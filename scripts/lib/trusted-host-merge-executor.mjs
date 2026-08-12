@@ -44,6 +44,7 @@ const pullRequestQuery = `query TrustedMergePullRequest($owner: String!, $name: 
       baseRefName
       headRepository { nameWithOwner }
       baseRepository { nameWithOwner }
+      body
       reviewDecision
       mergeStateStatus
       mergeCommit { oid }
@@ -67,6 +68,7 @@ async function readPullRequest(api, invocation) {
       repo: { full_name: pr.headRepository?.nameWithOwner },
     },
     base: { sha: pr.baseRefOid, ref: pr.baseRefName, repo: { full_name: pr.baseRepository?.nameWithOwner } },
+    body: typeof pr.body === 'string' ? pr.body : '',
     reviewDecision: pr.reviewDecision,
     mergeStateStatus: pr.mergeStateStatus,
     mergeCommit: pr.mergeCommit?.oid || null,
@@ -269,8 +271,28 @@ export function fetchCloseout({ repoRoot, token }) {
 
 const delay = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds))
 
-const assertSnapshotEqual = (prepared, current, reason) => {
-  if (prepared.immutableSha256 !== current.immutableSha256) fail(reason, 'trusted_snapshot_changed')
+// Only the closed `heldReason` enum values in agent-contracts/spec-to-done.contract.json
+// may be used here; several drift kinds only have an `_after_verdict` variant, not a
+// `_during_buffer` one, so the two call sites below pass different, narrower maps.
+const DURING_BUFFER_FIELD_REASONS = {
+  pullRequest: 'identity_changed_during_buffer',
+}
+
+const AFTER_VERDICT_FIELD_REASONS = {
+  pullRequest: 'identity_changed_after_verdict',
+  approval: 'human_approval_changed_after_verdict',
+  reviewerPermission: 'reviewer_permission_changed_after_verdict',
+  reviewSurfaceSha256: 'review_evidence_changed_after_verdict',
+}
+
+const assertSnapshotEqual = (prepared, current, fallbackReason, fieldReasons = {}) => {
+  if (prepared.immutableSha256 === current.immutableSha256) return
+  for (const [field, reason] of Object.entries(fieldReasons)) {
+    if (canonicalJson(prepared.immutable[field]) !== canonicalJson(current.immutable[field])) {
+      fail(reason, 'trusted_snapshot_changed')
+    }
+  }
+  fail(fallbackReason, 'trusted_snapshot_changed')
 }
 
 async function readMergedState(api, invocation) {
@@ -322,7 +344,7 @@ export async function executeTrustedMerge({
     const buffered = await snapshotCollector({
       api, invocation, assertion, contract, now: now(),
     })
-    assertSnapshotEqual(prepared, buffered, 'branch_protection_changed_during_buffer')
+    assertSnapshotEqual(prepared, buffered, 'branch_protection_changed_during_buffer', DURING_BUFFER_FIELD_REASONS)
   }
 
   const apexEvidence = buildBoundedEvidence({
@@ -346,7 +368,7 @@ export async function executeTrustedMerge({
   const finalSnapshot = await snapshotCollector({
     api, invocation, assertion, contract, now: now(),
   })
-  assertSnapshotEqual(prepared, finalSnapshot, 'branch_protection_changed_after_verdict')
+  assertSnapshotEqual(prepared, finalSnapshot, 'branch_protection_changed_after_verdict', AFTER_VERDICT_FIELD_REASONS)
   if (Date.parse(installationTokenExpiresAt) <= now().getTime() + 60000) {
     fail('host_env_blocked', 'github_app_token_near_expiry')
   }

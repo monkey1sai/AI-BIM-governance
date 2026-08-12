@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { appendFile, readFile, writeFile } from 'node:fs/promises'
-import { relative, resolve } from 'node:path'
+import { isAbsolute, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import {
@@ -79,7 +79,7 @@ const outputChallenge = async (invocation, assertion) => {
 
 const writeResult = async (result) => {
   const runnerTemp = process.env.RUNNER_TEMP
-  if (typeof runnerTemp !== 'string' || runnerTemp.length === 0) {
+  if (typeof runnerTemp !== 'string' || runnerTemp.length === 0 || !isAbsolute(runnerTemp)) {
     throw new TrustedMergeHold('host_env_blocked', 'runner_temp_missing')
   }
   const resultPath = resolve(runnerTemp, 'trusted-host-merge-result.json')
@@ -114,7 +114,10 @@ try {
   if (mode === 'challenge') {
     await outputChallenge(invocation, assertion)
   } else if (mode === 'execute') {
-    if (process.platform !== 'linux' || process.version !== 'v20.20.2') {
+    if (
+      process.platform !== contract.executor.toolchain.platform ||
+      process.version !== contract.executor.toolchain.node_version
+    ) {
       throw new TrustedMergeHold('host_env_blocked', 'trusted_toolchain_identity_mismatch')
     }
     const minted = await mintInstallationToken({

@@ -240,6 +240,7 @@ test('executor rechecks five immutable snapshots and invokes the exact-head merg
   let snapshots = 0
   let mergeCalls = 0
   let closeouts = 0
+  let sleepCalls = 0
   const api = {
     request: async (path, options = {}) => {
       if (options.method === 'PUT') {
@@ -265,7 +266,7 @@ test('executor rechecks five immutable snapshots and invokes the exact-head merg
     apexApiKey: `sk-${'x'.repeat(40)}`,
     apexModel: 'gpt-5.6-sol',
     now: () => NOW,
-    sleep: async (milliseconds) => assert.equal(milliseconds, 30000),
+    sleep: async (milliseconds) => { sleepCalls += 1; assert.equal(milliseconds, 30000) },
     snapshotCollector: async () => { snapshots += 1; return structuredClone(stable) },
     gitEvidenceCollector: () => ({
       entries: [{ status: 'M', path: '.github/workflows/ci.yml' }],
@@ -288,6 +289,7 @@ test('executor rechecks five immutable snapshots and invokes the exact-head merg
   assert.equal(result.status, 'merged')
   assert.equal(result.mergeCommit, 'c'.repeat(40))
   assert.equal(snapshots, 5)
+  assert.equal(sleepCalls, 3)
   assert.equal(mergeCalls, 1)
   assert.equal(closeouts, 1)
 })

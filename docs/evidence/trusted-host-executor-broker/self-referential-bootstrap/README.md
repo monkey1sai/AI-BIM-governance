@@ -3,7 +3,7 @@
 - Stack kind: `self_referential_bootstrap`
 - Pull request: `#527`
 - Trusted baseline: `origin/main@7d85190a7f57e8abde8725b2d07484443aa58d04`
-- Implementation commit: `642fa9c`
+- Implementation commit: `642fa9cebac8f4299cc91cd30ffee579fbada2b9`
 
 This branch introduces the default-branch trusted executor that will eventually
 hold a short-lived GitHub App merge credential. The canonical workflow cannot

@@ -103,6 +103,7 @@
         "reviewer_buffer_seconds",
         "evidence_max_bytes",
         "merge_method",
+        "toolchain",
         "required_check_sources",
         "github_app_token",
         "terminal_states"
@@ -114,6 +115,15 @@
         "reviewer_buffer_seconds": { "const": 90 },
         "evidence_max_bytes": { "const": 500000 },
         "merge_method": { "const": "merge" },
+        "toolchain": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["platform", "node_version"],
+          "properties": {
+            "platform": { "const": "linux" },
+            "node_version": { "const": "v20.20.2" }
+          }
+        },
         "required_check_sources": {
           "type": "array",
           "uniqueItems": true,
@@ -138,6 +148,7 @@
               "const": {
                 "actions": "read",
                 "administration": "read",
+                "checks": "read",
                 "contents": "write",
                 "pull_requests": "read"
               }

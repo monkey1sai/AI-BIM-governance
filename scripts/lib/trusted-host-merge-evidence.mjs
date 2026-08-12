@@ -45,7 +45,7 @@ export function parseNameStatusZ(value) {
 }
 
 const elevatedPathPatterns = [
-  /^(?:\.agents|\.claude|\.codex|\.github|agent-contracts|scripts|docs\/agents|infra)(?:\/|$)/u,
+  /^(?:\.agents|\.claude|\.codex|\.github|agent-contracts|architecture|openspec|scripts|docs\/agents|infra)(?:\/|$)/u,
   /^(?:AGENTS\.md|CLAUDE\.md|agent-skills-manifest\.json)$/u,
   /(?:^|\/)(?:auth|permission|migration|migrations|production|deploy|deployment|destructive)(?:[._/-]|$)/iu,
 ]

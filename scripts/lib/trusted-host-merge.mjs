@@ -103,15 +103,19 @@ export function heldResult(invocation, reason, detail) {
 }
 
 export function mergedResult(invocation, mergeCommit, closeoutHeld = null) {
+  const held = closeoutHeld === null || closeoutHeld === undefined ? null : String(closeoutHeld)
+  if (held !== null && held.length === 0) {
+    fail('host_env_blocked', 'closeout_detail_empty')
+  }
   return {
     schemaVersion: 'trusted-host-merge-result/v1',
-    status: closeoutHeld ? 'merged_but_closeout_held' : 'merged',
+    status: held !== null ? 'merged_but_closeout_held' : 'merged',
     merged: true,
     prNumber: invocation.prNumber,
     headOid: invocation.headOid,
     baseOid: invocation.baseOid,
     mergeCommit,
-    heldReason: closeoutHeld ? 'merge_verification_failed' : null,
-    heldDetail: closeoutHeld,
+    heldReason: held !== null ? 'merge_verification_failed' : null,
+    heldDetail: held,
   }
 }

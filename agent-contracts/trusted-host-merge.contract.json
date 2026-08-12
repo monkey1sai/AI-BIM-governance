@@ -57,6 +57,10 @@
     "reviewer_buffer_seconds": 90,
     "evidence_max_bytes": 500000,
     "merge_method": "merge",
+    "toolchain": {
+      "platform": "linux",
+      "node_version": "v20.20.2"
+    },
     "required_check_sources": [
       { "context": "agent-governance", "app_id": 15368 },
       { "context": "root contracts and fakes", "app_id": 15368 },
@@ -75,6 +79,7 @@
       "permissions": {
         "actions": "read",
         "administration": "read",
+        "checks": "read",
         "contents": "write",
         "pull_requests": "read"
       }

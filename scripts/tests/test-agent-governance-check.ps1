@@ -479,9 +479,19 @@ try {
     Assert-True ($trustedMergeWorkflow -match 'if:\s*\$\{\{ inputs\.apex_provider == ''codex'' \}\}[\s\S]*?secrets\.OPENAI_API_KEY') 'Codex executor step receives only the OpenAI key'
     Assert-True (-not ($trustedMergeWorkflow -match '&&\s*secrets\.|\|\|\s*secrets\.')) 'provider secret routing cannot fall through to another provider key'
     Assert-True ($trustedMergeRuntime -match 'createSign\(' -and $trustedMergeRuntime -match 'repositories:\s*\[repository\.split') 'executor mints a single-repository GitHub App installation token'
-    foreach ($appCapability in @('actions', 'administration', 'contents', 'pull_requests')) {
-        Assert-True ($trustedMergeRuntime -match $appCapability -or (Get-Content -LiteralPath 'agent-contracts/trusted-host-merge.contract.json' -Raw) -match $appCapability) "trusted App contract declares capability: $appCapability"
+    $trustedMergeAppPermissions = (Get-Content -LiteralPath 'agent-contracts/trusted-host-merge.contract.json' -Raw | ConvertFrom-Json -Depth 100).executor.github_app_token.permissions
+    $trustedMergeExpectedCapabilities = [ordered]@{
+        actions = 'read'
+        administration = 'read'
+        checks = 'read'
+        contents = 'write'
+        pull_requests = 'read'
     }
+    foreach ($appCapability in $trustedMergeExpectedCapabilities.Keys) {
+        Assert-True ($trustedMergeAppPermissions.$appCapability -ceq $trustedMergeExpectedCapabilities[$appCapability]) "trusted App contract declares least-privilege capability: $appCapability=$($trustedMergeExpectedCapabilities[$appCapability])"
+    }
+    $trustedMergeActualCapabilityNames = @($trustedMergeAppPermissions.PSObject.Properties.Name | Sort-Object)
+    Assert-True (($trustedMergeActualCapabilityNames -join ',') -ceq (@($trustedMergeExpectedCapabilities.Keys | Sort-Object) -join ',')) 'trusted App contract declares exactly the expected least-privilege capability set, no more'
     Assert-True ($trustedMergeExecutor -match "body:\s*\{ sha: invocation\.headOid, merge_method: method \}") 'single merge sink is atomically bound to the exact adjudicated head'
     Assert-True ($trustedMergeExecutor -match "spawnSync\('/usr/bin/git'") 'trusted executor invokes the fixed host Git path instead of PATH lookup'
     Assert-True (([regex]::Matches($trustedMergeExecutor, "method:\s*'PUT'")).Count -eq 1) 'executor has exactly one irreversible PUT call site'
@@ -497,6 +507,11 @@ try {
     $trustedMergeContractRaw = Get-Content -LiteralPath 'agent-contracts/trusted-host-merge.contract.json' -Raw
     Assert-True ($trustedMergeContractRaw | Test-Json -SchemaFile 'agent-contracts/trusted-host-merge.contract.schema.json' -ErrorAction SilentlyContinue) 'trusted host merge contract satisfies its closed schema'
     $trustedMergeContract = $trustedMergeContractRaw | ConvertFrom-Json -Depth 100
+    Assert-True ($trustedMergeContract.executor.toolchain.platform -ceq 'linux') 'trusted merge contract pins the executor platform to linux'
+    $trustedMergeContractNodeVersion = [string]$trustedMergeContract.executor.toolchain.node_version
+    Assert-True ($trustedMergeContractNodeVersion -cmatch '^v\d+\.\d+\.\d+$') 'trusted merge contract pins an exact semantic Node.js version'
+    Assert-True ($trustedMergeCli -match [regex]::Escape('contract.executor.toolchain.platform') -and $trustedMergeCli -match [regex]::Escape('contract.executor.toolchain.node_version')) 'trusted executor reads its toolchain identity from the contract, not a hardcoded literal'
+    Assert-True ($trustedMergeWorkflow -match "node-version:\s*'$([regex]::Escape($trustedMergeContractNodeVersion.TrimStart('v')))'") 'workflow setup-node pin matches the contract-declared Node.js version'
     foreach ($schemaPath in @($trustedMergeContract.schemas.PSObject.Properties.Value)) {
         $resolvedSchemaPath = Join-Path 'agent-contracts' ([string]$schemaPath).Replace('./', '')
         Assert-True (Test-Path -LiteralPath $resolvedSchemaPath -PathType Leaf) "trusted merge referenced schema exists: $resolvedSchemaPath"

@@ -12,6 +12,17 @@ const JSON_HEADERS = {
 
 const base64url = (value) => Buffer.from(value).toString('base64url')
 
+const REQUEST_TIMEOUT_MS = 60000
+const APEX_TIMEOUT_MS = 600000
+
+const fetchOrFail = async (fetchImpl, url, init, timeoutMs, reason, detail) => {
+  try {
+    return await fetchImpl(url, { ...init, signal: AbortSignal.timeout(timeoutMs) })
+  } catch {
+    fail(reason, detail)
+  }
+}
+
 const assertOfficialGitHubApi = (value) => {
   if (value !== 'https://api.github.com') {
     fail('host_env_blocked', 'github_api_origin_invalid')
@@ -52,11 +63,11 @@ export async function mintInstallationToken({
   } catch {
     fail('host_env_blocked', 'github_app_private_key_unusable')
   }
-  const response = await fetchImpl(`${apiBaseUrl}/app/installations/${installationId}/access_tokens`, {
+  const response = await fetchOrFail(fetchImpl, `${apiBaseUrl}/app/installations/${installationId}/access_tokens`, {
     method: 'POST',
     headers: { ...JSON_HEADERS, Authorization: `Bearer ${unsigned}.${signature}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({ repositories: [repository.split('/')[1]], permissions }),
-  })
+  }, REQUEST_TIMEOUT_MS, 'host_env_blocked', 'github_app_token_mint_timeout')
   const body = await response.json().catch(() => null)
   if (!response.ok || typeof body?.token !== 'string' || !/^[\x21-\x7e]{20,2048}$/u.test(body.token)) {
     fail('host_env_blocked', 'github_app_token_mint_failed')
@@ -78,7 +89,7 @@ export class GitHubApi {
   }
 
   async request(path, { method = 'GET', body, headers = {} } = {}) {
-    const response = await this.fetchImpl(`${this.apiBaseUrl}${path}`, {
+    const response = await fetchOrFail(this.fetchImpl, `${this.apiBaseUrl}${path}`, {
       method,
       headers: {
         ...JSON_HEADERS,
@@ -87,7 +98,7 @@ export class GitHubApi {
         ...headers,
       },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-    })
+    }, REQUEST_TIMEOUT_MS, 'final_gate_read_failed', 'github_api_request_timeout')
     const text = await response.text()
     let value = null
     try { value = text ? JSON.parse(text) : null } catch { /* fail below */ }
@@ -148,7 +159,7 @@ export async function invokeCodexApex({ apiKey, model, evidence, fetchImpl = fet
   if (typeof apiKey !== 'string' || apiKey.length < 20 || !/^gpt-[A-Za-z0-9.-]{1,80}$/u.test(model)) {
     fail('host_env_blocked', 'codex_apex_configuration_invalid')
   }
-  const response = await fetchImpl('https://api.openai.com/v1/responses', {
+  const response = await fetchOrFail(fetchImpl, 'https://api.openai.com/v1/responses', {
     method: 'POST',
     headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -161,7 +172,7 @@ export async function invokeCodexApex({ apiKey, model, evidence, fetchImpl = fet
       ],
       text: { format: { type: 'json_schema', name: 'trusted_merge_verdict', strict: true, schema: apexVerdictSchema } },
     }),
-  })
+  }, APEX_TIMEOUT_MS, 'reviewer_agent_failed', 'codex_apex_request_timeout')
   const body = await response.json().catch(() => null)
   const outputItems = Array.isArray(body?.output) ? body.output : []
   const messages = outputItems.filter((item) => item?.type === 'message')
@@ -181,7 +192,7 @@ export async function invokeClaudeApex({ apiKey, model, evidence, fetchImpl = fe
   if (typeof apiKey !== 'string' || apiKey.length < 20 || !/^claude-[A-Za-z0-9.-]{1,80}$/u.test(model)) {
     fail('host_env_blocked', 'claude_apex_configuration_invalid')
   }
-  const response = await fetchImpl('https://api.anthropic.com/v1/messages', {
+  const response = await fetchOrFail(fetchImpl, 'https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: {
       'x-api-key': apiKey,
@@ -196,7 +207,7 @@ export async function invokeClaudeApex({ apiKey, model, evidence, fetchImpl = fe
       tools: [],
       output_config: { effort: 'max', format: { type: 'json_schema', schema: apexVerdictSchema } },
     }),
-  })
+  }, APEX_TIMEOUT_MS, 'reviewer_agent_failed', 'claude_apex_request_timeout')
   const body = await response.json().catch(() => null)
   if (
     !response.ok || body?.type !== 'message' || body?.role !== 'assistant' ||
