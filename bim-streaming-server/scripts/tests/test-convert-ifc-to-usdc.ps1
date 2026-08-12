@@ -257,26 +257,36 @@ try {
     # 3) Descendants are re-discovered THROUGH termination, not from one snapshot.
     #    A child that only becomes visible after the first scan must still be
     #    terminated before containment is claimed.
+    #
+    #    #509 review r3: the root here MUST be a fixture process this test owns.
+    #    Stop-ConverterProcessTree unconditionally adds its root argument to the
+    #    kill list and runs Stop-Process -Force on it, so a hard-coded
+    #    "surely nobody has this PID" value would terminate an unrelated host or
+    #    CI process wherever that PID happens to be live - Linux routinely
+    #    allocates PIDs far above any such guess (pid_max defaults to 4194304).
+    $rescanRoot = Start-ContainmentTestProcess -FilePath $PwshPath -Arguments @('-NoProfile', '-NoLogo', '-File', $sleepScript)
+    $script:RescanRootId = [int]$rescanRoot.Id
+    $RecordedPids += $script:RescanRootId
     $lateChild = Start-ContainmentTestProcess -FilePath $PwshPath -Arguments @('-NoProfile', '-NoLogo', '-File', $sleepScript)
     $script:LateChildId = [int]$lateChild.Id
     $RecordedPids += $script:LateChildId
-    $script:PhantomRootId = 999999
     $script:TreeScanCount = 0
 
     function Get-ConverterChildProcessId {
         param([Parameter(Mandatory = $true)][int] $ParentProcessId)
-        if ($ParentProcessId -ne $script:PhantomRootId) { return @() }
+        if ($ParentProcessId -ne $script:RescanRootId) { return @() }
         $script:TreeScanCount++
         if ($script:TreeScanCount -eq 1) { return @() }
         return @($script:LateChildId)
     }
 
-    $lateContainment = Stop-ConverterProcessTree -ProcessId $script:PhantomRootId -TimeoutMs 10000
+    $lateContainment = Stop-ConverterProcessTree -ProcessId $script:RescanRootId -TimeoutMs 10000
     $lateSurvivors = @($lateContainment.SurvivingPids)
     Assert-True ($lateSurvivors.Count -eq 0) "Expected the rescan loop to prove containment; survivors: $($lateSurvivors -join ', ')"
     Assert-True ([bool]$lateContainment.FixedPointReached) 'Expected the late-descendant case to still reach a fixed point.'
     Assert-True ($script:TreeScanCount -ge 2) 'Expected the process tree to be re-scanned, not scanned once.'
-    Assert-True ($null -eq (Get-Process -Id $script:LateChildId -ErrorAction SilentlyContinue)) 'Expected the late-appearing descendant to be terminated.'
+    Assert-True (-not (Test-ConverterProcessAlive -ProcessId $script:LateChildId)) 'Expected the late-appearing descendant to be terminated.'
+    Assert-True (-not (Test-ConverterProcessAlive -ProcessId $script:RescanRootId)) 'Expected the rescan root fixture to be terminated.'
 }
 finally {
     foreach ($recorded in $RecordedPids) {

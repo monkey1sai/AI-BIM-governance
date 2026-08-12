@@ -4615,3 +4615,341 @@ def test_liveness_probe_helper_treats_a_posix_zombie_as_dead(monkeypatch):
 
     assert _pid_is_alive(4242) is False, "a defunct grandchild is not alive"
     assert _pid_is_alive(4243) is True
+
+
+# --- #509 review round 3 ------------------------------------------------------
+
+
+def test_posix_spawn_derives_the_group_id_instead_of_re_reading_it(monkeypatch):
+    """#509 review r3:``start_new_session=True`` 保證 child 的 PGID == 它的 PID。
+
+    再去 ``os.getpgid(pid)`` 讀一次是多餘且會失敗的(wrapper 可能已經退出),而舊碼
+    對任何失敗都記成 ``pgid=None``——containment 直接降級成「只殺直接 child」,
+    ``close()`` 的 sweep 也整個跳過。已知正確的 ID 不該被一次 racy 的重讀丟掉。
+    """
+
+    import ifc2usdc_powershell_adapter as mod
+
+    class _FastExitProc:
+        pid = 4242
+
+    monkeypatch.setattr(
+        mod._ContainedProcess, "_popen", staticmethod(lambda cmd, **kwargs: _FastExitProc())
+    )
+
+    def _dead_already(pid):
+        raise ProcessLookupError("wrapper already gone")
+
+    monkeypatch.setattr(os, "getpgid", _dead_already, raising=False)
+
+    contained = mod._ContainedProcess._spawn_posix(
+        ["converter"], cwd=".", stdout=None, stderr=None
+    )
+
+    assert contained._pgid == 4242, "the session leader's PGID is its own PID"
+
+
+def test_posix_group_members_is_indeterminate_when_a_record_is_unreadable(monkeypatch):
+    """#509 review r3:``/proc`` 列得出來、但個別 stat 讀不到時不得回具體答案。
+
+    受 LSM / 受限 procfs 保護的記錄若正好屬於 converter group,而所有讀得到的成員
+    都已離開,舊碼會回一個空 tuple,``_posix_group_alive`` 就把它當成「group 已消失」
+    的證明。讀不到就是讀不到,要回 None 讓上層 fail closed。
+    """
+
+    import builtins
+    import io
+
+    import ifc2usdc_powershell_adapter as mod
+
+    real_open = builtins.open
+
+    def _fake_listdir(path="."):
+        if str(path) == "/proc":
+            return ["100", "200", "self"]
+        raise AssertionError("unexpected listdir")
+
+    def _fake_open(path, *args, **kwargs):
+        text = str(path)
+        if text == "/proc/100/stat":
+            raise PermissionError(text)
+        if text == "/proc/200/stat":
+            return io.StringIO("200 (kit) S 1 999 999 0 -1\n")
+        return real_open(path, *args, **kwargs)
+
+    monkeypatch.setattr(os, "listdir", _fake_listdir)
+    monkeypatch.setattr(builtins, "open", _fake_open)
+
+    assert mod._ContainedProcess._posix_group_members(4242) is None
+
+
+def test_posix_group_members_still_answers_when_a_pid_merely_vanished(monkeypatch):
+    """對照組:listdir 與 open 之間行程消失是常態競態,不能因此變成 indeterminate。"""
+
+    import builtins
+    import io
+
+    import ifc2usdc_powershell_adapter as mod
+
+    real_open = builtins.open
+
+    def _fake_listdir(path="."):
+        if str(path) == "/proc":
+            return ["100", "200"]
+        raise AssertionError("unexpected listdir")
+
+    def _fake_open(path, *args, **kwargs):
+        text = str(path)
+        if text == "/proc/100/stat":
+            raise FileNotFoundError(text)
+        if text == "/proc/200/stat":
+            return io.StringIO("200 (kit) S 1 4242 4242 0 -1\n")
+        return real_open(path, *args, **kwargs)
+
+    monkeypatch.setattr(os, "listdir", _fake_listdir)
+    monkeypatch.setattr(builtins, "open", _fake_open)
+
+    assert mod._ContainedProcess._posix_group_members(4242) == (200,)
+
+
+def test_inner_timeout_exit_still_proves_containment_before_leaving_the_pin(
+    tmp_path: Path, monkeypatch
+):
+    """#509 review r3:ps1 自己的 -TimeoutSeconds 比外層早 30 秒到期。
+
+    所以「converter 逾時」的常態路徑是 wait() 正常返回(非零 exit),根本走不到
+    TimeoutExpired,terminate_tree() 也就從來沒跑過;close() 只是「開始」拆除,不是
+    邊界已空的證明。這條路徑必須在放掉 HOOPS pin 之前跑同一套有界證明。
+    """
+
+    from contextlib import contextmanager
+
+    import ifc2usdc_powershell_adapter
+
+    adapter = _adapter_for_sentinel(tmp_path)
+    validated_hoops_main, validated_hoops_identity = _validated_explicit_hoops(adapter)
+    events: list[str] = []
+
+    @contextmanager
+    def _recording_pin(candidate, identity):
+        events.append("pin_acquired")
+        try:
+            yield
+        finally:
+            events.append("pin_released")
+
+    def _recording_terminate(self, *, deadline_seconds, grace_seconds):
+        events.append("containment_proved")
+        self._survivors = ()
+        return True
+
+    monkeypatch.setattr(
+        adapter, "_hold_windows_hoops_entrypoint_for_execution", _recording_pin
+    )
+    monkeypatch.setattr(
+        ifc2usdc_powershell_adapter._ContainedProcess, "terminate_tree", _recording_terminate
+    )
+    _patch_popen(monkeypatch, returncode=1, stderr="Kit CAD conversion timed out")
+
+    with pytest.raises(ConversionAuthorityError) as excinfo:
+        adapter._run_powershell_conversion(
+            ifc_path=tmp_path / "fake.ifc",
+            output_dir=tmp_path / "out",
+            validated_hoops_main=validated_hoops_main,
+            validated_hoops_identity=validated_hoops_identity,
+        )
+
+    assert excinfo.value.code == "converter_failed"
+    assert events == ["pin_acquired", "containment_proved", "pin_released"]
+
+
+def test_inner_timeout_exit_with_unprovable_containment_fails_closed(
+    tmp_path: Path, monkeypatch
+):
+    """同一條路徑上證明失敗時,不得只回報 converter_failed 就放掉 pin。"""
+
+    import ifc2usdc_powershell_adapter
+
+    adapter = _adapter_for_sentinel(tmp_path)
+    validated_hoops_main, validated_hoops_identity = _validated_explicit_hoops(adapter)
+
+    def _unprovable(self, *, deadline_seconds, grace_seconds):
+        self._survivors = (515151,)
+        return False
+
+    monkeypatch.setattr(
+        ifc2usdc_powershell_adapter._ContainedProcess, "terminate_tree", _unprovable
+    )
+    _patch_popen(monkeypatch, returncode=1)
+
+    raised: ConversionAuthorityError | None = None
+    try:
+        adapter._run_powershell_conversion(
+            ifc_path=tmp_path / "fake.ifc",
+            output_dir=tmp_path / "out",
+            validated_hoops_main=validated_hoops_main,
+            validated_hoops_identity=validated_hoops_identity,
+        )
+    except ConversionAuthorityError as exc:
+        raised = exc
+
+    assert raised is not None
+    assert raised.code == "converter_containment_failed"
+    assert "515151" in raised.message
+
+
+def test_successful_exit_with_unprovable_containment_fails_closed(
+    tmp_path: Path, monkeypatch
+):
+    """returncode 0 也一樣:孫代還活著就代表 pin 已被破壞,不能當成功回報。"""
+
+    import ifc2usdc_powershell_adapter
+
+    adapter = _adapter_for_sentinel(tmp_path)
+    validated_hoops_main, validated_hoops_identity = _validated_explicit_hoops(adapter)
+
+    def _unprovable(self, *, deadline_seconds, grace_seconds):
+        self._survivors = (626262,)
+        return False
+
+    monkeypatch.setattr(
+        ifc2usdc_powershell_adapter._ContainedProcess, "terminate_tree", _unprovable
+    )
+    _patch_popen(monkeypatch, returncode=0)
+
+    raised: ConversionAuthorityError | None = None
+    try:
+        adapter._run_powershell_conversion(
+            ifc_path=tmp_path / "fake.ifc",
+            output_dir=tmp_path / "out",
+            validated_hoops_main=validated_hoops_main,
+            validated_hoops_identity=validated_hoops_identity,
+        )
+    except ConversionAuthorityError as exc:
+        raised = exc
+
+    assert raised is not None
+    assert raised.code == "converter_containment_failed"
+    assert "626262" in raised.message
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Win32 job object struct decoding")
+def test_truncated_job_membership_is_rejected_as_unreadable():
+    """#509 review r3:超過緩衝容量的 job membership 是截斷的,不是權威答案。
+
+    ``QueryInformationJobObject`` 以 ERROR_MORE_DATA 回一份不完整清單;被列出的行程
+    終止後,沒被列到的 Kit/HOOPS 孫代仍然活著,``_windows_live_pids`` 卻會算出空集合
+    並宣告 containment 已證明。
+    """
+
+    import ifc2usdc_powershell_adapter as mod
+
+    api = mod._Win32ContainmentApi()
+
+    truncated = api._pid_list_type()
+    truncated.NumberOfAssignedProcesses = 600
+    truncated.NumberOfProcessIdsInList = api._JOB_PID_LIST_CAPACITY
+    assert api._decode_job_pid_list(truncated, ok=False, last_error=api.ERROR_MORE_DATA) is None
+
+    # 即使呼叫「成功」,assigned > listed 一樣代表這份清單不完整。
+    partial = api._pid_list_type()
+    partial.NumberOfAssignedProcesses = 3
+    partial.NumberOfProcessIdsInList = 2
+    partial.ProcessIdList[0] = 111
+    partial.ProcessIdList[1] = 222
+    assert api._decode_job_pid_list(partial, ok=True, last_error=0) is None
+
+    complete = api._pid_list_type()
+    complete.NumberOfAssignedProcesses = 2
+    complete.NumberOfProcessIdsInList = 2
+    complete.ProcessIdList[0] = 111
+    complete.ProcessIdList[1] = 222
+    assert api._decode_job_pid_list(complete, ok=True, last_error=0) == [111, 222]
+
+
+_CLEAN_EXIT_FIXTURE = '''\
+import subprocess
+import sys
+
+# A real grandchild that exits on its own, exactly like a converter run that
+# finished normally: nothing should survive, so containment must be PROVABLE.
+child = subprocess.Popen([sys.executable, "-c", "pass"])
+child.wait()
+sys.stdout.write("converted\\n")
+sys.exit(0)
+'''
+
+
+def test_real_successful_run_proves_containment_without_failing_the_conversion(
+    tmp_path: Path, monkeypatch
+):
+    """#509 review r3 的反向保險:證明現在跑在「每一條」離開路徑上,包含成功路徑。
+
+    這條用真的 OS 行程(真 Job Object / 真 process group)跑完一次正常結束的轉檔,
+    確認新增的 containment 證明不會把成功的轉檔變成 converter_containment_failed,
+    也不會把它拖成掛死。純 fake 的測試驗不到這件事。
+    """
+
+    adapter = _adapter_for_sentinel(tmp_path)
+    validated_hoops_main, validated_hoops_identity = _validated_explicit_hoops(adapter)
+    fixture = tmp_path / "clean_exit.py"
+    fixture.write_text(_CLEAN_EXIT_FIXTURE, encoding="utf-8")
+
+    adapter.timeout_seconds = 30
+    monkeypatch.setattr(
+        adapter,
+        "_build_converter_command",
+        lambda **kwargs: [sys.executable, str(fixture)],
+    )
+
+    started = time.monotonic()
+    adapter._run_powershell_conversion(
+        ifc_path=tmp_path / "fake.ifc",
+        output_dir=tmp_path / "out",
+        validated_hoops_main=validated_hoops_main,
+        validated_hoops_identity=validated_hoops_identity,
+    )
+    elapsed = time.monotonic() - started
+
+    # 成功路徑不得因為多了一道證明就變慢一個數量級(grace 只在還有活著的成員時才等)。
+    assert elapsed < 30, f"the containment proof stalled a clean run for {elapsed:.1f}s"
+
+
+def test_real_failed_run_still_reports_converter_failed_not_containment_failed(
+    tmp_path: Path, monkeypatch
+):
+    """真行程、非零 exit、沒有殘存孫代 → 仍然是 converter_failed。
+
+    這正是 ps1 自己的 -TimeoutSeconds 先到期時的常態形狀:證明會跑,而且會成功,
+    所以錯誤碼不該被 containment 蓋掉。
+    """
+
+    adapter = _adapter_for_sentinel(tmp_path)
+    validated_hoops_main, validated_hoops_identity = _validated_explicit_hoops(adapter)
+    fixture = tmp_path / "clean_failure.py"
+    fixture.write_text(
+        "import sys\nsys.stderr.write('Kit CAD conversion timed out\\n')\nsys.exit(7)\n",
+        encoding="utf-8",
+    )
+
+    adapter.timeout_seconds = 30
+    monkeypatch.setattr(
+        adapter,
+        "_build_converter_command",
+        lambda **kwargs: [sys.executable, str(fixture)],
+    )
+
+    raised: ConversionAuthorityError | None = None
+    try:
+        adapter._run_powershell_conversion(
+            ifc_path=tmp_path / "fake.ifc",
+            output_dir=tmp_path / "out",
+            validated_hoops_main=validated_hoops_main,
+            validated_hoops_identity=validated_hoops_identity,
+        )
+    except ConversionAuthorityError as exc:
+        raised = exc
+
+    assert raised is not None
+    assert raised.code == "converter_failed", raised.message
+    assert "exited 7" in raised.message

@@ -253,10 +253,29 @@ class _Win32ContainmentApi:
             ctypes.sizeof(buffer),
             ctypes.byref(returned),
         )
-        if not ok and ctypes.get_last_error() != self.ERROR_MORE_DATA:
+        return self._decode_job_pid_list(buffer, ok=bool(ok), last_error=ctypes.get_last_error())
+
+    def _decode_job_pid_list(self, buffer, *, ok: bool, last_error: int) -> list[int] | None:
+        """Complete job membership, or None when the answer is not trustworthy.
+
+        #509 review r3:``ERROR_MORE_DATA`` 代表 job 裡的行程比這個固定大小的緩衝
+        裝得下的還多,回來的是一份「被截斷」的清單。舊碼把它當權威答案接受:被列出
+        的那些行程終止之後,``_windows_live_pids`` 會算出空集合並宣告 containment
+        已證明,而沒被列進來的 Kit/HOOPS 孫代還活著。截斷的清單不是成員清單,一律
+        當成讀不到(None),由呼叫端 fail closed —— 與 job membership 讀取失敗同一個
+        處置。單次轉檔的 job 正常只有個位數行程,踩到這個上限本身就是異常訊號。
+        """
+
+        if not ok:
+            # 包含 last_error == ERROR_MORE_DATA:那正是「清單被截斷」的訊號,以前
+            # 被當成可接受,現在與其他查詢失敗一視同仁。
+            del last_error
             return None
-        count = min(int(buffer.NumberOfProcessIdsInList), self._JOB_PID_LIST_CAPACITY)
-        return [int(buffer.ProcessIdList[index]) for index in range(count)]
+        assigned = int(buffer.NumberOfAssignedProcesses)
+        listed = int(buffer.NumberOfProcessIdsInList)
+        if listed > self._JOB_PID_LIST_CAPACITY or assigned > listed:
+            return None
+        return [int(buffer.ProcessIdList[index]) for index in range(listed)]
 
     # -- process / thread ---------------------------------------------------
 
@@ -501,13 +520,14 @@ class _ContainedProcess:
             cmd, cwd=cwd, stdout=stdout, stderr=stderr, shell=False, start_new_session=True
         )
         pid = getattr(proc, "pid", None)
-        pgid = None
-        if pid:
-            try:
-                pgid = os.getpgid(int(pid))
-            except OSError:
-                pgid = None
-        return cls(proc, pgid=pgid)
+        # #509 review r3:``start_new_session=True`` 讓 child 呼叫 setsid(),因此它
+        # 是一個 NEW process group 的 leader,而 leader 的 PGID 依 POSIX 定義就等於
+        # 它自己的 PID。再去 ``os.getpgid(pid)`` 讀一次沒有多得到任何資訊,卻多了一
+        # 個會失敗的競態:wrapper 若在這兩行之間就結束,舊碼把任何失敗都記成
+        # ``pgid=None``,於是 containment 靜默降級成「只殺直接 child」,而且
+        # ``close()`` 的 group sweep 會整個跳過——孫代就這樣活過 HOOPS pin。
+        # 已知正確的 ID 不該被一次 racy 的重讀丟掉。
+        return cls(proc, pgid=int(pid) if pid else None)
 
     # -- lifecycle ----------------------------------------------------------
 
@@ -709,8 +729,17 @@ class _ContainedProcess:
                     "/proc/%s/stat" % entry, encoding="utf-8", errors="replace"
                 ) as handle:
                     raw = handle.read()
-            except OSError:
+            except FileNotFoundError:
+                # 行程在 listdir 與 open 之間結束是常態競態,而且它結束了正是我們要
+                # 的答案:跳過,不影響結論。
                 continue
+            except OSError:
+                # #509 review r3:讀得到 /proc 卻讀不到「某一筆」記錄(LSM、受限
+                # procfs mount、permission)完全不同。舊碼一律 continue,於是那筆
+                # 記錄若正好屬於 converter group、而其他成員都已離開,回傳的空 tuple
+                # 會被 _posix_group_alive 當成「group 已消失」的證明。讀不到就是
+                # indeterminate,回 None 讓上層 fail closed。
+                return None
             close_index = raw.rfind(")")
             if close_index < 0:
                 continue
@@ -2350,16 +2379,24 @@ class Ifc2UsdcPowershellConverterAdapter:
                         except subprocess.TimeoutExpired:
                             timed_out = True
                             returncode = None
-                            # #489 SEC-001:等待整棵樹消失的 poll 一定要在 HOOPS pin
-                            # 仍持有的這個 with 區塊「之內」完成——pin 必須比 process
-                            # tree 活得久,否則 Kit 孫代會在 pin 已放掉之後,還握著
-                            # 已被判定不可信的 entrypoint 繼續處理輸入。
-                            containment_proven = contained.terminate_tree(
-                                deadline_seconds=self._CONTAINMENT_DEADLINE_SECONDS,
-                                grace_seconds=self._CONTAINMENT_GRACE_SECONDS,
-                            )
-                            survivors = contained.survivors
-                            containment_detail = contained.containment_detail
+                        # #489 SEC-001:等待整棵樹消失的 poll 一定要在 HOOPS pin
+                        # 仍持有的這個 with 區塊「之內」完成——pin 必須比 process
+                        # tree 活得久,否則 Kit 孫代會在 pin 已放掉之後,還握著
+                        # 已被判定不可信的 entrypoint 繼續處理輸入。
+                        #
+                        # #509 review r3:這個證明對「每一條」離開路徑都要跑,不是只
+                        # 有 TimeoutExpired。ps1 自己的 -TimeoutSeconds 比外層早 30 秒
+                        # (_OUTER_TIMEOUT_BUFFER_SECONDS)到期,所以常態的 converter
+                        # 逾時其實是「ps1 清理完、非零 exit、wait() 正常返回」,根本
+                        # 走不到 TimeoutExpired。舊碼在那條路徑上只呼叫 close(),而
+                        # close() 只是「開始」拆除(Windows 關掉 job handle、POSIX 送完
+                        # 最後一發 SIGKILL 就返回),不是邊界已空的證明。
+                        containment_proven = contained.terminate_tree(
+                            deadline_seconds=self._CONTAINMENT_DEADLINE_SECONDS,
+                            grace_seconds=self._CONTAINMENT_GRACE_SECONDS,
+                        )
+                        survivors = contained.survivors
+                        containment_detail = contained.containment_detail
                     finally:
                         contained.close()
                     stdout_handle.seek(0)
@@ -2377,30 +2414,38 @@ class Ifc2UsdcPowershellConverterAdapter:
                 "converter_unavailable",
                 f"Failed to launch PowerShell converter: {exc}",
             ) from exc
+        # streaming-ifc-usdc-conversion-authority spec:「subprocess 起來之後的
+        # 任何失敗」——明文包含 timeout——都要在 error 上帶 kit_stdout_log /
+        # kit_stderr_log 與 tail summary,否則 conversion_authority._fail_job 只
+        # 能吐出一個沒有診斷路徑的錯誤。ps1 在啟動 Kit 之前就印了 ##CONV_META##,
+        # 所以即使整棵樹被外層 timeout 殺掉,那兩個 log 路徑仍然拿得回來。
+        #
+        # #509 review r3:containment 證明失敗蓋過其他所有結果——包含 returncode 0。
+        # 「轉檔成功但 Kit 孫代還活著」代表那個已被判定不可信的 HOOPS entrypoint 在
+        # pin 放掉之後仍被持有,那不是成功。
+        if not containment_proven:
+            surviving = ", ".join(str(pid) for pid in survivors) or "unknown"
+            # #509 review r2:證明失敗的「原因」要跟著出去,operator 才分得清
+            # 「有殘存 PID」與「邊界根本讀不到(job_membership_unreadable)」。
+            detail = f" [{containment_detail}]" if containment_detail else ""
+            trigger = (
+                f"exceeded {outer_timeout}s"
+                if timed_out
+                else f"exited {completed.returncode}"
+            )
+            message, metadata = self._failure_diagnostics(
+                f"convert-ifc-to-usdc.ps1 {trigger} and its process "
+                f"tree could not be proven terminated within "
+                f"{self._CONTAINMENT_DEADLINE_SECONDS}s (surviving pids: "
+                f"{surviving}){detail}.",
+                completed,
+            )
+            raise ConversionAuthorityError(
+                "converter_containment_failed",
+                message,
+                metadata=metadata or None,
+            )
         if timed_out:
-            # streaming-ifc-usdc-conversion-authority spec:「subprocess 起來之後的
-            # 任何失敗」——明文包含 timeout——都要在 error 上帶 kit_stdout_log /
-            # kit_stderr_log 與 tail summary,否則 conversion_authority._fail_job 只
-            # 能吐出一個沒有診斷路徑的錯誤。ps1 在啟動 Kit 之前就印了 ##CONV_META##,
-            # 所以即使整棵樹被外層 timeout 殺掉,那兩個 log 路徑仍然拿得回來。
-            # 只有在「每個 descendant 都被觀察到消失」之後才允許回報單純 timeout。
-            if not containment_proven:
-                surviving = ", ".join(str(pid) for pid in survivors) or "unknown"
-                # #509 review r2:證明失敗的「原因」要跟著出去,operator 才分得清
-                # 「有殘存 PID」與「邊界根本讀不到(job_membership_unreadable)」。
-                detail = f" [{containment_detail}]" if containment_detail else ""
-                message, metadata = self._failure_diagnostics(
-                    f"convert-ifc-to-usdc.ps1 exceeded {outer_timeout}s and its process "
-                    f"tree could not be proven terminated within "
-                    f"{self._CONTAINMENT_DEADLINE_SECONDS}s (surviving pids: "
-                    f"{surviving}){detail}.",
-                    completed,
-                )
-                raise ConversionAuthorityError(
-                    "converter_containment_failed",
-                    message,
-                    metadata=metadata or None,
-                )
             message, metadata = self._failure_diagnostics(
                 f"convert-ifc-to-usdc.ps1 exceeded {outer_timeout}s and its whole "
                 "process tree was killed.",
