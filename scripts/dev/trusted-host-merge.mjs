@@ -79,7 +79,7 @@ const outputChallenge = async (invocation, assertion) => {
 
 const writeResult = async (result) => {
   const runnerTemp = process.env.RUNNER_TEMP
-  if (typeof runnerTemp !== 'string' || !resolve(runnerTemp)) {
+  if (typeof runnerTemp !== 'string' || runnerTemp.length === 0) {
     throw new TrustedMergeHold('host_env_blocked', 'runner_temp_missing')
   }
   const resultPath = resolve(runnerTemp, 'trusted-host-merge-result.json')
