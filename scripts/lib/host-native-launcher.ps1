@@ -523,23 +523,313 @@ function Start-HostNativeGovernance {
 }
 
 function Stop-HostNativeProcessTreeAndWait {
+    # Bounded best-effort process-tree SWEEP with a fail-closed provability
+    # report. The contract is deliberately narrower than "containment", and
+    # callers must read it as written:
+    #
+    #   It DOES: enumerate the descendants it can reach, terminate them
+    #     deepest-first (parent last) with identity revalidation before every
+    #     stop, re-enumerate to a fixed point, and THROW whenever it cannot prove
+    #     that the set it knows about is gone inside one bounded budget.
+    #
+    #   It is NOT an escape-proof boundary. Discovery rides the OS parent/child
+    #     link, and that link is advisory: a live process can spawn a child in the
+    #     window between an enumeration and the stop that follows it, and on a
+    #     platform that re-parents orphans the link vanishes outright once the
+    #     parent dies. Only an OS boundary established at LAUNCH - a Windows Job
+    #     Object, or a POSIX process group / cgroup - makes containment
+    #     inescapable (#517, and the follow-up that moves Start-HostNativeService
+    #     onto one).
+    #
+    # So a caller gets "this sweep proved what it could see, or it threw" - never
+    # "nothing survived". Releasing a trust boundary on the strength of a silent
+    # return is a misuse of this helper.
+    #
+    # Two defects made even that narrower proof false (#489 L1-COR-004):
+    #   1. Kill($true), WaitForExit and HasExited all describe the SAME Process
+    #      object. Microsoft documents that they can report completion while
+    #      descendants are still running, and the old catch additionally swallowed
+    #      the tree-kill exception whenever the parent had already exited - the
+    #      exact case where orphaned grandchildren survive.
+    #   2. Process.Kill([bool]) does not exist on .NET Framework, so under Windows
+    #      PowerShell 5.1 the tree kill ALWAYS threw into that catch and the helper
+    #      silently degraded to "parent only".
+    #
+    #   3. An `if ($Process.HasExited) { return }` pre-entry guard is not
+    #      containment either (#513 gate L1-COR-001). The parent can lose the race
+    #      between the caller's liveness decision and this helper, and NEITHER OS
+    #      cascades termination, so its descendants keep running. An exited parent
+    #      excuses the parent kill/wait only - never the sweep or the proof.
+    #   4. Stopping a snapshotted descendant by bare PID can terminate an unrelated
+    #      process that inherited a recycled PID (#513 gate L1-COR-002), and the
+    #      survivor poll would still read "our descendant is gone".
+    #   5. One fixed snapshot is not containment (#513 gate L1-SEC-002): a
+    #      snapshotted process can spawn another child before it dies, and that
+    #      child appears in neither the stop list nor the success check.
+    #   6. Sweeping an already-exited parent is only possible where the OS keeps
+    #      the creator PID on an orphan (#513 gate r2 L1-COR-001). Linux
+    #      re-parents orphans to init/subreaper, so BOTH discovery passes come
+    #      back empty and an empty pass would read as containment. There this
+    #      fails closed and names the caller's launch-time boundary instead of
+    #      pretending a sweep can recover the link.
+    #   7. Reaching the deadline is not a clean pass (#513 gate r2 L1-SEC-001).
+    #      Success requires a pass that observed NEITHER a survivor NOR a newly
+    #      discovered descendant; an empty survivor set at the deadline is not
+    #      the same thing and must fail closed.
+    #   8. TimeoutMs is ONE end-to-end budget (#513 gate r2 L1-COR-002). The
+    #      stopwatch starts before discovery and every bounded operation after it
+    #      - including the parent wait - receives only the remaining allowance.
+    #
+    # Fix: snapshot the descendant PID set BEFORE terminating (afterwards the
+    # parent/child links are gone and orphans are re-parented), guard the tree
+    # kill behind an overload probe with the enumerated-PID fallback used by
+    # Stop-HostNativeService, then drive containment as a bounded FIXED POINT -
+    # re-enumerate, terminate what is still ours, verify - until a pass finds
+    # nothing new and nothing alive. Anything still alive at the deadline throws.
+    #
+    # Descendant liveness is judged on process IDENTITY, not the bare PID, both
+    # before each stop and in the survivor proof, so a recycled PID is correctly
+    # read as "our descendant is gone" instead of killing an unrelated process or
+    # failing a caller closed on one.
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $true)][System.Diagnostics.Process] $Process,
-        [ValidateRange(1, 60000)][int] $TimeoutMs = 5000
+        [ValidateRange(1, 60000)][int] $TimeoutMs = 5000,
+        # Injectable so the containment postcondition is testable without an
+        # actually unkillable process.
+        [scriptblock] $ChildPidLookup = {
+            param($parentId)
+            @(Get-PlatformChildProcessIds -ParentProcessId ([int]$parentId))
+        },
+        [scriptblock] $IdentityProbeFn = {
+            param($procId)
+            Get-PlatformProcessIdentity -ProcessId ([int]$procId)
+        },
+        [scriptblock] $StopProcessFn = {
+            param($procId)
+            Stop-Process -Id ([int]$procId) -Force -ErrorAction SilentlyContinue
+        },
+        [scriptblock] $SleepFn = {
+            param($milliseconds)
+            Start-Sleep -Milliseconds ([int]$milliseconds)
+        },
+        # Injectable so the .NET Framework / Windows PowerShell 5.1 branch is
+        # reachable as BEHAVIOUR from a PowerShell 7 run instead of being pinned
+        # by source strings alone (#513 gate L1-TG-003). Windows PowerShell 5.1
+        # compatibility is an explicit purpose of this helper, and that branch
+        # carries the two races above.
+        [scriptblock] $TreeKillCapabilityProbeFn = {
+            $null -ne [System.Diagnostics.Process].GetMethod('Kill', [type[]]@([bool]))
+        },
+        # Injectable so the POSIX fail-closed path is provable from a Windows run
+        # and vice versa. See Test-OrphanRediscoverySupported for the platform
+        # facts this gate encodes.
+        [scriptblock] $OrphanRediscoveryProbeFn = {
+            Test-OrphanRediscoverySupported
+        }
     )
 
-    if ($Process.HasExited) { return }
-    try {
-        $Process.Kill($true)
+    # Nested on purpose: scripts/tests/test-deploy-governance-static.ps1 extracts
+    # this function's AST and dot-sources it ALONE, so every helper it needs has
+    # to travel inside its own extent.
+    function Update-DescendantSnapshot {
+        # Breadth-first walk below every root. Returns the PIDs discovered on THIS
+        # pass in parent-before-child order (so reverse iteration is deepest-first)
+        # and records an identity for each one.
+        param(
+            # Expanded from. Callers pass only PIDs that are still the incarnation
+            # they recorded, so a recycled PID can never contribute an unrelated
+            # process's children to the containment set.
+            [Parameter(Mandatory = $true)][AllowEmptyCollection()][int[]] $RootProcessIds,
+            # Already recorded; seeds the visited set so they are never rediscovered
+            # or re-probed, even when they are no longer expanded from.
+            [Parameter(Mandatory = $true)][AllowEmptyCollection()][int[]] $KnownProcessIds,
+            [Parameter(Mandatory = $true)][hashtable] $Identities,
+            [Parameter(Mandatory = $true)][scriptblock] $LookupFn,
+            [Parameter(Mandatory = $true)][scriptblock] $ProbeFn
+        )
+        $discovered = @()
+        $visited = @{}
+        foreach ($knownId in $KnownProcessIds) { $visited[[int]$knownId] = $true }
+        foreach ($rootId in $RootProcessIds) { $visited[[int]$rootId] = $true }
+        $pending = @($RootProcessIds)
+        while ($pending.Count -gt 0) {
+            $current = [int]$pending[0]
+            $pending = @($pending | Select-Object -Skip 1)
+            try {
+                $currentChildIds = @(& $LookupFn $current)
+            } catch {
+                throw ("Process tree child enumeration failed for PID {0}: {1}" -f $current, $_.Exception.Message)
+            }
+            foreach ($childId in $currentChildIds) {
+                $childProcessId = [int]$childId
+                if ($visited.ContainsKey($childProcessId)) { continue }
+                $visited[$childProcessId] = $true
+                $pending += $childProcessId
+                $discovered += $childProcessId
+                $Identities[$childProcessId] = (& $ProbeFn $childProcessId)
+            }
+        }
+        # Emitted flat on purpose: every call site re-collects with @(), which is
+        # what keeps the empty and single-descendant cases arrays.
+        return $discovered
     }
-    catch {
-        if (-not $Process.HasExited) {
-            throw "Process tree termination failed for PID $($Process.Id): $($_.Exception.Message)"
+
+    function Stop-DescendantSnapshot {
+        # Deepest-first termination, identity-revalidated immediately before each
+        # stop. A PID whose incarnation changed - or that we never got an identity
+        # for - is not ours to kill and is already gone for our purposes.
+        param(
+            [Parameter(Mandatory = $true)][AllowEmptyCollection()][int[]] $DescendantIds,
+            [Parameter(Mandatory = $true)][hashtable] $Identities,
+            [Parameter(Mandatory = $true)][scriptblock] $ProbeFn,
+            [Parameter(Mandatory = $true)][scriptblock] $StopFn
+        )
+        for ($i = $DescendantIds.Count - 1; $i -ge 0; $i--) {
+            $descendantProcessId = [int]$DescendantIds[$i]
+            if (-not (Test-PlatformProcessIdentityMatch `
+                        -Reference $Identities[$descendantProcessId] `
+                        -Current (& $ProbeFn $descendantProcessId))) {
+                continue
+            }
+            $null = & $StopFn $descendantProcessId
         }
     }
-    if (-not $Process.WaitForExit($TimeoutMs) -or -not $Process.HasExited) {
-        throw "Process tree for PID $($Process.Id) did not terminate within $TimeoutMs ms."
+
+    function Wait-ParentExitWithinBudget {
+        # $TimeoutMs here is the REMAINING allowance out of the caller's single
+        # end-to-end budget, never the caller's total: discovery and termination
+        # already spent part of it before this runs.
+        param(
+            [Parameter(Mandatory = $true)][System.Diagnostics.Process] $Process,
+            [Parameter(Mandatory = $true)][int] $TimeoutMs
+        )
+        if (-not $Process.WaitForExit($TimeoutMs) -or -not $Process.HasExited) { return $false }
+        return $true
+    }
+
+    # ONE end-to-end budget: started before discovery, so every later bounded
+    # operation spends what is left of it rather than a fresh full allowance.
+    $budget = [System.Diagnostics.Stopwatch]::StartNew()
+
+    $parentProcessId = [int]$Process.Id
+    $parentAlreadyExited = $Process.HasExited
+
+    # An already-exited parent is only sweepable where the OS keeps the creator
+    # PID on an orphan. Where it does not, discovery has nothing left to walk, so
+    # an empty result is ignorance rather than proof - fail closed and name the
+    # boundary that could actually have prevented the escape.
+    if ($parentAlreadyExited -and -not [bool](& $OrphanRediscoveryProbeFn)) {
+        throw ("Process tree for PID $parentProcessId cannot be proven contained: the parent had " +
+            'already exited on entry and this platform re-parents orphans, so containment is not ' +
+            'provable via PPID here. This helper is a bounded best-effort sweep, not an escape-proof ' +
+            'boundary: the authoritative containment boundary is the caller, which must hold an OS ' +
+            'process group, cgroup or Job Object established at launch (#517).')
+    }
+
+    $descendantIdentities = @{}
+    $descendantIds = @(Update-DescendantSnapshot `
+            -RootProcessIds @($parentProcessId) `
+            -KnownProcessIds @() `
+            -Identities $descendantIdentities `
+            -LookupFn $ChildPidLookup `
+            -ProbeFn $IdentityProbeFn)
+
+    $supportsTreeKill = [bool](& $TreeKillCapabilityProbeFn)
+    if (-not $parentAlreadyExited) {
+        try {
+            if ($supportsTreeKill) {
+                $Process.Kill($true)
+            }
+            else {
+                # Windows PowerShell 5.1 / .NET Framework: no tree overload. Kill the
+                # snapshot deepest-first, then the parent - the same enumerated-PID
+                # shape Stop-HostNativeService already uses.
+                Stop-DescendantSnapshot `
+                    -DescendantIds $descendantIds `
+                    -Identities $descendantIdentities `
+                    -ProbeFn $IdentityProbeFn `
+                    -StopFn $StopProcessFn
+                $Process.Kill()
+            }
+        }
+        catch {
+            # An already-exited PARENT is the only tolerated failure, and it is not
+            # a licence to stop: its descendants outlive it, so the containment
+            # loop below still terminates and proves them instead of swallowing
+            # the exception as before.
+            if (-not $Process.HasExited) {
+                throw "Process tree termination failed for PID $($Process.Id): $($_.Exception.Message)"
+            }
+        }
+        $parentWaitMs = [int]($TimeoutMs - $budget.ElapsedMilliseconds)
+        if ($parentWaitMs -le 0 -or -not (Wait-ParentExitWithinBudget -Process $Process -TimeoutMs $parentWaitMs)) {
+            throw "Process tree for PID $($Process.Id) did not terminate within $TimeoutMs ms."
+        }
+    }
+
+    # Bounded containment fixed point. Runs on EVERY path, including the exited
+    # parent that used to return here, and including a successful tree kill - a
+    # child created after the snapshot is invisible to both. The parent stays a
+    # root even once it is dead: this call holds its Process handle, so its PID
+    # cannot be recycled underneath us, and on Windows a just-orphaned child is
+    # still reachable through the dead parent's ppid link. Every other root has
+    # to still be the incarnation we recorded.
+    #
+    # $survivors starts as the WHOLE snapshot, alive or not, so the first pass
+    # re-walks every member the stop above just killed. That is what catches a
+    # descendant spawned between enumeration and the stop: measured on Windows
+    # with a real three-level fixture whose grandchild was hidden from the
+    # snapshot, pass 1 rediscovered it through its dead parent's link, stopped
+    # it, and pass 2 came back clean.
+    #
+    # KNOWN RESIDUAL (analysis, not measured; the reason the contract above stops
+    # short of "containment"): a descendant discovered AND stopped inside the same
+    # pass drops out of $survivors, so the next pass no longer expands from it. A
+    # child it spawned in that sub-window is not rediscovered. Expanding from dead
+    # PIDs on every pass instead would trade this fail-open gap for a
+    # fail-dangerous one - a recycled PID would contribute an unrelated process's
+    # children to the kill set - so the gap is documented and left to the
+    # launch-time OS boundary in #517 rather than papered over here.
+    $survivors = @($descendantIds)
+    $cleanPassObserved = $false
+    while ($true) {
+        # Never start another pass on an exhausted budget: the work below is
+        # itself unbounded platform I/O.
+        if ($budget.ElapsedMilliseconds -ge $TimeoutMs) { break }
+        $newDescendantIds = @(Update-DescendantSnapshot `
+                -RootProcessIds (@($parentProcessId) + $survivors) `
+                -KnownProcessIds $descendantIds `
+                -Identities $descendantIdentities `
+                -LookupFn $ChildPidLookup `
+                -ProbeFn $IdentityProbeFn)
+        if ($newDescendantIds.Count -gt 0) { $descendantIds += $newDescendantIds }
+        Stop-DescendantSnapshot `
+            -DescendantIds $descendantIds `
+            -Identities $descendantIdentities `
+            -ProbeFn $IdentityProbeFn `
+            -StopFn $StopProcessFn
+        $survivors = @($descendantIds | Where-Object {
+                $descendantProcessId = [int]$_
+                Test-PlatformProcessIdentityMatch `
+                    -Reference $descendantIdentities[$descendantProcessId] `
+                    -Current (& $IdentityProbeFn $descendantProcessId)
+            })
+        # The fixed point is a pass that found NOTHING new and NOTHING alive.
+        # An empty survivor set on a pass that still discovered a descendant is
+        # not a fixed point: whatever spawned it can spawn again.
+        if ($survivors.Count -eq 0 -and $newDescendantIds.Count -eq 0) {
+            $cleanPassObserved = $true
+            break
+        }
+        if ($budget.ElapsedMilliseconds -ge $TimeoutMs) { break }
+        & $SleepFn 50
+    }
+    if ($survivors.Count -gt 0) {
+        throw "Process tree for PID $($Process.Id) left descendant PID(s) $($survivors -join ', ') running after $TimeoutMs ms."
+    }
+    if (-not $cleanPassObserved) {
+        throw "Process tree for PID $($Process.Id) could not be proven contained within $TimeoutMs ms: no containment pass completed with neither a surviving nor a newly discovered descendant."
     }
 }
 
