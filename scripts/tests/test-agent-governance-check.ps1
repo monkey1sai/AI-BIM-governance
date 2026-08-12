@@ -88,13 +88,25 @@ function Get-WorkflowPermissionViolations {
         $normalizedEntries = @($entries | ForEach-Object { $_.Trim() })
         $normalizedWorkflowPath = $WorkflowPath.Replace('\', '/')
         $allowsPullRequestRead = $normalizedWorkflowPath -match '(?:^|/)\.github/workflows/governance-trust-root\.yml$'
+        # The @claude mention workflow is the one deliberate carve-out (issue #518):
+        # claude-code-action must exchange an OIDC token for a Claude GitHub App token,
+        # which requires literal 'id-token: write'. GITHUB_TOKEN stays read-only; every
+        # write goes through the separately-installed Claude GitHub App, which is an
+        # evidence provider and never satisfies the required human review.
+        $allowsClaudeMention = $normalizedWorkflowPath -match '(?:^|/)\.github/workflows/claude\.yml$'
         # Avoid PowerShell's pipeline unrolling: under StrictMode a one-item
         # branch result becomes a scalar string and has no reliable .Count.
         $allowedEntries = @('contents: read')
         if ($allowsPullRequestRead) {
             $allowedEntries += 'pull-requests: read'
         }
-        $invalidEntries = @($entries | Where-Object { $_ -cnotmatch '^  (?:contents|pull-requests): read$' })
+        if ($allowsClaudeMention) {
+            $allowedEntries += @('pull-requests: read', 'issues: read', 'id-token: write', 'actions: read')
+        }
+        $invalidEntries = @($entries | Where-Object {
+            $rawEntry = $_
+            @($allowedEntries | Where-Object { $rawEntry -ceq "  $_" }).Count -eq 0
+        })
         if (
             $entries.Count -lt 1 -or $entries.Count -gt $allowedEntries.Count -or
             $normalizedEntries -notcontains 'contents: read' -or
@@ -102,7 +114,7 @@ function Get-WorkflowPermissionViolations {
             @($normalizedEntries | Where-Object { $allowedEntries -notcontains $_ }).Count -gt 0 -or
             $invalidEntries.Count -gt 0
         ) {
-            $violations.Add("line $($lineIndex + 1): root permissions require literal 'contents: read'; only governance-trust-root.yml may add literal 'pull-requests: read'")
+            $violations.Add("line $($lineIndex + 1): root permissions require literal 'contents: read'; only governance-trust-root.yml may add literal 'pull-requests: read', and only claude.yml may add the literal mention read set plus 'id-token: write'")
         }
     }
 
@@ -449,6 +461,13 @@ try {
     Assert-True (@(Get-WorkflowPermissionViolations -Lines @('permissions:', '  contents: read')).Count -eq 0) 'the exact root contents-read workflow permission is allowed'
     Assert-True (@(Get-WorkflowPermissionViolations -Lines @('permissions:', '  contents: read', '  pull-requests: read') -WorkflowPath '.github/workflows/governance-trust-root.yml').Count -eq 0) 'base-owned governance trust root may read pull requests alongside contents'
     Assert-True (@(Get-WorkflowPermissionViolations -Lines @('permissions:', '  contents: read', '  pull-requests: read') -WorkflowPath '.github/workflows/ci.yml').Count -gt 0) 'pull-request read is rejected outside the base-owned governance trust root'
+    $claudeMentionPermissionLines = @('permissions:', '  contents: read', '  pull-requests: read', '  issues: read', '  id-token: write', '  actions: read')
+    Assert-True (@(Get-WorkflowPermissionViolations -Lines $claudeMentionPermissionLines -WorkflowPath '.github/workflows/claude.yml').Count -eq 0) 'the @claude mention workflow may carry the literal read set plus id-token write'
+    Assert-True (@(Get-WorkflowPermissionViolations -Lines $claudeMentionPermissionLines -WorkflowPath '.github/workflows/ci.yml').Count -gt 0) 'the claude mention permission set is rejected outside claude.yml'
+    Assert-True (@(Get-WorkflowPermissionViolations -Lines @('permissions:', '  contents: read', '  id-token: write') -WorkflowPath '.github/workflows/claude-code-review.yml').Count -gt 0) 'id-token write is rejected for other claude-prefixed workflow names'
+    Assert-True (@(Get-WorkflowPermissionViolations -Lines @('permissions:', '  contents: read', '  pull-requests: write') -WorkflowPath '.github/workflows/claude.yml').Count -gt 0) 'claude.yml cannot escalate to pull-request write'
+    Assert-True (@(Get-WorkflowPermissionViolations -Lines @('permissions:', '  contents: write', '  id-token: write') -WorkflowPath '.github/workflows/claude.yml').Count -gt 0) 'claude.yml cannot escalate to contents write'
+    Assert-True (@(Get-WorkflowPermissionViolations -Lines @('permissions:', '  contents: read', '   id-token: write') -WorkflowPath '.github/workflows/claude.yml').Count -gt 0) 'claude.yml entries must keep the exact two-space literal indent'
     Assert-True (@(Get-WorkflowPermissionViolations -Lines @('permissions:', '  pull-requests: read')).Count -gt 0) 'pull-request read without contents read is rejected'
     Assert-True (@(Get-WorkflowPermissionViolations -Lines @('permissions:', '  contents: read', '  pull-requests: write')).Count -gt 0) 'pull-request write is rejected'
     Assert-True (@(Get-WorkflowPermissionViolations -Lines @('permissions:', '  contents: read', '# permissions tokens are forbidden outside the root key')).Count -gt 0) 'extra permissions tokens in comments are rejected by the strict dependency-free grammar'
