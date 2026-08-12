@@ -56,8 +56,8 @@ Repair lane 只開一扇門：**修復 PR 把自己的 PR number 追加到該 op
 
 1. PR body 宣告的 entry 在 **PR base 已存在且 `status=open`**，在 head 仍為 `open`。
 2. 本 transition 對該 entry 的**唯一**差異是 `repair_prs` 的**尾端追加**，且追加內容**恰好等於本 PR number**（單一值）。無法取得 live PR number 時直接拒絕，不得略過驗證。
-3. 本 PR 命中機制清單的 changed paths **全部落在該 entry 已宣告的 `verification_mechanism_paths` 之內**（case-sensitive）。要改該範圍以外的機制，開新 entry。
-4. 本 PR **不得修改本 gate 自身的 adjudicator**（`$script:SelfReferentialAdjudicatorPaths`）。修改裁決者仍須依 §2／§3 另開 debt，不能藉 repair lane 讓被改過的規則裁決自己。
+3. 本 PR 必須**真的修了東西**：除 ledger 以外，至少改動一條機制清單路徑。ledger 自身即機制路徑，而 repair PR 必然要改 ledger 才能追加 `repair_prs`，所以「有改到機制路徑」恆真、不構成任何約束；只有 **non-ledger** 機制路徑能區分真修復與「只補一筆什麼都沒修的稽核記錄」。此條與 closure 的單一目的規則互為鏡像（closure 在機制面**只能**動 ledger）。
+4. 本 PR 命中機制清單的 changed paths **全部落在該 entry 已宣告的 `verification_mechanism_paths` 之內**（case-sensitive）。要改該範圍以外的機制，開新 entry。**此範圍包含本 gate 自身的 adjudicator**：adjudicator path 只要在該 entry 的宣告範圍內就允許修復。推理鏈為 (a) **base-pinned 裁決** —— `.github/workflows/pr-review-agent.yml` checkout `pull_request.base.sha` 並以 `git archive` 由 base 具現 gate，base 不完整時輸出 `base_gate_incomplete_external_approval_required` 並 fail closed，從不回退到 head checker，故 PR 永遠不會被自己改過的 adjudicator 裁決（可執行形式：`scripts/tests/test-base-gate-capability.ps1`）；(b) **declared-subset** —— 修復不得擴張 entry 的宣告範圍；(c) **fixpoint 義務不變** —— 修完仍須以該 entry 凍結的 `verification_contract` 自證才能關帳。反之，若沿用「一律禁止 adjudicator」，凡宣告了 adjudicator path 的 entry（本 repo 現行 open entry 即是）一旦 fixpoint 失敗就完全無 lane 可走，等於把 issue #494 的死鎖複製到上一層。
 5. 同一 transition **不得新增任何 entry，也不得關閉任何 entry**，且**只能修復 body 具名的那一個 entry** — 整個 transition 至多一筆 `repair_prs` 追加。否則未具名的 entry 稽核歷史會被改動，卻沒經過它自己的 PR number 與範圍檢查。
 
 Repair lane **不放寬**任何既有不變式：ledger 仍為 append-only（`repair_prs` 只能追加，既有元素不可改寫或刪除）；entry 除 `repair_prs` 外所有欄位仍不可變，唯一合法狀態轉移仍是一次 `open → closed`；closure 仍須提交完整且全綠的 fixpoint attestation（修復後的機制必須自己通過該 entry 凍結的 `verification_contract`）；同一 transition 仍不得一邊關債一邊開債；closed entry 仍完全不可變 — `repair_prs` 不是進入 closed entry 的後門。

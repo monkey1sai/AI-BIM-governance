@@ -1096,8 +1096,9 @@ function Assert-SelfReferentialRepairLane {
     # that entry's repair_prs - and every other invariant is re-asserted here:
     #   (1) the entry is pre-existing debt that stays open on both sides,
     #   (2) the append is exactly this PR's number (so the binding is machine-checked),
-    #   (3) the repair stays inside the mechanism surface the entry already declared,
-    #   (4) the repair does not touch this gate's own adjudicators, and
+    #   (3) the repair does real work - a mechanism path beyond the ledger itself,
+    #   (4) every mechanism path it changes is inside the surface that entry
+    #       declared (adjudicator paths included, see below), and
     #   (5) the transition neither opens nor closes debt.
     # The entry therefore keeps its single legal open -> closed transition, and the
     # closure attestation still has to prove the repaired mechanism passes.
@@ -1106,7 +1107,6 @@ function Assert-SelfReferentialRepairLane {
         [Parameter(Mandatory = $true)] $Transition,
         [Parameter(Mandatory = $true)] $BaseLedger,
         [Parameter(Mandatory = $true)] $HeadLedger,
-        [Parameter(Mandatory = $true)][AllowEmptyCollection()][string[]] $ChangedPaths,
         [Parameter(Mandatory = $true)][AllowEmptyCollection()][string[]] $MechanismPaths,
         [int] $PrNumber = 0
     )
@@ -1150,22 +1150,46 @@ function Assert-SelfReferentialRepairLane {
         throw "self_referential_bootstrap: repair of ledger entry '$EntryId' must append exactly this PR number to repair_prs; appended $($appendedPrs -join ', ') on PR #$PrNumber."
     }
 
-    # (3) a repair fixes the debt it is bound to - it may not widen it. Comparison
+    # (3) a repair must actually repair something. "Changed at least one mechanism
+    # path" proves nothing here: the ledger is ITSELF a classified mechanism path,
+    # and a repair PR necessarily edits it to append repair_prs, so that test is
+    # true by construction (measured: Get-SelfReferentialMechanismPaths returns
+    # exactly the ledger for a ledger-only PR, and a PR with no mechanism path at
+    # all returns from the body gate long before reaching this lane). Requiring a
+    # NON-LEDGER mechanism path is what stops a PR from appending a repair record
+    # that fixes nothing and only pollutes the entry's audit history. It is the
+    # exact mirror of the closure rule below, which allows a closure to touch the
+    # ledger and nothing else.
+    $repairedMechanism = @($MechanismPaths | Where-Object {
+        $_ -cne 'scripts/self-referential-bootstrap-ledger.json'
+    })
+    if ($repairedMechanism.Count -eq 0) {
+        throw "self_referential_bootstrap: repair of ledger entry '$EntryId' changes no verification-mechanism path other than the ledger; a repair_prs record must document real repair work, not an empty entry in the audit history."
+    }
+
+    # (4) a repair fixes the debt it is bound to - it may not widen it. Comparison
     # is case-sensitive for the same reason declared paths are: git paths are.
+    #
+    # This surface deliberately INCLUDES this gate's own adjudicators. An earlier
+    # revision banned them outright, reasoning that a PR repairing the rule that
+    # judges it could wave itself through. That reasoning does not survive the
+    # workflow: .github/workflows/pr-review-agent.yml checks out
+    # pull_request.base.sha, materializes the gate from BASE via `git archive`,
+    # and exits non-zero with base_gate_incomplete_external_approval_required
+    # rather than ever falling back to the head checker - so a PR is never
+    # adjudicated by its own edited adjudicator (test-base-gate-capability.ps1 is
+    # the executable form of that invariant). The ban also deadlocked the debt it
+    # meant to protect: an entry that declares an adjudicator path - as this
+    # repository's own open entry does - could never have a failing fixpoint
+    # repaired at all, reproducing issue #494 one level up. What keeps the
+    # relaxation safe is unchanged: base-pinned adjudication means no
+    # self-clearance, declared-subset means no scope expansion, and the fixpoint
+    # obligation still requires the repaired mechanism to prove itself against the
+    # entry's frozen verification contract before the debt can close.
     $declaredPaths = @($headEntries[0].verification_mechanism_paths | ForEach-Object { [string]$_ })
     $outsidePaths = @($MechanismPaths | Where-Object { -not ($declaredPaths -ccontains $_) })
     if ($outsidePaths.Count -gt 0) {
         throw "self_referential_bootstrap: repair of ledger entry '$EntryId' changes verification-mechanism paths outside the declared surface of that entry: $($outsidePaths -join ', '); open a new entry for that mechanism instead."
-    }
-
-    # (4) the repair lane deliberately does NOT reopen the adjudicators. Repairing
-    # the rule that judges the repair is the self-validation this whole contract exists
-    # to prevent, so those edits keep owing a fresh entry of their own.
-    $adjudicatorEdits = @($ChangedPaths | Where-Object {
-        $script:SelfReferentialAdjudicatorPaths -ccontains $_
-    })
-    if ($adjudicatorEdits.Count -gt 0) {
-        throw "self_referential_bootstrap: a repair PR must not change this gate's own adjudicators: $($adjudicatorEdits -join ', '); those changes must register new fixpoint debt."
     }
 
     # (5) one transition, one job. Mixing debt bookkeeping into a repair would let a
@@ -1174,6 +1198,11 @@ function Assert-SelfReferentialRepairLane {
         $newIds = @($Transition.NewEntries | ForEach-Object { [string]$_.id }) -join ', '
         throw "self_referential_bootstrap: a repair PR must not open new debt in the same transition ($newIds); repair and the next mechanism change belong in separate PRs."
     }
+    # Defence in depth since condition 3 began demanding a non-ledger mechanism
+    # path: a repair that also closes debt is now refused before reaching here on
+    # both reachable paths - ledger-only changed paths fail condition 3, and any
+    # non-ledger mechanism path trips the closure single-purpose rule while the
+    # closure is evaluated. Kept so the rule survives either of those moving.
     if (@($Transition.ClosedEntries).Count -gt 0) {
         $closedIds = @($Transition.ClosedEntries | ForEach-Object { [string]$_.id }) -join ', '
         throw "self_referential_bootstrap: a repair PR must not close debt in the same transition ($closedIds); the fixpoint closure must run after the repair merges."
@@ -1328,7 +1357,7 @@ function Assert-SelfReferentialBootstrapBody {
     # mechanism that entry already owns and registers itself in its repair_prs.
     if ($entryId -notin $newIds) {
         Assert-SelfReferentialRepairLane -EntryId $entryId -Transition $transition `
-            -BaseLedger $baseLedger -HeadLedger $headLedger -ChangedPaths $ChangedPaths `
+            -BaseLedger $baseLedger -HeadLedger $headLedger `
             -MechanismPaths $mechanismPaths -PrNumber $PrNumber
         return
     }

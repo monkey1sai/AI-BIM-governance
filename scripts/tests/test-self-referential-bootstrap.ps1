@@ -1094,8 +1094,13 @@ try {
             -HeadJson $repairHead -BaseJson $repairBase -PrNumber 601
     }
 
-    # (4) a repair may not edit this gate's own adjudicators - even when the entry
-    # declared them, which is why this fixture widens the declared surface first.
+    # (4) adjudicator paths ARE repairable, but only inside the declared surface.
+    # Banning them outright deadlocked the debt it meant to protect: an entry that
+    # declares an adjudicator path - as this repository's own open entry does -
+    # could never have a failing fixpoint repaired, reproducing issue #494 one
+    # level up. Self-clearance is prevented by base-pinned adjudication
+    # (.github/workflows/pr-review-agent.yml checks out pull_request.base.sha and
+    # fails closed rather than falling back to head), not by this list.
     $repairAdjudicatorSurface = @($repairSurface + 'scripts/lib/self-referential-bootstrap.ps1')
     $repairAdjudicatorBase = New-LedgerJson -Entries @((New-Entry -Override @{
         verification_mechanism_paths = $repairAdjudicatorSurface
@@ -1104,11 +1109,26 @@ try {
         verification_mechanism_paths = $repairAdjudicatorSurface
         repair_prs = @(601)
     }))
-    Assert-Throws -Context 'repair PR edits an adjudicator' `
-        -MessagePattern "must not change this gate's own adjudicators" -Action {
+    Invoke-BodyGate -Rows $repairRows `
+        -ChangedPaths @($repairChangedPaths + 'scripts/lib/self-referential-bootstrap.ps1') `
+        -HeadJson $repairAdjudicatorHead -BaseJson $repairAdjudicatorBase -PrNumber 601
+    # ...and an adjudicator OUTSIDE the declared surface is still refused, so the
+    # relaxation is bounded by the entry's own declaration rather than unbounded.
+    Assert-Throws -Context 'repair PR edits an adjudicator outside the declared surface' `
+        -MessagePattern 'outside the declared surface' -Action {
         Invoke-BodyGate -Rows $repairRows `
             -ChangedPaths @($repairChangedPaths + 'scripts/lib/self-referential-bootstrap.ps1') `
-            -HeadJson $repairAdjudicatorHead -BaseJson $repairAdjudicatorBase -PrNumber 601
+            -HeadJson $repairHead -BaseJson $repairBase -PrNumber 601
+    }
+
+    # (3) a repair must do real work. The ledger is itself a mechanism path and a
+    # repair PR necessarily edits it to append repair_prs, so "changed at least one
+    # mechanism path" is true by construction; only a NON-LEDGER mechanism path
+    # distinguishes a real fix from a bare audit-history entry.
+    Assert-Throws -Context 'repair PR that only appends the repair record' `
+        -MessagePattern 'changes no verification-mechanism path other than the ledger' -Action {
+        Invoke-BodyGate -Rows $repairRows -ChangedPaths @('scripts/self-referential-bootstrap-ledger.json') `
+            -HeadJson $repairHead -BaseJson $repairBase -PrNumber 601
     }
 
     # (2) the appended number must be exactly this PR: neither someone else's...
@@ -1277,12 +1297,19 @@ try {
             -HeadJson $closedRepairHead -BaseJson $closedRepairBase -PrNumber 601
     }
 
-    # (5) a repair may not close debt in the same transition. The closure here is
-    # otherwise fully legal, so only the combination is what the gate refuses.
+    # (5) a repair may not close debt in the same transition. Since condition 3
+    # started demanding a non-ledger mechanism path, this combination is blocked on
+    # BOTH reachable paths before condition 5 is consulted, so both are pinned here
+    # and the condition-5 closure check itself is defence in depth:
+    #   ledger-only changed paths -> condition 3 (the repair fixes nothing)
+    #   any non-ledger mechanism path -> the closure single-purpose rule, which
+    #   fires while evaluating the closure and before the body rows are read.
+    # The closure below is otherwise fully legal, so the refusal is about the
+    # combination and not about a defective fixpoint.
     $repairTargetEvidence = 'docs/evidence/repairable/self-referential-bootstrap/summary.md'
     $repairTargetEntry = New-Entry -Override @{
         id = 'repairable-mechanism-entry'
-        verification_mechanism_paths = @('scripts/self-referential-bootstrap-ledger.json')
+        verification_mechanism_paths = @('scripts/self-referential-bootstrap-ledger.json', 'scripts/deploy.ps1')
         bootstrap_evidence_refs = @($repairTargetEvidence)
     }
     & $write $repairTargetEvidence 'repair target bootstrap evidence'
@@ -1306,20 +1333,31 @@ try {
         $repairClosureEntry,
         (New-Entry -Override @{
             id = 'repairable-mechanism-entry'
-            verification_mechanism_paths = @('scripts/self-referential-bootstrap-ledger.json')
+            verification_mechanism_paths = @('scripts/self-referential-bootstrap-ledger.json', 'scripts/deploy.ps1')
             bootstrap_evidence_refs = @($repairTargetEvidence)
             repair_prs = @(601)
         })
     )
     $repairPlusClosureHead = New-FixtureHeadCommit -Json $repairPlusClosureJson 'closure plus repair in one transition'
-    Assert-Throws -Context 'repair PR also closes debt' `
-        -MessagePattern 'must not close debt in the same transition' -Action {
-        Invoke-BodyGate -Rows @{
-            'Self-referential bootstrap' = 'yes'
-            'Bootstrap ledger entry' = 'repairable-mechanism-entry'
-            'Bootstrap reason' = $goodReason
-        } -ChangedPaths @(
+    $repairPlusClosureRows = @{
+        'Self-referential bootstrap' = 'yes'
+        'Bootstrap ledger entry' = 'repairable-mechanism-entry'
+        'Bootstrap reason' = $goodReason
+    }
+    Assert-Throws -Context 'repair PR also closes debt, changing only the ledger' `
+        -MessagePattern 'changes no verification-mechanism path other than the ledger' -Action {
+        Invoke-BodyGate -Rows $repairPlusClosureRows -ChangedPaths @(
             'scripts/self-referential-bootstrap-ledger.json',
+            $repairClosureSummary,
+            $repairClosureAttestation
+        ) -HeadJson $repairPlusClosureJson -BaseJson $repairClosureBase `
+            -GateRepoRoot $gitRoot -BaseSha $repairClosureBaseSha -HeadSha $repairPlusClosureHead -PrNumber 601
+    }
+    Assert-Throws -Context 'repair PR also closes debt while doing real repair work' `
+        -MessagePattern 'may only change the ledger' -Action {
+        Invoke-BodyGate -Rows $repairPlusClosureRows -ChangedPaths @(
+            'scripts/self-referential-bootstrap-ledger.json',
+            'scripts/deploy.ps1',
             $repairClosureSummary,
             $repairClosureAttestation
         ) -HeadJson $repairPlusClosureJson -BaseJson $repairClosureBase `
