@@ -112,6 +112,33 @@
       }
     },
     {
+      "name": "verify-minio-real-data-e2e",
+      "locations": {
+        "claude": ".claude/skills/verify-minio-real-data-e2e",
+        "codex": ".codex/skills/verify-minio-real-data-e2e"
+      },
+      "sync": {
+        "mode": "mirror",
+        "source": "claude",
+        "targets": [
+          "codex"
+        ]
+      },
+      "provenance": {
+        "kind": "repo-authored",
+        "source": "AI-BIM-governance",
+        "notes": "Real-MinIO IFC/RVT data acceptance loop for the canonical Linux test deployment; first live-verified 2026-08-12 (0-to-12 auto-intake, 12/12 succeeded, RVT boundary negative test). Claude is canonical, Codex is a byte-identical mirror."
+      },
+      "integrity": {
+        "format": "agent-skill-tree/v2",
+        "algorithm": "sha256",
+        "trees": {
+          "claude": "97addf67e48b4101c90e5ba3b2ec01daaf0f701fd94f2e513d0828612bad304c",
+          "codex": "97addf67e48b4101c90e5ba3b2ec01daaf0f701fd94f2e513d0828612bad304c"
+        }
+      }
+    },
+    {
       "name": "figma",
       "locations": {
         "claude": ".claude/skills/figma",
