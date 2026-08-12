@@ -56,8 +56,11 @@ try {
         -SkipWebRtcProbe:$SkipWebRtcProbe
 
     if ([string]::IsNullOrWhiteSpace($OutputPath)) {
-        $timestamp = (Get-Date).ToUniversalTime().ToString('yyyyMMdd-HHmmss')
-        $OutputPath = Join-Path $RepoRoot "artifacts\gpu-baseline\$timestamp.json"
+        # Name the artifact after the report's own run_id (already computed
+        # above, inside $report). A bare second-resolution timestamp collides
+        # when two runs land in the same second, silently overwriting the
+        # earlier report; run_id carries a per-run random suffix as well.
+        $OutputPath = Join-Path $RepoRoot "artifacts\gpu-baseline\$($report.run_id).json"
     }
     $outDir = Split-Path -Parent $OutputPath
     if ($outDir -and -not (Test-Path -LiteralPath $outDir)) {

@@ -1237,11 +1237,11 @@
       "id": "gpu-session-baseline-and-idle-reclaim",
       "status": "active",
       "owner": "bim-streaming-server",
-      "current_slice": "1.1 done: measure-session-baseline.ps1 harness; next 1.2 env-fingerprint required-field gate",
+      "current_slice": "1.1 harness landed but unticked on review: TTFF and session-creation success rate remain caller-supplied, not measured; next 1.2 env-fingerprint required-field gate",
       "blocked_by": [],
       "last_verified": "2026-08-12T02:28:43Z",
       "task_ledger": {
-        "completed": 1,
+        "completed": 0,
         "total": 6
       },
       "evidence_refs": [

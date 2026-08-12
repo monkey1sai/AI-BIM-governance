@@ -268,5 +268,8 @@ artifacts/architecture/
 artifacts/tmp/
 artifacts/verification-outcomes/
 /artifacts/deploy-reports/
+# GPU session baseline reports are per-host measurement output (scripts/measure-session-baseline.ps1),
+# regenerated on demand and never source; the spec-bound numbers live in the deployment doc.
+artifacts/gpu-baseline/
 bim-review-coordinator/track.txt
 .aider*

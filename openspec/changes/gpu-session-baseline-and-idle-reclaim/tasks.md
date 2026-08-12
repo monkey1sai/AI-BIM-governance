@@ -1,6 +1,7 @@
 ## 1. gpu-session-baseline（量測 harness，`scripts/`＋部署文件）
 
-- [x] 1.1 在 `scripts/` 建立 `measure-session-baseline.ps1`：nvidia-smi 取 VRAM/利用率＋WebRTC health probe＋TTFF；輸出結構化 JSON 報告含 GPU 型號盤點（判定消費級 RTX、MIG 不可用）、1 primary + k spectator VRAM 水位、TTFF、建立成功率
+- [ ] 1.1 在 `scripts/` 建立 `measure-session-baseline.ps1`：nvidia-smi 取 VRAM/利用率＋WebRTC health probe＋TTFF；輸出結構化 JSON 報告含 GPU 型號盤點（判定消費級 RTX、MIG 不可用）、1 primary + k spectator VRAM 水位、TTFF、建立成功率
+  - 註（2026-08 review 修正）：harness 已落地，但 TTFF 與 session 建立成功率在結構上仍未量測 —— 兩者只能由呼叫端經 -TtffMs / -SessionCreationSuccessRate 傳入（已加範圍驗證並標記 source=caller_supplied），本 harness 為唯讀、不建立 session，故無現場量測路徑；1.1 維持未勾選，待 1.3 soak 提供實測路徑後才可結案。
 - [ ] 1.2 報告 schema 加「環境指紋」必填欄位（GPU 型號/driver 版/Kit 版/fixture hash＋大小），缺欄位判不完整並拒絕被下游引用；於 `scripts/` 加最小驗證測試
 - [ ] 1.3 實作 ≥30 分鐘（目標 2 小時）soak：隔離 stack（獨立埠＋獨立 governance，沿用 branch E2E 隔離模式）＋獨佔量測窗＋內建 keepalive health probe；輸出記憶體斜率報告；自然斷流記 finding、連兩次同點才判污染
 - [ ] 1.4 由 soak 報告訂洩漏 watchdog 門檻（只用本地實測、禁引用外部數字）；將 session 建立成功率下限/TTFF 上限/探針逾時/並發上限/idle-timeout/洩漏門檻以具體數值寫入可稽核部署文件並綁定環境指紋（禁模糊詞）
