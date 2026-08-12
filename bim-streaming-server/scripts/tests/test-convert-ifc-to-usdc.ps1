@@ -114,6 +114,7 @@ foreach ($fnName in @(
         'Get-ConverterChildProcessId',
         'Get-ProcStatProcessState',
         'Test-ConverterProcessAlive',
+        'Test-OrphanRediscoverySupported',
         'Stop-ConverterProcessTree')) {
     $found = @($converterAst.FindAll({
                 param($node)
@@ -185,7 +186,75 @@ try {
         Assert-True (-not (Test-ConverterProcessAlive -ProcessId $recorded)) "Expected PID $recorded to be gone after containment."
     }
 
-    # 2) Descendants are re-discovered THROUGH termination, not from one snapshot.
+    # 2) #509 review r2: a descendant forked by a KNOWN member after that member
+    #    was enumerated but before the reverse-order kill must still be found.
+    #    Only the FIRST enumeration is stubbed - that stub IS the premise ("the
+    #    fork had not happened yet when we looked"). Every later round uses the
+    #    real discovery and every kill is real, so this asserts the actual OS
+    #    behaviour: Windows keeps ParentProcessId pointing at the killed parent,
+    #    so the re-walk from the known (now dead) pid rediscovers the orphan.
+    #    Linux reparents orphans to PID 1 and cannot do this - the timeout
+    #    wording there says so instead of claiming proof.
+    #    The tree is 3 levels deep (root -> mid -> leaf) on purpose: the member
+    #    that "forks late" is the MID process, so once it is killed it vanishes
+    #    from the process table and the root can no longer reach it. Only a
+    #    re-walk that keeps querying every KNOWN pid rediscovers the leaf, which
+    #    is exactly the property under dispute.
+    if (Test-OrphanRediscoverySupported) {
+        $midScript = Join-Path $ContainmentTempDir 'spawn-mid.ps1'
+        Set-Content -LiteralPath $midScript -Encoding UTF8 -Value @(
+            'param([string] $MidPidFile, [string] $PwshPath, [string] $SpawnScript, [string] $LeafPidFile, [string] $SleepScript)',
+            '$psi = [System.Diagnostics.ProcessStartInfo]::new($PwshPath)',
+            '$psi.UseShellExecute = $false',
+            'foreach ($a in @("-NoProfile", "-NoLogo", "-File", $SpawnScript, "-PidFile", $LeafPidFile, "-PwshPath", $PwshPath, "-SleepScript", $SleepScript)) { $psi.ArgumentList.Add($a) | Out-Null }',
+            '$mid = [System.Diagnostics.Process]::Start($psi)',
+            'Set-Content -LiteralPath $MidPidFile -Value $mid.Id',
+            'Start-Sleep -Seconds 600'
+        )
+        $midPidFile = Join-Path $ContainmentTempDir 'mid.pid'
+        $leafPidFile = Join-Path $ContainmentTempDir 'leaf.pid'
+        $orphanRoot = Start-ContainmentTestProcess -FilePath $PwshPath -Arguments @(
+            '-NoProfile', '-NoLogo', '-File', $midScript,
+            '-MidPidFile', $midPidFile, '-PwshPath', $PwshPath, '-SpawnScript', $spawnScript,
+            '-LeafPidFile', $leafPidFile, '-SleepScript', $sleepScript
+        )
+        $RecordedPids += [int]$orphanRoot.Id
+        $orphanDeadline = [DateTime]::UtcNow.AddSeconds(30)
+        while ((-not (Test-Path -LiteralPath $leafPidFile)) -and [DateTime]::UtcNow -lt $orphanDeadline) {
+            Start-Sleep -Milliseconds 100
+        }
+        Assert-True (Test-Path -LiteralPath $midPidFile) 'Expected the fork fixture to record its mid PID.'
+        Assert-True (Test-Path -LiteralPath $leafPidFile) 'Expected the fork fixture to record its leaf PID.'
+        $midPid = [int]((Get-Content -LiteralPath $midPidFile -Raw).Trim())
+        $leafPid = [int]((Get-Content -LiteralPath $leafPidFile -Raw).Trim())
+        $RecordedPids += $midPid
+        $RecordedPids += $leafPid
+        Assert-True (Test-ConverterProcessAlive -ProcessId $leafPid) 'Expected the orphan-to-be to be alive before containment.'
+
+        $script:RealGetConverterChildProcessId = ${function:Get-ConverterChildProcessId}
+        $script:ForkParentId = $midPid
+        $script:FirstForkScanDone = $false
+
+        function Get-ConverterChildProcessId {
+            param([Parameter(Mandatory = $true)][int] $ParentProcessId)
+            if ($ParentProcessId -eq $script:ForkParentId -and -not $script:FirstForkScanDone) {
+                $script:FirstForkScanDone = $true
+                return @()
+            }
+            return @(& $script:RealGetConverterChildProcessId -ParentProcessId $ParentProcessId)
+        }
+
+        $orphanContainment = Stop-ConverterProcessTree -ProcessId ([int]$orphanRoot.Id) -TimeoutMs 15000
+        $orphanSurvivors = @($orphanContainment.SurvivingPids)
+        Assert-True $script:FirstForkScanDone 'Expected the mid process to have been enumerated before the kill.'
+        Assert-True ($orphanSurvivors.Count -eq 0) "Expected no survivors after the orphan round; got: $($orphanSurvivors -join ', ')"
+        Assert-True ([bool]$orphanContainment.FixedPointReached) 'Expected the orphan case to reach a stable fixed point.'
+        Assert-True (-not (Test-ConverterProcessAlive -ProcessId $leafPid)) 'Expected the orphan forked before the kill to be terminated, not left running.'
+        # No restore needed: the next case replaces Get-ConverterChildProcessId
+        # with a self-contained stub that never delegates.
+    }
+
+    # 3) Descendants are re-discovered THROUGH termination, not from one snapshot.
     #    A child that only becomes visible after the first scan must still be
     #    terminated before containment is claimed.
     $lateChild = Start-ContainmentTestProcess -FilePath $PwshPath -Arguments @('-NoProfile', '-NoLogo', '-File', $sleepScript)

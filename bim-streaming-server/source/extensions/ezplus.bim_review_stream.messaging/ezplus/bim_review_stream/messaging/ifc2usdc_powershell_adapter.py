@@ -568,13 +568,32 @@ class _ContainedProcess:
         self._reap_bounded(max(deadline - time.monotonic(), 0.5))
         while True:
             live = self._windows_live_pids(api, pid)
-            if not live:
+            # live is None = job membership 讀不到。那不是「空的」,是「沒觀察到」,
+            # 所以它永遠不能滿足成功條件;單次失敗仍可能是暫時性的,因此繼續 poll
+            # 到 deadline 再 fail closed,而不是第一次讀取失敗就放棄。
+            if live is not None and not live:
                 self._survivors = ()
                 return True
             if time.monotonic() >= deadline:
-                self._survivors = tuple(sorted(live))
+                self._survivors = self._windows_unprovable_survivors(api, pid, live)
                 return False
             time.sleep(_CONTAINMENT_POLL_INTERVAL_SECONDS)
+
+    def _windows_unprovable_survivors(
+        self, api: _Win32ContainmentApi, root_pid: int, live: set[int] | None
+    ) -> tuple[int, ...]:
+        if live is not None:
+            return tuple(sorted(live))
+        # Job membership 從頭到尾沒讀成功。這裡才用 PPID walk,而且只用來在錯誤訊息
+        # 裡列出可疑 PID(診斷提示),絕不用它的「空集合」去證明 containment ——
+        # 那正是本函式 fail closed 的原因。walk 什麼都撈不到時退回 root pid,寧可
+        # 給一個不精確的 PID 也不要給一個空的 survivor 清單假裝乾淨。
+        hint = {
+            int(candidate)
+            for candidate in self._windows_tree_pids(api, root_pid)
+            if candidate and api.pid_is_alive(int(candidate))
+        }
+        return tuple(sorted(hint)) or (int(root_pid),)
 
     @staticmethod
     def _windows_tree_pids(api: _Win32ContainmentApi, root_pid: int) -> list[int]:
@@ -592,12 +611,25 @@ class _ContainedProcess:
             stack.extend(api.child_pids(current))
         return ordered
 
-    def _windows_live_pids(self, api: _Win32ContainmentApi, root_pid: int) -> set[int]:
+    def _windows_live_pids(
+        self, api: _Win32ContainmentApi, root_pid: int
+    ) -> set[int] | None:
+        """Live PIDs inside the boundary; None when membership is UNREADABLE.
+
+        #509 review r2:job 才是權威的成員紀錄。``QueryInformationJobObject`` 失敗
+        時退回 PPID walk,等於用「祖先關係」這個比較弱的問題去回答「這個 job 還有
+        沒有成員」——root 可能已經退出、還在跑的 Kit/HOOPS 孫代可能已經被 reparent,
+        於是 walk 只看到一個死掉的 root 就宣告 containment 已證明,而 job 的成員從
+        頭到尾沒被觀察過。讀不到就回 None,由呼叫端 fail closed。
+        """
+
         if self._job is not None:
             candidates = api.job_process_ids(self._job)
             if candidates is None:
-                candidates = self._windows_tree_pids(api, root_pid)
+                return None
         else:
+            # 沒有 job 只會出現在 unit-test double 或直接建構的 _ContainedProcess:
+            # 真實 spawn 現在建不出 job 就 fail closed(_spawn_windows)。
             candidates = self._windows_tree_pids(api, root_pid)
         return {int(pid) for pid in candidates if pid and api.pid_is_alive(int(pid))}
 

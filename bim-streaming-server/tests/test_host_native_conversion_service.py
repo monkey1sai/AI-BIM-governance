@@ -3678,6 +3678,24 @@ def _pid_is_alive(pid: int) -> bool:
             return kernel32.WaitForSingleObject(handle, 0) != 0  # != WAIT_OBJECT_0
         finally:
             kernel32.CloseHandle(handle)
+    # #509 review r2:一個被殺掉、父行程已消失的孫代會停在 state 'Z' 直到 PID 1
+    # 回收它,而 ``os.kill(pid, 0)`` 對這種 corpse 一樣成功。production containment
+    # 刻意把 defunct 當成已終止(它握不住 HOOPS handle,也不能再執行任何東西),所以
+    # 它會在 PID 被 reap 之前就回報成功;這個 probe 若還把 zombie 算成活著,就會在
+    # 「containment 其實成功」的主機上讓測試假失敗——正是這個修復針對的那種主機。
+    # 解析獨立於 adapter(不共用它的 containment 程式碼):state 取最後一個 ')' 之後
+    # 的第一個欄位,因為 comm 可能含空白與括號。
+    try:
+        with open(f"/proc/{int(pid)}/stat", encoding="utf-8", errors="replace") as handle:
+            raw = handle.read()
+    except OSError:
+        raw = ""
+    if raw:
+        close_index = raw.rfind(")")
+        if close_index >= 0:
+            fields = raw[close_index + 1 :].split()
+            if fields:
+                return fields[0] != "Z"
     try:
         os.kill(int(pid), 0)
     except ProcessLookupError:
@@ -4433,3 +4451,122 @@ def test_containment_failure_carries_the_kit_log_diagnostics(tmp_path: Path, mon
     assert raised.metadata is not None
     assert raised.metadata["kit_stderr_log"] == "C:\\logs\\kit-stderr.log"
     assert "kit_stderr_log: C:\\logs\\kit-stderr.log" in raised.message
+
+
+# --- #509 review round 3 ------------------------------------------------------
+
+
+class _FakeJobMembershipApi:
+    """kernel32 double for the Windows containment poll.
+
+    ``job_process_ids`` returning None is the "QueryInformationJobObject failed"
+    case: the authoritative membership record could not be observed at all.
+    """
+
+    ERROR_ACCESS_DENIED = 5
+
+    def __init__(self, *, job_pid_snapshots, child_map=None, alive=()):
+        self._job_pid_snapshots = list(job_pid_snapshots)
+        self._child_map = child_map or {}
+        self._alive = {int(pid) for pid in alive}
+        self.terminated_jobs: list[int] = []
+
+    def terminate_job(self, job) -> bool:
+        self.terminated_jobs.append(job)
+        return True
+
+    def job_process_ids(self, job):
+        if len(self._job_pid_snapshots) > 1:
+            return self._job_pid_snapshots.pop(0)
+        return self._job_pid_snapshots[0]
+
+    def child_pids(self, parent_pid):
+        return list(self._child_map.get(int(parent_pid), ()))
+
+    def pid_is_alive(self, pid) -> bool:
+        return int(pid) in self._alive
+
+    def terminate_pid(self, pid) -> None:
+        self._alive.discard(int(pid))
+
+    def close_handle(self, handle) -> None:
+        return None
+
+
+def _contained_with_job(api, *, pid: int = 4242, job: int = 7):
+    import ifc2usdc_powershell_adapter
+
+    proc = _FakeContainedPopen(["converter"])
+    proc.pid = pid
+    return ifc2usdc_powershell_adapter._ContainedProcess(proc, job=job, api=api)
+
+
+def test_windows_containment_is_unprovable_when_job_membership_cannot_be_read():
+    """#509 review r2:讀不到 Job Object membership 時不得退回 PPID walk 當證明。
+
+    job 才是權威的成員紀錄;PPID walk 回答的是「祖先關係」這個比較弱的問題。root
+    可能已經退出、還在跑的 Kit/HOOPS 孫代可能已被 reparent,於是那個 walk 只看到一
+    個死掉的 root 就回報「containment 已證明」——而 job 的成員從頭到尾沒被觀察過。
+    """
+
+    api = _FakeJobMembershipApi(job_pid_snapshots=[None], child_map={4242: []}, alive=())
+    contained = _contained_with_job(api)
+
+    assert contained._terminate_tree_windows(time.monotonic()) is False
+    assert contained.survivors == (4242,)
+    assert api.terminated_jobs == [7]
+
+
+def test_windows_containment_is_proven_when_the_job_reports_no_members():
+    """對照組:job membership 讀得到而且是空的,才算證明。"""
+
+    api = _FakeJobMembershipApi(job_pid_snapshots=[[]], child_map={4242: []}, alive=())
+    contained = _contained_with_job(api)
+
+    assert contained._terminate_tree_windows(time.monotonic() + 1.0) is True
+    assert contained.survivors == ()
+
+
+def test_windows_containment_recovers_from_a_transient_membership_query_failure():
+    """一次讀取失敗不等於永久失敗:deadline 之內讀到空成員仍然算證明。"""
+
+    api = _FakeJobMembershipApi(job_pid_snapshots=[None, []], child_map={4242: []}, alive=())
+    contained = _contained_with_job(api)
+
+    assert contained._terminate_tree_windows(time.monotonic() + 2.0) is True
+    assert contained.survivors == ()
+
+
+def test_windows_containment_failure_names_the_live_job_members(monkeypatch):
+    """job membership 讀得到且非空時,survivors 就是那些真正還活著的成員。"""
+
+    api = _FakeJobMembershipApi(
+        job_pid_snapshots=[[4242, 5150]], child_map={4242: []}, alive=(5150,)
+    )
+    contained = _contained_with_job(api)
+
+    assert contained._terminate_tree_windows(time.monotonic()) is False
+    assert contained.survivors == (5150,)
+
+
+def test_liveness_probe_helper_treats_a_posix_zombie_as_dead(monkeypatch):
+    """#509 review r2:測試自己的 liveness probe 也必須排除 zombie。
+
+    production containment 現在刻意把 defunct 當成已終止,所以它會在孫代被 reap
+    之前就回報成功。若這個 helper 仍用 ``os.kill(pid, 0)``(對 corpse 一樣成功)
+    判定存活,`test_converter_timeout_kills_the_whole_process_tree_before_raising`
+    會在「containment 其實成功」的主機上假失敗——正是這個修復針對的那種主機。
+    """
+
+    monkeypatch.setattr(os, "name", "posix")
+    monkeypatch.setattr(os, "kill", lambda pid, sig: None, raising=False)
+    _patch_fake_proc_table(
+        monkeypatch,
+        {
+            "4242": "4242 (kit (cad) worker) Z 1 4242 4242 0 -1\n",
+            "4243": "4243 (kit) S 1 4243 4243 0 -1\n",
+        },
+    )
+
+    assert _pid_is_alive(4242) is False, "a defunct grandchild is not alive"
+    assert _pid_is_alive(4243) is True

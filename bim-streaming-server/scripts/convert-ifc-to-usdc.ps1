@@ -371,6 +371,20 @@ function Test-ConverterProcessAlive {
     return ((Get-ProcStatProcessState -StatLine $raw) -ne 'Z')
 }
 
+function Test-OrphanRediscoverySupported {
+    # Can a re-walk still find a descendant whose parent has already been killed?
+    #
+    # Windows: yes. Win32_Process.ParentProcessId keeps pointing at the dead
+    # parent (verified on a real host), so the discover -> kill loop rediscovers
+    # such an orphan through the parent's retained PID and terminates it.
+    # Linux: no. Orphans are reparented to PID 1, so the /proc ppid link that the
+    # walk depends on is destroyed and the orphan becomes unreachable from the
+    # tree root. There the authoritative boundary is the CALLER's process group
+    # (the adapter sweeps it on every exit path); a non-escapable in-script
+    # boundary needs a cgroup, tracked in #517.
+    return ($env:OS -eq 'Windows_NT' -or $IsWindows)
+}
+
 function Stop-ConverterProcessTree {
     # #489 L1-COR-004: `Stop-Process -Id $process.Id -Force` only reaches Kit
     # itself. Its HOOPS/CAD grandchildren keep processing untrusted input after
@@ -401,9 +415,19 @@ function Stop-ConverterProcessTree {
     while ($round -lt $MaxRounds -and $stableRounds -lt 2) {
         $round++
         $discovered = 0
-        # Re-walk from EVERY known member, not just the root: once the root dies
-        # its orphaned descendants are reparented away, so a root-only re-walk
-        # could never rediscover them.
+        # Re-walk from EVERY known member, not just the root: a descendant forked
+        # by a known member AFTER that member was enumerated but BEFORE the
+        # reverse-order kill is only reachable through its (by then dead) parent.
+        #
+        # #509 review r2, verified on a real Windows host: Windows does NOT
+        # reparent orphans - Win32_Process.ParentProcessId still resolves to the
+        # killed parent, so querying children of an already-dead KNOWN pid does
+        # return the orphan, and the loop terminates it before declaring a fixed
+        # point. Regression: scripts/tests/test-convert-ifc-to-usdc.ps1
+        # "orphan forked before the kill".
+        # Linux DOES reparent orphans to PID 1, which destroys that link, so no
+        # PPID-based rescan can rediscover them there - see
+        # Test-OrphanRediscoverySupported and the honest timeout wording below.
         $stack = [System.Collections.Generic.List[int]]::new()
         $stack.Add([int]$ProcessId)
         foreach ($known in @($ids)) { $stack.Add([int]$known) }
@@ -600,6 +624,12 @@ function Invoke-KitConversion {
                 # could still have been appearing when we stopped looking. No
                 # survivor was observed, but that is best-effort, not proof.
                 "$timeoutReason; process tree kill loop hit its round cap before reaching a stable fixed point; no survivors were observed but containment is NOT proven"
+            } elseif (-not (Test-OrphanRediscoverySupported)) {
+                # This platform reparents orphans to PID 1, so a descendant forked
+                # during termination loses the ppid link the walk depends on and
+                # cannot be tracked from here. No survivor was observed among the
+                # tracked PIDs, which is strictly weaker than proof.
+                "$timeoutReason; no survivors were observed among the tracked PIDs, but this platform reparents orphans away from a killed parent, so a descendant forked during termination cannot be tracked by this script; containment is NOT proven here (the caller's process-group boundary is authoritative)"
             } else {
                 "$timeoutReason; process tree terminated and confirmed gone"
             }
