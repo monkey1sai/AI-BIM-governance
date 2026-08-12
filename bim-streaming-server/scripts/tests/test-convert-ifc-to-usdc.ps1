@@ -358,6 +358,73 @@ try {
     Assert-True (Test-ConverterProcessAlive -ProcessId $script:BystanderId) 'Expected a recycled PID to be left alone: signalling it is a kill OUTSIDE the tree.'
     Assert-True ($identitySurvivors -notcontains $script:BystanderId) "Expected a recycled PID not to be reported as a tree survivor; got: $($identitySurvivors -join ', ')"
     Assert-True (-not (Test-ConverterProcessAlive -ProcessId $script:IdentityRootId)) 'Expected the identity-case root fixture to be terminated.'
+
+    # 5) #509 review r4 (second finding): validating identity only in the KILL
+    #    phase is too late, because the re-walk runs FIRST. A pid carried over
+    #    from an earlier round can be recycled before this round's walk, and
+    #    enumerating ITS children then enrols an unrelated process's children into
+    #    the kill set with fresh, self-consistent identities - which the
+    #    reverse-order kill terminates BEFORE the recycled parent is evaluated.
+    #
+    #    Stop-Process is shadowed here rather than fired for real: the assertion is
+    #    about WHICH pids get signalled, and recording the attempts proves that
+    #    directly without needing the fixture processes to survive being killed
+    #    (which is precisely what a real kill would prevent).
+    $carriedProc = Start-ContainmentTestProcess -FilePath $PwshPath -Arguments @('-NoProfile', '-NoLogo', '-File', $sleepScript)
+    $script:CarriedId = [int]$carriedProc.Id
+    $RecordedPids += $script:CarriedId
+    $unrelatedProc = Start-ContainmentTestProcess -FilePath $PwshPath -Arguments @('-NoProfile', '-NoLogo', '-File', $sleepScript)
+    $script:UnrelatedChildId = [int]$unrelatedProc.Id
+    $RecordedPids += $script:UnrelatedChildId
+    $walkRoot = Start-ContainmentTestProcess -FilePath $PwshPath -Arguments @('-NoProfile', '-NoLogo', '-File', $sleepScript)
+    $script:WalkRootId = [int]$walkRoot.Id
+    $RecordedPids += $script:WalkRootId
+
+    try {
+        $script:KillAttempts = [System.Collections.Generic.List[int]]::new()
+        function Stop-Process {
+            param([int] $Id, [switch] $Force, [string] $ErrorAction)
+            $script:KillAttempts.Add([int]$Id)
+        }
+
+        $script:CarriedChildScanCount = 0
+        function Get-ConverterChildProcessId {
+            param([Parameter(Mandatory = $true)][int] $ParentProcessId)
+            if ($ParentProcessId -eq $script:WalkRootId) { return @($script:CarriedId) }
+            if ($ParentProcessId -eq $script:CarriedId) {
+                $script:CarriedChildScanCount++
+                # Round 1: the pid is still ours and has no children. From round 2
+                # on it has been recycled, and the process now holding it has a
+                # child of its own - which has nothing to do with this tree.
+                if ($script:CarriedChildScanCount -eq 1) { return @() }
+                return @($script:UnrelatedChildId)
+            }
+            return @()
+        }
+
+        $script:CarriedProbeCount = 0
+        function Get-ConverterProcessStartTime {
+            param([Parameter(Mandatory = $true)][int] $ProcessId)
+            if ($ProcessId -ne $script:CarriedId) { return ([datetime]'2020-01-01T00:00:00Z') }
+            $script:CarriedProbeCount++
+            # Probe 1 = discovery, probe 2 = round 1's kill check (still ours).
+            # The recycle becomes visible only from round 2's WALK onwards.
+            if ($script:CarriedProbeCount -le 2) { return ([datetime]'2020-01-01T00:00:00Z') }
+            return ([datetime]'2026-01-01T00:00:00Z')
+        }
+
+        $walkContainment = Stop-ConverterProcessTree -ProcessId $script:WalkRootId -TimeoutMs 0
+        $walkSurvivors = @($walkContainment.SurvivingPids)
+        Assert-True ($script:CarriedChildScanCount -ge 1) 'Expected the carried-over PID to have been walked at least once.'
+        Assert-True ($script:KillAttempts -contains $script:CarriedId) 'Expected the carried-over PID to be signalled while its identity still matched (fixture sanity).'
+        Assert-True ($script:KillAttempts -notcontains $script:UnrelatedChildId) 'A recycled PID''s children must never be enrolled and signalled: identity has to be revalidated BEFORE the child walk, not only before the kill.'
+        Assert-True ($walkSurvivors -notcontains $script:UnrelatedChildId) 'An unrelated process reached through a recycled PID must not be reported as a survivor of this tree.'
+    }
+    finally {
+        # Restore the real cmdlet before the outer cleanup runs, or the fixture
+        # processes would be "stopped" into a list instead of being terminated.
+        Remove-Item -LiteralPath 'function:Stop-Process' -ErrorAction SilentlyContinue
+    }
 }
 finally {
     foreach ($recorded in $RecordedPids) {

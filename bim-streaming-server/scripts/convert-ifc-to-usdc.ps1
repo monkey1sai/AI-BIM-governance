@@ -498,9 +498,10 @@ function Stop-ConverterProcessTree {
     # rounds and every round re-signalled all of it, so a member that exited early
     # and had its pid recycled was signalled again - by then possibly an unrelated
     # service. Each member is therefore recorded as an (Id, StartTime) pair at
-    # discovery and re-validated immediately before every signal and before being
-    # reported as a survivor; a pid whose identity no longer matches is dropped
-    # from all later passes instead of being killed or blamed.
+    # discovery and re-validated immediately before every signal, before its child
+    # list is traversed, and before being reported as a survivor; a pid whose
+    # identity no longer matches is dropped from all later passes instead of being
+    # killed, traversed or blamed.
     #
     # On BOTH platforms the authoritative containment boundary is the Python
     # adapter (ifc2usdc_powershell_adapter._ContainedProcess), whose OS-level
@@ -555,7 +556,26 @@ function Stop-ConverterProcessTree {
             $stack.RemoveAt(0)
             if ($walked.ContainsKey($current)) { continue }
             $walked[$current] = $true
-            if (-not $seen.ContainsKey($current)) {
+            if ($seen.ContainsKey($current)) {
+                # A pid carried over from an earlier round. Its CHILD LIST is only
+                # ours if the pid still holds the process we recorded, so validate
+                # before traversing: a recycled pid's children are an unrelated
+                # process's children, and discovering them here would enrol them
+                # into $ids with fresh, self-consistent identities - after which
+                # the reverse-order kill would terminate them before the recycled
+                # parent itself is ever evaluated. Validating in the kill phase
+                # alone is too late, because the walk runs first (#509 review r4).
+                if ($recycled.ContainsKey($current)) { continue }
+                if ((Test-ConverterProcessIdentity -ProcessId $current -RecordedStartTime $identity[$current]) -eq 'recycled') {
+                    $recycled[$current] = $true
+                    continue
+                }
+                # 'gone' still gets traversed: on Windows an exited pid is exactly
+                # what its orphaned children keep naming, and that link is how the
+                # re-walk rediscovers them (regression case 2). A 'gone' pid holds
+                # no process at all, so nothing unrelated can be reached through it.
+            }
+            else {
                 $seen[$current] = $true
                 $ids.Add($current)
                 # Capture identity at the moment of discovery: this is what every
