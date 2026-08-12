@@ -1491,18 +1491,19 @@
       "id": "migrate-console-to-hifi-design",
       "status": "active",
       "owner": "web-viewer-sample",
-      "current_slice": "2026-08-12 PR #497 squash fixpoint：landed source snapshot 已重綁；task status 與證據缺口見 tasks.md。",
+      "current_slice": "2026-08-12 7.3 補勾（npm run verify 全綠：typecheck+build+78 files/1069 tests+struct-log 23/23，exit 0）；7.4 產出逐 scenario 稽核 artifacts/2026-08-12-hifi-consumer-spec-scenario-audit.md（66/66 走過，58 HOLDS/5 HOLDS-WITH-NOTE/0 STALE/3 UNVERIFIABLE 需部署 stack 才能驗證，未勾）；7.1 rebaseline 非 no-op——會復原 #429 修正過的 A4 canonical baseline，已 STOP 還原未 commit，capture script 缺 baseline_provenance 特判待另立修復。32/40；殘項＝0.5/1.2/6.4（human owner）＋7.1/7.4。",
       "blocked_by": [],
-      "last_verified": "2026-08-11T21:32:44Z",
+      "last_verified": "2026-08-12T02:34:00Z",
       "task_ledger": {
-        "completed": 31,
+        "completed": 32,
         "total": 40
       },
       "evidence_refs": [
         "openspec/changes/migrate-console-to-hifi-design/proposal.md",
-        "openspec/changes/migrate-console-to-hifi-design/tasks.md"
+        "openspec/changes/migrate-console-to-hifi-design/tasks.md",
+        "artifacts/2026-08-12-hifi-consumer-spec-scenario-audit.md"
       ],
-      "subject_commit": "de40d6181ca287788fcffc7e6b09b3f0915c907d",
+      "subject_commit": "af60c29abaafb28266e996cf21b98953b127c2ee",
       "archive_debt": null
     },
     {
