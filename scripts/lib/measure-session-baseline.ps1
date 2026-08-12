@@ -472,6 +472,12 @@ function Get-SessionVramWatermark {
             measured                    = $false
             reason                      = $GpuComputeSnapshot.reason
             kit_processes               = @()
+            # The compute-app query itself failed, so the process census is
+            # UNKNOWN -- null, never 0. Keeping the keys present keeps the
+            # gpu-session-baseline-report/v1 shape identical across host
+            # states (PR #511 review r7).
+            kit_process_count           = $null
+            kit_process_vram_unreadable_count = $null
             total_kit_vram_mb           = $null
             attribution                 = $attribution
             attribution_note            = $attributionNote
@@ -491,6 +497,13 @@ function Get-SessionVramWatermark {
             measured                    = $false
             reason                      = 'no active Kit GPU process observed at capture time (no live session running on this host right now)'
             kit_processes               = @()
+            # The query succeeded and saw zero Kit processes: an observed 0 is
+            # a real measurement, and emitting both count fields here keeps the
+            # report shape identical to the with-process path so consumers can
+            # read an idle host's zero instead of a missing key (PR #511
+            # review r7).
+            kit_process_count           = 0
+            kit_process_vram_unreadable_count = 0
             total_kit_vram_mb           = $null
             attribution                 = $attribution
             attribution_note            = $attributionNote

@@ -379,10 +379,14 @@ Write-TestPass 'Get-WebRtcHealthProbe (reachable + unreachable, injected invoker
 # ============================================================================
 $vramNoQuery = Get-SessionVramWatermark -GpuComputeSnapshot (Get-GpuComputeProcessSnapshot -NvidiaSmiComputeAppsQuery { return $null })
 Assert-True (-not $vramNoQuery.measured) 'vram watermark propagates unmeasured compute snapshot'
+Assert-True ($vramNoQuery.Contains('kit_process_count') -and $null -eq $vramNoQuery.kit_process_count) 'failed compute query keeps kit_process_count present as null (unknown, not zero)'
+Assert-True ($vramNoQuery.Contains('kit_process_vram_unreadable_count') -and $null -eq $vramNoQuery.kit_process_vram_unreadable_count) 'failed compute query keeps kit_process_vram_unreadable_count present as null'
 
 $vramNoKit = Get-SessionVramWatermark -GpuComputeSnapshot (Get-GpuComputeProcessSnapshot -NvidiaSmiComputeAppsQuery { @('4128, explorer.exe, 64') })
 Assert-True (-not $vramNoKit.measured) 'vram watermark unmeasured when no Kit process observed'
 Assert-True ($vramNoKit.reason -match 'no active Kit') 'vram watermark reason names the missing Kit process'
+Assert-Equal 0 $vramNoKit.kit_process_count 'idle host reports an observed kit_process_count of zero, not a missing key'
+Assert-Equal 0 $vramNoKit.kit_process_vram_unreadable_count 'idle host reports zero unreadable Kit processes, not a missing key'
 
 $vramUnreadable = Get-SessionVramWatermark -GpuComputeSnapshot (Get-GpuComputeProcessSnapshot -NvidiaSmiComputeAppsQuery { @('40232, kit.exe, [Insufficient Permissions]') })
 Assert-True (-not $vramUnreadable.measured) 'vram watermark unmeasured when Kit VRAM column unreadable'
