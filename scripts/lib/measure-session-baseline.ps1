@@ -473,7 +473,8 @@ function Get-EnvironmentFingerprint {
     param(
         [Parameter(Mandatory = $true)] $GpuInventory,
         [Parameter(Mandatory = $true)] $KitVersion,
-        [Parameter(Mandatory = $true)] $FixtureFingerprint
+        [Parameter(Mandatory = $true)] $FixtureFingerprint,
+        [int] $ObservedKitProcessCount = 0
     )
 
     $gpuModel = $null
@@ -499,6 +500,16 @@ function Get-EnvironmentFingerprint {
         $gpuDriverReason = $GpuInventory.reason
     }
 
+    # The checkout-vs-runtime caveat is unconditional; when the harness actually
+    # observed Kit processes holding GPU memory at capture time, the report must
+    # additionally say that those specific processes were never interrogated --
+    # otherwise a reader sees live Kit measurements sitting next to a version
+    # string and assumes the two are bound together (PR #511 review, round 2).
+    $kitVersionCaveat = [string](Get-SafeProperty -Object $KitVersion -Name 'caveat')
+    if ($ObservedKitProcessCount -gt 0) {
+        $kitVersionCaveat += ('; {0} Kit GPU process(es) were observed running at capture time and their actual build identity was not interrogated, so this checkout-declared version may not describe the processes that produced these measurements' -f $ObservedKitProcessCount)
+    }
+
     $fields = [ordered]@{
         gpu_model           = [ordered]@{ value = $gpuModel; measured = $gpuModelMeasured; reason = $gpuModelReason }
         gpu_driver_version  = [ordered]@{ value = $gpuDriver; measured = $gpuDriverMeasured; reason = $gpuDriverReason }
@@ -507,7 +518,14 @@ function Get-EnvironmentFingerprint {
             measured = $KitVersion.measured
             reason   = $KitVersion.reason
             source   = (Get-SafeProperty -Object $KitVersion -Name 'source')
-            caveat   = (Get-SafeProperty -Object $KitVersion -Name 'caveat')
+            # No local mechanism interrogates a running Kit build's identity, so
+            # this stays hard-coded false rather than being left to a reader's
+            # inference; a runtime version query is task 1.2 scope. A baseline
+            # comparison is only valid when the DEPLOYED runtime revision matches
+            # this checkout (PR #511 review, round 2).
+            runtime_verified = $false
+            observed_kit_process_count = $ObservedKitProcessCount
+            caveat   = $kitVersionCaveat
         }
         fixture_hash        = [ordered]@{ value = $FixtureFingerprint.hash; measured = $FixtureFingerprint.hash_measured; reason = $FixtureFingerprint.hash_reason }
         fixture_size_bytes  = [ordered]@{ value = $FixtureFingerprint.size_bytes; measured = $FixtureFingerprint.size_measured; reason = $FixtureFingerprint.size_reason }
@@ -628,7 +646,11 @@ function Get-SessionBaselineReport {
         -ObservedActiveSessionCount $webRtcProbe.active_session_count `
         -ObservedPrimaryLeaseCount $webRtcProbe.observed_primary_lease_count `
         -ObservedSpectatorLeaseCount $webRtcProbe.observed_spectator_lease_count
-    $environmentFingerprint = Get-EnvironmentFingerprint -GpuInventory $gpuInventory -KitVersion $kitVersion -FixtureFingerprint $fixtureFingerprint
+    $environmentFingerprint = Get-EnvironmentFingerprint `
+        -GpuInventory $gpuInventory `
+        -KitVersion $kitVersion `
+        -FixtureFingerprint $fixtureFingerprint `
+        -ObservedKitProcessCount @($vramWatermark.kit_processes).Count
 
     $ttff = New-OptionalMeasurement `
         -Value $TtffMs `

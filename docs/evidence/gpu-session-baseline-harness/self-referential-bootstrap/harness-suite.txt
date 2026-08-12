@@ -1,0 +1,38 @@
+# stack_kind=self_referential_bootstrap - PR #511 - entry gpu-session-baseline-harness
+# command: pwsh -NoProfile -File scripts/tests/test-measure-session-baseline.ps1
+# branch parent at capture: f6bb26b717ce12c77431374083a9159ac4870f1e
+# base: origin/main cba626587c6cc50000e35050988c29208c8246ac
+# exit code: 0
+# NOTE: development-host run only. Not canonical post-change evidence; the fixpoint
+# requires the first canonical baseline run on the deployment host after merge.
+
+[PASS] consumer RTX name classification
+[PASS] nvidia-smi GPU line parsing
+[PASS] Get-GpuInventorySnapshot (measured + fail-safe paths)
+[PASS] Get-GpuComputeProcessSnapshot (measured + fail-safe paths)
+[PASS] Get-KitVersionFingerprint
+[PASS] Get-KitVersionFingerprint against real repo tree
+[PASS] Get-FixtureFingerprint
+[PASS] Get-WebRtcHealthProbe (reachable + unreachable, injected invoker, real binding enum, per-role leases)
+[PASS] Get-SessionVramWatermark (partial-visibility refusal + attribution honesty)
+[PASS] Get-EnvironmentFingerprint completeness gate
+[PASS] New-OptionalMeasurement (validation + provenance)
+[PASS] Get-SessionBaselineReport offline end-to-end (schema + honesty)
+[PASS] Get-SessionBaselineReport complete end-to-end (fixture + TTFF + success rate)
+[PASS] Get-SessionBaselineReport validates caller-supplied TTFF / success rate
+[PASS] Get-SessionBaselineReport honors -SkipWebRtcProbe
+[PASS] end-to-end fail-safe when nvidia-smi is entirely absent
+[PASS] Get-GpuInventorySnapshot against real local nvidia-smi
+[PASS] script-registry.json consistency
+{"ts":"2026-08-12T05:15:48.142Z","level":"info","event_type":"lifecycle","service":"scripts","component":"measure-session-baseline","run_id":"run_20260812_051548_304d7d","trace_id":"script_run_20260812_051548_304d7d","msg":"","data":{"fixture_path":"","phase":"start","coordinator_url":"http://127.0.0.1:8004"},"seq":1}
+{"ts":"2026-08-12T05:15:48.351Z","level":"info","event_type":"lifecycle","service":"scripts","component":"measure-session-baseline","run_id":"run_20260812_051548_304d7d","trace_id":"script_run_20260812_051548_304d7d","msg":"","data":{"gpu_inventory_measured":true,"environment_fingerprint_complete":false,"output_path":"C:\\Users\\IOT\\AppData\\Local\\Temp\\measure-baseline-cli-696d56c4b17242c79962a6b7b192580a\\report.json","phase":"complete","webrtc_reachable":false},"seq":2}
+[measure-session-baseline] report written to C:\Users\IOT\AppData\Local\Temp\measure-baseline-cli-696d56c4b17242c79962a6b7b192580a\report.json
+WARNING: [measure-session-baseline] environment fingerprint is incomplete; this report SHALL NOT be used to set SLOs or admission parameters (see openspec gpu-session-baseline spec).
+[PASS] root wrapper CLI smoke test (-OutputPath, -SkipWebRtcProbe)
+{"ts":"2026-08-12T05:15:48.556Z","level":"info","event_type":"lifecycle","service":"scripts","component":"measure-session-baseline","run_id":"run_20260812_051548_9aae80","trace_id":"script_run_20260812_051548_9aae80","msg":"","data":{"fixture_path":"","phase":"start","coordinator_url":"http://127.0.0.1:8004"},"seq":1}
+{"ts":"2026-08-12T05:15:48.665Z","level":"info","event_type":"lifecycle","service":"scripts","component":"measure-session-baseline","run_id":"run_20260812_051548_9aae80","trace_id":"script_run_20260812_051548_9aae80","msg":"","data":{"gpu_inventory_measured":true,"environment_fingerprint_complete":false,"output_path":"C:\\Repos\\active\\iot\\AI-BIM-governance.worktrees\\nightly-511\\artifacts\\gpu-baseline\\measure_20260812_051548_31c94e.json","phase":"complete","webrtc_reachable":false},"seq":2}
+[measure-session-baseline] report written to C:\Repos\active\iot\AI-BIM-governance.worktrees\nightly-511\artifacts\gpu-baseline\measure_20260812_051548_31c94e.json
+WARNING: [measure-session-baseline] environment fingerprint is incomplete; this report SHALL NOT be used to set SLOs or admission parameters (see openspec gpu-session-baseline spec).
+[PASS] root wrapper default -OutputPath under artifacts/gpu-baseline/<run_id>.json
+
+=== test-measure-session-baseline.ps1: ALL PASSED ===

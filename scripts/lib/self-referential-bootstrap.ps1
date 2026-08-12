@@ -67,6 +67,14 @@ $script:SelfReferentialMechanismPattern = @(
     '^\.github/CODEOWNERS$'
     '^scripts/tests/test-agent-governance-check\.ps1$'
     '^docs/agents/self-referential-bootstrap\.md$'
+    # The GPU session-baseline harness PRODUCES the evidence that capacity SLOs
+    # and admission parameters are set from, and its own suite decides whether a
+    # report is honest (measured/reason triples, fingerprint completeness). An
+    # evidence harness is named by the rule text as mechanism surface, so editing
+    # it is editing what "measured" means (CodeRabbit review r2, PR #511).
+    '^scripts/measure-session-baseline\.ps1$'
+    '^scripts/lib/measure-session-baseline\.ps1$'
+    '^scripts/tests/test-measure-session-baseline\.ps1$'
 ) -join '|'
 
 # These files define or dispatch this gate's own adjudication. Unlike an

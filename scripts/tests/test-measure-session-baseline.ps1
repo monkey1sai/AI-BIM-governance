@@ -50,6 +50,8 @@ function Assert-ReportSchemaShape {
     Assert-True ($ef.Contains('gpu_count')) "$Message :: environment_fingerprint has 'gpu_count'"
     Assert-True ($ef.Contains('gpu_fingerprint_scope')) "$Message :: environment_fingerprint declares its GPU scope"
     Assert-True ($ef.gpu_fingerprint_scope_note -match 'deferred to task 1.2') "$Message :: GPU scope note defers per-GPU fingerprinting to task 1.2"
+    Assert-Equal 'checkout_packman_declared' $ef.kit_version.source "$Message :: kit_version declares checkout provenance"
+    Assert-True (-not $ef.kit_version.runtime_verified) "$Message :: kit_version is never claimed as runtime-verified"
     $expectComplete = (-not [bool]($REQUIRED_ENV_FINGERPRINT_FIELDS | Where-Object { -not $ef[$_].measured })) -and ($ef.gpu_fingerprint_scope -ne 'first_gpu_only')
     Assert-Equal $expectComplete $ef.complete "$Message :: environment_fingerprint.complete matches per-field measured flags AND full GPU-topology attribution"
 
@@ -414,7 +416,18 @@ $fullFixture = [ordered]@{ hash = 'deadbeef'; hash_measured = $true; hash_reason
 $fullFingerprint = Get-EnvironmentFingerprint -GpuInventory $fullInv -KitVersion $fullKit -FixtureFingerprint $fullFixture
 Assert-True $fullFingerprint.complete 'environment fingerprint complete=true when all five fields measured'
 Assert-Equal 'checkout_packman_declared' $fullFingerprint.kit_version.source 'environment fingerprint propagates kit_version source through to the report'
-Assert-Equal 'test caveat' $fullFingerprint.kit_version.caveat 'environment fingerprint propagates kit_version caveat through to the report'
+Assert-True ($fullFingerprint.kit_version.caveat -match 'test caveat') 'environment fingerprint propagates kit_version caveat through to the report'
+Assert-True (-not $fullFingerprint.kit_version.runtime_verified) 'kit_version.runtime_verified=false: no running Kit build was interrogated'
+Assert-Equal 0 $fullFingerprint.kit_version.observed_kit_process_count 'no observed Kit processes -> observed_kit_process_count=0'
+Assert-True ($fullFingerprint.kit_version.caveat -notmatch 'observed running at capture time') 'no observed Kit processes -> no observed-process caveat appended'
+
+# When Kit processes WERE observed holding GPU memory, the version field must say
+# those exact processes were never interrogated (PR #511 review, round 2).
+$observedKitFingerprint = Get-EnvironmentFingerprint -GpuInventory $fullInv -KitVersion $fullKit -FixtureFingerprint $fullFixture -ObservedKitProcessCount 2
+Assert-Equal 2 $observedKitFingerprint.kit_version.observed_kit_process_count 'observed Kit process count carried into the fingerprint'
+Assert-True (-not $observedKitFingerprint.kit_version.runtime_verified) 'observed Kit processes still do not make the version runtime-verified'
+Assert-True ($observedKitFingerprint.kit_version.caveat -match '2 Kit GPU process\(es\) were observed running at capture time') 'observed Kit processes -> caveat names how many ran uninterrogated'
+Assert-True ($observedKitFingerprint.kit_version.caveat -match 'may not describe the processes that produced these measurements') 'observed Kit processes -> caveat refuses to bind the checkout version to them'
 
 Assert-Equal 1 $fullFingerprint.gpu_count 'single-GPU inventory reports gpu_count=1'
 Assert-Equal 'single_gpu' $fullFingerprint.gpu_fingerprint_scope 'single-GPU host is fingerprinted under a declared single_gpu scope'
