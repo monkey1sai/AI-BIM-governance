@@ -59,6 +59,13 @@ _CONTAINMENT_POLL_INTERVAL_SECONDS = 0.05
 # 必須在每一條離開路徑(成功 / 非 timeout 失敗 / timeout)自己把 process group
 # 掃乾淨。這是那個 sweep 的有界上限。
 _CONTAINMENT_CLOSE_SWEEP_SECONDS = 5.0
+
+# #509 review r3: upper bound on the poll interval used while waiting for the
+# direct child to exit WITHOUT reaping it (``_pin_child_exit``). ``os.waitid``
+# has no timeout parameter, so the bounded wait polls with ``WNOHANG``; the cap
+# keeps a multi-minute conversion from spinning at the 50 ms containment rate
+# while still bounding the added latency to a quarter second.
+_PGID_PIN_MAX_POLL_INTERVAL_SECONDS = 0.25
 # ``signal.SIGKILL`` 只存在於 POSIX。下面的 POSIX containment 分支在 Windows 上永遠
 # 不會執行,但把號碼在 import 時綁一次,這些分支才能在 Windows 開發機上被單元測試
 # 直接呼叫(而不是整組退化成「只能在 Linux 上驗」)。
@@ -415,6 +422,12 @@ class _ContainedProcess:
         self._survivors: tuple[int, ...] = ()
         self._containment_detail: str | None = None
         self._closed = False
+        # #509 review r3: POSIX pgid reservation state. ``_leader_pinned`` means the
+        # direct child has been observed EXITED but deliberately NOT reaped, so it is
+        # a zombie whose pid - and therefore the whole group's pgid - cannot be
+        # recycled by the kernel until we reap it in ``close()``.
+        self._leader_pinned = False
+        self._pinned_returncode: int | None = None
 
     # -- construction -------------------------------------------------------
 
@@ -547,6 +560,27 @@ class _ContainedProcess:
         return self._containment_detail
 
     def wait(self, timeout):
+        """Wait for the direct child, keeping the POSIX pgid RESERVED.
+
+        #509 review r3 (recycled POSIX process-group IDs): with
+        ``start_new_session=True`` the direct child is the group LEADER, so the pgid
+        every later group operation targets IS that child's pid. ``Popen.wait()``
+        REAPS it, and the instant it is reaped the kernel may hand the number to an
+        unrelated new session - after which ``_terminate_tree_posix``'s ``killpg``
+        and ``close()``'s sweep would be aimed at innocent bystanders.
+
+        So on POSIX the exit is observed with ``os.waitid(..., WNOWAIT)`` instead:
+        the exit status is read while the child stays an unreaped zombie, which
+        keeps the pid/pgid reserved for the entire teardown. ``close()`` reaps it
+        only after the sweep has finished. The public contract is unchanged - the
+        exit code is returned here, and ``subprocess.TimeoutExpired`` is still what
+        a caller sees when the deadline passes.
+        """
+
+        if self._leader_pinned:
+            return self._pinned_returncode
+        if self._pin_child_exit(timeout, raise_on_timeout=True):
+            return self._pinned_returncode
         return self._proc.wait(timeout=timeout)
 
     def close(self) -> None:
@@ -567,6 +601,12 @@ class _ContainedProcess:
             # authorised it. Without it containment existed only on the timeout
             # path and the process group leaked everywhere else.
             self._sweep_posix_group(self._pgid)
+        # #509 review r3: the retained zombie leader is the ONLY thing that kept the
+        # pgid from being recycled while every group-wide operation above ran. Reap
+        # it now, once no further group signal can be sent - this is the last
+        # statement of the object's life cycle, so the reservation is released
+        # strictly after the sweep, never before it.
+        self._release_pgid_pin()
 
     def terminate_tree(self, *, deadline_seconds: float, grace_seconds: float) -> bool:
         """Kill the tree and return True only once every descendant is gone."""
@@ -692,6 +732,102 @@ class _ContainedProcess:
                 self._survivors = self._posix_group_members(pgid) or (pid,)
                 return False
             time.sleep(_CONTAINMENT_POLL_INTERVAL_SECONDS)
+
+    def _pin_supported(self) -> bool:
+        """Can this platform hold the pgid reserved across the teardown?"""
+
+        return (
+            os.name != "nt"
+            and self._pgid is not None
+            and self.pid is not None
+            and hasattr(os, "waitid")
+            and hasattr(os, "P_PID")
+            and hasattr(os, "WNOWAIT")
+            and hasattr(os, "WNOHANG")
+        )
+
+    def _pin_child_exit(self, timeout, *, raise_on_timeout: bool) -> bool:
+        """Observe the direct child's exit WITHOUT reaping it (POSIX only).
+
+        Returns True when the reservation is in force, i.e. the caller must NOT fall
+        back to a reaping wait; the exit status is cached in ``_pinned_returncode``.
+        Returns True as well when the bounded wait elapsed with the child still
+        RUNNING and ``raise_on_timeout`` is unset - a running child holds its own
+        pgid, so there is nothing to reserve and nothing to reap. Returns False only
+        when the mechanism does not apply (Windows, unknown pgid, no ``os.waitid``,
+        an already-reaped child, or a host whose ``/proc`` cannot be enumerated).
+        """
+
+        if self._leader_pinned:
+            return True
+        if not self._pin_supported():
+            return False
+        pid = self.pid
+        deadline = (
+            None if timeout is None else time.monotonic() + max(float(timeout), 0.0)
+        )
+        interval = _CONTAINMENT_POLL_INTERVAL_SECONDS
+        while True:
+            try:
+                info = os.waitid(os.P_PID, pid, os.WEXITED | os.WNOWAIT | os.WNOHANG)
+            except ChildProcessError:
+                # Somebody already reaped it (a Popen double in the unit tests, or an
+                # earlier reaping wait): the number is gone and no reservation can be
+                # recreated after the fact. Say so instead of pretending.
+                return False
+            except OSError:
+                return False
+            if info is not None:
+                if not self._pgid_pin_is_useful():
+                    return False
+                self._leader_pinned = True
+                self._pinned_returncode = self._exit_status_from_siginfo(info)
+                return True
+            if deadline is not None and time.monotonic() >= deadline:
+                if raise_on_timeout:
+                    raise subprocess.TimeoutExpired(
+                        getattr(self._proc, "args", None), timeout
+                    )
+                return True
+            time.sleep(interval)
+            interval = min(interval * 2, _PGID_PIN_MAX_POLL_INTERVAL_SECONDS)
+
+    def _pgid_pin_is_useful(self) -> bool:
+        """Is holding the zombie leader worth what it costs on THIS host?
+
+        The reservation is invisible to ``_posix_group_members`` (state 'Z' is
+        excluded) but NOT to the ``killpg(pgid, 0)`` fallback that
+        ``_posix_group_alive`` uses when ``/proc`` cannot be enumerated - there a
+        retained zombie answers "alive" forever, which would burn the whole
+        containment deadline and false-report ``converter_containment_failed``. That
+        same host also cannot run the membership-verified sweep, so it gains nothing
+        from the reservation. Keep the fallback simple and honest: no pin, reap as
+        before, and accept the residual documented in ``_sweep_posix_group``. On
+        Linux - the POSIX target - ``/proc`` is readable and the pin applies.
+        """
+
+        return self._posix_group_members(self._pgid) is not None
+
+    @staticmethod
+    def _exit_status_from_siginfo(info) -> int:
+        """Map ``siginfo_t`` to the ``Popen.returncode`` convention."""
+
+        status = int(getattr(info, "si_status", 0) or 0)
+        if getattr(info, "si_code", None) == getattr(os, "CLD_EXITED", 1):
+            return status
+        # Killed (or dumped) by a signal: negative, exactly like Popen reports it.
+        return -status
+
+    def _release_pgid_pin(self) -> None:
+        """Reap the retained zombie leader; the pgid may be recycled after this."""
+
+        if not self._leader_pinned:
+            return
+        self._leader_pinned = False
+        try:
+            self._proc.wait(timeout=_CONTAINMENT_CLOSE_SWEEP_SECONDS)
+        except Exception:  # noqa: BLE001 - the child already exited; never block close
+            pass
 
     @staticmethod
     def _killpg(pgid: int, sig: int) -> None:
@@ -822,8 +958,21 @@ class _ContainedProcess:
             pass
 
     def _reap_bounded(self, seconds: float) -> None:
+        """Bounded wait for the direct child to EXIT - on POSIX without reaping it.
+
+        #509 review r3: the SIGKILL escalation in ``_terminate_tree_posix`` and the
+        sweep in ``close()`` both still address the group AFTER this call, so reaping
+        the group leader here is what opened the recycled-pgid window in the first
+        place. ``_pin_child_exit`` observes the same exit with ``WNOWAIT``, leaving a
+        zombie that holds the number until ``close()`` is done. Windows and any host
+        without ``os.waitid`` keep the original reaping wait.
+        """
+
+        seconds = max(float(seconds), 0.0)
+        if self._pin_child_exit(seconds, raise_on_timeout=False):
+            return
         try:
-            self._proc.wait(timeout=max(float(seconds), 0.0))
+            self._proc.wait(timeout=seconds)
         except Exception:  # noqa: BLE001 - a stubborn child is handled by the poll
             pass
 

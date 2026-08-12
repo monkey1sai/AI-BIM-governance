@@ -305,6 +305,26 @@ function New-ConversionPlan {
     return $rows.ToArray()
 }
 
+function Test-ConverterHostIsWindows {
+    # #509 review r3: `$IsWindows` is an AUTOMATIC variable that only EXISTS on
+    # PowerShell Core. Windows PowerShell 5.1 - the host the adapter falls back to -
+    # never defines it, and this script runs under `Set-StrictMode -Version Latest`,
+    # where READING an undefined variable THROWS. So `-or $IsWindows` did not quietly
+    # evaluate to $null on 5.1: it aborted the caller before any child was discovered,
+    # which is precisely the failure this platform check was added to prevent (a
+    # conversion timeout then entered cleanup with an empty survivor list and reported
+    # "confirmed gone" for a tree that was still fully alive).
+    #
+    # `Get-Variable -ErrorAction SilentlyContinue` READS the variable without
+    # dereferencing it, so "not defined" is a MISS instead of a terminating error.
+    # Semantics are unchanged: Windows is detected when EITHER signal says so.
+    # The only residual gap would be a host where `$IsWindows` is absent AND `OS` is
+    # unset - i.e. Windows PowerShell 5.1, which only ever runs on Windows and always
+    # exports `OS`, so `$env:OS` alone already covers that host.
+    return (($env:OS -eq 'Windows_NT') -or
+        ((Get-Variable -Name 'IsWindows' -ValueOnly -ErrorAction SilentlyContinue) -eq $true))
+}
+
 function Get-ConverterChildProcessId {
     # Win32_Process is Windows-only; on Linux read /proc/<pid>/stat. Same shape as
     # scripts/lib/platform/platform-adapter.ps1::Get-PlatformChildProcessIds, kept
@@ -316,9 +336,10 @@ function Get-ConverterChildProcessId {
     # environment that does not export OS (observed on a real Windows host: the
     # Windows branch was skipped, the /proc branch found nothing, and
     # Stop-ConverterProcessTree reported "confirmed gone" for a tree that was
-    # still fully alive). $IsWindows is $null on Windows PowerShell 5.1, where
-    # $env:OS is always set, so the pair covers both hosts.
-    if ($env:OS -eq 'Windows_NT' -or $IsWindows) {
+    # still fully alive). #509 review r3: the second signal must be read through
+    # Test-ConverterHostIsWindows - a bare $IsWindows THROWS under Set-StrictMode on
+    # Windows PowerShell 5.1, where the variable does not exist at all.
+    if (Test-ConverterHostIsWindows) {
         return @(Get-CimInstance Win32_Process -Filter "ParentProcessId=$ParentProcessId" -ErrorAction SilentlyContinue |
             ForEach-Object { [int]$_.ProcessId })
     }
@@ -361,7 +382,7 @@ function Test-ConverterProcessAlive {
     # containment FAILURE for a tree that is already dead.
     param([Parameter(Mandatory = $true)][int] $ProcessId)
 
-    if ($env:OS -eq 'Windows_NT' -or $IsWindows) {
+    if (Test-ConverterHostIsWindows) {
         return ($null -ne (Get-Process -Id $ProcessId -ErrorAction SilentlyContinue))
     }
 
@@ -382,7 +403,7 @@ function Test-OrphanRediscoverySupported {
     # tree root. There the authoritative boundary is the CALLER's process group
     # (the adapter sweeps it on every exit path); a non-escapable in-script
     # boundary needs a cgroup, tracked in #517.
-    return ($env:OS -eq 'Windows_NT' -or $IsWindows)
+    return (Test-ConverterHostIsWindows)
 }
 
 function Stop-ConverterProcessTree {

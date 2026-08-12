@@ -4368,6 +4368,161 @@ def test_close_sweeps_the_posix_process_group_on_every_exit_path(monkeypatch):
     assert len(signalled) == 2
 
 
+# --- #509 review r3: the pgid must stay RESERVED until the sweep is done -------
+
+
+def _patch_posix_pin_primitives(monkeypatch, siginfo):
+    """Make ``_ContainedProcess._pin_supported()`` true on any host.
+
+    ``os.waitid`` and the ``P_PID`` / ``WEXITED`` / ``WNOWAIT`` / ``CLD_EXITED``
+    constants are Unix-only, so the Windows dev host would otherwise skip these
+    tests entirely -- and the POSIX reaping order is exactly what must not
+    regress unnoticed. Faking the primitives keeps the contract executable
+    everywhere while the production guard (``hasattr``) stays honest.
+    """
+
+    monkeypatch.setattr(os, "name", "posix")
+    for attr, value in (
+        ("P_PID", 1),
+        ("WEXITED", 0x00000004),
+        ("WNOWAIT", 0x01000000),
+        ("WNOHANG", 0x00000001),
+        ("CLD_EXITED", 1),
+    ):
+        monkeypatch.setattr(os, attr, value, raising=False)
+    monkeypatch.setattr(
+        os,
+        "waitid",
+        lambda idtype, pid, options: siginfo,
+        raising=False,
+    )
+
+
+class _PosixLeaderProc:
+    """A group-leader child whose reaping is observable."""
+
+    def __init__(self, events: list, returncode: int = 7) -> None:
+        self.pid = 4242
+        self.args = ["converter"]
+        self.returncode = None
+        self._events = events
+        self._exit = returncode
+
+    def wait(self, timeout=None):
+        self._events.append("reap")
+        self.returncode = self._exit
+        return self._exit
+
+    def kill(self) -> None:
+        pass
+
+
+def test_posix_group_sweep_runs_before_the_group_leader_is_reaped(monkeypatch):
+    """#509 review r3：killpg / sweep 不得在 group leader 被 reap 之後才發。
+
+    ``start_new_session=True`` 下直接 child 就是 group leader，pgid == 它的 PID。
+    ``contained.wait()`` 一旦 reap 它，那個號碼就回到 kernel 的 PID 池；稍後
+    ``close()`` 的 sweep（``_posix_group_members`` + kill）打到的就可能是拿到
+    回收號碼的無辜 process group。正確順序：先用 ``WNOWAIT`` 看到 exit（leader
+    留成 zombie，號碼不可回收）→ sweep → 最後才 reap。
+    """
+
+    import ifc2usdc_powershell_adapter as mod
+
+    cls = mod._ContainedProcess
+    events: list = []
+
+    class _Siginfo:
+        si_code = 1  # CLD_EXITED
+        si_status = 7
+
+    _patch_posix_pin_primitives(monkeypatch, _Siginfo())
+
+    contained = cls(_PosixLeaderProc(events, returncode=7), pgid=4242)
+
+    snapshot = {"live": (4242, 9001)}
+    monkeypatch.setattr(
+        cls,
+        "_posix_group_members",
+        classmethod(lambda owner, pgid: snapshot["live"]),
+    )
+
+    def _kill(pid, sig):
+        events.append("sweep:%d" % int(pid))
+        snapshot["live"] = ()
+
+    monkeypatch.setattr(cls, "_kill_pid", staticmethod(_kill))
+    monkeypatch.setattr(
+        cls,
+        "_killpg",
+        staticmethod(
+            lambda pgid, sig: pytest.fail("bare killpg on a possibly-recycled pgid")
+        ),
+    )
+
+    assert contained.wait(timeout=1.0) == 7, "WNOWAIT 觀測不得弄丟 exit status"
+    assert events == [], "leader 必須一直是 zombie，sweep 之前不得 reap"
+
+    contained.close()
+
+    assert events == ["sweep:4242", "sweep:9001", "reap"], (
+        "sweep 必須在 reap 之前完成，這段期間 pgid 才是被 zombie leader 鎖住的"
+    )
+    assert contained._proc.returncode == 7, "sweep 之後的 reap 仍要把 returncode 設對"
+
+
+def test_posix_pinned_wait_maps_a_signal_death_to_a_negative_returncode(monkeypatch):
+    """WNOWAIT 路徑要完全沿用 ``Popen.returncode`` 的約定：被訊號殺死 = -sig。"""
+
+    import ifc2usdc_powershell_adapter as mod
+
+    cls = mod._ContainedProcess
+    events: list = []
+
+    class _Siginfo:
+        si_code = 2  # CLD_KILLED
+        si_status = 9  # SIGKILL
+
+    _patch_posix_pin_primitives(monkeypatch, _Siginfo())
+    monkeypatch.setattr(
+        cls, "_posix_group_members", classmethod(lambda owner, pgid: ())
+    )
+
+    contained = cls(_PosixLeaderProc(events), pgid=4242)
+
+    assert contained.wait(timeout=1.0) == -9
+    assert events == []
+
+
+def test_posix_pin_is_declined_when_proc_cannot_be_enumerated(monkeypatch):
+    """/proc 讀不到時不抱 zombie，老實退回原本行為。
+
+    那種 host 上 sweep 本來就已經退化成 bare ``killpg``，而且
+    ``_posix_group_alive`` 的 ``killpg(pgid, 0)`` fallback 會把被留下的 zombie
+    當成「還活著」，把整個 containment deadline 燒完再誤報 containment failure。
+    這條路徑的殘餘 PID-reuse 風險寫在 ``_sweep_posix_group`` 的 docstring 裡。
+    """
+
+    import ifc2usdc_powershell_adapter as mod
+
+    cls = mod._ContainedProcess
+    events: list = []
+
+    class _Siginfo:
+        si_code = 1
+        si_status = 7
+
+    _patch_posix_pin_primitives(monkeypatch, _Siginfo())
+    monkeypatch.setattr(
+        cls, "_posix_group_members", classmethod(lambda owner, pgid: None)
+    )
+
+    contained = cls(_PosixLeaderProc(events), pgid=4242)
+
+    assert contained.wait(timeout=1.0) == 7
+    assert events == ["reap"], "無法驗證 group 成員時不抱 zombie，直接 reap"
+    assert contained._leader_pinned is False
+
 def _patch_subprocess_returning(monkeypatch, *, returncode: int, stderr: str, stdout: str = "") -> None:
     _patch_popen(monkeypatch, returncode=returncode, stdout=stdout, stderr=stderr)
 

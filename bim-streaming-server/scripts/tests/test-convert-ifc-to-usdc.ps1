@@ -111,6 +111,7 @@ finally {
 
 $converterAst = [System.Management.Automation.Language.Parser]::ParseFile($ScriptPath, [ref]$null, [ref]$null)
 foreach ($fnName in @(
+        'Test-ConverterHostIsWindows',
         'Get-ConverterChildProcessId',
         'Get-ProcStatProcessState',
         'Test-ConverterProcessAlive',
@@ -123,6 +124,37 @@ foreach ($fnName in @(
     Assert-True ($found.Count -eq 1) "Expected exactly one $fnName definition in the converter script."
     . ([scriptblock]::Create($found[0].Extent.Text))
 }
+
+# --- #509 review r3: the platform probe must survive Set-StrictMode ----------
+# `$IsWindows` is a PowerShell Core AUTOMATIC variable. Windows PowerShell 5.1 -
+# the host the adapter falls back to - never defines it, and the converter runs
+# under `Set-StrictMode -Version Latest`, where READING an undefined variable is a
+# terminating error. `-or $IsWindows` therefore aborted the containment walk on
+# 5.1 instead of selecting the Windows branch.
+
+# (a) the mechanism: Get-Variable on a name that exists on NO host must answer,
+#     not throw, even under the strictest mode.
+$missingVariableProbe = {
+    Set-StrictMode -Version Latest
+    (Get-Variable -Name 'IsDefinitelyNotAnAutomaticVariable509' -ValueOnly -ErrorAction SilentlyContinue) -eq $true
+}
+Assert-True ((& $missingVariableProbe) -eq $false) 'Get-Variable on an undefined name must answer $false under Set-StrictMode, not throw.'
+
+# (b) the probe itself still answers correctly for the host running the tests.
+$expectedWindows = ([System.Environment]::OSVersion.Platform -eq [System.PlatformID]::Win32NT)
+$strictPlatformProbe = {
+    Set-StrictMode -Version Latest
+    Test-ConverterHostIsWindows
+}
+Assert-True ((& $strictPlatformProbe) -eq $expectedWindows) 'Test-ConverterHostIsWindows must detect the running host under Set-StrictMode -Version Latest.'
+
+# (c) regression guard: no bare $IsWindows dereference may come back ANYWHERE in
+#     the converter script - a single one re-arms the same strict-mode abort.
+$bareIsWindowsRefs = @($converterAst.FindAll({
+            param($node)
+            $node -is [System.Management.Automation.Language.VariableExpressionAst] -and $node.VariablePath.UserPath -eq 'IsWindows'
+        }, $true))
+Assert-True ($bareIsWindowsRefs.Count -eq 0) 'The converter must not dereference $IsWindows; it is undefined on Windows PowerShell 5.1 under Set-StrictMode.'
 
 # /proc/<pid>/stat: comm (field 2) may contain spaces and parens, and a defunct
 # descendant must not be counted as a containment survivor.
