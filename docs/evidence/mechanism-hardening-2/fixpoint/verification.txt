@@ -30,5 +30,5 @@ NOTE all 13 raw logs scanned for FAIL|Exception|Unhandled|Terminating error; onl
 --- canonical half: commands 14-15, owned by coordinator (owner-inventory SSH path, out of this worktree's scope) ---
 PASS canonical-linux-rebuild (exit=0, completed 2026-08-12T11:38:36Z, pinned form from a fresh origin/main isolated worktree at daf551e, no -IdentityFile/-TargetId; deployment tag deploy-20260812-639221315101291265-002 -> daf551e pushed and verified; effective-env snapshot artifacts/deploy-reports/canonical-linux/20260812T113830Z-effective-env.json)
 PASS canonical-linux-deployment-verify (exit=0, completed ~2026-08-12T11:40Z, pinned form on the remote deploy_root against the new deployment; six checks Passed: deployment required artifacts, coordinator health, governance health, conversion health, kit manager health, viewer endpoint; Failed list empty)
-LIMIT ledger fixpoint.reverified_at not yet set; owed once commands 14-15 complete and this file + summary.md are updated in place by the coordinator
+NOTE ledger fixpoint.reverified_at stamped 2026-08-12T11:40:00Z after commands 14-15 completed; this file + summary.md updated in place by the coordinator
 LIMIT full-system browser, Kit/WebRTC first-frame, USD stage, DataChannel E2E not claimed
