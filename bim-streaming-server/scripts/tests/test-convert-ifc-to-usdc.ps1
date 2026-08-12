@@ -116,6 +116,8 @@ foreach ($fnName in @(
         'Get-ProcStatProcessState',
         'Test-ConverterProcessAlive',
         'Test-OrphanRediscoverySupported',
+        'Get-ConverterProcessStartTime',
+        'Test-ConverterProcessIdentity',
         'Stop-ConverterProcessTree')) {
     $found = @($converterAst.FindAll({
                 param($node)
@@ -319,6 +321,43 @@ try {
     Assert-True ($script:TreeScanCount -ge 2) 'Expected the process tree to be re-scanned, not scanned once.'
     Assert-True (-not (Test-ConverterProcessAlive -ProcessId $script:LateChildId)) 'Expected the late-appearing descendant to be terminated.'
     Assert-True (-not (Test-ConverterProcessAlive -ProcessId $script:RescanRootId)) 'Expected the rescan root fixture to be terminated.'
+
+    # 4) #509 review r4: a PID is not an identity. The known-member set accumulates
+    #    across rounds, so a member that exits early and has its pid handed to an
+    #    UNRELATED process must not be signalled by a later kill round, and must not
+    #    be reported as a survivor of this tree. Stubbing the recorded start time so
+    #    that it stops matching the live one reproduces exactly what the caller
+    #    observes after a recycle, without having to win a real pid-reuse race.
+    $identityRoot = Start-ContainmentTestProcess -FilePath $PwshPath -Arguments @('-NoProfile', '-NoLogo', '-File', $sleepScript)
+    $script:IdentityRootId = [int]$identityRoot.Id
+    $RecordedPids += $script:IdentityRootId
+    $bystander = Start-ContainmentTestProcess -FilePath $PwshPath -Arguments @('-NoProfile', '-NoLogo', '-File', $sleepScript)
+    $script:BystanderId = [int]$bystander.Id
+    $RecordedPids += $script:BystanderId
+
+    function Get-ConverterChildProcessId {
+        param([Parameter(Mandatory = $true)][int] $ParentProcessId)
+        if ($ParentProcessId -eq $script:IdentityRootId) { return @($script:BystanderId) }
+        return @()
+    }
+
+    $script:StartTimeProbeCount = 0
+    function Get-ConverterProcessStartTime {
+        param([Parameter(Mandatory = $true)][int] $ProcessId)
+        if ($ProcessId -ne $script:BystanderId) { return ([datetime]'2020-01-01T00:00:00Z') }
+        $script:StartTimeProbeCount++
+        # The first read is the discovery snapshot; every later read sees the pid
+        # owned by a different process.
+        if ($script:StartTimeProbeCount -eq 1) { return ([datetime]'2020-01-01T00:00:00Z') }
+        return ([datetime]'2026-01-01T00:00:00Z')
+    }
+
+    $identityContainment = Stop-ConverterProcessTree -ProcessId $script:IdentityRootId -TimeoutMs 10000
+    $identitySurvivors = @($identityContainment.SurvivingPids)
+    Assert-True ($script:StartTimeProbeCount -ge 2) 'Expected the recorded process identity to be re-validated before the kill, not only captured at discovery.'
+    Assert-True (Test-ConverterProcessAlive -ProcessId $script:BystanderId) 'Expected a recycled PID to be left alone: signalling it is a kill OUTSIDE the tree.'
+    Assert-True ($identitySurvivors -notcontains $script:BystanderId) "Expected a recycled PID not to be reported as a tree survivor; got: $($identitySurvivors -join ', ')"
+    Assert-True (-not (Test-ConverterProcessAlive -ProcessId $script:IdentityRootId)) 'Expected the identity-case root fixture to be terminated.'
 }
 finally {
     foreach ($recorded in $RecordedPids) {

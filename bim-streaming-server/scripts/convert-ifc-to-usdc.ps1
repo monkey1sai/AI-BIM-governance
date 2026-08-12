@@ -406,6 +406,61 @@ function Test-OrphanRediscoverySupported {
     return (Test-ConverterHostIsWindows)
 }
 
+function Get-ConverterProcessStartTime {
+    # #509 review r4: a PID is NOT an identity. Between the round that discovered
+    # a descendant and a later round that signals it, that descendant can exit and
+    # the OS can hand the very same pid to an unrelated process (Windows recycles
+    # pids aggressively; Linux wraps at pid_max). `Stop-Process` on such a pid is a
+    # kill OUTSIDE the tree - the exact failure this containment walk exists to
+    # prevent, inverted. (Id, StartTime) is the cheapest identity pair readable on
+    # both hosts.
+    #
+    # Returns $null when the pid does not resolve OR when its start time cannot be
+    # read (protected process / raced exit). Callers treat an unreadable start time
+    # as "identity unknown" and fall back to the pre-r4 existence check, so this
+    # guard can never LOSE a kill that used to happen - it only blocks kills it can
+    # PROVE are aimed at a different process.
+    param([Parameter(Mandatory = $true)][int] $ProcessId)
+
+    try {
+        $process = Get-Process -Id $ProcessId -ErrorAction Stop
+        return $process.StartTime
+    }
+    catch {
+        return $null
+    }
+}
+
+function Test-ConverterProcessIdentity {
+    # Is the process currently holding $ProcessId still the one recorded under that
+    # pid at discovery time? Three answers, because the caller must treat them
+    # differently:
+    #
+    #   'match'    - same process (or identity unreadable on either side, see
+    #                Get-ConverterProcessStartTime): signal it, poll it.
+    #   'gone'     - the pid no longer resolves: nothing to signal. It is still kept
+    #                as a re-walk seed, because on Windows Win32_Process keeps
+    #                naming a dead parent and that is how orphans are rediscovered.
+    #   'recycled' - the pid resolves to a DIFFERENT process: it is not ours. Never
+    #                signal it, never re-walk from it (its children are not ours),
+    #                never report it as a survivor of this tree.
+    param(
+        [Parameter(Mandatory = $true)][int] $ProcessId,
+        [Parameter(Mandatory = $true)][AllowNull()][object] $RecordedStartTime
+    )
+
+    $exists = $false
+    try { $exists = ($null -ne (Get-Process -Id $ProcessId -ErrorAction Stop)) }
+    catch { $exists = $false }
+    if (-not $exists) { return 'gone' }
+    if ($null -eq $RecordedStartTime) { return 'match' }
+
+    $current = Get-ConverterProcessStartTime -ProcessId $ProcessId
+    if ($null -eq $current) { return 'match' }
+    if ($current -eq $RecordedStartTime) { return 'match' }
+    return 'recycled'
+}
+
 function Stop-ConverterProcessTree {
     # #489 L1-COR-004: `Stop-Process -Id $process.Id -Force` only reaches Kit
     # itself. Its HOOPS/CAD grandchildren keep processing untrusted input after
@@ -439,6 +494,14 @@ function Stop-ConverterProcessTree {
     #   EFFORT by construction - see Test-OrphanRediscoverySupported and the
     #   timeout wording, which says so instead of claiming proof.
     #
+    # PID IDENTITY (#509 review r4): the known-member set accumulates ACROSS
+    # rounds and every round re-signalled all of it, so a member that exited early
+    # and had its pid recycled was signalled again - by then possibly an unrelated
+    # service. Each member is therefore recorded as an (Id, StartTime) pair at
+    # discovery and re-validated immediately before every signal and before being
+    # reported as a survivor; a pid whose identity no longer matches is dropped
+    # from all later passes instead of being killed or blamed.
+    #
     # On BOTH platforms the authoritative containment boundary is the Python
     # adapter (ifc2usdc_powershell_adapter._ContainedProcess), whose OS-level
     # boundary -- a Windows Job Object, or a POSIX process group -- keeps
@@ -456,6 +519,12 @@ function Stop-ConverterProcessTree {
 
     $ids = [System.Collections.Generic.List[int]]::new()
     $seen = @{}
+    # pid -> start time recorded AT DISCOVERY ($null when unreadable).
+    $identity = @{}
+    # pids observed to be a DIFFERENT process than the one discovered under that
+    # pid: dropped from later kill rounds, from the re-walk seeds and from the
+    # survivor poll.
+    $recycled = @{}
     $stableRounds = 0
     $round = 0
     while ($round -lt $MaxRounds -and $stableRounds -lt 2) {
@@ -476,7 +545,10 @@ function Stop-ConverterProcessTree {
         # Test-OrphanRediscoverySupported and the honest timeout wording below.
         $stack = [System.Collections.Generic.List[int]]::new()
         $stack.Add([int]$ProcessId)
-        foreach ($known in @($ids)) { $stack.Add([int]$known) }
+        foreach ($known in @($ids)) {
+            if ($recycled.ContainsKey([int]$known)) { continue }
+            $stack.Add([int]$known)
+        }
         $walked = @{}
         while ($stack.Count -gt 0) {
             $current = [int]$stack[0]
@@ -486,6 +558,9 @@ function Stop-ConverterProcessTree {
             if (-not $seen.ContainsKey($current)) {
                 $seen[$current] = $true
                 $ids.Add($current)
+                # Capture identity at the moment of discovery: this is what every
+                # later round validates against before signalling the pid.
+                $identity[$current] = Get-ConverterProcessStartTime -ProcessId $current
                 $discovered++
             }
             foreach ($child in @(Get-ConverterChildProcessId -ParentProcessId $current)) {
@@ -494,7 +569,16 @@ function Stop-ConverterProcessTree {
         }
 
         for ($i = $ids.Count - 1; $i -ge 0; $i--) {
-            Stop-Process -Id ([int]$ids[$i]) -Force -ErrorAction SilentlyContinue
+            $target = [int]$ids[$i]
+            if ($recycled.ContainsKey($target)) { continue }
+            $state = Test-ConverterProcessIdentity -ProcessId $target -RecordedStartTime $identity[$target]
+            if ($state -eq 'recycled') {
+                # The pid outlived its owner and now belongs to someone else.
+                $recycled[$target] = $true
+                continue
+            }
+            if ($state -eq 'gone') { continue }
+            Stop-Process -Id $target -Force -ErrorAction SilentlyContinue
         }
 
         if ($discovered -eq 0) { $stableRounds++ } else { $stableRounds = 0 }
@@ -503,7 +587,20 @@ function Stop-ConverterProcessTree {
 
     $deadline = [DateTime]::UtcNow.AddMilliseconds($TimeoutMs)
     while ($true) {
-        $alive = @($ids | Where-Object { Test-ConverterProcessAlive -ProcessId $_ })
+        $alive = [System.Collections.Generic.List[int]]::new()
+        foreach ($candidate in @($ids)) {
+            $candidateId = [int]$candidate
+            if ($recycled.ContainsKey($candidateId)) { continue }
+            if (-not (Test-ConverterProcessAlive -ProcessId $candidateId)) { continue }
+            # A pid recycled between the kill and this poll IS alive, but it is not
+            # a survivor of THIS tree; reporting it as one blames containment for an
+            # unrelated process and the caller escalates on survivors.
+            if ((Test-ConverterProcessIdentity -ProcessId $candidateId -RecordedStartTime $identity[$candidateId]) -ne 'match') {
+                $recycled[$candidateId] = $true
+                continue
+            }
+            $alive.Add($candidateId)
+        }
         if ($alive.Count -eq 0) {
             return [pscustomobject]@{ SurvivingPids = @(); FixedPointReached = $fixedPoint }
         }
