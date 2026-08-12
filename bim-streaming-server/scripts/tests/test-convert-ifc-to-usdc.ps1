@@ -104,4 +104,335 @@ finally {
     }
 }
 
+# --- #489 L1-COR-004: the containment helpers need executable coverage --------
+# They live inside the converter script (which executes a conversion plan when
+# loaded), so lift the function definitions out through the PowerShell AST rather
+# than dot-sourcing the whole script.
+
+$converterAst = [System.Management.Automation.Language.Parser]::ParseFile($ScriptPath, [ref]$null, [ref]$null)
+foreach ($fnName in @(
+        'Test-ConverterHostIsWindows',
+        'Get-ConverterChildProcessId',
+        'Get-ProcStatProcessState',
+        'Test-ConverterProcessAlive',
+        'Test-OrphanRediscoverySupported',
+        'Get-ConverterProcessStartTime',
+        'Test-ConverterProcessIdentity',
+        'Stop-ConverterProcessTree')) {
+    $found = @($converterAst.FindAll({
+                param($node)
+                $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $fnName
+            }, $true))
+    Assert-True ($found.Count -eq 1) "Expected exactly one $fnName definition in the converter script."
+    . ([scriptblock]::Create($found[0].Extent.Text))
+}
+
+# --- #509 review r3: the platform probe must survive Set-StrictMode ----------
+# `$IsWindows` is a PowerShell Core AUTOMATIC variable. Windows PowerShell 5.1 -
+# the host the adapter falls back to - never defines it, and the converter runs
+# under `Set-StrictMode -Version Latest`, where READING an undefined variable is a
+# terminating error. `-or $IsWindows` therefore aborted the containment walk on
+# 5.1 instead of selecting the Windows branch.
+
+# (a) the mechanism: Get-Variable on a name that exists on NO host must answer,
+#     not throw, even under the strictest mode.
+$missingVariableProbe = {
+    Set-StrictMode -Version Latest
+    (Get-Variable -Name 'IsDefinitelyNotAnAutomaticVariable509' -ValueOnly -ErrorAction SilentlyContinue) -eq $true
+}
+Assert-True ((& $missingVariableProbe) -eq $false) 'Get-Variable on an undefined name must answer $false under Set-StrictMode, not throw.'
+
+# (b) the probe itself still answers correctly for the host running the tests.
+$expectedWindows = ([System.Environment]::OSVersion.Platform -eq [System.PlatformID]::Win32NT)
+$strictPlatformProbe = {
+    Set-StrictMode -Version Latest
+    Test-ConverterHostIsWindows
+}
+Assert-True ((& $strictPlatformProbe) -eq $expectedWindows) 'Test-ConverterHostIsWindows must detect the running host under Set-StrictMode -Version Latest.'
+
+# (c) regression guard: no bare $IsWindows dereference may come back ANYWHERE in
+#     the converter script - a single one re-arms the same strict-mode abort.
+$bareIsWindowsRefs = @($converterAst.FindAll({
+            param($node)
+            $node -is [System.Management.Automation.Language.VariableExpressionAst] -and $node.VariablePath.UserPath -eq 'IsWindows'
+        }, $true))
+Assert-True ($bareIsWindowsRefs.Count -eq 0) 'The converter must not dereference $IsWindows; it is undefined on Windows PowerShell 5.1 under Set-StrictMode.'
+
+# /proc/<pid>/stat: comm (field 2) may contain spaces and parens, and a defunct
+# descendant must not be counted as a containment survivor.
+Assert-True ((Get-ProcStatProcessState -StatLine '4242 (kit (cad) worker) Z 1 4242') -eq 'Z') 'Expected Z state from a comm containing spaces and parens.'
+Assert-True ((Get-ProcStatProcessState -StatLine '4242 (kit) S 1 4242') -eq 'S') 'Expected S state from a simple stat line.'
+Assert-True ((Get-ProcStatProcessState -StatLine 'garbage') -eq '') 'Expected empty state from an unparsable stat line.'
+
+function Start-ContainmentTestProcess {
+    # ProcessStartInfo.ArgumentList, never a joined string: Start-Process's
+    # ArgumentList re-tokenizes and shreds quoted arguments.
+    param(
+        [Parameter(Mandatory = $true)][string] $FilePath,
+        [Parameter(Mandatory = $true)][string[]] $Arguments
+    )
+
+    $psi = [System.Diagnostics.ProcessStartInfo]::new($FilePath)
+    $psi.UseShellExecute = $false
+    foreach ($argument in $Arguments) { $psi.ArgumentList.Add($argument) | Out-Null }
+    return [System.Diagnostics.Process]::Start($psi)
+}
+
+$PwshPath = (Get-Process -Id $PID).Path
+$ContainmentTempDir = Join-Path ([System.IO.Path]::GetTempPath()) ("conv-containment-{0}" -f ([guid]::NewGuid().ToString('N')))
+New-Item -ItemType Directory -Path $ContainmentTempDir | Out-Null
+$RecordedPids = @()
+try {
+    $sleepScript = Join-Path $ContainmentTempDir 'sleep-forever.ps1'
+    Set-Content -LiteralPath $sleepScript -Encoding UTF8 -Value 'Start-Sleep -Seconds 600'
+    $spawnScript = Join-Path $ContainmentTempDir 'spawn-tree.ps1'
+    Set-Content -LiteralPath $spawnScript -Encoding UTF8 -Value @(
+        'param([string] $PidFile, [string] $PwshPath, [string] $SleepScript)',
+        '$psi = [System.Diagnostics.ProcessStartInfo]::new($PwshPath)',
+        '$psi.UseShellExecute = $false',
+        'foreach ($a in @("-NoProfile", "-NoLogo", "-File", $SleepScript)) { $psi.ArgumentList.Add($a) | Out-Null }',
+        '$child = [System.Diagnostics.Process]::Start($psi)',
+        'Set-Content -LiteralPath $PidFile -Value $child.Id',
+        'Start-Sleep -Seconds 600'
+    )
+    $pidFile = Join-Path $ContainmentTempDir 'grandchild.pid'
+
+    # 1) A real 2-deep tree must be fully terminated and PROVEN gone.
+    $rootProcess = Start-ContainmentTestProcess -FilePath $PwshPath -Arguments @(
+        '-NoProfile', '-NoLogo', '-File', $spawnScript,
+        '-PidFile', $pidFile, '-PwshPath', $PwshPath, '-SleepScript', $sleepScript
+    )
+    $RecordedPids += [int]$rootProcess.Id
+    $waitDeadline = [DateTime]::UtcNow.AddSeconds(30)
+    while (-not (Test-Path -LiteralPath $pidFile) -and [DateTime]::UtcNow -lt $waitDeadline) {
+        Start-Sleep -Milliseconds 100
+    }
+    Assert-True (Test-Path -LiteralPath $pidFile) 'Expected the fixture to record its grandchild PID.'
+    $grandchildPid = [int]((Get-Content -LiteralPath $pidFile -Raw).Trim())
+    $RecordedPids += $grandchildPid
+    Assert-True (Test-ConverterProcessAlive -ProcessId $grandchildPid) 'Expected the grandchild to be alive before containment.'
+
+    $containment = Stop-ConverterProcessTree -ProcessId ([int]$rootProcess.Id) -TimeoutMs 15000
+    $survivors = @($containment.SurvivingPids)
+    Assert-True ($survivors.Count -eq 0) "Expected containment to be proven; survivors: $($survivors -join ', ')"
+    Assert-True ([bool]$containment.FixedPointReached) 'Expected the discover -> kill loop to reach a stable fixed point.'
+    foreach ($recorded in $RecordedPids) {
+        Assert-True (-not (Test-ConverterProcessAlive -ProcessId $recorded)) "Expected PID $recorded to be gone after containment."
+    }
+
+    # 2) #509 review r2: a descendant forked by a KNOWN member after that member
+    #    was enumerated but before the reverse-order kill must still be found.
+    #    Only the FIRST enumeration is stubbed - that stub IS the premise ("the
+    #    fork had not happened yet when we looked"). Every later round uses the
+    #    real discovery and every kill is real, so this asserts the actual OS
+    #    behaviour: Windows keeps ParentProcessId pointing at the killed parent,
+    #    so the re-walk from the known (now dead) pid rediscovers the orphan.
+    #    Linux reparents orphans to PID 1 and cannot do this - the timeout
+    #    wording there says so instead of claiming proof.
+    #    The tree is 3 levels deep (root -> mid -> leaf) on purpose: the member
+    #    that "forks late" is the MID process, so once it is killed it vanishes
+    #    from the process table and the root can no longer reach it. Only a
+    #    re-walk that keeps querying every KNOWN pid rediscovers the leaf, which
+    #    is exactly the property under dispute.
+    if (Test-OrphanRediscoverySupported) {
+        $midScript = Join-Path $ContainmentTempDir 'spawn-mid.ps1'
+        Set-Content -LiteralPath $midScript -Encoding UTF8 -Value @(
+            'param([string] $MidPidFile, [string] $PwshPath, [string] $SpawnScript, [string] $LeafPidFile, [string] $SleepScript)',
+            '$psi = [System.Diagnostics.ProcessStartInfo]::new($PwshPath)',
+            '$psi.UseShellExecute = $false',
+            'foreach ($a in @("-NoProfile", "-NoLogo", "-File", $SpawnScript, "-PidFile", $LeafPidFile, "-PwshPath", $PwshPath, "-SleepScript", $SleepScript)) { $psi.ArgumentList.Add($a) | Out-Null }',
+            '$mid = [System.Diagnostics.Process]::Start($psi)',
+            'Set-Content -LiteralPath $MidPidFile -Value $mid.Id',
+            'Start-Sleep -Seconds 600'
+        )
+        $midPidFile = Join-Path $ContainmentTempDir 'mid.pid'
+        $leafPidFile = Join-Path $ContainmentTempDir 'leaf.pid'
+        $orphanRoot = Start-ContainmentTestProcess -FilePath $PwshPath -Arguments @(
+            '-NoProfile', '-NoLogo', '-File', $midScript,
+            '-MidPidFile', $midPidFile, '-PwshPath', $PwshPath, '-SpawnScript', $spawnScript,
+            '-LeafPidFile', $leafPidFile, '-SleepScript', $sleepScript
+        )
+        $RecordedPids += [int]$orphanRoot.Id
+        $orphanDeadline = [DateTime]::UtcNow.AddSeconds(30)
+        while ((-not (Test-Path -LiteralPath $leafPidFile)) -and [DateTime]::UtcNow -lt $orphanDeadline) {
+            Start-Sleep -Milliseconds 100
+        }
+        Assert-True (Test-Path -LiteralPath $midPidFile) 'Expected the fork fixture to record its mid PID.'
+        Assert-True (Test-Path -LiteralPath $leafPidFile) 'Expected the fork fixture to record its leaf PID.'
+        $midPid = [int]((Get-Content -LiteralPath $midPidFile -Raw).Trim())
+        $leafPid = [int]((Get-Content -LiteralPath $leafPidFile -Raw).Trim())
+        $RecordedPids += $midPid
+        $RecordedPids += $leafPid
+        Assert-True (Test-ConverterProcessAlive -ProcessId $leafPid) 'Expected the orphan-to-be to be alive before containment.'
+
+        $script:RealGetConverterChildProcessId = ${function:Get-ConverterChildProcessId}
+        $script:ForkParentId = $midPid
+        $script:FirstForkScanDone = $false
+
+        function Get-ConverterChildProcessId {
+            param([Parameter(Mandatory = $true)][int] $ParentProcessId)
+            if ($ParentProcessId -eq $script:ForkParentId -and -not $script:FirstForkScanDone) {
+                $script:FirstForkScanDone = $true
+                return @()
+            }
+            return @(& $script:RealGetConverterChildProcessId -ParentProcessId $ParentProcessId)
+        }
+
+        $orphanContainment = Stop-ConverterProcessTree -ProcessId ([int]$orphanRoot.Id) -TimeoutMs 15000
+        $orphanSurvivors = @($orphanContainment.SurvivingPids)
+        Assert-True $script:FirstForkScanDone 'Expected the mid process to have been enumerated before the kill.'
+        Assert-True ($orphanSurvivors.Count -eq 0) "Expected no survivors after the orphan round; got: $($orphanSurvivors -join ', ')"
+        Assert-True ([bool]$orphanContainment.FixedPointReached) 'Expected the orphan case to reach a stable fixed point.'
+        Assert-True (-not (Test-ConverterProcessAlive -ProcessId $leafPid)) 'Expected the orphan forked before the kill to be terminated, not left running.'
+        # No restore needed: the next case replaces Get-ConverterChildProcessId
+        # with a self-contained stub that never delegates.
+    }
+
+    # 3) Descendants are re-discovered THROUGH termination, not from one snapshot.
+    #    A child that only becomes visible after the first scan must still be
+    #    terminated before containment is claimed.
+    #
+    #    #509 review r3: the root here MUST be a fixture process this test owns.
+    #    Stop-ConverterProcessTree unconditionally adds its root argument to the
+    #    kill list and runs Stop-Process -Force on it, so a hard-coded
+    #    "surely nobody has this PID" value would terminate an unrelated host or
+    #    CI process wherever that PID happens to be live - Linux routinely
+    #    allocates PIDs far above any such guess (pid_max defaults to 4194304).
+    $rescanRoot = Start-ContainmentTestProcess -FilePath $PwshPath -Arguments @('-NoProfile', '-NoLogo', '-File', $sleepScript)
+    $script:RescanRootId = [int]$rescanRoot.Id
+    $RecordedPids += $script:RescanRootId
+    $lateChild = Start-ContainmentTestProcess -FilePath $PwshPath -Arguments @('-NoProfile', '-NoLogo', '-File', $sleepScript)
+    $script:LateChildId = [int]$lateChild.Id
+    $RecordedPids += $script:LateChildId
+    $script:TreeScanCount = 0
+
+    function Get-ConverterChildProcessId {
+        param([Parameter(Mandatory = $true)][int] $ParentProcessId)
+        if ($ParentProcessId -ne $script:RescanRootId) { return @() }
+        $script:TreeScanCount++
+        if ($script:TreeScanCount -eq 1) { return @() }
+        return @($script:LateChildId)
+    }
+
+    $lateContainment = Stop-ConverterProcessTree -ProcessId $script:RescanRootId -TimeoutMs 10000
+    $lateSurvivors = @($lateContainment.SurvivingPids)
+    Assert-True ($lateSurvivors.Count -eq 0) "Expected the rescan loop to prove containment; survivors: $($lateSurvivors -join ', ')"
+    Assert-True ([bool]$lateContainment.FixedPointReached) 'Expected the late-descendant case to still reach a fixed point.'
+    Assert-True ($script:TreeScanCount -ge 2) 'Expected the process tree to be re-scanned, not scanned once.'
+    Assert-True (-not (Test-ConverterProcessAlive -ProcessId $script:LateChildId)) 'Expected the late-appearing descendant to be terminated.'
+    Assert-True (-not (Test-ConverterProcessAlive -ProcessId $script:RescanRootId)) 'Expected the rescan root fixture to be terminated.'
+
+    # 4) #509 review r4: a PID is not an identity. The known-member set accumulates
+    #    across rounds, so a member that exits early and has its pid handed to an
+    #    UNRELATED process must not be signalled by a later kill round, and must not
+    #    be reported as a survivor of this tree. Stubbing the recorded start time so
+    #    that it stops matching the live one reproduces exactly what the caller
+    #    observes after a recycle, without having to win a real pid-reuse race.
+    $identityRoot = Start-ContainmentTestProcess -FilePath $PwshPath -Arguments @('-NoProfile', '-NoLogo', '-File', $sleepScript)
+    $script:IdentityRootId = [int]$identityRoot.Id
+    $RecordedPids += $script:IdentityRootId
+    $bystander = Start-ContainmentTestProcess -FilePath $PwshPath -Arguments @('-NoProfile', '-NoLogo', '-File', $sleepScript)
+    $script:BystanderId = [int]$bystander.Id
+    $RecordedPids += $script:BystanderId
+
+    function Get-ConverterChildProcessId {
+        param([Parameter(Mandatory = $true)][int] $ParentProcessId)
+        if ($ParentProcessId -eq $script:IdentityRootId) { return @($script:BystanderId) }
+        return @()
+    }
+
+    $script:StartTimeProbeCount = 0
+    function Get-ConverterProcessStartTime {
+        param([Parameter(Mandatory = $true)][int] $ProcessId)
+        if ($ProcessId -ne $script:BystanderId) { return ([datetime]'2020-01-01T00:00:00Z') }
+        $script:StartTimeProbeCount++
+        # The first read is the discovery snapshot; every later read sees the pid
+        # owned by a different process.
+        if ($script:StartTimeProbeCount -eq 1) { return ([datetime]'2020-01-01T00:00:00Z') }
+        return ([datetime]'2026-01-01T00:00:00Z')
+    }
+
+    $identityContainment = Stop-ConverterProcessTree -ProcessId $script:IdentityRootId -TimeoutMs 10000
+    $identitySurvivors = @($identityContainment.SurvivingPids)
+    Assert-True ($script:StartTimeProbeCount -ge 2) 'Expected the recorded process identity to be re-validated before the kill, not only captured at discovery.'
+    Assert-True (Test-ConverterProcessAlive -ProcessId $script:BystanderId) 'Expected a recycled PID to be left alone: signalling it is a kill OUTSIDE the tree.'
+    Assert-True ($identitySurvivors -notcontains $script:BystanderId) "Expected a recycled PID not to be reported as a tree survivor; got: $($identitySurvivors -join ', ')"
+    Assert-True (-not (Test-ConverterProcessAlive -ProcessId $script:IdentityRootId)) 'Expected the identity-case root fixture to be terminated.'
+
+    # 5) #509 review r4 (second finding): validating identity only in the KILL
+    #    phase is too late, because the re-walk runs FIRST. A pid carried over
+    #    from an earlier round can be recycled before this round's walk, and
+    #    enumerating ITS children then enrols an unrelated process's children into
+    #    the kill set with fresh, self-consistent identities - which the
+    #    reverse-order kill terminates BEFORE the recycled parent is evaluated.
+    #
+    #    Stop-Process is shadowed here rather than fired for real: the assertion is
+    #    about WHICH pids get signalled, and recording the attempts proves that
+    #    directly without needing the fixture processes to survive being killed
+    #    (which is precisely what a real kill would prevent).
+    $carriedProc = Start-ContainmentTestProcess -FilePath $PwshPath -Arguments @('-NoProfile', '-NoLogo', '-File', $sleepScript)
+    $script:CarriedId = [int]$carriedProc.Id
+    $RecordedPids += $script:CarriedId
+    $unrelatedProc = Start-ContainmentTestProcess -FilePath $PwshPath -Arguments @('-NoProfile', '-NoLogo', '-File', $sleepScript)
+    $script:UnrelatedChildId = [int]$unrelatedProc.Id
+    $RecordedPids += $script:UnrelatedChildId
+    $walkRoot = Start-ContainmentTestProcess -FilePath $PwshPath -Arguments @('-NoProfile', '-NoLogo', '-File', $sleepScript)
+    $script:WalkRootId = [int]$walkRoot.Id
+    $RecordedPids += $script:WalkRootId
+
+    try {
+        $script:KillAttempts = [System.Collections.Generic.List[int]]::new()
+        function Stop-Process {
+            param([int] $Id, [switch] $Force, [string] $ErrorAction)
+            $script:KillAttempts.Add([int]$Id)
+        }
+
+        $script:CarriedChildScanCount = 0
+        function Get-ConverterChildProcessId {
+            param([Parameter(Mandatory = $true)][int] $ParentProcessId)
+            if ($ParentProcessId -eq $script:WalkRootId) { return @($script:CarriedId) }
+            if ($ParentProcessId -eq $script:CarriedId) {
+                $script:CarriedChildScanCount++
+                # Round 1: the pid is still ours and has no children. From round 2
+                # on it has been recycled, and the process now holding it has a
+                # child of its own - which has nothing to do with this tree.
+                if ($script:CarriedChildScanCount -eq 1) { return @() }
+                return @($script:UnrelatedChildId)
+            }
+            return @()
+        }
+
+        $script:CarriedProbeCount = 0
+        function Get-ConverterProcessStartTime {
+            param([Parameter(Mandatory = $true)][int] $ProcessId)
+            if ($ProcessId -ne $script:CarriedId) { return ([datetime]'2020-01-01T00:00:00Z') }
+            $script:CarriedProbeCount++
+            # Probe 1 = discovery, probe 2 = round 1's kill check (still ours).
+            # The recycle becomes visible only from round 2's WALK onwards.
+            if ($script:CarriedProbeCount -le 2) { return ([datetime]'2020-01-01T00:00:00Z') }
+            return ([datetime]'2026-01-01T00:00:00Z')
+        }
+
+        $walkContainment = Stop-ConverterProcessTree -ProcessId $script:WalkRootId -TimeoutMs 0
+        $walkSurvivors = @($walkContainment.SurvivingPids)
+        Assert-True ($script:CarriedChildScanCount -ge 1) 'Expected the carried-over PID to have been walked at least once.'
+        Assert-True ($script:KillAttempts -contains $script:CarriedId) 'Expected the carried-over PID to be signalled while its identity still matched (fixture sanity).'
+        Assert-True ($script:KillAttempts -notcontains $script:UnrelatedChildId) 'A recycled PID''s children must never be enrolled and signalled: identity has to be revalidated BEFORE the child walk, not only before the kill.'
+        Assert-True ($walkSurvivors -notcontains $script:UnrelatedChildId) 'An unrelated process reached through a recycled PID must not be reported as a survivor of this tree.'
+    }
+    finally {
+        # Restore the real cmdlet before the outer cleanup runs, or the fixture
+        # processes would be "stopped" into a list instead of being terminated.
+        Remove-Item -LiteralPath 'function:Stop-Process' -ErrorAction SilentlyContinue
+    }
+}
+finally {
+    foreach ($recorded in $RecordedPids) {
+        Stop-Process -Id ([int]$recorded) -Force -ErrorAction SilentlyContinue
+    }
+    if (Test-Path -LiteralPath $ContainmentTempDir) {
+        Remove-Item -LiteralPath $ContainmentTempDir -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+
 Write-Host "convert-ifc-to-usdc tests passed"
