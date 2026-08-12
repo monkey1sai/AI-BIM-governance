@@ -47,6 +47,9 @@ function Assert-ReportSchemaShape {
         Assert-MeasuredShape -Obj $ef[$field] -Message "$Message :: environment_fingerprint.$field"
     }
     Assert-True ($ef.Contains('complete')) "$Message :: environment_fingerprint has 'complete'"
+    Assert-True ($ef.Contains('gpu_count')) "$Message :: environment_fingerprint has 'gpu_count'"
+    Assert-True ($ef.Contains('gpu_fingerprint_scope')) "$Message :: environment_fingerprint declares its GPU scope"
+    Assert-True ($ef.gpu_fingerprint_scope_note -match 'deferred to task 1.2') "$Message :: GPU scope note defers per-GPU fingerprinting to task 1.2"
     $expectComplete = -not [bool]($REQUIRED_ENV_FINGERPRINT_FIELDS | Where-Object { -not $ef[$_].measured })
     Assert-Equal $expectComplete $ef.complete "$Message :: environment_fingerprint.complete matches per-field measured flags"
 
@@ -397,10 +400,21 @@ $fullFixture = [ordered]@{ hash = 'deadbeef'; hash_measured = $true; hash_reason
 $fullFingerprint = Get-EnvironmentFingerprint -GpuInventory $fullInv -KitVersion $fullKit -FixtureFingerprint $fullFixture
 Assert-True $fullFingerprint.complete 'environment fingerprint complete=true when all five fields measured'
 
+Assert-Equal 1 $fullFingerprint.gpu_count 'single-GPU inventory reports gpu_count=1'
+Assert-Equal 'single_gpu' $fullFingerprint.gpu_fingerprint_scope 'single-GPU host is fingerprinted under a declared single_gpu scope'
+
+# A multi-GPU host must say the fingerprint covers only the first GPU row.
+$multiFingerprint = Get-EnvironmentFingerprint -GpuInventory $invMixed -KitVersion $fullKit -FixtureFingerprint $fullFixture
+Assert-Equal 2 $multiFingerprint.gpu_count 'multi-GPU inventory reports gpu_count=2'
+Assert-Equal 'first_gpu_only' $multiFingerprint.gpu_fingerprint_scope 'multi-GPU host declares first_gpu_only fingerprint scope, not a silent single-GPU claim'
+Assert-Equal 'NVIDIA GeForce RTX 4060 Ti' $multiFingerprint.gpu_model.value 'multi-GPU fingerprint still pins the first row (scope field is what makes that honest)'
+
 $partialFingerprint = Get-EnvironmentFingerprint -GpuInventory $invMissing -KitVersion $fullKit -FixtureFingerprint $fullFixture
 Assert-True (-not $partialFingerprint.complete) 'environment fingerprint complete=false when GPU unmeasured'
 Assert-True (-not $partialFingerprint.gpu_model.measured) 'partial fingerprint: gpu_model unmeasured'
 Assert-True (-not [string]::IsNullOrWhiteSpace($partialFingerprint.gpu_model.reason)) 'partial fingerprint: gpu_model carries reason'
+Assert-True ($null -eq $partialFingerprint.gpu_count) 'no GPU inventory -> gpu_count null, not fabricated 0'
+Assert-Equal 'unknown_no_gpu_inventory' $partialFingerprint.gpu_fingerprint_scope 'no GPU inventory -> scope reported as unknown, not single_gpu'
 Write-TestPass 'Get-EnvironmentFingerprint completeness gate'
 
 $measurementPresent = New-OptionalMeasurement -Value 42.5 -MissingReason 'unused'

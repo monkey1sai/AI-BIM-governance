@@ -495,6 +495,22 @@ function Get-EnvironmentFingerprint {
         if (-not $fields[$key].measured) { $allMeasured = $false }
     }
     $fields['complete'] = $allMeasured
+
+    # Multi-GPU scope, appended after the completeness loop so these keys are
+    # never mistaken for measurement triples. gpu_model / gpu_driver_version
+    # above describe the FIRST nvidia-smi row only, while the harness's VRAM
+    # figures span every device the driver reports. On a multi-GPU host the
+    # fingerprint therefore pins one device and an equal fingerprint does not
+    # prove an equal GPU topology. Per-GPU fingerprinting is deferred to task 1.2.
+    $parsedGpuCount = $null
+    if ($GpuInventory.measured) { $parsedGpuCount = @($GpuInventory.gpus | Where-Object { $_.parse_ok }).Count }
+    $gpuScope = 'unknown_no_gpu_inventory'
+    if ($null -ne $parsedGpuCount) {
+        if ($parsedGpuCount -le 1) { $gpuScope = 'single_gpu' } else { $gpuScope = 'first_gpu_only' }
+    }
+    $fields['gpu_count'] = $parsedGpuCount
+    $fields['gpu_fingerprint_scope'] = $gpuScope
+    $fields['gpu_fingerprint_scope_note'] = 'gpu_model and gpu_driver_version describe the first nvidia-smi GPU row only; a multi-GPU host is not fully fingerprinted (per-GPU fingerprint deferred to task 1.2), so an equal fingerprint does not by itself prove an equal GPU topology'
     return $fields
 }
 
