@@ -339,6 +339,38 @@ function Get-ConverterChildProcessId {
     return @($children)
 }
 
+function Get-ProcStatProcessState {
+    # State field of a /proc/<pid>/stat line ('' when unparsable). comm (field 2)
+    # may contain spaces and parens, so split on the LAST ')' - same idiom as
+    # Get-ConverterChildProcessId and the adapter's _posix_group_members.
+    param([Parameter(Mandatory = $true)][AllowEmptyString()][string] $StatLine)
+
+    $closeIndex = $StatLine.LastIndexOf(')')
+    if ($closeIndex -lt 0) { return '' }
+    $rest = $StatLine.Substring($closeIndex + 1).Trim() -split '\s+'
+    if ($rest.Count -lt 1 -or [string]::IsNullOrEmpty($rest[0])) { return '' }
+    return $rest[0]
+}
+
+function Test-ConverterProcessAlive {
+    # #509 review: a defunct (zombie) descendant still owns a PID, so Get-Process
+    # keeps returning it - but it holds no HOOPS handle and can no longer execute
+    # anything, so for containment it IS terminated. On Linux hosts whose PID 1
+    # does not promptly reap orphans (our containers included) counting zombies
+    # as survivors burns the whole containment deadline and then reports a
+    # containment FAILURE for a tree that is already dead.
+    param([Parameter(Mandatory = $true)][int] $ProcessId)
+
+    if ($env:OS -eq 'Windows_NT' -or $IsWindows) {
+        return ($null -ne (Get-Process -Id $ProcessId -ErrorAction SilentlyContinue))
+    }
+
+    $statPath = "/proc/$ProcessId/stat"
+    if (-not (Test-Path -LiteralPath $statPath)) { return $false }
+    try { $raw = Get-Content -LiteralPath $statPath -Raw -ErrorAction Stop } catch { return $false }
+    return ((Get-ProcStatProcessState -StatLine $raw) -ne 'Z')
+}
+
 function Stop-ConverterProcessTree {
     # #489 L1-COR-004: `Stop-Process -Id $process.Id -Force` only reaches Kit
     # itself. Its HOOPS/CAD grandchildren keep processing untrusted input after
@@ -401,7 +433,7 @@ function Stop-ConverterProcessTree {
 
     $deadline = [DateTime]::UtcNow.AddMilliseconds($TimeoutMs)
     while ($true) {
-        $alive = @($ids | Where-Object { $null -ne (Get-Process -Id $_ -ErrorAction SilentlyContinue) })
+        $alive = @($ids | Where-Object { Test-ConverterProcessAlive -ProcessId $_ })
         if ($alive.Count -eq 0) {
             return [pscustomobject]@{ SurvivingPids = @(); FixedPointReached = $fixedPoint }
         }

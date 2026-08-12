@@ -114,7 +114,6 @@ foreach ($fnName in @(
         'Get-ConverterChildProcessId',
         'Get-ProcStatProcessState',
         'Test-ConverterProcessAlive',
-        'Get-ConverterProcessTreeId',
         'Stop-ConverterProcessTree')) {
     $found = @($converterAst.FindAll({
                 param($node)
@@ -178,8 +177,10 @@ try {
     $RecordedPids += $grandchildPid
     Assert-True (Test-ConverterProcessAlive -ProcessId $grandchildPid) 'Expected the grandchild to be alive before containment.'
 
-    $survivors = @(Stop-ConverterProcessTree -ProcessId ([int]$rootProcess.Id) -TimeoutMs 15000)
+    $containment = Stop-ConverterProcessTree -ProcessId ([int]$rootProcess.Id) -TimeoutMs 15000
+    $survivors = @($containment.SurvivingPids)
     Assert-True ($survivors.Count -eq 0) "Expected containment to be proven; survivors: $($survivors -join ', ')"
+    Assert-True ([bool]$containment.FixedPointReached) 'Expected the discover -> kill loop to reach a stable fixed point.'
     foreach ($recorded in $RecordedPids) {
         Assert-True (-not (Test-ConverterProcessAlive -ProcessId $recorded)) "Expected PID $recorded to be gone after containment."
     }
@@ -192,7 +193,6 @@ try {
     $RecordedPids += $script:LateChildId
     $script:PhantomRootId = 999999
     $script:TreeScanCount = 0
-    $script:PhantomProbeCount = 0
 
     function Get-ConverterChildProcessId {
         param([Parameter(Mandatory = $true)][int] $ParentProcessId)
@@ -202,17 +202,10 @@ try {
         return @($script:LateChildId)
     }
 
-    function Test-ConverterProcessAlive {
-        param([Parameter(Mandatory = $true)][int] $ProcessId)
-        if ($ProcessId -eq $script:PhantomRootId) {
-            $script:PhantomProbeCount++
-            return ($script:PhantomProbeCount -lt 3)
-        }
-        return ($null -ne (Get-Process -Id $ProcessId -ErrorAction SilentlyContinue))
-    }
-
-    $lateSurvivors = @(Stop-ConverterProcessTree -ProcessId $script:PhantomRootId -TimeoutMs 10000)
+    $lateContainment = Stop-ConverterProcessTree -ProcessId $script:PhantomRootId -TimeoutMs 10000
+    $lateSurvivors = @($lateContainment.SurvivingPids)
     Assert-True ($lateSurvivors.Count -eq 0) "Expected the rescan loop to prove containment; survivors: $($lateSurvivors -join ', ')"
+    Assert-True ([bool]$lateContainment.FixedPointReached) 'Expected the late-descendant case to still reach a fixed point.'
     Assert-True ($script:TreeScanCount -ge 2) 'Expected the process tree to be re-scanned, not scanned once.'
     Assert-True ($null -eq (Get-Process -Id $script:LateChildId -ErrorAction SilentlyContinue)) 'Expected the late-appearing descendant to be terminated.'
 }
