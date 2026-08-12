@@ -1020,6 +1020,216 @@ try {
         }
     }
 
+    # --- regression-repair lane (issue #494) ----------------------------------------
+    # A fixpoint run that surfaces a mechanism regression had no legal repair
+    # channel: naming the open entry hit the impersonation guard, opening a second
+    # entry hit the other-open-debt gate, and bootstrap=no hit it too. The lane
+    # opens exactly one door - append THIS PR's number to the open entry's
+    # repair_prs - and keeps every other invariant.
+    $repairSurface = @('scripts/deploy.ps1', 'scripts/self-referential-bootstrap-ledger.json')
+    $repairChangedPaths = @('scripts/deploy.ps1', 'scripts/self-referential-bootstrap-ledger.json')
+    $repairRows = @{
+        'Self-referential bootstrap' = 'yes'
+        'Bootstrap ledger entry' = 'remote-linux-deploy-target'
+        'Bootstrap reason' = $goodReason
+    }
+    $repairBase = New-LedgerJson -Entries @((New-Entry -Override @{
+        verification_mechanism_paths = $repairSurface
+    }))
+    function New-RepairHeadJson {
+        param([hashtable] $Override = @{})
+        $base = @{ verification_mechanism_paths = $repairSurface; repair_prs = @(601) }
+        foreach ($key in $Override.Keys) { $base[$key] = $Override[$key] }
+        return (New-LedgerJson -Entries @((New-Entry -Override $base)))
+    }
+    $repairHead = New-RepairHeadJson
+
+    # A legal repair passes: pre-existing open debt, own PR number appended, edits
+    # confined to the surface that entry already declared, no adjudicator touched.
+    Invoke-BodyGate -Rows $repairRows -ChangedPaths $repairChangedPaths `
+        -HeadJson $repairHead -BaseJson $repairBase -PrNumber 601
+
+    # (3) a repair may not widen the debt beyond the entry's declared surface.
+    Assert-Throws -Context 'repair PR changes mechanism paths outside the declared surface' `
+        -MessagePattern 'outside the declared surface' -Action {
+        Invoke-BodyGate -Rows $repairRows -ChangedPaths @($repairChangedPaths + 'scripts/verify-all.ps1') `
+            -HeadJson $repairHead -BaseJson $repairBase -PrNumber 601
+    }
+
+    # (4) a repair may not edit this gate's own adjudicators - even when the entry
+    # declared them, which is why this fixture widens the declared surface first.
+    $repairAdjudicatorSurface = @($repairSurface + 'scripts/lib/self-referential-bootstrap.ps1')
+    $repairAdjudicatorBase = New-LedgerJson -Entries @((New-Entry -Override @{
+        verification_mechanism_paths = $repairAdjudicatorSurface
+    }))
+    $repairAdjudicatorHead = New-LedgerJson -Entries @((New-Entry -Override @{
+        verification_mechanism_paths = $repairAdjudicatorSurface
+        repair_prs = @(601)
+    }))
+    Assert-Throws -Context 'repair PR edits an adjudicator' `
+        -MessagePattern "must not change this gate's own adjudicators" -Action {
+        Invoke-BodyGate -Rows $repairRows `
+            -ChangedPaths @($repairChangedPaths + 'scripts/lib/self-referential-bootstrap.ps1') `
+            -HeadJson $repairAdjudicatorHead -BaseJson $repairAdjudicatorBase -PrNumber 601
+    }
+
+    # (2) the appended number must be exactly this PR: neither someone else's...
+    Assert-Throws -Context 'repair appends a foreign PR number' `
+        -MessagePattern 'must append exactly this PR number' -Action {
+        Invoke-BodyGate -Rows $repairRows -ChangedPaths $repairChangedPaths `
+            -HeadJson $repairHead -BaseJson $repairBase -PrNumber 602
+    }
+    # ...nor a batch that smuggles extra PRs in alongside it.
+    Assert-Throws -Context 'repair appends more than its own PR number' `
+        -MessagePattern 'must append exactly this PR number' -Action {
+        Invoke-BodyGate -Rows $repairRows -ChangedPaths $repairChangedPaths `
+            -HeadJson (New-RepairHeadJson -Override @{ repair_prs = @(600, 601) }) `
+            -BaseJson $repairBase -PrNumber 601
+    }
+    # An unbound PR number cannot be checked against, so it is refused outright.
+    Assert-Throws -Context 'repair without a live PR number' `
+        -MessagePattern 'requires a live PR number' -Action {
+        Invoke-BodyGate -Rows $repairRows -ChangedPaths $repairChangedPaths `
+            -HeadJson $repairHead -BaseJson $repairBase -PrNumber 0
+    }
+
+    # (5) a repair may not open new debt in the same transition.
+    $repairPlusNewJson = New-LedgerJson -Entries @(
+        (New-Entry -Override @{ verification_mechanism_paths = $repairSurface; repair_prs = @(601) }),
+        (New-Entry -Override @{
+            id = 'successor-mechanism-debt'
+            pr = 601
+            verification_mechanism_paths = $repairSurface
+            bootstrap_evidence_refs = @('docs/evidence/successor/self-referential-bootstrap/summary.md')
+        })
+    )
+    Assert-Throws -Context 'repair PR also opens new debt' `
+        -MessagePattern 'must not open new debt in the same transition' -Action {
+        Invoke-BodyGate -Rows $repairRows -ChangedPaths $repairChangedPaths `
+            -HeadJson $repairPlusNewJson -BaseJson $repairBase -PrNumber 601
+    }
+
+    # Everything except repair_prs stays immutable: an append cannot smuggle a
+    # field rewrite past the open-entry immutability rule.
+    Assert-Throws -Context 'repair append alongside another field change' -MessagePattern 'was modified' -Action {
+        Invoke-BodyGate -Rows $repairRows -ChangedPaths $repairChangedPaths `
+            -HeadJson (New-RepairHeadJson -Override @{ pr = 777 }) `
+            -BaseJson $repairBase -PrNumber 601
+    }
+    # ...and the append really must be an append, not a rewrite of history.
+    $repairTwiceBase = New-LedgerJson -Entries @((New-Entry -Override @{
+        verification_mechanism_paths = $repairSurface
+        repair_prs = @(590)
+    }))
+    Assert-Throws -Context 'repair rewrites an earlier repair_prs element' -MessagePattern 'was modified' -Action {
+        Invoke-BodyGate -Rows $repairRows -ChangedPaths $repairChangedPaths `
+            -HeadJson (New-RepairHeadJson -Override @{ repair_prs = @(591, 601) }) `
+            -BaseJson $repairTwiceBase -PrNumber 601
+    }
+    Assert-Throws -Context 'repair drops an earlier repair_prs element' -MessagePattern 'was modified' -Action {
+        Invoke-BodyGate -Rows $repairRows -ChangedPaths $repairChangedPaths `
+            -HeadJson $repairHead -BaseJson $repairTwiceBase -PrNumber 601
+    }
+    # A second repair on top of an existing repair_prs record is legal.
+    Invoke-BodyGate -Rows $repairRows -ChangedPaths $repairChangedPaths `
+        -HeadJson (New-RepairHeadJson -Override @{ repair_prs = @(590, 601) }) `
+        -BaseJson $repairTwiceBase -PrNumber 601
+
+    # repair_prs schema: positive integers, strictly increasing, no duplicates.
+    Assert-Throws -Context 'repair_prs out of order' -MessagePattern 'strictly increasing' -Action {
+        Invoke-BodyGate -Rows $repairRows -ChangedPaths $repairChangedPaths `
+            -HeadJson (New-RepairHeadJson -Override @{ repair_prs = @(602, 601) }) `
+            -BaseJson $repairBase -PrNumber 601
+    }
+    Assert-Throws -Context 'repair_prs duplicate' -MessagePattern 'strictly increasing' -Action {
+        Invoke-BodyGate -Rows $repairRows -ChangedPaths $repairChangedPaths `
+            -HeadJson (New-RepairHeadJson -Override @{ repair_prs = @(601, 601) }) `
+            -BaseJson $repairBase -PrNumber 601
+    }
+    foreach ($badRepairPrs in @(@('601'), @(601.5), @(0), @(-1))) {
+        Assert-Throws -Context "repair_prs non-positive-integer member: $($badRepairPrs -join ',')" `
+            -MessagePattern 'positive integers' -Action {
+            Invoke-BodyGate -Rows $repairRows -ChangedPaths $repairChangedPaths `
+                -HeadJson (New-RepairHeadJson -Override @{ repair_prs = $badRepairPrs }) `
+                -BaseJson $repairBase -PrNumber 601
+        }
+    }
+    Assert-Throws -Context 'repair_prs as a scalar' -MessagePattern 'positive integers' -Action {
+        Invoke-BodyGate -Rows $repairRows -ChangedPaths $repairChangedPaths `
+            -HeadJson (New-RepairHeadJson -Override @{ repair_prs = 601 }) `
+            -BaseJson $repairBase -PrNumber 601
+    }
+    # Unknown properties are still rejected: repair_prs is the ONLY new key.
+    Assert-Throws -Context 'unknown ledger entry property' -MessagePattern 'unknown JSON property' -Action {
+        Invoke-BodyGate -Rows $repairRows -ChangedPaths $repairChangedPaths `
+            -HeadJson (New-RepairHeadJson -Override @{ repair_notes = 'x' }) `
+            -BaseJson $repairBase -PrNumber 601
+    }
+
+    # closed entries remain immutable - repair_prs is not a back door into them.
+    $closedRepairBase = New-LedgerJson -Entries @((New-Entry -Override @{
+        status = 'closed'
+        fixpoint = @{ reverified_at = '2026-08-01T08:00:00Z'; mechanism_commit = ('a' * 40); evidence_refs = @('docs/evidence/remote-linux-deploy/fixpoint/summary.md') }
+    }))
+    $closedRepairHead = New-LedgerJson -Entries @((New-Entry -Override @{
+        status = 'closed'
+        fixpoint = @{ reverified_at = '2026-08-01T08:00:00Z'; mechanism_commit = ('a' * 40); evidence_refs = @('docs/evidence/remote-linux-deploy/fixpoint/summary.md') }
+        repair_prs = @(601)
+    }))
+    Assert-Throws -Context 'appending repair_prs to a closed entry' -MessagePattern 'closed entries are immutable' -Action {
+        Invoke-BodyGate -Rows $repairRows -ChangedPaths $repairChangedPaths `
+            -HeadJson $closedRepairHead -BaseJson $closedRepairBase -PrNumber 601
+    }
+
+    # (5) a repair may not close debt in the same transition. The closure here is
+    # otherwise fully legal, so only the combination is what the gate refuses.
+    $repairTargetEvidence = 'docs/evidence/repairable/self-referential-bootstrap/summary.md'
+    $repairTargetEntry = New-Entry -Override @{
+        id = 'repairable-mechanism-entry'
+        verification_mechanism_paths = @('scripts/self-referential-bootstrap-ledger.json')
+        bootstrap_evidence_refs = @($repairTargetEvidence)
+    }
+    & $write $repairTargetEvidence 'repair target bootstrap evidence'
+    $null = Invoke-FixtureGit -Arguments @('add', '--', $repairTargetEvidence)
+    $repairClosureBase = New-LedgerJson -Entries @((New-Entry), $repairTargetEntry)
+    $repairClosureBaseSha = New-FixtureHeadCommit -Json $repairClosureBase 'base: closable entry plus repair target'
+    $repairClosureSummary = 'docs/evidence/repair-closure/fixpoint/summary.md'
+    $repairClosureAttestation = 'docs/evidence/repair-closure/fixpoint/attestation.json'
+    $repairClosureEntry = New-Entry -Override @{
+        status = 'closed'
+        fixpoint = @{
+            reverified_at = '2026-08-01T08:00:00Z'
+            mechanism_commit = $fixpointCommit
+            evidence_refs = @($repairClosureSummary, $repairClosureAttestation)
+        }
+    }
+    & $write $repairClosureSummary 'repair-plus-closure re-verification'
+    & $write $repairClosureAttestation (New-FixpointAttestationJson -Entry $repairClosureEntry -MechanismCommit $fixpointCommit)
+    $null = Invoke-FixtureGit -Arguments @('add', '--', $repairClosureSummary, $repairClosureAttestation)
+    $repairPlusClosureJson = New-LedgerJson -Entries @(
+        $repairClosureEntry,
+        (New-Entry -Override @{
+            id = 'repairable-mechanism-entry'
+            verification_mechanism_paths = @('scripts/self-referential-bootstrap-ledger.json')
+            bootstrap_evidence_refs = @($repairTargetEvidence)
+            repair_prs = @(601)
+        })
+    )
+    $repairPlusClosureHead = New-FixtureHeadCommit -Json $repairPlusClosureJson 'closure plus repair in one transition'
+    Assert-Throws -Context 'repair PR also closes debt' `
+        -MessagePattern 'must not close debt in the same transition' -Action {
+        Invoke-BodyGate -Rows @{
+            'Self-referential bootstrap' = 'yes'
+            'Bootstrap ledger entry' = 'repairable-mechanism-entry'
+            'Bootstrap reason' = $goodReason
+        } -ChangedPaths @(
+            'scripts/self-referential-bootstrap-ledger.json',
+            $repairClosureSummary,
+            $repairClosureAttestation
+        ) -HeadJson $repairPlusClosureJson -BaseJson $repairClosureBase `
+            -GateRepoRoot $gitRoot -BaseSha $repairClosureBaseSha -HeadSha $repairPlusClosureHead -PrNumber 601
+    }
+
     # --- non-mechanism PRs are untouched by all of this -----------------------------
     Invoke-BodyGate -Rows @{} -ChangedPaths @('web-viewer-sample/src/Window.tsx') -HeadJson $openBase -BaseJson $openBase
 

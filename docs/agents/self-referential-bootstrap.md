@@ -44,6 +44,22 @@
 
 **升級規則**：後續 PR 把此類腳本的輸出接進第 1／2 類的任何機器消費者時，該接線 PR 必然觸及 mechanism surface（manifest／workflow／gate script），**必須在同一 PR 把該腳本加入 `Get-SelfReferentialMechanismPaths`**；該腳本自此成為 mechanism surface。反向亦同：要從清單移除一個路徑，必須先移除它的所有機器消費者。
 
+## 2.2 Regression-repair lane（修復既有 open debt 的唯一通道）
+
+fixpoint 首跑本身就是機制的第一次正規執行，因此**可能就地驗出該機制的 regression**。在此之前契約沒有任何合法修復通道：宣告既有 entry 被 impersonation guard 擋（entry 必須是本 PR 新增）、自增新 entry 被「其他 open debt」擋、宣告 `bootstrap=no` 也被同一道 open debt 擋 — 三面互鎖（issue #494）。
+
+Repair lane 只開一扇門：**修復 PR 把自己的 PR number 追加到該 open entry 的 `repair_prs`**，藉此以機器方式把修復綁定到既有債務，而不是新增或竄改債務。`repair_prs` 是選填的正整數陣列，必須嚴格遞增且不得重複；未列出者等同空陣列（repair lane 之前寫入的 entry 因此保持可解析且不可變）。
+
+放行的**五個條件（缺一即 fail closed）**：
+
+1. PR body 宣告的 entry 在 **PR base 已存在且 `status=open`**，在 head 仍為 `open`。
+2. 本 transition 對該 entry 的**唯一**差異是 `repair_prs` 的**尾端追加**，且追加內容**恰好等於本 PR number**（單一值）。無法取得 live PR number 時直接拒絕，不得略過驗證。
+3. 本 PR 命中機制清單的 changed paths **全部落在該 entry 已宣告的 `verification_mechanism_paths` 之內**（case-sensitive）。要改該範圍以外的機制，開新 entry。
+4. 本 PR **不得修改本 gate 自身的 adjudicator**（`$script:SelfReferentialAdjudicatorPaths`）。修改裁決者仍須依 §2／§3 另開 debt，不能藉 repair lane 讓被改過的規則裁決自己。
+5. 同一 transition **不得新增任何 entry，也不得關閉任何 entry**。
+
+Repair lane **不放寬**任何既有不變式：ledger 仍為 append-only（`repair_prs` 只能追加，既有元素不可改寫或刪除）；entry 除 `repair_prs` 外所有欄位仍不可變，唯一合法狀態轉移仍是一次 `open → closed`；closure 仍須提交完整且全綠的 fixpoint attestation（修復後的機制必須自己通過該 entry 凍結的 `verification_contract`）；同一 transition 仍不得一邊關債一邊開債；closed entry 仍完全不可變 — `repair_prs` 不是進入 closed entry 的後門。
+
 ## 3. Ledger 機制
 
 - Ledger：`scripts/self-referential-bootstrap-ledger.json`（schema `self-referential-bootstrap-ledger/v1`）。
@@ -85,7 +101,7 @@
 }
 ```
 
-`bootstrap_evidence_refs` 的每個 ref 必須含 `self-referential-bootstrap`（或底線變體）字樣，作為 stack kind 標示。closed 時 `fixpoint`：
+`bootstrap_evidence_refs` 的每個 ref 必須含 `self-referential-bootstrap`（或底線變體）字樣，作為 stack kind 標示。新 entry 不帶 `repair_prs`；該欄位是選填的嚴格遞增正整數陣列，只由 §2.2 repair lane 追加。closed 時 `fixpoint`：
 
 ```json
 {

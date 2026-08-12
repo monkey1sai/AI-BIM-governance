@@ -202,10 +202,12 @@
       "status": "open",
       "pr": 521,
       "opened_at": "2026-08-12T05:20:43Z",
-      "reason": "本 PR 修改 gate 契約本文，增補 §2.1 範圍界定與升級規則。契約文字由 base-pinned 裁決者按 base 版本強制執行，merge 前不存在任何能以變更後條文裁決 PR 的正規機制；僅能於 merge 後在 main 重跑 gate 套件，驗證契約文字與機制清單分類一致。",
+      "reason": "本 PR 修改 gate 契約本文，增補 §2.1 範圍界定與升級規則，並增補 §2.2 regression-repair lane 條文與其在 gate library、回歸套件中的實作（issue #494：fixpoint 首跑驗出 mechanism regression 時，修復 PR 被 impersonation guard、other open debt、bootstrap=no 三面互鎖）。契約文字與裁決邏輯皆由 base-pinned 裁決者按 base 版本強制執行，merge 前不存在任何能以變更後條文或變更後放行條件裁決 PR 的正規機制；僅能於 merge 後在 main 重跑 gate 套件，驗證契約文字、機制清單分類與 repair lane 判定一致。",
       "verification_mechanism_paths": [
         "docs/agents/self-referential-bootstrap.md",
-        "scripts/self-referential-bootstrap-ledger.json"
+        "scripts/lib/self-referential-bootstrap.ps1",
+        "scripts/self-referential-bootstrap-ledger.json",
+        "scripts/tests/test-self-referential-bootstrap.ps1"
       ],
       "verification_contract": {
         "id": "evidence-harness-scope-clarification/v1",

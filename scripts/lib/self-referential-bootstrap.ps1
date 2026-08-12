@@ -225,20 +225,26 @@ function Assert-SelfReferentialBootstrapReason {
 }
 
 function Assert-SelfReferentialJsonObjectShape {
+    # The property set stays EXACT. -OptionalProperties widens the allowed set
+    # without widening the required set, which is the only way to add a field to
+    # a schema whose existing closed entries are immutable: an entry written
+    # before the field existed must keep validating byte-for-byte.
     param(
         [Parameter(Mandatory = $true)][System.Text.Json.JsonElement] $Element,
         [Parameter(Mandatory = $true)][string] $Context,
-        [Parameter(Mandatory = $true)][string[]] $RequiredProperties
+        [Parameter(Mandatory = $true)][string[]] $RequiredProperties,
+        [AllowEmptyCollection()][string[]] $OptionalProperties = @()
     )
     if ($Element.ValueKind -ne [System.Text.Json.JsonValueKind]::Object) {
         throw "self_referential_bootstrap: $Context must be a JSON object."
     }
+    $allowedProperties = @($RequiredProperties) + @($OptionalProperties)
     $seen = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
     foreach ($property in $Element.EnumerateObject()) {
         if (-not $seen.Add($property.Name)) {
             throw "self_referential_bootstrap: $Context has duplicate JSON property '$($property.Name)'."
         }
-        if (-not ($RequiredProperties -ccontains $property.Name)) {
+        if (-not ($allowedProperties -ccontains $property.Name)) {
             throw "self_referential_bootstrap: $Context has unknown JSON property '$($property.Name)' (raw-string validation requires exact property names)."
         }
     }
@@ -246,6 +252,33 @@ function Assert-SelfReferentialJsonObjectShape {
         if (-not $seen.Contains($required)) {
             throw "self_referential_bootstrap: $Context is missing required JSON property '$required'."
         }
+    }
+}
+
+function Assert-SelfReferentialJsonRepairPrs {
+    # repair_prs records which PRs repaired an open entry's mechanism (issue #494).
+    # It is append-only in the transition rules, so the value itself must be a
+    # strictly increasing list of positive native integers: duplicates or a
+    # decreasing tail would make "the appended suffix" ambiguous, and a string or
+    # fraction would coerce past a naive [int] cast the way `pr` once did.
+    param(
+        [Parameter(Mandatory = $true)][System.Text.Json.JsonElement] $Element,
+        [Parameter(Mandatory = $true)][string] $Context
+    )
+    if ($Element.ValueKind -ne [System.Text.Json.JsonValueKind]::Array) {
+        throw "self_referential_bootstrap: $Context repair_prs must be a JSON array of positive integers."
+    }
+    $previous = 0
+    foreach ($item in $Element.EnumerateArray()) {
+        $value = 0
+        if ($item.ValueKind -ne [System.Text.Json.JsonValueKind]::Number -or
+            -not $item.TryGetInt32([ref]$value) -or $value -le 0) {
+            throw "self_referential_bootstrap: $Context repair_prs must be a JSON array of positive integers."
+        }
+        if ($value -le $previous) {
+            throw "self_referential_bootstrap: $Context repair_prs must be strictly increasing with no duplicates."
+        }
+        $previous = $value
     }
 }
 
@@ -290,7 +323,14 @@ function Assert-SelfReferentialRawLedgerShape {
             Assert-SelfReferentialJsonObjectShape -Element $entry -Context $context -RequiredProperties @(
                 'id', 'status', 'pr', 'opened_at', 'reason',
                 'verification_mechanism_paths', 'verification_contract',
-                'bootstrap_evidence_refs', 'fixpoint')
+                'bootstrap_evidence_refs', 'fixpoint') -OptionalProperties @('repair_prs')
+            # repair_prs is OPTIONAL, not required: the four closed entries that
+            # predate the repair lane are immutable, so requiring the field would
+            # make the existing ledger unparsable.
+            $repairProperties = @($entry.EnumerateObject() | Where-Object { $_.Name -ceq 'repair_prs' })
+            if ($repairProperties.Count -eq 1) {
+                Assert-SelfReferentialJsonRepairPrs -Element $repairProperties[0].Value -Context $context
+            }
             foreach ($stringProperty in @('id', 'status', 'opened_at', 'reason')) {
                 if ($entry.GetProperty($stringProperty).ValueKind -ne [System.Text.Json.JsonValueKind]::String) {
                     throw "self_referential_bootstrap: $context $stringProperty must be a JSON string."
@@ -480,6 +520,40 @@ function Get-SelfReferentialBootstrapLedger {
 function ConvertTo-SelfReferentialCanonicalEntry {
     param([Parameter(Mandatory = $true)] $Entry)
     return ($Entry | ConvertTo-Json -Depth 8 -Compress)
+}
+
+function Get-SelfReferentialRepairPrs {
+    # Absent repair_prs reads as the empty list, so an entry written before the
+    # repair lane existed and an entry that has never been repaired are the same
+    # thing to the transition rules.
+    param([Parameter(Mandatory = $true)] $Entry)
+    $property = $Entry.PSObject.Properties['repair_prs']
+    if ($null -eq $property -or $null -eq $property.Value) { return @() }
+    return @($property.Value | ForEach-Object { [int]$_ })
+}
+
+function Get-SelfReferentialRepairAppend {
+    # Returns the PR numbers appended to repair_prs when a TAIL APPEND to that one
+    # field is the only difference between the base and head entry; $null for any
+    # other difference. This is what makes the repair lane narrow: the caller can
+    # treat "$null" as "an open entry was mutated" and keep the original refusal.
+    param(
+        [Parameter(Mandatory = $true)] $BaseEntry,
+        [Parameter(Mandatory = $true)] $HeadEntry
+    )
+    $baseComparable = $BaseEntry | Select-Object -Property * -ExcludeProperty repair_prs
+    $headComparable = $HeadEntry | Select-Object -Property * -ExcludeProperty repair_prs
+    if ((ConvertTo-SelfReferentialCanonicalEntry $baseComparable) -cne
+        (ConvertTo-SelfReferentialCanonicalEntry $headComparable)) {
+        return $null
+    }
+    $basePrs = @(Get-SelfReferentialRepairPrs -Entry $BaseEntry)
+    $headPrs = @(Get-SelfReferentialRepairPrs -Entry $HeadEntry)
+    if ($headPrs.Count -le $basePrs.Count) { return $null }
+    for ($index = 0; $index -lt $basePrs.Count; $index++) {
+        if ($headPrs[$index] -ne $basePrs[$index]) { return $null }
+    }
+    return @($headPrs[$basePrs.Count..($headPrs.Count - 1)])
 }
 
 function Assert-SelfReferentialEvidenceBlob {
@@ -764,11 +838,13 @@ function Compare-SelfReferentialLedgerTransition {
     # entries are immutable except for the single legal open -> closed transition:
     #   removed entry                  -> violation (deleting debt is the attack)
     #   mutated entry (any field)      -> violation
+    #   open -> open, repair_prs tail  -> recorded as a repair candidate; the body
+    #                                     gate decides whether THIS PR may claim it
     #   open -> closed                 -> fixpoint must be real (see below)
     #   new entry                      -> must be open, self-registered to THIS PR,
     #                                     and scoped to this PR's changed paths
-    # Returns @{ NewEntries; ClosedEntries; OpenDebt } where OpenDebt is the union
-    # of base-open entries not legally closed and head-open entries.
+    # Returns @{ NewEntries; ClosedEntries; RepairEntries; OpenDebt } where OpenDebt
+    # is the union of base-open entries not legally closed and head-open entries.
     param(
         [Parameter(Mandatory = $true)] $BaseLedger,
         [Parameter(Mandatory = $true)] $HeadLedger,
@@ -793,6 +869,7 @@ function Compare-SelfReferentialLedgerTransition {
 
     $newEntries = @()
     $closedEntries = @()
+    $repairEntries = @()
     foreach ($id in $headById.Keys) {
         $head = $headById[$id]
         if (-not $baseById.ContainsKey($id)) {
@@ -855,7 +932,16 @@ function Compare-SelfReferentialLedgerTransition {
         # base open
         if ($headStatus -eq 'open') {
             if ((ConvertTo-SelfReferentialCanonicalEntry $base) -ne (ConvertTo-SelfReferentialCanonicalEntry $head)) {
-                throw "self_referential_bootstrap: open entry '$id' was modified; the only legal transition is open -> closed with a real fixpoint."
+                # One narrow exception (issue #494): a tail append to repair_prs.
+                # Everything else about the entry stays immutable, so the debt,
+                # its contract, and its declared surface cannot be edited under
+                # cover of a repair. Assert-SelfReferentialRepairLane decides
+                # whether the append is legal FOR THIS PR; this only records it.
+                $appendedPrs = Get-SelfReferentialRepairAppend -BaseEntry $base -HeadEntry $head
+                if ($null -eq $appendedPrs) {
+                    throw "self_referential_bootstrap: open entry '$id' was modified; the only legal transition is open -> closed with a real fixpoint, or an append-only repair_prs record."
+                }
+                $repairEntries += [pscustomobject]@{ Id = $id; AppendedPrs = @($appendedPrs) }
             }
             continue
         }
@@ -979,7 +1065,88 @@ function Compare-SelfReferentialLedgerTransition {
     return [pscustomobject]@{
         NewEntries    = @($newEntries)
         ClosedEntries = @($closedEntries)
+        RepairEntries = @($repairEntries)
         OpenDebt      = @($openDebt)
+    }
+}
+
+function Assert-SelfReferentialRepairLane {
+    # Regression-repair lane (issue #494). The first fixpoint run of a mechanism
+    # can surface a regression in that same mechanism, and the contract used to
+    # leave no legal way to fix it: naming the open entry hit the impersonation
+    # guard, self-registering a second entry hit the other-open-debt gate, and
+    # declaring bootstrap=no hit that gate too. This lane opens exactly one door -
+    # a repair PR binds itself to the EXISTING debt by appending its own number to
+    # that entry's repair_prs - and every other invariant is re-asserted here:
+    #   (1) the entry is pre-existing debt that stays open on both sides,
+    #   (2) the append is exactly this PR's number (so the binding is machine-checked),
+    #   (3) the repair stays inside the mechanism surface the entry already declared,
+    #   (4) the repair does not touch this gate's own adjudicators, and
+    #   (5) the transition neither opens nor closes debt.
+    # The entry therefore keeps its single legal open -> closed transition, and the
+    # closure attestation still has to prove the repaired mechanism passes.
+    param(
+        [Parameter(Mandatory = $true)][string] $EntryId,
+        [Parameter(Mandatory = $true)] $Transition,
+        [Parameter(Mandatory = $true)] $BaseLedger,
+        [Parameter(Mandatory = $true)] $HeadLedger,
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][string[]] $ChangedPaths,
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][string[]] $MechanismPaths,
+        [int] $PrNumber = 0
+    )
+
+    # (1) pre-existing OPEN debt on both sides. A head-only or closed entry is the
+    # impersonation case the original guard was written for, so it keeps that message.
+    $baseEntries = @($BaseLedger.entries | Where-Object { [string]$_.id -ceq $EntryId })
+    if ($baseEntries.Count -ne 1 -or [string]$baseEntries[0].status -cne 'open') {
+        throw "self_referential_bootstrap: PR body names ledger entry '$EntryId' but this PR does not ADD it and it is not open debt at the PR base; each bootstrap PR must self-register its own open entry (base-vs-head verified)."
+    }
+    $headEntries = @($HeadLedger.entries | Where-Object { [string]$_.id -ceq $EntryId })
+    if ($headEntries.Count -ne 1 -or [string]$headEntries[0].status -cne 'open') {
+        throw "self_referential_bootstrap: repair PR for entry '$EntryId' must leave that entry open; a repair cannot double as the fixpoint closure it is repairing."
+    }
+
+    # (2) the repair must bind itself to THIS PR. Without a live PR number there is
+    # nothing to bind against, so an unbound run is refused rather than skipped.
+    if ($PrNumber -le 0) {
+        throw "self_referential_bootstrap: repair of ledger entry '$EntryId' requires a live PR number to bind repair_prs; refusing an unbound repair."
+    }
+    $repairs = @($Transition.RepairEntries | Where-Object { [string]$_.Id -ceq $EntryId })
+    if ($repairs.Count -ne 1) {
+        throw "self_referential_bootstrap: PR body names ledger entry '$EntryId' but this PR does not ADD it and does not append a repair_prs record for it; each bootstrap PR must self-register its own open entry, or register itself as a repair of the open entry it fixes."
+    }
+    $appendedPrs = @($repairs[0].AppendedPrs)
+    if ($appendedPrs.Count -ne 1 -or ([int]$appendedPrs[0]) -ne $PrNumber) {
+        throw "self_referential_bootstrap: repair of ledger entry '$EntryId' must append exactly this PR number to repair_prs; appended $($appendedPrs -join ', ') on PR #$PrNumber."
+    }
+
+    # (3) a repair fixes the debt it is bound to - it may not widen it. Comparison
+    # is case-sensitive for the same reason declared paths are: git paths are.
+    $declaredPaths = @($headEntries[0].verification_mechanism_paths | ForEach-Object { [string]$_ })
+    $outsidePaths = @($MechanismPaths | Where-Object { -not ($declaredPaths -ccontains $_) })
+    if ($outsidePaths.Count -gt 0) {
+        throw "self_referential_bootstrap: repair of ledger entry '$EntryId' changes verification-mechanism paths outside the declared surface of that entry: $($outsidePaths -join ', '); open a new entry for that mechanism instead."
+    }
+
+    # (4) the repair lane deliberately does NOT reopen the adjudicators. Repairing
+    # the rule that judges the repair is the self-validation this whole contract exists
+    # to prevent, so those edits keep owing a fresh entry of their own.
+    $adjudicatorEdits = @($ChangedPaths | Where-Object {
+        $script:SelfReferentialAdjudicatorPaths -ccontains $_
+    })
+    if ($adjudicatorEdits.Count -gt 0) {
+        throw "self_referential_bootstrap: a repair PR must not change this gate's own adjudicators: $($adjudicatorEdits -join ', '); those changes must register new fixpoint debt."
+    }
+
+    # (5) one transition, one job. Mixing debt bookkeeping into a repair would let a
+    # repair launder a new obligation, or bank a closure whose evidence predates the fix.
+    if (@($Transition.NewEntries).Count -gt 0) {
+        $newIds = @($Transition.NewEntries | ForEach-Object { [string]$_.id }) -join ', '
+        throw "self_referential_bootstrap: a repair PR must not open new debt in the same transition ($newIds); repair and the next mechanism change belong in separate PRs."
+    }
+    if (@($Transition.ClosedEntries).Count -gt 0) {
+        $closedIds = @($Transition.ClosedEntries | ForEach-Object { [string]$_.id }) -join ', '
+        throw "self_referential_bootstrap: a repair PR must not close debt in the same transition ($closedIds); the fixpoint closure must run after the repair merges."
     }
 }
 
@@ -1126,9 +1293,14 @@ function Assert-SelfReferentialBootstrapBody {
     Assert-SelfReferentialBootstrapReason -Reason $reason -Context "PR body 'Bootstrap reason'"
 
     # Impersonation guard: the declared entry must be NEW in this PR (present at
-    # head, absent at base). Pointing at an earlier PR's open entry is refused.
+    # head, absent at base). Pointing at an earlier PR's open entry is refused -
+    # EXCEPT along the regression-repair lane (issue #494), where the PR fixes the
+    # mechanism that entry already owns and registers itself in its repair_prs.
     if ($entryId -notin $newIds) {
-        throw "self_referential_bootstrap: PR body names ledger entry '$entryId' but this PR does not ADD it; each bootstrap PR must self-register its own open entry (base-vs-head verified)."
+        Assert-SelfReferentialRepairLane -EntryId $entryId -Transition $transition `
+            -BaseLedger $baseLedger -HeadLedger $headLedger -ChangedPaths $ChangedPaths `
+            -MechanismPaths $mechanismPaths -PrNumber $PrNumber
+        return
     }
 
     $otherOpen = @($transition.OpenDebt | Where-Object { [string]$_.id -ne $entryId })
