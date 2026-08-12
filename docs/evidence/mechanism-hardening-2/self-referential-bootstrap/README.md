@@ -5,7 +5,7 @@
 - `stack_kind=self_referential_bootstrap`
 - Pull request: see the ledger entry `mechanism-hardening-2` (`pr` field is the binding record)
 - Baseline: freshly fetched `origin/main` at `472192386f8402cf19a29005daf25556d26f222c`
-- Reviewed head: `110c657fd620e3bdbac4379ac716da99d37848b9` (round 2), worktree clean — `git status --porcelain` produced no output at that commit
+- Reviewed head: `110c657fd620e3bdbac4379ac716da99d37848b9` (round 2) and `d63453024f59b13714ed222ea14bdc34a2890253` (round 3), worktree clean at each — `git status --porcelain` produced no output at either commit
 - This is isolated branch bootstrap evidence. It is not canonical post-change evidence and does not claim full-system E2E completion.
 
 ## Scope
@@ -31,6 +31,12 @@ Local mechanism suites on the branch head, on Windows with PowerShell 7.5.4. The
 ## Round 2: PR #513 ship-gate findings
 
 The Codex tri-adversarial ship-gate returned NO-SHIP on four findings against `Stop-HostNativeProcessTreeAndWait`, and the PR review threads named the same defects. All four are closed at the reviewed head: the pre-entry `HasExited` return no longer skips descendant containment, descendant stops are identity-revalidated against PID reuse, containment is a bounded re-enumerating fixed point rather than one snapshot, and the tree-kill capability decision is injectable so the Windows PowerShell 5.1 fallback is exercised as behaviour. The round also restored `-DryRun` adjudication of `KIT_CONTROL_URL` and put `test-host-native-launcher.ps1` into the required `rebuild-test-deploy` CI job, which is why `.github/workflows/ci.yml` and `scripts/verification-manifest.json` joined this entry's `verification_mechanism_paths`.
+
+## Round 3: PR #513 ship-gate second pass
+
+A second gate pass found three more defects in the same helper, all real. The exited-parent sweep added in round 2 is only sound where the OS keeps the creator PID on an orphan — measured as true on Windows and false on Linux, where the kernel re-parents orphans — so that platform fact now lives in `Test-OrphanRediscoverySupported` and the helper fails closed where PPID rediscovery cannot prove containment, naming the caller as the authoritative boundary and accepting a pre-exit descendant record as the escape. Reaching the deadline is no longer treated as a clean containment pass. `TimeoutMs` is now one end-to-end budget spanning discovery, termination, the parent wait, and every containment pass.
+
+Both behavioural regressions were confirmed against the previous implementation before the fix, not merely argued: the clean-pass scenario returned success after discovering twelve descendants, and the slow-discovery scenario overran its advertised bound by 1286 ms. The POSIX branch of the platform gate is proven on this host through the injected capability decision; it has not been executed on a real re-parenting kernel, which is recorded as a limit in `verification.txt`.
 
 ## Limits
 

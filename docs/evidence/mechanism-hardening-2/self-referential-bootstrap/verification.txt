@@ -42,5 +42,22 @@ PASS test-rebuild-test-deploy
 PASS test-agent-governance-check
 PASS test-deploy-dryrun (pwsh -NoProfile -NonInteractive -File scripts/tests/test-deploy-dryrun.ps1)
 NOT_RUN the remaining round-1 command ids were not re-executed in round 2; nothing in the round-2 scope reaches them
+--- round 3: PR #513 ship-gate second pass (L1-COR-001 platform gate, L1-SEC-001 clean pass, L1-COR-002 single budget) ---
+reviewed_head_commit=d63453024f59b13714ed222ea14bdc34a2890253
+reviewed_head_worktree=clean (`git status --porcelain` produced no output at the recorded commit)
+reviewed_host=windows pwsh=7.5.4
+reviewed_scope=scripts/lib/host-native-launcher.ps1, scripts/lib/platform/platform-adapter.ps1, scripts/tests/test-host-native-launcher.ps1
+PASS test-host-native-launcher
+PASS test-deploy-governance-static
+PASS test-verify-all
+PASS test-self-referential-bootstrap
+PASS invoke-powershell-static
+PASS test-platform-adapter
+PASS test-host-native-child-launch
+PASS test-rebuild-test-deploy
+MEASURED windows-orphan-rediscovery=SUPPORTED (a killed fixture parent's PID still resolved its orphaned python child and its conhost through Win32_Process.ParentProcessId, and the production-default sweep contained and proved both; this is the platform fact Test-OrphanRediscoverySupported encodes)
+MEASURED regression-is-real (previous implementation at 26f056d, same two scenarios): the clean-pass scenario returned SUCCESS after discovering 12 descendants with an empty survivor set, and the slow-discovery scenario spent 2786 ms against an advertised 1500 ms bound
+NOT_RUN linux-leg-of-the-platform-gate (no canonical Linux session was opened; the POSIX fail-closed branch is proven on this host through the injected capability gate, not on a real re-parenting kernel)
+NOT_RUN the remaining round-1 command ids were not re-executed in round 3; nothing in the round-3 scope reaches them
 LIMIT canonical-post-change-verification=pending merge and mainline fixpoint rebuild
 LIMIT full-system-e2e=not claimed
