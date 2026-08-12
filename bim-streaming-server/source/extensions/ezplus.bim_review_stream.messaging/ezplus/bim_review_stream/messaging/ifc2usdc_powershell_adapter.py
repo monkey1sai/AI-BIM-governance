@@ -376,7 +376,9 @@ class _ContainedProcess:
       的 descendant 會離開原本的 PGID,``killpg``、/proc pgrp 掃描與存活檢查都涵蓋
       不到它。真正不可逃脫的 POSIX 邊界要 cgroup(需要 cgroup 委派權限),不在本
       class 範圍內。實際的 Kit/HOOPS converter 不會 ``setsid()``,但這個殘餘風險
-      是真的,不要把 POSIX 這一側說成「不可逃脫」。
+      是真的,不要把 POSIX 這一側說成「不可逃脫」。#509 review r2:非可逃脫的
+      POSIX 邊界(cgroup v2 + ``cgroup.kill``)列為 TRACKED FOLLOW-UP,本 PR 不
+      實作;出貨路徑(Windows Job Object)不受這個限制影響。
     """
 
     def __init__(
@@ -392,6 +394,7 @@ class _ContainedProcess:
         self._pgid = pgid
         self._api = api
         self._survivors: tuple[int, ...] = ()
+        self._containment_detail: str | None = None
         self._closed = False
 
     # -- construction -------------------------------------------------------
@@ -517,6 +520,12 @@ class _ContainedProcess:
     def survivors(self) -> tuple[int, ...]:
         return self._survivors
 
+    @property
+    def containment_detail(self) -> str | None:
+        """Machine-readable reason the containment proof failed, if any."""
+
+        return self._containment_detail
+
     def wait(self, timeout):
         return self._proc.wait(timeout=timeout)
 
@@ -568,6 +577,19 @@ class _ContainedProcess:
         self._reap_bounded(max(deadline - time.monotonic(), 0.5))
         while True:
             live = self._windows_live_pids(api, pid)
+            if live is None:
+                # #509 review r2: the job EXISTS but QueryInformationJobObject
+                # would not say who is still in it. TerminateJobObject was already
+                # issued above -- killing is best-effort and always attempted --
+                # but the PROOF must fail closed. Falling back to the PPID walk
+                # here let the terminator announce containment on evidence that
+                # never observed the authoritative boundary: a reparented Kit
+                # grandchild is invisible to an ancestry walk, so an empty walk is
+                # not proof of an empty job. Survivors are genuinely unknown, so
+                # report none instead of inventing an ancestry-walk answer.
+                self._survivors = ()
+                self._containment_detail = "job_membership_unreadable"
+                return False
             if not live:
                 self._survivors = ()
                 return True
@@ -592,11 +614,20 @@ class _ContainedProcess:
             stack.extend(api.child_pids(current))
         return ordered
 
-    def _windows_live_pids(self, api: _Win32ContainmentApi, root_pid: int) -> set[int]:
+    def _windows_live_pids(
+        self, api: _Win32ContainmentApi, root_pid: int
+    ) -> set[int] | None:
+        """Live pids inside the boundary; None when the boundary is UNREADABLE.
+
+        None is not "empty": it means the job exists but its membership query
+        failed, so containment cannot be proven from here. Only the no-job case
+        (a unit-test double) may answer from the PPID walk.
+        """
+
         if self._job is not None:
             candidates = api.job_process_ids(self._job)
             if candidates is None:
-                candidates = self._windows_tree_pids(api, root_pid)
+                return None
         else:
             candidates = self._windows_tree_pids(api, root_pid)
         return {int(pid) for pid in candidates if pid and api.pid_is_alive(int(pid))}
@@ -2295,6 +2326,7 @@ class Ifc2UsdcPowershellConverterAdapter:
         timed_out = False
         containment_proven = True
         survivors: tuple[int, ...] = ()
+        containment_detail: str | None = None
         try:
             with self._hold_windows_hoops_entrypoint_for_execution(
                 validated_hoops_main,
@@ -2327,6 +2359,7 @@ class Ifc2UsdcPowershellConverterAdapter:
                                 grace_seconds=self._CONTAINMENT_GRACE_SECONDS,
                             )
                             survivors = contained.survivors
+                            containment_detail = contained.containment_detail
                     finally:
                         contained.close()
                     stdout_handle.seek(0)
@@ -2353,10 +2386,14 @@ class Ifc2UsdcPowershellConverterAdapter:
             # 只有在「每個 descendant 都被觀察到消失」之後才允許回報單純 timeout。
             if not containment_proven:
                 surviving = ", ".join(str(pid) for pid in survivors) or "unknown"
+                # #509 review r2:證明失敗的「原因」要跟著出去,operator 才分得清
+                # 「有殘存 PID」與「邊界根本讀不到(job_membership_unreadable)」。
+                detail = f" [{containment_detail}]" if containment_detail else ""
                 message, metadata = self._failure_diagnostics(
                     f"convert-ifc-to-usdc.ps1 exceeded {outer_timeout}s and its process "
                     f"tree could not be proven terminated within "
-                    f"{self._CONTAINMENT_DEADLINE_SECONDS}s (surviving pids: {surviving}).",
+                    f"{self._CONTAINMENT_DEADLINE_SECONDS}s (surviving pids: "
+                    f"{surviving}){detail}.",
                     completed,
                 )
                 raise ConversionAuthorityError(

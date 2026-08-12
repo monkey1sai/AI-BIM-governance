@@ -386,8 +386,23 @@ function Stop-ConverterProcessTree {
     # (two consecutive rounds that discover no new PID), capped at $MaxRounds.
     # Hitting the cap is reported honestly instead of being papered over.
     #
+    # KNOWN BLIND SPOT (#509 review r2): this is a PPID walk, and a PPID walk
+    # structurally cannot see an orphan whose parent died between discovery and
+    # kill. Once a parent exits, the OS reparents its children (to init/PID 1 on
+    # Linux, to nothing on Windows), so the child stops answering any
+    # ParentProcessId query rooted at this converter and drops out of the walk
+    # entirely. Re-walking from every known member narrows that window; it cannot
+    # close it. This wrapper is therefore BEST EFFORT by construction. The
+    # authoritative containment boundary is the Python adapter
+    # (ifc2usdc_powershell_adapter._ContainedProcess), whose OS-level boundary --
+    # a Windows Job Object, or a POSIX process group -- keeps membership across
+    # reparenting. The ps1 direct-invocation path is not the ship path, so this
+    # gap is accepted and disclosed rather than papered over.
+    #
     # Returns [pscustomobject] @{ SurvivingPids = @(); FixedPointReached = $bool };
-    # SurvivingPids empty AND FixedPointReached true is the only proven case.
+    # SurvivingPids empty AND FixedPointReached true is the strongest result this
+    # wrapper can report, and it still means "no survivor observed", not "proven
+    # contained".
     param(
         [Parameter(Mandatory = $true)][int] $ProcessId,
         [ValidateRange(0, 600000)][int] $TimeoutMs = 15000,
@@ -601,7 +616,7 @@ function Invoke-KitConversion {
                 # survivor was observed, but that is best-effort, not proof.
                 "$timeoutReason; process tree kill loop hit its round cap before reaching a stable fixed point; no survivors were observed but containment is NOT proven"
             } else {
-                "$timeoutReason; process tree terminated and confirmed gone"
+                "$timeoutReason; best-effort PPID-walk cleanup finished with no surviving PID observed - a PPID walk cannot see descendants reparented after their parent died, so this is NOT a containment proof; the authoritative containment boundary is the Python adapter OS-level Job Object / process group"
             }
         } elseif ($exitCode -ne 0) {
             "Kit CAD conversion failed with exit code $exitCode for $($Item.IfcPath)"
