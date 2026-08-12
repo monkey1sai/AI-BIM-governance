@@ -191,6 +191,7 @@
         "reverified_at": "2026-08-12T11:40:00Z",
         "mechanism_commit": "daf551e0a794c5b895333478ea518518d76390bd",
         "evidence_refs": [
+          "docs/evidence/mechanism-hardening-2/fixpoint/attestation.json",
           "docs/evidence/mechanism-hardening-2/fixpoint/summary.md",
           "docs/evidence/mechanism-hardening-2/fixpoint/verification.txt"
         ]
