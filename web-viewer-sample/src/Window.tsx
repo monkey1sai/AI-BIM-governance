@@ -919,6 +919,12 @@ export default class App extends React.Component<AppProps, AppState> {
     private pendingBindingApplyGeneration: number | null = null;
     private pendingBindingApplyStageAttemptGeneration: number | null = null;
     private stageLoadFailureActive = false;
+    // Stable machine-readable reason for the currently visible stage-load
+    // failure. Only "stage-load-timeout" is populated today; every other
+    // stage-load failure keeps this null so its DOM anchor (data-stage-
+    // failure-reason) stays state-specific instead of colliding with the
+    // shared "stage-load-failure" testid across unrelated failure causes.
+    private stageLoadFailureReason: "stage-load-timeout" | null = null;
     // VG-01 M1：first_frame 只送一次的閂（防失敗/斷線/開檔路徑誤觸→偽證據）。
     private _firstFramePosted = false;
     // Important #3：白名單為空導致 _postToParent 全 reject 時，只 warn 一次（_postToParent 在 first_frame/heartbeat 高頻呼叫）。
@@ -1981,6 +1987,9 @@ export default class App extends React.Component<AppProps, AppState> {
                     `${t(stageLoadTimeoutPresentation.diagnostic.zh, stageLoadTimeoutPresentation.diagnostic.en)}${t("：", ": ")}${this._getVideoDiagnosticText()}`,
                     t(stageLoadTimeoutPresentation.missingCompletion.zh, stageLoadTimeoutPresentation.missingCompletion.en),
                 ].join("\n"),
+                undefined,
+                undefined,
+                "stage-load-timeout",
             );
         }, STAGE_LOAD_TIMEOUT_MS);
     }
@@ -2078,6 +2087,7 @@ export default class App extends React.Component<AppProps, AppState> {
         const generation = ++this.stageAttemptGeneration;
         this._firstFramePosted = false;
         this.stageLoadFailureActive = false;
+        this.stageLoadFailureReason = null;
         this.activeStageAttempt = {
             generation,
             status: "pending",
@@ -2261,6 +2271,7 @@ export default class App extends React.Component<AppProps, AppState> {
         this._revokeStageProof();
         if (!attemptGeneration) {
             this.stageLoadFailureActive = false;
+            this.stageLoadFailureReason = null;
             return;
         }
         this.stageAttemptGeneration = Math.max(this.stageAttemptGeneration, attemptGeneration) + 1;
@@ -2278,6 +2289,7 @@ export default class App extends React.Component<AppProps, AppState> {
         // still rejects any old correlated result by generation mismatch.
         this.activeStageAttempt = null;
         this.stageLoadFailureActive = false;
+        this.stageLoadFailureReason = null;
     }
 
     private _failPendingBindingApplyAsSuperseded(): void {
@@ -2398,6 +2410,7 @@ export default class App extends React.Component<AppProps, AppState> {
             this.activeStageAttempt.status = "completed";
         }
         this.stageLoadFailureActive = false;
+        this.stageLoadFailureReason = null;
         this._finishStageLoad(currentAttempt, promotingProvisional);
         this._getChildren();
         this.setState({
@@ -2473,6 +2486,7 @@ export default class App extends React.Component<AppProps, AppState> {
         diagnostic?: string,
         attemptGeneration: number | null | undefined = this.activeStageAttempt?.generation,
         bindingFailureReason = loadingText,
+        reasonCode?: "stage-load-timeout",
     ): void {
         const invalidatesStageProof = Boolean(
             attemptGeneration && this._isCurrentStageAttemptAwaitingProof(attemptGeneration),
@@ -2486,6 +2500,7 @@ export default class App extends React.Component<AppProps, AppState> {
             this._clearPendingBindingApplyForAttempt(failedAttemptGeneration);
         }
         this.stageLoadFailureActive = true;
+        this.stageLoadFailureReason = reasonCode ?? null;
         this.setState((state) => ({
             loadingText,
             streamDiagnostic: diagnostic || null,
@@ -5108,6 +5123,9 @@ export default class App extends React.Component<AppProps, AppState> {
                                 `${t(stageLoadTimeoutPresentation.lastState.zh, stageLoadTimeoutPresentation.lastState.en)}${t("：", ": ")}${payloadUrl ? redactStageUrlForDiagnostic(payloadUrl) : "empty"} busy`,
                                 t(stageLoadTimeoutPresentation.missingCompletion.zh, stageLoadTimeoutPresentation.missingCompletion.en),
                             ].join("\n"),
+                            undefined,
+                            undefined,
+                            "stage-load-timeout",
                         );
                     }
                     return;
@@ -5529,6 +5547,7 @@ export default class App extends React.Component<AppProps, AppState> {
                     <div
                         className="loading-indicator-label"
                         data-testid={this.stageLoadFailureActive ? "stage-load-failure" : undefined}
+                        data-stage-failure-reason={this.stageLoadFailureActive ? (this.stageLoadFailureReason ?? "generic") : undefined}
                         role={this.stageLoadFailureActive ? "alert" : "status"}
                         aria-live={this.stageLoadFailureActive ? "assertive" : "polite"}
                         style={this.stageLoadFailureActive ? {
