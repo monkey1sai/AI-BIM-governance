@@ -1103,6 +1103,25 @@ if (-not (Test-PlatformServiceLingerEnabled)) {
     $hardFails += 'user_lingering_disabled'
     Write-DeployTag -Tag 'fail' -Message "host-native services would not survive logout: lingering is disabled for this account. Fix once with: loginctl enable-linger $(& id -un 2>`$null)" -LogPath $LogPath | Out-Null
 }
+# Moving the AUTHORITATIVE Kit control resolution after the Phase 2 missing-key
+# merge (below) also moved it past this dry-run exit, so the required preflight
+# stopped reporting a malformed or non-local KIT_CONTROL_URL at all and the real
+# deploy only discovered it after Phase 2 had already modified the environment.
+# The merge can only APPEND an absent key with a default; it never rewrites an
+# existing value, so an existing unusable authority is unfixable and belongs in
+# Phase 1 hard fails. Validation only - nothing is assigned here, and the single
+# authoritative assignment stays after the merge where a repaired file still
+# takes effect. Resolve-HostNativeKitControlUrl's messages never echo the URL.
+if (-not $SkipKitManager) {
+    try {
+        Resolve-HostNativeKitControlUrl `
+            -KitControlUrl (Get-DeployEnvValue -Name 'KIT_CONTROL_URL' -EnvFile $resolvedEnvFile -Default '').Trim() | Out-Null
+    }
+    catch {
+        $hardFails += 'kit_control_url_unusable'
+        Write-DeployTag -Tag 'fail' -Message "KIT_CONTROL_URL in $resolvedEnvFile is not a usable Kit control authority: $($_.Exception.Message)" -LogPath $LogPath | Out-Null
+    }
+}
 if ($DryRun) {
     Write-DeployHeader -Title 'Phase 2: Auto-fix (safe actions)'
     if ($hardFails.Count -gt 0) {

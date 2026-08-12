@@ -793,6 +793,275 @@ time.sleep(120)
     Assert-True ($survivorFailure -match "left descendant PID\(s\) $unkillableDescendantId running") 'process-tree terminator fails closed when a snapshotted descendant survives'
     Assert-True ($survivorStopwatch.Elapsed.TotalSeconds -lt 15) 'process-tree terminator bounds the descendant wait before failing closed'
     Write-TestPass 'process-tree terminator fails closed on a surviving descendant'
+
+    # Case 3 (#489 L1-COR-001): the parent exits BEFORE the helper is entered.
+    # Neither Windows nor Linux cascades termination, so the descendants are still
+    # running - the old `if ($Process.HasExited) { return }` reported containment
+    # without ever looking at them. An exited parent excuses the parent kill/wait
+    # only; the sweep, the termination and the proof still have to happen.
+    $orphanFixture = Join-Path $treeSandbox 'orphan-fixture.py'
+    $orphanPidFile = Join-Path $treeSandbox 'orphan-pids.json'
+    [System.IO.File]::WriteAllText($orphanFixture, $treeSource)
+    $orphanProcess = Start-TreeFixtureProcess -PythonExe $fixturePython -ScriptPath $orphanFixture -PidPath $orphanPidFile
+    $orphanPids = @(Get-Content -Raw -LiteralPath $orphanPidFile | ConvertFrom-Json)
+    $orphanParentId = [int]$orphanPids[0]
+    $orphanChildId = [int]$orphanPids[1]
+    $orphanProcess.Kill()
+    [void]$orphanProcess.WaitForExit(5000)
+    Assert-True $orphanProcess.HasExited 'orphan fixture parent has already exited before the helper is entered'
+    Assert-True ($null -ne (Get-PlatformProcessIdentity -ProcessId $orphanChildId)) 'orphaned descendant outlives the parent that spawned it'
+    $orphanStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+    # Sampled INSIDE the try, before the sandbox cleanup below: killing the child
+    # here and asserting afterwards would let the test's own cleanup satisfy the
+    # containment claim the helper is supposed to prove.
+    $orphanChildIdentityAfterStop = 'never-sampled'
+    try {
+        Stop-HostNativeProcessTreeAndWait -Process $orphanProcess -TimeoutMs 5000 `
+            -ChildPidLookup {
+                param($parentId)
+                # A re-parented descendant is no longer reachable through the dead
+                # parent's ppid link, so the caller's own record stands in for it.
+                if ([int]$parentId -eq $orphanParentId) { return @($orphanChildId) }
+                return @()
+            }.GetNewClosure()
+        $orphanChildIdentityAfterStop = Get-PlatformProcessIdentity -ProcessId $orphanChildId
+    }
+    finally {
+        $orphanStopwatch.Stop()
+        Stop-Process -Id $orphanChildId -Force -ErrorAction SilentlyContinue
+    }
+    Assert-True ($null -eq $orphanChildIdentityAfterStop) 'process-tree terminator contains the descendants of an already-exited parent'
+    Assert-True ($orphanStopwatch.Elapsed.TotalSeconds -lt 15) 'already-exited-parent containment stays inside the bounded window'
+    Write-TestPass 'process-tree terminator sweeps descendants when the parent exited before entry'
+
+    # Case 4 (#489 L1-COR-001): the same entry state, but the descendant cannot be
+    # killed. Silent success is exactly the defect; it must fail closed instead.
+    $orphanFailFixture = Join-Path $treeSandbox 'orphan-fail-fixture.py'
+    $orphanFailPidFile = Join-Path $treeSandbox 'orphan-fail-pids.json'
+    [System.IO.File]::WriteAllText($orphanFailFixture, $survivorSource)
+    $orphanFailProcess = Start-TreeFixtureProcess -PythonExe $fixturePython -ScriptPath $orphanFailFixture -PidPath $orphanFailPidFile
+    $orphanFailProcess.Kill()
+    [void]$orphanFailProcess.WaitForExit(5000)
+    $orphanFailFailure = ''
+    try {
+        Stop-HostNativeProcessTreeAndWait -Process $orphanFailProcess -TimeoutMs 1000 `
+            -ChildPidLookup {
+                param($parentId)
+                if ([int]$parentId -eq $unkillableDescendantId) { return @() }
+                return @($unkillableDescendantId)
+            }.GetNewClosure() `
+            -IdentityProbeFn {
+                param($procId)
+                if ([int]$procId -eq $unkillableDescendantId) { return $survivorIdentity }
+                return $null
+            }.GetNewClosure() `
+            -StopProcessFn { param($procId) } | Out-Null
+    }
+    catch {
+        $orphanFailFailure = $_.Exception.Message
+    }
+    Assert-True ($orphanFailFailure -match "left descendant PID\(s\) $unkillableDescendantId running") 'process-tree terminator fails closed when an already-exited parent leaves a live descendant'
+    Write-TestPass 'already-exited parent with a surviving descendant fails closed'
+
+    # Case 5 (#489 L1-COR-002): a snapshotted descendant PID can be recycled before
+    # the stop resolves it. Terminating it by bare PID would kill an unrelated host
+    # process, and the later identity check would still read "our descendant is
+    # gone". The stop primitive must therefore be identity-gated too.
+    $recycledFixture = Join-Path $treeSandbox 'recycled-fixture.py'
+    $recycledPidFile = Join-Path $treeSandbox 'recycled-pids.json'
+    [System.IO.File]::WriteAllText($recycledFixture, $survivorSource)
+    $recycledProcess = Start-TreeFixtureProcess -PythonExe $fixturePython -ScriptPath $recycledFixture -PidPath $recycledPidFile
+    $recycledDescendantId = 424243
+    $recycledSnapshotIdentity = [pscustomobject]@{
+        ProcessId      = $recycledDescendantId
+        BirthToken     = 'snapshot-birth-token'
+        ExecutablePath = ''
+        CommandLine    = ''
+    }
+    $recycledCurrentIdentity = [pscustomobject]@{
+        ProcessId      = $recycledDescendantId
+        BirthToken     = 'recycled-birth-token'
+        ExecutablePath = ''
+        CommandLine    = ''
+    }
+    $recycledProbeCalls = [System.Collections.Generic.List[int]]::new()
+    $recycledStopCalls = [System.Collections.Generic.List[int]]::new()
+    try {
+        Stop-HostNativeProcessTreeAndWait -Process $recycledProcess -TimeoutMs 2000 `
+            -TreeKillCapabilityProbeFn { $false } `
+            -ChildPidLookup {
+                param($parentId)
+                if ([int]$parentId -eq $recycledDescendantId) { return @() }
+                return @($recycledDescendantId)
+            }.GetNewClosure() `
+            -IdentityProbeFn {
+                param($procId)
+                if ([int]$procId -ne $recycledDescendantId) { return $null }
+                $recycledProbeCalls.Add([int]$procId)
+                if ($recycledProbeCalls.Count -eq 1) { return $recycledSnapshotIdentity }
+                return $recycledCurrentIdentity
+            }.GetNewClosure() `
+            -StopProcessFn {
+                param($procId)
+                $recycledStopCalls.Add([int]$procId)
+            }.GetNewClosure()
+    }
+    finally {
+        if (-not $recycledProcess.HasExited) {
+            $recycledProcess.Kill()
+            [void]$recycledProcess.WaitForExit(5000)
+        }
+    }
+    Assert-True ($recycledStopCalls.Count -eq 0) 'process-tree terminator never terminates a descendant PID whose incarnation changed'
+    Assert-True ($recycledProbeCalls.Count -ge 2) 'process-tree terminator re-probes descendant identity before terminating it'
+    Write-TestPass 'process-tree terminator revalidates descendant identity before the stop'
+
+    # Case 6 (#489 L1-TG-003): drive the .NET Framework / Windows PowerShell 5.1
+    # branch as BEHAVIOUR from this PowerShell 7 run by injecting the capability
+    # decision. Source-order assertions cannot show that the fallback really
+    # terminates the tree deepest-first and proves it gone.
+    $chainFixture = Join-Path $treeSandbox 'chain-fixture.py'
+    $chainPidFile = Join-Path $treeSandbox 'chain-pids.json'
+    $chainSource = @'
+import json
+import os
+import pathlib
+import subprocess
+import sys
+import time
+
+pid_path = pathlib.Path(sys.argv[1])
+depth = int(sys.argv[2]) if len(sys.argv) > 2 else 2
+
+descendants = []
+if depth > 0:
+    child_path = pid_path.with_name(pid_path.name + "." + str(depth))
+    subprocess.Popen([sys.executable, sys.argv[0], str(child_path), str(depth - 1)])
+    for _ in range(200):
+        try:
+            descendants = json.loads(child_path.read_text(encoding="utf-8"))
+            break
+        except (OSError, ValueError):
+            time.sleep(0.05)
+
+pid_path.write_text(json.dumps([os.getpid()] + descendants), encoding="utf-8")
+time.sleep(120)
+'@
+    [System.IO.File]::WriteAllText($chainFixture, $chainSource)
+    $chainProcess = Start-TreeFixtureProcess -PythonExe $fixturePython -ScriptPath $chainFixture -PidPath $chainPidFile
+    $chainPids = @(Get-Content -Raw -LiteralPath $chainPidFile | ConvertFrom-Json)
+    Assert-Equal 3 $chainPids.Count 'fallback fixture records a three-level parent/child/grandchild chain'
+    $chainChildId = [int]$chainPids[1]
+    $chainGrandchildId = [int]$chainPids[2]
+    $fallbackStopCalls = [System.Collections.Generic.List[int]]::new()
+    $fallbackStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+    try {
+        Stop-HostNativeProcessTreeAndWait -Process $chainProcess -TimeoutMs 5000 `
+            -TreeKillCapabilityProbeFn { $false } `
+            -StopProcessFn {
+                param($procId)
+                $fallbackStopCalls.Add([int]$procId)
+                Stop-Process -Id ([int]$procId) -Force -ErrorAction SilentlyContinue
+            }.GetNewClosure()
+    }
+    finally {
+        $fallbackStopwatch.Stop()
+        foreach ($chainPid in $chainPids) {
+            Stop-Process -Id ([int]$chainPid) -Force -ErrorAction SilentlyContinue
+        }
+    }
+    Assert-True ($fallbackStopCalls.Contains($chainGrandchildId)) 'forced fallback terminates the deepest descendant through the PID stop primitive'
+    Assert-True ($fallbackStopCalls.Contains($chainChildId)) 'forced fallback terminates the intermediate descendant through the PID stop primitive'
+    Assert-True ($fallbackStopCalls.IndexOf($chainGrandchildId) -lt $fallbackStopCalls.IndexOf($chainChildId)) 'forced fallback terminates the descendant snapshot deepest-first'
+    foreach ($chainPid in $chainPids) {
+        Assert-True ($null -eq (Get-PlatformProcessIdentity -ProcessId ([int]$chainPid))) "forced fallback proves PID $chainPid exited"
+    }
+    Assert-True ($fallbackStopwatch.Elapsed.TotalSeconds -lt 15) 'forced fallback returns inside the bounded cleanup window'
+    Write-TestPass 'forced no-Kill(bool) fallback terminates the tree deepest-first and proves it gone'
+
+    # Case 7 (#489 L1-SEC-002): one fixed snapshot is not containment. A snapshotted
+    # process can spawn another child before it dies, and that child is absent from
+    # both the stop list and the success check unless containment re-enumerates.
+    $lateSpawnFixture = Join-Path $treeSandbox 'late-spawn-fixture.py'
+    $lateSpawnPidFile = Join-Path $treeSandbox 'late-spawn-pids.json'
+    [System.IO.File]::WriteAllText($lateSpawnFixture, $survivorSource)
+    $lateSpawnProcess = Start-TreeFixtureProcess -PythonExe $fixturePython -ScriptPath $lateSpawnFixture -PidPath $lateSpawnPidFile
+    $lateSpawnParentId = [int]$lateSpawnProcess.Id
+    $lateSpawnDescendantId = 424244
+    $lateSpawnIdentity = [pscustomobject]@{
+        ProcessId      = $lateSpawnDescendantId
+        BirthToken     = 'late-spawn-birth-token'
+        ExecutablePath = ''
+        CommandLine    = ''
+    }
+    $lateSpawnLookups = [System.Collections.Generic.List[int]]::new()
+    $lateSpawnStopped = [System.Collections.Generic.List[int]]::new()
+    try {
+        Stop-HostNativeProcessTreeAndWait -Process $lateSpawnProcess -TimeoutMs 3000 `
+            -TreeKillCapabilityProbeFn { $false } `
+            -ChildPidLookup {
+                param($parentId)
+                if ([int]$parentId -ne $lateSpawnParentId) { return @() }
+                $lateSpawnLookups.Add([int]$parentId)
+                # Empty on the snapshot pass; the child shows up only afterwards,
+                # exactly like a real post-snapshot spawn.
+                if ($lateSpawnLookups.Count -eq 1) { return @() }
+                return @($lateSpawnDescendantId)
+            }.GetNewClosure() `
+            -IdentityProbeFn {
+                param($procId)
+                if ([int]$procId -ne $lateSpawnDescendantId) { return $null }
+                if ($lateSpawnStopped.Contains($lateSpawnDescendantId)) { return $null }
+                return $lateSpawnIdentity
+            }.GetNewClosure() `
+            -StopProcessFn {
+                param($procId)
+                $lateSpawnStopped.Add([int]$procId)
+            }.GetNewClosure()
+    }
+    finally {
+        if (-not $lateSpawnProcess.HasExited) {
+            $lateSpawnProcess.Kill()
+            [void]$lateSpawnProcess.WaitForExit(5000)
+        }
+    }
+    Assert-True ($lateSpawnStopped.Contains($lateSpawnDescendantId)) 'containment re-enumerates and terminates a descendant spawned after the snapshot'
+    Assert-True ($lateSpawnLookups.Count -ge 2) 'containment enumerates descendants more than once before declaring success'
+    Write-TestPass 'process-tree terminator contains post-snapshot descendants'
+
+    # Case 8 (#489 L1-TG-003): the forced fallback must fail closed on a survivor
+    # too - the branch carries the retained races, so its failure mode is pinned.
+    $fallbackFailFixture = Join-Path $treeSandbox 'fallback-fail-fixture.py'
+    $fallbackFailPidFile = Join-Path $treeSandbox 'fallback-fail-pids.json'
+    [System.IO.File]::WriteAllText($fallbackFailFixture, $survivorSource)
+    $fallbackFailProcess = Start-TreeFixtureProcess -PythonExe $fixturePython -ScriptPath $fallbackFailFixture -PidPath $fallbackFailPidFile
+    $fallbackFailFailure = ''
+    try {
+        Stop-HostNativeProcessTreeAndWait -Process $fallbackFailProcess -TimeoutMs 1000 `
+            -TreeKillCapabilityProbeFn { $false } `
+            -ChildPidLookup {
+                param($parentId)
+                if ([int]$parentId -eq $unkillableDescendantId) { return @() }
+                return @($unkillableDescendantId)
+            }.GetNewClosure() `
+            -IdentityProbeFn {
+                param($procId)
+                if ([int]$procId -eq $unkillableDescendantId) { return $survivorIdentity }
+                return $null
+            }.GetNewClosure() `
+            -StopProcessFn { param($procId) } | Out-Null
+    }
+    catch {
+        $fallbackFailFailure = $_.Exception.Message
+    }
+    finally {
+        if (-not $fallbackFailProcess.HasExited) {
+            $fallbackFailProcess.Kill()
+            [void]$fallbackFailProcess.WaitForExit(5000)
+        }
+    }
+    Assert-True ($fallbackFailFailure -match "left descendant PID\(s\) $unkillableDescendantId running") 'forced fallback fails closed when a snapshotted descendant survives'
+    Write-TestPass 'forced no-Kill(bool) fallback fails closed on a surviving descendant'
 }
 finally {
     Remove-TestSandbox -Path $treeSandbox

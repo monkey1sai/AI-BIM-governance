@@ -537,15 +537,29 @@ function Stop-HostNativeProcessTreeAndWait {
     #      PowerShell 5.1 the tree kill ALWAYS threw into that catch and the helper
     #      silently degraded to "parent only".
     #
+    #   3. An `if ($Process.HasExited) { return }` pre-entry guard is not
+    #      containment either (#513 gate L1-COR-001). The parent can lose the race
+    #      between the caller's liveness decision and this helper, and NEITHER OS
+    #      cascades termination, so its descendants keep running. An exited parent
+    #      excuses the parent kill/wait only - never the sweep or the proof.
+    #   4. Stopping a snapshotted descendant by bare PID can terminate an unrelated
+    #      process that inherited a recycled PID (#513 gate L1-COR-002), and the
+    #      survivor poll would still read "our descendant is gone".
+    #   5. One fixed snapshot is not containment (#513 gate L1-SEC-002): a
+    #      snapshotted process can spawn another child before it dies, and that
+    #      child appears in neither the stop list nor the success check.
+    #
     # Fix: snapshot the descendant PID set BEFORE terminating (afterwards the
     # parent/child links are gone and orphans are re-parented), guard the tree
     # kill behind an overload probe with the enumerated-PID fallback used by
-    # Stop-HostNativeService, then wait for the parent AND every snapshotted
-    # descendant inside one bounded budget. Anything still alive throws.
+    # Stop-HostNativeService, then drive containment as a bounded FIXED POINT -
+    # re-enumerate, terminate what is still ours, verify - until a pass finds
+    # nothing new and nothing alive. Anything still alive at the deadline throws.
     #
-    # Descendant liveness is judged on process IDENTITY, not the bare PID, so a
-    # recycled PID is correctly read as "our descendant is gone" instead of
-    # failing a caller closed on an unrelated process.
+    # Descendant liveness is judged on process IDENTITY, not the bare PID, both
+    # before each stop and in the survivor proof, so a recycled PID is correctly
+    # read as "our descendant is gone" instead of killing an unrelated process or
+    # failing a caller closed on one.
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $true)][System.Diagnostics.Process] $Process,
@@ -567,68 +581,151 @@ function Stop-HostNativeProcessTreeAndWait {
         [scriptblock] $SleepFn = {
             param($milliseconds)
             Start-Sleep -Milliseconds ([int]$milliseconds)
+        },
+        # Injectable so the .NET Framework / Windows PowerShell 5.1 branch is
+        # reachable as BEHAVIOUR from a PowerShell 7 run instead of being pinned
+        # by source strings alone (#513 gate L1-TG-003). Windows PowerShell 5.1
+        # compatibility is an explicit purpose of this helper, and that branch
+        # carries the two races above.
+        [scriptblock] $TreeKillCapabilityProbeFn = {
+            $null -ne [System.Diagnostics.Process].GetMethod('Kill', [type[]]@([bool]))
         }
     )
 
-    if ($Process.HasExited) { return }
-    $parentProcessId = [int]$Process.Id
+    # Nested on purpose: scripts/tests/test-deploy-governance-static.ps1 extracts
+    # this function's AST and dot-sources it ALONE, so every helper it needs has
+    # to travel inside its own extent.
+    function Update-DescendantSnapshot {
+        # Breadth-first walk below every root. Returns the PIDs discovered on THIS
+        # pass in parent-before-child order (so reverse iteration is deepest-first)
+        # and records an identity for each one.
+        param(
+            # Expanded from. Callers pass only PIDs that are still the incarnation
+            # they recorded, so a recycled PID can never contribute an unrelated
+            # process's children to the containment set.
+            [Parameter(Mandatory = $true)][AllowEmptyCollection()][int[]] $RootProcessIds,
+            # Already recorded; seeds the visited set so they are never rediscovered
+            # or re-probed, even when they are no longer expanded from.
+            [Parameter(Mandatory = $true)][AllowEmptyCollection()][int[]] $KnownProcessIds,
+            [Parameter(Mandatory = $true)][hashtable] $Identities,
+            [Parameter(Mandatory = $true)][scriptblock] $LookupFn,
+            [Parameter(Mandatory = $true)][scriptblock] $ProbeFn
+        )
+        $discovered = @()
+        $visited = @{}
+        foreach ($knownId in $KnownProcessIds) { $visited[[int]$knownId] = $true }
+        foreach ($rootId in $RootProcessIds) { $visited[[int]$rootId] = $true }
+        $pending = @($RootProcessIds)
+        while ($pending.Count -gt 0) {
+            $current = [int]$pending[0]
+            $pending = @($pending | Select-Object -Skip 1)
+            foreach ($childId in @(& $LookupFn $current)) {
+                $childProcessId = [int]$childId
+                if ($visited.ContainsKey($childProcessId)) { continue }
+                $visited[$childProcessId] = $true
+                $pending += $childProcessId
+                $discovered += $childProcessId
+                $Identities[$childProcessId] = (& $ProbeFn $childProcessId)
+            }
+        }
+        # Emitted flat on purpose: every call site re-collects with @(), which is
+        # what keeps the empty and single-descendant cases arrays.
+        return $discovered
+    }
 
-    $descendantIds = @()
-    $descendantIdentities = @{}
-    $pending = @($parentProcessId)
-    while ($pending.Count -gt 0) {
-        $current = [int]$pending[0]
-        $pending = @($pending | Select-Object -Skip 1)
-        foreach ($childId in @(& $ChildPidLookup $current)) {
-            $childProcessId = [int]$childId
-            if ($childProcessId -eq $parentProcessId) { continue }
-            if ($descendantIds -contains $childProcessId) { continue }
-            $descendantIds += $childProcessId
-            $descendantIdentities[$childProcessId] = (& $IdentityProbeFn $childProcessId)
-            $pending += $childProcessId
+    function Stop-DescendantSnapshot {
+        # Deepest-first termination, identity-revalidated immediately before each
+        # stop. A PID whose incarnation changed - or that we never got an identity
+        # for - is not ours to kill and is already gone for our purposes.
+        param(
+            [Parameter(Mandatory = $true)][AllowEmptyCollection()][int[]] $DescendantIds,
+            [Parameter(Mandatory = $true)][hashtable] $Identities,
+            [Parameter(Mandatory = $true)][scriptblock] $ProbeFn,
+            [Parameter(Mandatory = $true)][scriptblock] $StopFn
+        )
+        for ($i = $DescendantIds.Count - 1; $i -ge 0; $i--) {
+            $descendantProcessId = [int]$DescendantIds[$i]
+            if (-not (Test-PlatformProcessIdentityMatch `
+                        -Reference $Identities[$descendantProcessId] `
+                        -Current (& $ProbeFn $descendantProcessId))) {
+                continue
+            }
+            $null = & $StopFn $descendantProcessId
         }
     }
+
+    $parentProcessId = [int]$Process.Id
+    $parentAlreadyExited = $Process.HasExited
+
+    $descendantIdentities = @{}
+    $descendantIds = @(Update-DescendantSnapshot `
+            -RootProcessIds @($parentProcessId) `
+            -KnownProcessIds @() `
+            -Identities $descendantIdentities `
+            -LookupFn $ChildPidLookup `
+            -ProbeFn $IdentityProbeFn)
 
     $budget = [System.Diagnostics.Stopwatch]::StartNew()
-    $supportsTreeKill = $null -ne [System.Diagnostics.Process].GetMethod('Kill', [type[]]@([bool]))
-    try {
-        if ($supportsTreeKill) {
-            $Process.Kill($true)
-        }
-        else {
-            # Windows PowerShell 5.1 / .NET Framework: no tree overload. Kill the
-            # snapshot deepest-first, then the parent - the same enumerated-PID
-            # shape Stop-HostNativeService already uses.
-            for ($i = $descendantIds.Count - 1; $i -ge 0; $i--) {
-                & $StopProcessFn ([int]$descendantIds[$i])
+    $supportsTreeKill = [bool](& $TreeKillCapabilityProbeFn)
+    if (-not $parentAlreadyExited) {
+        try {
+            if ($supportsTreeKill) {
+                $Process.Kill($true)
             }
-            $Process.Kill()
+            else {
+                # Windows PowerShell 5.1 / .NET Framework: no tree overload. Kill the
+                # snapshot deepest-first, then the parent - the same enumerated-PID
+                # shape Stop-HostNativeService already uses.
+                Stop-DescendantSnapshot `
+                    -DescendantIds $descendantIds `
+                    -Identities $descendantIdentities `
+                    -ProbeFn $IdentityProbeFn `
+                    -StopFn $StopProcessFn
+                $Process.Kill()
+            }
         }
-    }
-    catch {
-        # An already-exited PARENT is the only tolerated failure, and it is not a
-        # licence to stop: its descendants outlive it, so terminate the snapshot
-        # explicitly instead of swallowing the exception as before.
-        if (-not $Process.HasExited) {
-            throw "Process tree termination failed for PID $($Process.Id): $($_.Exception.Message)"
+        catch {
+            # An already-exited PARENT is the only tolerated failure, and it is not
+            # a licence to stop: its descendants outlive it, so the containment
+            # loop below still terminates and proves them instead of swallowing
+            # the exception as before.
+            if (-not $Process.HasExited) {
+                throw "Process tree termination failed for PID $($Process.Id): $($_.Exception.Message)"
+            }
         }
-        for ($i = $descendantIds.Count - 1; $i -ge 0; $i--) {
-            & $StopProcessFn ([int]$descendantIds[$i])
+        if (-not $Process.WaitForExit($TimeoutMs) -or -not $Process.HasExited) {
+            throw "Process tree for PID $($Process.Id) did not terminate within $TimeoutMs ms."
         }
-    }
-    if (-not $Process.WaitForExit($TimeoutMs) -or -not $Process.HasExited) {
-        throw "Process tree for PID $($Process.Id) did not terminate within $TimeoutMs ms."
     }
 
+    # Bounded containment fixed point. Runs on EVERY path, including the exited
+    # parent that used to return here, and including a successful tree kill - a
+    # child created after the snapshot is invisible to both. The parent stays a
+    # root even once it is dead: this call holds its Process handle, so its PID
+    # cannot be recycled underneath us, and on Windows a just-orphaned child is
+    # still reachable through the dead parent's ppid link. Every other root has
+    # to still be the incarnation we recorded.
     $survivors = @($descendantIds)
-    while ($survivors.Count -gt 0) {
-        $survivors = @($survivors | Where-Object {
-            $descendantProcessId = [int]$_
-            Test-PlatformProcessIdentityMatch `
-                -Reference $descendantIdentities[$descendantProcessId] `
-                -Current (& $IdentityProbeFn $descendantProcessId)
-        })
-        if ($survivors.Count -eq 0) { break }
+    while ($true) {
+        $newDescendantIds = @(Update-DescendantSnapshot `
+                -RootProcessIds (@($parentProcessId) + $survivors) `
+                -KnownProcessIds $descendantIds `
+                -Identities $descendantIdentities `
+                -LookupFn $ChildPidLookup `
+                -ProbeFn $IdentityProbeFn)
+        if ($newDescendantIds.Count -gt 0) { $descendantIds += $newDescendantIds }
+        Stop-DescendantSnapshot `
+            -DescendantIds $descendantIds `
+            -Identities $descendantIdentities `
+            -ProbeFn $IdentityProbeFn `
+            -StopFn $StopProcessFn
+        $survivors = @($descendantIds | Where-Object {
+                $descendantProcessId = [int]$_
+                Test-PlatformProcessIdentityMatch `
+                    -Reference $descendantIdentities[$descendantProcessId] `
+                    -Current (& $IdentityProbeFn $descendantProcessId)
+            })
+        if ($survivors.Count -eq 0 -and $newDescendantIds.Count -eq 0) { break }
         if ($budget.ElapsedMilliseconds -ge $TimeoutMs) { break }
         & $SleepFn 50
     }

@@ -211,6 +211,36 @@ Assert-True (-not $invalidAuthorityOutput.Contains($invalidAuthorityToken)) 'inv
 Remove-Item -LiteralPath $invalidAuthorityEnv, $invalidAuthorityOut, $invalidAuthorityErr -ErrorAction SilentlyContinue
 Write-TestPass 'non-loopback runtime authority base rejected without secret disclosure'
 
+# Test 12b: the dry-run preflight still adjudicates KIT_CONTROL_URL.
+# The AUTHORITATIVE resolution moved after the Phase 2 missing-key merge (so a
+# repaired env file takes effect in the same run), which put it past the -DryRun
+# exit. The merge only APPENDS an absent key with a default and never rewrites an
+# existing value, so an unusable authority is unfixable and has to surface as a
+# Phase 1 hard fail - otherwise the required preflight reports success and the
+# real deploy discovers it only after Phase 2 has modified the environment.
+# One representative rejection is enough here: this proves the dry-run PATH still
+# adjudicates, while the resolver's own shape matrix is unit-tested in
+# test-host-native-launcher.ps1.
+$remoteKitControlEnv = Join-Path $repoRoot 'scripts\.run\deploy-kit-control-remote-test.env'
+$remoteKitControlOut = Join-Path $repoRoot 'scripts\.run\deploy-kit-control-remote-test.out.log'
+$remoteKitControlErr = Join-Path $repoRoot 'scripts\.run\deploy-kit-control-remote-test.err.log'
+Set-Content -LiteralPath $remoteKitControlEnv -Encoding ascii -Value @(
+    'KIT_CONTROL_URL=http://192.0.2.51:49101',
+    'RUNTIME_STORAGE_ROOT=C:\tmp\ai-bim-governance-kit-control-remote-test\storage'
+)
+$remoteKitControlProc = Start-Process -FilePath 'powershell.exe' `
+    -ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-File',$deploy,'-DryRun','-EnvFile',$remoteKitControlEnv) `
+    -RedirectStandardOutput $remoteKitControlOut `
+    -RedirectStandardError $remoteKitControlErr `
+    -Wait -PassThru -WindowStyle Hidden
+$remoteKitControlOutput = ((Get-Content -LiteralPath $remoteKitControlOut -Raw -ErrorAction SilentlyContinue) + "`n" + (Get-Content -LiteralPath $remoteKitControlErr -Raw -ErrorAction SilentlyContinue))
+Assert-Equal 0 $remoteKitControlProc.ExitCode 'dry-run stays a read-only audit while reporting an unusable Kit control authority'
+Assert-True ($remoteKitControlOutput -match 'kit_control_url_unusable') 'dry-run reports a non-local KIT_CONTROL_URL as a preflight hard fail'
+Assert-True ($remoteKitControlOutput -match 'loopback or an address assigned to this host') 'dry-run tells the operator why the Kit control authority was rejected'
+Assert-True (-not $remoteKitControlOutput.Contains('192.0.2.51')) 'dry-run rejects the Kit control authority without echoing its value'
+Remove-Item -LiteralPath $remoteKitControlEnv, $remoteKitControlOut, $remoteKitControlErr -ErrorAction SilentlyContinue
+Write-TestPass 'dry-run preflight still rejects a non-local Kit control authority'
+
 # A configured A4 token must meet the coordinator boundary without being echoed.
 $shortA4Token = 's7x'
 $shortA4Env = Join-Path $repoRoot 'scripts\.run\deploy-a4-token-short-test.env'
@@ -424,6 +454,9 @@ Write-Host "`n=== test-deploy-dryrun.ps1: ALL PASSED ===" -ForegroundColor Green
         'deploy-runtime-authority-invalid-test.env',
         'deploy-runtime-authority-invalid-test.out.log',
         'deploy-runtime-authority-invalid-test.err.log',
+        'deploy-kit-control-remote-test.env',
+        'deploy-kit-control-remote-test.out.log',
+        'deploy-kit-control-remote-test.err.log',
         'deploy-a4-token-short-test.env',
         'deploy-a4-token-short-test.out.log',
         'deploy-a4-token-short-test.err.log',

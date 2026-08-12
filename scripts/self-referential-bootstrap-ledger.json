@@ -154,9 +154,11 @@
       "opened_at": "2026-08-12T02:38:49Z",
       "reason": "the canonical Linux transport rebuilds only from freshly fetched origin/main and refuses an unmerged revision, so this branch cannot exercise its changed deploy resolver, its Deployment-profile locality assertion, or its process-tree terminator as canonical post-change evidence before merge; only a mainline fixpoint rebuild can produce that proof",
       "verification_mechanism_paths": [
+        ".github/workflows/ci.yml",
         "scripts/deploy.ps1",
         "scripts/lib/host-native-launcher.ps1",
         "scripts/self-referential-bootstrap-ledger.json",
+        "scripts/verification-manifest.json",
         "scripts/verify-all.ps1"
       ],
       "verification_contract": {
