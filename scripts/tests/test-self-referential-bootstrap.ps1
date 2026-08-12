@@ -425,6 +425,7 @@ try {
         'detect-base-gate-capability-bash-syntax' = @{ Path = 'scripts/lib/detect-base-gate-capability.sh'; Invocation = @('bash', '-n', 'scripts/lib/detect-base-gate-capability.sh') }
         'harden-cad-extension-cache' = @{ Path = 'bim-streaming-server/scripts/harden-cad-extension-cache.py'; Invocation = @('python', 'bim-streaming-server/scripts/harden-cad-extension-cache.py', '--repo-root', 'bim-streaming-server') }
         'invoke-powershell-static' = @{ Path = 'scripts/tests/invoke-powershell-static.ps1'; Invocation = @($pwshPrefix + 'scripts/tests/invoke-powershell-static.ps1') }
+        'scan-secret-patterns' = @{ Path = 'scripts/tests/scan-secret-patterns.ps1'; Invocation = @($pwshPrefix + 'scripts/tests/scan-secret-patterns.ps1') }
         'test-agent-governance-check' = @{ Path = 'scripts/tests/test-agent-governance-check.ps1'; Invocation = @($pwshPrefix + 'scripts/tests/test-agent-governance-check.ps1') }
         'test-base-gate-capability' = @{ Path = 'scripts/tests/test-base-gate-capability.ps1'; Invocation = @($pwshPrefix + 'scripts/tests/test-base-gate-capability.ps1') }
         'test-deploy-governance-static' = @{ Path = 'scripts/tests/test-deploy-governance-static.ps1'; Invocation = @($pwshPrefix + 'scripts/tests/test-deploy-governance-static.ps1') }
@@ -443,6 +444,10 @@ try {
         'test-rebuild-test-deploy' = @{ Path = 'scripts/tests/test-rebuild-test-deploy.ps1'; Invocation = @($pwshPrefix + 'scripts/tests/test-rebuild-test-deploy.ps1') }
         'test-remote-deploy-transport' = @{ Path = 'scripts/tests/test-remote-deploy-transport.ps1'; Invocation = @($pwshPrefix + 'scripts/tests/test-remote-deploy-transport.ps1') }
         'test-self-referential-bootstrap' = @{ Path = 'scripts/tests/test-self-referential-bootstrap.ps1'; Invocation = @($pwshPrefix + 'scripts/tests/test-self-referential-bootstrap.ps1') }
+        'test-review-risk' = @{ Path = 'scripts/tests/test-review-risk.mjs'; Invocation = @('node', '--test', 'scripts/tests/test-review-risk.mjs') }
+        'test-routing-consistency' = @{ Path = 'tests/test_routing_consistency.py'; Invocation = @('python', '-m', 'pytest', 'tests/test_routing_consistency.py', '-q', '-p', 'no:cacheprovider') }
+        'test-ship-item-runtime' = @{ Path = 'tests/test_ship_item_runtime.mjs'; Invocation = @('node', '--test', 'tests/test_ship_item_runtime.mjs') }
+        'test-trusted-host-merge' = @{ Path = 'scripts/tests/test-trusted-host-merge.mjs'; Invocation = @('node', '--test', 'scripts/tests/test-trusted-host-merge.mjs', 'scripts/tests/test-trusted-host-merge-runtime.mjs') }
         'test-verify-all' = @{ Path = 'scripts/tests/test-verify-all.ps1'; Invocation = @($pwshPrefix + 'scripts/tests/test-verify-all.ps1') }
         'test-windows-verification-scope' = @{ Path = 'scripts/tests/test-windows-verification-scope.ps1'; Invocation = @($pwshPrefix + 'scripts/tests/test-windows-verification-scope.ps1') }
     }
