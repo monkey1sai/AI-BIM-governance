@@ -32,6 +32,7 @@ import os
 import re
 import secrets
 import shutil
+import signal
 import stat
 import subprocess
 import sys
@@ -54,6 +55,11 @@ from ifc_openusd_identity_author import IDENTITY_PROFILE, IfcOpenUsdIdentityAuth
 # HOOPS pin 區塊。無法在期限內證明樹已清空時,必須用獨立的 fail-closed 代碼
 # (``converter_containment_failed``)回報,不得偽裝成單純 timeout。
 _CONTAINMENT_POLL_INTERVAL_SECONDS = 0.05
+# ``signal.SIGKILL`` 只存在於 POSIX。下面的 POSIX containment 分支在 Windows 上永遠
+# 不會執行,但把號碼在 import 時綁一次,這些分支才能在 Windows 開發機上被單元測試
+# 直接呼叫(而不是整組退化成「只能在 Linux 上驗」)。
+_POSIX_SIGTERM = int(getattr(signal, "SIGTERM", 15))
+_POSIX_SIGKILL = int(getattr(signal, "SIGKILL", 9))
 
 
 class _Win32ContainmentApi:
@@ -354,6 +360,18 @@ class _ContainedProcess:
     deadline expires with survivors still alive. Callers must run it while the
     HOOPS pin is still held, and must map a False result to a distinct
     fail-closed error instead of a plain timeout.
+
+    Boundary strength differs per platform, and that difference is deliberate,
+    documented, and NOT to be papered over:
+
+    - Windows(production 轉檔路徑)= Job Object。job 沒有設
+      ``JOB_OBJECT_LIMIT_BREAKAWAY_OK``,所以 descendant 無法用
+      ``CREATE_BREAKAWAY_FROM_JOB`` 脫離;邊界不可逃脫。建不出這個邊界時
+      ``_spawn_windows`` 直接 fail closed,不會降級成無邊界執行。
+    - POSIX = 獨立 session / process group。這是 best-effort:自己呼叫 ``setsid()``
+      的 descendant 會離開原本的 PGID,``killpg`` 與存活檢查都涵蓋不到它。真正不可
+      逃脫的 POSIX 邊界要 cgroup(需要 cgroup 委派權限),不在本 class 範圍內。
+      實際的 Kit/HOOPS converter 不會 ``setsid()``,但這個殘餘風險是真的。
     """
 
     def __init__(
@@ -418,6 +436,20 @@ class _ContainedProcess:
         assigned = False
         if job is not None and api is not None and handle is not None:
             assigned = api.assign_process(job, int(handle))
+        if pid and not assigned:
+            # #489 SEC-001:Job Object 就是 Windows 這一側的 containment boundary。
+            # 少了它,timeout 只能靠 racy 的 PID-tree snapshot——在兩次 snapshot
+            # 之間退出或被 reparent 的 descendant 會逃出這個 class 承諾的邊界,而
+            # 呼叫端還是會收到「已終止」的結論。所以「建不出邊界」必須是 launch
+            # failure,不是靜默降級。child 若是 CREATE_SUSPENDED 起的,此刻還沒
+            # 執行過任何一行不可信輸入的處理程式碼,先殺掉再拋。
+            # pid 為 None 只會發生在單元測試的 Popen double 上:沒有真的 OS
+            # process 就沒有樹要關,與 terminate_tree 的 ``pid is None`` 分支一致。
+            cls._abort_uncontained_windows_launch(proc, api=api, job=job, pid=int(pid))
+            raise OSError(
+                "failed to place the converter inside a Windows Job Object; refusing "
+                "to launch it without a containment boundary"
+            )
         if job is not None and api is not None and pid:
             # The child was created suspended, so it MUST be resumed or the whole
             # conversion hangs. Failing to resume is a fail-closed launch error.
@@ -433,6 +465,24 @@ class _ContainedProcess:
             api.close_handle(job)
             job = None
         return cls(proc, job=job, api=api)
+
+    @staticmethod
+    def _abort_uncontained_windows_launch(proc, *, api, job, pid: int) -> None:
+        """Kill a child that could not be placed inside the job, then drop the job."""
+
+        if api is not None:
+            api.terminate_pid(pid)
+        else:
+            try:
+                proc.kill()
+            except Exception:  # noqa: BLE001 - best-effort kill of an unknown child
+                pass
+        try:
+            proc.wait(timeout=5)
+        except Exception:  # noqa: BLE001 - best-effort reap of a dead child
+            pass
+        if job is not None and api is not None:
+            api.close_handle(job)
 
     @classmethod
     def _spawn_posix(cls, cmd, *, cwd, stdout, stderr) -> _ContainedProcess:
@@ -471,6 +521,13 @@ class _ContainedProcess:
             # terminates anything that outlived the converter.
             self._api.close_handle(self._job)
             self._job = None
+            return
+        if self._pgid is not None:
+            # POSIX 沒有 kill-on-close 對應物,而 ``terminate_tree`` 只在
+            # TimeoutExpired 走。PowerShell 正常結束、先於 Kit 崩潰、或被外部殺掉
+            # 時,``wait()`` 都會正常返回,孫代卻可能還在處理不可信輸入——這裡在
+            # HOOPS pin 還持有的時候把整個 group 明確清掉,讓每一條離開路徑都收斂。
+            self._posix_release_group(self._pgid)
 
     def terminate_tree(self, *, deadline_seconds: float, grace_seconds: float) -> bool:
         """Kill the tree and return True only once every descendant is gone."""
@@ -537,8 +594,6 @@ class _ContainedProcess:
     # -- posix --------------------------------------------------------------
 
     def _terminate_tree_posix(self, deadline: float, grace_seconds: float) -> bool:
-        import signal
-
         pid = self.pid
         if pid is None:
             self._survivors = ()
@@ -548,21 +603,39 @@ class _ContainedProcess:
             self._kill_direct_child()
             self._survivors = (pid,)
             return False
-        self._killpg(pgid, signal.SIGTERM)
+        self._killpg(pgid, _POSIX_SIGTERM)
+        # 寬限期屬於整個 group,不是直接 child 一個人的:先把直接 child reap 掉
+        # (否則它會變 zombie 讓 group 一直看起來活著),然後 POLL 到 grace 期限,
+        # Kit/HOOPS descendant 才真的有時間跑完自己的 signal handler。原本一 reap
+        # 到直接 child 就立刻 SIGKILL,等於設定了 grace 卻沒有真的給出去。
+        grace_deadline = min(time.monotonic() + grace_seconds, deadline)
         self._reap_bounded(grace_seconds)
+        while self._posix_group_alive(pgid) and time.monotonic() < grace_deadline:
+            time.sleep(_CONTAINMENT_POLL_INTERVAL_SECONDS)
         if not self._posix_group_alive(pgid):
             self._survivors = ()
             return True
-        self._killpg(pgid, signal.SIGKILL)
+        self._killpg(pgid, _POSIX_SIGKILL)
         self._reap_bounded(max(deadline - time.monotonic(), 0.5))
         while True:
             if not self._posix_group_alive(pgid):
                 self._survivors = ()
                 return True
             if time.monotonic() >= deadline:
-                self._survivors = (pid,)
+                # 直接 child(PowerShell)通常正是已經退掉的那一個。回報它等於同時
+                # 「列出一個已消失的 PID」和「藏起真正還在跑不可信輸入的 PID」,
+                # 所以這裡列舉 group 裡真正還活著的成員。
+                self._survivors = self._posix_group_members(pgid) or (pid,)
                 return False
             time.sleep(_CONTAINMENT_POLL_INTERVAL_SECONDS)
+
+    @classmethod
+    def _posix_release_group(cls, pgid: int) -> None:
+        """Terminate whatever outlived the converter inside its own group."""
+
+        if not cls._posix_group_alive(pgid):
+            return
+        cls._killpg(pgid, _POSIX_SIGKILL)
 
     @staticmethod
     def _killpg(pgid: int, sig: int) -> None:
@@ -571,8 +644,8 @@ class _ContainedProcess:
         except OSError:
             pass
 
-    @staticmethod
-    def _posix_group_alive(pgid: int) -> bool:
+    @classmethod
+    def _posix_group_alive(cls, pgid: int) -> bool:
         try:
             os.killpg(pgid, 0)
         except ProcessLookupError:
@@ -581,7 +654,61 @@ class _ContainedProcess:
             # Permission or any other error: the group may still exist, so the
             # honest answer is "not proven gone".
             return True
-        return True
+        # ``killpg(pgid, 0)`` 對「成員全是 defunct」的 group 一樣成功:zombie 佔著
+        # PID 卻已經不能執行任何指令,對 containment 而言就是已終止。PID 1 不 reap
+        # 孤兒的容器(本 repo 的 canonical Linux 部署就是這種)裡不做這個區分,
+        # 每次 timeout 都會燒完整個 deadline 並誤報 converter_containment_failed。
+        members = cls._posix_group_members(pgid)
+        if members is None:
+            # /proc 讀不到就沒有比 killpg 更好的證據,誠實答案是「無法證明已消失」。
+            return True
+        return bool(members)
+
+    @staticmethod
+    def _posix_group_members(pgid: int) -> tuple[int, ...] | None:
+        """Live (non-defunct) PIDs in ``pgid``; None when /proc is not enumerable."""
+
+        try:
+            entries = os.listdir("/proc")
+        except OSError:
+            return None
+        members: list[int] = []
+        for entry in entries:
+            if not entry.isdigit():
+                continue
+            pid = int(entry)
+            try:
+                if os.getpgid(pid) != pgid:
+                    continue
+            except OSError:
+                continue
+            if _ContainedProcess._posix_pid_is_defunct(pid):
+                continue
+            members.append(pid)
+        return tuple(sorted(members))
+
+    @staticmethod
+    def _posix_pid_is_defunct(pid: int) -> bool:
+        try:
+            with open(f"/proc/{pid}/stat", "rb") as handle:
+                raw = handle.read().decode("utf-8", errors="replace")
+        except OSError:
+            return False
+        return _ContainedProcess._posix_stat_state(raw) == "Z"
+
+    @staticmethod
+    def _posix_stat_state(raw: str) -> str:
+        """State field of a ``/proc/<pid>/stat`` line ("" when unparsable).
+
+        ``comm``(field 2)可以含空白與括號,所以用最後一個 ')' 切開再取 state ——
+        與 convert-ifc-to-usdc.ps1::Get-ConverterChildProcessId 同一個 idiom。
+        """
+
+        close_index = raw.rfind(")")
+        if close_index < 0:
+            return ""
+        rest = raw[close_index + 1 :].split()
+        return rest[0] if rest else ""
 
     # -- shared -------------------------------------------------------------
 
@@ -2175,61 +2302,89 @@ class Ifc2UsdcPowershellConverterAdapter:
                 f"Failed to launch PowerShell converter: {exc}",
             ) from exc
         if timed_out:
+            # streaming-ifc-usdc-conversion-authority spec:「subprocess 起來之後的
+            # 任何失敗」——含 timeout——都要在 error 上帶 kit_stdout_log /
+            # kit_stderr_log 與 tail。ps1 在啟動 Kit 之前就印了 ##CONV_META##,所以
+            # 即使被外層 timeout 殺掉,診斷路徑仍然拿得回來。
             # 只有在「每個 descendant 都被觀察到消失」之後才允許回報單純 timeout。
             if not containment_proven:
                 surviving = ", ".join(str(pid) for pid in survivors) or "unknown"
-                raise ConversionAuthorityError(
-                    "converter_containment_failed",
+                headline = (
                     f"convert-ifc-to-usdc.ps1 exceeded {outer_timeout}s and its process "
                     f"tree could not be proven terminated within "
-                    f"{self._CONTAINMENT_DEADLINE_SECONDS}s (surviving pids: {surviving}).",
+                    f"{self._CONTAINMENT_DEADLINE_SECONDS}s (surviving pids: {surviving})."
                 )
-            raise ConversionAuthorityError(
-                "converter_timeout",
+                message, metadata = self._failure_diagnostics(headline, completed)
+                raise ConversionAuthorityError(
+                    "converter_containment_failed",
+                    message,
+                    metadata=metadata or None,
+                )
+            message, metadata = self._failure_diagnostics(
                 f"convert-ifc-to-usdc.ps1 exceeded {outer_timeout}s and its whole "
                 "process tree was killed.",
+                completed,
             )
-        if completed.returncode != 0:
-            # streaming-server-capture-kit-conversion-logs §3:ps1 wrapper emit 一行
-            # `##CONV_META## {"kit_stdout_log":"<path>","kit_stderr_log":"<path>"}`
-            # (見 convert-ifc-to-usdc.ps1 Invoke-KitConversion)。sentinel + JSON 取代
-            # 脆弱的 prose regex:用 re.search 抓 JSON payload,json.loads 解析失敗
-            # fallback 空 dict 不 crash。kit_stdout_log/kit_stderr_log 放進
-            # ConversionAuthorityError.metadata,讓 host_native_conversion_service 寫進
-            # result.error 內,operator 可直接 tail 完整 Kit subprocess log。
-            metadata: dict = {}
-            combined = "\n".join(filter(None, (completed.stderr or "", completed.stdout or "")))
-            # 單行 compact JSON(ps1 用 ConvertTo-Json -Compress):用貪婪 (\{.*\})
-            # 吃到該行最後一個右括號 + 行錨 $,避免非貪婪在 log path 含字面右括號時
-            # 提早截斷;不用 DOTALL 讓 . 不跨行,MULTILINE 讓 $ 對應每一行尾。
-            meta_match = re.search(r"##CONV_META##[ \t]*(\{.*\})\s*$", combined, re.MULTILINE)
-            if meta_match:
-                try:
-                    parsed_meta = json.loads(meta_match.group(1))
-                except (ValueError, TypeError):
-                    parsed_meta = {}
-                if isinstance(parsed_meta, dict):
-                    for key in ("kit_stdout_log", "kit_stderr_log"):
-                        value = parsed_meta.get(key)
-                        if value:
-                            metadata[key] = str(value).strip()
-            # streaming-server-capture-kit-conversion-logs review fix(2026-05-22):
-            # 把 log path 與 spec-required "---- stderr tail (last 100 lines) ----"
-            # 標頭顯式 prepend 到 message 開頭,再放 tail,避免 truncation 把 spec
-            # 要求的 substring 從 message 後段砍掉(spec scenario 1)。tail 額度
-            # 提升到 3000 chars 以涵蓋 header + 大部分 tail 內容。
-            tail = (completed.stderr or completed.stdout or "").strip()[-3000:]
-            message_parts = [f"convert-ifc-to-usdc.ps1 exited {completed.returncode}"]
-            if "kit_stdout_log" in metadata:
-                message_parts.append(f"kit_stdout_log: {metadata['kit_stdout_log']}")
-            if "kit_stderr_log" in metadata:
-                message_parts.append(f"kit_stderr_log: {metadata['kit_stderr_log']}")
-            message_parts.append(tail)
             raise ConversionAuthorityError(
-                "converter_failed",
-                "\n".join(message_parts),
+                "converter_timeout",
+                message,
                 metadata=metadata or None,
             )
+        if completed.returncode != 0:
+            message, metadata = self._failure_diagnostics(
+                f"convert-ifc-to-usdc.ps1 exited {completed.returncode}",
+                completed,
+            )
+            raise ConversionAuthorityError(
+                "converter_failed",
+                message,
+                metadata=metadata or None,
+            )
+
+    def _failure_diagnostics(self, headline: str, completed) -> tuple[str, dict]:
+        """Build the (message, metadata) pair every post-start failure must carry.
+
+        streaming-server-capture-kit-conversion-logs §3:ps1 wrapper emit 一行
+        ``##CONV_META## {"kit_stdout_log":"<path>","kit_stderr_log":"<path>"}``
+        (見 convert-ifc-to-usdc.ps1 Invoke-KitConversion)。sentinel + JSON 取代脆弱
+        的 prose regex:用 re.search 抓 JSON payload,json.loads 解析失敗 fallback
+        空 dict 不 crash。kit_stdout_log/kit_stderr_log 放進
+        ``ConversionAuthorityError.metadata``,讓 host_native_conversion_service 寫進
+        result.error 內,operator 可直接 tail 完整 Kit subprocess log。
+
+        非零 exit、timeout、containment failure 共用同一條路徑,因為 spec 對這三種
+        「subprocess 起來之後的失敗」要求的是同一組診斷欄位。
+        """
+
+        metadata: dict = {}
+        combined = "\n".join(filter(None, (completed.stderr or "", completed.stdout or "")))
+        # 單行 compact JSON(ps1 用 ConvertTo-Json -Compress):用貪婪 (\{.*\})
+        # 吃到該行最後一個右括號 + 行錨 $,避免非貪婪在 log path 含字面右括號時
+        # 提早截斷;不用 DOTALL 讓 . 不跨行,MULTILINE 讓 $ 對應每一行尾。
+        meta_match = re.search(r"##CONV_META##[ \t]*(\{.*\})\s*$", combined, re.MULTILINE)
+        if meta_match:
+            try:
+                parsed_meta = json.loads(meta_match.group(1))
+            except (ValueError, TypeError):
+                parsed_meta = {}
+            if isinstance(parsed_meta, dict):
+                for key in ("kit_stdout_log", "kit_stderr_log"):
+                    value = parsed_meta.get(key)
+                    if value:
+                        metadata[key] = str(value).strip()
+        # streaming-server-capture-kit-conversion-logs review fix(2026-05-22):
+        # 把 log path 與 spec-required "---- stderr tail (last 100 lines) ----"
+        # 標頭顯式 prepend 到 message 開頭,再放 tail,避免 truncation 把 spec
+        # 要求的 substring 從 message 後段砍掉(spec scenario 1)。tail 額度
+        # 提升到 3000 chars 以涵蓋 header + 大部分 tail 內容。
+        tail = (completed.stderr or completed.stdout or "").strip()[-3000:]
+        message_parts = [headline]
+        if "kit_stdout_log" in metadata:
+            message_parts.append(f"kit_stdout_log: {metadata['kit_stdout_log']}")
+        if "kit_stderr_log" in metadata:
+            message_parts.append(f"kit_stderr_log: {metadata['kit_stderr_log']}")
+        message_parts.append(tail)
+        return "\n".join(message_parts), metadata
 
     def _is_primary_ifc_import_failure(self, exc: ConversionAuthorityError) -> bool:
         if exc.code != "converter_failed":

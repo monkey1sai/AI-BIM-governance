@@ -104,4 +104,125 @@ finally {
     }
 }
 
+# --- #489 L1-COR-004: the containment helpers need executable coverage --------
+# They live inside the converter script (which executes a conversion plan when
+# loaded), so lift the function definitions out through the PowerShell AST rather
+# than dot-sourcing the whole script.
+
+$converterAst = [System.Management.Automation.Language.Parser]::ParseFile($ScriptPath, [ref]$null, [ref]$null)
+foreach ($fnName in @(
+        'Get-ConverterChildProcessId',
+        'Get-ProcStatProcessState',
+        'Test-ConverterProcessAlive',
+        'Get-ConverterProcessTreeId',
+        'Stop-ConverterProcessTree')) {
+    $found = @($converterAst.FindAll({
+                param($node)
+                $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $fnName
+            }, $true))
+    Assert-True ($found.Count -eq 1) "Expected exactly one $fnName definition in the converter script."
+    . ([scriptblock]::Create($found[0].Extent.Text))
+}
+
+# /proc/<pid>/stat: comm (field 2) may contain spaces and parens, and a defunct
+# descendant must not be counted as a containment survivor.
+Assert-True ((Get-ProcStatProcessState -StatLine '4242 (kit (cad) worker) Z 1 4242') -eq 'Z') 'Expected Z state from a comm containing spaces and parens.'
+Assert-True ((Get-ProcStatProcessState -StatLine '4242 (kit) S 1 4242') -eq 'S') 'Expected S state from a simple stat line.'
+Assert-True ((Get-ProcStatProcessState -StatLine 'garbage') -eq '') 'Expected empty state from an unparsable stat line.'
+
+function Start-ContainmentTestProcess {
+    # ProcessStartInfo.ArgumentList, never a joined string: Start-Process's
+    # ArgumentList re-tokenizes and shreds quoted arguments.
+    param(
+        [Parameter(Mandatory = $true)][string] $FilePath,
+        [Parameter(Mandatory = $true)][string[]] $Arguments
+    )
+
+    $psi = [System.Diagnostics.ProcessStartInfo]::new($FilePath)
+    $psi.UseShellExecute = $false
+    foreach ($argument in $Arguments) { $psi.ArgumentList.Add($argument) | Out-Null }
+    return [System.Diagnostics.Process]::Start($psi)
+}
+
+$PwshPath = (Get-Process -Id $PID).Path
+$ContainmentTempDir = Join-Path ([System.IO.Path]::GetTempPath()) ("conv-containment-{0}" -f ([guid]::NewGuid().ToString('N')))
+New-Item -ItemType Directory -Path $ContainmentTempDir | Out-Null
+$RecordedPids = @()
+try {
+    $sleepScript = Join-Path $ContainmentTempDir 'sleep-forever.ps1'
+    Set-Content -LiteralPath $sleepScript -Encoding UTF8 -Value 'Start-Sleep -Seconds 600'
+    $spawnScript = Join-Path $ContainmentTempDir 'spawn-tree.ps1'
+    Set-Content -LiteralPath $spawnScript -Encoding UTF8 -Value @(
+        'param([string] $PidFile, [string] $PwshPath, [string] $SleepScript)',
+        '$psi = [System.Diagnostics.ProcessStartInfo]::new($PwshPath)',
+        '$psi.UseShellExecute = $false',
+        'foreach ($a in @("-NoProfile", "-NoLogo", "-File", $SleepScript)) { $psi.ArgumentList.Add($a) | Out-Null }',
+        '$child = [System.Diagnostics.Process]::Start($psi)',
+        'Set-Content -LiteralPath $PidFile -Value $child.Id',
+        'Start-Sleep -Seconds 600'
+    )
+    $pidFile = Join-Path $ContainmentTempDir 'grandchild.pid'
+
+    # 1) A real 2-deep tree must be fully terminated and PROVEN gone.
+    $rootProcess = Start-ContainmentTestProcess -FilePath $PwshPath -Arguments @(
+        '-NoProfile', '-NoLogo', '-File', $spawnScript,
+        '-PidFile', $pidFile, '-PwshPath', $PwshPath, '-SleepScript', $sleepScript
+    )
+    $RecordedPids += [int]$rootProcess.Id
+    $waitDeadline = [DateTime]::UtcNow.AddSeconds(30)
+    while (-not (Test-Path -LiteralPath $pidFile) -and [DateTime]::UtcNow -lt $waitDeadline) {
+        Start-Sleep -Milliseconds 100
+    }
+    Assert-True (Test-Path -LiteralPath $pidFile) 'Expected the fixture to record its grandchild PID.'
+    $grandchildPid = [int]((Get-Content -LiteralPath $pidFile -Raw).Trim())
+    $RecordedPids += $grandchildPid
+    Assert-True (Test-ConverterProcessAlive -ProcessId $grandchildPid) 'Expected the grandchild to be alive before containment.'
+
+    $survivors = @(Stop-ConverterProcessTree -ProcessId ([int]$rootProcess.Id) -TimeoutMs 15000)
+    Assert-True ($survivors.Count -eq 0) "Expected containment to be proven; survivors: $($survivors -join ', ')"
+    foreach ($recorded in $RecordedPids) {
+        Assert-True (-not (Test-ConverterProcessAlive -ProcessId $recorded)) "Expected PID $recorded to be gone after containment."
+    }
+
+    # 2) Descendants are re-discovered THROUGH termination, not from one snapshot.
+    #    A child that only becomes visible after the first scan must still be
+    #    terminated before containment is claimed.
+    $lateChild = Start-ContainmentTestProcess -FilePath $PwshPath -Arguments @('-NoProfile', '-NoLogo', '-File', $sleepScript)
+    $script:LateChildId = [int]$lateChild.Id
+    $RecordedPids += $script:LateChildId
+    $script:PhantomRootId = 999999
+    $script:TreeScanCount = 0
+    $script:PhantomProbeCount = 0
+
+    function Get-ConverterChildProcessId {
+        param([Parameter(Mandatory = $true)][int] $ParentProcessId)
+        if ($ParentProcessId -ne $script:PhantomRootId) { return @() }
+        $script:TreeScanCount++
+        if ($script:TreeScanCount -eq 1) { return @() }
+        return @($script:LateChildId)
+    }
+
+    function Test-ConverterProcessAlive {
+        param([Parameter(Mandatory = $true)][int] $ProcessId)
+        if ($ProcessId -eq $script:PhantomRootId) {
+            $script:PhantomProbeCount++
+            return ($script:PhantomProbeCount -lt 3)
+        }
+        return ($null -ne (Get-Process -Id $ProcessId -ErrorAction SilentlyContinue))
+    }
+
+    $lateSurvivors = @(Stop-ConverterProcessTree -ProcessId $script:PhantomRootId -TimeoutMs 10000)
+    Assert-True ($lateSurvivors.Count -eq 0) "Expected the rescan loop to prove containment; survivors: $($lateSurvivors -join ', ')"
+    Assert-True ($script:TreeScanCount -ge 2) 'Expected the process tree to be re-scanned, not scanned once.'
+    Assert-True ($null -eq (Get-Process -Id $script:LateChildId -ErrorAction SilentlyContinue)) 'Expected the late-appearing descendant to be terminated.'
+}
+finally {
+    foreach ($recorded in $RecordedPids) {
+        Stop-Process -Id ([int]$recorded) -Force -ErrorAction SilentlyContinue
+    }
+    if (Test-Path -LiteralPath $ContainmentTempDir) {
+        Remove-Item -LiteralPath $ContainmentTempDir -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+
 Write-Host "convert-ifc-to-usdc tests passed"

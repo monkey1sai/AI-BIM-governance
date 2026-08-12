@@ -332,17 +332,41 @@ function Get-ConverterChildProcessId {
     return @($children)
 }
 
-function Stop-ConverterProcessTree {
-    # #489 L1-COR-004: `Stop-Process -Id $process.Id -Force` only reaches Kit
-    # itself. Its HOOPS/CAD grandchildren keep processing untrusted input after
-    # the wrapper reports a timeout. Walk the tree breadth-first (same idiom as
-    # scripts/lib/host-native-launcher.ps1::Stop-HostNativeService), kill leaves
-    # first, then WAIT until every collected PID is observed gone. Returns the
-    # PIDs that survived the wait: an empty array means containment is proven.
-    param(
-        [Parameter(Mandatory = $true)][int] $ProcessId,
-        [ValidateRange(0, 600000)][int] $TimeoutMs = 15000
-    )
+function Get-ProcStatProcessState {
+    # State field of a /proc/<pid>/stat line ('' when unparsable). comm (field 2)
+    # may contain spaces and parens, so split on the LAST ')' — same idiom as
+    # Get-ConverterChildProcessId and the adapter's _posix_stat_state.
+    param([Parameter(Mandatory = $true)][AllowEmptyString()][string] $StatLine)
+
+    $closeIndex = $StatLine.LastIndexOf(')')
+    if ($closeIndex -lt 0) { return '' }
+    $rest = $StatLine.Substring($closeIndex + 1).Trim() -split '\s+'
+    if ($rest.Count -lt 1 -or [string]::IsNullOrEmpty($rest[0])) { return '' }
+    return $rest[0]
+}
+
+function Test-ConverterProcessAlive {
+    # A defunct (zombie) descendant still owns a PID, so Get-Process keeps
+    # returning it, but it can no longer execute anything — for containment it IS
+    # terminated. On Linux hosts whose PID 1 does not promptly reap orphans (our
+    # containers included) counting zombies as survivors burns the whole
+    # containment deadline and reports a false containment failure.
+    param([Parameter(Mandatory = $true)][int] $ProcessId)
+
+    if ($env:OS -eq 'Windows_NT') {
+        return ($null -ne (Get-Process -Id $ProcessId -ErrorAction SilentlyContinue))
+    }
+
+    $statPath = "/proc/$ProcessId/stat"
+    if (-not (Test-Path -LiteralPath $statPath)) { return $false }
+    try { $raw = Get-Content -LiteralPath $statPath -Raw -ErrorAction Stop } catch { return $false }
+    return ((Get-ProcStatProcessState -StatLine $raw) -ne 'Z')
+}
+
+function Get-ConverterProcessTreeId {
+    # Breadth-first walk of the live process tree rooted at $ProcessId (same idiom
+    # as scripts/lib/host-native-launcher.ps1::Stop-HostNativeService).
+    param([Parameter(Mandatory = $true)][int] $ProcessId)
 
     $ids = @()
     $stack = @($ProcessId)
@@ -354,14 +378,49 @@ function Stop-ConverterProcessTree {
             $stack += @(Get-ConverterChildProcessId -ParentProcessId $current)
         }
     }
+    return @($ids)
+}
 
-    for ($i = $ids.Count - 1; $i -ge 0; $i--) {
-        Stop-Process -Id ([int]$ids[$i]) -Force -ErrorAction SilentlyContinue
-    }
+function Stop-ConverterProcessTree {
+    # #489 L1-COR-004: `Stop-Process -Id $process.Id -Force` only reaches Kit
+    # itself. Its HOOPS/CAD grandchildren keep processing untrusted input after
+    # the wrapper reports a timeout. Kill the tree leaves-first and WAIT until
+    # every known PID is observed gone. Returns the PIDs that survived the wait:
+    # an empty array means containment is proven for everything discovered.
+    #
+    # Discovery is REPEATED, not one-shot: a single BFS snapshot can miss a child
+    # spawned after its parent was visited, and a Stop-Process can transiently
+    # fail. Each round re-scans the tree, re-kills anything still alive, and only
+    # then re-checks liveness — so an empty result means "a fresh scan plus every
+    # previously seen PID are all gone", not "one old snapshot is gone".
+    #
+    # LIMIT (honest): a descendant whose parent already died is reparented to
+    # PID 1 / the OS, so it is no longer reachable from $ProcessId and no
+    # script-level rescan can rediscover it. The non-escapable boundary is the
+    # CALLER's: the adapter's Windows Job Object (kill-on-close) or POSIX process
+    # group, both of which outlive this function. Direct invocations of this
+    # script get best-effort containment only.
+    param(
+        [Parameter(Mandatory = $true)][int] $ProcessId,
+        [ValidateRange(0, 600000)][int] $TimeoutMs = 15000
+    )
 
     $deadline = [DateTime]::UtcNow.AddMilliseconds($TimeoutMs)
+    $known = @()
     while ($true) {
-        $alive = @($ids | Where-Object { $null -ne (Get-Process -Id $_ -ErrorAction SilentlyContinue) })
+        $ids = @(Get-ConverterProcessTreeId -ProcessId $ProcessId)
+        foreach ($id in $ids) {
+            if ($known -notcontains $id) { $known += $id }
+        }
+        for ($i = $ids.Count - 1; $i -ge 0; $i--) {
+            Stop-Process -Id ([int]$ids[$i]) -Force -ErrorAction SilentlyContinue
+        }
+        foreach ($id in $known) {
+            if ($ids -notcontains $id -and (Test-ConverterProcessAlive -ProcessId $id)) {
+                Stop-Process -Id ([int]$id) -Force -ErrorAction SilentlyContinue
+            }
+        }
+        $alive = @($known | Where-Object { Test-ConverterProcessAlive -ProcessId $_ })
         if ($alive.Count -eq 0) { return @() }
         if ([DateTime]::UtcNow -ge $deadline) { return @($alive) }
         Start-Sleep -Milliseconds 100

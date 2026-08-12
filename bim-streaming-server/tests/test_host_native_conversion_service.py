@@ -3837,6 +3837,260 @@ def test_unprovable_containment_fails_closed_with_a_distinct_reason(
     assert "424243" in raised.message
 
 
+# --- #489 review round 2: containment boundary must not silently degrade ------
+
+
+def test_windows_launch_is_refused_without_a_job_object(tmp_path: Path, monkeypatch):
+    """#489 SEC-001:Job Object 建不起來 / assign 不上時,不得降級成無邊界執行。
+
+    少了 Job Object,timeout 只剩 racy 的 PID-tree snapshot,在兩次 snapshot 之間
+    退出或被 reparent 的 descendant 會逃出這個 class 承諾的邊界。建不出邊界必須是
+    launch failure(``converter_unavailable``),而且那個已經起來的 child 要先殺掉。
+    """
+
+    import ifc2usdc_powershell_adapter as mod
+
+    killed: list[str] = []
+
+    class _UncontainableProc:
+        pid = 4242
+
+        def kill(self) -> None:
+            killed.append("kill")
+
+        def wait(self, timeout=None):
+            return -9
+
+    monkeypatch.setattr(mod, "_win32_containment_api", lambda: None)
+    monkeypatch.setattr(
+        mod._ContainedProcess, "_popen", staticmethod(lambda cmd, **kwargs: _UncontainableProc())
+    )
+
+    with pytest.raises(OSError) as excinfo:
+        mod._ContainedProcess._spawn_windows(
+            ["converter"], cwd=str(tmp_path), stdout=None, stderr=None
+        )
+
+    assert "containment boundary" in str(excinfo.value)
+    assert killed == ["kill"], "the uncontained child must be terminated, not left running"
+
+
+def test_close_terminates_a_posix_group_that_outlived_the_converter(monkeypatch):
+    """#489 SEC-001:POSIX 沒有 kill-on-close 對應物。
+
+    PowerShell 先於 Kit 崩潰/被外部殺掉時 ``wait()`` 正常返回,``terminate_tree``
+    只在 TimeoutExpired 走,所以 ``close()`` 必須自己把 group 清掉,否則 HOOPS pin
+    會在孫代還活著時就被放掉。
+    """
+
+    import ifc2usdc_powershell_adapter as mod
+
+    signalled: list[tuple[int, int]] = []
+    monkeypatch.setattr(
+        mod._ContainedProcess, "_posix_group_alive", classmethod(lambda cls, pgid: True)
+    )
+    monkeypatch.setattr(
+        mod._ContainedProcess,
+        "_killpg",
+        staticmethod(lambda pgid, sig: signalled.append((pgid, sig))),
+    )
+
+    contained = mod._ContainedProcess(_FakeContainedPopen(["converter"]), pgid=4242)
+    contained.close()
+    assert signalled == [(4242, mod._POSIX_SIGKILL)]
+
+    contained.close()
+    assert signalled == [(4242, mod._POSIX_SIGKILL)], "close() must stay idempotent"
+
+
+def test_close_does_not_signal_a_posix_group_that_is_already_gone(monkeypatch):
+    import ifc2usdc_powershell_adapter as mod
+
+    signalled: list[tuple[int, int]] = []
+    monkeypatch.setattr(
+        mod._ContainedProcess, "_posix_group_alive", classmethod(lambda cls, pgid: False)
+    )
+    monkeypatch.setattr(
+        mod._ContainedProcess,
+        "_killpg",
+        staticmethod(lambda pgid, sig: signalled.append((pgid, sig))),
+    )
+
+    mod._ContainedProcess(_FakeContainedPopen(["converter"]), pgid=4242).close()
+    assert signalled == []
+
+
+def test_posix_group_alive_treats_a_zombie_only_group_as_terminated(monkeypatch):
+    """#489:``killpg(pgid, 0)`` 對「只剩 defunct 成員」的 group 一樣成功。
+
+    PID 1 不 reap 孤兒的容器裡,不做這個區分會讓每次 timeout 都燒完整個 deadline
+    並誤報 ``converter_containment_failed``。zombie 佔著 PID 但不能再執行任何指令。
+    """
+
+    import ifc2usdc_powershell_adapter as mod
+
+    monkeypatch.setattr(os, "killpg", lambda pgid, sig: None, raising=False)
+
+    monkeypatch.setattr(
+        mod._ContainedProcess, "_posix_group_members", staticmethod(lambda pgid: ())
+    )
+    assert mod._ContainedProcess._posix_group_alive(4242) is False
+
+    monkeypatch.setattr(
+        mod._ContainedProcess, "_posix_group_members", staticmethod(lambda pgid: (7,))
+    )
+    assert mod._ContainedProcess._posix_group_alive(4242) is True
+
+    # /proc 讀不到時誠實的答案是「無法證明已消失」,不是「已消失」。
+    monkeypatch.setattr(
+        mod._ContainedProcess, "_posix_group_members", staticmethod(lambda pgid: None)
+    )
+    assert mod._ContainedProcess._posix_group_alive(4242) is True
+
+
+def test_posix_stat_state_survives_a_comm_containing_spaces_and_parens():
+    import ifc2usdc_powershell_adapter as mod
+
+    assert mod._ContainedProcess._posix_stat_state("4242 (kit (cad) worker) Z 1 4242\n") == "Z"
+    assert mod._ContainedProcess._posix_stat_state("4242 (kit) S 1 4242\n") == "S"
+    assert mod._ContainedProcess._posix_stat_state("garbage") == ""
+
+
+def test_posix_group_members_is_none_when_proc_cannot_be_enumerated(monkeypatch):
+    import ifc2usdc_powershell_adapter as mod
+
+    def _no_proc(path):
+        raise OSError("no /proc here")
+
+    monkeypatch.setattr(os, "listdir", _no_proc)
+    assert mod._ContainedProcess._posix_group_members(4242) is None
+
+
+def test_posix_deadline_reports_the_live_group_members_not_the_direct_child(monkeypatch):
+    """#489:``converter_containment_failed`` 要列出真正還活著的成員。
+
+    直接 child(PowerShell)通常正是已經死掉的那一個;把它當 survivor 回報會
+    同時「列出已消失的 PID」和「藏起仍在處理不可信輸入的 PID」。
+    """
+
+    import ifc2usdc_powershell_adapter as mod
+
+    monkeypatch.setattr(mod._ContainedProcess, "_killpg", staticmethod(lambda pgid, sig: None))
+    monkeypatch.setattr(
+        mod._ContainedProcess, "_posix_group_alive", classmethod(lambda cls, pgid: True)
+    )
+    monkeypatch.setattr(
+        mod._ContainedProcess, "_posix_group_members", staticmethod(lambda pgid: (777, 888))
+    )
+
+    proc = _FakeContainedPopen(["converter"])
+    proc.pid = 4242
+    contained = mod._ContainedProcess(proc, pgid=4242)
+
+    assert contained._terminate_tree_posix(time.monotonic(), 0.0) is False
+    assert contained.survivors == (777, 888)
+
+
+def test_posix_grace_period_is_granted_to_the_whole_group(monkeypatch):
+    """#489:SIGTERM 之後的寬限期屬於整個 group,不是直接 child 一個人的。
+
+    直接 child 一被 reap 就立刻 SIGKILL,等於沒有給 Kit/HOOPS descendant 跑完
+    signal handler 的時間(診斷 flush / 資源釋放會被截斷)。
+    """
+
+    import ifc2usdc_powershell_adapter as mod
+
+    signals: list[int] = []
+    probes = {"count": 0}
+
+    def _alive(cls, pgid):
+        probes["count"] += 1
+        # descendant 還在跑自己的 handler,第三次 poll 才收乾淨。
+        return probes["count"] < 3
+
+    monkeypatch.setattr(mod._ContainedProcess, "_posix_group_alive", classmethod(_alive))
+    monkeypatch.setattr(
+        mod._ContainedProcess, "_killpg", staticmethod(lambda pgid, sig: signals.append(sig))
+    )
+
+    proc = _FakeContainedPopen(["converter"])
+    proc.pid = 4242
+    contained = mod._ContainedProcess(proc, pgid=4242)
+
+    assert contained._terminate_tree_posix(time.monotonic() + 5.0, 2.0) is True
+    assert signals == [mod._POSIX_SIGTERM], "grace 期間內收乾淨就不該升級到 SIGKILL"
+    assert contained.survivors == ()
+
+
+_TIMEOUT_CONV_META = (
+    '##CONV_META## {"kit_stdout_log":"C:\\\\logs\\\\kit-stdout.log",'
+    '"kit_stderr_log":"C:\\\\logs\\\\kit-stderr.log"}\n'
+    "[ifc-convert] still importing the model\n"
+)
+
+
+def test_timeout_error_carries_the_kit_log_diagnostics(tmp_path: Path, monkeypatch):
+    """streaming-ifc-usdc-conversion-authority spec:subprocess 起來之後的任何失敗
+    (含 timeout)都要在 error 裡帶 ``kit_stdout_log`` / ``kit_stderr_log`` 與 tail。"""
+
+    adapter = _adapter_for_sentinel(tmp_path)
+    validated_hoops_main, validated_hoops_identity = _validated_explicit_hoops(adapter)
+    _patch_popen(monkeypatch, timeout=True, stdout=_TIMEOUT_CONV_META)
+
+    raised: ConversionAuthorityError | None = None
+    try:
+        adapter._run_powershell_conversion(
+            ifc_path=tmp_path / "fake.ifc",
+            output_dir=tmp_path / "out",
+            validated_hoops_main=validated_hoops_main,
+            validated_hoops_identity=validated_hoops_identity,
+        )
+    except ConversionAuthorityError as exc:
+        raised = exc
+
+    assert raised is not None
+    assert raised.code == "converter_timeout"
+    assert raised.metadata is not None
+    assert raised.metadata["kit_stdout_log"] == "C:\\logs\\kit-stdout.log"
+    assert raised.metadata["kit_stderr_log"] == "C:\\logs\\kit-stderr.log"
+    assert "kit_stdout_log: C:\\logs\\kit-stdout.log" in raised.message
+    assert "still importing the model" in raised.message
+
+
+def test_containment_failure_carries_the_kit_log_diagnostics(tmp_path: Path, monkeypatch):
+    import ifc2usdc_powershell_adapter
+
+    adapter = _adapter_for_sentinel(tmp_path)
+    validated_hoops_main, validated_hoops_identity = _validated_explicit_hoops(adapter)
+
+    def _unprovable(self, *, deadline_seconds, grace_seconds):
+        self._survivors = (424242,)
+        return False
+
+    monkeypatch.setattr(
+        ifc2usdc_powershell_adapter._ContainedProcess, "terminate_tree", _unprovable
+    )
+    _patch_popen(monkeypatch, timeout=True, stdout=_TIMEOUT_CONV_META)
+
+    raised: ConversionAuthorityError | None = None
+    try:
+        adapter._run_powershell_conversion(
+            ifc_path=tmp_path / "fake.ifc",
+            output_dir=tmp_path / "out",
+            validated_hoops_main=validated_hoops_main,
+            validated_hoops_identity=validated_hoops_identity,
+        )
+    except ConversionAuthorityError as exc:
+        raised = exc
+
+    assert raised is not None
+    assert raised.code == "converter_containment_failed"
+    assert "424242" in raised.message
+    assert raised.metadata is not None
+    assert raised.metadata["kit_stderr_log"] == "C:\\logs\\kit-stderr.log"
+    assert "kit_stderr_log: C:\\logs\\kit-stderr.log" in raised.message
+
+
 def _patch_subprocess_returning(monkeypatch, *, returncode: int, stderr: str, stdout: str = "") -> None:
     _patch_popen(monkeypatch, returncode=returncode, stdout=stdout, stderr=stderr)
 
