@@ -4,27 +4,43 @@ ledger_entry=mechanism-hardening-2
 base_commit=472192386f8402cf19a29005daf25556d26f222c
 host=windows pwsh=7.5.4
 gitnexus=NOT_APPLICABLE (the GitNexus index carries no PowerShell symbols; `impact Stop-HostNativeProcessTreeAndWait` and `impact Resolve-HostNativeKitControlUrl` both returned target-not-found, so callers were established by repository-wide grep instead)
+command_resolution=every `PASS <id>` below without an inline invocation resolves through the immutable command map `$commandSpecById` in scripts/tests/test-self-referential-bootstrap.ps1 at the recorded head; the ids that map does not carry are written with their resolved invocation inline
+--- round 1: initial bundle, recorded at base_commit ---
 PASS test-deploy-governance-static
 PASS test-verify-all
 PASS test-host-native-launcher
 PASS test-host-native-child-launch
-PASS test-deploy-dryrun
-PASS test-deploy-env-fallback
+PASS test-deploy-dryrun (pwsh -NoProfile -NonInteractive -File scripts/tests/test-deploy-dryrun.ps1)
+PASS test-deploy-env-fallback (pwsh -NoProfile -NonInteractive -File scripts/tests/test-deploy-env-fallback.ps1)
 PASS test-rebuild-test-deploy
 PASS test-platform-adapter
 PASS test-preflight-ports
-PASS test-stop-all-single-pid
+PASS test-stop-all-single-pid (pwsh -NoProfile -NonInteractive -File scripts/tests/test-stop-all-single-pid.ps1)
 PASS test-kit-log-probe
 PASS test-deploy-target-registry
 PASS test-remote-deploy-transport
 PASS test-self-referential-bootstrap
 PASS test-agent-governance-check
 PASS invoke-powershell-static
-NOTE test-deploy-dryrun and test-deploy-env-fallback pass on this branch but are absent from the immutable command map in scripts/tests/test-self-referential-bootstrap.ps1, which is itself a gated file; they are therefore recorded here as evidence but are not verification-contract command ids
+NOTE test-deploy-dryrun, test-deploy-env-fallback and test-stop-all-single-pid each have an executable source under scripts/tests/ and pass on this branch, but none of the three is in the immutable command map, so none of them is a verification-contract command id; all three are supporting evidence only. Adding them to the map and to the entry's ordered command_ids would enlarge this entry's fixpoint obligation, so that scope decision is left to the ledger owner rather than taken inside a review-fix round.
 PASS deploy-dry-run-operator-path (scripts/deploy.ps1 -DryRun exits 0 and leaves the working tree clean)
 PASS verify-all-deployment-plan-only-windows (scripts/verify-all.ps1 -Profile Deployment -PlanOnly exits 0)
 NOT_RUN verify-all-deployment-plan-only-linux (no canonical Linux session was opened for this bundle)
 NOT_RUN canonical-linux-rebuild (owed at fixpoint; no baseline rebuild was executed for this bundle)
 NOT_RUN canonical-linux-deployment-verify (owed at fixpoint)
+--- round 2: PR #513 ship-gate NO-SHIP findings and review threads ---
+reviewed_head_commit=110c657fd620e3bdbac4379ac716da99d37848b9
+reviewed_head_worktree=clean (`git status --porcelain` produced no output at the recorded commit)
+reviewed_host=windows pwsh=7.5.4
+reviewed_scope=scripts/lib/host-native-launcher.ps1, scripts/deploy.ps1, scripts/tests/test-host-native-launcher.ps1, scripts/tests/test-deploy-dryrun.ps1, .github/workflows/ci.yml, scripts/verification-manifest.json, scripts/self-referential-bootstrap-ledger.json
+PASS test-host-native-launcher
+PASS test-deploy-governance-static
+PASS test-verify-all
+PASS test-self-referential-bootstrap
+PASS invoke-powershell-static
+PASS test-rebuild-test-deploy
+PASS test-agent-governance-check
+PASS test-deploy-dryrun (pwsh -NoProfile -NonInteractive -File scripts/tests/test-deploy-dryrun.ps1)
+NOT_RUN the remaining round-1 command ids were not re-executed in round 2; nothing in the round-2 scope reaches them
 LIMIT canonical-post-change-verification=pending merge and mainline fixpoint rebuild
 LIMIT full-system-e2e=not claimed

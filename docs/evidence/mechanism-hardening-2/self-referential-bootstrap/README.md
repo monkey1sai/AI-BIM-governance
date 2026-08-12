@@ -5,6 +5,7 @@
 - `stack_kind=self_referential_bootstrap`
 - Pull request: see the ledger entry `mechanism-hardening-2` (`pr` field is the binding record)
 - Baseline: freshly fetched `origin/main` at `472192386f8402cf19a29005daf25556d26f222c`
+- Reviewed head: `110c657fd620e3bdbac4379ac716da99d37848b9` (round 2), worktree clean — `git status --porcelain` produced no output at that commit
 - This is isolated branch bootstrap evidence. It is not canonical post-change evidence and does not claim full-system E2E completion.
 
 ## Scope
@@ -25,7 +26,11 @@ The canonical deployment transport rebuilds the Linux test target only from fres
 
 ## What this branch did verify
 
-Local mechanism suites on the branch head, on Windows with PowerShell 7.5.4. The recorded results are in `verification.txt`.
+Local mechanism suites on the branch head, on Windows with PowerShell 7.5.4. The recorded results are in `verification.txt`, split into the two rounds that produced them: the initial bundle at the baseline, and the PR #513 review round at the reviewed head above. Each `PASS` line names either a command id that resolves through the immutable command map in `scripts/tests/test-self-referential-bootstrap.ps1`, or its resolved invocation inline when that map does not carry the id.
+
+## Round 2: PR #513 ship-gate findings
+
+The Codex tri-adversarial ship-gate returned NO-SHIP on four findings against `Stop-HostNativeProcessTreeAndWait`, and the PR review threads named the same defects. All four are closed at the reviewed head: the pre-entry `HasExited` return no longer skips descendant containment, descendant stops are identity-revalidated against PID reuse, containment is a bounded re-enumerating fixed point rather than one snapshot, and the tree-kill capability decision is injectable so the Windows PowerShell 5.1 fallback is exercised as behaviour. The round also restored `-DryRun` adjudication of `KIT_CONTROL_URL` and put `test-host-native-launcher.ps1` into the required `rebuild-test-deploy` CI job, which is why `.github/workflows/ci.yml` and `scripts/verification-manifest.json` joined this entry's `verification_mechanism_paths`.
 
 ## Limits
 
