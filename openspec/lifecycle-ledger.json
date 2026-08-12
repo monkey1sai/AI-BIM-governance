@@ -376,6 +376,24 @@
       "archive_debt": null
     },
     {
+      "id": "align-ship-cycle-merge-ancestry",
+      "status": "archived",
+      "owner": "repository-maintainer",
+      "current_slice": "spec squash-merge 措辭改對齊 ship-item.md/enforcing test 的 merge ancestry 契約，已 archived(2026-08-11)",
+      "blocked_by": [],
+      "last_verified": "2026-08-11T00:00:00Z",
+      "task_ledger": {
+        "completed": 6,
+        "total": 6
+      },
+      "evidence_refs": [
+        "openspec/changes/archive/2026-08-11-align-ship-cycle-merge-ancestry/proposal.md",
+        "openspec/changes/archive/2026-08-11-align-ship-cycle-merge-ancestry/tasks.md"
+      ],
+      "subject_commit": "bccf251319b50a64806592cd0b4709c186e9c1f4",
+      "archive_debt": null
+    },
+    {
       "id": "align-workflow-v3-with-saas-roadmap",
       "status": "archived",
       "owner": "repository-maintainer",
