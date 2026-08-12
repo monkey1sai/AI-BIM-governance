@@ -1,0 +1,32 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "trusted-host-merge-assertion.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "kind",
+    "version",
+    "repo",
+    "prNumber",
+    "headOid",
+    "baseOid",
+    "action",
+    "runId",
+    "provider",
+    "nonce",
+    "expiresAt"
+  ],
+  "properties": {
+    "kind": { "const": "ai-bim-trusted-elevated-merge" },
+    "version": { "const": 1 },
+    "repo": { "const": "monkey1sai/AI-BIM-governance" },
+    "prNumber": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+    "headOid": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "baseOid": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "action": { "const": "merge-elevated" },
+    "runId": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+    "provider": { "enum": ["claude", "codex"] },
+    "nonce": { "type": "string", "pattern": "^[A-Za-z0-9_-]{32,128}$" },
+    "expiresAt": { "type": "string", "format": "date-time" }
+  }
+}

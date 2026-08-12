@@ -1,6 +1,6 @@
 # ship-item — P6 buffered ship 的權威程序
 
-> 本檔與 `ship-item.js` 的安全語義必須同步。完整 PR 規則見 `docs/agents/github-workflow.md`；本檔同時記錄目前可執行狀態與未來 trusted-host 程序，不得把設計中的 merge path 說成已可用。
+> 本檔與 `ship-item.js` 的安全語義必須同步。完整 PR 規則見 `docs/agents/github-workflow.md`；本檔同時區分 Workflow runtime、repo 已實作的 trusted host，以及尚待 owner provision 的 hosted activation，不得把未啟用的 merge path 說成 live。
 
 ## 目前 runtime 狀態（fail closed）
 
@@ -15,10 +15,11 @@
 
 這個分支不 dispatch apex、不執行 preparation/final reads，也不執行 merge。production script 已移除 legacy coordinator、shell／agent dispatch 與 merge sink；即使 caller 注入 synthetic `$` 或 `agent` 也只能得到同一個 durable HELD。不存在 synthetic injected-`$` happy path 可作為 deployability 或真實 runtime pass 證據，測試只證明注入能力無法解鎖 production workflow。
 
-真正恢復 P6 必須由 **base-pinned trusted host executor** 在 Workflow 外執行固定 preparation、verdict 後 final reads 與
-`gh pr merge --merge --match-head-commit <preparedHead>`；executor 必須來自 freshly fetched trusted base，不能執行 PR branch 可修改的 merge script。apex 仍保持 shell-free，只讀 host 供給且綁定 repo/PR/base/head 的 immutable evidence。trusted host executor 尚未實作前，P6 一律停在上述 durable HELD，不得 retry 成成功、人工補寫 `merged=true` 或進入 P7。
+repo 已提供 **base-pinned trusted host executor**：`.github/workflows/trusted-elevated-merge.yml` 只可從 default branch 的 `workflow_dispatch` 載入，固定 `ubuntu-24.04`、Node `20.20.2` 與 `/usr/bin/git`，執行 `scripts/dev/trusted-host-merge.mjs`，並以 `agent-contracts/trusted-host-merge.contract.json` 作 machine contract。executor 在 Workflow 外執行固定 preparation、verdict 後 final reads 與 exact-head REST merge；只 checkout `github.sha` 的 trusted base，PR head 僅 fetch 成 inert Git object，不 checkout、不執行 candidate script、action、hook 或 dependency。apex 直接呼叫 Claude/OpenAI API，`tools=[]`，只讀 host 供給且綁定 repo/PR/base/head 的 immutable evidence。
 
-以下 §2–§5 是 trusted host executor 上線後必須保留的安全程序；目前不是 Workflow runtime 已能自行執行的能力。
+這個 implementation 只有在本變更先由既有流程合併到 `main`，且 owner 完成下述 protected environment／GitHub App provision 與 live attestation 後才可啟用。`ship-item.js` 本身仍無 shell／GitHub capability，因此未取得 hosted activation evidence 或沒有外層 host adapter 時，一律停在上述 durable HELD，不得 retry 成成功、人工補寫 `merged=true` 或進入 P7。machine truth 的 activation state 是 `requires_protected_environment_provisioning`。
+
+以下 §2–§5 是 external trusted host 已實作的安全程序；仍不是 `ship-item.js` Workflow runtime 自行擁有的能力。
 
 ## 邊界與前置條件
 
@@ -39,8 +40,8 @@ P0–P5／呼叫端負責實作、測試、commit、base freshness、push、建�
 |---|---|
 | Repository owner | 實作與最終 merge operator；不得審核自己的 PR。 |
 | Human reviewer `monkey1sai-blip` | 唯一人工 approval authority；固定 user ID `311287868`，並由 `.github/CODEOWNERS` 指定為全路徑唯一 code owner。必須在 GitHub UI 對 exact head 提交 APPROVED review 與 canonical body。Agent 不得代交、修改或 dismiss review。 |
-| Base-pinned trusted host executor | 尚未實作；未來唯一固定命令執行者，驗證 args/identity、蒐集 immutable-SHA evidence，並擁有唯一 merge sink。 |
-| `code-reviewer` apex | 只有 Read/Grep/Glob，沒有 Bash、PowerShell、Edit 或 Write；只做重要的最終裁決。目前 fail-closed runtime 不 dispatch。 |
+| Base-pinned trusted host executor | default-branch workflow 中的唯一固定命令執行者；驗證 args/identity、蒐集 immutable-SHA evidence，並擁有唯一 merge sink。未 provision 時保持 unavailable。 |
+| Claude／Codex apex | 直接 API、`tools=[]`、無 GitHub App token；只裁決 schema-bound evidence。Claude 使用 max effort，Codex 使用官方 Responses API 支援的 xhigh。 |
 
 沒有 preparation child、autofix child 或第二個 writer。所有 child **MUST NOT run any merge command, including `gh pr merge --admin`**。未來 trusted host executor 也不得使用 `--admin` 或繞過 branch protection。
 workflow 與 trusted host executor 都不得呼叫任何建立、修改、dismiss 或提交 GitHub review 的 API/CLI；canonical human approval 只能由固定 reviewer 在 UI 輸入。
@@ -51,9 +52,9 @@ workflow 與 trusted host executor 都不得呼叫任何建立、修改、dismis
 
 不安全輸入在任何 command/agent 前回：`invalid_args_format`、`invalid_branch_arg`、`invalid_pr_number_arg` 或 `invalid_elevated_authorization_arg`。
 
-## 2. Trusted host preparation evidence（尚未實作）
+## 2. Trusted host preparation evidence
 
-base-pinned trusted host executor 上線後，必須依序執行固定命令並 fail closed：
+base-pinned trusted host executor 必須依序執行固定命令並 fail closed：
 
 1. 確認非 detached HEAD、指定 branch 與 checkout 相同、worktree 乾淨。
 2. `revert-*`、release、hotfix branch 回 `branch_requires_separate_authorization`。
@@ -62,7 +63,7 @@ base-pinned trusted host executor 上線後，必須依序執行固定命令並 
 5. 只跑 GitHub required checks；不在持有 merge credential 的流程內執行 PR branch 上可被改寫的 script。
 6. required checks 完成後，以三個 30 秒 bounded wait 形成 reviewer buffer，再重讀同一 PR identity。
 7. single-owner branch protection 必須精確為 approvals=1、dismiss stale reviews=true、require code-owner reviews=true、conversation resolution=true、strict required checks 非空、enforce admins=true、禁止 force-push/delete/bypass；完整 protection response 會 canonicalize 成 snapshot，在 reviewer buffer 後與 merge 前都要重讀，任一欄位漂移即 HELD。
-8. `reviewDecision` 必須是 `APPROVED`；空值、`REVIEW_REQUIRED`、`CHANGES_REQUESTED` 或未知值一律回 `review_required`。所有可 merge 的 PR 都必須有唯一 canonical human approval review，精確綁定 repo/PR/base/head；缺漏回 `human_approval_required`。elevated path 在可信、agent-inaccessible、一次性 authorization broker 尚未實作前一律回 `trusted_elevated_authorization_unavailable`，任何 caller-supplied `elevatedAuthorization` 都不能解鎖；routine path 出現該欄則回 `unexpected_elevated_authorization`。
+8. `reviewDecision` 必須是 `APPROVED`；空值、`REVIEW_REQUIRED`、`CHANGES_REQUESTED` 或未知值一律回 `review_required`。所有可 merge 的 PR 都必須有唯一 canonical human approval review，精確綁定 repo/PR/base/head；缺漏回 `human_approval_required`。elevated path 必須消耗下述 protected-environment broker 的 exact approval；broker 未 provision、未 attested、過期、重跑或 payload 不同一律回 `trusted_elevated_authorization_unavailable`。任何 caller-supplied `elevatedAuthorization` 都不能解鎖；routine path 出現該欄則回 `unexpected_elevated_authorization`。
 9. 用已固定的 SHA 蒐證，而不是 mutable PR ref：
 
    ```bash
@@ -92,7 +93,7 @@ GitHub REST metadata 無法以密碼學方式區分「reviewer 在 UI 親手送�
 
 GitHub 伺服器層的人工 gate 由 approvals=1、`require_code_owner_reviews=true` 與 base branch 的 `.github/CODEOWNERS` 共同強制，因此一般 collaborator 或 GitHub App 不能取代 `monkey1sai-blip` 的 approval。canonical body、exact action 與 apex verdict 是 `ship-item` coordinator 的額外稽核，不誤稱為 GitHub 原生會驗證的欄位；current-turn authorization 若要成為機械安全邊界，必須來自下述 trusted broker。GitHub 會從 PR base branch 讀取 CODEOWNERS；修改 CODEOWNERS 的後續 PR 仍受舊 base 版本保護。
 
-任何 `.claude/`、`.codex/`、`.github/`、`scripts/`、`docs/agents/`、`AGENTS.md`、`CLAUDE.md`、`agent-skills-manifest.json`、`infra/**`，以及 auth/permission/migration/destructive/production/deployment path 變更，都標記為 elevated scope，要求 exact `merge-elevated` human approval 與 trusted broker assertion；broker 尚未存在時 workflow 必須在 apex 與 merge 前 HELD。single-owner 模式沒有 routine auto-merge。
+任何 `.agents/`、`.claude/`、`.codex/`、`.github/`、`agent-contracts/`、`scripts/`、`docs/agents/`、`AGENTS.md`、`CLAUDE.md`、`agent-skills-manifest.json`、`infra/**`，以及 auth/permission/migration/destructive/production/deployment path 變更，都標記為 elevated scope，要求 exact `merge-elevated` human approval 與 trusted broker assertion；broker 未 provision 或驗證失敗時 executor 必須在 apex 與 merge 前 HELD。single-owner 模式沒有無人核准的 auto-merge。
 
 不得以自製 commit status 取代 GitHub PR review。Commit status 只綁 SHA，且具 write 權限者可發布，無法安全表達本契約的 PR/base/reviewer identity；repo workflows 因此不得宣告任何 write permission 作為 merge authority。每個 repo workflow 必須只有一個 literal root `permissions:` block：`contents: read` 必填，只可另加 `pull-requests: read` 供 base-owned trust-root 讀 server-authoritative reviews；其他 permission、任何 write 值與 job-level override 一律禁止。為維持 dependency-free scanner 的單義性，comment、string literal 或其他位置也不得再出現額外 `permissions` token；YAML flow map、anchor、alias、merge、escaped/complex mapping key 都 fail closed。GitHub App 不得提交 approval；它只能在 GitHub 已接受固定 code-owner 的 exact-head review、trusted host immutable-SHA gate 也通過後執行 routine merge，且 private key 不得暴露給 agent；elevated merge 在 trusted broker 上線前仍為 HELD。
 
@@ -109,7 +110,7 @@ GitHub 伺服器層的人工 gate 由 approvals=1、`require_code_owner_reviews=
 
 verdict 必須包含 `allowMerge`、`prNumber`、`headOid`、`baseOid`、`approvalReviewId`、`approvalReviewNodeId`、`approvalBody`、`approvalCommitId`、`heldReason`、`evidence`。只有 `allowMerge=true` 且 identity 與 approval 欄位逐字等於 preparation evidence 才可進入 Merge。
 
-## 4. Trusted host identity-bound merge（尚未實作）
+## 4. Trusted host identity-bound merge
 
 base-pinned trusted host executor 在 verdict 後重新讀取 PR state/draft/number/head/base/mergeState/reviewDecision 與 branch protection、再跑一次 required checks，並重新 `--paginate` 讀取三處 reviewer evidence。任何 protection、human approval 或 reviewer payload 新增／修改／刪除都回對應 HELD，必須用新 evidence 重跑 arbiter。下列任一情況回 HELD：
 
@@ -119,11 +120,13 @@ base-pinned trusted host executor 在 verdict 後重新讀取 PR state/draft/num
 - protection 不再精確符合 single-owner gate，或 snapshot 與 preparation 不同。
 - canonical human approval 不存在、identity/body/commit ID 不同，reviewer live permission 不再精確是 `write`，或 comments/reviews payload 漂移。
 
-唯一 merge sink 必須把 server operation 綁到已裁決 head：
+唯一 merge sink 使用 GitHub Pull Request Merge REST endpoint，把 server operation 原子綁到已裁決 head：
 
-```bash
-gh pr merge <n> --repo monkey1sai/AI-BIM-governance --merge --match-head-commit <preparedHead>
+```json
+{"sha":"<preparedHead>","merge_method":"merge"}
 ```
+
+這與 `gh pr merge <n> --repo monkey1sai/AI-BIM-governance --merge --match-head-commit <preparedHead>` 的 exact-head 安全語義相同。短效 App token 不進 command line、candidate process 或 apex；只有固定 `/usr/bin/git` fetch child 會透過單次環境 extraheader 取得 token。CLI 等價式只供稽核，不是第二個 sink；任何角色仍 **MUST NOT run any merge command, including `gh pr merge --admin`**。
 
 命令回非零也不能直接宣稱未 merge；trusted host executor 必須再讀 GitHub authoritative state。只有重新讀到 `state=MERGED` 與有效 `mergeCommit.oid` 才回 `merged=true`。之後的 `git fetch origin --prune` 失敗只記警告，不得把已發生的 server merge 誤報為 `merged=false`。
 
@@ -131,7 +134,31 @@ gh pr merge <n> --repo monkey1sai/AI-BIM-governance --merge --match-head-commit 
 
 single-owner 模式沒有 routine auto-merge；每個 PR 都必須由固定 reviewer `monkey1sai-blip` 在 GitHub UI 手動提交 exact canonical human approval。以下高風險動作除了 review 外，仍須使用者本輪明確同意：
 
-caller-controlled `elevatedAuthorization` 無法證明目前對話 turn 的人類授權，即使內容與 canonical tuple/body 完全相同也不得解鎖。elevated automation 只有在 agent 無法存取的 broker 簽發並一次性消耗、同時綁定 repo/PR/base/head/action、nonce 與 expiry 的 assertion 後才能啟用；該 broker 目前不存在，因此 runtime 一律回 `trusted_elevated_authorization_unavailable`。固定 GitHub review 仍提供 code-owner identity gate，但不能取代這個 current-turn provenance boundary。
+caller-controlled `elevatedAuthorization` 無法證明目前對話 turn 的人類授權，即使內容與 canonical tuple/body 完全相同也不得解鎖。broker 使用 agent-inaccessible GitHub protected environment `trusted-elevated-merge`：challenge 綁定 repo/PR/base/head/action/runId/provider/nonce/expiry；environment 必須只有 reviewer `monkey1sai-blip`（ID `311287868`）、`prevent_self_review=true`、`can_admins_bypass=false`，且只允許 `main` branch。reviewer 必須在 approval comment 貼上逐字 assertion。executor 只接受 run attempt 1、唯一一筆 approved history、唯一 environment、尚未過期的 exact comment；新 run ID 或重跑都必須使用新 assertion。
+
+environment 放行後才釋出 GitHub App private key與所選 apex key。executor 即時 mint 最長一小時、只限 `AI-BIM-governance` 單 repo的 installation token，capability 固定為 Actions read、Administration read、Contents write、Pull requests read；App 不可提交 review。Claude/Codex apex 只收到已 redacted、500,000-byte 上限的 untrusted evidence，不收到 App token/private key。固定 GitHub review 仍提供 code-owner identity gate，environment approval 提供 current-run provenance；兩者缺一不可。
+
+Hosted activation 前 owner 必須完成並實證：
+
+1. 本 workflow／executor 已可由 freshly fetched `origin/main` 取得，不能用 feature branch 自我啟動。
+2. environment reviewer、self-review、admin bypass 與 selected `main` branch policy 完全符合上述值。
+3. environment secrets 已建立：`TRUSTED_MERGE_APP_ID`、`TRUSTED_MERGE_APP_INSTALLATION_ID`、`TRUSTED_MERGE_APP_PRIVATE_KEY`、`ANTHROPIC_API_KEY`、`OPENAI_API_KEY`；variables 已建立：`TRUSTED_MERGE_CLAUDE_MODEL`、`TRUSTED_MERGE_CODEX_MODEL`。不得在 log／PR／artifact 回顯值。
+4. GitHub App installation 僅涵蓋本 repo，capability 與 contract 完全相符；branch required checks 的每個 context 都綁定非空 App ID，並以獨立 provisioning PR 寫入 trusted-base contract 的 `executor.required_check_sources`。runtime 要求 live protection 與這份 allowlist 完全相等；空 allowlist、context/App ID 漂移或 ruleset bypass actor 都 HELD。
+5. 在 disposable PR 完成 negative matrix（wrong tuple/reviewer/nonce/expiry/rerun/head/base/App ID/protection/review drift 全部 HELD），再完成一次 exact-head merge；只有 live attestation 通過後才可把 machine activation state 改為 active。
+
+activation state=active 後，Claude/Codex 外層 host adapter 只可用固定 `gh workflow run` handoff；不得執行 PR branch 的 requester script。adapter 從 server 取得 exact `headRefOid/baseRefOid`、用 CSPRNG 產生 32-byte base64url nonce、expiry 設在 10 分鐘內，然後以 `--ref main` dispatch `trusted-elevated-merge.yml`。workflow source SHA 若不等於 expected base，challenge 會 fail closed。environment reviewer 核准 exact assertion 後，其餘 evidence、apex、final reread、merge 與 closeout 全自動；沒有 approval 時不會取得 merge credential。
+
+```powershell
+$trustedPr = 123
+$trustedIdentity = gh pr view $trustedPr --repo monkey1sai/AI-BIM-governance --json headRefOid,baseRefOid,state,isDraft | ConvertFrom-Json
+$trustedNonceBytes = [byte[]]::new(32)
+[System.Security.Cryptography.RandomNumberGenerator]::Fill($trustedNonceBytes)
+$trustedNonce = [Convert]::ToBase64String($trustedNonceBytes).TrimEnd('=').Replace('+', '-').Replace('/', '_')
+$trustedExpiry = [DateTimeOffset]::UtcNow.AddMinutes(10).ToString('yyyy-MM-ddTHH:mm:ss.fffZ')
+gh workflow run trusted-elevated-merge.yml --repo monkey1sai/AI-BIM-governance --ref main `
+  -f pr_number=$trustedPr -f expected_head=$trustedIdentity.headRefOid -f expected_base=$trustedIdentity.baseRefOid `
+  -f apex_provider=codex -f nonce=$trustedNonce -f expires_at=$trustedExpiry
+```
 
 - 任何 agent/governance/self-approval、infra、auth/permission/migration/destructive/production/deployment 變更。
 - revert、release、hotfix branch。

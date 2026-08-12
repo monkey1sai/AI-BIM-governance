@@ -46,6 +46,12 @@
 
 root `scripts/` 只保留已登記且有明確 operator / adapter / verifier 角色的檔案。
 
+`scripts/dev/trusted-host-merge.mjs` 是特殊的 base-pinned security authority，不是一般 branch dev
+helper。它只能由 default-branch `.github/workflows/trusted-elevated-merge.yml` 在 protected environment
+核准後執行；PR head 只能作 inert evidence，不得 checkout 或執行。唯一 merge sink、短效單 repo GitHub
+App token、tool-free apex 與 activation contract 以 `.claude/workflows/ship-item.md` 及
+`agent-contracts/trusted-host-merge.contract.json` 為準。它不得取代 deploy/verify/stop operator 入口。
+
 `scripts/dev/seed-isolated-stack-ifc-ready.ps1`（branch-only dev tool）：對隔離 branch stack 的
 coordinator 灌入一筆來自真實 MinIO 的 IFC-ready job，供 A4 browser E2E preflight 取得
 `download_status=downloaded` 的 job。呼叫邊界：

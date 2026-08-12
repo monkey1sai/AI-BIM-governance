@@ -137,6 +137,7 @@ try {
         '.github/workflows/ci.yml',
         '.github/workflows/agent-governance.yml',
         '.github/workflows/governance-trust-root.yml',
+        '.github/workflows/trusted-elevated-merge.yml',
         '.github/workflows/pr-review-agent.yml',
         '.github/PULL_REQUEST_TEMPLATE.md',
         'scripts/tests/check-pr-body-evidence.ps1',
@@ -157,6 +158,21 @@ try {
         'scripts/lib/openspec-machine-truth.mjs',
         'scripts/lib/collect-openspec-github-state.mjs',
         'scripts/lib/gitnexus-worktree-health.mjs',
+        'scripts/dev/trusted-host-merge.mjs',
+        'scripts/lib/trusted-host-merge-contract.mjs',
+        'scripts/lib/trusted-host-merge-evidence.mjs',
+        'scripts/lib/trusted-host-merge-executor.mjs',
+        'scripts/lib/trusted-host-merge-runtime.mjs',
+        'scripts/lib/trusted-host-merge.mjs',
+        'scripts/tests/test-trusted-host-merge.mjs',
+        'scripts/tests/test-trusted-host-merge-runtime.mjs',
+        'scripts/tests/fixtures/trusted-host-merge-machine-fixtures.json',
+        'agent-contracts/trusted-host-merge.contract.json',
+        'agent-contracts/trusted-host-merge.contract.schema.json',
+        'agent-contracts/trusted-host-merge-assertion.schema.json',
+        'agent-contracts/trusted-host-merge-evidence.schema.json',
+        'agent-contracts/trusted-host-merge-verdict.schema.json',
+        'agent-contracts/trusted-host-merge-result.schema.json',
         'scripts/dev/report-gitnexus-worktree-health.mjs',
         'scripts/lib/task-packet.mjs',
         'scripts/dev/validate-task-packet.mjs',
@@ -414,6 +430,7 @@ try {
     Assert-True (-not ($governanceWorkflow -match '(?m)^\s+paths:\s*$')) 'agent-governance workflow does not use path filters because it is a required-check candidate'
     Assert-True ($governanceWorkflow -match '(?m)^\s+timeout-minutes:\s*30\s*$') 'agent-governance workflow has a bounded runtime'
     Assert-True ($governanceWorkflow -match 'scripts/tests/test-agent-governance-check\.ps1') 'agent-governance workflow runs static check'
+    Assert-True ($governanceWorkflow -match 'node --test scripts/tests/test-trusted-host-merge\.mjs scripts/tests/test-trusted-host-merge-runtime\.mjs') 'agent-governance runs trusted host executor and broker contract tests'
     Assert-True ($governanceWorkflow -match 'pwsh -NoProfile -NonInteractive -File scripts/tests/test-isolated-branch-stack\.ps1') 'agent-governance workflow runs isolated branch stack machine tests'
     Assert-True ($governanceWorkflow -match 'scripts/tests/test-openspec-ledger-reconciliation\.ps1') 'agent-governance workflow runs OpenSpec ledger reconciliation tests'
     Assert-True ($governanceWorkflow -match 'node --test scripts/tests/test-openspec-machine-truth\.mjs scripts/tests/test-openspec-machine-truth-cli\.mjs scripts/tests/test-collect-openspec-github-state\.mjs') 'agent-governance workflow runs machine-truth core, CLI, and GitHub collector tests'
@@ -439,6 +456,66 @@ try {
     Assert-True ($pwshRunCount -eq $totalRunCount) 'agent-governance workflow runs every step with PowerShell 7 (no legacy or non-pwsh shell)'
 
     $shipWorkflowScript = Get-Content -LiteralPath '.claude/workflows/ship-item.js' -Raw
+    $trustedMergeWorkflow = Get-Content -LiteralPath '.github/workflows/trusted-elevated-merge.yml' -Raw
+    $trustedMergeExecutor = Get-Content -LiteralPath 'scripts/lib/trusted-host-merge-executor.mjs' -Raw
+    $trustedMergeRuntime = Get-Content -LiteralPath 'scripts/lib/trusted-host-merge-runtime.mjs' -Raw
+    $trustedMergeCli = Get-Content -LiteralPath 'scripts/dev/trusted-host-merge.mjs' -Raw
+    Assert-True ($trustedMergeWorkflow -match '(?m)^\s{2}workflow_dispatch:\s*$') 'trusted merge is dispatch-only from the default branch'
+    foreach ($forbiddenTrigger in @('pull_request:', 'pull_request_target:', 'push:', 'schedule:', 'repository_dispatch:')) {
+        Assert-True (-not ($trustedMergeWorkflow -match "(?m)^\s{2}$([regex]::Escape($forbiddenTrigger))\s*$")) "trusted merge forbids trigger: $forbiddenTrigger"
+    }
+    Assert-True (([regex]::Matches($trustedMergeWorkflow, 'actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5')).Count -eq 2) 'trusted merge pins both trusted-base checkouts'
+    Assert-True (([regex]::Matches($trustedMergeWorkflow, 'actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020')).Count -eq 2) 'trusted merge pins both Node setup actions'
+    Assert-True (([regex]::Matches($trustedMergeWorkflow, "node-version:\s*'20\.20\.2'")).Count -eq 2) 'trusted merge uses one exact Node.js runtime'
+    Assert-True (([regex]::Matches($trustedMergeWorkflow, 'runs-on:\s*ubuntu-24\.04')).Count -eq 2) 'trusted merge pins the hosted runner generation'
+    Assert-True (([regex]::Matches($trustedMergeWorkflow, 'persist-credentials:\s*false')).Count -eq 2) 'trusted merge never persists checkout credentials'
+    Assert-True ($trustedMergeWorkflow -match '(?m)^\s{4}environment:\s*trusted-elevated-merge\s*$') 'irreversible job is protected by the exact broker environment'
+    Assert-True ($trustedMergeWorkflow -match 'ref:\s*\$\{\{ github\.sha \}\}') 'trusted executor checkout is pinned to the workflow source SHA'
+    Assert-True (-not ($trustedMergeWorkflow -match 'github\.event\.pull_request|refs/pull/')) 'workflow never checks out or executes candidate code'
+    foreach ($brokerSecret in @('TRUSTED_MERGE_APP_ID', 'TRUSTED_MERGE_APP_INSTALLATION_ID', 'TRUSTED_MERGE_APP_PRIVATE_KEY')) {
+        Assert-True ($trustedMergeWorkflow -match [regex]::Escape("secrets.$brokerSecret")) "trusted merge receives protected broker secret: $brokerSecret"
+    }
+    Assert-True ($trustedMergeWorkflow -match 'if:\s*\$\{\{ inputs\.apex_provider == ''claude'' \}\}[\s\S]*?secrets\.ANTHROPIC_API_KEY') 'Claude executor step receives only the Anthropic key'
+    Assert-True ($trustedMergeWorkflow -match 'if:\s*\$\{\{ inputs\.apex_provider == ''codex'' \}\}[\s\S]*?secrets\.OPENAI_API_KEY') 'Codex executor step receives only the OpenAI key'
+    Assert-True (-not ($trustedMergeWorkflow -match '&&\s*secrets\.|\|\|\s*secrets\.')) 'provider secret routing cannot fall through to another provider key'
+    Assert-True ($trustedMergeRuntime -match 'createSign\(' -and $trustedMergeRuntime -match 'repositories:\s*\[repository\.split') 'executor mints a single-repository GitHub App installation token'
+    foreach ($appCapability in @('actions', 'administration', 'contents', 'pull_requests')) {
+        Assert-True ($trustedMergeRuntime -match $appCapability -or (Get-Content -LiteralPath 'agent-contracts/trusted-host-merge.contract.json' -Raw) -match $appCapability) "trusted App contract declares capability: $appCapability"
+    }
+    Assert-True ($trustedMergeExecutor -match "body:\s*\{ sha: invocation\.headOid, merge_method: method \}") 'single merge sink is atomically bound to the exact adjudicated head'
+    Assert-True ($trustedMergeExecutor -match "spawnSync\('/usr/bin/git'") 'trusted executor invokes the fixed host Git path instead of PATH lookup'
+    Assert-True (([regex]::Matches($trustedMergeExecutor, "method:\s*'PUT'")).Count -eq 1) 'executor has exactly one irreversible PUT call site'
+    Assert-True ($trustedMergeRuntime -match "tools:\s*\[\]") 'both direct apex APIs receive no tools'
+    Assert-True ($trustedMergeCli -match '::add-mask::\$\{minted\.token\}') 'installation token is masked before any downstream operation'
+    $trustedMergeUses = @([regex]::Matches($trustedMergeWorkflow, '(?m)^\s+uses:\s*(\S+)\s*$') | ForEach-Object { $_.Groups[1].Value })
+    $trustedMergeAllowedUses = @(
+        'actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5',
+        'actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020'
+    )
+    Assert-True ($trustedMergeUses.Count -eq 4 -and @($trustedMergeUses | Where-Object { $trustedMergeAllowedUses -notcontains $_ }).Count -eq 0) 'trusted workflow uses only the two exact pinned first-party actions'
+
+    $trustedMergeContractRaw = Get-Content -LiteralPath 'agent-contracts/trusted-host-merge.contract.json' -Raw
+    Assert-True ($trustedMergeContractRaw | Test-Json -SchemaFile 'agent-contracts/trusted-host-merge.contract.schema.json' -ErrorAction SilentlyContinue) 'trusted host merge contract satisfies its closed schema'
+    $trustedMergeContract = $trustedMergeContractRaw | ConvertFrom-Json -Depth 100
+    foreach ($schemaPath in @($trustedMergeContract.schemas.PSObject.Properties.Value)) {
+        $resolvedSchemaPath = Join-Path 'agent-contracts' ([string]$schemaPath).Replace('./', '')
+        Assert-True (Test-Path -LiteralPath $resolvedSchemaPath -PathType Leaf) "trusted merge referenced schema exists: $resolvedSchemaPath"
+        $null = Get-Content -LiteralPath $resolvedSchemaPath -Raw | ConvertFrom-Json -Depth 100
+    }
+    $trustedMergeFixtures = Get-Content -LiteralPath 'scripts/tests/fixtures/trusted-host-merge-machine-fixtures.json' -Raw | ConvertFrom-Json -Depth 100
+    $trustedMergeFixtureSchemas = @{
+        assertion = 'agent-contracts/trusted-host-merge-assertion.schema.json'
+        evidence = 'agent-contracts/trusted-host-merge-evidence.schema.json'
+        verdict = 'agent-contracts/trusted-host-merge-verdict.schema.json'
+        result = 'agent-contracts/trusted-host-merge-result.schema.json'
+    }
+    foreach ($fixtureName in @($trustedMergeFixtureSchemas.Keys)) {
+        $fixtureJson = $trustedMergeFixtures.$fixtureName | ConvertTo-Json -Depth 100
+        Assert-True ($fixtureJson | Test-Json -SchemaFile $trustedMergeFixtureSchemas[$fixtureName] -ErrorAction SilentlyContinue) "trusted merge $fixtureName fixture satisfies its closed schema"
+    }
+    $mutatedAssertion = $trustedMergeFixtures.assertion | ConvertTo-Json -Depth 100 | ConvertFrom-Json -Depth 100
+    $mutatedAssertion | Add-Member -NotePropertyName callerAuthorization -NotePropertyValue 'untrusted'
+    Assert-True (-not (($mutatedAssertion | ConvertTo-Json -Depth 100) | Test-Json -SchemaFile 'agent-contracts/trusted-host-merge-assertion.schema.json' -ErrorAction SilentlyContinue)) 'broker assertion schema rejects caller-controlled extension fields'
     Assert-True (-not (Test-Path -LiteralPath '.github/workflows/owner-consent.yml')) 'replayable custom owner-consent status workflow is absent'
     Assert-True (-not (Test-Path -LiteralPath '.github/scripts/owner-consent.mjs')) 'replayable custom owner-consent status publisher is absent'
     foreach ($p6FailClosedMarker in @('ARG_KEYS_SAFE', 'USER_FACING_SAFE', 'SHIP_HELD_REASON_VALUES', 'host_env_blocked', 'ship_workflow_shell_unavailable')) {
@@ -695,7 +772,12 @@ try {
         Assert-True ($contractHeldReasons -contains $requiredHeldReason) "spec-to-done machine contract includes durable reason $requiredHeldReason"
     }
     Assert-True ($specToDoneContract.ship.workflow_shell_capability -ceq 'not_available_in_measured_runtime') 'spec-to-done machine contract records measured Workflow shell absence'
-    Assert-True ($specToDoneContract.ship.trusted_host_executor -ceq 'required') 'spec-to-done machine contract requires a trusted host executor'
+    Assert-True ($specToDoneContract.ship.trusted_host_executor -ceq 'implemented_external_workflow') 'spec-to-done machine contract points to the external trusted host executor'
+    Assert-True ($specToDoneContract.ship.trusted_host_contract -ceq './trusted-host-merge.contract.json') 'spec-to-done machine contract links the trusted merge protocol'
+    Assert-True ($specToDoneContract.ship.trusted_host_workflow -ceq '.github/workflows/trusted-elevated-merge.yml') 'spec-to-done machine contract links the default-branch executor workflow'
+    Assert-True ($specToDoneContract.ship.dispatch_protocol -ceq 'github-workflow-dispatch') 'spec-to-done machine contract declares the host handoff protocol'
+    Assert-True ($specToDoneContract.ship.activation_state -ceq 'requires_protected_environment_provisioning') 'machine truth does not claim hosted broker provisioning before verification'
+    Assert-True (@($trustedMergeContract.executor.required_check_sources).Count -eq 0) 'pre-activation contract keeps required check source allowlist empty and therefore fail closed'
     Assert-True ($specToDoneContract.ship.unavailable_reason -ceq 'host_env_blocked') 'spec-to-done machine contract maps unavailable P6 to a durable host hold'
     Assert-True ($specToDoneContract.terminal_evidence.owner_phase -ceq 'P7') 'spec-to-done machine contract owns terminal evidence at P7'
     Assert-True ($specToDoneContract.terminal_evidence.trusted_remote_url -ceq 'https://github.com/monkey1sai/AI-BIM-governance.git') 'P7 pins the trusted HTTPS remote'

@@ -281,11 +281,13 @@ P6 = Workflow({name:'ship-item', args:{branch, prNumber:<前置 c 的號碼>, us
        回 `heldReason='host_env_blocked'`、`heldDetail='ship_workflow_shell_unavailable'`；不 dispatch apex、
        不讀 git/gh、不 merge。production `ship-item.js` 已移除 legacy coordinator 與 merge sink；注入 synthetic
        `$`／`agent` 的測試只證明 caller capability 無法解鎖這個 durable hold，不是 deployability evidence。
-     **恢復條件**：必須先實作 base-pinned trusted host executor，由 freshly fetched trusted base 執行固定
-       preparation、shell-free apex 裁決後的 final reads，以及唯一 exact-head merge sink
-       `gh pr merge --merge --match-head-commit <preparedHead>`；不得執行 PR branch 可修改的 merge script。
-       executor 上線前，這個 `host_env_blocked` 是 durable HELD，不得 retry 成成功、手填 `merged=true` 或進 P7。
-     future executor consume：所有 `heldReason` 必須先通過 machine contract closed enum；raw 細節寫
+     **external executor**：repo 已實作 default-branch-only `.github/workflows/trusted-elevated-merge.yml`，
+       由 freshly fetched trusted base 執行固定 preparation、tool-free Claude/Codex apex、final reads 與
+       exact-head REST merge；不得 checkout 或執行 PR branch 可修改的 script/action/hook/dependency。
+     **activation**：protected environment、單 repo GitHub App、secrets/model vars 與 live negative/positive
+       attestation 尚未由 repo code provision；外層 host adapter 只有在 machine activation state=active 後才可
+       dispatch。之前 `host_env_blocked` 仍是 durable HELD，不得 retry 成成功、手填 `merged=true` 或進 P7。
+     external executor consume：所有 `heldReason` 必須先通過 machine contract closed enum；raw 細節寫
        `heldDetail`／`診斷=`。review／approval／protection／elevated／consent carve-out 依下方處置表停下；
        常用 protection/branch checkpoint 是 `branch_requires_separate_authorization`、
        `branch_protection_changed_during_buffer`、`branch_protection_changed_after_verdict` 與
@@ -334,7 +336,7 @@ P1 內含 plan 四軸 review(Completeness/Spec Alignment/Task Decomposition/Buil
 | `reviewer_permission_not_strict` / `reviewer_permission_changed_after_verdict` | P6 fixed reviewer identity | HELD；使用者恢復固定 reviewer exact `write` permission/role 後 resume，不得降級 identity gate |
 | `branch_requires_separate_authorization` | P6 revert-* / release / hotfix branch | HELD；持久化目前 checkpoint，取得使用者明確同意後改走另行授權流程；不得以同一 ship-item 自動重試、resume 或 merge |
 | `branch_protection_changed_during_buffer` / `branch_protection_changed_after_verdict` / `human_approval_changed_after_verdict` | P6 protected-state drift | HELD；重讀 protection 與 exact-head human approval，狀態穩定且 fresh approval 綁定目前 head 後才能 resume；不得自動重試或 merge |
-| `trusted_elevated_authorization_unavailable` | P6 elevated authorization broker | HELD；agent-inaccessible、一次性、tuple/nonce/expiry-bound broker 尚未實作，caller-supplied `elevatedAuthorization` 不得解鎖或 resume |
+| `trusted_elevated_authorization_unavailable` | P6 elevated authorization broker | HELD；repo broker contract 已實作，但 hosted environment 未 provision／未 attested，或 exact tuple/runId/provider/nonce/expiry approval 不成立；caller-supplied `elevatedAuthorization` 不得解鎖或 resume |
 | `unexpected_elevated_authorization` | P6 routine caller args | 移除 routine PR 不應出現的 `elevatedAuthorization` 後，以同一 prNumber resume |
 | `branch_protection_single_owner_gate_not_strict` | P6 live protection | HELD；使用者／admin 恢復 approvals=1、dismiss stale、code-owner review、strict checks、conversation resolution、enforce-admins 且無 bypass/force/delete 後 resume |
 | `cyber_safeguard_payload` | P5/P6 reviewer safeguard | separator-only fixture 才可換成 `a/b` / `seg/seg/id`，確認 payload paths 的 `passwd` grep 無結果後 resume；涉及 security 語意則 HELD |

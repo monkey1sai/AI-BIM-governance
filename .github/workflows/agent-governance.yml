@@ -32,6 +32,10 @@ jobs:
         shell: pwsh
         run: pwsh -NoProfile -NonInteractive -File scripts/tests/test-agent-governance-check.ps1
 
+      - name: Run trusted host merge contract tests
+        shell: pwsh
+        run: pwsh -NoProfile -NonInteractive -Command "node --test scripts/tests/test-trusted-host-merge.mjs scripts/tests/test-trusted-host-merge-runtime.mjs"
+
       - name: Run isolated branch stack machine tests
         shell: pwsh
         run: pwsh -NoProfile -NonInteractive -File scripts/tests/test-isolated-branch-stack.ps1

@@ -56,6 +56,10 @@
       "required": [
         "workflow_shell_capability",
         "trusted_host_executor",
+        "trusted_host_contract",
+        "trusted_host_workflow",
+        "dispatch_protocol",
+        "activation_state",
         "unavailable_reason",
         "arbiter_held_reasons"
       ],
@@ -63,7 +67,11 @@
         "workflow_shell_capability": {
           "const": "not_available_in_measured_runtime"
         },
-        "trusted_host_executor": { "const": "required" },
+        "trusted_host_executor": { "const": "implemented_external_workflow" },
+        "trusted_host_contract": { "const": "./trusted-host-merge.contract.json" },
+        "trusted_host_workflow": { "const": ".github/workflows/trusted-elevated-merge.yml" },
+        "dispatch_protocol": { "const": "github-workflow-dispatch" },
+        "activation_state": { "const": "requires_protected_environment_provisioning" },
         "unavailable_reason": { "const": "host_env_blocked" },
         "arbiter_held_reasons": {
           "type": "array",

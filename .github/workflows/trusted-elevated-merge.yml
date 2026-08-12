@@ -1,0 +1,130 @@
+name: Trusted Elevated Merge
+run-name: Trusted elevated merge PR #${{ inputs.pr_number }} at ${{ inputs.expected_head }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: Exact open pull request number
+        required: true
+        type: string
+      expected_head:
+        description: Exact 40-character pull request head SHA
+        required: true
+        type: string
+      expected_base:
+        description: Exact 40-character main SHA and workflow source SHA
+        required: true
+        type: string
+      apex_provider:
+        description: Read-only final arbiter
+        required: true
+        type: choice
+        options:
+          - claude
+          - codex
+      nonce:
+        description: Fresh 32-128 character base64url nonce
+        required: true
+        type: string
+      expires_at:
+        description: RFC3339 expiry no more than 15 minutes from dispatch
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: trusted-elevated-merge-${{ inputs.pr_number }}
+  cancel-in-progress: false
+
+jobs:
+  challenge:
+    name: Build exact broker challenge
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      provider: ${{ steps.challenge.outputs.provider }}
+      assertion: ${{ steps.challenge.outputs.assertion }}
+    steps:
+      - name: Checkout default-branch trusted executor
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ github.sha }}
+          path: trusted-base
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Setup fixed Node.js runtime
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '20.20.2'
+          check-latest: false
+
+      - name: Materialize one-use approval challenge
+        id: challenge
+        working-directory: trusted-base
+        env:
+          INPUT_PR_NUMBER: ${{ inputs.pr_number }}
+          INPUT_EXPECTED_HEAD: ${{ inputs.expected_head }}
+          INPUT_EXPECTED_BASE: ${{ inputs.expected_base }}
+          INPUT_APEX_PROVIDER: ${{ inputs.apex_provider }}
+          INPUT_NONCE: ${{ inputs.nonce }}
+          INPUT_EXPIRES_AT: ${{ inputs.expires_at }}
+        run: node scripts/dev/trusted-host-merge.mjs challenge
+
+  execute:
+    name: Verify, arbitrate, and exact-head merge
+    needs: challenge
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment: trusted-elevated-merge
+    steps:
+      - name: Checkout the same default-branch trusted executor
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ github.sha }}
+          path: trusted-base
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Setup the same fixed Node.js runtime
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '20.20.2'
+          check-latest: false
+
+      - name: Consume approval with Claude and run the single exact-head merge sink
+        if: ${{ inputs.apex_provider == 'claude' }}
+        working-directory: trusted-base
+        env:
+          INPUT_PR_NUMBER: ${{ inputs.pr_number }}
+          INPUT_EXPECTED_HEAD: ${{ inputs.expected_head }}
+          INPUT_EXPECTED_BASE: ${{ inputs.expected_base }}
+          INPUT_APEX_PROVIDER: ${{ inputs.apex_provider }}
+          INPUT_NONCE: ${{ inputs.nonce }}
+          INPUT_EXPIRES_AT: ${{ inputs.expires_at }}
+          TRUSTED_MERGE_APP_ID: ${{ secrets.TRUSTED_MERGE_APP_ID }}
+          TRUSTED_MERGE_APP_INSTALLATION_ID: ${{ secrets.TRUSTED_MERGE_APP_INSTALLATION_ID }}
+          TRUSTED_MERGE_APP_PRIVATE_KEY: ${{ secrets.TRUSTED_MERGE_APP_PRIVATE_KEY }}
+          TRUSTED_MERGE_APEX_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          TRUSTED_MERGE_APEX_MODEL: ${{ vars.TRUSTED_MERGE_CLAUDE_MODEL }}
+        run: node scripts/dev/trusted-host-merge.mjs execute
+
+      - name: Consume approval with Codex and run the single exact-head merge sink
+        if: ${{ inputs.apex_provider == 'codex' }}
+        working-directory: trusted-base
+        env:
+          INPUT_PR_NUMBER: ${{ inputs.pr_number }}
+          INPUT_EXPECTED_HEAD: ${{ inputs.expected_head }}
+          INPUT_EXPECTED_BASE: ${{ inputs.expected_base }}
+          INPUT_APEX_PROVIDER: ${{ inputs.apex_provider }}
+          INPUT_NONCE: ${{ inputs.nonce }}
+          INPUT_EXPIRES_AT: ${{ inputs.expires_at }}
+          TRUSTED_MERGE_APP_ID: ${{ secrets.TRUSTED_MERGE_APP_ID }}
+          TRUSTED_MERGE_APP_INSTALLATION_ID: ${{ secrets.TRUSTED_MERGE_APP_INSTALLATION_ID }}
+          TRUSTED_MERGE_APP_PRIVATE_KEY: ${{ secrets.TRUSTED_MERGE_APP_PRIVATE_KEY }}
+          TRUSTED_MERGE_APEX_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          TRUSTED_MERGE_APEX_MODEL: ${{ vars.TRUSTED_MERGE_CODEX_MODEL }}
+        run: node scripts/dev/trusted-host-merge.mjs execute

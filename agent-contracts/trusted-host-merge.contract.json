@@ -1,0 +1,87 @@
+{
+  "$schema": "./trusted-host-merge.contract.schema.json",
+  "schema_version": "trusted-host-merge/v1",
+  "schemas": {
+    "broker_assertion": "./trusted-host-merge-assertion.schema.json",
+    "apex_evidence": "./trusted-host-merge-evidence.schema.json",
+    "apex_verdict": "./trusted-host-merge-verdict.schema.json",
+    "terminal_result": "./trusted-host-merge-result.schema.json"
+  },
+  "repository": {
+    "full_name": "monkey1sai/AI-BIM-governance",
+    "base_branch": "main",
+    "workflow_path": ".github/workflows/trusted-elevated-merge.yml"
+  },
+  "broker": {
+    "kind": "github-protected-environment",
+    "environment": "trusted-elevated-merge",
+    "required_reviewer": {
+      "login": "monkey1sai-blip",
+      "id": 311287868,
+      "type": "User",
+      "permission": "write",
+      "role_name": "write"
+    },
+    "prevent_self_review": true,
+    "admins_can_bypass": false,
+    "deployment_branch_policy": {
+      "protected_branches": false,
+      "custom_branch_policies": true,
+      "allowed_branch": "main"
+    },
+    "assertion": {
+      "kind": "ai-bim-trusted-elevated-merge",
+      "version": 1,
+      "action": "merge-elevated",
+      "max_lifetime_seconds": 900,
+      "nonce_pattern": "^[A-Za-z0-9_-]{32,128}$",
+      "fields": [
+        "kind",
+        "version",
+        "repo",
+        "prNumber",
+        "headOid",
+        "baseOid",
+        "action",
+        "runId",
+        "provider",
+        "nonce",
+        "expiresAt"
+      ]
+    }
+  },
+  "executor": {
+    "source": "default-branch-workflow-dispatch",
+    "run_attempt": 1,
+    "candidate_execution": "forbidden",
+    "reviewer_buffer_seconds": 90,
+    "evidence_max_bytes": 500000,
+    "merge_method": "merge",
+    "required_check_sources": [],
+    "github_app_token": {
+      "repository_scope": "single",
+      "max_ttl_seconds": 3600,
+      "permissions": {
+        "actions": "read",
+        "administration": "read",
+        "contents": "write",
+        "pull_requests": "read"
+      }
+    },
+    "terminal_states": [
+      "held",
+      "merged",
+      "merged_but_closeout_held"
+    ]
+  },
+  "apex": {
+    "providers": ["claude", "codex"],
+    "side_effects": "none",
+    "tools": "none",
+    "input_trust": "untrusted-evidence-only",
+    "required_effort": {
+      "claude": "max",
+      "codex": "xhigh"
+    }
+  }
+}
