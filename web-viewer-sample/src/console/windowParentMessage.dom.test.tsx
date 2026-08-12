@@ -1001,6 +1001,69 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
     expect(renderToString(internals(app).render())).toBe(timeoutHtml);
   });
 
+  it("marks the scheduled 45s stage-load-timeout terminal with a state-specific test anchor", () => {
+    vi.useFakeTimers();
+    setLang("zh");
+    reviewEnv.sourceClientId = "viewer_lease_primary";
+    reviewEnv.viewerLeaseToken = "lease_token_primary";
+
+    const app = operableApp();
+    useSynchronousSetState(app);
+    vi.spyOn(AppStream, "sendMessage").mockImplementation(() => new Promise(() => {}));
+    internals(app).pendingStageUrl = "stage://timeout-anchor.usdc";
+    const generation = internals(app)._beginStageAttempt("stage://timeout-anchor.usdc");
+    internals(app)._sendStreamMessage({
+      event_type: "openStageRequest",
+      payload: { request_id: "req_timeout_anchor_45s", url: "stage://timeout-anchor.usdc" },
+    });
+    vi.spyOn(internals(app), "_completeStageLoadFromVisibleStream").mockReturnValue(false);
+    internals(app)._scheduleStageLoadTimeout(generation);
+    vi.runOnlyPendingTimers();
+
+    const html = renderToString(internals(app).render());
+    expect(html).toContain('data-testid="stage-load-failure"');
+    expect(html).toContain('data-stage-failure-reason="stage-load-timeout"');
+  });
+
+  it("marks the 90x1s busy-poll stage-load-timeout terminal with the same state-specific test anchor", () => {
+    reviewEnv.sourceClientId = "viewer_lease_primary";
+    reviewEnv.viewerLeaseToken = "lease_token_primary";
+    const app = operableApp();
+    useSynchronousSetState(app);
+    internals(app).state = {
+      ...internals(app).state,
+      isKitReady: true,
+      webrtcLifecycleStatus: "started",
+      selectedUSDAsset: { name: "poll-timeout-anchor", url: "stage://poll-timeout-anchor.usdc" },
+    };
+    internals(app).pendingStageUrl = "stage://poll-timeout-anchor.usdc";
+    internals(app).loadingStatePollCount = 90;
+    internals(app)._handleCustomEvent({
+      event_type: "loadingStateResponse",
+      payload: { url: "stage://poll-timeout-anchor.usdc", loading_state: "busy" },
+    });
+
+    const html = renderToString(internals(app).render());
+    expect(html).toContain('data-testid="stage-load-failure"');
+    expect(html).toContain('data-stage-failure-reason="stage-load-timeout"');
+  });
+
+  it("does not tag an unrelated stage-load failure with the stage-load-timeout anchor", () => {
+    const app = operableApp();
+    useSynchronousSetState(app);
+    const privateApp = internals(app) as unknown as {
+      _beginStageAttempt: (url: string) => number;
+      _failStageLoad: (title: string, diagnostic?: string, generation?: number) => void;
+    };
+    const generation = privateApp._beginStageAttempt("stage://non-timeout-failure.usdc");
+    privateApp._failStageLoad("Stage loading state did not report a URL", undefined, generation);
+
+    const html = renderToString(internals(app).render());
+    expect(html).toContain('data-testid="stage-load-failure"');
+    expect(html).not.toContain('data-stage-failure-reason="stage-load-timeout"');
+    expect(html).toContain('data-stage-failure-reason="generic"');
+  });
+
   it("applies a late changed_failed terminal to its timed-out stage without reviving it", () => {
     vi.useFakeTimers();
     reviewEnv.sourceClientId = "viewer_lease_primary";
