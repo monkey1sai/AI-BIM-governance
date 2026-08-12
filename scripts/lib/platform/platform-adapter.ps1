@@ -30,13 +30,26 @@ function Get-PlatformChildProcessIds {
     param([Parameter(Mandatory = $true)][int] $ParentProcessId)
 
     if ((Get-PlatformName) -eq 'windows') {
-        return @(Get-CimInstance Win32_Process -Filter "ParentProcessId=$ParentProcessId" -ErrorAction SilentlyContinue |
-            ForEach-Object { [int]$_.ProcessId })
+        try {
+            return @(Get-CimInstance Win32_Process -Filter "ParentProcessId=$ParentProcessId" -ErrorAction Stop |
+                ForEach-Object { [int]$_.ProcessId })
+        } catch {
+            throw "platform_child_enumeration_failed: unable to query Windows children of PID ${ParentProcessId}: $($_.Exception.Message)"
+        }
+    }
+    try {
+        $procDirectories = @(Get-ChildItem -LiteralPath '/proc' -Directory -ErrorAction Stop)
+    } catch {
+        throw "platform_child_enumeration_failed: unable to enumerate /proc for children of PID ${ParentProcessId}: $($_.Exception.Message)"
     }
     $children = [System.Collections.Generic.List[int]]::new()
-    foreach ($dir in Get-ChildItem -LiteralPath '/proc' -Directory -ErrorAction SilentlyContinue) {
+    foreach ($dir in $procDirectories) {
         if ($dir.Name -notmatch '^\d+$') { continue }
-        $stat = Get-PlatformProcStatFields -ProcessId ([int]$dir.Name)
+        try {
+            $stat = Get-PlatformProcStatFields -ProcessId ([int]$dir.Name) -FailOnReadError
+        } catch {
+            throw "platform_child_enumeration_failed: unable to inspect /proc/$($dir.Name) while enumerating children of PID ${ParentProcessId}: $($_.Exception.Message)"
+        }
         if ($null -ne $stat -and $stat.ParentProcessId -eq $ParentProcessId) {
             $children.Add([int]$dir.Name)
         }
@@ -44,20 +57,69 @@ function Get-PlatformChildProcessIds {
     return @($children)
 }
 
+function Test-OrphanRediscoverySupported {
+    # Can a dead parent's descendants still be found through the parent/child
+    # link AFTER the parent has exited?
+    #
+    #   windows: YES. Win32_Process.ParentProcessId keeps the CREATOR's PID once
+    #            the creator exits, so an orphan stays reachable from the parent
+    #            PID we recorded - and while a handle to the exited process is
+    #            held that PID cannot be recycled underneath the query.
+    #   linux:   NO. The kernel re-parents an orphan to init or to the nearest
+    #            subreaper, so /proc/<pid>/stat field 4 stops naming the creator
+    #            and the link is gone for good.
+    #
+    # Anything that must PROVE containment across a parent exit on Linux has to
+    # own a boundary established at LAUNCH (process group / job object) or a
+    # descendant record captured before the exit - the same conclusion the
+    # converter containment work reached and measured (#489 / #509).
+    param([string] $Platform = (Get-PlatformName))
+    return ($Platform -eq 'windows')
+}
+
 function Get-PlatformProcStatFields {
     # Parses /proc/<pid>/stat. comm (field 2) may contain spaces/parens, so split
     # on the LAST ')' before reading positional fields.
-    param([Parameter(Mandatory = $true)][int] $ProcessId)
+    param(
+        [Parameter(Mandatory = $true)][int] $ProcessId,
+        [switch] $FailOnReadError
+    )
 
     $statPath = "/proc/$ProcessId/stat"
-    if (-not (Test-Path -LiteralPath $statPath)) { return $null }
-    try { $raw = Get-Content -LiteralPath $statPath -Raw -ErrorAction Stop } catch { return $null }
+    try {
+        if (-not (Test-Path -LiteralPath $statPath -PathType Leaf -ErrorAction Stop)) { return $null }
+    } catch {
+        if ($FailOnReadError) {
+            throw "platform_proc_stat_read_failed: unable to inspect ${statPath}: $($_.Exception.Message)"
+        }
+        return $null
+    }
+    try {
+        $raw = Get-Content -LiteralPath $statPath -Raw -ErrorAction Stop
+    } catch {
+        # A process can disappear between listing /proc and reading stat. That is
+        # a successful observation that this candidate no longer exists. Any
+        # failure while the entry still exists is unknown and must fail closed
+        # for child enumeration instead of being converted to an empty set.
+        $entryStillExists = $false
+        try { $entryStillExists = Test-Path -LiteralPath $statPath -PathType Leaf -ErrorAction Stop } catch { $entryStillExists = $true }
+        if ($FailOnReadError -and $entryStillExists) {
+            throw "platform_proc_stat_read_failed: unable to read ${statPath}: $($_.Exception.Message)"
+        }
+        return $null
+    }
     $closeIndex = $raw.LastIndexOf(')')
-    if ($closeIndex -lt 0) { return $null }
+    if ($closeIndex -lt 0) {
+        if ($FailOnReadError) { throw "platform_proc_stat_read_failed: malformed ${statPath} (missing process-name terminator)." }
+        return $null
+    }
     $rest = $raw.Substring($closeIndex + 1).Trim() -split '\s+'
     # $rest[0] = state (field 3), $rest[1] = ppid (field 4), $rest[3] = session
     # (field 6), $rest[19] = starttime (field 22)
-    if ($rest.Count -lt 20) { return $null }
+    if ($rest.Count -lt 20) {
+        if ($FailOnReadError) { throw "platform_proc_stat_read_failed: malformed ${statPath} (expected at least 20 trailing fields)." }
+        return $null
+    }
     return [pscustomobject]@{
         ParentProcessId = [int]$rest[1]
         SessionId       = [int]$rest[3]

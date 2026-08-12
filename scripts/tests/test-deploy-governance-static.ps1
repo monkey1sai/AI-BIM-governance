@@ -441,6 +441,116 @@ if ($kitBuildIndex -lt 0 -or $cadHardeningIndex -le $kitBuildIndex -or $envMerge
     throw 'CAD cache hardening must run after the Kit build gate and before later deployment phases'
 }
 
+# The Phase 2 missing-key merge can BOTH append a missing KIT_CONTROL_URL and
+# repoint $resolvedEnvFile from the .example to the real env file. Resolving the
+# Kit control authority (or sealing it into the Kit Manager runtime signature)
+# before that block leaves the current run starting the child with the stale
+# pre-merge value and persisting a signature that claims the repaired state —
+# a blocked runtime-control state that looks configured.
+$kitControlResolveIndex = $deploy.IndexOf('$resolvedKitControlUrl = if ($SkipKitManager)')
+$kitManagerSignatureIndex = $deploy.IndexOf('$kitManagerRuntimeSignature = New-KitManagerRuntimeSignature')
+if ($kitControlResolveIndex -lt 0) {
+    throw 'deploy.ps1 must resolve the Kit control authority through the SkipKitManager-aware assignment'
+}
+if ($kitManagerSignatureIndex -lt 0) {
+    throw 'deploy.ps1 must build the Kit Manager runtime signature from the resolved control authority'
+}
+if ($kitControlResolveIndex -le $envMergeIndex) {
+    throw 'deploy.ps1 must resolve the Kit control authority AFTER the .env missing-key merge so a repaired KIT_CONTROL_URL takes effect in the same run'
+}
+if ($kitManagerSignatureIndex -le $envMergeIndex) {
+    throw 'deploy.ps1 must build the Kit Manager runtime signature AFTER the .env missing-key merge so it never persists the stale pre-merge control authority'
+}
+if ($kitManagerSignatureIndex -le $kitControlResolveIndex) {
+    throw 'deploy.ps1 must resolve the Kit control authority before sealing it into the Kit Manager runtime signature'
+}
+$kitManagerStartIndex = $deploy.IndexOf('Start-HostNativeKitManager -RepoRoot $RepoRoot -Port 8010 -KitControlUrl $resolvedKitControlUrl')
+if ($kitManagerStartIndex -le $kitManagerSignatureIndex) {
+    throw 'deploy.ps1 must start the host-native Kit Manager with the post-merge control authority'
+}
+
+# The Phase 2 copy still has to materialize the canonical env for the default
+# deployment path, but it must not replace an operator-selected -EnvFile. Run
+# only that loop in a sandbox so this regression is proved without starting any
+# runtime or depending on Docker preflight.
+$envMergeLoops = @($deployAst.FindAll({
+    param($node)
+    $node -is [System.Management.Automation.Language.ForEachStatementAst] -and
+        $node.Extent.Text -match 'Copy-Item\s+-LiteralPath\s+\$examplePath'
+}, $true))
+if ($envMergeLoops.Count -ne 1) {
+    throw 'deploy.ps1 must expose exactly one Phase 2 env merge loop'
+}
+function Invoke-EnvMergeFixture {
+    param(
+        [Parameter(Mandatory = $true)][string] $LoopText,
+        [Parameter(Mandatory = $true)][string] $FixtureRoot,
+        [Parameter(Mandatory = $true)][string] $InitialResolvedEnvFile,
+        [Parameter(Mandatory = $true)][bool] $ResolvedEnvFileIsExplicit
+    )
+    function Write-DeployTag { param($Tag, $Message, $LogPath) }
+    function Test-VolumeAlignment { param($RepoRoot, $EnvFile); [pscustomobject]@{ status = 'ALIGNED' } }
+    function Resolve-DeployVolumeState { param($Volume, $EdgeRuntimeContract); $Volume }
+
+    $RepoRoot = $FixtureRoot
+    $LogPath = Join-Path $FixtureRoot 'deploy.log'
+    $edgeRuntimeContract = $null
+    $envFiles = @([pscustomobject]@{
+            file          = '.env.web-plane.host-kit'
+            envExists     = $false
+            exampleExists = $true
+            missing       = @()
+        })
+    $resolvedEnvFile = $InitialResolvedEnvFile
+    $script:resolvedEnvFile = $InitialResolvedEnvFile
+    $resolvedEnvFileIsExplicit = $ResolvedEnvFileIsExplicit
+    $volume = [pscustomobject]@{ status = 'ALIGNED' }
+    $fixActions = 0
+    . ([scriptblock]::Create($LoopText))
+    return [pscustomobject]@{
+        Resolved       = $resolvedEnvFile
+        ScriptResolved = $script:resolvedEnvFile
+        Copied         = Test-Path -LiteralPath (Join-Path $FixtureRoot '.env.web-plane.host-kit') -PathType Leaf
+        FixActions     = $fixActions
+    }
+}
+$envMergeSandbox = Join-Path ([System.IO.Path]::GetTempPath()) ("ai-bim-explicit-env-{0}" -f [guid]::NewGuid().ToString('N'))
+try {
+    New-Item -ItemType Directory -Path $envMergeSandbox -Force | Out-Null
+    [System.IO.File]::WriteAllText(
+        (Join-Path $envMergeSandbox '.env.web-plane.host-kit.example'),
+        "KIT_CONTROL_URL=`n"
+    )
+    [System.IO.File]::WriteAllText(
+        (Join-Path $envMergeSandbox 'custom.env'),
+        "KIT_CONTROL_URL=http://127.0.0.1:49100/control`n"
+    )
+
+    $explicitEnvResult = Invoke-EnvMergeFixture `
+        -LoopText $envMergeLoops[0].Extent.Text `
+        -FixtureRoot $envMergeSandbox `
+        -InitialResolvedEnvFile 'custom.env' `
+        -ResolvedEnvFileIsExplicit $true
+    if (-not $explicitEnvResult.Copied -or $explicitEnvResult.FixActions -ne 1) {
+        throw 'Phase 2 must still materialize the missing canonical env when an explicit env file is selected'
+    }
+    if ($explicitEnvResult.Resolved -cne 'custom.env' -or $explicitEnvResult.ScriptResolved -cne 'custom.env') {
+        throw 'Phase 2 must preserve an explicitly selected -EnvFile after materializing the canonical fallback'
+    }
+
+    Remove-Item -LiteralPath (Join-Path $envMergeSandbox '.env.web-plane.host-kit') -Force
+    $fallbackEnvResult = Invoke-EnvMergeFixture `
+        -LoopText $envMergeLoops[0].Extent.Text `
+        -FixtureRoot $envMergeSandbox `
+        -InitialResolvedEnvFile '.env.web-plane.host-kit.example' `
+        -ResolvedEnvFileIsExplicit $false
+    if ($fallbackEnvResult.Resolved -cne '.env.web-plane.host-kit' -or $fallbackEnvResult.ScriptResolved -cne '.env.web-plane.host-kit') {
+        throw 'Phase 2 must repoint the automatic .example fallback after materializing the canonical env'
+    }
+} finally {
+    Remove-Item -LiteralPath $envMergeSandbox -Recurse -Force -ErrorAction SilentlyContinue
+}
+
 # Hybrid mode must not start a CONTAINERISED kit-manager-api. `compose up
 # coordinator viewer` used to pull it in through coordinator's depends_on, and
 # that service publishes 127.0.0.1:8010 - the same port deploy.ps1 Phase 4c-2

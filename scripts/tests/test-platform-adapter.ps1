@@ -53,6 +53,50 @@ while ((Get-Date) -lt $deadline -and $null -ne (Get-PlatformProcessIdentity -Pro
 Assert-True ($null -eq (Get-PlatformProcessIdentity -ProcessId $child.Id)) 'dead child identity must resolve to null'
 Assert-True (-not (Test-PlatformProcessIdentityMatch -Reference $childIdentity -Current (Get-PlatformProcessIdentity -ProcessId $child.Id))) 'match against dead process must be false'
 
+# A platform query failure is not an empty child set. Shadow the native query
+# for this dynamic scope with a non-terminating error: -ErrorAction Stop in the
+# adapter must promote it and fail closed, while SilentlyContinue would erase it.
+$childEnumerationFailure = & {
+    if ($platform -eq 'windows') {
+        function Get-CimInstance {
+            [CmdletBinding()]
+            param([Parameter(Position = 0)] $ClassName, [string] $Filter)
+            Write-Error 'simulated platform child enumeration failure'
+        }
+    } else {
+        function Get-ChildItem {
+            [CmdletBinding()]
+            param([string] $LiteralPath, [switch] $Directory)
+            Write-Error 'simulated platform child enumeration failure'
+        }
+    }
+    try {
+        @(Get-PlatformChildProcessIds -ParentProcessId $PID) | Out-Null
+        return ''
+    } catch {
+        return $_.Exception.Message
+    }
+}
+Assert-True ($childEnumerationFailure -match 'platform_child_enumeration_failed') 'child enumeration errors must be distinguishable from a successful empty result'
+
+if ($platform -eq 'linux') {
+    $procStatFailure = & {
+        function Get-Content {
+            [CmdletBinding()]
+            param([string] $LiteralPath, [switch] $Raw)
+            Write-Error 'simulated proc stat read failure'
+        }
+        try {
+            Get-PlatformProcStatFields -ProcessId $PID -FailOnReadError | Out-Null
+            return ''
+        } catch {
+            return $_.Exception.Message
+        }
+    }
+    Assert-True ($procStatFailure -match 'platform_proc_stat_read_failed') 'an unreadable live /proc entry must fail child enumeration closed'
+    Assert-True ($null -eq (Get-PlatformProcStatFields -ProcessId 2147483647 -FailOnReadError)) 'a process that disappeared before the stat read remains a normal empty result'
+}
+
 # --- tcp listener ownership --------------------------------------------------------
 $listener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 0)
 $listener.Start()

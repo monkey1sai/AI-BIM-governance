@@ -221,6 +221,9 @@ try {
     Assert-True ($verifySource -match 'conversionRuntimeSignature\.revision -cne \$deploymentCheckoutRevision') 'deployment verifier rejects a conversion runtime from another revision'
     Assert-True ($verifySource -match 'kitManagerRuntimeSignature\.revision -cne \$deploymentCheckoutRevision') 'deployment verifier rejects a Kit Manager runtime from another revision'
     Assert-True ($verifySource -match 'kitControlUrl\)\.TrimEnd\(''\/''\)') 'deployment verifier compares the normalized child Kit control origin recorded by service settings'
+    Assert-True ($verifySource -match 'function Assert-DeploymentKitControlUrlIsLocal') 'deployment verifier defines an independent Kit control locality assertion'
+    Assert-True ($verifySource -match 'Assert-DeploymentKitControlUrlIsLocal -Url \$expectedKitControlUrl') 'deployment verifier applies the locality assertion to the expected Kit control URL'
+    Assert-True ($verifySource -notmatch 'host-native-launcher\.ps1') 'deployment verifier never dot-sources the launcher it verifies'
 
     $verifyTokens = $null
     $verifyParseErrors = $null
@@ -327,8 +330,86 @@ try {
     }
     Assert-True ($redactedFailure -match [regex]::Escape('<host-native-bind>')) 'deployment HTTP failure uses the redacted display host'
     Assert-True (-not $redactedFailure.Contains($privateHost)) 'deployment HTTP failure never retains the private inventory host'
+
+    # SEC-004 paired proof: a drifted signature and a drifted service can AGREE on
+    # a remote Kit control origin. The identity comparison is satisfied by that
+    # agreement, so only an independent locality policy rejects it.
+    $agreedRemoteControlUrl = 'http://192.0.2.51:49101'
+    $script:deploymentHttpFixture = @{
+        StatusCode = 200
+        Content = ('{{"status":"ok","runtime_mode":"hybrid-web-plane-host-native-kit","host_local_runtime_allowed":true,"kit_instance_id":"kit_local_001","kit_control_url":"{0}"}}' -f $agreedRemoteControlUrl)
+        ThrowMessage = ''
+    }
+    $agreedRemoteFailure = ''
+    try {
+        Test-DeploymentHttpEndpoint -Name 'kit manager health' -Uri 'http://127.0.0.1:8010/health' `
+            -DisplayUri 'http://127.0.0.1:8010/health' -ExpectJson -ExpectedService '' `
+            -ExpectedJsonProperties @{
+                runtime_mode = 'hybrid-web-plane-host-native-kit'
+                host_local_runtime_allowed = $true
+                kit_instance_id = 'kit_local_001'
+                kit_control_url = $agreedRemoteControlUrl
+            }
+    }
+    catch {
+        $agreedRemoteFailure = $_.Exception.Message
+    }
+    Assert-Equal '' $agreedRemoteFailure 'a remote Kit control origin agreed by signature and service passes the identity comparison alone'
     Remove-Item Function:Invoke-WebRequest -Force
     Write-TestPass 'deployment HTTP JSON identity and redaction rejection matrix'
+
+    $localityFunctions = @($verifyAst.FindAll({
+        param($node)
+        $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+            $node.Name -eq 'Assert-DeploymentKitControlUrlIsLocal'
+    }, $true))
+    Assert-Equal 1 $localityFunctions.Count 'deployment verifier exposes exactly one Kit control locality assertion'
+    # Independence is a property of the executable graph, not of the prose: the
+    # verifier may NAME the launcher rule it mirrors, but must never invoke it.
+    $launcherInvocations = @($verifyAst.FindAll({
+        param($node)
+        $node -is [System.Management.Automation.Language.CommandAst] -and
+            $node.GetCommandName() -eq 'Resolve-HostNativeKitControlUrl'
+    }, $true))
+    Assert-Equal 0 $launcherInvocations.Count 'deployment verifier re-implements the locality rule instead of calling the launcher it verifies'
+    . ([scriptblock]::Create($localityFunctions[0].Extent.Text))
+
+    $localityRejectCases = @(
+        @{ Name = 'remote literal address'; Url = $agreedRemoteControlUrl; Expected = 'loopback or an address assigned to this host' },
+        @{ Name = 'remote DNS name'; Url = 'http://kit.example.invalid:49101'; Expected = 'loopback or an address assigned to this host' },
+        @{ Name = 'https scheme'; Url = 'https://localhost:49101'; Expected = 'origin-only absolute HTTP URL' },
+        @{ Name = 'credentials'; Url = 'http://user:pass@localhost:49101'; Expected = 'origin-only absolute HTTP URL' },
+        @{ Name = 'path'; Url = 'http://localhost:49101/control'; Expected = 'origin-only absolute HTTP URL' },
+        @{ Name = 'query'; Url = 'http://localhost:49101/?x=1'; Expected = 'origin-only absolute HTTP URL' },
+        @{ Name = 'fragment'; Url = 'http://localhost:49101/#f'; Expected = 'origin-only absolute HTTP URL' },
+        @{ Name = 'relative'; Url = 'localhost:49101'; Expected = 'origin-only absolute HTTP URL' }
+    )
+    foreach ($localityCase in $localityRejectCases) {
+        $localityFailure = ''
+        try {
+            Assert-DeploymentKitControlUrlIsLocal -Url ([string]$localityCase.Url)
+        }
+        catch {
+            $localityFailure = $_.Exception.Message
+        }
+        Assert-True ($localityFailure -match [regex]::Escape([string]$localityCase.Expected)) "deployment Kit control locality rejects $($localityCase.Name)"
+    }
+
+    # The empty string is the honest unconfigured/blocked state, and `localhost`
+    # MUST be accepted or the verifier contradicts the launcher, which
+    # canonicalises http://localhost:49101 through.
+    foreach ($acceptedControlUrl in @('', 'http://127.0.0.1:49101', 'http://localhost:49101', 'http://[::1]:49101')) {
+        $acceptedFailure = ''
+        try {
+            Assert-DeploymentKitControlUrlIsLocal -Url $acceptedControlUrl
+        }
+        catch {
+            $acceptedFailure = $_.Exception.Message
+        }
+        Assert-Equal '' $acceptedFailure "deployment Kit control locality accepts '$acceptedControlUrl'"
+    }
+    Remove-Item Function:Assert-DeploymentKitControlUrlIsLocal -Force
+    Write-TestPass 'deployment Kit control locality accept and reject matrix'
 
     $executionInventoryPath = Join-Path $sandbox 'execution-target.local.json'
     $executionDeployRoot = if ($IsWindows) { '/tmp/ai-bim-verify-execution-deploy' } else { $deploymentRoot }
@@ -429,6 +510,30 @@ try {
                     ConvertTo-Json -Compress |
                     Set-Content -LiteralPath (Join-Path $root 'kit-manager-api.params.json') -Encoding utf8
             }
+        },
+        # SEC-004: port and revision equality only prove checkout identity. A
+        # remote control origin agreed between a drifted signature and a drifted
+        # service used to pass, because locality was asserted for the host-native
+        # bind and the conversion health host but never for this URL.
+        @{
+            Name = 'remote Kit control URL'
+            Expected = 'loopback or an address assigned to this host'
+            Mutate = {
+                param($root)
+                [pscustomobject]@{ kitControlUrl = 'http://192.0.2.51:49101'; port = 8010; revision = $deploymentRevision } |
+                    ConvertTo-Json -Compress |
+                    Set-Content -LiteralPath (Join-Path $root 'kit-manager-api.params.json') -Encoding utf8
+            }
+        },
+        @{
+            Name = 'non-origin Kit control URL'
+            Expected = 'origin-only absolute HTTP URL'
+            Mutate = {
+                param($root)
+                [pscustomobject]@{ kitControlUrl = 'http://user:pass@localhost:49101'; port = 8010; revision = $deploymentRevision } |
+                    ConvertTo-Json -Compress |
+                    Set-Content -LiteralPath (Join-Path $root 'kit-manager-api.params.json') -Encoding utf8
+            }
         }
     )
     foreach ($signatureCase in $runtimeSignatureCases) {
@@ -438,6 +543,20 @@ try {
         $executionResult = Invoke-VerificationExecution -RepoRoot $deploymentRoot -AdditionalArguments $executionArguments
         Assert-True ($executionResult.ExitCode -ne 0) "deployment execution rejects $($signatureCase.Name)"
         Assert-True ($executionResult.Output -match [string]$signatureCase.Expected) "deployment execution reports $($signatureCase.Name)"
+    }
+
+    # Local control origins must survive the new policy: the launcher
+    # canonicalises http://localhost:49101 through, so a verifier that rejected it
+    # would contradict the mechanism it verifies. These runs still fail on the
+    # unreachable health endpoints - they must not fail on locality.
+    foreach ($acceptedKitControlUrl in @('http://127.0.0.1:49101', 'http://localhost:49101')) {
+        Set-ValidDeploymentRuntimeSignatures -Root $runtimeSignatureRoot
+        [pscustomobject]@{ kitControlUrl = $acceptedKitControlUrl; port = 8010; revision = $deploymentRevision } |
+            ConvertTo-Json -Compress |
+            Set-Content -LiteralPath (Join-Path $runtimeSignatureRoot 'kit-manager-api.params.json') -Encoding utf8
+        $acceptedResult = Invoke-VerificationExecution -RepoRoot $deploymentRoot -AdditionalArguments $executionArguments
+        Assert-True ($acceptedResult.Output -notmatch 'loopback or an address assigned to this host') "deployment execution accepts local Kit control URL '$acceptedKitControlUrl'"
+        Assert-True ($acceptedResult.Output -notmatch 'origin-only absolute HTTP URL') "deployment execution accepts the origin shape of '$acceptedKitControlUrl'"
     }
     Set-ValidDeploymentRuntimeSignatures -Root $runtimeSignatureRoot
     Write-TestPass 'deployment runtime signature rejection matrix'
