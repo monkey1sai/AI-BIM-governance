@@ -433,6 +433,7 @@ $kitManagerEnvironmentNames = @('RUNTIME_MODE', 'HOST_LOCAL_RUNTIME_ALLOWED', 'K
 $originalKitManagerEnvironment = @{}
 $originalDefaultProbePythonPath = $env:PYTHONPATH
 $originalDefaultProbePidFileEnv = $env:HOST_NATIVE_LAUNCHER_TEST_PID_FILE
+$originalDefaultProbeMarkerFileEnv = $env:HOST_NATIVE_LAUNCHER_TEST_MARKER_FILE
 try {
     foreach ($name in $kitManagerEnvironmentNames) {
         $originalKitManagerEnvironment[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
@@ -522,21 +523,119 @@ try {
     Assert-True ($nonLocalError -match 'loopback or an address assigned to this host') 'Kit Manager rejects a non-local conversion authority URL'
     Write-TestPass 'host-native Kit Manager rejects non-local Kit control URL'
 
-    # Test 21b (issue #493 / TG-02): every dynamic case above injects a
-    # SUCCEEDING fake -ImportProbeFn, so the DEFAULT probe defined inline in
-    # Start-HostNativeKitManager (host-native-launcher.ps1:556-600) — its
-    # WaitForExit($TimeoutSec * 1000), the Stop-HostNativeProcessTreeAndWait
-    # call, and the -1 -> throw propagation at host-native-launcher.ps1:616-618
-    # — was only proven by source-regex assertions, never actually driven.
-    # The probe's argv is hardcoded to `-c 'import fastapi, uvicorn'`, so make
-    # the import itself hang: put a `fastapi.py` shim earlier on PYTHONPATH
-    # that spawns a child and sleeps 30s, modeled on the proven hung-child
-    # fixture at test-deploy-governance-static.ps1:174-215.
+    # Test 21b (issue #493 / TG-02): drive the DEFAULT ImportProbeFn through
+    # a real Python subprocess on the success path. Local shim modules avoid a
+    # dependency on whatever fastapi/uvicorn versions happen to be installed,
+    # while a marker file proves that both imports actually executed.
     $defaultProbePython = Resolve-PlatformSystemPython
     if ([string]::IsNullOrWhiteSpace($defaultProbePython)) {
         throw 'default import-probe regression fixture requires a working Python 3.11+ interpreter'
     }
-    $defaultProbeShimDir = Join-Path $sb 'default-probe-shim'
+    function Resolve-HostNativePython { param($RepoRoot, $ServiceName) return $defaultProbePython }
+    $script:defaultProbeServiceStartCount = 0
+    function Start-HostNativeService {
+        param($Name, $WorkingDirectory, $FilePath, $ArgumentList, $RunDir)
+        $script:defaultProbeServiceStartCount++
+        return [pscustomobject]@{ Pid = 4251; LogPath = 'fixture.log' }
+    }
+
+    $defaultProbeSuccessShimDir = Join-Path $sb 'default-probe-success-shim'
+    New-Item -ItemType Directory -Path $defaultProbeSuccessShimDir -Force | Out-Null
+    $defaultProbeSuccessMarker = Join-Path $sb 'default-probe-success.marker'
+    $defaultProbeSuccessFastapiSource = @'
+import os
+from pathlib import Path
+
+Path(os.environ['HOST_NATIVE_LAUNCHER_TEST_MARKER_FILE']).write_text('fastapi', encoding='utf-8')
+'@
+    $defaultProbeSuccessUvicornSource = @'
+import os
+from pathlib import Path
+
+with Path(os.environ['HOST_NATIVE_LAUNCHER_TEST_MARKER_FILE']).open('a', encoding='utf-8') as fh:
+    fh.write(',uvicorn')
+'@
+    [System.IO.File]::WriteAllText(
+        (Join-Path $defaultProbeSuccessShimDir 'fastapi.py'),
+        $defaultProbeSuccessFastapiSource
+    )
+    [System.IO.File]::WriteAllText(
+        (Join-Path $defaultProbeSuccessShimDir 'uvicorn.py'),
+        $defaultProbeSuccessUvicornSource
+    )
+    $env:PYTHONPATH = $defaultProbeSuccessShimDir
+    $env:HOST_NATIVE_LAUNCHER_TEST_MARKER_FILE = $defaultProbeSuccessMarker
+    $script:defaultProbeServiceStartCount = 0
+
+    Start-HostNativeKitManager -RepoRoot $sb -Port 8010 -KitControlUrl '' `
+        -ImportProbeTimeoutSec 5 | Out-Null
+
+    Assert-Equal 1 $script:defaultProbeServiceStartCount `
+        'a successful default import probe reaches Start-HostNativeService exactly once'
+    Assert-True (Test-Path -LiteralPath $defaultProbeSuccessMarker -PathType Leaf) `
+        'successful default import probe writes its subprocess marker'
+    Assert-Equal 'fastapi,uvicorn' (Get-Content -Raw -LiteralPath $defaultProbeSuccessMarker) `
+        'successful default import probe executes both real Python imports in order'
+    Write-TestPass 'host-native Kit Manager default import probe dynamically executes the success path'
+
+    # Test 21c (issue #493 / TG-02): execute the DEFAULT probe failure path.
+    # The fastapi shim writes a marker before raising. The uvicorn shim would
+    # append an unmistakable value if it were unexpectedly reached.
+    $defaultProbeFailureShimDir = Join-Path $sb 'default-probe-failure-shim'
+    New-Item -ItemType Directory -Path $defaultProbeFailureShimDir -Force | Out-Null
+    $defaultProbeFailureMarker = Join-Path $sb 'default-probe-failure.marker'
+    $defaultProbeFailureFastapiSource = @'
+import os
+from pathlib import Path
+
+Path(os.environ['HOST_NATIVE_LAUNCHER_TEST_MARKER_FILE']).write_text('fastapi-failure', encoding='utf-8')
+raise RuntimeError('fixture import failure')
+'@
+    $defaultProbeFailureUvicornSource = @'
+import os
+from pathlib import Path
+
+with Path(os.environ['HOST_NATIVE_LAUNCHER_TEST_MARKER_FILE']).open('a', encoding='utf-8') as fh:
+    fh.write(',uvicorn-unexpected')
+'@
+    [System.IO.File]::WriteAllText(
+        (Join-Path $defaultProbeFailureShimDir 'fastapi.py'),
+        $defaultProbeFailureFastapiSource
+    )
+    [System.IO.File]::WriteAllText(
+        (Join-Path $defaultProbeFailureShimDir 'uvicorn.py'),
+        $defaultProbeFailureUvicornSource
+    )
+    $env:PYTHONPATH = $defaultProbeFailureShimDir
+    $env:HOST_NATIVE_LAUNCHER_TEST_MARKER_FILE = $defaultProbeFailureMarker
+    $script:defaultProbeServiceStartCount = 0
+    $defaultProbeFailureStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+    $defaultProbeFailureError = ''
+    try {
+        Start-HostNativeKitManager -RepoRoot $sb -Port 8010 -KitControlUrl '' `
+            -ImportProbeTimeoutSec 5 | Out-Null
+    }
+    catch {
+        $defaultProbeFailureError = $_.Exception.Message
+    }
+    $defaultProbeFailureStopwatch.Stop()
+
+    Assert-True ($defaultProbeFailureError -match [regex]::Escape('kit-manager-api Python cannot import fastapi and uvicorn')) `
+        'a real default import failure propagates the documented service-start blocker'
+    Assert-True ($defaultProbeFailureStopwatch.Elapsed.TotalSeconds -lt 10) `
+        'a real default import failure returns within a bounded window'
+    Assert-Equal 0 $script:defaultProbeServiceStartCount `
+        'a failed default import probe never reaches Start-HostNativeService'
+    Assert-True (Test-Path -LiteralPath $defaultProbeFailureMarker -PathType Leaf) `
+        'failed default import probe writes its subprocess marker before raising'
+    Assert-Equal 'fastapi-failure' (Get-Content -Raw -LiteralPath $defaultProbeFailureMarker) `
+        'failed default import probe executes the failing fastapi shim and does not reach uvicorn'
+    Write-TestPass 'host-native Kit Manager default import probe dynamically executes the failure path'
+
+    # Test 21d (issue #493 / TG-02): make the DEFAULT import probe hang.
+    # Put a fastapi.py shim earlier on PYTHONPATH; it spawns a child and sleeps,
+    # proving timeout propagation and descendant cleanup through the real probe.
+    $defaultProbeShimDir = Join-Path $sb 'default-probe-timeout-shim'
     New-Item -ItemType Directory -Path $defaultProbeShimDir -Force | Out-Null
     $defaultProbePidFile = Join-Path $sb 'default-probe-pids.json'
     # The shim reads its output path from an env var rather than an embedded
@@ -558,14 +657,7 @@ time.sleep(30)
     [System.IO.File]::WriteAllText((Join-Path $defaultProbeShimDir 'fastapi.py'), $defaultProbeShimSource)
     $env:PYTHONPATH = $defaultProbeShimDir
     $env:HOST_NATIVE_LAUNCHER_TEST_PID_FILE = $defaultProbePidFile
-
-    function Resolve-HostNativePython { param($RepoRoot, $ServiceName) return $defaultProbePython }
-    $script:defaultProbeServiceStarted = $false
-    function Start-HostNativeService {
-        param($Name, $WorkingDirectory, $FilePath, $ArgumentList, $RunDir)
-        $script:defaultProbeServiceStarted = $true
-        return [pscustomobject]@{ Pid = 4251; LogPath = 'fixture.log' }
-    }
+    $script:defaultProbeServiceStartCount = 0
 
     $defaultProbeStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
     $defaultProbeError = ''
@@ -582,8 +674,8 @@ time.sleep(30)
         'default import probe timeout propagates the documented -1 failure (host-native-launcher.ps1:616-618)'
     Assert-True ($defaultProbeStopwatch.Elapsed.TotalSeconds -lt 10) `
         'default import probe timeout returns within a bounded window, proving the timeout wiring rather than a hang'
-    Assert-True (-not $script:defaultProbeServiceStarted) `
-        'a failed default import probe must never reach Start-HostNativeService'
+    Assert-Equal 0 $script:defaultProbeServiceStartCount `
+        'a timed-out default import probe must never reach Start-HostNativeService'
     Assert-True (Test-Path -LiteralPath $defaultProbePidFile -PathType Leaf) `
         'hung-import shim must record its own PID and its child PID before the timeout kills it'
     $defaultProbePids = @(Get-Content -Raw -LiteralPath $defaultProbePidFile | ConvertFrom-Json)
@@ -606,6 +698,7 @@ finally {
     }
     $env:PYTHONPATH = $originalDefaultProbePythonPath
     $env:HOST_NATIVE_LAUNCHER_TEST_PID_FILE = $originalDefaultProbePidFileEnv
+    $env:HOST_NATIVE_LAUNCHER_TEST_MARKER_FILE = $originalDefaultProbeMarkerFileEnv
     Remove-TestSandbox -Path $sb
 }
 
