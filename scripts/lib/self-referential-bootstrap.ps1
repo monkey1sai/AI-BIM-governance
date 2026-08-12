@@ -876,6 +876,16 @@ function Compare-SelfReferentialLedgerTransition {
             if ([string]$head.status -ne 'open') {
                 throw "self_referential_bootstrap: new entry '$id' must be born open; opening and closing debt in the same PR defeats the fixpoint obligation."
             }
+            # repair_prs is optional at the SCHEMA level only so that entries
+            # written before the repair lane existed stay parsable and immutable.
+            # An entry born in this transition has no repair history by
+            # construction, so declaring the field at all - empty array included -
+            # is a fabricated record: it never passed through a repair transition
+            # and was never bound to a repairing PR's number. Presence is the
+            # violation, not content.
+            if ($null -ne $head.PSObject.Properties['repair_prs']) {
+                throw "self_referential_bootstrap: new entry '$id' must not declare repair_prs; that field records completed repairs and can only be appended by a later repair PR bound to its own PR number."
+            }
             if ($PrNumber -gt 0 -and [int]$head.pr -ne $PrNumber) {
                 throw "self_referential_bootstrap: new entry '$id' records pr=$($head.pr) but this is PR #$PrNumber; entries must bind to their originating PR."
             }
@@ -923,15 +933,21 @@ function Compare-SelfReferentialLedgerTransition {
         $base = $baseById[$id]
         $baseStatus = [string]$base.status
         $headStatus = [string]$head.status
+        # Every canonical entry comparison below is -cne, never -ne: PowerShell's
+        # -ne is CASE-INSENSITIVE on strings (measured on 7.5.4: 'abc' -ne 'ABC'
+        # is False, 'abc' -cne 'ABC' is True), so a case-only edit to any field
+        # read as "unchanged" and walked past immutability entirely. That matters
+        # most for declared git paths, which ARE case-sensitive - the same reason
+        # the new-entry path below compares them with -ccontains.
         if ($baseStatus -eq 'closed') {
-            if ((ConvertTo-SelfReferentialCanonicalEntry $base) -ne (ConvertTo-SelfReferentialCanonicalEntry $head)) {
+            if ((ConvertTo-SelfReferentialCanonicalEntry $base) -cne (ConvertTo-SelfReferentialCanonicalEntry $head)) {
                 throw "self_referential_bootstrap: closed entry '$id' was modified; closed entries are immutable."
             }
             continue
         }
         # base open
         if ($headStatus -eq 'open') {
-            if ((ConvertTo-SelfReferentialCanonicalEntry $base) -ne (ConvertTo-SelfReferentialCanonicalEntry $head)) {
+            if ((ConvertTo-SelfReferentialCanonicalEntry $base) -cne (ConvertTo-SelfReferentialCanonicalEntry $head)) {
                 # One narrow exception (issue #494): a tail append to repair_prs.
                 # Everything else about the entry stays immutable, so the debt,
                 # its contract, and its declared surface cannot be edited under
@@ -948,7 +964,7 @@ function Compare-SelfReferentialLedgerTransition {
         # open -> closed: the fixpoint must be real, not merely well-formed.
         $baseComparable = $base | Select-Object -Property * -ExcludeProperty status, fixpoint
         $headComparable = $head | Select-Object -Property * -ExcludeProperty status, fixpoint
-        if ((ConvertTo-SelfReferentialCanonicalEntry $baseComparable) -ne (ConvertTo-SelfReferentialCanonicalEntry $headComparable)) {
+        if ((ConvertTo-SelfReferentialCanonicalEntry $baseComparable) -cne (ConvertTo-SelfReferentialCanonicalEntry $headComparable)) {
             throw "self_referential_bootstrap: entry '$id' fields other than status/fixpoint changed during closure; entries are immutable."
         }
         $fp = $head.fixpoint

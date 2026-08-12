@@ -50,6 +50,8 @@ fixpoint 首跑本身就是機制的第一次正規執行，因此**可能就地
 
 Repair lane 只開一扇門：**修復 PR 把自己的 PR number 追加到該 open entry 的 `repair_prs`**，藉此以機器方式把修復綁定到既有債務，而不是新增或竄改債務。`repair_prs` 是選填的正整數陣列，必須嚴格遞增且不得重複；未列出者等同空陣列（repair lane 之前寫入的 entry 因此保持可解析且不可變）。
 
+**新開 entry 不得帶 `repair_prs`**（含空陣列 `[]`）；該欄位只能由 repair transition 追加產生。schema 層的「選填」僅為了讓 repair lane 之前寫入的 entry 維持可解析，不是允許自我登記時憑空宣告修復歷史 —— 那種記錄從未經過 repair transition，也從未綁定任何修復 PR 的號碼。
+
 放行的**五個條件（缺一即 fail closed）**：
 
 1. PR body 宣告的 entry 在 **PR base 已存在且 `status=open`**，在 head 仍為 `open`。

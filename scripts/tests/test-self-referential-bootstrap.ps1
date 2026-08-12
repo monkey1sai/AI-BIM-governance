@@ -620,6 +620,44 @@ try {
         Invoke-BodyGate -Rows @{ 'Self-referential bootstrap' = 'no' } -ChangedPaths $mechanism -HeadJson $mutatedHead -BaseJson $openBase
     }
 
+    # Entry immutability must be CASE-SENSITIVE. PowerShell's -ne is not: measured
+    # on 7.5.4, 'abc' -ne 'ABC' is False while 'abc' -cne 'ABC' is True. So a
+    # case-only edit to any entry field read as "unchanged" and walked straight
+    # past the immutability rule - and for declared git paths, which ARE
+    # case-sensitive, that silently rebinds the debt to a path that does not exist.
+    Assert-Throws -Context 'open entry reason changed only in case' -MessagePattern 'was modified' -Action {
+        Invoke-BodyGate -Rows @{ 'Self-referential bootstrap' = 'no' } -ChangedPaths $mechanism `
+            -HeadJson (New-LedgerJson -Entries @((New-Entry -Override @{ reason = $goodReason.ToUpperInvariant() }))) `
+            -BaseJson $openBase
+    }
+    Assert-Throws -Context 'open entry mechanism path changed only in case' -MessagePattern 'was modified' -Action {
+        Invoke-BodyGate -Rows @{ 'Self-referential bootstrap' = 'no' } -ChangedPaths $mechanism `
+            -HeadJson (New-LedgerJson -Entries @((New-Entry -Override @{ verification_mechanism_paths = @('Scripts/Deploy.ps1') }))) `
+            -BaseJson $openBase
+    }
+    $caseClosedFixpoint = @{
+        reverified_at = '2026-08-01T08:00:00Z'
+        mechanism_commit = ('a' * 40)
+        evidence_refs = @('docs/evidence/remote-linux-deploy/fixpoint/summary.md')
+    }
+    $caseClosedBase = New-LedgerJson -Entries @((New-Entry -Override @{
+        status = 'closed'; fixpoint = $caseClosedFixpoint
+    }))
+    $caseClosedHead = New-LedgerJson -Entries @((New-Entry -Override @{
+        status = 'closed'; fixpoint = $caseClosedFixpoint; reason = $goodReason.ToUpperInvariant()
+    }))
+    Assert-Throws -Context 'closed entry reason changed only in case' -MessagePattern 'closed entries are immutable' -Action {
+        Invoke-BodyGate -Rows @{ 'Self-referential bootstrap' = 'no' } -ChangedPaths $mechanism `
+            -HeadJson $caseClosedHead -BaseJson $caseClosedBase
+    }
+    # ...and the same on the open -> closed comparison, which excludes status and
+    # fixpoint but must still hold every other field byte-for-byte.
+    Assert-Throws -Context 'closure changes another field only in case' `
+        -MessagePattern 'fields other than status/fixpoint changed during closure' -Action {
+        Invoke-BodyGate -Rows @{ 'Self-referential bootstrap' = 'no' } -ChangedPaths $mechanism `
+            -HeadJson $caseClosedHead -BaseJson $openBase
+    }
+
     # --- transition: forged fixpoint (review P1 #3) ---------------------------------
     $forgedClosed = New-LedgerJson -Entries @((New-Entry -Override @{
         status = 'closed'
@@ -1204,6 +1242,24 @@ try {
         Invoke-BodyGate -Rows $repairRows -ChangedPaths $repairChangedPaths `
             -HeadJson (New-RepairHeadJson -Override @{ repair_notes = 'x' }) `
             -BaseJson $repairBase -PrNumber 601
+    }
+
+    # A NEW entry may not arrive carrying repair history. repair_prs is optional at
+    # the schema level so the pre-lane closed entries stay parsable, which means a
+    # self-registering entry could otherwise be born with a fabricated repair
+    # record - never produced by a repair transition, never bound to any PR number.
+    # The empty array is refused too: presence is the violation, not content.
+    foreach ($fabricatedRepairPrs in @(@(), @(123), @(123, 456))) {
+        Assert-Throws -Context "new entry born with repair_prs: [$($fabricatedRepairPrs -join ', ')]" `
+            -MessagePattern 'new entry .* must not declare repair_prs' -Action {
+            Invoke-BodyGate -Rows @{
+                'Self-referential bootstrap' = 'yes'
+                'Bootstrap ledger entry' = 'remote-linux-deploy-target'
+                'Bootstrap reason' = $goodReason
+            } -ChangedPaths $mechanism `
+                -HeadJson (New-LedgerJson -Entries @((New-Entry -Override @{ repair_prs = $fabricatedRepairPrs }))) `
+                -BaseJson $emptyJson
+        }
     }
 
     # closed entries remain immutable - repair_prs is not a back door into them.
