@@ -1,24 +1,24 @@
 # gate-suites — stack_kind=self_referential_bootstrap
-tested_head=52488e8189887a7852ed97bb2c7c56bda69a9037
-run_at=2026-08-12T13:19:55Z
-note=rerun after the repair-lane commit expanded this PR beyond contract prose into the gate library and its suite (issue #494 folded in per owner direction). The entry's declared surface grew to four mechanism paths accordingly, so these suites now bind a tree containing the new lane, not only the §2.1/§2.2 prose. Exact canonical invocation form recorded per suite; earlier stale-checkout EOL false-red note retained in README. Previous recorded head 82c6aa4 is superseded.
+tested_head=c2a26e5dc18adf5fe2310bf232c77271e242ebd6
+run_at=2026-08-12T13:44:01Z
+note=rerun after the repair-lane commit expanded this PR beyond contract prose into the gate library and its suite (issue #494 folded in per owner direction), and again after the single-door fix (L1-COR-001: the lane now refuses a transition that appends repair_prs to any entry the PR body does not name). The entry's declared surface grew to four mechanism paths accordingly, so these suites bind a tree containing the new lane, not only the §2.1/§2.2 prose. Exact canonical invocation form recorded per suite; earlier stale-checkout EOL false-red note retained in README. Recorded heads 82c6aa4 and 52488e8 are superseded. This file is the only change after tested_head; it carries no executable content.
 
 ## test-self-referential-bootstrap — pwsh -NoProfile -NonInteractive -File scripts/tests/test-self-referential-bootstrap.ps1
 [test-self-referential-bootstrap] all assertions passed
-exit_code=0 duration_s=28
+exit_code=0 duration_s=33
 
 ## test-pr-body-evidence — pwsh -NoProfile -NonInteractive -File scripts/tests/test-pr-body-evidence.ps1
 [test-pr-body-evidence] all assertions passed
-exit_code=0 duration_s=12
+exit_code=0 duration_s=15
 
 ## test-agent-governance-check — pwsh -NoProfile -NonInteractive -File scripts/tests/test-agent-governance-check.ps1
 # fail 0
 # cancelled 0
 # skipped 0
 # todo 0
-# duration_ms 2531.8315
+# duration_ms 2881.4535
 [test-agent-governance-check] all assertions passed
-exit_code=0 duration_s=135
+exit_code=0 duration_s=148
 
 ## invoke-powershell-static — pwsh -NoProfile -NonInteractive -File scripts/tests/invoke-powershell-static.ps1
 [invoke-powershell-static] passed
