@@ -146,6 +146,48 @@
           "docs/evidence/linux-test-deploy-verifier-hardening/fixpoint/summary.md"
         ]
       }
+    },
+    {
+      "id": "mechanism-hardening-2",
+      "status": "open",
+      "pr": 513,
+      "opened_at": "2026-08-12T02:38:49Z",
+      "reason": "the canonical Linux transport rebuilds only from freshly fetched origin/main and refuses an unmerged revision, so this branch cannot exercise its changed deploy resolver, its Deployment-profile locality assertion, or its process-tree terminator as canonical post-change evidence before merge; only a mainline fixpoint rebuild can produce that proof",
+      "verification_mechanism_paths": [
+        ".github/workflows/ci.yml",
+        "scripts/deploy.ps1",
+        "scripts/lib/host-native-launcher.ps1",
+        "scripts/lib/platform/platform-adapter.ps1",
+        "scripts/self-referential-bootstrap-ledger.json",
+        "scripts/verification-manifest.json",
+        "scripts/verify-all.ps1"
+      ],
+      "verification_contract": {
+        "id": "mechanism-hardening-2/v1",
+        "command_ids": [
+          "test-deploy-governance-static",
+          "test-verify-all",
+          "test-host-native-launcher",
+          "test-host-native-child-launch",
+          "test-platform-adapter",
+          "test-preflight-ports",
+          "test-kit-log-probe",
+          "test-deploy-target-registry",
+          "test-remote-deploy-transport",
+          "test-rebuild-test-deploy",
+          "test-self-referential-bootstrap",
+          "test-agent-governance-check",
+          "invoke-powershell-static",
+          "canonical-linux-rebuild",
+          "canonical-linux-deployment-verify"
+        ],
+        "contract_sha256": "881fac8337efca52cb16e753cc016ee3219297180bfeec092406cad5ff7b2bc6"
+      },
+      "bootstrap_evidence_refs": [
+        "docs/evidence/mechanism-hardening-2/self-referential-bootstrap/README.md",
+        "docs/evidence/mechanism-hardening-2/self-referential-bootstrap/verification.txt"
+      ],
+      "fixpoint": null
     }
   ]
 }

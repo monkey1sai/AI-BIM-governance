@@ -756,7 +756,8 @@ Write-DeployHeader -Title 'Phase 1: Preflight (read-only)'
 $docker     = Test-DockerEnvironment       -RepoRoot $RepoRoot
 $hostNative = Test-HostNativeEnvironment   -RepoRoot $RepoRoot
 $envFiles   = Test-EnvFiles                -RepoRoot $RepoRoot
-$resolvedEnvFile = if ([string]::IsNullOrWhiteSpace($EnvFile)) {
+$resolvedEnvFileIsExplicit = -not [string]::IsNullOrWhiteSpace($EnvFile)
+$resolvedEnvFile = if (-not $resolvedEnvFileIsExplicit) {
     # $docker.envFile 解析順序(見 preflight-docker.ps1 Test-DockerEnvironment):
     #   real .env.web-plane.host-kit 存在 → '.env.web-plane.host-kit'
     #   只有 .example 存在             → '.env.web-plane.host-kit.example'(dev/demo fallback,發 Warning)
@@ -888,12 +889,14 @@ if (-not (Test-KitRuntimeSignatureMatches -Path $script:webPlaneRuntimeSignature
     $shouldRefreshWebPlane = $true
 }
 $resolvedConversionHealthHost = Resolve-HealthProbeHost -BindHost $resolvedConversionBindHost
-$resolvedKitControlUrl = if ($SkipKitManager) {
-    ''
-} else {
-    Resolve-HostNativeKitControlUrl `
-        -KitControlUrl (Get-DeployEnvValue -Name 'KIT_CONTROL_URL' -EnvFile $resolvedEnvFile -Default '').Trim()
-}
+# NOTE: $resolvedKitControlUrl and $kitManagerRuntimeSignature are deliberately
+# NOT resolved here. Both derive from KIT_CONTROL_URL in $resolvedEnvFile, and the
+# Phase 2 ".env / .env.example missing-key merge" below can still append that key
+# and repoint $resolvedEnvFile at the real env file. Resolving here sealed the
+# pre-merge value into the child launch and the persisted runtime signature, so a
+# run that repaired the file still started blocked while claiming to be
+# configured. They now live immediately after that merge; nothing between here
+# and there reads either variable.
 $resolvedAllowedStageHosts = Resolve-AllowedStageHosts -EnvFile $resolvedEnvFile -PublicHost $resolvedPublicHost -ConversionPort 49101
 $kitRuntimeSignature = New-KitRuntimeSignature `
     -PublicHost $resolvedPublicHost `
@@ -966,11 +969,6 @@ $governanceRuntimeSignature = New-GovernanceRuntimeSignature `
     -DbPath $resolvedGovernanceDbPath `
     -FileLibraryRoot $resolvedGovernanceFileLibraryRoot `
     -A4InternalContextTokenFingerprint $a4InternalContextTokenFingerprint `
-    -Revision $resolvedDeployRevision
-$kitManagerRuntimeSignature = New-KitManagerRuntimeSignature `
-    -BindHost $resolvedHostNativeBindHost `
-    -Port 8010 `
-    -KitControlUrl $resolvedKitControlUrl `
     -Revision $resolvedDeployRevision
 $resolvedGovernanceApiBaseForDocker = if ($SkipGovernance) { '' } else { "http://host.docker.internal:$resolvedGovernancePort" }
 if (-not $SkipGovernance) {
@@ -1105,6 +1103,25 @@ if ($volume.status -eq 'WRONG_LEAF')          { $hardFails += 'runtime_storage_r
 if (-not (Test-PlatformServiceLingerEnabled)) {
     $hardFails += 'user_lingering_disabled'
     Write-DeployTag -Tag 'fail' -Message "host-native services would not survive logout: lingering is disabled for this account. Fix once with: loginctl enable-linger $(& id -un 2>`$null)" -LogPath $LogPath | Out-Null
+}
+# Moving the AUTHORITATIVE Kit control resolution after the Phase 2 missing-key
+# merge (below) also moved it past this dry-run exit, so the required preflight
+# stopped reporting a malformed or non-local KIT_CONTROL_URL at all and the real
+# deploy only discovered it after Phase 2 had already modified the environment.
+# The merge can only APPEND an absent key with a default; it never rewrites an
+# existing value, so an existing unusable authority is unfixable and belongs in
+# Phase 1 hard fails. Validation only - nothing is assigned here, and the single
+# authoritative assignment stays after the merge where a repaired file still
+# takes effect. Resolve-HostNativeKitControlUrl's messages never echo the URL.
+if (-not $SkipKitManager) {
+    try {
+        Resolve-HostNativeKitControlUrl `
+            -KitControlUrl (Get-DeployEnvValue -Name 'KIT_CONTROL_URL' -EnvFile $resolvedEnvFile -Default '').Trim() | Out-Null
+    }
+    catch {
+        $hardFails += 'kit_control_url_unusable'
+        Write-DeployTag -Tag 'fail' -Message "KIT_CONTROL_URL in $resolvedEnvFile is not a usable Kit control authority: $($_.Exception.Message)" -LogPath $LogPath | Out-Null
+    }
 }
 if ($DryRun) {
     Write-DeployHeader -Title 'Phase 2: Auto-fix (safe actions)'
@@ -1347,9 +1364,10 @@ foreach ($ef in $envFiles) {
         Write-DeployTag -Tag 'fix' -Message "Copy-Item $examplePath -> $envPath" -LogPath $LogPath | Out-Null
         Copy-Item -LiteralPath $examplePath -Destination $envPath -Force
         $fixActions++
-        # 若剛 copy 的是 host-kit env,$resolvedEnvFile 要切到真檔(否則後續 volume
-        # alignment / rm / build 仍指 .example)
-        if ($ef.file -eq '.env.web-plane.host-kit') {
+        # 若 preflight 自動選到 host-kit .example，copy 後要切到真檔（否則
+        # 後續 volume alignment / rm / build 仍指 .example）。明示 -EnvFile
+        # 是 operator authority，不能被 canonical bootstrap 靜默覆蓋。
+        if ($ef.file -eq '.env.web-plane.host-kit' -and -not $resolvedEnvFileIsExplicit) {
             $resolvedEnvFile = '.env.web-plane.host-kit'
             $script:resolvedEnvFile = $resolvedEnvFile
             $volume = Resolve-DeployVolumeState -Volume (Test-VolumeAlignment -RepoRoot $RepoRoot -EnvFile $resolvedEnvFile) -EdgeRuntimeContract $edgeRuntimeContract
@@ -1386,6 +1404,26 @@ if ($volume.status -eq 'MISSING_KEY') {
     }
     $fixActions++
 }
+
+# Kit control authority is resolved HERE, after the missing-key merge and the
+# volume fix, because both can still change $resolvedEnvFile or add the
+# KIT_CONTROL_URL key. Resolving it earlier meant a run that repaired the env
+# file still launched the Kit Manager with the stale pre-merge value and then
+# persisted a runtime signature describing the repaired state — a blocked
+# runtime-control state that reads as configured on the next run.
+# Assigned exactly once: test-deploy-governance-static.ps1 proves the single
+# assignment and this ordering.
+$resolvedKitControlUrl = if ($SkipKitManager) {
+    ''
+} else {
+    Resolve-HostNativeKitControlUrl `
+        -KitControlUrl (Get-DeployEnvValue -Name 'KIT_CONTROL_URL' -EnvFile $resolvedEnvFile -Default '').Trim()
+}
+$kitManagerRuntimeSignature = New-KitManagerRuntimeSignature `
+    -BindHost $resolvedHostNativeBindHost `
+    -Port 8010 `
+    -KitControlUrl $resolvedKitControlUrl `
+    -Revision $resolvedDeployRevision
 
 # fix: 清 stale PID file
 foreach ($pidFile in Get-ChildItem -LiteralPath $RunDir -Filter '*.pid' -ErrorAction SilentlyContinue) {

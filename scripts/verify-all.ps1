@@ -227,6 +227,57 @@ function Assert-DeploymentHostNativeBindIsLocal {
     }
 }
 
+function Assert-DeploymentKitControlUrlIsLocal {
+    # SEC-004: the recorded Kit control origin was compared against the /health
+    # payload and nothing else. Port and revision equality only prove checkout
+    # identity, so a REMOTE origin agreed between a drifted signature and a
+    # drifted service passed silently. The canonical launcher refuses remote
+    # targets, but this verifier is deliberately an independent layer: it
+    # re-implements the launcher's rule (Resolve-HostNativeKitControlUrl) rather
+    # than importing the mechanism it is supposed to check, exactly as
+    # Assert-DeploymentHostNativeBindIsLocal re-implements
+    # Test-HostNativeLocalAddress.
+    [CmdletBinding()]
+    param([Parameter(Mandatory = $true)][AllowEmptyString()][string] $Url)
+
+    # Empty is the honest unconfigured/blocked runtime-control state.
+    if ([string]::IsNullOrWhiteSpace($Url)) { return }
+
+    $controlUri = $null
+    if (-not [uri]::TryCreate($Url, [UriKind]::Absolute, [ref]$controlUri) -or
+        $controlUri.Scheme -ne 'http' -or
+        [string]::IsNullOrWhiteSpace($controlUri.Host) -or
+        -not [string]::IsNullOrWhiteSpace($controlUri.UserInfo) -or
+        -not [string]::IsNullOrWhiteSpace($controlUri.Query) -or
+        -not [string]::IsNullOrWhiteSpace($controlUri.Fragment) -or
+        -not ($controlUri.AbsolutePath -eq '' -or $controlUri.AbsolutePath -eq '/')) {
+        throw 'Deployment Kit control URL must be an origin-only absolute HTTP URL without credentials, path, query, or fragment.'
+    }
+
+    $normalizedHost = $controlUri.Host.Trim().Trim([char[]]'[]').ToLowerInvariant()
+    # localhost MUST be accepted: the launcher canonicalises
+    # http://localhost:49101 through, so rejecting it here would make the
+    # verifier contradict the mechanism it verifies.
+    if ($normalizedHost -eq 'localhost') { return }
+
+    $controlAddress = $null
+    if (-not [Net.IPAddress]::TryParse($normalizedHost, [ref]$controlAddress)) {
+        # No DNS resolution: a DNS answer is not proof that the control authority
+        # is bound to this host, and resolving here would accept rebinding.
+        throw 'Deployment Kit control URL host must be loopback or an address assigned to this host.'
+    }
+    if ([Net.IPAddress]::IsLoopback($controlAddress)) { return }
+
+    $localAddresses = @(
+        [Net.NetworkInformation.NetworkInterface]::GetAllNetworkInterfaces() |
+            ForEach-Object { $_.GetIPProperties().UnicastAddresses } |
+            ForEach-Object { $_.Address }
+    )
+    if (@($localAddresses | Where-Object { $_.Equals($controlAddress) }).Count -eq 0) {
+        throw 'Deployment Kit control URL host must be loopback or an address assigned to this host.'
+    }
+}
+
 if ($VerifyProfile -eq 'Deployment' -and ($StreamingOnly -or $TsOnly -or $PyOnly)) {
     throw 'Deployment profile does not accept StreamingOnly, TsOnly, or PyOnly filters.'
 }
@@ -351,6 +402,7 @@ if ($VerifyProfile -eq 'Deployment') {
     if (-not $PlanOnly) {
         Assert-DeploymentHostNativeBindIsLocal -HostName ([string]$deploymentTarget.host_native_bind_host)
         Assert-DeploymentHostNativeBindIsLocal -HostName $conversionHealthHost
+        Assert-DeploymentKitControlUrlIsLocal -Url $expectedKitControlUrl
     }
 
     $Targets += @{
