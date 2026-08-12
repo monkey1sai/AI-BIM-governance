@@ -56,11 +56,10 @@ try {
         -SkipWebRtcProbe:$SkipWebRtcProbe
 
     if ([string]::IsNullOrWhiteSpace($OutputPath)) {
-        # Derive the default filename from the report's own run_id
-        # (measure_<yyyyMMdd_HHmmss>_<random hex6>) rather than a bare
-        # second-resolution timestamp: two invocations starting within the
-        # same second must not collide on the same default path and race on
-        # Set-Content below.
+        # Name the artifact after the report's own run_id (already computed
+        # above, inside $report). A bare second-resolution timestamp collides
+        # when two runs land in the same second, silently overwriting the
+        # earlier report; run_id carries a per-run random suffix as well.
         $OutputPath = Join-Path $RepoRoot "artifacts\gpu-baseline\$($report.run_id).json"
     }
     $outDir = Split-Path -Parent $OutputPath

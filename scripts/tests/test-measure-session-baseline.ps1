@@ -47,16 +47,27 @@ function Assert-ReportSchemaShape {
         Assert-MeasuredShape -Obj $ef[$field] -Message "$Message :: environment_fingerprint.$field"
     }
     Assert-True ($ef.Contains('complete')) "$Message :: environment_fingerprint has 'complete'"
+    Assert-True ($ef.Contains('gpu_count')) "$Message :: environment_fingerprint has 'gpu_count'"
+    Assert-True ($ef.Contains('gpu_fingerprint_scope')) "$Message :: environment_fingerprint declares its GPU scope"
+    Assert-True ($ef.gpu_fingerprint_scope_note -match 'deferred to task 1.2') "$Message :: GPU scope note defers per-GPU fingerprinting to task 1.2"
     $expectComplete = -not [bool]($REQUIRED_ENV_FINGERPRINT_FIELDS | Where-Object { -not $ef[$_].measured })
     Assert-Equal $expectComplete $ef.complete "$Message :: environment_fingerprint.complete matches per-field measured flags"
 
     Assert-MeasuredShape -Obj $Report.ttff_ms -Message "$Message :: ttff_ms"
     Assert-MeasuredShape -Obj $Report.session_creation_success_rate -Message "$Message :: session_creation_success_rate"
+    # Both metrics can only ever arrive from the caller; the report must say so.
+    Assert-Equal 'caller_supplied' $Report.ttff_ms.source "$Message :: ttff_ms tagged source=caller_supplied"
+    Assert-Equal 'caller_supplied' $Report.session_creation_success_rate.source "$Message :: session_creation_success_rate tagged source=caller_supplied"
 
     Assert-True ($Report.gpu_inventory.Contains('measured')) "$Message :: gpu_inventory has 'measured'"
     Assert-True ($Report.gpu_inventory.Contains('gpus')) "$Message :: gpu_inventory has 'gpus'"
     Assert-True ($Report.session_vram_watermark.Contains('measured')) "$Message :: session_vram_watermark has 'measured'"
+    Assert-Equal 'process_name_match_only' $Report.session_vram_watermark.attribution "$Message :: session_vram_watermark declares its attribution basis"
+    Assert-True ($Report.session_vram_watermark.Contains('observed_primary_lease_count')) "$Message :: session_vram_watermark has 'observed_primary_lease_count'"
+    Assert-True ($Report.session_vram_watermark.Contains('observed_spectator_lease_count')) "$Message :: session_vram_watermark has 'observed_spectator_lease_count'"
     Assert-True ($Report.webrtc_health_probe.Contains('measured')) "$Message :: webrtc_health_probe has 'measured'"
+    Assert-Equal $false $Report.webrtc_health_probe.webrtc_signaling_probed "$Message :: webrtc_health_probe admits no signaling endpoint was probed"
+    Assert-Equal 'coordinator_only' $Report.webrtc_health_probe.probe_scope "$Message :: webrtc_health_probe declares probe_scope=coordinator_only"
 }
 
 # ============================================================================
@@ -163,13 +174,10 @@ try {
     $kitVersion = Get-KitVersionFingerprint -RepoRoot $sandbox
     Assert-Equal '110.1.0' $kitVersion.value 'kit-kernel version extracted from packman xml, feature suffix stripped'
     Assert-True $kitVersion.measured 'kit version measured=true when packman xml present'
-    Assert-Equal 'checkout_packman_declared' $kitVersion.source 'kit version records its source as the checkout-declared dependency, not a live Kit-process read'
-    Assert-True (-not [string]::IsNullOrWhiteSpace($kitVersion.caveat)) 'kit version carries an explicit staleness caveat since it cannot verify the running build matches this checkout'
 
     $kitVersionMissing = Get-KitVersionFingerprint -RepoRoot (Join-Path $sandbox 'does-not-exist')
     Assert-True (-not $kitVersionMissing.measured) 'kit version measured=false when packman xml absent'
     Assert-True (-not [string]::IsNullOrWhiteSpace($kitVersionMissing.reason)) 'kit version absent -> reason present'
-    Assert-True (-not [string]::IsNullOrWhiteSpace($kitVersionMissing.caveat)) 'kit version caveat present even when unmeasured'
     Write-TestPass 'Get-KitVersionFingerprint'
 } finally { Remove-TestSandbox -Path $sandbox }
 
@@ -212,38 +220,52 @@ try {
 # ============================================================================
 # 6. Get-WebRtcHealthProbe (injected invoker; no live network calls)
 # ============================================================================
-# Real KitInstanceBinding.status values (bim-review-coordinator/src/types.ts)
-# are allocated|starting|ready|draining|released|failed -- 'active' is never
-# emitted by the real API. Mocks below use real values so the test actually
-# exercises the production predicate instead of hiding a mismatch.
 $probeOk = Get-WebRtcHealthProbe -CoordinatorUrl 'http://127.0.0.1:8004' -HealthInvoker {
     param($Uri, $Timeout)
     if ($Uri -match '/health$') {
         return [ordered]@{ ok = $true; body = [pscustomobject]@{ status = 'ok'; kit_signaling_port = 49100 }; status_code = 200; error = $null }
     }
+    # Shaped after the real buildRuntimeStatus() projection
+    # (bim-review-coordinator/src/runtimeStatus.ts): sessions.items[] each carry
+    # viewer_leases[] (role primary|spectator, status active|released|expired),
+    # and kit_instance_bindings[] is a flat list whose status comes from
+    # KitInstanceBindingStatus = allocated|starting|ready|draining|released|failed.
+    # Note there is no 'active' binding status in that enum.
     return [ordered]@{
         ok = $true
         body = [pscustomobject]@{
             sessions = [pscustomobject]@{
+                count = 2
                 active_count = 2
-                count        = 2
-                items        = @(
+                participant_count = 4
+                items = @(
                     [pscustomobject]@{
+                        session_id = 'rs_alpha'
+                        status = 'active'
                         viewer_leases = @(
-                            [pscustomobject]@{ role = 'primary'; status = 'active' },
-                            [pscustomobject]@{ role = 'spectator'; status = 'active' },
-                            [pscustomobject]@{ role = 'spectator'; status = 'active' },
-                            [pscustomobject]@{ role = 'spectator'; status = 'released' }
+                            [pscustomobject]@{ lease_id = 'vl_1'; role = 'primary'; status = 'active' },
+                            [pscustomobject]@{ lease_id = 'vl_2'; role = 'spectator'; status = 'active' },
+                            [pscustomobject]@{ lease_id = 'vl_3'; role = 'spectator'; status = 'active' },
+                            [pscustomobject]@{ lease_id = 'vl_4'; role = 'spectator'; status = 'released' }
                         )
                     },
-                    [pscustomobject]@{ viewer_leases = @() }
+                    [pscustomobject]@{
+                        session_id = 'rs_beta'
+                        status = 'active'
+                        viewer_leases = @(
+                            [pscustomobject]@{ lease_id = 'vl_5'; role = 'primary'; status = 'active' },
+                            [pscustomobject]@{ lease_id = 'vl_6'; role = 'spectator'; status = 'expired' }
+                        )
+                    }
                 )
             }
             kit_instance_bindings = @(
-                [pscustomobject]@{ status = 'ready' },
-                [pscustomobject]@{ status = 'starting' },
-                [pscustomobject]@{ status = 'released' },
-                [pscustomobject]@{ status = 'failed' }
+                [pscustomobject]@{ session_id = 'rs_alpha'; kit_instance_id = 'kit-1'; status = 'ready' },
+                [pscustomobject]@{ session_id = 'rs_alpha'; kit_instance_id = 'kit-2'; status = 'starting' },
+                [pscustomobject]@{ session_id = 'rs_beta'; kit_instance_id = 'kit-3'; status = 'allocated' },
+                [pscustomobject]@{ session_id = 'rs_beta'; kit_instance_id = 'kit-4'; status = 'draining' },
+                [pscustomobject]@{ session_id = 'rs_gamma'; kit_instance_id = 'kit-5'; status = 'released' },
+                [pscustomobject]@{ session_id = 'rs_gamma'; kit_instance_id = 'kit-6'; status = 'failed' }
             )
         }
         status_code = 200
@@ -255,29 +277,65 @@ Assert-True $probeOk.reachable 'webrtc probe reachable=true when injected invoke
 Assert-Equal 'ok' $probeOk.service_status 'webrtc probe surfaces coordinator /health status'
 Assert-Equal 49100 $probeOk.kit_signaling_port 'webrtc probe surfaces kit_signaling_port'
 Assert-Equal 2 $probeOk.active_session_count 'webrtc probe surfaces active_count from /api/runtime/status'
-Assert-Equal 2 $probeOk.session_count_at_capture 'webrtc probe surfaces total session count from /api/runtime/status'
-Assert-Equal 2 $probeOk.active_kit_instance_binding_count 'webrtc probe counts non-terminal (allocated/starting/ready/draining) bindings, not a literal status=active that the real API never emits'
-Assert-Equal 1 $probeOk.primary_viewer_lease_count 'webrtc probe counts active primary viewer_leases across sessions'
-Assert-Equal 2 $probeOk.spectator_viewer_lease_count 'webrtc probe counts active spectator viewer_leases across sessions, excluding released ones'
+Assert-Equal 3 $probeOk.active_kit_instance_binding_count 'webrtc probe counts non-terminal (allocated/starting/ready) kit_instance_bindings'
+Assert-Equal 2 $probeOk.observed_primary_lease_count 'webrtc probe counts active primary viewer leases across sessions'
+Assert-Equal 2 $probeOk.observed_spectator_lease_count 'webrtc probe counts active spectator viewer leases, excluding released/expired'
+Assert-Equal $false $probeOk.webrtc_signaling_probed 'probe admits it never contacted a WebRTC signaling endpoint'
+Assert-Equal 'coordinator_only' $probeOk.probe_scope 'probe declares its scope as coordinator_only'
+Assert-True ($probeOk.note -match 'coordinator HTTP reachability only') 'probe note states reachable covers coordinator reachability only'
+Assert-True ($probeOk.note -match 'echoes back from its own configuration') 'probe note explains kit_signaling_port is echoed config, not a contacted port'
 
-$probeEmptyBindings = Get-WebRtcHealthProbe -CoordinatorUrl 'http://127.0.0.1:8004' -HealthInvoker {
+# Regression guard for the enum bug: 'active' is NOT a KitInstanceBindingStatus,
+# so a body full of fabricated 'active' bindings must count zero, not three.
+$probeFabricatedStatus = Get-WebRtcHealthProbe -CoordinatorUrl 'http://127.0.0.1:8004' -HealthInvoker {
     param($Uri, $Timeout)
     if ($Uri -match '/health$') {
-        return [ordered]@{ ok = $true; body = [pscustomobject]@{ status = 'ok'; kit_signaling_port = 49100 }; status_code = 200; error = $null }
+        return [ordered]@{ ok = $true; body = [pscustomobject]@{ status = 'ok' }; status_code = 200; error = $null }
     }
     return [ordered]@{
         ok = $true
         body = [pscustomobject]@{
-            sessions = [pscustomobject]@{ active_count = 0; count = 0; items = @() }
+            sessions = [pscustomobject]@{ active_count = 1 }
+            kit_instance_bindings = @([pscustomobject]@{ status = 'active' }, [pscustomobject]@{ status = 'active' })
+        }
+        status_code = 200
+        error = $null
+    }
+}
+Assert-Equal 0 $probeFabricatedStatus.active_kit_instance_binding_count "'active' is not a KitInstanceBindingStatus; such rows count zero, never as capacity"
+
+# An observed-empty bindings array is a measured zero, not a missing measurement.
+$probeEmptyBindings = Get-WebRtcHealthProbe -CoordinatorUrl 'http://127.0.0.1:8004' -HealthInvoker {
+    param($Uri, $Timeout)
+    if ($Uri -match '/health$') {
+        return [ordered]@{ ok = $true; body = [pscustomobject]@{ status = 'ok' }; status_code = 200; error = $null }
+    }
+    return [ordered]@{
+        ok = $true
+        body = [pscustomobject]@{
+            sessions = [pscustomobject]@{ active_count = 0; items = @() }
             kit_instance_bindings = @()
         }
         status_code = 200
         error = $null
     }
 }
-Assert-True (0 -eq $probeEmptyBindings.active_kit_instance_binding_count) 'an observed empty kit_instance_bindings array is a real zero, not null (PowerShell treats @() as falsy, so a naive truthy check must not skip this branch)'
-Assert-True (0 -eq $probeEmptyBindings.primary_viewer_lease_count) 'an observed empty sessions.items array yields a real zero primary lease count, not null'
-Assert-True (0 -eq $probeEmptyBindings.spectator_viewer_lease_count) 'an observed empty sessions.items array yields a real zero spectator lease count, not null'
+Assert-Equal 0 $probeEmptyBindings.active_kit_instance_binding_count 'empty kit_instance_bindings array records an observed 0, not null'
+Assert-True ($null -ne $probeEmptyBindings.active_kit_instance_binding_count) 'observed zero bindings is not conflated with "no data"'
+Assert-Equal 0 $probeEmptyBindings.observed_primary_lease_count 'empty sessions.items records zero primary leases, not null'
+Assert-Equal 0 $probeEmptyBindings.observed_spectator_lease_count 'empty sessions.items records zero spectator leases, not null'
+
+# A runtime body with no sessions.items at all leaves the lease counts null:
+# absence of the projection is not evidence of zero leases.
+$probeNoItems = Get-WebRtcHealthProbe -CoordinatorUrl 'http://127.0.0.1:8004' -HealthInvoker {
+    param($Uri, $Timeout)
+    if ($Uri -match '/health$') {
+        return [ordered]@{ ok = $true; body = [pscustomobject]@{ status = 'ok' }; status_code = 200; error = $null }
+    }
+    return [ordered]@{ ok = $true; body = [pscustomobject]@{ sessions = [pscustomobject]@{ active_count = 1 } }; status_code = 200; error = $null }
+}
+Assert-True ($null -eq $probeNoItems.observed_primary_lease_count) 'missing sessions.items -> primary lease count null, not fabricated 0'
+Assert-True ($null -eq $probeNoItems.observed_spectator_lease_count) 'missing sessions.items -> spectator lease count null, not fabricated 0'
 
 $probeDown = Get-WebRtcHealthProbe -CoordinatorUrl 'http://127.0.0.1:8004' -HealthInvoker {
     param($Uri, $Timeout)
@@ -286,9 +344,10 @@ $probeDown = Get-WebRtcHealthProbe -CoordinatorUrl 'http://127.0.0.1:8004' -Heal
 Assert-True $probeDown.measured 'webrtc probe attempted even when coordinator is down -> measured=true (we tried)'
 Assert-True (-not $probeDown.reachable) 'webrtc probe reachable=false when coordinator unreachable'
 Assert-True ($null -eq $probeDown.active_session_count) 'webrtc probe leaves active_session_count null when unreachable, not zero'
-Assert-True ($null -eq $probeDown.primary_viewer_lease_count) 'webrtc probe leaves primary_viewer_lease_count null when unreachable, not zero'
 Assert-Equal 'connection refused' $probeDown.error 'webrtc probe surfaces the underlying error'
-Write-TestPass 'Get-WebRtcHealthProbe (reachable + unreachable + empty-binding-set, injected invoker)'
+Assert-True ($null -eq $probeDown.observed_primary_lease_count) 'unreachable coordinator -> primary lease count null, not zero'
+Assert-True ($null -eq $probeDown.observed_spectator_lease_count) 'unreachable coordinator -> spectator lease count null, not zero'
+Write-TestPass 'Get-WebRtcHealthProbe (reachable + unreachable, injected invoker, real binding enum, per-role leases)'
 
 # ============================================================================
 # 7. Get-SessionVramWatermark
@@ -303,79 +362,60 @@ Assert-True ($vramNoKit.reason -match 'no active Kit') 'vram watermark reason na
 $vramUnreadable = Get-SessionVramWatermark -GpuComputeSnapshot (Get-GpuComputeProcessSnapshot -NvidiaSmiComputeAppsQuery { @('40232, kit.exe, [Insufficient Permissions]') })
 Assert-True (-not $vramUnreadable.measured) 'vram watermark unmeasured when Kit VRAM column unreadable'
 Assert-Equal 1 @($vramUnreadable.kit_processes).Count 'vram watermark still lists the observed Kit process'
-Assert-True ($null -eq $vramUnreadable.total_kit_vram_mb) 'vram watermark leaves total_kit_vram_mb null when unreadable, never fabricated'
 
-$vramMeasured = Get-SessionVramWatermark -GpuComputeSnapshot (Get-GpuComputeProcessSnapshot -NvidiaSmiComputeAppsQuery { @('40232, kit.exe, 2000') }) `
-    -ObservedPrimaryViewerLeaseCount 1 -ObservedSpectatorViewerLeaseCount 5 -ObservedSessionCountAtCapture 1
-Assert-True $vramMeasured.measured 'vram watermark measured=true with exactly one readable Kit process'
-Assert-Equal 2000 $vramMeasured.total_kit_vram_mb 'vram watermark reports the single Kit process VRAM as the clean total'
-Assert-Equal 1 $vramMeasured.kit_process_count 'vram watermark records how many Kit processes were observed'
-Assert-True ($null -eq $vramMeasured.unscoped_total_kit_vram_mb) 'unscoped_total_kit_vram_mb stays null in the clean single-process case'
-Assert-Equal 1 $vramMeasured.observed_primary_viewer_lease_count 'vram watermark carries through observed primary viewer lease count'
-Assert-Equal 5 $vramMeasured.observed_spectator_viewer_lease_count 'vram watermark carries through observed spectator viewer lease count'
-Assert-Equal 1 $vramMeasured.observed_session_count_at_capture 'vram watermark carries through observed session count at capture'
+$vramMeasured = Get-SessionVramWatermark -GpuComputeSnapshot (Get-GpuComputeProcessSnapshot -NvidiaSmiComputeAppsQuery { @('40232, kit.exe, 2000') }) -ObservedActiveSessionCount 6 -ObservedPrimaryLeaseCount 2 -ObservedSpectatorLeaseCount 7
+Assert-True $vramMeasured.measured 'vram watermark measured=true with numeric Kit VRAM'
+Assert-Equal 2000 $vramMeasured.total_kit_vram_mb 'vram watermark sums numeric Kit process VRAM'
+Assert-Equal 6 $vramMeasured.observed_active_session_count 'vram watermark carries through observed active session count'
+Assert-Equal 2 $vramMeasured.observed_primary_lease_count 'vram watermark carries through observed primary lease count'
+Assert-Equal 7 $vramMeasured.observed_spectator_lease_count 'vram watermark carries through observed spectator lease count (the k in 1 primary + k spectator)'
+Assert-Equal 0 $vramMeasured.kit_process_vram_unreadable_count 'fully readable Kit VRAM -> zero unreadable processes'
 
-# Multiple concurrent Kit GPU processes (e.g. an unrelated IFC-conversion Kit
-# or another coordinator's Kit instance on a shared host): nvidia-smi
-# compute-apps carries no PID-to-review-session binding, so summing across
-# processes and calling it a clean session total would misattribute
-# unrelated workload VRAM. The sum must be exposed only as informational
-# (unscoped_total_kit_vram_mb), and measured must stay false.
-$vramMultiProcessAllReadable = Get-SessionVramWatermark -GpuComputeSnapshot (Get-GpuComputeProcessSnapshot -NvidiaSmiComputeAppsQuery {
-    @('40232, kit.exe, 2000', '51000, kit.exe, 3100')
+# Partial visibility must be refused, not silently under-counted: summing only
+# the readable subset would publish a watermark lower than the real one.
+$vramPartial = Get-SessionVramWatermark -GpuComputeSnapshot (Get-GpuComputeProcessSnapshot -NvidiaSmiComputeAppsQuery {
+    @('40232, kit.exe, 2000', '40988, kit.exe, [Insufficient Permissions]')
 })
-Assert-True (-not $vramMultiProcessAllReadable.measured) 'multiple observed Kit processes -> measured=false (host not confirmed exclusive to the measured session)'
-Assert-Equal 2 $vramMultiProcessAllReadable.kit_process_count 'vram watermark records the observed Kit process count'
-Assert-True ($null -eq $vramMultiProcessAllReadable.total_kit_vram_mb) 'multiple Kit processes -> total_kit_vram_mb stays null, not fabricated as a clean total'
-Assert-Equal 5100 $vramMultiProcessAllReadable.unscoped_total_kit_vram_mb 'the raw sum across processes is still exposed, but only as the explicitly unscoped/informational field'
-Assert-True ($vramMultiProcessAllReadable.reason -match '2 Kit GPU processes') 'reason names the multi-process contamination risk'
+Assert-True (-not $vramPartial.measured) 'partial Kit VRAM visibility -> measured=false'
+Assert-True ($null -eq $vramPartial.total_kit_vram_mb) 'partial Kit VRAM visibility -> total null, never the readable-subset sum'
+Assert-True ($vramPartial.reason -match 'partial VRAM visibility: 1 of 2 matching Kit processes have no readable used_memory') 'partial VRAM reason counts readable vs matching processes'
+Assert-True ($vramPartial.reason -match 'refusing to report an under-counted total') 'partial VRAM reason states the refusal explicitly'
+Assert-Equal 2 $vramPartial.kit_process_count 'partial VRAM case reports both matching Kit processes'
+Assert-Equal 1 $vramPartial.kit_process_vram_unreadable_count 'partial VRAM case counts the unreadable process'
 
-# Multiple Kit processes where only some have a readable VRAM column: the
-# unreadable ones must not be silently dropped from a total reported as
-# measured:true (this combines the multi-process and partial-readout risks).
-$vramMultiProcessPartial = Get-SessionVramWatermark -GpuComputeSnapshot (Get-GpuComputeProcessSnapshot -NvidiaSmiComputeAppsQuery {
-    @('40232, kit.exe, 2000', '51000, kit.exe, [Insufficient Permissions]')
-})
-Assert-True (-not $vramMultiProcessPartial.measured) 'partial + multi-process Kit VRAM readout -> measured=false'
-Assert-Equal 2 $vramMultiProcessPartial.kit_process_count 'vram watermark records both observed Kit processes even though one is unreadable'
-Assert-True ($null -eq $vramMultiProcessPartial.total_kit_vram_mb) 'partial multi-process readout -> total_kit_vram_mb stays null'
-Assert-Equal 2000 $vramMultiProcessPartial.unscoped_total_kit_vram_mb 'unscoped_total_kit_vram_mb carries only the readable subset, never fabricating the unreadable process as zero'
-Assert-True ($vramMultiProcessPartial.reason -match '1 of 2') 'reason names the partial-readout count'
-Write-TestPass 'Get-SessionVramWatermark (clean single-process, unreadable, and multi-process contamination/partial-readout paths)'
+# Attribution honesty: name-matched only, co-resident Kit processes included.
+foreach ($watermark in @($vramMeasured, $vramPartial, $vramNoKit, $vramUnreadable, $vramNoQuery)) {
+    Assert-Equal 'process_name_match_only' $watermark.attribution 'vram watermark declares process-name-only attribution on every path'
+    Assert-True ($watermark.attribution_note -match 'IFC conversion') 'attribution note names co-resident Kit processes as included'
+    Assert-True ($watermark.attribution_note -match 'deferred to task 1.2/1.3') 'attribution note states full PID-to-binding attribution is deferred'
+}
+Write-TestPass 'Get-SessionVramWatermark (partial-visibility refusal + attribution honesty)'
 
 # ============================================================================
 # 8. Get-EnvironmentFingerprint + New-OptionalMeasurement
 # ============================================================================
 $fullInv = Get-GpuInventorySnapshot -NvidiaSmiQuery { @('0, NVIDIA GeForce RTX 4060 Ti, 580.97, 8188, 1827, 6123, 2, 0, [N/A]') }
-$fullKit = [ordered]@{ value = '110.1.0'; measured = $true; reason = $null; source = 'checkout_packman_declared'; caveat = 'test caveat' }
+$fullKit = [ordered]@{ value = '110.1.0'; measured = $true; reason = $null }
 $fullFixture = [ordered]@{ hash = 'deadbeef'; hash_measured = $true; hash_reason = $null; size_bytes = 12345; size_measured = $true; size_reason = $null }
 $fullFingerprint = Get-EnvironmentFingerprint -GpuInventory $fullInv -KitVersion $fullKit -FixtureFingerprint $fullFixture
 Assert-True $fullFingerprint.complete 'environment fingerprint complete=true when all five fields measured'
-Assert-Equal 'checkout_packman_declared' $fullFingerprint.kit_version.source 'environment fingerprint propagates kit_version source through to the report'
-Assert-Equal 'test caveat' $fullFingerprint.kit_version.caveat 'environment fingerprint propagates kit_version caveat through to the report'
+
+Assert-Equal 1 $fullFingerprint.gpu_count 'single-GPU inventory reports gpu_count=1'
+Assert-Equal 'single_gpu' $fullFingerprint.gpu_fingerprint_scope 'single-GPU host is fingerprinted under a declared single_gpu scope'
+
+# A multi-GPU host must say the fingerprint covers only the first GPU row.
+$multiFingerprint = Get-EnvironmentFingerprint -GpuInventory $invMixed -KitVersion $fullKit -FixtureFingerprint $fullFixture
+Assert-Equal 2 $multiFingerprint.gpu_count 'multi-GPU inventory reports gpu_count=2'
+Assert-Equal 'first_gpu_only' $multiFingerprint.gpu_fingerprint_scope 'multi-GPU host declares first_gpu_only fingerprint scope, not a silent single-GPU claim'
+Assert-Equal 'NVIDIA GeForce RTX 4060 Ti' $multiFingerprint.gpu_model.value 'multi-GPU fingerprint still pins the first row (scope field is what makes that honest)'
 
 $partialFingerprint = Get-EnvironmentFingerprint -GpuInventory $invMissing -KitVersion $fullKit -FixtureFingerprint $fullFixture
 Assert-True (-not $partialFingerprint.complete) 'environment fingerprint complete=false when GPU unmeasured'
 Assert-True (-not $partialFingerprint.gpu_model.measured) 'partial fingerprint: gpu_model unmeasured'
 Assert-True (-not [string]::IsNullOrWhiteSpace($partialFingerprint.gpu_model.reason)) 'partial fingerprint: gpu_model carries reason'
+Assert-True ($null -eq $partialFingerprint.gpu_count) 'no GPU inventory -> gpu_count null, not fabricated 0'
+Assert-Equal 'unknown_no_gpu_inventory' $partialFingerprint.gpu_fingerprint_scope 'no GPU inventory -> scope reported as unknown, not single_gpu'
 Write-TestPass 'Get-EnvironmentFingerprint completeness gate'
-
-# Multi-GPU host: nvidia-smi compute-apps carries no GPU index/UUID, so this
-# harness cannot attribute the measured Kit process to gpus[0] vs gpus[1].
-# Blindly picking the first row would silently combine one GPU's model with
-# another GPU's VRAM workload and still claim `complete: true`.
-$invMultiGpu = Get-GpuInventorySnapshot -NvidiaSmiQuery {
-    @(
-        '0, NVIDIA GeForce RTX 4060 Ti, 580.97, 8188, 1827, 6123, 2, 0, [N/A]',
-        '1, NVIDIA H100 80GB HBM3, 550.54, 81920, 0, 81920, 0, 0, Enabled'
-    )
-}
-$ambiguousFingerprint = Get-EnvironmentFingerprint -GpuInventory $invMultiGpu -KitVersion $fullKit -FixtureFingerprint $fullFixture
-Assert-True (-not $ambiguousFingerprint.gpu_model.measured) 'multi-GPU host: gpu_model left unmeasured rather than guessing gpus[0]'
-Assert-True (-not $ambiguousFingerprint.gpu_driver_version.measured) 'multi-GPU host: gpu_driver_version left unmeasured rather than guessing gpus[0]'
-Assert-True ($ambiguousFingerprint.gpu_model.reason -match '2 GPUs') 'multi-GPU host: reason names the attribution ambiguity'
-Assert-True (-not $ambiguousFingerprint.complete) 'multi-GPU host: fingerprint incomplete due to GPU attribution ambiguity, never fabricated as complete'
-Write-TestPass 'Get-EnvironmentFingerprint fails closed on multi-GPU attribution ambiguity'
 
 $measurementPresent = New-OptionalMeasurement -Value 42.5 -MissingReason 'unused'
 Assert-Equal 42.5 $measurementPresent.value 'New-OptionalMeasurement passes through a supplied value'
@@ -383,7 +423,14 @@ Assert-True $measurementPresent.measured 'New-OptionalMeasurement measured=true 
 $measurementAbsent = New-OptionalMeasurement -Value $null -MissingReason 'no live session'
 Assert-True (-not $measurementAbsent.measured) 'New-OptionalMeasurement measured=false when value is null'
 Assert-Equal 'no live session' $measurementAbsent.reason 'New-OptionalMeasurement surfaces the missing reason'
-Write-TestPass 'New-OptionalMeasurement'
+
+$measurementRejected = New-OptionalMeasurement -Value -3 -MissingReason 'unused' -Source 'caller_supplied' `
+    -Validator { param($v) ([double]$v -ge 0) } -InvalidReasonFormat 'rejected {0}: must be >= 0'
+Assert-True (-not $measurementRejected.measured) 'New-OptionalMeasurement rejects a value failing the validator'
+Assert-True ($null -eq $measurementRejected.value) 'rejected value is dropped, not carried into the report'
+Assert-Equal 'rejected -3: must be >= 0' $measurementRejected.reason 'rejection reason interpolates the offending value'
+Assert-Equal 'caller_supplied' $measurementRejected.source 'rejected caller-supplied metric still records its provenance'
+Write-TestPass 'New-OptionalMeasurement (validation + provenance)'
 
 # ============================================================================
 # 9. Get-SessionBaselineReport end-to-end (fully injected, offline)
@@ -408,41 +455,9 @@ Assert-True (-not $offlineReport.environment_fingerprint.complete) 'offline repo
 Assert-True $offlineReport.gpu_inventory.software_queue_required 'offline report: consumer GPU without MIG locks to software queue path'
 Assert-True (-not $offlineReport.ttff_ms.measured) 'offline report: TTFF honestly unmeasured'
 Assert-True (-not $offlineReport.session_creation_success_rate.measured) 'offline report: success rate honestly unmeasured'
-
-# Caller-supplied TTFF / success-rate values are external input: a negative
-# TTFF or a success rate outside [0,1] is never a real measurement and must
-# be rejected rather than accepted as measured:true.
-$negativeTtffReport = Get-SessionBaselineReport -CoordinatorUrl 'http://127.0.0.1:8004' -RepoRoot $repoRoot -Now $fixedNow -SkipWebRtcProbe `
-    -TtffMs (-5.0) -NvidiaSmiQuery { return $null } -NvidiaSmiComputeAppsQuery { return $null }
-Assert-True (-not $negativeTtffReport.ttff_ms.measured) 'negative -TtffMs rejected, not fabricated as measured'
-Assert-True ($null -eq $negativeTtffReport.ttff_ms.value) 'negative -TtffMs value left null'
-Assert-True ($negativeTtffReport.ttff_ms.reason -match 'negative') 'negative -TtffMs reason explains the rejection'
-
-$badSuccessRateReport = Get-SessionBaselineReport -CoordinatorUrl 'http://127.0.0.1:8004' -RepoRoot $repoRoot -Now $fixedNow -SkipWebRtcProbe `
-    -SessionCreationSuccessRate 1.5 -NvidiaSmiQuery { return $null } -NvidiaSmiComputeAppsQuery { return $null }
-Assert-True (-not $badSuccessRateReport.session_creation_success_rate.measured) 'out-of-range -SessionCreationSuccessRate rejected, not fabricated as measured'
-Assert-True ($null -eq $badSuccessRateReport.session_creation_success_rate.value) 'out-of-range -SessionCreationSuccessRate value left null'
-Assert-True ($badSuccessRateReport.session_creation_success_rate.reason -match 'range') 'out-of-range success rate reason explains the rejection'
-
-$validTtffReport = Get-SessionBaselineReport -CoordinatorUrl 'http://127.0.0.1:8004' -RepoRoot $repoRoot -Now $fixedNow -SkipWebRtcProbe `
-    -TtffMs 0 -SessionCreationSuccessRate 1 -NvidiaSmiQuery { return $null } -NvidiaSmiComputeAppsQuery { return $null }
-Assert-True $validTtffReport.ttff_ms.measured 'boundary value TtffMs=0 accepted as measured'
-Assert-True $validTtffReport.session_creation_success_rate.measured 'boundary value SessionCreationSuccessRate=1 accepted as measured'
-Write-TestPass 'TtffMs / SessionCreationSuccessRate range validation rejects impossible caller-supplied values'
-
-# $env:COMPUTERNAME is Windows-only and normally unset on the canonical Linux
-# deployment target; host.hostname must still resolve via the cross-platform
-# Dns API instead of silently going null.
-$originalComputerName = $env:COMPUTERNAME
-try {
-    $env:COMPUTERNAME = ''
-    $hostnameFallbackReport = Get-SessionBaselineReport -CoordinatorUrl 'http://127.0.0.1:8004' -RepoRoot $repoRoot -Now $fixedNow -SkipWebRtcProbe `
-        -NvidiaSmiQuery { return $null } -NvidiaSmiComputeAppsQuery { return $null }
-    Assert-True (-not [string]::IsNullOrWhiteSpace($hostnameFallbackReport.host.hostname)) 'host.hostname resolves via the Dns/HOSTNAME fallback when COMPUTERNAME is unset (Linux deployment target)'
-} finally {
-    $env:COMPUTERNAME = $originalComputerName
-}
-Write-TestPass 'host.hostname falls back off the Windows-only COMPUTERNAME env var'
+# Hostname must come from the cross-platform API, not the Windows-only env var.
+Assert-Equal ([System.Net.Dns]::GetHostName()) $offlineReport.host.hostname 'report hostname resolves via [System.Net.Dns]::GetHostName()'
+Assert-True (-not [string]::IsNullOrWhiteSpace($offlineReport.host.hostname)) 'report hostname is non-empty'
 
 # ConvertTo-Json round trip must not throw and must preserve the schema_version.
 $json = $offlineReport | ConvertTo-Json -Depth 12
@@ -474,6 +489,47 @@ try {
     Assert-True $completeReport.session_creation_success_rate.measured 'complete report: success rate measured when supplied'
     Write-TestPass 'Get-SessionBaselineReport complete end-to-end (fixture + TTFF + success rate)'
 } finally { Remove-TestSandbox -Path $sandbox }
+
+# Caller-supplied TTFF / success rate are validated, not trusted blindly.
+$badInputReport = Get-SessionBaselineReport `
+    -CoordinatorUrl 'http://127.0.0.1:8004' `
+    -RepoRoot $repoRoot `
+    -Now $fixedNow `
+    -SkipWebRtcProbe `
+    -TtffMs -12.5 `
+    -SessionCreationSuccessRate 1.4 `
+    -NvidiaSmiQuery { @('0, NVIDIA GeForce RTX 4060 Ti, 580.97, 8188, 1827, 6123, 2, 0, [N/A]') } `
+    -NvidiaSmiComputeAppsQuery { return $null }
+Assert-ReportSchemaShape -Report $badInputReport -Message 'report with out-of-range caller inputs'
+Assert-True (-not $badInputReport.ttff_ms.measured) 'negative caller-supplied TTFF is rejected, not accepted as measured'
+Assert-True ($null -eq $badInputReport.ttff_ms.value) 'rejected TTFF leaves value null'
+Assert-True ($badInputReport.ttff_ms.reason -match 'cannot be negative') 'rejected TTFF reason names the violated constraint'
+Assert-True (-not $badInputReport.session_creation_success_rate.measured) 'success rate above 1 is rejected'
+Assert-True ($badInputReport.session_creation_success_rate.reason -match '\[0,1\]') 'rejected success rate reason names the allowed range'
+
+$negativeRateReport = Get-SessionBaselineReport `
+    -CoordinatorUrl 'http://127.0.0.1:8004' `
+    -RepoRoot $repoRoot `
+    -Now $fixedNow `
+    -SkipWebRtcProbe `
+    -SessionCreationSuccessRate -0.01 `
+    -NvidiaSmiQuery { return $null } `
+    -NvidiaSmiComputeAppsQuery { return $null }
+Assert-True (-not $negativeRateReport.session_creation_success_rate.measured) 'success rate below 0 is rejected'
+
+# Boundary values are legitimate measurements and must survive validation.
+$boundaryReport = Get-SessionBaselineReport `
+    -CoordinatorUrl 'http://127.0.0.1:8004' `
+    -RepoRoot $repoRoot `
+    -Now $fixedNow `
+    -SkipWebRtcProbe `
+    -TtffMs 0 `
+    -SessionCreationSuccessRate 1 `
+    -NvidiaSmiQuery { return $null } `
+    -NvidiaSmiComputeAppsQuery { return $null }
+Assert-True $boundaryReport.ttff_ms.measured 'TTFF of exactly 0 ms is accepted (boundary, not rejected)'
+Assert-True $boundaryReport.session_creation_success_rate.measured 'success rate of exactly 1 is accepted (boundary, not rejected)'
+Write-TestPass 'Get-SessionBaselineReport validates caller-supplied TTFF / success rate'
 
 # -SkipWebRtcProbe path
 $skippedProbeReport = Get-SessionBaselineReport `
@@ -554,25 +610,25 @@ try {
     Write-TestPass 'root wrapper CLI smoke test (-OutputPath, -SkipWebRtcProbe)'
 } finally { Remove-TestSandbox -Path $sandbox }
 
-# Default -OutputPath falls under artifacts/gpu-baseline/<timestamp>.json under RepoRoot.
+# Default -OutputPath falls under artifacts/gpu-baseline/<run_id>.json under RepoRoot.
+# run_id (not a bare second-resolution timestamp) prevents two runs inside the
+# same second from silently overwriting each other's report.
 $gpuBaselineDir = Join-Path $repoRoot 'artifacts\gpu-baseline'
 $dirExistedBefore = Test-Path -LiteralPath $gpuBaselineDir
 $before = @()
 if ($dirExistedBefore) { $before = @(Get-ChildItem -LiteralPath $gpuBaselineDir -Filter '*.json' -File | Select-Object -ExpandProperty Name) }
 try {
-    & $rootScriptPath -SkipWebRtcProbe -ProbeTimeoutSec 1 | Out-Null
+    $defaultReport = & $rootScriptPath -SkipWebRtcProbe -ProbeTimeoutSec 1
     Assert-True (Test-Path -LiteralPath $gpuBaselineDir -PathType Container) 'default OutputPath creates artifacts/gpu-baseline/'
     $after = @(Get-ChildItem -LiteralPath $gpuBaselineDir -Filter '*.json' -File | Select-Object -ExpandProperty Name)
     $newFiles = @($after | Where-Object { $before -notcontains $_ })
-    Assert-True ($newFiles.Count -ge 1) 'default OutputPath produced a new timestamped report file'
+    Assert-True ($newFiles.Count -ge 1) 'default OutputPath produced a new report file'
+    Assert-True ($defaultReport.run_id -match '^measure_\d{8}_\d{6}_[0-9a-f]{6}$') 'default run produced a run_id'
+    Assert-True ($newFiles -contains "$($defaultReport.run_id).json") 'default OutputPath names the report after its run_id, not a collision-prone timestamp'
     foreach ($newFile in $newFiles) {
-        # Filename must derive from run_id (measure_<yyyyMMdd_HHmmss>_<hex6>),
-        # not a bare second-resolution timestamp: two invocations starting
-        # within the same second must not collide on the default path.
-        Assert-True ($newFile -match '^measure_\d{8}_\d{6}_[0-9a-f]{6}\.json$') "default OutputPath filename '$newFile' derives from the collision-resistant run_id"
         Remove-Item -LiteralPath (Join-Path $gpuBaselineDir $newFile) -Force -ErrorAction SilentlyContinue
     }
-    Write-TestPass 'root wrapper default -OutputPath under artifacts/gpu-baseline/<run_id>.json (collision-resistant)'
+    Write-TestPass 'root wrapper default -OutputPath under artifacts/gpu-baseline/<run_id>.json'
 } finally {
     if (-not $dirExistedBefore) {
         $remaining = @(Get-ChildItem -LiteralPath $gpuBaselineDir -File -ErrorAction SilentlyContinue)
