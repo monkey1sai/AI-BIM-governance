@@ -54,6 +54,10 @@ from ifc_openusd_identity_author import IDENTITY_PROFILE, IfcOpenUsdIdentityAuth
 # HOOPS pin 區塊。無法在期限內證明樹已清空時,必須用獨立的 fail-closed 代碼
 # (``converter_containment_failed``)回報,不得偽裝成單純 timeout。
 _CONTAINMENT_POLL_INTERVAL_SECONDS = 0.05
+# POSIX 沒有 KILL_ON_JOB_CLOSE 這種「handle 一關整組就死」的原語,所以 close()
+# 必須在每一條離開路徑(成功 / 非 timeout 失敗 / timeout)自己把 process group
+# 掃乾淨。這是那個 sweep 的有界上限。
+_CONTAINMENT_CLOSE_SWEEP_SECONDS = 5.0
 
 
 class _Win32ContainmentApi:
@@ -386,19 +390,35 @@ class _ContainedProcess:
     @classmethod
     def _spawn_windows(cls, cmd, *, cwd, stdout, stderr) -> _ContainedProcess:
         api = _win32_containment_api()
-        job = api.create_kill_on_close_job() if api is not None else None
+        if api is None:
+            # Fail-closed: without the kernel32 bindings there is no Job Object
+            # boundary, and a PPID walk is a racy heuristic — not containment.
+            # Refuse to launch; the caller maps OSError to converter_unavailable.
+            raise OSError(
+                "Windows process-tree containment is unavailable (kernel32 job "
+                "bindings could not be loaded); refusing to launch the converter "
+                "without a containment boundary"
+            )
+        job = api.create_kill_on_close_job()
+        if job is None:
+            # Same reasoning: launching with creationflags=0 and hoping the PPID
+            # walk finds every Kit grandchild is exactly the fail-open this fix
+            # removes.
+            raise OSError(
+                "failed to create the converter containment job object; refusing "
+                "to launch the converter uncontained"
+            )
         # CREATE_SUSPENDED closes the race where the child spawns Kit before it is
         # assigned to the job; CREATE_BREAKAWAY_FROM_JOB keeps a pre-Win8 style
         # parent job from swallowing the assignment.
-        flags = (api.CREATE_SUSPENDED | api.CREATE_BREAKAWAY_FROM_JOB) if job is not None else 0
+        flags = api.CREATE_SUSPENDED | api.CREATE_BREAKAWAY_FROM_JOB
         try:
             proc = cls._popen(
                 cmd, cwd=cwd, stdout=stdout, stderr=stderr, shell=False, creationflags=flags
             )
         except OSError as exc:
-            if job is None or api is None or getattr(exc, "winerror", None) != api.ERROR_ACCESS_DENIED:
-                if job is not None and api is not None:
-                    api.close_handle(job)
+            if getattr(exc, "winerror", None) != api.ERROR_ACCESS_DENIED:
+                api.close_handle(job)
                 raise
             # Already inside a job that forbids breakaway: nested jobs are fine.
             try:
@@ -415,24 +435,43 @@ class _ContainedProcess:
                 raise
         handle = getattr(proc, "_handle", None)
         pid = getattr(proc, "pid", None)
-        assigned = False
-        if job is not None and api is not None and handle is not None:
-            assigned = api.assign_process(job, int(handle))
-        if job is not None and api is not None and pid:
+        if handle is None and not pid:
+            # A Popen double that produced no OS process at all (unit-test seam):
+            # there is nothing to assign and no tree to contain. Drop the job
+            # rather than claiming an imaginary child is contained. A REAL
+            # subprocess.Popen on Windows always yields both a handle and a pid,
+            # so this branch never fires in production.
+            api.close_handle(job)
+            return cls(proc, api=api)
+        # Assignment MUST be proven BEFORE the suspended child is resumed:
+        # resuming an unassigned child lets Kit fork its whole tree outside the
+        # job, which is precisely the containment the timeout path relies on.
+        assigned = bool(handle is not None and api.assign_process(job, int(handle)))
+        if not assigned:
+            if pid:
+                api.terminate_pid(int(pid))
+            api.close_handle(job)
+            cls._reap_after_failed_launch(proc)
+            raise OSError(
+                "failed to assign the converter process to its containment job "
+                "object; the suspended child was terminated instead of resumed"
+            )
+        if pid:
             # The child was created suspended, so it MUST be resumed or the whole
             # conversion hangs. Failing to resume is a fail-closed launch error.
             if api.resume_process_threads(int(pid)) == 0:
                 api.terminate_pid(int(pid))
                 api.close_handle(job)
-                try:
-                    proc.wait(timeout=5)
-                except Exception:  # noqa: BLE001 - best-effort reap of a dead child
-                    pass
+                cls._reap_after_failed_launch(proc)
                 raise OSError("failed to resume the contained converter process")
-        if job is not None and api is not None and not assigned:
-            api.close_handle(job)
-            job = None
         return cls(proc, job=job, api=api)
+
+    @staticmethod
+    def _reap_after_failed_launch(proc) -> None:
+        try:
+            proc.wait(timeout=5)
+        except Exception:  # noqa: BLE001 - best-effort reap of a dead child
+            pass
 
     @classmethod
     def _spawn_posix(cls, cmd, *, cwd, stdout, stderr) -> _ContainedProcess:
@@ -471,6 +510,15 @@ class _ContainedProcess:
             # terminates anything that outlived the converter.
             self._api.close_handle(self._job)
             self._job = None
+            return
+        if os.name != "nt" and self._pgid is not None:
+            # POSIX has no kill-on-close job. close() runs from the caller's
+            # ``finally``, i.e. on EVERY exit path — success, non-timeout failure
+            # and timeout alike — so this sweep is the only thing standing
+            # between a Kit grandchild and outliving the HOOPS pin that
+            # authorised it. Without it containment existed only on the timeout
+            # path and the process group leaked everywhere else.
+            self._sweep_posix_group(self._pgid)
 
     def terminate_tree(self, *, deadline_seconds: float, grace_seconds: float) -> bool:
         """Kill the tree and return True only once every descendant is gone."""
@@ -560,7 +608,10 @@ class _ContainedProcess:
                 self._survivors = ()
                 return True
             if time.monotonic() >= deadline:
-                self._survivors = (pid,)
+                # Report who actually survived. Naming only the root pid hid the
+                # real offenders (Kit/HOOPS grandchildren) from the operator, and
+                # the root is usually the one process that DID die.
+                self._survivors = self._posix_group_members(pgid) or (pid,)
                 return False
             time.sleep(_CONTAINMENT_POLL_INTERVAL_SECONDS)
 
@@ -571,8 +622,55 @@ class _ContainedProcess:
         except OSError:
             pass
 
-    @staticmethod
-    def _posix_group_alive(pgid: int) -> bool:
+    @classmethod
+    def _posix_group_members(cls, pgid: int) -> tuple[int, ...] | None:
+        """Live (non-zombie) pids whose process group is ``pgid``; None w/o /proc.
+
+        ``killpg(pgid, 0)`` succeeds for a group that holds nothing but zombies,
+        so it cannot answer "is anything still RUNNING" — it burned the whole
+        containment deadline and then false-reported converter_containment_failed
+        for a tree that was already dead but not yet reaped.
+
+        /proc can answer it. In /proc/<pid>/stat the comm field may contain
+        spaces and parentheses, so the fields are taken after the LAST ')':
+        index 0 is the state and index 2 is the pgrp. State 'Z' is a reaped-
+        pending corpse — it holds no HOOPS handle and cannot process input — so
+        zombies are excluded from "alive".
+        """
+
+        try:
+            entries = os.listdir("/proc")
+        except OSError:
+            return None
+        members: list[int] = []
+        for entry in entries:
+            if not entry.isdigit():
+                continue
+            try:
+                with open(
+                    "/proc/%s/stat" % entry, encoding="utf-8", errors="replace"
+                ) as handle:
+                    raw = handle.read()
+            except OSError:
+                continue
+            close_index = raw.rfind(")")
+            if close_index < 0:
+                continue
+            fields = raw[close_index + 1 :].split()
+            if len(fields) < 3 or fields[0] == "Z":
+                continue
+            try:
+                if int(fields[2]) == int(pgid):
+                    members.append(int(entry))
+            except ValueError:
+                continue
+        return tuple(sorted(members))
+
+    @classmethod
+    def _posix_group_alive(cls, pgid: int) -> bool:
+        members = cls._posix_group_members(pgid)
+        if members is not None:
+            return bool(members)
         try:
             os.killpg(pgid, 0)
         except ProcessLookupError:
@@ -582,6 +680,51 @@ class _ContainedProcess:
             # honest answer is "not proven gone".
             return True
         return True
+
+    @staticmethod
+    def _kill_pid(pid: int, sig: int) -> None:
+        try:
+            os.kill(int(pid), sig)
+        except OSError:
+            pass
+
+    def _sweep_posix_group(self, pgid: int) -> None:
+        """Terminate every live member of the converter's process group.
+
+        PID/PGID reuse makes a bare ``killpg`` unsafe once the group may be
+        empty: the kernel can hand the same pgid to an unrelated group and the
+        signal would land on an innocent bystander. So the sweep only signals
+        pids whose own /proc/<pid>/stat still reports THIS pgid, and falls back
+        to ``killpg`` only when /proc is unreadable AND the group was just
+        observed to be alive (a live group cannot be a recycled one).
+        """
+
+        import signal
+
+        members = self._posix_group_members(pgid)
+        if members is None:
+            if not self._posix_group_alive(pgid):
+                return
+            self._killpg(pgid, signal.SIGTERM)
+            time.sleep(_CONTAINMENT_POLL_INTERVAL_SECONDS)
+            if self._posix_group_alive(pgid):
+                self._killpg(pgid, signal.SIGKILL)
+            return
+        if not members:
+            return
+        for victim in members:
+            self._kill_pid(victim, signal.SIGTERM)
+        deadline = time.monotonic() + _CONTAINMENT_CLOSE_SWEEP_SECONDS
+        remaining: tuple[int, ...] = members
+        while True:
+            remaining = self._posix_group_members(pgid) or ()
+            if not remaining:
+                return
+            if time.monotonic() >= deadline:
+                break
+            time.sleep(_CONTAINMENT_POLL_INTERVAL_SECONDS)
+        for victim in remaining:
+            self._kill_pid(victim, signal.SIGKILL)
 
     # -- shared -------------------------------------------------------------
 

@@ -311,7 +311,14 @@ function Get-ConverterChildProcessId {
     # local so this converter stays free of the deploy-lib dependency.
     param([Parameter(Mandatory = $true)][int] $ParentProcessId)
 
-    if ($env:OS -eq 'Windows_NT') {
+    # #509 review: keying platform detection on $env:OS alone silently turns the
+    # whole containment walk into a no-op whenever the converter runs under an
+    # environment that does not export OS (observed on a real Windows host: the
+    # Windows branch was skipped, the /proc branch found nothing, and
+    # Stop-ConverterProcessTree reported "confirmed gone" for a tree that was
+    # still fully alive). $IsWindows is $null on Windows PowerShell 5.1, where
+    # $env:OS is always set, so the pair covers both hosts.
+    if ($env:OS -eq 'Windows_NT' -or $IsWindows) {
         return @(Get-CimInstance Win32_Process -Filter "ParentProcessId=$ParentProcessId" -ErrorAction SilentlyContinue |
             ForEach-Object { [int]$_.ProcessId })
     }
@@ -337,33 +344,70 @@ function Stop-ConverterProcessTree {
     # itself. Its HOOPS/CAD grandchildren keep processing untrusted input after
     # the wrapper reports a timeout. Walk the tree breadth-first (same idiom as
     # scripts/lib/host-native-launcher.ps1::Stop-HostNativeService), kill leaves
-    # first, then WAIT until every collected PID is observed gone. Returns the
-    # PIDs that survived the wait: an empty array means containment is proven.
+    # first, then WAIT until every collected PID is observed gone.
+    #
+    # #509 review: a SINGLE enumerate-then-kill pass is not a containment proof.
+    # Enumeration is not atomic, so a descendant forked by a still-living member
+    # AFTER that member was enumerated never lands in $ids, is never killed and
+    # is never waited on - yet the caller still printed "terminated and confirmed
+    # gone". Repeat discover -> kill from every known member until a fixed point
+    # (two consecutive rounds that discover no new PID), capped at $MaxRounds.
+    # Hitting the cap is reported honestly instead of being papered over.
+    #
+    # Returns [pscustomobject] @{ SurvivingPids = @(); FixedPointReached = $bool };
+    # SurvivingPids empty AND FixedPointReached true is the only proven case.
     param(
         [Parameter(Mandatory = $true)][int] $ProcessId,
-        [ValidateRange(0, 600000)][int] $TimeoutMs = 15000
+        [ValidateRange(0, 600000)][int] $TimeoutMs = 15000,
+        [ValidateRange(1, 100)][int] $MaxRounds = 10
     )
 
-    $ids = @()
-    $stack = @($ProcessId)
-    while ($stack.Count -gt 0) {
-        $current = [int]$stack[0]
-        $stack = @($stack | Select-Object -Skip 1)
-        if ($ids -notcontains $current) {
-            $ids += $current
-            $stack += @(Get-ConverterChildProcessId -ParentProcessId $current)
+    $ids = [System.Collections.Generic.List[int]]::new()
+    $seen = @{}
+    $stableRounds = 0
+    $round = 0
+    while ($round -lt $MaxRounds -and $stableRounds -lt 2) {
+        $round++
+        $discovered = 0
+        # Re-walk from EVERY known member, not just the root: once the root dies
+        # its orphaned descendants are reparented away, so a root-only re-walk
+        # could never rediscover them.
+        $stack = [System.Collections.Generic.List[int]]::new()
+        $stack.Add([int]$ProcessId)
+        foreach ($known in @($ids)) { $stack.Add([int]$known) }
+        $walked = @{}
+        while ($stack.Count -gt 0) {
+            $current = [int]$stack[0]
+            $stack.RemoveAt(0)
+            if ($walked.ContainsKey($current)) { continue }
+            $walked[$current] = $true
+            if (-not $seen.ContainsKey($current)) {
+                $seen[$current] = $true
+                $ids.Add($current)
+                $discovered++
+            }
+            foreach ($child in @(Get-ConverterChildProcessId -ParentProcessId $current)) {
+                $stack.Add([int]$child)
+            }
         }
-    }
 
-    for ($i = $ids.Count - 1; $i -ge 0; $i--) {
-        Stop-Process -Id ([int]$ids[$i]) -Force -ErrorAction SilentlyContinue
+        for ($i = $ids.Count - 1; $i -ge 0; $i--) {
+            Stop-Process -Id ([int]$ids[$i]) -Force -ErrorAction SilentlyContinue
+        }
+
+        if ($discovered -eq 0) { $stableRounds++ } else { $stableRounds = 0 }
     }
+    $fixedPoint = ($stableRounds -ge 2)
 
     $deadline = [DateTime]::UtcNow.AddMilliseconds($TimeoutMs)
     while ($true) {
         $alive = @($ids | Where-Object { $null -ne (Get-Process -Id $_ -ErrorAction SilentlyContinue) })
-        if ($alive.Count -eq 0) { return @() }
-        if ([DateTime]::UtcNow -ge $deadline) { return @($alive) }
+        if ($alive.Count -eq 0) {
+            return [pscustomobject]@{ SurvivingPids = @(); FixedPointReached = $fixedPoint }
+        }
+        if ([DateTime]::UtcNow -ge $deadline) {
+            return [pscustomobject]@{ SurvivingPids = @($alive); FixedPointReached = $fixedPoint }
+        }
         Start-Sleep -Milliseconds 100
     }
 }
@@ -468,12 +512,15 @@ function Invoke-KitConversion {
     $process.BeginErrorReadLine()
 
     $survivingPids = @()
+    $containmentFixedPoint = $true
     try {
         if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
             # #489 L1-COR-004:只殺 Kit 本身會留下 HOOPS/CAD 孫代繼續處理不可信
             # 輸入。改成 tree-scoped 終止,並且「觀察到」整棵樹消失才往下走;沒能
             # 證明清空時把殘存 PID 帶進 timeout 訊息,不假裝已清理乾淨。
-            $survivingPids = @(Stop-ConverterProcessTree -ProcessId $process.Id)
+            $containment = Stop-ConverterProcessTree -ProcessId $process.Id
+            $survivingPids = @($containment.SurvivingPids)
+            $containmentFixedPoint = [bool]$containment.FixedPointReached
             # fall through 到 finally drain 後,再 throw timeout
             $timedOut = $true
         } else {
@@ -483,7 +530,19 @@ function Invoke-KitConversion {
     }
     finally {
         # 二次 WaitForExit 確保所有 async events drain(per MS .NET docs)
-        try { $process.WaitForExit() } catch { }
+        # #509 review: when containment FAILED the tree still holds live
+        # processes owning the stdout/stderr write ends, so an unbounded
+        # WaitForExit() never sees EOF and turns an honestly-reported timeout
+        # into a hang. Unbounded drain is only allowed once no survivor was
+        # observed; with survivors, take a bounded 5s drain and accept losing
+        # a few trailing log lines rather than wedging the whole converter.
+        try {
+            if ($survivingPids.Count -gt 0) {
+                [void]$process.WaitForExit(5000)
+            } else {
+                $process.WaitForExit()
+            }
+        } catch { }
         Unregister-Event -SourceIdentifier $stdoutEvent.Name -ErrorAction SilentlyContinue
         Unregister-Event -SourceIdentifier $stderrEvent.Name -ErrorAction SilentlyContinue
         $stdoutWriter.Close()
@@ -504,6 +563,11 @@ function Invoke-KitConversion {
             $timeoutReason = "Kit CAD conversion timed out after $TimeoutSeconds seconds for $($Item.IfcPath)"
             if ($survivingPids.Count -gt 0) {
                 "$timeoutReason; process tree containment FAILED, surviving PIDs: $($survivingPids -join ', ')"
+            } elseif (-not $containmentFixedPoint) {
+                # The discover -> kill loop hit its round cap, so new descendants
+                # could still have been appearing when we stopped looking. No
+                # survivor was observed, but that is best-effort, not proof.
+                "$timeoutReason; process tree kill loop hit its round cap before reaching a stable fixed point; no survivors were observed but containment is NOT proven"
             } else {
                 "$timeoutReason; process tree terminated and confirmed gone"
             }

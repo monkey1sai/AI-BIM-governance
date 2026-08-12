@@ -3837,6 +3837,279 @@ def test_unprovable_containment_fails_closed_with_a_distinct_reason(
     assert "424243" in raised.message
 
 
+# --- #509 review: containment must FAIL CLOSED, never launch uncontained ---
+
+
+class _FakeWin32ContainmentApi:
+    """kernel32 double used to drive the Windows fail-closed launch contract."""
+
+    CREATE_SUSPENDED = 0x00000004
+    CREATE_BREAKAWAY_FROM_JOB = 0x01000000
+    ERROR_ACCESS_DENIED = 5
+
+    def __init__(self, *, job=None, assign: bool = True) -> None:
+        self._job = job
+        self._assign = assign
+        self.calls: list[str] = []
+        self.terminated: list[int] = []
+        self.closed: list[int] = []
+
+    def create_kill_on_close_job(self):
+        self.calls.append("create")
+        return self._job
+
+    def assign_process(self, job, handle) -> bool:
+        self.calls.append("assign")
+        return self._assign
+
+    def resume_process_threads(self, pid) -> int:
+        self.calls.append("resume")
+        return 1
+
+    def terminate_pid(self, pid) -> None:
+        self.calls.append("terminate")
+        self.terminated.append(int(pid))
+
+    def close_handle(self, handle) -> None:
+        self.calls.append("close")
+        self.closed.append(handle)
+
+
+class _FakeWindowsChildPopen:
+    """Popen double that looks like a real OS child (has both handle and pid)."""
+
+    def __init__(self, args) -> None:
+        self.args = args
+        self.pid = 4242
+        self._handle = 777
+        self.returncode = None
+        self.waits: list = []
+
+    def wait(self, timeout=None):
+        self.waits.append(timeout)
+        self.returncode = -1
+        return -1
+
+    def poll(self):
+        return self.returncode
+
+    def kill(self) -> None:
+        self.returncode = -9
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows Job Object launch contract")
+def test_windows_launch_refuses_when_the_containment_job_cannot_be_created(
+    tmp_path: Path, monkeypatch
+):
+    """#509 review:CreateJobObject 失敗時不得 fail-open。
+
+    舊行為是 creationflags=0 照樣啟動,再退回 racy 的 PPID walk 當「containment」。
+    那不是邊界,只是猜測。沒有 job 就不准啟動 converter,直接走既有的
+    OSError -> converter_unavailable 路徑。
+    """
+
+    import ifc2usdc_powershell_adapter
+
+    adapter = _adapter_for_sentinel(tmp_path)
+    validated_hoops_main, validated_hoops_identity = _validated_explicit_hoops(adapter)
+    api = _FakeWin32ContainmentApi(job=None)
+    monkeypatch.setattr(
+        ifc2usdc_powershell_adapter, "_win32_containment_api", lambda: api
+    )
+
+    launched: list = []
+
+    def _must_not_launch(cmd, **kwargs):
+        launched.append(cmd)
+        raise AssertionError("converter was launched without a containment job")
+
+    monkeypatch.setattr("subprocess.Popen", _must_not_launch)
+
+    with pytest.raises(ConversionAuthorityError) as excinfo:
+        adapter._run_powershell_conversion(
+            ifc_path=tmp_path / "fake.ifc",
+            output_dir=tmp_path / "out",
+            validated_hoops_main=validated_hoops_main,
+            validated_hoops_identity=validated_hoops_identity,
+        )
+
+    assert excinfo.value.code == "converter_unavailable"
+    assert launched == [], "no child may be spawned once containment is unavailable"
+    assert "resume" not in api.calls
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows Job Object launch contract")
+def test_windows_launch_kills_the_suspended_child_when_job_assignment_fails(
+    tmp_path: Path, monkeypatch
+):
+    """#509 review:AssignProcessToJobObject 失敗時,舊碼照樣 resume 子行程再繼續。
+
+    那顆 child 是 CREATE_SUSPENDED 起來的,resume 之後 Kit 會在 job 之外長出整棵
+    樹,timeout 路徑再也收不回來。正確作法:先驗 assignment,失敗就終止「仍然
+    suspended」的 child 並 raise OSError -> converter_unavailable。
+    """
+
+    import ifc2usdc_powershell_adapter
+
+    adapter = _adapter_for_sentinel(tmp_path)
+    validated_hoops_main, validated_hoops_identity = _validated_explicit_hoops(adapter)
+    api = _FakeWin32ContainmentApi(job=99, assign=False)
+    monkeypatch.setattr(
+        ifc2usdc_powershell_adapter, "_win32_containment_api", lambda: api
+    )
+
+    created: list = []
+
+    def _fake_popen(cmd, **kwargs):
+        assert kwargs.get("creationflags", 0) & api.CREATE_SUSPENDED
+        proc = _FakeWindowsChildPopen(cmd)
+        created.append(proc)
+        return proc
+
+    monkeypatch.setattr("subprocess.Popen", _fake_popen)
+
+    with pytest.raises(ConversionAuthorityError) as excinfo:
+        adapter._run_powershell_conversion(
+            ifc_path=tmp_path / "fake.ifc",
+            output_dir=tmp_path / "out",
+            validated_hoops_main=validated_hoops_main,
+            validated_hoops_identity=validated_hoops_identity,
+        )
+
+    assert excinfo.value.code == "converter_unavailable"
+    assert len(created) == 1
+    assert "resume" not in api.calls, "an unassigned child must never be resumed"
+    assert api.calls.index("assign") < api.calls.index("terminate")
+    assert api.terminated == [4242]
+    assert 99 in api.closed
+
+
+def _patch_fake_proc_table(monkeypatch, table: dict) -> None:
+    """Serve a synthetic /proc layout through os.listdir + builtins.open."""
+
+    import builtins
+    import io
+
+    real_open = builtins.open
+    real_listdir = os.listdir
+
+    def _fake_listdir(path="."):
+        if str(path) == "/proc":
+            return [*table, "self", "cpuinfo"]
+        return real_listdir(path)
+
+    def _fake_open(path, *args, **kwargs):
+        text = str(path)
+        if text.startswith("/proc/") and text.endswith("/stat"):
+            pid = text.split("/")[2]
+            if pid in table:
+                return io.StringIO(table[pid])
+            raise FileNotFoundError(text)
+        return real_open(path, *args, **kwargs)
+
+    monkeypatch.setattr(os, "listdir", _fake_listdir)
+    monkeypatch.setattr(builtins, "open", _fake_open)
+
+
+def test_posix_group_members_excludes_zombies_and_foreign_groups(monkeypatch):
+    """#509 review:killpg(pgid, 0) 對「只剩 zombie」的 group 仍然成功。
+
+    於是 containment poll 會把整個 30 秒 deadline 燒光,再對一棵其實早就死透、
+    只是還沒被 reap 的樹誤報 converter_containment_failed。改成讀 /proc:最後一個
+    ')' 之後 field[0]=state、field[2]=pgrp,state 'Z' 一律不算活著。
+    """
+
+    import ifc2usdc_powershell_adapter
+
+    cls = ifc2usdc_powershell_adapter._ContainedProcess
+    # comm 故意含空白與括號,驗證 rfind(')') 而非 split 的解析方式。
+    table = {
+        "1001": "1001 (kit .exe) R 900 5000 5000 0 -1 4194304 1 0 0\n",
+        "1002": "1002 (hoops (x)) Z 1001 5000 5000 0 -1 4194304 1 0 0\n",
+        "1004": "1004 (kit-child) S 1001 5000 5000 0 -1 4194304 1 0 0\n",
+        "1003": "1003 (unrelated) S 1 7777 7777 0 -1 4194304 1 0 0\n",
+        "1005": "1005 (all-dead) Z 1 6000 6000 0 -1 4194304 1 0 0\n",
+    }
+    _patch_fake_proc_table(monkeypatch, table)
+
+    assert cls._posix_group_members(5000) == (1001, 1004)
+    assert cls._posix_group_alive(5000) is True
+    # 只剩 zombie 的 group 必須被判定為「已經消失」,不能再燒 deadline。
+    assert cls._posix_group_members(6000) == ()
+    assert cls._posix_group_alive(6000) is False
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX signal set (SIGKILL)")
+def test_posix_containment_failure_reports_the_actual_surviving_members(monkeypatch):
+    """#509 review:deadline 到期時只回報 root pid,把真正的兇手藏起來。
+
+    root(PowerShell wrapper)通常正是唯一死掉的那個;operator 需要的是還活著的
+    Kit/HOOPS 孫代 PID。
+    """
+
+    import ifc2usdc_powershell_adapter
+
+    cls = ifc2usdc_powershell_adapter._ContainedProcess
+
+    class _StubProc:
+        pid = 5000
+
+        def wait(self, timeout=None):
+            raise subprocess.TimeoutExpired(cmd="converter", timeout=timeout)
+
+        def kill(self) -> None:
+            pass
+
+    contained = cls(_StubProc(), pgid=5000)
+    monkeypatch.setattr(cls, "_killpg", staticmethod(lambda pgid, sig: None))
+    monkeypatch.setattr(
+        cls, "_posix_group_members", classmethod(lambda owner, pgid: (7001, 7002))
+    )
+
+    assert contained._terminate_tree_posix(time.monotonic() - 1.0, 0.0) is False
+    assert contained.survivors == (7001, 7002)
+
+
+def test_close_sweeps_the_posix_process_group_on_every_exit_path(monkeypatch):
+    """#509 review:沒有 job 時 close() 是 no-op,POSIX 只在 timeout 路徑有 containment。
+
+    成功 / 非 timeout 失敗兩條路徑會在 HOOPS pin 放掉之後,把整個 process group
+    留給孫代繼續跑。close() 由呼叫端的 finally 觸發,涵蓋所有離開路徑,所以 sweep
+    放這裡。訊號只送給 /proc 驗證過確實屬於本 pgid 的 PID,避開 PID reuse。
+    """
+
+    import signal
+
+    import ifc2usdc_powershell_adapter
+
+    cls = ifc2usdc_powershell_adapter._ContainedProcess
+    contained = cls(_FakeContainedPopen(["converter"], returncode=0), pgid=5000)
+
+    snapshots = [(1001, 1004), ()]
+    signalled: list[tuple[int, int]] = []
+    monkeypatch.setattr(
+        cls,
+        "_posix_group_members",
+        classmethod(lambda owner, pgid: snapshots.pop(0) if snapshots else ()),
+    )
+    monkeypatch.setattr(
+        cls,
+        "_kill_pid",
+        staticmethod(lambda pid, sig: signalled.append((int(pid), int(sig)))),
+    )
+    monkeypatch.setattr(
+        cls, "_killpg", staticmethod(lambda pgid, sig: pytest.fail("bare killpg on a possibly-recycled pgid"))
+    )
+    monkeypatch.setattr(os, "name", "posix")
+
+    contained.close()
+
+    assert signalled == [(1001, int(signal.SIGTERM)), (1004, int(signal.SIGTERM))]
+    # 二次 close() 不得重送訊號(pgid 此時可能已被回收給別的 group)。
+    contained.close()
+    assert len(signalled) == 2
+
+
 def _patch_subprocess_returning(monkeypatch, *, returncode: int, stderr: str, stdout: str = "") -> None:
     _patch_popen(monkeypatch, returncode=returncode, stdout=stdout, stderr=stderr)
 
