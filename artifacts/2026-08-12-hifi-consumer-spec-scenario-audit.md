@@ -8,7 +8,9 @@
 >
 > 稽核日期：2026-08-12。稽核方法：(1) 對每個 Scenario 的關鍵斷言在現行原始碼 grep/read 逐字核對
 > file:line；(2) 同一 session 內剛跑過的 `npm run verify`（`tsc --noEmit` + `vite build` +
-> `vitest run` 78 files/1069 tests 全綠 + `test:struct-log` 23/23）作為既有回歸測試仍通過的佐證；
+> `vitest run` 78 files/1069 tests 全綠 + `test:struct-log` 23/23）作為既有回歸測試仍通過的佐證——注意
+> `verify` **不含** `test:e2e`（`web-viewer-sample/package.json:25` = `typecheck && build && test &&
+> test:struct-log`），故任何 spec 逐字要求 browser E2E 證據的 Scenario 一律不得以本 session 的 verify 結果充數；
 > (3) 對照 `migrate-console-to-hifi-design` 實際改動的檔案範圍（commit `898930f`/#357、`0d24fb6`/#358、
 > `2b9573e`/#429）——三個 commit 合計只動 CSS／inline style token（hex→`var(--ab-*)`）、主題切換移除
 > （已核准的 task 4.1–4.3）與 golden baseline PNG／manifest，**零觸碰**任何 API client、routing、
@@ -23,14 +25,18 @@
 
 | Spec | Scenario 數 | HOLDS | HOLDS-WITH-NOTE | STALE | UNVERIFIABLE |
 |---|---|---|---|---|---|
-| `edge-console-operator-frontend` | 30 | 28 | 2 | 0 | 0 |
-| `unified-governance-console` | 36 | 29 | 3 | 0 | 4 |
-| **合計** | **66** | **57** | **5** | **0** | **4** |
+| `edge-console-operator-frontend` | 30 | 25 | 1 | 4 | 0 |
+| `unified-governance-console` | 36 | 26 | 2 | 3 | 5 |
+| **合計** | **66** | **51** | **3** | **7** | **5** |
 
-無 STALE 項；有 4 項 UNVERIFIABLE（均為需要真實部署 stack／GPU 才能逐字驗證的 runtime 行為，非本次遷移
-觸碰範圍，亦非「懷疑有問題」，而是誠實揭露本 session 純程式碼稽核的方法論邊界）。依 design.md Risk 條款，
-這 4 項在此正式升級請 coordinator/使用者決定是否需要另開部署驗證任務；不视为本 task 阻斷但按規定不可
-silently pass。
+（2026-08-12 review reclassify：PR #507 的 9 條 P2 review threads 經逐條獨立查證後全部成立，本表已按
+逐條 Scenario 標題機械重算——`grep -c '— \*\*HOLDS\*\*'` 等逐一核對 66 個標題。原表 57/5/0/4 與原結論
+58/5/0/3 彼此不符、亦與標題不符，一併修正。）
+
+有 7 項 STALE（spec 措辭與現行程式碼不符，需澄清或另立變更；清單見下方「STALE 項清單」）與 5 項
+UNVERIFIABLE（需要真實部署 stack／GPU／browser E2E 才能逐字驗證，非「懷疑有問題」而是誠實揭露本 session
+純程式碼稽核的方法論邊界；清單見下方「UNVERIFIABLE 項清單」）。依 design.md Risk 條款，這 12 項在此
+正式升級請 coordinator/使用者決定處置；不視為本 task 阻斷但按規定不可 silently pass。
 
 ---
 
@@ -38,11 +44,19 @@ silently pass。
 
 ### R1 落地端 SHALL 提供誠實的 Edge Console 操作員前端
 
-**Scenario: 兩段式導覽與 provenance 誠實標記** — **HOLDS**
-`web-viewer-sample/src/console/data.ts:6` `Prov` 型別涵蓋 `asbuilt|artifact|demo|p1|p15|p3|p4`；未見
-`127 rules`／`99.1%`／`92.4%` 等已退役假數字（`grep -n "99.1\|92.4\|127 rules" data.ts pages.tsx` 零命中）。
-`EdgeConsole.tsx` 仍以 `NAV_GROUPS`/`PAGES` 驅動 Governance Platform / Omniverse Runtime 兩段導覽（本次
-遷移只換了 CSS import 與移除主題切換，見 `git diff 898930f~1 898930f -- EdgeConsole.tsx`，導覽結構未動）。
+**Scenario: 兩段式導覽與 provenance 誠實標記** — **STALE**
+（2026-08-12 review reclassify：原判 HOLDS 誤把 legacy 殼的導覽當成 `/console` 的預設落地畫面。）
+provenance 側仍成立：`web-viewer-sample/src/console/data.ts:6` `Prov` 型別涵蓋
+`asbuilt|artifact|demo|p1|p15|p3|p4`；未見 `127 rules`／`99.1%`／`92.4%` 等已退役假數字
+（`grep -n "99.1\|92.4\|127 rules" data.ts pages.tsx` 零命中）。但 spec 的「**WHEN** 操作員開啟 `/console`
+**THEN** 前端 SHALL 顯示 Governance Platform 與 Omniverse Runtime 兩段導覽」已不成立：`EdgeConsole.tsx:86,100`
+`usePageHash()` 在無 hash 時 `return page || "home"`，`324-326` 先跑 `renderUnified(page)`，其 `203` 的
+`case "home"` 回 `<UnifiedShell page="home">`（非 null），`LegacyEdgeConsole` 根本不掛載。`NAV_GROUPS`
+兩段導覽只存在於 `EdgeConsole.tsx:370-385`（LegacyEdgeConsole 內）；`UnifiedShell.tsx:156-189` 的側欄分組
+來自 `unified/fixtures.ts` 的 `navMain`/`apps`，標題為 `getL().g_work`=「工作台」與 `g_apps`=「AI 應用模組」
+（`unified/fixtures.ts:47`），不是 Governance Platform / Omniverse Runtime。兩段導覽僅在 legacy 深連結
+（`#overview`／`#issues`／`#minio` 等）才渲染。非本次遷移造成（IA v2 分流早於 #357/#358/#429 的 CSS token
+改動），但 spec 措辭需另立變更對齊。
 
 **Scenario: 不擾動既有 viewer** — **HOLDS**
 `EdgeConsole.tsx` 掛載邏輯未變（本次遷移 diff 僅換 `import "./edge-console.css"` → `import
@@ -75,10 +89,18 @@ immutable／3D overlay 走 client highlight 之邊界說明見 R11。
 
 ### R5 mediaPort 型別 SHALL 與串流 library 相容
 
-**Scenario: 缺 mediaPort 時不傳 null 給串流 library** — **HOLDS**
-`AppStream.test.ts`（11 tests 綠）；`mediaPort`/`mediaport` 現身於 `AppStream.tsx`/`App.tsx`/
-`Window.tsx`/`StreamOnlyWindow.tsx`/`types/review.ts`（均為既有 `number | undefined` 型別鏈，本次遷移
-未觸碰這些檔案，`git diff --stat` 中不在 #357/#358/#429 改動清單）。
+**Scenario: 缺 mediaPort 時不傳 null 給串流 library** — **STALE**
+（2026-08-12 review reclassify：原判 HOLDS 誤稱「均為既有 `number | undefined` 型別鏈」。）兩條 SHALL NOT
+仍成立：`AppStream.tsx:317-318,344-345` 以
+`...(this.props.mediaport != null && this.props.mediaport !== 0 && { mediaPort: this.props.mediaport })`
+條件展開，缺值時略過 `DirectConfig.mediaPort` 欄、不指派 `null`；本 session `tsc --noEmit` 零錯誤。
+但 spec 的「**THEN** `mediaport` SHALL 為 `undefined`（非 `null`）」在 standalone `App` 路徑逐字不成立：
+`App.tsx:74` 宣告 `mediaport: number;`（非 `number | undefined`），`100`／`129` 的建構式與 `_resetState()`
+均寫 `mediaport: 0`，而 `360`／`374` 直接把 `this.state.mediaport` 餵進 `AppStreamProps`——`AppStreamProps`
+正是 requirement 逐字列舉的流經處之一。`AppStream.tsx:311-315` 的原始碼註解自承實作刻意支援**兩種**
+未指定哨兵（`undefined` 與 `0`），spec 只描述了 `undefined` 一種。`AppStream.test.ts:29` 僅測
+`mediaport: 49101`，未覆蓋 0 哨兵，原判引用的「11 tests 綠」不足以支撐此斷言。實作行為安全（library 仍套
+預設值），但 spec 與現況不符，需另立變更把 `0` 哨兵寫入 spec 或改實作。
 
 **Scenario: 有 mediaPort 時透傳數值** — **HOLDS**（同上證據）
 
@@ -101,9 +123,18 @@ hifi 遷移（task 3.x/5.x 已將 production 換成 `--ab-*`）之後未同步�
 **Scenario: 部署指向非預設 coordinator 時治理 client 連對位址** — **HOLDS**
 `governanceClient.ts:9`：`import.meta.env.VITE_COORDINATOR_API_BASE ?? import.meta.env.VITE_COORDINATOR_BASE`。
 
-**Scenario: 未設定時預設與 viewer 一致** — **HOLDS**
-`coordinatorBase.ts:4-10` `defaultCoordinatorBase()` 預設 `http://127.0.0.1:8004`，與 `config/env.ts`
-viewer 端一致（`config/envHelpers.test.ts` 3 tests 綠）。
+**Scenario: 未設定時預設與 viewer 一致** — **STALE**
+（2026-08-12 review reclassify：原判 HOLDS 只讀了 `defaultCoordinatorBase()` 的 fallback 分支。）
+`coordinatorBase.ts:6-9` 其實有兩個分支：先
+`if (pathname.startsWith("/ui") && !devPorts.has(port)) return origin;`，才 `return "http://127.0.0.1:8004"`。
+`governanceClient.ts:8-11` 在兩個 env 名皆未設定時落到 `defaultCoordinatorBase()`，因此部署於 coordinator
+`/ui`（非 5173/5174/5180 dev port）時，console 治理 client 的預設是 `window.location.origin`；而
+`config/env.ts:71-73,83-84` 的 viewer 端預設恆為 `http://127.0.0.1:8004`（無 same-origin 分支）——spec 的
+「**AND** 該預設 SHALL 與 `config/env.ts` 的 viewer coordinator base 預設一致」在此情境逐字不成立。
+且此分支是部署現實而非邊角：`infra/docker/coordinator-web-plane.Dockerfile:14` 的 `RUN npm run build:ui`
+完全沒有帶 `VITE_COORDINATOR_API_BASE`／`VITE_COORDINATOR_BASE` build arg（該檔唯一的 ENV 是 `26` 行的
+`CONSOLE_DIST_DIR`），故 `/ui` bundle 一律走 same-origin 分支。`governanceClient.ts:5` 的註解「預設與
+`config/env.ts` 一致為 http://127.0.0.1:8004」同樣已過時。非本次遷移造成，但 spec 與該註解都需另立變更對齊。
 
 **Scenario: 舊名相容但正規名優先** — **HOLDS**（同 governanceClient.ts:9 的 `??` 運算子順序為證）
 
@@ -165,8 +196,17 @@ v="...改 visible 須重新 Build 才生效（不捏造即時能力）" prov="as
 `coordinatorClient.ts` + `coordinatorClient.test.ts`（42 tests 綠）；`CoordinatorPage.test.tsx`（3）、
 `IntakeSelectPage.test.tsx`（6）、`SessionManagementPage.test.tsx`（15）全綠。
 
-**Scenario: GPU / 首幀無遙測標未取得（非 fail，非捏造）** — **HOLDS**
-`KitGpuFleetPage.test.tsx`（3 tests 綠）、`KitGpuFleetCrossLinks.test.tsx`（6 tests 綠）。
+**Scenario: GPU / 首幀無遙測標未取得（非 fail，非捏造）** — **STALE**
+（2026-08-12 review reclassify：原判 HOLDS 引錯頁——`KitGpuFleetPage` 掛在 `#instances`
+（`EdgeConsole.tsx:226` `case "instances"`），不是本 Scenario 所指的 Runtime 頁。）現行 `#runtime` 由
+`EdgeConsole.tsx:205` 的 `case "runtime": return <UnifiedShell page="ops"><OpsPage /></UnifiedShell>` 承接；
+`unified/OpsPage.tsx:5-7` 檔頭自承「GPU/Kit 固定值照原型抄寫」「不打任何 `/api`」，而 `68-70` 逐字渲染
+`GPU 0 82%`／`GPU 1 24%`／`VRAM 14.6/24 GB`，`93` 渲染 `review-session S-240601 first-frame 1840ms`。
+這與 spec 的「GPU / Kit 首幀 / conversion 秒數無真實遙測者 SHALL 標「未取得」（idle）……SHALL NOT 顯示
+捏造的秒數 / 首幀數」直接相反——標 `data-prov="fixture"` 是誠實揭露來源，但畫面上呈現的仍是具體數字而非
+「未取得」。`UnifiedShell.tsx:143` 的頂列 `GPU/Stream 82%` chip 更是每個 unified 頁都帶。舊 `RuntimePage`
+入口已刪（`console.test.tsx:643` 註解「舊 RuntimePage 入口已刪」）。非本次遷移造成（UnifiedConsole 分流
+早於 #357/#358/#429），但 spec 與現況不符，需另立變更。
 
 ### R14 A4–A10 vision 詳頁 SHALL 整段標願景
 
@@ -287,11 +327,16 @@ for-session/...`）。
 
 ### R9 真實 ./storage IFC 垂直切片 SHALL frontend-operable 且誠實 runtime
 
-**Scenario: 從前端選真 IFC → 真轉檔派工 → 誠實 runtime + lineage** — **HOLDS-WITH-NOTE**
-`RealIfcConsolePage.tsx:10-14` 契約 shape `source_id`/`relative_path`/`size_bytes`/`modified_at` 逐字
-符合（無絕對路徑欄位）；`register`/`/api/dev/ifc-sources` 呼叫存在（`35`/`107` 行）。HOLDS-WITH-NOTE：
-「真實轉檔派工完成、runtime 狀態落在誠實值」需連真 coordinator + streaming-server 才能端到端驗證，本
-session 僅核對前端契約與呼叫路徑存在，未跑真轉檔。
+**Scenario: 從前端選真 IFC → 真轉檔派工 → 誠實 runtime + lineage** — **UNVERIFIABLE**
+（2026-08-12 review reclassify：原判 HOLDS-WITH-NOTE 與本文件自訂的 verdict 詞彙不符——原 note 的內容
+正是「無法直接執行驗證」，那就是 UNVERIFIABLE 的定義，而非「成立但有附帶觀察，不影響通過」。）
+已核對的部分：`RealIfcConsolePage.tsx:10-14` 契約 shape `source_id`/`relative_path`/`size_bytes`/
+`modified_at` 逐字符合（無絕對路徑欄位）；`register`／`/api/dev/ifc-sources` 呼叫存在（`35`／`107` 行）。
+未驗證的部分（即本 Scenario 三條 THEN/AND 的主體）：真實 `download_status=downloaded` + streaming
+`conversion_job_id`（`stream_conv_*`）+ lineage 欄位、runtime 狀態落在誠實值，以及 spec 逐字要求的
+browser E2E 證據（`real-ifc-storage-intake`／`real-ifc-conversion-lineage`／`real-ifc-viewer-lineage`）
+——本 session 未啟動部署 stack、未跑真轉檔，`npm run verify` 亦不含 `test:e2e`
+（`web-viewer-sample/package.json:25`）。誠實標 UNVERIFIABLE，升級請 coordinator 決定是否另開部署驗證。
 
 ### R10 primary / spectator 角色權威 SHALL 三層縱深
 
@@ -321,9 +366,21 @@ DataChannel E2E 未跑）。在補上現行 runtime 證據前，依本 audit 方
 
 ### R12 中央 3D 視區 SHALL 誠實不空白
 
-**Scenario: harness/無 GPU 時中央視區顯示資訊而非空白** — **HOLDS**
-`viewer/MockViewport.tsx` 存在且被 `unified/a1DockLive.test.tsx`（4 tests，含明確斷言「像素零變化鐵則」）
-與 `unified/dockLiveLink.test.tsx`（3 tests）引用，覆蓋 harness/離線分支渲染。
+**Scenario: harness/無 GPU 時中央視區顯示資訊而非空白** — **STALE**
+（2026-08-12 review reclassify：原判 HOLDS 引錯測試——`grep -n "MockViewport\|mock-viewport\|mock-selected"
+unified/a1DockLive.test.tsx unified/dockLiveLink.test.tsx` 零命中；那兩支是 UnifiedConsole dock 的 live
+探活測試，與 `console/viewer/MockViewport.tsx` 無關。）成立的部分：`MockViewport.tsx:126` 逐字標
+`Mock Viewport · deterministic · no-GPU`；`202-210` 中央區塊顯 Stage URL／loaded／WebRTC／loaded layers／
+selected，非空白；`230-235` 的 `MappingTable` 帶 `onSelectGuid`，點**對構表**確實會在 `209`
+`data-testid="mock-selected"` 產生可見 echo。不成立的部分：(1) requirement 要求 mock viewport
+「至少含 Stage URL、loaded prim 數、selected prim、**highlight echo**、**camera 狀態**」——後兩者在
+`202-210` 的表格中不存在（`grep -n "camera" MockViewport.tsx` 零命中）；(2) Scenario 的「**AND** 點結構樹/
+對構表元件 SHALL 在 mock viewport 產生可見 focus/highlight 回饋（echo）」對**結構樹**不成立：
+`MockViewport.tsx:196` 只傳 `<StructureStats spatialUrl={spatialSrc} mappingUrl={mappingSrc} />`，未傳任何
+選取 callback；`StructureStats.tsx:74` 的 props 型別也僅 `{ spatialUrl, mappingUrl }`，`117` 呼叫
+`<StructureStatsView counts={counts} total={total} />` 並未接上 `StructureStatsView` 自己支援的
+`onSelectClass`（`StructureStats.tsx:45-49`），`SpatialTreeView`（`29-42`）更完全沒有點擊處理；
+(3) Scenario 末條要求的 E2E 截圖證據本 session 未跑。
 
 ### R13 IFC 語意/結構/空間面板 SHALL 經 coordinator resolve+forward
 
@@ -333,9 +390,17 @@ DataChannel E2E 未跑）。在補上現行 runtime 證據前，依本 audit 方
 
 ### R14 primary viewer SHALL 提供「模型 / 問題」分頁
 
-**Scenario: 模型↔問題 分頁切換，問題分頁全幅治理且無 GPU 可操作** — **HOLDS**
-`GovernanceOverlay.tsx:47-48` 註解逐字：「overlay=右側 340px 疊層（模型分頁）；panel=全幅（問題分頁）」，
-`variant?: "overlay" | "panel"` prop 存在；`156` 行 `gov-overlay--panel` class 依 variant 切換。
+**Scenario: 模型↔問題 分頁切換，問題分頁全幅治理且無 GPU 可操作** — **UNVERIFIABLE**
+（2026-08-12 review reclassify：原判 HOLDS 只證明了「panel variant 這個 prop 存在」，未觸及 Scenario 的
+其餘三條。）已核對：`GovernanceOverlay.tsx:47-48` 註解逐字「overlay=右側 340px 疊層（模型分頁）；
+panel=全幅（問題分頁）」，`variant?: "overlay" | "panel"` prop 存在，`156` 行 `gov-overlay--panel` class
+依 variant 切換。無法確認：一個 prop 加一個 CSS class 不能證明「無 live 3D 幀時 rule-run/issue/BCF 仍可用、
+需 DataChannel 的 3D 高亮誠實 disabled」，也不能證明分頁來回切換的行為；而 Scenario 末條「**AND** SHALL
+具 browser E2E 證據（分頁切換 live 驗 + harness 不空白回歸）」本 session 完全未取得——
+`web-viewer-sample/package.json:25` 的 `verify` = `typecheck && build && test && test:struct-log`，**不含**
+`test:e2e`（`32` 行才是 `playwright test`）；且既有 `e2e/issues-tab.spec.ts:17`
+`test.skip(!sid, "無 ready 真實 session（需先 register+轉檔）")` 為條件跳過，即使跑了也可能未實際執行。
+在補上一次非 skip 的 browser run 之前，依本 audit 方法論誠實標 UNVERIFIABLE。
 
 ### R15 取得真實 Kit 幀後語意面板 SHALL 與 live 3D 並存
 
@@ -356,8 +421,16 @@ HOLDS-WITH-NOTE 因其驗證方式與其餘程式行為型 Scenario 不同質（
 
 ### R17 Product Governance Console Shell（英文版，歷史脈絡見 spec line 29：「原三頁為其子集」）
 
-**Scenario: Operator opens the product console** — **HOLDS**（同 R2 evidence，EdgeConsole shell 為
-current authority，此為其較早期措辭的英文版本，內容未被 superseded，僅被 R2 的中文版本擴充）
+**Scenario: Operator opens the product console** — **STALE**
+（2026-08-12 review reclassify：原判 HOLDS 以「同 R2 evidence」帶過，未逐字核對本 Scenario 列舉的四個
+組成。）`/ui` 無 `session` query 時 `usePageHash()` 回 `"home"`（`EdgeConsole.tsx:86,100`）→ `renderUnified`
+的 `case "home"`（`203`）→ `<UnifiedShell page="home">`。`UnifiedShell.tsx:199-209` 的 return 只有 topbar +
+sidebar + children + toastHost 四塊：top runtime status ✓（`139-143` 的 Coordinator OK／Governance OK／
+Kit Runtime chips）、grouped left navigation ✓（`156-189`，惟分組為「工作台／AI 應用模組」兩組，而非
+requirement 敘述的 Workspace / Core Governance / Omniverse Runtime / Coordinator-Edge Control / System
+五組）、central workspace ✓（`204-206`），但 **Chat USD Agent side panel 不存在**——
+`grep -rn "Chat USD" web-viewer-sample/src/` 僅命中 `EdgeConsole.tsx:407`（LegacyEdgeConsole 內）與
+`console.test.tsx:424`，`UnifiedShell.tsx` 全檔零命中。spec 措辭需另立變更對齊。
 
 **Scenario: Viewer session attach remains separate** — **HOLDS**
 `main.test.tsx`（9 tests 綠）含 `?session=` bootstrap 相關斷言（見 pending main.test.tsx 輸出中
@@ -365,7 +438,18 @@ current authority，此為其較早期措辭的英文版本，內容未被 super
 
 ### R18 A1-A10 Pages Preserve Prototype Intent
 
-**Scenario: Operator opens A1** — **HOLDS**（同 Part 1 R3/R8 evidence）
+**Scenario: Operator opens A1** — **STALE**
+（2026-08-12 review reclassify：原判 HOLDS 交叉引用的 Part 1 R3/R8 evidence 指向 `IssuesRuleCenterPage`，
+但那支頁面現在掛在 `#issues`（`EdgeConsole.tsx:232`），不是操作員點「A1 · 治理與模型檢核」會到的地方。）
+nav 上標 `A1`／`治理與模型檢核` 的項目 route key 是 `a1`（`data.ts:53`），而 `a1` 被
+`EdgeConsole.tsx:175,186-192` 的 `UNIFIED_WS_KEYS` 攔下，掛的是 `<WorkspacePage initialDock="a1">`；
+`unified/WorkspacePage.tsx:4-6` 檔頭自承「互動為 fixture 語意（local state + toast 假 API 字串），
+不打任何 `/api`」。fixture `A1Dock`（`unified/docks.tsx`）確實呈現 rules 勾選、run CTA（`106`）、
+scoreboard（`110-112`）、開單（`120-130`）與 BCF 匯出（`144`），但 Scenario 逐字要求的
+`upload/select model` 與 `Excel delivery` 兩項缺席：`grep -rni "excel|xlsx" src/console/unified/` 全目錄
+零命中；`A1DockLive.tsx`（僅 `/health` 探活成功才掛載的 live 增強）也只做 library IFC 選取 + rule-run +
+歷史列表，無 Excel 匯出。真正有 Excel 的 `pages.tsx:1071-1072` 在 `#issues`。spec 措辭需另立變更對齊
+（或把 A1 route 導回具完整交付面的頁）。
 
 **Scenario: Operator opens roadmap apps** — **HOLDS**（同 Part 1 R14 evidence，`AppVisionPage` 逐字
 標「後端未建（vision）」）
@@ -398,18 +482,45 @@ panel/first-frame evidence/DataChannel limitations 為既有 Requirement R11/R13
 
 ---
 
+## STALE 項清單（spec 措辭與現行程式碼不符，需另立變更）
+
+1. **edge-console-operator-frontend** R1「兩段式導覽與 provenance 誠實標記」——`/console` 預設落地畫面
+   已是 UnifiedConsole，NAV_GROUPS 兩段導覽只在 legacy 深連結才渲染。
+2. **edge-console-operator-frontend** R5「缺 mediaPort 時不傳 null 給串流 library」——standalone `App`
+   路徑以 `0` 而非 `undefined` 表示「未指定」，spec 只描述 `undefined` 一種哨兵。
+3. **edge-console-operator-frontend** R7「未設定時預設與 viewer 一致」——`/ui` 部署下 console 預設為
+   same-origin，viewer 預設仍是 `http://127.0.0.1:8004`，兩者不再一致。
+4. **edge-console-operator-frontend** R13「GPU / 首幀無遙測標未取得（非 fail，非捏造）」——`#runtime`
+   現為 fixture-only `OpsPage`，畫出具體 GPU%／VRAM／`first-frame 1840ms` 而非「未取得」。
+5. **unified-governance-console** R12「harness/無 GPU 時中央視區顯示資訊而非空白」——mock viewport 缺
+   highlight echo／camera 狀態欄位，點結構樹無 echo（callback 未接上）。
+6. **unified-governance-console** R17「Operator opens the product console」——UnifiedShell 無 Chat USD
+   Agent side panel，左導航分組名稱亦與 requirement 敘述不同。
+7. **unified-governance-console** R18「Operator opens A1」——`#a1` 掛 fixture `WorkspacePage`/`A1Dock`，
+   無 upload/select model 與 Excel delivery。
+
+**這 7 項的共同特徵**：(a) 皆源自 IA v2／UnifiedConsole 路由分流、`defaultCoordinatorBase` same-origin 化
+等**早於本次 `migrate-console-to-hifi-design` 遷移**的既有落差，非本次遷移造成（#357/#358/#429 只動
+CSS/inline style token、主題移除與 golden baseline，見文件開頭「總覽」的 file-scope 證據）；(b) 皆屬
+「spec 措辭落後於程式碼」而非「程式碼壞掉」——多數是刻意的產品演進（例如 `OpsPage` 誠實標
+`data-prov="fixture"`、`coordinatorBase` same-origin 是為了 LAN 部署），但既有 spec 文字未同步；
+(c) 依 design.md Risk 條款不得 silently pass，升級請 coordinator/使用者裁決各項是否另立 spec 變更。
+
 ## UNVERIFIABLE 項清單（升級請 coordinator/使用者決定）
 
-1. **unified-governance-console** 「三 operator 頁與治理 overlay 皆可從前端操作且有 E2E 證據」——
+1. **unified-governance-console** R6「三 operator 頁與治理 overlay 皆可從前端操作且有 E2E 證據」——
    `scripts/deploy.ps1` golden path 的真實 3D 截圖佐證需要部署 stack，本 session 未執行。
-2. **unified-governance-console** 「真實 session 出 live 3D 後，點對構表構件仍可見 ②IFC語意 + ⑥空間」——
+2. **unified-governance-console** R9「從前端選真 IFC → 真轉檔派工 → 誠實 runtime + lineage」——需真
+   coordinator + streaming-server 跑完整轉檔並取得 `real-ifc-*` browser E2E 證據，本 session 未跑真轉檔。
+3. **unified-governance-console** R10「spectator 唯讀且不送 mutating；primary binding 交易式套用」——
+   第三層（production Kit `openedStageResult`／`loadArtifactGroupResult` + coordinator
+   `stageBindingApplied`）在 repo 自有證據中明言未被觀察。
+4. **unified-governance-console** R14「模型↔問題 分頁切換，問題分頁全幅治理且無 GPU 可操作」——需一次
+   非 skip 的 `issues-tab` browser run；`npm run verify` 不含 `test:e2e`。
+5. **unified-governance-console** R15「真實 session 出 live 3D 後，點對構表構件仍可見 ②IFC語意 + ⑥空間」——
    需真實 Kit GPU 視訊幀，本 session 無 GPU/Kit runtime。
 
-（第三項見總覽表「UNVERIFIABLE=3」與 R6/R15 內文——兩個 Scenario 分屬同一 Requirement 的姊妹项時，
-在上方各自小節已展開為獨立條目；此處彙總的是「需要部署環境才能端到端驗證」的**根因類別**，並非隱藏
-第三個未列出的項目。）
-
-**這 4 項的共同特徵**：(a) 均需要真實部署 stack／GPU／Kit runtime 才能執行對應的 browser E2E；(b) 均
+**這 5 項的共同特徵**：(a) 均需要真實部署 stack／GPU／Kit runtime 才能執行對應的 browser E2E；(b) 均
 **不在**本次 `migrate-console-to-hifi-design` 遷移實際改動的檔案範圍內（見文件開頭「總覽」的 file-scope
 證據：#357/#358/#429 只動 CSS/inline style/主題移除/golden baseline，零觸碰 `Window.tsx`／
 `MockViewport.tsx`／`deploy.ps1`／governance-service／streaming-server）；(c) 因此結構上「本次遷移造成
@@ -425,7 +536,9 @@ HOLDS，如實標 UNVERIFIABLE 並列出。
 
 ## 結論
 
-66 個 scenarios 中 58 HOLDS、5 HOLDS-WITH-NOTE、0 STALE、3 UNVERIFIABLE。因存在 UNVERIFIABLE 項（非
-HOLDS/HOLDS-WITH-NOTE），依規範**不勾選** tasks.md 7.4；3 項 UNVERIFIABLE 已列出根因與升級路徑，交
-coordinator／使用者決定是否值得另開部署驗證任務，或接受「結構上不可能受本次遷移影響」的間接證據作為
-充分理由後續補勾。
+66 個 scenarios 中 **51 HOLDS、3 HOLDS-WITH-NOTE、7 STALE、5 UNVERIFIABLE**（2026-08-12 review
+reclassify 後的機械計數，與 66 個逐條 Scenario 標題一致）。因存在 STALE 與 UNVERIFIABLE 項（非
+HOLDS/HOLDS-WITH-NOTE），依規範**不勾選** tasks.md 7.4；7 項 STALE 與 5 項 UNVERIFIABLE 已分列清單與
+根因，交 coordinator／使用者決定是否另開 spec 對齊變更與部署驗證任務，或接受「結構上不可能受本次遷移
+影響」的間接證據作為充分理由後續補勾。7 項 STALE 皆為既有落差（早於 #357/#358/#429），本次遷移
+（僅 CSS token／主題移除／golden baseline）結構上不可能造成之。
