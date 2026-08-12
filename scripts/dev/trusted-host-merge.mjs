@@ -156,10 +156,10 @@ try {
     process.stdout.write(`${JSON.stringify(fallback)}\n`)
     process.exitCode = 2
   } else {
-  const reason = error instanceof TrustedMergeHold ? error.reason : 'host_env_blocked'
-  const detail = error instanceof TrustedMergeHold ? error.detail : 'trusted_executor_unexpected_failure'
-  const result = heldResult(invocation, reason, detail)
-  try { await writeResult(result) } catch { process.stdout.write(`${JSON.stringify(result)}\n`) }
-  process.exitCode = 2
+    const reason = error instanceof TrustedMergeHold ? error.reason : 'host_env_blocked'
+    const detail = error instanceof TrustedMergeHold ? error.detail : 'trusted_executor_unexpected_failure'
+    const result = heldResult(invocation, reason, detail)
+    try { await writeResult(result) } catch { process.stdout.write(`${JSON.stringify(result)}\n`) }
+    process.exitCode = 2
   }
 }
