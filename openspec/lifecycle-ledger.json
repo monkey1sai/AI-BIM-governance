@@ -1251,7 +1251,7 @@
         "scripts/lib/measure-session-baseline.ps1",
         "scripts/tests/test-measure-session-baseline.ps1"
       ],
-      "subject_commit": "405e2b651bf661e123a2f0561e7167bebbf705ca",
+      "subject_commit": "797c5c8136902722d028c7c59b5587c252a8aa96",
       "archive_debt": null
     },
     {
