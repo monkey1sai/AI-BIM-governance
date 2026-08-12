@@ -62,6 +62,8 @@ Repair lane 只開一扇門：**修復 PR 把自己的 PR number 追加到該 op
 
 Repair lane **不放寬**任何既有不變式：ledger 仍為 append-only（`repair_prs` 只能追加，既有元素不可改寫或刪除）；entry 除 `repair_prs` 外所有欄位仍不可變，唯一合法狀態轉移仍是一次 `open → closed`；closure 仍須提交完整且全綠的 fixpoint attestation（修復後的機制必須自己通過該 entry 凍結的 `verification_contract`）；同一 transition 仍不得一邊關債一邊開債；closed entry 仍完全不可變 — `repair_prs` 不是進入 closed entry 的後門。
 
+**刻意不設的一道檢查**：repair lane **不**因「存在其他 open debt」而拒絕。這是設計，不是遺漏 —— 若修復 PR 也要被其他未清債務擋住，就會在允許多筆 open entry 的未來重現本節要解的死鎖（修復需要債先關、債關需要修復先 merge）。開新債仍受 §3 的 open-debt 封鎖約束；**清舊債的通道不受它約束**。現行契約下同時至多一筆 open entry，故此條今日不可觀察，先寫明意圖以免日後被誤讀為缺口。
+
 ## 3. Ledger 機制
 
 - Ledger：`scripts/self-referential-bootstrap-ledger.json`（schema `self-referential-bootstrap-ledger/v1`）。
