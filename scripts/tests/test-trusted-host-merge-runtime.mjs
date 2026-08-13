@@ -817,6 +817,8 @@ test('trusted-base verification plan blocks mechanism changes and plans ordinary
     'governance-service/tests/test_api.py',
     'web-viewer-sample/src/main.test.tsx',
     'web-viewer-sample/.eslintignore',
+    '.gitattributes',
+    'web-viewer-sample/.gitattributes',
     'pytest.py',
     'pip/__main__.py',
   ]) {
@@ -942,6 +944,7 @@ test('machine timing budget bounds the only merge request and authoritative obse
   const mintIndex = cliSource.indexOf('await mintInstallationToken')
   assert.ok(deadlineIndex >= 0 && deadlineIndex < mintIndex)
   assert.match(cliSource, /timeoutMilliseconds: executionDeadline\.timeout\(/u)
+  assert.match(cliSource, /process\.exitCode = terminalResultExitCode\(terminalResult\)/u)
   assert.match(
     cliSource,
     /writeFileSync\(resultPath, serialized[\s\S]*?process\.stdout\.write\(serialized\)[\s\S]*?persistWithinDeadline\(appendPlatformFile/u,

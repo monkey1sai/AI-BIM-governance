@@ -82,6 +82,43 @@ export function rejectBinaryDiff(numstatEntries) {
   }
 }
 
+export function decodeLosslessGitDiff(value) {
+  if (!Buffer.isBuffer(value)) fail('scope_drift', 'git_diff_bytes_missing')
+  if (value.includes(0)) fail('scope_drift', 'binary_diff_forbidden')
+  const text = value.toString('utf8')
+  if (!Buffer.from(text, 'utf8').equals(value)) {
+    fail('scope_drift', 'non_utf8_diff_forbidden')
+  }
+  return text
+}
+
+export function verifyInspectableGitBlobs(rawEntries, readBlob) {
+  if (!Array.isArray(rawEntries) || rawEntries.length === 0 || typeof readBlob !== 'function') {
+    fail('scope_drift', 'raw_diff_entries_missing')
+  }
+  const blobOids = new Set()
+  for (const entry of rawEntries) {
+    for (const side of ['old', 'new']) {
+      const mode = entry?.[`${side}Mode`]
+      const oid = entry?.[`${side}Oid`]
+      if (mode === '000000') continue
+      if (!/^[0-9a-f]{40}$/u.test(oid) || /^0{40}$/u.test(oid)) {
+        fail('scope_drift', 'raw_diff_blob_oid_invalid')
+      }
+      blobOids.add(oid)
+    }
+  }
+  for (const oid of blobOids) {
+    const blob = readBlob(oid)
+    if (!Buffer.isBuffer(blob)) fail('scope_drift', 'git_blob_bytes_missing')
+    if (blob.includes(0)) fail('scope_drift', 'binary_diff_forbidden')
+    const text = blob.toString('utf8')
+    if (!Buffer.from(text, 'utf8').equals(blob)) {
+      fail('scope_drift', 'non_utf8_diff_forbidden')
+    }
+  }
+}
+
 export function parseRawDiffZ(value) {
   const text = Buffer.isBuffer(value) ? value.toString('utf8') : value
   if (typeof text !== 'string' || !text.endsWith('\0')) {
@@ -98,6 +135,8 @@ export function parseRawDiffZ(value) {
     entries.push({
       oldMode: match[1],
       newMode: match[2],
+      oldOid: match[3],
+      newOid: match[4],
       status: match[5],
       path: cleanGitPath(fields[index + 1]),
     })
@@ -120,6 +159,7 @@ export function rejectOpaqueGitModes(rawEntries) {
 const elevatedPathPatterns = [
   /^(?:\.agents|\.claude|\.codex|\.github|agent-contracts|architecture|openspec|scripts|docs\/agents|infra)(?:\/|$)/u,
   /^(?:AGENTS\.md|CLAUDE\.md|agent-skills-manifest\.json)$/u,
+  /^(?:.*\/)?\.gitattributes$/u,
   /(?:^|\/)(?:auth|permission|migration|migrations|production|deploy|deployment|destructive)(?:[._/-]|$)/iu,
 ]
 
@@ -309,7 +349,14 @@ export function verifyReviewerPermission(permission, contract) {
   }
 }
 
-export function verifyRequiredChecks(checkRuns, workflowRuns, protectionSnapshot, invocation, verificationPlan) {
+export function verifyRequiredChecks(
+  checkRuns,
+  workflowRuns,
+  protectionSnapshot,
+  invocation,
+  verificationPlan,
+  verificationTargetSources,
+) {
   if (!Array.isArray(checkRuns)) fail('final_gate_read_failed', 'check_runs_missing')
   if (!Array.isArray(workflowRuns)) fail('final_gate_read_failed', 'workflow_runs_missing')
   const headOid = invocation?.headOid
@@ -324,6 +371,36 @@ export function verifyRequiredChecks(checkRuns, workflowRuns, protectionSnapshot
   if (targetById.size !== verificationPlan.targets.length) {
     fail('final_gate_read_failed', 'trusted_base_verification_plan_invalid')
   }
+  if (!Array.isArray(verificationTargetSources)) {
+    fail('final_gate_read_failed', 'verification_target_source_registry_invalid')
+  }
+  const sourceByTarget = new Map()
+  for (const source of verificationTargetSources) {
+    if (
+      !exactKeys(source, ['context', 'app_id', 'verification_target', 'workflow_path']) ||
+      typeof source.context !== 'string' || source.context.length === 0 ||
+      !safeInteger(source.app_id) ||
+      typeof source.verification_target !== 'string' ||
+      typeof source.workflow_path !== 'string' || source.workflow_path.length === 0 ||
+      sourceByTarget.has(source.verification_target)
+    ) {
+      fail('final_gate_read_failed', 'verification_target_source_registry_invalid')
+    }
+    sourceByTarget.set(source.verification_target, {
+      context: source.context,
+      appId: source.app_id,
+      verificationTarget: source.verification_target,
+      workflowPath: source.workflow_path,
+    })
+  }
+  if (
+    sourceByTarget.size !== targetById.size ||
+    [...targetById].some(([targetId, target]) => (
+      !sourceByTarget.has(targetId) || sourceByTarget.get(targetId).context !== target?.ci_job
+    ))
+  ) {
+    fail('final_gate_read_failed', 'verification_target_source_coverage_invalid')
+  }
   const repositoryName = invocation?.repo?.split('/')[1]
   const exactRepository = (repository) => (
     typeof repositoryName === 'string' && repositoryName.length > 0 &&
@@ -331,8 +408,22 @@ export function verifyRequiredChecks(checkRuns, workflowRuns, protectionSnapshot
     repository?.name === repositoryName &&
     (repository?.full_name === undefined || repository.full_name === invocation.repo)
   )
-  const verified = []
+  const requirements = new Map()
+  for (const requirement of sourceByTarget.values()) {
+    requirements.set(canonicalJson(requirement), requirement)
+  }
+  if (!Array.isArray(protectionSnapshot?.requiredChecks)) {
+    fail('final_gate_read_failed', 'required_check_sources_missing')
+  }
   for (const requirement of protectionSnapshot.requiredChecks) {
+    if (!targetById.has(requirement?.verificationTarget)) {
+      fail('final_gate_read_failed', 'required_check_verification_target_unknown')
+    }
+    requirements.set(canonicalJson(requirement), requirement)
+  }
+
+  const verified = []
+  for (const requirement of requirements.values()) {
     const candidates = checkRuns.filter((run) => (
       run?.name === requirement.context && run?.app?.id === requirement.appId && run?.head_sha === headOid
     ))

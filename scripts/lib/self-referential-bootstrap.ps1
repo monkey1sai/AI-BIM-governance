@@ -70,6 +70,7 @@ $script:SelfReferentialMechanismPattern = @(
     # CODEOWNERS and its executable invariant decide whether the fixed human
     # owner gate exists, so changing either changes what "reviewed" means.
     '^\.github/CODEOWNERS$'
+    '^(?:.*/)?\.gitattributes$'
     '^scripts/tests/test-agent-governance-check\.ps1$'
     '^docs/agents/self-referential-bootstrap\.md$'
 ) -join '|'

@@ -110,6 +110,23 @@
       { "context": "powershell static analysis", "app_id": 15368, "verification_target": "powershell-static", "workflow_path": ".github/workflows/ci.yml" },
       { "context": "secret pattern scan", "app_id": 15368, "verification_target": "secret-pattern-scan", "workflow_path": ".github/workflows/ci.yml" }
     ],
+    "verification_target_sources": [
+      { "context": "root contracts and fakes", "app_id": 15368, "verification_target": "root-contracts", "workflow_path": ".github/workflows/ci.yml" },
+      { "context": "coordinator build and tests", "app_id": 15368, "verification_target": "coordinator", "workflow_path": ".github/workflows/ci.yml" },
+      { "context": "viewer build and tests", "app_id": 15368, "verification_target": "viewer", "workflow_path": ".github/workflows/ci.yml" },
+      { "context": "streaming stage-loading contract", "app_id": 15368, "verification_target": "streaming", "workflow_path": ".github/workflows/ci.yml" },
+      { "context": "governance-service tests", "app_id": 15368, "verification_target": "governance", "workflow_path": ".github/workflows/ci.yml" },
+      { "context": "viewer build and tests", "app_id": 15368, "verification_target": "viewer-session", "workflow_path": ".github/workflows/ci.yml" },
+      { "context": "kit-manager-api tests", "app_id": 15368, "verification_target": "kit-manager-api", "workflow_path": ".github/workflows/ci.yml" },
+      { "context": "kit-manager-web build", "app_id": 15368, "verification_target": "kit-manager-web", "workflow_path": ".github/workflows/ci.yml" },
+      { "context": "agent governance contracts", "app_id": 15368, "verification_target": "agent-governance", "workflow_path": ".github/workflows/ci.yml" },
+      { "context": "docker compose config", "app_id": 15368, "verification_target": "compose-config", "workflow_path": ".github/workflows/ci.yml" },
+      { "context": "powershell static analysis", "app_id": 15368, "verification_target": "powershell-static", "workflow_path": ".github/workflows/ci.yml" },
+      { "context": "rebuild/test-deploy contracts", "app_id": 15368, "verification_target": "rebuild-test-deploy", "workflow_path": ".github/workflows/ci.yml" },
+      { "context": "design-semantic-visual", "app_id": 15368, "verification_target": "design-semantic-visual", "workflow_path": ".github/workflows/ci.yml" },
+      { "context": "functional-runtime-conv", "app_id": 15368, "verification_target": "functional-runtime-conv", "workflow_path": ".github/workflows/ci.yml" },
+      { "context": "secret pattern scan", "app_id": 15368, "verification_target": "secret-pattern-scan", "workflow_path": ".github/workflows/ci.yml" }
+    ],
     "required_check_trust_boundary": {
       "candidate_mechanism_change": "separate_authorization",
       "base_owned_manifest_path": "scripts/verification-manifest.json",
@@ -154,6 +171,7 @@
         "^web-viewer-sample/scripts/lib/png-preflight\\.mjs$",
         "^scripts/tests/test-png-preflight\\.mjs$",
         "^\\.github/CODEOWNERS$",
+        "^(?:.*/)?\\.gitattributes$",
         "^scripts/tests/test-agent-governance-check\\.ps1$",
         "^docs/agents/self-referential-bootstrap\\.md$",
         "^scripts/tests/",

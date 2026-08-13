@@ -450,3 +450,7 @@ export function mergedResult(invocation, mergeCommit, closeoutHeld = null) {
     heldDetail: held,
   }
 }
+
+export function terminalResultExitCode(result) {
+  return result?.status === 'merged' ? 0 : 2
+}

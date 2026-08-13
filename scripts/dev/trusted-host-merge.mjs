@@ -11,6 +11,7 @@ import {
   heldResult,
   prepareInvocation,
   sha256,
+  terminalResultExitCode,
   verifyActivationGate,
 } from '../lib/trusted-host-merge.mjs'
 import { createExecutionDeadline, executeTrustedMerge } from '../lib/trusted-host-merge-executor.mjs'
@@ -211,7 +212,7 @@ try {
       executionDeadline,
     })
     await writeResult(terminalResult)
-    if (terminalResult.status === 'merge_outcome_unverified') process.exitCode = 2
+    process.exitCode = terminalResultExitCode(terminalResult)
   } else {
     throw new TrustedMergeHold('invalid_args_format', 'mode_must_be_challenge_activate_or_execute')
   }

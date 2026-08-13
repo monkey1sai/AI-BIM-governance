@@ -95,6 +95,7 @@ const SELF_REFERENTIAL_PATTERNS = [
   /^web-viewer-sample\/scripts\/lib\/png-preflight\.mjs$/,
   /^scripts\/tests\/test-png-preflight\.mjs$/,
   /^\.github\/codeowners$/,
+  /^(?:.*\/)?\.gitattributes$/,
   /^\.github\/workflows\/(?:agent-governance|pr-review-agent|ci|trusted-elevated-merge)\.ya?ml$/,
   /^scripts\/(?:dev|lib)\/trusted-host-merge(?:-[a-z-]+)?\.mjs$/,
   /^scripts\/tests\/test-trusted-host-merge(?:-runtime)?\.mjs$/,

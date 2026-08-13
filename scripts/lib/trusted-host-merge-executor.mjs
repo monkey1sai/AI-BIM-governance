@@ -13,6 +13,7 @@ import {
   heldResult,
   mergeOutcomeUnverifiedResult,
   mergedResult,
+  decodeLosslessGitDiff,
   parseNameStatusZ,
   parseNumstatZ,
   parseRawDiffZ,
@@ -26,6 +27,7 @@ import {
   verifyBranchProtection,
   verifyBrokerApproval,
   verifyEnvironmentConfiguration,
+  verifyInspectableGitBlobs,
   verifyPullRequestIdentity,
   verifyRequiredChecks,
   verifyReviewerPermission,
@@ -212,6 +214,7 @@ export async function collectVerifiedSnapshot({
     protection,
     invocation,
     verificationPlan,
+    contract.executor.verification_target_sources,
   )
   const reviewSurface = reviewSurfaceSnapshot({ pullComments, reviews, issueComments })
 
@@ -429,11 +432,17 @@ export function collectGitEvidence({ repoRoot, invocation, token, contract, exec
     'diff', '--raw', '--no-abbrev', '--no-renames', '-z', range,
   ], { encoding: 'buffer' }))
   rejectOpaqueGitModes(rawEntries)
+  verifyInspectableGitBlobs(rawEntries, (oid) => runCandidateGit(
+    ['cat-file', 'blob', oid],
+    { encoding: 'buffer' },
+  ))
   const numstat = parseNumstatZ(runCandidateGit([
     'diff', '--no-ext-diff', '--no-textconv', '--no-renames', '--numstat', '-z', range,
   ], { encoding: 'buffer' }))
   rejectBinaryDiff(numstat)
-  const diff = runCandidateGit(['diff', '--no-ext-diff', '--no-textconv', '--no-renames', range])
+  const diff = decodeLosslessGitDiff(runCandidateGit([
+    'diff', '--no-ext-diff', '--no-textconv', '--no-renames', range,
+  ], { encoding: 'buffer' }))
   const stat = runCandidateGit(['diff', '--no-ext-diff', '--no-textconv', '--stat', range])
   const log = runCandidateGit(['log', '--format=%H %s', `${invocation.baseOid}..${invocation.headOid}`])
   return { entries, paths: classification.paths, diff, stat, log }

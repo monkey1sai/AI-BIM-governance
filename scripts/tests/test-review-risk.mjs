@@ -267,6 +267,8 @@ test('all review-router implementation surfaces classify as self-referential', (
     'scripts/tests/test-review-risk.mjs',
     'scripts/tests/fixtures/review-risk-golden.json',
     'docs/agent-tooling/hermes-risk-proportional-review.md',
+    '.gitattributes',
+    'web-viewer-sample/.gitattributes',
   ]) {
     const input = caseInput('docs-typo-mechanical');
     input.changed_paths[0].path = path;

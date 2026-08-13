@@ -297,6 +297,8 @@ try {
         '.github/workflows/agent-governance.yml',
         '.github/workflows/ci.yml',
         '.github/workflows/trusted-elevated-merge.yml',
+        '.gitattributes',
+        'web-viewer-sample/.gitattributes',
         'scripts/dev/trusted-host-merge.mjs',
         'scripts/lib/trusted-host-merge-contract.mjs',
         'scripts/lib/trusted-host-merge-evidence.mjs',

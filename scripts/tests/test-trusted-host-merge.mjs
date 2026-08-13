@@ -14,6 +14,7 @@ import {
   buildBrokerAssertion,
   canonicalHumanApprovalBody,
   classifyElevatedPaths,
+  decodeLosslessGitDiff,
   heldResult,
   mergeOutcomeUnverifiedResult,
   mergedResult,
@@ -26,6 +27,7 @@ import {
   reviewSurfaceSnapshot,
   sanitizeUntrustedText,
   sha256,
+  terminalResultExitCode,
   canonicalJson,
   selectCanonicalApproval,
   verifyApexVerdict,
@@ -33,6 +35,7 @@ import {
   verifyBranchProtection,
   verifyBrokerApproval,
   verifyEnvironmentConfiguration,
+  verifyInspectableGitBlobs,
   verifyPullRequestIdentity,
   verifyRequiredChecks,
   verifyReviewerPermission,
@@ -43,6 +46,10 @@ import { collectVerifiedSnapshot } from '../lib/trusted-host-merge-executor.mjs'
 
 const contract = JSON.parse(await readFile(
   new URL('../../agent-contracts/trusted-host-merge.contract.json', import.meta.url),
+  'utf8',
+))
+const verificationManifest = JSON.parse(await readFile(
+  new URL('../../scripts/verification-manifest.json', import.meta.url),
   'utf8',
 ))
 const HEAD = 'a'.repeat(40)
@@ -116,6 +123,8 @@ const checkSources = [
   },
 ]
 
+const verificationTargetSources = structuredClone(checkSources)
+
 const verificationPlan = ({ rootRequired = true, governanceRequired = true } = {}) => ({
   schema_version: 'verification-plan/v2',
   manifest_version: 'verification-manifest/v2',
@@ -129,12 +138,12 @@ const verificationPlan = ({ rootRequired = true, governanceRequired = true } = {
     {
       id: 'root-contracts', required: rootRequired,
       reason: rootRequired ? 'affected_path' : 'path_not_affected',
-      ci_job: 'root contracts and fakes',
+      ci_job: 'ci/root',
     },
     {
       id: 'agent-governance', required: governanceRequired,
       reason: governanceRequired ? 'affected_path' : 'path_not_affected',
-      ci_job: 'agent-governance',
+      ci_job: 'governance/review',
     },
   ],
 })
@@ -355,6 +364,8 @@ test('NUL parser preserves both rename paths for elevated classification', () =>
   for (const path of [
     '.agents/skills/reviewer/SKILL.md',
     'agent-contracts/spec-to-done.contract.json',
+    '.gitattributes',
+    'web-viewer-sample/.gitattributes',
   ]) {
     assert.equal(classifyElevatedPaths([{ status: 'M', path }]).elevated, true)
   }
@@ -370,6 +381,17 @@ test('NUL numstat rejects binary candidates before arbiter evidence is built', (
   expectHold('scope_drift', () => rejectBinaryDiff(binary))
   expectHold('scope_drift', () => parseNumstatZ(`-\t0\tscripts/malformed.bin\0`))
   expectHold('scope_drift', () => parseNumstatZ(`1\t0\t../escape\0`))
+
+  const valid = Buffer.from('+const label = "�"\n', 'utf8')
+  assert.equal(decodeLosslessGitDiff(valid), valid.toString('utf8'))
+  assert.throws(() => decodeLosslessGitDiff(Buffer.from([0x2b, 0x00, 0x0a])), (error) => (
+    error instanceof TrustedMergeHold && error.reason === 'scope_drift' &&
+    error.detail === 'binary_diff_forbidden'
+  ))
+  assert.throws(() => decodeLosslessGitDiff(Buffer.from([0x2b, 0xff, 0x0a])), (error) => (
+    error instanceof TrustedMergeHold && error.reason === 'scope_drift' &&
+    error.detail === 'non_utf8_diff_forbidden'
+  ))
 })
 
 test('raw git modes reject gitlinks and other opaque candidate objects', () => {
@@ -377,9 +399,17 @@ test('raw git modes reject gitlinks and other opaque candidate objects', () => {
   const oid = 'a'.repeat(40)
   const regular = parseRawDiffZ(`:000000 100644 ${zero} ${oid} A\0scripts/text.mjs\0`)
   assert.deepEqual(regular, [{
-    oldMode: '000000', newMode: '100644', status: 'A', path: 'scripts/text.mjs',
+    oldMode: '000000', newMode: '100644', oldOid: zero, newOid: oid,
+    status: 'A', path: 'scripts/text.mjs',
   }])
   rejectOpaqueGitModes(regular)
+  assert.doesNotThrow(() => verifyInspectableGitBlobs(regular, () => Buffer.from('text\n')))
+  assert.throws(() => verifyInspectableGitBlobs(regular, () => Buffer.from([0x00, 0x41])), (error) => (
+    error instanceof TrustedMergeHold && error.detail === 'binary_diff_forbidden'
+  ))
+  assert.throws(() => verifyInspectableGitBlobs(regular, () => Buffer.from([0xff, 0x41])), (error) => (
+    error instanceof TrustedMergeHold && error.detail === 'non_utf8_diff_forbidden'
+  ))
   for (const mode of ['120000', '160000']) {
     const opaque = parseRawDiffZ(`:000000 ${mode} ${zero} ${oid} A\0scripts/opaque\0`)
     expectHold('scope_drift', () => rejectOpaqueGitModes(opaque))
@@ -408,6 +438,58 @@ test('Linux git raw output exposes a real gitlink to the opaque-mode guard', {
     git('update-index', '--add', '--cacheinfo', `160000,${commit},scripts/opaque-dependency`)
     const raw = git('diff', '--cached', '--raw', '--no-abbrev', '--no-renames', '-z', 'HEAD')
     expectHold('scope_drift', () => rejectOpaqueGitModes(parseRawDiffZ(raw)))
+  } finally {
+    await rm(fixture, { recursive: true, force: true })
+  }
+})
+
+test('lossless blob guard rejects base-owned attributes that force opaque bytes to text', async () => {
+  const fixture = await mkdtemp(join(tmpdir(), 'trusted-merge-attributes-'))
+  const gitExecutable = process.platform === 'win32' ? 'git.exe' : '/usr/bin/git'
+  const git = (...args) => {
+    const result = spawnSync(gitExecutable, args, { cwd: fixture, encoding: 'buffer' })
+    assert.equal(result.status, 0, result.stderr?.toString('utf8'))
+    return result.stdout
+  }
+  try {
+    git('init', '--quiet')
+    git('config', 'user.email', 'trusted-host@example.invalid')
+    git('config', 'user.name', 'Trusted Host Test')
+    await writeFile(join(fixture, '.gitattributes'), '*.bin diff\n')
+    const baseLines = Array.from({ length: 24 }, (_, index) => `line-${index}\n`)
+    await writeFile(join(fixture, 'payload.bin'), Buffer.concat([
+      Buffer.from([0x00]),
+      Buffer.from(baseLines.join(''), 'utf8'),
+    ]))
+    git('add', '.gitattributes', 'payload.bin')
+    git('commit', '--quiet', '-m', 'base')
+    const base = git('rev-parse', 'HEAD').toString('utf8').trim()
+    const headLines = [...baseLines]
+    headLines[18] = 'line-18-changed\n'
+    await writeFile(join(fixture, 'payload.bin'), Buffer.concat([
+      Buffer.from([0x00]),
+      Buffer.from(headLines.join(''), 'utf8'),
+    ]))
+    git('add', 'payload.bin')
+    git('commit', '--quiet', '-m', 'opaque payload')
+    const head = git('rev-parse', 'HEAD').toString('utf8').trim()
+    const range = `${base}...${head}`
+    const numstat = parseNumstatZ(git(
+      'diff', '--no-ext-diff', '--no-textconv', '--no-renames', '--numstat', '-z', range,
+    ))
+    assert.equal(numstat[0].binary, false)
+    assert.doesNotThrow(() => rejectBinaryDiff(numstat))
+    assert.doesNotThrow(() => decodeLosslessGitDiff(git(
+      'diff', '--no-ext-diff', '--no-textconv', '--no-renames', range,
+    )))
+    const rawEntries = parseRawDiffZ(git(
+      'diff', '--raw', '--no-abbrev', '--no-renames', '-z', range,
+    ))
+    assert.throws(() => verifyInspectableGitBlobs(rawEntries, (oid) => git(
+      'cat-file', 'blob', oid,
+    )), (error) => (
+      error instanceof TrustedMergeHold && error.detail === 'binary_diff_forbidden'
+    ))
   } finally {
     await rm(fixture, { recursive: true, force: true })
   }
@@ -505,7 +587,7 @@ test('PR, code-owner approval, reviewer permission, and App-pinned checks are ex
   ], [
     workflowRun({ id: 2000, checkSuiteId: 1000, path: '.github/workflows/ci.yml' }),
     workflowRun({ id: 2001, checkSuiteId: 1001, path: '.github/workflows/agent-governance.yml' }),
-  ], snapshot, invocation, verificationPlan())
+  ], snapshot, invocation, verificationPlan(), verificationTargetSources)
 
   expectHold('pr_identity_not_ready', () => verifyPullRequestIdentity({ ...pr(invocation), draft: true }, invocation))
   for (const branch of ['revert-bad-release', 'release/2026.08', 'release-2026.08', 'hotfix/urgent', 'hotfix-urgent']) {
@@ -524,7 +606,7 @@ test('PR, code-owner approval, reviewer permission, and App-pinned checks are ex
       checkSuiteId: 1000, workflowRunId: 2000,
     }),
   ], [workflowRun({ id: 2000, checkSuiteId: 1000, path: '.github/workflows/ci.yml' })],
-  snapshot, invocation, verificationPlan()))
+  snapshot, invocation, verificationPlan(), verificationTargetSources))
 
   const stablePr = bindVerifiedPullRequestIdentity(pr(invocation))
   const volatile = pr(invocation)
@@ -572,14 +654,14 @@ test('trusted-base verification plan prevents skipped checks from covering execu
       executed,
       rootRun(10, 'completed', 'skipped'),
       governanceSuccess,
-    ], workflowRuns, snapshot, invocation, verificationPlan()))
+    ], workflowRuns, snapshot, invocation, verificationPlan(), verificationTargetSources))
   }
 
   const priorSuccess = verifyRequiredChecks([
     rootRun(9, 'completed', 'success'),
     rootRun(10, 'completed', 'skipped'),
     governanceSuccess,
-  ], workflowRuns, snapshot, invocation, verificationPlan())
+  ], workflowRuns, snapshot, invocation, verificationPlan(), verificationTargetSources)
   assert.equal(priorSuccess.find((item) => item.context === 'ci/root').runId, 9)
 
   const rerunSuccess = verifyRequiredChecks([
@@ -587,18 +669,18 @@ test('trusted-base verification plan prevents skipped checks from covering execu
     rootRun(10, 'completed', 'skipped'),
     rootRun(11, 'completed', 'success'),
     governanceSuccess,
-  ], workflowRuns, snapshot, invocation, verificationPlan())
+  ], workflowRuns, snapshot, invocation, verificationPlan(), verificationTargetSources)
   assert.equal(rerunSuccess.find((item) => item.context === 'ci/root').runId, 11)
 
   expectHold('final_gate_not_clean', () => verifyRequiredChecks([
     rootRun(10, 'completed', 'skipped'),
     governanceSuccess,
-  ], workflowRuns, snapshot, invocation, verificationPlan()))
+  ], workflowRuns, snapshot, invocation, verificationPlan(), verificationTargetSources))
 
   const pathNotAffected = verifyRequiredChecks([
     rootRun(10, 'completed', 'skipped'),
     governanceSuccess,
-  ], workflowRuns, snapshot, invocation, verificationPlan({ rootRequired: false }))
+  ], workflowRuns, snapshot, invocation, verificationPlan({ rootRequired: false }), verificationTargetSources)
   assert.equal(pathNotAffected.find((item) => item.context === 'ci/root').targetRequired, false)
 
   const wrongWorkflow = workflowRuns.map((item) => (
@@ -607,12 +689,140 @@ test('trusted-base verification plan prevents skipped checks from covering execu
   expectHold('final_gate_read_failed', () => verifyRequiredChecks([
     rootRun(9, 'completed', 'success'),
     governanceSuccess,
-  ], wrongWorkflow, snapshot, invocation, verificationPlan()))
+  ], wrongWorkflow, snapshot, invocation, verificationPlan(), verificationTargetSources))
 
   expectHold('final_gate_read_failed', () => verifyRequiredChecks([
     rootRun(10, 'completed', 'success'),
     governanceSuccess,
-  ], workflowRuns, snapshot, invocation, { ...verificationPlan(), subject_sha: BASE }))
+  ], workflowRuns, snapshot, invocation, { ...verificationPlan(), subject_sha: BASE }, verificationTargetSources))
+})
+
+test('trusted target registry exactly covers every base-manifest verification target', () => {
+  const sourceByTarget = new Map(contract.executor.verification_target_sources.map((source) => (
+    [source.verification_target, source]
+  )))
+  assert.equal(sourceByTarget.size, verificationManifest.targets.length)
+  for (const target of verificationManifest.targets) {
+    const source = sourceByTarget.get(target.id)
+    assert.ok(source, `missing verification source for ${target.id}`)
+    assert.equal(source.context, target.ci_job)
+    assert.equal(source.app_id, 15368)
+    assert.equal(source.workflow_path, '.github/workflows/ci.yml')
+  }
+})
+
+test('actual full target registry verifies every target and shared check context', () => {
+  const invocation = prepareInvocation(rawInput(), context(), contract, NOW)
+  const liveProtection = protection()
+  liveProtection.required_status_checks.contexts = contract.executor.required_check_sources.map((source) => source.context)
+  liveProtection.required_status_checks.checks = contract.executor.required_check_sources.map((source) => ({
+    context: source.context,
+    app_id: source.app_id,
+  }))
+  const snapshot = verifyBranchProtection(liveProtection, contract.executor.required_check_sources)
+  const fullPlan = {
+    schema_version: 'verification-plan/v2',
+    manifest_version: 'verification-manifest/v2',
+    base_sha: BASE,
+    subject_sha: HEAD,
+    result: 'planned',
+    dispatch: 'full',
+    changed_paths: ['agent-contracts/trusted-host-merge.contract.json'],
+    unknown_paths: [],
+    targets: verificationManifest.targets.map((target) => ({
+      id: target.id,
+      required: true,
+      reason: 'full_dispatch_self_change',
+      ci_job: target.ci_job,
+    })),
+  }
+  const uniqueSources = [...new Map([
+    ...contract.executor.verification_target_sources,
+    ...contract.executor.required_check_sources,
+  ].map((source) => [
+    `${source.context}\0${source.app_id}\0${source.workflow_path}`,
+    source,
+  ])).values()]
+  const checkRuns = uniqueSources.map((source, index) => checkRun({
+    id: 100 + index,
+    name: source.context,
+    appId: source.app_id,
+    conclusion: 'success',
+    checkSuiteId: 1000 + index,
+    workflowRunId: 2000 + index,
+  }))
+  const workflowRuns = uniqueSources.map((source, index) => workflowRun({
+    id: 2000 + index,
+    checkSuiteId: 1000 + index,
+    path: source.workflow_path,
+  }))
+
+  const verified = verifyRequiredChecks(
+    checkRuns,
+    workflowRuns,
+    snapshot,
+    invocation,
+    fullPlan,
+    contract.executor.verification_target_sources,
+  )
+  assert.equal(verified.length, 16)
+  assert.equal(new Set(verified.map((item) => item.verificationTarget)).size, 15)
+  const viewerBindings = verified.filter((item) => (
+    item.verificationTarget === 'viewer' || item.verificationTarget === 'viewer-session'
+  ))
+  assert.equal(viewerBindings.length, 2)
+  assert.equal(viewerBindings[0].runId, viewerBindings[1].runId)
+  assert.deepEqual(
+    verified.filter((item) => item.verificationTarget === 'agent-governance').map((item) => item.context).sort(),
+    ['agent governance contracts', 'agent-governance'],
+  )
+})
+
+test('required verification targets cannot be omitted or hidden by a newer skipped run', () => {
+  const invocation = prepareInvocation(rawInput(), context(), contract, NOW)
+  const snapshot = verifyBranchProtection(protection(), checkSources)
+  const fullPlan = verificationPlan()
+  fullPlan.targets.push({
+    id: 'functional-runtime-conv', required: true,
+    reason: 'full_dispatch_self_change', ci_job: 'functional-runtime-conv',
+  })
+  const rootSuccess = checkRun({
+    id: 10, name: 'ci/root', appId: 100, conclusion: 'success',
+    checkSuiteId: 1010, workflowRunId: 2010,
+  })
+  const governanceSuccess = checkRun({
+    id: 11, name: 'governance/review', appId: 200, conclusion: 'success',
+    checkSuiteId: 1011, workflowRunId: 2011,
+  })
+  const baseRuns = [
+    workflowRun({ id: 2010, checkSuiteId: 1010, path: '.github/workflows/ci.yml' }),
+    workflowRun({ id: 2011, checkSuiteId: 1011, path: '.github/workflows/agent-governance.yml' }),
+  ]
+  assert.throws(() => verifyRequiredChecks(
+    [rootSuccess, governanceSuccess], baseRuns, snapshot, invocation, fullPlan,
+    verificationTargetSources,
+  ), (error) => (
+    error instanceof TrustedMergeHold && error.reason === 'final_gate_read_failed' &&
+    error.detail === 'verification_target_source_coverage_invalid'
+  ))
+
+  const extendedSources = verificationTargetSources.concat({
+    context: 'functional-runtime-conv', app_id: 300,
+    verification_target: 'functional-runtime-conv', workflow_path: '.github/workflows/ci.yml',
+  })
+  const functionalRun = (id, conclusion) => checkRun({
+    id, name: 'functional-runtime-conv', appId: 300, conclusion,
+    checkSuiteId: 1100 + id, workflowRunId: 2100 + id,
+  })
+  const extendedRuns = baseRuns.concat([20, 21].map((id) => workflowRun({
+    id: 2100 + id, checkSuiteId: 1100 + id, path: '.github/workflows/ci.yml',
+  })))
+  expectHold('final_gate_not_clean', () => verifyRequiredChecks([
+    rootSuccess,
+    governanceSuccess,
+    functionalRun(20, 'failure'),
+    functionalRun(21, 'skipped'),
+  ], extendedRuns, snapshot, invocation, fullPlan, extendedSources))
 })
 
 test('production snapshot collector binds Actions check runs to exact workflow provenance', async () => {
@@ -620,6 +830,7 @@ test('production snapshot collector binds Actions check runs to exact workflow p
   const assertion = buildBrokerAssertion(invocation, contract)
   const snapshotContract = structuredClone(contract)
   snapshotContract.executor.required_check_sources = structuredClone(checkSources)
+  snapshotContract.executor.verification_target_sources = structuredClone(verificationTargetSources)
   const checkRuns = [
     checkRun({
       id: 10, name: 'ci/root', appId: 100, conclusion: 'success',
@@ -957,4 +1168,9 @@ test('apex verdict must echo every immutable approval field before merge', () =>
   assert.equal(mergeOutcomeUnverifiedResult(invocation, 'unreadable').merged, null)
   assert.equal(mergedResult(invocation, 'c'.repeat(40)).status, 'merged')
   assert.equal(mergedResult(invocation, 'c'.repeat(40), 'fetch_failed').status, 'merged_but_closeout_held')
+
+  assert.equal(terminalResultExitCode(mergedResult(invocation, 'c'.repeat(40))), 0)
+  assert.equal(terminalResultExitCode(heldResult(invocation, 'host_env_blocked', 'test')), 2)
+  assert.equal(terminalResultExitCode(mergedResult(invocation, 'c'.repeat(40), 'fetch_failed')), 2)
+  assert.equal(terminalResultExitCode(mergeOutcomeUnverifiedResult(invocation, 'unreadable')), 2)
 })

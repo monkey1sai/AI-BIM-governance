@@ -828,10 +828,19 @@ try {
         'secret pattern scan:15368:secret-pattern-scan:.github/workflows/ci.yml'
     ) -join '|'
     Assert-True ($trustedMergeCheckSourceSignature -ceq $expectedTrustedMergeCheckSourceSignature) 'trusted merge contract pins every live required check to exact App, trusted verification target, and workflow path'
+    $trustedMergeTargetSources = @($trustedMergeContract.executor.verification_target_sources)
+    $verificationManifestTargets = @($verificationManifest.targets)
+    Assert-True ($trustedMergeTargetSources.Count -eq $verificationManifestTargets.Count) 'trusted merge target-source registry covers every base-owned manifest target'
+    foreach ($verificationTarget in $verificationManifestTargets) {
+        $matchingSources = @($trustedMergeTargetSources | Where-Object { $_.verification_target -ceq $verificationTarget.id })
+        Assert-True ($matchingSources.Count -eq 1) "trusted merge target-source registry has exactly one source for $($verificationTarget.id)"
+        Assert-True ($matchingSources[0].context -ceq $verificationTarget.ci_job) "trusted merge target-source context matches manifest ci_job for $($verificationTarget.id)"
+        Assert-True ($matchingSources[0].app_id -eq 15368 -and $matchingSources[0].workflow_path -ceq '.github/workflows/ci.yml') "trusted merge target source pins the Actions App and CI workflow for $($verificationTarget.id)"
+    }
     $trustedMergeMechanismPolicy = $trustedMergeContract.executor.required_check_trust_boundary
     Assert-True ($trustedMergeMechanismPolicy.candidate_mechanism_change -ceq 'separate_authorization') 'candidate verification-mechanism changes require separate authorization'
     Assert-True ($trustedMergeMechanismPolicy.base_owned_manifest_path -ceq 'scripts/verification-manifest.json') 'trusted merge computes plans from the base-owned manifest'
-    foreach ($mechanismProbe in @('.github/workflows/ci.yml', 'scripts/tests/test-agent-governance-check.ps1', 'bim-review-coordinator/package.json', 'pytest.py')) {
+    foreach ($mechanismProbe in @('.github/workflows/ci.yml', 'scripts/tests/test-agent-governance-check.ps1', 'bim-review-coordinator/package.json', 'pytest.py', '.gitattributes', 'web-viewer-sample/.gitattributes')) {
         $matches = @($trustedMergeMechanismPolicy.mechanism_path_patterns | Where-Object {
             [regex]::IsMatch($mechanismProbe, [string]$_, [System.Text.RegularExpressions.RegexOptions]::CultureInvariant)
         })
