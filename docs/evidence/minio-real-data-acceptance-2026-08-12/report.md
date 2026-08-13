@@ -22,7 +22,7 @@
 10. **RVT 邊界（B 方案）觀測**：bucket 內 RVT bundle（`model.rvt`＋elements.json/schedule.csv/geometries_chunks 等）與 `model.ifc` 同版本資料夾共存，抽驗之轉檔紀錄所在資料夾同時存在 `model.rvt`。（該 IFC「由該 RVT 衍生」屬推論，見 Inferences——derivation 權威在外部雲，附件無 worker handoff 紀錄可稽。）
 11. **RVT 邊界反向（負向測試）**：RVT-only 專案（`愛臻邸PPMS測試`、`東勢區許良宇紀念圖書館`——只有 `model.rvt`、無 `model.ifc`）**未**出現在 ConversionLedger；ledger 內無任何 `.rvt` key；watcher 未對 RVT 物件觸發 intake。data-plane 不越權、不假轉。
 12. **同行程冪等**：watcher 連續 8 輪 poll（`poll_count=8`），`seen_count=12`、`triggered_total` 維持 12——同一 watcher 行程內（in-memory seen 快取）不重複觸發、不重複建 job。
-13. **跨行程冪等（2026-08-13 補測，coordinator force-recreate 後首輪 tick 實測）**：重觸發 12 筆 intake POST（`triggered_total=12`），但 **streaming 端 job 數維持 12、零重轉**（新 ledger record `detected_at=2026-08-13T04:16` 綁回既有 job `stream_conv_20260812124112_…`）。同時暴露部署接線事實：coordinator 的 **conversion-ledger** store 預設落在容器內非掛載路徑（`<cwd>/data/conversion-ledger.json`、compose 未以 env 覆寫），**recreate 即蒸發**——`isLedgered` 水印因此在 recreate 後全 miss，最終擋住重轉的是 host-native streaming 的 request-fingerprint 冪等（三層去重的最深層）。已立案 issue #531。（更正 2026-08-13：callback-outbox **不**受此影響——`compose.runtime-manager.yml` 已設 `CALLBACK_OUTBOX_STORE_PATH=/workspace/storage/coordinator/callback-outbox.json` 且 `/workspace/storage` 為掛載 volume，recreate 可存活；初版報告誤把 outbox 一併列入，經 review 指正後以 compose 原文查證更正。outbox 的這套 env＋volume 接線正是 #531 修 ledger 的現成範本。）
+13. **跨行程冪等（2026-08-13 補測，coordinator force-recreate 後首輪 tick 實測）**：重觸發 12 筆 intake POST（`triggered_total=12`），但 **streaming 端 job 數維持 12、零重轉**（新 ledger record `detected_at=2026-08-13T04:16` 綁回既有 job `stream_conv_20260812124112_…`）。同時暴露部署接線事實：coordinator 的 **conversion-ledger** store 預設落在容器內非掛載路徑（`<cwd>/data/conversion-ledger.json`、compose 未以 env 覆寫），**recreate 即蒸發**——`isLedgered` 水印因此在 recreate 後全 miss，最終擋住重轉的是 host-native streaming 的 request-fingerprint 冪等（三層去重的最深層）。獨立佐證＝附件 `runtime-snapshot-rerun-2026-08-13.json`（recreate 後現場快照：12 筆 record 全列、8/13 detected_at 綁 8/12 job id、streaming 仍 12 job）。已立案 issue #531。（更正 2026-08-13：callback-outbox **不**受此影響——`compose.runtime-manager.yml` 已設 `CALLBACK_OUTBOX_STORE_PATH=/workspace/storage/coordinator/callback-outbox.json` 且 `/workspace/storage` 為掛載 volume，recreate 可存活；初版報告誤把 outbox 一併列入，經 review 指正後以 compose 原文查證更正。outbox 的這套 env＋volume 接線正是 #531 修 ledger 的現成範本。）
 14. **bucket census（資料夾視圖 BFS，各 root 上限 400 物件抽樣）**：頂層 7 資料夾；抽樣所見 16 個 `model.rvt`、10 個 `model.ifc`（watcher 全量 flat 權威計數為 12 個規約 `model.ifc`）；全 bucket flat list 總數 1680 物件。
 
 ## Inferences（由事實推得）
@@ -50,4 +50,5 @@
 ## 附件
 
 - `runtime-snapshot.json` — watch status／conversion records／streaming jobs 終態快照（redacted：host 遮蔽、UUID 截斷；`idempotency_key` 完整保留作為 `(bucket, key, etag)` 不可變身分綁定）
+- `runtime-snapshot-rerun-2026-08-13.json` — 8/13 force-recreate 後 rerun 態快照（跨行程冪等的獨立佐證；records ?limit=100 全列）
 - `element-mapping-sample.json` — 抽驗 mapping 的 provenance／fake 旗標／彙總＋2 筆去識別樣本＋quality_metrics 數值彙總（原始列撤下，完整資料在部署主機 artifact）
