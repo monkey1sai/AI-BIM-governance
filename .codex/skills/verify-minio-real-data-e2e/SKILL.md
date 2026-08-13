@@ -16,7 +16,7 @@ This skill verifies current behavior. Old reports, snapshots, PR comments, and g
 ## 0. Non-negotiable boundaries
 
 - Treat the MinIO bucket and its metadata as production data. Only list and read through approved runtime APIs; never upload, delete, rename, force-retrigger, or otherwise mutate bucket objects.
-- Credential values and identities remain owner-private. Do not open or parse `.env*`, presigned credential fields, access-key IDs, secret keys, authorization headers, or private inventory values.
+- Credential values and identities remain owner-private. Do not open or parse `.env*`, presigned credential fields, access-key IDs, secret keys, or authorization headers. The sole inventory exception is the governed `Get-DeployTarget` resolver used by the read-only `deploy-linux-test-environment` preflight: pass it an owner-approved inventory path without reading the file, keep its returned target object in protected memory, and never enumerate, serialize, print, persist, or expose its private values.
 - Do not print or commit host/user values, private endpoints, deploy roots, runtime-data roots, bucket object keys, or raw URLs.
 - A read-only acceptance never resets, rebuilds, restarts, recreates, or stops a service. If deployment mutation is needed, stop as `HELD`; only a separate explicit deploy/rebuild request may invoke `deploy-linux-test-environment`.
 - If `CONVERSION_LEDGER_STORE_PATH` is unknown or not proven durable, the whole acceptance is `HELD`. A snapshot is evidence, not a restore mechanism.
@@ -25,7 +25,7 @@ This skill verifies current behavior. Old reports, snapshots, PR comments, and g
 
 ## 1. Read-only target preflight
 
-Load `deploy-linux-test-environment` and follow only its read-only readiness/status path. It owns owner-inventory validation, target identity, SSH connection, private-root checks, and output redaction.
+Load `deploy-linux-test-environment` and follow only its read-only readiness/status path. It owns owner-inventory validation, target identity, SSH connection, private-root checks, and output redaction. Only its reviewed `Get-DeployTarget -Canonical -InventoryPath <owner-approved-path>` call may parse the inventory; this skill must not inspect the inventory before or after that call or substitute another parser.
 
 Through the validated connection:
 
@@ -62,11 +62,18 @@ After an owner change, stop. A separate explicit rebuild request must run the fu
 
 ## 3. Read-only acceptance checks
 
-Collect live responses into protected local temporary evidence, then compute only the following reportable aggregates:
+Collect live responses into protected local temporary evidence. Before computing any aggregate, build the current MinIO scope inside that protected boundary:
+
+1. Read the current object listing from `GET /api/minio/objects` using the watcher-reported prefix. Select only `role=source_ifc` rows with a nonempty `idempotency_key` and complete non-null derived project/category/version fields; those fields prove the row matched the active watcher's exact prefix/suffix intake shape. Retain object keys and identifiers only in protected memory.
+2. Join `GET /api/conversion/records` by those exact idempotency keys. Any duplicate key, missing record, or record outside the current listing must not enter the accepted lineage; a missing or duplicate in-scope join is `HELD`.
+3. Derive the in-scope streaming conversion-job set only from the joined ledger records' nonempty `conversion_job_id` values. Query or filter streaming results by that set; never aggregate the unfiltered global conversion collection.
+4. Apply this same scoped key/job set to both observations in every same-process or cross-process comparison. If the listing or a required joined surface is truncated or non-exhaustive, the acceptance is `HELD`.
+
+The words `total`, `histogram`, `set`, and `count` below always mean this MinIO-scoped subset, never the complete coordinator ledger or streaming service. Compute only the following reportable aggregates:
 
 1. Watcher state: enabled boolean, error-present boolean, poll-count advancement boolean, baseline/seen/triggered counts, malformed count.
-2. Coordinator ledger: total count, terminal-state histogram, records-with-job count, and missing-link count.
-3. Streaming conversions: total count, terminal-state histogram, and failed-job count.
+2. Coordinator ledger: in-scope total count, terminal-state histogram, records-with-job count, and missing-link count.
+3. Streaming conversions: in-scope total count, terminal-state histogram, and failed-job count.
 4. Cross-surface consistency: record count versus expected watch count, unique job-link count, missing/duplicate linkage counts. Any nonzero missing or duplicate linkage count is `HELD`.
 5. Same-process idempotency: poll count advances while the protected seen-object, triggered-object, and conversion-job identifier sets remain exactly stable. Stable totals without stable set membership are insufficient. Persist only aggregate equality booleans and counts.
 6. Cross-process idempotency, only when an already-authorized external operation produced two observations and protected evidence binds each observation to a distinct coordinator process creation identity. Compare stable identifiers in protected memory, then retain only `same_job_set=true|false`, before/after counts, and duplicate/new-job counts. Without verified process-instance change evidence, report this check as `unverified`; do not persist identities, identifiers, or a reusable mapping.
