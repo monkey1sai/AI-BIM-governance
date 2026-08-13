@@ -108,13 +108,28 @@ describe("ExternalIfcReadyStore 持久化（S2，env opt-in）", () => {
         },
         binding: restartBinding,
       },
+      {
+        event: { ...freshEvent, requested_outputs: ["usdc"] },
+        binding: restartBinding,
+      },
+      {
+        event: { ...freshEvent, external_conversion_task_id: "task_b" },
+        binding: restartBinding,
+      },
+      {
+        event: {
+          ...freshEvent,
+          source_ifc: { ...freshEvent.source_ifc, filename: "other.ifc" },
+        },
+        binding: restartBinding,
+      },
     ];
     for (const attempt of mismatchedAttempts) {
       expect(afterRestart.resumeRestartInterruptedDownload(
         interrupted.ifc_ready_job_id,
         attempt.event,
         attempt.binding,
-      )).toBeUndefined();
+      ).kind).toBe("binding_mismatch");
     }
     expect(afterRestart.get(interrupted.ifc_ready_job_id)?.download_status).toBe("failed");
     expect(afterRestart.get(interrupted.ifc_ready_job_id)?.source_ifc_ref).toBe(event.source_ifc.ref);
@@ -124,10 +139,12 @@ describe("ExternalIfcReadyStore 持久化（S2，env opt-in）", () => {
       freshEvent,
       restartBinding,
     );
-    expect(resumed?.ifc_ready_job_id).toBe(interrupted.ifc_ready_job_id);
-    expect(resumed?.download_status).toBe("downloading");
-    expect(resumed?.download_failure).toBeNull();
-    expect(resumed?.source_ifc_ref).toBe(
+    expect(resumed.kind).toBe("resumed");
+    if (resumed.kind !== "resumed") throw new Error("expected restart download to resume");
+    expect(resumed.job.ifc_ready_job_id).toBe(interrupted.ifc_ready_job_id);
+    expect(resumed.job.download_status).toBe("downloading");
+    expect(resumed.job.download_failure).toBeNull();
+    expect(resumed.job.source_ifc_ref).toBe(
       "http://minio.local/bucket/model.ifc?X-Amz-Signature=fresh",
     );
 
@@ -148,7 +165,7 @@ describe("ExternalIfcReadyStore 持久化（S2，env opt-in）", () => {
         idempotencyKey: "idem_permanent_download",
         correlationId: "corr_permanent_download",
       },
-    )).toBeUndefined();
+    ).kind).toBe("not_resumable");
     expect(closed.get(permanent.ifc_ready_job_id)?.download_status).toBe("failed");
   });
 
@@ -163,5 +180,20 @@ describe("ExternalIfcReadyStore 持久化（S2，env opt-in）", () => {
     const s = new ExternalIfcReadyStore();
     const job = s.create(event, { ...binding, idempotencyKey: "idem_v", correlationId: "corr_v" });
     expect(s.get(job.ifc_ready_job_id)).toBeDefined();
+    expect(s.isPersistent()).toBe(false);
+  });
+
+  it("明示持久路徑時 store 回報 persisted capability", () => {
+    const s = new ExternalIfcReadyStore(path.join(tmpRoot, "durability.json"));
+    s.create(event, { ...binding, idempotencyKey: "idem_p", correlationId: "corr_p" });
+    expect(s.isPersistent()).toBe(true);
+  });
+
+  it("持久寫入失敗時誠實回報 volatile", () => {
+    const blockingParent = path.join(tmpRoot, "not-a-directory");
+    fs.writeFileSync(blockingParent, "fixture");
+    const s = new ExternalIfcReadyStore(path.join(blockingParent, "durability.json"));
+    s.create(event, { ...binding, idempotencyKey: "idem_failed", correlationId: "corr_failed" });
+    expect(s.isPersistent()).toBe(false);
   });
 });

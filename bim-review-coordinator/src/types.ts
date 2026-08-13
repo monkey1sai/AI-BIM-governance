@@ -252,6 +252,10 @@ export interface IfcReadyIntakeJob {
   external_conversion_task_id?: string | null;
   source_ifc_ref: string;
   source_ifc_etag: string;
+  // Internal-only immutable digest for restart-interrupted download recovery.
+  // It freezes conversion-affecting event fields while allowing a renewed
+  // presigned capability for the same stable source identity.
+  restart_recovery_binding_sha256?: string | null;
   callback_url?: string | null;
   conversion_job_id: string | null;
   conversion_status: string | null;

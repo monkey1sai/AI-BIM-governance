@@ -17,6 +17,7 @@ export interface RuntimeStatusInput {
   startedAt: number;
   sessions: ReviewSession[];
   ifcReadyJobs: IfcReadyIntakeJob[];
+  ifcReadyDataVolatility?: "persisted" | "in_memory_volatile";
   viewerLeasesBySession?: (sessionId: string) => PublicViewerLease[];
 }
 export function buildRuntimeStatus(input: RuntimeStatusInput): Record<string, unknown> {
@@ -83,7 +84,12 @@ export function buildRuntimeStatus(input: RuntimeStatusInput): Record<string, un
         .slice(0, 10)
         .map((job) => {
           const session = input.sessions.find((item) => item.session_id === job.review_session_id) ?? null;
-          return summarizeIfcReadyJob(job, session, job.artifact_health ?? session?.artifact_health ?? null);
+          return summarizeIfcReadyJob(
+            job,
+            session,
+            job.artifact_health ?? session?.artifact_health ?? null,
+            input.ifcReadyDataVolatility,
+          );
         }),
     },
     observations: {
@@ -196,6 +202,7 @@ export function summarizeIfcReadyJob(
   job: IfcReadyIntakeJob,
   session: ReviewSession | null,
   artifactHealth: ArtifactHealthSnapshot | null = null,
+  dataVolatility: "persisted" | "in_memory_volatile" = "in_memory_volatile",
 ): Record<string, unknown> {
   const expectedStage = session ? expectedStageBinding(session) : null;
   const lifecycle = deriveLifecycleStatus(job);
@@ -240,8 +247,7 @@ export function summarizeIfcReadyJob(
     // 禁用 lifecycle==="ready" 假報 parsed_usdc：真實轉檔完成時 conversion_status→ready 會令 lifecycle→ready,
     // 但 job 端仍無 usdc_key,依 spec §6.3/AC8「禁假 parsed USDC」必須維持 pending（這正是 must_fix 要防的假 ready、且與 ledger 端 r.usdc_key!=null 才顯 parsed 對齊）。
     usdc_role: "pending" as const,
-    // 誠實：job 端為 in-memory store（重啟即清）;對帳真相以持久 ledger 為準。
-    data_volatility: "in_memory_volatile" as const,
+    data_volatility: dataVolatility,
     created_at: job.created_at,
     updated_at: job.updated_at,
   };

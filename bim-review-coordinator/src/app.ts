@@ -601,6 +601,9 @@ export function createCoordinatorApp(
     });
   const store = new SessionStore(config.sessionStoreDir);
   const externalIfcReadyStore = new ExternalIfcReadyStore();
+  const currentIfcReadyDataVolatility = () => externalIfcReadyStore.isPersistent()
+    ? "persisted" as const
+    : "in_memory_volatile" as const;
   const sessionTraceResolver = new SessionTraceResolver(store, (sessionId) =>
     externalIfcReadyStore
       .list()
@@ -1120,6 +1123,7 @@ export function createCoordinatorApp(
       startedAt,
       sessions: store.list(),
       ifcReadyJobs,
+      ifcReadyDataVolatility: currentIfcReadyDataVolatility(),
       viewerLeasesBySession: (sessionId) => viewerLeaseStore.list(sessionId).map((lease) => publicLease(lease)),
     }));
   });
@@ -2086,7 +2090,9 @@ export function createCoordinatorApp(
       }
       if (acceptResult.kind === "conflict") {
         response.status(409).json({
-          detail: "IFC source conflicts with the existing idempotent job.",
+          detail: acceptResult.reason === "source_ifc_ref_mismatch"
+            ? "IFC source conflicts with the existing idempotent job."
+            : "IFC intake binding conflicts with the existing idempotent job.",
           ifc_ready_job_id: acceptResult.ifc_ready_job_id,
           reason: acceptResult.reason,
         });
@@ -2122,7 +2128,12 @@ export function createCoordinatorApp(
       count: jobs.length,
       items: jobs.slice(0, limit).map((job) => {
         const session = store.get(job.review_session_id || "");
-        return summarizeIfcReadyJob(job, session, publicArtifactHealthForJob(job, session));
+        return summarizeIfcReadyJob(
+          job,
+          session,
+          publicArtifactHealthForJob(job, session),
+          currentIfcReadyDataVolatility(),
+        );
       }),
     });
   });
@@ -2399,7 +2410,7 @@ export function createCoordinatorApp(
         ...deriveFailure(job),
         recovery_action: deriveConversionRecoveryAction(job),
         usdc_role: "pending" as const, // 同 summarizeIfcReadyJob：job 端無 usdc_key,依 spec §4.6/§6.3 恆 pending（禁 lifecycle 假報 parsed）
-        data_volatility: "in_memory_volatile" as const,
+        data_volatility: currentIfcReadyDataVolatility(),
       });
     } catch (error) {
       next(error);
@@ -4125,6 +4136,7 @@ function sanitizeJobForExternal(job: IfcReadyIntakeJob): IfcReadyIntakeJob {
   delete (rest as { host_local_path?: string | null }).host_local_path;
   delete (rest as { terminal_observer_snapshot?: unknown }).terminal_observer_snapshot;
   delete (rest as { terminal_observer_completed_at?: string | null }).terminal_observer_completed_at;
+  delete (rest as { restart_recovery_binding_sha256?: string | null }).restart_recovery_binding_sha256;
   return rest;
 }
 

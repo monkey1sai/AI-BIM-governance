@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
-import { maskPresignedRef } from "../src/services/presignedRef.js";
+import { maskPresignedRef, stableHttpRefIdentity } from "../src/services/presignedRef.js";
 import { createCoordinatorApp, type CoordinatorApp } from "../src/app.js";
 
 describe("maskPresignedRef", () => {
@@ -30,6 +30,27 @@ describe("maskPresignedRef", () => {
 
   it("空字串原樣返回", () => {
     expect(maskPresignedRef("")).toBe("");
+  });
+});
+
+describe("stableHttpRefIdentity", () => {
+  it("保留一般 object-selecting query，避免不同 IFC 被視為同一來源", () => {
+    expect(stableHttpRefIdentity("https://edge.example/download?key=A.ifc"))
+      .not.toBe(stableHttpRefIdentity("https://edge.example/download?key=B.ifc"));
+  });
+
+  it("同一 object query 只更新 X-Amz 簽章時 identity 穩定", () => {
+    const first = "https://edge.example/download?key=A.ifc&X-Amz-Date=20260814T000000Z&X-Amz-Signature=old";
+    const renewed = "https://edge.example/download?X-Amz-Signature=new&key=A.ifc&X-Amz-Date=20260814T010000Z";
+    expect(stableHttpRefIdentity(first)).toBe(stableHttpRefIdentity(renewed));
+    expect(stableHttpRefIdentity(first)).toBe("https://edge.example/download?key=A.ifc");
+  });
+
+  it("SigV2 capability parameters 可更新，但一般 query 仍屬 identity", () => {
+    const first = "https://edge.example/download?key=A.ifc&AWSAccessKeyId=owner&Expires=1&Signature=old";
+    const renewed = "https://edge.example/download?Signature=new&Expires=2&AWSAccessKeyId=owner&key=A.ifc";
+    expect(stableHttpRefIdentity(first)).toBe(stableHttpRefIdentity(renewed));
+    expect(stableHttpRefIdentity(first)).toBe("https://edge.example/download?key=A.ifc");
   });
 });
 

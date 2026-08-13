@@ -77,7 +77,7 @@ export type AcceptResult =
   | {
       kind: "conflict";
       ifc_ready_job_id: string;
-      reason: "source_ifc_ref_mismatch";
+      reason: "source_ifc_ref_mismatch" | "intake_binding_mismatch";
     }
   | {
       kind: "download_failed";
@@ -270,7 +270,7 @@ export class IfcReadyConversionPipeline<TTerminalObserverResult = void> {
           reason: "source_ifc_ref_mismatch",
         };
       }
-      const resumed =
+      const resumeResult =
         this.ledger.get(existing.idempotency_key) === null
           ? this.store.resumeRestartInterruptedDownload(
               existing.ifc_ready_job_id,
@@ -283,13 +283,20 @@ export class IfcReadyConversionPipeline<TTerminalObserverResult = void> {
                 externalModelVersionId: command.externalModelVersionId,
               },
             )
-          : undefined;
-      if (!resumed) {
+          : { kind: "not_resumable" as const };
+      if (resumeResult.kind === "binding_mismatch") {
+        return {
+          kind: "conflict",
+          ifc_ready_job_id: existing.ifc_ready_job_id,
+          reason: "intake_binding_mismatch",
+        };
+      }
+      if (resumeResult.kind === "not_resumable") {
         const replayed =
           this.store.markIdempotentReplay(existing.ifc_ready_job_id) ?? existing;
         return { kind: "replay", job: replayed };
       }
-      job = resumed;
+      job = resumeResult.job;
     } else {
       job = this.store.create(event, {
         correlationId: command.correlationId,

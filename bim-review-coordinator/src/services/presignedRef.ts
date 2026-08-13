@@ -20,16 +20,36 @@ export function maskPresignedRef(ref: string): string {
 }
 
 /**
- * Stable object identity for retry comparison. HTTP(S) presigned query and
- * fragment values are renewable capabilities, while origin + pathname name
- * the underlying object. Non-HTTP refs keep exact-string semantics.
+ * Stable object identity for retry comparison. Only recognized signing query
+ * parameters are renewable capabilities. Ordinary query parameters can select
+ * the underlying object (for example, `/download?key=model.ifc`) and therefore
+ * remain part of the identity. URL fragments are not sent to the server.
+ * Non-HTTP refs keep exact-string semantics.
  */
 export function stableHttpRefIdentity(ref: string): string {
   if (!ref) return ref;
   try {
     const url = new URL(ref);
     if (url.protocol !== "http:" && url.protocol !== "https:") return ref;
-    return `${url.origin}${url.pathname}`;
+    const keys = Array.from(url.searchParams.keys());
+    const lowerKeys = keys.map((key) => key.toLowerCase());
+    const hasSigV4 = lowerKeys.some((key) => key.startsWith("x-amz-"));
+    const hasSigV2 =
+      lowerKeys.includes("signature") &&
+      (lowerKeys.includes("awsaccesskeyid") || lowerKeys.includes("expires"));
+
+    for (const key of keys) {
+      const lower = key.toLowerCase();
+      if (
+        (hasSigV4 && lower.startsWith("x-amz-")) ||
+        (hasSigV2 && ["awsaccesskeyid", "signature", "expires"].includes(lower))
+      ) {
+        url.searchParams.delete(key);
+      }
+    }
+    url.searchParams.sort();
+    const stableQuery = url.searchParams.toString();
+    return `${url.origin}${url.pathname}${stableQuery ? `?${stableQuery}` : ""}`;
   } catch {
     return ref;
   }

@@ -204,8 +204,9 @@ describe("app.ts isLedgered 接線整合測試（review Important #2）", () => 
         project_display_name: "899",
         model_category: "main",
         external_model_version_id: "xxx",
+        external_conversion_task_id: "xxx_mw_e1",
         source_ifc: {
-          ref: `${s3Base}/bim-control/${key}?X-Amz-Signature=interrupted`,
+          ref: `${s3Base}/bim-control/${key}?X-Amz-Signature=interrupted&x-id=GetObject`,
           etag,
           filename: "model.ifc",
           format: "ifc",

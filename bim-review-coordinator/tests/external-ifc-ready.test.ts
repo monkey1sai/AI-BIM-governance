@@ -8,6 +8,8 @@ import request from "supertest";
 import { afterEach, describe, expect, it } from "vitest";
 import { createCoordinatorApp, type CoordinatorApp } from "../src/app.js";
 import type { CoordinatorConfig } from "../src/config.js";
+import { ExternalIfcReadyStore } from "../src/services/externalIfcReadyStore.js";
+import type { ExternalIfcReadyEvent } from "../src/types.js";
 
 // B-scheme（local-coordinator-ifc-ready-intake-boundary T3 §4.5）契約測試。
 // 契約權威 = repo-root tests/contracts/ifc_ready_payload.json（凍結契約，
@@ -861,6 +863,84 @@ describe("POST /api/external/ifc-ready (worker compatibility payload)", () => {
     expect(conflict.body.ifc_ready_job_id).toBe(first.body.ifc_ready_job_id);
     const persisted = app.externalIfcReadyStore.get(first.body.ifc_ready_job_id as string);
     expect(persisted?.source_ifc_ref).toBe("http://edge-internal.example/storage/demo-model.ifc");
+  });
+
+  it("restart recovery 改變 conversion options → 409，persistent projections 誠實回 persisted", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "bim-review-coordinator-recovery-binding-"));
+    const persistencePath = path.join(root, "external-ifc-ready.json");
+    const previousPath = process.env.EXTERNAL_IFC_READY_STORE_PATH;
+    const originalEvent = payload() as unknown as ExternalIfcReadyEvent;
+    const seedStore = new ExternalIfcReadyStore(persistencePath);
+    const seeded = seedStore.create(originalEvent, {
+      correlationId: "corr_test_001",
+      idempotencyKey: "idem_test_001",
+      tenantId: originalEvent.tenant_id,
+      projectId: originalEvent.project_id,
+      externalModelVersionId: originalEvent.external_model_version_id,
+    });
+    seedStore.markDownloading(seeded.ifc_ready_job_id);
+
+    process.env.EXTERNAL_IFC_READY_STORE_PATH = persistencePath;
+    try {
+      const app = makeApp();
+
+      const detail = await request(app.app).get(`/api/external/ifc-ready/${seeded.ifc_ready_job_id}`);
+      expect(detail.status).toBe(200);
+      expect(detail.body.data_volatility).toBe("persisted");
+      const listed = await request(app.app).get("/api/external/ifc-ready");
+      expect(listed.body.items[0]?.data_volatility).toBe("persisted");
+      const runtime = await request(app.app).get("/api/runtime/status");
+      expect(runtime.body.ifc_ready_jobs.recent[0]?.data_volatility).toBe("persisted");
+
+      const conflict = await request(app.app)
+        .post("/api/external/ifc-ready")
+        .set(authHeaders())
+        .send(payload({ requested_outputs: ["usdc"] }));
+      expect(conflict.status).toBe(409);
+      expect(conflict.body.reason).toBe("intake_binding_mismatch");
+      expect(conflict.body.ifc_ready_job_id).toBe(seeded.ifc_ready_job_id);
+      const preserved = app.externalIfcReadyStore.get(seeded.ifc_ready_job_id);
+      expect(preserved?.download_status).toBe("failed");
+      expect(preserved?.source_ifc_ref).toBe(originalEvent.source_ifc.ref);
+    } finally {
+      if (previousPath === undefined) {
+        delete process.env.EXTERNAL_IFC_READY_STORE_PATH;
+      } else {
+        process.env.EXTERNAL_IFC_READY_STORE_PATH = previousPath;
+      }
+    }
+  });
+
+  it("configured persistence 寫入失敗時 projections 回落 volatile", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "bim-review-coordinator-persistence-failure-"));
+    const blockingParent = path.join(root, "not-a-directory");
+    fs.writeFileSync(blockingParent, "fixture");
+    const previousPath = process.env.EXTERNAL_IFC_READY_STORE_PATH;
+    process.env.EXTERNAL_IFC_READY_STORE_PATH = path.join(blockingParent, "external-ifc-ready.json");
+    try {
+      const app = makeApp();
+      const accepted = await request(app.app)
+        .post("/api/external/ifc-ready")
+        .set(authHeaders({
+          "X-Correlation-Id": "corr_persistence_failure",
+          "X-Idempotency-Key": "idem_persistence_failure",
+        }))
+        .send(payload());
+      expect(accepted.status).toBe(202);
+
+      const detail = await request(app.app)
+        .get(`/api/external/ifc-ready/${accepted.body.ifc_ready_job_id}`);
+      expect(detail.status).toBe(200);
+      expect(detail.body.data_volatility).toBe("in_memory_volatile");
+      const runtime = await request(app.app).get("/api/runtime/status");
+      expect(runtime.body.ifc_ready_jobs.recent[0]?.data_volatility).toBe("in_memory_volatile");
+    } finally {
+      if (previousPath === undefined) {
+        delete process.env.EXTERNAL_IFC_READY_STORE_PATH;
+      } else {
+        process.env.EXTERNAL_IFC_READY_STORE_PATH = previousPath;
+      }
+    }
   });
 
   it("explicit X-Correlation-Id 優先於 task_id 派生", async () => {

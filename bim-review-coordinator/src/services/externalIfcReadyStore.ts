@@ -13,6 +13,39 @@ import type {
 const RESTART_INTERRUPTED_DOWNLOAD_FAILURE =
   "coordinator restart interrupted download; operator must re-POST";
 
+const DEFAULT_REQUESTED_OUTPUTS = ["usdc", "element_mapping", "entity_index", "metadata"];
+
+function restartRecoveryBindingSha256(event: ExternalIfcReadyEvent): string {
+  const requestedOutputs =
+    event.requested_outputs && event.requested_outputs.length > 0
+      ? event.requested_outputs.slice().sort()
+      : DEFAULT_REQUESTED_OUTPUTS.slice().sort();
+  const binding = {
+    event: event.event,
+    event_id: event.event_id ?? null,
+    tenant_id: event.tenant_id,
+    project_id: event.project_id,
+    external_model_version_id: event.external_model_version_id,
+    project_display_name: event.project_display_name ?? null,
+    model_category: event.model_category ?? null,
+    external_conversion_task_id: event.external_conversion_task_id ?? null,
+    source_ifc: {
+      identity: stableHttpRefIdentity(event.source_ifc.ref),
+      etag: event.source_ifc.etag,
+      filename: event.source_ifc.filename || null,
+      format: event.source_ifc.format || "ifc",
+    },
+    requested_outputs: requestedOutputs,
+    callback_url: event.callback_url ?? null,
+  };
+  return crypto.createHash("sha256").update(JSON.stringify(binding)).digest("hex");
+}
+
+export type RestartInterruptedDownloadResumeResult =
+  | { kind: "not_resumable" }
+  | { kind: "binding_mismatch" }
+  | { kind: "resumed"; job: IfcReadyIntakeJob };
+
 /**
  * B-scheme（local-coordinator-ifc-ready-intake-boundary T3 §4.3）。
  *
@@ -38,6 +71,7 @@ export class ExternalIfcReadyStore {
    * ledger/輪詢面處理，不在本 store 擅自改寫）。
    */
   private readonly persistencePath: string | null;
+  private persistenceHealthy = false;
   /**
    * conversion-artifact-id-sanitize（PR #206 review 修補）：sanitize 後 correlation 鍵
    * 與原始鍵分桶。只供 conversion 結果回拋（getByCorrelation fallback）查詢，
@@ -58,6 +92,7 @@ export class ExternalIfcReadyStore {
       parsed = JSON.parse(fs.readFileSync(this.persistencePath, "utf-8")) as { jobs?: IfcReadyIntakeJob[] };
     } catch {
       // 壞檔不 crash：誠實空啟動（比照 conversionLedger），舊檔會在下次 persist 被覆寫。
+      this.persistenceHealthy = false;
       return;
     }
     for (const job of parsed.jobs ?? []) {
@@ -78,19 +113,25 @@ export class ExternalIfcReadyStore {
       this.idempotencyIndex.set(job.idempotency_key, job.ifc_ready_job_id);
       this.registerCorrelationKeys(job.correlation_id, job.ifc_ready_job_id);
     }
+    this.persistenceHealthy = true;
   }
 
   /** atomic tmp+rename（比照 conversionLedger.persist）；持久化失敗不拋出（不阻斷 intake 主流程）。 */
   private persist(): void {
-    if (!this.persistencePath) return;
+    if (!this.persistencePath) {
+      this.persistenceHealthy = false;
+      return;
+    }
     try {
       const dir = path.dirname(this.persistencePath);
       fs.mkdirSync(dir, { recursive: true });
       const tmp = `${this.persistencePath}.tmp`;
       fs.writeFileSync(tmp, JSON.stringify({ jobs: Array.from(this.jobsById.values()) }, null, 2), "utf-8");
       fs.renameSync(tmp, this.persistencePath);
+      this.persistenceHealthy = true;
     } catch {
       // 磁碟寫入失敗不 crash intake；下次 mutation 再試。
+      this.persistenceHealthy = false;
     }
   }
 
@@ -129,6 +170,7 @@ export class ExternalIfcReadyStore {
       external_conversion_task_id: event.external_conversion_task_id ?? null,
       source_ifc_ref: event.source_ifc.ref,
       source_ifc_etag: event.source_ifc.etag,
+      restart_recovery_binding_sha256: restartRecoveryBindingSha256(event),
       callback_url: event.callback_url ?? null,
       conversion_job_id: null,
       conversion_status: null,
@@ -258,7 +300,7 @@ export class ExternalIfcReadyStore {
       projectId: string;
       externalModelVersionId: string;
     },
-  ): IfcReadyIntakeJob | undefined {
+  ): RestartInterruptedDownloadResumeResult {
     const job = this.jobsById.get(jobId);
     if (
       !job ||
@@ -268,7 +310,11 @@ export class ExternalIfcReadyStore {
       job.conversion_job_id ||
       job.callback_outbox_id ||
       job.local_path ||
-      job.host_local_path ||
+      job.host_local_path
+    ) {
+      return { kind: "not_resumable" };
+    }
+    if (
       job.idempotency_key !== binding.idempotencyKey ||
       job.correlation_id !== binding.correlationId ||
       job.tenant_id !== binding.tenantId ||
@@ -279,16 +325,18 @@ export class ExternalIfcReadyStore {
       job.external_model_version_id !== event.external_model_version_id ||
       job.source_ifc_etag !== event.source_ifc.etag ||
       stableHttpRefIdentity(job.source_ifc_ref) !==
-        stableHttpRefIdentity(event.source_ifc.ref)
+        stableHttpRefIdentity(event.source_ifc.ref) ||
+      !job.restart_recovery_binding_sha256 ||
+      job.restart_recovery_binding_sha256 !== restartRecoveryBindingSha256(event)
     ) {
-      return undefined;
+      return { kind: "binding_mismatch" };
     }
     job.source_ifc_ref = event.source_ifc.ref;
     job.download_status = "downloading";
     job.download_failure = null;
     job.updated_at = new Date().toISOString();
     this.persist();
-    return job;
+    return { kind: "resumed", job };
   }
 
   /** fast-ifc-link-demo-loop §2.2:同步下載完成,寫入 local_path / host_local_path。 */
@@ -450,6 +498,10 @@ export class ExternalIfcReadyStore {
 
   get(jobId: string): IfcReadyIntakeJob | undefined {
     return this.jobsById.get(jobId);
+  }
+
+  isPersistent(): boolean {
+    return Boolean(this.persistencePath) && this.persistenceHealthy;
   }
 
   list(): IfcReadyIntakeJob[] {
