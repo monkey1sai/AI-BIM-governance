@@ -100,6 +100,7 @@ const SELF_REFERENTIAL_PATTERNS = [
   /^scripts\/tests\/test-trusted-host-merge(?:-runtime)?\.mjs$/,
   /^scripts\/tests\/fixtures\/trusted-host-merge-machine-fixtures\.json$/,
   /^agent-contracts\/trusted-host-merge(?:[.-][a-z-]+)?(?:\.schema)?\.json$/,
+  /^agent-contracts\/spec-to-done\.contract(?:\.schema)?\.json$/,
   /^scripts\/verification-manifest\.json$/,
   /^scripts\/self-referential-bootstrap-ledger\.json$/,
   /^scripts\/lib\/self-referential-bootstrap\.ps1$/,

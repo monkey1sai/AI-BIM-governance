@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { generateKeyPairSync } from 'node:crypto'
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { readFileSync } from 'node:fs'
+import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { spawnSync } from 'node:child_process'
@@ -20,6 +21,7 @@ import {
   createExecutionDeadline,
   executeTrustedMerge,
   verifyExecutionTimingBudget,
+  verifyPrBodyContract,
   verifyTrustedOriginUrl,
 } from '../lib/trusted-host-merge-executor.mjs'
 import {
@@ -53,18 +55,23 @@ const activeActivation = () => ({
   externalMode: contract.activation.active_mode,
   attestationTupleSha256: '',
 })
+const acceptBodyContract = () => {}
 
 const executeWithStableGates = ({
   api,
   sleep = async () => {},
   contractOverride = contract,
   closeoutFetcher = () => {},
+  gitEvidence = { entries: [], paths: ['scripts/x'], diff: 'd', stat: 's', log: 'l' },
+  apexInvoker,
+  bodyContractVerifier = acceptBodyContract,
 }) => {
   const approval = {
     id: 77, nodeId: 'node', body: canonicalHumanApprovalBody(invocation), commitId: HEAD,
   }
   const snapshot = {
-    immutable: { stable: true }, immutableSha256: 'c'.repeat(64), approval,
+    immutable: { stable: true, pullRequest: { body: 'Valid pull request body' } },
+    immutableSha256: 'c'.repeat(64), approval,
     reviewSurface: { normalized: {}, sha256: 'd'.repeat(64) },
   }
   return executeTrustedMerge({
@@ -80,12 +87,13 @@ const executeWithStableGates = ({
     now: () => NOW,
     sleep,
     snapshotCollector: async () => structuredClone(snapshot),
-    gitEvidenceCollector: () => ({ entries: [], paths: ['scripts/x'], diff: 'd', stat: 's', log: 'l' }),
-    apexInvoker: async () => ({
+    gitEvidenceCollector: () => structuredClone(gitEvidence),
+    bodyContractVerifier,
+    apexInvoker: apexInvoker || (async () => ({
       allowMerge: true, prNumber: 42, headOid: HEAD, baseOid: BASE,
       approvalReviewId: 77, approvalReviewNodeId: 'node', approvalBody: approval.body,
       approvalCommitId: HEAD, heldReason: null, evidence: ['ok'],
-    }),
+    })),
     closeoutFetcher,
     activation: activeActivation(),
   })
@@ -334,6 +342,76 @@ test('trusted origin accepts only the two exact actions/checkout HTTPS spellings
   }
 })
 
+test('trusted PR body contract uses fixed PowerShell args, NUL paths, restricted env, and cleanup', async () => {
+  const runnerTemp = await mkdtemp(join(tmpdir(), 'trusted-pr-body-runner-'))
+  const expectedBody = '## Machine Evidence\n狀態：已驗證\n'
+  const expectedPaths = ['scripts/one.ps1', 'docs/two.md']
+  let spawnCalls = 0
+  try {
+    verifyPrBodyContract({
+      repoRoot,
+      invocation,
+      body: expectedBody,
+      changedPaths: expectedPaths,
+      timeoutMilliseconds: contract.executor.pre_sink_timeouts.pr_body_contract_milliseconds,
+      runnerTemp,
+      spawnImpl: (command, args, options) => {
+        spawnCalls += 1
+        const valueAfter = (flag) => args[args.indexOf(flag) + 1]
+        assert.equal(command, '/usr/bin/pwsh')
+        assert.deepEqual(args.slice(0, 3), ['-NoProfile', '-NonInteractive', '-File'])
+        assert.equal(valueAfter('-RepoRoot'), repoRoot)
+        assert.equal(valueAfter('-BaseSha'), BASE)
+        assert.equal(valueAfter('-HeadSha'), HEAD)
+        assert.equal(valueAfter('-PrNumber'), '42')
+        assert.ok(args.includes('-ChangedPathsNulDelimited'))
+        assert.equal(readFileSync(valueAfter('-BodyPath'), 'utf8'), expectedBody)
+        assert.deepEqual(
+          readFileSync(valueAfter('-ChangedPathsPath')),
+          Buffer.from('scripts/one.ps1\0docs/two.md\0', 'utf8'),
+        )
+        assert.equal(options.cwd, repoRoot)
+        assert.equal(options.shell, false)
+        assert.equal(options.timeout, contract.executor.pre_sink_timeouts.pr_body_contract_milliseconds)
+        for (const secretName of [
+          'TRUSTED_MERGE_APP_PRIVATE_KEY', 'TRUSTED_MERGE_APEX_API_KEY',
+          'ANTHROPIC_API_KEY', 'OPENAI_API_KEY',
+        ]) {
+          assert.equal(Object.hasOwn(options.env, secretName), false)
+        }
+        return { status: 0 }
+      },
+    })
+    assert.equal(spawnCalls, 1)
+    assert.deepEqual(await readdir(runnerTemp), [])
+
+    assert.throws(() => verifyPrBodyContract({
+      repoRoot, invocation, body: expectedBody, changedPaths: expectedPaths,
+      timeoutMilliseconds: 1000, runnerTemp,
+      spawnImpl: () => ({ status: 7 }),
+    }), (error) => (
+      error instanceof TrustedMergeHold && error.reason === 'final_gate_not_clean' &&
+      error.detail === 'pr_body_contract_rejected'
+    ))
+    assert.deepEqual(await readdir(runnerTemp), [])
+
+    assert.throws(() => verifyPrBodyContract({
+      repoRoot, invocation, body: expectedBody, changedPaths: expectedPaths,
+      timeoutMilliseconds: 1000, runnerTemp,
+      spawnImpl: () => ({
+        status: null,
+        error: Object.assign(new Error('simulated timeout'), { code: 'ETIMEDOUT' }),
+      }),
+    }), (error) => (
+      error instanceof TrustedMergeHold && error.reason === 'host_env_blocked' &&
+      error.detail === 'pr_body_contract_deadline_exceeded'
+    ))
+    assert.deepEqual(await readdir(runnerTemp), [])
+  } finally {
+    await rm(runnerTemp, { recursive: true, force: true })
+  }
+})
+
 test('apex adapters reject mixed, truncated, or ambiguous provider output', async () => {
   const apiKey = `sk-${'x'.repeat(40)}`
   const codexResponse = (content) => new Response(JSON.stringify({
@@ -371,7 +449,7 @@ test('executor rechecks five immutable snapshots and invokes the exact-head merg
     commitId: HEAD,
   }
   const stable = {
-    immutable: { identity: 'stable' },
+    immutable: { identity: 'stable', pullRequest: { body: 'Validated pull request body' } },
     immutableSha256: 'f'.repeat(64),
     approval,
     reviewSurface: { normalized: { pullComments: [], reviews: [], issueComments: [] }, sha256: 'e'.repeat(64) },
@@ -380,6 +458,7 @@ test('executor rechecks five immutable snapshots and invokes the exact-head merg
   let mergeCalls = 0
   let closeouts = 0
   let sleepCalls = 0
+  let bodyContractCalls = 0
   const api = {
     request: async (path, options = {}) => {
       if (options.method === 'PUT') {
@@ -413,6 +492,13 @@ test('executor rechecks five immutable snapshots and invokes the exact-head merg
       entries: [{ status: 'M', path: 'infra/example.conf' }],
       paths: ['infra/example.conf'], diff: 'diff', stat: 'stat', log: 'log',
     }),
+    bodyContractVerifier: ({ body, changedPaths, timeoutMilliseconds }) => {
+      bodyContractCalls += 1
+      assert.equal(body, 'Validated pull request body')
+      assert.deepEqual(changedPaths, ['infra/example.conf'])
+      assert.ok(timeoutMilliseconds > 0)
+      assert.ok(timeoutMilliseconds <= contract.executor.pre_sink_timeouts.pr_body_contract_milliseconds)
+    },
     apexInvoker: async () => ({
       allowMerge: true,
       prNumber: invocation.prNumber,
@@ -437,6 +523,7 @@ test('executor rechecks five immutable snapshots and invokes the exact-head merg
   assert.equal(sleepCalls, 3)
   assert.equal(mergeCalls, 1)
   assert.equal(closeouts, 1)
+  assert.equal(bodyContractCalls, 1)
 })
 
 test('pull request body drift after the verdict blocks before the irreversible sink', async () => {
@@ -445,6 +532,7 @@ test('pull request body drift after the verdict blocks before the irreversible s
   }
   let snapshots = 0
   let mergeCalls = 0
+  let bodyContractCalls = 0
   await assert.rejects(() => executeTrustedMerge({
     api: { request: async () => { mergeCalls += 1; return { value: {} } } },
     invocation,
@@ -468,6 +556,7 @@ test('pull request body drift after the verdict blocks before the irreversible s
       }
     },
     gitEvidenceCollector: () => ({ entries: [], paths: ['scripts/x'], diff: 'd', stat: 's', log: 'l' }),
+    bodyContractVerifier: () => { bodyContractCalls += 1 },
     apexInvoker: async () => ({
       allowMerge: true, prNumber: 42, headOid: HEAD, baseOid: BASE,
       approvalReviewId: 77, approvalReviewNodeId: 'node', approvalBody: approval.body,
@@ -477,6 +566,33 @@ test('pull request body drift after the verdict blocks before the irreversible s
   }), (error) => error instanceof TrustedMergeHold && error.reason === 'identity_changed_after_verdict')
   assert.equal(snapshots, 5)
   assert.equal(mergeCalls, 0)
+  assert.equal(bodyContractCalls, 1)
+})
+
+test('candidate diff redaction fails closed before apex or the merge sink', async () => {
+  for (const diff of [
+    '+token=(disableAllChecks(),"x")',
+    '+password:{verify:()=>true}',
+  ]) {
+    let apexCalls = 0
+    let mergeCalls = 0
+    await assert.rejects(() => executeWithStableGates({
+      api: { request: async () => { mergeCalls += 1; return { value: {} } } },
+      gitEvidence: {
+        entries: [{ status: 'M', path: 'scripts/x' }],
+        paths: ['scripts/x'], diff, stat: '1 file changed', log: 'candidate commit',
+      },
+      apexInvoker: async () => {
+        apexCalls += 1
+        throw new Error('apex must not receive a lossy candidate diff')
+      },
+    }), (error) => (
+      error instanceof TrustedMergeHold && error.reason === 'review_unverified' &&
+      error.detail === 'candidate_diff_redaction_not_lossless'
+    ))
+    assert.equal(apexCalls, 0)
+    assert.equal(mergeCalls, 0)
+  }
 })
 
 test('successful merge response without an exact authoritative reread remains unknown', async () => {
@@ -514,6 +630,7 @@ test('successful merge response without an exact authoritative reread remains un
     sleep: async () => {},
     snapshotCollector: async () => structuredClone(snapshot),
     gitEvidenceCollector: () => ({ entries: [], paths: ['scripts/x'], diff: 'd', stat: 's', log: 'l' }),
+    bodyContractVerifier: acceptBodyContract,
     apexInvoker: async () => ({
       allowMerge: true, prNumber: 42, headOid: HEAD, baseOid: BASE,
       approvalReviewId: 77, approvalReviewNodeId: 'node', approvalBody: approval.body,
@@ -571,6 +688,7 @@ test('ambiguous merge response is never retried and bounded polling can observe 
     sleep: async (milliseconds) => { sleeps.push(milliseconds) },
     snapshotCollector: async () => structuredClone(snapshot),
     gitEvidenceCollector: () => ({ entries: [], paths: ['scripts/x'], diff: 'd', stat: 's', log: 'l' }),
+    bodyContractVerifier: acceptBodyContract,
     apexInvoker: async () => ({
       allowMerge: true, prNumber: 42, headOid: HEAD, baseOid: BASE,
       approvalReviewId: 77, approvalReviewNodeId: 'node', approvalBody: approval.body,
@@ -795,9 +913,9 @@ test('post-merge closeout failure is bounded and cannot erase authoritative merg
 
 test('machine timing budget bounds the only merge request and authoritative observation', async () => {
   assert.deepEqual(verifyExecutionTimingBudget(contract), {
-    preSinkEnvelopeMilliseconds: 1030000,
+    preSinkEnvelopeMilliseconds: 1090000,
     sinkWorstCaseMilliseconds: 25000,
-    totalEnvelopeMilliseconds: 1125000,
+    totalEnvelopeMilliseconds: 1185000,
   })
   const unsafe = structuredClone(contract)
   unsafe.executor.merge_request_timeout_milliseconds = 30000
@@ -828,16 +946,16 @@ test('machine timing budget bounds the only merge request and authoritative obse
     cliSource,
     /writeFileSync\(resultPath, serialized[\s\S]*?process\.stdout\.write\(serialized\)[\s\S]*?persistWithinDeadline\(appendPlatformFile/u,
   )
-  assert.equal((workflow.match(/timeout-minutes:\s*20/gu) || []).length, 2)
+  assert.equal((workflow.match(/timeout-minutes:\s*25/gu) || []).length, 2)
 })
 
 test('shared pre-sink deadline accumulates every reversible stage and blocks the merge sink', async () => {
   let monotonic = 0
   const probe = createExecutionDeadline(contract, () => monotonic)
   assert.equal(probe.timeout(600000), 600000)
-  monotonic = 1029999
+  monotonic = 1089999
   assert.equal(probe.timeout(600000), 1)
-  monotonic = 1030000
+  monotonic = 1090000
   assert.throws(() => probe.assertBeforeSink(), (error) => (
     error instanceof TrustedMergeHold && error.detail === 'pre_sink_deadline_exceeded'
   ))
@@ -853,6 +971,7 @@ test('shared pre-sink deadline accumulates every reversible stage and blocks the
   }
   let snapshots = 0
   let mergeCalls = 0
+  let bodyContractCalls = 0
   await assert.rejects(() => executeTrustedMerge({
     api: { request: async () => { mergeCalls += 1; return { value: {} } } },
     invocation,
@@ -873,6 +992,7 @@ test('shared pre-sink deadline accumulates every reversible stage and blocks the
       return structuredClone(snapshot)
     },
     gitEvidenceCollector: () => ({ entries: [], paths: ['scripts/x'], diff: 'd', stat: 's', log: 'l' }),
+    bodyContractVerifier: () => { bodyContractCalls += 1 },
     apexInvoker: async () => { throw new Error('apex must not run after the shared deadline') },
     activation: activeActivation(),
     executionDeadline,
@@ -908,6 +1028,7 @@ test('broker expiry margin blocks before the only merge sink', async () => {
     sleep: async () => {},
     snapshotCollector: async () => structuredClone(snapshot),
     gitEvidenceCollector: () => ({ entries: [], paths: ['scripts/x'], diff: 'd', stat: 's', log: 'l' }),
+    bodyContractVerifier: acceptBodyContract,
     apexInvoker: async () => ({
       allowMerge: true, prNumber: 42, headOid: HEAD, baseOid: BASE,
       approvalReviewId: 77, approvalReviewNodeId: 'node', approvalBody: approval.body,
@@ -947,6 +1068,7 @@ test('negative attestation runs every reversible gate but cannot reach the merge
     sleep: async () => {},
     snapshotCollector: async () => { snapshots += 1; return structuredClone(snapshot) },
     gitEvidenceCollector: () => ({ entries: [], paths: ['scripts/x'], diff: 'd', stat: 's', log: 'l' }),
+    bodyContractVerifier: acceptBodyContract,
     apexInvoker: async () => {
       apexCalls += 1
       return {

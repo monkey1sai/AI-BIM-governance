@@ -1,6 +1,6 @@
 import { spawnSync } from 'node:child_process'
-import { lstatSync, readFileSync } from 'node:fs'
-import { resolve, sep } from 'node:path'
+import { lstatSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { isAbsolute, join, resolve, sep } from 'node:path'
 
 import {
   TrustedMergeHold,
@@ -199,6 +199,7 @@ export async function collectVerifiedSnapshot({
   const branchPolicies = policyResponse.value?.branch_policies
   verifyEnvironmentConfiguration(environmentResponse.value, branchPolicies, contract)
   verifyBrokerApproval(approvalsResponse.value, assertion, invocation, contract, now)
+  if (typeof pr?.body !== 'string') fail('final_gate_read_failed', 'pr_body_snapshot_missing')
   verifyPullRequestIdentity(pr, invocation, { final: true })
   const protection = verifyBranchProtection(protectionResponse.value, contract.executor.required_check_sources)
   const normalizedRulesets = verifyRulesets(rulesets)
@@ -257,6 +258,96 @@ const safeGitEnvironment = (token) => {
   env.GIT_CONFIG_GLOBAL = process.platform === 'win32' ? 'NUL' : '/dev/null'
   env.GIT_ATTR_NOSYSTEM = '1'
   return env
+}
+
+export function verifyPrBodyContract({
+  repoRoot,
+  invocation,
+  body,
+  changedPaths,
+  timeoutMilliseconds,
+  runnerTemp = process.env.RUNNER_TEMP,
+  spawnImpl = spawnSync,
+}) {
+  if (typeof body !== 'string') fail('final_gate_read_failed', 'pr_body_snapshot_missing')
+  if (
+    !Array.isArray(changedPaths) || changedPaths.length === 0 ||
+    changedPaths.some((candidatePath) => (
+      typeof candidatePath !== 'string' || candidatePath.length === 0 || candidatePath.includes('\0')
+    ))
+  ) {
+    fail('host_env_blocked', 'pr_body_changed_paths_invalid')
+  }
+  if (
+    !Number.isSafeInteger(timeoutMilliseconds) || timeoutMilliseconds < 1 ||
+    timeoutMilliseconds > 60000
+  ) {
+    fail('host_env_blocked', 'pr_body_contract_timeout_invalid')
+  }
+  if (typeof runnerTemp !== 'string' || !runnerTemp || !isAbsolute(runnerTemp)) {
+    fail('host_env_blocked', 'pr_body_contract_host_failed')
+  }
+
+  const trustedRoot = resolve(repoRoot)
+  const checkerPath = join(trustedRoot, 'scripts', 'tests', 'check-pr-body-evidence.ps1')
+  let temporaryRoot
+  try {
+    const runnerItem = lstatSync(runnerTemp)
+    const checkerItem = lstatSync(checkerPath)
+    if (
+      !runnerItem.isDirectory() || runnerItem.isSymbolicLink() ||
+      !checkerItem.isFile() || checkerItem.isSymbolicLink()
+    ) {
+      fail('host_env_blocked', 'pr_body_contract_host_failed')
+    }
+    temporaryRoot = mkdtempSync(join(resolve(runnerTemp), 'trusted-pr-body-'))
+    const bodyPath = join(temporaryRoot, 'pr-body.md')
+    const changedPathsPath = join(temporaryRoot, 'changed-paths.bin')
+    writeFileSync(bodyPath, body, { encoding: 'utf8', flag: 'wx', mode: 0o600 })
+    writeFileSync(
+      changedPathsPath,
+      Buffer.from(`${changedPaths.join('\0')}\0`, 'utf8'),
+      { flag: 'wx', mode: 0o600 },
+    )
+    const result = spawnImpl('/usr/bin/pwsh', [
+      '-NoProfile',
+      '-NonInteractive',
+      '-File', checkerPath,
+      '-BodyPath', bodyPath,
+      '-ChangedPathsPath', changedPathsPath,
+      '-ChangedPathsNulDelimited',
+      '-RepoRoot', trustedRoot,
+      '-BaseSha', invocation.baseOid,
+      '-HeadSha', invocation.headOid,
+      '-PrNumber', String(invocation.prNumber),
+    ], {
+      cwd: trustedRoot,
+      env: safeGitEnvironment(),
+      shell: false,
+      encoding: 'utf8',
+      maxBuffer: 1024 * 1024,
+      timeout: timeoutMilliseconds,
+      windowsHide: true,
+    })
+    if (result?.error?.code === 'ETIMEDOUT') {
+      fail('host_env_blocked', 'pr_body_contract_deadline_exceeded')
+    }
+    if (result?.error || !Number.isInteger(result?.status)) {
+      fail('host_env_blocked', 'pr_body_contract_host_failed')
+    }
+    if (result.status !== 0) fail('final_gate_not_clean', 'pr_body_contract_rejected')
+  } catch (error) {
+    if (error instanceof TrustedMergeHold) throw error
+    fail('host_env_blocked', 'pr_body_contract_host_failed')
+  } finally {
+    if (temporaryRoot !== undefined) {
+      try {
+        rmSync(temporaryRoot, { recursive: true, force: true })
+      } catch {
+        fail('host_env_blocked', 'pr_body_contract_cleanup_failed')
+      }
+    }
+  }
 }
 
 function runGit(repoRoot, args, {
@@ -519,6 +610,7 @@ export function verifyExecutionTimingBudget(contract) {
     executor?.pre_sink_timeouts?.snapshot_milliseconds,
     executor?.pre_sink_timeouts?.snapshot_read_count,
     executor?.pre_sink_timeouts?.candidate_fetch_milliseconds,
+    executor?.pre_sink_timeouts?.pr_body_contract_milliseconds,
     executor?.pre_sink_timeouts?.app_token_mint_milliseconds,
     executor?.pre_sink_timeouts?.apex_request_milliseconds,
     executor?.pre_sink_timeouts?.workflow_job_milliseconds,
@@ -537,6 +629,7 @@ export function verifyExecutionTimingBudget(contract) {
   if (
     executor.pre_sink_timeouts.snapshot_milliseconds > 120000 ||
     executor.pre_sink_timeouts.candidate_fetch_milliseconds > 30000 ||
+    executor.pre_sink_timeouts.pr_body_contract_milliseconds > 60000 ||
     executor.pre_sink_timeouts.app_token_mint_milliseconds > 30000 ||
     executor.pre_sink_timeouts.apex_request_milliseconds > 900000
   ) {
@@ -557,6 +650,7 @@ export function verifyExecutionTimingBudget(contract) {
     executor.pre_sink_timeouts.app_token_mint_milliseconds +
     executor.pre_sink_timeouts.snapshot_read_count * executor.pre_sink_timeouts.snapshot_milliseconds +
     executor.pre_sink_timeouts.candidate_fetch_milliseconds +
+    executor.pre_sink_timeouts.pr_body_contract_milliseconds +
     executor.reviewer_buffer_seconds * 1000 +
     executor.pre_sink_timeouts.apex_request_milliseconds
   )
@@ -691,6 +785,7 @@ export async function executeTrustedMerge({
   apexInvoker,
   snapshotCollector = collectVerifiedSnapshot,
   gitEvidenceCollector = collectGitEvidence,
+  bodyContractVerifier = verifyPrBodyContract,
   closeoutFetcher = fetchCloseout,
   activation,
   executionDeadline,
@@ -717,6 +812,16 @@ export async function executeTrustedMerge({
     api, invocation, assertion, contract, verificationPlan, now: now(),
     timeoutMilliseconds: deadline.timeout(contract.executor.pre_sink_timeouts.snapshot_milliseconds),
   })
+  await bodyContractVerifier({
+    repoRoot,
+    invocation,
+    body: prepared.immutable?.pullRequest?.body,
+    changedPaths: gitEvidence.paths,
+    timeoutMilliseconds: deadline.timeout(
+      contract.executor.pre_sink_timeouts.pr_body_contract_milliseconds,
+      'pr_body_contract_deadline_exceeded',
+    ),
+  })
 
   for (let index = 0; index < 3; index += 1) {
     deadline.requireRemaining(30000)
@@ -738,6 +843,9 @@ export async function executeTrustedMerge({
     reviewSurface: prepared.reviewSurface.normalized,
     candidate: gitEvidence,
   }, contract.executor.evidence_max_bytes)
+  if (apexEvidence.sanitized?.candidate?.diff !== gitEvidence.diff) {
+    fail('review_unverified', 'candidate_diff_redaction_not_lossless')
+  }
 
   const invoke = apexInvoker || (invocation.provider === 'claude' ? invokeClaudeApex : invokeCodexApex)
   const verdict = await invoke({

@@ -73,7 +73,7 @@ base-pinned trusted host executor 必須依序執行固定命令並 fail closed�
    git log --oneline <preparedBase>..<preparedHead>
    ```
 
-   同一 range 必須先以 NUL-safe `--raw --no-renames` 與 `--numstat` 驗證；binary blob、symlink、gitlink/submodule 或其他非一般檔案 mode 一律 `scope_drift`，不得交給 apex 當成可完整檢閱的文字 evidence。
+   同一 range 必須先以 NUL-safe `--raw --no-renames` 與 `--numstat` 驗證；binary blob、symlink、gitlink/submodule 或其他非一般檔案 mode 一律 `scope_drift`，不得交給 apex 當成可完整檢閱的文字 evidence。首次 immutable snapshot 後，executor 必須以 trusted-base 的 `scripts/tests/check-pr-body-evidence.ps1`、exact base/head/PR number 與 NUL-delimited changed paths 驗證該 snapshot 的 PR body；後續 snapshot equality 綁定已驗證 body，checker 非零、timeout、host/tool 異常或 body 漂移都必須在 apex 與 merge sink 前 HELD。
 
 10. 三處 reviewer 來源必須全部 `--paginate` 蒐集：
 
@@ -130,7 +130,7 @@ base-pinned trusted host executor 在 verdict 後重新讀取 PR state/draft/num
 
 這與 `gh pr merge <n> --repo monkey1sai/AI-BIM-governance --merge --match-head-commit <preparedHead>` 的 exact-head 安全語義相同。短效 App token 不進 command line、candidate process 或 apex；只有固定 `/usr/bin/git` fetch child 會透過單次環境 extraheader 取得 token。CLI 等價式只供稽核，不是第二個 sink；任何角色仍 **MUST NOT run any merge command, including `gh pr merge --admin`**。
 
-所有 pre-sink outbound operation 都有 contract-pinned shared deadline：每次完整 snapshot 共用一個 60 秒 signal，candidate fetch 30 秒、App mint 10 秒、apex 10 分鐘；5 次 snapshot、90 秒 reviewer buffer、sink observation、closeout 與 result persistence 的合成 envelope 必須嚴格小於 workflow 30 分鐘 job timeout。唯一 PUT 與後續 authoritative reads 另受 machine invariant 約束，整體最壞時間必須小於 sink 前保留的 60 秒 broker/App token TTL margin。PUT response 無論成功或失敗都不能單獨宣稱已 merge 或未 merge；只有 bounded reread 精確確認同一 repo/PR/head/base 的 merged state 與有效 `mergeCommit.oid` 才回 `merged=true`。bounded reads 仍無法確認時回 `status=merge_outcome_unverified`、`merged=null`，不得誤報為 false；PUT SHA 與 reread SHA 衝突時保留 reread commit 並回 `merged_but_closeout_held`。之後的 bounded `git fetch origin --prune` 失敗只記 closeout hold，不得把已發生的 server merge 誤報為 `merged=false`。
+所有 pre-sink outbound operation 都有 contract-pinned shared deadline：每次完整 snapshot 共用一個 60 秒 signal，candidate fetch 30 秒、PR body contract 60 秒、App mint 10 秒、apex 10 分鐘；5 次 snapshot、90 秒 reviewer buffer、sink observation、closeout 與 result persistence 的合成 envelope 為 19 分 45 秒，兩個 credential-bearing execute step 各以 25 分鐘 hard timeout 保留 terminal-result 時間，並嚴格小於 workflow 30 分鐘 job timeout。唯一 PUT 與後續 authoritative reads 另受 machine invariant 約束，整體最壞時間必須小於 sink 前保留的 60 秒 broker/App token TTL margin。PUT response 無論成功或失敗都不能單獨宣稱已 merge 或未 merge；只有 bounded reread 精確確認同一 repo/PR/head/base 的 merged state 與有效 `mergeCommit.oid` 才回 `merged=true`。bounded reads 仍無法確認時回 `status=merge_outcome_unverified`、`merged=null`，不得誤報為 false；PUT SHA 與 reread SHA 衝突時保留 reread commit 並回 `merged_but_closeout_held`。之後的 bounded `git fetch origin --prune` 失敗只記 closeout hold，不得把已發生的 server merge 誤報為 `merged=false`。
 
 ## 5. Approval 與 closeout
 
@@ -138,7 +138,7 @@ single-owner 模式沒有 routine auto-merge；每個 PR 都必須由固定 revi
 
 caller-controlled `elevatedAuthorization` 無法證明目前對話 turn 的人類授權，即使內容與 canonical tuple/body 完全相同也不得解鎖。broker 使用 agent-inaccessible GitHub protected environment `trusted-elevated-merge`：challenge 綁定 repo/PR/base/head/action/runId/activationMode/provider/nonce/expiry；environment 必須只有 reviewer `monkey1sai-blip`（ID `311287868`）、`prevent_self_review=true`、`can_admins_bypass=false`，且只允許 `main` branch。reviewer 必須在 approval comment 貼上逐字 assertion。executor 只接受 run attempt 1、唯一一筆 approved history、唯一 environment、尚未過期的 exact comment；新 run ID、mode 或重跑都必須使用新 assertion。
 
-environment 放行後才釋出 GitHub App private key與所選 apex key。executor 即時 mint 最長一小時、只限 `AI-BIM-governance` 單 repo的 installation token，capability 固定為 Actions read、Administration read、Contents write、Pull requests read；App 不可提交 review。Claude/Codex apex 只收到已 redacted、500,000-byte 上限的 untrusted evidence，不收到 App token/private key。固定 GitHub review 仍提供 code-owner identity gate，environment approval 提供 current-run provenance；兩者缺一不可。
+environment 放行後才釋出 GitHub App private key與所選 apex key。executor 即時 mint 最長一小時、只限 `AI-BIM-governance` 單 repo的 installation token，capability 固定為 Actions read、Administration read、Contents write、Pull requests read；App 不可提交 review。Claude/Codex apex 只收到已 redacted、500,000-byte 上限的 untrusted evidence，不收到 App token/private key；candidate diff 必須在 redaction 後仍 byte-identical，否則以 `review_unverified/candidate_diff_redaction_not_lossless` fail closed，不能讓遮罩隱藏可執行語意。固定 GitHub review 仍提供 code-owner identity gate，environment approval 提供 current-run provenance；兩者缺一不可。
 
 Hosted activation 前 owner 必須完成並實證：
 

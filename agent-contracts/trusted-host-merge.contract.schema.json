@@ -159,6 +159,7 @@
             "snapshot_milliseconds": 60000,
             "snapshot_read_count": 5,
             "candidate_fetch_milliseconds": 30000,
+            "pr_body_contract_milliseconds": 60000,
             "app_token_mint_milliseconds": 10000,
             "apex_request_milliseconds": 600000,
             "workflow_job_milliseconds": 1800000,

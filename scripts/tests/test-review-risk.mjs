@@ -276,6 +276,20 @@ test('all review-router implementation surfaces classify as self-referential', (
   }
 });
 
+test('trusted merge activation state contracts require human governance review', () => {
+  for (const path of [
+    'agent-contracts/spec-to-done.contract.json',
+    'agent-contracts/spec-to-done.contract.schema.json',
+  ]) {
+    const input = caseInput('docs-typo-mechanical');
+    input.changed_paths[0].path = path;
+    const decision = classifyReview(input, policy);
+    assert.equal(decision.risk.trust_surface, 'critical_authority', path);
+    assert.equal(decision.review_mode, 'human_critical', path);
+    assert.ok(decision.specialists.includes('governance'), path);
+  }
+});
+
 test('stale evidence is not accepted for the exact head', () => {
   const decision = classifyReview(caseInput('stale-exact-head-evidence'), policy);
   assert.equal(decision.risk.evidence_strength, 'stale');
