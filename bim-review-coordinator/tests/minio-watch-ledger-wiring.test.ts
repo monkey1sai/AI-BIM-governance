@@ -176,4 +176,66 @@ describe("app.ts isLedgered 接線整合測試（review Important #2）", () => 
     expect(status.triggered_total).toBe(0);
     expect(status.baseline_count).toBe(1); // 診斷欄位仍填（首輪 model.ifc 數）
   });
+
+  it("coordinator recreate 共用持久路徑 → ledger/outbox 存活且 watcher 不建重複紀錄", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "minio-watch-wiring-recreate-"));
+    const ledgerStorePath = path.join(root, "coordinator", "conversion-ledger.json");
+    const outboxStorePath = path.join(root, "coordinator", "callback-outbox.json");
+    const state: { objs: S3Obj[] } = { objs: [{ key: "899/main/xxx/model.ifc", etag: "e1" }] };
+    const s3Base = await startS3Stub(state);
+    const appConfig = {
+      sessionStoreDir: path.join(root, "sessions"),
+      eventLogDir: path.join(root, "events"),
+      callbackOutboxStorePath: outboxStorePath,
+      corsOrigins: ["http://127.0.0.1:5173"],
+      ...watchOverrides(s3Base, ledgerStorePath),
+    };
+
+    active = createCoordinatorApp(appConfig);
+    await listenOnLoopback(active);
+    await active.minioWatchSurface.pollNow();
+
+    const idkey = idempotencyKeyFor("bim-control", "899/main/xxx/model.ifc", "e1");
+    const beforeRecreate = new ConversionLedger(ledgerStorePath).list();
+    expect(beforeRecreate).toHaveLength(1);
+    expect(beforeRecreate[0]?.idempotency_key).toBe(idkey);
+    expect(beforeRecreate[0]?.correlation_id).toBeTruthy();
+
+    const callback = await request(active.app)
+      .post("/api/internal/conversion-result")
+      .set("X-Internal-Token", "dev-internal-token")
+      .send({
+        correlation_id: beforeRecreate[0]!.correlation_id,
+        conversion_job_id: "cj_recreate_001",
+        status: "failed",
+        reason: "bounded recreate regression",
+        retryable: true,
+      });
+    expect(callback.status).toBe(202);
+    const outboxId = callback.body.callback.outbox_id as string;
+    expect(outboxId).toBeTruthy();
+
+    await active.dispose();
+    active.io.close();
+    await new Promise<void>((resolve) => active?.server.close(() => resolve()));
+    active = null;
+
+    active = createCoordinatorApp(appConfig);
+    await listenOnLoopback(active);
+    await active.minioWatchSurface.pollNow();
+
+    const restoredOutbox = await request(active.app)
+      .get(`/api/internal/callback-outbox/${outboxId}`)
+      .set("X-Internal-Token", "dev-internal-token");
+    expect(restoredOutbox.status).toBe(200);
+    expect(restoredOutbox.body.outbox_id).toBe(outboxId);
+    expect(restoredOutbox.body.status).toBe("pending");
+
+    const afterRecreate = new ConversionLedger(ledgerStorePath).list();
+    expect(afterRecreate).toHaveLength(1);
+    expect(afterRecreate[0]?.idempotency_key).toBe(idkey);
+    const status = await fetchWatcherStatus(active);
+    expect(status.poll_count ?? 0).toBeGreaterThanOrEqual(1);
+    expect(status.triggered_total).toBe(0);
+  });
 });

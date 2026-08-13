@@ -22,6 +22,7 @@ services:
       DEV_AUTH_TOKEN: ${DEV_AUTH_TOKEN:-dev-token}
       CORS_ORIGINS: "${CORS_ORIGINS:-http://127.0.0.1:5173,http://localhost:5173,http://127.0.0.1:5174,http://localhost:5174}"
       INTERNAL_API_AUTH_TOKEN: ${INTERNAL_API_AUTH_TOKEN:-dev-internal-token}
+      CONVERSION_LEDGER_STORE_PATH: /workspace/storage/coordinator/conversion-ledger.json
       CALLBACK_OUTBOX_STORE_PATH: /workspace/storage/coordinator/callback-outbox.json
       KIT_INSTANCE_ENDPOINTS: '[{"id":"kit_local_gpu_001","signalingServer":"127.0.0.1","signalingPort":49100,"mediaServer":"127.0.0.1","mediaPort":47998}]'
       # fast-ifc-link-demo-loop §2:同步下載 IFC 寫入 shared volume。
