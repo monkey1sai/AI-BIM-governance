@@ -1,11 +1,11 @@
 stack_kind=self_referential_bootstrap
 pr=527
 baseline=c5d423cb5e6b3f8b80e50efe2acc46d0c3bae736
-implementation_commit=e4efea3788e6713f73704284335d4d7131d9f5f4
+implementation_commit=0edd3a5147f4ff578b50cbc2c58aeec4921cdf51
 
 PASS test-trusted-host-merge
 command=node --test scripts/tests/test-trusted-host-merge.mjs scripts/tests/test-trusted-host-merge-runtime.mjs
-result=40 passed, 0 failed, 1 Windows-only Linux gitlink probe skipped
+result=44 passed, 0 failed, 1 Windows-only Linux gitlink probe skipped
 
 PASS test-ship-item-runtime
 command=node --test tests/test_ship_item_runtime.mjs
@@ -20,8 +20,8 @@ command=pwsh -NoProfile -NonInteractive -File scripts/tests/test-pr-body-evidenc
 result=all assertions passed
 
 PASS test-routing-consistency
-command=python -m pytest tests/test_routing_consistency.py -q -p no:cacheprovider
-result=14 passed
+command=python -c "import tests.test_routing_consistency as t; names=sorted(n for n in dir(t) if n.startswith('test_')); [getattr(t,n)() for n in names]; print(f'routing assertions passed: {len(names)}')"
+result=14 routing assertions passed; pytest collected and ran the same assertions but its Windows teardown did not terminate within the bounded command timeout
 
 PASS test-self-referential-bootstrap
 command=pwsh -NoProfile -NonInteractive -File scripts/tests/test-self-referential-bootstrap.ps1
@@ -44,5 +44,5 @@ command=git diff --check
 result=passed
 
 ADVISORY gitnexus-detect-changes
-command=gitnexus detect-changes --scope compare --base-ref main -r C:\Repos\active\iot\AI-BIM-governance
-result=low risk, but the index is 78 commits behind this sibling worktree; not treated as complete graph verification
+command=gitnexus detect-changes --scope compare --base-ref origin/main -r C:\Repos\active\iot\AI-BIM-governance
+result=the main-checkout-bound index reported no sibling-worktree changes; treated as unavailable advisory evidence, not a graph verification pass
