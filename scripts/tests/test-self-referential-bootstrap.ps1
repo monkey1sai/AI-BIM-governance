@@ -353,6 +353,14 @@ try {
     foreach ($expectedPath in $expectedMechanismPaths) {
         Assert-True ($matched -ccontains $expectedPath) "mechanism classifier includes $expectedPath"
     }
+    $trustedMergeContract = Get-Content -LiteralPath (Join-Path $repoRoot 'agent-contracts/trusted-host-merge.contract.json') -Raw | ConvertFrom-Json -Depth 100
+    $trustedMergePatterns = @($trustedMergeContract.executor.required_check_trust_boundary.mechanism_path_patterns)
+    foreach ($expectedPath in $expectedMechanismPaths) {
+        $coveredByTrustedMerge = @($trustedMergePatterns | Where-Object {
+            [regex]::IsMatch($expectedPath, [string]$_, [System.Text.RegularExpressions.RegexOptions]::CultureInvariant)
+        }).Count -gt 0
+        Assert-True $coveredByTrustedMerge "trusted merge mechanism policy is a superset of the self-referential classifier example: $expectedPath"
+    }
     Assert-True ($matched -notcontains 'web-viewer-sample/src/Window.tsx') 'ordinary product code must NOT classify as mechanism'
     $wrongCaseMechanismPaths = @(Get-SelfReferentialMechanismPaths -ChangedPaths @(
         'Scripts/Deploy.ps1',

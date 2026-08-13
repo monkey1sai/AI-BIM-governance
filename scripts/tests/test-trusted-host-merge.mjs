@@ -38,6 +38,7 @@ import {
   verifyReviewerPermission,
   verifyRulesets,
 } from '../lib/trusted-host-merge.mjs'
+import { collectVerifiedSnapshot } from '../lib/trusted-host-merge-executor.mjs'
 
 
 const contract = JSON.parse(await readFile(
@@ -105,9 +106,86 @@ const protection = () => ({
 })
 
 const checkSources = [
-  { context: 'ci/root', app_id: 100 },
-  { context: 'governance/review', app_id: 200 },
+  {
+    context: 'ci/root', app_id: 100, verification_target: 'root-contracts',
+    workflow_path: '.github/workflows/ci.yml',
+  },
+  {
+    context: 'governance/review', app_id: 200, verification_target: 'agent-governance',
+    workflow_path: '.github/workflows/agent-governance.yml',
+  },
 ]
+
+const verificationPlan = ({ rootRequired = true, governanceRequired = true } = {}) => ({
+  schema_version: 'verification-plan/v2',
+  manifest_version: 'verification-manifest/v2',
+  base_sha: BASE,
+  subject_sha: HEAD,
+  result: 'planned',
+  dispatch: 'affected',
+  changed_paths: ['scripts/x'],
+  unknown_paths: [],
+  targets: [
+    {
+      id: 'root-contracts', required: rootRequired,
+      reason: rootRequired ? 'affected_path' : 'path_not_affected',
+      ci_job: 'root contracts and fakes',
+    },
+    {
+      id: 'agent-governance', required: governanceRequired,
+      reason: governanceRequired ? 'affected_path' : 'path_not_affected',
+      ci_job: 'agent-governance',
+    },
+  ],
+})
+
+const checkRun = ({ id, name, appId, status = 'completed', conclusion, checkSuiteId, workflowRunId }) => ({
+  id,
+  name,
+  app: { id: appId },
+  head_sha: HEAD,
+  status,
+  conclusion,
+  check_suite: { id: checkSuiteId },
+  details_url: `https://github.com/${contract.repository.full_name}/actions/runs/${workflowRunId}/job/${id + 10000}`,
+})
+
+const workflowRun = ({ id, checkSuiteId, path }) => ({
+  id,
+  run_attempt: 1,
+  check_suite_id: checkSuiteId,
+  path,
+  event: 'pull_request',
+  head_sha: HEAD,
+  repository: {
+    name: 'AI-BIM-governance',
+    full_name: contract.repository.full_name,
+    url: `https://api.github.com/repos/${contract.repository.full_name}`,
+  },
+  head_repository: {
+    name: 'AI-BIM-governance',
+    full_name: contract.repository.full_name,
+    url: `https://api.github.com/repos/${contract.repository.full_name}`,
+  },
+  pull_requests: [{
+    number: 42,
+    head: {
+      sha: HEAD,
+      repo: {
+        name: 'AI-BIM-governance',
+        url: `https://api.github.com/repos/${contract.repository.full_name}`,
+      },
+    },
+    base: {
+      sha: BASE,
+      ref: 'main',
+      repo: {
+        name: 'AI-BIM-governance',
+        url: `https://api.github.com/repos/${contract.repository.full_name}`,
+      },
+    },
+  }],
+})
 
 const pr = (invocation) => ({
   number: invocation.prNumber,
@@ -338,8 +416,14 @@ test('Linux git raw output exposes a real gitlink to the opaque-mode guard', {
 test('branch policy requires source-pinned checks and forbids every bypass', () => {
   const snapshot = verifyBranchProtection(protection(), checkSources)
   assert.deepEqual(snapshot.requiredChecks, [
-    { context: 'ci/root', appId: 100 },
-    { context: 'governance/review', appId: 200 },
+    {
+      context: 'ci/root', appId: 100, verificationTarget: 'root-contracts',
+      workflowPath: '.github/workflows/ci.yml',
+    },
+    {
+      context: 'governance/review', appId: 200, verificationTarget: 'agent-governance',
+      workflowPath: '.github/workflows/agent-governance.yml',
+    },
   ])
   assert.deepEqual(verifyRulesets([{
     id: 9, name: 'main', target: 'branch', enforcement: 'active',
@@ -410,9 +494,18 @@ test('PR, code-owner approval, reviewer permission, and App-pinned checks are ex
   }, contract)
   const snapshot = verifyBranchProtection(protection(), checkSources)
   verifyRequiredChecks([
-    { id: 10, name: 'ci/root', app: { id: 100 }, head_sha: HEAD, status: 'completed', conclusion: 'success' },
-    { id: 11, name: 'governance/review', app: { id: 200 }, head_sha: HEAD, status: 'completed', conclusion: 'neutral' },
-  ], snapshot, HEAD)
+    checkRun({
+      id: 10, name: 'ci/root', appId: 100, conclusion: 'success',
+      checkSuiteId: 1000, workflowRunId: 2000,
+    }),
+    checkRun({
+      id: 11, name: 'governance/review', appId: 200, conclusion: 'success',
+      checkSuiteId: 1001, workflowRunId: 2001,
+    }),
+  ], [
+    workflowRun({ id: 2000, checkSuiteId: 1000, path: '.github/workflows/ci.yml' }),
+    workflowRun({ id: 2001, checkSuiteId: 1001, path: '.github/workflows/agent-governance.yml' }),
+  ], snapshot, invocation, verificationPlan())
 
   expectHold('pr_identity_not_ready', () => verifyPullRequestIdentity({ ...pr(invocation), draft: true }, invocation))
   for (const branch of ['revert-bad-release', 'release/2026.08', 'release-2026.08', 'hotfix/urgent', 'hotfix-urgent']) {
@@ -426,8 +519,12 @@ test('PR, code-owner approval, reviewer permission, and App-pinned checks are ex
     user: { login: 'monkey1sai-blip', id: 311287868, type: 'User' },
   }, contract))
   expectHold('final_gate_not_clean', () => verifyRequiredChecks([
-    { id: 10, name: 'ci/root', app: { id: 999 }, head_sha: HEAD, status: 'completed', conclusion: 'success' },
-  ], snapshot, HEAD))
+    checkRun({
+      id: 10, name: 'ci/root', appId: 999, conclusion: 'success',
+      checkSuiteId: 1000, workflowRunId: 2000,
+    }),
+  ], [workflowRun({ id: 2000, checkSuiteId: 1000, path: '.github/workflows/ci.yml' })],
+  snapshot, invocation, verificationPlan()))
 
   const stablePr = bindVerifiedPullRequestIdentity(pr(invocation))
   const volatile = pr(invocation)
@@ -438,6 +535,188 @@ test('PR, code-owner approval, reviewer permission, and App-pinned checks are ex
   assert.notDeepEqual(bindVerifiedPullRequestIdentity(bodyChanged), stablePr)
   expectHold('review_required', () => verifyPullRequestIdentity({ ...pr(invocation), reviewDecision: 'REVIEW_REQUIRED' }, invocation, { final: true }))
   expectHold('final_gate_not_clean', () => verifyPullRequestIdentity({ ...pr(invocation), mergeStateStatus: 'BLOCKED' }, invocation, { final: true }))
+})
+
+test('trusted-base verification plan prevents skipped checks from covering executed failures', () => {
+  const invocation = prepareInvocation(rawInput(), context(), contract, NOW)
+  const snapshot = verifyBranchProtection(protection(), checkSources)
+  const governanceSuccess = checkRun({
+    id: 50, name: 'governance/review', appId: 200, conclusion: 'success',
+    checkSuiteId: 1050, workflowRunId: 2050,
+  })
+  const rootRun = (id, status, conclusion) => checkRun({
+    id,
+    name: 'ci/root',
+    appId: 100,
+    status,
+    conclusion,
+    checkSuiteId: 1000 + id,
+    workflowRunId: 2000 + id,
+  })
+  const workflowRuns = [9, 10, 11].map((id) => workflowRun({
+    id: 2000 + id,
+    checkSuiteId: 1000 + id,
+    path: '.github/workflows/ci.yml',
+  })).concat(workflowRun({
+    id: 2050,
+    checkSuiteId: 1050,
+    path: '.github/workflows/agent-governance.yml',
+  }))
+
+  for (const executed of [
+    rootRun(9, 'completed', 'failure'),
+    rootRun(9, 'in_progress', null),
+    rootRun(9, 'completed', 'neutral'),
+  ]) {
+    expectHold('final_gate_not_clean', () => verifyRequiredChecks([
+      executed,
+      rootRun(10, 'completed', 'skipped'),
+      governanceSuccess,
+    ], workflowRuns, snapshot, invocation, verificationPlan()))
+  }
+
+  const priorSuccess = verifyRequiredChecks([
+    rootRun(9, 'completed', 'success'),
+    rootRun(10, 'completed', 'skipped'),
+    governanceSuccess,
+  ], workflowRuns, snapshot, invocation, verificationPlan())
+  assert.equal(priorSuccess.find((item) => item.context === 'ci/root').runId, 9)
+
+  const rerunSuccess = verifyRequiredChecks([
+    rootRun(9, 'completed', 'failure'),
+    rootRun(10, 'completed', 'skipped'),
+    rootRun(11, 'completed', 'success'),
+    governanceSuccess,
+  ], workflowRuns, snapshot, invocation, verificationPlan())
+  assert.equal(rerunSuccess.find((item) => item.context === 'ci/root').runId, 11)
+
+  expectHold('final_gate_not_clean', () => verifyRequiredChecks([
+    rootRun(10, 'completed', 'skipped'),
+    governanceSuccess,
+  ], workflowRuns, snapshot, invocation, verificationPlan()))
+
+  const pathNotAffected = verifyRequiredChecks([
+    rootRun(10, 'completed', 'skipped'),
+    governanceSuccess,
+  ], workflowRuns, snapshot, invocation, verificationPlan({ rootRequired: false }))
+  assert.equal(pathNotAffected.find((item) => item.context === 'ci/root').targetRequired, false)
+
+  const wrongWorkflow = workflowRuns.map((item) => (
+    item.id === 2009 ? { ...item, path: '.github/workflows/agent-governance.yml' } : item
+  ))
+  expectHold('final_gate_read_failed', () => verifyRequiredChecks([
+    rootRun(9, 'completed', 'success'),
+    governanceSuccess,
+  ], wrongWorkflow, snapshot, invocation, verificationPlan()))
+
+  expectHold('final_gate_read_failed', () => verifyRequiredChecks([
+    rootRun(10, 'completed', 'success'),
+    governanceSuccess,
+  ], workflowRuns, snapshot, invocation, { ...verificationPlan(), subject_sha: BASE }))
+})
+
+test('production snapshot collector binds Actions check runs to exact workflow provenance', async () => {
+  const invocation = prepareInvocation(rawInput(), context(), contract, NOW)
+  const assertion = buildBrokerAssertion(invocation, contract)
+  const snapshotContract = structuredClone(contract)
+  snapshotContract.executor.required_check_sources = structuredClone(checkSources)
+  const checkRuns = [
+    checkRun({
+      id: 10, name: 'ci/root', appId: 100, conclusion: 'success',
+      checkSuiteId: 1000, workflowRunId: 2000,
+    }),
+    checkRun({
+      id: 11, name: 'governance/review', appId: 200, conclusion: 'success',
+      checkSuiteId: 1001, workflowRunId: 2001,
+    }),
+  ]
+  const workflowRuns = [
+    workflowRun({ id: 2000, checkSuiteId: 1000, path: '.github/workflows/ci.yml' }),
+    workflowRun({ id: 2001, checkSuiteId: 1001, path: '.github/workflows/agent-governance.yml' }),
+  ]
+  const api = {
+    graphql: async () => ({
+      repository: {
+        pullRequest: {
+          number: invocation.prNumber,
+          state: 'OPEN',
+          isDraft: false,
+          merged: false,
+          headRefOid: invocation.headOid,
+          headRefName: 'feat/safe-change',
+          baseRefOid: invocation.baseOid,
+          baseRefName: 'main',
+          headRepository: { nameWithOwner: invocation.repo },
+          baseRepository: { nameWithOwner: invocation.repo },
+          body: 'Original pull request body',
+          reviewDecision: 'APPROVED',
+          mergeStateStatus: 'CLEAN',
+          mergeCommit: null,
+        },
+      },
+    }),
+    paginate: async (path) => {
+      if (path.includes('/rulesets?')) return []
+      if (path.includes('/reviews?')) return [review(invocation)]
+      return []
+    },
+    request: async (path) => {
+      if (path.includes(`/environments/${snapshotContract.broker.environment}/deployment-branch-policies`)) {
+        return { value: { branch_policies: [{ name: 'main', type: 'branch' }] } }
+      }
+      if (path.endsWith(`/environments/${snapshotContract.broker.environment}`)) {
+        return { value: environment() }
+      }
+      if (path.endsWith(`/actions/runs/${invocation.runId}/approvals`)) {
+        return { value: [{
+          state: 'approved',
+          comment: assertion,
+          environments: [{ name: snapshotContract.broker.environment }],
+          user: { login: 'monkey1sai-blip', id: 311287868, type: 'User' },
+        }] }
+      }
+      if (path.endsWith('/branches/main/protection')) return { value: protection() }
+      if (path.includes('/collaborators/monkey1sai-blip/permission')) {
+        return { value: {
+          permission: 'write',
+          role_name: 'write',
+          user: { login: 'monkey1sai-blip', id: 311287868, type: 'User' },
+        } }
+      }
+      if (path.includes(`/commits/${invocation.headOid}/check-runs?`)) {
+        return { value: { total_count: checkRuns.length, check_runs: checkRuns } }
+      }
+      if (path.includes(`/actions/runs?event=pull_request&head_sha=${invocation.headOid}`)) {
+        return { value: { total_count: workflowRuns.length, workflow_runs: workflowRuns } }
+      }
+      throw new Error(`unexpected request: ${path}`)
+    },
+  }
+  const snapshot = await collectVerifiedSnapshot({
+    api,
+    invocation,
+    assertion,
+    contract: snapshotContract,
+    verificationPlan: verificationPlan(),
+    now: NOW,
+    timeoutMilliseconds: 1000,
+  })
+  assert.deepEqual(snapshot.immutable.requiredChecks.map((item) => ({
+    context: item.context,
+    workflowPath: item.workflowPath,
+    checkSuiteId: item.checkSuiteId,
+    workflowRunId: item.workflowRunId,
+  })), [
+    {
+      context: 'ci/root', workflowPath: '.github/workflows/ci.yml',
+      checkSuiteId: 1000, workflowRunId: 2000,
+    },
+    {
+      context: 'governance/review', workflowPath: '.github/workflows/agent-governance.yml',
+      checkSuiteId: 1001, workflowRunId: 2001,
+    },
+  ])
+  assert.equal(snapshot.immutable.trustedVerificationPlan.subjectSha, invocation.headOid)
 })
 
 test('immutable raw branch protection detects drift outside normalized gate fields', () => {

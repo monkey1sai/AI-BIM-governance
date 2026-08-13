@@ -1,12 +1,16 @@
 import { spawnSync } from 'node:child_process'
+import { lstatSync, readFileSync } from 'node:fs'
+import { resolve, sep } from 'node:path'
 
 import {
+  TrustedMergeHold,
   buildBoundedEvidence,
   bindRawBranchProtection,
   bindVerifiedPullRequestIdentity,
   canonicalJson,
   classifyElevatedPaths,
   fail,
+  heldResult,
   mergeOutcomeUnverifiedResult,
   mergedResult,
   parseNameStatusZ,
@@ -28,6 +32,7 @@ import {
   verifyRulesets,
 } from './trusted-host-merge.mjs'
 import { invokeClaudeApex, invokeCodexApex } from './trusted-host-merge-runtime.mjs'
+import { createVerificationPlan } from './verification-plan.mjs'
 
 
 const splitRepository = (repository) => {
@@ -101,6 +106,21 @@ async function readCheckRuns(api, invocation, maxBytes, signal) {
   fail('evidence_too_large_for_arbiter', 'check_runs_pagination_limit_exceeded')
 }
 
+async function readWorkflowRuns(api, invocation, maxBytes, signal) {
+  const all = []
+  let bytes = 0
+  for (let page = 1; page <= 20; page += 1) {
+    const path = `/repos/${invocation.repo}/actions/runs?event=pull_request&head_sha=${invocation.headOid}&per_page=100&page=${page}`
+    const { value } = await api.request(path, { signal })
+    if (!Array.isArray(value?.workflow_runs)) fail('final_gate_read_failed', 'workflow_runs_payload_invalid')
+    bytes += Buffer.byteLength(JSON.stringify(value.workflow_runs), 'utf8')
+    if (bytes > maxBytes) fail('evidence_too_large_for_arbiter', 'workflow_runs_exceed_limit')
+    all.push(...value.workflow_runs)
+    if (all.length >= Number(value.total_count) || value.workflow_runs.length < 100) return all
+  }
+  fail('evidence_too_large_for_arbiter', 'workflow_runs_pagination_limit_exceeded')
+}
+
 async function readRulesets(api, invocation, signal) {
   const summaries = await api.paginate(
     `/repos/${invocation.repo}/rulesets?includes_parents=true&per_page=100`,
@@ -123,6 +143,7 @@ export async function collectVerifiedSnapshot({
   invocation,
   assertion,
   contract,
+  verificationPlan,
   now = new Date(),
   timeoutMilliseconds = contract.executor.pre_sink_timeouts.snapshot_milliseconds,
 }) {
@@ -147,6 +168,7 @@ export async function collectVerifiedSnapshot({
     issueComments,
     permissionResponse,
     checkRuns,
+    workflowRuns,
   ] = await Promise.all([
     api.request(`/repos/${invocation.repo}/environments/${environmentName}`, { signal }),
     api.request(
@@ -171,6 +193,7 @@ export async function collectVerifiedSnapshot({
       { signal },
     ),
     readCheckRuns(api, invocation, maxBytes, signal),
+    readWorkflowRuns(api, invocation, maxBytes, signal),
   ])
 
   const branchPolicies = policyResponse.value?.branch_policies
@@ -181,7 +204,14 @@ export async function collectVerifiedSnapshot({
   const normalizedRulesets = verifyRulesets(rulesets)
   const approval = selectCanonicalApproval(reviews, invocation, contract)
   verifyReviewerPermission(permissionResponse.value, contract)
-  verifyRequiredChecks(checkRuns, protection, invocation.headOid)
+  const trustedVerificationPlan = bindTrustedVerificationPlan(verificationPlan, invocation)
+  const verifiedRequiredChecks = verifyRequiredChecks(
+    checkRuns,
+    workflowRuns,
+    protection,
+    invocation,
+    verificationPlan,
+  )
   const reviewSurface = reviewSurfaceSnapshot({ pullComments, reviews, issueComments })
 
   const immutable = {
@@ -199,19 +229,8 @@ export async function collectVerifiedSnapshot({
     rulesets: normalizedRulesets,
     approval,
     reviewerPermission: permissionResponse.value,
-    requiredChecks: protection.requiredChecks.map((requirement) => {
-      const current = checkRuns.filter((run) => (
-        run?.name === requirement.context && run?.app?.id === requirement.appId &&
-        run?.head_sha === invocation.headOid
-      )).sort((a, b) => Number(b.id) - Number(a.id))[0]
-      return {
-        context: requirement.context,
-        appId: requirement.appId,
-        runId: current.id,
-        status: current.status,
-        conclusion: current.conclusion,
-      }
-    }),
+    trustedVerificationPlan,
+    requiredChecks: verifiedRequiredChecks,
     reviewSurfaceSha256: reviewSurface.sha256,
   }
   return {
@@ -327,6 +346,99 @@ export function collectGitEvidence({ repoRoot, invocation, token, contract, exec
   const stat = runCandidateGit(['diff', '--no-ext-diff', '--no-textconv', '--stat', range])
   const log = runCandidateGit(['log', '--format=%H %s', `${invocation.baseOid}..${invocation.headOid}`])
   return { entries, paths: classification.paths, diff, stat, log }
+}
+
+const bindTrustedVerificationPlan = (plan, invocation) => {
+  const targetsValid = Array.isArray(plan?.targets) && plan.targets.length > 0 &&
+    new Set(plan.targets.map((target) => target?.id)).size === plan.targets.length &&
+    plan.targets.every((target) => (
+      typeof target?.id === 'string' && /^[a-z][a-z0-9-]{0,63}$/u.test(target.id) &&
+      typeof target?.required === 'boolean' && typeof target?.reason === 'string' && target.reason.length > 0 &&
+      typeof target?.ci_job === 'string' && target.ci_job.length > 0
+    ))
+  if (
+    plan?.schema_version !== 'verification-plan/v2' || plan?.manifest_version !== 'verification-manifest/v2' ||
+    plan?.base_sha !== invocation.baseOid || plan?.subject_sha !== invocation.headOid ||
+    plan?.result !== 'planned' || !['affected', 'full'].includes(plan?.dispatch) ||
+    !Array.isArray(plan?.changed_paths) || !Array.isArray(plan?.unknown_paths) ||
+    plan.unknown_paths.length !== 0 || !targetsValid
+  ) {
+    fail('final_gate_read_failed', 'trusted_base_verification_plan_invalid')
+  }
+  return {
+    schemaVersion: plan.schema_version,
+    manifestVersion: plan.manifest_version,
+    baseSha: plan.base_sha,
+    subjectSha: plan.subject_sha,
+    result: plan.result,
+    dispatch: plan.dispatch,
+    changedPaths: [...plan.changed_paths],
+    targets: plan.targets.map((target) => ({
+      id: target.id,
+      required: target.required,
+      reason: target.reason,
+      ciJob: target.ci_job,
+    })),
+  }
+}
+
+export function buildTrustedVerificationPlan({ repoRoot, invocation, candidatePaths, contract }) {
+  const policy = contract?.executor?.required_check_trust_boundary
+  if (
+    policy?.candidate_mechanism_change !== 'separate_authorization' ||
+    policy?.base_owned_manifest_path !== 'scripts/verification-manifest.json' ||
+    !Array.isArray(policy?.mechanism_path_patterns) || policy.mechanism_path_patterns.length === 0 ||
+    policy?.required_target_conclusion !== 'success' ||
+    policy?.skipped_conclusion !== 'only_when_trusted_base_plan_not_required' ||
+    !Array.isArray(candidatePaths) || candidatePaths.length === 0
+  ) {
+    fail('host_env_blocked', 'required_check_trust_boundary_invalid')
+  }
+  let mechanismPatterns
+  try {
+    mechanismPatterns = policy.mechanism_path_patterns.map((pattern) => {
+      if (typeof pattern !== 'string' || !pattern.startsWith('^') || pattern.length > 256) {
+        throw new Error('invalid mechanism pattern')
+      }
+      return new RegExp(pattern, 'u')
+    })
+  } catch {
+    fail('host_env_blocked', 'required_check_mechanism_patterns_invalid')
+  }
+  if (candidatePaths.some((candidatePath) => (
+    typeof candidatePath !== 'string' || mechanismPatterns.some((pattern) => pattern.test(candidatePath))
+  ))) {
+    fail('branch_requires_separate_authorization', 'required_check_mechanism_changed')
+  }
+
+  const trustedRoot = resolve(repoRoot)
+  const manifestPath = resolve(trustedRoot, policy.base_owned_manifest_path)
+  if (!manifestPath.startsWith(`${trustedRoot}${sep}`)) {
+    fail('host_env_blocked', 'trusted_base_manifest_path_invalid')
+  }
+  let manifest
+  try {
+    const item = lstatSync(manifestPath)
+    if (!item.isFile() || item.isSymbolicLink() || item.size < 2 || item.size > 2 * 1024 * 1024) {
+      fail('host_env_blocked', 'trusted_base_manifest_invalid')
+    }
+    manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
+  } catch (error) {
+    if (error instanceof TrustedMergeHold) throw error
+    fail('host_env_blocked', 'trusted_base_manifest_invalid')
+  }
+  let plan
+  try {
+    plan = createVerificationPlan(manifest, {
+      changedPaths: candidatePaths,
+      baseSha: invocation.baseOid,
+      subjectSha: invocation.headOid,
+    })
+  } catch {
+    fail('final_gate_read_failed', 'trusted_base_verification_plan_invalid')
+  }
+  bindTrustedVerificationPlan(plan, invocation)
+  return plan
 }
 
 export function verifyTrustedOriginUrl(actual, invocation) {
@@ -592,12 +704,18 @@ export async function executeTrustedMerge({
     fail('host_env_blocked', 'execution_deadline_invalid')
   }
   const activationMode = verifyActivationGate({ ...activation, invocation, contract })
-  const prepared = await snapshotCollector({
-    api, invocation, assertion, contract, now: now(),
-    timeoutMilliseconds: deadline.timeout(contract.executor.pre_sink_timeouts.snapshot_milliseconds),
-  })
   const gitEvidence = gitEvidenceCollector({
     repoRoot, invocation, token: installationToken, contract, executionDeadline: deadline,
+  })
+  const verificationPlan = buildTrustedVerificationPlan({
+    repoRoot,
+    invocation,
+    candidatePaths: gitEvidence.paths,
+    contract,
+  })
+  const prepared = await snapshotCollector({
+    api, invocation, assertion, contract, verificationPlan, now: now(),
+    timeoutMilliseconds: deadline.timeout(contract.executor.pre_sink_timeouts.snapshot_milliseconds),
   })
 
   for (let index = 0; index < 3; index += 1) {
@@ -605,7 +723,7 @@ export async function executeTrustedMerge({
     await sleep(30000)
     deadline.assertBeforeSink()
     const buffered = await snapshotCollector({
-      api, invocation, assertion, contract, now: now(),
+      api, invocation, assertion, contract, verificationPlan, now: now(),
       timeoutMilliseconds: deadline.timeout(contract.executor.pre_sink_timeouts.snapshot_milliseconds),
     })
     assertSnapshotEqual(prepared, buffered, 'branch_protection_changed_during_buffer', DURING_BUFFER_FIELD_REASONS)
@@ -631,7 +749,7 @@ export async function executeTrustedMerge({
   verifyApexVerdict(verdict, invocation, prepared.approval)
 
   const finalSnapshot = await snapshotCollector({
-    api, invocation, assertion, contract, now: now(),
+    api, invocation, assertion, contract, verificationPlan, now: now(),
     timeoutMilliseconds: deadline.timeout(contract.executor.pre_sink_timeouts.snapshot_milliseconds),
   })
   assertSnapshotEqual(prepared, finalSnapshot, 'branch_protection_changed_after_verdict', AFTER_VERDICT_FIELD_REASONS)
@@ -659,6 +777,13 @@ export async function executeTrustedMerge({
     contract.executor.merge_method,
     contract.executor.merge_request_timeout_milliseconds,
   )
+  if (
+    mergeAttempt.error instanceof TrustedMergeHold &&
+    mergeAttempt.error.reason === 'final_gate_read_failed' &&
+    ['github_api_405', 'github_api_409'].includes(mergeAttempt.error.detail)
+  ) {
+    return heldResult(invocation, 'merge_command_failed', mergeAttempt.error.detail)
+  }
   const observation = await observeMergeState(api, invocation, contract, sleep)
   if (!observation.matched) {
     if (mergeAttempt.response?.merged === true && /^[0-9a-f]{40}$/u.test(mergeAttempt.response.sha || '')) {

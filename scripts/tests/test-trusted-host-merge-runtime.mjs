@@ -16,6 +16,7 @@ import {
   prepareInvocation,
 } from '../lib/trusted-host-merge.mjs'
 import {
+  buildTrustedVerificationPlan,
   createExecutionDeadline,
   executeTrustedMerge,
   verifyExecutionTimingBudget,
@@ -106,7 +107,7 @@ test('installation token is RSA-signed and narrowed to one repository and fixed 
     repository: contract.repository.full_name,
     permissions: contract.executor.github_app_token.permissions,
     timeoutMilliseconds: contract.executor.pre_sink_timeouts.app_token_mint_milliseconds,
-    now: NOW,
+    now: () => NOW,
     fetchImpl: async (url, init) => {
       request = { url, init, body: JSON.parse(init.body) }
       return new Response(JSON.stringify({
@@ -139,6 +140,39 @@ test('installation token is RSA-signed and narrowed to one repository and fixed 
     timeoutMilliseconds: contract.executor.pre_sink_timeouts.app_token_mint_milliseconds,
     fetchImpl: async () => { throw new Error('simulated stalled mint') },
   }), (error) => error instanceof TrustedMergeHold && error.detail === 'github_app_token_mint_request_failed')
+})
+
+test('installation token TTL is measured at response receipt, not mint start', async () => {
+  const { privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 })
+  const pem = privateKey.export({ type: 'pkcs8', format: 'pem' })
+  const mintStart = new Date('2026-08-12T02:00:00.000Z')
+  const receipt = new Date('2026-08-12T02:00:01.000Z')
+  const clock = [mintStart, receipt]
+  const minted = await mintInstallationToken({
+    appId: '123', installationId: '456', privateKey: pem,
+    repository: contract.repository.full_name,
+    permissions: contract.executor.github_app_token.permissions,
+    timeoutMilliseconds: contract.executor.pre_sink_timeouts.app_token_mint_milliseconds,
+    now: () => clock.shift(),
+    fetchImpl: async () => new Response(JSON.stringify({
+      token: `ghs_${'x'.repeat(40)}`,
+      expires_at: '2026-08-12T03:00:01.000Z',
+    }), { status: 201, headers: { 'content-type': 'application/json' } }),
+  })
+  assert.equal(minted.expiresAt, '2026-08-12T03:00:01.000Z')
+
+  const invalidClock = [mintStart, receipt]
+  await assert.rejects(() => mintInstallationToken({
+    appId: '123', installationId: '456', privateKey: pem,
+    repository: contract.repository.full_name,
+    permissions: contract.executor.github_app_token.permissions,
+    timeoutMilliseconds: contract.executor.pre_sink_timeouts.app_token_mint_milliseconds,
+    now: () => invalidClock.shift(),
+    fetchImpl: async () => new Response(JSON.stringify({
+      token: `ghs_${'x'.repeat(40)}`,
+      expires_at: '2026-08-12T03:00:02.000Z',
+    }), { status: 201, headers: { 'content-type': 'application/json' } }),
+  }), (error) => error instanceof TrustedMergeHold && error.detail === 'github_app_token_ttl_invalid')
 })
 
 test('GitHub client paginates only same-origin JSON and never places token in URLs', async () => {
@@ -376,8 +410,8 @@ test('executor rechecks five immutable snapshots and invokes the exact-head merg
     sleep: async (milliseconds) => { sleepCalls += 1; assert.equal(milliseconds, 30000) },
     snapshotCollector: async () => { snapshots += 1; return structuredClone(stable) },
     gitEvidenceCollector: () => ({
-      entries: [{ status: 'M', path: '.github/workflows/ci.yml' }],
-      paths: ['.github/workflows/ci.yml'], diff: 'diff', stat: 'stat', log: 'log',
+      entries: [{ status: 'M', path: 'infra/example.conf' }],
+      paths: ['infra/example.conf'], diff: 'diff', stat: 'stat', log: 'log',
     }),
     apexInvoker: async () => ({
       allowMerge: true,
@@ -616,6 +650,94 @@ test('ambiguous merge polling reports unknown after bounded unreadable or wrong-
   assert.equal(result.heldDetail, 'authoritative_merge_identity_mismatch')
   assert.equal(mergeCalls, 1)
   assert.equal(reads, 1)
+})
+
+test('definitive merge 405 and 409 are held without ambiguous outcome polling', async () => {
+  for (const status of [405, 409]) {
+    let mergeCalls = 0
+    let observationReads = 0
+    const result = await executeWithStableGates({
+      api: {
+        request: async (_path, options = {}) => {
+          if (options.method === 'PUT') {
+            mergeCalls += 1
+            throw new TrustedMergeHold('final_gate_read_failed', `github_api_${status}`)
+          }
+          observationReads += 1
+          throw new Error('authoritative observation must not run for a definitive rejection')
+        },
+      },
+    })
+    assert.equal(result.status, 'held')
+    assert.equal(result.merged, false)
+    assert.equal(result.heldReason, 'merge_command_failed')
+    assert.equal(result.heldDetail, `github_api_${status}`)
+    assert.equal(mergeCalls, 1)
+    assert.equal(observationReads, 0)
+  }
+})
+
+test('trusted-base verification plan blocks mechanism changes and plans ordinary elevated paths', () => {
+  const plan = buildTrustedVerificationPlan({
+    repoRoot,
+    invocation,
+    candidatePaths: ['infra/example.conf'],
+    contract,
+  })
+  assert.equal(plan.result, 'planned')
+  assert.equal(plan.base_sha, BASE)
+  assert.equal(plan.subject_sha, HEAD)
+  assert.equal(plan.targets.find((target) => target.id === 'secret-pattern-scan').required, true)
+
+  for (const candidatePath of [
+    '.github/workflows/ci.yml',
+    'scripts/verification-manifest.json',
+    'scripts/lib/verification-runner.mjs',
+    'scripts/tests/test-agent-governance-check.ps1',
+    '.github/CODEOWNERS',
+    'bim-review-coordinator/package.json',
+    'governance-service/tests/test_api.py',
+    'web-viewer-sample/src/main.test.tsx',
+    'web-viewer-sample/.eslintignore',
+    'pytest.py',
+    'pip/__main__.py',
+  ]) {
+    assert.throws(() => buildTrustedVerificationPlan({
+      repoRoot,
+      invocation,
+      candidatePaths: [candidatePath],
+      contract,
+    }), (error) => (
+      error instanceof TrustedMergeHold &&
+      error.reason === 'branch_requires_separate_authorization' &&
+      error.detail === 'required_check_mechanism_changed'
+    ))
+  }
+
+  for (const candidatePath of [
+    'bim-review-coordinator/src/app.ts',
+    'governance-service/app.py',
+    'web-viewer-sample/src/App.tsx',
+    'compose.runtime-manager.yml',
+  ]) {
+    assert.equal(buildTrustedVerificationPlan({
+      repoRoot,
+      invocation,
+      candidatePaths: [candidatePath],
+      contract,
+    }).result, 'planned')
+  }
+
+  assert.throws(() => buildTrustedVerificationPlan({
+    repoRoot,
+    invocation,
+    candidatePaths: ['unknown-surface/file.txt'],
+    contract,
+  }), (error) => (
+    error instanceof TrustedMergeHold &&
+    error.reason === 'final_gate_read_failed' &&
+    error.detail === 'trusted_base_verification_plan_invalid'
+  ))
 })
 
 test('conflicting response and authoritative merge SHAs preserve merged truth but hold closeout', async () => {

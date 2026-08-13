@@ -813,9 +813,30 @@ try {
     Assert-True ($specToDoneContract.ship.dispatch_protocol -ceq 'github-workflow-dispatch') 'spec-to-done machine contract declares the host handoff protocol'
     Assert-True ($specToDoneContract.ship.activation_state -ceq 'requires_live_attestation') 'machine truth remains held until the ordered live attestation closes'
     $trustedMergeCheckSourceSignature = (@($trustedMergeContract.executor.required_check_sources) | ForEach-Object {
-        "$($_.context):$($_.app_id)"
+        "$($_.context):$($_.app_id):$($_.verification_target):$($_.workflow_path)"
     }) -join '|'
-    Assert-True ($trustedMergeCheckSourceSignature -ceq 'agent-governance:15368|root contracts and fakes:15368|coordinator build and tests:15368|governance-service tests:15368|viewer build and tests:15368|kit-manager-api tests:15368|kit-manager-web build:15368|docker compose config:15368|powershell static analysis:15368|secret pattern scan:15368') 'trusted merge contract pins the exact live main required-check contexts to GitHub Actions App 15368'
+    $expectedTrustedMergeCheckSourceSignature = @(
+        'agent-governance:15368:agent-governance:.github/workflows/agent-governance.yml',
+        'root contracts and fakes:15368:root-contracts:.github/workflows/ci.yml',
+        'coordinator build and tests:15368:coordinator:.github/workflows/ci.yml',
+        'governance-service tests:15368:governance:.github/workflows/ci.yml',
+        'viewer build and tests:15368:viewer:.github/workflows/ci.yml',
+        'kit-manager-api tests:15368:kit-manager-api:.github/workflows/ci.yml',
+        'kit-manager-web build:15368:kit-manager-web:.github/workflows/ci.yml',
+        'docker compose config:15368:compose-config:.github/workflows/ci.yml',
+        'powershell static analysis:15368:powershell-static:.github/workflows/ci.yml',
+        'secret pattern scan:15368:secret-pattern-scan:.github/workflows/ci.yml'
+    ) -join '|'
+    Assert-True ($trustedMergeCheckSourceSignature -ceq $expectedTrustedMergeCheckSourceSignature) 'trusted merge contract pins every live required check to exact App, trusted verification target, and workflow path'
+    $trustedMergeMechanismPolicy = $trustedMergeContract.executor.required_check_trust_boundary
+    Assert-True ($trustedMergeMechanismPolicy.candidate_mechanism_change -ceq 'separate_authorization') 'candidate verification-mechanism changes require separate authorization'
+    Assert-True ($trustedMergeMechanismPolicy.base_owned_manifest_path -ceq 'scripts/verification-manifest.json') 'trusted merge computes plans from the base-owned manifest'
+    foreach ($mechanismProbe in @('.github/workflows/ci.yml', 'scripts/tests/test-agent-governance-check.ps1', 'bim-review-coordinator/package.json', 'pytest.py')) {
+        $matches = @($trustedMergeMechanismPolicy.mechanism_path_patterns | Where-Object {
+            [regex]::IsMatch($mechanismProbe, [string]$_, [System.Text.RegularExpressions.RegexOptions]::CultureInvariant)
+        })
+        Assert-True ($matches.Count -gt 0) "trusted merge mechanism policy blocks candidate-owned gate dependency: $mechanismProbe"
+    }
     Assert-True ($specToDoneContract.ship.unavailable_reason -ceq 'trusted_elevated_authorization_unavailable') 'spec-to-done machine contract maps pending attestation to a durable authorization hold'
     Assert-True ($specToDoneContract.terminal_evidence.owner_phase -ceq 'P7') 'spec-to-done machine contract owns terminal evidence at P7'
     Assert-True ($specToDoneContract.terminal_evidence.trusted_remote_url -ceq 'https://github.com/monkey1sai/AI-BIM-governance.git') 'P7 pins the trusted HTTPS remote'

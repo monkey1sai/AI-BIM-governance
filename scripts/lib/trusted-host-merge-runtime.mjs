@@ -37,7 +37,7 @@ export async function mintInstallationToken({
   repository,
   permissions,
   timeoutMilliseconds,
-  now = new Date(),
+  now = () => new Date(),
   fetchImpl = fetch,
 }) {
   assertOfficialGitHubApi(apiBaseUrl)
@@ -50,7 +50,15 @@ export async function mintInstallationToken({
   if (typeof repository !== 'string' || !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u.test(repository)) {
     fail('host_env_blocked', 'repository_identity_invalid')
   }
-  const issuedAt = Math.floor(now.getTime() / 1000) - 60
+  if (typeof now !== 'function') fail('host_env_blocked', 'github_app_token_clock_invalid')
+  const readClock = () => {
+    const value = now()
+    if (!(value instanceof Date) || !Number.isFinite(value.getTime())) {
+      fail('host_env_blocked', 'github_app_token_clock_invalid')
+    }
+    return value
+  }
+  const issuedAt = Math.floor(readClock().getTime() / 1000) - 60
   const header = base64url(JSON.stringify({ alg: 'RS256', typ: 'JWT' }))
   const payload = base64url(JSON.stringify({ iat: issuedAt, exp: issuedAt + 540, iss: String(appId) }))
   const unsigned = `${header}.${payload}`
@@ -80,8 +88,8 @@ export async function mintInstallationToken({
     fail('host_env_blocked', 'github_app_token_mint_failed')
   }
   const expiresAt = Date.parse(body.expires_at)
-  const ttlSeconds = Math.floor((expiresAt - now.getTime()) / 1000)
-  if (!Number.isFinite(expiresAt) || ttlSeconds <= 0 || ttlSeconds > 3600) {
+  const ttlMilliseconds = expiresAt - readClock().getTime()
+  if (!Number.isFinite(expiresAt) || ttlMilliseconds <= 0 || ttlMilliseconds > 3600 * 1000) {
     fail('host_env_blocked', 'github_app_token_ttl_invalid')
   }
   return { token: body.token, expiresAt: body.expires_at }

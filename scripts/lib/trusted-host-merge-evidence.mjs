@@ -178,7 +178,22 @@ export function verifyBranchProtection(protection, requiredCheckSources) {
   }
   return {
     strict: true,
-    requiredChecks: normalizedChecks,
+    requiredChecks: normalizedChecks.map((check) => {
+      const source = requiredCheckSources.find((candidate) => (
+        candidate?.context === check.context && candidate?.app_id === check.appId
+      ))
+      if (
+        typeof source?.verification_target !== 'string' || !source.verification_target ||
+        typeof source?.workflow_path !== 'string' || !source.workflow_path
+      ) {
+        fail('branch_protection_single_owner_gate_not_strict', 'required_check_verification_target_missing')
+      }
+      return {
+        ...check,
+        verificationTarget: source.verification_target,
+        workflowPath: source.workflow_path,
+      }
+    }),
     requiredApprovals: 1,
     dismissStaleReviews: true,
     requireCodeOwnerReviews: true,
@@ -294,19 +309,90 @@ export function verifyReviewerPermission(permission, contract) {
   }
 }
 
-const acceptedCheckConclusions = new Set(['success', 'neutral', 'skipped'])
-
-export function verifyRequiredChecks(checkRuns, protectionSnapshot, headOid) {
+export function verifyRequiredChecks(checkRuns, workflowRuns, protectionSnapshot, invocation, verificationPlan) {
   if (!Array.isArray(checkRuns)) fail('final_gate_read_failed', 'check_runs_missing')
+  if (!Array.isArray(workflowRuns)) fail('final_gate_read_failed', 'workflow_runs_missing')
+  const headOid = invocation?.headOid
+  if (
+    verificationPlan?.schema_version !== 'verification-plan/v2' ||
+    verificationPlan?.result !== 'planned' || verificationPlan?.subject_sha !== headOid ||
+    !Array.isArray(verificationPlan?.targets)
+  ) {
+    fail('final_gate_read_failed', 'trusted_base_verification_plan_invalid')
+  }
+  const targetById = new Map(verificationPlan.targets.map((target) => [target?.id, target]))
+  if (targetById.size !== verificationPlan.targets.length) {
+    fail('final_gate_read_failed', 'trusted_base_verification_plan_invalid')
+  }
+  const repositoryName = invocation?.repo?.split('/')[1]
+  const exactRepository = (repository) => (
+    typeof repositoryName === 'string' && repositoryName.length > 0 &&
+    repository?.url === `https://api.github.com/repos/${invocation.repo}` &&
+    repository?.name === repositoryName &&
+    (repository?.full_name === undefined || repository.full_name === invocation.repo)
+  )
+  const verified = []
   for (const requirement of protectionSnapshot.requiredChecks) {
     const candidates = checkRuns.filter((run) => (
       run?.name === requirement.context && run?.app?.id === requirement.appId && run?.head_sha === headOid
-    )).sort((a, b) => Number(b.id) - Number(a.id))
-    const latest = candidates[0]
-    if (!latest || latest.status !== 'completed' || !acceptedCheckConclusions.has(latest.conclusion)) {
+    ))
+    if (candidates.some((run) => !safeInteger(run?.id))) {
+      fail('final_gate_read_failed', 'required_check_run_id_invalid')
+    }
+    candidates.sort((a, b) => b.id - a.id)
+    const target = targetById.get(requirement.verificationTarget)
+    if (!target || typeof target.required !== 'boolean') {
+      fail('final_gate_read_failed', 'required_check_verification_target_unknown')
+    }
+    const selected = target.required
+      ? candidates.find((run) => run?.conclusion !== 'skipped')
+      : candidates[0]
+    const accepted = target.required
+      ? selected?.conclusion === 'success'
+      : ['success', 'skipped'].includes(selected?.conclusion)
+    if (!selected || selected.status !== 'completed' || !accepted) {
       fail('final_gate_not_clean', 'required_check_not_green')
     }
+    const checkSuiteId = selected?.check_suite?.id
+    if (!safeInteger(checkSuiteId) || typeof selected?.details_url !== 'string') {
+      fail('final_gate_read_failed', 'required_check_workflow_provenance_missing')
+    }
+    const matchingWorkflowRuns = workflowRuns.filter((run) => run?.check_suite_id === checkSuiteId)
+    if (matchingWorkflowRuns.length !== 1) {
+      fail('final_gate_read_failed', 'required_check_workflow_provenance_ambiguous')
+    }
+    const workflowRun = matchingWorkflowRuns[0]
+    const exactPullRequest = Array.isArray(workflowRun?.pull_requests) && workflowRun.pull_requests.some((item) => (
+      item?.number === invocation.prNumber && item?.head?.sha === headOid &&
+      exactRepository(item?.head?.repo) && item?.base?.sha === invocation.baseOid &&
+      item?.base?.ref === 'main' && exactRepository(item?.base?.repo)
+    ))
+    const detailsPrefix = `https://github.com/${invocation.repo}/actions/runs/${workflowRun?.id}/job/`
+    if (
+      !safeInteger(workflowRun?.id) || !safeInteger(workflowRun?.run_attempt) ||
+      workflowRun?.path !== requirement.workflowPath || workflowRun?.event !== 'pull_request' ||
+      workflowRun?.head_sha !== headOid || !exactRepository(workflowRun?.repository) ||
+      !exactRepository(workflowRun?.head_repository) || !exactPullRequest ||
+      !selected.details_url.startsWith(detailsPrefix) ||
+      !/^[0-9]+$/u.test(selected.details_url.slice(detailsPrefix.length))
+    ) {
+      fail('final_gate_read_failed', 'required_check_workflow_provenance_invalid')
+    }
+    verified.push({
+      context: requirement.context,
+      appId: requirement.appId,
+      verificationTarget: requirement.verificationTarget,
+      workflowPath: requirement.workflowPath,
+      targetRequired: target.required,
+      runId: selected.id,
+      checkSuiteId,
+      workflowRunId: workflowRun.id,
+      workflowRunAttempt: workflowRun.run_attempt,
+      status: selected.status,
+      conclusion: selected.conclusion,
+    })
   }
+  return verified
 }
 
 const surfaceFields = [
