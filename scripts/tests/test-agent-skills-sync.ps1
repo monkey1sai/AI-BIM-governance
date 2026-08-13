@@ -484,6 +484,11 @@ Assert-True ($claudeMinioAcceptance.Contains('apply the exact `sanitizeArtifactI
 Assert-True ($claudeMinioAcceptance.Contains('ledger `conversion_job_id`, `correlation_id`, `project_id`, and `external_model_version_id` versus streaming `conversion_job_id`, `correlation_id`, `project_id`, and `model_version_id`')) 'ledger-to-streaming job and metadata fields are mapped explicitly'
 Assert-True ($claudeMinioAcceptance -match 'Any proven unexpected RVT ledger count above zero is `HELD`') 'proven RVT-to-ledger boundary violations fail closed'
 Assert-True ($claudeMinioAcceptance -match '`baseline_count`, `seen_count`, `triggered_total`.+process-lifetime diagnostics') 'watcher lifetime counters are not current-scope totals'
+Assert-True ($claudeMinioAcceptance.Contains('If the effective suffix is absent or cannot be proven from this runtime-owned response, the object scope is unknown and the whole acceptance is `HELD`; do not read `.env*` or assume the default suffix.')) 'effective watcher suffix must come from the runtime-owned status response'
+Assert-True ($claudeMinioAcceptance.Contains('The current browse surface can omit unsupported keys without returning a skipped-key count, so its rows alone are not complete-list proof.')) 'object enumeration does not overclaim completeness when the API suppresses keys'
+Assert-True ($claudeMinioAcceptance.Contains('If authoritative completeness is absent, both the object scope and RVT boundary are `unverified` and the whole acceptance is `HELD`.')) 'missing authoritative object completeness fails the whole acceptance closed'
+Assert-True ($claudeMinioAcceptance.Contains('require `mapping_provenance=converter_verified`, `mock=false`, `allow_fake_mapping=false`, and `fake_mapping_count=0`')) 'real-data acceptance rejects fake or unverified mapping provenance'
+Assert-True ($claudeMinioAcceptance.Contains('even when the conversion is terminal-success')) 'terminal success cannot mask fake mapping evidence'
 $blastRadiusEntry = @($repoManifest.skills | Where-Object { $_.name -eq 'gitnexus-blast-radius' })
 Assert-True ($blastRadiusEntry.Count -eq 1) 'manifest declares one GitNexus blast-radius skill'
 $gitnexusEntry = @($repoManifest.skills | Where-Object { $_.name -eq 'gitnexus' })
