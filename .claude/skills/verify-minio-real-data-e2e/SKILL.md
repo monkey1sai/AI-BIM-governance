@@ -30,6 +30,7 @@ ssh -o BatchMode=yes <canonical-host> "curl -s -m 8 http://127.0.0.1:49101/healt
 - status `enabled:true` 且 `last_error:null` → 憑證已就緒，跳到 §4。
 - status note 含「credentials 未完整設定」→ 走 §2。
 - MinIO health 非 200 → 網路層先解，不動 env。同時記錄部署 revision（remote checkout 的 `git log -1` 或 deploy tag）供報告與 tip 版差裁決。
+- **:49101 探測位址依 owner inventory**：conversion service 綁定 inventory 的 `host_native_bind_host`——非 loopback 綁定時 `127.0.0.1:49101` 會對健康服務誤報不可達。以 inventory 解析出的 bind host 探測，或直接用 deployment-profile 的 `verify-all.ps1 -Profile Deployment`（其本來就按 target 解析）。
 
 ## 2. 憑證診斷與 owner 供裝
 
@@ -54,11 +55,13 @@ owner 填法（owner 親自在自己終端機執行；agent 只給指令不代�
 
 容器 env 來自 compose `--env-file` 內插；**restart 不會重讀 env**，必須 up -d recreate：
 
+**recreate 前先拍 ledger 快照**：部署未供給持久 `CONVERSION_LEDGER_STORE_PATH` 時（issue #531），recreate 會清掉容器內 ledger 水印——先 `GET :8004/api/conversion/records?limit=100` 存檔，供 recreate 後對帳（callback-outbox 不受影響：compose 已把它指向掛載的 `/workspace/storage/coordinator/`）。
+
 ```bash
 ssh -o BatchMode=yes <canonical-host> "cd <deploy-root> && docker compose --env-file .env.web-plane.host-kit -f compose.runtime-manager.yml -f compose.host-kit.yml up -d coordinator"
 ```
 
-後驗：status 轉 `enabled:true`、`last_error:null`。若 `last_error` 出現 authorization 字元錯誤 → 回 §2 表格。
+後驗：status 轉 `enabled:true`、`last_error:null`。若 `last_error` 出現 authorization 字元錯誤 → 回 §2 表格。recreate 後的觸發計數判讀依 §4 的「重跑（recreate 後）」情境。
 
 ## 4. 閉環驗收（全部唯讀）
 
@@ -66,7 +69,7 @@ watcher 首輪 tick 會對 bucket 內所有規約 key（`{專案}/root/{種類}/
 
 - **首跑（該部署第一次啟用，records 為空）**：`triggered_total` 逐步到齊至 `baseline_count`、`last_triggered[].error` 全 null、`skipped_malformed_total=0`。
 - **重跑（同一 watcher 行程持續運行）**：in-memory seen 快取生效——`poll_count` 遞增而 `triggered_total`／`seen_count` 持平＝正確的同行程冪等。
-- **重跑（coordinator recreate／restart 後）**：去重有三層——watcher in-memory seen（行程級）→ coordinator ConversionLedger 水印（`skip_ledgered`）→ streaming request-fingerprint（最深層）。**注意（2026-08-13 實測）**：coordinator 的 ledger／outbox store 預設在容器內 `<cwd>/data/`，canonical 部署未掛載該路徑時 **recreate 即蒸發**，此時會重觸發 intake（`triggered_total` 重新計到 N）但 streaming 冪等擋住重轉——判準改看 **streaming job 總數不變、record 綁回既有 `conversion_job_id`**。若部署已供給持久 store 路徑，則預期改為 `skip_ledgered`、`triggered_total=0`。兩種都算通過；重轉（job 數增加）才是失敗。
+- **重跑（coordinator recreate／restart 後）**：去重有三層——watcher in-memory seen（行程級）→ coordinator ConversionLedger 水印（`skip_ledgered`）→ streaming request-fingerprint（最深層）。**注意（2026-08-13 實測）**：coordinator 的 **conversion-ledger** store 預設在容器內 `<cwd>/data/`，canonical 部署未以 env 覆寫該路徑時 **recreate 即蒸發**（issue #531；callback-outbox 不同——compose 已將其指向掛載的 `/workspace/storage/coordinator/`，可存活），此時會重觸發 intake（`triggered_total` 重新計到 N）但 streaming 冪等擋住重轉——判準改看 **streaming job 總數不變、record 綁回既有 `conversion_job_id`**。若部署已供給持久 store 路徑，則預期改為 `skip_ledgered`、`triggered_total=0`。兩種都算通過；重轉（job 數增加）才是失敗。
 
 逐項驗：
 
@@ -81,6 +84,7 @@ watcher 首輪 tick 會對 bucket 內所有規約 key（`{專案}/root/{種類}/
 
 - **用資料夾視圖**：`GET :8004/api/minio/objects?delimiter=/&prefix=<urlencoded-prefix>`（單頁快回；CJK prefix 要 URL-encode）。
 - **flat（無 delimiter）在真 bucket 上要幾十秒**（2026-08-12：1680 物件 26.4s；mass-intake 高峰期間更久）——curl timeout 至少給 120s，或乾脆別用。
+- **list 端點有預設分頁，逐筆驗證不得依賴無參數呼叫**：`/api/conversion/records` 預設回 20 筆、`?limit=` 上限 100（`count` 欄位恆為全量總數，超過 100 筆時分不到的改用 count 對帳＋抽樣）；streaming `GET :49101/api/conversions` 預設 `limit=50`，支援 `model_version_id`／`status`／`ready` 篩選與 `GET /api/conversions/{id}` 逐筆讀取。
 - record／job 欄位名以 `conversionLedger.ts` 與 `/api/conversions` 實回為準（record 主鍵欄位是 `idempotency_key`＋`conversion_job_id`；mapping 陣列在 `items` 不是 `elements`）。
 
 ## 6. 報告與 evidence
