@@ -18,12 +18,12 @@
 6. **真檔下載**：12 個來源 IFC 經 presigned GET 由 coordinator 下載至 `storage/ifc-cache/`，實測大小 51MB×5、65MB×2、100MB×2、157MB×3（合計約 1.06 GB）——為真實大型模型，非 fixture。
 7. **轉檔閉環**：streaming 轉檔服務（`host-native-conversion-authority`，:49101）12/12 job `succeeded`、`stage=done`；coordinator ConversionLedger 12/12 `ready`（`detected→queued→converting→ready` 全走完）；`GET /api/conversion/records` count 由 0→12。
 8. **產物真實性**：12/12 `model.usdc` 落盤（0.95MB–22.2MB）；artifact 目錄含完整 sidecar 族（element_mapping / entity_index / pset_index / spatial_index / bbox_index / geo_reference / metadata / quality_metrics）。
-9. **mapping 誠實性（抽驗 `stream_conv_20260812124112_daf8f8b3`）**：`mapping_provenance="converter_verified"`、`mock=false`、`allow_fake_mapping=false`、`fake_mapping_count=0`、`mapping_fidelity="guid_exact"`、items=2639（首 20 筆抽樣見 `element-mapping-sample.json`，構件名為真實中文 MEP 內容）。轉換 profile `ifcopenshell_openusd_identity`。
+9. **mapping 誠實性（抽驗 `stream_conv_20260812124112_daf8f8b3`）**：`mapping_provenance="converter_verified"`、`mock=false`、`allow_fake_mapping=false`、`fake_mapping_count=0`、`mapping_fidelity="guid_exact"`、items=2639，構件名為真實中文 MEP 內容（tracked 附件僅留彙總與去識別樣本，見 `element-mapping-sample.json`）。轉換 profile `ifcopenshell_openusd_identity`。
 10. **RVT 邊界（B 方案）觀測**：bucket 內 RVT bundle（`model.rvt`＋elements.json/schedule.csv/geometries_chunks 等）與 `model.ifc` 同版本資料夾共存，抽驗之轉檔紀錄所在資料夾同時存在 `model.rvt`。（該 IFC「由該 RVT 衍生」屬推論，見 Inferences——derivation 權威在外部雲，附件無 worker handoff 紀錄可稽。）
 11. **RVT 邊界反向（負向測試）**：RVT-only 專案（`愛臻邸PPMS測試`、`東勢區許良宇紀念圖書館`——只有 `model.rvt`、無 `model.ifc`）**未**出現在 ConversionLedger；ledger 內無任何 `.rvt` key；watcher 未對 RVT 物件觸發 intake。data-plane 不越權、不假轉。
 12. **同行程冪等**：watcher 連續 8 輪 poll（`poll_count=8`），`seen_count=12`、`triggered_total` 維持 12——同一 watcher 行程內（in-memory seen 快取）不重複觸發、不重複建 job。
 13. **跨行程冪等（2026-08-13 補測，coordinator force-recreate 後首輪 tick 實測）**：重觸發 12 筆 intake POST（`triggered_total=12`），但 **streaming 端 job 數維持 12、零重轉**（新 ledger record `detected_at=2026-08-13T04:16` 綁回既有 job `stream_conv_20260812124112_…`）。同時暴露部署接線事實：coordinator 的 `conversion-ledger.json`／`callback-outbox.json` 預設落在容器內非掛載路徑（`<cwd>/data/`），**recreate 即蒸發**——`isLedgered` 水印因此在 recreate 後全 miss，最終擋住重轉的是 host-native streaming 的 request-fingerprint 冪等（三層去重的最深層）。已立案 issue #531。
-13. **bucket census（資料夾視圖 BFS，各 root 上限 400 物件抽樣）**：頂層 7 資料夾；抽樣所見 16 個 `model.rvt`、10 個 `model.ifc`（watcher 全量 flat 權威計數為 12 個規約 `model.ifc`）；全 bucket flat list 總數 1680 物件。
+14. **bucket census（資料夾視圖 BFS，各 root 上限 400 物件抽樣）**：頂層 7 資料夾；抽樣所見 16 個 `model.rvt`、10 個 `model.ifc`（watcher 全量 flat 權威計數為 12 個規約 `model.ifc`）；全 bucket flat list 總數 1680 物件。
 
 ## Inferences（由事實推得）
 
