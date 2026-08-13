@@ -1,5 +1,16 @@
-import { readFile } from "node:fs/promises";
+import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import {
+  copyFile,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  writeFile,
+} from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
   planOriginRebaseline,
@@ -155,5 +166,144 @@ describe("design-system origin rebaseline authority", () => {
     ).rejects.toThrow(/Preserved baseline hash mismatch/);
 
     expect(writes).toEqual([]);
+  });
+
+  it("runs the preserved digest guard through the production entrypoint before browser or writes", async () => {
+    const tempRoot = await mkdtemp(
+      path.join(os.tmpdir(), "ai-bim-design-rebaseline-"),
+    );
+    try {
+      const sourceScriptDir = path.dirname(fileURLToPath(import.meta.url));
+      const fixtureScriptDir = path.join(
+        tempRoot,
+        "web-viewer-sample",
+        "scripts",
+      );
+      const fixtureManifestPath = path.join(
+        tempRoot,
+        "docs",
+        "plans",
+        "design-system-reference.manifest.json",
+      );
+      const sourceRoot = path.join(tempRoot, "authoring-origin");
+      const productBaselinePath = path.join(
+        tempRoot,
+        "docs",
+        "plans",
+        "design-system-baseline",
+        "workspace.a4.default",
+        "desktop.png",
+      );
+      const originBaselinePath = path.join(
+        tempRoot,
+        "docs",
+        "plans",
+        "design-system-baseline",
+        "workspace.home.default",
+        "desktop.png",
+      );
+      await Promise.all([
+        mkdir(fixtureScriptDir, { recursive: true }),
+        mkdir(path.dirname(fixtureManifestPath), { recursive: true }),
+        mkdir(sourceRoot, { recursive: true }),
+        mkdir(path.dirname(productBaselinePath), { recursive: true }),
+        mkdir(path.dirname(originBaselinePath), { recursive: true }),
+      ]);
+      await Promise.all([
+        copyFile(
+          path.join(sourceScriptDir, "capture-design-system-reference.mjs"),
+          path.join(fixtureScriptDir, "capture-design-system-reference.mjs"),
+        ),
+        copyFile(
+          path.join(sourceScriptDir, "design-system-rebaseline-authority.mjs"),
+          path.join(fixtureScriptDir, "design-system-rebaseline-authority.mjs"),
+        ),
+        writeFile(path.join(sourceRoot, "index.html"), "fixture source", "utf8"),
+        writeFile(productBaselinePath, "approved product baseline", "utf8"),
+        writeFile(originBaselinePath, "unchanged origin baseline", "utf8"),
+      ]);
+
+      const originDigest = createHash("sha256")
+        .update("unchanged origin baseline")
+        .digest("hex");
+      const manifest = {
+        authority: { authoring_origin: sourceRoot },
+        source: { files: [], snapshot_sha256: "", captured_at_utc: null },
+        fidelity_contract: {
+          platform: process.platform === "win32" ? "windows" : process.platform,
+          device_scale_factor: 1,
+          playwright_version: "not-loaded",
+          chromium_revision: "not-loaded",
+          chromium_version: "not-loaded",
+          viewports: [{ id: "desktop", width: 100, height: 100 }],
+        },
+        screens: [
+          {
+            id: "workspace.home.default",
+            baseline_provenance: { authority: "authoring_origin" },
+            baselines: {
+              desktop: {
+                path: "docs/plans/design-system-baseline/workspace.home.default/desktop.png",
+                sha256: originDigest,
+              },
+            },
+          },
+          {
+            id: "workspace.a4.default",
+            baseline_provenance: { authority: "canonical_product_surface" },
+            baselines: {
+              desktop: {
+                path: "docs/plans/design-system-baseline/workspace.a4.default/desktop.png",
+                sha256: "0".repeat(64),
+              },
+            },
+          },
+        ],
+      };
+      await writeFile(
+        fixtureManifestPath,
+        `${JSON.stringify(manifest, null, 2)}\n`,
+        "utf8",
+      );
+      const [manifestBefore, productBefore, originBefore] = await Promise.all([
+        readFile(fixtureManifestPath),
+        readFile(productBaselinePath),
+        readFile(originBaselinePath),
+      ]);
+
+      const result = spawnSync(
+        process.execPath,
+        [
+          path.join(fixtureScriptDir, "capture-design-system-reference.mjs"),
+          "--rebaseline",
+          "--confirm-rebaseline",
+        ],
+        {
+          cwd: path.join(tempRoot, "web-viewer-sample"),
+          env: {
+            ...process.env,
+            DESIGN_SYSTEM_REFERENCE_ROOT: sourceRoot,
+            PLAYWRIGHT_MODULE_ROOT: "",
+          },
+          encoding: "utf8",
+          timeout: 10_000,
+        },
+      );
+      const output = `${result.stdout ?? ""}\n${result.stderr ?? ""}`;
+      expect(result.error).toBeUndefined();
+      expect(result.status).not.toBe(0);
+      expect(output).toMatch(/Preserved baseline hash mismatch/);
+      expect(output).not.toMatch(/Cannot find package ['"]@playwright\/test/);
+      const [manifestAfter, productAfter, originAfter] = await Promise.all([
+        readFile(fixtureManifestPath),
+        readFile(productBaselinePath),
+        readFile(originBaselinePath),
+      ]);
+      expect(manifestAfter).toEqual(manifestBefore);
+      expect(productAfter).toEqual(productBefore);
+      expect(originAfter).toEqual(originBefore);
+    } finally {
+      await rm(tempRoot, { recursive: true, force: true });
+    }
   });
 });
