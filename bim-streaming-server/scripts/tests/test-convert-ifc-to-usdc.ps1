@@ -118,7 +118,10 @@ foreach ($fnName in @(
         'Test-OrphanRediscoverySupported',
         'Get-ConverterProcessStartTime',
         'Test-ConverterProcessIdentity',
-        'Stop-ConverterProcessTree')) {
+        'Stop-ConverterProcessTree',
+        'Start-ConverterAsyncLogCapture',
+        'Wait-ConverterAsyncLogCapture',
+        'Stop-ConverterAsyncLogCapture')) {
     $found = @($converterAst.FindAll({
                 param($node)
                 $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $fnName
@@ -158,6 +161,29 @@ $bareIsWindowsRefs = @($converterAst.FindAll({
         }, $true))
 Assert-True ($bareIsWindowsRefs.Count -eq 0) 'The converter must not dereference $IsWindows; it is undefined on Windows PowerShell 5.1 under Set-StrictMode.'
 
+# #510: an empty survivor snapshot is not proof that every inherited async
+# stdout/stderr write handle reached EOF. A hidden descendant can retain a
+# handle even after the root process exits, so Invoke-KitConversion must never
+# enter the parameterless WaitForExit() drain that waits without a deadline.
+$invokeKitConversionAst = @($converterAst.FindAll({
+            param($node)
+            $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Invoke-KitConversion'
+        }, $true))
+Assert-True ($invokeKitConversionAst.Count -eq 1) 'Expected exactly one Invoke-KitConversion definition in the converter script.'
+$unboundedDrainCalls = @($invokeKitConversionAst[0].FindAll({
+            param($node)
+            $node -is [System.Management.Automation.Language.InvokeMemberExpressionAst] -and
+            $node.Member.Value -eq 'WaitForExit' -and
+            $null -eq $node.Arguments
+        }, $true))
+Assert-True ($unboundedDrainCalls.Count -eq 0) 'Invoke-KitConversion must not use parameterless WaitForExit(); final async drain needs a deadline even when no survivor was observed.'
+$boundedEofDrainCalls = @($invokeKitConversionAst[0].FindAll({
+            param($node)
+            $node -is [System.Management.Automation.Language.CommandAst] -and
+            $node.GetCommandName() -eq 'Wait-ConverterAsyncLogCapture'
+        }, $true))
+Assert-True ($boundedEofDrainCalls.Count -eq 1) 'Invoke-KitConversion must wait on the explicit async stdout/stderr EOF capture exactly once.'
+
 # /proc/<pid>/stat: comm (field 2) may contain spaces and parens, and a defunct
 # descendant must not be counted as a containment survivor.
 Assert-True ((Get-ProcStatProcessState -StatLine '4242 (kit (cad) worker) Z 1 4242') -eq 'Z') 'Expected Z state from a comm containing spaces and parens.'
@@ -178,6 +204,22 @@ function Start-ContainmentTestProcess {
     return [System.Diagnostics.Process]::Start($psi)
 }
 
+function Stop-OwnedTestProcess {
+    param([AllowNull()][System.Diagnostics.Process] $Process)
+
+    if ($null -eq $Process) { return }
+    try {
+        if (-not $Process.HasExited) {
+            # Kill through the already-open Process handle. Never look the
+            # process up again by numeric PID during cleanup: that PID may have
+            # been recycled after an assertion or wait failure.
+            $Process.Kill()
+        }
+        [void]$Process.WaitForExit(5000)
+    }
+    catch { }
+}
+
 $PwshPath = (Get-Process -Id $PID).Path
 $ContainmentTempDir = Join-Path ([System.IO.Path]::GetTempPath()) ("conv-containment-{0}" -f ([guid]::NewGuid().ToString('N')))
 New-Item -ItemType Directory -Path $ContainmentTempDir | Out-Null
@@ -196,6 +238,142 @@ try {
         'Start-Sleep -Seconds 600'
     )
     $pidFile = Join-Path $ContainmentTempDir 'grandchild.pid'
+
+    # 0a) Normal completion must preserve the final stdout/stderr events. A
+    #     bounded Process.WaitForExit(Int32) alone does not provide that
+    #     guarantee, so exercise the exact capture and EOF helpers used by
+    #     Invoke-KitConversion and inspect the closed log files.
+    $normalOutputScript = Join-Path $ContainmentTempDir 'write-final-lines.ps1'
+    Set-Content -LiteralPath $normalOutputScript -Encoding UTF8 -Value @(
+        "[Console]::Out.WriteLine('stdout-final-510')",
+        "[Console]::Error.WriteLine('stderr-final-510')"
+    )
+    $normalStdoutPath = Join-Path $ContainmentTempDir 'normal-stdout.log'
+    $normalStderrPath = Join-Path $ContainmentTempDir 'normal-stderr.log'
+    $normalProcess = $null
+    $normalCapture = $null
+    $normalStdoutWriter = $null
+    $normalStderrWriter = $null
+    try {
+        $normalStartInfo = [System.Diagnostics.ProcessStartInfo]::new($PwshPath)
+        $normalStartInfo.UseShellExecute = $false
+        $normalStartInfo.RedirectStandardOutput = $true
+        $normalStartInfo.RedirectStandardError = $true
+        foreach ($argument in @('-NoProfile', '-NoLogo', '-File', $normalOutputScript)) {
+            $normalStartInfo.ArgumentList.Add($argument) | Out-Null
+        }
+        $normalProcess = [System.Diagnostics.Process]::Start($normalStartInfo)
+        $normalStdoutWriter = [System.IO.StreamWriter]::new($normalStdoutPath, $false, [System.Text.Encoding]::UTF8)
+        $normalStderrWriter = [System.IO.StreamWriter]::new($normalStderrPath, $false, [System.Text.Encoding]::UTF8)
+        $normalStdoutWriter.AutoFlush = $true
+        $normalStderrWriter.AutoFlush = $true
+        $normalCapture = Start-ConverterAsyncLogCapture -Process $normalProcess `
+            -StdoutWriter $normalStdoutWriter -StderrWriter $normalStderrWriter
+
+        Assert-True ($normalProcess.WaitForExit(5000)) 'Expected the normal log fixture to exit.'
+        Assert-True (Wait-ConverterAsyncLogCapture -Capture $normalCapture -TimeoutMilliseconds 5000) 'Expected both normal log streams to reach EOF within one bounded drain window.'
+    }
+    finally {
+        if ($null -ne $normalCapture) {
+            Stop-ConverterAsyncLogCapture -Capture $normalCapture
+        } else {
+            if ($null -ne $normalStdoutWriter) { $normalStdoutWriter.Close() }
+            if ($null -ne $normalStderrWriter) { $normalStderrWriter.Close() }
+        }
+        Stop-OwnedTestProcess -Process $normalProcess
+        if ($null -ne $normalProcess) { $normalProcess.Dispose() }
+    }
+    Assert-True ((Get-Content -LiteralPath $normalStdoutPath -Raw) -match 'stdout-final-510') 'Expected the final stdout event to be persisted before capture cleanup.'
+    Assert-True ((Get-Content -LiteralPath $normalStderrPath -Raw) -match 'stderr-final-510') 'Expected the final stderr event to be persisted before capture cleanup.'
+
+    # 0b) The root may exit while a descendant that escaped discovery still
+    #     owns the inherited redirected handles. Exercise the same EOF helper:
+    #     it must consume only one aggregate deadline and return false instead
+    #     of waiting forever. Every cleanup signal uses an exact Process handle.
+    $hiddenHolderScript = Join-Path $ContainmentTempDir 'hidden-handle-holder.ps1'
+    Set-Content -LiteralPath $hiddenHolderScript -Encoding UTF8 -Value 'Start-Sleep -Seconds 600'
+    $spawnHiddenHolderScript = Join-Path $ContainmentTempDir 'spawn-hidden-handle-holder.ps1'
+    Set-Content -LiteralPath $spawnHiddenHolderScript -Encoding UTF8 -Value @(
+        'param([string] $PidFile, [string] $AckFile, [string] $PwshPath, [string] $HolderScript)',
+        '$psi = [System.Diagnostics.ProcessStartInfo]::new($PwshPath)',
+        '$psi.UseShellExecute = $false',
+        'foreach ($a in @("-NoProfile", "-NoLogo", "-File", $HolderScript)) { $psi.ArgumentList.Add($a) | Out-Null }',
+        '$holder = [System.Diagnostics.Process]::Start($psi)',
+        'Set-Content -LiteralPath $PidFile -Value @(([string]$holder.Id), ([string]$holder.StartTime.ToUniversalTime().Ticks))',
+        '$deadline = [DateTime]::UtcNow.AddSeconds(30)',
+        'while (-not (Test-Path -LiteralPath $AckFile) -and [DateTime]::UtcNow -lt $deadline) { Start-Sleep -Milliseconds 100 }',
+        'if (-not (Test-Path -LiteralPath $AckFile)) {',
+        '    if (-not $holder.HasExited) { $holder.Kill() }',
+        '    [void]$holder.WaitForExit(5000)',
+        "    throw 'Parent did not acknowledge the hidden-holder identity.'",
+        '}',
+        '$holder.Dispose()'
+    )
+    $hiddenHolderPidFile = Join-Path $ContainmentTempDir 'hidden-holder.pid'
+    $hiddenHolderAckFile = Join-Path $ContainmentTempDir 'hidden-holder.ack'
+    $hiddenStdoutPath = Join-Path $ContainmentTempDir 'hidden-stdout.log'
+    $hiddenStderrPath = Join-Path $ContainmentTempDir 'hidden-stderr.log'
+    $hiddenRoot = $null
+    $hiddenHolder = $null
+    $hiddenCapture = $null
+    $hiddenStdoutWriter = $null
+    $hiddenStderrWriter = $null
+    try {
+        $hiddenRootStartInfo = [System.Diagnostics.ProcessStartInfo]::new($PwshPath)
+        $hiddenRootStartInfo.UseShellExecute = $false
+        $hiddenRootStartInfo.RedirectStandardOutput = $true
+        $hiddenRootStartInfo.RedirectStandardError = $true
+        foreach ($argument in @(
+                '-NoProfile', '-NoLogo', '-File', $spawnHiddenHolderScript,
+                '-PidFile', $hiddenHolderPidFile, '-AckFile', $hiddenHolderAckFile,
+                '-PwshPath', $PwshPath, '-HolderScript', $hiddenHolderScript)) {
+            $hiddenRootStartInfo.ArgumentList.Add($argument) | Out-Null
+        }
+        $hiddenRoot = [System.Diagnostics.Process]::Start($hiddenRootStartInfo)
+        $hiddenStdoutWriter = [System.IO.StreamWriter]::new($hiddenStdoutPath, $false, [System.Text.Encoding]::UTF8)
+        $hiddenStderrWriter = [System.IO.StreamWriter]::new($hiddenStderrPath, $false, [System.Text.Encoding]::UTF8)
+        $hiddenStdoutWriter.AutoFlush = $true
+        $hiddenStderrWriter.AutoFlush = $true
+        $hiddenCapture = Start-ConverterAsyncLogCapture -Process $hiddenRoot `
+            -StdoutWriter $hiddenStdoutWriter -StderrWriter $hiddenStderrWriter
+
+        $hiddenHolderDeadline = [DateTime]::UtcNow.AddSeconds(30)
+        while (-not (Test-Path -LiteralPath $hiddenHolderPidFile) -and [DateTime]::UtcNow -lt $hiddenHolderDeadline) {
+            Start-Sleep -Milliseconds 100
+        }
+        Assert-True (Test-Path -LiteralPath $hiddenHolderPidFile) 'Expected the hidden handle-holder fixture to record its process identity.'
+        $hiddenIdentity = @(Get-Content -LiteralPath $hiddenHolderPidFile)
+        Assert-True ($hiddenIdentity.Count -eq 2) 'Expected hidden holder PID and creation time.'
+        $hiddenHolderCandidate = [System.Diagnostics.Process]::GetProcessById([int]$hiddenIdentity[0])
+        if ($hiddenHolderCandidate.StartTime.ToUniversalTime().Ticks -ne [long]$hiddenIdentity[1]) {
+            # The numeric PID no longer denotes our fixture. Dispose the
+            # candidate without granting cleanup permission to kill it.
+            $hiddenHolderCandidate.Dispose()
+            throw 'Hidden holder PID was recycled before its Process handle could be verified.'
+        }
+        $hiddenHolder = $hiddenHolderCandidate
+        Set-Content -LiteralPath $hiddenHolderAckFile -Value 'verified'
+        Assert-True ($hiddenRoot.WaitForExit(5000)) 'Expected the root fixture to exit while its hidden descendant retained the handles.'
+        Assert-True (-not $hiddenHolder.HasExited) 'Expected the hidden descendant to remain alive while retaining inherited handles.'
+
+        $hiddenDrainStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+        $hiddenDrainCompleted = Wait-ConverterAsyncLogCapture -Capture $hiddenCapture -TimeoutMilliseconds 300
+        $hiddenDrainStopwatch.Stop()
+        Assert-True (-not $hiddenDrainCompleted) 'Expected EOF drain to time out while the hidden descendant retained the handles.'
+        Assert-True ($hiddenDrainStopwatch.ElapsedMilliseconds -lt 3000) 'Expected one bounded aggregate drain window, not an unbounded or per-stream wait.'
+    }
+    finally {
+        if ($null -ne $hiddenCapture) {
+            Stop-ConverterAsyncLogCapture -Capture $hiddenCapture
+        } else {
+            if ($null -ne $hiddenStdoutWriter) { $hiddenStdoutWriter.Close() }
+            if ($null -ne $hiddenStderrWriter) { $hiddenStderrWriter.Close() }
+        }
+        Stop-OwnedTestProcess -Process $hiddenHolder
+        if ($null -ne $hiddenHolder) { $hiddenHolder.Dispose() }
+        Stop-OwnedTestProcess -Process $hiddenRoot
+        if ($null -ne $hiddenRoot) { $hiddenRoot.Dispose() }
+    }
 
     # 1) A real 2-deep tree must be fully terminated and PROVEN gone.
     $rootProcess = Start-ContainmentTestProcess -FilePath $PwshPath -Arguments @(
