@@ -1,8 +1,12 @@
 # 真 MinIO IFC/RVT 資料最終驗收報告（2026-08-12）
 
-驗收面：canonical Linux 測試部署（deploy tag `deploy-20260812-639221315101291265-002` → main `daf551e`；驗收當時 main tip `c5d423c`，部署與 tip 差距僅 openspec/streaming 修補，不影響本驗收路徑）。外部資料源：真實 MinIO（LAN `192.168.20.234:9000`）private bucket `bim-control`，內容為外部公司雲端實際上傳的 RVT bundle 與外部 IFC Worker 產出的衍生 IFC。
+> Document type: **working note（歷史驗收紀錄，非權威）**。本檔記錄 2026-08-12 對特定部署 revision 的一次性驗收觀測；不是 runtime／API 行為的 authority，現況一律以 runtime code、executable tests 與活的部署為準。
 
-本報告不含任何憑證值；來源 key 只記錄物件 key 與 etag。
+驗收面：canonical Linux 測試部署（deploy tag `deploy-20260812-639221315101291265-002` → main `daf551e`；驗收當時 main tip `c5d423c`）。**部署 revision 與 tip 的版差裁決（file-level）**：streaming 側 delta 僅 #509（Kit 轉換器 timeout 之行程樹 containment）——`ifc_openusd_identity_author.py`（本次實際執行的 identity 轉換實作）在 `daf551e..c5d423c` 之間 **0 diff**；`ifc2usdc_powershell_adapter.py` 雖為傘狀模組（identity 亦由其分派），但版差 hunks 全部落在 pwsh/Kit 子行程路徑（模組頂 containment 輔助、constructor 增欄、`_build_converter_command`／`_run_powershell_conversion`／`_failure_diagnostics`），identity 分派區塊只以 diff context 出現、未被修改。殘餘誠實界限：constructor 增欄在任何 profile 的服務啟動時都會執行，本驗收未在 c5d423c 上重跑（可選 follow-up＝重新 canonical 部署後複跑 skill）。
+
+外部資料源：真實 MinIO（LAN `192.168.20.234:9000`，此 endpoint 為 repo 內既有 example 值）private bucket `bim-control`，內容為外部公司雲端實際上傳的 RVT bundle 與外部 IFC Worker 產出的衍生 IFC。
+
+本報告與附件不含任何憑證值。**Redaction 政策**：canonical 部署主機以 `<canonical-host>` 遮蔽（host/network 對映屬 repo-external inventory 契約）；附件內 UUID 一律截斷為前 8 碼；mapping 原始列（完整 GUID＋構件顯示名）自 tracked 附件撤下，僅留 provenance／旗標／彙總與 2 筆去識別樣本（完整資料留在部署主機 artifact）。來源物件的不可變身分綁定＝`idempotency_key`（`(bucket, key, etag)` 的 SHA 指紋，附件完整保留 12 筆）。
 
 ## Verified facts（本次 session 逐項實測）
 
@@ -15,13 +19,15 @@
 7. **轉檔閉環**：streaming 轉檔服務（`host-native-conversion-authority`，:49101）12/12 job `succeeded`、`stage=done`；coordinator ConversionLedger 12/12 `ready`（`detected→queued→converting→ready` 全走完）；`GET /api/conversion/records` count 由 0→12。
 8. **產物真實性**：12/12 `model.usdc` 落盤（0.95MB–22.2MB）；artifact 目錄含完整 sidecar 族（element_mapping / entity_index / pset_index / spatial_index / bbox_index / geo_reference / metadata / quality_metrics）。
 9. **mapping 誠實性（抽驗 `stream_conv_20260812124112_daf8f8b3`）**：`mapping_provenance="converter_verified"`、`mock=false`、`allow_fake_mapping=false`、`fake_mapping_count=0`、`mapping_fidelity="guid_exact"`、items=2639（首 20 筆抽樣見 `element-mapping-sample.json`，構件名為真實中文 MEP 內容）。轉換 profile `ifcopenshell_openusd_identity`。
-10. **RVT 邊界（B 方案）正向**：bucket 內 RVT bundle（`model.rvt`＋elements.json/schedule.csv/geometries_chunks 等）與衍生 `model.ifc` 同版本資料夾共存；抽驗之轉檔紀錄即為 RVT 衍生鏈（同資料夾存在 `model.rvt`）——RVT→IFC 由外部 worker 完成、IFC→USDC 由本 data-plane 完成。
+10. **RVT 邊界（B 方案）觀測**：bucket 內 RVT bundle（`model.rvt`＋elements.json/schedule.csv/geometries_chunks 等）與 `model.ifc` 同版本資料夾共存，抽驗之轉檔紀錄所在資料夾同時存在 `model.rvt`。（該 IFC「由該 RVT 衍生」屬推論，見 Inferences——derivation 權威在外部雲，附件無 worker handoff 紀錄可稽。）
 11. **RVT 邊界反向（負向測試）**：RVT-only 專案（`愛臻邸PPMS測試`、`東勢區許良宇紀念圖書館`——只有 `model.rvt`、無 `model.ifc`）**未**出現在 ConversionLedger；ledger 內無任何 `.rvt` key；watcher 未對 RVT 物件觸發 intake。data-plane 不越權、不假轉。
-12. **冪等**：watcher 連續 8 輪 poll（`poll_count=8`），`seen_count=12`、`triggered_total` 維持 12——已觸發物件不重複觸發、不重複建 job。
+12. **同行程冪等**：watcher 連續 8 輪 poll（`poll_count=8`），`seen_count=12`、`triggered_total` 維持 12——同一 watcher 行程內（in-memory seen 快取）不重複觸發、不重複建 job。
+13. **跨行程冪等（2026-08-13 補測，coordinator force-recreate 後首輪 tick 實測）**：重觸發 12 筆 intake POST（`triggered_total=12`），但 **streaming 端 job 數維持 12、零重轉**（新 ledger record `detected_at=2026-08-13T04:16` 綁回既有 job `stream_conv_20260812124112_…`）。同時暴露部署接線事實：coordinator 的 `conversion-ledger.json`／`callback-outbox.json` 預設落在容器內非掛載路徑（`<cwd>/data/`），**recreate 即蒸發**——`isLedgered` 水印因此在 recreate 後全 miss，最終擋住重轉的是 host-native streaming 的 request-fingerprint 冪等（三層去重的最深層）。已立案 issue #531。
 13. **bucket census（資料夾視圖 BFS，各 root 上限 400 物件抽樣）**：頂層 7 資料夾；抽樣所見 16 個 `model.rvt`、10 個 `model.ifc`（watcher 全量 flat 權威計數為 12 個規約 `model.ifc`）；全 bucket flat list 總數 1680 物件。
 
 ## Inferences（由事實推得）
 
+- **RVT→IFC 衍生鏈**：`model.ifc` 與 `model.rvt` 同版本資料夾共存符合 B 方案外部 worker 的產出慣例，據此推論該 IFC 由該 RVT 衍生；但同 key 佈局也可能由獨立上傳或 stale IFC 造成，附件無 worker handoff／version manifest 可資證明，故列為推論而非 verified fact。
 - 三個 ~22.23MB 的 USDC 與三個 157MB 來源 IFC 對應，應為同一模型的三個版本（`測試建案0321/root/建築` 兩版＋弱電），與 key 結構一致。
 - `GET /api/minio/objects`（無 delimiter 的 flat list）於 1680 物件 bucket 靜默期實測 26.4s 完成（HTTP 200）；mass-intake 高峰（12 檔並行下載）期間同呼叫 30–45s 未回。production console 使用 delimiter=/ 資料夾視圖（單頁快回），不受影響。
 
@@ -35,11 +41,13 @@
 ## Next actions
 
 1. （建議）owner 於 MinIO 建立唯讀 service account，替換部署機 env 內金鑰並輪替現用管理金鑰。
-2. （可選）live 新檔觸發補測（上傳新 `model.ifc` → 觀測 `triggered_total` 遞增與新 record）。
-3. （可選）viewer/A1 console 以資料夾視圖瀏覽 `bim-control` 並手動觸發任一 IFC 的 force retrigger，驗 UI 鏈。
-4. 依 `verify-minio-real-data-e2e` skill（本 PR 一併落地）可隨時重跑本驗收。
+2. **（已立案）coordinator 容器內 `data/` store（conversion-ledger／callback-outbox）非掛載、recreate 即蒸發**：ledger 水印 recreate 後全 miss，callback outbox 亦歸零（pending callback 有遺失風險）——canonical 部署 compose 應供給持久路徑（`CONVERSION_LEDGER_STORE_PATH`／`CALLBACK_OUTBOX_STORE_PATH` 指向掛載 volume）——issue #531。
+3. （可選）以 `deploy-main-to-linux-test` 重新 canonical 部署 current main（含 #509）後複跑本 skill，完全退役「部署 revision 落後 tip」殘餘界限。
+4. （可選）live 新檔觸發補測——**此為對 production bucket 的寫入，超出本驗收與 skill 的唯讀邊界，只能由 owner 自行決定並親自上傳**；上傳後觀測 `triggered_total` 遞增與新 record。
+5. （可選）viewer/A1 console 以資料夾視圖瀏覽 `bim-control` 並手動觸發任一 IFC 的 force retrigger，驗 UI 鏈。
+6. 依 `verify-minio-real-data-e2e` skill（本 PR 一併落地）可隨時重跑本驗收。
 
 ## 附件
 
-- `runtime-snapshot.json` — watch status／conversion records／streaming jobs 終態快照
-- `element-mapping-sample.json` — 抽驗 mapping 首 20 筆＋fake 旗標＋quality_metrics
+- `runtime-snapshot.json` — watch status／conversion records／streaming jobs 終態快照（redacted：host 遮蔽、UUID 截斷；`idempotency_key` 完整保留作為 `(bucket, key, etag)` 不可變身分綁定）
+- `element-mapping-sample.json` — 抽驗 mapping 的 provenance／fake 旗標／彙總＋2 筆去識別樣本＋quality_metrics 數值彙總（原始列撤下，完整資料在部署主機 artifact）

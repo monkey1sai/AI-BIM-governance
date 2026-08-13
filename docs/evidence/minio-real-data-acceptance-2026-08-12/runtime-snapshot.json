@@ -13,31 +13,31 @@
   "skipped_malformed_total": 0,
   "last_triggered": [
    {
-    "key": "測試建案0321/root/給水/677f85ca-bc8d-4e18-a6a8-24ee8e779c2e/model.ifc",
+    "key": "測試建案0321/root/給水/677f85ca…/model.ifc",
     "job_id": "ifcready_1786538468375_44f3d53c",
     "error": null,
     "at": "2026-08-12T12:41:12.238Z"
    },
    {
-    "key": "測試建案0321/root/弱電/1b32d6de-3313-4d17-8c30-dfaddf4bda8d/model.ifc",
+    "key": "測試建案0321/root/弱電/1b32d6de…/model.ifc",
     "job_id": "ifcready_1786538465932_e89bc3b1",
     "error": null,
     "at": "2026-08-12T12:41:08.367Z"
    },
    {
-    "key": "測試建案0321/root/建築/f77d8fa7-320f-4f64-aca3-44a9fd854188/model.ifc",
+    "key": "測試建案0321/root/建築/f77d8fa7…/model.ifc",
     "job_id": "ifcready_1786538459696_c164119f",
     "error": null,
     "at": "2026-08-12T12:41:05.926Z"
    },
    {
-    "key": "測試建案0321/root/建築/7c38cbb6-d581-45f6-ae35-1e8ed8700cec/model.ifc",
+    "key": "測試建案0321/root/建築/7c38cbb6…/model.ifc",
     "job_id": "ifcready_1786538453280_ca77ceaf",
     "error": null,
     "at": "2026-08-12T12:40:59.690Z"
    },
    {
-    "key": "洲際好宅/root/給水/77e4fbad-e0f7-4946-9a49-fa84d941ddeb/model.ifc",
+    "key": "洲際好宅/root/給水/77e4fbad…/model.ifc",
     "job_id": "ifcready_1786538448949_3923bcfb",
     "error": null,
     "at": "2026-08-12T12:40:53.272Z"
@@ -53,7 +53,7 @@
     "project_id": "0321_6b258730",
     "project_display_name": "測試建案0321",
     "category": "給水",
-    "external_model_version_id": "677f85ca-bc8d-4e18-a6a8-24ee8e779c2e",
+    "external_model_version_id": "677f85ca…",
     "object_key": null,
     "bucket": null,
     "conversion_job_id": "stream_conv_20260812124112_daf8f8b3",
@@ -78,7 +78,7 @@
      "mapping_issue_count": null,
      "mapping_issues": null
     },
-    "usdc_key": "http://192.168.20.181:49101/artifacts/stream_conv_20260812124112_daf8f8b3/model.usdc",
+    "usdc_key": "http://<canonical-host>:49101/artifacts/stream_conv_20260812124112_daf8f8b3/model.usdc",
     "detected_at": "2026-08-12T12:41:12.236Z",
     "updated_at": "2026-08-12T12:44:30.533Z"
    },
@@ -88,7 +88,7 @@
     "project_id": "0321_6b258730",
     "project_display_name": "測試建案0321",
     "category": "弱電",
-    "external_model_version_id": "1b32d6de-3313-4d17-8c30-dfaddf4bda8d",
+    "external_model_version_id": "1b32d6de…",
     "object_key": null,
     "bucket": null,
     "conversion_job_id": "stream_conv_20260812124108_f549bc23",
@@ -113,7 +113,7 @@
      "mapping_issue_count": null,
      "mapping_issues": null
     },
-    "usdc_key": "http://192.168.20.181:49101/artifacts/stream_conv_20260812124108_f549bc23/model.usdc",
+    "usdc_key": "http://<canonical-host>:49101/artifacts/stream_conv_20260812124108_f549bc23/model.usdc",
     "detected_at": "2026-08-12T12:41:08.365Z",
     "updated_at": "2026-08-12T12:44:08.921Z"
    },
@@ -123,7 +123,7 @@
     "project_id": "0321_6b258730",
     "project_display_name": "測試建案0321",
     "category": "建築",
-    "external_model_version_id": "f77d8fa7-320f-4f64-aca3-44a9fd854188",
+    "external_model_version_id": "f77d8fa7…",
     "object_key": null,
     "bucket": null,
     "conversion_job_id": "stream_conv_20260812124105_bba2db7e",
@@ -148,7 +148,7 @@
      "mapping_issue_count": null,
      "mapping_issues": null
     },
-    "usdc_key": "http://192.168.20.181:49101/artifacts/stream_conv_20260812124105_bba2db7e/model.usdc",
+    "usdc_key": "http://<canonical-host>:49101/artifacts/stream_conv_20260812124105_bba2db7e/model.usdc",
     "detected_at": "2026-08-12T12:41:05.924Z",
     "updated_at": "2026-08-12T12:43:54.694Z"
    },
@@ -158,7 +158,7 @@
     "project_id": "0321_6b258730",
     "project_display_name": "測試建案0321",
     "category": "建築",
-    "external_model_version_id": "7c38cbb6-d581-45f6-ae35-1e8ed8700cec",
+    "external_model_version_id": "7c38cbb6…",
     "object_key": null,
     "bucket": null,
     "conversion_job_id": "stream_conv_20260812124100_b17d8aa4",
@@ -183,7 +183,7 @@
      "mapping_issue_count": null,
      "mapping_issues": null
     },
-    "usdc_key": "http://192.168.20.181:49101/artifacts/stream_conv_20260812124100_b17d8aa4/model.usdc",
+    "usdc_key": "http://<canonical-host>:49101/artifacts/stream_conv_20260812124100_b17d8aa4/model.usdc",
     "detected_at": "2026-08-12T12:40:59.687Z",
     "updated_at": "2026-08-12T12:43:14.416Z"
    },
@@ -193,7 +193,7 @@
     "project_id": "mv_006e2ea1",
     "project_display_name": "洲際好宅",
     "category": "給水",
-    "external_model_version_id": "77e4fbad-e0f7-4946-9a49-fa84d941ddeb",
+    "external_model_version_id": "77e4fbad…",
     "object_key": null,
     "bucket": null,
     "conversion_job_id": "stream_conv_20260812124053_20d911f7",
@@ -218,7 +218,7 @@
      "mapping_issue_count": null,
      "mapping_issues": null
     },
-    "usdc_key": "http://192.168.20.181:49101/artifacts/stream_conv_20260812124053_20d911f7/model.usdc",
+    "usdc_key": "http://<canonical-host>:49101/artifacts/stream_conv_20260812124053_20d911f7/model.usdc",
     "detected_at": "2026-08-12T12:40:53.269Z",
     "updated_at": "2026-08-12T12:42:39.466Z"
    },
@@ -228,7 +228,7 @@
     "project_id": "mv_006e2ea1",
     "project_display_name": "洲際好宅",
     "category": "弱電-JJtest",
-    "external_model_version_id": "4e3da869-41fe-4d5e-b95e-042d5aa11389",
+    "external_model_version_id": "4e3da869…",
     "object_key": null,
     "bucket": null,
     "conversion_job_id": "stream_conv_20260812124048_354df902",
@@ -253,7 +253,7 @@
      "mapping_issue_count": null,
      "mapping_issues": null
     },
-    "usdc_key": "http://192.168.20.181:49101/artifacts/stream_conv_20260812124048_354df902/model.usdc",
+    "usdc_key": "http://<canonical-host>:49101/artifacts/stream_conv_20260812124048_354df902/model.usdc",
     "detected_at": "2026-08-12T12:40:48.936Z",
     "updated_at": "2026-08-12T12:42:14.244Z"
    },
@@ -263,7 +263,7 @@
     "project_id": "mv_006e2ea1",
     "project_display_name": "洲際好宅",
     "category": "建築-JJtest",
-    "external_model_version_id": "b15653e5-0002-4fd3-a186-cf1d9b237b68",
+    "external_model_version_id": "b15653e5…",
     "object_key": null,
     "bucket": null,
     "conversion_job_id": "stream_conv_20260812124046_44e19520",
@@ -288,7 +288,7 @@
      "mapping_issue_count": null,
      "mapping_issues": null
     },
-    "usdc_key": "http://192.168.20.181:49101/artifacts/stream_conv_20260812124046_44e19520/model.usdc",
+    "usdc_key": "http://<canonical-host>:49101/artifacts/stream_conv_20260812124046_44e19520/model.usdc",
     "detected_at": "2026-08-12T12:40:46.136Z",
     "updated_at": "2026-08-12T12:42:01.678Z"
    },
@@ -298,7 +298,7 @@
     "project_id": "IOTTEST",
     "project_display_name": "IOTTEST",
     "category": "建築-JJtest",
-    "external_model_version_id": "d2f38656-4db1-40cf-ba64-64c6171337c0",
+    "external_model_version_id": "d2f38656…",
     "object_key": null,
     "bucket": null,
     "conversion_job_id": "stream_conv_20260812124039_88992cca",
@@ -323,7 +323,7 @@
      "mapping_issue_count": null,
      "mapping_issues": null
     },
-    "usdc_key": "http://192.168.20.181:49101/artifacts/stream_conv_20260812124039_88992cca/model.usdc",
+    "usdc_key": "http://<canonical-host>:49101/artifacts/stream_conv_20260812124039_88992cca/model.usdc",
     "detected_at": "2026-08-12T12:40:39.261Z",
     "updated_at": "2026-08-12T12:41:25.405Z"
    },
@@ -333,7 +333,7 @@
     "project_id": "IOTTEST",
     "project_display_name": "IOTTEST",
     "category": "建築-JJtest",
-    "external_model_version_id": "a1267709-a9da-43ee-80a4-bc6debec038a",
+    "external_model_version_id": "a1267709…",
     "object_key": null,
     "bucket": null,
     "conversion_job_id": "stream_conv_20260812124037_a8c79ba5",
@@ -358,7 +358,7 @@
      "mapping_issue_count": null,
      "mapping_issues": null
     },
-    "usdc_key": "http://192.168.20.181:49101/artifacts/stream_conv_20260812124037_a8c79ba5/model.usdc",
+    "usdc_key": "http://<canonical-host>:49101/artifacts/stream_conv_20260812124037_a8c79ba5/model.usdc",
     "detected_at": "2026-08-12T12:40:37.183Z",
     "updated_at": "2026-08-12T12:41:13.356Z"
    },
@@ -368,7 +368,7 @@
     "project_id": "IOTTEST",
     "project_display_name": "IOTTEST",
     "category": "建築-JJtest",
-    "external_model_version_id": "8d4ffe77-e015-4c80-a8b3-027c0fb6a3c3",
+    "external_model_version_id": "8d4ffe77…",
     "object_key": null,
     "bucket": null,
     "conversion_job_id": "stream_conv_20260812124034_a3bc7527",
@@ -393,7 +393,7 @@
      "mapping_issue_count": null,
      "mapping_issues": null
     },
-    "usdc_key": "http://192.168.20.181:49101/artifacts/stream_conv_20260812124034_a3bc7527/model.usdc",
+    "usdc_key": "http://<canonical-host>:49101/artifacts/stream_conv_20260812124034_a3bc7527/model.usdc",
     "detected_at": "2026-08-12T12:40:34.956Z",
     "updated_at": "2026-08-12T12:41:05.111Z"
    },
@@ -403,7 +403,7 @@
     "project_id": "IOTTEST",
     "project_display_name": "IOTTEST",
     "category": "建築-JJtest",
-    "external_model_version_id": "50dfa0c0-de0f-4eea-9c21-b60fe86d23ce",
+    "external_model_version_id": "50dfa0c0…",
     "object_key": null,
     "bucket": null,
     "conversion_job_id": "stream_conv_20260812124032_59b286b2",
@@ -428,7 +428,7 @@
      "mapping_issue_count": null,
      "mapping_issues": null
     },
-    "usdc_key": "http://192.168.20.181:49101/artifacts/stream_conv_20260812124032_59b286b2/model.usdc",
+    "usdc_key": "http://<canonical-host>:49101/artifacts/stream_conv_20260812124032_59b286b2/model.usdc",
     "detected_at": "2026-08-12T12:40:32.859Z",
     "updated_at": "2026-08-12T12:40:52.957Z"
    },
@@ -438,7 +438,7 @@
     "project_id": "IOTTEST",
     "project_display_name": "IOTTEST",
     "category": "建築-JJtest",
-    "external_model_version_id": "4c63d82d-0bdf-4ef7-bbeb-fd823c8c6c05",
+    "external_model_version_id": "4c63d82d…",
     "object_key": null,
     "bucket": null,
     "conversion_job_id": "stream_conv_20260812124030_dc1a89e8",
@@ -463,7 +463,7 @@
      "mapping_issue_count": null,
      "mapping_issues": null
     },
-    "usdc_key": "http://192.168.20.181:49101/artifacts/stream_conv_20260812124030_dc1a89e8/model.usdc",
+    "usdc_key": "http://<canonical-host>:49101/artifacts/stream_conv_20260812124030_dc1a89e8/model.usdc",
     "detected_at": "2026-08-12T12:40:30.733Z",
     "updated_at": "2026-08-12T12:40:40.771Z"
    }
@@ -474,85 +474,89 @@
    "conversion_job_id": "stream_conv_20260812124112_daf8f8b3",
    "status": "succeeded",
    "project_id": "0321_6b258730",
-   "model_version_id": "677f85ca-bc8d-4e18-a6a8-24ee8e779c2e",
+   "model_version_id": "677f85ca…",
    "correlation_id": "minio-watch-274596a3"
   },
   {
    "conversion_job_id": "stream_conv_20260812124108_f549bc23",
    "status": "succeeded",
    "project_id": "0321_6b258730",
-   "model_version_id": "1b32d6de-3313-4d17-8c30-dfaddf4bda8d",
+   "model_version_id": "1b32d6de…",
    "correlation_id": "minio-watch-20f042b1"
   },
   {
    "conversion_job_id": "stream_conv_20260812124105_bba2db7e",
    "status": "succeeded",
    "project_id": "0321_6b258730",
-   "model_version_id": "f77d8fa7-320f-4f64-aca3-44a9fd854188",
+   "model_version_id": "f77d8fa7…",
    "correlation_id": "minio-watch-56df25af"
   },
   {
    "conversion_job_id": "stream_conv_20260812124100_b17d8aa4",
    "status": "succeeded",
    "project_id": "0321_6b258730",
-   "model_version_id": "7c38cbb6-d581-45f6-ae35-1e8ed8700cec",
+   "model_version_id": "7c38cbb6…",
    "correlation_id": "minio-watch-e3225bd8"
   },
   {
    "conversion_job_id": "stream_conv_20260812124053_20d911f7",
    "status": "succeeded",
    "project_id": "mv_006e2ea1",
-   "model_version_id": "77e4fbad-e0f7-4946-9a49-fa84d941ddeb",
+   "model_version_id": "77e4fbad…",
    "correlation_id": "minio-watch-dac2e9f2"
   },
   {
    "conversion_job_id": "stream_conv_20260812124048_354df902",
    "status": "succeeded",
    "project_id": "mv_006e2ea1",
-   "model_version_id": "4e3da869-41fe-4d5e-b95e-042d5aa11389",
+   "model_version_id": "4e3da869…",
    "correlation_id": "minio-watch-4d5ac59a"
   },
   {
    "conversion_job_id": "stream_conv_20260812124046_44e19520",
    "status": "succeeded",
    "project_id": "mv_006e2ea1",
-   "model_version_id": "b15653e5-0002-4fd3-a186-cf1d9b237b68",
+   "model_version_id": "b15653e5…",
    "correlation_id": "minio-watch-f94841eb"
   },
   {
    "conversion_job_id": "stream_conv_20260812124039_88992cca",
    "status": "succeeded",
    "project_id": "IOTTEST",
-   "model_version_id": "d2f38656-4db1-40cf-ba64-64c6171337c0",
+   "model_version_id": "d2f38656…",
    "correlation_id": "minio-watch-bee31a6b"
   },
   {
    "conversion_job_id": "stream_conv_20260812124037_a8c79ba5",
    "status": "succeeded",
    "project_id": "IOTTEST",
-   "model_version_id": "a1267709-a9da-43ee-80a4-bc6debec038a",
+   "model_version_id": "a1267709…",
    "correlation_id": "minio-watch-c1a9483b"
   },
   {
    "conversion_job_id": "stream_conv_20260812124034_a3bc7527",
    "status": "succeeded",
    "project_id": "IOTTEST",
-   "model_version_id": "8d4ffe77-e015-4c80-a8b3-027c0fb6a3c3",
+   "model_version_id": "8d4ffe77…",
    "correlation_id": "minio-watch-0f90c389"
   },
   {
    "conversion_job_id": "stream_conv_20260812124032_59b286b2",
    "status": "succeeded",
    "project_id": "IOTTEST",
-   "model_version_id": "50dfa0c0-de0f-4eea-9c21-b60fe86d23ce",
+   "model_version_id": "50dfa0c0…",
    "correlation_id": "minio-watch-6eb037ae"
   },
   {
    "conversion_job_id": "stream_conv_20260812124030_dc1a89e8",
    "status": "succeeded",
    "project_id": "IOTTEST",
-   "model_version_id": "4c63d82d-0bdf-4ef7-bbeb-fd823c8c6c05",
+   "model_version_id": "4c63d82d…",
    "correlation_id": "minio-watch-0925fc45"
   }
- ]
+ ],
+ "_redaction": {
+  "policy": "canonical host replaced with <canonical-host> (repo-external inventory contract); all UUID segments truncated to first 8 chars; idempotency_key values are already SHA-based fingerprints of (bucket, key, etag) and are retained as the immutable source identity binding.",
+  "redacted_at": "2026-08-13"
+ }
 }

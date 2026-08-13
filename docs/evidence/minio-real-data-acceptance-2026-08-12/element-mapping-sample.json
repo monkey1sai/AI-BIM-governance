@@ -11,208 +11,31 @@
    "unmapped_ifc_count": 0
   },
   "items_total": 2639,
-  "items_first20": [
+  "items_sample_sanitized": [
    {
-    "ifc_guid": "0BxPmuXCDEGfdjxNtms9VL",
-    "usd_prim_path": "/World/Elements/IfcPipeSegment/G_0BxPmuXCDEGfdjxNtms9VL",
+    "ifc_guid_prefix": "0BxPmu…",
     "ifc_type": "IfcPipeSegment",
-    "ifc_class": "IfcPipeSegment",
-    "ifc_name": "Pipe Types:CW_PE被覆不銹鋼冷水管:15990146",
-    "entity_id": "ifc:0BxPmuXCDEGfdjxNtms9VL",
-    "mapping_fidelity": "guid_exact"
+    "usd_prim_path_pattern": "/World/Elements/IfcPipeSegment/G_0BxPmu…"
    },
    {
-    "ifc_guid": "0BxPmuXCDEGfdjxNtmtsTX",
-    "usd_prim_path": "/World/Elements/IfcFlowTerminal/G_0BxPmuXCDEGfdjxNtmtsTX",
+    "ifc_guid_prefix": "0BxPmu…",
     "ifc_type": "IfcFlowTerminal",
-    "ifc_class": "IfcFlowTerminal",
-    "ifc_name": "無障礙洗臉盆ALHM3301_V18:無障礙洗臉盆ALHM3301_V18:15994166",
-    "entity_id": "ifc:0BxPmuXCDEGfdjxNtmtsTX",
-    "mapping_fidelity": "guid_exact"
-   },
-   {
-    "ifc_guid": "0BxPmuXCDEGfdjxNtmttAx",
-    "usd_prim_path": "/World/Elements/IfcValve/G_0BxPmuXCDEGfdjxNtmttAx",
-    "ifc_type": "IfcValve",
-    "ifc_class": "IfcValve",
-    "ifc_name": "公共附鎖水龍頭(螺紋):戶外附鎖式龍頭:15997164",
-    "entity_id": "ifc:0BxPmuXCDEGfdjxNtmttAx",
-    "mapping_fidelity": "guid_exact"
-   },
-   {
-    "ifc_guid": "0BxPmuXCDEGfdjxNtmttAz",
-    "usd_prim_path": "/World/Elements/IfcPipeSegment/G_0BxPmuXCDEGfdjxNtmttAz",
-    "ifc_type": "IfcPipeSegment",
-    "ifc_class": "IfcPipeSegment",
-    "ifc_name": "Pipe Types:CW_PE被覆不銹鋼冷水管:15997162",
-    "entity_id": "ifc:0BxPmuXCDEGfdjxNtmttAz",
-    "mapping_fidelity": "guid_exact"
-   },
-   {
-    "ifc_guid": "0Cqep$ebfFtfE_SwROlsG9",
-    "usd_prim_path": "/World/Elements/IfcPipeFitting/G_0Cqep_ebfFtfE_SwROlsG9",
-    "ifc_type": "IfcPipeFitting",
-    "ifc_class": "IfcPipeFitting",
-    "ifc_name": "CW_給水管_彎頭_滾溝:CW_給水管_彎頭_滾溝:16168651",
-    "entity_id": "ifc:0Cqep$ebfFtfE_SwROlsG9",
-    "mapping_fidelity": "guid_exact"
-   },
-   {
-    "ifc_guid": "0Cqep$ebfFtfE_SwROlsGB",
-    "usd_prim_path": "/World/Elements/IfcPipeSegment/G_0Cqep_ebfFtfE_SwROlsGB",
-    "ifc_type": "IfcPipeSegment",
-    "ifc_class": "IfcPipeSegment",
-    "ifc_name": "Pipe Types:SW_進水管:16168649",
-    "entity_id": "ifc:0Cqep$ebfFtfE_SwROlsGB",
-    "mapping_fidelity": "guid_exact"
-   },
-   {
-    "ifc_guid": "0Cqep$ebfFtfE_SwROlsGF",
-    "usd_prim_path": "/World/Elements/IfcPipeFitting/G_0Cqep_ebfFtfE_SwROlsGF",
-    "ifc_type": "IfcPipeFitting",
-    "ifc_class": "IfcPipeFitting",
-    "ifc_name": "機械卡箍 - 凸緣 - 溝槽:標準:16168653",
-    "entity_id": "ifc:0Cqep$ebfFtfE_SwROlsGF",
-    "mapping_fidelity": "guid_exact"
-   },
-   {
-    "ifc_guid": "0Cqep$ebfFtfE_SwROlsGJ",
-    "usd_prim_path": "/World/Elements/IfcPipeFitting/G_0Cqep_ebfFtfE_SwROlsGJ",
-    "ifc_type": "IfcPipeFitting",
-    "ifc_class": "IfcPipeFitting",
-    "ifc_name": "機械卡箍 - 凸緣 - 溝槽:標準:16168657",
-    "entity_id": "ifc:0Cqep$ebfFtfE_SwROlsGJ",
-    "mapping_fidelity": "guid_exact"
-   },
-   {
-    "ifc_guid": "0Cqep$ebfFtfE_SwROlsGP",
-    "usd_prim_path": "/World/Elements/IfcPipeFitting/G_0Cqep_ebfFtfE_SwROlsGP",
-    "ifc_type": "IfcPipeFitting",
-    "ifc_class": "IfcPipeFitting",
-    "ifc_name": "CW_給水管_彎頭_滾溝:CW_給水管_彎頭_滾溝:16168667",
-    "entity_id": "ifc:0Cqep$ebfFtfE_SwROlsGP",
-    "mapping_fidelity": "guid_exact"
-   },
-   {
-    "ifc_guid": "0Cqep$ebfFtfE_SwROlsGT",
-    "usd_prim_path": "/World/Elements/IfcPipeFitting/G_0Cqep_ebfFtfE_SwROlsGT",
-    "ifc_type": "IfcPipeFitting",
-    "ifc_class": "IfcPipeFitting",
-    "ifc_name": "機械卡箍 - 凸緣 - 溝槽:標準:16168671",
-    "entity_id": "ifc:0Cqep$ebfFtfE_SwROlsGT",
-    "mapping_fidelity": "guid_exact"
-   },
-   {
-    "ifc_guid": "0Cqep$ebfFtfE_SwROlsGV",
-    "usd_prim_path": "/World/Elements/IfcPipeFitting/G_0Cqep_ebfFtfE_SwROlsGV",
-    "ifc_type": "IfcPipeFitting",
-    "ifc_class": "IfcPipeFitting",
-    "ifc_name": "機械卡箍 - 凸緣 - 溝槽:標準:16168669",
-    "entity_id": "ifc:0Cqep$ebfFtfE_SwROlsGV",
-    "mapping_fidelity": "guid_exact"
-   },
-   {
-    "ifc_guid": "0Cqep$ebfFtfE_SwROlsGX",
-    "usd_prim_path": "/World/Elements/IfcPipeFitting/G_0Cqep_ebfFtfE_SwROlsGX",
-    "ifc_type": "IfcPipeFitting",
-    "ifc_class": "IfcPipeFitting",
-    "ifc_name": "機械卡箍 - 凸緣 - 溝槽:標準:16168675",
-    "entity_id": "ifc:0Cqep$ebfFtfE_SwROlsGX",
-    "mapping_fidelity": "guid_exact"
-   },
-   {
-    "ifc_guid": "0Cqep$ebfFtfE_SwROlsGZ",
-    "usd_prim_path": "/World/Elements/IfcPipeFitting/G_0Cqep_ebfFtfE_SwROlsGZ",
-    "ifc_type": "IfcPipeFitting",
-    "ifc_class": "IfcPipeFitting",
-    "ifc_name": "CW_給水管_彎頭_滾溝:CW_給水管_彎頭_滾溝:16168673",
-    "entity_id": "ifc:0Cqep$ebfFtfE_SwROlsGZ",
-    "mapping_fidelity": "guid_exact"
-   },
-   {
-    "ifc_guid": "0Cqep$ebfFtfE_SwROlsGb",
-    "usd_prim_path": "/World/Elements/IfcPipeFitting/G_0Cqep_ebfFtfE_SwROlsGb",
-    "ifc_type": "IfcPipeFitting",
-    "ifc_class": "IfcPipeFitting",
-    "ifc_name": "機械卡箍 - 凸緣 - 溝槽:標準:16168679",
-    "entity_id": "ifc:0Cqep$ebfFtfE_SwROlsGb",
-    "mapping_fidelity": "guid_exact"
-   },
-   {
-    "ifc_guid": "0Cqep$ebfFtfE_SwROlsH3",
-    "usd_prim_path": "/World/Elements/IfcPipeFitting/G_0Cqep_ebfFtfE_SwROlsH3",
-    "ifc_type": "IfcPipeFitting",
-    "ifc_class": "IfcPipeFitting",
-    "ifc_name": "機械卡箍 - 凸緣 - 溝槽:標準:16168577",
-    "entity_id": "ifc:0Cqep$ebfFtfE_SwROlsH3",
-    "mapping_fidelity": "guid_exact"
-   },
-   {
-    "ifc_guid": "0Cqep$ebfFtfE_SwROlsH7",
-    "usd_prim_path": "/World/Elements/IfcPipeFitting/G_0Cqep_ebfFtfE_SwROlsH7",
-    "ifc_type": "IfcPipeFitting",
-    "ifc_class": "IfcPipeFitting",
-    "ifc_name": "機械卡箍 - 凸緣 - 溝槽:標準:16168581",
-    "entity_id": "ifc:0Cqep$ebfFtfE_SwROlsH7",
-    "mapping_fidelity": "guid_exact"
-   },
-   {
-    "ifc_guid": "0Cqep$ebfFtfE_SwROlsHO",
-    "usd_prim_path": "/World/Elements/IfcPipeFitting/G_0Cqep_ebfFtfE_SwROlsHO",
-    "ifc_type": "IfcPipeFitting",
-    "ifc_class": "IfcPipeFitting",
-    "ifc_name": "ST_揚水管_彎頭_滾溝:ST_揚水管_彎頭_滾溝:16168602",
-    "entity_id": "ifc:0Cqep$ebfFtfE_SwROlsHO",
-    "mapping_fidelity": "guid_exact"
-   },
-   {
-    "ifc_guid": "0Cqep$ebfFtfE_SwROlsHQ",
-    "usd_prim_path": "/World/Elements/IfcPipeSegment/G_0Cqep_ebfFtfE_SwROlsHQ",
-    "ifc_type": "IfcPipeSegment",
-    "ifc_class": "IfcPipeSegment",
-    "ifc_name": "Pipe Types:ST_揚水管:16168600",
-    "entity_id": "ifc:0Cqep$ebfFtfE_SwROlsHQ",
-    "mapping_fidelity": "guid_exact"
-   },
-   {
-    "ifc_guid": "0Cqep$ebfFtfE_SwROlsHU",
-    "usd_prim_path": "/World/Elements/IfcPipeFitting/G_0Cqep_ebfFtfE_SwROlsHU",
-    "ifc_type": "IfcPipeFitting",
-    "ifc_class": "IfcPipeFitting",
-    "ifc_name": "機械卡箍 - 凸緣 - 溝槽:標準:16168604",
-    "entity_id": "ifc:0Cqep$ebfFtfE_SwROlsHU",
-    "mapping_fidelity": "guid_exact"
-   },
-   {
-    "ifc_guid": "0Cqep$ebfFtfE_SwROlsHY",
-    "usd_prim_path": "/World/Elements/IfcPipeFitting/G_0Cqep_ebfFtfE_SwROlsHY",
-    "ifc_type": "IfcPipeFitting",
-    "ifc_class": "IfcPipeFitting",
-    "ifc_name": "機械卡箍 - 凸緣 - 溝槽:標準:16168608",
-    "entity_id": "ifc:0Cqep$ebfFtfE_SwROlsHY",
-    "mapping_fidelity": "guid_exact"
+    "usd_prim_path_pattern": "/World/Elements/IfcFlowTerminal/G_0BxPmu…"
    }
-  ]
+  ],
+  "_redaction": "raw mapping rows (full GUIDs + element display names) withheld from the tracked evidence per private-model-metadata review; full items remain on the deployment host artifact element_mapping.json"
  },
  "quality_metrics": {
   "source_ifc_entity_count": 2639,
   "mapped_count": 2639,
   "unmapped_count": 0,
   "coverage_ratio": 1.0,
-  "coverage_status": "pass",
-  "materialization_strategy": "ifcopenshell_openusd_identity",
-  "identity_authoring_profile": "ifcopenshell_openusd_identity",
-  "mapping_fidelity": "guid_exact",
-  "semantic_mapping_fidelity": "guid_exact",
   "mapping_has_ifc_type": true,
   "mapping_has_ifc_name": true,
   "sidecar_carrier_count": 2639,
   "minimum_coverage_baseline_locked": false,
   "shape_count": 2639,
   "skipped_shape_count": 0,
-  "warnings": [
-   "geo_reference_missing"
-  ],
   "hard_quality_gates": {
    "usdc_openable": true,
    "has_renderable_prims": true,
