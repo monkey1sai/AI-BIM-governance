@@ -268,6 +268,9 @@ function Assert-SelfReferentialJsonRepairPrs {
     if ($Element.ValueKind -ne [System.Text.Json.JsonValueKind]::Array) {
         throw "self_referential_bootstrap: $Context repair_prs must be a JSON array of positive integers."
     }
+    if ($Element.GetArrayLength() -eq 0) {
+        throw "self_referential_bootstrap: $Context repair_prs must be non-empty when present; omit the property until a repair transition appends a PR number."
+    }
     $previous = 0
     foreach ($item in $Element.EnumerateArray()) {
         $value = 0
@@ -543,6 +546,17 @@ function Get-SelfReferentialBootstrapLedger {
         if ($successorByPredecessor.ContainsKey($successorOf)) {
             throw "self_referential_bootstrap: ledger entry '$successorOf' has more than one successor; successor debt must be a single linked continuation."
         }
+        $predecessor = @($ledger.entries | Where-Object {
+            [string]$_.id -ceq $successorOf
+        })[0]
+        # Closure order is a ledger-integrity invariant, not only a transition
+        # rule. Along any successor lineage statuses must be a closed prefix
+        # followed by a contiguous open suffix. Otherwise A(open)->B(closed) can
+        # hide C(open) from active-chain checks, and a later multi-close could
+        # bypass the body exception once OpenDebt reaches zero.
+        if ([string]$entry.status -ceq 'closed' -and [string]$predecessor.status -ceq 'open') {
+            throw "self_referential_bootstrap: successor entry '$($entry.id)' cannot be closed while predecessor '$successorOf' remains open; successor chains must close oldest-root first."
+        }
         $successorByPredecessor[$successorOf] = [string]$entry.id
     }
     # Relation cycles cannot be produced by a legal transition, but the parser is
@@ -566,6 +580,69 @@ function Get-SelfReferentialBootstrapLedger {
 function ConvertTo-SelfReferentialCanonicalEntry {
     param([Parameter(Mandatory = $true)] $Entry)
     return ($Entry | ConvertTo-Json -Depth 8 -Compress)
+}
+
+function Get-SelfReferentialOpenSuccessorChain {
+    # Return the contiguous open successor component containing EntryId. Closed
+    # ancestors are historical debt and therefore stop the active chain. Callers
+    # that create another successor or use the linked-closure exception can also
+    # require this component to contain every open entry, which keeps unrelated
+    # debt and discontinuous open suffixes fail-closed without blocking a purely
+    # in-surface repair of one existing entry.
+    param(
+        [Parameter(Mandatory = $true)] $Ledger,
+        [Parameter(Mandatory = $true)][string] $EntryId,
+        [switch] $RequireAllOpen
+    )
+
+    $openEntries = @($Ledger.entries | Where-Object { [string]$_.status -ceq 'open' })
+    $openById = [System.Collections.Generic.Dictionary[string, object]]::new(
+        [System.StringComparer]::Ordinal
+    )
+    foreach ($entry in $openEntries) {
+        $openById.Add([string]$entry.id, $entry)
+    }
+    if (-not $openById.ContainsKey($EntryId)) {
+        throw "self_referential_bootstrap: ledger entry '$EntryId' is not open debt in the active successor chain."
+    }
+
+    $root = $openById[$EntryId]
+    while ($null -ne $root.PSObject.Properties['successor_of']) {
+        $predecessorId = [string]$root.successor_of
+        if (-not $openById.ContainsKey($predecessorId)) { break }
+        $root = $openById[$predecessorId]
+    }
+
+    $chain = @()
+    $cursor = $root
+    $visited = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
+    while ($null -ne $cursor) {
+        $cursorId = [string]$cursor.id
+        if (-not $visited.Add($cursorId)) {
+            throw "self_referential_bootstrap: active open successor chain contains a cycle at ledger entry '$cursorId'."
+        }
+        $chain += $cursor
+        $openSuccessors = @($openEntries | Where-Object {
+            $property = $_.PSObject.Properties['successor_of']
+            $null -ne $property -and [string]$property.Value -ceq $cursorId
+        })
+        if ($openSuccessors.Count -gt 1) {
+            throw "self_referential_bootstrap: active open debt forks after ledger entry '$cursorId'."
+        }
+        $cursor = if ($openSuccessors.Count -eq 1) { $openSuccessors[0] } else { $null }
+    }
+
+    if (-not ($chain | Where-Object { [string]$_.id -ceq $EntryId })) {
+        throw "self_referential_bootstrap: ledger entry '$EntryId' is not part of its resolved active successor chain."
+    }
+    if ($RequireAllOpen -and $chain.Count -ne $openEntries.Count) {
+        $chainIds = @($chain | ForEach-Object { [string]$_.id })
+        $unrelatedIds = @($openEntries | Where-Object {
+            -not ($chainIds -ccontains [string]$_.id)
+        } | ForEach-Object { [string]$_.id }) -join ', '
+        throw "self_referential_bootstrap: linked successor and closure transitions require all open debt to form one contiguous successor chain; unrelated or discontinuous open debt: $unrelatedIds."
+    }
+    return @($chain)
 }
 
 function Get-SelfReferentialRepairPrs {
@@ -1124,18 +1201,13 @@ function Compare-SelfReferentialLedgerTransition {
         $closedEntries += $head
     }
 
-    # Linked debt closes in two reviewable transitions. If both ends close in
-    # one PR, OpenDebt becomes empty and the body-level singular exception never
-    # runs; reject that bypass at the transition boundary itself.
+    # Every debt closes in its own reviewable transition. This global singularity
+    # is simpler and safer than checking only direct linked pairs: a malformed or
+    # legacy discontinuous chain could otherwise close non-adjacent entries
+    # together, make OpenDebt empty, and skip the body-level chain exception.
     if ($closedEntries.Count -gt 1) {
-        $closedIds = @($closedEntries | ForEach-Object { [string]$_.id })
-        $closedLinkedPairs = @($closedEntries | Where-Object {
-            $property = $_.PSObject.Properties['successor_of']
-            $null -ne $property -and $closedIds -ccontains [string]$property.Value
-        })
-        if ($closedLinkedPairs.Count -gt 0) {
-            throw "self_referential_bootstrap: linked predecessor and successor must close in separate transitions, predecessor first."
-        }
+        $closedIds = @($closedEntries | ForEach-Object { [string]$_.id }) -join ', '
+        throw "self_referential_bootstrap: each closure transition must close exactly one ledger entry; close these entries in separate transitions: $closedIds."
     }
 
     # Debt is computed over the UNION of base and head: a base-open entry counts
@@ -1163,11 +1235,11 @@ function Assert-SelfReferentialRepairLane {
     #   (1) the entry is pre-existing debt that stays open on both sides,
     #   (2) the append is exactly this PR's number (so the binding is machine-checked),
     #   (3) the repair does real work - a mechanism path beyond the ledger itself,
-    #   (4) every in-surface path stays bound to the predecessor; any necessary
-    #       outside path is bound to exactly one independently contracted successor,
+    #   (4) every in-surface path stays bound to its active-chain owner; any
+    #       necessary outside path is bound to one independently contracted leaf,
     #       and
     #   (5) the transition never closes debt and opens no unrelated debt.
-    # The predecessor therefore keeps its single legal open -> closed transition,
+    # Every entry therefore keeps its single legal open -> closed transition,
     # and each linked entry's closure attestation must prove its own mechanism.
     param(
         [Parameter(Mandatory = $true)][string] $EntryId,
@@ -1203,9 +1275,8 @@ function Assert-SelfReferentialRepairLane {
     # change is a repair_prs tail append, but the body names exactly one - so
     # validating only the named record would let a second entry's audit history
     # ride along without ever meeting the PR-number or declared-surface checks
-    # (L1-COR-001). Unreachable today, because a new entry may only be opened when
-    # no other debt is open and therefore at most one entry is ever open; this is
-    # defence in depth, and the insurance if that constraint is ever relaxed.
+    # (L1-COR-001). A linked successor chain deliberately has multiple open
+    # entries, so this is an active invariant rather than only defence in depth.
     if ($allRepairs.Count -ne 1) {
         $unnamedRepairIds = @($allRepairs |
             Where-Object { [string]$_.Id -cne $EntryId } |
@@ -1253,16 +1324,22 @@ function Assert-SelfReferentialRepairLane {
     # self-clearance, declared-subset means no scope expansion, and the fixpoint
     # obligation still requires the repaired mechanism to prove itself against the
     # entry's frozen verification contract before the debt can close.
-    $declaredPaths = @($headEntries[0].verification_mechanism_paths | ForEach-Object { [string]$_ })
-    $outsidePaths = @($MechanismPaths | Where-Object { -not ($declaredPaths -ccontains $_) })
+    $activeChain = @(Get-SelfReferentialOpenSuccessorChain -Ledger $BaseLedger -EntryId $EntryId)
+    $activeSurface = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
+    foreach ($activeEntry in $activeChain) {
+        foreach ($path in @($activeEntry.verification_mechanism_paths)) {
+            $null = $activeSurface.Add([string]$path)
+        }
+    }
+    $outsidePaths = @($MechanismPaths | Where-Object { -not $activeSurface.Contains([string]$_) })
     $newEntries = @($Transition.NewEntries)
 
     # (5) If a real repair necessarily changes a classified dependency outside
-    # the predecessor's immutable surface, the same PR must open exactly one
-    # independently contracted successor. This is the only exception to the
-    # repair lane's no-new-debt rule. It preserves the predecessor verbatim,
-    # binds the new surface to the current PR, and prevents an arbitrary scope
-    # extension from laundering the original debt.
+    # the active open chain's immutable surface union, the same PR must open
+    # exactly one independently contracted successor at the unique leaf. This is
+    # the only exception to the repair lane's no-new-debt rule. It preserves every
+    # existing entry verbatim, binds only the new delta to the current PR, and
+    # prevents arbitrary scope extension or duplicate path ownership.
     if ($outsidePaths.Count -eq 0) {
         if ($newEntries.Count -gt 0) {
             $newIds = @($newEntries | ForEach-Object { [string]$_.id }) -join ', '
@@ -1272,24 +1349,24 @@ function Assert-SelfReferentialRepairLane {
         if ($newEntries.Count -ne 1) {
             throw "self_referential_bootstrap: repair of ledger entry '$EntryId' changes paths outside its declared surface ($($outsidePaths -join ', ')) and must open exactly one linked successor debt; found $($newEntries.Count)."
         }
+        # Only a single contiguous open lineage may grow. The entry whose
+        # fixpoint failed remains the repair target (and owns repair_prs), while
+        # the new debt attaches to the lineage's current leaf to avoid a fork.
+        $activeChain = @(Get-SelfReferentialOpenSuccessorChain -Ledger $BaseLedger `
+            -EntryId $EntryId -RequireAllOpen)
+        $attachmentLeaf = $activeChain[-1]
+        $attachmentLeafId = [string]$attachmentLeaf.id
         $successor = $newEntries[0]
         $successorProperty = $successor.PSObject.Properties['successor_of']
-        if ($null -eq $successorProperty -or [string]$successorProperty.Value -cne $EntryId) {
-            throw "self_referential_bootstrap: successor entry '$($successor.id)' must declare successor_of='$EntryId'."
+        if ($null -eq $successorProperty -or [string]$successorProperty.Value -cne $attachmentLeafId) {
+            throw "self_referential_bootstrap: successor entry '$($successor.id)' must declare successor_of='$attachmentLeafId', the unique open successor-chain leaf."
         }
         $existingSuccessors = @($BaseLedger.entries | Where-Object {
             $property = $_.PSObject.Properties['successor_of']
-            $null -ne $property -and [string]$property.Value -ceq $EntryId
+            $null -ne $property -and [string]$property.Value -ceq $attachmentLeafId
         })
         if ($existingSuccessors.Count -gt 0) {
-            throw "self_referential_bootstrap: ledger entry '$EntryId' already has successor '$($existingSuccessors[0].id)'; a second successor is forbidden."
-        }
-        $otherBaseOpen = @($BaseLedger.entries | Where-Object {
-            [string]$_.status -ceq 'open' -and [string]$_.id -cne $EntryId
-        })
-        if ($otherBaseOpen.Count -gt 0) {
-            $ids = @($otherBaseOpen | ForEach-Object { [string]$_.id }) -join ', '
-            throw "self_referential_bootstrap: linked successor creation requires '$EntryId' to be the only open debt at the PR base; close its linked predecessor first: $ids."
+            throw "self_referential_bootstrap: open successor-chain leaf '$attachmentLeafId' already has successor '$($existingSuccessors[0].id)'; a second successor is forbidden."
         }
 
         $expectedSuccessorPaths = @('scripts/self-referential-bootstrap-ledger.json')
@@ -1308,16 +1385,16 @@ function Assert-SelfReferentialRepairLane {
         }
 
         # The successor may add verification commands, but cannot remove or
-        # reorder the predecessor's frozen command set. Prefix preservation is a
-        # machine-checkable no-downgrade rule while still allowing new coverage.
-        $predecessorCommands = @($headEntries[0].verification_contract.command_ids | ForEach-Object { [string]$_ })
+        # reorder the attachment leaf's frozen command set. Each generation's
+        # prefix preservation transitively retains every ancestor contract.
+        $predecessorCommands = @($attachmentLeaf.verification_contract.command_ids | ForEach-Object { [string]$_ })
         $successorCommands = @($successor.verification_contract.command_ids | ForEach-Object { [string]$_ })
         if ($successorCommands.Count -lt $predecessorCommands.Count) {
-            throw "self_referential_bootstrap: successor entry '$($successor.id)' verification_contract downgrades predecessor '$EntryId' by removing commands."
+            throw "self_referential_bootstrap: successor entry '$($successor.id)' verification_contract downgrades predecessor '$attachmentLeafId' by removing commands."
         }
         for ($index = 0; $index -lt $predecessorCommands.Count; $index++) {
             if ($successorCommands[$index] -cne $predecessorCommands[$index]) {
-                throw "self_referential_bootstrap: successor entry '$($successor.id)' verification_contract must preserve predecessor '$EntryId' command_ids as an ordered prefix."
+                throw "self_referential_bootstrap: successor entry '$($successor.id)' verification_contract must preserve predecessor '$attachmentLeafId' command_ids as an ordered prefix."
             }
         }
     }
@@ -1461,21 +1538,32 @@ function Assert-SelfReferentialBootstrapBody {
             throw "self_referential_bootstrap: the ledger gains entries ($($newIds -join ', ')) but the PR body declares bootstrap=no; adding debt requires declaring yes."
         }
         if (@($transition.OpenDebt).Count -gt 0) {
-            # A fully attested, ledger-only closure must remain possible when its
-            # one directly linked predecessor/successor is still open. Without
-            # this exception the successor transition merely moves the deadlock
-            # to closure. Unrelated or multiple debt, repair bookkeeping, and all
-            # non-closure PRs remain blocked.
+            # A fully attested, ledger-only closure must remain possible while a
+            # contiguous successor suffix is still open. Without this exception
+            # a later fixpoint dependency merely moves the repair deadlock to
+            # closure. Only the oldest open root may close, one entry per PR;
+            # unrelated/discontinuous debt and all non-closure PRs stay blocked.
             $linkedClosure = $false
             $closedEntries = @($transition.ClosedEntries)
             $remainingDebt = @($transition.OpenDebt)
-            if ($closedEntries.Count -eq 1 -and $remainingDebt.Count -eq 1 -and
+            if ($closedEntries.Count -eq 1 -and
                 @($transition.NewEntries).Count -eq 0 -and @($transition.RepairEntries).Count -eq 0) {
                 $closedEntry = $closedEntries[0]
-                $openEntry = $remainingDebt[0]
-                $openSuccessorProperty = $openEntry.PSObject.Properties['successor_of']
-                $openIsSuccessor = $null -ne $openSuccessorProperty -and
-                    [string]$openSuccessorProperty.Value -ceq [string]$closedEntry.id
+                $baseOpenChain = @(Get-SelfReferentialOpenSuccessorChain -Ledger $baseLedger `
+                    -EntryId ([string]$closedEntry.id) -RequireAllOpen)
+                $expectedRemaining = @($baseOpenChain | Select-Object -Skip 1)
+                $expectedRemainingIds = @($expectedRemaining | ForEach-Object { [string]$_.id })
+                $closesOldestRoot = $baseOpenChain.Count -gt 1 -and
+                    [string]$baseOpenChain[0].id -ceq [string]$closedEntry.id -and
+                    $remainingDebt.Count -eq $expectedRemaining.Count
+                if ($closesOldestRoot) {
+                    foreach ($remainingEntry in $remainingDebt) {
+                        if (-not ($expectedRemainingIds -ccontains [string]$remainingEntry.id)) {
+                            $closesOldestRoot = $false
+                            break
+                        }
+                    }
+                }
                 $allowedLinkedClosurePaths = @(
                     'scripts/self-referential-bootstrap-ledger.json'
                     @($closedEntry.fixpoint.evidence_refs | ForEach-Object { [string]$_ })
@@ -1483,10 +1571,9 @@ function Assert-SelfReferentialBootstrapBody {
                 $unexpectedLinkedClosurePaths = @($ChangedPaths | Where-Object {
                     -not ($allowedLinkedClosurePaths -ccontains $_)
                 })
-                # Close in predecessor -> successor order. Allowing the successor
-                # to close first could strand an open predecessor that is forever
-                # forbidden from creating a second successor.
-                $linkedClosure = $openIsSuccessor -and
+                # Close in oldest-root -> leaf order. Allowing a descendant to
+                # close first would make the active open suffix discontinuous.
+                $linkedClosure = $closesOldestRoot -and
                     $unexpectedLinkedClosurePaths.Count -eq 0
             }
             if (-not $linkedClosure) {
