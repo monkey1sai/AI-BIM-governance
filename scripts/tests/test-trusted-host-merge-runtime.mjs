@@ -702,7 +702,10 @@ test('machine timing budget bounds the only merge request and authoritative obse
   const mintIndex = cliSource.indexOf('await mintInstallationToken')
   assert.ok(deadlineIndex >= 0 && deadlineIndex < mintIndex)
   assert.match(cliSource, /timeoutMilliseconds: executionDeadline\.timeout\(/u)
-  assert.match(cliSource, /process\.stdout\.write\(serialized\)[\s\S]*?Promise\.race/u)
+  assert.match(
+    cliSource,
+    /writeFileSync\(resultPath, serialized[\s\S]*?process\.stdout\.write\(serialized\)[\s\S]*?persistWithinDeadline\(appendPlatformFile/u,
+  )
   assert.equal((workflow.match(/timeout-minutes:\s*20/gu) || []).length, 2)
 })
 
@@ -873,6 +876,79 @@ test('challenge CLI writes only the exact tuple to runner-owned files', async ()
     assert.match(await readFile(output, 'utf8'), /^provider=claude\r?\nassertion=\{"kind":"ai-bim-trusted-elevated-merge"/u)
     assert.match(await readFile(summary, 'utf8'), /protected-environment approval comment/u)
     assert.ok(!child.stdout.includes('PRIVATE KEY'))
+  } finally {
+    await rm(fixture, { recursive: true, force: true })
+  }
+})
+
+test('CLI persistence failure emits exactly one terminal result', () => {
+  const child = spawnSync(process.execPath, ['scripts/dev/trusted-host-merge.mjs', 'invalid-mode'], {
+    cwd: repoRoot,
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      RUNNER_TEMP: '',
+      GITHUB_EVENT_NAME: 'workflow_dispatch',
+      GITHUB_REPOSITORY: contract.repository.full_name,
+      GITHUB_REF: 'refs/heads/main',
+      GITHUB_SHA: BASE,
+      GITHUB_RUN_ID: '987654',
+      GITHUB_RUN_ATTEMPT: '1',
+      INPUT_PR_NUMBER: '42',
+      INPUT_EXPECTED_HEAD: HEAD,
+      INPUT_EXPECTED_BASE: BASE,
+      INPUT_EXPECTED_ACTIVATION_MODE: 'attesting_negative',
+      INPUT_APEX_PROVIDER: 'codex',
+      INPUT_NONCE: 'q'.repeat(32),
+      INPUT_EXPIRES_AT: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
+    },
+  })
+  assert.equal(child.status, 2, child.stderr)
+  const terminalLines = child.stdout.split(/\r?\n/u).filter((line) => line.startsWith('{'))
+  assert.equal(terminalLines.length, 1, child.stdout)
+  const result = JSON.parse(terminalLines[0])
+  assert.deepEqual(Object.keys(result).sort(), [
+    'baseOid', 'headOid', 'heldDetail', 'heldReason', 'mergeCommit',
+    'merged', 'prNumber', 'schemaVersion', 'status',
+  ])
+  assert.equal(result.schemaVersion, 'trusted-host-merge-result/v1')
+  assert.equal(result.status, 'held')
+  assert.equal(result.merged, false)
+  assert.equal(result.heldReason, 'invalid_args_format')
+})
+
+test('advisory summary failure cannot split the terminal file from stdout', async () => {
+  const fixture = await mkdtemp(join(tmpdir(), 'trusted-merge-result-'))
+  try {
+    const child = spawnSync(process.execPath, ['scripts/dev/trusted-host-merge.mjs', 'invalid-mode'], {
+      cwd: repoRoot,
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        RUNNER_TEMP: fixture,
+        GITHUB_STEP_SUMMARY: fixture,
+        GITHUB_EVENT_NAME: 'workflow_dispatch',
+        GITHUB_REPOSITORY: contract.repository.full_name,
+        GITHUB_REF: 'refs/heads/main',
+        GITHUB_SHA: BASE,
+        GITHUB_RUN_ID: '987654',
+        GITHUB_RUN_ATTEMPT: '1',
+        INPUT_PR_NUMBER: '42',
+        INPUT_EXPECTED_HEAD: HEAD,
+        INPUT_EXPECTED_BASE: BASE,
+        INPUT_EXPECTED_ACTIVATION_MODE: 'attesting_negative',
+        INPUT_APEX_PROVIDER: 'codex',
+        INPUT_NONCE: 's'.repeat(32),
+        INPUT_EXPIRES_AT: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
+      },
+    })
+    assert.equal(child.status, 2, child.stderr)
+    const terminalLines = child.stdout.split(/\r?\n/u).filter((line) => line.startsWith('{'))
+    assert.equal(terminalLines.length, 1, child.stdout)
+    const stdoutResult = JSON.parse(terminalLines[0])
+    const fileResult = JSON.parse(await readFile(join(fixture, 'trusted-host-merge-result.json'), 'utf8'))
+    assert.deepEqual(fileResult, stdoutResult)
+    assert.match(child.stderr, /summary persistence failed; terminal JSON remains authoritative/u)
   } finally {
     await rm(fixture, { recursive: true, force: true })
   }

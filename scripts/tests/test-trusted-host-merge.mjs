@@ -488,6 +488,23 @@ test('review surface is drift-detectable and apex evidence is bounded and redact
     'synthetic-yaml-folded-value',
     'synthetic-authorization-assignment',
     'synthetic-structured-authorization',
+    'synthetic-pretty-json',
+    'synthetic-yaml-plain',
+    'synthetic-multiline-quote',
+    'synthetic-here-string',
+    'synthetic-header-continuation',
+    'synthetic-added-uri',
+    'synthetic-removed-uri',
+    'synthetic-semicolon-uri',
+    'synthetic-comma-uri',
+    'synthetic-paren-uri',
+    'synthetic-triple-secret',
+    'continued-triple-secret',
+    'synthetic-prefixed-triple-secret',
+    'continued-prefixed-triple',
+    'synthetic-nested-credential',
+    'synthetic-array-credential',
+    'synthetic-indented-header-token',
   ]
   const safeMarkers = [
     'safe-rotation-days',
@@ -495,6 +512,20 @@ test('review surface is drift-detectable and apex evidence is bounded and redact
     'safe-password-policy',
     'safe-database-pool-size',
     'safe-docs-url',
+    'visible-after-pretty-json',
+    'visible-after-yaml-plain',
+    'visible-after-multiline-quote',
+    'visible-after-here-string',
+    'visible-after-header-continuation',
+    'visible-security-critical-context',
+    'visible-after-triple',
+    'visible-after-prefixed-triple',
+    'visible-after-nested-credential',
+    'visible-after-array-credential',
+    'visible-same-indent-security-critical',
+    'visible-context-security-critical',
+    'visible-opposite-prefix-security-critical',
+    'visible-after-blank-security-critical',
   ]
   const evidence = buildBoundedEvidence({
     diff: [
@@ -525,6 +556,53 @@ test('review surface is drift-detectable and apex evidence is bounded and redact
       '+  synthetic-yaml-folded-value',
       '+safe_folded_setting: visible-after-folded-block',
       '+Authorization=Bearer synthetic-authorization-assignment',
+      '+"token":',
+      '+  "synthetic-pretty-json"',
+      '+safe_pretty: visible-after-pretty-json',
+      '+password:',
+      '+  synthetic-yaml-plain',
+      '+safe_plain: visible-after-yaml-plain',
+      '+secret: "line-one',
+      '+synthetic-multiline-quote"',
+      '+safe_quote: visible-after-multiline-quote',
+      "+token: @'",
+      '+synthetic-here-string',
+      "+'@",
+      '+safe_here: visible-after-here-string',
+      '+Authorization: Bearer prefix',
+      '+  synthetic-header-continuation',
+      '+safe_header: visible-after-header-continuation',
+      '+    Authorization: Bearer synthetic-indented-header-token',
+      '+    if (visible-security-critical-context) bypassChecks();',
+      '+password = """synthetic-triple-secret',
+      '+continued-triple-secret"""',
+      '+safe_triple: visible-after-triple',
+      "+token = rf'''synthetic-prefixed-triple-secret",
+      "+continued-prefixed-triple'''",
+      '+safe_prefixed_triple: visible-after-prefixed-triple',
+      '+credentials: {',
+      '+  "value": "synthetic-nested-credential",',
+      '+  "nested": ["brace } inside string", {"value": "nested"}]',
+      '+}',
+      '+safe_nested_setting: visible-after-nested-credential',
+      '+credentials: ["synthetic-array-credential", {"value": "] inside string"}]',
+      '+safe_array_setting: visible-after-array-credential',
+      '+token:',
+      '+if (visible-same-indent-security-critical) bypassChecks();',
+      '+password:',
+      '+',
+      '+if (visible-after-blank-security-critical) bypassChecks();',
+      '+secret:',
+      ' context visible-context-security-critical',
+      '+safe_after_context();',
+      '+api_key:',
+      '-removed visible-opposite-prefix-security-critical',
+      '+safe_after_opposite_prefix();',
+      '+https://user:synthetic-added-uri@added.example.invalid/path',
+      '-redis://user:synthetic-removed-uri@removed.example.invalid/db',
+      '+https://user:pre;synthetic-semicolon-uri@semi.example.invalid/path',
+      '+https://user:pre,synthetic-comma-uri@comma.example.invalid/path',
+      '+https://user:pre)synthetic-paren-uri@paren.example.invalid/path',
       '+SECRET_ROTATION_DAYS=safe-rotation-days',
       '+TOKEN_COUNT=safe-token-count',
       '+PASSWORD_POLICY=safe-password-policy',
@@ -549,11 +627,17 @@ test('review surface is drift-detectable and apex evidence is bounded and redact
   const redactionMilliseconds = performance.now() - redactionStartedAt
   assert.ok(redactionMilliseconds < 2000, `499KB redaction took ${redactionMilliseconds}ms`)
 
-  const unterminatedBackslashes = `safeKey="${'\\'.repeat(50)}`
+  const unterminatedBackslashes = `safeKey="${'\\'.repeat(50_000)}`
   const backslashStartedAt = performance.now()
   assert.equal(sanitizeUntrustedText(unterminatedBackslashes), unterminatedBackslashes)
   const backslashMilliseconds = performance.now() - backslashStartedAt
   assert.ok(backslashMilliseconds < 1000, `unterminated quote redaction took ${backslashMilliseconds}ms`)
+
+  const manyDelimiters = 'safe_key=value&'.repeat(32_000)
+  const delimiterStartedAt = performance.now()
+  assert.equal(sanitizeUntrustedText(manyDelimiters), manyDelimiters)
+  const delimiterMilliseconds = performance.now() - delimiterStartedAt
+  assert.ok(delimiterMilliseconds < 2000, `many-delimiter redaction took ${delimiterMilliseconds}ms`)
 
   const credentialUris = sanitizeUntrustedText([
     'redis://:synthetic-empty-user-password@redis.example.invalid/db',
@@ -563,6 +647,11 @@ test('review surface is drift-detectable and apex evidence is bounded and redact
   assert.ok(!credentialUris.includes('synthetic-token-userinfo'))
   assert.ok(credentialUris.includes('redis.example.invalid/db'))
   assert.ok(credentialUris.includes('api.example.invalid/v1'))
+  assert.ok(evidence.serialized.includes('added.example.invalid/path'))
+  assert.ok(evidence.serialized.includes('removed.example.invalid/db'))
+  assert.ok(evidence.serialized.includes('semi.example.invalid/path'))
+  assert.ok(evidence.serialized.includes('comma.example.invalid/path'))
+  assert.ok(evidence.serialized.includes('paren.example.invalid/path'))
   assert.ok(evidence.serialized.includes('visible-after-yaml-block'))
   assert.ok(evidence.serialized.includes('visible-after-folded-block'))
 })

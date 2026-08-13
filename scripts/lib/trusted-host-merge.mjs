@@ -44,8 +44,7 @@ const isUnquotedValueTerminator = (char) => (
 )
 const isAuthorityTerminator = (char) => (
   char === ' ' || char === '\t' || char === '\r' || char === '\n' ||
-  char === '/' || char === '?' || char === '#' || char === ',' || char === ';' ||
-  char === '"' || char === "'" || char === ')' || char === ']' || char === '}'
+  char === '/' || char === '?' || char === '#' || char === '"' || char === "'"
 )
 
 const applyRedactionRanges = (value, ranges) => {
@@ -76,10 +75,133 @@ const assignmentKeyBefore = (value, delimiterIndex) => {
   return value.slice(keyStart, keyEnd)
 }
 
+const lineEndFrom = (value, start) => {
+  let end = start
+  while (end < value.length && value[end] !== '\r' && value[end] !== '\n') end += 1
+  return end
+}
+
+const nextLineStart = (value, lineEnd) => (
+  value[lineEnd] === '\r' && value[lineEnd + 1] === '\n' ? lineEnd + 2 : lineEnd + 1
+)
+
+const lineLayoutAt = (value, index) => {
+  const lineStart = value.lastIndexOf('\n', Math.max(0, index - 1)) + 1
+  let contentStart = lineStart
+  if (value[contentStart] === '+' || value[contentStart] === '-') contentStart += 1
+  let indentation = 0
+  while (contentStart + indentation < value.length && isHorizontalSpace(value[contentStart + indentation])) {
+    indentation += 1
+  }
+  return { lineStart, contentStart, indentation }
+}
+
+const assignmentValueStart = (value, delimiterIndex) => {
+  const baseLayout = lineLayoutAt(value, delimiterIndex)
+  const diffPrefix = value[baseLayout.lineStart] === '+' || value[baseLayout.lineStart] === '-'
+    ? value[baseLayout.lineStart]
+    : null
+  let cursor = delimiterIndex + 1
+  let crossedLine = false
+  while (cursor < value.length) {
+    while (cursor < value.length && isHorizontalSpace(value[cursor])) cursor += 1
+    if (value[cursor] !== '\r' && value[cursor] !== '\n') break
+    crossedLine = true
+    cursor = nextLineStart(value, cursor)
+    if (diffPrefix !== null) {
+      if (value[cursor] !== diffPrefix) return null
+      cursor += 1
+    } else if (value[cursor] === '+' || value[cursor] === '-') return null
+  }
+  if (cursor >= value.length) return null
+  const valueLayout = lineLayoutAt(value, cursor)
+  if (crossedLine && valueLayout.indentation <= baseLayout.indentation) return null
+  return { start: cursor, crossedLine }
+}
+
+const hereStringRange = (value, start) => {
+  if (value[start] !== '@' || (value[start + 1] !== '"' && value[start + 1] !== "'")) return null
+  const closing = `${value[start + 1]}@`
+  let lineEnd = lineEndFrom(value, start + 2)
+  while (lineEnd < value.length) {
+    const candidateLineStart = nextLineStart(value, lineEnd)
+    let candidateStart = candidateLineStart
+    if (value[candidateStart] === '+' || value[candidateStart] === '-') candidateStart += 1
+    if (value.startsWith(closing, candidateStart)) return { start, end: candidateStart + closing.length }
+    lineEnd = lineEndFrom(value, candidateLineStart)
+  }
+  return { start, end: value.length }
+}
+
+const balancedContainerRange = (value, start) => {
+  const closingFor = { '{': '}', '[': ']', '(': ')' }
+  const firstClosing = closingFor[value[start]]
+  if (firstClosing === undefined) return null
+  const stack = [firstClosing]
+  let quote = null
+  let cursor = start + 1
+  while (cursor < value.length) {
+    const char = value[cursor]
+    if (quote !== null) {
+      if (char === '\\' && cursor + 1 < value.length) cursor += 2
+      else {
+        if (char === quote) quote = null
+        cursor += 1
+      }
+      continue
+    }
+    if (char === '"' || char === "'") {
+      quote = char
+      cursor += 1
+      continue
+    }
+    const nestedClosing = closingFor[char]
+    if (nestedClosing !== undefined) stack.push(nestedClosing)
+    else if (char === stack[stack.length - 1]) {
+      stack.pop()
+      if (stack.length === 0) return { start, end: cursor + 1 }
+    }
+    cursor += 1
+  }
+  return { start, end: value.length }
+}
+
+const quotedValueRange = (value, start) => {
+  let quoteStart = start
+  let prefixLength = 0
+  while (
+    prefixLength < 2 && quoteStart < value.length &&
+    (value[quoteStart] === 'r' || value[quoteStart] === 'R' ||
+      value[quoteStart] === 'b' || value[quoteStart] === 'B' ||
+      value[quoteStart] === 'u' || value[quoteStart] === 'U' ||
+      value[quoteStart] === 'f' || value[quoteStart] === 'F')
+  ) {
+    prefixLength += 1
+    quoteStart += 1
+  }
+  const quote = value[quoteStart]
+  if (quote !== '"' && quote !== "'") return null
+  const triple = value.startsWith(quote.repeat(3), quoteStart)
+  const closing = triple ? quote.repeat(3) : quote
+  let cursor = quoteStart + closing.length
+  while (cursor < value.length) {
+    if (value[cursor] === '\\' && cursor + 1 < value.length) cursor += 2
+    else if (value.startsWith(closing, cursor)) return { start, end: cursor + closing.length }
+    else cursor += 1
+  }
+  return { start, end: value.length }
+}
+
 const assignmentValueRange = (value, delimiterIndex) => {
-  let start = delimiterIndex + 1
-  while (start < value.length && isHorizontalSpace(value[start])) start += 1
-  if (start === value.length) return null
+  const located = assignmentValueStart(value, delimiterIndex)
+  if (located === null) return null
+  const { start, crossedLine } = located
+  const hereString = hereStringRange(value, start)
+  if (hereString !== null) return hereString
+  const container = balancedContainerRange(value, start)
+  if (container !== null) return container
+  const quoted = quotedValueRange(value, start)
+  if (quoted !== null) return quoted
   const quote = value[start]
   if (quote === '|' || quote === '>') {
     const lineStart = value.lastIndexOf('\n', delimiterIndex - 1) + 1
@@ -109,20 +231,34 @@ const assignmentValueRange = (value, delimiterIndex) => {
     }
     return { start, end }
   }
-  if (quote !== '"' && quote !== "'") {
-    let end = start
-    while (end < value.length && !isUnquotedValueTerminator(value[end])) end += 1
-    return end === start ? null : { start, end }
-  }
-  let end = start + 1
-  while (end < value.length && value[end] !== '\r' && value[end] !== '\n') {
-    if (value[end] === '\\' && end + 1 < value.length && value[end + 1] !== '\r' && value[end + 1] !== '\n') {
-      end += 2
-    } else if (value[end] === quote) {
-      return { start, end: end + 1 }
-    } else {
-      end += 1
+  let end = start
+  if (crossedLine) end = lineEndFrom(value, start)
+  else while (end < value.length && !isUnquotedValueTerminator(value[end])) end += 1
+  return end === start ? null : { start, end }
+}
+
+const assignmentLineRange = (value, delimiterIndex) => {
+  const start = delimiterIndex + 1
+  const headerLayout = lineLayoutAt(value, delimiterIndex)
+  const diffPrefix = value[headerLayout.lineStart] === '+' || value[headerLayout.lineStart] === '-'
+    ? value[headerLayout.lineStart]
+    : null
+  let end = lineEndFrom(value, start)
+  while (end < value.length) {
+    const followingLineStart = nextLineStart(value, end)
+    const followingLineEnd = lineEndFrom(value, followingLineStart)
+    let contentStart = followingLineStart
+    if (diffPrefix !== null) {
+      if (value[contentStart] !== diffPrefix) break
+      contentStart += 1
     }
+    let indentation = 0
+    while (contentStart + indentation < followingLineEnd && isHorizontalSpace(value[contentStart + indentation])) {
+      indentation += 1
+    }
+    const isBlank = contentStart + indentation === followingLineEnd
+    if (isBlank || indentation <= headerLayout.indentation) break
+    end = followingLineEnd
   }
   return { start, end }
 }
@@ -141,13 +277,7 @@ const redactSensitiveAssignments = (value) => {
       continue
     }
     const range = consumesAssignmentLine(key)
-      ? {
-          start: cursor + 1,
-          end: (() => {
-            const lineEnd = value.indexOf('\n', cursor + 1)
-            return lineEnd === -1 ? value.length : lineEnd
-          })(),
-        }
+      ? assignmentLineRange(value, cursor)
       : assignmentValueRange(value, cursor)
     if (range === null) {
       cursor += 1
@@ -170,10 +300,16 @@ const redactCredentialUriUserinfo = (value) => {
       schemeStart > 0 && separator - schemeStart < 32 &&
       isUriSchemeCode(value.charCodeAt(schemeStart - 1))
     ) schemeStart -= 1
+    const lineStart = value.lastIndexOf('\n', Math.max(0, separator - 1)) + 1
+    const hasDiffPrefix = (
+      schemeStart === lineStart && (value[schemeStart] === '+' || value[schemeStart] === '-') &&
+      schemeStart + 1 < separator
+    )
+    if (hasDiffPrefix) schemeStart += 1
     const schemeLength = separator - schemeStart
     const validScheme = schemeLength > 0 && schemeLength <= 32 &&
       isAsciiAlpha(value.charCodeAt(schemeStart)) &&
-      (schemeStart === 0 || !isUriSchemeCode(value.charCodeAt(schemeStart - 1)))
+      (hasDiffPrefix || schemeStart === 0 || !isUriSchemeCode(value.charCodeAt(schemeStart - 1)))
     const authorityStart = separator + 3
     let authorityEnd = authorityStart
     while (authorityEnd < value.length && !isAuthorityTerminator(value[authorityEnd])) authorityEnd += 1
@@ -194,7 +330,6 @@ const secretPatterns = [
   /\b(?:gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,}|sk-[A-Za-z0-9_-]{20,})\b/gu,
   /\b(?:AKIA[0-9A-Z]{16}|AIza[0-9A-Za-z_-]{30,}|xox[baprs]-[0-9A-Za-z-]{20,})\b/gu,
   /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/gu,
-  /\b(?:authorization|proxy-authorization|cookie|set-cookie)\s*:\s*[^\r\n]*/giu,
 ]
 
 export function sanitizeUntrustedText(value) {

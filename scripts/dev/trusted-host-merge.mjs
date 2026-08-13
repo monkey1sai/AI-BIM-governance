@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
-import { appendFile, readFile, writeFile } from 'node:fs/promises'
+import { writeFileSync } from 'node:fs'
+import { appendFile, readFile } from 'node:fs/promises'
 import { isAbsolute, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -105,7 +106,6 @@ const outputChallenge = async (invocation, assertion) => {
 
 const writeResult = async (result) => {
   const serialized = `${JSON.stringify(result)}\n`
-  process.stdout.write(serialized)
   const runnerTemp = process.env.RUNNER_TEMP
   if (typeof runnerTemp !== 'string' || runnerTemp.length === 0 || !isAbsolute(runnerTemp)) {
     throw new TrustedMergeHold('host_env_blocked', 'runner_temp_missing')
@@ -123,23 +123,34 @@ const writeResult = async (result) => {
     `- Held detail: \`${result.heldDetail ?? 'none'}\``,
     '',
   ].join('\n')
-  const persistence = async () => {
-    await writeFile(resultPath, `${JSON.stringify(result, null, 2)}\n`, { encoding: 'utf8', flag: 'wx' })
-    if (process.env.GITHUB_STEP_SUMMARY) await appendPlatformFile(process.env.GITHUB_STEP_SUMMARY, summary)
+  const persistenceDeadline = performance.now() +
+    contract.executor.pre_sink_timeouts.result_persistence_reserve_milliseconds
+  const persistWithinDeadline = async (operation) => {
+    const remaining = Math.floor(persistenceDeadline - performance.now())
+    if (remaining <= 0) throw new TrustedMergeHold('host_env_blocked', 'result_persistence_timeout')
+    let persistenceTimeout = null
+    try {
+      await Promise.race([
+        operation,
+        new Promise((_, reject) => {
+          persistenceTimeout = setTimeout(
+            () => reject(new TrustedMergeHold('host_env_blocked', 'result_persistence_timeout')),
+            remaining,
+          )
+        }),
+      ])
+    } finally {
+      if (persistenceTimeout !== null) clearTimeout(persistenceTimeout)
+    }
   }
-  let persistenceTimeout = null
-  try {
-    await Promise.race([
-      persistence(),
-      new Promise((_, reject) => {
-        persistenceTimeout = setTimeout(
-          () => reject(new TrustedMergeHold('host_env_blocked', 'result_persistence_timeout')),
-          contract.executor.pre_sink_timeouts.result_persistence_reserve_milliseconds,
-        )
-      }),
-    ])
-  } finally {
-    if (persistenceTimeout !== null) clearTimeout(persistenceTimeout)
+  writeFileSync(resultPath, serialized, { encoding: 'utf8', flag: 'wx' })
+  process.stdout.write(serialized)
+  if (process.env.GITHUB_STEP_SUMMARY) {
+    try {
+      await persistWithinDeadline(appendPlatformFile(process.env.GITHUB_STEP_SUMMARY, summary))
+    } catch {
+      process.stderr.write('Trusted host merge summary persistence failed; terminal JSON remains authoritative.\n')
+    }
   }
 }
 
