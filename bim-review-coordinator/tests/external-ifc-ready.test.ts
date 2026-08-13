@@ -844,6 +844,23 @@ describe("POST /api/external/ifc-ready (worker compatibility payload)", () => {
     expect(second.body.ifc_ready_job_id).toBe(first.body.ifc_ready_job_id);
   });
 
+  it("worker 重用相同派生 identity 但改變 IFC origin/path → 409 且保留原來源", async () => {
+    const app = makeApp();
+    const first = await request(app.app)
+      .post("/api/external/ifc-ready")
+      .set(workerAuthHeaders())
+      .send(workerPayload());
+    const conflict = await request(app.app)
+      .post("/api/external/ifc-ready")
+      .set(workerAuthHeaders())
+      .send(workerPayload({ ifc_path: "http://other.example/storage/other-model.ifc" }));
+
+    expect(first.status).toBe(202);
+    expect(conflict.status).toBe(409);
+    const persisted = app.externalIfcReadyStore.get(first.body.ifc_ready_job_id as string);
+    expect(persisted?.source_ifc_ref).toBe("http://edge-internal.example/storage/demo-model.ifc");
+  });
+
   it("explicit X-Correlation-Id 優先於 task_id 派生", async () => {
     const app = makeApp();
     const res = await request(app.app)

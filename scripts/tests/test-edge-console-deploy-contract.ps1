@@ -93,6 +93,8 @@ try {
     Assert-True ($coordinatorComposeBlock.Groups['body'].Value -match '(?m)^      CONVERSION_LEDGER_STORE_PATH: /workspace/storage/coordinator/conversion-ledger\.json\r?$') 'coordinator conversion ledger uses persistent storage mount'
     Assert-True ($coordinatorComposeBlock.Groups['body'].Value -match '(?m)^      CALLBACK_OUTBOX_STORE_PATH: /workspace/storage/coordinator/callback-outbox\.json\r?$') 'coordinator callback outbox uses persistent storage mount'
     Assert-True ($coordinatorComposeBlock.Groups['body'].Value -match '(?m)^      EXTERNAL_IFC_READY_STORE_PATH: /workspace/storage/coordinator/external-ifc-ready\.json\r?$') 'coordinator external IFC-ready correlation store uses persistent storage mount'
+    Assert-True ($coordinatorComposeBlock.Groups['body'].Value -match '(?m)^      SESSION_STORE_DIR: /workspace/storage/coordinator/sessions\r?$') 'coordinator review sessions use persistent storage mount'
+    Assert-True ($coordinatorComposeBlock.Groups['body'].Value -match '(?m)^      EVENT_LOG_DIR: /workspace/storage/coordinator/events\r?$') 'coordinator lifecycle events use persistent storage mount'
     Assert-True ($coordinatorComposeBlock.Groups['body'].Value -match '(?m)^      - \$\{RUNTIME_STORAGE_ROOT:-\./storage\}:/workspace/storage\r?$') 'coordinator state paths share owner-controlled runtime storage mount'
     Assert-True ($compose -match 'dockerfile:\s+infra/docker/coordinator-web-plane\.Dockerfile') 'coordinator uses dedicated Dockerfile'
     Assert-True ($compose -match 'CONSOLE_DIST_DIR:\s+/workspace/console-dist') 'compose points coordinator at image console-dist'

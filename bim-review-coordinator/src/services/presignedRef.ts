@@ -18,3 +18,19 @@ export function maskPresignedRef(ref: string): string {
   if (!hasSignature) return ref;
   return `${url.origin}${url.pathname}`;
 }
+
+/**
+ * Stable object identity for retry comparison. HTTP(S) presigned query and
+ * fragment values are renewable capabilities, while origin + pathname name
+ * the underlying object. Non-HTTP refs keep exact-string semantics.
+ */
+export function stableHttpRefIdentity(ref: string): string {
+  if (!ref) return ref;
+  try {
+    const url = new URL(ref);
+    if (url.protocol !== "http:" && url.protocol !== "https:") return ref;
+    return `${url.origin}${url.pathname}`;
+  } catch {
+    return ref;
+  }
+}

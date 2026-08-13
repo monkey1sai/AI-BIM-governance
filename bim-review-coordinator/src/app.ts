@@ -2084,6 +2084,14 @@ export function createCoordinatorApp(
         });
         return;
       }
+      if (acceptResult.kind === "conflict") {
+        response.status(409).json({
+          detail: "IFC source conflicts with the existing idempotent job.",
+          ifc_ready_job_id: acceptResult.ifc_ready_job_id,
+          reason: acceptResult.reason,
+        });
+        return;
+      }
       if (acceptResult.kind === "download_failed") {
         response.status(502).json({
           detail: "IFC download failed",
@@ -2876,6 +2884,10 @@ export function createCoordinatorApp(
     );
     return sessionCapture;
   };
+
+  // Durable dispatched jobs outlive the coordinator process, but their
+  // in-process pollers do not. Resume only after the terminal observer is ready.
+  ifcReadyPipeline.resumePersistedPollers();
 
   // 內部端點（外部/輪詢直接餵 report）。callback 投遞狀態與 conversion 成功
   // 分離；conversion 在本地 ready 即可查，callback 由 outbox 追蹤。

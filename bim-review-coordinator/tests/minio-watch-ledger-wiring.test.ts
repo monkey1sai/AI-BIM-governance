@@ -6,7 +6,13 @@ import request from "supertest";
 import { afterEach, describe, expect, it } from "vitest";
 import { createCoordinatorApp, type CoordinatorApp } from "../src/app.js";
 import { ConversionLedger } from "../src/services/conversionLedger.js";
-import { idempotencyKeyFor, type MinioWatcherStatus } from "../src/services/minioWatcher.js";
+import { ExternalIfcReadyStore } from "../src/services/externalIfcReadyStore.js";
+import {
+  correlationIdFor,
+  idempotencyKeyFor,
+  type MinioWatcherStatus,
+} from "../src/services/minioWatcher.js";
+import type { ExternalIfcReadyEvent } from "../src/types.js";
 
 // review Important #2：production 接線整合測試。
 //
@@ -177,6 +183,73 @@ describe("app.ts isLedgered 接線整合測試（review Important #2）", () => 
     expect(status.baseline_count).toBe(1); // 診斷欄位仍填（首輪 model.ifc 數）
   });
 
+  it("restart-interrupted download → watcher 沿用同一 job 重下載並建立 ledger", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "minio-watch-wiring-download-recovery-"));
+    const ledgerStorePath = path.join(root, "coordinator", "conversion-ledger.json");
+    const externalIfcReadyStorePath = path.join(root, "coordinator", "external-ifc-ready.json");
+    const previousExternalIfcReadyStorePath = process.env.EXTERNAL_IFC_READY_STORE_PATH;
+    const key = "899/main/xxx/model.ifc";
+    const etag = "e1";
+    const state: { objs: S3Obj[] } = { objs: [{ key, etag }] };
+    const s3Base = await startS3Stub(state);
+    const idkey = idempotencyKeyFor("bim-control", key, etag);
+    const correlationId = correlationIdFor("bim-control", key, etag);
+
+    const seedStore = new ExternalIfcReadyStore(externalIfcReadyStorePath);
+    const seeded = seedStore.create(
+      {
+        event: "ifc_ready",
+        tenant_id: "tenant_demo_001",
+        project_id: "899",
+        project_display_name: "899",
+        model_category: "main",
+        external_model_version_id: "xxx",
+        source_ifc: {
+          ref: `${s3Base}/bim-control/${key}?X-Amz-Signature=interrupted`,
+          etag,
+          filename: "model.ifc",
+          format: "ifc",
+        },
+        requested_outputs: ["usdc", "element_mapping", "entity_index", "metadata"],
+      } as ExternalIfcReadyEvent,
+      {
+        correlationId,
+        idempotencyKey: idkey,
+        tenantId: "tenant_demo_001",
+        projectId: "899",
+        externalModelVersionId: "xxx",
+      },
+    );
+    seedStore.markDownloading(seeded.ifc_ready_job_id);
+
+    process.env.EXTERNAL_IFC_READY_STORE_PATH = externalIfcReadyStorePath;
+    try {
+      active = createCoordinatorApp({
+        sessionStoreDir: path.join(root, "coordinator", "sessions"),
+        eventLogDir: path.join(root, "coordinator", "events"),
+        callbackOutboxStorePath: path.join(root, "coordinator", "callback-outbox.json"),
+        corsOrigins: ["http://127.0.0.1:5173"],
+        ...watchOverrides(s3Base, ledgerStorePath),
+      });
+      await listenOnLoopback(active);
+      await active.minioWatchSurface.pollNow();
+
+      const ledger = new ConversionLedger(ledgerStorePath).list();
+      expect(ledger).toHaveLength(1);
+      expect(ledger[0]?.idempotency_key).toBe(idkey);
+      const recovered = new ExternalIfcReadyStore(externalIfcReadyStorePath).list();
+      expect(recovered).toHaveLength(1);
+      expect(recovered[0]?.ifc_ready_job_id).toBe(seeded.ifc_ready_job_id);
+      expect(recovered[0]?.download_status).toBe("downloaded");
+    } finally {
+      if (previousExternalIfcReadyStorePath === undefined) {
+        delete process.env.EXTERNAL_IFC_READY_STORE_PATH;
+      } else {
+        process.env.EXTERNAL_IFC_READY_STORE_PATH = previousExternalIfcReadyStorePath;
+      }
+    }
+  });
+
   it("coordinator recreate 共用持久路徑 → intake correlation/ledger/outbox 存活且 watcher 不建重複紀錄", async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "minio-watch-wiring-recreate-"));
     const ledgerStorePath = path.join(root, "coordinator", "conversion-ledger.json");
@@ -186,8 +259,8 @@ describe("app.ts isLedgered 接線整合測試（review Important #2）", () => 
     const state: { objs: S3Obj[] } = { objs: [{ key: "899/main/xxx/model.ifc", etag: "e1" }] };
     const s3Base = await startS3Stub(state);
     const appConfig = {
-      sessionStoreDir: path.join(root, "sessions"),
-      eventLogDir: path.join(root, "events"),
+      sessionStoreDir: path.join(root, "coordinator", "sessions"),
+      eventLogDir: path.join(root, "coordinator", "events"),
       callbackOutboxStorePath: outboxStorePath,
       corsOrigins: ["http://127.0.0.1:5173"],
       ...watchOverrides(s3Base, ledgerStorePath),
@@ -226,13 +299,21 @@ describe("app.ts isLedgered 接線整合測試（review Important #2）", () => 
         .send({
           correlation_id: beforeRecreate[0]!.correlation_id,
           conversion_job_id: "cj_recreate_001",
-          status: "failed",
-          reason: "bounded recreate regression",
-          retryable: true,
+          status: "ready",
+          artifacts: {
+            usdc_ref: "http://127.0.0.1:49101/artifacts/recreate/model.usdc",
+            element_mapping_ref: "http://127.0.0.1:49101/artifacts/recreate/element_mapping.json",
+            manifest_ref: "http://127.0.0.1:49101/artifacts/recreate/manifest.json",
+          },
         });
       expect(callback.status).toBe(202);
       const outboxId = callback.body.callback.outbox_id as string;
       expect(outboxId).toBeTruthy();
+      const sessionId = callback.body.session.session_id as string;
+      const ifcReadyJobId = callback.body.ifc_ready_job.ifc_ready_job_id as string;
+      const viewerUrl = callback.body.ifc_ready_job.viewer_url as string;
+      expect(sessionId).toMatch(/^review_session_/);
+      expect(viewerUrl).toContain(`/ui/open?session=${sessionId}`);
 
       // 再重建一次，分別證明 callback outbox 與 conversion ledger 都從同一持久 mount 載入。
       await closeActiveCoordinator();
@@ -246,6 +327,26 @@ describe("app.ts isLedgered 接線整合測試（review Important #2）", () => 
       expect(restoredOutbox.status).toBe(200);
       expect(restoredOutbox.body.outbox_id).toBe(outboxId);
       expect(restoredOutbox.body.status).toBe("pending");
+
+      const restoredSession = await request(active.app).get(`/api/review-sessions/${sessionId}`);
+      expect(restoredSession.status).toBe(200);
+      expect(restoredSession.body.session_id).toBe(sessionId);
+      const restoredLifecycle = await request(active.app)
+        .get(`/api/review-sessions/${sessionId}/lifecycle-events`);
+      expect(restoredLifecycle.status).toBe(200);
+      expect(restoredLifecycle.body.items.map((item: { type: string }) => item.type)).toEqual(
+        expect.arrayContaining(["sessionCreated", "sessionActive"]),
+      );
+      const restoredOpen = await request(active.app)
+        .get("/ui/open")
+        .query({ session: sessionId, trace_id: ifcReadyJobId });
+      expect(restoredOpen.status).toBe(302);
+      expect(restoredOpen.headers.location).toBeTruthy();
+
+      const restoredJob = await request(active.app).get(`/api/external/ifc-ready/${ifcReadyJobId}`);
+      expect(restoredJob.status).toBe(200);
+      expect(restoredJob.body.review_session_id).toBe(sessionId);
+      expect(restoredJob.body.viewer_url).toBe(viewerUrl);
 
       const afterRecreate = new ConversionLedger(ledgerStorePath).list();
       expect(afterRecreate).toHaveLength(1);

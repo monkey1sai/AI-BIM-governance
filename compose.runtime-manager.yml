@@ -25,6 +25,8 @@ services:
       CONVERSION_LEDGER_STORE_PATH: /workspace/storage/coordinator/conversion-ledger.json
       CALLBACK_OUTBOX_STORE_PATH: /workspace/storage/coordinator/callback-outbox.json
       EXTERNAL_IFC_READY_STORE_PATH: /workspace/storage/coordinator/external-ifc-ready.json
+      SESSION_STORE_DIR: /workspace/storage/coordinator/sessions
+      EVENT_LOG_DIR: /workspace/storage/coordinator/events
       KIT_INSTANCE_ENDPOINTS: '[{"id":"kit_local_gpu_001","signalingServer":"127.0.0.1","signalingPort":49100,"mediaServer":"127.0.0.1","mediaPort":47998}]'
       # fast-ifc-link-demo-loop §2:同步下載 IFC 寫入 shared volume。
       # STORAGE_ROOT 必須對齊下方 volumes mount destination(/workspace/storage);

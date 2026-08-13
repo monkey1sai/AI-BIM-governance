@@ -2,8 +2,11 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { sanitizeArtifactIdPart } from "./streamingConversionClient.js";
-import { maskPresignedRef } from "./presignedRef.js";
+import { maskPresignedRef, stableHttpRefIdentity } from "./presignedRef.js";
 import type { ExternalIfcReadyEvent, IfcReadyIntakeJob, ShadowMetadata } from "../types.js";
+
+const RESTART_INTERRUPTED_DOWNLOAD_FAILURE =
+  "coordinator restart interrupted download; operator must re-POST";
 
 /**
  * B-scheme（local-coordinator-ifc-ready-intake-boundary T3 §4.3）。
@@ -63,7 +66,7 @@ export class ExternalIfcReadyStore {
       }
       if (job.download_status === "downloading") {
         job.download_status = "failed";
-        job.download_failure = "coordinator restart interrupted download; operator must re-POST";
+        job.download_failure = RESTART_INTERRUPTED_DOWNLOAD_FAILURE;
         job.updated_at = new Date().toISOString();
       }
       this.jobsById.set(job.ifc_ready_job_id, job);
@@ -225,6 +228,55 @@ export class ExternalIfcReadyStore {
   markDownloading(jobId: string): IfcReadyIntakeJob | undefined {
     const job = this.jobsById.get(jobId);
     if (!job) return undefined;
+    job.download_status = "downloading";
+    job.download_failure = null;
+    job.updated_at = new Date().toISOString();
+    this.persist();
+    return job;
+  }
+
+  /**
+   * Process restart is the only download failure that may reuse the original
+   * idempotent job. A fresh POST supplies a fresh presigned ref while keeping
+   * the authoritative correlation/job identity stable. Ordinary HTTP/auth
+   * failures remain closed so repeated watcher polls cannot create a retry loop.
+   */
+  resumeRestartInterruptedDownload(
+    jobId: string,
+    event: ExternalIfcReadyEvent,
+    binding: {
+      correlationId: string;
+      idempotencyKey: string;
+      tenantId: string;
+      projectId: string;
+      externalModelVersionId: string;
+    },
+  ): IfcReadyIntakeJob | undefined {
+    const job = this.jobsById.get(jobId);
+    if (
+      !job ||
+      job.status !== "accepted" ||
+      job.download_status !== "failed" ||
+      job.download_failure !== RESTART_INTERRUPTED_DOWNLOAD_FAILURE ||
+      job.conversion_job_id ||
+      job.callback_outbox_id ||
+      job.local_path ||
+      job.host_local_path ||
+      job.idempotency_key !== binding.idempotencyKey ||
+      job.correlation_id !== binding.correlationId ||
+      job.tenant_id !== binding.tenantId ||
+      job.project_id !== binding.projectId ||
+      job.external_model_version_id !== binding.externalModelVersionId ||
+      job.tenant_id !== event.tenant_id ||
+      job.project_id !== event.project_id ||
+      job.external_model_version_id !== event.external_model_version_id ||
+      job.source_ifc_etag !== event.source_ifc.etag ||
+      stableHttpRefIdentity(job.source_ifc_ref) !==
+        stableHttpRefIdentity(event.source_ifc.ref)
+    ) {
+      return undefined;
+    }
+    job.source_ifc_ref = event.source_ifc.ref;
     job.download_status = "downloading";
     job.download_failure = null;
     job.updated_at = new Date().toISOString();

@@ -8,6 +8,9 @@ import { afterEach, describe, expect, it } from "vitest";
 import { createCoordinatorApp, type CoordinatorApp } from "../src/app.js";
 import type { CoordinatorConfig } from "../src/config.js";
 import { createLogger, type StructLogger } from "../src/lib/structLog.js";
+import { CallbackOutbox } from "../src/services/callbackOutbox.js";
+import { ConversionLedger } from "../src/services/conversionLedger.js";
+import { ExternalIfcReadyStore } from "../src/services/externalIfcReadyStore.js";
 
 // coordinator-auto-poll-streaming-conversion §5 unit cover:
 // - dispatch 後 in-process polling 自動 ingest ready / failed
@@ -44,6 +47,7 @@ interface StubBehavior {
   /** 順序回的 /result body;最後一個 entry 用完後重複。 */
   resultSequence: Array<Record<string, unknown>>;
   resultStatus?: number;
+  dispatchStatus?: string;
 }
 
 async function startStreamingStub(behavior: StubBehavior): Promise<{
@@ -64,7 +68,7 @@ async function startStreamingStub(behavior: StubBehavior): Promise<{
         res.writeHead(202, { "Content-Type": "application/json" });
         res.end(JSON.stringify({
           conversion_job_id: "stream_conv_auto_poll_test",
-          status: "queued",
+          status: behavior.dispatchStatus ?? "queued",
           correlation_id: (JSON.parse(body) as { correlation_id?: string }).correlation_id ?? "corr_auto_001",
           authority: "bim-streaming-server",
         }));
@@ -215,6 +219,28 @@ describe("coordinator auto-poll streaming conversion", () => {
     expect(records).not.toHaveLength(0);
     expect(records.every((record) => record.trace_id === ifcReadyJobId)).toBe(true);
     expect(records.some((record) => record.trace_id === "stream_conv_stream_conv_auto_poll_test")).toBe(false);
+  });
+
+  it("poller 達 max attempts → 以 durable job correlation 落 failed/outbox，不留下無人恢復的 dispatched job", async () => {
+    const stub = await startStreamingStub({
+      resultSequence: [queuedResultPayload("corr_ap_timeout_001")],
+    });
+    const app = makeApp(stub.baseUrl, { conversionPollMaxAttempts: 1 });
+
+    const submit = await request(app.app)
+      .post("/api/external/ifc-ready")
+      .set(authHeaders("corr_ap_timeout_001", "idem_ap_timeout_001"))
+      .send(dispatchPayload());
+    expect(submit.status).toBe(202);
+    const jobId = submit.body.ifc_ready_job_id as string;
+
+    await waitFor(async () => {
+      const detail = await request(app.app).get(`/api/external/ifc-ready/${jobId}`);
+      return detail.body.conversion_status === "failed";
+    });
+    const persisted = app.externalIfcReadyStore.get(jobId);
+    expect(persisted?.conversion_failure).toBe("poll_timeout");
+    expect(persisted?.callback_outbox_id).toBeTruthy();
   });
 
   it("dispatch 成功後 poller 自動 fetch 直到 ready,自動 ingest 出 viewer_url + callback", async () => {
@@ -435,6 +461,129 @@ describe("coordinator auto-poll streaming conversion", () => {
     expect(final.body.conversion_status).toBe("ready");
     // stub /result 應該只被打過一次(manual endpoint 1 次,poller 被 cancel)
     expect(stub.resultCount.value).toBe(1);
+  });
+
+  it("coordinator recreate → restored dispatched job 自動恢復 poller，不重派工", async () => {
+    const stub = await startStreamingStub({
+      resultSequence: [readyResultPayload("corr_ap_restart_001")],
+      // Authority idempotent replay may already be terminal before coordinator
+      // gets its first poll. Durable outbox evidence owns completion.
+      dispatchStatus: "succeeded",
+    });
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "bim-coord-auto-poll-restart-"));
+    const externalStorePath = path.join(root, "coordinator", "external-ifc-ready.json");
+    const ledgerStorePath = path.join(root, "coordinator", "conversion-ledger.json");
+    const outboxStorePath = path.join(root, "coordinator", "callback-outbox.json");
+    const previousExternalStorePath = process.env.EXTERNAL_IFC_READY_STORE_PATH;
+    const commonConfig: Partial<CoordinatorConfig> = {
+      sessionStoreDir: path.join(root, "coordinator", "sessions"),
+      eventLogDir: path.join(root, "coordinator", "events"),
+      callbackOutboxStorePath: outboxStorePath,
+      conversionLedgerStorePath: ledgerStorePath,
+      streamingConversionApiBase: stub.baseUrl,
+      corsOrigins: ["http://127.0.0.1:5173"],
+      conversionPollEnabled: true,
+      conversionPollMaxAttempts: 20,
+      storageRoot: path.join(root, "storage"),
+      storageHostRoot: path.join(root, "storage"),
+    };
+
+    process.env.EXTERNAL_IFC_READY_STORE_PATH = externalStorePath;
+    try {
+      active = createCoordinatorApp({
+        ...commonConfig,
+        // app A 不應在 dispose 前 poll；只留下 persisted dispatched job。
+        conversionPollIntervalSeconds: 10,
+      });
+      const submit = await request(active.app)
+        .post("/api/external/ifc-ready")
+        .set(authHeaders("corr_ap_restart_001", "idem_ap_restart_001"))
+        .send(dispatchPayload());
+      expect(submit.status).toBe(202);
+      const jobId = submit.body.ifc_ready_job_id as string;
+      await waitFor(async () => {
+        const detail = await request(active!.app).get(`/api/external/ifc-ready/${jobId}`);
+        return detail.body.status === "dispatched";
+      });
+      expect(new ExternalIfcReadyStore(externalStorePath).get(jobId)?.conversion_status)
+        .toBe("succeeded");
+      expect(stub.dispatchCount.value).toBe(1);
+
+      const first = active;
+      active = null;
+      await first.dispose();
+      first.io.close();
+
+      // Simulate a process crash after outbox.persist() but before
+      // recordConversionOutcome() links callback_outbox_id onto the durable job.
+      const crashWindowJob = new ExternalIfcReadyStore(externalStorePath).get(jobId)!;
+      const seededOutbox = new CallbackOutbox(
+        5,
+        async () => undefined,
+        outboxStorePath,
+      ).enqueue({
+        event: "conversion_result_ready",
+        targetUrl: crashWindowJob.callback_url ?? null,
+        correlationId: crashWindowJob.correlation_id,
+        externalModelVersionId: crashWindowJob.external_model_version_id,
+        conversionJobId: crashWindowJob.conversion_job_id,
+        payload: {
+          event: "conversion_result_ready",
+          trace_id: crashWindowJob.ifc_ready_job_id,
+          tenant_id: crashWindowJob.tenant_id,
+          project_id: crashWindowJob.project_id,
+          external_model_version_id: crashWindowJob.external_model_version_id,
+          conversion_job_id: crashWindowJob.conversion_job_id,
+          correlation_id: crashWindowJob.correlation_id,
+          status: "ready",
+        },
+      });
+
+      active = createCoordinatorApp({
+        ...commonConfig,
+        conversionPollIntervalSeconds: 0.05,
+      });
+      await waitFor(async () => {
+        const detail = await request(active!.app).get(`/api/external/ifc-ready/${jobId}`);
+        return detail.body.conversion_status === "ready";
+      }, 3000);
+
+      expect(stub.dispatchCount.value).toBe(1);
+      expect(stub.resultCount.value).toBe(1);
+      const restoredJob = new ExternalIfcReadyStore(externalStorePath).get(jobId);
+      expect(restoredJob?.callback_outbox_id).toBe(seededOutbox.outbox_id);
+      expect(new CallbackOutbox(5, async () => undefined, outboxStorePath).list())
+        .toHaveLength(1);
+      const ledger = new ConversionLedger(ledgerStorePath).get("idem_ap_restart_001");
+      expect(ledger?.status).toBe("ready");
+      expect(ledger?.conversion_job_id).toBe("stream_conv_auto_poll_test");
+      const restoredOutbox = await request(active.app)
+        .get(`/api/internal/callback-outbox/${restoredJob!.callback_outbox_id}`)
+        .set("X-Internal-Token", "dev-internal-token");
+      expect(restoredOutbox.status).toBe(200);
+      expect(restoredOutbox.body.status).toBe("pending");
+
+      const second = active;
+      active = null;
+      await second.dispose();
+      second.io.close();
+      active = createCoordinatorApp({
+        ...commonConfig,
+        conversionPollIntervalSeconds: 0.05,
+      });
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      // terminal store 已有 outbox/ready outcome；第三個 process 不得再啟 poller 或重複 ingest。
+      expect(stub.dispatchCount.value).toBe(1);
+      expect(stub.resultCount.value).toBe(1);
+      expect(new ExternalIfcReadyStore(externalStorePath).get(jobId)?.callback_outbox_id)
+        .toBe(restoredJob?.callback_outbox_id);
+    } finally {
+      if (previousExternalStorePath === undefined) {
+        delete process.env.EXTERNAL_IFC_READY_STORE_PATH;
+      } else {
+        process.env.EXTERNAL_IFC_READY_STORE_PATH = previousExternalStorePath;
+      }
+    }
   });
 
   it("conversionPollEnabled:false fixture 不啟 poller", async () => {

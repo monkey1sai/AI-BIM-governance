@@ -60,6 +60,98 @@ describe("ExternalIfcReadyStore 持久化（S2，env opt-in）", () => {
     expect(s2.get(j2.ifc_ready_job_id)?.download_status).toBe("failed");
   });
 
+  it("只允許 restart-interrupted download 沿用同一 job 重新開始；一般失敗保持封閉", () => {
+    const retryPath = path.join(tmpRoot, "restart-download-retry.json");
+    const first = new ExternalIfcReadyStore(retryPath);
+    const restartBinding = {
+      ...binding,
+      idempotencyKey: "idem_restart_download",
+      correlationId: "corr_restart_download",
+    };
+    const interrupted = first.create(event, restartBinding);
+    first.markDownloading(interrupted.ifc_ready_job_id);
+
+    const afterRestart = new ExternalIfcReadyStore(retryPath);
+    const freshEvent = {
+      ...event,
+      source_ifc: {
+        ...event.source_ifc,
+        ref: "http://minio.local/bucket/model.ifc?X-Amz-Signature=fresh",
+      },
+    };
+    const mismatchedAttempts = [
+      { event: freshEvent, binding: { ...restartBinding, idempotencyKey: "other_idem" } },
+      { event: freshEvent, binding: { ...restartBinding, correlationId: "other_corr" } },
+      {
+        event: { ...freshEvent, tenant_id: "tenant_b" },
+        binding: { ...restartBinding, tenantId: "tenant_b" },
+      },
+      {
+        event: { ...freshEvent, project_id: "project_b" },
+        binding: { ...restartBinding, projectId: "project_b" },
+      },
+      {
+        event: { ...freshEvent, external_model_version_id: "version_b" },
+        binding: { ...restartBinding, externalModelVersionId: "version_b" },
+      },
+      {
+        event: { ...freshEvent, source_ifc: { ...freshEvent.source_ifc, etag: "etag_b" } },
+        binding: restartBinding,
+      },
+      {
+        event: {
+          ...freshEvent,
+          source_ifc: {
+            ...freshEvent.source_ifc,
+            ref: "http://minio.local/other/model.ifc?X-Amz-Signature=fresh",
+          },
+        },
+        binding: restartBinding,
+      },
+    ];
+    for (const attempt of mismatchedAttempts) {
+      expect(afterRestart.resumeRestartInterruptedDownload(
+        interrupted.ifc_ready_job_id,
+        attempt.event,
+        attempt.binding,
+      )).toBeUndefined();
+    }
+    expect(afterRestart.get(interrupted.ifc_ready_job_id)?.download_status).toBe("failed");
+    expect(afterRestart.get(interrupted.ifc_ready_job_id)?.source_ifc_ref).toBe(event.source_ifc.ref);
+
+    const resumed = afterRestart.resumeRestartInterruptedDownload(
+      interrupted.ifc_ready_job_id,
+      freshEvent,
+      restartBinding,
+    );
+    expect(resumed?.ifc_ready_job_id).toBe(interrupted.ifc_ready_job_id);
+    expect(resumed?.download_status).toBe("downloading");
+    expect(resumed?.download_failure).toBeNull();
+    expect(resumed?.source_ifc_ref).toBe(
+      "http://minio.local/bucket/model.ifc?X-Amz-Signature=fresh",
+    );
+
+    const permanentPath = path.join(tmpRoot, "permanent-download-failure.json");
+    const permanentStore = new ExternalIfcReadyStore(permanentPath);
+    const permanent = permanentStore.create(event, {
+      ...binding,
+      idempotencyKey: "idem_permanent_download",
+      correlationId: "corr_permanent_download",
+    });
+    permanentStore.markDownloadFailed(permanent.ifc_ready_job_id, "http_error: 404");
+    const closed = new ExternalIfcReadyStore(permanentPath);
+    expect(closed.resumeRestartInterruptedDownload(
+      permanent.ifc_ready_job_id,
+      event,
+      {
+        ...binding,
+        idempotencyKey: "idem_permanent_download",
+        correlationId: "corr_permanent_download",
+      },
+    )).toBeUndefined();
+    expect(closed.get(permanent.ifc_ready_job_id)?.download_status).toBe("failed");
+  });
+
   it("壞 JSON 檔：不 crash、空啟動（誠實降級）", () => {
     const p = path.join(tmpRoot, "corrupt.json");
     fs.writeFileSync(p, "{not json", "utf-8");

@@ -24,7 +24,7 @@ import {
   downloadIfcToSharedVolume,
   type IfcDownloadResult,
 } from "./ifcDownloader.js";
-import { maskPresignedRef } from "./presignedRef.js";
+import { maskPresignedRef, stableHttpRefIdentity } from "./presignedRef.js";
 import {
   buildQualityMetricsSummary,
   isTerminalConversionResult,
@@ -73,6 +73,11 @@ export type ConversionTerminalEvent = {
 
 export type AcceptResult =
   | { kind: "replay"; job: IfcReadyIntakeJob }
+  | {
+      kind: "conflict";
+      ifc_ready_job_id: string;
+      reason: "source_ifc_ref_mismatch";
+    }
   | {
       kind: "download_failed";
       ifc_ready_job_id: string;
@@ -244,21 +249,49 @@ export class IfcReadyConversionPipeline<TTerminalObserverResult = void> {
       command.idempotencyKey,
       command.correlationId,
     );
+    let job: IfcReadyIntakeJob;
     if (existing) {
-      const replayed =
-        this.store.markIdempotentReplay(existing.ifc_ready_job_id) ?? existing;
-      return { kind: "replay", job: replayed };
+      if (
+        stableHttpRefIdentity(existing.source_ifc_ref) !==
+        stableHttpRefIdentity(event.source_ifc.ref)
+      ) {
+        return {
+          kind: "conflict",
+          ifc_ready_job_id: existing.ifc_ready_job_id,
+          reason: "source_ifc_ref_mismatch",
+        };
+      }
+      const resumed =
+        this.ledger.get(existing.idempotency_key) === null
+          ? this.store.resumeRestartInterruptedDownload(
+              existing.ifc_ready_job_id,
+              event,
+              {
+                correlationId: command.correlationId,
+                idempotencyKey: command.idempotencyKey,
+                tenantId: command.tenantId,
+                projectId: command.projectId,
+                externalModelVersionId: command.externalModelVersionId,
+              },
+            )
+          : undefined;
+      if (!resumed) {
+        const replayed =
+          this.store.markIdempotentReplay(existing.ifc_ready_job_id) ?? existing;
+        return { kind: "replay", job: replayed };
+      }
+      job = resumed;
+    } else {
+      job = this.store.create(event, {
+        correlationId: command.correlationId,
+        idempotencyKey: command.idempotencyKey,
+        tenantId: command.tenantId,
+        projectId: command.projectId,
+        externalModelVersionId: command.externalModelVersionId,
+      });
+      this.store.markDownloading(job.ifc_ready_job_id);
     }
 
-    const job = this.store.create(event, {
-      correlationId: command.correlationId,
-      idempotencyKey: command.idempotencyKey,
-      tenantId: command.tenantId,
-      projectId: command.projectId,
-      externalModelVersionId: command.externalModelVersionId,
-    });
-
-    this.store.markDownloading(job.ifc_ready_job_id);
     const downloadResult = await this.download(
       event.source_ifc.ref,
       job.ifc_ready_job_id,
@@ -394,7 +427,18 @@ export class IfcReadyConversionPipeline<TTerminalObserverResult = void> {
       };
     }
 
-    const entry = this.outbox.enqueue({
+    // Crash-window recovery: outbox persistence happens before the job can
+    // durably link callback_outbox_id.  A restarted poller may therefore
+    // ingest the same terminal result again.  Reuse the already-persisted
+    // terminal entry by its authority binding instead of emitting a duplicate
+    // cloud callback.  Keep the first entry's target/payload as the durable
+    // authority for this terminal event.
+    const entry = this.outbox.list().find((candidate) =>
+      candidate.event === event &&
+      candidate.correlation_id === job.correlation_id &&
+      candidate.external_model_version_id === job.external_model_version_id &&
+      candidate.conversion_job_id === conversionJobId
+    ) ?? this.outbox.enqueue({
       event,
       targetUrl,
       correlationId: job.correlation_id,
@@ -666,6 +710,30 @@ export class IfcReadyConversionPipeline<TTerminalObserverResult = void> {
     return this.pendingDispatchEvents.has(jobId);
   }
 
+  /**
+   * Recreate only the in-process pollers whose durable jobs prove a dispatched,
+   * non-terminal conversion. Must be called after the terminal observer is
+   * wired so an immediately available result follows the normal ingest path.
+   */
+  resumePersistedPollers(): number {
+    if (this.disposed || !this.config.conversionPollEnabled) return 0;
+    let resumed = 0;
+    for (const job of this.store.list()) {
+      const conversionJobId = job.conversion_job_id;
+      if (
+        job.status !== "dispatched" ||
+        !conversionJobId ||
+        job.callback_outbox_id ||
+        this.pollerRegistry.has(conversionJobId)
+      ) {
+        continue;
+      }
+      this.schedulePollerForConversion(conversionJobId, job.ifc_ready_job_id);
+      resumed += 1;
+    }
+    return resumed;
+  }
+
   // ---------------------------------------------------------------------------
   // Internals
   // ---------------------------------------------------------------------------
@@ -735,8 +803,14 @@ export class IfcReadyConversionPipeline<TTerminalObserverResult = void> {
       maxAttempts: this.config.conversionPollMaxAttempts,
       onTerminal: async (result) => {
         try {
+          const persistedCorrelation =
+            result.reason === "poll_timeout" && !result.correlation_id
+              ? this.store.get(rootTraceId)?.correlation_id
+              : undefined;
           await this.ingestStreamingResult(conversionJobId, {
-            result,
+            result: persistedCorrelation
+              ? { ...result, correlation_id: persistedCorrelation }
+              : result,
             source: "auto-poll",
           });
         } catch (err) {
