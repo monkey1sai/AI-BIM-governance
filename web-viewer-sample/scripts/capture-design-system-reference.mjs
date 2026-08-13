@@ -13,7 +13,10 @@ import http from "node:http";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { planOriginRebaseline } from "./design-system-rebaseline-authority.mjs";
+import {
+  planOriginRebaseline,
+  runGuardedOriginRebaseline,
+} from "./design-system-rebaseline-authority.mjs";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(scriptDir, "..", "..");
@@ -213,10 +216,7 @@ async function loadPlaywright() {
   }
 }
 
-async function captureBaselines() {
-  const { captureScreens, preservedScreens } = planOriginRebaseline(
-    manifest.screens,
-  );
+async function captureBaselines({ captureScreens, preservedScreens }) {
   if (preservedScreens.length > 0) {
     console.log(
       `[design-reference] preserving canonical product-surface baselines: ${preservedScreens
@@ -351,23 +351,40 @@ if (rebaseline) {
         manifest.fidelity_contract.platform + ".",
     );
   }
-  manifest.source.files = actualSourceFiles;
-  manifest.source.snapshot_sha256 = canonicalFileDigest(actualSourceFiles);
-  const captureResult = await captureBaselines();
-  manifest.source.captured_at_utc = new Date().toISOString();
-  const baselineDescriptors = [];
-  for (const screen of manifest.screens) {
-    for (const viewport of manifest.fidelity_contract.viewports) {
-      const baseline = screen.baselines[viewport.id];
-      baselineDescriptors.push({
-        path: baseline.path,
-        bytes: (await stat(resolveBaselinePath(baseline.path))).size,
-        sha256: baseline.sha256,
-      });
-    }
-  }
-  manifest.baseline_snapshot_sha256 = canonicalFileDigest(baselineDescriptors);
-  await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+  const rebaselinePlan = planOriginRebaseline(manifest.screens);
+  const captureResult = await runGuardedOriginRebaseline({
+    preservedScreens: rebaselinePlan.preservedScreens,
+    viewportIds: manifest.fidelity_contract.viewports.map(
+      (viewport) => viewport.id,
+    ),
+    readDigest: async (relativePath) =>
+      sha256(await readFile(resolveBaselinePath(relativePath))),
+    captureBaselines: () => captureBaselines(rebaselinePlan),
+    commitManifest: async () => {
+      manifest.source.files = actualSourceFiles;
+      manifest.source.snapshot_sha256 = canonicalFileDigest(actualSourceFiles);
+      manifest.source.captured_at_utc = new Date().toISOString();
+      const baselineDescriptors = [];
+      for (const screen of manifest.screens) {
+        for (const viewport of manifest.fidelity_contract.viewports) {
+          const baseline = screen.baselines[viewport.id];
+          baselineDescriptors.push({
+            path: baseline.path,
+            bytes: (await stat(resolveBaselinePath(baseline.path))).size,
+            sha256: baseline.sha256,
+          });
+        }
+      }
+      manifest.baseline_snapshot_sha256 = canonicalFileDigest(
+        baselineDescriptors,
+      );
+      await writeFile(
+        manifestPath,
+        `${JSON.stringify(manifest, null, 2)}\n`,
+        "utf8",
+      );
+    },
+  });
   console.log(
     `[design-reference] rebaseline complete: ${captureResult.capturedScreenCount} origin screens captured, ` +
       `${captureResult.preservedScreenCount} product screens preserved x ` +

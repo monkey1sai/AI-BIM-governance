@@ -1,7 +1,11 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { planOriginRebaseline } from "./design-system-rebaseline-authority.mjs";
+import {
+  planOriginRebaseline,
+  runGuardedOriginRebaseline,
+  verifyPreservedBaselineIntegrity,
+} from "./design-system-rebaseline-authority.mjs";
 
 describe("design-system origin rebaseline authority", () => {
   it("preserves canonical product-surface baselines while selecting origin-authority screens", () => {
@@ -79,5 +83,77 @@ describe("design-system origin rebaseline authority", () => {
     expect(capturedIds.length + preservedIds.length).toBe(
       manifest.screens.length,
     );
+  });
+
+  it("fails closed when a preserved product baseline no longer matches its pinned digest", async () => {
+    const preservedScreen = {
+      id: "workspace.a4.default",
+      baselines: {
+        desktop: {
+          path: "docs/plans/design-system-baseline/workspace.a4.default/desktop.png",
+          sha256: "approved-product-digest",
+        },
+      },
+    };
+
+    await expect(
+      verifyPreservedBaselineIntegrity(
+        [preservedScreen],
+        ["desktop"],
+        async () => "corrupted-product-digest",
+      ),
+    ).rejects.toThrow(/Preserved baseline hash mismatch/);
+  });
+
+  it("checks every pinned viewport before origin capture may proceed", async () => {
+    const reads = [];
+    const preservedScreen = {
+      id: "workspace.a4.default",
+      baselines: {
+        desktop: { path: "desktop.png", sha256: "desktop-digest" },
+        wide: { path: "wide.png", sha256: "wide-digest" },
+      },
+    };
+
+    await verifyPreservedBaselineIntegrity(
+      [preservedScreen],
+      ["desktop", "wide"],
+      async (baselinePath) => {
+        reads.push(baselinePath);
+        return baselinePath === "desktop.png" ? "desktop-digest" : "wide-digest";
+      },
+    );
+
+    expect(reads).toEqual(["desktop.png", "wide.png"]);
+  });
+
+  it("prevents screenshot and manifest writes when preserved integrity fails", async () => {
+    const writes = [];
+
+    await expect(
+      runGuardedOriginRebaseline({
+        preservedScreens: [
+          {
+            id: "workspace.a4.default",
+            baselines: {
+              desktop: {
+                path: "desktop.png",
+                sha256: "approved-product-digest",
+              },
+            },
+          },
+        ],
+        viewportIds: ["desktop"],
+        readDigest: async () => "corrupted-product-digest",
+        captureBaselines: async () => {
+          writes.push("screenshot");
+        },
+        commitManifest: async () => {
+          writes.push("manifest");
+        },
+      }),
+    ).rejects.toThrow(/Preserved baseline hash mismatch/);
+
+    expect(writes).toEqual([]);
   });
 });
