@@ -205,14 +205,21 @@ function Start-ContainmentTestProcess {
 }
 
 function Stop-OwnedTestProcess {
-    param([AllowNull()][System.Diagnostics.Process] $Process)
+    param(
+        [AllowNull()][System.Diagnostics.Process] $Process,
+        [AllowNull()][System.Runtime.InteropServices.SafeHandle] $PinnedHandle
+    )
 
-    if ($null -eq $Process) { return }
+    if ($null -eq $Process -or $null -eq $PinnedHandle -or $PinnedHandle.IsClosed -or $PinnedHandle.IsInvalid) { return }
     try {
+        $activeHandle = $Process.SafeHandle
+        if ($activeHandle.DangerousGetHandle() -ne $PinnedHandle.DangerousGetHandle()) {
+            throw 'Refusing fixture cleanup because the Process no longer owns its pinned OS handle.'
+        }
         if (-not $Process.HasExited) {
-            # Kill through the already-open Process handle. Never look the
-            # process up again by numeric PID during cleanup: that PID may have
-            # been recycled after an assertion or wait failure.
+            # SafeHandle was forced open and retained before cleanup authority
+            # was granted. Process.Kill therefore targets that kernel process
+            # identity instead of reopening a possibly-recycled numeric PID.
             $Process.Kill()
         }
         [void]$Process.WaitForExit(5000)
@@ -254,6 +261,7 @@ try {
     $normalCapture = $null
     $normalStdoutWriter = $null
     $normalStderrWriter = $null
+    $normalProcessHandle = $null
     try {
         $normalStartInfo = [System.Diagnostics.ProcessStartInfo]::new($PwshPath)
         $normalStartInfo.UseShellExecute = $false
@@ -263,6 +271,7 @@ try {
             $normalStartInfo.ArgumentList.Add($argument) | Out-Null
         }
         $normalProcess = [System.Diagnostics.Process]::Start($normalStartInfo)
+        $normalProcessHandle = $normalProcess.SafeHandle
         $normalStdoutWriter = [System.IO.StreamWriter]::new($normalStdoutPath, $false, [System.Text.Encoding]::UTF8)
         $normalStderrWriter = [System.IO.StreamWriter]::new($normalStderrPath, $false, [System.Text.Encoding]::UTF8)
         $normalStdoutWriter.AutoFlush = $true
@@ -280,7 +289,7 @@ try {
             if ($null -ne $normalStdoutWriter) { $normalStdoutWriter.Close() }
             if ($null -ne $normalStderrWriter) { $normalStderrWriter.Close() }
         }
-        Stop-OwnedTestProcess -Process $normalProcess
+        Stop-OwnedTestProcess -Process $normalProcess -PinnedHandle $normalProcessHandle
         if ($null -ne $normalProcess) { $normalProcess.Dispose() }
     }
     Assert-True ((Get-Content -LiteralPath $normalStdoutPath -Raw) -match 'stdout-final-510') 'Expected the final stdout event to be persisted before capture cleanup.'
@@ -315,6 +324,8 @@ try {
     $hiddenStderrPath = Join-Path $ContainmentTempDir 'hidden-stderr.log'
     $hiddenRoot = $null
     $hiddenHolder = $null
+    $hiddenRootHandle = $null
+    $hiddenHolderHandle = $null
     $hiddenCapture = $null
     $hiddenStdoutWriter = $null
     $hiddenStderrWriter = $null
@@ -330,6 +341,7 @@ try {
             $hiddenRootStartInfo.ArgumentList.Add($argument) | Out-Null
         }
         $hiddenRoot = [System.Diagnostics.Process]::Start($hiddenRootStartInfo)
+        $hiddenRootHandle = $hiddenRoot.SafeHandle
         $hiddenStdoutWriter = [System.IO.StreamWriter]::new($hiddenStdoutPath, $false, [System.Text.Encoding]::UTF8)
         $hiddenStderrWriter = [System.IO.StreamWriter]::new($hiddenStderrPath, $false, [System.Text.Encoding]::UTF8)
         $hiddenStdoutWriter.AutoFlush = $true
@@ -345,6 +357,7 @@ try {
         $hiddenIdentity = @(Get-Content -LiteralPath $hiddenHolderPidFile)
         Assert-True ($hiddenIdentity.Count -eq 2) 'Expected hidden holder PID and creation time.'
         $hiddenHolderCandidate = [System.Diagnostics.Process]::GetProcessById([int]$hiddenIdentity[0])
+        $hiddenHolderCandidateHandle = $hiddenHolderCandidate.SafeHandle
         if ($hiddenHolderCandidate.StartTime.ToUniversalTime().Ticks -ne [long]$hiddenIdentity[1]) {
             # The numeric PID no longer denotes our fixture. Dispose the
             # candidate without granting cleanup permission to kill it.
@@ -352,6 +365,7 @@ try {
             throw 'Hidden holder PID was recycled before its Process handle could be verified.'
         }
         $hiddenHolder = $hiddenHolderCandidate
+        $hiddenHolderHandle = $hiddenHolderCandidateHandle
         Set-Content -LiteralPath $hiddenHolderAckFile -Value 'verified'
         Assert-True ($hiddenRoot.WaitForExit(5000)) 'Expected the root fixture to exit while its hidden descendant retained the handles.'
         Assert-True (-not $hiddenHolder.HasExited) 'Expected the hidden descendant to remain alive while retaining inherited handles.'
@@ -369,9 +383,9 @@ try {
             if ($null -ne $hiddenStdoutWriter) { $hiddenStdoutWriter.Close() }
             if ($null -ne $hiddenStderrWriter) { $hiddenStderrWriter.Close() }
         }
-        Stop-OwnedTestProcess -Process $hiddenHolder
+        Stop-OwnedTestProcess -Process $hiddenHolder -PinnedHandle $hiddenHolderHandle
         if ($null -ne $hiddenHolder) { $hiddenHolder.Dispose() }
-        Stop-OwnedTestProcess -Process $hiddenRoot
+        Stop-OwnedTestProcess -Process $hiddenRoot -PinnedHandle $hiddenRootHandle
         if ($null -ne $hiddenRoot) { $hiddenRoot.Dispose() }
     }
 
