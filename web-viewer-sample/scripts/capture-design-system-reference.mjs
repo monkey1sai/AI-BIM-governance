@@ -13,6 +13,7 @@ import http from "node:http";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { planOriginRebaseline } from "./design-system-rebaseline-authority.mjs";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(scriptDir, "..", "..");
@@ -213,6 +214,17 @@ async function loadPlaywright() {
 }
 
 async function captureBaselines() {
+  const { captureScreens, preservedScreens } = planOriginRebaseline(
+    manifest.screens,
+  );
+  if (preservedScreens.length > 0) {
+    console.log(
+      `[design-reference] preserving canonical product-surface baselines: ${preservedScreens
+        .map((screen) => screen.id)
+        .join(", ")}`,
+    );
+  }
+
   const { chromium } = await loadPlaywright();
   const playwrightPackage = JSON.parse(
     await readFile(path.join(repoRoot, "web-viewer-sample", "node_modules", "@playwright", "test", "package.json"), "utf8"),
@@ -246,7 +258,7 @@ async function captureBaselines() {
         colorScheme: manifest.fidelity_contract.color_scheme,
       });
       try {
-        for (const screen of manifest.screens) {
+        for (const screen of captureScreens) {
           const page = await context.newPage();
           await page.addInitScript(() => {
             const fixedNow = Date.parse("2026-07-14T00:00:00+08:00");
@@ -321,6 +333,10 @@ async function captureBaselines() {
     await browser.close();
     await server.close();
   }
+  return {
+    capturedScreenCount: captureScreens.length,
+    preservedScreenCount: preservedScreens.length,
+  };
 }
 
 if (!(await pathExists(sourceRoot))) {
@@ -337,7 +353,7 @@ if (rebaseline) {
   }
   manifest.source.files = actualSourceFiles;
   manifest.source.snapshot_sha256 = canonicalFileDigest(actualSourceFiles);
-  await captureBaselines();
+  const captureResult = await captureBaselines();
   manifest.source.captured_at_utc = new Date().toISOString();
   const baselineDescriptors = [];
   for (const screen of manifest.screens) {
@@ -353,7 +369,9 @@ if (rebaseline) {
   manifest.baseline_snapshot_sha256 = canonicalFileDigest(baselineDescriptors);
   await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
   console.log(
-    `[design-reference] rebaseline complete: ${manifest.screens.length} screens x ${manifest.fidelity_contract.viewports.length} viewports`,
+    `[design-reference] rebaseline complete: ${captureResult.capturedScreenCount} origin screens captured, ` +
+      `${captureResult.preservedScreenCount} product screens preserved x ` +
+      `${manifest.fidelity_contract.viewports.length} viewports`,
   );
 } else {
   const drift = compareSourceFiles(manifest.source.files, actualSourceFiles);
