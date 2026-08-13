@@ -16,6 +16,7 @@ import {
   prepareInvocation,
 } from '../lib/trusted-host-merge.mjs'
 import {
+  createExecutionDeadline,
   executeTrustedMerge,
   verifyExecutionTimingBudget,
   verifyTrustedOriginUrl,
@@ -461,7 +462,7 @@ test('successful merge response without an exact authoritative reread remains un
           return { value: { merged: true, sha: 'c'.repeat(40) } }
         }
         return { value: {
-          number: 42, state: 'open', merged: false, merge_commit_sha: null,
+          number: 42, state: 'open', merged: false, merge_commit_sha: 'f'.repeat(40),
           head: { sha: HEAD, repo: { full_name: invocation.repo } },
           base: { ref: 'main', repo: { full_name: invocation.repo } },
         } }
@@ -513,7 +514,7 @@ test('ambiguous merge response is never retried and bounded polling can observe 
         }
         reads += 1
         if (reads < 3) return { value: {
-          number: 42, state: 'open', merged: false, merge_commit_sha: null,
+          number: 42, state: 'open', merged: false, merge_commit_sha: 'f'.repeat(40),
           head: { sha: HEAD, repo: { full_name: invocation.repo } },
           base: { ref: 'main', repo: { full_name: invocation.repo } },
         } }
@@ -592,6 +593,29 @@ test('ambiguous merge polling reports unknown after bounded unreadable or wrong-
   assert.equal(result.heldDetail, 'authoritative_merge_identity_mismatch')
   assert.equal(mergeCalls, 1)
   assert.equal(reads, 1)
+
+  mergeCalls = 0
+  reads = 0
+  result = await executeWithStableGates({
+    api: {
+      request: async (_path, options = {}) => {
+        if (options.method === 'PUT') {
+          mergeCalls += 1
+          throw new Error('ambiguous merge response')
+        }
+        reads += 1
+        return { value: {
+          number: 42, state: 'open', merged: false, merge_commit_sha: 'malformed-test-merge-sha',
+          head: { sha: HEAD, repo: { full_name: invocation.repo } },
+          base: { ref: 'main', repo: { full_name: invocation.repo } },
+        } }
+      },
+    },
+  })
+  assert.equal(result.status, 'merge_outcome_unverified')
+  assert.equal(result.heldDetail, 'authoritative_merge_identity_mismatch')
+  assert.equal(mergeCalls, 1)
+  assert.equal(reads, 1)
 })
 
 test('conflicting response and authoritative merge SHAs preserve merged truth but hold closeout', async () => {
@@ -649,6 +673,7 @@ test('post-merge closeout failure is bounded and cannot erase authoritative merg
 
 test('machine timing budget bounds the only merge request and authoritative observation', async () => {
   assert.deepEqual(verifyExecutionTimingBudget(contract), {
+    preSinkEnvelopeMilliseconds: 1030000,
     sinkWorstCaseMilliseconds: 25000,
     totalEnvelopeMilliseconds: 1125000,
   })
@@ -672,6 +697,66 @@ test('machine timing budget bounds the only merge request and authoritative obse
   }), (error) => (
     error instanceof TrustedMergeHold && error.detail === 'workflow_job_timing_budget_invalid'
   ))
+
+  const deadlineIndex = cliSource.indexOf('const executionDeadline = createExecutionDeadline(contract)')
+  const mintIndex = cliSource.indexOf('await mintInstallationToken')
+  assert.ok(deadlineIndex >= 0 && deadlineIndex < mintIndex)
+  assert.match(cliSource, /timeoutMilliseconds: executionDeadline\.timeout\(/u)
+  assert.match(cliSource, /process\.stdout\.write\(serialized\)[\s\S]*?Promise\.race/u)
+  assert.equal((workflow.match(/timeout-minutes:\s*20/gu) || []).length, 2)
+})
+
+test('shared pre-sink deadline accumulates every reversible stage and blocks the merge sink', async () => {
+  let monotonic = 0
+  const probe = createExecutionDeadline(contract, () => monotonic)
+  assert.equal(probe.timeout(600000), 600000)
+  monotonic = 1029999
+  assert.equal(probe.timeout(600000), 1)
+  monotonic = 1030000
+  assert.throws(() => probe.assertBeforeSink(), (error) => (
+    error instanceof TrustedMergeHold && error.detail === 'pre_sink_deadline_exceeded'
+  ))
+
+  monotonic = 0
+  const executionDeadline = createExecutionDeadline(contract, () => monotonic)
+  const approval = {
+    id: 77, nodeId: 'node', body: canonicalHumanApprovalBody(invocation), commitId: HEAD,
+  }
+  const snapshot = {
+    immutable: { stable: true }, immutableSha256: 'e'.repeat(64), approval,
+    reviewSurface: { normalized: {}, sha256: 'f'.repeat(64) },
+  }
+  let snapshots = 0
+  let mergeCalls = 0
+  await assert.rejects(() => executeTrustedMerge({
+    api: { request: async () => { mergeCalls += 1; return { value: {} } } },
+    invocation,
+    assertion: buildBrokerAssertion(invocation, contract),
+    contract,
+    repoRoot,
+    installationToken: `ghs_${'x'.repeat(40)}`,
+    installationTokenExpiresAt: '2026-08-12T03:00:00.000Z',
+    apexApiKey: `sk-${'x'.repeat(40)}`,
+    apexModel: 'gpt-5.6-sol',
+    now: () => NOW,
+    sleep: async (milliseconds) => { monotonic += milliseconds },
+    snapshotCollector: async ({ timeoutMilliseconds }) => {
+      assert.ok(timeoutMilliseconds > 0)
+      assert.ok(timeoutMilliseconds <= contract.executor.pre_sink_timeouts.snapshot_milliseconds)
+      snapshots += 1
+      monotonic += 400000
+      return structuredClone(snapshot)
+    },
+    gitEvidenceCollector: () => ({ entries: [], paths: ['scripts/x'], diff: 'd', stat: 's', log: 'l' }),
+    apexInvoker: async () => { throw new Error('apex must not run after the shared deadline') },
+    activation: activeActivation(),
+    executionDeadline,
+  }), (error) => (
+    error instanceof TrustedMergeHold && error.reason === 'host_env_blocked' &&
+    error.detail === 'pre_sink_deadline_exceeded'
+  ))
+  assert.equal(snapshots, 3)
+  assert.equal(mergeCalls, 0)
 })
 
 test('broker expiry margin blocks before the only merge sink', async () => {

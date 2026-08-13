@@ -24,6 +24,7 @@ import {
   rejectBinaryDiff,
   rejectOpaqueGitModes,
   reviewSurfaceSnapshot,
+  sanitizeUntrustedText,
   sha256,
   canonicalJson,
   selectCanonicalApproval,
@@ -461,10 +462,109 @@ test('review surface is drift-detectable and apex evidence is bounded and redact
   const after = reviewSurfaceSnapshot({ pullComments: [], reviews: [{ id: 1, body: 'changed' }], issueComments: [] })
   assert.notEqual(before.sha256, after.sha256)
 
-  const evidence = buildBoundedEvidence({ diff: 'token=ghp_abcdefghijklmnopqrstuvwx' }, 500000)
+  const leakedMarkers = [
+    'synthetic-aws-value',
+    'synthetic-client-value',
+    'synthetic-database-password',
+    'synthetic-structured-key-value',
+    'synthetic-camelcase-key-value',
+    'synthetic-uri-password',
+    'synthetic-nested-token',
+    'synthetic-query-token',
+    'synthetic-fragment-password',
+    'synthetic-powershell-secret',
+    'synthetic-sensitive-suffix',
+    'synthetic-ampersand-suffix',
+    'synthetic-paren-suffix',
+    'synthetic-bracket-suffix',
+    'synthetic-brace-suffix',
+    'synthetic-credential-value',
+    'synthetic-credentials-value',
+    'synthetic-authorization-value',
+    'synthetic-proxy-authorization-value',
+    'synthetic-cookie-value',
+    'synthetic-request-cookie-value',
+    'synthetic-yaml-block-value',
+    'synthetic-yaml-folded-value',
+    'synthetic-authorization-assignment',
+    'synthetic-structured-authorization',
+  ]
+  const safeMarkers = [
+    'safe-rotation-days',
+    'safe-token-count',
+    'safe-password-policy',
+    'safe-database-pool-size',
+    'safe-docs-url',
+  ]
+  const evidence = buildBoundedEvidence({
+    diff: [
+      'token=ghp_abcdefghijklmnopqrstuvwx',
+      '+export AWS_SECRET_ACCESS_KEY=synthetic-aws-value',
+      '+"client_secret": "synthetic-client-value"',
+      '+DATABASE_URL=postgres://user:synthetic-database-password@example.invalid/db',
+      '+callback=https://user:synthetic-uri-password@example.invalid/path',
+      '+note="token=synthetic-nested-token"',
+      '+callback=https://example.invalid/path?token=synthetic-query-token',
+      '+fragment=#password=synthetic-fragment-password',
+      "+$env:OPENAI_API_KEY='synthetic-powershell-secret'",
+      '+password=prefix#synthetic-sensitive-suffix',
+      '+password=prefix&synthetic-ampersand-suffix',
+      '+password=prefix)synthetic-paren-suffix',
+      '+password=prefix]synthetic-bracket-suffix',
+      '+password=prefix}synthetic-brace-suffix',
+      '+credential=synthetic-credential-value',
+      '+credentials=synthetic-credentials-value',
+      '+Authorization: Bearer synthetic-authorization-value',
+      '+Proxy-Authorization: Basic synthetic-proxy-authorization-value',
+      '+Set-Cookie: session=synthetic-cookie-value; Secure',
+      '+Cookie: session=synthetic-request-cookie-value',
+      '+password: |',
+      '+  synthetic-yaml-block-value',
+      '+safe_setting: visible-after-yaml-block',
+      '+token: >-',
+      '+  synthetic-yaml-folded-value',
+      '+safe_folded_setting: visible-after-folded-block',
+      '+Authorization=Bearer synthetic-authorization-assignment',
+      '+SECRET_ROTATION_DAYS=safe-rotation-days',
+      '+TOKEN_COUNT=safe-token-count',
+      '+PASSWORD_POLICY=safe-password-policy',
+      '+DATABASE_URL_POOL_SIZE=safe-database-pool-size',
+      '+DOCS_URL=https://example.invalid/safe-docs-url',
+    ].join('\n'),
+    structured: {
+      OPENAI_API_KEY: 'synthetic-structured-key-value',
+      openaiApiKey: 'synthetic-camelcase-key-value',
+      Authorization: 'Bearer synthetic-structured-authorization',
+    },
+  }, 500000)
   assert.ok(evidence.serialized.includes('[REDACTED]'))
   assert.ok(!evidence.serialized.includes('ghp_'))
+  for (const marker of leakedMarkers) assert.ok(!evidence.serialized.includes(marker), marker)
+  for (const marker of safeMarkers) assert.ok(evidence.serialized.includes(marker), marker)
   expectHold('evidence_too_large_for_arbiter', () => buildBoundedEvidence({ diff: 'x'.repeat(100) }, 20))
+
+  const longNonSecretAssignment = `${'a'.repeat(499000)}=x`
+  const redactionStartedAt = performance.now()
+  assert.equal(sanitizeUntrustedText(longNonSecretAssignment), longNonSecretAssignment)
+  const redactionMilliseconds = performance.now() - redactionStartedAt
+  assert.ok(redactionMilliseconds < 2000, `499KB redaction took ${redactionMilliseconds}ms`)
+
+  const unterminatedBackslashes = `safeKey="${'\\'.repeat(50)}`
+  const backslashStartedAt = performance.now()
+  assert.equal(sanitizeUntrustedText(unterminatedBackslashes), unterminatedBackslashes)
+  const backslashMilliseconds = performance.now() - backslashStartedAt
+  assert.ok(backslashMilliseconds < 1000, `unterminated quote redaction took ${backslashMilliseconds}ms`)
+
+  const credentialUris = sanitizeUntrustedText([
+    'redis://:synthetic-empty-user-password@redis.example.invalid/db',
+    'https://synthetic-token-userinfo@api.example.invalid/v1',
+  ].join(' '))
+  assert.ok(!credentialUris.includes('synthetic-empty-user-password'))
+  assert.ok(!credentialUris.includes('synthetic-token-userinfo'))
+  assert.ok(credentialUris.includes('redis.example.invalid/db'))
+  assert.ok(credentialUris.includes('api.example.invalid/v1'))
+  assert.ok(evidence.serialized.includes('visible-after-yaml-block'))
+  assert.ok(evidence.serialized.includes('visible-after-folded-block'))
 })
 
 test('apex verdict must echo every immutable approval field before merge', () => {

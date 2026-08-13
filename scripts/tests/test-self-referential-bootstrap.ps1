@@ -312,6 +312,8 @@ try {
         'agent-contracts/trusted-host-merge-evidence.schema.json',
         'agent-contracts/trusted-host-merge-verdict.schema.json',
         'agent-contracts/trusted-host-merge-result.schema.json',
+        'agent-contracts/spec-to-done.contract.json',
+        'agent-contracts/spec-to-done.contract.schema.json',
         'scripts/verification-manifest.json',
         'scripts/tests/verify-functional-runtime-result.ps1',
         'scripts/tests/verify-security-exceptions.ps1',
@@ -1022,7 +1024,12 @@ try {
             -BaseSha $legalOpeningBaseSha -HeadSha $legalOpeningHeadSha
     }
 
-    foreach ($selfAdjudicator in @('scripts/lib/self-referential-bootstrap.ps1', 'scripts/lib/windows-verification-scope.ps1')) {
+    foreach ($selfAdjudicator in @(
+        'scripts/lib/self-referential-bootstrap.ps1',
+        'scripts/lib/windows-verification-scope.ps1',
+        'agent-contracts/spec-to-done.contract.json',
+        'agent-contracts/spec-to-done.contract.schema.json'
+    )) {
         Assert-Throws -Context "self-adjudicator edit under bootstrap=no: $selfAdjudicator" -MessagePattern 'must declare bootstrap=yes' -Action {
             Invoke-BodyGate -Rows @{ 'Self-referential bootstrap' = 'no' } `
                 -ChangedPaths @($selfAdjudicator) `

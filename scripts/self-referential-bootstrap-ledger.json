@@ -162,6 +162,8 @@
         "agent-contracts/trusted-host-merge-verdict.schema.json",
         "agent-contracts/trusted-host-merge.contract.json",
         "agent-contracts/trusted-host-merge.contract.schema.json",
+        "agent-contracts/spec-to-done.contract.json",
+        "agent-contracts/spec-to-done.contract.schema.json",
         "scripts/dev/trusted-host-merge.mjs",
         "scripts/lib/self-referential-bootstrap.ps1",
         "scripts/lib/trusted-host-merge-contract.mjs",

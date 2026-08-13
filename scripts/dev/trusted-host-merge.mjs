@@ -12,7 +12,7 @@ import {
   sha256,
   verifyActivationGate,
 } from '../lib/trusted-host-merge.mjs'
-import { executeTrustedMerge } from '../lib/trusted-host-merge-executor.mjs'
+import { createExecutionDeadline, executeTrustedMerge } from '../lib/trusted-host-merge-executor.mjs'
 import { GitHubApi, mintInstallationToken } from '../lib/trusted-host-merge-runtime.mjs'
 
 
@@ -104,28 +104,43 @@ const outputChallenge = async (invocation, assertion) => {
 }
 
 const writeResult = async (result) => {
+  const serialized = `${JSON.stringify(result)}\n`
+  process.stdout.write(serialized)
   const runnerTemp = process.env.RUNNER_TEMP
   if (typeof runnerTemp !== 'string' || runnerTemp.length === 0 || !isAbsolute(runnerTemp)) {
     throw new TrustedMergeHold('host_env_blocked', 'runner_temp_missing')
   }
   const resultPath = resolve(runnerTemp, 'trusted-host-merge-result.json')
-  await writeFile(resultPath, `${JSON.stringify(result, null, 2)}\n`, { encoding: 'utf8', flag: 'wx' })
-  if (process.env.GITHUB_STEP_SUMMARY) {
-    const summary = [
-      '## Trusted host merge result',
-      '',
-      `- Status: \`${result.status}\``,
-      `- PR: \`${result.prNumber ?? 'unknown'}\``,
-      `- Head: \`${result.headOid ?? 'unknown'}\``,
-      `- Base: \`${result.baseOid ?? 'unknown'}\``,
-      `- Merge commit: \`${result.mergeCommit ?? 'none'}\``,
-      `- Held reason: \`${result.heldReason ?? 'none'}\``,
-      `- Held detail: \`${result.heldDetail ?? 'none'}\``,
-      '',
-    ].join('\n')
-    await appendPlatformFile(process.env.GITHUB_STEP_SUMMARY, summary)
+  const summary = [
+    '## Trusted host merge result',
+    '',
+    `- Status: \`${result.status}\``,
+    `- PR: \`${result.prNumber ?? 'unknown'}\``,
+    `- Head: \`${result.headOid ?? 'unknown'}\``,
+    `- Base: \`${result.baseOid ?? 'unknown'}\``,
+    `- Merge commit: \`${result.mergeCommit ?? 'none'}\``,
+    `- Held reason: \`${result.heldReason ?? 'none'}\``,
+    `- Held detail: \`${result.heldDetail ?? 'none'}\``,
+    '',
+  ].join('\n')
+  const persistence = async () => {
+    await writeFile(resultPath, `${JSON.stringify(result, null, 2)}\n`, { encoding: 'utf8', flag: 'wx' })
+    if (process.env.GITHUB_STEP_SUMMARY) await appendPlatformFile(process.env.GITHUB_STEP_SUMMARY, summary)
   }
-  process.stdout.write(`${JSON.stringify(result)}\n`)
+  let persistenceTimeout = null
+  try {
+    await Promise.race([
+      persistence(),
+      new Promise((_, reject) => {
+        persistenceTimeout = setTimeout(
+          () => reject(new TrustedMergeHold('host_env_blocked', 'result_persistence_timeout')),
+          contract.executor.pre_sink_timeouts.result_persistence_reserve_milliseconds,
+        )
+      }),
+    ])
+  } finally {
+    if (persistenceTimeout !== null) clearTimeout(persistenceTimeout)
+  }
 }
 
 let invocation = null
@@ -154,6 +169,7 @@ try {
     verifyTrustedToolchain()
     const activation = activationFor(invocation)
     verifyActivationGate(activation)
+    const executionDeadline = createExecutionDeadline(contract)
     const minted = await mintInstallationToken({
       apiBaseUrl: process.env.GITHUB_API_URL || 'https://api.github.com',
       appId: process.env.TRUSTED_MERGE_APP_ID,
@@ -161,7 +177,9 @@ try {
       privateKey: process.env.TRUSTED_MERGE_APP_PRIVATE_KEY,
       repository: invocation.repo,
       permissions: contract.executor.github_app_token.permissions,
-      timeoutMilliseconds: contract.executor.pre_sink_timeouts.app_token_mint_milliseconds,
+      timeoutMilliseconds: executionDeadline.timeout(
+        contract.executor.pre_sink_timeouts.app_token_mint_milliseconds,
+      ),
     })
     process.stdout.write(`::add-mask::${minted.token}\n`)
     const api = new GitHubApi({
@@ -179,6 +197,7 @@ try {
       apexApiKey: process.env.TRUSTED_MERGE_APEX_API_KEY,
       apexModel: process.env.TRUSTED_MERGE_APEX_MODEL,
       activation,
+      executionDeadline,
     })
     await writeResult(terminalResult)
     if (terminalResult.status === 'merge_outcome_unverified') process.exitCode = 2

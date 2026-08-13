@@ -120,6 +120,7 @@ jobs:
 
       - name: Consume approval with Claude and run the single exact-head merge sink
         if: ${{ inputs.apex_provider == 'claude' }}
+        timeout-minutes: 20
         working-directory: trusted-base
         env:
           INPUT_PR_NUMBER: ${{ inputs.pr_number }}
@@ -140,6 +141,7 @@ jobs:
 
       - name: Consume approval with Codex and run the single exact-head merge sink
         if: ${{ inputs.apex_provider == 'codex' }}
+        timeout-minutes: 20
         working-directory: trusted-base
         env:
           INPUT_PR_NUMBER: ${{ inputs.pr_number }}

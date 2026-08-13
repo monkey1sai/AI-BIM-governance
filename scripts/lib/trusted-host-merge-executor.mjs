@@ -118,9 +118,22 @@ async function readRulesets(api, invocation, signal) {
   return details
 }
 
-export async function collectVerifiedSnapshot({ api, invocation, assertion, contract, now = new Date() }) {
+export async function collectVerifiedSnapshot({
+  api,
+  invocation,
+  assertion,
+  contract,
+  now = new Date(),
+  timeoutMilliseconds = contract.executor.pre_sink_timeouts.snapshot_milliseconds,
+}) {
   const maxBytes = contract.executor.evidence_max_bytes
-  const signal = AbortSignal.timeout(contract.executor.pre_sink_timeouts.snapshot_milliseconds)
+  if (
+    !Number.isSafeInteger(timeoutMilliseconds) || timeoutMilliseconds < 1 ||
+    timeoutMilliseconds > contract.executor.pre_sink_timeouts.snapshot_milliseconds
+  ) {
+    fail('host_env_blocked', 'snapshot_timeout_invalid')
+  }
+  const signal = AbortSignal.timeout(timeoutMilliseconds)
   const environmentName = encodeURIComponent(contract.broker.environment)
   const [
     environmentResponse,
@@ -258,30 +271,43 @@ function runGit(repoRoot, args, {
   return result.stdout
 }
 
-export function collectGitEvidence({ repoRoot, invocation, token, contract }) {
-  verifyTrustedOriginUrl(runGit(repoRoot, ['remote', 'get-url', 'origin']).trim(), invocation)
-  if (runGit(repoRoot, ['rev-parse', 'HEAD']).trim() !== invocation.baseOid) {
+export function collectGitEvidence({ repoRoot, invocation, token, contract, executionDeadline }) {
+  const deadline = executionDeadline || createExecutionDeadline(contract)
+  const candidateStage = deadline.startStage(
+    contract.executor.pre_sink_timeouts.candidate_fetch_milliseconds,
+    'candidate_evidence_deadline_exceeded',
+  )
+  const runCandidateGit = (args, options = {}) => runGit(repoRoot, args, {
+    ...options,
+    timeoutMilliseconds: candidateStage.timeout(),
+  })
+
+  verifyTrustedOriginUrl(runCandidateGit(['remote', 'get-url', 'origin']).trim(), invocation)
+  if (runCandidateGit(['rev-parse', 'HEAD']).trim() !== invocation.baseOid) {
     fail('wrong_checkout', 'trusted_checkout_not_base')
   }
-  if (runGit(repoRoot, ['status', '--porcelain=v1', '-z'], { encoding: 'buffer' }).length !== 0) {
+  if (runCandidateGit(['status', '--porcelain=v1', '-z'], { encoding: 'buffer' }).length !== 0) {
     fail('worktree_not_clean', 'trusted_checkout_dirty')
   }
-  const hookPath = runGit(repoRoot, ['config', '--local', '--get', 'core.hooksPath'], { allowedStatuses: [0, 1] }).trim()
+  const hookPath = runCandidateGit(
+    ['config', '--local', '--get', 'core.hooksPath'],
+    { allowedStatuses: [0, 1] },
+  ).trim()
   if (hookPath) fail('wrong_checkout', 'local_git_hooks_forbidden')
 
   const trustedRef = `refs/trusted-merge/${invocation.runId}/head`
-  runGit(repoRoot, [
+  runCandidateGit([
     'fetch', '--no-tags', '--force', 'origin',
     `refs/pull/${invocation.prNumber}/head:${trustedRef}`,
-  ], { token, timeoutMilliseconds: contract.executor.pre_sink_timeouts.candidate_fetch_milliseconds })
-  if (runGit(repoRoot, ['rev-parse', trustedRef]).trim() !== invocation.headOid) {
+  ], { token })
+  if (runCandidateGit(['rev-parse', trustedRef]).trim() !== invocation.headOid) {
     fail('pr_identity_not_ready', 'fetched_head_mismatch')
   }
-  if (runGit(repoRoot, ['merge-base', invocation.baseOid, invocation.headOid]).trim() !== invocation.baseOid) {
+  if (runCandidateGit(['merge-base', invocation.baseOid, invocation.headOid]).trim() !== invocation.baseOid) {
     fail('stale_base', 'head_not_based_on_exact_base')
   }
   const range = `${invocation.baseOid}...${invocation.headOid}`
-  const nameStatus = runGit(repoRoot, [
+  const nameStatus = runCandidateGit([
     'diff', '--no-ext-diff', '--no-textconv', '--find-renames', '--name-status', '-z', range,
   ], { encoding: 'buffer' })
   const entries = parseNameStatusZ(nameStatus)
@@ -289,17 +315,17 @@ export function collectGitEvidence({ repoRoot, invocation, token, contract }) {
   if (!classification.elevated) {
     fail('unexpected_elevated_authorization', 'elevated_workflow_requires_elevated_scope')
   }
-  const rawEntries = parseRawDiffZ(runGit(repoRoot, [
+  const rawEntries = parseRawDiffZ(runCandidateGit([
     'diff', '--raw', '--no-abbrev', '--no-renames', '-z', range,
   ], { encoding: 'buffer' }))
   rejectOpaqueGitModes(rawEntries)
-  const numstat = parseNumstatZ(runGit(repoRoot, [
+  const numstat = parseNumstatZ(runCandidateGit([
     'diff', '--no-ext-diff', '--no-textconv', '--no-renames', '--numstat', '-z', range,
   ], { encoding: 'buffer' }))
   rejectBinaryDiff(numstat)
-  const diff = runGit(repoRoot, ['diff', '--no-ext-diff', '--no-textconv', '--no-renames', range])
-  const stat = runGit(repoRoot, ['diff', '--no-ext-diff', '--no-textconv', '--stat', range])
-  const log = runGit(repoRoot, ['log', '--format=%H %s', `${invocation.baseOid}..${invocation.headOid}`])
+  const diff = runCandidateGit(['diff', '--no-ext-diff', '--no-textconv', '--no-renames', range])
+  const stat = runCandidateGit(['diff', '--no-ext-diff', '--no-textconv', '--stat', range])
+  const log = runCandidateGit(['log', '--format=%H %s', `${invocation.baseOid}..${invocation.headOid}`])
   return { entries, paths: classification.paths, diff, stat, log }
 }
 
@@ -415,12 +441,15 @@ export function verifyExecutionTimingBudget(contract) {
   if (sinkWorstCaseMilliseconds >= executor.irreversible_sink_min_ttl_seconds * 1000) {
     fail('host_env_blocked', 'irreversible_sink_timing_budget_invalid')
   }
-  const totalEnvelopeMilliseconds = (
+  const preSinkEnvelopeMilliseconds = (
     executor.pre_sink_timeouts.app_token_mint_milliseconds +
     executor.pre_sink_timeouts.snapshot_read_count * executor.pre_sink_timeouts.snapshot_milliseconds +
     executor.pre_sink_timeouts.candidate_fetch_milliseconds +
     executor.reviewer_buffer_seconds * 1000 +
-    executor.pre_sink_timeouts.apex_request_milliseconds +
+    executor.pre_sink_timeouts.apex_request_milliseconds
+  )
+  const totalEnvelopeMilliseconds = (
+    preSinkEnvelopeMilliseconds +
     sinkWorstCaseMilliseconds +
     executor.closeout_fetch_timeout_milliseconds +
     executor.pre_sink_timeouts.result_persistence_reserve_milliseconds
@@ -428,7 +457,65 @@ export function verifyExecutionTimingBudget(contract) {
   if (totalEnvelopeMilliseconds >= executor.pre_sink_timeouts.workflow_job_milliseconds) {
     fail('host_env_blocked', 'workflow_job_timing_budget_invalid')
   }
-  return { sinkWorstCaseMilliseconds, totalEnvelopeMilliseconds }
+  return { preSinkEnvelopeMilliseconds, sinkWorstCaseMilliseconds, totalEnvelopeMilliseconds }
+}
+
+const readMonotonicClock = (monotonicNow) => {
+  const value = monotonicNow()
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
+    fail('host_env_blocked', 'monotonic_clock_invalid')
+  }
+  return value
+}
+
+const assertPositiveMilliseconds = (value) => {
+  if (!Number.isSafeInteger(value) || value < 1) {
+    fail('host_env_blocked', 'execution_deadline_timeout_invalid')
+  }
+}
+
+export function createExecutionDeadline(contract, monotonicNow = () => performance.now()) {
+  if (typeof monotonicNow !== 'function') fail('host_env_blocked', 'monotonic_clock_invalid')
+  const { preSinkEnvelopeMilliseconds } = verifyExecutionTimingBudget(contract)
+  const startedAt = readMonotonicClock(monotonicNow)
+  const preSinkDeadline = startedAt + preSinkEnvelopeMilliseconds
+
+  const remainingUntil = (deadline, detail) => {
+    const remaining = Math.floor(deadline - readMonotonicClock(monotonicNow))
+    if (remaining < 1) fail('host_env_blocked', detail)
+    return remaining
+  }
+
+  const timeout = (maximumMilliseconds, detail = 'pre_sink_deadline_exceeded') => {
+    assertPositiveMilliseconds(maximumMilliseconds)
+    return Math.min(maximumMilliseconds, remainingUntil(preSinkDeadline, detail))
+  }
+
+  const requireRemaining = (requiredMilliseconds, detail = 'pre_sink_deadline_exceeded') => {
+    assertPositiveMilliseconds(requiredMilliseconds)
+    if (remainingUntil(preSinkDeadline, detail) < requiredMilliseconds) {
+      fail('host_env_blocked', detail)
+    }
+  }
+
+  const startStage = (maximumMilliseconds, detail = 'pre_sink_deadline_exceeded') => {
+    assertPositiveMilliseconds(maximumMilliseconds)
+    const stageDeadline = Math.min(
+      preSinkDeadline,
+      readMonotonicClock(monotonicNow) + maximumMilliseconds,
+    )
+    return Object.freeze({
+      timeout: () => remainingUntil(stageDeadline, detail),
+    })
+  }
+
+  return Object.freeze({
+    preSinkDeadlineMilliseconds: preSinkDeadline,
+    timeout,
+    requireRemaining,
+    startStage,
+    assertBeforeSink: () => { remainingUntil(preSinkDeadline, 'pre_sink_deadline_exceeded') },
+  })
 }
 
 const isExactObservedMerge = (observed, invocation) => (
@@ -460,9 +547,12 @@ async function observeMergeState(api, invocation, contract, sleep) {
       readable = true
       last = current
       if (isExactObservedMerge(current, invocation)) return { matched: current, last, readable, inconsistentMergedState }
+      const openMergeCommitValid = current.mergeCommit === null || (
+        typeof current.mergeCommit === 'string' && /^[0-9a-f]{40}$/u.test(current.mergeCommit)
+      )
       if (
         !hasExactObservationIdentity(current, invocation) || current.merged === true ||
-        current.mergeCommit !== null || current.state === 'closed'
+        current.state === 'closed' || !openMergeCommitValid
       ) {
         inconsistentMergedState = true
         break
@@ -491,18 +581,32 @@ export async function executeTrustedMerge({
   gitEvidenceCollector = collectGitEvidence,
   closeoutFetcher = fetchCloseout,
   activation,
+  executionDeadline,
 }) {
   verifyExecutionTimingBudget(contract)
+  const deadline = executionDeadline || createExecutionDeadline(contract)
+  if (
+    typeof deadline?.timeout !== 'function' || typeof deadline?.requireRemaining !== 'function' ||
+    typeof deadline?.startStage !== 'function' || typeof deadline?.assertBeforeSink !== 'function'
+  ) {
+    fail('host_env_blocked', 'execution_deadline_invalid')
+  }
   const activationMode = verifyActivationGate({ ...activation, invocation, contract })
   const prepared = await snapshotCollector({
     api, invocation, assertion, contract, now: now(),
+    timeoutMilliseconds: deadline.timeout(contract.executor.pre_sink_timeouts.snapshot_milliseconds),
   })
-  const gitEvidence = gitEvidenceCollector({ repoRoot, invocation, token: installationToken, contract })
+  const gitEvidence = gitEvidenceCollector({
+    repoRoot, invocation, token: installationToken, contract, executionDeadline: deadline,
+  })
 
   for (let index = 0; index < 3; index += 1) {
+    deadline.requireRemaining(30000)
     await sleep(30000)
+    deadline.assertBeforeSink()
     const buffered = await snapshotCollector({
       api, invocation, assertion, contract, now: now(),
+      timeoutMilliseconds: deadline.timeout(contract.executor.pre_sink_timeouts.snapshot_milliseconds),
     })
     assertSnapshotEqual(prepared, buffered, 'branch_protection_changed_during_buffer', DURING_BUFFER_FIELD_REASONS)
   }
@@ -522,12 +626,13 @@ export async function executeTrustedMerge({
     apiKey: apexApiKey,
     model: apexModel,
     evidence: apexEvidence.serialized,
-    timeoutMilliseconds: contract.executor.pre_sink_timeouts.apex_request_milliseconds,
+    timeoutMilliseconds: deadline.timeout(contract.executor.pre_sink_timeouts.apex_request_milliseconds),
   })
   verifyApexVerdict(verdict, invocation, prepared.approval)
 
   const finalSnapshot = await snapshotCollector({
     api, invocation, assertion, contract, now: now(),
+    timeoutMilliseconds: deadline.timeout(contract.executor.pre_sink_timeouts.snapshot_milliseconds),
   })
   assertSnapshotEqual(prepared, finalSnapshot, 'branch_protection_changed_after_verdict', AFTER_VERDICT_FIELD_REASONS)
   const finalActivationMode = verifyActivationGate({ ...activation, invocation, contract })
@@ -546,6 +651,7 @@ export async function executeTrustedMerge({
   if (activationMode === contract.activation.pending_modes[0]) {
     fail('trusted_elevated_authorization_unavailable', 'negative_attestation_merge_forbidden')
   }
+  deadline.assertBeforeSink()
 
   const mergeAttempt = await mergeOnce(
     api,

@@ -470,6 +470,7 @@ try {
     Assert-True (([regex]::Matches($trustedMergeWorkflow, 'runs-on:\s*ubuntu-24\.04')).Count -eq 2) 'trusted merge pins the hosted runner generation'
     Assert-True (([regex]::Matches($trustedMergeWorkflow, 'persist-credentials:\s*false')).Count -eq 2) 'trusted merge never persists checkout credentials'
     Assert-True ($trustedMergeWorkflow -match '(?m)^\s{4}environment:\s*trusted-elevated-merge\s*$') 'irreversible job is protected by the exact broker environment'
+    Assert-True (([regex]::Matches($trustedMergeWorkflow, '(?m)^\s{8}timeout-minutes:\s*20\s*$')).Count -eq 2) 'each credential-bearing executor step stops before the 30-minute job deadline and preserves terminal-result time'
     Assert-True ($trustedMergeWorkflow -match 'ref:\s*\$\{\{ github\.sha \}\}') 'trusted executor checkout is pinned to the workflow source SHA'
     Assert-True (-not ($trustedMergeWorkflow -match 'github\.event\.pull_request|refs/pull/')) 'workflow never checks out or executes candidate code'
     foreach ($brokerSecret in @('TRUSTED_MERGE_APP_ID', 'TRUSTED_MERGE_APP_INSTALLATION_ID', 'TRUSTED_MERGE_APP_PRIVATE_KEY')) {
