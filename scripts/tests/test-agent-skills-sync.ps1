@@ -471,6 +471,19 @@ foreach ($skill in $repoManifest.skills) {
         }
     }
 }
+$minioAcceptanceEntry = @($repoManifest.skills | Where-Object { $_.name -eq 'verify-minio-real-data-e2e' })
+Assert-True ($minioAcceptanceEntry.Count -eq 1) 'manifest declares one real-MinIO acceptance skill'
+$claudeMinioAcceptance = Get-Content -Raw -LiteralPath (Join-Path (Join-Path $repoRoot $minioAcceptanceEntry[0].locations.claude) 'SKILL.md')
+$codexMinioAcceptance = Get-Content -Raw -LiteralPath (Join-Path (Join-Path $repoRoot $minioAcceptanceEntry[0].locations.codex) 'SKILL.md')
+Assert-True ($codexMinioAcceptance -ceq $claudeMinioAcceptance) 'Codex mirrors the real-MinIO acceptance workflow byte-for-byte'
+Assert-True ($claudeMinioAcceptance -match 'Any such IFC candidate.+is malformed and makes the acceptance `HELD`') 'current malformed IFC rows fail closed before lineage filtering'
+Assert-True ($claudeMinioAcceptance.Contains('A nonzero watcher `skipped_malformed_total` requires reconciliation against the current complete listing: it is not current-scope proof by itself, but if protected evidence cannot prove the count is historical-only, the acceptance is `HELD`.')) 'lifetime malformed counters do not gate a proven-clean current scope'
+Assert-True ([regex]::Matches($claudeMinioAcceptance, 'require `same_job_set=true` and zero duplicate/new jobs').Count -eq 2) 'verified same-process and cross-process idempotency comparisons both fail closed'
+Assert-True ($claudeMinioAcceptance -match 'object `idempotency_key`, `project_id`, `category`, and `version`.+ledger `idempotency_key`, `project_id`, `category`, and `external_model_version_id`') 'object-to-ledger metadata binding is explicit'
+Assert-True ($claudeMinioAcceptance.Contains('apply the exact `sanitizeArtifactIdPart` contract from `bim-review-coordinator/src/services/streamingConversionClient.ts` to the ledger-side correlation, project, and external-model-version values')) 'ledger correlation, project, and external model version use the exact runtime normalization contract'
+Assert-True ($claudeMinioAcceptance.Contains('ledger `conversion_job_id`, `correlation_id`, `project_id`, and `external_model_version_id` versus streaming `conversion_job_id`, `correlation_id`, `project_id`, and `model_version_id`')) 'ledger-to-streaming job and metadata fields are mapped explicitly'
+Assert-True ($claudeMinioAcceptance -match 'Any proven unexpected RVT ledger count above zero is `HELD`') 'proven RVT-to-ledger boundary violations fail closed'
+Assert-True ($claudeMinioAcceptance -match '`baseline_count`, `seen_count`, `triggered_total`.+process-lifetime diagnostics') 'watcher lifetime counters are not current-scope totals'
 $blastRadiusEntry = @($repoManifest.skills | Where-Object { $_.name -eq 'gitnexus-blast-radius' })
 Assert-True ($blastRadiusEntry.Count -eq 1) 'manifest declares one GitNexus blast-radius skill'
 $gitnexusEntry = @($repoManifest.skills | Where-Object { $_.name -eq 'gitnexus' })
