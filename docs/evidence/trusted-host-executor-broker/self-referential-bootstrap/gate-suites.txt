@@ -1,11 +1,11 @@
 stack_kind=self_referential_bootstrap
 pr=527
 baseline=c5d423cb5e6b3f8b80e50efe2acc46d0c3bae736
-implementation_commit=f6b39991d4359f8735741759e00d9a649b3deac3
+implementation_commit=e4efea3788e6713f73704284335d4d7131d9f5f4
 
 PASS test-trusted-host-merge
 command=node --test scripts/tests/test-trusted-host-merge.mjs scripts/tests/test-trusted-host-merge-runtime.mjs
-result=38 passed, 0 failed, 1 Windows-only Linux gitlink probe skipped
+result=40 passed, 0 failed, 1 Windows-only Linux gitlink probe skipped
 
 PASS test-ship-item-runtime
 command=node --test tests/test_ship_item_runtime.mjs
@@ -13,7 +13,11 @@ result=5 passed
 
 PASS test-review-risk
 command=node --test scripts/tests/test-review-risk.mjs
-result=64 passed
+result=65 passed
+
+PASS test-pr-body-evidence
+command=pwsh -NoProfile -NonInteractive -File scripts/tests/test-pr-body-evidence.ps1
+result=all assertions passed
 
 PASS test-routing-consistency
 command=python -m pytest tests/test_routing_consistency.py -q -p no:cacheprovider
