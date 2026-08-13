@@ -1,25 +1,25 @@
 # gate-suites — stack_kind=self_referential_bootstrap
-tested_head=1ef0ea8ced2a75e7097893ed5b298006eb8ccf72
-run_at=2026-08-13T05:29:38Z
-note=exact-head rerun after the linked-successor repair closed SRB-REPAIR-OUTSIDE-SURFACE-DEADLOCK. The tested tree preserves the predecessor surface, binds exactly one current-PR successor to all outside classified paths plus the ledger, preserves the predecessor command list as an ordered prefix, rejects orphan/fork/cycle/three-open-chain/child-first/close-both transitions, and permits only a predecessor-first ledger-plus-fixpoint-evidence closure while its direct successor remains open. The entry's declared surface remains the same four mechanism paths. Exact canonical invocation form is recorded per suite; earlier stale-checkout EOL false-red context remains in README. All earlier tested heads are superseded. This file is the only change after tested_head and carries no executable content.
+tested_head=e5e2c9829b49dae5b9964f553fea73788977c345
+run_at=2026-08-13T11:58:54Z
+note=exact-code rerun after the linear linked-successor-chain repair. The tested tree separates the actual repair target from the unique attachment leaf, assigns new paths relative to the active-chain surface union, preserves the leaf command list as an ordered prefix, and permits a contiguous A->B->C lineage to close one oldest open root at a time. It rejects fork/orphan/cycle/discontinuous status, unrelated debt, duplicate path ownership, leaf-contract downgrade, child-first or multi-entry closure, and empty repair_prs. The entry's declared surface remains the same four mechanism paths. Exact canonical invocation form is recorded per suite; earlier stale-checkout EOL false-red context remains in README. All earlier tested heads are superseded. Only this file and its non-executable evidence README change after tested_head; neither carries mechanism logic.
 
 ## test-self-referential-bootstrap — pwsh -NoProfile -NonInteractive -File scripts/tests/test-self-referential-bootstrap.ps1
 [test-self-referential-bootstrap] all assertions passed
-exit_code=0 duration_s=45
+exit_code=0 duration_s=37
 
 ## test-pr-body-evidence — pwsh -NoProfile -NonInteractive -File scripts/tests/test-pr-body-evidence.ps1
 [test-pr-body-evidence] all assertions passed
-exit_code=0 duration_s=14
+exit_code=0 duration_s=9
 
 ## test-agent-governance-check — pwsh -NoProfile -NonInteractive -File scripts/tests/test-agent-governance-check.ps1
 # fail 0
 # cancelled 0
 # skipped 0
 # todo 0
-# duration_ms 1890.8321
+# duration_ms 1759.216
 [test-agent-governance-check] all assertions passed
-exit_code=0 duration_s=131
+exit_code=0 duration_s=116
 
 ## invoke-powershell-static — pwsh -NoProfile -NonInteractive -File scripts/tests/invoke-powershell-static.ps1
 [invoke-powershell-static] passed
-exit_code=0 duration_s=4
+exit_code=0 duration_s=2

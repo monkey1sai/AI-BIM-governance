@@ -45,8 +45,13 @@ The pattern list itself is still untouched.
 The post-merge fixpoint therefore has two things to prove, not one: that the
 gate suites still pass on `main` with the new prose in place (contract text and
 classifier behavior remain consistent), and that they still pass with the new
-repair lane live in the library — including the lane's own admission and
-refusal cases, which `test-self-referential-bootstrap.ps1` now carries.
+repair lane live in the library. The latter includes recursive linked-successor
+chains: the actual repair target owns `repair_prs`, a new debt attaches to the
+unique open leaf, outside scope is computed from the active-chain surface
+union, and closures proceed one oldest open root at a time. The adversarial
+suite covers both the legal `A -> B -> C` lifecycle and the fork, unrelated
+debt, duplicate ownership, contract downgrade, discontinuous status,
+child-first, multi-close, and empty-history refusal cases.
 
 ## What was run
 
