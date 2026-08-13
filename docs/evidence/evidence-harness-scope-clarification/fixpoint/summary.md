@@ -1,5 +1,7 @@
 # evidence-harness-scope-clarification fixpoint
 
+> 文件性質：**evidence**（fixpoint 完成證據）。本檔記錄已執行之驗證與其結果，不是 contract、不是 working note，也不是 runtime 行為權威；ledger entry 閉合後受閘門的證據不可變規則保護。
+
 ## Verified facts
 
 - Stack kind: `self_referential_fixpoint`
