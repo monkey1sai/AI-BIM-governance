@@ -1,11 +1,11 @@
 stack_kind=self_referential_bootstrap
 pr=527
-baseline=7d85190a7f57e8abde8725b2d07484443aa58d04
-implementation_commit=642fa9c
+baseline=c5d423cb5e6b3f8b80e50efe2acc46d0c3bae736
+implementation_commit=f6b39991d4359f8735741759e00d9a649b3deac3
 
 PASS test-trusted-host-merge
 command=node --test scripts/tests/test-trusted-host-merge.mjs scripts/tests/test-trusted-host-merge-runtime.mjs
-result=20 passed
+result=38 passed, 0 failed, 1 Windows-only Linux gitlink probe skipped
 
 PASS test-ship-item-runtime
 command=node --test tests/test_ship_item_runtime.mjs
@@ -38,3 +38,7 @@ result=passed
 PASS git-diff-check
 command=git diff --check
 result=passed
+
+ADVISORY gitnexus-detect-changes
+command=gitnexus detect-changes --scope compare --base-ref main -r C:\Repos\active\iot\AI-BIM-governance
+result=low risk, but the index is 78 commits behind this sibling worktree; not treated as complete graph verification
