@@ -35,6 +35,14 @@ def test_ifc_ready_contract_parses_with_required_fields():
     assert set(ifc["required_fields"]).issubset(ifc["example"].keys())
 
 
+def test_ifc_ready_contract_freezes_source_conflict_response():
+    conflict = _contract("ifc_ready_payload.json")["responses"]["conflict"]
+    assert conflict["status"] == 409
+    assert set(conflict["required_fields"]).issubset(conflict["example"].keys())
+    assert conflict["example"]["reason"] == "source_ifc_ref_mismatch"
+    assert conflict["example"]["ifc_ready_job_id"].startswith("ifcready_")
+
+
 def test_conversion_result_callback_contract_metadata_only():
     cb = _contract("conversion_result_callback.json")
     ready = cb["events"]["conversion_result_ready"]

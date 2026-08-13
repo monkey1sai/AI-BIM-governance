@@ -121,6 +121,30 @@ export interface ConversionQualityMetricsSummary {
   mapping_issues?: ConversionMappingIssueSummary[] | null;
 }
 
+/**
+ * Internal durable hand-off for terminal side effects that run after the
+ * conversion outcome and callback outbox link have been persisted.
+ *
+ * This snapshot is intentionally not part of the external IFC-ready wire
+ * response.  It exists only so a coordinator restart can replay the terminal
+ * observer without asking the streaming authority to reproduce a completed
+ * result or losing quality metrics needed by an auto-created review session.
+ */
+export interface IfcReadyTerminalObserverSnapshot {
+  status: "ready" | "failed";
+  report_status: "ready" | "succeeded" | "failed";
+  conversion_job_id: string | null;
+  artifacts: {
+    usdc_ref?: string | null;
+    element_mapping_ref?: string | null;
+    manifest_ref?: string | null;
+  };
+  artifact_summary?: Record<string, unknown>;
+  quality_summary: ConversionQualityMetricsSummary | null;
+  reason?: string | null;
+  retryable?: boolean;
+}
+
 export interface ReviewSession {
   session_id: string;
   /**
@@ -240,6 +264,12 @@ export interface IfcReadyIntakeJob {
   // T5：雲端 callback outbox 連結。callback 投遞狀態與 conversion 成功分離，
   // 故為獨立欄位（outbox 各自追蹤 delivered/dead_letter）。
   callback_outbox_id?: string | null;
+  // Internal-only restart recovery state. recordConversionOutcome persists the
+  // snapshot before invoking the terminal observer; successful completion
+  // clears it and records the timestamp. sanitizeJobForExternal MUST remove
+  // both fields from every public response.
+  terminal_observer_snapshot?: IfcReadyTerminalObserverSnapshot | null;
+  terminal_observer_completed_at?: string | null;
   // T6：data-plane shadow——本地 artifact manifest 參照（external_model_version_id
   // binding 已在上方欄位；不 mirror 公司 MySQL）。
   artifact_manifest_ref?: string | null;

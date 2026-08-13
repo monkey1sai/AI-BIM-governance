@@ -10,7 +10,13 @@ import type { CoordinatorConfig } from "../src/config.js";
 import { createLogger, type StructLogger } from "../src/lib/structLog.js";
 import { CallbackOutbox } from "../src/services/callbackOutbox.js";
 import { ConversionLedger } from "../src/services/conversionLedger.js";
+import { EventLog } from "../src/services/eventLog.js";
 import { ExternalIfcReadyStore } from "../src/services/externalIfcReadyStore.js";
+import { SessionStore } from "../src/services/sessionStore.js";
+import type {
+  ExternalIfcReadyEvent,
+  IfcReadyTerminalObserverSnapshot,
+} from "../src/types.js";
 
 // coordinator-auto-poll-streaming-conversion §5 unit cover:
 // - dispatch 後 in-process polling 自動 ingest ready / failed
@@ -167,6 +173,95 @@ function authHeaders(correlationId: string, idempotencyKey: string): Record<stri
     "X-Webhook-Secret": WEBHOOK_SECRET,
     "X-Correlation-Id": correlationId,
     "X-Idempotency-Key": idempotencyKey,
+  };
+}
+
+function seedPendingTerminalObserver(
+  root: string,
+  suffix: string,
+): {
+  externalStorePath: string;
+  outboxStorePath: string;
+  sessionStoreDir: string;
+  jobId: string;
+  outboxId: string;
+  snapshot: IfcReadyTerminalObserverSnapshot;
+} {
+  const externalStorePath = path.join(root, "coordinator", "external-ifc-ready.json");
+  const outboxStorePath = path.join(root, "coordinator", "callback-outbox.json");
+  const sessionStoreDir = path.join(root, "coordinator", "sessions");
+  const correlationId = `corr_observer_restart_${suffix}`;
+  const idempotencyKey = `idem_observer_restart_${suffix}`;
+  const conversionJobId = `stream_conv_observer_restart_${suffix}`;
+  const store = new ExternalIfcReadyStore(externalStorePath);
+  const job = store.create(
+    structuredClone(CONTRACT.example) as unknown as ExternalIfcReadyEvent,
+    {
+      correlationId,
+      idempotencyKey,
+      tenantId: "tenant_demo_001",
+      projectId: "project_demo_001",
+      externalModelVersionId: `ext_mv_observer_restart_${suffix}`,
+    },
+  );
+  store.markDispatched(job.ifc_ready_job_id, conversionJobId, "succeeded");
+  const artifacts = {
+    usdc_ref: `edge-local://observer-restart/${suffix}/model.usdc`,
+    element_mapping_ref: `edge-local://observer-restart/${suffix}/element_mapping.json`,
+    manifest_ref: `edge-local://observer-restart/${suffix}/artifact_manifest.json`,
+  };
+  const outbox = new CallbackOutbox(
+    5,
+    async () => undefined,
+    outboxStorePath,
+  ).enqueue({
+    event: "conversion_result_ready",
+    targetUrl: null,
+    correlationId,
+    externalModelVersionId: `ext_mv_observer_restart_${suffix}`,
+    conversionJobId,
+    payload: {
+      event: "conversion_result_ready",
+      trace_id: job.ifc_ready_job_id,
+      tenant_id: "tenant_demo_001",
+      project_id: "project_demo_001",
+      external_model_version_id: `ext_mv_observer_restart_${suffix}`,
+      conversion_job_id: conversionJobId,
+      correlation_id: correlationId,
+      status: "ready",
+      artifacts,
+      artifact_summary: { coverage_status: "pass" },
+    },
+  });
+  const snapshot: IfcReadyTerminalObserverSnapshot = {
+    status: "ready",
+    report_status: "ready",
+    conversion_job_id: conversionJobId,
+    artifacts,
+    artifact_summary: { coverage_status: "pass" },
+    quality_summary: {
+      conversion_job_id: conversionJobId,
+      coverage_status: "pass",
+      semantic_mapping_fidelity: "guid_exact",
+      mapping_has_ifc_type: true,
+      mapping_has_ifc_name: true,
+    },
+  };
+  store.recordConversionOutcome(
+    job.ifc_ready_job_id,
+    "ready",
+    outbox.outbox_id,
+    artifacts.manifest_ref,
+    null,
+    snapshot,
+  );
+  return {
+    externalStorePath,
+    outboxStorePath,
+    sessionStoreDir,
+    jobId: job.ifc_ready_job_id,
+    outboxId: outbox.outbox_id,
+    snapshot,
   };
 }
 
@@ -577,6 +672,145 @@ describe("coordinator auto-poll streaming conversion", () => {
       expect(stub.resultCount.value).toBe(1);
       expect(new ExternalIfcReadyStore(externalStorePath).get(jobId)?.callback_outbox_id)
         .toBe(restoredJob?.callback_outbox_id);
+    } finally {
+      if (previousExternalStorePath === undefined) {
+        delete process.env.EXTERNAL_IFC_READY_STORE_PATH;
+      } else {
+        process.env.EXTERNAL_IFC_READY_STORE_PATH = previousExternalStorePath;
+      }
+    }
+  });
+
+  it("callback link 後 observer 前重啟 → durable snapshot 恢復 session/viewer 且只執行一次", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "bim-coord-observer-restart-"));
+    const seeded = seedPendingTerminalObserver(root, "callback_linked");
+    const previousExternalStorePath = process.env.EXTERNAL_IFC_READY_STORE_PATH;
+    const config: Partial<CoordinatorConfig> = {
+      sessionStoreDir: seeded.sessionStoreDir,
+      eventLogDir: path.join(root, "coordinator", "events"),
+      callbackOutboxStorePath: seeded.outboxStorePath,
+      conversionLedgerStorePath: path.join(root, "coordinator", "conversion-ledger.json"),
+      conversionPollEnabled: false,
+      streamingConversionApiBase: "http://127.0.0.1:1",
+      corsOrigins: ["http://127.0.0.1:5173"],
+      storageRoot: path.join(root, "storage"),
+      storageHostRoot: path.join(root, "storage"),
+    };
+
+    process.env.EXTERNAL_IFC_READY_STORE_PATH = seeded.externalStorePath;
+    try {
+      active = createCoordinatorApp(config);
+      const recovered = new ExternalIfcReadyStore(seeded.externalStorePath).get(seeded.jobId);
+      expect(recovered?.callback_outbox_id).toBe(seeded.outboxId);
+      expect(recovered?.terminal_observer_snapshot).toBeNull();
+      expect(recovered?.terminal_observer_completed_at).toBeTruthy();
+      expect(recovered?.review_session_id).toMatch(/^review_session_/);
+      expect(recovered?.viewer_url).toContain("/ui/open?session=");
+      expect(active.store.list()).toHaveLength(1);
+      expect(active.store.list()[0]?.quality_metrics_summary).toMatchObject({
+        semantic_mapping_fidelity: "guid_exact",
+        mapping_has_ifc_type: true,
+        mapping_has_ifc_name: true,
+      });
+      const detail = await request(active.app).get(`/api/external/ifc-ready/${seeded.jobId}`);
+      expect(detail.body).not.toHaveProperty("terminal_observer_snapshot");
+      expect(detail.body).not.toHaveProperty("terminal_observer_completed_at");
+
+      const first = active;
+      active = null;
+      await first.dispose();
+      first.io.close();
+      active = createCoordinatorApp(config);
+      expect(active.store.list()).toHaveLength(1);
+      expect(new CallbackOutbox(5, async () => undefined, seeded.outboxStorePath).list())
+        .toHaveLength(1);
+    } finally {
+      if (previousExternalStorePath === undefined) {
+        delete process.env.EXTERNAL_IFC_READY_STORE_PATH;
+      } else {
+        process.env.EXTERNAL_IFC_READY_STORE_PATH = previousExternalStorePath;
+      }
+    }
+  });
+
+  it.each([
+    ["session create 後、任何 lifecycle event 前", false],
+    ["sessionCreated 後、sessionActive 前", true],
+  ])("%s 重啟 → 補齊 audit、重用 trace 且不建 duplicate session", async (_label, seedCreatedEvent) => {
+    const suffix = seedCreatedEvent ? "session_created" : "no_events";
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), `bim-coord-session-backlink-${suffix}-`));
+    const seeded = seedPendingTerminalObserver(root, suffix);
+    const previousExternalStorePath = process.env.EXTERNAL_IFC_READY_STORE_PATH;
+    const eventLogDir = path.join(root, "coordinator", "events");
+    const persistedAt = new Date().toISOString();
+    const persistedSession = new SessionStore(seeded.sessionStoreDir).create({
+      trace_id: seeded.jobId,
+      tenant_id: "tenant_demo_001",
+      project_id: "project_demo_001",
+      model_version_id: `ext_mv_observer_restart_${suffix}`,
+      created_by: "observer-crash-window-fixture",
+      kit_instance: {
+        instance_id: "kit_observer_restart_001",
+        provider: "local_fixed",
+        status: "ready",
+        stream_server: "127.0.0.1",
+        signaling_port: 49100,
+        media_server: "127.0.0.1",
+        media_port: 47998,
+      },
+      kit_instance_bindings: [{
+        kit_instance_id: "kit_observer_restart_001",
+        provider: "local_fixed",
+        tenant_id: "tenant_demo_001",
+        assigned_artifact_ids: ["auto_usdc_observer_restart"],
+        status: "ready",
+        stream_config: {
+          signalingServer: "127.0.0.1",
+          signalingPort: 49100,
+          mediaServer: "127.0.0.1",
+          mediaPort: 47998,
+        },
+        started_at: persistedAt,
+        last_heartbeat_at: persistedAt,
+        released_at: null,
+        gpu_profile: {
+          profile: "fixture",
+          capacity_slot: "fixture-0",
+        },
+      }],
+      quality_metrics_summary: seeded.snapshot.quality_summary,
+    });
+    const eventLog = new EventLog(eventLogDir);
+    if (seedCreatedEvent) {
+      eventLog.append(persistedSession.session_id, "sessionCreated", {
+        project_id: persistedSession.project_id,
+        model_version_id: persistedSession.model_version_id,
+        review_request_id: persistedSession.review_request_id,
+      });
+    }
+
+    process.env.EXTERNAL_IFC_READY_STORE_PATH = seeded.externalStorePath;
+    try {
+      active = createCoordinatorApp({
+        sessionStoreDir: seeded.sessionStoreDir,
+        eventLogDir,
+        callbackOutboxStorePath: seeded.outboxStorePath,
+        conversionLedgerStorePath: path.join(root, "coordinator", "conversion-ledger.json"),
+        conversionPollEnabled: false,
+        streamingConversionApiBase: "http://127.0.0.1:1",
+        corsOrigins: ["http://127.0.0.1:5173"],
+        storageRoot: path.join(root, "storage"),
+        storageHostRoot: path.join(root, "storage"),
+      });
+      const sessions = active.store.list();
+      expect(sessions).toHaveLength(1);
+      expect(sessions[0]?.session_id).toBe(persistedSession.session_id);
+      const recovered = new ExternalIfcReadyStore(seeded.externalStorePath).get(seeded.jobId);
+      expect(recovered?.review_session_id).toBe(persistedSession.session_id);
+      expect(recovered?.web_view_session_id).toBe(persistedSession.session_id);
+      expect(recovered?.terminal_observer_completed_at).toBeTruthy();
+      const lifecycleTypes = eventLog.listLifecycle(persistedSession.session_id).map((event) => event.type);
+      expect(lifecycleTypes).toEqual(["sessionCreated", "sessionActive"]);
     } finally {
       if (previousExternalStorePath === undefined) {
         delete process.env.EXTERNAL_IFC_READY_STORE_PATH;

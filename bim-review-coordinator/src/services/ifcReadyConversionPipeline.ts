@@ -15,6 +15,7 @@ import type {
   ConversionQualityMetricsSummary,
   ExternalIfcReadyEvent,
   IfcReadyIntakeJob,
+  IfcReadyTerminalObserverSnapshot,
 } from "../types.js";
 import type { CallbackOutbox, CallbackOutboxEntry } from "./callbackOutbox.js";
 import type { ConversionDispatchQueue } from "./conversionDispatchQueue.js";
@@ -195,6 +196,14 @@ function normalizeConversionReportStatus(
   status: "ready" | "succeeded" | "failed",
 ): "ready" | "failed" {
   return status === "failed" ? "failed" : "ready";
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function nullableString(value: unknown): string | null {
+  return typeof value === "string" ? value : null;
 }
 
 export class IfcReadyConversionPipeline<TTerminalObserverResult = void> {
@@ -446,6 +455,20 @@ export class IfcReadyConversionPipeline<TTerminalObserverResult = void> {
       conversionJobId,
       payload,
     });
+    const terminalObserverSnapshot: IfcReadyTerminalObserverSnapshot = {
+      status: normalizedStatus,
+      report_status: report.status,
+      conversion_job_id: conversionJobId,
+      artifacts: {
+        usdc_ref: report.artifacts?.usdc_ref ?? null,
+        element_mapping_ref: report.artifacts?.element_mapping_ref ?? null,
+        manifest_ref: report.artifacts?.manifest_ref ?? null,
+      },
+      artifact_summary: report.artifact_summary,
+      quality_summary: qualitySummary,
+      reason: report.reason ?? null,
+      retryable: report.retryable,
+    };
     const updatedJob = this.store.recordConversionOutcome(
       job.ifc_ready_job_id,
       normalizedStatus,
@@ -454,6 +477,7 @@ export class IfcReadyConversionPipeline<TTerminalObserverResult = void> {
       normalizedStatus === "failed"
         ? report.reason || "conversion_failed"
         : null,
+      terminalObserverSnapshot,
     );
 
     try {
@@ -491,38 +515,12 @@ export class IfcReadyConversionPipeline<TTerminalObserverResult = void> {
       this.store.get(job.ifc_ready_job_id) ?? updatedJob ?? job;
 
     // Conversion terminal only (ready|failed). download_failed / dispatch_failed never reach here.
-    let terminalObserverResult: TTerminalObserverResult | undefined;
-    try {
-      terminalObserverResult = this.onConversionTerminal?.({
-        status: normalizedStatus,
-        job: terminalJob,
-        conversionJobId,
-        artifacts: {
-          usdc_ref: report.artifacts?.usdc_ref ?? null,
-          element_mapping_ref: report.artifacts?.element_mapping_ref ?? null,
-          manifest_ref: report.artifacts?.manifest_ref ?? null,
-        },
-        qualitySummary,
-        report,
-      });
-    } catch (error) {
-      // Observer failure is deliberately non-fatal, but it must remain
-      // diagnosable without logging a potentially sensitive error message.
-      this.structLog
-        ?.withTraceId(job.ifc_ready_job_id)
-        .anomaly(
-          "ifcReadyConversionPipeline",
-          "onConversionTerminal observer failed",
-          {
-            anomaly_kind: "unexpected_state",
-            reason: "on_conversion_terminal_failed",
-            error_name: error instanceof Error ? error.name : typeof error,
-            ifc_ready_job_id: job.ifc_ready_job_id,
-            conversion_job_id: conversionJobId,
-            conversion_status: normalizedStatus,
-          },
-        );
-    }
+    // The durable snapshot remains pending when the observer throws or the
+    // process exits; successful completion clears it atomically in the store.
+    const terminalObserverResult = this.runTerminalObserver(
+      terminalJob,
+      terminalObserverSnapshot,
+    );
 
     return {
       ok: true,
@@ -711,23 +709,47 @@ export class IfcReadyConversionPipeline<TTerminalObserverResult = void> {
   }
 
   /**
-   * Recreate only the in-process pollers whose durable jobs prove a dispatched,
-   * non-terminal conversion. Must be called after the terminal observer is
-   * wired so an immediately available result follows the normal ingest path.
+   * Restore unfinished terminal observers from their durable local snapshot,
+   * then recreate pollers only for dispatched jobs that have no terminal
+   * outcome yet. Must be called after the terminal observer is wired.
    */
   resumePersistedPollers(): number {
-    if (this.disposed || !this.config.conversionPollEnabled) return 0;
+    if (this.disposed) return 0;
     let resumed = 0;
     for (const job of this.store.list()) {
       const conversionJobId = job.conversion_job_id;
       if (
         job.status !== "dispatched" ||
         !conversionJobId ||
-        job.callback_outbox_id ||
         this.pollerRegistry.has(conversionJobId)
       ) {
         continue;
       }
+      if (job.terminal_observer_completed_at) continue;
+      if (job.callback_outbox_id) {
+        const snapshot =
+          job.terminal_observer_snapshot ??
+          this.rebuildLegacyTerminalObserverSnapshot(job);
+        if (!snapshot) {
+          this.structLog
+            ?.withTraceId(job.ifc_ready_job_id)
+            .anomaly(
+              "ifcReadyConversionPipeline",
+              "persisted terminal observer snapshot unavailable",
+              {
+                anomaly_kind: "unexpected_state",
+                reason: "terminal_observer_snapshot_unavailable",
+                ifc_ready_job_id: job.ifc_ready_job_id,
+                conversion_job_id: conversionJobId,
+              },
+            );
+          continue;
+        }
+        this.runTerminalObserver(job, snapshot);
+        resumed += 1;
+        continue;
+      }
+      if (!this.config.conversionPollEnabled) continue;
       this.schedulePollerForConversion(conversionJobId, job.ifc_ready_job_id);
       resumed += 1;
     }
@@ -737,6 +759,93 @@ export class IfcReadyConversionPipeline<TTerminalObserverResult = void> {
   // ---------------------------------------------------------------------------
   // Internals
   // ---------------------------------------------------------------------------
+
+  private runTerminalObserver(
+    job: IfcReadyIntakeJob,
+    snapshot: IfcReadyTerminalObserverSnapshot,
+  ): TTerminalObserverResult | undefined {
+    const report: ConversionResultReport = {
+      correlation_id: job.correlation_id,
+      conversion_job_id: snapshot.conversion_job_id,
+      status: snapshot.report_status,
+      artifacts: snapshot.artifacts,
+      artifact_summary: snapshot.artifact_summary,
+      reason: snapshot.reason,
+      retryable: snapshot.retryable,
+    };
+    try {
+      const result = this.onConversionTerminal?.({
+        status: snapshot.status,
+        job,
+        conversionJobId: snapshot.conversion_job_id,
+        artifacts: snapshot.artifacts,
+        qualitySummary: snapshot.quality_summary,
+        report,
+      });
+      this.store.recordTerminalObserverCompleted(job.ifc_ready_job_id);
+      return result;
+    } catch (error) {
+      // Observer failure is deliberately non-fatal, but the snapshot remains
+      // pending for restart recovery and the error stays diagnosable without
+      // logging a potentially sensitive message.
+      this.structLog
+        ?.withTraceId(job.ifc_ready_job_id)
+        .anomaly(
+          "ifcReadyConversionPipeline",
+          "onConversionTerminal observer failed",
+          {
+            anomaly_kind: "unexpected_state",
+            reason: "on_conversion_terminal_failed",
+            error_name: error instanceof Error ? error.name : typeof error,
+            ifc_ready_job_id: job.ifc_ready_job_id,
+            conversion_job_id: snapshot.conversion_job_id,
+            conversion_status: snapshot.status,
+          },
+        );
+      return undefined;
+    }
+  }
+
+  /** Backward-compatible recovery for jobs persisted before snapshots existed. */
+  private rebuildLegacyTerminalObserverSnapshot(
+    job: IfcReadyIntakeJob,
+  ): IfcReadyTerminalObserverSnapshot | null {
+    if (!job.callback_outbox_id) return null;
+    const entry = this.outbox.get(job.callback_outbox_id);
+    const status =
+      job.conversion_status === "ready"
+        ? "ready"
+        : job.conversion_status === "failed"
+          ? "failed"
+          : null;
+    if (!entry || !status) return null;
+    const artifacts = isRecord(entry.payload.artifacts)
+      ? entry.payload.artifacts
+      : {};
+    const artifactSummary = isRecord(entry.payload.artifact_summary)
+      ? entry.payload.artifact_summary
+      : undefined;
+    const persistedQuality = this.ledger.get(job.idempotency_key)?.coverage_report;
+    return {
+      status,
+      report_status: status,
+      conversion_job_id: entry.conversion_job_id,
+      artifacts: {
+        usdc_ref: nullableString(artifacts.usdc_ref),
+        element_mapping_ref: nullableString(artifacts.element_mapping_ref),
+        manifest_ref: nullableString(artifacts.manifest_ref),
+      },
+      artifact_summary: artifactSummary,
+      quality_summary: isRecord(persistedQuality)
+        ? (persistedQuality as ConversionQualityMetricsSummary)
+        : null,
+      reason: nullableString(entry.payload.reason),
+      retryable:
+        typeof entry.payload.retryable === "boolean"
+          ? entry.payload.retryable
+          : undefined,
+    };
+  }
 
   private async dispatchJob(jobId: string): Promise<void> {
     const pending = this.pendingDispatchEvents.get(jobId);

@@ -1,6 +1,6 @@
 {
   "contract": "ifc_ready_payload",
-  "contract_version": "1.1.0",
+  "contract_version": "1.2.0",
   "direction": "customer-edge IFC Worker -> bim-review-coordinator POST /api/external/ifc-ready",
   "caller": "customer-edge IFC Worker (edge intranet / intra-LAN; NOT the company cloud test/prod hosts)",
   "source_of_truth": [
@@ -23,6 +23,22 @@
         "X-Webhook-Secret": "<shared-secret-or-HMAC-signature> (intranet-dev provider; replaceable AuthProvider)"
       },
       "ip_allowlist": "edge intranet only"
+    }
+  },
+  "responses": {
+    "conflict": {
+      "when": "the same idempotency/correlation identity is reused with a materially different source IFC reference",
+      "status": 409,
+      "required_fields": [
+        "detail",
+        "ifc_ready_job_id",
+        "reason"
+      ],
+      "example": {
+        "detail": "IFC source conflicts with the existing idempotent job.",
+        "ifc_ready_job_id": "ifcready_demo_001",
+        "reason": "source_ifc_ref_mismatch"
+      }
     }
   },
   "required_fields": [

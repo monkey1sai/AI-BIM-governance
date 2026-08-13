@@ -2743,6 +2743,44 @@ export function createCoordinatorApp(
   // kitPool / eventLog 權威；不複製 binding 規則。傳入 conversion-ready 的
   // streaming-owned artifact refs，構建最小 ArtifactBinding 後重用既有 Kit
   // binding 分配。
+  function assertAutoSessionBinding(
+    session: ReviewSession,
+    job: IfcReadyIntakeJob,
+  ): void {
+    if (
+      session.trace_id !== job.ifc_ready_job_id ||
+      session.tenant_id !== job.tenant_id ||
+      session.project_id !== job.project_id ||
+      session.model_version_id !== job.external_model_version_id
+    ) {
+      throw new Error("Persisted review session does not match the IFC-ready binding.");
+    }
+  }
+
+  function ensureAutoSessionLifecycleEvents(session: ReviewSession): void {
+    const lifecycleEvents = eventLog.listLifecycle(session.session_id);
+    const createdEvents = lifecycleEvents.filter((event) => event.type === "sessionCreated");
+    const activeEvents = lifecycleEvents.filter((event) => event.type === "sessionActive");
+    if (createdEvents.length > 1 || activeEvents.length > 1) {
+      throw new Error("Persisted review session has duplicate lifecycle audit events.");
+    }
+    if (createdEvents.length === 0 && activeEvents.length > 0) {
+      throw new Error("Persisted review session lifecycle audit is out of order.");
+    }
+    if (createdEvents.length === 0) {
+      eventLog.append(session.session_id, "sessionCreated", {
+        project_id: session.project_id,
+        model_version_id: session.model_version_id,
+        review_request_id: session.review_request_id,
+      });
+    }
+    if (session.status === "active" && activeEvents.length === 0) {
+      eventLog.append(session.session_id, "sessionActive", {
+        kit_instance_bindings: session.kit_instance_bindings.map((binding) => binding.kit_instance_id),
+      });
+    }
+  }
+
   function autoCreateOrActivateSession(
     job: IfcReadyIntakeJob,
     artifacts: { usdc_ref?: string | null; element_mapping_ref?: string | null; manifest_ref?: string | null },
@@ -2754,9 +2792,32 @@ export function createCoordinatorApp(
     if (job.review_session_id) {
       const existing = store.get(job.review_session_id);
       if (existing) {
+        assertAutoSessionBinding(existing, job);
+        ensureAutoSessionLifecycleEvents(existing);
         return { session: existing, replay: true };
       }
       // 既有 session 檔被外部移除 → 視為無 session，重建（不丟 review intent）。
+    }
+
+    // Crash-window recovery: SessionStore.create() persists before the
+    // IFC-ready job backlink. The job id is the immutable auto-session trace,
+    // so reuse that durable session and backfill the link instead of creating
+    // a duplicate after restart.
+    const existingByTrace = store
+      .list()
+      .filter((session) => session.trace_id === job.ifc_ready_job_id);
+    if (existingByTrace.length > 1) {
+      throw new Error("Multiple review sessions share the IFC-ready trace root.");
+    }
+    const recoveredSession = existingByTrace[0];
+    if (recoveredSession) {
+      assertAutoSessionBinding(recoveredSession, job);
+      ensureAutoSessionLifecycleEvents(recoveredSession);
+      externalIfcReadyStore.recordReviewSession(
+        job.ifc_ready_job_id,
+        recoveredSession.session_id,
+      );
+      return { session: recoveredSession, replay: true };
     }
 
     const modelVersionId = job.external_model_version_id;
@@ -2818,18 +2879,9 @@ export function createCoordinatorApp(
       // onConversionTerminal 傳入。null 時與舊邏輯等價,backward compatible。
       quality_metrics_summary: qualitySummary,
     });
-    // lifecycle audit event parity（與 explicit /api/review-sessions caller
-    // 路徑等價；Risk mitigation）。
-    eventLog.append(session.session_id, "sessionCreated", {
-      project_id: session.project_id,
-      model_version_id: session.model_version_id,
-      review_request_id: session.review_request_id,
-    });
-    if (session.status === "active") {
-      eventLog.append(session.session_id, "sessionActive", {
-        kit_instance_bindings: session.kit_instance_bindings.map((binding) => binding.kit_instance_id),
-      });
-    }
+    // Lifecycle audit parity with explicit /api/review-sessions. The helper is
+    // idempotent so restart recovery can finish either append crash window.
+    ensureAutoSessionLifecycleEvents(session);
     externalIfcReadyStore.recordReviewSession(job.ifc_ready_job_id, session.session_id);
     return { session, replay: false };
   }
@@ -4071,6 +4123,8 @@ function sanitizeJobForExternal(job: IfcReadyIntakeJob): IfcReadyIntakeJob {
   delete (rest as { conversion_failure?: string | null }).conversion_failure;
   delete (rest as { local_path?: string | null }).local_path;
   delete (rest as { host_local_path?: string | null }).host_local_path;
+  delete (rest as { terminal_observer_snapshot?: unknown }).terminal_observer_snapshot;
+  delete (rest as { terminal_observer_completed_at?: string | null }).terminal_observer_completed_at;
   return rest;
 }
 

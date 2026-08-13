@@ -857,6 +857,8 @@ describe("POST /api/external/ifc-ready (worker compatibility payload)", () => {
 
     expect(first.status).toBe(202);
     expect(conflict.status).toBe(409);
+    expect(conflict.body.reason).toBe("source_ifc_ref_mismatch");
+    expect(conflict.body.ifc_ready_job_id).toBe(first.body.ifc_ready_job_id);
     const persisted = app.externalIfcReadyStore.get(first.body.ifc_ready_job_id as string);
     expect(persisted?.source_ifc_ref).toBe("http://edge-internal.example/storage/demo-model.ifc");
   });

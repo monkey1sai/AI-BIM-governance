@@ -3,7 +3,12 @@ import fs from "node:fs";
 import path from "node:path";
 import { sanitizeArtifactIdPart } from "./streamingConversionClient.js";
 import { maskPresignedRef, stableHttpRefIdentity } from "./presignedRef.js";
-import type { ExternalIfcReadyEvent, IfcReadyIntakeJob, ShadowMetadata } from "../types.js";
+import type {
+  ExternalIfcReadyEvent,
+  IfcReadyIntakeJob,
+  IfcReadyTerminalObserverSnapshot,
+  ShadowMetadata,
+} from "../types.js";
 
 const RESTART_INTERRUPTED_DOWNLOAD_FAILURE =
   "coordinator restart interrupted download; operator must re-POST";
@@ -129,6 +134,8 @@ export class ExternalIfcReadyStore {
       conversion_status: null,
       conversion_authority: null,
       dispatch_error: null,
+      terminal_observer_snapshot: null,
+      terminal_observer_completed_at: null,
       // coordinator-serial-conversion-dispatch-queue:預設 null,在 enqueue
       // 階段被 markQueuedForConversion 改為 1-based,dispatched 後清回 null。
       queue_position: null,
@@ -379,11 +386,17 @@ export class ExternalIfcReadyStore {
     callbackOutboxId: string,
     artifactManifestRef?: string | null,
     conversionFailure?: string | null,
+    terminalObserverSnapshot?: IfcReadyTerminalObserverSnapshot | null,
   ): IfcReadyIntakeJob | undefined {
     const job = this.jobsById.get(jobId);
     if (!job) return undefined;
     job.conversion_status = conversionStatus;
     job.callback_outbox_id = callbackOutboxId;
+    // Persist the observer hand-off in the same atomic job write as the
+    // callback link. A crash after this point can replay local side effects
+    // without re-polling or re-dispatching the streaming authority.
+    job.terminal_observer_snapshot = terminalObserverSnapshot ?? null;
+    job.terminal_observer_completed_at = null;
     if (artifactManifestRef !== undefined) {
       job.artifact_manifest_ref = artifactManifestRef;
     }
@@ -391,6 +404,17 @@ export class ExternalIfcReadyStore {
     //（供 deriveFailure 投影 failure_stage="conversion"）；ready 時清空,誠實不留舊失敗殘留。
     job.conversion_failure = conversionStatus === "failed" ? (conversionFailure ?? "conversion_failed") : null;
     job.updated_at = new Date().toISOString();
+    this.persist();
+    return job;
+  }
+
+  /** Mark the durable terminal observer hand-off complete and discard its replay payload. */
+  recordTerminalObserverCompleted(jobId: string): IfcReadyIntakeJob | undefined {
+    const job = this.jobsById.get(jobId);
+    if (!job) return undefined;
+    job.terminal_observer_snapshot = null;
+    job.terminal_observer_completed_at = new Date().toISOString();
+    job.updated_at = job.terminal_observer_completed_at;
     this.persist();
     return job;
   }
