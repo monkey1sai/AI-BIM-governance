@@ -15,6 +15,55 @@ const RESTART_INTERRUPTED_DOWNLOAD_FAILURE =
 
 const DEFAULT_REQUESTED_OUTPUTS = ["usdc", "element_mapping", "entity_index", "metadata"];
 
+const IFC_READY_STATUSES = new Set([
+  "accepted",
+  "queued_for_conversion",
+  "dispatched",
+  "dispatch_failed",
+  "dropped_on_restart",
+  "failed",
+]);
+
+const DOWNLOAD_STATUSES = new Set([
+  "pending",
+  "downloading",
+  "downloaded",
+  "failed",
+]);
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isNullableString(value: unknown): value is string | null {
+  return value === null || typeof value === "string";
+}
+
+function isPersistedIfcReadyJob(value: unknown): value is IfcReadyIntakeJob {
+  if (!isRecord(value)) return false;
+  return (
+    typeof value.ifc_ready_job_id === "string" &&
+    IFC_READY_STATUSES.has(String(value.status)) &&
+    typeof value.idempotent_replay === "boolean" &&
+    typeof value.correlation_id === "string" &&
+    typeof value.idempotency_key === "string" &&
+    typeof value.tenant_id === "string" &&
+    typeof value.project_id === "string" &&
+    typeof value.external_model_version_id === "string" &&
+    typeof value.source_ifc_ref === "string" &&
+    typeof value.source_ifc_etag === "string" &&
+    isNullableString(value.conversion_job_id) &&
+    isNullableString(value.conversion_status) &&
+    (value.conversion_authority === null ||
+      value.conversion_authority === "bim-streaming-server") &&
+    (value.download_status === undefined ||
+      value.download_status === null ||
+      DOWNLOAD_STATUSES.has(String(value.download_status))) &&
+    typeof value.created_at === "string" &&
+    typeof value.updated_at === "string"
+  );
+}
+
 function restartRecoveryBindingSha256(event: ExternalIfcReadyEvent): string {
   const requestedOutputs =
     event.requested_outputs && event.requested_outputs.length > 0
@@ -87,16 +136,24 @@ export class ExternalIfcReadyStore {
 
   private loadFromDisk(): void {
     if (!this.persistencePath || !fs.existsSync(this.persistencePath)) return;
-    let parsed: { jobs?: IfcReadyIntakeJob[] };
+    let jobs: IfcReadyIntakeJob[];
     try {
-      parsed = JSON.parse(fs.readFileSync(this.persistencePath, "utf-8")) as { jobs?: IfcReadyIntakeJob[] };
+      const parsed = JSON.parse(fs.readFileSync(this.persistencePath, "utf-8")) as unknown;
+      if (!isRecord(parsed) || !Array.isArray(parsed.jobs)) {
+        this.persistenceHealthy = false;
+        return;
+      }
+      if (!parsed.jobs.every(isPersistedIfcReadyJob)) {
+        this.persistenceHealthy = false;
+        return;
+      }
+      jobs = parsed.jobs;
     } catch {
       // 壞檔不 crash：誠實空啟動（比照 conversionLedger），舊檔會在下次 persist 被覆寫。
       this.persistenceHealthy = false;
       return;
     }
-    for (const job of parsed.jobs ?? []) {
-      if (!job?.ifc_ready_job_id) continue;
+    for (const job of jobs) {
       // 重啟調和（誠實）：in-flight 狀態不可能跨行程存活。
       if (job.status === "queued_for_conversion") {
         job.status = "dropped_on_restart";

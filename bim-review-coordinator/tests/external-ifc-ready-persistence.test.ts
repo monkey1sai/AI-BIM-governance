@@ -174,6 +174,35 @@ describe("ExternalIfcReadyStore 持久化（S2，env opt-in）", () => {
     fs.writeFileSync(p, "{not json", "utf-8");
     const s = new ExternalIfcReadyStore(p);
     expect(s.list()).toEqual([]);
+    expect(s.isPersistent()).toBe(false);
+  });
+
+  it.each([
+    ["jobs 不是 array", { jobs: {} }],
+    ["job 缺必要 identity", { jobs: [{ ifc_ready_job_id: "ifcready_incomplete" }] }],
+  ])("合法 JSON 但結構錯誤（%s）不 crash 且誠實降級", (_label, payload) => {
+    const p = path.join(tmpRoot, `malformed-${String(_label)}.json`);
+    fs.writeFileSync(p, JSON.stringify(payload), "utf-8");
+    const s = new ExternalIfcReadyStore(p);
+    expect(s.list()).toEqual([]);
+    expect(s.isPersistent()).toBe(false);
+  });
+
+  it("valid + malformed mixed records 不做 partial restore", () => {
+    const p = path.join(tmpRoot, "mixed-malformed.json");
+    const seeded = new ExternalIfcReadyStore(p);
+    seeded.create(event, {
+      ...binding,
+      idempotencyKey: "idem_mixed_valid",
+      correlationId: "corr_mixed_valid",
+    });
+    const payload = JSON.parse(fs.readFileSync(p, "utf-8")) as { jobs: unknown[] };
+    payload.jobs.push({ ifc_ready_job_id: "ifcready_incomplete" });
+    fs.writeFileSync(p, JSON.stringify(payload), "utf-8");
+
+    const restored = new ExternalIfcReadyStore(p);
+    expect(restored.list()).toEqual([]);
+    expect(restored.isPersistent()).toBe(false);
   });
 
   it("未給路徑（且無 env）→ 維持現行 volatile 行為", () => {
