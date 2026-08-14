@@ -271,9 +271,10 @@ try {
     }
 
     $ci = Get-Content -LiteralPath '.github/workflows/ci.yml' -Raw
-    foreach ($job in @('changes', 'root-contracts', 'coordinator', 'streaming', 'governance-service', 'agent-governance-contracts', 'viewer', 'design-semantic-visual', 'kit-manager-api', 'kit-manager-web', 'compose-config', 'powershell-static', 'secret-pattern-scan')) {
+    foreach ($job in @('changes', 'root-contracts', 'coordinator', 'streaming', 'governance-service', 'viewer', 'design-semantic-visual', 'kit-manager-api', 'kit-manager-web', 'compose-config', 'powershell-static', 'secret-pattern-scan')) {
         Assert-True ($ci -match "(?m)^\s{2}$([regex]::Escape($job)):\s*$") "ci.yml contains job $job"
     }
+    Assert-True (-not ($ci -match '(?m)^\s{2}agent-governance-contracts:\s*$')) 'ci.yml does not duplicate the Agent Governance suite'
     Assert-True ($ci -match 'changed path classifier') 'ci.yml contains changed path classifier'
     Assert-True ($ci -match 'types:\s*\[opened, edited, synchronize, reopened, ready_for_review\]') 'CI listens for PR base edits as well as head lifecycle events'
     $ciEditedGate = '${{ github.event.action != ''edited'' || github.event.changes.base != null }}'
@@ -292,11 +293,11 @@ try {
         Assert-True ($ci -match [regex]::Escape($expectedOutput)) "changes job exposes manifest-derived $output output"
     }
     Assert-True ($ci -match [regex]::Escape("^[a-z0-9][a-z0-9.-]{0,63}$")) 'CI accepts the dotted screen identifiers used by the design-system manifest'
-    foreach ($gate in @('root_contracts', 'coordinator', 'streaming', 'governance_service', 'viewer', 'agent_governance', 'conv_functional', 'kit_manager_api', 'kit_manager_web', 'compose_config', 'powershell_static', 'rebuild_test_deploy', 'secret_pattern_scan')) {
+    foreach ($gate in @('root_contracts', 'coordinator', 'streaming', 'governance_service', 'viewer', 'conv_functional', 'kit_manager_api', 'kit_manager_web', 'compose_config', 'powershell_static', 'rebuild_test_deploy', 'secret_pattern_scan')) {
         Assert-True ($ci -match [regex]::Escape("needs.changes.outputs.$gate == 'true'")) "ci.yml gates affected job on $gate"
     }
-    Assert-True (([regex]::Matches($ci, 'name: Require changed-path classifier success')).Count -eq 14) 'every downstream required job explicitly fails when the classifier dependency fails'
-    Assert-True (([regex]::Matches($ci, "if: always\(\) && \(needs\.changes\.result != 'success' \|\|")).Count -eq 14) 'downstream required jobs run on classifier failure instead of reporting skipped-success'
+    Assert-True (([regex]::Matches($ci, 'name: Require changed-path classifier success')).Count -eq 13) 'every downstream CI job explicitly fails when the classifier dependency fails'
+    Assert-True (([regex]::Matches($ci, "if: always\(\) && \(needs\.changes\.result != 'success' \|\|")).Count -eq 13) 'downstream CI jobs run on classifier failure instead of reporting skipped-success'
     Assert-True ($ci -match '(?s)name: Run rebuild transaction safety tests \(PowerShell 7\).*?shell: pwsh.*?run: pwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/tests/test-rebuild-test-deploy\.ps1') 'CI runs rebuild transaction safety tests in a PowerShell 7 file scope'
     Assert-True ($ci -match '(?s)name: Run rebuild transaction safety tests \(Windows PowerShell 5\.1\).*?shell: pwsh.*?run: powershell\.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/tests/test-rebuild-test-deploy\.ps1') 'CI runs rebuild transaction safety tests in a Windows PowerShell 5.1 file scope'
     $verificationManifest = Get-Content -LiteralPath 'scripts/verification-manifest.json' -Raw | ConvertFrom-Json -Depth 100
@@ -310,6 +311,8 @@ try {
     $missingGate.command = [pscustomobject]@{ executable = 'npm'; args = @('run', 'verify') }
     Assert-True (-not (($invalidNotConfigured | ConvertTo-Json -Depth 100) | Test-Json -SchemaFile 'scripts/tests/verification-manifest.schema.json' -ErrorAction SilentlyContinue)) 'not-configured gate with a command fails the manifest schema'
     Assert-True ($verificationManifest.schema_version -eq 'verification-manifest/v2') 'shared manifest uses the typed quality policy contract'
+    $agentGovernanceTarget = @($verificationManifest.targets | Where-Object id -eq 'agent-governance')[0]
+    Assert-True ($agentGovernanceTarget.ci_job -ceq 'agent-governance') 'shared manifest binds Agent Governance to the surviving required context'
     foreach ($serviceTarget in @('coordinator', 'viewer', 'kit-manager-api', 'kit-manager-web')) {
         Assert-True ($verificationManifest.quality_policy.service_targets -contains $serviceTarget) "quality policy covers $serviceTarget"
     }
@@ -412,6 +415,19 @@ try {
 
     $governanceWorkflow = Get-Content -LiteralPath '.github/workflows/agent-governance.yml' -Raw
     Assert-True (-not ($governanceWorkflow -match '(?m)^\s+paths:\s*$')) 'agent-governance workflow does not use path filters because it is a required-check candidate'
+    Assert-True ($governanceWorkflow -match 'types:\s*\[opened, edited, synchronize, reopened, ready_for_review\]') 'agent-governance reclassifies the exact path set after base retarget edits'
+    Assert-True ($governanceWorkflow -match '(?m)^\s{2}scope:\s*$') 'agent-governance workflow has an internal scope classifier job'
+    Assert-True ($governanceWorkflow -match 'scripts/lib/verification-plan\.mjs') 'agent-governance scope consumes the shared verification planner'
+    Assert-True ($governanceWorkflow -match 'git -c core\.quotepath=false diff --no-renames --name-only -z .* > agent-governance-changed-paths\.bin') 'agent-governance scope makes git diff failure terminal before planning'
+    Assert-True ($governanceWorkflow -match '--changed-paths0-file agent-governance-changed-paths\.bin') 'agent-governance scope preserves NUL-delimited changed paths through the shared planner file contract'
+    Assert-True (-not ($governanceWorkflow -match '< <\(')) 'agent-governance scope does not hide git diff failures inside process substitution'
+    Assert-True ($governanceWorkflow -match '(?m)^\s{2}suite:\s*$') 'agent-governance workflow isolates the expensive suite'
+    Assert-True ($governanceWorkflow -match "if: needs\.scope\.result == 'success' && needs\.scope\.outputs\.agent_governance == 'true'") 'agent-governance suite runs only for affected paths after a successful classifier'
+    Assert-True ($governanceWorkflow -match '(?ms)^\s{4}needs:\s*\r?\n\s{6}- scope\s*\r?\n\s{6}- suite\s*$') 'required Agent Governance result aggregates classifier and suite outcomes'
+    Assert-True ($governanceWorkflow -match '(?m)^\s{4}if: always\(\)\s*$') 'required Agent Governance result always publishes a terminal context'
+    Assert-True ($governanceWorkflow -match 'scope classifier did not succeed; refusing a skipped-success required check') 'classifier failure is not converted into skipped success'
+    Assert-True ($governanceWorkflow -match 'scope classifier did not publish a closed required/not-required decision') 'missing or malformed classifier output fails closed'
+    Assert-True ($governanceWorkflow -match 'publishing explicit no-op success') 'unaffected paths produce an explicit successful terminal result'
     Assert-True ($governanceWorkflow -match '(?m)^\s+timeout-minutes:\s*30\s*$') 'agent-governance workflow has a bounded runtime'
     Assert-True ($governanceWorkflow -match 'scripts/tests/test-agent-governance-check\.ps1') 'agent-governance workflow runs static check'
     Assert-True ($governanceWorkflow -match 'pwsh -NoProfile -NonInteractive -File scripts/tests/test-isolated-branch-stack\.ps1') 'agent-governance workflow runs isolated branch stack machine tests'
@@ -436,7 +452,8 @@ try {
     $pwshRunCount = @([regex]::Matches($governanceWorkflow, '(?m)^\s*run:\s*pwsh\b')).Count
     $totalRunCount = @([regex]::Matches($governanceWorkflow, '(?m)^\s*run:\s*\S')).Count
     Assert-True ($pwshRunCount -ge 5) 'agent-governance workflow runs the governance checks with PowerShell 7'
-    Assert-True ($pwshRunCount -eq $totalRunCount) 'agent-governance workflow runs every step with PowerShell 7 (no legacy or non-pwsh shell)'
+    Assert-True (([regex]::Matches($governanceWorkflow, '(?m)^\s*shell:\s*bash\s*$')).Count -eq 1) 'only the NUL-safe scope classifier uses bash'
+    Assert-True (($pwshRunCount + 2) -eq $totalRunCount) 'only the NUL-safe classifier and the explicit pwsh aggregator use multiline run blocks'
 
     $shipWorkflowScript = Get-Content -LiteralPath '.claude/workflows/ship-item.js' -Raw
     Assert-True (-not (Test-Path -LiteralPath '.github/workflows/owner-consent.yml')) 'replayable custom owner-consent status workflow is absent'
@@ -579,6 +596,24 @@ try {
     # line budgets, sub-file index completeness, dead-link liveness, mirror declaration, mirror pairing.
     $agentsBody = Get-Content -LiteralPath 'AGENTS.md' -Raw
     $claudeBody = Get-Content -LiteralPath 'CLAUDE.md' -Raw
+    $githubWorkflowBody = Get-Content -LiteralPath 'docs/agents/github-workflow.md' -Raw
+    foreach ($authRoutingMarker in @(
+        'gh api user --jq .login',
+        'GH_TOKEN',
+        'x509',
+        'sandbox 外',
+        'HTTP `401 Bad credentials`',
+        'GIT_SSL_NO_VERIFY=1',
+        'HELD: TLS trust unresolved'
+    )) {
+        Assert-True ($githubWorkflowBody -match [regex]::Escape($authRoutingMarker)) "GitHub workflow preserves gh auth routing marker: $authRoutingMarker"
+    }
+    foreach ($entrypoint in @(@{ Name = 'AGENTS.md'; Body = $agentsBody }, @{ Name = 'CLAUDE.md'; Body = $claudeBody })) {
+        $entrypointLf = $entrypoint.Body.Replace("`r`n", "`n")
+        foreach ($entrypointVariant in @($entrypointLf, $entrypointLf.Replace("`n", "`r`n"))) {
+            Assert-True ($entrypointVariant -match '(?m)^\|[^\r\n]*gh[^\r\n]*docs/agents/github-workflow\.md[^\r\n]*\r?$') "$($entrypoint.Name) routes gh auth work to the GitHub workflow runbook under LF and CRLF"
+        }
+    }
     foreach ($generatedBody in @($agentsBody, $claudeBody)) {
         $generatedMatch = [regex]::Match($generatedBody, '(?s)<!-- gitnexus:start -->.*?<!-- gitnexus:end -->')
         Assert-True $generatedMatch.Success 'GitNexus generated block has both markers'

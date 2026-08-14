@@ -62,16 +62,16 @@ test('legacy developer filters are represented by closed manifest profiles', () 
 });
 
 const fixtures = [
-  ['streaming service', ['bim-streaming-server/server.py'], ['root-contracts', 'secret-pattern-scan', 'streaming']],
-  ['governance service', ['governance-service/app.py'], ['governance', 'root-contracts', 'secret-pattern-scan']],
-  ['kit manager api', ['services/kit-manager-api/app.py'], ['kit-manager-api', 'kit-manager-web', 'root-contracts', 'secret-pattern-scan']],
-  ['kit manager web', ['apps/kit-manager-web/src/main.ts'], ['design-semantic-visual', 'kit-manager-web', 'root-contracts', 'secret-pattern-scan']],
-  ['kit manager browser harness', ['web-viewer-sample/e2e/kit-manager-operator.spec.ts'], ['design-semantic-visual', 'functional-runtime-conv', 'kit-manager-web', 'root-contracts', 'secret-pattern-scan', 'viewer', 'viewer-session']],
-  ['viewer user surface', ['web-viewer-sample/src/console/pages.tsx'], ['design-semantic-visual', 'functional-runtime-conv', 'root-contracts', 'secret-pattern-scan', 'viewer', 'viewer-session']],
-  ['coordinator source', ['bim-review-coordinator/src/app.ts'], ['coordinator', 'design-semantic-visual', 'functional-runtime-conv', 'kit-manager-web', 'root-contracts', 'secret-pattern-scan', 'viewer', 'viewer-session']],
+  ['streaming service', ['bim-streaming-server/server.py'], ['agent-governance', 'root-contracts', 'secret-pattern-scan', 'streaming']],
+  ['governance service', ['governance-service/app.py'], ['agent-governance', 'governance', 'root-contracts', 'secret-pattern-scan']],
+  ['kit manager api', ['services/kit-manager-api/app.py'], ['agent-governance', 'kit-manager-api', 'kit-manager-web', 'root-contracts', 'secret-pattern-scan']],
+  ['kit manager web', ['apps/kit-manager-web/src/main.ts'], ['agent-governance', 'design-semantic-visual', 'kit-manager-web', 'root-contracts', 'secret-pattern-scan']],
+  ['kit manager browser harness', ['web-viewer-sample/e2e/kit-manager-operator.spec.ts'], ['agent-governance', 'design-semantic-visual', 'functional-runtime-conv', 'kit-manager-web', 'root-contracts', 'secret-pattern-scan', 'viewer', 'viewer-session']],
+  ['viewer user surface', ['web-viewer-sample/src/console/pages.tsx'], ['agent-governance', 'design-semantic-visual', 'functional-runtime-conv', 'root-contracts', 'secret-pattern-scan', 'viewer', 'viewer-session']],
+  ['coordinator source', ['bim-review-coordinator/src/app.ts'], ['agent-governance', 'coordinator', 'design-semantic-visual', 'functional-runtime-conv', 'kit-manager-web', 'root-contracts', 'secret-pattern-scan', 'viewer', 'viewer-session']],
   ['governance document', ['docs/agents/domain.md'], ['agent-governance', 'powershell-static', 'secret-pattern-scan']],
-  ['compose config', ['compose.runtime-manager.yml'], ['compose-config', 'kit-manager-web', 'root-contracts', 'secret-pattern-scan']],
-  ['kit manager image', ['infra/docker/kit-manager-web.Dockerfile'], ['compose-config', 'kit-manager-web', 'secret-pattern-scan']],
+  ['compose config', ['compose.runtime-manager.yml'], ['agent-governance', 'compose-config', 'kit-manager-web', 'root-contracts', 'secret-pattern-scan']],
+  ['kit manager image', ['infra/docker/kit-manager-web.Dockerfile'], ['agent-governance', 'compose-config', 'kit-manager-web', 'secret-pattern-scan']],
 ];
 
 for (const [name, changedPaths, expected] of fixtures) {
@@ -102,6 +102,26 @@ test('docs-only paths produce typed skips while the security scan remains explic
   const plan = createVerificationPlan(manifest, { changedPaths: ['docs/architecture/overview.md'] });
   assert.deepEqual(requiredIds(plan), ['secret-pattern-scan']);
   assert.ok(plan.targets.filter(({ required }) => !required).every(({ reason }) => reason === 'docs_only'));
+});
+
+test('agent governance defaults to code and security inputs and skips only bounded known docs', () => {
+  for (const changedPath of [
+    'compose.runtime-manager.yml',
+    'bim-review-coordinator/src/app.ts',
+    'bim-streaming-server/server.py',
+    'governance-service/app.py',
+    'web-viewer-sample/src/console/pages.tsx',
+    'docs/plans/NOW.md',
+    'docs/PR_REVIEW_AGENT.md',
+    'docs/superpowers/plans/2026-06-18-ai-coding-maturity-governance.md',
+    '.ignore',
+    '.gitnexusignore',
+  ]) {
+    const plan = createVerificationPlan(manifest, { changedPaths: [changedPath] });
+    const target = plan.targets.find(({ id }) => id === 'agent-governance');
+    assert.equal(target.required, true, `${changedPath} must run the cross-product Agent Governance suite`);
+    assert.equal(target.reason, 'affected_path');
+  }
 });
 
 test('workflow and manifest self-changes force every target', () => {
@@ -150,7 +170,7 @@ test('mixed paths use the union of affected classes and output is byte stable', 
   const first = createVerificationPlan(manifest, options);
   const second = createVerificationPlan(manifest, { changedPaths: [...options.changedPaths].reverse() });
   assert.deepEqual(first, second);
-  assert.deepEqual(requiredIds(first), ['governance', 'root-contracts', 'secret-pattern-scan']);
+  assert.deepEqual(requiredIds(first), ['agent-governance', 'governance', 'root-contracts', 'secret-pattern-scan']);
   assert.equal(JSON.stringify(first), JSON.stringify(second));
 });
 

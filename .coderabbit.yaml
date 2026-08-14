@@ -2,5 +2,7 @@
 reviews:
   high_level_summary: false
   auto_review:
-    enabled: true
+    enabled: false
     auto_incremental_review: false
+    labels:
+      - ai-review-ready
