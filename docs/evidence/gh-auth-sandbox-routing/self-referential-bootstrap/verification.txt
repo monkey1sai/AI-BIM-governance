@@ -1,8 +1,9 @@
 stack_kind=self_referential_bootstrap
 pr=544
 entry=gh-auth-sandbox-routing
-verified_at=2026-08-14T09:19:35Z
+verified_at=2026-08-14T09:28:53Z
 status=passed
+lf_crlf_regression=passed
 test-self-referential-bootstrap.exit_code=0
 test-agent-governance-check.exit_code=0
 invoke-powershell-static.exit_code=0

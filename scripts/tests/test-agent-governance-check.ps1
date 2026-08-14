@@ -592,7 +592,10 @@ try {
         Assert-True ($githubWorkflowBody -match [regex]::Escape($authRoutingMarker)) "GitHub workflow preserves gh auth routing marker: $authRoutingMarker"
     }
     foreach ($entrypoint in @(@{ Name = 'AGENTS.md'; Body = $agentsBody }, @{ Name = 'CLAUDE.md'; Body = $claudeBody })) {
-        Assert-True ($entrypoint.Body -match '(?m)^\|[^\r\n]*gh[^\r\n]*docs/agents/github-workflow\.md[^\r\n]*$') "$($entrypoint.Name) routes gh auth work to the GitHub workflow runbook"
+        $entrypointLf = $entrypoint.Body.Replace("`r`n", "`n")
+        foreach ($entrypointVariant in @($entrypointLf, $entrypointLf.Replace("`n", "`r`n"))) {
+            Assert-True ($entrypointVariant -match '(?m)^\|[^\r\n]*gh[^\r\n]*docs/agents/github-workflow\.md[^\r\n]*\r?$') "$($entrypoint.Name) routes gh auth work to the GitHub workflow runbook under LF and CRLF"
+        }
     }
     foreach ($generatedBody in @($agentsBody, $claudeBody)) {
         $generatedMatch = [regex]::Match($generatedBody, '(?s)<!-- gitnexus:start -->.*?<!-- gitnexus:end -->')
