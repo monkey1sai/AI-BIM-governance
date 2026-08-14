@@ -222,7 +222,7 @@
         "openspec/changes/a4-semantic-search-model-qa/proposal.md",
         "openspec/changes/a4-semantic-search-model-qa/tasks.md"
       ],
-      "subject_commit": "57aa968c1b2d5e21213d872732f27392d20da8fc",
+      "subject_commit": "9e111e58a4f8b160047a3fe1d3be09efe87e1ad6",
       "archive_debt": null
     },
     {
@@ -373,7 +373,7 @@
         "openspec/changes/align-frontend-design-system-reference/tasks.md",
         "openspec/changes/align-frontend-design-system-reference/successor-crosswalk-migrate-console-to-hifi-design.md"
       ],
-      "subject_commit": "5e176a46ddb63f7453a195feed2c1edc6cb1e47a",
+      "subject_commit": "9e111e58a4f8b160047a3fe1d3be09efe87e1ad6",
       "archive_debt": null
     },
     {
@@ -1513,11 +1513,11 @@
       "id": "migrate-console-to-hifi-design",
       "status": "active",
       "owner": "web-viewer-sample",
-      "current_slice": "2026-08-14 align successor crosswalk landed (互斥已裁決，align 不 thaw)。7.1 仍 STOP until PR #535 保全 workspace.a4.default；7.4 不勾。32/40；殘項＝0.5/1.2/6.4（human owner）＋7.1/7.4。",
+      "current_slice": "2026-08-14 align successor crosswalk landed (互斥已裁決，align 不 thaw)。7.1 仍 STOP until PR #535 保全 workspace.a4.default；8.2 因本 PR 改 align 檔而取消勾選；7.4 不勾。31/40；殘項＝0.5/1.2/6.4（human owner）＋7.1/7.4/8.2。",
       "blocked_by": [],
       "last_verified": "2026-08-14T00:00:00Z",
       "task_ledger": {
-        "completed": 32,
+        "completed": 31,
         "total": 40
       },
       "evidence_refs": [
@@ -1526,7 +1526,7 @@
         "artifacts/2026-08-12-hifi-consumer-spec-scenario-audit.md",
         "openspec/changes/align-frontend-design-system-reference/successor-crosswalk-migrate-console-to-hifi-design.md"
       ],
-      "subject_commit": "5e176a46ddb63f7453a195feed2c1edc6cb1e47a",
+      "subject_commit": "9e111e58a4f8b160047a3fe1d3be09efe87e1ad6",
       "archive_debt": null
     },
     {
