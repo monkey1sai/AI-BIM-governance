@@ -94,6 +94,15 @@ try {
     Assert-True ($compose -match 'CONSOLE_DIST_DIR:\s+/workspace/console-dist') 'compose points coordinator at image console-dist'
     Assert-True (-not ($compose -match 'web-viewer-sample/dist-ui:/workspace/console-dist')) 'compose does not bind-mount ignored host dist-ui over image bundle'
 
+    # #531：coordinator 持久 state（conversion ledger＋callback outbox）必須都指向
+    # 掛載卷 /workspace/storage（volumes 綁 RUNTIME_STORAGE_ROOT），否則 recreate 蒸發
+    # watcher 冪等水位／pending callback。ledger 一旦改回 ${...} 透傳也會被抓——
+    # deploy.ps1 contract 的同名 host 路徑會滲進容器變 container-local。
+    $coordinatorComposeBody = $coordinatorComposeBlock.Groups['body'].Value
+    Assert-True ($coordinatorComposeBody -match '(?m)^      CALLBACK_OUTBOX_STORE_PATH:\s+/workspace/storage/coordinator/callback-outbox\.json\r?$') 'compose pins callback outbox store under the mounted runtime storage volume'
+    Assert-True ($coordinatorComposeBody -match '(?m)^      CONVERSION_LEDGER_STORE_PATH:\s+/workspace/storage/coordinator/conversion-ledger\.json\r?$') 'compose pins conversion ledger store under the mounted runtime storage volume (#531)'
+    Assert-True ($coordinatorComposeBody -match '(?m)^      - \$\{RUNTIME_STORAGE_ROOT:-\./storage\}:/workspace/storage\r?$') 'coordinator mounts the owner-controlled runtime storage volume at /workspace/storage'
+
     $deploy = Get-Content -LiteralPath $deployPath -Raw
     Assert-True ($deploy -match 'Sync-DeploymentDesignAssets -RepoRoot \$RepoRoot') 'deploy refreshes or validates design assets before image build'
     Assert-True ($deploy -match 'function Probe-UiAsset') 'deploy verifies built /ui assets'

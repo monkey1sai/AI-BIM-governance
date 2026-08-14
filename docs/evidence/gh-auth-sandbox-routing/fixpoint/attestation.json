@@ -1,0 +1,17 @@
+{
+  "schema_version": "self-referential-fixpoint-attestation/v1",
+  "entry_id": "gh-auth-sandbox-routing",
+  "mechanism_commit": "dfa61a82a5277e8e1a0f3811c9d462d27da6c00d",
+  "verification_contract_sha256": "9c17cdb4f22a7b0a6386b4dd5de034145df9512baa12573e3ea0bc62a90c5cbc",
+  "result": "pass",
+  "commands": [
+    {
+      "id": "test-agent-governance-check",
+      "exit_code": 0
+    },
+    {
+      "id": "invoke-powershell-static",
+      "exit_code": 0
+    }
+  ]
+}
