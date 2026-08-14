@@ -499,6 +499,7 @@ try {
         'harden-cad-extension-cache' = @{ Path = 'bim-streaming-server/scripts/harden-cad-extension-cache.py'; Invocation = @('python', 'bim-streaming-server/scripts/harden-cad-extension-cache.py', '--repo-root', 'bim-streaming-server') }
         'invoke-powershell-static' = @{ Path = 'scripts/tests/invoke-powershell-static.ps1'; Invocation = @($pwshPrefix + 'scripts/tests/invoke-powershell-static.ps1') }
         'test-agent-governance-check' = @{ Path = 'scripts/tests/test-agent-governance-check.ps1'; Invocation = @($pwshPrefix + 'scripts/tests/test-agent-governance-check.ps1') }
+        'test-verification-plan' = @{ Path = 'scripts/tests/test-verification-plan.mjs'; Invocation = @('node', '--test', 'scripts/tests/test-verification-plan.mjs', 'scripts/tests/test-verification-command-policy.mjs', 'scripts/tests/test-verification-runner.mjs') }
         'test-base-gate-capability' = @{ Path = 'scripts/tests/test-base-gate-capability.ps1'; Invocation = @($pwshPrefix + 'scripts/tests/test-base-gate-capability.ps1') }
         'test-deploy-governance-static' = @{ Path = 'scripts/tests/test-deploy-governance-static.ps1'; Invocation = @($pwshPrefix + 'scripts/tests/test-deploy-governance-static.ps1') }
         'test-deploy-target-registry' = @{ Path = 'scripts/tests/test-deploy-target-registry.ps1'; Invocation = @($pwshPrefix + 'scripts/tests/test-deploy-target-registry.ps1') }

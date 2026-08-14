@@ -3,6 +3,8 @@
 > **Status: deferred 2026-07-21**（**使用者已採納**／NOW 軌0；原 #364 deferred-proposed 升格）。不計入 active WIP；動前端 visual full gate 前再 thaw。A4 切片允許 `Full completion claimed: no` 而不強制本 change 全線接通。重啟時須重跑 `npx openspec validate align-frontend-design-system-reference --strict`。
 
 > **Historical correction 2026-07-24**：本 change 曾被誤作 completed archive；現依「deferred 留在 `openspec/changes/`」規則恢復原 change id。它仍是 frozen、non-canonical、non-owner，**不得直接 apply 或 coding**。解凍前 MUST 先與 `migrate-console-to-hifi-design` 建立逐 requirement disposition／successor crosswalk，裁決 HTML-only authority、repo 外唯讀 origin、mixed-change fail-closed 與 rebaseline ownership 的互斥設計；沒有 crosswalk 不得修改 production frontend、manifest、goldens 或 branch-protection gate。
+>
+> **Crosswalk 2026-08-14**：四軸對帳已寫入 `successor-crosswalk-migrate-console-to-hifi-design.md`。這份文件解除的是「互斥未裁決」阻擋，**不是 thaw**。本 change 維持 `Status: deferred`／frozen／non-canonical／non-owner。`specs/documentation-source-of-truth` 內已刪七檔所有權模型標 `obsolete`。軸 4 程式 successor 是 PR #535（issue #508），不在本 change apply。解凍仍須使用者本輪明確指令，並另開 successor change；不得直接 apply 本目錄舊 tasks。
 
 ## Why
 
