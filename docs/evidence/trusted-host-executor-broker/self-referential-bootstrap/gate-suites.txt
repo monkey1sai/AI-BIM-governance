@@ -1,7 +1,8 @@
 stack_kind=self_referential_bootstrap
 pr=527
-baseline=c5d423cb5e6b3f8b80e50efe2acc46d0c3bae736
-implementation_commit=0edd3a5147f4ff578b50cbc2c58aeec4921cdf51
+baseline=b7ec84bb081d4f7630d0945869e7875b785e42d3
+implementation_commit=30ba74fb22541d98c88585a2f63cbabc7da1d598
+observed_at=2026-08-14T20:28:00Z
 
 PASS test-trusted-host-merge
 command=node --test scripts/tests/test-trusted-host-merge.mjs scripts/tests/test-trusted-host-merge-runtime.mjs
@@ -45,4 +46,4 @@ result=passed
 
 ADVISORY gitnexus-detect-changes
 command=gitnexus detect-changes --scope compare --base-ref origin/main -r C:\Repos\active\iot\AI-BIM-governance
-result=the main-checkout-bound index reported no sibling-worktree changes; treated as unavailable advisory evidence, not a graph verification pass
+result=reported 38 files, 3 symbols, 0 affected processes, and low risk from stale indexed commit 31b75df while current main was b7ec84b; treated as advisory evidence, not a graph verification pass
