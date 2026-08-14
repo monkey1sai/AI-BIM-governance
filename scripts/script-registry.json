@@ -204,6 +204,12 @@
       "role": "measurement-harness",
       "owner": "scripts",
       "notes": "openspec/changes/gpu-session-baseline-and-idle-reclaim task 1.1: read-only GPU session baseline measurement (nvidia-smi + coordinator health probe + environment fingerprint). Not deploy.ps1/verify-all.ps1 (it measures, it does not deploy or gate); not scripts/lib (it is the operator-invoked CLI entry, repeatable by design); not scripts/tests or tests/e2e (it is not a pass/fail check, it produces a JSON report). Core logic lives in scripts/lib/measure-session-baseline.ps1; unit/fail-safe/registry tests in scripts/tests/test-measure-session-baseline.ps1. Never opens a WebRTC session or starts/stops a service."
+    },
+    {
+      "path": "scripts/validate-session-baseline-report.ps1",
+      "role": "validation-gate",
+      "owner": "scripts",
+      "notes": "openspec/changes/gpu-session-baseline-and-idle-reclaim task 1.2: downstream reference gate for gpu-session-baseline-report/v1 files. Exit 0 only when every required environment-fingerprint field (gpu_model, gpu_driver_version, kit_version, fixture_hash, fixture_size_bytes) is present and measured and the completeness claim is consistent; otherwise exit 1 with a structured gpu-session-baseline-report-validation/v1 verdict on stdout. SLO formalization and admission parameter loaders SHALL call this (or Test-SessionBaselineReportForDownstream in scripts/lib/measure-session-baseline.ps1) before referencing any baseline report. Fail-closed: unreadable or unparseable reports are refusals, never passes. Not a measurement harness (it never runs nvidia-smi or probes the coordinator); tests in scripts/tests/test-measure-session-baseline.ps1."
     }
   ]
 }
