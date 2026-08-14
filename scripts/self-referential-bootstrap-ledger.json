@@ -234,7 +234,7 @@
     },
     {
       "id": "gh-auth-sandbox-routing",
-      "status": "open",
+      "status": "closed",
       "pr": 544,
       "opened_at": "2026-08-14T09:14:56Z",
       "reason": "this PR changes the required agent-governance adjudication suite, so the pre-change gate cannot prove that the new gh authentication and sandbox TLS routing markers remain enforced after merge; only a post-merge run from main can verify the changed mechanism against itself",
@@ -254,7 +254,14 @@
         "docs/evidence/gh-auth-sandbox-routing/self-referential-bootstrap/README.md",
         "docs/evidence/gh-auth-sandbox-routing/self-referential-bootstrap/verification.txt"
       ],
-      "fixpoint": null
+      "fixpoint": {
+        "reverified_at": "2026-08-14T10:19:56Z",
+        "mechanism_commit": "dfa61a82a5277e8e1a0f3811c9d462d27da6c00d",
+        "evidence_refs": [
+          "docs/evidence/gh-auth-sandbox-routing/fixpoint/attestation.json",
+          "docs/evidence/gh-auth-sandbox-routing/fixpoint/summary.md"
+        ]
+      }
     }
   ]
 }
