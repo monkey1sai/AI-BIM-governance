@@ -199,7 +199,7 @@
     },
     {
       "id": "evidence-harness-scope-clarification",
-      "status": "open",
+      "status": "closed",
       "pr": 521,
       "opened_at": "2026-08-12T05:20:43Z",
       "reason": "本 PR 修改 gate 契約本文，增補 §2.1 範圍界定與升級規則、§2.2 regression-repair lane，以及 §2.2.1 linked-successor chain transition（修復必須跨出 active open chain immutable surface union 時，以唯一線性 successor chain、leaf attachment、無重複 path ownership 與 oldest-root-first 窄 closure 避免 repair/open-debt/fixpoint 再度互鎖），並同步修改 gate library 與 adversarial suite。契約文字與裁決邏輯皆由 base-pinned 裁決者按 base 版本強制執行，merge 前不存在任何能以變更後條文或變更後放行條件裁決 PR 的正規機制；僅能於 merge 後在 main 重跑 gate 套件，驗證 classifier、repair、successor-chain 與 closure 判定一致。",
@@ -223,7 +223,14 @@
         "docs/evidence/evidence-harness-scope-clarification/self-referential-bootstrap/README.md",
         "docs/evidence/evidence-harness-scope-clarification/self-referential-bootstrap/gate-suites.txt"
       ],
-      "fixpoint": null
+      "fixpoint": {
+        "reverified_at": "2026-08-14T03:43:33Z",
+        "mechanism_commit": "89e9b61c32eea4bd3eb6990588430416b66e9181",
+        "evidence_refs": [
+          "docs/evidence/evidence-harness-scope-clarification/fixpoint/attestation.json",
+          "docs/evidence/evidence-harness-scope-clarification/fixpoint/gate-suites-on-main.txt"
+        ]
+      }
     }
   ]
 }

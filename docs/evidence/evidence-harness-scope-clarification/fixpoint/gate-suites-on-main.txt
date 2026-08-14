@@ -1,0 +1,23 @@
+# fixpoint re-verification — post-merge canonical mechanism
+mechanism_commit=89e9b61c32eea4bd3eb6990588430416b66e9181 (squash of PR #521 on origin/main)
+run_tree=89e9b61c32eea4bd3eb6990588430416b66e9181 (equals the mechanism commit)
+run_at=2026-08-14T03:38:19Z
+
+## test-self-referential-bootstrap — pwsh -NoProfile -NonInteractive -File scripts/tests/test-self-referential-bootstrap.ps1
+[test-self-referential-bootstrap] all assertions passed
+exit_code=0 duration_s=31
+
+## test-pr-body-evidence — pwsh -NoProfile -NonInteractive -File scripts/tests/test-pr-body-evidence.ps1
+[test-pr-body-evidence] all assertions passed
+exit_code=0 duration_s=12
+
+## test-agent-governance-check — pwsh -NoProfile -NonInteractive -File scripts/tests/test-agent-governance-check.ps1
+# skipped 0
+# todo 0
+# duration_ms 4727.6179
+[test-agent-governance-check] all assertions passed
+exit_code=0 duration_s=125
+
+## invoke-powershell-static — pwsh -NoProfile -NonInteractive -File scripts/tests/invoke-powershell-static.ps1
+[invoke-powershell-static] passed
+exit_code=0 duration_s=9
