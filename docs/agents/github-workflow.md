@@ -25,6 +25,36 @@ Lane F/B 不使用 Superpowers，也不自動 push、開 PR 或 merge。當使�
 - ❌ 用 GitNexus 當產品設計依據（2D 設計來自 approved pinned design reference，行為來自 TARGET/contracts，非 call graph）。
 - ❌ 用 browser tool 改 backend symbol 而跳過 Lane G/S 的 GitNexus gate。
 
+## `gh` CLI 認證與 sandbox 網路錯誤分流
+
+`gh` 的安裝、credential 儲存與命令執行邊界是三件不同的事。同一個 Windows 使用者下，Codex、Claude、Grok 通常共用系統 credential store 中的 `gh` 登入；不得把 token 當成需要為每個 AI 重複安裝的元件。不同 AI、terminal、sandbox、container 或長駐 process 仍可能繼承不同的 PATH、Windows identity、`GH_CONFIG_DIR` 或環境變數，因此認證檢查必須在**實際執行 GitHub 命令的同一個 process boundary**內完成。
+
+在重新安裝 `gh`、執行 `gh auth login/logout` 或 rotation 前，先跑最小唯讀 preflight：
+
+```powershell
+Get-Command gh -All
+gh --version
+gh auth status --active --hostname github.com
+gh api user --jq .login
+```
+
+不得執行或記錄 `gh auth token`、`gh auth status --show-token`，也不得回印 token、proxy URL、CA bundle 內容或其他 secret。需要檢查 override 時，只回報下列變數名稱在 process / user / machine 層是否存在，不得顯示值：`GH_TOKEN`、`GITHUB_TOKEN`、`GH_ENTERPRISE_TOKEN`、`GITHUB_ENTERPRISE_TOKEN`、`GH_HOST`、`GH_CONFIG_DIR`、`XDG_CONFIG_HOME`。其中 `GH_TOKEN` / `GITHUB_TOKEN` 會優先於 credential store；launcher 變更後必須重啟長駐 AI process，避免沿用 stale environment。
+
+錯誤必須依下表分流，不得只看 `gh auth status` 的 exit code 或 `token invalid` 摘要：
+
+| 觀察結果 | 分類與下一步 |
+|---|---|
+| 找不到 `gh` 或解析到非預期路徑 | PATH / installation 問題；先確認唯一預期的 executable，不得先重建 token |
+| `x509`、certificate、proxy、DNS、timeout、connection failure | TLS / network / sandbox 問題；以相同唯讀 API probe 在 owner-approved sandbox 外邊界交叉確認，或修正受管 proxy / CA trust |
+| sandbox 內失敗、sandbox 外 `gh api user` 成功 | credential 有效；固定核准的執行邊界，不得 logout、login、reinstall 或 rotation |
+| sandbox 外仍為 HTTP `401 Bad credentials` | 才可判定 credential 失效，依 owner-approved browser flow 重新登入 |
+| HTTP `403` / `404` | account、repo permission、token scope 或 organization SSO 問題；不得用更廣的 classic PAT 猜測修復 |
+| `git` 成功但 `gh pr` / `gh api` 失敗 | 分開檢查 Git SSH/HTTPS transport 與 GitHub API OAuth；一方成功不代表另一方有效 |
+
+`gh auth status` 會向 GitHub 驗證 credential；在某些受限網路邊界，TLS / proxy 失敗可能被上層摘要或 agent 誤報成 token invalid。結論必須以原始 API / transport error 與 sandbox 外對照為準；只有 owner-approved 非 sandbox probe 也得到 HTTP 401，才允許宣稱 token 失效。
+
+禁止以降低安全性繞過問題：不得設定 `GIT_SSL_NO_VERIFY=1`、停用 TLS、安裝來源不明的 root CA、使用 `--insecure-storage`、plaintext `credential.helper store`、把 PAT 寫入 remote URL / command line / log，或要求使用者在對話中貼 token。若可信 proxy / CA 尚未配置，狀態必須標為 `HELD: TLS trust unresolved`，改用核准的 sandbox 外 `gh` 執行邊界或交由 owner 修正信任鏈。
+
 ## 開分支前
 
 - 從最新 `main` 建立功能 branch（例：`feat/<slug>`、`fix/<slug>`、`chore/<slug>`）；Lane G/S 或 checkout 不乾淨時用 dedicated worktree。
