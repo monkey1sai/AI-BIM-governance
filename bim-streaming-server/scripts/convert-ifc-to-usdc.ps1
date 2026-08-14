@@ -631,6 +631,110 @@ function Stop-ConverterProcessTree {
     }
 }
 
+function Start-ConverterAsyncLogCapture {
+    param(
+        [Parameter(Mandatory = $true)]
+        [System.Diagnostics.Process] $Process,
+
+        [Parameter(Mandatory = $true)]
+        [System.IO.TextWriter] $StdoutWriter,
+
+        [Parameter(Mandatory = $true)]
+        [System.IO.TextWriter] $StderrWriter
+    )
+
+    $stdoutEndOfStream = [System.Threading.ManualResetEventSlim]::new($false)
+    $stderrEndOfStream = [System.Threading.ManualResetEventSlim]::new($false)
+    $stdoutEvent = $null
+    $stderrEvent = $null
+
+    try {
+        $stdoutEvent = Register-ObjectEvent -InputObject $Process -EventName OutputDataReceived `
+            -MessageData ([pscustomobject]@{ Writer = $StdoutWriter; EndOfStream = $stdoutEndOfStream }) -Action {
+                if ($null -eq $EventArgs.Data) {
+                    $Event.MessageData.EndOfStream.Set()
+                } else {
+                    $Event.MessageData.Writer.WriteLine($EventArgs.Data)
+                }
+            }
+        $stderrEvent = Register-ObjectEvent -InputObject $Process -EventName ErrorDataReceived `
+            -MessageData ([pscustomobject]@{ Writer = $StderrWriter; EndOfStream = $stderrEndOfStream }) -Action {
+                if ($null -eq $EventArgs.Data) {
+                    $Event.MessageData.EndOfStream.Set()
+                } else {
+                    $Event.MessageData.Writer.WriteLine($EventArgs.Data)
+                }
+            }
+        $Process.BeginOutputReadLine()
+        $Process.BeginErrorReadLine()
+
+        return [pscustomobject]@{
+            StdoutEvent       = $stdoutEvent
+            StderrEvent       = $stderrEvent
+            StdoutEndOfStream = $stdoutEndOfStream
+            StderrEndOfStream = $stderrEndOfStream
+            StdoutWriter      = $StdoutWriter
+            StderrWriter      = $StderrWriter
+        }
+    }
+    catch {
+        foreach ($subscription in @($stdoutEvent, $stderrEvent)) {
+            if ($null -eq $subscription) { continue }
+            Unregister-Event -SourceIdentifier $subscription.Name -ErrorAction SilentlyContinue
+            Remove-Job -Job $subscription -Force -ErrorAction SilentlyContinue
+        }
+        $stdoutEndOfStream.Dispose()
+        $stderrEndOfStream.Dispose()
+        throw
+    }
+}
+
+function Wait-ConverterAsyncLogCapture {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object] $Capture,
+
+        [ValidateRange(0, [int]::MaxValue)]
+        [int] $TimeoutMilliseconds = 5000
+    )
+
+    # Wait on the EOF notifications emitted by DataReceived, not on Process
+    # exit: WaitForExit(Int32) can return while PowerShell still has queued
+    # output events. One stopwatch supplies a single aggregate deadline for
+    # both streams rather than allowing each stream its own full timeout.
+    $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+    foreach ($signal in @($Capture.StdoutEndOfStream, $Capture.StderrEndOfStream)) {
+        $remaining = [Math]::Max(0, $TimeoutMilliseconds - [int]$stopwatch.ElapsedMilliseconds)
+        if (-not $signal.Wait($remaining)) {
+            return $false
+        }
+    }
+    return $true
+}
+
+function Stop-ConverterAsyncLogCapture {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object] $Capture
+    )
+
+    # Stop event jobs before closing their writers. Otherwise an already-queued
+    # callback can race the cleanup and write to a disposed StreamWriter.
+    foreach ($subscription in @($Capture.StdoutEvent, $Capture.StderrEvent)) {
+        if ($null -eq $subscription) { continue }
+        try {
+            Unregister-Event -SourceIdentifier $subscription.Name -ErrorAction SilentlyContinue
+        } catch { }
+        try {
+            Remove-Job -Job $subscription -Force -ErrorAction SilentlyContinue
+        } catch { }
+    }
+    try { $Capture.StdoutWriter.Close() } catch { }
+    try { $Capture.StderrWriter.Close() } catch { }
+    try { $Capture.StdoutEndOfStream.Dispose() } catch { }
+    try { $Capture.StderrEndOfStream.Dispose() } catch { }
+}
+
 function Invoke-KitConversion {
     param(
         [Parameter(Mandatory = $true)]
@@ -719,16 +823,8 @@ function Invoke-KitConversion {
 
     # async file redirect — avoids classic sync ReadToEnd + WaitForExit deadlock
     # when Kit subprocess output volume fills the OS pipe buffer (large IFC 可達 MB).
-    $stdoutEvent = Register-ObjectEvent -InputObject $process -EventName OutputDataReceived `
-        -MessageData $stdoutWriter -Action {
-            if ($EventArgs.Data) { $Event.MessageData.WriteLine($EventArgs.Data) }
-        }
-    $stderrEvent = Register-ObjectEvent -InputObject $process -EventName ErrorDataReceived `
-        -MessageData $stderrWriter -Action {
-            if ($EventArgs.Data) { $Event.MessageData.WriteLine($EventArgs.Data) }
-        }
-    $process.BeginOutputReadLine()
-    $process.BeginErrorReadLine()
+    $logCapture = Start-ConverterAsyncLogCapture -Process $process `
+        -StdoutWriter $stdoutWriter -StderrWriter $stderrWriter
 
     $survivingPids = @()
     $containmentFixedPoint = $true
@@ -748,25 +844,26 @@ function Invoke-KitConversion {
         $exitCode = if ($timedOut) { -1 } else { $process.ExitCode }
     }
     finally {
-        # 二次 WaitForExit 確保所有 async events drain(per MS .NET docs)
-        # #509 review: when containment FAILED the tree still holds live
-        # processes owning the stdout/stderr write ends, so an unbounded
-        # WaitForExit() never sees EOF and turns an honestly-reported timeout
-        # into a hang. Unbounded drain is only allowed once no survivor was
-        # observed; with survivors, take a bounded 5s drain and accept losing
-        # a few trailing log lines rather than wedging the whole converter.
+        # #509/#510: process-tree enumeration cannot prove that every inherited
+        # stdout/stderr write handle reached EOF. Wait for the actual async EOF
+        # notifications with one aggregate 5s deadline. A hidden/reparented
+        # descendant may keep them pending, but normal completion still drains
+        # every queued log event before cleanup.
+        $logDrainCompleted = $false
         try {
-            if ($survivingPids.Count -gt 0) {
-                [void]$process.WaitForExit(5000)
-            } else {
-                $process.WaitForExit()
-            }
-        } catch { }
-        Unregister-Event -SourceIdentifier $stdoutEvent.Name -ErrorAction SilentlyContinue
-        Unregister-Event -SourceIdentifier $stderrEvent.Name -ErrorAction SilentlyContinue
-        $stdoutWriter.Close()
-        $stderrWriter.Close()
-        $process.Dispose()
+            $logDrainCompleted = Wait-ConverterAsyncLogCapture -Capture $logCapture -TimeoutMilliseconds 5000
+        } catch {
+            Write-Warning "[ifc-convert] async Kit log drain failed: $($_.Exception.Message)"
+        }
+        if (-not $logDrainCompleted) {
+            Write-Warning '[ifc-convert] async Kit log drain exceeded 5000ms; trailing stdout/stderr may be incomplete.'
+        }
+        try {
+            Stop-ConverterAsyncLogCapture -Capture $logCapture
+        }
+        finally {
+            $process.Dispose()
+        }
     }
 
     $outputCreated = Test-Path -LiteralPath $Item.OutputPath -PathType Leaf
