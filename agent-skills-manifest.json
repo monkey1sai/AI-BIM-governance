@@ -112,6 +112,33 @@
       }
     },
     {
+      "name": "verify-minio-real-data-e2e",
+      "locations": {
+        "claude": ".claude/skills/verify-minio-real-data-e2e",
+        "codex": ".codex/skills/verify-minio-real-data-e2e"
+      },
+      "sync": {
+        "mode": "mirror",
+        "source": "claude",
+        "targets": [
+          "codex"
+        ]
+      },
+      "provenance": {
+        "kind": "repo-authored",
+        "source": "AI-BIM-governance",
+        "notes": "Public-safe, read-only real-MinIO acceptance procedure. It intentionally contains no historical production snapshot or customer/model metadata. Claude is canonical and Codex is a byte-identical mirror."
+      },
+      "integrity": {
+        "format": "agent-skill-tree/v2",
+        "algorithm": "sha256",
+        "trees": {
+          "claude": "818e9b86c630ba0a9481d8824e52d64ad5e2b141fe6f069e4804d4a60dfccaeb",
+          "codex": "818e9b86c630ba0a9481d8824e52d64ad5e2b141fe6f069e4804d4a60dfccaeb"
+        }
+      }
+    },
+    {
       "name": "figma",
       "locations": {
         "claude": ".claude/skills/figma",
