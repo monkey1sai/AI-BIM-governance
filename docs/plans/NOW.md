@@ -66,7 +66,7 @@
 
 2026-07-24 historical correction：deferred 不再放 completed archive；下列 change 均恢復原 id、保留 `Status: deferred`，未落地 delta 仍不構成 canonical authority。`minio-folderview-and-baseline-disclosure` 已於 2026-07-29 對帳 7/7 task 與 archive 證據後封存：
 
-- `openspec/changes/align-frontend-design-system-reference/`（2026-08-14 已與 migrate 完成 successor crosswalk，仍 deferred／frozen；**不 thaw**。正本見 `successor-crosswalk-migrate-console-to-hifi-design.md`）
+- `openspec/changes/align-frontend-design-system-reference/`（與 migrate 的互斥需求完成 crosswalk 前不得 thaw）
 - `openspec/changes/rvt-ifc-usdc-lineage/`（1/48；切片與 shared ownership 調和前不得 coding）
 
 Archive lexical audit 在本次恢復後仍有 44 個歷史目錄、696 個 unchecked checkbox；三層交叉裁決未把它們判為獨立、可繼續執行的 unfinished owner（主要是已落地但 task bookkeeping 過時、已被 successor 承接，或已退役 service 的歷史工作），因此不批次搬移，也不改寫 archive 歷史。這批屬 legacy audit debt；新增 lifecycle gate 只對本次之後的新 archive fail closed，禁止再產生 unchecked/deferred archive。
@@ -85,7 +85,7 @@ Archive lexical audit 在本次恢復後仍有 44 個歷史目錄、696 個 unch
 | `minio-watch-key-structure` | ✅ archived `2026-07-21-minio-watch-key-structure`（`--skip-specs`；主線 scenario 已在 main） | 選 A deferred-evidence | #237 |
 | `cross-service-structured-log-baseline` | deferred、frozen（92/93；缺 fresh final 4-service runtime/P4 evidence） | 由 `cross-service-observability` 明確重啟後只補該 evidence；不重套 pipeline/code/canonical spec | #126 |
 | `minio-folderview-and-baseline-disclosure` | ✅ archived `2026-07-29-minio-folderview-and-baseline-disclosure`（7/7 closeout reconciled） | done；archive proposal/tasks 為證據 | #265 |
-| `align-frontend-design-system-reference` | ↩ restored deferred、frozen；2026-08-14 crosswalk 已落地 | 維持 frozen；禁止 apply／平行 design coding；軸 4 程式走 #535 | #363 |
+| `align-frontend-design-system-reference` | ↩ restored deferred、frozen | 先與 migrate 做 requirement/successor crosswalk；禁止平行 design coding | #363 |
 | `rvt-ifc-usdc-lineage` | ↩ restored deferred、frozen（1/48） | 先切片與調和 shared ownership；禁止直接 apply | #354 |
 
 ### minio-watch task 5
@@ -222,6 +222,5 @@ Done: 通過 DoD 所列測試；回報 verified / inferences / risks
 | 2026-07-24 | 使用者改採嚴格 terminal rule：archive 僅限 completed／完整 successor；三個 7/22 deferred change 與 structured-log evidence 缺口 historical correction 恢復原 id，維持 frozen/non-owner。 |
 | 2026-07-29 | `minio-folderview-and-baseline-disclosure` 完成 frozen closeout reconciliation：7/7 tasks 已有 terminal disposition，更新 lifecycle ledger 與 NOW projection 後 archive。 |
 | 2026-07-24 | 使用者將 active OpenSpec WIP 上限由 2 調整為 6；新增額度不自動 thaw deferred/frozen change。 |
-| 2026-08-14 | `align-frontend-design-system-reference` × `migrate-console-to-hifi-design` 四軸 successor crosswalk 落地；align 維持 deferred。軸 4 程式 successor＝#535。 |
 | 2026-07-29 | design gate 時間線收斂：`13033cb` 紅（`#a4` route IA 遷移）→ **#429 就地重核 A4 golden 轉綠**（產品面快照，混合權威記 D-15）；「rebaseline 關不掉」的早期斷言被 #429 實證推翻並在 proposal 誠實更正。三層對抗驗證＋重跑輪（X1/X2/X3）完成：缺口 D-1～D-17、Q1–Q8 依使用者委任由 AI 代答（標 AI-裁決、可推翻），全記於 `isolated-branch-stack-browser-e2e` proposal。 |
 | 2026-07-23 | #382／#383／#386 merged；#386 先收斂 scoped A4 visible caller compatibility，S4-B coordinator session search proxy、安全 transport、host-kit dual-namespace seam 與 cold-scan timeout regression 由 PR #384 交付（狀態以 GitHub machine truth 為準），S4-C/D 仍 pending。 |
