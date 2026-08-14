@@ -315,7 +315,7 @@
     },
     {
       "id": "agent-governance-scope-routing",
-      "status": "open",
+      "status": "closed",
       "pr": 543,
       "opened_at": "2026-08-14T09:06:34Z",
       "reason": "the required Agent Governance workflow and verification manifest decide whether other pull requests satisfy the protected context; before this branch merges, only the base workflow can run, so it cannot prove the new scope classifier, explicit no-op success, or duplicate-job removal",
@@ -342,7 +342,14 @@
         "docs/evidence/agent-governance-scope-routing/self-referential-bootstrap/README.md",
         "docs/evidence/agent-governance-scope-routing/self-referential-bootstrap/verification.txt"
       ],
-      "fixpoint": null
+      "fixpoint": {
+        "reverified_at": "2026-08-14T11:41:01Z",
+        "mechanism_commit": "1eec958c727099e06cfb877dfaa2d4103bd103ea",
+        "evidence_refs": [
+          "docs/evidence/agent-governance-scope-routing/fixpoint/attestation.json",
+          "docs/evidence/agent-governance-scope-routing/fixpoint/summary.md"
+        ]
+      }
     }
   ]
 }
