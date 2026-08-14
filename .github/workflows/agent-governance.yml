@@ -2,6 +2,7 @@ name: Agent Governance
 
 on:
   pull_request:
+    types: [opened, edited, synchronize, reopened, ready_for_review]
   workflow_dispatch:
 
 permissions:
@@ -12,8 +13,50 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  agent-governance:
-    name: ${{ github.event_name == 'pull_request' && 'agent-governance' || 'agent-governance-diagnostic' }}
+  scope:
+    name: agent-governance scope
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      agent_governance: ${{ steps.plan.outputs.agent_governance }}
+      plan_result: ${{ steps.plan.outputs.plan_result }}
+      plan_sha256: ${{ steps.plan.outputs.plan_sha256 }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Setup pinned Node.js for scope classification
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '20.20.2'
+
+      - name: Classify Agent Governance scope
+        id: plan
+        shell: bash
+        run: |
+          set -euo pipefail
+          planner_args=(
+            --manifest scripts/verification-manifest.json
+            --json-out verification-plan.json
+            --github-output "$GITHUB_OUTPUT"
+          )
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            base_sha='${{ github.event.pull_request.base.sha }}'
+            head_sha='${{ github.event.pull_request.head.sha }}'
+            git -c core.quotepath=false diff --no-renames --name-only -z "$base_sha...$head_sha" > agent-governance-changed-paths.bin
+            planner_args+=(--changed-paths0-file agent-governance-changed-paths.bin --base "$base_sha" --subject "$head_sha")
+          else
+            planner_args+=(--subject '${{ github.sha }}' --full)
+          fi
+          node scripts/lib/verification-plan.mjs "${planner_args[@]}"
+
+  suite:
+    name: agent-governance suite
+    needs: scope
+    if: needs.scope.result == 'success' && needs.scope.outputs.agent_governance == 'true'
     runs-on: windows-latest
     timeout-minutes: 30
     steps:
@@ -135,3 +178,37 @@ jobs:
       - name: Run PNG pre-decode bound tests
         shell: pwsh
         run: pwsh -NoProfile -NonInteractive -Command "node --test scripts/tests/test-png-preflight.mjs"
+
+  agent-governance:
+    name: ${{ github.event_name == 'pull_request' && 'agent-governance' || 'agent-governance-diagnostic' }}
+    needs:
+      - scope
+      - suite
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Publish required Agent Governance result
+        shell: pwsh
+        env:
+          SCOPE_RESULT: ${{ needs.scope.result }}
+          AGENT_GOVERNANCE_REQUIRED: ${{ needs.scope.outputs.agent_governance }}
+          SUITE_RESULT: ${{ needs.suite.result }}
+        run: |
+          $scopeResult = $env:SCOPE_RESULT
+          $required = $env:AGENT_GOVERNANCE_REQUIRED
+          $suiteResult = $env:SUITE_RESULT
+          if ($scopeResult -ne 'success') {
+            throw 'agent-governance scope classifier did not succeed; refusing a skipped-success required check.'
+          }
+          if (@('true', 'false') -cnotcontains $required) {
+            throw 'agent-governance scope classifier did not publish a closed required/not-required decision.'
+          }
+          if ($required -eq 'false') {
+            Write-Host 'agent-governance not required for this exact path set; publishing explicit no-op success.'
+            exit 0
+          }
+          if ($suiteResult -ne 'success') {
+            throw "agent-governance suite did not succeed (result=$suiteResult)."
+          }
+          Write-Host 'agent-governance suite passed for this exact path set.'
