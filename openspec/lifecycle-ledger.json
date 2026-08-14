@@ -1252,7 +1252,7 @@
         "scripts/tests/test-measure-session-baseline.ps1",
         "scripts/validate-session-baseline-report.ps1"
       ],
-      "subject_commit": "256334c43e4a83c40d692ee7bdbca6592149f023",
+      "subject_commit": "b74afc09edd3031b4bbda8a3b1d737b9aa0441f3",
       "archive_debt": null
     },
     {
