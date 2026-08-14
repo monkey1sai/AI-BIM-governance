@@ -373,7 +373,7 @@
         "openspec/changes/align-frontend-design-system-reference/tasks.md",
         "openspec/changes/align-frontend-design-system-reference/successor-crosswalk-migrate-console-to-hifi-design.md"
       ],
-      "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
+      "subject_commit": "5e176a46ddb63f7453a195feed2c1edc6cb1e47a",
       "archive_debt": null
     },
     {
@@ -1526,7 +1526,7 @@
         "artifacts/2026-08-12-hifi-consumer-spec-scenario-audit.md",
         "openspec/changes/align-frontend-design-system-reference/successor-crosswalk-migrate-console-to-hifi-design.md"
       ],
-      "subject_commit": "4187102b23c2746eacd6c829cf79ee934722bc00",
+      "subject_commit": "5e176a46ddb63f7453a195feed2c1edc6cb1e47a",
       "archive_debt": null
     },
     {
