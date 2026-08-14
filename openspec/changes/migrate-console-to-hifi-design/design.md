@@ -53,7 +53,7 @@
 
 **決策**：`align-frontend-design-system-reference` 已於 2026-07-24 historical correction 恢復為 `Status: deferred` 的 frozen change，其未完成的 tasks 2.4–2.8（branch-protection required check、11 個語意案例 approved state variants、獨立 review authority、runner/font fingerprint pin）不是 active 前置，也不是 canonical implementation authority。2026-08-14 四軸 crosswalk 已落地（`../align-frontend-design-system-reference/successor-crosswalk-migrate-console-to-hifi-design.md`）：本 change 可重用現有驗證工具；align 維持 deferred。產品面 golden 保全由 PR #535 承接，不在本 change 改 capture。禁止平行再開第三個 design-authority change。
 
-**理由**：archive 記錄的 pixel+semantic 雙閘**機制**（manifest schema、verify script、capture/rebaseline 工具、Playwright spec 結構）與被鎖定的視覺內容正交；既有工具對顏色系統無感知，換皮後直接用同一套工具重新 rebaseline 即可。archive 內容保留作歷史脈絡，不提供現行工作計畫或權威。
+**理由**：archive 記錄的 pixel+semantic 雙閘**機制**（manifest schema、verify script、capture/rebaseline 工具、Playwright spec 結構）與被鎖定的視覺內容正交；既有工具對顏色系統無感知，換皮後可重用同一套工具。但 `canonical_product_surface`（目前僅 `workspace.a4.default`）必須保全 #429 pinned digest，不得用 origin mockup 全量 13-screen generic rebaseline 覆寫。產品面保全由 PR #535 修 capture；本 change 7.1 在 #535 merge 前維持 STOP。archive 內容保留作歷史脈絡，不提供現行工作計畫或權威。
 
 ### D4：品牌色與主題移除記錄於 `docs/plans/AI-BIM 前後端設計文件.dc.html` §08，不僅記錄於 OpenSpec
 
@@ -63,7 +63,7 @@
 
 ## Risks / Trade-offs
 
-- **[Risk] 26 個既有 golden baseline 全數作廢** → **Mitigation**：這是預期且必要的代價（視覺內容真的改變），已規劃遷移完成後立即用既有 `capture-design-system-reference.mjs --rebaseline --confirm-rebaseline` 重新鎖定，不新建流程，降低執行風險。
+- **[Risk] 26 個既有 golden baseline 全數作廢** → **Mitigation**：origin 投影屏可在視覺落地後用既有 capture 重鎖；`workspace.a4.default` 必須保全 #429 pinned SHA，待 #535 修 provenance 後才准產品面重拍。禁止 13-screen generic `--rebaseline` 覆寫產品面。不新建流程。
 - **[Risk] `LegacyEdgeConsole` 覆蓋的功能面（A1 rule-run、A2 apply-overlay、A3 federation、Review Room 等）在換皮過程中意外破壞既有行為** → **Mitigation**：`console-design-token-authority` spec 明文要求所有既有 SHALL 條款遷移後逐字成立；實作階段每個遷移頁面 SHALL 保留其既有 browser E2E 證據案例，只允許樣式相關的截圖差異。
 - **[Risk] `unified-governance-console` 與 `edge-console-operator-frontend` 兩份既有 spec 本身可能已過時或內部不一致，遷移時若程式碼行為與 spec 文字有落差，容易在不知情下「順手」改到行為** → **Mitigation**：實作前務必先讀這兩份 spec 的相關 Requirement 段落與對應真實程式碼比對，任何行為層面的不確定 SHALL 停下來澄清而非假設，不在本 change 順帶修正 spec 文字本體。
 - **[Risk] `ai-bim-governance.css` 本身可能未覆蓋 `edge-console.css` 217 個 token 涵蓋的所有語意（例如某些 UI 狀態色、diff 專用色）** → **Mitigation**：實作階段 tasks.md SHALL 包含一項「逐一比對 --ec-* 與 --ab-* 語意覆蓋率，缺口另補 --ab-* token（而非退回 --ec-*）」的任務，缺口不應阻塞整體遷移但需誠實記錄。
@@ -74,7 +74,7 @@
 2. 全部遷移完成、`--ec-` 使用量歸零後，retire `edge-console.css`（移至 `deprecated/` 或直接刪除，依實作階段判斷）。
 3. 移除 `EdgeConsole.tsx` 主題切換邏輯。
 4. 更新 `docs/plans/AI-BIM 前後端設計文件.dc.html` §08。
-5. 執行 `capture-design-system-reference.mjs --rebaseline --confirm-rebaseline` + `verify-design-system-reference.ps1 -VerifyOrigin`。
+5. 待 #535 後：只重拍非 `canonical_product_surface` 屏，或以零覆寫方式 verify 產品面 pinned digest + `verify-design-system-reference.ps1 -VerifyOrigin`。#535 前禁止 generic 13-screen `--rebaseline`。
 6. 若中途需要 rollback：`edge-console.css` 與 `--ab-*` 遷移可逐頁獨立 revert（非 atomic 一次性切換），因兩套 token 命名空間不重疊，可暫時並存於未完成遷移的過渡期而不互相污染。
 
 ## Open Questions
