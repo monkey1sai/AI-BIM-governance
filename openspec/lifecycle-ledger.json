@@ -222,7 +222,7 @@
         "openspec/changes/a4-semantic-search-model-qa/proposal.md",
         "openspec/changes/a4-semantic-search-model-qa/tasks.md"
       ],
-      "subject_commit": "57aa968c1b2d5e21213d872732f27392d20da8fc",
+      "subject_commit": "9e111e58a4f8b160047a3fe1d3be09efe87e1ad6",
       "archive_debt": null
     },
     {
@@ -361,18 +361,19 @@
       "id": "align-frontend-design-system-reference",
       "status": "deferred",
       "owner": "web-viewer-sample",
-      "current_slice": null,
+      "current_slice": "2026-08-14 successor crosswalk with migrate-console-to-hifi-design landed; still deferred/frozen/non-canonical; do not apply. Axis-4 implementation successor is PR #535.",
       "blocked_by": [],
-      "last_verified": "2026-07-28T06:30:00Z",
+      "last_verified": "2026-08-14T00:00:00Z",
       "task_ledger": {
         "completed": 0,
         "total": 23
       },
       "evidence_refs": [
         "openspec/changes/align-frontend-design-system-reference/proposal.md",
-        "openspec/changes/align-frontend-design-system-reference/tasks.md"
+        "openspec/changes/align-frontend-design-system-reference/tasks.md",
+        "openspec/changes/align-frontend-design-system-reference/successor-crosswalk-migrate-console-to-hifi-design.md"
       ],
-      "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
+      "subject_commit": "9e111e58a4f8b160047a3fe1d3be09efe87e1ad6",
       "archive_debt": null
     },
     {
@@ -1512,19 +1513,20 @@
       "id": "migrate-console-to-hifi-design",
       "status": "active",
       "owner": "web-viewer-sample",
-      "current_slice": "2026-08-12 7.3 補勾（npm run verify 全綠：typecheck+build+1069 tests+struct-log 23/23，exit 0）；7.4 稽核 artifacts/2026-08-12-hifi-consumer-spec-scenario-audit.md 66/66 走過，經 PR #507 兩輪 P2 review（13 條：12 改判、1 查證不成立已反駁）重算為 48 HOLDS/3 HOLDS-WITH-NOTE/9 STALE/6 UNVERIFIABLE（STALE 皆早於本遷移，僅 highlight 標紅為真缺口；UNVER 需部署 stack/GPU/E2E），未勾；7.1 rebaseline 非 no-op——會復原 #429 修正過的 A4 canonical baseline，已 STOP 還原未 commit，capture script 缺 baseline_provenance 特判待另立修復。32/40；殘項＝0.5/1.2/6.4（human owner）＋7.1/7.4。",
+      "current_slice": "2026-08-14 align successor crosswalk landed (互斥已裁決，align 不 thaw)。7.1 仍 STOP until PR #535 保全 workspace.a4.default；8.2 因本 PR 改 align 檔而取消勾選；7.4 不勾。31/40；殘項＝0.5/1.2/6.4（human owner）＋7.1/7.4/8.2。",
       "blocked_by": [],
-      "last_verified": "2026-08-12T02:34:00Z",
+      "last_verified": "2026-08-14T00:00:00Z",
       "task_ledger": {
-        "completed": 32,
+        "completed": 31,
         "total": 40
       },
       "evidence_refs": [
         "openspec/changes/migrate-console-to-hifi-design/proposal.md",
         "openspec/changes/migrate-console-to-hifi-design/tasks.md",
-        "artifacts/2026-08-12-hifi-consumer-spec-scenario-audit.md"
+        "artifacts/2026-08-12-hifi-consumer-spec-scenario-audit.md",
+        "openspec/changes/align-frontend-design-system-reference/successor-crosswalk-migrate-console-to-hifi-design.md"
       ],
-      "subject_commit": "4187102b23c2746eacd6c829cf79ee934722bc00",
+      "subject_commit": "9e111e58a4f8b160047a3fe1d3be09efe87e1ad6",
       "archive_debt": null
     },
     {
