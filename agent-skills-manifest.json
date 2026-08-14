@@ -133,8 +133,8 @@
         "format": "agent-skill-tree/v2",
         "algorithm": "sha256",
         "trees": {
-          "claude": "e1f2b175702a8c226f7b44e1678c3945e967015a7f79fab93a4ae80ee45bd461",
-          "codex": "e1f2b175702a8c226f7b44e1678c3945e967015a7f79fab93a4ae80ee45bd461"
+          "claude": "c0189f9aa77d9f087dee15d3fe66f032436be6d97140afe11407dee361c7a73a",
+          "codex": "c0189f9aa77d9f087dee15d3fe66f032436be6d97140afe11407dee361c7a73a"
         }
       }
     },
