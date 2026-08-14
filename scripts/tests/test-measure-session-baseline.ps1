@@ -49,13 +49,14 @@ function Assert-ReportSchemaShape {
     Assert-True ($ef.Contains('complete')) "$Message :: environment_fingerprint has 'complete'"
     Assert-True ($ef.Contains('gpu_count')) "$Message :: environment_fingerprint has 'gpu_count'"
     Assert-True ($ef.Contains('gpu_fingerprint_scope')) "$Message :: environment_fingerprint declares its GPU scope"
-    Assert-True ($ef.gpu_fingerprint_scope_note -match 'deferred to task 1.2') "$Message :: GPU scope note defers per-GPU fingerprinting to task 1.2"
+    Assert-True ($ef.Contains('gpus')) "$Message :: environment_fingerprint carries the per-GPU fingerprint array (task 1.2)"
+    Assert-True ($ef.gpu_fingerprint_scope_note -match 'first_gpu_only gap') "$Message :: GPU scope note records that task 1.2 closed the first_gpu_only gap"
     Assert-Equal 'checkout_packman_declared' $ef.kit_version.source "$Message :: kit_version declares checkout provenance"
     Assert-True (-not $ef.kit_version.runtime_verified) "$Message :: kit_version is never claimed as runtime-verified"
     Assert-True ($ef.Contains('fixture_binding_scope')) "$Message :: environment_fingerprint declares its fixture-to-session binding scope"
     Assert-True (-not $ef.fixture_provenance.runtime_verified) "$Message :: fixture identity is never claimed as runtime-verified"
     Assert-True ($ef.fixture_provenance.caveat -match 'task 1.2/1.3') "$Message :: fixture provenance caveat defers runtime artifact-identity verification to task 1.2/1.3"
-    $expectComplete = (-not [bool]($REQUIRED_ENV_FINGERPRINT_FIELDS | Where-Object { -not $ef[$_].measured })) -and ($ef.gpu_fingerprint_scope -ne 'first_gpu_only') -and ($ef.fixture_binding_scope -ne 'live_session_unverified') -and ($ef.fixture_binding_scope -ne 'runtime_state_unknown')
+    $expectComplete = (-not [bool]($REQUIRED_ENV_FINGERPRINT_FIELDS | Where-Object { -not $ef[$_].measured })) -and ($ef.gpu_fingerprint_scope -notin @('first_gpu_only', 'partial_gpu_rows')) -and ($ef.fixture_binding_scope -ne 'live_session_unverified') -and ($ef.fixture_binding_scope -ne 'runtime_state_unknown')
     Assert-Equal $expectComplete $ef.complete "$Message :: environment_fingerprint.complete matches per-field measured flags AND full GPU-topology attribution AND a verifiable fixture binding AND a KNOWN runtime state"
 
     Assert-MeasuredShape -Obj $Report.ttff_ms -Message "$Message :: ttff_ms"
@@ -491,17 +492,34 @@ Assert-True ($observedKitFingerprint.kit_version.caveat -match 'may not describe
 Assert-Equal 1 $fullFingerprint.gpu_count 'single-GPU inventory reports gpu_count=1'
 Assert-Equal 'single_gpu' $fullFingerprint.gpu_fingerprint_scope 'single-GPU host is fingerprinted under a declared single_gpu scope'
 
-# A multi-GPU host must say the fingerprint covers only the first GPU row.
-$multiFingerprint = Get-EnvironmentFingerprint -GpuInventory $invMixed -KitVersion $fullKit -FixtureFingerprint $fullFixture
+# Task 1.2: a multi-GPU host is now fully fingerprinted -- gpus[] pins every
+# parseable nvidia-smi row, the scope declares all_gpus, and completeness is
+# no longer withdrawn for topology attribution (the observed-idle runtime
+# counts keep the fixture binding verifiable, as in the single-GPU case).
+$multiFingerprint = Get-EnvironmentFingerprint -GpuInventory $invMixed -KitVersion $fullKit -FixtureFingerprint $fullFixture -ObservedActiveSessionCount 0 -ObservedKitInstanceBindingCount 0
 Assert-Equal 2 $multiFingerprint.gpu_count 'multi-GPU inventory reports gpu_count=2'
-Assert-Equal 'first_gpu_only' $multiFingerprint.gpu_fingerprint_scope 'multi-GPU host declares first_gpu_only fingerprint scope, not a silent single-GPU claim'
-Assert-Equal 'NVIDIA GeForce RTX 4060 Ti' $multiFingerprint.gpu_model.value 'multi-GPU fingerprint still pins the first row (scope field is what makes that honest)'
-# All five base fields individually measured=true does not entitle
-# complete=true here: first_gpu_only means the fingerprint has not attributed
-# every relevant GPU, and the wrapper's incomplete-fingerprint warning (SHALL
-# NOT be used to set SLOs or admission parameters) must still fire on this
-# host shape instead of being silently bypassed (PR #511 review, round 2).
-Assert-True (-not $multiFingerprint.complete) 'multi-GPU host: complete=false despite every base field individually measured, because GPU topology attribution is incomplete'
+Assert-Equal 'all_gpus' $multiFingerprint.gpu_fingerprint_scope 'multi-GPU host with every row parseable declares all_gpus scope (task 1.2 closes the former first_gpu_only gap)'
+Assert-Equal 2 @($multiFingerprint.gpus).Count 'per-GPU fingerprint pins both rows'
+Assert-Equal 'NVIDIA GeForce RTX 4060 Ti' $multiFingerprint.gpus[0].model 'per-GPU fingerprint row 0 pins the model'
+Assert-Equal '580.97' $multiFingerprint.gpus[0].driver_version 'per-GPU fingerprint row 0 pins the driver version'
+Assert-Equal 'NVIDIA H100 80GB HBM3' $multiFingerprint.gpus[1].model 'per-GPU fingerprint row 1 pins the model'
+Assert-Equal '550.54' $multiFingerprint.gpus[1].driver_version 'per-GPU fingerprint row 1 pins the driver version'
+Assert-Equal 'NVIDIA GeForce RTX 4060 Ti' $multiFingerprint.gpu_model.value 'gpu_model still pins the first row for gpu-session-baseline-report/v1 compatibility'
+Assert-True $multiFingerprint.complete 'multi-GPU host with full per-GPU attribution and an observed idle runtime: complete=true (the former first_gpu_only withdrawal no longer applies)'
+
+# A row nvidia-smi emitted but this harness could not parse is a real
+# attribution gap: the topology fingerprint must say so and withdraw
+# completeness instead of letting a skipped device compare equal.
+$invPartialRows = Get-GpuInventorySnapshot -NvidiaSmiQuery {
+    @(
+        '0, NVIDIA GeForce RTX 4060 Ti, 580.97, 8188, 1827, 6123, 2, 0, [N/A]',
+        'garbled row without enough columns'
+    )
+}
+$partialRowsFingerprint = Get-EnvironmentFingerprint -GpuInventory $invPartialRows -KitVersion $fullKit -FixtureFingerprint $fullFixture -ObservedActiveSessionCount 0 -ObservedKitInstanceBindingCount 0
+Assert-Equal 'partial_gpu_rows' $partialRowsFingerprint.gpu_fingerprint_scope 'unparseable nvidia-smi row -> scope=partial_gpu_rows, never a silent all_gpus claim'
+Assert-Equal 1 @($partialRowsFingerprint.gpus).Count 'per-GPU fingerprint carries only the parseable row'
+Assert-True (-not $partialRowsFingerprint.complete) 'partial_gpu_rows withdraws completeness: a fingerprint that skipped a device row must not pass the downstream gate'
 
 $partialFingerprint = Get-EnvironmentFingerprint -GpuInventory $invMissing -KitVersion $fullKit -FixtureFingerprint $fullFixture
 Assert-True (-not $partialFingerprint.complete) 'environment fingerprint complete=false when GPU unmeasured'
@@ -966,4 +984,254 @@ try {
     }
 }
 
+# ============================================================================
+# 14. Test-SessionBaselineReportForDownstream (task 1.2 downstream gate)
+# ============================================================================
+$gateGpuQuery = { @('0, NVIDIA GeForce RTX 4060 Ti, 580.97, 8188, 1827, 6123, 2, 0, [N/A]') }
+$gateComputeQuery = { @() }
+$gateProbe = {
+    param($Uri, $Timeout)
+    if ($Uri -match '/health$') {
+        return [ordered]@{ ok = $true; body = [ordered]@{ status = 'ok'; kit_signaling_port = 49100 }; status_code = 200; error = $null }
+    }
+    return [ordered]@{ ok = $true; body = [ordered]@{ sessions = [ordered]@{ active_count = 0; items = @() }; kit_instance_bindings = @() }; status_code = 200; error = $null }
+}
+$sandbox = New-TestSandbox -Prefix 'baseline-gate'
+try {
+    $gateFixturePath = Join-Path $sandbox 'fixture.ifc'
+    Set-Content -LiteralPath $gateFixturePath -Value 'fixture bytes' -Encoding utf8 -NoNewline
+    $completeReport = Get-SessionBaselineReport -RepoRoot $repoRoot -FixturePath $gateFixturePath -NvidiaSmiQuery $gateGpuQuery -NvidiaSmiComputeAppsQuery $gateComputeQuery -WebRtcHealthInvoker $gateProbe
+    Assert-True $completeReport.environment_fingerprint.complete 'gate precondition: the fixture-supplied idle-host report is complete'
+
+    # The gate must accept the live [ordered] report shape...
+    $liveVerdict = Test-SessionBaselineReportForDownstream -Report $completeReport
+    Assert-Equal 'gpu-session-baseline-report-validation/v1' $liveVerdict.schema_version 'verdict pins its own schema_version'
+    Assert-True $liveVerdict.eligible_for_downstream_reference 'complete report (live shape) is eligible for downstream reference'
+    Assert-Equal 0 @($liveVerdict.missing_fields).Count 'complete report: no missing fields'
+    Assert-Equal 0 @($liveVerdict.unmeasured_fields).Count 'complete report: no unmeasured fields'
+
+    # ...and the JSON round-trip PSCustomObject shape a downstream loader sees.
+    $parsedReport = $completeReport | ConvertTo-Json -Depth 12 | ConvertFrom-Json
+    $parsedVerdict = Test-SessionBaselineReportForDownstream -Report $parsedReport
+    Assert-True $parsedVerdict.eligible_for_downstream_reference 'complete report (JSON round-trip shape) is eligible for downstream reference'
+
+    # Missing required fingerprint field -> refusal naming the field.
+    $missingFieldReport = $completeReport | ConvertTo-Json -Depth 12 | ConvertFrom-Json
+    $missingFieldReport.environment_fingerprint.PSObject.Properties.Remove('fixture_hash')
+    $missingVerdict = Test-SessionBaselineReportForDownstream -Report $missingFieldReport
+    Assert-True (-not $missingVerdict.eligible_for_downstream_reference) 'missing fixture_hash -> not eligible'
+    Assert-True (@($missingVerdict.missing_fields) -contains 'environment_fingerprint.fixture_hash') 'missing fixture_hash is named in missing_fields'
+    Assert-True (@($missingVerdict.inconsistencies).Count -ge 1) 'complete=true beside a missing field is called out as an inconsistency, not trusted'
+
+    # Unmeasured field beside complete=true (hand-edited report) -> fail-closed.
+    $tamperedReport = $completeReport | ConvertTo-Json -Depth 12 | ConvertFrom-Json
+    $tamperedReport.environment_fingerprint.gpu_model.measured = $false
+    $tamperedVerdict = Test-SessionBaselineReportForDownstream -Report $tamperedReport
+    Assert-True (-not $tamperedVerdict.eligible_for_downstream_reference) 'unmeasured gpu_model -> not eligible'
+    Assert-True ([bool](@($tamperedVerdict.unmeasured_fields) | Where-Object { $_ -match 'gpu_model' })) 'unmeasured gpu_model is named'
+    Assert-True ([bool](@($tamperedVerdict.inconsistencies) | Where-Object { $_ -match 'contradicts' })) 'complete=true contradicting field evidence is refused fail-closed'
+
+    # complete=false (e.g. the honest no-fixture report) -> refusal.
+    $incompleteReport = Get-SessionBaselineReport -RepoRoot $repoRoot -NvidiaSmiQuery $gateGpuQuery -NvidiaSmiComputeAppsQuery $gateComputeQuery -WebRtcHealthInvoker $gateProbe
+    $incompleteVerdict = Test-SessionBaselineReportForDownstream -Report $incompleteReport
+    Assert-True (-not $incompleteVerdict.eligible_for_downstream_reference) 'no-fixture report (complete=false) is not eligible'
+    Assert-True ([bool](@($incompleteVerdict.unmeasured_fields) | Where-Object { $_ -match 'fixture_hash' })) 'no-fixture refusal names the unmeasured fixture_hash'
+
+    # Unknown schema_version -> refused fail-closed, never guessed at.
+    $wrongSchemaReport = $completeReport | ConvertTo-Json -Depth 12 | ConvertFrom-Json
+    $wrongSchemaReport.schema_version = 'gpu-session-baseline-report/v999'
+    $wrongSchemaVerdict = Test-SessionBaselineReportForDownstream -Report $wrongSchemaReport
+    Assert-True (-not $wrongSchemaVerdict.eligible_for_downstream_reference) 'unknown report schema_version -> not eligible'
+    Assert-True ([bool](@($wrongSchemaVerdict.reasons) | Where-Object { $_ -match 'v999' })) 'unknown schema refusal names the offending version'
+
+    # A legacy multi-GPU report that still carries first_gpu_only scope must be
+    # refused even if its completeness flag were (wrongly) true.
+    $legacyScopeReport = $completeReport | ConvertTo-Json -Depth 12 | ConvertFrom-Json
+    $legacyScopeReport.environment_fingerprint.gpu_fingerprint_scope = 'first_gpu_only'
+    $legacyScopeVerdict = Test-SessionBaselineReportForDownstream -Report $legacyScopeReport
+    Assert-True (-not $legacyScopeVerdict.eligible_for_downstream_reference) 'first_gpu_only scope -> not eligible (topology fingerprint incomplete)'
+    Assert-True ([bool](@($legacyScopeVerdict.reasons) | Where-Object { $_ -match 'first_gpu_only' })) 'first_gpu_only refusal names the scope'
+
+    # Null input -> refusal with a verdict, never a throw.
+    $nullVerdict = Test-SessionBaselineReportForDownstream -Report $null
+    Assert-True (-not $nullVerdict.eligible_for_downstream_reference) 'null report -> not eligible'
+    Assert-True (@($nullVerdict.reasons).Count -ge 1) 'null report refusal carries a reason'
+
+    Write-TestPass 'Test-SessionBaselineReportForDownstream (task 1.2 downstream gate)'
+
+    # --- PR #539 tri-adversarial review repairs (APX-1..APX-5) ---
+
+    # APX-1: scope must be an ALLOWLIST -- an unknown/tampered/future scope
+    # value refuses, it does not pass a two-value denylist.
+    $unknownScopeReport = $completeReport | ConvertTo-Json -Depth 12 | ConvertFrom-Json
+    $unknownScopeReport.environment_fingerprint.gpu_fingerprint_scope = 'totally_new_scope_value'
+    $unknownScopeVerdict = Test-SessionBaselineReportForDownstream -Report $unknownScopeReport
+    Assert-True (-not $unknownScopeVerdict.eligible_for_downstream_reference) 'unknown gpu_fingerprint_scope value -> not eligible (allowlist, not denylist)'
+    Assert-True ([bool](@($unknownScopeVerdict.reasons) | Where-Object { $_ -match 'totally_new_scope_value' })) 'unknown scope refusal names the offending value'
+
+    # APX-2: fixture_binding_scope is re-verified independently -- a report
+    # hand-edited to complete=true while the fixture binding is unverifiable
+    # must still refuse.
+    $bindingTamperReport = $completeReport | ConvertTo-Json -Depth 12 | ConvertFrom-Json
+    $bindingTamperReport.environment_fingerprint.fixture_binding_scope = 'live_session_unverified'
+    $bindingTamperVerdict = Test-SessionBaselineReportForDownstream -Report $bindingTamperReport
+    Assert-True (-not $bindingTamperVerdict.eligible_for_downstream_reference) 'live_session_unverified binding scope -> not eligible even with complete=true'
+    Assert-True ([bool](@($bindingTamperVerdict.reasons) | Where-Object { $_ -match 'live_session_unverified' })) 'binding-scope refusal names the offending value'
+
+    $bindingMissingReport = $completeReport | ConvertTo-Json -Depth 12 | ConvertFrom-Json
+    $bindingMissingReport.environment_fingerprint.PSObject.Properties.Remove('fixture_binding_scope')
+    $bindingMissingVerdict = Test-SessionBaselineReportForDownstream -Report $bindingMissingReport
+    Assert-True (-not $bindingMissingVerdict.eligible_for_downstream_reference) 'removed fixture_binding_scope key -> not eligible'
+    Assert-True (@($bindingMissingVerdict.missing_fields) -contains 'environment_fingerprint.fixture_binding_scope') 'missing fixture_binding_scope is named in missing_fields'
+
+    # APX-3: gpus[] is verified, not trusted -- missing array, count mismatch,
+    # and first-row disagreement with the compatibility fields all refuse.
+    $gpusMissingReport = $completeReport | ConvertTo-Json -Depth 12 | ConvertFrom-Json
+    $gpusMissingReport.environment_fingerprint.PSObject.Properties.Remove('gpus')
+    $gpusMissingVerdict = Test-SessionBaselineReportForDownstream -Report $gpusMissingReport
+    Assert-True (-not $gpusMissingVerdict.eligible_for_downstream_reference) 'report without gpus[] (e.g. pre-1.2 v1 report) -> not eligible'
+    Assert-True (@($gpusMissingVerdict.missing_fields) -contains 'environment_fingerprint.gpus') 'missing gpus[] is named in missing_fields'
+
+    $gpuCountMismatchReport = $completeReport | ConvertTo-Json -Depth 12 | ConvertFrom-Json
+    $gpuCountMismatchReport.environment_fingerprint.gpu_count = 5
+    $gpuCountMismatchVerdict = Test-SessionBaselineReportForDownstream -Report $gpuCountMismatchReport
+    Assert-True (-not $gpuCountMismatchVerdict.eligible_for_downstream_reference) 'gpu_count disagreeing with gpus[] row count -> not eligible'
+    Assert-True ([bool](@($gpuCountMismatchVerdict.inconsistencies) | Where-Object { $_ -match 'gpu_count' })) 'gpu_count mismatch is named as an inconsistency'
+
+    $gpuRowTamperReport = $completeReport | ConvertTo-Json -Depth 12 | ConvertFrom-Json
+    $gpuRowTamperReport.environment_fingerprint.gpus[0].model = 'NVIDIA Something Else'
+    $gpuRowTamperVerdict = Test-SessionBaselineReportForDownstream -Report $gpuRowTamperReport
+    Assert-True (-not $gpuRowTamperVerdict.eligible_for_downstream_reference) 'gpus[0] disagreeing with gpu_model -> not eligible'
+    Assert-True ([bool](@($gpuRowTamperVerdict.inconsistencies) | Where-Object { $_ -match 'does not agree' })) 'gpus[0] disagreement is named as an inconsistency'
+
+    # APX-4: flags must be strict booleans and values must be usable pins --
+    # the string 'true', an empty-string model, and a non-hex hash all refuse.
+    $stringMeasuredReport = $completeReport | ConvertTo-Json -Depth 12 | ConvertFrom-Json
+    $stringMeasuredReport.environment_fingerprint.gpu_model.measured = 'true'
+    $stringMeasuredVerdict = Test-SessionBaselineReportForDownstream -Report $stringMeasuredReport
+    Assert-True (-not $stringMeasuredVerdict.eligible_for_downstream_reference) "measured='true' (string) -> not eligible (strict boolean required)"
+    Assert-True ([bool](@($stringMeasuredVerdict.unmeasured_fields) | Where-Object { $_ -match 'strict boolean' })) 'string measured flag refusal says a strict boolean is required'
+
+    $emptyValueReport = $completeReport | ConvertTo-Json -Depth 12 | ConvertFrom-Json
+    $emptyValueReport.environment_fingerprint.gpu_model.value = '   '
+    $emptyValueVerdict = Test-SessionBaselineReportForDownstream -Report $emptyValueReport
+    Assert-True (-not $emptyValueVerdict.eligible_for_downstream_reference) 'whitespace-only gpu_model value -> not eligible'
+    Assert-True ([bool](@($emptyValueVerdict.inconsistencies) | Where-Object { $_ -match 'usable fingerprint pin' })) 'unusable value is named as an inconsistency'
+
+    $badHashReport = $completeReport | ConvertTo-Json -Depth 12 | ConvertFrom-Json
+    $badHashReport.environment_fingerprint.fixture_hash.value = 'DEADBEEF'
+    $badHashVerdict = Test-SessionBaselineReportForDownstream -Report $badHashReport
+    Assert-True (-not $badHashVerdict.eligible_for_downstream_reference) 'non-sha256-shaped fixture_hash -> not eligible'
+
+    # APX-5: the fabrication-shaped branch (measured=true, value=null) is
+    # exercised directly.
+    $fabricationReport = $completeReport | ConvertTo-Json -Depth 12 | ConvertFrom-Json
+    $fabricationReport.environment_fingerprint.kit_version.value = $null
+    $fabricationVerdict = Test-SessionBaselineReportForDownstream -Report $fabricationReport
+    Assert-True (-not $fabricationVerdict.eligible_for_downstream_reference) 'measured=true with value=null -> not eligible'
+    Assert-True ([bool](@($fabricationVerdict.inconsistencies) | Where-Object { $_ -match 'fabrication-shaped' })) 'null-value fabrication branch is named as an inconsistency'
+
+    # partial_gpu_rows literal (defence-in-depth regression guard).
+    $partialScopeReport = $completeReport | ConvertTo-Json -Depth 12 | ConvertFrom-Json
+    $partialScopeReport.environment_fingerprint.gpu_fingerprint_scope = 'partial_gpu_rows'
+    $partialScopeVerdict = Test-SessionBaselineReportForDownstream -Report $partialScopeReport
+    Assert-True (-not $partialScopeVerdict.eligible_for_downstream_reference) 'partial_gpu_rows scope -> not eligible'
+
+    # Whole-fingerprint null: refuses with the fingerprint named, never throws.
+    $nullFingerprintReport = $completeReport | ConvertTo-Json -Depth 12 | ConvertFrom-Json
+    $nullFingerprintReport.environment_fingerprint = $null
+    $nullFingerprintVerdict = Test-SessionBaselineReportForDownstream -Report $nullFingerprintReport
+    Assert-True (-not $nullFingerprintVerdict.eligible_for_downstream_reference) 'null environment_fingerprint -> not eligible'
+    Assert-True (@($nullFingerprintVerdict.missing_fields) -contains 'environment_fingerprint') 'null environment_fingerprint is named in missing_fields'
+
+    Write-TestPass 'downstream gate APX-1..APX-5 repairs (allowlist scope, binding-scope re-verification, gpus[] verification, strict typing, fabrication branch)'
+
+    # --- PR #539 tri-adversarial review round 2 repairs ---
+
+    # gpu_count [int] overflow (APX-539-1/SEC-539-03): a hand-edited value
+    # beyond Int32 must refuse with a verdict, never throw.
+    $overflowCountReport = $completeReport | ConvertTo-Json -Depth 12 | ConvertFrom-Json
+    $overflowCountReport.environment_fingerprint.gpu_count = 9999999999999999
+    $overflowCountVerdict = Test-SessionBaselineReportForDownstream -Report $overflowCountReport
+    Assert-True (-not $overflowCountVerdict.eligible_for_downstream_reference) 'gpu_count beyond Int32 -> not eligible, and the gate does not throw'
+    Assert-True ([bool](@($overflowCountVerdict.inconsistencies) | Where-Object { $_ -match 'gpu_count' })) 'overflow gpu_count is named as an inconsistency'
+
+    # Positive all_gpus path (TG-539-02): a fully fingerprinted multi-GPU
+    # report is eligible -- the gate must not over-refuse multi-GPU hosts.
+    $multiGpuGateQuery = {
+        @(
+            '0, NVIDIA GeForce RTX 4060 Ti, 580.97, 8188, 1827, 6123, 2, 0, [N/A]',
+            '1, NVIDIA GeForce RTX 4090, 580.97, 24564, 0, 24564, 0, 0, [N/A]'
+        )
+    }
+    $multiGpuGateReport = Get-SessionBaselineReport -RepoRoot $repoRoot -FixturePath $gateFixturePath -NvidiaSmiQuery $multiGpuGateQuery -NvidiaSmiComputeAppsQuery $gateComputeQuery -WebRtcHealthInvoker $gateProbe
+    Assert-Equal 'all_gpus' $multiGpuGateReport.environment_fingerprint.gpu_fingerprint_scope 'positive path precondition: multi-GPU report declares all_gpus'
+    $multiGpuGateVerdict = Test-SessionBaselineReportForDownstream -Report ($multiGpuGateReport | ConvertTo-Json -Depth 12 | ConvertFrom-Json)
+    Assert-True $multiGpuGateVerdict.eligible_for_downstream_reference 'complete multi-GPU (all_gpus) report is eligible -- no over-refusal'
+
+    # gpus[] rejection branches (TG-539-03): empty array, unusable row pin,
+    # and scope/row-count contradictions each refuse with a named reason.
+    $emptyGpusReport = $completeReport | ConvertTo-Json -Depth 12 | ConvertFrom-Json
+    $emptyGpusReport.environment_fingerprint.gpus = @()
+    $emptyGpusVerdict = Test-SessionBaselineReportForDownstream -Report $emptyGpusReport
+    Assert-True (-not $emptyGpusVerdict.eligible_for_downstream_reference) 'empty gpus[] -> not eligible'
+    Assert-True ([bool](@($emptyGpusVerdict.reasons) | Where-Object { $_ -match 'empty' })) 'empty gpus[] refusal names the emptiness'
+
+    $badRowPinReport = $completeReport | ConvertTo-Json -Depth 12 | ConvertFrom-Json
+    $badRowPinReport.environment_fingerprint.gpus[0].driver_version = ''
+    $badRowPinVerdict = Test-SessionBaselineReportForDownstream -Report $badRowPinReport
+    Assert-True (-not $badRowPinVerdict.eligible_for_downstream_reference) 'blank driver_version in gpus[0] -> not eligible'
+    Assert-True ([bool](@($badRowPinVerdict.inconsistencies) | Where-Object { $_ -match 'gpus\[0\]' })) 'unusable row pin is named with its index'
+
+    $singleScopeContradictionReport = $multiGpuGateReport | ConvertTo-Json -Depth 12 | ConvertFrom-Json
+    $singleScopeContradictionReport.environment_fingerprint.gpu_fingerprint_scope = 'single_gpu'
+    $singleScopeContradictionVerdict = Test-SessionBaselineReportForDownstream -Report $singleScopeContradictionReport
+    Assert-True (-not $singleScopeContradictionVerdict.eligible_for_downstream_reference) 'single_gpu scope with two gpus[] rows -> not eligible'
+    Assert-True ([bool](@($singleScopeContradictionVerdict.inconsistencies) | Where-Object { $_ -match 'single_gpu contradicts' })) 'single_gpu/row-count contradiction is named'
+
+    $allScopeContradictionReport = $completeReport | ConvertTo-Json -Depth 12 | ConvertFrom-Json
+    $allScopeContradictionReport.environment_fingerprint.gpu_fingerprint_scope = 'all_gpus'
+    $allScopeContradictionVerdict = Test-SessionBaselineReportForDownstream -Report $allScopeContradictionReport
+    Assert-True (-not $allScopeContradictionVerdict.eligible_for_downstream_reference) 'all_gpus scope with one gpus[] row -> not eligible'
+    Assert-True ([bool](@($allScopeContradictionVerdict.inconsistencies) | Where-Object { $_ -match 'all_gpus contradicts' })) 'all_gpus/row-count contradiction is named'
+
+    Write-TestPass 'downstream gate round-2 repairs (gpu_count overflow verdict, positive all_gpus path, gpus[] rejection branches)'
+
+
+
+    # ========================================================================
+    # 15. validate-session-baseline-report.ps1 CLI gate (exit codes + verdict)
+    # ========================================================================
+    $validateScriptPath = Join-Path $repoRoot 'scripts\validate-session-baseline-report.ps1'
+    Assert-True (Test-Path -LiteralPath $validateScriptPath -PathType Leaf) 'validate-session-baseline-report.ps1 exists'
+
+    $completeReportPath = Join-Path $sandbox 'complete-report.json'
+    $completeReport | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $completeReportPath -Encoding utf8
+    $cliPassOutput = pwsh -NoProfile -NonInteractive -File $validateScriptPath -ReportPath $completeReportPath
+    Assert-Equal 0 $LASTEXITCODE 'CLI gate exits 0 for a complete report'
+    $cliPassVerdict = ($cliPassOutput -join "`n") | ConvertFrom-Json
+    Assert-True $cliPassVerdict.eligible_for_downstream_reference 'CLI gate stdout verdict says eligible'
+
+    $incompleteReportPath = Join-Path $sandbox 'incomplete-report.json'
+    $incompleteReport | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $incompleteReportPath -Encoding utf8
+    $cliFailOutput = pwsh -NoProfile -NonInteractive -File $validateScriptPath -ReportPath $incompleteReportPath
+    Assert-Equal 1 $LASTEXITCODE 'CLI gate exits 1 for an incomplete report'
+    $cliFailVerdict = ($cliFailOutput -join "`n") | ConvertFrom-Json
+    Assert-True (-not $cliFailVerdict.eligible_for_downstream_reference) 'CLI gate stdout verdict says not eligible'
+    Assert-True (@($cliFailVerdict.unmeasured_fields).Count -ge 1) 'CLI gate verdict carries the unmeasured fields'
+
+    $malformedPath = Join-Path $sandbox 'malformed.json'
+    Set-Content -LiteralPath $malformedPath -Value '{ this is not json' -Encoding utf8
+    $cliMalformedOutput = pwsh -NoProfile -NonInteractive -File $validateScriptPath -ReportPath $malformedPath
+    Assert-Equal 1 $LASTEXITCODE 'CLI gate exits 1 for a malformed report file'
+    $cliMalformedVerdict = ($cliMalformedOutput -join "`n") | ConvertFrom-Json
+    Assert-True ([bool](@($cliMalformedVerdict.reasons) | Where-Object { $_ -match 'not valid JSON' })) 'malformed-file refusal says the file is not valid JSON'
+
+    $cliMissingOutput = pwsh -NoProfile -NonInteractive -File $validateScriptPath -ReportPath (Join-Path $sandbox 'does-not-exist.json')
+    Assert-Equal 1 $LASTEXITCODE 'CLI gate exits 1 for a missing report file'
+    $cliMissingVerdict = ($cliMissingOutput -join "`n") | ConvertFrom-Json
+    Assert-True ([bool](@($cliMissingVerdict.reasons) | Where-Object { $_ -match 'does not exist' })) 'missing-file refusal names the path problem'
+
+    Write-TestPass 'validate-session-baseline-report.ps1 CLI gate (exit codes + stdout verdict)'
+} finally { Remove-TestSandbox -Path $sandbox }
 Write-Host "`n=== test-measure-session-baseline.ps1: ALL PASSED ===" -ForegroundColor Green
