@@ -99,6 +99,37 @@ New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
 
 $goodReason = 'the deploy contract only verifies merged origin/main, so a PR changing the deploy path itself cannot obtain deploy-target evidence pre-merge'
 
+function New-VerificationContract {
+    param(
+        [string] $Id = 'self-referential-bootstrap-gate/v1',
+        [string[]] $CommandIds = @(
+            'test-self-referential-bootstrap',
+            'test-base-gate-capability',
+            'test-preflight-prnumber-forwarding',
+            'test-agent-governance-check',
+            'test-pr-body-evidence',
+            'test-pr-review-agent',
+            'invoke-powershell-static',
+            'detect-base-gate-capability-bash-syntax'
+        )
+    )
+    $separator = [string][char]10
+    $canonical = (@($Id) + @($CommandIds)) -join $separator
+    $sha256 = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $digest = ([BitConverter]::ToString(
+            $sha256.ComputeHash([Text.UTF8Encoding]::new($false).GetBytes($canonical))
+        )).Replace('-', '').ToLowerInvariant()
+    } finally {
+        $sha256.Dispose()
+    }
+    return [ordered]@{
+        id = $Id
+        command_ids = @($CommandIds)
+        contract_sha256 = $digest
+    }
+}
+
 function New-Entry {
     param([hashtable] $Override = @{})
     $entry = [ordered]@{
@@ -108,20 +139,7 @@ function New-Entry {
         opened_at = '2026-07-31T08:00:00Z'
         reason = $goodReason
         verification_mechanism_paths = @('scripts/deploy.ps1')
-        verification_contract = [ordered]@{
-            id = 'self-referential-bootstrap-gate/v1'
-            command_ids = @(
-                'test-self-referential-bootstrap',
-                'test-base-gate-capability',
-                'test-preflight-prnumber-forwarding',
-                'test-agent-governance-check',
-                'test-pr-body-evidence',
-                'test-pr-review-agent',
-                'invoke-powershell-static',
-                'detect-base-gate-capability-bash-syntax'
-            )
-            contract_sha256 = '0f37135086c5b61af8246ba89ac584287ab57749c6b0ff9e7eabd7a6a4351367'
-        }
+        verification_contract = New-VerificationContract
         bootstrap_evidence_refs = @('docs/evidence/remote-linux-deploy/self-referential-bootstrap/summary.md')
         fixpoint = $null
     }
@@ -398,6 +416,77 @@ try {
         Get-SelfReferentialBootstrapLedger -Json (New-LedgerJson -Entries @((New-Entry -Override @{ verification_mechanism_paths = @('scripts/deploy.ps1', '') })))
     }
 
+    # --- linked-successor relation shape and graph integrity -----------------------
+    Assert-Throws -Context 'successor_of as non-string' -MessagePattern 'successor_of must be a JSON string' -Action {
+        Get-SelfReferentialBootstrapLedger -Json (New-LedgerJson -Entries @((New-Entry -Override @{ successor_of = 500 })))
+    }
+    Assert-Throws -Context 'successor_of with invalid entry id' -MessagePattern 'must name a kebab-case ledger entry id' -Action {
+        Get-SelfReferentialBootstrapLedger -Json (New-LedgerJson -Entries @((New-Entry -Override @{ successor_of = 'Wrong_Case' })))
+    }
+    Assert-Throws -Context 'self-referential successor' -MessagePattern 'cannot be its own successor' -Action {
+        Get-SelfReferentialBootstrapLedger -Json (New-LedgerJson -Entries @((New-Entry -Override @{ successor_of = 'remote-linux-deploy-target' })))
+    }
+    Assert-Throws -Context 'successor names missing predecessor' -MessagePattern 'names missing ledger entry' -Action {
+        Get-SelfReferentialBootstrapLedger -Json (New-LedgerJson -Entries @((New-Entry -Override @{
+            id = 'orphan-successor'
+            successor_of = 'missing-predecessor'
+        })))
+    }
+    $linkedParent = New-Entry
+    $linkedChild = New-Entry -Override @{
+        id = 'linked-successor'
+        pr = 501
+        successor_of = 'remote-linux-deploy-target'
+        bootstrap_evidence_refs = @('docs/evidence/linked/self-referential-bootstrap/summary.md')
+    }
+    $null = Get-SelfReferentialBootstrapLedger -Json (New-LedgerJson -Entries @($linkedParent, $linkedChild))
+    Assert-Throws -Context 'closed successor below an open predecessor' `
+        -MessagePattern 'cannot be closed while predecessor.*remains open' -Action {
+        Get-SelfReferentialBootstrapLedger -Json (New-LedgerJson -Entries @(
+            $linkedParent,
+            (New-Entry -Override @{
+                id = 'closed-linked-successor'
+                status = 'closed'
+                pr = 501
+                successor_of = 'remote-linux-deploy-target'
+                bootstrap_evidence_refs = @('docs/evidence/closed-linked/self-referential-bootstrap/summary.md')
+                fixpoint = @{
+                    reverified_at = '2026-08-02T00:00:00Z'
+                    mechanism_commit = ('a' * 40)
+                    evidence_refs = @('docs/evidence/closed-linked/fixpoint/summary.md')
+                }
+            })
+        ))
+    }
+    Assert-Throws -Context 'predecessor with two successors' -MessagePattern 'more than one successor' -Action {
+        Get-SelfReferentialBootstrapLedger -Json (New-LedgerJson -Entries @(
+            $linkedParent,
+            $linkedChild,
+            (New-Entry -Override @{
+                id = 'second-linked-successor'
+                pr = 502
+                successor_of = 'remote-linux-deploy-target'
+                bootstrap_evidence_refs = @('docs/evidence/linked-two/self-referential-bootstrap/summary.md')
+            })
+        ))
+    }
+    Assert-Throws -Context 'multi-entry successor cycle' -MessagePattern 'contains a cycle' -Action {
+        Get-SelfReferentialBootstrapLedger -Json (New-LedgerJson -Entries @(
+            (New-Entry -Override @{
+                id = 'cycle-entry-a'
+                pr = 510
+                successor_of = 'cycle-entry-b'
+                bootstrap_evidence_refs = @('docs/evidence/cycle-a/self-referential-bootstrap/summary.md')
+            }),
+            (New-Entry -Override @{
+                id = 'cycle-entry-b'
+                pr = 511
+                successor_of = 'cycle-entry-a'
+                bootstrap_evidence_refs = @('docs/evidence/cycle-b/self-referential-bootstrap/summary.md')
+            })
+        ))
+    }
+
     # --- the mechanism cannot be its own evidence (Codex round-6) -------------------
     # The stack-kind label is a substring test and the mechanism files are named
     # after the stack kind, so the ledger itself satisfied it.
@@ -651,6 +740,44 @@ try {
     $mutatedHead = New-LedgerJson -Entries @((New-Entry -Override @{ pr = 777 }))
     Assert-Throws -Context 'mutating an open entry' -MessagePattern 'was modified' -Action {
         Invoke-BodyGate -Rows @{ 'Self-referential bootstrap' = 'no' } -ChangedPaths $mechanism -HeadJson $mutatedHead -BaseJson $openBase
+    }
+
+    # Entry immutability must be CASE-SENSITIVE. PowerShell's -ne is not: measured
+    # on 7.5.4, 'abc' -ne 'ABC' is False while 'abc' -cne 'ABC' is True. So a
+    # case-only edit to any entry field read as "unchanged" and walked straight
+    # past the immutability rule - and for declared git paths, which ARE
+    # case-sensitive, that silently rebinds the debt to a path that does not exist.
+    Assert-Throws -Context 'open entry reason changed only in case' -MessagePattern 'was modified' -Action {
+        Invoke-BodyGate -Rows @{ 'Self-referential bootstrap' = 'no' } -ChangedPaths $mechanism `
+            -HeadJson (New-LedgerJson -Entries @((New-Entry -Override @{ reason = $goodReason.ToUpperInvariant() }))) `
+            -BaseJson $openBase
+    }
+    Assert-Throws -Context 'open entry mechanism path changed only in case' -MessagePattern 'was modified' -Action {
+        Invoke-BodyGate -Rows @{ 'Self-referential bootstrap' = 'no' } -ChangedPaths $mechanism `
+            -HeadJson (New-LedgerJson -Entries @((New-Entry -Override @{ verification_mechanism_paths = @('Scripts/Deploy.ps1') }))) `
+            -BaseJson $openBase
+    }
+    $caseClosedFixpoint = @{
+        reverified_at = '2026-08-01T08:00:00Z'
+        mechanism_commit = ('a' * 40)
+        evidence_refs = @('docs/evidence/remote-linux-deploy/fixpoint/summary.md')
+    }
+    $caseClosedBase = New-LedgerJson -Entries @((New-Entry -Override @{
+        status = 'closed'; fixpoint = $caseClosedFixpoint
+    }))
+    $caseClosedHead = New-LedgerJson -Entries @((New-Entry -Override @{
+        status = 'closed'; fixpoint = $caseClosedFixpoint; reason = $goodReason.ToUpperInvariant()
+    }))
+    Assert-Throws -Context 'closed entry reason changed only in case' -MessagePattern 'closed entries are immutable' -Action {
+        Invoke-BodyGate -Rows @{ 'Self-referential bootstrap' = 'no' } -ChangedPaths $mechanism `
+            -HeadJson $caseClosedHead -BaseJson $caseClosedBase
+    }
+    # ...and the same on the open -> closed comparison, which excludes status and
+    # fixpoint but must still hold every other field byte-for-byte.
+    Assert-Throws -Context 'closure changes another field only in case' `
+        -MessagePattern 'fields other than status/fixpoint changed during closure' -Action {
+        Invoke-BodyGate -Rows @{ 'Self-referential bootstrap' = 'no' } -ChangedPaths $mechanism `
+            -HeadJson $caseClosedHead -BaseJson $openBase
     }
 
     # --- transition: forged fixpoint (review P1 #3) ---------------------------------
@@ -1056,6 +1183,1036 @@ try {
         Assert-Throws -Context "classified path reaches debt gate: $classifiedPath" -MessagePattern 'open ledger debt|must declare bootstrap=yes' -Action {
             Invoke-BodyGate -Rows @{ 'Self-referential bootstrap' = 'no' } -ChangedPaths @($classifiedPath) -HeadJson $openBase -BaseJson $openBase
         }
+    }
+
+    # --- regression-repair lane (issue #494) ----------------------------------------
+    # A fixpoint run that surfaces a mechanism regression had no legal repair
+    # channel: naming the open entry hit the impersonation guard, opening a second
+    # entry hit the other-open-debt gate, and bootstrap=no hit it too. The lane
+    # opens exactly one door - append THIS PR's number to the open entry's
+    # repair_prs - and keeps every other invariant.
+    $repairSurface = @('scripts/deploy.ps1', 'scripts/self-referential-bootstrap-ledger.json')
+    $repairChangedPaths = @('scripts/deploy.ps1', 'scripts/self-referential-bootstrap-ledger.json')
+    $repairRows = @{
+        'Self-referential bootstrap' = 'yes'
+        'Bootstrap ledger entry' = 'remote-linux-deploy-target'
+        'Bootstrap reason' = $goodReason
+    }
+    $repairBase = New-LedgerJson -Entries @((New-Entry -Override @{
+        verification_mechanism_paths = $repairSurface
+    }))
+    function New-RepairHeadJson {
+        param([hashtable] $Override = @{})
+        $base = @{ verification_mechanism_paths = $repairSurface; repair_prs = @(601) }
+        foreach ($key in $Override.Keys) { $base[$key] = $Override[$key] }
+        return (New-LedgerJson -Entries @((New-Entry -Override $base)))
+    }
+    $repairHead = New-RepairHeadJson
+
+    # A legal repair passes: pre-existing open debt, own PR number appended, edits
+    # confined to the surface that entry already declared, no adjudicator touched.
+    Invoke-BodyGate -Rows $repairRows -ChangedPaths $repairChangedPaths `
+        -HeadJson $repairHead -BaseJson $repairBase -PrNumber 601
+
+    # A repair that crosses the immutable surface must register one linked
+    # successor. Missing that successor fails closed instead of deadlocking later.
+    Assert-Throws -Context 'repair PR crosses surface without linked successor' `
+        -MessagePattern 'must open exactly one linked successor debt' -Action {
+        Invoke-BodyGate -Rows $repairRows -ChangedPaths @($repairChangedPaths + 'scripts/verify-all.ps1') `
+            -HeadJson $repairHead -BaseJson $repairBase -PrNumber 601
+    }
+
+    # (4) adjudicator paths ARE repairable, but only inside the declared surface.
+    # Banning them outright deadlocked the debt it meant to protect: an entry that
+    # declares an adjudicator path - as this repository's own open entry does -
+    # could never have a failing fixpoint repaired, reproducing issue #494 one
+    # level up. Self-clearance is prevented by base-pinned adjudication
+    # (.github/workflows/pr-review-agent.yml checks out pull_request.base.sha and
+    # fails closed rather than falling back to head), not by this list.
+    $repairAdjudicatorSurface = @($repairSurface + 'scripts/lib/self-referential-bootstrap.ps1')
+    $repairAdjudicatorBase = New-LedgerJson -Entries @((New-Entry -Override @{
+        verification_mechanism_paths = $repairAdjudicatorSurface
+    }))
+    $repairAdjudicatorHead = New-LedgerJson -Entries @((New-Entry -Override @{
+        verification_mechanism_paths = $repairAdjudicatorSurface
+        repair_prs = @(601)
+    }))
+    Invoke-BodyGate -Rows $repairRows `
+        -ChangedPaths @($repairChangedPaths + 'scripts/lib/self-referential-bootstrap.ps1') `
+        -HeadJson $repairAdjudicatorHead -BaseJson $repairAdjudicatorBase -PrNumber 601
+    # ...and an adjudicator OUTSIDE the declared surface needs its own linked
+    # successor instead of silently widening the predecessor.
+    Assert-Throws -Context 'repair PR edits outside adjudicator without successor' `
+        -MessagePattern 'must open exactly one linked successor debt' -Action {
+        Invoke-BodyGate -Rows $repairRows `
+            -ChangedPaths @($repairChangedPaths + 'scripts/lib/self-referential-bootstrap.ps1') `
+            -HeadJson $repairHead -BaseJson $repairBase -PrNumber 601
+    }
+
+    # (3) a repair must do real work. The ledger is itself a mechanism path and a
+    # repair PR necessarily edits it to append repair_prs, so "changed at least one
+    # mechanism path" is true by construction; only a NON-LEDGER mechanism path
+    # distinguishes a real fix from a bare audit-history entry.
+    Assert-Throws -Context 'repair PR that only appends the repair record' `
+        -MessagePattern 'changes no verification-mechanism path other than the ledger' -Action {
+        Invoke-BodyGate -Rows $repairRows -ChangedPaths @('scripts/self-referential-bootstrap-ledger.json') `
+            -HeadJson $repairHead -BaseJson $repairBase -PrNumber 601
+    }
+
+    # (2) the appended number must be exactly this PR: neither someone else's...
+    Assert-Throws -Context 'repair appends a foreign PR number' `
+        -MessagePattern 'must append exactly this PR number' -Action {
+        Invoke-BodyGate -Rows $repairRows -ChangedPaths $repairChangedPaths `
+            -HeadJson $repairHead -BaseJson $repairBase -PrNumber 602
+    }
+    # ...nor a batch that smuggles extra PRs in alongside it.
+    Assert-Throws -Context 'repair appends more than its own PR number' `
+        -MessagePattern 'must append exactly this PR number' -Action {
+        Invoke-BodyGate -Rows $repairRows -ChangedPaths $repairChangedPaths `
+            -HeadJson (New-RepairHeadJson -Override @{ repair_prs = @(600, 601) }) `
+            -BaseJson $repairBase -PrNumber 601
+    }
+    # An unbound PR number cannot be checked against, so it is refused outright.
+    Assert-Throws -Context 'repair without a live PR number' `
+        -MessagePattern 'requires a live PR number' -Action {
+        Invoke-BodyGate -Rows $repairRows -ChangedPaths $repairChangedPaths `
+            -HeadJson $repairHead -BaseJson $repairBase -PrNumber 0
+    }
+
+    # (2b) ONE PR repairs ONE entry (L1-COR-001). The transition records every open
+    # entry whose sole change is a repair_prs tail append, but the body names only
+    # one - so validating just the named record let a second entry's audit history
+    # ride along without ever meeting the PR-number or declared-surface checks.
+    $secondOpenEvidence = 'docs/evidence/second-open/self-referential-bootstrap/summary.md'
+    function New-SecondOpenEntry {
+        param([hashtable] $Override = @{})
+        $base = @{
+            id = 'second-open-debt'
+            verification_mechanism_paths = $repairSurface
+            bootstrap_evidence_refs = @($secondOpenEvidence)
+        }
+        foreach ($key in $Override.Keys) { $base[$key] = $Override[$key] }
+        return (New-Entry -Override $base)
+    }
+    $twoOpenRepairBase = New-LedgerJson -Entries @(
+        (New-Entry -Override @{ verification_mechanism_paths = $repairSurface }),
+        (New-SecondOpenEntry)
+    )
+    $twoOpenRepairHead = New-LedgerJson -Entries @(
+        (New-Entry -Override @{ verification_mechanism_paths = $repairSurface; repair_prs = @(601) }),
+        (New-SecondOpenEntry -Override @{ repair_prs = @(590) })
+    )
+    Assert-Throws -Context 'repair PR also appends repair_prs to an entry the body does not name' `
+        -MessagePattern 'must touch exactly one ledger entry' -Action {
+        Invoke-BodyGate -Rows $repairRows -ChangedPaths $repairChangedPaths `
+            -HeadJson $twoOpenRepairHead -BaseJson $twoOpenRepairBase -PrNumber 601
+    }
+    # Control: appending to ONLY the entry the body does not name must still be
+    # caught by the original self-registration guard, so the single-door check is
+    # an addition to that guard rather than a replacement for it.
+    Assert-Throws -Context 'repair PR appends only to the entry the body does not name' `
+        -MessagePattern 'does not ADD it' -Action {
+        Invoke-BodyGate -Rows $repairRows -ChangedPaths $repairChangedPaths `
+            -HeadJson (New-LedgerJson -Entries @(
+                (New-Entry -Override @{ verification_mechanism_paths = $repairSurface }),
+                (New-SecondOpenEntry -Override @{ repair_prs = @(590) }))) `
+            -BaseJson $twoOpenRepairBase -PrNumber 601
+    }
+
+    # A repair with no outside-surface path may not manufacture successor debt.
+    $repairPlusNewJson = New-LedgerJson -Entries @(
+        (New-Entry -Override @{ verification_mechanism_paths = $repairSurface; repair_prs = @(601) }),
+        (New-Entry -Override @{
+            id = 'successor-mechanism-debt'
+            pr = 601
+            verification_mechanism_paths = $repairSurface
+            bootstrap_evidence_refs = @('docs/evidence/successor/self-referential-bootstrap/summary.md')
+        })
+    )
+    Assert-Throws -Context 'repair PR also opens new debt' `
+        -MessagePattern 'has no outside-surface mechanism path' -Action {
+        Invoke-BodyGate -Rows $repairRows -ChangedPaths $repairChangedPaths `
+            -HeadJson $repairPlusNewJson -BaseJson $repairBase -PrNumber 601
+    }
+
+    # --- linked successor for a necessary outside-surface repair -------------------
+    $outsideRepairPath = 'scripts/tests/test-base-gate-capability.ps1'
+    $successorEvidence = 'docs/evidence/linked-successor/self-referential-bootstrap/summary.md'
+    $predecessorCommands = @((New-Entry).verification_contract.command_ids | ForEach-Object { [string]$_ })
+    $successorContract = New-VerificationContract -Id 'linked-successor-gate/v1' `
+        -CommandIds @($predecessorCommands + 'linked-successor-scope')
+    function New-LinkedSuccessorEntry {
+        param([hashtable] $Override = @{})
+        $base = @{
+            id = 'linked-successor-debt'
+            pr = 601
+            successor_of = 'remote-linux-deploy-target'
+            verification_mechanism_paths = @('scripts/self-referential-bootstrap-ledger.json', $outsideRepairPath)
+            verification_contract = $successorContract
+            bootstrap_evidence_refs = @($successorEvidence)
+        }
+        foreach ($key in $Override.Keys) { $base[$key] = $Override[$key] }
+        return (New-Entry -Override $base)
+    }
+    function New-LinkedRepairHeadJson {
+        param(
+            [hashtable] $SuccessorOverride = @{},
+            [array] $ExtraEntries = @(),
+            [array] $PrefixEntries = @()
+        )
+        return (New-LedgerJson -Entries @(
+            @($PrefixEntries)
+            (New-Entry -Override @{ verification_mechanism_paths = $repairSurface; repair_prs = @(601) })
+            (New-LinkedSuccessorEntry -Override $SuccessorOverride)
+            @($ExtraEntries)
+        ))
+    }
+    $successorRepairChangedPaths = @($repairChangedPaths + $outsideRepairPath)
+
+    # Valid path: predecessor remains immutable except repair_prs, successor is
+    # current-PR-bound and owns exactly the outside path plus the ledger.
+    Invoke-BodyGate -Rows $repairRows -ChangedPaths $successorRepairChangedPaths `
+        -HeadJson (New-LinkedRepairHeadJson) -BaseJson $repairBase -PrNumber 601
+
+    $missingRelationEntry = New-LinkedSuccessorEntry -Override @{
+        successor_of = $null
+        # Without the relation this is parsed as an ordinary entry, so cover all
+        # paths to reach the repair-lane relationship check itself.
+        verification_mechanism_paths = $successorRepairChangedPaths
+    }
+    $missingRelationEntry.Remove('successor_of')
+    Assert-Throws -Context 'successor missing successor_of' -MessagePattern 'must declare successor_of' -Action {
+        Invoke-BodyGate -Rows $repairRows -ChangedPaths $successorRepairChangedPaths `
+            -HeadJson (New-LedgerJson -Entries @(
+                (New-Entry -Override @{ verification_mechanism_paths = $repairSurface; repair_prs = @(601) }),
+                $missingRelationEntry
+            )) -BaseJson $repairBase -PrNumber 601
+    }
+
+    $alternateParent = New-Entry -Override @{
+        id = 'alternate-parent'
+        status = 'closed'
+        pr = 499
+        bootstrap_evidence_refs = @('docs/evidence/alternate/self-referential-bootstrap/summary.md')
+        fixpoint = @{
+            reverified_at = '2026-08-01T08:00:00Z'
+            mechanism_commit = ('a' * 40)
+            evidence_refs = @('docs/evidence/alternate/fixpoint/summary.md')
+        }
+    }
+    $repairBaseWithAlternate = New-LedgerJson -Entries @(
+        $alternateParent,
+        (New-Entry -Override @{ verification_mechanism_paths = $repairSurface })
+    )
+    Assert-Throws -Context 'successor points to wrong predecessor' -MessagePattern "must declare successor_of='remote-linux-deploy-target'" -Action {
+        Invoke-BodyGate -Rows $repairRows -ChangedPaths $successorRepairChangedPaths `
+            -HeadJson (New-LinkedRepairHeadJson -PrefixEntries @($alternateParent) `
+                -SuccessorOverride @{ successor_of = 'alternate-parent' }) `
+            -BaseJson $repairBaseWithAlternate -PrNumber 601
+    }
+    Assert-Throws -Context 'successor omits outside path' -MessagePattern 'must equal the ledger plus every outside-surface classified path' -Action {
+        Invoke-BodyGate -Rows $repairRows -ChangedPaths $successorRepairChangedPaths `
+            -HeadJson (New-LinkedRepairHeadJson -SuccessorOverride @{
+                verification_mechanism_paths = @('scripts/self-referential-bootstrap-ledger.json')
+            }) -BaseJson $repairBase -PrNumber 601
+    }
+    Assert-Throws -Context 'successor overlaps predecessor surface' -MessagePattern 'must equal the ledger plus every outside-surface classified path' -Action {
+        Invoke-BodyGate -Rows $repairRows -ChangedPaths $successorRepairChangedPaths `
+            -HeadJson (New-LinkedRepairHeadJson -SuccessorOverride @{
+                verification_mechanism_paths = @(
+                    'scripts/self-referential-bootstrap-ledger.json',
+                    $outsideRepairPath,
+                    'scripts/deploy.ps1'
+                )
+            }) -BaseJson $repairBase -PrNumber 601
+    }
+    Assert-Throws -Context 'successor duplicates a declared path' -MessagePattern 'duplicates=' -Action {
+        Invoke-BodyGate -Rows $repairRows -ChangedPaths $successorRepairChangedPaths `
+            -HeadJson (New-LinkedRepairHeadJson -SuccessorOverride @{
+                verification_mechanism_paths = @(
+                    'scripts/self-referential-bootstrap-ledger.json',
+                    $outsideRepairPath,
+                    $outsideRepairPath
+                )
+            }) -BaseJson $repairBase -PrNumber 601
+    }
+    Assert-Throws -Context 'successor claims classified path not changed by repair' -MessagePattern 'claims mechanism paths this PR does not change' -Action {
+        Invoke-BodyGate -Rows $repairRows -ChangedPaths $successorRepairChangedPaths `
+            -HeadJson (New-LinkedRepairHeadJson -SuccessorOverride @{
+                verification_mechanism_paths = @(
+                    'scripts/self-referential-bootstrap-ledger.json',
+                    $outsideRepairPath,
+                    'scripts/verify-all.ps1'
+                )
+            }) -BaseJson $repairBase -PrNumber 601
+    }
+    Assert-Throws -Context 'successor contract removes predecessor command' -MessagePattern 'downgrades predecessor' -Action {
+        Invoke-BodyGate -Rows $repairRows -ChangedPaths $successorRepairChangedPaths `
+            -HeadJson (New-LinkedRepairHeadJson -SuccessorOverride @{
+                verification_contract = (New-VerificationContract -Id 'linked-successor-gate/v1' `
+                    -CommandIds @($predecessorCommands[0..($predecessorCommands.Count - 2)]))
+            }) -BaseJson $repairBase -PrNumber 601
+    }
+    $reorderedCommands = @($predecessorCommands)
+    $reorderedCommands[0], $reorderedCommands[1] = $reorderedCommands[1], $reorderedCommands[0]
+    Assert-Throws -Context 'successor contract reorders predecessor commands' -MessagePattern 'ordered prefix' -Action {
+        Invoke-BodyGate -Rows $repairRows -ChangedPaths $successorRepairChangedPaths `
+            -HeadJson (New-LinkedRepairHeadJson -SuccessorOverride @{
+                verification_contract = (New-VerificationContract -Id 'linked-successor-gate/v1' `
+                    -CommandIds @($reorderedCommands + 'linked-successor-scope'))
+            }) -BaseJson $repairBase -PrNumber 601
+    }
+    Assert-Throws -Context 'repair opens two successors' -MessagePattern 'more than one successor|must open exactly one linked successor' -Action {
+        Invoke-BodyGate -Rows $repairRows -ChangedPaths $successorRepairChangedPaths `
+            -HeadJson (New-LinkedRepairHeadJson -ExtraEntries @(
+                (New-LinkedSuccessorEntry -Override @{
+                    id = 'second-linked-successor'
+                    bootstrap_evidence_refs = @('docs/evidence/linked-successor-two/self-referential-bootstrap/summary.md')
+                })
+            )) -BaseJson $repairBase -PrNumber 601
+    }
+    $unrelatedNewEntry = New-Entry -Override @{
+        id = 'unrelated-new-debt'
+        pr = 601
+        verification_mechanism_paths = $successorRepairChangedPaths
+        bootstrap_evidence_refs = @('docs/evidence/unrelated/self-referential-bootstrap/summary.md')
+    }
+    Assert-Throws -Context 'repair opens linked successor plus unrelated debt' -MessagePattern 'must open exactly one linked successor' -Action {
+        Invoke-BodyGate -Rows $repairRows -ChangedPaths $successorRepairChangedPaths `
+            -HeadJson (New-LinkedRepairHeadJson -ExtraEntries @($unrelatedNewEntry)) `
+            -BaseJson $repairBase -PrNumber 601
+    }
+
+    # A later fixpoint can discover another dependency while the original
+    # predecessor is still open. The actual repair target owns repair_prs, but new
+    # debt attaches to the unique open leaf. Outside scope is measured against the
+    # whole active-chain union, so paths already owned by either A or B do not get
+    # duplicated into C.
+    $nestedOutsideRepairPath = 'scripts/verify-all.ps1'
+    $nestedSuccessorEvidence = 'docs/evidence/nested-successor/self-referential-bootstrap/summary.md'
+    $nestedSuccessorContract = New-VerificationContract -Id 'nested-successor-gate/v1' `
+        -CommandIds @($successorContract.command_ids + 'nested-successor-scope')
+    $openGrandparent = New-Entry -Override @{
+        id = 'open-grandparent-debt'
+        pr = 400
+        verification_mechanism_paths = $repairSurface
+        bootstrap_evidence_refs = @('docs/evidence/grandparent/self-referential-bootstrap/summary.md')
+    }
+    $linkedRepairTarget = New-LinkedSuccessorEntry -Override @{
+        successor_of = 'open-grandparent-debt'
+    }
+    $nestedSuccessor = New-Entry -Override @{
+        id = 'nested-successor-debt'
+        pr = 602
+        successor_of = 'linked-successor-debt'
+        verification_mechanism_paths = @(
+            'scripts/self-referential-bootstrap-ledger.json',
+            $nestedOutsideRepairPath
+        )
+        verification_contract = $nestedSuccessorContract
+        bootstrap_evidence_refs = @($nestedSuccessorEvidence)
+    }
+    $linkedChainRepairRows = @{
+        'Self-referential bootstrap' = 'yes'
+        'Bootstrap ledger entry' = 'linked-successor-debt'
+        'Bootstrap reason' = $goodReason
+    }
+    $grandparentRepairRows = @{
+        'Self-referential bootstrap' = 'yes'
+        'Bootstrap ledger entry' = 'open-grandparent-debt'
+        'Bootstrap reason' = $goodReason
+    }
+    $nestedRepairChangedPaths = @(
+        'scripts/self-referential-bootstrap-ledger.json',
+        'scripts/deploy.ps1',
+        $outsideRepairPath,
+        $nestedOutsideRepairPath
+    )
+    $linkedChainBase = New-LedgerJson -Entries @($openGrandparent, $linkedRepairTarget)
+    $linkedChainHead = New-LedgerJson -Entries @(
+        $openGrandparent,
+        (New-LinkedSuccessorEntry -Override @{
+            successor_of = 'open-grandparent-debt'
+            repair_prs = @(602)
+        }),
+        $nestedSuccessor
+    )
+    Invoke-BodyGate -Rows $linkedChainRepairRows -ChangedPaths $nestedRepairChangedPaths `
+        -HeadJson $linkedChainHead -BaseJson $linkedChainBase -PrNumber 602
+
+    # A non-leaf target is also legal: repair bookkeeping stays on A while C
+    # still attaches to B, preserving a single lineage instead of forking A.
+    $grandparentRepairHead = New-LedgerJson -Entries @(
+        (New-Entry -Override @{
+            id = 'open-grandparent-debt'
+            pr = 400
+            verification_mechanism_paths = $repairSurface
+            bootstrap_evidence_refs = @('docs/evidence/grandparent/self-referential-bootstrap/summary.md')
+            repair_prs = @(602)
+        }),
+        $linkedRepairTarget,
+        $nestedSuccessor
+    )
+    Invoke-BodyGate -Rows $grandparentRepairRows -ChangedPaths $nestedRepairChangedPaths `
+        -HeadJson $grandparentRepairHead -BaseJson $linkedChainBase -PrNumber 602
+
+    Assert-Throws -Context 'nested successor forks from non-leaf repair target' `
+        -MessagePattern 'more than one successor' -Action {
+        Invoke-BodyGate -Rows $grandparentRepairRows -ChangedPaths $nestedRepairChangedPaths `
+            -HeadJson (New-LedgerJson -Entries @(
+                (New-Entry -Override @{
+                    id = 'open-grandparent-debt'
+                    pr = 400
+                    verification_mechanism_paths = $repairSurface
+                    bootstrap_evidence_refs = @('docs/evidence/grandparent/self-referential-bootstrap/summary.md')
+                    repair_prs = @(602)
+                }),
+                $linkedRepairTarget,
+                (New-Entry -Override @{
+                    id = 'nested-successor-debt'
+                    pr = 602
+                    successor_of = 'open-grandparent-debt'
+                    verification_mechanism_paths = @(
+                        'scripts/self-referential-bootstrap-ledger.json',
+                        $nestedOutsideRepairPath
+                    )
+                    verification_contract = $nestedSuccessorContract
+                    bootstrap_evidence_refs = @($nestedSuccessorEvidence)
+                })
+            )) -BaseJson $linkedChainBase -PrNumber 602
+    }
+    Assert-Throws -Context 'nested successor overlaps active-chain ancestor surface' `
+        -MessagePattern 'must equal the ledger plus every outside-surface classified path' -Action {
+        Invoke-BodyGate -Rows $linkedChainRepairRows -ChangedPaths $nestedRepairChangedPaths `
+            -HeadJson (New-LedgerJson -Entries @(
+                $openGrandparent,
+                (New-LinkedSuccessorEntry -Override @{
+                    successor_of = 'open-grandparent-debt'
+                    repair_prs = @(602)
+                }),
+                (New-Entry -Override @{
+                    id = 'nested-successor-debt'
+                    pr = 602
+                    successor_of = 'linked-successor-debt'
+                    verification_mechanism_paths = @(
+                        'scripts/self-referential-bootstrap-ledger.json',
+                        $nestedOutsideRepairPath,
+                        'scripts/deploy.ps1'
+                    )
+                    verification_contract = $nestedSuccessorContract
+                    bootstrap_evidence_refs = @($nestedSuccessorEvidence)
+                })
+            )) -BaseJson $linkedChainBase -PrNumber 602
+    }
+    $ancestorOnlyCommands = @($predecessorCommands + 'nested-successor-scope')
+    Assert-Throws -Context 'nested successor preserves target but downgrades leaf contract' `
+        -MessagePattern 'ordered prefix' -Action {
+        Invoke-BodyGate -Rows $grandparentRepairRows -ChangedPaths $nestedRepairChangedPaths `
+            -HeadJson (New-LedgerJson -Entries @(
+                (New-Entry -Override @{
+                    id = 'open-grandparent-debt'
+                    pr = 400
+                    verification_mechanism_paths = $repairSurface
+                    bootstrap_evidence_refs = @('docs/evidence/grandparent/self-referential-bootstrap/summary.md')
+                    repair_prs = @(602)
+                }),
+                $linkedRepairTarget,
+                (New-Entry -Override @{
+                    id = 'nested-successor-debt'
+                    pr = 602
+                    successor_of = 'linked-successor-debt'
+                    verification_mechanism_paths = @(
+                        'scripts/self-referential-bootstrap-ledger.json',
+                        $nestedOutsideRepairPath
+                    )
+                    verification_contract = (New-VerificationContract -Id 'nested-successor-gate/v1' `
+                        -CommandIds $ancestorOnlyCommands)
+                    bootstrap_evidence_refs = @($nestedSuccessorEvidence)
+                })
+            )) -BaseJson $linkedChainBase -PrNumber 602
+    }
+    $unrelatedChainDebt = New-Entry -Override @{
+        id = 'unrelated-chain-debt'
+        pr = 590
+        verification_mechanism_paths = @('scripts/verify-all.ps1')
+        bootstrap_evidence_refs = @('docs/evidence/unrelated-chain/self-referential-bootstrap/summary.md')
+    }
+    Assert-Throws -Context 'nested successor beside unrelated open debt' `
+        -MessagePattern 'one contiguous successor chain' -Action {
+        Invoke-BodyGate -Rows $linkedChainRepairRows -ChangedPaths $nestedRepairChangedPaths `
+            -HeadJson (New-LedgerJson -Entries @(
+                $openGrandparent,
+                (New-LinkedSuccessorEntry -Override @{
+                    successor_of = 'open-grandparent-debt'
+                    repair_prs = @(602)
+                }),
+                $unrelatedChainDebt,
+                $nestedSuccessor
+            )) -BaseJson (New-LedgerJson -Entries @(
+                $openGrandparent,
+                $linkedRepairTarget,
+                $unrelatedChainDebt
+            )) -PrNumber 602
+    }
+
+    # A linked successor is not an ordinary self-registering entry. Even when its
+    # predecessor is already closed, the body must name the predecessor repair.
+    $ordinarySuccessorRows = @{
+        'Self-referential bootstrap' = 'yes'
+        'Bootstrap ledger entry' = 'linked-successor-debt'
+        'Bootstrap reason' = $goodReason
+    }
+    Assert-Throws -Context 'successor self-registers as ordinary new debt' -MessagePattern 'cannot be self-registered as ordinary new debt' -Action {
+        Invoke-BodyGate -Rows $ordinarySuccessorRows `
+            -ChangedPaths @('scripts/self-referential-bootstrap-ledger.json', $outsideRepairPath) `
+            -HeadJson (New-LedgerJson -Entries @($alternateParent, (New-LinkedSuccessorEntry -Override @{
+                successor_of = 'alternate-parent'
+            }))) `
+            -BaseJson (New-LedgerJson -Entries @($alternateParent)) -PrNumber 601
+    }
+
+    # Everything except repair_prs stays immutable: an append cannot smuggle a
+    # field rewrite past the open-entry immutability rule.
+    Assert-Throws -Context 'repair append alongside another field change' -MessagePattern 'was modified' -Action {
+        Invoke-BodyGate -Rows $repairRows -ChangedPaths $repairChangedPaths `
+            -HeadJson (New-RepairHeadJson -Override @{ pr = 777 }) `
+            -BaseJson $repairBase -PrNumber 601
+    }
+    # ...and the append really must be an append, not a rewrite of history.
+    $repairTwiceBase = New-LedgerJson -Entries @((New-Entry -Override @{
+        verification_mechanism_paths = $repairSurface
+        repair_prs = @(590)
+    }))
+    Assert-Throws -Context 'repair rewrites an earlier repair_prs element' -MessagePattern 'was modified' -Action {
+        Invoke-BodyGate -Rows $repairRows -ChangedPaths $repairChangedPaths `
+            -HeadJson (New-RepairHeadJson -Override @{ repair_prs = @(591, 601) }) `
+            -BaseJson $repairTwiceBase -PrNumber 601
+    }
+    Assert-Throws -Context 'repair drops an earlier repair_prs element' -MessagePattern 'was modified' -Action {
+        Invoke-BodyGate -Rows $repairRows -ChangedPaths $repairChangedPaths `
+            -HeadJson $repairHead -BaseJson $repairTwiceBase -PrNumber 601
+    }
+    # A second repair on top of an existing repair_prs record is legal.
+    Invoke-BodyGate -Rows $repairRows -ChangedPaths $repairChangedPaths `
+        -HeadJson (New-RepairHeadJson -Override @{ repair_prs = @(590, 601) }) `
+        -BaseJson $repairTwiceBase -PrNumber 601
+
+    # repair_prs schema: positive integers, strictly increasing, no duplicates.
+    Assert-Throws -Context 'repair_prs out of order' -MessagePattern 'strictly increasing' -Action {
+        Invoke-BodyGate -Rows $repairRows -ChangedPaths $repairChangedPaths `
+            -HeadJson (New-RepairHeadJson -Override @{ repair_prs = @(602, 601) }) `
+            -BaseJson $repairBase -PrNumber 601
+    }
+    Assert-Throws -Context 'repair_prs duplicate' -MessagePattern 'strictly increasing' -Action {
+        Invoke-BodyGate -Rows $repairRows -ChangedPaths $repairChangedPaths `
+            -HeadJson (New-RepairHeadJson -Override @{ repair_prs = @(601, 601) }) `
+            -BaseJson $repairBase -PrNumber 601
+    }
+    foreach ($badRepairPrs in @(@('601'), @(601.5), @(0), @(-1))) {
+        Assert-Throws -Context "repair_prs non-positive-integer member: $($badRepairPrs -join ',')" `
+            -MessagePattern 'positive integers' -Action {
+            Invoke-BodyGate -Rows $repairRows -ChangedPaths $repairChangedPaths `
+                -HeadJson (New-RepairHeadJson -Override @{ repair_prs = $badRepairPrs }) `
+                -BaseJson $repairBase -PrNumber 601
+        }
+    }
+    Assert-Throws -Context 'repair_prs as a scalar' -MessagePattern 'positive integers' -Action {
+        Invoke-BodyGate -Rows $repairRows -ChangedPaths $repairChangedPaths `
+            -HeadJson (New-RepairHeadJson -Override @{ repair_prs = 601 }) `
+            -BaseJson $repairBase -PrNumber 601
+    }
+    # Unknown properties are still rejected: repair_prs is the ONLY new key.
+    Assert-Throws -Context 'unknown ledger entry property' -MessagePattern 'unknown JSON property' -Action {
+        Invoke-BodyGate -Rows $repairRows -ChangedPaths $repairChangedPaths `
+            -HeadJson (New-RepairHeadJson -Override @{ repair_notes = 'x' }) `
+            -BaseJson $repairBase -PrNumber 601
+    }
+
+    # A NEW entry may not arrive carrying repair history. repair_prs is optional at
+    # the schema level so the pre-lane closed entries stay parsable, which means a
+    # self-registering entry could otherwise be born with a fabricated repair
+    # record - never produced by a repair transition, never bound to any PR number.
+    # The empty array is refused too: presence is the violation, not content.
+    foreach ($fabricatedRepairPrs in @(@(), @(123), @(123, 456))) {
+        Assert-Throws -Context "new entry born with repair_prs: [$($fabricatedRepairPrs -join ', ')]" `
+            -MessagePattern 'new entry .* must not declare repair_prs|repair_prs must be non-empty when present' -Action {
+            Invoke-BodyGate -Rows @{
+                'Self-referential bootstrap' = 'yes'
+                'Bootstrap ledger entry' = 'remote-linux-deploy-target'
+                'Bootstrap reason' = $goodReason
+            } -ChangedPaths $mechanism `
+                -HeadJson (New-LedgerJson -Entries @((New-Entry -Override @{ repair_prs = $fabricatedRepairPrs }))) `
+                -BaseJson $emptyJson
+        }
+    }
+
+    # closed entries remain immutable - repair_prs is not a back door into them.
+    $closedRepairBase = New-LedgerJson -Entries @((New-Entry -Override @{
+        status = 'closed'
+        fixpoint = @{ reverified_at = '2026-08-01T08:00:00Z'; mechanism_commit = ('a' * 40); evidence_refs = @('docs/evidence/remote-linux-deploy/fixpoint/summary.md') }
+    }))
+    $closedRepairHead = New-LedgerJson -Entries @((New-Entry -Override @{
+        status = 'closed'
+        fixpoint = @{ reverified_at = '2026-08-01T08:00:00Z'; mechanism_commit = ('a' * 40); evidence_refs = @('docs/evidence/remote-linux-deploy/fixpoint/summary.md') }
+        repair_prs = @(601)
+    }))
+    Assert-Throws -Context 'appending repair_prs to a closed entry' -MessagePattern 'closed entries are immutable' -Action {
+        Invoke-BodyGate -Rows $repairRows -ChangedPaths $repairChangedPaths `
+            -HeadJson $closedRepairHead -BaseJson $closedRepairBase -PrNumber 601
+    }
+
+    # (5) a repair may not close debt in the same transition. Since condition 3
+    # started demanding a non-ledger mechanism path, this combination is blocked on
+    # BOTH reachable paths before condition 5 is consulted, so both are pinned here
+    # and the condition-5 closure check itself is defence in depth:
+    #   ledger-only changed paths -> condition 3 (the repair fixes nothing)
+    #   any non-ledger mechanism path -> the closure single-purpose rule, which
+    #   fires while evaluating the closure and before the body rows are read.
+    # The closure below is otherwise fully legal, so the refusal is about the
+    # combination and not about a defective fixpoint.
+    $repairTargetEvidence = 'docs/evidence/repairable/self-referential-bootstrap/summary.md'
+    $repairTargetEntry = New-Entry -Override @{
+        id = 'repairable-mechanism-entry'
+        verification_mechanism_paths = @('scripts/self-referential-bootstrap-ledger.json', 'scripts/deploy.ps1')
+        bootstrap_evidence_refs = @($repairTargetEvidence)
+    }
+    & $write $repairTargetEvidence 'repair target bootstrap evidence'
+    $null = Invoke-FixtureGit -Arguments @('add', '--', $repairTargetEvidence)
+    $repairClosureBase = New-LedgerJson -Entries @((New-Entry), $repairTargetEntry)
+    $repairClosureBaseSha = New-FixtureHeadCommit -Json $repairClosureBase 'base: closable entry plus repair target'
+    $repairClosureSummary = 'docs/evidence/repair-closure/fixpoint/summary.md'
+    $repairClosureAttestation = 'docs/evidence/repair-closure/fixpoint/attestation.json'
+    $repairClosureEntry = New-Entry -Override @{
+        status = 'closed'
+        fixpoint = @{
+            reverified_at = '2026-08-01T08:00:00Z'
+            mechanism_commit = $fixpointCommit
+            evidence_refs = @($repairClosureSummary, $repairClosureAttestation)
+        }
+    }
+    & $write $repairClosureSummary 'repair-plus-closure re-verification'
+    & $write $repairClosureAttestation (New-FixpointAttestationJson -Entry $repairClosureEntry -MechanismCommit $fixpointCommit)
+    $null = Invoke-FixtureGit -Arguments @('add', '--', $repairClosureSummary, $repairClosureAttestation)
+    $repairPlusClosureJson = New-LedgerJson -Entries @(
+        $repairClosureEntry,
+        (New-Entry -Override @{
+            id = 'repairable-mechanism-entry'
+            verification_mechanism_paths = @('scripts/self-referential-bootstrap-ledger.json', 'scripts/deploy.ps1')
+            bootstrap_evidence_refs = @($repairTargetEvidence)
+            repair_prs = @(601)
+        })
+    )
+    $repairPlusClosureHead = New-FixtureHeadCommit -Json $repairPlusClosureJson 'closure plus repair in one transition'
+    $repairPlusClosureRows = @{
+        'Self-referential bootstrap' = 'yes'
+        'Bootstrap ledger entry' = 'repairable-mechanism-entry'
+        'Bootstrap reason' = $goodReason
+    }
+    Assert-Throws -Context 'repair PR also closes debt, changing only the ledger' `
+        -MessagePattern 'changes no verification-mechanism path other than the ledger' -Action {
+        Invoke-BodyGate -Rows $repairPlusClosureRows -ChangedPaths @(
+            'scripts/self-referential-bootstrap-ledger.json',
+            $repairClosureSummary,
+            $repairClosureAttestation
+        ) -HeadJson $repairPlusClosureJson -BaseJson $repairClosureBase `
+            -GateRepoRoot $gitRoot -BaseSha $repairClosureBaseSha -HeadSha $repairPlusClosureHead -PrNumber 601
+    }
+    Assert-Throws -Context 'repair PR also closes debt while doing real repair work' `
+        -MessagePattern 'may only change the ledger' -Action {
+        Invoke-BodyGate -Rows $repairPlusClosureRows -ChangedPaths @(
+            'scripts/self-referential-bootstrap-ledger.json',
+            'scripts/deploy.ps1',
+            $repairClosureSummary,
+            $repairClosureAttestation
+        ) -HeadJson $repairPlusClosureJson -BaseJson $repairClosureBase `
+            -GateRepoRoot $gitRoot -BaseSha $repairClosureBaseSha -HeadSha $repairPlusClosureHead -PrNumber 601
+    }
+
+    # --- linked predecessor closure while its one successor remains open -----------
+    # Reproduce the post-repair state with real commits: PR #500 opened the
+    # predecessor, PR #601 repaired it and opened its linked successor, then a
+    # ledger-only PR closes #500. The remaining successor must not deadlock that
+    # fully attested closure, but unrelated debt still must.
+    $linkedParentBootstrap = 'docs/evidence/linked-parent/self-referential-bootstrap/summary.md'
+    $linkedChildBootstrap = 'docs/evidence/linked-child/self-referential-bootstrap/summary.md'
+    $linkedParentOpen = New-Entry -Override @{
+        verification_mechanism_paths = @(
+            'scripts/self-referential-bootstrap-ledger.json',
+            'scripts/deploy.ps1'
+        )
+        bootstrap_evidence_refs = @($linkedParentBootstrap)
+    }
+    & $write $linkedParentBootstrap 'linked parent bootstrap evidence'
+    & $write 'scripts/deploy.ps1' '# linked parent mechanism'
+    & $write 'scripts/self-referential-bootstrap-ledger.json' `
+        (New-LedgerJson -Entries @($linkedParentOpen))
+    $null = Invoke-FixtureGit -Arguments @('add', '--',
+        $linkedParentBootstrap,
+        'scripts/deploy.ps1',
+        'scripts/self-referential-bootstrap-ledger.json')
+    $linkedParentMechanismCommit = & $commit 'linked parent mechanism (#500)'
+
+    $linkedParentRepaired = New-Entry -Override @{
+        verification_mechanism_paths = @(
+            'scripts/self-referential-bootstrap-ledger.json',
+            'scripts/deploy.ps1'
+        )
+        bootstrap_evidence_refs = @($linkedParentBootstrap)
+        repair_prs = @(601)
+    }
+    $linkedChildOpen = New-Entry -Override @{
+        id = 'linked-closure-successor'
+        pr = 601
+        successor_of = 'remote-linux-deploy-target'
+        verification_mechanism_paths = @(
+            'scripts/self-referential-bootstrap-ledger.json',
+            $outsideRepairPath
+        )
+        verification_contract = $successorContract
+        bootstrap_evidence_refs = @($linkedChildBootstrap)
+    }
+    $linkedOpenLedger = New-LedgerJson -Entries @($linkedParentRepaired, $linkedChildOpen)
+    & $write $linkedChildBootstrap 'linked child bootstrap evidence'
+    & $write $outsideRepairPath '# linked successor mechanism'
+    & $write 'scripts/self-referential-bootstrap-ledger.json' $linkedOpenLedger
+    $null = Invoke-FixtureGit -Arguments @('add', '--',
+        $linkedChildBootstrap,
+        $outsideRepairPath,
+        'scripts/self-referential-bootstrap-ledger.json')
+    $linkedClosureBaseSha = & $commit 'linked successor mechanism (#601)'
+
+    $linkedClosureSummary = 'docs/evidence/linked-parent/fixpoint/summary.md'
+    $linkedClosureAttestation = 'docs/evidence/linked-parent/fixpoint/attestation.json'
+    $linkedParentClosed = New-Entry -Override @{
+        status = 'closed'
+        verification_mechanism_paths = @(
+            'scripts/self-referential-bootstrap-ledger.json',
+            'scripts/deploy.ps1'
+        )
+        bootstrap_evidence_refs = @($linkedParentBootstrap)
+        repair_prs = @(601)
+        fixpoint = @{
+            reverified_at = '2026-08-03T08:00:00Z'
+            mechanism_commit = $linkedParentMechanismCommit
+            evidence_refs = @($linkedClosureSummary, $linkedClosureAttestation)
+        }
+    }
+    $linkedClosedLedger = New-LedgerJson -Entries @($linkedParentClosed, $linkedChildOpen)
+    & $write $linkedClosureSummary 'linked predecessor post-repair re-verification'
+    & $write $linkedClosureAttestation `
+        (New-FixpointAttestationJson -Entry $linkedParentClosed -MechanismCommit $linkedParentMechanismCommit)
+    $null = Invoke-FixtureGit -Arguments @('add', '--', $linkedClosureSummary, $linkedClosureAttestation)
+    $linkedClosureHeadSha = New-FixtureHeadCommit -Json $linkedClosedLedger 'close linked predecessor only'
+    Invoke-BodyGate -Rows @{ 'Self-referential bootstrap' = 'no' } -ChangedPaths @(
+        'scripts/self-referential-bootstrap-ledger.json',
+        $linkedClosureSummary,
+        $linkedClosureAttestation
+    ) -HeadJson $linkedClosedLedger -BaseJson $linkedOpenLedger `
+        -GateRepoRoot $gitRoot -BaseSha $linkedClosureBaseSha -HeadSha $linkedClosureHeadSha
+    Assert-Throws -Context 'linked closure carries unrelated non-mechanism change' -MessagePattern 'open ledger debt' -Action {
+        Invoke-BodyGate -Rows @{ 'Self-referential bootstrap' = 'no' } -ChangedPaths @(
+            'scripts/self-referential-bootstrap-ledger.json',
+            $linkedClosureSummary,
+            $linkedClosureAttestation,
+            'README.md'
+        ) -HeadJson $linkedClosedLedger -BaseJson $linkedOpenLedger `
+            -GateRepoRoot $gitRoot -BaseSha $linkedClosureBaseSha -HeadSha $linkedClosureHeadSha
+    }
+    Assert-Throws -Context 'existing entry carries empty repair_prs' `
+        -MessagePattern 'repair_prs must be non-empty when present' -Action {
+        Get-SelfReferentialBootstrapLedger -Json (New-LedgerJson -Entries @(
+            (New-Entry -Override @{ repair_prs = @() })
+        ))
+    }
+
+    # A later fixpoint may extend the open lineage before the oldest predecessor
+    # can close. Exercise the full A -> B -> C lifecycle with real commits: close
+    # exactly the oldest open root, preserve the contiguous suffix, and repeat.
+    $linkedGrandchildBootstrap = 'docs/evidence/linked-grandchild/self-referential-bootstrap/summary.md'
+    $linkedGrandchildOpen = New-Entry -Override @{
+        id = 'linked-closure-grandchild'
+        pr = 602
+        successor_of = 'linked-closure-successor'
+        verification_mechanism_paths = @(
+            'scripts/self-referential-bootstrap-ledger.json',
+            $nestedOutsideRepairPath
+        )
+        verification_contract = $nestedSuccessorContract
+        bootstrap_evidence_refs = @($linkedGrandchildBootstrap)
+    }
+    $threeOpenLedger = New-LedgerJson -Entries @(
+        $linkedParentRepaired,
+        $linkedChildOpen,
+        $linkedGrandchildOpen
+    )
+    & $write $linkedGrandchildBootstrap 'linked grandchild bootstrap evidence'
+    & $write $nestedOutsideRepairPath '# nested successor mechanism'
+    & $write 'scripts/self-referential-bootstrap-ledger.json' $threeOpenLedger
+    $null = Invoke-FixtureGit -Arguments @('add', '--',
+        $linkedGrandchildBootstrap,
+        $nestedOutsideRepairPath,
+        'scripts/self-referential-bootstrap-ledger.json')
+    $threeOpenBaseSha = & $commit 'nested successor mechanism (#602)'
+
+    $chainParentSummary = 'docs/evidence/chain-parent/fixpoint/summary.md'
+    $chainParentAttestation = 'docs/evidence/chain-parent/fixpoint/attestation.json'
+    $chainParentClosed = New-Entry -Override @{
+        status = 'closed'
+        verification_mechanism_paths = @(
+            'scripts/self-referential-bootstrap-ledger.json',
+            'scripts/deploy.ps1'
+        )
+        bootstrap_evidence_refs = @($linkedParentBootstrap)
+        repair_prs = @(601)
+        fixpoint = @{
+            reverified_at = '2026-08-06T08:00:00Z'
+            mechanism_commit = $linkedParentMechanismCommit
+            evidence_refs = @($chainParentSummary, $chainParentAttestation)
+        }
+    }
+    $parentClosedChainLedger = New-LedgerJson -Entries @(
+        $chainParentClosed,
+        $linkedChildOpen,
+        $linkedGrandchildOpen
+    )
+    & $write $chainParentSummary 'oldest root verified before closing A'
+    & $write $chainParentAttestation `
+        (New-FixpointAttestationJson -Entry $chainParentClosed -MechanismCommit $linkedParentMechanismCommit)
+    $null = Invoke-FixtureGit -Arguments @('add', '--', $chainParentSummary, $chainParentAttestation)
+    $parentClosedChainHeadSha = New-FixtureHeadCommit -Json $parentClosedChainLedger 'close A and leave B to C open'
+    Invoke-BodyGate -Rows @{ 'Self-referential bootstrap' = 'no' } -ChangedPaths @(
+        'scripts/self-referential-bootstrap-ledger.json',
+        $chainParentSummary,
+        $chainParentAttestation
+    ) -HeadJson $parentClosedChainLedger -BaseJson $threeOpenLedger `
+        -GateRepoRoot $gitRoot -BaseSha $threeOpenBaseSha -HeadSha $parentClosedChainHeadSha
+
+    $chainChildSummary = 'docs/evidence/chain-child/fixpoint/summary.md'
+    $chainChildAttestation = 'docs/evidence/chain-child/fixpoint/attestation.json'
+    $chainChildClosed = New-Entry -Override @{
+        id = 'linked-closure-successor'
+        status = 'closed'
+        pr = 601
+        successor_of = 'remote-linux-deploy-target'
+        verification_mechanism_paths = @(
+            'scripts/self-referential-bootstrap-ledger.json',
+            $outsideRepairPath
+        )
+        verification_contract = $successorContract
+        bootstrap_evidence_refs = @($linkedChildBootstrap)
+        fixpoint = @{
+            reverified_at = '2026-08-07T08:00:00Z'
+            mechanism_commit = $linkedClosureBaseSha
+            evidence_refs = @($chainChildSummary, $chainChildAttestation)
+        }
+    }
+    $childClosedChainLedger = New-LedgerJson -Entries @(
+        $chainParentClosed,
+        $chainChildClosed,
+        $linkedGrandchildOpen
+    )
+    & $write $chainChildSummary 'next root verified before closing B'
+    & $write $chainChildAttestation `
+        (New-FixpointAttestationJson -Entry $chainChildClosed -MechanismCommit $linkedClosureBaseSha)
+    $null = Invoke-FixtureGit -Arguments @('add', '--', $chainChildSummary, $chainChildAttestation)
+    $childClosedChainHeadSha = New-FixtureHeadCommit -Json $childClosedChainLedger 'close B and leave C open'
+    Invoke-BodyGate -Rows @{ 'Self-referential bootstrap' = 'no' } -ChangedPaths @(
+        'scripts/self-referential-bootstrap-ledger.json',
+        $chainChildSummary,
+        $chainChildAttestation
+    ) -HeadJson $childClosedChainLedger -BaseJson $parentClosedChainLedger `
+        -GateRepoRoot $gitRoot -BaseSha $parentClosedChainHeadSha -HeadSha $childClosedChainHeadSha
+
+    $chainGrandchildSummary = 'docs/evidence/chain-grandchild/fixpoint/summary.md'
+    $chainGrandchildAttestation = 'docs/evidence/chain-grandchild/fixpoint/attestation.json'
+    $chainGrandchildClosed = New-Entry -Override @{
+        id = 'linked-closure-grandchild'
+        status = 'closed'
+        pr = 602
+        successor_of = 'linked-closure-successor'
+        verification_mechanism_paths = @(
+            'scripts/self-referential-bootstrap-ledger.json',
+            $nestedOutsideRepairPath
+        )
+        verification_contract = $nestedSuccessorContract
+        bootstrap_evidence_refs = @($linkedGrandchildBootstrap)
+        fixpoint = @{
+            reverified_at = '2026-08-08T08:00:00Z'
+            mechanism_commit = $threeOpenBaseSha
+            evidence_refs = @($chainGrandchildSummary, $chainGrandchildAttestation)
+        }
+    }
+    $closedChainLedger = New-LedgerJson -Entries @(
+        $chainParentClosed,
+        $chainChildClosed,
+        $chainGrandchildClosed
+    )
+    & $write $chainGrandchildSummary 'leaf verified before closing C'
+    & $write $chainGrandchildAttestation `
+        (New-FixpointAttestationJson -Entry $chainGrandchildClosed -MechanismCommit $threeOpenBaseSha)
+    $null = Invoke-FixtureGit -Arguments @('add', '--', $chainGrandchildSummary, $chainGrandchildAttestation)
+    $closedChainHeadSha = New-FixtureHeadCommit -Json $closedChainLedger 'close final chain leaf C'
+    Invoke-BodyGate -Rows @{ 'Self-referential bootstrap' = 'no' } -ChangedPaths @(
+        'scripts/self-referential-bootstrap-ledger.json',
+        $chainGrandchildSummary,
+        $chainGrandchildAttestation
+    ) -HeadJson $closedChainLedger -BaseJson $childClosedChainLedger `
+        -GateRepoRoot $gitRoot -BaseSha $childClosedChainHeadSha -HeadSha $closedChainHeadSha
+
+    # Closure order is predecessor first. Closing the successor while its
+    # predecessor remains open could strand that predecessor behind the global
+    # no-second-successor invariant.
+    $successorFirstBaseSha = New-FixtureHeadCommit -Json $linkedOpenLedger 'base for forbidden successor-first closure'
+    $successorFirstSummary = 'docs/evidence/linked-child-first/fixpoint/summary.md'
+    $successorFirstAttestation = 'docs/evidence/linked-child-first/fixpoint/attestation.json'
+    $linkedChildClosedFirst = New-Entry -Override @{
+        id = 'linked-closure-successor'
+        status = 'closed'
+        pr = 601
+        successor_of = 'remote-linux-deploy-target'
+        verification_mechanism_paths = @(
+            'scripts/self-referential-bootstrap-ledger.json',
+            $outsideRepairPath
+        )
+        verification_contract = $successorContract
+        bootstrap_evidence_refs = @($linkedChildBootstrap)
+        fixpoint = @{
+            reverified_at = '2026-08-03T09:00:00Z'
+            mechanism_commit = $linkedClosureBaseSha
+            evidence_refs = @($successorFirstSummary, $successorFirstAttestation)
+        }
+    }
+    $successorFirstClosedLedger = New-LedgerJson -Entries @($linkedParentRepaired, $linkedChildClosedFirst)
+    & $write $successorFirstSummary 'successor-first closure must remain blocked'
+    & $write $successorFirstAttestation `
+        (New-FixpointAttestationJson -Entry $linkedChildClosedFirst -MechanismCommit $linkedClosureBaseSha)
+    $null = Invoke-FixtureGit -Arguments @('add', '--', $successorFirstSummary, $successorFirstAttestation)
+    $successorFirstHeadSha = New-FixtureHeadCommit -Json $successorFirstClosedLedger 'attempt successor-first closure'
+    Assert-Throws -Context 'successor closes before open predecessor' `
+        -MessagePattern 'cannot be closed while predecessor.*remains open' -Action {
+        Invoke-BodyGate -Rows @{ 'Self-referential bootstrap' = 'no' } -ChangedPaths @(
+            'scripts/self-referential-bootstrap-ledger.json',
+            $successorFirstSummary,
+            $successorFirstAttestation
+        ) -HeadJson $successorFirstClosedLedger -BaseJson $linkedOpenLedger `
+            -GateRepoRoot $gitRoot -BaseSha $successorFirstBaseSha -HeadSha $successorFirstHeadSha
+    }
+
+    # Closing both linked entries at once would make OpenDebt empty and bypass the
+    # body-level singular exception. The transition itself must reject the pair.
+    $closeBothParentSummary = 'docs/evidence/close-both-parent/fixpoint/summary.md'
+    $closeBothParentAttestation = 'docs/evidence/close-both-parent/fixpoint/attestation.json'
+    $closeBothChildSummary = 'docs/evidence/close-both-child/fixpoint/summary.md'
+    $closeBothChildAttestation = 'docs/evidence/close-both-child/fixpoint/attestation.json'
+    $closeBothParent = New-Entry -Override @{
+        status = 'closed'
+        verification_mechanism_paths = @(
+            'scripts/self-referential-bootstrap-ledger.json',
+            'scripts/deploy.ps1'
+        )
+        bootstrap_evidence_refs = @($linkedParentBootstrap)
+        repair_prs = @(601)
+        fixpoint = @{
+            reverified_at = '2026-08-05T08:00:00Z'
+            mechanism_commit = $linkedParentMechanismCommit
+            evidence_refs = @($closeBothParentSummary, $closeBothParentAttestation)
+        }
+    }
+    $closeBothChild = New-Entry -Override @{
+        id = 'linked-closure-successor'
+        status = 'closed'
+        pr = 601
+        successor_of = 'remote-linux-deploy-target'
+        verification_mechanism_paths = @(
+            'scripts/self-referential-bootstrap-ledger.json',
+            $outsideRepairPath
+        )
+        verification_contract = $successorContract
+        bootstrap_evidence_refs = @($linkedChildBootstrap)
+        fixpoint = @{
+            reverified_at = '2026-08-05T08:01:00Z'
+            mechanism_commit = $linkedClosureBaseSha
+            evidence_refs = @($closeBothChildSummary, $closeBothChildAttestation)
+        }
+    }
+    $closeBothLedger = New-LedgerJson -Entries @($closeBothParent, $closeBothChild)
+    & $write $closeBothParentSummary 'parent half of forbidden close-both transition'
+    & $write $closeBothParentAttestation `
+        (New-FixpointAttestationJson -Entry $closeBothParent -MechanismCommit $linkedParentMechanismCommit)
+    & $write $closeBothChildSummary 'child half of forbidden close-both transition'
+    & $write $closeBothChildAttestation `
+        (New-FixpointAttestationJson -Entry $closeBothChild -MechanismCommit $linkedClosureBaseSha)
+    $null = Invoke-FixtureGit -Arguments @('add', '--',
+        $closeBothParentSummary,
+        $closeBothParentAttestation,
+        $closeBothChildSummary,
+        $closeBothChildAttestation)
+    $closeBothHeadSha = New-FixtureHeadCommit -Json $closeBothLedger 'attempt linked close-both transition'
+    Assert-Throws -Context 'linked predecessor and successor close together' `
+        -MessagePattern 'must close exactly one ledger entry' -Action {
+        Invoke-BodyGate -Rows @{ 'Self-referential bootstrap' = 'no' } -ChangedPaths @(
+            'scripts/self-referential-bootstrap-ledger.json',
+            $closeBothParentSummary,
+            $closeBothParentAttestation,
+            $closeBothChildSummary,
+            $closeBothChildAttestation
+        ) -HeadJson $closeBothLedger -BaseJson $linkedOpenLedger `
+            -GateRepoRoot $gitRoot -BaseSha $linkedClosureBaseSha -HeadSha $closeBothHeadSha
+    }
+
+    # The exception is direct and singular: an unrelated open entry beside the
+    # linked successor keeps blocking the closure.
+    $unrelatedLinkedEvidence = 'docs/evidence/unrelated-linked/self-referential-bootstrap/summary.md'
+    $unrelatedLinkedEntry = New-Entry -Override @{
+        id = 'unrelated-linked-debt'
+        pr = 777
+        verification_mechanism_paths = @('scripts/verify-all.ps1')
+        bootstrap_evidence_refs = @($unrelatedLinkedEvidence)
+    }
+    & $write $unrelatedLinkedEvidence 'unrelated open debt evidence'
+    $null = Invoke-FixtureGit -Arguments @('add', '--', $unrelatedLinkedEvidence)
+    $linkedOpenWithUnrelated = New-LedgerJson -Entries @(
+        $linkedParentRepaired,
+        $linkedChildOpen,
+        $unrelatedLinkedEntry
+    )
+    $linkedUnrelatedBaseSha = New-FixtureHeadCommit -Json $linkedOpenWithUnrelated 'base with linked and unrelated debt'
+    $linkedUnrelatedSummary = 'docs/evidence/linked-parent-unrelated/fixpoint/summary.md'
+    $linkedUnrelatedAttestation = 'docs/evidence/linked-parent-unrelated/fixpoint/attestation.json'
+    $linkedClosedWithUnrelated = New-LedgerJson -Entries @(
+        (New-Entry -Override @{
+            status = 'closed'
+            verification_mechanism_paths = @(
+                'scripts/self-referential-bootstrap-ledger.json',
+                'scripts/deploy.ps1'
+            )
+            bootstrap_evidence_refs = @($linkedParentBootstrap)
+            repair_prs = @(601)
+            fixpoint = @{
+                reverified_at = '2026-08-04T08:00:00Z'
+                mechanism_commit = $linkedParentMechanismCommit
+                evidence_refs = @($linkedUnrelatedSummary, $linkedUnrelatedAttestation)
+            }
+        }),
+        $linkedChildOpen,
+        $unrelatedLinkedEntry
+    )
+    $linkedUnrelatedClosedEntry = @((Get-SelfReferentialBootstrapLedger -Json $linkedClosedWithUnrelated).entries | Where-Object {
+        [string]$_.id -ceq 'remote-linux-deploy-target'
+    })[0]
+    & $write $linkedUnrelatedSummary 'closure must remain blocked by unrelated debt'
+    & $write $linkedUnrelatedAttestation `
+        (New-FixpointAttestationJson -Entry $linkedUnrelatedClosedEntry -MechanismCommit $linkedParentMechanismCommit)
+    $null = Invoke-FixtureGit -Arguments @('add', '--', $linkedUnrelatedSummary, $linkedUnrelatedAttestation)
+    $linkedUnrelatedHeadSha = New-FixtureHeadCommit -Json $linkedClosedWithUnrelated 'attempt closure beside unrelated debt'
+    Assert-Throws -Context 'linked closure with unrelated open debt' `
+        -MessagePattern 'one contiguous successor chain' -Action {
+        Invoke-BodyGate -Rows @{ 'Self-referential bootstrap' = 'no' } -ChangedPaths @(
+            'scripts/self-referential-bootstrap-ledger.json',
+            $linkedUnrelatedSummary,
+            $linkedUnrelatedAttestation
+        ) -HeadJson $linkedClosedWithUnrelated -BaseJson $linkedOpenWithUnrelated `
+            -GateRepoRoot $gitRoot -BaseSha $linkedUnrelatedBaseSha -HeadSha $linkedUnrelatedHeadSha
     }
 
     # --- non-mechanism PRs are untouched by all of this -----------------------------

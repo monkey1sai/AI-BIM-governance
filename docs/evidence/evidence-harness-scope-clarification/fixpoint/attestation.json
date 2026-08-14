@@ -1,0 +1,25 @@
+{
+  "schema_version": "self-referential-fixpoint-attestation/v1",
+  "entry_id": "evidence-harness-scope-clarification",
+  "mechanism_commit": "89e9b61c32eea4bd3eb6990588430416b66e9181",
+  "verification_contract_sha256": "f7d7e6b235ab8d965a96f5ee1f2835d2157f6cc32613884eebf839068c17cac5",
+  "result": "pass",
+  "commands": [
+    {
+      "id": "test-self-referential-bootstrap",
+      "exit_code": 0
+    },
+    {
+      "id": "test-pr-body-evidence",
+      "exit_code": 0
+    },
+    {
+      "id": "test-agent-governance-check",
+      "exit_code": 0
+    },
+    {
+      "id": "invoke-powershell-static",
+      "exit_code": 0
+    }
+  ]
+}
