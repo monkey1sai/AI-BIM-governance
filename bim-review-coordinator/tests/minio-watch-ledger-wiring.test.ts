@@ -5,6 +5,7 @@ import path from "node:path";
 import request from "supertest";
 import { afterEach, describe, expect, it } from "vitest";
 import { createCoordinatorApp, type CoordinatorApp } from "../src/app.js";
+import { CallbackOutbox } from "../src/services/callbackOutbox.js";
 import { ConversionLedger } from "../src/services/conversionLedger.js";
 import { idempotencyKeyFor, type MinioWatcherStatus } from "../src/services/minioWatcher.js";
 
@@ -175,5 +176,66 @@ describe("app.ts isLedgered 接線整合測試（review Important #2）", () => 
     // ledger 命中 → 全程 skip：triggered_total 維持 0（若接線退化成繞過 ledger 盲觸發，這裡會 ≥1）。
     expect(status.triggered_total).toBe(0);
     expect(status.baseline_count).toBe(1); // 診斷欄位仍填（首輪 model.ifc 數）
+  });
+
+  it("#531 recreate 存活：同持久路徑重啟後 ledger/outbox state 存活、watcher 不重複觸發", async () => {
+    // 模擬 compose 掛載卷：ledger 與 outbox 同落 <卷>/coordinator/（compose.runtime-manager.yml
+    // 的 /workspace/storage/coordinator/ 佈局）；container recreate＝process 換代、檔案留存。
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "minio-watch-wiring-recreate-"));
+    const coordinatorStateDir = path.join(root, "coordinator");
+    const ledgerStorePath = path.join(coordinatorStateDir, "conversion-ledger.json");
+    const outboxStorePath = path.join(coordinatorStateDir, "callback-outbox.json");
+    const state: { objs: S3Obj[] } = { objs: [{ key: "899/main/xxx/model.ifc", etag: "e1" }] };
+    const s3Base = await startS3Stub(state);
+    const appOptions = () => ({
+      sessionStoreDir: path.join(root, "sessions"),
+      eventLogDir: path.join(root, "events"),
+      callbackOutboxStorePath: outboxStorePath,
+      corsOrigins: ["http://127.0.0.1:5173"],
+      ...watchOverrides(s3Base, ledgerStorePath),
+    });
+
+    // 第一世代：首輪 intake 觸發 → ledger 落帳到持久檔。
+    active = createCoordinatorApp(appOptions());
+    await listenOnLoopback(active);
+    await active.minioWatchSurface.pollNow();
+    const firstGen = await fetchWatcherStatus(active);
+    expect(firstGen.triggered_total).toBeGreaterThanOrEqual(1);
+    await active.dispose();
+    active.io.close();
+    await new Promise<void>((r) => active?.server.close(() => r()));
+    active = null;
+
+    // 世代之間 seed 一筆 pending callback（模擬 recreate 當下尚未投遞的 outbox state）。
+    const seeded = new CallbackOutbox(5, async () => {}, outboxStorePath).enqueue({
+      event: "conversion_failed",
+      targetUrl: null,
+      correlationId: "corr-531-recreate",
+      externalModelVersionId: "xxx",
+      conversionJobId: null,
+      payload: { note: "pre-recreate pending callback" },
+    });
+
+    // 第二世代（recreate）：同持久路徑重建 app。
+    active = createCoordinatorApp(appOptions());
+    await listenOnLoopback(active);
+    await active.minioWatchSurface.pollNow();
+
+    // 冪等水位存活：同一物件不得重複觸發、ledger 不得長出重複紀錄。
+    const secondGen = await fetchWatcherStatus(active);
+    expect(secondGen.triggered_total).toBe(0);
+    const idkey = idempotencyKeyFor("bim-control", "899/main/xxx/model.ifc", "e1");
+    const persisted = new ConversionLedger(ledgerStorePath);
+    expect(persisted.get(idkey)).not.toBeNull();
+    expect(persisted.list()).toHaveLength(1);
+
+    // outbox state 存活：seed 的 pending entry 在新 process 經真 route 可見。
+    const summary = await request(active.app).get("/api/callback-outbox/summary");
+    expect(summary.status).toBe(200);
+    const survivor = (summary.body.entries as Array<{ outbox_id: string; status: string }>).find(
+      (entry) => entry.outbox_id === seeded.outbox_id,
+    );
+    expect(survivor).toBeDefined();
+    expect(survivor!.status).toBe("pending");
   });
 });

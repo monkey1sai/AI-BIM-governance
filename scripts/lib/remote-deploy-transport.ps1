@@ -493,8 +493,14 @@ function Invoke-RemoteTestDeployRebuild {
     # The PS pipeline appends an OS newline (CRLF on Windows) when feeding native
     # stdin, which lands a stray \r line in bash. Base64 transport is byte-precise.
     $scriptB64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($rebuildScript))
+    # #531/#540-3: the report's execution window must CONTAIN any container
+    # recreate this rebuild performs (the durability proof compares container
+    # creation time against it), so the clock starts before the remote dispatch
+    # and stops only after it returns.
+    $executionStartedAt = [DateTimeOffset]::UtcNow
     $output = & ssh @sshArguments "echo '$scriptB64' | base64 -d | bash" 2>&1
     $exitCode = $LASTEXITCODE
+    $executionFinishedAt = [DateTimeOffset]::UtcNow
 
     $outputText = ($output | Out-String)
     $snapshot = ConvertFrom-DeployEnvSnapshotTranscript -OutputText $outputText
@@ -507,6 +513,12 @@ function Invoke-RemoteTestDeployRebuild {
     $stamp = (Get-Date).ToUniversalTime().ToString('yyyyMMddTHHmmssZ')
     $snapshotPath = Join-Path $reportDir "$stamp-effective-env.json"
     if ($null -ne $snapshot) {
+        # #531/#540-3: persist the dispatch execution window alongside the
+        # redacted snapshot. Timestamps only - no env value, host, or topology.
+        $snapshot | Add-Member -NotePropertyName 'execution_window' -NotePropertyValue ([pscustomobject]@{
+            started_at  = $executionStartedAt.ToString('o')
+            finished_at = $executionFinishedAt.ToString('o')
+        }) -Force
         $snapshot | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $snapshotPath -Encoding utf8
     } else {
         $snapshotPath = ''
@@ -548,10 +560,14 @@ function Invoke-RemoteTestDeployRebuild {
     }
 
     return [pscustomobject]@{
-        ExitCode      = $exitCode
-        Output        = $outputText
-        SnapshotPath  = $snapshotPath
-        EffectiveKeys = if ($null -ne $snapshot) { @($snapshot.entries | ForEach-Object { [string]$_.key }) } else { @() }
-        DeployTag     = $deployTag
+        ExitCode        = $exitCode
+        Output          = $outputText
+        SnapshotPath    = $snapshotPath
+        EffectiveKeys   = if ($null -ne $snapshot) { @($snapshot.entries | ForEach-Object { [string]$_.key }) } else { @() }
+        DeployTag       = $deployTag
+        ExecutionWindow = [pscustomobject]@{
+            started_at  = $executionStartedAt.ToString('o')
+            finished_at = $executionFinishedAt.ToString('o')
+        }
     }
 }

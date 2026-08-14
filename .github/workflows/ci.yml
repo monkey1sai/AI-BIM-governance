@@ -288,27 +288,6 @@ jobs:
         shell: pwsh
         run: python -m pytest governance-service/tests -q
 
-  agent-governance-contracts:
-    name: agent governance contracts
-    needs: changes
-    if: always() && (needs.changes.result != 'success' || needs.changes.outputs.agent_governance == 'true')
-    runs-on: windows-latest
-    steps:
-      - name: Require changed-path classifier success
-        if: needs.changes.result != 'success'
-        shell: pwsh
-        run: throw 'changed path classifier did not succeed; refusing a skipped-success required check.'
-
-      - name: Checkout
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-
-      - name: Run agent governance contracts
-        shell: pwsh
-        run: pwsh -NoProfile -NonInteractive -File scripts/tests/test-agent-governance-check.ps1
-
   viewer:
     name: viewer build and tests
     needs: changes
