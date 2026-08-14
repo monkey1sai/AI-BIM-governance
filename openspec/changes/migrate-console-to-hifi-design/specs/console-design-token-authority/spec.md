@@ -44,12 +44,13 @@
 
 ### Requirement: 遷移落地後 SHALL 重用既有 pixel/semantic 雙閘機制重新 rebaseline
 
-視覺遷移程式碼落地後，SHALL 使用既有 `web-viewer-sample/scripts/capture-design-system-reference.mjs`（帶 `--rebaseline --confirm-rebaseline` 雙旗標）重新擷取 `docs/plans/design-system-reference.manifest.json` 的 golden baseline（13 screens × 2 viewports），SHALL NOT 新建擷取機制或手動覆寫 golden 圖檔。重新擷取後 SHALL 以 `scripts/tests/verify-design-system-reference.ps1 -VerifyOrigin` 驗證通過。`align-frontend-design-system-reference` 已於 2026-07-24 historical correction 恢復為 `Status: deferred` 的 frozen change；其未完成 tasks 2.4–2.8 是 non-canonical delta，並非平行中的 gate owner。既有機制與視覺內容正交，無論鎖定何種視覺皆可重用；兩案完成 requirement/successor crosswalk 前不得平行修改相關 gate 資產。
+視覺遷移程式碼落地後，SHALL 重用既有 `web-viewer-sample/scripts/capture-design-system-reference.mjs` 重鎖 **非** `canonical_product_surface` 的 origin 投影屏，SHALL NOT 新建擷取機制或手動覆寫 golden 圖檔。SHALL NOT 用 origin-mockup generic `--rebaseline` 覆寫 `baseline_provenance.authority=canonical_product_surface` 的 screen（目前僅 `workspace.a4.default`，pinned by PR #429）。該產品面路徑在 PR #535 修 capture provenance 前 SHALL 維持 STOP。驗證 SHALL 以 `scripts/tests/verify-design-system-reference.ps1 -VerifyOrigin` 通過。`align-frontend-design-system-reference` 已於 2026-07-24 historical correction 恢復為 `Status: deferred` 的 frozen change；2026-08-14 四軸 crosswalk 已落地且不是 thaw。其未完成 tasks 2.4–2.8 是 non-canonical delta，並非平行中的 gate owner。既有機制與視覺內容正交，origin 投影屏可重用同一套工具；產品面必須保全 pinned digest。
 
 #### Scenario: 視覺遷移後重新 rebaseline 且驗證通過
 
 - **WHEN** UnifiedConsole 完成 `--ab-*` token 遷移的程式碼變更
-- **THEN** SHALL 執行 `node web-viewer-sample/scripts/capture-design-system-reference.mjs --rebaseline --confirm-rebaseline`
+- **THEN** SHALL 只重拍非 `canonical_product_surface` 屏，或以零覆寫方式 verify `workspace.a4.default` 的 #429 pinned digest
+- **AND** SHALL NOT 執行會覆寫 `workspace.a4.default` PNG／sha256 的 generic 13-screen `--rebaseline`
 - **AND** 隨後執行 `pwsh scripts/tests/verify-design-system-reference.ps1 -VerifyOrigin` SHALL 通過
 - **AND** SHALL NOT 手動編輯 `design-system-reference.manifest.json` 的 baseline hash 欄位或手動置換 golden PNG
 
