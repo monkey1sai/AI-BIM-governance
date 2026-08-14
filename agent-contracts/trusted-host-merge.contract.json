@@ -119,7 +119,7 @@
       { "context": "viewer build and tests", "app_id": 15368, "verification_target": "viewer-session", "workflow_path": ".github/workflows/ci.yml" },
       { "context": "kit-manager-api tests", "app_id": 15368, "verification_target": "kit-manager-api", "workflow_path": ".github/workflows/ci.yml" },
       { "context": "kit-manager-web build", "app_id": 15368, "verification_target": "kit-manager-web", "workflow_path": ".github/workflows/ci.yml" },
-      { "context": "agent governance contracts", "app_id": 15368, "verification_target": "agent-governance", "workflow_path": ".github/workflows/ci.yml" },
+      { "context": "agent-governance", "app_id": 15368, "verification_target": "agent-governance", "workflow_path": ".github/workflows/agent-governance.yml" },
       { "context": "docker compose config", "app_id": 15368, "verification_target": "compose-config", "workflow_path": ".github/workflows/ci.yml" },
       { "context": "powershell static analysis", "app_id": 15368, "verification_target": "powershell-static", "workflow_path": ".github/workflows/ci.yml" },
       { "context": "rebuild/test-deploy contracts", "app_id": 15368, "verification_target": "rebuild-test-deploy", "workflow_path": ".github/workflows/ci.yml" },

@@ -870,7 +870,12 @@ try {
         $matchingSources = @($trustedMergeTargetSources | Where-Object { $_.verification_target -ceq $verificationTarget.id })
         Assert-True ($matchingSources.Count -eq 1) "trusted merge target-source registry has exactly one source for $($verificationTarget.id)"
         Assert-True ($matchingSources[0].context -ceq $verificationTarget.ci_job) "trusted merge target-source context matches manifest ci_job for $($verificationTarget.id)"
-        Assert-True ($matchingSources[0].app_id -eq 15368 -and $matchingSources[0].workflow_path -ceq '.github/workflows/ci.yml') "trusted merge target source pins the Actions App and CI workflow for $($verificationTarget.id)"
+        $expectedWorkflowPath = if ($verificationTarget.id -ceq 'agent-governance') {
+            '.github/workflows/agent-governance.yml'
+        } else {
+            '.github/workflows/ci.yml'
+        }
+        Assert-True ($matchingSources[0].app_id -eq 15368 -and $matchingSources[0].workflow_path -ceq $expectedWorkflowPath) "trusted merge target source pins the Actions App and workflow for $($verificationTarget.id)"
     }
     $trustedMergeMechanismPolicy = $trustedMergeContract.executor.required_check_trust_boundary
     Assert-True ($trustedMergeMechanismPolicy.candidate_mechanism_change -ceq 'separate_authorization') 'candidate verification-mechanism changes require separate authorization'

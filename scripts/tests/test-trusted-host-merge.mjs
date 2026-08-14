@@ -707,7 +707,10 @@ test('trusted target registry exactly covers every base-manifest verification ta
     assert.ok(source, `missing verification source for ${target.id}`)
     assert.equal(source.context, target.ci_job)
     assert.equal(source.app_id, 15368)
-    assert.equal(source.workflow_path, '.github/workflows/ci.yml')
+    const expectedWorkflowPath = target.id === 'agent-governance'
+      ? '.github/workflows/agent-governance.yml'
+      : '.github/workflows/ci.yml'
+    assert.equal(source.workflow_path, expectedWorkflowPath)
   }
 })
 
@@ -765,7 +768,7 @@ test('actual full target registry verifies every target and shared check context
     fullPlan,
     contract.executor.verification_target_sources,
   )
-  assert.equal(verified.length, 16)
+  assert.equal(verified.length, 15)
   assert.equal(new Set(verified.map((item) => item.verificationTarget)).size, 15)
   const viewerBindings = verified.filter((item) => (
     item.verificationTarget === 'viewer' || item.verificationTarget === 'viewer-session'
@@ -774,7 +777,7 @@ test('actual full target registry verifies every target and shared check context
   assert.equal(viewerBindings[0].runId, viewerBindings[1].runId)
   assert.deepEqual(
     verified.filter((item) => item.verificationTarget === 'agent-governance').map((item) => item.context).sort(),
-    ['agent governance contracts', 'agent-governance'],
+    ['agent-governance'],
   )
 })
 
