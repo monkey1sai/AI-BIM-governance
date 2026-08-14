@@ -51,7 +51,7 @@
 
 ### D3：不以 frozen deferred 的雙閘方案作為遷移前置
 
-**決策**：`align-frontend-design-system-reference` 已於 2026-07-24 historical correction 恢復為 `Status: deferred` 的 frozen change，其未完成的 tasks 2.4–2.8（branch-protection required check、11 個語意案例 approved state variants、獨立 review authority、runner/font fingerprint pin）不是 active 前置，也不是 canonical implementation authority。本 change 可重用現有驗證工具；若要補齊該方案，須先依 current main 完成兩案 requirement/successor crosswalk，再另行 thaw／調和，禁止平行 coding。
+**決策**：`align-frontend-design-system-reference` 已於 2026-07-24 historical correction 恢復為 `Status: deferred` 的 frozen change，其未完成的 tasks 2.4–2.8（branch-protection required check、11 個語意案例 approved state variants、獨立 review authority、runner/font fingerprint pin）不是 active 前置，也不是 canonical implementation authority。2026-08-14 四軸 crosswalk 已落地（`../align-frontend-design-system-reference/successor-crosswalk-migrate-console-to-hifi-design.md`）：本 change 可重用現有驗證工具；align 維持 deferred。產品面 golden 保全由 PR #535 承接，不在本 change 改 capture。禁止平行再開第三個 design-authority change。
 
 **理由**：archive 記錄的 pixel+semantic 雙閘**機制**（manifest schema、verify script、capture/rebaseline 工具、Playwright spec 結構）與被鎖定的視覺內容正交；既有工具對顏色系統無感知，換皮後直接用同一套工具重新 rebaseline 即可。archive 內容保留作歷史脈絡，不提供現行工作計畫或權威。
 
