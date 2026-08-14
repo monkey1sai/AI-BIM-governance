@@ -237,6 +237,22 @@ LOCAL_ONLY_FLAG=1
         Assert-True ($null -eq $entry.PSObject.Properties['value']) "persisted snapshot entry '$($entry.key)' must never carry a raw value"
     }
     Assert-True (@($live.EffectiveKeys) -contains 'AUTHORIZATION') 'parsed effective keys come from the redacted snapshot'
+    # --- #531/#540-3: 持久化 execution window ---------------------------------------
+    # 耐久性驗收要拿容器 creation time 比對 deploy report 的 execution window，
+    # 所以 window 必須落在持久化報告裡、可解析、且 started<=finished（含蓋 dispatch）。
+    Assert-True ($null -ne $persistedSnapshot.PSObject.Properties['execution_window']) 'persisted report records the dispatch execution window'
+    # ConvertFrom-Json 會把 ISO 字串自動轉 [datetime]（[string] 化再 parse 會被本地
+    # 時區/文化格式偏移），一律型別分流正規化成 UTC DateTimeOffset 再比。
+    $toUtcOffset = {
+        param($value)
+        if ($value -is [datetime]) { return [DateTimeOffset]::new($value.ToUniversalTime(), [TimeSpan]::Zero) }
+        return [DateTimeOffset]::Parse([string]$value, [cultureinfo]::InvariantCulture, [System.Globalization.DateTimeStyles]::RoundtripKind)
+    }
+    $persistedWindowStart = & $toUtcOffset $persistedSnapshot.execution_window.started_at
+    $persistedWindowEnd = & $toUtcOffset $persistedSnapshot.execution_window.finished_at
+    Assert-True ($persistedWindowStart -le $persistedWindowEnd) 'execution window start does not exceed its end'
+    Assert-True ((& $toUtcOffset $live.ExecutionWindow.started_at) -eq $persistedWindowStart) 'returned execution window matches the persisted report'
+    Assert-True ($persistedSnapshotJson -notmatch 'deploy\.example\.invalid') 'execution window addition keeps topology out of the report'
 
     $script:fakeSshCallCount = 0
     function ssh {

@@ -23,6 +23,13 @@ services:
       CORS_ORIGINS: "${CORS_ORIGINS:-http://127.0.0.1:5173,http://localhost:5173,http://127.0.0.1:5174,http://localhost:5174}"
       INTERNAL_API_AUTH_TOKEN: ${INTERNAL_API_AUTH_TOKEN:-dev-internal-token}
       CALLBACK_OUTBOX_STORE_PATH: /workspace/storage/coordinator/callback-outbox.json
+      # #531：conversion ledger 必須與 callback outbox 同落掛載卷（/workspace/storage
+      # 由下方 volumes 綁 owner 控制的 RUNTIME_STORAGE_ROOT）。不設此值時 config.ts
+      # 回退 <cwd>/data/conversion-ledger.json＝container-local，recreate 即蒸發
+      # watcher 冪等水位。刻意寫死容器路徑（不做 ${...} 透傳）：deploy.ps1 的
+      # edge-runtime contract 會把同名 process env 設成 host 路徑，透傳會讓 host
+      # 路徑滲進容器變成另一個 container-local 目錄。
+      CONVERSION_LEDGER_STORE_PATH: /workspace/storage/coordinator/conversion-ledger.json
       KIT_INSTANCE_ENDPOINTS: '[{"id":"kit_local_gpu_001","signalingServer":"127.0.0.1","signalingPort":49100,"mediaServer":"127.0.0.1","mediaPort":47998}]'
       # fast-ifc-link-demo-loop §2:同步下載 IFC 寫入 shared volume。
       # STORAGE_ROOT 必須對齊下方 volumes mount destination(/workspace/storage);

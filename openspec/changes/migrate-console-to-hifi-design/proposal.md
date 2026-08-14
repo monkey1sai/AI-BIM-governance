@@ -19,7 +19,7 @@ Legacy checkpoint `codex/openspec/migrate-console-to-hifi-design@94a557571c25fe6
 - 收斂三套並存的顏色來源為一套：(a) 已遷移的 UnifiedConsole IA v2（`console/unified/*.tsx`）目前手寫 inline hex JSX style，SHALL 改為消費 `ai-bim-governance.css` 的 `--ab-*` token；(b) 尚未遷移、仍掛 `edge-console.css` 的頁面（`LegacyEdgeConsole`：`#/kit`、`#/demo-control`、`#conv` 等路由，`ConversionPage.tsx`，`governance/overlay.css`，`viewer/*.css`）SHALL 遷移至 `ai-bim-governance.css`。
 - **BREAKING**：移除 `EdgeConsole.tsx` 的亮/暗主題切換功能（按鈕、`localStorage["aibim:ec-theme"]` 持久化、`theme-light` class 邏輯）。UnifiedConsole 收斂為純深色 console，對齊 `ai-bim-governance.css`（全檔僅一組深色 token，無淺色變體）。
 - 品牌主色由 NVIDIA 綠（`#76b900`）改為 Hi-Fi 青色系（`#41c7e8` / `#2f7bf6`），為有意識的品牌方向調整（非疏忽覆蓋）。
-- 遷移完成後，重用既有 `web-viewer-sample/scripts/capture-design-system-reference.mjs`（`--rebaseline --confirm-rebaseline`）重新擷取 `docs/plans/design-system-reference.manifest.json` 的 13 screens × 2 viewports golden baseline，不新建擷取機制。
+- 遷移完成後，重用既有 `web-viewer-sample/scripts/capture-design-system-reference.mjs` 重鎖 **非** `canonical_product_surface` 的 origin 投影屏；`workspace.a4.default` 必須保全 PR #429 pinned digest，不得用 generic 13-screen `--rebaseline` 覆寫。產品面 capture 修正歸 PR #535，不新建擷取機制。
 - `docs/plans/AI-BIM 前後端設計文件.dc.html` §08 R1（現行「design token 沿用 edge-console.css --ec-* 單一真相源」）SHALL 改寫以反映新權威。
 
 ## Capabilities
@@ -33,9 +33,10 @@ Legacy checkpoint `codex/openspec/migrate-console-to-hifi-design@94a557571c25fe6
 ## Impact
 
 - **受影響程式碼**：`web-viewer-sample/src/console/edge-console.css`（retire）、`web-viewer-sample/src/console/EdgeConsole.tsx`（移除主題切換邏輯）、`web-viewer-sample/src/console/unified/*.tsx`（inline hex → `--ab-*` token）、`web-viewer-sample/src/console/unified/unified.css`、`web-viewer-sample/src/console/governance/overlay.css`、`web-viewer-sample/src/console/viewer/*.css`、`web-viewer-sample/src/console/ConversionPage.tsx`。
-- **受影響文件**：`docs/plans/AI-BIM 前後端設計文件.dc.html` §08、`docs/plans/design-system-reference.manifest.json`（golden baseline 需重新 rebaseline，13 screens × 2 viewports 全數視覺內容改變）。
+- **受影響文件**：`docs/plans/AI-BIM 前後端設計文件.dc.html` §08、`docs/plans/design-system-reference.manifest.json`（origin 投影屏可重鎖；`workspace.a4.default` 保全 #429，不得被 generic 13-screen rebaseline 覆寫）。
 - **不受影響**：`bim-review-coordinator`、`governance-service`、`bim-streaming-server`、任何 API/event/DB schema/session/conversion lifecycle。前端仍只打 coordinator `:8004`。`edge-console-operator-frontend` 與 `unified-governance-console` 定義的功能行為、provenance 標記、coordinator-only proxy 邊界逐字不變，只換視覺外觀。
-- **不受影響（機制重用，非新建）**：現有 pixel+semantic 雙閘工具（manifest schema、`scripts/lib/design-system-gate.ps1`、`scripts/tests/verify-design-system-reference.ps1`、`capture-design-system-reference.mjs`、`web-viewer-sample/e2e/design-system-visual.spec.ts` + `design-system-semantic-cases.ts`）可直接重用。`align-frontend-design-system-reference` 已於 2026-07-24 historical correction 恢復至 `openspec/changes/`，但仍是 `Status: deferred`、frozen、non-canonical、non-owner；本 change 與它完成 requirement/successor crosswalk 前，不得平行修改 HTML authority、manifest、goldens 或 gate。
+- **不受影響（機制重用，非新建）**：現有 pixel+semantic 雙閘工具（manifest schema、`scripts/lib/design-system-gate.ps1`、`scripts/tests/verify-design-system-reference.ps1`、`capture-design-system-reference.mjs`、`web-viewer-sample/e2e/design-system-visual.spec.ts` + `design-system-semantic-cases.ts`）可直接重用。`align-frontend-design-system-reference` 已於 2026-07-24 historical correction 恢復至 `openspec/changes/`，但仍是 `Status: deferred`、frozen、non-canonical、non-owner。
+- **Crosswalk 2026-08-14**：與 align 的四軸對帳已落地於 `openspec/changes/align-frontend-design-system-reference/successor-crosswalk-migrate-console-to-hifi-design.md`。互斥已裁決：本 change 繼續只做換皮；不得改 HTML 權威、gate enum 或在 #535 進 main 前對 `workspace.a4.default` 做 generic rebaseline。align 不因 crosswalk 而 thaw。
 
 ## Known Risks（記錄不處理，超出本 change 範圍）
 

@@ -147,9 +147,14 @@
     {
       "id": "agent-governance",
       "path_globs": [
-        "AGENTS.md", "CLAUDE.md", ".claude/**", ".codex/**", ".github/**", "agent-contracts/**", "docs/agents/**",
-        "openspec/**", "scripts/**", "agent-skills-manifest.json", "skills-lock.json",
-        "architecture/**"
+        "AGENTS.md", "CLAUDE.md", "CONTEXT.md", "*.json", "*.yml", "*.yaml",
+        ".claude/**", ".codex/**", ".github/**", ".gitignore", ".ignore", ".gitnexusignore", ".coderabbit.yaml",
+        "agent-contracts/**", "apps/**", "artifacts/**",
+        "bim-review-coordinator/**", "bim-streaming-server/**",
+        "docs/PR_REVIEW_AGENT.md", "docs/agents/**", "docs/contracts/**", "docs/plans/**", "docs/superpowers/**",
+        "governance-service/**", "infra/**", "openspec/**", "rules/**", "scripts/**", "services/**",
+        "tests/**", "web-viewer-sample/**", "architecture/**",
+        "compose.*.yml", ".env*.example", "agent-skills-manifest.json", "skills-lock.json"
       ]
     },
     { "id": "compose-config", "path_globs": ["compose.*.yml", ".env*.example", "infra/docker/**"] },
@@ -378,11 +383,21 @@
       "ci_job": "kit-manager-web build", "result_artifact": null
     },
     {
-      "id": "agent-governance", "display_name": "agent governance contracts", "path_globs": ["AGENTS.md", "CLAUDE.md", ".claude/**", ".codex/**", ".github/**", "agent-contracts/**", "docs/agents/**", "openspec/**", "scripts/**", "agent-skills-manifest.json", "skills-lock.json", "architecture/**"],
+      "id": "agent-governance", "display_name": "agent governance contracts",
+      "path_globs": [
+        "AGENTS.md", "CLAUDE.md", "CONTEXT.md", "*.json", "*.yml", "*.yaml",
+        ".claude/**", ".codex/**", ".github/**", ".gitignore", ".ignore", ".gitnexusignore", ".coderabbit.yaml",
+        "agent-contracts/**", "apps/**", "artifacts/**",
+        "bim-review-coordinator/**", "bim-streaming-server/**",
+        "docs/PR_REVIEW_AGENT.md", "docs/agents/**", "docs/contracts/**", "docs/plans/**", "docs/superpowers/**",
+        "governance-service/**", "infra/**", "openspec/**", "rules/**", "scripts/**", "services/**",
+        "tests/**", "web-viewer-sample/**", "architecture/**",
+        "compose.*.yml", ".env*.example", "agent-skills-manifest.json", "skills-lock.json"
+      ],
       "owner": "agent-governance", "fast_gates": [], "contract_gates": ["agent-governance-tests"], "slow_evidence_gates": [],
       "required_when": { "predicate": "changed_path_class", "any_of": ["agent-governance"] }, "skip_reason": "path_not_affected",
       "default_profiles": [], "ci_output": "agent_governance",
-      "ci_job": "agent governance contracts", "result_artifact": null
+      "ci_job": "agent-governance", "result_artifact": null
     },
     {
       "id": "compose-config", "display_name": "docker compose config", "path_globs": ["compose.*.yml", ".env*.example", "infra/docker/**"],

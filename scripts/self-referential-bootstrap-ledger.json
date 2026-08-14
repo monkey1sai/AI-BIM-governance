@@ -281,6 +281,68 @@
           "docs/evidence/evidence-harness-scope-clarification/fixpoint/summary.md"
         ]
       }
+    },
+    {
+      "id": "gh-auth-sandbox-routing",
+      "status": "closed",
+      "pr": 544,
+      "opened_at": "2026-08-14T09:14:56Z",
+      "reason": "this PR changes the required agent-governance adjudication suite, so the pre-change gate cannot prove that the new gh authentication and sandbox TLS routing markers remain enforced after merge; only a post-merge run from main can verify the changed mechanism against itself",
+      "verification_mechanism_paths": [
+        "scripts/self-referential-bootstrap-ledger.json",
+        "scripts/tests/test-agent-governance-check.ps1"
+      ],
+      "verification_contract": {
+        "id": "gh-auth-sandbox-routing/v1",
+        "command_ids": [
+          "test-agent-governance-check",
+          "invoke-powershell-static"
+        ],
+        "contract_sha256": "9c17cdb4f22a7b0a6386b4dd5de034145df9512baa12573e3ea0bc62a90c5cbc"
+      },
+      "bootstrap_evidence_refs": [
+        "docs/evidence/gh-auth-sandbox-routing/self-referential-bootstrap/README.md",
+        "docs/evidence/gh-auth-sandbox-routing/self-referential-bootstrap/verification.txt"
+      ],
+      "fixpoint": {
+        "reverified_at": "2026-08-14T10:19:56Z",
+        "mechanism_commit": "dfa61a82a5277e8e1a0f3811c9d462d27da6c00d",
+        "evidence_refs": [
+          "docs/evidence/gh-auth-sandbox-routing/fixpoint/attestation.json",
+          "docs/evidence/gh-auth-sandbox-routing/fixpoint/summary.md"
+        ]
+      }
+    },
+    {
+      "id": "agent-governance-scope-routing",
+      "status": "open",
+      "pr": 543,
+      "opened_at": "2026-08-14T09:06:34Z",
+      "reason": "the required Agent Governance workflow and verification manifest decide whether other pull requests satisfy the protected context; before this branch merges, only the base workflow can run, so it cannot prove the new scope classifier, explicit no-op success, or duplicate-job removal",
+      "verification_mechanism_paths": [
+        ".github/workflows/agent-governance.yml",
+        ".github/workflows/ci.yml",
+        "scripts/self-referential-bootstrap-ledger.json",
+        "scripts/verification-manifest.json",
+        "scripts/tests/test-agent-governance-check.ps1",
+        "scripts/tests/test-self-referential-bootstrap.ps1"
+      ],
+      "verification_contract": {
+        "id": "agent-governance-scope-routing/v1",
+        "command_ids": [
+          "test-agent-governance-check",
+          "test-verification-plan",
+          "test-self-referential-bootstrap",
+          "test-pr-body-evidence",
+          "invoke-powershell-static"
+        ],
+        "contract_sha256": "c35e227950b720d265eeb0866d4dc76aab563e997c6f427ff7d3ed297d08248c"
+      },
+      "bootstrap_evidence_refs": [
+        "docs/evidence/agent-governance-scope-routing/self-referential-bootstrap/README.md",
+        "docs/evidence/agent-governance-scope-routing/self-referential-bootstrap/verification.txt"
+      ],
+      "fixpoint": null
     }
   ]
 }
