@@ -908,12 +908,14 @@ function Test-SessionBaselineReportForDownstream {
     # environment-fingerprint field SHALL be judged incomplete, and SLO
     # formalization / admission parameter loaders SHALL NOT reference it.
     #
-    # This function is the single judgment those consumers must call. It is
-    # fail-closed: a malformed report, a missing field, an unmeasured field,
-    # a fingerprint whose own field-level evidence contradicts its `complete`
-    # flag (e.g. a hand-edited report), or an incompletely fingerprinted GPU
-    # topology all yield eligible_for_downstream_reference=false with the
-    # reasons enumerated -- it never throws on bad input and never guesses.
+    # This function is the single judgment those consumers must call, and its
+    # threat model explicitly includes hand-edited reports. Every completeness
+    # dimension the producer (Get-EnvironmentFingerprint) can withdraw is
+    # therefore re-verified here independently, with ALLOWLISTS rather than
+    # denylists (PR #539 tri-adversarial review APX-1/APX-2): an unknown,
+    # tampered, or future-drifted enum value refuses instead of passing, and
+    # flag fields must be strict booleans -- the string 'true' is not $true
+    # (APX-4). It never throws on bad input and never guesses.
     #
     # -Report accepts the live [ordered] report from Get-SessionBaselineReport
     # or a PSCustomObject parsed back from a report JSON file; all property
@@ -928,6 +930,24 @@ function Test-SessionBaselineReportForDownstream {
     $reasons = @()
     $reportSchemaVersion = $null
 
+    function Test-IsStrictTrue {
+        param($Value)
+        return (($Value -is [bool]) -and $Value)
+    }
+    function Test-IsNonBlankString {
+        param($Value)
+        return (($Value -is [string]) -and -not [string]::IsNullOrWhiteSpace($Value))
+    }
+    function Test-IsPositiveWholeNumber {
+        param($Value)
+        if ($null -eq $Value) { return $false }
+        if ($Value -is [bool] -or $Value -is [string]) { return $false }
+        $asDouble = $null
+        try { $asDouble = [double]$Value } catch { return $false }
+        if ([double]::IsNaN($asDouble) -or [double]::IsInfinity($asDouble)) { return $false }
+        return (($asDouble -gt 0) -and ($asDouble -eq [math]::Floor($asDouble)))
+    }
+
     if ($null -eq $Report) {
         $reasons += 'report is null or unparseable; nothing can be referenced'
     } else {
@@ -940,6 +960,19 @@ function Test-SessionBaselineReportForDownstream {
         if ($null -eq $fingerprint) {
             $missingFields += 'environment_fingerprint'
         } else {
+            # Per-field value sanity: measured=true must come with a value of
+            # the shape the harness actually produces. An empty string, a
+            # whitespace run, a wrong type, a non-hex hash, or a non-positive
+            # size is not a usable fingerprint pin even if flagged measured
+            # (APX-4).
+            $fieldValueValidators = @{
+                gpu_model          = { param($v) Test-IsNonBlankString $v }
+                gpu_driver_version = { param($v) Test-IsNonBlankString $v }
+                kit_version        = { param($v) Test-IsNonBlankString $v }
+                fixture_hash       = { param($v) (($v -is [string]) -and ($v -cmatch '^[0-9a-f]{64}$')) }
+                fixture_size_bytes = { param($v) Test-IsPositiveWholeNumber $v }
+            }
+            $fieldValues = @{}
             foreach ($fieldName in $requiredFingerprintFields) {
                 $field = Get-SafeProperty -Object $fingerprint -Name $fieldName
                 if ($null -eq $field) {
@@ -948,34 +981,100 @@ function Test-SessionBaselineReportForDownstream {
                 }
                 $measured = Get-SafeProperty -Object $field -Name 'measured'
                 $value = Get-SafeProperty -Object $field -Name 'value'
-                if ($measured -ne $true) {
+                if (-not (Test-IsStrictTrue $measured)) {
                     $fieldReason = [string](Get-SafeProperty -Object $field -Name 'reason')
                     if ([string]::IsNullOrWhiteSpace($fieldReason)) { $fieldReason = 'no reason recorded' }
+                    if ($null -ne $measured -and -not ($measured -is [bool])) {
+                        $fieldReason = "measured flag is not a strict boolean (refused fail-closed); recorded reason: $fieldReason"
+                    }
                     $unmeasuredFields += "environment_fingerprint.${fieldName}: $fieldReason"
                 } elseif ($null -eq $value) {
                     $inconsistencies += "environment_fingerprint.${fieldName}: measured=true but value is null (fabrication-shaped inconsistency)"
+                } elseif (-not (& $fieldValueValidators[$fieldName] $value)) {
+                    $inconsistencies += "environment_fingerprint.${fieldName}: measured=true but value '$value' is not a usable fingerprint pin (empty, wrong type, or wrong shape)"
+                } else {
+                    $fieldValues[$fieldName] = $value
                 }
             }
 
             $complete = Get-SafeProperty -Object $fingerprint -Name 'complete'
-            if ($complete -ne $true) {
-                $reasons += 'environment_fingerprint.complete is not true; the harness itself judged this fingerprint incomplete'
-            } elseif (($missingFields.Count -gt 0) -or ($unmeasuredFields.Count -gt 0)) {
+            if (-not (Test-IsStrictTrue $complete)) {
+                if ($null -ne $complete -and -not ($complete -is [bool])) {
+                    $reasons += 'environment_fingerprint.complete is not a strict boolean; refused fail-closed'
+                } else {
+                    $reasons += 'environment_fingerprint.complete is not true; the harness itself judged this fingerprint incomplete'
+                }
+            } elseif (($missingFields.Count -gt 0) -or ($unmeasuredFields.Count -gt 0) -or ($inconsistencies.Count -gt 0)) {
                 $inconsistencies += 'environment_fingerprint.complete=true contradicts the field-level evidence in this report; refusing fail-closed rather than trusting the flag'
             }
 
-            $fingerprintKeys = $null
-            if ($fingerprint -is [System.Collections.IDictionary]) {
-                $fingerprintKeys = @($fingerprint.Keys)
-            } else {
-                $fingerprintKeys = @($fingerprint.PSObject.Properties | ForEach-Object { $_.Name })
-            }
-            if ($fingerprintKeys -notcontains 'gpu_fingerprint_scope') {
+            # GPU topology scope: ALLOWLIST (APX-1). Only the two values that
+            # mean "every reported device row is fingerprinted" are eligible;
+            # first_gpu_only, partial_gpu_rows, unknown_no_gpu_inventory, a
+            # missing key, and any unknown/tampered/future value all refuse.
+            $gpuScopeRaw = Get-SafeProperty -Object $fingerprint -Name 'gpu_fingerprint_scope'
+            $gpuScope = if ($gpuScopeRaw -is [string]) { $gpuScopeRaw } else { $null }
+            if ($null -eq $gpuScopeRaw) {
                 $missingFields += 'environment_fingerprint.gpu_fingerprint_scope'
+            } elseif ($gpuScope -cnotin @('single_gpu', 'all_gpus')) {
+                $reasons += ("gpu_fingerprint_scope='{0}' is not an eligible scope (allowlist: single_gpu, all_gpus); the GPU topology fingerprint cannot be trusted as covering every device" -f $gpuScopeRaw)
+                $gpuScope = $null
+            }
+
+            # Fixture-to-session binding scope: ALLOWLIST (APX-2). This is a
+            # completeness withdrawal dimension in its own right; a report
+            # whose complete flag was hand-set to true while the binding is
+            # unverifiable must still refuse. Eligibility requires a measured
+            # fixture, and a measured fixture is only honestly bindable when
+            # the runtime was observed idle at capture time.
+            $fixtureBindingScopeRaw = Get-SafeProperty -Object $fingerprint -Name 'fixture_binding_scope'
+            if ($null -eq $fixtureBindingScopeRaw) {
+                $missingFields += 'environment_fingerprint.fixture_binding_scope'
+            } elseif (-not (($fixtureBindingScopeRaw -is [string]) -and ($fixtureBindingScopeRaw -ceq 'no_live_session_observed'))) {
+                $reasons += ("fixture_binding_scope='{0}' is not eligible (allowlist: no_live_session_observed); the declared fixture cannot be bound to the measurements in this report" -f $fixtureBindingScopeRaw)
+            }
+
+            # Per-GPU fingerprint array (APX-3): gpus[] is the authoritative
+            # topology pin, so the gate verifies it instead of trusting the
+            # scope label alone. Reports without it (including pre-1.2 v1
+            # reports) are refused as missing a required field. Every entry
+            # must carry a usable model and driver_version, the row count must
+            # equal gpu_count and match the declared scope, and row 0 must
+            # agree with the compatibility fields gpu_model/gpu_driver_version.
+            $gpusRaw = Get-SafeProperty -Object $fingerprint -Name 'gpus'
+            if ($null -eq $gpusRaw) {
+                $missingFields += 'environment_fingerprint.gpus'
             } else {
-                $gpuScope = [string](Get-SafeProperty -Object $fingerprint -Name 'gpu_fingerprint_scope')
-                if ($gpuScope -in @('first_gpu_only', 'partial_gpu_rows')) {
-                    $reasons += ("gpu_fingerprint_scope='{0}': the GPU topology is not fully fingerprinted, so an equal fingerprint cannot prove an equal environment" -f $gpuScope)
+                $gpuEntries = @($gpusRaw)
+                $gpuCountRaw = Get-SafeProperty -Object $fingerprint -Name 'gpu_count'
+                if ($gpuEntries.Count -lt 1) {
+                    $reasons += 'environment_fingerprint.gpus[] is empty; there is no per-GPU topology fingerprint to trust'
+                } else {
+                    $entryIndex = 0
+                    foreach ($gpuEntry in $gpuEntries) {
+                        $entryModel = Get-SafeProperty -Object $gpuEntry -Name 'model'
+                        $entryDriver = Get-SafeProperty -Object $gpuEntry -Name 'driver_version'
+                        if (-not (Test-IsNonBlankString $entryModel) -or -not (Test-IsNonBlankString $entryDriver)) {
+                            $inconsistencies += "environment_fingerprint.gpus[$entryIndex]: model/driver_version missing or not a usable pin"
+                        }
+                        $entryIndex++
+                    }
+                    if (($null -eq $gpuCountRaw) -or (-not (Test-IsPositiveWholeNumber $gpuCountRaw)) -or ([int]$gpuCountRaw -ne $gpuEntries.Count)) {
+                        $inconsistencies += ("environment_fingerprint.gpu_count '{0}' does not match gpus[] row count {1}" -f $gpuCountRaw, $gpuEntries.Count)
+                    }
+                    if ($gpuScope -eq 'single_gpu' -and $gpuEntries.Count -ne 1) {
+                        $inconsistencies += ("gpu_fingerprint_scope=single_gpu contradicts gpus[] row count {0}" -f $gpuEntries.Count)
+                    }
+                    if ($gpuScope -eq 'all_gpus' -and $gpuEntries.Count -lt 2) {
+                        $inconsistencies += ("gpu_fingerprint_scope=all_gpus contradicts gpus[] row count {0} (all_gpus is only declared for multi-GPU hosts)" -f $gpuEntries.Count)
+                    }
+                    if ($fieldValues.ContainsKey('gpu_model')) {
+                        $firstModel = Get-SafeProperty -Object $gpuEntries[0] -Name 'model'
+                        $firstDriver = Get-SafeProperty -Object $gpuEntries[0] -Name 'driver_version'
+                        if (($firstModel -cne $fieldValues['gpu_model']) -or ($fieldValues.ContainsKey('gpu_driver_version') -and ($firstDriver -cne $fieldValues['gpu_driver_version']))) {
+                            $inconsistencies += 'environment_fingerprint.gpus[0] does not agree with gpu_model/gpu_driver_version; the report contradicts itself'
+                        }
+                    }
                 }
             }
         }
