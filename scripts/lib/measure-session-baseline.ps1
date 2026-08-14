@@ -908,10 +908,15 @@ function Test-SessionBaselineReportForDownstream {
     # environment-fingerprint field SHALL be judged incomplete, and SLO
     # formalization / admission parameter loaders SHALL NOT reference it.
     #
-    # This function is the single judgment those consumers must call, and its
-    # threat model explicitly includes hand-edited reports. Every completeness
-    # dimension the producer (Get-EnvironmentFingerprint) can withdraw is
-    # therefore re-verified here independently, with ALLOWLISTS rather than
+    # This function is the single judgment those consumers must call. It
+    # verifies SELF-CONSISTENCY only: every completeness dimension the
+    # producer (Get-EnvironmentFingerprint) can withdraw is re-verified here
+    # independently, so a report whose flags contradict their own field-level
+    # evidence (e.g. a hand-edited complete=true) refuses. It does NOT
+    # authenticate provenance -- there is no signature or attestation, so a
+    # fully self-consistent fabricated report passes; source authenticity and
+    # runtime identity verification are task 1.3 scope. Checks use ALLOWLISTS
+    # rather than
     # denylists (PR #539 tri-adversarial review APX-1/APX-2): an unknown,
     # tampered, or future-drifted enum value refuses instead of passing, and
     # flag fields must be strict booleans -- the string 'true' is not $true
@@ -1059,7 +1064,7 @@ function Test-SessionBaselineReportForDownstream {
                         }
                         $entryIndex++
                     }
-                    if (($null -eq $gpuCountRaw) -or (-not (Test-IsPositiveWholeNumber $gpuCountRaw)) -or ([int]$gpuCountRaw -ne $gpuEntries.Count)) {
+                    if (($null -eq $gpuCountRaw) -or (-not (Test-IsPositiveWholeNumber $gpuCountRaw)) -or ([double]$gpuCountRaw -ne [double]$gpuEntries.Count)) {
                         $inconsistencies += ("environment_fingerprint.gpu_count '{0}' does not match gpus[] row count {1}" -f $gpuCountRaw, $gpuEntries.Count)
                     }
                     if ($gpuScope -eq 'single_gpu' -and $gpuEntries.Count -ne 1) {

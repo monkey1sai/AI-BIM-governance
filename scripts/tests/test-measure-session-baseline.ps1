@@ -1146,6 +1146,58 @@ try {
 
     Write-TestPass 'downstream gate APX-1..APX-5 repairs (allowlist scope, binding-scope re-verification, gpus[] verification, strict typing, fabrication branch)'
 
+    # --- PR #539 tri-adversarial review round 2 repairs ---
+
+    # gpu_count [int] overflow (APX-539-1/SEC-539-03): a hand-edited value
+    # beyond Int32 must refuse with a verdict, never throw.
+    $overflowCountReport = $completeReport | ConvertTo-Json -Depth 12 | ConvertFrom-Json
+    $overflowCountReport.environment_fingerprint.gpu_count = 9999999999999999
+    $overflowCountVerdict = Test-SessionBaselineReportForDownstream -Report $overflowCountReport
+    Assert-True (-not $overflowCountVerdict.eligible_for_downstream_reference) 'gpu_count beyond Int32 -> not eligible, and the gate does not throw'
+    Assert-True ([bool](@($overflowCountVerdict.inconsistencies) | Where-Object { $_ -match 'gpu_count' })) 'overflow gpu_count is named as an inconsistency'
+
+    # Positive all_gpus path (TG-539-02): a fully fingerprinted multi-GPU
+    # report is eligible -- the gate must not over-refuse multi-GPU hosts.
+    $multiGpuGateQuery = {
+        @(
+            '0, NVIDIA GeForce RTX 4060 Ti, 580.97, 8188, 1827, 6123, 2, 0, [N/A]',
+            '1, NVIDIA GeForce RTX 4090, 580.97, 24564, 0, 24564, 0, 0, [N/A]'
+        )
+    }
+    $multiGpuGateReport = Get-SessionBaselineReport -RepoRoot $repoRoot -FixturePath $gateFixturePath -NvidiaSmiQuery $multiGpuGateQuery -NvidiaSmiComputeAppsQuery $gateComputeQuery -WebRtcHealthInvoker $gateProbe
+    Assert-Equal 'all_gpus' $multiGpuGateReport.environment_fingerprint.gpu_fingerprint_scope 'positive path precondition: multi-GPU report declares all_gpus'
+    $multiGpuGateVerdict = Test-SessionBaselineReportForDownstream -Report ($multiGpuGateReport | ConvertTo-Json -Depth 12 | ConvertFrom-Json)
+    Assert-True $multiGpuGateVerdict.eligible_for_downstream_reference 'complete multi-GPU (all_gpus) report is eligible -- no over-refusal'
+
+    # gpus[] rejection branches (TG-539-03): empty array, unusable row pin,
+    # and scope/row-count contradictions each refuse with a named reason.
+    $emptyGpusReport = $completeReport | ConvertTo-Json -Depth 12 | ConvertFrom-Json
+    $emptyGpusReport.environment_fingerprint.gpus = @()
+    $emptyGpusVerdict = Test-SessionBaselineReportForDownstream -Report $emptyGpusReport
+    Assert-True (-not $emptyGpusVerdict.eligible_for_downstream_reference) 'empty gpus[] -> not eligible'
+    Assert-True ([bool](@($emptyGpusVerdict.reasons) | Where-Object { $_ -match 'empty' })) 'empty gpus[] refusal names the emptiness'
+
+    $badRowPinReport = $completeReport | ConvertTo-Json -Depth 12 | ConvertFrom-Json
+    $badRowPinReport.environment_fingerprint.gpus[0].driver_version = ''
+    $badRowPinVerdict = Test-SessionBaselineReportForDownstream -Report $badRowPinReport
+    Assert-True (-not $badRowPinVerdict.eligible_for_downstream_reference) 'blank driver_version in gpus[0] -> not eligible'
+    Assert-True ([bool](@($badRowPinVerdict.inconsistencies) | Where-Object { $_ -match 'gpus\[0\]' })) 'unusable row pin is named with its index'
+
+    $singleScopeContradictionReport = $multiGpuGateReport | ConvertTo-Json -Depth 12 | ConvertFrom-Json
+    $singleScopeContradictionReport.environment_fingerprint.gpu_fingerprint_scope = 'single_gpu'
+    $singleScopeContradictionVerdict = Test-SessionBaselineReportForDownstream -Report $singleScopeContradictionReport
+    Assert-True (-not $singleScopeContradictionVerdict.eligible_for_downstream_reference) 'single_gpu scope with two gpus[] rows -> not eligible'
+    Assert-True ([bool](@($singleScopeContradictionVerdict.inconsistencies) | Where-Object { $_ -match 'single_gpu contradicts' })) 'single_gpu/row-count contradiction is named'
+
+    $allScopeContradictionReport = $completeReport | ConvertTo-Json -Depth 12 | ConvertFrom-Json
+    $allScopeContradictionReport.environment_fingerprint.gpu_fingerprint_scope = 'all_gpus'
+    $allScopeContradictionVerdict = Test-SessionBaselineReportForDownstream -Report $allScopeContradictionReport
+    Assert-True (-not $allScopeContradictionVerdict.eligible_for_downstream_reference) 'all_gpus scope with one gpus[] row -> not eligible'
+    Assert-True ([bool](@($allScopeContradictionVerdict.inconsistencies) | Where-Object { $_ -match 'all_gpus contradicts' })) 'all_gpus/row-count contradiction is named'
+
+    Write-TestPass 'downstream gate round-2 repairs (gpu_count overflow verdict, positive all_gpus path, gpus[] rejection branches)'
+
+
 
     # ========================================================================
     # 15. validate-session-baseline-report.ps1 CLI gate (exit codes + verdict)
