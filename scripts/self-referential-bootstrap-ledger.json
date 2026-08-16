@@ -149,7 +149,7 @@
     },
     {
       "id": "trusted-host-executor-broker",
-      "status": "open",
+      "status": "closed",
       "pr": 527,
       "opened_at": "2026-08-12T10:55:47Z",
       "reason": "the trusted merge workflow changes its own adjudicator and only a default-branch copy may hold the GitHub App merge credential, so the feature branch cannot perform the canonical hosted execution or prove its post-merge fixpoint before PR 527 lands",
@@ -195,7 +195,14 @@
         "docs/evidence/trusted-host-executor-broker/self-referential-bootstrap/README.md",
         "docs/evidence/trusted-host-executor-broker/self-referential-bootstrap/gate-suites.txt"
       ],
-      "fixpoint": null
+      "fixpoint": {
+        "reverified_at": "2026-08-16T20:12:32Z",
+        "mechanism_commit": "6a4cc5658592750658f6b9e9ad0a17236749e092",
+        "evidence_refs": [
+          "docs/evidence/trusted-host-executor-broker/fixpoint/attestation.json",
+          "docs/evidence/trusted-host-executor-broker/fixpoint/summary.md"
+        ]
+      }
     },
     {
       "id": "mechanism-hardening-2",
