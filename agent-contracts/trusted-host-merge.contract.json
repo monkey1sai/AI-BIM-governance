@@ -1,0 +1,224 @@
+{
+  "$schema": "./trusted-host-merge.contract.schema.json",
+  "schema_version": "trusted-host-merge/v1",
+  "schemas": {
+    "broker_assertion": "./trusted-host-merge-assertion.schema.json",
+    "apex_evidence": "./trusted-host-merge-evidence.schema.json",
+    "apex_verdict": "./trusted-host-merge-verdict.schema.json",
+    "terminal_result": "./trusted-host-merge-result.schema.json"
+  },
+  "repository": {
+    "full_name": "monkey1sai/AI-BIM-governance",
+    "base_branch": "main",
+    "workflow_path": ".github/workflows/trusted-elevated-merge.yml"
+  },
+  "activation": {
+    "state_contract": "./spec-to-done.contract.json",
+    "pending_state": "requires_live_attestation",
+    "active_state": "active",
+    "external_mode_variable": "TRUSTED_MERGE_ACTIVATION_MODE",
+    "attestation_tuple_sha256_variable": "TRUSTED_MERGE_ATTESTATION_TUPLE_SHA256",
+    "pending_modes": ["attesting_negative", "attesting_positive"],
+    "active_mode": "active",
+    "attestation_tuple_fields": [
+      "repo",
+      "prNumber",
+      "headOid",
+      "baseOid",
+      "action",
+      "activationMode",
+      "provider"
+    ]
+  },
+  "broker": {
+    "kind": "github-protected-environment",
+    "environment": "trusted-elevated-merge",
+    "required_reviewer": {
+      "login": "monkey1sai-blip",
+      "id": 311287868,
+      "type": "User",
+      "permission": "write",
+      "role_name": "write"
+    },
+    "prevent_self_review": true,
+    "admins_can_bypass": false,
+    "deployment_branch_policy": {
+      "protected_branches": false,
+      "custom_branch_policies": true,
+      "allowed_branch": "main"
+    },
+    "assertion": {
+      "kind": "ai-bim-trusted-elevated-merge",
+      "version": 1,
+      "action": "merge-elevated",
+      "max_lifetime_seconds": 900,
+      "nonce_pattern": "^[A-Za-z0-9_-]{32,128}$",
+      "fields": [
+        "kind",
+        "version",
+        "repo",
+        "prNumber",
+        "headOid",
+        "baseOid",
+        "action",
+        "runId",
+        "activationMode",
+        "provider",
+        "nonce",
+        "expiresAt"
+      ]
+    }
+  },
+  "executor": {
+    "source": "default-branch-workflow-dispatch",
+    "run_attempt": 1,
+    "candidate_execution": "forbidden",
+    "reviewer_buffer_seconds": 90,
+    "evidence_max_bytes": 500000,
+    "merge_method": "merge",
+    "toolchain": {
+      "platform": "linux",
+      "node_version": "v20.20.2"
+    },
+    "irreversible_sink_min_ttl_seconds": 60,
+    "merge_request_timeout_milliseconds": 10000,
+    "closeout_fetch_timeout_milliseconds": 10000,
+    "pre_sink_timeouts": {
+      "snapshot_milliseconds": 60000,
+      "snapshot_read_count": 5,
+      "candidate_fetch_milliseconds": 30000,
+      "pr_body_contract_milliseconds": 60000,
+      "app_token_mint_milliseconds": 10000,
+      "apex_request_milliseconds": 600000,
+      "workflow_job_milliseconds": 1800000,
+      "result_persistence_reserve_milliseconds": 60000
+    },
+    "post_merge_observation": {
+      "attempts": 4,
+      "interval_milliseconds": 1000,
+      "request_timeout_milliseconds": 3000
+    },
+    "required_check_sources": [
+      { "context": "agent-governance", "app_id": 15368, "verification_target": "agent-governance", "workflow_path": ".github/workflows/agent-governance.yml" },
+      { "context": "root contracts and fakes", "app_id": 15368, "verification_target": "root-contracts", "workflow_path": ".github/workflows/ci.yml" },
+      { "context": "coordinator build and tests", "app_id": 15368, "verification_target": "coordinator", "workflow_path": ".github/workflows/ci.yml" },
+      { "context": "governance-service tests", "app_id": 15368, "verification_target": "governance", "workflow_path": ".github/workflows/ci.yml" },
+      { "context": "viewer build and tests", "app_id": 15368, "verification_target": "viewer", "workflow_path": ".github/workflows/ci.yml" },
+      { "context": "kit-manager-api tests", "app_id": 15368, "verification_target": "kit-manager-api", "workflow_path": ".github/workflows/ci.yml" },
+      { "context": "kit-manager-web build", "app_id": 15368, "verification_target": "kit-manager-web", "workflow_path": ".github/workflows/ci.yml" },
+      { "context": "docker compose config", "app_id": 15368, "verification_target": "compose-config", "workflow_path": ".github/workflows/ci.yml" },
+      { "context": "powershell static analysis", "app_id": 15368, "verification_target": "powershell-static", "workflow_path": ".github/workflows/ci.yml" },
+      { "context": "secret pattern scan", "app_id": 15368, "verification_target": "secret-pattern-scan", "workflow_path": ".github/workflows/ci.yml" }
+    ],
+    "verification_target_sources": [
+      { "context": "root contracts and fakes", "app_id": 15368, "verification_target": "root-contracts", "workflow_path": ".github/workflows/ci.yml" },
+      { "context": "coordinator build and tests", "app_id": 15368, "verification_target": "coordinator", "workflow_path": ".github/workflows/ci.yml" },
+      { "context": "viewer build and tests", "app_id": 15368, "verification_target": "viewer", "workflow_path": ".github/workflows/ci.yml" },
+      { "context": "streaming stage-loading contract", "app_id": 15368, "verification_target": "streaming", "workflow_path": ".github/workflows/ci.yml" },
+      { "context": "governance-service tests", "app_id": 15368, "verification_target": "governance", "workflow_path": ".github/workflows/ci.yml" },
+      { "context": "viewer build and tests", "app_id": 15368, "verification_target": "viewer-session", "workflow_path": ".github/workflows/ci.yml" },
+      { "context": "kit-manager-api tests", "app_id": 15368, "verification_target": "kit-manager-api", "workflow_path": ".github/workflows/ci.yml" },
+      { "context": "kit-manager-web build", "app_id": 15368, "verification_target": "kit-manager-web", "workflow_path": ".github/workflows/ci.yml" },
+      { "context": "agent-governance", "app_id": 15368, "verification_target": "agent-governance", "workflow_path": ".github/workflows/agent-governance.yml" },
+      { "context": "docker compose config", "app_id": 15368, "verification_target": "compose-config", "workflow_path": ".github/workflows/ci.yml" },
+      { "context": "powershell static analysis", "app_id": 15368, "verification_target": "powershell-static", "workflow_path": ".github/workflows/ci.yml" },
+      { "context": "rebuild/test-deploy contracts", "app_id": 15368, "verification_target": "rebuild-test-deploy", "workflow_path": ".github/workflows/ci.yml" },
+      { "context": "design-semantic-visual", "app_id": 15368, "verification_target": "design-semantic-visual", "workflow_path": ".github/workflows/ci.yml" },
+      { "context": "functional-runtime-conv", "app_id": 15368, "verification_target": "functional-runtime-conv", "workflow_path": ".github/workflows/ci.yml" },
+      { "context": "secret pattern scan", "app_id": 15368, "verification_target": "secret-pattern-scan", "workflow_path": ".github/workflows/ci.yml" }
+    ],
+    "required_check_trust_boundary": {
+      "candidate_mechanism_change": "separate_authorization",
+      "base_owned_manifest_path": "scripts/verification-manifest.json",
+      "mechanism_path_patterns": [
+        "^\\.github/workflows/",
+        "^scripts/deploy\\.ps1$",
+        "^scripts/verify-all\\.ps1$",
+        "^scripts/dev/rebuild-test-deploy\\.ps1$",
+        "^scripts/deploy-target-registry\\.json$",
+        "^scripts/lib/deploy-target-registry\\.ps1$",
+        "^scripts/lib/remote-deploy-transport\\.ps1$",
+        "^scripts/lib/windows-verification-scope\\.ps1$",
+        "^scripts/dev/start-isolated-branch-stack\\.ps1$",
+        "^scripts/start-web-plane-docker\\.ps1$",
+        "^scripts/lib/(preflight-[a-z-]+|deploy-report|host-native-launcher|rebuild-test-deploy|start-child-with-environment|kit-log-probe|smoke-evidence|design-assets)\\.ps1$",
+        "^scripts/lib/platform/",
+        "^scripts/lib/(design-system-gate|pr-review-agent|production-boundary-contract)\\.ps1$",
+        "^scripts/tests/(check-pr-body-evidence|verify-design-system-reference|verify-design-system-visual-result|verify-functional-runtime-result|verify-security-exceptions|verify-openspec-lifecycle)\\.ps1$",
+        "^scripts/tests/verify-openspec-machine-truth\\.mjs$",
+        "^scripts/lib/self-referential-bootstrap\\.ps1$",
+        "^scripts/self-referential-bootstrap-ledger\\.json$",
+        "^scripts/(dev|lib)/trusted-host-merge(?:-[a-z-]+)?\\.mjs$",
+        "^scripts/tests/test-trusted-host-merge(?:-runtime)?\\.mjs$",
+        "^scripts/tests/fixtures/trusted-host-merge-machine-fixtures\\.json$",
+        "^agent-contracts/trusted-host-merge(?:[.-][a-z-]+)?(?:\\.schema)?\\.json$",
+        "^agent-contracts/spec-to-done\\.contract(?:\\.schema)?\\.json$",
+        "^scripts/verification-manifest\\.json$",
+        "^scripts/dev/check-pr-local-preflight\\.ps1$",
+        "^scripts/hooks/require-gstack-evidence\\.ps1$",
+        "^scripts/lib/detect-base-gate-capability\\.sh$",
+        "^scripts/verify-all\\.sh$",
+        "^scripts/lib/verification-(plan|runner|command-policy|outcome)\\.mjs$",
+        "^scripts/lib/security-exceptions-cli\\.mjs$",
+        "^scripts/lib/security-exceptions\\.mjs$",
+        "^scripts/security-exceptions\\.json$",
+        "^scripts/lib/openspec-lifecycle\\.ps1$",
+        "^scripts/lib/openspec-machine-truth\\.mjs$",
+        "^scripts/tests/(invoke-powershell-static|scan-secret-patterns)\\.ps1$",
+        "^scripts/tests/verification-plan\\.schema\\.json$",
+        "^scripts/tests/test-(self-referential-bootstrap|base-gate-capability|preflight-prnumber-forwarding)\\.ps1$",
+        "^web-viewer-sample/scripts/verify-design-system-pixels\\.mjs$",
+        "^web-viewer-sample/scripts/lib/png-preflight\\.mjs$",
+        "^scripts/tests/test-png-preflight\\.mjs$",
+        "^\\.github/CODEOWNERS$",
+        "^(?:.*/)?\\.gitattributes$",
+        "^scripts/tests/test-agent-governance-check\\.ps1$",
+        "^docs/agents/self-referential-bootstrap\\.md$",
+        "^scripts/tests/",
+        "^tests/",
+        "^(?:.*/)?(?:pytest\\.ini|pyproject\\.toml|setup\\.cfg|tox\\.ini|sitecustomize\\.py|usercustomize\\.py)$",
+        "^(?:.*/)?conftest\\.py$",
+        "^pytest(?:\\.py|/)",
+        "^pip(?:\\.py|/)",
+        "^(?:.*/)?\\.npmrc$",
+        "^bim-review-coordinator/(?:package(?:-lock)?\\.json|npm-shrinkwrap\\.json|vitest\\.(?:config|workspace)\\.[^/]+|tsconfig(?:\\.[^/]+)?\\.json|tests/)",
+        "^governance-service/(?:tests/|conftest\\.py$|requirements\\.txt$)",
+        "^web-viewer-sample/(?:package(?:-lock)?\\.json|npm-shrinkwrap\\.json|\\.npmrc|vitest\\.(?:config|workspace)\\.[^/]+|vite\\.config\\.[^/]+|tsconfig(?:\\.[^/]+)?\\.json|playwright(?:\\.[a-z0-9-]+)?\\.config\\.[^/]+|e2e/|src/harness/|src/.*\\.(?:test|spec)\\.[cm]?[jt]sx?)",
+        "^web-viewer-sample/(?:\\.eslintignore|\\.eslintrc(?:\\.[^/]+)?|eslint\\.config\\.[^/]+)$",
+        "^web-viewer-sample/scripts/(?:check-eslint-baseline|sync-design-assets|verify-session-first-contract|verify-struct-log)\\.mjs$",
+        "^web-viewer-sample/scripts/eslint-baseline\\.json$",
+        "^services/kit-manager-api/(?:tests/|requirements\\.txt$)",
+        "^apps/kit-manager-web/(?:package(?:-lock)?\\.json|npm-shrinkwrap\\.json|vite\\.config\\.[^/]+|tsconfig(?:\\.[^/]+)?\\.json)"
+      ],
+      "required_target_conclusion": "success",
+      "skipped_conclusion": "only_when_trusted_base_plan_not_required"
+    },
+    "github_app_token": {
+      "repository_scope": "single",
+      "max_ttl_seconds": 3600,
+      "permissions": {
+        "actions": "read",
+        "administration": "read",
+        "checks": "read",
+        "contents": "write",
+        "pull_requests": "read"
+      }
+    },
+    "terminal_states": [
+      "held",
+      "merged",
+      "merged_but_closeout_held",
+      "merge_outcome_unverified"
+    ]
+  },
+  "apex": {
+    "providers": ["claude", "codex"],
+    "side_effects": "none",
+    "tools": "none",
+    "input_trust": "untrusted-evidence-only",
+    "required_effort": {
+      "claude": "max",
+      "codex": "xhigh"
+    }
+  }
+}

@@ -1,0 +1,274 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "trusted-host-merge.contract.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "schemas", "repository", "activation", "broker", "executor", "apex"],
+  "properties": {
+    "$schema": { "type": "string" },
+    "schema_version": { "const": "trusted-host-merge/v1" },
+    "schemas": {
+      "const": {
+        "broker_assertion": "./trusted-host-merge-assertion.schema.json",
+        "apex_evidence": "./trusted-host-merge-evidence.schema.json",
+        "apex_verdict": "./trusted-host-merge-verdict.schema.json",
+        "terminal_result": "./trusted-host-merge-result.schema.json"
+      }
+    },
+    "repository": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["full_name", "base_branch", "workflow_path"],
+      "properties": {
+        "full_name": { "const": "monkey1sai/AI-BIM-governance" },
+        "base_branch": { "const": "main" },
+        "workflow_path": { "const": ".github/workflows/trusted-elevated-merge.yml" }
+      }
+    },
+    "activation": {
+      "const": {
+        "state_contract": "./spec-to-done.contract.json",
+        "pending_state": "requires_live_attestation",
+        "active_state": "active",
+        "external_mode_variable": "TRUSTED_MERGE_ACTIVATION_MODE",
+        "attestation_tuple_sha256_variable": "TRUSTED_MERGE_ATTESTATION_TUPLE_SHA256",
+        "pending_modes": ["attesting_negative", "attesting_positive"],
+        "active_mode": "active",
+        "attestation_tuple_fields": [
+          "repo",
+          "prNumber",
+          "headOid",
+          "baseOid",
+          "action",
+          "activationMode",
+          "provider"
+        ]
+      }
+    },
+    "broker": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "environment",
+        "required_reviewer",
+        "prevent_self_review",
+        "admins_can_bypass",
+        "deployment_branch_policy",
+        "assertion"
+      ],
+      "properties": {
+        "kind": { "const": "github-protected-environment" },
+        "environment": { "const": "trusted-elevated-merge" },
+        "required_reviewer": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["login", "id", "type", "permission", "role_name"],
+          "properties": {
+            "login": { "const": "monkey1sai-blip" },
+            "id": { "const": 311287868 },
+            "type": { "const": "User" },
+            "permission": { "const": "write" },
+            "role_name": { "const": "write" }
+          }
+        },
+        "prevent_self_review": { "const": true },
+        "admins_can_bypass": { "const": false },
+        "deployment_branch_policy": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["protected_branches", "custom_branch_policies", "allowed_branch"],
+          "properties": {
+            "protected_branches": { "const": false },
+            "custom_branch_policies": { "const": true },
+            "allowed_branch": { "const": "main" }
+          }
+        },
+        "assertion": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "version", "action", "max_lifetime_seconds", "nonce_pattern", "fields"],
+          "properties": {
+            "kind": { "const": "ai-bim-trusted-elevated-merge" },
+            "version": { "const": 1 },
+            "action": { "const": "merge-elevated" },
+            "max_lifetime_seconds": { "type": "integer", "minimum": 60, "maximum": 900 },
+            "nonce_pattern": { "const": "^[A-Za-z0-9_-]{32,128}$" },
+            "fields": {
+              "const": [
+                "kind",
+                "version",
+                "repo",
+                "prNumber",
+                "headOid",
+                "baseOid",
+                "action",
+                "runId",
+                "activationMode",
+                "provider",
+                "nonce",
+                "expiresAt"
+              ]
+            }
+          }
+        }
+      }
+    },
+    "executor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source",
+        "run_attempt",
+        "candidate_execution",
+        "reviewer_buffer_seconds",
+        "evidence_max_bytes",
+        "merge_method",
+        "toolchain",
+        "irreversible_sink_min_ttl_seconds",
+        "merge_request_timeout_milliseconds",
+        "closeout_fetch_timeout_milliseconds",
+        "pre_sink_timeouts",
+        "post_merge_observation",
+        "required_check_sources",
+        "verification_target_sources",
+        "required_check_trust_boundary",
+        "github_app_token",
+        "terminal_states"
+      ],
+      "properties": {
+        "source": { "const": "default-branch-workflow-dispatch" },
+        "run_attempt": { "const": 1 },
+        "candidate_execution": { "const": "forbidden" },
+        "reviewer_buffer_seconds": { "const": 90 },
+        "evidence_max_bytes": { "const": 500000 },
+        "merge_method": { "const": "merge" },
+        "toolchain": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["platform", "node_version"],
+          "properties": {
+            "platform": { "const": "linux" },
+            "node_version": { "const": "v20.20.2" }
+          }
+        },
+        "irreversible_sink_min_ttl_seconds": { "const": 60 },
+        "merge_request_timeout_milliseconds": { "const": 10000 },
+        "closeout_fetch_timeout_milliseconds": { "const": 10000 },
+        "pre_sink_timeouts": {
+          "const": {
+            "snapshot_milliseconds": 60000,
+            "snapshot_read_count": 5,
+            "candidate_fetch_milliseconds": 30000,
+            "pr_body_contract_milliseconds": 60000,
+            "app_token_mint_milliseconds": 10000,
+            "apex_request_milliseconds": 600000,
+            "workflow_job_milliseconds": 1800000,
+            "result_persistence_reserve_milliseconds": 60000
+          }
+        },
+        "post_merge_observation": {
+          "const": {
+            "attempts": 4,
+            "interval_milliseconds": 1000,
+            "request_timeout_milliseconds": 3000
+          }
+        },
+        "required_check_sources": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["context", "app_id", "verification_target", "workflow_path"],
+            "properties": {
+              "context": { "type": "string", "minLength": 1 },
+              "app_id": { "type": "integer", "minimum": 1 },
+              "verification_target": { "type": "string", "pattern": "^[a-z][a-z0-9-]{0,63}$" },
+              "workflow_path": { "enum": [".github/workflows/agent-governance.yml", ".github/workflows/ci.yml"] }
+            }
+          }
+        },
+        "verification_target_sources": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 100,
+          "uniqueItems": true,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["context", "app_id", "verification_target", "workflow_path"],
+            "properties": {
+              "context": { "type": "string", "minLength": 1 },
+              "app_id": { "type": "integer", "minimum": 1 },
+              "verification_target": { "type": "string", "pattern": "^[a-z][a-z0-9-]{0,63}$" },
+              "workflow_path": { "enum": [".github/workflows/agent-governance.yml", ".github/workflows/ci.yml"] }
+            }
+          }
+        },
+        "required_check_trust_boundary": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "candidate_mechanism_change",
+            "base_owned_manifest_path",
+            "mechanism_path_patterns",
+            "required_target_conclusion",
+            "skipped_conclusion"
+          ],
+          "properties": {
+            "candidate_mechanism_change": { "const": "separate_authorization" },
+            "base_owned_manifest_path": { "const": "scripts/verification-manifest.json" },
+            "mechanism_path_patterns": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 128,
+              "uniqueItems": true,
+              "items": { "type": "string", "minLength": 3, "maxLength": 256 }
+            },
+            "required_target_conclusion": { "const": "success" },
+            "skipped_conclusion": { "const": "only_when_trusted_base_plan_not_required" }
+          }
+        },
+        "github_app_token": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["repository_scope", "max_ttl_seconds", "permissions"],
+          "properties": {
+            "repository_scope": { "const": "single" },
+            "max_ttl_seconds": { "type": "integer", "minimum": 60, "maximum": 3600 },
+            "permissions": {
+              "const": {
+                "actions": "read",
+                "administration": "read",
+                "checks": "read",
+                "contents": "write",
+                "pull_requests": "read"
+              }
+            }
+          }
+        },
+        "terminal_states": {
+          "const": ["held", "merged", "merged_but_closeout_held", "merge_outcome_unverified"]
+        }
+      }
+    },
+    "apex": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["providers", "side_effects", "tools", "input_trust", "required_effort"],
+      "properties": {
+        "providers": { "const": ["claude", "codex"] },
+        "side_effects": { "const": "none" },
+        "tools": { "const": "none" },
+        "input_trust": { "const": "untrusted-evidence-only" },
+        "required_effort": {
+          "const": {
+            "claude": "max",
+            "codex": "xhigh"
+          }
+        }
+      }
+    }
+  }
+}

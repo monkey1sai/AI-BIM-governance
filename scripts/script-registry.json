@@ -194,6 +194,12 @@
       "notes": "Branch-only: seeds one real-MinIO IFC-ready job into an isolated branch stack coordinator (loopback 8005-8009). Fail-closed against deployment ports. Not a deploy entrypoint; does not own stack lifecycle."
     },
     {
+      "path": "scripts/dev/trusted-host-merge.mjs",
+      "role": "base-pinned-security-authority",
+      "owner": "agent-governance",
+      "notes": "Default-branch workflow adapter for protected-environment approval and exact-head merge. Never run candidate code; hosted activation remains owner-provisioned."
+    },
+    {
       "path": "scripts/measure-session-baseline.ps1",
       "role": "measurement-harness",
       "owner": "scripts",

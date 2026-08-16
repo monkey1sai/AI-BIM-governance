@@ -40,7 +40,7 @@ Pick this when explicit user intent maps to one repeatable perspective.
 ### Coordinator entrypoint (risk-based fan-out)
 Pick this only when **independent** investigations can run in parallel and produce reports that the coordinator then merges.
 
-- An explicit ship request follows [ship-item.md](../workflows/ship-item.md): the workflow coordinator collects actual PR evidence with fixed commands, an independent shell-less Fable/max `code-reviewer` acts as apex arbiter, and only the coordinator may execute the identity-bound merge sink.
+- An explicit ship request follows [ship-item.md](../workflows/ship-item.md): `ship-item.js` remains validation-only, while the default-branch trusted host collects immutable PR evidence, calls a tool-free Claude/Codex apex, and exclusively owns the exact-head merge sink after protected-environment approval.
 
 This is the only orchestration pattern this repo endorses. See [references/orchestration-patterns.md](../references/orchestration-patterns.md) for the full pattern catalog and anti-patterns.
 
