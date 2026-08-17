@@ -1527,7 +1527,7 @@
         "artifacts/2026-08-12-hifi-consumer-spec-scenario-audit.md",
         "openspec/changes/align-frontend-design-system-reference/successor-crosswalk-migrate-console-to-hifi-design.md"
       ],
-      "subject_commit": "78f6b32cefffa48093b9e8fd6ad1d338511aa8ed",
+      "subject_commit": "c3057d844ae0a972ad9b9fcdabf151500a52fd90",
       "archive_debt": null
     },
     {
