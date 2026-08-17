@@ -43,6 +43,14 @@ $t2a = Get-Tier @('scripts/deploy.ps1')
 Assert-True ($t2a.Tier -eq 2 -and $t2a.Id -eq 'deploy_dryrun') "deploy.ps1 -> tier 2 (got $($t2a.Id))"
 $t2b = Get-Tier @('scripts/lib/rebuild-test-deploy.ps1')
 Assert-True ($t2b.Tier -eq 2) "scripts/lib top-level ps1 -> tier 2 (got $($t2b.Tier))"
+# A module under scripts/lib owes the same evidence as a script there. StructLog.psm1 is imported by
+# scripts/lib/rebuild-test-deploy.ps1 (tier 2), so excluding .psm1 let a deploy-library dependency
+# escape the tier its dependant sits in.
+$t2bm = Get-Tier @('scripts/lib/StructLog.psm1')
+Assert-True ($t2bm.Tier -eq 2 -and $t2bm.Id -eq 'deploy_dryrun') "scripts/lib top-level psm1 -> tier 2 (got $($t2bm.Id))"
+Assert-True ($t2bm.Required) 'a scripts/lib module owes Windows deploy dry-run evidence'
+# The platform exclusion must survive the extension widening in both file kinds.
+Assert-True ((Get-Tier @('scripts/lib/platform/adapter.psm1')).Id -eq 'platform_unit') 'platform modules stay tier 1, not tier 2'
 $t2c = Get-Tier @('compose.host-kit.yml')
 Assert-True ($t2c.Tier -eq 2) "compose file -> tier 2 (got $($t2c.Tier))"
 $t2d = Get-Tier @('scripts/stop-all.ps1')
@@ -74,7 +82,11 @@ foreach ($exempt in @(
     'scripts/tests/test-platform-adapter.ps1',
     'web-viewer-sample/src/Window.tsx',
     'bim-streaming-server/README.md',
-    'README.md'
+    'README.md',
+    # The .psm1 widening must not over-reach: a module manifest is not executable deploy logic, and
+    # nested paths stay out for the same reason the .ps1 half of this pattern excludes them.
+    'scripts/lib/SomeModule.psd1',
+    'scripts/lib/nested/helper.psm1'
 )) {
     $none = Get-Tier @($exempt)
     Assert-True (-not $none.Required) "$exempt must not owe Windows evidence (got tier $($none.Tier))"
