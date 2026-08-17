@@ -1,0 +1,49 @@
+stack_kind=self_referential_bootstrap
+pr=527
+baseline=b7ec84bb081d4f7630d0945869e7875b785e42d3
+implementation_commit=30ba74fb22541d98c88585a2f63cbabc7da1d598
+observed_at=2026-08-14T20:28:00Z
+
+PASS test-trusted-host-merge
+command=node --test scripts/tests/test-trusted-host-merge.mjs scripts/tests/test-trusted-host-merge-runtime.mjs
+result=44 passed, 0 failed, 1 Windows-only Linux gitlink probe skipped
+
+PASS test-ship-item-runtime
+command=node --test tests/test_ship_item_runtime.mjs
+result=5 passed
+
+PASS test-review-risk
+command=node --test scripts/tests/test-review-risk.mjs
+result=65 passed
+
+PASS test-pr-body-evidence
+command=pwsh -NoProfile -NonInteractive -File scripts/tests/test-pr-body-evidence.ps1
+result=all assertions passed
+
+PASS test-routing-consistency
+command=python -c "import tests.test_routing_consistency as t; names=sorted(n for n in dir(t) if n.startswith('test_')); [getattr(t,n)() for n in names]; print(f'routing assertions passed: {len(names)}')"
+result=14 routing assertions passed; pytest collected and ran the same assertions but its Windows teardown did not terminate within the bounded command timeout
+
+PASS test-self-referential-bootstrap
+command=pwsh -NoProfile -NonInteractive -File scripts/tests/test-self-referential-bootstrap.ps1
+result=all assertions passed with the PR 527 open entry and immutable command map
+
+PASS test-agent-governance-check
+command=pwsh -NoProfile -NonInteractive -File scripts/tests/test-agent-governance-check.ps1
+result=all assertions passed with the PR 527 bootstrap evidence
+
+PASS scan-secret-patterns
+command=pwsh -NoProfile -NonInteractive -File scripts/tests/scan-secret-patterns.ps1
+result=passed
+
+PASS node-syntax-check
+command=node --check scripts/dev/trusted-host-merge.mjs and every scripts/lib/trusted-host-merge*.mjs
+result=passed
+
+PASS git-diff-check
+command=git diff --check
+result=passed
+
+ADVISORY gitnexus-detect-changes
+command=gitnexus detect-changes --scope compare --base-ref origin/main -r C:\Repos\active\iot\AI-BIM-governance
+result=reported 38 files, 3 symbols, 0 affected processes, and low risk from stale indexed commit 31b75df while current main was b7ec84b; treated as advisory evidence, not a graph verification pass

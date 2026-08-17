@@ -83,6 +83,71 @@ DIFF_BEGIN = "<<<BEGIN_UNTRUSTED_PR_DIFF>>>"
 DIFF_END = "<<<END_UNTRUSTED_PR_DIFF>>>"
 MODEL_DATA_BEGIN = "<<<BEGIN_UNTRUSTED_MODEL_DATA>>>"
 MODEL_DATA_END = "<<<END_UNTRUSTED_MODEL_DATA>>>"
+PINNED_CODEX_VERSION = "codex-cli 0.147.0"
+
+# `--sandbox read-only` constrains shell writes; it does not remove tools.  The
+# reviewed Codex binary is version-pinned and every feature that can expose a
+# host, connector, browser, image, skill, memory, or child-agent capability is
+# therefore disabled explicitly on every model call.  A future Codex upgrade
+# must update this allow-none contract and pass independent security review.
+TOOL_BEARING_FEATURES = (
+    "apps",
+    "artifact",
+    "auth_elicitation",
+    "browser_use",
+    "browser_use_external",
+    "browser_use_full_cdp_access",
+    "code_mode",
+    "code_mode_buffered_exec",
+    "code_mode_host",
+    "code_mode_only",
+    "computer_use",
+    "deferred_executor",
+    "deferred_tool_world_state",
+    "enable_mcp_apps",
+    "goals",
+    "hooks",
+    "image_generation",
+    "in_app_browser",
+    "js_repl",
+    "js_repl_tools_only",
+    "mcp_2026_07_28",
+    "memories",
+    "multi_agent",
+    "network_proxy",
+    "plugins",
+    "remote_plugin",
+    "request_permissions_tool",
+    "shell_snapshot",
+    "shell_tool",
+    "skill_mcp_dependency_install",
+    "skill_search",
+    "standalone_web_search",
+    "tool_call_mcp_elicitation",
+    "tool_suggest",
+    "unified_exec",
+    "unified_exec_zsh_fork",
+    "view_image",
+    "web_search_cached",
+    "web_search_request",
+    "workspace_dependencies",
+)
+
+DLP_PATTERNS = (
+    ("private_key", re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH |DSA |ENCRYPTED )?PRIVATE KEY-----", re.I)),
+    ("github_token", re.compile(r"\b(?:gh[pousr]_[A-Za-z0-9]{20,255}|github_pat_[A-Za-z0-9_]{20,255})\b")),
+    ("openai_key", re.compile(r"\bsk-(?:proj-)?[A-Za-z0-9_-]{20,255}\b")),
+    ("aws_access_key", re.compile(r"\b(?:AKIA|ASIA)[A-Z0-9]{16}\b")),
+    ("jwt", re.compile(r"\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b")),
+    ("dlp_sentinel", re.compile(r"\bBLIP_DLP_SENTINEL_[A-Z0-9_-]{8,}\b")),
+    (
+        "credential_assignment",
+        re.compile(
+            r"(?i)(?:access[_-]?token|refresh[_-]?token|client[_-]?secret|password|private[_-]?key)"
+            r"[\"']?\s*[:=]\s*[\"']?[A-Za-z0-9+/_=.-]{24,}"
+        ),
+    ),
+)
 
 # --------------------------------------------------------------- json schemas
 
@@ -176,6 +241,69 @@ def severity_rank(finding: dict) -> int:
     return SEVERITY_ORDER.get(str(finding.get("severity")), 9)
 
 
+class UnsafeModelOutput(RuntimeError):
+    """Model-derived output matched a public-output DLP rule."""
+
+
+def outbound_safety_violation(value: object) -> str | None:
+    if isinstance(value, bytes):
+        text = value.decode("utf-8", errors="replace")
+    else:
+        text = value if isinstance(value, str) else json.dumps(
+            value, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        )
+    for label, pattern in DLP_PATTERNS:
+        if pattern.search(text):
+            return label
+    return None
+
+
+def require_safe_model_output(value: object) -> None:
+    violation = outbound_safety_violation(value)
+    if violation:
+        raise UnsafeModelOutput(f"model output rejected by outbound policy: {violation}")
+
+
+def minimal_child_environment(codex_home: Path) -> dict[str, str]:
+    child_env: dict[str, str] = {
+        "CODEX_HOME": str(codex_home),
+        "PATH": os.pathsep.join((r"C:\Windows\System32", r"C:\Windows")),
+        "PYTHONIOENCODING": "utf-8",
+    }
+    for name in ("SystemRoot", "WINDIR", "TEMP", "TMP"):
+        value = os.environ.get(name, "").strip()
+        if value:
+            child_env[name] = value
+    return child_env
+
+
+def build_codex_exec_command(
+    *, binary: str, model: str, effort: str, schema_file: Path, out_file: Path
+) -> list[str]:
+    cmd = [
+        binary, "exec",
+        "--strict-config",
+        "--ignore-user-config",
+        "--ignore-rules",
+        "--ephemeral",
+        "--sandbox", "read-only",
+        "--skip-git-repo-check",
+        "--color", "never",
+        "--model", model,
+        "-c", f"model_reasoning_effort={effort}",
+        "-c", 'web_search="disabled"',
+        "-c", "apps._default.enabled=false",
+        "-c", "project_doc_max_bytes=0",
+        "-c", 'shell_environment_policy.inherit="none"',
+        "--output-schema", str(schema_file),
+        "--output-last-message", str(out_file),
+        "-",
+    ]
+    for feature in TOOL_BEARING_FEATURES:
+        cmd[2:2] = ["--disable", feature]
+    return cmd
+
+
 # ------------------------------------------------------------- codex runner
 
 
@@ -199,6 +327,18 @@ class CodexRunner:
         self.calls: list[dict] = []
         self._schema_files: dict[int, Path] = {}
         self._seq = 0
+        version = subprocess.run(
+            [self.binary, "--version"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=15,
+            cwd=str(self.work_dir),
+            env=minimal_child_environment(self.codex_home),
+        )
+        if version.returncode != 0 or version.stdout.strip() != PINNED_CODEX_VERSION:
+            raise ValueError("the protected Codex binary version differs from the reviewed tool-free contract")
 
     def _schema_file(self, schema: dict) -> Path:
         key = id(schema)
@@ -212,35 +352,18 @@ class CodexRunner:
         self._seq += 1
         safe_label = re.sub(r"[^A-Za-z0-9_.-]+", "_", label)
         out_file = self.work_dir / f"agent-{self._seq:02d}-{safe_label}.json"
-        cmd = [
-            self.binary, "exec",
-            "--strict-config",
-            "--ignore-user-config",
-            "--ignore-rules",
-            "--ephemeral",
-            "--sandbox", "read-only",
-            "--skip-git-repo-check",
-            "--color", "never",
-            "--model", model,
-            "-c", f"model_reasoning_effort={effort}",
-            "-c", 'web_search="disabled"',
-            "-c", 'shell_environment_policy.inherit="none"',
-            "--output-schema", str(self._schema_file(schema)),
-            "--output-last-message", str(out_file),
-            "-",
-        ]
+        cmd = build_codex_exec_command(
+            binary=self.binary,
+            model=model,
+            effort=effort,
+            schema_file=self._schema_file(schema),
+            out_file=out_file,
+        )
         for attempt in range(1, self.retries + 2):
+            out_file.unlink(missing_ok=True)
             started = datetime.now(timezone.utc)
+            proc: subprocess.CompletedProcess[str] | None = None
             try:
-                child_env: dict[str, str] = {
-                    "CODEX_HOME": str(self.codex_home),
-                    "PATH": os.pathsep.join((r"C:\Windows\System32", r"C:\Windows")),
-                    "PYTHONIOENCODING": "utf-8",
-                }
-                for name in ("SystemRoot", "WINDIR", "TEMP", "TMP"):
-                    value = os.environ.get(name, "").strip()
-                    if value:
-                        child_env[name] = value
                 proc = subprocess.run(
                     cmd,
                     input=prompt,
@@ -250,25 +373,72 @@ class CodexRunner:
                     errors="replace",
                     timeout=self.timeout,
                     cwd=str(self.work_dir),
-                    env=child_env,
+                    env=minimal_child_environment(self.codex_home),
                 )
                 seconds = (datetime.now(timezone.utc) - started).total_seconds()
                 if proc.returncode != 0:
-                    # The Codex banner fills the head of stderr; the API error is at the tail.
-                    raise RuntimeError(f"rc={proc.returncode}: …{proc.stderr.strip()[-500:]}")
+                    stream_violation = outbound_safety_violation(proc.stdout) or outbound_safety_violation(proc.stderr)
+                    if stream_violation:
+                        raise UnsafeModelOutput(
+                            f"Codex process output rejected by outbound policy: {stream_violation}"
+                        )
+                    raise RuntimeError(f"Codex subprocess failed with rc={proc.returncode}")
                 raw = out_file.read_text(encoding="utf-8") if out_file.is_file() else ""
                 if not raw.strip():
                     raise RuntimeError("empty last message")
+                require_safe_model_output(raw)
                 structured = json.loads(raw)
+                require_safe_model_output(structured)
                 self.calls.append(
                     {"label": label, "model": model, "effort": effort, "attempt": attempt,
                      "ok": True, "seconds": round(seconds, 1)}
                 )
                 log(f"{label} [{model}/{effort}] ok (attempt {attempt}, {seconds:.0f}s)")
                 return structured
+            except UnsafeModelOutput:
+                seconds = (datetime.now(timezone.utc) - started).total_seconds()
+                out_file.unlink(missing_ok=True)
+                detail = "unsafe_model_output"
+                self.calls.append(
+                    {"label": label, "model": model, "effort": effort, "attempt": attempt,
+                     "ok": False, "error": detail, "seconds": round(seconds, 1)}
+                )
+                log(f"{label} [{model}/{effort}] REJECTED: {detail}")
+                (self.work_dir / f"fail-{safe_label}.txt").write_text(
+                    "unsafe_model_output\n", encoding="utf-8"
+                )
+                return None
             except Exception as exc:  # noqa: BLE001 - failure is data, not a crash
                 seconds = (datetime.now(timezone.utc) - started).total_seconds()
-                detail = str(exc)[:600]
+                artifact_violation = None
+                if out_file.is_file():
+                    try:
+                        artifact_violation = outbound_safety_violation(
+                            out_file.read_text(encoding="utf-8", errors="replace")
+                        )
+                    finally:
+                        out_file.unlink(missing_ok=True)
+                stream_violation = None
+                if proc is not None:
+                    stream_violation = (
+                        outbound_safety_violation(proc.stdout)
+                        or outbound_safety_violation(proc.stderr)
+                    )
+                elif isinstance(exc, subprocess.TimeoutExpired):
+                    stream_violation = (
+                        outbound_safety_violation(exc.stdout or "")
+                        or outbound_safety_violation(exc.stderr or "")
+                    )
+                error_violation = outbound_safety_violation(str(exc))
+                violation = artifact_violation or stream_violation or error_violation
+                if violation:
+                    detail = "unsafe_model_output"
+                elif isinstance(exc, json.JSONDecodeError):
+                    detail = "malformed structured output"
+                elif isinstance(exc, subprocess.TimeoutExpired):
+                    detail = "Codex subprocess timed out"
+                else:
+                    detail = f"{type(exc).__name__}: Codex invocation failed"
                 self.calls.append(
                     {"label": label, "model": model, "effort": effort, "attempt": attempt,
                      "ok": False, "error": detail, "seconds": round(seconds, 1)}
@@ -497,13 +667,27 @@ def map_event(result: dict, block_severities: set[str]) -> tuple[str, str]:
     return "comment", "SHIP"
 
 
+def inert_markdown_block(value: object) -> str:
+    """Render untrusted text as one inert, canonical Markdown code block."""
+    encoded = json.dumps("" if value is None else str(value).strip(), ensure_ascii=True)
+    encoded = (
+        encoded.replace("`", r"\u0060")
+        .replace("@", r"\u0040")
+        .replace("<", r"\u003c")
+        .replace(">", r"\u003e")
+    )
+    return f"```text\n{encoded}\n```"
+
+
 def render_markdown(result: dict, meta: dict, verdict_label: str, event: str, block_severities: set[str]) -> str:
     pr = meta.get("number")
     lines: list[str] = []
     lines.append(f"# Codex Tri-Adversarial ship-gate — PR #{pr}")
     lines.append("")
-    lines.append(f"- Repo head: `{meta.get('headRefName')}` @ `{str(meta.get('headRefOid'))[:7]}`")
-    lines.append(f"- Base: `{meta.get('baseRefName')}` @ `{str(meta.get('baseRefOid'))[:7]}`")
+    lines += ["- Repo head ref (inert):", "", inert_markdown_block(meta.get("headRefName")), ""]
+    lines.append(f"- Repo head commit: `{str(meta.get('headRefOid'))[:7]}`")
+    lines += ["- Base ref (inert):", "", inert_markdown_block(meta.get("baseRefName")), ""]
+    lines.append(f"- Base commit: `{str(meta.get('baseRefOid'))[:7]}`")
     lines.append(f"- Files changed: {len(result.get('files_changed') or [])}")
     lines.append(
         "- Engine: four-model tri-adversarial gate on Codex — "
@@ -523,7 +707,10 @@ def render_markdown(result: dict, meta: dict, verdict_label: str, event: str, bl
         lines += [
             "**HELD** — 三層驗證未能完成，本次不投同意票（fail-closed）。",
             "",
-            f"- held reason: `{result.get('held')}`",
+            "- held reason (inert):",
+            "",
+            inert_markdown_block(result.get("held")),
+            "",
             f"- mapped GitHub event: `{event.upper()}`",
         ]
     else:
@@ -554,18 +741,20 @@ def render_markdown(result: dict, meta: dict, verdict_label: str, event: str, bl
     if findings:
         lines += ["", "## Findings (final, after apex)", ""]
         for f in sorted(findings, key=severity_rank):
-            lines.append(f"### [{f.get('severity')}] {f.get('title')}")
-            lines.append("")
-            lines.append(f"- id: `{f.get('id')}` lens: `{f.get('dimension')}` file: `{f.get('file')}`"
-                         + (f" line: `{f.get('line')}`" if f.get("line") else ""))
+            lines += ["### Finding", "", f"- severity: `{f.get('severity')}`"]
+            lines += ["- title (inert):", "", inert_markdown_block(f.get("title")), ""]
+            lines.append(f"- id: `{f.get('id')}` lens: `{f.get('dimension')}`")
+            lines += ["- file (inert):", "", inert_markdown_block(f.get("file")), ""]
+            if f.get("line"):
+                lines += ["- line (inert):", "", inert_markdown_block(f.get("line")), ""]
             prov = f
             lines.append(f"- provenance: finder=`{prov.get('finder_model')}` "
                          f"refuter=`{prov.get('refuter_model')}` ({prov.get('refuter_mode')}) "
                          f"L2=`{(prov.get('layer2') or {}).get('verdict')}`")
-            lines.append(f"- evidence: {str(f.get('evidence', '')).strip()}")
-            lines.append(f"- why: {str(f.get('why', '')).strip()}")
+            lines += ["- evidence (inert):", "", inert_markdown_block(f.get("evidence")), ""]
+            lines += ["- why (inert):", "", inert_markdown_block(f.get("why")), ""]
             if f.get("proposed_fix"):
-                lines.append(f"- proposed fix: {str(f.get('proposed_fix')).strip()}")
+                lines += ["- proposed fix (inert):", "", inert_markdown_block(f.get("proposed_fix")), ""]
             lines.append("")
     killed = result.get("killed") or []
     if killed:
@@ -573,10 +762,12 @@ def render_markdown(result: dict, meta: dict, verdict_label: str, event: str, bl
         for f in killed:
             reason = str((f.get("layer2") or {}).get("reason", f.get("kill_reason", ""))).strip()
             reason = re.sub(r"\s+", " ", reason)[:300]
-            lines.append(f"- `{f.get('id')}` [{f.get('severity')}] {f.get('title')} — {reason}")
+            lines += ["### Killed finding", "", f"- id: `{f.get('id')}` severity: `{f.get('severity')}`"]
+            lines += ["- title (inert):", "", inert_markdown_block(f.get("title")), ""]
+            lines += ["- reason (inert):", "", inert_markdown_block(reason), ""]
         lines.append("")
     if result.get("summary"):
-        lines += ["## Summary", "", str(result["summary"]).strip(), ""]
+        lines += ["## Summary (inert)", "", inert_markdown_block(result["summary"]), ""]
     calls = result.get("agent_calls") or []
     if calls:
         ok = sum(1 for c in calls if c.get("ok"))

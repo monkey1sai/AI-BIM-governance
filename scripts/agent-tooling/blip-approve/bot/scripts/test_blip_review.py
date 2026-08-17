@@ -1265,10 +1265,16 @@ class AutomatedApprovalTests(unittest.TestCase):
         )
         self.assertEqual(
             body,
+            '{"kind":"ai-bim-automated-approve-only","version":1,"automated":true,'
+            '"repo":"monkey1sai/AI-BIM-governance","prNumber":511,'
+            f'"headOid":"{HEAD}","baseOid":"{BASE}","action":"approve-only"}}',
+        )
+        trusted_merge_body = (
             '{"kind":"ai-bim-single-owner-approval","version":1,'
             '"repo":"monkey1sai/AI-BIM-governance","prNumber":511,'
-            f'"headOid":"{HEAD}","baseOid":"{BASE}","action":"merge"}}',
+            f'"headOid":"{HEAD}","baseOid":"{BASE}","action":"merge"}}'
         )
+        self.assertNotEqual(body, trusted_merge_body)
         posted = {
             "id": 4242,
             "state": "APPROVED",

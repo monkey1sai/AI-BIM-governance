@@ -197,6 +197,38 @@ class BindShipAttestationTests(unittest.TestCase):
                 expected_head=HEAD, pr_number=511,
             )
 
+    def test_report_verdict_and_active_markdown_grammar_fail_closed(self) -> None:
+        inert = '# gate\n\n```text\n"@example ![x](https://example.test) <img> VERDICT: HELD"\n```\n\nVERDICT: SHIP\n'
+        bound, _ = binder.bind_report(
+            report=inert,
+            gate=make_gate(report=inert),
+            pr_state=make_snapshot(),
+            expected_head=HEAD,
+            pr_number=511,
+        )
+        self.assertEqual(bound.count(binder.MARKER_PREFIX), 1)
+
+        cases = (
+            ("# gate\n\nVERDICT: HELD\nVERDICT: SHIP\n", "exactly one canonical verdict"),
+            (REPORT.replace("\n", "\r\n"), "line or direction controls"),
+            ("# gate\n\u202e\nVERDICT: SHIP\n", "line or direction controls"),
+            ("# gate\n\nVERDICT: SHIP\nextra\n", "terminal boundary"),
+            ("# gate\n\n@example-team\n\nVERDICT: SHIP\n", "active Markdown: mention"),
+            ("# gate\n\n![x](https://example.test)\n\nVERDICT: SHIP\n", "active Markdown: link_or_image"),
+            ("# gate\n\n<img src=x>\n\nVERDICT: SHIP\n", "active Markdown: html"),
+            ("# gate\n\n/command\n\nVERDICT: SHIP\n", "active Markdown: command"),
+            ("# gate\n\n- [x] task\n\nVERDICT: SHIP\n", "active Markdown: task_list"),
+        )
+        for report, message in cases:
+            with self.subTest(message=message), self.assertRaisesRegex(SystemExit, message):
+                binder.bind_report(
+                    report=report,
+                    gate=make_gate(report=report),
+                    pr_state=make_snapshot(),
+                    expected_head=HEAD,
+                    pr_number=511,
+                )
+
     def test_critical_paths_and_renames_are_human_only(self) -> None:
         for files in (
             make_files("docs/agents/github-workflow.md"),

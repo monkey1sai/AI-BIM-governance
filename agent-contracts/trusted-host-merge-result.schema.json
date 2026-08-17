@@ -1,0 +1,65 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "trusted-host-merge-result.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "status",
+    "merged",
+    "prNumber",
+    "headOid",
+    "baseOid",
+    "mergeCommit",
+    "heldReason",
+    "heldDetail"
+  ],
+  "properties": {
+    "schemaVersion": { "const": "trusted-host-merge-result/v1" },
+    "status": { "enum": ["held", "merged", "merged_but_closeout_held", "merge_outcome_unverified"] },
+    "merged": { "type": ["boolean", "null"] },
+    "prNumber": { "type": ["integer", "null"], "minimum": 1 },
+    "headOid": { "type": ["string", "null"], "pattern": "^[0-9a-f]{40}$" },
+    "baseOid": { "type": ["string", "null"], "pattern": "^[0-9a-f]{40}$" },
+    "mergeCommit": { "type": ["string", "null"], "pattern": "^[0-9a-f]{40}$" },
+    "heldReason": { "type": ["string", "null"] },
+    "heldDetail": { "type": ["string", "null"] }
+  },
+  "oneOf": [
+    {
+      "properties": {
+        "status": { "const": "held" },
+        "merged": { "const": false },
+        "mergeCommit": { "const": null },
+        "heldReason": { "type": "string", "minLength": 1 }
+      }
+    },
+    {
+      "properties": {
+        "status": { "const": "merged" },
+        "merged": { "const": true },
+        "mergeCommit": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+        "heldReason": { "const": null },
+        "heldDetail": { "const": null }
+      }
+    },
+    {
+      "properties": {
+        "status": { "const": "merged_but_closeout_held" },
+        "merged": { "const": true },
+        "mergeCommit": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+        "heldReason": { "type": "string", "minLength": 1 },
+        "heldDetail": { "type": "string", "minLength": 1 }
+      }
+    },
+    {
+      "properties": {
+        "status": { "const": "merge_outcome_unverified" },
+        "merged": { "const": null },
+        "mergeCommit": { "const": null },
+        "heldReason": { "const": "merge_command_failed_unverified" },
+        "heldDetail": { "type": "string", "minLength": 1 }
+      }
+    }
+  ]
+}

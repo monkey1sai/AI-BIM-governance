@@ -722,13 +722,14 @@ def automated_approval_body(
 ) -> str:
     return json.dumps(
         {
-            "kind": "ai-bim-single-owner-approval",
+            "kind": "ai-bim-automated-approve-only",
             "version": 1,
+            "automated": True,
             "repo": DEFAULT_REPO,
             "prNumber": pr_number,
             "headOid": head.lower(),
             "baseOid": base.lower(),
-            "action": "merge",
+            "action": "approve-only",
         },
         separators=(",", ":"),
     )

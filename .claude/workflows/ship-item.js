@@ -3,11 +3,11 @@
 // P6 is intentionally a validation-only fail-closed boundary. The measured
 // Workflow runtime cannot provide the base-pinned host capability required to
 // gather trusted evidence or merge. Keep every command and dispatch sink out of
-// this candidate-controlled file until that executor exists outside the runtime.
-// The future trusted-host procedure is documented in ship-item.md.
+// this candidate-controlled file. The external default-branch executor and its
+// hosted-activation requirements are documented in ship-item.md.
 export const meta = {
   name: 'ship-item',
-  description: 'P6 buffered ship: validate bounded args, then durably hold until a base-pinned trusted host executor exists.',
+  description: 'P6 buffered ship: validate bounded args, then durably hold until a host adapter can hand off to the activated base-pinned executor.',
   phases: [
     { title: 'Validate', detail: 'Fail-closed validate the bounded workflow args' },
     { title: 'Hold', detail: 'Return the durable unavailable-host state without side effects' },

@@ -346,6 +346,55 @@ def _validate_outcome(gate: dict) -> str:
     return verdict
 
 
+VERDICT_LINE = re.compile(r"(?m)^VERDICT: (SHIP|NO-SHIP|HELD)$")
+VERDICT_LIKE_LINE = re.compile(r"(?mi)^[ \t]*VERDICT[ \t]*:")
+UNSAFE_LINE_CONTROL = re.compile(r"[\u0085\u2028\u2029\u202a-\u202e\u2066-\u2069]")
+ACTIVE_MARKDOWN = (
+    ("mention", re.compile(r"(?<!\\)@[A-Za-z0-9_]")),
+    ("link_or_image", re.compile(r"!?\[[^\]\n]*\]\([^\)\n]+\)")),
+    ("html", re.compile(r"(?i)<(?:/?[a-z!][^>]*)>")),
+    ("command", re.compile(r"^[ \t]*/[A-Za-z]")),
+    ("task_list", re.compile(r"^[ \t]*[-*+][ \t]+\[[ xX]\]")),
+)
+
+
+def active_markdown_violation(report: str) -> str | None:
+    in_inert_block = False
+    for line in report.split("\n"):
+        if line == "```text":
+            if in_inert_block:
+                return "nested_inert_block"
+            in_inert_block = True
+            continue
+        if line == "```":
+            if not in_inert_block:
+                return "unexpected_fence"
+            in_inert_block = False
+            continue
+        if in_inert_block:
+            continue
+        for label, pattern in ACTIVE_MARKDOWN:
+            if pattern.search(line):
+                return label
+    return "unclosed_inert_block" if in_inert_block else None
+
+
+def validate_report_grammar(report: str, expected_verdict: str) -> None:
+    if "\r" in report or UNSAFE_LINE_CONTROL.search(report):
+        fail("gate report contains non-canonical line or direction controls")
+    canonical = list(VERDICT_LINE.finditer(report))
+    verdict_like = list(VERDICT_LIKE_LINE.finditer(report))
+    if len(canonical) != 1 or len(verdict_like) != 1:
+        fail("gate report must contain exactly one canonical verdict line")
+    active_violation = active_markdown_violation(report)
+    if active_violation:
+        fail(f"gate report contains non-canonical active Markdown: {active_violation}")
+    if canonical[0].group(1) != expected_verdict:
+        fail("gate report verdict differs from the protected gate outcome")
+    if not report.endswith(f"VERDICT: {expected_verdict}\n"):
+        fail("gate report verdict is not at the canonical terminal boundary")
+
+
 def bind_report(*, report: str, gate: dict, pr_state: dict, expected_head: str, pr_number: int) -> tuple[str, dict]:
     if MARKER_PREFIX in report:
         fail("untrusted gate report already contains the reserved attestation marker")
@@ -388,6 +437,7 @@ def bind_report(*, report: str, gate: dict, pr_state: dict, expected_head: str, 
         fail("live changed-file evidence differs from the exact evidence reviewed by the gate")
     if live["diff_sha256"] != gate.get("diff_sha256"):
         fail("live inspectable patch evidence differs from the exact evidence reviewed by the gate")
+    validate_report_grammar(report, verdict)
 
     if verdict != "HELD":
         validate_agent_calls(gate)
@@ -404,7 +454,7 @@ def bind_report(*, report: str, gate: dict, pr_state: dict, expected_head: str, 
             digest=digest,
             diff_digest=live["diff_sha256"],
         )
-        output = report.rstrip() + "\n\n" + footer
+        output = report[:-1] + "\n\n" + footer
     else:
         output = report
     return output, {

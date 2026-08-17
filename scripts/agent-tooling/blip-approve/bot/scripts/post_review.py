@@ -23,6 +23,42 @@ CODEX_BOT_NAME = "Codex Tri-Adversarial Bot"
 CODEX_BOT_SUBTITLE = "Automated **tri-adversarial ship-gate** with protected canonical attestation binding."
 ATTESTATION_MARKER = "<!-- blip-ship-attestation:v1"
 EVENT_MAP = {"comment": "COMMENT", "request_changes": "REQUEST_CHANGES"}
+VERDICT_LINE = re.compile(r"(?m)^VERDICT: (SHIP|NO-SHIP|HELD)$")
+VERDICT_LIKE_LINE = re.compile(r"(?mi)^[ \t]*VERDICT[ \t]*:")
+UNSAFE_LINE_CONTROL = re.compile(r"[\u0085\u2028\u2029\u202a-\u202e\u2066-\u2069]")
+ATTESTATION_FOOTER = re.compile(
+    r"<!-- blip-ship-attestation:v1\n"
+    r"repo=monkey1sai/AI-BIM-governance\n"
+    r"pr=(?P<pr>[1-9][0-9]{0,5})\n"
+    r"base=(?P<base>[0-9a-f]{40})\n"
+    r"head=(?P<head>[0-9a-f]{40})\n"
+    r"review_mode=(?:focused_semantic|risk_scoped_specialists|human_critical)\n"
+    r"changed_files_sha256=[0-9a-f]{64}\n"
+    r"diff_sha256=[0-9a-f]{64}\n"
+    r"verdict=SHIP\n-->"
+)
+ACTIVE_MARKDOWN = (
+    ("mention", re.compile(r"(?<!\\)@[A-Za-z0-9_]")),
+    ("link_or_image", re.compile(r"!?\[[^\]\n]*\]\([^\)\n]+\)")),
+    ("html", re.compile(r"(?i)<(?:/?[a-z!][^>]*)>")),
+    ("command", re.compile(r"^[ \t]*/[A-Za-z]")),
+    ("task_list", re.compile(r"^[ \t]*[-*+][ \t]+\[[ xX]\]")),
+)
+DLP_PATTERNS = (
+    ("private_key", re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH |DSA |ENCRYPTED )?PRIVATE KEY-----", re.I)),
+    ("github_token", re.compile(r"\b(?:gh[pousr]_[A-Za-z0-9]{20,255}|github_pat_[A-Za-z0-9_]{20,255})\b")),
+    ("openai_key", re.compile(r"\bsk-(?:proj-)?[A-Za-z0-9_-]{20,255}\b")),
+    ("aws_access_key", re.compile(r"\b(?:AKIA|ASIA)[A-Z0-9]{16}\b")),
+    ("jwt", re.compile(r"\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b")),
+    ("dlp_sentinel", re.compile(r"\bBLIP_DLP_SENTINEL_[A-Z0-9_-]{8,}\b")),
+    (
+        "credential_assignment",
+        re.compile(
+            r"(?i)(?:access[_-]?token|refresh[_-]?token|client[_-]?secret|password|private[_-]?key)"
+            r"[\"']?\s*[:=]\s*[\"']?[A-Za-z0-9+/_=.-]{24,}"
+        ),
+    ),
+)
 
 
 def runtime_root() -> Path:
@@ -57,26 +93,78 @@ def review_header(event: str) -> str:
     )
 
 
-def validate_body(event: str, body: str) -> str:
-    body = body.strip()
+def outbound_safety_violation(body: str) -> str | None:
+    for label, pattern in DLP_PATTERNS:
+        if pattern.search(body):
+            return label
+    return None
+
+
+def active_markdown_violation(report: str) -> str | None:
+    in_inert_block = False
+    for line in report.split("\n"):
+        if line == "```text":
+            if in_inert_block:
+                return "nested_inert_block"
+            in_inert_block = True
+            continue
+        if line == "```":
+            if not in_inert_block:
+                return "unexpected_fence"
+            in_inert_block = False
+            continue
+        if in_inert_block:
+            continue
+        for label, pattern in ACTIVE_MARKDOWN:
+            if pattern.search(line):
+                return label
+    return "unclosed_inert_block" if in_inert_block else None
+
+
+def validate_body(event: str, body: str, *, pr_number: int, commit_id: str) -> str:
+    if "\r" in body or UNSAFE_LINE_CONTROL.search(body):
+        raise SystemExit("Protected Codex review body contains non-canonical line or direction controls")
+    if body.endswith("\n"):
+        body = body[:-1]
+    if not body or body.endswith((" ", "\t", "\n")):
+        raise SystemExit("Protected Codex review body has a non-canonical terminal boundary")
+    violation = outbound_safety_violation(body)
+    if violation:
+        raise SystemExit(f"Protected Codex review body failed outbound content safety policy: {violation}")
     marker_count = body.count(ATTESTATION_MARKER)
-    is_ship = bool(re.search(r"(?m)^VERDICT: SHIP\s*$", body))
-    is_held = bool(re.search(r"(?m)^VERDICT: HELD\s*$", body))
-    is_no_ship = bool(re.search(r"(?m)^VERDICT: NO-SHIP\s*$", body))
+    verdicts = list(VERDICT_LINE.finditer(body))
+    verdict_like = list(VERDICT_LIKE_LINE.finditer(body))
+    if len(verdicts) != 1 or len(verdict_like) != 1:
+        raise SystemExit("Protected Codex review body requires exactly one canonical verdict line")
+    verdict_match = verdicts[0]
+    verdict = verdict_match.group(1)
+    active_violation = active_markdown_violation(body[:verdict_match.end()])
+    if active_violation:
+        raise SystemExit(f"Protected Codex review body contains active Markdown: {active_violation}")
     if event == "comment":
-        if is_ship:
+        if verdict == "SHIP":
             if marker_count != 1:
                 raise SystemExit("Protected Codex canonical SHIP comment requires one attestation footer")
-            footer = body[body.index(ATTESTATION_MARKER):]
-            if not body.endswith(footer) or footer.count(ATTESTATION_MARKER) != 1:
-                raise SystemExit("Canonical Codex attestation footer is not unique at the final body boundary")
-        elif is_held:
+            suffix = body[verdict_match.end():]
+            if not suffix.startswith("\n\n"):
+                raise SystemExit("Canonical Codex attestation footer is not at the final body boundary")
+            footer = suffix[2:]
+            footer_match = ATTESTATION_FOOTER.fullmatch(footer)
+            if footer_match is None:
+                raise SystemExit("Canonical Codex attestation footer grammar is invalid")
+            if int(footer_match.group("pr")) != pr_number or footer_match.group("head") != commit_id.lower():
+                raise SystemExit("Canonical Codex attestation footer differs from the exact PR/head tuple")
+        elif verdict == "HELD":
             if marker_count != 0:
                 raise SystemExit("Protected Codex HELD comment cannot carry a SHIP attestation footer")
+            if verdict_match.end() != len(body):
+                raise SystemExit("Protected Codex HELD verdict is not at the canonical terminal boundary")
         else:
             raise SystemExit("Protected Codex comment must be canonical SHIP+attestation or HELD")
-    elif not is_no_ship or marker_count != 0:
+    elif verdict != "NO-SHIP" or marker_count != 0:
         raise SystemExit("Protected Codex REQUEST_CHANGES requires NO-SHIP without a SHIP attestation")
+    elif verdict_match.end() != len(body):
+        raise SystemExit("Protected Codex NO-SHIP verdict is not at the canonical terminal boundary")
     full_body = review_header(event) + body
     if len(full_body) > 60_000:
         raise SystemExit("Protected Codex review body is too large; refusing to truncate authorization evidence")
@@ -130,7 +218,7 @@ def main() -> None:
         body = args.body_file.read_text(encoding="utf-8")
     else:
         body = str(args.body or "")
-    full_body = validate_body(args.event, body)
+    full_body = validate_body(args.event, body, pr_number=args.pr, commit_id=args.commit_id)
     payload = {"body": full_body, "event": EVENT_MAP[args.event], "commit_id": args.commit_id.lower()}
     dry = not args.live
 

@@ -79,8 +79,12 @@
   },
   "ship": {
     "workflow_shell_capability": "not_available_in_measured_runtime",
-    "trusted_host_executor": "required",
-    "unavailable_reason": "host_env_blocked",
+    "trusted_host_executor": "implemented_external_workflow",
+    "trusted_host_contract": "./trusted-host-merge.contract.json",
+    "trusted_host_workflow": ".github/workflows/trusted-elevated-merge.yml",
+    "dispatch_protocol": "github-workflow-dispatch",
+    "activation_state": "requires_live_attestation",
+    "unavailable_reason": "trusted_elevated_authorization_unavailable",
     "arbiter_held_reasons": [
       "evidence_stale",
       "human_approval_required",

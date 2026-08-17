@@ -148,6 +148,63 @@
       }
     },
     {
+      "id": "trusted-host-executor-broker",
+      "status": "closed",
+      "pr": 527,
+      "opened_at": "2026-08-12T10:55:47Z",
+      "reason": "the trusted merge workflow changes its own adjudicator and only a default-branch copy may hold the GitHub App merge credential, so the feature branch cannot perform the canonical hosted execution or prove its post-merge fixpoint before PR 527 lands",
+      "verification_mechanism_paths": [
+        ".github/workflows/agent-governance.yml",
+        ".github/workflows/trusted-elevated-merge.yml",
+        "agent-contracts/trusted-host-merge-assertion.schema.json",
+        "agent-contracts/trusted-host-merge-evidence.schema.json",
+        "agent-contracts/trusted-host-merge-result.schema.json",
+        "agent-contracts/trusted-host-merge-verdict.schema.json",
+        "agent-contracts/trusted-host-merge.contract.json",
+        "agent-contracts/trusted-host-merge.contract.schema.json",
+        "agent-contracts/spec-to-done.contract.json",
+        "agent-contracts/spec-to-done.contract.schema.json",
+        "scripts/dev/trusted-host-merge.mjs",
+        "scripts/lib/self-referential-bootstrap.ps1",
+        "scripts/lib/trusted-host-merge-contract.mjs",
+        "scripts/lib/trusted-host-merge-evidence.mjs",
+        "scripts/lib/trusted-host-merge-executor.mjs",
+        "scripts/lib/trusted-host-merge-runtime.mjs",
+        "scripts/lib/trusted-host-merge.mjs",
+        "scripts/self-referential-bootstrap-ledger.json",
+        "scripts/tests/fixtures/trusted-host-merge-machine-fixtures.json",
+        "scripts/tests/test-agent-governance-check.ps1",
+        "scripts/tests/test-self-referential-bootstrap.ps1",
+        "scripts/tests/test-trusted-host-merge-runtime.mjs",
+        "scripts/tests/test-trusted-host-merge.mjs"
+      ],
+      "verification_contract": {
+        "id": "trusted-host-executor-broker/v1",
+        "command_ids": [
+          "test-trusted-host-merge",
+          "test-ship-item-runtime",
+          "test-review-risk",
+          "test-routing-consistency",
+          "test-self-referential-bootstrap",
+          "test-agent-governance-check",
+          "scan-secret-patterns"
+        ],
+        "contract_sha256": "46e4d248bf0d33754eb67704fdfb5aa1954ae32cbed9cda5c8f951edcf2ef337"
+      },
+      "bootstrap_evidence_refs": [
+        "docs/evidence/trusted-host-executor-broker/self-referential-bootstrap/README.md",
+        "docs/evidence/trusted-host-executor-broker/self-referential-bootstrap/gate-suites.txt"
+      ],
+      "fixpoint": {
+        "reverified_at": "2026-08-16T20:12:32Z",
+        "mechanism_commit": "6a4cc5658592750658f6b9e9ad0a17236749e092",
+        "evidence_refs": [
+          "docs/evidence/trusted-host-executor-broker/fixpoint/attestation.json",
+          "docs/evidence/trusted-host-executor-broker/fixpoint/summary.md"
+        ]
+      }
+    },
+    {
       "id": "mechanism-hardening-2",
       "status": "closed",
       "pr": 513,
@@ -265,7 +322,7 @@
     },
     {
       "id": "agent-governance-scope-routing",
-      "status": "open",
+      "status": "closed",
       "pr": 543,
       "opened_at": "2026-08-14T09:06:34Z",
       "reason": "the required Agent Governance workflow and verification manifest decide whether other pull requests satisfy the protected context; before this branch merges, only the base workflow can run, so it cannot prove the new scope classifier, explicit no-op success, or duplicate-job removal",
@@ -291,6 +348,43 @@
       "bootstrap_evidence_refs": [
         "docs/evidence/agent-governance-scope-routing/self-referential-bootstrap/README.md",
         "docs/evidence/agent-governance-scope-routing/self-referential-bootstrap/verification.txt"
+      ],
+      "fixpoint": {
+        "reverified_at": "2026-08-14T11:41:01Z",
+        "mechanism_commit": "1eec958c727099e06cfb877dfaa2d4103bd103ea",
+        "evidence_refs": [
+          "docs/evidence/agent-governance-scope-routing/fixpoint/attestation.json",
+          "docs/evidence/agent-governance-scope-routing/fixpoint/summary.md"
+        ]
+      }
+    },
+    {
+      "id": "blip-approve-authority-separation",
+      "status": "open",
+      "pr": 548,
+      "opened_at": "2026-08-17T04:30:13Z",
+      "reason": "the trusted-host merge evidence consumer is itself an adjudicator, so the base-pinned consumer cannot prove before merge that its changed exact-body matcher rejects the new automated approve-only schema; only a post-merge run of the updated consumer can establish that authority separation as a fixpoint",
+      "verification_mechanism_paths": [
+        "scripts/lib/trusted-host-merge-evidence.mjs",
+        "scripts/self-referential-bootstrap-ledger.json",
+        "scripts/tests/test-trusted-host-merge.mjs"
+      ],
+      "verification_contract": {
+        "id": "blip-approve-authority-separation/v1",
+        "command_ids": [
+          "test-trusted-host-merge",
+          "test-ship-item-runtime",
+          "test-review-risk",
+          "test-routing-consistency",
+          "test-self-referential-bootstrap",
+          "test-agent-governance-check",
+          "scan-secret-patterns"
+        ],
+        "contract_sha256": "bbce37a6f251449805f968dda832770a935d17d59bd37ed8661f795a7955a712"
+      },
+      "bootstrap_evidence_refs": [
+        "docs/evidence/blip-approve-authority-separation/self-referential-bootstrap/README.md",
+        "docs/evidence/blip-approve-authority-separation/self-referential-bootstrap/gate-suites.txt"
       ],
       "fixpoint": null
     }

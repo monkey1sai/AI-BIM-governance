@@ -314,6 +314,26 @@ try {
         '.github/workflows/pr-review-agent.yml',
         '.github/workflows/agent-governance.yml',
         '.github/workflows/ci.yml',
+        '.github/workflows/trusted-elevated-merge.yml',
+        '.gitattributes',
+        'web-viewer-sample/.gitattributes',
+        'scripts/dev/trusted-host-merge.mjs',
+        'scripts/lib/trusted-host-merge-contract.mjs',
+        'scripts/lib/trusted-host-merge-evidence.mjs',
+        'scripts/lib/trusted-host-merge-executor.mjs',
+        'scripts/lib/trusted-host-merge-runtime.mjs',
+        'scripts/lib/trusted-host-merge.mjs',
+        'scripts/tests/test-trusted-host-merge.mjs',
+        'scripts/tests/test-trusted-host-merge-runtime.mjs',
+        'scripts/tests/fixtures/trusted-host-merge-machine-fixtures.json',
+        'agent-contracts/trusted-host-merge.contract.json',
+        'agent-contracts/trusted-host-merge.contract.schema.json',
+        'agent-contracts/trusted-host-merge-assertion.schema.json',
+        'agent-contracts/trusted-host-merge-evidence.schema.json',
+        'agent-contracts/trusted-host-merge-verdict.schema.json',
+        'agent-contracts/trusted-host-merge-result.schema.json',
+        'agent-contracts/spec-to-done.contract.json',
+        'agent-contracts/spec-to-done.contract.schema.json',
         'scripts/verification-manifest.json',
         'scripts/tests/verify-functional-runtime-result.ps1',
         'scripts/tests/verify-security-exceptions.ps1',
@@ -352,6 +372,14 @@ try {
     Assert-True ($matched.Count -eq $expectedMechanismPaths.Count) "every direct adjudicator and contract path must classify as mechanism (matched: $($matched -join ', '))"
     foreach ($expectedPath in $expectedMechanismPaths) {
         Assert-True ($matched -ccontains $expectedPath) "mechanism classifier includes $expectedPath"
+    }
+    $trustedMergeContract = Get-Content -LiteralPath (Join-Path $repoRoot 'agent-contracts/trusted-host-merge.contract.json') -Raw | ConvertFrom-Json -Depth 100
+    $trustedMergePatterns = @($trustedMergeContract.executor.required_check_trust_boundary.mechanism_path_patterns)
+    foreach ($expectedPath in $expectedMechanismPaths) {
+        $coveredByTrustedMerge = @($trustedMergePatterns | Where-Object {
+            [regex]::IsMatch($expectedPath, [string]$_, [System.Text.RegularExpressions.RegexOptions]::CultureInvariant)
+        }).Count -gt 0
+        Assert-True $coveredByTrustedMerge "trusted merge mechanism policy is a superset of the self-referential classifier example: $expectedPath"
     }
     Assert-True ($matched -notcontains 'web-viewer-sample/src/Window.tsx') 'ordinary product code must NOT classify as mechanism'
     $wrongCaseMechanismPaths = @(Get-SelfReferentialMechanismPaths -ChangedPaths @(
@@ -498,6 +526,7 @@ try {
         'detect-base-gate-capability-bash-syntax' = @{ Path = 'scripts/lib/detect-base-gate-capability.sh'; Invocation = @('bash', '-n', 'scripts/lib/detect-base-gate-capability.sh') }
         'harden-cad-extension-cache' = @{ Path = 'bim-streaming-server/scripts/harden-cad-extension-cache.py'; Invocation = @('python', 'bim-streaming-server/scripts/harden-cad-extension-cache.py', '--repo-root', 'bim-streaming-server') }
         'invoke-powershell-static' = @{ Path = 'scripts/tests/invoke-powershell-static.ps1'; Invocation = @($pwshPrefix + 'scripts/tests/invoke-powershell-static.ps1') }
+        'scan-secret-patterns' = @{ Path = 'scripts/tests/scan-secret-patterns.ps1'; Invocation = @($pwshPrefix + 'scripts/tests/scan-secret-patterns.ps1') }
         'test-agent-governance-check' = @{ Path = 'scripts/tests/test-agent-governance-check.ps1'; Invocation = @($pwshPrefix + 'scripts/tests/test-agent-governance-check.ps1') }
         'test-verification-plan' = @{ Path = 'scripts/tests/test-verification-plan.mjs'; Invocation = @('node', '--test', 'scripts/tests/test-verification-plan.mjs', 'scripts/tests/test-verification-command-policy.mjs', 'scripts/tests/test-verification-runner.mjs') }
         'test-base-gate-capability' = @{ Path = 'scripts/tests/test-base-gate-capability.ps1'; Invocation = @($pwshPrefix + 'scripts/tests/test-base-gate-capability.ps1') }
@@ -517,6 +546,10 @@ try {
         'test-rebuild-test-deploy' = @{ Path = 'scripts/tests/test-rebuild-test-deploy.ps1'; Invocation = @($pwshPrefix + 'scripts/tests/test-rebuild-test-deploy.ps1') }
         'test-remote-deploy-transport' = @{ Path = 'scripts/tests/test-remote-deploy-transport.ps1'; Invocation = @($pwshPrefix + 'scripts/tests/test-remote-deploy-transport.ps1') }
         'test-self-referential-bootstrap' = @{ Path = 'scripts/tests/test-self-referential-bootstrap.ps1'; Invocation = @($pwshPrefix + 'scripts/tests/test-self-referential-bootstrap.ps1') }
+        'test-review-risk' = @{ Path = 'scripts/tests/test-review-risk.mjs'; Invocation = @('node', '--test', 'scripts/tests/test-review-risk.mjs') }
+        'test-routing-consistency' = @{ Path = 'tests/test_routing_consistency.py'; Invocation = @('python', '-m', 'pytest', 'tests/test_routing_consistency.py', '-q', '-p', 'no:cacheprovider') }
+        'test-ship-item-runtime' = @{ Path = 'tests/test_ship_item_runtime.mjs'; Invocation = @('node', '--test', 'tests/test_ship_item_runtime.mjs') }
+        'test-trusted-host-merge' = @{ Path = 'scripts/tests/test-trusted-host-merge.mjs'; Invocation = @('node', '--test', 'scripts/tests/test-trusted-host-merge.mjs', 'scripts/tests/test-trusted-host-merge-runtime.mjs') }
         'test-verify-all' = @{ Path = 'scripts/tests/test-verify-all.ps1'; Invocation = @($pwshPrefix + 'scripts/tests/test-verify-all.ps1') }
         'test-windows-verification-scope' = @{ Path = 'scripts/tests/test-windows-verification-scope.ps1'; Invocation = @($pwshPrefix + 'scripts/tests/test-windows-verification-scope.ps1') }
     }
@@ -1129,7 +1162,12 @@ try {
             -BaseSha $legalOpeningBaseSha -HeadSha $legalOpeningHeadSha
     }
 
-    foreach ($selfAdjudicator in @('scripts/lib/self-referential-bootstrap.ps1', 'scripts/lib/windows-verification-scope.ps1')) {
+    foreach ($selfAdjudicator in @(
+        'scripts/lib/self-referential-bootstrap.ps1',
+        'scripts/lib/windows-verification-scope.ps1',
+        'agent-contracts/spec-to-done.contract.json',
+        'agent-contracts/spec-to-done.contract.schema.json'
+    )) {
         Assert-Throws -Context "self-adjudicator edit under bootstrap=no: $selfAdjudicator" -MessagePattern 'must declare bootstrap=yes' -Action {
             Invoke-BodyGate -Rows @{ 'Self-referential bootstrap' = 'no' } `
                 -ChangedPaths @($selfAdjudicator) `

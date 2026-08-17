@@ -224,6 +224,47 @@ class PostReviewTests(unittest.TestCase):
                      "--event", "comment", "--commit-id", "a" * 40, "--live"]
                 )
 
+    def test_outbound_dlp_rejects_malicious_sentinel_before_token_or_http(self) -> None:
+        body = "VERDICT: HELD\n\nBLIP_DLP_SENTINEL_MUST_NEVER_REACH_GITHUB"
+        with patch.dict(os.environ, {}, clear=True), self.assertRaisesRegex(
+            SystemExit, "outbound content safety policy: dlp_sentinel"
+        ):
+            self.run_main(
+                [
+                    "--bot", "codex", "--repo", post.FIXED_REPO, "--pr", "511",
+                    "--body", body, "--event", "comment", "--commit-id", "a" * 40, "--live",
+                ]
+            )
+        FAKE_AUTH.protected_installation_token.assert_not_called()
+        FAKE_AUTH.http_json.assert_not_called()
+
+    def test_body_grammar_rejects_active_markdown_conflicting_verdicts_and_unicode(self) -> None:
+        valid = self.attested_body()
+        cases = (
+            ("VERDICT: HELD\n\n" + valid, "exactly one canonical verdict"),
+            ("@example-team\n\n" + valid, "active Markdown: mention"),
+            ("![x](https://example.test)\n\n" + valid, "active Markdown: link_or_image"),
+            ("<img src=x>\n\n" + valid, "active Markdown: html"),
+            ("/command\n\n" + valid, "active Markdown: command"),
+            ("- [x] task\n\n" + valid, "active Markdown: task_list"),
+            (valid.replace("\n", "\r\n"), "line or direction controls"),
+            ("\u202e" + valid, "line or direction controls"),
+            (
+                valid.replace("head=" + "a" * 40, "head=" + "b" * 40),
+                "exact PR/head tuple",
+            ),
+            (valid.replace("review_mode=focused_semantic", "review_mode=unknown"), "footer grammar"),
+            ("VERDICT: HELD\nextra", "terminal boundary"),
+        )
+        for body, message in cases:
+            with self.subTest(message=message), self.assertRaisesRegex(SystemExit, message):
+                post.validate_body("comment", body, pr_number=511, commit_id="a" * 40)
+
+        self.assertEqual(
+            post.validate_body("comment", valid, pr_number=511, commit_id="a" * 40),
+            post.review_header("comment") + valid,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

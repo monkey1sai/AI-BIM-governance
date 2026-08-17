@@ -1,6 +1,6 @@
 # Blip protected broker source handoff
 
-> 文件性質：agent-tooling source/development handoff。本文記錄 2026-08-14
+> 文件性質：agent-tooling source/development handoff。本文記錄 2026-08-17
 > `codex/blip-auto-approval` 的 repo machine truth；它不是 runtime activation、
 > GitHub review、branch protection、credential 或 ProgramData 安裝證據。
 
@@ -8,11 +8,11 @@
 
 - Branch：`codex/blip-auto-approval`
 - Worktree：`C:\Repos\active\iot\AI-BIM-governance-blip-auto-approval`
-- Rebaseline authority：2026-08-14 freshly fetched `origin/main`
-  `f67ca99ee9667e131dd0c639766ba434aabace7f`。在建立本 change-set commit 前，branch
-  `HEAD` 與該 SHA 完全相同，ahead／behind 都是 0；本 PR commit 直接疊在此基線上。
-  `docs/agents/github-workflow.md` 的上游 `gh` auth／sandbox routing 與本 change set 的
-  broker status hunk 已無衝突整合。
+- Rebaseline authority：2026-08-17 freshly fetched `origin/main`
+  `67f82d23127070858f05d72cbbc2a9b74849638c`（含已 merge 的 #549）。本 change-set 已在
+  隔離 worktree 整合該基線；`docs/agents/github-workflow.md` 與
+  `.claude/workflows/ship-item.md` 的衝突已保留 main 的 trusted-host elevated authorization
+  契約及本 PR 的 source-only broker 邊界。
 - Source package：implemented；stage／commit／PR 狀態以 Git machine truth 為準
 - Activation：**HELD**
 
@@ -35,10 +35,22 @@ Canonical package：`scripts/agent-tooling/blip-approve/`
   前 deterministic fail closed，不依賴 REST patch mode 或模型判斷。
 - Finder 或 aggregate finding 容量飽和時直接 HELD，不得截斷後 SHIP；PR title、author、
   refs、paths 與 diff 全部 JSON encode 並置於同一 untrusted prompt envelope。
+- Model gate 要求 reviewed `codex-cli 0.147.0`，並對每次 `codex exec` 明確停用所有列舉的
+  shell／unified exec／Apps／plugins／browser／computer／image／skill／memory／workspace／
+  child-agent tool features 與 web search；read-only sandbox 僅作 defense in depth。模型輸出
+  若命中 private-key/token/JWT/credential-assignment 或 sentinel DLP 規則，輸出檔立即移除並
+  HELD；poster 在取得 token 或 HTTP 前重複同一 fail-closed outbound DLP 檢查。另以真實 pinned
+  CLI、相同 production argv 與 loopback fake provider 驗證 strict config parser 能抵達 request
+  boundary；測試不使用 credential 或外部網路。
+- 所有模型／PR-controlled 顯示文字先以 ASCII-escaped JSON 寫入 canonical inert Markdown
+  code block；binder 與 poster 拒絕 active mention/link/image/HTML/command/task-list、CRLF／Unicode
+  方向控制字元、多重或非 terminal verdict，並要求 SHIP footer 完整符合 exact PR/head grammar。
 - App wrapper 以 protected per-PR exclusive lock 序列化本機 review pipeline；gate child
   timeout 依 `AgentTimeoutSec`／`Jobs` 的最壞 phase wave 動態計算。
-- User approval body byte-exact 符合 `ship-item` canonical schema，branch protection 必須
-  精確要求一個 approval；App attestation 僅接受單一 `COMMENTED` footer，且同時綁定
+- User approval body byte-exact 使用 distinct `ai-bim-automated-approve-only` schema，明示
+  `automated=true` 與 `action=approve-only`；trusted-host merge consumer 明確拒絕把它當成
+  `merge`／`merge-elevated` authority。branch protection 必須精確要求一個 approval；
+  App attestation 僅接受單一 `COMMENTED` footer，且同時綁定
   changed-files 與 full-patch digest。
 - Runtime manifest／completion marker 使用 duplicate-aware exact schema reader；User broker
   將新引入的 immutable packet helper納入 ACL、manifest hash、open-stream pin 與 child
@@ -88,13 +100,13 @@ Package trust model、能力表與 activation gate 見
 以固定 Python 3.12、`-I -S -B` 執行 package 內全部 `test_*.py`：
 
 - `test_app_auth.py`：7 passed
-- `test_bind_ship_attestation.py`：9 passed
+- `test_bind_ship_attestation.py`：10 passed
 - `test_blip_review.py`：38 passed
-- `test_codex_ship_gate.py`：10 passed
+- `test_codex_ship_gate.py`：15 passed（含 real CLI／loopback provider parser contract）
 - `test_collect_ship_gate_packet.py`：2 passed
-- `test_post_review.py`：4 passed
+- `test_post_review.py`：6 passed
 - `test_ship_gate_packet.py`：7 passed
-- Total：77 passed
+- Total：85 passed
 
 ### PowerShell safe-only tests
 
@@ -120,11 +132,14 @@ Package trust model、能力表與 activation gate 見
 - Secret literal signatures：0 matches（只輸出計數）
 - Trailing whitespace：0 lines
 - `git diff --check`：passed
+- 本機 `codex-cli 0.147.0` 的 `debug prompt-input` 接受完整 tool-free denylist 與 config keys；
+  未呼叫模型、未讀 credential、未發 API request
 
 ## Skipped gates and uncertainty
 
-- Owner-context ACL／full installer integration：未執行。即使本 session 已允許安裝與
-  credential 存取，這個未 merge 的 source change 尚未具備獨立保護的 reviewed manifest、
+- Owner-context ACL／full installer integration：未執行。本 session 未授權安裝、
+  credential 存取、ProgramData 寫入或 live mutation；即使未來逐項明確授權，這個未
+  merge 的 source change 尚未具備獨立保護的 reviewed manifest、
   launcher／verifier publication 與 owner-context candidate；sandbox-safe suite 只證明
   source contract 與拒絕路徑。
 - Production candidate freeze、external verifier publication、ProgramData installation：
@@ -138,11 +153,13 @@ Package trust model、能力表與 activation gate 見
 
 ## Activation gates
 
-本 session 已明確允許安裝、credential 存取與 live review mutation；這份授權不取代
-下列技術與 trust gates。只有每一項 prerequisite 都以 exact tuple 驗證後，才可依序處理：
+本 session 未授權安裝、credential 存取、ProgramData 寫入或任何 live mutation；未來每個
+named operation／PR 都必須逐次取得明確授權，且 activation 維持 HELD。即使取得授權，仍須
+先讓每一項 prerequisite 都通過 exact tuple 驗證，才可依序處理：
 
 1. exact diff security acceptance、tracked clean source review，並由獨立 reviewer 產生／保存
-   reviewed build manifest 與 SHA-256；
+   reviewed build manifest 與 SHA-256；任何 Codex 版本或 tool feature inventory 變更都必須
+   重新審查 tool-free denylist 與 outbound DLP；
 2. protected builder launcher／installer launcher／internal verifier publication，以及
    owner-context production v3 freeze（不得把 builder stdout 當成核准 authority）；
 3. ProgramData initial install及 owner ACL／completion-marker驗證；
