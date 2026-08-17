@@ -1,0 +1,39 @@
+stack_kind=self_referential_bootstrap
+pr=566
+base=d33049c
+contract=conversion-service-ci-wiring/v1
+contract_sha256=488bc1d25000fb444089ac040ea60409c6ddadc796df98ccc2490b8d74e026ae
+result=pass
+
+command_id=test-host-native-conversion-service
+command=python -m pytest bim-streaming-server/tests/test_host_native_conversion_service.py -q
+result=130 passed, 8 skipped in 8.47s
+exit_code=0
+
+command_id=test-agent-governance-check
+command=pwsh -NoProfile -NonInteractive -File scripts/tests/test-agent-governance-check.ps1
+result=all assertions passed
+exit_code=0
+
+command_id=test-verification-plan
+command=node --test scripts/tests/test-verification-plan.mjs scripts/tests/test-verification-command-policy.mjs scripts/tests/test-verification-runner.mjs
+result=33/33 tests passed
+exit_code=0
+
+command_id=test-self-referential-bootstrap
+command=pwsh -NoProfile -NonInteractive -File scripts/tests/test-self-referential-bootstrap.ps1
+result=all assertions passed (new entry validated; command id resolves through the existing immutable map)
+exit_code=0
+
+command_id=test-pr-body-evidence
+command=pwsh -NoProfile -NonInteractive -File scripts/tests/test-pr-body-evidence.ps1
+result=all assertions passed
+exit_code=0
+
+command_id=invoke-powershell-static
+command=pwsh -NoProfile -NonInteractive -File scripts/tests/invoke-powershell-static.ps1
+result=passed
+exit_code=0
+
+note=Commands were replayed in contract order inside the dedicated worktree after the workflow step and ledger entry were authored.
+privacy=No credential, private topology, production metadata, or external runtime identifier is recorded.
