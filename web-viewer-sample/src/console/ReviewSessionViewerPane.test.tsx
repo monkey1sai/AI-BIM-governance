@@ -203,6 +203,45 @@ describe("ReviewSessionViewerPane", () => {
     expect(viewerBox.current?.viewerOrigin).toBe("http://127.0.0.1:5173");
   });
 
+  it("empty session shows the dedicated no-session state with the session selector still actionable", async () => {
+    await renderPane({ ...handoff, sessionId: "" });
+
+    const note = q("review-room-no-session");
+    expect(note).not.toBeNull();
+    expect(note?.textContent).toContain("尚未附掛 review session");
+    expect(q<HTMLInputElement>("review-room-session-input")).not.toBeNull();
+    expect(q("review-room-session-candidates")).not.toBeNull();
+    expect(q<HTMLButtonElement>("review-room-manual-start")!.disabled).toBe(true);
+    expect(coordinatorClient.claimViewerLease).not.toHaveBeenCalled();
+  });
+
+  it("a valid attached session does not show the no-session state", async () => {
+    await renderPane();
+
+    expect(q("review-room-no-session")).toBeNull();
+  });
+
+  it("missing viewer origin shows the origin-missing state with an actionable runtime refresh", async () => {
+    const originless = fakeRuntimeStatus();
+    originless.configured_endpoints.viewer.browser_url_base = "";
+    vi.mocked(coordinatorClient.runtimeStatus).mockResolvedValueOnce(originless as never);
+
+    await renderPane();
+
+    const note = q("review-room-viewer-origin-missing");
+    expect(note).not.toBeNull();
+    expect(note?.textContent).toContain("viewer 入口");
+    expect(q<HTMLButtonElement>("review-room-manual-start")!.disabled).toBe(true);
+    expect(coordinatorClient.claimViewerLease).not.toHaveBeenCalled();
+
+    await act(async () => { q<HTMLButtonElement>("review-room-viewer-origin-refresh")!.click(); });
+    await flush();
+
+    expect(coordinatorClient.runtimeStatus).toHaveBeenCalledTimes(2);
+    expect(q("review-room-viewer-origin-missing")).toBeNull();
+    expect(q<HTMLButtonElement>("review-room-manual-start")!.disabled).toBe(false);
+  });
+
   it("stale or missing runtime session is distinguishable and cannot be attached", async () => {
     vi.mocked(coordinatorClient.runtimeStatus).mockResolvedValue({
       ...fakeRuntimeStatus(),
@@ -253,7 +292,10 @@ describe("ReviewSessionViewerPane", () => {
     await act(async () => { q<HTMLButtonElement>("review-room-manual-start")!.click(); });
     await flush();
 
-    expect(q("review-room-lease-occupied")?.textContent).toContain("占用");
+    const occupied = q("review-room-lease-occupied");
+    expect(occupied?.textContent).toContain("占用");
+    // spec: SHALL NOT 顯示現任 holder user/viewer/display/nonce/stream detail
+    expect(occupied?.textContent).not.toMatch(/lease_|viewer_|nonce|stream|display_name|holder/u);
     expect(q("review-room-lease-error")).toBeNull();
     expect(q("review-room-viewer-host")).toBeNull();
     expect(viewerBox.renderCount).toBe(0);

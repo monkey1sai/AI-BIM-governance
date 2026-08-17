@@ -174,6 +174,7 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
   const [viewerOrigin, setViewerOrigin] = useState<string | null>(null);
   const [coordinatorBase, setCoordinatorBase] = useState<string | null>(null);
   const [runtimeErr, setRuntimeErr] = useState<string | null>(null);
+  const [runtimeReady, setRuntimeReady] = useState(false);
   const [lease, setLease] = useState<ViewerLeaseClaimResponse | null>(null);
   const [leaseBusy, setLeaseBusy] = useState(false);
   const [leaseErr, setLeaseErr] = useState<ViewerLeaseError | null>(null);
@@ -228,25 +229,30 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
   const stageMatched = Boolean(loadedStageUrl && expectedStageUrl && stageUrlsEquivalent(loadedStageUrl, expectedStageUrl));
   const viewerOpenUrl = validSession ? coordinatorClient.openInViewerUrl(sid) : undefined;
 
-  useEffect(() => {
-    let alive = true;
-    coordinatorClient.runtimeStatus()
+  // 失敗態矩陣（task 5.6）：viewer-origin-missing 需要「重新整理 runtime status」可行動作，
+  // 因此把單次 fetch 抽成可重複呼叫的 refresh；unmount 後不再 set state（沿用既有 alive 語意）。
+  const runtimeAliveRef = useRef(true);
+  useEffect(() => () => { runtimeAliveRef.current = false; }, []);
+  const refreshRuntimeStatus = useCallback(() => {
+    return coordinatorClient.runtimeStatus()
       .then((rt) => {
-        if (!alive) return;
+        if (!runtimeAliveRef.current) return;
         setRuntimeSessions(rt.sessions.items.filter((s) => s.status === "active" || s.status === "created"));
         setViewerOrigin(rt.configured_endpoints.viewer.browser_url_base || null);
         setCoordinatorBase(rt.configured_endpoints.coordinator.public_base_url || null);
         setRuntimeErr(null);
+        setRuntimeReady(true);
       })
       .catch((e) => {
-        if (!alive) return;
+        if (!runtimeAliveRef.current) return;
         setRuntimeSessions([]);
         setViewerOrigin(null);
         setCoordinatorBase(null);
         setRuntimeErr(String(e));
+        setRuntimeReady(true);
       });
-    return () => { alive = false; };
   }, []);
+  useEffect(() => { void refreshRuntimeStatus(); }, [refreshRuntimeStatus]);
 
   useEffect(() => {
     setSessionId(handoff.sessionId);
@@ -507,6 +513,35 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
           <Field k="kit_instance_id" v={activePrimaryLease?.kit_instance_id ?? "—"} prov={activePrimaryLease?.kit_instance_id ? "asbuilt" : "p1"} />
         </div>
         {runtimeErr && <p className="ec-warn-note" data-testid="review-room-runtime-error">{runtimeErr}</p>}
+        {sid === "" && (
+          <p className="ec-note" data-testid={`${tidPrefix}-no-session`}>
+            {t(
+              "尚未附掛 review session；請由上方欄位選擇或輸入 session id。",
+              "No review session is attached; pick or enter a session id in the field above.",
+            )}
+          </p>
+        )}
+        {runtimeReady && !runtimeErr && !viewerOrigin && (
+          <div
+            className="ec-warn-note"
+            data-testid={viewerOriginMissingTestId}
+            role="alert"
+            aria-live="assertive"
+          >
+            <span>
+              {t(
+                "runtime/status 無 viewer 入口（viewer origin 未配置），無法掛載 viewer。",
+                "runtime/status has no viewer entry (viewer origin is not configured); the viewer cannot mount.",
+              )}
+            </span>{" "}
+            <Btn
+              data-testid={`${tidPrefix}-viewer-origin-refresh`}
+              onClick={() => { void refreshRuntimeStatus(); }}
+            >
+              {t("重新整理 runtime status", "Refresh runtime status")}
+            </Btn>
+          </div>
+        )}
         {leaseErr?.kind === "primary_occupied" ? (
           <div
             className="ec-warn-note"
@@ -581,9 +616,7 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
               }}
             />
           </div>
-        ) : (
-          <p className="ec-warn-note" data-testid={viewerOriginMissingTestId}>{t("runtime/status 無 viewer 入口，無法掛載 viewer", "runtime/status has no viewer entry; cannot mount viewer")}</p>
-        )}
+        ) : null /* origin-missing 態改由上方常駐 note（含 refresh 動作）呈現，避免 testid 重複 */}
       </Panel>
 
       {/* a2-overlay 模式抑制單筆 handoff 高亮面板：A2 疊加控制（apply/ack/unmapped）由 VersionDiffPage
