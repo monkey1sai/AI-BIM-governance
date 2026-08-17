@@ -191,18 +191,18 @@
       "id": "a4-console-convergence",
       "status": "active",
       "owner": "governance-service",
-      "current_slice": "前後端收斂（main 後端 × convergence 分支前端）",
+      "current_slice": "1.1-1.3 盤點完成 2026-08-17：baseline 三件全綠（governance A4 183／coordinator 857／viewer 1080）；conflict-plan.md 落 artifacts/a4-console-convergence/（27 檔 153 hunks 逐檔調和方向，原 126 為 7 月快照）；impact 現值 LOW 但 createCoordinatorApp 與歷史 CRITICAL 不符，實作輪須 re-index 重測。下一步=2.x 後端調和（main 基準）；4.0.4 卡 owner 唯讀 MinIO 憑證。",
       "blocked_by": [],
-      "last_verified": "2026-07-29T07:00:00Z",
+      "last_verified": "2026-08-17T07:45:00Z",
       "task_ledger": {
-        "completed": 3,
+        "completed": 6,
         "total": 29
       },
       "evidence_refs": [
         "openspec/changes/a4-console-convergence/proposal.md",
         "openspec/changes/a4-console-convergence/tasks.md"
       ],
-      "subject_commit": "7784884a577a17104053404776c74fd42905610c",
+      "subject_commit": "0d89ee1c160c8ee6611f5d0fb61ed1e15350b622",
       "archive_debt": null
     },
     {
