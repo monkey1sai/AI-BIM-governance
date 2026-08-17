@@ -322,15 +322,17 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
     activePrimaryLease?.heartbeat_after_ms,
     dataChannelReady,
     loadedStageUrl,
+    heartbeatDelayFn,
   ]);
 
   // first-frame-timeout（task 5.6）：claim 成功且 viewer 已掛載，但期限內未收
   // first_frame 即轉入可見逾時態；首幀到達或 lease/session 變更時清除。
+  const activeLeaseIdForFirstFrame = activePrimaryLease ? activePrimaryLease.lease_id : null;
   useEffect(() => {
-    if (!activePrimaryLease || firstFrame) return;
+    if (!activeLeaseIdForFirstFrame || firstFrame) return;
     const timer = window.setTimeout(() => { setFirstFrameTimedOut(true); }, firstFrameTimeoutMs);
     return () => { window.clearTimeout(timer); };
-  }, [activePrimaryLease?.lease_id, firstFrame, firstFrameTimeoutMs]);
+  }, [activeLeaseIdForFirstFrame, firstFrame, firstFrameTimeoutMs]);
   useEffect(() => {
     if (firstFrame) setFirstFrameTimedOut(false);
   }, [firstFrame]);
