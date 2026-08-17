@@ -1362,9 +1362,9 @@
       "id": "implement-runtime-command-authority-and-rejection",
       "status": "active",
       "owner": "bim-review-coordinator",
-      "current_slice": "5.6 slice-2 收斂 2026-08-17：session-preparing/gpu-unavailable/lease-expired/first-frame-timeout 四態（RED→GREEN focused DOM tests；全套 80 files/1093 tests 零回歸；typecheck 零錯；eslint 基線4+1同類窄依賴）。累計 11/12 態；checkbox 維持 open：僅 stream-disconnected 需 viewer 側 WebRTC 斷線 postMessage 協定（涉 datachannel 契約文件，另切片）。production/full completion=no.",
+      "current_slice": "5.6 slice-3 收斂 2026-08-17：stream-disconnected（vg01 stream_state 協定＋schema/contracts fail-closed＋EmbeddedViewer 守衛轉發＋pane 誠實回退與重掛重連）。**console 內嵌側 12/12 態完成**（全套 80 files/1096 tests 零回歸；typecheck 零錯；lint:baseline regressions=0；contracts pytest 24 passed）。checkbox 維持 open：standalone viewer origin 頁側逐態盤點為最後殘項（stage 系列已在、其餘適用性需 spec 裁決）。production/full completion=no.",
       "blocked_by": [],
-      "last_verified": "2026-08-17T12:05:00Z",
+      "last_verified": "2026-08-17T12:55:00Z",
       "task_ledger": {
         "completed": 31,
         "total": 35
@@ -1373,7 +1373,7 @@
         "openspec/changes/implement-runtime-command-authority-and-rejection/proposal.md",
         "openspec/changes/implement-runtime-command-authority-and-rejection/tasks.md"
       ],
-      "subject_commit": "d2f07d3ae41a807e45d9098af27a04df04044632",
+      "subject_commit": "9003bb7a8e53d48a2acf22ee57e36fc599cbd2a7",
       "archive_debt": null
     },
     {
