@@ -1,0 +1,21 @@
+{
+  "schema_version": "self-referential-fixpoint-attestation/v1",
+  "entry_id": "windows-tier-lib-modules",
+  "mechanism_commit": "655f1f9687b12874a1cbf4434006916bd16a2893",
+  "verification_contract_sha256": "5545d1f629a74c7062da9a7c0bac5e15dced6494982be658b962ad659146d5be",
+  "result": "pass",
+  "commands": [
+    {
+      "id": "test-windows-verification-scope",
+      "exit_code": 0
+    },
+    {
+      "id": "test-pr-body-evidence",
+      "exit_code": 0
+    },
+    {
+      "id": "invoke-powershell-static",
+      "exit_code": 0
+    }
+  ]
+}
