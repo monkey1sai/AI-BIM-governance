@@ -464,7 +464,7 @@
       "kind": "yaml_every",
       "severity": "error",
       "title": "the Agent Governance suite still invokes the governance static check",
-      "replaces": "test-agent-governance-check.ps1:267-274",
+      "replaces": "additive-structural (the old gate's per-suite presence greps are retained; this pins the static-check step by name)",
       "path": ".github/workflows/agent-governance.yml",
       "collection": "jobs.suite.steps",
       "where": {
@@ -481,7 +481,7 @@
       "kind": "yaml_every",
       "severity": "error",
       "title": "the Agent Governance suite pins its Node.js toolchain",
-      "replaces": "test-agent-governance-check.ps1:267-274",
+      "replaces": "additive-structural (the old gate's node-pin regex is retained at its ci-workflow block)",
       "path": ".github/workflows/agent-governance.yml",
       "collection": "jobs.suite.steps",
       "where": {
@@ -498,7 +498,7 @@
       "kind": "yaml_node",
       "severity": "error",
       "title": "the Agent Governance suite runs on the canonical Windows runner",
-      "replaces": "test-agent-governance-check.ps1:291",
+      "replaces": "additive-structural (no prior assertion pinned the suite runner)",
       "path": ".github/workflows/agent-governance.yml",
       "pointer": "jobs.suite.runs-on",
       "equals": "windows-latest"
@@ -535,7 +535,7 @@
       "kind": "yaml_node",
       "severity": "error",
       "title": "the agent task template carries the agent-ready triage label",
-      "replaces": "test-agent-governance-check.ps1:259-262",
+      "replaces": "additive (labels were never asserted by the old gate; its body-marker assertions are retained)",
       "path": ".github/ISSUE_TEMPLATE/agent-task.yml",
       "pointer": "labels",
       "contains": [
