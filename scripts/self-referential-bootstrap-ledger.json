@@ -465,6 +465,30 @@
           "docs/evidence/conversion-service-ci-wiring/fixpoint/summary.md"
         ]
       }
+    },
+    {
+      "id": "windows-tier-lib-modules",
+      "status": "open",
+      "pr": 570,
+      "opened_at": "2026-08-17T09:33:05Z",
+      "reason": "this PR changes scripts/lib/windows-verification-scope.ps1, the checker that decides how much Windows verification evidence every other PR owes; the branch can only exercise the new classification with the changed checker itself, so no pre-merge run can prove that what merges is what gets enforced, and only a post-merge run from main closes that gap",
+      "verification_mechanism_paths": [
+        "scripts/self-referential-bootstrap-ledger.json",
+        "scripts/lib/windows-verification-scope.ps1"
+      ],
+      "verification_contract": {
+        "id": "windows-tier-lib-modules/v1",
+        "command_ids": [
+          "test-windows-verification-scope",
+          "test-pr-body-evidence",
+          "invoke-powershell-static"
+        ],
+        "contract_sha256": "5545d1f629a74c7062da9a7c0bac5e15dced6494982be658b962ad659146d5be"
+      },
+      "bootstrap_evidence_refs": [
+        "docs/evidence/windows-tier-lib-modules/self-referential-bootstrap/README.md",
+        "docs/evidence/windows-tier-lib-modules/self-referential-bootstrap/verification.txt"
+      ]
     }
   ]
 }
