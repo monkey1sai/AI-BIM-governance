@@ -116,7 +116,7 @@ reason_code (closed v1):
 
 Queue語意亦固定：pre-merge `HELD`不造成main mutation並使該exact tuple不可merge；`HELD/MERGE_OUTCOME_UNVERIFIED` 與 `HELD/DELIVERY_PENDING_FIXPOINT` 凍結普通queue且只開放綁定相同lineage的reconciliation lane；`FAILED/MERGED_NOT_DELIVERED` 凍結普通queue且只開放綁定failure delivery ID的repair／revert lane；其他post-merge `HELD`不開放任何PR進入sink。只有 `DELIVERED`釋放普通queue。任何新增phase、terminal class或reason code都需要新的OpenSpec delta。
 
-Failure mapping互斥：尚未以authenticated input啟動target command（authority／inventory／target／runner／network／artifact不可取得或不可驗證）一律 `HELD/DEPLOYMENT_BLOCKED`；GitHub merge outcome歧義一律 `HELD/MERGE_OUTCOME_UNVERIFIED`；已在exact commit與attested target上啟動的 `deploy.ps1 -Build` 回傳nonzero，或required post-deploy gate產生可重現negative conclusion，一律 `FAILED/MERGED_NOT_DELIVERED`；只有所有required gates positive才是 `DELIVERED/DELIVERY_VERIFIED`。同一事件不得二選一。
+Failure mapping互斥且依merge boundary分段：pre-merge Windows design／semantic authority、runner或required network path不可取得或不可驗證，一律 `HELD/PREMERGE_AUTHORITY_UNAVAILABLE`；merge後尚未以authenticated input啟動canonical target command（inventory／target／runner／network／artifact不可取得或不可驗證）一律 `HELD/DEPLOYMENT_BLOCKED`；GitHub merge outcome歧義一律 `HELD/MERGE_OUTCOME_UNVERIFIED`；已在exact commit與attested target上啟動的 `deploy.ps1 -Build` 回傳nonzero，或required post-deploy gate產生可重現negative conclusion，一律 `FAILED/MERGED_NOT_DELIVERED`；只有所有required gates positive才是 `DELIVERED/DELIVERY_VERIFIED`。同一事件不得二選一，producer不得把pre-merge authority failure映射成post-merge deployment blocker。
 
 ### D9 — 失敗觸發 bounded repair，不改寫歷史
 

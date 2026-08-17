@@ -334,6 +334,14 @@ try {
         'agent-contracts/trusted-host-merge-result.schema.json',
         'agent-contracts/spec-to-done.contract.json',
         'agent-contracts/spec-to-done.contract.schema.json',
+        'agent-contracts/autonomous-delivery-adjudication-packet.schema.json',
+        'agent-contracts/autonomous-delivery-attestation-envelope.schema.json',
+        'agent-contracts/autonomous-delivery-classifier-input.schema.json',
+        'agent-contracts/autonomous-delivery-terminal-record.schema.json',
+        'agent-contracts/autonomous-delivery-transition.contract.json',
+        'scripts/lib/autonomous-delivery-contract.mjs',
+        'scripts/tests/test-autonomous-linux-delivery-contracts.mjs',
+        'tests/test_autonomous_delivery_contract_schemas.py',
         'scripts/verification-manifest.json',
         'scripts/tests/verify-functional-runtime-result.ps1',
         'scripts/tests/verify-security-exceptions.ps1',
@@ -382,9 +390,18 @@ try {
         Assert-True $coveredByTrustedMerge "trusted merge mechanism policy is a superset of the self-referential classifier example: $expectedPath"
     }
     Assert-True ($matched -notcontains 'web-viewer-sample/src/Window.tsx') 'ordinary product code must NOT classify as mechanism'
+    $adjacentAutonomousPaths = @(
+        'agent-contracts/autonomous-delivery-not-normative.txt',
+        'scripts/lib/autonomous-delivery-ui.mjs',
+        'scripts/tests/test-autonomous-linux-delivery-contracts-extra.mjs'
+    )
+    $adjacentAutonomousMatches = @(Get-SelfReferentialMechanismPaths -ChangedPaths $adjacentAutonomousPaths)
+    Assert-True ($adjacentAutonomousMatches.Count -eq 0) `
+        "adjacent autonomous-delivery names must not broaden mechanism scope (matched: $($adjacentAutonomousMatches -join ', '))"
     $wrongCaseMechanismPaths = @(Get-SelfReferentialMechanismPaths -ChangedPaths @(
         'Scripts/Deploy.ps1',
-        '.github/workflows/CI.yml'
+        '.github/workflows/CI.yml',
+        'agent-contracts/Autonomous-delivery-terminal-record.schema.json'
     ))
     Assert-True ($wrongCaseMechanismPaths.Count -eq 0) `
         "wrong-case git paths must not classify as mechanisms (matched: $($wrongCaseMechanismPaths -join ', '))"

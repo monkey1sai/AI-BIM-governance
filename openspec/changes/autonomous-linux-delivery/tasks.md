@@ -2,12 +2,12 @@
 
 ## 1. 契約與失敗語意
 
-- [ ] 1.1 盤點並以測試固定現有 exact-head collector、trusted-host merge、self-referential bootstrap、deployment inventory 與 terminal-state contract 的 current behavior。
-- [ ] 1.2 定義並驗證 immutable adjudication packet與attestation envelope，涵蓋repo／PR／base-head tuple、完整changed paths、diff／policy／manifest digests、required-check sources、conversation、issuer／key／nonce／expiry與artifact digests。
-- [ ] 1.3 定義並驗證closed `phase`、`terminal_class=DELIVERED|FAILED|HELD`、v1 `reason_code` transition table，以及delivery／attempt／supersedes append-only lineage與queue-lock語意。
+- [x] 1.1 盤點並以測試固定現有 exact-head collector、trusted-host merge、self-referential bootstrap、deployment inventory 與 terminal-state contract 的 current behavior。
+- [x] 1.2 定義並驗證 immutable adjudication packet與attestation envelope，涵蓋repo／PR／base-head tuple、完整changed paths、diff／policy／manifest digests、required-check sources、conversation、issuer／key／nonce／expiry與artifact digests。
+- [x] 1.3 定義並驗證closed `phase`、`terminal_class=DELIVERED|FAILED|HELD`、v1 `reason_code` transition table，以及delivery／attempt／supersedes append-only lineage與queue-lock語意。
 - [ ] 1.4 將 `human_critical` policy輸入遷移成 `critical_machine_adjudication`，為舊值提供明確拒絕／遷移錯誤，且不建立human-approval fallback。
-- [ ] 1.5 新增contract parse、unknown-field／enum、illegal transition、attempt rewrite與secret-redaction tests，證明malformed／incomplete input fail closed。
-- [ ] 1.6 實作closed PR classifier：`draft_report_only|ordinary|repair|reconciliation|activation_canary|activation_closure|revert|release_hotfix`；固定repair／revert failure lineage、merge ambiguity與post-active fixpoint reconciliation、activation-only closure的互斥適用範圍，證明每個exact tuple恰屬一類且沒有human fallback。
+- [x] 1.5 新增contract parse、unknown-field／enum、illegal transition、attempt rewrite與secret-redaction tests，證明malformed／incomplete input fail closed。
+- [x] 1.6 實作closed PR classifier：`draft_report_only|ordinary|repair|reconciliation|activation_canary|activation_closure|revert|release_hotfix`；固定repair／revert failure lineage、merge ambiguity與post-active fixpoint reconciliation、activation-only closure的互斥適用範圍，證明每個exact tuple恰屬一類且沒有human fallback。
 
 ## 2. Exact-head evidence 與 deterministic gate
 

@@ -1,0 +1,388 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "autonomous-delivery-adjudication-packet.schema.json",
+  "title": "Autonomous delivery immutable adjudication packet v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "repository",
+    "pull_request",
+    "classification",
+    "classification_evidence",
+    "changed_paths",
+    "changed_paths_sha256",
+    "required_check_sources",
+    "conversation_state",
+    "openspec_state",
+    "review_surface",
+    "artifacts",
+    "review_surface_sha256",
+    "artifacts_sha256",
+    "collector",
+    "budgets"
+  ],
+  "properties": {
+    "schema_version": { "const": "autonomous-delivery-adjudication-packet/v1" },
+    "repository": { "$ref": "#/definitions/repository" },
+    "pull_request": { "$ref": "#/definitions/pull_request" },
+    "classification": { "$ref": "#/definitions/classification" },
+    "classification_evidence": { "$ref": "#/definitions/classification_evidence" },
+    "changed_paths": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 3000,
+      "uniqueItems": true,
+      "items": { "$ref": "#/definitions/path_record" }
+    },
+    "changed_paths_sha256": { "$ref": "#/definitions/sha256" },
+    "required_check_sources": {
+      "type": "array",
+      "maxItems": 256,
+      "items": { "$ref": "#/definitions/check_source" }
+    },
+    "conversation_state": { "$ref": "#/definitions/conversation_state" },
+    "openspec_state": { "$ref": "#/definitions/openspec_state" },
+    "review_surface": { "$ref": "#/definitions/review_surface" },
+    "artifacts": {
+      "type": "array",
+      "maxItems": 512,
+      "items": { "$ref": "#/definitions/artifact" }
+    },
+    "review_surface_sha256": { "$ref": "#/definitions/sha256" },
+    "artifacts_sha256": { "$ref": "#/definitions/sha256" },
+    "collector": { "$ref": "#/definitions/collector" },
+    "budgets": { "$ref": "#/definitions/budgets" }
+  },
+  "definitions": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "identifier": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$"
+    },
+    "opaque_identifier": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*(?::[A-Za-z0-9][A-Za-z0-9._-]*)?$"
+    },
+    "repo_path": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096,
+      "pattern": "^(?!/)(?![A-Za-z]:[\\\\/])(?!.*(?:^|/)\\.\\.(?:/|$))[^\\u0000\\r\\n\\\\]+$"
+    },
+    "repository": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["full_name", "repository_id"],
+      "properties": {
+        "full_name": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$",
+          "maxLength": 200
+        },
+        "repository_id": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        }
+      }
+    },
+    "pull_request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["number", "base_ref", "base_oid", "head_ref", "head_oid", "merge_base_oid"],
+      "properties": {
+        "number": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "base_ref": { "$ref": "#/definitions/identifier" },
+        "base_oid": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "head_ref": { "$ref": "#/definitions/identifier" },
+        "head_oid": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "merge_base_oid": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        }
+      }
+    },
+    "classification": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind"],
+          "properties": { "kind": { "enum": ["draft_report_only", "ordinary"] } }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "failure_delivery_id"],
+          "properties": {
+            "kind": { "enum": ["repair", "revert"] },
+            "failure_delivery_id": { "$ref": "#/definitions/opaque_identifier" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "delivery_id"],
+          "properties": {
+            "kind": { "const": "reconciliation" },
+            "delivery_id": { "$ref": "#/definitions/opaque_identifier" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "delivery_id", "debt_id"],
+          "properties": {
+            "kind": { "const": "reconciliation" },
+            "delivery_id": { "$ref": "#/definitions/opaque_identifier" },
+            "debt_id": { "$ref": "#/definitions/opaque_identifier" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "activation_plan_id"],
+          "properties": {
+            "kind": { "const": "activation_canary" },
+            "activation_plan_id": { "$ref": "#/definitions/opaque_identifier" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "activation_plan_id", "debt_id", "canary_delivery_id"],
+          "properties": {
+            "kind": { "const": "activation_closure" },
+            "activation_plan_id": { "$ref": "#/definitions/opaque_identifier" },
+            "debt_id": { "$ref": "#/definitions/opaque_identifier" },
+            "canary_delivery_id": { "$ref": "#/definitions/opaque_identifier" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "release_id"],
+          "properties": {
+            "kind": { "const": "release_hotfix" },
+            "release_id": { "$ref": "#/definitions/opaque_identifier" }
+          }
+        }
+      ]
+    },
+    "classification_evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source",
+        "activation_phase",
+        "draft",
+        "queue_state",
+        "complete_paths_sha256",
+        "classification_lease_sha256"
+      ],
+      "properties": {
+        "source": { "const": "server_authoritative" },
+        "activation_phase": {
+          "enum": ["LEGACY_GUARDED", "SHADOW_DUAL", "CUTOVER_ARMED", "CANARY_ACTIVE", "AUTONOMOUS_ACTIVE"]
+        },
+        "draft": { "type": "boolean" },
+        "queue_state": { "enum": ["open", "frozen", "activation_exclusive"] },
+        "complete_paths_sha256": { "$ref": "#/definitions/sha256" },
+        "classification_lease_sha256": {
+          "type": ["string", "null"],
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      }
+    },
+    "path_record": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["path", "status"],
+          "properties": {
+            "path": { "$ref": "#/definitions/repo_path" },
+            "status": { "enum": ["added", "modified", "deleted", "copied", "type_changed"] }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["path", "status", "previous_path"],
+          "properties": {
+            "path": { "$ref": "#/definitions/repo_path" },
+            "status": { "const": "renamed" },
+            "previous_path": { "$ref": "#/definitions/repo_path" }
+          }
+        }
+      ]
+    },
+    "check_source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "context",
+        "app_id",
+        "check_run_id",
+        "head_oid",
+        "workflow_path",
+        "verification_target",
+        "conclusion"
+      ],
+      "properties": {
+        "context": { "$ref": "#/definitions/identifier" },
+        "app_id": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "check_run_id": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "head_oid": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "workflow_path": { "$ref": "#/definitions/repo_path" },
+        "verification_target": { "$ref": "#/definitions/identifier" },
+        "conclusion": { "const": "success" }
+      }
+    },
+    "conversation_state": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["total_threads", "resolved_threads", "unresolved_threads", "threads_sha256"],
+      "properties": {
+        "total_threads": { "type": "integer", "minimum": 0 },
+        "resolved_threads": { "type": "integer", "minimum": 0 },
+        "unresolved_threads": { "type": "integer", "minimum": 0 },
+        "threads_sha256": { "$ref": "#/definitions/sha256" }
+      }
+    },
+    "openspec_state": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["required", "change_name", "alignment", "evidence_sha256"],
+      "properties": {
+        "required": { "type": "boolean" },
+        "change_name": {
+          "type": ["string", "null"],
+          "minLength": 3,
+          "maxLength": 128,
+          "pattern": "^[a-z0-9][a-z0-9-]+$"
+        },
+        "alignment": { "enum": ["aligned", "not_applicable"] },
+        "evidence_sha256": { "$ref": "#/definitions/sha256" }
+      }
+    },
+    "review_surface": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "changed_paths_sha256",
+        "diff_sha256",
+        "policy_sha256",
+        "manifest_sha256",
+        "required_checks_sha256",
+        "conversation_sha256"
+      ],
+      "properties": {
+        "changed_paths_sha256": { "$ref": "#/definitions/sha256" },
+        "diff_sha256": { "$ref": "#/definitions/sha256" },
+        "policy_sha256": { "$ref": "#/definitions/sha256" },
+        "manifest_sha256": { "$ref": "#/definitions/sha256" },
+        "required_checks_sha256": { "$ref": "#/definitions/sha256" },
+        "conversation_sha256": { "$ref": "#/definitions/sha256" }
+      }
+    },
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "artifact_id",
+        "sha256",
+        "size_bytes",
+        "media_type",
+        "acl_scope",
+        "authentication",
+        "retention_class"
+      ],
+      "properties": {
+        "artifact_id": { "$ref": "#/definitions/opaque_identifier" },
+        "sha256": { "$ref": "#/definitions/sha256" },
+        "size_bytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "media_type": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 200,
+          "pattern": "^[A-Za-z0-9!#$&^_.+-]+/[A-Za-z0-9!#$&^_.+-]+$"
+        },
+        "acl_scope": { "const": "issuer_and_executor" },
+        "authentication": { "const": "short_lived_lease" },
+        "retention_class": {
+          "enum": ["ephemeral_24h", "delivery_30d", "audit_1y"]
+        }
+      }
+    },
+    "collector": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "app_id", "run_id", "source_api", "collected_at"],
+      "properties": {
+        "kind": { "const": "github_app" },
+        "app_id": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+        "run_id": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+        "source_api": { "const": "github_rest_graphql" },
+        "collected_at": { "type": "string", "format": "date-time" }
+      }
+    },
+    "budgets": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "changed_path_count",
+        "changed_path_limit",
+        "diff_bytes",
+        "diff_byte_limit",
+        "review_surface_bytes",
+        "review_surface_byte_limit",
+        "artifact_count",
+        "artifact_count_limit"
+      ],
+      "properties": {
+        "changed_path_count": { "type": "integer", "minimum": 1 },
+        "changed_path_limit": { "type": "integer", "minimum": 1 },
+        "diff_bytes": { "type": "integer", "minimum": 0 },
+        "diff_byte_limit": { "type": "integer", "minimum": 1 },
+        "review_surface_bytes": { "type": "integer", "minimum": 0 },
+        "review_surface_byte_limit": { "type": "integer", "minimum": 1 },
+        "artifact_count": { "type": "integer", "minimum": 0 },
+        "artifact_count_limit": { "type": "integer", "minimum": 0 }
+      }
+    }
+  }
+}

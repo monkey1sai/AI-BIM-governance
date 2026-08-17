@@ -235,9 +235,11 @@ Transaction phase SHALL只允許 `COLLECTING`、`VERIFYING`、`READY_TO_MERGE`�
 
 #### Scenario: Required Windows runner或跨網段path不可用
 
-- **WHEN**適用的pre-merge Windows design gate、post-merge Windows browser runner、owner-approved跨網段path、DPR／viewport、fixture或target identity任一無法驗證
-- **THEN**attempt SHALL以 `HELD/DEPLOYMENT_BLOCKED`結案
-- **AND**Linux runner success SHALL NOT替代缺失的Windows evidence
+- **WHEN**適用的pre-merge Windows design／semantic authority、runner、DPR／viewport或fixture任一無法驗證
+- **THEN**pre-merge attempt SHALL以 `HELD/PREMERGE_AUTHORITY_UNAVAILABLE`結案
+- **AND WHEN**merge後的Windows browser runner、owner-approved跨網段path、fixture或target identity在authenticated canonical target command啟動前無法驗證
+- **THEN**post-merge attempt SHALL以 `HELD/DEPLOYMENT_BLOCKED`結案
+- **AND**Linux runner success SHALL NOT替代缺失的Windows evidence，producer亦 SHALL NOT跨merge boundary交換兩個reason code
 
 ### Requirement: Failed delivery SHALL freeze the queue and enter a bounded repair lineage
 
