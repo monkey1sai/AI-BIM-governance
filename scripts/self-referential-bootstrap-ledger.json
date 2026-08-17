@@ -360,7 +360,7 @@
     },
     {
       "id": "blip-approve-authority-separation",
-      "status": "open",
+      "status": "closed",
       "pr": 548,
       "opened_at": "2026-08-17T04:30:13Z",
       "reason": "the trusted-host merge evidence consumer is itself an adjudicator, so the base-pinned consumer cannot prove before merge that its changed exact-body matcher rejects the new automated approve-only schema; only a post-merge run of the updated consumer can establish that authority separation as a fixpoint",
@@ -386,7 +386,14 @@
         "docs/evidence/blip-approve-authority-separation/self-referential-bootstrap/README.md",
         "docs/evidence/blip-approve-authority-separation/self-referential-bootstrap/gate-suites.txt"
       ],
-      "fixpoint": null
+      "fixpoint": {
+        "reverified_at": "2026-08-17T05:17:08Z",
+        "mechanism_commit": "a9b8c7c7c68062ba4aea5e813f7242b118164a23",
+        "evidence_refs": [
+          "docs/evidence/blip-approve-authority-separation/fixpoint/attestation.json",
+          "docs/evidence/blip-approve-authority-separation/fixpoint/summary.md"
+        ]
+      }
     }
   ]
 }
