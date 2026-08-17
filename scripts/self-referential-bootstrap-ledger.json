@@ -433,7 +433,7 @@
     },
     {
       "id": "conversion-service-ci-wiring",
-      "status": "open",
+      "status": "closed",
       "pr": 566,
       "opened_at": "2026-08-17T08:25:59Z",
       "reason": "the required CI streaming job decides whether other pull requests satisfy the protected context; before this branch merges, only the base workflow can run, so it cannot prove that the new step executes the host-native conversion service suite (process-tree containment regressions, issue #516) as mainline behavior",
@@ -457,7 +457,14 @@
         "docs/evidence/conversion-service-ci-wiring/self-referential-bootstrap/README.md",
         "docs/evidence/conversion-service-ci-wiring/self-referential-bootstrap/verification.txt"
       ],
-      "fixpoint": null
+      "fixpoint": {
+        "reverified_at": "2026-08-17T09:27:55Z",
+        "mechanism_commit": "1e01a9c4f80200c305c6b9e62b2d0f6dd821b644",
+        "evidence_refs": [
+          "docs/evidence/conversion-service-ci-wiring/fixpoint/attestation.json",
+          "docs/evidence/conversion-service-ci-wiring/fixpoint/summary.md"
+        ]
+      }
     }
   ]
 }

@@ -1,0 +1,33 @@
+{
+  "schema_version": "self-referential-fixpoint-attestation/v1",
+  "entry_id": "conversion-service-ci-wiring",
+  "mechanism_commit": "1e01a9c4f80200c305c6b9e62b2d0f6dd821b644",
+  "verification_contract_sha256": "488bc1d25000fb444089ac040ea60409c6ddadc796df98ccc2490b8d74e026ae",
+  "result": "pass",
+  "commands": [
+    {
+      "id": "test-host-native-conversion-service",
+      "exit_code": 0
+    },
+    {
+      "id": "test-agent-governance-check",
+      "exit_code": 0
+    },
+    {
+      "id": "test-verification-plan",
+      "exit_code": 0
+    },
+    {
+      "id": "test-self-referential-bootstrap",
+      "exit_code": 0
+    },
+    {
+      "id": "test-pr-body-evidence",
+      "exit_code": 0
+    },
+    {
+      "id": "invoke-powershell-static",
+      "exit_code": 0
+    }
+  ]
+}
