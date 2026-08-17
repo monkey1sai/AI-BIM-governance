@@ -1,0 +1,67 @@
+windows-tier-lib-modules — pre-merge verification
+
+branch : fix/windows-tier-covers-lib-modules
+base   : 35d6672ff92c131855499157537c8c63e410898e
+date   : 2026-08-17T07:58:59Z
+
+Why this is bootstrap debt: this PR changes scripts/lib/windows-verification-scope.ps1, which
+decides how much Windows evidence every OTHER PR owes. The pre-change checker cannot prove that
+the post-change classification is the one enforced after merge, because the branch runs the
+changed checker against itself. Only a post-merge run from main closes that.
+
+
+## 1. Gap reproduction — BASE copy of the checker, unmodified
+
+The base checker was materialized with `git show 35d6672:scripts/lib/windows-verification-scope.ps1`
+and dot-sourced directly, so this is the classification origin/main actually enforces today.
+
+  scripts/lib/StructLog.psm1                 Tier=0 Id=none           Required=False
+  scripts/lib/rebuild-test-deploy.ps1        Tier=2 Id=deploy_dryrun  Required=True
+
+The asymmetry is the finding: scripts/lib/rebuild-test-deploy.ps1 imports StructLog.psm1
+(`grep -rl "StructLog\.psm1" scripts/` lists it), so a tier-2 deploy library depends on a file
+that the same pattern classifies as owing no Windows evidence at all. The dependency escaped the
+tier its dependant sits in.
+
+Not a deliberate exclusion:
+  - scripts/lib/StructLog.psm1 was added 2026-05-27 (#126); the pattern was written 2026-08-05
+    (#467), so .psm1 already existed under scripts/lib/ when the author typed `\.ps1$`.
+  - scripts/tests/test-windows-verification-scope.ps1 documents its "deliberate exclusions"
+    (docs, tests, frontend, README) and mentions neither `psm1` nor `module` anywhere.
+  - The pattern already treats EVERY non-platform .ps1 directly under scripts/lib/ as a deploy
+    library, including design-system-gate.ps1, pr-review-agent.ps1, openspec-lifecycle.ps1 and
+    self-referential-bootstrap.ps1 — none of which are deploy libraries. The design accepts
+    over-inclusion; the module extension was the one PowerShell file kind escaping it.
+
+
+## 2. After the fix — HEAD copy
+
+  scripts/lib/StructLog.psm1                 Tier=2 Id=deploy_dryrun  Required=True
+  scripts/lib/rebuild-test-deploy.ps1        Tier=2 Id=deploy_dryrun  Required=True
+  scripts/lib/platform/adapter.psm1          Tier=1 Id=platform_unit  Required=True
+  scripts/lib/SomeModule.psd1                Tier=0 Id=none           Required=False
+  scripts/lib/nested/helper.psm1             Tier=0 Id=none           Required=False
+
+The platform/ exclusion survives in both file kinds, and the widening does not over-reach: a
+module manifest (.psd1) is not executable deploy logic, and nested paths stay out for the same
+reason the .ps1 half of this pattern excludes them.
+
+
+## 3. Verification contract commands (run on this branch)
+
+$ pwsh -File scripts/tests/test-windows-verification-scope.ps1
+  [test-windows-verification-scope] all assertions passed
+
+$ pwsh -File scripts/tests/test-pr-body-evidence.ps1
+  [test-pr-body-evidence] all assertions passed
+
+$ pwsh -File scripts/tests/invoke-powershell-static.ps1
+  [invoke-powershell-static] passed
+
+
+## 4. Known consequence for other branches
+
+After merge, scripts/lib/agent-governance-policy.psm1 (branch
+chore/agent-governance-policy-report-only) classifies as deploy_dryrun rather than none. That PR
+must then declare the tier and carry deploy dry-run evidence, or land before this one. This is the
+fix working as intended, not a regression, but it is a real cross-branch obligation.
