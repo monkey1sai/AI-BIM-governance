@@ -119,6 +119,7 @@ _worker / _bim-control = 已自 repo 刪除（2026-05-18 B 方案落地），僅
 | 需要依任務種類／難度選擇 Codex workflow、subagents、模型 lane，或使用 `use agents` / `subagents` / `swarm` 開發 `docs/plans` 需求 | `docs/agents/codex-loop-workflows.md` |
 | 多終端機／多 CLI 並行 session 看板（明確 register/status/done、選用 Codex notify） | `docs/agents/parallel-session-board.md` |
 | PR 變更對象包含驗證機制本身（deploy path / evidence harness / gate script）、bootstrap ledger 欠帳 | `docs/agents/self-referential-bootstrap.md` |
+| 新增／修改 repo 治理規則（機器可讀 artifact 的結構規則、rule ratchet、PINNED 承重規則） | `docs/agents/agent-governance-policy.md` |
 | 查 domain vocabulary、GitHub issue workflow 或 triage labels | `docs/agents/domain.md`、`docs/agents/issue-tracker.md`、`docs/agents/triage-labels.md` |
 
 新增 sub-file 時：先在 `docs/agents/` 建檔，再同步更新本表與 `CLAUDE.md` index（兩份主檔的 sub-file 集合必須一致）。本文件行數預算 ≤ 250 行（目標 ≤ 200）；CLAUDE.md ≤ 130 行（目標 ≤ 100）。預算規範見 spec `agent-doc-context-budget`。

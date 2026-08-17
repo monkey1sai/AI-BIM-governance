@@ -432,6 +432,41 @@
       }
     },
     {
+      "id": "conversion-service-ci-wiring",
+      "status": "closed",
+      "pr": 566,
+      "opened_at": "2026-08-17T08:25:59Z",
+      "reason": "the required CI streaming job decides whether other pull requests satisfy the protected context; before this branch merges, only the base workflow can run, so it cannot prove that the new step executes the host-native conversion service suite (process-tree containment regressions, issue #516) as mainline behavior",
+      "verification_mechanism_paths": [
+        ".github/workflows/ci.yml",
+        "scripts/self-referential-bootstrap-ledger.json"
+      ],
+      "verification_contract": {
+        "id": "conversion-service-ci-wiring/v1",
+        "command_ids": [
+          "test-host-native-conversion-service",
+          "test-agent-governance-check",
+          "test-verification-plan",
+          "test-self-referential-bootstrap",
+          "test-pr-body-evidence",
+          "invoke-powershell-static"
+        ],
+        "contract_sha256": "488bc1d25000fb444089ac040ea60409c6ddadc796df98ccc2490b8d74e026ae"
+      },
+      "bootstrap_evidence_refs": [
+        "docs/evidence/conversion-service-ci-wiring/self-referential-bootstrap/README.md",
+        "docs/evidence/conversion-service-ci-wiring/self-referential-bootstrap/verification.txt"
+      ],
+      "fixpoint": {
+        "reverified_at": "2026-08-17T08:55:12Z",
+        "mechanism_commit": "1e01a9c4f80200c305c6b9e62b2d0f6dd821b644",
+        "evidence_refs": [
+          "docs/evidence/conversion-service-ci-wiring/fixpoint/attestation.json",
+          "docs/evidence/conversion-service-ci-wiring/fixpoint/summary.md"
+        ]
+      }
+    },
+    {
       "id": "autonomous-delivery-path-classifier",
       "status": "open",
       "pr": 558,
