@@ -34,7 +34,8 @@ describe("f4-viewer-lease-fork structural invariant", () => {
   it("both lease clients consume the shared heartbeat policy helper", () => {
     const pane = read("../console/ReviewSessionViewerPane.tsx");
     const standalone = read("../Window.tsx");
-    expect(pane).toContain("viewerLeaseHeartbeatDelayMs(");
+    // pane 經注入縫消費政策：預設綁定必須是共用 helper 本體。
+    expect(pane).toContain("heartbeatDelayFn = viewerLeaseHeartbeatDelayMs");
     expect(standalone).toContain("viewerLeaseHeartbeatDelayMs(");
     const localFork = /Math\.max\(\s*[\d_]+\s*,\s*[^)]*heartbeat_after_ms/u;
     expect(pane).not.toMatch(localFork);

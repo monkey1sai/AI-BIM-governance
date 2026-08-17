@@ -157,6 +157,12 @@ function classifyViewerLeaseError(error: unknown): ViewerLeaseError {
 export interface ReviewSessionViewerPaneProps {
   handoff?: ReviewRoomHandoff;
   mode?: ReviewSessionViewerPaneMode;
+  // 失敗態矩陣 first-frame-timeout（task 5.6）：claim 後未收首幀的可見逾時。90s 與
+  // stage-load-timeout 的 90×1s busy-poll 上限對齊；測試注入小值。
+  firstFrameTimeoutMs?: number;
+  // 測試縫：heartbeat 排程延遲計算。預設＝f4 統一政策 viewerLeaseHeartbeatDelayMs，
+  // 不得在生產路徑另定數值。
+  heartbeatDelayFn?: (heartbeatAfterMs: number) => number;
   // A2 批次疊加 gate 通知：viewer 證據鏈（lease/first frame/DataChannel/stage match）任一變動時回報，
   // 外部據以 enable/disable「套用疊加」鈕並顯示誠實理由。非 a2 用途可不傳（零行為變更）。
   onBatchGateChange?: (gate: ReviewSessionViewerPaneBatchGate) => void;
@@ -165,7 +171,7 @@ export interface ReviewSessionViewerPaneProps {
 }
 
 export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle, ReviewSessionViewerPaneProps>(
-  function ReviewSessionViewerPane({ handoff = parseReviewRoomHandoff(), mode = "review-room", onBatchGateChange, onBatchAck }, ref) {
+  function ReviewSessionViewerPane({ handoff = parseReviewRoomHandoff(), mode = "review-room", onBatchGateChange, onBatchAck, firstFrameTimeoutMs = 90_000, heartbeatDelayFn = viewerLeaseHeartbeatDelayMs }, ref) {
   const isA1Inline = mode === "a1-inline";
   const isA2Overlay = mode === "a2-overlay";
   // testid 前綴 = mode（review-room / a1-inline / a2-overlay），既有兩模式的 testid 逐字不變。
@@ -176,6 +182,9 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
   const [coordinatorBase, setCoordinatorBase] = useState<string | null>(null);
   const [runtimeErr, setRuntimeErr] = useState<string | null>(null);
   const [runtimeReady, setRuntimeReady] = useState(false);
+  const [gpuUnavailable, setGpuUnavailable] = useState(false);
+  const [leaseExpired, setLeaseExpired] = useState(false);
+  const [firstFrameTimedOut, setFirstFrameTimedOut] = useState(false);
   const [lease, setLease] = useState<ViewerLeaseClaimResponse | null>(null);
   const [leaseBusy, setLeaseBusy] = useState(false);
   const [leaseErr, setLeaseErr] = useState<ViewerLeaseError | null>(null);
@@ -216,6 +225,8 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
   const runtimeSession = runtimeSessions.find((s) => s.session_id === sid) ?? null;
   const sessionObserved = Boolean(runtimeSession);
   const artifactHealth = runtimeSession?.artifact_health ?? null;
+  // session-preparing（task 5.6）：session 已列於 runtime/status 但 conversion 未達終態。
+  const conversionPreparing = Boolean(sessionObserved && runtimeSession && runtimeSession.conversion_status && runtimeSession.conversion_status !== 'succeeded');
   const modelArtifactStale = artifactHealth?.model_usdc_reachable === false;
   const mappingArtifactStale = artifactHealth?.mapping_reachable === false;
   const artifactHealthSummary = artifactHealth
@@ -235,6 +246,11 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
   const runtimeAliveRef = useRef(true);
   useEffect(() => () => { runtimeAliveRef.current = false; }, []);
   const refreshRuntimeStatus = useCallback(() => {
+    // gpu-unavailable（task 5.6）：kit-manager instances 查詢失敗或無可用 instance 即
+    // 誠實停用啟動鈕；查詢成功才恢復。與 runtime status 同一 refresh 動作重測。
+    void coordinatorClient.kitInstanceCurrent()
+      .then(() => { if (runtimeAliveRef.current) setGpuUnavailable(false); })
+      .catch(() => { if (runtimeAliveRef.current) setGpuUnavailable(true); });
     return coordinatorClient.runtimeStatus()
       .then((rt) => {
         if (!runtimeAliveRef.current) return;
@@ -259,6 +275,8 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
     setSessionId(handoff.sessionId);
     setLease(null);
     setLeaseErr(null);
+    setLeaseExpired(false);
+    setFirstFrameTimedOut(false);
     setFirstFrame(false);
     setDataChannelReady(false);
     setLoadedStageUrl(null);
@@ -280,12 +298,21 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
 
   useEffect(() => {
     if (!activePrimaryLease) return;
-    const heartbeatMs = viewerLeaseHeartbeatDelayMs(activePrimaryLease.heartbeat_after_ms);
+    const heartbeatMs = heartbeatDelayFn(activePrimaryLease.heartbeat_after_ms);
     const timer = window.setInterval(() => {
       void coordinatorClient.viewerLeaseHeartbeat(sid, activePrimaryLease.lease_id, activePrimaryLease.lease_token, {
         loaded_stage_url: loadedStageUrl,
         datachannel_ready: dataChannelReady,
-      }).catch(() => {});
+      }).catch((e) => {
+        // lease-expired（task 5.6）：coordinator 對過期/失效 lease 的 heartbeat 回
+        // 404「Viewer lease not found or token invalid」。轉入可見失效態並清 lease；
+        // 其他 heartbeat 失敗維持既有沉默重試語意，不誤標為過期。
+        const message = String(e);
+        if (/\b404\b/.test(message) && /viewer lease/i.test(message)) {
+          setLease(null);
+          setLeaseExpired(true);
+        }
+      });
     }, heartbeatMs);
     return () => window.clearInterval(timer);
   }, [
@@ -295,14 +322,29 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
     activePrimaryLease?.heartbeat_after_ms,
     dataChannelReady,
     loadedStageUrl,
+    heartbeatDelayFn,
   ]);
 
+  // first-frame-timeout（task 5.6）：claim 成功且 viewer 已掛載，但期限內未收
+  // first_frame 即轉入可見逾時態；首幀到達或 lease/session 變更時清除。
+  const activeLeaseIdForFirstFrame = activePrimaryLease ? activePrimaryLease.lease_id : null;
+  useEffect(() => {
+    if (!activeLeaseIdForFirstFrame || firstFrame) return;
+    const timer = window.setTimeout(() => { setFirstFrameTimedOut(true); }, firstFrameTimeoutMs);
+    return () => { window.clearTimeout(timer); };
+  }, [activeLeaseIdForFirstFrame, firstFrame, firstFrameTimeoutMs]);
+  useEffect(() => {
+    if (firstFrame) setFirstFrameTimedOut(false);
+  }, [firstFrame]);
+
   const claimPrimary = useCallback(async () => {
-    if (!validSession || !viewerOrigin || !sessionObserved || modelArtifactStale || leaseBusy) return;
+    if (!validSession || !viewerOrigin || !sessionObserved || modelArtifactStale || gpuUnavailable || leaseBusy) return;
     const identity = identityRef.current ?? createReviewViewerIdentity(mode);
     identityRef.current = identity;
     setLeaseBusy(true);
     setLeaseErr(null);
+    setLeaseExpired(false);
+    setFirstFrameTimedOut(false);
     setLease(null);
     setFirstFrame(false);
     setDataChannelReady(false);
@@ -323,7 +365,7 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
     } finally {
       setLeaseBusy(false);
     }
-  }, [sid, validSession, viewerOrigin, sessionObserved, modelArtifactStale, leaseBusy, mode]);
+  }, [sid, validSession, viewerOrigin, sessionObserved, modelArtifactStale, gpuUnavailable, leaseBusy, mode]);
 
   const stageText = stageProofStatus === "unproven"
     ? t("unproven（coordinator authority 尚未證實；handoff 已阻擋）", "unproven (coordinator authority is not confirmed; handoff is blocked)")
@@ -468,11 +510,12 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
           <Btn
             primary
             data-testid={manualStartTestId}
-            disabled={!validSession || !viewerOrigin || !sessionObserved || modelArtifactStale || leaseBusy || Boolean(activePrimaryLease)}
+            disabled={!validSession || !viewerOrigin || !sessionObserved || modelArtifactStale || gpuUnavailable || leaseBusy || Boolean(activePrimaryLease)}
             caption={!validSession ? t("需有效 session id", "valid session id required")
               : !viewerOrigin ? t("runtime/status 尚未提供 viewer 入口", "runtime/status has not provided a viewer entry")
               : !sessionObserved ? t("runtime/status 未列出此 session（可能 stale / 已關閉）", "runtime/status does not list this session (possibly stale / closed)")
               : modelArtifactStale ? `model_usdc_reachable=false: ${artifactHealth?.stale_reason ?? "derived_artifact_unreachable"}`
+              : gpuUnavailable ? t("Kit runtime 不可用（instances 查詢失敗或無可用 instance）", "Kit runtime is unavailable (instances query failed or none available)")
               : activePrimaryLease ? t("已 attach primary viewer lease", "primary viewer lease attached")
               : t("POST /api/review-sessions/:id/viewer-leases/claim", "POST /api/review-sessions/:id/viewer-leases/claim")}
             onClick={() => { void claimPrimary(); }}
@@ -514,6 +557,52 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
           <Field k="kit_instance_id" v={activePrimaryLease?.kit_instance_id ?? "—"} prov={activePrimaryLease?.kit_instance_id ? "asbuilt" : "p1"} />
         </div>
         {runtimeErr && <p className="ec-warn-note" data-testid="review-room-runtime-error">{runtimeErr}</p>}
+        {conversionPreparing && (
+          <p className="ec-note" data-testid={`${tidPrefix}-session-preparing`}>
+            {t("此 session 的模型轉檔尚未完成（conversion status: ", "This session's model conversion is not finished yet (conversion status: ")}
+            {runtimeSession?.conversion_status}
+            {t("）；請至 Pipeline 追蹤。", "); track it on the Pipeline page. ")}{" "}
+            <a href="#pipeline">{t("前往 Pipeline", "Go to Pipeline")}</a>
+          </p>
+        )}
+        {gpuUnavailable && (
+          <div className="ec-warn-note" data-testid={`${tidPrefix}-gpu-unavailable`} role="alert" aria-live="assertive">
+            <span>
+              {t(
+                "Kit runtime 不可用（kit-manager instances 查詢失敗或無可用 instance）；啟動已誠實停用。",
+                "Kit runtime is unavailable (the kit-manager instances query failed or no instance is available); start is honestly disabled.",
+              )}
+            </span>{" "}
+            <a href="#runtime">{t("檢視 Runtime", "Inspect Runtime")}</a>
+          </div>
+        )}
+        {leaseExpired && (
+          <div className="ec-warn-note" data-testid={`${tidPrefix}-lease-expired`} role="alert" aria-live="assertive">
+            <span>
+              {t(
+                "viewer lease 已過期（heartbeat 遭 coordinator 拒絕）；不會自動搶佔，請手動重新 claim。",
+                "The viewer lease has expired (the coordinator rejected the heartbeat); nothing is auto-reclaimed - re-claim manually.",
+              )}
+            </span>{" "}
+            <Btn data-testid={`${tidPrefix}-lease-reclaim`} disabled={leaseBusy} onClick={() => { void claimPrimary(); }}>
+              {leaseBusy ? t("重新 claim 中...", "Re-claiming...") : t("重新 claim", "Re-claim")}
+            </Btn>
+          </div>
+        )}
+        {firstFrameTimedOut && !firstFrame && (
+          <div className="ec-warn-note" data-testid={`${tidPrefix}-first-frame-timeout`} role="alert" aria-live="assertive">
+            <span>
+              {t(
+                "串流已建立但期限內未收到首幀；可重試啟動，或至 Runtime 檢視 Kit 診斷。",
+                "The stream is established but no first frame arrived within the deadline; retry the start or inspect Kit diagnostics on Runtime.",
+              )}
+            </span>{" "}
+            <Btn data-testid={`${tidPrefix}-first-frame-retry`} disabled={leaseBusy} onClick={() => { void claimPrimary(); }}>
+              {leaseBusy ? t("重試中...", "Retrying...") : t("重試", "Retry")}
+            </Btn>{" "}
+            <a href="#runtime">{t("檢視 Runtime", "Inspect Runtime")}</a>
+          </div>
+        )}
         {sid === "" && (
           <p className="ec-note" data-testid={`${tidPrefix}-no-session`}>
             {t(

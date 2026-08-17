@@ -38,7 +38,7 @@
 - [x] 5.3 新增FakeKit deterministic one-shot rejection replay；證明production build不能只靠query啟用harness
 - [x] 5.4 trusted `viewer_lease_token`晚到時，只在embedded、stage未matched、selected asset仍可開啟時重排既有deferred-open timer
 - [x] 5.5 補visible rejection、retryable outage、changed-unconfirmed resync/block、one-shot replay、late-token單次恢復、timer replacement與matched-stage不重開tests
-- [ ] 5.6 將viewer origin完整失敗態矩陣接到既有i18n keys；本切片已收斂runtime-command-rejection diagnostics、changed-unconfirmed binding、rejected stage-load，以及2026-08-12新收斂的stage-load-timeout（見下方RED/GREEN證據：兩觸發路徑皆有可見overlay/雙語診斷文案/late-result不覆寫證明，並新增`data-stage-failure-reason`狀態專屬test anchor）。2026-08-17新增收斂no-session、viewer-origin-missing（含refresh動作）、lease-occupied（驗證＋holder-privacy負向斷言）三態（見下方同日期證據）；session-preparing、stream-disconnected、lease-expired、gpu-unavailable、first-frame-timeout共5態仍未逐態驗證，因此checkbox維持open、production/full completion維持no
+- [ ] 5.6 將viewer origin完整失敗態矩陣接到既有i18n keys；本切片已收斂runtime-command-rejection diagnostics、changed-unconfirmed binding、rejected stage-load，以及2026-08-12新收斂的stage-load-timeout（見下方RED/GREEN證據：兩觸發路徑皆有可見overlay/雙語診斷文案/late-result不覆寫證明，並新增`data-stage-failure-reason`狀態專屬test anchor）。2026-08-17兩個切片累計收斂七態：slice-1收no-session、viewer-origin-missing（含refresh動作）、lease-occupied（驗證＋holder-privacy負向斷言）；slice-2收session-preparing（conversion_status非終態→可見note＋#pipeline動作）、gpu-unavailable（kit-manager instances查詢失敗→誠實停用啟動＋#runtime動作）、lease-expired（heartbeat 404 lease拒絕→清lease＋手動re-claim）、first-frame-timeout（90s與stage-load busy-poll上限對齊，逾時→重試＋#runtime診斷）——各含RED→GREEN focused DOM tests（見下方同日期證據）。僅stream-disconnected一態未驗證（需viewer側WebRTC斷線postMessage協定新增，涉及`docs/contracts/streaming-datachannel-events.md`契約面，另切片處理），checkbox維持open、production/full completion維持no
 
 ## 6. Wiring與可自動合併文件
 
@@ -94,3 +94,13 @@
 - **回歸驗證**：focused 13/13；全套`npx vitest run` 79 test files／1083 tests全過（零回歸）；`npm run typecheck`（tsc --noEmit）通過；`npx eslint`（changed 2檔）0 errors／4 warnings且與main基線逐項相同（fast-refresh×2＋既有effect exhaustive-deps×2，零新增）。
 - **GitNexus**：`gitnexus impact "Function:web-viewer-sample/src/console/ReviewSessionViewerPane.tsx:ReviewSessionViewerPane" -d upstream`＝HIGH（6 impacted、3 direct callers：A1GovernanceWorkbenchPage／pages.tsx／VersionDiffPage），exact epistemic；已依HIGH警示流程揭露並以純additive設計＋全套迴歸緩解。
 - **範圍裁決**：本輪收斂3態（累計7/12）；session-preparing（需conversion status判定接線）、stream-disconnected（需WebRTC斷線偵測）、lease-expired（heartbeat失敗目前被靜默吞掉，需失效偵測）、gpu-unavailable（需kit-manager instances查詢）、first-frame-timeout（需啟動計時器）共5態需要新行為，未經本輪驗證，5.6維持open、production/full completion維持no。
+
+## 2026-08-17 Task 5.6 slice-2：session-preparing／gpu-unavailable／lease-expired／first-frame-timeout 四態收斂證據
+
+- **範圍**：`ReviewSessionViewerPane.tsx` 矩陣第8–11態；additive（新增3個state、1個derived flag、2個timer/probe effect、4個可見區塊），不動claim/highlight/batch既有邏輯與testid。
+- **資料源與行為**：session-preparing讀runtime summary的`conversion_status`（非null且非`succeeded`即顯示status原文＋`#pipeline`連結）；gpu-unavailable由`kitInstanceCurrent()`（`/api/kit/instances/current`）查詢失敗觸發，manual start誠實disabled＋caption＋`#runtime`連結，refresh動作同步重測；lease-expired由heartbeat catch分類（`/404/`＋`/viewer lease/i`對應coordinator「Viewer lease not found or token invalid」）→清lease＋`*-lease-reclaim`手動re-claim，其他heartbeat失敗維持既有沉默重試不誤標；first-frame-timeout以`firstFrameTimeoutMs`（預設90_000，與stage-load-timeout的90×1s busy-poll上限對齊）計時，首幀到達即清除，逾時顯示`*-first-frame-retry`＋`#runtime`診斷連結。
+- **測試縫**：`heartbeatDelayFn` prop預設綁定f4統一政策`viewerLeaseHeartbeatDelayMs`（結構不變式測試改釘default綁定原文）；`firstFrameTimeoutMs` prop供測試注入。A1/A2模式測試檔補`kitInstanceCurrent` mock。
+- **RED→GREEN**：6條新focused DOM tests（preparing正負、gpu-unavailable、lease-expired過期→re-claim恢復、fftimeout逾時→retry、首幀到達防誤報）RED階段4條因行為不存在而失敗；GREEN後pane suite 19/19。
+- **回歸驗證**：全套`npx vitest run` 80 files／1093 tests全過；`tsc --noEmit`零錯；eslint changed files 0 errors／5 warnings（基線4＋新增1條與既有兩條同類的刻意窄依賴`exhaustive-deps`，narrow deps by design避免timer每render重掛）。
+- **除錯教訓（已入memory）**：python字串`''`經shell heredoc注入成字面backspace（0x08）使regex永不匹配且grep/sed顯示隱形——控制字元regex一律顯式`chr(92)+'b'`寫入並以repr驗證。
+- **範圍裁決**：累計11/12態；stream-disconnected需viewer→parent的WebRTC斷線協定訊息（`Window.tsx`＋`EmbeddedViewer`＋datachannel契約文件），5.6維持open、production/full completion維持no。
