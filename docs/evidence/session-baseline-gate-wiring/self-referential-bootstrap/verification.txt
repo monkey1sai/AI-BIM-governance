@@ -1,0 +1,39 @@
+stack_kind=self_referential_bootstrap
+pr=553
+base=80a388f2b813c5197262a01408f77d3e64435e73
+contract=session-baseline-gate-wiring/v1
+contract_sha256=162a3860faff807ce6b9ab6b763940afcd4c97c60cbf31d596342ceab589bdc5
+result=pass
+
+command_id=test-measure-session-baseline
+command=pwsh -NoProfile -NonInteractive -File scripts/tests/test-measure-session-baseline.ps1
+result=ALL PASSED (unit + fail-safe + schema + registry consistency + downstream validator CLI)
+exit_code=0
+
+command_id=test-agent-governance-check
+command=pwsh -NoProfile -NonInteractive -File scripts/tests/test-agent-governance-check.ps1
+result=all assertions passed
+exit_code=0
+
+command_id=test-verification-plan
+command=node --test scripts/tests/test-verification-plan.mjs scripts/tests/test-verification-command-policy.mjs scripts/tests/test-verification-runner.mjs
+result=33/33 tests passed
+exit_code=0
+
+command_id=test-self-referential-bootstrap
+command=pwsh -NoProfile -NonInteractive -File scripts/tests/test-self-referential-bootstrap.ps1
+result=all assertions passed (new entry + new immutable command map key validated)
+exit_code=0
+
+command_id=test-pr-body-evidence
+command=pwsh -NoProfile -NonInteractive -File scripts/tests/test-pr-body-evidence.ps1
+result=all assertions passed
+exit_code=0
+
+command_id=invoke-powershell-static
+command=pwsh -NoProfile -NonInteractive -File scripts/tests/invoke-powershell-static.ps1
+result=passed
+exit_code=0
+
+note=Commands were replayed in contract order inside the dedicated worktree after the workflow step, ledger entry, and command-map key were authored.
+privacy=No credential, private topology, production metadata, or external runtime identifier is recorded.
