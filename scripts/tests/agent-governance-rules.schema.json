@@ -1,0 +1,118 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://ai-bim-governance.local/schemas/agent-governance-rules.json",
+  "title": "Agent Governance Policy rule document",
+  "description": "Repository governance rules as data. The rule KIND vocabulary is closed on purpose: adding a kind edits scripts/lib/agent-governance-policy.psm1, which is a mechanism-surface change, while adding a rule instance is not. There is deliberately no regex_matches kind.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "purpose", "rules", "retired"],
+  "properties": {
+    "$schema": { "type": "string" },
+    "schema_version": { "const": "agent-governance-rules/v1" },
+    "purpose": { "type": "string", "minLength": 1 },
+    "rules": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/definitions/rule" }
+    },
+    "retired": {
+      "type": "array",
+      "items": { "$ref": "#/definitions/retirement" }
+    }
+  },
+  "definitions": {
+    "severity": { "enum": ["error", "warning"] },
+    "expectation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["pointer"],
+      "properties": {
+        "pointer": { "type": "string" },
+        "exists": { "type": "boolean" },
+        "is_null": { "type": "boolean" },
+        "equals": { "type": "string" },
+        "one_of": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+        "contains": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+        "starts_with": { "type": "string", "minLength": 1 }
+      }
+    },
+    "rule": {
+      "type": "object",
+      "required": ["id", "kind", "severity", "title"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
+        "kind": {
+          "enum": [
+            "file_exists",
+            "json_schema",
+            "json_node",
+            "yaml_node",
+            "yaml_every",
+            "codeowners_owns"
+          ]
+        },
+        "severity": { "$ref": "#/definitions/severity" },
+        "title": { "type": "string", "minLength": 1 },
+        "replaces": {
+          "type": "string",
+          "description": "The assertion(s) in test-agent-governance-check.ps1 this rule supersedes, so the wiring PR can delete exactly those lines."
+        },
+        "paths": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+        "path": { "type": "string", "minLength": 1 },
+        "schema": { "type": "string", "minLength": 1 },
+        "pointer": { "type": "string" },
+        "exists": { "type": "boolean" },
+        "is_null": { "type": "boolean" },
+        "equals": { "type": "string" },
+        "one_of": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+        "contains": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+        "starts_with": { "type": "string", "minLength": 1 },
+        "collection": { "type": "string", "minLength": 1 },
+        "where": { "$ref": "#/definitions/expectation" },
+        "require": { "$ref": "#/definitions/expectation" },
+        "pattern": { "type": "string", "minLength": 1 },
+        "owners": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+        "exactly": { "type": "boolean" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "kind": { "const": "file_exists" } }, "required": ["kind"] },
+          "then": { "required": ["paths"] }
+        },
+        {
+          "if": { "properties": { "kind": { "const": "json_schema" } }, "required": ["kind"] },
+          "then": { "required": ["path", "schema"] }
+        },
+        {
+          "if": { "properties": { "kind": { "const": "json_node" } }, "required": ["kind"] },
+          "then": { "required": ["path", "pointer"] }
+        },
+        {
+          "if": { "properties": { "kind": { "const": "yaml_node" } }, "required": ["kind"] },
+          "then": { "required": ["path", "pointer"] }
+        },
+        {
+          "if": { "properties": { "kind": { "const": "yaml_every" } }, "required": ["kind"] },
+          "then": { "required": ["path", "collection", "require"] }
+        },
+        {
+          "if": { "properties": { "kind": { "const": "codeowners_owns" } }, "required": ["kind"] },
+          "then": { "required": ["path", "pattern", "owners"] }
+        }
+      ]
+    },
+    "retirement": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Fields mirror the ARCH-EXC-001 exception record in architecture/README.md: a removal is a declared decision with an owner, not a silent edit.",
+      "required": ["rule_id", "owner", "reason", "pr", "retired_on"],
+      "properties": {
+        "rule_id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
+        "owner": { "type": "string", "minLength": 1 },
+        "reason": { "type": "string", "minLength": 1 },
+        "pr": { "type": "integer", "minimum": 1 },
+        "retired_on": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$" }
+      }
+    }
+  }
+}
