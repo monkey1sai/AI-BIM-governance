@@ -488,7 +488,8 @@
       "bootstrap_evidence_refs": [
         "docs/evidence/windows-tier-lib-modules/self-referential-bootstrap/README.md",
         "docs/evidence/windows-tier-lib-modules/self-referential-bootstrap/verification.txt"
-      ]
+      ],
+      "fixpoint": null
     }
   ]
 }
