@@ -1362,9 +1362,9 @@
       "id": "implement-runtime-command-authority-and-rejection",
       "status": "active",
       "owner": "bim-review-coordinator",
-      "current_slice": "5.6 stage-load-timeout closed 2026-08-12 (data-stage-failure-reason test anchor, RED->GREEN, 1072/1072 suite, typecheck+changed-file lint clean). Checkbox stays open: 8/12 viewer-origin failure states (no-session/session-preparing/viewer-origin-missing/lease-occupied/stream-disconnected/lease-expired/gpu-unavailable/first-frame-timeout) unverified. production/full completion=no.",
+      "current_slice": "5.6 三態收斂 2026-08-17（no-session／viewer-origin-missing＋refresh 動作／lease-occupied holder-privacy 斷言；RED→GREEN focused DOM tests，全套 79 files／1083 tests 零回歸，typecheck＋changed-file eslint 與 main 基線相同）。累計 7/12 態；checkbox 維持 open：session-preparing/stream-disconnected/lease-expired/gpu-unavailable/first-frame-timeout 5 態需新行為（conversion status 判定、WebRTC 斷線偵測、heartbeat 失效偵測、kit-manager 查詢、啟動計時器）未驗證。production/full completion=no.",
       "blocked_by": [],
-      "last_verified": "2026-08-12T02:29:23Z",
+      "last_verified": "2026-08-17T06:20:00Z",
       "task_ledger": {
         "completed": 31,
         "total": 35
@@ -1373,7 +1373,7 @@
         "openspec/changes/implement-runtime-command-authority-and-rejection/proposal.md",
         "openspec/changes/implement-runtime-command-authority-and-rejection/tasks.md"
       ],
-      "subject_commit": "cba626587c6cc50000e35050988c29208c8246ac",
+      "subject_commit": "35d6672ff92c131855499157537c8c63e410898e",
       "archive_debt": null
     },
     {
