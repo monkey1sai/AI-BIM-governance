@@ -13,6 +13,11 @@ if (-not (Get-Command -Name 'Resolve-PlatformVenvPython' -ErrorAction SilentlyCo
 if (-not (Get-Command -Name 'Get-DeployTargetForCurrentPlatform' -ErrorAction SilentlyContinue)) {
     . (Join-Path $PSScriptRoot 'deploy-target-registry.ps1')
 }
+# Launch-time OS containment boundary (issue #522). Guarded like the adapters so
+# this lib stays dot-sourceable standalone in tests.
+if (-not (Get-Command -Name 'Test-HostNativeJobBoundarySupported' -ErrorAction SilentlyContinue)) {
+    . (Join-Path $PSScriptRoot 'host-native-job-boundary.ps1')
+}
 
 function Resolve-HostNativePython {
     # Single interpreter-selection rule for every host-native service. The three
@@ -194,9 +199,36 @@ function Stop-HostNativeService {
         [scriptblock] $StopProcessFn = {
             param($procId)
             Stop-Process -Id $procId -Force -ErrorAction SilentlyContinue
+        },
+        # Job-first stop (issue #522): when the launch recorded a job boundary,
+        # membership - not PPID discovery - is the containment authority.
+        [scriptblock] $JobStopFn = {
+            param($jobName)
+            Stop-HostNativeJobBoundary -Name $jobName -TimeoutMs 5000
         }
     )
     $pidFile = Join-Path $RunDir "$Name.pid"
+    $jobFile = Join-Path $RunDir "$Name.job"
+
+    # Job-first: a recorded boundary makes the stop authoritative. Found+Proven
+    # terminated the whole membership set; Found=$false is proven-dead by
+    # construction (the anchor handle lives exactly as long as the root, so a
+    # missing job means no member survived). An unproven survivor THROWS inside
+    # Stop-HostNativeJobBoundary - deliberately not swallowed here. A run whose
+    # platform cannot open jobs (Supported=$false) falls through to the sweep.
+    if (Test-Path -LiteralPath $jobFile) {
+        $jobName = (Get-Content -LiteralPath $jobFile -ErrorAction SilentlyContinue | Select-Object -First 1)
+        if ($jobName) {
+            $jobReport = & $JobStopFn ([string]$jobName.Trim())
+            if ($jobReport.Supported) {
+                Remove-Item -LiteralPath $jobFile -Force -ErrorAction SilentlyContinue
+                Remove-Item -LiteralPath $pidFile -Force -ErrorAction SilentlyContinue
+                return $true
+            }
+        }
+        Remove-Item -LiteralPath $jobFile -Force -ErrorAction SilentlyContinue
+    }
+
     if (-not (Test-Path -LiteralPath $pidFile)) { return $false }
     $raw = Get-Content -LiteralPath $pidFile -ErrorAction SilentlyContinue | Select-Object -First 1
     $procId = 0
@@ -239,6 +271,18 @@ function Start-HostNativeService {
         [scriptblock] $SleepFn = {
             param($milliseconds)
             Start-Sleep -Milliseconds $milliseconds
+        },
+        # Launch-time containment boundary ops (issue #522). Injectable as ONE
+        # table so tests can prove ordering and the failure contract without a
+        # real kernel object. Keys: Supported / Create / Assign / Anchor /
+        # Terminate / Close - all required when the table is replaced.
+        [hashtable] $JobBoundaryOps = @{
+            Supported = { Test-HostNativeJobBoundarySupported }
+            Create    = { param($jobName) New-HostNativeJobBoundary -Name $jobName }
+            Assign    = { param($handle, $childId) Add-HostNativeJobBoundaryProcess -Handle $handle -ProcessId ([int]$childId) }
+            Anchor    = { param($handle, $childId) Grant-HostNativeJobBoundaryAnchor -Handle $handle -ProcessId ([int]$childId) }
+            Terminate = { param($handle) Stop-HostNativeJobBoundaryHandle -Handle $handle }
+            Close     = { param($handle) Close-HostNativeJobBoundary -Handle $handle }
         }
     )
 
@@ -248,6 +292,7 @@ function Start-HostNativeService {
     $logFile = Join-Path $RunDir "$Name.log"
     $errFile = "$logFile.err"
     $pidFile = Join-Path $RunDir "$Name.pid"
+    $jobFile = Join-Path $RunDir "$Name.job"
 
     # Off Windows the service must OUTLIVE the session that started it: a remote
     # deploy runs over SSH, and a service that dies at disconnect makes the whole
@@ -287,6 +332,39 @@ function Start-HostNativeService {
     # "PID=" as [ok] and only the health probe noticed, 30 seconds later.
     if (-not $proc -or -not $proc.Id) {
         throw "$Name did not start: '$launchExe' produced no process (workdir=$WorkingDirectory, stderr=$errFile)."
+    }
+
+    # Launch-time containment boundary (issue #522), Windows only. Ordering is
+    # load-bearing and happens BEFORE the detach probe so the pre-membership
+    # window stays as small as Start-Process allows:
+    #   create(named, kill-on-close) -> assign(child) -> anchor(duplicate the
+    #   job handle INTO the child) -> close(our handle).
+    # After the anchor the child's duplicated handle keeps the job alive, so
+    # the deploy session exiting does not kill the service, while the root
+    # dying reaps every remaining descendant via kill-on-close. A service this
+    # launcher cannot contain must not run: any boundary failure terminates
+    # the just-started tree and throws. POSIX keeps the setsid path unchanged
+    # (real boundary tracked in #517).
+    Remove-Item -LiteralPath $jobFile -Force -ErrorAction SilentlyContinue
+    if ([bool](& $JobBoundaryOps.Supported)) {
+        $jobName = Get-HostNativeJobBoundaryName -Name $Name
+        $jobHandle = & $JobBoundaryOps.Create $jobName
+        $boundaryEstablished = $false
+        try {
+            & $JobBoundaryOps.Assign $jobHandle $proc.Id
+            & $JobBoundaryOps.Anchor $jobHandle $proc.Id
+            $boundaryEstablished = $true
+        }
+        finally {
+            if (-not $boundaryEstablished) {
+                # Terminate reaps whatever DID make it into the job; the direct
+                # stop covers the assign-failed case where the child is outside.
+                try { & $JobBoundaryOps.Terminate $jobHandle } catch { }
+                try { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue } catch { }
+            }
+            & $JobBoundaryOps.Close $jobHandle
+        }
+        Set-Content -LiteralPath $jobFile -Value $jobName -Encoding ascii
     }
     # Verify the detachment actually happened rather than assuming it. If setsid
     # forked instead of exec'ing, the PID we are about to record is not the
@@ -538,8 +616,12 @@ function Stop-HostNativeProcessTreeAndWait {
     #     platform that re-parents orphans the link vanishes outright once the
     #     parent dies. Only an OS boundary established at LAUNCH - a Windows Job
     #     Object, or a POSIX process group / cgroup - makes containment
-    #     inescapable (#517, and the follow-up that moves Start-HostNativeService
-    #     onto one).
+    #     inescapable. #522 landed that boundary on Windows (named kill-on-close
+    #     Job Objects for services via Start-HostNativeService, anonymous ones
+    #     for bounded children via Invoke-HostNativeBoundedProcess), so this
+    #     sweep is now the FALLBACK for processes launched without a boundary
+    #     and for platforms without Job Objects (#517 tracks the POSIX cgroup
+    #     boundary).
     #
     # So a caller gets "this sweep proved what it could see, or it threw" - never
     # "nothing survived". Releasing a trust boundary on the strength of a silent
@@ -844,49 +926,20 @@ function Start-HostNativeKitManager {
         [Parameter(Mandatory = $true)][AllowEmptyString()][string] $KitControlUrl,
         [ValidateRange(1, 300)][int] $ImportProbeTimeoutSec = 30,
         [scriptblock] $ImportProbeFn = {
+            # Bounded child on the launch-time containment boundary (#522):
+            # Invoke-HostNativeBoundedProcess runs the probe inside a
+            # kill-on-close Job Object on Windows and keeps the prior
+            # Stop-HostNativeProcessTreeAndWait sweep + fail-closed disclosure
+            # where Job Objects do not exist (POSIX boundary: #517).
             param($PythonExe, $TimeoutSec)
-            $importProcess = $null
-            $terminationFailure = $null
-            $importExitCode = -1
-            try {
-                $importStartInfo = [System.Diagnostics.ProcessStartInfo]::new()
-                $importStartInfo.FileName = $PythonExe
-                $importStartInfo.UseShellExecute = $false
-                $importStartInfo.RedirectStandardOutput = $true
-                $importStartInfo.RedirectStandardError = $true
-                [void]$importStartInfo.ArgumentList.Add('-c')
-                [void]$importStartInfo.ArgumentList.Add('import fastapi, uvicorn')
-                $importProcess = [System.Diagnostics.Process]::new()
-                $importProcess.StartInfo = $importStartInfo
-                if (-not $importProcess.Start()) {
-                    throw 'Kit Manager import probe process did not start.'
-                }
-                $stdoutTask = $importProcess.StandardOutput.ReadToEndAsync()
-                $stderrTask = $importProcess.StandardError.ReadToEndAsync()
-                if (-not $importProcess.WaitForExit($TimeoutSec * 1000)) {
-                    try {
-                        Stop-HostNativeProcessTreeAndWait -Process $importProcess -TimeoutMs 5000
-                    }
-                    catch {
-                        $terminationFailure = $_
-                    }
-                }
-                else {
-                    $null = $stdoutTask.GetAwaiter().GetResult()
-                    $null = $stderrTask.GetAwaiter().GetResult()
-                    $importExitCode = $importProcess.ExitCode
-                }
+            $probe = Invoke-HostNativeBoundedProcess `
+                -FilePath $PythonExe `
+                -ArgumentList @('-c', 'import fastapi, uvicorn') `
+                -TimeoutSec ([int]$TimeoutSec)
+            if ($null -ne $probe.TerminationFailure) {
+                throw "Kit Manager import probe timed out and its process tree exit could not be proven: $($probe.TerminationFailure.Exception.Message)"
             }
-            catch {
-                $importExitCode = -1
-            }
-            finally {
-                if ($null -ne $importProcess) { $importProcess.Dispose() }
-            }
-            if ($null -ne $terminationFailure) {
-                throw "Kit Manager import probe timed out and its process tree exit could not be proven: $($terminationFailure.Exception.Message)"
-            }
-            return $importExitCode
+            return $probe.ExitCode
         },
         [scriptblock] $LocalAddressProbeFn = {
             param($HostName)

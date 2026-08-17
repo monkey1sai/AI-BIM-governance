@@ -499,6 +499,52 @@
       }
     },
     {
+      "id": "host-native-job-boundary",
+      "status": "closed",
+      "pr": 573,
+      "opened_at": "2026-08-17T10:46:50Z",
+      "reason": "the canonical deployment transport consumes only freshly fetched origin/main, so this branch cannot exercise its changed service launcher, stop path, and containment boundary as canonical post-change evidence before merge; only a post-merge canonical Linux rebuild plus a mainline contract replay can establish the boundary as a fixpoint",
+      "verification_mechanism_paths": [
+        "scripts/deploy.ps1",
+        "scripts/lib/host-native-launcher.ps1",
+        "scripts/self-referential-bootstrap-ledger.json"
+      ],
+      "verification_contract": {
+        "id": "host-native-job-boundary/v1",
+        "command_ids": [
+          "test-host-native-launcher",
+          "test-host-native-child-launch",
+          "test-platform-adapter",
+          "test-deploy-governance-static",
+          "test-verify-all",
+          "test-preflight-ports",
+          "test-kit-log-probe",
+          "test-deploy-target-registry",
+          "test-rebuild-test-deploy",
+          "test-remote-deploy-transport",
+          "test-host-native-conversion-service",
+          "test-self-referential-bootstrap",
+          "test-agent-governance-check",
+          "invoke-powershell-static",
+          "canonical-linux-rebuild",
+          "canonical-linux-deployment-verify"
+        ],
+        "contract_sha256": "fc5b3467646fc0953f88fceef16bf854dc18eb7f80d007b79d463b4bacb0b60a"
+      },
+      "bootstrap_evidence_refs": [
+        "docs/evidence/host-native-job-boundary/self-referential-bootstrap/README.md",
+        "docs/evidence/host-native-job-boundary/self-referential-bootstrap/verification.txt"
+      ],
+      "fixpoint": {
+        "reverified_at": "2026-08-17T11:17:02Z",
+        "mechanism_commit": "ef7518037d41b3d11800ee841e353d315c085c2c",
+        "evidence_refs": [
+          "docs/evidence/host-native-job-boundary/fixpoint/attestation.json",
+          "docs/evidence/host-native-job-boundary/fixpoint/summary.md"
+        ]
+      }
+    },
+    {
       "id": "agent-governance-policy-wiring",
       "status": "open",
       "pr": 572,
