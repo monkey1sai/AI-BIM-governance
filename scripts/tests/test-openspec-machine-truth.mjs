@@ -441,6 +441,114 @@ test('typed archive debt may be inherited unchanged from a previous archived led
   }, [archived]);
 });
 
+test('historical archive debt may be adjudicated permanent when counts and owner are unchanged', () => {
+  const archived = machineChange('alpha', 'archived', 0, 1);
+  archived.archive_debt = {
+    reason: 'permanent_historical_task_ledger_debt',
+    unchecked_tasks: 1,
+    unsupported_checkboxes: 0,
+    owner: 'repository-maintainer',
+    adjudicated_on: '2026-08-17',
+  };
+  archived.evidence_refs = [
+    'openspec/changes/archive/2026-07-28-alpha/proposal.md',
+    'openspec/changes/archive/2026-07-28-alpha/tasks.md',
+  ];
+  withWorkspace((input) => {
+    const directory = path.join(input.repoRoot, 'openspec', 'changes', 'archive', '2026-07-28-alpha');
+    write(path.join(directory, 'proposal.md'), '> **Status: adopted 2026-07-28** — completed.\n');
+    write(path.join(directory, 'tasks.md'), '- [ ] historical debt\n');
+    input.previousLedger = structuredClone(input.ledger);
+    input.previousLedger.changes[0].archive_debt = {
+      reason: 'historical_task_ledger_debt',
+      unchecked_tasks: 1,
+      unsupported_checkboxes: 0,
+      owner: 'repository-maintainer',
+      review_due: '2026-08-31',
+    };
+    const report = evaluateOpenSpecMachineTruth(input);
+    assert.equal(report.result, 'consistent_with_accepted_debt');
+    assert.equal(report.summary.archive_debt_count, 1);
+
+    const inherited = structuredClone(input);
+    inherited.previousLedger = structuredClone(input.ledger);
+    const inheritedReport = evaluateOpenSpecMachineTruth(inherited);
+    assert.equal(inheritedReport.result, 'consistent_with_accepted_debt');
+  }, [archived]);
+});
+
+test('permanence adjudication with drifted counts or a fresh permanent debt stays unproven', () => {
+  const archived = machineChange('alpha', 'archived', 0, 1);
+  archived.archive_debt = {
+    reason: 'permanent_historical_task_ledger_debt',
+    unchecked_tasks: 1,
+    unsupported_checkboxes: 0,
+    owner: 'repository-maintainer',
+    adjudicated_on: '2026-08-17',
+  };
+  archived.evidence_refs = [
+    'openspec/changes/archive/2026-07-28-alpha/proposal.md',
+    'openspec/changes/archive/2026-07-28-alpha/tasks.md',
+  ];
+  withWorkspace((input) => {
+    const directory = path.join(input.repoRoot, 'openspec', 'changes', 'archive', '2026-07-28-alpha');
+    write(path.join(directory, 'proposal.md'), '> **Status: adopted 2026-07-28** — completed.\n');
+    write(path.join(directory, 'tasks.md'), '- [ ] historical debt\n');
+    const drifted = structuredClone(input);
+    drifted.previousLedger = structuredClone(input.ledger);
+    drifted.previousLedger.changes[0].archive_debt = {
+      reason: 'historical_task_ledger_debt',
+      unchecked_tasks: 2,
+      unsupported_checkboxes: 0,
+      owner: 'repository-maintainer',
+      review_due: '2026-08-31',
+    };
+    const driftedReport = evaluateOpenSpecMachineTruth(drifted);
+    assert.ok(driftedReport.mismatches.some(({ reason }) => reason === 'archive_debt_unproven'));
+
+    const fresh = structuredClone(input);
+    fresh.previousLedger = structuredClone(input.ledger);
+    fresh.previousLedger.changes[0].archive_debt = null;
+    fresh.previousLedger.changes[0].task_ledger = { completed: 1, total: 1 };
+    const freshReport = evaluateOpenSpecMachineTruth(fresh);
+    assert.ok(freshReport.mismatches.some(({ reason }) => reason === 'archive_debt_unproven'));
+  }, [archived]);
+});
+
+test('permanent archive debt rejects a review_due key and historical debt rejects adjudicated_on', () => {
+  const permanent = machineChange('alpha', 'archived', 0, 1);
+  permanent.archive_debt = {
+    reason: 'permanent_historical_task_ledger_debt',
+    unchecked_tasks: 1,
+    unsupported_checkboxes: 0,
+    owner: 'repository-maintainer',
+    review_due: '2026-08-31',
+  };
+  permanent.evidence_refs = [
+    'openspec/changes/archive/2026-07-28-alpha/proposal.md',
+    'openspec/changes/archive/2026-07-28-alpha/tasks.md',
+  ];
+  withWorkspace((input) => {
+    assert.throws(() => evaluateOpenSpecMachineTruth(input), /archive_debt/u);
+  }, [permanent]);
+
+  const historical = machineChange('beta', 'archived', 0, 1);
+  historical.archive_debt = {
+    reason: 'historical_task_ledger_debt',
+    unchecked_tasks: 1,
+    unsupported_checkboxes: 0,
+    owner: 'repository-maintainer',
+    adjudicated_on: '2026-08-17',
+  };
+  historical.evidence_refs = [
+    'openspec/changes/archive/2026-07-28-beta/proposal.md',
+    'openspec/changes/archive/2026-07-28-beta/tasks.md',
+  ];
+  withWorkspace((input) => {
+    assert.throws(() => evaluateOpenSpecMachineTruth(input), /archive_debt/u);
+  }, [historical]);
+});
+
 test('every archive identity is tracked once in the ledger', () => {
   withWorkspace((input) => {
     const first = path.join(input.repoRoot, 'openspec', 'changes', 'archive', '2026-07-28-orphan');
