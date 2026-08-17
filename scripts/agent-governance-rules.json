@@ -1,0 +1,573 @@
+{
+  "$schema": "./tests/agent-governance-rules.schema.json",
+  "schema_version": "agent-governance-rules/v1",
+  "purpose": "Repository governance rules as data. Adding a governance capability adds a rule here; it does not edit scripts/lib/agent-governance-policy.psm1. Rules may be added or tightened freely; removing one or downgrading its severity requires a matching `retired` record and is otherwise rejected by the ratchet.",
+  "rules": [
+    {
+      "id": "governance-surface-present",
+      "kind": "file_exists",
+      "severity": "error",
+      "title": "every governance-surface file the contract names is present",
+      "replaces": "test-agent-governance-check.ps1:131-256",
+      "paths": [
+        ".github/ISSUE_TEMPLATE/config.yml",
+        ".github/ISSUE_TEMPLATE/agent-task.yml",
+        ".github/ISSUE_TEMPLATE/runtime-bug.yml",
+        ".github/ISSUE_TEMPLATE/governance-change.yml",
+        ".github/CODEOWNERS",
+        ".github/workflows/ci.yml",
+        ".github/workflows/agent-governance.yml",
+        ".github/workflows/governance-trust-root.yml",
+        ".github/workflows/trusted-elevated-merge.yml",
+        ".github/workflows/pr-review-agent.yml",
+        ".github/PULL_REQUEST_TEMPLATE.md",
+        "scripts/tests/check-pr-body-evidence.ps1",
+        "scripts/tests/test-pr-body-evidence.ps1",
+        "scripts/lib/production-boundary-contract.ps1",
+        "scripts/tests/test-production-boundary-contract.ps1",
+        "tests/contracts/element-mapping-provenance.schema.json",
+        "web-viewer-sample/playwright.kit-manager.config.ts",
+        "web-viewer-sample/e2e/kit-manager-operator.spec.ts",
+        "scripts/tests/verify-openspec-lifecycle.ps1",
+        "scripts/tests/test-openspec-lifecycle-archive-diff.ps1",
+        "scripts/lib/openspec-lifecycle.ps1",
+        "scripts/tests/reconcile-openspec-ledger.ps1",
+        "scripts/tests/openspec-lifecycle-ledger.schema.json",
+        "scripts/tests/openspec-ledger-reconciliation-report.schema.json",
+        "scripts/tests/test-openspec-ledger-reconciliation.ps1",
+        "openspec/lifecycle-ledger.json",
+        "scripts/lib/openspec-machine-truth.mjs",
+        "scripts/lib/collect-openspec-github-state.mjs",
+        "scripts/lib/gitnexus-worktree-health.mjs",
+        "scripts/dev/trusted-host-merge.mjs",
+        "scripts/lib/trusted-host-merge-contract.mjs",
+        "scripts/lib/trusted-host-merge-evidence.mjs",
+        "scripts/lib/trusted-host-merge-executor.mjs",
+        "scripts/lib/trusted-host-merge-runtime.mjs",
+        "scripts/lib/trusted-host-merge.mjs",
+        "scripts/tests/test-trusted-host-merge.mjs",
+        "scripts/tests/test-trusted-host-merge-runtime.mjs",
+        "scripts/tests/fixtures/trusted-host-merge-machine-fixtures.json",
+        "agent-contracts/trusted-host-merge.contract.json",
+        "agent-contracts/trusted-host-merge.contract.schema.json",
+        "agent-contracts/trusted-host-merge-assertion.schema.json",
+        "agent-contracts/trusted-host-merge-evidence.schema.json",
+        "agent-contracts/trusted-host-merge-verdict.schema.json",
+        "agent-contracts/trusted-host-merge-result.schema.json",
+        "scripts/dev/report-gitnexus-worktree-health.mjs",
+        "scripts/lib/task-packet.mjs",
+        "scripts/dev/validate-task-packet.mjs",
+        "scripts/tests/verify-openspec-machine-truth.mjs",
+        "scripts/tests/test-openspec-machine-truth.mjs",
+        "scripts/tests/test-openspec-machine-truth-cli.mjs",
+        "scripts/tests/test-collect-openspec-github-state.mjs",
+        "scripts/tests/test-gitnexus-worktree-health.mjs",
+        "scripts/tests/gitnexus-worktree-health-observation.schema.json",
+        "scripts/tests/gitnexus-worktree-health-report.schema.json",
+        "scripts/tests/task-packet.schema.json",
+        "scripts/tests/test-task-packet.mjs",
+        "scripts/tests/openspec-github-lifecycle-state.schema.json",
+        "scripts/tests/openspec-machine-truth-report.schema.json",
+        "scripts/tests/fixtures/task-ledger-parity.json",
+        "scripts/tests/test-task-ledger-parser-parity.mjs",
+        "scripts/lib/design-system-gate.ps1",
+        "scripts/tests/verify-design-system-reference.ps1",
+        "scripts/tests/test-design-system-reference.ps1",
+        "scripts/tests/test-design-system-change-scope.ps1",
+        "scripts/tests/verify-functional-runtime-result.ps1",
+        "scripts/tests/test-functional-runtime-result.ps1",
+        "scripts/tests/verify-design-system-visual-result.ps1",
+        "scripts/tests/test-design-system-visual-result.ps1",
+        "scripts/tests/test-png-preflight.mjs",
+        "web-viewer-sample/scripts/lib/png-preflight.mjs",
+        "scripts/verification-manifest.json",
+        "scripts/lib/verification-plan.mjs",
+        "scripts/lib/verification-runner.mjs",
+        "scripts/lib/verification-outcome.mjs",
+        "scripts/lib/verification-command-policy.mjs",
+        "scripts/lib/security-exceptions.mjs",
+        "scripts/lib/security-exceptions-cli.mjs",
+        "scripts/security-exceptions.json",
+        "scripts/ai-coding-metrics-policy.json",
+        "scripts/lib/ai-coding-metrics.mjs",
+        "scripts/dev/record-ai-coding-telemetry.mjs",
+        "scripts/dev/report-ai-coding-metrics.mjs",
+        "scripts/tests/test-verification-plan.mjs",
+        "scripts/tests/test-verification-command-policy.mjs",
+        "scripts/tests/test-verification-runner.mjs",
+        "scripts/tests/test-security-exceptions.mjs",
+        "scripts/tests/verify-security-exceptions.ps1",
+        "scripts/tests/invoke-powershell-static.ps1",
+        "scripts/tests/scan-secret-patterns.ps1",
+        "scripts/tests/verification-manifest.schema.json",
+        "scripts/tests/verification-plan.schema.json",
+        "scripts/tests/verification-outcome.schema.json",
+        "scripts/tests/security-exceptions.schema.json",
+        "scripts/tests/ai-coding-metrics-policy.schema.json",
+        "scripts/tests/ai-coding-telemetry-observation.schema.json",
+        "scripts/tests/ai-coding-metrics-report.schema.json",
+        "scripts/tests/test-ai-coding-metrics.mjs",
+        "scripts/tests/fixtures/ai-coding-telemetry-observation.json",
+        "scripts/tests/fixtures/ai-coding-metrics-report.json",
+        "docs/plans/design-system-reference.manifest.json",
+        "scripts/tests/fixtures/agent-governance-routing.json",
+        ".gitignore",
+        ".ignore",
+        ".gitnexusignore",
+        "agent-skills-manifest.json",
+        "scripts/dev/sync-agent-skills.ps1",
+        "scripts/tests/test-agent-skills-sync.ps1",
+        ".codex/skills/ai-bim-fast-fix/SKILL.md",
+        ".codex/skills/ai-bim-bounded-change/SKILL.md",
+        ".codex/skills/repo-health/SKILL.md",
+        ".codex/skills/spec-to-done/agents/openai.yaml",
+        "agent-contracts/spec-to-done.contract.json",
+        "agent-contracts/spec-to-done.contract.schema.json",
+        ".claude/skills/spec-to-done/validate-state.mjs",
+        ".claude/skills/spec-to-done/ensure-host-native-ports-free.ps1",
+        ".codex/skills/spec-to-done/ensure-host-native-ports-free.ps1",
+        ".claude/workflows/std-evidence-closeout.js",
+        "docs/agents/superpowers-invocation-policy.md",
+        "docs/agents/ai-coding-metrics.md",
+        "docs/PR_REVIEW_AGENT.md",
+        "docs/superpowers/plans/2026-06-18-ai-coding-maturity-governance.md",
+        "openspec/AGENTS.md"
+      ]
+    },
+    {
+      "id": "verification-manifest-schema",
+      "kind": "json_schema",
+      "severity": "error",
+      "title": "verification-manifest.json satisfies its Draft-07 schema",
+      "replaces": "test-agent-governance-check.ps1:321",
+      "path": "scripts/verification-manifest.json",
+      "schema": "scripts/tests/verification-manifest.schema.json"
+    },
+    {
+      "id": "ai-coding-metrics-policy-schema",
+      "kind": "json_schema",
+      "severity": "error",
+      "title": "ai-coding-metrics-policy.json satisfies its Draft-07 schema",
+      "replaces": "test-agent-governance-check.ps1:347",
+      "path": "scripts/ai-coding-metrics-policy.json",
+      "schema": "scripts/tests/ai-coding-metrics-policy.schema.json"
+    },
+    {
+      "id": "ai-coding-telemetry-fixture-schema",
+      "kind": "json_schema",
+      "severity": "error",
+      "title": "ai-coding-telemetry-observation.json satisfies its Draft-07 schema",
+      "replaces": "test-agent-governance-check.ps1:370",
+      "path": "scripts/tests/fixtures/ai-coding-telemetry-observation.json",
+      "schema": "scripts/tests/ai-coding-telemetry-observation.schema.json"
+    },
+    {
+      "id": "ai-coding-metrics-report-fixture-schema",
+      "kind": "json_schema",
+      "severity": "error",
+      "title": "ai-coding-metrics-report.json satisfies its Draft-07 schema",
+      "replaces": "test-agent-governance-check.ps1:375",
+      "path": "scripts/tests/fixtures/ai-coding-metrics-report.json",
+      "schema": "scripts/tests/ai-coding-metrics-report.schema.json"
+    },
+    {
+      "id": "trusted-host-merge-contract-schema",
+      "kind": "json_schema",
+      "severity": "error",
+      "title": "trusted-host-merge.contract.json satisfies its Draft-07 schema",
+      "replaces": "test-agent-governance-check.ps1:530",
+      "path": "agent-contracts/trusted-host-merge.contract.json",
+      "schema": "agent-contracts/trusted-host-merge.contract.schema.json"
+    },
+    {
+      "id": "quality-policy-service-targets",
+      "kind": "json_node",
+      "severity": "error",
+      "title": "quality policy covers every service target",
+      "replaces": "test-agent-governance-check.ps1:332-334",
+      "path": "scripts/verification-manifest.json",
+      "pointer": "quality_policy.service_targets",
+      "contains": [
+        "coordinator",
+        "viewer",
+        "kit-manager-api",
+        "kit-manager-web"
+      ]
+    },
+    {
+      "id": "coverage-rejects-whole-repository-percentage",
+      "kind": "json_node",
+      "severity": "error",
+      "title": "coverage policy publishes no whole-repository vanity percentage",
+      "replaces": "test-agent-governance-check.ps1:335",
+      "path": "scripts/verification-manifest.json",
+      "pointer": "quality_policy.coverage.whole_repository_percentage",
+      "is_null": true
+    },
+    {
+      "id": "attestation-scope-deployables-only",
+      "kind": "json_node",
+      "severity": "error",
+      "title": "attestation policy excludes test evidence",
+      "replaces": "test-agent-governance-check.ps1:336",
+      "path": "scripts/verification-manifest.json",
+      "pointer": "artifact_policy.attestation_scope",
+      "equals": "deployables-only"
+    },
+    {
+      "id": "e2e-evidence-not-attested",
+      "kind": "json_node",
+      "severity": "error",
+      "title": "screenshots and traces stay hash/commit evidence rather than attested deployables",
+      "replaces": "test-agent-governance-check.ps1:337",
+      "path": "scripts/verification-manifest.json",
+      "pointer": "artifact_policy.excluded_globs",
+      "contains": [
+        "artifacts/e2e/**"
+      ]
+    },
+    {
+      "id": "metrics-authority-self-change-full-dispatch",
+      "kind": "json_node",
+      "severity": "error",
+      "title": "AI coding metric authority self-change triggers full dispatch",
+      "replaces": "test-agent-governance-check.ps1:338-344, 365, 1200",
+      "path": "scripts/verification-manifest.json",
+      "pointer": "full_dispatch_globs",
+      "contains": [
+        "scripts/ai-coding-metrics-policy.json",
+        "scripts/lib/ai-coding-metrics.mjs",
+        "scripts/tests/test-ai-coding-metrics.mjs",
+        ".gitignore",
+        "skills-lock.json"
+      ]
+    },
+    {
+      "id": "powershell-class-covers-modules",
+      "kind": "json_node",
+      "severity": "error",
+      "title": "shared manifest PowerShell class includes script modules",
+      "replaces": "test-agent-governance-check.ps1:382-383",
+      "path": "scripts/verification-manifest.json",
+      "pointer": "path_classes[id=powershell-static].path_globs",
+      "contains": [
+        "scripts/**/*.psm1"
+      ]
+    },
+    {
+      "id": "rebuild-class-covers-struct-logger",
+      "kind": "json_node",
+      "severity": "error",
+      "title": "shared manifest rebuild class includes the structured logger module",
+      "replaces": "test-agent-governance-check.ps1:384-385",
+      "path": "scripts/verification-manifest.json",
+      "pointer": "path_classes[id=rebuild-test-deploy].path_globs",
+      "contains": [
+        "scripts/lib/StructLog.psm1"
+      ]
+    },
+    {
+      "id": "root-contract-trigger-closure",
+      "kind": "json_node",
+      "severity": "error",
+      "title": "root contract trigger closure covers every service owner path",
+      "replaces": "test-agent-governance-check.ps1:386-389",
+      "path": "scripts/verification-manifest.json",
+      "pointer": "path_classes[id=root-contracts].path_globs",
+      "contains": [
+        "bim-review-coordinator/**",
+        "bim-streaming-server/**",
+        "governance-service/**",
+        "web-viewer-sample/**",
+        "services/kit-manager-api/**",
+        "apps/kit-manager-web/**"
+      ]
+    },
+    {
+      "id": "agent-governance-target-binds-required-context",
+      "kind": "json_node",
+      "severity": "error",
+      "title": "shared manifest binds Agent Governance to the surviving required context",
+      "replaces": "test-agent-governance-check.ps1:330-331",
+      "path": "scripts/verification-manifest.json",
+      "pointer": "targets[id=agent-governance].ci_job",
+      "equals": "agent-governance"
+    },
+    {
+      "id": "metrics-telemetry-only",
+      "kind": "json_node",
+      "severity": "error",
+      "title": "AI coding metrics remain telemetry-only",
+      "replaces": "test-agent-governance-check.ps1:348",
+      "path": "scripts/ai-coding-metrics-policy.json",
+      "pointer": "authority",
+      "equals": "telemetry_only"
+    },
+    {
+      "id": "metrics-immutable-epoch",
+      "kind": "json_node",
+      "severity": "error",
+      "title": "AI coding metrics baseline has an immutable no-backfill epoch",
+      "replaces": "test-agent-governance-check.ps1:349",
+      "path": "scripts/ai-coding-metrics-policy.json",
+      "pointer": "baseline.started_on",
+      "equals": "2026-07-28"
+    },
+    {
+      "id": "metrics-zero-retry",
+      "kind": "json_node",
+      "severity": "error",
+      "title": "required merge truth has zero retry",
+      "replaces": "test-agent-governance-check.ps1:353",
+      "path": "scripts/ai-coding-metrics-policy.json",
+      "pointer": "merge_truth.required_retry_count",
+      "equals": "0"
+    },
+    {
+      "id": "metrics-not-merge-authority",
+      "kind": "json_node",
+      "severity": "error",
+      "title": "telemetry cannot become merge authority",
+      "replaces": "test-agent-governance-check.ps1:354",
+      "path": "scripts/ai-coding-metrics-policy.json",
+      "pointer": "merge_truth.telemetry_is_merge_authority",
+      "equals": "False"
+    },
+    {
+      "id": "metrics-baseline-window",
+      "kind": "json_node",
+      "severity": "error",
+      "title": "metrics require four weeks before setting targets",
+      "replaces": "test-agent-governance-check.ps1:355",
+      "path": "scripts/ai-coding-metrics-policy.json",
+      "pointer": "baseline.minimum_days",
+      "equals": "28"
+    },
+    {
+      "id": "metrics-no-improvement-targets",
+      "kind": "json_node",
+      "severity": "error",
+      "title": "metrics declare no improvement targets before the baseline window closes",
+      "replaces": "test-agent-governance-check.ps1:355",
+      "path": "scripts/ai-coding-metrics-policy.json",
+      "pointer": "baseline.improvement_targets",
+      "is_null": true
+    },
+    {
+      "id": "metrics-unattested-provenance",
+      "kind": "json_node",
+      "severity": "error",
+      "title": "caller timestamps cannot claim a trusted baseline",
+      "replaces": "test-agent-governance-check.ps1:356",
+      "path": "scripts/ai-coding-metrics-policy.json",
+      "pointer": "baseline.capture_provenance",
+      "equals": "unattested"
+    },
+    {
+      "id": "metrics-readiness-gate",
+      "kind": "json_node",
+      "severity": "error",
+      "title": "baseline readiness requires hosted capture attestation",
+      "replaces": "test-agent-governance-check.ps1:357",
+      "path": "scripts/ai-coding-metrics-policy.json",
+      "pointer": "baseline.readiness_gate",
+      "equals": "hosted-attested-capture-required"
+    },
+    {
+      "id": "metrics-retention-bounded",
+      "kind": "json_node",
+      "severity": "error",
+      "title": "raw telemetry retention is bounded",
+      "replaces": "test-agent-governance-check.ps1:358",
+      "path": "scripts/ai-coding-metrics-policy.json",
+      "pointer": "retention.raw_observations_days",
+      "equals": "35"
+    },
+    {
+      "id": "metrics-retention-not-claimed",
+      "kind": "json_node",
+      "severity": "error",
+      "title": "raw telemetry retention enforcement is not falsely claimed",
+      "replaces": "test-agent-governance-check.ps1:359",
+      "path": "scripts/ai-coding-metrics-policy.json",
+      "pointer": "retention.enforcement",
+      "equals": "not_configured"
+    },
+    {
+      "id": "metrics-retention-blocker",
+      "kind": "json_node",
+      "severity": "error",
+      "title": "raw telemetry retention has a closed hosted blocker",
+      "replaces": "test-agent-governance-check.ps1:360",
+      "path": "scripts/ai-coding-metrics-policy.json",
+      "pointer": "retention.not_configured_reason",
+      "equals": "hosted-retention-unverified"
+    },
+    {
+      "id": "telemetry-privacy-forbidden-fields",
+      "kind": "json_node",
+      "severity": "error",
+      "title": "telemetry privacy policy forbids every identifying field",
+      "replaces": "test-agent-governance-check.ps1:366-368",
+      "path": "scripts/ai-coding-metrics-policy.json",
+      "pointer": "privacy.forbidden_fields",
+      "contains": [
+        "prompt",
+        "source",
+        "user",
+        "args",
+        "env",
+        "cwd",
+        "stdout",
+        "stderr",
+        "path",
+        "repository",
+        "actor"
+      ]
+    },
+    {
+      "id": "classifier-guard-on-every-dependent-job",
+      "kind": "yaml_every",
+      "severity": "error",
+      "title": "every job depending on the changed-path classifier fails closed when it did not succeed",
+      "replaces": "test-agent-governance-check.ps1:315",
+      "path": ".github/workflows/ci.yml",
+      "collection": "jobs",
+      "where": {
+        "pointer": "if",
+        "starts_with": "always() && (needs.changes.result != 'success'"
+      },
+      "require": {
+        "pointer": "steps.0.name",
+        "equals": "Require changed-path classifier success"
+      }
+    },
+    {
+      "id": "classifier-guard-condition",
+      "kind": "yaml_every",
+      "severity": "error",
+      "title": "the classifier guard fires exactly when the classifier did not succeed",
+      "replaces": "test-agent-governance-check.ps1:315",
+      "path": ".github/workflows/ci.yml",
+      "collection": "jobs",
+      "where": {
+        "pointer": "if",
+        "starts_with": "always() && (needs.changes.result != 'success'"
+      },
+      "require": {
+        "pointer": "steps.0.if",
+        "equals": "needs.changes.result != 'success'"
+      }
+    },
+    {
+      "id": "agent-governance-suite-runs-the-static-check",
+      "kind": "yaml_every",
+      "severity": "error",
+      "title": "the Agent Governance suite still invokes the governance static check",
+      "replaces": "test-agent-governance-check.ps1:267-274",
+      "path": ".github/workflows/agent-governance.yml",
+      "collection": "jobs.suite.steps",
+      "where": {
+        "pointer": "name",
+        "equals": "Run governance static check"
+      },
+      "require": {
+        "pointer": "run",
+        "equals": "pwsh -NoProfile -NonInteractive -File scripts/tests/test-agent-governance-check.ps1"
+      }
+    },
+    {
+      "id": "agent-governance-suite-pins-node",
+      "kind": "yaml_every",
+      "severity": "error",
+      "title": "the Agent Governance suite pins its Node.js toolchain",
+      "replaces": "test-agent-governance-check.ps1:267-274",
+      "path": ".github/workflows/agent-governance.yml",
+      "collection": "jobs.suite.steps",
+      "where": {
+        "pointer": "name",
+        "equals": "Setup pinned Node.js for governance tests"
+      },
+      "require": {
+        "pointer": "with.node-version",
+        "equals": "20.20.2"
+      }
+    },
+    {
+      "id": "agent-governance-suite-runs-on-windows",
+      "kind": "yaml_node",
+      "severity": "error",
+      "title": "the Agent Governance suite runs on the canonical Windows runner",
+      "replaces": "test-agent-governance-check.ps1:291",
+      "path": ".github/workflows/agent-governance.yml",
+      "pointer": "jobs.suite.runs-on",
+      "equals": "windows-latest"
+    },
+    {
+      "id": "agent-governance-steps-use-pwsh",
+      "kind": "yaml_every",
+      "severity": "error",
+      "title": "every executing step in the Agent Governance suite runs under PowerShell 7",
+      "replaces": "test-agent-governance-check.ps1:466-473",
+      "path": ".github/workflows/agent-governance.yml",
+      "collection": "jobs.suite.steps",
+      "where": {
+        "pointer": "run",
+        "exists": true
+      },
+      "require": {
+        "pointer": "shell",
+        "equals": "pwsh"
+      }
+    },
+    {
+      "id": "blank-issues-disabled",
+      "kind": "yaml_node",
+      "severity": "error",
+      "title": "blank GitHub issues are disabled",
+      "replaces": "test-agent-governance-check.ps1:258",
+      "path": ".github/ISSUE_TEMPLATE/config.yml",
+      "pointer": "blank_issues_enabled",
+      "equals": "false"
+    },
+    {
+      "id": "agent-task-template-labels",
+      "kind": "yaml_node",
+      "severity": "error",
+      "title": "the agent task template carries the agent-ready triage label",
+      "replaces": "test-agent-governance-check.ps1:259-262",
+      "path": ".github/ISSUE_TEMPLATE/agent-task.yml",
+      "pointer": "labels",
+      "contains": [
+        "agent-ready",
+        "needs-triage"
+      ]
+    },
+    {
+      "id": "governance-change-template-label",
+      "kind": "yaml_node",
+      "severity": "error",
+      "title": "the governance change template carries the agent workflow label",
+      "replaces": "test-agent-governance-check.ps1:264",
+      "path": ".github/ISSUE_TEMPLATE/governance-change.yml",
+      "pointer": "labels",
+      "contains": [
+        "agent-workflow"
+      ]
+    },
+    {
+      "id": "codeowners-wildcard-fallback",
+      "kind": "codeowners_owns",
+      "severity": "error",
+      "title": "CODEOWNERS has a fixed human reviewer wildcard fallback",
+      "replaces": "test-agent-governance-check.ps1:266, 581",
+      "path": ".github/CODEOWNERS",
+      "pattern": "*",
+      "owners": [
+        "@monkey1sai-blip"
+      ],
+      "exactly": true
+    }
+  ],
+  "retired": []
+}
