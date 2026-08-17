@@ -9,6 +9,8 @@ Console內嵌viewport與viewer origin頁 SHALL各自實作下列失敗態，每�
 > Task 5.6 partial progress（2026-08-12）：stage-load-timeout已收斂並由RED→GREEN focused DOM tests驗證——45s排程deadline與90×1s busy-poll上限兩觸發路徑皆有可見overlay（zh/en title/target/diagnostic/guidance）、late-result不覆寫既有失敗terminal，並新增`data-stage-failure-reason="stage-load-timeout"`狀態專屬test anchor（與其他stage-load失敗共用的`data-testid="stage-load-failure"`區隔）。核心可見行為（overlay/診斷文案/late-result）實為2026-08-04 PR #463／#468既已落地但未同步勾選的doc-drift，本輪為獨立重驗+新增test anchor，詳見`tasks.md`同日期證據段落。no-session、session-preparing、viewer-origin-missing、lease-occupied、stream-disconnected、lease-expired、gpu-unavailable、first-frame-timeout共8態仍未逐態驗證，5.6維持OPEN，本change不得宣稱production/full completion。
 >
 > Task 5.6 partial progress（2026-08-17）：no-session、viewer-origin-missing、lease-occupied三態已收斂並由RED→GREEN focused DOM tests驗證——no-session有`data-testid`專屬錨點＋「尚未附掛 review session」zh/en文案＋session選擇器可行動作；viewer-origin-missing改為常駐條件render（role=alert）並新增「重新整理 runtime status」動作（`*-viewer-origin-refresh`）；lease-occupied驗證既有generic 409呈現並加入holder-privacy負向斷言（不得命中lease_/viewer_/nonce/stream/display_name/holder）。session-preparing、stream-disconnected、lease-expired、gpu-unavailable、first-frame-timeout共5態仍未逐態驗證（各需新行為：conversion status判定、WebRTC斷線偵測、heartbeat失效偵測、kit-manager查詢、啟動計時器），5.6維持OPEN，本change不得宣稱production/full completion。
+>
+> Task 5.6 partial progress（2026-08-17 slice-2）：session-preparing、gpu-unavailable、lease-expired、first-frame-timeout四態已收斂並由RED→GREEN focused DOM tests驗證（conversion_status非終態note＋#pipeline；instances查詢失敗誠實停用＋#runtime；heartbeat 404 lease拒絕→手動re-claim；90s首幀計時→重試＋診斷）。僅stream-disconnected一態未驗證（需viewer側WebRTC斷線postMessage協定，另切片），5.6維持OPEN，本change不得宣稱production/full completion。
 
 | 態 | 觸發條件（可判定） | 畫面/文案要點 | 可行動作 |
 |---|---|---|---|
