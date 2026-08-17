@@ -25,6 +25,7 @@ import { isBlockedLifecycle, lifecycleStatusText, sameStreamEndpoint, sameStream
 // collaboration events」)。
 import { BimControlClient } from "./clients/bimControlClient";
 import { CoordinatorClient, CoordinatorHttpError, isQueuedForInstanceError } from "./clients/coordinatorClient";
+import { viewerLeaseHeartbeatDelayMs } from "./clients/viewerLeaseHeartbeat";
 import {
     connectReviewSocket,
     type ReviewSocketAck,
@@ -2958,7 +2959,7 @@ export default class App extends React.Component<AppProps, AppState> {
     private _scheduleStandaloneViewerLeaseHeartbeat(sessionId: string, lease: StandaloneViewerLease): void {
         this._clearStandaloneViewerLeaseHeartbeat();
         if (!this.componentMounted) return;
-        const delayMs = Math.max(1_000, lease.heartbeat_after_ms);
+        const delayMs = viewerLeaseHeartbeatDelayMs(lease.heartbeat_after_ms);
         this.standaloneViewerLeaseHeartbeatId = window.setTimeout(() => {
             this.standaloneViewerLeaseHeartbeatId = null;
             void this._heartbeatStandaloneViewerLease(sessionId, lease);
