@@ -44,7 +44,7 @@ PINNED_FINDING_STATUS = {
     "f1-page-registry": "open",
     "f2-session-view-read-model": "open",
     "f3-rule-run-triplication": "open",
-    "f4-viewer-lease-fork": "open",
+    "f4-viewer-lease-fork": "refactored",
     "f5-unified-fixtures": "open",
 }
 PINNED_PROMOTIONS = frozenset(
@@ -130,7 +130,7 @@ def test_canonical_quality_report_grades_b_with_attributed_debt() -> None:
     }
     # Attributed debt exists today, so the honest grade is B, not A. Closing
     # debt to reach A must show up here as a deliberate pin edit.
-    assert debt["learning_open_findings"] == 9
+    assert debt["learning_open_findings"] == 8
     assert report.total_debt > 0
     assert report.grade == "B"
 
