@@ -1,0 +1,33 @@
+{
+  "schema_version": "self-referential-fixpoint-attestation/v1",
+  "entry_id": "session-baseline-gate-wiring",
+  "mechanism_commit": "54f07f555133a2542f64fde4001fa9ff6b2785b1",
+  "verification_contract_sha256": "162a3860faff807ce6b9ab6b763940afcd4c97c60cbf31d596342ceab589bdc5",
+  "result": "pass",
+  "commands": [
+    {
+      "id": "test-measure-session-baseline",
+      "exit_code": 0
+    },
+    {
+      "id": "test-agent-governance-check",
+      "exit_code": 0
+    },
+    {
+      "id": "test-verification-plan",
+      "exit_code": 0
+    },
+    {
+      "id": "test-self-referential-bootstrap",
+      "exit_code": 0
+    },
+    {
+      "id": "test-pr-body-evidence",
+      "exit_code": 0
+    },
+    {
+      "id": "invoke-powershell-static",
+      "exit_code": 0
+    }
+  ]
+}
