@@ -4,9 +4,9 @@
 
 ## 1. 基準與盤點
 
-- [ ] 1.1 在本 change worktree 對 `origin/main` 建立當前行為 baseline：跑 `governance-service` pytest（A4 相關）、`bim-review-coordinator` `npm run verify`、`web-viewer-sample` `npm run typecheck && npm run test`，記錄通過數與既有失敗，作為調和後的對照基準。
-- [ ] 1.2 產出 126 個衝突 hunk 的逐檔清單與分類（後端契約／前端結構／test／文件），標記每處的調和方向（取 main／取 convergence／兩者聯集），清單存 `artifacts/a4-console-convergence/conflict-plan.md`。
-- [ ] 1.3 對 `A4SemanticSearchPage`、`governanceClient`、`engine.search`、`proofs` 執行 `gitnexus impact -d upstream -r AI-BIM-governance`，HIGH／CRITICAL 須在 PR body 揭露補強策略；index stale 且已取得 current-turn re-index 授權時跑 `npx gitnexus@1.6.9 analyze --index-only`，否則依 `docs/agents/gitnexus-usage.md` 走 unavailable gate。
+- [x] 1.1 在本 change worktree 對 `origin/main` 建立當前行為 baseline：跑 `governance-service` pytest（A4 相關）、`bim-review-coordinator` `npm run verify`、`web-viewer-sample` `npm run typecheck && npm run test`，記錄通過數與既有失敗，作為調和後的對照基準。
+- [x] 1.2 產出衝突 hunk 的逐檔清單與分類（2026-08-17 重測為 27 檔／153 hunks，原 126 為 2026-07 快照）（後端契約／前端結構／test／文件），標記每處的調和方向（取 main／取 convergence／兩者聯集），清單存 `artifacts/a4-console-convergence/conflict-plan.md`。**2026-08-17 完成**：baseline 三件全綠（governance A4 相關 183 passed／coordinator verify 857 passed／viewer typecheck+1080 tests passed；venv 缺 openpyxl 的 8 個 collection error 已修復並記錄）；conflict-plan.md 含 27 檔逐檔調和方向與分類彙總；impact 現值全 LOW 但 `createCoordinatorApp` 與歷史 CRITICAL 紀錄不符，已明文要求實作輪 re-index 重測、未重測前依 CRITICAL 對待。
+- [x] 1.3 對 `A4SemanticSearchPage`、`governanceClient`、`engine.search`、`proofs` 執行 `gitnexus impact -d upstream -r AI-BIM-governance`，HIGH／CRITICAL 須在 PR body 揭露補強策略；index stale 且已取得 current-turn re-index 授權時跑 `npx gitnexus@1.6.9 analyze --index-only`，否則依 `docs/agents/gitnexus-usage.md` 走 unavailable gate。
 
 ## 2. 後端契約調和（以 main 為基準）
 
