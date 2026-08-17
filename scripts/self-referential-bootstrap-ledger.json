@@ -468,7 +468,7 @@
     },
     {
       "id": "windows-tier-lib-modules",
-      "status": "open",
+      "status": "closed",
       "pr": 570,
       "opened_at": "2026-08-17T09:33:05Z",
       "reason": "this PR changes scripts/lib/windows-verification-scope.ps1, the checker that decides how much Windows verification evidence every other PR owes; the branch can only exercise the new classification with the changed checker itself, so no pre-merge run can prove that what merges is what gets enforced, and only a post-merge run from main closes that gap",
@@ -489,7 +489,14 @@
         "docs/evidence/windows-tier-lib-modules/self-referential-bootstrap/README.md",
         "docs/evidence/windows-tier-lib-modules/self-referential-bootstrap/verification.txt"
       ],
-      "fixpoint": null
+      "fixpoint": {
+        "reverified_at": "2026-08-17T10:21:17Z",
+        "mechanism_commit": "655f1f9687b12874a1cbf4434006916bd16a2893",
+        "evidence_refs": [
+          "docs/evidence/windows-tier-lib-modules/fixpoint/attestation.json",
+          "docs/evidence/windows-tier-lib-modules/fixpoint/summary.md"
+        ]
+      }
     }
   ]
 }
