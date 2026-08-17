@@ -135,9 +135,12 @@
       "recorded_on": "2026-07-30",
       "pattern": "duplicate-capability-implementations",
       "area": "web-viewer-sample viewer lease client",
-      "summary": "As recorded in the 2026-07-30 round: two lease client implementations diverged (heartbeat floor 1000 vs 5000); assessed highest-risk of the frontend set. The server-side lease lifecycle is now pinned by ARCH-LIFECYCLE-001; the client fork remains open.",
-      "status": "open",
-      "resolution": null
+      "summary": "As recorded in the 2026-07-30 round: two lease client implementations diverged (heartbeat floor 1000 vs 5000); assessed highest-risk of the frontend set. The server-side lease lifecycle is now pinned by ARCH-LIFECYCLE-001; the client fork is closed: both clients consume the shared viewerLeaseHeartbeatDelayMs policy (floor 5000, default 15000) with a structural test pinning the invariant.",
+      "status": "refactored",
+      "resolution": {
+        "kind": "refactor",
+        "reference": "fix/f4-viewer-lease-heartbeat-unify (2026-08-17 round): src/clients/viewerLeaseHeartbeat.ts + structural test"
+      }
     },
     {
       "id": "f5-unified-fixtures",

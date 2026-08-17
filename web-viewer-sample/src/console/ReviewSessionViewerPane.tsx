@@ -1,6 +1,7 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
 import { Btn, Field, Panel } from "./components";
 import { coordinatorClient, type RuntimeSessionSummary, type ViewerLeaseClaimResponse } from "./coordinatorClient";
+import { viewerLeaseHeartbeatDelayMs } from "../clients/viewerLeaseHeartbeat";
 import { EmbeddedViewer, type EmbeddedViewerHandle, type HighlightItem, type HighlightResultMessage } from "./EmbeddedViewer";
 import { t } from "./i18n";
 import { getLocalDevUserCarrier } from "./localDevPrincipal";
@@ -279,7 +280,7 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
 
   useEffect(() => {
     if (!activePrimaryLease) return;
-    const heartbeatMs = Math.max(5000, activePrimaryLease.heartbeat_after_ms || 15000);
+    const heartbeatMs = viewerLeaseHeartbeatDelayMs(activePrimaryLease.heartbeat_after_ms);
     const timer = window.setInterval(() => {
       void coordinatorClient.viewerLeaseHeartbeat(sid, activePrimaryLease.lease_id, activePrimaryLease.lease_token, {
         loaded_stage_url: loadedStageUrl,
