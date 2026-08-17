@@ -8,7 +8,7 @@
 
 ## Why bootstrap evidence is required
 
-本 PR 修改 required Agent Governance workflow（新增 session-baseline gate step），並依 issue #520 裁決的升級規則，把先前被判定為非 mechanism surface 的量測 harness（`scripts/lib/measure-session-baseline.ps1`、root CLI `scripts/measure-session-baseline.ps1`、`scripts/validate-session-baseline-report.ps1`）於接進 gate 的同一 PR 補登為 mechanism surface（tri-adversarial round-2 finding TG-539-01）。
+本 PR 修改 required Agent Governance workflow（新增 session-baseline gate step）與 bootstrap adjudicator 的 immutable command map（tri-adversarial round-2 finding TG-539-01）。依 gate 的 entry-claim 規則，entry 的 mechanism paths 僅登記本 PR 實際改動的 adjudicator surface（workflow／ledger／command map）；量測 harness 檔案本身未在本 PR 改動，其 gate 化保護由新 command map 鍵（固定 invocation）與新 suite step 承擔，issue #520 升級規則的 surface 補登延後到未來實際修改 harness 檔案的 PR。
 
 Merge 之前 GitHub 只能以 base workflow 作為既定機制執行；該機制無法證明新 gate step 會以 mainline 行為執行量測 harness、root CLI 與 downstream report validator suite。本分支因此記錄 bounded bootstrap evidence；它不是 canonical 部署證據，也不關閉 ledger entry。Merge 後必須自 main 重跑精確 verification contract，並以 ledger-only fixpoint PR 關帳。
 
