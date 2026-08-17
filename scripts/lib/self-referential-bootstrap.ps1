@@ -62,11 +62,11 @@ $script:SelfReferentialMechanismPattern = @(
     '^scripts/lib/openspec-lifecycle\.ps1$'
     '^scripts/lib/openspec-machine-truth\.mjs$'
     '^scripts/tests/(invoke-powershell-static|scan-secret-patterns)\.ps1$'
-    # The Agent Governance Policy module and its adjudicating gate decide whether the
-    # machine-readable governance surface holds, and the behaviour suite carries the PINNED
-    # vocabulary and load-bearing fingerprints. The rule DATA file is deliberately NOT here:
-    # adding a rule must stay debt-free; removals and downgrades are held by the rule ratchet
-    # inside verify-governance-policy.ps1 (§2.1 upgrade rule, wired by the same PR).
+    # The Agent Governance Policy module, its machine-readable rules, and its adjudicating
+    # gate decide whether the governance surface holds; changing any of them can change the
+    # required-check verdict. The behaviour suite carries the PINNED vocabulary and
+    # load-bearing fingerprints.
+    '^scripts/agent-governance-rules\.json$'
     '^scripts/lib/agent-governance-policy\.psm1$'
     '^scripts/tests/verify-governance-policy\.ps1$'
     '^scripts/tests/test-agent-governance-policy\.ps1$'

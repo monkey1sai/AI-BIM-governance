@@ -546,10 +546,13 @@
     },
     {
       "id": "agent-governance-policy-wiring",
-      "status": "closed",
+      "status": "open",
       "pr": 572,
       "opened_at": "2026-08-17T10:43:02Z",
       "reason": "this PR rewires the required agent-governance adjudication suite: it adds the governance-policy gate and behaviour suite as required steps, deletes the 182 text assertions the rule document supersedes, and registers the module surface in the mechanism classification; the branch is judged by the surface it edits, so only a post-merge fixpoint replay from main can prove the wired mechanism against itself",
+      "repair_prs": [
+        579
+      ],
       "verification_mechanism_paths": [
         ".github/workflows/agent-governance.yml",
         "scripts/self-referential-bootstrap-ledger.json",
@@ -573,14 +576,37 @@
         "docs/evidence/agent-governance-policy-wiring/self-referential-bootstrap/README.md",
         "docs/evidence/agent-governance-policy-wiring/self-referential-bootstrap/verification.txt"
       ],
-      "fixpoint": {
-        "reverified_at": "2026-08-17T12:38:53Z",
-        "mechanism_commit": "8b647d3492d50f02b2bdaa8b20f3f0670dfd7998",
-        "evidence_refs": [
-          "docs/evidence/agent-governance-policy-wiring/fixpoint/attestation.json",
-          "docs/evidence/agent-governance-policy-wiring/fixpoint/summary.md"
-        ]
-      }
+      "fixpoint": null
+    },
+    {
+      "id": "agent-governance-policy-trust-boundary",
+      "status": "open",
+      "pr": 579,
+      "opened_at": "2026-08-17T12:58:44Z",
+      "reason": "repairing the governance-policy classifier also requires the separate trusted-host merge contract to classify the rule document and policy module as human-critical; that contract path is outside the original open entry surface, so this linked successor records the additional self-referential mechanism obligation without widening its predecessor",
+      "successor_of": "agent-governance-policy-wiring",
+      "verification_mechanism_paths": [
+        "scripts/self-referential-bootstrap-ledger.json",
+        "agent-contracts/trusted-host-merge.contract.json"
+      ],
+      "verification_contract": {
+        "id": "agent-governance-policy-trust-boundary/v1",
+        "command_ids": [
+          "verify-governance-policy",
+          "test-agent-governance-policy",
+          "test-agent-governance-check",
+          "test-self-referential-bootstrap",
+          "test-pr-body-evidence",
+          "invoke-powershell-static",
+          "test-trusted-host-merge"
+        ],
+        "contract_sha256": "050a2d2b9a7bea7c80f98480a7295da5b44f7a08b2c6c4aac4d21dfd41529396"
+      },
+      "bootstrap_evidence_refs": [
+        "docs/evidence/agent-governance-policy-trust-boundary/self-referential-bootstrap/README.md",
+        "docs/evidence/agent-governance-policy-trust-boundary/self-referential-bootstrap/verification.txt"
+      ],
+      "fixpoint": null
     }
   ]
 }

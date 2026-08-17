@@ -1,0 +1,40 @@
+agent-governance-policy-trust-boundary — pre-merge verification
+
+stack_kind : self_referential_bootstrap
+pr         : 579
+base       : 8b647d3492d50f02b2bdaa8b20f3f0670dfd7998
+date       : 2026-08-17
+
+Repair transition:
+- agent-governance-policy-wiring stays open and appends repair_prs [579].
+- agent-governance-policy-trust-boundary is born open and links to that predecessor.
+- The successor owns only the ledger plus the outside-surface trusted-host merge contract.
+- The prior closure evidence is absent from the final base-to-head diff.
+
+Classifier probes:
+- scripts/agent-governance-rules.json                         matched exactly
+- scripts/Agent-governance-rules.json                        not matched
+- scripts/agent-governance-rules.json.bak                    not matched
+- scripts/archive/agent-governance-rules.json                not matched
+- trusted-host mechanism policy covers the rule document and policy module.
+
+Ordered verification contract replay on the candidate worktree:
+
+1. pwsh -NoProfile -NonInteractive -File scripts/tests/verify-governance-policy.ps1
+   37 rules, 0 error, 0 warning; passed; exit 0
+2. pwsh -NoProfile -NonInteractive -File scripts/tests/test-agent-governance-policy.ps1
+   all 106 assertions passed; exit 0
+3. pwsh -NoProfile -NonInteractive -File scripts/tests/test-agent-governance-check.ps1
+   all assertions passed; exit 0
+4. pwsh -NoProfile -NonInteractive -File scripts/tests/test-self-referential-bootstrap.ps1
+   all assertions passed; exit 0
+5. pwsh -NoProfile -NonInteractive -File scripts/tests/test-pr-body-evidence.ps1
+   all assertions passed; exit 0
+6. pwsh -NoProfile -NonInteractive -File scripts/tests/invoke-powershell-static.ps1
+   passed; exit 0
+7. node --test scripts/tests/test-trusted-host-merge.mjs scripts/tests/test-trusted-host-merge-runtime.mjs
+   45 tests: 44 passed, 1 platform-specific skip, 0 failed; exit 0
+
+Known boundary: these pre-merge runs prove the candidate contract and regression guards. They do
+not close either open entry; each entry still requires its own post-merge fixpoint attestation in
+oldest-root-first order.
