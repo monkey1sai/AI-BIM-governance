@@ -397,7 +397,7 @@
     },
     {
       "id": "session-baseline-gate-wiring",
-      "status": "open",
+      "status": "closed",
       "pr": 553,
       "opened_at": "2026-08-17T05:44:03Z",
       "reason": "the required Agent Governance workflow decides whether other pull requests satisfy the protected context; before this branch merges, only the base workflow can run, so it cannot prove that the new session-baseline gate step executes the measurement harness, root CLI wrapper, and downstream report validator suite as mainline behavior (tri-adversarial round-2 finding TG-539-01)",
@@ -422,7 +422,14 @@
         "docs/evidence/session-baseline-gate-wiring/self-referential-bootstrap/README.md",
         "docs/evidence/session-baseline-gate-wiring/self-referential-bootstrap/verification.txt"
       ],
-      "fixpoint": null
+      "fixpoint": {
+        "reverified_at": "2026-08-17T07:16:58Z",
+        "mechanism_commit": "54f07f555133a2542f64fde4001fa9ff6b2785b1",
+        "evidence_refs": [
+          "docs/evidence/session-baseline-gate-wiring/fixpoint/attestation.json",
+          "docs/evidence/session-baseline-gate-wiring/fixpoint/summary.md"
+        ]
+      }
     }
   ]
 }
