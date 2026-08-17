@@ -1,0 +1,37 @@
+{
+  "schema_version": "self-referential-fixpoint-attestation/v1",
+  "entry_id": "blip-approve-authority-separation",
+  "mechanism_commit": "a9b8c7c7c68062ba4aea5e813f7242b118164a23",
+  "verification_contract_sha256": "bbce37a6f251449805f968dda832770a935d17d59bd37ed8661f795a7955a712",
+  "result": "pass",
+  "commands": [
+    {
+      "id": "test-trusted-host-merge",
+      "exit_code": 0
+    },
+    {
+      "id": "test-ship-item-runtime",
+      "exit_code": 0
+    },
+    {
+      "id": "test-review-risk",
+      "exit_code": 0
+    },
+    {
+      "id": "test-routing-consistency",
+      "exit_code": 0
+    },
+    {
+      "id": "test-self-referential-bootstrap",
+      "exit_code": 0
+    },
+    {
+      "id": "test-agent-governance-check",
+      "exit_code": 0
+    },
+    {
+      "id": "scan-secret-patterns",
+      "exit_code": 0
+    }
+  ]
+}
