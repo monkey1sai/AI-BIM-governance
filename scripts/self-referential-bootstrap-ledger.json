@@ -506,11 +506,8 @@
       "reason": "the canonical deployment transport consumes only freshly fetched origin/main, so this branch cannot exercise its changed service launcher, stop path, and containment boundary as canonical post-change evidence before merge; only a post-merge canonical Linux rebuild plus a mainline contract replay can establish the boundary as a fixpoint",
       "verification_mechanism_paths": [
         "scripts/deploy.ps1",
-        "scripts/lib/host-native-job-boundary.ps1",
         "scripts/lib/host-native-launcher.ps1",
-        "scripts/self-referential-bootstrap-ledger.json",
-        "scripts/tests/test-deploy-governance-static.ps1",
-        "scripts/tests/test-host-native-launcher.ps1"
+        "scripts/self-referential-bootstrap-ledger.json"
       ],
       "verification_contract": {
         "id": "host-native-job-boundary/v1",
