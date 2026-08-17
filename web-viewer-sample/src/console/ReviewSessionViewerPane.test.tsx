@@ -142,6 +142,7 @@ describe("ReviewSessionViewerPane", () => {
   afterEach(async () => {
     if (root) await act(async () => { root!.unmount(); });
     if (container.parentNode) document.body.removeChild(container);
+    vi.useRealTimers();
     vi.restoreAllMocks();
     (globalThis as Record<string, unknown>)[actEnvKey] = prevActEnv;
   });
@@ -456,5 +457,137 @@ describe("ReviewSessionViewerPane", () => {
     expect(q("review-room-highlight-reason")?.textContent).toContain("ifc_usdc_mapping_information_incomplete");
     expect(q("review-room-handoff-summary")?.textContent).toContain("status=incomplete");
     expect(viewerBox.sendHighlight).not.toHaveBeenCalled();
+  });
+  it("a preparing session (status=created) is a distinct state and cannot be attached yet", async () => {
+    const preparing = fakeRuntimeStatus();
+    preparing.sessions.items[0] = { ...preparing.sessions.items[0], status: "created" };
+    vi.mocked(coordinatorClient.runtimeStatus).mockResolvedValueOnce(preparing as never);
+
+    await renderPane();
+
+    const note = q("review-room-session-preparing");
+    expect(note).not.toBeNull();
+    expect(note?.textContent).toContain("created");
+    expect(note?.getAttribute("role")).toBe("status");
+    // preparing 必須與 not_listed（stale / 已關閉）分開，不得共用同一句診斷
+    expect(note?.textContent).not.toContain("not_listed");
+    expect(q("review-room-runtime-evidence")?.textContent).toContain("preparing");
+    expect(q("review-room-runtime-evidence")?.textContent).not.toContain("not_listed");
+    expect(q<HTMLButtonElement>("review-room-manual-start")!.disabled).toBe(true);
+    expect(q<HTMLButtonElement>("review-room-highlight")!.disabled).toBe(true);
+    expect(q("review-room-highlight-reason")?.textContent).toContain("準備中");
+    expect(coordinatorClient.claimViewerLease).not.toHaveBeenCalled();
+
+    await act(async () => { q<HTMLButtonElement>("review-room-session-preparing-refresh")!.click(); });
+    await flush();
+
+    expect(coordinatorClient.runtimeStatus).toHaveBeenCalledTimes(2);
+    expect(q("review-room-session-preparing")).toBeNull();
+    expect(q<HTMLButtonElement>("review-room-manual-start")!.disabled).toBe(false);
+  });
+
+  it("an active session is never reported as preparing", async () => {
+    await renderPane();
+
+    expect(q("review-room-session-preparing")).toBeNull();
+    expect(q("review-room-runtime-evidence")?.textContent).toContain("observed");
+  });
+
+  it("a coordinator-terminal heartbeat rejection unmounts the viewer and shows the lease-expired state", async () => {
+    await renderPane();
+    await act(async () => { q<HTMLButtonElement>("review-room-manual-start")!.click(); });
+    await flush();
+    expect(q("review-room-viewer-host")).not.toBeNull();
+
+    vi.mocked(coordinatorClient.viewerLeaseHeartbeat).mockRejectedValue(
+      new Error("coordinator /api/review-sessions/review_session_x/viewer-leases/viewer_lease_primary/heartbeat -> 404 Viewer lease not found or token invalid."),
+    );
+    await act(async () => {
+      (viewerBox.current!.onFirstFrame as (m: unknown) => void)({ protocol: "vg01", type: "first_frame", stageUrl: "stage://x" });
+    });
+    await flush();
+
+    const expired = q("review-room-lease-expired");
+    expect(expired).not.toBeNull();
+    expect(expired?.getAttribute("role")).toBe("alert");
+    // 過期後不得繼續把舊畫面當成現行 session 的證據
+    expect(q("review-room-viewer-host")).toBeNull();
+    expect(q("review-room-runtime-evidence")?.textContent).toContain("not_started");
+    expect(q("review-room-runtime-evidence")?.textContent).not.toContain("viewer_lease_primary");
+
+    vi.mocked(coordinatorClient.viewerLeaseHeartbeat).mockResolvedValue(fakePrimaryLease() as never);
+    await act(async () => { q<HTMLButtonElement>("review-room-lease-expired-reclaim")!.click(); });
+    await flush();
+
+    expect(coordinatorClient.claimViewerLease).toHaveBeenCalledTimes(2);
+    expect(q("review-room-lease-expired")).toBeNull();
+    expect(q("review-room-viewer-host")).not.toBeNull();
+  });
+
+  it("a non-terminal heartbeat rejection must not be escalated to lease-expired", async () => {
+    await renderPane();
+    await act(async () => { q<HTMLButtonElement>("review-room-manual-start")!.click(); });
+    await flush();
+
+    vi.mocked(coordinatorClient.viewerLeaseHeartbeat).mockRejectedValue(
+      new Error("coordinator /api/review-sessions/review_session_x/viewer-leases/viewer_lease_primary/heartbeat -> 503 upstream unavailable"),
+    );
+    await act(async () => {
+      (viewerBox.current!.onFirstFrame as (m: unknown) => void)({ protocol: "vg01", type: "first_frame", stageUrl: "stage://x" });
+    });
+    await flush();
+
+    expect(q("review-room-lease-expired")).toBeNull();
+    expect(q("review-room-viewer-host")).not.toBeNull();
+  });
+
+  it("no first frame within the bounded budget becomes a visible timeout state, and retry takes a fresh viewer identity", async () => {
+    vi.useFakeTimers();
+    root = createRoot(container);
+    await act(async () => { root!.render(<ReviewSessionViewerPane handoff={handoff} />); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    await act(async () => { q<HTMLButtonElement>("review-room-manual-start")!.click(); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+
+    expect(q("review-room-viewer-host")).not.toBeNull();
+    expect(q("review-room-first-frame-timeout")).toBeNull();
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(45_000); });
+
+    const timedOut = q("review-room-first-frame-timeout");
+    expect(timedOut).not.toBeNull();
+    expect(timedOut?.getAttribute("role")).toBe("alert");
+    // 只能主張「未觀察到」，不得替 Kit / GPU 端斷因
+    expect(timedOut?.textContent).toContain("未觀察到");
+    expect(q("review-room-highlight-reason")?.textContent).toContain("逾時");
+    expect(q("review-room-runtime-evidence")?.textContent).toContain("not_observed");
+
+    const firstViewerId = (vi.mocked(coordinatorClient.claimViewerLease).mock.calls[0][1] as { viewer_id: string }).viewer_id;
+    await act(async () => { q<HTMLButtonElement>("review-room-first-frame-retry")!.click(); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+
+    expect(coordinatorClient.releaseViewerLease).toHaveBeenCalledWith("review_session_x", "viewer_lease_primary", "lease_token_primary");
+    expect(coordinatorClient.claimViewerLease).toHaveBeenCalledTimes(2);
+    const secondViewerId = (vi.mocked(coordinatorClient.claimViewerLease).mock.calls[1][1] as { viewer_id: string }).viewer_id;
+    expect(secondViewerId).not.toBe(firstViewerId);
+    expect(q("review-room-first-frame-timeout")).toBeNull();
+    vi.useRealTimers();
+  });
+
+  it("an observed first frame cancels the bounded timeout", async () => {
+    vi.useFakeTimers();
+    root = createRoot(container);
+    await act(async () => { root!.render(<ReviewSessionViewerPane handoff={handoff} />); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    await act(async () => { q<HTMLButtonElement>("review-room-manual-start")!.click(); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    await act(async () => {
+      (viewerBox.current!.onFirstFrame as (m: unknown) => void)({ protocol: "vg01", type: "first_frame", stageUrl: "stage://x" });
+    });
+    await act(async () => { await vi.advanceTimersByTimeAsync(90_000); });
+
+    expect(q("review-room-first-frame-timeout")).toBeNull();
+    expect(q("review-room-viewer-host")).not.toBeNull();
+    vi.useRealTimers();
   });
 });

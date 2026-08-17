@@ -146,6 +146,26 @@ type ViewerLeaseError =
   | { kind: "primary_occupied"; message: string }
   | { kind: "other"; message: string };
 
+// 失敗態矩陣（task 5.6）：first frame 的有界等待預算。
+// 誠實邊界：這不是量測得出的 TTFF SLO。權威 TTFF 上限由
+// `gpu-session-baseline-and-idle-reclaim` task 1.4 的本地實測基準持有，該基準尚未產出；
+// 在它落地前，本常數只是「不再無限期假裝載入中」的下限保護，取與 viewer 端
+// STAGE_LOAD_TIMEOUT_MS（Window.tsx）同級的 45 秒，不宣稱任何效能承諾。
+export const REVIEW_VIEWER_FIRST_FRAME_TIMEOUT_MS = 45_000;
+
+// coordinator 對 heartbeat 的權威終局拒絕（bim-review-coordinator/src/app.ts
+// POST /api/review-sessions/:sessionId/viewer-leases/:leaseId/heartbeat）：
+//   404 "Viewer lease not found or token invalid." → lease 已逾期或被回收
+//   409 "Review session is not active."            → session 已離開可變更狀態
+// 只有這兩種可判定的終局拒絕才升級為 lease-expired；網路抖動、5xx、未知錯誤
+// 維持既有靜默重試語意，不得把不確定當成已證實的逾期。
+function heartbeatRejectionIsTerminal(error: unknown): boolean {
+  const message = String(error);
+  if (/\b404\b[\s\S]*\bViewer lease not found or token invalid\b/.test(message)) return true;
+  if (/\b409\b[\s\S]*\bReview session is not active\b/.test(message)) return true;
+  return false;
+}
+
 function classifyViewerLeaseError(error: unknown): ViewerLeaseError {
   const message = String(error);
   if (/\b409\b[\s\S]*\bprimary_already_claimed\b/.test(message)) {
@@ -179,6 +199,10 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
   const [lease, setLease] = useState<ViewerLeaseClaimResponse | null>(null);
   const [leaseBusy, setLeaseBusy] = useState(false);
   const [leaseErr, setLeaseErr] = useState<ViewerLeaseError | null>(null);
+  // 失敗態矩陣（task 5.6）：lease-expired 與 first-frame-timeout 是兩個彼此獨立的可見態，
+  // 不能折疊回 leaseErr（那是 claim 當下的錯誤），也不能折疊回 firstFrame（那是正向證據）。
+  const [leaseExpired, setLeaseExpired] = useState(false);
+  const [firstFrameTimedOut, setFirstFrameTimedOut] = useState(false);
   const [firstFrame, setFirstFrame] = useState(false);
   const [dataChannelReady, setDataChannelReady] = useState(false);
   const [loadedStageUrl, setLoadedStageUrl] = useState<string | null>(null);
@@ -194,6 +218,9 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
   const runtimeEvidenceTestId = `${tidPrefix}-runtime-evidence`;
   const viewerHostTestId = `${tidPrefix}-viewer-host`;
   const kitNotStartedTestId = `${tidPrefix}-kit-not-started`;
+  const sessionPreparingTestId = `${tidPrefix}-session-preparing`;
+  const leaseExpiredTestId = `${tidPrefix}-lease-expired`;
+  const firstFrameTimeoutTestId = `${tidPrefix}-first-frame-timeout`;
   const viewerOriginMissingTestId = `${tidPrefix}-viewer-origin-missing`;
   const handoffSummaryTestId = `${tidPrefix}-handoff-summary`;
   const highlightButtonTestId = `${tidPrefix}-highlight`;
@@ -215,6 +242,11 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
   const activePrimaryLease = lease && lease.session_id === sid && lease.role === "primary" && lease.status === "active" ? lease : null;
   const runtimeSession = runtimeSessions.find((s) => s.session_id === sid) ?? null;
   const sessionObserved = Boolean(runtimeSession);
+  // 失敗態矩陣（task 5.6）：runtime/status 已列出但 status=created 的 session 仍在準備中（尚未 active）。
+  // 這與「未列出（stale / 已關閉）」是不同的失敗態：前者稍後會自行變 active，後者不會。
+  // 兩者共用同一句診斷會誤導操作員，且讓「可 attach」看起來成立。
+  const sessionPreparing = runtimeSession?.status === "created";
+  const sessionAttachable = sessionObserved && !sessionPreparing;
   const artifactHealth = runtimeSession?.artifact_health ?? null;
   const modelArtifactStale = artifactHealth?.model_usdc_reachable === false;
   const mappingArtifactStale = artifactHealth?.mapping_reachable === false;
@@ -255,10 +287,26 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
   }, []);
   useEffect(() => { void refreshRuntimeStatus(); }, [refreshRuntimeStatus]);
 
+  // heartbeat 是 coordinator 對「這個 lease 是否仍然有效」的權威回覆。舊實作把所有 rejection
+  // 靜默吞掉，於是 lease 逾期／被回收之後畫面仍顯示 attached primary lease 與掛載中的 viewer，
+  // 也就是把過期畫面當成現行 session 的證據。這裡只在可判定的終局拒絕時卸載並轉入 lease-expired。
+  const handleHeartbeatRejection = useCallback((error: unknown) => {
+    if (!heartbeatRejectionIsTerminal(error)) return;
+    setLeaseExpired(true);
+    setLease(null);
+    setFirstFrame(false);
+    setDataChannelReady(false);
+    setLoadedStageUrl(null);
+    setStageProofStatus("not_observed");
+    setFirstFrameTimedOut(false);
+  }, []);
+
   useEffect(() => {
     setSessionId(handoff.sessionId);
     setLease(null);
     setLeaseErr(null);
+    setLeaseExpired(false);
+    setFirstFrameTimedOut(false);
     setFirstFrame(false);
     setDataChannelReady(false);
     setLoadedStageUrl(null);
@@ -285,7 +333,7 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
       void coordinatorClient.viewerLeaseHeartbeat(sid, activePrimaryLease.lease_id, activePrimaryLease.lease_token, {
         loaded_stage_url: loadedStageUrl,
         datachannel_ready: dataChannelReady,
-      }).catch(() => {});
+      }).catch(handleHeartbeatRejection);
     }, heartbeatMs);
     return () => window.clearInterval(timer);
   }, [
@@ -295,14 +343,32 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
     activePrimaryLease?.heartbeat_after_ms,
     dataChannelReady,
     loadedStageUrl,
+    handleHeartbeatRejection,
   ]);
 
+  // 失敗態矩陣（task 5.6）：持有 active primary lease 但遲遲沒有第一幀時，必須從「等待中」
+  // 轉成可見的有界失敗態，而不是無限期停在 not_observed。逾時只描述「本瀏覽器在預算內
+  // 沒有觀察到第一幀」，不宣稱 Kit / GPU 端的成因（本 pane 沒有那個訊號）。
+  // 只依賴 lease 身分（primitive），計時器才會隨「換一條 lease」重新開始，而不是隨任何
+  // lease 物件欄位更新（heartbeat 回填）被無謂重置；同時避免整個 lease 物件進 dep array。
+  const activePrimaryLeaseId = activePrimaryLease?.lease_id ?? null;
+  useEffect(() => {
+    if (!activePrimaryLeaseId || firstFrame) {
+      setFirstFrameTimedOut(false);
+      return;
+    }
+    const timer = window.setTimeout(() => setFirstFrameTimedOut(true), REVIEW_VIEWER_FIRST_FRAME_TIMEOUT_MS);
+    return () => window.clearTimeout(timer);
+  }, [activePrimaryLeaseId, firstFrame]);
+
   const claimPrimary = useCallback(async () => {
-    if (!validSession || !viewerOrigin || !sessionObserved || modelArtifactStale || leaseBusy) return;
+    if (!validSession || !viewerOrigin || !sessionAttachable || modelArtifactStale || leaseBusy) return;
     const identity = identityRef.current ?? createReviewViewerIdentity(mode);
     identityRef.current = identity;
     setLeaseBusy(true);
     setLeaseErr(null);
+    setLeaseExpired(false);
+    setFirstFrameTimedOut(false);
     setLease(null);
     setFirstFrame(false);
     setDataChannelReady(false);
@@ -323,7 +389,24 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
     } finally {
       setLeaseBusy(false);
     }
-  }, [sid, validSession, viewerOrigin, sessionObserved, modelArtifactStale, leaseBusy, mode]);
+  }, [sid, validSession, viewerOrigin, sessionAttachable, modelArtifactStale, leaseBusy, mode]);
+
+  // first-frame 逾時唯一誠實的補救是換一條乾淨的 viewer 連線：先歸還目前 primary lease
+  //（否則新的 claim 會被自己占用而 409 primary_already_claimed），重置 viewer 身分讓
+  // EmbeddedViewer 以新的 key 重新掛載，再重新 claim。不重用舊 lease_id 假裝已修復。
+  const restartAfterFirstFrameTimeout = useCallback(async () => {
+    if (leaseBusy) return;
+    const current = activePrimaryLease;
+    setFirstFrameTimedOut(false);
+    if (current) {
+      await coordinatorClient
+        .releaseViewerLease(current.session_id, current.lease_id, current.lease_token)
+        .catch(() => {});
+      setLease(null);
+    }
+    identityRef.current = null;
+    await claimPrimary();
+  }, [activePrimaryLease, claimPrimary, leaseBusy]);
 
   const stageText = stageProofStatus === "unproven"
     ? t("unproven（coordinator authority 尚未證實；handoff 已阻擋）", "unproven (coordinator authority is not confirmed; handoff is blocked)")
@@ -335,6 +418,15 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
         ? t("matched（expected == loaded）", "matched (expected == loaded)")
         : t("mismatch（expected != loaded）", "mismatch (expected != loaded)");
 
+  // 兩個共用診斷字串：session 不可用的原因（preparing vs not_listed）與等待第一幀的原因
+  //（等待中 vs 已逾時）。單筆高亮與 A2 批次疊加共用，避免兩條 ladder 各自漂移。
+  const sessionNotUsableReason = sessionPreparing
+    ? t("session 準備中（runtime/status status=created，尚未 active）", "session is preparing (runtime/status status=created, not active yet)")
+    : t("runtime/status 未列出此 session（可能 stale / 已關閉）", "runtime/status does not list this session (possibly stale / closed)");
+  const waitingFirstFrameReason = firstFrameTimedOut
+    ? t("等待 3D 第一幀逾時（本瀏覽器在預算內未觀察到第一幀）", "timed out waiting for the 3D first frame (this browser observed no first frame within the budget)")
+    : t("等待 3D 第一幀", "waiting for first frame");
+
   const highlightDisabledReason = !handoff.ifcGuid
     ? t("handoff 缺 ifc_guid，無法高亮", "handoff is missing ifc_guid")
     : !handoff.usdPrimPath
@@ -343,12 +435,12 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
         ? `mapping_reachable=false: ${artifactHealth?.stale_reason ?? "derived_artifact_unreachable"}`
       : !validSession
         ? t("尚未輸入有效 review session", "enter a valid review session first")
-        : !sessionObserved
-          ? t("runtime/status 未列出此 session（可能 stale / 已關閉）", "runtime/status does not list this session (possibly stale / closed)")
+        : !sessionAttachable
+          ? sessionNotUsableReason
           : !activePrimaryLease
             ? t("需先手動啟動 / attach Kit session", "manually start / attach the Kit session first")
             : !firstFrame
-              ? t("等待 3D 第一幀", "waiting for first frame")
+              ? waitingFirstFrameReason
               : !dataChannelReady
                 ? t("等待 viewer DataChannel", "waiting for viewer DataChannel")
               : !stageMatched
@@ -383,12 +475,12 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
     ? `mapping_reachable=false: ${artifactHealth?.stale_reason ?? "derived_artifact_unreachable"}`
     : !validSession
       ? t("尚未輸入有效 review session", "enter a valid review session first")
-      : !sessionObserved
-        ? t("runtime/status 未列出此 session（可能 stale / 已關閉）", "runtime/status does not list this session (possibly stale / closed)")
+      : !sessionAttachable
+        ? sessionNotUsableReason
         : !activePrimaryLease
           ? t("需先手動啟動 / attach Kit session", "manually start / attach the Kit session first")
           : !firstFrame
-            ? t("等待 3D 第一幀", "waiting for first frame")
+            ? waitingFirstFrameReason
             : !dataChannelReady
               ? t("等待 viewer DataChannel", "waiting for viewer DataChannel")
               : !stageMatched
@@ -454,6 +546,8 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
               setSessionId(e.target.value);
               setLease(null);
               setLeaseErr(null);
+              setLeaseExpired(false);
+              setFirstFrameTimedOut(false);
               setFirstFrame(false);
               setDataChannelReady(false);
               setLoadedStageUrl(null);
@@ -468,10 +562,10 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
           <Btn
             primary
             data-testid={manualStartTestId}
-            disabled={!validSession || !viewerOrigin || !sessionObserved || modelArtifactStale || leaseBusy || Boolean(activePrimaryLease)}
+            disabled={!validSession || !viewerOrigin || !sessionAttachable || modelArtifactStale || leaseBusy || Boolean(activePrimaryLease)}
             caption={!validSession ? t("需有效 session id", "valid session id required")
               : !viewerOrigin ? t("runtime/status 尚未提供 viewer 入口", "runtime/status has not provided a viewer entry")
-              : !sessionObserved ? t("runtime/status 未列出此 session（可能 stale / 已關閉）", "runtime/status does not list this session (possibly stale / closed)")
+              : !sessionAttachable ? sessionNotUsableReason
               : modelArtifactStale ? `model_usdc_reachable=false: ${artifactHealth?.stale_reason ?? "derived_artifact_unreachable"}`
               : activePrimaryLease ? t("已 attach primary viewer lease", "primary viewer lease attached")
               : t("POST /api/review-sessions/:id/viewer-leases/claim", "POST /api/review-sessions/:id/viewer-leases/claim")}
@@ -504,7 +598,17 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
           style={{ marginBottom: 8, gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 180px), 1fr))" }}
         >
           <Field k="session" v={sid || "—"} prov={validSession ? "asbuilt" : "p1"} />
-          <Field k="runtime session" v={!sid ? "—" : sessionObserved ? t("observed", "observed") : t("not_listed（可能 stale / 已關閉）", "not_listed (possibly stale / closed)")} prov={sessionObserved ? "asbuilt" : "p1"} />
+          <Field
+            k="runtime session"
+            v={!sid
+              ? "—"
+              : sessionPreparing
+                ? t("preparing（status=created，尚未 active）", "preparing (status=created, not active yet)")
+                : sessionObserved
+                  ? t("observed", "observed")
+                  : t("not_listed（可能 stale / 已關閉）", "not_listed (possibly stale / closed)")}
+            prov={sessionAttachable ? "asbuilt" : "p1"}
+          />
           <Field k="primary lease" v={activePrimaryLease ? activePrimaryLease.lease_id : t("not_started（需手動）", "not_started (manual action required)")} prov={activePrimaryLease ? "asbuilt" : "p1"} />
           <Field k="first frame" v={firstFrame ? t("observed", "observed") : t("not_observed", "not_observed")} prov={firstFrame ? "asbuilt" : "p1"} />
           <Field k="DataChannel ready" v={dataChannelReady ? t("observed", "observed") : t("not_observed", "not_observed")} prov={dataChannelReady ? "asbuilt" : "p1"} />
@@ -521,6 +625,27 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
               "No review session is attached; pick or enter a session id in the field above.",
             )}
           </p>
+        )}
+        {sessionPreparing && (
+          <div
+            className="ec-note"
+            data-testid={sessionPreparingTestId}
+            role="status"
+            aria-live="polite"
+          >
+            <span>
+              {t(
+                "runtime/status 已列出此 session，但狀態為 created（準備中，尚未 active）；attach 需等 session 轉為 active。",
+                "runtime/status lists this session as created (preparing, not active yet); attach must wait until it becomes active.",
+              )}
+            </span>{" "}
+            <Btn
+              data-testid={`${tidPrefix}-session-preparing-refresh`}
+              onClick={() => { void refreshRuntimeStatus(); }}
+            >
+              {t("重新整理 runtime status", "Refresh runtime status")}
+            </Btn>
+          </div>
         )}
         {runtimeReady && !runtimeErr && !viewerOrigin && (
           <div
@@ -567,6 +692,50 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
         ) : leaseErr ? (
           <p className="ec-warn-note" data-testid="review-room-lease-error">{leaseErr.message}</p>
         ) : null}
+        {leaseExpired && (
+          <div
+            className="ec-warn-note"
+            data-testid={leaseExpiredTestId}
+            role="alert"
+            aria-live="assertive"
+          >
+            <span>
+              {t(
+                "coordinator 已不再認得此 primary viewer lease（逾期或已被回收）；viewer 已卸載，先前畫面不再代表現行 session。",
+                "The coordinator no longer recognizes this primary viewer lease (expired or reclaimed); the viewer was unmounted and the previous frame no longer represents the live session.",
+              )}
+            </span>{" "}
+            <Btn
+              data-testid={`${tidPrefix}-lease-expired-reclaim`}
+              disabled={leaseBusy}
+              onClick={() => { void claimPrimary(); }}
+            >
+              {leaseBusy ? t("重新取得中...", "Reclaiming...") : t("重新取得 primary lease", "Reclaim primary lease")}
+            </Btn>
+          </div>
+        )}
+        {firstFrameTimedOut && activePrimaryLease && (
+          <div
+            className="ec-warn-note"
+            data-testid={firstFrameTimeoutTestId}
+            role="alert"
+            aria-live="assertive"
+          >
+            <span>
+              {t(
+                "已持有 primary viewer lease，但在預算內未觀察到 3D 第一幀；本頁只能證明「未觀察到」，不宣稱 Kit / GPU 端成因。",
+                "The primary viewer lease is held, but no 3D first frame was observed within the budget. This page can only prove 'not observed'; it does not claim a Kit / GPU cause.",
+              )}
+            </span>{" "}
+            <Btn
+              data-testid={`${tidPrefix}-first-frame-retry`}
+              disabled={leaseBusy}
+              onClick={() => { void restartAfterFirstFrameTimeout(); }}
+            >
+              {leaseBusy ? t("重新啟動中...", "Restarting...") : t("重新啟動 3D session", "Restart 3D session")}
+            </Btn>
+          </div>
+        )}
         {!activePrimaryLease ? (
           <p className="ec-note" data-testid={kitNotStartedTestId}>
             {isA1Inline
@@ -597,7 +766,7 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
                 void coordinatorClient.viewerLeaseHeartbeat(sid, activePrimaryLease.lease_id, activePrimaryLease.lease_token, {
                   first_frame: true,
                   datachannel_ready: true,
-                }).catch(() => {});
+                }).catch(handleHeartbeatRejection);
                 void coordinatorClient.reportFirstFrame(sid).catch(() => {});
               }}
               onStageLoaded={(message) => {
@@ -608,7 +777,7 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
                 void coordinatorClient.viewerLeaseHeartbeat(sid, activePrimaryLease.lease_id, activePrimaryLease.lease_token, {
                   loaded_stage_url: activeUrl,
                   datachannel_ready: true,
-                }).catch(() => {});
+                }).catch(handleHeartbeatRejection);
               }}
               onHighlightResult={(m) => {
                 setHighlightResult({ ok: m.ok, reason: m.reason });
