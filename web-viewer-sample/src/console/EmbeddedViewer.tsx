@@ -14,6 +14,7 @@ function normalizeOrigin(value: string): string {
 
 // VG-01 postMessage 協定（版本化）。viewer→console 與 console→viewer 皆帶 protocol:"vg01"。
 export interface FirstFrameMessage { protocol: "vg01"; type: "first_frame"; stageUrl: string | null }
+export interface StreamStateMessage { protocol: "vg01"; type: "stream_state"; state: "disconnected"; kind: "stopped" | "terminated" }
 export interface StageLoadedMessage {
   protocol: "vg01";
   type: "stage_loaded";
@@ -70,6 +71,7 @@ export interface EmbeddedViewerProps {
   userToken?: string | null;
   onViewerReady?: () => void;
   onFirstFrame?: (m: FirstFrameMessage) => void;
+  onStreamState?: (m: StreamStateMessage) => void;
   onStageLoaded?: (message: StageLoadedMessage) => void;
   onHighlightResult?: (m: HighlightResultMessage) => void;
   onSelectedGuid?: (ifcGuid: string | null) => void;
@@ -116,6 +118,7 @@ export const EmbeddedViewer = forwardRef<EmbeddedViewerHandle, EmbeddedViewerPro
           }
           break; // 每次 iframe document load 都必須重新 ready，且同一 document 的重複 ready 不重送 bearer
         case "first_frame":      p.onFirstFrame?.(m as unknown as FirstFrameMessage); break;
+        case "stream_state":     p.onStreamState?.(m as unknown as StreamStateMessage); break;
         case "stage_loaded": {
           const stageMessage = m as unknown as StageLoadedMessage;
           if (stageMessage.status === "active" || stageMessage.status === "unproven") {

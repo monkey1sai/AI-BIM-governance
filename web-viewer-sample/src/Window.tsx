@@ -4067,6 +4067,10 @@ export default class App extends React.Component<AppProps, AppState> {
             `event：${JSON.stringify(message)}`,
             "請按「重新連線」重建 viewer 端 AppStreamer；若仍停在 busy/disconnected，需重啟 Kit/WebRTC runtime。",
         ].join("\n");
+        // 失敗態矩陣 stream-disconnected（task 5.6 slice-3）：讓 console parent 於
+        // 終止當下即收到可見斷線訊號（額外於既有 stage_loaded/unproven 撤銷之上，
+        // 因 unproven 也會由 stage-unproven 等其他路徑發出，parent 無法據以區分斷線）。
+        this._postToParent({ type: "stream_state", state: "disconnected", kind });
         this.setState((state) => ({
             loadingText: "webrtc_disconnected",
             streamDiagnostic: diagnostic,

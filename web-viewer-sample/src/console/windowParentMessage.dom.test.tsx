@@ -1418,6 +1418,16 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
 
     privateApp._handleStreamStopped("stopped", { reason: "runtime stopped" });
 
+    // 失敗態矩陣 stream-disconnected（task 5.6 slice-3）：viewer 於 WebRTC 終止時
+    // 必須對 parent 發 stream_state，console 端才能於 5 秒內轉入可見斷線態。
+    const streamStatePosts = parent.postMessage.mock.calls
+      .map((call) => call[0] as { protocol?: string; type?: string; state?: string; kind?: string })
+      .filter((message) => message.type === "stream_state");
+    expect(streamStatePosts.length).toBe(1);
+    expect(streamStatePosts[0].protocol).toBe("vg01");
+    expect(streamStatePosts[0].state).toBe("disconnected");
+    expect(streamStatePosts[0].kind).toBe("stopped");
+
     expect(internals(app).state.loadedStageUrl).toBeNull();
     expect(internals(app).state.stageLoadStatus).toBe("disconnected");
     expect(internals(app).state.showStream).toBe(false);

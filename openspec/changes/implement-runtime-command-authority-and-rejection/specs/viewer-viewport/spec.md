@@ -11,6 +11,8 @@ Console內嵌viewport與viewer origin頁 SHALL各自實作下列失敗態，每�
 > Task 5.6 partial progress（2026-08-17）：no-session、viewer-origin-missing、lease-occupied三態已收斂並由RED→GREEN focused DOM tests驗證——no-session有`data-testid`專屬錨點＋「尚未附掛 review session」zh/en文案＋session選擇器可行動作；viewer-origin-missing改為常駐條件render（role=alert）並新增「重新整理 runtime status」動作（`*-viewer-origin-refresh`）；lease-occupied驗證既有generic 409呈現並加入holder-privacy負向斷言（不得命中lease_/viewer_/nonce/stream/display_name/holder）。session-preparing、stream-disconnected、lease-expired、gpu-unavailable、first-frame-timeout共5態仍未逐態驗證（各需新行為：conversion status判定、WebRTC斷線偵測、heartbeat失效偵測、kit-manager查詢、啟動計時器），5.6維持OPEN，本change不得宣稱production/full completion。
 >
 > Task 5.6 partial progress（2026-08-17 slice-2）：session-preparing、gpu-unavailable、lease-expired、first-frame-timeout四態已收斂並由RED→GREEN focused DOM tests驗證（conversion_status非終態note＋#pipeline；instances查詢失敗誠實停用＋#runtime；heartbeat 404 lease拒絕→手動re-claim；90s首幀計時→重試＋診斷）。僅stream-disconnected一態未驗證（需viewer側WebRTC斷線postMessage協定，另切片），5.6維持OPEN，本change不得宣稱production/full completion。
+>
+> Task 5.6 partial progress（2026-08-17 slice-3）：stream-disconnected已收斂——viewer終態處理器發vg01 `stream_state`（schema＋contracts pytest fail-closed）、EmbeddedViewer守衛轉發、pane可見alert＋誠實回退全部streaming證據＋重掛iframe重連。**console內嵌側12/12態完成**；standalone viewer origin頁側逐態盤點為最後殘項（stage系列已在、其餘適用性需裁決），5.6維持OPEN。
 
 | 態 | 觸發條件（可判定） | 畫面/文案要點 | 可行動作 |
 |---|---|---|---|

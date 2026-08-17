@@ -185,6 +185,8 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
   const [gpuUnavailable, setGpuUnavailable] = useState(false);
   const [leaseExpired, setLeaseExpired] = useState(false);
   const [firstFrameTimedOut, setFirstFrameTimedOut] = useState(false);
+  const [streamDisconnected, setStreamDisconnected] = useState(false);
+  const [viewerMountNonce, setViewerMountNonce] = useState(0);
   const [lease, setLease] = useState<ViewerLeaseClaimResponse | null>(null);
   const [leaseBusy, setLeaseBusy] = useState(false);
   const [leaseErr, setLeaseErr] = useState<ViewerLeaseError | null>(null);
@@ -277,6 +279,7 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
     setLeaseErr(null);
     setLeaseExpired(false);
     setFirstFrameTimedOut(false);
+    setStreamDisconnected(false);
     setFirstFrame(false);
     setDataChannelReady(false);
     setLoadedStageUrl(null);
@@ -334,7 +337,10 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
     return () => { window.clearTimeout(timer); };
   }, [activeLeaseIdForFirstFrame, firstFrame, firstFrameTimeoutMs]);
   useEffect(() => {
-    if (firstFrame) setFirstFrameTimedOut(false);
+    if (firstFrame) {
+      setFirstFrameTimedOut(false);
+      setStreamDisconnected(false);
+    }
   }, [firstFrame]);
 
   const claimPrimary = useCallback(async () => {
@@ -345,6 +351,7 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
     setLeaseErr(null);
     setLeaseExpired(false);
     setFirstFrameTimedOut(false);
+    setStreamDisconnected(false);
     setLease(null);
     setFirstFrame(false);
     setDataChannelReady(false);
@@ -603,6 +610,25 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
             <a href="#runtime">{t("檢視 Runtime", "Inspect Runtime")}</a>
           </div>
         )}
+        {streamDisconnected && (
+          <div className="ec-warn-note" data-testid={`${tidPrefix}-stream-disconnected`} role="alert" aria-live="assertive">
+            <span>
+              {t(
+                "串流中斷（WebRTC 連線已終止）；viewer 端保留最後畫格與診斷。可重新連線（重掛 viewer）。",
+                "The stream disconnected (the WebRTC connection terminated); the viewer keeps the last frame and diagnostics. Reconnect to remount the viewer.",
+              )}
+            </span>{" "}
+            <Btn
+              data-testid={`${tidPrefix}-stream-reconnect`}
+              onClick={() => {
+                setStreamDisconnected(false);
+                setViewerMountNonce((nonce) => nonce + 1);
+              }}
+            >
+              {t("重新連線", "Reconnect")}
+            </Btn>
+          </div>
+        )}
         {sid === "" && (
           <p className="ec-note" data-testid={`${tidPrefix}-no-session`}>
             {t(
@@ -668,7 +694,7 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
           <div data-testid={viewerHostTestId} style={{ height: 480 }}>
             <EmbeddedViewer
               ref={viewerRef}
-              key={`${sid}:${activePrimaryLease.lease_id}`}
+              key={`${sid}:${activePrimaryLease.lease_id}:${viewerMountNonce}`}
               sessionId={sid}
               viewerOrigin={viewerOrigin}
               coordinatorApiBase={coordinatorBase}
@@ -698,6 +724,18 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
                   loaded_stage_url: activeUrl,
                   datachannel_ready: true,
                 }).catch(() => {});
+              }}
+              onStreamState={(message) => {
+                if (message.state !== "disconnected") return;
+                // 失敗態矩陣 stream-disconnected（task 5.6 slice-3）：誠實回退所有
+                // streaming 證據——不再顯示已中斷連線的 first frame / DataChannel /
+                // stage 狀態，highlight gate 立即回封鎖。
+                setStreamDisconnected(true);
+                setFirstFrame(false);
+                setDataChannelReady(false);
+                setLoadedStageUrl(null);
+                setStageProofStatus("not_observed");
+                setHighlightResult(null);
               }}
               onHighlightResult={(m) => {
                 setHighlightResult({ ok: m.ok, reason: m.reason });
