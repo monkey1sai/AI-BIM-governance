@@ -458,7 +458,7 @@ describe("ReviewSessionViewerPane", () => {
     expect(q("review-room-handoff-summary")?.textContent).toContain("status=incomplete");
     expect(viewerBox.sendHighlight).not.toHaveBeenCalled();
   });
-  it("a preparing session (status=created) is a distinct state and cannot be attached yet", async () => {
+  it("a preparing session (status=created) is a distinct visible state that still honours the attachable contract", async () => {
     const preparing = fakeRuntimeStatus();
     preparing.sessions.items[0] = { ...preparing.sessions.items[0], status: "created" };
     vi.mocked(coordinatorClient.runtimeStatus).mockResolvedValueOnce(preparing as never);
@@ -473,17 +473,29 @@ describe("ReviewSessionViewerPane", () => {
     expect(note?.textContent).not.toContain("not_listed");
     expect(q("review-room-runtime-evidence")?.textContent).toContain("preparing");
     expect(q("review-room-runtime-evidence")?.textContent).not.toContain("not_listed");
-    expect(q<HTMLButtonElement>("review-room-manual-start")!.disabled).toBe(true);
-    expect(q<HTMLButtonElement>("review-room-highlight")!.disabled).toBe(true);
-    expect(q("review-room-highlight-reason")?.textContent).toContain("準備中");
-    expect(coordinatorClient.claimViewerLease).not.toHaveBeenCalled();
+    // 既有跨頁契約（pages.tsx / 後端 isSessionMutable）：created 尚未綁 Kit 但已可 attach。
+    // 這個可見態只增加診斷，不得反向把可開的 session 說成不可開。
+    expect(q<HTMLButtonElement>("review-room-manual-start")!.disabled).toBe(false);
+    await act(async () => { q<HTMLButtonElement>("review-room-manual-start")!.click(); });
+    await flush();
+    expect(coordinatorClient.claimViewerLease).toHaveBeenCalledTimes(1);
+    expect(q("review-room-viewer-host")).not.toBeNull();
+  });
+
+  it("refreshing a preparing session that has become active clears the preparing state", async () => {
+    const preparing = fakeRuntimeStatus();
+    preparing.sessions.items[0] = { ...preparing.sessions.items[0], status: "created" };
+    vi.mocked(coordinatorClient.runtimeStatus).mockResolvedValueOnce(preparing as never);
+
+    await renderPane();
+    expect(q("review-room-session-preparing")).not.toBeNull();
 
     await act(async () => { q<HTMLButtonElement>("review-room-session-preparing-refresh")!.click(); });
     await flush();
 
     expect(coordinatorClient.runtimeStatus).toHaveBeenCalledTimes(2);
     expect(q("review-room-session-preparing")).toBeNull();
-    expect(q<HTMLButtonElement>("review-room-manual-start")!.disabled).toBe(false);
+    expect(q("review-room-runtime-evidence")?.textContent).toContain("observed");
   });
 
   it("an active session is never reported as preparing", async () => {

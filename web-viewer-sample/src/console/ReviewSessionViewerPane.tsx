@@ -242,11 +242,13 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
   const activePrimaryLease = lease && lease.session_id === sid && lease.role === "primary" && lease.status === "active" ? lease : null;
   const runtimeSession = runtimeSessions.find((s) => s.session_id === sid) ?? null;
   const sessionObserved = Boolean(runtimeSession);
-  // 失敗態矩陣（task 5.6）：runtime/status 已列出但 status=created 的 session 仍在準備中（尚未 active）。
-  // 這與「未列出（stale / 已關閉）」是不同的失敗態：前者稍後會自行變 active，後者不會。
-  // 兩者共用同一句診斷會誤導操作員，且讓「可 attach」看起來成立。
+  // 失敗態矩陣（task 5.6）：runtime/status 已列出但 status=created 的 session 尚未綁定 Kit。
+  // 這與「未列出（stale / 已關閉）」是不同的態：前者稍後會轉 active，後者不會，兩者共用同一句
+  // 診斷會誤導操作員。但它**不是 attach 的封鎖條件**：既有跨頁契約（pages.tsx 的 KG/Review
+  // 跨頁連結與 CoordinatorPage rt-crosslinks，比照後端 isSessionMutable）已裁定
+  //「created 尚未綁 Kit 但已可 attach，不是『結束』」。把 created 擋掉會反向違反同一條誠實鐵律
+  //（能開卻說不能開），因此這裡只增加可見診斷，不改 attach 授權。
   const sessionPreparing = runtimeSession?.status === "created";
-  const sessionAttachable = sessionObserved && !sessionPreparing;
   const artifactHealth = runtimeSession?.artifact_health ?? null;
   const modelArtifactStale = artifactHealth?.model_usdc_reachable === false;
   const mappingArtifactStale = artifactHealth?.mapping_reachable === false;
@@ -362,7 +364,7 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
   }, [activePrimaryLeaseId, firstFrame]);
 
   const claimPrimary = useCallback(async () => {
-    if (!validSession || !viewerOrigin || !sessionAttachable || modelArtifactStale || leaseBusy) return;
+    if (!validSession || !viewerOrigin || !sessionObserved || modelArtifactStale || leaseBusy) return;
     const identity = identityRef.current ?? createReviewViewerIdentity(mode);
     identityRef.current = identity;
     setLeaseBusy(true);
@@ -389,7 +391,7 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
     } finally {
       setLeaseBusy(false);
     }
-  }, [sid, validSession, viewerOrigin, sessionAttachable, modelArtifactStale, leaseBusy, mode]);
+  }, [sid, validSession, viewerOrigin, sessionObserved, modelArtifactStale, leaseBusy, mode]);
 
   // first-frame 逾時唯一誠實的補救是換一條乾淨的 viewer 連線：先歸還目前 primary lease
   //（否則新的 claim 會被自己占用而 409 primary_already_claimed），重置 viewer 身分讓
@@ -418,11 +420,8 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
         ? t("matched（expected == loaded）", "matched (expected == loaded)")
         : t("mismatch（expected != loaded）", "mismatch (expected != loaded)");
 
-  // 兩個共用診斷字串：session 不可用的原因（preparing vs not_listed）與等待第一幀的原因
-  //（等待中 vs 已逾時）。單筆高亮與 A2 批次疊加共用，避免兩條 ladder 各自漂移。
-  const sessionNotUsableReason = sessionPreparing
-    ? t("session 準備中（runtime/status status=created，尚未 active）", "session is preparing (runtime/status status=created, not active yet)")
-    : t("runtime/status 未列出此 session（可能 stale / 已關閉）", "runtime/status does not list this session (possibly stale / closed)");
+  // 共用診斷字串：等待第一幀的原因（等待中 vs 已逾時）。單筆高亮與 A2 批次疊加共用，
+  // 避免兩條 ladder 各自漂移。session preparing 不進這條 ladder —— 它不封鎖 attach。
   const waitingFirstFrameReason = firstFrameTimedOut
     ? t("等待 3D 第一幀逾時（本瀏覽器在預算內未觀察到第一幀）", "timed out waiting for the 3D first frame (this browser observed no first frame within the budget)")
     : t("等待 3D 第一幀", "waiting for first frame");
@@ -435,8 +434,8 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
         ? `mapping_reachable=false: ${artifactHealth?.stale_reason ?? "derived_artifact_unreachable"}`
       : !validSession
         ? t("尚未輸入有效 review session", "enter a valid review session first")
-        : !sessionAttachable
-          ? sessionNotUsableReason
+        : !sessionObserved
+          ? t("runtime/status 未列出此 session（可能 stale / 已關閉）", "runtime/status does not list this session (possibly stale / closed)")
           : !activePrimaryLease
             ? t("需先手動啟動 / attach Kit session", "manually start / attach the Kit session first")
             : !firstFrame
@@ -475,8 +474,8 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
     ? `mapping_reachable=false: ${artifactHealth?.stale_reason ?? "derived_artifact_unreachable"}`
     : !validSession
       ? t("尚未輸入有效 review session", "enter a valid review session first")
-      : !sessionAttachable
-        ? sessionNotUsableReason
+      : !sessionObserved
+        ? t("runtime/status 未列出此 session（可能 stale / 已關閉）", "runtime/status does not list this session (possibly stale / closed)")
         : !activePrimaryLease
           ? t("需先手動啟動 / attach Kit session", "manually start / attach the Kit session first")
           : !firstFrame
@@ -562,10 +561,10 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
           <Btn
             primary
             data-testid={manualStartTestId}
-            disabled={!validSession || !viewerOrigin || !sessionAttachable || modelArtifactStale || leaseBusy || Boolean(activePrimaryLease)}
+            disabled={!validSession || !viewerOrigin || !sessionObserved || modelArtifactStale || leaseBusy || Boolean(activePrimaryLease)}
             caption={!validSession ? t("需有效 session id", "valid session id required")
               : !viewerOrigin ? t("runtime/status 尚未提供 viewer 入口", "runtime/status has not provided a viewer entry")
-              : !sessionAttachable ? sessionNotUsableReason
+              : !sessionObserved ? t("runtime/status 未列出此 session（可能 stale / 已關閉）", "runtime/status does not list this session (possibly stale / closed)")
               : modelArtifactStale ? `model_usdc_reachable=false: ${artifactHealth?.stale_reason ?? "derived_artifact_unreachable"}`
               : activePrimaryLease ? t("已 attach primary viewer lease", "primary viewer lease attached")
               : t("POST /api/review-sessions/:id/viewer-leases/claim", "POST /api/review-sessions/:id/viewer-leases/claim")}
@@ -607,7 +606,7 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
                 : sessionObserved
                   ? t("observed", "observed")
                   : t("not_listed（可能 stale / 已關閉）", "not_listed (possibly stale / closed)")}
-            prov={sessionAttachable ? "asbuilt" : "p1"}
+            prov={sessionObserved ? "asbuilt" : "p1"}
           />
           <Field k="primary lease" v={activePrimaryLease ? activePrimaryLease.lease_id : t("not_started（需手動）", "not_started (manual action required)")} prov={activePrimaryLease ? "asbuilt" : "p1"} />
           <Field k="first frame" v={firstFrame ? t("observed", "observed") : t("not_observed", "not_observed")} prov={firstFrame ? "asbuilt" : "p1"} />
@@ -635,8 +634,8 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
           >
             <span>
               {t(
-                "runtime/status 已列出此 session，但狀態為 created（準備中，尚未 active）；attach 需等 session 轉為 active。",
-                "runtime/status lists this session as created (preparing, not active yet); attach must wait until it becomes active.",
+                "runtime/status 將此 session 列為 created（Kit 尚未綁定，尚未 active）。依既有跨頁契約仍可 attach；Kit 就緒後才會有 first frame。",
+                "runtime/status lists this session as created (Kit not bound yet, not active). Attach is still allowed by the existing cross-page contract; the first frame only arrives once Kit is ready.",
               )}
             </span>{" "}
             <Btn
