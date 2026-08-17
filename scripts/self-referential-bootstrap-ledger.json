@@ -394,6 +394,33 @@
           "docs/evidence/blip-approve-authority-separation/fixpoint/summary.md"
         ]
       }
+    },
+    {
+      "id": "autonomous-delivery-path-classifier",
+      "status": "open",
+      "pr": 558,
+      "opened_at": "2026-08-17T07:13:57Z",
+      "reason": "the base-owned classifier cannot recognize the future autonomous delivery authority files, so this prerequisite must bootstrap those exact paths before the implementation pull request can bind complete debt",
+      "verification_mechanism_paths": [
+        "scripts/lib/self-referential-bootstrap.ps1",
+        "scripts/self-referential-bootstrap-ledger.json",
+        "scripts/tests/test-self-referential-bootstrap.ps1"
+      ],
+      "verification_contract": {
+        "id": "autonomous-delivery-path-classifier/v1",
+        "command_ids": [
+          "test-self-referential-bootstrap",
+          "test-agent-governance-check",
+          "invoke-powershell-static",
+          "scan-secret-patterns"
+        ],
+        "contract_sha256": "c4ec0b8682985e3cab7d09fac2fcc0dedd2dc0a6ef9ab426e2ff189ca42f6347"
+      },
+      "bootstrap_evidence_refs": [
+        "docs/evidence/autonomous-delivery-path-classifier/self-referential-bootstrap/README.md",
+        "docs/evidence/autonomous-delivery-path-classifier/self-referential-bootstrap/verification.txt"
+      ],
+      "fixpoint": null
     }
   ]
 }
