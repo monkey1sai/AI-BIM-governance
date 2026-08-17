@@ -266,7 +266,7 @@ jobs:
         shell: pwsh
         run: |
           python -m pip install --upgrade pip
-          python -m pip install pytest fastapi httpx
+          python -m pip install -r bim-streaming-server/requirements.txt pytest httpx
 
       - name: Run host-native conversion service tests
         shell: pwsh

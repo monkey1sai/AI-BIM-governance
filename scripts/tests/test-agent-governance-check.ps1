@@ -235,6 +235,8 @@ try {
     Assert-True ($ci -match 'AllowUntrackedArtifacts') 'CI uploads reproducible visual artifacts without committing ignored output'
     Assert-True ($ci -match '(?s)design-semantic-visual:.*?runs-on: windows-2025') 'design-system CI uses the manifest-pinned Windows runner label'
     Assert-True ($ci -match '(?s)design-semantic-visual:.*?working-directory: web-viewer-sample\s+run: npm ci --ignore-scripts --no-audit --no-fund') 'design-system CI installs the tracked dependency snapshot without lifecycle scripts'
+    Assert-True ($ci -match '(?s)streaming:.*?Install conversion service test dependencies.*?python -m pip install -r bim-streaming-server/requirements\.txt pytest httpx.*?Run host-native conversion service tests') `
+        'streaming CI installs the canonical pinned runtime dependencies before tests that import pxr'
     foreach ($command in @(
         'python -m pytest tests -q -p no:cacheprovider',
         'python -m pytest governance-service/tests -q',
