@@ -497,6 +497,40 @@
           "docs/evidence/windows-tier-lib-modules/fixpoint/summary.md"
         ]
       }
+    },
+    {
+      "id": "agent-governance-policy-wiring",
+      "status": "open",
+      "pr": 572,
+      "opened_at": "2026-08-17T10:43:02Z",
+      "reason": "this PR rewires the required agent-governance adjudication suite: it adds the governance-policy gate and behaviour suite as required steps, deletes the 182 text assertions the rule document supersedes, and registers the module surface in the mechanism classification; the branch is judged by the surface it edits, so only a post-merge fixpoint replay from main can prove the wired mechanism against itself",
+      "verification_mechanism_paths": [
+        ".github/workflows/agent-governance.yml",
+        "scripts/self-referential-bootstrap-ledger.json",
+        "scripts/lib/agent-governance-policy.psm1",
+        "scripts/lib/self-referential-bootstrap.ps1",
+        "scripts/tests/verify-governance-policy.ps1",
+        "scripts/tests/test-agent-governance-policy.ps1",
+        "scripts/tests/test-agent-governance-check.ps1",
+        "scripts/tests/test-self-referential-bootstrap.ps1"
+      ],
+      "verification_contract": {
+        "id": "agent-governance-policy-wiring/v1",
+        "command_ids": [
+          "verify-governance-policy",
+          "test-agent-governance-policy",
+          "test-agent-governance-check",
+          "test-self-referential-bootstrap",
+          "test-pr-body-evidence",
+          "invoke-powershell-static"
+        ],
+        "contract_sha256": "8dc3130cb48cd290527f915d63dbecd3b9c8306c89f940dc27a32f3a13177036"
+      },
+      "bootstrap_evidence_refs": [
+        "docs/evidence/agent-governance-policy-wiring/self-referential-bootstrap/README.md",
+        "docs/evidence/agent-governance-policy-wiring/self-referential-bootstrap/verification.txt"
+      ],
+      "fixpoint": null
     }
   ]
 }
