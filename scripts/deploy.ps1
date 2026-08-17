@@ -539,51 +539,32 @@ function Invoke-CadExtensionCacheHardener {
         [ValidateRange(1, 3600)][int] $TimeoutSec = 60
     )
 
-    $exitCode = -1
-    $stdout = ''
-    $stderr = ''
-    $process = $null
-    $terminationFailure = $null
+    # Bounded child on the launch-time containment boundary (#522): the shared
+    # helper runs the hardener inside a kill-on-close Job Object on Windows and
+    # keeps the prior Stop-HostNativeProcessTreeAndWait sweep + fail-closed
+    # disclosure where Job Objects do not exist. This call site is Linux-only
+    # today, so the sweep path is the one exercised until #517 lands a real
+    # POSIX boundary - the migration removes the hand-rolled duplicate, not the
+    # honest limitation.
+    $bounded = $null
     try {
-        $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
-        $startInfo.FileName = $PythonPath
-        $startInfo.UseShellExecute = $false
-        $startInfo.RedirectStandardOutput = $true
-        $startInfo.RedirectStandardError = $true
-        foreach ($argument in @($ScriptPath, '--repo-root', $StreamingRepoRoot)) {
-            [void]$startInfo.ArgumentList.Add([string]$argument)
-        }
-        $process = [System.Diagnostics.Process]::new()
-        $process.StartInfo = $startInfo
-        if (-not $process.Start()) {
-            throw 'CAD extension cache hardener process did not start.'
-        }
-        $stdoutTask = $process.StandardOutput.ReadToEndAsync()
-        $stderrTask = $process.StandardError.ReadToEndAsync()
-        if (-not $process.WaitForExit($TimeoutSec * 1000)) {
-            try {
-                Stop-HostNativeProcessTreeAndWait -Process $process -TimeoutMs 5000
-            }
-            catch {
-                $terminationFailure = $_
-            }
-        }
-        else {
-            $stdout = $stdoutTask.GetAwaiter().GetResult()
-            $stderr = $stderrTask.GetAwaiter().GetResult()
-            $exitCode = $process.ExitCode
-        }
+        $bounded = Invoke-HostNativeBoundedProcess `
+            -FilePath $PythonPath `
+            -ArgumentList @($ScriptPath, '--repo-root', $StreamingRepoRoot) `
+            -TimeoutSec $TimeoutSec
+        $exitCode = $bounded.ExitCode
+        $stdout = $bounded.StdOut
+        $stderr = $bounded.StdErr
     }
     catch {
+        # An interpreter that cannot start at all fails CLOSED as exit -1 with no
+        # status JSON - the caller's passed-contract check rejects it.
         $exitCode = -1
         $stdout = ''
         $stderr = ''
     }
-    finally {
-        if ($null -ne $process) { $process.Dispose() }
-    }
-    if ($null -ne $terminationFailure) {
-        throw "CAD extension cache hardener timed out and its process tree exit could not be proven: $($terminationFailure.Exception.Message)"
+    if ($null -ne $bounded -and $null -ne $bounded.TerminationFailure) {
+        throw "CAD extension cache hardener timed out and its process tree exit could not be proven: $($bounded.TerminationFailure.Exception.Message)"
     }
 
     $status = $null

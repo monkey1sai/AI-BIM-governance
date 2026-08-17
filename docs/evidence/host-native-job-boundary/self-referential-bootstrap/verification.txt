@@ -1,0 +1,80 @@
+stack_kind=self_referential_bootstrap
+pr=573
+base=89dd01c
+contract=host-native-job-boundary/v1
+contract_sha256=fc5b3467646fc0953f88fceef16bf854dc18eb7f80d007b79d463b4bacb0b60a
+result=pass (local commands; canonical-linux commands deferred to the post-merge fixpoint by contract design)
+
+command_id=test-host-native-launcher
+command=pwsh -NoProfile -NonInteractive -File scripts/tests/test-host-native-launcher.ps1
+result=ALL PASSED (existing 47 + J1 real Windows job membership/anchored terminate + J2 bounded-child timeout containment + J3 service boundary ordering/fail-closed anchor + J4 job-first stop)
+exit_code=0
+
+command_id=test-host-native-child-launch
+command=pwsh -NoProfile -NonInteractive -File scripts/tests/test-host-native-child-launch.ps1
+exit_code=0
+
+command_id=test-platform-adapter
+command=pwsh -NoProfile -NonInteractive -File scripts/tests/test-platform-adapter.ps1
+exit_code=0
+
+command_id=test-deploy-governance-static
+command=pwsh -NoProfile -NonInteractive -File scripts/tests/test-deploy-governance-static.ps1
+result=PASS (hardener pins updated to the boundary helper; extracted-extent harness dot-sources the boundary lib; invalid-interpreter fail-closed case still enforced)
+exit_code=0
+
+command_id=test-verify-all
+command=pwsh -NoProfile -NonInteractive -File scripts/tests/test-verify-all.ps1
+exit_code=0
+
+command_id=test-preflight-ports
+command=pwsh -NoProfile -NonInteractive -File scripts/tests/test-preflight-ports.ps1
+exit_code=0
+
+command_id=test-kit-log-probe
+command=pwsh -NoProfile -NonInteractive -File scripts/tests/test-kit-log-probe.ps1
+exit_code=0
+
+command_id=test-deploy-target-registry
+command=pwsh -NoProfile -NonInteractive -File scripts/tests/test-deploy-target-registry.ps1
+exit_code=0
+
+command_id=test-rebuild-test-deploy
+command=pwsh -NoProfile -NonInteractive -File scripts/tests/test-rebuild-test-deploy.ps1
+exit_code=0
+
+command_id=test-remote-deploy-transport
+command=pwsh -NoProfile -NonInteractive -File scripts/tests/test-remote-deploy-transport.ps1
+exit_code=0
+
+command_id=test-host-native-conversion-service
+command=python -m pytest bim-streaming-server/tests/test_host_native_conversion_service.py -q
+result=130 passed, 8 skipped
+exit_code=0
+
+command_id=test-self-referential-bootstrap
+command=pwsh -NoProfile -NonInteractive -File scripts/tests/test-self-referential-bootstrap.ps1
+result=all assertions passed (new entry validated)
+exit_code=0
+
+command_id=test-agent-governance-check
+command=pwsh -NoProfile -NonInteractive -File scripts/tests/test-agent-governance-check.ps1
+exit_code=0
+
+command_id=invoke-powershell-static
+command=pwsh -NoProfile -NonInteractive -File scripts/tests/invoke-powershell-static.ps1
+result=passed (new host-native-job-boundary.ps1 parses under the repository static gate)
+exit_code=0
+
+command_id=canonical-linux-rebuild
+command=pwsh scripts/dev/rebuild-test-deploy.ps1 -Build -InventoryPath <owner-private-inventory>
+result=not run pre-merge by contract design: the canonical transport only consumes freshly fetched origin/main; executes at the post-merge fixpoint with the owner-approved inventory
+exit_code=deferred
+
+command_id=canonical-linux-deployment-verify
+command=pwsh scripts/verify-all.ps1 -Profile Deployment -InventoryPath <owner-private-inventory>
+result=not run pre-merge by contract design; executes at the post-merge fixpoint with the owner-approved inventory
+exit_code=deferred
+
+note=Local commands were replayed inside the dedicated worktree after the boundary, launcher, stop-path, and test changes were authored. The two canonical-linux commands are exactly the debt this entry records.
+privacy=No credential, private topology, production metadata, or external runtime identifier is recorded.
