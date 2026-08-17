@@ -10,6 +10,7 @@
   "schema_version": "openspec-now-view/v1",
   "scope": "current",
   "changes": [
+    { "id": "autonomous-linux-delivery", "status": "active" },
     { "id": "a4-console-convergence", "status": "active" },
     { "id": "a4-semantic-search-model-qa", "status": "deferred" },
     { "id": "add-single-gpu-session-ai-review-mvp", "status": "deferred" },
@@ -35,6 +36,8 @@
 
 **並行規則：** 0 可與 1 同天；所有軌與新功能合計不得超過 6 個 active product change；deferred/frozen 不因額度增加自動 thaw。
 **本週不做：** A5–A10 全棧、`rvt-ifc-usdc-lineage` 實作、新 OpenSpec（除 archive/defer 註記）、整 repo 重掃。
+
+> **2026-08-17 P0 例外揭露：** 使用者明確要求建立 `autonomous-linux-delivery` OpenSpec，依本檔優先序「使用者最新口令 > 本檔」覆寫上方「本週不做：新 OpenSpec」。此 change 是目前最高優先治理項目；non-deferred active 由 5 增為 6，仍在 ≤6 上限內，沒有暗中 defer 或取代其他 active change。本次只接受規格，不宣稱 GitHub machine authority、canonical Linux deployment或 live activation 已完成；live truth 維持 `HELD/ACTIVATION_UNATTESTED`。
 
 > **2026-07-29 例外揭露：** 使用者明確要求開立 `isolated-branch-stack-browser-e2e`（A4 tasks 4.x 所需的隔離 stack browser E2E 契約），依本檔優先序「使用者最新口令 > 本檔」採納，偏離上面「本週不做：新 OpenSpec」。non-deferred active 由 4 增為 5，仍在 ≤6 內。
 

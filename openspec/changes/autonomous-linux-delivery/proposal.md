@@ -1,5 +1,7 @@
 > **Priority: P0 — 目前最高優先治理項目**
 >
+> **Status: active**
+>
 > **Owner assumption（可推翻）**：允許一次性的 owner-controlled provisioning、settings cutover 與 live attestation；它只建立外部 machine trust root，不是未來逐 PR 的 approval。若 owner 不接受此一次性 bootstrap，本 capability 必須永久維持 `HELD`，不得自我授權。
 
 ## Why
