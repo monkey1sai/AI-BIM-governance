@@ -508,7 +508,6 @@
         ".github/workflows/agent-governance.yml",
         "scripts/self-referential-bootstrap-ledger.json",
         "scripts/lib/self-referential-bootstrap.ps1",
-        "scripts/tests/verify-governance-policy.ps1",
         "scripts/tests/test-agent-governance-check.ps1",
         "scripts/tests/test-self-referential-bootstrap.ps1"
       ],
