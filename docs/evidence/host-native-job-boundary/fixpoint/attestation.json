@@ -1,0 +1,73 @@
+{
+  "schema_version": "self-referential-fixpoint-attestation/v1",
+  "entry_id": "host-native-job-boundary",
+  "mechanism_commit": "ef7518037d41b3d11800ee841e353d315c085c2c",
+  "verification_contract_sha256": "fc5b3467646fc0953f88fceef16bf854dc18eb7f80d007b79d463b4bacb0b60a",
+  "result": "pass",
+  "commands": [
+    {
+      "id": "test-host-native-launcher",
+      "exit_code": 0
+    },
+    {
+      "id": "test-host-native-child-launch",
+      "exit_code": 0
+    },
+    {
+      "id": "test-platform-adapter",
+      "exit_code": 0
+    },
+    {
+      "id": "test-deploy-governance-static",
+      "exit_code": 0
+    },
+    {
+      "id": "test-verify-all",
+      "exit_code": 0
+    },
+    {
+      "id": "test-preflight-ports",
+      "exit_code": 0
+    },
+    {
+      "id": "test-kit-log-probe",
+      "exit_code": 0
+    },
+    {
+      "id": "test-deploy-target-registry",
+      "exit_code": 0
+    },
+    {
+      "id": "test-rebuild-test-deploy",
+      "exit_code": 0
+    },
+    {
+      "id": "test-remote-deploy-transport",
+      "exit_code": 0
+    },
+    {
+      "id": "test-host-native-conversion-service",
+      "exit_code": 0
+    },
+    {
+      "id": "test-self-referential-bootstrap",
+      "exit_code": 0
+    },
+    {
+      "id": "test-agent-governance-check",
+      "exit_code": 0
+    },
+    {
+      "id": "invoke-powershell-static",
+      "exit_code": 0
+    },
+    {
+      "id": "canonical-linux-rebuild",
+      "exit_code": 0
+    },
+    {
+      "id": "canonical-linux-deployment-verify",
+      "exit_code": 0
+    }
+  ]
+}
