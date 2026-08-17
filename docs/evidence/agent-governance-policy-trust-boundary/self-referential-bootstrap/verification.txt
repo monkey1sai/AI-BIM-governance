@@ -16,6 +16,10 @@ Classifier probes:
 - scripts/Agent-governance-rules.json                        not matched
 - scripts/agent-governance-rules.json.bak                    not matched
 - scripts/archive/agent-governance-rules.json                not matched
+- scripts/tests/agent-governance-rules.schema.json            matched exactly
+- scripts/tests/Agent-governance-rules.schema.json            not matched
+- scripts/tests/agent-governance-rules.schema.json.bak        not matched
+- scripts/tests/archive/agent-governance-rules.schema.json    not matched
 - trusted-host mechanism policy covers the rule document and policy module.
 
 Ordered verification contract replay on the candidate worktree:

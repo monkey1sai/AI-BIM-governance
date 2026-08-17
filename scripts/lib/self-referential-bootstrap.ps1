@@ -62,11 +62,12 @@ $script:SelfReferentialMechanismPattern = @(
     '^scripts/lib/openspec-lifecycle\.ps1$'
     '^scripts/lib/openspec-machine-truth\.mjs$'
     '^scripts/tests/(invoke-powershell-static|scan-secret-patterns)\.ps1$'
-    # The Agent Governance Policy module, its machine-readable rules, and its adjudicating
+    # The Agent Governance Policy module, its machine-readable rules/schema, and its adjudicating
     # gate decide whether the governance surface holds; changing any of them can change the
     # required-check verdict. The behaviour suite carries the PINNED vocabulary and
     # load-bearing fingerprints.
     '^scripts/agent-governance-rules\.json$'
+    '^scripts/tests/agent-governance-rules\.schema\.json$'
     '^scripts/lib/agent-governance-policy\.psm1$'
     '^scripts/tests/verify-governance-policy\.ps1$'
     '^scripts/tests/test-agent-governance-policy\.ps1$'

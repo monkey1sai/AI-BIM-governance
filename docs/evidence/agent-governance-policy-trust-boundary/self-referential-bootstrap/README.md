@@ -8,15 +8,17 @@
 ## Why this successor exists
 
 The required Agent Governance workflow executes `verify-governance-policy.ps1`, which reads
-`scripts/agent-governance-rules.json` through `agent-governance-policy.psm1`; changing either
-file can therefore change another PR's required-check verdict. The wiring commit classified the
-module and gate but deliberately omitted the rule document, while the trusted-host merge contract
-also omitted both direct decision inputs from its human-critical mechanism boundary.
+`scripts/agent-governance-rules.json` through `agent-governance-policy.psm1`; its required
+behaviour suite also validates that rule document against
+`scripts/tests/agent-governance-rules.schema.json`. Changing any of those inputs can therefore
+change another PR's required-check verdict. The wiring commit classified the module and gate but
+deliberately omitted the rule document and schema, while the trusted-host merge contract omitted
+the rule document and module from its explicit human-critical mechanism boundary.
 
-PR #579 repairs the existing open debt by classifying the rule document and preserving exact,
-case-sensitive negative guards. Updating the separate trusted-host merge contract is outside the
-predecessor's immutable surface, so the repair lane requires this linked successor rather than
-widening the predecessor in place.
+PR #579 repairs the existing open debt by classifying the rule document and schema while
+preserving exact, case-sensitive negative guards. Updating the separate trusted-host merge
+contract is outside the predecessor's immutable surface, so the repair lane requires this linked
+successor rather than widening the predecessor in place.
 
 ## Bound surface
 

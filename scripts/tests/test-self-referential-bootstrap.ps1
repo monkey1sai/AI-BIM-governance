@@ -355,6 +355,7 @@ try {
         'scripts/lib/openspec-lifecycle.ps1',
         'scripts/lib/openspec-machine-truth.mjs',
         'scripts/agent-governance-rules.json',
+        'scripts/tests/agent-governance-rules.schema.json',
         'scripts/lib/agent-governance-policy.psm1',
         'scripts/tests/verify-governance-policy.ps1',
         'scripts/tests/test-agent-governance-policy.ps1',
@@ -389,13 +390,16 @@ try {
     $wrongCaseMechanismPaths = @(Get-SelfReferentialMechanismPaths -ChangedPaths @(
         'Scripts/Deploy.ps1',
         '.github/workflows/CI.yml',
-        'scripts/Agent-governance-rules.json'
+        'scripts/Agent-governance-rules.json',
+        'scripts/tests/Agent-governance-rules.schema.json'
     ))
     Assert-True ($wrongCaseMechanismPaths.Count -eq 0) `
         "wrong-case git paths must not classify as mechanisms (matched: $($wrongCaseMechanismPaths -join ', '))"
     $adjacentGovernancePolicyPaths = @(Get-SelfReferentialMechanismPaths -ChangedPaths @(
         'scripts/agent-governance-rules.json.bak',
-        'scripts/archive/agent-governance-rules.json'
+        'scripts/archive/agent-governance-rules.json',
+        'scripts/tests/agent-governance-rules.schema.json.bak',
+        'scripts/tests/archive/agent-governance-rules.schema.json'
     ))
     Assert-True ($adjacentGovernancePolicyPaths.Count -eq 0) `
         "adjacent governance-policy paths must not classify as mechanisms (matched: $($adjacentGovernancePolicyPaths -join ', '))"
