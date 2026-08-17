@@ -707,8 +707,9 @@ $canonicalControlUrl = Resolve-HostNativeKitControlUrl `
     -LocalAddressProbeFn { param($HostName) return ($HostName -eq 'localhost') }
 Assert-Equal 'http://localhost:49101' $canonicalControlUrl 'resolver canonicalizes an explicit localhost authority'
 
-Assert-True ($moduleContent -match '\$importProcess\.WaitForExit\(\$TimeoutSec \* 1000\)') 'Kit Manager import probe wait is bounded'
-Assert-True ($moduleContent -match 'Stop-HostNativeProcessTreeAndWait -Process \$importProcess -TimeoutMs 5000') 'Kit Manager import probe terminates and waits for a timed-out child process tree'
+Assert-True ($moduleContent -match 'Invoke-HostNativeBoundedProcess') 'Kit Manager import probe routes through the shared launch-time containment boundary (#522)'
+Assert-True ($moduleContent -match '-TimeoutSec \(\[int\]\$TimeoutSec\)') 'Kit Manager import probe wait is bounded through the boundary helper'
+Assert-True ($moduleContent -match 'probe\.TerminationFailure') 'Kit Manager import probe fails closed when a timed-out child process tree exit cannot be proven'
 Assert-True ($moduleContent -match 'function Stop-HostNativeProcessTreeAndWait') 'launcher defines a shared bounded process-tree terminator'
 Assert-True ($moduleContent -match '\$Process\.Kill\(\$true\)') 'bounded process-tree terminator includes descendants'
 Assert-True ($moduleContent -match '\$Process\.WaitForExit\(\$TimeoutMs\)') 'bounded process-tree terminator waits for exit'
@@ -1396,6 +1397,259 @@ time.sleep(120)
 }
 finally {
     Remove-TestSandbox -Path $treeSandbox
+}
+
+# ---------------------------------------------------------------------------
+# Launch-time OS containment boundary (issue #522)
+# ---------------------------------------------------------------------------
+
+# Test J1: real Windows Job Object boundary - membership is authoritative and
+# Stop-HostNativeJobBoundary proves an empty set for a real two-process tree.
+if (Test-HostNativeJobBoundarySupported) {
+    $jobSandbox = New-TestSandbox -Prefix 'hn-job-boundary'
+    try {
+        $jobFixturePython = Resolve-PlatformSystemPython
+        if ([string]::IsNullOrWhiteSpace($jobFixturePython)) {
+            throw 'job boundary containment regressions require a working Python interpreter'
+        }
+        $jobFixture = Join-Path $jobSandbox 'job-tree-fixture.py'
+        $jobPidFile = Join-Path $jobSandbox 'job-tree-pids.json'
+        $jobFixtureSource = @'
+import json
+import os
+import pathlib
+import subprocess
+import sys
+import time
+
+child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)"])
+pathlib.Path(sys.argv[1]).write_text(
+    json.dumps([os.getpid(), child.pid]), encoding="utf-8"
+)
+time.sleep(120)
+'@
+        [System.IO.File]::WriteAllText($jobFixture, $jobFixtureSource)
+
+        $jobName = Get-HostNativeJobBoundaryName -Name ('test-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
+        $jobHandle = New-HostNativeJobBoundary -Name $jobName
+        try {
+            $jobStartInfo = [System.Diagnostics.ProcessStartInfo]::new()
+            $jobStartInfo.FileName = $jobFixturePython
+            $jobStartInfo.UseShellExecute = $false
+            $jobStartInfo.CreateNoWindow = $true
+            [void]$jobStartInfo.ArgumentList.Add($jobFixture)
+            [void]$jobStartInfo.ArgumentList.Add($jobPidFile)
+            $jobRoot = [System.Diagnostics.Process]::new()
+            $jobRoot.StartInfo = $jobStartInfo
+            if (-not $jobRoot.Start()) { throw 'job boundary fixture did not start' }
+            Add-HostNativeJobBoundaryProcess -Handle $jobHandle -ProcessId $jobRoot.Id
+            Grant-HostNativeJobBoundaryAnchor -Handle $jobHandle -ProcessId $jobRoot.Id
+            for ($attempt = 0; $attempt -lt 200; $attempt++) {
+                if (Test-Path -LiteralPath $jobPidFile -PathType Leaf) { break }
+                Start-Sleep -Milliseconds 50
+            }
+            $jobTreePids = @(Get-Content -Raw -LiteralPath $jobPidFile | ConvertFrom-Json)
+            Assert-Equal 2 $jobTreePids.Count 'job boundary fixture records exactly its parent and child PIDs'
+            $membership = @(Get-HostNativeJobBoundaryProcessIds -Handle $jobHandle)
+            foreach ($treePid in $jobTreePids) {
+                Assert-True ($membership -contains [int]$treePid) "job membership is authoritative: contains fixture PID $treePid"
+            }
+        }
+        finally {
+            Close-HostNativeJobBoundary -Handle $jobHandle
+        }
+        # The anchor handle inside the fixture root keeps the job alive after our
+        # handle closes; the named stop must find it, terminate the whole
+        # membership set, and prove it empty.
+        $jobStopReport = Stop-HostNativeJobBoundary -Name $jobName -TimeoutMs 5000
+        Assert-True $jobStopReport.Found 'named job stop finds the anchored job after the launcher handle closed'
+        Assert-True $jobStopReport.Proven 'named job stop proves an empty membership set'
+        foreach ($treePid in $jobTreePids) {
+            Assert-True ($null -eq (Get-PlatformProcessIdentity -ProcessId ([int]$treePid))) "job stop proves PID $treePid exited"
+        }
+        $jobGoneReport = Stop-HostNativeJobBoundary -Name $jobName -TimeoutMs 1000
+        Assert-True (-not $jobGoneReport.Found) 'a fully terminated job ceases to exist (proven-dead by construction)'
+        Assert-True $jobGoneReport.Proven 'a missing job reports proven'
+        Write-TestPass 'Windows job boundary: authoritative membership, anchored lifetime, proven terminate (#522)'
+    }
+    finally {
+        Remove-TestSandbox -Path $jobSandbox
+    }
+}
+else {
+    Assert-True (-not (Test-HostNativeJobBoundarySupported)) 'job boundary reports unsupported off Windows'
+    Write-TestPass 'job boundary honestly reports unsupported on this platform (#517 tracks the POSIX boundary)'
+}
+
+# Test J2: Invoke-HostNativeBoundedProcess - a timed-out tree leaves no
+# survivors on either platform (job on Windows, sweep fallback elsewhere).
+$boundedSandbox = New-TestSandbox -Prefix 'hn-bounded'
+try {
+    $boundedPython = Resolve-PlatformSystemPython
+    if ([string]::IsNullOrWhiteSpace($boundedPython)) {
+        throw 'bounded process containment regressions require a working Python interpreter'
+    }
+    $boundedFixture = Join-Path $boundedSandbox 'bounded-tree-fixture.py'
+    $boundedPidFile = Join-Path $boundedSandbox 'bounded-tree-pids.json'
+    $boundedSource = @'
+import json
+import os
+import pathlib
+import subprocess
+import sys
+import time
+
+child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)"])
+pathlib.Path(sys.argv[1]).write_text(
+    json.dumps([os.getpid(), child.pid]), encoding="utf-8"
+)
+time.sleep(120)
+'@
+    [System.IO.File]::WriteAllText($boundedFixture, $boundedSource)
+    $boundedResult = Invoke-HostNativeBoundedProcess `
+        -FilePath $boundedPython `
+        -ArgumentList @($boundedFixture, $boundedPidFile) `
+        -TimeoutSec 2
+    Assert-True $boundedResult.TimedOut 'bounded process reports the timeout'
+    Assert-True ($null -eq $boundedResult.TerminationFailure) 'bounded process termination is proven, not best-effort'
+    $boundedPids = @(Get-Content -Raw -LiteralPath $boundedPidFile | ConvertFrom-Json)
+    Assert-Equal 2 $boundedPids.Count 'bounded fixture records exactly its parent and child PIDs'
+    foreach ($boundedPid in $boundedPids) {
+        Assert-True ($null -eq (Get-PlatformProcessIdentity -ProcessId ([int]$boundedPid))) "bounded timeout leaves no survivor PID $boundedPid"
+    }
+    if (Test-HostNativeJobBoundarySupported) {
+        Assert-Equal 'job' $boundedResult.Boundary 'bounded process used the job boundary on Windows'
+    } else {
+        Assert-Equal 'sweep' $boundedResult.Boundary 'bounded process disclosed the sweep fallback off Windows'
+    }
+    # Success path: exit code and output still flow through the boundary.
+    $boundedOk = Invoke-HostNativeBoundedProcess `
+        -FilePath $boundedPython `
+        -ArgumentList @('-c', 'print("bounded-ok")') `
+        -TimeoutSec 30
+    Assert-Equal 0 $boundedOk.ExitCode 'bounded success path forwards the exit code'
+    Assert-True ($boundedOk.StdOut -match 'bounded-ok') 'bounded success path forwards stdout'
+    Write-TestPass 'bounded child helper contains a timed-out tree and forwards the success path (#522)'
+}
+finally {
+    Remove-TestSandbox -Path $boundedSandbox
+}
+
+# Test J3: Start-HostNativeService boundary contract, proven with mocked ops -
+# ordering create->assign->anchor->close, the sidecar record, and the
+# fail-closed teardown when the anchor cannot be established.
+$serviceSandbox = New-TestSandbox -Prefix 'hn-service-boundary'
+# Earlier wiring tests shadow Start-HostNativeService with stubs; restore the real module.
+. $modulePath
+try {
+    $servicePython = Resolve-PlatformSystemPython
+    $serviceRunDir = Join-Path $serviceSandbox 'scripts\.run'
+    New-Item -ItemType Directory -Path $serviceRunDir -Force | Out-Null
+    $script:jobOpsCalls = [System.Collections.ArrayList]::new()
+    $mockOps = @{
+        Supported = { $true }
+        Create    = { param($jobName) [void]$script:jobOpsCalls.Add("create:$jobName"); return ([IntPtr]::new(42)) }
+        Assign    = { param($handle, $childId) [void]$script:jobOpsCalls.Add("assign:$childId") }
+        Anchor    = { param($handle, $childId) [void]$script:jobOpsCalls.Add("anchor:$childId") }
+        Terminate = { param($handle) [void]$script:jobOpsCalls.Add('terminate') }
+        Close     = { param($handle) [void]$script:jobOpsCalls.Add('close') }
+    }
+    $serviceInfo = Start-HostNativeService `
+        -Name 'boundary-contract' `
+        -WorkingDirectory $serviceSandbox `
+        -FilePath $servicePython `
+        -ArgumentList @('-c', 'import time; time.sleep(60)') `
+        -RunDir $serviceRunDir `
+        -DetachProbeFn { param($processId) $true } `
+        -JobBoundaryOps $mockOps
+    try {
+        $expectedJobName = Get-HostNativeJobBoundaryName -Name 'boundary-contract'
+        Assert-Equal "create:$expectedJobName" $script:jobOpsCalls[0] 'service boundary creates the named job first'
+        Assert-Equal "assign:$($serviceInfo.Pid)" $script:jobOpsCalls[1] 'service boundary assigns the child before anything else touches it'
+        Assert-Equal "anchor:$($serviceInfo.Pid)" $script:jobOpsCalls[2] 'service boundary anchors the job into the child'
+        Assert-Equal 'close' $script:jobOpsCalls[3] 'service boundary closes its own handle after the anchor'
+        Assert-True ($script:jobOpsCalls -notcontains 'terminate') 'a healthy launch never terminates the job'
+        $sidecar = Join-Path $serviceRunDir 'boundary-contract.job'
+        Assert-True (Test-Path -LiteralPath $sidecar) 'service launch records the job sidecar for the stop path'
+        Assert-Equal $expectedJobName ((Get-Content -LiteralPath $sidecar | Select-Object -First 1).Trim()) 'job sidecar records the exact boundary name'
+    }
+    finally {
+        Stop-Process -Id $serviceInfo.Pid -Force -ErrorAction SilentlyContinue
+    }
+
+    # Anchor failure must terminate the just-started tree and throw: a service
+    # the launcher cannot contain must not run.
+    $script:jobOpsCalls = [System.Collections.ArrayList]::new()
+    $failingOps = @{
+        Supported = { $true }
+        Create    = { param($jobName) [void]$script:jobOpsCalls.Add("create:$jobName"); return ([IntPtr]::new(42)) }
+        Assign    = { param($handle, $childId) [void]$script:jobOpsCalls.Add("assign:$childId") }
+        Anchor    = { param($handle, $childId) throw 'simulated anchor failure' }
+        Terminate = { param($handle) [void]$script:jobOpsCalls.Add('terminate') }
+        Close     = { param($handle) [void]$script:jobOpsCalls.Add('close') }
+    }
+    $anchorFailure = ''
+    try {
+        Start-HostNativeService `
+            -Name 'boundary-anchor-fail' `
+            -WorkingDirectory $serviceSandbox `
+            -FilePath $servicePython `
+            -ArgumentList @('-c', 'import time; time.sleep(60)') `
+            -RunDir $serviceRunDir `
+            -DetachProbeFn { param($processId) $true } `
+            -JobBoundaryOps $failingOps | Out-Null
+    }
+    catch {
+        $anchorFailure = $_.Exception.Message
+    }
+    Assert-True ($anchorFailure -match 'simulated anchor failure') 'anchor failure propagates as a launch failure'
+    Assert-True ($script:jobOpsCalls -contains 'terminate') 'anchor failure terminates the partially contained tree'
+    Assert-True ($script:jobOpsCalls -contains 'close') 'anchor failure still closes the launcher handle'
+    Assert-True (-not (Test-Path -LiteralPath (Join-Path $serviceRunDir 'boundary-anchor-fail.job'))) 'a failed boundary never records a sidecar'
+    Write-TestPass 'service boundary contract: ordering, sidecar, and fail-closed anchor teardown (#522)'
+}
+finally {
+    Remove-TestSandbox -Path $serviceSandbox
+}
+
+# Test J4: Stop-HostNativeService is job-first - a recorded boundary makes the
+# stop authoritative and skips the PPID walk; an unsupported-platform report
+# falls back to the legacy walk.
+$stopSandbox = New-TestSandbox -Prefix 'hn-job-stop'
+. $modulePath
+try {
+    $stopRunDir = Join-Path $stopSandbox 'scripts\.run'
+    New-Item -ItemType Directory -Path $stopRunDir -Force | Out-Null
+    Set-Content -LiteralPath (Join-Path $stopRunDir 'svc.pid') -Value '4242'
+    Set-Content -LiteralPath (Join-Path $stopRunDir 'svc.job') -Value 'Local\aibim-job-svc'
+    $script:walkInvoked = $false
+    $stopped = Stop-HostNativeService -Name 'svc' -RunDir $stopRunDir `
+        -ChildPidLookup { param($parentId) $script:walkInvoked = $true; @() } `
+        -StopProcessFn { param($procId) $script:walkInvoked = $true } `
+        -JobStopFn { param($jobName)
+            Assert-Equal 'Local\aibim-job-svc' $jobName 'job-first stop opens the recorded boundary name'
+            [pscustomobject]@{ Found = $true; MemberPids = @(4242); Proven = $true; Supported = $true }
+        }
+    Assert-True $stopped 'job-first stop reports success'
+    Assert-True (-not $script:walkInvoked) 'job-first stop never falls back to the PPID walk when the boundary is authoritative'
+    Assert-True (-not (Test-Path -LiteralPath (Join-Path $stopRunDir 'svc.pid'))) 'job-first stop removes the pid file'
+    Assert-True (-not (Test-Path -LiteralPath (Join-Path $stopRunDir 'svc.job'))) 'job-first stop removes the job sidecar'
+
+    # Unsupported platform report -> legacy PPID walk still runs.
+    Set-Content -LiteralPath (Join-Path $stopRunDir 'svc2.pid') -Value '4343'
+    Set-Content -LiteralPath (Join-Path $stopRunDir 'svc2.job') -Value 'Local\aibim-job-svc2'
+    $script:walkStops = @()
+    $stopped2 = Stop-HostNativeService -Name 'svc2' -RunDir $stopRunDir `
+        -ChildPidLookup { param($parentId) @() } `
+        -StopProcessFn { param($procId) $script:walkStops += [int]$procId } `
+        -JobStopFn { param($jobName) [pscustomobject]@{ Found = $false; MemberPids = @(); Proven = $false; Supported = $false } }
+    Assert-True $stopped2 'unsupported boundary report falls back to the legacy walk'
+    Assert-True ($script:walkStops -contains 4343) 'legacy walk still stops the recorded pid'
+    Assert-True (-not (Test-Path -LiteralPath (Join-Path $stopRunDir 'svc2.job'))) 'fallback removes the stale job sidecar'
+    Write-TestPass 'stop path is job-first with an honest legacy fallback (#522)'
+}
+finally {
+    Remove-TestSandbox -Path $stopSandbox
 }
 
 Write-Host "`n=== test-host-native-launcher.ps1: ALL PASSED ===" -ForegroundColor Green

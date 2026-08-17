@@ -43,14 +43,18 @@ Assert-Contains $deploy "Get-DeployEnvValue -Name 'STREAMING_CONVERSION_HOOPS_MA
 if ($deploy -match 'GetUnixFileMode') {
     throw 'Linux deploy must remain compatible with the repository PowerShell 7 baseline'
 }
-Assert-Contains $deploy '[System.Diagnostics.ProcessStartInfo]::new()' 'Linux deploy must launch the hardener through a process with a reliable ExitCode'
-Assert-Contains $deploy '$process.WaitForExit($TimeoutSec * 1000)' 'Linux deploy must bound the CAD hardener process wait'
-Assert-Contains $deploy 'Stop-HostNativeProcessTreeAndWait -Process $process -TimeoutMs 5000' 'Linux deploy must terminate and wait for a timed-out CAD hardener process tree'
+Assert-Contains $deploy 'Invoke-HostNativeBoundedProcess' 'Linux deploy must launch the hardener through the launch-time containment boundary helper (#522)'
+$boundaryLib = Get-Content -Raw -LiteralPath (Join-Path $repoRoot 'scripts/lib/host-native-job-boundary.ps1')
+Assert-Contains $boundaryLib '[System.Diagnostics.ProcessStartInfo]::new()' 'the boundary helper must launch children through a process with a reliable ExitCode'
+Assert-Contains $boundaryLib 'JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE' 'the boundary helper must set kill-on-close so a closed handle reaps the tree'
+Assert-Contains $deploy '-TimeoutSec $TimeoutSec' 'Linux deploy must bound the CAD hardener process wait through the boundary helper'
+Assert-Contains $deploy 'bounded.TerminationFailure' 'Linux deploy must fail closed when a timed-out CAD hardener process tree exit cannot be proven'
+Assert-Contains $boundaryLib 'Stop-HostNativeProcessTreeAndWait -Process $process -TimeoutMs 5000' 'the boundary helper must keep the sweep fallback for platforms without Job Objects'
 Assert-Contains $launcher 'function Stop-HostNativeProcessTreeAndWait' 'host-native launcher must expose the shared bounded process-tree terminator'
 Assert-Contains $launcher '$Process.Kill($true)' 'bounded process-tree terminator must request descendant termination'
 Assert-Contains $launcher '$Process.WaitForExit($TimeoutMs)' 'bounded process-tree terminator must wait for the parent exit'
 Assert-Contains $launcher '-not $Process.HasExited' 'bounded process-tree terminator must prove the parent exited'
-Assert-Contains $deploy '$process.ExitCode' 'Linux deploy must read the hardener process ExitCode directly'
+Assert-Contains $deploy '$bounded.ExitCode' 'Linux deploy must read the hardener process ExitCode from the boundary result'
 Assert-Contains $deploy "[string]`$status.status -ceq 'passed'" 'Linux deploy must require the hardener passed JSON contract'
 Assert-Contains $cadHardener 'harden_default_hoops_main_permissions' 'CAD cache hardener must reuse the adapter trust-boundary implementation'
 Assert-Contains $cadHardener 'cad-extension-cache-hardening/v1' 'CAD cache hardener must emit the stable redacted result schema'
@@ -63,7 +67,7 @@ Assert-Contains $launcher "KIT_INSTANCE_ID = 'kit_local_001'" 'host-native Kit M
 Assert-Contains $launcher 'KIT_CONTROL_URL = $normalizedKitControlUrl' 'host-native Kit Manager must use only a validated explicit control authority or the empty blocked state'
 Assert-Contains $launcher 'function Test-HostNativeLocalAddress' 'host-native Kit Manager must verify that its conversion authority is local'
 Assert-Contains $launcher 'KitControlUrl host must be loopback or an address assigned to this host.' 'host-native Kit Manager must reject remote Kit control targets'
-Assert-Contains $launcher '$importExitCode = $importProcess.ExitCode' 'host-native Kit Manager import probe must read a real process ExitCode'
+Assert-Contains $launcher 'return $probe.ExitCode' 'host-native Kit Manager import probe must read a real process ExitCode from the boundary result'
 Assert-Contains $deploy "Get-DeployEnvValue -Name 'KIT_CONTROL_URL'" 'deploy.ps1 must preserve an explicit Kit control authority instead of inventing conversion runtime routes'
 Assert-Contains $deploy 'Resolve-HostNativeKitControlUrl' 'deploy.ps1 must canonicalize and validate Kit control identity before writing its runtime signature'
 Assert-Contains $deploy '-KitControlUrl $resolvedKitControlUrl' 'deploy.ps1 must pass the explicit or empty Kit control authority to the child'
@@ -140,6 +144,9 @@ $hardenerFunction = @($deployAst.FindAll({
 if ($hardenerFunction.Count -ne 1) {
     throw 'deploy.ps1 must define exactly one Invoke-CadExtensionCacheHardener helper'
 }
+# The hardener now routes through the launch-time containment boundary (#522);
+# give the extracted extent its dependency the same way deploy.ps1 does.
+. (Join-Path $repoRoot 'scripts/lib/host-native-job-boundary.ps1')
 . ([scriptblock]::Create($hardenerFunction[0].Extent.Text))
 $hardenerSandbox = Join-Path ([System.IO.Path]::GetTempPath()) ("ai-bim-invalid-hardener-{0}" -f [guid]::NewGuid().ToString('N'))
 try {
