@@ -39,12 +39,12 @@ P0–P5／呼叫端負責實作、測試、commit、base freshness、push、建�
 | 角色 | 能力與責任 |
 |---|---|
 | Repository owner | 實作與最終 merge operator；不得審核自己的 PR。 |
-| Human reviewer `monkey1sai-blip` | 唯一人工 approval authority；固定 user ID `311287868`，並由 `.github/CODEOWNERS` 指定為全路徑唯一 code owner。必須在 GitHub UI 對 exact head 提交 APPROVED review 與 canonical body。Agent 不得代交、修改或 dismiss review。 |
+| Human reviewer `monkey1sai-blip` | 唯一 counted approval identity；固定 user ID `311287868`，並由 `.github/CODEOWNERS` 指定為全路徑唯一 code owner。目前 trusted merge authority 必須在 GitHub UI 對 exact head 另行提交 APPROVED review 與 canonical `merge`／`merge-elevated` body；repo 的未啟用 broker source 只可產生 distinct automated `approve-only` body，永遠不是 merge authority。Agent 不得直接代交、修改或 dismiss review。 |
 | Base-pinned trusted host executor | default-branch workflow 中的唯一固定命令執行者；驗證 args/identity、蒐集 immutable-SHA evidence，並擁有唯一 merge sink。未 provision 時保持 unavailable。 |
 | Claude／Codex apex | 直接 API、`tools=[]`、無 GitHub App token；只裁決 schema-bound evidence。Claude 使用 max effort，Codex 使用官方 Responses API 支援的 xhigh。 |
 
 沒有 preparation child、autofix child 或第二個 writer。所有 child **MUST NOT run any merge command, including `gh pr merge --admin`**。未來 trusted host executor 也不得使用 `--admin` 或繞過 branch protection。
-workflow 與 trusted host executor 都不得呼叫任何建立、修改、dismiss 或提交 GitHub review 的 API/CLI；canonical human approval 只能由固定 reviewer 在 UI 輸入。
+workflow 與 trusted host executor 都不得直接呼叫任何建立、修改、dismiss 或提交 GitHub review 的 API/CLI。`scripts/agent-tooling/blip-approve/` 只持久化 source；只有外部 verifier、ProgramData runtime、owner credential 與 token health 另案完成，且使用者對 named PR 明確授權後，固定 User broker 才可提交 distinct automated `approve-only` review。該 review 只供 branch-protection counted approval，不能滿足本 workflow 的 canonical `merge`／`merge-elevated` authority；activation 前兩者都只能由固定 reviewer 在 UI 分別處理。
 
 ## 1. Fail-closed 輸入
 
@@ -63,7 +63,7 @@ base-pinned trusted host executor 必須依序執行固定命令並 fail closed�
 5. 只跑 GitHub required checks；不在持有 merge credential 的流程內執行 PR branch 上可被改寫的 script。
 6. required checks 完成後，以三個 30 秒 bounded wait 形成 reviewer buffer，再重讀同一 PR identity。
 7. single-owner branch protection 必須精確為 approvals=1、dismiss stale reviews=true、require code-owner reviews=true、conversation resolution=true、strict required checks 非空、enforce admins=true、禁止 force-push/delete/bypass；完整 protection response 會 canonicalize 成 snapshot，在 reviewer buffer 後與 merge 前都要重讀，任一欄位漂移即 HELD。
-8. `reviewDecision` 必須是 `APPROVED`；空值、`REVIEW_REQUIRED`、`CHANGES_REQUESTED` 或未知值一律回 `review_required`。所有可 merge 的 PR 都必須有唯一 canonical human approval review，精確綁定 repo/PR/base/head；缺漏回 `human_approval_required`。elevated path 必須消耗下述 protected-environment broker 的 exact approval；broker 未 provision、未 attested、過期、重跑或 payload 不同一律回 `trusted_elevated_authorization_unavailable`。任何 caller-supplied `elevatedAuthorization` 都不能解鎖；routine path 出現該欄則回 `unexpected_elevated_authorization`。
+8. `reviewDecision` 必須是 `APPROVED`；空值、`REVIEW_REQUIRED`、`CHANGES_REQUESTED` 或未知值一律回 `review_required`。所有可 merge 的 PR 都必須另有唯一 canonical fixed-User `merge`／`merge-elevated` authority review，精確綁定 repo/PR/base/head；缺漏回 `human_approval_required`。review 目前只能由 reviewer UI 提交。未來 source-only broker 另行安裝、啟用且對 named PR 逐次授權後，只能提交 `kind=ai-bim-automated-approve-only`、`automated=true`、`action=approve-only` 的 counted review；executor 明確拒絕把它當成 merge authority。runtime 驗證 GitHub authoritative identity/state/body/commit tuple，不臆稱能辨識鍵盤來源。elevated path 仍須分別消耗下述 protected-environment broker 的 exact approval；broker 未 provision、未 attested、過期、重跑或 payload 不同一律回 `trusted_elevated_authorization_unavailable`。任何 caller-supplied `elevatedAuthorization` 都不能解鎖；routine path 出現該欄則回 `unexpected_elevated_authorization`。
 9. 用已固定的 SHA 蒐證，而不是 mutable PR ref：
 
    ```bash
@@ -134,7 +134,7 @@ base-pinned trusted host executor 在 verdict 後重新讀取 PR state/draft/num
 
 ## 5. Approval 與 closeout
 
-single-owner 模式沒有 routine auto-merge；每個 PR 都必須由固定 reviewer `monkey1sai-blip` 在 GitHub UI 手動提交 exact canonical human approval。以下高風險動作除了 review 外，仍須使用者本輪明確同意：
+single-owner 模式沒有 routine auto-merge；每個 PR 都必須由固定 reviewer `monkey1sai-blip` 提交 exact canonical approval。目前 counted-review broker activation=`HELD`，因此只能在 GitHub UI 手動提交；即使未來 broker 啟用，也必須對 named PR 逐次取得 live mutation 授權。以下高風險動作除了 review 外，仍須使用者本輪明確同意：
 
 caller-controlled `elevatedAuthorization` 無法證明目前對話 turn 的人類授權，即使內容與 canonical tuple/body 完全相同也不得解鎖。broker 使用 agent-inaccessible GitHub protected environment `trusted-elevated-merge`：challenge 綁定 repo/PR/base/head/action/runId/activationMode/provider/nonce/expiry；environment 必須只有 reviewer `monkey1sai-blip`（ID `311287868`）、`prevent_self_review=true`、`can_admins_bypass=false`，且只允許 `main` branch。reviewer 必須在 approval comment 貼上逐字 assertion。executor 只接受 run attempt 1、唯一一筆 approved history、唯一 environment、尚未過期的 exact comment；新 run ID、mode 或重跑都必須使用新 assertion。
 

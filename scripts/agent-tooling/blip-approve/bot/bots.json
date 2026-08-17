@@ -1,0 +1,11 @@
+{
+  "schema": "blip-protected-bot-config/v1",
+  "bots": {
+    "codex": {
+      "app_slug": "codex-tri-adversarial-bot",
+      "app_id": "4445344",
+      "installation_id": "150304409",
+      "repo": "monkey1sai/AI-BIM-governance"
+    }
+  }
+}

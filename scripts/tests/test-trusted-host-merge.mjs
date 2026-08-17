@@ -12,6 +12,7 @@ import {
   bindVerifiedPullRequestIdentity,
   buildBoundedEvidence,
   buildBrokerAssertion,
+  canonicalAutomatedApproveOnlyBody,
   canonicalHumanApprovalBody,
   classifyElevatedPaths,
   decodeLosslessGitDiff,
@@ -596,6 +597,21 @@ test('PR, code-owner approval, reviewer permission, and App-pinned checks are ex
     expectHold('branch_requires_separate_authorization', () => verifyPullRequestIdentity(restricted, invocation))
   }
   expectHold('human_approval_required', () => selectCanonicalApproval([{ ...review(invocation), body: 'approve' }], invocation, contract))
+  const approveOnlyBody = canonicalAutomatedApproveOnlyBody(invocation)
+  assert.equal(approveOnlyBody, JSON.stringify({
+    kind: 'ai-bim-automated-approve-only',
+    version: 1,
+    automated: true,
+    repo: invocation.repo,
+    prNumber: invocation.prNumber,
+    headOid: invocation.headOid,
+    baseOid: invocation.baseOid,
+    action: 'approve-only',
+  }))
+  assert.notEqual(approveOnlyBody, canonicalHumanApprovalBody(invocation))
+  expectHold('human_approval_required', () => selectCanonicalApproval([
+    { ...review(invocation), body: approveOnlyBody },
+  ], invocation, contract))
   expectHold('reviewer_permission_not_strict', () => verifyReviewerPermission({
     permission: 'admin', role_name: 'admin',
     user: { login: 'monkey1sai-blip', id: 311287868, type: 'User' },

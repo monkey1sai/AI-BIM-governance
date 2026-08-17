@@ -322,12 +322,27 @@ export function canonicalHumanApprovalBody(invocation) {
   })
 }
 
+export function canonicalAutomatedApproveOnlyBody(invocation) {
+  return JSON.stringify({
+    kind: 'ai-bim-automated-approve-only',
+    version: 1,
+    automated: true,
+    repo: invocation.repo,
+    prNumber: invocation.prNumber,
+    headOid: invocation.headOid,
+    baseOid: invocation.baseOid,
+    action: 'approve-only',
+  })
+}
+
 export function selectCanonicalApproval(reviews, invocation, contract) {
   const expectedBody = canonicalHumanApprovalBody(invocation)
+  const approveOnlyBody = canonicalAutomatedApproveOnlyBody(invocation)
   const reviewer = contract.broker.required_reviewer
   const matches = Array.isArray(reviews) ? reviews.filter((review) => (
     review?.state === 'APPROVED' && review?.commit_id === invocation.headOid &&
-    equalText(review?.body, expectedBody) && review?.user?.login === reviewer.login &&
+    !equalText(review?.body, approveOnlyBody) && equalText(review?.body, expectedBody) &&
+    review?.user?.login === reviewer.login &&
     review?.user?.id === reviewer.id && review?.user?.type === reviewer.type &&
     review?.author_association === 'COLLABORATOR' &&
     typeof review?.submitted_at === 'string' && review.submitted_at.length > 0 &&

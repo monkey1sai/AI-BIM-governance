@@ -1,0 +1,18 @@
+stack_kind=self_referential_bootstrap
+pr=548
+base=67f82d23127070858f05d72cbbc2a9b74849638c
+activation=HELD
+
+test-blip-broker: exit 0, 85/85 passed
+test-trusted-host-merge: exit 0, 44 passed, 1 Windows-only skipped
+test-ship-item-runtime: exit 0, 5/5 passed
+test-review-risk: exit 0, 65/65 passed
+test-routing-consistency: exit 0, 14/14 passed
+test-self-referential-bootstrap: exit 0, all assertions passed
+test-agent-governance-check: exit 0, all assertions passed
+scan-secret-patterns: exit 0, passed
+invoke-powershell-static: exit 0, 13 files parsed
+python-ast: exit 0, 14 files parsed
+
+Owner-context ACL, ProgramData installation, credentials, activation, live
+review mutation, approval, auto-merge, and merge were not run.

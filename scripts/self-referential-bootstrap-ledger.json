@@ -357,6 +357,36 @@
           "docs/evidence/agent-governance-scope-routing/fixpoint/summary.md"
         ]
       }
+    },
+    {
+      "id": "blip-approve-authority-separation",
+      "status": "open",
+      "pr": 548,
+      "opened_at": "2026-08-17T04:30:13Z",
+      "reason": "the trusted-host merge evidence consumer is itself an adjudicator, so the base-pinned consumer cannot prove before merge that its changed exact-body matcher rejects the new automated approve-only schema; only a post-merge run of the updated consumer can establish that authority separation as a fixpoint",
+      "verification_mechanism_paths": [
+        "scripts/lib/trusted-host-merge-evidence.mjs",
+        "scripts/self-referential-bootstrap-ledger.json",
+        "scripts/tests/test-trusted-host-merge.mjs"
+      ],
+      "verification_contract": {
+        "id": "blip-approve-authority-separation/v1",
+        "command_ids": [
+          "test-trusted-host-merge",
+          "test-ship-item-runtime",
+          "test-review-risk",
+          "test-routing-consistency",
+          "test-self-referential-bootstrap",
+          "test-agent-governance-check",
+          "scan-secret-patterns"
+        ],
+        "contract_sha256": "bbce37a6f251449805f968dda832770a935d17d59bd37ed8661f795a7955a712"
+      },
+      "bootstrap_evidence_refs": [
+        "docs/evidence/blip-approve-authority-separation/self-referential-bootstrap/README.md",
+        "docs/evidence/blip-approve-authority-separation/self-referential-bootstrap/gate-suites.txt"
+      ],
+      "fixpoint": null
     }
   ]
 }
