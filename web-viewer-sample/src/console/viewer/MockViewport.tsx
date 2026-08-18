@@ -6,6 +6,7 @@ import { MappingTable } from "./MappingTable";
 import { IfcSemanticPanel } from "./IfcSemanticPanel";
 import { StructureStats } from "./StructureStats";
 import { coordinatorClient } from "../coordinatorClient";
+import { t } from "../i18n";
 import type { TriReadyState } from "../../utils/triReady";
 import { harnessMappingItems } from "../../harness/fixtures/harnessMapping";
 
@@ -179,7 +180,7 @@ export function MockViewport(props: MockViewportProps) {
             </tbody></table>
             {canReconnect && (
               <button className="gv-action" type="button" data-testid="viewer-reconnect-stream" onClick={onReconnect}>
-                重新連線 WebRTC
+                {t("重新連線 WebRTC", "Reconnect WebRTC")}
               </button>
             )}
           </section>
