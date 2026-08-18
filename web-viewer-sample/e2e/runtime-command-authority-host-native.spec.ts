@@ -293,7 +293,13 @@ async function sendCommand(page: Page, eventType: string, payload: Record<string
       };
     }).__HOST_NATIVE_AUTHORITY_PROBE__;
     if (!probe) throw new Error("host-native probe is unavailable");
-    await probe.streamer.sendMessage({ event_type: nextEventType, payload: nextPayload });
+    // Mirror production semantics: Window.tsx sends with `void AppStream.sendMessage(...)`
+    // and never awaits the returned promise. On the host-native WebRTC path that promise
+    // does not settle, so awaiting it here hung every run at the FIRST command for the
+    // full 300s test timeout while video frames were already arriving - the harness, not
+    // the product, was the thing that was broken. Delivery is still verified: every caller
+    // waits on the observed response event, not on this promise.
+    void probe.streamer.sendMessage({ event_type: nextEventType, payload: nextPayload });
   }, { eventType, payload });
 }
 
