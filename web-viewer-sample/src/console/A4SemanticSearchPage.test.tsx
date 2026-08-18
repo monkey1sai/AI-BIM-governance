@@ -633,5 +633,96 @@ describe("A4SemanticSearchPage", () => {
       expect(surfaceText).not.toContain("for-session/");
       expect(surfaceText).not.toContain("A4 governance request failed");
     });
+
+    // ------------------------------------------------------------------
+    // a4-console-convergence task 3.5/3.6：visible-state 錨點與 retry 關聯
+    // ------------------------------------------------------------------
+
+    const okResponse = (queryId: string, results: unknown[] = []) => ({
+      status: "ok",
+      query_id: queryId,
+      search_scope: "ifc_ready_table_only",
+      completion_scope: "complete_table",
+      issue_eligible: false,
+      highlight_eligible: false,
+      interpreted_filters: {
+        raw_query: "IfcDoor", ifc_classes: ["IfcDoor"], storey_tokens: [],
+        property_filters: [], interpretable: true, notes: [], confidence: 1,
+        confidence_basis: "deterministic_grammar",
+      },
+      results,
+      stats: { total: results.length, matched: results.length, unmapped: 0, scanned: 1 },
+      evidence_refs: [],
+    });
+
+    async function mountAndRunOnce() {
+      root = createRoot(container);
+      await act(async () => { root!.render(<A4SemanticSearchPage />); });
+      await flush();
+      const jobSelect = container.querySelector<HTMLSelectElement>('[data-testid="a4-job-select"]')!;
+      await act(async () => {
+        jobSelect.value = "ifcready_x";
+        jobSelect.dispatchEvent(new Event("change", { bubbles: true }));
+      });
+      const runBtn = container.querySelector<HTMLButtonElement>('[data-testid="a4-run"]')!;
+      await act(async () => { runBtn.click(); });
+      await flush();
+      return { runBtn };
+    }
+
+    it("empty result renders a neutral a4-empty state instead of an error", async () => {
+      vi.spyOn(governanceClient, "searchModelForIfcReady")
+        .mockResolvedValue(okResponse("a4_q_empty") as never);
+      await mountAndRunOnce();
+      const empty = container.querySelector('[data-testid="a4-empty"]');
+      expect(empty).not.toBeNull();
+      expect(container.querySelector('[data-testid="a4-run-err"]')).toBeNull();
+      expect(empty?.textContent ?? "").not.toMatch(/error|失敗/i);
+    });
+
+    it("uninterpreted status renders its own anchor", async () => {
+      vi.spyOn(governanceClient, "searchModelForIfcReady")
+        .mockResolvedValue({ ...okResponse("a4_q_unint"), status: "uninterpreted" } as never);
+      await mountAndRunOnce();
+      expect(container.querySelector('[data-testid="a4-uninterpreted"]')).not.toBeNull();
+    });
+
+    it("retry keeps the explicit query/mode and associates the prior query id", async () => {
+      const search = vi.spyOn(governanceClient, "searchModelForIfcReady")
+        .mockResolvedValueOnce(okResponse("a4_q_first") as never)
+        .mockResolvedValueOnce(okResponse("a4_q_second") as never);
+      await mountAndRunOnce();
+      const retryBtn = container.querySelector<HTMLButtonElement>('[data-testid="a4-retry"]');
+      expect(retryBtn).not.toBeNull();
+      await act(async () => { retryBtn!.click(); });
+      await flush();
+      expect(search).toHaveBeenCalledTimes(2);
+      const secondBody = search.mock.calls[1][1] as { query: string; retry_of_query_id?: string | null };
+      expect(secondBody.retry_of_query_id).toBe("a4_q_first");
+      expect(secondBody.query).toBe(search.mock.calls[0][1].query);
+    });
+
+    it("a failing retry surfaces a4-retry-failed and preserves the draft query", async () => {
+      vi.spyOn(governanceClient, "searchModelForIfcReady")
+        .mockResolvedValueOnce(okResponse("a4_q_ok") as never)
+        .mockRejectedValueOnce(new A4GovernanceError(503, "a4_authentication_unavailable"));
+      await mountAndRunOnce();
+      const retryBtn = container.querySelector<HTMLButtonElement>('[data-testid="a4-retry"]')!;
+      await act(async () => { retryBtn.click(); });
+      await flush();
+      expect(container.querySelector('[data-testid="a4-retry-failed"]')).not.toBeNull();
+      const input = container.querySelector<HTMLInputElement>('[data-testid="a4-query-input"]')!;
+      expect(input.value.length).toBeGreaterThan(0);
+    });
+
+    it("the page source stays console-only: zero DataChannel/AppStream senders and no fixture counts", async () => {
+      const { readFileSync } = await import("node:fs");
+      const source = readFileSync("src/console/A4SemanticSearchPage.tsx", "utf8");
+      // 只盯 import／呼叫面；使用者可見的誠實聲明文案（如「不送 DataChannel」）不在禁用範圍。
+      for (const banned of ["from \"../AppStream\"", "from \"./AppStream\"", "_sendStreamMessage", ".sendMessage(", "getStreamer"]) {
+        expect(source).not.toContain(banned);
+      }
+      expect(source.toLowerCase()).not.toContain("fixture");
+    });
   });
 });

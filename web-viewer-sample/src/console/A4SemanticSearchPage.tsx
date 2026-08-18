@@ -144,6 +144,11 @@ export function A4SemanticSearchPage() {
   const [resultContext, setResultContext] = useState<A4ResultContext | null>(null);
   const [llmReadinessExpired, setLlmReadinessExpired] = useState(false);
   const [llmReadinessExpiresAtMs, setLlmReadinessExpiresAtMs] = useState<number | null>(null);
+  // task 3.5：retry 關聯 prior query id 與 neutral 非錯誤態（empty/uninterpreted）。
+  const [lastQueryId, setLastQueryId] = useState<string | null>(null);
+  const [retrying, setRetrying] = useState(false);
+  const [retryFailed, setRetryFailed] = useState(false);
+  const [runNotice, setRunNotice] = useState<{ kind: "empty" | "uninterpreted"; text: string } | null>(null);
   const llmStatusRequestIdRef = useRef(0);
   const sourceSelectionInitializedRef = useRef(false);
 
@@ -300,15 +305,23 @@ export function A4SemanticSearchPage() {
     && resultContext.interpretMode === interpretMode,
   );
 
-  async function onRun() {
+  async function onRun(isRetry = false) {
     const trimmedQuery = query.trim();
     setBusy(true);
+    setRetrying(isRetry);
+    setRetryFailed(false);
     setRunErr(null);
+    setRunNotice(null);
     setResult(null);
     setResultContext(null);
     try {
       const userToken = getLocalDevUserCarrier();
-      const body = { query: trimmedQuery, interpret_mode: interpretMode };
+      // retry 沿用同一組 explicit query/mode，並以 retry_of_query_id 關聯 prior 查詢。
+      const body = {
+        query: trimmedQuery,
+        interpret_mode: interpretMode,
+        ...(isRetry && lastQueryId ? { retry_of_query_id: lastQueryId } : {}),
+      };
       const res: ModelSearchResponse = sourceMode === "session"
         ? await governanceClient.searchModelForSession(sessionId, body, userToken)
         : await governanceClient.searchModelForIfcReady(jobId, body, userToken);
@@ -316,20 +329,25 @@ export function A4SemanticSearchPage() {
       // 保存這次查詢的 explicit 條件，讓「結果是否仍對應目前輸入」可判定；
       // retry 必須沿用同一組 query/mode，不得靜默改寫。
       setResultContext({ sourceMode, sessionId, jobId, query: trimmedQuery, interpretMode });
+      setLastQueryId(typeof res.query_id === "string" && res.query_id ? res.query_id : null);
       if (res.status === "uninterpreted") {
-        setRunErr(t("無法解譯問句 — 請用範例語法改寫", "Query not interpreted — rewrite using example grammar"));
+        // neutral 態：非錯誤，僅表達「查詢條件未被解譯」。
+        setRunNotice({ kind: "uninterpreted", text: t("無法解譯問句 — 請用範例語法改寫", "Query not interpreted — rewrite using example grammar") });
       } else if (res.error_code) {
         const code = safeA4DiagnosticCode(res.error_code);
         setRunErr(t(`查詢未完成（${code}）`, `Query did not complete (${code})`));
       } else if ((res.results?.length ?? 0) === 0) {
-        setRunErr(t("0 筆結果 — 放寬條件或確認模型內容", "0 results — broaden filters or check model content"));
+        // neutral 態：0 筆是合法查詢結果，不以錯誤呈現。
+        setRunNotice({ kind: "empty", text: t("0 筆符合查詢條件 — 可放寬條件或確認模型內容", "0 rows match this query — broaden filters or check model content") });
       }
     } catch (e) {
       // 只顯示 allowlist code 對應的復原指引；不得把 upstream detail／path 帶進 UI。
       setRunErr(a4RequestErrorCopy(e));
+      if (isRetry) setRetryFailed(true);
     } finally {
       if (interpretMode !== "deterministic") void refreshLlmStatusAfterRun();
       setBusy(false);
+      setRetrying(false);
     }
   }
 
@@ -514,6 +532,18 @@ export function A4SemanticSearchPage() {
           )}
           {loadErr && <p className="ec-err" data-testid="a4-load-err">{loadErr}</p>}
           {runErr && <p className="ec-warn" data-testid="a4-run-err">{runErr}</p>}
+          {runNotice && <p className="ec-note" data-testid={`a4-${runNotice.kind}`}>{runNotice.text}</p>}
+          {busy && retrying && <p className="ec-note" data-testid="a4-retrying">{t("重試中（沿用原查詢條件）…", "Retrying with the original query…")}</p>}
+          {retryFailed && (
+            <p className="ec-warn" data-testid="a4-retry-failed">
+              {t("重試失敗；原查詢草稿已保留，可稍後再試。", "Retry failed; the original query draft is preserved for a later attempt.")}
+            </p>
+          )}
+          {lastQueryId && resultContextMatchesCurrent && !busy && (
+            <Btn data-testid="a4-retry" onClick={() => { void onRun(true); }}>
+              {t("重試（關聯前次查詢）", "Retry (linked to prior query)")}
+            </Btn>
+          )}
         </Panel>
 
         <Panel title={t("解譯與統計", "Interpretation & stats")} sub="interpreted_filters" prov="asbuilt">
