@@ -652,7 +652,7 @@ function New-IsolatedBackendEnvironment {
         $Ports
     )
     if ($Role -eq 'governance') {
-        return @{
+        $governanceEnvironment = @{
             GOV_PORT = "$($Ports.governance)"
             GOV_DB_PATH = [string]$StateLayout.governance_db
             GOV_FED_OUT = [string]$StateLayout.governance_federation_out
@@ -660,6 +660,14 @@ function New-IsolatedBackendEnvironment {
             RUNTIME_STORAGE_ROOT = [string]$StateLayout.fixture_root
             LOG_ROOT = (Join-Path $StateLayout.governance_root 'logs')
         }
+        # a4-trusted-context 透傳（issue #505）第二半：governance-service 的
+        # search/internal_auth.py 以同一 shared secret 驗 coordinator 的 internal
+        # 呼叫；缺席時 A4 search/issues 面 503 a4_internal_context_unavailable。
+        # 同 coordinator 側規則：只由 parent process env 透傳，值不落 manifest/log。
+        if (-not [string]::IsNullOrWhiteSpace($env:A4_INTERNAL_CONTEXT_TOKEN)) {
+            $governanceEnvironment.A4_INTERNAL_CONTEXT_TOKEN = $env:A4_INTERNAL_CONTEXT_TOKEN
+        }
+        return $governanceEnvironment
     }
 
     $coordinatorRoot = [string]$StateLayout.coordinator_root
