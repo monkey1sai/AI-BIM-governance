@@ -10,11 +10,11 @@
 
 ## 2. 後端契約調和（以 main 為基準）
 
-- [ ] 2.1 `governance-service/search/engine.py`(26 hunks)：保留 main 的 `MAX_A4_PROOF_ROWS_PER_RESPONSE`／`MAX_A4_SEARCH_RESPONSE_BYTES` 等上限常數與 `degraded_to_deterministic` 欄位；只在不改變既有 response shape 的前提下併入 convergence 的補強。
-- [ ] 2.2 `governance-service/search/proofs.py`(15 hunks)、`api.py`(8 hunks)、`interpreter.py`／`llm_client.py`(各 2 hunks)：同上原則調和，維持 proof 上限與 truncation 語意。
-- [ ] 2.3 `governance-service/issues/store.py`(3 hunks)：保留 main 的 session-bound issue 持久化（#398），不回退為舊版。
-- [ ] 2.4 `bim-review-coordinator/src/app.ts`(6 hunks)、`routes/a4HandoffRoutes.ts`(1 hunk)：保留 main 的 route 拆分與 handoff backend（#380／#418 重構），不重新引入已移除的 inline 掛載。
-- [ ] 2.5 後端調和後跑 `governance-service` 全量 pytest 與 coordinator `npm run verify`，結果不得低於 1.1 baseline。
+- [x] 2.1 `governance-service/search/engine.py`(26 hunks)：保留 main 的 `MAX_A4_PROOF_ROWS_PER_RESPONSE`／`MAX_A4_SEARCH_RESPONSE_BYTES` 等上限常數與 `degraded_to_deterministic` 欄位；只在不改變既有 response shape 的前提下併入 convergence 的補強。**2026-08-18 裁決：全取 main、零併入**——逐行審計 convergence-only（+59 行）全屬 pre-refactor 殘影（storey trace／mapped 計數／舊版 `session_binding`——main 已於 478/629/663 行含加固版）；main 為嚴格 superset（上限常數 4 處在檔）。零 code 變更。
+- [x] 2.2 `governance-service/search/proofs.py`(15 hunks)、`api.py`(8 hunks)、`interpreter.py`／`llm_client.py`(各 2 hunks)：同上原則調和，維持 proof 上限與 truncation 語意。**2026-08-18 裁決：全取 main、零併入**——conv-only 各為 +24/+14/+2/+1 行，抽查全屬舊版 docstring／init 殘影；proof 上限與 truncation 語意由 main 現行實作持有。零 code 變更。
+- [x] 2.3 `governance-service/issues/store.py`(3 hunks)：保留 main 的 session-bound issue 持久化（#398），不回退為舊版。**2026-08-18 裁決：全取 main**——conv-only +312 行為舊 schema 整檔殘影（main_only −318≈全檔互換）；main 現檔 session 出現 13 處。零 code 變更。
+- [x] 2.4 `bim-review-coordinator/src/app.ts`(6 hunks)、`routes/a4HandoffRoutes.ts`(1 hunk)：保留 main 的 route 拆分與 handoff backend（#380／#418 重構），不重新引入已移除的 inline 掛載。**2026-08-18 裁決：全取 main**——conv-only +1176/+7 行即拆分前 inline 版全文；不回退。零 code 變更（歷史 CRITICAL 紀錄之 `createCoordinatorApp` 因零觸碰而不適用本輪）。
+- [x] 2.5 後端調和後跑 `governance-service` 全量 pytest 與 coordinator `npm run verify`，結果不得低於 1.1 baseline。**2026-08-18**：coordinator verify 綠；governance 全量 295 passed／1 skipped／6 failed——6 紅全在 IDS/ifctester 面（`test_ids.py`×5＋`test_api.py::test_health_reports_ifctester_true`），與 A4 零關聯，且 2.x 為零 code 變更之裁決＝main pre-existing（1.1 當時僅記 A4 子集 183 passed，未涵蓋全量），不低於 baseline 成立。
 
 ## 3. 前端 Console 收斂（以 convergence 為基準）
 
