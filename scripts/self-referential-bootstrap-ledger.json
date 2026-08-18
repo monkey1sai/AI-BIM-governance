@@ -587,7 +587,7 @@
     },
     {
       "id": "agent-governance-policy-trust-boundary",
-      "status": "closed",
+      "status": "open",
       "pr": 579,
       "opened_at": "2026-08-17T12:58:44Z",
       "reason": "repairing the governance-policy classifier changes the trusted-host merge contract and therefore forces the base-owned verification plan to full-dispatch every required target; hosted run 32036393744 then proved the streaming CI adjudicator omitted the repository-pinned usd-core dependency and could not import pxr. Both the trusted-host contract and ci workflow are classified outside the original open entry surface, so this linked successor owns that exact verification trust boundary without widening its predecessor or weakening the product tests",
@@ -616,14 +616,7 @@
         "docs/evidence/agent-governance-policy-trust-boundary/self-referential-bootstrap/README.md",
         "docs/evidence/agent-governance-policy-trust-boundary/self-referential-bootstrap/verification.txt"
       ],
-      "fixpoint": {
-        "reverified_at": "2026-08-18T04:11:25Z",
-        "mechanism_commit": "f07c8f198f1fd3dd6c86ef827d7300eaf901fd77",
-        "evidence_refs": [
-          "docs/evidence/agent-governance-policy-trust-boundary/fixpoint/attestation.json",
-          "docs/evidence/agent-governance-policy-trust-boundary/fixpoint/summary.md"
-        ]
-      }
+      "fixpoint": null
     }
   ]
 }
