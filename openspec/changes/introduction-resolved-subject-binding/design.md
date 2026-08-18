@@ -70,11 +70,15 @@ resolve(row) =
   - **危險窗**：strict `validateLedgerShape` 也驗 **base 的 previous ledger**。第一筆 sentinel 落 main 後，「腳本舊、trusted base 新」的執行組合會 `schema_invalid`。CI 免疫（merge-ref 帶入新腳本；node --test 只跑 fixtures）；受影響面＝未 rebase 的長壽本機分支上的 agent evidence run。操作閘（tasks 6.2）：首個 sentinel 寫入前盤點 open PRs、通知 rebase，並在第一波 merge 與第二波之間保留至少一個工作日。
 - 本規格 PR 自身的 lifecycle row 用 **legacy 10-key 形狀**（sentinel 欄位在第一波前尚不存在於任何驗證面）；squash 後其 subject 懸空屬 P1 已裁決的正常狀態，並成為第二波 sentinel 升級（或 introduction-recovery）的 dogfood。
 
-## 5. 決策五：容量——`MAX_UNIQUE_SUBJECTS` 與 rawBudget 是同一個決策（吸收挑戰 B2／N1／N6）
+## 5. 決策五：容量——`MAX_UNIQUE_SUBJECTS` 與 rawBudget 記帳點（吸收挑戰 B2／N1／N6；owner 已裁決）
 
-草案原論證（「每 watermark 至多一次 diff、全域 rawBudget 與 diff 次數無關」）**事實反轉**：`changedPathsSince` 對每個相異 watermark 各做一次全 repo diff，並在 owned 過濾前把全部 paths 計入同一共享 budget——**budget 消耗 ∝ 相異 watermark 數 × repo churn**。今天 64 上限撐住是因 bulk normalization 把 ~112/121 rows 收斂到共用 subject；sentinel 終態每 change 一個獨立 watermark，兩個常數會一起到期。因此：
+草案原論證（「每 watermark 至多一次 diff、全域 rawBudget 與 diff 次數無關」）**事實反轉**：`changedPathsSince` 對每個相異 watermark 各做一次全 repo diff，並在 owned 過濾前把全部 paths 計入同一共享 budget——**budget 消耗 ∝ 相異 watermark 數 × repo churn**。今天 64 上限撐住是因 bulk normalization 把 ~112/121 rows 收斂到共用 subject；sentinel 終態每 change 一個獨立 watermark，兩個常數會一起到期。
 
-- `MAX_UNIQUE_SUBJECTS` 上修幅度、rawBudget（10k paths／2MB）調整、以及「把 budget 記帳移到 owned-path 過濾之後（消除與 repo churn 的比例）」三者**合併為 openQuestions #1 單一 owner 簽核項**；規格只鎖結果（row cap 內成長不得機械性爆表），不預設常數。
+**Owner 裁決（2026-08-18）**：
+
+- `MAX_UNIQUE_SUBJECTS`：64 → **500**（對齊 ledger row cap）。
+- rawBudget 記帳點：由「`changedPathsSince` 對全 repo diff 立即計入 `consumeRawObservationPaths`」**移到 owned-path 過濾之後**——即先以 `isOwnedOpenSpecSource` 過濾出屬於該 change 的 paths，budget 只對過濾後的集合計數。此舉把消耗與「相異 watermark 數 × repo 全域 churn」的比例關係，收斂為「相異 watermark 數 × 各自 owned churn」——後者是規格意圖真正要衡量的量，且不受不相關目錄的無關編輯影響。
+- rawBudget 常數本身（10,000 paths／2MB）**不變**——記帳點修正後，同一常數對應的有效上限已顯著寬鬆，暫不需要額外調大；若實作時以 500-row／owned-only 情境重新量測發現不足，於同一 PR 內另行提案調整並附量測依據。
 - git 子程序數上界：每懸空 row ≤ 1 cat-file ＋ 1 log -S ＋ 32×2 show；由 rows cap、candidates cap 與逐呼叫 15s timeout 界住；實作時在註解記明上界推導（N1）。
 
 ## 6. 決策六：快取（吸收挑戰 N2）
