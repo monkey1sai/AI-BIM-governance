@@ -16,12 +16,11 @@ SHALL NOT 把 UNVERIFIABLE 項當成已驗證。
 
 ## 2. edge-console-operator-frontend（5 項 STALE）
 
-- [ ] 2.1 R1「兩段式導覽與 provenance 誠實標記」收斂（稽核 L48；provenance 側仍成立，不成立的是
-      「開啟 `/console` SHALL 顯示 Governance Platform 與 Omniverse Runtime 兩段導覽」）
-- [ ] 2.2 R3「A2/A3 為 as-built 操作頁並誠實標邊界」收斂（稽核 L81）
-- [ ] 2.3 R5「缺 mediaPort 時不傳 null 給串流 library」收斂（稽核 L104）
-- [ ] 2.4 「未設定時預設與 viewer 一致」收斂（稽核 L138）
-- [ ] 2.5 「GPU／首幀無遙測標未取得（非 fail，非捏造）」收斂（稽核 L211）
+- [x] 2.1 R1「兩段式導覽與 provenance 誠實標記」收斂（稽核 L48）：明載預設落地為 `UnifiedShell`（側欄「工作台」／「AI 應用模組」），兩段式導覽僅在 legacy 深連結渲染 `LegacyEdgeConsole` 時出現；provenance 與「不顯示願景假數字」兩條維持不變
+- [x] 2.2 R3「A2/A3 為 as-built 操作頁並誠實標邊界」收斂（稽核 L81）：明載 as-built 操作頁位於 `#version-diff`／`#federation`，nav 的 `a2`／`a3` route 由 fixture `WorkspacePage` 承接；fixture dock 渲染捏造數字一事**記為 known gap 而非追認**
+- [x] 2.3 R5「缺 mediaPort 時不傳 null 給串流 library」收斂（稽核 L104）：spec 改為承認實作刻意支援的**兩種**未指定哨兵（`undefined` 與 `0`，`App.tsx:74,100,129` 走 `0`），並寫入 `AppStream` 的 `!= null && !== 0` 條件展開；兩條 SHALL NOT 不變
+- [x] 2.4 「未設定時預設與 viewer 一致」收斂（稽核 L138）：明載 `defaultCoordinatorBase()` 的兩個分支（`/ui` 非 dev port → same-origin；否則 `http://127.0.0.1:8004`），並揭露 Dockerfile 的 `build:ui` 未帶任何 coordinator base build arg 故 `/ui` bundle 恆走 same-origin
+- [x] 2.5 「GPU／首幀無遙測標未取得（非 fail，非捏造）」收斂（稽核 L211）：**刻意不追認捏造數字**。誠實義務改綁在「由 `coordinatorClient` 供資料的頁面」，並新增一條 Scenario 把 `#runtime` 的 fixture `OpsPage` 明列為**未解決的誠實性缺口**、SHALL NOT 充作 runtime 遙測證據
 
 ## 3. 收尾
 
