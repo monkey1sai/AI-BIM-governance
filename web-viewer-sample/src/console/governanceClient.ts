@@ -358,7 +358,7 @@ export const governanceClient = {
   searchLlmStatus: () => jsonFetch<ModelSearchLlmStatus>("/api/governance/search/llm-status"),
   searchModelForSession: async (
     sessionId: string,
-    body: { query: string; limit?: number; interpret_mode?: ModelSearchInterpretMode },
+    body: { query: string; limit?: number; interpret_mode?: ModelSearchInterpretMode; retry_of_query_id?: string },
     userToken: string,
   ) =>
     jsonFetch<ModelSearchResponse>(
@@ -373,7 +373,7 @@ export const governanceClient = {
     ),
   searchModelForIfcReady: async (
     ifcReadyJobId: string,
-    body: { query: string; limit?: number; interpret_mode?: ModelSearchInterpretMode },
+    body: { query: string; limit?: number; interpret_mode?: ModelSearchInterpretMode; retry_of_query_id?: string },
     userToken: string,
   ) =>
     jsonFetch<ModelSearchResponse>(
