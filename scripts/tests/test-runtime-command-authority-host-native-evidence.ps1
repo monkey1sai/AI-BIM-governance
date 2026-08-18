@@ -19,8 +19,25 @@ $e2e = Get-Content -LiteralPath $e2ePath -Raw
 $playwrightConfig = Get-Content -LiteralPath $playwrightConfigPath -Raw
 $browserLaunchSurface = "$playwrightConfig`n$e2e"
 
-Assert-True ($runner -match [regex]::Escape("D:\Users\deploy\AI-bim-geo")) 'runner pins canonical test deployment root'
-Assert-True ($runner -match [regex]::Escape("D:\Users\deploy\AI-bim-geo-data")) 'runner pins canonical deployment data root'
+# The runner used to hard-code the deployment paths. It now resolves them from
+# scripts/deploy-target-registry.json, so pinning is asserted at the source it
+# actually reads instead of at a literal that no longer appears in the file.
+Assert-True ($runner -match [regex]::Escape("Get-DeployTarget -Id 'local-windows'")) 'runner pins the local-windows registry target'
+Assert-True ($runner -match [regex]::Escape('$script:HostNativeEvidenceTarget.deploy_root')) 'runner takes the deployment root from the pinned target'
+Assert-True ($runner -match [regex]::Escape('$script:HostNativeEvidenceTarget.runtime_data_root')) 'runner takes the deployment data root from the pinned target'
+
+# Owner ruling 2026-08-18: local Windows is an agent development-verification
+# surface, canonical Linux is the human delivery surface. Evidence-integrity
+# gates fail closed only on a delivery surface; elsewhere they are recorded and
+# published so the output cannot be quoted as delivery-grade proof by omission.
+Assert-True ($runner -match [regex]::Escape("-ceq 'canonical_test_deploy'")) 'runner decides delivery-surface status from the target role, case-sensitively'
+Assert-True ($runner -match 'function Assert-HostNativeEvidenceIntegrity') 'runner routes evidence-integrity conditions through one role-scoped decision'
+Assert-True ($runner -match [regex]::Escape('if ($script:HostNativeEvidenceIsDeliverySurface) { throw $Detail }')) 'delivery surfaces still fail closed on an integrity condition'
+Assert-True ($runner -match 'broad_write_acl') 'broad-write ACL is an integrity condition rather than an unconditional throw'
+Assert-True ($runner -match 'checkout_not_exactly_origin_main') 'checkout drift is an integrity condition rather than an unconditional throw'
+Assert-True ($runner -match 'evidence_class') 'runner stamps the evidence class into runner-evidence.json'
+Assert-True ($runner -match 'integrity_notes') 'runner publishes recorded integrity conditions alongside the evidence'
+Assert-True ($runner -notmatch 'throw\s+"Host-native evidence path grants') 'the ACL condition no longer throws unconditionally'
 Assert-True ($runner -match [regex]::Escape('origin/main')) 'runner requires fresh origin/main'
 Assert-True ($runner -match [regex]::Escape('com.docker.compose.project.working_dir')) 'runner verifies Compose working-dir ownership label'
 Assert-True ($runner -match [regex]::Escape('com.docker.compose.service')) 'runner verifies Compose service label'
