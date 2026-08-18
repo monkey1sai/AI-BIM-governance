@@ -96,6 +96,7 @@ type SessionFixture = {
   artifactId: string;
   userCarrier: string;
   lease: Lease;
+  traceId: string;
 };
 
 type StageAuthorization = {
@@ -164,7 +165,25 @@ async function createSession(label: string, stageUrl: string): Promise<SessionFi
       },
     },
   );
-  return { sessionId: created.session_id, artifactId, userCarrier, lease };
+  // Every runtime command handler in the Kit messaging extension calls
+  // `verify_datachannel_trace` before it does anything else, and that gate needs this
+  // session's *canonical* trace id - any other value makes the handler return silently
+  // with no response at all. Production gets it from the stream-config the coordinator
+  // mints (Window.tsx compares `streamConfig.trace_id`), so read the same source here
+  // and the two agree by construction.
+  const streamConfig = await apiJson<{ trace_id?: string }>(
+    `/api/review-sessions/${encodeURIComponent(created.session_id)}/stream-config`,
+  );
+  if (!streamConfig.trace_id) {
+    throw new Error(`coordinator returned no canonical trace id for ${created.session_id}`);
+  }
+  return {
+    sessionId: created.session_id,
+    artifactId,
+    userCarrier,
+    lease,
+    traceId: streamConfig.trace_id,
+  };
 }
 
 async function preauthorize(fixture: SessionFixture): Promise<StageAuthorization> {
@@ -294,10 +313,11 @@ async function sendCommand(page: Page, eventType: string, payload: Record<string
     }).__HOST_NATIVE_AUTHORITY_PROBE__;
     if (!probe) throw new Error("host-native probe is unavailable");
     // Mirror production semantics: Window.tsx sends with `void AppStream.sendMessage(...)`
-    // and never awaits the returned promise. On the host-native WebRTC path that promise
-    // does not settle, so awaiting it here hung every run at the FIRST command for the
-    // full 300s test timeout while video frames were already arriving - the harness, not
-    // the product, was the thing that was broken. Delivery is still verified: every caller
+    // and never awaits the returned promise. The streaming library resolves that promise
+    // only when the exact mapped response arrives (`openStageRequest` -> `openedStageResult`,
+    // `loadingStateQuery` -> `loadingStateResponse`); a denied command answers with
+    // `commandRejected` instead, so for the denial cases it never settles by design.
+    // Awaiting it therefore hung the whole run. Delivery is still verified: every caller
     // waits on the observed response event, not on this promise.
     void probe.streamer.sendMessage({ event_type: nextEventType, payload: nextPayload });
   }, { eventType, payload });
@@ -370,9 +390,12 @@ async function waitForEvent(
   return match;
 }
 
-async function observedStageUrl(page: Page): Promise<string> {
+async function observedStageUrl(page: Page, observer: SessionFixture): Promise<string> {
   const before = (await safeEvents(page)).filter((event) => event.event_type === "loadingStateResponse").length;
-  await sendCommand(page, "loadingStateQuery", {});
+  await sendCommand(page, "loadingStateQuery", {
+    session_id: observer.sessionId,
+    trace_id: observer.traceId,
+  });
   await page.waitForFunction((previousCount) => {
     const probe = (globalThis as typeof globalThis & {
       __HOST_NATIVE_AUTHORITY_PROBE__?: { events: SafeEvent[] };
@@ -385,18 +408,19 @@ async function observedStageUrl(page: Page): Promise<string> {
 
 async function assertStageStable(
   page: Page,
+  observer: SessionFixture,
   expectedStage: string,
   settleMs = denialStageStabilityMs,
 ): Promise<string> {
   const deadline = Date.now() + settleMs;
   let observedStage = "";
   do {
-    observedStage = await observedStageUrl(page);
+    observedStage = await observedStageUrl(page, observer);
     expect(observedStage).toBe(expectedStage);
     const remainingMs = deadline - Date.now();
     if (remainingMs > 0) await page.waitForTimeout(Math.min(100, remainingMs));
   } while (Date.now() < deadline);
-  const finalStage = await observedStageUrl(page);
+  const finalStage = await observedStageUrl(page, observer);
   expect(finalStage).toBe(expectedStage);
   return finalStage;
 }
@@ -412,6 +436,7 @@ function commandPayload(
     source_client_id: fixture.lease.lease_id,
     viewer_lease_token: fixture.lease.lease_token,
     session_id: fixture.sessionId,
+    trace_id: fixture.traceId,
     ...extra,
   };
 }
@@ -454,7 +479,7 @@ test("host-native Kit enforces runtime authority and preserves stage truth", asy
   const expiryWaitMs = Math.max(0, expiresAtMs - Date.now() + 1_000);
   if (expiryWaitMs > 0) await page.waitForTimeout(expiryWaitMs);
   const expiredRequestId = `host_expired_${randomUUID()}`;
-  const expiredStageBefore = await observedStageUrl(page);
+  const expiredStageBefore = await observedStageUrl(page, expiring);
   await sendCommand(page, "focusPrimRequest", commandPayload(expiring, expiredRequestId, { prim_path: "/World" }));
   const expiredTerminal = await waitForEvent(page, expiredRequestId, ["commandRejected"]);
   expect(expiredTerminal.payload).toMatchObject({
@@ -463,7 +488,7 @@ test("host-native Kit enforces runtime authority and preserves stage truth", asy
     runtime_state: "unchanged",
     retryable: false,
   });
-  const expiredStageAfter = await assertStageStable(page, expiredStageBefore);
+  const expiredStageAfter = await assertStageStable(page, expiring, expiredStageBefore);
   expect(expiredStageAfter).toBe(expiredStageBefore);
   denialEvidence.expired = {
     terminal: safeTerminal(expiredTerminal),
@@ -498,7 +523,7 @@ test("host-native Kit enforces runtime authority and preserves stage truth", asy
   const initialStageMs = performance.now() - stageStartedAt;
   expect(initialTerminal.event_type).toBe("openedStageResult");
   expect(initialTerminal.payload.result).toBe("success");
-  const baselineStage = await observedStageUrl(page);
+  const baselineStage = await observedStageUrl(page, primary);
   expect(baselineStage).toBe(stageUrlA);
 
   const latencySamples: number[] = [];
@@ -516,7 +541,7 @@ test("host-native Kit enforces runtime authority and preserves stage truth", asy
   expect(p95Ms).toBeLessThan(500);
 
   const forgedRequestId = `host_forged_${randomUUID()}`;
-  const forgedStageBefore = await observedStageUrl(page);
+  const forgedStageBefore = await observedStageUrl(page, primary);
   expect(forgedStageBefore).toBe(baselineStage);
   await sendCommand(page, "focusPrimRequest", {
     ...commandPayload(primary, forgedRequestId, { prim_path: "/World" }),
@@ -524,7 +549,7 @@ test("host-native Kit enforces runtime authority and preserves stage truth", asy
   });
   const forgedTerminal = await waitForEvent(page, forgedRequestId, ["commandRejected"]);
   expect(forgedTerminal.payload).toMatchObject({ reason: "lease_invalid", runtime_state: "unchanged", retryable: false });
-  const forgedStageAfter = await assertStageStable(page, baselineStage);
+  const forgedStageAfter = await assertStageStable(page, primary, baselineStage);
   denialEvidence.forged = {
     terminal: safeTerminal(forgedTerminal),
     observed_stage_before: forgedStageBefore,
@@ -532,7 +557,7 @@ test("host-native Kit enforces runtime authority and preserves stage truth", asy
   };
 
   const wrongSourceRequestId = `host_wrong_source_${randomUUID()}`;
-  const wrongSourceStageBefore = await observedStageUrl(page);
+  const wrongSourceStageBefore = await observedStageUrl(page, primary);
   expect(wrongSourceStageBefore).toBe(baselineStage);
   await sendCommand(page, "focusPrimRequest", {
     ...commandPayload(primary, wrongSourceRequestId, { prim_path: "/World" }),
@@ -544,7 +569,7 @@ test("host-native Kit enforces runtime authority and preserves stage truth", asy
     runtime_state: "unchanged",
     retryable: false,
   });
-  const wrongSourceStageAfter = await assertStageStable(page, baselineStage);
+  const wrongSourceStageAfter = await assertStageStable(page, primary, baselineStage);
   denialEvidence.wrong_source = {
     terminal: safeTerminal(wrongSourceTerminal),
     observed_stage_before: wrongSourceStageBefore,
@@ -560,7 +585,7 @@ test("host-native Kit enforces runtime authority and preserves stage truth", asy
     },
   );
   const releasedRequestId = `host_released_${randomUUID()}`;
-  const releasedStageBefore = await observedStageUrl(page);
+  const releasedStageBefore = await observedStageUrl(page, primary);
   expect(releasedStageBefore).toBe(baselineStage);
   await sendCommand(page, "focusPrimRequest", commandPayload(released, releasedRequestId, { prim_path: "/World" }));
   const releasedTerminal = await waitForEvent(page, releasedRequestId, ["commandRejected"]);
@@ -570,7 +595,7 @@ test("host-native Kit enforces runtime authority and preserves stage truth", asy
     runtime_state: "unchanged",
     retryable: false,
   });
-  const releasedStageAfter = await assertStageStable(page, baselineStage);
+  const releasedStageAfter = await assertStageStable(page, primary, baselineStage);
   denialEvidence.released = {
     terminal: safeTerminal(releasedTerminal),
     observed_stage_before: releasedStageBefore,
@@ -579,7 +604,7 @@ test("host-native Kit enforces runtime authority and preserves stage truth", asy
 
   const wrongSessionAuthorization = await preauthorize(wrongSession);
   const wrongSessionRequestId = `host_wrong_session_${randomUUID()}`;
-  const wrongSessionStageBefore = await observedStageUrl(page);
+  const wrongSessionStageBefore = await observedStageUrl(page, primary);
   expect(wrongSessionStageBefore).toBe(baselineStage);
   await sendCommand(page, "openStageRequest", commandPayload(primary, wrongSessionRequestId, {
     stage_binding_authorization_id: wrongSessionAuthorization.stage_binding_authorization_id,
@@ -593,7 +618,7 @@ test("host-native Kit enforces runtime authority and preserves stage truth", asy
     detail_code: "stage_transaction_mismatch",
     runtime_state: "unchanged",
   });
-  const wrongSessionStageAfter = await assertStageStable(page, baselineStage);
+  const wrongSessionStageAfter = await assertStageStable(page, primary, baselineStage);
   denialEvidence.direct_open_wrong_session = {
     terminal: safeTerminal(wrongSessionTerminal),
     observed_stage_before: wrongSessionStageBefore,
@@ -604,7 +629,7 @@ test("host-native Kit enforces runtime authority and preserves stage truth", asy
   const tamperedComposition = structuredClone(tamperAuthorization.stage_composition);
   tamperedComposition.primary.usdc_url = stageUrlB;
   const tamperRequestId = `host_composition_tamper_${randomUUID()}`;
-  const tamperStageBefore = await observedStageUrl(page);
+  const tamperStageBefore = await observedStageUrl(page, primary);
   expect(tamperStageBefore).toBe(baselineStage);
   await sendCommand(page, "loadArtifactGroupRequest", commandPayload(primary, tamperRequestId, {
     stage_binding_authorization_id: tamperAuthorization.stage_binding_authorization_id,
@@ -618,7 +643,7 @@ test("host-native Kit enforces runtime authority and preserves stage truth", asy
     detail_code: "stage_transaction_mismatch",
     runtime_state: "unchanged",
   });
-  const tamperStageAfter = await assertStageStable(page, baselineStage);
+  const tamperStageAfter = await assertStageStable(page, primary, baselineStage);
   denialEvidence.composition_tamper = {
     terminal: safeTerminal(tamperTerminal),
     observed_stage_before: tamperStageBefore,
@@ -670,7 +695,7 @@ test("host-native Kit enforces runtime authority and preserves stage truth", asy
   expect(replaySuccess).toHaveLength(1);
   expect(replayAccepted).toHaveLength(1);
   expect(replayRejections).toHaveLength(1);
-  expect(await assertStageStable(page, baselineStage)).toBe(baselineStage);
+  expect(await assertStageStable(page, primary, baselineStage)).toBe(baselineStage);
 
   for (const [name, evidence] of Object.entries(denialEvidence)) {
     expect(evidence.observed_stage_after).toBe(evidence.observed_stage_before);
@@ -697,7 +722,7 @@ test("host-native Kit enforces runtime authority and preserves stage truth", asy
     runtime_state: "unchanged",
     retryable: true,
   });
-  const outageStage = await observedStageUrl(page);
+  const outageStage = await observedStageUrl(page, primary);
   expect(outageStage).toBe(baselineStage);
 
   const result = {
