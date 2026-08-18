@@ -38,8 +38,8 @@
 ## 5. 首個 consumer 實跑（owner：本 change，唯讀對待 A4 實作）
 
 - [x] 5.1 記錄啟動前 `:8004`／`:49102` 的 listener 狀態快照；用 2.2 的 launcher 起隔離 stack；記錄啟動後同樣快照，證明部署區未被改動。
-- [ ] 5.2 以 require-real 模式對隔離 stack 跑一次既有 A4 browser E2E（`a4-closeout.spec.ts`），證明 harness 能產出 screenshot／trace／console／network 與 observed runtime IDs。
-- [ ] 5.3 evidence 落 `artifacts/e2e/isolated-branch-stack-browser-e2e/<run-id>/`：`stack-manifest.json`、evidence manifest、截圖（依 repo 慣例需 `git add -f`）、trace 路徑；PR body 記錄精確 run ID。
+- [x] 5.2 以 require-real 模式對隔離 stack 跑一次既有 A4 browser E2E（`a4-closeout.spec.ts`），證明 harness 能產出 screenshot／trace／console／network 與 observed runtime IDs。2026-08-18 run `r20260818d`：**8/8 passed**（4 cases × 1440x900/1920x1080）。解鎖鏈：task 4.0 seed 工具灌入真 MinIO IFC-ready job（download_status=downloaded）→ #594/#599 雙側 A4_INTERNAL_CONTEXT_TOKEN 透傳（owner 依 #505 供裝，guard 過的 parent-env，值不落盤）→ 揭露並修復 a4-closeout loading-state 測試的 unroute teardown 競態（route.continue 對 already-handled 容忍）。三層歷史紅燈（no-downloaded-job→a4_trusted_context_unavailable→a4_internal_context_unavailable）逐層實測消解。
+- [x] 5.3 evidence 落 `artifacts/e2e/isolated-branch-stack-browser-e2e/r20260818d/`：`stack-manifest.json`＋`evidence-manifest.json`＋`evidence-invocation.json`＋8 張 PNG（loading/success/failure-retry/empty × 雙 viewport，`git add -f` 至 `screenshots/` 淺路徑——playwright-output 原始深路徑會超過 Windows runner MAX_PATH，checkout 會炸）；trace/video/console/network 於同 run `playwright-output/`（僅記路徑，檔案不入庫）；runtime state（`state/`，含 source.ifc／governance.db）與 stdout/stderr logs 依 PUBLIC repo 隱私邊界刻意不入庫（manifest 三檔經 endpoint/bucket/key/token 掃描 clean）。PR body 記 run ID `r20260818d`。
 - [x] 5.4 若 A4 現況在 require-real 模式下未通過，**記為 known gap 並交回 `a4-console-convergence`**；本 change 不修改任何 A4 前後端實作，PR body 誠實標示該紅燈是既有假通過被揭露，而非本 change 造成的回歸。fresh P5 run `p5-20260730-163713`（manifest head `eed43c8a17274a573121fc604fa61aae0f408f29`）再次由 6 個 Chromium cases 證實相同缺口：`no downloaded IFC-ready job is available`；該 run 未產生成功 evidence manifest、PNG screenshot 或 observed runtime ID，只產生失敗 `trace.zip`、video 與 error-context Markdown，因此 5.2／5.3 仍不得勾選。
 - [x] 5.5 停 stack 後再取一次部署區 listener 快照，確認三次快照一致。
 
