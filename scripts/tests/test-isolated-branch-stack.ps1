@@ -1305,4 +1305,11 @@ try {
 }
 finally { Remove-TestSandbox -Path $dispatcherSandbox }
 
+# a4-trusted-context 透傳縫（issue #505）：只允許 guard 過的 parent-env 透傳，不得無條件寫死值。
+$launcherText = Get-Content -LiteralPath (Join-Path $PSScriptRoot '..\dev\start-isolated-branch-stack.ps1') -Raw
+Assert-True ($launcherText -match '(?s)IsNullOrWhiteSpace\(\$env:A4_INTERNAL_CONTEXT_TOKEN\).*?\$coordinatorEnvironment\.A4_INTERNAL_CONTEXT_TOKEN = \$env:A4_INTERNAL_CONTEXT_TOKEN') `
+    'coordinator env passes A4_INTERNAL_CONTEXT_TOKEN through only behind the provisioned-parent-env guard'
+Assert-True ($launcherText -notmatch "A4_INTERNAL_CONTEXT_TOKEN\s*=\s*'") `
+    'launcher never hardcodes an A4_INTERNAL_CONTEXT_TOKEN literal value'
+
 $testLogger | Write-StructInfo -Component 'test-isolated-branch-stack' -Msg 'contract assertions passed' -Data @{ assertions = 'isolated-stack' }
