@@ -10,6 +10,27 @@ $ErrorActionPreference = 'Stop'
 $script:HostNativeEvidenceTarget = Get-DeployTarget -Id 'local-windows'
 $script:FixedTestDeploymentRoot = [string]$script:HostNativeEvidenceTarget.deploy_root
 $script:FixedTestDeploymentDataRoot = [string]$script:HostNativeEvidenceTarget.runtime_data_root
+# Owner ruling 2026-08-18 (core norm): the local Windows box is an AGENT
+# development-verification surface; the canonical Linux deployment is where a
+# HUMAN reviews delivered results. Evidence-integrity gates exist so a human can
+# trust a result as a claim about the delivered system, so they are scoped to
+# delivery targets. On a development-verification target the same conditions are
+# RECORDED and published in the evidence rather than failing the run - the run
+# still happens, but its output is stamped so it can never be quoted as
+# delivery-grade proof by omission.
+$script:HostNativeEvidenceRole = [string]$script:HostNativeEvidenceTarget.role
+$script:HostNativeEvidenceIsDeliverySurface = ($script:HostNativeEvidenceRole -ceq 'canonical_test_deploy')
+$script:HostNativeEvidenceIntegrityNotes = @()
+
+function Assert-HostNativeEvidenceIntegrity {
+    param(
+        [Parameter(Mandatory = $true)][string] $Code,
+        [Parameter(Mandatory = $true)][string] $Detail
+    )
+
+    if ($script:HostNativeEvidenceIsDeliverySurface) { throw $Detail }
+    $script:HostNativeEvidenceIntegrityNotes += [ordered]@{ code = $Code; detail = $Detail }
+}
 $script:CoordinatorHealthUrl = 'http://127.0.0.1:8004/health'
 $script:ConversionHealthUrl = 'http://127.0.0.1:49101/health'
 $script:ComposeFiles = @('compose.runtime-manager.yml', 'compose.host-kit.yml')
@@ -93,7 +114,10 @@ function Assert-NoBroadWriteAcl {
         if ($rule.AccessControlType -ne [System.Security.AccessControl.AccessControlType]::Allow) { continue }
         if ($rule.IdentityReference.Value -notin $broadWriterSids) { continue }
         if (([int64]$rule.FileSystemRights -band $writeMask) -ne 0) {
-            throw "Host-native evidence path grants a broad principal write access: $Path"
+            Assert-HostNativeEvidenceIntegrity -Code 'broad_write_acl' `
+                -Detail "Host-native evidence path grants a broad principal write access: $Path"
+            # One note per path: further matching ACEs describe the same condition.
+            return
         }
     }
 }
@@ -417,7 +441,9 @@ if ($LASTEXITCODE -ne 0 -or $headSha -notmatch '^[0-9a-f]{40}$' -or $originMainS
     throw 'Unable to establish canonical deployment Git provenance.'
 }
 if ($headSha -ne $originMainSha -or -not [string]::IsNullOrWhiteSpace($dirty)) {
-    throw 'Canonical deployment must be clean and exactly equal to origin/main before evidence runs.'
+    $dirtyCount = @($dirty -split "`r?`n" | Where-Object { $_ }).Count
+    Assert-HostNativeEvidenceIntegrity -Code 'checkout_not_exactly_origin_main' `
+        -Detail "Deployment checkout is not exactly a clean origin/main: head=$headSha origin_main=$originMainSha dirty_entries=$dirtyCount."
 }
 
 $dockerContext = (& docker context show 2>&1 | Out-String).Trim()
@@ -663,6 +689,10 @@ if ($null -ne $childCleanupFailure) { throw $childCleanupFailure }
 
 $evidence = [ordered]@{
     schema_version = 'runtime-command-authority-host-native-runner/v1'
+    target_id = [string]$script:HostNativeEvidenceTarget.id
+    target_role = $script:HostNativeEvidenceRole
+    evidence_class = if ($script:HostNativeEvidenceIsDeliverySurface) { 'delivery' } else { 'development_verification' }
+    integrity_notes = @($script:HostNativeEvidenceIntegrityNotes)
     post_merge_corrective = $true
     tested_origin_main_sha = $originMainSha
     deployment = [ordered]@{
