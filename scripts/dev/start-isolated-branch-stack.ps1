@@ -652,7 +652,7 @@ function New-IsolatedBackendEnvironment {
         $Ports
     )
     if ($Role -eq 'governance') {
-        return @{
+        $governanceEnvironment = @{
             GOV_PORT = "$($Ports.governance)"
             GOV_DB_PATH = [string]$StateLayout.governance_db
             GOV_FED_OUT = [string]$StateLayout.governance_federation_out
@@ -660,12 +660,20 @@ function New-IsolatedBackendEnvironment {
             RUNTIME_STORAGE_ROOT = [string]$StateLayout.fixture_root
             LOG_ROOT = (Join-Path $StateLayout.governance_root 'logs')
         }
+        # a4-trusted-context 透傳（issue #505）第二半：governance-service 的
+        # search/internal_auth.py 以同一 shared secret 驗 coordinator 的 internal
+        # 呼叫；缺席時 A4 search/issues 面 503 a4_internal_context_unavailable。
+        # 同 coordinator 側規則：只由 parent process env 透傳，值不落 manifest/log。
+        if (-not [string]::IsNullOrWhiteSpace($env:A4_INTERNAL_CONTEXT_TOKEN)) {
+            $governanceEnvironment.A4_INTERNAL_CONTEXT_TOKEN = $env:A4_INTERNAL_CONTEXT_TOKEN
+        }
+        return $governanceEnvironment
     }
 
     $coordinatorRoot = [string]$StateLayout.coordinator_root
     $fixtureArtifacts = Join-Path $StateLayout.fixture_root 'artifacts'
     $coordinatorStorage = Join-Path $coordinatorRoot 'storage'
-    @{
+    $coordinatorEnvironment = @{
         PORT = "$($Ports.coordinator)"
         HOST = '127.0.0.1'
         GOVERNANCE_API_BASE = "http://127.0.0.1:$($Ports.governance)"
@@ -692,6 +700,15 @@ function New-IsolatedBackendEnvironment {
         IFC_DOWNLOAD_STRICT = 'true'
         EXTERNAL_INTAKE_WEBHOOK_SECRET = 'dev-webhook-secret'
     }
+    # a4-trusted-context 透傳（issue #505）：owner 以 server-only 通道供裝
+    # A4_INTERNAL_CONTEXT_TOKEN 時（parent process env），隔離 coordinator 才能
+    # 啟用 A4 search/handoff trusted context。值只進 child process env——manifest
+    # 與 stdout/stderr log 均不記錄環境值；未供裝時維持缺席，A4 面照舊 fail
+    # closed（503 a4_trusted_context_unavailable），與部署區行為一致。
+    if (-not [string]::IsNullOrWhiteSpace($env:A4_INTERNAL_CONTEXT_TOKEN)) {
+        $coordinatorEnvironment.A4_INTERNAL_CONTEXT_TOKEN = $env:A4_INTERNAL_CONTEXT_TOKEN
+    }
+    $coordinatorEnvironment
 }
 
 function ConvertTo-IsolatedCreationIdentity {
