@@ -333,9 +333,17 @@ class LoadingManager:
 
     def _verify_datachannel_trace(self, event_type, request_payload):
         try:
-            return self._runtime_authority.verify_datachannel_trace(event_type, request_payload)
+            trace_id = self._runtime_authority.verify_datachannel_trace(event_type, request_payload)
         except Exception:
-            return None
+            trace_id = None
+        # A rejected trace used to drop the command with no record at all, which makes
+        # "Kit never received it" and "Kit received it and refused it" indistinguishable
+        # from the outside. Record the outcome - never the trace value, it is a carrier.
+        if trace_id is None:
+            carb.log_warn(f"[runtime-authority] datachannel trace rejected for {event_type}")
+        else:
+            carb.log_info(f"[runtime-authority] datachannel trace accepted for {event_type}")
+        return trace_id
 
     def _active_output_trace_id(self):
         if self._active_stage_attempt is not None:

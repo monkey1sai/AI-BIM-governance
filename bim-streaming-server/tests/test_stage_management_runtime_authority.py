@@ -22,6 +22,7 @@ def install_stage_management_stubs() -> None:
     carb_dictionary.Item = DummyItem
     carb.dictionary = carb_dictionary
     carb.log_info = lambda *_args, **_kwargs: None
+    carb.log_warn = lambda *_args, **_kwargs: None
     carb_events = types.ModuleType("carb.events")
     carb_events.IEvent = object
     carb_events.type_from_string = lambda value: value
