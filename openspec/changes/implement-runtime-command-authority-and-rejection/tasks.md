@@ -38,7 +38,7 @@
 - [x] 5.3 新增FakeKit deterministic one-shot rejection replay；證明production build不能只靠query啟用harness
 - [x] 5.4 trusted `viewer_lease_token`晚到時，只在embedded、stage未matched、selected asset仍可開啟時重排既有deferred-open timer
 - [x] 5.5 補visible rejection、retryable outage、changed-unconfirmed resync/block、one-shot replay、late-token單次恢復、timer replacement與matched-stage不重開tests
-- [ ] 5.6 將viewer origin完整失敗態矩陣接到既有i18n keys；本切片已收斂runtime-command-rejection diagnostics、changed-unconfirmed binding、rejected stage-load，以及2026-08-12新收斂的stage-load-timeout（見下方RED/GREEN證據：兩觸發路徑皆有可見overlay/雙語診斷文案/late-result不覆寫證明，並新增`data-stage-failure-reason`狀態專屬test anchor）。2026-08-17兩個切片累計收斂七態：slice-1收no-session、viewer-origin-missing（含refresh動作）、lease-occupied（驗證＋holder-privacy負向斷言）；slice-2收session-preparing（conversion_status非終態→可見note＋#pipeline動作）、gpu-unavailable（kit-manager instances查詢失敗→誠實停用啟動＋#runtime動作）、lease-expired（heartbeat 404 lease拒絕→清lease＋手動re-claim）、first-frame-timeout（90s與stage-load busy-poll上限對齊，逾時→重試＋#runtime診斷）——各含RED→GREEN focused DOM tests（見下方同日期證據）。僅stream-disconnected一態未驗證（需viewer側WebRTC斷線postMessage協定新增，涉及`docs/contracts/streaming-datachannel-events.md`契約面，另切片處理），checkbox維持open、production/full completion維持no
+- [ ] 5.6 將viewer origin完整失敗態矩陣接到既有i18n keys；本切片已收斂runtime-command-rejection diagnostics、changed-unconfirmed binding、rejected stage-load，以及2026-08-12新收斂的stage-load-timeout（見下方RED/GREEN證據：兩觸發路徑皆有可見overlay/雙語診斷文案/late-result不覆寫證明，並新增`data-stage-failure-reason`狀態專屬test anchor）。2026-08-17兩個切片累計收斂七態：slice-1收no-session、viewer-origin-missing（含refresh動作）、lease-occupied（驗證＋holder-privacy負向斷言）；slice-2收session-preparing（conversion_status非終態→可見note＋#pipeline動作）、gpu-unavailable（kit-manager instances查詢失敗→誠實停用啟動＋#runtime動作）、lease-expired（heartbeat 404 lease拒絕→清lease＋手動re-claim）、first-frame-timeout（90s與stage-load busy-poll上限對齊，逾時→重試＋#runtime診斷）——各含RED→GREEN focused DOM tests（見下方同日期證據）。slice-3（同日）收斂stream-disconnected：viewer `_handleStreamStopped` 對parent發 vg01 `stream_state`（schema oneOf新分支＋contracts pytest正負例）、EmbeddedViewer origin守衛轉發、console pane可見斷線alert＋誠實回退全部streaming證據＋「重新連線」重掛iframe（mount nonce）。**console內嵌側12/12態全數收斂**。checkbox仍維持open：spec要求「Console內嵌viewport與viewer origin頁SHALL各自實作」——standalone viewer origin頁側的逐態盤點（部分態如stage系列已在、no-session/lease系列適用性需裁決）為最後殘項，production/full completion維持no
 
 ## 6. Wiring與可自動合併文件
 
@@ -104,3 +104,12 @@
 - **回歸驗證**：全套`npx vitest run` 80 files／1093 tests全過；`tsc --noEmit`零錯；eslint changed files 0 errors／5 warnings（基線4＋新增1條與既有兩條同類的刻意窄依賴`exhaustive-deps`，narrow deps by design避免timer每render重掛）。
 - **除錯教訓（已入memory）**：python字串`''`經shell heredoc注入成字面backspace（0x08）使regex永不匹配且grep/sed顯示隱形——控制字元regex一律顯式`chr(92)+'b'`寫入並以repr驗證。
 - **範圍裁決**：累計11/12態；stream-disconnected需viewer→parent的WebRTC斷線協定訊息（`Window.tsx`＋`EmbeddedViewer`＋datachannel契約文件），5.6維持open、production/full completion維持no。
+
+## 2026-08-17 Task 5.6 slice-3：stream-disconnected 收斂證據（console 側矩陣 12/12 完成）
+
+- **協定**：`Window.tsx` `_handleStreamStopped`（stopped/terminated 終態處理器）新增 `_postToParent({type:"stream_state",state:"disconnected",kind})`——複用既有 origin 白名單守衛；`tests/contracts/vg01-postmessage-v1.schema.json` oneOf 新增 `viewer-to-console: stream_state` 分支（additionalProperties:false、kind enum、state const）；`tests/test_runtime_command_contracts.py` 新增正負例（缺 kind／未知 state／token 滲入均 fail-closed），24 passed。
+- **轉發**：`EmbeddedViewer` 新增 `StreamStateMessage` type＋`onStreamState` prop＋switch case；origin 守衛負例測試（evil origin 不轉發），18/18。
+- **Pane**：`streamDisconnected` state＋`viewerMountNonce`；onStreamState(disconnected)→可見 alert（`*-stream-disconnected`）＋誠實回退（firstFrame/dataChannelReady/loadedStageUrl/stageProof 全清→highlight gate 立即回封鎖、evidence grid 回 not_observed=「不再顯示 Streaming 指示」）；「重新連線」（`*-stream-reconnect`）以 key nonce 重掛 iframe、不重新 claim；新 first_frame 到達自動清除。事件驅動即時轉入（優於 spec 的 5 秒內）。
+- **RED→GREEN**：viewer 側於既有 stopped 測試加 stream_state 斷言（RED）→ 實作後 171/171；pane 2 條新測試 RED → GREEN 21/21。
+- **回歸**：全套 80 files／1096 tests；typecheck 零錯；lint:baseline trusted=18/current=18/regressions=0。
+- **範圍裁決**：console 內嵌側 12/12 全數收斂。5.6 不勾：spec 措辭「Console內嵌viewport**與viewer origin頁**SHALL各自實作」——standalone 側逐態盤點（stage-load 系列四態已於 standalone 收斂；no-session/session-preparing/lease 系列在 /ui/open 進入模式的適用性需 spec 裁決）為最後殘項。

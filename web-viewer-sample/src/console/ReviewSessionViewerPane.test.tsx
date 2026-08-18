@@ -567,4 +567,51 @@ describe("ReviewSessionViewerPane", () => {
     expect(q("review-room-first-frame-timeout")).toBeNull();
   });
 
+
+  it("a viewer stream_state disconnect flips into the stream-disconnected state and a reconnect remounts the iframe", async () => {
+    await renderPane();
+    await act(async () => { q<HTMLButtonElement>("review-room-manual-start")!.click(); });
+    await flush();
+    await act(async () => {
+      (viewerBox.current!.onFirstFrame as (m: unknown) => void)({ protocol: "vg01", type: "first_frame", stageUrl: "stage://x" });
+    });
+    await flush();
+    expect(q("review-room-stream-disconnected")).toBeNull();
+    const mountsBefore = viewerBox.renderCount;
+
+    await act(async () => {
+      (viewerBox.current!.onStreamState as (m: unknown) => void)({ protocol: "vg01", type: "stream_state", state: "disconnected", kind: "stopped" });
+    });
+    await flush();
+
+    const note = q("review-room-stream-disconnected");
+    expect(note).not.toBeNull();
+    expect(note?.textContent).toContain("串流中斷");
+    // 誠實回退：不再顯示 streaming 證據，highlight 立即回封鎖。
+    expect(q("review-room-runtime-evidence")?.textContent).toContain("not_observed");
+    expect(q<HTMLButtonElement>("review-room-highlight")!.disabled).toBe(true);
+
+    await act(async () => { q<HTMLButtonElement>("review-room-stream-reconnect")!.click(); });
+    await flush();
+    expect(q("review-room-stream-disconnected")).toBeNull();
+    expect(viewerBox.renderCount).toBeGreaterThan(mountsBefore);
+    expect(coordinatorClient.claimViewerLease).toHaveBeenCalledTimes(1);
+  });
+
+  it("a fresh first frame clears the stream-disconnected state", async () => {
+    await renderPane();
+    await act(async () => { q<HTMLButtonElement>("review-room-manual-start")!.click(); });
+    await flush();
+    await act(async () => {
+      (viewerBox.current!.onStreamState as (m: unknown) => void)({ protocol: "vg01", type: "stream_state", state: "disconnected", kind: "terminated" });
+    });
+    await flush();
+    expect(q("review-room-stream-disconnected")).not.toBeNull();
+    await act(async () => {
+      (viewerBox.current!.onFirstFrame as (m: unknown) => void)({ protocol: "vg01", type: "first_frame", stageUrl: "stage://x" });
+    });
+    await flush();
+    expect(q("review-room-stream-disconnected")).toBeNull();
+  });
+
 });
