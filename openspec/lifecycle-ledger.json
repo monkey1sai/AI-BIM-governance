@@ -788,11 +788,11 @@
       "id": "converge-console-specs-to-shipped-behavior",
       "status": "active",
       "owner": "web-viewer-sample",
-      "current_slice": "2026-08-18：unified-governance-console 四項 STALE 全數收斂（1.1 R3 標紅→USD selection、1.2 mock viewport 欄位與結構樹回饋、1.3 console shell 導覽分組與 Chat USD panel、1.4 A1 route 交付面）。edge-console-operator-frontend 五項（2.1-2.5）待收斂。6 項 UNVERIFIABLE 明確不在範圍。零 production 變更。",
+      "current_slice": "2026-08-18：9 項 STALE 全數收斂（unified 4 項＋edge-console 5 項），零 production 變更。兩處刻意不追認而記為 known gap：a2/a3 fixture dock 的捏造版本差異數字、#runtime fixture OpsPage 以固定值取代「未取得」。剩 3.1-3.3 收尾（strict validate／三源 gate／PR body 誠實揭露）。6 項 UNVERIFIABLE 明確不在範圍。",
       "blocked_by": [],
-      "last_verified": "2026-08-18T02:20:00Z",
+      "last_verified": "2026-08-18T02:35:00Z",
       "task_ledger": {
-        "completed": 4,
+        "completed": 9,
         "total": 12
       },
       "evidence_refs": [
@@ -800,7 +800,7 @@
         "openspec/changes/converge-console-specs-to-shipped-behavior/tasks.md",
         "artifacts/2026-08-12-hifi-consumer-spec-scenario-audit.md"
       ],
-      "subject_commit": "7bfe22f78ffae273f0408209a560ab7c9afa4db0",
+      "subject_commit": "3f414b792d2992b3e64b2b105519eb71fa772b33",
       "archive_debt": null
     },
     {
