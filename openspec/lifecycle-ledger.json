@@ -1463,7 +1463,7 @@
       "last_verified": "2026-08-18T08:30:00Z",
       "task_ledger": {
         "completed": 0,
-        "total": 32
+        "total": 33
       },
       "evidence_refs": [
         "openspec/changes/introduction-resolved-subject-binding/proposal.md",

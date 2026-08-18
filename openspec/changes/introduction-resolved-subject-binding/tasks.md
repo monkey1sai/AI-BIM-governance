@@ -16,6 +16,7 @@
 - [ ] 2.3 `assertGitBase` 補強：checkout 存在 `refs/remotes/origin/main` 時，`--base` 必須 ∈ ancestry(origin/main)（含相等）；無該 ref 維持現行為；trust envelope 註解明文（R6；design 決策二／挑戰 B5）
 - [ ] 2.4 容量聯合調整（openQuestions #1 owner 簽核後）：`MAX_UNIQUE_SUBJECTS` 上修＋rawBudget 調整＋（若採）budget 記帳移到 owned-path 過濾之後；註解記明 git 子程序上界推導（R7；design 決策五）
 - [ ] 2.5 保留並補強 folded-into-same-squash residual limit 的程式註解，指向本 change 規格（R5）
+- [ ] 2.6 **（第二波硬前提）** 把 required CI 的真實 ledger 檢查（`test-openspec-machine-truth.mjs`「current ledger keeps reconciled source snapshots clean」）改為 base-aware：`collectSourceObservations` 呼叫 SHALL 供給 trusted base（derivation fail-closed 順序：CI 環境由 workflow 傳入 `pull_request.base.sha`；本機優先 `refs/remotes/origin/main`；皆無時的行為實作時定案並以 fixture 釘住），使 legacy introduction-recovery 與 sentinel 解析都能在 required CI 內運作；未完成本 task 前 SHALL NOT 寫入任何 sentinel row（design §0 required-CI 檢查點事實）
 
 ## 3. Reconcile ratchet（Spec: openspec-machine-truth-reconcile-ratchet）
 - [ ] 3.1 verify CLI 新增 ratchet：以 `previousLedgerAtBase` 比對 base→head——新 row＝sentinel 或 subject ∈ ancestry(trusted base)；被改寫 row＝sentinel 或新值恰等於舊 binding 的 resolved introduction commit；違反丟 `subject_binding_required`；previous ledger 為 null 不套用（R1/R2/R4）

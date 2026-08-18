@@ -23,8 +23,9 @@ Owner 已裁決（#589 comment，2026-08-18；本 change 不重新辯論）：
 
 ## 落地順序（two-phase，危險窗明示）
 
-- **第一波（code）**：schema 支援＋解析＋ratchet＋測試落 main；ledger 資料面零 sentinel row。
+- **第一波（code）**：schema 支援＋解析＋ratchet＋測試＋**required CI 真實 ledger 檢查的 base-aware 化（tasks 2.6，第二波硬前提）**落 main；ledger 資料面零 sentinel row。
 - **第二波（data）**：第一波落 main 之後的 reconcile 才開始寫 sentinel row。
+- **required CI 現實（規格定稿後乾淨 clone 實證，design §0）**：`test-openspec-machine-truth.mjs` 的真實 ledger 檢查未傳 trusted base → #474 recovery 在 required CI 結構性不可用，任何一列懸空 subject 都紅其後所有 PR 的 `agent-governance`。因此 (a) **P1「廢止 rebind 慣例」在第一波落地前操作上不可執行**——squash 後留下懸空 binding 仍須立即 rebind PR；(b) 不先完成 tasks 2.6 就寫入 sentinel row 會使 required CI 永紅。
 - **危險窗（挑戰 B1 確認）**：strict `validateLedgerShape` 同時驗 HEAD 與 **BASE** ledger。第一筆 sentinel row 落 main 後，任何「腳本還是舊版、trusted base 已指向新 main」的本機 checkout 跑 machine-truth comparator 會 `schema_invalid` 硬失敗。CI 不受影響（merge-ref checkout 會帶入 main 的新腳本；node --test 只跑 fixtures）；受影響面是未 rebase 的長壽本機分支。第二波開始前必須執行 tasks 6.2 的操作閘（盤點 open PRs／通知 rebase）。
 
 ## Impact（影響）
@@ -43,6 +44,7 @@ ratchet 與 sentinel 語義由 **machine-truth comparator 的一切執行面**�
 1. 第一個 sentinel row 經一次 squash-merge 後，於 main checkout 實跑 machine-truth comparator：該 row 解析為 squash commit，**零 follow-up rebind PR**。
 2. introduction commit 之後對該 change owned sources 的編輯，恰好紅旗該 row（`source_changed_since_subject`）。
 3. 回歸測試全綠：`node scripts/tests/test-openspec-machine-truth.mjs`、`node scripts/tests/test-openspec-machine-truth-cli.mjs`、`pwsh scripts/tests/test-openspec-ledger-reconciliation.ps1`、agent-governance 檢查。
+4. **required CI 驗收（tasks 2.6 效果）**：第一個 sentinel row squash 落 main 後，開一支不含任何 ledger 變更的後續 PR，其 required `agent-governance`（含真實 ledger 檢查）全綠——treadmill 的 CI 強制點就此消失。
 
 ## Non-goals（不做）
 
