@@ -52,6 +52,10 @@ logs/
 !/source/apps/**
 !/source/extensions/
 !/source/extensions/**
+# Runtime structured-log sink (cross-service log baseline) writes JSONL runs
+# under the messaging extension while the service is live; the extensions
+# negation above would otherwise re-track it and break clean-tree gates.
+/source/extensions/ezplus.bim_review_stream.messaging/ezplus/bim_review_stream/messaging/logs/
 /source/**/__pycache__/
 /source/**/__pycache__/**
 /source/**/*.pyc

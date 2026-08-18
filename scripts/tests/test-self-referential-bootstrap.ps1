@@ -354,6 +354,11 @@ try {
         'scripts/security-exceptions.json',
         'scripts/lib/openspec-lifecycle.ps1',
         'scripts/lib/openspec-machine-truth.mjs',
+        'scripts/agent-governance-rules.json',
+        'scripts/tests/agent-governance-rules.schema.json',
+        'scripts/lib/agent-governance-policy.psm1',
+        'scripts/tests/verify-governance-policy.ps1',
+        'scripts/tests/test-agent-governance-policy.ps1',
         'scripts/tests/verification-plan.schema.json',
         'scripts/tests/invoke-powershell-static.ps1',
         'scripts/tests/scan-secret-patterns.ps1',
@@ -413,10 +418,20 @@ try {
     $wrongCaseMechanismPaths = @(Get-SelfReferentialMechanismPaths -ChangedPaths @(
         'Scripts/Deploy.ps1',
         '.github/workflows/CI.yml',
-        'agent-contracts/Autonomous-delivery-terminal-record.schema.json'
+        'agent-contracts/Autonomous-delivery-terminal-record.schema.json',
+        'scripts/Agent-governance-rules.json',
+        'scripts/tests/Agent-governance-rules.schema.json'
     ))
     Assert-True ($wrongCaseMechanismPaths.Count -eq 0) `
         "wrong-case git paths must not classify as mechanisms (matched: $($wrongCaseMechanismPaths -join ', '))"
+    $adjacentGovernancePolicyPaths = @(Get-SelfReferentialMechanismPaths -ChangedPaths @(
+        'scripts/agent-governance-rules.json.bak',
+        'scripts/archive/agent-governance-rules.json',
+        'scripts/tests/agent-governance-rules.schema.json.bak',
+        'scripts/tests/archive/agent-governance-rules.schema.json'
+    ))
+    Assert-True ($adjacentGovernancePolicyPaths.Count -eq 0) `
+        "adjacent governance-policy paths must not classify as mechanisms (matched: $($adjacentGovernancePolicyPaths -join ', '))"
     $prTemplate = Get-Content -LiteralPath (Join-Path $repoRoot '.github/PULL_REQUEST_TEMPLATE.md') -Raw
     $prTemplateBooleanPattern = '(?m)^\| Self-referential bootstrap \| yes / no \|\r?$'
     Assert-True ($prTemplate -match $prTemplateBooleanPattern) `
@@ -557,6 +572,8 @@ try {
         'invoke-powershell-static' = @{ Path = 'scripts/tests/invoke-powershell-static.ps1'; Invocation = @($pwshPrefix + 'scripts/tests/invoke-powershell-static.ps1') }
         'scan-secret-patterns' = @{ Path = 'scripts/tests/scan-secret-patterns.ps1'; Invocation = @($pwshPrefix + 'scripts/tests/scan-secret-patterns.ps1') }
         'test-agent-governance-check' = @{ Path = 'scripts/tests/test-agent-governance-check.ps1'; Invocation = @($pwshPrefix + 'scripts/tests/test-agent-governance-check.ps1') }
+        'test-agent-governance-policy' = @{ Path = 'scripts/tests/test-agent-governance-policy.ps1'; Invocation = @($pwshPrefix + 'scripts/tests/test-agent-governance-policy.ps1') }
+        'verify-governance-policy' = @{ Path = 'scripts/tests/verify-governance-policy.ps1'; Invocation = @($pwshPrefix + 'scripts/tests/verify-governance-policy.ps1') }
         'test-verification-plan' = @{ Path = 'scripts/tests/test-verification-plan.mjs'; Invocation = @('node', '--test', 'scripts/tests/test-verification-plan.mjs', 'scripts/tests/test-verification-command-policy.mjs', 'scripts/tests/test-verification-runner.mjs') }
         'test-base-gate-capability' = @{ Path = 'scripts/tests/test-base-gate-capability.ps1'; Invocation = @($pwshPrefix + 'scripts/tests/test-base-gate-capability.ps1') }
         'test-deploy-governance-static' = @{ Path = 'scripts/tests/test-deploy-governance-static.ps1'; Invocation = @($pwshPrefix + 'scripts/tests/test-deploy-governance-static.ps1') }

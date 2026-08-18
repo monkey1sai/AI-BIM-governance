@@ -69,6 +69,20 @@ describe("EmbeddedViewer postMessage 橋", () => {
     expect(onFirstFrame).toHaveBeenCalledTimes(1);
   });
 
+  it("stream_state 訊息經 origin 守衛後轉發 onStreamState（task 5.6 stream-disconnected）", async () => {
+    const onStreamState = vi.fn();
+    root = createRoot(container);
+    await act(async () => {
+      root!.render(<EmbeddedViewer sessionId="review_session_abc" viewerOrigin={VIEWER_ORIGIN} onStreamState={onStreamState} />);
+    });
+    const iframeWin = container.querySelector("iframe")!.contentWindow;
+    fireMessage({ protocol: "vg01", type: "stream_state", state: "disconnected", kind: "stopped" }, "http://evil.example", iframeWin);
+    expect(onStreamState).not.toHaveBeenCalled();
+    fireMessage({ protocol: "vg01", type: "stream_state", state: "disconnected", kind: "stopped" }, VIEWER_ORIGIN, iframeWin);
+    expect(onStreamState).toHaveBeenCalledTimes(1);
+    expect(onStreamState.mock.calls[0][0]).toMatchObject({ state: "disconnected", kind: "stopped" });
+  });
+
   it("iframe src 帶尾斜線 viewerOrigin 不產生雙斜線、且帶 coordinator handoff query", async () => {
     root = createRoot(container);
     await act(async () => {

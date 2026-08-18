@@ -1,0 +1,45 @@
+{
+  "schema_version": "self-referential-fixpoint-attestation/v1",
+  "entry_id": "rebuild-test-deploy-pwsh7-child",
+  "mechanism_commit": "fca2efa9ed9fa7034a9cb5e71513b1d4da73baaa",
+  "verification_contract_sha256": "b425887e7bd4ea8801ec645bbbf6511f542a1207c267e35230136b8bb435aa85",
+  "result": "pass",
+  "commands": [
+    {
+      "id": "test-rebuild-test-deploy",
+      "exit_code": 0
+    },
+    {
+      "id": "test-platform-adapter",
+      "exit_code": 0
+    },
+    {
+      "id": "test-host-native-launcher",
+      "exit_code": 0
+    },
+    {
+      "id": "test-host-native-child-launch",
+      "exit_code": 0
+    },
+    {
+      "id": "test-deploy-target-registry",
+      "exit_code": 0
+    },
+    {
+      "id": "test-deploy-governance-static",
+      "exit_code": 0
+    },
+    {
+      "id": "test-self-referential-bootstrap",
+      "exit_code": 0
+    },
+    {
+      "id": "test-agent-governance-check",
+      "exit_code": 0
+    },
+    {
+      "id": "invoke-powershell-static",
+      "exit_code": 0
+    }
+  ]
+}
