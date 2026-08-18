@@ -14,7 +14,7 @@
 - [ ] 2.1 `scripts/tests/verify-openspec-machine-truth.mjs`：`resolveRowSubjectWatermark` 增加 sentinel 分支——subject ∈ ancestry(HEAD) → 自身；否則（不存在或 exists-not-ancestor）→ `ledgerIntroductionCommit` 原樣解析；legacy 三分支逐字不動（R1/R3）
 - [ ] 2.2 確認 ambiguity、>32 candidates、not-found、introduction 非 trusted-base ancestor 四種失敗對 sentinel row 均維持 `MachineTruthInputError` 硬失敗（HELD；R2）
 - [ ] 2.3 `assertGitBase` 補強：checkout 存在 `refs/remotes/origin/main` 時，`--base` 必須 ∈ ancestry(origin/main)（含相等）；無該 ref 維持現行為；trust envelope 註解明文（R6；design 決策二／挑戰 B5）
-- [ ] 2.4 容量聯合調整（openQuestions #1 owner 簽核後）：`MAX_UNIQUE_SUBJECTS` 上修＋rawBudget 調整＋（若採）budget 記帳移到 owned-path 過濾之後；註解記明 git 子程序上界推導（R7；design 決策五）
+- [ ] 2.4 容量調整（owner 已裁決，2026-08-18）：`MAX_UNIQUE_SUBJECTS: 64 → 500`；`changedPathsSince` 的 rawBudget 記帳點移到 `isOwnedOpenSpecSource` 過濾之後（rawBudget 常數本身不變）；註解記明 git 子程序上界推導（R7；design 決策五）
 - [ ] 2.5 保留並補強 folded-into-same-squash residual limit 的程式註解，指向本 change 規格（R5）
 - [ ] 2.6 **（第二波硬前提）** 把 required CI 的真實 ledger 檢查（`test-openspec-machine-truth.mjs`「current ledger keeps reconciled source snapshots clean」）改為 base-aware：`collectSourceObservations` 呼叫 SHALL 供給 trusted base（derivation fail-closed 順序：CI 環境由 workflow 傳入 `pull_request.base.sha`；本機優先 `refs/remotes/origin/main`；皆無時的行為實作時定案並以 fixture 釘住），使 legacy introduction-recovery 與 sentinel 解析都能在 required CI 內運作；未完成本 task 前 SHALL NOT 寫入任何 sentinel row（design §0 required-CI 檢查點事實）
 

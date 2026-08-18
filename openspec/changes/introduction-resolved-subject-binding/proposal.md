@@ -18,7 +18,7 @@ Owner 已裁決（#589 comment，2026-08-18；本 change 不重新辯論）：
 1. **Schema 演進（spec: openspec-lifecycle-ledger-schema）**：row 新增選填欄位 `subject_binding`，唯一合法值 `"introduction"`；缺席＝legacy commit binding，語義完全不變。`subject_commit` 維持 40-hex（sentinel row 記錄 reconcile 當下的 PR HEAD，作為 binding watermark／`-S` 搜尋鍵）。`schema_version` 維持 `openspec-lifecycle-ledger/v1`（additive）。三個 strict 驗證面同步：`scripts/lib/openspec-machine-truth.mjs`（`CHANGE_KEYS` exact-keys）、`scripts/tests/openspec-lifecycle-ledger.schema.json`（`additionalProperties: false`）；`scripts/lib/openspec-repository-lifecycle.mjs`（PR CI gate）經查證只驗 row 的 `id`+`status`，無需語義變更，但要加回歸測試釘住這個寬容性，並可選擇性地加入 `subject_binding` 的 shape-only 靜態驗證（見 tasks 1.6）。
 2. **有效 subject 解析（spec: openspec-machine-truth-subject-resolution）**：sentinel row 的有效 subject＝(a) `subject_commit` 是 HEAD ancestor 時取其自身（in-PR self-anchored）；(b) 否則一律以 #474 演算法解析 introduction commit。任何歧義／解析失敗 fail closed（HELD），不得 round down。folded-into-same-squash 的 source edits 殘留限制照舊明文保留。另補強 `--base` 信任錨：checkout 存在 `refs/remotes/origin/main` 時，`--base` 必須是其 ancestor（封死 caller 以 `--base=HEAD` 自我背書的鑄造路徑）。
 3. **Reconcile ratchet（spec: openspec-machine-truth-reconcile-ratchet）**：相對 trusted base 的 previous ledger，「新 row」與「`subject_commit` 被改寫的 row」必須：新 row＝帶 sentinel 或綁 trusted-base ancestor；被改寫的 row＝帶 sentinel 或新值**恰等於舊 binding 的 resolved introduction commit**（P2b normalization 的精確定義；任意 base ancestor 不合法，防止把 watermark 前移到 base tip 洗掉累積 drift）。違反＝硬錯誤 `subject_binding_required`。
-4. **容量對齊**：`MAX_UNIQUE_SUBJECTS`（現 64）與全域 rawBudget（10k paths／2MB）在 sentinel 終態下同屬一個容量決策——per-watermark 的 `changedPathsSince` 對**全 repo diff** 收 budget，消耗與相異 watermark 數成正比。兩常數（含是否把 budget 記帳移到 owned-path 過濾之後）合併為單一 owner 簽核項（openQuestions #1），規格只鎖結果：ledger 成長到 row cap 不得機械性觸發 budget 失敗。
+4. **容量對齊（owner 已裁決，2026-08-18）**：`MAX_UNIQUE_SUBJECTS` 由 64 上修對齊 ledger row cap **500**；rawBudget 記帳點由「diff 全 repo 之後、owned 過濾之前」**移到 owned-path 過濾之後**，徹底解除消耗與相異 watermark 數（進而與 repo churn）的比例關係；rawBudget 常數（10k paths／2MB）本身不變。
 5. **回歸測試與 fixtures**：ambiguity（rebind-away-and-back）、>32 candidates、stale-base ancestry、`--base` origin-main 錨、folded edits residual limit、sentinel row 的 `source_changed_since_subject`、P2b 精確 normalization、legacy row 行為不變、determinism、budget。
 
 ## 落地順序（two-phase，危險窗明示）
@@ -55,7 +55,7 @@ ratchet 與 sentinel 語義由 **machine-truth comparator 的一切執行面**�
 
 ## Open Questions（owner 裁決項）
 
-1. **容量常數聯合裁決**：`MAX_UNIQUE_SUBJECTS` 上修幅度（草案：對齊 row cap 500）＋全域 rawBudget 是否隨之調整＋是否把 budget 記帳移到 owned-path 過濾之後（消除與 repo churn 的比例關係）。三者同屬一個決策，須一起簽核。
+1. ~~**容量常數聯合裁決**~~——**已裁決（2026-08-18）**：`MAX_UNIQUE_SUBJECTS→500`；rawBudget 記帳移到 owned-path 過濾之後；rawBudget 常數本身不變。見 design 決策五。
 2. **ratchet 違規呈現層級**：預設 CLI 硬錯誤 `subject_binding_required`（HELD 停機）；替代案為 mismatch row（agent 於 evidence 迴圈看紅旗自行修復）。
 3. `scripts/tests/openspec-lifecycle-ledger.schema.json`、`openspec-machine-truth-report.schema.json` 與新增 fixtures 是否應納入 `SELF_REFERENTIAL_PATTERNS` 或 `scripts/verification-manifest.json`（實作時依 self-referential-bootstrap §2.1 升級規則核對清單全文）。
 4. **終態收斂範圍**：是否另立 follow-up change 把 archived rows 全面收斂為 sentinel（本 change 不涵蓋）。
