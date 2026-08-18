@@ -73,10 +73,15 @@ sentinel row 的 `source_changed_since_subject` SHALL 以解析後的有效 subj
 - When 分別執行
 - Then 兩次各自以當下 HEAD 歷史解析，第二次不得沿用第一次的結果
 
-### Requirement: 容量常數聯合裁決且成長不得機械性爆表
-`MAX_UNIQUE_SUBJECTS`（現 64）、全域 rawBudget（10,000 paths／2MB）與「budget 記帳是否移到 owned-path 過濾之後」SHALL 作為單一容量決策由 owner 簽核（proposal openQuestions #1）——per-watermark 的 `changedPathsSince` 對全 repo diff 收 budget，消耗與相異 watermark 數成正比，兩常數在 sentinel 終態下同時到期。裁決後的常數組合 SHALL 保證：ledger 於 row cap（500）內成長、sentinel rows 逐 change 保留獨立 watermark 時，不因 unique subject 數量或 budget 機械性觸發失敗；逐 git 呼叫 timeout 與 candidates cap 照舊生效。
+### Requirement: 容量上限對齊 row cap、budget 記帳限 owned-path（owner 已裁決）
+`MAX_UNIQUE_SUBJECTS` SHALL 為 **500**（對齊 ledger row cap）。`changedPathsSince` 的 rawBudget（10,000 paths／2MB，常數本身不變）記帳點 SHALL 從「對每個相異 watermark 的全 repo diff 立即計入」改為「先以 `isOwnedOpenSpecSource` 過濾出該 change 的 owned paths，再計入 budget」，使消耗與「相異 watermark 數 × 各自 owned churn」成正比，SHALL NOT 隨不相關目錄的無關編輯或全 repo churn 增長。
 
-#### Scenario: 大量 sentinel rows 不爆 budget（依裁決後常數）
-- Given ledger 含超過 64 個相異 `subject_commit` 值（各 sentinel row 保留自己的 pre-merge SHA），總 rows 不超過 row cap
+#### Scenario: 大量 sentinel rows 不爆 budget
+- Given ledger 含超過 64 個（至多 500 個）相異 `subject_commit` 值（各 sentinel row 保留自己的 pre-merge SHA），總 rows 不超過 row cap
 - When 執行 verify CLI
-- Then 不因 unique subject 數量觸發失敗；裁決後的 budget 常數照舊生效且足以涵蓋本情境
+- Then 不因 unique subject 數量觸發失敗；budget 只對各 watermark 的 owned-path 變更計數
+
+#### Scenario: 不相關的全 repo churn 不消耗 budget
+- Given 某 watermark 與 HEAD 之間的全 repo diff 含大量與該 change 無關目錄的變更（例如另一服務的大型 refactor）
+- When 執行 verify CLI 計算該 watermark 的 `changedPathsSince`
+- Then budget 只計入通過 `isOwnedOpenSpecSource` 過濾後、真正屬於該 change 的 paths；無關目錄的變更不計入共享 rawBudget
