@@ -355,7 +355,8 @@ function Wait-ForControlMarker {
         [Parameter(Mandatory = $true)][string] $RunId,
         [Parameter(Mandatory = $true)][string] $ControlNonce,
         [Parameter(Mandatory = $true)][int] $TimeoutSeconds,
-        [System.Diagnostics.Process] $ChildProcess
+        [System.Diagnostics.Process] $ChildProcess,
+        [string] $ChildLogPath
     )
 
     $deadline = (Get-Date).ToUniversalTime().AddSeconds($TimeoutSeconds)
@@ -371,7 +372,8 @@ function Wait-ForControlMarker {
             return $marker
         }
         if ($null -ne $ChildProcess -and $ChildProcess.HasExited) {
-            throw 'The host-native Playwright case exited before its required control marker was written.'
+            $where = if ([string]::IsNullOrWhiteSpace($ChildLogPath)) { '' } else { " Case output: $ChildLogPath" }
+            throw "The host-native Playwright case exited before its required control marker was written.$where"
         }
         Start-Sleep -Milliseconds 250
     } while ((Get-Date).ToUniversalTime() -lt $deadline)
@@ -499,6 +501,11 @@ Copy-Item -LiteralPath $fixtureSource -Destination $fixtureStagePath
 $stageUrlA = "http://127.0.0.1:$conversionPort/artifacts/$runId/model.usdc"
 $stageUrlB = "http://localhost:$conversionPort/artifacts/$runId/model.usdc"
 $playwrightOutput = Join-Path $evidenceDirectory 'playwright-output'
+# Start-Process -WindowStyle Hidden throws the case's own output away, so an early
+# failure surfaced only as "exited before its required control marker was written"
+# with no reason attached. Keep both streams next to the evidence.
+$playwrightStdoutLog = Join-Path $evidenceDirectory 'playwright-stdout.log'
+$playwrightStderrLog = Join-Path $evidenceDirectory 'playwright-stderr.log'
 Ensure-Directory -Path $playwrightOutput
 
 $listener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 0)
@@ -545,11 +552,23 @@ $childCleanupFailure = $null
 try {
     Push-Location -LiteralPath $viewerRoot
     try {
+        # The claim this gate makes is that INSTALLING DEPENDENCIES does not mutate the
+        # checkout, so compare the tree before and after rather than requiring it to be
+        # pristine afterwards - the pristine form cannot tell "npm ci dirtied the tree"
+        # apart from "the tree was already dirty", and the deployment-revision gate above
+        # already reports the latter. Same owner ruling as that gate: on a
+        # development-verification target the condition is recorded in the evidence
+        # instead of ending the run.
+        $dirtyBeforeInstall = (& git status --porcelain | Out-String).Trim()
+        if ($LASTEXITCODE -ne 0) { throw 'git status failed before viewer dependency installation.' }
         & npm ci --ignore-scripts --no-audit --no-fund
         if ($LASTEXITCODE -ne 0) { throw 'npm ci failed for the canonical deployment viewer.' }
         $dirtyAfterInstall = (& git status --porcelain | Out-String).Trim()
-        if ($LASTEXITCODE -ne 0 -or -not [string]::IsNullOrWhiteSpace($dirtyAfterInstall)) {
-            throw 'Viewer dependency installation changed the canonical deployment checkout.'
+        if ($LASTEXITCODE -ne 0) { throw 'git status failed after viewer dependency installation.' }
+        if ($dirtyAfterInstall -cne $dirtyBeforeInstall) {
+            Assert-HostNativeEvidenceIntegrity `
+                -Code 'viewer_install_mutated_checkout' `
+                -Detail 'Viewer dependency installation changed the canonical deployment checkout.'
         }
     }
     finally {
@@ -585,14 +604,17 @@ try {
         -ArgumentList $e2eArguments `
         -WorkingDirectory $viewerRoot `
         -PassThru `
-        -WindowStyle Hidden
+        -WindowStyle Hidden `
+        -RedirectStandardOutput $playwrightStdoutLog `
+        -RedirectStandardError $playwrightStderrLog
 
     $outageReady = Wait-ForControlMarker `
         -Path (Join-Path $controlDirectory 'outage-ready.json') `
         -RunId $runId `
         -ControlNonce $controlNonce `
         -TimeoutSeconds ($script:PlaywrightEvidenceTimeoutSeconds + $script:PlaywrightRunnerGraceSeconds) `
-        -ChildProcess $e2eProcess
+        -ChildProcess $e2eProcess `
+        -ChildLogPath $playwrightStdoutLog
 
     $coordinator = Get-DeploymentCoordinator -ComposeBase $composeBase -DeploymentRoot $deploymentRoot
     $coordinatorRecoveryRequired = $true
