@@ -18,12 +18,12 @@
 
 ## 3. 前端 Console 收斂（以 convergence 為基準）
 
-- [ ] 3.1 先加入 failing tests：涵蓋 canonical route 收斂、session binding 顯示、`table_only` 相容結果停用 Issue／3D，以及 browser 不得提供 host path／mapping input。
-- [ ] 3.2 將 convergence 的 live session-scoped `A4SemanticSearchPage.tsx`(938 行) 移植到 main 的後端契約上，對齊 `governanceClient` 的現行 API 形狀（承接母版 5.1）。
-- [ ] 3.3 收斂 `#a4`／`#/a4`／separate semantic-search entry 為相容轉址，`#/workspace?dock=a4` 成為唯一 canonical 操作面；不得留下第二套實作（承接母版 5.1）。
-- [ ] 3.4 移除 production path mode 與 browser mapping input；顯示 active-session binding；IFC-ready 相容結果標 `table_only` 並停用 Issue／3D（承接母版 5.2）。
-- [ ] 3.5 實作 visible states：idle、loading、success、empty、uninterpreted、semantic error、retrying、retry-failed、source/session unavailable、proof-expired-draft-preserved；Retry SHALL 保留 explicit query/mode 並關聯 prior query ID（承接母版 5.3 中不依賴未實作 auth 的部分）。
-- [ ] 3.6 Component tests 涵蓋 canonical route 收斂、上述所有 visible states、neutral labels（只表達「符合查詢條件」，不作 compliance judgement）、no fixture counts、no host path control、Console zero DataChannel send（承接母版 5.6 對應範圍）。
+- [x] 3.1 先加入 failing tests：涵蓋 canonical route 收斂、session binding 顯示、`table_only` 相容結果停用 Issue／3D，以及 browser 不得提供 host path／mapping input。**2026-08-18**：4 條 RED→GREEN（empty neutral／uninterpreted 錨點／retry 關聯 prior query id／retry-failed 保草稿）＋1 條 console-only 結構測試（zero AppStream/streamer import、no fixture 字樣）；canonical route 收斂由既有 `EdgeConsole.aliasRedirect.test.tsx` 持續覆蓋。
+- [x] 3.2 將 convergence 的 live session-scoped `A4SemanticSearchPage.tsx`(938 行) 移植到 main 的後端契約上，對齊 `governanceClient` 的現行 API 形狀（承接母版 5.1）。**2026-08-18 裁決：main 已落地**（反向 doc-drift）——現行 654 行版即 session-scoped（sessions/sessionId state、`a4-session-select`、source=session|ifc_ready），convergence 938 行版為舊形狀；無移植需求，殘差由 3.5 錨點補齊。
+- [x] 3.3 收斂 `#a4`／`#/a4`／separate semantic-search entry 為相容轉址，`#/workspace?dock=a4` 成為唯一 canonical 操作面；不得留下第二套實作（承接母版 5.1）。**2026-08-18 裁決：main 已落地**——`EdgeConsole.aliasRedirect.test.tsx` 驗 `#a4`／`#semantic-search`→`#workspace?dock=a4`（202-236 行），canonical 唯一操作面成立。
+- [x] 3.4 移除 production path mode 與 browser mapping input；顯示 active-session binding；IFC-ready 相容結果標 `table_only` 並停用 Issue／3D（承接母版 5.2）。**2026-08-18 裁決：main 已落地**——頁面零 host-path/mapping-input 命中；`table_only`（session_table_only/ifc_ready_table_only 雙語）＋`a4-actions-unavailable` 停用 Issue/3D；`a4-no-active-session`/`a4-session-select` 呈現 binding。
+- [x] 3.5 實作 visible states：idle、loading、success、empty、uninterpreted、semantic error、retrying、retry-failed、source/session unavailable、proof-expired-draft-preserved；Retry SHALL 保留 explicit query/mode 並關聯 prior query ID（承接母版 5.3 中不依賴未實作 auth 的部分）。**2026-08-18 完成**：既有=loading(`a4-source-loading`)/success(`a4-results-table`)/error(`a4-run-err`,`a4-load-err`)/source-session-unavailable(復原文案 56 行)/proof-expired-draft-preserved(68-70)/stale(`a4-result-stale-context`)；本輪補=empty(`a4-empty` neutral)/uninterpreted(`a4-uninterpreted` neutral)/retrying(`a4-retrying`)/retry-failed(`a4-retry-failed`)；Retry（`a4-retry`）沿用 explicit query/mode 並以 `retry_of_query_id` 關聯 prior query id（client 型別同步補欄）。
+- [x] 3.6 Component tests 涵蓋 canonical route 收斂、上述所有 visible states、neutral labels（只表達「符合查詢條件」，不作 compliance judgement）、no fixture counts、no host path control、Console zero DataChannel send（承接母版 5.6 對應範圍）。**2026-08-18**：26/26（A4 頁 focused）＋全套 1104 tests；canonical route（aliasRedirect）＋十態＋neutral labels（「符合查詢條件」）＋no fixture counts＋zero DataChannel/AppStream sender（結構斷言，聲明文案不誤傷）。
 
 ## 4. 隔離 stack 驗證與修復迴圈
 
