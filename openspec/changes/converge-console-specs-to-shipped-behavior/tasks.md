@@ -24,7 +24,7 @@ SHALL NOT 把 UNVERIFIABLE 項當成已驗證。
 
 ## 3. 收尾
 
-- [ ] 3.1 `npx openspec validate converge-console-specs-to-shipped-behavior --strict` 通過
-- [ ] 3.2 `node scripts/tests/verify-openspec-repository-lifecycle.mjs` exit 0（三源一致）
-- [ ] 3.3 PR body 誠實揭露：本 change 只收斂措辭、零 production 變更；6 項 UNVERIFIABLE 明列為
+- [ ] 3.1 `npx openspec validate converge-console-specs-to-shipped-behavior --strict` 通過 —— **本機不可執行**：`npx openspec@latest` 在此環境回 `could not determine executable to run`（已試兩次），repo 亦未安裝該 CLI。維持未勾，不以其他檢查代稱通過
+- [x] 3.2 `node scripts/tests/verify-openspec-repository-lifecycle.mjs` exit 0：`current=12 archived=111 now=12 change_dirs=12 archive_dirs=111`，三源一致
+- [x] 3.3 PR body 誠實揭露：本 change 只收斂措辭、零 production 變更；6 項 UNVERIFIABLE 明列為
       **不在範圍**且仍未驗證；`migrate-console-to-hifi-design` 7.4 維持 unchecked
