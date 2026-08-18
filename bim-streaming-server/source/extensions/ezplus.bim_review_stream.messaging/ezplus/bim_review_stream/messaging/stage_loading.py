@@ -25,9 +25,13 @@ from carb.eventdispatcher import get_eventdispatcher
 
 import omni.client
 import omni.kit.app
-import omni.kit.livestream.messaging as messaging
 import omni.usd
 from pxr import Gf, Sdf, Usd, UsdGeom, UsdLux
+
+try:
+    from . import client_send_bridge
+except ImportError:  # pragma: no cover - test modules import this file directly.
+    import client_send_bridge
 
 try:
     from .runtime_authority import (
@@ -273,7 +277,7 @@ class LoadingManager:
         ]
 
         for o in outgoing:
-            messaging.register_event_type_to_send(o)
+            self._subscriptions.append(client_send_bridge.register_event_type_to_send(o))
             omni.kit.app.register_event_alias(
                 carb.events.type_from_string(o),
                 o,

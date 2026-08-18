@@ -16,7 +16,9 @@ def install_stage_loading_stubs() -> None:
             return {}
 
     carb = types.ModuleType("carb")
-    carb.dictionary = types.SimpleNamespace(Item=DummyItem)
+    carb_dictionary = types.ModuleType("carb.dictionary")
+    carb_dictionary.Item = DummyItem
+    carb.dictionary = carb_dictionary
     carb.log_error = lambda *args, **kwargs: None
     carb.log_info = lambda *args, **kwargs: None
     carb.log_warn = lambda *args, **kwargs: None
@@ -74,6 +76,7 @@ def install_stage_loading_stubs() -> None:
     sys.modules.update(
         {
             "carb": carb,
+            "carb.dictionary": carb_dictionary,
             "carb.events": carb_events,
             "carb.tokens": carb_tokens,
             "carb.eventdispatcher": carb_eventdispatcher,

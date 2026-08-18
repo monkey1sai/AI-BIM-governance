@@ -15,10 +15,14 @@ import carb.dictionary
 import carb.events
 import omni.usd
 import omni.kit.app
-import omni.kit.livestream.messaging as messaging
 
 from carb.eventdispatcher import get_eventdispatcher
 from omni.kit.viewport.utility import get_active_viewport_camera_string
+
+try:
+    from . import client_send_bridge
+except ImportError:  # pragma: no cover - test modules import this file directly.
+    import client_send_bridge
 
 try:
     from .runtime_authority import (
@@ -64,7 +68,7 @@ class StageManager:
         ]
 
         for o in outgoing:
-            messaging.register_event_type_to_send(o)
+            self._subscriptions.append(client_send_bridge.register_event_type_to_send(o))
             omni.kit.app.register_event_alias(
                 carb.events.type_from_string(o),
                 o,
