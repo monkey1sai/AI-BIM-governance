@@ -1,0 +1,63 @@
+agent-governance-policy-trust-boundary — pre-merge verification
+
+stack_kind : self_referential_bootstrap
+pr         : 579
+base       : 8b647d3492d50f02b2bdaa8b20f3f0670dfd7998
+date       : 2026-08-17
+
+Repair transition:
+- agent-governance-policy-wiring stays open and appends repair_prs [579].
+- agent-governance-policy-trust-boundary is born open and links to that predecessor.
+- The successor owns the ledger plus the outside-surface trusted-host merge contract and CI workflow.
+- The prior closure evidence is absent from the final base-to-head diff.
+
+Hosted failure characterization:
+- Exact-head Actions run 32036393744 dispatched the complete trusted verification plan.
+- Its streaming job failed before collection because pxr was unavailable after the workflow installed
+  only ad-hoc packages; bim-streaming-server/requirements.txt already pins usd-core==26.5.
+- The repair binds that canonical requirements file before the unchanged host-native conversion tests.
+- The Windows rebuild job's deploy dry-run steps passed, but the later launcher cleanup step failed;
+  that job is not claimed as green or as governed merge evidence.
+
+Classifier probes:
+- scripts/agent-governance-rules.json                         matched exactly
+- scripts/Agent-governance-rules.json                        not matched
+- scripts/agent-governance-rules.json.bak                    not matched
+- scripts/archive/agent-governance-rules.json                not matched
+- scripts/tests/agent-governance-rules.schema.json            matched exactly
+- scripts/tests/Agent-governance-rules.schema.json            not matched
+- scripts/tests/agent-governance-rules.schema.json.bak        not matched
+- scripts/tests/archive/agent-governance-rules.schema.json    not matched
+- trusted-host mechanism policy covers the rule document and policy module.
+
+Ordered verification contract replay on the candidate worktree:
+
+1. pwsh -NoProfile -NonInteractive -File scripts/tests/verify-governance-policy.ps1
+   37 rules, 0 error, 0 warning; passed; exit 0
+2. pwsh -NoProfile -NonInteractive -File scripts/tests/test-agent-governance-policy.ps1
+   all 106 assertions passed; exit 0
+3. pwsh -NoProfile -NonInteractive -File scripts/tests/test-agent-governance-check.ps1
+   all assertions passed; exit 0
+4. pwsh -NoProfile -NonInteractive -File scripts/tests/test-self-referential-bootstrap.ps1
+   all assertions passed; exit 0
+5. pwsh -NoProfile -NonInteractive -File scripts/tests/test-pr-body-evidence.ps1
+   all assertions passed; exit 0
+6. pwsh -NoProfile -NonInteractive -File scripts/tests/invoke-powershell-static.ps1
+   passed; exit 0
+7. node --test scripts/tests/test-trusted-host-merge.mjs scripts/tests/test-trusted-host-merge-runtime.mjs
+   45 tests: 44 passed, 1 platform-specific skip, 0 failed; exit 0
+8. python -m pytest bim-streaming-server/tests/test_host_native_conversion_service.py -q
+   130 passed, 8 platform-specific skips; exit 0 in the owner boundary
+9. node --test scripts/tests/test-verification-plan.mjs scripts/tests/test-verification-command-policy.mjs scripts/tests/test-verification-runner.mjs
+   33 tests passed; exit 0 in the owner boundary
+
+Execution-boundary evidence:
+- The first sandbox run of command 8 reached the 300-second limit with fixture setup errors; the
+  exact command completed in 8.24 seconds in the owner boundary.
+- The first sandbox run of command 9 was rejected by artifacts/tmp EPERM and proxy-warning stderr;
+  the exact command completed 33/33 in 7.67 seconds in the owner boundary.
+- These failed sandbox attempts are retained as boundary evidence and are not counted as passing runs.
+
+Known boundary: these pre-merge runs prove the candidate contract and regression guards. They do
+not close either open entry; each entry still requires its own post-merge fixpoint attestation in
+oldest-root-first order.
