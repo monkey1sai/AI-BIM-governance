@@ -1469,7 +1469,7 @@
         "openspec/changes/introduction-resolved-subject-binding/proposal.md",
         "openspec/changes/introduction-resolved-subject-binding/tasks.md"
       ],
-      "subject_commit": "2a3a2932550ecec2df56333022d945b84060d00f",
+      "subject_commit": "f77b769c419e243e5dd8ed9310050c0614ed97ed",
       "archive_debt": null
     },
     {
@@ -1489,7 +1489,7 @@
         "docs/plans/NOW.md",
         "scripts/tests/test-isolated-branch-stack.ps1"
       ],
-      "subject_commit": "dba889a50957d30599187be011bc491f728249f1",
+      "subject_commit": "f77b769c419e243e5dd8ed9310050c0614ed97ed",
       "archive_debt": null
     },
     {
