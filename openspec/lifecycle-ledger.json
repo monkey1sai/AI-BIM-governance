@@ -202,7 +202,7 @@
         "openspec/changes/a4-console-convergence/proposal.md",
         "openspec/changes/a4-console-convergence/tasks.md"
       ],
-      "subject_commit": "fdb25bd5c981d8fadc620899368b0add76afbe01",
+      "subject_commit": "21710d459d900872729581fb5b894f8e33a2fd46",
       "archive_debt": null
     },
     {
@@ -1526,7 +1526,7 @@
         "docs/plans/NOW.md",
         "scripts/tests/test-isolated-branch-stack.ps1"
       ],
-      "subject_commit": "9fd7997709769ef444cb7fa5e411bf2952493d2c",
+      "subject_commit": "63b56ce91ab64232f7cb0ae3b0d2749d69a579eb",
       "archive_debt": null
     },
     {

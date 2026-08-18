@@ -215,7 +215,13 @@ for (const viewport of VIEWPORTS) {
       };
       const waitForRealList = async (route: Route) => {
         await listGate;
-        await route.continue();
+        // teardown 的 unroute 可能已把 pending route 標記 handled（多請求競態）；
+        // continue 對已處理路由拋錯屬預期，吞掉以免真實 loading-state 斷言被誤判。
+        try {
+          await route.continue();
+        } catch {
+          /* route already handled by unroute teardown */
+        }
       };
       await page.route(listPattern, waitForRealList);
       try {
