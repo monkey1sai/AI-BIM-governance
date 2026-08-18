@@ -785,6 +785,25 @@
       }
     },
     {
+      "id": "converge-console-specs-to-shipped-behavior",
+      "status": "active",
+      "owner": "web-viewer-sample",
+      "current_slice": "2026-08-18 開案：承接 migrate-console-to-hifi-design task 7.4 稽核出的 9 項 STALE spec 措辭收斂。1.1（R3「標紅」→ USD selection highlighting）已依 owner 2026-08-18 選定的 (b) 落地 MODIFIED delta；其餘 8 項待逐項收斂。6 項 UNVERIFIABLE 明確不在本 change 範圍（屬驗證環境欠帳）。零 production 變更。",
+      "blocked_by": [],
+      "last_verified": "2026-08-18T02:10:00Z",
+      "task_ledger": {
+        "completed": 1,
+        "total": 12
+      },
+      "evidence_refs": [
+        "openspec/changes/converge-console-specs-to-shipped-behavior/proposal.md",
+        "openspec/changes/converge-console-specs-to-shipped-behavior/tasks.md",
+        "artifacts/2026-08-12-hifi-consumer-spec-scenario-audit.md"
+      ],
+      "subject_commit": "f8fd82c465a0cb733f1032cae99eda946959bd97",
+      "archive_debt": null
+    },
+    {
       "id": "cross-service-structured-log-baseline",
       "status": "deferred",
       "owner": "cross-service-observability",
