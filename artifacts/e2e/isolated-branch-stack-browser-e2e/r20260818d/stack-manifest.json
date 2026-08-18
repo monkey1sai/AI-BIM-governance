@@ -1,0 +1,84 @@
+{
+  "schema_version": "isolated-branch-stack/v1",
+  "stack_kind": "isolated_branch_stack",
+  "change_id": "isolated-branch-stack-browser-e2e",
+  "run_id": "r20260818d",
+  "worktree_root": "C:\\Repos\\active\\iot\\AI-BIM-governance.worktrees\\isolated-e2e-run",
+  "offset": 0,
+  "reservation_id": "f901499b-005a-47fd-b2df-29bd011abf35",
+  "ports": {
+    "coordinator": 8005,
+    "governance": 49103,
+    "viewer": 5180
+  },
+  "base_urls": {
+    "coordinator": "http://127.0.0.1:8005",
+    "governance": "http://127.0.0.1:49103",
+    "viewer": "http://127.0.0.1:5180"
+  },
+  "head_sha": "4479259d7ec53035333a0faaab5115e8b1885892",
+  "started_at": "2026-08-18T09:37:20.1052512Z",
+  "stopped_at": "2026-08-18T09:39:55.4638290Z",
+  "backend_ready": {
+    "governance": false,
+    "coordinator": false
+  },
+  "lifecycle_owners": {
+    "governance": "repo_launcher",
+    "coordinator": "repo_launcher",
+    "viewer": "playwright_webserver"
+  },
+  "viewer": {
+    "expected_port": 5180,
+    "owner": "playwright_webserver",
+    "managed_by_launcher": false
+  },
+  "read_only_fixture_root": "C:\\Repos\\active\\iot\\AI-BIM-governance.worktrees\\isolated-e2e-run\\storage",
+  "mutable_state": {
+    "root": "C:\\Repos\\active\\iot\\AI-BIM-governance.worktrees\\isolated-e2e-run\\artifacts\\e2e\\isolated-branch-stack-browser-e2e\\r20260818d\\state",
+    "governance_db": "C:\\Repos\\active\\iot\\AI-BIM-governance.worktrees\\isolated-e2e-run\\artifacts\\e2e\\isolated-branch-stack-browser-e2e\\r20260818d\\state\\governance\\governance.db",
+    "governance_federation_out": "C:\\Repos\\active\\iot\\AI-BIM-governance.worktrees\\isolated-e2e-run\\artifacts\\e2e\\isolated-branch-stack-browser-e2e\\r20260818d\\state\\governance\\federated",
+    "coordinator_root": "C:\\Repos\\active\\iot\\AI-BIM-governance.worktrees\\isolated-e2e-run\\artifacts\\e2e\\isolated-branch-stack-browser-e2e\\r20260818d\\state\\coordinator"
+  },
+  "processes": [
+    {
+      "pid": 10052,
+      "entrypoint": "C:\\Repos\\active\\iot\\AI-BIM-governance.worktrees\\isolated-e2e-run\\governance-service",
+      "command_line": "\"C:\\Program Files\\PowerShell\\7\\pwsh.exe\" -NoProfile -NonInteractive -File C:\\Repos\\active\\iot\\AI-BIM-governance.worktrees\\isolated-e2e-run\\scripts\\lib\\start-child-with-environment.ps1 -Executable C:\\Repos\\active\\iot\\AI-BIM-governance.worktrees\\isolated-e2e-run\\.venv\\Scripts\\python.exe -PayloadBase64 eyJlbnZpcm9ubWVudCI6eyJHT1ZfRkVEX09VVCI6IkM6XFxSZXBvc1xcYWN0aXZlXFxpb3RcXEFJLUJJTS1nb3Zlcm5hbmNlLndvcmt0cmVlc1xcaXNvbGF0ZWQtZTJlLXJ1blxcYXJ0aWZhY3RzXFxlMmVcXGlzb2xhdGVkLWJyYW5jaC1zdGFjay1icm93c2VyLWUyZVxccjIwMjYwODE4ZFxcc3RhdGVcXGdvdmVybmFuY2VcXGZlZGVyYXRlZCIsIlJVTlRJTUVfU1RPUkFHRV9ST09UIjoiQzpcXFJlcG9zXFxhY3RpdmVcXGlvdFxcQUktQklNLWdvdmVybmFuY2Uud29ya3RyZWVzXFxpc29sYXRlZC1lMmUtcnVuXFxzdG9yYWdlIiwiTE9HX1JPT1QiOiJDOlxcUmVwb3NcXGFjdGl2ZVxcaW90XFxBSS1CSU0tZ292ZXJuYW5jZS53b3JrdHJlZXNcXGlzb2xhdGVkLWUyZS1ydW5cXGFydGlmYWN0c1xcZTJlXFxpc29sYXRlZC1icmFuY2gtc3RhY2stYnJvd3Nlci1lMmVcXHIyMDI2MDgxOGRcXHN0YXRlXFxnb3Zlcm5hbmNlXFxsb2dzIiwiR09WX0RCX1BBVEgiOiJDOlxcUmVwb3NcXGFjdGl2ZVxcaW90XFxBSS1CSU0tZ292ZXJuYW5jZS53b3JrdHJlZXNcXGlzb2xhdGVkLWUyZS1ydW5cXGFydGlmYWN0c1xcZTJlXFxpc29sYXRlZC1icmFuY2gtc3RhY2stYnJvd3Nlci1lMmVcXHIyMDI2MDgxOGRcXHN0YXRlXFxnb3Zlcm5hbmNlXFxnb3Zlcm5hbmNlLmRiIiwiR09WX1BPUlQiOiI0OTEwMyIsIkE0X0lOVEVSTkFMX0NPTlRFWFRfVE9LRU4iOiJlMjk1Njc5ODNmNTIyYjg5MTc1MDI1MTRkNjQ4ZTczOWMwYzEzN2QyMDViMDI3NmZhYmVjYzUzY2FjNTQzYmI2IiwiQklNX0ZJTEVfTElCUkFSWV9ST09UIjoiQzpcXFJlcG9zXFxhY3RpdmVcXGlvdFxcQUktQklNLWdvdmVybmFuY2Uud29ya3RyZWVzXFxpc29sYXRlZC1lMmUtcnVuXFxzdG9yYWdlIn0sImFyZ3VtZW50cyI6WyItbSIsInV2aWNvcm4iLCItLWFwcC1kaXIiLCJDOlxcUmVwb3NcXGFjdGl2ZVxcaW90XFxBSS1CSU0tZ292ZXJuYW5jZS53b3JrdHJlZXNcXGlzb2xhdGVkLWUyZS1ydW5cXGdvdmVybmFuY2Utc2VydmljZSIsImFwcDphcHAiLCItLWhvc3QiLCIxMjcuMC4wLjEiLCItLXBvcnQiLCI0OTEwMyJdfQ== -EntrypointMarker C:\\Repos\\active\\iot\\AI-BIM-governance.worktrees\\isolated-e2e-run\\governance-service -Role governance -ExpectedPortMarkerBase64 LS1wb3J0 -ExpectedPort 49103 -BindingMarker \"isolated-governance-port-49103 --port 49103\"",
+      "creation_identity": "2026-08-18T09:37:16.507191Z",
+      "executable_path": "C:\\Program Files\\PowerShell\\7\\pwsh.exe",
+      "role": "governance",
+      "stdout_path": "C:\\Repos\\active\\iot\\AI-BIM-governance.worktrees\\isolated-e2e-run\\artifacts\\e2e\\isolated-branch-stack-browser-e2e\\r20260818d\\governance.stdout.log",
+      "stderr_path": "C:\\Repos\\active\\iot\\AI-BIM-governance.worktrees\\isolated-e2e-run\\artifacts\\e2e\\isolated-branch-stack-browser-e2e\\r20260818d\\governance.stderr.log",
+      "stop_status": "stopped"
+    },
+    {
+      "pid": 1644,
+      "entrypoint": "C:\\Repos\\active\\iot\\AI-BIM-governance.worktrees\\isolated-e2e-run\\bim-review-coordinator\\src\\index.ts",
+      "command_line": "\"C:\\Program Files\\PowerShell\\7\\pwsh.exe\" -NoProfile -NonInteractive -File C:\\Repos\\active\\iot\\AI-BIM-governance.worktrees\\isolated-e2e-run\\scripts\\lib\\start-child-with-environment.ps1 -Executable \"C:\\Program Files\\nodejs\\node.exe\" -PayloadBase64 eyJlbnZpcm9ubWVudCI6eyJQT1JUIjoiODAwNSIsIkNPUlNfT1JJR0lOUyI6Imh0dHA6Ly8xMjcuMC4wLjE6NTE4MCIsIkVYVEVSTkFMX0lGQ19SRUFEWV9TVE9SRV9QQVRIIjoiQzpcXFJlcG9zXFxhY3RpdmVcXGlvdFxcQUktQklNLWdvdmVybmFuY2Uud29ya3RyZWVzXFxpc29sYXRlZC1lMmUtcnVuXFxhcnRpZmFjdHNcXGUyZVxcaXNvbGF0ZWQtYnJhbmNoLXN0YWNrLWJyb3dzZXItZTJlXFxyMjAyNjA4MThkXFxzdGF0ZVxcY29vcmRpbmF0b3JcXGV4dGVybmFsLWlmYy1yZWFkeS5qc29uIiwiTUlOSU9fV0FUQ0hfRU5BQkxFRCI6ImZhbHNlIiwiQ0FMTEJBQ0tfT1VUQk9YX1NUT1JFX1BBVEgiOiJDOlxcUmVwb3NcXGFjdGl2ZVxcaW90XFxBSS1CSU0tZ292ZXJuYW5jZS53b3JrdHJlZXNcXGlzb2xhdGVkLWUyZS1ydW5cXGFydGlmYWN0c1xcZTJlXFxpc29sYXRlZC1icmFuY2gtc3RhY2stYnJvd3Nlci1lMmVcXHIyMDI2MDgxOGRcXHN0YXRlXFxjb29yZGluYXRvclxcY2FsbGJhY2stb3V0Ym94Lmpzb24iLCJBNF9DT05WRVJTSU9OX0FSVElGQUNUU19ST09UIjoiQzpcXFJlcG9zXFxhY3RpdmVcXGlvdFxcQUktQklNLWdvdmVybmFuY2Uud29ya3RyZWVzXFxpc29sYXRlZC1lMmUtcnVuXFxzdG9yYWdlXFxhcnRpZmFjdHMiLCJBUlRJRkFDVF9IRUFMVEhfTEVER0VSX1NUT1JFX1BBVEgiOiJDOlxcUmVwb3NcXGFjdGl2ZVxcaW90XFxBSS1CSU0tZ292ZXJuYW5jZS53b3JrdHJlZXNcXGlzb2xhdGVkLWUyZS1ydW5cXGFydGlmYWN0c1xcZTJlXFxpc29sYXRlZC1icmFuY2gtc3RhY2stYnJvd3Nlci1lMmVcXHIyMDI2MDgxOGRcXHN0YXRlXFxjb29yZGluYXRvclxcYXJ0aWZhY3QtaGVhbHRoLWxlZGdlci5qc29uIiwiU1RPUkFHRV9IT1NUX1JPT1QiOiJDOlxcUmVwb3NcXGFjdGl2ZVxcaW90XFxBSS1CSU0tZ292ZXJuYW5jZS53b3JrdHJlZXNcXGlzb2xhdGVkLWUyZS1ydW5cXGFydGlmYWN0c1xcZTJlXFxpc29sYXRlZC1icmFuY2gtc3RhY2stYnJvd3Nlci1lMmVcXHIyMDI2MDgxOGRcXHN0YXRlXFxjb29yZGluYXRvclxcc3RvcmFnZSIsIkxPR19ST09UIjoiQzpcXFJlcG9zXFxhY3RpdmVcXGlvdFxcQUktQklNLWdvdmVybmFuY2Uud29ya3RyZWVzXFxpc29sYXRlZC1lMmUtcnVuXFxhcnRpZmFjdHNcXGUyZVxcaXNvbGF0ZWQtYnJhbmNoLXN0YWNrLWJyb3dzZXItZTJlXFxyMjAyNjA4MThkXFxzdGF0ZVxcY29vcmRpbmF0b3JcXGxvZ3MiLCJTRVNTSU9OX1NUT1JFX0RJUiI6IkM6XFxSZXBvc1xcYWN0aXZlXFxpb3RcXEFJLUJJTS1nb3Zlcm5hbmNlLndvcmt0cmVlc1xcaXNvbGF0ZWQtZTJlLXJ1blxcYXJ0aWZhY3RzXFxlMmVcXGlzb2xhdGVkLWJyYW5jaC1zdGFjay1icm93c2VyLWUyZVxccjIwMjYwODE4ZFxcc3RhdGVcXGNvb3JkaW5hdG9yXFxzZXNzaW9ucyIsIlZJRVdFUl9QVUJMSUNfQkFTRV9VUkwiOiJodHRwOi8vMTI3LjAuMC4xOjUxODAiLCJFVkVOVF9MT0dfRElSIjoiQzpcXFJlcG9zXFxhY3RpdmVcXGlvdFxcQUktQklNLWdvdmVybmFuY2Uud29ya3RyZWVzXFxpc29sYXRlZC1lMmUtcnVuXFxhcnRpZmFjdHNcXGUyZVxcaXNvbGF0ZWQtYnJhbmNoLXN0YWNrLWJyb3dzZXItZTJlXFxyMjAyNjA4MThkXFxzdGF0ZVxcY29vcmRpbmF0b3JcXGV2ZW50cyIsIlJVTlRJTUVfU1RPUkFHRV9ST09UIjoiQzpcXFJlcG9zXFxhY3RpdmVcXGlvdFxcQUktQklNLWdvdmVybmFuY2Uud29ya3RyZWVzXFxpc29sYXRlZC1lMmUtcnVuXFxhcnRpZmFjdHNcXGUyZVxcaXNvbGF0ZWQtYnJhbmNoLXN0YWNrLWJyb3dzZXItZTJlXFxyMjAyNjA4MThkXFxzdGF0ZVxcY29vcmRpbmF0b3JcXHN0b3JhZ2UiLCJHT1ZFUk5BTkNFX0FQSV9CQVNFIjoiaHR0cDovLzEyNy4wLjAuMTo0OTEwMyIsIklGQ19ET1dOTE9BRF9TVFJJQ1QiOiJ0cnVlIiwiRURHRV9SVU5USU1FX0RBVEFfUk9PVCI6IkM6XFxSZXBvc1xcYWN0aXZlXFxpb3RcXEFJLUJJTS1nb3Zlcm5hbmNlLndvcmt0cmVlc1xcaXNvbGF0ZWQtZTJlLXJ1blxcYXJ0aWZhY3RzXFxlMmVcXGlzb2xhdGVkLWJyYW5jaC1zdGFjay1icm93c2VyLWUyZVxccjIwMjYwODE4ZFxcc3RhdGVcXGNvb3JkaW5hdG9yXFxlZGdlLXJ1bnRpbWUiLCJTVE9SQUdFX1JPT1QiOiJDOlxcUmVwb3NcXGFjdGl2ZVxcaW90XFxBSS1CSU0tZ292ZXJuYW5jZS53b3JrdHJlZXNcXGlzb2xhdGVkLWUyZS1ydW5cXGFydGlmYWN0c1xcZTJlXFxpc29sYXRlZC1icmFuY2gtc3RhY2stYnJvd3Nlci1lMmVcXHIyMDI2MDgxOGRcXHN0YXRlXFxjb29yZGluYXRvclxcc3RvcmFnZSIsIkVYVEVSTkFMX0lOVEFLRV9XRUJIT09LX1NFQ1JFVCI6ImRldi13ZWJob29rLXNlY3JldCIsIlNUUkVBTUlOR19DT05WRVJTSU9OX0FQSV9CQVNFIjoiaHR0cDovLzEyNy4wLjAuMTo0OTEwMyIsIkE0X0lOVEVSTkFMX0NPTlRFWFRfVE9LRU4iOiJlMjk1Njc5ODNmNTIyYjg5MTc1MDI1MTRkNjQ4ZTczOWMwYzEzN2QyMDViMDI3NmZhYmVjYzUzY2FjNTQzYmI2IiwiQTRfQ09OVkVSU0lPTl9BUlRJRkFDVFNfSE9TVF9ST09UIjoiQzpcXFJlcG9zXFxhY3RpdmVcXGlvdFxcQUktQklNLWdvdmVybmFuY2Uud29ya3RyZWVzXFxpc29sYXRlZC1lMmUtcnVuXFxzdG9yYWdlXFxhcnRpZmFjdHMiLCJDT09SRElOQVRPUl9QVUJMSUNfQkFTRV9VUkwiOiJodHRwOi8vMTI3LjAuMC4xOjgwMDUiLCJIT1NUIjoiMTI3LjAuMC4xIiwiQ09OVkVSU0lPTl9MRURHRVJfU1RPUkVfUEFUSCI6IkM6XFxSZXBvc1xcYWN0aXZlXFxpb3RcXEFJLUJJTS1nb3Zlcm5hbmNlLndvcmt0cmVlc1xcaXNvbGF0ZWQtZTJlLXJ1blxcYXJ0aWZhY3RzXFxlMmVcXGlzb2xhdGVkLWJyYW5jaC1zdGFjay1icm93c2VyLWUyZVxccjIwMjYwODE4ZFxcc3RhdGVcXGNvb3JkaW5hdG9yXFxjb252ZXJzaW9uLWxlZGdlci5qc29uIn0sImFyZ3VtZW50cyI6WyJDOlxcUmVwb3NcXGFjdGl2ZVxcaW90XFxBSS1CSU0tZ292ZXJuYW5jZS53b3JrdHJlZXNcXGlzb2xhdGVkLWUyZS1ydW5cXGJpbS1yZXZpZXctY29vcmRpbmF0b3JcXG5vZGVfbW9kdWxlc1xcdHN4XFxkaXN0XFxjbGkubWpzIiwiQzpcXFJlcG9zXFxhY3RpdmVcXGlvdFxcQUktQklNLWdvdmVybmFuY2Uud29ya3RyZWVzXFxpc29sYXRlZC1lMmUtcnVuXFxiaW0tcmV2aWV3LWNvb3JkaW5hdG9yXFxzcmNcXGluZGV4LnRzIiwiLS1pc29sYXRlZC1zdGFjay1wb3J0IiwiODAwNSJdfQ== -EntrypointMarker C:\\Repos\\active\\iot\\AI-BIM-governance.worktrees\\isolated-e2e-run\\bim-review-coordinator\\src\\index.ts -Role coordinator -ExpectedPortMarkerBase64 LS1pc29sYXRlZC1zdGFjay1wb3J0 -ExpectedPort 8005 -BindingMarker \"isolated-coordinator-port-8005 --isolated-stack-port 8005\"",
+      "creation_identity": "2026-08-18T09:37:18.619934Z",
+      "executable_path": "C:\\Program Files\\PowerShell\\7\\pwsh.exe",
+      "role": "coordinator",
+      "stdout_path": "C:\\Repos\\active\\iot\\AI-BIM-governance.worktrees\\isolated-e2e-run\\artifacts\\e2e\\isolated-branch-stack-browser-e2e\\r20260818d\\coordinator.stdout.log",
+      "stderr_path": "C:\\Repos\\active\\iot\\AI-BIM-governance.worktrees\\isolated-e2e-run\\artifacts\\e2e\\isolated-branch-stack-browser-e2e\\r20260818d\\coordinator.stderr.log",
+      "stop_status": "stopped"
+    }
+  ],
+  "stop_state": {
+    "attempted_at": "2026-08-18T09:39:54.5104710Z",
+    "entries": [
+      {
+        "role": "coordinator",
+        "pid": 1644,
+        "status": "stopped",
+        "reason": null
+      },
+      {
+        "role": "governance",
+        "pid": 10052,
+        "status": "stopped",
+        "reason": null
+      }
+    ]
+  }
+}
