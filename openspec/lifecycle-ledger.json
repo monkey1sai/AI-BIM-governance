@@ -1396,6 +1396,24 @@
       "archive_debt": null
     },
     {
+      "id": "introduce-viewer-app-integration-surface",
+      "status": "deferred",
+      "owner": "web-viewer-sample",
+      "current_slice": "deferred 開立 2026-08-18（active WIP 6/6 滿額）：四份 artifact 已落、strict validate 通過、F* issues #603-#610 與治理複核 #611 已開。thaw 條件=任一 active change archive 釋出名額或使用者明確口令升 active（最快路徑見 #611：converge-console 3.1 重測後 archive）。thaw 後第一片=S0 pre-flight（重取基線＋凍結 12 態錨點清單＋ack transcript golden）。",
+      "blocked_by": [],
+      "last_verified": "2026-08-18T11:02:41Z",
+      "task_ledger": {
+        "completed": 4,
+        "total": 33
+      },
+      "evidence_refs": [
+        "openspec/changes/introduce-viewer-app-integration-surface/proposal.md",
+        "openspec/changes/introduce-viewer-app-integration-surface/tasks.md"
+      ],
+      "subject_commit": "ab75392ee624cea9876f8cce256c97ed06e6f3ba",
+      "archive_debt": null
+    },
+    {
       "id": "introduce-ai-bim-runtime-manager-docker-kit-mvp",
       "status": "archived",
       "owner": "repository-maintainer",
@@ -1508,7 +1526,7 @@
         "docs/plans/NOW.md",
         "scripts/tests/test-isolated-branch-stack.ps1"
       ],
-      "subject_commit": "63b56ce91ab64232f7cb0ae3b0d2749d69a579eb",
+      "subject_commit": "c45adb358e33f122b500c4010af1464b941e2ac9",
       "archive_debt": null
     },
     {
