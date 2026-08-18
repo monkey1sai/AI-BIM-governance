@@ -546,7 +546,7 @@
     },
     {
       "id": "agent-governance-policy-wiring",
-      "status": "open",
+      "status": "closed",
       "pr": 572,
       "opened_at": "2026-08-17T10:43:02Z",
       "reason": "this PR rewires the required agent-governance adjudication suite: it adds the governance-policy gate and behaviour suite as required steps, deletes the 182 text assertions the rule document supersedes, and registers the module surface in the mechanism classification; the branch is judged by the surface it edits, so only a post-merge fixpoint replay from main can prove the wired mechanism against itself",
@@ -576,7 +576,14 @@
         "docs/evidence/agent-governance-policy-wiring/self-referential-bootstrap/README.md",
         "docs/evidence/agent-governance-policy-wiring/self-referential-bootstrap/verification.txt"
       ],
-      "fixpoint": null
+      "fixpoint": {
+        "reverified_at": "2026-08-18T04:11:25Z",
+        "mechanism_commit": "8b647d3492d50f02b2bdaa8b20f3f0670dfd7998",
+        "evidence_refs": [
+          "docs/evidence/agent-governance-policy-wiring/fixpoint/attestation.json",
+          "docs/evidence/agent-governance-policy-wiring/fixpoint/summary.md"
+        ]
+      }
     },
     {
       "id": "agent-governance-policy-trust-boundary",
