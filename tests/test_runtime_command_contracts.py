@@ -488,3 +488,47 @@ def test_vg01_bridge_carries_ephemeral_user_token_and_stage_proof_status() -> No
         "token": "must-not-serialize",
     }
     assert list(validator.iter_errors(token_in_stage_event))
+
+
+def test_vg01_bridge_stream_state_disconnect_is_typed_and_fail_closed() -> None:
+    validator = load_validator("vg01-postmessage-v1.schema.json")
+    validator.validate(
+        {
+            "protocol": "vg01",
+            "type": "stream_state",
+            "state": "disconnected",
+            "kind": "stopped",
+        }
+    )
+    validator.validate(
+        {
+            "protocol": "vg01",
+            "type": "stream_state",
+            "state": "disconnected",
+            "kind": "terminated",
+        }
+    )
+
+    missing_kind = {
+        "protocol": "vg01",
+        "type": "stream_state",
+        "state": "disconnected",
+    }
+    assert list(validator.iter_errors(missing_kind))
+
+    connected_is_not_a_state_yet = {
+        "protocol": "vg01",
+        "type": "stream_state",
+        "state": "connected",
+        "kind": "stopped",
+    }
+    assert list(validator.iter_errors(connected_is_not_a_state_yet))
+
+    token_in_stream_event = {
+        "protocol": "vg01",
+        "type": "stream_state",
+        "state": "disconnected",
+        "kind": "stopped",
+        "token": "must-not-serialize",
+    }
+    assert list(validator.iter_errors(token_in_stream_event))

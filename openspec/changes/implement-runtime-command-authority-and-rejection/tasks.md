@@ -4,7 +4,7 @@
 - [x] 1.2 依 `origin/main` `99cd722` 的 archive後真相更新 proposal/design/spec/tasks：除 `viewer-runtime-command-bridge` 外，直接 reconcile canonical `kit-datachannel-protocol`／`embedded-viewer-bridge`／`viewer-viewport` delta，不回寫 archive source或手寫design canon，並通過strict validation
 - [x] 1.3 取得fresh GitNexus兩個CRITICAL symbols `createCoordinatorApp` 與 `App._openSelectedAsset` 的dependency-scope明確簽核；記錄HIGH viewer symbols與UNKNOWN Kit handlers的補強gate
 - [x] 1.4 記錄使用者裁決：本輪以 `local-dev lab-only` 推進且 `production full=no`
-- [ ] 1.5 Credential owner最新確認舊 A4/Ornith credential尚未撤銷或輪替；任何檔案不得記錄實值，且在外部完成前不得宣稱credential hygiene或full completion通過
+- [x] 1.5 Credential owner最新確認舊 A4/Ornith credential已撤銷（owner 於 2026-08-18 明確回覆「舊的已經被撤銷」；credential owner 為外部動作持有者，此為其最新確認）。任何檔案未記錄實值——本 repo 為 PUBLIC，撤銷事實以本行文字記錄，不附帳號、金鑰、端點或任何可還原的識別值。外部動作已完成，credential hygiene 前置解除；full completion 仍為 no（受 5.6／7.3／7.5 殘項限制）
 
 ## 2. Coordinator principal與lease authority
 
@@ -38,7 +38,7 @@
 - [x] 5.3 新增FakeKit deterministic one-shot rejection replay；證明production build不能只靠query啟用harness
 - [x] 5.4 trusted `viewer_lease_token`晚到時，只在embedded、stage未matched、selected asset仍可開啟時重排既有deferred-open timer
 - [x] 5.5 補visible rejection、retryable outage、changed-unconfirmed resync/block、one-shot replay、late-token單次恢復、timer replacement與matched-stage不重開tests
-- [ ] 5.6 將viewer origin完整失敗態矩陣接到既有i18n keys；本切片已收斂runtime-command-rejection diagnostics、changed-unconfirmed binding、rejected stage-load，以及2026-08-12新收斂的stage-load-timeout（見下方RED/GREEN證據：兩觸發路徑皆有可見overlay/雙語診斷文案/late-result不覆寫證明，並新增`data-stage-failure-reason`狀態專屬test anchor）。2026-08-17兩個切片累計收斂七態：slice-1收no-session、viewer-origin-missing（含refresh動作）、lease-occupied（驗證＋holder-privacy負向斷言）；slice-2收session-preparing（conversion_status非終態→可見note＋#pipeline動作）、gpu-unavailable（kit-manager instances查詢失敗→誠實停用啟動＋#runtime動作）、lease-expired（heartbeat 404 lease拒絕→清lease＋手動re-claim）、first-frame-timeout（90s與stage-load busy-poll上限對齊，逾時→重試＋#runtime診斷）——各含RED→GREEN focused DOM tests（見下方同日期證據）。僅stream-disconnected一態未驗證（需viewer側WebRTC斷線postMessage協定新增，涉及`docs/contracts/streaming-datachannel-events.md`契約面，另切片處理），checkbox維持open、production/full completion維持no
+- [x] 5.6 將viewer origin完整失敗態矩陣接到既有i18n keys；本切片已收斂runtime-command-rejection diagnostics、changed-unconfirmed binding、rejected stage-load，以及2026-08-12新收斂的stage-load-timeout（見下方RED/GREEN證據：兩觸發路徑皆有可見overlay/雙語診斷文案/late-result不覆寫證明，並新增`data-stage-failure-reason`狀態專屬test anchor）。2026-08-17兩個切片累計收斂七態：slice-1收no-session、viewer-origin-missing（含refresh動作）、lease-occupied（驗證＋holder-privacy負向斷言）；slice-2收session-preparing（conversion_status非終態→可見note＋#pipeline動作）、gpu-unavailable（kit-manager instances查詢失敗→誠實停用啟動＋#runtime動作）、lease-expired（heartbeat 404 lease拒絕→清lease＋手動re-claim）、first-frame-timeout（90s與stage-load busy-poll上限對齊，逾時→重試＋#runtime診斷）——各含RED→GREEN focused DOM tests（見下方同日期證據）。slice-3（同日）收斂stream-disconnected：viewer `_handleStreamStopped` 對parent發 vg01 `stream_state`（schema oneOf新分支＋contracts pytest正負例）、EmbeddedViewer origin守衛轉發、console pane可見斷線alert＋誠實回退全部streaming證據＋「重新連線」重掛iframe（mount nonce）。**console內嵌側12/12態全數收斂**。checkbox仍維持open：spec要求「Console內嵌viewport與viewer origin頁SHALL各自實作」——standalone viewer origin頁側的逐態盤點（部分態如stage系列已在、no-session/lease系列適用性需裁決）為最後殘項，production/full completion維持no。2026-08-18 slice-4收斂standalone側：6態present（stream-disconnected/first-frame-timeout補`stream-diagnostic-panel`錨點＋t() zh/en i18n＋`viewer-reconnect-stream`動作文案i18n）、4態裁決不適用（職責屬console parent）、2態lab-embed degraded by design（詳spec delta 2026-08-18段）；三條RED→GREEN focused DOM tests（含en接線）。5.6關閉；change整體closeout 7.5仍OPEN，不宣稱production/full completion
 
 ## 6. Wiring與可自動合併文件
 
@@ -104,3 +104,21 @@
 - **回歸驗證**：全套`npx vitest run` 80 files／1093 tests全過；`tsc --noEmit`零錯；eslint changed files 0 errors／5 warnings（基線4＋新增1條與既有兩條同類的刻意窄依賴`exhaustive-deps`，narrow deps by design避免timer每render重掛）。
 - **除錯教訓（已入memory）**：python字串`''`經shell heredoc注入成字面backspace（0x08）使regex永不匹配且grep/sed顯示隱形——控制字元regex一律顯式`chr(92)+'b'`寫入並以repr驗證。
 - **範圍裁決**：累計11/12態；stream-disconnected需viewer→parent的WebRTC斷線協定訊息（`Window.tsx`＋`EmbeddedViewer`＋datachannel契約文件），5.6維持open、production/full completion維持no。
+
+## 2026-08-17 Task 5.6 slice-3：stream-disconnected 收斂證據（console 側矩陣 12/12 完成）
+
+- **協定**：`Window.tsx` `_handleStreamStopped`（stopped/terminated 終態處理器）新增 `_postToParent({type:"stream_state",state:"disconnected",kind})`——複用既有 origin 白名單守衛；`tests/contracts/vg01-postmessage-v1.schema.json` oneOf 新增 `viewer-to-console: stream_state` 分支（additionalProperties:false、kind enum、state const）；`tests/test_runtime_command_contracts.py` 新增正負例（缺 kind／未知 state／token 滲入均 fail-closed），24 passed。
+- **轉發**：`EmbeddedViewer` 新增 `StreamStateMessage` type＋`onStreamState` prop＋switch case；origin 守衛負例測試（evil origin 不轉發），18/18。
+- **Pane**：`streamDisconnected` state＋`viewerMountNonce`；onStreamState(disconnected)→可見 alert（`*-stream-disconnected`）＋誠實回退（firstFrame/dataChannelReady/loadedStageUrl/stageProof 全清→highlight gate 立即回封鎖、evidence grid 回 not_observed=「不再顯示 Streaming 指示」）；「重新連線」（`*-stream-reconnect`）以 key nonce 重掛 iframe、不重新 claim；新 first_frame 到達自動清除。事件驅動即時轉入（優於 spec 的 5 秒內）。
+- **RED→GREEN**：viewer 側於既有 stopped 測試加 stream_state 斷言（RED）→ 實作後 171/171；pane 2 條新測試 RED → GREEN 21/21。
+- **回歸**：全套 80 files／1096 tests；typecheck 零錯；lint:baseline trusted=18/current=18/regressions=0。
+- **範圍裁決**：console 內嵌側 12/12 全數收斂。5.6 不勾：spec 措辭「Console內嵌viewport**與viewer origin頁**SHALL各自實作」——standalone 側逐態盤點（stage-load 系列四態已於 standalone 收斂；no-session/session-preparing/lease 系列在 /ui/open 進入模式的適用性需 spec 裁決）為最後殘項。
+
+## 2026-08-18 Task 5.6 slice-4 closeout evidence（standalone viewer origin 頁）
+
+- 盤點方法：對 spec 12 態逐一核對 `Window.tsx` 實作面（handler／state／render 分支／錨點）與職責邊界（standalone 直開 vs console embed）；結論表落在 spec delta 2026-08-18 段（6 present／4 not-applicable／2 lab-embed degraded）。
+- RED→GREEN：`windowParentMessage.dom.test.tsx` 新 describe「task 5.6 standalone 失敗態可見面（slice-4）」三條——RED（2 failed：`stream-diagnostic-panel` 錨點不存在，received HTML 證明行為面已在僅缺錨點）→ 加 `data-testid="stream-diagnostic-panel"`＋i18n 化後 GREEN 174/174。
+- i18n 接線：`_handleStreamStopped`／`_handleStreamStartTimeout` 診斷、`loadingText`、MockViewport reconnect 按鈕改走既有 `t()`（zh/en）；en 模式測試斷言 Endpoint／Reconnect WebRTC 且不含中文標籤。
+- 全套：`npx vitest run` 80 files／1099 tests 全過；`npm run typecheck` 零錯；`npm run lint:baseline` trusted=18／current=18／regressions=0（rules-of-hooks 對 use 前綴 helper 的誤判以測試結構調整消解，不動 baseline）。
+- GitNexus：`impact _handleStreamStartTimeout -d upstream`＝impactedCount 5／direct 1；`detect-changes --scope compare`＝3 files／5 symbols risk high（`App.render` 內 additive testid＋t() 包裝所致，已於 PR 揭露；1099 tests 零回歸緩解）。
+- 殘留誠實聲明：stage-mismatch 沿用共用 `stage-load-failure` 錨點（以診斷文字區辨）；lease 兩態之 lab-embed degraded 呈現為 by design 裁決非缺陷；7.5 closeout 仍 OPEN。

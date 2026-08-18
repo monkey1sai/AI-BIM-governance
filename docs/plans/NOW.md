@@ -18,6 +18,7 @@
     { "id": "cross-service-structured-log-baseline", "status": "deferred" },
     { "id": "gpu-session-baseline-and-idle-reclaim", "status": "active" },
     { "id": "implement-runtime-command-authority-and-rejection", "status": "active" },
+    { "id": "introduction-resolved-subject-binding", "status": "deferred" },
     { "id": "isolated-branch-stack-browser-e2e", "status": "active" },
     { "id": "migrate-console-to-hifi-design", "status": "active" },
     { "id": "rvt-ifc-usdc-lineage", "status": "deferred" }

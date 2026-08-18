@@ -3226,14 +3226,20 @@ export default class App extends React.Component<AppProps, AppState> {
         const seconds = Math.round(reviewEnv.streamStartTimeoutMs / 1000);
         const endpoint = streamEndpointLabel(this.state.activeStreamEndpoint);
         const diagnostic = [
-            `WebRTC 串流未建立（${seconds} 秒內沒有收到影片）。`,
-            `診斷：${this._getVideoDiagnosticText()}`,
-            `端點：${endpoint}`,
-            "請將此視為 demo blocker：Kit signaling 可能已連上，但 browser 尚未取得 media stream。",
+            t(
+                `WebRTC 串流未建立（${seconds} 秒內沒有收到影片）。`,
+                `WebRTC stream was not established (no video within ${seconds}s).`,
+            ),
+            `${t("診斷", "Diagnostic")}${t("：", ": ")}${this._getVideoDiagnosticText()}`,
+            `${t("端點", "Endpoint")}${t("：", ": ")}${endpoint}`,
+            t(
+                "請將此視為 demo blocker：Kit signaling 可能已連上，但 browser 尚未取得 media stream。",
+                "Treat this as a demo blocker: Kit signaling may be connected, but the browser has not received a media stream.",
+            ),
         ].join("\n");
 
         this.setState((state) => ({
-            loadingText: "WebRTC 串流未建立",
+            loadingText: t("WebRTC 串流未建立", "WebRTC stream was not established"),
             streamDiagnostic: diagnostic,
             isLoading: false,
             webrtcLifecycleStatus: "failed",
@@ -4062,11 +4068,18 @@ export default class App extends React.Component<AppProps, AppState> {
         const endpoint = streamEndpointLabel(this.state.activeStreamEndpoint);
         const diagnostic = [
             `webrtc_disconnected=${kind}`,
-            `端點：${endpoint}`,
-            `診斷：${this._getVideoDiagnosticText()}`,
-            `event：${JSON.stringify(message)}`,
-            "請按「重新連線」重建 viewer 端 AppStreamer；若仍停在 busy/disconnected，需重啟 Kit/WebRTC runtime。",
+            `${t("端點", "Endpoint")}${t("：", ": ")}${endpoint}`,
+            `${t("診斷", "Diagnostic")}${t("：", ": ")}${this._getVideoDiagnosticText()}`,
+            `event${t("：", ": ")}${JSON.stringify(message)}`,
+            t(
+                "請按「重新連線」重建 viewer 端 AppStreamer；若仍停在 busy/disconnected，需重啟 Kit/WebRTC runtime。",
+                "Press 「Reconnect WebRTC」 to rebuild the viewer-side AppStreamer; if it stays busy or disconnected, restart the Kit/WebRTC runtime.",
+            ),
         ].join("\n");
+        // 失敗態矩陣 stream-disconnected（task 5.6 slice-3）：讓 console parent 於
+        // 終止當下即收到可見斷線訊號（額外於既有 stage_loaded/unproven 撤銷之上，
+        // 因 unproven 也會由 stage-unproven 等其他路徑發出，parent 無法據以區分斷線）。
+        this._postToParent({ type: "stream_state", state: "disconnected", kind });
         this.setState((state) => ({
             loadingText: "webrtc_disconnected",
             streamDiagnostic: diagnostic,
@@ -5564,7 +5577,7 @@ export default class App extends React.Component<AppProps, AppState> {
                     >
                         {this.state.loadingText}
                         {this.state.streamDiagnostic &&
-                            <pre className="stream-diagnostic-panel">{this.state.streamDiagnostic}</pre>
+                            <pre className="stream-diagnostic-panel" data-testid="stream-diagnostic-panel">{this.state.streamDiagnostic}</pre>
                         }
                         <div className="spinner-border" role="status" style={{ marginTop: 10, visibility: this.state.isLoading? 'visible': 'hidden' }} />
                     </div>

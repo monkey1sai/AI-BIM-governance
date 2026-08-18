@@ -1381,18 +1381,18 @@
       "id": "implement-runtime-command-authority-and-rejection",
       "status": "active",
       "owner": "bim-review-coordinator",
-      "current_slice": "5.6 slice-2 收斂 2026-08-17：session-preparing/gpu-unavailable/lease-expired/first-frame-timeout 四態（RED→GREEN focused DOM tests；全套 80 files/1093 tests 零回歸；typecheck 零錯；eslint 基線4+1同類窄依賴）。累計 11/12 態；checkbox 維持 open：僅 stream-disconnected 需 viewer 側 WebRTC 斷線 postMessage 協定（涉 datachannel 契約文件，另切片）。production/full completion=no.",
+      "current_slice": "2026-08-18：#578（5.6 slice-3 stream-disconnected）已 squash 進 main 為 ec2684f，本列 subject_commit 由已消失的 pre-squash 9003bb7 rebind 至該 SHA。1.5 由 owner 2026-08-18 確認舊 A4/Ornith credential 已撤銷而結案（實值不入檔，PUBLIC repo）。32/35；殘項＝5.6（console 內嵌側 12/12 已完成，standalone viewer origin 頁側逐態盤點未做、no-session/lease 系列適用性待裁決）、7.3（Windows host-native Kit 九案取證，harness runtime-command-authority-host-native.spec.ts 已存在、待實跑）、7.5（定義即已 merge）。production/full completion=no。",
       "blocked_by": [],
-      "last_verified": "2026-08-17T12:05:00Z",
+      "last_verified": "2026-08-18T03:05:00Z",
       "task_ledger": {
-        "completed": 31,
+        "completed": 32,
         "total": 35
       },
       "evidence_refs": [
         "openspec/changes/implement-runtime-command-authority-and-rejection/proposal.md",
         "openspec/changes/implement-runtime-command-authority-and-rejection/tasks.md"
       ],
-      "subject_commit": "0546d1b9984c00f09fc2bd37abb4a6f508a1f002",
+      "subject_commit": "6aab355f39fe941c046e7a3fab93703c6f9728ca",
       "archive_debt": null
     },
     {
@@ -1474,6 +1474,24 @@
       "archive_debt": null
     },
     {
+      "id": "introduction-resolved-subject-binding",
+      "status": "deferred",
+      "owner": "repository-maintainer",
+      "current_slice": null,
+      "blocked_by": [],
+      "last_verified": "2026-08-18T08:30:00Z",
+      "task_ledger": {
+        "completed": 0,
+        "total": 33
+      },
+      "evidence_refs": [
+        "openspec/changes/introduction-resolved-subject-binding/proposal.md",
+        "openspec/changes/introduction-resolved-subject-binding/tasks.md"
+      ],
+      "subject_commit": "2a3a2932550ecec2df56333022d945b84060d00f",
+      "archive_debt": null
+    },
+    {
       "id": "isolated-branch-stack-browser-e2e",
       "status": "active",
       "owner": "repository-maintainer",
@@ -1490,7 +1508,7 @@
         "docs/plans/NOW.md",
         "scripts/tests/test-isolated-branch-stack.ps1"
       ],
-      "subject_commit": "9feb943d3cdccce42f2a9933ea985df50083ce1f",
+      "subject_commit": "dba889a50957d30599187be011bc491f728249f1",
       "archive_debt": null
     },
     {

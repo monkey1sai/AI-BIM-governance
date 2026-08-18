@@ -354,6 +354,11 @@ try {
         'scripts/security-exceptions.json',
         'scripts/lib/openspec-lifecycle.ps1',
         'scripts/lib/openspec-machine-truth.mjs',
+        'scripts/agent-governance-rules.json',
+        'scripts/tests/agent-governance-rules.schema.json',
+        'scripts/lib/agent-governance-policy.psm1',
+        'scripts/tests/verify-governance-policy.ps1',
+        'scripts/tests/test-agent-governance-policy.ps1',
         'scripts/tests/verification-plan.schema.json',
         'scripts/tests/invoke-powershell-static.ps1',
         'scripts/tests/scan-secret-patterns.ps1',
@@ -384,10 +389,20 @@ try {
     Assert-True ($matched -notcontains 'web-viewer-sample/src/Window.tsx') 'ordinary product code must NOT classify as mechanism'
     $wrongCaseMechanismPaths = @(Get-SelfReferentialMechanismPaths -ChangedPaths @(
         'Scripts/Deploy.ps1',
-        '.github/workflows/CI.yml'
+        '.github/workflows/CI.yml',
+        'scripts/Agent-governance-rules.json',
+        'scripts/tests/Agent-governance-rules.schema.json'
     ))
     Assert-True ($wrongCaseMechanismPaths.Count -eq 0) `
         "wrong-case git paths must not classify as mechanisms (matched: $($wrongCaseMechanismPaths -join ', '))"
+    $adjacentGovernancePolicyPaths = @(Get-SelfReferentialMechanismPaths -ChangedPaths @(
+        'scripts/agent-governance-rules.json.bak',
+        'scripts/archive/agent-governance-rules.json',
+        'scripts/tests/agent-governance-rules.schema.json.bak',
+        'scripts/tests/archive/agent-governance-rules.schema.json'
+    ))
+    Assert-True ($adjacentGovernancePolicyPaths.Count -eq 0) `
+        "adjacent governance-policy paths must not classify as mechanisms (matched: $($adjacentGovernancePolicyPaths -join ', '))"
     $prTemplate = Get-Content -LiteralPath (Join-Path $repoRoot '.github/PULL_REQUEST_TEMPLATE.md') -Raw
     $prTemplateBooleanPattern = '(?m)^\| Self-referential bootstrap \| yes / no \|\r?$'
     Assert-True ($prTemplate -match $prTemplateBooleanPattern) `

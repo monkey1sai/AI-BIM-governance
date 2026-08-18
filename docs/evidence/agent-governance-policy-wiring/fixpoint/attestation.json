@@ -1,0 +1,33 @@
+{
+  "schema_version": "self-referential-fixpoint-attestation/v1",
+  "entry_id": "agent-governance-policy-wiring",
+  "mechanism_commit": "8b647d3492d50f02b2bdaa8b20f3f0670dfd7998",
+  "verification_contract_sha256": "8dc3130cb48cd290527f915d63dbecd3b9c8306c89f940dc27a32f3a13177036",
+  "result": "pass",
+  "commands": [
+    {
+      "id": "verify-governance-policy",
+      "exit_code": 0
+    },
+    {
+      "id": "test-agent-governance-policy",
+      "exit_code": 0
+    },
+    {
+      "id": "test-agent-governance-check",
+      "exit_code": 0
+    },
+    {
+      "id": "test-self-referential-bootstrap",
+      "exit_code": 0
+    },
+    {
+      "id": "test-pr-body-evidence",
+      "exit_code": 0
+    },
+    {
+      "id": "invoke-powershell-static",
+      "exit_code": 0
+    }
+  ]
+}
