@@ -800,7 +800,7 @@
         "openspec/changes/converge-console-specs-to-shipped-behavior/tasks.md",
         "artifacts/2026-08-12-hifi-consumer-spec-scenario-audit.md"
       ],
-      "subject_commit": "349b46e01f0da4f3555d7e04afe0bfabbe1d4258",
+      "subject_commit": "9fd7997709769ef444cb7fa5e411bf2952493d2c",
       "archive_debt": null
     },
     {
