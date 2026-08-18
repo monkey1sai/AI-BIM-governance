@@ -75,6 +75,14 @@ jobs:
         shell: pwsh
         run: pwsh -NoProfile -NonInteractive -File scripts/tests/test-agent-governance-check.ps1
 
+      - name: Verify governance policy rules
+        shell: pwsh
+        run: pwsh -NoProfile -NonInteractive -File scripts/tests/verify-governance-policy.ps1 -BaseRef '${{ github.event.pull_request.base.sha }}'
+
+      - name: Run governance policy module behaviour tests
+        shell: pwsh
+        run: pwsh -NoProfile -NonInteractive -File scripts/tests/test-agent-governance-policy.ps1
+
       - name: Run trusted host merge contract tests
         shell: pwsh
         run: pwsh -NoProfile -NonInteractive -Command "node --test scripts/tests/test-trusted-host-merge.mjs scripts/tests/test-trusted-host-merge-runtime.mjs"
