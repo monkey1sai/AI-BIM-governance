@@ -1593,7 +1593,7 @@ exit 7
     Assert-Equal 0 $deployHelperResult.ExitCode 'deploy helper returns direct deploy.ps1 exit code'
     Assert-Equal 1 $deployHelperProbes.Count 'deploy helper invokes process runner once'
     $deployHelperProbe = $deployHelperProbes[0]
-    Assert-Equal 'powershell.exe' $deployHelperProbe.FilePath 'deploy helper uses Windows PowerShell'
+    Assert-True ($deployHelperProbe.FilePath -match '(?i)pwsh(\.exe)?$') 'deploy helper runs deploy.ps1 under PowerShell 7, not Windows PowerShell 5.1 (5.1 mangles embedded double quotes in native command arguments, which silently broke Resolve-PlatformSystemPython version probing)'
     Assert-Equal $deployHelperRoot $deployHelperProbe.WorkingDirectory 'deploy helper runs inside deployment root'
     Assert-True (($deployHelperProbe.ArgumentList -join ' ') -match 'scripts\\deploy\.ps1') 'deploy helper invokes scripts\deploy.ps1'
     Assert-True ($deployHelperProbe.ArgumentList -contains '-Build') 'deploy helper preserves -Build'
@@ -1639,9 +1639,9 @@ exit 0
         Assert-Equal 0 $childEnvironmentResult.ExitCode 'deploy helper preserves its direct process result under a PowerShell 7-first parent'
         Assert-Equal 1 $childEnvironmentProbe.Count 'deploy helper exposes one normalized child environment to the injected process runner'
         $childModulePath = [string]$childEnvironmentProbe[0].Environment['PSModulePath']
-        Assert-True (-not [string]::IsNullOrWhiteSpace($childModulePath)) 'deploy helper provides PSModulePath only to its Windows PowerShell child'
+        Assert-True (-not [string]::IsNullOrWhiteSpace($childModulePath)) 'deploy helper provides an explicit PSModulePath to its PowerShell 7 child'
         Assert-True ($childModulePath -match '(?i)WindowsPowerShell') 'deploy helper child PSModulePath includes Windows PowerShell module roots'
-        Assert-True ($childModulePath -notmatch '(?i)[\\/]PowerShell[\\/]7[\\/]Modules') 'deploy helper child PSModulePath excludes PowerShell 7 module roots'
+        Assert-True ($childModulePath -match '(?i)[\\/]PowerShell[\\/]7[\\/]Modules') 'deploy helper child PSModulePath includes PowerShell 7 module roots'
         Assert-Equal $contaminatedParentModulePath ([Environment]::GetEnvironmentVariable('PSModulePath', 'Process')) 'deploy helper does not mutate the PowerShell 7-first parent environment'
     } finally {
         [Environment]::SetEnvironmentVariable('PSModulePath', $originalParentModulePath, 'Process')
