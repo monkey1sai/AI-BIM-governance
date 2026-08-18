@@ -1362,18 +1362,18 @@
       "id": "implement-runtime-command-authority-and-rejection",
       "status": "active",
       "owner": "bim-review-coordinator",
-      "current_slice": "5.6 slice-3 收斂 2026-08-17：stream-disconnected（vg01 stream_state 協定＋schema/contracts fail-closed＋EmbeddedViewer 守衛轉發＋pane 誠實回退與重掛重連）。**console 內嵌側 12/12 態完成**（全套 80 files/1096 tests 零回歸；typecheck 零錯；lint:baseline regressions=0；contracts pytest 24 passed）。checkbox 維持 open：standalone viewer origin 頁側逐態盤點為最後殘項（stage 系列已在、其餘適用性需 spec 裁決）。production/full completion=no.",
+      "current_slice": "2026-08-18：#578（5.6 slice-3 stream-disconnected）已 squash 進 main 為 ec2684f，本列 subject_commit 由已消失的 pre-squash 9003bb7 rebind 至該 SHA。1.5 由 owner 2026-08-18 確認舊 A4/Ornith credential 已撤銷而結案（實值不入檔，PUBLIC repo）。32/35；殘項＝5.6（console 內嵌側 12/12 已完成，standalone viewer origin 頁側逐態盤點未做、no-session/lease 系列適用性待裁決）、7.3（Windows host-native Kit 九案取證，harness runtime-command-authority-host-native.spec.ts 已存在、待實跑）、7.5（定義即已 merge）。production/full completion=no。",
       "blocked_by": [],
-      "last_verified": "2026-08-17T12:55:00Z",
+      "last_verified": "2026-08-18T03:05:00Z",
       "task_ledger": {
-        "completed": 31,
+        "completed": 32,
         "total": 35
       },
       "evidence_refs": [
         "openspec/changes/implement-runtime-command-authority-and-rejection/proposal.md",
         "openspec/changes/implement-runtime-command-authority-and-rejection/tasks.md"
       ],
-      "subject_commit": "9003bb7a8e53d48a2acf22ee57e36fc599cbd2a7",
+      "subject_commit": "ec2684fecd1955668d320030bcf9299ab23adf63",
       "archive_debt": null
     },
     {

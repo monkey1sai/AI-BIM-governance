@@ -4,7 +4,7 @@
 - [x] 1.2 依 `origin/main` `99cd722` 的 archive後真相更新 proposal/design/spec/tasks：除 `viewer-runtime-command-bridge` 外，直接 reconcile canonical `kit-datachannel-protocol`／`embedded-viewer-bridge`／`viewer-viewport` delta，不回寫 archive source或手寫design canon，並通過strict validation
 - [x] 1.3 取得fresh GitNexus兩個CRITICAL symbols `createCoordinatorApp` 與 `App._openSelectedAsset` 的dependency-scope明確簽核；記錄HIGH viewer symbols與UNKNOWN Kit handlers的補強gate
 - [x] 1.4 記錄使用者裁決：本輪以 `local-dev lab-only` 推進且 `production full=no`
-- [ ] 1.5 Credential owner最新確認舊 A4/Ornith credential尚未撤銷或輪替；任何檔案不得記錄實值，且在外部完成前不得宣稱credential hygiene或full completion通過
+- [x] 1.5 Credential owner最新確認舊 A4/Ornith credential已撤銷（owner 於 2026-08-18 明確回覆「舊的已經被撤銷」；credential owner 為外部動作持有者，此為其最新確認）。任何檔案未記錄實值——本 repo 為 PUBLIC，撤銷事實以本行文字記錄，不附帳號、金鑰、端點或任何可還原的識別值。外部動作已完成，credential hygiene 前置解除；full completion 仍為 no（受 5.6／7.3／7.5 殘項限制）
 
 ## 2. Coordinator principal與lease authority
 
