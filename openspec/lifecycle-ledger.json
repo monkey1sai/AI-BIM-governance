@@ -788,11 +788,11 @@
       "id": "converge-console-specs-to-shipped-behavior",
       "status": "active",
       "owner": "web-viewer-sample",
-      "current_slice": "2026-08-18 開案：承接 migrate-console-to-hifi-design task 7.4 稽核出的 9 項 STALE spec 措辭收斂。1.1（R3「標紅」→ USD selection highlighting）已依 owner 2026-08-18 選定的 (b) 落地 MODIFIED delta；其餘 8 項待逐項收斂。6 項 UNVERIFIABLE 明確不在本 change 範圍（屬驗證環境欠帳）。零 production 變更。",
+      "current_slice": "2026-08-18：unified-governance-console 四項 STALE 全數收斂（1.1 R3 標紅→USD selection、1.2 mock viewport 欄位與結構樹回饋、1.3 console shell 導覽分組與 Chat USD panel、1.4 A1 route 交付面）。edge-console-operator-frontend 五項（2.1-2.5）待收斂。6 項 UNVERIFIABLE 明確不在範圍。零 production 變更。",
       "blocked_by": [],
-      "last_verified": "2026-08-18T02:10:00Z",
+      "last_verified": "2026-08-18T02:20:00Z",
       "task_ledger": {
-        "completed": 1,
+        "completed": 4,
         "total": 12
       },
       "evidence_refs": [
@@ -800,7 +800,7 @@
         "openspec/changes/converge-console-specs-to-shipped-behavior/tasks.md",
         "artifacts/2026-08-12-hifi-consumer-spec-scenario-audit.md"
       ],
-      "subject_commit": "f8fd82c465a0cb733f1032cae99eda946959bd97",
+      "subject_commit": "7bfe22f78ffae273f0408209a560ab7c9afa4db0",
       "archive_debt": null
     },
     {
