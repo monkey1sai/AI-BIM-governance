@@ -1455,6 +1455,24 @@
       "archive_debt": null
     },
     {
+      "id": "introduction-resolved-subject-binding",
+      "status": "deferred",
+      "owner": "repository-maintainer",
+      "current_slice": null,
+      "blocked_by": [],
+      "last_verified": "2026-08-18T08:30:00Z",
+      "task_ledger": {
+        "completed": 0,
+        "total": 33
+      },
+      "evidence_refs": [
+        "openspec/changes/introduction-resolved-subject-binding/proposal.md",
+        "openspec/changes/introduction-resolved-subject-binding/tasks.md"
+      ],
+      "subject_commit": "2a3a2932550ecec2df56333022d945b84060d00f",
+      "archive_debt": null
+    },
+    {
       "id": "isolated-branch-stack-browser-e2e",
       "status": "active",
       "owner": "repository-maintainer",
@@ -1471,7 +1489,7 @@
         "docs/plans/NOW.md",
         "scripts/tests/test-isolated-branch-stack.ps1"
       ],
-      "subject_commit": "709e7d609dfa6c9b04f5d31df223f16b84b7ed63",
+      "subject_commit": "dba889a50957d30599187be011bc491f728249f1",
       "archive_debt": null
     },
     {
