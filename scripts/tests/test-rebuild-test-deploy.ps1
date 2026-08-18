@@ -1639,9 +1639,9 @@ exit 0
         Assert-Equal 0 $childEnvironmentResult.ExitCode 'deploy helper preserves its direct process result under a PowerShell 7-first parent'
         Assert-Equal 1 $childEnvironmentProbe.Count 'deploy helper exposes one normalized child environment to the injected process runner'
         $childModulePath = [string]$childEnvironmentProbe[0].Environment['PSModulePath']
-        Assert-True (-not [string]::IsNullOrWhiteSpace($childModulePath)) 'deploy helper provides an explicit PSModulePath to its PowerShell 7 child'
+        Assert-True (-not [string]::IsNullOrWhiteSpace($childModulePath)) 'deploy helper provides Windows PowerShell module roots for the 5.1 grandchildren deploy.ps1 spawns'
         Assert-True ($childModulePath -match '(?i)WindowsPowerShell') 'deploy helper child PSModulePath includes Windows PowerShell module roots'
-        Assert-True ($childModulePath -match '(?i)[\\/]PowerShell[\\/]7[\\/]Modules') 'deploy helper child PSModulePath includes PowerShell 7 module roots'
+        Assert-True ($childModulePath -notmatch '(?i)[\\/]PowerShell[\\/]7[\\/]Modules') 'deploy helper child PSModulePath excludes PowerShell 7 module roots so Windows PowerShell 5.1 grandchildren still resolve Microsoft.PowerShell.Utility'
         Assert-Equal $contaminatedParentModulePath ([Environment]::GetEnvironmentVariable('PSModulePath', 'Process')) 'deploy helper does not mutate the PowerShell 7-first parent environment'
     } finally {
         [Environment]::SetEnvironmentVariable('PSModulePath', $originalParentModulePath, 'Process')

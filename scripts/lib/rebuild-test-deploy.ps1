@@ -780,12 +780,19 @@ function Resolve-TestDeployPowerShell7 {
     throw 'PowerShell 7 (pwsh) is required to run the deployment child process and was not found.'
 }
 
-function Get-TestDeployPowerShell7ChildEnvironment {
-    # The child is now the same edition as the parent, so the cross-edition
-    # PSModulePath contamination this used to guard against cannot occur. Keep
-    # handing the child an explicit, existence-checked module path anyway so the
-    # deployment run stays deterministic instead of inheriting whatever the
-    # operator shell happened to carry.
+function Get-TestDeployHostNativeChildEnvironment {
+    # Deliberately Windows PowerShell module roots, even though the direct child
+    # is now pwsh 7. deploy.ps1 spawns its host-native children through
+    # Get-HostNativePowerShellExe, which returns powershell.exe on Windows, so
+    # 5.1 GRANDCHILDREN inherit this value. Listing PowerShell 7 roots here makes
+    # 5.1 resolve the Core-only Microsoft.PowerShell.Utility first and fail to
+    # load it, which is how Get-FileHash vanished inside start-web-plane-docker.ps1
+    # and took Phase 4d down. pwsh 7 needs no help: it resolves its own modules
+    # through $PSHOME regardless of PSModulePath. Measured on this host with
+    # Get-FileHash as the probe:
+    #   PS7 roots first        -> 5.1 MISSING, 7 OK
+    #   Windows roots first    -> 5.1 OK,      7 OK
+    #   Windows roots only     -> 5.1 OK,      7 OK   <- kept, narrowest that works
     [CmdletBinding()]
     param()
 
@@ -797,17 +804,20 @@ function Get-TestDeployPowerShell7ChildEnvironment {
     if ([string]::IsNullOrWhiteSpace($programFiles)) {
         $programFiles = [Environment]::GetEnvironmentVariable('ProgramFiles', 'Process')
     }
+    $programFilesX86 = [Environment]::GetEnvironmentVariable('ProgramFiles(x86)', 'Machine')
+    if ([string]::IsNullOrWhiteSpace($programFilesX86)) {
+        $programFilesX86 = [Environment]::GetEnvironmentVariable('ProgramFiles(x86)', 'Process')
+    }
 
     $candidateRoots = @()
-    if (-not [string]::IsNullOrWhiteSpace($programFiles)) {
-        # PowerShell 7's own shipped modules, then machine-wide 7.x modules.
-        $candidateRoots += Join-Path $programFiles 'PowerShell\7\Modules'
-        $candidateRoots += Join-Path $programFiles 'PowerShell\Modules'
-    }
     if (-not [string]::IsNullOrWhiteSpace($systemRoot)) {
-        # PowerShell 7 on Windows keeps the Windows PowerShell root on its module
-        # path for Windows-only compatibility modules; deploy.ps1 uses them.
         $candidateRoots += Join-Path $systemRoot 'System32\WindowsPowerShell\v1.0\Modules'
+    }
+    if (-not [string]::IsNullOrWhiteSpace($programFiles)) {
+        $candidateRoots += Join-Path $programFiles 'WindowsPowerShell\Modules'
+    }
+    if (-not [string]::IsNullOrWhiteSpace($programFilesX86)) {
+        $candidateRoots += Join-Path $programFilesX86 'WindowsPowerShell\Modules'
     }
 
     $moduleRoots = @(
@@ -816,7 +826,7 @@ function Get-TestDeployPowerShell7ChildEnvironment {
             Select-Object -Unique
     )
     if ($moduleRoots.Count -eq 0) {
-        throw 'PowerShell 7 module roots are unavailable for the deployment child process.'
+        throw 'Windows PowerShell module roots are unavailable for the deployment child process.'
     }
 
     return @{ PSModulePath = ($moduleRoots -join [IO.Path]::PathSeparator) }
@@ -831,7 +841,7 @@ function Invoke-TestDeployScript {
 
     $arguments = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', 'scripts\deploy.ps1', '-Build')
     $powerShell7Path = Resolve-TestDeployPowerShell7
-    $childEnvironment = Get-TestDeployPowerShell7ChildEnvironment
+    $childEnvironment = Get-TestDeployHostNativeChildEnvironment
     if ($null -ne $ProcessRunner) {
         $exitCode = & $ProcessRunner `
             -FilePath $powerShell7Path `
