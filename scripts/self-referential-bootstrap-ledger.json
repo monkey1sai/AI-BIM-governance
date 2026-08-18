@@ -624,6 +624,37 @@
           "docs/evidence/agent-governance-policy-trust-boundary/fixpoint/summary.md"
         ]
       }
+    },
+    {
+      "id": "rebuild-test-deploy-pwsh7-child",
+      "status": "open",
+      "pr": 586,
+      "opened_at": "2026-08-18T05:05:00Z",
+      "reason": "this PR changes the deploy child launcher in scripts/lib/rebuild-test-deploy.ps1 from Windows PowerShell 5.1 to PowerShell 7 because 5.1 mangles the embedded double quotes in Resolve-PlatformSystemPython version probe, so deploy.ps1 reported no usable system python and exited 2 on a host with Python 3.12; rebuild-test-deploy always replaces the checkout from freshly fetched origin/main, so the branch launcher can never run as canonical evidence before merge and only a post-merge local-windows rebuild can prove the changed launcher against itself",
+      "verification_mechanism_paths": [
+        "scripts/lib/rebuild-test-deploy.ps1",
+        "scripts/self-referential-bootstrap-ledger.json"
+      ],
+      "verification_contract": {
+        "id": "rebuild-test-deploy-pwsh7-child/v1",
+        "command_ids": [
+          "test-rebuild-test-deploy",
+          "test-platform-adapter",
+          "test-host-native-launcher",
+          "test-host-native-child-launch",
+          "test-deploy-target-registry",
+          "test-deploy-governance-static",
+          "test-self-referential-bootstrap",
+          "test-agent-governance-check",
+          "invoke-powershell-static"
+        ],
+        "contract_sha256": "b425887e7bd4ea8801ec645bbbf6511f542a1207c267e35230136b8bb435aa85"
+      },
+      "bootstrap_evidence_refs": [
+        "docs/evidence/rebuild-test-deploy-pwsh7-child/self-referential-bootstrap/README.md",
+        "docs/evidence/rebuild-test-deploy-pwsh7-child/self-referential-bootstrap/verification.txt"
+      ],
+      "fixpoint": null
     }
   ]
 }
