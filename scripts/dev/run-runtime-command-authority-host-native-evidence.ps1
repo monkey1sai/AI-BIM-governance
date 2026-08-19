@@ -224,7 +224,17 @@ function Resolve-HostNativeEvidenceStage {
             $rejected += "$jobId (no model_usdc artifact)"
             continue
         }
-        $fileName = Split-Path -Path ([uri][string]$artifact.url).AbsolutePath -Leaf
+        # A relative artifact URL is legal in the conversion result payload, and casting
+        # one to [uri] and reading AbsolutePath throws - outside the try/catch above, so
+        # it would end the whole run instead of rejecting this one candidate.
+        $artifactUrl = [string]$artifact.url
+        $artifactPath = if ([uri]::IsWellFormedUriString($artifactUrl, [System.UriKind]::Absolute)) {
+            ([uri]$artifactUrl).AbsolutePath
+        }
+        else {
+            ($artifactUrl -split '[?#]')[0]
+        }
+        $fileName = Split-Path -Path $artifactPath -Leaf
         if ([string]::IsNullOrWhiteSpace($fileName)) {
             $rejected += "$jobId (unnamed artifact)"
             continue
@@ -438,8 +448,7 @@ function Wait-ForControlMarker {
         [Parameter(Mandatory = $true)][string] $RunId,
         [Parameter(Mandatory = $true)][string] $ControlNonce,
         [Parameter(Mandatory = $true)][int] $TimeoutSeconds,
-        [System.Diagnostics.Process] $ChildProcess,
-        [string] $ChildLogPath
+        [System.Diagnostics.Process] $ChildProcess
     )
 
     $deadline = (Get-Date).ToUniversalTime().AddSeconds($TimeoutSeconds)
@@ -455,8 +464,14 @@ function Wait-ForControlMarker {
             return $marker
         }
         if ($null -ne $ChildProcess -and $ChildProcess.HasExited) {
-            $where = if ([string]::IsNullOrWhiteSpace($ChildLogPath)) { '' } else { " Case output: $ChildLogPath" }
-            throw "The host-native Playwright case exited before its required control marker was written.$where"
+            # The case's raw stdout/stderr can carry lease tokens, datachannel trace ids and
+            # session ids, so it is deliberately never redirected to a file next to the
+            # evidence. The exit code is the one detail that can be reported safely; the
+            # case's own sanitized JSON under the Playwright output directory is where the
+            # per-request detail lives.
+            throw ("The host-native Playwright case exited (code $($ChildProcess.ExitCode)) before its " +
+                   'required control marker was written. Raw case output is intentionally not persisted; ' +
+                   "read the sanitized case JSON under the run's Playwright output directory.")
         }
         Start-Sleep -Milliseconds 250
     } while ((Get-Date).ToUniversalTime() -lt $deadline)
@@ -579,11 +594,11 @@ $stageUrlA = [string]$stageArtifact.stage_url_a
 $stageUrlB = [string]$stageArtifact.stage_url_b
 Write-Host "stage artifact: $($stageArtifact.conversion_job_id)/$($stageArtifact.file_name)"
 $playwrightOutput = Join-Path $evidenceDirectory 'playwright-output'
-# Start-Process -WindowStyle Hidden throws the case's own output away, so an early
-# failure surfaced only as "exited before its required control marker was written"
-# with no reason attached. Keep both streams next to the evidence.
-$playwrightStdoutLog = Join-Path $evidenceDirectory 'playwright-stdout.log'
-$playwrightStderrLog = Join-Path $evidenceDirectory 'playwright-stderr.log'
+# The case's raw stdout/stderr is NOT redirected to a file. Playwright echoes request
+# payloads and failure diagnostics verbatim, which can carry lease tokens, datachannel
+# trace ids and session ids; landing that in the deployment artifacts root would break
+# the "raw tokens persisted=false" claim the evidence itself makes. Diagnostics come
+# from the child exit code plus the case's own sanitized JSON under $playwrightOutput.
 Ensure-Directory -Path $playwrightOutput
 
 $listener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 0)
@@ -682,17 +697,14 @@ try {
         -ArgumentList $e2eArguments `
         -WorkingDirectory $viewerRoot `
         -PassThru `
-        -WindowStyle Hidden `
-        -RedirectStandardOutput $playwrightStdoutLog `
-        -RedirectStandardError $playwrightStderrLog
+        -WindowStyle Hidden
 
     $outageReady = Wait-ForControlMarker `
         -Path (Join-Path $controlDirectory 'outage-ready.json') `
         -RunId $runId `
         -ControlNonce $controlNonce `
         -TimeoutSeconds ($script:PlaywrightEvidenceTimeoutSeconds + $script:PlaywrightRunnerGraceSeconds) `
-        -ChildProcess $e2eProcess `
-        -ChildLogPath $playwrightStdoutLog
+        -ChildProcess $e2eProcess
 
     $coordinator = Get-DeploymentCoordinator -ComposeBase $composeBase -DeploymentRoot $deploymentRoot
     $coordinatorRecoveryRequired = $true
@@ -717,8 +729,7 @@ try {
         -RunId $runId `
         -ControlNonce $controlNonce `
         -TimeoutSeconds ($script:PlaywrightEvidenceTimeoutSeconds + $script:PlaywrightRunnerGraceSeconds) `
-        -ChildProcess $e2eProcess `
-        -ChildLogPath $playwrightStdoutLog
+        -ChildProcess $e2eProcess
     if (-not (Test-DeploymentCoordinatorRunning -ContainerId $coordinator.container_id)) {
         Invoke-Docker -Arguments @('start', $coordinator.container_id) | Out-Null
     }
@@ -818,7 +829,10 @@ if ($null -ne $recoveryFailure) { throw $recoveryFailure }
 if ($null -ne $childCleanupFailure) { throw $childCleanupFailure }
 
 $evidence = [ordered]@{
-    schema_version = 'runtime-command-authority-host-native-runner/v1'
+    # v2 replaces the `fixture` block with `stage`: the harness no longer copies a
+    # tracked USD fixture into the artifacts root, it loads a real conversion artifact
+    # served by the conversion service (#441 download authority).
+    schema_version = 'runtime-command-authority-host-native-runner/v2'
     target_id = [string]$script:HostNativeEvidenceTarget.id
     target_role = $script:HostNativeEvidenceRole
     evidence_class = if ($script:HostNativeEvidenceIsDeliverySurface) { 'delivery' } else { 'development_verification' }
@@ -832,8 +846,11 @@ $evidence = [ordered]@{
         coordinator_recovered = $coordinatorRecovered
     }
     runtime = $kitProcess
-    fixture = [ordered]@{
-        source = 'bim-streaming-server/source/extensions/ezplus.bim_review_stream.messaging/data/testing.usd'
+    stage = [ordered]@{
+        # Whatever names the stage here must be what the run actually loaded. There is no
+        # tracked-fixture copy any more, so `source` is the conversion-service artifact
+        # route this run resolved, not a repo path.
+        source = $stageUrlA
         stage_url_a = $stageUrlA
         stage_url_b = $stageUrlB
         stage_source = [ordered]@{
