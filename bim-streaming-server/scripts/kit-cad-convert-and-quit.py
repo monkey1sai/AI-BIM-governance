@@ -13,6 +13,14 @@ def main():
     parser.add_argument("--input-path", required=True)
     parser.add_argument("--output-path", required=True)
     parser.add_argument("--config-path", required=True)
+    # convert-ifc-to-usdc.ps1 forwards the inbound trace id to this Kit subprocess
+    # (cross-service-structured-log-baseline 4.2) so kit_struct_log can adopt it from
+    # the process argv. Declaring it keeps argparse strict for real typos while
+    # accepting the flag the caller has always sent - without this, argparse aborted
+    # with "unrecognized arguments" and every host-native IFC->USDC conversion died
+    # before the converter ran. It is deliberately not forwarded to the process
+    # script below, whose own parser does not accept it.
+    parser.add_argument("--trace-id", default=None)
     args = parser.parse_args()
 
     exit_code = 0

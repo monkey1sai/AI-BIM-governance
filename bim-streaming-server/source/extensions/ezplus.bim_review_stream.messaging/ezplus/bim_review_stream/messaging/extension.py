@@ -13,12 +13,12 @@ from typing import Optional
 from .stage_loading import LoadingManager
 from .stage_management import StageManager
 from .runtime_authority import DataChannelTraceContext, RuntimeAuthorityClient
+from .client_send_bridge import register_event_type_to_send as register_client_send
 from . import kit_struct_log
 import carb
 import carb.events
 import omni.ext
 import omni.kit.app
-import omni.kit.livestream.messaging as messaging
 
 
 # Any class derived from `omni.ext.IExt` in top level module (defined in
@@ -36,7 +36,9 @@ class Extension(omni.ext.IExt):
 
         self._runtime_authority: Optional[RuntimeAuthorityClient] = RuntimeAuthorityClient.from_env()
         self._datachannel_trace_context = DataChannelTraceContext()
-        messaging.register_event_type_to_send("commandRejected")
+        self._command_rejected_send_sub = register_client_send(
+            "commandRejected"
+        )
         omni.kit.app.register_event_alias(
             carb.events.type_from_string("commandRejected"),
             "commandRejected",

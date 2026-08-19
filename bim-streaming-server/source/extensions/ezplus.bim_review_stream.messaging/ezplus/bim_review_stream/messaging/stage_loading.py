@@ -25,9 +25,16 @@ from carb.eventdispatcher import get_eventdispatcher
 
 import omni.client
 import omni.kit.app
-import omni.kit.livestream.messaging as messaging
 import omni.usd
 from pxr import Gf, Sdf, Usd, UsdGeom, UsdLux
+
+# Import the submodule directly, not `from . import client_send_bridge`: the package
+# form adds an edge to `messaging` itself, which pulled this module into the existing
+# package-level import cycle and tripped ARCH-GRAPH-001.
+try:
+    from .client_send_bridge import register_event_type_to_send as register_client_send
+except ImportError:  # pragma: no cover - test modules import this file directly.
+    from client_send_bridge import register_event_type_to_send as register_client_send
 
 try:
     from .runtime_authority import (
@@ -273,7 +280,7 @@ class LoadingManager:
         ]
 
         for o in outgoing:
-            messaging.register_event_type_to_send(o)
+            self._subscriptions.append(register_client_send(o))
             omni.kit.app.register_event_alias(
                 carb.events.type_from_string(o),
                 o,
@@ -333,9 +340,25 @@ class LoadingManager:
 
     def _verify_datachannel_trace(self, event_type, request_payload):
         try:
-            return self._runtime_authority.verify_datachannel_trace(event_type, request_payload)
+            decision = self._runtime_authority.verify_datachannel_trace_decision(
+                event_type, request_payload
+            )
         except Exception:
-            return None
+            decision = None
+        if decision is not None and decision.authorized:
+            carb.log_info(f"[runtime-authority] datachannel trace accepted for {event_type}")
+            return decision.trace_id
+        # A rejected trace used to drop the command with no record at all, which makes
+        # "Kit never received it" and "Kit received it and refused it" indistinguishable
+        # from the outside. Record the outcome - never the trace value, it is a carrier.
+        carb.log_warn(f"[runtime-authority] datachannel trace rejected for {event_type}")
+        # When the authority could not be reached at all, answer instead of dropping. A
+        # viewer that gets nothing back waits forever, which is exactly what a coordinator
+        # outage produced. The command is still never executed - it is refused, retryably,
+        # so the caller knows this was "could not check", not "checked and denied".
+        if decision is not None and decision.detail_code == "authority_unavailable":
+            self._dispatch_rejection(event_type, request_payload, decision)
+        return None
 
     def _active_output_trace_id(self):
         if self._active_stage_attempt is not None:
