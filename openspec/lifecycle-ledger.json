@@ -191,18 +191,18 @@
       "id": "a4-console-convergence",
       "status": "active",
       "owner": "governance-service",
-      "current_slice": "4.x 隔離 stack 實跑收斂完成 2026-08-19（run r20260819a：manifest head_sha=76ce813＝pre-rebase 實跑 commit；branch 已 rebase，subject 綁 rebase 後 evidence commit 1194b5c＋sentinel）：seed 真 MinIO job（downloaded＋etag 重驗）、require-real E2E 8/8、7 項 live probe（degraded completion_scope=not_executed／table_only 停用 Issue+3D／retry_of_query_id 回帶）、部署區 listener 前後零變動；evidence 依 PUBLIC 隱私邊界入庫（seed-result/state/logs 只記路徑）。下一步=5.x 收尾（5.1 前端驗證五項綠已實跑、5.3/5.4 PR body 揭露、5.5 merge 後 crosswalk）。",
+      "current_slice": "5.x 全結 2026-08-19（PR 本號待補）：5.1 前端五項綠重跑於本 head；5.2 UNKNOWN gate 如實；5.5 crosswalk 已更新母版 proposal Status block。change 29/29，待 archive（獨立後續 PR）。",
       "blocked_by": [],
-      "last_verified": "2026-08-19T03:20:00Z",
+      "last_verified": "2026-08-19T05:58:18Z",
       "task_ledger": {
-        "completed": 24,
+        "completed": 29,
         "total": 29
       },
       "evidence_refs": [
         "openspec/changes/a4-console-convergence/proposal.md",
         "openspec/changes/a4-console-convergence/tasks.md"
       ],
-      "subject_commit": "1194b5cd79d3fc513f340d1c165b00516f2ffa81",
+      "subject_commit": "9e8ee5fb4d5806b6754ab194c7a3946681f0f803",
       "archive_debt": null,
       "subject_binding": "introduction"
     },
@@ -214,7 +214,7 @@
       "blocked_by": [
         "a4-console-convergence"
       ],
-      "last_verified": "2026-07-29T07:00:00Z",
+      "last_verified": "2026-08-19T05:58:18Z",
       "task_ledger": {
         "completed": 28,
         "total": 64
@@ -223,7 +223,7 @@
         "openspec/changes/a4-semantic-search-model-qa/proposal.md",
         "openspec/changes/a4-semantic-search-model-qa/tasks.md"
       ],
-      "subject_commit": "9e111e58a4f8b160047a3fe1d3be09efe87e1ad6",
+      "subject_commit": "9e8ee5fb4d5806b6754ab194c7a3946681f0f803",
       "archive_debt": null
     },
     {
