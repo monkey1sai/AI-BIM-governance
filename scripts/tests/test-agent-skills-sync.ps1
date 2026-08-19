@@ -499,7 +499,7 @@ $activeIndexRefreshFiles = @(
     '.claude/workflows/spec-to-done-adversarial-verify.js',
     '.claude/workflows/std-plan.js',
     '.claude/workflows/std-implement.js',
-    'openspec/changes/a4-console-convergence/tasks.md'
+    'openspec/changes/archive/2026-08-19-a4-console-convergence/tasks.md'
 ) + @(Get-ChildItem -Recurse -File -Filter 'SKILL.md' -LiteralPath (Join-Path $repoRoot '.claude\skills\gitnexus') | ForEach-Object {
     [IO.Path]::GetRelativePath($repoRoot, $_.FullName).Replace('\', '/')
 })
