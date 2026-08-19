@@ -1525,7 +1525,7 @@
         "docs/plans/NOW.md",
         "scripts/tests/test-isolated-branch-stack.ps1"
       ],
-      "subject_commit": "2828c76c17d670c9f52caed5eed683e5eba6b014",
+      "subject_commit": "96b6206e32742ec33e6c4031ab63564e9468ada2",
       "archive_debt": null
     },
     {
