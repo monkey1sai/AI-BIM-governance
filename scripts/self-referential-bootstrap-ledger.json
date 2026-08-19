@@ -699,7 +699,7 @@
     },
     {
       "id": "introduction-resolved-subject-binding",
-      "status": "open",
+      "status": "closed",
       "pr": 620,
       "opened_at": "2026-08-19T03:05:00Z",
       "reason": "the machine-truth comparator (sentinel subject resolution, reconcile ratchet, base-aware real-ledger required check) is itself the adjudicating mechanism being changed; the base-pinned mechanism can only execute the pre-change comparator and therefore cannot produce evidence about the post-change resolution semantics before merge",
@@ -723,7 +723,14 @@
         "docs/evidence/introduction-resolved-subject-binding/self-referential-bootstrap/README.md",
         "docs/evidence/introduction-resolved-subject-binding/self-referential-bootstrap/verification.txt"
       ],
-      "fixpoint": null
+      "fixpoint": {
+        "reverified_at": "2026-08-19T03:55:00Z",
+        "mechanism_commit": "ab6787778d98094f6d34992ab3024aacd841e6bf",
+        "evidence_refs": [
+          "docs/evidence/introduction-resolved-subject-binding/fixpoint/attestation.json",
+          "docs/evidence/introduction-resolved-subject-binding/fixpoint/summary.md"
+        ]
+      }
     }
   ]
 }
