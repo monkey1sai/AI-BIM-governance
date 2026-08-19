@@ -189,20 +189,20 @@
     },
     {
       "id": "a4-console-convergence",
-      "status": "active",
+      "status": "archived",
       "owner": "governance-service",
-      "current_slice": "5.x 全結 2026-08-19（PR 本號待補）：5.1 前端五項綠重跑於本 head；5.2 UNKNOWN gate 如實；5.5 crosswalk 已更新母版 proposal Status block。change 29/29，待 archive（獨立後續 PR）。",
+      "current_slice": "5.x 收尾 PR 為 #638（前一輪 current_slice 的「PR 本號待補」即指 #638，於本 PR 回填）；29/29 全數結案，change 目錄已移入 openspec/changes/archive/2026-08-19-a4-console-convergence，delta spec 已同步 canonical openspec/specs/a4-semantic-search/spec.md。母版 a4-semantic-search-model-qa 維持 deferred（四項重啟條件僅第 1 項達成）。",
       "blocked_by": [],
-      "last_verified": "2026-08-19T05:58:18Z",
+      "last_verified": "2026-08-19T07:30:00Z",
       "task_ledger": {
         "completed": 29,
         "total": 29
       },
       "evidence_refs": [
-        "openspec/changes/a4-console-convergence/proposal.md",
-        "openspec/changes/a4-console-convergence/tasks.md"
+        "openspec/changes/archive/2026-08-19-a4-console-convergence/proposal.md",
+        "openspec/changes/archive/2026-08-19-a4-console-convergence/tasks.md"
       ],
-      "subject_commit": "9e8ee5fb4d5806b6754ab194c7a3946681f0f803",
+      "subject_commit": "ee866e9078fa2c557d0c2006c74410d7ac315c2b",
       "archive_debt": null,
       "subject_binding": "introduction"
     },
@@ -376,6 +376,25 @@
       ],
       "subject_commit": "9e111e58a4f8b160047a3fe1d3be09efe87e1ad6",
       "archive_debt": null
+    },
+    {
+      "id": "align-html-derived-design-gate-contract",
+      "status": "active",
+      "owner": "repository-maintainer",
+      "current_slice": "2026-08-19 開立：successor of align-frontend-design-system-reference（deferred/frozen），只承接 closed design-gate policy 與 ref-bound HTML source collection；provenance、classifier/status、typed consumers 留給尚未建立的三個 successor。0/2；下一片＝1.1 closed-schema scripts/config/design-gate-policy.json。scope guard：不動 HTML 內容、manifest、golden、baseline、capture/rebaseline、production UI、runtime、API、data/event、storage 或 session/conversion 行為。",
+      "blocked_by": [],
+      "last_verified": "2026-08-19T08:36:23Z",
+      "task_ledger": {
+        "completed": 0,
+        "total": 2
+      },
+      "evidence_refs": [
+        "openspec/changes/align-html-derived-design-gate-contract/proposal.md",
+        "openspec/changes/align-html-derived-design-gate-contract/tasks.md"
+      ],
+      "subject_commit": "660e994b0574c60d796c77b0faf6e39e8358611b",
+      "archive_debt": null,
+      "subject_binding": "introduction"
     },
     {
       "id": "align-ship-cycle-merge-ancestry",
@@ -1495,11 +1514,11 @@
       "id": "introduction-resolved-subject-binding",
       "status": "active",
       "owner": "repository-maintainer",
-      "current_slice": "2026-08-19：owner 排程 thaw，第一波（tasks §1–§5）同 PR 實作完成——schema 雙形狀／sentinel 解析／ratchet／origin-main 錨／容量裁決落地／required CI base-aware 化（2.6）。28/33；殘項＝5.4（merge 後 fixpoint）與 §6 第二波（首次 sentinel 資料寫入與 #589 驗收，須先過 6.2 危險窗操作閘）。",
+      "current_slice": "2026-08-19：第一波（§1–§5）已於 #620 落地（squash ab67877），merge 後 fixpoint 由 #629 收尾（bootstrap entry status=closed、mechanism_commit=ab67877）；第二波記帳由 #636 完成——6.1 確認 introduction-recovery 已覆蓋本 row 故不升級 sentinel、6.3 首批 sentinel rows 已由 #621／#630 寫入（sentinel 的 post-squash 壓測列為已知殘留）、6.4 GitNexus detect-changes 記為 unavailable/UNKNOWN；慣例已入文 docs/agents/agent-governance-policy.md。32/33；唯一殘項＝6.2 危險窗操作閘：wave-1 merge 與首個 sentinel 進 main 僅隔 64 分鐘（非一個工作日）且無 open PR 盤點紀錄，如實記為已繞過、未造成事故，不勾，交 owner 追認。",
       "blocked_by": [],
-      "last_verified": "2026-08-19T02:10:00Z",
+      "last_verified": "2026-08-19T07:51:00Z",
       "task_ledger": {
-        "completed": 28,
+        "completed": 32,
         "total": 33
       },
       "evidence_refs": [
