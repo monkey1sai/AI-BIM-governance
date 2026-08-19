@@ -696,6 +696,34 @@
           "docs/evidence/autonomous-delivery-path-classifier/fixpoint/summary.md"
         ]
       }
+    },
+    {
+      "id": "introduction-resolved-subject-binding",
+      "status": "open",
+      "pr": 620,
+      "opened_at": "2026-08-19T03:05:00Z",
+      "reason": "the machine-truth comparator (sentinel subject resolution, reconcile ratchet, base-aware real-ledger required check) is itself the adjudicating mechanism being changed; the base-pinned mechanism can only execute the pre-change comparator and therefore cannot produce evidence about the post-change resolution semantics before merge",
+      "verification_mechanism_paths": [
+        "scripts/lib/openspec-machine-truth.mjs",
+        "scripts/self-referential-bootstrap-ledger.json",
+        "scripts/tests/test-self-referential-bootstrap.ps1",
+        "scripts/tests/verify-openspec-machine-truth.mjs"
+      ],
+      "verification_contract": {
+        "id": "introduction-resolved-subject-binding/v1",
+        "command_ids": [
+          "test-openspec-machine-truth",
+          "test-openspec-repository-lifecycle",
+          "test-openspec-ledger-reconciliation",
+          "verify-openspec-lifecycle"
+        ],
+        "contract_sha256": "4846c3f1df6582d9836ce24a404d9862bcc8036cfaacddb7c82c000a5ea02027"
+      },
+      "bootstrap_evidence_refs": [
+        "docs/evidence/introduction-resolved-subject-binding/self-referential-bootstrap/README.md",
+        "docs/evidence/introduction-resolved-subject-binding/self-referential-bootstrap/verification.txt"
+      ],
+      "fixpoint": null
     }
   ]
 }
