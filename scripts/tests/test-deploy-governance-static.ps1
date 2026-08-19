@@ -610,6 +610,25 @@ if ($dockerFailureIndex -lt 0 -or $webPlaneSignatureSaveIndex -le $dockerFailure
     throw 'web-plane signature must be persisted only after docker compose succeeds'
 }
 
+# #640: Phase 4c must consult the orphan gate BEFORE it launches a Kit, and it
+# must refuse rather than adopt or race the holder. The observation that a
+# previous instance is still holding the streaming ports already existed in
+# Phase 1's audit output; what was missing was any path from that observation to
+# the start decision, so a dead launcher plus a live Kit child produced a second
+# Kit that deadlocked with no listener and no log of its own.
+Assert-Contains $launcher 'function Get-HostNativeOrphanListener' 'host-native launcher must expose the orphaned-listener detector'
+Assert-Contains $launcher 'function Get-HostNativeServiceListenPorts' 'host-native launcher must expose the recorded port claim'
+Assert-Contains $deploy '$kitOrphan = Get-HostNativeOrphanListener' 'deploy.ps1 must run the orphaned-Kit gate on the start path'
+Assert-Contains $deploy '-ExpectedPorts (@($resolvedKitSignalPort) + @($resolvedSpectatorSignalPorts))' 'the orphaned-Kit gate must cover every signal port this run intends to use'
+Assert-Contains $deploy 'stage=4c Phase 4c refusing to start a second Kit' 'deploy.ps1 must fail closed instead of starting a second Kit'
+Assert-Contains $deploy 'Stop it first with scripts/stop-all.ps1, then re-run this deploy' 'the orphaned-Kit refusal must name the executable remedy'
+Assert-Contains $deploy "Print-FinalSummary -ExitCode 4 -FailedPhase 'Phase 4c (orphaned Kit holds the streaming ports)'" 'the orphaned-Kit refusal must exit through the Phase 4 failure summary'
+$kitOrphanGateIndex = $deploy.IndexOf('$kitOrphan = Get-HostNativeOrphanListener')
+$kitStartIndex = $deploy.IndexOf('$startInfo = Start-HostNativeKit')
+if ($kitOrphanGateIndex -lt 0 -or $kitStartIndex -lt 0 -or $kitStartIndex -le $kitOrphanGateIndex) {
+    throw 'deploy.ps1 must evaluate the orphaned-Kit gate before Start-HostNativeKit, not after'
+}
+
 $kitBuildIndex = $deploy.IndexOf('Invoke-KitRepoBuild')
 $cadHardeningIndex = $deploy.IndexOf('harden-cad-extension-cache.py')
 $envMergeIndex = $deploy.IndexOf('# fix: .env / .env.example missing-key merge')

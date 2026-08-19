@@ -1736,4 +1736,252 @@ finally {
     Remove-TestSandbox -Path $conversionProbeSandbox
 }
 
+# ---------------------------------------------------------------------------
+# #640: an orphaned Kit child is invisible to pid-file liveness, so Phase 4c
+# started a second instance into a live one. Two halves are proven here:
+#   (1) a launch RECORDS the ports its process tree will own, and that record
+#       outlives the pid file that Remove-StalePidFile is right to delete;
+#   (2) Get-HostNativeOrphanListener turns that record into a refusal signal.
+#
+# Everything below runs on fixtures and injected probes. No Kit is launched, no
+# real port in 49100-49110 (or any other real port) is bound, and the only real
+# processes started are short-lived Python sleeps that bind nothing.
+# ---------------------------------------------------------------------------
+
+# Test O1: Start-HostNativeService records the declared ports as a sidecar, and
+# a launch that declares none clears a previous claim instead of inheriting it.
+. $modulePath
+$portRecordSandbox = New-TestSandbox -Prefix 'hn-port-record'
+try {
+    $portRunDir = Join-Path $portRecordSandbox 'scripts\.run'
+    New-Item -ItemType Directory -Path $portRunDir -Force | Out-Null
+    $portProbePython = Resolve-PlatformSystemPython
+    # Supported=$false keeps the launch off real Job Objects; the other keys are
+    # present only because the parameter contract requires the whole table.
+    $noBoundaryOps = @{
+        Supported = { $false }
+        Create    = { param($jobName) throw 'unsupported boundary must never create' }
+        Assign    = { param($handle, $childId) throw 'unsupported boundary must never assign' }
+        Anchor    = { param($handle, $childId) throw 'unsupported boundary must never anchor' }
+        Terminate = { param($handle) throw 'unsupported boundary must never terminate' }
+        Close     = { param($handle) throw 'unsupported boundary must never close' }
+    }
+    $portedInfo = Start-HostNativeService `
+        -Name 'ported-service' `
+        -WorkingDirectory $portRecordSandbox `
+        -FilePath $portProbePython `
+        -ArgumentList @('-c', 'import time; time.sleep(60)') `
+        -RunDir $portRunDir `
+        -ListenPorts @(49150, 49100, 49100) `
+        -DetachProbeFn { param($processId) $true } `
+        -JobBoundaryOps $noBoundaryOps
+    try {
+        $portSidecar = Join-Path $portRunDir 'ported-service.ports'
+        Assert-True (Test-Path -LiteralPath $portSidecar -PathType Leaf) 'a launch that declares ports records the sidecar'
+        Assert-Equal '49100,49150' ((Get-HostNativeServiceListenPorts -Name 'ported-service' -RunDir $portRunDir) -join ',') 'the recorded claim is de-duplicated and sorted'
+    }
+    finally {
+        Stop-Process -Id $portedInfo.Pid -Force -ErrorAction SilentlyContinue
+    }
+
+    # A service that declares no ports must not inherit the previous claim.
+    $portlessInfo = Start-HostNativeService `
+        -Name 'ported-service' `
+        -WorkingDirectory $portRecordSandbox `
+        -FilePath $portProbePython `
+        -ArgumentList @('-c', 'import time; time.sleep(60)') `
+        -RunDir $portRunDir `
+        -DetachProbeFn { param($processId) $true } `
+        -JobBoundaryOps $noBoundaryOps
+    try {
+        Assert-True (-not (Test-Path -LiteralPath (Join-Path $portRunDir 'ported-service.ports'))) 'a portless launch clears the previous port claim'
+        Assert-Equal '' ((Get-HostNativeServiceListenPorts -Name 'ported-service' -RunDir $portRunDir) -join ',') 'no sidecar reads back as no recorded ports'
+    }
+    finally {
+        Stop-Process -Id $portlessInfo.Pid -Force -ErrorAction SilentlyContinue
+    }
+    Write-TestPass 'host-native launch records the ports its tree will own (#640)'
+}
+finally {
+    Remove-TestSandbox -Path $portRecordSandbox
+}
+
+# Test O2: Remove-StalePidFile still removes the stale pid file, and deliberately
+# leaves the port claim behind - that record is the only remaining trace of an
+# orphaned child, and deleting it here is exactly how #640 lost the orphan.
+$staleRecordSandbox = New-TestSandbox -Prefix 'hn-stale-ports'
+try {
+    $staleRunDir = Join-Path $staleRecordSandbox 'scripts\.run'
+    New-Item -ItemType Directory -Path $staleRunDir -Force | Out-Null
+    Set-Content -LiteralPath (Join-Path $staleRunDir 'bim-streaming-server.pid') -Value '216268'
+    Set-Content -LiteralPath (Join-Path $staleRunDir 'bim-streaming-server.ports') -Value "49100`n49150"
+    $removed = Remove-StalePidFile -Name 'bim-streaming-server' -RunDir $staleRunDir -GetProcessFn { param($procId) $null }
+    Assert-True $removed 'a dead recorded pid is still cleaned up'
+    Assert-True (-not (Test-Path -LiteralPath (Join-Path $staleRunDir 'bim-streaming-server.pid'))) 'the stale pid file is removed'
+    Assert-Equal '49100,49150' ((Get-HostNativeServiceListenPorts -Name 'bim-streaming-server' -RunDir $staleRunDir) -join ',') 'the port claim survives stale-pid cleanup'
+    Write-TestPass 'stale-pid cleanup keeps the port claim that outlives the launcher (#640)'
+}
+finally {
+    Remove-TestSandbox -Path $staleRecordSandbox
+}
+
+# Test O3: Get-HostNativeOrphanListener - the start decision matrix.
+$orphanSandbox = New-TestSandbox -Prefix 'hn-orphan-listener'
+try {
+    $orphanRunDir = Join-Path $orphanSandbox 'scripts\.run'
+    New-Item -ItemType Directory -Path $orphanRunDir -Force | Out-Null
+    Set-Content -LiteralPath (Join-Path $orphanRunDir 'bim-streaming-server.ports') -Value "49100`n49150"
+    # The measured #640 shape: launcher 216268 gone, orphaned Kit 216306 still
+    # holding a spectator signal port, pid file already deleted as stale.
+    $orphanPortOwners = @{ 49100 = $null; 49150 = 216306 }
+    $orphanProbe = { param($port) $orphanPortOwners[[int]$port] }
+    $noProcess = { param($procId) $null }
+    $noChildren = { param($parentId) @() }
+    # SettleTimeoutMs 0 keeps every "should report" case to a single observation;
+    # the settle window itself is proven separately at the end of this block.
+    $now = @{ SettleTimeoutMs = 0; SleepFn = { param($milliseconds) } }
+
+    $reported = Get-HostNativeOrphanListener -Name 'bim-streaming-server' -RunDir $orphanRunDir @now `
+        -PortLookupFn $orphanProbe -GetProcessFn $noProcess -ChildPidLookup $noChildren
+    Assert-True ($null -ne $reported) 'a surviving holder with no pid file is reported'
+    Assert-Equal '49150' (@($reported.Ports) -join ',') 'the report names the port that is actually held'
+    Assert-Equal '216306' (@($reported.ProcessIds) -join ',') 'the report names the holding pid, not the recorded launcher pid'
+    Assert-Equal '49100,49150' (@($reported.RecordedPorts) -join ',') 'the report carries the claim it checked'
+
+    # Same answer when the pid file still exists but its process is gone: that is
+    # the window between the launcher dying and Phase 2 deleting the pid file.
+    Set-Content -LiteralPath (Join-Path $orphanRunDir 'bim-streaming-server.pid') -Value '216268'
+    $deadRecorded = Get-HostNativeOrphanListener -Name 'bim-streaming-server' -RunDir $orphanRunDir @now `
+        -PortLookupFn $orphanProbe -GetProcessFn $noProcess -ChildPidLookup $noChildren
+    Assert-True ($null -ne $deadRecorded) 'a dead recorded pid cannot account for a live holder'
+    Assert-Equal '216306' (@($deadRecorded.ProcessIds) -join ',') 'the dead launcher pid is not treated as the holder'
+
+    # Healthy idempotent re-run: the recorded launcher is alive and the holder is
+    # its child, so nothing is reported and Phase 4c keeps its existing skip path.
+    $liveTree = { param($parentId) if ([int]$parentId -eq 216268) { @(216306) } else { @() } }
+    $liveProcess = { param($procId) @{ Id = [int]$procId } }
+    $healthy = Get-HostNativeOrphanListener -Name 'bim-streaming-server' -RunDir $orphanRunDir @now `
+        -PortLookupFn $orphanProbe -GetProcessFn $liveProcess -ChildPidLookup $liveTree
+    Assert-True ($null -eq $healthy) 'a live launcher accounts for its own child'
+
+    # A live launcher does NOT account for an unrelated holder: two instances.
+    $strangerOwners = @{ 49100 = $null; 49150 = 188705 }
+    $twoInstances = Get-HostNativeOrphanListener -Name 'bim-streaming-server' -RunDir $orphanRunDir @now `
+        -PortLookupFn { param($port) $strangerOwners[[int]$port] } -GetProcessFn $liveProcess -ChildPidLookup $liveTree
+    Assert-True ($null -ne $twoInstances) 'a holder outside our tree is reported even when our tree is alive'
+    Assert-Equal '188705' (@($twoInstances.ProcessIds) -join ',') 'the unrelated holder is named'
+
+    # Get-PlatformTcpListenerPid returns -1 for "occupied, owner not visible".
+    # Unknown ownership must fail closed, never read as free.
+    $invisibleOwners = @{ 49100 = -1; 49150 = $null }
+    $invisible = Get-HostNativeOrphanListener -Name 'bim-streaming-server' -RunDir $orphanRunDir @now `
+        -PortLookupFn { param($port) $invisibleOwners[[int]$port] } -GetProcessFn $liveProcess -ChildPidLookup $liveTree
+    Assert-True ($null -ne $invisible) 'an occupied port with an invisible owner fails closed'
+    Assert-Equal '49100' (@($invisible.Ports) -join ',') 'the invisible-owner port is the one reported'
+    Assert-Equal '-1' (@($invisible.ProcessIds) -join ',') 'the sentinel owner is surfaced rather than swallowed'
+
+    # Free ports mean no report, whatever the claim says.
+    $allFree = Get-HostNativeOrphanListener -Name 'bim-streaming-server' -RunDir $orphanRunDir @now `
+        -PortLookupFn { param($port) $null } -GetProcessFn $noProcess -ChildPidLookup $noChildren
+    Assert-True ($null -eq $allFree) 'a recorded claim with every port free is not an orphan'
+
+    # The probe set is the UNION of the recorded claim and this run's expectation,
+    # so neither a config change nor a first-ever launch can hide a holder.
+    $script:probedPorts = @()
+    $unionProbe = {
+        param($port)
+        $script:probedPorts += [int]$port
+        if ([int]$port -eq 49101) { return 4242 }
+        return $null
+    }
+    $union = Get-HostNativeOrphanListener -Name 'bim-streaming-server' -RunDir $orphanRunDir @now `
+        -ExpectedPorts @(49101) -PortLookupFn $unionProbe -GetProcessFn $noProcess -ChildPidLookup $noChildren
+    Assert-Equal '49100,49101,49150' (@($script:probedPorts | Sort-Object -Unique) -join ',') 'recorded and expected ports are both probed'
+    Assert-True ($null -ne $union) 'a holder on a port only this run expects is still reported'
+    Assert-Equal '49101' (@($union.Ports) -join ',') 'the newly expected port is the one reported'
+
+    # Nothing recorded and nothing expected: no probe, no verdict, no refusal.
+    $script:probedPorts = @()
+    $emptyRunDir = Join-Path $orphanSandbox 'empty-run'
+    New-Item -ItemType Directory -Path $emptyRunDir -Force | Out-Null
+    $nothing = Get-HostNativeOrphanListener -Name 'bim-streaming-server' -RunDir $emptyRunDir @now `
+        -PortLookupFn $unionProbe -GetProcessFn $noProcess -ChildPidLookup $noChildren
+    Assert-True ($null -eq $nothing) 'no claim and no expectation is not an orphan'
+    Assert-Equal 0 @($script:probedPorts).Count 'with no ports to check the detector probes nothing'
+
+    # Settle window: Phase 4c also reaches this gate immediately after stopping
+    # the previous tree itself, and a force-killed listener needs a moment to
+    # release its socket. A holder that is gone on a later pass is teardown, not
+    # an orphan; one still there when the budget runs out is an orphan.
+    $script:teardownProbeCalls = 0
+    $script:sleepCalls = 0
+    $noSleep = { param($milliseconds) $script:sleepCalls++ }
+    $teardownProbe = {
+        param($port)
+        $script:teardownProbeCalls++
+        if ($script:teardownProbeCalls -le 2) { return 999001 }
+        return $null
+    }
+    $settled = Get-HostNativeOrphanListener -Name 'bim-streaming-server' -RunDir $orphanRunDir `
+        -SettleTimeoutMs 5000 -SleepFn $noSleep `
+        -PortLookupFn $teardownProbe -GetProcessFn $noProcess -ChildPidLookup $noChildren
+    Assert-True ($null -eq $settled) 'a listener that disappears within the settle budget is teardown, not an orphan'
+    Assert-True ($script:sleepCalls -ge 1) 'the settle window actually waits before re-observing'
+
+    $script:sleepCalls = 0
+    $persistent = Get-HostNativeOrphanListener -Name 'bim-streaming-server' -RunDir $orphanRunDir `
+        -SettleTimeoutMs 5000 -SleepFn $noSleep `
+        -PortLookupFn $orphanProbe -GetProcessFn $noProcess -ChildPidLookup $noChildren
+    Assert-True ($null -ne $persistent) 'a holder that survives the settle budget is still reported'
+    Assert-Equal '49150' (@($persistent.Ports) -join ',') 'the surviving holder keeps its port in the report'
+    Write-TestPass 'orphaned listener detection is fail-closed and tree-aware (#640)'
+}
+finally {
+    Remove-TestSandbox -Path $orphanSandbox
+}
+
+# Test O4: a deliberate stop releases the claim; a stop that stopped nothing does
+# not - otherwise the recovery path would erase the very record it needs.
+$stopClaimSandbox = New-TestSandbox -Prefix 'hn-stop-ports'
+try {
+    $stopClaimRunDir = Join-Path $stopClaimSandbox 'scripts\.run'
+    New-Item -ItemType Directory -Path $stopClaimRunDir -Force | Out-Null
+
+    Set-Content -LiteralPath (Join-Path $stopClaimRunDir 'svc.pid') -Value '4242'
+    Set-Content -LiteralPath (Join-Path $stopClaimRunDir 'svc.job') -Value 'Local\aibim-job-svc'
+    Set-Content -LiteralPath (Join-Path $stopClaimRunDir 'svc.ports') -Value '49100'
+    $null = Stop-HostNativeService -Name 'svc' -RunDir $stopClaimRunDir `
+        -ChildPidLookup { param($parentId) @() } `
+        -StopProcessFn { param($procId) } `
+        -JobStopFn { param($jobName) [pscustomobject]@{ Found = $true; MemberPids = @(4242); Proven = $true; Supported = $true } }
+    Assert-True (-not (Test-Path -LiteralPath (Join-Path $stopClaimRunDir 'svc.ports'))) 'the job-first stop releases the port claim'
+
+    Set-Content -LiteralPath (Join-Path $stopClaimRunDir 'svc2.pid') -Value '4343'
+    Set-Content -LiteralPath (Join-Path $stopClaimRunDir 'svc2.ports') -Value '49150'
+    $null = Stop-HostNativeService -Name 'svc2' -RunDir $stopClaimRunDir `
+        -ChildPidLookup { param($parentId) @() } `
+        -StopProcessFn { param($procId) } `
+        -JobStopFn { param($jobName) [pscustomobject]@{ Found = $false; MemberPids = @(); Proven = $false; Supported = $false } }
+    Assert-True (-not (Test-Path -LiteralPath (Join-Path $stopClaimRunDir 'svc2.ports'))) 'the legacy walk releases the port claim too'
+
+    Set-Content -LiteralPath (Join-Path $stopClaimRunDir 'svc3.ports') -Value '49160'
+    $stoppedNothing = Stop-HostNativeService -Name 'svc3' -RunDir $stopClaimRunDir `
+        -ChildPidLookup { param($parentId) @() } `
+        -StopProcessFn { param($procId) } `
+        -JobStopFn { param($jobName) [pscustomobject]@{ Found = $false; MemberPids = @(); Proven = $false; Supported = $false } }
+    Assert-True (-not $stoppedNothing) 'a stop with no pid file reports that it stopped nothing'
+    Assert-Equal '49160' ((Get-HostNativeServiceListenPorts -Name 'svc3' -RunDir $stopClaimRunDir) -join ',') 'a stop that stopped nothing keeps the claim'
+    Write-TestPass 'only a stop that terminated something releases the port claim (#640)'
+}
+finally {
+    Remove-TestSandbox -Path $stopClaimSandbox
+}
+
+# Test O5: the Kit launcher declares the TCP signal ports as its claim. Media
+# ports are UDP and stay out of a record that only a TCP probe can attribute.
+$launcherBody = Get-Content -LiteralPath $modulePath -Raw
+Assert-True ($launcherBody -match '-ListenPorts \(@\(\$SignalPort\) \+ @\(\$SpectatorSignalPorts\)\)') 'Start-HostNativeKit declares its signal ports as the recorded claim'
+Assert-True (-not ($launcherBody -match '-ListenPorts.*\$StreamPort')) 'the UDP media port is not recorded as a TCP claim'
+Write-TestPass 'Kit launch declares the signal ports it will own (#640)'
+
 Write-Host "`n=== test-host-native-launcher.ps1: ALL PASSED ===" -ForegroundColor Green

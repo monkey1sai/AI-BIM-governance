@@ -1772,6 +1772,33 @@ if ($SkipKit) {
     if ($kitAlreadyRunning) {
         Write-DeployTag -Tag 'skip' -Message 'Phase 4c host-native Kit already running with matching runtime parameters' -LogPath $LogPath | Out-Null
     } else {
+        # Orphan gate (#640). Liveness above is the LAUNCHER's pid, but the Kit
+        # child holds the ports, the GPU context and the Omniverse user
+        # directory. When the launcher dies and the child survives,
+        # Remove-StalePidFile correctly drops the pid file, Test-AlreadyRunning
+        # correctly reports "not running", and starting anyway put a second Kit
+        # on top of a live one: the new process deadlocked in early startup with
+        # two futex-waiting threads, no listener and not one line of its own log,
+        # and the deploy only found out 480s later.
+        #
+        # Phase 1 already prints this exact observation ("occupied by our PID
+        # ... already running, will skip start"). It was never a gate; this is.
+        # Refusing is the only honest option here: this run cannot tell a
+        # deadlocked orphan from a healthy instance, and it must not adopt one or
+        # race one. scripts/stop-all.ps1 stops by port as well as by pid file, so
+        # it reaches an orphan whose pid file is already gone - which is exactly
+        # the manual recovery that made the failing deployment pass unchanged.
+        $kitOrphan = Get-HostNativeOrphanListener `
+            -Name 'bim-streaming-server' `
+            -RunDir $RunDir `
+            -ExpectedPorts (@($resolvedKitSignalPort) + @($resolvedSpectatorSignalPorts))
+        if ($null -ne $kitOrphan) {
+            $orphanPortList = @($kitOrphan.Ports) -join ', '
+            $orphanPidList = @($kitOrphan.ProcessIds | ForEach-Object { if ([int]$_ -le 0) { 'owner-not-visible' } else { "$_" } }) -join ', '
+            Write-DeployTag -Tag 'fail' -Message "stage=4c Phase 4c refusing to start a second Kit: TCP port(s) $orphanPortList still LISTEN under PID(s) $orphanPidList, which no live bim-streaming-server PID file accounts for (orphaned Kit). Stop it first with scripts/stop-all.ps1, then re-run this deploy" -LogPath $LogPath | Out-Null
+            Print-FinalSummary -ExitCode 4 -FailedPhase 'Phase 4c (orphaned Kit holds the streaming ports)'
+            exit 4
+        }
         Write-DeployTag -Tag 'ok' -Message 'Phase 4c starting host-native Kit streaming' -LogPath $LogPath | Out-Null
         $startInfo = Start-HostNativeKit `
             -RepoRoot $RepoRoot `
