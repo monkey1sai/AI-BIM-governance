@@ -1,0 +1,127 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://ai-bim-governance.local/schemas/design-gate-policy.json",
+  "title": "Design gate closed engineering policy v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "sources", "engineering", "full_completion_eligibility"],
+  "not": { "required": ["policy_digest"] },
+  "properties": {
+    "schema_version": { "const": "design-gate-policy/v1" },
+    "sources": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 2,
+      "uniqueItems": true,
+      "items": {
+        "oneOf": [
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["source_id", "path", "source_role"],
+            "properties": {
+              "source_id": { "const": "ai-bim-frontend-backend-design" },
+              "path": { "const": "docs/plans/AI-BIM 前後端設計文件.dc.html" },
+              "source_role": { "const": "architecture_behavior" }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["source_id", "path", "source_role"],
+            "properties": {
+              "source_id": { "const": "ai-bim-console-hifi" },
+              "path": { "const": "docs/plans/AI-BIM Console Hi-Fi.dc.html" },
+              "source_role": { "const": "console_hifi_visual" }
+            }
+          }
+        ]
+      }
+    },
+    "engineering": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "platform",
+        "browser",
+        "ci_runner_label",
+        "node_version",
+        "npm_version",
+        "playwright_version",
+        "chromium_revision",
+        "chromium_version",
+        "device_scale_factor",
+        "locale",
+        "timezone",
+        "fonts_ready_required",
+        "animations_disabled",
+        "viewports",
+        "pixelmatch_color_threshold",
+        "include_antialiasing",
+        "max_diff_pixel_ratio",
+        "semantic_parity_required"
+      ],
+      "properties": {
+        "platform": { "const": "windows" },
+        "browser": { "const": "chromium" },
+        "ci_runner_label": { "const": "windows-2025" },
+        "node_version": { "const": "20.20.2" },
+        "npm_version": { "const": "10.9.4" },
+        "playwright_version": { "const": "1.61.1" },
+        "chromium_revision": { "const": "1228" },
+        "chromium_version": { "const": "149.0.7827.55" },
+        "device_scale_factor": { "const": 1 },
+        "locale": { "const": "zh-TW" },
+        "timezone": { "const": "Asia/Taipei" },
+        "fonts_ready_required": { "const": true },
+        "animations_disabled": { "const": true },
+        "viewports": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "uniqueItems": true,
+          "items": {
+            "oneOf": [
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["id", "width", "height"],
+                "properties": {
+                  "id": { "const": "1440x900" },
+                  "width": { "const": 1440 },
+                  "height": { "const": 900 }
+                }
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["id", "width", "height"],
+                "properties": {
+                  "id": { "const": "1920x1080" },
+                  "width": { "const": 1920 },
+                  "height": { "const": 1080 }
+                }
+              }
+            ]
+          }
+        },
+        "pixelmatch_color_threshold": { "type": "number", "const": 0.1 },
+        "include_antialiasing": { "const": false },
+        "max_diff_pixel_ratio": { "type": "number", "const": 0.01 },
+        "semantic_parity_required": { "type": "number", "const": 1 }
+      }
+    },
+    "full_completion_eligibility": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "allow_when_any_route_is_reference_missing",
+        "allow_when_routes_without_approved_pixel_reference_nonempty"
+      ],
+      "properties": {
+        "allow_when_any_route_is_reference_missing": { "const": false },
+        "allow_when_routes_without_approved_pixel_reference_nonempty": { "const": false }
+      }
+    }
+  }
+}
