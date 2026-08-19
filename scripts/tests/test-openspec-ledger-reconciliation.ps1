@@ -399,6 +399,122 @@ Archive rejection fixture.
     Assert-Equal 1 $deferredArchiveResult.ExitCode 'archive containing any deferred marker fails closed'
     Write-Utf8Text -Path (Join-Path $archiveFixtureRoot 'proposal.md') -Value $adoptedArchiveProposal
 
+    # The PowerShell parser mirrors the canonical JS lifecycle vocabulary: an adopted
+    # proposal is completed while preserving the repository marker for diagnostics.
+    Write-Utf8Text -Path (Join-Path $alphaRoot 'proposal.md') -Value $adoptedArchiveProposal
+    try {
+        $activeAdoptedState = Get-OpenSpecProposalState -ChangeDirectory $alphaRoot -TrustedRoot $repoRoot
+        Assert-Equal 'adopted' $activeAdoptedState.RawStatus 'adopted marker preserves raw proposal status'
+        Assert-Equal 'completed' $activeAdoptedState.LifecycleStatus 'adopted marker normalizes to completed'
+        Assert-True (-not $activeAdoptedState.IsDeferred) 'adopted marker is not deferred'
+    } finally {
+        Write-Utf8Text -Path (Join-Path $alphaRoot 'proposal.md') -Value $activeProposal
+    }
+
+    # Completed lifecycle parity spans the proposal marker, machine ledger, and
+    # OpenSpec CLI projection. Keep the established deferred compatibility rule,
+    # but never let completed drift reconcile as consistent.
+    $completedOpenSpecChanges = @(
+        [ordered]@{
+            name           = 'change-zeta'
+            completedTasks = 0
+            totalTasks     = 1
+            lastModified   = '2099-01-01T00:00:00.000Z'
+            status         = 'in-progress'
+        },
+        [ordered]@{
+            name           = 'change-alpha'
+            completedTasks = 2
+            totalTasks     = 2
+            lastModified   = '2000-01-01T00:00:00.000Z'
+            status         = 'complete'
+        }
+    )
+    $completedLedgerChanges = @(
+        (New-MachineChange -Id 'change-zeta' -Status 'active' -Completed 0 -Total 1),
+        (New-MachineChange -Id 'change-alpha' -Status 'completed' -Completed 2 -Total 2)
+    )
+    Write-Utf8Text -Path (Join-Path $alphaRoot 'proposal.md') -Value $adoptedArchiveProposal
+    Write-Utf8Text -Path (Join-Path $alphaRoot 'tasks.md') -Value "- [x] completed`n- [x] pending`n"
+    try {
+        Write-OpenSpecFixture -Path $openSpecPath -Root $repoRoot -Changes $completedOpenSpecChanges
+        Write-JsonDocument -Path $ledgerPath -Document ([ordered]@{
+            schema_version = 'openspec-lifecycle-ledger/v1'
+            changes       = $completedLedgerChanges
+        })
+        $completedResult = Invoke-Reconciler -Root $repoRoot -Ledger $ledgerPath -OpenSpecList $openSpecPath
+        Assert-ReportContract -Result $completedResult -Message 'completed lifecycle representation'
+        Assert-Equal 0 $completedResult.ExitCode 'adopted proposal, completed ledger, and complete CLI status agree'
+        Assert-Equal 0 @($completedResult.Document.mismatches).Count 'completed lifecycle representation has no mismatches'
+        $completedInventory = $completedResult.Document.inventory |
+            Where-Object id -eq 'change-alpha' | Select-Object -First 1
+        Assert-Equal 'completed' $completedInventory.repository.proposal_status 'adopted marker normalizes in the report'
+        Assert-Equal 'adopted' $completedInventory.repository.proposal_raw_status 'report preserves the adopted marker'
+
+        $activeMachineAgainstAdopted = @(
+            (New-MachineChange -Id 'change-zeta' -Status 'active' -Completed 0 -Total 1),
+            (New-MachineChange -Id 'change-alpha' -Status 'active' -Completed 2 -Total 2)
+        )
+        Write-JsonDocument -Path $ledgerPath -Document ([ordered]@{
+            schema_version = 'openspec-lifecycle-ledger/v1'
+            changes       = $activeMachineAgainstAdopted
+        })
+        $adoptedMachineMismatch = Invoke-Reconciler -Root $repoRoot -Ledger $ledgerPath -OpenSpecList $openSpecPath
+        Assert-ReportContract -Result $adoptedMachineMismatch -Message 'adopted proposal against active machine state'
+        Assert-Equal 2 $adoptedMachineMismatch.ExitCode 'adopted proposal cannot agree with an active machine row'
+        Assert-Equal 1 @($adoptedMachineMismatch.Document.mismatches | Where-Object {
+            $_.reason -eq 'lifecycle_disagreement' -and
+            $_.change_id -eq 'change-alpha' -and
+            $_.expected -eq 'completed' -and
+            $_.actual -eq 'active'
+        }).Count 'adopted proposal reports the completed-versus-active disagreement'
+
+        Write-Utf8Text -Path (Join-Path $alphaRoot 'proposal.md') -Value $activeProposal
+        Write-JsonDocument -Path $ledgerPath -Document ([ordered]@{
+            schema_version = 'openspec-lifecycle-ledger/v1'
+            changes       = $completedLedgerChanges
+        })
+        $activeProposalMismatch = Invoke-Reconciler -Root $repoRoot -Ledger $ledgerPath -OpenSpecList $openSpecPath
+        Assert-ReportContract -Result $activeProposalMismatch -Message 'active proposal against completed machine state'
+        Assert-Equal 2 $activeProposalMismatch.ExitCode 'active proposal cannot agree with a completed machine row'
+        Assert-Equal 1 @($activeProposalMismatch.Document.mismatches | Where-Object {
+            $_.reason -eq 'lifecycle_disagreement' -and
+            $_.change_id -eq 'change-alpha' -and
+            $_.expected -eq 'active' -and
+            $_.actual -eq 'completed'
+        }).Count 'active proposal reports the active-versus-completed disagreement'
+
+        Write-Utf8Text -Path (Join-Path $alphaRoot 'proposal.md') -Value $adoptedArchiveProposal
+        $inProgressCompletedOpenSpec = @(
+            $completedOpenSpecChanges[0],
+            [ordered]@{
+                name           = 'change-alpha'
+                completedTasks = 2
+                totalTasks     = 2
+                lastModified   = '2000-01-01T00:00:00.000Z'
+                status         = 'in-progress'
+            }
+        )
+        Write-OpenSpecFixture -Path $openSpecPath -Root $repoRoot -Changes $inProgressCompletedOpenSpec
+        $completedCliMismatch = Invoke-Reconciler -Root $repoRoot -Ledger $ledgerPath -OpenSpecList $openSpecPath
+        Assert-ReportContract -Result $completedCliMismatch -Message 'completed lifecycle against in-progress CLI status'
+        Assert-Equal 2 $completedCliMismatch.ExitCode 'completed lifecycle requires a complete CLI status'
+        Assert-Equal 1 @($completedCliMismatch.Document.mismatches | Where-Object {
+            $_.reason -eq 'lifecycle_unrepresented' -and
+            $_.change_id -eq 'change-alpha' -and
+            $_.expected -eq 'complete' -and
+            $_.actual -eq 'in-progress'
+        }).Count 'completed lifecycle reports the in-progress CLI representation'
+    } finally {
+        Write-Utf8Text -Path (Join-Path $alphaRoot 'proposal.md') -Value $activeProposal
+        Write-Utf8Text -Path (Join-Path $alphaRoot 'tasks.md') -Value "- [x] completed`n- [ ] pending`n"
+        Write-OpenSpecFixture -Path $openSpecPath -Root $repoRoot -Changes $baseOpenSpecChanges
+        Write-JsonDocument -Path $ledgerPath -Document ([ordered]@{
+            schema_version = 'openspec-lifecycle-ledger/v1'
+            changes       = $baseLedgerChanges
+        })
+    }
+
     $noLedgerInventory = Invoke-Reconciler -Root $repoRoot -Mode Inventory -OpenSpecList $openSpecPath
     $noLedgerReconcile = Invoke-Reconciler -Root $repoRoot -Mode Reconcile -OpenSpecList $openSpecPath
     Assert-Equal 0 $noLedgerInventory.ExitCode 'inventory without machine state remains report-only'

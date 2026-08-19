@@ -773,6 +773,33 @@
           "docs/evidence/ci-parallelization-agent-governance-shards/fixpoint/summary.md"
         ]
       }
+    },
+    {
+      "id": "openspec-lifecycle-parser-alignment",
+      "status": "open",
+      "pr": 634,
+      "opened_at": "2026-08-19T04:46:26Z",
+      "reason": "the shared PowerShell lifecycle parser now maps adopted proposal markers to completed state and its reconciliation consumer emits completed lifecycle mismatches; the base-pinned checker cannot prove the post-change normalization before merge, so a mainline replay is the only merged-behavior evidence",
+      "verification_mechanism_paths": [
+        "scripts/lib/openspec-lifecycle.ps1",
+        "scripts/self-referential-bootstrap-ledger.json"
+      ],
+      "verification_contract": {
+        "id": "openspec-lifecycle-parser-alignment/v1",
+        "command_ids": [
+          "test-openspec-ledger-reconciliation",
+          "verify-openspec-lifecycle",
+          "test-self-referential-bootstrap",
+          "test-pr-body-evidence",
+          "invoke-powershell-static"
+        ],
+        "contract_sha256": "80ce60c30c2e4d071d3b22c33e352ec61047514822632c95d50aa9ad3eb570bd"
+      },
+      "bootstrap_evidence_refs": [
+        "docs/evidence/openspec-lifecycle-parser-alignment/self-referential-bootstrap/README.md",
+        "docs/evidence/openspec-lifecycle-parser-alignment/self-referential-bootstrap/verification.txt"
+      ],
+      "fixpoint": null
     }
   ]
 }

@@ -1,0 +1,43 @@
+stack_kind=self_referential_bootstrap
+pr=634
+ledger_entry=openspec-lifecycle-parser-alignment
+opening_base=7e55de6492078b6cfd327435e5933ed7ade4f1de
+pre_opening_head=ea5f4977bf7a0677092ae3a9e1d8d1a8e6446dcb
+verification_contract=openspec-lifecycle-parser-alignment/v1
+contract_sha256=80ce60c30c2e4d071d3b22c33e352ec61047514822632c95d50aa9ad3eb570bd
+mechanism_paths=scripts/lib/openspec-lifecycle.ps1,scripts/self-referential-bootstrap-ledger.json
+
+status=bootstrap_contract_pass
+verified_at=2026-08-19T05:05:52Z
+subject=working tree based on pre-opening head ea5f4977bf7a0677092ae3a9e1d8d1a8e6446dcb with the exact ledger and evidence additions listed by this PR
+
+test-openspec-ledger-reconciliation
+command=pwsh -NoProfile -NonInteractive -File scripts/tests/test-openspec-ledger-reconciliation.ps1
+result=exit 0; all assertions passed; elapsed 268.7 seconds
+
+verify-openspec-lifecycle
+command=pwsh -NoProfile -NonInteractive -File scripts/tests/verify-openspec-lifecycle.ps1 -BaseRef 7e55de6492078b6cfd327435e5933ed7ade4f1de
+result=exit 0; openspec lifecycle OK; non_deferred=5; deferred=6; elapsed 3.6 seconds
+
+test-self-referential-bootstrap
+command=pwsh -NoProfile -NonInteractive -File scripts/tests/test-self-referential-bootstrap.ps1
+result=exit 0; all assertions passed; elapsed 40.8 seconds
+
+test-pr-body-evidence
+command=pwsh -NoProfile -NonInteractive -File scripts/tests/test-pr-body-evidence.ps1
+result=exit 0; all assertions passed; elapsed 13.3 seconds
+
+invoke-powershell-static
+command=pwsh -NoProfile -NonInteractive -File scripts/tests/invoke-powershell-static.ps1
+result=exit 0; passed; elapsed 3.1 seconds
+
+gitnexus-impact
+command=gitnexus impact Get-OpenSpecProposalState -d upstream -r AI-BIM-governance
+result=UNKNOWN/unavailable; symbol target was not found, and exact-worktree detect-changes later located the index but its internal git diff failed with Not a git repository; owner explicitly accepted raw source, tests, and diff fallback for this Lane S shared-flow
+
+windows-verification
+tier=deploy_dryrun
+result=HELD; exact-final-head Windows deploy dry-run and machine-checkable GitHub Actions run URL are recorded in the PR body after the final push, not claimed by this pre-final-head bootstrap file
+
+No credential value was read or emitted. No approval, merge, runtime stop,
+deployment mutation, or production action was performed while opening this debt.

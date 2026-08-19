@@ -159,7 +159,7 @@
         },
         "proposal_status": {
           "type": "string",
-          "enum": ["active", "deferred", "invalid", "missing"]
+          "enum": ["active", "deferred", "completed", "invalid", "missing"]
         },
         "proposal_raw_status": {
           "type": ["string", "null"],

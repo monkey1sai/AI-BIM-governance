@@ -860,7 +860,7 @@ try {
         if ($repo.Proposal.Exists -and $repo.Proposal.LifecycleStatus -eq 'invalid') {
             $mismatches.Add((New-Mismatch -Code 'lifecycle' -Reason 'invalid_marker' `
                 -ChangeId $id -Field 'repository.proposal_status' -ExpectedSource 'repository_contract' `
-                -Expected 'active|deferred' -ActualSource 'proposal' -Actual ([string]$repo.Proposal.RawStatus) `
+                -Expected 'active|deferred|completed' -ActualSource 'proposal' -Actual ([string]$repo.Proposal.RawStatus) `
                 -Message 'The proposal prologue contains an unsupported or duplicate lifecycle marker.'))
         }
         if (
@@ -878,12 +878,25 @@ try {
                 -Expected 'deferred' -ActualSource 'openspec_cli' -Actual ([string]$openSpecById[$id].Status) `
                 -Message 'OpenSpec CLI task status does not represent the proposal deferred lifecycle.'))
         }
+        if (
+            $hasMachine -and
+            [string]$machineById[$id].status -eq 'completed' -and
+            $hasOpenSpec -and
+            $openSpecById[$id].Status -ne 'complete'
+        ) {
+            $mismatches.Add((New-Mismatch -Code 'lifecycle' -Reason 'lifecycle_unrepresented' `
+                -ChangeId $id -Field 'lifecycle.status' -ExpectedSource 'machine_state' `
+                -Expected 'complete' -ActualSource 'openspec_cli' -Actual ([string]$openSpecById[$id].Status) `
+                -Message 'OpenSpec CLI task status does not represent the completed lifecycle.'))
+        }
         if ($hasMachine -and $repo.Proposal.Exists) {
             $machineStatus = [string]$machineById[$id].status
             $machineLifecycleMismatch = (
                 $repo.Proposal.LifecycleStatus -eq 'deferred' -and $machineStatus -ne 'deferred'
             ) -or (
-                $repo.Proposal.LifecycleStatus -eq 'active' -and $machineStatus -in @('deferred', 'archived')
+                $repo.Proposal.LifecycleStatus -eq 'active' -and $machineStatus -in @('deferred', 'completed', 'archived')
+            ) -or (
+                $repo.Proposal.LifecycleStatus -eq 'completed' -and $machineStatus -ne 'completed'
             )
             if ($machineLifecycleMismatch) {
                 $mismatches.Add((New-Mismatch -Code 'lifecycle' -Reason 'lifecycle_disagreement' `
