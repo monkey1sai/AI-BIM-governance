@@ -109,6 +109,33 @@ that comparison is PR evidence, not a gate.
 Until the wiring PR lands, nothing here adjudicates anything. `report-agent-governance-policy.ps1`
 exits 0 regardless of findings, deliberately, so that no caller can turn it into a gate by accident.
 
+## Lifecycle-ledger subject binding
+
+A different machine-readable artifact with a different ratchet from the rule ratchet above:
+`openspec/lifecycle-ledger.json`, adjudicated by the machine-truth comparator
+(`scripts/lib/openspec-machine-truth.mjs`, `scripts/tests/verify-openspec-machine-truth.mjs`).
+Spec: `openspec/changes/introduction-resolved-subject-binding/`.
+
+**Reconcile declares the sentinel.** A lifecycle row that a reconcile *adds*, or whose
+`subject_commit` it *rewrites*, MUST also carry `subject_binding: "introduction"`. The sentinel
+says "when the recorded SHA is no longer reachable from the trusted base, resolve my subject from
+its introduction commit", which is what lets a row survive the squash merge that lands it. The
+reconcile ratchet (`assertReconcileRatchet`) fails closed with `subject_binding_required` on every
+other rewrite, so a row can no longer advance its watermark past accrued drift.
+
+**A dangling subject is not a PR.** Post-squash dangling subjects no longer get a rebind PR —
+owner ruling on #589 P1, 2026-08-18. The required CI ledger check is base-aware and recovers the
+introduction itself, so a PR whose only content is re-pointing a `subject_commit` at a landed
+squash is the treadmill this replaced, not a chore.
+
+**Rebind is repair, not routine.** Moving a subject by hand is legitimate only where
+introduction recovery fails closed — `subject_not_ancestor`, ambiguity, more than 32 candidates —
+and the repair states which failure it answers.
+
+Legacy rows without the sentinel stay legal. They are normalized opportunistically: only a
+reconcile that already touches a row rewrites it, and then only to the resolved introduction of
+its base binding. There is no batch upgrade and no tooling for one.
+
 ## Running it
 
 ```powershell
