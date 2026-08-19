@@ -271,4 +271,3 @@ Review Room（G）v1 SHALL 維持殼層狀態並提供「在既有 viewer 開啟
 - **WHEN** 操作員開啟 Review Room
 - **THEN** 頁面 SHALL 誠實標示「不動 App.tsx / Window.tsx」
 - **AND** 工具列 section / snapshot SHALL 標 `p15`（待建），SHALL NOT 標為已實作
-

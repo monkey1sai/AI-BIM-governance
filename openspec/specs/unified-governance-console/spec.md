@@ -316,4 +316,3 @@ Every user-facing capability shown in the product console SHALL mark whether the
 #### Scenario: Operator inspects a not-built action
 - **WHEN** a capability is not backed by current API/runtime behavior
 - **THEN** the UI disables the action or labels it as pending/roadmap and explains the missing backend or evidence
-
