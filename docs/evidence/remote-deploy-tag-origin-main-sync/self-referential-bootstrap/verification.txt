@@ -1,0 +1,40 @@
+stack_kind=self_referential_bootstrap
+pr=647
+ledger_entry=remote-deploy-tag-origin-main-sync
+opening_base=85179d36bbc0c8421efd10b454d80a6891fffd80
+pre_opening_head=37d54dcefbbcf1c8d2f7f1450253ecb375814f35
+verification_contract=remote-deploy-tag-origin-main-sync/v1
+contract_sha256=79f59833ee9e310be43cca15dd1429a4e830e1dd7de0fddb0fba125ed51e2211
+mechanism_paths=scripts/lib/remote-deploy-transport.ps1,scripts/self-referential-bootstrap-ledger.json
+
+status=bootstrap_contract_pass
+verified_at=2026-08-19T08:52:00Z
+subject=working tree based on pre-opening head 37d54dcefbbcf1c8d2f7f1450253ecb375814f35 with the exact ledger and evidence additions listed by this PR
+
+test-remote-deploy-transport
+command=pwsh -NoProfile -NonInteractive -File scripts/tests/test-remote-deploy-transport.ps1
+result=exit 0; all assertions passed, including the two new assertions covering the origin/main sync push and its failure handling; elapsed 1.5 seconds
+
+test-self-referential-bootstrap
+command=pwsh -NoProfile -NonInteractive -File scripts/tests/test-self-referential-bootstrap.ps1
+result=exit 0; all assertions passed; elapsed 29.1 seconds
+
+test-pr-body-evidence
+command=pwsh -NoProfile -NonInteractive -File scripts/tests/test-pr-body-evidence.ps1
+result=exit 0; all assertions passed; elapsed 11.1 seconds
+
+invoke-powershell-static
+command=pwsh -NoProfile -NonInteractive -File scripts/tests/invoke-powershell-static.ps1
+result=exit 0; passed; elapsed 2.8 seconds
+
+gitnexus-impact
+command=gitnexus impact New-RemoteDeployTag -d upstream -r AI-BIM-governance
+result=UNKNOWN/unavailable; target symbol not found (impactedCount=0, risk=UNKNOWN) both before and after `gitnexus analyze --force --index-only` fully rebuilt the index (17,429 nodes / 36,560 edges); a control query against a known-good TypeScript symbol (CoordinatorApp) succeeded in the same run, so the tool itself is functioning - PowerShell function-level symbols are not currently extracted by GitNexus (.ps1 files are indexed as File nodes only). Substitute evidence: manual call-site inventory via Grep found exactly two consumers (scripts/dev/rebuild-test-deploy.ps1 and scripts/tests/test-remote-deploy-transport.ps1); both were read and the test file was extended in this PR.
+
+windows-verification
+tier=deploy_dryrun
+result=HELD; exact-final-head GitHub Actions run URL is recorded in the PR body after the final push, not claimed by this pre-final-head bootstrap file; this change was verified via the injected-GitRunner unit test above, not a live SSH deployment to the canonical Linux host (no deployment was triggered while opening this debt)
+
+No credential value was read or emitted. No approval, merge, runtime stop,
+deployment mutation, or production action was performed while opening this
+debt.
