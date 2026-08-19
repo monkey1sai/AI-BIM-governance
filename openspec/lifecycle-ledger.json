@@ -1929,11 +1929,11 @@
     },
     {
       "id": "rvt-ifc-usdc-lineage",
-      "status": "deferred",
+      "status": "active",
       "owner": "conversion-lineage",
-      "current_slice": null,
+      "current_slice": "2026-08-19 owner 裁決 R-2026-08-19 thaw：Slice L1 = tasks 2.1–2.7 contract fixtures → tests/contracts/；1.1 順序前置降級為衝突面約束（align successor 鏈平行）；L2（tasks 1.2/1.3 + strict validate）完成前不得 3.x runtime 接線",
       "blocked_by": [],
-      "last_verified": "2026-07-28T06:30:00Z",
+      "last_verified": "2026-08-19T09:40:00Z",
       "task_ledger": {
         "completed": 1,
         "total": 48
