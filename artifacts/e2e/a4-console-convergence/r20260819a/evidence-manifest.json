@@ -1,0 +1,265 @@
+{
+  "schema_version": "isolated-branch-browser-evidence/v1",
+  "stack_kind": "isolated_branch_stack",
+  "change_id": "a4-console-convergence",
+  "run_id": "r20260819a",
+  "head_sha": "76ce813535a191c19bb2d39f0800e765b9a715d1",
+  "invocation_generation": "7d928882-2351-4df5-a4ca-91e89be33666",
+  "resolved_ports": {
+    "coordinator": 8005,
+    "governance": 49103,
+    "viewer": 5180
+  },
+  "base_urls": {
+    "coordinator": "http://127.0.0.1:8005",
+    "governance": "http://127.0.0.1:49103",
+    "viewer": "http://127.0.0.1:5180"
+  },
+  "execution_window": {
+    "started_at": "2026-08-19T02:28:19.1153651Z",
+    "finished_at": "2026-08-19T02:42:16.277Z"
+  },
+  "observations": [
+    {
+      "test_id": "a4-real-empty-1440x900",
+      "route": "#semantic-search",
+      "main_buttons": [
+        "a4-refresh-sources",
+        "a4-run"
+      ],
+      "fixture": "downloaded IFC-ready job exercised against the real coordinator with deterministic query=IfcDoor NoMatchobeedglonagfenmi",
+      "backend_api": "POST /api/governance/search/model/for-ifc-ready/ifcready_1787107017281_a713c7bc",
+      "observed_runtime_ids": {
+        "ifc_ready_job_id": "ifcready_1787107017281_a713c7bc",
+        "query_id": "a4q_0qcPHe67kSXWZ9ofC2M4SjyV"
+      },
+      "visible_states": [
+        "success",
+        "empty"
+      ],
+      "harness": {
+        "buildFlag": false,
+        "queryFlag": false,
+        "realControlPlaneEligible": true
+      },
+      "artifacts": {
+        "screenshots": [
+          "playwright-output/af874450-b940-477b-a137-15901ab17116/a4-closeout-A4-require-rea-e567a-s-not-enable-legacy-actions-chromium/a4-real-empty-1440x900.png"
+        ],
+        "trace": "playwright-output/af874450-b940-477b-a137-15901ab17116/a4-closeout-A4-require-rea-e567a-s-not-enable-legacy-actions-chromium/empty-match-stays-explicit-and-does-not-enable-legacy-actions-trace.zip"
+      }
+    },
+    {
+      "test_id": "a4-real-empty-1920x1080",
+      "route": "#semantic-search",
+      "main_buttons": [
+        "a4-refresh-sources",
+        "a4-run"
+      ],
+      "fixture": "downloaded IFC-ready job exercised against the real coordinator with deterministic query=IfcDoor NoMatchcncejaopjpkheajc",
+      "backend_api": "POST /api/governance/search/model/for-ifc-ready/ifcready_1787107017281_a713c7bc",
+      "observed_runtime_ids": {
+        "ifc_ready_job_id": "ifcready_1787107017281_a713c7bc",
+        "query_id": "a4q_KhnGZPcn607uCKELrC5a1bgh"
+      },
+      "visible_states": [
+        "success",
+        "empty"
+      ],
+      "harness": {
+        "buildFlag": false,
+        "queryFlag": false,
+        "realControlPlaneEligible": true
+      },
+      "artifacts": {
+        "screenshots": [
+          "playwright-output/af874450-b940-477b-a137-15901ab17116/a4-closeout-A4-require-rea-b05e0-s-not-enable-legacy-actions-chromium/a4-real-empty-1920x1080.png"
+        ],
+        "trace": "playwright-output/af874450-b940-477b-a137-15901ab17116/a4-closeout-A4-require-rea-b05e0-s-not-enable-legacy-actions-chromium/empty-match-stays-explicit-and-does-not-enable-legacy-actions-trace.zip"
+      }
+    },
+    {
+      "test_id": "a4-real-failure-retry-1440x900",
+      "route": "#semantic-search",
+      "main_buttons": [
+        "a4-refresh-sources",
+        "a4-run"
+      ],
+      "fixture": "downloaded IFC-ready job preflighted against the real coordinator with deterministic query=IfcDoor",
+      "backend_api": "GET /api/external/ifc-ready?limit=100",
+      "observed_runtime_ids": {
+        "ifc_ready_job_id": "ifcready_1787107017281_a713c7bc"
+      },
+      "visible_states": [
+        "failure",
+        "retry"
+      ],
+      "harness": {
+        "buildFlag": false,
+        "queryFlag": false,
+        "realControlPlaneEligible": true
+      },
+      "artifacts": {
+        "screenshots": [
+          "playwright-output/af874450-b940-477b-a137-15901ab17116/a4-closeout-A4-require-rea-8aebc-e-then-retries-the-real-API-chromium/a4-real-failure-retry-1440x900.png"
+        ],
+        "trace": "playwright-output/af874450-b940-477b-a137-15901ab17116/a4-closeout-A4-require-rea-8aebc-e-then-retries-the-real-API-chromium/shows-list-failure-then-retries-the-real-API-trace.zip"
+      }
+    },
+    {
+      "test_id": "a4-real-failure-retry-1920x1080",
+      "route": "#semantic-search",
+      "main_buttons": [
+        "a4-refresh-sources",
+        "a4-run"
+      ],
+      "fixture": "downloaded IFC-ready job preflighted against the real coordinator with deterministic query=IfcDoor",
+      "backend_api": "GET /api/external/ifc-ready?limit=100",
+      "observed_runtime_ids": {
+        "ifc_ready_job_id": "ifcready_1787107017281_a713c7bc"
+      },
+      "visible_states": [
+        "failure",
+        "retry"
+      ],
+      "harness": {
+        "buildFlag": false,
+        "queryFlag": false,
+        "realControlPlaneEligible": true
+      },
+      "artifacts": {
+        "screenshots": [
+          "playwright-output/af874450-b940-477b-a137-15901ab17116/a4-closeout-A4-require-rea-05ceb-e-then-retries-the-real-API-chromium/a4-real-failure-retry-1920x1080.png"
+        ],
+        "trace": "playwright-output/af874450-b940-477b-a137-15901ab17116/a4-closeout-A4-require-rea-05ceb-e-then-retries-the-real-API-chromium/shows-list-failure-then-retries-the-real-API-trace.zip"
+      }
+    },
+    {
+      "test_id": "a4-real-loading-1440x900",
+      "route": "#semantic-search",
+      "main_buttons": [
+        "a4-refresh-sources",
+        "a4-run"
+      ],
+      "fixture": "downloaded IFC-ready job preflighted against the real coordinator with deterministic query=IfcDoor",
+      "backend_api": "GET /api/external/ifc-ready?limit=100",
+      "observed_runtime_ids": {
+        "ifc_ready_job_id": "ifcready_1787107017281_a713c7bc"
+      },
+      "visible_states": [
+        "loading"
+      ],
+      "harness": {
+        "buildFlag": false,
+        "queryFlag": false,
+        "realControlPlaneEligible": true
+      },
+      "artifacts": {
+        "screenshots": [
+          "playwright-output/af874450-b940-477b-a137-15901ab17116/a4-closeout-A4-require-rea-c18df-eal-IFC-ready-loading-state-chromium/a4-real-loading-1440x900.png"
+        ],
+        "trace": "playwright-output/af874450-b940-477b-a137-15901ab17116/a4-closeout-A4-require-rea-c18df-eal-IFC-ready-loading-state-chromium/shows-real-IFC-ready-loading-state-trace.zip"
+      }
+    },
+    {
+      "test_id": "a4-real-loading-1920x1080",
+      "route": "#semantic-search",
+      "main_buttons": [
+        "a4-refresh-sources",
+        "a4-run"
+      ],
+      "fixture": "downloaded IFC-ready job preflighted against the real coordinator with deterministic query=IfcDoor",
+      "backend_api": "GET /api/external/ifc-ready?limit=100",
+      "observed_runtime_ids": {
+        "ifc_ready_job_id": "ifcready_1787107017281_a713c7bc"
+      },
+      "visible_states": [
+        "loading"
+      ],
+      "harness": {
+        "buildFlag": false,
+        "queryFlag": false,
+        "realControlPlaneEligible": true
+      },
+      "artifacts": {
+        "screenshots": [
+          "playwright-output/af874450-b940-477b-a137-15901ab17116/a4-closeout-A4-require-rea-fd46a-eal-IFC-ready-loading-state-chromium/a4-real-loading-1920x1080.png"
+        ],
+        "trace": "playwright-output/af874450-b940-477b-a137-15901ab17116/a4-closeout-A4-require-rea-fd46a-eal-IFC-ready-loading-state-chromium/shows-real-IFC-ready-loading-state-trace.zip"
+      }
+    },
+    {
+      "test_id": "a4-real-success-1440x900",
+      "route": "#semantic-search",
+      "main_buttons": [
+        "a4-refresh-sources",
+        "a4-run"
+      ],
+      "fixture": "downloaded IFC-ready job exercised against the real coordinator with deterministic query=IfcDoor",
+      "backend_api": "POST /api/governance/search/model/for-ifc-ready/ifcready_1787107017281_a713c7bc",
+      "observed_runtime_ids": {
+        "ifc_ready_job_id": "ifcready_1787107017281_a713c7bc",
+        "query_id": "a4q_Ge0xAgA8JoMrwl_BTdUbest8"
+      },
+      "visible_states": [
+        "success"
+      ],
+      "harness": {
+        "buildFlag": false,
+        "queryFlag": false,
+        "realControlPlaneEligible": true
+      },
+      "artifacts": {
+        "screenshots": [
+          "playwright-output/af874450-b940-477b-a137-15901ab17116/a4-closeout-A4-require-rea-44fd2-gainst-the-real-coordinator-chromium/a4-real-success-1440x900.png"
+        ],
+        "trace": "playwright-output/af874450-b940-477b-a137-15901ab17116/a4-closeout-A4-require-rea-44fd2-gainst-the-real-coordinator-chromium/runs-A4-against-the-real-coordinator-trace.zip"
+      }
+    },
+    {
+      "test_id": "a4-real-success-1920x1080",
+      "route": "#semantic-search",
+      "main_buttons": [
+        "a4-refresh-sources",
+        "a4-run"
+      ],
+      "fixture": "downloaded IFC-ready job exercised against the real coordinator with deterministic query=IfcDoor",
+      "backend_api": "POST /api/governance/search/model/for-ifc-ready/ifcready_1787107017281_a713c7bc",
+      "observed_runtime_ids": {
+        "ifc_ready_job_id": "ifcready_1787107017281_a713c7bc",
+        "query_id": "a4q_20LzuCvkkGNdgjglRHhHEShH"
+      },
+      "visible_states": [
+        "success"
+      ],
+      "harness": {
+        "buildFlag": false,
+        "queryFlag": false,
+        "realControlPlaneEligible": true
+      },
+      "artifacts": {
+        "screenshots": [
+          "playwright-output/af874450-b940-477b-a137-15901ab17116/a4-closeout-A4-require-rea-24482-gainst-the-real-coordinator-chromium/a4-real-success-1920x1080.png"
+        ],
+        "trace": "playwright-output/af874450-b940-477b-a137-15901ab17116/a4-closeout-A4-require-rea-24482-gainst-the-real-coordinator-chromium/runs-A4-against-the-real-coordinator-trace.zip"
+      }
+    }
+  ],
+  "scope": {
+    "cpu_browser_operability": "partial",
+    "required_observation_ids": [
+      "a3-federated-session-chain",
+      "a4-real-loading-1440x900",
+      "a4-real-failure-retry-1440x900",
+      "a4-real-success-1440x900",
+      "a4-real-empty-1440x900",
+      "a4-real-loading-1920x1080",
+      "a4-real-failure-retry-1920x1080",
+      "a4-real-success-1920x1080",
+      "a4-real-empty-1920x1080"
+    ],
+    "design": "not_claimed",
+    "deploy": "not_claimed",
+    "kit_webrtc": "not_claimed"
+  }
+}
