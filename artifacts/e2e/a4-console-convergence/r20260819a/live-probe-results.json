@@ -1,0 +1,149 @@
+{
+  "schema_version": "a4-live-probe/v1",
+  "run_id": "r20260819a",
+  "job_id": "ifcready_1787107017281_a713c7bc",
+  "stack": {
+    "coordinator_base_url": "http://127.0.0.1:8005",
+    "governance_base_url_internal": "http://127.0.0.1:49103"
+  },
+  "endpoint": "/api/governance/search/model/for-ifc-ready/:jobId (POST, coordinator-owned lab-scope route; forwards to governance-service /api/internal/a4/search/model with a4_trusted_context.scope=ifc_ready_table_only)",
+  "llm_status_endpoint": "/api/governance/search/llm-status (GET) -> proxies governance-service GET /api/search/llm-status; path confirmed live, no 404",
+  "auth_note": "for-ifc-ready requires principal.auth_scope==lab; obtained via local-dev UserAuthProvider (any non-empty Authorization: Bearer <token> or X-User-Token header hashes into an opaque lab principal). No literal token/secret recorded in this file.",
+  "tooling_note": "Windows PowerShell 5.1 Invoke-WebRequest -Body <string> mangled multi-byte Chinese query text into literal '?' characters on the first pass (visible as raw_query:\"??????\" server-side). Fixed by sending [System.Text.Encoding]::UTF8.GetBytes(json) as -Body with explicit ContentType 'application/json; charset=utf-8'. All probes below are from the corrected run; raw_query fields confirm correct transmission.",
+  "probes": [
+    {
+      "name": "llm_status",
+      "request": { "method": "GET", "path": "/api/governance/search/llm-status" },
+      "http_status": 200,
+      "enabled": false,
+      "configured": false,
+      "state": "disabled",
+      "model": "Ornith-1.0-35B",
+      "error_code": "llm_disabled",
+      "transport_class": "unconfigured",
+      "note": "Semantic LLM is unavailable in this isolated stack. All semantic-mode probes below therefore exercise the real LLM-unavailable path, not a simulated one."
+    },
+    {
+      "name": "uninterpreted_live",
+      "request": { "query": "嗚啦啦這不是合法查詢語法", "interpret_mode": "deterministic" },
+      "http_status": 200,
+      "status": "partial_fallback_requires_trusted_context",
+      "error_code": null,
+      "search_scope": "ifc_ready_table_only",
+      "issue_eligible": false,
+      "highlight_eligible": false,
+      "degraded_to_deterministic": false,
+      "completion_scope": "not_executed",
+      "next_step": "run_through_authenticated_session_confirmation",
+      "interpreted_filters": {
+        "raw_query": "嗚啦啦這不是合法查詢語法",
+        "ifc_classes": [],
+        "usable": true,
+        "complete": false,
+        "unresolved_terms": ["不是"]
+      },
+      "result_rows": 0,
+      "observed_query_id": "a4q_CzreRzLCo50B5s4c53A9nJ9s",
+      "acceptance_read": "No compliance/completion claim is made; deterministic interpretation was only partially usable and the ifc_ready (lab, no session binding) scope cannot mint a partial-fallback confirmation, so it correctly falls to the trusted-context-required gate instead of returning any rows."
+    },
+    {
+      "name": "table_only_gating_live",
+      "request": { "query": "IfcWall", "interpret_mode": "deterministic" },
+      "http_status": 200,
+      "status": "ok",
+      "search_scope": "ifc_ready_table_only",
+      "issue_eligible": false,
+      "highlight_eligible": false,
+      "degraded_to_deterministic": false,
+      "completion_scope": "truncated_table",
+      "stats": { "total": 375, "scanned": 375, "matched": 375, "returned": 200, "truncated": true },
+      "result_rows": 200,
+      "observed_query_id": "a4q_lnJ_CFZNaTX_pApIcy0XSvpc",
+      "acceptance_read": "table_only scope forces issue_eligible=false and highlight_eligible=false on every row regardless of match count (Issue creation / 3D highlight both disabled for ifc_ready-scope search)."
+    },
+    {
+      "name": "semantic_degraded_live",
+      "request": { "query": "找出所有的門", "interpret_mode": "semantic" },
+      "http_status": 200,
+      "status": "semantic_error",
+      "error_code": "llm_config_invalid",
+      "retryable": true,
+      "search_scope": "ifc_ready_table_only",
+      "issue_eligible": false,
+      "highlight_eligible": false,
+      "completion_scope": "not_executed",
+      "next_step": "retry_semantic_interpretation_or_use_deterministic_mode",
+      "model_invocation": { "attempted": true, "error_code": "llm_config_invalid" },
+      "result_rows": 0,
+      "observed_query_id": "a4q_wJmflEaz_wFnUMnE5F5YWyB4",
+      "acceptance_read": "Explicit interpret_mode=semantic with LLM unavailable does NOT silently substitute a deterministic answer and does NOT claim completion: it fails hard with status=semantic_error, retryable=true, 0 result rows, issue/highlight both disabled. This is a stronger form of the 4.4 guarantee than a silent degrade would be — for an explicit semantic request the engine refuses to pretend, rather than quietly answering a different question."
+    },
+    {
+      "name": "semantic_degraded_auto_live",
+      "request": { "query": "找出所有的門", "interpret_mode": "auto" },
+      "http_status": 200,
+      "status": "ok",
+      "search_scope": "ifc_ready_table_only",
+      "issue_eligible": false,
+      "highlight_eligible": false,
+      "degraded_to_deterministic": false,
+      "completion_scope": "complete_table",
+      "interpreted_filters": {
+        "raw_query": "找出所有的門",
+        "ifc_classes": ["IfcDoor"],
+        "usable": true,
+        "complete": true,
+        "unresolved_terms": []
+      },
+      "stats": { "total": 68, "scanned": 68, "matched": 0, "returned": 0 },
+      "model_invocation": { "attempted": false, "error_code": null },
+      "result_rows": 0,
+      "observed_query_id": "a4q_4pPj6hgli2CoKYfwreq8I_09",
+      "acceptance_read": "For this specific Chinese query the deterministic class-alias grammar (門 -> IfcDoor, plus stopword-strip of 找/所有) already fully resolves the query on its own, so auto mode never invokes the LLM (model_invocation.attempted=false) and there is no degrade to report — recorded as-is per instruction not to fabricate a degrade. issue_eligible/highlight_eligible remain false regardless (ifc_ready scope), and matched=0/68 was observed honestly without further row-level investigation (out of this probe's scope)."
+    },
+    {
+      "name": "degraded_to_deterministic_probe",
+      "request": { "query": "IfcWall 附近的門", "interpret_mode": "auto" },
+      "http_status": 200,
+      "status": "partial_fallback_requires_trusted_context",
+      "error_code": null,
+      "search_scope": "ifc_ready_table_only",
+      "issue_eligible": false,
+      "highlight_eligible": false,
+      "degraded_to_deterministic": true,
+      "completion_scope": "not_executed",
+      "next_step": "run_through_authenticated_session_confirmation",
+      "interpreted_filters": {
+        "raw_query": "IfcWall 附近的門",
+        "ifc_classes": ["IfcWall", "IfcDoor"],
+        "usable": true,
+        "complete": false,
+        "unresolved_terms": ["附近", "multiple_ifc_class_boolean_semantics"]
+      },
+      "model_invocation": { "attempted": true, "error_code": "llm_config_invalid" },
+      "result_rows": 0,
+      "observed_query_id": "a4q_7ZogqzahMPr1xUTu6S1ZFZ6w",
+      "acceptance_read": "Deliberately crafted query (usable-but-incomplete deterministic parse: two IFC classes plus an unsupported proximity relation) so that auto mode is forced to attempt the LLM and then genuinely falls back on LlmError. This is the actual degraded_to_deterministic=true state: the response returns ZERO result rows, does not execute or claim any completion (completion_scope=not_executed), keeps issue_eligible and highlight_eligible both false, and routes to the authenticated-session confirmation gate rather than serving a silently-substituted deterministic answer. This is the strongest direct evidence for task 4.4: degraded search never claims semantic completion and never unlocks Issue/3D eligibility."
+    },
+    {
+      "name": "retry_linkage_live",
+      "request_first": { "query": "IfcDoor", "interpret_mode": "deterministic" },
+      "request_second": { "query": "IfcDoor", "interpret_mode": "deterministic", "retry_of_query_id": "<first response's query_id>" },
+      "http_status_first": 200,
+      "http_status_second": 200,
+      "first_query_id": "a4q_T4X4oOg7ZE2vWJScpD1W_nCw",
+      "second_query_id": "a4q_T7xAHZI2dy57bfLnPdinfv9t",
+      "second_retry_of_query_id_echoed": "a4q_T4X4oOg7ZE2vWJScpD1W_nCw",
+      "field_name_confirmed": "retry_of_query_id",
+      "first_result_rows": 68,
+      "second_result_rows": 68,
+      "acceptance_read": "The coordinator route (a4SearchRoutes.ts) validates retry_of_query_id against pattern ^a4q_[A-Za-z0-9_-]{12,64}$ and forwards it verbatim to governance-service, which echoes it back unchanged as retry_of_query_id on the second response (opaque client-correlation only, not treated as authority per governance-service/search/api.py comment). Linkage confirmed end to end; both calls returned status=ok / issue_eligible=false / highlight_eligible=false consistent with ifc_ready table-only scope."
+    }
+  ],
+  "task_4_4_summary": {
+    "degraded_never_claims_semantic_completion": true,
+    "table_only_disables_issue_and_highlight_eligibility": true,
+    "explicit_semantic_mode_fails_hard_rather_than_silently_substituting": true,
+    "evidence_probes": ["semantic_degraded_live", "semantic_degraded_auto_live", "degraded_to_deterministic_probe", "table_only_gating_live"]
+  }
+}

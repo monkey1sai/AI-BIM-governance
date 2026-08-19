@@ -351,7 +351,9 @@ for (const viewport of VIEWPORTS) {
       requireReal(Array.isArray(responseBody.results) && responseBody.results.length === 0, "A4 empty search did not return an empty results array");
       requireReal(SAFE_A4_QUERY_ID.test(responseBody.query_id ?? ""), "A4 empty search did not return a safe query_id");
 
-      await expect(page.getByTestId("a4-run-err")).toBeVisible({ timeout: 120_000 });
+      // #615 起 0 筆為 neutral 態（a4-empty），不再以錯誤（a4-run-err）呈現。
+      await expect(page.getByTestId("a4-empty")).toBeVisible({ timeout: 120_000 });
+      await expect(page.getByTestId("a4-run-err")).toHaveCount(0);
       await expect(page.getByTestId("a4-results-table")).toContainText("無列");
       await expect(page.getByTestId("a4-create-issues")).toBeDisabled();
       await finishEvidence(
