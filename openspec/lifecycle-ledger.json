@@ -1493,20 +1493,20 @@
     },
     {
       "id": "introduction-resolved-subject-binding",
-      "status": "deferred",
+      "status": "active",
       "owner": "repository-maintainer",
-      "current_slice": null,
+      "current_slice": "2026-08-19：owner 排程 thaw，第一波（tasks §1–§5）同 PR 實作完成——schema 雙形狀／sentinel 解析／ratchet／origin-main 錨／容量裁決落地／required CI base-aware 化（2.6）。28/33；殘項＝5.4（merge 後 fixpoint）與 §6 第二波（首次 sentinel 資料寫入與 #589 驗收，須先過 6.2 危險窗操作閘）。",
       "blocked_by": [],
-      "last_verified": "2026-08-18T08:30:00Z",
+      "last_verified": "2026-08-19T02:10:00Z",
       "task_ledger": {
-        "completed": 0,
+        "completed": 28,
         "total": 33
       },
       "evidence_refs": [
         "openspec/changes/introduction-resolved-subject-binding/proposal.md",
         "openspec/changes/introduction-resolved-subject-binding/tasks.md"
       ],
-      "subject_commit": "f77b769c419e243e5dd8ed9310050c0614ed97ed",
+      "subject_commit": "51adda7658d098025fc163b5958ca495150eb5e0",
       "archive_debt": null
     },
     {
