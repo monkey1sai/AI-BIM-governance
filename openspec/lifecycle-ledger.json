@@ -191,7 +191,7 @@
       "id": "a4-console-convergence",
       "status": "active",
       "owner": "governance-service",
-      "current_slice": "4.x 隔離 stack 實跑收斂完成 2026-08-19（run r20260819a：manifest head_sha=76ce813（實跑當下 pre-rebase commit，rebase 後不在 branch 歷史）；branch 已 rebase 至 ab67877，本 row subject 綁 rebase 後 evidence commit 1194b5c，宣告 subject_binding=introduction）：seed 真 MinIO job（downloaded＋etag 重驗）、require-real E2E 8/8、7 項 live probe（degraded completion_scope=not_executed／table_only 停用 Issue+3D／retry_of_query_id 回帶）、部署區 listener 前後零變動；evidence 依 PUBLIC 隱私邊界入庫（seed-result/state/logs 只記路徑）。下一步=5.x 收尾（5.1 前端驗證五項綠已實跑、5.3/5.4 PR body 揭露、5.5 merge 後 crosswalk）。",
+      "current_slice": "4.x 隔離 stack 實跑收斂完成 2026-08-19（run r20260819a：manifest head_sha=76ce813＝pre-rebase 實跑 commit；branch 已 rebase，subject 綁 rebase 後 evidence commit 1194b5c＋sentinel）：seed 真 MinIO job（downloaded＋etag 重驗）、require-real E2E 8/8、7 項 live probe（degraded completion_scope=not_executed／table_only 停用 Issue+3D／retry_of_query_id 回帶）、部署區 listener 前後零變動；evidence 依 PUBLIC 隱私邊界入庫（seed-result/state/logs 只記路徑）。下一步=5.x 收尾（5.1 前端驗證五項綠已實跑、5.3/5.4 PR body 揭露、5.5 merge 後 crosswalk）。",
       "blocked_by": [],
       "last_verified": "2026-08-19T03:20:00Z",
       "task_ledger": {
