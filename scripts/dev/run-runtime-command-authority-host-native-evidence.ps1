@@ -708,6 +708,36 @@ try {
         coordinator_stopped = $true
     }
 
+    # The stage read that proves stage truth is authority-gated too, so the case cannot
+    # observe it while the coordinator is down - it would hang, which is exactly what a
+    # gated read during an outage does. Recover as soon as the case reports its outage
+    # assertion done, and tell it when the authority is actually back.
+    $null = Wait-ForControlMarker `
+        -Path (Join-Path $controlDirectory 'outage-done.json') `
+        -RunId $runId `
+        -ControlNonce $controlNonce `
+        -TimeoutSeconds ($script:PlaywrightEvidenceTimeoutSeconds + $script:PlaywrightRunnerGraceSeconds) `
+        -ChildProcess $e2eProcess `
+        -ChildLogPath $playwrightStdoutLog
+    if (-not (Test-DeploymentCoordinatorRunning -ContainerId $coordinator.container_id)) {
+        Invoke-Docker -Arguments @('start', $coordinator.container_id) | Out-Null
+    }
+    $recoveredCoordinator = Get-DeploymentCoordinator -ComposeBase $composeBase -DeploymentRoot $deploymentRoot
+    if ($recoveredCoordinator.container_id -ne $coordinator.container_id) {
+        throw 'Coordinator recovery did not restore the exact container proven before the controlled outage.'
+    }
+    $coordinatorRecovered = Wait-ForHttpOk -Url $script:CoordinatorHealthUrl -TimeoutSeconds 60
+    if (-not $coordinatorRecovered) {
+        throw 'Coordinator did not recover its health endpoint after the controlled outage.'
+    }
+    Write-ControlMarker -Path (Join-Path $controlDirectory 'outage-recovered.json') -Marker @{
+        schema_version = 'runtime-command-authority-control/v1'
+        run_id = $runId
+        request_id = [string]$outageReady.request_id
+        control_nonce = $controlNonce
+        coordinator_recovered = $true
+    }
+
     Wait-ForProcessExit -Process $e2eProcess -TimeoutSeconds ($script:PlaywrightEvidenceTimeoutSeconds + $script:PlaywrightRunnerGraceSeconds)
     if ($e2eProcess.ExitCode -ne 0) {
         throw 'The host-native Playwright case failed; inspect the token-safe result, screenshot, and Playwright output directory.'
