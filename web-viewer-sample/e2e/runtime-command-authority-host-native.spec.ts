@@ -22,7 +22,10 @@ const processLogPaths = (process.env.E2E_RUNTIME_PROCESS_LOGS || "")
   .map((value) => value.trim())
   .filter(Boolean);
 
-// Keep this aligned with the pinned Playwright 1.61.1 Chromium defaults.
+// Keep this aligned with the pinned Playwright 1.61.1 `chromiumSwitches` defaults
+// (packages/playwright-core/src/server/chromium/chromiumSwitches.ts). Playwright
+// composes this switch itself, so the list is identical for the bundled Chromium
+// and for `channel: "chrome"`; only the executable changes.
 const playwrightChromiumDisabledFeatures = [
   "AvoidUnnecessaryBeforeUnloadCheckSync",
   "BoundaryEventDispatchTracksNodeRemoval",
@@ -49,13 +52,26 @@ const hostNativeDisableFeaturesArg = `--disable-features=${[
 ].join(",")}`;
 
 test.use({
+  // Playwright's bundled Chromium ships without the proprietary codecs, so it
+  // never negotiates a video track against Kit's NVENC H.264 livestream and the
+  // first-frame wait can only ever time out. The one repo path that has actually
+  // captured a first frame (scripts/verify-runtime-e2e-cdp.mjs) drives the real
+  // Chrome install for exactly this reason, so this evidence case does the same.
+  channel: "chrome",
   trace: "off",
   screenshot: "off",
   video: "off",
   launchOptions: {
-    // Headless Chromium cannot grant the localhost WebSocket LNA prompt.
+    // Headless Chrome cannot grant the localhost WebSocket LNA prompt. This
+    // surgery is on Playwright's own default switch, not on a browser-shipped
+    // one, so it stays correct under `channel: "chrome"`.
     ignoreDefaultArgs: [playwrightDisableFeaturesArg],
-    args: [hostNativeDisableFeaturesArg],
+    args: [
+      hostNativeDisableFeaturesArg,
+      // Matches scripts/verify-runtime-e2e-cdp.mjs: the probe page starts
+      // playback without a user gesture.
+      "--autoplay-policy=no-user-gesture-required",
+    ],
   },
 });
 test.skip(!enabled, "opt-in Windows host-native Kit/GPU runtime authority evidence");
@@ -233,6 +249,7 @@ async function connectProbe(page: Page): Promise<void> {
       starts: [] as Array<{ action?: string; status?: string }>,
       events: [] as SafeEvent[],
       stats: [] as Array<{ width?: number; height?: number }>,
+      connectSettled: [] as Array<{ settled: "resolved" | "rejected" }>,
     };
     const safeKeys = [
       "result",
@@ -251,7 +268,12 @@ async function connectProbe(page: Page): Promise<void> {
     (globalThis as typeof globalThis & { __HOST_NATIVE_AUTHORITY_PROBE__?: typeof probe })
       .__HOST_NATIVE_AUTHORITY_PROBE__ = probe;
 
-    await streamer.connect({
+    // Production (src/AppStream.tsx) never awaits connect(); it fires the call and
+    // lets the onStart callback drive readiness. Awaiting here made the probe hang
+    // on the streaming library's own internal retry budget instead of on the
+    // onStart wait below, so a codec/SDP failure surfaced as an opaque whole-test
+    // timeout rather than a bounded onStart timeout. Mirror production instead.
+    streamer.connect({
       streamSource: "direct",
       streamConfig: {
         videoElementId: "remote-video",
@@ -290,15 +312,40 @@ async function connectProbe(page: Page): Promise<void> {
           probe.events.push({ event_type: message.event_type, payload });
         },
       },
-    });
+    })
+      .then(() => { probe.connectSettled.push({ settled: "resolved" }); })
+      .catch(() => { probe.connectSettled.push({ settled: "rejected" }); });
   }, { signalPort: kitSignalPort, mediaPort: kitMediaPort });
 
-  await page.waitForFunction(() => {
-    const probe = (globalThis as typeof globalThis & {
-      __HOST_NATIVE_AUTHORITY_PROBE__?: { starts: Array<{ status?: string }> };
-    }).__HOST_NATIVE_AUTHORITY_PROBE__;
-    return probe?.starts.some((entry) => entry.status === "success") === true;
-  }, undefined, { timeout: 90_000 });
+  try {
+    await page.waitForFunction(() => {
+      const probe = (globalThis as typeof globalThis & {
+        __HOST_NATIVE_AUTHORITY_PROBE__?: { starts: Array<{ status?: string }> };
+      }).__HOST_NATIVE_AUTHORITY_PROBE__;
+      return probe?.starts.some((entry) => entry.status === "success") === true;
+    }, undefined, { timeout: 90_000 });
+  } catch (error) {
+    // Report the connect settlement state (never its message, which may carry
+    // signaling detail) so an onStart timeout names its own failure mode.
+    const settled = await page.evaluate(() => {
+      const probe = (globalThis as typeof globalThis & {
+        __HOST_NATIVE_AUTHORITY_PROBE__?: {
+          starts: Array<{ status?: string }>;
+          connectSettled: Array<{ settled: string }>;
+        };
+      }).__HOST_NATIVE_AUTHORITY_PROBE__;
+      return {
+        connect: probe?.connectSettled.map((entry) => entry.settled) || [],
+        startStatuses: probe?.starts.map((entry) => entry.status || "unknown") || [],
+      };
+    }).catch(() => ({ connect: [] as string[], startStatuses: [] as string[] }));
+    throw new Error(
+      `host-native streamer never reported onStart success within 90s `
+      + `(waitFailure=${error instanceof Error ? error.name : "non-error"}; `
+      + `connect=${settled.connect.join(",") || "pending"}; `
+      + `starts=${settled.startStatuses.join(",") || "none"})`,
+    );
+  }
   await page.waitForFunction(() => {
     const video = document.getElementById("remote-video") as HTMLVideoElement | null;
     return Boolean(video && video.videoWidth > 0 && video.videoHeight > 0 && video.readyState >= 2);
