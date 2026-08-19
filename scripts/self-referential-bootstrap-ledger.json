@@ -731,6 +731,41 @@
           "docs/evidence/introduction-resolved-subject-binding/fixpoint/summary.md"
         ]
       }
+    },
+    {
+      "id": "ci-parallelization-agent-governance-shards",
+      "status": "open",
+      "pr": 636,
+      "opened_at": "2026-08-19T00:00:00Z",
+      "reason": "required context agent-governance 由 pull_request 事件執行 PR 自己樹上的 agent-governance.yml，因此本 PR 把 suite 改成 matrix 之後的綠燈是自證，不能證明四個 shard 的聯集仍等於原本 31 個步驟；而 base-owned 的裁決者 pr-review-agent.yml 固定 checkout base.sha，base 樹上根本沒有 shard 結構與 shard 覆蓋斷言，無法執行也無法判定分片後的 gate 是否漏跑任何一支測試。只有 merge 後在 first-parent mainline 上以變更後的 workflow 與變更後的覆蓋斷言重跑一次，才能證明分片沒有靜默移除任何驗證。",
+      "verification_mechanism_paths": [
+        ".github/workflows/agent-governance.yml",
+        ".github/workflows/ci.yml",
+        "scripts/self-referential-bootstrap-ledger.json",
+        "scripts/tests/test-agent-governance-check.ps1",
+        "scripts/tests/test-self-referential-bootstrap.ps1"
+      ],
+      "verification_contract": {
+        "id": "ci-parallelization-agent-governance-shards/v1",
+        "command_ids": [
+          "test-agent-governance-check",
+          "verify-governance-policy",
+          "test-agent-governance-policy",
+          "test-self-referential-bootstrap",
+          "test-base-gate-capability",
+          "test-openspec-ledger-reconciliation",
+          "test-openspec-machine-truth",
+          "test-pr-body-evidence",
+          "invoke-powershell-static",
+          "agent-governance-shard-coverage"
+        ],
+        "contract_sha256": "29f1314ad2121ff365ebe239d7fbcfcb084a42d89bf3aedd301c943d19c79cbf"
+      },
+      "bootstrap_evidence_refs": [
+        "docs/evidence/ci-parallelization-agent-governance-shards/self-referential-bootstrap/README.md",
+        "docs/evidence/ci-parallelization-agent-governance-shards/self-referential-bootstrap/shard-coverage.txt"
+      ],
+      "fixpoint": null
     }
   ]
 }
