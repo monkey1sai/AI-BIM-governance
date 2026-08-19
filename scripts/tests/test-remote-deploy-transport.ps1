@@ -338,6 +338,7 @@ LOCAL_ONLY_FLAG=1
     $name = New-RemoteDeployTag -OperatorRepoRoot 'X:/nowhere' -TargetId 'transport-unit-target' -DeployedSha $sha -SnapshotName 'snap.json' -TimestampUtc $ts -GitRunner $runner
     if ($name -notmatch '-004$') { throw "ASSERT FAILED: collision on -003 must retry to -004 (got $name)" }
     if (-not ($script:tagCalls | Where-Object { $_ -eq "push origin refs/tags/$name" })) { throw 'ASSERT FAILED: the tag must be pushed to origin' }
+    if (-not ($script:tagCalls | Where-Object { $_ -eq "push origin ${sha}:refs/heads/main" })) { throw 'ASSERT FAILED: the deployed commit must also be pushed to origin/main' }
 
     $script:pushFailCalls = [System.Collections.Generic.List[string]]::new()
     $threw = $false
@@ -353,10 +354,31 @@ LOCAL_ONLY_FLAG=1
     if (-not $threw) { throw 'ASSERT FAILED: a failed push must be a hard error, not a silent local tag' }
     if (-not (@($script:pushFailCalls) -match '^tag -d deploy-')) { throw 'ASSERT FAILED: a failed push must delete the local tag (B13: never leave a local-only tag)' }
 
+    # A tag push that succeeds but whose origin/main sync fails must still be a
+    # hard error (origin/main silently diverging from what was tagged as
+    # deployed is worth surfacing) - but must NOT delete the tag, which is
+    # already correct evidence of what was deployed regardless of main's state.
+    $script:mainSyncCalls = [System.Collections.Generic.List[string]]::new()
+    $threw = $false
+    try {
+        $null = New-RemoteDeployTag -OperatorRepoRoot 'X:/nowhere' -TargetId 't' -DeployedSha $sha -SnapshotName 's' -TimestampUtc $ts -GitRunner {
+            param([string[]] $GitArgs)
+            $joined = ($GitArgs -join ' ')
+            $script:mainSyncCalls.Add($joined)
+            if ($joined -match '^push origin refs/tags/') { return [pscustomobject]@{ ExitCode = 0; Output = '' } }
+            if ($joined -match '^push origin \S+:refs/heads/main$') { return [pscustomobject]@{ ExitCode = 1; Output = 'non-fast-forward' } }
+            return [pscustomobject]@{ ExitCode = 0; Output = '' }
+        }
+    } catch { $threw = $true }
+    if (-not $threw) { throw 'ASSERT FAILED: a failed origin/main sync must be a hard error' }
+    if (@($script:mainSyncCalls) -match '^tag -d ') { throw 'ASSERT FAILED: an origin/main sync failure must NOT delete the already-pushed tag' }
+    if (-not (@($script:mainSyncCalls) -match "^push origin ${sha}:refs/heads/main$")) { throw 'ASSERT FAILED: origin/main sync must push the exact deployed sha to refs/heads/main' }
+
     $threw = $false
     try { $null = New-RemoteDeployTag -OperatorRepoRoot 'X:' -TargetId 't' -DeployedSha 'not-a-sha' -SnapshotName 's' -TimestampUtc $ts } catch { $threw = $true }
     if (-not $threw) { throw 'ASSERT FAILED: a non-sha deployed ref must be rejected' }
     Write-Host '[PASS] B13 deploy tag naming, sequencing, collision retry, push discipline'
+    Write-Host '[PASS] deploy tag push also syncs origin/main to the deployed commit'
 
     Write-Host '[test-remote-deploy-transport] all assertions passed'
 } finally {
