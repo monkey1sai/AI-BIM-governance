@@ -41,7 +41,7 @@ flowchart TD
 
 ### 依賴配置步驟（以 `uv` 為主）
 1. **建立虛擬環境**：`uv venv`
-2. **安裝核心測試依賴**：`uv pip install pytest fastapi httpx`
+2. **安裝核心測試依賴**：`uv pip install pytest pytest-asyncio fastapi httpx`
 3. **安裝 3D 轉檔與 fallback 依賴**：`uv pip install usd-core ifcopenshell`（`usd-core` 提供了 Pixar 的 `pxr` 模組，可供本地單元測試使用）
 4. **安裝 Node.js 依賴**：分別在 `bim-review-coordinator/` 與 `web-viewer-sample/` 目錄執行 `npm install`。
 
