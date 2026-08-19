@@ -810,7 +810,7 @@
     },
     {
       "id": "remote-deploy-tag-origin-main-sync",
-      "status": "open",
+      "status": "closed",
       "pr": 647,
       "opened_at": "2026-08-19T08:37:28Z",
       "reason": "the canonical deploy path only ever executes a live deployment against already-merged origin/main content, so proving the new origin/main sync step actually runs and succeeds during a real canonical deployment is impossible before this change itself reaches origin/main; the unit test suite exercises the injected git runner but cannot replace a real B13 tag-and-sync deployment cycle.",
@@ -832,7 +832,14 @@
         "docs/evidence/remote-deploy-tag-origin-main-sync/self-referential-bootstrap/README.md",
         "docs/evidence/remote-deploy-tag-origin-main-sync/self-referential-bootstrap/verification.txt"
       ],
-      "fixpoint": null
+      "fixpoint": {
+        "reverified_at": "2026-08-19T09:47:18Z",
+        "mechanism_commit": "4f55c26d18a4e8cbc7c3ac34816b64bdc188f7fe",
+        "evidence_refs": [
+          "docs/evidence/remote-deploy-tag-origin-main-sync/fixpoint/attestation.json",
+          "docs/evidence/remote-deploy-tag-origin-main-sync/fixpoint/summary.md"
+        ]
+      }
     }
   ]
 }
