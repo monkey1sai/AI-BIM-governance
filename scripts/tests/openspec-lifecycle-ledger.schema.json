@@ -151,6 +151,9 @@
           "type": "string",
           "pattern": "^[0-9a-f]{40}$"
         },
+        "subject_binding": {
+          "const": "introduction"
+        },
         "archive_debt": {
           "$ref": "#/definitions/archiveDebt"
         }
