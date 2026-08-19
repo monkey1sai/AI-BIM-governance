@@ -1,0 +1,74 @@
+[
+  {
+    "note": "all-zero 128-bit identity; the canonical anchor value",
+    "uuid36_source": "00000000-0000-0000-0000-000000000000",
+    "uuid36_canonical": "00000000-0000-0000-0000-000000000000",
+    "global_id22": "0000000000000000000000",
+    "usd_safe_identifier": "_0000000000000000000000",
+    "usd_guid_token": "G_0000000000000000000000",
+    "usd_element_root_path": "/World/Elements/IfcWall/G_0000000000000000000000"
+  },
+  {
+    "note": "least significant bit only; last 6-bit group = 1",
+    "uuid36_source": "00000000-0000-0000-0000-000000000001",
+    "uuid36_canonical": "00000000-0000-0000-0000-000000000001",
+    "global_id22": "0000000000000000000001",
+    "usd_safe_identifier": "_0000000000000000000001",
+    "usd_guid_token": "G_0000000000000000000001",
+    "usd_element_root_path": "/World/Elements/IfcWall/G_0000000000000000000001"
+  },
+  {
+    "note": "value 64 carries into the next 6-bit group",
+    "uuid36_source": "00000000-0000-0000-0000-000000000040",
+    "uuid36_canonical": "00000000-0000-0000-0000-000000000040",
+    "global_id22": "0000000000000000000010",
+    "usd_safe_identifier": "_0000000000000000000010",
+    "usd_guid_token": "G_0000000000000000000010",
+    "usd_element_root_path": "/World/Elements/IfcWall/G_0000000000000000000010"
+  },
+  {
+    "note": "leading byte 0xC0 saturates the 2-bit first character to '3'",
+    "uuid36_source": "c0000000-0000-0000-0000-000000000000",
+    "uuid36_canonical": "c0000000-0000-0000-0000-000000000000",
+    "global_id22": "3000000000000000000000",
+    "usd_safe_identifier": "_3000000000000000000000",
+    "usd_guid_token": "G_3000000000000000000000",
+    "usd_element_root_path": "/World/Elements/IfcWall/G_3000000000000000000000"
+  },
+  {
+    "note": "all-ones identity; exercises the '$' alphabet character",
+    "uuid36_source": "ffffffff-ffff-ffff-ffff-ffffffffffff",
+    "uuid36_canonical": "ffffffff-ffff-ffff-ffff-ffffffffffff",
+    "global_id22": "3$$$$$$$$$$$$$$$$$$$$$",
+    "usd_safe_identifier": "_3_____________________",
+    "usd_guid_token": "G_3_____________________",
+    "usd_element_root_path": "/World/Elements/IfcWall/G_3_____________________"
+  },
+  {
+    "note": "mixed byte pattern used as the fixture identity base",
+    "uuid36_source": "0f0e0d0c-0b0a-4908-8706-050403020100",
+    "uuid36_canonical": "0f0e0d0c-0b0a-4908-8706-050403020100",
+    "global_id22": "0F3WqC2mf928S61GG30W40",
+    "usd_safe_identifier": "_0F3WqC2mf928S61GG30W40",
+    "usd_guid_token": "G_0F3WqC2mf928S61GG30W40",
+    "usd_element_root_path": "/World/Elements/IfcWall/G_0F3WqC2mf928S61GG30W40"
+  },
+  {
+    "note": "uppercase source string; identity is case-insensitive, canon is lowercase",
+    "uuid36_source": "2A3B4C5D-6E7F-4A8B-9C0D-1E2F3A4B5C6D",
+    "uuid36_canonical": "2a3b4c5d-6e7f-4a8b-9c0d-1e2f3a4b5c6d",
+    "global_id22": "0gEqnTRdzAYvmD7YywIrnj",
+    "usd_safe_identifier": "_0gEqnTRdzAYvmD7YywIrnj",
+    "usd_guid_token": "G_0gEqnTRdzAYvmD7YywIrnj",
+    "usd_element_root_path": "/World/Elements/IfcWall/G_0gEqnTRdzAYvmD7YywIrnj"
+  },
+  {
+    "note": "picked so the encoding contains the '_' alphabet character",
+    "uuid36_source": "3ffbeff8-0000-0000-0000-000000000000",
+    "uuid36_canonical": "3ffbeff8-0000-0000-0000-000000000000",
+    "global_id22": "0$__$u0000000000000000",
+    "usd_safe_identifier": "_0____u0000000000000000",
+    "usd_guid_token": "G_0____u0000000000000000",
+    "usd_element_root_path": "/World/Elements/IfcWall/G_0____u0000000000000000"
+  }
+]

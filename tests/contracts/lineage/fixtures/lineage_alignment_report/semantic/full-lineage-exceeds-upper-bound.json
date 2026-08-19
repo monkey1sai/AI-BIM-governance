@@ -1,0 +1,120 @@
+{
+  "payload": {
+    "schema_version": "lineage-alignment-report/v1",
+    "document_type": "alignment_report_json",
+    "body": {
+      "report_schema_version": "alignment-report/v1",
+      "source_bundle_id": "source-bundle-0003",
+      "pipeline_job_id": "pipeline-job-0003",
+      "attempt_id": "attempt-0007",
+      "result_id": "result-0007",
+      "generated_at": "2026-07-16T08:15:30.000Z",
+      "scope": {
+        "eligible_ifc_product_selector": "IfcProduct",
+        "eligible_ifc_product_count": 10,
+        "legacy_alias": {
+          "source_ifc_entity_count_is_alias_of": "eligible_ifc_product_count"
+        }
+      },
+      "metrics": {
+        "ifc_usdc_coverage_ratio": {
+          "numerator": 9,
+          "denominator": 10,
+          "ratio": 0.9,
+          "status": "partial",
+          "denominator_scope": "eligible_ifc_product_count"
+        },
+        "rvt_ifc_alignment_ratio": {
+          "numerator": 8,
+          "denominator": 10,
+          "ratio": 0.8,
+          "status": "partial",
+          "denominator_scope": "csv_valid_count"
+        },
+        "rvt_ifc_usdc_lineage_ratio": {
+          "numerator": 9,
+          "denominator": 10,
+          "ratio": 0.9,
+          "status": "partial",
+          "denominator_scope": "csv_valid_count"
+        }
+      },
+      "counts": {
+        "csv_total_count": 10,
+        "csv_valid_count": 10,
+        "eligible_ifc_product_count": 10,
+        "duplicate_rvt_id_count": 0,
+        "duplicate_ifc_guid_count": 0,
+        "invalid_row_count": 0,
+        "csv_only_count": 2,
+        "ifc_only_count": 2,
+        "ifc_usdc_unmapped_count": 1,
+        "full_lineage_matched_count": 9
+      },
+      "difference_sets": {
+        "csv_only": [
+          {
+            "rvt_element_id": "0000211",
+            "ifc_uuid36_raw": "0F0E0D0C-0B0A-4908-87D9-05D703D501D3",
+            "ifc_uuid36": "0f0e0d0c-0b0a-4908-87d9-05d703d501d3",
+            "ifc_global_id22": "0F3WqC2mf928VP1TS3rG7J",
+            "reason_code": "ifc_product_not_found"
+          },
+          {
+            "rvt_element_id": "0000212",
+            "ifc_uuid36_raw": "0F0E0D0C-0B0A-4908-87DA-05D803D601D4",
+            "ifc_uuid36": "0f0e0d0c-0b0a-4908-87da-05d803d601d4",
+            "ifc_global_id22": "0F3WqC2mf928VQ1TW3rW7K",
+            "reason_code": "ifc_product_not_found"
+          }
+        ],
+        "ifc_only": [
+          {
+            "ifc_global_id22": "0F3WqC2mf928VR1Ta3rm7L",
+            "ifc_uuid36": "0f0e0d0c-0b0a-4908-87db-05d903d701d5",
+            "ifc_class": "IfcDoor",
+            "usd_prim_path": "/World/Elements/IfcDoor/G_0F3WqC2mf928VR1Ta3rm7L"
+          },
+          {
+            "ifc_global_id22": "0F3WqC2mf928VS1Te3s07M",
+            "ifc_uuid36": "0f0e0d0c-0b0a-4908-87dc-05da03d801d6",
+            "ifc_class": "IfcDoor",
+            "usd_prim_path": "/World/Elements/IfcDoor/G_0F3WqC2mf928VS1Te3s07M"
+          }
+        ],
+        "ifc_usdc_unmapped": [
+          {
+            "ifc_global_id22": "0F3WqC2mf928VT1Ti3sG7N",
+            "ifc_uuid36": "0f0e0d0c-0b0a-4908-87dd-05db03d901d7",
+            "ifc_class": "IfcSlab",
+            "reason_code": "prim_not_found"
+          }
+        ],
+        "duplicate_rvt_ids": [],
+        "duplicate_ifc_guids": [],
+        "invalid_rows": [],
+        "full_lineage_matched": [
+          {
+            "rvt_element_id": "0000216",
+            "ifc_uuid36": "0f0e0d0c-0b0a-4908-87de-05dc03da01d8",
+            "ifc_global_id22": "0F3WqC2mf928VU1Tm3sW7O",
+            "usd_prim_path": "/World/Elements/IfcWall/G_0F3WqC2mf928VU1Tm3sW7O"
+          },
+          {
+            "rvt_element_id": "0000217",
+            "ifc_uuid36": "0f0e0d0c-0b0a-4908-87df-05dd03db01d9",
+            "ifc_global_id22": "0F3WqC2mf928VV1Tq3sm7P",
+            "usd_prim_path": "/World/Elements/IfcWall/G_0F3WqC2mf928VV1Tq3sm7P"
+          }
+        ]
+      },
+      "warning_codes": [],
+      "warning_code_count": 0
+    }
+  },
+  "expect": {
+    "diagnostic_codes": [
+      "FULL_LINEAGE_EXCEEDS_SET_INTERSECTION_UPPER_BOUND"
+    ]
+  }
+}

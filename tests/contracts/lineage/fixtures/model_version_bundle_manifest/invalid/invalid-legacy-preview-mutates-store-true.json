@@ -1,0 +1,55 @@
+{
+  "schema_version": "model-version-bundle-manifest/v1",
+  "document_type": "legacy_unmanaged_preview",
+  "body": {
+    "grouping_key": "legacy/legacy-project-01/legacy-version-01",
+    "state": "LEGACY_UNMANAGED",
+    "candidate_metadata": {
+      "external_model_version_id": "legacy-version-01",
+      "tenant_id": null,
+      "project_id": "legacy-project-01",
+      "project_display_name": "legacy-project-01",
+      "model_category": "main",
+      "candidate_artifacts": [
+        {
+          "role": "source_rvt",
+          "ref": "minio://edge-tpe-01/legacy-unmanaged/legacy-project-01/legacy-version-01/model.rvt?versionId=v-legacy-rvt",
+          "object_version_id": "v-legacy-rvt",
+          "etag": "etag-legacy-rvt",
+          "size_bytes": 173015040
+        },
+        {
+          "role": "schedule_csv",
+          "ref": "minio://edge-tpe-01/legacy-unmanaged/legacy-project-01/legacy-version-01/schedule.csv?versionId=v-legacy-csv",
+          "object_version_id": "v-legacy-csv",
+          "etag": null,
+          "size_bytes": null
+        },
+        {
+          "role": "source_ifc",
+          "ref": "minio://edge-tpe-01/legacy-unmanaged/legacy-project-01/legacy-version-01/model.ifc?versionId=v-legacy-ifc",
+          "object_version_id": "v-legacy-ifc",
+          "etag": "etag-legacy-ifc",
+          "size_bytes": 40108032
+        }
+      ]
+    },
+    "differences": [
+      {
+        "field": "manifest.json",
+        "difference_kind": "missing_manifest",
+        "candidate_value": null,
+        "governed_value": "source-bundle-manifest/v1"
+      },
+      {
+        "field": "artifacts[schedule_csv].sha256",
+        "difference_kind": "digest_unknown",
+        "candidate_value": null,
+        "governed_value": "sha256"
+      }
+    ],
+    "mutates_store": true,
+    "requires_capability": "bundle.publish",
+    "observed_at": "2026-07-16T10:05:00.000Z"
+  }
+}

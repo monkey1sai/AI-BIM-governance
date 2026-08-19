@@ -1,0 +1,29 @@
+{
+  "schema_version": "result-manifest-document/v1",
+  "document_type": "result_publication_outcome",
+  "body": {
+    "result_id": "result-0007",
+    "attempt_id": "attempt-0007",
+    "pipeline_job_id": "pipeline-job-0003",
+    "publication_state": "INVALID",
+    "conditional_create": {
+      "attempted": true,
+      "outcome": "conflict_different_digest"
+    },
+    "replay": true,
+    "result_manifest_digest": "5008deb0b7fbfa0d82f4aeec0897baa2e6bb2d959b2ef7cda15c07fe36432609",
+    "prior_result_id": "result-0007",
+    "prior_result_manifest_digest": "11ab9629a8743b1babd9291c32cd7ff9e37abb8015b2b2cc7e200926d77cb720",
+    "available_at": null,
+    "diagnostics": [
+      {
+        "code": "manifest_digest_conflict",
+        "role": null,
+        "expected": "11ab9629a8743b1babd9291c32cd7ff9e37abb8015b2b2cc7e200926d77cb720",
+        "observed": "5008deb0b7fbfa0d82f4aeec0897baa2e6bb2d959b2ef7cda15c07fe36432609",
+        "detail": "同一 attempt 以不同 digest conditional-create result-manifest.json"
+      }
+    ],
+    "observed_at": "2026-07-16T09:02:44Z"
+  }
+}

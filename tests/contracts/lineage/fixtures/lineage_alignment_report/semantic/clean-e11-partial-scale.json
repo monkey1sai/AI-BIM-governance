@@ -1,0 +1,160 @@
+{
+  "payload": {
+    "schema_version": "lineage-alignment-report/v1",
+    "document_type": "alignment_report_json",
+    "body": {
+      "report_schema_version": "alignment-report/v1",
+      "source_bundle_id": "source-bundle-0003",
+      "pipeline_job_id": "pipeline-job-0003",
+      "attempt_id": "attempt-0007",
+      "result_id": "result-0007",
+      "generated_at": "2026-07-16T08:15:30.000Z",
+      "scope": {
+        "eligible_ifc_product_selector": "IfcProduct",
+        "eligible_ifc_product_count": 1200,
+        "legacy_alias": {
+          "source_ifc_entity_count_is_alias_of": "eligible_ifc_product_count"
+        }
+      },
+      "metrics": {
+        "ifc_usdc_coverage_ratio": {
+          "numerator": 1180,
+          "denominator": 1200,
+          "ratio": 0.9833333333,
+          "status": "partial",
+          "denominator_scope": "eligible_ifc_product_count"
+        },
+        "rvt_ifc_alignment_ratio": {
+          "numerator": 990,
+          "denominator": 1000,
+          "ratio": 0.99,
+          "status": "partial",
+          "denominator_scope": "csv_valid_count"
+        },
+        "rvt_ifc_usdc_lineage_ratio": {
+          "numerator": 975,
+          "denominator": 1000,
+          "ratio": 0.975,
+          "status": "partial",
+          "denominator_scope": "csv_valid_count"
+        }
+      },
+      "counts": {
+        "csv_total_count": 1008,
+        "csv_valid_count": 1000,
+        "eligible_ifc_product_count": 1200,
+        "duplicate_rvt_id_count": 3,
+        "duplicate_ifc_guid_count": 2,
+        "invalid_row_count": 3,
+        "csv_only_count": 10,
+        "ifc_only_count": 210,
+        "ifc_usdc_unmapped_count": 20,
+        "full_lineage_matched_count": 975
+      },
+      "difference_sets": {
+        "csv_only": [
+          {
+            "rvt_element_id": "0000101",
+            "ifc_uuid36_raw": "0F0E0D0C-0B0A-4908-876B-056903670165",
+            "ifc_uuid36": "0f0e0d0c-0b0a-4908-876b-056903670165",
+            "ifc_global_id22": "0F3WqC2mf928Th1Ma3Pm5b",
+            "reason_code": "ifc_product_not_found"
+          },
+          {
+            "rvt_element_id": "0000102",
+            "ifc_uuid36_raw": "0F0E0D0C-0B0A-4908-876C-056A03680166",
+            "ifc_uuid36": "0f0e0d0c-0b0a-4908-876c-056a03680166",
+            "reason_code": "guid_roundtrip_failed"
+          }
+        ],
+        "ifc_only": [
+          {
+            "ifc_global_id22": "0F3WqC2mf928Tr1NC3SG5l",
+            "ifc_uuid36": "0f0e0d0c-0b0a-4908-8775-05730371016f",
+            "ifc_class": "IfcDoor",
+            "usd_prim_path": "/World/Elements/IfcDoor/G_0F3WqC2mf928Tr1NC3SG5l"
+          },
+          {
+            "ifc_global_id22": "0F3WqC2mf928Ts1NG3SW5m",
+            "ifc_uuid36": "0f0e0d0c-0b0a-4908-8776-057403720170",
+            "ifc_class": "IfcDoor",
+            "usd_prim_path": "/World/Elements/IfcDoor/G_0F3WqC2mf928Ts1NG3SW5m"
+          },
+          {
+            "ifc_global_id22": "0F3WqC2mf928Tt1NK3Sm5n",
+            "ifc_uuid36": "0f0e0d0c-0b0a-4908-8777-057503730171",
+            "ifc_class": "IfcDoor",
+            "usd_prim_path": "/World/Elements/IfcDoor/G_0F3WqC2mf928Tt1NK3Sm5n"
+          }
+        ],
+        "ifc_usdc_unmapped": [
+          {
+            "ifc_global_id22": "0F3WqC2mf928T$1Nq3Um5v",
+            "ifc_uuid36": "0f0e0d0c-0b0a-4908-877f-057d037b0179",
+            "ifc_class": "IfcSlab",
+            "reason_code": "prim_not_found"
+          },
+          {
+            "ifc_global_id22": "0F3WqC2mf928U01Nu3V05w",
+            "ifc_uuid36": "0f0e0d0c-0b0a-4908-8780-057e037c017a",
+            "ifc_class": "IfcSlab",
+            "reason_code": "unstable_child_prim_target",
+            "observed_prim_path": "/World/Elements/IfcSlab/G_0F3WqC2mf928U01Nu3V05w/Body/Mesh_0"
+          }
+        ],
+        "duplicate_rvt_ids": [
+          {
+            "rvt_element_id": "0000131",
+            "occurrence_count": 2
+          }
+        ],
+        "duplicate_ifc_guids": [
+          {
+            "ifc_uuid36": "0f0e0d0c-0b0a-4908-878a-058803860184",
+            "occurrence_count": 2
+          }
+        ],
+        "invalid_rows": [
+          {
+            "row_number": 17,
+            "reason_code": "duplicate_id",
+            "rvt_element_id": "0000141"
+          },
+          {
+            "row_number": 23,
+            "reason_code": "missing_guid",
+            "rvt_element_id": "0000142"
+          }
+        ],
+        "full_lineage_matched": [
+          {
+            "rvt_element_id": "0000150",
+            "ifc_uuid36": "0f0e0d0c-0b0a-4908-879c-059a03980196",
+            "ifc_global_id22": "0F3WqC2mf928US1Pe3c06M",
+            "usd_prim_path": "/World/Elements/IfcWall/G_0F3WqC2mf928US1Pe3c06M"
+          },
+          {
+            "rvt_element_id": "0000151",
+            "ifc_uuid36": "0f0e0d0c-0b0a-4908-879d-059b03990197",
+            "ifc_global_id22": "0F3WqC2mf928UT1Pi3cG6N",
+            "usd_prim_path": "/World/Elements/IfcWall/G_0F3WqC2mf928UT1Pi3cG6N"
+          },
+          {
+            "rvt_element_id": "0000152",
+            "ifc_uuid36": "0f0e0d0c-0b0a-4908-879e-059c039a0198",
+            "ifc_global_id22": "0F3WqC2mf928UU1Pm3cW6O",
+            "usd_prim_path": "/World/Elements/IfcWall/G_0F3WqC2mf928UU1Pm3cW6O"
+          }
+        ]
+      },
+      "warning_codes": [
+        "PARTIAL_RVT_IFC_ALIGNMENT",
+        "IFC_USDC_UNMAPPED"
+      ],
+      "warning_code_count": 2
+    }
+  },
+  "expect": {
+    "diagnostic_codes": []
+  }
+}
