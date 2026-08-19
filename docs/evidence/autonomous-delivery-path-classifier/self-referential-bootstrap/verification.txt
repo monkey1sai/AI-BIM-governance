@@ -1,0 +1,34 @@
+stack_kind=self_referential_bootstrap
+pr=558
+base=319dc26b4ed424daf369850cb84f442ddd2d50ae
+classifier_subject=16e2edb11c8777e495587957cd7a2f5cdc80146a
+activation=HELD
+verification_contract=autonomous-delivery-path-classifier/v1
+contract_sha256=c4ec0b8682985e3cab7d09fac2fcc0dedd2dc0a6ef9ab426e2ff189ca42f6347
+
+classifier-probe
+command=dot-source scripts/lib/self-referential-bootstrap.ps1 and classify the frozen eight future, three adjacent, and one wrong-case paths
+result=exit 0; base future 0/8; head future 8/8; adjacent 0/3; wrong-case 0/1
+
+test-self-referential-bootstrap
+command=pwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/tests/test-self-referential-bootstrap.ps1
+result=exit 0; all assertions passed
+
+test-agent-governance-check
+command=pwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/tests/test-agent-governance-check.ps1
+result=exit 0; all assertions passed
+
+invoke-powershell-static
+command=pwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/tests/invoke-powershell-static.ps1
+result=exit 0; passed
+
+scan-secret-patterns
+command=pwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/tests/scan-secret-patterns.ps1
+result=exit 0; passed
+
+gitnexus-impact
+command=gitnexus impact Get-SelfReferentialMechanismPaths -d upstream -r <current-worktree-absolute-path>
+result=UNKNOWN; current linked worktree is not registered; not counted as a pass
+
+No external signer, owner-private inventory, credentials, live GitHub settings,
+approval, merge, runtime stop, deployment, or production action was run.

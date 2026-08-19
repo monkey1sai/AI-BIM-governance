@@ -14,12 +14,11 @@
     { "id": "a4-semantic-search-model-qa", "status": "deferred" },
     { "id": "add-single-gpu-session-ai-review-mvp", "status": "deferred" },
     { "id": "align-frontend-design-system-reference", "status": "deferred" },
-    { "id": "converge-console-specs-to-shipped-behavior", "status": "active" },
     { "id": "cross-service-structured-log-baseline", "status": "deferred" },
     { "id": "gpu-session-baseline-and-idle-reclaim", "status": "active" },
     { "id": "implement-runtime-command-authority-and-rejection", "status": "active" },
-    { "id": "introduction-resolved-subject-binding", "status": "deferred" },
-    { "id": "isolated-branch-stack-browser-e2e", "status": "active" },
+    { "id": "introduce-viewer-app-integration-surface", "status": "deferred" },
+    { "id": "introduction-resolved-subject-binding", "status": "active" },
     { "id": "migrate-console-to-hifi-design", "status": "active" },
     { "id": "rvt-ifc-usdc-lineage", "status": "deferred" }
   ]

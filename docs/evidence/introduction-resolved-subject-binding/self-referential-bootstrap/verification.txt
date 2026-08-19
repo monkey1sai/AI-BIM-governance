@@ -1,0 +1,29 @@
+stack_kind=self_referential_bootstrap
+pr=620
+ledger_entry=introduction-resolved-subject-binding
+verification_contract=introduction-resolved-subject-binding/v1
+contract_sha256=4846c3f1df6582d9836ce24a404d9862bcc8036cfaacddb7c82c000a5ea02027
+subject=branch head openspec/introduction-resolved-subject-binding-wave1（sources commit 51adda76；merge-with-main 後全套重放）
+
+test-openspec-machine-truth
+command=node --test scripts/tests/test-openspec-machine-truth.mjs scripts/tests/test-openspec-machine-truth-cli.mjs
+result=exit 0; 51 pass / 0 fail（unit 29 含 base-aware real-ledger check 與 sentinel 雙形狀；CLI 22 含 sentinel squash／determinism／ambiguity＋minted／origin-main 錨／ratchet／容量）
+
+test-openspec-repository-lifecycle
+command=node --test scripts/tests/test-openspec-repository-lifecycle.mjs
+result=exit 0; 46 pass / 0 fail（含 gate 寬容性回歸，task 1.4）
+
+test-openspec-ledger-reconciliation
+command=pwsh -NoProfile -NonInteractive -File scripts/tests/test-openspec-ledger-reconciliation.ps1
+result=exit 0; all assertions passed（含 sentinel schema 斷言，task 4.9）
+
+verify-openspec-lifecycle
+command=pwsh -NoProfile -NonInteractive -File scripts/tests/verify-openspec-lifecycle.ps1 -BaseRef <origin/main>
+result=exit 0; openspec lifecycle OK（non_deferred=7 為 soft-budget warning，非 failure；已於 PR body 揭露交 owner 裁量）
+
+gitnexus-impact
+command=npx gitnexus@1.6.9 impact validateLedgerShape|resolveRowSubjectWatermark -d upstream -r AI-BIM-governance
+result=UNKNOWN; LadybugDB index missing; not counted as a pass
+
+No credential read, live mutation, approval, merge, runtime stop, deployment,
+or production action was performed while producing this evidence.

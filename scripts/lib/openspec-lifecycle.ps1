@@ -237,6 +237,7 @@ function Get-OpenSpecProposalState {
             'active' { $lifecycleStatus = 'active' }
             'deferred' { $lifecycleStatus = 'deferred' }
             'deferred-proposed' { $lifecycleStatus = 'deferred' }
+            'adopted' { $lifecycleStatus = 'completed' }
             default { $lifecycleStatus = 'invalid' }
         }
     } elseif ($markers.Count -gt 1) {

@@ -312,16 +312,30 @@ class StreamingConversionStore:
         idempotency_key = _safe_id(str(event.get("idempotency_key") or event_id), "idempotency_key")
         request_fingerprint = _request_fingerprint(event)
         existing = self._find_job_by_idempotency_key(idempotency_key)
+        superseded: dict[str, Any] | None = None
         if existing is not None:
             existing_fingerprint = existing.get("request_fingerprint")
             if existing_fingerprint and existing_fingerprint != request_fingerprint:
                 raise ConversionRequestError(409, "Idempotency key already belongs to a different conversion request.")
-            if not existing.get("trace_id"):
-                existing["trace_id"] = str(existing["conversion_job_id"])
-                self._write_job(existing)
-            replay = dict(existing)
-            replay["idempotent_replay"] = True
-            return replay
+            if str(existing.get("status") or "") == "failed":
+                # A terminal failure is the one state a replay cannot serve. The caller is
+                # asking again precisely because the previous attempt produced nothing
+                # usable, and the failure is often bound to inputs that no longer exist -
+                # a MinIO re-trigger re-downloads the IFC to a fresh cache path while the
+                # failed job still points at the deleted one, so every retrigger returned
+                # the same dead record and the job's own `recovery_action:
+                # retrigger_required` could never be satisfied. Start a new attempt under
+                # the same idempotency key instead. The failed record is kept for audit and
+                # back-linked with `superseded_by` below, which is also how the lookup
+                # tells the live attempt from the dead ones.
+                superseded = existing
+            else:
+                if not existing.get("trace_id"):
+                    existing["trace_id"] = str(existing["conversion_job_id"])
+                    self._write_job(existing)
+                replay = dict(existing)
+                replay["idempotent_replay"] = True
+                return replay
 
         ifc_artifact = _ifc_artifact(event)
         conversion_job_id = f"stream_conv_{datetime.now(UTC).strftime('%Y%m%d%H%M%S')}_{uuid4().hex[:8]}"
@@ -335,6 +349,8 @@ class StreamingConversionStore:
             "event_id": event_id,
             "idempotency_key": idempotency_key,
             "request_fingerprint": request_fingerprint,
+            "attempt": (int(superseded.get("attempt") or 1) + 1) if superseded is not None else 1,
+            "retry_of": str(superseded["conversion_job_id"]) if superseded is not None else None,
             "event_type": event["event_type"],
             "correlation_id": _safe_id(str(event.get("correlation_id") or ""), "correlation_id"),
             "tenant_id": _safe_id(str(event.get("tenant_id") or "tenant_demo_001"), "tenant_id"),
@@ -363,6 +379,9 @@ class StreamingConversionStore:
             },
         }
         self._write_job(job)
+        if superseded is not None:
+            superseded["superseded_by"] = conversion_job_id
+            self._write_job(superseded)
         self._log_conversion_lifecycle(job, status="queued", phase="start")
         return job
 
@@ -782,11 +801,23 @@ class StreamingConversionStore:
         )
 
     def _find_job_by_idempotency_key(self, idempotency_key: str) -> dict[str, Any] | None:
+        matches: list[dict[str, Any]] = []
         for path in sorted(Path(self.settings.jobs_dir).glob("stream_conv_*.json"), reverse=True):
             job = json.loads(path.read_text(encoding="utf-8"))
             if (job.get("idempotency_key") or job.get("event_id")) == idempotency_key:
-                return job
-        return None
+                matches.append(job)
+        if not matches:
+            return None
+        # A retry chain links every superseded attempt forward, so the live record is the
+        # one nothing points past. Filename order cannot decide this: a conversion job id
+        # carries a whole-second timestamp plus a random suffix, so two attempts created
+        # inside the same second sort by chance - which handed back the dead record about
+        # a quarter of the time. Fall back to filename order only for records that predate
+        # supersession, where at most one match per key could ever exist.
+        live = [job for job in matches if not job.get("superseded_by")]
+        if len(live) == 1:
+            return live[0]
+        return (live or matches)[0]
 
     def _job_path(self, conversion_job_id: str) -> Path:
         _safe_id(conversion_job_id, "conversion_job_id")

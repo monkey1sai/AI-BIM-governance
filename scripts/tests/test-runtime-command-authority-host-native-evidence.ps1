@@ -69,10 +69,28 @@ Assert-True ($runner -match [regex]::Escape('node_modules\.bin\playwright.cmd'))
 Assert-True ($runner -match [regex]::Escape('npm ci --ignore-scripts --no-audit --no-fund')) 'runner disables dependency lifecycle scripts during test setup'
 Assert-True (-not ($runner -match [regex]::Escape('-RedirectStandardOutput'))) 'runner does not persist raw Playwright stdout'
 Assert-True (-not ($runner -match [regex]::Escape('-RedirectStandardError'))) 'runner does not persist raw Playwright stderr'
-Assert-True ($runner -match [regex]::Escape('runtime-authority-e2e-')) 'runner creates unique runtime fixture directory'
+Assert-True (-not ($runner -match [regex]::Escape('playwright-stdout.log'))) 'runner keeps no raw Playwright stdout file beside the evidence'
+Assert-True (-not ($runner -match [regex]::Escape('playwright-stderr.log'))) 'runner keeps no raw Playwright stderr file beside the evidence'
+Assert-True ($runner -match [regex]::Escape('runtime-authority-e2e-')) 'runner scopes every run to its own run ID'
 Assert-True ($runner -match [regex]::Escape('runtime-command-authority-evidence')) 'runner persists evidence beneath data-root artifacts'
-Assert-True ($runner -match [regex]::Escape('testing.usd')) 'runner copies tracked USD fixture'
-Assert-True ($runner -match [regex]::Escape('model.usdc')) 'runner gives the copied fixture a stage URL filename'
+
+# The 7.3 stage is no longer a tracked USD fixture copied into the artifacts root: #441
+# gave the conversion service per-artifact download authority, so a fabricated
+# /artifacts/<runId>/model.usdc URL 404s and Kit reports an HTTPError. The stage must be
+# a real, downloadable conversion artifact, and the published evidence must name THAT
+# artifact - a stale fixture path in the evidence would contradict the run it describes.
+Assert-True (-not ($runner -match [regex]::Escape('testing.usd'))) 'runner neither copies nor claims the retired tracked USD fixture'
+Assert-True ($runner -match 'function Resolve-HostNativeEvidenceStage') 'runner resolves the stage through one conversion-artifact resolver'
+Assert-True ($runner -match [regex]::Escape('$stageArtifact = Resolve-HostNativeEvidenceStage')) 'runner takes its stage from that resolver rather than building a URL of its own'
+Assert-True ($runner -match [regex]::Escape('$artifact = $result.artifacts.model_usdc')) 'resolver selects the conversion job model_usdc artifact'
+Assert-True ($runner -match [regex]::Escape('/artifacts/$jobId/$fileName')) 'resolver builds both stage URLs from the job that actually serves them'
+Assert-True (($runner -match [regex]::Escape('Test-HttpOk -Url $urlA')) -and ($runner -match [regex]::Escape('Test-HttpOk -Url $urlB'))) 'resolver proves both stage host spellings are downloadable before returning them'
+Assert-True ($runner -match [regex]::Escape('[uri]::IsWellFormedUriString($artifactUrl, [System.UriKind]::Absolute)')) 'resolver rejects a relative artifact URL as one candidate instead of throwing out of the run'
+Assert-True ($runner -match [regex]::Escape("kind              = 'conversion_artifact'")) 'evidence stamps the stage source kind as a conversion artifact'
+Assert-True ($runner -match [regex]::Escape('conversion_job_id = [string]$stageArtifact.conversion_job_id')) 'evidence names the conversion job the stage came from'
+Assert-True ($runner -match [regex]::Escape('checksum_sha256   = [string]$stageArtifact.checksum_sha256')) 'evidence binds the stage to the resolved artifact checksum'
+Assert-True ($runner -match [regex]::Escape('source = $stageUrlA')) 'evidence publishes the stage URL the run actually loaded as its source'
+Assert-True (-not ($runner -match [regex]::Escape('bim-streaming-server/source/extensions'))) 'evidence no longer hard-codes a repo fixture path as the stage source'
 Assert-True ($runner -match [regex]::Escape('runtime-command-authority-host-native.spec.ts')) 'runner launches only the authority host-native E2E case'
 Assert-True (-not ($runner -match [regex]::Escape('-DryRun'))) 'runner cannot invoke dry-run deployment behavior'
 Assert-True (-not ($runner -match [regex]::Escape('-Force'))) 'runner cannot invoke force behavior'
@@ -95,17 +113,29 @@ Assert-True ($e2e -match [regex]::Escape('ignoreDefaultArgs: [playwrightDisableF
 Assert-True ($e2e -match [regex]::Escape('...playwrightChromiumDisabledFeatures') -and $e2e -match [regex]::Escape('"LocalNetworkAccessChecksWebSockets"')) 'E2E preserves Playwright disabled features while adding the WebSocket LNA gate'
 Assert-True ($e2e -match [regex]::Escape('LocalNetworkAccessChecksWebSockets')) 'E2E disables only the headless Chromium WebSocket LNA gate'
 Assert-True (-not ($browserLaunchSurface -match '(?<![A-Za-z0-9_])LocalNetworkAccessChecks(?!WebSockets|[A-Za-z0-9_])')) 'E2E and inherited Playwright config do not disable the broader Chromium LNA parent gate'
+
+# Playwright's bundled Chromium has no proprietary codecs, so it cannot negotiate
+# a video track against Kit's NVENC H.264 livestream and the first-frame wait can
+# only time out. The evidence case must drive the real Chrome install, matching
+# the one repo path that has actually captured a first frame.
+Assert-True ($e2e -match [regex]::Escape('channel: "chrome"')) 'E2E drives the real Chrome install rather than codec-less bundled Chromium'
+Assert-True ($e2e -match [regex]::Escape('--autoplay-policy=no-user-gesture-required')) 'E2E lets the probe page start playback without a user gesture'
+Assert-True (-not ($e2e -match [regex]::Escape('await streamer.connect'))) 'E2E mirrors production by not awaiting connect(), so onStart owns the readiness timeout'
+Assert-True ($e2e -match [regex]::Escape('probe.connectSettled.push')) 'E2E records connect settlement so an onStart timeout names its failure mode'
 $expiryWaitIndex = $e2e.IndexOf('await page.waitForTimeout(expiryWaitMs)')
 $primaryLeaseIndex = $e2e.IndexOf('const primary = await createSession')
 $wrongSessionLeaseIndex = $e2e.IndexOf('const wrongSession = await createSession')
 Assert-True ($expiryWaitIndex -ge 0 -and $primaryLeaseIndex -gt $expiryWaitIndex -and $wrongSessionLeaseIndex -gt $expiryWaitIndex) 'E2E mints replay and outage leases only after the deliberate expiry wait'
-Assert-True ($e2e -match [regex]::Escape('const expiredStageBefore = await observedStageUrl(page)')) 'expired denial captures its pre-command stage before the initial stage baseline exists'
+# #623 made every stage read go through a named session, because the stage read is
+# authority-gated too. Anchor on that shape: the expired case must read through the
+# expiring session it is denying, not through some other session's lease.
+Assert-True ($e2e -match [regex]::Escape('const expiredStageBefore = await observedStageUrl(page, expiring)')) 'expired denial captures its pre-command stage through the expiring session, before the initial stage baseline exists'
 Assert-True ($e2e -match [regex]::Escape('expect(expiredStageAfter).toBe(expiredStageBefore)')) 'expired denial proves its own pre/post stage invariant'
 Assert-True ($e2e -match [regex]::Escape('async function assertStageStable')) 'E2E samples a stage stability window after each denial'
 Assert-True ($e2e -match [regex]::Escape('const denialStageStabilityMs = 750')) 'E2E gives deferred runtime mutations a bounded observation window'
-Assert-True ($e2e -match [regex]::Escape('const finalStage = await observedStageUrl(page)')) 'E2E takes a final stage sample after the stability deadline'
+Assert-True ($e2e -match [regex]::Escape('const finalStage = await observedStageUrl(page, observer)')) 'E2E takes a final stage sample through the observing session after the stability deadline'
 Assert-True ($e2e -match [regex]::Escape('expect(forgedStageBefore).toBe(baselineStage)')) 'post-initial forged denial starts from the initial stage baseline'
-Assert-True ($e2e -match [regex]::Escape('const wrongSessionStageAfter = await assertStageStable(page, baselineStage)')) 'direct wrong-session denial holds the initial stage across the stability window'
+Assert-True ($e2e -match [regex]::Escape('const wrongSessionStageAfter = await assertStageStable(page, primary, baselineStage)')) 'direct wrong-session denial holds the initial stage across the stability window, read through the primary session'
 Assert-True ($e2e -match [regex]::Escape('expect(evidence.observed_stage_after).toBe(baselineStage)')) 'all post-initial denial evidence remains at the initial stage baseline'
 Assert-True ($e2e -match [regex]::Escape('observed_stage_before')) 'all denial evidence records a pre-command stage'
 Assert-True ($e2e -match [regex]::Escape('observed_stage_after')) 'all denial evidence records a post-command stage'

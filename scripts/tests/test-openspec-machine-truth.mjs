@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
 import test from 'node:test';
 import { collectSourceObservations } from './verify-openspec-machine-truth.mjs';
 import {
@@ -142,6 +143,61 @@ test('missing owner and unknown lifecycle fail schema validation', () => {
   });
 });
 
+test('subject_binding sentinel is the single optional row key with a closed value domain', () => {
+  // Valid sentinel row passes both strict shapes unchanged.
+  withWorkspace((input) => {
+    input.ledger.changes[0].subject_binding = 'introduction';
+    const report = evaluateOpenSpecMachineTruth(input);
+    assert.equal(report.result, 'consistent');
+  });
+  // Any value other than the exact string 'introduction' is schema_invalid.
+  for (const invalid of ['commit', 'Introduction', null, 0, true]) {
+    withWorkspace((input) => {
+      input.ledger.changes[0].subject_binding = invalid;
+      assert.throws(() => evaluateOpenSpecMachineTruth(input), (error) => {
+        assert.ok(error instanceof MachineTruthInputError);
+        assert.equal(error.code, 'schema_invalid');
+        assert.match(error.field, /subject_binding/);
+        return true;
+      });
+    });
+  }
+  // The sentinel is not a precedent for open row extension: other unknown keys stay fail-closed.
+  withWorkspace((input) => {
+    input.ledger.changes[0].subject_binding = 'introduction';
+    input.ledger.changes[0].note = 'free text';
+    assert.throws(() => evaluateOpenSpecMachineTruth(input), (error) => {
+      assert.ok(error instanceof MachineTruthInputError);
+      assert.equal(error.code, 'schema_invalid');
+      return true;
+    });
+  });
+  // The base-ledger validation path accepts sentinel rows too (two-phase hazard window closure).
+  withWorkspace((input) => {
+    input.previousLedger = structuredClone(input.ledger);
+    input.previousLedger.changes[0].subject_binding = 'introduction';
+    input.ledger.changes[0].subject_binding = 'introduction';
+    const report = evaluateOpenSpecMachineTruth(input);
+    assert.equal(report.result, 'consistent');
+  });
+});
+
+test('sentinel rows keep the source-observation equality contract without exemption', () => {
+  withWorkspace((input) => {
+    input.ledger.changes[0].subject_binding = 'introduction';
+    input.sourceObservations = [{
+      change_id: 'alpha',
+      subject_commit: 'cccccccccccccccccccccccccccccccccccccccc',
+      changed_paths: [],
+    }];
+    assert.throws(() => evaluateOpenSpecMachineTruth(input), (error) => {
+      assert.ok(error instanceof MachineTruthInputError);
+      assert.equal(error.code, 'source_observation_invalid');
+      return true;
+    });
+  });
+});
+
 test('blocked_by cycle and missing blocker are exact mismatches', () => {
   const alpha = machineChange('alpha');
   const beta = machineChange('beta');
@@ -199,9 +255,34 @@ test('row source observations permit historical snapshots and attribute drift on
   }, [alpha, beta]);
 });
 
+function trustedBaseForRealLedger(repoRoot) {
+  // introduction-resolved-subject-binding tasks 2.6: this required check runs
+  // over the REAL ledger, so it must supply a trusted base or the introduction
+  // recovery (and sentinel resolution) is structurally unavailable and every
+  // post-squash dangling subject turns required CI red for all later PRs.
+  // Derivation, fail-closed in order: explicit override env; then the
+  // origin/main remote ref (present in CI via fetch-depth: 0 checkouts and in
+  // every normal clone); else HEAD as the degenerate landed-history anchor for
+  // origin-less clones (accepts introductions already reachable from HEAD).
+  const override = process.env.OPENSPEC_TRUSTED_BASE_SHA;
+  if (typeof override === 'string' && override.trim() !== '') {
+    const sha = override.trim().toLowerCase();
+    assert.match(sha, /^[0-9a-f]{40}$/, 'OPENSPEC_TRUSTED_BASE_SHA must be a full 40-hex commit SHA');
+    return sha;
+  }
+  const git = (args) => spawnSync('git', ['-C', repoRoot, ...args], { encoding: 'utf8', timeout: 15_000, windowsHide: true });
+  const origin = git(['rev-parse', '--verify', 'refs/remotes/origin/main^{commit}']);
+  if (origin.status === 0 && /^[0-9a-f]{40}$/u.test(origin.stdout.trim().toLowerCase())) {
+    return origin.stdout.trim().toLowerCase();
+  }
+  const head = git(['rev-parse', '--verify', 'HEAD^{commit}']);
+  assert.equal(head.status, 0, 'repository must expose a HEAD commit for the real-ledger check');
+  return head.stdout.trim().toLowerCase();
+}
+
 test('current ledger keeps reconciled source snapshots clean', () => {
   const ledger = JSON.parse(readFileSync(path.join(process.cwd(), 'openspec/lifecycle-ledger.json'), 'utf8'));
-  const observed = collectSourceObservations(process.cwd(), ledger).sourceObservations
+  const observed = collectSourceObservations(process.cwd(), ledger, trustedBaseForRealLedger(process.cwd())).sourceObservations
     .filter(({ change_id: id }) => RECONCILED_SOURCE_IDS.includes(id));
 
   assert.deepEqual(observed.map(({ change_id: id }) => id).sort(), [...RECONCILED_SOURCE_IDS].sort());
