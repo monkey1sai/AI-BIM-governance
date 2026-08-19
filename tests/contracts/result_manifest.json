@@ -1,0 +1,958 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bim-docs.jackshappybot.com/contracts/result-manifest-v1.schema.json",
+  "title": "Result Manifest v1",
+  "description": "Edge formal result documents for the RVT->IFC->USDC lineage pipeline: the attempt-scoped result manifest that is conditional-created LAST, the publication outcome that adjudicates AVAILABLE, and the local-cache observation that proves local files never decide formal availability. Artifacts are referenced by immutable versioned MinIO locators only; artifact bytes and base64 payloads MUST NOT appear in these documents.",
+  "$comment": "Source of truth: openspec/changes/rvt-ifc-usdc-lineage/specs/conversion-attempt-publication/spec.md (tasks.md 2.3). Enum spellings are copied verbatim from that spec; wire literal AVAILABLE is uppercase and lowercase 'available' is natural language only. Shared $defs (utcTimestamp / sha256 / locator / metric / counts) are byte-identical copies of openspec/changes/rvt-ifc-usdc-lineage/contracts/cloud-lineage-publication-request-v1.schema.json and are asserted deep-equal by test_shared_defs_are_deep_equal_across_contracts.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "document_type",
+    "body"
+  ],
+  "properties": {
+    "schema_version": {
+      "$comment": "Envelope version for this contract file. It is deliberately distinct from the manifest document's own manifest_schema_version const 'result-manifest/v1'.",
+      "const": "result-manifest-document/v1"
+    },
+    "document_type": {
+      "enum": [
+        "result_manifest",
+        "result_publication_outcome",
+        "local_cache_observation"
+      ]
+    },
+    "body": {
+      "type": "object"
+    }
+  },
+  "oneOf": [
+    {
+      "$comment": "Discriminated branch. `else: false` makes a non-matching branch fail on the discriminator alone, so a body violation is reported once, at its real location, instead of being buried under two sibling branches that also define result_id / attempt_id.",
+      "if": {
+        "required": [
+          "document_type"
+        ],
+        "properties": {
+          "document_type": {
+            "const": "result_manifest"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "body": {
+            "$ref": "#/$defs/resultManifest"
+          }
+        }
+      },
+      "else": false
+    },
+    {
+      "if": {
+        "required": [
+          "document_type"
+        ],
+        "properties": {
+          "document_type": {
+            "const": "result_publication_outcome"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "body": {
+            "$ref": "#/$defs/resultPublicationOutcome"
+          }
+        }
+      },
+      "else": false
+    },
+    {
+      "if": {
+        "required": [
+          "document_type"
+        ],
+        "properties": {
+          "document_type": {
+            "const": "local_cache_observation"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "body": {
+            "$ref": "#/$defs/localCacheObservation"
+          }
+        }
+      },
+      "else": false
+    }
+  ],
+  "$defs": {
+    "utcTimestamp": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^[1-9][0-9]{3}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12][0-9]|3[01])T(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](?:\\.[0-9]{1,6})?Z$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "locator": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "ref",
+        "object_version_id",
+        "etag",
+        "sha256",
+        "size_bytes"
+      ],
+      "properties": {
+        "ref": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096,
+          "pattern": "^minio://[A-Za-z0-9._-]+/[A-Za-z0-9._-]+/[^?#\\s]+\\?versionId=[A-Za-z0-9._~%-]+$",
+          "not": {
+            "pattern": "[?&][Xx]-[Aa][Mm][Zz]-"
+          }
+        },
+        "object_version_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "etag": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "size_bytes": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "metric": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "numerator",
+        "denominator",
+        "ratio",
+        "status"
+      ],
+      "properties": {
+        "numerator": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "denominator": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "ratio": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 1
+        },
+        "status": {
+          "enum": [
+            "complete",
+            "partial",
+            "not_evaluable"
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "denominator": {
+                "const": 0
+              }
+            },
+            "required": [
+              "denominator"
+            ]
+          },
+          "then": {
+            "properties": {
+              "numerator": {
+                "const": 0
+              },
+              "ratio": {
+                "type": "null"
+              },
+              "status": {
+                "const": "not_evaluable"
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "ratio": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              },
+              "status": {
+                "enum": [
+                  "complete",
+                  "partial"
+                ]
+              }
+            }
+          }
+        }
+      ]
+    },
+    "counts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "csv_total_count",
+        "csv_valid_count",
+        "eligible_ifc_product_count",
+        "duplicate_rvt_id_count",
+        "duplicate_ifc_guid_count",
+        "invalid_row_count",
+        "csv_only_count",
+        "ifc_only_count",
+        "ifc_usdc_unmapped_count",
+        "full_lineage_matched_count"
+      ],
+      "properties": {
+        "csv_total_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "csv_valid_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "eligible_ifc_product_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "duplicate_rvt_id_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "duplicate_ifc_guid_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "invalid_row_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "csv_only_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "ifc_only_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "ifc_usdc_unmapped_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "full_lineage_matched_count": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "nullableUtcTimestamp": {
+      "$comment": "Same wire form as $defs/utcTimestamp; null means the event has not happened yet. `pattern` and `format` only constrain the string branch.",
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date-time",
+      "pattern": "^[1-9][0-9]{3}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12][0-9]|3[01])T(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](?:\\.[0-9]{1,6})?Z$"
+    },
+    "nullableSha256": {
+      "$comment": "Same wire form as $defs/sha256; null means no digest exists yet. `pattern` only constrains the string branch.",
+      "type": [
+        "string",
+        "null"
+      ],
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "identifier": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "nullableIdentifier": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "sourceBundleId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200,
+      "pattern": "^[A-Za-z0-9._-]+$"
+    },
+    "attemptResultPrefix": {
+      "$comment": "Immutable attempt-scoped MinIO prefix. Always ends with '/', never carries a query string, so it can never be a presigned URL.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096,
+      "pattern": "^minio://[A-Za-z0-9._-]+/[A-Za-z0-9._-]+/[^?#\\s]*/$"
+    },
+    "minioObjectRef": {
+      "$comment": "Same string constraints as $defs/locator.properties.ref, duplicated because result artifacts carry the locator fields flattened alongside role / filename / content_type.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096,
+      "pattern": "^minio://[A-Za-z0-9._-]+/[A-Za-z0-9._-]+/[^?#\\s]+\\?versionId=[A-Za-z0-9._~%-]+$",
+      "not": {
+        "pattern": "[?&][Xx]-[Aa][Mm][Zz]-"
+      }
+    },
+    "warningCode": {
+      "type": "string",
+      "pattern": "^[A-Z][A-Z0-9_]{0,63}$"
+    },
+    "publicationState": {
+      "$comment": "Formal publication axis. Wire literals are uppercase; lowercase 'available' is natural language only and MUST NOT become a second enum value.",
+      "enum": [
+        "UNPUBLISHED",
+        "PUBLISHING",
+        "AVAILABLE",
+        "INVALID"
+      ]
+    },
+    "completedAttemptOutcome": {
+      "$comment": "A result manifest only exists for a completed attempt, so unlike the attempt document this enum has no null member.",
+      "enum": [
+        "succeeded",
+        "succeeded_with_warnings",
+        "failed",
+        "cancelled"
+      ]
+    },
+    "resultArtifactRole": {
+      "enum": [
+        "usdc",
+        "element_mapping",
+        "entity_index",
+        "bbox_index",
+        "spatial_index",
+        "pset_index",
+        "alignment_report_json",
+        "alignment_report_csv",
+        "quality_report"
+      ]
+    },
+    "resultArtifact": {
+      "$comment": "additionalProperties:false is what rejects inline artifact bytes such as content_base64: the cloud and the manifest only ever carry locators.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "role",
+        "ref",
+        "object_version_id",
+        "etag",
+        "sha256",
+        "size_bytes",
+        "published_at"
+      ],
+      "properties": {
+        "role": {
+          "$ref": "#/$defs/resultArtifactRole"
+        },
+        "ref": {
+          "$ref": "#/$defs/minioObjectRef"
+        },
+        "object_version_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "etag": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "size_bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "published_at": {
+          "$comment": "Every referenced artifact is published BEFORE the manifest; validate_result_publication_scenario compares these against the manifest published_at.",
+          "$ref": "#/$defs/utcTimestamp"
+        },
+        "filename": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "content_type": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        }
+      }
+    },
+    "alignmentSummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "metrics",
+        "counts",
+        "warning_codes",
+        "warning_code_count"
+      ],
+      "properties": {
+        "metrics": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "ifc_usdc_coverage_ratio",
+            "rvt_ifc_alignment_ratio",
+            "rvt_ifc_usdc_lineage_ratio"
+          ],
+          "properties": {
+            "ifc_usdc_coverage_ratio": {
+              "$ref": "#/$defs/metric"
+            },
+            "rvt_ifc_alignment_ratio": {
+              "$ref": "#/$defs/metric"
+            },
+            "rvt_ifc_usdc_lineage_ratio": {
+              "$ref": "#/$defs/metric"
+            }
+          }
+        },
+        "counts": {
+          "$ref": "#/$defs/counts"
+        },
+        "warning_codes": {
+          "type": "array",
+          "maxItems": 64,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/warningCode"
+          }
+        },
+        "warning_code_count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 64
+        }
+      }
+    },
+    "resultManifest": {
+      "$comment": "The attempt-scoped result-manifest.json. It is conditional-created LAST, after model.usdc, element_mapping.json, the required indexes and the quality/alignment reports are complete.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "manifest_schema_version",
+        "result_id",
+        "attempt_id",
+        "pipeline_job_id",
+        "source_bundle_id",
+        "external_model_version_id",
+        "attempt_outcome",
+        "converter",
+        "result_prefix",
+        "created_at",
+        "published_at",
+        "artifacts",
+        "alignment_summary"
+      ],
+      "properties": {
+        "manifest_schema_version": {
+          "const": "result-manifest/v1"
+        },
+        "result_id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "attempt_id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "pipeline_job_id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "source_bundle_id": {
+          "$ref": "#/$defs/sourceBundleId"
+        },
+        "external_model_version_id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "attempt_outcome": {
+          "$ref": "#/$defs/completedAttemptOutcome"
+        },
+        "converter": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "converter_id",
+            "converter_version",
+            "runtime_profile"
+          ],
+          "properties": {
+            "converter_id": {
+              "$ref": "#/$defs/identifier"
+            },
+            "converter_version": {
+              "$ref": "#/$defs/identifier"
+            },
+            "runtime_profile": {
+              "$ref": "#/$defs/identifier"
+            }
+          }
+        },
+        "result_prefix": {
+          "$ref": "#/$defs/attemptResultPrefix"
+        },
+        "created_at": {
+          "$ref": "#/$defs/utcTimestamp"
+        },
+        "published_at": {
+          "$ref": "#/$defs/utcTimestamp"
+        },
+        "artifacts": {
+          "type": "array",
+          "minItems": 4,
+          "items": {
+            "$ref": "#/$defs/resultArtifact"
+          },
+          "allOf": [
+            {
+              "$comment": "required role: usdc",
+              "contains": {
+                "type": "object",
+                "required": [
+                  "role"
+                ],
+                "properties": {
+                  "role": {
+                    "const": "usdc"
+                  }
+                }
+              }
+            },
+            {
+              "$comment": "required role: element_mapping",
+              "contains": {
+                "type": "object",
+                "required": [
+                  "role"
+                ],
+                "properties": {
+                  "role": {
+                    "const": "element_mapping"
+                  }
+                }
+              }
+            },
+            {
+              "$comment": "required role: alignment_report_json",
+              "contains": {
+                "type": "object",
+                "required": [
+                  "role"
+                ],
+                "properties": {
+                  "role": {
+                    "const": "alignment_report_json"
+                  }
+                }
+              }
+            },
+            {
+              "$comment": "required role: alignment_report_csv",
+              "contains": {
+                "type": "object",
+                "required": [
+                  "role"
+                ],
+                "properties": {
+                  "role": {
+                    "const": "alignment_report_csv"
+                  }
+                }
+              }
+            }
+          ]
+        },
+        "alignment_summary": {
+          "$ref": "#/$defs/alignmentSummary"
+        }
+      }
+    },
+    "publicationDiagnostic": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "code",
+        "role",
+        "expected",
+        "observed",
+        "detail"
+      ],
+      "properties": {
+        "code": {
+          "enum": [
+            "manifest_missing",
+            "missing_required_role",
+            "artifact_not_found",
+            "etag_mismatch",
+            "sha256_mismatch",
+            "size_mismatch",
+            "manifest_published_before_artifacts",
+            "manifest_digest_conflict",
+            "converter_exit_zero_insufficient",
+            "local_file_only"
+          ]
+        },
+        "role": {
+          "enum": [
+            "usdc",
+            "element_mapping",
+            "entity_index",
+            "bbox_index",
+            "spatial_index",
+            "pset_index",
+            "alignment_report_json",
+            "alignment_report_csv",
+            "quality_report",
+            null
+          ]
+        },
+        "expected": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 2000
+        },
+        "observed": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 2000
+        },
+        "detail": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000
+        }
+      }
+    },
+    "resultPublicationOutcome": {
+      "$comment": "Adjudication of formal availability for one attempt. Only a readable manifest with all required roles and fully verified refs / etags / SHA-256 / sizes may be AVAILABLE; a local file or converter exit 0 is never sufficient.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "result_id",
+        "attempt_id",
+        "pipeline_job_id",
+        "publication_state",
+        "conditional_create",
+        "replay",
+        "result_manifest_digest",
+        "prior_result_id",
+        "prior_result_manifest_digest",
+        "available_at",
+        "diagnostics",
+        "observed_at"
+      ],
+      "properties": {
+        "result_id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "attempt_id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "pipeline_job_id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "publication_state": {
+          "$ref": "#/$defs/publicationState"
+        },
+        "conditional_create": {
+          "$comment": "outcome exists only once the conditional create has been attempted; while the artifacts are still going up there is no outcome to report yet.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "attempted"
+          ],
+          "properties": {
+            "attempted": {
+              "type": "boolean"
+            },
+            "outcome": {
+              "enum": [
+                "created",
+                "replay_same_digest",
+                "conflict_different_digest"
+              ]
+            }
+          },
+          "allOf": [
+            {
+              "if": {
+                "required": [
+                  "attempted"
+                ],
+                "properties": {
+                  "attempted": {
+                    "const": true
+                  }
+                }
+              },
+              "then": {
+                "required": [
+                  "outcome"
+                ]
+              },
+              "else": {
+                "not": {
+                  "required": [
+                    "outcome"
+                  ]
+                }
+              }
+            }
+          ]
+        },
+        "replay": {
+          "type": "boolean"
+        },
+        "result_manifest_digest": {
+          "$ref": "#/$defs/nullableSha256"
+        },
+        "prior_result_id": {
+          "$comment": "Formal result already published for this attempt, if any. Publication resume MUST NOT create a second formal result; validate_result_publication_scenario compares it with result_id.",
+          "$ref": "#/$defs/nullableIdentifier"
+        },
+        "prior_result_manifest_digest": {
+          "$ref": "#/$defs/nullableSha256"
+        },
+        "result_manifest_ref": {
+          "$ref": "#/$defs/locator"
+        },
+        "available_at": {
+          "$ref": "#/$defs/nullableUtcTimestamp"
+        },
+        "diagnostics": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/publicationDiagnostic"
+          }
+        },
+        "observed_at": {
+          "$ref": "#/$defs/utcTimestamp"
+        }
+      },
+      "allOf": [
+        {
+          "$comment": "AVAILABLE is adjudicated only by a clean, readable, fully verified manifest publication.",
+          "if": {
+            "required": [
+              "publication_state"
+            ],
+            "properties": {
+              "publication_state": {
+                "const": "AVAILABLE"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "result_manifest_ref"
+            ],
+            "properties": {
+              "diagnostics": {
+                "maxItems": 0
+              },
+              "available_at": {
+                "type": "string"
+              },
+              "conditional_create": {
+                "required": [
+                  "outcome"
+                ],
+                "properties": {
+                  "outcome": {
+                    "enum": [
+                      "created",
+                      "replay_same_digest"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "$comment": "A non-AVAILABLE result has no availability timestamp.",
+          "if": {
+            "required": [
+              "publication_state"
+            ],
+            "properties": {
+              "publication_state": {
+                "enum": [
+                  "UNPUBLISHED",
+                  "PUBLISHING",
+                  "INVALID"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "available_at": {
+                "type": "null"
+              }
+            }
+          }
+        },
+        {
+          "$comment": "Same attempt + different manifest digest SHALL conflict and MUST NOT overwrite; a conflict is never an idempotent replay.",
+          "if": {
+            "required": [
+              "conditional_create"
+            ],
+            "properties": {
+              "conditional_create": {
+                "required": [
+                  "outcome"
+                ],
+                "properties": {
+                  "outcome": {
+                    "const": "conflict_different_digest"
+                  }
+                }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "publication_state": {
+                "const": "INVALID"
+              },
+              "replay": {
+                "const": false
+              }
+            }
+          }
+        }
+      ]
+    },
+    "localCacheObservation": {
+      "$comment": "Formal availability is decided by MinIO objects only. minio_objects_intact means the manifest is readable and every referenced artifact verified; the local artifact directory is staging / cache and never decides availability.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "result_id",
+        "attempt_id",
+        "pipeline_job_id",
+        "local_cache_present",
+        "minio_objects_intact",
+        "formal_availability",
+        "rebuild_from_minio_possible",
+        "observed_at"
+      ],
+      "properties": {
+        "result_id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "attempt_id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "pipeline_job_id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "local_cache_present": {
+          "type": "boolean"
+        },
+        "minio_objects_intact": {
+          "type": "boolean"
+        },
+        "formal_availability": {
+          "enum": [
+            "AVAILABLE",
+            "NON_AVAILABLE"
+          ]
+        },
+        "rebuild_from_minio_possible": {
+          "type": "boolean"
+        },
+        "observed_at": {
+          "$ref": "#/$defs/utcTimestamp"
+        }
+      },
+      "allOf": [
+        {
+          "$comment": "Local cache removal does not change formal availability.",
+          "if": {
+            "required": [
+              "minio_objects_intact"
+            ],
+            "properties": {
+              "minio_objects_intact": {
+                "const": true
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "formal_availability": {
+                "const": "AVAILABLE"
+              }
+            }
+          }
+        },
+        {
+          "$comment": "A local file that exists only on disk is never a formal result.",
+          "if": {
+            "required": [
+              "minio_objects_intact"
+            ],
+            "properties": {
+              "minio_objects_intact": {
+                "const": false
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "formal_availability": {
+                "const": "NON_AVAILABLE"
+              },
+              "rebuild_from_minio_possible": {
+                "const": false
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}

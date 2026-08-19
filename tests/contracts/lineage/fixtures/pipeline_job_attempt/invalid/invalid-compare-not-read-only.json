@@ -1,0 +1,142 @@
+{
+  "schema_version": "pipeline-job-attempt/v1",
+  "document_type": "result_compare",
+  "body": {
+    "capability": "result.compare",
+    "read_only": false,
+    "active_pointer_changed": false,
+    "pipeline_job_id": "pipeline-job-0003",
+    "actor": {
+      "actor_kind": "operator",
+      "actor_id": "operator-lin"
+    },
+    "compared_at": "2026-07-16T10:05:00Z",
+    "left": {
+      "result_id": "result-0007",
+      "attempt_id": "attempt-0007",
+      "pipeline_job_id": "pipeline-job-0003",
+      "publication_state": "AVAILABLE",
+      "attempt_outcome": "succeeded",
+      "result_manifest_digest": "11ab9629a8743b1babd9291c32cd7ff9e37abb8015b2b2cc7e200926d77cb720",
+      "result_manifest_ref": {
+        "ref": "minio://edge-tpe-01/lineage-results/tenant-a/project-library/model-version-20260715-001/results/attempt-0007/result-manifest.json?versionId=v-attempt-0007-manifest",
+        "object_version_id": "v-attempt-0007-manifest",
+        "etag": "etag-v-attempt-0007-manifest",
+        "sha256": "11ab9629a8743b1babd9291c32cd7ff9e37abb8015b2b2cc7e200926d77cb720",
+        "size_bytes": 8421
+      },
+      "converter": {
+        "converter_id": "ifc-usdc-converter",
+        "converter_version": "2.4.1",
+        "runtime_profile": "kit-gpu-exclusive"
+      },
+      "metrics": {
+        "ifc_usdc_coverage_ratio": {
+          "numerator": 1200,
+          "denominator": 1200,
+          "ratio": 1,
+          "status": "complete"
+        },
+        "rvt_ifc_alignment_ratio": {
+          "numerator": 1000,
+          "denominator": 1000,
+          "ratio": 1,
+          "status": "complete"
+        },
+        "rvt_ifc_usdc_lineage_ratio": {
+          "numerator": 1000,
+          "denominator": 1000,
+          "ratio": 1,
+          "status": "complete"
+        }
+      },
+      "counts": {
+        "csv_total_count": 1000,
+        "csv_valid_count": 1000,
+        "eligible_ifc_product_count": 1200,
+        "duplicate_rvt_id_count": 0,
+        "duplicate_ifc_guid_count": 0,
+        "invalid_row_count": 0,
+        "csv_only_count": 0,
+        "ifc_only_count": 200,
+        "ifc_usdc_unmapped_count": 0,
+        "full_lineage_matched_count": 1000
+      },
+      "warning_codes": []
+    },
+    "right": {
+      "result_id": "result-0008",
+      "attempt_id": "attempt-0008",
+      "pipeline_job_id": "pipeline-job-0003",
+      "publication_state": "AVAILABLE",
+      "attempt_outcome": "succeeded_with_warnings",
+      "result_manifest_digest": "614c9b6c5ca319f426eec2bbc3107a7768cbdb0a75c0c1af4bbbf15bc4912e55",
+      "result_manifest_ref": {
+        "ref": "minio://edge-tpe-01/lineage-results/tenant-a/project-library/model-version-20260715-001/results/attempt-0008/result-manifest.json?versionId=v-attempt-0008-manifest",
+        "object_version_id": "v-attempt-0008-manifest",
+        "etag": "etag-v-attempt-0008-manifest",
+        "sha256": "614c9b6c5ca319f426eec2bbc3107a7768cbdb0a75c0c1af4bbbf15bc4912e55",
+        "size_bytes": 8421
+      },
+      "converter": {
+        "converter_id": "ifc-usdc-converter",
+        "converter_version": "2.4.1",
+        "runtime_profile": "kit-gpu-exclusive"
+      },
+      "metrics": {
+        "ifc_usdc_coverage_ratio": {
+          "numerator": 1180,
+          "denominator": 1200,
+          "ratio": 0.9833333333,
+          "status": "partial"
+        },
+        "rvt_ifc_alignment_ratio": {
+          "numerator": 990,
+          "denominator": 1000,
+          "ratio": 0.99,
+          "status": "partial"
+        },
+        "rvt_ifc_usdc_lineage_ratio": {
+          "numerator": 975,
+          "denominator": 1000,
+          "ratio": 0.975,
+          "status": "partial"
+        }
+      },
+      "counts": {
+        "csv_total_count": 1010,
+        "csv_valid_count": 1000,
+        "eligible_ifc_product_count": 1200,
+        "duplicate_rvt_id_count": 0,
+        "duplicate_ifc_guid_count": 0,
+        "invalid_row_count": 10,
+        "csv_only_count": 10,
+        "ifc_only_count": 210,
+        "ifc_usdc_unmapped_count": 20,
+        "full_lineage_matched_count": 975
+      },
+      "warning_codes": [
+        "PARTIAL_RVT_IFC_ALIGNMENT"
+      ]
+    },
+    "differences": {
+      "changed_metric_names": [
+        "ifc_usdc_coverage_ratio",
+        "rvt_ifc_alignment_ratio",
+        "rvt_ifc_usdc_lineage_ratio"
+      ],
+      "changed_count_names": [
+        "csv_total_count",
+        "invalid_row_count",
+        "csv_only_count",
+        "ifc_only_count",
+        "ifc_usdc_unmapped_count",
+        "full_lineage_matched_count"
+      ],
+      "warning_codes_added": [
+        "PARTIAL_RVT_IFC_ALIGNMENT"
+      ],
+      "warning_codes_removed": []
+    }
+  }
+}

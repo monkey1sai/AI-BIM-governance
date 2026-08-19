@@ -1,0 +1,33 @@
+{
+  "schema_version": "pipeline-job-attempt/v1",
+  "document_type": "admission_record",
+  "body": {
+    "pipeline_job_id": "pipeline-job-0003",
+    "attempt_id": "attempt-0007",
+    "trigger_kind": "automatic",
+    "required_runtime_capabilities": [
+      "ifc_to_usdc_conversion",
+      "gpu_rendering"
+    ],
+    "admission_status": "ADMITTED",
+    "runtime_profile": "kit-gpu-exclusive",
+    "requires_exclusive_runtime": true,
+    "lease_id": null,
+    "readiness_evidence": [
+      {
+        "evidence_kind": "runtime_health",
+        "detail": "kit stage READY, primary stream port 49100 idle",
+        "observed_at": "2026-07-16T08:05:10Z"
+      },
+      {
+        "evidence_kind": "gpu_present",
+        "detail": "NVIDIA RTX 4060 Ti visible to the conversion runtime",
+        "observed_at": "2026-07-16T08:05:10Z"
+      }
+    ],
+    "blocker_codes": [],
+    "attempt_counter_before": 0,
+    "attempt_counter_after": 1,
+    "observed_at": "2026-07-16T08:05:11Z"
+  }
+}

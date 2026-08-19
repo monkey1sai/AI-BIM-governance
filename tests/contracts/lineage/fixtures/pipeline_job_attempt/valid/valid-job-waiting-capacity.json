@@ -1,0 +1,33 @@
+{
+  "schema_version": "pipeline-job-attempt/v1",
+  "document_type": "pipeline_job",
+  "body": {
+    "owner": "bim-review-coordinator",
+    "pipeline_job_id": "pipeline-job-0003",
+    "source_bundle_id": "source-bundle-0003",
+    "external_model_version_id": "model-version-20260715-001",
+    "tenant_id": "tenant-a",
+    "project_id": "project-library",
+    "job_state": "WAITING_CAPACITY",
+    "attempt_count": 0,
+    "in_flight_attempt_id": null,
+    "active_result_id": null,
+    "manual_correction_blocker": null,
+    "ready_event_ledger": [
+      {
+        "event_id": "ready-evt-0001",
+        "event_kind": "source_bundle_ready",
+        "received_at": "2026-07-16T08:00:00Z",
+        "created_new_logical_job": true
+      },
+      {
+        "event_id": "ready-evt-0002",
+        "event_kind": "ready_replay",
+        "received_at": "2026-07-16T08:01:30Z",
+        "created_new_logical_job": false
+      }
+    ],
+    "created_at": "2026-07-16T08:00:00Z",
+    "updated_at": "2026-07-16T08:05:12.250Z"
+  }
+}

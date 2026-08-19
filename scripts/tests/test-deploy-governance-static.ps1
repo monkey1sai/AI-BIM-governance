@@ -11,6 +11,7 @@ if ($deployBytes.Count -lt 3 -or $deployBytes[0] -ne 0xEF -or $deployBytes[1] -n
 $deploy = Get-Content -Raw $deployPath
 $launcher = Get-Content -Raw (Join-Path $RepoRoot 'scripts\lib\host-native-launcher.ps1')
 $cadHardener = Get-Content -Raw (Join-Path $RepoRoot 'bim-streaming-server\scripts\harden-cad-extension-cache.py')
+$cadAclLibrary = Get-Content -Raw (Join-Path $RepoRoot 'scripts\lib\cad-extension-cache-acl.ps1')
 $kitGateway = Get-Content -Raw (Join-Path $RepoRoot 'services\kit-manager-api\app\kit_gateway.py')
 $stopAll = Get-Content -Raw (Join-Path $RepoRoot 'scripts\stop-all.ps1')
 $hostKitCompose = Get-Content -Raw (Join-Path $RepoRoot 'compose.host-kit.yml')
@@ -37,8 +38,22 @@ Assert-Contains $deploy 'Test-KitRuntimeSignatureMatches -Path $script:webPlaneR
 Assert-Contains $deploy 'Set-KitRuntimeSignature -Path $script:webPlaneRuntimeSignaturePath' 'deploy.ps1 must persist the web-plane signature after reconcile'
 Assert-Contains $deploy '-ArtifactsRoot $resolvedConversionArtifactsRoot' 'conversion runtime signature must track its effective output root'
 Assert-Contains $deploy '$shouldRefreshWebPlane = $true' 'deploy.ps1 must force web-plane refresh for custom governance port'
-Assert-Contains $deploy "if (-not `$SkipConversion -and (Get-PlatformName) -eq 'linux')" 'deploy.ps1 must harden the CAD entrypoint only on the Linux conversion path'
+Assert-Contains $deploy "if (-not `$SkipConversion -and (Get-PlatformName) -eq 'linux')" 'deploy.ps1 must keep the inode-replacing CAD entrypoint hardener on the Linux conversion path'
 Assert-Contains $deploy 'harden-cad-extension-cache.py' 'deploy.ps1 must invoke the checked-in CAD cache hardener'
+# #625: the runtime adapter enforces the same owner-private boundary on every
+# platform, so the Windows conversion path must converge its NTFS DACLs instead
+# of being skipped by the platform guard above.
+Assert-Contains $deploy "if (-not `$SkipConversion -and (Get-PlatformName) -eq 'windows')" 'deploy.ps1 must harden the CAD extension cache on the Windows conversion path too (#625)'
+Assert-Contains $deploy 'cad-extension-cache-acl.ps1' 'deploy.ps1 must import the Windows CAD extension cache ACL library'
+Assert-Contains $deploy 'Invoke-CadExtensionCacheWindowsHardening' 'deploy.ps1 must converge the Windows CAD extension cache chain through the shared library'
+Assert-Contains $cadAclLibrary 'RemoveAccessRuleSpecific' 'the Windows hardener must remove ACEs through the ACL object model, never icacls'
+Assert-Contains $cadAclLibrary 'SetAccessRuleProtection($true, $true)' 'the Windows hardener must preserve inherited ACEs when it breaks inheritance'
+Assert-Contains $cadAclLibrary 'FileSystemAclExtensions]::SetAccessControl' 'the Windows hardener must persist DACL-only writes without SeSecurityPrivilege'
+Assert-Contains $cadAclLibrary 'GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier])' 'the Windows hardener must enumerate rules positionally instead of through @()'
+$cadAclCodeLines = @($cadAclLibrary -split '\r?\n' | Where-Object { $_.TrimStart() -notmatch '^#' })
+if (@($cadAclCodeLines | Where-Object { $_ -match 'icacls' }).Count -gt 0) {
+    throw 'the Windows hardener must not shell out to icacls: /remove:g reports success and does nothing for an unresolvable orphan SID'
+}
 Assert-Contains $deploy "Get-DeployEnvValue -Name 'STREAMING_CONVERSION_HOOPS_MAIN'" 'Linux deploy must reject an unpinned explicit HOOPS override'
 if ($deploy -match 'GetUnixFileMode') {
     throw 'Linux deploy must remain compatible with the repository PowerShell 7 baseline'
@@ -422,6 +437,160 @@ Write-Output 'PHASE_CONTINUED'
         }
     }
 }
+
+# #625: the Windows conversion path owes the same fail-closed treatment. The
+# hardening itself is fixture-tested in scripts/tests/test-cad-extension-cache-acl.ps1;
+# this matrix pins how the deploy phase reacts to each status it can return.
+$windowsCadPhases = @($deployAst.FindAll({
+    param($node)
+    $node -is [System.Management.Automation.Language.IfStatementAst] -and
+        $node.Extent.Text.TrimStart().StartsWith("if (-not `$SkipConversion -and (Get-PlatformName) -eq 'windows')", [System.StringComparison]::Ordinal)
+}, $true))
+if ($windowsCadPhases.Count -ne 1) {
+    throw 'deploy.ps1 must expose exactly one Windows CAD hardening phase block'
+}
+$windowsPhaseSandbox = Join-Path ([System.IO.Path]::GetTempPath()) ("ai-bim-cad-win-phase-{0}" -f [guid]::NewGuid().ToString('N'))
+try {
+    New-Item -ItemType Directory -Path $windowsPhaseSandbox -Force | Out-Null
+    $windowsPhaseSourcePath = Join-Path $windowsPhaseSandbox 'cad-hardening-phase-windows.ps1'
+    [System.IO.File]::WriteAllText($windowsPhaseSourcePath, $windowsCadPhases[0].Extent.Text)
+    $windowsRunnerPath = Join-Path $windowsPhaseSandbox 'invoke-cad-hardening-phase-windows.ps1'
+    $windowsRunnerSource = @'
+param(
+    [Parameter(Mandatory = $true)][string] $RepoRoot,
+    [Parameter(Mandatory = $true)][string] $PhaseSourcePath,
+    [ValidateSet('passed', 'skipped', 'failed', 'none')][string] $HardenerStatus = 'passed',
+    [AllowEmptyString()][string] $ConfiguredHoopsMain = ''
+)
+Set-StrictMode -Version Latest
+$ErrorActionPreference = 'Stop'
+$SkipConversion = $false
+$resolvedEnvFile = ''
+$LogPath = Join-Path $RepoRoot 'phase.log'
+$script:fixtureStatus = $HardenerStatus
+$script:fixtureConfiguredHoopsMain = $ConfiguredHoopsMain
+function Get-PlatformName { return 'windows' }
+function Get-DeployEnvValue {
+    param($Name, $EnvFile, $Default)
+    return $script:fixtureConfiguredHoopsMain
+}
+function Invoke-CadExtensionCacheWindowsHardening {
+    param($StreamingRepoRoot, $ConfiguredHoopsMain)
+    [pscustomobject]@{
+        StreamingRepoRoot = $StreamingRepoRoot
+        ConfiguredHoopsMain = $ConfiguredHoopsMain
+    } | ConvertTo-Json -Compress | Set-Content -LiteralPath (Join-Path $RepoRoot 'windows-hardener-call.json') -Encoding utf8
+    if ($script:fixtureStatus -ceq 'none') { return $null }
+    return [pscustomobject]@{
+        Status = $script:fixtureStatus
+        ReasonKind = 'fixture_reason_kind'
+        Diagnostic = 'fixture diagnostic naming the failing level and SIDs'
+        StatusJson = '{"schema_version":"cad-extension-cache-windows-hardening/v1","status":"' + $script:fixtureStatus + '"}'
+    }
+}
+function Write-DeployTag {
+    param($Tag, $Message, $LogPath)
+    "$Tag|$Message" | Add-Content -LiteralPath (Join-Path $RepoRoot 'phase-trace.txt')
+}
+function Print-FinalSummary {
+    param($ExitCode, $FailedPhase)
+    Write-Output "SUMMARY_EXIT=$ExitCode PHASE=$FailedPhase"
+}
+. ([scriptblock]::Create([System.IO.File]::ReadAllText($PhaseSourcePath)))
+Write-Output 'PHASE_CONTINUED'
+'@
+    [System.IO.File]::WriteAllText($windowsRunnerPath, $windowsRunnerSource)
+    $windowsPhaseCases = @(
+        @{
+            Name = 'unconverged chain'
+            HardenerStatus = 'failed'
+            ConfiguredHoopsMain = ''
+            ExpectedExitCode = 2
+            ExpectedTrace = 'fail|CAD extension cache permission hardening failed (fixture_reason_kind)'
+            ExpectContinuation = $false
+        },
+        @{
+            Name = 'nothing to converge (uncached package or explicit override)'
+            HardenerStatus = 'skipped'
+            ConfiguredHoopsMain = 'C:\explicit\hoops_main.py'
+            ExpectedExitCode = 0
+            ExpectedTrace = 'skip|CAD extension cache hardening skipped (fixture_reason_kind)'
+            ExpectContinuation = $true
+        },
+        @{
+            Name = 'converged chain'
+            HardenerStatus = 'passed'
+            ConfiguredHoopsMain = ''
+            ExpectedExitCode = 0
+            ExpectedTrace = 'ok|CAD extension cache entrypoint permissions hardened'
+            ExpectContinuation = $true
+        },
+        @{
+            # A hardener that cannot run at all must never fall through to the
+            # success tag; an unmatched status is a failure, not a pass.
+            Name = 'hardener unavailable'
+            HardenerStatus = 'none'
+            ConfiguredHoopsMain = ''
+            ExpectedExitCode = 2
+            ExpectedTrace = 'fail|CAD extension cache permission hardening failed (hardener_unavailable)'
+            ExpectContinuation = $false
+        }
+    )
+    foreach ($windowsCase in $windowsPhaseCases) {
+        foreach ($artifactName in @('windows-hardener-call.json', 'phase-trace.txt', 'phase.log')) {
+            Remove-Item -LiteralPath (Join-Path $windowsPhaseSandbox $artifactName) -Force -ErrorAction SilentlyContinue
+        }
+        $windowsOutput = @(& (Get-Process -Id $PID).Path -NoProfile -NonInteractive -File $windowsRunnerPath `
+            -RepoRoot $windowsPhaseSandbox `
+            -PhaseSourcePath $windowsPhaseSourcePath `
+            -HardenerStatus ([string]$windowsCase.HardenerStatus) `
+            -ConfiguredHoopsMain ([string]$windowsCase.ConfiguredHoopsMain) 2>&1)
+        $windowsExitCode = $LASTEXITCODE
+        $windowsOutputText = $windowsOutput -join "`n"
+        if ($windowsExitCode -ne [int]$windowsCase.ExpectedExitCode) {
+            throw "Windows CAD phase '$($windowsCase.Name)' exit code mismatch: expected=$($windowsCase.ExpectedExitCode) actual=$windowsExitCode output=$windowsOutputText"
+        }
+        $windowsTracePath = Join-Path $windowsPhaseSandbox 'phase-trace.txt'
+        $windowsTrace = if (Test-Path -LiteralPath $windowsTracePath) { Get-Content -LiteralPath $windowsTracePath -Raw } else { '' }
+        if ($windowsTrace -notmatch [regex]::Escape([string]$windowsCase.ExpectedTrace)) {
+            throw "Windows CAD phase '$($windowsCase.Name)' did not report its expected phase result: $windowsTrace"
+        }
+        $windowsContinued = $windowsOutputText -match 'PHASE_CONTINUED'
+        if ($windowsContinued -ne [bool]$windowsCase.ExpectContinuation) {
+            throw "Windows CAD phase '$($windowsCase.Name)' continuation mismatch"
+        }
+        $windowsCallPath = Join-Path $windowsPhaseSandbox 'windows-hardener-call.json'
+        if (-not (Test-Path -LiteralPath $windowsCallPath -PathType Leaf)) {
+            throw "Windows CAD phase '$($windowsCase.Name)' must always consult the hardener"
+        }
+        $windowsCall = Get-Content -LiteralPath $windowsCallPath -Raw | ConvertFrom-Json -ErrorAction Stop
+        if ([string]$windowsCall.StreamingRepoRoot -cne (Join-Path $windowsPhaseSandbox 'bim-streaming-server')) {
+            throw "Windows CAD phase '$($windowsCase.Name)' must pass the streaming repo root that owns the pinned manifest"
+        }
+        if ([string]$windowsCall.ConfiguredHoopsMain -cne [string]$windowsCase.ConfiguredHoopsMain) {
+            throw "Windows CAD phase '$($windowsCase.Name)' must forward the configured HOOPS override verbatim"
+        }
+        $windowsPhaseLogPath = Join-Path $windowsPhaseSandbox 'phase.log'
+        if ([string]$windowsCase.HardenerStatus -ceq 'none') {
+            if (Test-Path -LiteralPath $windowsPhaseLogPath) {
+                throw "Windows CAD phase '$($windowsCase.Name)' must not invent a structured status when the hardener returned none"
+            }
+        }
+        else {
+            $windowsPhaseLog = Get-Content -LiteralPath $windowsPhaseLogPath -Raw
+            if ($windowsPhaseLog -notmatch 'cad-extension-cache-windows-hardening/v1') {
+                throw "Windows CAD phase '$($windowsCase.Name)' must retain the structured hardener status in the deploy log"
+            }
+        }
+    }
+    Write-Host 'PASS Windows CAD hardening deploy-phase execution matrix'
+}
+finally {
+    if (Test-Path -LiteralPath $windowsPhaseSandbox) {
+        Remove-Item -LiteralPath $windowsPhaseSandbox -Recurse -Force
+    }
+}
+
 $refreshFunction = @($deployAst.FindAll({
     param($node)
     $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and

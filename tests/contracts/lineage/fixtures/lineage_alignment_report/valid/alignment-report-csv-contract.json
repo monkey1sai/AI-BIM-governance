@@ -1,0 +1,19 @@
+{
+  "schema_version": "lineage-alignment-report/v1",
+  "document_type": "alignment_report_csv_contract",
+  "body": {
+    "columns": [
+      "row_number",
+      "rvt_element_id",
+      "ifc_uuid36_raw",
+      "ifc_uuid36",
+      "ifc_global_id22",
+      "usd_prim_path",
+      "alignment_class",
+      "reason_code"
+    ],
+    "delimiter": ",",
+    "encoding": "utf-8",
+    "newline": "\n"
+  }
+}

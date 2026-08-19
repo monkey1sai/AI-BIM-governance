@@ -1,0 +1,158 @@
+{
+  "schema_version": "result-manifest-document/v1",
+  "document_type": "result_manifest",
+  "body": {
+    "manifest_schema_version": "result-manifest/v1",
+    "result_id": "result-0007",
+    "attempt_id": "attempt-0007",
+    "pipeline_job_id": "pipeline-job-0003",
+    "source_bundle_id": "source-bundle-0003",
+    "external_model_version_id": "model-version-20260715-001",
+    "attempt_outcome": "succeeded",
+    "converter": {
+      "converter_id": "ifc-usdc-converter",
+      "converter_version": "2.4.1",
+      "runtime_profile": "kit-gpu-exclusive"
+    },
+    "result_prefix": "minio://edge-tpe-01/lineage-results/tenant-a/project-library/model-version-20260715-001/results/attempt-0007/",
+    "created_at": "2026-07-16T08:38:40Z",
+    "published_at": "2026-07-16T08:40:22.750Z",
+    "artifacts": [
+      {
+        "role": "usdc",
+        "ref": "minio://edge-tpe-01/lineage-results/tenant-a/project-library/model-version-20260715-001/results/attempt-0007/model.usdc?versionId=v-0007-usdc",
+        "object_version_id": "v-0007-usdc",
+        "etag": "etag-v-0007-usdc",
+        "sha256": "ac44a1163bacc9201a2df24ea2049e79f2d34d7f1ad46f07e33794156bced4cc",
+        "size_bytes": 73400320,
+        "published_at": "2026-07-16T08:38:41Z",
+        "filename": "model.usdc",
+        "content_type": "application/octet-stream"
+      },
+      {
+        "role": "element_mapping",
+        "ref": "minio://edge-tpe-01/lineage-results/tenant-a/project-library/model-version-20260715-001/results/attempt-0007/element_mapping.json",
+        "object_version_id": "v-0007-element-mapping",
+        "etag": "etag-v-0007-element-mapping",
+        "sha256": "49ca81b7129e91cf01227d0253dde6a3d29939edb5efc1ac0b9b19f624379302",
+        "size_bytes": 2411008,
+        "published_at": "2026-07-16T08:39:02Z",
+        "filename": "element_mapping.json",
+        "content_type": "application/json"
+      },
+      {
+        "role": "entity_index",
+        "ref": "minio://edge-tpe-01/lineage-results/tenant-a/project-library/model-version-20260715-001/results/attempt-0007/entity_index.json?versionId=v-0007-entity-index",
+        "object_version_id": "v-0007-entity-index",
+        "etag": "etag-v-0007-entity-index",
+        "sha256": "2fa2b283932df712e43f2269a9166c28f8f3899afba242dcf07e14fa9775ebbc",
+        "size_bytes": 812032,
+        "published_at": "2026-07-16T08:39:11Z",
+        "filename": "entity_index.json",
+        "content_type": "application/json"
+      },
+      {
+        "role": "bbox_index",
+        "ref": "minio://edge-tpe-01/lineage-results/tenant-a/project-library/model-version-20260715-001/results/attempt-0007/bbox_index.json?versionId=v-0007-bbox-index",
+        "object_version_id": "v-0007-bbox-index",
+        "etag": "etag-v-0007-bbox-index",
+        "sha256": "0bd9d2955e9dc8d1bfad7cfc6547e3d02d39caed6e880adf13e8438e21c8f7a9",
+        "size_bytes": 640512,
+        "published_at": "2026-07-16T08:39:19Z",
+        "filename": "bbox_index.json",
+        "content_type": "application/json"
+      },
+      {
+        "role": "spatial_index",
+        "ref": "minio://edge-tpe-01/lineage-results/tenant-a/project-library/model-version-20260715-001/results/attempt-0007/spatial_index.json?versionId=v-0007-spatial-index",
+        "object_version_id": "v-0007-spatial-index",
+        "etag": "etag-v-0007-spatial-index",
+        "sha256": "64a5b261cf422fdce83b4d735d22bb3d463e88d0650e3e682b33b91dd97feacd",
+        "size_bytes": 401920,
+        "published_at": "2026-07-16T08:39:26Z",
+        "filename": "spatial_index.json",
+        "content_type": "application/json"
+      },
+      {
+        "role": "pset_index",
+        "ref": "minio://edge-tpe-01/lineage-results/tenant-a/project-library/model-version-20260715-001/results/attempt-0007/pset_index.json?versionId=v-0007-pset-index",
+        "object_version_id": "v-0007-pset-index",
+        "etag": "etag-v-0007-pset-index",
+        "sha256": "b4936b4459ffc654e040b61087b011055e7630954f5f33be77db7ec34d436548",
+        "size_bytes": 1204224,
+        "published_at": "2026-07-16T08:39:34Z",
+        "filename": "pset_index.json",
+        "content_type": "application/json"
+      },
+      {
+        "role": "alignment_report_json",
+        "ref": "minio://edge-tpe-01/lineage-results/tenant-a/project-library/model-version-20260715-001/results/attempt-0007/alignment_report.json?versionId=v-0007-alignment-report-json",
+        "object_version_id": "v-0007-alignment-report-json",
+        "etag": "etag-v-0007-alignment-report-json",
+        "sha256": "c481e17bce0675de5741c9e86f149a71d33aa3f42f084e7da1b1f2df40a06bd5",
+        "size_bytes": 96040,
+        "published_at": "2026-07-16T08:39:51Z",
+        "filename": "alignment_report.json",
+        "content_type": "application/json"
+      },
+      {
+        "role": "alignment_report_csv",
+        "ref": "minio://edge-tpe-01/lineage-results/tenant-a/project-library/model-version-20260715-001/results/attempt-0007/alignment_report.csv?versionId=v-0007-alignment-report-csv",
+        "object_version_id": "v-0007-alignment-report-csv",
+        "etag": "etag-v-0007-alignment-report-csv",
+        "sha256": "c169135c6a1b5e985bb2bba79956e09587986184615433092eb226fd23deb24e",
+        "size_bytes": 64010,
+        "published_at": "2026-07-16T08:39:58Z",
+        "filename": "alignment_report.csv",
+        "content_type": "text/csv"
+      },
+      {
+        "role": "quality_report",
+        "ref": "minio://edge-tpe-01/lineage-results/tenant-a/project-library/model-version-20260715-001/results/attempt-0007/quality_report.json?versionId=v-0007-quality-report",
+        "object_version_id": "v-0007-quality-report",
+        "etag": "etag-v-0007-quality-report",
+        "sha256": "2dffbb71c51af48aea71b5a50ad404818a2b2365dc3f869cd9f08068ad19f114",
+        "size_bytes": 30720,
+        "published_at": "2026-07-16T08:40:06Z",
+        "filename": "quality_report.json",
+        "content_type": "application/json"
+      }
+    ],
+    "alignment_summary": {
+      "metrics": {
+        "ifc_usdc_coverage_ratio": {
+          "numerator": 1200,
+          "denominator": 1200,
+          "ratio": 1,
+          "status": "complete"
+        },
+        "rvt_ifc_alignment_ratio": {
+          "numerator": 1000,
+          "denominator": 1000,
+          "ratio": 1,
+          "status": "complete"
+        },
+        "rvt_ifc_usdc_lineage_ratio": {
+          "numerator": 1000,
+          "denominator": 1000,
+          "ratio": 1,
+          "status": "complete"
+        }
+      },
+      "counts": {
+        "csv_total_count": 1000,
+        "csv_valid_count": 1000,
+        "eligible_ifc_product_count": 1200,
+        "duplicate_rvt_id_count": 0,
+        "duplicate_ifc_guid_count": 0,
+        "invalid_row_count": 0,
+        "csv_only_count": 0,
+        "ifc_only_count": 200,
+        "ifc_usdc_unmapped_count": 0,
+        "full_lineage_matched_count": 1000
+      },
+      "warning_codes": [],
+      "warning_code_count": 0
+    }
+  }
+}

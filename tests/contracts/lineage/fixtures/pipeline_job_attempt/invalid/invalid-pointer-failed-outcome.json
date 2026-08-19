@@ -1,0 +1,15 @@
+{
+  "schema_version": "pipeline-job-attempt/v1",
+  "document_type": "active_result_pointer",
+  "body": {
+    "pipeline_job_id": "pipeline-job-0003",
+    "result_id": "result-0007",
+    "attempt_id": "attempt-0007",
+    "selection_state": "active",
+    "publication_state": "AVAILABLE",
+    "attempt_outcome": "failed",
+    "audit_entry_id": "audit-0001",
+    "activated_at": "2026-07-16T08:41:07.500Z",
+    "correlation_id": "corr-lineage-0003-0007"
+  }
+}

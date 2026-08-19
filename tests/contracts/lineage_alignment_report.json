@@ -1,0 +1,832 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bim-docs.jackshappybot.com/contracts/lineage_alignment_report.json",
+  "title": "Lineage Alignment Report",
+  "description": "Edge-owned RVT/IFC/USDC alignment report contract (task 2.2). Carries the machine-readable JSON report body and the operator-downloadable CSV column contract. Source UUID36 strings are preserved verbatim; derived canonical UUID36 <-> IFC GlobalId22 round-trip and the stable USD element root are validated by tests/contracts/lineage/semantic_validators.py.",
+  "$comment": "Shared $defs utcTimestamp / metric / counts are byte-verbatim copies of openspec/changes/rvt-ifc-usdc-lineage/contracts/cloud-lineage-publication-request-v1.schema.json (blueprint E-4/E-12); do not edit them here. $defs/scopedMetric is the alignment-report extension of $defs/metric that additionally carries denominator_scope; it repeats metric's constraints inline because $defs/metric declares additionalProperties:false and therefore cannot be extended by allOf/$ref composition. document_type narrows body through allOf/if-then rather than oneOf: the two bodies are already disjoint by required members, and if-then keeps validator errors anchored on the offending body member instead of collapsing every failure into one root-level oneOf. Semantic invariants (metric<->count binding, decimal truncation, identity round-trip, prim token) live in semantic_validators.validate_alignment_report and are deliberately not expressible in JSON Schema.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "document_type",
+    "body"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "lineage-alignment-report/v1"
+    },
+    "document_type": {
+      "enum": [
+        "alignment_report_json",
+        "alignment_report_csv_contract"
+      ]
+    },
+    "body": {}
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "document_type": {
+            "const": "alignment_report_json"
+          }
+        },
+        "required": [
+          "document_type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "body": {
+            "$ref": "#/$defs/alignmentReportJson"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "document_type": {
+            "const": "alignment_report_csv_contract"
+          }
+        },
+        "required": [
+          "document_type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "body": {
+            "$ref": "#/$defs/alignmentReportCsvContract"
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "utcTimestamp": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^[1-9][0-9]{3}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12][0-9]|3[01])T(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](?:\\.[0-9]{1,6})?Z$"
+    },
+    "metric": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "numerator",
+        "denominator",
+        "ratio",
+        "status"
+      ],
+      "properties": {
+        "numerator": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "denominator": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "ratio": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 1
+        },
+        "status": {
+          "enum": [
+            "complete",
+            "partial",
+            "not_evaluable"
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "denominator": {
+                "const": 0
+              }
+            },
+            "required": [
+              "denominator"
+            ]
+          },
+          "then": {
+            "properties": {
+              "numerator": {
+                "const": 0
+              },
+              "ratio": {
+                "type": "null"
+              },
+              "status": {
+                "const": "not_evaluable"
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "ratio": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              },
+              "status": {
+                "enum": [
+                  "complete",
+                  "partial"
+                ]
+              }
+            }
+          }
+        }
+      ]
+    },
+    "counts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "csv_total_count",
+        "csv_valid_count",
+        "eligible_ifc_product_count",
+        "duplicate_rvt_id_count",
+        "duplicate_ifc_guid_count",
+        "invalid_row_count",
+        "csv_only_count",
+        "ifc_only_count",
+        "ifc_usdc_unmapped_count",
+        "full_lineage_matched_count"
+      ],
+      "properties": {
+        "csv_total_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "csv_valid_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "eligible_ifc_product_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "duplicate_rvt_id_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "duplicate_ifc_guid_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "invalid_row_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "csv_only_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "ifc_only_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "ifc_usdc_unmapped_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "full_lineage_matched_count": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "scopedMetric": {
+      "type": "object",
+      "$comment": "Verbatim projection of $defs/metric plus the mandatory denominator_scope discriminator required by spec.md 'Alignment metrics SHALL 使用明確且不同的分母'. Keep the four inherited keywords byte-identical to $defs/metric.",
+      "additionalProperties": false,
+      "required": [
+        "numerator",
+        "denominator",
+        "ratio",
+        "status",
+        "denominator_scope"
+      ],
+      "properties": {
+        "numerator": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "denominator": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "ratio": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 1
+        },
+        "status": {
+          "enum": [
+            "complete",
+            "partial",
+            "not_evaluable"
+          ]
+        },
+        "denominator_scope": {
+          "enum": [
+            "eligible_ifc_product_count",
+            "csv_valid_count"
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "denominator": {
+                "const": 0
+              }
+            },
+            "required": [
+              "denominator"
+            ]
+          },
+          "then": {
+            "properties": {
+              "numerator": {
+                "const": 0
+              },
+              "ratio": {
+                "type": "null"
+              },
+              "status": {
+                "const": "not_evaluable"
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "ratio": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              },
+              "status": {
+                "enum": [
+                  "complete",
+                  "partial"
+                ]
+              }
+            }
+          }
+        }
+      ]
+    },
+    "identifier": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "rvtElementId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200,
+      "$comment": "spec.md: schedule.csv ID 以原始字串保存，不得因 numeric coercion 或 leading zero 正規化而改變。"
+    },
+    "uuid36Raw": {
+      "type": "string",
+      "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+      "$comment": "Source schedule.csv IfcGUID preserved verbatim; case is not identity-bearing."
+    },
+    "uuid36Canon": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+      "$comment": "Derived canonical ifc_uuid36 (lowercase) used for exact 128-bit identity comparison."
+    },
+    "globalId22": {
+      "type": "string",
+      "pattern": "^[0-9A-Za-z_$]{22}$",
+      "$comment": "IFC GlobalId 22-character base64 encoding over charset 0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz_$ ; the first character encodes only 2 bits and is therefore restricted to 0-3 by semantic_validators.ifc_guid_expand."
+    },
+    "ifcClassToken": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 120,
+      "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+    },
+    "usdElementRootPath": {
+      "type": "string",
+      "maxLength": 512,
+      "pattern": "^/World/Elements/[A-Za-z_][A-Za-z0-9_]*/G_[A-Za-z0-9_]+$",
+      "$comment": "Stable element root authored by bim-streaming-server ifc_openusd_identity_author.build_identity_root_path. Exactly four path segments; a fifth segment is a tessellation child mesh and is rejected."
+    },
+    "usdChildPrimPath": {
+      "type": "string",
+      "maxLength": 1024,
+      "pattern": "^/World/Elements/[A-Za-z_][A-Za-z0-9_]*/G_[A-Za-z0-9_]+(?:/[A-Za-z_][A-Za-z0-9_]*)+$",
+      "$comment": "Observed offending target for diagnostic unstable_child_prim_target: a descendant of the stable element root, never the root itself."
+    },
+    "csvOnlyRow": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "rvt_element_id",
+        "ifc_uuid36_raw",
+        "ifc_uuid36",
+        "reason_code"
+      ],
+      "properties": {
+        "rvt_element_id": {
+          "$ref": "#/$defs/rvtElementId"
+        },
+        "ifc_uuid36_raw": {
+          "$ref": "#/$defs/uuid36Raw"
+        },
+        "ifc_uuid36": {
+          "$ref": "#/$defs/uuid36Canon"
+        },
+        "ifc_global_id22": {
+          "$ref": "#/$defs/globalId22"
+        },
+        "reason_code": {
+          "enum": [
+            "ifc_product_not_found",
+            "guid_roundtrip_failed"
+          ],
+          "$comment": "spec.md scenario 'Transform 或 IFC lookup 失敗': UUID36 無法 round-trip，或 source IFC 不存在對應 GlobalId。"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "reason_code": {
+                "const": "ifc_product_not_found"
+              }
+            },
+            "required": [
+              "reason_code"
+            ]
+          },
+          "then": {
+            "required": [
+              "ifc_global_id22"
+            ]
+          },
+          "else": {
+            "not": {
+              "required": [
+                "ifc_global_id22"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "ifcOnlyProduct": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "ifc_global_id22",
+        "ifc_uuid36",
+        "ifc_class"
+      ],
+      "properties": {
+        "ifc_global_id22": {
+          "$ref": "#/$defs/globalId22"
+        },
+        "ifc_uuid36": {
+          "$ref": "#/$defs/uuid36Canon"
+        },
+        "ifc_class": {
+          "$ref": "#/$defs/ifcClassToken"
+        },
+        "usd_prim_path": {
+          "$ref": "#/$defs/usdElementRootPath"
+        }
+      }
+    },
+    "ifcUsdcUnmappedProduct": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "ifc_global_id22",
+        "ifc_uuid36",
+        "ifc_class",
+        "reason_code"
+      ],
+      "properties": {
+        "ifc_global_id22": {
+          "$ref": "#/$defs/globalId22"
+        },
+        "ifc_uuid36": {
+          "$ref": "#/$defs/uuid36Canon"
+        },
+        "ifc_class": {
+          "$ref": "#/$defs/ifcClassToken"
+        },
+        "reason_code": {
+          "enum": [
+            "prim_not_found",
+            "unstable_child_prim_target",
+            "prim_token_mismatch"
+          ],
+          "$comment": "spec.md scenario 'Mapping 只指向 child mesh' fixes the literal diagnostic name unstable_child_prim_target."
+        },
+        "observed_prim_path": {
+          "$ref": "#/$defs/usdChildPrimPath"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "reason_code": {
+                "const": "unstable_child_prim_target"
+              }
+            },
+            "required": [
+              "reason_code"
+            ]
+          },
+          "then": {
+            "required": [
+              "observed_prim_path"
+            ]
+          },
+          "else": {
+            "not": {
+              "required": [
+                "observed_prim_path"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "duplicateRvtIdGroup": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "rvt_element_id",
+        "occurrence_count"
+      ],
+      "properties": {
+        "rvt_element_id": {
+          "$ref": "#/$defs/rvtElementId"
+        },
+        "occurrence_count": {
+          "type": "integer",
+          "minimum": 2
+        }
+      }
+    },
+    "duplicateIfcGuidGroup": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "ifc_uuid36",
+        "occurrence_count"
+      ],
+      "properties": {
+        "ifc_uuid36": {
+          "$ref": "#/$defs/uuid36Canon"
+        },
+        "occurrence_count": {
+          "type": "integer",
+          "minimum": 2
+        }
+      }
+    },
+    "invalidRow": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "row_number",
+        "reason_code"
+      ],
+      "properties": {
+        "row_number": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "rvt_element_id": {
+          "$ref": "#/$defs/rvtElementId"
+        },
+        "ifc_uuid36_raw": {
+          "$ref": "#/$defs/uuid36Raw"
+        },
+        "reason_code": {
+          "enum": [
+            "missing_id",
+            "missing_guid",
+            "duplicate_id",
+            "duplicate_guid",
+            "invalid_guid_format",
+            "guid_roundtrip_failed"
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "reason_code": {
+                "const": "missing_id"
+              }
+            },
+            "required": [
+              "reason_code"
+            ]
+          },
+          "then": {
+            "not": {
+              "required": [
+                "rvt_element_id"
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "reason_code": {
+                "const": "missing_guid"
+              }
+            },
+            "required": [
+              "reason_code"
+            ]
+          },
+          "then": {
+            "not": {
+              "required": [
+                "ifc_uuid36_raw"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "fullLineageMatch": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "rvt_element_id",
+        "ifc_uuid36",
+        "ifc_global_id22",
+        "usd_prim_path"
+      ],
+      "properties": {
+        "rvt_element_id": {
+          "$ref": "#/$defs/rvtElementId"
+        },
+        "ifc_uuid36": {
+          "$ref": "#/$defs/uuid36Canon"
+        },
+        "ifc_global_id22": {
+          "$ref": "#/$defs/globalId22"
+        },
+        "usd_prim_path": {
+          "$ref": "#/$defs/usdElementRootPath"
+        }
+      }
+    },
+    "differenceSets": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "csv_only",
+        "ifc_only",
+        "ifc_usdc_unmapped",
+        "duplicate_rvt_ids",
+        "duplicate_ifc_guids",
+        "invalid_rows",
+        "full_lineage_matched"
+      ],
+      "$comment": "Every set is an enumeration of the corresponding count. counts.* stay authoritative: semantic_validators enforces len(set) <= matching count so a large report may publish a bounded page of each set, and never the reverse.",
+      "properties": {
+        "csv_only": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/csvOnlyRow"
+          }
+        },
+        "ifc_only": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/ifcOnlyProduct"
+          }
+        },
+        "ifc_usdc_unmapped": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/ifcUsdcUnmappedProduct"
+          }
+        },
+        "duplicate_rvt_ids": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/duplicateRvtIdGroup"
+          }
+        },
+        "duplicate_ifc_guids": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/duplicateIfcGuidGroup"
+          }
+        },
+        "invalid_rows": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/invalidRow"
+          }
+        },
+        "full_lineage_matched": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/fullLineageMatch"
+          }
+        }
+      }
+    },
+    "alignmentScope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "eligible_ifc_product_selector",
+        "eligible_ifc_product_count",
+        "legacy_alias"
+      ],
+      "properties": {
+        "eligible_ifc_product_selector": {
+          "const": "IfcProduct"
+        },
+        "eligible_ifc_product_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "legacy_alias": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "source_ifc_entity_count_is_alias_of"
+          ],
+          "properties": {
+            "source_ifc_entity_count_is_alias_of": {
+              "const": "eligible_ifc_product_count",
+              "$comment": "spec.md: 若沿用 legacy source_ifc_entity_count field，schema MUST 明定它是同一 eligible 集合的 alias。"
+            }
+          }
+        }
+      }
+    },
+    "alignmentReportJson": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "report_schema_version",
+        "source_bundle_id",
+        "pipeline_job_id",
+        "attempt_id",
+        "result_id",
+        "generated_at",
+        "scope",
+        "metrics",
+        "counts",
+        "difference_sets",
+        "warning_codes",
+        "warning_code_count"
+      ],
+      "properties": {
+        "report_schema_version": {
+          "const": "alignment-report/v1"
+        },
+        "source_bundle_id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "pipeline_job_id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "attempt_id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "result_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200,
+          "pattern": "^[^:]+$"
+        },
+        "generated_at": {
+          "$ref": "#/$defs/utcTimestamp"
+        },
+        "scope": {
+          "$ref": "#/$defs/alignmentScope"
+        },
+        "metrics": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "ifc_usdc_coverage_ratio",
+            "rvt_ifc_alignment_ratio",
+            "rvt_ifc_usdc_lineage_ratio"
+          ],
+          "properties": {
+            "ifc_usdc_coverage_ratio": {
+              "$ref": "#/$defs/scopedMetric",
+              "properties": {
+                "denominator_scope": {
+                  "const": "eligible_ifc_product_count"
+                }
+              }
+            },
+            "rvt_ifc_alignment_ratio": {
+              "$ref": "#/$defs/scopedMetric",
+              "properties": {
+                "denominator_scope": {
+                  "const": "csv_valid_count"
+                }
+              }
+            },
+            "rvt_ifc_usdc_lineage_ratio": {
+              "$ref": "#/$defs/scopedMetric",
+              "properties": {
+                "denominator_scope": {
+                  "const": "csv_valid_count"
+                }
+              }
+            }
+          }
+        },
+        "counts": {
+          "$ref": "#/$defs/counts"
+        },
+        "difference_sets": {
+          "$ref": "#/$defs/differenceSets"
+        },
+        "warning_codes": {
+          "type": "array",
+          "maxItems": 64,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Z][A-Z0-9_]{0,63}$"
+          }
+        },
+        "warning_code_count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 64
+        }
+      }
+    },
+    "alignmentReportCsvContract": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "columns",
+        "delimiter",
+        "encoding",
+        "newline"
+      ],
+      "$comment": "alignment_class is one of the seven difference-set names: full_lineage_matched | csv_only | ifc_only | ifc_usdc_unmapped | duplicate_rvt_id | duplicate_ifc_guid | invalid_row.",
+      "properties": {
+        "columns": {
+          "const": [
+            "row_number",
+            "rvt_element_id",
+            "ifc_uuid36_raw",
+            "ifc_uuid36",
+            "ifc_global_id22",
+            "usd_prim_path",
+            "alignment_class",
+            "reason_code"
+          ]
+        },
+        "delimiter": {
+          "const": ","
+        },
+        "encoding": {
+          "const": "utf-8"
+        },
+        "newline": {
+          "const": "\n"
+        }
+      }
+    }
+  }
+}
