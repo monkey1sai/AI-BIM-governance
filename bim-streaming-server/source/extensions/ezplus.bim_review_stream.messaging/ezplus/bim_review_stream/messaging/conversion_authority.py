@@ -325,9 +325,9 @@ class StreamingConversionStore:
                 # failed job still points at the deleted one, so every retrigger returned
                 # the same dead record and the job's own `recovery_action:
                 # retrigger_required` could never be satisfied. Start a new attempt under
-                # the same idempotency key instead. Lookup is newest-first, so the new job
-                # supersedes this one for later callers; the failed record is kept for
-                # audit and back-linked below.
+                # the same idempotency key instead. The failed record is kept for audit and
+                # back-linked with `superseded_by` below, which is also how the lookup
+                # tells the live attempt from the dead ones.
                 superseded = existing
             else:
                 if not existing.get("trace_id"):
@@ -801,11 +801,23 @@ class StreamingConversionStore:
         )
 
     def _find_job_by_idempotency_key(self, idempotency_key: str) -> dict[str, Any] | None:
+        matches: list[dict[str, Any]] = []
         for path in sorted(Path(self.settings.jobs_dir).glob("stream_conv_*.json"), reverse=True):
             job = json.loads(path.read_text(encoding="utf-8"))
             if (job.get("idempotency_key") or job.get("event_id")) == idempotency_key:
-                return job
-        return None
+                matches.append(job)
+        if not matches:
+            return None
+        # A retry chain links every superseded attempt forward, so the live record is the
+        # one nothing points past. Filename order cannot decide this: a conversion job id
+        # carries a whole-second timestamp plus a random suffix, so two attempts created
+        # inside the same second sort by chance - which handed back the dead record about
+        # a quarter of the time. Fall back to filename order only for records that predate
+        # supersession, where at most one match per key could ever exist.
+        live = [job for job in matches if not job.get("superseded_by")]
+        if len(live) == 1:
+            return live[0]
+        return (live or matches)[0]
 
     def _job_path(self, conversion_job_id: str) -> Path:
         _safe_id(conversion_job_id, "conversion_job_id")
