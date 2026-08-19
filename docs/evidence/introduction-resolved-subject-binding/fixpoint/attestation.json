@@ -1,0 +1,13 @@
+{
+  "schema_version": "self-referential-fixpoint-attestation/v1",
+  "entry_id": "introduction-resolved-subject-binding",
+  "mechanism_commit": "ab6787778d98094f6d34992ab3024aacd841e6bf",
+  "verification_contract_sha256": "4846c3f1df6582d9836ce24a404d9862bcc8036cfaacddb7c82c000a5ea02027",
+  "result": "pass",
+  "commands": [
+    { "id": "test-openspec-machine-truth", "exit_code": 0 },
+    { "id": "test-openspec-repository-lifecycle", "exit_code": 0 },
+    { "id": "test-openspec-ledger-reconciliation", "exit_code": 0 },
+    { "id": "verify-openspec-lifecycle", "exit_code": 0 }
+  ]
+}
