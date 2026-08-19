@@ -5,6 +5,8 @@
 > **重啟條件**：(1) successor change `a4-console-convergence` 完成前後端收斂並 merge，使單一 canonical A4 實作存在於 `main`；(2) credential owner 完成 1.8 rotate；(3) Windows host-native Kit 與 authorized Ornith lab 環境就緒可跑 7.4／7.5；(4) 取得 8.7 獨立 review 資源。四者齊備後 thaw，並先與 successor 做 Requirement crosswalk 再續接剩餘 task。
 >
 > **Successor crosswalk**：`a4-console-convergence` 承接本 change 的 5.1／5.2（已在 convergence 分支落地但未進 main）與 5.3／5.6／8.3／8.4，並沿用 Requirement 名稱「Canonical A4 UI SHALL 可操作且接受誠實的 design gate」以利 crosswalk；其餘 Requirement 與 task 仍屬本 change，不得平行實作。
+>
+> **2026-08-19 更新**：5.1／5.2／5.3／5.6／8.3／8.4 已由 successor `a4-console-convergence` 承接並落地 `main`（證據：PR #615 tasks 3.1–3.6、PR #630 tasks 4.0.4–4.4＋run `r20260819a`、E2E 8/8＋7 項 live probes）。本 change 的 tasks.md checkbox 不隨此更新變動（避免與 deferred 狀態衝突），現況仍以下列重啟條件判定：(1) successor 收斂——**本輪起已完成**（`a4-console-convergence` 29/29，待獨立後續 PR archive）；(2) credential owner 完成 1.8 rotate——**未做**；(3) Windows host-native Kit 與 authorized Ornith lab 環境就緒可跑 7.4／7.5——**未做**；(4) 取得 8.7 獨立 review 資源——**未做**。四者尚未齊備，本 change 維持 deferred。
 
 ## Why
 
