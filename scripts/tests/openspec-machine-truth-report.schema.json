@@ -92,7 +92,7 @@
               "archive_identity_invalid", "artifact_invalid_json", "artifact_too_large", "artifact_unreadable",
               "artifact_untrusted", "input_unreadable", "invalid_argument", "now_view_invalid", "repository_invalid",
               "base_not_ancestor", "base_unavailable", "report_too_large", "schema_invalid", "source_observation_invalid",
-              "subject_invalid", "subject_not_ancestor", "subject_not_head", "subject_unavailable"
+              "subject_binding_required", "subject_invalid", "subject_not_ancestor", "subject_not_head", "subject_unavailable"
             ]
           },
           "field": { "type": "string", "minLength": 1, "maxLength": 200 },
