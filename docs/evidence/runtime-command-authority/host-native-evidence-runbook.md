@@ -34,7 +34,7 @@ Then, from `D:\Users\deploy\AI-bim-geo`:
 pwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass -File .\scripts\dev\run-runtime-command-authority-host-native-evidence.ps1
 ```
 
-The runner runs lockfile-pinned `npm ci --ignore-scripts --no-audit --no-fund`, re-checks that the deployment checkout stayed clean, then invokes only the resulting local Playwright binary (never `npx`). It creates a unique runtime-only copy of `testing.usd` as `model.usdc`, starts only `e2e/runtime-command-authority-host-native.spec.ts`, and cleans only its process-scoped environment variables after the run.
+The runner runs lockfile-pinned `npm ci --ignore-scripts --no-audit --no-fund`, re-checks that the deployment checkout stayed clean, then invokes only the resulting local Playwright binary (never `npx`). It resolves the stage from the newest succeeded conversion whose `model_usdc` artifact is actually downloadable — #441 gave the conversion service per-artifact download authority, so a fabricated artifact URL 404s and the harness can no longer supply its own fixture — starts only `e2e/runtime-command-authority-host-native.spec.ts`, and cleans only its process-scoped environment variables after the run. If the deployment has no such conversion, the runner fails closed and asks an operator to convert a MinIO-sourced IFC first.
 
 ## Handshake and assertions
 
@@ -51,11 +51,7 @@ The case requires:
 
 ## Evidence locations
 
-Each run uses a unique ID and stores runtime-only fixture input below:
-
-```text
-D:\Users\deploy\AI-bim-geo-data\artifacts\runtime-authority-e2e-<run-id>\model.usdc
-```
+Each run uses a unique ID. The run writes no stage input of its own: it loads an existing conversion artifact through the conversion service, so the stage lives where that job already put it, and `runner-evidence.json` names the job ID, file name, and SHA-256 under `stage.stage_source`.
 
 The sanitized evidence bundle is below:
 

@@ -233,6 +233,11 @@
         },
         {
           "match": "exact",
+          "value": "ezplus.bim_review_stream.messaging.client_send_bridge",
+          "layer": "infrastructure"
+        },
+        {
+          "match": "exact",
           "value": "ezplus.bim_review_stream.messaging.ifc2usdc_powershell_adapter",
           "layer": "infrastructure"
         },

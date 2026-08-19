@@ -16,7 +16,9 @@ def install_stage_loading_stubs() -> None:
             return {}
 
     carb = types.ModuleType("carb")
-    carb.dictionary = types.SimpleNamespace(Item=DummyItem)
+    carb_dictionary = types.ModuleType("carb.dictionary")
+    carb_dictionary.Item = DummyItem
+    carb.dictionary = carb_dictionary
     carb.log_error = lambda *args, **kwargs: None
     carb.log_info = lambda *args, **kwargs: None
     carb.log_warn = lambda *args, **kwargs: None
@@ -74,6 +76,7 @@ def install_stage_loading_stubs() -> None:
     sys.modules.update(
         {
             "carb": carb,
+            "carb.dictionary": carb_dictionary,
             "carb.events": carb_events,
             "carb.tokens": carb_tokens,
             "carb.eventdispatcher": carb_eventdispatcher,
@@ -129,6 +132,19 @@ class FakeAuthority:
         ):
             return "rev_review_session_x"
         return None
+
+    def verify_datachannel_trace_decision(self, event_type, payload):
+        # Mirrors RuntimeAuthorityClient: the handler needs "refused" and "could not be
+        # asked" to be distinguishable. This fake is always reachable, so a failure here
+        # is always a refusal - never authority_unavailable.
+        trace_id = self.verify_datachannel_trace(event_type, payload)
+        if trace_id:
+            return AuthorityDecision(authorized=True, trace_id=trace_id)
+        return AuthorityDecision(
+            authorized=False,
+            reason="lease_invalid",
+            detail_code="datachannel_trace_unverified",
+        )
 
     def authorize(self, event_type, payload):
         self.authorize_calls.append((event_type, payload))
