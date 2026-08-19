@@ -19,10 +19,13 @@ import omni.kit.app
 from carb.eventdispatcher import get_eventdispatcher
 from omni.kit.viewport.utility import get_active_viewport_camera_string
 
+# Import the submodule directly, not `from . import client_send_bridge`: the package
+# form adds an edge to `messaging` itself, which pulled this module into the existing
+# package-level import cycle and tripped ARCH-GRAPH-001.
 try:
-    from . import client_send_bridge
+    from .client_send_bridge import register_event_type_to_send as register_client_send
 except ImportError:  # pragma: no cover - test modules import this file directly.
-    import client_send_bridge
+    from client_send_bridge import register_event_type_to_send as register_client_send
 
 try:
     from .runtime_authority import (
@@ -68,7 +71,7 @@ class StageManager:
         ]
 
         for o in outgoing:
-            self._subscriptions.append(client_send_bridge.register_event_type_to_send(o))
+            self._subscriptions.append(register_client_send(o))
             omni.kit.app.register_event_alias(
                 carb.events.type_from_string(o),
                 o,
