@@ -352,17 +352,28 @@ class StageManager:
 
     def _verify_datachannel_trace(self, event_type, request_payload):
         try:
-            trace_id = self._runtime_authority.verify_datachannel_trace(event_type, request_payload)
+            decision = self._runtime_authority.verify_datachannel_trace_decision(
+                event_type, request_payload
+            )
         except Exception:
-            trace_id = None
+            decision = None
+        if decision is not None and decision.authorized:
+            carb.log_info(f"[runtime-authority] datachannel trace accepted for {event_type}")
+            return decision.trace_id
         # A rejected trace used to drop the command with no record at all, which makes
         # "Kit never received it" and "Kit received it and refused it" indistinguishable
         # from the outside. Record the outcome - never the trace value, it is a carrier.
-        if trace_id is None:
-            carb.log_warn(f"[runtime-authority] datachannel trace rejected for {event_type}")
-        else:
-            carb.log_info(f"[runtime-authority] datachannel trace accepted for {event_type}")
-        return trace_id
+        carb.log_warn(f"[runtime-authority] datachannel trace rejected for {event_type}")
+        # When the authority could not be reached at all, answer instead of dropping. A
+        # viewer that gets nothing back waits forever, which is exactly what a coordinator
+        # outage produced. The command is still never executed - it is refused, retryably,
+        # so the caller knows this was "could not check", not "checked and denied".
+        if decision is not None and decision.detail_code == "authority_unavailable":
+            get_eventdispatcher().dispatch_event(
+                "commandRejected",
+                payload=command_rejected_payload(event_type, request_payload, decision),
+            )
+        return None
 
     def _authorize_mutator(self, event_type, request_payload):
         trace_id = self._verify_datachannel_trace(event_type, request_payload)

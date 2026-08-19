@@ -110,6 +110,19 @@ class FakeAuthority:
             return "rev_review_session_x"
         return None
 
+    def verify_datachannel_trace_decision(self, event_type, payload):
+        # Mirrors RuntimeAuthorityClient: the handler needs "refused" and "could not be
+        # asked" to be distinguishable. This fake is always reachable, so a failure here
+        # is always a refusal - never authority_unavailable.
+        trace_id = self.verify_datachannel_trace(event_type, payload)
+        if trace_id:
+            return AuthorityDecision(authorized=True, trace_id=trace_id)
+        return AuthorityDecision(
+            authorized=False,
+            reason="lease_invalid",
+            detail_code="datachannel_trace_unverified",
+        )
+
     def authorize(self, event_type, payload):
         self.calls.append((event_type, payload))
         if self.authorized:
@@ -245,6 +258,55 @@ def test_every_stage_mutator_denial_emits_only_command_rejected_before_mutation(
         assert "viewer-secret-sentinel" not in str(dispatched[0][1])
 
     assert [event_type for event_type, _payload in authority.calls] == [case[1] for case in cases]
+
+
+class UnreachableAuthority(FakeAuthority):
+    """Models a coordinator outage: the trace cannot be verified because the authority
+    cannot be asked at all, which is a different answer from having been refused."""
+
+    def verify_datachannel_trace_decision(self, event_type, payload):
+        self.verify_calls.append((event_type, payload))
+        return AuthorityDecision(
+            authorized=False,
+            reason="lease_invalid",
+            request_id=payload.get("request_id"),
+            retryable=True,
+            detail_code="authority_unavailable",
+        )
+
+
+def test_unreachable_authority_answers_instead_of_dropping_the_command(monkeypatch):
+    # A coordinator outage used to make every command vanish: the trace could not be
+    # verified, the handler returned early, and nothing went back to the viewer, which
+    # then waited forever. An unverifiable command must still be refused out loud - and
+    # retryably, because "could not check" is not "checked and denied". It must still
+    # never execute, and must never reach the authorization step.
+    dispatched = []
+    monkeypatch.setattr(
+        stage_management,
+        "get_eventdispatcher",
+        lambda: types.SimpleNamespace(
+            dispatch_event=lambda name, payload: dispatched.append((name, payload))
+        ),
+    )
+    monkeypatch.setattr(
+        stage_management.omni.usd,
+        "get_context",
+        lambda: (_ for _ in ()).throw(AssertionError("runtime state accessed before authority")),
+    )
+    authority = UnreachableAuthority(False)
+    manager = make_manager(authority)
+
+    manager._on_focus_prim(event({**base_payload("req-outage"), "prim_path": "/World/Wall_001"}))
+
+    assert [name for name, _payload in dispatched] == ["commandRejected"]
+    rejection = dispatched[0][1]
+    assert rejection["rejected_event_type"] == "focusPrimRequest"
+    assert rejection["detail_code"] == "authority_unavailable"
+    assert rejection["retryable"] is True
+    assert rejection["runtime_state"] == "unchanged"
+    assert authority.calls == []
+    assert "viewer-secret-sentinel" not in str(rejection)
 
 
 def test_allowed_mutators_change_state_and_echo_request_id_on_existing_result(monkeypatch):

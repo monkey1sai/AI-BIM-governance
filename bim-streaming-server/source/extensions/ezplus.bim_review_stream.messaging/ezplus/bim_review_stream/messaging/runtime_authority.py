@@ -295,27 +295,46 @@ class RuntimeAuthorityClient:
         return decision
 
     def verify_datachannel_trace(self, event_type: str, payload) -> Optional[str]:
+        """Verified trace id, or None. Kept for callers that only need the yes/no."""
+        decision = self.verify_datachannel_trace_decision(event_type, payload)
+        return decision.trace_id if decision.authorized else None
+
+    def verify_datachannel_trace_decision(self, event_type: str, payload) -> AuthorityDecision:
+        """Verify the datachannel trace and say *why* when it fails.
+
+        A caller that drops an unverified command leaves the viewer waiting forever, so
+        it needs to tell "the authority refused this trace" apart from "the authority
+        could not be asked at all". Only the second is retryable, and only the second
+        should be answered with `authority_unavailable`; a refused or malformed trace is
+        an authenticity failure and must not be advertised as retryable.
+        """
         request_payload = payload_dict(payload)
         if event_type not in MUTATING_EVENTS | READONLY_EVENTS:
-            return None
+            return local_denial(request_payload, "invalid_payload", "unsupported_event_type")
         session_id = _safe_session_id(request_payload)
         trace_id = _safe_trace_id(request_payload)
         if not session_id or not trace_id:
-            return None
+            return local_denial(request_payload, "invalid_payload", "datachannel_trace_missing")
 
-        response = self._request_json(
+        response = self._request_json_or_unreachable(
             f"/api/internal/review-sessions/{quote(session_id, safe='')}/datachannel-trace-verifications",
             "",
             {"trace_id": trace_id},
         )
+        if response is self.UNREACHABLE:
+            return authority_unavailable(request_payload)
         if (
             response is None
             or response.get("verified") is not True
             or response.get("session_id") != session_id
             or response.get("trace_id") != trace_id
         ):
-            return None
-        return trace_id
+            return local_denial(request_payload, "lease_invalid", "datachannel_trace_unverified")
+        return AuthorityDecision(
+            authorized=True,
+            request_id=_safe_request_id(request_payload),
+            trace_id=trace_id,
+        )
 
     def _fail_stage_before_mutation(
         self,
@@ -368,9 +387,18 @@ class RuntimeAuthorityClient:
         )
         return _confirmation_decision(request_payload, response, outcome)
 
+    # Returned in place of a parsed body when the authority could not be reached at all
+    # (unconfigured, transport error, non-200). Callers that must answer the viewer need
+    # to tell "the authority said no" apart from "the authority could not be asked".
+    UNREACHABLE = object()
+
     def _request_json(self, path: str, viewer_lease_token: str, body: Mapping[str, object]):
+        response = self._request_json_or_unreachable(path, viewer_lease_token, body)
+        return None if response is self.UNREACHABLE else response
+
+    def _request_json_or_unreachable(self, path: str, viewer_lease_token: str, body: Mapping[str, object]):
         if not self._configuration_valid:
-            return None
+            return self.UNREACHABLE
         headers = {
             "Content-Type": "application/json",
             "X-Internal-Token": self._internal_token,
@@ -394,15 +422,15 @@ class RuntimeAuthorityClient:
             elif len(transport_response) == 3:
                 status, response_headers, raw = transport_response
             else:
-                return None
+                return self.UNREACHABLE
             if status != 200 or len(raw) > _MAX_RESPONSE_BYTES:
-                return None
+                return self.UNREACHABLE
             if request_trace_id and _header_value(response_headers, "X-Trace-Id") != request_trace_id:
-                return None
+                return self.UNREACHABLE
             decoded = json.loads(raw.decode("utf-8"))
         except Exception:
-            return None
-        return decoded if isinstance(decoded, dict) else None
+            return self.UNREACHABLE
+        return decoded if isinstance(decoded, dict) else self.UNREACHABLE
 
     @staticmethod
     def _default_transport(

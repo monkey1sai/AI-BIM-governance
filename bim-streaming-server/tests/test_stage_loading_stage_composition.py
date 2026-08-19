@@ -133,6 +133,19 @@ class FakeAuthority:
             return "rev_review_session_x"
         return None
 
+    def verify_datachannel_trace_decision(self, event_type, payload):
+        # Mirrors RuntimeAuthorityClient: the handler needs "refused" and "could not be
+        # asked" to be distinguishable. This fake is always reachable, so a failure here
+        # is always a refusal - never authority_unavailable.
+        trace_id = self.verify_datachannel_trace(event_type, payload)
+        if trace_id:
+            return AuthorityDecision(authorized=True, trace_id=trace_id)
+        return AuthorityDecision(
+            authorized=False,
+            reason="lease_invalid",
+            detail_code="datachannel_trace_unverified",
+        )
+
     def authorize(self, event_type, payload):
         self.authorize_calls.append((event_type, payload))
         return self.authorize_decision
