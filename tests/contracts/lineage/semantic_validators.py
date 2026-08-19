@@ -5,8 +5,9 @@ Scope
 JSON Schema fixes the *shape* of the lineage contracts. This module fixes the
 invariants that JSON Schema cannot express: the metric/count binding of
 ``openspec/changes/rvt-ifc-usdc-lineage/tasks.md`` task 4.4, the decimal
-truncation rule, and the UUID36 <-> IFC GlobalId22 <-> stable USD element root
-identity chain of task 2.2.
+truncation rule, the UUID36 <-> IFC GlobalId22 <-> stable USD element root
+identity chain of task 2.2, and the cross-field rules of the
+``cloud-lineage-publication/v1`` request envelope of task 2.5.
 
 The module is deliberately stdlib-only. The CI job ``root contracts and fakes``
 installs nothing but ``pytest`` and ``jsonschema``, and this file must remain
@@ -31,6 +32,11 @@ spells its own out:
   (``integrity_diagnostics[].code``, ``diagnostics[].code``); the semantic
   layer must not invent a second spelling of a diagnosis the schema can
   already name.
+* :func:`validate_cloud_publication_scenario` (task 2.5) emits UPPER_SNAKE
+  codes. The cloud publication request carries no diagnostic wire enum to
+  borrow a spelling from, and it forwards :func:`validate_alignment_summary`'s
+  codes verbatim rather than collapsing them, so a second vocabulary for the
+  same arithmetic never appears.
 
 Codes are emitted in a fixed evaluation order and de-duplicated while keeping
 first occurrence, so a fixture's expected code list is deterministic.
@@ -59,6 +65,10 @@ __all__ = [
     "validate_bundle_scenario",
     "validate_result_publication_scenario",
     "validate_job_scenario",
+    "CLOUD_PUBLICATION_SCHEMA_VERSION",
+    "CLOUD_PUBLISHED_RESULT_REFS",
+    "cloud_publication_direction",
+    "validate_cloud_publication_scenario",
 ]
 
 
@@ -744,6 +754,14 @@ def validate_job_scenario(document: Mapping[str, Any]) -> list[str]:
            ``system`` actor with no ``authorization_decision_ref`` is an
            automatic replacement of the active pointer; a later successful
            result may only reach ``candidate``.
+        9. ``stale_or_missing_authorization_decision`` -- a ``promote`` /
+           ``rollback`` raised by a non-``system`` actor must name the
+           control-plane decision that authorised it. A null reference means
+           the console either had no decision or reused a cached one, and
+           ``lineage-governance-console`` requires those to fail closed rather
+           than be executed optimistically. The schema cannot express it: the
+           reference is legitimately null for the ``first_activation`` the
+           system performs on its own, so the rule is conditional on the actor.
 
     ``active_result_pointer`` and ``retention_policy`` are fully constrained by
     the schema and yield no semantic codes.
@@ -797,12 +815,20 @@ def validate_job_scenario(document: Mapping[str, Any]) -> list[str]:
             if not_available or not_selectable:
                 codes.append("promote_target_not_selectable")
 
+        actor_kind = body["actor"]["actor_kind"]
         if (
             transition == "promote"
-            and body["actor"]["actor_kind"] == "system"
+            and actor_kind == "system"
             and body["authorization_decision_ref"] is None
         ):
             codes.append("auto_promotion_of_subsequent_result")
+
+        if (
+            transition in POINTER_MOVING_TRANSITIONS
+            and actor_kind != "system"
+            and body["authorization_decision_ref"] is None
+        ):
+            codes.append("stale_or_missing_authorization_decision")
 
     return _dedupe(codes)
 
@@ -887,3 +913,200 @@ def validate_result_publication_scenario(document: Mapping[str, Any]) -> list[st
                 codes.append("manifest_digest_conflict")
 
     return _dedupe(codes)
+
+# ===========================================================================
+# Task 2.5 -- cloud-lineage-publication/v1
+# ===========================================================================
+#
+# Appended rather than kept in a second module: the lineage contract
+# directory ships no ``__init__.py`` (blueprint E-6), so a separate file
+# would need its own ``spec_from_file_location`` load and would have to
+# re-import ``validate_alignment_summary``, ``_locator_authority``,
+# ``_locator_version_id``, ``_parse_utc`` and ``_dedupe`` -- the very
+# helpers this section exists to reuse.
+
+# NOTE: no imports here on purpose. This body is appended to
+# ``semantic_validators.py``, which already carries
+# ``from __future__ import annotations`` (a second one mid-file is a
+# SyntaxError) and already imports ``Any`` and ``Mapping`` from ``typing``.
+
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
+
+#: The one ``schema_version`` const the request envelope accepts.
+CLOUD_PUBLICATION_SCHEMA_VERSION = "cloud-lineage-publication/v1"
+
+#: The four formal locators a ``lineage_result_published`` payload carries, in
+#: the order ``$defs/publishedPayload`` declares them. Diagnostics are emitted
+#: in this order so a fixture's expected code list is deterministic.
+CLOUD_PUBLISHED_RESULT_REFS = (
+    "result_manifest_ref",
+    "lineage_mapping_ref",
+    "alignment_report_json_ref",
+    "alignment_report_csv_ref",
+)
+
+
+# ---------------------------------------------------------------------------
+# Direction
+# ---------------------------------------------------------------------------
+
+
+def cloud_publication_direction(document: Any) -> str:
+    """Return ``"request"`` or ``"response"`` for one cloud fixture.
+
+    The two cloud schemas share a fixture directory, so the runner needs a
+    total, content-derived rule rather than a hand-maintained filename list.
+
+    ``schema_version`` is the discriminator: the request envelope requires it,
+    and both response bodies (``successAck`` / ``errorResponse``) are closed
+    objects that do not list it, so a response can never carry the member.
+    Presence -- not value -- is what is tested, so a fixture that deliberately
+    breaks the ``const`` still routes to the request schema.
+    """
+    if isinstance(document, Mapping) and "schema_version" in document:
+        return "request"
+    return "response"
+
+
+# ---------------------------------------------------------------------------
+# Cloud publication scenarios (task 2.5)
+# ---------------------------------------------------------------------------
+
+
+def validate_cloud_publication_scenario(document: Mapping[str, Any]) -> list[str]:
+    """Semantic invariants of ``cloud-lineage-publication/v1`` (task 2.5).
+
+    ``document`` is a whole request envelope or a whole response body, and is
+    assumed to already satisfy the matching cloud schema. Response bodies carry
+    no cross-field rule the response schema cannot already express -- the
+    code/``retryable`` triples are ``if``/``then`` consts, and the ACK's
+    agreement with the *sent* event is a two-document comparison that no
+    single-document validator can make -- so they yield no codes.
+
+    Implemented rules for a request, in emission order:
+
+    1. ``PUBLICATION_IDENTITY_MISMATCH`` -- ``publication_identity`` must be
+       byte-equal to ``edge_site_id + ":" + external_model_version_id + ":" +
+       result_id``. The schema pins the *shape* of the colon-join and forbids a
+       literal ``:`` inside the last two components, so the encoding is
+       unambiguous; only the sender/receiver recomputation can show that this
+       particular string is the join of *these* components.
+    2. ``CALENDAR_INVALID_TIMESTAMP`` -- ``occurred_at`` and the payload's
+       ``published_at`` / ``observed_at`` must name a date that exists.
+       ``$defs/utcTimestamp`` bounds each field independently (``0[1-9]|1[0-2]``
+       months, ``0[1-9]|[12][0-9]|3[01]`` days), which no regex can reconcile:
+       ``2026-02-30T00:00:00Z`` is pattern-valid. ``spec.md`` requires a
+       calendar-valid parser and forbids rounding or truncating.
+    3. ``LOCATOR_AUTHORITY_NOT_EDGE_SITE`` -- every locator authority must be
+       byte-equal to the envelope's ``edge_site_id``. Both are drawn from the
+       same ASCII ``[A-Za-z0-9._-]+`` set, which is exactly what makes the
+       comparison meaningful: a locator pointing at another edge site is
+       shape-valid and still a cross-site publication.
+    4. ``LOCATOR_VERSION_ID_MISMATCH`` -- each locator's ``?versionId=`` value
+       must be byte-equal to its ``object_version_id``. The schema guarantees
+       there is exactly one such query and no other, but not that it names the
+       version the metadata claims.
+    5. ``RESULT_MANIFEST_DIGEST_MISMATCH`` -- the top-level
+       ``result_manifest_digest`` must equal the manifest locator's ``sha256``.
+       This is the field the receiver joins health events on, so a mismatch
+       would bind health history to a digest no locator can prove.
+    6. the metric / count binding, delegated **verbatim** to
+       :func:`validate_alignment_summary` (published events only).
+    7. ``WARNING_CODE_COUNT_MISMATCH`` -- ``warning_code_count`` equals
+       ``len(warning_codes)``; same spelling the alignment report uses.
+
+    Rules 3-5 walk the four ``result_refs`` in declaration order for a
+    published event, and the single ``result_manifest_ref`` for a health event.
+    Codes are de-duplicated keeping first occurrence, so a document with two
+    cross-site locators reports one ``LOCATOR_AUTHORITY_NOT_EDGE_SITE``.
+
+    Deliberately **not** implemented here:
+
+    * presigned locators, element rows, diff identifier sets, extra metric or
+      count fields, the ``?versionId=`` uniqueness itself and the two event
+      types -- all of them are shape rules that the request schema's
+      ``pattern`` / ``not`` / ``additionalProperties: false`` already reject, so
+      re-checking them here would give a second, drifting authority.
+    * whether the named MinIO objects exist and hash to the declared
+      ``sha256`` / ``etag`` / ``size_bytes``. That needs a live object-store
+      HEAD, exactly as with the bundle manifest.
+    * the ACK-versus-sent-event comparison and the HTTP-status / ``error.code``
+      triple, which are transport-level and need both sides of an exchange.
+    """
+    if document.get("schema_version") != CLOUD_PUBLICATION_SCHEMA_VERSION:
+        return []
+
+    codes: list[str] = []
+    payload = document["payload"]
+    edge_site_id = document["edge_site_id"]
+
+    canonical_identity = ":".join(
+        (
+            edge_site_id,
+            document["external_model_version_id"],
+            document["result_id"],
+        )
+    )
+    if document["publication_identity"] != canonical_identity:
+        codes.append("PUBLICATION_IDENTITY_MISMATCH")
+
+    timestamps = [document["occurred_at"]]
+    if document["event_type"] == "lineage_result_published":
+        timestamps.append(payload["published_at"])
+    else:
+        timestamps.append(payload["observed_at"])
+    if any(not _is_calendar_valid_utc(value) for value in timestamps):
+        codes.append("CALENDAR_INVALID_TIMESTAMP")
+
+    locators = _cloud_locators(document)
+    for locator in locators:
+        if _locator_authority(locator["ref"]) != edge_site_id:
+            codes.append("LOCATOR_AUTHORITY_NOT_EDGE_SITE")
+        if _locator_version_id(locator["ref"]) != locator["object_version_id"]:
+            codes.append("LOCATOR_VERSION_ID_MISMATCH")
+
+    if locators[0]["sha256"] != document["result_manifest_digest"]:
+        codes.append("RESULT_MANIFEST_DIGEST_MISMATCH")
+
+    if document["event_type"] == "lineage_result_published":
+        alignment_summary = payload["alignment_summary"]
+        codes.extend(
+            validate_alignment_summary(
+                alignment_summary["metrics"], alignment_summary["counts"]
+            )
+        )
+        if alignment_summary["warning_code_count"] != len(
+            alignment_summary["warning_codes"]
+        ):
+            codes.append("WARNING_CODE_COUNT_MISMATCH")
+
+    return _dedupe(codes)
+
+
+def _cloud_locators(document: Mapping[str, Any]) -> list[Mapping[str, Any]]:
+    """Every locator the event carries, manifest locator first.
+
+    The manifest locator leads in both event types so rule 5 can index
+    position 0 without branching on the event type a second time.
+    """
+    payload = document["payload"]
+    if document["event_type"] == "lineage_result_published":
+        result_refs = payload["result_refs"]
+        return [result_refs[name] for name in CLOUD_PUBLISHED_RESULT_REFS]
+    return [payload["result_manifest_ref"]]
+
+
+def _is_calendar_valid_utc(text: str) -> bool:
+    """True when the value names a date that exists on the calendar.
+
+    ``_parse_utc`` raises ``ValueError`` for ``2026-02-30T00:00:00Z``, which the
+    shared ``utcTimestamp`` pattern accepts. Nothing is rounded or truncated:
+    the value is either a real instant or a rejection.
+    """
+    try:
+        _parse_utc(text)
+    except ValueError:
+        return False
+    return True

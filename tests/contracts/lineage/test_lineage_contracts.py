@@ -1,10 +1,15 @@
 """Executable contract tests for the ``rvt-ifc-usdc-lineage`` schemas.
 
-Covers ``openspec/changes/rvt-ifc-usdc-lineage/tasks.md`` 2.1-2.4: the five
-lineage JSON Schemas under ``tests/contracts/``, their fixture corpus under
-``tests/contracts/lineage/fixtures/``, the semantic invariants JSON Schema
-cannot express, and the boundary between the new source-bundle intake and the
-two frozen legacy contracts.
+Covers ``openspec/changes/rvt-ifc-usdc-lineage/tasks.md`` 2.1-2.5 and the
+document half of 2.7: the five lineage JSON Schemas plus the two promoted
+``cloud-lineage-publication`` schemas under ``tests/contracts/``, their
+fixture corpus under ``tests/contracts/lineage/fixtures/``, the semantic
+invariants JSON Schema cannot express, and the boundary between the new
+source-bundle intake and the two frozen legacy contracts.
+
+The wire/transport half of 2.6 and 2.7 -- HMAC, the signature timestamp
+header, skew, ACK classification, the nine HTTP/code/retryable triples --
+lives next door in ``test_cloud_publication_protocol.py``.
 
 Run with::
 
@@ -22,12 +27,18 @@ Two structural notes:
 * Validators are built **without** a ``format_checker``. ``format: date-time``
   stays an annotation and every timestamp rejection is carried by ``pattern``,
   which is what task 2.6 depends on.
+* ``cloud_lineage_publication`` is the one contract with **two** schemas, a
+  request envelope and a response body, behind a single fixture directory.
+  Fixtures are routed by content through
+  ``semantic_validators.cloud_publication_direction``; see
+  :func:`_validator_for`.
 """
 
 from __future__ import annotations
 
 import importlib.util
 import json
+import re
 import sys
 from decimal import Decimal
 from pathlib import Path
@@ -55,6 +66,9 @@ _CHANGE_CONTRACTS_DIR = (
 _CLOUD_REQUEST_SCHEMA_PATH = (
     _CHANGE_CONTRACTS_DIR / "cloud-lineage-publication-request-v1.schema.json"
 )
+_CLOUD_RESPONSE_SCHEMA_PATH = (
+    _CHANGE_CONTRACTS_DIR / "cloud-lineage-publication-response-v1.schema.json"
+)
 _CLOUD_PUBLISHED_EXAMPLE_PATH = (
     _CHANGE_CONTRACTS_DIR / "examples" / "valid-lineage-result-published.json"
 )
@@ -62,13 +76,49 @@ _CLOUD_PUBLISHED_EXAMPLE_PATH = (
 _LEGACY_IFC_READY_PATH = _CONTRACTS_DIR / "ifc_ready_payload.json"
 _LEGACY_CALLBACK_PATH = _CONTRACTS_DIR / "conversion_result_callback.json"
 
-#: contract name -> schema file, in tasks.md order (2.1, 2.2, 2.3, 2.3, 2.4).
+#: The 2.5 contract, promoted out of the change directory. It is the only
+#: contract with two schemas -- a request envelope and a response body --
+#: behind one fixture directory, so it is named separately everywhere the
+#: "one contract, one schema file" assumption would otherwise hold.
+CLOUD_CONTRACT = "cloud_lineage_publication"
+
+#: contract name -> fixture directory, in tasks.md order
+#: (2.1, 2.2, 2.3, 2.3, 2.4, 2.5).
 CONTRACTS = (
     "model_version_bundle_manifest",
     "lineage_alignment_report",
     "pipeline_job_attempt",
     "result_manifest",
     "source_bundle_ready",
+    CLOUD_CONTRACT,
+)
+
+#: The contracts whose schema file is ``<contract>.json`` (naming decision E-1).
+SINGLE_SCHEMA_CONTRACTS = tuple(
+    contract for contract in CONTRACTS if contract != CLOUD_CONTRACT
+)
+
+#: direction -> promoted schema filename. These two keep the change's own
+#: ``cloud-lineage-publication-<direction>-v1.schema.json`` spelling rather
+#: than the E-1 snake_case style: they are byte-identical promotions of the
+#: change originals, and the matching filename is what lets
+#: :func:`test_promoted_cloud_schemas_are_byte_equal_to_the_change_originals`
+#: read as a provenance claim instead of as a rename.
+CLOUD_SCHEMA_FILES = {
+    "request": "cloud-lineage-publication-request-v1.schema.json",
+    "response": "cloud-lineage-publication-response-v1.schema.json",
+}
+
+#: tasks.md 2.7: "三個valid request fixture event IDs互異". These three are the
+#: request-direction examples the change shipped. The other three valid
+#: request fixtures are deliberate *variants of the same event* -- a second
+#: health transition, a 64-code summary, a zero-denominator summary -- and
+#: reuse those event IDs on purpose, so the distinctness claim names the
+#: three it is actually about instead of quantifying over the directory.
+CLOUD_DISTINCT_EVENT_ID_FIXTURES = (
+    "valid-lineage-result-published.json",
+    "valid-lineage-result-health-changed.json",
+    "valid-lineage-result-tombstoned.json",
 )
 
 #: Fixture floors, per contract: (valid, invalid, semantic). Blueprint E-13.
@@ -76,9 +126,10 @@ CONTRACTS = (
 FIXTURE_MINIMUMS = {
     "model_version_bundle_manifest": (9, 30, 8),
     "lineage_alignment_report": (6, 48, 24),
-    "pipeline_job_attempt": (27, 53, 8),
+    "pipeline_job_attempt": (27, 54, 9),
     "result_manifest": (15, 38, 5),
     "source_bundle_ready": (2, 13, 0),
+    CLOUD_CONTRACT: (10, 41, 22),
 }
 
 #: Tokens the two frozen legacy contracts must never learn about.
@@ -127,10 +178,52 @@ def _load_schema(contract: str) -> dict:
     return _read_json(_CONTRACTS_DIR / f"{contract}.json")
 
 
-_SCHEMAS = {contract: _load_schema(contract) for contract in CONTRACTS}
+_SCHEMAS = {
+    contract: _load_schema(contract) for contract in SINGLE_SCHEMA_CONTRACTS
+}
 _VALIDATORS = {
     contract: Draft202012Validator(schema) for contract, schema in _SCHEMAS.items()
 }
+
+#: direction -> promoted cloud schema / validator (task 2.5).
+_CLOUD_SCHEMAS = {
+    direction: _read_json(_CONTRACTS_DIR / filename)
+    for direction, filename in CLOUD_SCHEMA_FILES.items()
+}
+_CLOUD_VALIDATORS = {
+    direction: Draft202012Validator(schema)
+    for direction, schema in _CLOUD_SCHEMAS.items()
+}
+
+#: Every schema document this module owns, keyed by a stable id: the five
+#: single-schema contracts keep their contract name, the two cloud schemas
+#: are ``cloud_lineage_publication/request`` and ``.../response``. The
+#: schema-health tests walk this map, so the promoted schemas get exactly the
+#: same treatment as the five that landed with 2.1-2.4.
+SCHEMA_DOCUMENTS = {
+    **_SCHEMAS,
+    **{
+        f"{CLOUD_CONTRACT}/{direction}": schema
+        for direction, schema in _CLOUD_SCHEMAS.items()
+    },
+}
+
+
+def _validator_for(contract: str, document: Any) -> Draft202012Validator:
+    """Return the validator that owns ``document`` for ``contract``.
+
+    Every contract but ``cloud_lineage_publication`` has exactly one schema.
+    The cloud publication fixtures share one directory across a request
+    envelope and a response body, so the direction is derived from the
+    document itself. ``cloud_publication_direction`` keys on the *presence*
+    of ``schema_version``, which both response bodies are closed against, so
+    a fixture that deliberately breaks the ``schema_version`` ``const`` still
+    routes to the request schema.
+    """
+    if contract != CLOUD_CONTRACT:
+        return _VALIDATORS[contract]
+    direction = semantic_validators.cloud_publication_direction(document)
+    return _CLOUD_VALIDATORS[direction]
 
 
 def _fixture_paths(contract: str, kind: str) -> list[Path]:
@@ -184,6 +277,13 @@ def _load_expectations() -> dict[str, dict]:
 
 
 EXPECTATIONS = _load_expectations()
+
+
+def _invalid_fixture_keys() -> Iterator[tuple[str, Path, str]]:
+    """Yield ``(contract, path, expectations key)`` for every negative fixture."""
+    for contract in CONTRACTS:
+        for path in _fixture_paths(contract, "invalid"):
+            yield contract, path, f"{contract}/{path.name}"
 
 
 # ---------------------------------------------------------------------------
@@ -258,6 +358,15 @@ _SUBSCHEMA_SINGLES = ("items", "additionalProperties", "unevaluatedProperties",
 _PARTIAL_APPLICATORS = frozenset(
     {"if", "then", "else", "not", "contains", "propertyNames"}
 )
+#: Applicators whose *direct* branches narrow an already-closed definition.
+#: A bare branch -- ``properties`` with neither an object ``type`` nor a
+#: ``$ref`` sibling -- is the list form of the ``$ref``-sibling exemption
+#: below: what it narrows is the enclosing definition, which already closed
+#: itself, so closing the branch too would reject that definition's other
+#: legitimate members. The flag applies to the branch only, never to its
+#: descendants, and ``prefixItems`` is deliberately absent -- its entries are
+#: whole item definitions, not narrowings of a shared one.
+_LIST_NARROWING_APPLICATORS = frozenset({"allOf", "anyOf", "oneOf"})
 
 #: Escape hatch for nodes that genuinely must stay open. Empty today: every
 #: exception in the five contracts is structural (a partial applicator, or a
@@ -267,11 +376,17 @@ _PARTIAL_APPLICATORS = frozenset(
 _OPEN_OBJECT_WHITELIST: dict[str, str] = {}
 
 
-def _walk_subschemas(node: Any, pointer: str = "", partial: bool = False):
-    """Yield ``(pointer, subschema, partial)`` for every object subschema."""
+def _walk_subschemas(
+    node: Any, pointer: str = "", partial: bool = False, narrowing: bool = False
+):
+    """Yield ``(pointer, subschema, partial, narrowing)`` per object subschema.
+
+    ``narrowing`` is true only for a *direct* branch of ``allOf`` / ``anyOf``
+    / ``oneOf``; it is reset for that branch's own descendants.
+    """
     if not isinstance(node, dict):
         return
-    yield pointer, node, partial
+    yield pointer, node, partial, narrowing
     for keyword, child in node.items():
         if keyword in _SUBSCHEMA_MAPS and isinstance(child, dict):
             for name, sub in child.items():
@@ -282,7 +397,10 @@ def _walk_subschemas(node: Any, pointer: str = "", partial: bool = False):
         elif keyword in _SUBSCHEMA_LISTS and isinstance(child, list):
             for index, sub in enumerate(child):
                 yield from _walk_subschemas(
-                    sub, f"{pointer}/{keyword}/{index}", partial
+                    sub,
+                    f"{pointer}/{keyword}/{index}",
+                    partial,
+                    keyword in _LIST_NARROWING_APPLICATORS,
                 )
         elif keyword in _SUBSCHEMA_SINGLES:
             yield from _walk_subschemas(
@@ -318,24 +436,24 @@ def _strip_annotations(node: Any) -> Any:
     return node
 
 
-@pytest.mark.parametrize("contract", CONTRACTS)
-def test_schema_is_valid_draft_2020_12(contract: str):
-    schema = _SCHEMAS[contract]
+@pytest.mark.parametrize("schema_id", sorted(SCHEMA_DOCUMENTS))
+def test_schema_is_valid_draft_2020_12(schema_id: str):
+    schema = SCHEMA_DOCUMENTS[schema_id]
     assert schema["$schema"] == "https://json-schema.org/draft/2020-12/schema"
     assert list(schema)[:4] == ["$schema", "$id", "title", "description"], (
-        f"{contract}: header keys must lead with $schema/$id/title/description"
+        f"{schema_id}: header keys must lead with $schema/$id/title/description"
     )
     Draft202012Validator.check_schema(schema)
 
 
-@pytest.mark.parametrize("contract", CONTRACTS)
-def test_object_schemas_close_additional_properties(contract: str):
+@pytest.mark.parametrize("schema_id", sorted(SCHEMA_DOCUMENTS))
+def test_object_schemas_close_additional_properties(schema_id: str):
     """Every closed object definition must set ``additionalProperties: false``."""
-    schema = _SCHEMAS[contract]
+    schema = SCHEMA_DOCUMENTS[schema_id]
     open_objects: list[str] = []
     unclassified: list[str] = []
 
-    for pointer, node, partial in _walk_subschemas(schema):
+    for pointer, node, partial, narrowing in _walk_subschemas(schema):
         if partial or "properties" not in node:
             continue
         if "$ref" in node:
@@ -345,71 +463,82 @@ def test_object_schemas_close_additional_properties(contract: str):
         if pointer in _OPEN_OBJECT_WHITELIST:
             continue
         if not _declares_object(node):
+            if narrowing:
+                # A bare `allOf`/`anyOf`/`oneOf` branch: same exemption as a
+                # `$ref` sibling, in list form. It narrows the enclosing
+                # definition, which owns the closure.
+                continue
             unclassified.append(pointer)
             continue
         if node.get("additionalProperties") is not False:
             open_objects.append(pointer)
 
     assert not unclassified, (
-        f"{contract}: subschemas declare `properties` without an object `type`, "
-        f"so their closure cannot be checked: {unclassified}"
+        f"{schema_id}: subschemas declare `properties` without an object "
+        f"`type`, so their closure cannot be checked: {unclassified}"
     )
     assert not open_objects, (
-        f"{contract}: object definitions missing `additionalProperties: false`: "
-        f"{open_objects}"
+        f"{schema_id}: object definitions missing `additionalProperties: "
+        f"false`: {open_objects}"
     )
 
 
-@pytest.mark.parametrize("contract", CONTRACTS)
-def test_utc_timestamp_defs_carry_pattern_and_format(contract: str):
+@pytest.mark.parametrize("schema_id", sorted(SCHEMA_DOCUMENTS))
+def test_utc_timestamp_defs_carry_pattern_and_format(schema_id: str):
     """``pattern`` does the rejecting; ``format`` stays as the annotation."""
-    defs = _SCHEMAS[contract].get("$defs", {})
+    defs = SCHEMA_DOCUMENTS[schema_id].get("$defs", {})
     timestamp_defs = {
         name: definition
         for name, definition in defs.items()
         if "timestamp" in name.lower() or definition.get("format") == "date-time"
     }
-    assert timestamp_defs, f"{contract}: no timestamp $def found"
+    assert timestamp_defs, f"{schema_id}: no timestamp $def found"
     for name, definition in timestamp_defs.items():
         assert definition.get("format") == "date-time", (
-            f"{contract}.$defs.{name}: expected format: date-time"
+            f"{schema_id}.$defs.{name}: expected format: date-time"
         )
         assert "pattern" in definition, (
-            f"{contract}.$defs.{name}: no format_checker is installed, so the "
+            f"{schema_id}.$defs.{name}: no format_checker is installed, so the "
             "pattern must carry the UTC rejection on its own"
         )
         pattern = definition["pattern"]
         assert pattern.endswith("Z$"), (
-            f"{contract}.$defs.{name}: pattern must pin a literal uppercase Z"
+            f"{schema_id}.$defs.{name}: pattern must pin a literal uppercase Z"
         )
 
 
 def test_shared_defs_are_deep_equal_across_contracts():
-    """E-4: the copied ``$defs`` must not drift between the five contracts."""
+    """E-4: the copied ``$defs`` must not drift between the schema documents.
+
+    Scope grew with 2.5: the two promoted cloud schemas are compared on the
+    same footing as the five 2.1-2.4 contracts, so a copy cannot drift on the
+    request/response side either.
+    """
     holders: dict[str, list[str]] = {}
-    for contract in CONTRACTS:
-        for name in _SCHEMAS[contract].get("$defs", {}):
-            holders.setdefault(name, []).append(contract)
+    for schema_id, schema in SCHEMA_DOCUMENTS.items():
+        for name in schema.get("$defs", {}):
+            holders.setdefault(name, []).append(schema_id)
 
     shared = {
-        name: contracts for name, contracts in holders.items() if len(contracts) > 1
+        name: holder for name, holder in holders.items() if len(holder) > 1
     }
-    assert {"utcTimestamp", "sha256", "locator"} <= set(shared), (
+    assert {"utcTimestamp", "sha256", "locator", "uuid"} <= set(shared), (
         f"expected the identity/locator defs to be shared; got {sorted(shared)}"
     )
-    assert shared["utcTimestamp"] == list(CONTRACTS), (
-        "utcTimestamp must be present in all five contracts"
+    assert shared["utcTimestamp"] == list(SCHEMA_DOCUMENTS), (
+        "utcTimestamp must be present in every schema document, including "
+        "both cloud directions"
     )
 
     drifted: dict[str, list[str]] = {}
-    for name, contracts in sorted(shared.items()):
+    for name, holder in sorted(shared.items()):
         variants = [
-            _strip_annotations(_SCHEMAS[contract]["$defs"][name])
-            for contract in contracts
+            _strip_annotations(SCHEMA_DOCUMENTS[schema_id]["$defs"][name])
+            for schema_id in holder
         ]
         if any(variant != variants[0] for variant in variants):
-            drifted[name] = contracts
-    assert not drifted, f"shared $defs drifted between contracts: {drifted}"
+            drifted[name] = holder
+    assert not drifted, f"shared $defs drifted between schemas: {drifted}"
 
 
 @pytest.mark.skipif(
@@ -421,7 +550,7 @@ def test_shared_defs_match_cloud_request_schema():
     cloud_defs = _read_json(_CLOUD_REQUEST_SCHEMA_PATH).get("$defs", {})
     compared = 0
     drifted: list[str] = []
-    for contract in CONTRACTS:
+    for contract in SINGLE_SCHEMA_CONTRACTS:
         for name, definition in _SCHEMAS[contract].get("$defs", {}).items():
             if name not in cloud_defs:
                 continue
@@ -459,7 +588,7 @@ def test_fixture_minimum_counts():
 @pytest.mark.parametrize(("contract", "fixture_path"), VALID_FIXTURES)
 def test_valid_fixture_passes_schema(contract: str, fixture_path: Path):
     document = _read_json(fixture_path)
-    errors = sorted(_VALIDATORS[contract].iter_errors(document), key=str)
+    errors = sorted(_validator_for(contract, document).iter_errors(document), key=str)
     assert not errors, (
         f"{contract}/{fixture_path.name} must satisfy the schema; got: "
         + "; ".join(
@@ -473,7 +602,7 @@ def test_valid_fixture_passes_schema(contract: str, fixture_path: Path):
 @pytest.mark.parametrize(("contract", "fixture_path"), INVALID_FIXTURES)
 def test_invalid_fixture_fails_schema(contract: str, fixture_path: Path):
     document = _read_json(fixture_path)
-    errors = list(_VALIDATORS[contract].iter_errors(document))
+    errors = list(_validator_for(contract, document).iter_errors(document))
     assert errors, (
         f"{contract}/{fixture_path.name} passed validation; either the fixture "
         "is no longer invalid or the schema stopped enforcing the rule it targets"
@@ -491,7 +620,7 @@ def test_invalid_fixture_hits_expected_violation(contract: str, fixture_path: Pa
     expectation = EXPECTATIONS[key]
 
     document = _read_json(fixture_path)
-    errors = list(_VALIDATORS[contract].iter_errors(document))
+    errors = list(_validator_for(contract, document).iter_errors(document))
     leaf = deterministic_leaf_error(errors)
     assert leaf is not None, f"{key}: no non-boolean leaf error was produced"
 
@@ -512,11 +641,7 @@ def test_invalid_fixture_hits_expected_violation(contract: str, fixture_path: Pa
 
 def test_every_invalid_fixture_is_covered_by_expectations():
     """No orphan expectations, no undeclared negative fixtures."""
-    fixture_keys = {
-        f"{contract}/{path.name}"
-        for contract in CONTRACTS
-        for path in _fixture_paths(contract, "invalid")
-    }
+    fixture_keys = {key for _contract, _path, key in _invalid_fixture_keys()}
     assert fixture_keys == set(EXPECTATIONS), (
         "expectations.json and the invalid fixtures disagree:\n"
         f"  only_in_fixtures={sorted(fixture_keys - set(EXPECTATIONS))}\n"
@@ -604,6 +729,7 @@ SEMANTIC_DISPATCH = {
     "lineage_alignment_report": "validate_alignment_report",
     "pipeline_job_attempt": "validate_job_scenario",
     "result_manifest": "validate_result_publication_scenario",
+    CLOUD_CONTRACT: "validate_cloud_publication_scenario",
 }
 
 
@@ -639,7 +765,7 @@ def test_semantic_scenario(contract: str, fixture_path: Path):
     fixture = _read_json(fixture_path)
     payload = fixture["payload"]
 
-    schema_errors = list(_VALIDATORS[contract].iter_errors(payload))
+    schema_errors = list(_validator_for(contract, payload).iter_errors(payload))
     assert not schema_errors, (
         f"{contract}/{fixture_path.name}: a semantic fixture payload must be "
         "schema-valid so the scenario isolates the semantic layer; got: "
@@ -769,3 +895,300 @@ def test_ratio_truncation_is_decimal_not_float():
     result = truncate_ratio(1, 3)
     assert isinstance(result, Decimal) and not isinstance(result, float)
     assert result.as_tuple().exponent == -semantic_validators.RATIO_DECIMAL_PLACES
+
+
+# ---------------------------------------------------------------------------
+# Task 2.5: the promoted cloud publication contract
+# ---------------------------------------------------------------------------
+
+
+def _cloud_fixture_documents() -> list:
+    """``(kind, path, document)`` for every cloud fixture, semantic unwrapped."""
+    entries = []
+    for kind in ("valid", "invalid", "semantic"):
+        for path in _fixture_paths(CLOUD_CONTRACT, kind):
+            fixture = _read_json(path)
+            document = fixture["payload"] if kind == "semantic" else fixture
+            entries.append((kind, path, document))
+    return entries
+
+
+CLOUD_FIXTURE_PARAMS = [
+    pytest.param(kind, path, id=f"{kind}/{path.name}")
+    for kind, path, _document in _cloud_fixture_documents()
+]
+
+CLOUD_INVALID_PARAMS = [
+    pytest.param(path, id=path.name)
+    for path in _fixture_paths(CLOUD_CONTRACT, "invalid")
+]
+
+
+@pytest.mark.skipif(
+    not (
+        _CLOUD_REQUEST_SCHEMA_PATH.exists() and _CLOUD_RESPONSE_SCHEMA_PATH.exists()
+    ),
+    reason=f"change contracts not present: {_CHANGE_CONTRACTS_DIR}",
+)
+@pytest.mark.parametrize("direction", sorted(CLOUD_SCHEMA_FILES))
+def test_promoted_cloud_schemas_are_byte_equal_to_the_change_originals(
+    direction: str,
+):
+    """2.5 is a *promotion*: the two schemas were copied, never re-authored.
+
+    Compared as bytes rather than as parsed documents, so key order, spacing
+    and comment text are all in scope -- a JSON deep-equal would let a
+    reformatted copy pass. Line endings are normalised first because
+    ``core.autocrlf`` decides them per checkout, and the same normalisation is
+    applied to both sides.
+    """
+    original = (
+        _CHANGE_CONTRACTS_DIR / CLOUD_SCHEMA_FILES[direction]
+    ).read_bytes().replace(b"\r\n", b"\n")
+    promoted = (
+        _CONTRACTS_DIR / CLOUD_SCHEMA_FILES[direction]
+    ).read_bytes().replace(b"\r\n", b"\n")
+    assert promoted == original, (
+        f"tests/contracts/{CLOUD_SCHEMA_FILES[direction]} is no longer a "
+        "byte-identical promotion of the change original; a re-authored copy "
+        "would make the change and the executable contract two authorities"
+    )
+
+
+def test_shared_defs_match_the_promoted_cloud_request_schema():
+    """E-12, but against the copy that survives archiving.
+
+    :func:`test_shared_defs_match_cloud_request_schema` binds the five 2.1-2.4
+    contracts to the *change* original and skips once the change is archived.
+    This one makes the same comparison against the promoted copy under
+    ``tests/contracts/``, so the binding keeps running afterwards. The two
+    cannot disagree while
+    :func:`test_promoted_cloud_schemas_are_byte_equal_to_the_change_originals`
+    holds.
+    """
+    cloud_defs = _CLOUD_SCHEMAS["request"].get("$defs", {})
+    compared = 0
+    drifted: list[str] = []
+    for contract in SINGLE_SCHEMA_CONTRACTS:
+        for name, definition in _SCHEMAS[contract].get("$defs", {}).items():
+            if name not in cloud_defs:
+                continue
+            compared += 1
+            if _strip_annotations(definition) != _strip_annotations(cloud_defs[name]):
+                drifted.append(f"{contract}.$defs.{name}")
+    assert compared >= 5, (
+        f"expected at least the five shared defs to be compared; compared {compared}"
+    )
+    assert not drifted, f"lineage copies drifted from the promoted cloud copy: {drifted}"
+
+
+@pytest.mark.parametrize("fixture_path", CLOUD_INVALID_PARAMS)
+def test_cloud_expectation_schema_field_matches_the_direction_router(
+    fixture_path: Path,
+):
+    """The expectations' ``schema`` field is a redundant check on the router.
+
+    One fixture directory feeds two schemas, so a routing mistake would show up
+    as a fixture silently validated against the wrong side. Every cloud
+    expectation records which direction its author meant; this compares that
+    declaration against what ``cloud_publication_direction`` actually decides.
+    """
+    key = f"{CLOUD_CONTRACT}/{fixture_path.name}"
+    declared = EXPECTATIONS[key].get("schema")
+    assert declared in CLOUD_SCHEMA_FILES, (
+        f"{key}: expectations must declare schema as one of "
+        f"{sorted(CLOUD_SCHEMA_FILES)}, got {declared!r}"
+    )
+    document = _read_json(fixture_path)
+    routed = semantic_validators.cloud_publication_direction(document)
+    assert routed == declared, (
+        f"{key}: expectations say {declared}, the router says {routed}"
+    )
+
+
+@pytest.mark.parametrize(("kind", "fixture_path"), CLOUD_FIXTURE_PARAMS)
+def test_cloud_fixture_is_rejected_by_the_opposite_direction_schema(
+    kind: str, fixture_path: Path
+):
+    """Routing cannot silently point at the wrong schema.
+
+    Every cloud fixture must be rejected by the direction it was *not* routed
+    to. Without this the request and response corpora could drift into
+    something both schemas accept, and the router would stop meaning anything.
+    """
+    fixture = _read_json(fixture_path)
+    document = fixture["payload"] if kind == "semantic" else fixture
+    routed = semantic_validators.cloud_publication_direction(document)
+    opposite = "response" if routed == "request" else "request"
+    assert list(_CLOUD_VALIDATORS[opposite].iter_errors(document)), (
+        f"{kind}/{fixture_path.name} routed to the {routed} schema but the "
+        f"{opposite} schema also accepts it; the two directions are no longer "
+        "distinguishable"
+    )
+
+
+# ---------------------------------------------------------------------------
+# expectations.json: the optional ``must_contain`` target (F-2)
+# ---------------------------------------------------------------------------
+#
+# `deterministic_leaf_error` answers "which leaf does the tie-break pick?".
+# For a bare `oneOf` -- the shape the cloud request schema uses -- the
+# non-matching branch leaves a real `const` leaf on the discriminator rather
+# than the boolean leaf that step 2 of the rule drops, so a violation at the
+# same depth can lose the lexicographic tie to `/event_type`. Those fixtures
+# additionally declare `must_contain`: the rule they actually exercise, which
+# must be present somewhere in the error tree. The check is purely additive --
+# the 182 entries that landed with 2.1-2.4 declare no `must_contain` and are
+# untouched.
+
+MUST_CONTAIN_FIXTURES = [
+    pytest.param(contract, path, id=key)
+    for contract, path, key in _invalid_fixture_keys()
+    if "must_contain" in EXPECTATIONS.get(key, {})
+]
+
+
+def _leaf_targets(errors) -> set:
+    """Every ``(keyword, instance pointer)`` the error tree carries."""
+    return {
+        (error.validator, _json_pointer(error.absolute_path))
+        for error in _flatten_leaf_errors(errors)
+        if error.validator is not None
+    }
+
+
+def test_must_contain_declarations_exist():
+    """A ratchet: the ``must_contain`` corpus must not silently empty out."""
+    assert len(MUST_CONTAIN_FIXTURES) >= 5, (
+        "the bare-oneOf fixtures that need a must_contain target disappeared; "
+        f"found {len(MUST_CONTAIN_FIXTURES)}"
+    )
+
+
+@pytest.mark.parametrize(("contract", "fixture_path"), MUST_CONTAIN_FIXTURES)
+def test_invalid_fixture_contains_declared_target(contract: str, fixture_path: Path):
+    """The rule the fixture is *about* must really fire, tie-break aside."""
+    key = f"{contract}/{fixture_path.name}"
+    expectation = EXPECTATIONS[key]
+    target = expectation["must_contain"]
+    assert set(target) == {"keyword", "instance_pointer"}, (
+        f"{key}: must_contain must carry exactly keyword + instance_pointer, "
+        f"got {sorted(target)}"
+    )
+    wanted = (target["keyword"], target["instance_pointer"])
+    recorded = (expectation["keyword"], expectation["instance_pointer"])
+    assert wanted != recorded, (
+        f"{key}: must_contain repeats the deterministic leaf, so it proves "
+        "nothing the existing expectation does not already prove; drop it"
+    )
+
+    document = _read_json(fixture_path)
+    observed = _leaf_targets(_validator_for(contract, document).iter_errors(document))
+    assert wanted in observed, (
+        f"{key}: expected {wanted[0]} @ {wanted[1] or '(root)'} somewhere in the "
+        f"error tree; the tree carries {sorted(observed)}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Task 2.7 negative cases that need a fixture-reading assertion
+# ---------------------------------------------------------------------------
+
+
+def _cloud_valid_fixture(name: str) -> dict:
+    return _read_json(_FIXTURES_DIR / CLOUD_CONTRACT / "valid" / name)
+
+
+def test_three_valid_cloud_request_fixtures_have_distinct_event_ids():
+    """tasks.md 2.7: "三個valid request fixture event IDs互異".
+
+    Event IDs are the receiver's primary key for the immutable event identity
+    ledger, so three examples sharing one would make the corpus unable to
+    demonstrate three distinct events at all -- and every replay/conflict rule
+    downstream is stated in terms of that key.
+    """
+    uuid_pattern = _CLOUD_SCHEMAS["request"]["$defs"]["uuid"]["pattern"]
+    seen: dict[str, str] = {}
+    for name in CLOUD_DISTINCT_EVENT_ID_FIXTURES:
+        document = _cloud_valid_fixture(name)
+        assert semantic_validators.cloud_publication_direction(document) == "request", (
+            f"{name} is not a request-direction fixture"
+        )
+        event_id = document["event_id"]
+        assert re.fullmatch(uuid_pattern.strip("^$"), event_id), (
+            f"{name}: event_id {event_id!r} is not a schema-valid UUID"
+        )
+        assert event_id not in seen, (
+            f"{name} reuses the event_id of {seen[event_id]}; the three shipped "
+            "valid request examples must name three distinct events"
+        )
+        seen[event_id] = name
+    assert len(seen) == len(CLOUD_DISTINCT_EVENT_ID_FIXTURES)
+
+
+#: Response bodies that echo a request's ``event_id`` back to the sender.
+CLOUD_ECHO_FIXTURES = ("valid-created-ack.json", "valid-conflict-error.json")
+
+
+@pytest.mark.parametrize("name", CLOUD_ECHO_FIXTURES)
+def test_ack_or_error_echo_is_not_a_second_request_event(name: str):
+    """tasks.md 2.7: "ACK/error echo request ID不得誤算為request event重用".
+
+    Both fixtures echo the ``event_id`` of
+    ``valid-lineage-result-published.json``. Three separate mechanisms have to
+    agree that the echo is still a response:
+
+    1. the direction router sends it to the response schema -- it carries no
+       ``schema_version``, and neither response body may declare one;
+    2. the request schema rejects it outright, so it can never be replayed into
+       the publication corpus as a second event with that ID;
+    3. the request-side semantic rules stay silent on it, so no identity or
+       reuse diagnosis is invented for a document that is not an event.
+    """
+    published_event_id = _cloud_valid_fixture(
+        "valid-lineage-result-published.json"
+    )["event_id"]
+    echo = _cloud_valid_fixture(name)
+    assert echo["event_id"] == published_event_id, (
+        f"{name} no longer echoes the published event's ID, so it stops being "
+        "the confusable case this test exists for"
+    )
+
+    assert semantic_validators.cloud_publication_direction(echo) == "response"
+    assert list(_CLOUD_VALIDATORS["request"].iter_errors(echo)), (
+        f"{name} was accepted by the request schema; an echoed request ID would "
+        "then be indistinguishable from a reuse of that event ID"
+    )
+    assert semantic_validators.validate_cloud_publication_scenario(echo) == []
+
+
+def test_same_health_event_id_with_a_different_body_is_a_receiver_side_conflict():
+    """tasks.md 2.7: "same-health-event/different-body".
+
+    The two health fixtures carry one event ID and two different bodies. Both
+    are individually schema-valid and semantically clean, which is the point:
+    no single-document validator can see the conflict, so the rule has to live
+    in the receiver's event-identity ledger and surface on the wire as
+    ``409``/``PUBLICATION_DIGEST_CONFLICT``. This test pins the exhibit and the
+    error code it demands; the status/retryable binding for that code is
+    asserted in ``test_cloud_publication_protocol.py``.
+    """
+    first = _cloud_valid_fixture("valid-lineage-result-health-changed.json")
+    second = _cloud_valid_fixture("valid-health-verified-restored.json")
+
+    assert first["event_id"] == second["event_id"], (
+        "the two health fixtures no longer share an event ID, so they stop "
+        "being the same-event/different-body exhibit"
+    )
+    assert first["payload"] != second["payload"], "the two bodies must differ"
+    for document in (first, second):
+        assert not list(_CLOUD_VALIDATORS["request"].iter_errors(document))
+        assert semantic_validators.validate_cloud_publication_scenario(document) == []
+
+    error_codes = _CLOUD_SCHEMAS["response"]["$defs"]["errorResponse"]["properties"][
+        "error"
+    ]["properties"]["code"]["enum"]
+    assert "PUBLICATION_DIGEST_CONFLICT" in error_codes, (
+        "the response schema must be able to name the conflict the document "
+        "layer cannot detect"
+    )

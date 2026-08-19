@@ -774,5 +774,286 @@
   "source_bundle_ready/invalid-wrong-event.json": {
     "keyword": "const",
     "instance_pointer": "/event"
+  },
+  "cloud_lineage_publication/invalid-colon-publication-identity-component.json": {
+    "schema": "request",
+    "keyword": "pattern",
+    "instance_pointer": "/publication_identity",
+    "intent": "a literal ':' inside result_id makes the three-component identity ambiguous; result_id and publication_identity both fail their pattern and the lexicographically first pointer wins"
+  },
+  "cloud_lineage_publication/invalid-duplicate-version-id-query.json": {
+    "schema": "request",
+    "keyword": "pattern",
+    "instance_pointer": "/payload/result_refs/lineage_mapping_ref/ref",
+    "intent": "the only query allowed is a single ?versionId=; two of them make the pinned object version ambiguous"
+  },
+  "cloud_lineage_publication/invalid-duplicate-warning-code.json": {
+    "schema": "request",
+    "keyword": "uniqueItems",
+    "instance_pointer": "/payload/alignment_summary/warning_codes",
+    "intent": "warning codes are a set; a repeated code would inflate the bound"
+  },
+  "cloud_lineage_publication/invalid-edge-site-authority-character.json": {
+    "schema": "request",
+    "keyword": "pattern",
+    "instance_pointer": "/edge_site_id",
+    "intent": "edge_site_id shares the locator authority charset [A-Za-z0-9._-]; a '/' would let the authority swallow a path segment"
+  },
+  "cloud_lineage_publication/invalid-error-event-id.json": {
+    "schema": "response",
+    "keyword": "pattern",
+    "instance_pointer": "/event_id",
+    "intent": "a receiver must not invent an event id; when it echoes one it has to be a valid UUID"
+  },
+  "cloud_lineage_publication/invalid-extra-count-field.json": {
+    "schema": "request",
+    "keyword": "additionalProperties",
+    "instance_pointer": "/payload/alignment_summary/counts",
+    "intent": "the ten count fields are exhaustive"
+  },
+  "cloud_lineage_publication/invalid-extra-envelope-member.json": {
+    "schema": "request",
+    "keyword": "additionalProperties",
+    "instance_pointer": "",
+    "intent": "strict additionalProperties:false at the envelope: transport bookkeeping must not ride along inside the signed body"
+  },
+  "cloud_lineage_publication/invalid-extra-metric-group.json": {
+    "schema": "request",
+    "keyword": "additionalProperties",
+    "instance_pointer": "/payload/alignment_summary/metrics",
+    "intent": "exactly three metric groups; a fourth would let a producer invent an unreviewed cloud metric"
+  },
+  "cloud_lineage_publication/invalid-extra-result-ref.json": {
+    "schema": "request",
+    "keyword": "additionalProperties",
+    "instance_pointer": "/payload/result_refs",
+    "intent": "exactly four stable refs; a fifth locator would widen what cloud persists beyond the normative projection"
+  },
+  "cloud_lineage_publication/invalid-fragment-in-object-key.json": {
+    "schema": "request",
+    "keyword": "pattern",
+    "instance_pointer": "/payload/result_refs/alignment_report_json_ref/ref",
+    "intent": "object key must not carry a raw #; a fragment would split the key from the version query"
+  },
+  "cloud_lineage_publication/invalid-health-payload-carries-summary.json": {
+    "schema": "request",
+    "keyword": "const",
+    "instance_pointer": "/event_type",
+    "intent": "health events must not resend the alignment summary; the original summary stays on the immutable publication row",
+    "must_contain": {
+      "keyword": "additionalProperties",
+      "instance_pointer": "/payload"
+    },
+    "tie_break_note": "the deterministic leaf lands on the bare-oneOf discriminator, not on this rule; see README-e.md section 5"
+  },
+  "cloud_lineage_publication/invalid-incomplete-ack.json": {
+    "schema": "response",
+    "keyword": "required",
+    "instance_pointer": "",
+    "intent": "an ACK without manifest_digest cannot be compared to the sent event"
+  },
+  "cloud_lineage_publication/invalid-leap-second-health-observed-at.json": {
+    "schema": "request",
+    "keyword": "pattern",
+    "instance_pointer": "/payload/observed_at",
+    "intent": "second 60 is not on the wire; a leap second must not be truncated"
+  },
+  "cloud_lineage_publication/invalid-locator-without-version-id.json": {
+    "schema": "request",
+    "keyword": "pattern",
+    "instance_pointer": "/payload/result_refs/lineage_mapping_ref/ref",
+    "intent": "a locator with no ?versionId= is not pinned to immutable bytes"
+  },
+  "cloud_lineage_publication/invalid-lowercase-presigned-locator.json": {
+    "schema": "request",
+    "keyword": "not",
+    "instance_pointer": "/payload/result_manifest_ref/ref",
+    "intent": "the presign guard is case-insensitive: ?x-amz- is rejected the same way as ?X-Amz-"
+  },
+  "cloud_lineage_publication/invalid-lowercase-z-occurred-at.json": {
+    "schema": "request",
+    "keyword": "pattern",
+    "instance_pointer": "/occurred_at",
+    "intent": "the shared UTC wire form pins a literal uppercase Z; lowercase z must be rejected by pattern, not by an annotation-only format"
+  },
+  "cloud_lineage_publication/invalid-missing-alignment-report-csv-ref.json": {
+    "schema": "request",
+    "keyword": "required",
+    "instance_pointer": "/payload/result_refs",
+    "intent": "all four stable refs are required; three is not a publishable result location projection"
+  },
+  "cloud_lineage_publication/invalid-missing-metric-group.json": {
+    "schema": "request",
+    "keyword": "required",
+    "instance_pointer": "/payload/alignment_summary/metrics",
+    "intent": "exactly three metric groups; two is an incomplete summary"
+  },
+  "cloud_lineage_publication/invalid-nonretryable-transient-error.json": {
+    "schema": "response",
+    "keyword": "const",
+    "instance_pointer": "/error/retryable",
+    "intent": "TRANSIENT_UNAVAILABLE is always retryable"
+  },
+  "cloud_lineage_publication/invalid-nonzero-denominator-null-ratio.json": {
+    "schema": "request",
+    "keyword": "type",
+    "instance_pointer": "/payload/alignment_summary/metrics/rvt_ifc_alignment_ratio/ratio",
+    "intent": "the else branch of the same rule: a nonzero denominator must carry a computed ratio, not null"
+  },
+  "cloud_lineage_publication/invalid-offset-ack-stored-at.json": {
+    "schema": "response",
+    "keyword": "pattern",
+    "instance_pointer": "/stored_at",
+    "intent": "offset negative fixture 4/4: success ACK stored_at, proving the response schema shares the same utcTimestamp definition"
+  },
+  "cloud_lineage_publication/invalid-offset-health-observed-at.json": {
+    "schema": "request",
+    "keyword": "pattern",
+    "instance_pointer": "/payload/observed_at",
+    "intent": "offset negative fixture 3/4: health payload observed_at"
+  },
+  "cloud_lineage_publication/invalid-offset-occurred-at.json": {
+    "schema": "request",
+    "keyword": "pattern",
+    "instance_pointer": "/occurred_at",
+    "intent": "offset negative fixture 1/4: request occurred_at"
+  },
+  "cloud_lineage_publication/invalid-offset-published-at.json": {
+    "schema": "request",
+    "keyword": "pattern",
+    "instance_pointer": "/payload/published_at",
+    "intent": "offset negative fixture 2/4: published payload published_at"
+  },
+  "cloud_lineage_publication/invalid-out-of-range-health-observed-at.json": {
+    "schema": "request",
+    "keyword": "pattern",
+    "instance_pointer": "/payload/observed_at",
+    "intent": "year 0999 is outside the 1000-9999 MySQL DATETIME range"
+  },
+  "cloud_lineage_publication/invalid-presigned-health-locator.json": {
+    "schema": "request",
+    "keyword": "not",
+    "instance_pointer": "/payload/result_manifest_ref/ref",
+    "intent": "an https presigned URL is not a stable minio:// locator; the ref pattern and the X-Amz- `not` guard both fire, and the tie-break picks `not` (schema path .../not sorts before .../pattern)"
+  },
+  "cloud_lineage_publication/invalid-published-payload-element-rows.json": {
+    "schema": "request",
+    "keyword": "const",
+    "instance_pointer": "/event_type",
+    "intent": "no element rows: per-element mapping stays in edge MinIO and the payload object is closed",
+    "must_contain": {
+      "keyword": "additionalProperties",
+      "instance_pointer": "/payload"
+    },
+    "tie_break_note": "the deterministic leaf lands on the bare-oneOf discriminator, not on this rule; see README-e.md section 5"
+  },
+  "cloud_lineage_publication/invalid-response-extra-ack-member.json": {
+    "schema": "response",
+    "keyword": "additionalProperties",
+    "instance_pointer": "",
+    "intent": "strict additionalProperties:false on the success ACK: an exact ACK is what the sender compares before marking DELIVERED"
+  },
+  "cloud_lineage_publication/invalid-retryable-deterministic-error.json": {
+    "schema": "response",
+    "keyword": "const",
+    "instance_pointer": "/error/retryable",
+    "intent": "PUBLICATION_DIGEST_CONFLICT is never retryable"
+  },
+  "cloud_lineage_publication/invalid-single-confirmation-missing-health.json": {
+    "schema": "request",
+    "keyword": "minimum",
+    "instance_pointer": "/payload/confirmation_count",
+    "intent": "MISSING and INTEGRITY_FAILED need at least two independent edge observations"
+  },
+  "cloud_lineage_publication/invalid-submicrosecond-health-observed-at.json": {
+    "schema": "request",
+    "keyword": "pattern",
+    "instance_pointer": "/payload/observed_at",
+    "intent": "seven fractional digits exceed the microsecond wire form"
+  },
+  "cloud_lineage_publication/invalid-summary-diff-id-set.json": {
+    "schema": "request",
+    "keyword": "additionalProperties",
+    "instance_pointer": "/payload/alignment_summary",
+    "intent": "no diff identifier sets: the cloud summary carries counts only"
+  },
+  "cloud_lineage_publication/invalid-tombstone-id-on-non-tombstone.json": {
+    "schema": "request",
+    "keyword": "const",
+    "instance_pointer": "/event_type",
+    "intent": "MISSING must not carry tombstone_record_id",
+    "must_contain": {
+      "keyword": "not",
+      "instance_pointer": "/payload"
+    },
+    "tie_break_note": "the deterministic leaf lands on the bare-oneOf discriminator, not on this rule; see README-e.md section 5"
+  },
+  "cloud_lineage_publication/invalid-tombstone-without-record-id.json": {
+    "schema": "request",
+    "keyword": "const",
+    "instance_pointer": "/event_type",
+    "intent": "TOMBSTONED requires a formal retention record id; the inverse of invalid-tombstone-id-on-non-tombstone",
+    "must_contain": {
+      "keyword": "required",
+      "instance_pointer": "/payload"
+    },
+    "tie_break_note": "the deterministic leaf lands on the bare-oneOf discriminator, not on this rule; see README-e.md section 5"
+  },
+  "cloud_lineage_publication/invalid-unknown-event-type.json": {
+    "schema": "request",
+    "keyword": "const",
+    "instance_pointer": "/event_type",
+    "intent": "only lineage_result_published and lineage_result_health_changed exist; a third event type must fail closed at the envelope",
+    "must_contain": {
+      "keyword": "enum",
+      "instance_pointer": "/event_type"
+    },
+    "tie_break_note": "the deterministic leaf lands on the bare-oneOf discriminator, not on this rule; see README-e.md section 5"
+  },
+  "cloud_lineage_publication/invalid-unknown-schema-version.json": {
+    "schema": "request",
+    "keyword": "const",
+    "instance_pointer": "/schema_version",
+    "intent": "the envelope pins one schema_version const; an unknown version must not be accepted as a v1 request"
+  },
+  "cloud_lineage_publication/invalid-warning-code-count-above-max.json": {
+    "schema": "request",
+    "keyword": "maximum",
+    "instance_pointer": "/payload/alignment_summary/warning_code_count",
+    "intent": "the declared count is bounded by the same 64"
+  },
+  "cloud_lineage_publication/invalid-warning-code-lowercase.json": {
+    "schema": "request",
+    "keyword": "pattern",
+    "instance_pointer": "/payload/alignment_summary/warning_codes/0",
+    "intent": "warning codes are bounded UPPER_SNAKE tokens"
+  },
+  "cloud_lineage_publication/invalid-warning-codes-above-max-items.json": {
+    "schema": "request",
+    "keyword": "maxItems",
+    "instance_pointer": "/payload/alignment_summary/warning_codes",
+    "intent": "65 codes breaks the 64 bound; warning_code_count is deliberately left at 64 so this fixture violates exactly one schema rule"
+  },
+  "cloud_lineage_publication/invalid-zero-denominator-ratio-zero.json": {
+    "schema": "request",
+    "keyword": "type",
+    "instance_pointer": "/payload/alignment_summary/metrics/ifc_usdc_coverage_ratio/ratio",
+    "intent": "zero denominator: ratio must be null, never 0 - the cloud summary must not claim 0%"
+  },
+  "pipeline_job_attempt/invalid-audit-force-release-capability.json": {
+    "keyword": "const",
+    "instance_pointer": "/body/capability",
+    "intent": "tasks.md 2.7 'unauthorized force release': the activation audit carries the only capability vocabulary in the 2.x corpus, and it is result.promote / result.rollback / null. A runtime.force_release value cannot ride in here, so this contract can never be used to record or authorise a runtime force release.",
+    "must_contain": {
+      "keyword": "enum",
+      "instance_pointer": "/body/capability"
+    },
+    "tie_break_note": "the promote branch's `const: result.promote` and the capability `enum` fire on the same pointer at the same depth; the schema-path tie-break picks the const, so the vocabulary rule this fixture is about is declared here"
+  },
+  "cloud_lineage_publication/invalid-malformed-request-event-id.json": {
+    "schema": "request",
+    "keyword": "pattern",
+    "instance_pointer": "/event_id",
+    "intent": "tasks.md 2.7 'malformed wire UUID', request direction: event_id is the receiver's event identity ledger primary key, so a value that is not a schema-valid UUID must fail closed before any mutation. The response direction is covered by invalid-error-event-id.json."
   }
 }
