@@ -1510,22 +1510,20 @@
     },
     {
       "id": "isolated-branch-stack-browser-e2e",
-      "status": "active",
+      "status": "archived",
       "owner": "repository-maintainer",
-      "current_slice": "PR #431 主體已 merge（cdd1f2f）；reviewer ACCEPT（P1/P2=0）。2026-08-11：4.3 以 gate 重跑補勾（test-agent-governance-check 45 pass／0 fail @7929d74）。31/33；5.2/5.3 與 A4 manifest/PNG/runtime ID 維持 gap（a4-console-convergence 缺口），fixture seed 由 #434 持有。GitNexus unavailable/UNKNOWN 紀錄維持，非 pass。",
+      "current_slice": null,
       "blocked_by": [],
-      "last_verified": "2026-08-11T11:40:00Z",
+      "last_verified": "2026-08-19T03:03:00Z",
       "task_ledger": {
-        "completed": 31,
+        "completed": 33,
         "total": 33
       },
       "evidence_refs": [
-        "openspec/changes/isolated-branch-stack-browser-e2e/proposal.md",
-        "openspec/changes/isolated-branch-stack-browser-e2e/tasks.md",
-        "docs/plans/NOW.md",
-        "scripts/tests/test-isolated-branch-stack.ps1"
+        "openspec/changes/archive/2026-08-19-isolated-branch-stack-browser-e2e/proposal.md",
+        "openspec/changes/archive/2026-08-19-isolated-branch-stack-browser-e2e/tasks.md"
       ],
-      "subject_commit": "2828c76c17d670c9f52caed5eed683e5eba6b014",
+      "subject_commit": "63b56ce91ab64232f7cb0ae3b0d2749d69a579eb",
       "archive_debt": null
     },
     {
