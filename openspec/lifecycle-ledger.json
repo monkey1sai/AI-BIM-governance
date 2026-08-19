@@ -378,6 +378,25 @@
       "archive_debt": null
     },
     {
+      "id": "align-html-derived-design-gate-contract",
+      "status": "active",
+      "owner": "repository-maintainer",
+      "current_slice": "2026-08-19 開立：successor of align-frontend-design-system-reference（deferred/frozen），只承接 closed design-gate policy 與 ref-bound HTML source collection；provenance、classifier/status、typed consumers 留給尚未建立的三個 successor。0/2；下一片＝1.1 closed-schema scripts/config/design-gate-policy.json。scope guard：不動 HTML 內容、manifest、golden、baseline、capture/rebaseline、production UI、runtime、API、data/event、storage 或 session/conversion 行為。",
+      "blocked_by": [],
+      "last_verified": "2026-08-19T08:36:23Z",
+      "task_ledger": {
+        "completed": 0,
+        "total": 2
+      },
+      "evidence_refs": [
+        "openspec/changes/align-html-derived-design-gate-contract/proposal.md",
+        "openspec/changes/align-html-derived-design-gate-contract/tasks.md"
+      ],
+      "subject_commit": "660e994b0574c60d796c77b0faf6e39e8358611b",
+      "archive_debt": null,
+      "subject_binding": "introduction"
+    },
+    {
       "id": "align-ship-cycle-merge-ancestry",
       "status": "archived",
       "owner": "repository-maintainer",
