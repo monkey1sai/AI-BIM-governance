@@ -1,0 +1,20 @@
+{
+  "schema_version": "result-manifest-document/v1",
+  "document_type": "result_publication_outcome",
+  "body": {
+    "result_id": "result-0011",
+    "attempt_id": "attempt-0011",
+    "pipeline_job_id": "pipeline-job-0003",
+    "publication_state": "PUBLISHING",
+    "conditional_create": {
+      "attempted": false
+    },
+    "replay": false,
+    "result_manifest_digest": null,
+    "prior_result_id": null,
+    "prior_result_manifest_digest": null,
+    "available_at": null,
+    "diagnostics": [],
+    "observed_at": "2026-07-16T12:10:00Z"
+  }
+}

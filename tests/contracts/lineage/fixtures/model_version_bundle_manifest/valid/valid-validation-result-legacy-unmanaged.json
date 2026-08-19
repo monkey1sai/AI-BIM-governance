@@ -1,0 +1,27 @@
+{
+  "schema_version": "model-version-bundle-manifest/v1",
+  "document_type": "source_bundle_validation_result",
+  "body": {
+    "source_bundle_id": "legacy-grouping-01",
+    "external_model_version_id": "model-version-legacy-01",
+    "manifest_sha256": null,
+    "manifest_present": false,
+    "bundle_state": "LEGACY_UNMANAGED",
+    "conditional_create": {
+      "attempted": false,
+      "outcome": "not_attempted"
+    },
+    "replay": false,
+    "enqueued_pipeline_job_id": null,
+    "integrity_diagnostics": [
+      {
+        "code": "missing_required_role",
+        "role": "schedule_csv",
+        "expected": "schedule_csv",
+        "observed": null,
+        "detail": "grouping 內沒有 schedule.csv，無 manifest 可佐證"
+      }
+    ],
+    "observed_at": "2026-07-16T09:30:00.000Z"
+  }
+}

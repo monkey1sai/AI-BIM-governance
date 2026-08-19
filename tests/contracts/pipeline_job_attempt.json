@@ -1,0 +1,1640 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bim-docs.jackshappybot.com/contracts/pipeline-job-attempt-v1.schema.json",
+  "title": "Pipeline Job and Attempt v1",
+  "description": "Edge orchestration documents for the RVT->IFC->USDC lineage pipeline: the coordinator-owned stable pipeline job, the streaming-owned immutable attempt, the runtime admission record, the active-result pointer, the append-only activation audit entry, the read-only result comparison and the retention policy. Attempt outcome, publication state and result-scoped selection state are three orthogonal axes and MUST NOT be merged into a single status field.",
+  "$comment": "Source of truth: openspec/changes/rvt-ifc-usdc-lineage/specs/conversion-attempt-publication/spec.md and specs/conversion-runtime-admission/spec.md (tasks.md 2.3). Enum spellings are copied verbatim from those specs; do not re-case them (wire literals UNPUBLISHED / PUBLISHING / AVAILABLE / INVALID / WAITING_CAPACITY / ADMITTED / BLOCKED are uppercase, manual_correction_required / succeeded_with_warnings / candidate|active|historical are lowercase). Shared $defs (utcTimestamp / sha256 / locator / metric / counts) are byte-identical copies of openspec/changes/rvt-ifc-usdc-lineage/contracts/cloud-lineage-publication-request-v1.schema.json and are asserted deep-equal by test_shared_defs_are_deep_equal_across_contracts.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "document_type",
+    "body"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "pipeline-job-attempt/v1"
+    },
+    "document_type": {
+      "enum": [
+        "pipeline_job",
+        "attempt",
+        "admission_record",
+        "active_result_pointer",
+        "activation_audit_entry",
+        "result_compare",
+        "retention_policy"
+      ]
+    },
+    "body": {
+      "type": "object"
+    }
+  },
+  "oneOf": [
+    {
+      "$comment": "Discriminated branch. `else: false` makes a non-matching branch fail on the discriminator alone, so a body violation is reported once, at its real location, instead of being buried under six sibling branches that also define pipeline_job_id / result_id.",
+      "if": {
+        "required": [
+          "document_type"
+        ],
+        "properties": {
+          "document_type": {
+            "const": "pipeline_job"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "body": {
+            "$ref": "#/$defs/pipelineJob"
+          }
+        }
+      },
+      "else": false
+    },
+    {
+      "if": {
+        "required": [
+          "document_type"
+        ],
+        "properties": {
+          "document_type": {
+            "const": "attempt"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "body": {
+            "$ref": "#/$defs/attempt"
+          }
+        }
+      },
+      "else": false
+    },
+    {
+      "if": {
+        "required": [
+          "document_type"
+        ],
+        "properties": {
+          "document_type": {
+            "const": "admission_record"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "body": {
+            "$ref": "#/$defs/admissionRecord"
+          }
+        }
+      },
+      "else": false
+    },
+    {
+      "if": {
+        "required": [
+          "document_type"
+        ],
+        "properties": {
+          "document_type": {
+            "const": "active_result_pointer"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "body": {
+            "$ref": "#/$defs/activeResultPointer"
+          }
+        }
+      },
+      "else": false
+    },
+    {
+      "if": {
+        "required": [
+          "document_type"
+        ],
+        "properties": {
+          "document_type": {
+            "const": "activation_audit_entry"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "body": {
+            "$ref": "#/$defs/activationAuditEntry"
+          }
+        }
+      },
+      "else": false
+    },
+    {
+      "if": {
+        "required": [
+          "document_type"
+        ],
+        "properties": {
+          "document_type": {
+            "const": "result_compare"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "body": {
+            "$ref": "#/$defs/resultCompare"
+          }
+        }
+      },
+      "else": false
+    },
+    {
+      "if": {
+        "required": [
+          "document_type"
+        ],
+        "properties": {
+          "document_type": {
+            "const": "retention_policy"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "body": {
+            "$ref": "#/$defs/retentionPolicy"
+          }
+        }
+      },
+      "else": false
+    }
+  ],
+  "$defs": {
+    "utcTimestamp": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^[1-9][0-9]{3}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12][0-9]|3[01])T(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](?:\\.[0-9]{1,6})?Z$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "locator": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "ref",
+        "object_version_id",
+        "etag",
+        "sha256",
+        "size_bytes"
+      ],
+      "properties": {
+        "ref": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096,
+          "pattern": "^minio://[A-Za-z0-9._-]+/[A-Za-z0-9._-]+/[^?#\\s]+\\?versionId=[A-Za-z0-9._~%-]+$",
+          "not": {
+            "pattern": "[?&][Xx]-[Aa][Mm][Zz]-"
+          }
+        },
+        "object_version_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "etag": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "size_bytes": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "metric": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "numerator",
+        "denominator",
+        "ratio",
+        "status"
+      ],
+      "properties": {
+        "numerator": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "denominator": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "ratio": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 1
+        },
+        "status": {
+          "enum": [
+            "complete",
+            "partial",
+            "not_evaluable"
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "denominator": {
+                "const": 0
+              }
+            },
+            "required": [
+              "denominator"
+            ]
+          },
+          "then": {
+            "properties": {
+              "numerator": {
+                "const": 0
+              },
+              "ratio": {
+                "type": "null"
+              },
+              "status": {
+                "const": "not_evaluable"
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "ratio": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              },
+              "status": {
+                "enum": [
+                  "complete",
+                  "partial"
+                ]
+              }
+            }
+          }
+        }
+      ]
+    },
+    "counts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "csv_total_count",
+        "csv_valid_count",
+        "eligible_ifc_product_count",
+        "duplicate_rvt_id_count",
+        "duplicate_ifc_guid_count",
+        "invalid_row_count",
+        "csv_only_count",
+        "ifc_only_count",
+        "ifc_usdc_unmapped_count",
+        "full_lineage_matched_count"
+      ],
+      "properties": {
+        "csv_total_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "csv_valid_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "eligible_ifc_product_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "duplicate_rvt_id_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "duplicate_ifc_guid_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "invalid_row_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "csv_only_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "ifc_only_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "ifc_usdc_unmapped_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "full_lineage_matched_count": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "nullableUtcTimestamp": {
+      "$comment": "Same wire form as $defs/utcTimestamp; null means the event has not happened yet. `pattern` and `format` only constrain the string branch.",
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date-time",
+      "pattern": "^[1-9][0-9]{3}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12][0-9]|3[01])T(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](?:\\.[0-9]{1,6})?Z$"
+    },
+    "identifier": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "nullableIdentifier": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "sourceBundleId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200,
+      "pattern": "^[A-Za-z0-9._-]+$"
+    },
+    "attemptResultPrefix": {
+      "$comment": "Immutable attempt-scoped MinIO prefix. Always ends with '/', never carries a query string, so it can never be a presigned URL.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096,
+      "pattern": "^minio://[A-Za-z0-9._-]+/[A-Za-z0-9._-]+/[^?#\\s]*/$"
+    },
+    "lowerSnakeCode": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]{0,63}$"
+    },
+    "warningCode": {
+      "type": "string",
+      "pattern": "^[A-Z][A-Z0-9_]{0,63}$"
+    },
+    "attemptOutcome": {
+      "$comment": "Converter outcome axis. null while the attempt is still executing.",
+      "enum": [
+        "succeeded",
+        "succeeded_with_warnings",
+        "failed",
+        "cancelled",
+        null
+      ]
+    },
+    "publicationState": {
+      "$comment": "Formal publication axis. Wire literals are uppercase; lowercase 'available' is natural language only and MUST NOT become a second enum value.",
+      "enum": [
+        "UNPUBLISHED",
+        "PUBLISHING",
+        "AVAILABLE",
+        "INVALID"
+      ]
+    },
+    "selectionState": {
+      "$comment": "Result-scoped selection axis. null means the attempt has no formal selectable result at all.",
+      "enum": [
+        "candidate",
+        "active",
+        "historical",
+        null
+      ]
+    },
+    "selectableAttemptOutcome": {
+      "enum": [
+        "succeeded",
+        "succeeded_with_warnings"
+      ]
+    },
+    "actor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "actor_kind",
+        "actor_id"
+      ],
+      "properties": {
+        "actor_kind": {
+          "enum": [
+            "system",
+            "operator",
+            "service_account"
+          ]
+        },
+        "actor_id": {
+          "$ref": "#/$defs/identifier"
+        }
+      }
+    },
+    "readyEventLedgerEntry": {
+      "$comment": "Append-only evidence that ready-event replay, retry, streaming restart and coordinator restart did not create a second logical job. Only the very first entry may set created_new_logical_job=true; ordering/arithmetic is enforced by validate_job_scenario, not by this schema.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "event_id",
+        "event_kind",
+        "received_at",
+        "created_new_logical_job"
+      ],
+      "properties": {
+        "event_id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "event_kind": {
+          "enum": [
+            "source_bundle_ready",
+            "ready_replay",
+            "streaming_restart",
+            "coordinator_restart",
+            "retry"
+          ]
+        },
+        "received_at": {
+          "$ref": "#/$defs/utcTimestamp"
+        },
+        "created_new_logical_job": {
+          "type": "boolean"
+        }
+      }
+    },
+    "manualCorrectionBlocker": {
+      "$comment": "Nullable object rather than a oneOf branch pair: required / properties / additionalProperties are inert for a null instance, so a null blocker stays a single clean state instead of producing a discriminator error.",
+      "type": [
+        "object",
+        "null"
+      ],
+      "additionalProperties": false,
+      "required": [
+        "blocker_code",
+        "detail",
+        "requires_new_source_bundle"
+      ],
+      "properties": {
+        "blocker_code": {
+          "$ref": "#/$defs/lowerSnakeCode"
+        },
+        "detail": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000
+        },
+        "requires_new_source_bundle": {
+          "$comment": "Correcting a semantic-invalid source SHALL create a new source bundle and pipeline job; the READY bundle MUST NOT be overwritten and retried on the original job.",
+          "const": true
+        }
+      }
+    },
+    "pipelineJob": {
+      "$comment": "One stable logical job per immutable source_bundle_id, owned by bim-review-coordinator across retry, runtime re-admission, streaming restart and coordinator restart.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "owner",
+        "pipeline_job_id",
+        "source_bundle_id",
+        "external_model_version_id",
+        "job_state",
+        "attempt_count",
+        "in_flight_attempt_id",
+        "active_result_id",
+        "manual_correction_blocker",
+        "ready_event_ledger",
+        "created_at",
+        "updated_at"
+      ],
+      "properties": {
+        "owner": {
+          "const": "bim-review-coordinator"
+        },
+        "pipeline_job_id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "source_bundle_id": {
+          "$ref": "#/$defs/sourceBundleId"
+        },
+        "external_model_version_id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "tenant_id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "project_id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "job_state": {
+          "$comment": "Verbatim spec spelling: WAITING_CAPACITY is uppercase, manual_correction_required is lowercase.",
+          "enum": [
+            "PENDING_ADMISSION",
+            "WAITING_CAPACITY",
+            "RUNNING",
+            "manual_correction_required",
+            "TERMINAL"
+          ]
+        },
+        "attempt_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "in_flight_attempt_id": {
+          "$ref": "#/$defs/nullableIdentifier"
+        },
+        "active_result_id": {
+          "$ref": "#/$defs/nullableIdentifier"
+        },
+        "manual_correction_blocker": {
+          "$ref": "#/$defs/manualCorrectionBlocker"
+        },
+        "ready_event_ledger": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/readyEventLedgerEntry"
+          }
+        },
+        "created_at": {
+          "$ref": "#/$defs/utcTimestamp"
+        },
+        "updated_at": {
+          "$ref": "#/$defs/utcTimestamp"
+        }
+      },
+      "allOf": [
+        {
+          "$comment": "WAITING_CAPACITY SHALL NOT allocate an attempt.",
+          "if": {
+            "required": [
+              "job_state"
+            ],
+            "properties": {
+              "job_state": {
+                "const": "WAITING_CAPACITY"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "in_flight_attempt_id": {
+                "type": "null"
+              }
+            }
+          }
+        },
+        {
+          "$comment": "A RUNNING job is executing exactly one streaming-owned attempt.",
+          "if": {
+            "required": [
+              "job_state"
+            ],
+            "properties": {
+              "job_state": {
+                "const": "RUNNING"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "in_flight_attempt_id": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        {
+          "$comment": "manual_correction_required is a terminal human-correction state and SHALL carry its blocker.",
+          "if": {
+            "required": [
+              "job_state"
+            ],
+            "properties": {
+              "job_state": {
+                "const": "manual_correction_required"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "manual_correction_blocker": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "attempt": {
+      "$comment": "Immutable streaming-owned execution record. attempt_outcome, publication_state and selection_state are three orthogonal axes; a merged `status` field is rejected by additionalProperties:false.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "owner",
+        "immutable",
+        "attempt_id",
+        "pipeline_job_id",
+        "source_bundle_id",
+        "attempt_number",
+        "result_prefix",
+        "started_at",
+        "completed_at",
+        "attempt_outcome",
+        "publication_state",
+        "result_id",
+        "selection_state",
+        "failure_classification",
+        "retry_eligible"
+      ],
+      "properties": {
+        "owner": {
+          "const": "bim-streaming-server"
+        },
+        "immutable": {
+          "const": true
+        },
+        "attempt_id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "pipeline_job_id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "source_bundle_id": {
+          "$ref": "#/$defs/sourceBundleId"
+        },
+        "attempt_number": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "result_prefix": {
+          "$ref": "#/$defs/attemptResultPrefix"
+        },
+        "started_at": {
+          "$ref": "#/$defs/utcTimestamp"
+        },
+        "completed_at": {
+          "$ref": "#/$defs/nullableUtcTimestamp"
+        },
+        "attempt_outcome": {
+          "$ref": "#/$defs/attemptOutcome"
+        },
+        "publication_state": {
+          "$ref": "#/$defs/publicationState"
+        },
+        "result_id": {
+          "$ref": "#/$defs/nullableIdentifier"
+        },
+        "selection_state": {
+          "$ref": "#/$defs/selectionState"
+        },
+        "failure_classification": {
+          "enum": [
+            "transient_minio",
+            "transient_network",
+            "transient_dispatch",
+            "semantic_invalid_source",
+            "runtime_failed",
+            "cancelled_by_operator",
+            null
+          ]
+        },
+        "retry_eligible": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "failure_detail": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 2000
+        }
+      },
+      "allOf": [
+        {
+          "$comment": "Selectable matrix rule 1: a result-scoped selection state SHALL only exist on an AVAILABLE formal result of a succeeded / succeeded_with_warnings attempt.",
+          "if": {
+            "required": [
+              "selection_state"
+            ],
+            "properties": {
+              "selection_state": {
+                "type": "string"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "publication_state": {
+                "const": "AVAILABLE"
+              },
+              "attempt_outcome": {
+                "$ref": "#/$defs/selectableAttemptOutcome"
+              },
+              "result_id": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        {
+          "$comment": "Selectable matrix rule 2: failed / cancelled attempts have no selection state even when they publish a contract-complete audit-only formal result.",
+          "if": {
+            "required": [
+              "attempt_outcome"
+            ],
+            "properties": {
+              "attempt_outcome": {
+                "enum": [
+                  "failed",
+                  "cancelled"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "selection_state": {
+                "type": "null"
+              }
+            }
+          }
+        },
+        {
+          "$comment": "Selectable matrix rule 3: no ResultManifest means no formal result, so no selection state and no AVAILABLE publication.",
+          "if": {
+            "required": [
+              "result_id"
+            ],
+            "properties": {
+              "result_id": {
+                "type": "null"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "selection_state": {
+                "type": "null"
+              },
+              "publication_state": {
+                "enum": [
+                  "UNPUBLISHED",
+                  "PUBLISHING",
+                  "INVALID"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "$comment": "Selectable matrix rule 4: contrapositive of rule 1 on the publication axis; redundant by design so that the matrix is machine-readable from either direction.",
+          "if": {
+            "required": [
+              "publication_state"
+            ],
+            "properties": {
+              "publication_state": {
+                "enum": [
+                  "UNPUBLISHED",
+                  "PUBLISHING",
+                  "INVALID"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "selection_state": {
+                "type": "null"
+              }
+            }
+          }
+        },
+        {
+          "$comment": "Failure classification controls retry: transient MinIO / network / dispatch failures back off and retry.",
+          "if": {
+            "required": [
+              "failure_classification"
+            ],
+            "properties": {
+              "failure_classification": {
+                "enum": [
+                  "transient_minio",
+                  "transient_network",
+                  "transient_dispatch"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "retry_eligible": {
+                "const": true
+              }
+            }
+          }
+        },
+        {
+          "$comment": "Failure classification controls retry: a semantic-invalid source stops automatic retry and requires a new source bundle / pipeline job.",
+          "if": {
+            "required": [
+              "failure_classification"
+            ],
+            "properties": {
+              "failure_classification": {
+                "const": "semantic_invalid_source"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "retry_eligible": {
+                "const": false
+              }
+            }
+          }
+        }
+      ]
+    },
+    "readinessEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "evidence_kind",
+        "detail",
+        "observed_at"
+      ],
+      "properties": {
+        "evidence_kind": {
+          "$ref": "#/$defs/lowerSnakeCode"
+        },
+        "detail": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000
+        },
+        "observed_at": {
+          "$ref": "#/$defs/utcTimestamp"
+        }
+      }
+    },
+    "admissionRecord": {
+      "$comment": "CANONICAL admission definition for tasks.md 5.1 (blueprint E-7): task 5.1 MUST reuse this document type and MUST NOT create a parallel admission schema. Topology-independent: it describes runtime capability only and binds no queue vendor, service topology or port. User authorization stays with the external control-plane capability decision.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "pipeline_job_id",
+        "attempt_id",
+        "trigger_kind",
+        "required_runtime_capabilities",
+        "admission_status",
+        "runtime_profile",
+        "requires_exclusive_runtime",
+        "lease_id",
+        "readiness_evidence",
+        "blocker_codes",
+        "attempt_counter_before",
+        "attempt_counter_after",
+        "observed_at"
+      ],
+      "properties": {
+        "pipeline_job_id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "attempt_id": {
+          "$ref": "#/$defs/nullableIdentifier"
+        },
+        "trigger_kind": {
+          "$comment": "automatic enqueue, manual trigger and retry all traverse the same admission path.",
+          "enum": [
+            "automatic",
+            "manual",
+            "retry"
+          ]
+        },
+        "required_runtime_capabilities": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/lowerSnakeCode"
+          }
+        },
+        "admission_status": {
+          "enum": [
+            "ADMITTED",
+            "WAITING_CAPACITY",
+            "BLOCKED"
+          ]
+        },
+        "runtime_profile": {
+          "$ref": "#/$defs/identifier"
+        },
+        "requires_exclusive_runtime": {
+          "type": "boolean"
+        },
+        "lease_id": {
+          "$ref": "#/$defs/nullableIdentifier"
+        },
+        "readiness_evidence": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/readinessEvidence"
+          }
+        },
+        "blocker_codes": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/lowerSnakeCode"
+          }
+        },
+        "attempt_counter_before": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "attempt_counter_after": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "observed_at": {
+          "$ref": "#/$defs/utcTimestamp"
+        }
+      },
+      "allOf": [
+        {
+          "$comment": "A CPU / non-exclusive profile MUST NOT fabricate a Kit lease just to satisfy the schema.",
+          "if": {
+            "required": [
+              "requires_exclusive_runtime"
+            ],
+            "properties": {
+              "requires_exclusive_runtime": {
+                "const": false
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "lease_id": {
+                "type": "null"
+              }
+            }
+          }
+        },
+        {
+          "$comment": "An ADMITTED record has no blockers.",
+          "if": {
+            "required": [
+              "admission_status"
+            ],
+            "properties": {
+              "admission_status": {
+                "const": "ADMITTED"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "blocker_codes": {
+                "maxItems": 0
+              }
+            }
+          }
+        },
+        {
+          "$comment": "An ADMITTED exclusive profile SHALL hold a verifiable lease.",
+          "if": {
+            "required": [
+              "admission_status",
+              "requires_exclusive_runtime"
+            ],
+            "properties": {
+              "admission_status": {
+                "const": "ADMITTED"
+              },
+              "requires_exclusive_runtime": {
+                "const": true
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "lease_id": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        {
+          "$comment": "WAITING_CAPACITY and BLOCKED SHALL report concrete blocker codes / evidence.",
+          "if": {
+            "required": [
+              "admission_status"
+            ],
+            "properties": {
+              "admission_status": {
+                "enum": [
+                  "WAITING_CAPACITY",
+                  "BLOCKED"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "blocker_codes": {
+                "minItems": 1
+              }
+            }
+          }
+        },
+        {
+          "$comment": "WAITING_CAPACITY SHALL NOT allocate an attempt id.",
+          "if": {
+            "required": [
+              "admission_status"
+            ],
+            "properties": {
+              "admission_status": {
+                "const": "WAITING_CAPACITY"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "attempt_id": {
+                "type": "null"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "activeResultPointer": {
+      "$comment": "At most one active-result pointer per pipeline job. audit_entry_id is required even for the first automatic activation.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "pipeline_job_id",
+        "result_id",
+        "attempt_id",
+        "selection_state",
+        "publication_state",
+        "attempt_outcome",
+        "audit_entry_id",
+        "activated_at",
+        "correlation_id"
+      ],
+      "properties": {
+        "pipeline_job_id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "result_id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "attempt_id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "selection_state": {
+          "const": "active"
+        },
+        "publication_state": {
+          "const": "AVAILABLE"
+        },
+        "attempt_outcome": {
+          "$ref": "#/$defs/selectableAttemptOutcome"
+        },
+        "audit_entry_id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "activated_at": {
+          "$ref": "#/$defs/utcTimestamp"
+        },
+        "correlation_id": {
+          "$ref": "#/$defs/identifier"
+        }
+      }
+    },
+    "targetResultEvidence": {
+      "$comment": "Snapshot of the transition target recorded at decision time. It is deliberately NOT narrowed by transition here: the audit is append-only evidence of what actually happened, so it must be able to record an out-of-contract transition faithfully. The selectable-matrix binding between transition and this snapshot is enforced by validate_job_scenario (semantic layer).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "result_id",
+        "publication_state",
+        "attempt_outcome",
+        "selection_state_before"
+      ],
+      "properties": {
+        "result_id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "publication_state": {
+          "$ref": "#/$defs/publicationState"
+        },
+        "attempt_outcome": {
+          "$ref": "#/$defs/attemptOutcome"
+        },
+        "selection_state_before": {
+          "enum": [
+            "candidate",
+            "historical",
+            null
+          ]
+        }
+      }
+    },
+    "activationAuditEntry": {
+      "$comment": "Append-only audit for first automatic activation, promote and rollback. Historical result objects are never deleted by a rollback.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "audit_entry_id",
+        "pipeline_job_id",
+        "transition",
+        "from_result_id",
+        "to_result_id",
+        "target_result_evidence",
+        "capability",
+        "reason",
+        "actor",
+        "authorization_decision_ref",
+        "correlation_id",
+        "occurred_at",
+        "append_only"
+      ],
+      "properties": {
+        "audit_entry_id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "pipeline_job_id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "transition": {
+          "enum": [
+            "first_activation",
+            "promote",
+            "rollback"
+          ]
+        },
+        "from_result_id": {
+          "$ref": "#/$defs/nullableIdentifier"
+        },
+        "to_result_id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "target_result_evidence": {
+          "$ref": "#/$defs/targetResultEvidence"
+        },
+        "capability": {
+          "enum": [
+            "result.promote",
+            "result.rollback",
+            null
+          ]
+        },
+        "reason": {
+          "type": "string",
+          "maxLength": 2000
+        },
+        "actor": {
+          "$ref": "#/$defs/actor"
+        },
+        "authorization_decision_ref": {
+          "$ref": "#/$defs/nullableIdentifier"
+        },
+        "correlation_id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "occurred_at": {
+          "$ref": "#/$defs/utcTimestamp"
+        },
+        "append_only": {
+          "const": true
+        }
+      },
+      "allOf": [
+        {
+          "$comment": "The first selectable result MAY become active automatically, but the automatic assignment still writes an audit entry with a system actor and no capability.",
+          "if": {
+            "required": [
+              "transition"
+            ],
+            "properties": {
+              "transition": {
+                "const": "first_activation"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "from_result_id": {
+                "type": "null"
+              },
+              "capability": {
+                "type": "null"
+              },
+              "actor": {
+                "properties": {
+                  "actor_kind": {
+                    "const": "system"
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "transition"
+            ],
+            "properties": {
+              "transition": {
+                "const": "promote"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "capability": {
+                "const": "result.promote"
+              },
+              "reason": {
+                "minLength": 1
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "transition"
+            ],
+            "properties": {
+              "transition": {
+                "const": "rollback"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "capability": {
+                "const": "result.rollback"
+              },
+              "reason": {
+                "minLength": 1
+              }
+            }
+          }
+        }
+      ]
+    },
+    "compareSide": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "result_id",
+        "attempt_id",
+        "pipeline_job_id",
+        "publication_state",
+        "attempt_outcome",
+        "result_manifest_digest",
+        "result_manifest_ref",
+        "converter",
+        "metrics",
+        "counts",
+        "warning_codes"
+      ],
+      "properties": {
+        "result_id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "attempt_id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "pipeline_job_id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "publication_state": {
+          "const": "AVAILABLE"
+        },
+        "attempt_outcome": {
+          "$ref": "#/$defs/selectableAttemptOutcome"
+        },
+        "result_manifest_digest": {
+          "$ref": "#/$defs/sha256"
+        },
+        "result_manifest_ref": {
+          "$ref": "#/$defs/locator"
+        },
+        "converter": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "converter_id",
+            "converter_version",
+            "runtime_profile"
+          ],
+          "properties": {
+            "converter_id": {
+              "$ref": "#/$defs/identifier"
+            },
+            "converter_version": {
+              "$ref": "#/$defs/identifier"
+            },
+            "runtime_profile": {
+              "$ref": "#/$defs/identifier"
+            }
+          }
+        },
+        "metrics": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "ifc_usdc_coverage_ratio",
+            "rvt_ifc_alignment_ratio",
+            "rvt_ifc_usdc_lineage_ratio"
+          ],
+          "properties": {
+            "ifc_usdc_coverage_ratio": {
+              "$ref": "#/$defs/metric"
+            },
+            "rvt_ifc_alignment_ratio": {
+              "$ref": "#/$defs/metric"
+            },
+            "rvt_ifc_usdc_lineage_ratio": {
+              "$ref": "#/$defs/metric"
+            }
+          }
+        },
+        "counts": {
+          "$ref": "#/$defs/counts"
+        },
+        "warning_codes": {
+          "type": "array",
+          "maxItems": 64,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/warningCode"
+          }
+        }
+      }
+    },
+    "resultCompare": {
+      "$comment": "Read-only comparison of two selectable AVAILABLE results of the same pipeline job. It MUST NOT change the active pointer, selection state or formal artifacts and MUST NOT require result.promote. Cross-job compare is rejected by validate_job_scenario (the two pipeline_job_id values cannot be compared inside JSON Schema).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "capability",
+        "read_only",
+        "active_pointer_changed",
+        "pipeline_job_id",
+        "actor",
+        "compared_at",
+        "left",
+        "right",
+        "differences"
+      ],
+      "properties": {
+        "capability": {
+          "const": "result.compare"
+        },
+        "read_only": {
+          "const": true
+        },
+        "active_pointer_changed": {
+          "const": false
+        },
+        "pipeline_job_id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "actor": {
+          "$ref": "#/$defs/actor"
+        },
+        "compared_at": {
+          "$ref": "#/$defs/utcTimestamp"
+        },
+        "left": {
+          "$ref": "#/$defs/compareSide"
+        },
+        "right": {
+          "$ref": "#/$defs/compareSide"
+        },
+        "differences": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "changed_metric_names",
+            "changed_count_names",
+            "warning_codes_added",
+            "warning_codes_removed"
+          ],
+          "properties": {
+            "changed_metric_names": {
+              "type": "array",
+              "uniqueItems": true,
+              "items": {
+                "enum": [
+                  "ifc_usdc_coverage_ratio",
+                  "rvt_ifc_alignment_ratio",
+                  "rvt_ifc_usdc_lineage_ratio"
+                ]
+              }
+            },
+            "changed_count_names": {
+              "type": "array",
+              "uniqueItems": true,
+              "items": {
+                "enum": [
+                  "csv_total_count",
+                  "csv_valid_count",
+                  "eligible_ifc_product_count",
+                  "duplicate_rvt_id_count",
+                  "duplicate_ifc_guid_count",
+                  "invalid_row_count",
+                  "csv_only_count",
+                  "ifc_only_count",
+                  "ifc_usdc_unmapped_count",
+                  "full_lineage_matched_count"
+                ]
+              }
+            },
+            "warning_codes_added": {
+              "type": "array",
+              "uniqueItems": true,
+              "items": {
+                "$ref": "#/$defs/warningCode"
+              }
+            },
+            "warning_codes_removed": {
+              "type": "array",
+              "uniqueItems": true,
+              "items": {
+                "$ref": "#/$defs/warningCode"
+              }
+            }
+          }
+        }
+      }
+    },
+    "retentionEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "artifact_class",
+        "auto_delete_allowed",
+        "retention_days"
+      ],
+      "properties": {
+        "artifact_class": {
+          "enum": [
+            "source_rvt",
+            "schedule_csv",
+            "source_ifc",
+            "source_manifest",
+            "result_manifest_referenced_artifacts",
+            "activation_audit",
+            "alignment_audit",
+            "failed_attempt_logs",
+            "temporary_uploads",
+            "diagnostics",
+            "local_cache"
+          ]
+        },
+        "auto_delete_allowed": {
+          "type": "boolean"
+        },
+        "retention_days": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "rationale": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000
+        }
+      },
+      "oneOf": [
+        {
+          "$comment": "Protected class: formal source/result artifacts and audit are never auto-deleted, so they carry no retention window.",
+          "if": {
+            "required": [
+              "artifact_class"
+            ],
+            "properties": {
+              "artifact_class": {
+                "enum": [
+                  "source_rvt",
+                  "schedule_csv",
+                  "source_ifc",
+                  "source_manifest",
+                  "result_manifest_referenced_artifacts",
+                  "activation_audit",
+                  "alignment_audit"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "auto_delete_allowed": {
+                "const": false
+              },
+              "retention_days": {
+                "type": "null"
+              }
+            }
+          },
+          "else": false
+        },
+        {
+          "$comment": "Cleanable class: failed-attempt logs, temporary uploads, diagnostics and local cache MAY be cleaned under an explicit retention policy.",
+          "if": {
+            "required": [
+              "artifact_class"
+            ],
+            "properties": {
+              "artifact_class": {
+                "enum": [
+                  "failed_attempt_logs",
+                  "temporary_uploads",
+                  "diagnostics",
+                  "local_cache"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "auto_delete_allowed": {
+                "type": "boolean"
+              },
+              "retention_days": {
+                "type": "integer",
+                "minimum": 0
+              }
+            }
+          },
+          "else": false
+        }
+      ]
+    },
+    "retentionPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "policy_id",
+        "effective_at",
+        "entries"
+      ],
+      "properties": {
+        "policy_id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "effective_at": {
+          "$ref": "#/$defs/utcTimestamp"
+        },
+        "entries": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/retentionEntry"
+          }
+        }
+      }
+    }
+  }
+}

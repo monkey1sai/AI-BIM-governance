@@ -1,0 +1,35 @@
+{
+  "schema_version": "result-manifest-document/v1",
+  "document_type": "result_publication_outcome",
+  "body": {
+    "result_id": "result-0013",
+    "attempt_id": "attempt-0013",
+    "pipeline_job_id": "pipeline-job-0003",
+    "publication_state": "INVALID",
+    "conditional_create": {
+      "attempted": false
+    },
+    "replay": false,
+    "result_manifest_digest": null,
+    "prior_result_id": null,
+    "prior_result_manifest_digest": null,
+    "available_at": null,
+    "diagnostics": [
+      {
+        "code": "local_file_only",
+        "role": "usdc",
+        "expected": "minio object",
+        "observed": "local staging file only",
+        "detail": "converter exit 0 且本地有 model.usdc，但 MinIO 沒有任何 object"
+      },
+      {
+        "code": "converter_exit_zero_insufficient",
+        "role": null,
+        "expected": "verified result manifest",
+        "observed": "converter exit code 0",
+        "detail": "converter exit 0 不足以裁決 formal availability"
+      }
+    ],
+    "observed_at": "2026-07-16T13:01:05Z"
+  }
+}

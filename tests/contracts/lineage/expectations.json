@@ -1,0 +1,778 @@
+{
+  "lineage_alignment_report/invalid/body-empty-source-bundle-id.json": {
+    "keyword": "minLength",
+    "instance_pointer": "/body/source_bundle_id",
+    "intent": "identifier minLength 1"
+  },
+  "lineage_alignment_report/invalid/body-missing-metrics.json": {
+    "keyword": "required",
+    "instance_pointer": "/body",
+    "intent": "alignmentReportJson required metrics"
+  },
+  "lineage_alignment_report/invalid/body-missing-report-schema-version.json": {
+    "keyword": "required",
+    "instance_pointer": "/body",
+    "intent": "alignmentReportJson required report_schema_version"
+  },
+  "lineage_alignment_report/invalid/body-result-id-with-colon.json": {
+    "keyword": "pattern",
+    "instance_pointer": "/body/result_id",
+    "intent": "result_id pattern ^[^:]+$"
+  },
+  "lineage_alignment_report/invalid/body-unknown-member.json": {
+    "keyword": "additionalProperties",
+    "instance_pointer": "/body",
+    "intent": "alignmentReportJson additionalProperties:false"
+  },
+  "lineage_alignment_report/invalid/body-wrong-report-schema-version-const.json": {
+    "keyword": "const",
+    "instance_pointer": "/body/report_schema_version",
+    "intent": "report_schema_version const"
+  },
+  "lineage_alignment_report/invalid/counts-missing-member.json": {
+    "keyword": "required",
+    "instance_pointer": "/body/counts",
+    "intent": "counts required full_lineage_matched_count"
+  },
+  "lineage_alignment_report/invalid/counts-negative-value.json": {
+    "keyword": "minimum",
+    "instance_pointer": "/body/counts/csv_total_count",
+    "intent": "counts minimum 0"
+  },
+  "lineage_alignment_report/invalid/counts-unknown-member.json": {
+    "keyword": "additionalProperties",
+    "instance_pointer": "/body/counts",
+    "intent": "counts additionalProperties:false"
+  },
+  "lineage_alignment_report/invalid/csv-contract-columns-reordered.json": {
+    "keyword": "const",
+    "instance_pointer": "/body/columns",
+    "intent": "csv columns const is order-sensitive"
+  },
+  "lineage_alignment_report/invalid/csv-contract-unknown-member.json": {
+    "keyword": "additionalProperties",
+    "instance_pointer": "/body",
+    "intent": "alignmentReportCsvContract additionalProperties:false"
+  },
+  "lineage_alignment_report/invalid/csv-contract-wrong-delimiter.json": {
+    "keyword": "const",
+    "instance_pointer": "/body/delimiter",
+    "intent": "csv delimiter const ,"
+  },
+  "lineage_alignment_report/invalid/csv-only-product-not-found-missing-global-id.json": {
+    "keyword": "required",
+    "instance_pointer": "/body/difference_sets/csv_only/0",
+    "intent": "csvOnlyRow then-branch requires ifc_global_id22"
+  },
+  "lineage_alignment_report/invalid/csv-only-roundtrip-failure-carries-global-id.json": {
+    "keyword": "not",
+    "instance_pointer": "/body/difference_sets/csv_only/1",
+    "intent": "csvOnlyRow else-branch forbids ifc_global_id22 when round-trip failed"
+  },
+  "lineage_alignment_report/invalid/difference-set-duplicate-item.json": {
+    "keyword": "uniqueItems",
+    "instance_pointer": "/body/difference_sets/full_lineage_matched",
+    "intent": "difference set uniqueItems"
+  },
+  "lineage_alignment_report/invalid/difference-sets-missing-member.json": {
+    "keyword": "required",
+    "instance_pointer": "/body/difference_sets",
+    "intent": "differenceSets required ifc_usdc_unmapped"
+  },
+  "lineage_alignment_report/invalid/difference-sets-unknown-member.json": {
+    "keyword": "additionalProperties",
+    "instance_pointer": "/body/difference_sets",
+    "intent": "differenceSets additionalProperties:false"
+  },
+  "lineage_alignment_report/invalid/duplicate-rvt-id-occurrence-count-one.json": {
+    "keyword": "minimum",
+    "instance_pointer": "/body/difference_sets/duplicate_rvt_ids/0/occurrence_count",
+    "intent": "duplicateRvtIdGroup occurrence_count minimum 2"
+  },
+  "lineage_alignment_report/invalid/envelope-missing-schema-version.json": {
+    "keyword": "required",
+    "instance_pointer": "",
+    "intent": "top-level required schema_version"
+  },
+  "lineage_alignment_report/invalid/envelope-unknown-document-type.json": {
+    "keyword": "enum",
+    "instance_pointer": "/document_type",
+    "intent": "document_type enum"
+  },
+  "lineage_alignment_report/invalid/envelope-unknown-member.json": {
+    "keyword": "additionalProperties",
+    "instance_pointer": "",
+    "intent": "top-level additionalProperties:false"
+  },
+  "lineage_alignment_report/invalid/envelope-wrong-schema-version-const.json": {
+    "keyword": "const",
+    "instance_pointer": "/schema_version",
+    "intent": "schema_version const"
+  },
+  "lineage_alignment_report/invalid/full-lineage-empty-rvt-element-id.json": {
+    "keyword": "minLength",
+    "instance_pointer": "/body/difference_sets/full_lineage_matched/0/rvt_element_id",
+    "intent": "rvtElementId minLength 1"
+  },
+  "lineage_alignment_report/invalid/full-lineage-globalid22-illegal-character.json": {
+    "keyword": "pattern",
+    "instance_pointer": "/body/difference_sets/full_lineage_matched/0/ifc_global_id22",
+    "intent": "globalId22 alphabet excludes '-'"
+  },
+  "lineage_alignment_report/invalid/full-lineage-globalid22-too-short.json": {
+    "keyword": "pattern",
+    "instance_pointer": "/body/difference_sets/full_lineage_matched/0/ifc_global_id22",
+    "intent": "globalId22 pattern requires exactly 22 characters"
+  },
+  "lineage_alignment_report/invalid/full-lineage-item-unknown-member.json": {
+    "keyword": "additionalProperties",
+    "instance_pointer": "/body/difference_sets/full_lineage_matched/0",
+    "intent": "fullLineageMatch additionalProperties:false"
+  },
+  "lineage_alignment_report/invalid/full-lineage-prim-path-child-mesh.json": {
+    "keyword": "pattern",
+    "instance_pointer": "/body/difference_sets/full_lineage_matched/0/usd_prim_path",
+    "intent": "usdElementRootPath forbids a fifth (child mesh) segment"
+  },
+  "lineage_alignment_report/invalid/full-lineage-prim-path-missing-g-prefix.json": {
+    "keyword": "pattern",
+    "instance_pointer": "/body/difference_sets/full_lineage_matched/0/usd_prim_path",
+    "intent": "usdElementRootPath requires the G_ guid token prefix"
+  },
+  "lineage_alignment_report/invalid/full-lineage-uuid36-not-canonical-case.json": {
+    "keyword": "pattern",
+    "instance_pointer": "/body/difference_sets/full_lineage_matched/0/ifc_uuid36",
+    "intent": "uuid36Canon pattern is lowercase-only"
+  },
+  "lineage_alignment_report/invalid/generated-at-lowercase-z.json": {
+    "keyword": "pattern",
+    "instance_pointer": "/body/generated_at",
+    "intent": "utcTimestamp pattern requires uppercase Z"
+  },
+  "lineage_alignment_report/invalid/generated-at-seven-fraction-digits.json": {
+    "keyword": "pattern",
+    "instance_pointer": "/body/generated_at",
+    "intent": "utcTimestamp pattern allows at most 6 fractional digits"
+  },
+  "lineage_alignment_report/invalid/generated-at-with-utc-offset.json": {
+    "keyword": "pattern",
+    "instance_pointer": "/body/generated_at",
+    "intent": "utcTimestamp pattern rejects offsets"
+  },
+  "lineage_alignment_report/invalid/invalid-row-missing-id-carries-rvt-element-id.json": {
+    "keyword": "not",
+    "instance_pointer": "/body/difference_sets/invalid_rows/0",
+    "intent": "reason_code missing_id forbids rvt_element_id"
+  },
+  "lineage_alignment_report/invalid/invalid-row-unknown-reason-code.json": {
+    "keyword": "enum",
+    "instance_pointer": "/body/difference_sets/invalid_rows/0/reason_code",
+    "intent": "invalidRow reason_code enum"
+  },
+  "lineage_alignment_report/invalid/metric-missing-denominator-scope.json": {
+    "keyword": "required",
+    "instance_pointer": "/body/metrics/ifc_usdc_coverage_ratio",
+    "intent": "scopedMetric required denominator_scope"
+  },
+  "lineage_alignment_report/invalid/metric-ratio-above-one.json": {
+    "keyword": "maximum",
+    "instance_pointer": "/body/metrics/rvt_ifc_alignment_ratio/ratio",
+    "intent": "metric ratio maximum 1"
+  },
+  "lineage_alignment_report/invalid/metric-wrong-denominator-scope-const.json": {
+    "keyword": "const",
+    "instance_pointer": "/body/metrics/ifc_usdc_coverage_ratio/denominator_scope",
+    "intent": "coverage denominator_scope const eligible_ifc_product_count"
+  },
+  "lineage_alignment_report/invalid/metric-zero-denominator-non-null-ratio.json": {
+    "keyword": "type",
+    "instance_pointer": "/body/metrics/ifc_usdc_coverage_ratio/ratio",
+    "intent": "denominator 0 then-branch requires ratio null"
+  },
+  "lineage_alignment_report/invalid/metric-zero-denominator-status-partial.json": {
+    "keyword": "const",
+    "instance_pointer": "/body/metrics/ifc_usdc_coverage_ratio/status",
+    "intent": "denominator 0 then-branch requires status not_evaluable"
+  },
+  "lineage_alignment_report/invalid/metrics-extra-metric-key.json": {
+    "keyword": "additionalProperties",
+    "instance_pointer": "/body/metrics",
+    "intent": "metrics additionalProperties:false (no generic coverage_ratio)"
+  },
+  "lineage_alignment_report/invalid/scope-legacy-alias-wrong-target.json": {
+    "keyword": "const",
+    "instance_pointer": "/body/scope/legacy_alias/source_ifc_entity_count_is_alias_of",
+    "intent": "legacy alias const eligible_ifc_product_count"
+  },
+  "lineage_alignment_report/invalid/scope-missing-legacy-alias.json": {
+    "keyword": "required",
+    "instance_pointer": "/body/scope",
+    "intent": "alignmentScope required legacy_alias"
+  },
+  "lineage_alignment_report/invalid/scope-wrong-selector-const.json": {
+    "keyword": "const",
+    "instance_pointer": "/body/scope/eligible_ifc_product_selector",
+    "intent": "eligible_ifc_product_selector const IfcProduct"
+  },
+  "lineage_alignment_report/invalid/unmapped-child-target-missing-observed-path.json": {
+    "keyword": "required",
+    "instance_pointer": "/body/difference_sets/ifc_usdc_unmapped/0",
+    "intent": "unstable_child_prim_target requires observed_prim_path"
+  },
+  "lineage_alignment_report/invalid/unmapped-observed-path-is-element-root.json": {
+    "keyword": "pattern",
+    "instance_pointer": "/body/difference_sets/ifc_usdc_unmapped/0/observed_prim_path",
+    "intent": "usdChildPrimPath must be strictly below the element root"
+  },
+  "lineage_alignment_report/invalid/warning-code-count-above-bound.json": {
+    "keyword": "maximum",
+    "instance_pointer": "/body/warning_code_count",
+    "intent": "warning_code_count maximum 64"
+  },
+  "lineage_alignment_report/invalid/warning-code-lowercase.json": {
+    "keyword": "pattern",
+    "instance_pointer": "/body/warning_codes/0",
+    "intent": "warning code pattern ^[A-Z][A-Z0-9_]{0,63}$"
+  },
+  "lineage_alignment_report/invalid/warning-codes-not-unique.json": {
+    "keyword": "uniqueItems",
+    "instance_pointer": "/body/warning_codes",
+    "intent": "warning_codes uniqueItems"
+  },
+  "model_version_bundle_manifest/invalid-legacy-enrollment-conflict-not-retryable.json": {
+    "keyword": "const",
+    "instance_pointer": "/body/retryable"
+  },
+  "model_version_bundle_manifest/invalid-legacy-enrollment-conflict-with-id.json": {
+    "keyword": "type",
+    "instance_pointer": "/body/created_source_bundle_id"
+  },
+  "model_version_bundle_manifest/invalid-legacy-enrollment-created-null-id.json": {
+    "keyword": "type",
+    "instance_pointer": "/body/created_source_bundle_id"
+  },
+  "model_version_bundle_manifest/invalid-legacy-preview-mutates-store-true.json": {
+    "keyword": "const",
+    "instance_pointer": "/body/mutates_store"
+  },
+  "model_version_bundle_manifest/invalid-legacy-preview-unknown-candidate-role.json": {
+    "keyword": "enum",
+    "instance_pointer": "/body/candidate_metadata/candidate_artifacts/0/role"
+  },
+  "model_version_bundle_manifest/invalid-legacy-preview-wrong-capability.json": {
+    "keyword": "const",
+    "instance_pointer": "/body/requires_capability"
+  },
+  "model_version_bundle_manifest/invalid-manifest-additional-body-property.json": {
+    "keyword": "additionalProperties",
+    "instance_pointer": "/body"
+  },
+  "model_version_bundle_manifest/invalid-manifest-duplicate-role.json": {
+    "keyword": "contains",
+    "instance_pointer": "/body/artifacts"
+  },
+  "model_version_bundle_manifest/invalid-manifest-four-artifacts.json": {
+    "keyword": "maxItems",
+    "instance_pointer": "/body/artifacts"
+  },
+  "model_version_bundle_manifest/invalid-manifest-lowercase-z-created-at.json": {
+    "keyword": "pattern",
+    "instance_pointer": "/body/created_at"
+  },
+  "model_version_bundle_manifest/invalid-manifest-missing-published-at.json": {
+    "keyword": "required",
+    "instance_pointer": "/body"
+  },
+  "model_version_bundle_manifest/invalid-manifest-negative-size-bytes.json": {
+    "keyword": "minimum",
+    "instance_pointer": "/body/artifacts/1/size_bytes"
+  },
+  "model_version_bundle_manifest/invalid-manifest-offset-published-at.json": {
+    "keyword": "pattern",
+    "instance_pointer": "/body/published_at"
+  },
+  "model_version_bundle_manifest/invalid-manifest-presigned-locator-ref.json": {
+    "keyword": "not",
+    "instance_pointer": "/body/artifacts/2/ref"
+  },
+  "model_version_bundle_manifest/invalid-manifest-source-bundle-id-charset.json": {
+    "keyword": "pattern",
+    "instance_pointer": "/body/source_bundle_id"
+  },
+  "model_version_bundle_manifest/invalid-manifest-unknown-producer-kind.json": {
+    "keyword": "enum",
+    "instance_pointer": "/body/producer/producer_kind"
+  },
+  "model_version_bundle_manifest/invalid-manifest-unversioned-locator-ref.json": {
+    "keyword": "pattern",
+    "instance_pointer": "/body/artifacts/2/ref"
+  },
+  "model_version_bundle_manifest/invalid-manifest-uppercase-sha256.json": {
+    "keyword": "pattern",
+    "instance_pointer": "/body/artifacts/2/sha256"
+  },
+  "model_version_bundle_manifest/invalid-manifest-wrong-manifest-schema-version.json": {
+    "keyword": "const",
+    "instance_pointer": "/body/manifest_schema_version"
+  },
+  "model_version_bundle_manifest/invalid-missing-schema-version.json": {
+    "keyword": "required",
+    "instance_pointer": ""
+  },
+  "model_version_bundle_manifest/invalid-top-level-additional-property.json": {
+    "keyword": "additionalProperties",
+    "instance_pointer": ""
+  },
+  "model_version_bundle_manifest/invalid-unknown-document-type.json": {
+    "keyword": "enum",
+    "instance_pointer": "/document_type"
+  },
+  "model_version_bundle_manifest/invalid-unknown-schema-version.json": {
+    "keyword": "const",
+    "instance_pointer": "/schema_version"
+  },
+  "model_version_bundle_manifest/invalid-validation-non-ready-empty-diagnostics.json": {
+    "keyword": "minItems",
+    "instance_pointer": "/body/integrity_diagnostics"
+  },
+  "model_version_bundle_manifest/invalid-validation-non-ready-enqueued-job.json": {
+    "keyword": "type",
+    "instance_pointer": "/body/enqueued_pipeline_job_id"
+  },
+  "model_version_bundle_manifest/invalid-validation-ready-conflict-outcome.json": {
+    "keyword": "enum",
+    "instance_pointer": "/body/conditional_create/outcome"
+  },
+  "model_version_bundle_manifest/invalid-validation-ready-manifest-absent.json": {
+    "keyword": "const",
+    "instance_pointer": "/body/manifest_present"
+  },
+  "model_version_bundle_manifest/invalid-validation-ready-with-diagnostics.json": {
+    "keyword": "maxItems",
+    "instance_pointer": "/body/integrity_diagnostics"
+  },
+  "model_version_bundle_manifest/invalid-validation-unknown-bundle-state.json": {
+    "keyword": "enum",
+    "instance_pointer": "/body/bundle_state"
+  },
+  "model_version_bundle_manifest/invalid-validation-unknown-diagnostic-code.json": {
+    "keyword": "enum",
+    "instance_pointer": "/body/integrity_diagnostics/0/code"
+  },
+  "pipeline_job_attempt/invalid-admission-admitted-with-blockers.json": {
+    "keyword": "maxItems",
+    "instance_pointer": "/body/blocker_codes"
+  },
+  "pipeline_job_attempt/invalid-admission-blocked-empty-blocker-codes.json": {
+    "keyword": "minItems",
+    "instance_pointer": "/body/blocker_codes"
+  },
+  "pipeline_job_attempt/invalid-admission-cpu-profile-with-lease.json": {
+    "keyword": "type",
+    "instance_pointer": "/body/lease_id"
+  },
+  "pipeline_job_attempt/invalid-admission-exclusive-admitted-null-lease.json": {
+    "keyword": "type",
+    "instance_pointer": "/body/lease_id"
+  },
+  "pipeline_job_attempt/invalid-admission-missing-readiness-evidence.json": {
+    "keyword": "minItems",
+    "instance_pointer": "/body/readiness_evidence"
+  },
+  "pipeline_job_attempt/invalid-admission-unknown-status.json": {
+    "keyword": "enum",
+    "instance_pointer": "/body/admission_status"
+  },
+  "pipeline_job_attempt/invalid-admission-waiting-capacity-with-attempt.json": {
+    "keyword": "type",
+    "instance_pointer": "/body/attempt_id"
+  },
+  "pipeline_job_attempt/invalid-attempt-cancelled-with-selection-candidate.json": {
+    "keyword": "enum",
+    "instance_pointer": "/body/attempt_outcome"
+  },
+  "pipeline_job_attempt/invalid-attempt-failed-with-selection-active.json": {
+    "keyword": "enum",
+    "instance_pointer": "/body/attempt_outcome"
+  },
+  "pipeline_job_attempt/invalid-attempt-immutable-false.json": {
+    "keyword": "const",
+    "instance_pointer": "/body/immutable"
+  },
+  "pipeline_job_attempt/invalid-attempt-lowercase-available.json": {
+    "keyword": "enum",
+    "instance_pointer": "/body/publication_state"
+  },
+  "pipeline_job_attempt/invalid-attempt-merged-status-field.json": {
+    "keyword": "additionalProperties",
+    "instance_pointer": "/body"
+  },
+  "pipeline_job_attempt/invalid-attempt-owner-coordinator.json": {
+    "keyword": "const",
+    "instance_pointer": "/body/owner"
+  },
+  "pipeline_job_attempt/invalid-attempt-result-prefix-with-query.json": {
+    "keyword": "pattern",
+    "instance_pointer": "/body/result_prefix"
+  },
+  "pipeline_job_attempt/invalid-attempt-selection-without-available.json": {
+    "keyword": "const",
+    "instance_pointer": "/body/publication_state"
+  },
+  "pipeline_job_attempt/invalid-attempt-selection-without-result-id.json": {
+    "keyword": "enum",
+    "instance_pointer": "/body/publication_state"
+  },
+  "pipeline_job_attempt/invalid-attempt-semantic-invalid-source-retry-eligible.json": {
+    "keyword": "const",
+    "instance_pointer": "/body/retry_eligible"
+  },
+  "pipeline_job_attempt/invalid-attempt-transient-not-retry-eligible.json": {
+    "keyword": "const",
+    "instance_pointer": "/body/retry_eligible"
+  },
+  "pipeline_job_attempt/invalid-attempt-unknown-failure-classification.json": {
+    "keyword": "enum",
+    "instance_pointer": "/body/failure_classification"
+  },
+  "pipeline_job_attempt/invalid-attempt-uppercase-selection-state.json": {
+    "keyword": "enum",
+    "instance_pointer": "/body/selection_state"
+  },
+  "pipeline_job_attempt/invalid-audit-first-activation-human-actor.json": {
+    "keyword": "const",
+    "instance_pointer": "/body/actor/actor_kind"
+  },
+  "pipeline_job_attempt/invalid-audit-first-activation-with-capability.json": {
+    "keyword": "type",
+    "instance_pointer": "/body/capability"
+  },
+  "pipeline_job_attempt/invalid-audit-first-activation-with-from-result.json": {
+    "keyword": "type",
+    "instance_pointer": "/body/from_result_id"
+  },
+  "pipeline_job_attempt/invalid-audit-mutable-flag.json": {
+    "keyword": "const",
+    "instance_pointer": "/body/append_only"
+  },
+  "pipeline_job_attempt/invalid-audit-promote-empty-reason.json": {
+    "keyword": "minLength",
+    "instance_pointer": "/body/reason"
+  },
+  "pipeline_job_attempt/invalid-audit-promote-without-capability.json": {
+    "keyword": "const",
+    "instance_pointer": "/body/capability"
+  },
+  "pipeline_job_attempt/invalid-audit-rollback-with-promote-capability.json": {
+    "keyword": "const",
+    "instance_pointer": "/body/capability"
+  },
+  "pipeline_job_attempt/invalid-audit-unknown-transition.json": {
+    "keyword": "enum",
+    "instance_pointer": "/body/transition"
+  },
+  "pipeline_job_attempt/invalid-compare-failed-side-outcome.json": {
+    "keyword": "enum",
+    "instance_pointer": "/body/left/attempt_outcome"
+  },
+  "pipeline_job_attempt/invalid-compare-mutates-active-pointer.json": {
+    "keyword": "const",
+    "instance_pointer": "/body/active_pointer_changed"
+  },
+  "pipeline_job_attempt/invalid-compare-non-available-side.json": {
+    "keyword": "const",
+    "instance_pointer": "/body/right/publication_state"
+  },
+  "pipeline_job_attempt/invalid-compare-not-read-only.json": {
+    "keyword": "const",
+    "instance_pointer": "/body/read_only"
+  },
+  "pipeline_job_attempt/invalid-compare-requires-promote-capability.json": {
+    "keyword": "const",
+    "instance_pointer": "/body/capability"
+  },
+  "pipeline_job_attempt/invalid-compare-uppercase-outcome.json": {
+    "keyword": "enum",
+    "instance_pointer": "/body/right/attempt_outcome"
+  },
+  "pipeline_job_attempt/invalid-job-blocker-not-requiring-new-bundle.json": {
+    "keyword": "const",
+    "instance_pointer": "/body/manual_correction_blocker/requires_new_source_bundle"
+  },
+  "pipeline_job_attempt/invalid-job-empty-ready-event-ledger.json": {
+    "keyword": "minItems",
+    "instance_pointer": "/body/ready_event_ledger"
+  },
+  "pipeline_job_attempt/invalid-job-manual-correction-without-blocker.json": {
+    "keyword": "type",
+    "instance_pointer": "/body/manual_correction_blocker"
+  },
+  "pipeline_job_attempt/invalid-job-offset-created-at.json": {
+    "keyword": "pattern",
+    "instance_pointer": "/body/created_at"
+  },
+  "pipeline_job_attempt/invalid-job-owner-streaming.json": {
+    "keyword": "const",
+    "instance_pointer": "/body/owner"
+  },
+  "pipeline_job_attempt/invalid-job-running-without-in-flight-attempt.json": {
+    "keyword": "type",
+    "instance_pointer": "/body/in_flight_attempt_id"
+  },
+  "pipeline_job_attempt/invalid-job-unknown-state.json": {
+    "keyword": "enum",
+    "instance_pointer": "/body/job_state"
+  },
+  "pipeline_job_attempt/invalid-job-waiting-capacity-with-in-flight-attempt.json": {
+    "keyword": "type",
+    "instance_pointer": "/body/in_flight_attempt_id"
+  },
+  "pipeline_job_attempt/invalid-missing-body.json": {
+    "keyword": "required",
+    "instance_pointer": ""
+  },
+  "pipeline_job_attempt/invalid-pointer-failed-outcome.json": {
+    "keyword": "enum",
+    "instance_pointer": "/body/attempt_outcome"
+  },
+  "pipeline_job_attempt/invalid-pointer-missing-audit-entry-id.json": {
+    "keyword": "required",
+    "instance_pointer": "/body"
+  },
+  "pipeline_job_attempt/invalid-pointer-non-available-result.json": {
+    "keyword": "const",
+    "instance_pointer": "/body/publication_state"
+  },
+  "pipeline_job_attempt/invalid-retention-deletes-activation-audit.json": {
+    "keyword": "const",
+    "instance_pointer": "/body/entries/5/auto_delete_allowed"
+  },
+  "pipeline_job_attempt/invalid-retention-deletes-formal-artifacts.json": {
+    "keyword": "const",
+    "instance_pointer": "/body/entries/4/auto_delete_allowed"
+  },
+  "pipeline_job_attempt/invalid-retention-protected-with-retention-days.json": {
+    "keyword": "type",
+    "instance_pointer": "/body/entries/0/retention_days"
+  },
+  "pipeline_job_attempt/invalid-retention-unknown-class.json": {
+    "keyword": "enum",
+    "instance_pointer": "/body/entries/7/artifact_class"
+  },
+  "pipeline_job_attempt/invalid-top-level-additional-property.json": {
+    "keyword": "additionalProperties",
+    "instance_pointer": ""
+  },
+  "pipeline_job_attempt/invalid-unknown-document-type.json": {
+    "keyword": "enum",
+    "instance_pointer": "/document_type"
+  },
+  "pipeline_job_attempt/invalid-unknown-schema-version.json": {
+    "keyword": "const",
+    "instance_pointer": "/schema_version"
+  },
+  "result_manifest/invalid-local-cache-intact-marked-non-available.json": {
+    "keyword": "const",
+    "instance_pointer": "/body/formal_availability"
+  },
+  "result_manifest/invalid-local-cache-rebuild-without-objects.json": {
+    "keyword": "const",
+    "instance_pointer": "/body/rebuild_from_minio_possible"
+  },
+  "result_manifest/invalid-local-file-only-marked-available.json": {
+    "keyword": "const",
+    "instance_pointer": "/body/formal_availability"
+  },
+  "result_manifest/invalid-manifest-additional-property.json": {
+    "keyword": "additionalProperties",
+    "instance_pointer": "/body"
+  },
+  "result_manifest/invalid-manifest-embedded-usdc-base64.json": {
+    "keyword": "additionalProperties",
+    "instance_pointer": "/body/artifacts/0"
+  },
+  "result_manifest/invalid-manifest-local-path-ref.json": {
+    "keyword": "pattern",
+    "instance_pointer": "/body/artifacts/0/ref"
+  },
+  "result_manifest/invalid-manifest-lowercase-warning-code.json": {
+    "keyword": "pattern",
+    "instance_pointer": "/body/alignment_summary/warning_codes/0"
+  },
+  "result_manifest/invalid-manifest-lowercase-z-artifact-published-at.json": {
+    "keyword": "pattern",
+    "instance_pointer": "/body/artifacts/3/published_at"
+  },
+  "result_manifest/invalid-manifest-missing-alignment-csv-role.json": {
+    "keyword": "contains",
+    "instance_pointer": "/body/artifacts"
+  },
+  "result_manifest/invalid-manifest-missing-alignment-json-role.json": {
+    "keyword": "contains",
+    "instance_pointer": "/body/artifacts"
+  },
+  "result_manifest/invalid-manifest-missing-alignment-summary.json": {
+    "keyword": "required",
+    "instance_pointer": "/body"
+  },
+  "result_manifest/invalid-manifest-missing-element-mapping-role.json": {
+    "keyword": "contains",
+    "instance_pointer": "/body/artifacts"
+  },
+  "result_manifest/invalid-manifest-missing-usdc-role.json": {
+    "keyword": "contains",
+    "instance_pointer": "/body/artifacts"
+  },
+  "result_manifest/invalid-manifest-negative-size-bytes.json": {
+    "keyword": "minimum",
+    "instance_pointer": "/body/artifacts/2/size_bytes"
+  },
+  "result_manifest/invalid-manifest-offset-published-at.json": {
+    "keyword": "pattern",
+    "instance_pointer": "/body/published_at"
+  },
+  "result_manifest/invalid-manifest-presigned-ref.json": {
+    "keyword": "not",
+    "instance_pointer": "/body/artifacts/0/ref"
+  },
+  "result_manifest/invalid-manifest-result-prefix-with-query.json": {
+    "keyword": "pattern",
+    "instance_pointer": "/body/result_prefix"
+  },
+  "result_manifest/invalid-manifest-unknown-artifact-role.json": {
+    "keyword": "enum",
+    "instance_pointer": "/body/artifacts/2/role"
+  },
+  "result_manifest/invalid-manifest-unversioned-ref.json": {
+    "keyword": "pattern",
+    "instance_pointer": "/body/artifacts/1/ref"
+  },
+  "result_manifest/invalid-manifest-uppercase-attempt-outcome.json": {
+    "keyword": "enum",
+    "instance_pointer": "/body/attempt_outcome"
+  },
+  "result_manifest/invalid-manifest-uppercase-sha256.json": {
+    "keyword": "pattern",
+    "instance_pointer": "/body/artifacts/0/sha256"
+  },
+  "result_manifest/invalid-manifest-wrong-manifest-schema-version.json": {
+    "keyword": "const",
+    "instance_pointer": "/body/manifest_schema_version"
+  },
+  "result_manifest/invalid-manifest-zero-denominator-complete-status.json": {
+    "keyword": "const",
+    "instance_pointer": "/body/alignment_summary/metrics/rvt_ifc_alignment_ratio/status"
+  },
+  "result_manifest/invalid-manifest-zero-denominator-with-ratio.json": {
+    "keyword": "type",
+    "instance_pointer": "/body/alignment_summary/metrics/ifc_usdc_coverage_ratio/ratio"
+  },
+  "result_manifest/invalid-publication-attempted-without-outcome.json": {
+    "keyword": "required",
+    "instance_pointer": "/body/conditional_create"
+  },
+  "result_manifest/invalid-publication-available-null-available-at.json": {
+    "keyword": "type",
+    "instance_pointer": "/body/available_at"
+  },
+  "result_manifest/invalid-publication-available-with-diagnostics.json": {
+    "keyword": "maxItems",
+    "instance_pointer": "/body/diagnostics"
+  },
+  "result_manifest/invalid-publication-available-without-manifest-ref.json": {
+    "keyword": "required",
+    "instance_pointer": "/body"
+  },
+  "result_manifest/invalid-publication-conflict-marked-available.json": {
+    "keyword": "enum",
+    "instance_pointer": "/body/conditional_create/outcome"
+  },
+  "result_manifest/invalid-publication-conflict-marked-replay.json": {
+    "keyword": "const",
+    "instance_pointer": "/body/replay"
+  },
+  "result_manifest/invalid-publication-lowercase-available.json": {
+    "keyword": "enum",
+    "instance_pointer": "/body/publication_state"
+  },
+  "result_manifest/invalid-publication-non-available-with-available-at.json": {
+    "keyword": "type",
+    "instance_pointer": "/body/available_at"
+  },
+  "result_manifest/invalid-publication-not-attempted-with-outcome.json": {
+    "keyword": "not",
+    "instance_pointer": "/body/conditional_create"
+  },
+  "result_manifest/invalid-publication-unknown-conditional-outcome.json": {
+    "keyword": "enum",
+    "instance_pointer": "/body/conditional_create/outcome"
+  },
+  "result_manifest/invalid-publication-unknown-diagnostic-code.json": {
+    "keyword": "enum",
+    "instance_pointer": "/body/diagnostics/0/code"
+  },
+  "result_manifest/invalid-top-level-additional-property.json": {
+    "keyword": "additionalProperties",
+    "instance_pointer": ""
+  },
+  "result_manifest/invalid-unknown-document-type.json": {
+    "keyword": "enum",
+    "instance_pointer": "/document_type"
+  },
+  "result_manifest/invalid-unknown-schema-version.json": {
+    "keyword": "const",
+    "instance_pointer": "/schema_version"
+  },
+  "source_bundle_ready/invalid-cloud-publication-fields-present.json": {
+    "keyword": "additionalProperties",
+    "instance_pointer": ""
+  },
+  "source_bundle_ready/invalid-empty-correlation-id.json": {
+    "keyword": "minLength",
+    "instance_pointer": "/correlation_id"
+  },
+  "source_bundle_ready/invalid-legacy-callback-url-present.json": {
+    "keyword": "additionalProperties",
+    "instance_pointer": ""
+  },
+  "source_bundle_ready/invalid-lowercase-z-claimed-at.json": {
+    "keyword": "pattern",
+    "instance_pointer": "/claimed_at"
+  },
+  "source_bundle_ready/invalid-manifest-ref-presigned.json": {
+    "keyword": "not",
+    "instance_pointer": "/manifest_ref/ref"
+  },
+  "source_bundle_ready/invalid-manifest-ref-unversioned.json": {
+    "keyword": "pattern",
+    "instance_pointer": "/manifest_ref/ref"
+  },
+  "source_bundle_ready/invalid-missing-idempotency-key.json": {
+    "keyword": "required",
+    "instance_pointer": ""
+  },
+  "source_bundle_ready/invalid-offset-claimed-at.json": {
+    "keyword": "pattern",
+    "instance_pointer": "/claimed_at"
+  },
+  "source_bundle_ready/invalid-source-bundle-id-charset.json": {
+    "keyword": "pattern",
+    "instance_pointer": "/source_bundle_id"
+  },
+  "source_bundle_ready/invalid-unknown-producer-kind.json": {
+    "keyword": "enum",
+    "instance_pointer": "/producer/producer_kind"
+  },
+  "source_bundle_ready/invalid-uppercase-manifest-sha256.json": {
+    "keyword": "pattern",
+    "instance_pointer": "/manifest_sha256"
+  },
+  "source_bundle_ready/invalid-wrong-contract-version.json": {
+    "keyword": "const",
+    "instance_pointer": "/contract_version"
+  },
+  "source_bundle_ready/invalid-wrong-event.json": {
+    "keyword": "const",
+    "instance_pointer": "/event"
+  }
+}
