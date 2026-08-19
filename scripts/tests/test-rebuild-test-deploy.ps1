@@ -53,6 +53,9 @@ function New-DeployEdgeVolumeHarness {
     New-Item -ItemType Directory -Path $platformLibRoot -Force | Out-Null
     Copy-Item -LiteralPath (Join-Path $SourceRepoRoot 'scripts\lib\design-assets.ps1') -Destination (Join-Path $libRoot 'design-assets.ps1')
     Copy-Item -LiteralPath (Join-Path $SourceRepoRoot 'scripts\lib\platform\platform-adapter.ps1') -Destination (Join-Path $platformLibRoot 'platform-adapter.ps1')
+    # Real file, not a stub: deploy.ps1 dot-sources it unconditionally (#625), and
+    # a missing lib would only surface as a stderr line the dry-run swallows.
+    Copy-Item -LiteralPath (Join-Path $SourceRepoRoot 'scripts\lib\cad-extension-cache-acl.ps1') -Destination (Join-Path $libRoot 'cad-extension-cache-acl.ps1')
 
     # deploy.ps1 resolves its target profile from the registry, so the sandbox
     # overrides DATA instead of rewriting code: copy the script unmodified and
