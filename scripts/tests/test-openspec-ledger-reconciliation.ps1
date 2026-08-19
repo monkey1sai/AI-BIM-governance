@@ -952,4 +952,27 @@ exit 0
     }
 }
 
+# introduction-resolved-subject-binding tasks 4.9: a sentinel row passes the
+# strict ledger JSON schema; any other subject_binding value is refused; the
+# reconciler's evaluation logic keeps subject_commit (and the sentinel) out of
+# its evaluated surface by construction.
+$sentinelRow = New-MachineChange -Id 'sentinel-row' -Status 'active' -Completed 1 -Total 2
+$sentinelRow['subject_binding'] = 'introduction'
+$sentinelLedger = [ordered]@{
+    schema_version = 'openspec-lifecycle-ledger/v1'
+    changes        = @($sentinelRow)
+} | ConvertTo-Json -Depth 8
+$sentinelErrors = @()
+$sentinelValid = Test-Json -Json $sentinelLedger -SchemaFile $ledgerSchemaPath `
+    -ErrorAction SilentlyContinue -ErrorVariable sentinelErrors
+Assert-True $sentinelValid 'ledger schema accepts a subject_binding sentinel row'
+$badRow = New-MachineChange -Id 'sentinel-bad' -Status 'active' -Completed 1 -Total 2
+$badRow['subject_binding'] = 'commit'
+$badLedger = [ordered]@{
+    schema_version = 'openspec-lifecycle-ledger/v1'
+    changes        = @($badRow)
+} | ConvertTo-Json -Depth 8
+$badValid = Test-Json -Json $badLedger -SchemaFile $ledgerSchemaPath -ErrorAction SilentlyContinue
+Assert-True (-not $badValid) 'ledger schema refuses a non-introduction subject_binding value'
+
 Write-Host '[test-openspec-ledger-reconciliation] all assertions passed'

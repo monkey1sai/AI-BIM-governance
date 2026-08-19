@@ -13,8 +13,9 @@ import { spawnSync } from 'node:child_process';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import {
+  assertReconcileRatchet,
   changedPathsSince,
-  createRawObservationBudget,
+  collectSourceObservations,
   resolveRowSubjectWatermark,
 } from './verify-openspec-machine-truth.mjs';
 
@@ -405,15 +406,19 @@ test('CLI compares against the explicit base and rejects a committed candidate t
   }
 });
 
-test('CLI rejects more than the bounded number of unique lifecycle row subjects before Git fan-out', () => {
+test('CLI rejects more than the bounded number of lifecycle rows before Git fan-out', () => {
+  // Owner ruling 2026-08-18 (openQuestions #1): MAX_UNIQUE_SUBJECTS is aligned
+  // to the 500-row ledger cap, so the pre-fan-out rejection now triggers at the
+  // row cap itself. Sixty-five unique watermarks are accepted (covered by the
+  // dedicated capacity test below); 501 rows stay fail-closed without fan-out.
   const fixture = makeRepository();
   try {
     const ledgerPath = path.join(fixture.root, 'openspec/lifecycle-ledger.json');
     const ledger = JSON.parse(readFileSync(ledgerPath, 'utf8'));
-    ledger.changes = Array.from({ length: 65 }, (_, index) => ({
+    ledger.changes = Array.from({ length: 501 }, (_, index) => ({
       ...structuredClone(ledger.changes[0]),
       id: `change-${index}`,
-      subject_commit: `${'a'.repeat(38)}${index.toString(16).padStart(2, '0')}`,
+      subject_commit: `${'a'.repeat(37)}${index.toString(16).padStart(3, '0')}`,
     }));
     write(ledgerPath, `${JSON.stringify(ledger)}\n`);
     const result = runVerifier(fixture.root, fixture.subject);
@@ -427,7 +432,7 @@ test('CLI rejects more than the bounded number of unique lifecycle row subjects 
 test('machine-truth report schema accepts every emitted subject failure code', () => {
   const schema = JSON.parse(readFileSync(path.join(path.dirname(commandPath), 'openspec-machine-truth-report.schema.json'), 'utf8'));
   const codes = schema.properties.errors.items.properties.code.enum;
-  for (const code of ['subject_not_head', 'subject_not_ancestor', 'subject_unavailable']) {
+  for (const code of ['subject_not_head', 'subject_not_ancestor', 'subject_unavailable', 'subject_binding_required']) {
     assert.ok(codes.includes(code), `schema must accept ${code}`);
   }
 });
@@ -446,7 +451,7 @@ test('raw observation budget rejects unrelated decoded paths before row-subject 
   }
 });
 
-test('repeated row subject reuses actual Git ancestor and diff caches without consuming raw budget twice', () => {
+test('repeated row subject reuses actual Git ancestor and diff caches; raw diff no longer consumes the budget', () => {
   const fixture = makeRepository();
   try {
     write(path.join(fixture.root, 'unrelated/changed.json'), '{}\n');
@@ -457,12 +462,244 @@ test('repeated row subject reuses actual Git ancestor and diff caches without co
     assert.equal(resolveRowSubjectWatermark(fixture.root, { subject_commit: fixture.subject, id: 'alpha' }, subjects, fixture.subject), fixture.subject);
     assert.equal(subjects.size, 1);
     const cache = new Map();
-    const budget = createRawObservationBudget();
-    const first = changedPathsSince(fixture.root, fixture.subject, cache, budget);
-    const afterFirst = structuredClone(budget);
-    const second = changedPathsSince(fixture.root, fixture.subject, cache, budget);
+    const first = changedPathsSince(fixture.root, fixture.subject, cache);
+    const second = changedPathsSince(fixture.root, fixture.subject, cache);
     assert.deepEqual(second, first);
-    assert.deepEqual(budget, afterFirst);
+    assert.ok(first.includes('unrelated/changed.json'));
+  } finally {
+    rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test('unrelated repo-wide churn between a watermark and HEAD does not consume the shared raw budget', () => {
+  // Owner ruling 2026-08-18 (openQuestions #1): the budget is charged after the
+  // owned-path filter, so a large refactor in an unrelated directory can no
+  // longer exhaust the observation budget for every row.
+  const fixture = makeRepository();
+  try {
+    for (let index = 0; index < 50; index += 1) {
+      write(path.join(fixture.root, 'unrelated-service', `${index}.txt`), `${index}\n`);
+    }
+    runGit(fixture.root, ['add', '--all']);
+    runGit(fixture.root, ['commit', '--quiet', '-m', 'unrelated repo-wide churn']);
+    const head = runGit(fixture.root, ['rev-parse', 'HEAD']);
+    const githubPath = path.join(fixture.root, 'artifacts/github.json');
+    const githubState = JSON.parse(readFileSync(githubPath, 'utf8'));
+    githubState.repository_subject = head;
+    write(githubPath, `${JSON.stringify(githubState)}\n`);
+    const ledger = JSON.parse(readFileSync(path.join(fixture.root, 'openspec/lifecycle-ledger.json'), 'utf8'));
+    const { sourceObservations } = collectSourceObservations(fixture.root, ledger, head);
+    assert.ok(sourceObservations.every(({ changed_paths: paths }) => paths.every((value) => !value.startsWith('unrelated-service/'))));
+  } finally {
+    rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test('sentinel row resolves a squash-discarded subject to its introduction and keeps drift precision', () => {
+  const fixture = makeHistoricalRowRepository();
+  try {
+    const squashed = JSON.parse(readFileSync(fixture.ledgerPath, 'utf8'));
+    squashed.changes[0].subject_commit = 'f'.repeat(40);
+    squashed.changes[0].subject_binding = 'introduction';
+    write(fixture.ledgerPath, `${JSON.stringify(squashed)}\n`);
+    // Fold a source edit into the same squash unit: the deliberate residual
+    // limit says it must NOT be red-flagged after the squash.
+    write(path.join(fixture.root, 'openspec/changes/alpha/proposal.md'), '# folded into the same squash unit\n');
+    runGit(fixture.root, ['add', '--all']);
+    runGit(fixture.root, ['commit', '--quiet', '-m', 'squash: land sentinel row with discarded pre-merge subject']);
+    const head = runGit(fixture.root, ['rev-parse', 'HEAD']);
+    const githubPath = path.join(fixture.root, 'artifacts/github.json');
+    const githubState = JSON.parse(readFileSync(githubPath, 'utf8'));
+    githubState.repository_subject = head;
+    write(githubPath, `${JSON.stringify(githubState)}\n`);
+
+    const accepted = runVerifier(fixture.root, head);
+    assert.equal(accepted.status, 0, JSON.stringify(accepted.document.errors ?? accepted.document.mismatches));
+    assert.equal(accepted.document.result, 'consistent');
+
+    // Post-introduction edits still red-flag exactly the sentinel row.
+    write(path.join(fixture.root, 'openspec/changes/alpha/proposal.md'), '# drift after the introduction\n');
+    const drifted = runVerifier(fixture.root, head);
+    assert.equal(drifted.status, 2);
+    assert.ok(drifted.document.mismatches.some(({ change_id: id, reason }) => id === 'alpha' && reason === 'source_changed_since_subject'));
+    assert.ok(!drifted.document.mismatches.some(({ change_id: id, reason }) => id === 'beta' && reason === 'source_changed_since_subject'));
+  } finally {
+    rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test('sentinel row treats a locally surviving non-ancestor subject exactly like a missing one (determinism)', () => {
+  const fixture = makeHistoricalRowRepository();
+  try {
+    // An orphan commit object that exists locally but is outside HEAD history:
+    // the legacy branch hard-fails subject_not_ancestor on this shape; the
+    // sentinel declares the SHA a watermark key only and must resolve through
+    // the introduction algorithm, matching a clean clone where the object is
+    // gone entirely.
+    const orphan = runGit(fixture.root, ['commit-tree', 'HEAD^{tree}', '-m', 'orphan pre-squash survivor']);
+    const ledger = JSON.parse(readFileSync(fixture.ledgerPath, 'utf8'));
+    ledger.changes[0].subject_commit = orphan;
+    ledger.changes[0].subject_binding = 'introduction';
+    write(fixture.ledgerPath, `${JSON.stringify(ledger)}\n`);
+    runGit(fixture.root, ['add', 'openspec/lifecycle-ledger.json']);
+    runGit(fixture.root, ['commit', '--quiet', '-m', 'squash: land sentinel row bound to a locally surviving orphan']);
+    const head = runGit(fixture.root, ['rev-parse', 'HEAD']);
+    const githubPath = path.join(fixture.root, 'artifacts/github.json');
+    const githubState = JSON.parse(readFileSync(githubPath, 'utf8'));
+    githubState.repository_subject = head;
+    write(githubPath, `${JSON.stringify(githubState)}\n`);
+    const result = runVerifier(fixture.root, head);
+    assert.equal(result.status, 0, JSON.stringify(result.document.errors ?? result.document.mismatches));
+    assert.equal(result.document.result, 'consistent');
+  } finally {
+    rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test('sentinel resolution keeps every introduction failure fail-closed: ambiguity and minted bindings', () => {
+  // Rebind-away-and-back ambiguity stays HELD for sentinel rows.
+  const ambiguous = makeHistoricalRowRepository();
+  try {
+    const discarded = 'f'.repeat(40);
+    const reachable = JSON.parse(readFileSync(ambiguous.ledgerPath, 'utf8')).changes[0].subject_commit;
+    const bindAlphaTo = (value, sentinel, message) => {
+      const ledger = JSON.parse(readFileSync(ambiguous.ledgerPath, 'utf8'));
+      ledger.changes[0].subject_commit = value;
+      if (sentinel) ledger.changes[0].subject_binding = 'introduction';
+      else delete ledger.changes[0].subject_binding;
+      write(ambiguous.ledgerPath, `${JSON.stringify(ledger)}\n`);
+      runGit(ambiguous.root, ['add', 'openspec/lifecycle-ledger.json']);
+      runGit(ambiguous.root, ['commit', '--quiet', '-m', message]);
+    };
+    bindAlphaTo(discarded, true, 'squash: first sentinel introduction');
+    bindAlphaTo(reachable, false, 'rebind away');
+    bindAlphaTo(discarded, true, 'reintroduce the same sentinel binding');
+    const head = runGit(ambiguous.root, ['rev-parse', 'HEAD']);
+    const githubPath = path.join(ambiguous.root, 'artifacts/github.json');
+    const githubState = JSON.parse(readFileSync(githubPath, 'utf8'));
+    githubState.repository_subject = head;
+    write(githubPath, `${JSON.stringify(githubState)}\n`);
+    const result = runVerifier(ambiguous.root, head);
+    assert.equal(result.status, 3);
+    assert.equal(result.document.errors[0].code, 'subject_unavailable');
+  } finally {
+    rmSync(ambiguous.root, { recursive: true, force: true });
+  }
+  // A candidate-minted sentinel binding is rejected by trusted-base ancestry.
+  const minted = makeHistoricalRowRepository();
+  try {
+    const base = commitLifecycleSnapshot(minted);
+    const ledger = JSON.parse(readFileSync(minted.ledgerPath, 'utf8'));
+    ledger.changes[0].subject_commit = 'f'.repeat(40);
+    ledger.changes[0].subject_binding = 'introduction';
+    write(minted.ledgerPath, `${JSON.stringify(ledger)}\n`);
+    runGit(minted.root, ['add', 'openspec/lifecycle-ledger.json']);
+    runGit(minted.root, ['commit', '--quiet', '-m', 'candidate mints a sentinel binding']);
+    const head = runGit(minted.root, ['rev-parse', 'HEAD']);
+    const githubPath = path.join(minted.root, 'artifacts/github.json');
+    const githubState = JSON.parse(readFileSync(githubPath, 'utf8'));
+    githubState.repository_subject = head;
+    write(githubPath, `${JSON.stringify(githubState)}\n`);
+    const result = runVerifier(minted.root, head, base);
+    assert.equal(result.status, 3);
+    assert.equal(result.document.errors[0].code, 'subject_unavailable');
+  } finally {
+    rmSync(minted.root, { recursive: true, force: true });
+  }
+});
+
+test('assertGitBase anchors --base to origin/main ancestry when that ref exists', () => {
+  const fixture = makeRepository();
+  try {
+    const base = fixture.subject;
+    write(path.join(fixture.root, 'unrelated/next.txt'), 'next\n');
+    runGit(fixture.root, ['add', '--all']);
+    runGit(fixture.root, ['commit', '--quiet', '-m', 'work beyond origin/main']);
+    const head = runGit(fixture.root, ['rev-parse', 'HEAD']);
+    const githubPath = path.join(fixture.root, 'artifacts/github.json');
+    const githubState = JSON.parse(readFileSync(githubPath, 'utf8'));
+    githubState.repository_subject = head;
+    write(githubPath, `${JSON.stringify(githubState)}\n`);
+    // Pin origin/main at the base commit: --base beyond it must be refused
+    // (self-blessing guard, challenge B5); --base at it must pass the anchor.
+    runGit(fixture.root, ['update-ref', 'refs/remotes/origin/main', base]);
+    const refused = runVerifier(fixture.root, head, head);
+    assert.equal(refused.status, 3);
+    assert.equal(refused.document.errors[0].code, 'base_unavailable');
+    const anchored = runVerifier(fixture.root, head, base);
+    assert.notEqual(anchored.status, 3, JSON.stringify(anchored.document.errors ?? []));
+  } finally {
+    rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test('reconcile ratchet blocks undeclared danglable bindings and admits exact P2b normalization', () => {
+  const fixture = makeHistoricalRowRepository();
+  try {
+    const base = commitLifecycleSnapshot(fixture);
+    const baseLedger = JSON.parse(readFileSync(fixture.ledgerPath, 'utf8'));
+    write(path.join(fixture.root, 'scratch.txt'), 'branch work\n');
+    runGit(fixture.root, ['add', '--all']);
+    runGit(fixture.root, ['commit', '--quiet', '-m', 'branch head beyond base']);
+    const branchHead = runGit(fixture.root, ['rev-parse', 'HEAD']);
+
+    const row = (id, subject, sentinel = false) => ({
+      id, subject_commit: subject, ...(sentinel ? { subject_binding: 'introduction' } : {}),
+    });
+    const ledgerWith = (...changes) => ({ schema_version: 'openspec-lifecycle-ledger/v1', changes });
+    const alphaBefore = baseLedger.changes[0];
+
+    // New row bound to the branch head without the sentinel: blocked.
+    assert.throws(
+      () => assertReconcileRatchet(fixture.root, ledgerWith(row('gamma', branchHead)), baseLedger, base),
+      (error) => error.code === 'subject_binding_required');
+    // New row with the sentinel, or bound to a base ancestor: admitted.
+    assertReconcileRatchet(fixture.root, ledgerWith(row('gamma', branchHead, true)), baseLedger, base);
+    assertReconcileRatchet(fixture.root, ledgerWith(row('gamma', base)), baseLedger, base);
+    // Untouched row: exempt.
+    assertReconcileRatchet(fixture.root, ledgerWith(row('alpha', alphaBefore.subject_commit)), baseLedger, base);
+    // Rewritten row to the branch head without the sentinel: blocked (legacy rebind-to-PR-HEAD).
+    assert.throws(
+      () => assertReconcileRatchet(fixture.root, ledgerWith(row('alpha', branchHead)), baseLedger, base),
+      (error) => error.code === 'subject_binding_required');
+    // Rewritten row with the sentinel: admitted.
+    assertReconcileRatchet(fixture.root, ledgerWith(row('alpha', branchHead, true)), baseLedger, base);
+    // Exact P2b normalization: the base binding resolves to itself here, so the
+    // only admissible undeclared rewrite target is that resolved value - any
+    // other base ancestor is watermark laundering and stays blocked.
+    assertReconcileRatchet(fixture.root, ledgerWith(row('alpha', alphaBefore.subject_commit)), baseLedger, base);
+    const otherAncestor = runGit(fixture.root, ['rev-parse', `${base}^`]);
+    assert.throws(
+      () => assertReconcileRatchet(fixture.root, ledgerWith(row('alpha', otherAncestor)), baseLedger, base),
+      (error) => error.code === 'subject_binding_required');
+    // Bootstrap-era: no previous ledger, ratchet does not apply.
+    assertReconcileRatchet(fixture.root, ledgerWith(row('gamma', branchHead)), null, base);
+  } finally {
+    rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test('more than 64 unique row watermarks no longer trip the unique-subject budget', () => {
+  const fixture = makeRepository();
+  try {
+    const subjects = [fixture.subject];
+    for (let index = 0; index < 69; index += 1) {
+      write(path.join(fixture.root, 'churn.txt'), `${index}\n`);
+      runGit(fixture.root, ['add', 'churn.txt']);
+      runGit(fixture.root, ['commit', '--quiet', '-m', `churn ${index}`]);
+      subjects.push(runGit(fixture.root, ['rev-parse', 'HEAD']));
+    }
+    const head = subjects[subjects.length - 1];
+    const ledger = {
+      schema_version: 'openspec-lifecycle-ledger/v1',
+      changes: subjects.map((subject, index) => ({
+        id: `row-${index}`,
+        subject_commit: subject,
+        evidence_refs: [],
+      })),
+    };
+    const { sourceObservations } = collectSourceObservations(fixture.root, ledger, head);
+    assert.equal(sourceObservations.length, subjects.length);
   } finally {
     rmSync(fixture.root, { recursive: true, force: true });
   }

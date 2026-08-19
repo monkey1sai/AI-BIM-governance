@@ -1,667 +1,736 @@
 {
- "schema_version": "self-referential-bootstrap-ledger/v1",
- "entries": [
-  {
-   "id": "self-referential-bootstrap-gate",
-   "status": "closed",
-   "pr": 459,
-   "opened_at": "2026-08-03T04:00:00Z",
-   "reason": "This PR introduces the bootstrap gate itself. The PR Metadata Contract job materialises the body checker pinned at the base SHA so that a PR cannot adjudicate itself with its own edited gate; the base here has no scripts/lib/self-referential-bootstrap.ps1 and no gate wiring, so the base-pinned checker has no gate to run at all. Any PR that adds a gate has a base without that gate, so no ordering avoids this.",
-   "verification_mechanism_paths": [
-    ".github/workflows/agent-governance.yml",
-    ".github/workflows/pr-review-agent.yml",
-    "docs/agents/self-referential-bootstrap.md",
-    "scripts/dev/check-pr-local-preflight.ps1",
-    "scripts/lib/detect-base-gate-capability.sh",
-    "scripts/lib/self-referential-bootstrap.ps1",
-    "scripts/self-referential-bootstrap-ledger.json",
-    "scripts/tests/check-pr-body-evidence.ps1",
-    "scripts/tests/test-agent-governance-check.ps1",
-    "scripts/tests/test-self-referential-bootstrap.ps1",
-    "scripts/tests/test-base-gate-capability.ps1",
-    "scripts/tests/test-preflight-prnumber-forwarding.ps1"
-   ],
-   "verification_contract": {
-    "id": "self-referential-bootstrap-gate/v1",
-    "command_ids": [
-     "test-self-referential-bootstrap",
-     "test-base-gate-capability",
-     "test-preflight-prnumber-forwarding",
-     "test-agent-governance-check",
-     "test-pr-body-evidence",
-     "test-pr-review-agent",
-     "invoke-powershell-static",
-     "detect-base-gate-capability-bash-syntax"
-    ],
-    "contract_sha256": "0f37135086c5b61af8246ba89ac584287ab57749c6b0ff9e7eabd7a6a4351367"
-   },
-   "bootstrap_evidence_refs": [
-    "docs/evidence/self-referential-bootstrap-gate/self-referential-bootstrap/README.md",
-    "docs/evidence/self-referential-bootstrap-gate/self-referential-bootstrap/gate-suites.txt"
-   ],
-   "fixpoint": {
-    "reverified_at": "2026-08-04T14:47:51Z",
-    "mechanism_commit": "ad7a50cf9ebb056c26411547df6e4d7aa0703a8b",
-    "evidence_refs": [
-     "docs/evidence/self-referential-bootstrap-gate/fixpoint/attestation.json",
-     "docs/evidence/self-referential-bootstrap-gate/fixpoint/gate-suites-on-main.txt"
-    ]
-   }
-  },
-  {
-   "id": "remote-linux-deploy-target",
-   "status": "closed",
-   "pr": 467,
-   "opened_at": "2026-08-03T02:00:00Z",
-   "reason": "the deploy contract rebuilds the test deployment only from a freshly fetched origin/main and forbids verifying an unmerged branch, so a change to the deploy path itself cannot be exercised by any pre-merge run against origin/main",
-   "verification_mechanism_paths": [
-    ".github/workflows/agent-governance.yml",
-    ".github/workflows/ci.yml",
-    "scripts/deploy.ps1",
-    "scripts/dev/rebuild-test-deploy.ps1",
-    "scripts/lib/host-native-launcher.ps1",
-    "scripts/lib/kit-log-probe.ps1",
-    "scripts/lib/platform/platform-adapter.ps1",
-    "scripts/lib/preflight-host-native.ps1",
-    "scripts/lib/preflight-ports.ps1",
-    "scripts/lib/rebuild-test-deploy.ps1",
-    "scripts/lib/smoke-evidence.ps1",
-    "scripts/self-referential-bootstrap-ledger.json",
-    "scripts/tests/check-pr-body-evidence.ps1"
-   ],
-   "verification_contract": {
-    "id": "remote-linux-deploy-target/v1",
-    "command_ids": [
-     "test-deploy-target-registry",
-     "test-platform-adapter",
-     "test-host-native-launcher",
-     "test-host-native-child-launch",
-     "test-preflight-host-native",
-     "test-preflight-ports",
-     "test-kit-log-probe",
-     "test-rebuild-test-deploy",
-     "test-remote-deploy-transport",
-     "test-windows-verification-scope",
-     "test-deploy-governance-static",
-     "invoke-powershell-static"
-    ],
-    "contract_sha256": "44dec1d887f2f815b359eefdeb56459226881c045c76ab3c3406bfccf48dbd0c"
-   },
-   "bootstrap_evidence_refs": [
-    "docs/evidence/remote-linux-deploy-target/self-referential-bootstrap/README.md",
-    "docs/evidence/remote-linux-deploy-target/self-referential-bootstrap/deploy-verified.txt"
-   ],
-   "fixpoint": {
-    "reverified_at": "2026-08-05T08:44:36Z",
-    "mechanism_commit": "591f930b04026a796e570fc943c95f80a54c3337",
-    "evidence_refs": [
-     "docs/evidence/remote-linux-deploy-target/fixpoint/attestation.json",
-     "docs/evidence/remote-linux-deploy-target/fixpoint/summary.md"
-    ]
-   }
-  },
-  {
-   "id": "linux-test-deploy-verifier-hardening",
-   "status": "closed",
-   "pr": 484,
-   "opened_at": "2026-08-10T06:53:57Z",
-   "reason": "the canonical deployment transport consumes only freshly fetched origin/main, so this branch cannot exercise its changed deploy launcher and strict verifier as canonical post-change evidence before merge; the bootstrap run is isolated and requires a mainline fixpoint rebuild",
-   "verification_mechanism_paths": [
-    "scripts/deploy.ps1",
-    "scripts/lib/host-native-launcher.ps1",
-    "scripts/self-referential-bootstrap-ledger.json",
-    "scripts/tests/test-self-referential-bootstrap.ps1",
-    "scripts/verify-all.ps1",
-    "scripts/verify-all.sh"
-   ],
-   "verification_contract": {
-    "id": "linux-test-deploy-verifier-hardening/v1",
-    "command_ids": [
-     "test-host-native-conversion-service",
-     "test-host-native-launcher",
-     "test-kit-manager-api",
-     "test-verify-all",
-     "test-deploy-target-registry",
-     "test-rebuild-test-deploy",
-     "test-remote-deploy-transport",
-     "test-deploy-governance-static",
-     "test-self-referential-bootstrap",
-     "test-agent-governance-check",
-     "invoke-powershell-static",
-     "harden-cad-extension-cache",
-     "canonical-linux-rebuild",
-     "canonical-linux-deployment-verify"
-    ],
-    "contract_sha256": "5caa635738c142274b5dbd0f045ceb8436f5401565306a5464f2086d6b472a64"
-   },
-   "bootstrap_evidence_refs": [
-    "docs/evidence/linux-test-deploy-verifier-hardening/self-referential-bootstrap/README.md",
-    "docs/evidence/linux-test-deploy-verifier-hardening/self-referential-bootstrap/verification.txt"
-   ],
-   "fixpoint": {
-    "reverified_at": "2026-08-12T03:07:00Z",
-    "mechanism_commit": "5a7fea9991f04a7e8204df2a02c5b4c4dedb1831",
-    "evidence_refs": [
-     "docs/evidence/linux-test-deploy-verifier-hardening/fixpoint/attestation.json",
-     "docs/evidence/linux-test-deploy-verifier-hardening/fixpoint/summary.md"
-    ]
-   }
-  },
-  {
-   "id": "trusted-host-executor-broker",
-   "status": "closed",
-   "pr": 527,
-   "opened_at": "2026-08-12T10:55:47Z",
-   "reason": "the trusted merge workflow changes its own adjudicator and only a default-branch copy may hold the GitHub App merge credential, so the feature branch cannot perform the canonical hosted execution or prove its post-merge fixpoint before PR 527 lands",
-   "verification_mechanism_paths": [
-    ".github/workflows/agent-governance.yml",
-    ".github/workflows/trusted-elevated-merge.yml",
-    "agent-contracts/trusted-host-merge-assertion.schema.json",
-    "agent-contracts/trusted-host-merge-evidence.schema.json",
-    "agent-contracts/trusted-host-merge-result.schema.json",
-    "agent-contracts/trusted-host-merge-verdict.schema.json",
-    "agent-contracts/trusted-host-merge.contract.json",
-    "agent-contracts/trusted-host-merge.contract.schema.json",
-    "agent-contracts/spec-to-done.contract.json",
-    "agent-contracts/spec-to-done.contract.schema.json",
-    "scripts/dev/trusted-host-merge.mjs",
-    "scripts/lib/self-referential-bootstrap.ps1",
-    "scripts/lib/trusted-host-merge-contract.mjs",
-    "scripts/lib/trusted-host-merge-evidence.mjs",
-    "scripts/lib/trusted-host-merge-executor.mjs",
-    "scripts/lib/trusted-host-merge-runtime.mjs",
-    "scripts/lib/trusted-host-merge.mjs",
-    "scripts/self-referential-bootstrap-ledger.json",
-    "scripts/tests/fixtures/trusted-host-merge-machine-fixtures.json",
-    "scripts/tests/test-agent-governance-check.ps1",
-    "scripts/tests/test-self-referential-bootstrap.ps1",
-    "scripts/tests/test-trusted-host-merge-runtime.mjs",
-    "scripts/tests/test-trusted-host-merge.mjs"
-   ],
-   "verification_contract": {
-    "id": "trusted-host-executor-broker/v1",
-    "command_ids": [
-     "test-trusted-host-merge",
-     "test-ship-item-runtime",
-     "test-review-risk",
-     "test-routing-consistency",
-     "test-self-referential-bootstrap",
-     "test-agent-governance-check",
-     "scan-secret-patterns"
-    ],
-    "contract_sha256": "46e4d248bf0d33754eb67704fdfb5aa1954ae32cbed9cda5c8f951edcf2ef337"
-   },
-   "bootstrap_evidence_refs": [
-    "docs/evidence/trusted-host-executor-broker/self-referential-bootstrap/README.md",
-    "docs/evidence/trusted-host-executor-broker/self-referential-bootstrap/gate-suites.txt"
-   ],
-   "fixpoint": {
-    "reverified_at": "2026-08-16T20:12:32Z",
-    "mechanism_commit": "6a4cc5658592750658f6b9e9ad0a17236749e092",
-    "evidence_refs": [
-     "docs/evidence/trusted-host-executor-broker/fixpoint/attestation.json",
-     "docs/evidence/trusted-host-executor-broker/fixpoint/summary.md"
-    ]
-   }
-  },
-  {
-   "id": "mechanism-hardening-2",
-   "status": "closed",
-   "pr": 513,
-   "opened_at": "2026-08-12T02:38:49Z",
-   "reason": "the canonical Linux transport rebuilds only from freshly fetched origin/main and refuses an unmerged revision, so this branch cannot exercise its changed deploy resolver, its Deployment-profile locality assertion, or its process-tree terminator as canonical post-change evidence before merge; only a mainline fixpoint rebuild can produce that proof",
-   "verification_mechanism_paths": [
-    ".github/workflows/ci.yml",
-    "scripts/deploy.ps1",
-    "scripts/lib/host-native-launcher.ps1",
-    "scripts/lib/platform/platform-adapter.ps1",
-    "scripts/self-referential-bootstrap-ledger.json",
-    "scripts/verification-manifest.json",
-    "scripts/verify-all.ps1"
-   ],
-   "verification_contract": {
-    "id": "mechanism-hardening-2/v1",
-    "command_ids": [
-     "test-deploy-governance-static",
-     "test-verify-all",
-     "test-host-native-launcher",
-     "test-host-native-child-launch",
-     "test-platform-adapter",
-     "test-preflight-ports",
-     "test-kit-log-probe",
-     "test-deploy-target-registry",
-     "test-remote-deploy-transport",
-     "test-rebuild-test-deploy",
-     "test-self-referential-bootstrap",
-     "test-agent-governance-check",
-     "invoke-powershell-static",
-     "canonical-linux-rebuild",
-     "canonical-linux-deployment-verify"
-    ],
-    "contract_sha256": "881fac8337efca52cb16e753cc016ee3219297180bfeec092406cad5ff7b2bc6"
-   },
-   "bootstrap_evidence_refs": [
-    "docs/evidence/mechanism-hardening-2/self-referential-bootstrap/README.md",
-    "docs/evidence/mechanism-hardening-2/self-referential-bootstrap/verification.txt"
-   ],
-   "fixpoint": {
-    "reverified_at": "2026-08-12T11:40:00Z",
-    "mechanism_commit": "daf551e0a794c5b895333478ea518518d76390bd",
-    "evidence_refs": [
-     "docs/evidence/mechanism-hardening-2/fixpoint/attestation.json",
-     "docs/evidence/mechanism-hardening-2/fixpoint/summary.md",
-     "docs/evidence/mechanism-hardening-2/fixpoint/verification.txt"
-    ]
-   }
-  },
-  {
-   "id": "evidence-harness-scope-clarification",
-   "status": "closed",
-   "pr": 521,
-   "opened_at": "2026-08-12T05:20:43Z",
-   "reason": "本 PR 修改 gate 契約本文，增補 §2.1 範圍界定與升級規則、§2.2 regression-repair lane，以及 §2.2.1 linked-successor chain transition（修復必須跨出 active open chain immutable surface union 時，以唯一線性 successor chain、leaf attachment、無重複 path ownership 與 oldest-root-first 窄 closure 避免 repair/open-debt/fixpoint 再度互鎖），並同步修改 gate library 與 adversarial suite。契約文字與裁決邏輯皆由 base-pinned 裁決者按 base 版本強制執行，merge 前不存在任何能以變更後條文或變更後放行條件裁決 PR 的正規機制；僅能於 merge 後在 main 重跑 gate 套件，驗證 classifier、repair、successor-chain 與 closure 判定一致。",
-   "verification_mechanism_paths": [
-    "docs/agents/self-referential-bootstrap.md",
-    "scripts/lib/self-referential-bootstrap.ps1",
-    "scripts/self-referential-bootstrap-ledger.json",
-    "scripts/tests/test-self-referential-bootstrap.ps1"
-   ],
-   "verification_contract": {
-    "id": "evidence-harness-scope-clarification/v1",
-    "command_ids": [
-     "test-self-referential-bootstrap",
-     "test-pr-body-evidence",
-     "test-agent-governance-check",
-     "invoke-powershell-static"
-    ],
-    "contract_sha256": "f7d7e6b235ab8d965a96f5ee1f2835d2157f6cc32613884eebf839068c17cac5"
-   },
-   "bootstrap_evidence_refs": [
-    "docs/evidence/evidence-harness-scope-clarification/self-referential-bootstrap/README.md",
-    "docs/evidence/evidence-harness-scope-clarification/self-referential-bootstrap/gate-suites.txt"
-   ],
-   "fixpoint": {
-    "reverified_at": "2026-08-13T17:56:16Z",
-    "mechanism_commit": "89e9b61c32eea4bd3eb6990588430416b66e9181",
-    "evidence_refs": [
-     "docs/evidence/evidence-harness-scope-clarification/fixpoint/attestation.json",
-     "docs/evidence/evidence-harness-scope-clarification/fixpoint/summary.md"
-    ]
-   }
-  },
-  {
-   "id": "gh-auth-sandbox-routing",
-   "status": "closed",
-   "pr": 544,
-   "opened_at": "2026-08-14T09:14:56Z",
-   "reason": "this PR changes the required agent-governance adjudication suite, so the pre-change gate cannot prove that the new gh authentication and sandbox TLS routing markers remain enforced after merge; only a post-merge run from main can verify the changed mechanism against itself",
-   "verification_mechanism_paths": [
-    "scripts/self-referential-bootstrap-ledger.json",
-    "scripts/tests/test-agent-governance-check.ps1"
-   ],
-   "verification_contract": {
-    "id": "gh-auth-sandbox-routing/v1",
-    "command_ids": [
-     "test-agent-governance-check",
-     "invoke-powershell-static"
-    ],
-    "contract_sha256": "9c17cdb4f22a7b0a6386b4dd5de034145df9512baa12573e3ea0bc62a90c5cbc"
-   },
-   "bootstrap_evidence_refs": [
-    "docs/evidence/gh-auth-sandbox-routing/self-referential-bootstrap/README.md",
-    "docs/evidence/gh-auth-sandbox-routing/self-referential-bootstrap/verification.txt"
-   ],
-   "fixpoint": {
-    "reverified_at": "2026-08-14T10:19:56Z",
-    "mechanism_commit": "dfa61a82a5277e8e1a0f3811c9d462d27da6c00d",
-    "evidence_refs": [
-     "docs/evidence/gh-auth-sandbox-routing/fixpoint/attestation.json",
-     "docs/evidence/gh-auth-sandbox-routing/fixpoint/summary.md"
-    ]
-   }
-  },
-  {
-   "id": "agent-governance-scope-routing",
-   "status": "closed",
-   "pr": 543,
-   "opened_at": "2026-08-14T09:06:34Z",
-   "reason": "the required Agent Governance workflow and verification manifest decide whether other pull requests satisfy the protected context; before this branch merges, only the base workflow can run, so it cannot prove the new scope classifier, explicit no-op success, or duplicate-job removal",
-   "verification_mechanism_paths": [
-    ".github/workflows/agent-governance.yml",
-    ".github/workflows/ci.yml",
-    "scripts/self-referential-bootstrap-ledger.json",
-    "scripts/verification-manifest.json",
-    "scripts/tests/test-agent-governance-check.ps1",
-    "scripts/tests/test-self-referential-bootstrap.ps1"
-   ],
-   "verification_contract": {
-    "id": "agent-governance-scope-routing/v1",
-    "command_ids": [
-     "test-agent-governance-check",
-     "test-verification-plan",
-     "test-self-referential-bootstrap",
-     "test-pr-body-evidence",
-     "invoke-powershell-static"
-    ],
-    "contract_sha256": "c35e227950b720d265eeb0866d4dc76aab563e997c6f427ff7d3ed297d08248c"
-   },
-   "bootstrap_evidence_refs": [
-    "docs/evidence/agent-governance-scope-routing/self-referential-bootstrap/README.md",
-    "docs/evidence/agent-governance-scope-routing/self-referential-bootstrap/verification.txt"
-   ],
-   "fixpoint": {
-    "reverified_at": "2026-08-14T11:41:01Z",
-    "mechanism_commit": "1eec958c727099e06cfb877dfaa2d4103bd103ea",
-    "evidence_refs": [
-     "docs/evidence/agent-governance-scope-routing/fixpoint/attestation.json",
-     "docs/evidence/agent-governance-scope-routing/fixpoint/summary.md"
-    ]
-   }
-  },
-  {
-   "id": "blip-approve-authority-separation",
-   "status": "closed",
-   "pr": 548,
-   "opened_at": "2026-08-17T04:30:13Z",
-   "reason": "the trusted-host merge evidence consumer is itself an adjudicator, so the base-pinned consumer cannot prove before merge that its changed exact-body matcher rejects the new automated approve-only schema; only a post-merge run of the updated consumer can establish that authority separation as a fixpoint",
-   "verification_mechanism_paths": [
-    "scripts/lib/trusted-host-merge-evidence.mjs",
-    "scripts/self-referential-bootstrap-ledger.json",
-    "scripts/tests/test-trusted-host-merge.mjs"
-   ],
-   "verification_contract": {
-    "id": "blip-approve-authority-separation/v1",
-    "command_ids": [
-     "test-trusted-host-merge",
-     "test-ship-item-runtime",
-     "test-review-risk",
-     "test-routing-consistency",
-     "test-self-referential-bootstrap",
-     "test-agent-governance-check",
-     "scan-secret-patterns"
-    ],
-    "contract_sha256": "bbce37a6f251449805f968dda832770a935d17d59bd37ed8661f795a7955a712"
-   },
-   "bootstrap_evidence_refs": [
-    "docs/evidence/blip-approve-authority-separation/self-referential-bootstrap/README.md",
-    "docs/evidence/blip-approve-authority-separation/self-referential-bootstrap/gate-suites.txt"
-   ],
-   "fixpoint": {
-    "reverified_at": "2026-08-17T05:17:08Z",
-    "mechanism_commit": "a9b8c7c7c68062ba4aea5e813f7242b118164a23",
-    "evidence_refs": [
-     "docs/evidence/blip-approve-authority-separation/fixpoint/attestation.json",
-     "docs/evidence/blip-approve-authority-separation/fixpoint/summary.md"
-    ]
-   }
-  },
-  {
-   "id": "session-baseline-gate-wiring",
-   "status": "closed",
-   "pr": 553,
-   "opened_at": "2026-08-17T05:44:03Z",
-   "reason": "the required Agent Governance workflow decides whether other pull requests satisfy the protected context; before this branch merges, only the base workflow can run, so it cannot prove that the new session-baseline gate step executes the measurement harness, root CLI wrapper, and downstream report validator suite as mainline behavior (tri-adversarial round-2 finding TG-539-01)",
-   "verification_mechanism_paths": [
-    ".github/workflows/agent-governance.yml",
-    "scripts/self-referential-bootstrap-ledger.json",
-    "scripts/tests/test-self-referential-bootstrap.ps1"
-   ],
-   "verification_contract": {
-    "id": "session-baseline-gate-wiring/v1",
-    "command_ids": [
-     "test-measure-session-baseline",
-     "test-agent-governance-check",
-     "test-verification-plan",
-     "test-self-referential-bootstrap",
-     "test-pr-body-evidence",
-     "invoke-powershell-static"
-    ],
-    "contract_sha256": "162a3860faff807ce6b9ab6b763940afcd4c97c60cbf31d596342ceab589bdc5"
-   },
-   "bootstrap_evidence_refs": [
-    "docs/evidence/session-baseline-gate-wiring/self-referential-bootstrap/README.md",
-    "docs/evidence/session-baseline-gate-wiring/self-referential-bootstrap/verification.txt"
-   ],
-   "fixpoint": {
-    "reverified_at": "2026-08-17T07:16:58Z",
-    "mechanism_commit": "54f07f555133a2542f64fde4001fa9ff6b2785b1",
-    "evidence_refs": [
-     "docs/evidence/session-baseline-gate-wiring/fixpoint/attestation.json",
-     "docs/evidence/session-baseline-gate-wiring/fixpoint/summary.md"
-    ]
-   }
-  },
-  {
-   "id": "conversion-service-ci-wiring",
-   "status": "closed",
-   "pr": 566,
-   "opened_at": "2026-08-17T08:25:59Z",
-   "reason": "the required CI streaming job decides whether other pull requests satisfy the protected context; before this branch merges, only the base workflow can run, so it cannot prove that the new step executes the host-native conversion service suite (process-tree containment regressions, issue #516) as mainline behavior",
-   "verification_mechanism_paths": [
-    ".github/workflows/ci.yml",
-    "scripts/self-referential-bootstrap-ledger.json"
-   ],
-   "verification_contract": {
-    "id": "conversion-service-ci-wiring/v1",
-    "command_ids": [
-     "test-host-native-conversion-service",
-     "test-agent-governance-check",
-     "test-verification-plan",
-     "test-self-referential-bootstrap",
-     "test-pr-body-evidence",
-     "invoke-powershell-static"
-    ],
-    "contract_sha256": "488bc1d25000fb444089ac040ea60409c6ddadc796df98ccc2490b8d74e026ae"
-   },
-   "bootstrap_evidence_refs": [
-    "docs/evidence/conversion-service-ci-wiring/self-referential-bootstrap/README.md",
-    "docs/evidence/conversion-service-ci-wiring/self-referential-bootstrap/verification.txt"
-   ],
-   "fixpoint": {
-    "reverified_at": "2026-08-17T08:55:12Z",
-    "mechanism_commit": "1e01a9c4f80200c305c6b9e62b2d0f6dd821b644",
-    "evidence_refs": [
-     "docs/evidence/conversion-service-ci-wiring/fixpoint/attestation.json",
-     "docs/evidence/conversion-service-ci-wiring/fixpoint/summary.md"
-    ]
-   }
-  },
-  {
-   "id": "windows-tier-lib-modules",
-   "status": "closed",
-   "pr": 570,
-   "opened_at": "2026-08-17T09:33:05Z",
-   "reason": "this PR changes scripts/lib/windows-verification-scope.ps1, the checker that decides how much Windows verification evidence every other PR owes; the branch can only exercise the new classification with the changed checker itself, so no pre-merge run can prove that what merges is what gets enforced, and only a post-merge run from main closes that gap",
-   "verification_mechanism_paths": [
-    "scripts/self-referential-bootstrap-ledger.json",
-    "scripts/lib/windows-verification-scope.ps1"
-   ],
-   "verification_contract": {
-    "id": "windows-tier-lib-modules/v1",
-    "command_ids": [
-     "test-windows-verification-scope",
-     "test-pr-body-evidence",
-     "invoke-powershell-static"
-    ],
-    "contract_sha256": "5545d1f629a74c7062da9a7c0bac5e15dced6494982be658b962ad659146d5be"
-   },
-   "bootstrap_evidence_refs": [
-    "docs/evidence/windows-tier-lib-modules/self-referential-bootstrap/README.md",
-    "docs/evidence/windows-tier-lib-modules/self-referential-bootstrap/verification.txt"
-   ],
-   "fixpoint": {
-    "reverified_at": "2026-08-17T10:21:17Z",
-    "mechanism_commit": "655f1f9687b12874a1cbf4434006916bd16a2893",
-    "evidence_refs": [
-     "docs/evidence/windows-tier-lib-modules/fixpoint/attestation.json",
-     "docs/evidence/windows-tier-lib-modules/fixpoint/summary.md"
-    ]
-   }
-  },
-  {
-   "id": "host-native-job-boundary",
-   "status": "closed",
-   "pr": 573,
-   "opened_at": "2026-08-17T10:46:50Z",
-   "reason": "the canonical deployment transport consumes only freshly fetched origin/main, so this branch cannot exercise its changed service launcher, stop path, and containment boundary as canonical post-change evidence before merge; only a post-merge canonical Linux rebuild plus a mainline contract replay can establish the boundary as a fixpoint",
-   "verification_mechanism_paths": [
-    "scripts/deploy.ps1",
-    "scripts/lib/host-native-launcher.ps1",
-    "scripts/self-referential-bootstrap-ledger.json"
-   ],
-   "verification_contract": {
-    "id": "host-native-job-boundary/v1",
-    "command_ids": [
-     "test-host-native-launcher",
-     "test-host-native-child-launch",
-     "test-platform-adapter",
-     "test-deploy-governance-static",
-     "test-verify-all",
-     "test-preflight-ports",
-     "test-kit-log-probe",
-     "test-deploy-target-registry",
-     "test-rebuild-test-deploy",
-     "test-remote-deploy-transport",
-     "test-host-native-conversion-service",
-     "test-self-referential-bootstrap",
-     "test-agent-governance-check",
-     "invoke-powershell-static",
-     "canonical-linux-rebuild",
-     "canonical-linux-deployment-verify"
-    ],
-    "contract_sha256": "fc5b3467646fc0953f88fceef16bf854dc18eb7f80d007b79d463b4bacb0b60a"
-   },
-   "bootstrap_evidence_refs": [
-    "docs/evidence/host-native-job-boundary/self-referential-bootstrap/README.md",
-    "docs/evidence/host-native-job-boundary/self-referential-bootstrap/verification.txt"
-   ],
-   "fixpoint": {
-    "reverified_at": "2026-08-17T11:17:02Z",
-    "mechanism_commit": "ef7518037d41b3d11800ee841e353d315c085c2c",
-    "evidence_refs": [
-     "docs/evidence/host-native-job-boundary/fixpoint/attestation.json",
-     "docs/evidence/host-native-job-boundary/fixpoint/summary.md"
-    ]
-   }
-  },
-  {
-   "id": "agent-governance-policy-wiring",
-   "status": "closed",
-   "pr": 572,
-   "opened_at": "2026-08-17T10:43:02Z",
-   "reason": "this PR rewires the required agent-governance adjudication suite: it adds the governance-policy gate and behaviour suite as required steps, deletes the 182 text assertions the rule document supersedes, and registers the module surface in the mechanism classification; the branch is judged by the surface it edits, so only a post-merge fixpoint replay from main can prove the wired mechanism against itself",
-   "repair_prs": [
-    579
-   ],
-   "verification_mechanism_paths": [
-    ".github/workflows/agent-governance.yml",
-    "scripts/self-referential-bootstrap-ledger.json",
-    "scripts/lib/self-referential-bootstrap.ps1",
-    "scripts/tests/test-agent-governance-check.ps1",
-    "scripts/tests/test-self-referential-bootstrap.ps1"
-   ],
-   "verification_contract": {
-    "id": "agent-governance-policy-wiring/v1",
-    "command_ids": [
-     "verify-governance-policy",
-     "test-agent-governance-policy",
-     "test-agent-governance-check",
-     "test-self-referential-bootstrap",
-     "test-pr-body-evidence",
-     "invoke-powershell-static"
-    ],
-    "contract_sha256": "8dc3130cb48cd290527f915d63dbecd3b9c8306c89f940dc27a32f3a13177036"
-   },
-   "bootstrap_evidence_refs": [
-    "docs/evidence/agent-governance-policy-wiring/self-referential-bootstrap/README.md",
-    "docs/evidence/agent-governance-policy-wiring/self-referential-bootstrap/verification.txt"
-   ],
-   "fixpoint": {
-    "reverified_at": "2026-08-18T04:11:25Z",
-    "mechanism_commit": "8b647d3492d50f02b2bdaa8b20f3f0670dfd7998",
-    "evidence_refs": [
-     "docs/evidence/agent-governance-policy-wiring/fixpoint/attestation.json",
-     "docs/evidence/agent-governance-policy-wiring/fixpoint/summary.md"
-    ]
-   }
-  },
-  {
-   "id": "agent-governance-policy-trust-boundary",
-   "status": "closed",
-   "pr": 579,
-   "opened_at": "2026-08-17T12:58:44Z",
-   "reason": "repairing the governance-policy classifier changes the trusted-host merge contract and therefore forces the base-owned verification plan to full-dispatch every required target; hosted run 32036393744 then proved the streaming CI adjudicator omitted the repository-pinned usd-core dependency and could not import pxr. Both the trusted-host contract and ci workflow are classified outside the original open entry surface, so this linked successor owns that exact verification trust boundary without widening its predecessor or weakening the product tests",
-   "successor_of": "agent-governance-policy-wiring",
-   "verification_mechanism_paths": [
-    "scripts/self-referential-bootstrap-ledger.json",
-    "agent-contracts/trusted-host-merge.contract.json",
-    ".github/workflows/ci.yml"
-   ],
-   "verification_contract": {
-    "id": "agent-governance-policy-trust-boundary/v1",
-    "command_ids": [
-     "verify-governance-policy",
-     "test-agent-governance-policy",
-     "test-agent-governance-check",
-     "test-self-referential-bootstrap",
-     "test-pr-body-evidence",
-     "invoke-powershell-static",
-     "test-trusted-host-merge",
-     "test-host-native-conversion-service",
-     "test-verification-plan"
-    ],
-    "contract_sha256": "b88a37af8d3800de0813d058b3349e25daebce0d39b6e212dc030243c0bcae2a"
-   },
-   "bootstrap_evidence_refs": [
-    "docs/evidence/agent-governance-policy-trust-boundary/self-referential-bootstrap/README.md",
-    "docs/evidence/agent-governance-policy-trust-boundary/self-referential-bootstrap/verification.txt"
-   ],
-   "fixpoint": {
-    "reverified_at": "2026-08-18T04:11:25Z",
-    "mechanism_commit": "f07c8f198f1fd3dd6c86ef827d7300eaf901fd77",
-    "evidence_refs": [
-     "docs/evidence/agent-governance-policy-trust-boundary/fixpoint/attestation.json",
-     "docs/evidence/agent-governance-policy-trust-boundary/fixpoint/summary.md"
-    ]
-   }
-  },
-  {
-   "id": "rebuild-test-deploy-pwsh7-child",
-   "status": "closed",
-   "pr": 586,
-   "opened_at": "2026-08-18T05:05:00Z",
-   "reason": "this PR changes the deploy child launcher in scripts/lib/rebuild-test-deploy.ps1 from Windows PowerShell 5.1 to PowerShell 7 because 5.1 mangles the embedded double quotes in Resolve-PlatformSystemPython version probe, so deploy.ps1 reported no usable system python and exited 2 on a host with Python 3.12; rebuild-test-deploy always replaces the checkout from freshly fetched origin/main, so the branch launcher can never run as canonical evidence before merge and only a post-merge local-windows rebuild can prove the changed launcher against itself",
-   "verification_mechanism_paths": [
-    "scripts/lib/rebuild-test-deploy.ps1",
-    "scripts/self-referential-bootstrap-ledger.json"
-   ],
-   "verification_contract": {
-    "id": "rebuild-test-deploy-pwsh7-child/v1",
-    "command_ids": [
-     "test-rebuild-test-deploy",
-     "test-platform-adapter",
-     "test-host-native-launcher",
-     "test-host-native-child-launch",
-     "test-deploy-target-registry",
-     "test-deploy-governance-static",
-     "test-self-referential-bootstrap",
-     "test-agent-governance-check",
-     "invoke-powershell-static"
-    ],
-    "contract_sha256": "b425887e7bd4ea8801ec645bbbf6511f542a1207c267e35230136b8bb435aa85"
-   },
-   "bootstrap_evidence_refs": [
-    "docs/evidence/rebuild-test-deploy-pwsh7-child/self-referential-bootstrap/README.md",
-    "docs/evidence/rebuild-test-deploy-pwsh7-child/self-referential-bootstrap/verification.txt"
-   ],
-   "fixpoint": {
-    "reverified_at": "2026-08-18T08:42:03Z",
-    "mechanism_commit": "fca2efa9ed9fa7034a9cb5e71513b1d4da73baaa",
-    "evidence_refs": [
-     "docs/evidence/rebuild-test-deploy-pwsh7-child/fixpoint/attestation.json",
-     "docs/evidence/rebuild-test-deploy-pwsh7-child/fixpoint/summary.md"
-    ]
-   }
-  }
- ]
+  "schema_version": "self-referential-bootstrap-ledger/v1",
+  "entries": [
+    {
+      "id": "self-referential-bootstrap-gate",
+      "status": "closed",
+      "pr": 459,
+      "opened_at": "2026-08-03T04:00:00Z",
+      "reason": "This PR introduces the bootstrap gate itself. The PR Metadata Contract job materialises the body checker pinned at the base SHA so that a PR cannot adjudicate itself with its own edited gate; the base here has no scripts/lib/self-referential-bootstrap.ps1 and no gate wiring, so the base-pinned checker has no gate to run at all. Any PR that adds a gate has a base without that gate, so no ordering avoids this.",
+      "verification_mechanism_paths": [
+        ".github/workflows/agent-governance.yml",
+        ".github/workflows/pr-review-agent.yml",
+        "docs/agents/self-referential-bootstrap.md",
+        "scripts/dev/check-pr-local-preflight.ps1",
+        "scripts/lib/detect-base-gate-capability.sh",
+        "scripts/lib/self-referential-bootstrap.ps1",
+        "scripts/self-referential-bootstrap-ledger.json",
+        "scripts/tests/check-pr-body-evidence.ps1",
+        "scripts/tests/test-agent-governance-check.ps1",
+        "scripts/tests/test-self-referential-bootstrap.ps1",
+        "scripts/tests/test-base-gate-capability.ps1",
+        "scripts/tests/test-preflight-prnumber-forwarding.ps1"
+      ],
+      "verification_contract": {
+        "id": "self-referential-bootstrap-gate/v1",
+        "command_ids": [
+          "test-self-referential-bootstrap",
+          "test-base-gate-capability",
+          "test-preflight-prnumber-forwarding",
+          "test-agent-governance-check",
+          "test-pr-body-evidence",
+          "test-pr-review-agent",
+          "invoke-powershell-static",
+          "detect-base-gate-capability-bash-syntax"
+        ],
+        "contract_sha256": "0f37135086c5b61af8246ba89ac584287ab57749c6b0ff9e7eabd7a6a4351367"
+      },
+      "bootstrap_evidence_refs": [
+        "docs/evidence/self-referential-bootstrap-gate/self-referential-bootstrap/README.md",
+        "docs/evidence/self-referential-bootstrap-gate/self-referential-bootstrap/gate-suites.txt"
+      ],
+      "fixpoint": {
+        "reverified_at": "2026-08-04T14:47:51Z",
+        "mechanism_commit": "ad7a50cf9ebb056c26411547df6e4d7aa0703a8b",
+        "evidence_refs": [
+          "docs/evidence/self-referential-bootstrap-gate/fixpoint/attestation.json",
+          "docs/evidence/self-referential-bootstrap-gate/fixpoint/gate-suites-on-main.txt"
+        ]
+      }
+    },
+    {
+      "id": "remote-linux-deploy-target",
+      "status": "closed",
+      "pr": 467,
+      "opened_at": "2026-08-03T02:00:00Z",
+      "reason": "the deploy contract rebuilds the test deployment only from a freshly fetched origin/main and forbids verifying an unmerged branch, so a change to the deploy path itself cannot be exercised by any pre-merge run against origin/main",
+      "verification_mechanism_paths": [
+        ".github/workflows/agent-governance.yml",
+        ".github/workflows/ci.yml",
+        "scripts/deploy.ps1",
+        "scripts/dev/rebuild-test-deploy.ps1",
+        "scripts/lib/host-native-launcher.ps1",
+        "scripts/lib/kit-log-probe.ps1",
+        "scripts/lib/platform/platform-adapter.ps1",
+        "scripts/lib/preflight-host-native.ps1",
+        "scripts/lib/preflight-ports.ps1",
+        "scripts/lib/rebuild-test-deploy.ps1",
+        "scripts/lib/smoke-evidence.ps1",
+        "scripts/self-referential-bootstrap-ledger.json",
+        "scripts/tests/check-pr-body-evidence.ps1"
+      ],
+      "verification_contract": {
+        "id": "remote-linux-deploy-target/v1",
+        "command_ids": [
+          "test-deploy-target-registry",
+          "test-platform-adapter",
+          "test-host-native-launcher",
+          "test-host-native-child-launch",
+          "test-preflight-host-native",
+          "test-preflight-ports",
+          "test-kit-log-probe",
+          "test-rebuild-test-deploy",
+          "test-remote-deploy-transport",
+          "test-windows-verification-scope",
+          "test-deploy-governance-static",
+          "invoke-powershell-static"
+        ],
+        "contract_sha256": "44dec1d887f2f815b359eefdeb56459226881c045c76ab3c3406bfccf48dbd0c"
+      },
+      "bootstrap_evidence_refs": [
+        "docs/evidence/remote-linux-deploy-target/self-referential-bootstrap/README.md",
+        "docs/evidence/remote-linux-deploy-target/self-referential-bootstrap/deploy-verified.txt"
+      ],
+      "fixpoint": {
+        "reverified_at": "2026-08-05T08:44:36Z",
+        "mechanism_commit": "591f930b04026a796e570fc943c95f80a54c3337",
+        "evidence_refs": [
+          "docs/evidence/remote-linux-deploy-target/fixpoint/attestation.json",
+          "docs/evidence/remote-linux-deploy-target/fixpoint/summary.md"
+        ]
+      }
+    },
+    {
+      "id": "linux-test-deploy-verifier-hardening",
+      "status": "closed",
+      "pr": 484,
+      "opened_at": "2026-08-10T06:53:57Z",
+      "reason": "the canonical deployment transport consumes only freshly fetched origin/main, so this branch cannot exercise its changed deploy launcher and strict verifier as canonical post-change evidence before merge; the bootstrap run is isolated and requires a mainline fixpoint rebuild",
+      "verification_mechanism_paths": [
+        "scripts/deploy.ps1",
+        "scripts/lib/host-native-launcher.ps1",
+        "scripts/self-referential-bootstrap-ledger.json",
+        "scripts/tests/test-self-referential-bootstrap.ps1",
+        "scripts/verify-all.ps1",
+        "scripts/verify-all.sh"
+      ],
+      "verification_contract": {
+        "id": "linux-test-deploy-verifier-hardening/v1",
+        "command_ids": [
+          "test-host-native-conversion-service",
+          "test-host-native-launcher",
+          "test-kit-manager-api",
+          "test-verify-all",
+          "test-deploy-target-registry",
+          "test-rebuild-test-deploy",
+          "test-remote-deploy-transport",
+          "test-deploy-governance-static",
+          "test-self-referential-bootstrap",
+          "test-agent-governance-check",
+          "invoke-powershell-static",
+          "harden-cad-extension-cache",
+          "canonical-linux-rebuild",
+          "canonical-linux-deployment-verify"
+        ],
+        "contract_sha256": "5caa635738c142274b5dbd0f045ceb8436f5401565306a5464f2086d6b472a64"
+      },
+      "bootstrap_evidence_refs": [
+        "docs/evidence/linux-test-deploy-verifier-hardening/self-referential-bootstrap/README.md",
+        "docs/evidence/linux-test-deploy-verifier-hardening/self-referential-bootstrap/verification.txt"
+      ],
+      "fixpoint": {
+        "reverified_at": "2026-08-12T03:07:00Z",
+        "mechanism_commit": "5a7fea9991f04a7e8204df2a02c5b4c4dedb1831",
+        "evidence_refs": [
+          "docs/evidence/linux-test-deploy-verifier-hardening/fixpoint/attestation.json",
+          "docs/evidence/linux-test-deploy-verifier-hardening/fixpoint/summary.md"
+        ]
+      }
+    },
+    {
+      "id": "trusted-host-executor-broker",
+      "status": "closed",
+      "pr": 527,
+      "opened_at": "2026-08-12T10:55:47Z",
+      "reason": "the trusted merge workflow changes its own adjudicator and only a default-branch copy may hold the GitHub App merge credential, so the feature branch cannot perform the canonical hosted execution or prove its post-merge fixpoint before PR 527 lands",
+      "verification_mechanism_paths": [
+        ".github/workflows/agent-governance.yml",
+        ".github/workflows/trusted-elevated-merge.yml",
+        "agent-contracts/trusted-host-merge-assertion.schema.json",
+        "agent-contracts/trusted-host-merge-evidence.schema.json",
+        "agent-contracts/trusted-host-merge-result.schema.json",
+        "agent-contracts/trusted-host-merge-verdict.schema.json",
+        "agent-contracts/trusted-host-merge.contract.json",
+        "agent-contracts/trusted-host-merge.contract.schema.json",
+        "agent-contracts/spec-to-done.contract.json",
+        "agent-contracts/spec-to-done.contract.schema.json",
+        "scripts/dev/trusted-host-merge.mjs",
+        "scripts/lib/self-referential-bootstrap.ps1",
+        "scripts/lib/trusted-host-merge-contract.mjs",
+        "scripts/lib/trusted-host-merge-evidence.mjs",
+        "scripts/lib/trusted-host-merge-executor.mjs",
+        "scripts/lib/trusted-host-merge-runtime.mjs",
+        "scripts/lib/trusted-host-merge.mjs",
+        "scripts/self-referential-bootstrap-ledger.json",
+        "scripts/tests/fixtures/trusted-host-merge-machine-fixtures.json",
+        "scripts/tests/test-agent-governance-check.ps1",
+        "scripts/tests/test-self-referential-bootstrap.ps1",
+        "scripts/tests/test-trusted-host-merge-runtime.mjs",
+        "scripts/tests/test-trusted-host-merge.mjs"
+      ],
+      "verification_contract": {
+        "id": "trusted-host-executor-broker/v1",
+        "command_ids": [
+          "test-trusted-host-merge",
+          "test-ship-item-runtime",
+          "test-review-risk",
+          "test-routing-consistency",
+          "test-self-referential-bootstrap",
+          "test-agent-governance-check",
+          "scan-secret-patterns"
+        ],
+        "contract_sha256": "46e4d248bf0d33754eb67704fdfb5aa1954ae32cbed9cda5c8f951edcf2ef337"
+      },
+      "bootstrap_evidence_refs": [
+        "docs/evidence/trusted-host-executor-broker/self-referential-bootstrap/README.md",
+        "docs/evidence/trusted-host-executor-broker/self-referential-bootstrap/gate-suites.txt"
+      ],
+      "fixpoint": {
+        "reverified_at": "2026-08-16T20:12:32Z",
+        "mechanism_commit": "6a4cc5658592750658f6b9e9ad0a17236749e092",
+        "evidence_refs": [
+          "docs/evidence/trusted-host-executor-broker/fixpoint/attestation.json",
+          "docs/evidence/trusted-host-executor-broker/fixpoint/summary.md"
+        ]
+      }
+    },
+    {
+      "id": "mechanism-hardening-2",
+      "status": "closed",
+      "pr": 513,
+      "opened_at": "2026-08-12T02:38:49Z",
+      "reason": "the canonical Linux transport rebuilds only from freshly fetched origin/main and refuses an unmerged revision, so this branch cannot exercise its changed deploy resolver, its Deployment-profile locality assertion, or its process-tree terminator as canonical post-change evidence before merge; only a mainline fixpoint rebuild can produce that proof",
+      "verification_mechanism_paths": [
+        ".github/workflows/ci.yml",
+        "scripts/deploy.ps1",
+        "scripts/lib/host-native-launcher.ps1",
+        "scripts/lib/platform/platform-adapter.ps1",
+        "scripts/self-referential-bootstrap-ledger.json",
+        "scripts/verification-manifest.json",
+        "scripts/verify-all.ps1"
+      ],
+      "verification_contract": {
+        "id": "mechanism-hardening-2/v1",
+        "command_ids": [
+          "test-deploy-governance-static",
+          "test-verify-all",
+          "test-host-native-launcher",
+          "test-host-native-child-launch",
+          "test-platform-adapter",
+          "test-preflight-ports",
+          "test-kit-log-probe",
+          "test-deploy-target-registry",
+          "test-remote-deploy-transport",
+          "test-rebuild-test-deploy",
+          "test-self-referential-bootstrap",
+          "test-agent-governance-check",
+          "invoke-powershell-static",
+          "canonical-linux-rebuild",
+          "canonical-linux-deployment-verify"
+        ],
+        "contract_sha256": "881fac8337efca52cb16e753cc016ee3219297180bfeec092406cad5ff7b2bc6"
+      },
+      "bootstrap_evidence_refs": [
+        "docs/evidence/mechanism-hardening-2/self-referential-bootstrap/README.md",
+        "docs/evidence/mechanism-hardening-2/self-referential-bootstrap/verification.txt"
+      ],
+      "fixpoint": {
+        "reverified_at": "2026-08-12T11:40:00Z",
+        "mechanism_commit": "daf551e0a794c5b895333478ea518518d76390bd",
+        "evidence_refs": [
+          "docs/evidence/mechanism-hardening-2/fixpoint/attestation.json",
+          "docs/evidence/mechanism-hardening-2/fixpoint/summary.md",
+          "docs/evidence/mechanism-hardening-2/fixpoint/verification.txt"
+        ]
+      }
+    },
+    {
+      "id": "evidence-harness-scope-clarification",
+      "status": "closed",
+      "pr": 521,
+      "opened_at": "2026-08-12T05:20:43Z",
+      "reason": "本 PR 修改 gate 契約本文，增補 §2.1 範圍界定與升級規則、§2.2 regression-repair lane，以及 §2.2.1 linked-successor chain transition（修復必須跨出 active open chain immutable surface union 時，以唯一線性 successor chain、leaf attachment、無重複 path ownership 與 oldest-root-first 窄 closure 避免 repair/open-debt/fixpoint 再度互鎖），並同步修改 gate library 與 adversarial suite。契約文字與裁決邏輯皆由 base-pinned 裁決者按 base 版本強制執行，merge 前不存在任何能以變更後條文或變更後放行條件裁決 PR 的正規機制；僅能於 merge 後在 main 重跑 gate 套件，驗證 classifier、repair、successor-chain 與 closure 判定一致。",
+      "verification_mechanism_paths": [
+        "docs/agents/self-referential-bootstrap.md",
+        "scripts/lib/self-referential-bootstrap.ps1",
+        "scripts/self-referential-bootstrap-ledger.json",
+        "scripts/tests/test-self-referential-bootstrap.ps1"
+      ],
+      "verification_contract": {
+        "id": "evidence-harness-scope-clarification/v1",
+        "command_ids": [
+          "test-self-referential-bootstrap",
+          "test-pr-body-evidence",
+          "test-agent-governance-check",
+          "invoke-powershell-static"
+        ],
+        "contract_sha256": "f7d7e6b235ab8d965a96f5ee1f2835d2157f6cc32613884eebf839068c17cac5"
+      },
+      "bootstrap_evidence_refs": [
+        "docs/evidence/evidence-harness-scope-clarification/self-referential-bootstrap/README.md",
+        "docs/evidence/evidence-harness-scope-clarification/self-referential-bootstrap/gate-suites.txt"
+      ],
+      "fixpoint": {
+        "reverified_at": "2026-08-13T17:56:16Z",
+        "mechanism_commit": "89e9b61c32eea4bd3eb6990588430416b66e9181",
+        "evidence_refs": [
+          "docs/evidence/evidence-harness-scope-clarification/fixpoint/attestation.json",
+          "docs/evidence/evidence-harness-scope-clarification/fixpoint/summary.md"
+        ]
+      }
+    },
+    {
+      "id": "gh-auth-sandbox-routing",
+      "status": "closed",
+      "pr": 544,
+      "opened_at": "2026-08-14T09:14:56Z",
+      "reason": "this PR changes the required agent-governance adjudication suite, so the pre-change gate cannot prove that the new gh authentication and sandbox TLS routing markers remain enforced after merge; only a post-merge run from main can verify the changed mechanism against itself",
+      "verification_mechanism_paths": [
+        "scripts/self-referential-bootstrap-ledger.json",
+        "scripts/tests/test-agent-governance-check.ps1"
+      ],
+      "verification_contract": {
+        "id": "gh-auth-sandbox-routing/v1",
+        "command_ids": [
+          "test-agent-governance-check",
+          "invoke-powershell-static"
+        ],
+        "contract_sha256": "9c17cdb4f22a7b0a6386b4dd5de034145df9512baa12573e3ea0bc62a90c5cbc"
+      },
+      "bootstrap_evidence_refs": [
+        "docs/evidence/gh-auth-sandbox-routing/self-referential-bootstrap/README.md",
+        "docs/evidence/gh-auth-sandbox-routing/self-referential-bootstrap/verification.txt"
+      ],
+      "fixpoint": {
+        "reverified_at": "2026-08-14T10:19:56Z",
+        "mechanism_commit": "dfa61a82a5277e8e1a0f3811c9d462d27da6c00d",
+        "evidence_refs": [
+          "docs/evidence/gh-auth-sandbox-routing/fixpoint/attestation.json",
+          "docs/evidence/gh-auth-sandbox-routing/fixpoint/summary.md"
+        ]
+      }
+    },
+    {
+      "id": "agent-governance-scope-routing",
+      "status": "closed",
+      "pr": 543,
+      "opened_at": "2026-08-14T09:06:34Z",
+      "reason": "the required Agent Governance workflow and verification manifest decide whether other pull requests satisfy the protected context; before this branch merges, only the base workflow can run, so it cannot prove the new scope classifier, explicit no-op success, or duplicate-job removal",
+      "verification_mechanism_paths": [
+        ".github/workflows/agent-governance.yml",
+        ".github/workflows/ci.yml",
+        "scripts/self-referential-bootstrap-ledger.json",
+        "scripts/verification-manifest.json",
+        "scripts/tests/test-agent-governance-check.ps1",
+        "scripts/tests/test-self-referential-bootstrap.ps1"
+      ],
+      "verification_contract": {
+        "id": "agent-governance-scope-routing/v1",
+        "command_ids": [
+          "test-agent-governance-check",
+          "test-verification-plan",
+          "test-self-referential-bootstrap",
+          "test-pr-body-evidence",
+          "invoke-powershell-static"
+        ],
+        "contract_sha256": "c35e227950b720d265eeb0866d4dc76aab563e997c6f427ff7d3ed297d08248c"
+      },
+      "bootstrap_evidence_refs": [
+        "docs/evidence/agent-governance-scope-routing/self-referential-bootstrap/README.md",
+        "docs/evidence/agent-governance-scope-routing/self-referential-bootstrap/verification.txt"
+      ],
+      "fixpoint": {
+        "reverified_at": "2026-08-14T11:41:01Z",
+        "mechanism_commit": "1eec958c727099e06cfb877dfaa2d4103bd103ea",
+        "evidence_refs": [
+          "docs/evidence/agent-governance-scope-routing/fixpoint/attestation.json",
+          "docs/evidence/agent-governance-scope-routing/fixpoint/summary.md"
+        ]
+      }
+    },
+    {
+      "id": "blip-approve-authority-separation",
+      "status": "closed",
+      "pr": 548,
+      "opened_at": "2026-08-17T04:30:13Z",
+      "reason": "the trusted-host merge evidence consumer is itself an adjudicator, so the base-pinned consumer cannot prove before merge that its changed exact-body matcher rejects the new automated approve-only schema; only a post-merge run of the updated consumer can establish that authority separation as a fixpoint",
+      "verification_mechanism_paths": [
+        "scripts/lib/trusted-host-merge-evidence.mjs",
+        "scripts/self-referential-bootstrap-ledger.json",
+        "scripts/tests/test-trusted-host-merge.mjs"
+      ],
+      "verification_contract": {
+        "id": "blip-approve-authority-separation/v1",
+        "command_ids": [
+          "test-trusted-host-merge",
+          "test-ship-item-runtime",
+          "test-review-risk",
+          "test-routing-consistency",
+          "test-self-referential-bootstrap",
+          "test-agent-governance-check",
+          "scan-secret-patterns"
+        ],
+        "contract_sha256": "bbce37a6f251449805f968dda832770a935d17d59bd37ed8661f795a7955a712"
+      },
+      "bootstrap_evidence_refs": [
+        "docs/evidence/blip-approve-authority-separation/self-referential-bootstrap/README.md",
+        "docs/evidence/blip-approve-authority-separation/self-referential-bootstrap/gate-suites.txt"
+      ],
+      "fixpoint": {
+        "reverified_at": "2026-08-17T05:17:08Z",
+        "mechanism_commit": "a9b8c7c7c68062ba4aea5e813f7242b118164a23",
+        "evidence_refs": [
+          "docs/evidence/blip-approve-authority-separation/fixpoint/attestation.json",
+          "docs/evidence/blip-approve-authority-separation/fixpoint/summary.md"
+        ]
+      }
+    },
+    {
+      "id": "session-baseline-gate-wiring",
+      "status": "closed",
+      "pr": 553,
+      "opened_at": "2026-08-17T05:44:03Z",
+      "reason": "the required Agent Governance workflow decides whether other pull requests satisfy the protected context; before this branch merges, only the base workflow can run, so it cannot prove that the new session-baseline gate step executes the measurement harness, root CLI wrapper, and downstream report validator suite as mainline behavior (tri-adversarial round-2 finding TG-539-01)",
+      "verification_mechanism_paths": [
+        ".github/workflows/agent-governance.yml",
+        "scripts/self-referential-bootstrap-ledger.json",
+        "scripts/tests/test-self-referential-bootstrap.ps1"
+      ],
+      "verification_contract": {
+        "id": "session-baseline-gate-wiring/v1",
+        "command_ids": [
+          "test-measure-session-baseline",
+          "test-agent-governance-check",
+          "test-verification-plan",
+          "test-self-referential-bootstrap",
+          "test-pr-body-evidence",
+          "invoke-powershell-static"
+        ],
+        "contract_sha256": "162a3860faff807ce6b9ab6b763940afcd4c97c60cbf31d596342ceab589bdc5"
+      },
+      "bootstrap_evidence_refs": [
+        "docs/evidence/session-baseline-gate-wiring/self-referential-bootstrap/README.md",
+        "docs/evidence/session-baseline-gate-wiring/self-referential-bootstrap/verification.txt"
+      ],
+      "fixpoint": {
+        "reverified_at": "2026-08-17T07:16:58Z",
+        "mechanism_commit": "54f07f555133a2542f64fde4001fa9ff6b2785b1",
+        "evidence_refs": [
+          "docs/evidence/session-baseline-gate-wiring/fixpoint/attestation.json",
+          "docs/evidence/session-baseline-gate-wiring/fixpoint/summary.md"
+        ]
+      }
+    },
+    {
+      "id": "conversion-service-ci-wiring",
+      "status": "closed",
+      "pr": 566,
+      "opened_at": "2026-08-17T08:25:59Z",
+      "reason": "the required CI streaming job decides whether other pull requests satisfy the protected context; before this branch merges, only the base workflow can run, so it cannot prove that the new step executes the host-native conversion service suite (process-tree containment regressions, issue #516) as mainline behavior",
+      "verification_mechanism_paths": [
+        ".github/workflows/ci.yml",
+        "scripts/self-referential-bootstrap-ledger.json"
+      ],
+      "verification_contract": {
+        "id": "conversion-service-ci-wiring/v1",
+        "command_ids": [
+          "test-host-native-conversion-service",
+          "test-agent-governance-check",
+          "test-verification-plan",
+          "test-self-referential-bootstrap",
+          "test-pr-body-evidence",
+          "invoke-powershell-static"
+        ],
+        "contract_sha256": "488bc1d25000fb444089ac040ea60409c6ddadc796df98ccc2490b8d74e026ae"
+      },
+      "bootstrap_evidence_refs": [
+        "docs/evidence/conversion-service-ci-wiring/self-referential-bootstrap/README.md",
+        "docs/evidence/conversion-service-ci-wiring/self-referential-bootstrap/verification.txt"
+      ],
+      "fixpoint": {
+        "reverified_at": "2026-08-17T08:55:12Z",
+        "mechanism_commit": "1e01a9c4f80200c305c6b9e62b2d0f6dd821b644",
+        "evidence_refs": [
+          "docs/evidence/conversion-service-ci-wiring/fixpoint/attestation.json",
+          "docs/evidence/conversion-service-ci-wiring/fixpoint/summary.md"
+        ]
+      }
+    },
+    {
+      "id": "windows-tier-lib-modules",
+      "status": "closed",
+      "pr": 570,
+      "opened_at": "2026-08-17T09:33:05Z",
+      "reason": "this PR changes scripts/lib/windows-verification-scope.ps1, the checker that decides how much Windows verification evidence every other PR owes; the branch can only exercise the new classification with the changed checker itself, so no pre-merge run can prove that what merges is what gets enforced, and only a post-merge run from main closes that gap",
+      "verification_mechanism_paths": [
+        "scripts/self-referential-bootstrap-ledger.json",
+        "scripts/lib/windows-verification-scope.ps1"
+      ],
+      "verification_contract": {
+        "id": "windows-tier-lib-modules/v1",
+        "command_ids": [
+          "test-windows-verification-scope",
+          "test-pr-body-evidence",
+          "invoke-powershell-static"
+        ],
+        "contract_sha256": "5545d1f629a74c7062da9a7c0bac5e15dced6494982be658b962ad659146d5be"
+      },
+      "bootstrap_evidence_refs": [
+        "docs/evidence/windows-tier-lib-modules/self-referential-bootstrap/README.md",
+        "docs/evidence/windows-tier-lib-modules/self-referential-bootstrap/verification.txt"
+      ],
+      "fixpoint": {
+        "reverified_at": "2026-08-17T10:21:17Z",
+        "mechanism_commit": "655f1f9687b12874a1cbf4434006916bd16a2893",
+        "evidence_refs": [
+          "docs/evidence/windows-tier-lib-modules/fixpoint/attestation.json",
+          "docs/evidence/windows-tier-lib-modules/fixpoint/summary.md"
+        ]
+      }
+    },
+    {
+      "id": "host-native-job-boundary",
+      "status": "closed",
+      "pr": 573,
+      "opened_at": "2026-08-17T10:46:50Z",
+      "reason": "the canonical deployment transport consumes only freshly fetched origin/main, so this branch cannot exercise its changed service launcher, stop path, and containment boundary as canonical post-change evidence before merge; only a post-merge canonical Linux rebuild plus a mainline contract replay can establish the boundary as a fixpoint",
+      "verification_mechanism_paths": [
+        "scripts/deploy.ps1",
+        "scripts/lib/host-native-launcher.ps1",
+        "scripts/self-referential-bootstrap-ledger.json"
+      ],
+      "verification_contract": {
+        "id": "host-native-job-boundary/v1",
+        "command_ids": [
+          "test-host-native-launcher",
+          "test-host-native-child-launch",
+          "test-platform-adapter",
+          "test-deploy-governance-static",
+          "test-verify-all",
+          "test-preflight-ports",
+          "test-kit-log-probe",
+          "test-deploy-target-registry",
+          "test-rebuild-test-deploy",
+          "test-remote-deploy-transport",
+          "test-host-native-conversion-service",
+          "test-self-referential-bootstrap",
+          "test-agent-governance-check",
+          "invoke-powershell-static",
+          "canonical-linux-rebuild",
+          "canonical-linux-deployment-verify"
+        ],
+        "contract_sha256": "fc5b3467646fc0953f88fceef16bf854dc18eb7f80d007b79d463b4bacb0b60a"
+      },
+      "bootstrap_evidence_refs": [
+        "docs/evidence/host-native-job-boundary/self-referential-bootstrap/README.md",
+        "docs/evidence/host-native-job-boundary/self-referential-bootstrap/verification.txt"
+      ],
+      "fixpoint": {
+        "reverified_at": "2026-08-17T11:17:02Z",
+        "mechanism_commit": "ef7518037d41b3d11800ee841e353d315c085c2c",
+        "evidence_refs": [
+          "docs/evidence/host-native-job-boundary/fixpoint/attestation.json",
+          "docs/evidence/host-native-job-boundary/fixpoint/summary.md"
+        ]
+      }
+    },
+    {
+      "id": "agent-governance-policy-wiring",
+      "status": "closed",
+      "pr": 572,
+      "opened_at": "2026-08-17T10:43:02Z",
+      "reason": "this PR rewires the required agent-governance adjudication suite: it adds the governance-policy gate and behaviour suite as required steps, deletes the 182 text assertions the rule document supersedes, and registers the module surface in the mechanism classification; the branch is judged by the surface it edits, so only a post-merge fixpoint replay from main can prove the wired mechanism against itself",
+      "repair_prs": [
+        579
+      ],
+      "verification_mechanism_paths": [
+        ".github/workflows/agent-governance.yml",
+        "scripts/self-referential-bootstrap-ledger.json",
+        "scripts/lib/self-referential-bootstrap.ps1",
+        "scripts/tests/test-agent-governance-check.ps1",
+        "scripts/tests/test-self-referential-bootstrap.ps1"
+      ],
+      "verification_contract": {
+        "id": "agent-governance-policy-wiring/v1",
+        "command_ids": [
+          "verify-governance-policy",
+          "test-agent-governance-policy",
+          "test-agent-governance-check",
+          "test-self-referential-bootstrap",
+          "test-pr-body-evidence",
+          "invoke-powershell-static"
+        ],
+        "contract_sha256": "8dc3130cb48cd290527f915d63dbecd3b9c8306c89f940dc27a32f3a13177036"
+      },
+      "bootstrap_evidence_refs": [
+        "docs/evidence/agent-governance-policy-wiring/self-referential-bootstrap/README.md",
+        "docs/evidence/agent-governance-policy-wiring/self-referential-bootstrap/verification.txt"
+      ],
+      "fixpoint": {
+        "reverified_at": "2026-08-18T04:11:25Z",
+        "mechanism_commit": "8b647d3492d50f02b2bdaa8b20f3f0670dfd7998",
+        "evidence_refs": [
+          "docs/evidence/agent-governance-policy-wiring/fixpoint/attestation.json",
+          "docs/evidence/agent-governance-policy-wiring/fixpoint/summary.md"
+        ]
+      }
+    },
+    {
+      "id": "agent-governance-policy-trust-boundary",
+      "status": "closed",
+      "pr": 579,
+      "opened_at": "2026-08-17T12:58:44Z",
+      "reason": "repairing the governance-policy classifier changes the trusted-host merge contract and therefore forces the base-owned verification plan to full-dispatch every required target; hosted run 32036393744 then proved the streaming CI adjudicator omitted the repository-pinned usd-core dependency and could not import pxr. Both the trusted-host contract and ci workflow are classified outside the original open entry surface, so this linked successor owns that exact verification trust boundary without widening its predecessor or weakening the product tests",
+      "successor_of": "agent-governance-policy-wiring",
+      "verification_mechanism_paths": [
+        "scripts/self-referential-bootstrap-ledger.json",
+        "agent-contracts/trusted-host-merge.contract.json",
+        ".github/workflows/ci.yml"
+      ],
+      "verification_contract": {
+        "id": "agent-governance-policy-trust-boundary/v1",
+        "command_ids": [
+          "verify-governance-policy",
+          "test-agent-governance-policy",
+          "test-agent-governance-check",
+          "test-self-referential-bootstrap",
+          "test-pr-body-evidence",
+          "invoke-powershell-static",
+          "test-trusted-host-merge",
+          "test-host-native-conversion-service",
+          "test-verification-plan"
+        ],
+        "contract_sha256": "b88a37af8d3800de0813d058b3349e25daebce0d39b6e212dc030243c0bcae2a"
+      },
+      "bootstrap_evidence_refs": [
+        "docs/evidence/agent-governance-policy-trust-boundary/self-referential-bootstrap/README.md",
+        "docs/evidence/agent-governance-policy-trust-boundary/self-referential-bootstrap/verification.txt"
+      ],
+      "fixpoint": {
+        "reverified_at": "2026-08-18T04:11:25Z",
+        "mechanism_commit": "f07c8f198f1fd3dd6c86ef827d7300eaf901fd77",
+        "evidence_refs": [
+          "docs/evidence/agent-governance-policy-trust-boundary/fixpoint/attestation.json",
+          "docs/evidence/agent-governance-policy-trust-boundary/fixpoint/summary.md"
+        ]
+      }
+    },
+    {
+      "id": "rebuild-test-deploy-pwsh7-child",
+      "status": "closed",
+      "pr": 586,
+      "opened_at": "2026-08-18T05:05:00Z",
+      "reason": "this PR changes the deploy child launcher in scripts/lib/rebuild-test-deploy.ps1 from Windows PowerShell 5.1 to PowerShell 7 because 5.1 mangles the embedded double quotes in Resolve-PlatformSystemPython version probe, so deploy.ps1 reported no usable system python and exited 2 on a host with Python 3.12; rebuild-test-deploy always replaces the checkout from freshly fetched origin/main, so the branch launcher can never run as canonical evidence before merge and only a post-merge local-windows rebuild can prove the changed launcher against itself",
+      "verification_mechanism_paths": [
+        "scripts/lib/rebuild-test-deploy.ps1",
+        "scripts/self-referential-bootstrap-ledger.json"
+      ],
+      "verification_contract": {
+        "id": "rebuild-test-deploy-pwsh7-child/v1",
+        "command_ids": [
+          "test-rebuild-test-deploy",
+          "test-platform-adapter",
+          "test-host-native-launcher",
+          "test-host-native-child-launch",
+          "test-deploy-target-registry",
+          "test-deploy-governance-static",
+          "test-self-referential-bootstrap",
+          "test-agent-governance-check",
+          "invoke-powershell-static"
+        ],
+        "contract_sha256": "b425887e7bd4ea8801ec645bbbf6511f542a1207c267e35230136b8bb435aa85"
+      },
+      "bootstrap_evidence_refs": [
+        "docs/evidence/rebuild-test-deploy-pwsh7-child/self-referential-bootstrap/README.md",
+        "docs/evidence/rebuild-test-deploy-pwsh7-child/self-referential-bootstrap/verification.txt"
+      ],
+      "fixpoint": {
+        "reverified_at": "2026-08-18T08:42:03Z",
+        "mechanism_commit": "fca2efa9ed9fa7034a9cb5e71513b1d4da73baaa",
+        "evidence_refs": [
+          "docs/evidence/rebuild-test-deploy-pwsh7-child/fixpoint/attestation.json",
+          "docs/evidence/rebuild-test-deploy-pwsh7-child/fixpoint/summary.md"
+        ]
+      }
+    },
+    {
+      "id": "autonomous-delivery-path-classifier",
+      "status": "closed",
+      "pr": 558,
+      "opened_at": "2026-08-17T07:13:57Z",
+      "reason": "the base-owned classifier cannot recognize the future autonomous delivery authority files, so this prerequisite must bootstrap those exact paths before the implementation pull request can bind complete debt",
+      "verification_mechanism_paths": [
+        "scripts/lib/self-referential-bootstrap.ps1",
+        "scripts/self-referential-bootstrap-ledger.json",
+        "scripts/tests/test-self-referential-bootstrap.ps1"
+      ],
+      "verification_contract": {
+        "id": "autonomous-delivery-path-classifier/v1",
+        "command_ids": [
+          "test-self-referential-bootstrap",
+          "test-agent-governance-check",
+          "invoke-powershell-static",
+          "scan-secret-patterns"
+        ],
+        "contract_sha256": "c4ec0b8682985e3cab7d09fac2fcc0dedd2dc0a6ef9ab426e2ff189ca42f6347"
+      },
+      "bootstrap_evidence_refs": [
+        "docs/evidence/autonomous-delivery-path-classifier/self-referential-bootstrap/README.md",
+        "docs/evidence/autonomous-delivery-path-classifier/self-referential-bootstrap/verification.txt"
+      ],
+      "fixpoint": {
+        "reverified_at": "2026-08-19T01:35:00Z",
+        "mechanism_commit": "6d39f0dab0335b5ed1006cce9e6a18f1159f1a22",
+        "evidence_refs": [
+          "docs/evidence/autonomous-delivery-path-classifier/fixpoint/attestation.json",
+          "docs/evidence/autonomous-delivery-path-classifier/fixpoint/summary.md"
+        ]
+      }
+    },
+    {
+      "id": "introduction-resolved-subject-binding",
+      "status": "closed",
+      "pr": 620,
+      "opened_at": "2026-08-19T03:05:00Z",
+      "reason": "the machine-truth comparator (sentinel subject resolution, reconcile ratchet, base-aware real-ledger required check) is itself the adjudicating mechanism being changed; the base-pinned mechanism can only execute the pre-change comparator and therefore cannot produce evidence about the post-change resolution semantics before merge",
+      "verification_mechanism_paths": [
+        "scripts/lib/openspec-machine-truth.mjs",
+        "scripts/self-referential-bootstrap-ledger.json",
+        "scripts/tests/test-self-referential-bootstrap.ps1",
+        "scripts/tests/verify-openspec-machine-truth.mjs"
+      ],
+      "verification_contract": {
+        "id": "introduction-resolved-subject-binding/v1",
+        "command_ids": [
+          "test-openspec-machine-truth",
+          "test-openspec-repository-lifecycle",
+          "test-openspec-ledger-reconciliation",
+          "verify-openspec-lifecycle"
+        ],
+        "contract_sha256": "4846c3f1df6582d9836ce24a404d9862bcc8036cfaacddb7c82c000a5ea02027"
+      },
+      "bootstrap_evidence_refs": [
+        "docs/evidence/introduction-resolved-subject-binding/self-referential-bootstrap/README.md",
+        "docs/evidence/introduction-resolved-subject-binding/self-referential-bootstrap/verification.txt"
+      ],
+      "fixpoint": {
+        "reverified_at": "2026-08-19T03:55:00Z",
+        "mechanism_commit": "ab6787778d98094f6d34992ab3024aacd841e6bf",
+        "evidence_refs": [
+          "docs/evidence/introduction-resolved-subject-binding/fixpoint/attestation.json",
+          "docs/evidence/introduction-resolved-subject-binding/fixpoint/summary.md"
+        ]
+      }
+    }
+  ]
 }
