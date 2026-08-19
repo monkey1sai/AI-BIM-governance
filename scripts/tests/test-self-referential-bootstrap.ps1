@@ -584,6 +584,10 @@ try {
         'test-kit-manager-api' = @{ Path = 'services/kit-manager-api/tests/test_kit_service_runtime_status.py'; Invocation = @('python', '-m', 'pytest', 'services/kit-manager-api/tests', '-q') }
         'test-kit-log-probe' = @{ Path = 'scripts/tests/test-kit-log-probe.ps1'; Invocation = @($pwshPrefix + 'scripts/tests/test-kit-log-probe.ps1') }
         'test-measure-session-baseline' = @{ Path = 'scripts/tests/test-measure-session-baseline.ps1'; Invocation = @($pwshPrefix + 'scripts/tests/test-measure-session-baseline.ps1') }
+        'test-openspec-machine-truth' = @{ Path = 'scripts/tests/test-openspec-machine-truth.mjs'; Invocation = @('node', '--test', 'scripts/tests/test-openspec-machine-truth.mjs', 'scripts/tests/test-openspec-machine-truth-cli.mjs') }
+        'test-openspec-repository-lifecycle' = @{ Path = 'scripts/tests/test-openspec-repository-lifecycle.mjs'; Invocation = @('node', '--test', 'scripts/tests/test-openspec-repository-lifecycle.mjs') }
+        'test-openspec-ledger-reconciliation' = @{ Path = 'scripts/tests/test-openspec-ledger-reconciliation.ps1'; Invocation = @($pwshPrefix + 'scripts/tests/test-openspec-ledger-reconciliation.ps1') }
+        'verify-openspec-lifecycle' = @{ Path = 'scripts/tests/verify-openspec-lifecycle.ps1'; Invocation = @($pwshPrefix + @('scripts/tests/verify-openspec-lifecycle.ps1', '-BaseRef', '<origin-main-sha>')) }
         'test-platform-adapter' = @{ Path = 'scripts/tests/test-platform-adapter.ps1'; Invocation = @($pwshPrefix + 'scripts/tests/test-platform-adapter.ps1') }
         'test-pr-body-evidence' = @{ Path = 'scripts/tests/test-pr-body-evidence.ps1'; Invocation = @($pwshPrefix + 'scripts/tests/test-pr-body-evidence.ps1') }
         'test-pr-review-agent' = @{ Path = 'scripts/tests/test-pr-review-agent.ps1'; Invocation = @($pwshPrefix + 'scripts/tests/test-pr-review-agent.ps1') }

@@ -1,8 +1,6 @@
 # introduction-resolved-subject-binding
 
-> **Status: deferred 2026-08-18**（使用者裁決 spec-first：規格先行落地，實作另案排程）。不計入 active WIP。
->
-> **重啟條件**：owner 明示排程 P2a 第一波實作（本 change tasks §1–§5），或任何 machine-truth consumer 因懸空 subject 實際 fail-closed 而需要提前落地時 thaw。thaw 前本 change 只是規格正本，不得據以修改任何 mechanism surface。
+> Thaw 紀錄：2026-08-18 以 deferred spec-first 開案；2026-08-19 owner 明示「把 P2a 第一波（含 tasks 2.6）的優先度往前提」，命中原重啟條件（owner 明示排程 P2a 第一波實作）→ thaw 為 active，第一波（tasks §1–§5）隨本次 thaw 同 PR 實作。前一日 2026-08-18 的四次 mainline 懸空事故（#602／#612／#617 修復鏈）亦獨立命中第二重啟條件（machine-truth consumer 實際 fail-closed）。
 
 ## Why（為什麼）
 
