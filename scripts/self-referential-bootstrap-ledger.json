@@ -735,7 +735,7 @@
     {
       "id": "ci-parallelization-agent-governance-shards",
       "status": "open",
-      "pr": 636,
+      "pr": 637,
       "opened_at": "2026-08-19T00:00:00Z",
       "reason": "required context agent-governance 由 pull_request 事件執行 PR 自己樹上的 agent-governance.yml，因此本 PR 把 suite 改成 matrix 之後的綠燈是自證，不能證明四個 shard 的聯集仍等於原本 31 個步驟；而 base-owned 的裁決者 pr-review-agent.yml 固定 checkout base.sha，base 樹上根本沒有 shard 結構與 shard 覆蓋斷言，無法執行也無法判定分片後的 gate 是否漏跑任何一支測試。只有 merge 後在 first-parent mainline 上以變更後的 workflow 與變更後的覆蓋斷言重跑一次，才能證明分片沒有靜默移除任何驗證。",
       "verification_mechanism_paths": [

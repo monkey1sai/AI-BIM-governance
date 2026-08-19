@@ -1,7 +1,7 @@
 # ci-parallelization-agent-governance-shards — self-referential bootstrap
 
 - `stack_kind=self_referential_bootstrap`
-- Originating PR: `#636`
+- Originating PR: `#637`
 - Ledger entry: `ci-parallelization-agent-governance-shards`
 - Verification contract: `ci-parallelization-agent-governance-shards/v1`
 - Contract SHA-256: `29f1314ad2121ff365ebe239d7fbcfcb084a42d89bf3aedd301c943d19c79cbf`
