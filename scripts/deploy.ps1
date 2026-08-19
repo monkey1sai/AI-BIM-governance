@@ -79,6 +79,10 @@ $libDir = Join-Path $PSScriptRoot 'lib'
 . (Join-Path $libDir 'host-native-launcher.ps1')
 . (Join-Path $libDir 'kit-log-probe.ps1')
 . (Join-Path $libDir 'design-assets.ps1')
+# Windows CAD extension cache DACL convergence (#625). The Linux hardener's
+# convergence step (an inode replacement) has no NTFS equivalent, so the Windows
+# side of the same trust boundary is converged here instead of being skipped.
+. (Join-Path $libDir 'cad-extension-cache-acl.ps1')
 
 if (-not (Test-Path -LiteralPath $RunDir)) {
     New-Item -ItemType Directory -Path $RunDir -Force | Out-Null
@@ -1335,6 +1339,45 @@ if (-not $SkipConversion -and (Get-PlatformName) -eq 'linux') {
         exit 2
     }
     Write-DeployTag -Tag 'ok' -Message 'CAD extension cache entrypoint permissions hardened' -LogPath $LogPath | Out-Null
+}
+
+# The runtime adapter enforces the same owner-private trust boundary on EVERY
+# platform (_path_components_are_owner_private -> _windows_path_component_is_owner_private),
+# but the Linux hardener above returns early on nt: its convergence step replaces
+# the entrypoint inode, which NTFS cannot do. Nothing converged the Windows cache
+# ACLs, so conversion failed at runtime with an unactionable converter_unavailable
+# whenever the inherited DACL carried a non-trusted writer (#625). Converge the
+# NTFS DACLs of the pinned chain here and fail closed on the same predicate.
+if (-not $SkipConversion -and (Get-PlatformName) -eq 'windows') {
+    # Pre-initialised and matched on 'passed' LAST: a hardener that could not run
+    # at all (missing library, unexpected throw) leaves $null here and must fail
+    # closed, never fall through to the success tag.
+    $windowsCadResult = $null
+    $windowsCadResult = Invoke-CadExtensionCacheWindowsHardening `
+        -StreamingRepoRoot (Join-Path $RepoRoot 'bim-streaming-server') `
+        -ConfiguredHoopsMain (Get-DeployEnvValue -Name 'STREAMING_CONVERSION_HOOPS_MAIN' -EnvFile $resolvedEnvFile -Default '')
+    $windowsCadStatus = if ($null -eq $windowsCadResult) { '' } else { [string]$windowsCadResult.Status }
+    if ($null -ne $windowsCadResult -and -not [string]::IsNullOrWhiteSpace([string]$windowsCadResult.StatusJson)) {
+        Add-Content -LiteralPath $LogPath -Value ([string]$windowsCadResult.StatusJson)
+    }
+    if ($windowsCadStatus -ceq 'passed') {
+        Write-DeployTag -Tag 'ok' -Message "CAD extension cache entrypoint permissions hardened ($($windowsCadResult.Diagnostic))" -LogPath $LogPath | Out-Null
+    }
+    elseif ($windowsCadStatus -ceq 'skipped') {
+        # Nothing cached yet, no pinned manifest in this deployment root, or an
+        # explicit override owns the entrypoint: there is no pinned chain to
+        # converge, and the runtime keeps its own unchanged gate for each case.
+        Write-DeployTag -Tag 'skip' -Message "CAD extension cache hardening skipped ($($windowsCadResult.ReasonKind)): $($windowsCadResult.Diagnostic)" -LogPath $LogPath | Out-Null
+    }
+    else {
+        # The diagnostic names the failing chain component and its untrusted SIDs,
+        # which is what the runtime message could not say.
+        $windowsCadReason = if ($null -eq $windowsCadResult) { 'hardener_unavailable' } else { [string]$windowsCadResult.ReasonKind }
+        $windowsCadDiagnostic = if ($null -eq $windowsCadResult) { 'the Windows CAD cache hardener returned no result' } else { [string]$windowsCadResult.Diagnostic }
+        Write-DeployTag -Tag 'fail' -Message "CAD extension cache permission hardening failed ($windowsCadReason): $windowsCadDiagnostic" -LogPath $LogPath | Out-Null
+        Print-FinalSummary -ExitCode 2 -FailedPhase 'Phase 2 (CAD extension cache hardening)'
+        exit 2
+    }
 }
 
 # fix: .env / .env.example missing-key merge
