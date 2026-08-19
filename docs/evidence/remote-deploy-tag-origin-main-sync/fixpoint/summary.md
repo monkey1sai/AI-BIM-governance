@@ -24,7 +24,7 @@ Entry 的 reason 指出：canonical deploy path 依契約只對**已 merge 的 `
 
 - 部署 commit：`b6ccc3c2224ef6b56d8ee241d3570eb4eefb42f7`（`origin/main` tip，其 first-parent 歷史包含 mechanism commit `4f55c26`），wrapper `deploy_exit=0`。
 - Deploy tag：`deploy-20260819-639227293146090441-002` → `b6ccc3c2224ef6b56d8ee241d3570eb4eefb42f7`，annotated tag，message `deploy target=canonical-linux exit=0 snapshot=20260819T094154Z-effective-env.json deployed=b6ccc3c…`；已 push，`git fetch --tags` 後於本機可解析（`git rev-parse deploy-20260819-639227293146090441-002^{commit}` 回 `b6ccc3c…`）。
-- 執行的正是變更後機制：operator 側 `scripts/lib/remote-deploy-transport.ps1` 的 blob 在 operator checkout HEAD（`e9abe507`，#647 分支 head）、mechanism commit `4f55c26`、`origin/main` 與 operator 工作樹 `git hash-object` 四處皆為同一顆 `5c7079c5463c691a1e252939ccd5fd8c6e9f8d31`，即 tag/sync 是由**含同步步驟的那份程式碼**執行的。
+- 執行的正是變更後機制：operator 側 `scripts/lib/remote-deploy-transport.ps1` 的 blob 在 operator checkout HEAD（`e9abe507`，位於 #647 的 feature branch `feat/remote-deploy-tag-sync-origin-main` 上，且為 #647 merged head `ad64ed6` 的祖先）、mechanism commit `4f55c26`、`origin/main` 與 operator 工作樹 `git hash-object` 四處皆為同一顆 `5c7079c5463c691a1e252939ccd5fd8c6e9f8d31`，即 tag/sync 是由**含同步步驟的那份程式碼**執行的。
 
 同步步驟成功的論證走 code path（`New-RemoteDeployTag`，mechanism commit 版本）：
 
