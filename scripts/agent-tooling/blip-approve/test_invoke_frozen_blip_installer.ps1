@@ -173,12 +173,14 @@ function Invoke-FreezeV3SchemaRegression {
         'runtime/psmodule/Microsoft.PowerShell.Security.dll',
         'runtime/psmodule/Microsoft.PowerShell.Commands.Utility.dll'
     )
+    # Authenticode signer binding is publisher provenance layered on the runtime_source
+    # SHA-256 pins. Upstream ripgrep ('runtime/codex-path/rg.exe') ships unsigned, so it
+    # is hash-pinned only; see build_blip_candidate.ps1 for the full rationale.
     $expectedSignerKeys = @(
         'runtime/pwsh.exe',
         'runtime/python.exe',
         'runtime/bin/codex.exe',
         'runtime/bin/codex-code-mode-host.exe',
-        'runtime/codex-path/rg.exe',
         'runtime/codex-resources/codex-command-runner.exe',
         'runtime/codex-resources/codex-windows-sandbox-setup.exe',
         'runtime/psmodule/Microsoft.PowerShell.Commands.Management.dll',
@@ -639,12 +641,14 @@ if ($BootstrapContext.Schema -cne 'blip-installer-bootstrap-context/v3' -or
         'runtime/psmodule/Microsoft.PowerShell.Security.dll',
         'runtime/psmodule/Microsoft.PowerShell.Commands.Utility.dll'
     )
+    # Authenticode signer binding is publisher provenance layered on the runtime_source
+    # SHA-256 pins. Upstream ripgrep ('runtime/codex-path/rg.exe') ships unsigned, so it
+    # is hash-pinned only; see build_blip_candidate.ps1 for the full rationale.
     $signerKeys = @(
         'runtime/pwsh.exe',
         'runtime/python.exe',
         'runtime/bin/codex.exe',
         'runtime/bin/codex-code-mode-host.exe',
-        'runtime/codex-path/rg.exe',
         'runtime/codex-resources/codex-command-runner.exe',
         'runtime/codex-resources/codex-windows-sandbox-setup.exe',
         'runtime/psmodule/Microsoft.PowerShell.Commands.Management.dll',
