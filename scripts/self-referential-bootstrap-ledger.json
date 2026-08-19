@@ -665,7 +665,7 @@
     },
     {
       "id": "autonomous-delivery-path-classifier",
-      "status": "open",
+      "status": "closed",
       "pr": 558,
       "opened_at": "2026-08-17T07:13:57Z",
       "reason": "the base-owned classifier cannot recognize the future autonomous delivery authority files, so this prerequisite must bootstrap those exact paths before the implementation pull request can bind complete debt",
@@ -688,7 +688,14 @@
         "docs/evidence/autonomous-delivery-path-classifier/self-referential-bootstrap/README.md",
         "docs/evidence/autonomous-delivery-path-classifier/self-referential-bootstrap/verification.txt"
       ],
-      "fixpoint": null
+      "fixpoint": {
+        "reverified_at": "2026-08-19T01:35:00Z",
+        "mechanism_commit": "6d39f0dab0335b5ed1006cce9e6a18f1159f1a22",
+        "evidence_refs": [
+          "docs/evidence/autonomous-delivery-path-classifier/fixpoint/attestation.json",
+          "docs/evidence/autonomous-delivery-path-classifier/fixpoint/summary.md"
+        ]
+      }
     }
   ]
 }

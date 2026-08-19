@@ -1,0 +1,13 @@
+{
+  "schema_version": "self-referential-fixpoint-attestation/v1",
+  "entry_id": "autonomous-delivery-path-classifier",
+  "mechanism_commit": "6d39f0dab0335b5ed1006cce9e6a18f1159f1a22",
+  "verification_contract_sha256": "c4ec0b8682985e3cab7d09fac2fcc0dedd2dc0a6ef9ab426e2ff189ca42f6347",
+  "result": "pass",
+  "commands": [
+    { "id": "test-self-referential-bootstrap", "exit_code": 0 },
+    { "id": "test-agent-governance-check", "exit_code": 0 },
+    { "id": "invoke-powershell-static", "exit_code": 0 },
+    { "id": "scan-secret-patterns", "exit_code": 0 }
+  ]
+}
