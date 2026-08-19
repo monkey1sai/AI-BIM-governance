@@ -35,6 +35,10 @@ const CHANGE_KEYS = [
   'subject_commit',
   'archive_debt',
 ];
+// introduction-resolved-subject-binding: `subject_binding` is the only optional
+// row key. Value domain is closed to the single string 'introduction'; any
+// other key stays fail-closed via the exact-keys check below.
+const CHANGE_KEYS_WITH_BINDING = [...CHANGE_KEYS, 'subject_binding'];
 
 export class MachineTruthInputError extends Error {
   constructor(code, field, message) {
@@ -87,7 +91,11 @@ function validateLedgerShape(ledger, label = 'ledger') {
   const ids = new Set();
   for (const [index, change] of ledger.changes.entries()) {
     const field = `${label}.changes[${index}]`;
-    assertExactKeys(change, CHANGE_KEYS, field);
+    const hasBinding = isObject(change) && Object.hasOwn(change, 'subject_binding');
+    assertExactKeys(change, hasBinding ? CHANGE_KEYS_WITH_BINDING : CHANGE_KEYS, field);
+    if (hasBinding && change.subject_binding !== 'introduction') {
+      fail('schema_invalid', `${field}.subject_binding`, 'subject_binding must be the string "introduction" when present.');
+    }
     if (typeof change.id !== 'string' || !CHANGE_ID.test(change.id) || ids.has(change.id)) {
       fail('schema_invalid', `${field}.id`, 'Change id is invalid or duplicated.');
     }
