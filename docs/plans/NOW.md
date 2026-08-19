@@ -13,6 +13,7 @@
     { "id": "a4-semantic-search-model-qa", "status": "deferred" },
     { "id": "add-single-gpu-session-ai-review-mvp", "status": "deferred" },
     { "id": "align-frontend-design-system-reference", "status": "deferred" },
+    { "id": "align-html-derived-design-gate-contract", "status": "active" },
     { "id": "cross-service-structured-log-baseline", "status": "deferred" },
     { "id": "gpu-session-baseline-and-idle-reclaim", "status": "active" },
     { "id": "implement-runtime-command-authority-and-rejection", "status": "active" },
