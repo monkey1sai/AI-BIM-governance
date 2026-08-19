@@ -6,7 +6,7 @@
 
 `web-viewer-sample` SHALL 在 `/console` 路徑提供 Edge Console；每個資料區塊與按鈕 SHALL 帶 provenance 標記（asbuilt / artifact / demo / p1 / p15）；SHALL NOT 顯示任何願景假數字。掛載 SHALL NOT 改變既有 viewer App 在其他路徑的行為。自 IA v2 起，無 hash 時的預設落地畫面為 `UnifiedShell`（`usePageHash()` 無 hash 回 `"home"` → `renderUnified` 的 `case "home"`），其側欄分組來自 `unified/fixtures.ts` 的 `navMain`／`apps`，標題為「工作台」與「AI 應用模組」；**兩段式導覽（Governance Platform 零 GPU / Omniverse Runtime 綁 GPU）僅存在於 `LegacyEdgeConsole`，且只在 legacy 深連結（`#overview`／`#issues`／`#minio` 等）才渲染**。本 requirement SHALL NOT 宣稱兩段式導覽是 `/console` 的預設落地畫面。
 
-#### Scenario: 預設落地畫面與 provenance 誠實標記
+#### Scenario: 兩段式導覽與 provenance 誠實標記
 
 - **WHEN** 操作員開啟 `/console`（無 legacy 深連結 hash）
 - **THEN** 前端 SHALL 渲染 `UnifiedShell`，側欄分組為「工作台」與「AI 應用模組」
@@ -29,7 +29,7 @@ Edge Console SHALL 讓 A1 在介面可驗證：顯示真實 IFC 實測 artifact 
 - **THEN** 前端 SHALL 顯示來自 committed evidence 的真實實測值（標 artifact，非 demo、非捏造）
 - **AND** SHALL 顯示規則集，其中已落地項（IDS 匯入 / BCF 匯出 / Issue DB）SHALL 標 `asbuilt`，不誤標待建
 
-#### Scenario: A2/A3 as-built 操作頁位於 legacy 深連結，nav route 為 fixture dock
+#### Scenario: A2/A3 為 as-built 操作頁並誠實標邊界
 
 - **WHEN** 操作員開啟 `#version-diff` 或 `#federation`
 - **THEN** 前端 SHALL 顯示經 coordinator proxy 操作後端的 as-built 操作頁（Diff Builder / Federation Builder）
@@ -65,7 +65,7 @@ Edge Console 的治理 client（A1 rule-run、A2 diff、A3 federation，以及 I
 - **AND** SHALL NOT fallback 到寫死預設 `http://127.0.0.1:8004`
 - **AND** 其 coordinator base SHALL 與 viewer（AppStream / Window）取得的值同源（同一 env 名）
 
-#### Scenario: 未設定時預設依落點分支
+#### Scenario: 未設定時預設與 viewer 一致
 
 - **WHEN** 環境未設定 `VITE_COORDINATOR_API_BASE` 亦未設定舊名 `VITE_COORDINATOR_BASE`，且前端由 coordinator `/ui` 提供（非 dev port）
 - **THEN** console 治理 client 的 coordinator base SHALL 為 `window.location.origin`（same-origin）
@@ -89,7 +89,7 @@ Edge Console 的治理 client（A1 rule-run、A2 diff、A3 federation，以及 I
 - **AND** SHALL NOT 直連 `:49100` / `:49101` / `:49102`
 - **AND** SHALL NOT 呼叫 `/api/governance/uploads` 或 `/api/governance/runtime/*` 等幻覺端點
 
-#### Scenario: coordinatorClient 供資料的頁面無遙測標未取得（非 fail，非捏造）
+#### Scenario: GPU / 首幀無遙測標未取得（非 fail，非捏造）
 
 - **WHEN** 操作員開啟由 `coordinatorClient` 供資料的 Coordinator / Intake 頁
 - **THEN** GPU / Kit 首幀 / conversion 秒數無真實遙測者 SHALL 標「未取得」（idle）

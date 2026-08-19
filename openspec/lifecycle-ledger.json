@@ -786,19 +786,18 @@
     },
     {
       "id": "converge-console-specs-to-shipped-behavior",
-      "status": "active",
+      "status": "archived",
       "owner": "web-viewer-sample",
-      "current_slice": "2026-08-18：9 項 STALE 全數收斂（unified 4＋edge-console 5），零 production 變更。3.2 三源 gate 綠、3.3 PR body 已備。3.1 維持未勾——npx openspec CLI 在本環境不可執行，不以其他檢查代稱通過。兩處刻意不追認而記為 known gap：a2/a3 fixture dock 捏造數字、#runtime fixture OpsPage 以固定值取代「未取得」。",
+      "current_slice": null,
       "blocked_by": [],
-      "last_verified": "2026-08-18T08:35:00Z",
+      "last_verified": "2026-08-19T02:23:07Z",
       "task_ledger": {
-        "completed": 11,
+        "completed": 12,
         "total": 12
       },
       "evidence_refs": [
-        "openspec/changes/converge-console-specs-to-shipped-behavior/proposal.md",
-        "openspec/changes/converge-console-specs-to-shipped-behavior/tasks.md",
-        "artifacts/2026-08-12-hifi-consumer-spec-scenario-audit.md"
+        "openspec/changes/archive/2026-08-19-converge-console-specs-to-shipped-behavior/proposal.md",
+        "openspec/changes/archive/2026-08-19-converge-console-specs-to-shipped-behavior/tasks.md"
       ],
       "subject_commit": "9fd7997709769ef444cb7fa5e411bf2952493d2c",
       "archive_debt": null
@@ -1526,7 +1525,7 @@
         "docs/plans/NOW.md",
         "scripts/tests/test-isolated-branch-stack.ps1"
       ],
-      "subject_commit": "d3ad3971115e9370cb037d59073f6f64e51bd3cc",
+      "subject_commit": "2828c76c17d670c9f52caed5eed683e5eba6b014",
       "archive_debt": null
     },
     {
