@@ -58,12 +58,17 @@ $runtimeKeys = @(
     'runtime/psmodule/Microsoft.PowerShell.Security.dll',
     'runtime/psmodule/Microsoft.PowerShell.Commands.Utility.dll'
 )
+# Authenticode is a publisher-provenance addition on top of the SHA-256 pins in
+# $runtimeKeys, not the integrity control itself. 'runtime/codex-path/rg.exe' is
+# upstream ripgrep, which ships unsigned (measured: Get-AuthenticodeSignature
+# reports NotSigned), so requiring a Valid signature there can only be satisfied
+# by a dishonest manifest. It keeps its runtime_source hash pin and is therefore
+# still byte-exact; it is out of scope for signer binding alone.
 $runtimeSignerKeys = @(
     'runtime/pwsh.exe',
     'runtime/python.exe',
     'runtime/bin/codex.exe',
     'runtime/bin/codex-code-mode-host.exe',
-    'runtime/codex-path/rg.exe',
     'runtime/codex-resources/codex-command-runner.exe',
     'runtime/codex-resources/codex-windows-sandbox-setup.exe',
     'runtime/psmodule/Microsoft.PowerShell.Commands.Management.dll',
@@ -259,9 +264,77 @@ function Get-CandidateMutationRightsMask {
         (Get-ReplacementRightsMask)
 }
 
+function Get-NormalizedAncestorPath {
+    # A bare Windows drive specifier ('C:') is a drive-RELATIVE path, not the
+    # drive root: Get-Acl and File.GetAttributes resolve it against the process
+    # working directory. An ancestor walk that trims the trailing separator off
+    # the root therefore stops inspecting the drive root and silently inspects
+    # the caller's working directory instead. Keep the root's separator; trim it
+    # everywhere else so ancestors compare exactly.
+    param([Parameter(Mandatory)][string]$LiteralPath)
+    $trimmed = ([string]$LiteralPath).TrimEnd('\')
+    if ($trimmed -cmatch '^[A-Za-z]:$') { return $trimmed + '\' }
+    return $trimmed
+}
+
+function Test-LocalDriveRootPath {
+    param([Parameter(Mandatory)][string]$LiteralPath)
+    return ([string]$LiteralPath) -cmatch '^[A-Za-z]:\\$'
+}
+
+function Assert-TrustedAncestorChain {
+    param(
+        [Parameter(Mandatory)][string]$LiteralPath,
+        [Parameter(Mandatory)][AllowEmptyCollection()][string[]]$TrustedSids,
+        [switch]$SkipAclInspection
+    )
+    $cursor = Get-NormalizedAncestorPath -LiteralPath ([System.IO.Path]::GetFullPath($LiteralPath))
+    while ($true) {
+        if (([System.IO.File]::GetAttributes($cursor) -band
+            [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw "Candidate output parent resolves through a reparse point: $cursor"
+        }
+        # The replacement-rights rule exists because a principal able to delete,
+        # rename, or re-ACL an ancestor directory can substitute the whole
+        # candidate path underneath it. A local drive root can be neither
+        # deleted nor renamed, so its Windows-default inherited ACEs cannot
+        # enable that substitution and the root itself is exempt. Every
+        # intermediate ancestor stays fully inspected, inherited ACEs included,
+        # and non-drive roots (UNC shares) are not exempt.
+        if (-not $SkipAclInspection -and -not (Test-LocalDriveRootPath -LiteralPath $cursor)) {
+            $acl = Get-Acl -LiteralPath $cursor
+            foreach ($rule in $acl.Access) {
+                if ($rule.AccessControlType -ne [System.Security.AccessControl.AccessControlType]::Allow -or
+                    ($rule.FileSystemRights -band (Get-ReplacementRightsMask)) -eq 0) {
+                    continue
+                }
+                try {
+                    $sid = $rule.IdentityReference.Translate(
+                        [System.Security.Principal.SecurityIdentifier]
+                    ).Value
+                }
+                catch { throw "Candidate output parent has an unresolvable replacement identity: $cursor" }
+                if ($TrustedSids -notcontains $sid) {
+                    throw "Untrusted SID $sid has replacement rights on candidate output ancestor: $cursor"
+                }
+            }
+        }
+        $next = [System.IO.Directory]::GetParent($cursor)
+        if ($null -eq $next) { break }
+        $parentPath = Get-NormalizedAncestorPath -LiteralPath $next.FullName
+        # Every real ancestor is strictly shorter than its child. Requiring that
+        # keeps the walk provably terminating instead of looping forever if a
+        # path form ever resolves to something other than an ancestor.
+        if ($parentPath.Length -ge $cursor.Length) {
+            throw "Candidate output parent has an invalid ancestor chain: $cursor"
+        }
+        $cursor = $parentPath
+    }
+}
+
 function Assert-TrustedOutputParent {
     param([Parameter(Mandatory)][string]$LiteralPath)
-    $parent = [System.IO.Path]::GetFullPath($LiteralPath).TrimEnd('\')
+    $parent = Get-NormalizedAncestorPath -LiteralPath ([System.IO.Path]::GetFullPath($LiteralPath))
     if (-not [System.IO.Directory]::Exists($parent)) {
         throw 'Candidate output parent must already exist.'
     }
@@ -289,36 +362,8 @@ function Assert-TrustedOutputParent {
             throw 'Production candidate output parent must explicitly deny CodexSandboxUsers mutation rights.'
         }
     }
-    $root = [System.IO.Path]::GetPathRoot($parent).TrimEnd('\')
-    $cursor = $parent
-    while ($true) {
-        if (([System.IO.File]::GetAttributes($cursor) -band
-            [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
-            throw "Candidate output parent resolves through a reparse point: $cursor"
-        }
-        if (-not $TestOnly) {
-            $acl = Get-Acl -LiteralPath $cursor
-            foreach ($rule in $acl.Access) {
-                if ($rule.AccessControlType -ne [System.Security.AccessControl.AccessControlType]::Allow -or
-                    ($rule.FileSystemRights -band (Get-ReplacementRightsMask)) -eq 0) {
-                    continue
-                }
-                try {
-                    $sid = $rule.IdentityReference.Translate(
-                        [System.Security.Principal.SecurityIdentifier]
-                    ).Value
-                }
-                catch { throw "Candidate output parent has an unresolvable replacement identity: $cursor" }
-                if ($identityState.Trusted -notcontains $sid) {
-                    throw "Untrusted SID $sid has replacement rights on candidate output ancestor: $cursor"
-                }
-            }
-        }
-        if ($cursor.TrimEnd('\') -ceq $root) { break }
-        $next = [System.IO.Directory]::GetParent($cursor)
-        if ($null -eq $next) { throw 'Candidate output parent has an invalid ancestor chain.' }
-        $cursor = $next.FullName.TrimEnd('\')
-    }
+    Assert-TrustedAncestorChain -LiteralPath $parent `
+        -TrustedSids $identityState.Trusted -SkipAclInspection:$TestOnly
     return $parent
 }
 

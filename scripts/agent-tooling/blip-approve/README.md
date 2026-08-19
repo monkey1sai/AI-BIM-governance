@@ -10,7 +10,7 @@ This directory persists the review broker source and offline regression tests. I
 - `run_blip_live_approve_once.ps1`: deterministic fixed-User broker for a counted GitHub `APPROVE`. Its byte-exact body is a distinct `ai-bim-automated-approve-only` schema with `automated=true` and `action=approve-only`; it cannot satisfy trusted `merge` or `merge-elevated` authority. It remains separate from all model execution and requires an exact canonical SHIP attestation.
 - `-TokenHealth`: token-only health parameter set. It is incompatible with PR/live parameters, does not require or inspect Codex `auth.json`, and exits before collector, model, binder, or post processes.
 - `invoke_protected_blip_candidate_builder.ps1`: separately reviewed owner-side launcher. It pins a fixed PowerShell host, itself, the builder, and an explicitly authorized reviewed-manifest hash, then starts the builder with `-NoProfile -NonInteractive` and a minimal fixed environment.
-- `build_blip_candidate.ps1`: deterministic candidate builder. Production requires an exact `blip-auto-approval-reviewed-build/v2` manifest that binds a clean source commit, distinct builder-launcher/builder/installer-launcher/verifier hashes, every candidate source/runtime hash, and every executable/DLL signer. Candidate output is inert data and deliberately excludes both launchers, the external verifier, builder, and tests.
+- `build_blip_candidate.ps1`: deterministic candidate builder. Production requires an exact `blip-auto-approval-reviewed-build/v2` manifest that binds a clean source commit, distinct builder-launcher/builder/installer-launcher/verifier hashes, every candidate source/runtime hash, and the Authenticode signer of every signed runtime executable/DLL (upstream ripgrep ships unsigned and is bound by hash only). Candidate output is inert data and deliberately excludes both launchers, the external verifier, builder, and tests.
 - `invoke_protected_blip_installer_launcher.ps1`: the only public owner-side installer entrypoint. It accepts only an exact fixed-host `-NoProfile -NonInteractive -File` command line, pins its own and the internal verifier bytes, clears the process environment, then executes the strict-UTF-8 verifier bytes in that same process with a fresh reference-equal capability and exact launcher context.
 - `invoke_protected_blip_installer.ps1`: internal verifier source. It refuses file-based execution, requires the process-local launcher proof plus the launcher's exact OS command line, validates the reviewed v2 manifest and installer-launcher/verifier/bootstrap tuple, and forwards pinned provenance streams to the in-memory bootstrap.
 - `invoke_frozen_blip_installer.ps1`: candidate inner bootstrap, executed only as verified in-memory bytes by the external verifier.
@@ -31,7 +31,7 @@ The protected build/install schemas intentionally use fixed inventories. The off
 | reviewed-build v2 top-level fields | 9 |
 | candidate source files | 12 |
 | runtime inputs | 15 |
-| runtime executable/DLL signers | 10 |
+| runtime executable/DLL signers | 9 |
 | candidate-freeze v3 fields | 7 |
 | launcher-context v1 fields | 15 |
 | internal verifier parameters | 8 |

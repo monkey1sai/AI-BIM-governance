@@ -18,6 +18,9 @@ $runtimeRoot = Join-Path $testRoot 'runtime-fixture'
 $candidateOne = Join-Path $testRoot 'candidate-one'
 $candidateTwo = Join-Path $testRoot 'candidate-two'
 $junctionParent = $null
+# Rule (2) ancestor-ACL coverage has to live directly under a real drive root,
+# because every path under the user profile carries profile ACEs by design.
+$ancestorProbeRoot = $null
 
 function Assert-True {
     param([Parameter(Mandatory)][bool]$Condition, [Parameter(Mandatory)][string]$Message)
@@ -46,6 +49,65 @@ function Assert-ExactNames {
     for ($index = 0; $index -lt $expectedSorted.Count; $index += 1) {
         Assert-True ($actualSorted[$index] -ceq $expectedSorted[$index]) "$Label differs."
     }
+}
+
+function Get-BuilderLiteralArray {
+    param(
+        [Parameter(Mandatory)][System.Management.Automation.Language.ScriptBlockAst]$Ast,
+        [Parameter(Mandatory)][string]$Name
+    )
+    $assignments = @($Ast.FindAll(
+        {
+            param($candidate)
+            $candidate -is [System.Management.Automation.Language.AssignmentStatementAst] -and
+                $candidate.Left -is [System.Management.Automation.Language.VariableExpressionAst] -and
+                $candidate.Left.VariablePath.UserPath -ceq $Name
+        },
+        $true
+    ))
+    if ($assignments.Count -ne 1) {
+        throw "Candidate builder must assign exactly one literal inventory: $Name"
+    }
+    return @($assignments[0].Right.FindAll(
+        {
+            param($candidate)
+            $candidate -is [System.Management.Automation.Language.StringConstantExpressionAst]
+        },
+        $true
+    ) | ForEach-Object { $_.Value })
+}
+
+function New-ProtectedProbeDirectory {
+    param(
+        [Parameter(Mandatory)][string]$LiteralPath,
+        [Parameter(Mandatory)][System.Security.Principal.SecurityIdentifier]$Owner,
+        [Parameter(Mandatory)][string[]]$AllowFullControlSids,
+        [AllowEmptyCollection()][string[]]$AllowReplacementSids = @()
+    )
+    $security = [System.Security.AccessControl.DirectorySecurity]::new()
+    $security.SetOwner($Owner)
+    $security.SetAccessRuleProtection($true, $false)
+    $inheritance = [System.Security.AccessControl.InheritanceFlags]::ContainerInherit -bor
+        [System.Security.AccessControl.InheritanceFlags]::ObjectInherit
+    foreach ($sid in $AllowFullControlSids) {
+        $security.AddAccessRule([System.Security.AccessControl.FileSystemAccessRule]::new(
+            [System.Security.Principal.SecurityIdentifier]::new($sid),
+            [System.Security.AccessControl.FileSystemRights]::FullControl,
+            $inheritance,
+            [System.Security.AccessControl.PropagationFlags]::None,
+            [System.Security.AccessControl.AccessControlType]::Allow
+        ))
+    }
+    foreach ($sid in $AllowReplacementSids) {
+        $security.AddAccessRule([System.Security.AccessControl.FileSystemAccessRule]::new(
+            [System.Security.Principal.SecurityIdentifier]::new($sid),
+            [System.Security.AccessControl.FileSystemRights]::Delete,
+            $inheritance,
+            [System.Security.AccessControl.PropagationFlags]::None,
+            [System.Security.AccessControl.AccessControlType]::Allow
+        ))
+    }
+    [void][System.IO.FileSystemAclExtensions]::CreateDirectory($security, $LiteralPath)
 }
 
 function Get-BuilderFunction {
@@ -98,12 +160,14 @@ try {
         'bot/scripts/ship_gate_packet.py'
     )
     $runtimeKeys = @($runtimeFiles | ForEach-Object { 'runtime/' + $_ })
+    # Authenticode signer binding is publisher provenance layered on the runtime_source
+    # SHA-256 pins. Upstream ripgrep ('runtime/codex-path/rg.exe') ships unsigned, so it
+    # is hash-pinned only; see build_blip_candidate.ps1 for the full rationale.
     $runtimeSignerKeys = @(
         'runtime/pwsh.exe',
         'runtime/python.exe',
         'runtime/bin/codex.exe',
         'runtime/bin/codex-code-mode-host.exe',
-        'runtime/codex-path/rg.exe',
         'runtime/codex-resources/codex-command-runner.exe',
         'runtime/codex-resources/codex-windows-sandbox-setup.exe',
         'runtime/psmodule/Microsoft.PowerShell.Commands.Management.dll',
@@ -372,6 +436,68 @@ try {
     Assert-ReviewedManifestRejected -Json ($zeroCommit | ConvertTo-Json -Depth 6 -Compress) `
         -Label 'zero source commit'
 
+    Assert-ExactNames `
+        -Actual @(Get-BuilderLiteralArray -Ast $builderAst -Name 'runtimeSignerKeys') `
+        -Expected $runtimeSignerKeys -Label 'Builder runtime signer inventory'
+    Assert-ExactNames `
+        -Actual @(Get-BuilderLiteralArray -Ast $builderAst -Name 'runtimeKeys') `
+        -Expected $runtimeKeys -Label 'Builder runtime source inventory'
+    Assert-True ($runtimeSignerKeys.Count -eq 9) `
+        'Reviewed signer inventory is not the exact nine-entry contract.'
+    Assert-True ($runtimeSignerKeys -cnotcontains 'runtime/codex-path/rg.exe') `
+        'Unsigned upstream ripgrep must not be bound by an unobtainable Authenticode signer.'
+    Assert-True ($runtimeKeys -ccontains 'runtime/codex-path/rg.exe') `
+        'Unsigned upstream ripgrep lost its runtime_source SHA-256 pin.'
+
+    $ancestorFunctions = @(
+        'Get-NormalizedAncestorPath',
+        'Test-LocalDriveRootPath',
+        'Get-ReplacementRightsMask',
+        'Assert-TrustedAncestorChain'
+    ) | ForEach-Object { Get-BuilderFunction -Ast $builderAst -Name $_ }
+    . ([ScriptBlock]::Create(($ancestorFunctions -join "`n")))
+
+    # A bare 'C:' is drive-relative: Get-Acl would silently inspect the process
+    # working directory instead of the drive root, so the ancestor walk must
+    # normalize it back to the root form.
+    Assert-True ((Get-NormalizedAncestorPath -LiteralPath 'C:') -ceq 'C:\') `
+        'Ancestor walk did not normalize a bare drive specifier to the drive root.'
+    Assert-True ((Get-NormalizedAncestorPath -LiteralPath 'C:\') -ceq 'C:\') `
+        'Ancestor walk did not preserve the drive root form.'
+    Assert-True ((Get-NormalizedAncestorPath -LiteralPath 'C:\Users\') -ceq 'C:\Users') `
+        'Ancestor walk did not trim a non-root trailing separator.'
+    Assert-True (Test-LocalDriveRootPath -LiteralPath 'C:\') `
+        'Drive root was not recognized as the undeletable ancestor.'
+    foreach ($nonRoot in @('C:\Users', 'C:', '\\server\share', '\\server\share\dir')) {
+        Assert-True (-not (Test-LocalDriveRootPath -LiteralPath $nonRoot)) `
+            "Rule (2) exemption incorrectly covers a deletable or renameable ancestor: $nonRoot"
+    }
+
+    $probeIdentity = [System.Security.Principal.WindowsIdentity]::GetCurrent()
+    $probeTrusted = @($probeIdentity.User.Value, 'S-1-5-18', 'S-1-5-32-544')
+    $ancestorProbeRoot = Join-Path (
+        [System.IO.Path]::GetPathRoot([System.IO.Path]::GetTempPath())
+    ) ('blip-ancestor-probe-' + [Guid]::NewGuid().ToString('N'))
+    New-ProtectedProbeDirectory -LiteralPath $ancestorProbeRoot `
+        -Owner $probeIdentity.User -AllowFullControlSids $probeTrusted
+    # Positive: a step0-shaped owner-protected parent whose only remaining
+    # ancestor is the drive root must pass the production ancestor contract.
+    Assert-TrustedAncestorChain -LiteralPath $ancestorProbeRoot -TrustedSids $probeTrusted
+    # Negative: the drive-root exemption must not leak to intermediate
+    # ancestors. 'Everyone' with Delete on a middle directory still fails.
+    $untrustedMiddle = Join-Path $ancestorProbeRoot 'untrusted-middle'
+    New-ProtectedProbeDirectory -LiteralPath $untrustedMiddle `
+        -Owner $probeIdentity.User -AllowFullControlSids $probeTrusted `
+        -AllowReplacementSids @('S-1-1-0')
+    $untrustedLeaf = Join-Path $untrustedMiddle 'leaf'
+    New-ProtectedProbeDirectory -LiteralPath $untrustedLeaf `
+        -Owner $probeIdentity.User -AllowFullControlSids $probeTrusted
+    $ancestorRejected = $false
+    try { Assert-TrustedAncestorChain -LiteralPath $untrustedLeaf -TrustedSids $probeTrusted }
+    catch { $ancestorRejected = $_.Exception.Message -match 'replacement rights on candidate output ancestor' }
+    Assert-True $ancestorRejected `
+        'Ancestor chain accepted an intermediate directory an untrusted SID can delete.'
+
     $installerText = Get-Content -Raw -LiteralPath $installer
     $innerText = Get-Content -Raw -LiteralPath $innerBootstrap
     Assert-True ($installerText -match "build_profile[\s\S]+PRODUCTION") `
@@ -391,6 +517,9 @@ try {
 finally {
     if ($null -ne $junctionParent -and (Test-Path -LiteralPath $junctionParent)) {
         Remove-Item -LiteralPath $junctionParent -Force
+    }
+    if ($null -ne $ancestorProbeRoot -and (Test-Path -LiteralPath $ancestorProbeRoot)) {
+        Remove-Item -LiteralPath $ancestorProbeRoot -Recurse -Force
     }
     if (Test-Path -LiteralPath $testRoot) {
         Remove-Item -LiteralPath $testRoot -Recurse -Force
