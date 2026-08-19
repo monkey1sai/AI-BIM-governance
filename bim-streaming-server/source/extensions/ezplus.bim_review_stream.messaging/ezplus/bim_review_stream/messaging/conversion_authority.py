@@ -312,16 +312,30 @@ class StreamingConversionStore:
         idempotency_key = _safe_id(str(event.get("idempotency_key") or event_id), "idempotency_key")
         request_fingerprint = _request_fingerprint(event)
         existing = self._find_job_by_idempotency_key(idempotency_key)
+        superseded: dict[str, Any] | None = None
         if existing is not None:
             existing_fingerprint = existing.get("request_fingerprint")
             if existing_fingerprint and existing_fingerprint != request_fingerprint:
                 raise ConversionRequestError(409, "Idempotency key already belongs to a different conversion request.")
-            if not existing.get("trace_id"):
-                existing["trace_id"] = str(existing["conversion_job_id"])
-                self._write_job(existing)
-            replay = dict(existing)
-            replay["idempotent_replay"] = True
-            return replay
+            if str(existing.get("status") or "") == "failed":
+                # A terminal failure is the one state a replay cannot serve. The caller is
+                # asking again precisely because the previous attempt produced nothing
+                # usable, and the failure is often bound to inputs that no longer exist -
+                # a MinIO re-trigger re-downloads the IFC to a fresh cache path while the
+                # failed job still points at the deleted one, so every retrigger returned
+                # the same dead record and the job's own `recovery_action:
+                # retrigger_required` could never be satisfied. Start a new attempt under
+                # the same idempotency key instead. Lookup is newest-first, so the new job
+                # supersedes this one for later callers; the failed record is kept for
+                # audit and back-linked below.
+                superseded = existing
+            else:
+                if not existing.get("trace_id"):
+                    existing["trace_id"] = str(existing["conversion_job_id"])
+                    self._write_job(existing)
+                replay = dict(existing)
+                replay["idempotent_replay"] = True
+                return replay
 
         ifc_artifact = _ifc_artifact(event)
         conversion_job_id = f"stream_conv_{datetime.now(UTC).strftime('%Y%m%d%H%M%S')}_{uuid4().hex[:8]}"
@@ -335,6 +349,8 @@ class StreamingConversionStore:
             "event_id": event_id,
             "idempotency_key": idempotency_key,
             "request_fingerprint": request_fingerprint,
+            "attempt": (int(superseded.get("attempt") or 1) + 1) if superseded is not None else 1,
+            "retry_of": str(superseded["conversion_job_id"]) if superseded is not None else None,
             "event_type": event["event_type"],
             "correlation_id": _safe_id(str(event.get("correlation_id") or ""), "correlation_id"),
             "tenant_id": _safe_id(str(event.get("tenant_id") or "tenant_demo_001"), "tenant_id"),
@@ -363,6 +379,9 @@ class StreamingConversionStore:
             },
         }
         self._write_job(job)
+        if superseded is not None:
+            superseded["superseded_by"] = conversion_job_id
+            self._write_job(superseded)
         self._log_conversion_lifecycle(job, status="queued", phase="start")
         return job
 
