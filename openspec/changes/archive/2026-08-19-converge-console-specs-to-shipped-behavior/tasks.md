@@ -24,7 +24,7 @@ SHALL NOT 把 UNVERIFIABLE 項當成已驗證。
 
 ## 3. 收尾
 
-- [ ] 3.1 `npx openspec validate converge-console-specs-to-shipped-behavior --strict` 通過 —— **本機不可執行**：`npx openspec@latest` 在此環境回 `could not determine executable to run`（已試兩次），repo 亦未安裝該 CLI。維持未勾，不以其他檢查代稱通過
+- [x] 3.1 `npx openspec validate converge-console-specs-to-shipped-behavior --strict` 通過 —— 2026-08-19 於 main（#616 merge 後，HEAD 97668b0 之 worktree）重測：exit 0、輸出 `Change 'converge-console-specs-to-shipped-behavior' is valid`。先前「本機不可執行」（`npx openspec@latest` 回 `could not determine executable to run`）係當時環境狀態，已於 2026-08-18 證偽並記錄於 issue #611；本次依 owner 指示重測後勾選
 - [x] 3.2 `node scripts/tests/verify-openspec-repository-lifecycle.mjs` exit 0：`current=12 archived=111 now=12 change_dirs=12 archive_dirs=111`，三源一致
 - [x] 3.3 PR body 誠實揭露：本 change 只收斂措辭、零 production 變更；6 項 UNVERIFIABLE 明列為
       **不在範圍**且仍未驗證；`migrate-console-to-hifi-design` 7.4 維持 unchecked
