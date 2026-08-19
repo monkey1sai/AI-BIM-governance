@@ -399,6 +399,18 @@ Archive rejection fixture.
     Assert-Equal 1 $deferredArchiveResult.ExitCode 'archive containing any deferred marker fails closed'
     Write-Utf8Text -Path (Join-Path $archiveFixtureRoot 'proposal.md') -Value $adoptedArchiveProposal
 
+    # The PowerShell parser mirrors the canonical JS lifecycle vocabulary: an adopted
+    # proposal is completed while preserving the repository marker for diagnostics.
+    Write-Utf8Text -Path (Join-Path $alphaRoot 'proposal.md') -Value $adoptedArchiveProposal
+    try {
+        $activeAdoptedState = Get-OpenSpecProposalState -ChangeDirectory $alphaRoot -TrustedRoot $repoRoot
+        Assert-Equal 'adopted' $activeAdoptedState.RawStatus 'adopted marker preserves raw proposal status'
+        Assert-Equal 'completed' $activeAdoptedState.LifecycleStatus 'adopted marker normalizes to completed'
+        Assert-True (-not $activeAdoptedState.IsDeferred) 'adopted marker is not deferred'
+    } finally {
+        Write-Utf8Text -Path (Join-Path $alphaRoot 'proposal.md') -Value $activeProposal
+    }
+
     $noLedgerInventory = Invoke-Reconciler -Root $repoRoot -Mode Inventory -OpenSpecList $openSpecPath
     $noLedgerReconcile = Invoke-Reconciler -Root $repoRoot -Mode Reconcile -OpenSpecList $openSpecPath
     Assert-Equal 0 $noLedgerInventory.ExitCode 'inventory without machine state remains report-only'
