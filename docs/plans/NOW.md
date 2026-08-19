@@ -10,7 +10,6 @@
   "schema_version": "openspec-now-view/v1",
   "scope": "current",
   "changes": [
-    { "id": "a4-console-convergence", "status": "active" },
     { "id": "a4-semantic-search-model-qa", "status": "deferred" },
     { "id": "add-single-gpu-session-ai-review-mvp", "status": "deferred" },
     { "id": "align-frontend-design-system-reference", "status": "deferred" },

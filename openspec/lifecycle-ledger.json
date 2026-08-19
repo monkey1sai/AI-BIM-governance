@@ -189,18 +189,18 @@
     },
     {
       "id": "a4-console-convergence",
-      "status": "active",
+      "status": "archived",
       "owner": "governance-service",
-      "current_slice": "5.x 全結 2026-08-19（PR 本號待補）：5.1 前端五項綠重跑於本 head；5.2 UNKNOWN gate 如實；5.5 crosswalk 已更新母版 proposal Status block。change 29/29，待 archive（獨立後續 PR）。",
+      "current_slice": "5.x 收尾 PR 為 #638（前一輪 current_slice 的「PR 本號待補」即指 #638，於本 PR 回填）；29/29 全數結案，change 目錄已移入 openspec/changes/archive/2026-08-19-a4-console-convergence，delta spec 已同步 canonical openspec/specs/a4-semantic-search/spec.md。母版 a4-semantic-search-model-qa 維持 deferred（四項重啟條件僅第 1 項達成）。",
       "blocked_by": [],
-      "last_verified": "2026-08-19T05:58:18Z",
+      "last_verified": "2026-08-19T07:30:00Z",
       "task_ledger": {
         "completed": 29,
         "total": 29
       },
       "evidence_refs": [
-        "openspec/changes/a4-console-convergence/proposal.md",
-        "openspec/changes/a4-console-convergence/tasks.md"
+        "openspec/changes/archive/2026-08-19-a4-console-convergence/proposal.md",
+        "openspec/changes/archive/2026-08-19-a4-console-convergence/tasks.md"
       ],
       "subject_commit": "9e8ee5fb4d5806b6754ab194c7a3946681f0f803",
       "archive_debt": null,
