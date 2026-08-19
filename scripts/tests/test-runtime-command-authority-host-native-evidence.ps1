@@ -95,6 +95,15 @@ Assert-True ($e2e -match [regex]::Escape('ignoreDefaultArgs: [playwrightDisableF
 Assert-True ($e2e -match [regex]::Escape('...playwrightChromiumDisabledFeatures') -and $e2e -match [regex]::Escape('"LocalNetworkAccessChecksWebSockets"')) 'E2E preserves Playwright disabled features while adding the WebSocket LNA gate'
 Assert-True ($e2e -match [regex]::Escape('LocalNetworkAccessChecksWebSockets')) 'E2E disables only the headless Chromium WebSocket LNA gate'
 Assert-True (-not ($browserLaunchSurface -match '(?<![A-Za-z0-9_])LocalNetworkAccessChecks(?!WebSockets|[A-Za-z0-9_])')) 'E2E and inherited Playwright config do not disable the broader Chromium LNA parent gate'
+
+# Playwright's bundled Chromium has no proprietary codecs, so it cannot negotiate
+# a video track against Kit's NVENC H.264 livestream and the first-frame wait can
+# only time out. The evidence case must drive the real Chrome install, matching
+# the one repo path that has actually captured a first frame.
+Assert-True ($e2e -match [regex]::Escape('channel: "chrome"')) 'E2E drives the real Chrome install rather than codec-less bundled Chromium'
+Assert-True ($e2e -match [regex]::Escape('--autoplay-policy=no-user-gesture-required')) 'E2E lets the probe page start playback without a user gesture'
+Assert-True (-not ($e2e -match [regex]::Escape('await streamer.connect'))) 'E2E mirrors production by not awaiting connect(), so onStart owns the readiness timeout'
+Assert-True ($e2e -match [regex]::Escape('probe.connectSettled.push')) 'E2E records connect settlement so an onStart timeout names its failure mode'
 $expiryWaitIndex = $e2e.IndexOf('await page.waitForTimeout(expiryWaitMs)')
 $primaryLeaseIndex = $e2e.IndexOf('const primary = await createSession')
 $wrongSessionLeaseIndex = $e2e.IndexOf('const wrongSession = await createSession')
