@@ -19,7 +19,6 @@
     { "id": "implement-runtime-command-authority-and-rejection", "status": "active" },
     { "id": "introduce-viewer-app-integration-surface", "status": "deferred" },
     { "id": "introduction-resolved-subject-binding", "status": "active" },
-    { "id": "isolated-branch-stack-browser-e2e", "status": "active" },
     { "id": "migrate-console-to-hifi-design", "status": "active" },
     { "id": "rvt-ifc-usdc-lineage", "status": "deferred" }
   ]
