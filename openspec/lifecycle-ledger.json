@@ -191,19 +191,20 @@
       "id": "a4-console-convergence",
       "status": "active",
       "owner": "governance-service",
-      "current_slice": "1.1-1.3 盤點完成 2026-08-17：baseline 三件全綠（governance A4 183／coordinator 857／viewer 1080）；conflict-plan.md 落 artifacts/a4-console-convergence/（27 檔 153 hunks 逐檔調和方向，原 126 為 7 月快照）；impact 現值 LOW 但 createCoordinatorApp 與歷史 CRITICAL 不符，實作輪須 re-index 重測。下一步=2.x 後端調和（main 基準）；4.0.4 卡 owner 唯讀 MinIO 憑證。",
+      "current_slice": "4.x 隔離 stack 實跑收斂完成 2026-08-19（run r20260819a：manifest head_sha=76ce813＝pre-rebase 實跑 commit；branch 已 rebase，subject 綁 rebase 後 evidence commit 1194b5c＋sentinel）：seed 真 MinIO job（downloaded＋etag 重驗）、require-real E2E 8/8、7 項 live probe（degraded completion_scope=not_executed／table_only 停用 Issue+3D／retry_of_query_id 回帶）、部署區 listener 前後零變動；evidence 依 PUBLIC 隱私邊界入庫（seed-result/state/logs 只記路徑）。下一步=5.x 收尾（5.1 前端驗證五項綠已實跑、5.3/5.4 PR body 揭露、5.5 merge 後 crosswalk）。",
       "blocked_by": [],
-      "last_verified": "2026-08-17T07:45:00Z",
+      "last_verified": "2026-08-19T03:20:00Z",
       "task_ledger": {
-        "completed": 6,
+        "completed": 24,
         "total": 29
       },
       "evidence_refs": [
         "openspec/changes/a4-console-convergence/proposal.md",
         "openspec/changes/a4-console-convergence/tasks.md"
       ],
-      "subject_commit": "62f33f5362a5691ce502e6992aef277e9c3d220d",
-      "archive_debt": null
+      "subject_commit": "1194b5cd79d3fc513f340d1c165b00516f2ffa81",
+      "archive_debt": null,
+      "subject_binding": "introduction"
     },
     {
       "id": "a4-semantic-search-model-qa",
@@ -1505,27 +1506,26 @@
         "openspec/changes/introduction-resolved-subject-binding/proposal.md",
         "openspec/changes/introduction-resolved-subject-binding/tasks.md"
       ],
-      "subject_commit": "51adda7658d098025fc163b5958ca495150eb5e0",
+      "subject_commit": "ab6787778d98094f6d34992ab3024aacd841e6bf",
       "archive_debt": null
     },
     {
       "id": "isolated-branch-stack-browser-e2e",
-      "status": "active",
+      "status": "archived",
       "owner": "repository-maintainer",
-      "current_slice": "PR #431 主體已 merge（cdd1f2f）；reviewer ACCEPT（P1/P2=0）。2026-08-11：4.3 以 gate 重跑補勾（test-agent-governance-check 45 pass／0 fail @7929d74）。31/33；5.2/5.3 與 A4 manifest/PNG/runtime ID 維持 gap（a4-console-convergence 缺口），fixture seed 由 #434 持有。GitNexus unavailable/UNKNOWN 紀錄維持，非 pass。",
+      "current_slice": null,
       "blocked_by": [],
-      "last_verified": "2026-08-11T11:40:00Z",
+      "last_verified": "2026-08-19T03:03:00Z",
       "task_ledger": {
-        "completed": 31,
+        "completed": 33,
         "total": 33
       },
       "evidence_refs": [
-        "openspec/changes/isolated-branch-stack-browser-e2e/proposal.md",
-        "openspec/changes/isolated-branch-stack-browser-e2e/tasks.md",
-        "docs/plans/NOW.md",
-        "scripts/tests/test-isolated-branch-stack.ps1"
+        "openspec/changes/archive/2026-08-19-isolated-branch-stack-browser-e2e/proposal.md",
+        "openspec/changes/archive/2026-08-19-isolated-branch-stack-browser-e2e/tasks.md"
       ],
-      "subject_commit": "96b6206e32742ec33e6c4031ab63564e9468ada2",
+      "subject_commit": "a1b53c38c93259775ee871e4afd825baa430975e",
+      "subject_binding": "introduction",
       "archive_debt": null
     },
     {
