@@ -1,0 +1,85 @@
+stack_kind=self_referential_bootstrap
+ledger_entry=ci-parallelization-agent-governance-shards
+verification_contract=ci-parallelization-agent-governance-shards/v1
+contract_sha256=29f1314ad2121ff365ebe239d7fbcfcb084a42d89bf3aedd301c943d19c79cbf
+subject=branch feat/ci-suite-shard-and-caches (base origin/main 7e55de6)
+scope=local pre-PR verification; hosted matrix wall-clock numbers are NOT claimed here
+
+shard-union (V1, spec 11): four legs vs the base 31-step set
+method=parse .github/workflows/agent-governance.yml at origin/main and at branch HEAD,
+       take every jobs.suite step that has `run`, group the branch steps by their
+       `if: matrix.shard == '<x>'`, then compare the union against the base set with
+       every non-`if` key of the step compared verbatim.
+declared_shards=[core, openspec, capability, evidence]
+fail_fast=false
+base_run_steps=31
+head_run_steps=31
+union_run_steps=31
+leg_core=13 steps
+leg_openspec=4 steps
+leg_capability=1 step
+leg_evidence=13 steps
+result=PASS - union == base 31-step set, verbatim, no step in two legs, no step missing,
+       no step body (name/shell/run) changed, and neither setup step (Checkout, Setup
+       pinned Node.js) is shard-bound.
+
+agent-governance-shard-coverage (new machine assertion, spec 2.4)
+command=pwsh -NoProfile -NonInteractive -File scripts/tests/test-agent-governance-check.ps1
+result=exit 0; [test-agent-governance-check] all assertions passed
+
+agent-governance-shard-coverage negative 1 (typo shard name)
+mutation=Run base-gate capability detection tests -> if: matrix.shard == 'capabilty'
+result=exit 1; ASSERT FAILED: suite step 'Run base-gate capability detection tests'
+       names a declared shard, not the unreachable 'capabilty'
+reverted=yes
+
+agent-governance-shard-coverage negative 2 (missing shard membership)
+mutation=Run PNG pre-decode bound tests -> `if:` line deleted
+result=exit 1; ASSERT FAILED: suite step 'Run PNG pre-decode bound tests' declares a
+       shard; a run step without one is skipped in every leg
+reverted=yes; re-run after revert exit 0 and V1 re-run PASS
+
+test-agent-governance-check
+command=pwsh -NoProfile -NonInteractive -File scripts/tests/test-agent-governance-check.ps1
+result=exit 0; all assertions passed (46 embedded node --test subtests pass / 0 fail)
+
+verify-governance-policy
+command=pwsh -NoProfile -NonInteractive -File scripts/tests/verify-governance-policy.ps1 -BaseRef origin/main
+result=exit 0; policy: 37 rules, 0 error, 0 warning; ratchet vs origin/main: 0 error
+       (the four PINNED jobs.suite rules pass unmodified, which is why the matrix
+       shape was chosen over sibling jobs)
+
+test-agent-governance-policy
+command=pwsh -NoProfile -NonInteractive -File scripts/tests/test-agent-governance-policy.ps1
+result=exit 0; all 106 assertions passed
+
+test-openspec-machine-truth
+command=node --test scripts/tests/test-openspec-machine-truth.mjs
+result=exit 0; 29 pass / 0 fail
+
+command-map registration (deviation from the design doc, recorded here on purpose)
+note=the contract declares command id `agent-governance-shard-coverage`, and the repo's
+     immutable command map in scripts/tests/test-self-referential-bootstrap.ps1 must
+     resolve every command id used by the real ledger. Registering it there is therefore
+     a prerequisite of the frozen contract, and it adds that script to this entry's
+     verification_mechanism_paths (5 paths, not the 4 the design doc drafted).
+     contract_sha256 is unaffected: it digests only the contract id and command_ids.
+
+test-self-referential-bootstrap
+command=pwsh -NoProfile -NonInteractive -File scripts/tests/test-self-referential-bootstrap.ps1
+result=exit 0; all assertions passed
+
+workflow-yaml-parse
+command=python -c "import yaml,glob;[yaml.safe_load(open(f,encoding='utf-8')) for f in glob.glob('.github/workflows/*.yml')]"
+result=exit 0; 6 workflow files parse
+
+gitnexus-impact
+command=npx gitnexus@1.6.9 impact ... -r AI-BIM-governance
+result=UNKNOWN; LadybugDB index unavailable in this worktree; not counted as a pass
+
+not_claimed=hosted runner wall-clock, pip/npm/Playwright cache hit rates, and the
+       branch-protection required-context set are hosted observations. They cannot be
+       produced locally and are deliberately left open for the PR run and the fixpoint.
+
+No credential read, live mutation, approval, merge, runtime stop, deployment, or
+production action was performed while producing this evidence.

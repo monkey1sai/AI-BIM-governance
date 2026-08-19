@@ -59,6 +59,12 @@ jobs:
     if: needs.scope.result == 'success' && needs.scope.outputs.agent_governance == 'true'
     runs-on: windows-latest
     timeout-minutes: 30
+    strategy:
+      # One leg failing must not cancel the others: the required gate has to show
+      # every red shard at once, not just the first one to fail.
+      fail-fast: false
+      matrix:
+        shard: [core, openspec, capability, evidence]
     steps:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
@@ -72,126 +78,157 @@ jobs:
           node-version: '20.20.2'
 
       - name: Run governance static check
+        if: matrix.shard == 'core'
         shell: pwsh
         run: pwsh -NoProfile -NonInteractive -File scripts/tests/test-agent-governance-check.ps1
 
       - name: Verify governance policy rules
+        if: matrix.shard == 'core'
         shell: pwsh
         run: pwsh -NoProfile -NonInteractive -File scripts/tests/verify-governance-policy.ps1 -BaseRef '${{ github.event.pull_request.base.sha }}'
 
       - name: Run governance policy module behaviour tests
+        if: matrix.shard == 'core'
         shell: pwsh
         run: pwsh -NoProfile -NonInteractive -File scripts/tests/test-agent-governance-policy.ps1
 
       - name: Run trusted host merge contract tests
+        if: matrix.shard == 'core'
         shell: pwsh
         run: pwsh -NoProfile -NonInteractive -Command "node --test scripts/tests/test-trusted-host-merge.mjs scripts/tests/test-trusted-host-merge-runtime.mjs"
 
       - name: Run isolated branch stack machine tests
+        if: matrix.shard == 'core'
         shell: pwsh
         run: pwsh -NoProfile -NonInteractive -File scripts/tests/test-isolated-branch-stack.ps1
 
       - name: Enforce production provenance and network boundaries
+        if: matrix.shard == 'core'
         shell: pwsh
         run: pwsh -NoProfile -NonInteractive -File scripts/tests/test-production-boundary-contract.ps1
 
       - name: Run session baseline measurement and downstream report gate
+        if: matrix.shard == 'core'
         shell: pwsh
         run: pwsh -NoProfile -NonInteractive -File scripts/tests/test-measure-session-baseline.ps1
 
       - name: Test GitNexus and worktree health report
+        if: matrix.shard == 'core'
         shell: pwsh
         run: pwsh -NoProfile -NonInteractive -Command "node --test scripts/tests/test-gitnexus-worktree-health.mjs"
 
       - name: Test task packet routing contract
+        if: matrix.shard == 'core'
         shell: pwsh
         run: pwsh -NoProfile -NonInteractive -Command "node --test scripts/tests/test-task-packet.mjs"
 
       - name: Test verification outcomes and security exception policy
+        if: matrix.shard == 'core'
         shell: pwsh
         run: pwsh -NoProfile -NonInteractive -Command "node --test scripts/tests/test-verification-plan.mjs scripts/tests/test-verification-command-policy.mjs scripts/tests/test-verification-runner.mjs scripts/tests/test-security-exceptions.mjs"
 
       - name: Test AI coding metrics privacy and truth contract
+        if: matrix.shard == 'core'
         shell: pwsh
         run: pwsh -NoProfile -NonInteractive -Command "node --test scripts/tests/test-ai-coding-metrics.mjs"
 
       - name: Verify OpenSpec lifecycle state
+        if: matrix.shard == 'openspec'
         shell: pwsh
         run: pwsh -NoProfile -NonInteractive -File scripts/tests/verify-openspec-lifecycle.ps1 -BaseRef '${{ github.event.pull_request.base.sha }}'
 
       - name: Test OpenSpec archive diff guard
+        if: matrix.shard == 'openspec'
         shell: pwsh
         run: pwsh -NoProfile -NonInteractive -File scripts/tests/test-openspec-lifecycle-archive-diff.ps1
 
       - name: Run OpenSpec ledger reconciliation tests
+        if: matrix.shard == 'openspec'
         shell: pwsh
         run: pwsh -NoProfile -NonInteractive -File scripts/tests/test-openspec-ledger-reconciliation.ps1
 
       - name: Run OpenSpec machine-truth tests
+        if: matrix.shard == 'openspec'
         shell: pwsh
         run: pwsh -NoProfile -NonInteractive -Command "node --test scripts/tests/test-openspec-machine-truth.mjs scripts/tests/test-openspec-machine-truth-cli.mjs scripts/tests/test-collect-openspec-github-state.mjs scripts/tests/test-task-ledger-parser-parity.mjs"
 
       - name: Run PR body evidence tests
+        if: matrix.shard == 'evidence'
         shell: pwsh
         run: pwsh -NoProfile -NonInteractive -File scripts/tests/test-pr-body-evidence.ps1
 
       - name: Run self-referential bootstrap ledger tests
+        if: matrix.shard == 'evidence'
         shell: pwsh
         run: pwsh -NoProfile -NonInteractive -File scripts/tests/test-self-referential-bootstrap.ps1
 
       - name: Run base-gate capability detection tests
+        if: matrix.shard == 'capability'
         shell: pwsh
         run: pwsh -NoProfile -NonInteractive -File scripts/tests/test-base-gate-capability.ps1
 
       - name: Run local preflight PrNumber forwarding tests
+        if: matrix.shard == 'evidence'
         shell: pwsh
         run: pwsh -NoProfile -NonInteractive -File scripts/tests/test-preflight-prnumber-forwarding.ps1
 
       - name: Run deploy target registry tests
+        if: matrix.shard == 'evidence'
         shell: pwsh
         run: pwsh -NoProfile -NonInteractive -File scripts/tests/test-deploy-target-registry.ps1
 
       - name: Run platform adapter tests (windows)
+        if: matrix.shard == 'evidence'
         shell: pwsh
         run: pwsh -NoProfile -NonInteractive -File scripts/tests/test-platform-adapter.ps1
 
       - name: Run host-native child-launch regression
+        if: matrix.shard == 'evidence'
         shell: pwsh
         run: pwsh -NoProfile -NonInteractive -File scripts/tests/test-host-native-child-launch.ps1
 
       - name: Run remote deploy transport tests
+        if: matrix.shard == 'evidence'
         shell: pwsh
         run: pwsh -NoProfile -NonInteractive -File scripts/tests/test-remote-deploy-transport.ps1
 
       - name: Run host-native preflight regression tests
+        if: matrix.shard == 'evidence'
         shell: pwsh
         run: pwsh -NoProfile -NonInteractive -File scripts/tests/test-preflight-host-native.ps1
 
       - name: Run Windows verification scope tests
+        if: matrix.shard == 'evidence'
         shell: pwsh
         run: pwsh -NoProfile -NonInteractive -File scripts/tests/test-windows-verification-scope.ps1
 
       - name: Run IFC fixture pin tests
+        if: matrix.shard == 'core'
         shell: pwsh
         run: pwsh -NoProfile -NonInteractive -Command "node --test scripts/tests/test-ifc-fixture-pin.mjs"
 
       - name: Run browser-evidence hook tests
+        if: matrix.shard == 'evidence'
         shell: pwsh
         run: pwsh -NoProfile -NonInteractive -File scripts/tests/test-require-gstack-evidence.ps1
 
       - name: Run design-system reference gate tests
+        if: matrix.shard == 'evidence'
         shell: pwsh
         run: pwsh -NoProfile -NonInteractive -File scripts/tests/test-design-system-reference.ps1
 
       - name: Run design-system changed-path scope tests
+        if: matrix.shard == 'evidence'
         shell: pwsh
         run: pwsh -NoProfile -NonInteractive -File scripts/tests/test-design-system-change-scope.ps1
 
       - name: Run functional-runtime result gate tests
+        if: matrix.shard == 'evidence'
         shell: pwsh
         run: pwsh -NoProfile -NonInteractive -File scripts/tests/test-functional-runtime-result.ps1
 
       - name: Run PNG pre-decode bound tests
+        if: matrix.shard == 'core'
         shell: pwsh
         run: pwsh -NoProfile -NonInteractive -Command "node --test scripts/tests/test-png-preflight.mjs"
 

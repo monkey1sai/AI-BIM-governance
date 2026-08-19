@@ -295,6 +295,56 @@ try {
     Assert-True ($governanceWorkflow -match "node-version: '20\.20\.2'") 'agent-governance uses the exact Node.js pin'
     Assert-True (-not ($governanceWorkflow -match '(?m)^\s*run:\s*powershell\b')) 'agent-governance workflow does not re-enter legacy Windows PowerShell from pwsh'
 
+    # Shard coverage. The suite runs as a fail-fast:false matrix, so each verification step
+    # now carries its own `if: matrix.shard == '<x>'`. A typo there (or a new step added
+    # without one) is skipped in EVERY leg while the required check still reports success -
+    # the one failure mode sharding introduces that no existing assertion can see. Parse the
+    # workflow structurally instead of grepping it, and prove the union of the legs is still
+    # the whole declared step set.
+    Import-Module (Join-Path $repoRoot 'scripts/lib/agent-governance-policy.psm1') -Force
+    $governanceWorkflowTree = ConvertFrom-AgentGovernanceYaml -Text $governanceWorkflow -Origin '.github/workflows/agent-governance.yml'
+    $suiteJob = $governanceWorkflowTree['jobs']['suite']
+    Assert-True ($suiteJob.Contains('strategy') -and $suiteJob['strategy'].Contains('matrix') -and $suiteJob['strategy']['matrix'].Contains('shard')) 'agent-governance suite declares its shard matrix'
+    Assert-True (([string]$suiteJob['strategy']['fail-fast']) -ceq 'false') 'one failing shard never cancels the others, so a single red leg cannot hide a second failure'
+    $declaredShards = @(@($suiteJob['strategy']['matrix']['shard']) | ForEach-Object { [string]$_ })
+    Assert-True ($declaredShards.Count -ge 2) 'the shard matrix declares more than one leg'
+    Assert-True (@($declaredShards | Sort-Object -Unique).Count -eq $declaredShards.Count) 'shard names are unique'
+
+    $shardMembershipPattern = [regex]"^matrix\.shard == '(?<shard>[a-z][a-z0-9-]*)'$"
+    $suiteRunSteps = [ordered]@{}
+    foreach ($suiteStep in @($suiteJob['steps'])) {
+        $suiteStepName = [string]$suiteStep['name']
+        if ($suiteStep.Contains('run')) {
+            Assert-True ($suiteStep.Contains('if')) "suite step '$suiteStepName' declares a shard; a run step without one is skipped in every leg"
+            $shardMembership = $shardMembershipPattern.Match([string]$suiteStep['if'])
+            Assert-True ($shardMembership.Success) "suite step '$suiteStepName' uses the exact shard membership form matrix.shard == '<shard>'"
+            $suiteStepShard = $shardMembership.Groups['shard'].Value
+            Assert-True ($declaredShards -ccontains $suiteStepShard) "suite step '$suiteStepName' names a declared shard, not the unreachable '$suiteStepShard'"
+            Assert-True (-not $suiteRunSteps.Contains($suiteStepName)) "suite step name '$suiteStepName' is unique, so shard coverage stays countable"
+            $suiteRunSteps[$suiteStepName] = $suiteStepShard
+        } elseif ($suiteStep.Contains('if')) {
+            Assert-True (-not (([string]$suiteStep['if']) -match 'matrix\.shard')) "suite setup step '$suiteStepName' is not bound to one shard; every leg needs it"
+        }
+    }
+
+    # Ratchet: shards may be rebalanced freely, but the suite may never run fewer steps than
+    # the 31 it carried when the matrix landed. Losing a step must be a deliberate edit here.
+    Assert-True ($suiteRunSteps.Count -ge 31) "agent-governance suite still runs at least 31 verification steps (found $($suiteRunSteps.Count))"
+    $coveredShards = @($suiteRunSteps.Values | Sort-Object -Unique)
+    foreach ($declaredShard in $declaredShards) {
+        Assert-True ($coveredShards -ccontains $declaredShard) "shard '$declaredShard' actually runs at least one step instead of burning a runner on nothing"
+    }
+    foreach ($pinnedShardStep in @(
+        @{ Name = 'Run governance static check'; Shard = 'core' },
+        @{ Name = 'Run OpenSpec ledger reconciliation tests'; Shard = 'openspec' },
+        @{ Name = 'Run OpenSpec machine-truth tests'; Shard = 'openspec' },
+        @{ Name = 'Run base-gate capability detection tests'; Shard = 'capability' },
+        @{ Name = 'Run self-referential bootstrap ledger tests'; Shard = 'evidence' }
+    )) {
+        Assert-True ($suiteRunSteps.Contains($pinnedShardStep.Name)) "agent-governance suite still runs '$($pinnedShardStep.Name)'"
+        Assert-True (($suiteRunSteps[$pinnedShardStep.Name]) -ceq $pinnedShardStep.Shard) "'$($pinnedShardStep.Name)' stays on the '$($pinnedShardStep.Shard)' shard the wall-clock split assumes"
+    }
+
     $shipWorkflowScript = Get-Content -LiteralPath '.claude/workflows/ship-item.js' -Raw
     $trustedMergeWorkflow = Get-Content -LiteralPath '.github/workflows/trusted-elevated-merge.yml' -Raw
     $trustedMergeExecutor = Get-Content -LiteralPath 'scripts/lib/trusted-host-merge-executor.mjs' -Raw

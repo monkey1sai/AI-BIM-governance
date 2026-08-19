@@ -559,6 +559,11 @@ try {
     Assert-True ($null -ne $realLedger) 'repo ledger must parse and validate'
     $pwshPrefix = @('pwsh', '-NoProfile', '-NonInteractive', '-File')
     $commandSpecById = @{
+        # The shard-coverage assertion is carried by test-agent-governance-check.ps1 but is
+        # attested as its own command: it is the only check that can see a mistyped or
+        # missing `if: matrix.shard == '<x>'`, so a fixpoint must record its exit code
+        # separately rather than let it hide inside the wider static check.
+        'agent-governance-shard-coverage' = @{ Path = 'scripts/tests/test-agent-governance-check.ps1'; Invocation = @($pwshPrefix + 'scripts/tests/test-agent-governance-check.ps1') }
         'canonical-linux-deployment-verify' = @{
             Path = 'scripts/verify-all.ps1'
             Invocation = @($pwshPrefix + @('scripts/verify-all.ps1', '-Profile', 'Deployment', '-InventoryPath', '<owner-private-inventory>'))
