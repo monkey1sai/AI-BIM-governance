@@ -167,6 +167,89 @@ function Test-HttpOk {
     }
 }
 
+function Resolve-HostNativeEvidenceStage {
+    <#
+    .SYNOPSIS
+    Resolve the stage this evidence run loads, from a real conversion artifact.
+
+    .DESCRIPTION
+    The harness used to copy a tracked USD fixture into the artifacts root and build
+    its own /artifacts/<runId>/model.usdc URL. That stopped working when #441 gave the
+    conversion service per-artifact download authority: the route now serves only
+    artifacts belonging to a succeeded conversion job, with a matching checksum, so the
+    fabricated URL 404s and Kit reports the stage load as an HTTPError. Kit's
+    BIM_REVIEW_STREAM_ALLOWED_STAGE_HOSTS also permits only the conversion service, so
+    that service is the single legal stage origin - and it will only serve real output.
+
+    Owner ruling 2026-08-19: MinIO is the single source, and an already-converted
+    artifact is preferred over converting again. This therefore reuses the newest
+    succeeded conversion whose model_usdc is actually downloadable, and fails closed
+    with an actionable message when the deployment has none - producing one is an
+    operator step, not something to run inside an evidence capture.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory = $true)][int] $ConversionPort)
+
+    $apiBase = "http://127.0.0.1:$ConversionPort/api/conversions"
+    try {
+        $listing = Invoke-RestMethod -Method Get -Uri $apiBase -TimeoutSec 20
+    }
+    catch {
+        throw "Conversion service did not answer $apiBase : $($_.Exception.Message)"
+    }
+
+    $succeeded = @(@($listing.items) | Where-Object {
+        $_.status -eq 'succeeded' -or $_.status -eq 'succeeded_with_warnings'
+    })
+    if ($succeeded.Count -eq 0) {
+        throw ('No succeeded conversion is available to serve a stage. This harness loads a real ' +
+               'conversion artifact because the conversion service only serves those (#441). ' +
+               'Convert a MinIO-sourced IFC on this deployment first, then rerun.')
+    }
+
+    # conversion job ids are timestamp-prefixed, so descending name order is newest-ish;
+    # the download probe below is what actually decides, so ordering is only a preference.
+    $rejected = @()
+    foreach ($job in ($succeeded | Sort-Object -Property conversion_job_id -Descending)) {
+        $jobId = [string]$job.conversion_job_id
+        try {
+            $result = Invoke-RestMethod -Method Get -Uri "$apiBase/$jobId/result" -TimeoutSec 20
+        }
+        catch {
+            $rejected += "$jobId (result unreadable)"
+            continue
+        }
+        $artifact = $result.artifacts.model_usdc
+        if ($null -eq $artifact -or [string]::IsNullOrWhiteSpace([string]$artifact.url)) {
+            $rejected += "$jobId (no model_usdc artifact)"
+            continue
+        }
+        $fileName = Split-Path -Path ([uri][string]$artifact.url).AbsolutePath -Leaf
+        if ([string]::IsNullOrWhiteSpace($fileName)) {
+            $rejected += "$jobId (unnamed artifact)"
+            continue
+        }
+        # A and B are the same artifact through the two host spellings Kit allows. The
+        # denial cases need two distinct, individually loadable stage URLs: composition
+        # tamper points the composition at B and asserts the stage stays A, which only
+        # means anything while B would genuinely have loaded.
+        $urlA = "http://127.0.0.1:$ConversionPort/artifacts/$jobId/$fileName"
+        $urlB = "http://localhost:$ConversionPort/artifacts/$jobId/$fileName"
+        if (-not (Test-HttpOk -Url $urlA)) { $rejected += "$jobId (127.0.0.1 not served)"; continue }
+        if (-not (Test-HttpOk -Url $urlB)) { $rejected += "$jobId (localhost not served)"; continue }
+        return [ordered]@{
+            conversion_job_id = $jobId
+            file_name         = $fileName
+            checksum_sha256   = [string]$artifact.checksum_sha256
+            stage_url_a       = $urlA
+            stage_url_b       = $urlB
+        }
+    }
+
+    throw ("No succeeded conversion currently serves a downloadable model_usdc. Rejected: " +
+           ($rejected -join '; '))
+}
+
 function Wait-ForHttpOk {
     param(
         [Parameter(Mandatory = $true)][string] $Url,
@@ -420,7 +503,6 @@ $dataRoot = [System.IO.Path]::GetFullPath($script:FixedTestDeploymentDataRoot).T
 $artifactsRoot = Join-Path $dataRoot 'artifacts'
 $viewerRoot = Join-Path $deploymentRoot 'web-viewer-sample'
 $runMetadataRoot = Join-Path $deploymentRoot 'scripts\.run'
-$fixtureSource = Join-Path $deploymentRoot 'bim-streaming-server\source\extensions\ezplus.bim_review_stream.messaging\data\testing.usd'
 $envFilePath = Join-Path $deploymentRoot $script:ComposeEnvFile
 
 Assert-NoReparsePointPath -Path $deploymentRoot
@@ -428,13 +510,11 @@ Assert-NoBroadWriteAcl -Path $deploymentRoot
 if (-not (Test-Path -LiteralPath $dataRoot -PathType Container)) { throw 'Canonical deployment data root is missing.' }
 if (-not (Test-Path -LiteralPath $artifactsRoot -PathType Container)) { throw 'Canonical deployment artifacts root is missing.' }
 if (-not (Test-Path -LiteralPath $viewerRoot -PathType Container)) { throw 'Canonical deployment viewer source is missing.' }
-if (-not (Test-Path -LiteralPath $fixtureSource -PathType Leaf)) { throw 'Tracked host-native USD fixture is missing.' }
 if (-not (Test-Path -LiteralPath $envFilePath -PathType Leaf)) { throw 'Canonical deployment Compose environment file is missing.' }
 Assert-NoReparsePointPath -Path $dataRoot
 Assert-NoBroadWriteAcl -Path $dataRoot
 Assert-NoReparsePointPath -Path $artifactsRoot
 Assert-NoReparsePointPath -Path $viewerRoot
-Assert-NoReparsePointPath -Path $fixtureSource
 
 $headSha = (& git rev-parse HEAD).Trim()
 $originMainSha = (& git rev-parse origin/main).Trim()
@@ -484,22 +564,20 @@ if (-not (Wait-ForHttpOk -Url $script:ConversionHealthUrl -TimeoutSeconds 30)) {
 $runId = "runtime-authority-e2e-$([guid]::NewGuid().ToString('N'))"
 if ($runId -notmatch '^[a-z0-9-]+$') { throw 'Generated host-native evidence run ID is invalid.' }
 $controlNonce = [guid]::NewGuid().ToString('N')
-$fixtureDirectory = Join-Path $artifactsRoot $runId
 $controlParent = Join-Path $dataRoot 'control'
 $controlDirectory = Join-Path (Join-Path $controlParent 'runtime-command-authority') $runId
 $evidenceParent = Join-Path $artifactsRoot 'runtime-command-authority-evidence'
 $evidenceDirectory = Join-Path $evidenceParent $runId
-Ensure-Directory -Path $fixtureDirectory
 Ensure-Directory -Path $controlParent
 Ensure-Directory -Path (Join-Path $controlParent 'runtime-command-authority')
 Ensure-Directory -Path $controlDirectory
 Ensure-Directory -Path $evidenceParent
 Ensure-Directory -Path $evidenceDirectory
 
-$fixtureStagePath = Join-Path $fixtureDirectory 'model.usdc'
-Copy-Item -LiteralPath $fixtureSource -Destination $fixtureStagePath
-$stageUrlA = "http://127.0.0.1:$conversionPort/artifacts/$runId/model.usdc"
-$stageUrlB = "http://localhost:$conversionPort/artifacts/$runId/model.usdc"
+$stageArtifact = Resolve-HostNativeEvidenceStage -ConversionPort $conversionPort
+$stageUrlA = [string]$stageArtifact.stage_url_a
+$stageUrlB = [string]$stageArtifact.stage_url_b
+Write-Host "stage artifact: $($stageArtifact.conversion_job_id)/$($stageArtifact.file_name)"
 $playwrightOutput = Join-Path $evidenceDirectory 'playwright-output'
 # Start-Process -WindowStyle Hidden throws the case's own output away, so an early
 # failure surfaced only as "exited before its required control marker was written"
@@ -728,6 +806,12 @@ $evidence = [ordered]@{
         source = 'bim-streaming-server/source/extensions/ezplus.bim_review_stream.messaging/data/testing.usd'
         stage_url_a = $stageUrlA
         stage_url_b = $stageUrlB
+        stage_source = [ordered]@{
+            kind              = 'conversion_artifact'
+            conversion_job_id = [string]$stageArtifact.conversion_job_id
+            file_name         = [string]$stageArtifact.file_name
+            checksum_sha256   = [string]$stageArtifact.checksum_sha256
+        }
     }
     playwright = [ordered]@{
         viewer_port = $viewerPort
