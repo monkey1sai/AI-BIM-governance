@@ -1,0 +1,66 @@
+{
+  "schema_version": "cloud-lineage-publication/v1",
+  "event_type": "lineage_result_health_changed",
+  "event_id": "22222222-2222-4222-8222-222222222222",
+  "occurred_at": "2026-07-16T09:20:00.000Z",
+  "correlation_id": "corr-health-0007",
+  "edge_site_id": "edge-tpe-01",
+  "tenant_id": "tenant-a",
+  "project_id": "project-library",
+  "external_model_version_id": "model-version-20260715-001",
+  "result_id": "result-0007",
+  "publication_identity": "edge-tpe-01:model-version-20260715-001:result-0007",
+  "result_manifest_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "payload": {
+    "health_state": "MISSING",
+    "observed_at": "2026-07-16T09:19:30.000Z",
+    "confirmation_count": 2,
+    "reason_code": "RESULT_OBJECTS_MISSING",
+    "result_manifest_ref": {
+      "ref": "minio://edge-tpe-01/lineage-results/tenant-a/project-library/model-version-20260715-001/results/attempt-0007/result-manifest.json?versionId=v-0007-manifest",
+      "object_version_id": "v-0007-manifest",
+      "etag": "etag-result-manifest-0007",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "size_bytes": 4096
+    },
+    "alignment_summary": {
+      "metrics": {
+        "ifc_usdc_coverage_ratio": {
+          "numerator": 1180,
+          "denominator": 1200,
+          "ratio": 0.9833333333,
+          "status": "partial"
+        },
+        "rvt_ifc_alignment_ratio": {
+          "numerator": 990,
+          "denominator": 1000,
+          "ratio": 0.99,
+          "status": "partial"
+        },
+        "rvt_ifc_usdc_lineage_ratio": {
+          "numerator": 975,
+          "denominator": 1000,
+          "ratio": 0.975,
+          "status": "partial"
+        }
+      },
+      "counts": {
+        "csv_total_count": 1008,
+        "csv_valid_count": 1000,
+        "eligible_ifc_product_count": 1200,
+        "duplicate_rvt_id_count": 3,
+        "duplicate_ifc_guid_count": 2,
+        "invalid_row_count": 3,
+        "csv_only_count": 10,
+        "ifc_only_count": 210,
+        "ifc_usdc_unmapped_count": 20,
+        "full_lineage_matched_count": 975
+      },
+      "warning_codes": [
+        "PARTIAL_RVT_IFC_ALIGNMENT",
+        "IFC_USDC_UNMAPPED"
+      ],
+      "warning_code_count": 2
+    }
+  }
+}

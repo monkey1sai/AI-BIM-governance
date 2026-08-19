@@ -1,0 +1,91 @@
+{
+  "schema_version": "cloud-lineage-publication/v1",
+  "event_type": "lineage_result_published",
+  "event_id": "11111111-1111-4111-8111-111111111111",
+  "occurred_at": "2026-07-16T08:15:30.000Z",
+  "correlation_id": "corr-lineage-0007",
+  "edge_site_id": "edge-tpe-01",
+  "tenant_id": "tenant-a",
+  "project_id": "project-library",
+  "external_model_version_id": "model-version-20260715-001",
+  "result_id": "result-0007",
+  "publication_identity": "edge-tpe-01:model-version-20260715-001:result-0007",
+  "result_manifest_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "payload": {
+    "source_bundle_id": "source-bundle-0003",
+    "pipeline_job_id": "pipeline-job-0003",
+    "attempt_id": "attempt-0007",
+    "attempt_outcome": "succeeded_with_warnings",
+    "publication_state": "AVAILABLE",
+    "published_at": "2026-07-16T08:15:00.000Z",
+    "result_refs": {
+      "result_manifest_ref": {
+        "ref": "minio://edge-tpe-01/lineage-results/tenant-a/project-library/model-version-20260715-001/results/attempt-0007/result-manifest.json?versionId=v-0007-manifest",
+        "object_version_id": "v-0007-manifest",
+        "etag": "etag-result-manifest-0007",
+        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "size_bytes": 4096
+      },
+      "lineage_mapping_ref": {
+        "ref": "minio://edge-tpe-01/lineage-results/tenant-a/project-library/model-version-20260715-001/results/attempt-0007/element_mapping.json?versionId=v-0007-mapping",
+        "object_version_id": "v-0007-mapping",
+        "etag": "etag-element-mapping-0007",
+        "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "size_bytes": 1874200
+      },
+      "alignment_report_json_ref": {
+        "ref": "minio://edge-tpe-01/lineage-results/tenant-a/project-library/model-version-20260715-001/results/attempt-0007/alignment-report.json?versionId=v-0007-report-json",
+        "object_version_id": "v-0007-report-json",
+        "etag": "etag-alignment-json-0007",
+        "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "size_bytes": 284560
+      },
+      "alignment_report_csv_ref": {
+        "ref": "minio://edge-tpe-01/lineage-results/tenant-a/project-library/model-version-20260715-001/results/attempt-0007/alignment-report.csv?versionId=v-0007-report-csv",
+        "object_version_id": "v-0007-report-csv",
+        "etag": "etag-alignment-csv-0007",
+        "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "size_bytes": 490221
+      }
+    },
+    "alignment_summary": {
+      "metrics": {
+        "ifc_usdc_coverage_ratio": {
+          "numerator": 1180,
+          "denominator": 1200,
+          "ratio": 0.9833333333,
+          "status": "partial"
+        },
+        "rvt_ifc_alignment_ratio": {
+          "numerator": 990,
+          "denominator": 1000,
+          "ratio": null,
+          "status": "partial"
+        },
+        "rvt_ifc_usdc_lineage_ratio": {
+          "numerator": 975,
+          "denominator": 1000,
+          "ratio": 0.975,
+          "status": "partial"
+        }
+      },
+      "counts": {
+        "csv_total_count": 1008,
+        "csv_valid_count": 1000,
+        "eligible_ifc_product_count": 1200,
+        "duplicate_rvt_id_count": 3,
+        "duplicate_ifc_guid_count": 2,
+        "invalid_row_count": 3,
+        "csv_only_count": 10,
+        "ifc_only_count": 210,
+        "ifc_usdc_unmapped_count": 20,
+        "full_lineage_matched_count": 975
+      },
+      "warning_codes": [
+        "PARTIAL_RVT_IFC_ALIGNMENT",
+        "IFC_USDC_UNMAPPED"
+      ],
+      "warning_code_count": 2
+    }
+  }
+}
