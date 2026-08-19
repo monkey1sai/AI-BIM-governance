@@ -776,7 +776,7 @@
     },
     {
       "id": "openspec-lifecycle-parser-alignment",
-      "status": "open",
+      "status": "closed",
       "pr": 634,
       "opened_at": "2026-08-19T04:46:26Z",
       "reason": "the shared PowerShell lifecycle parser now maps adopted proposal markers to completed state and its reconciliation consumer emits completed lifecycle mismatches; the base-pinned checker cannot prove the post-change normalization before merge, so a mainline replay is the only merged-behavior evidence",
@@ -799,7 +799,14 @@
         "docs/evidence/openspec-lifecycle-parser-alignment/self-referential-bootstrap/README.md",
         "docs/evidence/openspec-lifecycle-parser-alignment/self-referential-bootstrap/verification.txt"
       ],
-      "fixpoint": null
+      "fixpoint": {
+        "reverified_at": "2026-08-19T07:08:50Z",
+        "mechanism_commit": "348ad00974f13964b8505720416a1265277c8ed1",
+        "evidence_refs": [
+          "docs/evidence/openspec-lifecycle-parser-alignment/fixpoint/attestation.json",
+          "docs/evidence/openspec-lifecycle-parser-alignment/fixpoint/summary.md"
+        ]
+      }
     }
   ]
 }
