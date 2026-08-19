@@ -467,6 +467,12 @@ function New-StructuredLogProcessSpecs {
             STREAMING_CONVERSION_ARTIFACTS_ROOT = $conversionArtifactsRoot
             STREAMING_CONVERSION_JOBS_DIR = $conversionJobsRoot
             STORAGE_ROOT = $Context.StorageRoot
+            # 這個 env overlay 是疊在本 process 的環境上(Set-StructuredLogEnvironment 只覆蓋
+            # 列出的鍵),所以操作者 shell 若殘留一個指向部署區的 RUNTIME_STORAGE_ROOT,
+            # conversion child 會同時看到兩個不同的 storage root。轉檔服務現在會擋下這種
+            # 不一致(issue #626),這裡明示宣告成同一個 attempt-local root——與下方
+            # coordinator 的宣告一致,同一個 attempt 只有一個 storage root。
+            RUNTIME_STORAGE_ROOT = $Context.StorageRoot
             LOG_ROOT = $Context.LogRoot
         }
         port = [int]$Context.Ports.Conversion

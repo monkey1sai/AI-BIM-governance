@@ -1652,4 +1652,88 @@ finally {
     Remove-TestSandbox -Path $stopSandbox
 }
 
+# Test: conversion service launcher honours the STORAGE_ROOT invariant (#626)
+#
+# 這一組直接跑 bim-streaming-server\scripts\start-host-native-conversion-service.ps1。
+# STORAGE_ROOT 的解析全部發生在啟動 python 之前,而 -PythonExe 指向一個不存在的執行檔,
+# 所以四種情境都能在「服務真的綁 port」之前觀察完畢——不啟動任何服務、不綁任何 port。
+$conversionLauncherPath = Join-Path $repoRoot 'bim-streaming-server\scripts\start-host-native-conversion-service.ps1'
+$conversionLauncherText = Get-Content -LiteralPath $conversionLauncherPath -Raw
+$currentPwshPath = (Get-Process -Id $PID).Path
+
+function Invoke-ConversionLauncherProbe {
+    param(
+        [AllowNull()][string] $StorageRoot,
+        [AllowNull()][string] $RuntimeStorageRoot
+    )
+
+    $managedNames = @('STORAGE_ROOT', 'RUNTIME_STORAGE_ROOT')
+    $saved = @{}
+    foreach ($name in $managedNames) {
+        $saved[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
+    }
+    try {
+        # 先清乾淨:CI runner 或操作者 shell 殘留的值會讓「未設定」情境失去意義。
+        [Environment]::SetEnvironmentVariable('STORAGE_ROOT', $StorageRoot, 'Process')
+        [Environment]::SetEnvironmentVariable('RUNTIME_STORAGE_ROOT', $RuntimeStorageRoot, 'Process')
+        $output = & $currentPwshPath -NoProfile -NonInteractive -File $conversionLauncherPath `
+            -PythonExe 'aibim-nonexistent-python-626' 2>&1 | Out-String
+        return [pscustomobject]@{ ExitCode = [int]$LASTEXITCODE; Output = [string]$output }
+    }
+    finally {
+        foreach ($name in $managedNames) {
+            [Environment]::SetEnvironmentVariable($name, $saved[$name], 'Process')
+        }
+    }
+}
+
+# 靜態面:convenience 預設必須真的消失,否則行為測試只證明「當下這台機器剛好沒踩到」。
+Assert-True (-not ($conversionLauncherText -match 'Join-Path\s+\$repoRoot\s+"storage"')) `
+    'conversion launcher no longer guesses <repoRoot>\storage as STORAGE_ROOT'
+Assert-True ($conversionLauncherText -match 'RUNTIME_STORAGE_ROOT') `
+    'conversion launcher knows the RUNTIME_STORAGE_ROOT fallback name'
+Write-TestPass 'conversion launcher dropped the guessed STORAGE_ROOT default (#626)'
+
+$conversionProbeSandbox = New-TestSandbox -Prefix 'hn-conv-storage-root'
+try {
+    $runtimeStorageRoot = Join-Path $conversionProbeSandbox 'runtime-storage'
+    New-Item -ItemType Directory -Path $runtimeStorageRoot -Force | Out-Null
+
+    # 1) 兩個都沒設 -> fail closed,訊息要同時點名兩個 env 與不變式所在位置。
+    $bothMissing = Invoke-ConversionLauncherProbe -StorageRoot $null -RuntimeStorageRoot $null
+    Assert-Equal 2 $bothMissing.ExitCode 'both roots missing -> refuses to start with exit 2'
+    Assert-True ($bothMissing.Output -match 'STORAGE_ROOT is not configured') 'refusal names STORAGE_ROOT'
+    Assert-True ($bothMissing.Output -match 'RUNTIME_STORAGE_ROOT is not set') 'refusal names RUNTIME_STORAGE_ROOT'
+    Assert-True ($bothMissing.Output -match 'host-native-launcher\.ps1') 'refusal points at the invariant comment'
+    Assert-True (-not ($bothMissing.Output -match '(?m)^STORAGE_ROOT: ')) 'refusal never resolves a guessed root'
+    Write-TestPass 'conversion launcher fails closed when neither storage root is configured (#626)'
+
+    # 2) 只有 RUNTIME_STORAGE_ROOT -> 採用它,並標示來源。之後才因為假的 python 失敗,
+    #    代表解析階段已完成而服務從未啟動。
+    $runtimeOnly = Invoke-ConversionLauncherProbe -StorageRoot $null -RuntimeStorageRoot $runtimeStorageRoot
+    Assert-True ($runtimeOnly.Output -match [regex]::Escape("STORAGE_ROOT: $runtimeStorageRoot (source: RUNTIME_STORAGE_ROOT)")) `
+        'missing STORAGE_ROOT adopts RUNTIME_STORAGE_ROOT and reports the source'
+    Assert-True ($runtimeOnly.ExitCode -ne 2) 'adopting the runtime root is not a refusal'
+    Write-TestPass 'conversion launcher adopts RUNTIME_STORAGE_ROOT when STORAGE_ROOT is absent (#626)'
+
+    # 3) 兩個都設但指向不同目錄 -> 拒絕啟動,訊息要引兩個實際值。
+    $divergentRoot = Join-Path $conversionProbeSandbox 'explicit-storage'
+    $mismatch = Invoke-ConversionLauncherProbe -StorageRoot $divergentRoot -RuntimeStorageRoot $runtimeStorageRoot
+    Assert-Equal 2 $mismatch.ExitCode 'divergent roots -> refuses to start with exit 2'
+    Assert-True ($mismatch.Output -match [regex]::Escape("STORAGE_ROOT='$divergentRoot'")) 'refusal quotes the STORAGE_ROOT value'
+    Assert-True ($mismatch.Output -match [regex]::Escape("RUNTIME_STORAGE_ROOT='$runtimeStorageRoot'")) 'refusal quotes the RUNTIME_STORAGE_ROOT value'
+    Assert-True (-not (Test-Path -LiteralPath $divergentRoot)) 'refusal never materialises the divergent sandbox'
+    Write-TestPass 'conversion launcher refuses a STORAGE_ROOT/RUNTIME_STORAGE_ROOT mismatch (#626)'
+
+    # 4) 只差尾端分隔符與大小寫的同一個目錄不得誤擋(Windows 路徑不分大小寫)。
+    $sameRootNoisySpelling = $runtimeStorageRoot.ToUpperInvariant() + '\'
+    $equivalent = Invoke-ConversionLauncherProbe -StorageRoot $sameRootNoisySpelling -RuntimeStorageRoot $runtimeStorageRoot
+    Assert-True ($equivalent.ExitCode -ne 2) 'trailing separator / case differences are not a mismatch'
+    Assert-True ($equivalent.Output -match '\(source: STORAGE_ROOT\)') 'equivalent spellings keep the explicit STORAGE_ROOT'
+    Write-TestPass 'conversion launcher normalises trailing separators and case before asserting (#626)'
+}
+finally {
+    Remove-TestSandbox -Path $conversionProbeSandbox
+}
+
 Write-Host "`n=== test-host-native-launcher.ps1: ALL PASSED ===" -ForegroundColor Green
