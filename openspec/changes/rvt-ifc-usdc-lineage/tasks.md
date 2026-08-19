@@ -1,6 +1,6 @@
 ## 1. 前置變更與遷移閘門
 
-- [ ] 1.1 確認 active MinIO changes已merge/archive；先執行`npx --no-install openspec validate align-frontend-design-system-reference --strict`，archive `align`並確認`agent-operability-governance`、`demo-fast-mvp-orchestration`、`documentation-source-of-truth`與`unified-governance-console` canonical specs已落地；再完成`migrate-console-to-hifi-design` rebase並撤銷／調和repo外origin與`VerifyOrigin`假設至 `docs/plans/*.html`唯一authority → `migrate` closeout → lineage rebase最新`origin/main`並strict validate。Lineage不得重建`align`目錄或重複宣告其delta；不得只確認兩者closeout而把衝突authority一起archive。
+- [ ] 1.1 〔2026-08-19 owner 裁決 R-2026-08-19：原「先 archive `align-frontend-design-system-reference`、先 closeout `migrate-console-to-hifi-design`」的順序前置已降級，兩線平行進行，不再擋本 change coding〕遵守保留的衝突面硬約束：Lineage不得重建`align`目錄或重複宣告其delta；不得動 `docs/plans/*.html` 唯一authority裁決；不得只確認兩者closeout而把衝突authority一起archive。本項殘餘工作：每個 slice PR 前 lineage rebase最新`origin/main`並執行`npx --no-install openspec validate rvt-ifc-usdc-lineage --strict`；本項於 L2（1.3 deltas調和）完成時一併勾銷。
 - [ ] 1.2 建立 governed-vs-legacy compatibility matrix，固定 `/model.ifc` watcher 只能產生 legacy intake、`manifest.json` 才能產生 governed `READY`，並列出 rollback/dual-read 期間。
 - [ ] 1.3 Predecessor closeout後，對 `minio-watch-auto-intake`、`local-coordinator-ifc-ready-intake-boundary`、`streaming-ifc-usdc-conversion-authority`、`conversion-kit-lifecycle-recovery` 與 `local-artifact-shadow-metadata` 補必要MODIFIED deltas並重新 strict validate；既有`external-cloud-callback-lifecycle`行為保持不變，governed lineage publication由新capability擁有；完成前不得開始runtime接線。
 

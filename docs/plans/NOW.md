@@ -20,7 +20,7 @@
     { "id": "introduce-viewer-app-integration-surface", "status": "deferred" },
     { "id": "introduction-resolved-subject-binding", "status": "active" },
     { "id": "migrate-console-to-hifi-design", "status": "active" },
-    { "id": "rvt-ifc-usdc-lineage", "status": "deferred" }
+    { "id": "rvt-ifc-usdc-lineage", "status": "active" }
   ]
 }
 ```
@@ -35,7 +35,9 @@
 | **2** | A4 | 只走切片 PR（先 #365，再下一刀） | **#365 + #380 + #382 + #383 + #386 MERGED**；current = S4-B PR #384 final gate，next = S4-C |
 
 **並行規則：** 0 可與 1 同天；所有軌與新功能合計不得超過 6 個 active product change；deferred/frozen 不因額度增加自動 thaw。
-**本週不做：** A5–A10 全棧、`rvt-ifc-usdc-lineage` 實作、新 OpenSpec（除 archive/defer 註記）、整 repo 重掃。
+**本週不做：** A5–A10 全棧、新 OpenSpec（除 archive/defer 註記）、整 repo 重掃。
+
+> **2026-08-19 owner 裁決（R-2026-08-19，lineage thaw）：** 使用者明示採納，`rvt-ifc-usdc-lineage` 由 deferred/frozen thaw 為 active（切片制，「禁止直接 apply」原則保留）。(1) tasks 1.1 的順序前置降級：`align-frontend-design-system-reference` archive 與 `migrate-console-to-hifi-design` closeout 不再擋 lineage coding，align successor 鏈（#649 起）與 lineage 平行進行；lineage 不得重建 align 目錄、不得重複宣告其 delta、不得動 `docs/plans/*.html` 唯一 authority 的衝突面禁令全數保留為 fail-closed 硬約束。(2) 切片：L1 = tasks 2.1–2.7（contract fixtures → `tests/contracts/`，不接 runtime、不動 legacy path）；L2 = tasks 1.2/1.3（compatibility matrix＋五個既有 spec 的 MODIFIED deltas＋strict validate）；**L2 完成前不得進行 3.x runtime 接線**（原 gate 保留）。(3) WIP 記帳：thaw 當日 non-deferred active 5→6，仍在 ≤6 內，未 defer 任何 change。(4) 既有 `/api/external/ifc-ready` 與 callback 路徑不變、cloud-lineage-publication 不得雙 authority、MySQL DDL 維持 REFERENCE ONLY。執行路由：coordinator（Fable）接手原 Codex 分支 `codex/openspec/rvt-ifc-usdc-lineage`。
 
 > **2026-07-29 例外揭露：** 使用者明確要求開立 `isolated-branch-stack-browser-e2e`（A4 tasks 4.x 所需的隔離 stack browser E2E 契約），依本檔優先序「使用者最新口令 > 本檔」採納，偏離上面「本週不做：新 OpenSpec」。non-deferred active 由 4 增為 5，仍在 ≤6 內。
 
@@ -61,14 +63,14 @@
 
 | OQ | 題目 | **建議裁決** |
 |---|---|---|
-| OQ-1 | 收斂後保留哪個 active | ✅ 2026-07-21 原採納上限 2；2026-07-24 使用者調整為 ≤6。既有 `rvt-ifc-usdc-lineage` 仍為 `Status: deferred`、frozen/non-owner，須另行滿足 thaw 條件 |
+| OQ-1 | 收斂後保留哪個 active | ✅ 2026-07-21 原採納上限 2；2026-07-24 使用者調整為 ≤6。`rvt-ifc-usdc-lineage` 的 thaw 條件已由 2026-08-19 owner 裁決 R-2026-08-19 滿足（使用者明確 thaw），轉 active（切片制） |
 | OQ-2 | docs+chore ≤30% | ✅ **已採納**：首月 40% → 次月 30% |
 | OQ-3 | #364 自身是第 10 個 active | ✅ **已採納**：#364 merge 後 archive `governance-throughput-budget` |
 
 2026-07-24 historical correction：deferred 不再放 completed archive；下列 change 均恢復原 id、保留 `Status: deferred`，未落地 delta 仍不構成 canonical authority。`minio-folderview-and-baseline-disclosure` 已於 2026-07-29 對帳 7/7 task 與 archive 證據後封存：
 
 - `openspec/changes/align-frontend-design-system-reference/`（與 migrate 的互斥需求完成 crosswalk 前不得 thaw）
-- `openspec/changes/rvt-ifc-usdc-lineage/`（1/48；切片與 shared ownership 調和前不得 coding）
+- `openspec/changes/rvt-ifc-usdc-lineage/`（1/48；2026-08-19 已依 R-2026-08-19 thaw 為 active 切片制，見「本週三軌」節的裁決揭露）
 
 Archive lexical audit 在本次恢復後仍有 44 個歷史目錄、696 個 unchecked checkbox；三層交叉裁決未把它們判為獨立、可繼續執行的 unfinished owner（主要是已落地但 task bookkeeping 過時、已被 successor 承接，或已退役 service 的歷史工作），因此不批次搬移，也不改寫 archive 歷史。這批屬 legacy audit debt；新增 lifecycle gate 只對本次之後的新 archive fail closed，禁止再產生 unchecked/deferred archive。
 
@@ -87,7 +89,7 @@ Archive lexical audit 在本次恢復後仍有 44 個歷史目錄、696 個 unch
 | `cross-service-structured-log-baseline` | deferred、frozen（92/93；缺 fresh final 4-service runtime/P4 evidence） | 由 `cross-service-observability` 明確重啟後只補該 evidence；不重套 pipeline/code/canonical spec | #126 |
 | `minio-folderview-and-baseline-disclosure` | ✅ archived `2026-07-29-minio-folderview-and-baseline-disclosure`（7/7 closeout reconciled） | done；archive proposal/tasks 為證據 | #265 |
 | `align-frontend-design-system-reference` | ↩ restored deferred、frozen | 先與 migrate 做 requirement/successor crosswalk；禁止平行 design coding | #363 |
-| `rvt-ifc-usdc-lineage` | ↩ restored deferred、frozen（1/48） | 先切片與調和 shared ownership；禁止直接 apply | #354 |
+| `rvt-ifc-usdc-lineage` | ⚡ active（切片制；2026-08-19 R-2026-08-19 thaw；1/48） | Slice L1 = tasks 2.1–2.7 contract fixtures；L2 前不得 runtime 接線 | #354、R-2026-08-19 |
 
 ### minio-watch task 5
 
@@ -96,7 +98,7 @@ Archive lexical audit 在本次恢復後仍有 44 個歷史目錄、696 個 unch
 ### 收口 DoD（軌 1）
 
 - [x] 5 個近期 completed closeout change 維持 archive；4 個 unfinished change 維持 deferred／frozen；structured-log 等待 fresh final 4-service runtime/P4 evidence 的明確重啟
-- [x] lineage / align-frontend / semantic-search / structured-log 保留 `Status: deferred`、frozen/non-owner；minio-folderview 已在 2026-07-29 closeout 後 archive
+- [x] lineage / align-frontend / semantic-search / structured-log 保留 `Status: deferred`、frozen/non-owner；minio-folderview 已在 2026-07-29 closeout 後 archive（歷史紀錄；lineage 已於 2026-08-19 依 R-2026-08-19 thaw 為 active，其餘維持 deferred）
 - [x] #364 merge + `governance-throughput-budget` archive（OQ-3 出場）
 - [x] 本週 WIP focus 保留 **A4 + migrate-console**；structured-log P5 evidence 已 deferred，`implement-runtime-command-authority-and-rejection` 與 `add-single-gpu-session-ai-review-mvp` 的 retain/defer 另案裁決，不在本次 archive 範圍
 - [ ] 過期 worktree 刪到 ≤5（人工／下一切可選）— **2026-07-30 report-only 稽核（未執行刪除）**：主 repo 共 21 個 worktree。稽核方法＝`git worktree list --porcelain` ＋ 逐一 `git status --porcelain --ignored`（含 ignored 產物）＋ `git for-each-ref --contains <HEAD>`（reachability）＋ `.agents/board/sessions/*.json`（session 佔用）。結果：**in-use 6**＝main checkout（PR #436）、PR #431／#432／#433／#434 各一、deployment checkout `D:/Users/deploy/AI-bim-geo`。**可安全移除 7**＝`pr428` ＋ 6 個 `.codex/worktrees/*` detached；六個 detached HEAD 分別可由 22–28 個 ref 觸及，移除 worktree 不會產生 unreachable commit，且三項檢查（ignored 產物 0、board 未佔用、reachable）全過。**需先裁決 5**（porcelain 乾淨但帶 ignored 產物，`git worktree remove` 會連同刪除）＝`a4-semantic-search-model-qa-main-convergence`（29 項，含 `.gitnexus/`、`.workflow/`、`artifacts/e2e/design-system-visual*` 設計視覺證據）、`pr-422-a4-baseline-reapproval`（5 項，含 e2e 視覺證據與 `web-viewer-sample/dist/`）、`spec-to-done-cost-guardrails`（5 項，`.gitnexus/`、`logs/`、caches）、`codex+openspec+isolated-branch-stack-browser-e2e`（1 項 `.claude/settings.local.json`）、`pr-422-session-first-contract`（1 項 `node_modules/`）。**dirty 3**＝`ci-boundary-guards`（23 檔）、`.worktrees/cross-service-structured-log-baseline`（8 檔）、`.worktrees/pr-422-risk-loop-validation`（8 檔），含未提交工作。board 目前唯一 `status: active` 的 session 是 `codex--2a3983`（cwd `sign-main-commit-pr`），不屬上述任何一個。只移除那 7 個後仍有 14 個，達不到 ≤5；deployment checkout 與待裁決／dirty 者不列入「過期 worktree」。刪除屬 destructive 動作，維持人工執行，本項保持 unchecked。
@@ -195,7 +197,6 @@ Done: 通過 DoD 所列測試；回報 verified / inferences / risks
 ## 明確不做（本週黑名單）
 
 - A5–A10 假後端 / 新 service  
-- `rvt-ifc-usdc-lineage` 實作 PR  
 - `align-frontend-design-system-reference` 全線接通（除非 A4 切片明確需要且單獨排期）  
 - 「先理解整個 repo」當 session 入口  
 - 同時開 >1 個 A4 大 branch 重寫  
@@ -225,3 +226,4 @@ Done: 通過 DoD 所列測試；回報 verified / inferences / risks
 | 2026-07-24 | 使用者將 active OpenSpec WIP 上限由 2 調整為 6；新增額度不自動 thaw deferred/frozen change。 |
 | 2026-07-29 | design gate 時間線收斂：`13033cb` 紅（`#a4` route IA 遷移）→ **#429 就地重核 A4 golden 轉綠**（產品面快照，混合權威記 D-15）；「rebaseline 關不掉」的早期斷言被 #429 實證推翻並在 proposal 誠實更正。三層對抗驗證＋重跑輪（X1/X2/X3）完成：缺口 D-1～D-17、Q1–Q8 依使用者委任由 AI 代答（標 AI-裁決、可推翻），全記於 `isolated-branch-stack-browser-e2e` proposal。 |
 | 2026-07-23 | #382／#383／#386 merged；#386 先收斂 scoped A4 visible caller compatibility，S4-B coordinator session search proxy、安全 transport、host-kit dual-namespace seam 與 cold-scan timeout regression 由 PR #384 交付（狀態以 GitHub machine truth 為準），S4-C/D 仍 pending。 |
+| 2026-08-19 | 使用者採納 R-2026-08-19：`rvt-ifc-usdc-lineage` thaw 為 active（切片制）；tasks 1.1 順序前置降級為衝突面約束（align successor 鏈與 lineage 平行）；Slice L1 = 2.1–2.7 contract fixtures、L2 = 1.2/1.3、L2 前不得 3.x runtime 接線；non-deferred active 5→6 仍在上限內；執行由 coordinator 接手原 Codex 分支。詳見「本週三軌」節 2026-08-19 裁決揭露。 |
