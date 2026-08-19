@@ -1,0 +1,44 @@
+stack_kind=self_referential_bootstrap
+pr=653
+ledger_entry=orphan-kit-liveness-preflight
+opening_base=d72f3a66e738a8f1654707185cc14d836dd26759
+pre_opening_head=449e6eb0f3ca99dd8bcaad219ec08e3b68e53ece
+verification_contract=orphan-kit-liveness-preflight/v1
+contract_sha256=aaf83a0022155d2b8858e98570bbf15ead369b298ce8360402982a6e0c149223
+mechanism_paths=scripts/deploy.ps1,scripts/lib/host-native-launcher.ps1,scripts/self-referential-bootstrap-ledger.json
+
+status=bootstrap_contract_pass
+verified_at=2026-08-19T10:44:44Z
+subject=working tree based on pre-opening head 449e6eb0f3ca99dd8bcaad219ec08e3b68e53ece with the exact ledger and evidence additions listed by this PR
+
+test-host-native-launcher
+command=pwsh -NoProfile -NonInteractive -File scripts/tests/test-host-native-launcher.ps1
+result=exit 0; ALL PASSED, including the five new #640 cases (port claim recorded by a real launch; stale-pid cleanup keeps the claim; orphan detection matrix incl. dead recorded pid, live-tree attribution, unrelated holder, owner-not-visible sentinel, union probing and the settle window; only a stop that terminated something releases the claim; Kit launch declares its signal ports)
+
+test-deploy-governance-static
+command=pwsh -NoProfile -NonInteractive -File scripts/tests/test-deploy-governance-static.ps1
+result=exit 0; PASS deploy governance static checks, including the new assertions that Phase 4c evaluates Get-HostNativeOrphanListener BEFORE Start-HostNativeKit, refuses with stage=4c, names scripts/stop-all.ps1, and exits through Print-FinalSummary -ExitCode 4
+
+test-self-referential-bootstrap
+command=pwsh -NoProfile -NonInteractive -File scripts/tests/test-self-referential-bootstrap.ps1
+result=see PR body Validation section for the exact-head run
+
+test-pr-body-evidence
+command=pwsh -NoProfile -NonInteractive -File scripts/tests/test-pr-body-evidence.ps1
+result=see PR body Validation section for the exact-head run
+
+invoke-powershell-static
+command=pwsh -NoProfile -NonInteractive -File scripts/tests/invoke-powershell-static.ps1
+result=exit 0; [invoke-powershell-static] passed
+
+gitnexus-impact
+command=gitnexus impact Get-HostNativeOrphanListener -d upstream -r AI-BIM-governance
+result=UNKNOWN/unavailable; PowerShell function-level symbols are not indexed by GitNexus (.ps1 files are File nodes only), the same coverage gap recorded for PR #647. Recorded as unavailable, not as a pass. Substitute evidence: manual call-site inventory - Get-HostNativeOrphanListener has exactly two consumers (scripts/deploy.ps1 Phase 4c, scripts/tests/test-host-native-launcher.ps1), and every reader/writer of the <Name>.ports sidecar is enumerated in the README next to this file.
+
+windows-verification
+tier=deploy_dryrun
+result=scripts/deploy.ps1 -DryRun exits 0 on this Windows host; the exact-final-head GitHub Actions run URL is recorded in the PR body after the final push, not claimed by this pre-final-head bootstrap file. No live deployment, no service start, no port bind, and no Kit/GPU/WebRTC/browser evidence is claimed here.
+
+No credential value was read or emitted. No approval, merge, runtime stop,
+deployment mutation, or production action was performed while opening this
+debt.
