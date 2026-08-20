@@ -91,6 +91,7 @@ const defaultConfig: CoordinatorConfig = {
   // rvt-ifc-usdc-lineage task 3.1（governed source bundle）：fixture 預設全空＝
   // governed 端未設定（route 一律 503）。此 fixture 與 kitPool 無關，僅為型別完整性。
   sourceBundleStorePath: "/tmp/source-bundles.json",
+  pipelineJobStorePath: "/tmp/pipeline-jobs.json",
   sourceBundleSha256VerifyMode: "full",
   governedSourceMinioEndpoint: "",
   governedSourceMinioAccessKey: "",

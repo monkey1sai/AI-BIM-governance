@@ -17,7 +17,7 @@
 ## 3. bim-review-coordinator權責
 
 - [ ] 3.1 實作 additive `POST /api/external/source-bundles/ready`、MinIO source manifest discovery/validation、minimal shadow fields 與 explicit legacy preview/confirm enrollment；producer ready claim必須重驗、polling只作reconciliation，既有`/api/external/ifc-ready`保持不變，local `storage/`/`ifc-cache` 僅作 cache。
-- [ ] 3.2 由 coordinator以 `source_bundle_id` 建立 durable stable `pipeline_job_id` 與 idempotent auto-enqueue；restart 後可恢復 pending/admission/publication state，streaming restart與 replay不建第二個 logical job。
+- [x] 3.2 由 coordinator以 `source_bundle_id` 建立 durable stable `pipeline_job_id` 與 idempotent auto-enqueue；restart 後可恢復 pending/admission/publication state，streaming restart與 replay不建第二個 logical job。〔2026-08-20：`PipelineJobStore` 持久化 L1 `pipelineJob` 殼（PENDING_ADMISSION、attempt_count=0、ready_event_ledger）；`registerLineageSourceBundleRoutes` 注入 enqueue。同 bundle replay 追加 `ready_replay` 且 `created_new_logical_job=false`。admission／attempt／publication 推進仍屬 3.3／4.x／5.x。〕
 - [ ] 3.3 實作 active-result pointer、candidate results、`result.compare` read-only compare、capability-gated promote/rollback與append-only activation/transition audit；由coordinator驗證external control-plane authorization decision並執行意圖，`governance-service`不成為lineage RBAC／active-result owner；只接受 `AVAILABLE + succeeded|succeeded_with_warnings` selectable target，拒絕cross-job、failed/cancelled與non-AVAILABLE target。
 - [ ] 3.4 擴充 browser-facing coordinator APIs，提供 bundle/artifact/alignment/attempt/audit read models、intent/confirm actions 與短效 presigned individual download，不暴露 MinIO secrets。
 - [ ] 3.5 跑 coordinator affected Vitest/integration tests，特別驗證 manifest integrity、restart recovery、idempotency、authorization、Range/resume refs 與 callback outbox separation。

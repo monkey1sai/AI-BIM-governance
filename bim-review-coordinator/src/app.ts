@@ -74,6 +74,7 @@ import { registerDevMetaRoutes } from "./routes/devMeta.js";
 // app.ts 只有 import ＋ 一段 mount，路由本體在 routes/lineageSourceBundleRoutes.ts。
 import { registerLineageSourceBundleRoutes } from "./routes/lineageSourceBundleRoutes.js";
 import { SourceBundleStore } from "./services/lineage/sourceBundleStore.js";
+import { PipelineJobStore } from "./services/lineage/pipelineJobStore.js";
 import { validateSourceBundle } from "./services/lineage/sourceBundleValidator.js";
 import {
   createS3SourceBundleObjectPort,
@@ -539,6 +540,11 @@ export interface CoordinatorApp {
    * 空間互相獨立（design.md §11.2 規則 3），不得互相推導。
    */
   sourceBundleStore: SourceBundleStore;
+  /**
+   * @internal rvt-ifc-usdc-lineage task 3.2 的 coordinator-owned pipeline job store。
+   * 與 `sourceBundleStore` 同性質的 test-only read accessor。
+   */
+  pipelineJobStore: PipelineJobStore;
   eventLog: EventLog;
   structLog: StructLogger;
   // coordinator-auto-poll-streaming-conversion §6:cancel 全部 in-process auto-poll
@@ -715,6 +721,7 @@ export function createCoordinatorApp(
   // governed 端未設定時 port 為 null → route 誠實回 503；**MUST NOT** 用 legacy watcher 的
   // MINIO_WATCH_* credentials 頂替（design.md §11.2 規則 3／5）。
   const sourceBundleStore = new SourceBundleStore(config.sourceBundleStorePath);
+  const pipelineJobStore = new PipelineJobStore(config.pipelineJobStorePath);
   const governedSourceConfigured =
     config.governedSourceMinioEndpoint.length > 0 &&
     config.governedSourceMinioAccessKey.length > 0 &&
@@ -4055,7 +4062,8 @@ export function createCoordinatorApp(
   // rvt-ifc-usdc-lineage task 3.1：governed source-bundle intake／讀取（加性 mount）。
   // legacy `/api/external/ifc-ready*` 路由已在上方註冊且**逐字不動**；此處只新增
   // `/api/external/source-bundles*` 與 `/api/lineage/legacy-unmanaged/*`。
-  // `enqueue` 由 task 3.2 注入；3.1 不注入＝`enqueued_pipeline_job_id` 誠實維持 null。
+  // task 3.2：READY bundle 自動保證恰好一個 durable pipeline_job_id。
+  // replay／restart 走同一 store，不得 mint 第二個 logical job。
   registerLineageSourceBundleRoutes(app, {
     config,
     authProvider,
@@ -4064,6 +4072,10 @@ export function createCoordinatorApp(
     objects: sourceBundleObjectPort,
     rejectIfIpNotAllowed,
     structLog,
+    enqueue: async (record) => {
+      const ensured = pipelineJobStore.ensureFromReadyBundle(record, nowIso());
+      return ensured.job.pipeline_job_id;
+    },
   });
 
   app.use((error: unknown, _request: express.Request, response: express.Response, _next: express.NextFunction) => {
@@ -4122,6 +4134,7 @@ export function createCoordinatorApp(
     store,
     externalIfcReadyStore,
     sourceBundleStore,
+    pipelineJobStore,
     eventLog,
     structLog,
     dispose,

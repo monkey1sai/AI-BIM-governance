@@ -116,6 +116,10 @@ export interface CoordinatorConfig {
   // governed source bundle durable store。env SOURCE_BUNDLE_STORE_PATH；
   // default data/source-bundles.json（比照 conversionLedgerStorePath 的 <cwd>/data 慣例）。
   sourceBundleStorePath: string;
+  // rvt-ifc-usdc-lineage task 3.2：coordinator-owned pipeline job durable store。
+  // env PIPELINE_JOB_STORE_PATH；default data/pipeline-jobs.json。與 source-bundles
+  // 分檔，避免 READY bundle 與 job orchestration 互相覆寫。
+  pipelineJobStorePath: string;
   // SOURCE_BUNDLE_SHA256_VERIFY_MODE：`full`（default，streaming 全量重算 SHA-256）或
   // `size_etag_only`（降檔門；此模式下 validator MUST 在 integrity_diagnostics 誠實標示
   // SHA-256 未重驗）。未知值 fail-fast，不靜默降檔（與 integerFromEnv 的 fail-fast 同風格）。
@@ -486,6 +490,8 @@ export function loadConfig(overrides: Partial<CoordinatorConfig> = {}): Coordina
     // rvt-ifc-usdc-lineage task 3.1（governed source bundle；與 MINIO_WATCH_* 完全分離）
     sourceBundleStorePath:
       process.env.SOURCE_BUNDLE_STORE_PATH || path.join(cwd, "data", "source-bundles.json"),
+    pipelineJobStorePath:
+      process.env.PIPELINE_JOB_STORE_PATH || path.join(cwd, "data", "pipeline-jobs.json"),
     sourceBundleSha256VerifyMode: sha256VerifyModeFromEnv(),
     governedSourceMinioEndpoint: process.env.GOVERNED_SOURCE_MINIO_ENDPOINT || "",
     governedSourceMinioAccessKey: process.env.GOVERNED_SOURCE_MINIO_ACCESS_KEY || "",
