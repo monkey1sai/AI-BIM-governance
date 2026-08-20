@@ -1588,16 +1588,17 @@
       "id": "migrate-console-to-hifi-design",
       "status": "active",
       "owner": "web-viewer-sample",
-      "current_slice": "2026-08-20 對帳：34/40 維持。殘項六條＝0.5／1.2／6.4（human owner：token disposition／--ab-* 延伸／design origin 正本，AI 不停筆寫 canon）＋2.8／3.7（逐頁 browser E2E：Pipeline／Concept 與 #/admin／#/gpu／#/sessions 尚未有本 change 的逐頁 run）＋7.4（9 STALE spec 措辭＋6 UNVERIFIABLE 需部署 E2E，待 owner 裁決 spec 對齊 vs Kit 多色高亮）。本輪不寫 docs/plans/*.html、不延伸 token、不 archive。",
+      "current_slice": "2026-08-20 HIFI-01～04 已記錄：拒絕 93、允許本地 geometry、四個 HIGH／CRITICAL 不放行、本 change 不再打包 consumer 遷移。0.5／1.2 結案（1.2=won't-add）。36/40。殘項＝2.8／3.7 逐頁 browser E2E、6.4 human origin sync、7.4 STALE spec vs Kit 標紅。不寫 docs/plans 正本、不 archive。",
       "blocked_by": [],
-      "last_verified": "2026-08-20T06:20:00Z",
+      "last_verified": "2026-08-20T06:40:00Z",
       "task_ledger": {
-        "completed": 34,
+        "completed": 36,
         "total": 40
       },
       "evidence_refs": [
         "openspec/changes/migrate-console-to-hifi-design/proposal.md",
         "openspec/changes/migrate-console-to-hifi-design/tasks.md",
+        "openspec/changes/migrate-console-to-hifi-design/adjudication-index.md",
         "artifacts/2026-08-12-hifi-consumer-spec-scenario-audit.md",
         "openspec/changes/align-frontend-design-system-reference/successor-crosswalk-migrate-console-to-hifi-design.md"
       ],

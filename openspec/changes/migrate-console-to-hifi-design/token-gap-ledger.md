@@ -24,16 +24,16 @@
 
 | Category | Count | Initial disposition |
 |---|---:|---|
-| literal spacing | 16 | `user-decision`: prefer consolidation where an existing semantic scale is equivalent |
-| radius | 6 | `user-decision` |
-| font size | 15 | `user-decision` |
-| font weight | 5 | `user-decision` |
-| line height | 5 | `user-decision` |
-| letter spacing | 8 | `user-decision` |
-| color/alpha/transparent | 38 | `user-decision`: semantic reuse before alpha proliferation |
-| **Total** | **93** | proposal only; none adopted |
+| literal spacing | 16 | `rejected 2026-08-20 HIFI-01/02`：不採納；元件可留本地 geometry |
+| radius | 6 | `rejected 2026-08-20 HIFI-01/02` |
+| font size | 15 | `rejected 2026-08-20 HIFI-01/02` |
+| font weight | 5 | `rejected 2026-08-20 HIFI-01/02` |
+| line height | 5 | `rejected 2026-08-20 HIFI-01/02` |
+| letter spacing | 8 | `rejected 2026-08-20 HIFI-01/02` |
+| color/alpha/transparent | 38 | `rejected 2026-08-20 HIFI-01`：不為 alpha 增殖開新 token |
+| **Total** | **93** | **rejected 2026-08-20**；draft 僅歷史；不得抄進正本 |
 
-Exact names and CSS-equivalent values are preserved in `drafts/ai-bim-governance.token-extension.proposed.css`. The draft is not imported and must not be copied into the protected canon without recorded user approval.
+Exact names and CSS-equivalent values remain in `drafts/ai-bim-governance.token-extension.proposed.css` as a historical proposal. The draft is not imported and must not be copied into the protected canon.
 
 ## Existing-token consumer slice assessment
 
@@ -41,16 +41,16 @@ Legacy commits also contain style-only replacements that use tokens already pres
 
 | Symbol | GitNexus risk | Disposition |
 |---|---|---|
-| `A1GovernanceWorkbenchPage` | HIGH | candidate only after explicit warning, strengthened regression plan, affected tests + visual gate |
-| `ProvLegend` | LOW | candidate after affected tests + visual gate |
-| `ConversionPage` | HIGH | requires explicit warning and strengthened regression plan |
-| `GovernanceOverlay` | LOW | candidate after affected tests + visual gate |
-| `LifecycleStrip` | CRITICAL | blocked pending user sign-off |
-| `MinioTreePane` | LOW | candidate after affected tests + visual gate |
-| `ObjectDetailPane` | LOW | candidate after affected tests + visual gate |
-| `ReviewSessionViewerPane` | HIGH | blocked; legacy file also mixes session payload changes that must not be ported |
-| `StreamConfigReader` | LOW | candidate after affected tests + visual gate |
-| `SpatialTreeView` | LOW | candidate after affected tests + visual gate |
+| `A1GovernanceWorkbenchPage` | HIGH | **blocked 2026-08-20 HIFI-03**：本 change 不放行 |
+| `ProvLegend` | LOW | **blocked 2026-08-20 HIFI-04**：本 change 不做 consumer 遷移；以後單 route 另開 |
+| `ConversionPage` | HIGH | **blocked 2026-08-20 HIFI-03** |
+| `GovernanceOverlay` | LOW | **blocked 2026-08-20 HIFI-04** |
+| `LifecycleStrip` | CRITICAL | **blocked 2026-08-20 HIFI-03**：不 sign-off |
+| `MinioTreePane` | LOW | **blocked 2026-08-20 HIFI-04** |
+| `ObjectDetailPane` | LOW | **blocked 2026-08-20 HIFI-04** |
+| `ReviewSessionViewerPane` | HIGH | **blocked 2026-08-20 HIFI-03**：另含 session payload，不得 port |
+| `StreamConfigReader` | LOW | **blocked 2026-08-20 HIFI-04** |
+| `SpatialTreeView` | LOW | **blocked 2026-08-20 HIFI-04** |
 
 The exact index used for this assessment was rebuilt from the fresh convergence worktree. The table records the conservative production-only (`includeTests=false`) result: `A1GovernanceWorkbenchPage`, `ConversionPage`, and `ReviewSessionViewerPane` each affected three indexed processes; `LifecycleStrip` affected five. Including tests changes caller counts and can lower the tool's risk heuristic, so it is not used to downgrade the production gate.
 

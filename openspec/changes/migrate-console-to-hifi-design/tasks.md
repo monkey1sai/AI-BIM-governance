@@ -6,12 +6,12 @@
 - [x] 0.2 以 parser-backed census 確認 current/legacy canon 分別有 86/179 個 unique declaration、差集為 93；legacy consumer 相對 current canon 的第 94 個缺名是負向測試 sentinel `--ab-not-real`
 - [x] 0.3 建立 `token-gap-ledger.md` 與 `adjudication-index.md`，揭露 current-main 已完成事項、未裁決缺口與 GitNexus HIGH/CRITICAL gates
 - [x] 0.4 在 `drafts/ai-bim-governance.token-extension.proposed.css` 保存平行 proposal；不得 import、不得覆寫受保護 canon
-- [ ] 0.5 使用者逐項裁決 token disposition 與 consumer migration blast radius；canon adoption 仍由 human owner 執行，AI 只維護 parallel proposal/draft，frontend visual slice 另依核准範圍啟動
+- [x] 0.5 使用者逐項裁決 token disposition 與 consumer migration blast radius；canon adoption 仍由 human owner 執行，AI 只維護 parallel proposal/draft，frontend visual slice 另依核准範圍啟動。**2026-08-20 owner grill**：HIFI-01 拒絕 93；HIFI-02 允許元件本地 geometry；HIFI-03 四個 HIGH／CRITICAL consumer 不放行；HIFI-04 本 change 不再打包 consumer 遷移、以後 visual 單 route。正本寫入未授權（R-A1）。紀錄＝`adjudication-index.md`。
 
 ## 1. Token 覆蓋率盤點
 
 - [x] 1.1 以 parser-backed census 比對 legacy canon 與 current canon 的 token 語意對應並列出缺口清單（census 正本＝`token-gap-ledger.md`：86/179 unique declaration、差集 93；原文「217 個 `--ec-*` token」數字有誤，實體缺口清單＝ledger「Legacy proposed declaration census」7 類 93 項表 + `drafts/ai-bim-governance.token-extension.proposed.css`）
-- [ ] 1.2 為缺口新增對應的 `--ab-*` token（延伸 `ai-bim-governance.css`，維持既有 `primitive`/命名慣例），SHALL NOT 為填補缺口而退回消費 `--ec-*`
+- [x] 1.2 為缺口新增對應的 `--ab-*` token（延伸 `ai-bim-governance.css`，維持既有 `primitive`/命名慣例），SHALL NOT 為填補缺口而退回消費 `--ec-*`。**terminal disposition 2026-08-20 HIFI-01／02：won't-add**。不延伸受保護正本；93 項 draft 保持歷史、不 import。
 - [x] 1.3 確認 `ai-bim-governance.css` 的 import 機制（current main 由 `EdgeConsole.tsx` 直接 import）並在 `web-viewer-sample` 建置設定中接上
 
 ## 2. UnifiedConsole IA v2 收斂（console/unified/*）
