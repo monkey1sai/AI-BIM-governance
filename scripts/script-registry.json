@@ -194,6 +194,12 @@
       "notes": "Branch-only: seeds one real-MinIO IFC-ready job into an isolated branch stack coordinator (loopback 8005-8009). Fail-closed against deployment ports. Not a deploy entrypoint; does not own stack lifecycle."
     },
     {
+      "path": "scripts/dev/kit-message-probe/driver.mjs",
+      "role": "diagnostic",
+      "owner": "scripts",
+      "notes": "Isolated Kit DataChannel message-timing probe over raw CDP. Not a deploy entrypoint; not a merge/CI gate. Live-shape-checks statsBefore.pcs so replMode:true cannot silently serialise awaitPromise as {} (#671)."
+    },
+    {
       "path": "scripts/dev/trusted-host-merge.mjs",
       "role": "base-pinned-security-authority",
       "owner": "agent-governance",
