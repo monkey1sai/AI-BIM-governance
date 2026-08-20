@@ -1512,20 +1512,21 @@
     },
     {
       "id": "introduction-resolved-subject-binding",
-      "status": "active",
+      "status": "archived",
       "owner": "repository-maintainer",
-      "current_slice": "2026-08-19：第一波（§1–§5）已於 #620 落地（squash ab67877），merge 後 fixpoint 由 #629 收尾（bootstrap entry status=closed、mechanism_commit=ab67877）；第二波記帳由 #636 完成——6.1 確認 introduction-recovery 已覆蓋本 row 故不升級 sentinel、6.3 首批 sentinel rows 已由 #621／#630 寫入（sentinel 的 post-squash 壓測列為已知殘留）、6.4 GitNexus detect-changes 記為 unavailable/UNKNOWN；慣例已入文 docs/agents/agent-governance-policy.md。32/33；唯一殘項＝6.2 危險窗操作閘：wave-1 merge 與首個 sentinel 進 main 僅隔 64 分鐘（非一個工作日）且無 open PR 盤點紀錄，如實記為已繞過、未造成事故，不勾，交 owner 追認。",
+      "current_slice": null,
       "blocked_by": [],
-      "last_verified": "2026-08-19T07:51:00Z",
+      "last_verified": "2026-08-20T03:20:00Z",
       "task_ledger": {
-        "completed": 32,
+        "completed": 33,
         "total": 33
       },
       "evidence_refs": [
-        "openspec/changes/introduction-resolved-subject-binding/proposal.md",
-        "openspec/changes/introduction-resolved-subject-binding/tasks.md"
+        "openspec/changes/archive/2026-08-20-introduction-resolved-subject-binding/proposal.md",
+        "openspec/changes/archive/2026-08-20-introduction-resolved-subject-binding/tasks.md"
       ],
       "subject_commit": "ab6787778d98094f6d34992ab3024aacd841e6bf",
+      "subject_binding": "introduction",
       "archive_debt": null
     },
     {
@@ -1931,11 +1932,11 @@
       "id": "rvt-ifc-usdc-lineage",
       "status": "active",
       "owner": "conversion-lineage",
-      "current_slice": "2026-08-19 L2 全結（tasks 1.1–1.3）：11 條 MODIFIED deltas（五個既有 spec）＋design.md §11 相容矩陣＋archive dry-run 11/11 OK；**3.x runtime 接線已解鎖**，下一片 L3 = tasks 3.1–3.2（coordinator source-bundles/ready intake＋durable pipeline job）",
+      "current_slice": "2026-08-20 tasks 3.1/3.2 落地：governed intake 全鏈（PR #662）＋legacy enrollment confirm（owner carve-out）＋durable pipelineJobStore/enqueue/reconciler；coordinator 全套 1203 tests；下一片 = tasks 3.3（active-result pointer/promote/rollback/audit）＋3.4（browser read models）",
       "blocked_by": [],
-      "last_verified": "2026-08-19T14:20:00Z",
+      "last_verified": "2026-08-20T04:10:00Z",
       "task_ledger": {
-        "completed": 11,
+        "completed": 13,
         "total": 48
       },
       "evidence_refs": [

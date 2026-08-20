@@ -183,11 +183,21 @@ main checkout 或 sibling worktree 開發 → branch → PR → CI 綠 → merge
 
 ## Per-item ship-cycle 自動化（ship-item workflow）
 
-Lane F/B 不自動啟動 ship-cycle。只有使用者明確要求 ship，或 Lane S 的已核准 spec 授權自主推進時，才使用 `.claude/workflows/ship-item.md`（commit→push→PR→local preflight→CI watch→buffered merge→closeout）。Lane G 預設停在 PR ready；是否 merge 仍依使用者授權與 branch protection。完整 gate、reviewer buffer、finding fix 與 human-approval contract 以 `ship-item.md` 為準。
+Lane F/B 不自動啟動 ship-cycle。只有使用者明確要求 ship，或 Lane S 的已核准 spec 授權自主推進時，才使用 `.claude/workflows/ship-item.md`（commit→push→PR→local preflight→CI watch→buffered merge→closeout）。Lane G 預設停在 PR ready。完整 gate、reviewer buffer、finding fix 與 trusted-host human-approval contract 以 `ship-item.md` 為準。GitHub native merge（`gh pr merge`，非 trusted-host elevated sink）在 counted `monkey1sai-blip` APPROVE 之後，依下方 2026-08-20 owner 常設授權由 coordinating agent 決定。
 
 本 repo 採 single-owner、dual-identity merge governance：同一位人類持有 owner 與固定 reviewer 兩個 GitHub 帳號，但 branch protection 保留 approving reviews=1 並強制 code-owner review。Base branch `.github/CODEOWNERS` 將全路徑唯一指定給 `monkey1sai-blip`；PR 作者不得自批，GitHub App 也不得成為 approver。該帳號的 immutable user ID 為 `311287868`、type=`User`、association=`COLLABORATOR`；trusted executor 在 preparation 與 merge 前複驗 live permission/role 都精確為 `write`，並額外要求 review body 與 `commit_id` 精確綁定 repo、PR、base SHA、head SHA。
 
-repo 內已持久化 `scripts/agent-tooling/blip-approve/` broker source package：App producer 只具 `COMMENT`／`REQUEST_CHANGES`，固定 User broker 才能產生 counted `APPROVE`；source 存在不等於已安裝、已啟用或已授權。外部 verifier、ProgramData runtime、credential 與 token health 尚未在本 repo source PR 內完成，因此 activation 與任何 live review mutation 維持 `HELD`，目前 operational path 仍是 reviewer UI。counted-review broker 不提供 current-turn provenance，也不取代下述 tuple-bound elevated authorization。
+repo 內已持久化 `scripts/agent-tooling/blip-approve/` broker source package：App producer 只具 `COMMENT`／`REQUEST_CHANGES`，固定 User broker 才能產生 counted `APPROVE`；source 存在不等於已安裝、已啟用或已授權。外部 verifier、ProgramData runtime、credential 與 token health 尚未在本 repo source PR 內完成，因此 **ProgramData broker activation 維持 `HELD`**。這不否定另一條已授權的 operational path：user-level `blip-approve` skill 透過 `C:\Users\IOT\.grok\github-bot\scripts\run_blip_human_equivalent_approve_once.ps1` 對 named PR 提交 counted `ai-bim-automated-approve-only`（owner ruling 2026-08-18）。該 body 仍不是 trusted-host `merge`／`merge-elevated` authority。counted-review 不提供 current-turn provenance，也不取代下述 tuple-bound elevated authorization。
+
+### Owner standing merge decision（2026-08-20）
+
+Owner 授予 coordinating agent 常設授權：在固定 reviewer `monkey1sai-blip`（User `311287868`）已對 **exact current head** 投下 counted APPROVE 之後，agent 可自行決定是否執行 **GitHub native merge**。這不是把 merge 放進投票 helper，也不是啟用 auto-merge。
+
+- **投票與 merge 分開。** `BLIP_GITHUB_TOKEN` 與 blip-approve helper 仍不得 merge、不得 `gh pr merge --auto`、不得改 repository `allow_auto_merge`（必須維持 `false`）。
+- **Merge 用 owner `gh`。** 指令為 `gh pr merge <n> --delete-branch`（不帶 `--auto`、不帶 `--admin`）。方法讓 GitHub 在 repo 已啟用的 merge commit／squash／rebase 之間選擇，除非另有 ledger／subject_commit 等必須 squash 的不變量。
+- **決定 yes 僅當同時成立：** OPEN、非 draft、base=`main`、`reviewDecision=APPROVED` 綁定 exact current head、required checks 綠、0 unresolved threads、GitHub 報 mergeable／無衝突、human_critical floor 未 HELD、已記錄恰好一個 machine-eligible `review_mode`（`mechanical_only`／`focused_semantic`／`risk_scoped_specialists`）、且 coordinator 判斷變更可合。
+- **決定 no／HOLD：** 任一 blip-approve vote gate 會 HELD、head 自投票後漂移、衝突、CI 紅、不明或無法分類風險、或變更未就緒。
+- **Trusted-host 路徑不變。** 禁止從自動化路徑貼 `ai-bim-single-owner-approval`（`merge`／`merge-elevated`）。trusted-host elevated merge 仍只認該 human-UI body；`approve-only` 被 evidence consumer 拒絕。
 
 elevated path 使用 `merge-elevated` action；caller-controlled `elevatedAuthorization` 永遠不構成人類授權。repo-side executor／broker contract 位於 `.github/workflows/trusted-elevated-merge.yml`、`scripts/{dev,lib}/trusted-host-merge*.mjs` 與 `agent-contracts/trusted-host-merge*`，由 protected environment 的唯一 reviewer approval 綁定 repo/PR/base/head/runId/activationMode/provider/nonce/expiry，之後才釋出單 repo短效 GitHub App token。Hosted environment、App、secrets 與 variables 是 repo 外 provisioning；repo machine state=`requires_live_attestation` 時，只允許 protected variables 綁定 exact tuple 的 `attesting_negative`／`attesting_positive`，且 workflow input、assertion與 external mode 必須逐字相同，其餘一律 `trusted_elevated_authorization_unavailable`。negative mode 永不到達 merge sink；positive live merge 通過且 closure PR 把 repo state 與 external mode 都改為 `active`、清除 tuple digest 前，不得把 repository implementation 說成 live automation。
 

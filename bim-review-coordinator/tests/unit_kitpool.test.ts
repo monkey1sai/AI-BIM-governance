@@ -98,6 +98,10 @@ const defaultConfig: CoordinatorConfig = {
   governedSourceAuthorityAllowlist: [],
   governedSourceBucketAllowlist: [],
   governedSourcePrefix: "",
+  // rvt-ifc-usdc-lineage task 3.2（durable stable pipeline job）：reconciliation 預設關閉。
+  pipelineJobStorePath: "/tmp/pipeline-jobs.json",
+  sourceBundleReconcileEnabled: false,
+  sourceBundleReconcileIntervalMs: 300_000,
 };
 
 const multiEndpointConfig: CoordinatorConfig = {

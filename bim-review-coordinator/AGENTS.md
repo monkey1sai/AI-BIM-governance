@@ -38,6 +38,7 @@
 - 不得引入 Omniverse / `pxr` / `omni.*` dependency。
 - 不得直接控制 Kit viewport、camera、material；runtime operation 屬於 `bim-streaming-server`。
 - 不直接保存大型模型檔案 byte。**例外 carve-out（2026-05-21，change `fast-ifc-link-demo-loop`）**：`POST /api/external/ifc-ready` 同步階段允許把外部 IFC 下載到本地 shared volume（`storage/ifc-cache/<ifc_ready_job_id>/source.ifc`）作 dispatch 前臨時通道（實作 `src/services/ifcDownloader.ts`）；coordinator 不因此成為 IFC bytes 權威。production 應設 `IFC_DOWNLOAD_STRICT=true` / `fallbackOnFetchError=false` 強制真實下載。
+- 對 MinIO（governed source store 與 legacy watch bucket）預設**只讀不寫**：不建立、不覆寫、不刪除任何 object。**唯一例外 carve-out（2026-08-20 owner 裁決，change `rvt-ifc-usdc-lineage`）**：legacy enrollment confirm（`POST /api/lineage/legacy-unmanaged/confirm`）允許 coordinator 對 governed source bundle 的 **`<governed prefix>/**/manifest.json` 這單一 object key** 做 conditional create（`If-None-Match: *`）；實作為 `src/services/lineage/sourceBundleObjectPort.ts` 的 `putIfAbsent`（`assertManifestObjectKey` 機器強制：非 `/manifest.json` 結尾的 key 一律 throw、不發請求）與 `src/services/lineage/legacyEnrollment.ts` 的 `confirmLegacyEnrollment`。此 carve-out **不**擴及：覆寫或刪除既有 manifest、任何其他 object key（artifact bytes、暫存檔）、任何其他 code path，以及 legacy watch bucket。conditional create 失敗（412）時 MUST 回 retryable conflict 並保留既有 manifest，MUST NOT 改以 unconditional PUT 重試。
 - User-facing flow 需要本服務參與時，API done 不等於 feature done；必須同步確認 `web-viewer-sample` 有可操作 route / button / E2E evidence。
 
 權威歸屬速查：
@@ -49,6 +50,7 @@
 | runtime mutator policy / stage-binding confirmation shadow | **owner**；只做allow/deny與bounded evidence，不執行GPU mutation |
 | project / artifact metadata | reference only（owner 在外部公司雲端 control-plane） |
 | file / conversion body | 不擁有（owner 在 `bim-streaming-server` / 外部 artifact store） |
+| MinIO object 寫入 | 不擁有；唯一例外是 legacy enrollment confirm 對 `**/manifest.json` 的 conditional create（2026-08-20 carve-out），其餘讀取面一律唯讀 |
 | 3D runtime state | 不擁有；actual state owner 在 `bim-streaming-server`，本服務只保存其confirmation shadow |
 
 ## Before Editing

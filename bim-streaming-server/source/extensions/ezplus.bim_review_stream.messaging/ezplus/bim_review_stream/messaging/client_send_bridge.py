@@ -1,28 +1,28 @@
-"""Make outbound runtime messages actually reach the connected viewer.
+"""Make outbound runtime messages reach the connected viewer exactly once.
 
-`omni.kit.livestream.messaging.register_event_type_to_send` observes the event
-on carb's Events 2.0 dispatcher and forwards it with `omni.kit.app.queue_event`.
-On this deployment that registration alone never delivers: measured end to end
-against the real Kit, the handler runs, the trace gate passes, `dispatch_event`
-fires observers, and the upstream extension serialises the message correctly and
-hands it over -- and the browser receives nothing at all, for every response
-type, so a viewer's runtime commands hang forever.
+This module forwards each registered response type to the viewer by pushing
+the wire message onto the app message bus itself. It deliberately does NOT
+also call `omni.kit.livestream.messaging.register_event_type_to_send`: both
+delivery paths work, and running them together duplicates every response.
 
-Pushing the same wire message onto the app message bus alongside that
-registration does deliver it. Measured, both together deliver exactly one copy
-per response, not two -- six `loadingStateQuery` round trips produced six
-`loadingStateResponse` messages at the client. Neither half works on its own:
-the registration without the push delivers nothing, and the push without the
-registration also delivers nothing, so both are kept deliberately. The wire
-shape is the one `LivestreamMessaging._on_message_to_send` produces, because
-that is what the plugin and the browser streaming library expect.
+Measured on an isolated real-Kit instance with a real WebRTC client (issue
+#624 experiment C.2, 2026-08-20): with both paths registered, every request
+produced exactly two identical responses at the client; with only this
+module's push path, exactly one. The 2026-08-19 measurements that this module
+originally encoded -- "registration alone delivers nothing, push alone
+delivers nothing, both together deliver one" -- were experiment artifacts;
+issue #624 has the full record. The client-side dedupe from #664 remains as
+defence in depth, not as the primary duplicate control.
 
-Why one copy rather than two is not established here; only that this pairing is
-what makes the product's runtime responses arrive. The livestream extensions in
-this deployment are version-skewed -- `app`/`core`/`webrtc` are +110.0.0 builds
-while `omni.kit.livestream.messaging-1.2.1` is a +109.0.0 build -- so aligning
-messaging to a +110 build is the upstream thing to try. Once responses arrive
-without this module, delete it and call the upstream helper directly.
+The wire shape is the one `LivestreamMessaging._on_message_to_send` produces,
+because that is what the plugin and the browser streaming library expect.
+
+The livestream extensions in this deployment are version-skewed --
+`app`/`core`/`webrtc` are +110.0.0 builds while
+`omni.kit.livestream.messaging-1.2.1` is a +109.0.0 build. If messaging is
+ever aligned to a +110 build and the upstream helper is adopted instead,
+re-measure single delivery first: switching back to the upstream path while
+this push path is still registered reintroduces the duplicates.
 """
 
 import json
@@ -58,9 +58,10 @@ def register_event_type_to_send(event_type: str):
     """Register `event_type` for sending and forward it; returns the subscription.
 
     The caller must keep the returned handle alive -- dropping it unsubscribes.
-    """
 
-    messaging.register_event_type_to_send(event_type)
+    Single-path on purpose: no `messaging.register_event_type_to_send` call
+    here -- that second path duplicates every response (issue #624, C.2).
+    """
 
     def _forward(event) -> None:
         try:
