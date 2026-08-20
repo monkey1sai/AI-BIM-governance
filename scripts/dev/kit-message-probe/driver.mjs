@@ -14,6 +14,8 @@ import { setTimeout as delay } from "node:timers/promises";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { createKitProbeCdpRpc } from "../../lib/cdp-rpc.mjs";
+import { recordStatsBefore } from "./stats-health.mjs";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const defaultRepoRoot = path.resolve(scriptDir, "..", "..", "..");
@@ -107,9 +109,7 @@ const say = (...parts) => console.log(`[${stamp()}]`, ...parts);
 
 const consoleLines = [];
 const statsSeries = [];
-const pending = new Map();
-let ws = null;
-let msgId = 0;
+let rpc = null;
 
 // --- static page server ----------------------------------------------------
 
@@ -154,11 +154,10 @@ async function startPageServer() {
 // --- CDP -------------------------------------------------------------------
 
 function send(method, params = {}) {
-  return new Promise((resolve, reject) => {
-    const id = ++msgId;
-    pending.set(id, { resolve, reject });
-    ws.send(JSON.stringify({ id, method, params }));
-  });
+  if (!rpc) {
+    throw new Error("CDP session is not attached");
+  }
+  return rpc.send(method, params);
 }
 
 // DO NOT set replMode:true here. When Runtime.evaluate is given replMode:true
@@ -230,24 +229,17 @@ async function attachToPage() {
     throw new Error(`No probe page target appeared on CDP port ${cdpPort} within 40s. Is ${chromePath} correct?`);
   }
 
-  ws = new WebSocket(target.webSocketDebuggerUrl);
-  await new Promise((resolve, reject) => { ws.onopen = resolve; ws.onerror = reject; });
-  ws.onmessage = (event) => {
-    const message = JSON.parse(event.data);
-    if (message.id && pending.has(message.id)) {
-      const handler = pending.get(message.id);
-      pending.delete(message.id);
-      if (message.error) handler.reject(new Error(JSON.stringify(message.error)));
-      else handler.resolve(message.result);
-      return;
-    }
-    if (message.method === "Runtime.consoleAPICalled") {
-      const line = (message.params.args || [])
+  const socket = new WebSocket(target.webSocketDebuggerUrl);
+  rpc = createKitProbeCdpRpc(socket, {
+    requestTimeoutMs: readyTimeoutSec * 1000,
+    onConsole(params) {
+      const line = (params.args || [])
         .map((arg) => (arg.value !== undefined ? String(arg.value) : arg.description || ""))
         .join(" ");
-      consoleLines.push(`${new Date(message.params.timestamp).toISOString()} [${message.params.type}] ${line}`);
-    }
-  };
+      consoleLines.push(`${new Date(params.timestamp).toISOString()} [${params.type}] ${line}`);
+    },
+  });
+  await rpc.opened;
   await send("Runtime.enable");
 }
 
@@ -356,7 +348,7 @@ async function run(result) {
   if (!result.ready) return false;
 
   await delay(3000);
-  result.statsBefore = await evaluate("__statsFull()");
+  recordStatsBefore(result, await evaluate("__statsFull()"));
 
   if (mode === "single") {
     say(`sending ONE command ${safeLabel}-01, then total silence`);
@@ -465,9 +457,10 @@ try {
     rawCount: result.snapshot?.raw?.length ?? null,
     byType: result.snapshot?.byType ?? null,
     table: result.table ?? null,
+    statsHealth: result.statsHealth ?? null,
     outPath,
   })}`);
-  try { ws?.close(); } catch { /* already closed */ }
+  try { rpc?.close(); } catch { /* already closed */ }
   try { chrome?.kill(); } catch { /* already gone */ }
   // closeAllConnections() first: a keep-alive socket Chrome has not released yet
   // would otherwise keep close() pending and hang the teardown indefinitely.
