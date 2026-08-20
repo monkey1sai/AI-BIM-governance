@@ -2,7 +2,7 @@
 
 > **Status: deferred 2026-08-18**（active WIP 6/6 滿額——owner 2026-07-24 檔位；六筆＝a4-console-convergence、converge-console-specs-to-shipped-behavior、gpu-session-baseline-and-idle-reclaim、implement-runtime-command-authority-and-rejection、isolated-branch-stack-browser-e2e、migrate-console-to-hifi-design，ledger＋NOW 一致實測）。本 change 以 deferred 開立、不計入 active WIP；artifacts 寫全，thaw 後即可由 spec-to-done 逐片執行。
 >
-> **重啟條件（thaw）**：任一 active change archive 釋出名額，或使用者明確口令升 active。最快路徑：`converge-console-specs-to-shipped-behavior` 唯一未勾 task 3.1 的「npx openspec CLI 在本環境不可執行」前提已於 2026-08-18 被證偽（main HEAD `080c714f` 實測 `npx openspec list` 與 `validate --all --strict` 皆 exit 0），owner 重測後 archive 即釋額（見 issue #611）。thaw 前本 change 只是規格正本，不得據以修改任何 runtime surface。
+> **重啟條件（thaw）**：僅使用者明確口令升 active。deferred/frozen 不因額度增加或任一 change archive 而自動 thaw（`docs/plans/NOW.md` 2026-07-24 owner 裁決）。thaw 前本 change 只是規格正本，不得據以修改任何 runtime surface。
 
 ## Why
 

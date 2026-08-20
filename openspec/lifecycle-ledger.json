@@ -210,11 +210,9 @@
       "id": "a4-semantic-search-model-qa",
       "status": "deferred",
       "owner": "governance-service",
-      "current_slice": null,
-      "blocked_by": [
-        "a4-console-convergence"
-      ],
-      "last_verified": "2026-08-19T05:58:18Z",
+      "current_slice": "2026-08-20 R2：blocked_by 不再指向已 archived 的 a4-console-convergence（該欄僅允許既有 change id）。真實外部條件仍擋 thaw：credential rotation (1.8)、host-native Kit lab (7.4/7.5)、獨立 reviewer (8.7)。",
+      "blocked_by": [],
+      "last_verified": "2026-08-20T08:15:00Z",
       "task_ledger": {
         "completed": 28,
         "total": 64
@@ -824,18 +822,18 @@
     },
     {
       "id": "cross-service-structured-log-baseline",
-      "status": "deferred",
+      "status": "archived",
       "owner": "cross-service-observability",
-      "current_slice": null,
+      "current_slice": "2026-08-20 archive：93/93（13.11 terminal deferred-this-change，owner R2 終局關帳）。change 目錄移入 openspec/changes/archive/2026-08-20-cross-service-structured-log-baseline；canonical spec 已 byte-identical，archive 用 --skip-specs。evidence 重跑不在本 change，需 owner 另指定範圍與窗口。",
       "blocked_by": [],
-      "last_verified": "2026-07-30T08:48:00Z",
+      "last_verified": "2026-08-20T08:15:00Z",
       "task_ledger": {
-        "completed": 92,
+        "completed": 93,
         "total": 93
       },
       "evidence_refs": [
-        "openspec/changes/cross-service-structured-log-baseline/proposal.md",
-        "openspec/changes/cross-service-structured-log-baseline/tasks.md"
+        "openspec/changes/archive/2026-08-20-cross-service-structured-log-baseline/proposal.md",
+        "openspec/changes/archive/2026-08-20-cross-service-structured-log-baseline/tasks.md"
       ],
       "subject_commit": "72a0bffc4eca4fa34beabc20a1477769bea3ad05",
       "archive_debt": null
