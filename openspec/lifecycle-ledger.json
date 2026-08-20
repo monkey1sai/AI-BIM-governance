@@ -1586,19 +1586,19 @@
     },
     {
       "id": "migrate-console-to-hifi-design",
-      "status": "active",
+      "status": "archived",
       "owner": "web-viewer-sample",
-      "current_slice": "2026-08-20 HIFI-01～04 已記錄；6.4／7.4 deferred-this-change（未勾）。2.8／3.7 已以 vite Playwright 12/12 勾選（#pipeline／#a9／#a10／#admin／#gpu／#sessions；無 Kit）。38/40。不寫 docs/plans 正本、不 archive、不宣稱 full completion。",
+      "current_slice": "2026-08-20 archive：40/40（6.4／7.4 terminal deferred-this-change）。HIFI-01～04 已記錄。change 目錄移入 openspec/changes/archive/2026-08-20-migrate-console-to-hifi-design；delta 已同步 canonical openspec/specs/console-design-token-authority/spec.md。不宣稱 visual full completion；origin 正本對齊與 STALE spec／Kit 標紅不在本 change。",
       "blocked_by": [],
-      "last_verified": "2026-08-20T07:20:00Z",
+      "last_verified": "2026-08-20T07:30:00Z",
       "task_ledger": {
-        "completed": 38,
+        "completed": 40,
         "total": 40
       },
       "evidence_refs": [
-        "openspec/changes/migrate-console-to-hifi-design/proposal.md",
-        "openspec/changes/migrate-console-to-hifi-design/tasks.md",
-        "openspec/changes/migrate-console-to-hifi-design/adjudication-index.md",
+        "openspec/changes/archive/2026-08-20-migrate-console-to-hifi-design/proposal.md",
+        "openspec/changes/archive/2026-08-20-migrate-console-to-hifi-design/tasks.md",
+        "openspec/changes/archive/2026-08-20-migrate-console-to-hifi-design/adjudication-index.md",
         "artifacts/2026-08-12-hifi-consumer-spec-scenario-audit.md",
         "openspec/changes/align-frontend-design-system-reference/successor-crosswalk-migrate-console-to-hifi-design.md"
       ],

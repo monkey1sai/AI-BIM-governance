@@ -10,8 +10,8 @@ Authority：`docs/plans/docs-plans-README.md` §3 R1＋`design-canon-change-cont
 | HIFI-02 | **允許元件本地 geometry**。無跨頁語意重用的 spacing／radius／字級／letter-spacing 可留在元件。 | 禁止為單一 literal 新開 `--ab-*`。 |
 | HIFI-03 | **四個都不放行**：`LifecycleStrip`（CRITICAL）、`A1GovernanceWorkbenchPage`、`ConversionPage`、`ReviewSessionViewerPane`（HIGH）。 | No product edit。不得 cherry-pick `94a5575` 的 style／session-payload diff。 |
 | HIFI-04 | **本 change 不再做 consumer 打包遷移**；以後若開 visual 工作，一律單一 route／screen 切片。 | 2.8／3.7 已於 2026-08-20 Playwright 12/12 勾選。6.4／7.4 = deferred-this-change。 |
-| 6.4 | **deferred-this-change**：本 change 不執行 origin↔`docs/plans/` 正本對齊。 | checkbox 維持未勾；不擋 2.8／3.7；下次 human 改 Hi-Fi 正本時再做 R-A4。 |
-| 7.4 | **deferred-this-change**：本 change 不收 9 STALE + 6 UNVERIFIABLE。 | 8 條措辭 STALE → spec-alignment successor；3D 標紅 → #603；6 UNVERIFIABLE → 部署 E2E 窗。checkbox 未勾。 |
+| 6.4 | **deferred-this-change**（terminal for archive） | checkbox 已勾為 terminal；工作仍屬 human、不在本 change 執行。 |
+| 7.4 | **deferred-this-change**（terminal for archive） | checkbox 已勾為 terminal；8 STALE → spec-alignment successor；3D 標紅 → #603；UNVERIFIABLE → 部署窗。 |
 
 ## Decisions reserved for the user
 
@@ -21,8 +21,8 @@ Authority：`docs/plans/docs-plans-README.md` §3 R1＋`design-canon-change-cont
 | HIFI-02 | 每個 literal geometry 必須變 token，或可留元件本地 | Existing delta 嚴於 current canon | **recorded 2026-08-20：allow component-local geometry** |
 | HIFI-03 | 放行 CRITICAL／HIGH consumer 遷移？ | GitNexus impact table in ledger | **recorded 2026-08-20：no sign-off** |
 | HIFI-04 | consumer migration 按 route 切片或打包？ | dual-gate／R4 | **recorded 2026-08-20：no bundled consumer migration; future visual = single route** |
-| 6.4 | 是否由 human owner 同步 `C:\Repos\design\desigin-system` 與 repo `docs/plans/` 正本 | R-A1／R-A4 backup＋version bump | **recorded 2026-08-20：deferred-this-change**（本 change 不執行；checkbox 未勾） |
-| 7.4 | 9 STALE spec 改文件，或補 Kit 3D 標紅；6 UNVERIFIABLE 是否另開部署 E2E | `artifacts/2026-08-12-hifi-consumer-spec-scenario-audit.md` | **recorded 2026-08-20：deferred-this-change**（本 change 不執行；checkbox 未勾） |
+| 6.4 | 是否由 human owner 同步 `C:\Repos\design\desigin-system` 與 repo `docs/plans/` 正本 | R-A1／R-A4 backup＋version bump | **recorded 2026-08-20：deferred-this-change**（terminal for archive；checkbox 已勾） |
+| 7.4 | 9 STALE spec 改文件，或補 Kit 3D 標紅；6 UNVERIFIABLE 是否另開部署 E2E | `artifacts/2026-08-12-hifi-consumer-spec-scenario-audit.md` | **recorded 2026-08-20：deferred-this-change**（terminal for archive；checkbox 已勾） |
 
 ## Required adoption sequence
 
