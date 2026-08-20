@@ -114,7 +114,7 @@ exits 0 regardless of findings, deliberately, so that no caller can turn it into
 A different machine-readable artifact with a different ratchet from the rule ratchet above:
 `openspec/lifecycle-ledger.json`, adjudicated by the machine-truth comparator
 (`scripts/lib/openspec-machine-truth.mjs`, `scripts/tests/verify-openspec-machine-truth.mjs`).
-Spec: `openspec/changes/introduction-resolved-subject-binding/`.
+Spec: `openspec/specs/openspec-lifecycle-ledger-schema/spec.md`、`openspec/specs/openspec-machine-truth-subject-resolution/spec.md`、`openspec/specs/openspec-machine-truth-reconcile-ratchet/spec.md`。
 
 **Reconcile declares the sentinel.** A lifecycle row that a reconcile *adds*, or whose
 `subject_commit` it *rewrites*, MUST also carry `subject_binding: "introduction"`. The sentinel
