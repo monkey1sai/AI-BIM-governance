@@ -1,4 +1,4 @@
-import type { FullResult, Reporter, TestCase, TestResult } from "@playwright/test/reporter";
+import type { Reporter, TestCase, TestResult } from "@playwright/test/reporter";
 
 export type SkippedTestRecord = {
   title: string;
@@ -30,7 +30,7 @@ export default class ForbidSkippedWhenRealReporter implements Reporter {
     }
   }
 
-  onEnd(_result: FullResult): void {
+  onEnd(): void {
     const message = skippedTestsViolateRealGate(process.env, this.skipped);
     if (!message) return;
     console.error(message);
