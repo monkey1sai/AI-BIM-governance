@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import {
+  assertManifestObjectKey,
   assertRefAllowed,
   buildMinioRef,
   parseGovernedPrefix,
@@ -142,7 +143,10 @@ export function createFakeSourceBundleObjectPort(
       _contentType: string,
     ): Promise<PutIfAbsentOutcome> {
       port.writeCalls += 1;
+      // 兩道 gate 都刻意共用 production 函式：allowlist（D-3）與 owner carve-out 的
+      // key 形狀（只准 `**/manifest.json`）在兩個 adapter 上被同一份程式碼驗證。
       assertRefAllowed(ref, allow);
+      assertManifestObjectKey(ref.objectKey);
       const existing = port.objects.find(
         (object) =>
           object.authority === ref.authority &&
@@ -152,16 +156,17 @@ export function createFakeSourceBundleObjectPort(
       // conditional create（If-None-Match: *）：已存在就衝突，絕不覆寫。
       if (existing) return { outcome: "conflict_existing_manifest" };
       const versionId = `v-fake-${port.objects.length + 1}`;
+      const etag = fakeEtag(body);
       port.objects.push({
         authority: ref.authority,
         bucket: ref.bucket,
         objectKey: ref.objectKey,
         versionId,
-        etag: fakeEtag(body),
+        etag,
         sizeBytes: body.length,
         bytes: Buffer.from(body),
       });
-      return { outcome: "created", versionId };
+      return { outcome: "created", versionId, etag };
     },
 
     async listVersionPrefixes(prefix: string): Promise<string[]> {

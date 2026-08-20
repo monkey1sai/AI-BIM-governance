@@ -16,12 +16,19 @@
 //
 // D-3（coordinator 裁決）：authority／bucket 走 **fail-closed allowlist**。
 // 不在清單內的 locator 一律拒絕，不做任何連線。
+//
+// **Owner carve-out（2026-08-20 裁決）**：`putIfAbsent` 是 coordinator 對 MinIO 的
+// **唯一**寫入面，且只開給 legacy enrollment confirm 的 `manifest.json` conditional
+// create。`assertManifestObjectKey` 是這條 carve-out 的**機器強制**：任何不以
+// `/manifest.json` 結尾的 key 一律拋錯，不發出請求。正本：`bim-review-coordinator/AGENTS.md`
+// 的 Required Boundaries carve-out 段。
 import crypto from "node:crypto";
 import type { Readable } from "node:stream";
 import {
   GetObjectCommand,
   HeadObjectCommand,
   ListObjectVersionsCommand,
+  PutObjectCommand,
   S3Client,
 } from "@aws-sdk/client-s3";
 import { isRefParseFailure, parseMinioRef, type ParsedRef } from "./minioLocator.js";
@@ -45,8 +52,21 @@ export interface VersionedObjectSummary {
   sizeBytes: number;
 }
 
+/**
+ * governed manifest 的固定檔名。
+ *
+ * 三個地方共用同一個字：discovery（哪些 prefix 是 governed version）、legacy 判定
+ * （有 manifest 就不是 `LEGACY_UNMANAGED`）、以及 carve-out 的寫入 gate。
+ * 多一種拼法就是多一個 authority，所以這裡是唯一定義處（`legacyEnrollment.ts`
+ * 只 re-export）。
+ */
+export const MANIFEST_OBJECT_NAME = "manifest.json";
+
+/** carve-out 的 key 形狀：只有以此結尾的 object key 可被 `putIfAbsent` 寫入。 */
+export const MANIFEST_OBJECT_SUFFIX = `/${MANIFEST_OBJECT_NAME}`;
+
 export type PutIfAbsentOutcome =
-  | { outcome: "created"; versionId: string }
+  | { outcome: "created"; versionId: string; etag: string }
   | { outcome: "conflict_existing_manifest" };
 
 /**
@@ -65,10 +85,10 @@ export interface SourceBundleObjectPort {
   /**
    * legacy enrollment 用：conditional create（`If-None-Match: *`）。
    *
-   * **D-4（coordinator 裁決，preview-only）**：真 S3 adapter 目前**不實作**寫入，
-   * 一律拋 `SourceBundleWriteNotPermittedError`。coordinator 至今只讀 MinIO，
-   * 新增寫入權責需要 owner 對 `bim-review-coordinator/AGENTS.md` 的明示 carve-out。
-   * 介面成員保留，讓 carve-out 落地時是 adapter 內的單點變更。
+   * **owner carve-out（2026-08-20）**：這是 coordinator 對 MinIO 的唯一寫入面，
+   * 且僅限 governed prefix 之下、以 `/manifest.json` 結尾的 key —— 其餘 key 由
+   * `assertManifestObjectKey` fail-closed 擋下，連請求都不發。已存在時回
+   * `conflict_existing_manifest`（可重試），**絕不覆寫**。
    */
   putIfAbsent(
     ref: Omit<ParsedRef, "versionId">,
@@ -100,14 +120,41 @@ export class SourceBundleAccessDeniedError extends Error {
   }
 }
 
-/** coordinator 尚未取得 MinIO 寫入 carve-out（D-4，preview-only）。 */
-export class SourceBundleWriteNotPermittedError extends Error {
-  readonly code = "source_bundle_write_awaiting_owner_carve_out";
-  readonly httpStatus = 501;
+/**
+ * 寫入超出 owner carve-out 的範圍（2026-08-20 裁決只開 `manifest.json` 一種 key）。
+ *
+ * 這不是使用者輸入錯誤而是**呼叫端的程式錯誤**，故不帶 `httpStatus`：route 層的
+ * 4xx 映射不會撿它，會冒到 error middleware 變 500。carve-out 的邊界寧可以 500
+ * 尖叫，也不要被靜默降級成一個看起來像正常拒絕的 4xx。
+ */
+export class SourceBundleWriteScopeError extends Error {
+  readonly code = "source_bundle_write_scope_violation";
 
-  constructor(detail = "coordinator MinIO write is awaiting owner carve-out") {
+  constructor(readonly objectKey: string) {
+    super(
+      `coordinator MinIO write carve-out only covers ${MANIFEST_OBJECT_SUFFIX} conditional create; refusing to write ${objectKey}`,
+    );
+    this.name = "SourceBundleWriteScopeError";
+  }
+}
+
+/**
+ * PutObject 成功了但回應缺 `VersionId`／`ETag`。
+ *
+ * governed bucket **必須**開 versioning：沒有 version id 就組不出 governed locator
+ * （`?versionId=` 是契約必填），這份 manifest 也就無法被後續重驗引用。誠實 fail-closed，
+ * 不用空字串偽造一個 locator。注意此時 object **已寫入**：重試會得到
+ * `conflict_existing_manifest`，那是正確且可讀的後續狀態。
+ */
+export class SourceBundleWriteResponseError extends Error {
+  readonly code = "source_bundle_write_response_incomplete";
+
+  constructor(
+    readonly bucket: string,
+    detail: string,
+  ) {
     super(detail);
-    this.name = "SourceBundleWriteNotPermittedError";
+    this.name = "SourceBundleWriteResponseError";
   }
 }
 
@@ -165,6 +212,22 @@ export function assertRefAllowed(
   }
 }
 
+/**
+ * owner carve-out 的機器強制（2026-08-20）。
+ *
+ * coordinator 只被授權 conditional-create governed bundle 的 `manifest.json`。
+ * 任何其他 key（artifact bytes、暫存檔、其他路徑）一律在**發出請求前**拒絕，
+ * 讓「只寫這一個 key」成為程式碼事實，而不是一句文件承諾。
+ *
+ * 也擋掉裸 `manifest.json`（沒有前置 `/`）：governed manifest 一定住在
+ * `<prefix>/<version>/` 之下，bucket 根目錄的 manifest 不是本 carve-out 的對象。
+ */
+export function assertManifestObjectKey(objectKey: string): void {
+  if (typeof objectKey !== "string" || !objectKey.endsWith(MANIFEST_OBJECT_SUFFIX)) {
+    throw new SourceBundleWriteScopeError(String(objectKey));
+  }
+}
+
 export interface ParsedGovernedPrefix {
   authority: string;
   bucket: string;
@@ -210,7 +273,7 @@ export function versionPrefixesFromObjects(
 ): string[] {
   const prefixes = new Set<string>();
   for (const object of objects) {
-    if (object.objectKey.endsWith("/manifest.json")) {
+    if (object.objectKey.endsWith(MANIFEST_OBJECT_SUFFIX)) {
       prefixes.add(
         `minio://${object.authority}/${object.bucket}/${containingPrefix(object.objectKey)}`,
       );
@@ -228,6 +291,20 @@ function isNotFound(err: unknown): boolean {
     name === "NoSuchVersion" ||
     status === 404
   );
+}
+
+/**
+ * conditional create 的「物件已存在」訊號。
+ *
+ * `If-None-Match: *` 命中既有 object 時，MinIO／S3 回 **412 Precondition Failed**
+ * （code `PreconditionFailed`）。**只**映射 412：S3 在並行寫入時另有 409
+ * `ConditionalRequestConflict`，那是「條件還沒判完」而不是「manifest 已存在」，
+ * 讓它照常 propagate 成錯誤，比誤報成一個 conflict 文件誠實。
+ */
+function isPreconditionFailed(err: unknown): boolean {
+  const name = (err as { name?: string })?.name ?? "";
+  const status = (err as { $metadata?: { httpStatusCode?: number } })?.$metadata?.httpStatusCode;
+  return name === "PreconditionFailed" || status === 412;
 }
 
 function stripEtagQuotes(etag: string | undefined): string {
@@ -323,9 +400,42 @@ export function createS3SourceBundleObjectPort(
       return Buffer.concat(chunks);
     },
 
-    async putIfAbsent(): Promise<PutIfAbsentOutcome> {
-      // D-4：preview-only。真寫入等 owner carve-out。
-      throw new SourceBundleWriteNotPermittedError();
+    async putIfAbsent(
+      ref: Omit<ParsedRef, "versionId">,
+      body: Buffer,
+      contentType: string,
+    ): Promise<PutIfAbsentOutcome> {
+      // 兩道 fail-closed gate 都在發請求之前：D-3 allowlist ＋ carve-out key 形狀。
+      assertRefAllowed(ref, allow);
+      assertManifestObjectKey(ref.objectKey);
+      let resp;
+      try {
+        resp = await client.send(
+          new PutObjectCommand({
+            Bucket: ref.bucket,
+            Key: ref.objectKey,
+            Body: body,
+            ContentType: contentType,
+            ContentLength: body.length,
+            // conditional create：object 已存在時 server 端拒絕，寫入不發生。
+            // 這是「並行升格只允許一個成功」在 store 層的唯一保證——不用先 HEAD
+            // 再 PUT（那是 TOCTOU，兩個 operator 會雙雙看到「不存在」）。
+            IfNoneMatch: "*",
+          }),
+        );
+      } catch (err) {
+        if (isPreconditionFailed(err)) return { outcome: "conflict_existing_manifest" };
+        throw err;
+      }
+      const versionId = resp.VersionId ?? "";
+      const etag = stripEtagQuotes(resp.ETag);
+      if (versionId === "" || etag === "") {
+        throw new SourceBundleWriteResponseError(
+          ref.bucket,
+          `PutObject 對 ${ref.objectKey} 成功但回應缺 ${versionId === "" ? "VersionId（governed bucket 必須開 versioning）" : "ETag"}；無法組出 governed locator`,
+        );
+      }
+      return { outcome: "created", versionId, etag };
     },
 
     async listVersionPrefixes(prefix: string): Promise<string[]> {

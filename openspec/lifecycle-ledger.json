@@ -1932,11 +1932,11 @@
       "id": "rvt-ifc-usdc-lineage",
       "status": "active",
       "owner": "conversion-lineage",
-      "current_slice": "2026-08-19 L2 全結（tasks 1.1–1.3）：11 條 MODIFIED deltas（五個既有 spec）＋design.md §11 相容矩陣＋archive dry-run 11/11 OK；**3.x runtime 接線已解鎖**，下一片 L3 = tasks 3.1–3.2（coordinator source-bundles/ready intake＋durable pipeline job）",
+      "current_slice": "2026-08-20 tasks 3.1/3.2 落地：governed intake 全鏈（PR #662）＋legacy enrollment confirm（owner carve-out）＋durable pipelineJobStore/enqueue/reconciler；coordinator 全套 1203 tests；下一片 = tasks 3.3（active-result pointer/promote/rollback/audit）＋3.4（browser read models）",
       "blocked_by": [],
-      "last_verified": "2026-08-19T14:20:00Z",
+      "last_verified": "2026-08-20T04:10:00Z",
       "task_ledger": {
-        "completed": 11,
+        "completed": 13,
         "total": 48
       },
       "evidence_refs": [

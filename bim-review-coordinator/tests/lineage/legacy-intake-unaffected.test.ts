@@ -267,7 +267,7 @@ describe("watcher／手動 trigger 不被 governed manifest 抑制（D-7、§11.
 });
 
 describe("app.ts 接線：governed route 掛上且 fail-closed", () => {
-  it("governed MinIO 未設定 → ready claim 503；讀取面誠實回空；confirm 為 501", async () => {
+  it("governed MinIO 未設定 → ready claim 503；讀取面誠實回空；confirm 也 503", async () => {
     const app = makeApp();
     const ready = await request(app.app)
       .post("/api/external/source-bundles/ready")
@@ -311,7 +311,11 @@ describe("app.ts 接線：governed route 掛上且 fail-closed", () => {
         capability: "bundle.publish",
         authorization_decision_ref: "decision://governance-console/abc123",
       });
-    expect(confirm.status).toBe(501);
-    expect(confirm.body.error).toBe("awaiting_owner_carveout");
+    // carve-out 之後 confirm 是真流程，但沒有 governed MinIO 就無從 conditional create：
+    // 誠實 503（與 ready claim 同一個 fail-closed 理由），不是假裝成功也不是 501。
+    expect(confirm.status).toBe(503);
+    expect(confirm.body.error).toBe("governed_source_store_unconfigured");
+    // legacy 面照樣零污染：升格路徑不得憑空生出 governed bundle。
+    expect(app.sourceBundleStore.list()).toEqual([]);
   });
 });
