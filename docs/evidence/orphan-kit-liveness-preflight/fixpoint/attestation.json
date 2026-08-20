@@ -1,0 +1,14 @@
+{
+  "schema_version": "self-referential-fixpoint-attestation/v1",
+  "entry_id": "orphan-kit-liveness-preflight",
+  "mechanism_commit": "cb92a2bf99a4cbb7ba3c67ec17bfcf2996721972",
+  "verification_contract_sha256": "aaf83a0022155d2b8858e98570bbf15ead369b298ce8360402982a6e0c149223",
+  "result": "pass",
+  "commands": [
+    { "id": "test-host-native-launcher", "exit_code": 0 },
+    { "id": "test-deploy-governance-static", "exit_code": 0 },
+    { "id": "test-self-referential-bootstrap", "exit_code": 0 },
+    { "id": "test-pr-body-evidence", "exit_code": 0 },
+    { "id": "invoke-powershell-static", "exit_code": 0 }
+  ]
+}

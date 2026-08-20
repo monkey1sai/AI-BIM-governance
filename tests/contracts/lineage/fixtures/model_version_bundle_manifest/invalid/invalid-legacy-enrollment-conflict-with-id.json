@@ -1,0 +1,16 @@
+{
+  "schema_version": "model-version-bundle-manifest/v1",
+  "document_type": "legacy_enrollment_confirmation",
+  "body": {
+    "grouping_key": "legacy/legacy-project-01/legacy-version-01",
+    "confirmed_by_subject": "subject:operator-b",
+    "capability": "bundle.publish",
+    "authorization_decision_ref": "authz-decision-2026-07-16-0012",
+    "confirmed_at": "2026-07-16T10:12:31.400Z",
+    "conditional_create": {
+      "outcome": "conflict_existing_manifest"
+    },
+    "created_source_bundle_id": "source-bundle-legacy-0011",
+    "retryable": true
+  }
+}

@@ -1,0 +1,7 @@
+{
+  "error": {
+    "code": "TRANSIENT_UNAVAILABLE",
+    "message": "Cloud persistence is temporarily unavailable.",
+    "retryable": true
+  }
+}

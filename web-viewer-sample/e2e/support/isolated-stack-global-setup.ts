@@ -23,6 +23,9 @@ function Get-CreationIdentity($value) {
   if ($value -is [datetime]) { return $value.ToUniversalTime().ToString('o') }
   return [string]$value
 }
+function Get-RedactedCommandLine($value) {
+  return [string]$value -replace '((?:^|\s)-PayloadBase64\s+)(?:"[^"]*"|[A-Za-z0-9+/=]+)', '$1<payload-elided>'
+}
 $process = Get-CimInstance Win32_Process -Filter "ProcessId=$expectedPid" -ErrorAction Stop
 if ($null -eq $process) { throw "manifest process $expectedPid is not running" }
 if (-not ([string]$process.CommandLine).Contains($entrypoint, [StringComparison]::OrdinalIgnoreCase)) {
@@ -72,7 +75,7 @@ foreach ($node in $lineage) {
 [ordered]@{
   process = [ordered]@{
     pid = [int]$process.ProcessId
-    command_line = [string]$process.CommandLine
+    command_line = Get-RedactedCommandLine $process.CommandLine
     creation_identity = Get-CreationIdentity $process.CreationDate
     executable_path = [string]$process.ExecutablePath
   }

@@ -1497,7 +1497,8 @@ class Ifc2UsdcPowershellConverterAdapter:
         if extension_root.name != expected_package_name:
             raise ConversionAuthorityError(
                 "converter_unavailable",
-                "CAD extension cache candidate does not match the trusted package build.",
+                "CAD extension cache candidate does not match the trusted package "
+                f"build: found={extension_root.name!r} expected={expected_package_name!r}",
             )
         try:
             resolved_release_root = release_root.resolve(strict=True)
@@ -1507,32 +1508,40 @@ class Ifc2UsdcPowershellConverterAdapter:
         except OSError as exc:
             raise ConversionAuthorityError(
                 "converter_unavailable",
-                "CAD extension cache candidate could not be resolved.",
+                f"CAD extension cache candidate could not be resolved: {candidate} ({exc}).",
             ) from exc
         if resolved_extension_root.name != extension_root.name:
             raise ConversionAuthorityError(
                 "converter_unavailable",
-                "CAD extension cache link target does not match its pinned package name.",
+                "CAD extension cache link target does not match its pinned package "
+                f"name: link={extension_root.name!r} target={resolved_extension_root.name!r}",
             )
         try:
             resolved_candidate.relative_to(resolved_extension_root)
         except ValueError as exc:
             raise ConversionAuthorityError(
                 "converter_unavailable",
-                "CAD extension entrypoint escapes its package root.",
+                "CAD extension entrypoint escapes its package root: "
+                f"candidate={resolved_candidate} package_root={resolved_extension_root}",
             ) from exc
         if not self._path_components_are_owner_private(resolved_release_root, resolved_link_parent):
             raise ConversionAuthorityError(
                 "converter_unavailable",
-                "CAD extension cache link parent is not owner-private.",
+                "CAD extension cache link parent is not owner-private: "
+                f"path={resolved_link_parent} (root={resolved_release_root})",
             )
-        if os.name != "nt" and extension_root.lstat().st_uid != os.geteuid():
-            raise ConversionAuthorityError(
-                "converter_unavailable",
-                "CAD extension cache link is not owned by the service account.",
-            )
+        if os.name != "nt":
+            link_owner_uid = extension_root.lstat().st_uid
+            current_uid = os.geteuid()
+            if link_owner_uid != current_uid:
+                raise ConversionAuthorityError(
+                    "converter_unavailable",
+                    "CAD extension cache link is not owned by the service account: "
+                    f"owner_uid={link_owner_uid} service_uid={current_uid}",
+                )
 
         contained_by_trusted_root = False
+        failed_trusted_root: Path | None = None
         for trusted_root in self._trusted_extension_cache_roots():
             try:
                 resolved_trusted_root = trusted_root.resolve(strict=True)
@@ -1549,14 +1558,17 @@ class Ifc2UsdcPowershellConverterAdapter:
                 allow_leaf_world_write=allow_leaf_world_write,
             ):
                 return resolved_candidate
+            failed_trusted_root = resolved_trusted_root
         if contained_by_trusted_root:
             raise ConversionAuthorityError(
                 "converter_unavailable",
-                "CAD extension cache path failed owner-private permission validation.",
+                "CAD extension cache path failed owner-private permission "
+                f"validation: path={resolved_candidate} trusted_root={failed_trusted_root}",
             )
         raise ConversionAuthorityError(
             "converter_unavailable",
-            "CAD extension cache link resolves outside an owner-approved cache root.",
+            "CAD extension cache link resolves outside an owner-approved cache "
+            f"root: path={resolved_candidate}",
         )
 
     @staticmethod
@@ -1571,7 +1583,7 @@ class Ifc2UsdcPowershellConverterAdapter:
         except OSError as exc:
             raise ConversionAuthorityError(
                 "converter_unavailable",
-                "CAD extension path link state could not be inspected safely.",
+                f"CAD extension path link state could not be inspected safely: {path} ({exc}).",
             ) from exc
         return bool(file_attributes & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400))
 
@@ -1593,12 +1605,12 @@ class Ifc2UsdcPowershellConverterAdapter:
             except OSError as exc:
                 raise ConversionAuthorityError(
                     "converter_unavailable",
-                    "CAD extension search root could not be inspected safely.",
+                    f"CAD extension search root could not be inspected safely: {root} ({exc}).",
                 ) from exc
             if self._path_is_directory_link(root):
                 raise ConversionAuthorityError(
                     "converter_unavailable",
-                    "CAD extension search root must not be a link or junction.",
+                    f"CAD extension search root must not be a link or junction: {root}",
                 )
             if not stat.S_ISDIR(root_stat.st_mode):
                 continue
@@ -1608,7 +1620,8 @@ class Ifc2UsdcPowershellConverterAdapter:
             except (OSError, ValueError) as exc:
                 raise ConversionAuthorityError(
                     "converter_unavailable",
-                    "CAD extension search root escapes the Kit release root.",
+                    "CAD extension search root escapes the Kit release root: "
+                    f"root={root} release_root={resolved_release_root} ({exc}).",
                 ) from exc
             for extension_root in sorted(root.glob("omni.services.convert.cad*")):
                 candidate = extension_root.joinpath(*suffix)
@@ -1617,7 +1630,8 @@ class Ifc2UsdcPowershellConverterAdapter:
                 if extension_root.name != expected_package_name:
                     raise ConversionAuthorityError(
                         "converter_unavailable",
-                        "CAD extension candidate does not match the trusted package build.",
+                        "CAD extension candidate does not match the trusted package "
+                        f"build: found={extension_root.name!r} expected={expected_package_name!r}",
                     )
                 if self._path_is_directory_link(extension_root):
                     resolved_candidate = self._resolve_symlinked_cad_entrypoint(
@@ -1636,7 +1650,8 @@ class Ifc2UsdcPowershellConverterAdapter:
                     except (OSError, ValueError) as exc:
                         raise ConversionAuthorityError(
                             "converter_unavailable",
-                            "CAD extension entrypoint escapes the Kit release root.",
+                            "CAD extension entrypoint escapes the Kit release root: "
+                            f"candidate={candidate} search_root={resolved_root} ({exc}).",
                         ) from exc
                     if not self._path_components_are_owner_private(
                         resolved_release_root,
@@ -1645,7 +1660,8 @@ class Ifc2UsdcPowershellConverterAdapter:
                     ):
                         raise ConversionAuthorityError(
                             "converter_unavailable",
-                            "CAD extension directory failed owner-private permission validation.",
+                            "CAD extension directory failed owner-private permission "
+                            f"validation: path={resolved_candidate} (root={resolved_release_root})",
                         )
                 self._verify_cad_entrypoint_digest(
                     resolved_candidate,
@@ -1656,7 +1672,8 @@ class Ifc2UsdcPowershellConverterAdapter:
         if len(matches) > 1:
             raise ConversionAuthorityError(
                 "converter_unavailable",
-                "Multiple CAD extension entrypoints were found; refusing an ambiguous selection.",
+                "Multiple CAD extension entrypoints were found; refusing an ambiguous "
+                f"selection: {', '.join(str(match) for match in matches)}",
             )
         return matches[0] if matches else None
 
@@ -2399,7 +2416,8 @@ class Ifc2UsdcPowershellConverterAdapter:
         except ValueError as exc:
             raise ConversionAuthorityError(
                 "invalid_ifc_input",
-                f"local IFC path is outside storage_root: {raw}",
+                f"local IFC path is outside storage_root: {raw} "
+                f"(storage_root={self.storage_root})",
             ) from exc
         if not resolved.is_file():
             return None

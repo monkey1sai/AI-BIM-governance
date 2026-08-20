@@ -1,0 +1,19 @@
+{
+  "schema_version": "model-version-bundle-manifest/v1",
+  "document_type": "source_bundle_validation_result",
+  "body": {
+    "source_bundle_id": "source-bundle-0003",
+    "external_model_version_id": "model-version-20260715-001",
+    "manifest_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+    "manifest_present": true,
+    "bundle_state": "READY",
+    "conditional_create": {
+      "attempted": true,
+      "outcome": "created"
+    },
+    "replay": false,
+    "enqueued_pipeline_job_id": "pipeline-job-0003",
+    "integrity_diagnostics": [],
+    "observed_at": "2026-07-16T07:58:40.000Z"
+  }
+}

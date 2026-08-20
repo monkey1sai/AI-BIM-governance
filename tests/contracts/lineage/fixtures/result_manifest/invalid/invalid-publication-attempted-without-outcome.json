@@ -1,0 +1,35 @@
+{
+  "schema_version": "result-manifest-document/v1",
+  "document_type": "result_publication_outcome",
+  "body": {
+    "result_id": "result-0012",
+    "attempt_id": "attempt-0012",
+    "pipeline_job_id": "pipeline-job-0003",
+    "publication_state": "INVALID",
+    "conditional_create": {
+      "attempted": true
+    },
+    "replay": false,
+    "result_manifest_digest": "72438a7fdf982341dc69412317e94ab756862ca60fc84ca1ba8a95daae383b0e",
+    "prior_result_id": null,
+    "prior_result_manifest_digest": null,
+    "available_at": null,
+    "diagnostics": [
+      {
+        "code": "missing_required_role",
+        "role": "alignment_report_csv",
+        "expected": "alignment_report_csv",
+        "observed": null,
+        "detail": "manifest 未宣告 alignment_report_csv role"
+      },
+      {
+        "code": "sha256_mismatch",
+        "role": "usdc",
+        "expected": "23e1a0c3fcab1ab66373a968271ae72e2f1197c02b7d524c6c6114b1ba2c3987",
+        "observed": "2667a2d3ba0e57dc46f5199570477415a2f1bf423b11683dbb2198b1c3ed408f",
+        "detail": "model.usdc 的 SHA-256 與 manifest 宣告不符"
+      }
+    ],
+    "observed_at": "2026-07-16T12:44:31Z"
+  }
+}

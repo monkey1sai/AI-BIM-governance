@@ -1,0 +1,14 @@
+{
+  "schema_version": "result-manifest-document/v1",
+  "document_type": "local_cache_observation",
+  "body": {
+    "result_id": "result-0007",
+    "attempt_id": "attempt-0007",
+    "pipeline_job_id": "pipeline-job-0003",
+    "local_cache_present": false,
+    "minio_objects_intact": true,
+    "formal_availability": "AVAILABLE",
+    "rebuild_from_minio_possible": true,
+    "observed_at": "2026-07-17T02:00:00Z"
+  }
+}

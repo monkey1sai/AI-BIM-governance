@@ -79,6 +79,10 @@ $libDir = Join-Path $PSScriptRoot 'lib'
 . (Join-Path $libDir 'host-native-launcher.ps1')
 . (Join-Path $libDir 'kit-log-probe.ps1')
 . (Join-Path $libDir 'design-assets.ps1')
+# Windows CAD extension cache DACL convergence (#625). The Linux hardener's
+# convergence step (an inode replacement) has no NTFS equivalent, so the Windows
+# side of the same trust boundary is converged here instead of being skipped.
+. (Join-Path $libDir 'cad-extension-cache-acl.ps1')
 
 if (-not (Test-Path -LiteralPath $RunDir)) {
     New-Item -ItemType Directory -Path $RunDir -Force | Out-Null
@@ -1337,6 +1341,45 @@ if (-not $SkipConversion -and (Get-PlatformName) -eq 'linux') {
     Write-DeployTag -Tag 'ok' -Message 'CAD extension cache entrypoint permissions hardened' -LogPath $LogPath | Out-Null
 }
 
+# The runtime adapter enforces the same owner-private trust boundary on EVERY
+# platform (_path_components_are_owner_private -> _windows_path_component_is_owner_private),
+# but the Linux hardener above returns early on nt: its convergence step replaces
+# the entrypoint inode, which NTFS cannot do. Nothing converged the Windows cache
+# ACLs, so conversion failed at runtime with an unactionable converter_unavailable
+# whenever the inherited DACL carried a non-trusted writer (#625). Converge the
+# NTFS DACLs of the pinned chain here and fail closed on the same predicate.
+if (-not $SkipConversion -and (Get-PlatformName) -eq 'windows') {
+    # Pre-initialised and matched on 'passed' LAST: a hardener that could not run
+    # at all (missing library, unexpected throw) leaves $null here and must fail
+    # closed, never fall through to the success tag.
+    $windowsCadResult = $null
+    $windowsCadResult = Invoke-CadExtensionCacheWindowsHardening `
+        -StreamingRepoRoot (Join-Path $RepoRoot 'bim-streaming-server') `
+        -ConfiguredHoopsMain (Get-DeployEnvValue -Name 'STREAMING_CONVERSION_HOOPS_MAIN' -EnvFile $resolvedEnvFile -Default '')
+    $windowsCadStatus = if ($null -eq $windowsCadResult) { '' } else { [string]$windowsCadResult.Status }
+    if ($null -ne $windowsCadResult -and -not [string]::IsNullOrWhiteSpace([string]$windowsCadResult.StatusJson)) {
+        Add-Content -LiteralPath $LogPath -Value ([string]$windowsCadResult.StatusJson)
+    }
+    if ($windowsCadStatus -ceq 'passed') {
+        Write-DeployTag -Tag 'ok' -Message "CAD extension cache entrypoint permissions hardened ($($windowsCadResult.Diagnostic))" -LogPath $LogPath | Out-Null
+    }
+    elseif ($windowsCadStatus -ceq 'skipped') {
+        # Nothing cached yet, no pinned manifest in this deployment root, or an
+        # explicit override owns the entrypoint: there is no pinned chain to
+        # converge, and the runtime keeps its own unchanged gate for each case.
+        Write-DeployTag -Tag 'skip' -Message "CAD extension cache hardening skipped ($($windowsCadResult.ReasonKind)): $($windowsCadResult.Diagnostic)" -LogPath $LogPath | Out-Null
+    }
+    else {
+        # The diagnostic names the failing chain component and its untrusted SIDs,
+        # which is what the runtime message could not say.
+        $windowsCadReason = if ($null -eq $windowsCadResult) { 'hardener_unavailable' } else { [string]$windowsCadResult.ReasonKind }
+        $windowsCadDiagnostic = if ($null -eq $windowsCadResult) { 'the Windows CAD cache hardener returned no result' } else { [string]$windowsCadResult.Diagnostic }
+        Write-DeployTag -Tag 'fail' -Message "CAD extension cache permission hardening failed ($windowsCadReason): $windowsCadDiagnostic" -LogPath $LogPath | Out-Null
+        Print-FinalSummary -ExitCode 2 -FailedPhase 'Phase 2 (CAD extension cache hardening)'
+        exit 2
+    }
+}
+
 # fix: .env / .env.example missing-key merge
 foreach ($ef in $envFiles) {
     $envPath     = Join-Path $RepoRoot $ef.file
@@ -1729,6 +1772,33 @@ if ($SkipKit) {
     if ($kitAlreadyRunning) {
         Write-DeployTag -Tag 'skip' -Message 'Phase 4c host-native Kit already running with matching runtime parameters' -LogPath $LogPath | Out-Null
     } else {
+        # Orphan gate (#640). Liveness above is the LAUNCHER's pid, but the Kit
+        # child holds the ports, the GPU context and the Omniverse user
+        # directory. When the launcher dies and the child survives,
+        # Remove-StalePidFile correctly drops the pid file, Test-AlreadyRunning
+        # correctly reports "not running", and starting anyway put a second Kit
+        # on top of a live one: the new process deadlocked in early startup with
+        # two futex-waiting threads, no listener and not one line of its own log,
+        # and the deploy only found out 480s later.
+        #
+        # Phase 1 already prints this exact observation ("occupied by our PID
+        # ... already running, will skip start"). It was never a gate; this is.
+        # Refusing is the only honest option here: this run cannot tell a
+        # deadlocked orphan from a healthy instance, and it must not adopt one or
+        # race one. scripts/stop-all.ps1 stops by port as well as by pid file, so
+        # it reaches an orphan whose pid file is already gone - which is exactly
+        # the manual recovery that made the failing deployment pass unchanged.
+        $kitOrphan = Get-HostNativeOrphanListener `
+            -Name 'bim-streaming-server' `
+            -RunDir $RunDir `
+            -ExpectedPorts (@($resolvedKitSignalPort) + @($resolvedSpectatorSignalPorts))
+        if ($null -ne $kitOrphan) {
+            $orphanPortList = @($kitOrphan.Ports) -join ', '
+            $orphanPidList = @($kitOrphan.ProcessIds | ForEach-Object { if ([int]$_ -le 0) { 'owner-not-visible' } else { "$_" } }) -join ', '
+            Write-DeployTag -Tag 'fail' -Message "stage=4c Phase 4c refusing to start a second Kit: TCP port(s) $orphanPortList still LISTEN under PID(s) $orphanPidList, which no live bim-streaming-server PID file accounts for (orphaned Kit). Stop it first with scripts/stop-all.ps1, then re-run this deploy" -LogPath $LogPath | Out-Null
+            Print-FinalSummary -ExitCode 4 -FailedPhase 'Phase 4c (orphaned Kit holds the streaming ports)'
+            exit 4
+        }
         Write-DeployTag -Tag 'ok' -Message 'Phase 4c starting host-native Kit streaming' -LogPath $LogPath | Out-Null
         $startInfo = Start-HostNativeKit `
             -RepoRoot $RepoRoot `

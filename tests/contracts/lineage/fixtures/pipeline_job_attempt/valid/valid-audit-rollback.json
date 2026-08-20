@@ -1,0 +1,27 @@
+{
+  "schema_version": "pipeline-job-attempt/v1",
+  "document_type": "activation_audit_entry",
+  "body": {
+    "audit_entry_id": "audit-0003",
+    "pipeline_job_id": "pipeline-job-0003",
+    "transition": "rollback",
+    "from_result_id": "result-0008",
+    "to_result_id": "result-0007",
+    "target_result_evidence": {
+      "result_id": "result-0007",
+      "publication_state": "AVAILABLE",
+      "attempt_outcome": "succeeded",
+      "selection_state_before": "historical"
+    },
+    "capability": "result.rollback",
+    "reason": "warning result regressed the pset index, roll back to the first result",
+    "actor": {
+      "actor_kind": "operator",
+      "actor_id": "operator-lin"
+    },
+    "authorization_decision_ref": "authz-decision-9925",
+    "correlation_id": "corr-lineage-0003-0009",
+    "occurred_at": "2026-07-16T11:30:02Z",
+    "append_only": true
+  }
+}
