@@ -1931,11 +1931,11 @@
       "id": "rvt-ifc-usdc-lineage",
       "status": "active",
       "owner": "conversion-lineage",
-      "current_slice": "2026-08-19 L1 全結（tasks 2.1–2.7）：七支 schema（含 cloud-lineage-publication promotion byte-identical）＋360+ fixtures＋HMAC/timestamp/ACK protocol tests 進 tests/contracts/；下一片 L2 = tasks 1.2 compatibility matrix＋1.3 五個 spec 的 MODIFIED deltas＋strict validate；L2 完成前不得 3.x runtime 接線",
+      "current_slice": "2026-08-19 L2 全結（tasks 1.1–1.3）：11 條 MODIFIED deltas（五個既有 spec）＋design.md §11 相容矩陣＋archive dry-run 11/11 OK；**3.x runtime 接線已解鎖**，下一片 L3 = tasks 3.1–3.2（coordinator source-bundles/ready intake＋durable pipeline job）",
       "blocked_by": [],
-      "last_verified": "2026-08-19T13:10:00Z",
+      "last_verified": "2026-08-19T14:20:00Z",
       "task_ledger": {
-        "completed": 8,
+        "completed": 11,
         "total": 48
       },
       "evidence_refs": [
