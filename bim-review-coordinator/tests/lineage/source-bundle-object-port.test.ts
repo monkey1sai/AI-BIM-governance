@@ -6,6 +6,7 @@ import {
   isUtcTimestamp,
   locatorDiagnostics,
   parseMinioRef,
+  utcTimestampToMicros,
   utcTimestampToMillis,
 } from "../../src/services/lineage/minioLocator.js";
 import {
@@ -160,6 +161,9 @@ describe("minioLocator", () => {
   it("時間當 instant 比，不比字串", () => {
     expect(utcTimestampToMillis("2026-07-16T07:58:12Z")).toBe(
       utcTimestampToMillis("2026-07-16T07:58:12.000Z"),
+    );
+    expect(utcTimestampToMicros("2026-07-16T07:58:12.000001Z")).toBe(
+      utcTimestampToMicros("2026-07-16T07:58:12.000000Z") + 1n,
     );
   });
 });
