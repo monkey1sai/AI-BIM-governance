@@ -288,7 +288,7 @@ function ledgerIntroductionCommit(repoRoot, change, field, baseCommit, failure) 
   // the live task-count comparison; they cannot be re-derived once the
   // pre-merge history is discarded. Anything not provably introduced for this
   // exact row fails closed with the original error. This residual limit is
-  // normative: see openspec/changes/introduction-resolved-subject-binding/
+  // normative: see openspec/specs/openspec-machine-truth-subject-resolution/spec.md
   // specs/openspec-machine-truth-subject-resolution/spec.md (folded-squash
   // requirement) - do not "fix" it or claim coverage for folded edits.
   const listed = gitOutput(repoRoot, ['log', '--format=%H', `-S${change.subject_commit}`, 'HEAD', '--',
