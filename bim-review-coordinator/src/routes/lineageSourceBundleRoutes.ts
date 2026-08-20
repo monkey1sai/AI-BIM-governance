@@ -28,7 +28,15 @@ import type {
   SourceBundleRecord,
   SourceBundleStore,
 } from "../services/lineage/sourceBundleStore.js";
-import { previewLegacyGrouping } from "../services/lineage/legacyEnrollment.js";
+import {
+  confirmLegacyEnrollment,
+  previewLegacyGrouping,
+} from "../services/lineage/legacyEnrollment.js";
+// rvt-ifc-usdc-lineage task 3.2：governed pipeline job 的唯讀投影。
+import {
+  toPipelineJobDocument,
+  type PipelineJobStore,
+} from "../services/lineage/pipelineJobStore.js";
 import type { GovernedShadowMetadata } from "../types.js";
 
 /** L1 `model_version_bundle_manifest.json` 的 envelope `schema_version`。 */
@@ -36,6 +44,15 @@ const MANIFEST_DOCUMENT_SCHEMA_VERSION = "model-version-bundle-manifest/v1";
 
 /** L1 `source_bundle_ready.json` 的 `source_bundle_id.pattern`（route 端 id 守門同一把尺）。 */
 const SOURCE_BUNDLE_ID_PATTERN = /^[A-Za-z0-9._-]+$/;
+
+/**
+ * `pipeline_job_id` 的 route 端守門（task 3.2）。
+ *
+ * L1 的 `$defs/identifier` 只約束長度 1..200，沒有 charset；route param 收得比契約嚴
+ * 是刻意的——實際產生的 id 是 `pj_<32 hex>`，把 path 參數限制在同一族字元可以讓
+ * 「奇怪的 path 值」在打到 store 之前就 400，而不是變成一次無意義的查表。
+ */
+const PIPELINE_JOB_ID_PATTERN = /^[A-Za-z0-9._-]{1,200}$/;
 
 /** L1 `legacyUnmanagedPreview.requires_capability` / `legacyEnrollmentConfirmation.capability`。 */
 const GOVERNED_ENROLLMENT_CAPABILITY = "bundle.publish";
@@ -83,6 +100,11 @@ export interface LineageSourceBundleRouteDeps {
   objects: SourceBundleObjectPort | null;
   /** task 3.2 注入；未注入時 `enqueued_pipeline_job_id` 誠實維持 null（3.1 不偽造 job）。 */
   enqueue?: (record: SourceBundleRecord) => Promise<string>;
+  /**
+   * task 3.2 的 durable pipeline-job store（`/api/lineage/pipeline-jobs*` 的讀取面）。
+   * 未注入＝job 面尚未接線 → 兩條讀取 route 一律 503（誠實停擺，不回空集合冒充「沒有 job」）。
+   */
+  jobs?: PipelineJobStore | null;
   rejectIfIpNotAllowed: (request: express.Request, response: express.Response) => boolean;
   structLog: StructLogger;
   /**
@@ -92,6 +114,29 @@ export interface LineageSourceBundleRouteDeps {
    * seam-not-mock 慣例）。
    */
   previewLegacy?: typeof previewLegacyGrouping;
+  /** @internal 同 `previewLegacy` 的 additive 測試 seam；省略＝用 module 預設。 */
+  confirmLegacy?: typeof confirmLegacyEnrollment;
+}
+
+/**
+ * 把 service 層的 4xx 錯誤（帶 `httpStatus` ＋ `code`）映射成 wire 回應。
+ *
+ * 只認 4xx：allowlist 拒絕、port 回應異常、carve-out scope 違規這類**沒有** `httpStatus`
+ * 或屬 5xx 的錯誤一律回 null，交給 error middleware 變 500。伺服器端的設定／程式錯誤
+ * 不該被包裝成一個看起來像「請求有問題」的 4xx。
+ */
+function governedClientError(
+  error: unknown,
+): { status: number; code: string; detail: string } | null {
+  if (typeof error !== "object" || error === null) return null;
+  const { httpStatus, code } = error as { httpStatus?: unknown; code?: unknown };
+  if (typeof httpStatus !== "number" || typeof code !== "string") return null;
+  if (httpStatus < 400 || httpStatus > 499) return null;
+  return {
+    status: httpStatus,
+    code,
+    detail: error instanceof Error ? error.message : String(error),
+  };
 }
 
 function toPublicRecord(record: SourceBundleRecord): SourceBundleRecord {
@@ -404,6 +449,63 @@ export function registerLineageSourceBundleRoutes(
     });
   });
 
+  // ── GET /api/lineage/pipeline-jobs?source_bundle_id= ───────────────────────
+  // rvt-ifc-usdc-lineage task 3.2 的 job 讀取面（唯讀，無 auth——比照本檔其他 GET
+  // 與 legacy `GET /api/external/ifc-ready`）。
+  //
+  // 靜態路徑必須先於 `/:pipelineJobId` 註冊（同 app.ts:2122-2211 的既有坑）。
+  //
+  // 這條路由的存在意義是**讓 1:1 可被外部證明**：同一個 `source_bundle_id` 無論被
+  // claim 幾次、經過幾次 restart，這裡永遠只會回同一個 `pipeline_job_id`。
+  app.get("/api/lineage/pipeline-jobs", (request, response) => {
+    if (!deps.jobs) {
+      response.status(503).json({
+        error: "pipeline_job_store_unavailable",
+        detail: "governed pipeline job store 尚未接線",
+      });
+      return;
+    }
+    const raw = request.query.source_bundle_id;
+    const sourceBundleId = typeof raw === "string" ? raw : "";
+    // 刻意**不**提供「省略參數就列全部」的分支：job 讀取面只服務
+    // 「這個 source bundle 的 job 是哪一個」這一個問題，不順手長出一個無界列表。
+    if (!SOURCE_BUNDLE_ID_PATTERN.test(sourceBundleId)) {
+      response.status(400).json({ error: "invalid_source_bundle_id" });
+      return;
+    }
+    const record = deps.jobs.getBySourceBundle(sourceBundleId);
+    if (!record) {
+      response.status(404).json({ detail: "No governed pipeline job for this source bundle." });
+      return;
+    }
+    response.json(toPipelineJobDocument(record));
+  });
+
+  // ── GET /api/lineage/pipeline-jobs/:pipelineJobId ──────────────────────────
+  // 回 L1 `pipeline-job-attempt/v1` envelope，使 wire 可直接被 L1 schema 驗。
+  // `ready_event_ledger` 原樣輸出（append-only evidence）：replay／restart 沒有建立
+  // 第二個 logical job 這件事，必須看得見才算數。
+  app.get("/api/lineage/pipeline-jobs/:pipelineJobId", (request, response) => {
+    if (!deps.jobs) {
+      response.status(503).json({
+        error: "pipeline_job_store_unavailable",
+        detail: "governed pipeline job store 尚未接線",
+      });
+      return;
+    }
+    const pipelineJobId = request.params.pipelineJobId;
+    if (!PIPELINE_JOB_ID_PATTERN.test(pipelineJobId)) {
+      response.status(400).json({ error: "invalid_pipeline_job_id" });
+      return;
+    }
+    const record = deps.jobs.get(pipelineJobId);
+    if (!record) {
+      response.status(404).json({ detail: "Governed pipeline job not found." });
+      return;
+    }
+    response.json(toPipelineJobDocument(record));
+  });
+
   // ── GET /api/lineage/legacy-unmanaged/preview ──────────────────────────────
   // 唯讀 preview：`mutates_store` 恆 false（L1 const）。守門比照 `/api/conversion/*`
   // 控制路由（rejectIfIpNotAllowed）——它會打 MinIO，屬 control-plane 讀取面。
@@ -446,15 +548,16 @@ export function registerLineageSourceBundleRoutes(
   });
 
   // ── POST /api/lineage/legacy-unmanaged/confirm ─────────────────────────────
-  // coordinator 裁決 D-4（preview-only）＋ D-5（capability 最小 gate）：
-  //   - 端點存在且 fail-closed 可測，不靜默 404，也不假裝成功；
-  //   - 缺 `authorization_decision_ref` 或 capability 不符 → 403（先於 501，讓授權面可被證明）；
-  //   - 通過最小 gate 後回 501 `awaiting_owner_carveout`：coordinator 對 MinIO 的
-  //     **寫入權責**（conditional-create `manifest.json`）尚未取得 owner carve-out
-  //     （`bim-review-coordinator/AGENTS.md` 目前只有 IFC 下載的讀取 carve-out）。
-  //   - 本端點在此裁決下 **不呼叫** `confirmLegacyEnrollment`，也不回傳
-  //     `legacy_enrollment_confirmation` 文件（沒發生的事不得產出契約文件）。
-  app.post("/api/lineage/legacy-unmanaged/confirm", (request, response) => {
+  // capability-gated 升格。**owner carve-out（2026-08-20 裁決）**：coordinator 取得對
+  // governed source bundle `manifest.json` 這**單一 object key** 的 conditional create
+  // 寫入權（`If-None-Match: *`），僅此一 key、僅本路徑；其餘 MinIO 寫入仍全面禁止
+  // （正本：`bim-review-coordinator/AGENTS.md` Required Boundaries）。
+  //
+  // 順序：IP 守門 → wire 形狀 → D-5 capability 最小 gate（403，先於任何 MinIO 動作）
+  //      → governed MinIO 未設定 503 → service。
+  // 狀態碼：created → 200、conflict → 409，**兩者 body 都是** L1
+  // `legacy_enrollment_confirmation` envelope（衝突是契約內的合法結果，不是錯誤格式）。
+  app.post("/api/lineage/legacy-unmanaged/confirm", async (request, response, next) => {
     if (deps.rejectIfIpNotAllowed(request, response)) return;
     const body = isPlainObject(request.body) ? request.body : {};
     const groupingKey = typeof body.grouping_key === "string" ? body.grouping_key.trim() : "";
@@ -466,7 +569,11 @@ export function registerLineageSourceBundleRoutes(
         ? body.authorization_decision_ref.trim()
         : "";
 
-    if (groupingKey.length === 0 || groupingKey.length > GROUPING_KEY_MAX_LENGTH) {
+    if (
+      groupingKey.length === 0 ||
+      groupingKey.length > GROUPING_KEY_MAX_LENGTH ||
+      /[\r\n]/.test(groupingKey)
+    ) {
       response.status(400).json({ error: "invalid_grouping_key" });
       return;
     }
@@ -491,14 +598,61 @@ export function registerLineageSourceBundleRoutes(
       });
       return;
     }
+    if (!deps.objects) {
+      response.status(503).json({
+        error: "governed_source_store_unconfigured",
+        detail:
+          "governed MinIO 未設定（endpoint/credentials/authority allowlist/bucket allowlist 不齊全）",
+      });
+      return;
+    }
 
-    response.status(501).json({
-      error: "awaiting_owner_carveout",
-      detail:
-        "legacy enrollment confirm 需要 coordinator 對 MinIO 的 manifest.json 寫入權責 carve-out；本 slice 只提供唯讀 preview",
-      required_capability: GOVERNED_ENROLLMENT_CAPABILITY,
-      authorization_verification: "minimal_gate_only",
-      mutates_store: false,
-    });
+    let confirmation;
+    try {
+      confirmation = await (deps.confirmLegacy ?? confirmLegacyEnrollment)(
+        { groupingKey, confirmedBySubject, authorizationDecisionRef },
+        {
+          objects: deps.objects,
+          legacyRootPrefix: config.governedSourcePrefix,
+          now: nowIso,
+          structLog,
+          store: deps.store,
+          validator: deps.validator,
+          sha256Mode: config.sourceBundleSha256VerifyMode,
+        },
+      );
+    } catch (error) {
+      const mapped = governedClientError(error);
+      if (mapped) {
+        structLog.warn("legacyEnrollment", "confirm rejected", {
+          reason: mapped.code,
+          status: mapped.status,
+        });
+        response.status(mapped.status).json({ error: mapped.code, detail: mapped.detail });
+        return;
+      }
+      next(error);
+      return;
+    }
+
+    const created = confirmation.conditional_create.outcome === "created";
+    if (
+      confirmation.capability !== GOVERNED_ENROLLMENT_CAPABILITY ||
+      (created && confirmation.created_source_bundle_id === null) ||
+      (!created && (confirmation.created_source_bundle_id !== null || !confirmation.retryable))
+    ) {
+      // fail-closed：不送出違反 L1 `legacyEnrollmentConfirmation` allOf 的文件
+      //（created ⇒ id 非 null；conflict ⇒ id null ∧ retryable true）。與 preview 的
+      // `mutates_store` 守衛同一個理由：契約不變式要在 route 層可被 falsify。
+      next(
+        new Error(
+          "legacy enrollment confirmation violated its L1 invariants (capability / created_source_bundle_id / retryable).",
+        ),
+      );
+      return;
+    }
+    response
+      .status(created ? 200 : 409)
+      .json(manifestDocument("legacy_enrollment_confirmation", confirmation));
   });
 }
