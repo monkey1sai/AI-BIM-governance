@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { isReady, consoleText } from '../lib/runtime-e2e-readiness.mjs';
+import { isReady, inspectReadiness, consoleText } from '../lib/runtime-e2e-readiness.mjs';
 
 // A page state that satisfies every gate except the DataChannel axis, so each test below
 // isolates exactly one variable: which console/body signal supplies DataChannel evidence.
@@ -80,6 +80,33 @@ test('non-DataChannel gates still fail closed', () => {
   assert.equal(isReady(baseState({ ...withReply, bodyHasWaitingText: true }), consoleEvents(), {}), false);
   assert.equal(isReady(baseState({ ...withReply, pixelStats: { nonBlack: 3 } }), consoleEvents(), {}), false);
   assert.equal(isReady(baseState({ ...withReply, pixelStats: null }), consoleEvents(), {}), false);
+});
+
+test('inspectReadiness names the inbound DataChannel signal that passed', () => {
+  assert.equal(
+    inspectReadiness(baseState({ bodyHasDataChannelReply: true }), consoleEvents(), {}).matchedEvidence,
+    'bodyHasDataChannelReply',
+  );
+  assert.equal(
+    inspectReadiness(baseState({ bodyHasLoadingStateResponse: true }), consoleEvents(), {}).matchedEvidence,
+    'bodyHasLoadingStateResponse',
+  );
+  assert.equal(
+    inspectReadiness(baseState(), consoleEvents('Kit App sent loadingStateResponse'), {}).matchedEvidence,
+    'loadingStateResponse',
+  );
+  assert.equal(
+    inspectReadiness(baseState(), consoleEvents('makePrimsPickableResponse arrived'), {}).matchedEvidence,
+    'makePrimsPickableResponse',
+  );
+  assert.equal(
+    inspectReadiness(baseState(), consoleEvents('viewer sent loadingStateQuery'), {}).matchedEvidence,
+    null,
+  );
+  assert.equal(
+    inspectReadiness(baseState(), consoleEvents(), { requireDataChannel: false }).matchedEvidence,
+    'requireDataChannel:false',
+  );
 });
 
 test('consoleText flattens CDP arg shapes without throwing on empty events', () => {
