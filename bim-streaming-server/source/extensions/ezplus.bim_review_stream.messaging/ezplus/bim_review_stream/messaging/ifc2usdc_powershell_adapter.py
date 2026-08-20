@@ -39,7 +39,14 @@ import sys
 import tempfile
 import time
 
-from conversion_authority import ConversionAuthorityError, _PLACEHOLDER_MARKERS
+from conversion_authority import (
+    ConversionAuthorityError,
+    _PLACEHOLDER_MARKERS,
+    _int_metric,
+    compute_coverage_quality,
+    count_eligible_ifc_products,
+    try_count_eligible_ifc_products,
+)
 from ifc_openusd_identity_author import IDENTITY_PROFILE, IfcOpenUsdIdentityAuthor
 
 
@@ -2915,8 +2922,10 @@ class Ifc2UsdcPowershellConverterAdapter:
 
         schema = str(getattr(ifc_model, "schema", "") or "")
         mapped_count = len(mapping_items)
-        source_count = shape_count
-        coverage_ratio = (mapped_count / source_count) if source_count else 0.0
+        coverage = compute_coverage_quality(
+            mapped_count=mapped_count,
+            eligible_ifc_product_count=count_eligible_ifc_products(ifc_model),
+        )
         mapping_doc = {
             "mapping_provenance": "converter_verified",
             "mock": False,
@@ -2946,11 +2955,7 @@ class Ifc2UsdcPowershellConverterAdapter:
         mapping_has_ifc_type = any(item.get("ifc_type") for item in mapping_items)
         mapping_has_ifc_name = any(item.get("ifc_name") for item in mapping_items)
         quality_metrics = {
-            "source_ifc_entity_count": source_count,
-            "mapped_count": mapped_count,
-            "unmapped_count": max(source_count - mapped_count, 0),
-            "coverage_ratio": coverage_ratio,
-            "coverage_status": "pass" if mapped_count == source_count else "warn",
+            **coverage,
             "materialization_strategy": "ifcopenshell_openusd_fallback",
             "sidecar_carrier_count": shape_count,
             "minimum_coverage_baseline_locked": False,
@@ -3082,7 +3087,7 @@ class Ifc2UsdcPowershellConverterAdapter:
             bool(adopted.get("mapping_has_ifc_type"))
             or bool(adopted.get("mapping_has_ifc_name"))
         ):
-            return adopted
+            return self._overlay_independent_coverage(adopted, ifc_path=ifc_path)
         self._run_ifcopenshell_semantic_sidecar(
             ifc_source_path=ifc_path,
             artifact_dir=output_dir,
@@ -3094,6 +3099,31 @@ class Ifc2UsdcPowershellConverterAdapter:
             entity_index_path=entity_index_path,
             metadata_path=metadata_path,
         )
+
+    @staticmethod
+    def _overlay_independent_coverage(
+        quality: Mapping[str, Any],
+        *,
+        ifc_path: Path,
+    ) -> dict[str, Any]:
+        """Replace self-referential coverage with an independent IfcProduct denominator.
+
+        If the IFC source cannot be counted, keep converter-emitted numbers rather
+        than inventing 0.0 / 1.0.
+        """
+        updated = dict(quality)
+        eligible = try_count_eligible_ifc_products(ifc_path)
+        if eligible is None:
+            return updated
+        mapped_count = _int_metric(updated.get("mapped_count"))
+        coverage = compute_coverage_quality(
+            mapped_count=mapped_count,
+            eligible_ifc_product_count=eligible,
+        )
+        updated.update(coverage)
+        if updated["coverage_status"] == "not_evaluable":
+            updated["minimum_coverage_baseline_locked"] = False
+        return updated
 
     def _adopt_converter_sidecars(
         self,
@@ -3267,8 +3297,10 @@ class Ifc2UsdcPowershellConverterAdapter:
                 if supplemented:
                     mapping_source = "ifc_semantic_sidecar"
 
-        source_count = len(mapping_items) or len(prims)
         mapped_count = len(mapping_items)
+        eligible = try_count_eligible_ifc_products(ifc_path)
+        if eligible is None and sidecar_entry_count > 0:
+            eligible = sidecar_entry_count
         mapping_issues: list[dict[str, Any]] = []
         if sidecar_entry_count > 0 and mapped_count == 0:
             mapping_issues.append(
@@ -3343,12 +3375,12 @@ class Ifc2UsdcPowershellConverterAdapter:
         metadata_path.write_text(
             json.dumps(metadata_doc, ensure_ascii=False), encoding="utf-8"
         )
+        coverage = compute_coverage_quality(
+            mapped_count=mapped_count,
+            eligible_ifc_product_count=eligible,
+        )
         return {
-            "source_ifc_entity_count": source_count,
-            "mapped_count": mapped_count,
-            "unmapped_count": max(source_count - mapped_count, 0),
-            "coverage_ratio": (mapped_count / source_count) if source_count else 0.0,
-            "coverage_status": "pass" if mapped_count == source_count else "warn",
+            **coverage,
             "materialization_strategy": "usd_stage_enumeration",
             "sidecar_carrier_count": 0,
             "minimum_coverage_baseline_locked": False,

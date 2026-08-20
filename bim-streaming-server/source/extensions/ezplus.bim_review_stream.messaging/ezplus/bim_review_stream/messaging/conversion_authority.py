@@ -662,18 +662,24 @@ class StreamingConversionStore:
 
     def _normalize_quality_metrics(self, raw: Mapping[str, Any]) -> dict[str, Any]:
         metrics = dict(raw)
-        source_count = _int_metric(metrics.get("source_ifc_entity_count"), metrics.get("source_ifc_element_count"))
         mapped_count = _int_metric(metrics.get("mapped_count"), metrics.get("mapped_entity_count"))
-        unmapped_count = _int_metric(metrics.get("unmapped_count"), metrics.get("unmapped_entity_count"), default=max(source_count - mapped_count, 0))
-        coverage_ratio = float(metrics.get("coverage_ratio") if metrics.get("coverage_ratio") is not None else (mapped_count / source_count if source_count else 0.0))
-        metrics["source_ifc_entity_count"] = source_count
-        metrics["mapped_count"] = mapped_count
-        metrics["unmapped_count"] = unmapped_count
-        metrics["coverage_ratio"] = coverage_ratio
-        metrics["coverage_status"] = str(metrics.get("coverage_status") or ("pass" if unmapped_count == 0 else "warn"))
+        eligible = _optional_int_metric(
+            metrics.get("eligible_ifc_product_count"),
+            metrics.get("source_ifc_entity_count"),
+            metrics.get("source_ifc_element_count"),
+        )
+        metrics.update(
+            compute_coverage_quality(
+                mapped_count=mapped_count,
+                eligible_ifc_product_count=eligible,
+            )
+        )
         metrics["materialization_strategy"] = str(metrics.get("materialization_strategy") or "sidecar")
         metrics["sidecar_carrier_count"] = _int_metric(metrics.get("sidecar_carrier_count"), default=0)
-        metrics["minimum_coverage_baseline_locked"] = bool(metrics.get("minimum_coverage_baseline_locked", False))
+        locked = bool(metrics.get("minimum_coverage_baseline_locked", False))
+        if metrics["coverage_status"] == "not_evaluable":
+            locked = False
+        metrics["minimum_coverage_baseline_locked"] = locked
         return metrics
 
     def _artifact_payload(self, *, artifact_id: str, role: str, format_: str, path: Path) -> dict[str, Any]:
@@ -1076,6 +1082,113 @@ def _int_metric(*values: Any, default: int = 0) -> int:
         except (TypeError, ValueError):
             continue
     return default
+
+
+def _optional_int_metric(*values: Any) -> int | None:
+    for value in values:
+        if value is None:
+            continue
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
+def count_eligible_ifc_products(ifc_model: Any) -> int | None:
+    """Count unique eligible source IfcProduct entities.
+
+    Lineage contract: selector is ``IfcProduct``; ``source_ifc_entity_count`` is
+    an alias of this eligible set. Eligible means the product has a GlobalId
+    and a Representation (convertible geometry), matching the sidecar pass so
+    spatial containers without representation do not inflate the denominator.
+    Returns ``None`` when the model cannot be queried.
+    """
+    by_type = getattr(ifc_model, "by_type", None)
+    if not callable(by_type):
+        return None
+    try:
+        products = by_type("IfcProduct")
+    except Exception:  # noqa: BLE001
+        return None
+    seen: set[str] = set()
+    for product in products or ():
+        try:
+            representation = getattr(product, "Representation", None)
+        except Exception:  # noqa: BLE001
+            representation = None
+        if representation is None:
+            continue
+        try:
+            guid = str(getattr(product, "GlobalId", "") or "")
+        except Exception:  # noqa: BLE001
+            guid = ""
+        if not guid or guid in seen:
+            continue
+        seen.add(guid)
+    return len(seen)
+
+
+def try_count_eligible_ifc_products(ifc_path: Path) -> int | None:
+    """Open ``ifc_path`` and count eligible IfcProduct; ``None`` if unevaluable."""
+    path = Path(ifc_path)
+    if not path.is_file():
+        return None
+    try:
+        import ifcopenshell  # type: ignore[import-not-found]
+    except Exception:  # noqa: BLE001
+        return None
+    if ifcopenshell is None:
+        return None
+    try:
+        model = ifcopenshell.open(str(path))
+    except Exception:  # noqa: BLE001
+        return None
+    return count_eligible_ifc_products(model)
+
+
+def compute_coverage_quality(
+    *,
+    mapped_count: int,
+    eligible_ifc_product_count: int | None,
+) -> dict[str, Any]:
+    """Honest IFC→USDC coverage. Zero or unknown denominator is not_evaluable.
+
+    Lineage contract: denominator 0 → ``ratio=null`` / ``not_evaluable``, never
+    0.0 or 1.0. Existing quality_metrics vocabulary keeps ``pass`` / ``warn``
+    for evaluable results (not lineage ``complete`` / ``partial``).
+    ``source_ifc_entity_count`` is the declared alias of
+    ``eligible_ifc_product_count``.
+    """
+    mapped = max(int(mapped_count), 0)
+    if eligible_ifc_product_count is None:
+        return {
+            "eligible_ifc_product_count": None,
+            "source_ifc_entity_count": None,
+            "mapped_count": mapped,
+            "unmapped_count": None,
+            "coverage_ratio": None,
+            "coverage_status": "not_evaluable",
+        }
+    eligible = max(int(eligible_ifc_product_count), 0)
+    if eligible == 0:
+        return {
+            "eligible_ifc_product_count": 0,
+            "source_ifc_entity_count": 0,
+            "mapped_count": mapped,
+            "unmapped_count": 0,
+            "coverage_ratio": None,
+            "coverage_status": "not_evaluable",
+        }
+    unmapped = max(eligible - mapped, 0)
+    return {
+        "eligible_ifc_product_count": eligible,
+        "source_ifc_entity_count": eligible,
+        "mapped_count": mapped,
+        "unmapped_count": unmapped,
+        "coverage_ratio": mapped / eligible,
+        "coverage_status": "pass" if mapped == eligible else "warn",
+    }
 
 
 def _utc_now() -> str:
