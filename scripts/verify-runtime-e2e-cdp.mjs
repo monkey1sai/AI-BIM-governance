@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
+import { isReady } from "./lib/runtime-e2e-readiness.mjs";
 
 const cwd = process.cwd();
 const chromePath = process.env.RUNTIME_E2E_CHROME_PATH || "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe";
@@ -275,51 +276,6 @@ const readinessExpression = `(() => {
     pixelError,
   };
 })()`;
-
-function consoleText(events) {
-  return events
-    .flatMap((event) => event.args || [])
-    .map((arg) => String(arg.value || arg.description || arg.type || ""))
-    .join("\n");
-}
-
-function isReady(state, consoleEvents, options = {}) {
-  const requireDataChannel = options.requireDataChannel !== false;
-  const requireStageSuccess = options.requireStageSuccess !== false;
-  const log = consoleText(consoleEvents);
-  const hasOpenedStageSuccess =
-    state.bodyHasModelLoaded
-    || (
-      state.bodyHasOpenedStageResult
-      && !log.includes("Kit App communicates there was an error loading")
-    )
-    || (log.includes("openedStageResult") && log.includes('"result":"success"'));
-  const hasStageQuerySuccess =
-    log.includes("Kit App sent stage prims")
-    || log.includes("getChildrenResponse");
-  const hasStageSuccess =
-    hasOpenedStageSuccess
-    || hasStageQuerySuccess;
-  const hasDataChannelEvidence =
-    state.bodyHasDataChannelReply
-    || state.bodyHasMakePickableResponse
-    || log.includes("makePrimsPickableResponse")
-    || log.includes("loadingStateQuery");
-  return Boolean(
-    state
-      && state.readyState >= 2
-      && state.videoWidth > 0
-      && state.videoHeight > 0
-      && state.srcObject
-      && state.bodyHasUsdcPanel
-      && state.bodyHasArtifactUrl
-      && (!requireStageSuccess || hasStageSuccess || state.bodyHasSpectatorReady)
-      && (!requireDataChannel || hasDataChannelEvidence)
-      && !state.bodyHasWaitingText
-      && state.pixelStats
-      && state.pixelStats.nonBlack > 100
-  );
-}
 
 async function waitForRuntimeReady(page, label, options = {}) {
   const deadline = Date.now() + streamTimeoutMs;
