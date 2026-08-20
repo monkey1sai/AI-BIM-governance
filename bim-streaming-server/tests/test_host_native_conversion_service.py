@@ -777,10 +777,13 @@ def test_directory_link_probe_fails_closed_when_link_state_cannot_be_read():
         def lstat(self):
             raise OSError("fixture access denied")
 
-    with pytest.raises(ConversionAuthorityError, match="could not be inspected safely"):
+    with pytest.raises(ConversionAuthorityError, match="could not be inspected safely") as excinfo:
         Ifc2UsdcPowershellConverterAdapter._path_is_directory_link(
             UninspectableLegacyPath()
         )
+    # issue #628: message must carry the underlying OSError detail, not just
+    # the generic "could not be inspected safely" phrase.
+    assert "fixture access denied" in str(excinfo.value)
 
 
 def test_windows_acl_policy_rejects_untrusted_owner_or_writer():
@@ -844,8 +847,12 @@ def test_default_hoops_entrypoint_rejects_symlink_outside_trusted_cache(
     adapter = Ifc2UsdcPowershellConverterAdapter(repo_root=tmp_path, storage_root=tmp_path / "storage")
     monkeypatch.setattr(adapter, "_trusted_extension_cache_roots", lambda: (trusted_cache,))
 
-    with pytest.raises(ConversionAuthorityError, match="outside an owner-approved cache root"):
+    with pytest.raises(
+        ConversionAuthorityError, match="outside an owner-approved cache root"
+    ) as excinfo:
         adapter._default_hoops_main()
+    # issue #628: message must name which resolved path failed the check.
+    assert str(hoops_main.resolve()) in str(excinfo.value)
 
 
 def test_default_hoops_entrypoint_rejects_unpinned_package_version(
@@ -868,8 +875,14 @@ def test_default_hoops_entrypoint_rejects_unpinned_package_version(
     adapter = Ifc2UsdcPowershellConverterAdapter(repo_root=tmp_path, storage_root=tmp_path / "storage")
     monkeypatch.setattr(adapter, "_trusted_extension_cache_roots", lambda: (package_cache,))
 
-    with pytest.raises(ConversionAuthorityError, match="does not match the trusted package build"):
+    with pytest.raises(
+        ConversionAuthorityError, match="does not match the trusted package build"
+    ) as excinfo:
         adapter._default_hoops_main()
+    # issue #628: message must name the found vs. expected package identity,
+    # not just say "does not match".
+    assert "found=" in str(excinfo.value)
+    assert "expected=" in str(excinfo.value)
 
 
 def test_default_hoops_entrypoint_rejects_unpinned_real_directory(tmp_path: Path):
@@ -898,8 +911,12 @@ def test_default_hoops_entrypoint_rejects_unpinned_real_directory(tmp_path: Path
     )
     adapter = Ifc2UsdcPowershellConverterAdapter(repo_root=tmp_path, storage_root=tmp_path / "storage")
 
-    with pytest.raises(ConversionAuthorityError, match="does not match the trusted package build"):
+    with pytest.raises(
+        ConversionAuthorityError, match="does not match the trusted package build"
+    ) as excinfo:
         adapter._default_hoops_main()
+    assert "found=" in str(excinfo.value)
+    assert "expected=" in str(excinfo.value)
 
 
 def test_default_hoops_entrypoint_rejects_linked_search_root(tmp_path: Path):
@@ -929,8 +946,12 @@ def test_default_hoops_entrypoint_rejects_linked_search_root(tmp_path: Path):
     _write_trusted_cad_manifest(tmp_path, package_name=package_name, hoops_main=hoops_main)
     adapter = Ifc2UsdcPowershellConverterAdapter(repo_root=tmp_path, storage_root=tmp_path / "storage")
 
-    with pytest.raises(ConversionAuthorityError, match="search root must not be a link or junction"):
+    with pytest.raises(
+        ConversionAuthorityError, match="search root must not be a link or junction"
+    ) as excinfo:
         adapter._default_hoops_main()
+    # issue #628: message must name which search root tripped the check.
+    assert str(release_root / "exts") in str(excinfo.value)
 
 
 def test_default_hoops_entrypoint_rejects_ambiguous_pinned_candidates(
@@ -957,8 +978,13 @@ def test_default_hoops_entrypoint_rejects_ambiguous_pinned_candidates(
     adapter = Ifc2UsdcPowershellConverterAdapter(repo_root=tmp_path, storage_root=tmp_path / "storage")
     monkeypatch.setattr(adapter, "_trusted_extension_cache_roots", lambda: (package_cache,))
 
-    with pytest.raises(ConversionAuthorityError, match="Multiple CAD extension entrypoints"):
+    with pytest.raises(
+        ConversionAuthorityError, match="Multiple CAD extension entrypoints"
+    ) as excinfo:
         adapter._default_hoops_main()
+    # issue #628: message must list the ambiguous candidate paths, not just
+    # say the selection is ambiguous.
+    assert str(hoops_main.resolve()) in str(excinfo.value)
 
 
 def test_powershell_conversion_rejects_hoops_path_swap_after_preflight(
@@ -1499,6 +1525,10 @@ def test_adapter_resolve_rejects_local_path_outside_storage_root(tmp_path: Path)
     assert raised is not None
     assert raised.code == "invalid_ifc_input"
     assert "outside storage_root" in raised.message
+    # issue #628: the message must also carry the server-side storage_root
+    # value the operator cannot otherwise see, not just the rejected path.
+    assert str(outside) in raised.message
+    assert f"storage_root={adapter.storage_root}" in raised.message
 
 
 def test_adapter_resolve_existing_edge_local_url_still_works(tmp_path: Path):
