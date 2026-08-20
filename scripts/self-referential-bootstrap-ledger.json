@@ -843,7 +843,7 @@
     },
     {
       "id": "orphan-kit-liveness-preflight",
-      "status": "open",
+      "status": "closed",
       "pr": 653,
       "opened_at": "2026-08-19T10:44:44Z",
       "reason": "the canonical deploy path decides \"is an instance already running, and is it safe to start one\" only while a real deployment is executing against already-merged origin/main content, and the behaviour this PR changes exists only in that moment: the <Name>.ports claim is written by a live Start-HostNativeService, and the Phase 4c refusal only fires against a real orphaned Kit child that is still holding a real LISTEN socket after its launcher died. Neither state can be produced on a branch by the canonical mechanism before this change reaches origin/main; the unit suite proves the detection and refusal logic with injected port, process and child-enumeration probes and with sidecar fixtures, but a fixture orphan is not a canonical deployment cycle.",
@@ -867,7 +867,14 @@
         "docs/evidence/orphan-kit-liveness-preflight/self-referential-bootstrap/README.md",
         "docs/evidence/orphan-kit-liveness-preflight/self-referential-bootstrap/verification.txt"
       ],
-      "fixpoint": null
+      "fixpoint": {
+        "reverified_at": "2026-08-19T13:45:51Z",
+        "mechanism_commit": "cb92a2bf99a4cbb7ba3c67ec17bfcf2996721972",
+        "evidence_refs": [
+          "docs/evidence/orphan-kit-liveness-preflight/fixpoint/attestation.json",
+          "docs/evidence/orphan-kit-liveness-preflight/fixpoint/summary.md"
+        ]
+      }
     }
   ]
 }

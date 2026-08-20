@@ -734,6 +734,17 @@ function ConvertTo-IsolatedCreationIdentity {
     return $value
 }
 
+# 身分核對只需要 entrypoint／port binding／pid＋creation_identity；-PayloadBase64 的長 base64
+# 內含 child process 環境值，屬洩漏面，一律在落 manifest 之前換成佔位符。live lookup 與
+# manifest 兩側都走同一個正規化函式，因此 stop/status 的逐字命令列核對維持等效。
+$script:IsolatedElidedPayloadPlaceholder = '<payload-elided>'
+
+function ConvertTo-IsolatedRedactedCommandLine {
+    param([string] $CommandLine)
+    if ([string]::IsNullOrEmpty($CommandLine)) { return $CommandLine }
+    return $CommandLine -replace '((?:^|\s)-PayloadBase64\s+)(?:"[^"]*"|[A-Za-z0-9+/=]+)', "`$1$script:IsolatedElidedPayloadPlaceholder"
+}
+
 function Get-IsolatedProcessIdentity {
     param(
         [int] $ProcessId,
@@ -749,7 +760,7 @@ function Get-IsolatedProcessIdentity {
     [pscustomobject]@{
         pid = [int]$process.ProcessId
         entrypoint = $Entrypoint
-        command_line = $commandLine
+        command_line = ConvertTo-IsolatedRedactedCommandLine $commandLine
         creation_identity = ConvertTo-IsolatedCreationIdentity $process.CreationDate
         executable_path = [string]$process.ExecutablePath
     }
@@ -781,7 +792,7 @@ function Test-IsolatedProcessOwnership {
     $null -ne $Actual `
       -and [int]$Expected.pid -eq [int]$Actual.pid `
       -and [string]$Expected.entrypoint -ceq [string]$Actual.entrypoint `
-      -and [string]$Expected.command_line -ceq [string]$Actual.command_line `
+      -and (ConvertTo-IsolatedRedactedCommandLine ([string]$Expected.command_line)) -ceq (ConvertTo-IsolatedRedactedCommandLine ([string]$Actual.command_line)) `
       -and (ConvertTo-IsolatedCreationIdentity $Expected.creation_identity) -ceq (ConvertTo-IsolatedCreationIdentity $Actual.creation_identity)
 }
 
