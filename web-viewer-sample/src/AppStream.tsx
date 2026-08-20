@@ -17,6 +17,11 @@ import StreamConfig from '../stream.config.json';
 // harness 開啟時為可決定性 FakeAppStreamer（只換 transport + 假 Kit 大腦，不碰前端狀態機）。
 import { getStreamer } from './harness/streamer';
 import { harnessEnabled } from './harness/harnessConfig';
+// #624 exactly-once 緩解：帶 request_id 的 Kit runtime 回應在此咽喉點做短時窗 LRU 去重。
+import {
+    KitRuntimeResponseDeduper,
+    readKitRuntimeResponseIdentity,
+} from './clients/kitRuntimeResponseDedup';
 
 // NVIDIA's singleton streamer clears its callback map only after a successful
 // terminate result. A fulfilled inProgress/error result can retain _stream,
@@ -207,6 +212,9 @@ export default class AppStream extends Component<AppStreamProps, AppStreamState>
     private _requested: boolean;
     private _negotiatedSize: { w: number; h: number } | null;
     private _disposed: boolean;
+    // 每個掛載實例各自一份：remount 後重置等於放行（fail-open），
+    // 絕不讓跨連線的舊記憶誤殺新 stream 的第一則回應。
+    private _kitResponseDeduper: KitRuntimeResponseDeduper;
 
     static defaultProps = {
         style: {}
@@ -224,6 +232,7 @@ export default class AppStream extends Component<AppStreamProps, AppStreamState>
         this._requested = false;
         this._negotiatedSize = null;
         this._disposed = false;
+        this._kitResponseDeduper = new KitRuntimeResponseDeduper();
         this.state = {
             streamReady: false
         };
@@ -447,6 +456,19 @@ export default class AppStream extends Component<AppStreamProps, AppStreamState>
     }
 
     _onCustomEvent(message: AppStreamCustomEvent) {
+        // #624 exactly-once 緩解。gfn / local / stream 三種 stream source 的 onCustomEvent
+        // 都收斂到這裡，是 Kit custom event 進入應用的單一咽喉點；在此以
+        // (event_type, request_id) 去重，stage_loading / stage_management 回應、
+        // commandRejected 等所有下游一體受惠，毋須各自防重。
+        // 無 request_id 的事件由 readKitRuntimeResponseIdentity 回 null 直接放行。
+        const identity = readKitRuntimeResponseIdentity(message);
+        if (identity && !this._kitResponseDeduper.admit(identity)) {
+            console.warn(
+                'AppStream dropped duplicate Kit runtime response',
+                { event_type: identity.eventType, request_id: identity.requestId },
+            );
+            return;
+        }
         this.props.handleCustomEvent(message);
     }
 
