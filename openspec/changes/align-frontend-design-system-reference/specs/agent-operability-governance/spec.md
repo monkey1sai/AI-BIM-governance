@@ -11,7 +11,7 @@
 
 Repo agent contract SHALL 將 A1–A10 識別為主要產品開發項目，並 SHALL 以 current checkout 中所有 Git-tracked `docs/plans/*.html` 作為 design gate 的唯一 UX／IA／visual／interaction reference。Manifest、route inventory、semantic cases 與 goldens SHALL 被視為 HTML-derived machine artifacts；code＋tests/contracts SHALL 作為現行 behavior 與 runtime 現況的查證面（現況證據，非需求權威；需求權威依 doc-first 為 `docs/plans` 正本）。Repo 外 design path、任意 screenshot 或衍生 artifact SHALL NOT 覆寫 HTML、API、enum、security、authority 或 runtime lifecycle。
 
-#### Scenario: Agent 開始 user-facing governance work
+#### Scenario: Agent starts user-facing governance work
 
 - **GIVEN** agent 被要求修改 user-facing governance capability
 - **WHEN** agent 讀取 repo contract 與 `docs/plans/docs-plans-README.md`
@@ -46,7 +46,7 @@ Repo agent contract SHALL 將 A1–A10 識別為主要產品開發項目，並 S
 
 每項 user-facing capability SHALL 通過兩個獨立 gates：(1) 從 tracked HTML 派生且可回溯的 design fidelity gate，在 Windows runner、Chromium DPR1、`1440x900` 與 `1920x1080` 下每個 viewport pixel diff ratio `<=0.01`，required semantic cases 100%；(2) functional browser flow，包含 canonical route、visible controls、default fixture、real backend API、loading/success/failure/retry states、domain／runtime identifiers、screenshot/trace/network evidence，以及適用時的 Kit first-frame/stage/DataChannel evidence。Design scope SHALL 從 changed paths 與較嚴格的 base/head HTML-derived manifest 聯集推導，不得由 PR prose 選取。
 
-#### Scenario: 使用者從 browser UI 驗證 capability
+#### Scenario: User verifies a capability from browser UI
 
 - **GIVEN** development server 與 default fixture 可用
 - **WHEN** 使用者開啟 HTML 指定的 canonical route 並點擊指定 action

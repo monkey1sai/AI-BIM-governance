@@ -9,7 +9,7 @@
 
 Repo SHALL 在 `docs/demo/fast-mvp-demo-recap.md` 提供唯一 canonical fast MVP demo runbook，整合啟動順序、port matrix、host 與 container 邊界、WSL Kit graphics 限制、sample fixture 選取規則，以及僅使用 repo 內服務與 `tests/fakes` doubles 執行 coordinator + streaming-server + viewer 單機閉環 demo 所需的驗收條件。
 
-#### Scenario: 新操作人員從 repo root 找到 demo runbook
+#### Scenario: A new operator finds the demo runbook from the repo root
 
 - **WHEN** 新操作人員從 repo root 尋找「如何執行 demo」
 - **THEN** `README.md` SHALL 交叉連結至 `docs/demo/fast-mvp-demo-recap.md`
@@ -18,7 +18,7 @@ Repo SHALL 在 `docs/demo/fast-mvp-demo-recap.md` 提供唯一 canonical fast MV
 - **AND** 已刪文件、repo 外 design path 與 arbitrary screenshot SHALL NOT 作為 active demo/design authority
 - **AND** `docs/demo/fast-mvp-demo-recap.md` SHALL 維持 demo orchestration knowledge 的單一來源
 
-#### Scenario: Runbook 引用既有驗證入口而不複製內容
+#### Scenario: Runbook references existing verification entries rather than duplicating them
 
 - **WHEN** runbook 列出 service launch、verification 或 trigger commands
 - **THEN** 它 SHALL 以相對路徑引用 `scripts/` 下既有 scripts 與 `docs/agents/sub-repo-verify-commands.md` 的驗證入口
