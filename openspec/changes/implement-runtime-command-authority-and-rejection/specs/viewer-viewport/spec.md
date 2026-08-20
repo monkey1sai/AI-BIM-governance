@@ -33,7 +33,7 @@ Console內嵌viewport與viewer origin頁 SHALL各自實作下列失敗態，每�
 
 `commandRejected` SHALL形成persistent aria-live terminal state並以 `request_id`／`rejection_id`關聯。`retryable:true`只允許顯示安全重試選項；`runtime_state:"changed_unconfirmed"` SHALL優先轉入stage-unproven，直到authenticated self-only status證實同revision active。Raw credential、lease token、internal token與other-principal detail SHALL NOT進入DOM、toast、event panel或browser log。
 
-#### Scenario: lease被占只顯示generic conflict
+#### Scenario: lease 被佔
 
 - **WHEN** 使用者按「啟動 3D Session」而coordinator回generic 409
 - **THEN** UI SHALL顯示lease-occupied態，但 SHALL NOT顯示現任holder role、display name、viewer、lease或stream detail

@@ -60,7 +60,7 @@ console↔Kit 的 DataChannel 訊息 SHALL 固定為 envelope `{event_type: stri
 
 Production Kit SHALL在任何 USD、selection、highlight、pickability或stage state mutation前，即時向 coordinator internal authority驗證 exact session、source client、current primary lease、expiry、lifecycle、requested event與必要 command context，且 SHALL NOT使用positive authorization cache。`openStageRequest`與`loadArtifactGroupRequest` SHALL另帶 coordinator-issued `stage_binding_authorization_id`、`binding_revision_id`與exact canonical composition；valid lease、browser URL或payload bypass marker SHALL NOT取代stage transaction。Readonly query與video SHALL不受authority outage阻擋。
 
-#### Scenario: spectator 送 mutator 被前端或Kit攔下
+#### Scenario: spectator 送 mutator 被前端攔下
 
 - **WHEN** spectator模式觸發 `highlightPrimsRequest`，或繞過frontend直接送入Kit
 - **THEN** frontend SHALL不送出並記錄原因，或Kit SHALL在zero mutation下回唯一 `commandRejected {reason:"spectator_readonly", runtime_state:"unchanged"}`
@@ -95,7 +95,13 @@ Kit/streaming拒絕一個well-formed runtime mutator attempt時 SHALL只回一�
 
 `viewer_lease_token`、user credential、internal token、Authorization header、raw upstream response SHALL NOT出現在payload/log。Console與viewer origin收到 rejection後 SHALL顯示persistent、可存取的terminal回饋；`changed_unconfirmed` SHALL標記stage unproven並阻擋盲retry/A4 handoff直到authenticated status resync。FakeKit SHALL支援deterministic one-shot同形回放，且production build SHALL NOT只因query參數啟用harness。
 
-#### Scenario: lease失效與authority outage可區分
+#### Scenario: 後端拒絕 spectator 寫入
+
+- **WHEN** spectator 繞過前端 gate 直送 highlightPrimsRequest（defense-in-depth 情境）
+- **THEN** Kit 端 SHALL 回 `commandRejected {rejected_event_type:"highlightPrimsRequest", reason:"spectator_readonly"}`
+- **AND** viewer UI SHALL 顯示拒絕回饋、3D 選取狀態 SHALL 不變
+
+#### Scenario: lease 失效
 
 - **WHEN** forged/released/expired lease被coordinator正常拒絕
 - **THEN** Kit SHALL回HTTP-200 decision映射出的 `commandRejected {reason:"lease_invalid", retryable:false, runtime_state:"unchanged"}`

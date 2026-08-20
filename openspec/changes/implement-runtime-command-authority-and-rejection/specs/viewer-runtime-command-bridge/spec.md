@@ -10,6 +10,16 @@ Authority network/timeout/non-JSON failure SHALL zero mutation並使用 `reason:
 
 Kit SHALL每個attempt即時驗證且 SHALL NOT使用positive authorization cache。Production `openStageRequest`與`loadArtifactGroupRequest` SHALL另要求 server-issued stage transaction與exact canonical composition；valid lease + browser URL SHALL NOT構成stage authority。Readonly DataChannel query與video SHALL不受mutator authority outage阻擋。Coordinator只 SHALL回authorization decision，SHALL NOT提供通用runtime operations proxy或控制viewport。
 
+#### Scenario: spectator 明示唯讀角色的 mutating 指令被拒
+
+- **WHEN** 一個 spectator（`role!=="primary"` 或缺 lease token）送出 mutating 指令
+- **THEN** 前端 SHALL 略過送出並記錄阻擋原因，Kit 端 `is_authorized_mutator` SHALL 回 false 使 handler 拒絕
+
+#### Scenario: primary 帶合法 lease 的 mutating 指令通過閘門
+
+- **WHEN** primary viewer 已由 coordinator 取得 viewer lease token 且 session lifecycle 未阻擋，送出 `loadArtifactGroupRequest`
+- **THEN** 指令 SHALL 通過前端 UX 閘門與 Kit 端授權檢查並套用，`binding_revision_id` SHALL 隨 `openedStageResult` 回傳供前端宣告 applied
+
 #### Scenario: forged 或 released lease 被拒且 zero mutation
 
 - **WHEN** caller繞過frontend gate，送入 `role:"primary"` 搭配偽造、過期、已釋放、跨session或wrong-source lease

@@ -6,7 +6,7 @@ EmbeddedViewer SHALL以 `{viewerOrigin base}/?{params}` 直連viewer origin（�
 
 `viewer_lease_token`與local-dev／future production user auth token皆為bearer secret，MUST NOT出現在URL query、history、referrer或log。兩者 SHALL只在 `viewer_ready` 後經受限targetOrigin、驗證source/origin的既有 `viewer_lease_token {token, user_token?}` postMessage交付；viewer只可ephemeral保存並用於coordinator header，不得寫入UI、structured log或artifact。`viewerOrigin` SHALL取自 `runtimeStatus().configured_endpoints.viewer.browser_url_base`（可含路徑前綴）；origin比對與postMessage targetOrigin SHALL使用normalize後的純origin。
 
-#### Scenario: lease與user token都不落URL
+#### Scenario: lease token 不落 URL
 
 - **WHEN** console掛載EmbeddedViewer且已持有viewer lease與lab user carrier
 - **THEN** iframe src SHALL不含任一token；兩者 SHALL於 `viewer_ready` 握手後以受限 `viewer_lease_token {token, user_token}` postMessage交付
