@@ -302,3 +302,119 @@ describe('AppStream auth updates', () => {
         retry.componentWillUnmount();
     });
 });
+
+// #624 exactly-once 緩解：_onCustomEvent 是 gfn / local / stream 三種 source 共用的
+// 單一咽喉點，去重放在這裡讓所有下游（stage_loading / stage_management 回應、
+// commandRejected 等）一體受惠。
+describe('AppStream Kit runtime response dedup (#624)', () => {
+    afterEach(() => {
+        vi.restoreAllMocks();
+        vi.useRealTimers();
+    });
+
+    function rejectionEvent(requestId: string) {
+        return {
+            event_type: 'commandRejected',
+            payload: {
+                request_id: requestId,
+                rejected_event_type: 'openStageRequest',
+                reason: 'lease_invalid',
+                retryable: true,
+                runtime_state: 'unchanged',
+            },
+        };
+    }
+
+    it('drops a duplicate (event_type, request_id) response and logs it once', () => {
+        const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+        const props = makeProps();
+        const stream = new AppStream(props);
+
+        stream._onCustomEvent(rejectionEvent('req_dup_001'));
+        stream._onCustomEvent(rejectionEvent('req_dup_001'));
+
+        expect(props.handleCustomEvent).toHaveBeenCalledOnce();
+        expect(warnSpy).toHaveBeenCalledOnce();
+        expect(warnSpy).toHaveBeenCalledWith(
+            'AppStream dropped duplicate Kit runtime response',
+            { event_type: 'commandRejected', request_id: 'req_dup_001' },
+        );
+    });
+
+    it('forwards distinct request_ids untouched', () => {
+        const props = makeProps();
+        const stream = new AppStream(props);
+
+        stream._onCustomEvent(rejectionEvent('req_a'));
+        stream._onCustomEvent(rejectionEvent('req_b'));
+
+        expect(props.handleCustomEvent).toHaveBeenCalledTimes(2);
+    });
+
+    it('never suppresses events without a request_id', () => {
+        const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+        const props = makeProps();
+        const stream = new AppStream(props);
+        const selectionChanged = {
+            event_type: 'stageSelectionChanged',
+            payload: { prim_paths: ['/World/A'] },
+        };
+
+        stream._onCustomEvent(selectionChanged);
+        stream._onCustomEvent(selectionChanged);
+        stream._onCustomEvent(null);
+
+        expect(props.handleCustomEvent).toHaveBeenCalledTimes(3);
+        expect(warnSpy).not.toHaveBeenCalled();
+    });
+
+    it('dedupes the wrapped messageRecipient/data wire shape too', () => {
+        vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+        const props = makeProps();
+        const stream = new AppStream(props);
+        const wrapped = {
+            messageRecipient: 'kit',
+            data: JSON.stringify({
+                event_type: 'openedStageResult',
+                payload: { request_id: 'req_wrapped_001', result: 'success' },
+            }),
+        };
+
+        stream._onCustomEvent(wrapped);
+        stream._onCustomEvent(wrapped);
+
+        expect(props.handleCustomEvent).toHaveBeenCalledOnce();
+    });
+
+    it('forwards the same key again after the dedup window elapses', () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date('2026-08-20T00:00:00.000Z'));
+        vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+        const props = makeProps();
+        const stream = new AppStream(props);
+
+        stream._onCustomEvent(rejectionEvent('req_window_001'));
+        stream._onCustomEvent(rejectionEvent('req_window_001'));
+        expect(props.handleCustomEvent).toHaveBeenCalledOnce();
+
+        vi.advanceTimersByTime(60_000);
+        stream._onCustomEvent(rejectionEvent('req_window_001'));
+
+        expect(props.handleCustomEvent).toHaveBeenCalledTimes(2);
+    });
+
+    it('keeps dedup memory per mounted instance so a remount fails open', () => {
+        vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+        const firstProps = makeProps();
+        const first = new AppStream(firstProps);
+        first._onCustomEvent(rejectionEvent('req_remount_001'));
+        first._onCustomEvent(rejectionEvent('req_remount_001'));
+        expect(firstProps.handleCustomEvent).toHaveBeenCalledOnce();
+
+        const remountProps = makeProps();
+        const remounted = new AppStream(remountProps);
+        remounted._onCustomEvent(rejectionEvent('req_remount_001'));
+
+        expect(remountProps.handleCustomEvent).toHaveBeenCalledOnce();
+    });
+});
