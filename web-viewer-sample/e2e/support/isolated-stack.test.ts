@@ -5,6 +5,7 @@ import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { captureWindowsBackendSnapshot } from "./isolated-stack-global-setup";
+import ForbidSkippedWhenRealReporter, { skippedTestsViolateRealGate } from "./forbid-skipped-when-real";
 import {
   assertIsolatedBackendProcessSnapshot,
   assertIsolatedManifestHead,
@@ -951,4 +952,87 @@ describe("loadIsolatedStackConfig", () => {
       screenshotPaths: [path.join(escape, "outside.png")],
     })).rejects.toThrow(/artifact path must stay inside current run/);
   });
+});
+
+describe("forbid skipped tests when E2E_REQUIRE_REAL=1", () => {
+  it("fails closed on skipped tests and stays green when every test ran", () => {
+    const skipped = [{ title: "fixture skip", status: "skipped" }];
+    expect(skippedTestsViolateRealGate({ E2E_REQUIRE_REAL: "1" }, skipped)).toMatch(/forbids skipped tests \(1\)/);
+    expect(skippedTestsViolateRealGate({ E2E_REQUIRE_REAL: "1" }, [])).toBeNull();
+    expect(skippedTestsViolateRealGate({}, skipped)).toBeNull();
+  });
+
+  it("reporter exits non-zero for skipped tests and zero when all tests ran", () => {
+    const previous = process.env.E2E_REQUIRE_REAL;
+    const previousExit = process.exitCode;
+    process.env.E2E_REQUIRE_REAL = "1";
+    try {
+      process.exitCode = 0;
+      const skippedReporter = new ForbidSkippedWhenRealReporter();
+      skippedReporter.onTestEnd(
+        { titlePath: () => ["fixture skip"] } as never,
+        { status: "skipped" } as never,
+      );
+      skippedReporter.onEnd({} as never);
+      expect(process.exitCode).not.toBe(0);
+
+      process.exitCode = 0;
+      const passedReporter = new ForbidSkippedWhenRealReporter();
+      passedReporter.onTestEnd(
+        { titlePath: () => ["runs"] } as never,
+        { status: "passed" } as never,
+      );
+      passedReporter.onEnd({} as never);
+      expect(process.exitCode).toBe(0);
+    } finally {
+      if (previous === undefined) delete process.env.E2E_REQUIRE_REAL;
+      else process.env.E2E_REQUIRE_REAL = previous;
+      process.exitCode = previousExit ?? 0;
+    }
+  });
+
+  it("Playwright fixture run with test.skip(true) exits non-zero under E2E_REQUIRE_REAL=1", () => {
+    const workDir = mkdtempSync(path.join(tmpdir(), "forbid-skip-"));
+    roots.push(workDir);
+    const specPath = path.join(workDir, "skip-fixture.spec.ts");
+    const configPath = path.join(workDir, "playwright.config.ts");
+    const reporterPath = path.join(process.cwd(), "e2e", "support", "forbid-skipped-when-real.ts").replaceAll("\\", "/");
+    writeFileSync(
+      specPath,
+      [
+        'import { test } from "@playwright/test";',
+        'test("fixture skip", () => { test.skip(true, "intentional fixture skip"); });',
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+    writeFileSync(
+      configPath,
+      [
+        'import { defineConfig } from "@playwright/test";',
+        "export default defineConfig({",
+        '  testDir: ".",',
+        '  testMatch: "skip-fixture.spec.ts",',
+        `  reporter: [["list"], ["${reporterPath}"]],`,
+        "  retries: 0,",
+        "  timeout: 5_000,",
+        "});",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+    let skippedExit = 0;
+    try {
+      execFileSync("npx", ["playwright", "test", "--config", configPath], {
+        cwd: process.cwd(),
+        env: { ...process.env, E2E_REQUIRE_REAL: "1" },
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"],
+        windowsHide: true,
+      });
+    } catch (error) {
+      skippedExit = (error as { status?: number }).status ?? 1;
+    }
+    expect(skippedExit).not.toBe(0);
+  }, 60_000);
 });

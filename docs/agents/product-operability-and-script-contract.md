@@ -240,7 +240,7 @@ manifest path/content/worktree/HEAD、coordinator/viewer env 或保留 port HTTP
 global setup 必須在 health 後重驗 backend PID/command line/creation identity，且 resolved listener 必須
 位於 manifest process lineage；lineage 每節必須帶 creation identity、拒絕 parent 比 child 晚的 PID-reuse
 假關聯，並在輸出 snapshot 前重驗 listener 與整條 lineage 未改變；
-不得以 conditional skip 計為通過。evidence 必須揭露 harness build/query flags、resolved ports、
+不得以 conditional skip 計為通過。機器執行點：`web-viewer-sample/e2e/support/forbid-skipped-when-real.ts`（掛在 `playwright.config.ts` / `playwright.functional-runtime.config.ts`）；`E2E_REQUIRE_REAL=1` 時任一 test status 為 `skipped` 即非零退出。evidence 必須揭露 harness build/query flags、resolved ports、
 base URLs、observed runtime IDs 與 screenshot/trace 路徑。
 
 隔離 stack evidence 不得推論 design gate；不得推論 deploy path；不得推論 Kit/WebRTC、GPU、
