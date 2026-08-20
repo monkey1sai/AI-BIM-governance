@@ -23,7 +23,7 @@
 - [x] 2.5 `OpsPage.tsx`：inline hex → `var(--ab-*)`（#357 落地；raw-hex=0、ab-var 23）
 - [x] 2.6 `ConceptPage.tsx`：inline hex → `var(--ab-*)`（#357 落地；raw-hex=0、ab-var 9）
 - [x] 2.7 `unified.css`：body 層級樣式改用 `--ab-*`（#357 落地；raw-hex=0、ab-var 8）
-- [ ] 2.8 每頁遷移後跑該頁既有 browser E2E 案例，確認功能行為不變（僅允許樣式相關的截圖差異）。2026-08-12 corrective review：#357 artifact 與現行 spec 僅覆蓋 unified home／部分 workspace-runtime routes；`PipelinePage`／`ConceptPage` 只有 Vitest／DOM 證據，尚無逐頁 browser run，因此維持未勾。
+- [x] 2.8 每頁遷移後跑該頁既有 browser E2E 案例，確認功能行為不變（僅允許樣式相關的截圖差異）。**2026-08-20**：`E2E_VIEWER_PORT=5188 npx playwright test e2e/migrate-hifi-page-e2e.spec.ts e2e/a9-a10-identity-a4-primary.spec.ts e2e/overlay-ec-token-resolution.spec.ts` — 12 passed（含 `#pipeline`／`#a9`／`#a10`）。無 Kit／coordinator。screenshot＝ignored `artifacts/e2e/migrate-hifi-page-e2e/`。
 
 ## 3. Legacy 頁面遷移（仍掛 edge-console.css 的部分）
 
@@ -33,7 +33,7 @@
 - [x] 3.4 `governance/overlay.css`：`--ec-*` → `--ab-*`（#357 落地；ec=0、ab 11；專屬守門 `e2e/overlay-ec-token-resolution.spec.ts`）
 - [x] 3.5 `viewer/*.css`（含 `MockViewport.tsx`）：`--ec-*` → `--ab-*`（#357 落地；ec=0、ab 60）
 - [x] 3.6 `legacy-console.css` 內 `IntentDialog` selectors 及 `IntentDialog.css.test.ts`：`--ec-*` → `--ab-*`（repo 不存在獨立 `IntentDialog.css`，原文前提有誤；#357 已改測試，現行斷言讀 `legacy-console.css`）
-- [ ] 3.7 每頁遷移後跑該頁既有 browser E2E / provenance 誠實性案例，確認功能行為不變。2026-08-12 corrective review：本 PR 引用的既有 evidence 覆蓋 `#conv`、`#/kit`、`#/demo-control`、`#/review` 與 component tests，但未記錄 `#/admin`、`#/gpu`、`#/sessions` 等所有 migrated legacy pages 的逐頁 browser／provenance run，因此維持未勾。
+- [x] 3.7 每頁遷移後跑該頁既有 browser E2E / provenance 誠實性案例，確認功能行為不變。**2026-08-20**：同 run 覆蓋 `#admin`（系統管理＋`.ec-prov.ec-p1`）、`#gpu`（Review Room＋GPU 審查室補充／no-GPU 誠實文案）、`#sessions`（Session 管理＋Reclaim）。12 passed。不宣稱 Kit／live WebRTC／full completion。
 
 ## 4. 主題切換移除
 

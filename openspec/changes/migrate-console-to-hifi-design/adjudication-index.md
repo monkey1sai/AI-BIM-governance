@@ -9,7 +9,7 @@ Authority：`docs/plans/docs-plans-README.md` §3 R1＋`design-canon-change-cont
 | HIFI-01 | **拒絕** 93 個 legacy-only declaration。維持 current canon 86 個 `--ab-*`。 | 不得把 `drafts/ai-bim-governance.token-extension.proposed.css` 合併或抄進正本。task 1.2 = won't-add。 |
 | HIFI-02 | **允許元件本地 geometry**。無跨頁語意重用的 spacing／radius／字級／letter-spacing 可留在元件。 | 禁止為單一 literal 新開 `--ab-*`。 |
 | HIFI-03 | **四個都不放行**：`LifecycleStrip`（CRITICAL）、`A1GovernanceWorkbenchPage`、`ConversionPage`、`ReviewSessionViewerPane`（HIGH）。 | No product edit。不得 cherry-pick `94a5575` 的 style／session-payload diff。 |
-| HIFI-04 | **本 change 不再做 consumer 打包遷移**；以後若開 visual 工作，一律單一 route／screen 切片。 | 本 change 剩餘＝2.8／3.7 E2E。6.4／7.4 = deferred-this-change。 |
+| HIFI-04 | **本 change 不再做 consumer 打包遷移**；以後若開 visual 工作，一律單一 route／screen 切片。 | 2.8／3.7 已於 2026-08-20 Playwright 12/12 勾選。6.4／7.4 = deferred-this-change。 |
 | 6.4 | **deferred-this-change**：本 change 不執行 origin↔`docs/plans/` 正本對齊。 | checkbox 維持未勾；不擋 2.8／3.7；下次 human 改 Hi-Fi 正本時再做 R-A4。 |
 | 7.4 | **deferred-this-change**：本 change 不收 9 STALE + 6 UNVERIFIABLE。 | 8 條措辭 STALE → spec-alignment successor；3D 標紅 → #603；6 UNVERIFIABLE → 部署 E2E 窗。checkbox 未勾。 |
 
