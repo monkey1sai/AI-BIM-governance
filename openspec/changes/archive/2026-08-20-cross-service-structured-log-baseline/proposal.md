@@ -1,6 +1,6 @@
 # cross-service-structured-log-baseline — Proposal
 
-> **Status: deferred 2026-07-30** — evidence-only，與 `openspec/lifecycle-ledger.json`、`docs/plans/NOW.md` 對齊。#422 的實作已合併，但 task 13.11 的 fresh final runtime/P4 evidence 尚未閉合；因此本 change 不是 active owner，且不得宣稱 full completion。只有 `cross-service-observability` 明確重新開啟、指定 owner 與 fresh four-service runtime/P4 evidence 範圍後，才可重啟；重啟時只補該 evidence，不重套既有 code 或 canonical-spec delta。
+> **2026-08-20 owner R2 終局關帳**：task 13.11 以 deferred-this-change 結案並 archive。#422 實作已在 main；fresh four-service runtime/P4 evidence 不在本 change 宣稱完成。evidence 重跑只在 owner 明確指定範圍與窗口後執行；不另開 successor 目錄，不重套既有 code 或 canonical-spec delta。
 
 > **Historical amendment (2026-07-28)**：當時的 active P5 remediation 曾驗出 viewer-log/health trust boundary、四 adapter generic redaction、flush identity、evidence privacy與未完成 trace carriers；使用者與 user-delegated security/impact reviewer 曾核准限縮 remediation。這段是歷史脈絡，不能覆寫上方 deferred lifecycle 狀態。
 

@@ -13,7 +13,6 @@
     { "id": "a4-semantic-search-model-qa", "status": "deferred" },
     { "id": "add-single-gpu-session-ai-review-mvp", "status": "deferred" },
     { "id": "align-frontend-design-system-reference", "status": "deferred" },
-    { "id": "cross-service-structured-log-baseline", "status": "deferred" },
     { "id": "gpu-session-baseline-and-idle-reclaim", "status": "active" },
     { "id": "implement-runtime-command-authority-and-rejection", "status": "active" },
     { "id": "introduce-viewer-app-integration-surface", "status": "deferred" },
@@ -35,6 +34,8 @@
 **本週不做：** A5–A10 全棧、新 OpenSpec（除 archive/defer 註記）、整 repo 重掃。
 
 > **2026-08-19 owner 裁決（R-2026-08-19，lineage thaw）：** 使用者明示採納，`rvt-ifc-usdc-lineage` 由 deferred/frozen thaw 為 active（切片制，「禁止直接 apply」原則保留）。(1) tasks 1.1 的順序前置降級：`align-frontend-design-system-reference` archive 與 `migrate-console-to-hifi-design` closeout 不再擋 lineage coding，align successor 鏈（#649 起）與 lineage 平行進行；lineage 不得重建 align 目錄、不得重複宣告其 delta、不得動 `docs/plans/*.html` 唯一 authority 的衝突面禁令全數保留為 fail-closed 硬約束。(2) 切片：L1 = tasks 2.1–2.7（contract fixtures → `tests/contracts/`，不接 runtime、不動 legacy path）；L2 = tasks 1.2/1.3（compatibility matrix＋五個既有 spec 的 MODIFIED deltas＋strict validate）；**L2 完成前不得進行 3.x runtime 接線**（原 gate 保留）。(3) WIP 記帳：thaw 當日 non-deferred active 5→6，仍在 ≤6 內，未 defer 任何 change。(4) 既有 `/api/external/ifc-ready` 與 callback 路徑不變、cloud-lineage-publication 不得雙 authority、MySQL DDL 維持 REFERENCE ONLY。執行路由：coordinator（Fable）接手原 Codex 分支 `codex/openspec/rvt-ifc-usdc-lineage`。
+
+> **2026-08-20 owner 裁決（R2，終局處置限縮）：** (1) `cross-service-structured-log-baseline` 終局關帳並 archive（93/93；13.11 terminal deferred-this-change；`--skip-specs`，canonical spec 已 byte-identical）；不另開 evidence-only successor。(2) `a4-semantic-search-model-qa` 維持 deferred；ledger `blocked_by` 不再指向已 archived 的 `a4-console-convergence`。真實外部條件（credential rotation／host-native Kit lab／獨立 reviewer）寫在 `current_slice`，不進 `blocked_by`（該欄僅允許既有 change id）。(3) `align-frontend-design-system-reference` 明列 **frozen-historical**、status 維持 deferred；不新增 `abandoned` STATUS enum。(4) `introduce-viewer-app-integration-surface` thaw 僅「使用者明確口令升 active」；deferred/frozen 不因額度增加自動 thaw。
 
 > **2026-07-29 例外揭露：** 使用者明確要求開立 `isolated-branch-stack-browser-e2e`（A4 tasks 4.x 所需的隔離 stack browser E2E 契約），依本檔優先序「使用者最新口令 > 本檔」採納，偏離上面「本週不做：新 OpenSpec」。non-deferred active 由 4 增為 5，仍在 ≤6 內。
 
@@ -66,7 +67,7 @@
 
 2026-07-24 historical correction：deferred 不再放 completed archive；下列 change 均恢復原 id、保留 `Status: deferred`，未落地 delta 仍不構成 canonical authority。`minio-folderview-and-baseline-disclosure` 已於 2026-07-29 對帳 7/7 task 與 archive 證據後封存：
 
-- `openspec/changes/align-frontend-design-system-reference/`（與 migrate 的互斥需求完成 crosswalk 前不得 thaw）
+- `openspec/changes/align-frontend-design-system-reference/`（2026-08-20 R2：frozen-historical；status 維持 deferred；不因額度增加自動 thaw）
 - `openspec/changes/rvt-ifc-usdc-lineage/`（1/48；2026-08-19 已依 R-2026-08-19 thaw 為 active 切片制，見「本週三軌」節的裁決揭露）
 
 Archive lexical audit 在本次恢復後仍有 44 個歷史目錄、696 個 unchecked checkbox；三層交叉裁決未把它們判為獨立、可繼續執行的 unfinished owner（主要是已落地但 task bookkeeping 過時、已被 successor 承接，或已退役 service 的歷史工作），因此不批次搬移，也不改寫 archive 歷史。這批屬 legacy audit debt；新增 lifecycle gate 只對本次之後的新 archive fail closed，禁止再產生 unchecked/deferred archive。
@@ -83,9 +84,9 @@ Archive lexical audit 在本次恢復後仍有 44 個歷史目錄、696 個 unch
 | `minio-trigger-lifecycle-backend` | ✅ archived `2026-07-21-minio-trigger-lifecycle-backend` | done | #259 |
 | `c-m4-runtime-command-bridge` | ✅ archived `2026-07-21-c-m4-runtime-command-bridge`（新建 capability spec） | done | #309 |
 | `minio-watch-key-structure` | ✅ archived `2026-07-21-minio-watch-key-structure`（`--skip-specs`；主線 scenario 已在 main） | 選 A deferred-evidence | #237 |
-| `cross-service-structured-log-baseline` | deferred、frozen（92/93；缺 fresh final 4-service runtime/P4 evidence） | 由 `cross-service-observability` 明確重啟後只補該 evidence；不重套 pipeline/code/canonical spec | #126 |
+| `cross-service-structured-log-baseline` | ✅ archived `2026-08-20-cross-service-structured-log-baseline`（93/93；13.11 terminal deferred-this-change；`--skip-specs`） | done；evidence 重跑需 owner 另指定範圍與窗口 | #126、R2 2026-08-20 |
 | `minio-folderview-and-baseline-disclosure` | ✅ archived `2026-07-29-minio-folderview-and-baseline-disclosure`（7/7 closeout reconciled） | done；archive proposal/tasks 為證據 | #265 |
-| `align-frontend-design-system-reference` | ↩ restored deferred、frozen | 先與 migrate 做 requirement/successor crosswalk；禁止平行 design coding | #363 |
+| `align-frontend-design-system-reference` | ↩ deferred、**frozen-historical**（0/23；不新增 abandoned enum） | 維持 deferred；不 thaw、不平行 design coding | #363、R2 2026-08-20 |
 | `rvt-ifc-usdc-lineage` | ⚡ active（切片制；2026-08-19 R-2026-08-19 thaw；1/48） | Slice L1 = tasks 2.1–2.7 contract fixtures；L2 前不得 runtime 接線 | #354、R-2026-08-19 |
 
 ### minio-watch task 5
@@ -224,3 +225,4 @@ Done: 通過 DoD 所列測試；回報 verified / inferences / risks
 | 2026-07-29 | design gate 時間線收斂：`13033cb` 紅（`#a4` route IA 遷移）→ **#429 就地重核 A4 golden 轉綠**（產品面快照，混合權威記 D-15）；「rebaseline 關不掉」的早期斷言被 #429 實證推翻並在 proposal 誠實更正。三層對抗驗證＋重跑輪（X1/X2/X3）完成：缺口 D-1～D-17、Q1–Q8 依使用者委任由 AI 代答（標 AI-裁決、可推翻），全記於 `isolated-branch-stack-browser-e2e` proposal。 |
 | 2026-07-23 | #382／#383／#386 merged；#386 先收斂 scoped A4 visible caller compatibility，S4-B coordinator session search proxy、安全 transport、host-kit dual-namespace seam 與 cold-scan timeout regression 由 PR #384 交付（狀態以 GitHub machine truth 為準），S4-C/D 仍 pending。 |
 | 2026-08-19 | 使用者採納 R-2026-08-19：`rvt-ifc-usdc-lineage` thaw 為 active（切片制）；tasks 1.1 順序前置降級為衝突面約束（align successor 鏈與 lineage 平行）；Slice L1 = 2.1–2.7 contract fixtures、L2 = 1.2/1.3、L2 前不得 3.x runtime 接線；non-deferred active 5→6 仍在上限內；執行由 coordinator 接手原 Codex 分支。詳見「本週三軌」節 2026-08-19 裁決揭露。 |
+| 2026-08-20 | owner R2 終局處置限縮：`cross-service-structured-log-baseline` archive（93/93、`--skip-specs`）；`a4-semantic-search-model-qa` 維持 deferred 且 `blocked_by` 清空（外部條件改記 current_slice）；`align-frontend-design-system-reference` 明列 frozen-historical、status 維持 deferred；`introduce-viewer-app-integration-surface` thaw 僅使用者明確口令。 |
