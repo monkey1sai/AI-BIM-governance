@@ -91,6 +91,7 @@ function makeApp(overrides: Partial<CoordinatorConfig> = {}): CoordinatorApp {
     conversionLedgerStorePath: path.join(root, "conversion-ledger.json"),
     artifactHealthLedgerStorePath: path.join(root, "artifact-health-ledger.json"),
     sourceBundleStorePath: path.join(root, "source-bundles.json"),
+    pipelineJobStorePath: path.join(root, "pipeline-jobs.json"),
     edgeSiteId: "site_test_edge",
     edgeRuntimeDataRoot: root,
     storageRoot,
@@ -205,6 +206,7 @@ describe("watcher／手動 trigger 不被 governed manifest 抑制（D-7、§11.
     const app = makeApp({
       conversionLedgerStorePath: ledgerStorePath,
       sourceBundleStorePath: path.join(root, "source-bundles.json"),
+    pipelineJobStorePath: path.join(root, "pipeline-jobs.json"),
       minioWatchEnabled: true,
       minioWatchEndpoint: s3Base,
       minioWatchBucket: "bim-control",
@@ -238,6 +240,7 @@ describe("watcher／手動 trigger 不被 governed manifest 抑制（D-7、§11.
     const app = makeApp({
       conversionLedgerStorePath: path.join(root, "conversion-ledger.json"),
       sourceBundleStorePath: path.join(root, "source-bundles.json"),
+    pipelineJobStorePath: path.join(root, "pipeline-jobs.json"),
       // watcher loop 關閉，只用手動 trigger 路徑（MinIO 連線參數仍需齊全）。
       minioWatchEnabled: false,
       minioWatchEndpoint: s3Base,
