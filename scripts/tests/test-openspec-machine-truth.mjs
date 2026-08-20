@@ -303,18 +303,26 @@ test('source drift mismatch keeps schema-bounded field and path evidence', () =>
   });
 });
 
-test('current cross-service lifecycle status agrees with its proposal and NOW projection', () => {
+test('archived cross-service lifecycle status agrees with its archive proposal and NOW projection', () => {
   const ledger = JSON.parse(readFileSync(path.join(process.cwd(), 'openspec/lifecycle-ledger.json'), 'utf8'));
   const change = ledger.changes.find(({ id }) => id === 'cross-service-structured-log-baseline');
   const nowText = readFileSync(path.join(process.cwd(), 'docs/plans/NOW.md'), 'utf8');
-  const proposal = readFileSync(path.join(process.cwd(), 'openspec/changes/cross-service-structured-log-baseline/proposal.md'), 'utf8');
+  const proposal = readFileSync(
+    path.join(process.cwd(), 'openspec/changes/archive/2026-08-20-cross-service-structured-log-baseline/proposal.md'),
+    'utf8',
+  );
 
-  assert.equal(change?.status, 'deferred');
-  assert.equal(change?.current_slice, null);
-  assert.match(proposal, /^> \*\*Status: deferred/mu);
-  assert.match(nowText, /"id": "cross-service-structured-log-baseline", "status": "deferred"/u);
+  assert.equal(change?.status, 'archived');
+  assert.equal(change?.task_ledger?.completed, 93);
+  assert.equal(change?.task_ledger?.total, 93);
+  assert.match(String(change?.current_slice), /2026-08-20 archive/u);
+  assert.ok(change?.evidence_refs?.every((ref) => ref.startsWith(
+    'openspec/changes/archive/2026-08-20-cross-service-structured-log-baseline/',
+  )));
+  assert.doesNotMatch(proposal, /^> \*\*Status:/mu);
+  assert.doesNotMatch(nowText, /"id": "cross-service-structured-log-baseline"/u);
+  assert.match(nowText, /cross-service-structured-log-baseline.*archive/iu);
   const closeoutDoD = nowText.split('### 收口 DoD（軌 1）', 2)[1].split('\n---', 2)[0];
-  assert.match(closeoutDoD, /structured-log.*deferred/iu);
   assert.doesNotMatch(closeoutDoD, /structured-log.*active P5/iu);
 });
 
