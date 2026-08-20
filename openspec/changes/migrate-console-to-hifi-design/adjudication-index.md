@@ -9,7 +9,8 @@ Authority：`docs/plans/docs-plans-README.md` §3 R1＋`design-canon-change-cont
 | HIFI-01 | **拒絕** 93 個 legacy-only declaration。維持 current canon 86 個 `--ab-*`。 | 不得把 `drafts/ai-bim-governance.token-extension.proposed.css` 合併或抄進正本。task 1.2 = won't-add。 |
 | HIFI-02 | **允許元件本地 geometry**。無跨頁語意重用的 spacing／radius／字級／letter-spacing 可留在元件。 | 禁止為單一 literal 新開 `--ab-*`。 |
 | HIFI-03 | **四個都不放行**：`LifecycleStrip`（CRITICAL）、`A1GovernanceWorkbenchPage`、`ConversionPage`、`ReviewSessionViewerPane`（HIGH）。 | No product edit。不得 cherry-pick `94a5575` 的 style／session-payload diff。 |
-| HIFI-04 | **本 change 不再做 consumer 打包遷移**；以後若開 visual 工作，一律單一 route／screen 切片。 | 本 change 剩餘＝2.8／3.7 E2E、6.4 human origin sync、7.4 spec／Kit 標紅。 |
+| HIFI-04 | **本 change 不再做 consumer 打包遷移**；以後若開 visual 工作，一律單一 route／screen 切片。 | 本 change 剩餘＝2.8／3.7 E2E、7.4 spec／Kit 標紅。 |
+| 6.4 | **deferred-this-change**：本 change 不執行 origin↔`docs/plans/` 正本對齊。 | checkbox 維持未勾；不擋 2.8／3.7；下次 human 改 Hi-Fi 正本時再做 R-A4。 |
 
 ## Decisions reserved for the user
 
@@ -19,7 +20,7 @@ Authority：`docs/plans/docs-plans-README.md` §3 R1＋`design-canon-change-cont
 | HIFI-02 | 每個 literal geometry 必須變 token，或可留元件本地 | Existing delta 嚴於 current canon | **recorded 2026-08-20：allow component-local geometry** |
 | HIFI-03 | 放行 CRITICAL／HIGH consumer 遷移？ | GitNexus impact table in ledger | **recorded 2026-08-20：no sign-off** |
 | HIFI-04 | consumer migration 按 route 切片或打包？ | dual-gate／R4 | **recorded 2026-08-20：no bundled consumer migration; future visual = single route** |
-| 6.4 | 是否由 human owner 同步 `C:\Repos\design\desigin-system` 與 repo `docs/plans/` 正本 | R-A1／R-A4 backup＋version bump | **open** |
+| 6.4 | 是否由 human owner 同步 `C:\Repos\design\desigin-system` 與 repo `docs/plans/` 正本 | R-A1／R-A4 backup＋version bump | **recorded 2026-08-20：deferred-this-change**（本 change 不執行；checkbox 未勾） |
 | 7.4 | 9 STALE spec 改文件，或補 Kit 3D 標紅；6 UNVERIFIABLE 是否另開部署 E2E | `artifacts/2026-08-12-hifi-consumer-spec-scenario-audit.md` | **open** |
 
 ## Required adoption sequence

@@ -1588,9 +1588,9 @@
       "id": "migrate-console-to-hifi-design",
       "status": "active",
       "owner": "web-viewer-sample",
-      "current_slice": "2026-08-20 HIFI-01～04 已記錄：拒絕 93、允許本地 geometry、四個 HIGH／CRITICAL 不放行、本 change 不再打包 consumer 遷移。0.5／1.2 結案（1.2=won't-add）。36/40。殘項＝2.8／3.7 逐頁 browser E2E、6.4 human origin sync、7.4 STALE spec vs Kit 標紅。不寫 docs/plans 正本、不 archive。",
+      "current_slice": "2026-08-20 HIFI-01～04 已記錄；6.4 Status: deferred-this-change（本 change 不對齊 origin，checkbox 未勾）。0.5／1.2 結案（1.2=won't-add）。36/40。殘項＝2.8／3.7 逐頁 browser E2E、7.4 STALE spec vs Kit 標紅、6.4 仍未勾（deferred-this-change）。不寫 docs/plans 正本、不 archive。",
       "blocked_by": [],
-      "last_verified": "2026-08-20T06:40:00Z",
+      "last_verified": "2026-08-20T06:55:00Z",
       "task_ledger": {
         "completed": 36,
         "total": 40

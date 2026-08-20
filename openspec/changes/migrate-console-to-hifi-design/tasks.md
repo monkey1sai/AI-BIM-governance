@@ -52,7 +52,7 @@
 - [x] 6.1 current canon §08 R1 已記錄 `ai-bim-governance.css --ab-*` 為唯一 production design token 權威（本 reconciliation 僅讀取驗證，未寫 canon）
 - [x] 6.2 current canon §08 已記錄「production 主色由 NVIDIA 綠改 Hi-Fi 青色系」與「移除亮色主題」為有意識決策（本 reconciliation 僅讀取驗證）
 - [x] 6.3 §03（或其他相關章節）核對過時敘述（2026-07-28 對 dc.html 全文 grep `edge-console|雙主題|theme-light|亮色主題`，僅命中 §08 三處且措辭正確；§03 零殘留）
-- [ ] 6.4 **human owner only**：同步 origin（`C:\Repos\design\desigin-system`）與受保護的 repo `docs/plans/` 正本；AI 只提供 parallel proposal/draft，不原地寫入任一正本
+- [ ] 6.4 **human owner only**：同步 origin（`C:\Repos\design\desigin-system`）與受保護的 repo `docs/plans/` 正本；AI 只提供 parallel proposal/draft，不原地寫入任一正本。**Status: deferred-this-change 2026-08-20**（owner grill：本 change 不執行 origin↔repo 正本對齊；等下次 human 真的要改 Hi-Fi 正本再做 R-A4 backup／version bump。不擋 2.8／3.7。checkbox 維持未勾，不算完成。）
 
 ## 7. Rebaseline 與驗證
 
