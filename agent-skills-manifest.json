@@ -412,13 +412,13 @@
         "kind": "repo-authored-platform-variants",
         "source": "AI-BIM-governance",
         "import_commit": "c414e1cd4ca46ae3443db76a1a43a5334695db01",
-        "notes": "Claude and Codex adapter prose intentionally differs; agent-contracts/spec-to-done.contract.json owns the shared phases, canonical state path, durable HELD reasons, and terminal evidence constraints, with agent-governance tests enforcing adapter parity."
+        "notes": "Claude and Codex adapter prose intentionally differs; agent-contracts/spec-to-done.contract.json owns the shared phases, canonical state path, durable HELD reasons, and terminal evidence constraints, with agent-governance tests enforcing adapter parity. Grok host adapter is tracked as .claude/skills/spec-to-done/GROK.md."
       },
       "integrity": {
         "format": "agent-skill-tree/v2",
         "algorithm": "sha256",
         "trees": {
-          "claude": "f6f9c71106f4ed4581ae9e9ae824dd0a7d20b3850a322aec60c396e212902cf8",
+          "claude": "bef3237724baf5529f4ac1c942503e949a9163df0ba11218c7458e71b987bd79",
           "codex": "8d01116062ccd07296dc913df602ec035ea24c12b408356688fac1c807254b42"
         }
       }

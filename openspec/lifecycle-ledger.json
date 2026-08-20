@@ -381,11 +381,11 @@
       "id": "align-html-derived-design-gate-contract",
       "status": "active",
       "owner": "repository-maintainer",
-      "current_slice": "2026-08-19 開立：successor of align-frontend-design-system-reference（deferred/frozen），只承接 closed design-gate policy 與 ref-bound HTML source collection；provenance、classifier/status、typed consumers 留給尚未建立的三個 successor。0/2；下一片＝1.1 closed-schema scripts/config/design-gate-policy.json。scope guard：不動 HTML 內容、manifest、golden、baseline、capture/rebaseline、production UI、runtime、API、data/event、storage 或 session/conversion 行為。",
+      "current_slice": "2026-08-19：1.1 closed policy 與 1.2 ref-bound collector 已落地（task#1/task#2）。provenance、classifier/status、typed consumers 仍屬尚未建立的 successor。scope guard：未改 HTML 內容、manifest、golden、baseline、capture/rebaseline、production UI、runtime、API、data/event、storage 或 session/conversion 行為。",
       "blocked_by": [],
-      "last_verified": "2026-08-19T08:36:23Z",
+      "last_verified": "2026-08-19T12:00:00Z",
       "task_ledger": {
-        "completed": 0,
+        "completed": 2,
         "total": 2
       },
       "evidence_refs": [

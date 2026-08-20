@@ -14,6 +14,7 @@ CLAUDE_VALIDATOR = ROOT / ".claude/skills/spec-to-done/validate-state.mjs"
 CODEX_VALIDATOR = ROOT / ".codex/skills/spec-to-done/validate-state.mjs"
 CLAUDE_SKILL = ROOT / ".claude/skills/spec-to-done/SKILL.md"
 CODEX_SKILL = ROOT / ".codex/skills/spec-to-done/SKILL.md"
+GROK_SKILL = ROOT / ".claude/skills/spec-to-done/GROK.md"
 MACHINE_CONTRACT = ROOT / "agent-contracts/spec-to-done.contract.json"
 MACHINE_CONTRACT_SCHEMA = ROOT / "agent-contracts/spec-to-done.contract.schema.json"
 GIT = shutil.which("git")
@@ -203,6 +204,51 @@ def test_valid_claude_and_codex_states_and_single_canonical_validator(tmp_path):
         repo,
         _line(repo, head, runIds="P5:codex:019f9324-65d8-7223-9d3e-efabb2eeb08c"),
         platform="codex",
+    )
+    assert code == 0 and result["ok"] is True
+    grok_id = "P5:grok:01a01998-c3f4-77b2-8825-0706ec8e57c6"
+    code, result = _run(tmp_path, repo, _line(repo, head, runIds=grok_id), platform="grok")
+    assert code == 0 and result["ok"] is True
+
+
+def test_grok_adapter_is_thin_and_points_at_canonical_gates():
+    grok_skill = GROK_SKILL.read_text(encoding="utf-8")
+    assert GROK_SKILL.is_file()
+    assert "--platform grok" in grok_skill
+    assert "grok:<actual-subagent-or-workflow-id>" in grok_skill
+    assert ".claude/skills/spec-to-done/SKILL.md" in grok_skill
+    assert "agent-contracts/spec-to-done.contract.json" in grok_skill
+    assert "validate-state.mjs" in grok_skill
+    assert "禁止" in grok_skill and "等價" in grok_skill
+    assert "P0/P1/P3/P4/P5/P6/P7" in grok_skill
+    assert "host_env_blocked" in grok_skill
+    assert "std-plan.js" in grok_skill
+
+
+def test_grok_platform_requires_grok_run_ids_except_p0_none(tmp_path):
+    repo, head = _new_repo(tmp_path)
+    code, result = _run(
+        tmp_path,
+        repo,
+        _line(repo, head, runIds="P5:wf_abc123"),
+        platform="grok",
+    )
+    assert code == 2 and result["held"] == "resume_state_invalid"
+    code, result = _run(
+        tmp_path,
+        repo,
+        _line(
+            repo,
+            head,
+            "DONE@P0",
+            runIds="none",
+            taskIndex="0",
+            evidenceHead="",
+            agentCalls="0/40",
+            p5Rounds="0/2",
+            evidenceAttempts="0/2",
+        ),
+        platform="grok",
     )
     assert code == 0 and result["ok"] is True
 
@@ -609,6 +655,12 @@ def test_transition_is_append_only_and_monotonic(tmp_path):
     [
         ("codex", "P5:wf_old123", "P5:wf_old123 codex:019f9324-65d8-7223-9d3e-efabb2eeb08c"),
         ("claude", "P5:codex:019f9324-65d8-7223-9d3e-efabb2eeb08c", "P5:codex:019f9324-65d8-7223-9d3e-efabb2eeb08c wf_new123"),
+        ("grok", "P5:wf_old123", "P5:wf_old123 grok:01a01998-c3f4-77b2-8825-0706ec8e57c6"),
+        (
+            "claude",
+            "P5:grok:01a01998-c3f4-77b2-8825-0706ec8e57c6",
+            "P5:grok:01a01998-c3f4-77b2-8825-0706ec8e57c6 wf_new123",
+        ),
     ],
 )
 def test_cross_cli_handoff_preserves_both_actual_ids(tmp_path, platform, old_ids, new_ids):
@@ -624,6 +676,58 @@ def test_cross_cli_handoff_preserves_both_actual_ids(tmp_path, platform, old_ids
     )
     code, result = _run(tmp_path, repo, [previous, current], platform=platform)
     assert code == 0 and result["ok"] is True
+
+
+def test_grok_ids_require_handoff_when_switching_from_claude_and_are_preserved(tmp_path):
+    repo, head = _new_repo(tmp_path)
+    previous = _line(repo, head, "DONE@P4", runIds="P4:wf_old123", agentCalls="8/40")
+    without_handoff = _line(
+        repo,
+        head,
+        "DONE@P5",
+        runIds="P4:wf_old123 grok:01a01998-c3f4-77b2-8825-0706ec8e57c6",
+        agentCalls="9/40",
+    )
+    code, result = _run(tmp_path, repo, [previous, without_handoff], platform="grok")
+    assert code == 2 and result["held"] == "resume_state_invalid"
+
+    p0 = _line(
+        repo,
+        head,
+        "DONE@P0",
+        runIds="none",
+        taskIndex="0",
+        evidenceHead="",
+        agentCalls="0/40",
+        p5Rounds="0/2",
+        evidenceAttempts="0/2",
+    )
+    p1 = _line(
+        repo,
+        head,
+        "DONE@P1",
+        runIds="P1:grok:01a01998-c3f4-77b2-8825-0706ec8e57c6",
+        taskIndex="0",
+        evidenceHead="",
+        agentCalls="1/40",
+        p5Rounds="0/2",
+        evidenceAttempts="0/2",
+    )
+    code, result = _run(tmp_path, repo, [p0, p1], platform="grok")
+    assert code == 0 and result["ok"] is True
+
+    dropped = _line(
+        repo,
+        head,
+        "DONE@P3",
+        runIds="P3:wf_new123",
+        agentCalls="2/40",
+        p5Rounds="0/2",
+        evidenceAttempts="0/2",
+        evidenceHead="",
+    )
+    code, result = _run(tmp_path, repo, [p0, p1, dropped], platform="claude")
+    assert code == 2 and result["held"] == "resume_state_invalid"
 
 
 def test_authorization_values_are_allowlisted(tmp_path):
