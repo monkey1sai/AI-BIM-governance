@@ -249,7 +249,10 @@ describe("watcher／手動 trigger 不被 governed manifest 抑制（D-7、§11.
       externalIntakeWebhookSecret: WEBHOOK_SECRET,
       ifcDownloadStrict: false,
     });
-    await listenOnLoopback(app);
+    const port = await listenOnLoopback(app);
+    // 比照 conversion-trigger.test.ts：self-POST loopback 必須指向本測試的 port，
+    // 否則空值 fallback 會打到機器上恰好在跑的部署區 coordinator（本機假綠、CI 502）。
+    app.config.minioWatchSelfBaseUrl = `http://127.0.0.1:${port}`;
 
     const triggered = await request(app.app)
       .post("/api/conversion/trigger")
