@@ -379,18 +379,18 @@
     },
     {
       "id": "align-html-derived-design-gate-contract",
-      "status": "active",
+      "status": "archived",
       "owner": "repository-maintainer",
-      "current_slice": "2026-08-19：1.1 closed policy 與 1.2 ref-bound collector 已落地（task#1/task#2）。provenance、classifier/status、typed consumers 仍屬尚未建立的 successor。scope guard：未改 HTML 內容、manifest、golden、baseline、capture/rebaseline、production UI、runtime、API、data/event、storage 或 session/conversion 行為。",
+      "current_slice": "2026-08-20 archive：#656 已進 main（6e7d156），2/2 tasks 結案；change 目錄移入 openspec/changes/archive/2026-08-20-align-html-derived-design-gate-contract，delta 已同步 canonical openspec/specs/agent-operability-governance/spec.md。provenance／classifier-status／typed-consumers 仍屬尚未建立的 successor，不在本 change 範圍。",
       "blocked_by": [],
-      "last_verified": "2026-08-19T12:00:00Z",
+      "last_verified": "2026-08-20T06:20:00Z",
       "task_ledger": {
         "completed": 2,
         "total": 2
       },
       "evidence_refs": [
-        "openspec/changes/align-html-derived-design-gate-contract/proposal.md",
-        "openspec/changes/align-html-derived-design-gate-contract/tasks.md"
+        "openspec/changes/archive/2026-08-20-align-html-derived-design-gate-contract/proposal.md",
+        "openspec/changes/archive/2026-08-20-align-html-derived-design-gate-contract/tasks.md"
       ],
       "subject_commit": "660e994b0574c60d796c77b0faf6e39e8358611b",
       "archive_debt": null,
@@ -1400,11 +1400,11 @@
       "id": "implement-runtime-command-authority-and-rejection",
       "status": "active",
       "owner": "bim-review-coordinator",
-      "current_slice": "2026-08-18：#578（5.6 slice-3 stream-disconnected）已 squash 進 main 為 ec2684f，本列 subject_commit 由已消失的 pre-squash 9003bb7 rebind 至該 SHA。1.5 由 owner 2026-08-18 確認舊 A4/Ornith credential 已撤銷而結案（實值不入檔，PUBLIC repo）。32/35；殘項＝5.6（console 內嵌側 12/12 已完成，standalone viewer origin 頁側逐態盤點未做、no-session/lease 系列適用性待裁決）、7.3（Windows host-native Kit 九案取證，harness runtime-command-authority-host-native.spec.ts 已存在、待實跑）、7.5（定義即已 merge）。production/full completion=no。",
+      "current_slice": "2026-08-20 對帳：tasks.md 5.6 已於 2026-08-18 slice-4 勾選（console 12/12 + standalone 6 present／4 N/A／2 lab-embed degraded）；ledger 自 32/35 升為 33/35。殘項＝7.3（Windows host-native Kit 九案，須活 coordinator＋部署面，禁止用隔離 Kit 當 authority 證據）、7.5（change 尚未 archive）。本輪不跑 7.3、不 archive、不宣稱 production/full completion。",
       "blocked_by": [],
-      "last_verified": "2026-08-18T03:05:00Z",
+      "last_verified": "2026-08-20T06:20:00Z",
       "task_ledger": {
-        "completed": 32,
+        "completed": 33,
         "total": 35
       },
       "evidence_refs": [
@@ -1588,9 +1588,9 @@
       "id": "migrate-console-to-hifi-design",
       "status": "active",
       "owner": "web-viewer-sample",
-      "current_slice": "2026-08-17 7.1/7.2/8.2 收斂：#535 provenance guard 上線後合規 rebaseline 真 no-op（A4 preserved、26 golden byte-identical、snapshot 2f414d9d 未變、僅 captured_at_utc 時戳）；-VerifyOrigin passed 13 screens／26 golden；8.2 改寫為允許 #538 crosswalk-only 編輯並以 git history 重核後重勾。34/40；殘項＝0.5/1.2/6.4（human owner）＋7.4（9 STALE spec 措辭＋6 UNVERIFIABLE 需部署 E2E，待 owner 裁決 spec 對齊 change）。",
+      "current_slice": "2026-08-20 對帳：34/40 維持。殘項六條＝0.5／1.2／6.4（human owner：token disposition／--ab-* 延伸／design origin 正本，AI 不停筆寫 canon）＋2.8／3.7（逐頁 browser E2E：Pipeline／Concept 與 #/admin／#/gpu／#/sessions 尚未有本 change 的逐頁 run）＋7.4（9 STALE spec 措辭＋6 UNVERIFIABLE 需部署 E2E，待 owner 裁決 spec 對齊 vs Kit 多色高亮）。本輪不寫 docs/plans/*.html、不延伸 token、不 archive。",
       "blocked_by": [],
-      "last_verified": "2026-08-17T06:13:00Z",
+      "last_verified": "2026-08-20T06:20:00Z",
       "task_ledger": {
         "completed": 34,
         "total": 40
