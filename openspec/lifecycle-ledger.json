@@ -212,7 +212,7 @@
       "owner": "governance-service",
       "current_slice": "2026-08-20 R2：blocked_by 不再指向已 archived 的 a4-console-convergence（該欄僅允許既有 change id）。真實外部條件仍擋 thaw：credential rotation (1.8)、host-native Kit lab (7.4/7.5)、獨立 reviewer (8.7)。",
       "blocked_by": [],
-      "last_verified": "2026-08-20T09:30:00Z",
+      "last_verified": "2026-08-20T08:15:00Z",
       "task_ledger": {
         "completed": 28,
         "total": 64
