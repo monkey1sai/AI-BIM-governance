@@ -140,4 +140,12 @@
 - [x] 13.8 Socket.IO使用 server-owned immutable/fail-closed session trace resolver；join/heartbeat/leave candidate exact-match，成功 ack/presence回 canonical trace，rejected ack只回stable error且在room/participant/session/presence副作用前停止；linked/standalone/mismatch/ambiguous cases有零副作用 tests
 - [x] 13.9 DataChannel正式 contract改為每個 `payload.trace_id`；完整 26-message catalog的 viewer outbound、Kit inbound/outbound、viewer inbound皆在任何 read/mutation/correlation/UI更新前驗證，同時保留 mutator runtime authority
 - [x] 13.10 Affected unit/type/lint/build/contract/PowerShell/full suites、OpenSpec strict validate、Compose config與 GitNexus detect通過；CRITICAL/UNKNOWN index blind spots由 delegated reviewer sign-off並以 source/tests補償
-- [ ] 13.11 從 final remediation HEAD重跑 owned runtime、browser/design P4 evidence，並以同一 22-item registry取得 canonical P5 22/22 closed、zero new issue、critic safe
+- [x] 13.11 從 final remediation HEAD重跑 owned runtime、browser/design P4 evidence，並以同一 22-item registry取得 canonical P5 22/22 closed、zero new issue、critic safe。**Status: deferred-this-change 2026-08-20**（terminal for archive：owner 2026-08-20 R2 終局關帳。本 change 不重跑 owned runtime／browser/design P4 evidence；evidence 重跑需 owner 另指定範圍與窗口。不另開 successor change。）
+
+## 14. 後續 successor 指路（非本 change tasks）
+
+> 使用者於 2026-08-20 裁決 R2 終局關帳：下列工作不在本 archived change 宣稱完成，不另開 evidence-only successor 目錄。evidence 重跑只在 owner 明確指定範圍與窗口後執行。
+
+- owned four-service runtime + browser/design P4 evidence 重跑（原 task 13.11）：需 owner 指定範圍、部署／Kit 窗口，以及 live coordinator；isolated Kit 不得當 authority evidence
+- 承接條件：`cross-service-observability` 明確重新開啟，且指定 owner 與 fresh four-service runtime/P4 evidence 範圍；只補該 evidence，不重套既有 code 或 canonical-spec delta
+
