@@ -73,12 +73,26 @@ import { registerDevMetaRoutes } from "./routes/devMeta.js";
 // rvt-ifc-usdc-lineage task 3.1：governed source-bundle intake／讀取面。同一加性慣例——
 // app.ts 只有 import ＋ 一段 mount，路由本體在 routes/lineageSourceBundleRoutes.ts。
 import { registerLineageSourceBundleRoutes } from "./routes/lineageSourceBundleRoutes.js";
-import { SourceBundleStore } from "./services/lineage/sourceBundleStore.js";
+import {
+  SourceBundleStore,
+  type SourceBundleRecord,
+} from "./services/lineage/sourceBundleStore.js";
 import { validateSourceBundle } from "./services/lineage/sourceBundleValidator.js";
 import {
   createS3SourceBundleObjectPort,
   type SourceBundleObjectPort,
 } from "./services/lineage/sourceBundleObjectPort.js";
+// rvt-ifc-usdc-lineage task 3.2：durable stable pipeline job ＋ idempotent auto-enqueue
+// ＋ 撿漏用的 polling reconciliation（預設關閉）。
+import { PipelineJobStore } from "./services/lineage/pipelineJobStore.js";
+import {
+  autoEnqueueGovernedBundle,
+  newReadyEventId,
+} from "./services/lineage/pipelineJobEnqueue.js";
+import {
+  createSourceBundleReconciler,
+  type SourceBundleReconciler,
+} from "./services/lineage/sourceBundleReconciler.js";
 import { ViewerLeaseStore, publicLease } from "./services/viewerLeaseStore.js";
 import {
   RuntimeMutationAuthority,
@@ -539,6 +553,19 @@ export interface CoordinatorApp {
    * 空間互相獨立（design.md §11.2 規則 3），不得互相推導。
    */
   sourceBundleStore: SourceBundleStore;
+  /**
+   * @internal rvt-ifc-usdc-lineage task 3.2 的 durable stable pipeline-job store。
+   * 與 `sourceBundleStore` 同性質的 test-only read accessor；**不是** production 介面
+   * （production 只經 `/api/lineage/pipeline-jobs/*` route）。restart recovery 已在
+   * `createCoordinatorApp` 內執行完畢，測試讀到的即為恢復後的狀態。
+   */
+  pipelineJobStore: PipelineJobStore;
+  /**
+   * @internal deterministic 測試驅動：`await sourceBundleReconciler.pollNow()` 取代
+   * 對輪詢計數器的 waitFor。**不是 production 介面**——production 只由
+   * `SOURCE_BUNDLE_RECONCILE_ENABLED` 的 auto tick 驅動（預設關閉）。
+   */
+  sourceBundleReconciler: SourceBundleReconciler;
   eventLog: EventLog;
   structLog: StructLogger;
   // coordinator-auto-poll-streaming-conversion §6:cancel 全部 in-process auto-poll
@@ -740,6 +767,42 @@ export function createCoordinatorApp(
       allowedBuckets: config.governedSourceBucketAllowlist,
     });
   }
+  // rvt-ifc-usdc-lineage task 3.2：durable stable pipeline job。
+  // 建構即從持久檔恢復，接著立刻做 restart recovery：`RUNNING`／`WAITING_CAPACITY`
+  // 的 governed job 回到 `PENDING_ADMISSION` 並 append 一筆 `coordinator_restart`
+  // （`created_new_logical_job:false`）。**MUST NOT** 標 `dropped_on_restart`
+  // （那是 legacy in-memory 佇列的語意，逐字不動），**MUST NOT** 增 `attempt_count`，
+  // 也 MUST NOT 要求 operator 重送 intake。
+  const pipelineJobStore = new PipelineJobStore(config.pipelineJobStorePath, { structLog });
+  pipelineJobStore.recoverOnStart(nowIso(), newReadyEventId);
+  // READY governed bundle → stable job 的冪等 auto-enqueue。同一個 source_bundle_id
+  // 永遠回同一個 job（決定性 job id ＋ 單一寫入點），replay 不建第二個 logical job。
+  // 只到 `PENDING_ADMISSION`：admission_record 屬 task 5.1、attempt 屬 4.1。
+  const enqueueGovernedBundle = async (record: SourceBundleRecord): Promise<string> =>
+    autoEnqueueGovernedBundle(record, {
+      jobs: pipelineJobStore,
+      bundles: sourceBundleStore,
+      now: nowIso,
+      newEventId: newReadyEventId,
+      structLog,
+    }).pipeline_job_id;
+  // 撿漏用的 polling reconciliation（預設關閉；env 與 MINIO_WATCH_* 完全分離，D-8）。
+  // 走的是與 ready claim **同一條** validate＋enqueue 路徑，故不可能建第二個 logical job。
+  const sourceBundleReconciler = createSourceBundleReconciler({
+    objects: sourceBundleObjectPort,
+    bundles: sourceBundleStore,
+    jobs: pipelineJobStore,
+    sha256Mode: config.sourceBundleSha256VerifyMode,
+    now: nowIso,
+    newEventId: newReadyEventId,
+    structLog,
+    config: {
+      enabled: config.sourceBundleReconcileEnabled,
+      intervalMs: config.sourceBundleReconcileIntervalMs,
+      prefix: config.governedSourcePrefix,
+    },
+  });
+  sourceBundleReconciler.start();
   // minio-watch-auto-intake（O4 B 案，env opt-in 預設關）：MinIO Watch Surface（deep
   // module，見 CONTEXT.md 詞條與 services/minioWatchSurface.ts）擁有 watcher loop 生命週期、
   // runtime toggle、status 投影與 pollNow 測試驅動。watcher 自打 loopback
@@ -4062,6 +4125,10 @@ export function createCoordinatorApp(
     store: sourceBundleStore,
     validator: validateSourceBundle,
     objects: sourceBundleObjectPort,
+    // rvt-ifc-usdc-lineage task 3.2：接上 auto-enqueue ＋ job 讀取面。
+    // 3.1 未注入時 `enqueued_pipeline_job_id` 誠實維持 null；接上後由 store 決定。
+    enqueue: enqueueGovernedBundle,
+    jobs: pipelineJobStore,
     rejectIfIpNotAllowed,
     structLog,
   });
@@ -4109,6 +4176,10 @@ export function createCoordinatorApp(
     await minioWatchSurface.dispose();
     // conversion pollers + dispatch drain + pending clear（pipeline 擁有）。
     ifcReadyPipeline.dispose();
+    // rvt-ifc-usdc-lineage 3.2：先停 reconciliation 排程並 await in-flight tick settle，
+    // 否則它可能在 object port 被 destroy 之後才醒來（unhandled rejection）。
+    // 順序與 minioWatchSurface → port destroy 的既有理由完全相同。
+    await sourceBundleReconciler.stop();
     // rvt-ifc-usdc-lineage 3.1：governed object port 的 S3 client（未設定時為 null）。
     // destroy 可能回 void 或 Promise，await 兩者皆安全。
     await sourceBundleObjectPort?.destroy();
@@ -4122,6 +4193,8 @@ export function createCoordinatorApp(
     store,
     externalIfcReadyStore,
     sourceBundleStore,
+    pipelineJobStore,
+    sourceBundleReconciler,
     eventLog,
     structLog,
     dispose,

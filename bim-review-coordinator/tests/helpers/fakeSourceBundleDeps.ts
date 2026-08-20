@@ -10,7 +10,11 @@ import type {
   BundleValidationResult,
   validateSourceBundle,
 } from "../../src/services/lineage/sourceBundleValidator.js";
-import type { LegacyUnmanagedPreview } from "../../src/services/lineage/legacyEnrollment.js";
+import type {
+  LegacyEnrollmentConfirmation,
+  LegacyEnrollmentConfirmInput,
+  LegacyUnmanagedPreview,
+} from "../../src/services/lineage/legacyEnrollment.js";
 import {
   registerLineageSourceBundleRoutes,
   type LineageSourceBundleRouteDeps,
@@ -233,6 +237,42 @@ export function legacyPreviewFor(
     observed_at: "2026-07-16T08:00:00.000Z",
     ...overrides,
   };
+}
+
+// ── legacy enrollment confirm ────────────────────────────────────────────────
+
+/**
+ * L1 自洽的 `legacy_enrollment_confirmation`（預設走 created 分支）。
+ *
+ * 用 override 打成 conflict 時記得同時把 `created_source_bundle_id` 設 null、
+ * `retryable` 設 true——那正是 route 的 fail-closed 守衛在檢查的不變式。
+ */
+export function legacyConfirmationFor(
+  input: LegacyEnrollmentConfirmInput,
+  overrides: Partial<LegacyEnrollmentConfirmation> = {},
+): LegacyEnrollmentConfirmation {
+  return {
+    grouping_key: input.groupingKey,
+    confirmed_by_subject: input.confirmedBySubject,
+    capability: "bundle.publish",
+    authorization_decision_ref: input.authorizationDecisionRef,
+    confirmed_at: "2026-07-16T08:00:00.000Z",
+    conditional_create: { outcome: "created" },
+    created_source_bundle_id: "legacy-enrolled-0123456789abcdef",
+    retryable: false,
+    ...overrides,
+  };
+}
+
+/** 同上的 conflict 分支（並行升格的輸家）。 */
+export function legacyConflictConfirmationFor(
+  input: LegacyEnrollmentConfirmInput,
+): LegacyEnrollmentConfirmation {
+  return legacyConfirmationFor(input, {
+    conditional_create: { outcome: "conflict_existing_manifest" },
+    created_source_bundle_id: null,
+    retryable: true,
+  });
 }
 
 // ── bare express app ─────────────────────────────────────────────────────────

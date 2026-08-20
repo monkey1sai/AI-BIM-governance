@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
-import { beforeEach, describe, expect, it } from "vitest";
+import http from "node:http";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   assertLocatorConsistent,
   isUtcTimestamp,
@@ -8,6 +9,7 @@ import {
   utcTimestampToMillis,
 } from "../../src/services/lineage/minioLocator.js";
 import {
+  assertManifestObjectKey,
   assertRefAllowed,
   buildMinioRef,
   createS3SourceBundleObjectPort,
@@ -16,7 +18,8 @@ import {
   SourceBundleAccessDeniedError,
   SourceBundleObjectTooLargeError,
   SourceBundlePrefixError,
-  SourceBundleWriteNotPermittedError,
+  SourceBundleWriteResponseError,
+  SourceBundleWriteScopeError,
   versionPrefixesFromObjects,
 } from "../../src/services/lineage/sourceBundleObjectPort.js";
 import {
@@ -25,14 +28,59 @@ import {
 } from "../helpers/fakeSourceBundleObjectPort.js";
 import { TEST_ALLOWLIST, TEST_AUTHORITY, TEST_BUCKET } from "../helpers/governedBundleFixtures.js";
 
-// port 契約與 D-3 allowlist。真 S3 adapter 只驗**不需要網路**的那幾條
-// （建構、寫入拒絕、allowlist、prefix 解析）；分頁與 XML 解析屬 adapter
-// implementation，不在此重演。
+// port 契約與 D-3 allowlist。真 S3 adapter 驗兩類：
+//   (1) 不需要網路的（建構、carve-out key gate、allowlist、prefix 解析）；
+//   (2) conditional create 的 wire 行為——用 loopback 上的 S3 stub 驗
+//       `If-None-Match: *` 有真的送出、412 → conflict、200 → created。
+// ListObjectVersions 的分頁與 XML 解析屬 adapter implementation，不在此重演。
 
 let port: FakeSourceBundleObjectPort;
+let s3Stub: http.Server | null = null;
+
+interface StubReply {
+  status: number;
+  headers?: Record<string, string>;
+  body?: string;
+}
+
+/** loopback S3 stub（比照 `tests/lineage/legacy-intake-unaffected.ts` 的 startS3Stub 慣例）。 */
+async function startS3Stub(
+  respond: (request: http.IncomingMessage) => StubReply,
+): Promise<string> {
+  const server = http.createServer((request, response) => {
+    request.resume();
+    request.on("end", () => {
+      const reply = respond(request);
+      response.writeHead(reply.status, {
+        "Content-Type": "application/xml",
+        ...(reply.headers ?? {}),
+      });
+      response.end(reply.body ?? "");
+    });
+  });
+  s3Stub = server;
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
+  const address = server.address();
+  if (!address || typeof address === "string") throw new Error("s3 stub bind failed");
+  // 綁 port 0 由 OS 配發：測試絕不打固定埠，否則會撞到本機正在跑的部署區。
+  return `http://127.0.0.1:${address.port}`;
+}
+
+function s3ErrorXml(code: string, message: string): string {
+  return `<?xml version="1.0" encoding="UTF-8"?><Error><Code>${code}</Code><Message>${message}</Message><Resource>/</Resource><RequestId>test</RequestId></Error>`;
+}
 
 beforeEach(() => {
   port = createFakeSourceBundleObjectPort(TEST_ALLOWLIST);
+});
+
+afterEach(async () => {
+  if (s3Stub) {
+    s3Stub.closeAllConnections?.();
+    const server = s3Stub;
+    s3Stub = null;
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
 });
 
 describe("minioLocator", () => {
@@ -259,10 +307,25 @@ describe("fake port（測試 seam）", () => {
     const ref = { authority: TEST_AUTHORITY, bucket: TEST_BUCKET, objectKey: "m/manifest.json" };
     const first = await port.putIfAbsent(ref, Buffer.from("{}"), "application/json");
     expect(first.outcome).toBe("created");
+    if (first.outcome === "created") {
+      expect(first.versionId).not.toBe("");
+      expect(first.etag).not.toBe("");
+    }
     const second = await port.putIfAbsent(ref, Buffer.from('{"other":1}'), "application/json");
     expect(second.outcome).toBe("conflict_existing_manifest");
     const stored = port.objects.find((o) => o.objectKey === "m/manifest.json");
     expect(stored?.bytes.toString("utf-8")).toBe("{}");
+  });
+
+  it("fake 也吃同一份 carve-out key gate（兩個 adapter 共用同一條規則）", async () => {
+    await expect(
+      port.putIfAbsent(
+        { authority: TEST_AUTHORITY, bucket: TEST_BUCKET, objectKey: "m/model.ifc" },
+        Buffer.from("{}"),
+        "application/json",
+      ),
+    ).rejects.toBeInstanceOf(SourceBundleWriteScopeError);
+    expect(port.objects).toHaveLength(0);
   });
 
   it("每次讀寫都經過同一份 production allowlist gate", async () => {
@@ -276,8 +339,24 @@ describe("fake port（測試 seam）", () => {
   });
 });
 
+describe("carve-out key gate（assertManifestObjectKey）", () => {
+  it("只放行以 /manifest.json 結尾的 object key", () => {
+    expect(() => assertManifestObjectKey("a/b/v1/manifest.json")).not.toThrow();
+    for (const key of [
+      "a/b/v1/model.ifc",
+      "a/b/v1/manifest.json.bak",
+      "manifest.json", // 裸檔名：governed manifest 一定住在 version prefix 之下
+      "a/b/v1/MANIFEST.JSON", // 大小寫不同就是不同的 key
+      "",
+    ]) {
+      expect(() => assertManifestObjectKey(key)).toThrow(SourceBundleWriteScopeError);
+    }
+  });
+});
+
 describe("真 S3 adapter — 不需網路即可驗的契約", () => {
-  it("putIfAbsent 一律拒絕：coordinator 尚未取得 MinIO 寫入 carve-out（D-4）", async () => {
+  it("非 manifest.json 的 key 在發出請求前就被 carve-out gate 擋下", async () => {
+    // endpoint 指向必定不可達的 port 9：若 gate 沒擋，這裡會變成連線錯誤而不是 scope 錯誤。
     const s3 = createS3SourceBundleObjectPort({
       endpoint: "http://127.0.0.1:9",
       accessKey: "test-access",
@@ -288,22 +367,22 @@ describe("真 S3 adapter — 不需網路即可驗的契約", () => {
     try {
       await expect(
         s3.putIfAbsent(
-          { authority: TEST_AUTHORITY, bucket: TEST_BUCKET, objectKey: "m/manifest.json" },
-          Buffer.from("{}"),
-          "application/json",
+          { authority: TEST_AUTHORITY, bucket: TEST_BUCKET, objectKey: "m/v1/model.rvt" },
+          Buffer.from("bytes"),
+          "application/octet-stream",
         ),
       ).rejects.toMatchObject({
-        name: "SourceBundleWriteNotPermittedError",
-        code: "source_bundle_write_awaiting_owner_carve_out",
-        httpStatus: 501,
+        name: "SourceBundleWriteScopeError",
+        code: "source_bundle_write_scope_violation",
       });
+      // allowlist 仍先於 key gate 開槍：寫入面不得比讀取面寬。
       await expect(
         s3.putIfAbsent(
-          { authority: TEST_AUTHORITY, bucket: TEST_BUCKET, objectKey: "m/manifest.json" },
+          { authority: "not-allowlisted", bucket: TEST_BUCKET, objectKey: "m/v1/manifest.json" },
           Buffer.from("{}"),
           "application/json",
         ),
-      ).rejects.toBeInstanceOf(SourceBundleWriteNotPermittedError);
+      ).rejects.toBeInstanceOf(SourceBundleAccessDeniedError);
     } finally {
       await s3.destroy();
     }
@@ -332,6 +411,123 @@ describe("真 S3 adapter — 不需網路即可驗的契約", () => {
       await expect(s3.listObjectsUnder("bare/prefix")).rejects.toBeInstanceOf(
         SourceBundlePrefixError,
       );
+    } finally {
+      await s3.destroy();
+    }
+  });
+});
+
+describe("真 S3 adapter — conditional create 的 wire 行為（loopback stub）", () => {
+  const MANIFEST_KEY = "governed/tenant/version/manifest.json";
+
+  function portFor(endpoint: string) {
+    return createS3SourceBundleObjectPort({
+      endpoint,
+      accessKey: "test-access",
+      secretKey: "test-secret",
+      allowedAuthorities: [TEST_AUTHORITY],
+      allowedBuckets: [TEST_BUCKET],
+    });
+  }
+
+  it("送出 If-None-Match: *，200 → created（帶 versionId/etag）", async () => {
+    const seen: Array<{ method?: string; url?: string; ifNoneMatch?: string }> = [];
+    const endpoint = await startS3Stub((request) => {
+      seen.push({
+        method: request.method,
+        url: request.url,
+        ifNoneMatch: request.headers["if-none-match"] as string | undefined,
+      });
+      return {
+        status: 200,
+        headers: { ETag: '"etag-created-0001"', "x-amz-version-id": "v-created-0001" },
+      };
+    });
+    const s3 = portFor(endpoint);
+    try {
+      const outcome = await s3.putIfAbsent(
+        { authority: TEST_AUTHORITY, bucket: TEST_BUCKET, objectKey: MANIFEST_KEY },
+        Buffer.from('{"ok":true}'),
+        "application/json",
+      );
+      expect(outcome).toEqual({
+        outcome: "created",
+        versionId: "v-created-0001",
+        // ETag 的引號在 port 層剝掉（與 head/list 同一個 stripEtagQuotes）。
+        etag: "etag-created-0001",
+      });
+    } finally {
+      await s3.destroy();
+    }
+    expect(seen).toHaveLength(1);
+    expect(seen[0].method).toBe("PUT");
+    // forcePathStyle：bucket 在 path 上，不是 vhost。
+    //（SDK 會附一個 `?x-id=PutObject` 查詢參數，故比前綴而不是全等。）
+    expect(seen[0].url?.startsWith(`/${TEST_BUCKET}/${MANIFEST_KEY}`)).toBe(true);
+    // conditional create 的關鍵證據：header 真的送出去了，不是只寫在註解裡。
+    expect(seen[0].ifNoneMatch).toBe("*");
+  });
+
+  it("412 Precondition Failed → conflict_existing_manifest（不是錯誤、也不重試成覆寫）", async () => {
+    let requests = 0;
+    const endpoint = await startS3Stub(() => {
+      requests += 1;
+      return {
+        status: 412,
+        body: s3ErrorXml(
+          "PreconditionFailed",
+          "At least one of the pre-conditions you specified did not hold",
+        ),
+      };
+    });
+    const s3 = portFor(endpoint);
+    try {
+      const outcome = await s3.putIfAbsent(
+        { authority: TEST_AUTHORITY, bucket: TEST_BUCKET, objectKey: MANIFEST_KEY },
+        Buffer.from('{"ok":true}'),
+        "application/json",
+      );
+      expect(outcome).toEqual({ outcome: "conflict_existing_manifest" });
+    } finally {
+      await s3.destroy();
+    }
+    // 412 不是可重試錯誤：adapter 不得在收到衝突後再打一次（那就有覆寫風險）。
+    expect(requests).toBe(1);
+  });
+
+  it("其他 4xx/5xx 照常 propagate（不被誤讀成 conflict）", async () => {
+    const endpoint = await startS3Stub(() => ({
+      status: 403,
+      body: s3ErrorXml("AccessDenied", "Access Denied"),
+    }));
+    const s3 = portFor(endpoint);
+    try {
+      await expect(
+        s3.putIfAbsent(
+          { authority: TEST_AUTHORITY, bucket: TEST_BUCKET, objectKey: MANIFEST_KEY },
+          Buffer.from("{}"),
+          "application/json",
+        ),
+      ).rejects.toMatchObject({ $metadata: { httpStatusCode: 403 } });
+    } finally {
+      await s3.destroy();
+    }
+  });
+
+  it("bucket 沒開 versioning（回應缺 x-amz-version-id）→ fail closed，不偽造 locator", async () => {
+    const endpoint = await startS3Stub(() => ({
+      status: 200,
+      headers: { ETag: '"etag-created-0002"' },
+    }));
+    const s3 = portFor(endpoint);
+    try {
+      await expect(
+        s3.putIfAbsent(
+          { authority: TEST_AUTHORITY, bucket: TEST_BUCKET, objectKey: MANIFEST_KEY },
+          Buffer.from("{}"),
+          "application/json",
+        ),
+      ).rejects.toBeInstanceOf(SourceBundleWriteResponseError);
     } finally {
       await s3.destroy();
     }

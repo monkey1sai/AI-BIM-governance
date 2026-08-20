@@ -15,6 +15,8 @@ import {
   createFakeStructLogger,
   createLineageTestApp,
   createStubValidator,
+  legacyConfirmationFor,
+  legacyConflictConfirmationFor,
   legacyPreviewFor,
   readyResultFor,
   type FakeSourceBundleObjectPort,
@@ -88,6 +90,7 @@ function makeHarness(
     objects?: FakeSourceBundleObjectPort | null;
     enqueue?: (record: SourceBundleRecord) => Promise<string>;
     previewLegacy?: LineageSourceBundleRouteDeps["previewLegacy"];
+    confirmLegacy?: LineageSourceBundleRouteDeps["confirmLegacy"];
     rejectIp?: boolean;
     ipAllowlist?: string[];
     configOverrides?: Partial<CoordinatorConfig>;
@@ -127,6 +130,7 @@ function makeHarness(
     },
     structLog: logs.logger,
     previewLegacy: options.previewLegacy,
+    confirmLegacy: options.confirmLegacy,
   });
   return harness;
 }
@@ -541,7 +545,7 @@ describe("GET /api/lineage/legacy-unmanaged/preview（唯讀）", () => {
   });
 });
 
-describe("POST /api/lineage/legacy-unmanaged/confirm（D-4 preview-only ＋ D-5 最小 gate）", () => {
+describe("POST /api/lineage/legacy-unmanaged/confirm（carve-out 後的 conditional create）", () => {
   const confirmBody = {
     grouping_key: "tenant-a/legacy",
     confirmed_by_subject: "operator_test_subject",
@@ -588,18 +592,107 @@ describe("POST /api/lineage/legacy-unmanaged/confirm（D-4 preview-only ＋ D-5 
     expect(harness.ipRejections).toBe(1);
   });
 
-  it("完整授權 → 501 awaiting_owner_carveout，且**沒有**產生 legacy_enrollment_confirmation 文件", async () => {
-    const harness = makeHarness();
+  it("governed MinIO 未設定 → 503（沒有 store 就談不上 conditional create）", async () => {
+    const harness = makeHarness({ objects: null });
     const response = await request(harness.app)
       .post("/api/lineage/legacy-unmanaged/confirm")
       .send(confirmBody);
-    expect(response.status).toBe(501);
-    expect(response.body.error).toBe("awaiting_owner_carveout");
-    expect(response.body.mutates_store).toBe(false);
-    expect(response.body).not.toHaveProperty("document_type");
-    expect(response.body).not.toHaveProperty("conditional_create");
-    expect(response.body).not.toHaveProperty("created_source_bundle_id");
-    // preview-only 的機器證明：整條 confirm 路徑對 MinIO 零寫入嘗試。
-    expect(harness.objects?.writeAttempts).toBe(0);
+    expect(response.status).toBe(503);
+    expect(response.body.error).toBe("governed_source_store_unconfigured");
+  });
+
+  it("created → 200 ＋ legacy_enrollment_confirmation envelope", async () => {
+    const harness = makeHarness({
+      confirmLegacy: async (input) => legacyConfirmationFor(input),
+    });
+    const response = await request(harness.app)
+      .post("/api/lineage/legacy-unmanaged/confirm")
+      .send(confirmBody);
+    expect(response.status).toBe(200);
+    expect(response.body.schema_version).toBe("model-version-bundle-manifest/v1");
+    expect(response.body.document_type).toBe("legacy_enrollment_confirmation");
+    expect(response.body.body.conditional_create.outcome).toBe("created");
+    expect(response.body.body.created_source_bundle_id).not.toBeNull();
+    expect(response.body.body.retryable).toBe(false);
+    expect(response.body.body.capability).toBe("bundle.publish");
+    // route 只轉述 service 的 input，不自己改寫授權欄位。
+    expect(response.body.body.confirmed_by_subject).toBe(confirmBody.confirmed_by_subject);
+    expect(response.body.body.authorization_decision_ref).toBe(
+      confirmBody.authorization_decision_ref,
+    );
+  });
+
+  it("並行升格的輸家 → 409，body 仍是 conformant confirmation（id null ＋ retryable）", async () => {
+    const harness = makeHarness({
+      confirmLegacy: async (input) => legacyConflictConfirmationFor(input),
+    });
+    const response = await request(harness.app)
+      .post("/api/lineage/legacy-unmanaged/confirm")
+      .send(confirmBody);
+    expect(response.status).toBe(409);
+    expect(response.body.document_type).toBe("legacy_enrollment_confirmation");
+    expect(response.body.body.conditional_create.outcome).toBe("conflict_existing_manifest");
+    expect(response.body.body.created_source_bundle_id).toBeNull();
+    expect(response.body.body.retryable).toBe(true);
+  });
+
+  it("service 的 4xx（already governed／incomplete）依 httpStatus 映射，不變成 500", async () => {
+    for (const [httpStatus, code] of [
+      [409, "legacy_grouping_already_governed"],
+      [422, "legacy_grouping_incomplete_for_governance"],
+      [404, "legacy_grouping_not_found"],
+    ] as Array<[number, string]>) {
+      const harness = makeHarness({
+        confirmLegacy: async () => {
+          throw Object.assign(new Error(`refused: ${code}`), { httpStatus, code });
+        },
+      });
+      const response = await request(harness.app)
+        .post("/api/lineage/legacy-unmanaged/confirm")
+        .send(confirmBody);
+      expect(response.status).toBe(httpStatus);
+      expect(response.body.error).toBe(code);
+    }
+  });
+
+  it("沒有 httpStatus 的內部錯誤（例如 carve-out scope 違規）→ 500，不偽裝成 4xx", async () => {
+    const harness = makeHarness({
+      confirmLegacy: async () => {
+        throw Object.assign(new Error("refusing to write model.rvt"), {
+          code: "source_bundle_write_scope_violation",
+        });
+      },
+    });
+    const response = await request(harness.app)
+      .post("/api/lineage/legacy-unmanaged/confirm")
+      .send(confirmBody);
+    expect(response.status).toBe(500);
+  });
+
+  it("confirmation 違反 L1 不變式 → fail-closed 500（不送出違約文件）", async () => {
+    const harness = makeHarness({
+      confirmLegacy: async (input) =>
+        legacyConfirmationFor(input, {
+          conditional_create: { outcome: "conflict_existing_manifest" },
+          // conflict 卻宣稱建立了 bundle：契約禁止，route 必須擋在出口。
+          created_source_bundle_id: "legacy-enrolled-0123456789abcdef",
+          retryable: true,
+        }),
+    });
+    const response = await request(harness.app)
+      .post("/api/lineage/legacy-unmanaged/confirm")
+      .send(confirmBody);
+    expect(response.status).toBe(500);
+  });
+
+  it("created 卻沒有 created_source_bundle_id → 同樣 fail-closed 500", async () => {
+    const harness = makeHarness({
+      confirmLegacy: async (input) =>
+        legacyConfirmationFor(input, { created_source_bundle_id: null }),
+    });
+    const response = await request(harness.app)
+      .post("/api/lineage/legacy-unmanaged/confirm")
+      .send(confirmBody);
+    expect(response.status).toBe(500);
   });
 });
