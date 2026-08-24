@@ -11,7 +11,14 @@ export const EXTERNAL_LINEAGE_DECISION_HEADER = "x-lineage-authorization-decisio
 export const EXTERNAL_LINEAGE_CREDENTIAL_HEADER_MAX_LENGTH = 16_384;
 export const EXTERNAL_LINEAGE_DECISION_HEADER_MAX_LENGTH = 65_536;
 
-export type LineageCapability = "bundle.publish";
+export type LineageCapability =
+  | "bundle.read"
+  | "bundle.publish"
+  | "artifact.download"
+  | "alignment.read"
+  | "result.compare"
+  | "result.promote"
+  | "result.rollback";
 
 export interface ExternalLineagePrincipal {
   subject: string;
@@ -30,10 +37,55 @@ export interface ExternalLineageRequestContext {
   dpop: string | null;
 }
 
-export type ExternalLineageResourceBinding = {
-  kind: "legacy_bundle_enrollment";
-  grouping_key: string;
-};
+export type ExternalLineageResourceBinding =
+  | {
+      kind: "result_compare";
+      pipeline_job_id: string;
+      /** Canonical lexical order prevents left/right token substitution. */
+      result_ids: [string, string];
+    }
+  | {
+      /** Pre-authorization before the server creates the nonce-bound confirm intent. */
+      kind: "result_activation_intent";
+      pipeline_job_id: string;
+      target_result_id: string;
+      expected_active_result_id: string;
+      transition: "promote" | "rollback";
+      correlation_id: string;
+    }
+  | {
+      kind: "result_activation_confirm";
+      intent_id: string;
+      intent_nonce_sha256: string;
+      pipeline_job_id: string;
+      target_result_id: string;
+      expected_active_result_id: string;
+      transition: "promote" | "rollback";
+      correlation_id: string;
+    }
+  | {
+      kind: "pipeline_job_results";
+      pipeline_job_id: string;
+    }
+  | {
+      kind: "pipeline_result";
+      pipeline_job_id: string;
+      result_id: string;
+    }
+  | {
+      kind: "pipeline_job_audit";
+      pipeline_job_id: string;
+    }
+  | {
+      kind: "legacy_bundle_enrollment";
+      grouping_key: string;
+    }
+  | {
+      kind: "artifact_download";
+      pipeline_job_id: string;
+      result_id: string;
+      artifact_id: string;
+    };
 
 export interface ExpectedExternalLineageDecision {
   capability: LineageCapability;
@@ -49,7 +101,7 @@ export interface VerifiedExternalLineageDecision {
   audience: string;
   subject: string;
   capability: LineageCapability;
-  /** Raw issuer id is handed directly to stores; persistence layers must hash it. */
+  /** Raw issuer id is handed directly to the store, which persists only a domain-separated hash. */
   jti: string;
   issued_at: string;
   not_before: string;

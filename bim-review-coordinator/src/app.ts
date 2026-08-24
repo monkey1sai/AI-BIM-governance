@@ -73,6 +73,9 @@ import { registerDevMetaRoutes } from "./routes/devMeta.js";
 // rvt-ifc-usdc-lineage task 3.1：governed source-bundle intake／讀取面。同一加性慣例——
 // app.ts 只有 import ＋ 一段 mount，路由本體在 routes/lineageSourceBundleRoutes.ts。
 import { registerLineageSourceBundleRoutes } from "./routes/lineageSourceBundleRoutes.js";
+import { registerLineageArtifactDownloadRoutes } from "./routes/lineageArtifactDownloadRoutes.js";
+import { registerLineageGovernanceMetadataRoutes } from "./routes/lineageGovernanceMetadataRoutes.js";
+import { registerLineageResultRoutes } from "./routes/lineageResultRoutes.js";
 import {
   SourceBundleStore,
   type SourceBundleRecord,
@@ -85,6 +88,7 @@ import {
 // rvt-ifc-usdc-lineage task 3.2：durable stable pipeline job ＋ idempotent auto-enqueue
 // ＋ 撿漏用的 polling reconciliation（預設關閉）。
 import { PipelineJobStore } from "./services/lineage/pipelineJobStore.js";
+import { PipelineResultStore } from "./services/lineage/pipelineResultStore.js";
 import {
   autoEnqueueGovernedBundle,
   newReadyEventId,
@@ -774,6 +778,16 @@ export function createCoordinatorApp(
   // （那是 legacy in-memory 佇列的語意，逐字不動），**MUST NOT** 增 `attempt_count`，
   // 也 MUST NOT 要求 operator 重送 intake。
   const pipelineJobStore = new PipelineJobStore(config.pipelineJobStorePath, { structLog });
+  // Task 3.3：active-result/promotion audit 是獨立於 3.2 stable job document 的 authority。
+  // 使用 job store path 的專屬 sidecar，避免修改 CRITICAL CoordinatorConfig surface；兩份
+  // 文件仍分開持久化，3.3 不回寫 pipeline_job.active_result_id 形成第二真相。
+  const pipelineResultStore = new PipelineResultStore(
+    pipelineJobStore,
+    `${config.pipelineJobStorePath}.results`,
+  );
+  // Result sidecar commitment 必須先驗證；若已初始化 sidecar 遺失／digest 漂移，startup
+  // fail closed，不得先由 3.2 recovery 改寫 job snapshot 後再發現 pointer/audit 已丟失。
+  pipelineResultStore.assertAvailable();
   pipelineJobStore.recoverOnStart(nowIso(), newReadyEventId);
   // READY governed bundle → stable job 的冪等 auto-enqueue。同一個 source_bundle_id
   // 永遠回同一個 job（決定性 job id ＋ 單一寫入點），replay 不建第二個 logical job。
@@ -4133,6 +4147,42 @@ export function createCoordinatorApp(
     authorization: null,
     rejectIfIpNotAllowed,
     structLog,
+  });
+
+  // rvt-ifc-usdc-lineage task 3.3：additive result compare / intent / confirm routes。
+  // External decision wire/JWKS/principal adapter 與 result-manifest detail reader 尚無 owner
+  // contract，因此 production wiring 明確為 null，protected routes 回 authorization_unavailable
+  // 而不是沿用 LocalDevUserAuthProvider 或捏造 compare metrics。
+  registerLineageResultRoutes(app, {
+    jobs: pipelineJobStore,
+    results: pipelineResultStore,
+    authorization: null,
+    details: null,
+    now: nowIso,
+    newIntentId: () => `intent_${randomBytes(16).toString("hex")}`,
+    newIntentNonce: () => randomBytes(32).toString("base64url"),
+  });
+  // Task 3.4 metadata surfaces share the same external authorization boundary. The production
+  // adapter is intentionally not fabricated here; mounted routes therefore fail closed with 503
+  // until the control-plane verifier contract is supplied.
+  registerLineageGovernanceMetadataRoutes(app, {
+    jobs: pipelineJobStore,
+    bundles: sourceBundleStore,
+    results: pipelineResultStore,
+    authorization: null,
+    now: nowIso,
+  });
+  // Task 3.4 download endpoint is mounted so the public path fails closed instead of 404. The
+  // external verifier, digest-verified manifest reader, and VersionId-aware signer remain HELD;
+  // legacy ObjectStorePort.presign is intentionally not reused because it cannot pin VersionId.
+  registerLineageArtifactDownloadRoutes(app, {
+    jobs: pipelineJobStore,
+    results: pipelineResultStore,
+    authorization: null,
+    reader: null,
+    signer: null,
+    target_policies: [],
+    now: nowIso,
   });
 
   app.use((error: unknown, _request: express.Request, response: express.Response, _next: express.NextFunction) => {
