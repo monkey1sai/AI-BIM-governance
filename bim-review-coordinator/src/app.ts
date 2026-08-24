@@ -4129,6 +4129,8 @@ export function createCoordinatorApp(
     // 3.1 未注入時 `enqueued_pipeline_job_id` 誠實維持 null；接上後由 store 決定。
     enqueue: enqueueGovernedBundle,
     jobs: pipelineJobStore,
+    // Protected legacy enrollment remains 503 until an external verifier is explicitly wired.
+    authorization: null,
     rejectIfIpNotAllowed,
     structLog,
   });

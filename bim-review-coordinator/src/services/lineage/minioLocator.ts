@@ -100,6 +100,25 @@ export function utcTimestampToMillis(value: string): number {
   return Date.parse(value);
 }
 
+/**
+ * Parse a validated `$defs/utcTimestamp` without losing its permitted six-digit fraction.
+ * JavaScript `Date` truncates sub-millisecond digits, which is unsafe for authorization windows.
+ */
+export function utcTimestampToMicros(value: string): bigint {
+  if (!isUtcTimestamp(value)) throw new RangeError("invalid canonical UTC timestamp");
+  const epochSecondMillis = Date.UTC(
+    Number(value.slice(0, 4)),
+    Number(value.slice(5, 7)) - 1,
+    Number(value.slice(8, 10)),
+    Number(value.slice(11, 13)),
+    Number(value.slice(14, 16)),
+    Number(value.slice(17, 19)),
+  );
+  const fraction = /\.([0-9]{1,6})Z$/.exec(value)?.[1] ?? "";
+  const fractionalMicros = BigInt((fraction + "000000").slice(0, 6));
+  return BigInt(epochSecondMillis) * 1_000n + fractionalMicros;
+}
+
 /** 解析結果是否為失敗。 */
 export function isRefParseFailure(value: ParsedRef | RefParseFailure): value is RefParseFailure {
   return (value as RefParseFailure).error !== undefined;

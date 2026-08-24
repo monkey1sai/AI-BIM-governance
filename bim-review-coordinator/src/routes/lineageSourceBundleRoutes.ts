@@ -15,14 +15,25 @@
 import type express from "express";
 import type { CoordinatorConfig } from "../config.js";
 import { AuthError, type AuthProvider } from "../services/authProvider.js";
+import {
+  EXTERNAL_LINEAGE_DECISION_HEADER,
+  LineageAuthorizationDeniedError,
+  LineageAuthorizationUnavailableError,
+  readSingleExternalLineageHeader,
+  resolveExternalLineagePrincipal,
+  verifyExternalLineageDecision,
+  type ExternalLineageAuthorizationPort,
+  type ExternalLineageRequestContext,
+} from "../services/lineage/externalLineageAuthorization.js";
 import type { StructLogger } from "../lib/structLog.js";
 import { maskPresignedRef } from "../services/presignedRef.js";
 import { nowIso } from "../utils/time.js";
 import { validateSourceBundleReadyPayload } from "../services/lineage/sourceBundleReadyPayload.js";
 import type { SourceBundleObjectPort } from "../services/lineage/sourceBundleObjectPort.js";
-import type {
-  BundleValidationResult,
-  validateSourceBundle,
+import {
+  finalizeAdmissionOutcome,
+  type BundleValidationResult,
+  type validateSourceBundle,
 } from "../services/lineage/sourceBundleValidator.js";
 import type {
   SourceBundleRecord,
@@ -116,6 +127,8 @@ export interface LineageSourceBundleRouteDeps {
   previewLegacy?: typeof previewLegacyGrouping;
   /** @internal 同 `previewLegacy` 的 additive 測試 seam；省略＝用 module 預設。 */
   confirmLegacy?: typeof confirmLegacyEnrollment;
+  /** External control-plane verifier. Omitted/null is an intentional 503 fail-closed seam. */
+  authorization?: ExternalLineageAuthorizationPort | null;
 }
 
 /**
@@ -136,6 +149,26 @@ function governedClientError(
     status: httpStatus,
     code,
     detail: error instanceof Error ? error.message : String(error),
+  };
+}
+
+function externalLineageRequestContext(
+  request: express.Request,
+): ExternalLineageRequestContext {
+  return {
+    method: request.method.toUpperCase(),
+    path: request.path,
+    remote_address: request.ip || request.socket.remoteAddress || null,
+    authorization: readSingleExternalLineageHeader({
+      raw_headers: request.rawHeaders,
+      header_name: "authorization",
+      fallback: request.get("authorization") ?? null,
+    }),
+    dpop: readSingleExternalLineageHeader({
+      raw_headers: request.rawHeaders,
+      header_name: "dpop",
+      fallback: request.get("dpop") ?? null,
+    }),
   };
 }
 
@@ -282,17 +315,12 @@ export function registerLineageSourceBundleRoutes(
       );
       return;
     }
-    if (
-      result.conditional_create.outcome !== "created" &&
-      result.conditional_create.outcome !== "already_exists_same_digest"
-    ) {
-      // 同上：L1 READY 分支只允許這兩個 outcome。producer 路徑（manifest 由 producer
-      // 建立、coordinator 只觀察）的誠實值是 `{attempted:false, outcome:"already_exists_same_digest"}`。
-      next(
-        new Error(
-          `sourceBundleValidator returned bundle_state=READY with conditional_create.outcome="${result.conditional_create.outcome}" (L1 READY branch allows only created / already_exists_same_digest).`,
-        ),
-      );
+    if (auth.externalModelVersionId !== result.external_model_version_id) {
+      structLog.warn("sourceBundleReady", "authenticated ready identity mismatched manifest", {
+        correlation_id: auth.correlationId,
+        source_bundle_id: payload.source_bundle_id,
+      });
+      response.status(403).json({ error: "ready_identity_mismatch" });
       return;
     }
 
@@ -319,40 +347,22 @@ export function registerLineageSourceBundleRoutes(
     };
 
     const admitted = deps.store.admit(candidate);
-    if (admitted.outcome === "conflict_different_digest") {
+    const finalized = finalizeAdmissionOutcome(result, { outcome: admitted.outcome });
+    if (finalized.bundle_state !== "READY") {
       // READY 後不可變（`minio-model-version-bundle`：同 id 異 bytes 必須開新 version）。
-      // 送出的文件必須自洽：降為 NON_READY ＋ 診斷，否則違反 L1「READY 不得帶診斷」。
+      // admission outcome 的唯一 wire mapping 由 validator helper 統一維護；route 不手抄
+      // conditional_create/replay/diagnostics，避免 reconciler 與 claim 路徑漂移。
       structLog.warn("sourceBundleReady", "governed bundle overwrite rejected", {
         correlation_id: auth.correlationId,
         source_bundle_id: payload.source_bundle_id,
       });
       response.status(409).json(
-        manifestDocument("source_bundle_validation_result", {
-          ...result,
-          bundle_state: "NON_READY",
-          replay: false,
-          enqueued_pipeline_job_id: null,
-          conditional_create: {
-            attempted: result.conditional_create.attempted,
-            outcome: "conflict_different_digest",
-          },
-          integrity_diagnostics: [
-            ...result.integrity_diagnostics,
-            {
-              code: "immutable_bundle_overwrite_rejected" as const,
-              role: null,
-              expected: admitted.record.manifest_sha256,
-              observed: result.manifest_sha256,
-              detail:
-                "same source_bundle_id already admitted with a different manifest digest; a new governed version is required",
-            },
-          ],
-        }),
+        manifestDocument("source_bundle_validation_result", finalized),
       );
       return;
     }
 
-    const replay = admitted.outcome === "replay_same_digest";
+    const replay = finalized.replay;
     let pipelineJobId = admitted.record.pipeline_job_id;
     if (deps.enqueue) {
       try {
@@ -373,7 +383,7 @@ export function registerLineageSourceBundleRoutes(
     });
     response.status(replay ? 200 : 202).json(
       manifestDocument("source_bundle_validation_result", {
-        ...result,
+        ...finalized,
         replay,
         enqueued_pipeline_job_id: pipelineJobId,
       }),
@@ -553,21 +563,16 @@ export function registerLineageSourceBundleRoutes(
   // 寫入權（`If-None-Match: *`），僅此一 key、僅本路徑；其餘 MinIO 寫入仍全面禁止
   // （正本：`bim-review-coordinator/AGENTS.md` Required Boundaries）。
   //
-  // 順序：IP 守門 → wire 形狀 → D-5 capability 最小 gate（403，先於任何 MinIO 動作）
-  //      → governed MinIO 未設定 503 → service。
+  // 順序：IP 守門 → grouping wire 形狀 → external principal/decision exact binding
+  //      （adapter 未接 503、decision 缺失/過期 403，皆先於任何 MinIO 動作）
+  //      → governed MinIO 未設定 503 → service。Body 中舊 subject/capability/ref 僅為
+  //      相容輸入，不能取代 verified principal/decision，也不會進 service/audit。
   // 狀態碼：created → 200、conflict → 409，**兩者 body 都是** L1
   // `legacy_enrollment_confirmation` envelope（衝突是契約內的合法結果，不是錯誤格式）。
   app.post("/api/lineage/legacy-unmanaged/confirm", async (request, response, next) => {
     if (deps.rejectIfIpNotAllowed(request, response)) return;
     const body = isPlainObject(request.body) ? request.body : {};
     const groupingKey = typeof body.grouping_key === "string" ? body.grouping_key.trim() : "";
-    const confirmedBySubject =
-      typeof body.confirmed_by_subject === "string" ? body.confirmed_by_subject.trim() : "";
-    const capability = typeof body.capability === "string" ? body.capability.trim() : "";
-    const authorizationDecisionRef =
-      typeof body.authorization_decision_ref === "string"
-        ? body.authorization_decision_ref.trim()
-        : "";
 
     if (
       groupingKey.length === 0 ||
@@ -577,25 +582,46 @@ export function registerLineageSourceBundleRoutes(
       response.status(400).json({ error: "invalid_grouping_key" });
       return;
     }
-    if (confirmedBySubject.length === 0 || confirmedBySubject.length > 200) {
-      response.status(400).json({ error: "invalid_confirmed_by_subject" });
-      return;
-    }
-    if (capability !== GOVERNED_ENROLLMENT_CAPABILITY || authorizationDecisionRef.length === 0) {
-      structLog.warn("legacyEnrollment", "confirm rejected: missing capability decision", {
-        grouping_key_present: true,
-        capability_matched: capability === GOVERNED_ENROLLMENT_CAPABILITY,
-        authorization_decision_ref_present: authorizationDecisionRef.length > 0,
+    const authorizationNow = nowIso();
+    let confirmedBySubject: string;
+    let authorizationDecisionRef: string;
+    try {
+      const context = externalLineageRequestContext(request);
+      const principal = await resolveExternalLineagePrincipal({
+        authorization: deps.authorization ?? null,
+        request: context,
+        now: authorizationNow,
       });
-      response.status(403).json({
-        error: "authorization_decision_required",
-        detail:
-          "legacy enrollment 需要 capability `bundle.publish` 與非空 `authorization_decision_ref`",
-        required_capability: GOVERNED_ENROLLMENT_CAPABILITY,
-        // 誠實標記：真正的 external control-plane decision 驗證（issuer／signature／
-        // expiry／不可達 fail closed）屬 `lineage-governance-console`（task 3.3/3.4）。
-        authorization_verification: "minimal_gate_only",
+      const decision = await verifyExternalLineageDecision({
+        authorization: deps.authorization ?? null,
+        request: context,
+        opaque_decision: readSingleExternalLineageHeader({
+          raw_headers: request.rawHeaders,
+          header_name: EXTERNAL_LINEAGE_DECISION_HEADER,
+          fallback: request.get(EXTERNAL_LINEAGE_DECISION_HEADER) ?? null,
+        }),
+        expected: {
+          capability: GOVERNED_ENROLLMENT_CAPABILITY,
+          principal_subject: principal.subject,
+          method: "POST",
+          path: "/api/lineage/legacy-unmanaged/confirm",
+          resource: { kind: "legacy_bundle_enrollment", grouping_key: groupingKey },
+        },
+        principal,
+        now: authorizationNow,
       });
+      confirmedBySubject = principal.subject;
+      authorizationDecisionRef = decision.authorization_decision_ref;
+    } catch (error) {
+      if (error instanceof LineageAuthorizationUnavailableError) {
+        response.status(503).json({ error: error.code });
+        return;
+      }
+      if (error instanceof LineageAuthorizationDeniedError) {
+        response.status(403).json({ error: error.code });
+        return;
+      }
+      next(error);
       return;
     }
     if (!deps.objects) {

@@ -7,8 +7,21 @@ import { describe, expect, it } from "vitest";
 import { loadConfig, type CoordinatorConfig } from "../../src/config.js";
 import { IntranetDevAuthProvider } from "../../src/services/authProvider.js";
 import type { LineageSourceBundleRouteDeps } from "../../src/routes/lineageSourceBundleRoutes.js";
-import type { SourceBundleRecord } from "../../src/services/lineage/sourceBundleStore.js";
-import type { BundleValidationResult } from "../../src/services/lineage/sourceBundleValidator.js";
+import type {
+  ExpectedExternalLineageDecision,
+  ExternalLineageAuthorizationPort,
+  ExternalLineagePrincipal,
+  ExternalLineageRequestContext,
+  VerifiedExternalLineageDecision,
+} from "../../src/services/lineage/externalLineageAuthorization.js";
+import {
+  SourceBundleStore,
+  type SourceBundleRecord,
+} from "../../src/services/lineage/sourceBundleStore.js";
+import {
+  validateSourceBundle,
+  type BundleValidationResult,
+} from "../../src/services/lineage/sourceBundleValidator.js";
 import {
   createFakeSourceBundleObjectPort,
   createFakeSourceBundleStore,
@@ -23,6 +36,13 @@ import {
   type FakeSourceBundleStore,
   type ValidatorClaim,
 } from "../helpers/fakeSourceBundleDeps.js";
+import {
+  createFakeSourceBundleObjectPort as createGovernedSourceBundleObjectPort,
+} from "../helpers/fakeSourceBundleObjectPort.js";
+import {
+  seedGovernedBundle,
+  TEST_ALLOWLIST,
+} from "../helpers/governedBundleFixtures.js";
 
 /**
  * `rvt-ifc-usdc-lineage` task 3.1 —— governed source-bundle **route 契約**測試。
@@ -62,6 +82,54 @@ const INVALID_FIXTURE_NAMES = fs
   .sort();
 
 const WEBHOOK_SECRET = "dev-webhook-secret"; // = config 預設（環境設定，非契約資料）
+const LEGACY_DECISION_HEADER = "signed-test-decision-not-a-real-credential";
+
+class FakeLegacyAuthorization implements ExternalLineageAuthorizationPort {
+  readonly expected: ExpectedExternalLineageDecision[] = [];
+  readonly principal: ExternalLineagePrincipal = {
+    subject: "operator-verified-01",
+    actor_kind: "operator",
+    authentication_ref: "principal-ref-verified-01",
+  };
+
+  constructor(
+    private readonly decisionOverrides: (
+      now: string,
+    ) => Partial<VerifiedExternalLineageDecision> = () => ({}),
+  ) {}
+
+  async resolvePrincipal(_input: {
+    request: ExternalLineageRequestContext;
+    now: string;
+  }): Promise<ExternalLineagePrincipal> {
+    return { ...this.principal };
+  }
+
+  async verifyDecision(input: {
+    opaque_decision: string;
+    request: ExternalLineageRequestContext;
+    expected: ExpectedExternalLineageDecision;
+    principal: ExternalLineagePrincipal;
+    now: string;
+  }): Promise<VerifiedExternalLineageDecision> {
+    expect(input.opaque_decision).toBe(LEGACY_DECISION_HEADER);
+    this.expected.push(input.expected);
+    const expiresAt = new Date(Date.parse(input.now) + 5 * 60 * 1_000).toISOString();
+    return {
+      authorization_decision_ref: "decision-verified-enrollment-01",
+      issuer: "https://control-plane.test/",
+      audience: "urn:ai-bim:edge-lineage",
+      subject: input.principal.subject,
+      capability: "bundle.publish",
+      jti: "jti-verified-enrollment-01",
+      issued_at: input.now,
+      not_before: input.now,
+      expires_at: expiresAt,
+      verified_at: input.now,
+      ...this.decisionOverrides(input.now),
+    };
+  }
+}
 
 function payload(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return { ...structuredClone(VALID_MINIMAL), ...overrides };
@@ -80,6 +148,7 @@ interface Harness {
   app: express.Express;
   store: FakeSourceBundleStore;
   objects: FakeSourceBundleObjectPort | null;
+  authorization: ExternalLineageAuthorizationPort | null;
   logs: ReturnType<typeof createFakeStructLogger>;
   ipRejections: number;
 }
@@ -91,6 +160,7 @@ function makeHarness(
     enqueue?: (record: SourceBundleRecord) => Promise<string>;
     previewLegacy?: LineageSourceBundleRouteDeps["previewLegacy"];
     confirmLegacy?: LineageSourceBundleRouteDeps["confirmLegacy"];
+    authorization?: ExternalLineageAuthorizationPort | null;
     rejectIp?: boolean;
     ipAllowlist?: string[];
     configOverrides?: Partial<CoordinatorConfig>;
@@ -100,6 +170,8 @@ function makeHarness(
   const logs = createFakeStructLogger();
   const objects =
     options.objects === undefined ? createFakeSourceBundleObjectPort() : options.objects;
+  const authorization =
+    options.authorization === undefined ? new FakeLegacyAuthorization() : options.authorization;
   const config = loadConfig({
     governedSourcePrefix: "source-bundles/",
     sourceBundleSha256VerifyMode: "full",
@@ -109,6 +181,7 @@ function makeHarness(
     app: express(),
     store,
     objects,
+    authorization,
     logs,
     ipRejections: 0,
   };
@@ -131,6 +204,7 @@ function makeHarness(
     structLog: logs.logger,
     previewLegacy: options.previewLegacy,
     confirmLegacy: options.confirmLegacy,
+    authorization,
   });
   return harness;
 }
@@ -289,28 +363,25 @@ describe("POST /api/external/source-bundles/ready — 重驗結果 → 狀態碼
     expect(harness.store.admitInputs).toHaveLength(0);
   });
 
-  it("READY → 202 ＋ L1 envelope；identity 取 manifest 實讀值而非 claim", async () => {
+  it("READY claim identity 與 manifest 實讀 identity 不符 → 403，且不 admit/enqueue", async () => {
+    const enqueueCalls: SourceBundleRecord[] = [];
     const harness = makeHarness({
       respond: (claim) =>
         readyResultFor(claim, { external_model_version_id: "model-version-from-manifest" }),
+      enqueue: async (record) => {
+        enqueueCalls.push(record);
+        return "pj_must_not_be_created";
+      },
     });
     const response = await request(harness.app)
       .post("/api/external/source-bundles/ready")
       .set(authHeaders())
       .send(payload());
-    expect(response.status).toBe(202);
-    expect(response.body.schema_version).toBe("model-version-bundle-manifest/v1");
-    expect(response.body.document_type).toBe("source_bundle_validation_result");
-    expect(response.body.body.bundle_state).toBe("READY");
-    expect(response.body.body.replay).toBe(false);
-    expect(response.body.body.integrity_diagnostics).toEqual([]);
-    // 3.1 不注入 enqueue → 誠實 null，不偽造 pipeline job。
-    expect(response.body.body.enqueued_pipeline_job_id).toBeNull();
-    // claim 非權威：store 收到的 external_model_version_id 來自 validator（manifest 實讀）。
-    expect(harness.store.admitInputs[0].external_model_version_id).toBe(
-      "model-version-from-manifest",
-    );
-    expect(harness.store.admitInputs[0].pipeline_job_id).toBeNull();
+    expect(response.status).toBe(403);
+    expect(response.body).toEqual({ error: "ready_identity_mismatch" });
+    expect(harness.store.admitInputs).toHaveLength(0);
+    expect(harness.store.bindCalls).toHaveLength(0);
+    expect(enqueueCalls).toHaveLength(0);
   });
 
   it("同 id 同 digest 重放 → 200 ＋ replay:true（冪等鍵是 source_bundle_id）", async () => {
@@ -390,17 +461,51 @@ describe("POST /api/external/source-bundles/ready — 重驗結果 → 狀態碼
     expect(harness.store.admitInputs).toHaveLength(0);
   });
 
-  it("validator 回 READY 但 conditional_create 不合 L1 → fail-closed 500，不送出違約文件", async () => {
-    const harness = makeHarness({
-      respond: (claim) =>
-        readyResultFor(claim, { conditional_create: { attempted: false, outcome: "not_attempted" } }),
+  it("真 validator 的 READY 中間態先 admission finalize：首送 202、同 digest 重送 200", async () => {
+    const objects = createGovernedSourceBundleObjectPort(TEST_ALLOWLIST);
+    const seeded = seedGovernedBundle(objects);
+    const store = new SourceBundleStore(null);
+    const logs = createFakeStructLogger();
+    const app = createLineageTestApp({
+      config: loadConfig({
+        governedSourcePrefix: "source-bundles/",
+        sourceBundleSha256VerifyMode: "full",
+      }),
+      authProvider: new IntranetDevAuthProvider(WEBHOOK_SECRET, ["127.0.0.1", "::1"]),
+      store,
+      validator: validateSourceBundle,
+      objects,
+      rejectIfIpNotAllowed: () => false,
+      structLog: logs.logger,
     });
-    const response = await request(harness.app)
+    const readyPayload = payload({
+      source_bundle_id: seeded.claim.source_bundle_id,
+      external_model_version_id: seeded.claim.external_model_version_id,
+      manifest_ref: seeded.claim.manifest_ref,
+      manifest_sha256: seeded.claim.manifest_sha256,
+    });
+
+    const first = await request(app)
       .post("/api/external/source-bundles/ready")
       .set(authHeaders())
-      .send(payload());
-    expect(response.status).toBe(500);
-    expect(harness.store.admitInputs).toHaveLength(0);
+      .send(readyPayload);
+    expect(first.status).toBe(202);
+    expect(first.body.body.bundle_state).toBe("READY");
+    expect(first.body.body.conditional_create).toEqual({ attempted: true, outcome: "created" });
+    expect(first.body.body.replay).toBe(false);
+
+    const second = await request(app)
+      .post("/api/external/source-bundles/ready")
+      .set(authHeaders({ "X-Idempotency-Key": "idem-real-validator-replay" }))
+      .send(readyPayload);
+    expect(second.status).toBe(200);
+    expect(second.body.body.bundle_state).toBe("READY");
+    expect(second.body.body.conditional_create).toEqual({
+      attempted: true,
+      outcome: "already_exists_same_digest",
+    });
+    expect(second.body.body.replay).toBe(true);
+    expect(store.list()).toHaveLength(1);
   });
 
   it("validator 回 READY 但沒有 manifest digest → fail-closed 500", async () => {
@@ -549,29 +654,106 @@ describe("POST /api/lineage/legacy-unmanaged/confirm（carve-out 後的 conditio
   const confirmBody = {
     grouping_key: "tenant-a/legacy",
     confirmed_by_subject: "operator_test_subject",
-    capability: "bundle.publish",
+    capability: "conversion.trigger",
     authorization_decision_ref: "decision://governance-console/abc123",
   };
 
-  it("缺 authorization_decision_ref → 403 fail closed", async () => {
-    const harness = makeHarness();
-    const { authorization_decision_ref: _omitted, ...withoutDecision } = confirmBody;
+  function authorizedConfirm(app: express.Express, body: Record<string, unknown> = confirmBody) {
+    return request(app)
+      .post("/api/lineage/legacy-unmanaged/confirm")
+      .set("authorization", "Bearer synthetic-test-principal")
+      .set("x-lineage-authorization-decision", LEGACY_DECISION_HEADER)
+      .send(body);
+  }
+
+  it("external authorization adapter 缺失 → 503，且不呼叫 enrollment service", async () => {
+    let confirmCalls = 0;
+    const harness = makeHarness({
+      authorization: null,
+      confirmLegacy: async (input) => {
+        confirmCalls += 1;
+        return legacyConfirmationFor(input);
+      },
+    });
     const response = await request(harness.app)
       .post("/api/lineage/legacy-unmanaged/confirm")
-      .send(withoutDecision);
-    expect(response.status).toBe(403);
-    expect(response.body.error).toBe("authorization_decision_required");
-    expect(response.body.authorization_verification).toBe("minimal_gate_only");
+      .send({ grouping_key: confirmBody.grouping_key });
+    expect(response.status).toBe(503);
+    expect(response.body).toEqual({ error: "authorization_unavailable" });
+    expect(confirmCalls).toBe(0);
+    expect(harness.store.admitInputs).toHaveLength(0);
     expect(harness.objects?.writeAttempts).toBe(0);
   });
 
-  it("capability 不是 bundle.publish → 403", async () => {
+  it("缺 external decision → generic 403，body 自述 capability/ref 不得替代", async () => {
     const harness = makeHarness();
     const response = await request(harness.app)
       .post("/api/lineage/legacy-unmanaged/confirm")
-      .send({ ...confirmBody, capability: "conversion.trigger" });
+      .set("authorization", "Bearer synthetic-test-principal")
+      .send(confirmBody);
     expect(response.status).toBe(403);
-    expect(response.body.required_capability).toBe("bundle.publish");
+    expect(response.body).toEqual({ error: "stale_or_missing_authorization_decision" });
+    expect(harness.objects?.writeAttempts).toBe(0);
+  });
+
+  it.each([
+    ["authorization", ["Bearer duplicate-one", "Bearer duplicate-two"]],
+    ["dpop", ["proof-duplicate-one", "proof-duplicate-two"]],
+    [
+      "x-lineage-authorization-decision",
+      ["decision-duplicate-one", "decision-duplicate-two"],
+    ],
+  ])("重複 security header %s → 403，且 enrollment 零副作用", async (headerName, values) => {
+    let confirmCalls = 0;
+    const harness = makeHarness({
+      confirmLegacy: async (input) => {
+        confirmCalls += 1;
+        return legacyConfirmationFor(input);
+      },
+    });
+    const pending = request(harness.app)
+      .post("/api/lineage/legacy-unmanaged/confirm")
+      .set("authorization", "Bearer synthetic-test-principal")
+      .set("x-lineage-authorization-decision", LEGACY_DECISION_HEADER)
+      // Superagent accepts string arrays through IncomingHttpHeaders at runtime; this cast keeps
+      // the test on its string overload while preserving duplicate wire header fields.
+      .set(headerName, values as unknown as string)
+      .send({ grouping_key: confirmBody.grouping_key });
+
+    const response = await pending;
+    expect(response.status).toBe(403);
+    expect(response.body).toEqual({ error: "stale_or_missing_authorization_decision" });
+    expect(confirmCalls).toBe(0);
+    expect(harness.objects?.writeAttempts).toBe(0);
+    expect(harness.store.admitInputs).toHaveLength(0);
+  });
+
+  it.each([
+    ["wrong subject", () => ({ subject: "operator-other" })],
+    [
+      "future not_before",
+      (now: string) => ({ not_before: new Date(Date.parse(now) + 60_000).toISOString() }),
+    ],
+    [
+      "verified_at mismatch",
+      (now: string) => ({ verified_at: new Date(Date.parse(now) - 1).toISOString() }),
+    ],
+  ] as const)("normalized decision %s → 403，且 enrollment 零副作用", async (_name, overrides) => {
+    let confirmCalls = 0;
+    const harness = makeHarness({
+      authorization: new FakeLegacyAuthorization(overrides),
+      confirmLegacy: async (input) => {
+        confirmCalls += 1;
+        return legacyConfirmationFor(input);
+      },
+    });
+
+    const response = await authorizedConfirm(harness.app);
+    expect(response.status).toBe(403);
+    expect(response.body).toEqual({ error: "stale_or_missing_authorization_decision" });
+    expect(confirmCalls).toBe(0);
+    expect(harness.objects?.writeAttempts).toBe(0);
+    expect(harness.store.admitInputs).toHaveLength(0);
   });
 
   it("缺 grouping_key → 400", async () => {
@@ -585,18 +767,14 @@ describe("POST /api/lineage/legacy-unmanaged/confirm（carve-out 後的 conditio
 
   it("IP 不在 allowlist → 403（先於任何 body 判定）", async () => {
     const harness = makeHarness({ rejectIp: true });
-    const response = await request(harness.app)
-      .post("/api/lineage/legacy-unmanaged/confirm")
-      .send(confirmBody);
+    const response = await authorizedConfirm(harness.app);
     expect(response.status).toBe(403);
     expect(harness.ipRejections).toBe(1);
   });
 
   it("governed MinIO 未設定 → 503（沒有 store 就談不上 conditional create）", async () => {
     const harness = makeHarness({ objects: null });
-    const response = await request(harness.app)
-      .post("/api/lineage/legacy-unmanaged/confirm")
-      .send(confirmBody);
+    const response = await authorizedConfirm(harness.app);
     expect(response.status).toBe(503);
     expect(response.body.error).toBe("governed_source_store_unconfigured");
   });
@@ -605,9 +783,7 @@ describe("POST /api/lineage/legacy-unmanaged/confirm（carve-out 後的 conditio
     const harness = makeHarness({
       confirmLegacy: async (input) => legacyConfirmationFor(input),
     });
-    const response = await request(harness.app)
-      .post("/api/lineage/legacy-unmanaged/confirm")
-      .send(confirmBody);
+    const response = await authorizedConfirm(harness.app);
     expect(response.status).toBe(200);
     expect(response.body.schema_version).toBe("model-version-bundle-manifest/v1");
     expect(response.body.document_type).toBe("legacy_enrollment_confirmation");
@@ -615,20 +791,30 @@ describe("POST /api/lineage/legacy-unmanaged/confirm（carve-out 後的 conditio
     expect(response.body.body.created_source_bundle_id).not.toBeNull();
     expect(response.body.body.retryable).toBe(false);
     expect(response.body.body.capability).toBe("bundle.publish");
-    // route 只轉述 service 的 input，不自己改寫授權欄位。
-    expect(response.body.body.confirmed_by_subject).toBe(confirmBody.confirmed_by_subject);
+    expect(response.body.body.confirmed_by_subject).toBe("operator-verified-01");
     expect(response.body.body.authorization_decision_ref).toBe(
-      confirmBody.authorization_decision_ref,
+      "decision-verified-enrollment-01",
     );
+    const authorization = harness.authorization as FakeLegacyAuthorization;
+    expect(authorization.expected).toEqual([
+      {
+        capability: "bundle.publish",
+        principal_subject: "operator-verified-01",
+        method: "POST",
+        path: "/api/lineage/legacy-unmanaged/confirm",
+        resource: {
+          kind: "legacy_bundle_enrollment",
+          grouping_key: "tenant-a/legacy",
+        },
+      },
+    ]);
   });
 
   it("並行升格的輸家 → 409，body 仍是 conformant confirmation（id null ＋ retryable）", async () => {
     const harness = makeHarness({
       confirmLegacy: async (input) => legacyConflictConfirmationFor(input),
     });
-    const response = await request(harness.app)
-      .post("/api/lineage/legacy-unmanaged/confirm")
-      .send(confirmBody);
+    const response = await authorizedConfirm(harness.app);
     expect(response.status).toBe(409);
     expect(response.body.document_type).toBe("legacy_enrollment_confirmation");
     expect(response.body.body.conditional_create.outcome).toBe("conflict_existing_manifest");
@@ -647,9 +833,7 @@ describe("POST /api/lineage/legacy-unmanaged/confirm（carve-out 後的 conditio
           throw Object.assign(new Error(`refused: ${code}`), { httpStatus, code });
         },
       });
-      const response = await request(harness.app)
-        .post("/api/lineage/legacy-unmanaged/confirm")
-        .send(confirmBody);
+      const response = await authorizedConfirm(harness.app);
       expect(response.status).toBe(httpStatus);
       expect(response.body.error).toBe(code);
     }
@@ -663,9 +847,7 @@ describe("POST /api/lineage/legacy-unmanaged/confirm（carve-out 後的 conditio
         });
       },
     });
-    const response = await request(harness.app)
-      .post("/api/lineage/legacy-unmanaged/confirm")
-      .send(confirmBody);
+    const response = await authorizedConfirm(harness.app);
     expect(response.status).toBe(500);
   });
 
@@ -679,9 +861,7 @@ describe("POST /api/lineage/legacy-unmanaged/confirm（carve-out 後的 conditio
           retryable: true,
         }),
     });
-    const response = await request(harness.app)
-      .post("/api/lineage/legacy-unmanaged/confirm")
-      .send(confirmBody);
+    const response = await authorizedConfirm(harness.app);
     expect(response.status).toBe(500);
   });
 
@@ -690,9 +870,7 @@ describe("POST /api/lineage/legacy-unmanaged/confirm（carve-out 後的 conditio
       confirmLegacy: async (input) =>
         legacyConfirmationFor(input, { created_source_bundle_id: null }),
     });
-    const response = await request(harness.app)
-      .post("/api/lineage/legacy-unmanaged/confirm")
-      .send(confirmBody);
+    const response = await authorizedConfirm(harness.app);
     expect(response.status).toBe(500);
   });
 });

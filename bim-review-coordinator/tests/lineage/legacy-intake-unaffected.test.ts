@@ -305,16 +305,11 @@ describe("app.ts 接線：governed route 掛上且 fail-closed", () => {
 
     const confirm = await request(app.app)
       .post("/api/lineage/legacy-unmanaged/confirm")
-      .send({
-        grouping_key: "tenant-a/legacy",
-        confirmed_by_subject: "operator_test_subject",
-        capability: "bundle.publish",
-        authorization_decision_ref: "decision://governance-console/abc123",
-      });
-    // carve-out 之後 confirm 是真流程，但沒有 governed MinIO 就無從 conditional create：
-    // 誠實 503（與 ready claim 同一個 fail-closed 理由），不是假裝成功也不是 501。
+      .send({ grouping_key: "tenant-a/legacy" });
+    // Production external verifier 尚未接線：protected mutation 必須在任何 governed MinIO
+    // 探查前 fail closed，而不是信任 caller 自述 capability/decision ref。
     expect(confirm.status).toBe(503);
-    expect(confirm.body.error).toBe("governed_source_store_unconfigured");
+    expect(confirm.body.error).toBe("authorization_unavailable");
     // legacy 面照樣零污染：升格路徑不得憑空生出 governed bundle。
     expect(app.sourceBundleStore.list()).toEqual([]);
   });
