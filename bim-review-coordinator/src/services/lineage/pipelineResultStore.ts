@@ -1297,6 +1297,429 @@ export class PipelineResultStore {
     };
   }
 
+  createActivationIntent(
+    input: CreatePipelineResultActivationIntentInput,
+  ): CreatePipelineResultActivationIntentOutcome {
+    this.assertAvailable();
+    const expectedCapability =
+      input.transition === "promote" ? "result.promote" : "result.rollback";
+    if (
+      !isNonEmptyString(input.intent_id) ||
+      !/^intent_[A-Za-z0-9._:-]{8,200}$/.test(input.intent_id) ||
+      !isNonEmptyString(input.intent_nonce) ||
+      input.intent_nonce.length < 32 ||
+      input.intent_nonce.length > 512 ||
+      !isNonEmptyString(input.pipeline_job_id) ||
+      !isNonEmptyString(input.target_result_id) ||
+      !isNonEmptyString(input.expected_active_result_id) ||
+      input.capability !== expectedCapability ||
+      !isNonEmptyString(input.reason) ||
+      input.reason.length > 2_000 ||
+      (input.actor.actor_kind !== "operator" &&
+        input.actor.actor_kind !== "service_account") ||
+      !isNonEmptyString(input.actor.actor_id) ||
+      !isNonEmptyString(input.correlation_id) ||
+      !isUtcTimestamp(input.created_at) ||
+      !isUtcTimestamp(input.expires_at)
+    ) {
+      throw new PipelineResultInvariantError("invalid protected result activation intent");
+    }
+    const createdAt = utcTimestampToMicros(input.created_at);
+    const expiresAt = utcTimestampToMicros(input.expires_at);
+    if (
+      expiresAt <= createdAt ||
+      expiresAt - createdAt > BigInt(PIPELINE_RESULT_INTENT_TTL_MS) * 1_000n
+    ) {
+      throw new PipelineResultInvariantError("invalid protected result activation intent");
+    }
+
+    const intentNonceSha256 = sha256Text(input.intent_nonce);
+    // Pending challenges are short-lived and may be removed; committed/stale decision evidence is
+    // retained with the append-only transition history. Cleanup is included in the same commit as
+    // the new intent so no separate sweeper can race a confirm.
+    const retainedIntents = new Map(
+      [...this.activationIntents.entries()].filter(
+        ([, intent]) =>
+          intent.state !== "pending" || utcTimestampToMicros(intent.expires_at) > createdAt,
+      ),
+    );
+    const existing = retainedIntents.get(input.intent_id);
+    if (existing) {
+      const sameIntent =
+        existing.pipeline_job_id === input.pipeline_job_id &&
+        existing.target_result_id === input.target_result_id &&
+        existing.expected_active_result_id === input.expected_active_result_id &&
+        existing.transition === input.transition &&
+        existing.capability === input.capability &&
+        existing.reason === input.reason &&
+        existing.actor.actor_kind === input.actor.actor_kind &&
+        existing.actor.actor_id === input.actor.actor_id &&
+        existing.correlation_id === input.correlation_id &&
+        existing.intent_nonce_sha256 === intentNonceSha256 &&
+        existing.created_at === input.created_at &&
+        existing.expires_at === input.expires_at;
+      if (!sameIntent) {
+        throw new PipelineResultConflictError(
+          `activation intent id ${input.intent_id} was reused with different binding`,
+        );
+      }
+      return { replay: true, intent: cloneIntent(existing) };
+    }
+    if (
+      [...retainedIntents.values()].some(
+        (intent) => intent.intent_nonce_sha256 === intentNonceSha256,
+      )
+    ) {
+      throw new PipelineResultConflictError(
+        "server activation nonce was reused by a different intent",
+      );
+    }
+    const pendingIntents = [...retainedIntents.values()].filter(
+      (intent) => intent.state === "pending",
+    );
+    if (pendingIntents.length >= MAX_PENDING_ACTIVATION_INTENTS) {
+      throw new PipelineResultConflictError("global pending activation intent limit reached");
+    }
+    const pendingForSubjectJob = pendingIntents.filter(
+      (intent) =>
+        intent.pipeline_job_id === input.pipeline_job_id &&
+        intent.actor.actor_id === input.actor.actor_id,
+    ).length;
+    if (pendingForSubjectJob >= MAX_PENDING_ACTIVATION_INTENTS_PER_SUBJECT_JOB) {
+      throw new PipelineResultConflictError(
+        `pending activation intent limit reached for subject/job ${input.pipeline_job_id}`,
+      );
+    }
+
+    const currentPointer = this.activePointers.get(input.pipeline_job_id);
+    if (!currentPointer) {
+      throw new PipelineResultInvariantError(
+        `pipeline job ${input.pipeline_job_id} has no active result to ${input.transition}`,
+      );
+    }
+    if (currentPointer.result_id !== input.expected_active_result_id) {
+      throw new PipelineResultConflictError(
+        `active result changed: expected ${input.expected_active_result_id}, observed ${currentPointer.result_id}`,
+      );
+    }
+    const target = this.results.get(input.target_result_id);
+    if (!target || target.pipeline_job_id !== input.pipeline_job_id) {
+      throw new PipelineResultActivationTargetInvariantError(
+        "activation_target_not_selectable",
+        `target result ${input.target_result_id} does not belong to pipeline job ${input.pipeline_job_id}`,
+      );
+    }
+    if (!isSelectableResult(target)) {
+      throw new PipelineResultActivationTargetInvariantError(
+        "activation_target_not_selectable",
+        `target result ${input.target_result_id} is not AVAILABLE + succeeded|succeeded_with_warnings`,
+      );
+    }
+    const targetSelectionBefore = this.selectionStateFor(target);
+    if (
+      (input.transition === "promote" && targetSelectionBefore !== "candidate") ||
+      (input.transition === "rollback" && targetSelectionBefore !== "historical")
+    ) {
+      throw new PipelineResultActivationTargetInvariantError(
+        "selection_state_mismatch",
+        `${input.transition} target ${input.target_result_id} has selection_state=${targetSelectionBefore}`,
+      );
+    }
+
+    const intent: PipelineResultActivationIntent = {
+      intent_id: input.intent_id,
+      pipeline_job_id: input.pipeline_job_id,
+      target_result_id: input.target_result_id,
+      expected_active_result_id: input.expected_active_result_id,
+      transition: input.transition,
+      capability: input.capability,
+      reason: input.reason,
+      actor: { ...input.actor },
+      correlation_id: input.correlation_id,
+      intent_nonce_sha256: intentNonceSha256,
+      created_at: input.created_at,
+      expires_at: input.expires_at,
+      state: "pending",
+      decision: null,
+      audit_entry_id: null,
+      completed_at: null,
+      observed_active_result_id: null,
+    };
+    const nextIntents = new Map(retainedIntents);
+    nextIntents.set(intent.intent_id, intent);
+    const nextRevision = this.persistState(
+      this.results,
+      this.activePointers,
+      this.activationAudit,
+      nextIntents,
+    );
+    this.activationIntents = nextIntents;
+    this.revision = nextRevision;
+    return { replay: false, intent: cloneIntent(intent) };
+  }
+
+  private decisionProvenanceFor(
+    intent: PipelineResultActivationIntent,
+    decision: VerifiedExternalResultDecision,
+    now: string,
+  ): PipelineResultDecisionProvenance {
+    if (
+      !isNonEmptyString(decision.authorization_decision_ref) ||
+      !isNonEmptyString(decision.issuer) ||
+      !isNonEmptyString(decision.audience) ||
+      !isNonEmptyString(decision.subject) ||
+      !isNonEmptyString(decision.jti) ||
+      decision.capability !== intent.capability ||
+      decision.subject !== intent.actor.actor_id ||
+      !isUtcTimestamp(decision.issued_at) ||
+      !isUtcTimestamp(decision.not_before) ||
+      !isUtcTimestamp(decision.expires_at) ||
+      !isUtcTimestamp(decision.verified_at) ||
+      !isUtcTimestamp(now) ||
+      decision.verified_at !== now
+    ) {
+      throw new PipelineResultAuthorizationError(
+        `external authorization decision does not match pending intent ${intent.intent_id}`,
+      );
+    }
+    const nowInstant = utcTimestampToMicros(now);
+    const issuedAt = utcTimestampToMicros(decision.issued_at);
+    const notBefore = utcTimestampToMicros(decision.not_before);
+    const expiresAt = utcTimestampToMicros(decision.expires_at);
+    const intentCreatedAt = utcTimestampToMicros(intent.created_at);
+    const intentExpiresAt = utcTimestampToMicros(intent.expires_at);
+    if (
+      issuedAt < intentCreatedAt ||
+      issuedAt > nowInstant ||
+      notBefore > nowInstant ||
+      expiresAt <= nowInstant ||
+      expiresAt > intentExpiresAt ||
+      nowInstant >= intentExpiresAt
+    ) {
+      throw new PipelineResultAuthorizationError(
+        `external authorization decision does not match pending intent ${intent.intent_id}`,
+      );
+    }
+    return {
+      authorization_decision_ref: decision.authorization_decision_ref,
+      issuer: decision.issuer,
+      audience: decision.audience,
+      subject: decision.subject,
+      capability: decision.capability,
+      decision_replay_key_sha256: decisionReplayKeySha256(decision),
+      issued_at: decision.issued_at,
+      not_before: decision.not_before,
+      expires_at: decision.expires_at,
+      verified_at: decision.verified_at,
+    };
+  }
+
+  confirmActivationIntent(
+    input: ConfirmPipelineResultActivationIntentInput,
+  ): ConfirmPipelineResultActivationIntentOutcome {
+    this.assertAvailable();
+    const intent = this.activationIntents.get(input.intent_id);
+    if (!intent) {
+      throw new PipelineResultAuthorizationError(
+        `activation intent ${input.intent_id} is missing or expired`,
+      );
+    }
+    const provenance = this.decisionProvenanceFor(intent, input.decision, input.now);
+    const sameTerminalDecision =
+      intent.decision?.decision_replay_key_sha256 ===
+        provenance.decision_replay_key_sha256 &&
+      intent.decision.authorization_decision_ref === provenance.authorization_decision_ref &&
+      intent.decision.issuer === provenance.issuer &&
+      intent.decision.audience === provenance.audience &&
+      intent.decision.subject === provenance.subject &&
+      intent.decision.capability === provenance.capability &&
+      intent.decision.issued_at === provenance.issued_at &&
+      intent.decision.not_before === provenance.not_before &&
+      intent.decision.expires_at === provenance.expires_at;
+
+    if (intent.state === "committed") {
+      if (!sameTerminalDecision || !intent.audit_entry_id) {
+        throw new PipelineResultAuthorizationError(
+          `activation intent ${intent.intent_id} was already consumed by another decision`,
+        );
+      }
+      const auditEntry = this.activationAudit.find(
+        (entry) => entry.audit_entry_id === intent.audit_entry_id,
+      );
+      const target = this.results.get(intent.target_result_id);
+      if (!auditEntry || !target || !isSelectableResult(target)) {
+        throw new PipelineResultStateUnavailableError(
+          `committed activation intent ${intent.intent_id} lost referential evidence`,
+        );
+      }
+      const currentPointer = this.activePointers.get(intent.pipeline_job_id);
+      if (
+        !currentPointer ||
+        currentPointer.result_id !== target.result_id ||
+        currentPointer.audit_entry_id !== auditEntry.audit_entry_id
+      ) {
+        throw new PipelineResultConflictError(
+          `committed activation intent ${intent.intent_id} no longer owns the active pointer`,
+        );
+      }
+      return {
+        outcome: "committed",
+        replay: true,
+        intent: cloneIntent(intent),
+        active_result_pointer: clonePointer(currentPointer),
+        activation_audit_entry: cloneAudit(auditEntry),
+      };
+    }
+    if (intent.state === "rejected_stale") {
+      if (!sameTerminalDecision) {
+        throw new PipelineResultAuthorizationError(
+          `stale activation intent ${intent.intent_id} was consumed by another decision`,
+        );
+      }
+      return {
+        outcome: "rejected_stale",
+        replay: true,
+        intent: cloneIntent(intent),
+        observed_active_result_id: intent.observed_active_result_id,
+      };
+    }
+
+    const replayOwner = [...this.activationIntents.values()].find(
+      (candidate) =>
+        candidate.intent_id !== intent.intent_id &&
+        candidate.decision?.decision_replay_key_sha256 ===
+          provenance.decision_replay_key_sha256,
+    );
+    if (replayOwner) {
+      throw new PipelineResultAuthorizationError(
+        `external authorization decision was already consumed by intent ${replayOwner.intent_id}`,
+      );
+    }
+
+    const currentPointer = this.activePointers.get(intent.pipeline_job_id);
+    if (!currentPointer || currentPointer.result_id !== intent.expected_active_result_id) {
+      const staleIntent: PipelineResultActivationIntent = {
+        ...cloneIntent(intent),
+        state: "rejected_stale",
+        decision: provenance,
+        audit_entry_id: null,
+        completed_at: input.now,
+        observed_active_result_id: currentPointer?.result_id ?? null,
+      };
+      const nextIntents = new Map(this.activationIntents);
+      nextIntents.set(intent.intent_id, staleIntent);
+      const nextRevision = this.persistState(
+        this.results,
+        this.activePointers,
+        this.activationAudit,
+        nextIntents,
+      );
+      this.activationIntents = nextIntents;
+      this.revision = nextRevision;
+      return {
+        outcome: "rejected_stale",
+        replay: false,
+        intent: cloneIntent(staleIntent),
+        observed_active_result_id: staleIntent.observed_active_result_id,
+      };
+    }
+
+    const target = this.results.get(intent.target_result_id);
+    if (!target || target.pipeline_job_id !== intent.pipeline_job_id || !isSelectableResult(target)) {
+      throw new PipelineResultActivationTargetInvariantError(
+        "activation_target_not_selectable",
+        `activation intent ${intent.intent_id} target is no longer selectable`,
+      );
+    }
+    const targetSelectionBefore = this.selectionStateFor(target);
+    let selectionStateBefore: "candidate" | "historical";
+    if (intent.transition === "promote") {
+      if (targetSelectionBefore !== "candidate") {
+        throw new PipelineResultActivationTargetInvariantError(
+          "selection_state_mismatch",
+          `promote target ${target.result_id} has selection_state=${targetSelectionBefore}`,
+        );
+      }
+      selectionStateBefore = targetSelectionBefore;
+    } else {
+      if (targetSelectionBefore !== "historical") {
+        throw new PipelineResultActivationTargetInvariantError(
+          "selection_state_mismatch",
+          `rollback target ${target.result_id} has selection_state=${targetSelectionBefore}`,
+        );
+      }
+      selectionStateBefore = targetSelectionBefore;
+    }
+
+    const auditEntryId = protectedActivationAuditIdFor(intent.intent_id);
+    if (this.activationAudit.some((entry) => entry.audit_entry_id === auditEntryId)) {
+      throw new PipelineResultConflictError(
+        `activation audit id ${auditEntryId} already exists without a committed intent`,
+      );
+    }
+    const auditEntry: ActivationAuditEntry = {
+      audit_entry_id: auditEntryId,
+      pipeline_job_id: intent.pipeline_job_id,
+      transition: intent.transition,
+      from_result_id: currentPointer.result_id,
+      to_result_id: target.result_id,
+      target_result_evidence: {
+        result_id: target.result_id,
+        publication_state: target.publication_state,
+        attempt_outcome: target.attempt_outcome,
+        selection_state_before: selectionStateBefore,
+      },
+      capability: intent.capability,
+      reason: intent.reason,
+      actor: { ...intent.actor },
+      authorization_decision_ref: provenance.authorization_decision_ref,
+      correlation_id: intent.correlation_id,
+      occurred_at: input.now,
+      append_only: true,
+    };
+    const pointer: ActiveResultPointer = {
+      pipeline_job_id: target.pipeline_job_id,
+      result_id: target.result_id,
+      attempt_id: target.attempt_id,
+      selection_state: "active",
+      publication_state: "AVAILABLE",
+      attempt_outcome: target.attempt_outcome,
+      audit_entry_id: auditEntry.audit_entry_id,
+      activated_at: input.now,
+      correlation_id: intent.correlation_id,
+    };
+    const committedIntent: PipelineResultActivationIntent = {
+      ...cloneIntent(intent),
+      state: "committed",
+      decision: provenance,
+      audit_entry_id: auditEntry.audit_entry_id,
+      completed_at: input.now,
+      observed_active_result_id: null,
+    };
+    const nextPointers = new Map(this.activePointers);
+    nextPointers.set(intent.pipeline_job_id, pointer);
+    const nextAudit = [...this.activationAudit, auditEntry];
+    const nextIntents = new Map(this.activationIntents);
+    nextIntents.set(intent.intent_id, committedIntent);
+    const nextRevision = this.persistState(
+      this.results,
+      nextPointers,
+      nextAudit,
+      nextIntents,
+    );
+    this.activePointers = nextPointers;
+    this.activationAudit = nextAudit;
+    this.activationIntents = nextIntents;
+    this.revision = nextRevision;
+    return {
+      outcome: "committed",
+      replay: false,
+      intent: cloneIntent(committedIntent),
+      active_result_pointer: clonePointer(pointer),
+      activation_audit_entry: cloneAudit(auditEntry),
+    };
+  }
+
   getComparableResults(
     pipelineJobId: string,
     leftResultId: string,

@@ -119,6 +119,43 @@ describe("external lineage authorization boundary", () => {
     ).rejects.toBeInstanceOf(LineageAuthorizationUnavailableError);
   });
 
+  it("forwards an exact PR-B read-model resource binding to the external verifier", async () => {
+    const request: ExternalLineageRequestContext = {
+      ...REQUEST,
+      method: "GET",
+      path: "/api/lineage/pipeline-jobs/pj-1/overview",
+    };
+    const expected: ExpectedExternalLineageDecision = {
+      capability: "bundle.read",
+      principal_subject: PRINCIPAL.subject,
+      method: request.method,
+      path: request.path,
+      resource: { kind: "pipeline_job_results", pipeline_job_id: "pj-1" },
+    };
+    let observed: ExpectedExternalLineageDecision | null = null;
+    const authorization: ExternalLineageAuthorizationPort = {
+      async resolvePrincipal() {
+        return PRINCIPAL;
+      },
+      async verifyDecision(input) {
+        observed = input.expected;
+        return decision({ capability: "bundle.read" });
+      },
+    };
+
+    await expect(
+      verifyExternalLineageDecision({
+        authorization,
+        request,
+        opaque_decision: "opaque-decision",
+        principal: PRINCIPAL,
+        expected,
+        now: NOW,
+      }),
+    ).resolves.toMatchObject({ capability: "bundle.read" });
+    expect(observed).toEqual(expected);
+  });
+
   it.each([
     ["leading whitespace", " operator-test-01"],
     ["trailing whitespace", "operator-test-01 "],

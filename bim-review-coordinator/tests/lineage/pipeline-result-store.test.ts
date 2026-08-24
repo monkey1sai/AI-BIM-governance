@@ -1,16 +1,22 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { spawn } from "node:child_process";
+import { once } from "node:events";
 import { afterEach, describe, expect, it } from "vitest";
 import { PipelineJobStore } from "../../src/services/lineage/pipelineJobStore.js";
 import {
+  PipelineResultActivationTargetInvariantError,
   PipelineResultConflictError,
+  PipelineResultAuthorizationError,
   PipelineResultCompareInvariantError,
   PipelineResultInvariantError,
   PipelineResultRevisionConflictError,
   PipelineResultStateUnavailableError,
   PipelineResultStore,
+  type CreatePipelineResultActivationIntentInput,
   type RegisterPipelineResultInput,
+  type VerifiedExternalResultDecision,
 } from "../../src/services/lineage/pipelineResultStore.js";
 
 const NOW = "2026-07-16T08:41:07.500Z";
@@ -467,6 +473,47 @@ describe("PipelineResultStore persistence", () => {
       PipelineResultStateUnavailableError,
     );
   });
+
+  it("restart 重播 activation audit chain，拒絕被外部竄改的 from_result_id", () => {
+    const file = tmpStorePath();
+    const { store: jobStore, pipelineJobId } = jobs();
+    const first = new PipelineResultStore(jobStore, file);
+    first.registerResult(resultInput(pipelineJobId));
+    registerSecondSelectable(first, pipelineJobId);
+    first.registerResult(
+      resultInput(pipelineJobId, {
+        result_id: "result-0009",
+        attempt_id: "attempt-0009",
+        attempt_number: 3,
+        result_prefix:
+          "minio://edge-test-01/lineage-results/model-version-test-0001/results/attempt-0009/",
+        result_manifest_ref:
+          "minio://edge-test-01/lineage-results/model-version-test-0001/results/attempt-0009/result-manifest.json?versionId=v-manifest-0009",
+        result_manifest_digest: "c".repeat(64),
+        correlation_id: "corr-lineage-0009",
+        now: "2026-07-16T08:46:00.000Z",
+      }),
+    );
+    first.createActivationIntent(activationIntentInput(pipelineJobId));
+    first.confirmActivationIntent({
+      intent_id: "intent_promote_0008",
+      decision: verifiedDecision(),
+      now: "2026-07-16T08:51:00.000Z",
+    });
+    const snapshot = JSON.parse(fs.readFileSync(file, "utf-8")) as {
+      activation_audit: Array<{ transition: string; from_result_id: string | null }>;
+    };
+    const promote = snapshot.activation_audit.find((entry) => entry.transition === "promote");
+    expect(promote).toBeDefined();
+    if (!promote) throw new Error("promotion audit fixture was not persisted");
+    promote.from_result_id = "result-0009";
+    fs.writeFileSync(file, JSON.stringify(snapshot), "utf-8");
+
+    const reloaded = new PipelineResultStore(jobStore, file);
+    expect(() => reloaded.listActivationAudit(pipelineJobId)).toThrow(
+      /does not continue pointer history/,
+    );
+  });
 });
 
 function registerSecondSelectable(store: PipelineResultStore, pipelineJobId: string): void {
@@ -573,5 +620,611 @@ describe("PipelineResultStore compare", () => {
     );
     expect(store.getActiveResultPointer(pipelineJobId)).toEqual(pointerBefore);
     expect(store.listActivationAudit(pipelineJobId)).toEqual(auditBefore);
+  });
+});
+
+function activationIntentInput(
+  pipelineJobId: string,
+  overrides: Partial<CreatePipelineResultActivationIntentInput> = {},
+): CreatePipelineResultActivationIntentInput {
+  return {
+    intent_id: "intent_promote_0008",
+    intent_nonce: "nonce-" + "7".repeat(64),
+    pipeline_job_id: pipelineJobId,
+    target_result_id: "result-0008",
+    expected_active_result_id: "result-0007",
+    transition: "promote",
+    capability: "result.promote",
+    reason: "operator selected the verified warning result",
+    actor: { actor_kind: "operator", actor_id: "operator-test-01" },
+    correlation_id: "corr-promote-0008",
+    created_at: "2026-07-16T08:50:00.000Z",
+    expires_at: "2026-07-16T08:55:00.000Z",
+    ...overrides,
+  };
+}
+
+function verifiedDecision(
+  overrides: Partial<VerifiedExternalResultDecision> = {},
+): VerifiedExternalResultDecision {
+  return {
+    authorization_decision_ref: "decision-result-promote-0008",
+    issuer: "https://control-plane.test/",
+    audience: "urn:ai-bim:edge-lineage",
+    subject: "operator-test-01",
+    capability: "result.promote",
+    jti: "decision-jti-promote-0008",
+    issued_at: "2026-07-16T08:50:05.000Z",
+    not_before: "2026-07-16T08:50:05.000Z",
+    expires_at: "2026-07-16T08:54:00.000Z",
+    verified_at: "2026-07-16T08:51:00.000Z",
+    ...overrides,
+  };
+}
+
+describe("PipelineResultStore protected activation intents", () => {
+  it.each([
+    ["promote", "result.promote"],
+    ["rollback", "result.rollback"],
+  ] as const)("%s non-selectable target 以中性 typed reason fail closed", (transition, capability) => {
+    const { store: jobStore, pipelineJobId } = jobs();
+    const store = new PipelineResultStore(jobStore, null);
+    store.registerResult(resultInput(pipelineJobId));
+    store.registerResult(
+      resultInput(pipelineJobId, {
+        result_id: "result-failed-0008",
+        attempt_id: "attempt-failed-0008",
+        attempt_number: 2,
+        result_prefix:
+          "minio://edge-test-01/lineage-results/model-version-test-0001/results/attempt-failed-0008/",
+        result_manifest_ref:
+          "minio://edge-test-01/lineage-results/model-version-test-0001/results/attempt-failed-0008/result-manifest.json?versionId=v-manifest-failed-0008",
+        result_manifest_digest: "e".repeat(64),
+        attempt_outcome: "failed",
+        correlation_id: "corr-lineage-failed-0008",
+      }),
+    );
+
+    let observed: unknown;
+    try {
+      store.createActivationIntent(
+        activationIntentInput(pipelineJobId, {
+          intent_id: `intent_nonselectable_${transition}`,
+          intent_nonce: `nonce-nonselectable-${transition}-` + "e".repeat(64),
+          target_result_id: "result-failed-0008",
+          transition,
+          capability,
+        }),
+      );
+    } catch (error) {
+      observed = error;
+    }
+    expect(observed).toBeInstanceOf(PipelineResultActivationTargetInvariantError);
+    expect((observed as PipelineResultActivationTargetInvariantError).reason).toBe(
+      "activation_target_not_selectable",
+    );
+    expect(store.listActivationAudit(pipelineJobId)).toHaveLength(1);
+  });
+
+  it.each([
+    ["promote", "result.promote", "result-0007"],
+    ["rollback", "result.rollback", "result-0008"],
+  ] as const)("%s target selection state 不符時以 typed reason fail closed", (transition, capability, targetResultId) => {
+    const { store: jobStore, pipelineJobId } = jobs();
+    const store = new PipelineResultStore(jobStore, null);
+    store.registerResult(resultInput(pipelineJobId));
+    registerSecondSelectable(store, pipelineJobId);
+
+    let observed: unknown;
+    try {
+      store.createActivationIntent(
+        activationIntentInput(pipelineJobId, {
+          intent_id: `intent_selection_${transition}`,
+          intent_nonce: `nonce-selection-${transition}-` + "f".repeat(64),
+          target_result_id: targetResultId,
+          transition,
+          capability,
+        }),
+      );
+    } catch (error) {
+      observed = error;
+    }
+    expect(observed).toBeInstanceOf(PipelineResultActivationTargetInvariantError);
+    expect((observed as PipelineResultActivationTargetInvariantError).reason).toBe(
+      "selection_state_mismatch",
+    );
+    expect(store.listActivationAudit(pipelineJobId)).toHaveLength(1);
+  });
+
+  it("建立 server-bound intent 只落 nonce hash，pointer/audit 不變", () => {
+    const file = tmpStorePath();
+    const { store: jobStore, pipelineJobId } = jobs();
+    const store = new PipelineResultStore(jobStore, file);
+    store.registerResult(resultInput(pipelineJobId));
+    registerSecondSelectable(store, pipelineJobId);
+    const pointerBefore = store.getActiveResultPointer(pipelineJobId);
+    const auditBefore = store.listActivationAudit(pipelineJobId);
+    const input = activationIntentInput(pipelineJobId);
+
+    const created = store.createActivationIntent(input);
+
+    expect(created.replay).toBe(false);
+    expect(created.intent).toMatchObject({
+      intent_id: input.intent_id,
+      state: "pending",
+      pipeline_job_id: pipelineJobId,
+      target_result_id: "result-0008",
+      expected_active_result_id: "result-0007",
+      decision: null,
+    });
+    expect(created.intent.intent_nonce_sha256).toMatch(/^[0-9a-f]{64}$/);
+    const persisted = fs.readFileSync(file, "utf-8");
+    expect(persisted).not.toContain(input.intent_nonce);
+    expect(persisted).not.toContain("decision-jti-promote-0008");
+    expect(store.getActiveResultPointer(pipelineJobId)).toEqual(pointerBefore);
+    expect(store.listActivationAudit(pipelineJobId)).toEqual(auditBefore);
+  });
+
+  it("confirm 在同一 commit 消費 decision、切 pointer、append audit；response-loss retry 冪等", () => {
+    const file = tmpStorePath();
+    const { store: jobStore, pipelineJobId } = jobs();
+    const store = new PipelineResultStore(jobStore, file);
+    store.registerResult(resultInput(pipelineJobId));
+    registerSecondSelectable(store, pipelineJobId);
+    store.createActivationIntent(activationIntentInput(pipelineJobId));
+
+    const first = store.confirmActivationIntent({
+      intent_id: "intent_promote_0008",
+      decision: verifiedDecision(),
+      now: "2026-07-16T08:51:00.000Z",
+    });
+    expect(first).toMatchObject({
+      outcome: "committed",
+      replay: false,
+      active_result_pointer: { result_id: "result-0008" },
+      activation_audit_entry: {
+        transition: "promote",
+        from_result_id: "result-0007",
+        to_result_id: "result-0008",
+        actor: { actor_id: "operator-test-01" },
+        authorization_decision_ref: "decision-result-promote-0008",
+      },
+      intent: { state: "committed" },
+    });
+    const replay = store.confirmActivationIntent({
+      intent_id: "intent_promote_0008",
+      decision: verifiedDecision(),
+      now: "2026-07-16T08:51:00.000Z",
+    });
+    expect(replay.outcome).toBe("committed");
+    expect(replay.replay).toBe(true);
+    expect(store.listActivationAudit(pipelineJobId)).toHaveLength(2);
+
+    const persisted = fs.readFileSync(file, "utf-8");
+    expect(persisted).not.toContain("decision-jti-promote-0008");
+    const reloaded = new PipelineResultStore(jobStore, file);
+    expect(reloaded.getActivationIntent("intent_promote_0008")?.state).toBe("committed");
+    expect(reloaded.getActiveResultPointer(pipelineJobId)?.result_id).toBe("result-0008");
+  });
+
+  it("已 committed confirm 在 pointer 後續改變時不得重送歷史 active pointer", () => {
+    const { store: jobStore, pipelineJobId } = jobs();
+    const store = new PipelineResultStore(jobStore, null);
+    store.registerResult(resultInput(pipelineJobId));
+    registerSecondSelectable(store, pipelineJobId);
+    store.createActivationIntent(activationIntentInput(pipelineJobId));
+    store.confirmActivationIntent({
+      intent_id: "intent_promote_0008",
+      decision: verifiedDecision(),
+      now: "2026-07-16T08:51:00.000Z",
+    });
+    store.createActivationIntent(
+      activationIntentInput(pipelineJobId, {
+        intent_id: "intent_rollback_after_commit",
+        intent_nonce: "nonce-rollback-after-commit-" + "a".repeat(64),
+        target_result_id: "result-0007",
+        expected_active_result_id: "result-0008",
+        transition: "rollback",
+        capability: "result.rollback",
+        reason: "restore the previous verified result",
+        correlation_id: "corr-rollback-after-commit",
+        created_at: "2026-07-16T08:52:00.000Z",
+        expires_at: "2026-07-16T08:57:00.000Z",
+      }),
+    );
+    store.confirmActivationIntent({
+      intent_id: "intent_rollback_after_commit",
+      decision: verifiedDecision({
+        authorization_decision_ref: "decision-rollback-after-commit",
+        capability: "result.rollback",
+        jti: "decision-jti-rollback-after-commit",
+        issued_at: "2026-07-16T08:52:05.000Z",
+        not_before: "2026-07-16T08:52:05.000Z",
+        expires_at: "2026-07-16T08:56:00.000Z",
+        verified_at: "2026-07-16T08:53:00.000Z",
+      }),
+      now: "2026-07-16T08:53:00.000Z",
+    });
+
+    expect(() =>
+      store.confirmActivationIntent({
+        intent_id: "intent_promote_0008",
+        decision: verifiedDecision({ verified_at: "2026-07-16T08:53:00.000Z" }),
+        now: "2026-07-16T08:53:00.000Z",
+      }),
+    ).toThrow(PipelineResultConflictError);
+    expect(store.getActiveResultPointer(pipelineJobId)?.result_id).toBe("result-0007");
+  });
+
+  it("stale confirm 終結 intent/jti 但不新增 activation audit，pointer 日後恢復也不可重放", () => {
+    const { store: jobStore, pipelineJobId } = jobs();
+    const store = new PipelineResultStore(jobStore, null);
+    store.registerResult(resultInput(pipelineJobId));
+    registerSecondSelectable(store, pipelineJobId);
+    store.createActivationIntent(activationIntentInput(pipelineJobId));
+    store.createActivationIntent(
+      activationIntentInput(pipelineJobId, {
+        intent_id: "intent_competing_promote_0008",
+        intent_nonce: "nonce-competing-" + "8".repeat(64),
+        correlation_id: "corr-competing-promote-0008",
+        created_at: "2026-07-16T08:50:10.000Z",
+        expires_at: "2026-07-16T08:54:30.000Z",
+      }),
+    );
+    store.confirmActivationIntent({
+      intent_id: "intent_competing_promote_0008",
+      decision: verifiedDecision({
+        authorization_decision_ref: "decision-competing-promote-0008",
+        jti: "decision-jti-competing-promote-0008",
+        issued_at: "2026-07-16T08:50:10.000Z",
+        not_before: "2026-07-16T08:50:10.000Z",
+        expires_at: "2026-07-16T08:54:00.000Z",
+        verified_at: "2026-07-16T08:50:30.000Z",
+      }),
+      now: "2026-07-16T08:50:30.000Z",
+    });
+    const auditBefore = store.listActivationAudit(pipelineJobId);
+
+    const stale = store.confirmActivationIntent({
+      intent_id: "intent_promote_0008",
+      decision: verifiedDecision(),
+      now: "2026-07-16T08:51:00.000Z",
+    });
+    expect(stale).toMatchObject({
+      outcome: "rejected_stale",
+      replay: false,
+      intent: { state: "rejected_stale" },
+      observed_active_result_id: "result-0008",
+    });
+    expect(store.listActivationAudit(pipelineJobId)).toEqual(auditBefore);
+
+    store.createActivationIntent(
+      activationIntentInput(pipelineJobId, {
+        intent_id: "intent_rollback_after_stale",
+        intent_nonce: "nonce-rollback-after-stale-" + "9".repeat(64),
+        target_result_id: "result-0007",
+        expected_active_result_id: "result-0008",
+        transition: "rollback",
+        capability: "result.rollback",
+        reason: "restore the previous verified result",
+        correlation_id: "corr-rollback-after-stale",
+        created_at: "2026-07-16T08:52:00.000Z",
+        expires_at: "2026-07-16T08:57:00.000Z",
+      }),
+    );
+    store.confirmActivationIntent({
+      intent_id: "intent_rollback_after_stale",
+      decision: verifiedDecision({
+        authorization_decision_ref: "decision-rollback-after-stale",
+        capability: "result.rollback",
+        jti: "decision-jti-rollback-after-stale",
+        issued_at: "2026-07-16T08:52:05.000Z",
+        not_before: "2026-07-16T08:52:05.000Z",
+        expires_at: "2026-07-16T08:56:00.000Z",
+        verified_at: "2026-07-16T08:53:00.000Z",
+      }),
+      now: "2026-07-16T08:53:00.000Z",
+    });
+    const replay = store.confirmActivationIntent({
+      intent_id: "intent_promote_0008",
+      decision: verifiedDecision({ verified_at: "2026-07-16T08:53:00.000Z" }),
+      now: "2026-07-16T08:53:00.000Z",
+    });
+    expect(replay.outcome).toBe("rejected_stale");
+    expect(replay.replay).toBe(true);
+    expect(store.getActiveResultPointer(pipelineJobId)?.result_id).toBe("result-0007");
+  });
+
+  it("decision subject/capability/time 或跨 intent jti replay 不符時 fail closed", () => {
+    const { store: jobStore, pipelineJobId } = jobs();
+    const store = new PipelineResultStore(jobStore, null);
+    store.registerResult(resultInput(pipelineJobId));
+    registerSecondSelectable(store, pipelineJobId);
+    store.createActivationIntent(activationIntentInput(pipelineJobId));
+
+    for (const decision of [
+      verifiedDecision({ subject: "operator-other" }),
+      verifiedDecision({ capability: "result.rollback" }),
+      verifiedDecision({ expires_at: "2026-07-16T08:50:30.000Z" }),
+      verifiedDecision({ issued_at: "2026-07-16T08:50:05.1234567Z" }),
+      verifiedDecision({ issued_at: "2026-07-16T08:51:00.000001Z" }),
+      verifiedDecision({ not_before: "2026-07-16T08:51:00.000001Z" }),
+    ]) {
+      expect(() =>
+        store.confirmActivationIntent({
+          intent_id: "intent_promote_0008",
+          decision,
+          now: "2026-07-16T08:51:00.000Z",
+        }),
+      ).toThrow(PipelineResultAuthorizationError);
+    }
+    expect(store.getActiveResultPointer(pipelineJobId)?.result_id).toBe("result-0007");
+    expect(store.getActivationIntent("intent_promote_0008")?.state).toBe("pending");
+  });
+
+  it("同 issuer/audience/jti 不得跨 capability 再消費", () => {
+    const { store: jobStore, pipelineJobId } = jobs();
+    const store = new PipelineResultStore(jobStore, null);
+    store.registerResult(resultInput(pipelineJobId));
+    registerSecondSelectable(store, pipelineJobId);
+    store.createActivationIntent(activationIntentInput(pipelineJobId));
+    store.confirmActivationIntent({
+      intent_id: "intent_promote_0008",
+      decision: verifiedDecision({ jti: "issuer-global-jti-0001" }),
+      now: "2026-07-16T08:51:00.000Z",
+    });
+
+    store.createActivationIntent(
+      activationIntentInput(pipelineJobId, {
+        intent_id: "intent_rollback_0007",
+        intent_nonce: "nonce-" + "8".repeat(64),
+        target_result_id: "result-0007",
+        expected_active_result_id: "result-0008",
+        transition: "rollback",
+        capability: "result.rollback",
+        reason: "rollback after downstream regression",
+        correlation_id: "corr-rollback-0007",
+        created_at: "2026-07-16T08:52:00.000Z",
+        expires_at: "2026-07-16T08:57:00.000Z",
+      }),
+    );
+    expect(() =>
+      store.confirmActivationIntent({
+        intent_id: "intent_rollback_0007",
+        decision: verifiedDecision({
+          authorization_decision_ref: "decision-result-rollback-0007",
+          capability: "result.rollback",
+          jti: "issuer-global-jti-0001",
+          issued_at: "2026-07-16T08:52:05.000Z",
+          not_before: "2026-07-16T08:52:05.000Z",
+          expires_at: "2026-07-16T08:56:00.000Z",
+          verified_at: "2026-07-16T08:53:00.000Z",
+        }),
+        now: "2026-07-16T08:53:00.000Z",
+      }),
+    ).toThrow(PipelineResultAuthorizationError);
+    expect(store.getActiveResultPointer(pipelineJobId)?.result_id).toBe("result-0008");
+  });
+
+  it("每 principal/job pending intent 有上限，建立新 intent 時原子清掉已逾期 pending", () => {
+    const { store: jobStore, pipelineJobId } = jobs();
+    const store = new PipelineResultStore(jobStore, null);
+    store.registerResult(resultInput(pipelineJobId));
+    registerSecondSelectable(store, pipelineJobId);
+    for (let index = 0; index < 8; index += 1) {
+      store.createActivationIntent(
+        activationIntentInput(pipelineJobId, {
+          intent_id: `intent_cap_${String(index).padStart(4, "0")}`,
+          intent_nonce: `nonce-${index}-` + String(index).repeat(64),
+        }),
+      );
+    }
+    expect(() =>
+      store.createActivationIntent(
+        activationIntentInput(pipelineJobId, {
+          intent_id: "intent_cap_blocked_0009",
+          intent_nonce: "nonce-blocked-" + "9".repeat(64),
+          created_at: "2026-07-16T08:54:00.000Z",
+          expires_at: "2026-07-16T08:59:00.000Z",
+        }),
+      ),
+    ).toThrow(PipelineResultConflictError);
+
+    const afterExpiry = store.createActivationIntent(
+      activationIntentInput(pipelineJobId, {
+        intent_id: "intent_cap_after_expiry",
+        intent_nonce: "nonce-after-expiry-" + "a".repeat(64),
+        created_at: "2026-07-16T08:55:00.000Z",
+        expires_at: "2026-07-16T09:00:00.000Z",
+      }),
+    );
+    expect(afterExpiry.replay).toBe(false);
+    expect(store.getActivationIntent("intent_cap_0000")).toBeNull();
+  });
+
+  it("pre-existing sidecar write lock fail closed，不留下 partial tmp 或 state", () => {
+    const file = tmpStorePath();
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(`${file}.lock`, "another-writer", "utf-8");
+    const { store: jobStore, pipelineJobId } = jobs();
+    const store = new PipelineResultStore(jobStore, file);
+
+    expect(() => store.registerResult(resultInput(pipelineJobId))).toThrow(
+      PipelineResultStateUnavailableError,
+    );
+    expect(fs.existsSync(file)).toBe(false);
+    expect(fs.existsSync(`${file}.tmp`)).toBe(false);
+    expect(store.getResult("result-0007")).toBeNull();
+  });
+
+  it("crashed writer 的 owner metadata 可驗為 dead 後，原子接管 stale lock", async () => {
+    const file = tmpStorePath();
+    const exited = spawn(process.execPath, ["-e", "process.exit(0)"]);
+    const deadPid = exited.pid;
+    expect(deadPid).toBeTypeOf("number");
+    await once(exited, "exit");
+    fs.writeFileSync(
+      `${file}.lock`,
+      JSON.stringify({
+        schema_version: "pipeline-result-lock/v1",
+        pid: deadPid,
+        created_at_ms: Date.now() - 1_000,
+      }),
+      "utf-8",
+    );
+    const { store: jobStore, pipelineJobId } = jobs();
+    const store = new PipelineResultStore(jobStore, file);
+
+    store.registerResult(resultInput(pipelineJobId));
+
+    expect(store.getResult("result-0007")?.result_id).toBe("result-0007");
+    expect(fs.existsSync(`${file}.lock`)).toBe(false);
+  });
+
+  it.each([
+    ["malformed intent id", { intent_id: "bad" }],
+    ["short nonce", { intent_nonce: "too-short" }],
+    ["transition-capability mismatch", { capability: "result.rollback" }],
+    ["non-increasing expiry", { expires_at: "2026-07-16T08:50:00.000Z" }],
+  ] as const)("rejects malformed activation intent binding: %s", (_name, overrides) => {
+    const { store: jobStore, pipelineJobId } = jobs();
+    const store = new PipelineResultStore(jobStore, null);
+    store.registerResult(resultInput(pipelineJobId));
+    registerSecondSelectable(store, pipelineJobId);
+    const pointerBefore = store.getActiveResultPointer(pipelineJobId);
+    const auditBefore = store.listActivationAudit(pipelineJobId);
+
+    expect(() =>
+      store.createActivationIntent(activationIntentInput(pipelineJobId, overrides)),
+    ).toThrow(PipelineResultInvariantError);
+    expect(store.getActiveResultPointer(pipelineJobId)).toEqual(pointerBefore);
+    expect(store.listActivationAudit(pipelineJobId)).toEqual(auditBefore);
+  });
+
+  it("rejects conflicting intent-id and nonce reuse without changing pointer or audit", () => {
+    const { store: jobStore, pipelineJobId } = jobs();
+    const store = new PipelineResultStore(jobStore, null);
+    store.registerResult(resultInput(pipelineJobId));
+    registerSecondSelectable(store, pipelineJobId);
+    const input = activationIntentInput(pipelineJobId);
+    store.createActivationIntent(input);
+    expect(store.createActivationIntent(input).replay).toBe(true);
+    const pointerBefore = store.getActiveResultPointer(pipelineJobId);
+    const auditBefore = store.listActivationAudit(pipelineJobId);
+
+    expect(() =>
+      store.createActivationIntent(
+        activationIntentInput(pipelineJobId, { reason: "different binding" }),
+      ),
+    ).toThrow(PipelineResultConflictError);
+    expect(() =>
+      store.createActivationIntent(
+        activationIntentInput(pipelineJobId, {
+          intent_id: "intent_nonce_reuse_0009",
+          correlation_id: "corr-nonce-reuse-0009",
+        }),
+      ),
+    ).toThrow(PipelineResultConflictError);
+    expect(store.getActiveResultPointer(pipelineJobId)).toEqual(pointerBefore);
+    expect(store.listActivationAudit(pipelineJobId)).toEqual(auditBefore);
+  });
+
+  it("missing or expired confirm fails closed without consuming pointer or audit", () => {
+    const { store: jobStore, pipelineJobId } = jobs();
+    const store = new PipelineResultStore(jobStore, null);
+    store.registerResult(resultInput(pipelineJobId));
+    registerSecondSelectable(store, pipelineJobId);
+    const pointerBefore = store.getActiveResultPointer(pipelineJobId);
+    const auditBefore = store.listActivationAudit(pipelineJobId);
+
+    expect(() =>
+      store.confirmActivationIntent({
+        intent_id: "intent_missing_0009",
+        decision: verifiedDecision(),
+        now: "2026-07-16T08:51:00.000Z",
+      }),
+    ).toThrow(PipelineResultAuthorizationError);
+
+    store.createActivationIntent(activationIntentInput(pipelineJobId));
+    expect(() =>
+      store.confirmActivationIntent({
+        intent_id: "intent_promote_0008",
+        decision: verifiedDecision({
+          issued_at: "2026-07-16T08:54:00.000Z",
+          not_before: "2026-07-16T08:54:00.000Z",
+          expires_at: "2026-07-16T08:55:00.000001Z",
+          verified_at: "2026-07-16T08:55:00.000Z",
+        }),
+        now: "2026-07-16T08:55:00.000Z",
+      }),
+    ).toThrow(PipelineResultAuthorizationError);
+    expect(store.getActivationIntent("intent_promote_0008")?.state).toBe("pending");
+    expect(store.getActiveResultPointer(pipelineJobId)).toEqual(pointerBefore);
+    expect(store.listActivationAudit(pipelineJobId)).toEqual(auditBefore);
+  });
+
+  it("rejects stale pointer and missing or cross-job target bindings before intent persistence", () => {
+    const { store: jobStore, pipelineJobId } = jobs();
+    const otherJob = jobStore.ensureJobForSourceBundle({
+      sourceBundleId: "source-bundle-test-0002",
+      externalModelVersionId: "model-version-test-0002",
+      eventId: "ready-event-0002",
+      now: "2026-07-16T08:10:00.000Z",
+    }).job;
+    const store = new PipelineResultStore(jobStore, null);
+    store.registerResult(resultInput(pipelineJobId));
+    registerSecondSelectable(store, pipelineJobId);
+    store.registerResult(
+      resultInput(otherJob.pipeline_job_id, {
+        result_id: "result-other-0001",
+        attempt_id: "attempt-other-0001",
+        source_bundle_id: "source-bundle-test-0002",
+        external_model_version_id: "model-version-test-0002",
+        result_prefix:
+          "minio://edge-test-01/lineage-results/model-version-test-0002/results/attempt-other-0001/",
+        result_manifest_ref:
+          "minio://edge-test-01/lineage-results/model-version-test-0002/results/attempt-other-0001/result-manifest.json?versionId=v-manifest-other-0001",
+        result_manifest_digest: "d".repeat(64),
+        correlation_id: "corr-lineage-other-0001",
+      }),
+    );
+
+    expect(() =>
+      store.createActivationIntent(
+        activationIntentInput(pipelineJobId, { expected_active_result_id: "result-stale" }),
+      ),
+    ).toThrow(PipelineResultConflictError);
+    for (const [intentId, targetResultId] of [
+      ["intent_missing_target", "result-missing"],
+      ["intent_cross_job_target", "result-other-0001"],
+    ] as const) {
+      expect(() =>
+        store.createActivationIntent(
+          activationIntentInput(pipelineJobId, {
+            intent_id: intentId,
+            intent_nonce: `nonce-${intentId}-` + "c".repeat(64),
+            target_result_id: targetResultId,
+          }),
+        ),
+      ).toThrow(PipelineResultActivationTargetInvariantError);
+      expect(store.getActivationIntent(intentId)).toBeNull();
+    }
+  });
+
+  it("rejects activation intent when the job has no active selectable result", () => {
+    const { store: jobStore, pipelineJobId } = jobs();
+    const store = new PipelineResultStore(jobStore, null);
+    store.registerResult(
+      resultInput(pipelineJobId, {
+        attempt_outcome: "failed",
+        publication_state: "AVAILABLE",
+      }),
+    );
+
+    expect(() =>
+      store.createActivationIntent(activationIntentInput(pipelineJobId)),
+    ).toThrow(PipelineResultInvariantError);
+    expect(store.getActiveResultPointer(pipelineJobId)).toBeNull();
+    expect(store.listActivationAudit(pipelineJobId)).toHaveLength(0);
   });
 });
