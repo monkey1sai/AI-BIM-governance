@@ -1,0 +1,58 @@
+stack_kind=self_referential_bootstrap
+pr=557
+base=80a388f4c0e9627c46c442d5124b000d51141691
+implementation_subject=f9e7c415b3c71a8b5ead1ba25f090fcaf45430c4
+activation=HELD
+verification_contract=autonomous-linux-delivery-contracts/v1
+contract_sha256=2b03b006e23998453d0f62a440af5dcbccc680f2771d2f7e1abc65330b321856
+
+test-autonomous-delivery-contracts
+command=node --test scripts/tests/test-autonomous-linux-delivery-contracts.mjs
+result=exit 0; 12/12 passed
+
+test-autonomous-delivery-contract-schemas
+command=python -c "import runpy; ns=runpy.run_path(r'tests/test_autonomous_delivery_contract_schemas.py'); names=sorted(n for n in ns if n.startswith('test_')); [ns[n]() for n in names]; print('direct_schema_assertions_passed=' + str(len(names)))"
+result=exit 0; 5/5 direct schema assertions passed
+
+test-self-referential-bootstrap
+command=pwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/tests/test-self-referential-bootstrap.ps1
+result=exit 0; all assertions passed
+
+test-trusted-host-merge
+command=node --test scripts/tests/test-trusted-host-merge.mjs scripts/tests/test-trusted-host-merge-runtime.mjs
+result=exit 0; 44 passed; 1 Linux-only test skipped
+
+test-review-risk
+command=node --test scripts/tests/test-review-risk.mjs
+result=exit 0; 65/65 passed
+
+test-agent-governance-check
+command=pwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/tests/test-agent-governance-check.ps1
+result=exit 0; all assertions passed
+
+test-rebuild-test-deploy-pwsh
+command=pwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/tests/test-rebuild-test-deploy.ps1
+result=exit 0; PASS
+
+test-rebuild-test-deploy-windows-powershell
+command=powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/tests/test-rebuild-test-deploy.ps1
+result=exit 0; PASS
+
+verify-openspec-autonomous-linux-delivery
+command=openspec validate autonomous-linux-delivery --strict
+result=exit 0; valid
+
+verify-openspec-repository-lifecycle
+command=node scripts/tests/verify-openspec-repository-lifecycle.mjs --repo-root . --format text
+result=exit 0; all three repository sources agree
+
+scan-secret-patterns
+command=pwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/tests/scan-secret-patterns.ps1
+result=exit 0; passed
+
+gitnexus-detect-changes
+command=gitnexus detect-changes --scope compare --base-ref origin/main -r <current-worktree-absolute-path>
+result=UNKNOWN; current linked worktree is not registered; not counted as a pass
+
+No external signer, owner-private inventory, credentials, live GitHub settings,
+approval, merge, runtime stop, Linux deployment, or production action was run.

@@ -394,6 +394,49 @@
           "docs/evidence/blip-approve-authority-separation/fixpoint/summary.md"
         ]
       }
+    },
+    {
+      "id": "autonomous-linux-delivery-contracts",
+      "status": "open",
+      "pr": 557,
+      "opened_at": "2026-08-17T06:51:31Z",
+      "reason": "new delivery contracts and their evidence parser classify and adjudicate the future merge and deployment mechanism, so the current trusted mechanism cannot prove their post-merge behavior before this pull request merges",
+      "verification_mechanism_paths": [
+        "agent-contracts/autonomous-delivery-adjudication-packet.schema.json",
+        "agent-contracts/autonomous-delivery-attestation-envelope.schema.json",
+        "agent-contracts/autonomous-delivery-classifier-input.schema.json",
+        "agent-contracts/autonomous-delivery-terminal-record.schema.json",
+        "agent-contracts/autonomous-delivery-transition.contract.json",
+        "agent-contracts/trusted-host-merge.contract.json",
+        "scripts/lib/autonomous-delivery-contract.mjs",
+        "scripts/lib/self-referential-bootstrap.ps1",
+        "scripts/self-referential-bootstrap-ledger.json",
+        "scripts/tests/test-autonomous-linux-delivery-contracts.mjs",
+        "scripts/tests/test-self-referential-bootstrap.ps1",
+        "tests/test_autonomous_delivery_contract_schemas.py"
+      ],
+      "verification_contract": {
+        "id": "autonomous-linux-delivery-contracts/v1",
+        "command_ids": [
+          "test-autonomous-delivery-contracts",
+          "test-autonomous-delivery-contract-schemas",
+          "test-self-referential-bootstrap",
+          "test-trusted-host-merge",
+          "test-review-risk",
+          "test-agent-governance-check",
+          "test-rebuild-test-deploy-pwsh",
+          "test-rebuild-test-deploy-windows-powershell",
+          "verify-openspec-autonomous-linux-delivery",
+          "verify-openspec-repository-lifecycle",
+          "scan-secret-patterns"
+        ],
+        "contract_sha256": "2b03b006e23998453d0f62a440af5dcbccc680f2771d2f7e1abc65330b321856"
+      },
+      "bootstrap_evidence_refs": [
+        "docs/evidence/autonomous-linux-delivery-contracts/self-referential-bootstrap/README.md",
+        "docs/evidence/autonomous-linux-delivery-contracts/self-referential-bootstrap/gate-suites.txt"
+      ],
+      "fixpoint": null
     }
   ]
 }
