@@ -126,6 +126,108 @@ function compareSide(result: PipelineResultView): PipelineResultCompareSide {
   };
 }
 
+const SEMANTIC_CONTRADICTIONS: Array<{
+  label: string;
+  mutate: (side: PipelineResultCompareSide) => PipelineResultCompareSide;
+}> = [
+  {
+    label: "metric/count binding mismatch",
+    mutate: (side) => ({
+      ...side,
+      counts: {
+        ...side.counts,
+        eligible_ifc_product_count: side.counts.eligible_ifc_product_count - 1,
+      },
+    }),
+  },
+  {
+    label: "csv valid count exceeds total",
+    mutate: (side) => ({
+      ...side,
+      counts: {
+        ...side.counts,
+        csv_total_count: side.counts.csv_valid_count - 1,
+      },
+    }),
+  },
+  {
+    label: "diagnostic count exceeds non-valid rows",
+    mutate: (side) => ({
+      ...side,
+      counts: {
+        ...side.counts,
+        duplicate_rvt_id_count:
+          side.counts.csv_total_count - side.counts.csv_valid_count + 1,
+      },
+    }),
+  },
+  {
+    label: "ifc-only count identity mismatch",
+    mutate: (side) => ({
+      ...side,
+      counts: {
+        ...side.counts,
+        ifc_only_count: side.counts.ifc_only_count + 1,
+      },
+    }),
+  },
+  {
+    label: "full-lineage set-intersection violation",
+    mutate: (side) => {
+      const lowerBound = Math.max(
+        0,
+        side.metrics.rvt_ifc_alignment_ratio.numerator +
+          side.metrics.ifc_usdc_coverage_ratio.numerator -
+          side.counts.eligible_ifc_product_count,
+      );
+      const invalidFullLineage = lowerBound - 1;
+      const denominator = side.metrics.rvt_ifc_usdc_lineage_ratio.denominator;
+      return {
+        ...side,
+        metrics: {
+          ...side.metrics,
+          rvt_ifc_usdc_lineage_ratio: {
+            numerator: invalidFullLineage,
+            denominator,
+            ratio: invalidFullLineage / denominator,
+            status: "partial",
+          },
+        },
+        counts: {
+          ...side.counts,
+          full_lineage_matched_count: invalidFullLineage,
+        },
+      };
+    },
+  },
+  {
+    label: "ratio is not the exact 10dp truncation",
+    mutate: (side) => ({
+      ...side,
+      metrics: {
+        ...side.metrics,
+        ifc_usdc_coverage_ratio: {
+          ...side.metrics.ifc_usdc_coverage_ratio,
+          ratio: side.result_id === "result-0008" ? 0.9833333334 : 0.9999999999,
+        },
+      },
+    }),
+  },
+  {
+    label: "metric status contradicts numerator and denominator",
+    mutate: (side) => ({
+      ...side,
+      metrics: {
+        ...side.metrics,
+        ifc_usdc_coverage_ratio: {
+          ...side.metrics.ifc_usdc_coverage_ratio,
+          status: side.result_id === "result-0008" ? "complete" : "partial",
+        },
+      },
+    }),
+  },
+];
+
 class FakeAuthorization implements ExternalLineageAuthorizationPort {
   readonly expected: ExpectedExternalLineageDecision[] = [];
   decisionOverrides: Partial<VerifiedExternalLineageDecision> = {};
@@ -522,6 +624,25 @@ describe("lineage result routes", () => {
     expect(response.body).toEqual({ error: "result_detail_unavailable" });
     expect(JSON.stringify(response.body)).not.toContain("wrong-version");
   });
+
+  it.each(SEMANTIC_CONTRADICTIONS)(
+    "detail reader 回 schema-valid semantic contradiction（$label）時 compare 503",
+    async ({ mutate }) => {
+      const harness = makeHarness({
+        details: {
+          readCompareSide: async (result) => mutate(compareSide(result)),
+        },
+      });
+      const response = await request(harness.app)
+        .get(`/api/lineage/pipeline-jobs/${harness.pipelineJobId}/results/compare`)
+        .query({ left_result_id: "result-0007", right_result_id: "result-0008" })
+        .set("authorization", "test-principal-credential")
+        .set("x-lineage-authorization-decision", DECISION_HEADER);
+
+      expect(response.status).toBe(503);
+      expect(response.body).toEqual({ error: "result_detail_unavailable" });
+    },
+  );
 
   it("detail reader 回 schema-valid 但 immutable identity 漂移時仍只回 detail 503", async () => {
     const harness = makeHarness({

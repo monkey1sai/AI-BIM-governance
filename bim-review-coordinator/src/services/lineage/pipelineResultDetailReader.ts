@@ -76,6 +76,18 @@ export class PipelineResultDetailUnavailableError extends Error {
 }
 
 const identifierSchema = z.string().min(1).max(200);
+const nonnegativeSafeIntegerSchema = z.number().int().nonnegative().safe();
+const RATIO_SCALE = 10_000_000_000n;
+const RATIO_SCALE_NUMBER = 10_000_000_000;
+
+function truncatedRatio(numerator: number, denominator: number): number | null {
+  if (denominator === 0) {
+    return null;
+  }
+  const scaled = (BigInt(numerator) * RATIO_SCALE) / BigInt(denominator);
+  return Number(scaled) / RATIO_SCALE_NUMBER;
+}
+
 const locatorSchema = z
   .object({
     ref: z.string().min(1).max(4_096),
@@ -89,8 +101,8 @@ const locatorSchema = z
 
 const metricSchema = z
   .object({
-    numerator: z.number().int().nonnegative(),
-    denominator: z.number().int().nonnegative(),
+    numerator: nonnegativeSafeIntegerSchema,
+    denominator: nonnegativeSafeIntegerSchema,
     ratio: z.number().finite().min(0).max(1).nullable(),
     status: z.enum(["complete", "partial", "not_evaluable"]),
   })
@@ -108,21 +120,34 @@ const metricSchema = z
     }
     if (metric.ratio === null || metric.status === "not_evaluable") {
       context.addIssue({ code: z.ZodIssueCode.custom, message: "invalid evaluable metric" });
+      return;
+    }
+    if (metric.numerator > metric.denominator) {
+      context.addIssue({ code: z.ZodIssueCode.custom, message: "numerator exceeds denominator" });
+      return;
+    }
+    if (metric.ratio !== truncatedRatio(metric.numerator, metric.denominator)) {
+      context.addIssue({ code: z.ZodIssueCode.custom, message: "invalid truncated ratio" });
+    }
+    const expectedStatus =
+      metric.numerator === metric.denominator ? "complete" : "partial";
+    if (metric.status !== expectedStatus) {
+      context.addIssue({ code: z.ZodIssueCode.custom, message: "invalid metric status" });
     }
   });
 
 const countsSchema = z
   .object({
-    csv_total_count: z.number().int().nonnegative(),
-    csv_valid_count: z.number().int().nonnegative(),
-    eligible_ifc_product_count: z.number().int().nonnegative(),
-    duplicate_rvt_id_count: z.number().int().nonnegative(),
-    duplicate_ifc_guid_count: z.number().int().nonnegative(),
-    invalid_row_count: z.number().int().nonnegative(),
-    csv_only_count: z.number().int().nonnegative(),
-    ifc_only_count: z.number().int().nonnegative(),
-    ifc_usdc_unmapped_count: z.number().int().nonnegative(),
-    full_lineage_matched_count: z.number().int().nonnegative(),
+    csv_total_count: nonnegativeSafeIntegerSchema,
+    csv_valid_count: nonnegativeSafeIntegerSchema,
+    eligible_ifc_product_count: nonnegativeSafeIntegerSchema,
+    duplicate_rvt_id_count: nonnegativeSafeIntegerSchema,
+    duplicate_ifc_guid_count: nonnegativeSafeIntegerSchema,
+    invalid_row_count: nonnegativeSafeIntegerSchema,
+    csv_only_count: nonnegativeSafeIntegerSchema,
+    ifc_only_count: nonnegativeSafeIntegerSchema,
+    ifc_usdc_unmapped_count: nonnegativeSafeIntegerSchema,
+    full_lineage_matched_count: nonnegativeSafeIntegerSchema,
   })
   .strict();
 
@@ -155,7 +180,87 @@ const compareSideSchema = z
       .max(64)
       .refine((items) => new Set(items).size === items.length),
   })
-  .strict();
+  .strict()
+  .superRefine((side, context) => {
+    const issue = (path: Array<string | number>, message: string): void => {
+      context.addIssue({ code: z.ZodIssueCode.custom, path, message });
+    };
+    const coverage = side.metrics.ifc_usdc_coverage_ratio;
+    const alignment = side.metrics.rvt_ifc_alignment_ratio;
+    const lineage = side.metrics.rvt_ifc_usdc_lineage_ratio;
+    const csvTotal = BigInt(side.counts.csv_total_count);
+    const csvValid = BigInt(side.counts.csv_valid_count);
+    const eligible = BigInt(side.counts.eligible_ifc_product_count);
+    const csvOnly = BigInt(side.counts.csv_only_count);
+    const ifcOnly = BigInt(side.counts.ifc_only_count);
+    const unmapped = BigInt(side.counts.ifc_usdc_unmapped_count);
+    const fullLineage = BigInt(side.counts.full_lineage_matched_count);
+    const matchedRvtIfc = BigInt(alignment.numerator);
+    const mappedIfcUsdc = BigInt(coverage.numerator);
+
+    if (BigInt(coverage.denominator) !== eligible) {
+      issue(
+        ["metrics", "ifc_usdc_coverage_ratio", "denominator"],
+        "IFC-USDC denominator mismatch",
+      );
+    }
+    if (mappedIfcUsdc !== eligible - unmapped) {
+      issue(
+        ["metrics", "ifc_usdc_coverage_ratio", "numerator"],
+        "IFC-USDC numerator mismatch",
+      );
+    }
+    if (BigInt(alignment.denominator) !== csvValid) {
+      issue(
+        ["metrics", "rvt_ifc_alignment_ratio", "denominator"],
+        "RVT-IFC denominator mismatch",
+      );
+    }
+    if (matchedRvtIfc !== csvValid - csvOnly) {
+      issue(
+        ["metrics", "rvt_ifc_alignment_ratio", "numerator"],
+        "RVT-IFC numerator mismatch",
+      );
+    }
+    if (BigInt(lineage.denominator) !== csvValid) {
+      issue(
+        ["metrics", "rvt_ifc_usdc_lineage_ratio", "denominator"],
+        "lineage denominator mismatch",
+      );
+    }
+    if (BigInt(lineage.numerator) !== fullLineage) {
+      issue(
+        ["metrics", "rvt_ifc_usdc_lineage_ratio", "numerator"],
+        "lineage numerator mismatch",
+      );
+    }
+
+    if (csvValid > csvTotal) {
+      issue(["counts", "csv_valid_count"], "CSV valid count exceeds total");
+    } else {
+      const nonValidRows = csvTotal - csvValid;
+      for (const name of [
+        "duplicate_rvt_id_count",
+        "duplicate_ifc_guid_count",
+        "invalid_row_count",
+      ] as const) {
+        if (BigInt(side.counts[name]) > nonValidRows) {
+          issue(["counts", name], "diagnostic count exceeds non-valid rows");
+        }
+      }
+    }
+
+    if (ifcOnly !== eligible - matchedRvtIfc) {
+      issue(["counts", "ifc_only_count"], "IFC-only count mismatch");
+    }
+
+    const lowerCandidate = matchedRvtIfc + mappedIfcUsdc - eligible;
+    const lowerBound = lowerCandidate > 0n ? lowerCandidate : 0n;
+    const upperBound = matchedRvtIfc < mappedIfcUsdc ? matchedRvtIfc : mappedIfcUsdc;
+    if (fullLineage < lowerBound || fullLineage > upperBound) {
+      issue(["counts", "full_lineage_matched_count"], "lineage set-intersection mismatch");
+    }
+  });
 
 /** Runtime equivalent of the L1 compareSide schema; readers are untrusted until this succeeds. */
 export function parsePipelineResultCompareSide(
