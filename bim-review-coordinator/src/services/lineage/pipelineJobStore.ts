@@ -35,7 +35,29 @@ import path from "node:path";
 import type { StructLogger } from "../../lib/structLog.js";
 
 /** 本地持久檔的 schema 版本（**不是** L1 envelope 的 `schema_version`）。 */
-const STORE_SCHEMA_VERSION = "pipeline-job/v1";
+const STORE_SCHEMA_VERSION = "pipeline-job/v2";
+
+/** Stable ID derivation is immutable even when the private persistence envelope evolves. */
+const PIPELINE_JOB_ID_DERIVATION_VERSION = "pipeline-job/v1";
+
+/** Private cross-sidecar commitment; never part of PipelineJobRecord or its HTTP envelope. */
+export const PIPELINE_RESULT_SNAPSHOT_COMMITMENT_SCHEMA_VERSION =
+  "pipeline-result-commitment/v1";
+
+export interface PipelineResultSnapshotCommitment {
+  schema_version: typeof PIPELINE_RESULT_SNAPSHOT_COMMITMENT_SCHEMA_VERSION;
+  revision: number;
+  snapshot_sha256: string;
+}
+
+const PIPELINE_RESULT_SNAPSHOT_COMMITMENT_STATE_SCHEMA_VERSION =
+  "pipeline-result-commitment-state/v1";
+
+export interface PipelineResultSnapshotCommitmentState {
+  schema_version: typeof PIPELINE_RESULT_SNAPSHOT_COMMITMENT_STATE_SCHEMA_VERSION;
+  current: PipelineResultSnapshotCommitment | null;
+  pending: PipelineResultSnapshotCommitment | null;
+}
 
 /** L1 envelope 的 `schema_version` const。 */
 export const PIPELINE_JOB_DOCUMENT_SCHEMA_VERSION = "pipeline-job-attempt/v1";
@@ -154,7 +176,7 @@ export class PipelineJobInvariantError extends Error {
 export function pipelineJobIdFor(sourceBundleId: string): string {
   const digest = crypto
     .createHash("sha256")
-    .update(`${STORE_SCHEMA_VERSION}|${sourceBundleId}`, "utf-8")
+    .update(`${PIPELINE_JOB_ID_DERIVATION_VERSION}|${sourceBundleId}`, "utf-8")
     .digest("hex");
   return `pj_${digest.slice(0, 32)}`;
 }
@@ -279,6 +301,70 @@ export interface PipelineJobStoreOptions {
   structLog?: StructLogger;
 }
 
+function isPipelineResultSnapshotCommitment(
+  value: unknown,
+): value is PipelineResultSnapshotCommitment {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const candidate = value as Partial<PipelineResultSnapshotCommitment>;
+  return (
+    candidate.schema_version === PIPELINE_RESULT_SNAPSHOT_COMMITMENT_SCHEMA_VERSION &&
+    typeof candidate.revision === "number" &&
+    Number.isSafeInteger(candidate.revision) &&
+    candidate.revision > 0 &&
+    typeof candidate.snapshot_sha256 === "string" &&
+    /^[0-9a-f]{64}$/.test(candidate.snapshot_sha256)
+  );
+}
+
+function clonePipelineResultSnapshotCommitment(
+  commitment: PipelineResultSnapshotCommitment,
+): PipelineResultSnapshotCommitment {
+  return { ...commitment };
+}
+
+function samePipelineResultSnapshotCommitment(
+  left: PipelineResultSnapshotCommitment | null,
+  right: PipelineResultSnapshotCommitment | null,
+): boolean {
+  return (
+    left === right ||
+    (left !== null &&
+      right !== null &&
+      left.revision === right.revision &&
+      left.snapshot_sha256 === right.snapshot_sha256)
+  );
+}
+
+function isPipelineResultSnapshotCommitmentState(
+  value: unknown,
+): value is PipelineResultSnapshotCommitmentState {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const candidate = value as Partial<PipelineResultSnapshotCommitmentState>;
+  if (
+    candidate.schema_version !== PIPELINE_RESULT_SNAPSHOT_COMMITMENT_STATE_SCHEMA_VERSION ||
+    !(candidate.current === null || isPipelineResultSnapshotCommitment(candidate.current)) ||
+    !(candidate.pending === null || isPipelineResultSnapshotCommitment(candidate.pending))
+  ) {
+    return false;
+  }
+  if (candidate.pending === null) return true;
+  return candidate.pending.revision === (candidate.current?.revision ?? 0) + 1;
+}
+
+function clonePipelineResultSnapshotCommitmentState(
+  state: PipelineResultSnapshotCommitmentState,
+): PipelineResultSnapshotCommitmentState {
+  return {
+    schema_version: PIPELINE_RESULT_SNAPSHOT_COMMITMENT_STATE_SCHEMA_VERSION,
+    current: state.current
+      ? clonePipelineResultSnapshotCommitment(state.current)
+      : null,
+    pending: state.pending
+      ? clonePipelineResultSnapshotCommitment(state.pending)
+      : null,
+  };
+}
+
 /**
  * Durable stable pipeline-job store（coordinator-local；非 control-plane authority）。
  */
@@ -286,6 +372,11 @@ export class PipelineJobStore {
   private readonly records = new Map<string, PipelineJobRecord>();
   private readonly bySourceBundle = new Map<string, string>();
   private readonly structLog?: StructLogger;
+  private resultSnapshotCommitmentState: PipelineResultSnapshotCommitmentState = {
+    schema_version: PIPELINE_RESULT_SNAPSHOT_COMMITMENT_STATE_SCHEMA_VERSION,
+    current: null,
+    pending: null,
+  };
 
   /**
    * @param persistencePath JSON 持久化路徑；null 表示純記憶體（測試／降級）
@@ -304,13 +395,41 @@ export class PipelineJobStore {
     if (!this.persistencePath || !fs.existsSync(this.persistencePath)) return;
     try {
       const raw = fs.readFileSync(this.persistencePath, "utf-8");
-      const parsed = JSON.parse(raw) as { schema_version?: string; records?: unknown };
+      const parsed = JSON.parse(raw) as {
+        schema_version?: string;
+        records?: unknown;
+        result_snapshot_commitment?: unknown;
+      };
+      if (parsed.result_snapshot_commitment !== undefined) {
+        if (isPipelineResultSnapshotCommitment(parsed.result_snapshot_commitment)) {
+          // Backward-compatible read of the first v2 draft that stored only current.
+          this.resultSnapshotCommitmentState = {
+            schema_version: PIPELINE_RESULT_SNAPSHOT_COMMITMENT_STATE_SCHEMA_VERSION,
+            current: clonePipelineResultSnapshotCommitment(
+              parsed.result_snapshot_commitment,
+            ),
+            pending: null,
+          };
+        } else if (
+          isPipelineResultSnapshotCommitmentState(parsed.result_snapshot_commitment)
+        ) {
+          this.resultSnapshotCommitmentState =
+            clonePipelineResultSnapshotCommitmentState(
+              parsed.result_snapshot_commitment,
+            );
+        } else {
+          throw new PipelineJobInvariantError(
+            "pipeline result snapshot commitment is malformed",
+          );
+        }
+      }
       if (!Array.isArray(parsed.records)) return;
       for (const item of parsed.records) {
         if (!isPipelineJobRecord(item)) continue;
         this.index(item);
       }
-    } catch {
+    } catch (error) {
+      if (error instanceof PipelineJobInvariantError) throw error;
       // 壞檔不 crash，當空 store 起手。`pipeline_job_id` 是決定性推導，
       // 下一個 ready event 會以同一個 id 重建同一個 logical job。
       this.records.clear();
@@ -325,7 +444,19 @@ export class PipelineJobStore {
     fs.writeFileSync(
       tmpPath,
       JSON.stringify(
-        { schema_version: STORE_SCHEMA_VERSION, records: [...this.records.values()] },
+        {
+          schema_version: STORE_SCHEMA_VERSION,
+          records: [...this.records.values()],
+          ...(this.resultSnapshotCommitmentState.current ||
+          this.resultSnapshotCommitmentState.pending
+            ? {
+                result_snapshot_commitment:
+                  clonePipelineResultSnapshotCommitmentState(
+                    this.resultSnapshotCommitmentState,
+                  ),
+              }
+            : {}),
+        },
         null,
         2,
       ),
@@ -348,6 +479,135 @@ export class PipelineJobStore {
   getBySourceBundle(sourceBundleId: string): PipelineJobRecord | null {
     const id = this.bySourceBundle.get(sourceBundleId);
     return id ? (this.records.get(id) ?? null) : null;
+  }
+
+  getPipelineResultSnapshotCommitment(): PipelineResultSnapshotCommitment | null {
+    return this.resultSnapshotCommitmentState.current
+      ? clonePipelineResultSnapshotCommitment(
+          this.resultSnapshotCommitmentState.current,
+        )
+      : null;
+  }
+
+  getPipelineResultSnapshotCommitmentState(): PipelineResultSnapshotCommitmentState {
+    return clonePipelineResultSnapshotCommitmentState(
+      this.resultSnapshotCommitmentState,
+    );
+  }
+
+  private replacePipelineResultSnapshotCommitmentState(
+    next: PipelineResultSnapshotCommitmentState,
+  ): void {
+    const existing = clonePipelineResultSnapshotCommitmentState(
+      this.resultSnapshotCommitmentState,
+    );
+    this.resultSnapshotCommitmentState =
+      clonePipelineResultSnapshotCommitmentState(next);
+    try {
+      this.persist();
+    } catch (error) {
+      this.resultSnapshotCommitmentState = existing;
+      throw error;
+    }
+  }
+
+  commitPipelineResultSnapshot(commitment: PipelineResultSnapshotCommitment): void {
+    if (!isPipelineResultSnapshotCommitment(commitment)) {
+      throw new PipelineJobInvariantError(
+        "pipeline result snapshot commitment is malformed",
+      );
+    }
+    const state = this.resultSnapshotCommitmentState;
+    if (state.pending) {
+      throw new PipelineJobInvariantError(
+        "pipeline result snapshot cannot commit directly while a snapshot is pending",
+      );
+    }
+    const existing = state.current;
+    if (
+      existing &&
+      (commitment.revision < existing.revision ||
+        (commitment.revision === existing.revision &&
+          commitment.snapshot_sha256 !== existing.snapshot_sha256))
+    ) {
+      throw new PipelineJobInvariantError(
+        "pipeline result snapshot commitment cannot move backward or change at one revision",
+      );
+    }
+    if (samePipelineResultSnapshotCommitment(existing, commitment)) return;
+    this.replacePipelineResultSnapshotCommitmentState({
+      schema_version: PIPELINE_RESULT_SNAPSHOT_COMMITMENT_STATE_SCHEMA_VERSION,
+      current: commitment,
+      pending: null,
+    });
+  }
+
+  preparePipelineResultSnapshot(commitment: PipelineResultSnapshotCommitment): void {
+    if (!isPipelineResultSnapshotCommitment(commitment)) {
+      throw new PipelineJobInvariantError(
+        "pipeline result snapshot commitment is malformed",
+      );
+    }
+    const state = this.resultSnapshotCommitmentState;
+    if (state.pending) {
+      if (samePipelineResultSnapshotCommitment(state.pending, commitment)) return;
+      throw new PipelineJobInvariantError(
+        "a different pipeline result snapshot is already pending",
+      );
+    }
+    if (commitment.revision !== (state.current?.revision ?? 0) + 1) {
+      throw new PipelineJobInvariantError(
+        "pending pipeline result snapshot must be the next revision",
+      );
+    }
+    this.replacePipelineResultSnapshotCommitmentState({
+      schema_version: PIPELINE_RESULT_SNAPSHOT_COMMITMENT_STATE_SCHEMA_VERSION,
+      current: state.current,
+      pending: commitment,
+    });
+  }
+
+  promotePipelineResultSnapshot(commitment: PipelineResultSnapshotCommitment): void {
+    if (!isPipelineResultSnapshotCommitment(commitment)) {
+      throw new PipelineJobInvariantError(
+        "pipeline result snapshot commitment is malformed",
+      );
+    }
+    const state = this.resultSnapshotCommitmentState;
+    if (!state.pending) {
+      if (samePipelineResultSnapshotCommitment(state.current, commitment)) return;
+      throw new PipelineJobInvariantError("pipeline result snapshot is not pending");
+    }
+    if (!samePipelineResultSnapshotCommitment(state.pending, commitment)) {
+      throw new PipelineJobInvariantError(
+        "pipeline result snapshot promotion does not match pending commitment",
+      );
+    }
+    this.replacePipelineResultSnapshotCommitmentState({
+      schema_version: PIPELINE_RESULT_SNAPSHOT_COMMITMENT_STATE_SCHEMA_VERSION,
+      current: commitment,
+      pending: null,
+    });
+  }
+
+  abortPipelineResultSnapshot(commitment: PipelineResultSnapshotCommitment): void {
+    if (!isPipelineResultSnapshotCommitment(commitment)) {
+      throw new PipelineJobInvariantError(
+        "pipeline result snapshot commitment is malformed",
+      );
+    }
+    const state = this.resultSnapshotCommitmentState;
+    if (!state.pending) return;
+    if (!samePipelineResultSnapshotCommitment(state.pending, commitment)) {
+      throw new PipelineJobInvariantError(
+        "pipeline result snapshot abort does not match pending commitment",
+      );
+    }
+    this.replacePipelineResultSnapshotCommitmentState({
+      schema_version: PIPELINE_RESULT_SNAPSHOT_COMMITMENT_STATE_SCHEMA_VERSION,
+      current: state.current,
+      pending: null,
+    });
   }
 
   /** 依 `created_at` 降冪（最新在前），與 `SourceBundleStore.list()` 同慣例。 */

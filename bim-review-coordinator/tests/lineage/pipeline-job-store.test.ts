@@ -6,6 +6,7 @@ import {
   PipelineJobIdentityConflictError,
   PipelineJobInvariantError,
   PipelineJobStore,
+  PIPELINE_RESULT_SNAPSHOT_COMMITMENT_SCHEMA_VERSION,
   READY_EVENT_LEDGER_MAX_ENTRIES,
   pipelineJobIdFor,
   type PipelineJobRecord,
@@ -75,6 +76,12 @@ describe("pipelineJobIdFor", () => {
     expect(first).toMatch(/^pj_[0-9a-f]{32}$/);
     expect(first.length).toBeGreaterThanOrEqual(1);
     expect(first.length).toBeLessThanOrEqual(200);
+  });
+
+  it("private store schema 升版不得改變既有 v1 stable job id", () => {
+    expect(pipelineJobIdFor("source-bundle-stable-0001")).toBe(
+      "pj_999b9f28a919267880424d8fd9480bc2",
+    );
   });
 });
 
@@ -356,7 +363,48 @@ describe("PipelineJobStore 持久化", () => {
     const storePath = tmpStorePath();
     ensure(new PipelineJobStore(storePath));
     const parsed = JSON.parse(fs.readFileSync(storePath, "utf-8")) as { schema_version: string };
-    expect(parsed.schema_version).toBe("pipeline-job/v1");
+    expect(parsed.schema_version).toBe("pipeline-job/v2");
+  });
+
+  it("result sidecar two-phase commitment 只存在私有 envelope，且可 durable round-trip", () => {
+    const storePath = tmpStorePath();
+    const first = new PipelineJobStore(storePath);
+    const { job } = ensure(first);
+    const current = {
+      schema_version: PIPELINE_RESULT_SNAPSHOT_COMMITMENT_SCHEMA_VERSION,
+      revision: 1,
+      snapshot_sha256: "a".repeat(64),
+    } as const;
+    const pending = {
+      schema_version: PIPELINE_RESULT_SNAPSHOT_COMMITMENT_SCHEMA_VERSION,
+      revision: 2,
+      snapshot_sha256: "b".repeat(64),
+    } as const;
+
+    first.commitPipelineResultSnapshot(current);
+    first.preparePipelineResultSnapshot(pending);
+
+    expect(first.getPipelineResultSnapshotCommitment()).toEqual(current);
+    expect(first.getPipelineResultSnapshotCommitmentState()).toMatchObject({
+      current,
+      pending,
+    });
+    expect(first.get(job.pipeline_job_id)).not.toHaveProperty("result_snapshot_commitment");
+    const persisted = JSON.parse(fs.readFileSync(storePath, "utf-8")) as {
+      result_snapshot_commitment?: unknown;
+    };
+    expect(persisted.result_snapshot_commitment).toMatchObject({ current, pending });
+    const reopened = new PipelineJobStore(storePath);
+    expect(reopened.getPipelineResultSnapshotCommitmentState()).toMatchObject({
+      current,
+      pending,
+    });
+    reopened.promotePipelineResultSnapshot(pending);
+    expect(reopened.getPipelineResultSnapshotCommitmentState()).toMatchObject({
+      current: pending,
+      pending: null,
+    });
+    expect(reopened.get(job.pipeline_job_id)).not.toHaveProperty("result_snapshot_commitment");
   });
 
   it("壞檔不 crash，且下一個 ready event 以同一個 job id 重建（決定性 id 的用意）", () => {
