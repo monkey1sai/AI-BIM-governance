@@ -15,7 +15,6 @@
     { "id": "add-single-gpu-session-ai-review-mvp", "status": "deferred" },
     { "id": "align-frontend-design-system-reference", "status": "deferred" },
     { "id": "gpu-session-baseline-and-idle-reclaim", "status": "active" },
-    { "id": "implement-runtime-command-authority-and-rejection", "status": "active" },
     { "id": "introduce-viewer-app-integration-surface", "status": "deferred" },
     { "id": "rvt-ifc-usdc-lineage", "status": "active" }
   ]

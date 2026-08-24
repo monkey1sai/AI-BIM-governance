@@ -1415,20 +1415,20 @@
     },
     {
       "id": "implement-runtime-command-authority-and-rejection",
-      "status": "active",
+      "status": "archived",
       "owner": "bim-review-coordinator",
-      "current_slice": "2026-08-20 對帳：tasks.md 5.6 已於 2026-08-18 slice-4 勾選（console 12/12 + standalone 6 present／4 N/A／2 lab-embed degraded）；ledger 自 32/35 升為 33/35。殘項＝7.3（Windows host-native Kit 九案，須活 coordinator＋部署面，禁止用隔離 Kit 當 authority 證據）、7.5（change 尚未 archive）。本輪不跑 7.3、不 archive、不宣稱 production/full completion。",
+      "current_slice": null,
       "blocked_by": [],
-      "last_verified": "2026-08-20T06:20:00Z",
+      "last_verified": "2026-08-24T12:30:00Z",
       "task_ledger": {
-        "completed": 33,
+        "completed": 35,
         "total": 35
       },
       "evidence_refs": [
-        "openspec/changes/implement-runtime-command-authority-and-rejection/proposal.md",
-        "openspec/changes/implement-runtime-command-authority-and-rejection/tasks.md"
+        "openspec/changes/archive/2026-08-24-implement-runtime-command-authority-and-rejection/proposal.md",
+        "openspec/changes/archive/2026-08-24-implement-runtime-command-authority-and-rejection/tasks.md"
       ],
-      "subject_commit": "6aab355f39fe941c046e7a3fab93703c6f9728ca",
+      "subject_commit": "d4fddb17872fcb9c1f68c2d11cdd4c8be2b1489c",
       "archive_debt": null
     },
     {
