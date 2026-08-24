@@ -2,6 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import { once } from "node:events";
 import { afterEach, describe, expect, it } from "vitest";
 import { PipelineJobStore } from "../../src/services/lineage/pipelineJobStore.js";
@@ -21,6 +22,20 @@ import {
 
 const NOW = "2026-07-16T08:41:07.500Z";
 const LATER = "2026-07-16T08:45:00.000Z";
+const NON_CANONICAL_TIMESTAMPS = [
+  ["offset", "2026-07-16T08:41:07.500+00:00"],
+  ["lowercase z", "2026-07-16T08:41:07.500z"],
+  ["calendar-invalid", "2026-02-30T08:41:07.500Z"],
+  ["leap second", "2026-07-16T08:41:60.500Z"],
+  ["seven fractional digits", "2026-07-16T08:41:07.5000001Z"],
+  ["year below storage range", "0999-07-16T08:41:07.500Z"],
+  ["trailing newline", "2026-07-16T08:41:07.500Z\n"],
+] as const;
+type PersistedResultSnapshotForTest = {
+  results: Array<{ completed_at: string; registered_at: string }>;
+  active_result_pointers: Array<{ activated_at: string }>;
+  activation_audit: Array<{ occurred_at: string }>;
+};
 const tmpRoots: string[] = [];
 
 function tmpStorePath(): string {
@@ -254,6 +269,20 @@ describe("PipelineResultStore.registerResult", () => {
       PipelineResultInvariantError,
     );
   });
+
+  it.each(
+    (["completed_at", "now"] as const).flatMap((field) =>
+      NON_CANONICAL_TIMESTAMPS.map(
+        ([label, value]) => [field, label, value] as const,
+      ),
+    ),
+  )("拒絕 non-canonical %s（%s）", (field, _label, value) => {
+    const { store: jobStore, pipelineJobId } = jobs();
+    const store = new PipelineResultStore(jobStore, null);
+    expect(() =>
+      store.registerResult(resultInput(pipelineJobId, { [field]: value })),
+    ).toThrow(PipelineResultInvariantError);
+  });
 });
 
 describe("PipelineResultStore persistence", () => {
@@ -268,6 +297,60 @@ describe("PipelineResultStore persistence", () => {
     expect(reloaded.listResults(pipelineJobId)).toHaveLength(1);
     expect(reloaded.listActivationAudit(pipelineJobId)).toHaveLength(1);
   });
+
+  it.each([
+    ["result.completed_at", (snapshot: PersistedResultSnapshotForTest) => {
+      snapshot.results[0].completed_at = "2026-07-16T08:41:03.125+00:00";
+    }],
+    ["result.registered_at", (snapshot: PersistedResultSnapshotForTest) => {
+      snapshot.results[0].registered_at = "2026-07-16T08:41:07.500z";
+    }],
+    ["pointer.activated_at", (snapshot: PersistedResultSnapshotForTest) => {
+      snapshot.active_result_pointers[0].activated_at = "2026-02-30T08:41:07.500Z";
+    }],
+    ["audit.occurred_at", (snapshot: PersistedResultSnapshotForTest) => {
+      snapshot.activation_audit[0].occurred_at = "2026-07-16T08:41:07.5000001Z";
+    }],
+  ] as const)(
+    "commitment-valid snapshot 的 %s 非 canonical 時 restart fail closed",
+    (_field, mutate) => {
+      const file = tmpStorePath();
+      const jobFile = `${file}.jobs`;
+      const firstJobs = new PipelineJobStore(jobFile);
+      const { job } = firstJobs.ensureJobForSourceBundle({
+        sourceBundleId: "source-bundle-test-0001",
+        externalModelVersionId: "model-version-test-0001",
+        eventId: "ready-event-0001",
+        now: "2026-07-16T08:00:00.000Z",
+      });
+      new PipelineResultStore(firstJobs, file).registerResult(
+        resultInput(job.pipeline_job_id),
+      );
+
+      const snapshot = JSON.parse(
+        fs.readFileSync(file, "utf-8"),
+      ) as PersistedResultSnapshotForTest;
+      mutate(snapshot);
+      const snapshotBytes = JSON.stringify(snapshot, null, 2);
+      fs.writeFileSync(file, snapshotBytes, "utf-8");
+
+      const jobSnapshot = JSON.parse(fs.readFileSync(jobFile, "utf-8")) as {
+        result_snapshot_commitment: {
+          current: { snapshot_sha256: string };
+        };
+      };
+      jobSnapshot.result_snapshot_commitment.current.snapshot_sha256 = createHash("sha256")
+        .update(snapshotBytes, "utf8")
+        .digest("hex");
+      fs.writeFileSync(jobFile, JSON.stringify(jobSnapshot, null, 2), "utf-8");
+
+      const reloadedJobs = new PipelineJobStore(jobFile);
+      const reloaded = new PipelineResultStore(reloadedJobs, file);
+      expect(() => reloaded.assertAvailable()).toThrow(
+        /invalid result\/pointer\/audit shape/,
+      );
+    },
+  );
 
   it("已 committed 的 result sidecar 遺失時 restart fail closed，不得重建空 pointer/audit", () => {
     const file = tmpStorePath();

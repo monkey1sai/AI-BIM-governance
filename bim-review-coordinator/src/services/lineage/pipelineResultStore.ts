@@ -384,8 +384,8 @@ function isPipelineResultRecord(value: unknown): value is PipelineResultRecord {
     /^[0-9a-f]{64}$/.test(value.result_manifest_digest) &&
     isAttemptOutcome(value.attempt_outcome) &&
     isPublicationState(value.publication_state) &&
-    isNonEmptyString(value.completed_at) &&
-    isNonEmptyString(value.registered_at)
+    isUtcTimestamp(value.completed_at) &&
+    isUtcTimestamp(value.registered_at)
   );
 }
 
@@ -400,7 +400,7 @@ function isActiveResultPointer(value: unknown): value is ActiveResultPointer {
     (value.attempt_outcome === "succeeded" ||
       value.attempt_outcome === "succeeded_with_warnings") &&
     isNonEmptyString(value.audit_entry_id) &&
-    isNonEmptyString(value.activated_at) &&
+    isUtcTimestamp(value.activated_at) &&
     isNonEmptyString(value.correlation_id)
   );
 }
@@ -435,7 +435,7 @@ function isActivationAuditEntry(value: unknown): value is ActivationAuditEntry {
     (value.authorization_decision_ref === null ||
       isNonEmptyString(value.authorization_decision_ref)) &&
     isNonEmptyString(value.correlation_id) &&
-    isNonEmptyString(value.occurred_at) &&
+    isUtcTimestamp(value.occurred_at) &&
     value.append_only === true
   );
 }
