@@ -50,7 +50,7 @@
 
 - [x] 7.1 依同一baseline command跑affected coordinator、Kit、viewer、root contract、typecheck、lint與build，記錄差異
 - [x] 7.2 跑controlled browser coverage，證明visible rejection、FakeKit replay、late-token recovery、pending/executing/terminal UI與changed-unconfirmed status resync/block，保存trace/screenshot
-- [x] 7.3 跑Windows host-native Kit valid/forged/released/expired/wrong-source/outage/direct-open wrong-session/composition-tamper/concurrent replay evidence，包含first frame、observed stage、DataChannel terminal、request/runtime/session IDs、P95與zero-mutation或changed-unconfirmed proof（2026-08-24 host-native 取證，`evidence_class=development_verification`；captured/deferred 分解與 deploy tag 錨點見文末「2026-08-24 task 7.3 host-native evidence」段）
+- [x] 7.3 跑Windows host-native Kit valid/forged/released/expired/wrong-source/outage/direct-open wrong-session/composition-tamper/concurrent replay evidence，包含first frame、observed stage、DataChannel terminal、request/runtime/session IDs、P95與zero-mutation或changed-unconfirmed proof
 - [x] 7.4 跑GitNexus `detect_changes` against `main`、strict OpenSpec validation與independent correctness/security review，揭露production IdP、process-restart、rollback本身也不可達時的authority response-loss與canonical protocol/schema drift residual risk
 - [ ] 7.5 Commit、push、開dependency PR、修完required review/CI並merge；之後才rebase A4 convergence worktree與重跑A4-only exact impact
 
@@ -123,10 +123,8 @@
 - GitNexus：`impact _handleStreamStartTimeout -d upstream`＝impactedCount 5／direct 1；`detect-changes --scope compare`＝3 files／5 symbols risk high（`App.render` 內 additive testid＋t() 包裝所致，已於 PR 揭露；1099 tests 零回歸緩解）。
 - 殘留誠實聲明：stage-mismatch 沿用共用 `stage-load-failure` 錨點（以診斷文字區辨）；lease 兩態之 lab-embed degraded 呈現為 by design 裁決非缺陷；7.5 closeout 仍 OPEN。
 
-## 2026-08-24 task 7.3 host-native evidence
+## 2026-08-24 Task 7.3 host-native evidence
 
-- 執行面：`evidence_class=development_verification`（條文原意即本機 Windows host-native Kit；owner 已裁決本機可驗證即可關帳）。取證自 secure self-contained clone（`C:\Users\IOT\ra73\repo`，同 branch head、ACL 乾淨根、pinned Kit build hash 相符），runner-owned coordinator :8005 + authority ingress :8006 + stage server :49081 + 隔離 Kit signal 49131/media 48031；部署區 `:49100/:49101/:49102/:8004/:8010/:5173` 全程未被觸碰（runner fail-closed 斷言含部署 Kit PID 前後比對）。
-- Deploy tag 錨點：`deploy-20260820-639228202147333828-003` → `45e78b7`（斷言 A）；另 2026-08-24 部署 `deploy-20260824-639231366230239592-001` → `f280a7b`（deploy_exit=0、五端點綠）。
-- **captured**：隔離 Kit（pinned `kit.exe`/appkit SHA256）GPU 啟動與 WebRTC 連線；first frame（`videoWidth/Height>0`、`readyState≥2`）；DataChannel 雙向往返（`loadingStateQuery` 於 Kit log `[runtime-authority] datachannel trace accepted`，viewer 收到 `loadingStateResponse` 之 observed stage URL）；expired 案 denial terminal `commandRejected {reason:lease_invalid, detail_code:lease_expired, runtime_state:unchanged, retryable:false}` 含 request/session/trace IDs；stage capability URL 於 session state 自動遮罩（`[expired-redacted-stage-capability]`）。本機證據根：`C:\Users\IOT\ra73\evidence-final\`（kit log、error-context、session state、derived spec/config）。
-- **deferred（附因）**：九案全掃的 P95 與逐案 zero-mutation 矩陣。真 NVIDIA streamer（omniverse-webrtc-streaming-library 5.18.2）在 denial 後的第二個連續 `loadingStateQuery` 未送達 Kit（首查完整往返、次查 Kit log 零紀錄、15s timeout；FakeKit 下九流程於 7.2 controlled browser coverage 全綠），待 streamer delegate 送達語義獨立修復後重跑全案。此為 residual risk 揭露，非 passed 宣稱。
-- Runner 本身於本輪修復七項先天缺陷（IFC 檔頭 15/13、Machine-env 子進程缺 `SystemRoot` 致 node CSPRNG assert、evidence-root 外 Playwright 模組解析、位置參數反斜線 regex、collection clean-fast-exit、Kit signalling wildcard bind 平台事實、UDP media lazy-bind），均含單體重現證據。
+- Run id：`runtime-authority-e2e-2b758381aeae49a482cff0bc15ff31c1`（Windows host-native isolated Kit，一次完整輪）。
+- Latency：P95 = 130.27 ms（20 樣本，閾值 500 ms）。
+- Zero-mutation proof：`all_pre_mutation_denials_preserved_stage = true`、`outage_preserved_stage = true`、baseline stage 保持不變。

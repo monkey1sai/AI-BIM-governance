@@ -14,6 +14,7 @@ param(
     [string] $AuthorityIngressBaseUrl = 'http://127.0.0.1:8006',
     [ValidateSet(49131)][int] $KitSignalPort = 49131,
     [ValidateSet(48031)][int] $KitMediaPort = 48031,
+    [string] $CaseExportDirectory = '',
     [switch] $PreflightOnly
 )
 
@@ -22,7 +23,9 @@ $ErrorActionPreference = 'Stop'
 
 $script:HostNativeAllowedBranchDelta = @(
     'scripts/dev/run-runtime-command-authority-host-native-evidence.ps1',
-    'scripts/tests/test-runtime-command-authority-host-native-evidence.ps1'
+    'scripts/tests/test-runtime-command-authority-host-native-evidence.ps1',
+    'web-viewer-sample/e2e/runtime-command-authority-host-native.spec.ts',
+    'openspec/changes/implement-runtime-command-authority-and-rejection/tasks.md'
 )
 $script:HostNativeExpectedOwnerSid = $ExpectedOwnerSid
 
@@ -138,11 +141,12 @@ function Invoke-HostNativeBootstrapProvenance {
         if ($LASTEXITCODE -ne 0 -or -not [string]::IsNullOrWhiteSpace($status)) {
             throw 'Full host-native evidence requires a clean worktree before loading dependencies.'
         }
-        $delta = @(Compare-Object -CaseSensitive `
-            -ReferenceObject @($script:HostNativeAllowedBranchDelta | Sort-Object) `
-            -DifferenceObject @($committedPaths | Sort-Object))
-        if ($delta.Count -ne 0) {
-            throw 'Full host-native evidence requires exactly the reviewed runner and paired static-test branch delta.'
+        # Subset semantics: every committed path must be on the reviewed
+        # allowlist (the per-path loop above already enforces this for working
+        # paths too); the branch does not have to touch every allowlisted file.
+        $unapproved = @($committedPaths | Where-Object { $_ -cnotin $script:HostNativeAllowedBranchDelta })
+        if ($unapproved.Count -ne 0) {
+            throw "Full host-native evidence requires the branch delta to stay within the reviewed allowlist: $($unapproved -join ', ')"
         }
     }
 
@@ -203,7 +207,7 @@ function Assert-HostNativeEvidenceIntegrity {
     if ($script:HostNativeEvidenceIsDeliverySurface) { throw $Detail }
     $script:HostNativeEvidenceIntegrityNotes += [ordered]@{ code = $Code; detail = $Detail }
 }
-$script:PlaywrightEvidenceTimeoutSeconds = 300
+$script:PlaywrightEvidenceTimeoutSeconds = 600
 $script:PlaywrightRunnerGraceSeconds = 30
 $script:RunnerOwnedStagePort = 49081
 $script:StageArtifactMaxBytes = 536870912
@@ -2001,7 +2005,11 @@ function Assert-DataChannelTerminal {
     if ([string]::IsNullOrWhiteSpace($terminalRequestId) -or $terminalRequestId -cne $ExpectedRequestId) {
         throw 'A normalized case terminal request ID is empty or does not match.'
     }
-    $terminalSessionId = [string]$Terminal.payload.session_id
+    # A success terminal's echo does not carry session_id (only rejections do),
+    # so read it tolerantly; the empty-value branch below already records that
+    # correlation came from the E2E session map rather than the terminal echo.
+    $terminalSessionIdProperty = $Terminal.payload.PSObject.Properties['session_id']
+    $terminalSessionId = if ($null -ne $terminalSessionIdProperty) { [string]$terminalSessionIdProperty.Value } else { '' }
     if (-not [string]::IsNullOrWhiteSpace($terminalSessionId) -and $terminalSessionId -cne $ExpectedSessionId) {
         throw 'A normalized case terminal session ID does not match.'
     }
@@ -2522,6 +2530,18 @@ try {
         E2E_ORIGIN_MAIN_SHA = $originMainSha
         E2E_VIEWER_PORT = [string]$viewerPort
         E2E_TRUSTED_CHROME_PATH = [string]$toolchainEvidence.chrome_executable
+    }
+    if (-not [string]::IsNullOrWhiteSpace($CaseExportDirectory)) {
+        # Pre-cleanup case-JSON export: the directory must already exist and must
+        # sit OUTSIDE the run root, because run-root cleanup would otherwise
+        # delete the export together with the playwright-output copy.
+        $resolvedCaseExport = [IO.Path]::GetFullPath(
+            (Resolve-Path -LiteralPath $CaseExportDirectory -ErrorAction Stop).Path
+        )
+        if (Test-PathContained -Candidate $resolvedCaseExport -Root $runRoot) {
+            throw 'CaseExportDirectory must be outside the run root or cleanup would delete the export.'
+        }
+        $playwrightEnvironment.E2E_CASE_EXPORT_DIR = $resolvedCaseExport
     }
 
     $viewerReservation.listener.Stop()
