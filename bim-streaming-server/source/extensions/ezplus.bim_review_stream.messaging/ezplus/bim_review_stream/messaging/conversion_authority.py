@@ -312,16 +312,30 @@ class StreamingConversionStore:
         idempotency_key = _safe_id(str(event.get("idempotency_key") or event_id), "idempotency_key")
         request_fingerprint = _request_fingerprint(event)
         existing = self._find_job_by_idempotency_key(idempotency_key)
+        superseded: dict[str, Any] | None = None
         if existing is not None:
             existing_fingerprint = existing.get("request_fingerprint")
             if existing_fingerprint and existing_fingerprint != request_fingerprint:
                 raise ConversionRequestError(409, "Idempotency key already belongs to a different conversion request.")
-            if not existing.get("trace_id"):
-                existing["trace_id"] = str(existing["conversion_job_id"])
-                self._write_job(existing)
-            replay = dict(existing)
-            replay["idempotent_replay"] = True
-            return replay
+            if str(existing.get("status") or "") == "failed":
+                # A terminal failure is the one state a replay cannot serve. The caller is
+                # asking again precisely because the previous attempt produced nothing
+                # usable, and the failure is often bound to inputs that no longer exist -
+                # a MinIO re-trigger re-downloads the IFC to a fresh cache path while the
+                # failed job still points at the deleted one, so every retrigger returned
+                # the same dead record and the job's own `recovery_action:
+                # retrigger_required` could never be satisfied. Start a new attempt under
+                # the same idempotency key instead. The failed record is kept for audit and
+                # back-linked with `superseded_by` below, which is also how the lookup
+                # tells the live attempt from the dead ones.
+                superseded = existing
+            else:
+                if not existing.get("trace_id"):
+                    existing["trace_id"] = str(existing["conversion_job_id"])
+                    self._write_job(existing)
+                replay = dict(existing)
+                replay["idempotent_replay"] = True
+                return replay
 
         ifc_artifact = _ifc_artifact(event)
         conversion_job_id = f"stream_conv_{datetime.now(UTC).strftime('%Y%m%d%H%M%S')}_{uuid4().hex[:8]}"
@@ -335,6 +349,8 @@ class StreamingConversionStore:
             "event_id": event_id,
             "idempotency_key": idempotency_key,
             "request_fingerprint": request_fingerprint,
+            "attempt": (int(superseded.get("attempt") or 1) + 1) if superseded is not None else 1,
+            "retry_of": str(superseded["conversion_job_id"]) if superseded is not None else None,
             "event_type": event["event_type"],
             "correlation_id": _safe_id(str(event.get("correlation_id") or ""), "correlation_id"),
             "tenant_id": _safe_id(str(event.get("tenant_id") or "tenant_demo_001"), "tenant_id"),
@@ -363,6 +379,9 @@ class StreamingConversionStore:
             },
         }
         self._write_job(job)
+        if superseded is not None:
+            superseded["superseded_by"] = conversion_job_id
+            self._write_job(superseded)
         self._log_conversion_lifecycle(job, status="queued", phase="start")
         return job
 
@@ -643,18 +662,24 @@ class StreamingConversionStore:
 
     def _normalize_quality_metrics(self, raw: Mapping[str, Any]) -> dict[str, Any]:
         metrics = dict(raw)
-        source_count = _int_metric(metrics.get("source_ifc_entity_count"), metrics.get("source_ifc_element_count"))
         mapped_count = _int_metric(metrics.get("mapped_count"), metrics.get("mapped_entity_count"))
-        unmapped_count = _int_metric(metrics.get("unmapped_count"), metrics.get("unmapped_entity_count"), default=max(source_count - mapped_count, 0))
-        coverage_ratio = float(metrics.get("coverage_ratio") if metrics.get("coverage_ratio") is not None else (mapped_count / source_count if source_count else 0.0))
-        metrics["source_ifc_entity_count"] = source_count
-        metrics["mapped_count"] = mapped_count
-        metrics["unmapped_count"] = unmapped_count
-        metrics["coverage_ratio"] = coverage_ratio
-        metrics["coverage_status"] = str(metrics.get("coverage_status") or ("pass" if unmapped_count == 0 else "warn"))
+        eligible = _optional_int_metric(
+            metrics.get("eligible_ifc_product_count"),
+            metrics.get("source_ifc_entity_count"),
+            metrics.get("source_ifc_element_count"),
+        )
+        metrics.update(
+            compute_coverage_quality(
+                mapped_count=mapped_count,
+                eligible_ifc_product_count=eligible,
+            )
+        )
         metrics["materialization_strategy"] = str(metrics.get("materialization_strategy") or "sidecar")
         metrics["sidecar_carrier_count"] = _int_metric(metrics.get("sidecar_carrier_count"), default=0)
-        metrics["minimum_coverage_baseline_locked"] = bool(metrics.get("minimum_coverage_baseline_locked", False))
+        locked = bool(metrics.get("minimum_coverage_baseline_locked", False))
+        if metrics["coverage_status"] == "not_evaluable":
+            locked = False
+        metrics["minimum_coverage_baseline_locked"] = locked
         return metrics
 
     def _artifact_payload(self, *, artifact_id: str, role: str, format_: str, path: Path) -> dict[str, Any]:
@@ -782,11 +807,23 @@ class StreamingConversionStore:
         )
 
     def _find_job_by_idempotency_key(self, idempotency_key: str) -> dict[str, Any] | None:
+        matches: list[dict[str, Any]] = []
         for path in sorted(Path(self.settings.jobs_dir).glob("stream_conv_*.json"), reverse=True):
             job = json.loads(path.read_text(encoding="utf-8"))
             if (job.get("idempotency_key") or job.get("event_id")) == idempotency_key:
-                return job
-        return None
+                matches.append(job)
+        if not matches:
+            return None
+        # A retry chain links every superseded attempt forward, so the live record is the
+        # one nothing points past. Filename order cannot decide this: a conversion job id
+        # carries a whole-second timestamp plus a random suffix, so two attempts created
+        # inside the same second sort by chance - which handed back the dead record about
+        # a quarter of the time. Fall back to filename order only for records that predate
+        # supersession, where at most one match per key could ever exist.
+        live = [job for job in matches if not job.get("superseded_by")]
+        if len(live) == 1:
+            return live[0]
+        return (live or matches)[0]
 
     def _job_path(self, conversion_job_id: str) -> Path:
         _safe_id(conversion_job_id, "conversion_job_id")
@@ -1045,6 +1082,113 @@ def _int_metric(*values: Any, default: int = 0) -> int:
         except (TypeError, ValueError):
             continue
     return default
+
+
+def _optional_int_metric(*values: Any) -> int | None:
+    for value in values:
+        if value is None:
+            continue
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
+def count_eligible_ifc_products(ifc_model: Any) -> int | None:
+    """Count unique eligible source IfcProduct entities.
+
+    Lineage contract: selector is ``IfcProduct``; ``source_ifc_entity_count`` is
+    an alias of this eligible set. Eligible means the product has a GlobalId
+    and a Representation (convertible geometry), matching the sidecar pass so
+    spatial containers without representation do not inflate the denominator.
+    Returns ``None`` when the model cannot be queried.
+    """
+    by_type = getattr(ifc_model, "by_type", None)
+    if not callable(by_type):
+        return None
+    try:
+        products = by_type("IfcProduct")
+    except Exception:  # noqa: BLE001
+        return None
+    seen: set[str] = set()
+    for product in products or ():
+        try:
+            representation = getattr(product, "Representation", None)
+        except Exception:  # noqa: BLE001
+            representation = None
+        if representation is None:
+            continue
+        try:
+            guid = str(getattr(product, "GlobalId", "") or "")
+        except Exception:  # noqa: BLE001
+            guid = ""
+        if not guid or guid in seen:
+            continue
+        seen.add(guid)
+    return len(seen)
+
+
+def try_count_eligible_ifc_products(ifc_path: Path) -> int | None:
+    """Open ``ifc_path`` and count eligible IfcProduct; ``None`` if unevaluable."""
+    path = Path(ifc_path)
+    if not path.is_file():
+        return None
+    try:
+        import ifcopenshell  # type: ignore[import-not-found]
+    except Exception:  # noqa: BLE001
+        return None
+    if ifcopenshell is None:
+        return None
+    try:
+        model = ifcopenshell.open(str(path))
+    except Exception:  # noqa: BLE001
+        return None
+    return count_eligible_ifc_products(model)
+
+
+def compute_coverage_quality(
+    *,
+    mapped_count: int,
+    eligible_ifc_product_count: int | None,
+) -> dict[str, Any]:
+    """Honest IFC→USDC coverage. Zero or unknown denominator is not_evaluable.
+
+    Lineage contract: denominator 0 → ``ratio=null`` / ``not_evaluable``, never
+    0.0 or 1.0. Existing quality_metrics vocabulary keeps ``pass`` / ``warn``
+    for evaluable results (not lineage ``complete`` / ``partial``).
+    ``source_ifc_entity_count`` is the declared alias of
+    ``eligible_ifc_product_count``.
+    """
+    mapped = max(int(mapped_count), 0)
+    if eligible_ifc_product_count is None:
+        return {
+            "eligible_ifc_product_count": None,
+            "source_ifc_entity_count": None,
+            "mapped_count": mapped,
+            "unmapped_count": None,
+            "coverage_ratio": None,
+            "coverage_status": "not_evaluable",
+        }
+    eligible = max(int(eligible_ifc_product_count), 0)
+    if eligible == 0:
+        return {
+            "eligible_ifc_product_count": 0,
+            "source_ifc_entity_count": 0,
+            "mapped_count": mapped,
+            "unmapped_count": 0,
+            "coverage_ratio": None,
+            "coverage_status": "not_evaluable",
+        }
+    unmapped = max(eligible - mapped, 0)
+    return {
+        "eligible_ifc_product_count": eligible,
+        "source_ifc_entity_count": eligible,
+        "mapped_count": mapped,
+        "unmapped_count": unmapped,
+        "coverage_ratio": mapped / eligible,
+        "coverage_status": "pass" if mapped == eligible else "warn",
+    }
 
 
 def _utc_now() -> str:

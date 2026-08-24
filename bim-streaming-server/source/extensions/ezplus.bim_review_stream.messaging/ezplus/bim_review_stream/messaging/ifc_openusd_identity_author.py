@@ -12,7 +12,11 @@ from pathlib import Path
 from typing import Any, Mapping
 import json
 
-from conversion_authority import ConversionAuthorityError
+from conversion_authority import (
+    ConversionAuthorityError,
+    compute_coverage_quality,
+    count_eligible_ifc_products,
+)
 
 
 IDENTITY_PROFILE = "ifcopenshell_openusd_identity"
@@ -243,6 +247,7 @@ class IfcOpenUsdIdentityAuthor:
             ifc_schema=str(getattr(ifc_model, "schema", "") or "") or None,
             records=ordered,
             mapped_count=mapped_count,
+            eligible_ifc_product_count=count_eligible_ifc_products(ifc_model),
             shape_count=shape_count,
             skipped_shape_count=skipped_shape_count,
             renderable_count=renderable_count,
@@ -375,6 +380,7 @@ class IfcOpenUsdIdentityAuthor:
         ifc_schema: str | None,
         records: list[dict[str, Any]],
         mapped_count: int,
+        eligible_ifc_product_count: int | None,
         shape_count: int,
         skipped_shape_count: int,
         renderable_count: int,
@@ -413,12 +419,12 @@ class IfcOpenUsdIdentityAuthor:
             for item in records
         ]
         warnings = ["geo_reference_missing"]
+        coverage = compute_coverage_quality(
+            mapped_count=mapped_count,
+            eligible_ifc_product_count=eligible_ifc_product_count,
+        )
         quality_metrics = {
-            "source_ifc_entity_count": mapped_count,
-            "mapped_count": mapped_count,
-            "unmapped_count": 0,
-            "coverage_ratio": 1.0,
-            "coverage_status": "pass",
+            **coverage,
             "materialization_strategy": IDENTITY_PROFILE,
             "identity_authoring_profile": IDENTITY_PROFILE,
             "mapping_fidelity": "guid_exact",
@@ -446,7 +452,7 @@ class IfcOpenUsdIdentityAuthor:
                 "summary": {
                     "mapped_count": mapped_count,
                     "fake_mapping_count": 0,
-                    "unmapped_ifc_count": 0,
+                    "unmapped_ifc_count": coverage["unmapped_count"] or 0,
                 },
                 "items": mapping_items,
             },

@@ -1,0 +1,36 @@
+{
+  "schema_version": "result-manifest-document/v1",
+  "document_type": "result_publication_outcome",
+  "body": {
+    "result_id": "result-0007",
+    "attempt_id": "attempt-0007",
+    "pipeline_job_id": "pipeline-job-0003",
+    "publication_state": "AVAILABLE",
+    "conditional_create": {
+      "attempted": true,
+      "outcome": "created"
+    },
+    "replay": false,
+    "result_manifest_digest": "11ab9629a8743b1babd9291c32cd7ff9e37abb8015b2b2cc7e200926d77cb720",
+    "prior_result_id": null,
+    "prior_result_manifest_digest": null,
+    "result_manifest_ref": {
+      "ref": "minio://edge-tpe-01/lineage-results/tenant-a/project-library/model-version-20260715-001/results/attempt-0007/result-manifest.json?versionId=v-attempt-0007-manifest",
+      "object_version_id": "v-attempt-0007-manifest",
+      "etag": "etag-v-attempt-0007-manifest",
+      "sha256": "11ab9629a8743b1babd9291c32cd7ff9e37abb8015b2b2cc7e200926d77cb720",
+      "size_bytes": 8421
+    },
+    "available_at": "2026-07-16T08:40:23.100Z",
+    "diagnostics": [
+      {
+        "code": "etag_mismatch",
+        "role": "usdc",
+        "expected": "etag-v-attempt-0007-usdc",
+        "observed": "etag-stale",
+        "detail": "model.usdc etag 與 manifest 宣告不符"
+      }
+    ],
+    "observed_at": "2026-07-16T08:40:23.100Z"
+  }
+}

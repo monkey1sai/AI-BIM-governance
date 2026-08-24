@@ -168,6 +168,8 @@
         "^scripts/security-exceptions\\.json$",
         "^scripts/lib/openspec-lifecycle\\.ps1$",
         "^scripts/lib/openspec-machine-truth\\.mjs$",
+        "^scripts/agent-governance-rules\\.json$",
+        "^scripts/lib/agent-governance-policy\\.psm1$",
         "^scripts/tests/(invoke-powershell-static|scan-secret-patterns)\\.ps1$",
         "^scripts/tests/verification-plan\\.schema\\.json$",
         "^scripts/tests/test-(self-referential-bootstrap|base-gate-capability|preflight-prnumber-forwarding)\\.ps1$",

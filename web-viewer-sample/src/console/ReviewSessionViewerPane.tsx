@@ -1,6 +1,7 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
 import { Btn, Field, Panel } from "./components";
 import { coordinatorClient, type RuntimeSessionSummary, type ViewerLeaseClaimResponse } from "./coordinatorClient";
+import { viewerLeaseHeartbeatDelayMs } from "../clients/viewerLeaseHeartbeat";
 import { EmbeddedViewer, type EmbeddedViewerHandle, type HighlightItem, type HighlightResultMessage } from "./EmbeddedViewer";
 import { t } from "./i18n";
 import { getLocalDevUserCarrier } from "./localDevPrincipal";
@@ -156,6 +157,12 @@ function classifyViewerLeaseError(error: unknown): ViewerLeaseError {
 export interface ReviewSessionViewerPaneProps {
   handoff?: ReviewRoomHandoff;
   mode?: ReviewSessionViewerPaneMode;
+  // 失敗態矩陣 first-frame-timeout（task 5.6）：claim 後未收首幀的可見逾時。90s 與
+  // stage-load-timeout 的 90×1s busy-poll 上限對齊；測試注入小值。
+  firstFrameTimeoutMs?: number;
+  // 測試縫：heartbeat 排程延遲計算。預設＝f4 統一政策 viewerLeaseHeartbeatDelayMs，
+  // 不得在生產路徑另定數值。
+  heartbeatDelayFn?: (heartbeatAfterMs: number) => number;
   // A2 批次疊加 gate 通知：viewer 證據鏈（lease/first frame/DataChannel/stage match）任一變動時回報，
   // 外部據以 enable/disable「套用疊加」鈕並顯示誠實理由。非 a2 用途可不傳（零行為變更）。
   onBatchGateChange?: (gate: ReviewSessionViewerPaneBatchGate) => void;
@@ -164,7 +171,7 @@ export interface ReviewSessionViewerPaneProps {
 }
 
 export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle, ReviewSessionViewerPaneProps>(
-  function ReviewSessionViewerPane({ handoff = parseReviewRoomHandoff(), mode = "review-room", onBatchGateChange, onBatchAck }, ref) {
+  function ReviewSessionViewerPane({ handoff = parseReviewRoomHandoff(), mode = "review-room", onBatchGateChange, onBatchAck, firstFrameTimeoutMs = 90_000, heartbeatDelayFn = viewerLeaseHeartbeatDelayMs }, ref) {
   const isA1Inline = mode === "a1-inline";
   const isA2Overlay = mode === "a2-overlay";
   // testid 前綴 = mode（review-room / a1-inline / a2-overlay），既有兩模式的 testid 逐字不變。
@@ -174,6 +181,12 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
   const [viewerOrigin, setViewerOrigin] = useState<string | null>(null);
   const [coordinatorBase, setCoordinatorBase] = useState<string | null>(null);
   const [runtimeErr, setRuntimeErr] = useState<string | null>(null);
+  const [runtimeReady, setRuntimeReady] = useState(false);
+  const [gpuUnavailable, setGpuUnavailable] = useState(false);
+  const [leaseExpired, setLeaseExpired] = useState(false);
+  const [firstFrameTimedOut, setFirstFrameTimedOut] = useState(false);
+  const [streamDisconnected, setStreamDisconnected] = useState(false);
+  const [viewerMountNonce, setViewerMountNonce] = useState(0);
   const [lease, setLease] = useState<ViewerLeaseClaimResponse | null>(null);
   const [leaseBusy, setLeaseBusy] = useState(false);
   const [leaseErr, setLeaseErr] = useState<ViewerLeaseError | null>(null);
@@ -214,6 +227,8 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
   const runtimeSession = runtimeSessions.find((s) => s.session_id === sid) ?? null;
   const sessionObserved = Boolean(runtimeSession);
   const artifactHealth = runtimeSession?.artifact_health ?? null;
+  // session-preparing（task 5.6）：session 已列於 runtime/status 但 conversion 未達終態。
+  const conversionPreparing = Boolean(sessionObserved && runtimeSession && runtimeSession.conversion_status && runtimeSession.conversion_status !== 'succeeded');
   const modelArtifactStale = artifactHealth?.model_usdc_reachable === false;
   const mappingArtifactStale = artifactHealth?.mapping_reachable === false;
   const artifactHealthSummary = artifactHealth
@@ -228,30 +243,43 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
   const stageMatched = Boolean(loadedStageUrl && expectedStageUrl && stageUrlsEquivalent(loadedStageUrl, expectedStageUrl));
   const viewerOpenUrl = validSession ? coordinatorClient.openInViewerUrl(sid) : undefined;
 
-  useEffect(() => {
-    let alive = true;
-    coordinatorClient.runtimeStatus()
+  // 失敗態矩陣（task 5.6）：viewer-origin-missing 需要「重新整理 runtime status」可行動作，
+  // 因此把單次 fetch 抽成可重複呼叫的 refresh；unmount 後不再 set state（沿用既有 alive 語意）。
+  const runtimeAliveRef = useRef(true);
+  useEffect(() => () => { runtimeAliveRef.current = false; }, []);
+  const refreshRuntimeStatus = useCallback(() => {
+    // gpu-unavailable（task 5.6）：kit-manager instances 查詢失敗或無可用 instance 即
+    // 誠實停用啟動鈕；查詢成功才恢復。與 runtime status 同一 refresh 動作重測。
+    void coordinatorClient.kitInstanceCurrent()
+      .then(() => { if (runtimeAliveRef.current) setGpuUnavailable(false); })
+      .catch(() => { if (runtimeAliveRef.current) setGpuUnavailable(true); });
+    return coordinatorClient.runtimeStatus()
       .then((rt) => {
-        if (!alive) return;
+        if (!runtimeAliveRef.current) return;
         setRuntimeSessions(rt.sessions.items.filter((s) => s.status === "active" || s.status === "created"));
         setViewerOrigin(rt.configured_endpoints.viewer.browser_url_base || null);
         setCoordinatorBase(rt.configured_endpoints.coordinator.public_base_url || null);
         setRuntimeErr(null);
+        setRuntimeReady(true);
       })
       .catch((e) => {
-        if (!alive) return;
+        if (!runtimeAliveRef.current) return;
         setRuntimeSessions([]);
         setViewerOrigin(null);
         setCoordinatorBase(null);
         setRuntimeErr(String(e));
+        setRuntimeReady(true);
       });
-    return () => { alive = false; };
   }, []);
+  useEffect(() => { void refreshRuntimeStatus(); }, [refreshRuntimeStatus]);
 
   useEffect(() => {
     setSessionId(handoff.sessionId);
     setLease(null);
     setLeaseErr(null);
+    setLeaseExpired(false);
+    setFirstFrameTimedOut(false);
+    setStreamDisconnected(false);
     setFirstFrame(false);
     setDataChannelReady(false);
     setLoadedStageUrl(null);
@@ -273,12 +301,21 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
 
   useEffect(() => {
     if (!activePrimaryLease) return;
-    const heartbeatMs = Math.max(5000, activePrimaryLease.heartbeat_after_ms || 15000);
+    const heartbeatMs = heartbeatDelayFn(activePrimaryLease.heartbeat_after_ms);
     const timer = window.setInterval(() => {
       void coordinatorClient.viewerLeaseHeartbeat(sid, activePrimaryLease.lease_id, activePrimaryLease.lease_token, {
         loaded_stage_url: loadedStageUrl,
         datachannel_ready: dataChannelReady,
-      }).catch(() => {});
+      }).catch((e) => {
+        // lease-expired（task 5.6）：coordinator 對過期/失效 lease 的 heartbeat 回
+        // 404「Viewer lease not found or token invalid」。轉入可見失效態並清 lease；
+        // 其他 heartbeat 失敗維持既有沉默重試語意，不誤標為過期。
+        const message = String(e);
+        if (/\b404\b/.test(message) && /viewer lease/i.test(message)) {
+          setLease(null);
+          setLeaseExpired(true);
+        }
+      });
     }, heartbeatMs);
     return () => window.clearInterval(timer);
   }, [
@@ -288,14 +325,33 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
     activePrimaryLease?.heartbeat_after_ms,
     dataChannelReady,
     loadedStageUrl,
+    heartbeatDelayFn,
   ]);
 
+  // first-frame-timeout（task 5.6）：claim 成功且 viewer 已掛載，但期限內未收
+  // first_frame 即轉入可見逾時態；首幀到達或 lease/session 變更時清除。
+  const activeLeaseIdForFirstFrame = activePrimaryLease ? activePrimaryLease.lease_id : null;
+  useEffect(() => {
+    if (!activeLeaseIdForFirstFrame || firstFrame) return;
+    const timer = window.setTimeout(() => { setFirstFrameTimedOut(true); }, firstFrameTimeoutMs);
+    return () => { window.clearTimeout(timer); };
+  }, [activeLeaseIdForFirstFrame, firstFrame, firstFrameTimeoutMs]);
+  useEffect(() => {
+    if (firstFrame) {
+      setFirstFrameTimedOut(false);
+      setStreamDisconnected(false);
+    }
+  }, [firstFrame]);
+
   const claimPrimary = useCallback(async () => {
-    if (!validSession || !viewerOrigin || !sessionObserved || modelArtifactStale || leaseBusy) return;
+    if (!validSession || !viewerOrigin || !sessionObserved || modelArtifactStale || gpuUnavailable || leaseBusy) return;
     const identity = identityRef.current ?? createReviewViewerIdentity(mode);
     identityRef.current = identity;
     setLeaseBusy(true);
     setLeaseErr(null);
+    setLeaseExpired(false);
+    setFirstFrameTimedOut(false);
+    setStreamDisconnected(false);
     setLease(null);
     setFirstFrame(false);
     setDataChannelReady(false);
@@ -316,7 +372,7 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
     } finally {
       setLeaseBusy(false);
     }
-  }, [sid, validSession, viewerOrigin, sessionObserved, modelArtifactStale, leaseBusy, mode]);
+  }, [sid, validSession, viewerOrigin, sessionObserved, modelArtifactStale, gpuUnavailable, leaseBusy, mode]);
 
   const stageText = stageProofStatus === "unproven"
     ? t("unproven（coordinator authority 尚未證實；handoff 已阻擋）", "unproven (coordinator authority is not confirmed; handoff is blocked)")
@@ -461,11 +517,12 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
           <Btn
             primary
             data-testid={manualStartTestId}
-            disabled={!validSession || !viewerOrigin || !sessionObserved || modelArtifactStale || leaseBusy || Boolean(activePrimaryLease)}
+            disabled={!validSession || !viewerOrigin || !sessionObserved || modelArtifactStale || gpuUnavailable || leaseBusy || Boolean(activePrimaryLease)}
             caption={!validSession ? t("需有效 session id", "valid session id required")
               : !viewerOrigin ? t("runtime/status 尚未提供 viewer 入口", "runtime/status has not provided a viewer entry")
               : !sessionObserved ? t("runtime/status 未列出此 session（可能 stale / 已關閉）", "runtime/status does not list this session (possibly stale / closed)")
               : modelArtifactStale ? `model_usdc_reachable=false: ${artifactHealth?.stale_reason ?? "derived_artifact_unreachable"}`
+              : gpuUnavailable ? t("Kit runtime 不可用（instances 查詢失敗或無可用 instance）", "Kit runtime is unavailable (instances query failed or none available)")
               : activePrimaryLease ? t("已 attach primary viewer lease", "primary viewer lease attached")
               : t("POST /api/review-sessions/:id/viewer-leases/claim", "POST /api/review-sessions/:id/viewer-leases/claim")}
             onClick={() => { void claimPrimary(); }}
@@ -507,6 +564,100 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
           <Field k="kit_instance_id" v={activePrimaryLease?.kit_instance_id ?? "—"} prov={activePrimaryLease?.kit_instance_id ? "asbuilt" : "p1"} />
         </div>
         {runtimeErr && <p className="ec-warn-note" data-testid="review-room-runtime-error">{runtimeErr}</p>}
+        {conversionPreparing && (
+          <p className="ec-note" data-testid={`${tidPrefix}-session-preparing`}>
+            {t("此 session 的模型轉檔尚未完成（conversion status: ", "This session's model conversion is not finished yet (conversion status: ")}
+            {runtimeSession?.conversion_status}
+            {t("）；請至 Pipeline 追蹤。", "); track it on the Pipeline page. ")}{" "}
+            <a href="#pipeline">{t("前往 Pipeline", "Go to Pipeline")}</a>
+          </p>
+        )}
+        {gpuUnavailable && (
+          <div className="ec-warn-note" data-testid={`${tidPrefix}-gpu-unavailable`} role="alert" aria-live="assertive">
+            <span>
+              {t(
+                "Kit runtime 不可用（kit-manager instances 查詢失敗或無可用 instance）；啟動已誠實停用。",
+                "Kit runtime is unavailable (the kit-manager instances query failed or no instance is available); start is honestly disabled.",
+              )}
+            </span>{" "}
+            <a href="#runtime">{t("檢視 Runtime", "Inspect Runtime")}</a>
+          </div>
+        )}
+        {leaseExpired && (
+          <div className="ec-warn-note" data-testid={`${tidPrefix}-lease-expired`} role="alert" aria-live="assertive">
+            <span>
+              {t(
+                "viewer lease 已過期（heartbeat 遭 coordinator 拒絕）；不會自動搶佔，請手動重新 claim。",
+                "The viewer lease has expired (the coordinator rejected the heartbeat); nothing is auto-reclaimed - re-claim manually.",
+              )}
+            </span>{" "}
+            <Btn data-testid={`${tidPrefix}-lease-reclaim`} disabled={leaseBusy} onClick={() => { void claimPrimary(); }}>
+              {leaseBusy ? t("重新 claim 中...", "Re-claiming...") : t("重新 claim", "Re-claim")}
+            </Btn>
+          </div>
+        )}
+        {firstFrameTimedOut && !firstFrame && (
+          <div className="ec-warn-note" data-testid={`${tidPrefix}-first-frame-timeout`} role="alert" aria-live="assertive">
+            <span>
+              {t(
+                "串流已建立但期限內未收到首幀；可重試啟動，或至 Runtime 檢視 Kit 診斷。",
+                "The stream is established but no first frame arrived within the deadline; retry the start or inspect Kit diagnostics on Runtime.",
+              )}
+            </span>{" "}
+            <Btn data-testid={`${tidPrefix}-first-frame-retry`} disabled={leaseBusy} onClick={() => { void claimPrimary(); }}>
+              {leaseBusy ? t("重試中...", "Retrying...") : t("重試", "Retry")}
+            </Btn>{" "}
+            <a href="#runtime">{t("檢視 Runtime", "Inspect Runtime")}</a>
+          </div>
+        )}
+        {streamDisconnected && (
+          <div className="ec-warn-note" data-testid={`${tidPrefix}-stream-disconnected`} role="alert" aria-live="assertive">
+            <span>
+              {t(
+                "串流中斷（WebRTC 連線已終止）；viewer 端保留最後畫格與診斷。可重新連線（重掛 viewer）。",
+                "The stream disconnected (the WebRTC connection terminated); the viewer keeps the last frame and diagnostics. Reconnect to remount the viewer.",
+              )}
+            </span>{" "}
+            <Btn
+              data-testid={`${tidPrefix}-stream-reconnect`}
+              onClick={() => {
+                setStreamDisconnected(false);
+                setViewerMountNonce((nonce) => nonce + 1);
+              }}
+            >
+              {t("重新連線", "Reconnect")}
+            </Btn>
+          </div>
+        )}
+        {sid === "" && (
+          <p className="ec-note" data-testid={`${tidPrefix}-no-session`}>
+            {t(
+              "尚未附掛 review session；請由上方欄位選擇或輸入 session id。",
+              "No review session is attached; pick or enter a session id in the field above.",
+            )}
+          </p>
+        )}
+        {runtimeReady && !runtimeErr && !viewerOrigin && (
+          <div
+            className="ec-warn-note"
+            data-testid={viewerOriginMissingTestId}
+            role="alert"
+            aria-live="assertive"
+          >
+            <span>
+              {t(
+                "runtime/status 無 viewer 入口（viewer origin 未配置），無法掛載 viewer。",
+                "runtime/status has no viewer entry (viewer origin is not configured); the viewer cannot mount.",
+              )}
+            </span>{" "}
+            <Btn
+              data-testid={`${tidPrefix}-viewer-origin-refresh`}
+              onClick={() => { void refreshRuntimeStatus(); }}
+            >
+              {t("重新整理 runtime status", "Refresh runtime status")}
+            </Btn>
+          </div>
+        )}
         {leaseErr?.kind === "primary_occupied" ? (
           <div
             className="ec-warn-note"
@@ -543,7 +694,7 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
           <div data-testid={viewerHostTestId} style={{ height: 480 }}>
             <EmbeddedViewer
               ref={viewerRef}
-              key={`${sid}:${activePrimaryLease.lease_id}`}
+              key={`${sid}:${activePrimaryLease.lease_id}:${viewerMountNonce}`}
               sessionId={sid}
               viewerOrigin={viewerOrigin}
               coordinatorApiBase={coordinatorBase}
@@ -574,6 +725,18 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
                   datachannel_ready: true,
                 }).catch(() => {});
               }}
+              onStreamState={(message) => {
+                if (message.state !== "disconnected") return;
+                // 失敗態矩陣 stream-disconnected（task 5.6 slice-3）：誠實回退所有
+                // streaming 證據——不再顯示已中斷連線的 first frame / DataChannel /
+                // stage 狀態，highlight gate 立即回封鎖。
+                setStreamDisconnected(true);
+                setFirstFrame(false);
+                setDataChannelReady(false);
+                setLoadedStageUrl(null);
+                setStageProofStatus("not_observed");
+                setHighlightResult(null);
+              }}
               onHighlightResult={(m) => {
                 setHighlightResult({ ok: m.ok, reason: m.reason });
                 // 批次 ack 透傳（A2）：含 sent_count/unmapped_count 加性欄位；單筆 ack 也原樣透傳。
@@ -581,9 +744,7 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
               }}
             />
           </div>
-        ) : (
-          <p className="ec-warn-note" data-testid={viewerOriginMissingTestId}>{t("runtime/status 無 viewer 入口，無法掛載 viewer", "runtime/status has no viewer entry; cannot mount viewer")}</p>
-        )}
+        ) : null /* origin-missing 態改由上方常駐 note（含 refresh 動作）呈現，避免 testid 重複 */}
       </Panel>
 
       {/* a2-overlay 模式抑制單筆 handoff 高亮面板：A2 疊加控制（apply/ack/unmapped）由 VersionDiffPage

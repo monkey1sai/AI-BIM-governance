@@ -1,0 +1,19 @@
+{
+  "schema_version": "self-referential-fixpoint-attestation/v1",
+  "entry_id": "ci-parallelization-agent-governance-shards",
+  "mechanism_commit": "cc372e4d1e5b3a9fa0dac42f2e654df615318dec",
+  "verification_contract_sha256": "29f1314ad2121ff365ebe239d7fbcfcb084a42d89bf3aedd301c943d19c79cbf",
+  "result": "pass",
+  "commands": [
+    { "id": "test-agent-governance-check", "exit_code": 0 },
+    { "id": "verify-governance-policy", "exit_code": 0 },
+    { "id": "test-agent-governance-policy", "exit_code": 0 },
+    { "id": "test-self-referential-bootstrap", "exit_code": 0 },
+    { "id": "test-base-gate-capability", "exit_code": 0 },
+    { "id": "test-openspec-ledger-reconciliation", "exit_code": 0 },
+    { "id": "test-openspec-machine-truth", "exit_code": 0 },
+    { "id": "test-pr-body-evidence", "exit_code": 0 },
+    { "id": "invoke-powershell-static", "exit_code": 0 },
+    { "id": "agent-governance-shard-coverage", "exit_code": 0 }
+  ]
+}

@@ -2,6 +2,8 @@ import { spawn } from "node:child_process";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
+import { inspectReadiness } from "./lib/runtime-e2e-readiness.mjs";
+import { createRuntimeE2eCdpRpc } from "./lib/cdp-rpc.mjs";
 
 const cwd = process.cwd();
 const chromePath = process.env.RUNTIME_E2E_CHROME_PATH || "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe";
@@ -89,44 +91,28 @@ async function waitForJson(url, timeoutMs = 20000, init = undefined) {
 }
 
 class CdpPage {
-  constructor(wsUrl) {
+  constructor(wsUrl, options = {}) {
     this.wsUrl = wsUrl;
-    this.nextId = 1;
-    this.pending = new Map();
-    this.events = [];
-    this.console = [];
     this.ws = new WebSocket(wsUrl);
-    this.opened = new Promise((resolve, reject) => {
-      this.ws.addEventListener("open", resolve, { once: true });
-      this.ws.addEventListener("error", reject, { once: true });
-    });
-    this.ws.addEventListener("message", (message) => {
-      const payload = JSON.parse(message.data);
-      if (payload.id && this.pending.has(payload.id)) {
-        const { resolve, reject } = this.pending.get(payload.id);
-        this.pending.delete(payload.id);
-        if (payload.error) {
-          reject(new Error(JSON.stringify(payload.error)));
-        } else {
-          resolve(payload.result);
-        }
-        return;
-      }
-      this.events.push(payload);
-      if (payload.method === "Runtime.consoleAPICalled") {
-        this.console.push(payload.params);
-      }
+    this.rpc = createRuntimeE2eCdpRpc(this.ws, {
+      requestTimeoutMs: options.requestTimeoutMs ?? streamTimeoutMs,
     });
   }
 
-  async send(method, params = {}) {
-    await this.opened;
-    const id = this.nextId++;
-    const promise = new Promise((resolve, reject) => {
-      this.pending.set(id, { resolve, reject });
-    });
-    this.ws.send(JSON.stringify({ id, method, params }));
-    return promise;
+  get pending() {
+    return this.rpc.pending;
+  }
+
+  get events() {
+    return this.rpc.events;
+  }
+
+  get console() {
+    return this.rpc.console;
+  }
+
+  send(method, params = {}) {
+    return this.rpc.send(method, params);
   }
 
   async evaluate(expression) {
@@ -163,7 +149,7 @@ class CdpPage {
   }
 
   close() {
-    this.ws.close();
+    this.rpc.close();
   }
 }
 
@@ -276,57 +262,14 @@ const readinessExpression = `(() => {
   };
 })()`;
 
-function consoleText(events) {
-  return events
-    .flatMap((event) => event.args || [])
-    .map((arg) => String(arg.value || arg.description || arg.type || ""))
-    .join("\n");
-}
-
-function isReady(state, consoleEvents, options = {}) {
-  const requireDataChannel = options.requireDataChannel !== false;
-  const requireStageSuccess = options.requireStageSuccess !== false;
-  const log = consoleText(consoleEvents);
-  const hasOpenedStageSuccess =
-    state.bodyHasModelLoaded
-    || (
-      state.bodyHasOpenedStageResult
-      && !log.includes("Kit App communicates there was an error loading")
-    )
-    || (log.includes("openedStageResult") && log.includes('"result":"success"'));
-  const hasStageQuerySuccess =
-    log.includes("Kit App sent stage prims")
-    || log.includes("getChildrenResponse");
-  const hasStageSuccess =
-    hasOpenedStageSuccess
-    || hasStageQuerySuccess;
-  const hasDataChannelEvidence =
-    state.bodyHasDataChannelReply
-    || state.bodyHasMakePickableResponse
-    || log.includes("makePrimsPickableResponse")
-    || log.includes("loadingStateQuery");
-  return Boolean(
-    state
-      && state.readyState >= 2
-      && state.videoWidth > 0
-      && state.videoHeight > 0
-      && state.srcObject
-      && state.bodyHasUsdcPanel
-      && state.bodyHasArtifactUrl
-      && (!requireStageSuccess || hasStageSuccess || state.bodyHasSpectatorReady)
-      && (!requireDataChannel || hasDataChannelEvidence)
-      && !state.bodyHasWaitingText
-      && state.pixelStats
-      && state.pixelStats.nonBlack > 100
-  );
-}
-
 async function waitForRuntimeReady(page, label, options = {}) {
   const deadline = Date.now() + streamTimeoutMs;
   let last = null;
   while (Date.now() < deadline) {
     last = await page.evaluate(readinessExpression);
-    if (isReady(last, page.console, options)) {
+    const inspection = inspectReadiness(last, page.console, options);
+    last.matchedEvidence = inspection.matchedEvidence;
+    if (inspection.ready) {
       return last;
     }
     await sleep(1000);
@@ -405,7 +348,7 @@ async function captureScenario(name, url, screenshotName, port = debugPort, opti
     const consoleEvents = page.console.map((event) => ({
       type: event.type,
       args: (event.args || []).map((arg) => arg.value || arg.description || arg.type),
-    })).slice(-40);
+    })).slice(-80);
     return { name, url, screenshot, viewportScreenshot, state, consoleEvents };
   } catch (error) {
     await page.screenshot(screenshot.replace(/\.png$/, "-blocked.png"));

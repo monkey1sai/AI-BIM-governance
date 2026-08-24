@@ -752,7 +752,47 @@ function Get-TestDeployPruningContract {
     }
 }
 
-function Get-TestDeployWindowsPowerShellChildEnvironment {
+function Resolve-TestDeployPowerShell7 {
+    # deploy.ps1 must run under PowerShell 7. Windows PowerShell 5.1 mangles the
+    # embedded double quotes in a native command argument, which silently broke
+    # Resolve-PlatformSystemPython's version probe: python received a corrupt
+    # -c payload, exited non-zero, and every candidate was skipped, so a machine
+    # with a perfectly good Python 3.12 failed with "no usable system python
+    # found". Fail closed rather than fall back to 5.1 and reintroduce that.
+    [CmdletBinding()]
+    param()
+
+    $command = Get-Command -Name 'pwsh' -CommandType Application -ErrorAction SilentlyContinue |
+        Select-Object -First 1
+    if ($null -ne $command -and -not [string]::IsNullOrWhiteSpace($command.Source)) {
+        return [string]$command.Source
+    }
+
+    $programFiles = [Environment]::GetEnvironmentVariable('ProgramFiles', 'Machine')
+    if ([string]::IsNullOrWhiteSpace($programFiles)) {
+        $programFiles = [Environment]::GetEnvironmentVariable('ProgramFiles', 'Process')
+    }
+    if (-not [string]::IsNullOrWhiteSpace($programFiles)) {
+        $candidate = Join-Path $programFiles 'PowerShell\7\pwsh.exe'
+        if (Test-Path -LiteralPath $candidate -PathType Leaf) { return $candidate }
+    }
+
+    throw 'PowerShell 7 (pwsh) is required to run the deployment child process and was not found.'
+}
+
+function Get-TestDeployHostNativeChildEnvironment {
+    # Deliberately Windows PowerShell module roots, even though the direct child
+    # is now pwsh 7. deploy.ps1 spawns its host-native children through
+    # Get-HostNativePowerShellExe, which returns powershell.exe on Windows, so
+    # 5.1 GRANDCHILDREN inherit this value. Listing PowerShell 7 roots here makes
+    # 5.1 resolve the Core-only Microsoft.PowerShell.Utility first and fail to
+    # load it, which is how Get-FileHash vanished inside start-web-plane-docker.ps1
+    # and took Phase 4d down. pwsh 7 needs no help: it resolves its own modules
+    # through $PSHOME regardless of PSModulePath. Measured on this host with
+    # Get-FileHash as the probe:
+    #   PS7 roots first        -> 5.1 MISSING, 7 OK
+    #   Windows roots first    -> 5.1 OK,      7 OK
+    #   Windows roots only     -> 5.1 OK,      7 OK   <- kept, narrowest that works
     [CmdletBinding()]
     param()
 
@@ -800,10 +840,11 @@ function Invoke-TestDeployScript {
     )
 
     $arguments = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', 'scripts\deploy.ps1', '-Build')
-    $childEnvironment = Get-TestDeployWindowsPowerShellChildEnvironment
+    $powerShell7Path = Resolve-TestDeployPowerShell7
+    $childEnvironment = Get-TestDeployHostNativeChildEnvironment
     if ($null -ne $ProcessRunner) {
         $exitCode = & $ProcessRunner `
-            -FilePath 'powershell.exe' `
+            -FilePath $powerShell7Path `
             -ArgumentList $arguments `
             -WorkingDirectory $DeploymentRoot `
             -Environment $childEnvironment
@@ -826,7 +867,7 @@ function Invoke-TestDeployScript {
         # with file redirection so long-lived child processes cannot keep the agent
         # harness pipe open; then wait only for the direct cmd.exe process.
         $quotedArgs = ($arguments | ForEach-Object { ConvertTo-CmdQuotedArgument -Value $_ }) -join ' '
-        $cmdLine = 'set "PSModulePath=' + $childEnvironment.PSModulePath + '" && powershell.exe ' + $quotedArgs + ' > ' + (ConvertTo-CmdQuotedArgument -Value $stdoutPath) + ' 2> ' + (ConvertTo-CmdQuotedArgument -Value $stderrPath)
+        $cmdLine = 'set "PSModulePath=' + $childEnvironment.PSModulePath + '" && ' + (ConvertTo-CmdQuotedArgument -Value $powerShell7Path) + ' ' + $quotedArgs + ' > ' + (ConvertTo-CmdQuotedArgument -Value $stdoutPath) + ' 2> ' + (ConvertTo-CmdQuotedArgument -Value $stderrPath)
         $process = Start-Process -FilePath 'cmd.exe' `
             -ArgumentList @('/c', $cmdLine) `
             -WorkingDirectory $DeploymentRoot `

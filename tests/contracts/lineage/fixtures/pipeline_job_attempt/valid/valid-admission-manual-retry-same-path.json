@@ -1,0 +1,27 @@
+{
+  "schema_version": "pipeline-job-attempt/v1",
+  "document_type": "admission_record",
+  "body": {
+    "pipeline_job_id": "pipeline-job-0003",
+    "attempt_id": "attempt-0008",
+    "trigger_kind": "retry",
+    "required_runtime_capabilities": [
+      "ifc_to_usdc_conversion"
+    ],
+    "admission_status": "ADMITTED",
+    "runtime_profile": "cpu-ifc-usdc",
+    "requires_exclusive_runtime": false,
+    "lease_id": null,
+    "readiness_evidence": [
+      {
+        "evidence_kind": "converter_binary",
+        "detail": "ifc_to_usdc converter 2.4.1 present, storage root writable",
+        "observed_at": "2026-07-16T08:05:10Z"
+      }
+    ],
+    "blocker_codes": [],
+    "attempt_counter_before": 1,
+    "attempt_counter_after": 2,
+    "observed_at": "2026-07-16T08:05:11Z"
+  }
+}

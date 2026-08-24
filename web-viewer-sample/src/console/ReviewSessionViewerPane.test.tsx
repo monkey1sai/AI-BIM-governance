@@ -137,6 +137,7 @@ describe("ReviewSessionViewerPane", () => {
     vi.spyOn(coordinatorClient, "viewerLeaseHeartbeat").mockResolvedValue(fakePrimaryLease() as never);
     vi.spyOn(coordinatorClient, "releaseViewerLease").mockResolvedValue(fakePrimaryLease() as never);
     vi.spyOn(coordinatorClient, "reportFirstFrame").mockResolvedValue({ session_id: "review_session_x", first_frame_at: "2026-07-01T00:00:00.000Z" });
+    vi.spyOn(coordinatorClient, "kitInstanceCurrent").mockResolvedValue({ instance_id: "kit_local_001", status: "ready" } as never);
   });
 
   afterEach(async () => {
@@ -203,6 +204,45 @@ describe("ReviewSessionViewerPane", () => {
     expect(viewerBox.current?.viewerOrigin).toBe("http://127.0.0.1:5173");
   });
 
+  it("empty session shows the dedicated no-session state with the session selector still actionable", async () => {
+    await renderPane({ ...handoff, sessionId: "" });
+
+    const note = q("review-room-no-session");
+    expect(note).not.toBeNull();
+    expect(note?.textContent).toContain("尚未附掛 review session");
+    expect(q<HTMLInputElement>("review-room-session-input")).not.toBeNull();
+    expect(q("review-room-session-candidates")).not.toBeNull();
+    expect(q<HTMLButtonElement>("review-room-manual-start")!.disabled).toBe(true);
+    expect(coordinatorClient.claimViewerLease).not.toHaveBeenCalled();
+  });
+
+  it("a valid attached session does not show the no-session state", async () => {
+    await renderPane();
+
+    expect(q("review-room-no-session")).toBeNull();
+  });
+
+  it("missing viewer origin shows the origin-missing state with an actionable runtime refresh", async () => {
+    const originless = fakeRuntimeStatus();
+    originless.configured_endpoints.viewer.browser_url_base = "";
+    vi.mocked(coordinatorClient.runtimeStatus).mockResolvedValueOnce(originless as never);
+
+    await renderPane();
+
+    const note = q("review-room-viewer-origin-missing");
+    expect(note).not.toBeNull();
+    expect(note?.textContent).toContain("viewer 入口");
+    expect(q<HTMLButtonElement>("review-room-manual-start")!.disabled).toBe(true);
+    expect(coordinatorClient.claimViewerLease).not.toHaveBeenCalled();
+
+    await act(async () => { q<HTMLButtonElement>("review-room-viewer-origin-refresh")!.click(); });
+    await flush();
+
+    expect(coordinatorClient.runtimeStatus).toHaveBeenCalledTimes(2);
+    expect(q("review-room-viewer-origin-missing")).toBeNull();
+    expect(q<HTMLButtonElement>("review-room-manual-start")!.disabled).toBe(false);
+  });
+
   it("stale or missing runtime session is distinguishable and cannot be attached", async () => {
     vi.mocked(coordinatorClient.runtimeStatus).mockResolvedValue({
       ...fakeRuntimeStatus(),
@@ -253,7 +293,10 @@ describe("ReviewSessionViewerPane", () => {
     await act(async () => { q<HTMLButtonElement>("review-room-manual-start")!.click(); });
     await flush();
 
-    expect(q("review-room-lease-occupied")?.textContent).toContain("占用");
+    const occupied = q("review-room-lease-occupied");
+    expect(occupied?.textContent).toContain("占用");
+    // spec: SHALL NOT 顯示現任 holder user/viewer/display/nonce/stream detail
+    expect(occupied?.textContent).not.toMatch(/lease_|viewer_|nonce|stream|display_name|holder/u);
     expect(q("review-room-lease-error")).toBeNull();
     expect(q("review-room-viewer-host")).toBeNull();
     expect(viewerBox.renderCount).toBe(0);
@@ -415,4 +458,160 @@ describe("ReviewSessionViewerPane", () => {
     expect(q("review-room-handoff-summary")?.textContent).toContain("status=incomplete");
     expect(viewerBox.sendHighlight).not.toHaveBeenCalled();
   });
+
+  // -------------------------------------------------------------------------
+  // Task 5.6 slice 2: session-preparing / gpu-unavailable / lease-expired /
+  // first-frame-timeout (spec: viewer SHALL 實作失敗態 visible-states 矩陣)
+  // -------------------------------------------------------------------------
+
+  it("session with a non-terminal conversion shows the session-preparing state with a pipeline action", async () => {
+    const preparing = fakeRuntimeStatus();
+    preparing.sessions.items[0] = { ...preparing.sessions.items[0], conversion_status: "running" };
+    vi.mocked(coordinatorClient.runtimeStatus).mockResolvedValue(preparing as never);
+
+    await renderPane();
+
+    const note = q("review-room-session-preparing");
+    expect(note).not.toBeNull();
+    expect(note?.textContent).toContain("running");
+    expect(note?.querySelector('a[href="#pipeline"]')).not.toBeNull();
+  });
+
+  it("a terminal or absent conversion status does not show session-preparing", async () => {
+    const done = fakeRuntimeStatus();
+    done.sessions.items[0] = { ...done.sessions.items[0], conversion_status: "succeeded" };
+    vi.mocked(coordinatorClient.runtimeStatus).mockResolvedValue(done as never);
+    await renderPane();
+    expect(q("review-room-session-preparing")).toBeNull();
+  });
+
+  it("a failed kit instances query shows gpu-unavailable, disables start, and links runtime", async () => {
+    vi.mocked(coordinatorClient.kitInstanceCurrent).mockRejectedValue(
+      new Error("coordinator /api/kit/instances/current -> 503"),
+    );
+
+    await renderPane();
+
+    const note = q("review-room-gpu-unavailable");
+    expect(note).not.toBeNull();
+    expect(note?.textContent).toContain("Kit runtime");
+    expect(note?.querySelector('a[href="#runtime"]')).not.toBeNull();
+    expect(q<HTMLButtonElement>("review-room-manual-start")!.disabled).toBe(true);
+    expect(coordinatorClient.claimViewerLease).not.toHaveBeenCalled();
+  });
+
+  it("a heartbeat rejected as lease-not-found flips into the lease-expired state with a manual re-claim", async () => {
+    root = createRoot(container);
+    await act(async () => {
+      root!.render(<ReviewSessionViewerPane handoff={handoff} heartbeatDelayFn={() => 30} />);
+    });
+    await flush();
+    await act(async () => { q<HTMLButtonElement>("review-room-manual-start")!.click(); });
+    await flush();
+    expect(q("review-room-viewer-host")).not.toBeNull();
+
+    vi.mocked(coordinatorClient.viewerLeaseHeartbeat).mockRejectedValue(
+      new Error("coordinator /api/review-sessions/review_session_x/viewer-leases/viewer_lease_primary/heartbeat -> 404 Viewer lease not found or token invalid."),
+    );
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 120)); });
+    await flush();
+
+    const note = q("review-room-lease-expired");
+    expect(note).not.toBeNull();
+    expect(note?.textContent).toContain("過期");
+    expect(q("review-room-viewer-host")).toBeNull();
+
+    vi.mocked(coordinatorClient.viewerLeaseHeartbeat).mockResolvedValue(fakePrimaryLease() as never);
+    await act(async () => { q<HTMLButtonElement>("review-room-lease-reclaim")!.click(); });
+    await flush();
+    expect(coordinatorClient.claimViewerLease).toHaveBeenCalledTimes(2);
+    expect(q("review-room-lease-expired")).toBeNull();
+    expect(q("review-room-viewer-host")).not.toBeNull();
+  });
+
+  it("a claimed lease without a first frame inside the deadline shows first-frame-timeout with a retry", async () => {
+    root = createRoot(container);
+    await act(async () => {
+      root!.render(<ReviewSessionViewerPane handoff={handoff} firstFrameTimeoutMs={40} />);
+    });
+    await flush();
+    await act(async () => { q<HTMLButtonElement>("review-room-manual-start")!.click(); });
+    await flush();
+    expect(q("review-room-first-frame-timeout")).toBeNull();
+
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 80)); });
+
+    const note = q("review-room-first-frame-timeout");
+    expect(note).not.toBeNull();
+    expect(note?.textContent).toContain("首幀");
+    expect(q<HTMLButtonElement>("review-room-first-frame-retry")).not.toBeNull();
+
+    await act(async () => { q<HTMLButtonElement>("review-room-first-frame-retry")!.click(); });
+    await flush();
+    expect(coordinatorClient.claimViewerLease).toHaveBeenCalledTimes(2);
+    expect(q("review-room-first-frame-timeout")).toBeNull();
+  });
+
+  it("an arriving first frame clears and prevents the first-frame-timeout state", async () => {
+    root = createRoot(container);
+    await act(async () => {
+      root!.render(<ReviewSessionViewerPane handoff={handoff} firstFrameTimeoutMs={60} />);
+    });
+    await flush();
+    await act(async () => { q<HTMLButtonElement>("review-room-manual-start")!.click(); });
+    await flush();
+    await act(async () => {
+      (viewerBox.current!.onFirstFrame as (m: unknown) => void)({ protocol: "vg01", type: "first_frame", stageUrl: "stage://x" });
+    });
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 120)); });
+    expect(q("review-room-first-frame-timeout")).toBeNull();
+  });
+
+
+  it("a viewer stream_state disconnect flips into the stream-disconnected state and a reconnect remounts the iframe", async () => {
+    await renderPane();
+    await act(async () => { q<HTMLButtonElement>("review-room-manual-start")!.click(); });
+    await flush();
+    await act(async () => {
+      (viewerBox.current!.onFirstFrame as (m: unknown) => void)({ protocol: "vg01", type: "first_frame", stageUrl: "stage://x" });
+    });
+    await flush();
+    expect(q("review-room-stream-disconnected")).toBeNull();
+    const mountsBefore = viewerBox.renderCount;
+
+    await act(async () => {
+      (viewerBox.current!.onStreamState as (m: unknown) => void)({ protocol: "vg01", type: "stream_state", state: "disconnected", kind: "stopped" });
+    });
+    await flush();
+
+    const note = q("review-room-stream-disconnected");
+    expect(note).not.toBeNull();
+    expect(note?.textContent).toContain("串流中斷");
+    // 誠實回退：不再顯示 streaming 證據，highlight 立即回封鎖。
+    expect(q("review-room-runtime-evidence")?.textContent).toContain("not_observed");
+    expect(q<HTMLButtonElement>("review-room-highlight")!.disabled).toBe(true);
+
+    await act(async () => { q<HTMLButtonElement>("review-room-stream-reconnect")!.click(); });
+    await flush();
+    expect(q("review-room-stream-disconnected")).toBeNull();
+    expect(viewerBox.renderCount).toBeGreaterThan(mountsBefore);
+    expect(coordinatorClient.claimViewerLease).toHaveBeenCalledTimes(1);
+  });
+
+  it("a fresh first frame clears the stream-disconnected state", async () => {
+    await renderPane();
+    await act(async () => { q<HTMLButtonElement>("review-room-manual-start")!.click(); });
+    await flush();
+    await act(async () => {
+      (viewerBox.current!.onStreamState as (m: unknown) => void)({ protocol: "vg01", type: "stream_state", state: "disconnected", kind: "terminated" });
+    });
+    await flush();
+    expect(q("review-room-stream-disconnected")).not.toBeNull();
+    await act(async () => {
+      (viewerBox.current!.onFirstFrame as (m: unknown) => void)({ protocol: "vg01", type: "first_frame", stageUrl: "stage://x" });
+    });
+    await flush();
+    expect(q("review-room-stream-disconnected")).toBeNull();
+  });
+
 });

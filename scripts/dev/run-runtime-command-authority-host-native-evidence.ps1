@@ -10,6 +10,27 @@ $ErrorActionPreference = 'Stop'
 $script:HostNativeEvidenceTarget = Get-DeployTarget -Id 'local-windows'
 $script:FixedTestDeploymentRoot = [string]$script:HostNativeEvidenceTarget.deploy_root
 $script:FixedTestDeploymentDataRoot = [string]$script:HostNativeEvidenceTarget.runtime_data_root
+# Owner ruling 2026-08-18 (core norm): the local Windows box is an AGENT
+# development-verification surface; the canonical Linux deployment is where a
+# HUMAN reviews delivered results. Evidence-integrity gates exist so a human can
+# trust a result as a claim about the delivered system, so they are scoped to
+# delivery targets. On a development-verification target the same conditions are
+# RECORDED and published in the evidence rather than failing the run - the run
+# still happens, but its output is stamped so it can never be quoted as
+# delivery-grade proof by omission.
+$script:HostNativeEvidenceRole = [string]$script:HostNativeEvidenceTarget.role
+$script:HostNativeEvidenceIsDeliverySurface = ($script:HostNativeEvidenceRole -ceq 'canonical_test_deploy')
+$script:HostNativeEvidenceIntegrityNotes = @()
+
+function Assert-HostNativeEvidenceIntegrity {
+    param(
+        [Parameter(Mandatory = $true)][string] $Code,
+        [Parameter(Mandatory = $true)][string] $Detail
+    )
+
+    if ($script:HostNativeEvidenceIsDeliverySurface) { throw $Detail }
+    $script:HostNativeEvidenceIntegrityNotes += [ordered]@{ code = $Code; detail = $Detail }
+}
 $script:CoordinatorHealthUrl = 'http://127.0.0.1:8004/health'
 $script:ConversionHealthUrl = 'http://127.0.0.1:49101/health'
 $script:ComposeFiles = @('compose.runtime-manager.yml', 'compose.host-kit.yml')
@@ -93,7 +114,10 @@ function Assert-NoBroadWriteAcl {
         if ($rule.AccessControlType -ne [System.Security.AccessControl.AccessControlType]::Allow) { continue }
         if ($rule.IdentityReference.Value -notin $broadWriterSids) { continue }
         if (([int64]$rule.FileSystemRights -band $writeMask) -ne 0) {
-            throw "Host-native evidence path grants a broad principal write access: $Path"
+            Assert-HostNativeEvidenceIntegrity -Code 'broad_write_acl' `
+                -Detail "Host-native evidence path grants a broad principal write access: $Path"
+            # One note per path: further matching ACEs describe the same condition.
+            return
         }
     }
 }
@@ -141,6 +165,99 @@ function Test-HttpOk {
     catch {
         return $false
     }
+}
+
+function Resolve-HostNativeEvidenceStage {
+    <#
+    .SYNOPSIS
+    Resolve the stage this evidence run loads, from a real conversion artifact.
+
+    .DESCRIPTION
+    The harness used to copy a tracked USD fixture into the artifacts root and build
+    its own /artifacts/<runId>/model.usdc URL. That stopped working when #441 gave the
+    conversion service per-artifact download authority: the route now serves only
+    artifacts belonging to a succeeded conversion job, with a matching checksum, so the
+    fabricated URL 404s and Kit reports the stage load as an HTTPError. Kit's
+    BIM_REVIEW_STREAM_ALLOWED_STAGE_HOSTS also permits only the conversion service, so
+    that service is the single legal stage origin - and it will only serve real output.
+
+    Owner ruling 2026-08-19: MinIO is the single source, and an already-converted
+    artifact is preferred over converting again. This therefore reuses the newest
+    succeeded conversion whose model_usdc is actually downloadable, and fails closed
+    with an actionable message when the deployment has none - producing one is an
+    operator step, not something to run inside an evidence capture.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory = $true)][int] $ConversionPort)
+
+    $apiBase = "http://127.0.0.1:$ConversionPort/api/conversions"
+    try {
+        $listing = Invoke-RestMethod -Method Get -Uri $apiBase -TimeoutSec 20
+    }
+    catch {
+        throw "Conversion service did not answer $apiBase : $($_.Exception.Message)"
+    }
+
+    $succeeded = @(@($listing.items) | Where-Object {
+        $_.status -eq 'succeeded' -or $_.status -eq 'succeeded_with_warnings'
+    })
+    if ($succeeded.Count -eq 0) {
+        throw ('No succeeded conversion is available to serve a stage. This harness loads a real ' +
+               'conversion artifact because the conversion service only serves those (#441). ' +
+               'Convert a MinIO-sourced IFC on this deployment first, then rerun.')
+    }
+
+    # conversion job ids are timestamp-prefixed, so descending name order is newest-ish;
+    # the download probe below is what actually decides, so ordering is only a preference.
+    $rejected = @()
+    foreach ($job in ($succeeded | Sort-Object -Property conversion_job_id -Descending)) {
+        $jobId = [string]$job.conversion_job_id
+        try {
+            $result = Invoke-RestMethod -Method Get -Uri "$apiBase/$jobId/result" -TimeoutSec 20
+        }
+        catch {
+            $rejected += "$jobId (result unreadable)"
+            continue
+        }
+        $artifact = $result.artifacts.model_usdc
+        if ($null -eq $artifact -or [string]::IsNullOrWhiteSpace([string]$artifact.url)) {
+            $rejected += "$jobId (no model_usdc artifact)"
+            continue
+        }
+        # A relative artifact URL is legal in the conversion result payload, and casting
+        # one to [uri] and reading AbsolutePath throws - outside the try/catch above, so
+        # it would end the whole run instead of rejecting this one candidate.
+        $artifactUrl = [string]$artifact.url
+        $artifactPath = if ([uri]::IsWellFormedUriString($artifactUrl, [System.UriKind]::Absolute)) {
+            ([uri]$artifactUrl).AbsolutePath
+        }
+        else {
+            ($artifactUrl -split '[?#]')[0]
+        }
+        $fileName = Split-Path -Path $artifactPath -Leaf
+        if ([string]::IsNullOrWhiteSpace($fileName)) {
+            $rejected += "$jobId (unnamed artifact)"
+            continue
+        }
+        # A and B are the same artifact through the two host spellings Kit allows. The
+        # denial cases need two distinct, individually loadable stage URLs: composition
+        # tamper points the composition at B and asserts the stage stays A, which only
+        # means anything while B would genuinely have loaded.
+        $urlA = "http://127.0.0.1:$ConversionPort/artifacts/$jobId/$fileName"
+        $urlB = "http://localhost:$ConversionPort/artifacts/$jobId/$fileName"
+        if (-not (Test-HttpOk -Url $urlA)) { $rejected += "$jobId (127.0.0.1 not served)"; continue }
+        if (-not (Test-HttpOk -Url $urlB)) { $rejected += "$jobId (localhost not served)"; continue }
+        return [ordered]@{
+            conversion_job_id = $jobId
+            file_name         = $fileName
+            checksum_sha256   = [string]$artifact.checksum_sha256
+            stage_url_a       = $urlA
+            stage_url_b       = $urlB
+        }
+    }
+
+    throw ("No succeeded conversion currently serves a downloadable model_usdc. Rejected: " +
+           ($rejected -join '; '))
 }
 
 function Wait-ForHttpOk {
@@ -347,7 +464,14 @@ function Wait-ForControlMarker {
             return $marker
         }
         if ($null -ne $ChildProcess -and $ChildProcess.HasExited) {
-            throw 'The host-native Playwright case exited before its required control marker was written.'
+            # The case's raw stdout/stderr can carry lease tokens, datachannel trace ids and
+            # session ids, so it is deliberately never redirected to a file next to the
+            # evidence. The exit code is the one detail that can be reported safely; the
+            # case's own sanitized JSON under the Playwright output directory is where the
+            # per-request detail lives.
+            throw ("The host-native Playwright case exited (code $($ChildProcess.ExitCode)) before its " +
+                   'required control marker was written. Raw case output is intentionally not persisted; ' +
+                   "read the sanitized case JSON under the run's Playwright output directory.")
         }
         Start-Sleep -Milliseconds 250
     } while ((Get-Date).ToUniversalTime() -lt $deadline)
@@ -394,7 +518,6 @@ $dataRoot = [System.IO.Path]::GetFullPath($script:FixedTestDeploymentDataRoot).T
 $artifactsRoot = Join-Path $dataRoot 'artifacts'
 $viewerRoot = Join-Path $deploymentRoot 'web-viewer-sample'
 $runMetadataRoot = Join-Path $deploymentRoot 'scripts\.run'
-$fixtureSource = Join-Path $deploymentRoot 'bim-streaming-server\source\extensions\ezplus.bim_review_stream.messaging\data\testing.usd'
 $envFilePath = Join-Path $deploymentRoot $script:ComposeEnvFile
 
 Assert-NoReparsePointPath -Path $deploymentRoot
@@ -402,13 +525,11 @@ Assert-NoBroadWriteAcl -Path $deploymentRoot
 if (-not (Test-Path -LiteralPath $dataRoot -PathType Container)) { throw 'Canonical deployment data root is missing.' }
 if (-not (Test-Path -LiteralPath $artifactsRoot -PathType Container)) { throw 'Canonical deployment artifacts root is missing.' }
 if (-not (Test-Path -LiteralPath $viewerRoot -PathType Container)) { throw 'Canonical deployment viewer source is missing.' }
-if (-not (Test-Path -LiteralPath $fixtureSource -PathType Leaf)) { throw 'Tracked host-native USD fixture is missing.' }
 if (-not (Test-Path -LiteralPath $envFilePath -PathType Leaf)) { throw 'Canonical deployment Compose environment file is missing.' }
 Assert-NoReparsePointPath -Path $dataRoot
 Assert-NoBroadWriteAcl -Path $dataRoot
 Assert-NoReparsePointPath -Path $artifactsRoot
 Assert-NoReparsePointPath -Path $viewerRoot
-Assert-NoReparsePointPath -Path $fixtureSource
 
 $headSha = (& git rev-parse HEAD).Trim()
 $originMainSha = (& git rev-parse origin/main).Trim()
@@ -417,7 +538,9 @@ if ($LASTEXITCODE -ne 0 -or $headSha -notmatch '^[0-9a-f]{40}$' -or $originMainS
     throw 'Unable to establish canonical deployment Git provenance.'
 }
 if ($headSha -ne $originMainSha -or -not [string]::IsNullOrWhiteSpace($dirty)) {
-    throw 'Canonical deployment must be clean and exactly equal to origin/main before evidence runs.'
+    $dirtyCount = @($dirty -split "`r?`n" | Where-Object { $_ }).Count
+    Assert-HostNativeEvidenceIntegrity -Code 'checkout_not_exactly_origin_main' `
+        -Detail "Deployment checkout is not exactly a clean origin/main: head=$headSha origin_main=$originMainSha dirty_entries=$dirtyCount."
 }
 
 $dockerContext = (& docker context show 2>&1 | Out-String).Trim()
@@ -456,23 +579,26 @@ if (-not (Wait-ForHttpOk -Url $script:ConversionHealthUrl -TimeoutSeconds 30)) {
 $runId = "runtime-authority-e2e-$([guid]::NewGuid().ToString('N'))"
 if ($runId -notmatch '^[a-z0-9-]+$') { throw 'Generated host-native evidence run ID is invalid.' }
 $controlNonce = [guid]::NewGuid().ToString('N')
-$fixtureDirectory = Join-Path $artifactsRoot $runId
 $controlParent = Join-Path $dataRoot 'control'
 $controlDirectory = Join-Path (Join-Path $controlParent 'runtime-command-authority') $runId
 $evidenceParent = Join-Path $artifactsRoot 'runtime-command-authority-evidence'
 $evidenceDirectory = Join-Path $evidenceParent $runId
-Ensure-Directory -Path $fixtureDirectory
 Ensure-Directory -Path $controlParent
 Ensure-Directory -Path (Join-Path $controlParent 'runtime-command-authority')
 Ensure-Directory -Path $controlDirectory
 Ensure-Directory -Path $evidenceParent
 Ensure-Directory -Path $evidenceDirectory
 
-$fixtureStagePath = Join-Path $fixtureDirectory 'model.usdc'
-Copy-Item -LiteralPath $fixtureSource -Destination $fixtureStagePath
-$stageUrlA = "http://127.0.0.1:$conversionPort/artifacts/$runId/model.usdc"
-$stageUrlB = "http://localhost:$conversionPort/artifacts/$runId/model.usdc"
+$stageArtifact = Resolve-HostNativeEvidenceStage -ConversionPort $conversionPort
+$stageUrlA = [string]$stageArtifact.stage_url_a
+$stageUrlB = [string]$stageArtifact.stage_url_b
+Write-Host "stage artifact: $($stageArtifact.conversion_job_id)/$($stageArtifact.file_name)"
 $playwrightOutput = Join-Path $evidenceDirectory 'playwright-output'
+# The case's raw stdout/stderr is NOT redirected to a file. Playwright echoes request
+# payloads and failure diagnostics verbatim, which can carry lease tokens, datachannel
+# trace ids and session ids; landing that in the deployment artifacts root would break
+# the "raw tokens persisted=false" claim the evidence itself makes. Diagnostics come
+# from the child exit code plus the case's own sanitized JSON under $playwrightOutput.
 Ensure-Directory -Path $playwrightOutput
 
 $listener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 0)
@@ -519,11 +645,23 @@ $childCleanupFailure = $null
 try {
     Push-Location -LiteralPath $viewerRoot
     try {
+        # The claim this gate makes is that INSTALLING DEPENDENCIES does not mutate the
+        # checkout, so compare the tree before and after rather than requiring it to be
+        # pristine afterwards - the pristine form cannot tell "npm ci dirtied the tree"
+        # apart from "the tree was already dirty", and the deployment-revision gate above
+        # already reports the latter. Same owner ruling as that gate: on a
+        # development-verification target the condition is recorded in the evidence
+        # instead of ending the run.
+        $dirtyBeforeInstall = (& git status --porcelain | Out-String).Trim()
+        if ($LASTEXITCODE -ne 0) { throw 'git status failed before viewer dependency installation.' }
         & npm ci --ignore-scripts --no-audit --no-fund
         if ($LASTEXITCODE -ne 0) { throw 'npm ci failed for the canonical deployment viewer.' }
         $dirtyAfterInstall = (& git status --porcelain | Out-String).Trim()
-        if ($LASTEXITCODE -ne 0 -or -not [string]::IsNullOrWhiteSpace($dirtyAfterInstall)) {
-            throw 'Viewer dependency installation changed the canonical deployment checkout.'
+        if ($LASTEXITCODE -ne 0) { throw 'git status failed after viewer dependency installation.' }
+        if ($dirtyAfterInstall -cne $dirtyBeforeInstall) {
+            Assert-HostNativeEvidenceIntegrity `
+                -Code 'viewer_install_mutated_checkout' `
+                -Detail 'Viewer dependency installation changed the canonical deployment checkout.'
         }
     }
     finally {
@@ -580,6 +718,35 @@ try {
         request_id = [string]$outageReady.request_id
         control_nonce = $controlNonce
         coordinator_stopped = $true
+    }
+
+    # The stage read that proves stage truth is authority-gated too, so the case cannot
+    # observe it while the coordinator is down - it would hang, which is exactly what a
+    # gated read during an outage does. Recover as soon as the case reports its outage
+    # assertion done, and tell it when the authority is actually back.
+    $null = Wait-ForControlMarker `
+        -Path (Join-Path $controlDirectory 'outage-done.json') `
+        -RunId $runId `
+        -ControlNonce $controlNonce `
+        -TimeoutSeconds ($script:PlaywrightEvidenceTimeoutSeconds + $script:PlaywrightRunnerGraceSeconds) `
+        -ChildProcess $e2eProcess
+    if (-not (Test-DeploymentCoordinatorRunning -ContainerId $coordinator.container_id)) {
+        Invoke-Docker -Arguments @('start', $coordinator.container_id) | Out-Null
+    }
+    $recoveredCoordinator = Get-DeploymentCoordinator -ComposeBase $composeBase -DeploymentRoot $deploymentRoot
+    if ($recoveredCoordinator.container_id -ne $coordinator.container_id) {
+        throw 'Coordinator recovery did not restore the exact container proven before the controlled outage.'
+    }
+    $coordinatorRecovered = Wait-ForHttpOk -Url $script:CoordinatorHealthUrl -TimeoutSeconds 60
+    if (-not $coordinatorRecovered) {
+        throw 'Coordinator did not recover its health endpoint after the controlled outage.'
+    }
+    Write-ControlMarker -Path (Join-Path $controlDirectory 'outage-recovered.json') -Marker @{
+        schema_version = 'runtime-command-authority-control/v1'
+        run_id = $runId
+        request_id = [string]$outageReady.request_id
+        control_nonce = $controlNonce
+        coordinator_recovered = $true
     }
 
     Wait-ForProcessExit -Process $e2eProcess -TimeoutSeconds ($script:PlaywrightEvidenceTimeoutSeconds + $script:PlaywrightRunnerGraceSeconds)
@@ -662,7 +829,14 @@ if ($null -ne $recoveryFailure) { throw $recoveryFailure }
 if ($null -ne $childCleanupFailure) { throw $childCleanupFailure }
 
 $evidence = [ordered]@{
-    schema_version = 'runtime-command-authority-host-native-runner/v1'
+    # v2 replaces the `fixture` block with `stage`: the harness no longer copies a
+    # tracked USD fixture into the artifacts root, it loads a real conversion artifact
+    # served by the conversion service (#441 download authority).
+    schema_version = 'runtime-command-authority-host-native-runner/v2'
+    target_id = [string]$script:HostNativeEvidenceTarget.id
+    target_role = $script:HostNativeEvidenceRole
+    evidence_class = if ($script:HostNativeEvidenceIsDeliverySurface) { 'delivery' } else { 'development_verification' }
+    integrity_notes = @($script:HostNativeEvidenceIntegrityNotes)
     post_merge_corrective = $true
     tested_origin_main_sha = $originMainSha
     deployment = [ordered]@{
@@ -672,10 +846,19 @@ $evidence = [ordered]@{
         coordinator_recovered = $coordinatorRecovered
     }
     runtime = $kitProcess
-    fixture = [ordered]@{
-        source = 'bim-streaming-server/source/extensions/ezplus.bim_review_stream.messaging/data/testing.usd'
+    stage = [ordered]@{
+        # Whatever names the stage here must be what the run actually loaded. There is no
+        # tracked-fixture copy any more, so `source` is the conversion-service artifact
+        # route this run resolved, not a repo path.
+        source = $stageUrlA
         stage_url_a = $stageUrlA
         stage_url_b = $stageUrlB
+        stage_source = [ordered]@{
+            kind              = 'conversion_artifact'
+            conversion_job_id = [string]$stageArtifact.conversion_job_id
+            file_name         = [string]$stageArtifact.file_name
+            checksum_sha256   = [string]$stageArtifact.checksum_sha256
+        }
     }
     playwright = [ordered]@{
         viewer_port = $viewerPort

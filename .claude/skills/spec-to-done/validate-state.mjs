@@ -145,6 +145,7 @@ const requireFields = (fields, required) => {
 const extractRunIds = (runIds) => ({
   claude: new Set(String(runIds || '').match(/\bwf_[A-Za-z0-9_-]+\b/g) || []),
   codex: new Set(String(runIds || '').match(/codex:[A-Za-z0-9][A-Za-z0-9._:-]{7,}/g) || []),
+  grok: new Set(String(runIds || '').match(/grok:[A-Za-z0-9][A-Za-z0-9._:-]{7,}/g) || []),
 })
 
 const validateRunIds = (runIds, platform, phase, executionMode) => {
@@ -154,14 +155,17 @@ const validateRunIds = (runIds, platform, phase, executionMode) => {
   const canBeNone = phase === 'P0' || (phase === 'P1' && executionMode === 'evidence-closeout')
   if (runIds === 'none' && canBeNone) return
   const ids = extractRunIds(runIds)
-  if (platform === null && ids.claude.size === 0 && ids.codex.size === 0) {
-    reject('resume_state_invalid', 'historical state must contain an actual wf_* or codex:* run ID')
+  if (platform === null && ids.claude.size === 0 && ids.codex.size === 0 && ids.grok.size === 0) {
+    reject('resume_state_invalid', 'historical state must contain an actual wf_*, codex:*, or grok:* run ID')
   }
   if (platform === 'claude' && ids.claude.size === 0) {
     reject('resume_state_invalid', 'Claude state must contain an actual wf_* run ID')
   }
   if (platform === 'codex' && ids.codex.size === 0) {
     reject('resume_state_invalid', 'Codex state must contain codex:<actual-session-or-agent-id>')
+  }
+  if (platform === 'grok' && ids.grok.size === 0) {
+    reject('resume_state_invalid', 'Grok state must contain grok:<actual-subagent-or-workflow-id>')
   }
 }
 
@@ -510,14 +514,15 @@ const validateParsedTransition = (previous, current) => {
 
   const previousIds = extractRunIds(previous.fields.runIds)
   const currentIds = extractRunIds(current.fields.runIds)
-  for (const family of ['claude', 'codex']) {
+  const runIdFamilies = ['claude', 'codex', 'grok']
+  for (const family of runIdFamilies) {
     for (const id of previousIds[family]) {
       if (!currentIds[family].has(id)) reject('resume_state_invalid', `runIds dropped prior actual ID: ${id}`)
     }
   }
-  const crossedCli =
-    (previousIds.claude.size > 0 && previousIds.codex.size === 0 && currentIds.codex.size > 0) ||
-    (previousIds.codex.size > 0 && previousIds.claude.size === 0 && currentIds.claude.size > 0)
+  const previousFamilies = runIdFamilies.filter((family) => previousIds[family].size > 0)
+  const newlyAddedFamilies = runIdFamilies.filter((family) => currentIds[family].size > 0 && previousIds[family].size === 0)
+  const crossedCli = previousFamilies.length > 0 && newlyAddedFamilies.length > 0
   if (crossedCli && (current.kind !== 'RESUMED' || current.fields.decision !== 'cross-cli-handoff')) {
     reject('resume_state_invalid', 'cross-CLI handoff requires RESUMED with decision=cross-cli-handoff')
   }
@@ -547,7 +552,7 @@ const main = () => {
   const platform = cli.platform
   const requiredCli = ['state', 'platform', 'git-exe', 'expected-head', 'expected-worktree', 'expected-agent-limit', 'expected-p5-limit', 'expected-evidence-limit', 'trusted-main-ref']
   const missingCli = requiredCli.filter((key) => !cli[key])
-  if (missingCli.length || !['claude', 'codex'].includes(platform)) {
+  if (missingCli.length || !['claude', 'codex', 'grok'].includes(platform)) {
     reject('resume_state_invalid', `missing or invalid validator arguments: ${missingCli.join(',') || 'platform'}`)
   }
   if (cli['trusted-main-ref'] !== TERMINAL_EVIDENCE.remote_main_ref) {

@@ -1,0 +1,49 @@
+rebuild-test-deploy-pwsh7-child — pre-merge verification (branch scope only)
+
+scripts/tests/test-rebuild-test-deploy.ps1
+  [PASS] rebuild-test-deploy
+  scenarios: normal temp deployment path; deployment root junction; existing deep
+  ancestor junction; untracked leaf reparse; ordinary untracked leaf under
+  reparse ancestor; exclusive lock contention and reacquire; held-lock rebuild
+  integration
+
+PowerShell parse check (both changed files)
+  scripts/lib/rebuild-test-deploy.ps1        parse OK
+  scripts/tests/test-rebuild-test-deploy.ps1 parse OK
+
+Control-character scan (guards against escape-sequence injection while editing)
+  scripts/lib/rebuild-test-deploy.ps1        0
+  scripts/tests/test-rebuild-test-deploy.ps1 0
+
+Quoting isolation, resolver code run verbatim from a script file on this host
+  PS 5.1 + original f-string      exit=1  python: File "<string>", line 1
+  PS 5.1 + no embedded quotes     exit=0  3.12
+  PS 7   + original f-string      exit=0  3.12
+
+PSModulePath probe (Get-FileHash resolvable?)
+  PS7 roots first                 5.1 MISSING   7 OK
+  Windows roots first             5.1 OK        7 OK
+  Windows roots only  (retained)  5.1 OK        7 OK
+
+Observed local-windows deploy behaviour with the changed launcher
+  before change: deploy.log ends at
+                 [fail ] no usable system python found (tried python / python3)
+  after  change: deploy.log proceeds past that gate
+                 [fix  ] creating .venv via python -m venv
+                 [fix  ] pip install -r bim-streaming-server\requirements.txt
+                 [fix  ] pip install -r governance-service\requirements.txt
+                 [ok   ] Phase 2 complete (9 actions)
+                 [ok   ] Phase 4a governance-service ready (:49102/health 200)
+                 [ok   ] Phase 4b conversion-service ready (:49101/health 200)
+                 [ok   ] Phase 4c Kit ready (:49100 LISTEN + 'app ready')
+                 [ok   ] Phase 4c-2 kit-manager-api ready (:8010/health 200)
+                 Kit repo.bat build: BUILD (RELEASE) SUCCEEDED (Took 28.92 seconds)
+  Child edition confirmed live: the deploy child process command line was
+    "C:\Program Files\PowerShell\7\pwsh.exe" "-NoProfile" "-ExecutionPolicy" "Bypass" "-File" ...
+
+NOT CLAIMED pre-merge
+  A complete local-windows rebuild through to a green Phase 4d has not been
+  observed with the final code on this branch. rebuild-test-deploy replaces the
+  checkout from freshly fetched origin/main, so the branch launcher can never be
+  exercised as canonical evidence before merge. That is the registered debt;
+  local-windows-rebuild in the contract is the post-merge replay that settles it.

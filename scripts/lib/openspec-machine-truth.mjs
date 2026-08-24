@@ -35,6 +35,10 @@ const CHANGE_KEYS = [
   'subject_commit',
   'archive_debt',
 ];
+// introduction-resolved-subject-binding: `subject_binding` is the only optional
+// row key. Value domain is closed to the single string 'introduction'; any
+// other key stays fail-closed via the exact-keys check below.
+const CHANGE_KEYS_WITH_BINDING = [...CHANGE_KEYS, 'subject_binding'];
 
 export class MachineTruthInputError extends Error {
   constructor(code, field, message) {
@@ -87,7 +91,11 @@ function validateLedgerShape(ledger, label = 'ledger') {
   const ids = new Set();
   for (const [index, change] of ledger.changes.entries()) {
     const field = `${label}.changes[${index}]`;
-    assertExactKeys(change, CHANGE_KEYS, field);
+    const hasBinding = isObject(change) && Object.hasOwn(change, 'subject_binding');
+    assertExactKeys(change, hasBinding ? CHANGE_KEYS_WITH_BINDING : CHANGE_KEYS, field);
+    if (hasBinding && change.subject_binding !== 'introduction') {
+      fail('schema_invalid', `${field}.subject_binding`, 'subject_binding must be the string "introduction" when present.');
+    }
     if (typeof change.id !== 'string' || !CHANGE_ID.test(change.id) || ids.has(change.id)) {
       fail('schema_invalid', `${field}.id`, 'Change id is invalid or duplicated.');
     }
@@ -128,13 +136,20 @@ function validateLedgerShape(ledger, label = 'ledger') {
       fail('schema_invalid', `${field}.subject_commit`, 'subject_commit must be a lowercase full SHA.');
     }
     if (change.archive_debt !== null) {
-      assertExactKeys(change.archive_debt, ['reason', 'unchecked_tasks', 'unsupported_checkboxes', 'owner', 'review_due'], `${field}.archive_debt`);
-      if (change.status !== 'archived' || change.archive_debt.reason !== 'historical_task_ledger_debt' ||
-          !Number.isInteger(change.archive_debt.unchecked_tasks) || change.archive_debt.unchecked_tasks < 0 ||
-          !Number.isInteger(change.archive_debt.unsupported_checkboxes) || change.archive_debt.unsupported_checkboxes < 0 ||
-          change.archive_debt.unchecked_tasks + change.archive_debt.unsupported_checkboxes < 1 ||
-          typeof change.archive_debt.owner !== 'string' || !change.archive_debt.owner.trim() ||
-          typeof change.archive_debt.review_due !== 'string' || !/^\d{4}-\d{2}-\d{2}$/u.test(change.archive_debt.review_due)) {
+      const debt = change.archive_debt;
+      const permanentDebt = typeof debt === 'object' && debt !== null && !Array.isArray(debt) &&
+        debt.reason === 'permanent_historical_task_ledger_debt';
+      assertExactKeys(debt, permanentDebt
+        ? ['reason', 'unchecked_tasks', 'unsupported_checkboxes', 'owner', 'adjudicated_on']
+        : ['reason', 'unchecked_tasks', 'unsupported_checkboxes', 'owner', 'review_due'], `${field}.archive_debt`);
+      const debtDate = permanentDebt ? debt.adjudicated_on : debt.review_due;
+      if (change.status !== 'archived' ||
+          (!permanentDebt && debt.reason !== 'historical_task_ledger_debt') ||
+          !Number.isInteger(debt.unchecked_tasks) || debt.unchecked_tasks < 0 ||
+          !Number.isInteger(debt.unsupported_checkboxes) || debt.unsupported_checkboxes < 0 ||
+          debt.unchecked_tasks + debt.unsupported_checkboxes < 1 ||
+          typeof debt.owner !== 'string' || !debt.owner.trim() ||
+          typeof debtDate !== 'string' || !/^\d{4}-\d{2}-\d{2}$/u.test(debtDate)) {
         fail('schema_invalid', `${field}.archive_debt`, 'archive_debt must be a typed exception on an archived change.');
       }
     }
@@ -680,11 +695,17 @@ export function evaluateOpenSpecMachineTruth({
           const prior = previousById?.get(change.id);
           const inheritedDebt = prior?.status === 'archived' && prior.archive_debt !== null &&
             JSON.stringify(prior.archive_debt) === JSON.stringify(debt);
+          const adjudicatedPermanentDebt = prior?.status === 'archived' && prior.archive_debt !== null &&
+            prior.archive_debt.reason === 'historical_task_ledger_debt' &&
+            debt.reason === 'permanent_historical_task_ledger_debt' &&
+            prior.archive_debt.unchecked_tasks === debt.unchecked_tasks &&
+            prior.archive_debt.unsupported_checkboxes === debt.unsupported_checkboxes &&
+            prior.archive_debt.owner === debt.owner;
           const baseline = baselineArchiveById.get(change.id);
           const bootstrapDebt = previousById === null && baseline !== undefined &&
             baseline.completed === observed.completed && baseline.total === observed.total &&
             baseline.unsupported === observed.unsupported;
-          if (!inheritedDebt && !bootstrapDebt) {
+          if (!inheritedDebt && !adjudicatedPermanentDebt && !bootstrapDebt) {
             mismatch(mismatches, 'archive', 'archive_debt_unproven', change.id, 'archive_debt',
               'trusted_subject', 'pre-existing archived debt', 'machine_ledger', 'new_or_changed',
               'Archive debt must be inherited from the previous ledger or observed in archive tasks at the trusted subject.');

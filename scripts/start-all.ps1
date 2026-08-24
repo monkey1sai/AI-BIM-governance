@@ -128,6 +128,37 @@ if ([string]::IsNullOrWhiteSpace($env:STREAMING_CONVERSION_WORK_DIR)) {
     $env:STREAMING_CONVERSION_WORK_DIR = Resolve-ConversionWorkDir -Root $RepoRoot
 }
 
+function Resolve-HostStorageRoot {
+    # 解析「這台機器的 host storage root」。優先序刻意抄 coordinator 自己的解析鏈
+    # (bim-review-coordinator/src/config.ts 的 storageHostRoot:
+    #  STORAGE_HOST_ROOT -> RUNTIME_STORAGE_ROOT -> 預設),再把 conversion service 那側的
+    # 名字 STORAGE_ROOT 接在後面,最後才落到 <conversion work dir>\storage。
+    # 預設值用 conversion work dir 而不是 $RepoRoot,是為了沿用 Resolve-ConversionWorkDir
+    # 已經處理過的 worktree 情況(真 IFC 放在主 checkout 的 storage\)。
+    param([Parameter(Mandatory = $true)][string] $ConversionWorkDir)
+
+    foreach ($candidate in @($env:STORAGE_HOST_ROOT, $env:RUNTIME_STORAGE_ROOT, $env:STORAGE_ROOT)) {
+        if (-not [string]::IsNullOrWhiteSpace($candidate)) { return $candidate }
+    }
+    return (Join-Path $ConversionWorkDir "storage")
+}
+
+# 不變式(正本註解在 scripts/lib/host-native-launcher.ps1 的 Start-HostNativeConversion):
+# conversion service 的 STORAGE_ROOT 是 ifc2usdc_powershell_adapter.py 驗 dispatch payload
+# host_local_path 的 sandbox 根,而 coordinator 送出的 host_local_path 是
+# <host storage root>\ifc-cache\<job>\source.ifc,所以兩邊必須指同一個目錄。
+#
+# 先前只有 deploy.ps1 -> Start-HostNativeConversion 遵守它;start-all 直接叫起服務腳本、
+# 只設 STREAMING_CONVERSION_HOST/PORT,於是 coordinator 與 conversion service 各自推導出
+# 不同的 root,每一筆 IFC 都被回 invalid_ifc_input(issue #626)。這裡在啟動任何服務之前
+# 解析一次,並把同一個值同時交給 coordinator 與 conversion service——兩個 child process
+# 都繼承本 process 的環境變數,所以「解析一次」就是這條啟動路徑上的單一事實來源。
+$HostStorageRoot = Resolve-HostStorageRoot -ConversionWorkDir $env:STREAMING_CONVERSION_WORK_DIR
+$env:STORAGE_ROOT = $HostStorageRoot
+$env:STORAGE_HOST_ROOT = $HostStorageRoot
+$env:RUNTIME_STORAGE_ROOT = $HostStorageRoot
+Write-Host "[env  ] host storage root = $HostStorageRoot (STORAGE_ROOT / STORAGE_HOST_ROOT / RUNTIME_STORAGE_ROOT)" -ForegroundColor DarkGray
+
 function Get-KitEndpointSpecs {
     $signalPorts = @(ConvertTo-PortList -Values $KitSignalPorts -Name "KitSignalPorts")
     $streamPorts = @(ConvertTo-PortList -Values $KitStreamPorts -Name "KitStreamPorts")

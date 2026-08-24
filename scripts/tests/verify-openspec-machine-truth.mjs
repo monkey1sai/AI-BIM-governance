@@ -13,7 +13,12 @@ import {
   taskLedgerFromText,
 } from '../lib/openspec-machine-truth.mjs';
 
-const MAX_UNIQUE_SUBJECTS = 64;
+// Owner ruling 2026-08-18 (introduction-resolved-subject-binding, openQuestions #1):
+// aligned to the ledger row cap so sentinel rows can each keep an independent
+// watermark SHA without mechanically exhausting the budget. The rawBudget
+// accounting point moved after the owned-path filter (see collectSourceObservations),
+// so consumption scales with per-change owned churn, not repo-wide churn.
+const MAX_UNIQUE_SUBJECTS = 500;
 const MAX_OBSERVED_PATHS = 10_000;
 const MAX_OBSERVED_PATH_BYTES = 2 * 1024 * 1024;
 const MAX_RAW_OBSERVED_PATHS = 10_000;
@@ -192,25 +197,60 @@ function assertGitBase(repoRoot, baseCommit) {
   if (ancestor.status !== 0) {
     throw new MachineTruthInputError('base_not_ancestor', 'base_commit', 'Trusted base must be an ancestor of the checked-out HEAD.');
   }
+  // origin/main ancestry anchor (introduction-resolved-subject-binding, challenge B5):
+  // sentinel rows shift trust from subject reachability to "introduction is
+  // landed history at --base", so --base itself must be landed history when the
+  // checkout knows what landed history is. Without this, --base=HEAD lets a
+  // branch self-bless a minted binding. Environments without an origin/main
+  // remote ref (test fixture repositories) keep the prior behavior; there the
+  // residual trust boundary is the caller's honesty about --base, which is part
+  // of this CLI's trust envelope by design.
+  const originMain = gitOutput(repoRoot, ['rev-parse', '--verify', 'refs/remotes/origin/main^{commit}'], 'base_commit', true);
+  if (originMain.status === 0) {
+    let originTip;
+    try {
+      originTip = new TextDecoder('utf-8', { fatal: true }).decode(originMain.stdout).trim().toLowerCase();
+    } catch {
+      throw new MachineTruthInputError('base_unavailable', 'base_commit', 'origin/main tip could not be read safely.');
+    }
+    if (!/^[0-9a-f]{40}$/u.test(originTip)) {
+      throw new MachineTruthInputError('base_unavailable', 'base_commit', 'origin/main tip is not a full commit SHA.');
+    }
+    const anchored = gitOutput(repoRoot, ['merge-base', '--is-ancestor', baseCommit, originTip], 'base_commit', true);
+    if (anchored.status !== 0) {
+      throw new MachineTruthInputError('base_unavailable', 'base_commit',
+        'Trusted base must be an ancestor of origin/main when that ref exists.');
+    }
+  }
 }
 
 export function resolveRowSubjectWatermark(repoRoot, change, cache, baseCommit) {
   const cacheKey = `${change.id}\n${change.subject_commit}`;
   if (cache.has(cacheKey)) return cache.get(cacheKey);
   const field = `source_observations.${change.id}.subject_commit`;
+  const sentinel = change.subject_binding === 'introduction';
   const available = gitOutput(repoRoot, ['cat-file', '-e', `${change.subject_commit}^{commit}`], field, true);
   let effective;
   if (available.status === 0) {
     const ancestor = gitOutput(repoRoot, ['merge-base', '--is-ancestor', change.subject_commit, 'HEAD'], field, true);
-    if (ancestor.status !== 0) {
-      // A subject that still exists as a commit but sits outside HEAD's history
-      // is a row bound to untrusted work. Squash recovery must never run for
-      // it: only a subject that no longer exists at all can have been discarded
-      // by a squash merge.
+    if (ancestor.status === 0) {
+      effective = change.subject_commit;
+    } else if (sentinel) {
+      // A sentinel row declares its recorded SHA to be only a binding watermark
+      // key, never a reachability claim. A locally surviving pre-squash branch
+      // ref must therefore not change the verdict relative to a clean clone
+      // where the SHA is gone entirely: both resolve through the introduction
+      // algorithm, keeping the outcome deterministic across clones.
+      effective = ledgerIntroductionCommit(repoRoot, change, field, baseCommit,
+        new MachineTruthInputError('subject_unavailable', field, 'Lifecycle row subject is not a local commit.'));
+    } else {
+      // A legacy subject that still exists as a commit but sits outside HEAD's
+      // history is a row bound to untrusted work. Squash recovery must never
+      // run for it: only a subject that no longer exists at all can have been
+      // discarded by a squash merge.
       throw new MachineTruthInputError('subject_not_ancestor', field,
         'Lifecycle row subject must be an ancestor of the checked-out HEAD.');
     }
-    effective = change.subject_commit;
   } else {
     effective = ledgerIntroductionCommit(repoRoot, change, field, baseCommit,
       new MachineTruthInputError('subject_unavailable', field, 'Lifecycle row subject is not a local commit.'));
@@ -247,7 +287,10 @@ function ledgerIntroductionCommit(repoRoot, change, field, baseCommit, failure) 
   // own pre-merge gate run (where the recorded subject still resolved) and by
   // the live task-count comparison; they cannot be re-derived once the
   // pre-merge history is discarded. Anything not provably introduced for this
-  // exact row fails closed with the original error.
+  // exact row fails closed with the original error. This residual limit is
+  // normative: see openspec/specs/openspec-machine-truth-subject-resolution/spec.md
+  // specs/openspec-machine-truth-subject-resolution/spec.md (folded-squash
+  // requirement) - do not "fix" it or claim coverage for folded edits.
   const listed = gitOutput(repoRoot, ['log', '--format=%H', `-S${change.subject_commit}`, 'HEAD', '--',
     'openspec/lifecycle-ledger.json'], field, true);
   if (listed.status !== 0) throw failure;
@@ -282,12 +325,16 @@ function ledgerIntroductionCommit(repoRoot, change, field, baseCommit, failure) 
   return introduction;
 }
 
-export function changedPathsSince(repoRoot, subjectCommit, cache, rawBudget) {
+export function changedPathsSince(repoRoot, subjectCommit, cache) {
+  // Owner ruling 2026-08-18: the shared rawBudget is charged AFTER the
+  // owned-path filter in collectSourceObservations, so unrelated repo-wide
+  // churn between a watermark and HEAD never consumes the budget. The raw
+  // per-watermark diff itself stays bounded by gitOutput's 4MB maxBuffer and
+  // per-call 15s timeout.
   if (cache.has(subjectCommit)) return cache.get(subjectCommit);
   const tracked = gitOutput(repoRoot, ['-c', 'core.quotepath=false', 'diff', '--name-only', '-z', '--no-renames',
     `${subjectCommit}..HEAD`, '--'], `source_observations.${subjectCommit}.diff`);
   const paths = decodeNulList(tracked.stdout, `source_observations.${subjectCommit}.diff`);
-  consumeRawObservationPaths(rawBudget, paths, `source_observations.${subjectCommit}.diff`);
   cache.set(subjectCommit, paths);
   return paths;
 }
@@ -332,9 +379,10 @@ export function collectSourceObservations(repoRoot, ledger, baseCommit) {
     const evidence = new Set(change.evidence_refs.filter((reference) => typeof reference === 'string')
       .map((reference) => reference.replaceAll('\\', '/')));
     const changedPaths = [...new Set([
-      ...changedPathsSince(repoRoot, watermark, bySubject, rawBudget),
+      ...changedPathsSince(repoRoot, watermark, bySubject),
       ...localPaths,
     ])].filter((candidate) => isOwnedOpenSpecSource(change.id, candidate) || evidence.has(candidate));
+    consumeRawObservationPaths(rawBudget, changedPaths, `source_observations.${change.id}.owned`);
     aggregatePaths += changedPaths.length;
     aggregateBytes += changedPaths.reduce((total, value) => total + Buffer.byteLength(value, 'utf8'), 0);
     if (changedPaths.length > MAX_OBSERVED_PATHS || aggregatePaths > MAX_OBSERVED_PATHS || aggregateBytes > MAX_OBSERVED_PATH_BYTES) {
@@ -358,6 +406,54 @@ function previousLedgerAtBase(repoRoot, baseCommit) {
     return JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(shown.stdout));
   } catch {
     throw new MachineTruthInputError('artifact_invalid_json', 'previous_ledger', 'Previous ledger is invalid JSON.');
+  }
+}
+
+export function assertReconcileRatchet(repoRoot, ledger, previousLedger, baseCommit) {
+  // introduction-resolved-subject-binding reconcile ratchet: relative to the
+  // trusted base's previous ledger, a NEW row must either declare the sentinel
+  // or bind a base-ancestor subject (which can only over-report drift), and a
+  // REWRITTEN subject must either declare the sentinel or equal exactly the
+  // resolved introduction commit of the base binding (P2b normalization). Any
+  // other rewrite - including "any base ancestor" - could advance a row's
+  // watermark past accrued drift and silently launder it (challenge B4).
+  // Bootstrap-era (no previous ledger at base) is exempt by contract. Git
+  // subprocess upper bound per dangling row: 1 cat-file + 1 log -S + at most
+  // 32 candidates x 2 ledger shows, each bounded by a 15s timeout.
+  if (previousLedger === null) return;
+  if (!ledger || !Array.isArray(ledger.changes) || !Array.isArray(previousLedger.changes)) return;
+  const previousById = new Map(previousLedger.changes
+    .filter((change) => change && typeof change.id === 'string' && typeof change.subject_commit === 'string')
+    .map((change) => [change.id, change]));
+  const ratchetCache = new Map();
+  for (const change of ledger.changes) {
+    if (!change || typeof change.id !== 'string' || typeof change.subject_commit !== 'string' ||
+        !/^[0-9a-f]{40}$/u.test(change.subject_commit)) {
+      continue; // shape errors are adjudicated by validateLedgerShape, not the ratchet
+    }
+    const field = `ratchet.${change.id}.subject_commit`;
+    if (change.subject_binding === 'introduction') continue;
+    const before = previousById.get(change.id);
+    if (before && before.subject_commit === change.subject_commit) continue;
+    if (!before) {
+      const landed = gitOutput(repoRoot, ['merge-base', '--is-ancestor', change.subject_commit, baseCommit], field, true);
+      if (landed.status !== 0) {
+        throw new MachineTruthInputError('subject_binding_required', field,
+          'A new lifecycle row must declare subject_binding "introduction" or bind a trusted-base ancestor.');
+      }
+      continue;
+    }
+    let effectiveBefore;
+    try {
+      effectiveBefore = resolveRowSubjectWatermark(repoRoot, before, ratchetCache, baseCommit);
+    } catch {
+      throw new MachineTruthInputError('subject_binding_required', field,
+        'A rewritten lifecycle row subject requires subject_binding "introduction" because the base binding does not resolve to a unique introduction.');
+    }
+    if (change.subject_commit !== effectiveBefore) {
+      throw new MachineTruthInputError('subject_binding_required', field,
+        'A rewritten lifecycle row subject must declare subject_binding "introduction" or equal the resolved introduction of the base binding.');
+    }
   }
 }
 
@@ -436,6 +532,10 @@ if (process.argv[1] && pathToFileURL(path.resolve(process.argv[1])).href === imp
       ? baselineArchiveTasksAtSubject(repoRoot, subjectCommit, input.ledger)
       : null;
     const source = collectSourceObservations(repoRoot, input.ledger, baseCommit);
+    // Ratchet runs after watermark resolution: resolution failures keep their
+    // own fail-closed codes; the ratchet catches the rewrites that RESOLVE but
+    // would advance a watermark without declaring the sentinel.
+    assertReconcileRatchet(repoRoot, input.ledger, input.previousLedger, baseCommit);
     const report = evaluateOpenSpecMachineTruth({
       repoRoot,
       ...input,

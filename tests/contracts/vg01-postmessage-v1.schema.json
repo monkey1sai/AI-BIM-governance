@@ -4,119 +4,300 @@
   "title": "VG-01 EmbeddedViewer postMessage bridge v1",
   "description": "Canonical console-to-viewer iframe bridge. Both directions require protocol vg01, exact trusted origin/source checks, and a non-wildcard targetOrigin. Bearer values are delivered only after viewer_ready and never in the iframe URL.",
   "type": "object",
-  "required": ["protocol", "type"],
+  "required": [
+    "protocol",
+    "type"
+  ],
   "properties": {
-    "protocol": { "const": "vg01" },
-    "type": { "type": "string" }
+    "protocol": {
+      "const": "vg01"
+    },
+    "type": {
+      "type": "string"
+    }
   },
   "oneOf": [
     {
       "title": "console-to-viewer: viewer_lease_token",
       "type": "object",
-      "required": ["protocol", "type", "token"],
+      "required": [
+        "protocol",
+        "type",
+        "token"
+      ],
       "properties": {
-        "protocol": { "const": "vg01" },
-        "type": { "const": "viewer_lease_token" },
-        "token": { "type": "string", "minLength": 1 },
-        "user_token": { "type": "string", "minLength": 1 }
+        "protocol": {
+          "const": "vg01"
+        },
+        "type": {
+          "const": "viewer_lease_token"
+        },
+        "token": {
+          "type": "string",
+          "minLength": 1
+        },
+        "user_token": {
+          "type": "string",
+          "minLength": 1
+        }
       },
       "additionalProperties": false
     },
     {
       "title": "console-to-viewer: highlight",
       "type": "object",
-      "required": ["protocol", "type", "items"],
+      "required": [
+        "protocol",
+        "type",
+        "items"
+      ],
       "properties": {
-        "protocol": { "const": "vg01" },
-        "type": { "const": "highlight" },
-        "items": { "type": "array", "items": { "$ref": "#/$defs/bridgeHighlightItem" } }
+        "protocol": {
+          "const": "vg01"
+        },
+        "type": {
+          "const": "highlight"
+        },
+        "items": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/bridgeHighlightItem"
+          }
+        }
       },
       "additionalProperties": false
     },
     {
       "title": "console-to-viewer: highlight_batch",
       "type": "object",
-      "required": ["protocol", "type", "items"],
+      "required": [
+        "protocol",
+        "type",
+        "items"
+      ],
       "properties": {
-        "protocol": { "const": "vg01" },
-        "type": { "const": "highlight_batch" },
-        "items": { "type": "array", "items": { "$ref": "#/$defs/bridgeHighlightItem" } }
+        "protocol": {
+          "const": "vg01"
+        },
+        "type": {
+          "const": "highlight_batch"
+        },
+        "items": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/bridgeHighlightItem"
+          }
+        }
       },
       "additionalProperties": false
     },
     {
       "title": "console-to-viewer: focus",
       "type": "object",
-      "required": ["protocol", "type", "ifc_guid"],
+      "required": [
+        "protocol",
+        "type",
+        "ifc_guid"
+      ],
       "properties": {
-        "protocol": { "const": "vg01" },
-        "type": { "const": "focus" },
-        "ifc_guid": { "type": "string" }
+        "protocol": {
+          "const": "vg01"
+        },
+        "type": {
+          "const": "focus"
+        },
+        "ifc_guid": {
+          "type": "string"
+        }
       },
       "additionalProperties": false
     },
     {
       "title": "console-to-viewer: clear",
       "type": "object",
-      "required": ["protocol", "type"],
-      "properties": { "protocol": { "const": "vg01" }, "type": { "const": "clear" } },
+      "required": [
+        "protocol",
+        "type"
+      ],
+      "properties": {
+        "protocol": {
+          "const": "vg01"
+        },
+        "type": {
+          "const": "clear"
+        }
+      },
       "additionalProperties": false
     },
     {
       "title": "viewer-to-console: viewer_ready",
       "type": "object",
-      "required": ["protocol", "type"],
-      "properties": { "protocol": { "const": "vg01" }, "type": { "const": "viewer_ready" } },
+      "required": [
+        "protocol",
+        "type"
+      ],
+      "properties": {
+        "protocol": {
+          "const": "vg01"
+        },
+        "type": {
+          "const": "viewer_ready"
+        }
+      },
       "additionalProperties": false
     },
     {
       "title": "viewer-to-console: first_frame",
       "type": "object",
-      "required": ["protocol", "type", "stageUrl"],
+      "required": [
+        "protocol",
+        "type",
+        "stageUrl"
+      ],
       "properties": {
-        "protocol": { "const": "vg01" },
-        "type": { "const": "first_frame" },
-        "stageUrl": { "type": ["string", "null"] }
+        "protocol": {
+          "const": "vg01"
+        },
+        "type": {
+          "const": "first_frame"
+        },
+        "stageUrl": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "title": "viewer-to-console: stream_state",
+      "type": "object",
+      "required": [
+        "protocol",
+        "type",
+        "state",
+        "kind"
+      ],
+      "properties": {
+        "protocol": {
+          "const": "vg01"
+        },
+        "type": {
+          "const": "stream_state"
+        },
+        "state": {
+          "const": "disconnected"
+        },
+        "kind": {
+          "enum": [
+            "stopped",
+            "terminated"
+          ]
+        }
       },
       "additionalProperties": false
     },
     {
       "title": "viewer-to-console: stage_loaded",
       "type": "object",
-      "required": ["protocol", "type", "status"],
+      "required": [
+        "protocol",
+        "type",
+        "status"
+      ],
       "properties": {
-        "protocol": { "const": "vg01" },
-        "type": { "const": "stage_loaded" },
-        "stageUrl": { "type": ["string", "null"] },
-        "status": { "enum": ["active", "unproven"] },
-        "binding_revision_id": { "type": "string", "minLength": 1 }
+        "protocol": {
+          "const": "vg01"
+        },
+        "type": {
+          "const": "stage_loaded"
+        },
+        "stageUrl": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "status": {
+          "enum": [
+            "active",
+            "unproven"
+          ]
+        },
+        "binding_revision_id": {
+          "type": "string",
+          "minLength": 1
+        }
       },
       "additionalProperties": false
     },
     {
       "title": "viewer-to-console: highlight_result",
       "type": "object",
-      "required": ["protocol", "type", "requestId", "ok"],
+      "required": [
+        "protocol",
+        "type",
+        "requestId",
+        "ok"
+      ],
       "properties": {
-        "protocol": { "const": "vg01" },
-        "type": { "const": "highlight_result" },
-        "requestId": { "type": "string" },
-        "ok": { "type": "boolean" },
-        "reason": { "enum": ["unmapped", "datachannel_not_ready"] },
-        "sent_count": { "type": "integer", "minimum": 0 },
-        "unmapped_count": { "type": "integer", "minimum": 0 },
-        "unmapped_guids": { "type": "array", "items": { "type": "string" } }
+        "protocol": {
+          "const": "vg01"
+        },
+        "type": {
+          "const": "highlight_result"
+        },
+        "requestId": {
+          "type": "string"
+        },
+        "ok": {
+          "type": "boolean"
+        },
+        "reason": {
+          "enum": [
+            "unmapped",
+            "datachannel_not_ready"
+          ]
+        },
+        "sent_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "unmapped_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "unmapped_guids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
       },
       "additionalProperties": false
     },
     {
       "title": "viewer-to-console: selected_guid",
       "type": "object",
-      "required": ["protocol", "type", "ifcGuid"],
+      "required": [
+        "protocol",
+        "type",
+        "ifcGuid"
+      ],
       "properties": {
-        "protocol": { "const": "vg01" },
-        "type": { "const": "selected_guid" },
-        "ifcGuid": { "type": ["string", "null"] }
+        "protocol": {
+          "const": "vg01"
+        },
+        "type": {
+          "const": "selected_guid"
+        },
+        "ifcGuid": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
       },
       "additionalProperties": false
     }
@@ -124,12 +305,25 @@
   "$defs": {
     "bridgeHighlightItem": {
       "type": "object",
-      "required": ["ifc_guid"],
+      "required": [
+        "ifc_guid"
+      ],
       "properties": {
-        "ifc_guid": { "type": "string" },
-        "severity": { "type": "string" },
-        "label": { "type": "string" },
-        "rule_code": { "type": ["string", "null"] }
+        "ifc_guid": {
+          "type": "string"
+        },
+        "severity": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "rule_code": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
       },
       "additionalProperties": false
     }

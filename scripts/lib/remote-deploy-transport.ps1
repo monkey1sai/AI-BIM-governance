@@ -369,10 +369,11 @@ function Get-DeployTagName {
 }
 
 function New-RemoteDeployTag {
-    # Creates and pushes the B13 annotated tag for a deployment that EXITed 0.
-    # Binds to the commit the TARGET actually checked out (parsed from the remote
-    # transcript), not to whatever the operator happens to have locally. The tag
-    # name and message carry no host/account/network detail (policy A).
+    # Creates and pushes the B13 annotated tag for a deployment that EXITed 0,
+    # then syncs origin/main to the same commit. Binds to the commit the TARGET
+    # actually checked out (parsed from the remote transcript), not to whatever
+    # the operator happens to have locally. The tag name and message carry no
+    # host/account/network detail (policy A).
     param(
         [Parameter(Mandatory = $true)][string] $OperatorRepoRoot,
         [Parameter(Mandatory = $true)][string] $TargetId,
@@ -412,6 +413,19 @@ function New-RemoteDeployTag {
         $deleted = & $GitRunner @('tag', '-d', $tagName)
         $cleanup = if ($deleted.ExitCode -eq 0) { 'local tag deleted' } else { "local tag cleanup ALSO failed: $($deleted.Output)" }
         throw "remote_deploy_transport: deploy tag '$tagName' could not be pushed ($cleanup): $($pushed.Output)"
+    }
+    # Owner directive 2026-08-19: a tagged deploy must leave origin/main
+    # pointing at (or past) the deployed commit too. Pushing the sha directly -
+    # rather than a local 'main' branch ref - works regardless of what the
+    # operator checkout has checked out, and is a no-op whenever origin/main
+    # already contains the commit (the expected case, since the deploy source
+    # is always a fresh fetch of origin/main). A rejection here means
+    # origin/main diverged from what was actually deployed - worth surfacing,
+    # not silently swallowing - but it never unwinds the tag above, which
+    # stays correct evidence of what was deployed regardless.
+    $mainSynced = & $GitRunner @('push', 'origin', "${DeployedSha}:refs/heads/main")
+    if ($mainSynced.ExitCode -ne 0) {
+        throw "remote_deploy_transport: deploy tag '$tagName' was pushed, but origin/main could not be synced to the deployed commit $DeployedSha ($($mainSynced.Output))."
     }
     return $tagName
 }

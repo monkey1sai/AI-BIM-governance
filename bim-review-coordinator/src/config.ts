@@ -109,6 +109,43 @@ export interface CoordinatorConfig {
   // 測試 seam：watcher 自打 loopback 的 base url。default 空＝執行期用 http://127.0.0.1:${port}。
   // 整合測試以 listen(0) 取得實際 port 後注入完整 base，避免依賴固定 8004。
   minioWatchSelfBaseUrl: string;
+  // ── rvt-ifc-usdc-lineage task 3.1（governed source bundle）─────────────────
+  // 與上方 MINIO_WATCH_*（legacy watcher）是**兩套獨立設定**：design.md §11.2 規則 3
+  // 要求 `mw_<hash16>` 與 `source_bundle_id` 兩個去重空間互不取代／抑制／推導，
+  // 故 prefix、credentials、開關一律不共用 env（D-8）。
+  // governed source bundle durable store。env SOURCE_BUNDLE_STORE_PATH；
+  // default data/source-bundles.json（比照 conversionLedgerStorePath 的 <cwd>/data 慣例）。
+  sourceBundleStorePath: string;
+  // SOURCE_BUNDLE_SHA256_VERIFY_MODE：`full`（default，streaming 全量重算 SHA-256）或
+  // `size_etag_only`（降檔門；此模式下 validator MUST 在 integrity_diagnostics 誠實標示
+  // SHA-256 未重驗）。未知值 fail-fast，不靜默降檔（與 integerFromEnv 的 fail-fast 同風格）。
+  sourceBundleSha256VerifyMode: "full" | "size_etag_only";
+  // governed MinIO 連線（唯讀重驗用）。三者任一為空＝governed 端未設定 → route 一律 503。
+  governedSourceMinioEndpoint: string;   // GOVERNED_SOURCE_MINIO_ENDPOINT
+  governedSourceMinioAccessKey: string;  // GOVERNED_SOURCE_MINIO_ACCESS_KEY（不落 tracked 檔）
+  governedSourceMinioSecretKey: string;  // GOVERNED_SOURCE_MINIO_SECRET_KEY（同上）
+  // D-3 fail-closed allowlist：manifest locator 自帶 `minio://<authority>/<bucket>/…`，
+  // 不在清單內的 authority／bucket 一律拒收（回 semantic_contract_violation）。
+  // 空清單＝未設定＝governed 端視為未設定（fail-closed，不是「全部放行」）。
+  governedSourceAuthorityAllowlist: string[];  // GOVERNED_SOURCE_AUTHORITY_ALLOWLIST（CSV）
+  governedSourceBucketAllowlist: string[];     // GOVERNED_SOURCE_BUCKET_ALLOWLIST（CSV）
+  // governed discovery prefix（reconciliation 與 legacy preview 用）。MUST NOT 重用
+  // MINIO_WATCH_PREFIX。非空時 normalize 為以 '/' 結尾（同 watcher prefix 的 boundary 對齊理由）。
+  governedSourcePrefix: string;          // GOVERNED_SOURCE_PREFIX
+  // ── rvt-ifc-usdc-lineage task 3.2（durable stable pipeline job）───────────
+  // governed pipeline job 的 durable store。env PIPELINE_JOB_STORE_PATH；
+  // default data/pipeline-jobs.json（同 conversionLedgerStorePath 的 <cwd>/data 慣例）。
+  // 與 sourceBundleStorePath 分檔：bundle（來源事實）與 job（編排狀態）是兩個
+  // 生命週期不同的文件族，共檔會讓其中一邊的壞檔連坐另一邊。
+  pipelineJobStorePath: string;
+  // polling reconciliation（撿漏，非主要觸發面）。**預設關閉**，比照 MINIO_WATCH_ENABLED。
+  // env 獨立命名（D-8）：MUST NOT 重用 MINIO_WATCH_*——legacy 的 `mw_<hash16>` 與
+  // governed 的 `source_bundle_id` 是兩個 MUST NOT 互相取代／抑制／推導的去重空間。
+  sourceBundleReconcileEnabled: boolean;   // SOURCE_BUNDLE_RECONCILE_ENABLED，default false
+  // SOURCE_BUNDLE_RECONCILE_INTERVAL_MS，default 300000（5 分鐘），下限 5000。
+  // 單位刻意用 ms（而非 watcher 的 seconds）：撿漏面的節奏與 watcher 無關，
+  // 共用單位容易讓人以為兩者該設成同一個值。
+  sourceBundleReconcileIntervalMs: number;
   // R8（2026-07-10）：local_fs 測試 fixtures 專案清單（如 270,889,990,271），由部署區 .env 注入；
   // default 空＝不標。前端據 GET /api/dev/test-data-projects 渲染「測試資料」badge——
   // 編號不進程式碼（D-05），誠實標記由後端 config 驅動（鐵律 #3）。
@@ -326,6 +363,24 @@ function withGeneratedSpectatorEndpoints(endpoints: KitInstanceEndpointConfig[])
   return [...endpoints, ...spectators];
 }
 
+// rvt-ifc-usdc-lineage task 3.1：SHA-256 重驗深度只有兩個合法值（D-1）。
+// 未設＝full（誠實預設）；設了但拼錯 → fail-fast，不靜默降檔成 size_etag_only 或 full
+// （靜默降檔會讓 bundle_state="READY" 名不副實）。
+function sha256VerifyModeFromEnv(): "full" | "size_etag_only" {
+  const raw = process.env.SOURCE_BUNDLE_SHA256_VERIFY_MODE;
+  if (raw === undefined || raw.trim() === "") return "full";
+  const normalized = raw.trim().toLowerCase();
+  if (normalized === "full" || normalized === "size_etag_only") return normalized;
+  throw new Error(
+    "SOURCE_BUNDLE_SHA256_VERIFY_MODE must be 'full' or 'size_etag_only'.",
+  );
+}
+
+// rvt-ifc-usdc-lineage task 3.2：reconciliation 輪詢下限（安全保護，防忙迴圈連打 MinIO）。
+// 常數而非 env：撿漏面不需要為了 E2E 降到秒級（測試以 `pollNow()` 驅動），
+// 少一個 env 就少一個「被調成 1ms 打爆 MinIO」的部署面。
+const SOURCE_BUNDLE_RECONCILE_INTERVAL_FLOOR_MS = 5_000;
+
 function conversionApiBaseFromEnv(): string {
   const streamingBase = process.env.STREAMING_CONVERSION_API_BASE;
   if (streamingBase) return streamingBase;
@@ -447,6 +502,21 @@ export function loadConfig(overrides: Partial<CoordinatorConfig> = {}): Coordina
     minioWatchTenantId: process.env.MINIO_WATCH_TENANT_ID || "tenant_demo_001",
     minioWatchSelfBaseUrl: process.env.MINIO_WATCH_SELF_BASE_URL || "",
     testDataProjectIds: csvFromEnv("TEST_DATA_PROJECT_IDS", []),
+    // rvt-ifc-usdc-lineage task 3.1（governed source bundle；與 MINIO_WATCH_* 完全分離）
+    sourceBundleStorePath:
+      process.env.SOURCE_BUNDLE_STORE_PATH || path.join(cwd, "data", "source-bundles.json"),
+    sourceBundleSha256VerifyMode: sha256VerifyModeFromEnv(),
+    governedSourceMinioEndpoint: process.env.GOVERNED_SOURCE_MINIO_ENDPOINT || "",
+    governedSourceMinioAccessKey: process.env.GOVERNED_SOURCE_MINIO_ACCESS_KEY || "",
+    governedSourceMinioSecretKey: process.env.GOVERNED_SOURCE_MINIO_SECRET_KEY || "",
+    governedSourceAuthorityAllowlist: csvFromEnv("GOVERNED_SOURCE_AUTHORITY_ALLOWLIST", []),
+    governedSourceBucketAllowlist: csvFromEnv("GOVERNED_SOURCE_BUCKET_ALLOWLIST", []),
+    governedSourcePrefix: process.env.GOVERNED_SOURCE_PREFIX || "",
+    // rvt-ifc-usdc-lineage task 3.2（durable stable pipeline job；env 與 MINIO_WATCH_* 分離）
+    pipelineJobStorePath:
+      process.env.PIPELINE_JOB_STORE_PATH || path.join(cwd, "data", "pipeline-jobs.json"),
+    sourceBundleReconcileEnabled: parseBooleanEnv("SOURCE_BUNDLE_RECONCILE_ENABLED", false),
+    sourceBundleReconcileIntervalMs: numberFromEnv("SOURCE_BUNDLE_RECONCILE_INTERVAL_MS", 300_000),
     ...overrides,
   };
   // 下限是安全保護（防忙迴圈連打 MinIO），必須在 overrides 合併後夾值，
@@ -462,6 +532,19 @@ export function loadConfig(overrides: Partial<CoordinatorConfig> = {}): Coordina
   if (merged.minioWatchPrefix && !merged.minioWatchPrefix.endsWith("/")) {
     merged.minioWatchPrefix = `${merged.minioWatchPrefix}/`;
   }
+  // governed discovery prefix 同理（boundary-aligned）：`tenant_a` 不得靜默命中
+  // `tenant_ab/…`。與 watch prefix 是**獨立**設定，只是共用同一條 normalize 規則。
+  if (merged.governedSourcePrefix && !merged.governedSourcePrefix.endsWith("/")) {
+    merged.governedSourcePrefix = `${merged.governedSourcePrefix}/`;
+  }
+  // reconciliation 間隔下限（防忙迴圈連打 MinIO）。與 minioWatchIntervalSeconds 同理，
+  // 必須在 overrides 合併後才夾值，否則 loadConfig({sourceBundleReconcileIntervalMs: 1})
+  // 會繞過 env 路徑的夾值。governed 側刻意**不**提供降檔 env：撿漏面沒有 E2E 需要
+  // 秒級輪詢，測試一律用 `pollNow()` 驅動（比照 minioWatchSurface 的既有慣例）。
+  merged.sourceBundleReconcileIntervalMs = Math.max(
+    SOURCE_BUNDLE_RECONCILE_INTERVAL_FLOOR_MS,
+    merged.sourceBundleReconcileIntervalMs,
+  );
   // F2（2026-07-10）：production fail-fast——預設機密是原始碼常數（已知字串），
   // 部署漏設 env 時不得靜默沿用。與 integerFromEnv 的 fail-fast 風格一致；
   // dev（NODE_ENV 非 production）維持原預設行為，測試 overrides 注入自訂值即可通過。

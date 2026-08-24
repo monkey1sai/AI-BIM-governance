@@ -170,6 +170,7 @@ describe("A1 3D review decoupling", () => {
     viewerBox.highlightBatches = [];
     window.location.hash = "#a1";
     vi.spyOn(coordinatorClient, "runtimeStatus").mockResolvedValue(fakeRuntimeStatus() as never);
+    vi.spyOn(coordinatorClient, "kitInstanceCurrent").mockResolvedValue({ instance_id: "kit_local_001", status: "ready" } as never);
     vi.spyOn(governanceClient, "filesTree").mockResolvedValue(fakeFilesTree);
     vi.spyOn(coordinatorClient, "getMinioObjects").mockResolvedValue({
       bucket: "bim-control",

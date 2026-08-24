@@ -707,8 +707,9 @@ $canonicalControlUrl = Resolve-HostNativeKitControlUrl `
     -LocalAddressProbeFn { param($HostName) return ($HostName -eq 'localhost') }
 Assert-Equal 'http://localhost:49101' $canonicalControlUrl 'resolver canonicalizes an explicit localhost authority'
 
-Assert-True ($moduleContent -match '\$importProcess\.WaitForExit\(\$TimeoutSec \* 1000\)') 'Kit Manager import probe wait is bounded'
-Assert-True ($moduleContent -match 'Stop-HostNativeProcessTreeAndWait -Process \$importProcess -TimeoutMs 5000') 'Kit Manager import probe terminates and waits for a timed-out child process tree'
+Assert-True ($moduleContent -match 'Invoke-HostNativeBoundedProcess') 'Kit Manager import probe routes through the shared launch-time containment boundary (#522)'
+Assert-True ($moduleContent -match '-TimeoutSec \(\[int\]\$TimeoutSec\)') 'Kit Manager import probe wait is bounded through the boundary helper'
+Assert-True ($moduleContent -match 'probe\.TerminationFailure') 'Kit Manager import probe fails closed when a timed-out child process tree exit cannot be proven'
 Assert-True ($moduleContent -match 'function Stop-HostNativeProcessTreeAndWait') 'launcher defines a shared bounded process-tree terminator'
 Assert-True ($moduleContent -match '\$Process\.Kill\(\$true\)') 'bounded process-tree terminator includes descendants'
 Assert-True ($moduleContent -match '\$Process\.WaitForExit\(\$TimeoutMs\)') 'bounded process-tree terminator waits for exit'
@@ -1397,5 +1398,590 @@ time.sleep(120)
 finally {
     Remove-TestSandbox -Path $treeSandbox
 }
+
+# ---------------------------------------------------------------------------
+# Launch-time OS containment boundary (issue #522)
+# ---------------------------------------------------------------------------
+
+# Test J1: real Windows Job Object boundary - membership is authoritative and
+# Stop-HostNativeJobBoundary proves an empty set for a real two-process tree.
+if (Test-HostNativeJobBoundarySupported) {
+    $jobSandbox = New-TestSandbox -Prefix 'hn-job-boundary'
+    try {
+        $jobFixturePython = Resolve-PlatformSystemPython
+        if ([string]::IsNullOrWhiteSpace($jobFixturePython)) {
+            throw 'job boundary containment regressions require a working Python interpreter'
+        }
+        $jobFixture = Join-Path $jobSandbox 'job-tree-fixture.py'
+        $jobPidFile = Join-Path $jobSandbox 'job-tree-pids.json'
+        $jobFixtureSource = @'
+import json
+import os
+import pathlib
+import subprocess
+import sys
+import time
+
+child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)"])
+pathlib.Path(sys.argv[1]).write_text(
+    json.dumps([os.getpid(), child.pid]), encoding="utf-8"
+)
+time.sleep(120)
+'@
+        [System.IO.File]::WriteAllText($jobFixture, $jobFixtureSource)
+
+        $jobName = Get-HostNativeJobBoundaryName -Name ('test-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
+        $jobHandle = New-HostNativeJobBoundary -Name $jobName
+        try {
+            $jobStartInfo = [System.Diagnostics.ProcessStartInfo]::new()
+            $jobStartInfo.FileName = $jobFixturePython
+            $jobStartInfo.UseShellExecute = $false
+            $jobStartInfo.CreateNoWindow = $true
+            [void]$jobStartInfo.ArgumentList.Add($jobFixture)
+            [void]$jobStartInfo.ArgumentList.Add($jobPidFile)
+            $jobRoot = [System.Diagnostics.Process]::new()
+            $jobRoot.StartInfo = $jobStartInfo
+            if (-not $jobRoot.Start()) { throw 'job boundary fixture did not start' }
+            Add-HostNativeJobBoundaryProcess -Handle $jobHandle -ProcessId $jobRoot.Id
+            Grant-HostNativeJobBoundaryAnchor -Handle $jobHandle -ProcessId $jobRoot.Id
+            for ($attempt = 0; $attempt -lt 200; $attempt++) {
+                if (Test-Path -LiteralPath $jobPidFile -PathType Leaf) { break }
+                Start-Sleep -Milliseconds 50
+            }
+            $jobTreePids = @(Get-Content -Raw -LiteralPath $jobPidFile | ConvertFrom-Json)
+            Assert-Equal 2 $jobTreePids.Count 'job boundary fixture records exactly its parent and child PIDs'
+            $membership = @(Get-HostNativeJobBoundaryProcessIds -Handle $jobHandle)
+            foreach ($treePid in $jobTreePids) {
+                Assert-True ($membership -contains [int]$treePid) "job membership is authoritative: contains fixture PID $treePid"
+            }
+        }
+        finally {
+            Close-HostNativeJobBoundary -Handle $jobHandle
+        }
+        # The anchor handle inside the fixture root keeps the job alive after our
+        # handle closes; the named stop must find it, terminate the whole
+        # membership set, and prove it empty.
+        $jobStopReport = Stop-HostNativeJobBoundary -Name $jobName -TimeoutMs 5000
+        Assert-True $jobStopReport.Found 'named job stop finds the anchored job after the launcher handle closed'
+        Assert-True $jobStopReport.Proven 'named job stop proves an empty membership set'
+        foreach ($treePid in $jobTreePids) {
+            Assert-True ($null -eq (Get-PlatformProcessIdentity -ProcessId ([int]$treePid))) "job stop proves PID $treePid exited"
+        }
+        $jobGoneReport = Stop-HostNativeJobBoundary -Name $jobName -TimeoutMs 1000
+        Assert-True (-not $jobGoneReport.Found) 'a fully terminated job ceases to exist (proven-dead by construction)'
+        Assert-True $jobGoneReport.Proven 'a missing job reports proven'
+        Write-TestPass 'Windows job boundary: authoritative membership, anchored lifetime, proven terminate (#522)'
+    }
+    finally {
+        Remove-TestSandbox -Path $jobSandbox
+    }
+}
+else {
+    Assert-True (-not (Test-HostNativeJobBoundarySupported)) 'job boundary reports unsupported off Windows'
+    Write-TestPass 'job boundary honestly reports unsupported on this platform (#517 tracks the POSIX boundary)'
+}
+
+# Test J2: Invoke-HostNativeBoundedProcess - a timed-out tree leaves no
+# survivors on either platform (job on Windows, sweep fallback elsewhere).
+$boundedSandbox = New-TestSandbox -Prefix 'hn-bounded'
+try {
+    $boundedPython = Resolve-PlatformSystemPython
+    if ([string]::IsNullOrWhiteSpace($boundedPython)) {
+        throw 'bounded process containment regressions require a working Python interpreter'
+    }
+    $boundedFixture = Join-Path $boundedSandbox 'bounded-tree-fixture.py'
+    $boundedPidFile = Join-Path $boundedSandbox 'bounded-tree-pids.json'
+    $boundedSource = @'
+import json
+import os
+import pathlib
+import subprocess
+import sys
+import time
+
+child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)"])
+pathlib.Path(sys.argv[1]).write_text(
+    json.dumps([os.getpid(), child.pid]), encoding="utf-8"
+)
+time.sleep(120)
+'@
+    [System.IO.File]::WriteAllText($boundedFixture, $boundedSource)
+    $boundedResult = Invoke-HostNativeBoundedProcess `
+        -FilePath $boundedPython `
+        -ArgumentList @($boundedFixture, $boundedPidFile) `
+        -TimeoutSec 2
+    Assert-True $boundedResult.TimedOut 'bounded process reports the timeout'
+    Assert-True ($null -eq $boundedResult.TerminationFailure) 'bounded process termination is proven, not best-effort'
+    $boundedPids = @(Get-Content -Raw -LiteralPath $boundedPidFile | ConvertFrom-Json)
+    Assert-Equal 2 $boundedPids.Count 'bounded fixture records exactly its parent and child PIDs'
+    foreach ($boundedPid in $boundedPids) {
+        Assert-True ($null -eq (Get-PlatformProcessIdentity -ProcessId ([int]$boundedPid))) "bounded timeout leaves no survivor PID $boundedPid"
+    }
+    if (Test-HostNativeJobBoundarySupported) {
+        Assert-Equal 'job' $boundedResult.Boundary 'bounded process used the job boundary on Windows'
+    } else {
+        Assert-Equal 'sweep' $boundedResult.Boundary 'bounded process disclosed the sweep fallback off Windows'
+    }
+    # Success path: exit code and output still flow through the boundary.
+    $boundedOk = Invoke-HostNativeBoundedProcess `
+        -FilePath $boundedPython `
+        -ArgumentList @('-c', 'print("bounded-ok")') `
+        -TimeoutSec 30
+    Assert-Equal 0 $boundedOk.ExitCode 'bounded success path forwards the exit code'
+    Assert-True ($boundedOk.StdOut -match 'bounded-ok') 'bounded success path forwards stdout'
+    Write-TestPass 'bounded child helper contains a timed-out tree and forwards the success path (#522)'
+}
+finally {
+    Remove-TestSandbox -Path $boundedSandbox
+}
+
+# Test J3: Start-HostNativeService boundary contract, proven with mocked ops -
+# ordering create->assign->anchor->close, the sidecar record, and the
+# fail-closed teardown when the anchor cannot be established.
+$serviceSandbox = New-TestSandbox -Prefix 'hn-service-boundary'
+# Earlier wiring tests shadow Start-HostNativeService with stubs; restore the real module.
+. $modulePath
+try {
+    $servicePython = Resolve-PlatformSystemPython
+    $serviceRunDir = Join-Path $serviceSandbox 'scripts\.run'
+    New-Item -ItemType Directory -Path $serviceRunDir -Force | Out-Null
+    $script:jobOpsCalls = [System.Collections.ArrayList]::new()
+    $mockOps = @{
+        Supported = { $true }
+        Create    = { param($jobName) [void]$script:jobOpsCalls.Add("create:$jobName"); return ([IntPtr]::new(42)) }
+        Assign    = { param($handle, $childId) [void]$script:jobOpsCalls.Add("assign:$childId") }
+        Anchor    = { param($handle, $childId) [void]$script:jobOpsCalls.Add("anchor:$childId") }
+        Terminate = { param($handle) [void]$script:jobOpsCalls.Add('terminate') }
+        Close     = { param($handle) [void]$script:jobOpsCalls.Add('close') }
+    }
+    $serviceInfo = Start-HostNativeService `
+        -Name 'boundary-contract' `
+        -WorkingDirectory $serviceSandbox `
+        -FilePath $servicePython `
+        -ArgumentList @('-c', 'import time; time.sleep(60)') `
+        -RunDir $serviceRunDir `
+        -DetachProbeFn { param($processId) $true } `
+        -JobBoundaryOps $mockOps
+    try {
+        $expectedJobName = Get-HostNativeJobBoundaryName -Name 'boundary-contract'
+        Assert-Equal "create:$expectedJobName" $script:jobOpsCalls[0] 'service boundary creates the named job first'
+        Assert-Equal "assign:$($serviceInfo.Pid)" $script:jobOpsCalls[1] 'service boundary assigns the child before anything else touches it'
+        Assert-Equal "anchor:$($serviceInfo.Pid)" $script:jobOpsCalls[2] 'service boundary anchors the job into the child'
+        Assert-Equal 'close' $script:jobOpsCalls[3] 'service boundary closes its own handle after the anchor'
+        Assert-True ($script:jobOpsCalls -notcontains 'terminate') 'a healthy launch never terminates the job'
+        $sidecar = Join-Path $serviceRunDir 'boundary-contract.job'
+        Assert-True (Test-Path -LiteralPath $sidecar) 'service launch records the job sidecar for the stop path'
+        Assert-Equal $expectedJobName ((Get-Content -LiteralPath $sidecar | Select-Object -First 1).Trim()) 'job sidecar records the exact boundary name'
+    }
+    finally {
+        Stop-Process -Id $serviceInfo.Pid -Force -ErrorAction SilentlyContinue
+    }
+
+    # Anchor failure must terminate the just-started tree and throw: a service
+    # the launcher cannot contain must not run.
+    $script:jobOpsCalls = [System.Collections.ArrayList]::new()
+    $failingOps = @{
+        Supported = { $true }
+        Create    = { param($jobName) [void]$script:jobOpsCalls.Add("create:$jobName"); return ([IntPtr]::new(42)) }
+        Assign    = { param($handle, $childId) [void]$script:jobOpsCalls.Add("assign:$childId") }
+        Anchor    = { param($handle, $childId) throw 'simulated anchor failure' }
+        Terminate = { param($handle) [void]$script:jobOpsCalls.Add('terminate') }
+        Close     = { param($handle) [void]$script:jobOpsCalls.Add('close') }
+    }
+    $anchorFailure = ''
+    try {
+        Start-HostNativeService `
+            -Name 'boundary-anchor-fail' `
+            -WorkingDirectory $serviceSandbox `
+            -FilePath $servicePython `
+            -ArgumentList @('-c', 'import time; time.sleep(60)') `
+            -RunDir $serviceRunDir `
+            -DetachProbeFn { param($processId) $true } `
+            -JobBoundaryOps $failingOps | Out-Null
+    }
+    catch {
+        $anchorFailure = $_.Exception.Message
+    }
+    Assert-True ($anchorFailure -match 'simulated anchor failure') 'anchor failure propagates as a launch failure'
+    Assert-True ($script:jobOpsCalls -contains 'terminate') 'anchor failure terminates the partially contained tree'
+    Assert-True ($script:jobOpsCalls -contains 'close') 'anchor failure still closes the launcher handle'
+    Assert-True (-not (Test-Path -LiteralPath (Join-Path $serviceRunDir 'boundary-anchor-fail.job'))) 'a failed boundary never records a sidecar'
+    Write-TestPass 'service boundary contract: ordering, sidecar, and fail-closed anchor teardown (#522)'
+}
+finally {
+    Remove-TestSandbox -Path $serviceSandbox
+}
+
+# Test J4: Stop-HostNativeService is job-first - a recorded boundary makes the
+# stop authoritative and skips the PPID walk; an unsupported-platform report
+# falls back to the legacy walk.
+$stopSandbox = New-TestSandbox -Prefix 'hn-job-stop'
+. $modulePath
+try {
+    $stopRunDir = Join-Path $stopSandbox 'scripts\.run'
+    New-Item -ItemType Directory -Path $stopRunDir -Force | Out-Null
+    Set-Content -LiteralPath (Join-Path $stopRunDir 'svc.pid') -Value '4242'
+    Set-Content -LiteralPath (Join-Path $stopRunDir 'svc.job') -Value 'Local\aibim-job-svc'
+    $script:walkInvoked = $false
+    $stopped = Stop-HostNativeService -Name 'svc' -RunDir $stopRunDir `
+        -ChildPidLookup { param($parentId) $script:walkInvoked = $true; @() } `
+        -StopProcessFn { param($procId) $script:walkInvoked = $true } `
+        -JobStopFn { param($jobName)
+            Assert-Equal 'Local\aibim-job-svc' $jobName 'job-first stop opens the recorded boundary name'
+            [pscustomobject]@{ Found = $true; MemberPids = @(4242); Proven = $true; Supported = $true }
+        }
+    Assert-True $stopped 'job-first stop reports success'
+    Assert-True (-not $script:walkInvoked) 'job-first stop never falls back to the PPID walk when the boundary is authoritative'
+    Assert-True (-not (Test-Path -LiteralPath (Join-Path $stopRunDir 'svc.pid'))) 'job-first stop removes the pid file'
+    Assert-True (-not (Test-Path -LiteralPath (Join-Path $stopRunDir 'svc.job'))) 'job-first stop removes the job sidecar'
+
+    # Unsupported platform report -> legacy PPID walk still runs.
+    Set-Content -LiteralPath (Join-Path $stopRunDir 'svc2.pid') -Value '4343'
+    Set-Content -LiteralPath (Join-Path $stopRunDir 'svc2.job') -Value 'Local\aibim-job-svc2'
+    $script:walkStops = @()
+    $stopped2 = Stop-HostNativeService -Name 'svc2' -RunDir $stopRunDir `
+        -ChildPidLookup { param($parentId) @() } `
+        -StopProcessFn { param($procId) $script:walkStops += [int]$procId } `
+        -JobStopFn { param($jobName) [pscustomobject]@{ Found = $false; MemberPids = @(); Proven = $false; Supported = $false } }
+    Assert-True $stopped2 'unsupported boundary report falls back to the legacy walk'
+    Assert-True ($script:walkStops -contains 4343) 'legacy walk still stops the recorded pid'
+    Assert-True (-not (Test-Path -LiteralPath (Join-Path $stopRunDir 'svc2.job'))) 'fallback removes the stale job sidecar'
+    Write-TestPass 'stop path is job-first with an honest legacy fallback (#522)'
+}
+finally {
+    Remove-TestSandbox -Path $stopSandbox
+}
+
+# Test: conversion service launcher honours the STORAGE_ROOT invariant (#626)
+#
+# 這一組直接跑 bim-streaming-server\scripts\start-host-native-conversion-service.ps1。
+# STORAGE_ROOT 的解析全部發生在啟動 python 之前,而 -PythonExe 指向一個不存在的執行檔,
+# 所以四種情境都能在「服務真的綁 port」之前觀察完畢——不啟動任何服務、不綁任何 port。
+$conversionLauncherPath = Join-Path $repoRoot 'bim-streaming-server\scripts\start-host-native-conversion-service.ps1'
+$conversionLauncherText = Get-Content -LiteralPath $conversionLauncherPath -Raw
+$currentPwshPath = (Get-Process -Id $PID).Path
+
+function Invoke-ConversionLauncherProbe {
+    param(
+        [AllowNull()][string] $StorageRoot,
+        [AllowNull()][string] $RuntimeStorageRoot
+    )
+
+    $managedNames = @('STORAGE_ROOT', 'RUNTIME_STORAGE_ROOT')
+    $saved = @{}
+    foreach ($name in $managedNames) {
+        $saved[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
+    }
+    try {
+        # 先清乾淨:CI runner 或操作者 shell 殘留的值會讓「未設定」情境失去意義。
+        [Environment]::SetEnvironmentVariable('STORAGE_ROOT', $StorageRoot, 'Process')
+        [Environment]::SetEnvironmentVariable('RUNTIME_STORAGE_ROOT', $RuntimeStorageRoot, 'Process')
+        $output = & $currentPwshPath -NoProfile -NonInteractive -File $conversionLauncherPath `
+            -PythonExe 'aibim-nonexistent-python-626' 2>&1 | Out-String
+        return [pscustomobject]@{ ExitCode = [int]$LASTEXITCODE; Output = [string]$output }
+    }
+    finally {
+        foreach ($name in $managedNames) {
+            [Environment]::SetEnvironmentVariable($name, $saved[$name], 'Process')
+        }
+    }
+}
+
+# 靜態面:convenience 預設必須真的消失,否則行為測試只證明「當下這台機器剛好沒踩到」。
+Assert-True (-not ($conversionLauncherText -match 'Join-Path\s+\$repoRoot\s+"storage"')) `
+    'conversion launcher no longer guesses <repoRoot>\storage as STORAGE_ROOT'
+Assert-True ($conversionLauncherText -match 'RUNTIME_STORAGE_ROOT') `
+    'conversion launcher knows the RUNTIME_STORAGE_ROOT fallback name'
+Write-TestPass 'conversion launcher dropped the guessed STORAGE_ROOT default (#626)'
+
+$conversionProbeSandbox = New-TestSandbox -Prefix 'hn-conv-storage-root'
+try {
+    $runtimeStorageRoot = Join-Path $conversionProbeSandbox 'runtime-storage'
+    New-Item -ItemType Directory -Path $runtimeStorageRoot -Force | Out-Null
+
+    # 1) 兩個都沒設 -> fail closed,訊息要同時點名兩個 env 與不變式所在位置。
+    $bothMissing = Invoke-ConversionLauncherProbe -StorageRoot $null -RuntimeStorageRoot $null
+    Assert-Equal 2 $bothMissing.ExitCode 'both roots missing -> refuses to start with exit 2'
+    Assert-True ($bothMissing.Output -match 'STORAGE_ROOT is not configured') 'refusal names STORAGE_ROOT'
+    Assert-True ($bothMissing.Output -match 'RUNTIME_STORAGE_ROOT is not set') 'refusal names RUNTIME_STORAGE_ROOT'
+    Assert-True ($bothMissing.Output -match 'host-native-launcher\.ps1') 'refusal points at the invariant comment'
+    Assert-True (-not ($bothMissing.Output -match '(?m)^STORAGE_ROOT: ')) 'refusal never resolves a guessed root'
+    Write-TestPass 'conversion launcher fails closed when neither storage root is configured (#626)'
+
+    # 2) 只有 RUNTIME_STORAGE_ROOT -> 採用它,並標示來源。之後才因為假的 python 失敗,
+    #    代表解析階段已完成而服務從未啟動。
+    $runtimeOnly = Invoke-ConversionLauncherProbe -StorageRoot $null -RuntimeStorageRoot $runtimeStorageRoot
+    Assert-True ($runtimeOnly.Output -match [regex]::Escape("STORAGE_ROOT: $runtimeStorageRoot (source: RUNTIME_STORAGE_ROOT)")) `
+        'missing STORAGE_ROOT adopts RUNTIME_STORAGE_ROOT and reports the source'
+    Assert-True ($runtimeOnly.ExitCode -ne 2) 'adopting the runtime root is not a refusal'
+    Write-TestPass 'conversion launcher adopts RUNTIME_STORAGE_ROOT when STORAGE_ROOT is absent (#626)'
+
+    # 3) 兩個都設但指向不同目錄 -> 拒絕啟動,訊息要引兩個實際值。
+    $divergentRoot = Join-Path $conversionProbeSandbox 'explicit-storage'
+    $mismatch = Invoke-ConversionLauncherProbe -StorageRoot $divergentRoot -RuntimeStorageRoot $runtimeStorageRoot
+    Assert-Equal 2 $mismatch.ExitCode 'divergent roots -> refuses to start with exit 2'
+    Assert-True ($mismatch.Output -match [regex]::Escape("STORAGE_ROOT='$divergentRoot'")) 'refusal quotes the STORAGE_ROOT value'
+    Assert-True ($mismatch.Output -match [regex]::Escape("RUNTIME_STORAGE_ROOT='$runtimeStorageRoot'")) 'refusal quotes the RUNTIME_STORAGE_ROOT value'
+    Assert-True (-not (Test-Path -LiteralPath $divergentRoot)) 'refusal never materialises the divergent sandbox'
+    Write-TestPass 'conversion launcher refuses a STORAGE_ROOT/RUNTIME_STORAGE_ROOT mismatch (#626)'
+
+    # 4) 只差尾端分隔符與大小寫的同一個目錄不得誤擋(Windows 路徑不分大小寫)。
+    $sameRootNoisySpelling = $runtimeStorageRoot.ToUpperInvariant() + '\'
+    $equivalent = Invoke-ConversionLauncherProbe -StorageRoot $sameRootNoisySpelling -RuntimeStorageRoot $runtimeStorageRoot
+    Assert-True ($equivalent.ExitCode -ne 2) 'trailing separator / case differences are not a mismatch'
+    Assert-True ($equivalent.Output -match '\(source: STORAGE_ROOT\)') 'equivalent spellings keep the explicit STORAGE_ROOT'
+    Write-TestPass 'conversion launcher normalises trailing separators and case before asserting (#626)'
+}
+finally {
+    Remove-TestSandbox -Path $conversionProbeSandbox
+}
+
+# ---------------------------------------------------------------------------
+# #640: an orphaned Kit child is invisible to pid-file liveness, so Phase 4c
+# started a second instance into a live one. Two halves are proven here:
+#   (1) a launch RECORDS the ports its process tree will own, and that record
+#       outlives the pid file that Remove-StalePidFile is right to delete;
+#   (2) Get-HostNativeOrphanListener turns that record into a refusal signal.
+#
+# Everything below runs on fixtures and injected probes. No Kit is launched, no
+# real port in 49100-49110 (or any other real port) is bound, and the only real
+# processes started are short-lived Python sleeps that bind nothing.
+# ---------------------------------------------------------------------------
+
+# Test O1: Start-HostNativeService records the declared ports as a sidecar, and
+# a launch that declares none clears a previous claim instead of inheriting it.
+. $modulePath
+$portRecordSandbox = New-TestSandbox -Prefix 'hn-port-record'
+try {
+    $portRunDir = Join-Path $portRecordSandbox 'scripts\.run'
+    New-Item -ItemType Directory -Path $portRunDir -Force | Out-Null
+    $portProbePython = Resolve-PlatformSystemPython
+    # Supported=$false keeps the launch off real Job Objects; the other keys are
+    # present only because the parameter contract requires the whole table.
+    $noBoundaryOps = @{
+        Supported = { $false }
+        Create    = { param($jobName) throw 'unsupported boundary must never create' }
+        Assign    = { param($handle, $childId) throw 'unsupported boundary must never assign' }
+        Anchor    = { param($handle, $childId) throw 'unsupported boundary must never anchor' }
+        Terminate = { param($handle) throw 'unsupported boundary must never terminate' }
+        Close     = { param($handle) throw 'unsupported boundary must never close' }
+    }
+    $portedInfo = Start-HostNativeService `
+        -Name 'ported-service' `
+        -WorkingDirectory $portRecordSandbox `
+        -FilePath $portProbePython `
+        -ArgumentList @('-c', 'import time; time.sleep(60)') `
+        -RunDir $portRunDir `
+        -ListenPorts @(49150, 49100, 49100) `
+        -DetachProbeFn { param($processId) $true } `
+        -JobBoundaryOps $noBoundaryOps
+    try {
+        $portSidecar = Join-Path $portRunDir 'ported-service.ports'
+        Assert-True (Test-Path -LiteralPath $portSidecar -PathType Leaf) 'a launch that declares ports records the sidecar'
+        Assert-Equal '49100,49150' ((Get-HostNativeServiceListenPorts -Name 'ported-service' -RunDir $portRunDir) -join ',') 'the recorded claim is de-duplicated and sorted'
+    }
+    finally {
+        Stop-Process -Id $portedInfo.Pid -Force -ErrorAction SilentlyContinue
+    }
+
+    # A service that declares no ports must not inherit the previous claim.
+    $portlessInfo = Start-HostNativeService `
+        -Name 'ported-service' `
+        -WorkingDirectory $portRecordSandbox `
+        -FilePath $portProbePython `
+        -ArgumentList @('-c', 'import time; time.sleep(60)') `
+        -RunDir $portRunDir `
+        -DetachProbeFn { param($processId) $true } `
+        -JobBoundaryOps $noBoundaryOps
+    try {
+        Assert-True (-not (Test-Path -LiteralPath (Join-Path $portRunDir 'ported-service.ports'))) 'a portless launch clears the previous port claim'
+        Assert-Equal '' ((Get-HostNativeServiceListenPorts -Name 'ported-service' -RunDir $portRunDir) -join ',') 'no sidecar reads back as no recorded ports'
+    }
+    finally {
+        Stop-Process -Id $portlessInfo.Pid -Force -ErrorAction SilentlyContinue
+    }
+    Write-TestPass 'host-native launch records the ports its tree will own (#640)'
+}
+finally {
+    Remove-TestSandbox -Path $portRecordSandbox
+}
+
+# Test O2: Remove-StalePidFile still removes the stale pid file, and deliberately
+# leaves the port claim behind - that record is the only remaining trace of an
+# orphaned child, and deleting it here is exactly how #640 lost the orphan.
+$staleRecordSandbox = New-TestSandbox -Prefix 'hn-stale-ports'
+try {
+    $staleRunDir = Join-Path $staleRecordSandbox 'scripts\.run'
+    New-Item -ItemType Directory -Path $staleRunDir -Force | Out-Null
+    Set-Content -LiteralPath (Join-Path $staleRunDir 'bim-streaming-server.pid') -Value '216268'
+    Set-Content -LiteralPath (Join-Path $staleRunDir 'bim-streaming-server.ports') -Value "49100`n49150"
+    $removed = Remove-StalePidFile -Name 'bim-streaming-server' -RunDir $staleRunDir -GetProcessFn { param($procId) $null }
+    Assert-True $removed 'a dead recorded pid is still cleaned up'
+    Assert-True (-not (Test-Path -LiteralPath (Join-Path $staleRunDir 'bim-streaming-server.pid'))) 'the stale pid file is removed'
+    Assert-Equal '49100,49150' ((Get-HostNativeServiceListenPorts -Name 'bim-streaming-server' -RunDir $staleRunDir) -join ',') 'the port claim survives stale-pid cleanup'
+    Write-TestPass 'stale-pid cleanup keeps the port claim that outlives the launcher (#640)'
+}
+finally {
+    Remove-TestSandbox -Path $staleRecordSandbox
+}
+
+# Test O3: Get-HostNativeOrphanListener - the start decision matrix.
+$orphanSandbox = New-TestSandbox -Prefix 'hn-orphan-listener'
+try {
+    $orphanRunDir = Join-Path $orphanSandbox 'scripts\.run'
+    New-Item -ItemType Directory -Path $orphanRunDir -Force | Out-Null
+    Set-Content -LiteralPath (Join-Path $orphanRunDir 'bim-streaming-server.ports') -Value "49100`n49150"
+    # The measured #640 shape: launcher 216268 gone, orphaned Kit 216306 still
+    # holding a spectator signal port, pid file already deleted as stale.
+    $orphanPortOwners = @{ 49100 = $null; 49150 = 216306 }
+    $orphanProbe = { param($port) $orphanPortOwners[[int]$port] }
+    $noProcess = { param($procId) $null }
+    $noChildren = { param($parentId) @() }
+    # SettleTimeoutMs 0 keeps every "should report" case to a single observation;
+    # the settle window itself is proven separately at the end of this block.
+    $now = @{ SettleTimeoutMs = 0; SleepFn = { param($milliseconds) } }
+
+    $reported = Get-HostNativeOrphanListener -Name 'bim-streaming-server' -RunDir $orphanRunDir @now `
+        -PortLookupFn $orphanProbe -GetProcessFn $noProcess -ChildPidLookup $noChildren
+    Assert-True ($null -ne $reported) 'a surviving holder with no pid file is reported'
+    Assert-Equal '49150' (@($reported.Ports) -join ',') 'the report names the port that is actually held'
+    Assert-Equal '216306' (@($reported.ProcessIds) -join ',') 'the report names the holding pid, not the recorded launcher pid'
+    Assert-Equal '49100,49150' (@($reported.RecordedPorts) -join ',') 'the report carries the claim it checked'
+
+    # Same answer when the pid file still exists but its process is gone: that is
+    # the window between the launcher dying and Phase 2 deleting the pid file.
+    Set-Content -LiteralPath (Join-Path $orphanRunDir 'bim-streaming-server.pid') -Value '216268'
+    $deadRecorded = Get-HostNativeOrphanListener -Name 'bim-streaming-server' -RunDir $orphanRunDir @now `
+        -PortLookupFn $orphanProbe -GetProcessFn $noProcess -ChildPidLookup $noChildren
+    Assert-True ($null -ne $deadRecorded) 'a dead recorded pid cannot account for a live holder'
+    Assert-Equal '216306' (@($deadRecorded.ProcessIds) -join ',') 'the dead launcher pid is not treated as the holder'
+
+    # Healthy idempotent re-run: the recorded launcher is alive and the holder is
+    # its child, so nothing is reported and Phase 4c keeps its existing skip path.
+    $liveTree = { param($parentId) if ([int]$parentId -eq 216268) { @(216306) } else { @() } }
+    $liveProcess = { param($procId) @{ Id = [int]$procId } }
+    $healthy = Get-HostNativeOrphanListener -Name 'bim-streaming-server' -RunDir $orphanRunDir @now `
+        -PortLookupFn $orphanProbe -GetProcessFn $liveProcess -ChildPidLookup $liveTree
+    Assert-True ($null -eq $healthy) 'a live launcher accounts for its own child'
+
+    # A live launcher does NOT account for an unrelated holder: two instances.
+    $strangerOwners = @{ 49100 = $null; 49150 = 188705 }
+    $twoInstances = Get-HostNativeOrphanListener -Name 'bim-streaming-server' -RunDir $orphanRunDir @now `
+        -PortLookupFn { param($port) $strangerOwners[[int]$port] } -GetProcessFn $liveProcess -ChildPidLookup $liveTree
+    Assert-True ($null -ne $twoInstances) 'a holder outside our tree is reported even when our tree is alive'
+    Assert-Equal '188705' (@($twoInstances.ProcessIds) -join ',') 'the unrelated holder is named'
+
+    # Get-PlatformTcpListenerPid returns -1 for "occupied, owner not visible".
+    # Unknown ownership must fail closed, never read as free.
+    $invisibleOwners = @{ 49100 = -1; 49150 = $null }
+    $invisible = Get-HostNativeOrphanListener -Name 'bim-streaming-server' -RunDir $orphanRunDir @now `
+        -PortLookupFn { param($port) $invisibleOwners[[int]$port] } -GetProcessFn $liveProcess -ChildPidLookup $liveTree
+    Assert-True ($null -ne $invisible) 'an occupied port with an invisible owner fails closed'
+    Assert-Equal '49100' (@($invisible.Ports) -join ',') 'the invisible-owner port is the one reported'
+    Assert-Equal '-1' (@($invisible.ProcessIds) -join ',') 'the sentinel owner is surfaced rather than swallowed'
+
+    # Free ports mean no report, whatever the claim says.
+    $allFree = Get-HostNativeOrphanListener -Name 'bim-streaming-server' -RunDir $orphanRunDir @now `
+        -PortLookupFn { param($port) $null } -GetProcessFn $noProcess -ChildPidLookup $noChildren
+    Assert-True ($null -eq $allFree) 'a recorded claim with every port free is not an orphan'
+
+    # The probe set is the UNION of the recorded claim and this run's expectation,
+    # so neither a config change nor a first-ever launch can hide a holder.
+    $script:probedPorts = @()
+    $unionProbe = {
+        param($port)
+        $script:probedPorts += [int]$port
+        if ([int]$port -eq 49101) { return 4242 }
+        return $null
+    }
+    $union = Get-HostNativeOrphanListener -Name 'bim-streaming-server' -RunDir $orphanRunDir @now `
+        -ExpectedPorts @(49101) -PortLookupFn $unionProbe -GetProcessFn $noProcess -ChildPidLookup $noChildren
+    Assert-Equal '49100,49101,49150' (@($script:probedPorts | Sort-Object -Unique) -join ',') 'recorded and expected ports are both probed'
+    Assert-True ($null -ne $union) 'a holder on a port only this run expects is still reported'
+    Assert-Equal '49101' (@($union.Ports) -join ',') 'the newly expected port is the one reported'
+
+    # Nothing recorded and nothing expected: no probe, no verdict, no refusal.
+    $script:probedPorts = @()
+    $emptyRunDir = Join-Path $orphanSandbox 'empty-run'
+    New-Item -ItemType Directory -Path $emptyRunDir -Force | Out-Null
+    $nothing = Get-HostNativeOrphanListener -Name 'bim-streaming-server' -RunDir $emptyRunDir @now `
+        -PortLookupFn $unionProbe -GetProcessFn $noProcess -ChildPidLookup $noChildren
+    Assert-True ($null -eq $nothing) 'no claim and no expectation is not an orphan'
+    Assert-Equal 0 @($script:probedPorts).Count 'with no ports to check the detector probes nothing'
+
+    # Settle window: Phase 4c also reaches this gate immediately after stopping
+    # the previous tree itself, and a force-killed listener needs a moment to
+    # release its socket. A holder that is gone on a later pass is teardown, not
+    # an orphan; one still there when the budget runs out is an orphan.
+    $script:teardownProbeCalls = 0
+    $script:sleepCalls = 0
+    $noSleep = { param($milliseconds) $script:sleepCalls++ }
+    $teardownProbe = {
+        param($port)
+        $script:teardownProbeCalls++
+        if ($script:teardownProbeCalls -le 2) { return 999001 }
+        return $null
+    }
+    $settled = Get-HostNativeOrphanListener -Name 'bim-streaming-server' -RunDir $orphanRunDir `
+        -SettleTimeoutMs 5000 -SleepFn $noSleep `
+        -PortLookupFn $teardownProbe -GetProcessFn $noProcess -ChildPidLookup $noChildren
+    Assert-True ($null -eq $settled) 'a listener that disappears within the settle budget is teardown, not an orphan'
+    Assert-True ($script:sleepCalls -ge 1) 'the settle window actually waits before re-observing'
+
+    $script:sleepCalls = 0
+    $persistent = Get-HostNativeOrphanListener -Name 'bim-streaming-server' -RunDir $orphanRunDir `
+        -SettleTimeoutMs 5000 -SleepFn $noSleep `
+        -PortLookupFn $orphanProbe -GetProcessFn $noProcess -ChildPidLookup $noChildren
+    Assert-True ($null -ne $persistent) 'a holder that survives the settle budget is still reported'
+    Assert-Equal '49150' (@($persistent.Ports) -join ',') 'the surviving holder keeps its port in the report'
+    Write-TestPass 'orphaned listener detection is fail-closed and tree-aware (#640)'
+}
+finally {
+    Remove-TestSandbox -Path $orphanSandbox
+}
+
+# Test O4: a deliberate stop releases the claim; a stop that stopped nothing does
+# not - otherwise the recovery path would erase the very record it needs.
+$stopClaimSandbox = New-TestSandbox -Prefix 'hn-stop-ports'
+try {
+    $stopClaimRunDir = Join-Path $stopClaimSandbox 'scripts\.run'
+    New-Item -ItemType Directory -Path $stopClaimRunDir -Force | Out-Null
+
+    Set-Content -LiteralPath (Join-Path $stopClaimRunDir 'svc.pid') -Value '4242'
+    Set-Content -LiteralPath (Join-Path $stopClaimRunDir 'svc.job') -Value 'Local\aibim-job-svc'
+    Set-Content -LiteralPath (Join-Path $stopClaimRunDir 'svc.ports') -Value '49100'
+    $null = Stop-HostNativeService -Name 'svc' -RunDir $stopClaimRunDir `
+        -ChildPidLookup { param($parentId) @() } `
+        -StopProcessFn { param($procId) } `
+        -JobStopFn { param($jobName) [pscustomobject]@{ Found = $true; MemberPids = @(4242); Proven = $true; Supported = $true } }
+    Assert-True (-not (Test-Path -LiteralPath (Join-Path $stopClaimRunDir 'svc.ports'))) 'the job-first stop releases the port claim'
+
+    Set-Content -LiteralPath (Join-Path $stopClaimRunDir 'svc2.pid') -Value '4343'
+    Set-Content -LiteralPath (Join-Path $stopClaimRunDir 'svc2.ports') -Value '49150'
+    $null = Stop-HostNativeService -Name 'svc2' -RunDir $stopClaimRunDir `
+        -ChildPidLookup { param($parentId) @() } `
+        -StopProcessFn { param($procId) } `
+        -JobStopFn { param($jobName) [pscustomobject]@{ Found = $false; MemberPids = @(); Proven = $false; Supported = $false } }
+    Assert-True (-not (Test-Path -LiteralPath (Join-Path $stopClaimRunDir 'svc2.ports'))) 'the legacy walk releases the port claim too'
+
+    Set-Content -LiteralPath (Join-Path $stopClaimRunDir 'svc3.ports') -Value '49160'
+    $stoppedNothing = Stop-HostNativeService -Name 'svc3' -RunDir $stopClaimRunDir `
+        -ChildPidLookup { param($parentId) @() } `
+        -StopProcessFn { param($procId) } `
+        -JobStopFn { param($jobName) [pscustomobject]@{ Found = $false; MemberPids = @(); Proven = $false; Supported = $false } }
+    Assert-True (-not $stoppedNothing) 'a stop with no pid file reports that it stopped nothing'
+    Assert-Equal '49160' ((Get-HostNativeServiceListenPorts -Name 'svc3' -RunDir $stopClaimRunDir) -join ',') 'a stop that stopped nothing keeps the claim'
+    Write-TestPass 'only a stop that terminated something releases the port claim (#640)'
+}
+finally {
+    Remove-TestSandbox -Path $stopClaimSandbox
+}
+
+# Test O5: the Kit launcher declares the TCP signal ports as its claim. Media
+# ports are UDP and stay out of a record that only a TCP probe can attribute.
+$launcherBody = Get-Content -LiteralPath $modulePath -Raw
+Assert-True ($launcherBody -match '-ListenPorts \(@\(\$SignalPort\) \+ @\(\$SpectatorSignalPorts\)\)') 'Start-HostNativeKit declares its signal ports as the recorded claim'
+Assert-True (-not ($launcherBody -match '-ListenPorts.*\$StreamPort')) 'the UDP media port is not recorded as a TCP claim'
+Write-TestPass 'Kit launch declares the signal ports it will own (#640)'
 
 Write-Host "`n=== test-host-native-launcher.ps1: ALL PASSED ===" -ForegroundColor Green

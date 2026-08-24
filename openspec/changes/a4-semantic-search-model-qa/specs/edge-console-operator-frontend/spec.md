@@ -1,6 +1,6 @@
 ## REMOVED Requirements
 
-### Requirement: A4–A10 願景詳頁 SHALL 整段標願景，情境 SHALL 標範例且 SHALL NOT 當真實實測
+### Requirement: A4–A10 vision 詳頁 SHALL 整段標願景，scenario SHALL 標範例情境且 SHALL NOT 當真實實測
 
 **Reason**: A4 Semantic Search 已有 governance API、coordinator resolver 與核可的 canonical workspace screen，且本 change 將其收斂為 session-bound live capability；繼續把 A4 與 A5–A10 一起標「後端未建 / p4 願景」會與可執行 contract 衝突，也會讓 fixture 被誤認為唯一 A4。
 

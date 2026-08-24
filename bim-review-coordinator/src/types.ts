@@ -288,6 +288,36 @@ export interface ShadowMetadata {
 }
 
 /**
+ * `rvt-ifc-usdc-lineage` task 3.1（`local-artifact-shadow-metadata` 的 governed 段）。
+ *
+ * Governed source bundle 的最小 shadow。**刻意與上方 legacy `ShadowMetadata` 完全獨立**
+ * （L3 裁決 D-6）：delta 要求 legacy 12 欄逐字保留，governed 欄位 MUST NOT 塞進
+ * `IfcReadyIntakeJob` 或 `ShadowMetadata`，否則 `tests/shadow-metadata.test.ts` 與前端
+ * 契約會被動到。
+ *
+ * 只保存 identity／digest／locator／state；MUST NOT 保存 artifact bytes、逐 element
+ * mapping rows、MinIO credentials 或 cloud MySQL 內容的複本。`external_model_version_id`
+ * 只是對 company cloud `bim-control` 的**參照**，不宣告 control-plane 權威。
+ *
+ * 誠實邊界：spec 的 governed shadow 清單另含 `job_state`／`attempt_id`／`result_id`／
+ * `active_result_id`／admission state 等欄位，那些由 task 3.2／3.3／5.1 擁有；本型別
+ * **不以 null 佔位**宣告尚未存在的能力，只在能力落地時 additive 擴充。
+ */
+export interface GovernedShadowMetadata {
+  source_bundle_id: string;
+  external_model_version_id: string;
+  tenant_id: string;
+  project_id: string;
+  manifest_ref: string;
+  manifest_sha256: string;
+  bundle_state: "READY" | "NON_READY" | "LEGACY_UNMANAGED";
+  /** task 3.2 綁定前恆為 null（3.1 不偽造 pipeline job）。 */
+  pipeline_job_id: string | null;
+  claimed_at: string;
+  validated_at: string;
+}
+
+/**
  * B-scheme（local-coordinator-ifc-ready-intake-boundary T7 §8.1-8.3）。
  *
  * 客戶落地端 local web view session：以 data-plane 本地 artifact 解析給

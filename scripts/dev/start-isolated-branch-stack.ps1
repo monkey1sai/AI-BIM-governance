@@ -652,7 +652,7 @@ function New-IsolatedBackendEnvironment {
         $Ports
     )
     if ($Role -eq 'governance') {
-        return @{
+        $governanceEnvironment = @{
             GOV_PORT = "$($Ports.governance)"
             GOV_DB_PATH = [string]$StateLayout.governance_db
             GOV_FED_OUT = [string]$StateLayout.governance_federation_out
@@ -660,12 +660,20 @@ function New-IsolatedBackendEnvironment {
             RUNTIME_STORAGE_ROOT = [string]$StateLayout.fixture_root
             LOG_ROOT = (Join-Path $StateLayout.governance_root 'logs')
         }
+        # a4-trusted-context 透傳（issue #505）第二半：governance-service 的
+        # search/internal_auth.py 以同一 shared secret 驗 coordinator 的 internal
+        # 呼叫；缺席時 A4 search/issues 面 503 a4_internal_context_unavailable。
+        # 同 coordinator 側規則：只由 parent process env 透傳，值不落 manifest/log。
+        if (-not [string]::IsNullOrWhiteSpace($env:A4_INTERNAL_CONTEXT_TOKEN)) {
+            $governanceEnvironment.A4_INTERNAL_CONTEXT_TOKEN = $env:A4_INTERNAL_CONTEXT_TOKEN
+        }
+        return $governanceEnvironment
     }
 
     $coordinatorRoot = [string]$StateLayout.coordinator_root
     $fixtureArtifacts = Join-Path $StateLayout.fixture_root 'artifacts'
     $coordinatorStorage = Join-Path $coordinatorRoot 'storage'
-    @{
+    $coordinatorEnvironment = @{
         PORT = "$($Ports.coordinator)"
         HOST = '127.0.0.1'
         GOVERNANCE_API_BASE = "http://127.0.0.1:$($Ports.governance)"
@@ -692,6 +700,15 @@ function New-IsolatedBackendEnvironment {
         IFC_DOWNLOAD_STRICT = 'true'
         EXTERNAL_INTAKE_WEBHOOK_SECRET = 'dev-webhook-secret'
     }
+    # a4-trusted-context 透傳（issue #505）：owner 以 server-only 通道供裝
+    # A4_INTERNAL_CONTEXT_TOKEN 時（parent process env），隔離 coordinator 才能
+    # 啟用 A4 search/handoff trusted context。值只進 child process env——manifest
+    # 與 stdout/stderr log 均不記錄環境值；未供裝時維持缺席，A4 面照舊 fail
+    # closed（503 a4_trusted_context_unavailable），與部署區行為一致。
+    if (-not [string]::IsNullOrWhiteSpace($env:A4_INTERNAL_CONTEXT_TOKEN)) {
+        $coordinatorEnvironment.A4_INTERNAL_CONTEXT_TOKEN = $env:A4_INTERNAL_CONTEXT_TOKEN
+    }
+    $coordinatorEnvironment
 }
 
 function ConvertTo-IsolatedCreationIdentity {
@@ -717,6 +734,17 @@ function ConvertTo-IsolatedCreationIdentity {
     return $value
 }
 
+# 身分核對只需要 entrypoint／port binding／pid＋creation_identity；-PayloadBase64 的長 base64
+# 內含 child process 環境值，屬洩漏面，一律在落 manifest 之前換成佔位符。live lookup 與
+# manifest 兩側都走同一個正規化函式，因此 stop/status 的逐字命令列核對維持等效。
+$script:IsolatedElidedPayloadPlaceholder = '<payload-elided>'
+
+function ConvertTo-IsolatedRedactedCommandLine {
+    param([string] $CommandLine)
+    if ([string]::IsNullOrEmpty($CommandLine)) { return $CommandLine }
+    return $CommandLine -replace '((?:^|\s)-PayloadBase64\s+)(?:"[^"]*"|[A-Za-z0-9+/=]+)', "`$1$script:IsolatedElidedPayloadPlaceholder"
+}
+
 function Get-IsolatedProcessIdentity {
     param(
         [int] $ProcessId,
@@ -732,7 +760,7 @@ function Get-IsolatedProcessIdentity {
     [pscustomobject]@{
         pid = [int]$process.ProcessId
         entrypoint = $Entrypoint
-        command_line = $commandLine
+        command_line = ConvertTo-IsolatedRedactedCommandLine $commandLine
         creation_identity = ConvertTo-IsolatedCreationIdentity $process.CreationDate
         executable_path = [string]$process.ExecutablePath
     }
@@ -764,7 +792,7 @@ function Test-IsolatedProcessOwnership {
     $null -ne $Actual `
       -and [int]$Expected.pid -eq [int]$Actual.pid `
       -and [string]$Expected.entrypoint -ceq [string]$Actual.entrypoint `
-      -and [string]$Expected.command_line -ceq [string]$Actual.command_line `
+      -and (ConvertTo-IsolatedRedactedCommandLine ([string]$Expected.command_line)) -ceq (ConvertTo-IsolatedRedactedCommandLine ([string]$Actual.command_line)) `
       -and (ConvertTo-IsolatedCreationIdentity $Expected.creation_identity) -ceq (ConvertTo-IsolatedCreationIdentity $Actual.creation_identity)
 }
 

@@ -67,7 +67,8 @@ Canonical package：`scripts/agent-tooling/blip-approve/`
   `-NoProfile -NonInteractive` 與 minimal environment 啟動。外部核准的
   `blip-auto-approval-reviewed-build/v2` manifest 精確綁定 clean source commit、
   distinct builder-launcher／builder／installer-launcher／verifier、所有 source/runtime hash
-  及 executable/DLL signer。
+  及所有「已簽章」runtime executable/DLL 的 Authenticode signer（共 9 個；上游 ripgrep
+  `runtime/codex-path/rg.exe` 從不簽章，僅以 runtime_source hash pin 綁定完整性）。
 - Candidate builder 產生 deterministic v3 freeze；production freeze 綁定 reviewed manifest
   hash 與 source commit。Candidate 是 inert data，排除 builder、launcher、tests 與
   external verifier；TEST_ONLY freeze 使用全零 provenance sentinel，無法安裝。

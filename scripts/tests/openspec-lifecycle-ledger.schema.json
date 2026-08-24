@@ -59,6 +59,22 @@
             "owner": { "type": "string", "minLength": 1, "maxLength": 200, "pattern": "\\S" },
             "review_due": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}$" }
           }
+        },
+        {
+          "type": "object",
+          "required": ["reason", "unchecked_tasks", "unsupported_checkboxes", "owner", "adjudicated_on"],
+          "additionalProperties": false,
+          "anyOf": [
+            { "properties": { "unchecked_tasks": { "minimum": 1 } } },
+            { "properties": { "unsupported_checkboxes": { "minimum": 1 } } }
+          ],
+          "properties": {
+            "reason": { "const": "permanent_historical_task_ledger_debt" },
+            "unchecked_tasks": { "type": "integer", "minimum": 0, "maximum": 1000000 },
+            "unsupported_checkboxes": { "type": "integer", "minimum": 0, "maximum": 1000000 },
+            "owner": { "type": "string", "minLength": 1, "maxLength": 200, "pattern": "\\S" },
+            "adjudicated_on": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}$" }
+          }
         }
       ]
     },
@@ -134,6 +150,9 @@
         "subject_commit": {
           "type": "string",
           "pattern": "^[0-9a-f]{40}$"
+        },
+        "subject_binding": {
+          "const": "introduction"
         },
         "archive_debt": {
           "$ref": "#/definitions/archiveDebt"

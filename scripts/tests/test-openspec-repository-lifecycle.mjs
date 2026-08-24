@@ -827,3 +827,21 @@ test('the real repository lifecycle sources agree', () => {
   assert.equal(report.now_rows, report.current_ledger_rows);
   assert.equal(report.change_directories, report.current_ledger_rows);
 });
+
+test('the PR CI gate tolerates the subject_binding sentinel without any semantic change', () => {
+  // introduction-resolved-subject-binding tasks 1.4: this gate reads only id and
+  // status per row (no git, no subject semantics). A sentinel row must parse
+  // and adjudicate exactly like a legacy row, and the v1 schema_version pin
+  // stays load-bearing (a bump is refused, so the additive evolution cannot be
+  // bypassed through a version change).
+  withRepository((root) => {
+    const report = evaluateRepositoryLifecycle(root);
+    assert.equal(report.mismatches.length, 0);
+  }, (spec) => {
+    spec.ledger.changes[0].subject_binding = 'introduction';
+  });
+  withRepository((root) => expectInputError(root, 'ledger_invalid'), (spec) => {
+    spec.ledger.changes[0].subject_binding = 'introduction';
+    spec.ledger.schema_version = 'openspec-lifecycle-ledger/v2';
+  });
+});

@@ -152,11 +152,13 @@ docs/plans/AI-BIM Console Hi-Fi.dc.html
 
 `design-system-reference.manifest.json`、goldens、screens、route inventory 與 semantic cases 只能是由這些 HTML 可重現的 derived evidence。外部 absolute path、capture script hard-code 或 production CSS 都不能成為平行 authority。Lineage surface 在 HTML 增加 approved screen/state 前一律 `reference_missing`，不得宣稱 full design completion。
 
-### 9. Active predecessor以change boundary獨立擁有，採順序整合
+### 9. Active predecessor以change boundary獨立擁有，採平行整合
 
-目前 active MinIO watcher/intake changes、`align-frontend-design-system-reference` 與 `migrate-console-to-hifi-design` 已擁有其 capability、HTML machine contract、token migration或baseline工作。本 lineage change只建立六個新 capabilities，不宣告predecessor-owned canonical MODIFIED deltas。本PR另含`align-frontend-design-system-reference`本身的contract repair，涵蓋`agent-operability-governance`、`demo-fast-mvp-orchestration`、`documentation-source-of-truth`與`unified-governance-console`；這四組delta只由`align` change擁有、獨立strict validate並隨`align` archive，同一PR不代表lineage change接管ownership。Lineage rebase MUST NOT 重建`align`目錄或重複宣告這四組delta。
+> 〔2026-08-19 R-2026-08-19 更新〕本節原本記載的「先 closeout `align` → 再 closeout `migrate` → 最後 lineage rebase」**順序前置已由 owner 裁決降級為平行**，兩線不再擋本 change coding。衝突面硬約束保留：lineage 不得重建 `align` 目錄、不得重複宣告其四組 delta、不得動 `docs/plans/*.html` 唯一 authority 裁決、不得把衝突 authority 一起 archive。
 
-此spec可對tracked HTML做 `design_source_update_only` 的既有Outbox文字契約，但不得同PR修改production frontend、manifest/goldens或宣稱design pass。Apply gate固定為：先 closeout `align`並確認上述四組canonical specs已落地，再讓 `migrate` rebase並以 `docs/plans/*.html` 唯一權威撤銷／調和 repo 外 origin與 `VerifyOrigin` 假設，接著 closeout `migrate`，最後才讓 lineage rebase最新main。之後再為 `minio-watch-auto-intake`、`local-coordinator-ifc-ready-intake-boundary`、`streaming-ifc-usdc-conversion-authority`、`conversion-kit-lifecycle-recovery` 與 `local-artifact-shadow-metadata` 補必要MODIFIED deltas；`external-cloud-callback-lifecycle`保持不變，新lineage publisher由獨立capability擁有。
+目前 active MinIO watcher/intake changes、`align-frontend-design-system-reference` 與 `migrate-console-to-hifi-design` 已擁有其 capability、HTML machine contract、token migration或baseline工作。本 lineage change建立六個新 capabilities，並對 `minio-watch-auto-intake`、`local-coordinator-ifc-ready-intake-boundary`、`streaming-ifc-usdc-conversion-authority`、`conversion-kit-lifecycle-recovery` 與 `local-artifact-shadow-metadata` 宣告最小必要的 lineage-owned MODIFIED deltas（只增加 governed／legacy 邊界與 ownership 宣告，既有敘述與既有 scenario 逐字保留）；`external-cloud-callback-lifecycle`保持不變，新lineage publisher由獨立capability擁有。`align-frontend-design-system-reference`本身的contract repair涵蓋`agent-operability-governance`、`demo-fast-mvp-orchestration`、`documentation-source-of-truth`與`unified-governance-console`；這四組delta只由`align` change擁有、獨立strict validate並隨`align` archive，lineage change不接管ownership。Lineage rebase MUST NOT 重建`align`目錄或重複宣告這四組delta。
+
+此spec可對tracked HTML做 `design_source_update_only` 的既有Outbox文字契約，但不得同PR修改production frontend、manifest/goldens或宣稱design pass。降級後的 apply gate為：`align` 獨立strict validate／archive 並確認上述四組canonical specs落地、`migrate` rebase並以 `docs/plans/*.html` 唯一權威撤銷／調和 repo 外 origin與 `VerifyOrigin` 假設後 closeout，兩者與 lineage 平行進行；lineage 只需在每個 slice PR 前 rebase 最新`origin/main`並重跑 strict validate。lineage-owned MODIFIED deltas 的調和（tasks 1.3）仍 MUST 在 3.x runtime 接線之前完成。
 
 現行 `/model.ifc` watcher在過渡期仍可作 legacy intake，但不得標成 governed `READY`。現行 generic `coverage_ratio` 保留 IFC→USDC 意義，不得重命名成 RVT lineage。
 
@@ -319,6 +321,65 @@ lineage_event_receipts
 
 `lineage_publications`只保存identities、四個result locators、manifest digest、receiver計算的canonical `publication_content_sha256`與bounded summary；它提供case-sensitive的`publication_identity + manifest_digest` health binding與`publication_identity + manifest_digest + registration_id` receipt binding。所有UUID/event IDs與SHA-256 columns使用case-sensitive ASCII collation，registration/publication identities使用`utf8mb4_0900_bin`，使exact ACK與lowercase-hex CHECK不受database default collation影響。`lineage_event_identities`以全域`event_id`保存first accepted `event_type + publication_identity + raw_body_sha256` tuple，並以wire schema相同regex限制UUID；publication first event、每筆health event與receipt皆以四欄composite FK綁定該immutable tuple，health receipt再以`health_event_id + event_id`綁定exact health row，published receipt則強制`health_event_id IS NULL`，direct import／reconciliation亦不可繞過。Current health在尚無event時衍生為`VERIFIED`，其後依observation time衍生，不在immutable publication row保存mutable projection。Health events與receipts均append-only。Schema MUST NOT 定義逐 element lineage table。本 change附MySQL 8.0.16+ `REFERENCE ONLY` DDL，僅表達logical constraints；其2,952-byte最大ACK key要求16 KiB InnoDB page與`ROW_FORMAT=DYNAMIC`，external owner須在migration前live preflight，不相容環境不得截斷logical identity。Wire `published_at`／`observed_at`經canonical UTC驗證後去除`Z`存為`DATETIME(6)`，receiver-assigned storage／receipt times來自UTC clock；因`DATETIME`本身不帶zone，external receiver必須驗證此invariant。此處不提供migration、DB connection、credentials或「已執行／已驗證真MySQL」宣稱。Test fake只模擬protocol transaction/idempotency，不是production cloud runtime。
 
+### 11. Governed 與 legacy 的相容矩陣與 dual-read 期間
+
+本節固定 governed 與 legacy 兩條 intake 在過渡期的並存規則（tasks 1.2）。矩陣是可讀對照表，**不是**唯一約束：其規範性條文由六個新 capability 的 ADDED requirements 與五個既有 capability 的 lineage-owned MODIFIED deltas（tasks 1.3）承載。archive 之後只有 `openspec/specs/**` 是 canonical machine truth，本節會隨 change 一起進 archive，因此任何在本節出現的硬規則都必須在 spec delta 中有對應條文。
+
+#### 11.1 對照矩陣
+
+| 面向 | Legacy path（既有，不變） | Governed path（新增） |
+|---|---|---|
+| 觸發物 | `{prefix}{專案}/…/{種類}/{版本}/model.ifc`（`MINIO_WATCH_KEY_SUFFIX` 預設 `/model.ifc`） | `<version-prefix>/manifest.json`，且 `model.rvt`、`schedule.csv`、`model.ifc` 三個 required role 先完成、manifest 最後 conditional-create |
+| 偵測機制 | watcher `ListObjectsV2` 輪詢 ＋ `mw_<hash16>` 持久 ledger 去重；或 operator 打 `POST /api/conversion/trigger` | producer 於 manifest 發布後呼叫 additive `POST /api/external/source-bundles/ready`；polling 只作 restart recovery／reconciliation |
+| Intake endpoint | `POST /api/external/ifc-ready`（loopback self-POST，webhook secret ＋ presigned GET） | `POST /api/external/source-bundles/ready`（ready claim，非 authority；coordinator 必自行重驗） |
+| Integrity 驗證 | 無 manifest 概念；`IFC_DOWNLOAD_STRICT` 未設時甚至允許 placeholder fallback | required roles ＋ ref ＋ ETag ＋ object version ＋ SHA-256 ＋ size 全部重驗，任一不符即 non-ready ＋ integrity diagnostics |
+| 產生的狀態 | `conversion_lifecycle_status ∈ {detected, queued, converting, ready, failed}`（單軸，`summarizeIfcReadyJob`） | 三正交軸：`attempt_outcome ∈ {succeeded, succeeded_with_warnings, failed, cancelled}`、`publication_state ∈ {UNPUBLISHED, PUBLISHING, AVAILABLE, INVALID}`、`selection_state ∈ {candidate, active, historical}`；另有 job 側 `WAITING_CAPACITY` 與 terminal `manual_correction_required` |
+| **能否宣告 governed `READY`** | **否。** `/model.ifc` observation、watcher ledger 落帳、`POST /api/conversion/trigger` 與 `POST /api/external/ifc-ready` 任一路徑皆 MUST NOT 產生 governed `READY` | **是，且唯一。** 只有通過 integrity 驗證的 source `manifest.json` |
+| Identity | `ifc_ready_job_id` ＋ 由 `project_id`／`version`／`task_id` 或 `mw_<hash16>` 導出的 `idempotency_key`／`correlation_id` | `source_bundle_id`（manifest 決定）→ coordinator-owned stable `pipeline_job_id` → streaming-owned immutable `attempt_id` → `result_id` |
+| 佇列／併發 | in-memory FIFO，同時最多一個 in-flight；`queued_for_conversion` ＋ `queue_position`；restart → `dropped_on_restart`（operator 需重送） | durable orchestration state ＋ runtime admission；capacity 不足為 `WAITING_CAPACITY`（不消耗 attempt、不任意 timeout）；restart 後可恢復並重新 admission |
+| Artifact 佈局 | host-local conversion artifact dir，`/artifacts/.../model.usdc` 對外服務 | attempt-scoped MinIO prefix：先 `model.usdc` → mapping／indexes／quality／alignment sidecars → 最後 conditional-create `result-manifest.json`；local dir 僅 staging／cache |
+| Availability 裁決 | 磁碟上 `model.usdc`／`metadata.json`／required sidecars 存在且可由 `/artifacts/` 服務 | MinIO `result-manifest.json` 可讀 ＋ required roles 齊 ＋ 全部 refs／ETag／SHA-256／size 通過；local cache 消失不改 `AVAILABLE` |
+| Coverage 指標 | `coverage_ratio`（IFC→USDC 單值）、`source_ifc_entity_count`、`mapped_count`、`unmapped_count` | 三個具名 ratio：`ifc_usdc_coverage_ratio`、`rvt_ifc_alignment_ratio`、`rvt_ifc_usdc_lineage_ratio`，各自分母 ＋ zero-denominator `not_evaluable`；`coverage_ratio` 保留 IFC→USDC 意義不得重命名 |
+| Edge→cloud 事件 | `conversion_result_ready`／`conversion_failed`（既有 workflow callback，metadata-only，路徑／auth／語意不變） | `lineage_result_published`／`lineage_result_health_changed`（`POST /api/v1/lineage-publications`，HMAC-SHA256，exact 200/201 ACK）。`source_bundle_ready` 不送 cloud |
+| Outbox | `callback_outbox`：retry policy ＋ terminal `dead_letter` | 獨立 lineage publication outbox：`DISABLED｜PENDING｜RETRYING｜DELIVERED｜DEAD_LETTER｜CONFLICT`，atomic local JSON，先持久化 event／body digest 再送，單一 edge site 一個 active dispatcher |
+| 失敗復原 | 未被 streaming 接受前 → dispatch retry；terminal `failed` → re-trigger／re-ingest（新 correlation trail） | transient → 同 `pipeline_job_id` backoff；publish 中斷 → 同 `attempt_id` 冪等續傳；semantic-invalid → `manual_correction_required` ＋ 新 `source_bundle_id`／`pipeline_job_id` |
+| Shadow metadata | 12 個 legacy 欄位（`tenant_id` … `last_callback_attempt_at`） | additive governed identity／state 欄位（`source_bundle_id`、`manifest_sha256`、`pipeline_job_id`、`job_state`、`attempt_id`、`result_id`、`result_manifest_ref`／`result_manifest_digest`、`active_result_id`、admission state、`publication_identity` ＋ delivery state） |
+| UI surface | `#/minio` watcher Panel、`#/conv` 轉檔歷史、`#/pipeline` Callback Outbox | 五個 lineage surfaces（Version Overview／Artifacts／Alignment／Attempts／Audit，HTML 補齊前一律 `reference_missing`）＋ `#/pipeline` Outbox 新增 read-only 文字 status 欄 |
+| 授權模型 | IP allowlist ＋ webhook secret／`AuthProvider` | 額外驗證 external control-plane capability decision（`bundle.*`／`artifact.download`／`alignment.read`／`conversion.*`／`runtime.*`／`result.*`），缺失／過期／不可達一律 fail closed |
+
+#### 11.2 Dual-read 期間的硬規則
+
+Dual-read 期間 = 從 tasks 3.x runtime 接線上線，到 legacy intake 被正式移除為止。期間內：
+
+1. **單向禁止**：legacy 側（watcher／`POST /api/external/ifc-ready`／`POST /api/conversion/trigger`）MUST NOT 產生、推導或宣告 governed `READY`、`source_bundle_id`、`pipeline_job_id`、`attempt_id` 或任何 cloud lineage event。
+2. **反向禁止**：governed 側 MUST NOT 為了相容而把 governed bundle 降級成 legacy ifc-ready payload 送進 legacy 鏈，也 MUST NOT 把 governed 結果寫進 legacy ledger 的 `ready`。
+3. **兩套去重空間獨立**：`mw_<hash16>`（watcher ledger）與 `source_bundle_id`（manifest）MUST NOT 互相取代、互相抑制或互相推導。
+4. **狀態不混用**：`conversion_lifecycle_status` MUST NOT 用來裁決 governed `AVAILABLE`／active result；三正交軸 MUST NOT 被壓縮回單一 status。
+5. **同 version 並存（不抑制）**：同一 MinIO version prefix 若同時存在無 manifest 的 `model.ifc` 與 governed manifest，governed `READY` 只由 manifest 裁決；legacy job 若已存在，維持 legacy 語意、不得被追認為 governed，其產物 MUST NOT 進入 governed active-result pointer。watcher **不**因該 version 已被 governed 收編而主動 skip —— 讓 watcher 讀 governed state 會製造新耦合並改變既有 watcher 行為，違反「既有行為逐字不變」原則。已知代價是過渡期同一 version 可能各跑一次轉檔、operator 在 `#/minio` 與 lineage console 各看到一筆；此代價由 deployment 層處置（例如 governed 全面上線後關閉 `MINIO_WATCH_ENABLED`），contract 不因此改變。
+6. **既有契約凍結**：`conversion_result_ready`／`conversion_failed` 的 endpoint、auth、path 與語意 SHALL 不變，且不得新增 Cloud Ingest 欄位；不得以 legacy `callback_url` 轉送 Cloud Ingest。
+7. **cloud 不阻擋 edge**：cloud outage、`DEAD_LETTER` 或 `CONFLICT` 只改 publication delivery state，MUST NOT 撤銷 edge `READY`、`AVAILABLE`、active pointer 或 runtime admission。
+
+#### 11.3 期間邊界（以 exit criteria 定義，不以日曆定義）
+
+本 repo 沒有 production cutover 日期權威，且本階段為 contract-only，因此 dual-read 的長度以 **exit criteria** 而非 wall-clock 期限界定。刻意不寫日曆期限：任何寫死的日期都會成為無法由本 repo 驗證的宣稱。
+
+| 階段 | 進入條件 | 內容 | 離開條件 |
+|---|---|---|---|
+| P0 契約凍結（現況／L2） | 六個新 capability ADDED ＋ 五個既有 capability lineage-owned MODIFIED 皆 strict validate 通過 | 只有 legacy 在跑；governed 契約已固定但無 runtime | tasks 3.x 開始接線 |
+| P1 Dual-read（governed 為選用） | governed intake／job／attempt／result 皆可運作且通過 §11.2 全部硬規則的 negative tests | 兩條路徑並存；新 version 可選 governed | governed 通過 tasks 9.1–9.3 的 E2E／recovery／audit 驗證 |
+| P2 Governed 為預設 | P1 exit ＋ operator runbook 更新（task 9.4） | 新 version 一律 governed；legacy 只剩 `LEGACY_UNMANAGED` preview／confirm 升格 | migration evidence 全綠（含真實 fixture E2E、cache 重建、conflict fail-closed、design gate 誠實標示） |
+| P3 移除 legacy intake | P2 exit | 停用 watcher／legacy intake | — |
+
+#### 11.4 Rollback
+
+任一階段可回退到前一階段。Rollback 時：
+
+- MAY 停用 governed auto-enqueue 並退回 legacy intake visibility（例如關閉 governed intake，或 `MINIO_WATCH_ENABLED` 重新啟用）。
+- MUST NOT 把 legacy data 重新標為 governed `READY`。
+- MUST NOT 刪除 immutable source／result objects、`result-manifest.json`、active-result pointer 或任何 append-only audit／health history。
+- MUST NOT 因 rollback 而回收或改寫已送出的 cloud publication；cloud 端只以 append-only health event 反映後續狀態。
+- 已存在的 governed `pipeline_job_id` MAY 停在 `WAITING_CAPACITY` 或 `manual_correction_required`，MUST NOT 被靜默轉成 legacy job。
+
 ## 資料與控制流程
 
 ```text
@@ -359,7 +420,7 @@ lineage_event_receipts
 
 ## 遷移計畫
 
-1. Merge/archive active MinIO predecessors；先以`npx --no-install openspec validate align-frontend-design-system-reference --strict`驗證並archive `align`，確認其四組delta已落入canonical specs；再完成`migrate-console-to-hifi-design` rebase/reconcile至 `docs/plans/*.html` 唯一權威（移除repo外origin／`VerifyOrigin`平行authority）→ `migrate` closeout → lineage rebase最新main。Lineage rebase不得重建`align`目錄或重複宣告其delta。
+1. 〔2026-08-19 R-2026-08-19 更新：本項原為 lineage 的順序前置，已降級為平行工作〕Merge/archive active MinIO predecessors；以`npx --no-install openspec validate align-frontend-design-system-reference --strict`驗證並archive `align`，確認其四組delta已落入canonical specs；`migrate-console-to-hifi-design` 另行 rebase/reconcile至 `docs/plans/*.html` 唯一權威（移除repo外origin／`VerifyOrigin`平行authority）後 closeout。這兩項與 lineage 平行進行、不再互為前置；lineage 只需在每個 slice PR 前 rebase 最新`origin/main`並重跑 strict validate。Lineage rebase不得重建`align`目錄或重複宣告其delta。
 2. 將reference schemas/examples提升為source manifest、result manifest、alignment report、pipeline job/attempt及Cloud Ingest request/ACK/error的executable contract fixtures；既有workflow callback保持不變。
 3. 在legacy watcher旁新增additive `POST /api/external/source-bundles/ready`，驗證MinIO refs/checksums並建立durable stable jobs；polling只作reconciliation。
 4. 新增streaming mapping enrichment、attempt-scoped result prefixes與result-manifest publication。

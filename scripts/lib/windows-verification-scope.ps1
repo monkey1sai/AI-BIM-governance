@@ -43,7 +43,12 @@ $script:WindowsVerificationTiers = @(
             '^scripts/deploy-target-registry\.json$',
             '^scripts/dev/rebuild-test-deploy\.ps1$',
             '^scripts/stop-all\.ps1$',
-            '^scripts/lib/(?!platform/)[^/]+\.ps1$',
+            # .psm?1, not .ps1: a PowerShell MODULE directly under scripts/lib is a deploy library
+            # by the same reasoning as a script there, and modules are more likely to be shared
+            # dependencies. scripts/lib/StructLog.psm1 is imported by scripts/lib/rebuild-test-deploy.ps1,
+            # which this same pattern already puts in this tier - without the m? the dependency
+            # escaped the tier its dependant sits in.
+            '^scripts/lib/(?!platform/)[^/]+\.psm?1$',
             '^compose\.[^/]+\.yml$'
         )
         Evidence  = '.\scripts\deploy.ps1 -DryRun passes on Windows'

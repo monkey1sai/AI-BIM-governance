@@ -171,6 +171,38 @@ foreach ($field in @('pid','entrypoint','command_line','creation_identity')) {
     Assert-True (-not (Test-IsolatedProcessOwnership -Expected $expected -Actual $changed)) "$field mismatch rejected"
 }
 
+# Payload elision gate（#632）：manifest 只留 schema 必要欄位，長 base64 啟動 payload 不得落庫。
+$payloadLeakPattern = '-PayloadBase64\s+"?[A-Za-z0-9+/=]{20,}'
+$payloadWrapperEntrypoint = 'C:\repo\governance-service'
+$payloadWrapperCommandLine = '"C:\Program Files\PowerShell\7\pwsh.exe" -NoProfile -NonInteractive -File C:\repo\scripts\lib\start-child-with-environment.ps1 ' +
+    '-Executable C:\repo\.venv\Scripts\python.exe -PayloadBase64 eyJlbnZpcm9ubWVudCI6eyJHT1ZfUE9SVCI6IjQ5MTAzIn19 ' +
+    "-EntrypointMarker $payloadWrapperEntrypoint -Role governance -ExpectedPortMarkerBase64 LS1wb3J0 -ExpectedPort 49103 " +
+    '-BindingMarker "isolated-governance-port-49103 --port 49103"'
+$redactedWrapperCommandLine = ConvertTo-IsolatedRedactedCommandLine $payloadWrapperCommandLine
+Assert-True ($payloadWrapperCommandLine -match $payloadLeakPattern) 'payload elision fixture starts from a real base64 launch payload'
+Assert-True ($redactedWrapperCommandLine -notmatch $payloadLeakPattern) 'redaction removes the long base64 launch payload'
+Assert-True ($redactedWrapperCommandLine -match '(?:^|\s)-PayloadBase64\s+<payload-elided>(?:\s|$)') 'redaction keeps the payload argument as a placeholder'
+Assert-True ($redactedWrapperCommandLine -match [regex]::Escape($payloadWrapperEntrypoint)) 'redaction preserves the exact entrypoint marker'
+Assert-True ($redactedWrapperCommandLine -match '(?:^|\s)--port\s+49103(?:[\s"]|$)') 'redaction preserves the exact backend port binding'
+$payloadSnapshot = Get-IsolatedProcessIdentity -ProcessId 4203 -Entrypoint $payloadWrapperEntrypoint -ProcessLookup {
+    param($processId)
+    [pscustomobject]@{
+        ProcessId = 4203
+        CommandLine = $payloadWrapperCommandLine
+        CreationDate = 'c3'
+        ExecutablePath = 'C:\Program Files\PowerShell\7\pwsh.exe'
+    }
+}
+Assert-True ($payloadSnapshot.command_line -notmatch $payloadLeakPattern) 'process identity snapshot never carries the base64 launch payload'
+Assert-Equal $redactedWrapperCommandLine $payloadSnapshot.command_line 'process identity snapshot stores the redacted command line'
+$payloadLiveIdentity = $payloadSnapshot.PSObject.Copy()
+$payloadRawManifestRecord = $payloadSnapshot.PSObject.Copy()
+$payloadRawManifestRecord.command_line = $payloadWrapperCommandLine
+Assert-True (Test-IsolatedProcessOwnership -Expected $payloadRawManifestRecord -Actual $payloadLiveIdentity) 'stop-time ownership stays equivalent across redacted and legacy raw command lines'
+$payloadForeignIdentity = $payloadSnapshot.PSObject.Copy()
+$payloadForeignIdentity.command_line = $redactedWrapperCommandLine -replace '49103','49104'
+Assert-True (-not (Test-IsolatedProcessOwnership -Expected $payloadSnapshot -Actual $payloadForeignIdentity)) 'redacted ownership still rejects a different port binding'
+
 $listenerEntrypoint = 'C:\repo\bim-review-coordinator\src\index.ts'
 $listenerExpected = [pscustomobject]@{
     role='coordinator';pid=4202;entrypoint=$listenerEntrypoint
@@ -415,6 +447,10 @@ try {
     Assert-True ($realIdentity.command_line -match 'start-child-with-environment\.ps1') 'real process uses the version-controlled child environment wrapper'
     Assert-True ($realIdentity.command_line -match [regex]::Escape($realGovernanceEntrypoint)) 'wrapper process identity remains bound to the exact backend entrypoint marker'
     Assert-True ($realIdentity.command_line -match '(?:^|\s)--port\s+49103(?:[\s"]|$)') 'wrapper process identity exposes the exact contiguous backend port binding'
+    Assert-True ($realIdentity.command_line -notmatch $payloadLeakPattern) 'real wrapper process identity elides the base64 launch payload'
+    Assert-True ($realIdentity.command_line -match '(?:^|\s)-PayloadBase64\s+<payload-elided>(?:\s|$)') 'real wrapper process identity keeps the payload argument as a placeholder'
+    $realCleanupIdentity = Get-IsolatedProcessIdentity -ProcessId ([int]$realIdentity.pid) -Entrypoint $realGovernanceEntrypoint
+    Assert-True (Test-IsolatedProcessOwnership -Expected $realIdentity -Actual $realCleanupIdentity) 'redacted command lines still prove real process ownership for the stop path'
     $childEnvironmentDeadline = [DateTime]::UtcNow.AddSeconds(10)
     while (-not (Test-Path -LiteralPath $childEnvironmentPath -PathType Leaf) -and [DateTime]::UtcNow -lt $childEnvironmentDeadline) {
         Start-Sleep -Milliseconds 50
@@ -437,6 +473,11 @@ try {
         )
     }
     Assert-IsolatedStackManifestIdentity -Manifest $wrapperManifest -RepoRoot $repoRoot -ChangeId 'change-wrapper' -RunId 'run-wrapper' -OffsetInput '0'
+    $wrapperManifestPath = Join-Path $realProcessSandbox 'stack-manifest.json'
+    Write-IsolatedJsonAtomic -Path $wrapperManifestPath -Value $wrapperManifest -NoClobber
+    $wrapperManifestText = Get-Content -Raw -LiteralPath $wrapperManifestPath
+    Assert-True ($wrapperManifestText -notmatch $payloadLeakPattern) 'persisted stack manifest never contains a long base64 launch payload'
+    Assert-True ($wrapperManifestText -match '-PayloadBase64 <payload-elided>') 'persisted stack manifest keeps the payload argument as a placeholder'
 } catch {
     $bodyFailure = $_
     throw
@@ -1304,5 +1345,12 @@ try {
     Assert-True ($directExecutionOutput -match [regex]::Escape('ChangeId must be one safe path segment')) 'direct launcher execution reaches dispatcher validation'
 }
 finally { Remove-TestSandbox -Path $dispatcherSandbox }
+
+# a4-trusted-context 透傳縫（issue #505）：只允許 guard 過的 parent-env 透傳，不得無條件寫死值。
+$launcherText = Get-Content -LiteralPath (Join-Path $PSScriptRoot '..\dev\start-isolated-branch-stack.ps1') -Raw
+Assert-True ($launcherText -match '(?s)IsNullOrWhiteSpace\(\$env:A4_INTERNAL_CONTEXT_TOKEN\).*?\$coordinatorEnvironment\.A4_INTERNAL_CONTEXT_TOKEN = \$env:A4_INTERNAL_CONTEXT_TOKEN') `
+    'coordinator env passes A4_INTERNAL_CONTEXT_TOKEN through only behind the provisioned-parent-env guard'
+Assert-True ($launcherText -notmatch "A4_INTERNAL_CONTEXT_TOKEN\s*=\s*'") `
+    'launcher never hardcodes an A4_INTERNAL_CONTEXT_TOKEN literal value'
 
 $testLogger | Write-StructInfo -Component 'test-isolated-branch-stack' -Msg 'contract assertions passed' -Data @{ assertions = 'isolated-stack' }

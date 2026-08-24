@@ -1,0 +1,422 @@
+{
+  "_comment": "Wire-level ACK / error responses for tasks.md 2.6, one row per case. 'body' is the parsed response body exactly as it arrives (JSON null models an empty body). 'expected' is the sent event's identity, supplied only where the case is about ACK/event matching. 'outcome' and 'detail' are the AckClassification fields protocol_validators.classify_ack must return.",
+  "sent_event": {
+    "event_id": "11111111-1111-4111-8111-111111111111",
+    "publication_identity": "edge-tpe-01:model-version-20260715-001:result-0007",
+    "manifest_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "cases": [
+    {
+      "name": "first_commit_201",
+      "intent": "首次commit SHALL 回傳201與replay=false (spec.md L209)",
+      "status_code": 201,
+      "body": {
+        "registration_id": "registration-0007",
+        "event_id": "11111111-1111-4111-8111-111111111111",
+        "publication_identity": "edge-tpe-01:model-version-20260715-001:result-0007",
+        "manifest_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "stored_at": "2026-07-16T08:15:31.000Z",
+        "replay": false
+      },
+      "match_sent_event": true,
+      "outcome": "delivered",
+      "detail": "created",
+      "delivered": true
+    },
+    {
+      "name": "exact_replay_200",
+      "intent": "identity/digest/content皆相同的replay SHALL 回傳200、replay=true",
+      "status_code": 200,
+      "body": {
+        "registration_id": "registration-0007",
+        "event_id": "11111111-1111-4111-8111-111111111111",
+        "publication_identity": "edge-tpe-01:model-version-20260715-001:result-0007",
+        "manifest_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "stored_at": "2026-07-16T08:15:31.000Z",
+        "replay": true
+      },
+      "match_sent_event": true,
+      "outcome": "delivered",
+      "detail": "replay",
+      "delivered": true
+    },
+    {
+      "name": "no_fraction_stored_at_201",
+      "intent": "fractional seconds MAY be omitted entirely",
+      "status_code": 201,
+      "body": {
+        "registration_id": "registration-0007",
+        "event_id": "11111111-1111-4111-8111-111111111111",
+        "publication_identity": "edge-tpe-01:model-version-20260715-001:result-0007",
+        "manifest_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "stored_at": "2026-07-16T08:15:31Z",
+        "replay": false
+      },
+      "outcome": "delivered",
+      "detail": "created",
+      "delivered": true
+    },
+    {
+      "name": "accepted_202",
+      "intent": "HTTP 202 SHALL 視為protocol failure (spec.md L200, L230)",
+      "status_code": 202,
+      "body": {
+        "registration_id": "registration-0007",
+        "event_id": "11111111-1111-4111-8111-111111111111",
+        "publication_identity": "edge-tpe-01:model-version-20260715-001:result-0007",
+        "manifest_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "stored_at": "2026-07-16T08:15:31.000Z",
+        "replay": false
+      },
+      "outcome": "protocol_failure",
+      "detail": "status_202_is_not_an_ack",
+      "delivered": false
+    },
+    {
+      "name": "no_content_204",
+      "intent": "unexpected 2xx SHALL 視為protocol failure",
+      "status_code": 204,
+      "body": null,
+      "outcome": "protocol_failure",
+      "detail": "unexpected_2xx",
+      "delivered": false
+    },
+    {
+      "name": "unexpected_299",
+      "intent": "any other 2xx is equally not an ACK",
+      "status_code": 299,
+      "body": {
+        "registration_id": "registration-0007",
+        "event_id": "11111111-1111-4111-8111-111111111111",
+        "publication_identity": "edge-tpe-01:model-version-20260715-001:result-0007",
+        "manifest_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "stored_at": "2026-07-16T08:15:31.000Z",
+        "replay": false
+      },
+      "outcome": "protocol_failure",
+      "detail": "unexpected_2xx",
+      "delivered": false
+    },
+    {
+      "name": "empty_body_200",
+      "intent": "empty body SHALL 視為protocol failure",
+      "status_code": 200,
+      "body": null,
+      "outcome": "protocol_failure",
+      "detail": "ack_body_not_an_object",
+      "delivered": false
+    },
+    {
+      "name": "empty_object_body_201",
+      "intent": "a body that parses but carries nothing is still malformed",
+      "status_code": 201,
+      "body": {},
+      "outcome": "protocol_failure",
+      "detail": "ack_body_member_set_mismatch",
+      "delivered": false
+    },
+    {
+      "name": "string_body_200",
+      "intent": "malformed body: valid JSON, wrong type",
+      "status_code": 200,
+      "body": "ok",
+      "outcome": "protocol_failure",
+      "detail": "ack_body_not_an_object",
+      "delivered": false
+    },
+    {
+      "name": "array_body_201",
+      "intent": "malformed body: array instead of object",
+      "status_code": 201,
+      "body": [],
+      "outcome": "protocol_failure",
+      "detail": "ack_body_not_an_object",
+      "delivered": false
+    },
+    {
+      "name": "incomplete_ack_201",
+      "intent": "mirrors contracts/examples/invalid-incomplete-ack.json: manifest_digest dropped",
+      "status_code": 201,
+      "body": {
+        "registration_id": "registration-0007",
+        "event_id": "11111111-1111-4111-8111-111111111111",
+        "publication_identity": "edge-tpe-01:model-version-20260715-001:result-0007",
+        "stored_at": "2026-07-16T08:15:31.000Z",
+        "replay": false
+      },
+      "outcome": "protocol_failure",
+      "detail": "ack_body_member_set_mismatch",
+      "delivered": false
+    },
+    {
+      "name": "extra_member_ack_201",
+      "intent": "the ACK SHALL 精確包含六個members; health_event_id MUST NOT 新增至wire ACK (spec.md L182)",
+      "status_code": 201,
+      "body": {
+        "registration_id": "registration-0007",
+        "event_id": "11111111-1111-4111-8111-111111111111",
+        "publication_identity": "edge-tpe-01:model-version-20260715-001:result-0007",
+        "manifest_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "stored_at": "2026-07-16T08:15:31.000Z",
+        "replay": false,
+        "health_event_id": 41
+      },
+      "outcome": "protocol_failure",
+      "detail": "ack_body_member_set_mismatch",
+      "delivered": false
+    },
+    {
+      "name": "offset_stored_at_201",
+      "intent": "mirrors contracts/examples/invalid-offset-ack-stored-at.json",
+      "status_code": 201,
+      "body": {
+        "registration_id": "registration-0007",
+        "event_id": "11111111-1111-4111-8111-111111111111",
+        "publication_identity": "edge-tpe-01:model-version-20260715-001:result-0007",
+        "manifest_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "stored_at": "2026-07-16T16:15:31+08:00",
+        "replay": false
+      },
+      "outcome": "protocol_failure",
+      "detail": "ack_stored_at_not_canonical",
+      "delivered": false
+    },
+    {
+      "name": "calendar_invalid_stored_at_201",
+      "intent": "pattern-valid, calendar-invalid: the semantic parser has to catch it",
+      "status_code": 201,
+      "body": {
+        "registration_id": "registration-0007",
+        "event_id": "11111111-1111-4111-8111-111111111111",
+        "publication_identity": "edge-tpe-01:model-version-20260715-001:result-0007",
+        "manifest_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "stored_at": "2026-02-30T08:15:31.000Z",
+        "replay": false
+      },
+      "outcome": "protocol_failure",
+      "detail": "ack_stored_at_not_canonical",
+      "delivered": false
+    },
+    {
+      "name": "uppercase_manifest_digest_201",
+      "intent": "sha256 columns are case-sensitive lowercase hex (spec.md L326)",
+      "status_code": 201,
+      "body": {
+        "registration_id": "registration-0007",
+        "event_id": "11111111-1111-4111-8111-111111111111",
+        "publication_identity": "edge-tpe-01:model-version-20260715-001:result-0007",
+        "manifest_digest": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        "stored_at": "2026-07-16T08:15:31.000Z",
+        "replay": false
+      },
+      "outcome": "protocol_failure",
+      "detail": "ack_manifest_digest_not_sha256",
+      "delivered": false
+    },
+    {
+      "name": "replay_true_with_201",
+      "intent": "201 is the first commit; replay=true contradicts it",
+      "status_code": 201,
+      "body": {
+        "registration_id": "registration-0007",
+        "event_id": "11111111-1111-4111-8111-111111111111",
+        "publication_identity": "edge-tpe-01:model-version-20260715-001:result-0007",
+        "manifest_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "stored_at": "2026-07-16T08:15:31.000Z",
+        "replay": true
+      },
+      "outcome": "protocol_failure",
+      "detail": "replay_flag_contradicts_status",
+      "delivered": false
+    },
+    {
+      "name": "replay_false_with_200",
+      "intent": "200 is the exact replay; replay=false contradicts it",
+      "status_code": 200,
+      "body": {
+        "registration_id": "registration-0007",
+        "event_id": "11111111-1111-4111-8111-111111111111",
+        "publication_identity": "edge-tpe-01:model-version-20260715-001:result-0007",
+        "manifest_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "stored_at": "2026-07-16T08:15:31.000Z",
+        "replay": false
+      },
+      "outcome": "protocol_failure",
+      "detail": "replay_flag_contradicts_status",
+      "delivered": false
+    },
+    {
+      "name": "mismatched_event_id_201",
+      "intent": "schema-valid ACK for another event: still a protocol failure",
+      "status_code": 201,
+      "body": {
+        "registration_id": "registration-0007",
+        "event_id": "22222222-2222-4222-8222-222222222222",
+        "publication_identity": "edge-tpe-01:model-version-20260715-001:result-0007",
+        "manifest_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "stored_at": "2026-07-16T08:15:31.000Z",
+        "replay": false
+      },
+      "match_sent_event": true,
+      "outcome": "protocol_failure",
+      "detail": "ack_event_id_mismatch",
+      "delivered": false
+    },
+    {
+      "name": "mismatched_publication_identity_200",
+      "status_code": 200,
+      "body": {
+        "registration_id": "registration-0007",
+        "event_id": "11111111-1111-4111-8111-111111111111",
+        "publication_identity": "edge-tpe-01:model-version-20260715-001:result-0008",
+        "manifest_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "stored_at": "2026-07-16T08:15:31.000Z",
+        "replay": true
+      },
+      "match_sent_event": true,
+      "outcome": "protocol_failure",
+      "detail": "ack_publication_identity_mismatch",
+      "delivered": false
+    },
+    {
+      "name": "mismatched_manifest_digest_201",
+      "status_code": 201,
+      "body": {
+        "registration_id": "registration-0007",
+        "event_id": "11111111-1111-4111-8111-111111111111",
+        "publication_identity": "edge-tpe-01:model-version-20260715-001:result-0007",
+        "manifest_digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "stored_at": "2026-07-16T08:15:31.000Z",
+        "replay": false
+      },
+      "match_sent_event": true,
+      "outcome": "protocol_failure",
+      "detail": "ack_manifest_digest_mismatch",
+      "delivered": false
+    },
+    {
+      "name": "conflict_error_409",
+      "intent": "mirrors contracts/examples/valid-conflict-error.json",
+      "status_code": 409,
+      "body": {
+        "event_id": "11111111-1111-4111-8111-111111111111",
+        "error": {
+          "code": "PUBLICATION_DIGEST_CONFLICT",
+          "message": "Publication identity already exists with a different manifest digest.",
+          "retryable": false
+        }
+      },
+      "outcome": "error",
+      "detail": "PUBLICATION_DIGEST_CONFLICT",
+      "delivered": false,
+      "retryable": false
+    },
+    {
+      "name": "transient_error_503",
+      "intent": "mirrors contracts/examples/valid-transient-error.json",
+      "status_code": 503,
+      "body": {
+        "error": {
+          "code": "TRANSIENT_UNAVAILABLE",
+          "message": "Cloud persistence is temporarily unavailable.",
+          "retryable": true
+        }
+      },
+      "outcome": "error",
+      "detail": "TRANSIENT_UNAVAILABLE",
+      "delivered": false,
+      "retryable": true
+    },
+    {
+      "name": "auth_error_401_without_event_id",
+      "intent": "mirrors contracts/examples/valid-auth-error-without-event-id.json",
+      "status_code": 401,
+      "body": {
+        "error": {
+          "code": "HMAC_AUTH_FAILED",
+          "message": "Request authentication failed.",
+          "retryable": false
+        }
+      },
+      "outcome": "error",
+      "detail": "HMAC_AUTH_FAILED",
+      "delivered": false,
+      "retryable": false
+    },
+    {
+      "name": "error_400_with_malformed_event_id",
+      "intent": "mirrors contracts/examples/invalid-error-event-id.json",
+      "status_code": 400,
+      "body": {
+        "event_id": "not-a-uuid",
+        "error": {
+          "code": "INVALID_REQUEST",
+          "message": "The request event identifier is malformed.",
+          "retryable": false
+        }
+      },
+      "outcome": "protocol_failure",
+      "detail": "error_event_id_not_a_uuid",
+      "delivered": false
+    },
+    {
+      "name": "error_503_retryable_false",
+      "intent": "mirrors contracts/examples/invalid-nonretryable-transient-error.json",
+      "status_code": 503,
+      "body": {
+        "error": {
+          "code": "TRANSIENT_UNAVAILABLE",
+          "message": "Cloud persistence is temporarily unavailable.",
+          "retryable": false
+        }
+      },
+      "outcome": "protocol_failure",
+      "detail": "error_retryable_contradicts_code",
+      "delivered": false
+    },
+    {
+      "name": "error_400_carrying_transient_code",
+      "intent": "status/code cross-swap: valid body, wrong transport status",
+      "status_code": 400,
+      "body": {
+        "error": {
+          "code": "TRANSIENT_UNAVAILABLE",
+          "message": "Cloud persistence is temporarily unavailable.",
+          "retryable": true
+        }
+      },
+      "outcome": "protocol_failure",
+      "detail": "error_code_contradicts_http_status",
+      "delivered": false
+    },
+    {
+      "name": "error_409_with_empty_body",
+      "intent": "a canonical error status still needs a sanitized body",
+      "status_code": 409,
+      "body": null,
+      "outcome": "protocol_failure",
+      "detail": "error_body_not_an_object",
+      "delivered": false
+    },
+    {
+      "name": "timeout_408",
+      "intent": "408 is retryable transport, off the canonical triple table",
+      "status_code": 408,
+      "body": null,
+      "outcome": "transport_failure",
+      "detail": "unmapped_status",
+      "delivered": false,
+      "retryable": true
+    },
+    {
+      "name": "teapot_418",
+      "intent": "an unmapped deterministic 4xx is not retryable",
+      "status_code": 418,
+      "body": null,
+      "outcome": "transport_failure",
+      "detail": "unmapped_status",
+      "delivered": false,
+      "retryable": false
+    }
+  ]
+}

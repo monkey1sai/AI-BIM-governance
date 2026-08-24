@@ -18,11 +18,11 @@
       ],
       "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": {
-        "reason": "historical_task_ledger_debt",
+        "reason": "permanent_historical_task_ledger_debt",
         "unchecked_tasks": 2,
         "unsupported_checkboxes": 0,
         "owner": "repository-maintainer",
-        "review_due": "2026-08-31"
+        "adjudicated_on": "2026-08-17"
       }
     },
     {
@@ -42,11 +42,11 @@
       ],
       "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": {
-        "reason": "historical_task_ledger_debt",
+        "reason": "permanent_historical_task_ledger_debt",
         "unchecked_tasks": 4,
         "unsupported_checkboxes": 0,
         "owner": "repository-maintainer",
-        "review_due": "2026-08-31"
+        "adjudicated_on": "2026-08-17"
       }
     },
     {
@@ -120,11 +120,11 @@
       ],
       "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": {
-        "reason": "historical_task_ledger_debt",
+        "reason": "permanent_historical_task_ledger_debt",
         "unchecked_tasks": 4,
         "unsupported_checkboxes": 0,
         "owner": "repository-maintainer",
-        "review_due": "2026-08-31"
+        "adjudicated_on": "2026-08-17"
       }
     },
     {
@@ -180,40 +180,39 @@
       ],
       "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": {
-        "reason": "historical_task_ledger_debt",
+        "reason": "permanent_historical_task_ledger_debt",
         "unchecked_tasks": 4,
         "unsupported_checkboxes": 0,
         "owner": "repository-maintainer",
-        "review_due": "2026-08-31"
+        "adjudicated_on": "2026-08-17"
       }
     },
     {
       "id": "a4-console-convergence",
-      "status": "active",
+      "status": "archived",
       "owner": "governance-service",
-      "current_slice": "前後端收斂（main 後端 × convergence 分支前端）",
+      "current_slice": "5.x 收尾 PR 為 #638（前一輪 current_slice 的「PR 本號待補」即指 #638，於本 PR 回填）；29/29 全數結案，change 目錄已移入 openspec/changes/archive/2026-08-19-a4-console-convergence，delta spec 已同步 canonical openspec/specs/a4-semantic-search/spec.md。母版 a4-semantic-search-model-qa 維持 deferred（四項重啟條件僅第 1 項達成）。",
       "blocked_by": [],
-      "last_verified": "2026-07-29T07:00:00Z",
+      "last_verified": "2026-08-19T07:30:00Z",
       "task_ledger": {
-        "completed": 3,
+        "completed": 29,
         "total": 29
       },
       "evidence_refs": [
-        "openspec/changes/a4-console-convergence/proposal.md",
-        "openspec/changes/a4-console-convergence/tasks.md"
+        "openspec/changes/archive/2026-08-19-a4-console-convergence/proposal.md",
+        "openspec/changes/archive/2026-08-19-a4-console-convergence/tasks.md"
       ],
-      "subject_commit": "7784884a577a17104053404776c74fd42905610c",
-      "archive_debt": null
+      "subject_commit": "ee866e9078fa2c557d0c2006c74410d7ac315c2b",
+      "archive_debt": null,
+      "subject_binding": "introduction"
     },
     {
       "id": "a4-semantic-search-model-qa",
       "status": "deferred",
       "owner": "governance-service",
-      "current_slice": null,
-      "blocked_by": [
-        "a4-console-convergence"
-      ],
-      "last_verified": "2026-07-29T07:00:00Z",
+      "current_slice": "2026-08-20 R2：blocked_by 不再指向已 archived 的 a4-console-convergence（該欄僅允許既有 change id）。真實外部條件仍擋 thaw：credential rotation (1.8)、host-native Kit lab (7.4/7.5)、獨立 reviewer (8.7)。",
+      "blocked_by": [],
+      "last_verified": "2026-08-20T08:15:00Z",
       "task_ledger": {
         "completed": 28,
         "total": 64
@@ -222,7 +221,7 @@
         "openspec/changes/a4-semantic-search-model-qa/proposal.md",
         "openspec/changes/a4-semantic-search-model-qa/tasks.md"
       ],
-      "subject_commit": "9e111e58a4f8b160047a3fe1d3be09efe87e1ad6",
+      "subject_commit": "7edc82a54c2db8b5e68eb286fc9259cf4f301f03",
       "archive_debt": null
     },
     {
@@ -242,11 +241,11 @@
       ],
       "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": {
-        "reason": "historical_task_ledger_debt",
+        "reason": "permanent_historical_task_ledger_debt",
         "unchecked_tasks": 3,
         "unsupported_checkboxes": 0,
         "owner": "repository-maintainer",
-        "review_due": "2026-08-31"
+        "adjudicated_on": "2026-08-17"
       }
     },
     {
@@ -377,6 +376,25 @@
       "archive_debt": null
     },
     {
+      "id": "align-html-derived-design-gate-contract",
+      "status": "archived",
+      "owner": "repository-maintainer",
+      "current_slice": "2026-08-20 archive：#656 已進 main（6e7d156），2/2 tasks 結案；change 目錄移入 openspec/changes/archive/2026-08-20-align-html-derived-design-gate-contract，delta 已同步 canonical openspec/specs/agent-operability-governance/spec.md。provenance／classifier-status／typed-consumers 仍屬尚未建立的 successor，不在本 change 範圍。",
+      "blocked_by": [],
+      "last_verified": "2026-08-20T06:20:00Z",
+      "task_ledger": {
+        "completed": 2,
+        "total": 2
+      },
+      "evidence_refs": [
+        "openspec/changes/archive/2026-08-20-align-html-derived-design-gate-contract/proposal.md",
+        "openspec/changes/archive/2026-08-20-align-html-derived-design-gate-contract/tasks.md"
+      ],
+      "subject_commit": "660e994b0574c60d796c77b0faf6e39e8358611b",
+      "archive_debt": null,
+      "subject_binding": "introduction"
+    },
+    {
       "id": "align-ship-cycle-merge-ancestry",
       "status": "archived",
       "owner": "repository-maintainer",
@@ -483,11 +501,11 @@
       ],
       "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": {
-        "reason": "historical_task_ledger_debt",
+        "reason": "permanent_historical_task_ledger_debt",
         "unchecked_tasks": 4,
         "unsupported_checkboxes": 0,
         "owner": "repository-maintainer",
-        "review_due": "2026-08-31"
+        "adjudicated_on": "2026-08-17"
       }
     },
     {
@@ -543,11 +561,11 @@
       ],
       "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": {
-        "reason": "historical_task_ledger_debt",
+        "reason": "permanent_historical_task_ledger_debt",
         "unchecked_tasks": 2,
         "unsupported_checkboxes": 0,
         "owner": "repository-maintainer",
-        "review_due": "2026-08-31"
+        "adjudicated_on": "2026-08-17"
       }
     },
     {
@@ -567,11 +585,11 @@
       ],
       "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": {
-        "reason": "historical_task_ledger_debt",
+        "reason": "permanent_historical_task_ledger_debt",
         "unchecked_tasks": 1,
         "unsupported_checkboxes": 0,
         "owner": "repository-maintainer",
-        "review_due": "2026-08-31"
+        "adjudicated_on": "2026-08-17"
       }
     },
     {
@@ -627,11 +645,11 @@
       ],
       "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": {
-        "reason": "historical_task_ledger_debt",
+        "reason": "permanent_historical_task_ledger_debt",
         "unchecked_tasks": 8,
         "unsupported_checkboxes": 0,
         "owner": "repository-maintainer",
-        "review_due": "2026-08-31"
+        "adjudicated_on": "2026-08-17"
       }
     },
     {
@@ -687,11 +705,11 @@
       ],
       "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": {
-        "reason": "historical_task_ledger_debt",
+        "reason": "permanent_historical_task_ledger_debt",
         "unchecked_tasks": 45,
         "unsupported_checkboxes": 0,
         "owner": "repository-maintainer",
-        "review_due": "2026-08-31"
+        "adjudicated_on": "2026-08-17"
       }
     },
     {
@@ -711,11 +729,11 @@
       ],
       "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": {
-        "reason": "historical_task_ledger_debt",
+        "reason": "permanent_historical_task_ledger_debt",
         "unchecked_tasks": 21,
         "unsupported_checkboxes": 0,
         "owner": "repository-maintainer",
-        "review_due": "2026-08-31"
+        "adjudicated_on": "2026-08-17"
       }
     },
     {
@@ -753,11 +771,11 @@
       ],
       "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": {
-        "reason": "historical_task_ledger_debt",
+        "reason": "permanent_historical_task_ledger_debt",
         "unchecked_tasks": 25,
         "unsupported_checkboxes": 0,
         "owner": "repository-maintainer",
-        "review_due": "2026-08-31"
+        "adjudicated_on": "2026-08-17"
       }
     },
     {
@@ -795,27 +813,45 @@
       ],
       "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": {
-        "reason": "historical_task_ledger_debt",
+        "reason": "permanent_historical_task_ledger_debt",
         "unchecked_tasks": 16,
         "unsupported_checkboxes": 0,
         "owner": "repository-maintainer",
-        "review_due": "2026-08-31"
+        "adjudicated_on": "2026-08-17"
       }
     },
     {
-      "id": "cross-service-structured-log-baseline",
-      "status": "deferred",
-      "owner": "cross-service-observability",
+      "id": "converge-console-specs-to-shipped-behavior",
+      "status": "archived",
+      "owner": "web-viewer-sample",
       "current_slice": null,
       "blocked_by": [],
-      "last_verified": "2026-07-30T08:48:00Z",
+      "last_verified": "2026-08-19T02:23:07Z",
       "task_ledger": {
-        "completed": 92,
+        "completed": 12,
+        "total": 12
+      },
+      "evidence_refs": [
+        "openspec/changes/archive/2026-08-19-converge-console-specs-to-shipped-behavior/proposal.md",
+        "openspec/changes/archive/2026-08-19-converge-console-specs-to-shipped-behavior/tasks.md"
+      ],
+      "subject_commit": "9fd7997709769ef444cb7fa5e411bf2952493d2c",
+      "archive_debt": null
+    },
+    {
+      "id": "cross-service-structured-log-baseline",
+      "status": "archived",
+      "owner": "cross-service-observability",
+      "current_slice": "2026-08-20 archive：93/93（13.11 terminal deferred-this-change，owner R2 終局關帳）。change 目錄移入 openspec/changes/archive/2026-08-20-cross-service-structured-log-baseline；canonical spec 已 byte-identical，archive 用 --skip-specs。evidence 重跑不在本 change，需 owner 另指定範圍與窗口。",
+      "blocked_by": [],
+      "last_verified": "2026-08-20T08:15:00Z",
+      "task_ledger": {
+        "completed": 93,
         "total": 93
       },
       "evidence_refs": [
-        "openspec/changes/cross-service-structured-log-baseline/proposal.md",
-        "openspec/changes/cross-service-structured-log-baseline/tasks.md"
+        "openspec/changes/archive/2026-08-20-cross-service-structured-log-baseline/proposal.md",
+        "openspec/changes/archive/2026-08-20-cross-service-structured-log-baseline/tasks.md"
       ],
       "subject_commit": "72a0bffc4eca4fa34beabc20a1477769bea3ad05",
       "archive_debt": null
@@ -927,11 +963,11 @@
       ],
       "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": {
-        "reason": "historical_task_ledger_debt",
+        "reason": "permanent_historical_task_ledger_debt",
         "unchecked_tasks": 2,
         "unsupported_checkboxes": 0,
         "owner": "repository-maintainer",
-        "review_due": "2026-08-31"
+        "adjudicated_on": "2026-08-17"
       }
     },
     {
@@ -969,11 +1005,11 @@
       ],
       "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": {
-        "reason": "historical_task_ledger_debt",
+        "reason": "permanent_historical_task_ledger_debt",
         "unchecked_tasks": 1,
         "unsupported_checkboxes": 0,
         "owner": "repository-maintainer",
-        "review_due": "2026-08-31"
+        "adjudicated_on": "2026-08-17"
       }
     },
     {
@@ -993,11 +1029,11 @@
       ],
       "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": {
-        "reason": "historical_task_ledger_debt",
+        "reason": "permanent_historical_task_ledger_debt",
         "unchecked_tasks": 8,
         "unsupported_checkboxes": 0,
         "owner": "repository-maintainer",
-        "review_due": "2026-08-31"
+        "adjudicated_on": "2026-08-17"
       }
     },
     {
@@ -1035,11 +1071,11 @@
       ],
       "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": {
-        "reason": "historical_task_ledger_debt",
+        "reason": "permanent_historical_task_ledger_debt",
         "unchecked_tasks": 80,
         "unsupported_checkboxes": 0,
         "owner": "repository-maintainer",
-        "review_due": "2026-08-31"
+        "adjudicated_on": "2026-08-17"
       }
     },
     {
@@ -1185,11 +1221,11 @@
       ],
       "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": {
-        "reason": "historical_task_ledger_debt",
+        "reason": "permanent_historical_task_ledger_debt",
         "unchecked_tasks": 8,
         "unsupported_checkboxes": 0,
         "owner": "repository-maintainer",
-        "review_due": "2026-08-31"
+        "adjudicated_on": "2026-08-17"
       }
     },
     {
@@ -1209,11 +1245,11 @@
       ],
       "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": {
-        "reason": "historical_task_ledger_debt",
+        "reason": "permanent_historical_task_ledger_debt",
         "unchecked_tasks": 9,
         "unsupported_checkboxes": 0,
         "owner": "repository-maintainer",
-        "review_due": "2026-08-31"
+        "adjudicated_on": "2026-08-17"
       }
     },
     {
@@ -1327,11 +1363,11 @@
       ],
       "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": {
-        "reason": "historical_task_ledger_debt",
+        "reason": "permanent_historical_task_ledger_debt",
         "unchecked_tasks": 20,
         "unsupported_checkboxes": 0,
         "owner": "repository-maintainer",
-        "review_due": "2026-08-31"
+        "adjudicated_on": "2026-08-17"
       }
     },
     {
@@ -1369,29 +1405,47 @@
       ],
       "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": {
-        "reason": "historical_task_ledger_debt",
+        "reason": "permanent_historical_task_ledger_debt",
         "unchecked_tasks": 20,
         "unsupported_checkboxes": 0,
         "owner": "repository-maintainer",
-        "review_due": "2026-08-31"
+        "adjudicated_on": "2026-08-17"
       }
     },
     {
       "id": "implement-runtime-command-authority-and-rejection",
       "status": "active",
       "owner": "bim-review-coordinator",
-      "current_slice": "5.6 stage-load-timeout closed 2026-08-12 (data-stage-failure-reason test anchor, RED->GREEN, 1072/1072 suite, typecheck+changed-file lint clean). Checkbox stays open: 8/12 viewer-origin failure states (no-session/session-preparing/viewer-origin-missing/lease-occupied/stream-disconnected/lease-expired/gpu-unavailable/first-frame-timeout) unverified. production/full completion=no.",
+      "current_slice": "2026-08-20 對帳：tasks.md 5.6 已於 2026-08-18 slice-4 勾選（console 12/12 + standalone 6 present／4 N/A／2 lab-embed degraded）；ledger 自 32/35 升為 33/35。殘項＝7.3（Windows host-native Kit 九案，須活 coordinator＋部署面，禁止用隔離 Kit 當 authority 證據）、7.5（change 尚未 archive）。本輪不跑 7.3、不 archive、不宣稱 production/full completion。",
       "blocked_by": [],
-      "last_verified": "2026-08-12T02:29:23Z",
+      "last_verified": "2026-08-20T06:20:00Z",
       "task_ledger": {
-        "completed": 31,
+        "completed": 33,
         "total": 35
       },
       "evidence_refs": [
         "openspec/changes/implement-runtime-command-authority-and-rejection/proposal.md",
         "openspec/changes/implement-runtime-command-authority-and-rejection/tasks.md"
       ],
-      "subject_commit": "cba626587c6cc50000e35050988c29208c8246ac",
+      "subject_commit": "6aab355f39fe941c046e7a3fab93703c6f9728ca",
+      "archive_debt": null
+    },
+    {
+      "id": "introduce-viewer-app-integration-surface",
+      "status": "deferred",
+      "owner": "web-viewer-sample",
+      "current_slice": "deferred 開立 2026-08-18（active WIP 6/6 滿額）：四份 artifact 已落、strict validate 通過、F* issues #603-#610 與治理複核 #611 已開。thaw 條件=任一 active change archive 釋出名額或使用者明確口令升 active（最快路徑見 #611：converge-console 3.1 重測後 archive）。thaw 後第一片=S0 pre-flight（重取基線＋凍結 12 態錨點清單＋ack transcript golden）。",
+      "blocked_by": [],
+      "last_verified": "2026-08-18T11:02:41Z",
+      "task_ledger": {
+        "completed": 4,
+        "total": 33
+      },
+      "evidence_refs": [
+        "openspec/changes/introduce-viewer-app-integration-surface/proposal.md",
+        "openspec/changes/introduce-viewer-app-integration-surface/tasks.md"
+      ],
+      "subject_commit": "ab75392ee624cea9876f8cce256c97ed06e6f3ba",
       "archive_debt": null
     },
     {
@@ -1411,11 +1465,11 @@
       ],
       "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": {
-        "reason": "historical_task_ledger_debt",
+        "reason": "permanent_historical_task_ledger_debt",
         "unchecked_tasks": 1,
         "unsupported_checkboxes": 0,
         "owner": "repository-maintainer",
-        "review_due": "2026-08-31"
+        "adjudicated_on": "2026-08-17"
       }
     },
     {
@@ -1473,23 +1527,41 @@
       "archive_debt": null
     },
     {
-      "id": "isolated-branch-stack-browser-e2e",
-      "status": "active",
+      "id": "introduction-resolved-subject-binding",
+      "status": "archived",
       "owner": "repository-maintainer",
-      "current_slice": "PR #431 主體已 merge（cdd1f2f）；reviewer ACCEPT（P1/P2=0）。2026-08-11：4.3 以 gate 重跑補勾（test-agent-governance-check 45 pass／0 fail @7929d74）。31/33；5.2/5.3 與 A4 manifest/PNG/runtime ID 維持 gap（a4-console-convergence 缺口），fixture seed 由 #434 持有。GitNexus unavailable/UNKNOWN 紀錄維持，非 pass。",
+      "current_slice": null,
       "blocked_by": [],
-      "last_verified": "2026-08-11T11:40:00Z",
+      "last_verified": "2026-08-20T03:20:00Z",
       "task_ledger": {
-        "completed": 31,
+        "completed": 33,
         "total": 33
       },
       "evidence_refs": [
-        "openspec/changes/isolated-branch-stack-browser-e2e/proposal.md",
-        "openspec/changes/isolated-branch-stack-browser-e2e/tasks.md",
-        "docs/plans/NOW.md",
-        "scripts/tests/test-isolated-branch-stack.ps1"
+        "openspec/changes/archive/2026-08-20-introduction-resolved-subject-binding/proposal.md",
+        "openspec/changes/archive/2026-08-20-introduction-resolved-subject-binding/tasks.md"
       ],
-      "subject_commit": "709e7d609dfa6c9b04f5d31df223f16b84b7ed63",
+      "subject_commit": "ab6787778d98094f6d34992ab3024aacd841e6bf",
+      "subject_binding": "introduction",
+      "archive_debt": null
+    },
+    {
+      "id": "isolated-branch-stack-browser-e2e",
+      "status": "archived",
+      "owner": "repository-maintainer",
+      "current_slice": null,
+      "blocked_by": [],
+      "last_verified": "2026-08-19T03:03:00Z",
+      "task_ledger": {
+        "completed": 33,
+        "total": 33
+      },
+      "evidence_refs": [
+        "openspec/changes/archive/2026-08-19-isolated-branch-stack-browser-e2e/proposal.md",
+        "openspec/changes/archive/2026-08-19-isolated-branch-stack-browser-e2e/tasks.md"
+      ],
+      "subject_commit": "a1b53c38c93259775ee871e4afd825baa430975e",
+      "subject_binding": "introduction",
       "archive_debt": null
     },
     {
@@ -1530,22 +1602,23 @@
     },
     {
       "id": "migrate-console-to-hifi-design",
-      "status": "active",
+      "status": "archived",
       "owner": "web-viewer-sample",
-      "current_slice": "2026-08-14 align successor crosswalk landed (互斥已裁決，align 不 thaw)。7.1 仍 STOP until PR #535 保全 workspace.a4.default；8.2 因本 PR 改 align 檔而取消勾選；7.4 不勾。31/40；殘項＝0.5/1.2/6.4（human owner）＋7.1/7.4/8.2。",
+      "current_slice": "2026-08-20 archive：40/40（6.4／7.4 terminal deferred-this-change）。HIFI-01～04 已記錄。change 目錄移入 openspec/changes/archive/2026-08-20-migrate-console-to-hifi-design；delta 已同步 canonical openspec/specs/console-design-token-authority/spec.md。不宣稱 visual full completion；origin 正本對齊與 STALE spec／Kit 標紅不在本 change。",
       "blocked_by": [],
-      "last_verified": "2026-08-14T00:00:00Z",
+      "last_verified": "2026-08-20T07:30:00Z",
       "task_ledger": {
-        "completed": 31,
+        "completed": 40,
         "total": 40
       },
       "evidence_refs": [
-        "openspec/changes/migrate-console-to-hifi-design/proposal.md",
-        "openspec/changes/migrate-console-to-hifi-design/tasks.md",
+        "openspec/changes/archive/2026-08-20-migrate-console-to-hifi-design/proposal.md",
+        "openspec/changes/archive/2026-08-20-migrate-console-to-hifi-design/tasks.md",
+        "openspec/changes/archive/2026-08-20-migrate-console-to-hifi-design/adjudication-index.md",
         "artifacts/2026-08-12-hifi-consumer-spec-scenario-audit.md",
         "openspec/changes/align-frontend-design-system-reference/successor-crosswalk-migrate-console-to-hifi-design.md"
       ],
-      "subject_commit": "9e111e58a4f8b160047a3fe1d3be09efe87e1ad6",
+      "subject_commit": "c3057d844ae0a972ad9b9fcdabf151500a52fd90",
       "archive_debt": null
     },
     {
@@ -1655,11 +1728,11 @@
       ],
       "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": {
-        "reason": "historical_task_ledger_debt",
+        "reason": "permanent_historical_task_ledger_debt",
         "unchecked_tasks": 8,
         "unsupported_checkboxes": 0,
         "owner": "repository-maintainer",
-        "review_due": "2026-08-31"
+        "adjudicated_on": "2026-08-17"
       }
     },
     {
@@ -1679,11 +1752,11 @@
       ],
       "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": {
-        "reason": "historical_task_ledger_debt",
+        "reason": "permanent_historical_task_ledger_debt",
         "unchecked_tasks": 7,
         "unsupported_checkboxes": 0,
         "owner": "repository-maintainer",
-        "review_due": "2026-08-31"
+        "adjudicated_on": "2026-08-17"
       }
     },
     {
@@ -1775,11 +1848,11 @@
       ],
       "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": {
-        "reason": "historical_task_ledger_debt",
+        "reason": "permanent_historical_task_ledger_debt",
         "unchecked_tasks": 0,
         "unsupported_checkboxes": 3,
         "owner": "repository-maintainer",
-        "review_due": "2026-08-31"
+        "adjudicated_on": "2026-08-17"
       }
     },
     {
@@ -1799,11 +1872,11 @@
       ],
       "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": {
-        "reason": "historical_task_ledger_debt",
+        "reason": "permanent_historical_task_ledger_debt",
         "unchecked_tasks": 2,
         "unsupported_checkboxes": 0,
         "owner": "repository-maintainer",
-        "review_due": "2026-08-31"
+        "adjudicated_on": "2026-08-17"
       }
     },
     {
@@ -1823,11 +1896,11 @@
       ],
       "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": {
-        "reason": "historical_task_ledger_debt",
+        "reason": "permanent_historical_task_ledger_debt",
         "unchecked_tasks": 1,
         "unsupported_checkboxes": 0,
         "owner": "repository-maintainer",
-        "review_due": "2026-08-31"
+        "adjudicated_on": "2026-08-17"
       }
     },
     {
@@ -1865,22 +1938,22 @@
       ],
       "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": {
-        "reason": "historical_task_ledger_debt",
+        "reason": "permanent_historical_task_ledger_debt",
         "unchecked_tasks": 75,
         "unsupported_checkboxes": 0,
         "owner": "repository-maintainer",
-        "review_due": "2026-08-31"
+        "adjudicated_on": "2026-08-17"
       }
     },
     {
       "id": "rvt-ifc-usdc-lineage",
-      "status": "deferred",
+      "status": "active",
       "owner": "conversion-lineage",
-      "current_slice": null,
+      "current_slice": "2026-08-20 tasks 3.1/3.2 落地：governed intake 全鏈（PR #662）＋legacy enrollment confirm（owner carve-out）＋durable pipelineJobStore/enqueue/reconciler；coordinator 全套 1203 tests；下一片 = tasks 3.3（active-result pointer/promote/rollback/audit）＋3.4（browser read models）",
       "blocked_by": [],
-      "last_verified": "2026-07-28T06:30:00Z",
+      "last_verified": "2026-08-20T04:10:00Z",
       "task_ledger": {
-        "completed": 1,
+        "completed": 13,
         "total": 48
       },
       "evidence_refs": [
@@ -1925,11 +1998,11 @@
       ],
       "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": {
-        "reason": "historical_task_ledger_debt",
+        "reason": "permanent_historical_task_ledger_debt",
         "unchecked_tasks": 33,
         "unsupported_checkboxes": 0,
         "owner": "repository-maintainer",
-        "review_due": "2026-08-31"
+        "adjudicated_on": "2026-08-17"
       }
     },
     {
@@ -1985,11 +2058,11 @@
       ],
       "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": {
-        "reason": "historical_task_ledger_debt",
+        "reason": "permanent_historical_task_ledger_debt",
         "unchecked_tasks": 1,
         "unsupported_checkboxes": 0,
         "owner": "repository-maintainer",
-        "review_due": "2026-08-31"
+        "adjudicated_on": "2026-08-17"
       }
     },
     {
@@ -2027,11 +2100,11 @@
       ],
       "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": {
-        "reason": "historical_task_ledger_debt",
+        "reason": "permanent_historical_task_ledger_debt",
         "unchecked_tasks": 8,
         "unsupported_checkboxes": 0,
         "owner": "repository-maintainer",
-        "review_due": "2026-08-31"
+        "adjudicated_on": "2026-08-17"
       }
     },
     {
@@ -2051,11 +2124,11 @@
       ],
       "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": {
-        "reason": "historical_task_ledger_debt",
+        "reason": "permanent_historical_task_ledger_debt",
         "unchecked_tasks": 23,
         "unsupported_checkboxes": 0,
         "owner": "repository-maintainer",
-        "review_due": "2026-08-31"
+        "adjudicated_on": "2026-08-17"
       }
     },
     {
@@ -2075,11 +2148,11 @@
       ],
       "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": {
-        "reason": "historical_task_ledger_debt",
+        "reason": "permanent_historical_task_ledger_debt",
         "unchecked_tasks": 33,
         "unsupported_checkboxes": 0,
         "owner": "repository-maintainer",
-        "review_due": "2026-08-31"
+        "adjudicated_on": "2026-08-17"
       }
     },
     {
@@ -2099,11 +2172,11 @@
       ],
       "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": {
-        "reason": "historical_task_ledger_debt",
+        "reason": "permanent_historical_task_ledger_debt",
         "unchecked_tasks": 26,
         "unsupported_checkboxes": 0,
         "owner": "repository-maintainer",
-        "review_due": "2026-08-31"
+        "adjudicated_on": "2026-08-17"
       }
     },
     {
@@ -2123,11 +2196,11 @@
       ],
       "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": {
-        "reason": "historical_task_ledger_debt",
+        "reason": "permanent_historical_task_ledger_debt",
         "unchecked_tasks": 45,
         "unsupported_checkboxes": 0,
         "owner": "repository-maintainer",
-        "review_due": "2026-08-31"
+        "adjudicated_on": "2026-08-17"
       }
     },
     {
@@ -2147,11 +2220,11 @@
       ],
       "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": {
-        "reason": "historical_task_ledger_debt",
+        "reason": "permanent_historical_task_ledger_debt",
         "unchecked_tasks": 25,
         "unsupported_checkboxes": 4,
         "owner": "repository-maintainer",
-        "review_due": "2026-08-31"
+        "adjudicated_on": "2026-08-17"
       }
     },
     {
@@ -2189,11 +2262,11 @@
       ],
       "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": {
-        "reason": "historical_task_ledger_debt",
+        "reason": "permanent_historical_task_ledger_debt",
         "unchecked_tasks": 22,
         "unsupported_checkboxes": 0,
         "owner": "repository-maintainer",
-        "review_due": "2026-08-31"
+        "adjudicated_on": "2026-08-17"
       }
     },
     {
@@ -2213,11 +2286,11 @@
       ],
       "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": {
-        "reason": "historical_task_ledger_debt",
+        "reason": "permanent_historical_task_ledger_debt",
         "unchecked_tasks": 41,
         "unsupported_checkboxes": 0,
         "owner": "repository-maintainer",
-        "review_due": "2026-08-31"
+        "adjudicated_on": "2026-08-17"
       }
     },
     {
@@ -2237,11 +2310,11 @@
       ],
       "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": {
-        "reason": "historical_task_ledger_debt",
+        "reason": "permanent_historical_task_ledger_debt",
         "unchecked_tasks": 1,
         "unsupported_checkboxes": 0,
         "owner": "repository-maintainer",
-        "review_due": "2026-08-31"
+        "adjudicated_on": "2026-08-17"
       }
     },
     {
@@ -2279,11 +2352,11 @@
       ],
       "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": {
-        "reason": "historical_task_ledger_debt",
+        "reason": "permanent_historical_task_ledger_debt",
         "unchecked_tasks": 1,
         "unsupported_checkboxes": 0,
         "owner": "repository-maintainer",
-        "review_due": "2026-08-31"
+        "adjudicated_on": "2026-08-17"
       }
     },
     {
@@ -2303,11 +2376,11 @@
       ],
       "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": {
-        "reason": "historical_task_ledger_debt",
+        "reason": "permanent_historical_task_ledger_debt",
         "unchecked_tasks": 1,
         "unsupported_checkboxes": 3,
         "owner": "repository-maintainer",
-        "review_due": "2026-08-31"
+        "adjudicated_on": "2026-08-17"
       }
     },
     {
@@ -2327,11 +2400,11 @@
       ],
       "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": {
-        "reason": "historical_task_ledger_debt",
+        "reason": "permanent_historical_task_ledger_debt",
         "unchecked_tasks": 4,
         "unsupported_checkboxes": 0,
         "owner": "repository-maintainer",
-        "review_due": "2026-08-31"
+        "adjudicated_on": "2026-08-17"
       }
     },
     {
@@ -2351,11 +2424,11 @@
       ],
       "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": {
-        "reason": "historical_task_ledger_debt",
+        "reason": "permanent_historical_task_ledger_debt",
         "unchecked_tasks": 9,
         "unsupported_checkboxes": 0,
         "owner": "repository-maintainer",
-        "review_due": "2026-08-31"
+        "adjudicated_on": "2026-08-17"
       }
     },
     {
@@ -2375,11 +2448,11 @@
       ],
       "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": {
-        "reason": "historical_task_ledger_debt",
+        "reason": "permanent_historical_task_ledger_debt",
         "unchecked_tasks": 32,
         "unsupported_checkboxes": 0,
         "owner": "repository-maintainer",
-        "review_due": "2026-08-31"
+        "adjudicated_on": "2026-08-17"
       }
     },
     {
@@ -2435,11 +2508,11 @@
       ],
       "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": {
-        "reason": "historical_task_ledger_debt",
+        "reason": "permanent_historical_task_ledger_debt",
         "unchecked_tasks": 10,
         "unsupported_checkboxes": 0,
         "owner": "repository-maintainer",
-        "review_due": "2026-08-31"
+        "adjudicated_on": "2026-08-17"
       }
     },
     {

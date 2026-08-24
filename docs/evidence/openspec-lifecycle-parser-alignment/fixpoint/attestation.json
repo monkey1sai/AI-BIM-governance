@@ -1,0 +1,14 @@
+{
+  "schema_version": "self-referential-fixpoint-attestation/v1",
+  "entry_id": "openspec-lifecycle-parser-alignment",
+  "mechanism_commit": "348ad00974f13964b8505720416a1265277c8ed1",
+  "verification_contract_sha256": "80ce60c30c2e4d071d3b22c33e352ec61047514822632c95d50aa9ad3eb570bd",
+  "result": "pass",
+  "commands": [
+    { "id": "test-openspec-ledger-reconciliation", "exit_code": 0 },
+    { "id": "verify-openspec-lifecycle", "exit_code": 0 },
+    { "id": "test-self-referential-bootstrap", "exit_code": 0 },
+    { "id": "test-pr-body-evidence", "exit_code": 0 },
+    { "id": "invoke-powershell-static", "exit_code": 0 }
+  ]
+}

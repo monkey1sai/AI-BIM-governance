@@ -236,42 +236,10 @@ A4 v1 SHALL NOT 建立 persistent query-history table、analytics stream 或 sav
 - **THEN** coordinator SHALL 依 policy purge bounded handoff intent，且 SHALL NOT 由此建立 durable query/evidence/session-event record
 - **AND** URL SHALL 只含 opaque handoff ID，不得含 query text、evidence snapshot、prim path 或 signed proof
 
-### Requirement: Canonical A4 UI SHALL 可操作且接受誠實的 design gate
-
-`#/workspace?dock=a4` SHALL 是 canonical production A4 surface，並 SHALL render 真實 session-scoped API flow。Legacy `#a4`、`#/a4` 與目前 `#semantic-search` SHALL 在保留 valid session context 下 redirect 到 canonical dock，或在 caller migration 後移除；它們 SHALL NOT mount 第二套 fixture/live implementation。
-
-Canonical surface SHALL 提供 visible idle、source/session unavailable、loading、success、empty、uninterpreted、semantic error、partial-confirmation-required、confirmed partial、retrying、retry-failed、proof-expired-draft-preserved 與 3D-handoff creating/expired/rejected states。它 SHALL 顯示 validated filters、interpretation source、model/degradation status、Evidence Trace 與 mapped/unmapped/truncated counts。Fixed result counts、fabricated law citations 與 fake success states SHALL NOT 出現在 live flow。Console SHALL NOT host WebRTC/video 或送 DataChannel message；只能透過 coordinator-provided `/ui/open?session=` handoff URL 進入既有 session viewer。
-
-因 truthful copy 與 live states 會實質改變核可的 `workspace.a4.default` screen，implementation SHALL 明確 re-approve/rebaseline，並通過 repo-pinned Windows Chromium DPR1 1440×900／1920×1080、pixel diff ≤1% 與 Playwright semantic 100% gates。Visual fidelity SHALL NOT 取代 API/runtime/model evidence。
-
-**備註（決策原因）:** 兩個獨立 A4 pages 會形成兩套 product truth，並讓 fixture evidence 被誤認成 runtime evidence。保留 canonical approved route 可維持 information architecture；explicit rebaseline 則記錄從 compliance language 改為 neutral query-match semantics 的刻意修正，而不是把它藏成 visual drift。
-
-#### Scenario: Canonical route 呈現 live states 而非 fixture counts
-
-- **GIVEN** browser 具有 valid active Review Session
-- **WHEN** operator 開啟 `#/workspace?dock=a4` 並執行 query
-- **THEN** UI SHALL 呼叫 session-scoped A4 API，render returned `query_id`、filters、stats 與 evidence
-- **AND** SHALL NOT render fixed `5 / 7`、fabricated citations 或 local-only success
-
-#### Scenario: Legacy A4 routes 不得保留第二套 implementation
-
-- **WHEN** operator 開啟 `#a4`、`#/a4` 或 `#semantic-search`
-- **THEN** frontend SHALL 在保留 valid session context 下 redirect/converge 到 `#/workspace?dock=a4`；所有 callers migrate 後，retired route MAY unavailable
-- **AND** legacy route SHALL NOT mount separate A4 state、fixture 或 API client behavior
-
-#### Scenario: Empty 與 error states 提供 truthful recovery
-
-- **WHEN** query 回 zero matches、無法 interpretation、失去 session binding 或收到 semantic/runtime error
-- **THEN** UI SHALL render distinct state、cause 與 next action
-- **AND** retryable states SHALL 提供保留 explicit user input 的 Retry action
-- **AND** retry SHALL NOT silently change `interpret_mode` or filters
-
-#### Scenario: Design fidelity 與 operability 維持獨立 gates
-
-- **WHEN** A4 implementation 被提議為 complete
-- **THEN** required viewport visual comparisons 與 semantic design cases 都 SHALL 對 re-approved baseline 通過
-- **AND** real API/session/Ornith/Console-to-viewer handoff/DataChannel evidence SHALL 分開回報
-- **AND** 一個 gate 通過 SHALL NOT 推論另一個 gate 通過
+<!-- Requirement 'Canonical A4 UI SHALL 可操作且接受誠實的 design gate' removed from this
+     delta on 2026-08-20: the successor change a4-console-convergence already synced it into
+     openspec/specs/a4-semantic-search/spec.md (created by ee866e9). Re-declaring it here as
+     ADDED made `openspec archive` throw 'already exists'. It is not lost — canonical owns it. -->
 
 ### Requirement: A4 3D handoff、focus 與 highlight SHALL 明確、可關聯且限 primary
 

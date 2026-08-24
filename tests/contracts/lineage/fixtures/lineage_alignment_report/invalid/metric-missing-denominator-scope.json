@@ -1,0 +1,83 @@
+{
+  "schema_version": "lineage-alignment-report/v1",
+  "document_type": "alignment_report_json",
+  "body": {
+    "report_schema_version": "alignment-report/v1",
+    "source_bundle_id": "source-bundle-0003",
+    "pipeline_job_id": "pipeline-job-0003",
+    "attempt_id": "attempt-0007",
+    "result_id": "result-0007",
+    "generated_at": "2026-07-16T08:15:30.000Z",
+    "scope": {
+      "eligible_ifc_product_selector": "IfcProduct",
+      "eligible_ifc_product_count": 3,
+      "legacy_alias": {
+        "source_ifc_entity_count_is_alias_of": "eligible_ifc_product_count"
+      }
+    },
+    "metrics": {
+      "ifc_usdc_coverage_ratio": {
+        "numerator": 3,
+        "denominator": 3,
+        "ratio": 1.0,
+        "status": "complete"
+      },
+      "rvt_ifc_alignment_ratio": {
+        "numerator": 3,
+        "denominator": 3,
+        "ratio": 1.0,
+        "status": "complete",
+        "denominator_scope": "csv_valid_count"
+      },
+      "rvt_ifc_usdc_lineage_ratio": {
+        "numerator": 3,
+        "denominator": 3,
+        "ratio": 1.0,
+        "status": "complete",
+        "denominator_scope": "csv_valid_count"
+      }
+    },
+    "counts": {
+      "csv_total_count": 3,
+      "csv_valid_count": 3,
+      "eligible_ifc_product_count": 3,
+      "duplicate_rvt_id_count": 0,
+      "duplicate_ifc_guid_count": 0,
+      "invalid_row_count": 0,
+      "csv_only_count": 0,
+      "ifc_only_count": 0,
+      "ifc_usdc_unmapped_count": 0,
+      "full_lineage_matched_count": 3
+    },
+    "difference_sets": {
+      "csv_only": [],
+      "ifc_only": [],
+      "ifc_usdc_unmapped": [],
+      "duplicate_rvt_ids": [],
+      "duplicate_ifc_guids": [],
+      "invalid_rows": [],
+      "full_lineage_matched": [
+        {
+          "rvt_element_id": "0000001",
+          "ifc_uuid36": "0f0e0d0c-0b0a-4908-8707-050503030101",
+          "ifc_global_id22": "0F3WqC2mf928S71GK30m41",
+          "usd_prim_path": "/World/Elements/IfcWall/G_0F3WqC2mf928S71GK30m41"
+        },
+        {
+          "rvt_element_id": "0000002",
+          "ifc_uuid36": "0f0e0d0c-0b0a-4908-8708-050603040102",
+          "ifc_global_id22": "0F3WqC2mf928S81GO31042",
+          "usd_prim_path": "/World/Elements/IfcDoor/G_0F3WqC2mf928S81GO31042"
+        },
+        {
+          "rvt_element_id": "0000003",
+          "ifc_uuid36": "0f0e0d0c-0b0a-4908-8709-050703050103",
+          "ifc_global_id22": "0F3WqC2mf928S91GS31G43",
+          "usd_prim_path": "/World/Elements/IfcSlab/G_0F3WqC2mf928S91GS31G43"
+        }
+      ]
+    },
+    "warning_codes": [],
+    "warning_code_count": 0
+  }
+}

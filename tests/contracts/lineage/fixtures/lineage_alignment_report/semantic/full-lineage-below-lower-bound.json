@@ -1,0 +1,105 @@
+{
+  "payload": {
+    "schema_version": "lineage-alignment-report/v1",
+    "document_type": "alignment_report_json",
+    "body": {
+      "report_schema_version": "alignment-report/v1",
+      "source_bundle_id": "source-bundle-0003",
+      "pipeline_job_id": "pipeline-job-0003",
+      "attempt_id": "attempt-0007",
+      "result_id": "result-0007",
+      "generated_at": "2026-07-16T08:15:30.000Z",
+      "scope": {
+        "eligible_ifc_product_selector": "IfcProduct",
+        "eligible_ifc_product_count": 10,
+        "legacy_alias": {
+          "source_ifc_entity_count_is_alias_of": "eligible_ifc_product_count"
+        }
+      },
+      "metrics": {
+        "ifc_usdc_coverage_ratio": {
+          "numerator": 9,
+          "denominator": 10,
+          "ratio": 0.9,
+          "status": "partial",
+          "denominator_scope": "eligible_ifc_product_count"
+        },
+        "rvt_ifc_alignment_ratio": {
+          "numerator": 8,
+          "denominator": 8,
+          "ratio": 1.0,
+          "status": "complete",
+          "denominator_scope": "csv_valid_count"
+        },
+        "rvt_ifc_usdc_lineage_ratio": {
+          "numerator": 6,
+          "denominator": 8,
+          "ratio": 0.75,
+          "status": "partial",
+          "denominator_scope": "csv_valid_count"
+        }
+      },
+      "counts": {
+        "csv_total_count": 8,
+        "csv_valid_count": 8,
+        "eligible_ifc_product_count": 10,
+        "duplicate_rvt_id_count": 0,
+        "duplicate_ifc_guid_count": 0,
+        "invalid_row_count": 0,
+        "csv_only_count": 0,
+        "ifc_only_count": 2,
+        "ifc_usdc_unmapped_count": 1,
+        "full_lineage_matched_count": 6
+      },
+      "difference_sets": {
+        "csv_only": [],
+        "ifc_only": [
+          {
+            "ifc_global_id22": "0F3WqC2mf928VF1Sq3om79",
+            "ifc_uuid36": "0f0e0d0c-0b0a-4908-87cf-05cd03cb01c9",
+            "ifc_class": "IfcDoor",
+            "usd_prim_path": "/World/Elements/IfcDoor/G_0F3WqC2mf928VF1Sq3om79"
+          },
+          {
+            "ifc_global_id22": "0F3WqC2mf928VG1Su3p07A",
+            "ifc_uuid36": "0f0e0d0c-0b0a-4908-87d0-05ce03cc01ca",
+            "ifc_class": "IfcDoor",
+            "usd_prim_path": "/World/Elements/IfcDoor/G_0F3WqC2mf928VG1Su3p07A"
+          }
+        ],
+        "ifc_usdc_unmapped": [
+          {
+            "ifc_global_id22": "0F3WqC2mf928VH1Sy3pG7B",
+            "ifc_uuid36": "0f0e0d0c-0b0a-4908-87d1-05cf03cd01cb",
+            "ifc_class": "IfcSlab",
+            "reason_code": "prim_not_found"
+          }
+        ],
+        "duplicate_rvt_ids": [],
+        "duplicate_ifc_guids": [],
+        "invalid_rows": [],
+        "full_lineage_matched": [
+          {
+            "rvt_element_id": "0000204",
+            "ifc_uuid36": "0f0e0d0c-0b0a-4908-87d2-05d003ce01cc",
+            "ifc_global_id22": "0F3WqC2mf928VI1T03pW7C",
+            "usd_prim_path": "/World/Elements/IfcWall/G_0F3WqC2mf928VI1T03pW7C"
+          },
+          {
+            "rvt_element_id": "0000205",
+            "ifc_uuid36": "0f0e0d0c-0b0a-4908-87d3-05d103cf01cd",
+            "ifc_global_id22": "0F3WqC2mf928VJ1T43pm7D",
+            "usd_prim_path": "/World/Elements/IfcWall/G_0F3WqC2mf928VJ1T43pm7D"
+          }
+        ]
+      },
+      "warning_codes": [],
+      "warning_code_count": 0
+    }
+  },
+  "expect": {
+    "diagnostic_codes": [
+      "FULL_LINEAGE_BELOW_SET_INTERSECTION_LOWER_BOUND"
+    ]
+  }
+}

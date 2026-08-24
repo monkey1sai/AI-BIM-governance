@@ -13,6 +13,11 @@ if (-not (Get-Command -Name 'Resolve-PlatformVenvPython' -ErrorAction SilentlyCo
 if (-not (Get-Command -Name 'Get-DeployTargetForCurrentPlatform' -ErrorAction SilentlyContinue)) {
     . (Join-Path $PSScriptRoot 'deploy-target-registry.ps1')
 }
+# Launch-time OS containment boundary (issue #522). Guarded like the adapters so
+# this lib stays dot-sourceable standalone in tests.
+if (-not (Get-Command -Name 'Test-HostNativeJobBoundarySupported' -ErrorAction SilentlyContinue)) {
+    . (Join-Path $PSScriptRoot 'host-native-job-boundary.ps1')
+}
 
 function Resolve-HostNativePython {
     # Single interpreter-selection rule for every host-native service. The three
@@ -151,7 +156,167 @@ function Test-AlreadyRunning {
     return ($null -ne (& $GetProcessFn $procId))
 }
 
+function Get-HostNativeServiceListenPorts {
+    # The TCP ports the LAST launch of this service declared it would own, read
+    # back from the <Name>.ports sidecar. Empty when no launch ever declared any.
+    #
+    # This sidecar exists because the pid file cannot answer the question that
+    # matters (#640). Liveness is recorded as the LAUNCHER's pid, but the thing
+    # holding the ports, the GPU context and the Omniverse user directory is its
+    # CHILD - for the Kit service, a `kit` process started by the pwsh wrapper.
+    # When the wrapper dies and the child is orphaned, Remove-StalePidFile
+    # correctly deletes the pid file (the recorded pid really is gone) and the
+    # only record that ANY instance is still holding those resources disappears
+    # with it. The sidecar deliberately outlives the pid file so the surviving
+    # child stays visible; only a deliberate stop removes it.
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string] $Name,
+        [Parameter(Mandatory = $true)][string] $RunDir
+    )
+    $portFile = Join-Path $RunDir "$Name.ports"
+    if (-not (Test-Path -LiteralPath $portFile -PathType Leaf)) { return @() }
+    $ports = @()
+    foreach ($line in @(Get-Content -LiteralPath $portFile -ErrorAction SilentlyContinue)) {
+        $text = ([string]$line).Trim()
+        if ([string]::IsNullOrWhiteSpace($text)) { continue }
+        $port = 0
+        # A malformed line is dropped rather than thrown on: this record is read
+        # on the start path, and a corrupt sidecar must not make the deploy
+        # unrunnable. The caller's ExpectedPorts still cover the current config.
+        if ([int]::TryParse($text, [ref]$port) -and $port -ge 1 -and $port -le 65535) {
+            if ($ports -notcontains $port) { $ports += $port }
+        }
+    }
+    return @($ports)
+}
+
+function Get-HostNativeOrphanListener {
+    # Fail-closed answer to "is something OTHER than this service's recorded
+    # process tree still holding the ports this service owns?" - $null when the
+    # answer is no, a report object when it is yes.
+    #
+    # Phase 1 of the deploy already SAW the orphan in the failure this fixes
+    # ("port TCP/49150 occupied by our PID 188705 (kit.exe) - already running,
+    # will skip start") but that observation never reached the start decision:
+    # Phase 4c asked the pid file instead, the pid file had just been deleted as
+    # stale, and a second Kit was launched into the live one. This function is
+    # the observation the start decision can actually consume.
+    #
+    # "Accounted for" is deliberately narrow: the pid file must exist, its
+    # recorded process must still be alive, and the listener must be that
+    # process or one of its descendants. Everything else - no pid file, a dead
+    # recorded pid, an unrelated holder, or a listener whose owner the OS will
+    # not reveal (Get-PlatformTcpListenerPid returns -1) - is unaccounted and
+    # therefore a hard stop. Refusing is the safe direction: the caller can only
+    # ever choose between "refuse" and "start a second instance into a live one".
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string] $Name,
+        [Parameter(Mandatory = $true)][string] $RunDir,
+        # The ports THIS run intends to use. Unioned with the recorded ports so a
+        # config change cannot hide an orphan that is still holding the previous
+        # instance's ports, and so a first-ever launch is covered too.
+        [AllowEmptyCollection()][int[]] $ExpectedPorts = @(),
+        [scriptblock] $PortLookupFn = {
+            param($port)
+            Get-PlatformTcpListenerPid -Port ([int]$port)
+        },
+        [scriptblock] $GetProcessFn = {
+            param($procId)
+            try { Get-Process -Id $procId -ErrorAction Stop } catch { $null }
+        },
+        [scriptblock] $ChildPidLookup = {
+            param($parentId)
+            @(Get-PlatformChildProcessIds -ParentProcessId ([int]$parentId))
+        },
+        # Phase 4c also reaches this gate straight after deliberately stopping
+        # the previous tree (runtime parameters changed). A force-killed process
+        # does not release its listening socket at the instant the stop call
+        # returns, and turning that teardown window into a hard deploy failure
+        # would trade one flaky outcome for another. So a holder must still be
+        # there after this budget before it counts. Zero means answer on the
+        # first observation.
+        [ValidateRange(0, 60000)][int] $SettleTimeoutMs = 3000,
+        [scriptblock] $SleepFn = {
+            param($milliseconds)
+            Start-Sleep -Milliseconds ([int]$milliseconds)
+        }
+    )
+
+    $recordedPorts = @(Get-HostNativeServiceListenPorts -Name $Name -RunDir $RunDir)
+    $ports = @(@(@($recordedPorts) + @($ExpectedPorts)) |
+        ForEach-Object { [int]$_ } |
+        Where-Object { $_ -ge 1 -and $_ -le 65535 } |
+        Sort-Object -Unique)
+    if ($ports.Count -eq 0) { return $null }
+
+    $pidFile = Join-Path $RunDir "$Name.pid"
+    $budget = [System.Diagnostics.Stopwatch]::StartNew()
+    $accounted = @{}
+    $recordedProcessId = 0
+    $orphanPorts = @()
+    $orphanProcessIds = @()
+    while ($true) {
+        # Descendants of a LIVE recorded pid are ours. A dead recorded pid is
+        # expanded from nothing on purpose: on Linux the kernel re-parents the
+        # orphan, so the ppid link back to a dead launcher is gone and expanding
+        # from it would silently claim whatever later inherited that pid.
+        # Re-read every pass: the tree can still be dying underneath us.
+        $accounted = @{}
+        $recordedProcessId = 0
+        if (Test-Path -LiteralPath $pidFile -PathType Leaf) {
+            $raw = Get-Content -LiteralPath $pidFile -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($raw -and [int]::TryParse(([string]$raw).Trim(), [ref]$recordedProcessId)) {
+                if ($null -ne (& $GetProcessFn $recordedProcessId)) {
+                    $stack = @([int]$recordedProcessId)
+                    while ($stack.Count -gt 0) {
+                        $current = [int]$stack[0]
+                        $stack = @($stack | Select-Object -Skip 1)
+                        if ($accounted.ContainsKey($current)) { continue }
+                        $accounted[$current] = $true
+                        # Enumeration failure is fatal here, exactly as it is in
+                        # Stop-HostNativeService: a tree we cannot enumerate must
+                        # never be used to clear a start decision.
+                        $stack += @(& $ChildPidLookup $current)
+                    }
+                }
+            }
+        }
+
+        $orphanPorts = @()
+        $orphanProcessIds = @()
+        foreach ($port in $ports) {
+            $listenerProcessId = & $PortLookupFn ([int]$port)
+            if ($null -eq $listenerProcessId) { continue }
+            $listenerProcessId = [int]$listenerProcessId
+            if ($accounted.ContainsKey($listenerProcessId)) { continue }
+            $orphanPorts += [int]$port
+            if ($orphanProcessIds -notcontains $listenerProcessId) { $orphanProcessIds += $listenerProcessId }
+        }
+        if ($orphanPorts.Count -eq 0) { return $null }
+        if ($budget.ElapsedMilliseconds -ge $SettleTimeoutMs) { break }
+        & $SleepFn 250
+    }
+
+    return [pscustomobject]@{
+        Name          = $Name
+        Ports         = @($orphanPorts)
+        ProcessIds    = @($orphanProcessIds)
+        RecordedPorts = @($recordedPorts)
+        RecordedPid   = [int]$recordedProcessId
+        AccountedPids = @(@($accounted.Keys) | ForEach-Object { [int]$_ } | Sort-Object)
+    }
+}
+
 function Remove-StalePidFile {
+    # Removes ONLY the pid file, and only when the pid it records is gone.
+    #
+    # It deliberately leaves the <Name>.ports sidecar in place (#640). Deleting
+    # it here would be the exact fail-open this repo already shipped: a dead
+    # launcher whose Kit child is still alive would lose its last trace, and the
+    # next Phase 4c would read "nothing is running" and start a second instance
+    # into the live one. Only a deliberate stop clears that record.
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $true)][string] $Name,
@@ -194,9 +359,45 @@ function Stop-HostNativeService {
         [scriptblock] $StopProcessFn = {
             param($procId)
             Stop-Process -Id $procId -Force -ErrorAction SilentlyContinue
+        },
+        # Job-first stop (issue #522): when the launch recorded a job boundary,
+        # membership - not PPID discovery - is the containment authority.
+        [scriptblock] $JobStopFn = {
+            param($jobName)
+            Stop-HostNativeJobBoundary -Name $jobName -TimeoutMs 5000
         }
     )
     $pidFile = Join-Path $RunDir "$Name.pid"
+    $jobFile = Join-Path $RunDir "$Name.job"
+    # The port record is a claim on resources, so a DELIBERATE stop is what
+    # releases it (#640). Every return path below removes it: after this call the
+    # service is either gone or it threw, and in neither case may a later start
+    # decision keep treating the old claim as live.
+    $portFile = Join-Path $RunDir "$Name.ports"
+
+    # Job-first: a recorded boundary makes the stop authoritative. Found+Proven
+    # terminated the whole membership set; Found=$false is proven-dead by
+    # construction (the anchor handle lives exactly as long as the root, so a
+    # missing job means no member survived). An unproven survivor THROWS inside
+    # Stop-HostNativeJobBoundary - deliberately not swallowed here. A run whose
+    # platform cannot open jobs (Supported=$false) falls through to the sweep.
+    if (Test-Path -LiteralPath $jobFile) {
+        $jobName = (Get-Content -LiteralPath $jobFile -ErrorAction SilentlyContinue | Select-Object -First 1)
+        if ($jobName) {
+            $jobReport = & $JobStopFn ([string]$jobName.Trim())
+            if ($jobReport.Supported) {
+                Remove-Item -LiteralPath $jobFile -Force -ErrorAction SilentlyContinue
+                Remove-Item -LiteralPath $pidFile -Force -ErrorAction SilentlyContinue
+                Remove-Item -LiteralPath $portFile -Force -ErrorAction SilentlyContinue
+                return $true
+            }
+        }
+        Remove-Item -LiteralPath $jobFile -Force -ErrorAction SilentlyContinue
+    }
+
+    # The two $false returns below stopped NOTHING (no pid file, or a pid file we
+    # cannot parse), so they must not clear the port claim either - that is the
+    # orphan case, and erasing its last record here would recreate #640.
     if (-not (Test-Path -LiteralPath $pidFile)) { return $false }
     $raw = Get-Content -LiteralPath $pidFile -ErrorAction SilentlyContinue | Select-Object -First 1
     $procId = 0
@@ -219,6 +420,7 @@ function Stop-HostNativeService {
         & $StopProcessFn ([int]$ids[$i])
     }
     Remove-Item -LiteralPath $pidFile -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $portFile -Force -ErrorAction SilentlyContinue
     return $true
 }
 
@@ -230,6 +432,10 @@ function Start-HostNativeService {
         [Parameter(Mandatory = $true)][string] $FilePath,
         [string[]] $ArgumentList = @(),
         [Parameter(Mandatory = $true)][string] $RunDir,
+        # TCP ports this service's process TREE will own. Recorded as a sidecar
+        # so liveness stops depending on the launcher pid alone (#640): the
+        # holder is usually a child, and the child outlives the pid file.
+        [AllowEmptyCollection()][int[]] $ListenPorts = @(),
         [ValidateSet('Hidden','Normal')] [string] $WindowStyle = 'Hidden',
         [ValidateRange(0, 30000)][int] $DetachTimeoutMs = 5000,
         [scriptblock] $DetachProbeFn = {
@@ -239,6 +445,18 @@ function Start-HostNativeService {
         [scriptblock] $SleepFn = {
             param($milliseconds)
             Start-Sleep -Milliseconds $milliseconds
+        },
+        # Launch-time containment boundary ops (issue #522). Injectable as ONE
+        # table so tests can prove ordering and the failure contract without a
+        # real kernel object. Keys: Supported / Create / Assign / Anchor /
+        # Terminate / Close - all required when the table is replaced.
+        [hashtable] $JobBoundaryOps = @{
+            Supported = { Test-HostNativeJobBoundarySupported }
+            Create    = { param($jobName) New-HostNativeJobBoundary -Name $jobName }
+            Assign    = { param($handle, $childId) Add-HostNativeJobBoundaryProcess -Handle $handle -ProcessId ([int]$childId) }
+            Anchor    = { param($handle, $childId) Grant-HostNativeJobBoundaryAnchor -Handle $handle -ProcessId ([int]$childId) }
+            Terminate = { param($handle) Stop-HostNativeJobBoundaryHandle -Handle $handle }
+            Close     = { param($handle) Close-HostNativeJobBoundary -Handle $handle }
         }
     )
 
@@ -248,6 +466,23 @@ function Start-HostNativeService {
     $logFile = Join-Path $RunDir "$Name.log"
     $errFile = "$logFile.err"
     $pidFile = Join-Path $RunDir "$Name.pid"
+    $jobFile = Join-Path $RunDir "$Name.job"
+    $portFile = Join-Path $RunDir "$Name.ports"
+
+    # Written BEFORE the launch, not after (#640). This record is a claim, not an
+    # observation: the moment Start-Process returns, a child may already be
+    # binding these ports, and a launch that then fails its detach check must
+    # still leave the claim behind for the next run's orphan preflight. Recording
+    # it afterwards would reopen the same window the pid file already has.
+    $declaredPorts = @(@($ListenPorts) | ForEach-Object { [int]$_ } | Where-Object { $_ -ge 1 -and $_ -le 65535 } | Sort-Object -Unique)
+    if ($declaredPorts.Count -gt 0) {
+        Set-Content -LiteralPath $portFile -Value ($declaredPorts -join [string][char]10) -Encoding ascii
+    }
+    else {
+        # A service that declares no ports must not inherit a previous launch's
+        # claim; a stale record would fail the next start closed for nothing.
+        Remove-Item -LiteralPath $portFile -Force -ErrorAction SilentlyContinue
+    }
 
     # Off Windows the service must OUTLIVE the session that started it: a remote
     # deploy runs over SSH, and a service that dies at disconnect makes the whole
@@ -287,6 +522,39 @@ function Start-HostNativeService {
     # "PID=" as [ok] and only the health probe noticed, 30 seconds later.
     if (-not $proc -or -not $proc.Id) {
         throw "$Name did not start: '$launchExe' produced no process (workdir=$WorkingDirectory, stderr=$errFile)."
+    }
+
+    # Launch-time containment boundary (issue #522), Windows only. Ordering is
+    # load-bearing and happens BEFORE the detach probe so the pre-membership
+    # window stays as small as Start-Process allows:
+    #   create(named, kill-on-close) -> assign(child) -> anchor(duplicate the
+    #   job handle INTO the child) -> close(our handle).
+    # After the anchor the child's duplicated handle keeps the job alive, so
+    # the deploy session exiting does not kill the service, while the root
+    # dying reaps every remaining descendant via kill-on-close. A service this
+    # launcher cannot contain must not run: any boundary failure terminates
+    # the just-started tree and throws. POSIX keeps the setsid path unchanged
+    # (real boundary tracked in #517).
+    Remove-Item -LiteralPath $jobFile -Force -ErrorAction SilentlyContinue
+    if ([bool](& $JobBoundaryOps.Supported)) {
+        $jobName = Get-HostNativeJobBoundaryName -Name $Name
+        $jobHandle = & $JobBoundaryOps.Create $jobName
+        $boundaryEstablished = $false
+        try {
+            & $JobBoundaryOps.Assign $jobHandle $proc.Id
+            & $JobBoundaryOps.Anchor $jobHandle $proc.Id
+            $boundaryEstablished = $true
+        }
+        finally {
+            if (-not $boundaryEstablished) {
+                # Terminate reaps whatever DID make it into the job; the direct
+                # stop covers the assign-failed case where the child is outside.
+                try { & $JobBoundaryOps.Terminate $jobHandle } catch { }
+                try { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue } catch { }
+            }
+            & $JobBoundaryOps.Close $jobHandle
+        }
+        Set-Content -LiteralPath $jobFile -Value $jobName -Encoding ascii
     }
     # Verify the detachment actually happened rather than assuming it. If setsid
     # forked instead of exec'ing, the PID we are about to record is not the
@@ -538,8 +806,12 @@ function Stop-HostNativeProcessTreeAndWait {
     #     platform that re-parents orphans the link vanishes outright once the
     #     parent dies. Only an OS boundary established at LAUNCH - a Windows Job
     #     Object, or a POSIX process group / cgroup - makes containment
-    #     inescapable (#517, and the follow-up that moves Start-HostNativeService
-    #     onto one).
+    #     inescapable. #522 landed that boundary on Windows (named kill-on-close
+    #     Job Objects for services via Start-HostNativeService, anonymous ones
+    #     for bounded children via Invoke-HostNativeBoundedProcess), so this
+    #     sweep is now the FALLBACK for processes launched without a boundary
+    #     and for platforms without Job Objects (#517 tracks the POSIX cgroup
+    #     boundary).
     #
     # So a caller gets "this sweep proved what it could see, or it threw" - never
     # "nothing survived". Releasing a trust boundary on the strength of a silent
@@ -844,49 +1116,20 @@ function Start-HostNativeKitManager {
         [Parameter(Mandatory = $true)][AllowEmptyString()][string] $KitControlUrl,
         [ValidateRange(1, 300)][int] $ImportProbeTimeoutSec = 30,
         [scriptblock] $ImportProbeFn = {
+            # Bounded child on the launch-time containment boundary (#522):
+            # Invoke-HostNativeBoundedProcess runs the probe inside a
+            # kill-on-close Job Object on Windows and keeps the prior
+            # Stop-HostNativeProcessTreeAndWait sweep + fail-closed disclosure
+            # where Job Objects do not exist (POSIX boundary: #517).
             param($PythonExe, $TimeoutSec)
-            $importProcess = $null
-            $terminationFailure = $null
-            $importExitCode = -1
-            try {
-                $importStartInfo = [System.Diagnostics.ProcessStartInfo]::new()
-                $importStartInfo.FileName = $PythonExe
-                $importStartInfo.UseShellExecute = $false
-                $importStartInfo.RedirectStandardOutput = $true
-                $importStartInfo.RedirectStandardError = $true
-                [void]$importStartInfo.ArgumentList.Add('-c')
-                [void]$importStartInfo.ArgumentList.Add('import fastapi, uvicorn')
-                $importProcess = [System.Diagnostics.Process]::new()
-                $importProcess.StartInfo = $importStartInfo
-                if (-not $importProcess.Start()) {
-                    throw 'Kit Manager import probe process did not start.'
-                }
-                $stdoutTask = $importProcess.StandardOutput.ReadToEndAsync()
-                $stderrTask = $importProcess.StandardError.ReadToEndAsync()
-                if (-not $importProcess.WaitForExit($TimeoutSec * 1000)) {
-                    try {
-                        Stop-HostNativeProcessTreeAndWait -Process $importProcess -TimeoutMs 5000
-                    }
-                    catch {
-                        $terminationFailure = $_
-                    }
-                }
-                else {
-                    $null = $stdoutTask.GetAwaiter().GetResult()
-                    $null = $stderrTask.GetAwaiter().GetResult()
-                    $importExitCode = $importProcess.ExitCode
-                }
+            $probe = Invoke-HostNativeBoundedProcess `
+                -FilePath $PythonExe `
+                -ArgumentList @('-c', 'import fastapi, uvicorn') `
+                -TimeoutSec ([int]$TimeoutSec)
+            if ($null -ne $probe.TerminationFailure) {
+                throw "Kit Manager import probe timed out and its process tree exit could not be proven: $($probe.TerminationFailure.Exception.Message)"
             }
-            catch {
-                $importExitCode = -1
-            }
-            finally {
-                if ($null -ne $importProcess) { $importProcess.Dispose() }
-            }
-            if ($null -ne $terminationFailure) {
-                throw "Kit Manager import probe timed out and its process tree exit could not be proven: $($terminationFailure.Exception.Message)"
-            }
-            return $importExitCode
+            return $probe.ExitCode
         },
         [scriptblock] $LocalAddressProbeFn = {
             param($HostName)
@@ -975,10 +1218,15 @@ function Start-HostNativeKit {
         $arguments += ($SpectatorStreamPorts -join ',')
     }
 
+    # The signal ports are the observable identity of a running Kit tree (#640).
+    # They are TCP LISTEN sockets, so Get-PlatformTcpListenerPid can attribute
+    # them on both platforms; the WebRTC media ports are UDP and are deliberately
+    # not part of this record - one probe shape, one meaning.
     return (Start-HostNativeService `
         -Name 'bim-streaming-server' `
         -WorkingDirectory (Join-Path $RepoRoot 'bim-streaming-server') `
         -FilePath (Get-HostNativePowerShellExe) `
         -ArgumentList $arguments `
+        -ListenPorts (@($SignalPort) + @($SpectatorSignalPorts)) `
         -RunDir $runDir)
 }

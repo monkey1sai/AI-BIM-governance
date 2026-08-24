@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
 import test from 'node:test';
 import { collectSourceObservations } from './verify-openspec-machine-truth.mjs';
 import {
@@ -142,6 +143,61 @@ test('missing owner and unknown lifecycle fail schema validation', () => {
   });
 });
 
+test('subject_binding sentinel is the single optional row key with a closed value domain', () => {
+  // Valid sentinel row passes both strict shapes unchanged.
+  withWorkspace((input) => {
+    input.ledger.changes[0].subject_binding = 'introduction';
+    const report = evaluateOpenSpecMachineTruth(input);
+    assert.equal(report.result, 'consistent');
+  });
+  // Any value other than the exact string 'introduction' is schema_invalid.
+  for (const invalid of ['commit', 'Introduction', null, 0, true]) {
+    withWorkspace((input) => {
+      input.ledger.changes[0].subject_binding = invalid;
+      assert.throws(() => evaluateOpenSpecMachineTruth(input), (error) => {
+        assert.ok(error instanceof MachineTruthInputError);
+        assert.equal(error.code, 'schema_invalid');
+        assert.match(error.field, /subject_binding/);
+        return true;
+      });
+    });
+  }
+  // The sentinel is not a precedent for open row extension: other unknown keys stay fail-closed.
+  withWorkspace((input) => {
+    input.ledger.changes[0].subject_binding = 'introduction';
+    input.ledger.changes[0].note = 'free text';
+    assert.throws(() => evaluateOpenSpecMachineTruth(input), (error) => {
+      assert.ok(error instanceof MachineTruthInputError);
+      assert.equal(error.code, 'schema_invalid');
+      return true;
+    });
+  });
+  // The base-ledger validation path accepts sentinel rows too (two-phase hazard window closure).
+  withWorkspace((input) => {
+    input.previousLedger = structuredClone(input.ledger);
+    input.previousLedger.changes[0].subject_binding = 'introduction';
+    input.ledger.changes[0].subject_binding = 'introduction';
+    const report = evaluateOpenSpecMachineTruth(input);
+    assert.equal(report.result, 'consistent');
+  });
+});
+
+test('sentinel rows keep the source-observation equality contract without exemption', () => {
+  withWorkspace((input) => {
+    input.ledger.changes[0].subject_binding = 'introduction';
+    input.sourceObservations = [{
+      change_id: 'alpha',
+      subject_commit: 'cccccccccccccccccccccccccccccccccccccccc',
+      changed_paths: [],
+    }];
+    assert.throws(() => evaluateOpenSpecMachineTruth(input), (error) => {
+      assert.ok(error instanceof MachineTruthInputError);
+      assert.equal(error.code, 'source_observation_invalid');
+      return true;
+    });
+  });
+});
+
 test('blocked_by cycle and missing blocker are exact mismatches', () => {
   const alpha = machineChange('alpha');
   const beta = machineChange('beta');
@@ -199,9 +255,34 @@ test('row source observations permit historical snapshots and attribute drift on
   }, [alpha, beta]);
 });
 
+function trustedBaseForRealLedger(repoRoot) {
+  // introduction-resolved-subject-binding tasks 2.6: this required check runs
+  // over the REAL ledger, so it must supply a trusted base or the introduction
+  // recovery (and sentinel resolution) is structurally unavailable and every
+  // post-squash dangling subject turns required CI red for all later PRs.
+  // Derivation, fail-closed in order: explicit override env; then the
+  // origin/main remote ref (present in CI via fetch-depth: 0 checkouts and in
+  // every normal clone); else HEAD as the degenerate landed-history anchor for
+  // origin-less clones (accepts introductions already reachable from HEAD).
+  const override = process.env.OPENSPEC_TRUSTED_BASE_SHA;
+  if (typeof override === 'string' && override.trim() !== '') {
+    const sha = override.trim().toLowerCase();
+    assert.match(sha, /^[0-9a-f]{40}$/, 'OPENSPEC_TRUSTED_BASE_SHA must be a full 40-hex commit SHA');
+    return sha;
+  }
+  const git = (args) => spawnSync('git', ['-C', repoRoot, ...args], { encoding: 'utf8', timeout: 15_000, windowsHide: true });
+  const origin = git(['rev-parse', '--verify', 'refs/remotes/origin/main^{commit}']);
+  if (origin.status === 0 && /^[0-9a-f]{40}$/u.test(origin.stdout.trim().toLowerCase())) {
+    return origin.stdout.trim().toLowerCase();
+  }
+  const head = git(['rev-parse', '--verify', 'HEAD^{commit}']);
+  assert.equal(head.status, 0, 'repository must expose a HEAD commit for the real-ledger check');
+  return head.stdout.trim().toLowerCase();
+}
+
 test('current ledger keeps reconciled source snapshots clean', () => {
   const ledger = JSON.parse(readFileSync(path.join(process.cwd(), 'openspec/lifecycle-ledger.json'), 'utf8'));
-  const observed = collectSourceObservations(process.cwd(), ledger).sourceObservations
+  const observed = collectSourceObservations(process.cwd(), ledger, trustedBaseForRealLedger(process.cwd())).sourceObservations
     .filter(({ change_id: id }) => RECONCILED_SOURCE_IDS.includes(id));
 
   assert.deepEqual(observed.map(({ change_id: id }) => id).sort(), [...RECONCILED_SOURCE_IDS].sort());
@@ -222,18 +303,26 @@ test('source drift mismatch keeps schema-bounded field and path evidence', () =>
   });
 });
 
-test('current cross-service lifecycle status agrees with its proposal and NOW projection', () => {
+test('archived cross-service lifecycle status agrees with its archive proposal and NOW projection', () => {
   const ledger = JSON.parse(readFileSync(path.join(process.cwd(), 'openspec/lifecycle-ledger.json'), 'utf8'));
   const change = ledger.changes.find(({ id }) => id === 'cross-service-structured-log-baseline');
   const nowText = readFileSync(path.join(process.cwd(), 'docs/plans/NOW.md'), 'utf8');
-  const proposal = readFileSync(path.join(process.cwd(), 'openspec/changes/cross-service-structured-log-baseline/proposal.md'), 'utf8');
+  const proposal = readFileSync(
+    path.join(process.cwd(), 'openspec/changes/archive/2026-08-20-cross-service-structured-log-baseline/proposal.md'),
+    'utf8',
+  );
 
-  assert.equal(change?.status, 'deferred');
-  assert.equal(change?.current_slice, null);
-  assert.match(proposal, /^> \*\*Status: deferred/mu);
-  assert.match(nowText, /"id": "cross-service-structured-log-baseline", "status": "deferred"/u);
+  assert.equal(change?.status, 'archived');
+  assert.equal(change?.task_ledger?.completed, 93);
+  assert.equal(change?.task_ledger?.total, 93);
+  assert.match(String(change?.current_slice), /2026-08-20 archive/u);
+  assert.ok(change?.evidence_refs?.every((ref) => ref.startsWith(
+    'openspec/changes/archive/2026-08-20-cross-service-structured-log-baseline/',
+  )));
+  assert.doesNotMatch(proposal, /^> \*\*Status:/mu);
+  assert.doesNotMatch(nowText, /"id": "cross-service-structured-log-baseline"/u);
+  assert.match(nowText, /cross-service-structured-log-baseline.*archive/iu);
   const closeoutDoD = nowText.split('### 收口 DoD（軌 1）', 2)[1].split('\n---', 2)[0];
-  assert.match(closeoutDoD, /structured-log.*deferred/iu);
   assert.doesNotMatch(closeoutDoD, /structured-log.*active P5/iu);
 });
 
@@ -439,6 +528,114 @@ test('typed archive debt may be inherited unchanged from a previous archived led
     assert.equal(report.result, 'consistent_with_accepted_debt');
     assert.equal(report.summary.archive_debt_count, 1);
   }, [archived]);
+});
+
+test('historical archive debt may be adjudicated permanent when counts and owner are unchanged', () => {
+  const archived = machineChange('alpha', 'archived', 0, 1);
+  archived.archive_debt = {
+    reason: 'permanent_historical_task_ledger_debt',
+    unchecked_tasks: 1,
+    unsupported_checkboxes: 0,
+    owner: 'repository-maintainer',
+    adjudicated_on: '2026-08-17',
+  };
+  archived.evidence_refs = [
+    'openspec/changes/archive/2026-07-28-alpha/proposal.md',
+    'openspec/changes/archive/2026-07-28-alpha/tasks.md',
+  ];
+  withWorkspace((input) => {
+    const directory = path.join(input.repoRoot, 'openspec', 'changes', 'archive', '2026-07-28-alpha');
+    write(path.join(directory, 'proposal.md'), '> **Status: adopted 2026-07-28** — completed.\n');
+    write(path.join(directory, 'tasks.md'), '- [ ] historical debt\n');
+    input.previousLedger = structuredClone(input.ledger);
+    input.previousLedger.changes[0].archive_debt = {
+      reason: 'historical_task_ledger_debt',
+      unchecked_tasks: 1,
+      unsupported_checkboxes: 0,
+      owner: 'repository-maintainer',
+      review_due: '2026-08-31',
+    };
+    const report = evaluateOpenSpecMachineTruth(input);
+    assert.equal(report.result, 'consistent_with_accepted_debt');
+    assert.equal(report.summary.archive_debt_count, 1);
+
+    const inherited = structuredClone(input);
+    inherited.previousLedger = structuredClone(input.ledger);
+    const inheritedReport = evaluateOpenSpecMachineTruth(inherited);
+    assert.equal(inheritedReport.result, 'consistent_with_accepted_debt');
+  }, [archived]);
+});
+
+test('permanence adjudication with drifted counts or a fresh permanent debt stays unproven', () => {
+  const archived = machineChange('alpha', 'archived', 0, 1);
+  archived.archive_debt = {
+    reason: 'permanent_historical_task_ledger_debt',
+    unchecked_tasks: 1,
+    unsupported_checkboxes: 0,
+    owner: 'repository-maintainer',
+    adjudicated_on: '2026-08-17',
+  };
+  archived.evidence_refs = [
+    'openspec/changes/archive/2026-07-28-alpha/proposal.md',
+    'openspec/changes/archive/2026-07-28-alpha/tasks.md',
+  ];
+  withWorkspace((input) => {
+    const directory = path.join(input.repoRoot, 'openspec', 'changes', 'archive', '2026-07-28-alpha');
+    write(path.join(directory, 'proposal.md'), '> **Status: adopted 2026-07-28** — completed.\n');
+    write(path.join(directory, 'tasks.md'), '- [ ] historical debt\n');
+    const drifted = structuredClone(input);
+    drifted.previousLedger = structuredClone(input.ledger);
+    drifted.previousLedger.changes[0].archive_debt = {
+      reason: 'historical_task_ledger_debt',
+      unchecked_tasks: 2,
+      unsupported_checkboxes: 0,
+      owner: 'repository-maintainer',
+      review_due: '2026-08-31',
+    };
+    const driftedReport = evaluateOpenSpecMachineTruth(drifted);
+    assert.ok(driftedReport.mismatches.some(({ reason }) => reason === 'archive_debt_unproven'));
+
+    const fresh = structuredClone(input);
+    fresh.previousLedger = structuredClone(input.ledger);
+    fresh.previousLedger.changes[0].archive_debt = null;
+    fresh.previousLedger.changes[0].task_ledger = { completed: 1, total: 1 };
+    const freshReport = evaluateOpenSpecMachineTruth(fresh);
+    assert.ok(freshReport.mismatches.some(({ reason }) => reason === 'archive_debt_unproven'));
+  }, [archived]);
+});
+
+test('permanent archive debt rejects a review_due key and historical debt rejects adjudicated_on', () => {
+  const permanent = machineChange('alpha', 'archived', 0, 1);
+  permanent.archive_debt = {
+    reason: 'permanent_historical_task_ledger_debt',
+    unchecked_tasks: 1,
+    unsupported_checkboxes: 0,
+    owner: 'repository-maintainer',
+    review_due: '2026-08-31',
+  };
+  permanent.evidence_refs = [
+    'openspec/changes/archive/2026-07-28-alpha/proposal.md',
+    'openspec/changes/archive/2026-07-28-alpha/tasks.md',
+  ];
+  withWorkspace((input) => {
+    assert.throws(() => evaluateOpenSpecMachineTruth(input), /archive_debt/u);
+  }, [permanent]);
+
+  const historical = machineChange('beta', 'archived', 0, 1);
+  historical.archive_debt = {
+    reason: 'historical_task_ledger_debt',
+    unchecked_tasks: 1,
+    unsupported_checkboxes: 0,
+    owner: 'repository-maintainer',
+    adjudicated_on: '2026-08-17',
+  };
+  historical.evidence_refs = [
+    'openspec/changes/archive/2026-07-28-beta/proposal.md',
+    'openspec/changes/archive/2026-07-28-beta/tasks.md',
+  ];
+  withWorkspace((input) => {
+    assert.throws(() => evaluateOpenSpecMachineTruth(input), /archive_debt/u);
+  }, [historical]);
 });
 
 test('every archive identity is tracked once in the ledger', () => {

@@ -1418,6 +1418,16 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
 
     privateApp._handleStreamStopped("stopped", { reason: "runtime stopped" });
 
+    // 失敗態矩陣 stream-disconnected（task 5.6 slice-3）：viewer 於 WebRTC 終止時
+    // 必須對 parent 發 stream_state，console 端才能於 5 秒內轉入可見斷線態。
+    const streamStatePosts = parent.postMessage.mock.calls
+      .map((call) => call[0] as { protocol?: string; type?: string; state?: string; kind?: string })
+      .filter((message) => message.type === "stream_state");
+    expect(streamStatePosts.length).toBe(1);
+    expect(streamStatePosts[0].protocol).toBe("vg01");
+    expect(streamStatePosts[0].state).toBe("disconnected");
+    expect(streamStatePosts[0].kind).toBe("stopped");
+
     expect(internals(app).state.loadedStageUrl).toBeNull();
     expect(internals(app).state.stageLoadStatus).toBe("disconnected");
     expect(internals(app).state.showStream).toBe(false);
@@ -7065,5 +7075,66 @@ describe("P1：production stage completion correlation 與 parent proof 撤銷",
     ]);
     expect(internals(app).state.loadedStageUrl).toBeNull();
     expect(internals(app).state.stageLoadStatus).toBe("unproven");
+  });
+});
+
+// Task 5.6 slice-4：standalone viewer origin 頁的斷線／首幀逾時可見面（spec: 每態 SHALL 有穩定測試錨點與明示可行動作）。
+// stream-disconnected 與 first-frame-timeout 共用 stream-diagnostic-panel 診斷面與 MockViewport 的
+// viewer-reconnect-stream 動作（canReconnect: webrtcStatus ∈ stopped/terminated/failed）。
+describe("task 5.6 standalone 失敗態可見面（slice-4）", () => {
+  // 注意：useSynchronousSetState 名稱以 use 開頭，rules-of-hooks 會把具名 helper 內的呼叫誤判為
+  // hook 違規；因此 app 準備（含該 helper）留在各 it 的匿名 callback 內，這裡只收斂 render 斷面。
+  function terminalHtml(app: App): string {
+    // MockViewport（reconnect 動作載體）的 render 分支守衛：viewerTab==="model" && reviewSessionId。
+    internals(app).state = { ...internals(app).state, viewerTab: "model" };
+    return renderToString(internals(app).render());
+  }
+
+  it("stream-disconnected：斷線終態 render 出 stream-diagnostic-panel 錨點與 viewer-reconnect-stream 動作", () => {
+    vi.stubEnv("VITE_ALLOWED_COORDINATOR_ORIGINS", PARENT_ORIGIN);
+    const app = operableApp();
+    useSynchronousSetState(app);
+    vi.spyOn(AppStream, "stop").mockImplementation(() => undefined);
+    (internals(app) as unknown as {
+      _handleStreamStopped: (kind: "stopped", message: unknown) => void;
+    })._handleStreamStopped("stopped", { reason: "slice4_disconnect" });
+    const html = terminalHtml(app);
+    expect(html).toContain("data-testid=\"stream-diagnostic-panel\"");
+    expect(html).toContain("webrtc_disconnected");
+    expect(html).toContain("data-testid=\"viewer-reconnect-stream\"");
+  });
+
+  it("first-frame-timeout：stream start 逾時 render 出同一診斷 panel 錨點與 reconnect 動作", () => {
+    vi.stubEnv("VITE_ALLOWED_COORDINATOR_ORIGINS", PARENT_ORIGIN);
+    const app = operableApp();
+    useSynchronousSetState(app);
+    vi.spyOn(AppStream, "stop").mockImplementation(() => undefined);
+    (internals(app) as unknown as {
+      _handleStreamStartTimeout: () => void;
+    })._handleStreamStartTimeout();
+    const html = terminalHtml(app);
+    expect(html).toContain("data-testid=\"stream-diagnostic-panel\"");
+    expect(html).toContain("WebRTC 串流未建立");
+    expect(html).toContain("data-testid=\"viewer-reconnect-stream\"");
+  });
+
+  it("i18n 接線：en 模式下斷線診斷與 reconnect 動作以英文呈現", () => {
+    setLang("en");
+    try {
+      vi.stubEnv("VITE_ALLOWED_COORDINATOR_ORIGINS", PARENT_ORIGIN);
+      const app = operableApp();
+      useSynchronousSetState(app);
+      vi.spyOn(AppStream, "stop").mockImplementation(() => undefined);
+      (internals(app) as unknown as {
+        _handleStreamStopped: (kind: "stopped", message: unknown) => void;
+      })._handleStreamStopped("stopped", { reason: "slice4_i18n" });
+      const html = terminalHtml(app);
+      expect(html).toContain("Endpoint");
+      expect(html).toContain("Reconnect WebRTC");
+      expect(html).not.toContain("端點");
+    }
+    finally {
+      setLang(initialLang);
+    }
   });
 });

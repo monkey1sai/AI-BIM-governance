@@ -362,6 +362,11 @@ try {
         'scripts/security-exceptions.json',
         'scripts/lib/openspec-lifecycle.ps1',
         'scripts/lib/openspec-machine-truth.mjs',
+        'scripts/agent-governance-rules.json',
+        'scripts/tests/agent-governance-rules.schema.json',
+        'scripts/lib/agent-governance-policy.psm1',
+        'scripts/tests/verify-governance-policy.ps1',
+        'scripts/tests/test-agent-governance-policy.ps1',
         'scripts/tests/verification-plan.schema.json',
         'scripts/tests/invoke-powershell-static.ps1',
         'scripts/tests/scan-secret-patterns.ps1',
@@ -389,7 +394,26 @@ try {
         }).Count -gt 0
         Assert-True $coveredByTrustedMerge "trusted merge mechanism policy is a superset of the self-referential classifier example: $expectedPath"
     }
-    Assert-True ($matched -notcontains 'web-viewer-sample/src/Window.tsx') 'ordinary product code must NOT classify as mechanism'
+    # These future paths do not exist on this prerequisite branch. Pre-register
+    # them in the base-owned debt classifier so the later implementation PR can
+    # bind every new adjudicating surface without asking its head classifier to
+    # self-authorize an expanded path set.
+    $futureAutonomousMechanismPaths = @(
+        'agent-contracts/autonomous-delivery-adjudication-packet.schema.json',
+        'agent-contracts/autonomous-delivery-attestation-envelope.schema.json',
+        'agent-contracts/autonomous-delivery-classifier-input.schema.json',
+        'agent-contracts/autonomous-delivery-terminal-record.schema.json',
+        'agent-contracts/autonomous-delivery-transition.contract.json',
+        'scripts/lib/autonomous-delivery-contract.mjs',
+        'scripts/tests/test-autonomous-linux-delivery-contracts.mjs',
+        'tests/test_autonomous_delivery_contract_schemas.py'
+    )
+    $futureAutonomousMatches = @(Get-SelfReferentialMechanismPaths -ChangedPaths $futureAutonomousMechanismPaths)
+    Assert-True ($futureAutonomousMatches.Count -eq $futureAutonomousMechanismPaths.Count) `
+        "every future autonomous-delivery authority path must classify exactly (matched: $($futureAutonomousMatches -join ', '))"
+    foreach ($expectedPath in $futureAutonomousMechanismPaths) {
+        Assert-True ($futureAutonomousMatches -ccontains $expectedPath) "future mechanism classifier includes $expectedPath"
+    }
     $adjacentAutonomousPaths = @(
         'agent-contracts/autonomous-delivery-not-normative.txt',
         'scripts/lib/autonomous-delivery-ui.mjs',
@@ -398,13 +422,24 @@ try {
     $adjacentAutonomousMatches = @(Get-SelfReferentialMechanismPaths -ChangedPaths $adjacentAutonomousPaths)
     Assert-True ($adjacentAutonomousMatches.Count -eq 0) `
         "adjacent autonomous-delivery names must not broaden mechanism scope (matched: $($adjacentAutonomousMatches -join ', '))"
+    Assert-True ($matched -notcontains 'web-viewer-sample/src/Window.tsx') 'ordinary product code must NOT classify as mechanism'
     $wrongCaseMechanismPaths = @(Get-SelfReferentialMechanismPaths -ChangedPaths @(
         'Scripts/Deploy.ps1',
         '.github/workflows/CI.yml',
-        'agent-contracts/Autonomous-delivery-terminal-record.schema.json'
+        'agent-contracts/Autonomous-delivery-terminal-record.schema.json',
+        'scripts/Agent-governance-rules.json',
+        'scripts/tests/Agent-governance-rules.schema.json'
     ))
     Assert-True ($wrongCaseMechanismPaths.Count -eq 0) `
         "wrong-case git paths must not classify as mechanisms (matched: $($wrongCaseMechanismPaths -join ', '))"
+    $adjacentGovernancePolicyPaths = @(Get-SelfReferentialMechanismPaths -ChangedPaths @(
+        'scripts/agent-governance-rules.json.bak',
+        'scripts/archive/agent-governance-rules.json',
+        'scripts/tests/agent-governance-rules.schema.json.bak',
+        'scripts/tests/archive/agent-governance-rules.schema.json'
+    ))
+    Assert-True ($adjacentGovernancePolicyPaths.Count -eq 0) `
+        "adjacent governance-policy paths must not classify as mechanisms (matched: $($adjacentGovernancePolicyPaths -join ', '))"
     $prTemplate = Get-Content -LiteralPath (Join-Path $repoRoot '.github/PULL_REQUEST_TEMPLATE.md') -Raw
     $prTemplateBooleanPattern = '(?m)^\| Self-referential bootstrap \| yes / no \|\r?$'
     Assert-True ($prTemplate -match $prTemplateBooleanPattern) `
@@ -532,6 +567,11 @@ try {
     Assert-True ($null -ne $realLedger) 'repo ledger must parse and validate'
     $pwshPrefix = @('pwsh', '-NoProfile', '-NonInteractive', '-File')
     $commandSpecById = @{
+        # The shard-coverage assertion is carried by test-agent-governance-check.ps1 but is
+        # attested as its own command: it is the only check that can see a mistyped or
+        # missing `if: matrix.shard == '<x>'`, so a fixpoint must record its exit code
+        # separately rather than let it hide inside the wider static check.
+        'agent-governance-shard-coverage' = @{ Path = 'scripts/tests/test-agent-governance-check.ps1'; Invocation = @($pwshPrefix + 'scripts/tests/test-agent-governance-check.ps1') }
         'canonical-linux-deployment-verify' = @{
             Path = 'scripts/verify-all.ps1'
             Invocation = @($pwshPrefix + @('scripts/verify-all.ps1', '-Profile', 'Deployment', '-InventoryPath', '<owner-private-inventory>'))
@@ -545,6 +585,8 @@ try {
         'invoke-powershell-static' = @{ Path = 'scripts/tests/invoke-powershell-static.ps1'; Invocation = @($pwshPrefix + 'scripts/tests/invoke-powershell-static.ps1') }
         'scan-secret-patterns' = @{ Path = 'scripts/tests/scan-secret-patterns.ps1'; Invocation = @($pwshPrefix + 'scripts/tests/scan-secret-patterns.ps1') }
         'test-agent-governance-check' = @{ Path = 'scripts/tests/test-agent-governance-check.ps1'; Invocation = @($pwshPrefix + 'scripts/tests/test-agent-governance-check.ps1') }
+        'test-agent-governance-policy' = @{ Path = 'scripts/tests/test-agent-governance-policy.ps1'; Invocation = @($pwshPrefix + 'scripts/tests/test-agent-governance-policy.ps1') }
+        'verify-governance-policy' = @{ Path = 'scripts/tests/verify-governance-policy.ps1'; Invocation = @($pwshPrefix + 'scripts/tests/verify-governance-policy.ps1') }
         'test-autonomous-delivery-contracts' = @{
             Path = 'scripts/tests/test-autonomous-linux-delivery-contracts.mjs'
             Invocation = @('node', '--test', 'scripts/tests/test-autonomous-linux-delivery-contracts.mjs')
@@ -565,6 +607,11 @@ try {
         'test-host-native-launcher' = @{ Path = 'scripts/tests/test-host-native-launcher.ps1'; Invocation = @($pwshPrefix + 'scripts/tests/test-host-native-launcher.ps1') }
         'test-kit-manager-api' = @{ Path = 'services/kit-manager-api/tests/test_kit_service_runtime_status.py'; Invocation = @('python', '-m', 'pytest', 'services/kit-manager-api/tests', '-q') }
         'test-kit-log-probe' = @{ Path = 'scripts/tests/test-kit-log-probe.ps1'; Invocation = @($pwshPrefix + 'scripts/tests/test-kit-log-probe.ps1') }
+        'test-measure-session-baseline' = @{ Path = 'scripts/tests/test-measure-session-baseline.ps1'; Invocation = @($pwshPrefix + 'scripts/tests/test-measure-session-baseline.ps1') }
+        'test-openspec-machine-truth' = @{ Path = 'scripts/tests/test-openspec-machine-truth.mjs'; Invocation = @('node', '--test', 'scripts/tests/test-openspec-machine-truth.mjs', 'scripts/tests/test-openspec-machine-truth-cli.mjs') }
+        'test-openspec-repository-lifecycle' = @{ Path = 'scripts/tests/test-openspec-repository-lifecycle.mjs'; Invocation = @('node', '--test', 'scripts/tests/test-openspec-repository-lifecycle.mjs') }
+        'test-openspec-ledger-reconciliation' = @{ Path = 'scripts/tests/test-openspec-ledger-reconciliation.ps1'; Invocation = @($pwshPrefix + 'scripts/tests/test-openspec-ledger-reconciliation.ps1') }
+        'verify-openspec-lifecycle' = @{ Path = 'scripts/tests/verify-openspec-lifecycle.ps1'; Invocation = @($pwshPrefix + @('scripts/tests/verify-openspec-lifecycle.ps1', '-BaseRef', '<origin-main-sha>')) }
         'test-platform-adapter' = @{ Path = 'scripts/tests/test-platform-adapter.ps1'; Invocation = @($pwshPrefix + 'scripts/tests/test-platform-adapter.ps1') }
         'test-pr-body-evidence' = @{ Path = 'scripts/tests/test-pr-body-evidence.ps1'; Invocation = @($pwshPrefix + 'scripts/tests/test-pr-body-evidence.ps1') }
         'test-pr-review-agent' = @{ Path = 'scripts/tests/test-pr-review-agent.ps1'; Invocation = @($pwshPrefix + 'scripts/tests/test-pr-review-agent.ps1') }

@@ -1,0 +1,223 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Kit DataChannel message probe</title>
+<body style="background:#111;color:#eee;font:14px monospace">
+<div id="log">booting…</div>
+<video id="remote-video" autoplay playsinline muted
+       style="width:320px;height:180px;background:#000"></video>
+<audio id="remote-audio" autoplay></audio>
+
+<!--
+  Observation-only probe page for an isolated Kit instance. See README.md.
+
+  Everything is configured through the query string so the page itself holds no
+  environment knowledge:
+    signalPort     signalling port of the isolated Kit   (default 49131)
+    server         host for signalling and media         (default 127.0.0.1)
+    sessionId      review session id in the payload      (default review_session_probe0001)
+    traceId        trace id in the payload               (default "rev_" + sessionId)
+    eventType      DataChannel event_type to send        (default loadingStateQuery)
+    maxReconnects  AppStreamer reconnect budget          (default 20)
+
+  The page never alters streaming behaviour: it wraps RTCPeerConnection to read
+  the raw DataChannels, and it sends only what the driver explicitly asks for.
+-->
+
+<!-- Classic script: runs BEFORE the deferred module below, so the library's own
+     `new RTCPeerConnection(...)` goes through this proxy and we get the raw
+     DataChannel. This is observation only - no behaviour is altered. -->
+<script>
+globalThis.__pcs = [];
+globalThis.__dcs = [];
+globalThis.__raw = [];   // raw DataChannel 'message' arrivals, ms timestamps
+
+globalThis.__cfg = (() => {
+  const q = new URLSearchParams(location.search);
+  const sessionId = q.get('sessionId') || 'review_session_probe0001';
+  const num = (name, fallback) => {
+    const raw = q.get(name);
+    if (raw === null || raw === '') return fallback;
+    const value = Number(raw);
+    if (!Number.isFinite(value)) throw new Error(`query parameter ${name} must be a number`);
+    return value;
+  };
+  return {
+    server: q.get('server') || '127.0.0.1',
+    signalPort: num('signalPort', 49131),
+    maxReconnects: num('maxReconnects', 20),
+    sessionId,
+    // Kit's DataChannel trace verification expects the "rev_" + session_id shape;
+    // override only when deliberately probing a rejected/malformed trace.
+    traceId: q.get('traceId') || `rev_${sessionId}`,
+    eventType: q.get('eventType') || 'loadingStateQuery',
+  };
+})();
+
+(function () {
+  const Native = window.RTCPeerConnection;
+  function hook(dc, origin) {
+    if (!dc || globalThis.__dcs.some((d) => d.dc === dc)) return;
+    globalThis.__dcs.push({ dc, origin, label: dc.label });
+    dc.addEventListener('message', (ev) => {
+      const at = Date.now();
+      let head = '<non-string>';
+      let len = -1;
+      if (typeof ev.data === 'string') { head = ev.data.slice(0, 200); len = ev.data.length; }
+      else if (ev.data && ev.data.byteLength !== undefined) { len = ev.data.byteLength; head = '<binary>'; }
+      globalThis.__raw.push({ at, label: dc.label, len, head });
+    });
+  }
+  window.RTCPeerConnection = new Proxy(Native, {
+    construct(target, args) {
+      const pc = Reflect.construct(target, args);
+      globalThis.__pcs.push(pc);
+      const nativeCreate = pc.createDataChannel.bind(pc);
+      pc.createDataChannel = (...a) => { const dc = nativeCreate(...a); hook(dc, 'local'); return dc; };
+      pc.addEventListener('datachannel', (e) => hook(e.channel, 'remote'));
+      return pc;
+    },
+  });
+})();
+
+// Both stats accessors return Promises. The driver MUST evaluate them with
+// awaitPromise:true and replMode:false - see the replMode note in driver.mjs
+// and issue #671. Evaluated the wrong way they serialise as `{}` and every
+// downstream conclusion about the transport is silently based on nothing.
+globalThis.__stats = async () => {
+  const at = Date.now();
+  const out = [];
+  for (const pc of globalThis.__pcs) {
+    let rows = [];
+    try {
+      const rep = await pc.getStats();
+      rep.forEach((s) => {
+        if (s.type === 'data-channel' || s.type === 'transport' || s.type === 'peer-connection') rows.push(s);
+        else if (s.type === 'candidate-pair' && (s.state === 'succeeded' || s.nominated)) rows.push(s);
+      });
+    } catch (e) { rows = [{ type: 'error', error: String(e) }]; }
+    out.push({ conn: pc.connectionState, ice: pc.iceConnectionState, rows });
+  }
+  return JSON.parse(JSON.stringify({ at, pcs: out }));
+};
+
+globalThis.__statsFull = async () => {
+  const at = Date.now();
+  const out = [];
+  for (const pc of globalThis.__pcs) {
+    const rows = [];
+    try { (await pc.getStats()).forEach((s) => rows.push(s)); } catch (e) { rows.push({ type: 'error', error: String(e) }); }
+    out.push({ conn: pc.connectionState, ice: pc.iceConnectionState, rows });
+  }
+  return JSON.parse(JSON.stringify({ at, pcs: out }));
+};
+</script>
+
+<script type="module">
+import { AppStreamer, StreamType }
+  from './omniverse-webrtc-streaming-library.js';
+
+const CFG = globalThis.__cfg;
+
+const S = {
+  ready: false, readyAt: null, failed: null,
+  t0: null,               // set when the first command is sent
+  sent: [],               // {request_id, at, ok}
+  count: 0, events: [], byType: {},
+};
+globalThis.__T = S;
+
+const el = document.getElementById('log');
+const paint = () => { el.textContent = JSON.stringify(
+  { cfg: CFG, ready: S.ready, sent: S.sent.length, count: S.count, byType: S.byType }, null, 1); };
+
+function onCustomEvent(message) {
+  const at = Date.now();
+  S.count += 1;
+  let et = message && message.event_type;
+  let payload = message && message.payload;
+  if (!et && message && message.messageRecipient === 'kit'
+      && typeof message.data === 'string') {
+    try { const p = JSON.parse(message.data); et = p.event_type; payload = p.payload; }
+    catch { et = '<unparsable>'; }
+  }
+  et = et || '<no-event-type>';
+  S.byType[et] = (S.byType[et] || 0) + 1;
+  S.events.push({ n: S.count, at, event_type: et, payload });
+  console.log('PROBE_RECV', S.count, at, et, JSON.stringify(payload));
+  paint();
+}
+
+AppStreamer.connect({
+  streamSource: StreamType.DIRECT,
+  streamConfig: {
+    videoElementId: 'remote-video',
+    audioElementId: 'remote-audio',
+    server: CFG.server,
+    signalingServer: CFG.server,
+    signalingPort: CFG.signalPort,
+    mediaServer: CFG.server,
+    authenticate: false,
+    maxReconnects: CFG.maxReconnects,
+    nativeTouchEvents: true,
+    onStart: (m) => {
+      console.log('PROBE_START', JSON.stringify(m));
+      if (m.action === 'start' && m.status === 'success') { S.ready = true; S.readyAt = Date.now(); paint(); }
+    },
+    onUpdate: (m) => { console.log('PROBE_UPDATE', JSON.stringify(m)); },
+    onCustomEvent,
+    onStop: (m) => console.log('PROBE_STOP', JSON.stringify(m)),
+    onTerminate: (m) => console.log('PROBE_TERM', JSON.stringify(m)),
+  },
+}).catch((e) => { S.failed = String(e); paint(); console.error('PROBE_CONNECT_FAIL', e); });
+
+// Send exactly one command.
+//
+// FIRE-AND-FORGET IS MANDATORY. AppStreamer.sendMessage() returns a Promise that
+// this library never resolves for these messages: the ack it waits on is not
+// produced by the Kit messaging extension, so the Promise stays pending forever.
+// `await`ing it (or evaluating __send with awaitPromise:true) deadlocks the whole
+// driver on the first command and looks exactly like "Kit stopped responding".
+// Arrival is therefore observed through onCustomEvent / __arrived, never through
+// the return value of sendMessage. (Harness note R-6 of issue #624.)
+globalThis.__send = (request_id) => {
+  const msg = {
+    event_type: CFG.eventType,
+    payload: {
+      request_id,
+      session_id: CFG.sessionId,
+      trace_id: CFG.traceId,
+    },
+  };
+  const at = Date.now();
+  if (S.t0 === null) S.t0 = at;
+  try { AppStreamer.sendMessage(msg); S.sent.push({ request_id, at, ok: true }); }
+  catch (e) { S.sent.push({ request_id, at, ok: false, error: String(e) }); }
+  console.log('PROBE_SEND', request_id, at);
+  paint();
+  return { request_id, at };
+};
+
+// Arrival timestamp for one request id, or null. Kit answers an authorised read
+// with a *Response carrying request_id, and an unauthorised one with
+// commandRejected carrying request_id (or rejection_id when the request had no
+// usable id), so both keys are checked.
+globalThis.__arrived = (rid) => {
+  const hit = S.events.find((e) => e.payload && (e.payload.request_id === rid || e.payload.rejection_id === rid));
+  return hit ? hit.at : null;
+};
+
+globalThis.__snapshot = () => JSON.parse(JSON.stringify({
+  cfg: CFG,
+  t0: S.t0, readyAt: S.readyAt, count: S.count, byType: S.byType,
+  sent: S.sent,
+  raw: globalThis.__raw,
+  dcs: globalThis.__dcs.map((d) => ({ label: d.label, origin: d.origin, state: d.dc.readyState })),
+  events: S.events.map((e) => ({
+    n: e.n, at: e.at, event_type: e.event_type,
+    rid: e.payload && (e.payload.request_id || e.payload.rejection_id),
+    detail: e.payload && e.payload.detail_code,
+    reason: e.payload && e.payload.reason,
+  })),
+}));
+paint();
+</script>

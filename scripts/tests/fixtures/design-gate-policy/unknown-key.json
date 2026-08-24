@@ -1,0 +1,51 @@
+{
+  "schema_version": "design-gate-policy/v1",
+  "extra": true,
+  "sources": [
+    {
+      "source_id": "ai-bim-frontend-backend-design",
+      "path": "docs/plans/AI-BIM 前後端設計文件.dc.html",
+      "source_role": "architecture_behavior"
+    },
+    {
+      "source_id": "ai-bim-console-hifi",
+      "path": "docs/plans/AI-BIM Console Hi-Fi.dc.html",
+      "source_role": "console_hifi_visual"
+    }
+  ],
+  "engineering": {
+    "platform": "windows",
+    "browser": "chromium",
+    "ci_runner_label": "windows-2025",
+    "node_version": "20.20.2",
+    "npm_version": "10.9.4",
+    "playwright_version": "1.61.1",
+    "chromium_revision": "1228",
+    "chromium_version": "149.0.7827.55",
+    "device_scale_factor": 1,
+    "locale": "zh-TW",
+    "timezone": "Asia/Taipei",
+    "fonts_ready_required": true,
+    "animations_disabled": true,
+    "viewports": [
+      {
+        "id": "1440x900",
+        "width": 1440,
+        "height": 900
+      },
+      {
+        "id": "1920x1080",
+        "width": 1920,
+        "height": 1080
+      }
+    ],
+    "pixelmatch_color_threshold": 0.1,
+    "include_antialiasing": false,
+    "max_diff_pixel_ratio": 0.01,
+    "semantic_parity_required": 1.0
+  },
+  "full_completion_eligibility": {
+    "allow_when_any_route_is_reference_missing": false,
+    "allow_when_routes_without_approved_pixel_reference_nonempty": false
+  }
+}

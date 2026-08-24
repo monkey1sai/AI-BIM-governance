@@ -1,0 +1,13 @@
+{
+  "schema_version": "self-referential-fixpoint-attestation/v1",
+  "entry_id": "remote-deploy-tag-origin-main-sync",
+  "mechanism_commit": "4f55c26d18a4e8cbc7c3ac34816b64bdc188f7fe",
+  "verification_contract_sha256": "79f59833ee9e310be43cca15dd1429a4e830e1dd7de0fddb0fba125ed51e2211",
+  "result": "pass",
+  "commands": [
+    { "id": "test-remote-deploy-transport", "exit_code": 0 },
+    { "id": "test-self-referential-bootstrap", "exit_code": 0 },
+    { "id": "test-pr-body-evidence", "exit_code": 0 },
+    { "id": "invoke-powershell-static", "exit_code": 0 }
+  ]
+}

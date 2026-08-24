@@ -88,6 +88,20 @@ const defaultConfig: CoordinatorConfig = {
   minioWatchTenantId: "tenant_demo_001",
   minioWatchSelfBaseUrl: "",
   testDataProjectIds: [],
+  // rvt-ifc-usdc-lineage task 3.1（governed source bundle）：fixture 預設全空＝
+  // governed 端未設定（route 一律 503）。此 fixture 與 kitPool 無關，僅為型別完整性。
+  sourceBundleStorePath: "/tmp/source-bundles.json",
+  sourceBundleSha256VerifyMode: "full",
+  governedSourceMinioEndpoint: "",
+  governedSourceMinioAccessKey: "",
+  governedSourceMinioSecretKey: "",
+  governedSourceAuthorityAllowlist: [],
+  governedSourceBucketAllowlist: [],
+  governedSourcePrefix: "",
+  // rvt-ifc-usdc-lineage task 3.2（durable stable pipeline job）：reconciliation 預設關閉。
+  pipelineJobStorePath: "/tmp/pipeline-jobs.json",
+  sourceBundleReconcileEnabled: false,
+  sourceBundleReconcileIntervalMs: 300_000,
 };
 
 const multiEndpointConfig: CoordinatorConfig = {

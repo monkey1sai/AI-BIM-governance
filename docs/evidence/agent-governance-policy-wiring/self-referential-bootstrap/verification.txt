@@ -1,0 +1,67 @@
+agent-governance-policy-wiring — pre-merge verification
+
+branch : feat/wire-agent-governance-policy
+base   : 89dd01c (fix(governance): close the windows-tier-lib-modules debt with its fixpoint (#571))
+date   : 2026-08-17T10:43:02Z
+
+Why this is bootstrap debt: this PR turns the report-only Agent Governance Policy module (#565)
+into an adjudicator. It adds `verify-governance-policy.ps1` and the module behaviour suite to the
+required agent-governance CI job, deletes the 182 superseded text assertions from
+`test-agent-governance-check.ps1`, and registers the module, gate, and behaviour suite in
+`Get-SelfReferentialMechanismPaths` (§2.1 upgrade rule, same PR). The branch adjudicates itself
+with the changed adjudication surface, so only a post-merge run from main can prove the wired
+mechanism against itself.
+
+## What was deleted, and what holds each invariant now
+
+- 182 of the 195 lines mapped by the rules' `replaces` provenance were deleted. Every deleted
+  assertion's invariant is held structurally by scripts/agent-governance-rules.json through
+  scripts/lib/agent-governance-policy.psm1 (37 rules, all green below).
+- 13 mapped lines were RETAINED because block-by-block re-anchoring showed the provenance was
+  overbroad — the structural rules do not subsume them:
+    L259-262  agent-task template body markers (acceptance_criteria / validation_commands /
+              evidence_contract / docs/plans)
+    L267-274  per-suite presence greps for eight OTHER suites in agent-governance.yml
+    L291      ci.yml expected-job foreach
+  The four affected rules' `replaces` fields were corrected to say "additive" instead of
+  claiming those lines.
+- The deleted L466-473 post-mortem block (pwsh run-count arithmetic) is held by the
+  `agent-governance-steps-use-pwsh` rule (yaml_every over jobs.suite.steps). The old block's
+  "exactly one bash shell" count covered jobs.scope, which the rule deliberately does not: the
+  count was the arithmetic-coincidence antipattern this migration removes, and the suite-scoped
+  universal rule is the stated invariant.
+
+## Pre-merge runs (all on this branch, working tree)
+
+$ pwsh -File scripts/tests/verify-governance-policy.ps1 -BaseRef origin/main
+  [verify-governance-policy] policy: 37 rules, 0 error, 0 warning
+  [verify-governance-policy] ratchet vs origin/main: 0 error
+  [verify-governance-policy] passed                                  exit 0
+
+$ pwsh -File scripts/tests/verify-governance-policy.ps1 -RulesPath <one failing rule>
+  [verify-governance-policy] FAILED                                  exit 1   (fail-closed probe)
+
+$ pwsh -File scripts/tests/test-agent-governance-policy.ps1
+  [test-agent-governance-policy] all 106 assertions passed           exit 0
+
+$ pwsh -File scripts/tests/test-agent-governance-check.ps1          (slimmed, 1299 -> 1117 lines)
+  [test-agent-governance-check] all assertions passed                exit 0
+
+$ pwsh -File scripts/tests/test-self-referential-bootstrap.ps1
+  [test-self-referential-bootstrap] all assertions passed            exit 0
+  (command table now resolves test-agent-governance-policy and verify-governance-policy)
+
+$ pwsh -File scripts/tests/test-pr-body-evidence.ps1
+  [test-pr-body-evidence] all assertions passed                      exit 0
+
+$ pwsh -File scripts/tests/invoke-powershell-static.ps1
+  [invoke-powershell-static] passed                                  exit 0
+
+## Mechanism classification (Get-SelfReferentialMechanismPaths on this PR's changed paths)
+
+Classified: agent-governance-policy.psm1, verify-governance-policy.ps1,
+test-agent-governance-policy.ps1, agent-governance.yml, self-referential-bootstrap.ps1,
+test-self-referential-bootstrap.ps1, test-agent-governance-check.ps1, ledger.
+
+Deliberately NOT classified: scripts/agent-governance-rules.json — adding a governance rule must
+stay debt-free; removals and severity downgrades are held by the rule ratchet inside the new gate.

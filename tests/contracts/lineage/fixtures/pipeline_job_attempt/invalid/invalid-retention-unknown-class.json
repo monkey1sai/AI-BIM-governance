@@ -1,0 +1,76 @@
+{
+  "schema_version": "pipeline-job-attempt/v1",
+  "document_type": "retention_policy",
+  "body": {
+    "policy_id": "retention-policy-edge-tpe-01",
+    "effective_at": "2026-07-01T00:00:00Z",
+    "entries": [
+      {
+        "artifact_class": "source_rvt",
+        "auto_delete_allowed": false,
+        "retention_days": null,
+        "rationale": "formal lineage evidence is never auto-deleted"
+      },
+      {
+        "artifact_class": "schedule_csv",
+        "auto_delete_allowed": false,
+        "retention_days": null,
+        "rationale": "formal lineage evidence is never auto-deleted"
+      },
+      {
+        "artifact_class": "source_ifc",
+        "auto_delete_allowed": false,
+        "retention_days": null,
+        "rationale": "formal lineage evidence is never auto-deleted"
+      },
+      {
+        "artifact_class": "source_manifest",
+        "auto_delete_allowed": false,
+        "retention_days": null,
+        "rationale": "formal lineage evidence is never auto-deleted"
+      },
+      {
+        "artifact_class": "result_manifest_referenced_artifacts",
+        "auto_delete_allowed": false,
+        "retention_days": null,
+        "rationale": "formal lineage evidence is never auto-deleted"
+      },
+      {
+        "artifact_class": "activation_audit",
+        "auto_delete_allowed": false,
+        "retention_days": null,
+        "rationale": "formal lineage evidence is never auto-deleted"
+      },
+      {
+        "artifact_class": "alignment_audit",
+        "auto_delete_allowed": false,
+        "retention_days": null,
+        "rationale": "formal lineage evidence is never auto-deleted"
+      },
+      {
+        "artifact_class": "result_manifest",
+        "auto_delete_allowed": true,
+        "retention_days": 30,
+        "rationale": "deployment retention policy"
+      },
+      {
+        "artifact_class": "temporary_uploads",
+        "auto_delete_allowed": true,
+        "retention_days": 7,
+        "rationale": "deployment retention policy"
+      },
+      {
+        "artifact_class": "diagnostics",
+        "auto_delete_allowed": true,
+        "retention_days": 30,
+        "rationale": "deployment retention policy"
+      },
+      {
+        "artifact_class": "local_cache",
+        "auto_delete_allowed": true,
+        "retention_days": 3,
+        "rationale": "deployment retention policy"
+      }
+    ]
+  }
+}

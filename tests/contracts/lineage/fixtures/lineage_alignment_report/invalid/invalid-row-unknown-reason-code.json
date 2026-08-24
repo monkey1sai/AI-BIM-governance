@@ -1,0 +1,183 @@
+{
+  "schema_version": "lineage-alignment-report/v1",
+  "document_type": "alignment_report_json",
+  "body": {
+    "report_schema_version": "alignment-report/v1",
+    "source_bundle_id": "source-bundle-0003",
+    "pipeline_job_id": "pipeline-job-0003",
+    "attempt_id": "attempt-0007",
+    "result_id": "result-0007",
+    "generated_at": "2026-07-16T08:15:30.000Z",
+    "scope": {
+      "eligible_ifc_product_selector": "IfcProduct",
+      "eligible_ifc_product_count": 12,
+      "legacy_alias": {
+        "source_ifc_entity_count_is_alias_of": "eligible_ifc_product_count"
+      }
+    },
+    "metrics": {
+      "ifc_usdc_coverage_ratio": {
+        "numerator": 10,
+        "denominator": 12,
+        "ratio": 0.8333333333,
+        "status": "partial",
+        "denominator_scope": "eligible_ifc_product_count"
+      },
+      "rvt_ifc_alignment_ratio": {
+        "numerator": 8,
+        "denominator": 10,
+        "ratio": 0.8,
+        "status": "partial",
+        "denominator_scope": "csv_valid_count"
+      },
+      "rvt_ifc_usdc_lineage_ratio": {
+        "numerator": 7,
+        "denominator": 10,
+        "ratio": 0.7,
+        "status": "partial",
+        "denominator_scope": "csv_valid_count"
+      }
+    },
+    "counts": {
+      "csv_total_count": 12,
+      "csv_valid_count": 10,
+      "eligible_ifc_product_count": 12,
+      "duplicate_rvt_id_count": 1,
+      "duplicate_ifc_guid_count": 1,
+      "invalid_row_count": 2,
+      "csv_only_count": 2,
+      "ifc_only_count": 4,
+      "ifc_usdc_unmapped_count": 2,
+      "full_lineage_matched_count": 7
+    },
+    "difference_sets": {
+      "csv_only": [
+        {
+          "rvt_element_id": "0000021",
+          "ifc_uuid36_raw": "0F0E0D0C-0B0A-4908-871B-051903170115",
+          "ifc_uuid36": "0f0e0d0c-0b0a-4908-871b-051903170115",
+          "ifc_global_id22": "0F3WqC2mf928SR1Ha35m4L",
+          "reason_code": "ifc_product_not_found"
+        },
+        {
+          "rvt_element_id": "0000022",
+          "ifc_uuid36_raw": "0F0E0D0C-0B0A-4908-871C-051A03180116",
+          "ifc_uuid36": "0f0e0d0c-0b0a-4908-871c-051a03180116",
+          "reason_code": "guid_roundtrip_failed"
+        }
+      ],
+      "ifc_only": [
+        {
+          "ifc_global_id22": "0F3WqC2mf928Sb1IC38G4V",
+          "ifc_uuid36": "0f0e0d0c-0b0a-4908-8725-05230321011f",
+          "ifc_class": "IfcDoor",
+          "usd_prim_path": "/World/Elements/IfcDoor/G_0F3WqC2mf928Sb1IC38G4V"
+        },
+        {
+          "ifc_global_id22": "0F3WqC2mf928Sc1IG38W4W",
+          "ifc_uuid36": "0f0e0d0c-0b0a-4908-8726-052403220120",
+          "ifc_class": "IfcDoor",
+          "usd_prim_path": "/World/Elements/IfcDoor/G_0F3WqC2mf928Sc1IG38W4W"
+        },
+        {
+          "ifc_global_id22": "0F3WqC2mf928Sd1IK38m4X",
+          "ifc_uuid36": "0f0e0d0c-0b0a-4908-8727-052503230121",
+          "ifc_class": "IfcDoor"
+        },
+        {
+          "ifc_global_id22": "0F3WqC2mf928Se1IO3904Y",
+          "ifc_uuid36": "0f0e0d0c-0b0a-4908-8728-052603240122",
+          "ifc_class": "IfcDoor",
+          "usd_prim_path": "/World/Elements/IfcDoor/G_0F3WqC2mf928Se1IO3904Y"
+        }
+      ],
+      "ifc_usdc_unmapped": [
+        {
+          "ifc_global_id22": "0F3WqC2mf928Sl1Iq3Am4f",
+          "ifc_uuid36": "0f0e0d0c-0b0a-4908-872f-052d032b0129",
+          "ifc_class": "IfcSlab",
+          "reason_code": "unstable_child_prim_target",
+          "observed_prim_path": "/World/Elements/IfcSlab/G_0F3WqC2mf928Sl1Iq3Am4f/Body/Mesh_0"
+        },
+        {
+          "ifc_global_id22": "0F3WqC2mf928Sm1Iu3B04g",
+          "ifc_uuid36": "0f0e0d0c-0b0a-4908-8730-052e032c012a",
+          "ifc_class": "IfcSlab",
+          "reason_code": "prim_not_found"
+        }
+      ],
+      "duplicate_rvt_ids": [
+        {
+          "rvt_element_id": "0000051",
+          "occurrence_count": 3
+        }
+      ],
+      "duplicate_ifc_guids": [
+        {
+          "ifc_uuid36": "0f0e0d0c-0b0a-4908-873a-053803360134",
+          "occurrence_count": 2
+        }
+      ],
+      "invalid_rows": [
+        {
+          "row_number": 4,
+          "reason_code": "guid_not_in_ifc"
+        },
+        {
+          "row_number": 9,
+          "reason_code": "invalid_guid_format",
+          "rvt_element_id": "0000053"
+        }
+      ],
+      "full_lineage_matched": [
+        {
+          "rvt_element_id": "0000060",
+          "ifc_uuid36": "0f0e0d0c-0b0a-4908-8742-0540033e013c",
+          "ifc_global_id22": "0F3WqC2mf928T21K03FW4y",
+          "usd_prim_path": "/World/Elements/IfcWall/G_0F3WqC2mf928T21K03FW4y"
+        },
+        {
+          "rvt_element_id": "0000061",
+          "ifc_uuid36": "0f0e0d0c-0b0a-4908-8743-0541033f013d",
+          "ifc_global_id22": "0F3WqC2mf928T31K43Fm4z",
+          "usd_prim_path": "/World/Elements/IfcWall/G_0F3WqC2mf928T31K43Fm4z"
+        },
+        {
+          "rvt_element_id": "0000062",
+          "ifc_uuid36": "0f0e0d0c-0b0a-4908-8744-05420340013e",
+          "ifc_global_id22": "0F3WqC2mf928T41K83G04_",
+          "usd_prim_path": "/World/Elements/IfcWall/G_0F3WqC2mf928T41K83G04_"
+        },
+        {
+          "rvt_element_id": "0000063",
+          "ifc_uuid36": "0f0e0d0c-0b0a-4908-8745-05430341013f",
+          "ifc_global_id22": "0F3WqC2mf928T51KC3GG4$",
+          "usd_prim_path": "/World/Elements/IfcWall/G_0F3WqC2mf928T51KC3GG4_"
+        },
+        {
+          "rvt_element_id": "0000064",
+          "ifc_uuid36": "0f0e0d0c-0b0a-4908-8746-054403420140",
+          "ifc_global_id22": "0F3WqC2mf928T61KG3GW50",
+          "usd_prim_path": "/World/Elements/IfcWall/G_0F3WqC2mf928T61KG3GW50"
+        },
+        {
+          "rvt_element_id": "0000065",
+          "ifc_uuid36": "0f0e0d0c-0b0a-4908-8747-054503430141",
+          "ifc_global_id22": "0F3WqC2mf928T71KK3Gm51",
+          "usd_prim_path": "/World/Elements/IfcWall/G_0F3WqC2mf928T71KK3Gm51"
+        },
+        {
+          "rvt_element_id": "0000066",
+          "ifc_uuid36": "0f0e0d0c-0b0a-4908-8748-054603440142",
+          "ifc_global_id22": "0F3WqC2mf928T81KO3H052",
+          "usd_prim_path": "/World/Elements/IfcWall/G_0F3WqC2mf928T81KO3H052"
+        }
+      ]
+    },
+    "warning_codes": [
+      "PARTIAL_RVT_IFC_ALIGNMENT",
+      "IFC_USDC_UNMAPPED"
+    ],
+    "warning_code_count": 2
+  }
+}

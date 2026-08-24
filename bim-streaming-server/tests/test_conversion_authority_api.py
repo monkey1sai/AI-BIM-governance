@@ -22,7 +22,9 @@ import conversion_authority as conversion_authority_module  # noqa: E402
 from conversion_authority import (  # noqa: E402
     ConversionAuthorityError,
     ConversionAuthoritySettings,
+    StreamingConversionStore,
     _ifc_artifact,
+    compute_coverage_quality,
     create_conversion_api_app,
 )
 from struct_log import create_logger as create_struct_logger  # noqa: E402
@@ -264,6 +266,7 @@ def test_conversion_success_result_owns_usdc_mapping_entity_index_and_callback_p
     assert result["artifacts"]["element_mapping"]["url"].endswith("/element_mapping.json")
     assert result["artifacts"]["entity_index"]["url"].endswith("/entity_index.json")
     assert result["artifacts"]["metadata"]["url"].endswith("/metadata.json")
+    assert result["quality_metrics"]["eligible_ifc_product_count"] == 2
     assert result["quality_metrics"]["source_ifc_entity_count"] == 2
     assert result["quality_metrics"]["mapped_count"] == 2
     assert result["quality_metrics"]["unmapped_count"] == 0
@@ -828,6 +831,66 @@ def test_minio_retrigger_with_new_presigned_url_and_cache_path_replays_existing_
     assert job_file_count(tmp_path) == 1
 
 
+def test_minio_retrigger_after_terminal_failure_starts_a_new_attempt(tmp_path: Path):
+    # A failed job is bound to the cache path of the attempt that failed. A MinIO
+    # retrigger re-downloads the IFC to a fresh path, so replaying the dead record makes
+    # the job's own `recovery_action: retrigger_required` impossible to satisfy - the
+    # object can never convert again. Only a terminal failure behaves this way; queued,
+    # running and succeeded jobs still replay (covered above).
+    client = make_client(tmp_path, converter=FakeFailedConverter())
+
+    shared_artifact = {
+        "artifact_id": "ifc_minio_model_v2",
+        "format": "ifc",
+        "filename": "model.ifc",
+        "etag": "1f0e6d0e-1a5f-4a3a-9a1a-2b7b0a4b6c8d",
+    }
+
+    def post(event_id: str, cache_dir: str):
+        return client.post(
+            "/api/conversions/ifc-to-usdc",
+            json=ifc_ready_payload(
+                event_id=event_id,
+                correlation_id="minio-watch-a1b2c3d4",
+                idempotency_key="idem_minio_model_v2",
+                ifc_artifact={
+                    **shared_artifact,
+                    "url": "http://minio.local/source/model.ifc?X-Amz-Signature=" + event_id,
+                    "local_path": "/workspace/storage/" + cache_dir + "/source.ifc",
+                    "host_local_path": "D:/Users/deploy/AI-bim-geo/storage/" + cache_dir + "/source.ifc",
+                },
+            ),
+        )
+
+    first = post("evt_minio_watch_101", "ifcready_old")
+    assert first.status_code == 202
+    first_job_id = first.json()["conversion_job_id"]
+    assert first.json()["attempt"] == 1
+    assert first.json()["retry_of"] is None
+    assert client.get("/api/conversions/" + first_job_id + "/result").json()["status"] == "failed"
+
+    retry = post("evt_minio_watch_102", "ifcready_new")
+    assert retry.status_code == 202
+    retry_job_id = retry.json()["conversion_job_id"]
+    assert retry_job_id != first_job_id
+    assert not retry.json().get("idempotent_replay")
+    assert retry.json()["attempt"] == 2
+    assert retry.json()["retry_of"] == first_job_id
+    assert job_file_count(tmp_path) == 2
+
+    # the failed attempt is kept for audit and back-links to its successor
+    superseded = json.loads(
+        (tmp_path / "jobs" / (first_job_id + ".json")).read_text(encoding="utf-8")
+    )
+    assert superseded["status"] == "failed"
+    assert superseded["superseded_by"] == retry_job_id
+
+    # the idempotency key now resolves to the newest attempt, not the dead one
+    third = post("evt_minio_watch_103", "ifcready_new")
+    assert third.json()["retry_of"] == retry_job_id
+    assert third.json()["attempt"] == 3
+
+
 def test_conflicting_idempotency_key_returns_409_without_new_job(tmp_path: Path):
     client = make_client(tmp_path, converter=FakeSuccessfulConverter(), run_background=False)
 
@@ -1012,3 +1075,57 @@ def test_ifc_artifact_local_paths_default_to_none_when_absent():
 
     assert artifact["local_path"] is None
     assert artifact["host_local_path"] is None
+
+
+def test_compute_coverage_quality_uses_independent_denominator():
+    full = compute_coverage_quality(mapped_count=4, eligible_ifc_product_count=4)
+    assert full["coverage_ratio"] == 1.0
+    assert full["coverage_status"] == "pass"
+    assert full["source_ifc_entity_count"] == 4
+    assert full["eligible_ifc_product_count"] == 4
+
+    partial = compute_coverage_quality(mapped_count=3, eligible_ifc_product_count=5)
+    assert partial["coverage_ratio"] == 0.6
+    assert partial["coverage_status"] == "warn"
+    assert partial["unmapped_count"] == 2
+    assert partial["mapped_count"] != partial["eligible_ifc_product_count"]
+
+
+def test_compute_coverage_quality_zero_denominator_is_not_evaluable():
+    metrics = compute_coverage_quality(mapped_count=0, eligible_ifc_product_count=0)
+    assert metrics["coverage_status"] == "not_evaluable"
+    assert metrics["coverage_ratio"] is None
+    assert metrics["coverage_ratio"] != 1.0
+    assert metrics["coverage_ratio"] != 0.0
+    assert metrics["eligible_ifc_product_count"] == 0
+    assert metrics["source_ifc_entity_count"] == 0
+
+
+def test_compute_coverage_quality_unknown_denominator_is_not_evaluable():
+    metrics = compute_coverage_quality(mapped_count=4, eligible_ifc_product_count=None)
+    assert metrics["coverage_status"] == "not_evaluable"
+    assert metrics["coverage_ratio"] is None
+    assert metrics["eligible_ifc_product_count"] is None
+
+
+def test_normalize_quality_metrics_rejects_hardcoded_full_coverage_when_denominator_zero(tmp_path: Path):
+    store = StreamingConversionStore(
+        settings=ConversionAuthoritySettings(
+            service_root=tmp_path,
+            artifacts_root=tmp_path / "artifacts",
+            jobs_dir=tmp_path / "jobs",
+            public_artifacts_url="http://127.0.0.1/artifacts",
+        )
+    )
+    metrics = store._normalize_quality_metrics(
+        {
+            "eligible_ifc_product_count": 0,
+            "mapped_count": 0,
+            "coverage_ratio": 1.0,
+            "coverage_status": "pass",
+            "minimum_coverage_baseline_locked": True,
+        }
+    )
+    assert metrics["coverage_status"] == "not_evaluable"
+    assert metrics["coverage_ratio"] is None
+    assert metrics["minimum_coverage_baseline_locked"] is False
