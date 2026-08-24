@@ -1,5 +1,14 @@
 # Spec-to-done new-run classifier preregistration
 
+- stack_kind=self_referential_bootstrap
+- Originating PR: #687
+- Base commit: bfba0f061edc9b62e7d6edfb5fd412358ef22666
+- Classifier subject commit: 61b12f8471a7eb2ecc649cf076efcfcd4568aff6
+- Ledger entry: spec-to-done-new-run-boundary-classifier
+- Verification contract: spec-to-done-new-run-boundary-classifier/v1
+- Contract SHA-256: 82d607837a5a7d78ca3e1b2100082f9d018e4333e68c3016931d9a1b95bbd9e3
+- Activation status: HELD until the post-merge ledger-only fixpoint closes this debt
+
 ## Scope
 
 This first predecessor changes only the base-pinned mechanism classifier, its trusted-merge
