@@ -1797,15 +1797,20 @@ def _install_fake_identity_ifcopenshell(
             return None
 
     class FakeGeometry:
-        verts = (0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0)
-        faces = (0, 1, 2)
+        def __init__(self, *, skipped: bool = False):
+            if skipped:
+                self.verts = ()
+                self.faces = ()
+            else:
+                self.verts = (0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0)
+                self.faces = (0, 1, 2)
 
     class FakeShape:
         def __init__(self, spec: dict[str, str]):
             self.guid = spec["guid"]
             self.name = spec.get("name") or ""
             self.type = spec["ifc_type"]
-            self.geometry = FakeGeometry()
+            self.geometry = FakeGeometry(skipped=bool(spec.get("skipped_shape")))
 
     class FakeIterator:
         def __init__(self):
@@ -1944,6 +1949,36 @@ def test_identity_authoring_emits_guid_exact_mapping_and_joinable_geo_indexes(
     assert quality["identity_authoring_profile"] == "ifcopenshell_openusd_identity"
     assert quality["hard_quality_gates"]["usdc_openable"] is True
     assert quality["hard_quality_gates"]["has_renderable_prims"] is True
+    assert quality["eligible_ifc_product_count"] == 2
+    assert quality["source_ifc_entity_count"] == 2
+    assert quality["mapped_count"] == 2
+    assert quality["coverage_status"] == "pass"
+
+
+def test_identity_authoring_skipped_shape_warns_below_full_coverage(
+    tmp_path: Path,
+    monkeypatch,
+):
+    output_dir, _paths, metrics = _run_identity_authoring(
+        tmp_path,
+        monkeypatch,
+        shapes=[
+            {"guid": "GUID_OK", "name": "Wall", "ifc_type": "IfcWall"},
+            {"guid": "GUID_SKIP", "name": "Empty", "ifc_type": "IfcBeam", "skipped_shape": True},
+        ],
+    )
+    quality = json.loads((output_dir / "quality_metrics.json").read_text(encoding="utf-8"))
+
+    assert metrics["eligible_ifc_product_count"] == 2
+    assert metrics["source_ifc_entity_count"] == 2
+    assert metrics["mapped_count"] == 1
+    assert metrics["unmapped_count"] == 1
+    assert metrics["skipped_shape_count"] == 1
+    assert metrics["coverage_ratio"] < 1.0
+    assert metrics["coverage_status"] == "warn"
+    assert quality["coverage_ratio"] == metrics["coverage_ratio"]
+    assert quality["coverage_status"] == "warn"
+    assert quality["eligible_ifc_product_count"] != quality["mapped_count"]
 
 
 def test_identity_authoring_writes_psets_and_spatial_relationships_as_sidecars(
@@ -2282,7 +2317,15 @@ def test_ifcopenshell_openusd_fallback_writes_openable_usdc_and_sidecars(tmp_pat
         schema = "IFC4"
 
         def by_type(self, name: str):
-            return [object(), object()] if name == "IfcProduct" else []
+            if name != "IfcProduct":
+                return []
+            return [
+                _FakeIfcProduct(
+                    guid="2abc",
+                    ifc_type="IfcBuildingElementProxy",
+                    name="Demo element",
+                )
+            ]
 
     class FakeSettings:
         USE_WORLD_COORDS = "USE_WORLD_COORDS"
@@ -2465,7 +2508,15 @@ def _run_fallback_with_single_shape(
         schema = "IFC4"
 
         def by_type(self, name: str):
-            return [object()] if name == "IfcProduct" else []
+            if name != "IfcProduct":
+                return []
+            return [
+                _FakeIfcProduct(
+                    guid=ifc_guid,
+                    ifc_type=ifc_type,
+                    name=ifc_name,
+                )
+            ]
 
     class FakeSettings:
         USE_WORLD_COORDS = "USE_WORLD_COORDS"
@@ -2658,6 +2709,18 @@ def _run_fallback_with_multiple_shapes(
 
     class FakeModel:
         schema = "IFC4"
+
+        def by_type(self, name: str):
+            if name != "IfcProduct":
+                return []
+            return [
+                _FakeIfcProduct(
+                    guid=shape["guid"],
+                    ifc_type=shape["ifc_type"],
+                    name=shape.get("name"),
+                )
+                for shape in shapes
+            ]
 
     class FakeSettings:
         USE_WORLD_COORDS = "USE_WORLD_COORDS"
@@ -2875,6 +2938,52 @@ def test_enumeration_path_empty_custom_data_stays_honest(tmp_path: Path, monkeyp
     assert quality["mapping_has_ifc_name"] is False
     mapping_doc = json.loads((out_dir / "element_mapping.json").read_text(encoding="utf-8"))
     assert mapping_doc["items"] == []
+    # mapping_items 為空時不得改用 prim 數當分母灌水成 1.0
+    assert quality["coverage_status"] == "not_evaluable"
+    assert quality["coverage_ratio"] is None
+
+
+def test_enumeration_path_coverage_uses_eligible_products_not_mapping_items(
+    tmp_path: Path, monkeypatch
+):
+    _clear_pxr_test_stubs(monkeypatch)
+    adapter = _make_enumeration_adapter(tmp_path)
+    out_dir = tmp_path / "out"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    usdc = out_dir / "model.usdc"
+    _write_usd_stage_with_ifc_prims(
+        usdc,
+        [
+            {"path": "/World/IfcWall/wall_001", "ifc_guid": "GUID_A1", "ifc_type": "IfcWall", "ifc_name": "外牆 1"},
+            {"path": "/World/IfcBeam/beam_001", "ifc_guid": "GUID_B1", "ifc_type": "IfcBeam", "ifc_name": "梁 1"},
+        ],
+    )
+    ifc_source = tmp_path / "source.ifc"
+    ifc_source.write_text("ISO-10303-21;", encoding="utf-8")
+    _install_fake_ifcopenshell(
+        monkeypatch,
+        [
+            _FakeIfcProduct(guid="GUID_A1", ifc_type="IfcWall", name="外牆 1"),
+            _FakeIfcProduct(guid="GUID_B1", ifc_type="IfcBeam", name="梁 1"),
+            _FakeIfcProduct(guid="GUID_UNMAPPED", ifc_type="IfcColumn", name="未轉出"),
+        ],
+    )
+
+    quality = adapter._enumerate_usd_stage(
+        model_path=usdc,
+        ifc_path=ifc_source,
+        mapping_path=out_dir / "element_mapping.json",
+        entity_index_path=out_dir / "entity_index.json",
+        metadata_path=out_dir / "metadata.json",
+    )
+
+    assert quality["mapped_count"] == 2
+    assert quality["eligible_ifc_product_count"] == 3
+    assert quality["source_ifc_entity_count"] == 3
+    assert quality["unmapped_count"] == 1
+    assert quality["coverage_ratio"] < 1.0
+    assert quality["coverage_status"] == "warn"
+    assert quality["eligible_ifc_product_count"] != quality["mapped_count"]
 
 
 def test_adopt_path_supplements_missing_semantic_fields(tmp_path: Path):

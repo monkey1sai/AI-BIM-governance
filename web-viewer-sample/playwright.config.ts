@@ -63,6 +63,7 @@ export default defineConfig({
   retries: 0,
   reporter: [
     ["list"],
+    ["./e2e/support/forbid-skipped-when-real.ts"],
     ["html", { outputFolder: isolated ? path.join(isolated.runDir, "playwright-report", isolatedEvidenceGeneration!) : "../artifacts/e2e/report", open: "never" }],
   ],
   use: {
