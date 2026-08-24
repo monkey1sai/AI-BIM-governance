@@ -52,7 +52,7 @@
 - [x] 7.2 跑controlled browser coverage，證明visible rejection、FakeKit replay、late-token recovery、pending/executing/terminal UI與changed-unconfirmed status resync/block，保存trace/screenshot
 - [x] 7.3 跑Windows host-native Kit valid/forged/released/expired/wrong-source/outage/direct-open wrong-session/composition-tamper/concurrent replay evidence，包含first frame、observed stage、DataChannel terminal、request/runtime/session IDs、P95與zero-mutation或changed-unconfirmed proof
 - [x] 7.4 跑GitNexus `detect_changes` against `main`、strict OpenSpec validation與independent correctness/security review，揭露production IdP、process-restart、rollback本身也不可達時的authority response-loss與canonical protocol/schema drift residual risk
-- [ ] 7.5 Commit、push、開dependency PR、修完required review/CI並merge；之後才rebase A4 convergence worktree與重跑A4-only exact impact
+- [x] 7.5 Commit、push、開dependency PR、修完required review/CI並merge；之後才rebase A4 convergence worktree與重跑A4-only exact impact
 
 ## 2026-07-22 verification evidence
 
@@ -128,3 +128,9 @@
 - Run id：`runtime-authority-e2e-2b758381aeae49a482cff0bc15ff31c1`（Windows host-native isolated Kit，一次完整輪）。
 - Latency：P95 = 130.27 ms（20 樣本，閾值 500 ms）。
 - Zero-mutation proof：`all_pre_mutation_denials_preserved_stage = true`、`outage_preserved_stage = true`、baseline stage 保持不變。
+
+## 2026-08-24 Task 7.5 closeout evidence
+
+- Dependency PR #685（head `4f7e43c502991c8fbc9086d7f591782ffe81d96e`）已通過 required review/CI 並以 squash merge `d4fddb17872fcb9c1f68c2d11cdd4c8be2b1489c` 進入 main（7.3 evidence runner＋spec＋tasks.md 勾選）。
+- A4 rebase 子句裁決：A4 convergence 線已於先前輪次獨立收官（a4 4.x 全結；#681 已把 a4 subject watermark 指向其 merged commit），A4 convergence worktree 已移除（本日 `git worktree list` 無該項）。「rebase A4 convergence worktree 與重跑 A4-only exact impact」的前提已消滅，該子句以 moot 收束，不另造 worktree 重演。
+- 本 change 隨本 PR archive；archive 前 `openspec validate --strict` 通過且四個 delta spec 經 buildUpdatedSpec 模擬全數 CLEAN。
