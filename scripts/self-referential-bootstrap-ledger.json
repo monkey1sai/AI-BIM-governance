@@ -875,6 +875,35 @@
           "docs/evidence/orphan-kit-liveness-preflight/fixpoint/summary.md"
         ]
       }
+    },
+    {
+      "id": "spec-to-done-new-run-boundary-classifier",
+      "status": "open",
+      "pr": 687,
+      "opened_at": "2026-08-24T10:36:15Z",
+      "reason": "the base-owned self-referential and trusted-host classifiers do not recognize the future spec-to-done new-run validator, append authority, procedure adapters, and enforcement tests, so the implementation pull request cannot bind or separately authorize its complete mechanism surface",
+      "verification_mechanism_paths": [
+        "agent-contracts/trusted-host-merge.contract.json",
+        "scripts/lib/self-referential-bootstrap.ps1",
+        "scripts/self-referential-bootstrap-ledger.json",
+        "scripts/tests/test-self-referential-bootstrap.ps1"
+      ],
+      "verification_contract": {
+        "id": "spec-to-done-new-run-boundary-classifier/v1",
+        "command_ids": [
+          "test-self-referential-bootstrap",
+          "test-agent-governance-check",
+          "test-trusted-host-merge",
+          "invoke-powershell-static",
+          "scan-secret-patterns"
+        ],
+        "contract_sha256": "82d607837a5a7d78ca3e1b2100082f9d018e4333e68c3016931d9a1b95bbd9e3"
+      },
+      "bootstrap_evidence_refs": [
+        "docs/evidence/spec-to-done-new-run-boundary/self-referential-bootstrap/README.md",
+        "docs/evidence/spec-to-done-new-run-boundary/self-referential-bootstrap/verification.txt"
+      ],
+      "fixpoint": null
     }
   ]
 }

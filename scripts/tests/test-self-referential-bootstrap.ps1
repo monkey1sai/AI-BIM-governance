@@ -414,6 +414,48 @@ try {
     $adjacentAutonomousMatches = @(Get-SelfReferentialMechanismPaths -ChangedPaths $adjacentAutonomousPaths)
     Assert-True ($adjacentAutonomousMatches.Count -eq 0) `
         "adjacent autonomous-delivery names must not broaden mechanism scope (matched: $($adjacentAutonomousMatches -join ', '))"
+    # The state validator, append authority, procedure adapters, and the three
+    # required root pytest enforcement files are a single future NEW_RUN trust
+    # surface. Pre-register them before their implementation PR so its base-owned
+    # classifier can bind complete bootstrap debt.
+    $futureSpecToDoneNewRunPaths = @(
+        '.claude/skills/spec-to-done/validate-state.mjs',
+        '.claude/skills/spec-to-done/append-new-run.mjs',
+        '.claude/skills/spec-to-done/SKILL.md',
+        '.codex/skills/spec-to-done/SKILL.md',
+        '.claude/skills/spec-to-done/GROK.md',
+        'tests/test_spec_to_done_state_contract.py',
+        'tests/test_spec_to_done_budget_contract.py',
+        'tests/test_spec_to_done_closeout_contract.py'
+    )
+    $futureSpecToDoneNewRunMatches = @(
+        Get-SelfReferentialMechanismPaths -ChangedPaths $futureSpecToDoneNewRunPaths
+    )
+    Assert-True ($futureSpecToDoneNewRunMatches.Count -eq $futureSpecToDoneNewRunPaths.Count) "every future spec-to-done NEW_RUN path must classify exactly (matched: $($futureSpecToDoneNewRunMatches -join ', '))"
+    foreach ($expectedPath in $futureSpecToDoneNewRunPaths) {
+        Assert-True ($futureSpecToDoneNewRunMatches -ccontains $expectedPath) "future spec-to-done NEW_RUN classifier includes $expectedPath"
+        $coveredByTrustedMerge = @($trustedMergePatterns | Where-Object {
+            [regex]::IsMatch(
+                $expectedPath,
+                [string]$_,
+                [System.Text.RegularExpressions.RegexOptions]::CultureInvariant)
+        }).Count -gt 0
+        Assert-True $coveredByTrustedMerge "trusted merge mechanism policy covers future spec-to-done NEW_RUN path: $expectedPath"
+    }
+    $adjacentSpecToDoneNewRunPaths = @(
+        '.claude/skills/spec-to-done/validate-state.test.mjs',
+        '.claude/skills/spec-to-done/append-new-run.ps1',
+        '.claude/skills/spec-to-done/subdir/validate-state.mjs',
+        '.Claude/skills/spec-to-done/validate-state.mjs',
+        '.claude/skills/spec-to-done/SKILL.txt',
+        '.codex/skills/spec-to-done/GROK.md',
+        'tests/test_spec_to_done_state_contract_extra.py',
+        'tests/Test_spec_to_done_budget_contract.py'
+    )
+    $adjacentSpecToDoneNewRunMatches = @(
+        Get-SelfReferentialMechanismPaths -ChangedPaths $adjacentSpecToDoneNewRunPaths
+    )
+    Assert-True ($adjacentSpecToDoneNewRunMatches.Count -eq 0) "adjacent or wrong-case spec-to-done NEW_RUN paths must not broaden mechanism scope (matched: $($adjacentSpecToDoneNewRunMatches -join ', '))"
     Assert-True ($matched -notcontains 'web-viewer-sample/src/Window.tsx') 'ordinary product code must NOT classify as mechanism'
     $wrongCaseMechanismPaths = @(Get-SelfReferentialMechanismPaths -ChangedPaths @(
         'Scripts/Deploy.ps1',
