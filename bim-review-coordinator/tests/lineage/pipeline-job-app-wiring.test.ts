@@ -1,10 +1,18 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import request from "supertest";
 import { afterEach, describe, expect, it } from "vitest";
 import { createCoordinatorApp, type CoordinatorApp } from "../../src/app.js";
 import type { CoordinatorConfig } from "../../src/config.js";
-import { pipelineJobIdFor } from "../../src/services/lineage/pipelineJobStore.js";
+import {
+  PipelineJobStore,
+  pipelineJobIdFor,
+} from "../../src/services/lineage/pipelineJobStore.js";
+import {
+  PipelineResultStateUnavailableError,
+  PipelineResultStore,
+} from "../../src/services/lineage/pipelineResultStore.js";
 import {
   createFakeSourceBundleObjectPort,
   type FakeSourceBundleObjectPort,
@@ -136,12 +144,108 @@ describe("app 接線：durable pipeline job", () => {
     expect(fs.readFileSync(storePath, "utf-8")).not.toContain("dropped_on_restart");
   });
 
+  it("committed result sidecar 遺失時 startup fail closed，且不先改寫 job recovery", () => {
+    const root = tmpRoot();
+    const storePath = path.join(root, "pipeline-jobs.json");
+    const resultPath = `${storePath}.results`;
+    const jobs = new PipelineJobStore(storePath);
+    const { job } = jobs.ensureJobForSourceBundle({
+      sourceBundleId: "source-bundle-test-0001",
+      externalModelVersionId: "model-version-test-0001",
+      eventId: "ready-event-0001",
+      now: "2026-07-16T08:00:00.000Z",
+    });
+    const results = new PipelineResultStore(jobs, resultPath);
+    results.registerResult({
+      result_id: "result-0007",
+      attempt_id: "attempt-0007",
+      pipeline_job_id: job.pipeline_job_id,
+      source_bundle_id: job.source_bundle_id,
+      external_model_version_id: job.external_model_version_id,
+      attempt_number: 1,
+      result_prefix:
+        "minio://edge-test-01/lineage-results/model-version-test-0001/results/attempt-0007/",
+      result_manifest_ref:
+        "minio://edge-test-01/lineage-results/model-version-test-0001/results/attempt-0007/result-manifest.json?versionId=v-manifest-0007",
+      result_manifest_digest: "a".repeat(64),
+      attempt_outcome: "succeeded",
+      publication_state: "AVAILABLE",
+      completed_at: "2026-07-16T08:41:03.125Z",
+      correlation_id: "corr-lineage-0007",
+      now: "2026-07-16T08:41:07.500Z",
+    });
+    jobs.transition(
+      job.pipeline_job_id,
+      { job_state: "WAITING_CAPACITY" },
+      "2026-07-16T08:45:00.000Z",
+    );
+    const before = fs.readFileSync(storePath, "utf-8");
+    expect(jobs.getPipelineResultSnapshotCommitment()).not.toBeNull();
+    fs.unlinkSync(resultPath);
+
+    expect(() => makeApp(root, { pipelineJobStorePath: storePath })).toThrow(
+      PipelineResultStateUnavailableError,
+    );
+    expect(fs.readFileSync(storePath, "utf-8")).toBe(before);
+    const persisted = JSON.parse(before) as {
+      records: Array<{
+        job_state: string;
+        ready_event_ledger: Array<{ event_kind: string }>;
+      }>;
+      result_snapshot_commitment?: unknown;
+    };
+    expect(persisted.result_snapshot_commitment).toBeDefined();
+    expect(persisted.records[0].job_state).toBe("WAITING_CAPACITY");
+    expect(persisted.records[0].ready_event_ledger.at(-1)?.event_kind).not.toBe(
+      "coordinator_restart",
+    );
+  });
+
   it("legacy in-memory 佇列的 dropped_on_restart 語意不受影響（governed 走另一條路）", () => {
     const app = makeApp(tmpRoot());
     // governed store 與 legacy store 是兩張表、兩個去重空間；接線後 legacy 仍為空且獨立。
     expect(app.externalIfcReadyStore.list()).toHaveLength(0);
     expect(app.pipelineJobStore.list()).toHaveLength(0);
     expect(app.sourceBundleStore.list()).toHaveLength(0);
+  });
+
+  it("3.3/3.4 routes 已掛載但 external verifier 未接時 fail closed；3.2 job 文件不被 overlay", async () => {
+    const app = makeApp(tmpRoot());
+    const { job } = app.pipelineJobStore.ensureJobForSourceBundle({
+      sourceBundleId: "source-bundle-result-wiring-0001",
+      externalModelVersionId: "model-version-result-wiring-0001",
+      eventId: "ready-event-result-wiring-0001",
+      now: "2026-07-16T08:00:00.000Z",
+    });
+
+    const stableJob = await request(app.app).get(
+      `/api/lineage/pipeline-jobs/${job.pipeline_job_id}`,
+    );
+    expect(stableJob.status).toBe(200);
+    expect(stableJob.body.body.active_result_id).toBeNull();
+
+    const compare = await request(app.app)
+      .get(`/api/lineage/pipeline-jobs/${job.pipeline_job_id}/results/compare`)
+      .query({ left_result_id: "result-0007", right_result_id: "result-0008" })
+      .set("x-lineage-authorization-decision", "synthetic-decision");
+    expect(compare.status).toBe(503);
+    expect(compare.body.error).toBe("authorization_unavailable");
+
+    for (const surface of ["overview", "artifacts", "alignment", "attempts", "audit"]) {
+      const metadata = await request(app.app)
+        .get(`/api/lineage/pipeline-jobs/${job.pipeline_job_id}/${surface}`)
+        .set("x-lineage-authorization-decision", "synthetic-decision");
+      expect(metadata.status, surface).toBe(503);
+      expect(metadata.body).toEqual({ error: "authorization_unavailable" });
+    }
+
+    const download = await request(app.app)
+      .get(
+        `/api/lineage/pipeline-jobs/${job.pipeline_job_id}/results/result-0007/artifacts/usdc/download`,
+      )
+      .set("x-lineage-authorization-decision", "synthetic-decision");
+    expect(download.status).toBe(503);
+    expect(download.body).toEqual({ error: "authorization_unavailable" });
   });
 });
 

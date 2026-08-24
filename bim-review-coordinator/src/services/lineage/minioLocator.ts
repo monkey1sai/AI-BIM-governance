@@ -37,6 +37,13 @@ export interface ParsedRef {
   versionId: string;
 }
 
+/** Query-free immutable attempt prefix: `minio://authority/bucket/key-prefix/`. */
+export interface ParsedMinioPrefix {
+  authority: string;
+  bucket: string;
+  objectKeyPrefix: string;
+}
+
 /** `parseMinioRef` 的失敗形狀。三個 reason 都能直接映射成 integrity diagnostic code。 */
 export interface RefParseFailure {
   error: "malformed" | "presigned_locator_forbidden" | "unversioned_locator";
@@ -45,6 +52,9 @@ export interface RefParseFailure {
 /** L1 ref pattern 的逐字副本（authority / bucket / objectKey / versionId 四個 group）。 */
 const REF_PATTERN =
   /^minio:\/\/([A-Za-z0-9._-]+)\/([A-Za-z0-9._-]+)\/([^?#\s]+)\?versionId=([A-Za-z0-9._~%-]+)$/;
+
+const PREFIX_PATTERN =
+  /^minio:\/\/([A-Za-z0-9._-]+)\/([A-Za-z0-9._-]+)\/([^?#\s]+\/)$/;
 
 /** L1 ref 的 `not` 子句：presign 參數（大小寫皆擋）。 */
 const PRESIGN_PATTERN = /[?&][Xx]-[Aa][Mm][Zz]-/;
@@ -147,6 +157,55 @@ export function parseMinioRef(ref: string): ParsedRef | RefParseFailure {
     objectKey: matched[3],
     versionId: matched[4],
   };
+}
+
+/** Strict query-free, trailing-slash prefix parser used by result registration and downloads. */
+export function parseMinioPrefix(prefix: string): ParsedMinioPrefix | null {
+  if (typeof prefix !== "string" || prefix.length > 4_096 || hasLineBreak(prefix)) {
+    return null;
+  }
+  const matched = PREFIX_PATTERN.exec(prefix);
+  if (!matched) return null;
+  const objectKeyPrefix = matched[3];
+  const segments = objectKeyPrefix.slice(0, -1).split("/");
+  if (segments.some((segment) => segment.length === 0 || segment === "." || segment === "..")) {
+    return null;
+  }
+  return {
+    authority: matched[1],
+    bucket: matched[2],
+    objectKeyPrefix,
+  };
+}
+
+export function minioRefBelongsToPrefix(prefix: string, ref: string): boolean {
+  const parsedPrefix = parseMinioPrefix(prefix);
+  const parsedRef = parseMinioRef(ref);
+  return Boolean(
+    parsedPrefix &&
+      !isRefParseFailure(parsedRef) &&
+      parsedRef.authority === parsedPrefix.authority &&
+      parsedRef.bucket === parsedPrefix.bucket &&
+      parsedRef.objectKey.startsWith(parsedPrefix.objectKeyPrefix),
+  );
+}
+
+export function isAttemptScopedMinioResultLocation(input: {
+  resultPrefix: string;
+  attemptId: string;
+  manifestRef: string;
+}): boolean {
+  const parsedPrefix = parseMinioPrefix(input.resultPrefix);
+  if (!parsedPrefix) return false;
+  const segments = parsedPrefix.objectKeyPrefix.slice(0, -1).split("/");
+  const parsedManifest = parseMinioRef(input.manifestRef);
+  return (
+    segments.at(-1) === input.attemptId &&
+    !isRefParseFailure(parsedManifest) &&
+    parsedManifest.authority === parsedPrefix.authority &&
+    parsedManifest.bucket === parsedPrefix.bucket &&
+    parsedManifest.objectKey === `${parsedPrefix.objectKeyPrefix}result-manifest.json`
+  );
 }
 
 /** locator ref 的 authority（`minio://` 之後的第一段）；解析不出來時回空字串。 */
