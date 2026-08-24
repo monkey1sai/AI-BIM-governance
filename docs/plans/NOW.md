@@ -10,6 +10,7 @@
   "schema_version": "openspec-now-view/v1",
   "scope": "current",
   "changes": [
+    { "id": "autonomous-linux-delivery", "status": "active" },
     { "id": "a4-semantic-search-model-qa", "status": "deferred" },
     { "id": "add-single-gpu-session-ai-review-mvp", "status": "deferred" },
     { "id": "align-frontend-design-system-reference", "status": "deferred" },
@@ -35,6 +36,8 @@
 > **2026-08-19 owner 裁決（R-2026-08-19，lineage thaw）：** 使用者明示採納，`rvt-ifc-usdc-lineage` 由 deferred/frozen thaw 為 active（切片制，「禁止直接 apply」原則保留）。(1) tasks 1.1 的順序前置降級：`align-frontend-design-system-reference` archive 與 `migrate-console-to-hifi-design` closeout 不再擋 lineage coding，align successor 鏈（#649 起）與 lineage 平行進行；lineage 不得重建 align 目錄、不得重複宣告其 delta、不得動 `docs/plans/*.html` 唯一 authority 的衝突面禁令全數保留為 fail-closed 硬約束。(2) 切片：L1 = tasks 2.1–2.7（contract fixtures → `tests/contracts/`，不接 runtime、不動 legacy path）；L2 = tasks 1.2/1.3（compatibility matrix＋五個既有 spec 的 MODIFIED deltas＋strict validate）；**L2 完成前不得進行 3.x runtime 接線**（原 gate 保留）。(3) WIP 記帳：thaw 當日 non-deferred active 5→6，仍在 ≤6 內，未 defer 任何 change。(4) 既有 `/api/external/ifc-ready` 與 callback 路徑不變、cloud-lineage-publication 不得雙 authority、MySQL DDL 維持 REFERENCE ONLY。執行路由：coordinator（Fable）接手原 Codex 分支 `codex/openspec/rvt-ifc-usdc-lineage`。
 
 > **2026-08-20 owner 裁決（R2，終局處置限縮）：** (1) `cross-service-structured-log-baseline` 終局關帳並 archive（93/93；13.11 terminal deferred-this-change；`--skip-specs`，canonical spec 已 byte-identical）；不另開 evidence-only successor。(2) `a4-semantic-search-model-qa` 維持 deferred；ledger `blocked_by` 不再指向已 archived 的 `a4-console-convergence`。真實外部條件（credential rotation／host-native Kit lab／獨立 reviewer）寫在 `current_slice`，不進 `blocked_by`（該欄僅允許既有 change id）。(3) `align-frontend-design-system-reference` 明列 **frozen-historical**、status 維持 deferred；不新增 `abandoned` STATUS enum。(4) `introduce-viewer-app-integration-surface` thaw 僅「使用者明確口令升 active」；deferred/frozen 不因額度增加自動 thaw。
+
+> **2026-08-17 P0 例外揭露：** 使用者明確要求建立 `autonomous-linux-delivery` OpenSpec，依本檔優先序「使用者最新口令 > 本檔」覆寫上方「本週不做：新 OpenSpec」。此 change 是目前最高優先治理項目；non-deferred active 由 3 增為 4，仍在 ≤6 上限內，沒有暗中 defer 或取代其他 active change。本次只接受規格，不宣稱 GitHub machine authority、canonical Linux deployment或 live activation 已完成；live truth 維持 `HELD/ACTIVATION_UNATTESTED`。
 
 > **2026-07-29 例外揭露：** 使用者明確要求開立 `isolated-branch-stack-browser-e2e`（A4 tasks 4.x 所需的隔離 stack browser E2E 契約），依本檔優先序「使用者最新口令 > 本檔」採納，偏離上面「本週不做：新 OpenSpec」。non-deferred active 由 4 增為 5，仍在 ≤6 內。
 
