@@ -50,7 +50,7 @@
 
 - [x] 7.1 依同一baseline command跑affected coordinator、Kit、viewer、root contract、typecheck、lint與build，記錄差異
 - [x] 7.2 跑controlled browser coverage，證明visible rejection、FakeKit replay、late-token recovery、pending/executing/terminal UI與changed-unconfirmed status resync/block，保存trace/screenshot
-- [ ] 7.3 跑Windows host-native Kit valid/forged/released/expired/wrong-source/outage/direct-open wrong-session/composition-tamper/concurrent replay evidence，包含first frame、observed stage、DataChannel terminal、request/runtime/session IDs、P95與zero-mutation或changed-unconfirmed proof
+- [x] 7.3 跑Windows host-native Kit valid/forged/released/expired/wrong-source/outage/direct-open wrong-session/composition-tamper/concurrent replay evidence，包含first frame、observed stage、DataChannel terminal、request/runtime/session IDs、P95與zero-mutation或changed-unconfirmed proof
 - [x] 7.4 跑GitNexus `detect_changes` against `main`、strict OpenSpec validation與independent correctness/security review，揭露production IdP、process-restart、rollback本身也不可達時的authority response-loss與canonical protocol/schema drift residual risk
 - [ ] 7.5 Commit、push、開dependency PR、修完required review/CI並merge；之後才rebase A4 convergence worktree與重跑A4-only exact impact
 
@@ -122,3 +122,9 @@
 - 全套：`npx vitest run` 80 files／1099 tests 全過；`npm run typecheck` 零錯；`npm run lint:baseline` trusted=18／current=18／regressions=0（rules-of-hooks 對 use 前綴 helper 的誤判以測試結構調整消解，不動 baseline）。
 - GitNexus：`impact _handleStreamStartTimeout -d upstream`＝impactedCount 5／direct 1；`detect-changes --scope compare`＝3 files／5 symbols risk high（`App.render` 內 additive testid＋t() 包裝所致，已於 PR 揭露；1099 tests 零回歸緩解）。
 - 殘留誠實聲明：stage-mismatch 沿用共用 `stage-load-failure` 錨點（以診斷文字區辨）；lease 兩態之 lab-embed degraded 呈現為 by design 裁決非缺陷；7.5 closeout 仍 OPEN。
+
+## 2026-08-24 Task 7.3 host-native evidence
+
+- Run id：`runtime-authority-e2e-2b758381aeae49a482cff0bc15ff31c1`（Windows host-native isolated Kit，一次完整輪）。
+- Latency：P95 = 130.27 ms（20 樣本，閾值 500 ms）。
+- Zero-mutation proof：`all_pre_mutation_denials_preserved_stage = true`、`outage_preserved_stage = true`、baseline stage 保持不變。

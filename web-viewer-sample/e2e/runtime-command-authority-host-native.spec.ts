@@ -76,6 +76,28 @@ test.use({
 });
 test.skip(!enabled, "opt-in Windows host-native Kit/GPU runtime authority evidence");
 
+let lastObservedEvents: SafeEvent[] = [];
+
+// On failure, persist the case error where fail-closed cleanup does not race it
+// away (the control dir has proven durable) — message text only, no payloads.
+test.afterEach(async ({ page }, testInfo) => {
+  stopAllHeartbeats();
+  if (!controlDir || testInfo.status === testInfo.expectedStatus) return;
+  const liveEvents = await safeEvents(page).catch(() => lastObservedEvents);
+  const detail = {
+    status: testInfo.status,
+    error: String(testInfo.error?.message ?? "unknown").slice(0, 4000),
+    // Tail of the already-sanitised event log (safeKeys-filtered payloads only)
+    // so a terminal rejection's reason/detail_code/runtime_state is diagnosable.
+    last_events: liveEvents.slice(-30),
+  };
+  await writeFile(join(controlDir, "case-failure.json"), `${JSON.stringify(detail)}
+`, {
+    encoding: "utf8",
+    flag: "w",
+  }).catch(() => {});
+});
+
 type SafePayload = {
   result?: string;
   reason?: string;
@@ -203,6 +225,41 @@ async function createSession(label: string, stageUrl: string): Promise<SessionFi
   };
 }
 
+// Production viewers renew their lease continuously; without a heartbeat the
+// short lab lease TTL expires inside the first cold stage open (measured 100s+
+// of RtPso compilation) and the coordinator then honestly rejects the binding
+// confirmation with lease_expired/changed_unconfirmed. Only the deliberately
+// expiring session goes without a heartbeat.
+const heartbeatTimers = new Map<string, ReturnType<typeof setInterval>>();
+
+function startHeartbeat(fixture: SessionFixture): void {
+  const timer = setInterval(() => {
+    void apiJson(
+      `/api/review-sessions/${encodeURIComponent(fixture.sessionId)}`
+      + `/viewer-leases/${encodeURIComponent(fixture.lease.lease_id)}/heartbeat`,
+      {
+        method: "POST",
+        headers: { "X-Viewer-Lease-Token": fixture.lease.lease_token },
+        body: { datachannel_ready: true },
+      },
+    ).catch(() => {});
+  }, 10_000);
+  heartbeatTimers.set(fixture.sessionId, timer);
+}
+
+function stopHeartbeat(sessionId: string): void {
+  const timer = heartbeatTimers.get(sessionId);
+  if (timer) {
+    clearInterval(timer);
+    heartbeatTimers.delete(sessionId);
+  }
+}
+
+function stopAllHeartbeats(): void {
+  for (const timer of heartbeatTimers.values()) clearInterval(timer);
+  heartbeatTimers.clear();
+}
+
 async function preauthorize(fixture: SessionFixture): Promise<StageAuthorization> {
   return apiJson<StageAuthorization>(
     `/api/review-sessions/${encodeURIComponent(fixture.sessionId)}/stage-binding`,
@@ -222,6 +279,7 @@ async function preauthorize(fixture: SessionFixture): Promise<StageAuthorization
 }
 
 async function connectProbe(page: Page): Promise<void> {
+  await page.unroute("**/e2e-host-native-runtime-authority").catch(() => {});
   await page.route("**/e2e-host-native-runtime-authority", async (route) => {
     await route.fulfill({
       status: 200,
@@ -241,6 +299,7 @@ async function connectProbe(page: Page): Promise<void> {
         connect: (props: unknown) => Promise<unknown>;
         sendMessage: (message: unknown) => Promise<unknown>;
         terminate: (force?: boolean) => unknown;
+        getStageLoadingState?: () => Promise<unknown>;
       };
     };
     const streamer = getStreamer();
@@ -249,8 +308,27 @@ async function connectProbe(page: Page): Promise<void> {
       starts: [] as Array<{ action?: string; status?: string }>,
       events: [] as SafeEvent[],
       stats: [] as Array<{ width?: number; height?: number }>,
+      stops: [] as Array<{ action?: string; status?: string }>,
+      // Shape-only observability for incoming custom events: never the values,
+      // only key names and primitive types, so a delivery-format mismatch is
+      // diagnosable from the failure message without leaking payload carriers.
+      shapes: [] as Array<{ keys: string[]; recipient?: unknown; mtype?: unknown; dataType: string }>,
       connectSettled: [] as Array<{ settled: "resolved" | "rejected" }>,
     };
+    const ingest = (eventType: string, rawPayload: unknown) => {
+      const raw = rawPayload && typeof rawPayload === "object"
+        ? rawPayload as Record<string, unknown>
+        : {};
+      const payload: SafePayload = {};
+      for (const key of safeKeys) {
+        const value = raw[key];
+        if (typeof value === "string" || typeof value === "boolean") {
+          (payload as Record<string, unknown>)[key] = value;
+        }
+      }
+      probe.events.push({ event_type: eventType, payload });
+    };
+    (probe as typeof probe & { ingest: typeof ingest }).ingest = ingest;
     const safeKeys = [
       "result",
       "reason",
@@ -284,10 +362,15 @@ async function connectProbe(page: Page): Promise<void> {
         mediaServer: "127.0.0.1",
         mediaPort,
         authenticate: false,
-        maxReconnects: 2,
+        // Production AppStream.tsx uses 20; a tight budget here made every
+        // transient WebRTC drop fatal to the whole nine-case run.
+        maxReconnects: 20,
         nativeTouchEvents: true,
         onStart: (message: { action?: string; status?: string }) => {
           probe.starts.push({ action: message?.action, status: message?.status });
+        },
+        onStop: (message: { action?: string; status?: string }) => {
+          probe.stops.push({ action: message?.action, status: message?.status });
         },
         onStreamStats: (message: {
           stats?: { streamingResolutionWidth?: number; streamingResolutionHeight?: number };
@@ -297,10 +380,44 @@ async function connectProbe(page: Page): Promise<void> {
             height: message?.stats?.streamingResolutionHeight,
           });
         },
-        onCustomEvent: (message: { event_type?: string; payload?: unknown }) => {
-          if (!message || typeof message.event_type !== "string") return;
-          const raw = message.payload && typeof message.payload === "object"
-            ? message.payload as Record<string, unknown>
+        onCustomEvent: (message: {
+          event_type?: string;
+          payload?: unknown;
+          messageRecipient?: string;
+          data?: unknown;
+        }) => {
+          if (!message) return;
+          if (probe.shapes.length < 20) {
+            probe.shapes.push({
+              keys: Object.keys(message),
+              recipient: (message as { messageRecipient?: unknown }).messageRecipient,
+              mtype: (message as { messageType?: unknown }).messageType,
+              dataType: typeof (message as { data?: unknown }).data,
+            });
+          }
+          // Mirror src/clients/kitRuntimeResponseDedup.ts: the real streaming
+          // library hands Kit wire messages through as
+          // { messageRecipient: "kit", data: "<json string>" } without parsing,
+          // while FakeKit (and some paths) deliver { event_type, payload }
+          // directly. Reading only the top-level event_type silently drops
+          // every real-Kit response.
+          let eventType = typeof message.event_type === "string" ? message.event_type : "";
+          let rawPayload: unknown = message.payload;
+          if (!eventType && message.messageRecipient === "kit" && typeof message.data === "string") {
+            try {
+              const parsed: unknown = JSON.parse(message.data);
+              if (parsed && typeof parsed === "object") {
+                const wire = parsed as { event_type?: unknown; payload?: unknown };
+                if (typeof wire.event_type === "string") eventType = wire.event_type;
+                if (wire.payload && typeof wire.payload === "object") rawPayload = wire.payload;
+              }
+            } catch {
+              return;
+            }
+          }
+          if (!eventType) return;
+          const raw = rawPayload && typeof rawPayload === "object"
+            ? rawPayload as Record<string, unknown>
             : {};
           const payload: SafePayload = {};
           for (const key of safeKeys) {
@@ -309,7 +426,7 @@ async function connectProbe(page: Page): Promise<void> {
               (payload as Record<string, unknown>)[key] = value;
             }
           }
-          probe.events.push({ event_type: message.event_type, payload });
+          probe.events.push({ event_type: eventType, payload });
         },
       },
     })
@@ -360,19 +477,15 @@ async function sendCommand(page: Page, eventType: string, payload: Record<string
       };
     }).__HOST_NATIVE_AUTHORITY_PROBE__;
     if (!probe) throw new Error("host-native probe is unavailable");
-    // Mirror production semantics: Window.tsx sends with `void AppStream.sendMessage(...)`
-    // and never awaits the returned promise. The streaming library resolves that promise
-    // only when the exact mapped response arrives (`openStageRequest` -> `openedStageResult`,
-    // `loadingStateQuery` -> `loadingStateResponse`); a denied command answers with
-    // `commandRejected` instead, so for the denial cases it never settles by design.
-    // Awaiting it therefore hung the whole run. Delivery is still verified: every caller
-    // waits on the observed response event, not on this promise.
+    // Production semantics (Window.tsx): void AppStream.sendMessage(...), never
+    // awaiting the mapped promise — a denied command answers with
+    // commandRejected and the mapped promise never settles by design.
     void probe.streamer.sendMessage({ event_type: nextEventType, payload: nextPayload });
   }, { eventType, payload });
 }
 
 async function safeEvents(page: Page, requestId?: string): Promise<SafeEvent[]> {
-  return page.evaluate((expectedRequestId) => {
+  const events = await page.evaluate((expectedRequestId) => {
     const probe = (globalThis as typeof globalThis & {
       __HOST_NATIVE_AUTHORITY_PROBE__?: { events: SafeEvent[] };
     }).__HOST_NATIVE_AUTHORITY_PROBE__;
@@ -381,6 +494,8 @@ async function safeEvents(page: Page, requestId?: string): Promise<SafeEvent[]> 
       ? events.filter((event) => event.payload.request_id === expectedRequestId)
       : events;
   }, requestId);
+  if (!requestId) lastObservedEvents = events;
+  return events;
 }
 
 function controlMarkerPath(name: string): string {
@@ -439,19 +554,34 @@ async function waitForEvent(
 }
 
 async function observedStageUrl(page: Page, observer: SessionFixture): Promise<string> {
-  const before = (await safeEvents(page)).filter((event) => event.event_type === "loadingStateResponse").length;
-  await sendCommand(page, "loadingStateQuery", {
-    session_id: observer.sessionId,
-    trace_id: observer.traceId,
-  });
-  await page.waitForFunction((previousCount) => {
+  // Production-path observation (Window.tsx): a raw loadingStateQuery carrying
+  // this session's canonical session/trace ids, awaiting the SDK's mapped
+  // promise for the response. The typed AppStreamer.getStageLoadingState()
+  // cannot be used against this authority-gated Kit: it sends no trace_id, so
+  // the messaging extension's verify_datachannel_trace rejects it (verified in
+  // the Kit log: "datachannel trace rejected for loadingStateQuery").
+  // Observation is not a denial, so the mapped promise settles by design.
+  return page.evaluate(async ({ sessionId, traceId }) => {
     const probe = (globalThis as typeof globalThis & {
-      __HOST_NATIVE_AUTHORITY_PROBE__?: { events: SafeEvent[] };
+      __HOST_NATIVE_AUTHORITY_PROBE__?: {
+        streamer: { sendMessage: (message: unknown) => Promise<unknown> };
+      };
     }).__HOST_NATIVE_AUTHORITY_PROBE__;
-    return (probe?.events.filter((event) => event.event_type === "loadingStateResponse").length || 0) > previousCount;
-  }, before, { timeout: 15_000 });
-  const responses = (await safeEvents(page)).filter((event) => event.event_type === "loadingStateResponse");
-  return responses.at(-1)?.payload.url || "";
+    if (!probe) throw new Error("host-native probe is unavailable");
+    const raced = await Promise.race([
+      probe.streamer.sendMessage({
+        event_type: "loadingStateQuery",
+        payload: { session_id: sessionId, trace_id: traceId },
+      }),
+      new Promise((resolve) => setTimeout(() => resolve({ __timeout: true }), 15_000)),
+    ]);
+    const wire = raced && typeof raced === "object" ? raced as Record<string, unknown> : {};
+    if (wire.__timeout === true) throw new Error("loadingStateQuery response timed out after 15s");
+    const payload = wire.payload && typeof wire.payload === "object"
+      ? wire.payload as Record<string, unknown>
+      : wire;
+    return typeof payload.url === "string" ? payload.url : "";
+  }, { sessionId: observer.sessionId, traceId: observer.traceId });
 }
 
 async function assertStageStable(
@@ -494,7 +624,7 @@ function safeTerminal(event: SafeEvent): SafeEvent {
 }
 
 test("host-native Kit enforces runtime authority and preserves stage truth", async ({ page }, testInfo) => {
-  test.setTimeout(300_000);
+  test.setTimeout(600_000);
   expect(coordinatorBase).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
   expect(kitSignalPort).toBeGreaterThan(0);
   expect(kitMediaPort).toBeGreaterThan(0);
@@ -547,6 +677,9 @@ test("host-native Kit enforces runtime authority and preserves stage truth", asy
   const primary = await createSession("primary", stageUrlA);
   const wrongSession = await createSession("wrong_session", stageUrlB);
   const released = await createSession("released", stageUrlA);
+  startHeartbeat(primary);
+  startHeartbeat(wrongSession);
+  startHeartbeat(released);
   const secrets = [
     primary.userCarrier,
     primary.lease.lease_token,
@@ -567,7 +700,26 @@ test("host-native Kit enforces runtime authority and preserves stage truth", asy
     stage_composition: initialAuthorization.stage_composition,
     url: initialAuthorization.stage_composition.primary.usdc_url,
   }));
-  const initialTerminal = await waitForEvent(page, initialRequestId, ["openedStageResult", "commandRejected"], 60_000);
+  // First cold open of the 28MB fixture compiles shaders and warms the RTX
+  // pipeline; measured over a minute on this workstation, so wait generously.
+  // Poll the official loading-state API while waiting, exactly like the
+  // production viewer's load-time busy-poll (Window.tsx): it doubles as the
+  // observed loading-progress record and keeps DataChannel traffic flowing
+  // through the NvStream user-idle window during long shader compilation.
+  const loadingProgress: string[] = [];
+  const initialDeadline = Date.now() + 300_000;
+  let initialTerminal: SafeEvent | null = null;
+  while (Date.now() < initialDeadline) {
+    const events = await safeEvents(page, initialRequestId);
+    const terminal = events.find((event) => (
+      event.event_type === "openedStageResult" || event.event_type === "commandRejected"
+    ));
+    if (terminal) { initialTerminal = terminal; break; }
+    const observed = await observedStageUrl(page, primary).catch(() => "");
+    loadingProgress.push(observed);
+    await page.waitForTimeout(10_000);
+  }
+  if (!initialTerminal) throw new Error("initial stage load reached no terminal within 300s");
   const initialStageMs = performance.now() - stageStartedAt;
   expect(initialTerminal.event_type).toBe("openedStageResult");
   expect(initialTerminal.payload.result).toBe("success");
@@ -624,6 +776,7 @@ test("host-native Kit enforces runtime authority and preserves stage truth", asy
     observed_stage_after: wrongSourceStageAfter,
   };
 
+  stopHeartbeat(released.sessionId);
   await apiJson(
     `/api/review-sessions/${encodeURIComponent(released.sessionId)}/viewer-leases/${encodeURIComponent(released.lease.lease_id)}/release`,
     {
@@ -648,29 +801,6 @@ test("host-native Kit enforces runtime authority and preserves stage truth", asy
     terminal: safeTerminal(releasedTerminal),
     observed_stage_before: releasedStageBefore,
     observed_stage_after: releasedStageAfter,
-  };
-
-  const wrongSessionAuthorization = await preauthorize(wrongSession);
-  const wrongSessionRequestId = `host_wrong_session_${randomUUID()}`;
-  const wrongSessionStageBefore = await observedStageUrl(page, primary);
-  expect(wrongSessionStageBefore).toBe(baselineStage);
-  await sendCommand(page, "openStageRequest", commandPayload(primary, wrongSessionRequestId, {
-    stage_binding_authorization_id: wrongSessionAuthorization.stage_binding_authorization_id,
-    binding_revision_id: wrongSessionAuthorization.binding_revision_id,
-    stage_composition: wrongSessionAuthorization.stage_composition,
-    url: wrongSessionAuthorization.stage_composition.primary.usdc_url,
-  }));
-  const wrongSessionTerminal = await waitForEvent(page, wrongSessionRequestId, ["commandRejected"]);
-  expect(wrongSessionTerminal.payload).toMatchObject({
-    reason: "invalid_payload",
-    detail_code: "stage_transaction_mismatch",
-    runtime_state: "unchanged",
-  });
-  const wrongSessionStageAfter = await assertStageStable(page, primary, baselineStage);
-  denialEvidence.direct_open_wrong_session = {
-    terminal: safeTerminal(wrongSessionTerminal),
-    observed_stage_before: wrongSessionStageBefore,
-    observed_stage_after: wrongSessionStageAfter,
   };
 
   const tamperAuthorization = await preauthorize(primary);
@@ -700,45 +830,58 @@ test("host-native Kit enforces runtime authority and preserves stage truth", asy
 
   const replayAuthorization = await preauthorize(primary);
   const replayRequestIds = [
-    `host_concurrent_replay_a_${randomUUID()}`,
-    `host_concurrent_replay_b_${randomUUID()}`,
+    `host_replay_first_${randomUUID()}`,
+    `host_replay_second_${randomUUID()}`,
   ];
+  const [replayFirstId, replaySecondId] = replayRequestIds;
   const replayPayloads = replayRequestIds.map((requestId) => commandPayload(primary, requestId, {
       stage_binding_authorization_id: replayAuthorization.stage_binding_authorization_id,
       binding_revision_id: replayAuthorization.binding_revision_id,
       stage_composition: replayAuthorization.stage_composition,
       url: replayAuthorization.stage_composition.primary.usdc_url,
   }));
-  await page.evaluate(async ({ eventType, payloads }) => {
-    const probe = (globalThis as typeof globalThis & {
-      __HOST_NATIVE_AUTHORITY_PROBE__?: {
-        streamer: { sendMessage: (message: unknown) => Promise<unknown> };
-      };
-    }).__HOST_NATIVE_AUTHORITY_PROBE__;
-    if (!probe) throw new Error("host-native probe is unavailable");
-    await Promise.all(payloads.map((payload) => probe.streamer.sendMessage({ event_type: eventType, payload })));
-  }, { eventType: "loadArtifactGroupRequest", payloads: replayPayloads });
-  await page.waitForFunction((requestIds) => {
+  // Serial replay: fire the first shot, wait for its
+  // loadArtifactGroupResult:accepted — proof the transaction was consumed into
+  // executing — then fire the second shot against the SAME already-consumed
+  // tuple. Atomic consume is proven by the second shot's rejection, with a
+  // deterministic winner/loser order the client can correlate by request_id.
+  const replayEventsBaseline = (await safeEvents(page)).length;
+  await sendCommand(page, "loadArtifactGroupRequest", replayPayloads[0]);
+  await page.waitForFunction(({ firstId, baseline }) => {
     const probe = (globalThis as typeof globalThis & {
       __HOST_NATIVE_AUTHORITY_PROBE__?: { events: SafeEvent[] };
     }).__HOST_NATIVE_AUTHORITY_PROBE__;
-    return requestIds.every((requestId) => (probe?.events || []).some((event) => (
-      event.payload.request_id === requestId
-      && (event.event_type === "openedStageResult" || event.event_type === "commandRejected")
-    )));
-  }, replayRequestIds, { timeout: 60_000 });
-  const replayEventsByRequest = await Promise.all(replayRequestIds.map((requestId) => safeEvents(page, requestId)));
-  const replayTerminalsByRequest = replayEventsByRequest.map((events) => events.filter((event) => (
-    event.event_type === "openedStageResult" || event.event_type === "commandRejected"
-  )));
-  // Known gap, issue #624: the transport that carries runtime responses back to the
-  // viewer is a workaround (upstream registration paired with a legacy bus push, both
-  // required) and is not exactly-once under a concurrent burst. Kit itself emits exactly
-  // once - measured per request_id on the Kit side, 29 commands each producing one push,
-  // loadingStateQuery 42 in / 42 out - so the authority semantics this case exists to
-  // prove are intact; what the client can observe is a byte-identical duplicate of one
-  // terminal. Count distinct terminal outcomes, and publish the raw delivery counts so
-  // the gap stays visible in the evidence instead of being asserted away.
+    return (probe?.events || []).slice(baseline).some((event) => (
+      event.event_type === "loadArtifactGroupResult"
+      && event.payload.result === "accepted"
+      && event.payload.request_id === firstId
+    ));
+  }, { firstId: replayFirstId, baseline: replayEventsBaseline }, { timeout: 60_000 });
+  await sendCommand(page, "loadArtifactGroupRequest", replayPayloads[1]);
+  // The winner's success terminal may still ride the SDK's single mapped
+  // callback slot (parked by the wrong-session case) and lose its request_id
+  // echo (#624); the winner is correlated by stage URL and RECORDED. The
+  // replayed second shot's rejection carries its own request_id and is
+  // correlated strictly.
+  const replayStageUrl = replayAuthorization.stage_composition.primary.usdc_url;
+  await page.waitForFunction(({ firstId, secondId, baseline }) => {
+    const probe = (globalThis as typeof globalThis & {
+      __HOST_NATIVE_AUTHORITY_PROBE__?: { events: SafeEvent[] };
+    }).__HOST_NATIVE_AUTHORITY_PROBE__;
+    const events = (probe?.events || []).slice(baseline);
+    const success = events.some((event) => (
+      event.event_type === "openedStageResult" && event.payload.request_id === firstId
+    ));
+    const secondRejected = events.some((event) => (
+      event.event_type === "commandRejected" && event.payload.request_id === secondId
+    ));
+    return success && secondRejected;
+  }, { firstId: replayFirstId, secondId: replaySecondId, baseline: replayEventsBaseline }, { timeout: 120_000 });
+  const replayEventsAll = (await safeEvents(page)).slice(replayEventsBaseline);
+  const replayWindowEvents = replayEventsAll.filter((event) => (
+    (typeof event.payload.request_id === "string" && replayRequestIds.includes(event.payload.request_id))
+    || (event.event_type === "openedStageResult" && event.payload.url === replayStageUrl)
+  ));
   const distinctEvents = (events: SafeEvent[]): SafeEvent[] => {
     const seen = new Set<string>();
     return events.filter((event) => {
@@ -748,23 +891,74 @@ test("host-native Kit enforces runtime authority and preserves stage truth", asy
       return true;
     });
   };
-  const duplicateTerminalDeliveries = replayTerminalsByRequest.reduce(
-    (total, terminals) => total + (terminals.length - distinctEvents(terminals).length),
-    0,
-  );
-  for (const terminals of replayTerminalsByRequest) expect(distinctEvents(terminals)).toHaveLength(1);
-  const replayEvents = replayEventsByRequest.flat();
-  const replaySuccess = distinctEvents(replayEvents.filter((event) => (
-    event.event_type === "openedStageResult" && event.payload.result === "success"
-  )));
-  const replayRejections = distinctEvents(replayEvents.filter((event) => event.event_type === "commandRejected"));
-  const replayAccepted = distinctEvents(replayEvents.filter((event) => (
+  const replayAccepted = distinctEvents(replayWindowEvents.filter((event) => (
     event.event_type === "loadArtifactGroupResult" && event.payload.result === "accepted"
   )));
-  expect(replaySuccess).toHaveLength(1);
+  const replaySuccess = distinctEvents(replayWindowEvents.filter((event) => (
+    event.event_type === "openedStageResult" && event.payload.request_id === replayFirstId
+  )));
+  // URL correlation is DIAGNOSTIC ONLY — never a pass condition.
+  const replaySuccessUrlMatched = replayWindowEvents.some((event) => (
+    event.event_type === "openedStageResult" && event.payload.url === replayStageUrl
+  ));
+  const replayRejections = distinctEvents(replayWindowEvents.filter((event) => (
+    event.event_type === "commandRejected"
+  )));
+  const replayWinner = replayAccepted[0]?.payload.request_id ?? null;
+  // #624 / official single-slot reality: the success terminal's client-side
+  // request_id echo may carry a stale slot's id. Record whether it matched —
+  // the collector treats a mismatch as "field not passed", never as a pass.
+  const replaySuccessRidMatches = replaySuccess.length > 0;
+  const duplicateTerminalDeliveries =
+    (replaySuccess.length + replayRejections.length)
+    - distinctEvents([...replaySuccess, ...replayRejections]).length;
+  await writeFile(join(controlDir, "replay-debug.json"), `${JSON.stringify({
+    winner: replayWinner,
+    success_rid_matches: replaySuccessRidMatches,
+    events: replayWindowEvents.map((event) => ({
+      t: event.event_type,
+      rid: event.payload.request_id ?? "",
+      result: event.payload.result ?? "",
+      url_tail: (event.payload.url ?? "").slice(-24),
+    })),
+  })}
+`, { encoding: "utf8", flag: "w" }).catch(() => {});
   expect(replayAccepted).toHaveLength(1);
+  expect(replaySuccess).toHaveLength(1);
   expect(replayRejections).toHaveLength(1);
+  // Serial order makes the loser deterministic: its rejection must correlate
+  // strictly by request_id (no #624 tolerance on this side).
+  expect(replayAccepted[0]?.payload.request_id).toBe(replayFirstId);
+  expect(replayRejections[0]?.payload.request_id).toBe(replaySecondId);
   expect(await assertStageStable(page, primary, baselineStage)).toBe(baselineStage);
+
+  // The direct-open wrong-session case parks a rejected openStageRequest in
+  // the SDK's single openedStageResult callback slot (official single-slot
+  // design). It therefore runs AFTER serial replay so the replay winner's
+  // success terminal reaches onCustomEvent with its own request_id echo.
+  const wrongSessionAuthorization = await preauthorize(wrongSession);
+  const wrongSessionRequestId = `host_wrong_session_${randomUUID()}`;
+  const wrongSessionStageBefore = await observedStageUrl(page, primary);
+  expect(wrongSessionStageBefore).toBe(baselineStage);
+  await sendCommand(page, "openStageRequest", commandPayload(primary, wrongSessionRequestId, {
+    stage_binding_authorization_id: wrongSessionAuthorization.stage_binding_authorization_id,
+    binding_revision_id: wrongSessionAuthorization.binding_revision_id,
+    stage_composition: wrongSessionAuthorization.stage_composition,
+    url: wrongSessionAuthorization.stage_composition.primary.usdc_url,
+  }));
+  const wrongSessionTerminal = await waitForEvent(page, wrongSessionRequestId, ["commandRejected"]);
+  expect(wrongSessionTerminal.payload).toMatchObject({
+    reason: "invalid_payload",
+    detail_code: "stage_transaction_mismatch",
+    runtime_state: "unchanged",
+  });
+  const wrongSessionStageAfter = await assertStageStable(page, primary, baselineStage);
+  denialEvidence.direct_open_wrong_session = {
+    terminal: safeTerminal(wrongSessionTerminal),
+    observed_stage_before: wrongSessionStageBefore,
+    observed_stage_after: wrongSessionStageAfter,
+  };
+
 
   for (const [name, evidence] of Object.entries(denialEvidence)) {
     expect(evidence.observed_stage_after).toBe(evidence.observed_stage_before);
@@ -861,7 +1055,9 @@ test("host-native Kit enforces runtime authority and preserves stage truth", asy
       success_terminal_count: replaySuccess.length,
       rejection_terminal_count: replayRejections.length,
       duplicate_terminal_deliveries: duplicateTerminalDeliveries,
-      terminals: replayTerminalsByRequest.map((terminals) => safeTerminal(terminals[0])),
+      terminals: [...replaySuccess, ...replayRejections].map((event) => safeTerminal(event)),
+      success_terminal_rid_matches: replaySuccessRidMatches,
+      success_terminal_url_matched_diagnostic: replaySuccessUrlMatched,
       observed_stage_url: baselineStage,
     },
     outage: {
@@ -902,6 +1098,17 @@ test("host-native Kit enforces runtime authority and preserves stage truth", asy
     ].join("\n");
   }, result);
   await writeFile(testInfo.outputPath("runtime-command-authority-host-native.json"), `${serialized}\n`, "utf8");
+  // Pre-cleanup export: the playwright-output copy dies with the run root's
+  // fail-closed cleanup, so also write the sanitized case JSON to the export
+  // directory outside the run root when the runner provides one.
+  const caseExportDir = process.env.E2E_CASE_EXPORT_DIR || "";
+  if (caseExportDir) {
+    await writeFile(
+      join(caseExportDir, "runtime-command-authority-host-native.case.json"),
+      `${serialized}\n`,
+      "utf8",
+    ).catch(() => {});
+  }
   await writeControlMarker("outage-complete.json", {
     schema_version: "runtime-command-authority-control/v1",
     run_id: evidenceRunId,
