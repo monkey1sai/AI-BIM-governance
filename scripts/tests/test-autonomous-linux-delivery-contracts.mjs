@@ -63,7 +63,9 @@ const classifierInput = (overrides = {}) => ({
   ...overrides,
 })
 
-const classify = (input) => classifyPullRequest(canonicalJson(input))
+const approveLease = () => true
+const classify = (input, options = { verifyLease: approveLease }) =>
+  classifyPullRequest(canonicalJson(input), options)
 
 const packetFixture = () => {
   const changedPaths = [
@@ -340,6 +342,8 @@ test('classifier rejects ambiguity, activation-only misuse, missing lease, and h
     lineage: lineage({ activation_plan_id: 'activation:plan-1' }),
   })))
   expectCode('classification_untrusted', () => classify(classifierInput({ signed_lease_sha256: null })))
+  expectCode('classification_authority_unavailable', () => classify(classifierInput(), {}))
+  expectCode('classification_untrusted', () => classify(classifierInput(), { verifyLease: () => false }))
   const humanFallback = classifierInput()
   humanFallback.requested_class = 'human_critical'
   expectCode('invalid_shape', () => classify(humanFallback))
@@ -391,6 +395,10 @@ test('packet parser fails closed on unknown fields, path ambiguity, drift, budge
   const wrongHead = packetFixture()
   wrongHead.required_check_sources[0].head_oid = 'd'.repeat(40)
   expectCode('invalid_exact_tuple', () => parseAdjudicationPacket(canonicalJson(wrongHead)))
+
+  const noRequiredChecks = packetFixture()
+  noRequiredChecks.required_check_sources = []
+  expectCode('required_check_not_passing', () => parseAdjudicationPacket(canonicalJson(noRequiredChecks)))
 
   const overBudget = packetFixture()
   overBudget.budgets.diff_bytes = overBudget.budgets.diff_byte_limit + 1

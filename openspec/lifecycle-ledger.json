@@ -472,9 +472,9 @@
       "owner": "repository-maintainer",
       "current_slice": "P0：完成 autonomous exact-head machine merge、canonical Linux delivery 與 activation contracts",
       "blocked_by": [],
-      "last_verified": "2026-08-17T04:43:44Z",
+      "last_verified": "2026-08-24T06:05:00Z",
       "task_ledger": {
-        "completed": 0,
+        "completed": 5,
         "total": 51
       },
       "evidence_refs": [
@@ -482,6 +482,7 @@
         "openspec/changes/autonomous-linux-delivery/tasks.md"
       ],
       "subject_commit": "f9e7c415b3c71a8b5ead1ba25f090fcaf45430c4",
+      "subject_binding": "introduction",
       "archive_debt": null
     },
     {

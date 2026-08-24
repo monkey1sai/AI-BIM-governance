@@ -48,7 +48,7 @@ Workflow SHALL在per-repository single-flight delivery lock內執行，並以del
 
 測試部署區重建流程 SHALL 由attested transport bundle內的 `scripts\dev\rebuild-test-deploy.ps1 -Build -InventoryPath '<repo-external target.local.json>'` 觸發。流程 SHALL 從registry與owner-controlled repo-external inventory唯一解析 `role=canonical_test_deploy` 的Linux target及其fixed owner-controlled deployment checkout，並在任何reset／rebuild前freshly fetch `origin` with `+refs/heads/main:refs/remotes/origin/main`。Credential-bearing broker SHALL只建立target-scoped opaque lease；candidate runtime不得取得raw inventory、SSH material或broker environment。Transport SHALL NOT上傳、下載、覆寫或在output揭露private inventory。若target缺失／歧義、不是Linux、ownership無法證明、fresh commit不完全等於expected merge commit或fetch失敗，流程 MUST fail fast並回報sanitized blocker；流程 SHALL NOT使用ancestor包含、stale `origin/main`、`local-windows`、目前worktree、任意替代路徑或sub-repo啟動命令。
 
-#### Scenario: fetch成功後canonical Linux deployment checkout收斂到origin/main
+#### Scenario: fetch 成功後 deployment checkout reset 到 origin/main
 
 - **GIVEN**repo-external inventory解析出唯一canonical Linux target與owner-controlled deployment checkout
 - **WHEN**操作者或trusted dispatcher要求測試部署區重建且 `origin/main` fetch成功
@@ -57,7 +57,7 @@ Workflow SHALL在per-repository single-flight delivery lock內執行，並以del
 - **AND**流程 SHALL證明fresh origin/main commit完全等於expected delivery merge commit
 - **AND**流程 SHALL NOT從目前development worktree直接啟動服務
 
-#### Scenario: target解析或fetch失敗時停止且不部署stale code
+#### Scenario: fetch 失敗時停止且不部署 stale code
 
 - **WHEN**canonical target缺失／歧義、target不是Linux、checkout ownership不可證明，或 `origin/main` fetch因network、auth或remote error失敗
 - **THEN**流程 MUST停止並回報sanitized blocker
@@ -70,7 +70,7 @@ Workflow SHALL在per-repository single-flight delivery lock內執行，並以del
 
 Canonical Linux deployment checkout reset／clean後，流程 SHALL移除所有層級 `AGENTS.md`／`CLAUDE.md`，以及root `.codex/`、`.agents/`、`.agent/`、`.claude/`、`.cursor/`、`.windsurf/`、`.github/skills/`、`.github/prompts/`、`docs/`、`openspec/`、`patches/`。流程 SHALL保留 `.github/workflows/` 與production runtime必要檔案，例如 `scripts\deploy.ps1`、services、tests、compose files及inventory明定但不受source transport管理的owner-controlled assets。清理 SHALL限定於已解析、已驗證ownership的deployment checkout，不得操作inventory或其他host path。
 
-#### Scenario: 清理後deployment checkout不含agent/planning artifact
+#### Scenario: 清理後 deployment checkout 不含 agent/planning artifact
 
 - **WHEN**已驗證ownership的canonical Linux deployment checkout含有 `AGENTS.md`、`CLAUDE.md`、`.codex/`、`.agents/`、`.claude/`、`.github/skills/`、`.github/prompts/`、`docs/`、`openspec/`、`patches/`
 - **THEN**流程 SHALL移除上述source-controlled檔案與目錄
@@ -89,14 +89,14 @@ Canonical Linux deployment checkout reset／clean後，流程 SHALL移除所有�
 
 清理完成後，流程 SHALL先執行不改變runtime state的read-only port／process blocker preflight，再從inventory解析且已驗證ownership的canonical Linux deployment checkout執行 `scripts\deploy.ps1 -Build`，並在owner-controlled artifact store記錄non-secret target ID、fresh origin/main commit、expected delivery commit、removed artifact count、deploy exit code與deploy log reference。流程 MUST NOT支援或使用 `-DryRun`、`-Force`或替代command取代 `-Build`。只有command已在authenticated exact target啟動後回傳非0，wrapper才 SHALL以同一exit code失敗並映射為 `FAILED/MERGED_NOT_DELIVERED`；command啟動前的authority／target／runner unavailable或read-only blocker映射為 `HELD/DEPLOYMENT_BLOCKED`。
 
-#### Scenario: deploy.ps1 -Build成功時回報部署結果
+#### Scenario: deploy.ps1 -Build 成功時回報部署結果
 
 - **WHEN**canonical Linux deployment checkout清理完成且 `scripts\deploy.ps1 -Build` exit code為0
 - **THEN**wrapper SHALL exit 0
 - **AND**wrapper SHALL回報non-secret target ID、fresh origin/main commit、expected delivery commit、removed artifact count、deploy exit code與redacted log reference
 - **AND**caller SHALL繼續執行post-deploy verification，而非僅以exit 0宣告 `DELIVERED`
 
-#### Scenario: deploy.ps1 -Build失敗時傳遞exit code
+#### Scenario: deploy.ps1 -Build 失敗時傳遞 exit code
 
 - **WHEN**`scripts\deploy.ps1 -Build` exit code非0
 - **THEN**wrapper SHALL回傳相同exit code
@@ -104,7 +104,7 @@ Canonical Linux deployment checkout reset／clean後，流程 SHALL移除所有�
 - **AND**wrapper SHALL NOT改用 `-DryRun`、`-Force`或其他替代command
 - **AND**caller SHALL將attempt結案為 `FAILED/MERGED_NOT_DELIVERED`
 
-#### Scenario: Read-only preflight發現canonical Linux runtime blocker
+#### Scenario: host-native runtime blocker 只允許停止必要 blocking process
 
 - **WHEN**啟動 `deploy.ps1 -Build` 前的read-only preflight發現必要port上已有blocking process
 - **THEN**transport SHALL記錄non-secret port、process identity digest與blocker evidence

@@ -76,7 +76,7 @@ PR review agent SHALL 為每次 run 發布 machine-readable report 與 human-rea
 
 PR review agent SHALL 先以 deterministic checks 作為 pass／block決策基礎，再依immutable risk policy執行optional或required machine reviewer。AI reviewer SHALL NOT覆蓋deterministic failure；policy要求的machine reviewer unavailable時 SHALL fail closed，不得以human approval替代。
 
-#### Scenario: Deterministic checks 通過且optional AI adapter unavailable
+#### Scenario: Deterministic checks 通過且 AI adapter unavailable
 
 - **GIVEN**policy將PR分類為可省略model review的 `mechanical_only` 或其他明確optional lane
 - **WHEN**所有required deterministic checks通過，且optional AI adapter unavailable

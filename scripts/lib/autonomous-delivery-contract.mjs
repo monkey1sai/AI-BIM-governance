@@ -446,6 +446,9 @@ const validatePacketObject = (packet) => {
   if (!Array.isArray(packet.required_check_sources) || packet.required_check_sources.length > 256) {
     fail('evidence_budget_exceeded', 'required_check_sources_count_invalid')
   }
+  if (packet.required_check_sources.length < 1) {
+    fail('required_check_not_passing', 'required_check_sources_empty')
+  }
   for (const [index, source] of packet.required_check_sources.entries()) {
     exactKeys(source, [
       'context', 'app_id', 'check_run_id', 'head_oid', 'workflow_path',
@@ -558,7 +561,7 @@ const LINEAGE_KEYS = Object.freeze([
   'activation_plan_id', 'canary_delivery_id', 'release_id',
 ])
 
-export function classifyPullRequest(raw) {
+export function classifyPullRequest(raw, { verifyLease } = {}) {
   const input = parseCanonicalJson(raw, 'classifier_input', 256 * 1024)
   exactKeys(input, CLASSIFIER_KEYS, 'classifier_input')
   if (input.schema_version !== 'autonomous-delivery-classifier-input/v1' || input.source !== 'server_authoritative') {
@@ -596,6 +599,18 @@ export function classifyPullRequest(raw) {
     classification = { kind: 'draft_report_only' }
   } else {
     if (input.signed_lease_sha256 === null) fail('classification_untrusted', 'non_draft_classifier_requires_signed_lease')
+    // A digest alone is self-attested shape, not authority. Mirror the
+    // attestation path: no verifier, no classification lane.
+    if (typeof verifyLease !== 'function') {
+      fail('classification_authority_unavailable', 'lease_verifier_missing')
+    }
+    const leaseVerified = verifyLease({
+      signedLeaseSha256: input.signed_lease_sha256,
+      repository: input.repository,
+      pullRequest: input.pull_request,
+      activationPhase: input.activation_phase,
+    })
+    if (leaseVerified !== true) fail('classification_untrusted', 'lease_authority_rejected')
     if (lineage.remediation_kind !== null && present('failure_delivery_id') && noneExcept('failure_delivery_id')) {
       classification = { kind: lineage.remediation_kind, failure_delivery_id: lineage.failure_delivery_id }
     } else if (

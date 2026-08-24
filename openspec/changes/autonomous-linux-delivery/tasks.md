@@ -1,4 +1,4 @@
-> **Priority: P0 — 目前最高優先治理項目。** 本清單是後續實作順序；本 proposal 階段不勾選任何實作或 live activation task。
+> **Priority: P0 — 目前最高優先治理項目。** 本清單是後續實作順序；本 proposal 階段僅勾選契約／schema／測試等 bootstrap 交付項（1.x），不勾選任何 live activation task。
 
 ## 1. 契約與失敗語意
 

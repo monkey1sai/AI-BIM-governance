@@ -26,7 +26,7 @@ Pull requests that change governance, frontend/user-facing, or deploy/runtime pa
 
 Repo files SHALL prepare the checks, templates, ownership mappings, exact-head machine adjudication contracts and deployment evidence schema. After one-time autonomous delivery activation, GitHub branch protection or rulesets SHALL require strict source-pinned machine checks, stale-result invalidation, latest-head evaluation, conversation resolution, enforce-admins, and disallow force-push／delete on `main`; required approving review count SHALL be `0` and CODEOWNER review SHALL NOT be required. Merge authority SHALL belong to an agent-inaccessible external GitHub App that performs exact-head compare-and-swap only after all required checks pass. Before external provisioning, negative／positive live attestation and authoritative settings reread are complete, the repository SHALL remain below autonomous Level 5 and the merge path SHALL be `HELD` rather than self-authorized.
 
-#### Scenario: Maintainer evaluates AI coding maturity after autonomous activation
+#### Scenario: Maintainer evaluates AI coding maturity
 
 - **GIVEN** the repo-local governance artifacts are present
 - **AND** GitHub branch protection requires the documented source-pinned machine checks without required human／CODEOWNER approval
