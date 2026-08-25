@@ -1,0 +1,29 @@
+{
+  "schema_version": "self-referential-fixpoint-attestation/v1",
+  "entry_id": "spec-to-done-new-run-boundary-classifier",
+  "mechanism_commit": "2c983944e2a0c56fdfc8bb292f167b13b22c8250",
+  "verification_contract_sha256": "82d607837a5a7d78ca3e1b2100082f9d018e4333e68c3016931d9a1b95bbd9e3",
+  "result": "pass",
+  "commands": [
+    {
+      "id": "test-self-referential-bootstrap",
+      "exit_code": 0
+    },
+    {
+      "id": "test-agent-governance-check",
+      "exit_code": 0
+    },
+    {
+      "id": "test-trusted-host-merge",
+      "exit_code": 0
+    },
+    {
+      "id": "invoke-powershell-static",
+      "exit_code": 0
+    },
+    {
+      "id": "scan-secret-patterns",
+      "exit_code": 0
+    }
+  ]
+}

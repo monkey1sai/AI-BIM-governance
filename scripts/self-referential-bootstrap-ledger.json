@@ -975,7 +975,7 @@
     },
     {
       "id": "spec-to-done-new-run-boundary-classifier",
-      "status": "open",
+      "status": "closed",
       "pr": 687,
       "opened_at": "2026-08-24T10:36:15Z",
       "reason": "the base-owned self-referential and trusted-host classifiers do not recognize the future spec-to-done new-run validator, append authority, procedure adapters, and enforcement tests, so the implementation pull request cannot bind or separately authorize its complete mechanism surface",
@@ -1000,7 +1000,14 @@
         "docs/evidence/spec-to-done-new-run-boundary/self-referential-bootstrap/README.md",
         "docs/evidence/spec-to-done-new-run-boundary/self-referential-bootstrap/verification.txt"
       ],
-      "fixpoint": null
+      "fixpoint": {
+        "reverified_at": "2026-08-25T23:00:54Z",
+        "mechanism_commit": "2c983944e2a0c56fdfc8bb292f167b13b22c8250",
+        "evidence_refs": [
+          "docs/evidence/spec-to-done-new-run-boundary/fixpoint/attestation.json",
+          "docs/evidence/spec-to-done-new-run-boundary/fixpoint/summary.md"
+        ]
+      }
     }
   ]
 }
