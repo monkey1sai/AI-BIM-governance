@@ -20,9 +20,84 @@ import { test, expect } from "@playwright/test";
 // 深度因果已由 bim-review-coordinator 的 conversion-control-auth.test.ts／
 // conversion-control-auth-pins.test.ts／dev-routes-disabled.test.ts 兜底；本檔只證明
 // 「真 process 起、真 HTTP、行為與單元測試一致」這條 browser／HTTP 垂直切片。
+//
+// *** 前置守門設計與 E2E_REQUIRE_REAL 的誠實揭露（task#4 修復補記，2026-08-25）***
+//   plan（docs/superpowers/plans/2026-08-25-unified-console-runtime-truth-s2.md:1580、1616-1631）的
+//   逐字稿守門是「preflight → test.skip；再靠 E2E_REQUIRE_REAL=1 讓 skip 變 fail」（reporter：
+//   e2e/support/forbid-skipped-when-real.ts）。本 worktree 無法照該組合執行：
+//     playwright.config.ts:6 一律呼叫 loadIsolatedStackConfig()，而 e2e/support/isolated-stack.ts:245-246
+//     在 E2E_REQUIRE_REAL=1 且未給 E2E_STACK_MANIFEST 時直接 throw
+//     「E2E_STACK_MANIFEST is required in require-real mode」——config 載入階段即中止，跑不到任何 test；
+//     該守衛早於本 change（commit 45e78b7 / PR #684），且即使備妥 manifest，isolated 模式的 testMatch
+//     （playwright.config.ts:56）只收 a3／a4 兩支 spec，本檔仍不會被選中。
+//   故本檔改採「preflight 前置缺失＝直接 fail（不 skip）」：比 skip + reporter 更強（不存在
+//   「conditional skip 計為 pass」的縫，比照 conversion-artifact-id-sanitize.spec.ts:26-35 的先例揭露），
+//   且不依賴一個在本 worktree 設不起來的旗標。實際可重現指令（**不帶** E2E_REQUIRE_REAL=1）：
+//     cd web-viewer-sample
+//     E2E_COORDINATOR_BASE_URL=http://127.0.0.1:8005 npx playwright test e2e/dev-routes-disabled-operator-token.spec.ts
+//   另一項與 plan 逐字稿的差異：本檔的 testid 取自 task#3 實際落地的 UI（ifc-dev-routes-notice、
+//   a1-testdata-devroutes-note、ifc-fixture-select、ifc-register-btn、a1-localfs-select）；plan 草稿裡的
+//   dev-routes-disabled-notice／ifc-runtime-state／a1-test-data-dev-routes-disabled 在本 branch 不存在，
+//   照抄必紅。
 
 const COORDINATOR = process.env.E2E_COORDINATOR_BASE_URL || "http://127.0.0.1:8005";
 const OPERATOR_TOKEN = process.env.E2E_DEV_AUTH_TOKEN || "e2e-operator-token";
+
+const PRIORITIZE_PATH = "/api/conversion/jobs/ifcready_nope/prioritize";
+
+const PREFLIGHT_TIMEOUT_MS = 10_000;
+
+function fetchWithTimeout(url: string, init: RequestInit = {}): Promise<Response> {
+  return fetch(url, { ...init, signal: AbortSignal.timeout(PREFLIGHT_TIMEOUT_MS) });
+}
+
+/**
+ * 前置盤查：回 null 代表前置齊備；否則回「缺哪一項」的人類可讀原因。
+ * 三項對應 plan Task 11 Step 2 起 coordinator 的三個關鍵 env：
+ *   /health 可達、ENABLE_DEV_ROUTES=false（dev prefix 404）、
+ *   EXTERNAL_INTAKE_IP_ALLOWLIST 排除 loopback（無 token prioritize → 403）。
+ * 注意：這裡的無 token POST 在 guard 內於讀 token header 前就短路（見
+ * bim-review-coordinator/src/services/conversionControlAuthorization.ts:81-86），不計入速率視窗，
+ * 因此不會干擾下方 API 探針 test 精確數到第 11 次的 429 斷言。
+ */
+async function preflight(): Promise<string | null> {
+  try {
+    const health = await fetchWithTimeout(`${COORDINATOR}/health`);
+    if (!health.ok) return `coordinator ${COORDINATOR}/health 非 2xx（${health.status}）`;
+    const dev = await fetchWithTimeout(`${COORDINATOR}/api/dev/ifc-sources`);
+    if (dev.status !== 404) {
+      return `coordinator 未以 ENABLE_DEV_ROUTES=false 啟動（GET /api/dev/ifc-sources → ${dev.status}，預期 404）`;
+    }
+    const bare = await fetchWithTimeout(`${COORDINATOR}${PRIORITIZE_PATH}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{}",
+    });
+    if (bare.status !== 403) {
+      return `coordinator allowlist 未排除 loopback（無 token prioritize → ${bare.status}，預期 403）`;
+    }
+    return null;
+  } catch (error) {
+    return `coordinator ${COORDINATOR} 不可達：${String(error)}`;
+  }
+}
+
+let preflightReason: string | null = null;
+
+test.beforeAll(async () => {
+  preflightReason = await preflight();
+});
+
+// 前置缺失＝fail（不 skip）：Playwright 語意裡 skip 會被計為 pass，那是假信心。
+test.beforeEach(() => {
+  if (preflightReason === null) return;
+  throw new Error(
+    `前置不齊備，本 spec 直接 fail（刻意不 skip）：${preflightReason}。` +
+      "請先依 plan Task 11 Step 2 起 branch coordinator（PORT=8005、ENABLE_DEV_ROUTES=false、" +
+      "EXTERNAL_INTAKE_IP_ALLOWLIST=10.0.0.0/8、DEV_AUTH_TOKEN=e2e-operator-token、" +
+      "CORS_ORIGINS=http://127.0.0.1:5180）後重跑。",
+  );
+});
 
 test.describe("dev routes 已關閉：UI 垂直切片誠實狀態", () => {
   test("#demo-control：/api/dev/ifc-sources 404 → notice ＋ 選檔／註冊鈕 disabled", async ({ page }) => {
@@ -60,7 +135,6 @@ test.describe("dev routes 已關閉：UI 垂直切片誠實狀態", () => {
 test.describe("D2=T4 operator token API 契約探針（真 process、真 HTTP）", () => {
   test.setTimeout(90_000);
 
-  const PRIORITIZE_PATH = "/api/conversion/jobs/ifcready_nope/prioritize";
   const RETRY_PATH = "/api/conversion/jobs/ifcready_nope/retry";
   const WATCH_PATH = "/api/conversion/watch";
   const TRIGGER_PATH = "/api/conversion/trigger";
