@@ -882,6 +882,9 @@
       "pr": 557,
       "opened_at": "2026-08-17T06:51:31Z",
       "reason": "new delivery contracts and their evidence parser classify and adjudicate the future merge and deployment mechanism, so the current trusted mechanism cannot prove their post-merge behavior before this pull request merges",
+      "repair_prs": [
+        692
+      ],
       "verification_mechanism_paths": [
         "agent-contracts/autonomous-delivery-adjudication-packet.schema.json",
         "agent-contracts/autonomous-delivery-attestation-envelope.schema.json",
