@@ -61,7 +61,10 @@ try {
     }
     Assert-Rejected -ExpectedPattern 'both mapped and reference_missing' -Mutation {
         param($candidate)
-        $candidate.routes_without_approved_pixel_reference += '#home'
+        # Pick a route the manifest currently maps to an approved screen instead of pinning a literal;
+        # demoting/re-approving screens must not turn this case into a 'contains duplicates' rejection.
+        $mappedRoute = @($candidate.route_inventory | Where-Object { $_.status -eq 'approved' })[0].route
+        $candidate.routes_without_approved_pixel_reference += $mappedRoute
     }
     Assert-Rejected -ExpectedPattern 'non-rendering repository/cache state' -Mutation {
         param($candidate)
