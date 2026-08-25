@@ -12,7 +12,7 @@ import { useLang } from "../i18n";
 import { coordinatorClient } from "../coordinatorClient";
 import type { MinioWatchStatus } from "../coordinatorClient";
 import { MONO, chipBox, getL, innerBox } from "./fixtures";
-import { useConsoleData } from "./ConsoleDataProvider";
+import { useConsoleData } from "./consoleData";
 import type { EndpointKey } from "./coordinatorStatusStore";
 import {
   activeSessions, cell, cellSub, cellText, conversionCounts, lastUpdatedText, openIssueCount, outboxPending, stateColor,

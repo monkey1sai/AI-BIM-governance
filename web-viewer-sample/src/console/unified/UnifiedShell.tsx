@@ -18,7 +18,8 @@ import {
 import type {
   ConceptKey, ConvItem, DockKey, IntakeItem, IssueItem, OutboxItem, PageKey, SessionItem,
 } from "./fixtures";
-import { ConsoleDataProvider, useConsoleData } from "./ConsoleDataProvider";
+import { ConsoleDataProvider } from "./ConsoleDataProvider";
+import { useConsoleData } from "./consoleData";
 import { coordinatorStatusStore } from "./coordinatorStatusStore";
 import type { EndpointKey } from "./coordinatorStatusStore";
 import { HEALTH_DOT, cell, cellText, conversionCounts, healthOf } from "./runtimeTruth";

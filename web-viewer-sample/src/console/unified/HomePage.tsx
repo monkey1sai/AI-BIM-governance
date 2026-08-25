@@ -7,7 +7,7 @@
 // ═══════════════════════════════════════════════════════════════════════
 import { useLang } from "../i18n";
 import { MONO, SHOW_CONCEPT_APPS, getL, apps, appEn, badgeTone, chipBox } from "./fixtures";
-import { useConsoleData } from "./ConsoleDataProvider";
+import { useConsoleData } from "./consoleData";
 import type { EndpointKey } from "./coordinatorStatusStore";
 import { ServiceHealthList } from "./ServiceHealthList";
 import {
@@ -64,7 +64,7 @@ export function HomePage() {
         {kpi("#conv", L.kpi_conv, "kpi-conv", conv.state, cellText(conv, L, (c) => String(c.running)), cellSub(conv, L, (c) => `ready ${c.ready} · failed ${c.failed}`))}
         {kpi("#sessions", L.kpi_sess, "kpi-sess", sess.state, cellText(sess, L, (s) => String(s.active)), cellSub(sess, L, (s) => `participants ${s.participants}`))}
         {kpi("#issues", L.kpi_issue, "kpi-issue", issue.state, cellText(issue, L), cellSub(issue, L, () => (zh ? "非 resolved／rejected" : "not resolved/rejected")))}
-        {kpi("#pipeline", L.kpi_outbox, "kpi-outbox", outbox.state, cellText(outbox, L, (o) => String(o.pending)), cellSub(outbox, L, (o) => `attempts ${o.attempts}/${o.maxAttempts}`))}
+        {kpi("#minio", L.kpi_outbox, "kpi-outbox", outbox.state, cellText(outbox, L, (o) => String(o.pending)), cellSub(outbox, L, (o) => `attempts ${o.attempts}/${o.maxAttempts}`))}
       </div>
       {/* ---- 資料生產線快照 + 服務健康 ---- */}
       <div style={{ display: "grid", gridTemplateColumns: "1.7fr 1fr", gap: 12 }}>

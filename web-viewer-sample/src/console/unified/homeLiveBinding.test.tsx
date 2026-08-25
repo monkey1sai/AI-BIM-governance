@@ -89,4 +89,13 @@ describe("HomePage 真值綁定", () => {
     await act(async () => { uc("kpi-sess").dispatchEvent(new MouseEvent("click", { bubbles: true })); });
     expect(window.location.hash).toBe("#sessions");
   });
+
+  // design §4：#home 四 KPI 快捷一律導向 `#conv`／`#sessions`／`#issues`／`#minio`（`#minio` 為 outbox 卡的指定真頁）。
+  it("KPI 卡為 data-action=nav：點「Outbox 待送」導向 design §4 指定的 #minio", async () => {
+    spyCoordinatorEndpoints();
+    await mountHome();
+    expect(uc("kpi-outbox").getAttribute("data-action")).toBe("nav");
+    await act(async () => { uc("kpi-outbox").dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+    expect(window.location.hash).toBe("#minio");
+  });
 });
