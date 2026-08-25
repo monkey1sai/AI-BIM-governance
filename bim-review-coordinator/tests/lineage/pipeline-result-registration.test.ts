@@ -580,7 +580,77 @@ describe("createPipelineResultRegistrationService.registerFromManifest", () => {
     });
     // governed locator 的全文不得進 log（欄位只留 id／分類／截斷後的 expected/observed）。
     expect(JSON.stringify(warns[0].data)).not.toContain("?versionId=");
-    expect(JSON.stringify(warns[0].data)).not.toContain("minio://");
+    expect(JSON.stringify(warns[0].data)).not.toContain(RESULT_BUCKET);
+  });
+
+  it("containment 失敗同樣寫 warn，且帶 prefix 的 expected 被遮蔽成 minio://<redacted>", async () => {
+    // 這一案是上一案的補集：`artifact_outside_result_prefix` 的 `expected` 是完整的
+    // `result_prefix`（一個 governed locator prefix），正好證明遮蔽規則有作用。
+    const h = harness();
+    const warns: Array<{
+      component: string;
+      msg: string;
+      data?: Record<string, unknown>;
+    }> = [];
+    const service = createPipelineResultRegistrationService({
+      objects: h.objects,
+      results: h.resultStore,
+      structLog: {
+        info: () => {},
+        warn: (component, msg, data) => {
+          warns.push({ component, msg, data });
+        },
+      },
+    });
+    const seeded = seed(h, {
+      artifacts: {
+        usdc: {
+          declaredRef: `minio://${RESULT_AUTHORITY}/${RESULT_BUCKET}/${RESULT_EXTERNAL_MODEL_VERSION_ID}/results/attempt-9999/model.usdc?versionId=v-0007-usdc`,
+        },
+      },
+    });
+
+    await caught(service.registerFromManifest(registrationInput(h, seeded.locator)));
+
+    expect(warns).toHaveLength(1);
+    expect(warns[0].data).toMatchObject({
+      code: "result_manifest_artifact_outside_result_prefix",
+      role: "usdc",
+      field: "ref",
+      expected: "minio://<redacted>",
+    });
+    // 遮蔽必須真的擋住拓撲：bucket 名不得出現在整筆 log record 裡。
+    expect(JSON.stringify(warns[0].data)).not.toContain(RESULT_BUCKET);
+  });
+
+  it("非物件的 throw 值不會讓失敗面的 log 自己炸掉", async () => {
+    const h = harness();
+    const warns: Array<{ data?: Record<string, unknown> }> = [];
+    const service = createPipelineResultRegistrationService({
+      // headVersioned 直接 throw 一個字串：catch 的 error 是 `unknown`，
+      // 沒有物件守衛就會在讀 `.code` 時變成 TypeError（失敗面的第二個失敗模式）。
+      objects: {
+        ...h.objects,
+        headVersioned: async () => {
+          throw "boom";
+        },
+      },
+      results: h.resultStore,
+      structLog: {
+        info: () => {},
+        warn: (_component, _msg, data) => {
+          warns.push({ data });
+        },
+      },
+    });
+    const seeded = seed(h);
+
+    const error = await caught(service.registerFromManifest(registrationInput(h, seeded.locator)));
+
+    // 原始的 throw 值必須原樣向上拋（不被 log 路徑吞掉或替換）。
+    expect(error).toBe("boom");
+    expect(warns).toHaveLength(1);
+    expect(warns[0].data).toMatchObject({ code: "unclassified", role: null, field: null });
   });
 });
 
@@ -591,14 +661,21 @@ describe("parsePipelineResultManifest 的 runtime 收斂規則", () => {
     );
   }
 
-  it("同一 role 宣告兩次時拒絕（role 是 task 3.4 的穩定 artifact id，不得歧義）", () => {
+  // 這兩案刻意分開，但**無法完全隔離**：role enum 只有 9 個成員，任何超過 9 筆的
+  // artifacts 陣列必然含重複 role，所以 `.max(32)` 在現行詞彙下是**冗餘防線**
+  // （role 唯一性先觸發或同時觸發）。保留 `.max(32)` 是為了「role 詞彙日後擴充」與
+  // 「1 MiB 內的 manifest 不得逼出上千次 HEAD」兩個獨立理由。
+  it("同一 role 重複宣告時拒絕（10 筆 4 role：鎖 role 唯一性）", () => {
     const base = resultManifestDocument().body as { artifacts: unknown[] };
-    expect(parse({ artifacts: [...base.artifacts, base.artifacts[0]] })).toBeNull();
+    const duplicated = Array.from({ length: 10 }, (_, index) => base.artifacts[index % 4]);
+    expect(duplicated).toHaveLength(10);
+    expect(parse({ artifacts: duplicated })).toBeNull();
   });
 
-  it("artifacts 超過 32 筆時拒絕（有界性地板）", () => {
+  it("artifacts 超過 32 筆時拒絕（整體上限；與 role 唯一性同時成立）", () => {
     const base = resultManifestDocument().body as { artifacts: unknown[] };
     const inflated = Array.from({ length: 33 }, (_, index) => base.artifacts[index % 4]);
+    expect(inflated).toHaveLength(33);
     expect(parse({ artifacts: inflated })).toBeNull();
   });
 

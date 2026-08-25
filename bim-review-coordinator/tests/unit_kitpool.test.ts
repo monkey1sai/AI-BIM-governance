@@ -102,6 +102,8 @@ const defaultConfig: CoordinatorConfig = {
   pipelineJobStorePath: "/tmp/pipeline-jobs.json",
   sourceBundleReconcileEnabled: false,
   sourceBundleReconcileIntervalMs: 300_000,
+  // task 3.4：未設定＝空清單＝download fail-closed（與 production 預設同一狀態）。
+  lineageDownloadTargetPolicies: "",
 };
 
 const multiEndpointConfig: CoordinatorConfig = {

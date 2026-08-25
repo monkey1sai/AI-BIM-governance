@@ -1,4 +1,6 @@
 import { isIP } from "node:net";
+import { GetObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { z } from "zod";
 import {
   isUtcTimestamp,
@@ -269,4 +271,144 @@ export function isLineageArtifactSignedTargetBound(input: {
   } catch {
     return false;
   }
+}
+
+const targetPolicySchema = z
+  .object({
+    authority: z.string().min(1).max(253).regex(/^[A-Za-z0-9._-]+$/),
+    bucket: z.string().min(1).max(253).regex(/^[A-Za-z0-9._-]+$/),
+    public_origin: z.string().min(1).refine((value) => normalizedPublicOrigin(value) !== null),
+    object_path_prefix: z.string().min(1).refine(isCanonicalObjectPathPrefix),
+  })
+  .strict();
+
+export interface LineageArtifactDownloadTargetPolicyParseResult {
+  policies: LineageArtifactDownloadTargetPolicy[];
+  /** raw 非空但解析／驗證失敗；呼叫端應該記一筆 warn，而不是靜默當成「沒設定」。 */
+  malformed: boolean;
+}
+
+/**
+ * 解析 `LINEAGE_DOWNLOAD_TARGET_POLICIES`（單一 JSON 陣列 env）。
+ *
+ * **fail-closed 三態合一**：未設定、空字串、任何解析／驗證失敗，全部收斂成**空清單**。
+ * 空清單代表「沒有任何 authority/bucket 可被簽章下載」，`resolveLineageArtifactDownloadTarget`
+ * 於是 `matches.length !== 1` → route 誠實 503。這是刻意的：一個打錯字的 policy 設定
+ * 必須讓下載面完全關閉，而不是退化成某個「差不多」的 origin。
+ *
+ * 同一組 `(authority, bucket)` 重複宣告也視為 malformed：resolver 要求**唯一命中**，
+ * 重複只會在執行期變成難查的 503，不如在啟動時就收斂成空清單並告警。
+ */
+export function parseLineageArtifactDownloadTargetPolicies(
+  raw: string,
+): LineageArtifactDownloadTargetPolicyParseResult {
+  const trimmed = typeof raw === "string" ? raw.trim() : "";
+  if (trimmed.length === 0) return { policies: [], malformed: false };
+  let value: unknown;
+  try {
+    value = JSON.parse(trimmed);
+  } catch {
+    return { policies: [], malformed: true };
+  }
+  const parsed = z.array(targetPolicySchema).max(32).safeParse(value);
+  if (!parsed.success) return { policies: [], malformed: true };
+  const keys = parsed.data.map((policy) => `${policy.authority}/${policy.bucket}`);
+  if (new Set(keys).size !== keys.length) return { policies: [], malformed: true };
+  return { policies: parsed.data, malformed: false };
+}
+
+export interface S3LineageArtifactDownloadSignerOptions {
+  /** 與 governed object port **同一組** credentials（design.md §11.2 規則 3／5）。 */
+  accessKey: string;
+  secretKey: string;
+  /** SigV4 的 region 標籤；MinIO 不使用它，但簽章字串必須有一個固定值。 */
+  region?: string;
+}
+
+/**
+ * 生產 presigner。
+ *
+ * **簽章綁 host**：S3Client 的 `endpoint` 直接用 `target.public_origin`
+ * （path-style），因此 SigV4 的 `SignedHeaders=host` 綁的就是瀏覽器實際會連的那個 host。
+ * 絕不用內網 endpoint 簽完再換 host——那會讓簽章與請求的 Host header 不符而被 MinIO 拒絕，
+ * 或更糟：在某些寬鬆設定下通過，讓簽章的有效範圍脫離治理宣告的 public origin。
+ *
+ * 其餘鐵律：不跟 redirect、不接受 caller 提供的 URL（Bucket/Key/VersionId 一律取自
+ * 已驗證的 `parsed_ref`）、TTL 取 `min(caller, 契約上限)`、`expires_at` 由**簽章瞬間**導出。
+ */
+export function createS3LineageArtifactDownloadSigner(
+  opts: S3LineageArtifactDownloadSignerOptions,
+): LineageArtifactDownloadSignerPort {
+  const region = opts.region ?? "us-east-1";
+  // 每個 public origin 一個 client：endpoint 是簽章輸入的一部分，不能共用。
+  const clients = new Map<string, S3Client>();
+
+  function clientFor(publicOrigin: string): S3Client {
+    const existing = clients.get(publicOrigin);
+    if (existing) return existing;
+    const client = new S3Client({
+      endpoint: publicOrigin,
+      region,
+      forcePathStyle: true, // MinIO 必要；也讓 pathname 等於 /<bucket>/<key>
+      credentials: { accessKeyId: opts.accessKey, secretAccessKey: opts.secretKey },
+    });
+    clients.set(publicOrigin, client);
+    return client;
+  }
+
+  return {
+    async sign(
+      input: LineageArtifactDownloadSignerInput,
+    ): Promise<LineageArtifactSignedDownload> {
+      const ttlSeconds = Math.min(
+        input.max_ttl_seconds,
+        LINEAGE_ARTIFACT_DOWNLOAD_MAX_TTL_SECONDS,
+      );
+      if (!Number.isSafeInteger(ttlSeconds) || ttlSeconds <= 0) {
+        throw new LineageArtifactDownloadUnavailableError(
+          "requested artifact download TTL is not a positive whole number of seconds",
+        );
+      }
+      if (!isUtcTimestamp(input.requested_at)) {
+        throw new LineageArtifactDownloadUnavailableError(
+          "artifact download request time is not a canonical UTC timestamp",
+        );
+      }
+      // 防禦性：resolver 已保證 public_origin 是 https 且無 path，但簽章是安全邊界，
+      // 這裡再自證一次比相信上游便宜。
+      if (normalizedPublicOrigin(input.target.public_origin) !== input.target.public_origin) {
+        throw new LineageArtifactDownloadUnavailableError(
+          "artifact download target public origin is not a canonical https origin",
+        );
+      }
+
+      // AWS `X-Amz-Date` 只有秒精度。`expires_at` 必須由**截斷後**的簽章瞬間導出，
+      // 否則 route 的 `declaredExpires === signingInstant + X-Amz-Expires` 綁定會差
+      // 幾百微秒而整批 503。
+      const signingSeconds = Number(utcTimestampToMicros(input.requested_at) / 1_000_000n);
+      const signingDate = new Date(signingSeconds * 1_000);
+
+      const url = await getSignedUrl(
+        clientFor(input.target.public_origin),
+        new GetObjectCommand({
+          Bucket: input.target.parsed_ref.bucket,
+          Key: input.target.parsed_ref.objectKey,
+          VersionId: input.target.parsed_ref.versionId,
+          // 讓 MinIO 在 GET 時回 checksum header；route 的綁定檢查要求這個 query key。
+          ChecksumMode: "ENABLED",
+        }),
+        { expiresIn: ttlSeconds, signingDate },
+      );
+
+      return {
+        kind: "presigned_get",
+        url,
+        expires_at: new Date((signingSeconds + ttlSeconds) * 1_000).toISOString(),
+        // echo 已驗證的非機密綁定；route 會再比對一次實際 URL 的目標。
+        bound_ref: input.target.locator.ref,
+        object_version_id: input.target.locator.object_version_id,
+        supports_range: true,
+      };
+    },
+  };
 }

@@ -130,10 +130,34 @@ export class PipelineResultLocationError extends Error {
   }
 }
 
-/** log 欄位的長度地板：ref／prefix 只留可辨識的前綴，不把全文灌進 log。 */
+/**
+ * log 欄位的長度地板 ＋ governed locator 遮蔽。
+ *
+ * 長度：>120 字元一律截斷（ref／prefix 不灌全文）。
+ *
+ * 遮蔽：任何 `minio://…` 形狀的值只留 scheme。這是刻意的**分層**——`expected`／`observed`
+ * 在 error 物件上是完整值（呼叫端要靠它 debug），但 log 是長期保存、會被複製貼上的串流：
+ * 把 authority／bucket／完整 object key 灌進去等於把儲存拓撲寫進每一筆失敗紀錄。
+ * 需要精確 locator 時看 error 本身，不是看 log。
+ */
 function boundedDetail(value: unknown): string | null {
   if (typeof value !== "string") return null;
+  if (value.startsWith("minio://")) return "minio://<redacted>";
   return value.length <= 120 ? value : `${value.slice(0, 117)}...`;
+}
+
+/**
+ * 從未知的 throw 值上安全取欄位。
+ *
+ * `catch (error)` 的型別是 `unknown`：可能是 `null`、字串、或任何非物件的值
+ * （例如某個相依套件 `throw "boom"`）。直接 `(error as {code?}).code` 對 `null`
+ * 會是 TypeError，把「註冊失敗」升級成「log 這行本身炸掉」——失敗面的可觀測性
+ * 不該有自己的失敗模式。
+ */
+function errorField(error: unknown, field: string): unknown {
+  return typeof error === "object" && error !== null
+    ? (error as Record<string, unknown>)[field]
+    : undefined;
 }
 
 export interface PipelineResultRegistrationDeps extends PipelineResultManifestReadDeps {
@@ -192,11 +216,11 @@ export function createPipelineResultRegistrationService(
           pipeline_job_id: input.expected_identity.pipeline_job_id,
           result_id: input.expected_identity.result_id,
           attempt_id: input.expected_identity.attempt_id,
-          code: boundedDetail((error as { code?: unknown }).code) ?? "unclassified",
-          role: boundedDetail((error as { role?: unknown }).role),
-          field: boundedDetail((error as { field?: unknown }).field),
-          expected: boundedDetail((error as { expected?: unknown }).expected),
-          observed: boundedDetail((error as { observed?: unknown }).observed),
+          code: boundedDetail(errorField(error, "code")) ?? "unclassified",
+          role: boundedDetail(errorField(error, "role")),
+          field: boundedDetail(errorField(error, "field")),
+          expected: boundedDetail(errorField(error, "expected")),
+          observed: boundedDetail(errorField(error, "observed")),
         });
         throw error;
       }

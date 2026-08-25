@@ -27,6 +27,12 @@ import {
   type PipelineResultStore,
   type PipelineResultView,
 } from "../services/lineage/pipelineResultStore.js";
+import {
+  LineageMetadataProjectionUnavailableError,
+  type LineageArtifactProjection,
+  type LineageMetadataProjectionReaderPort,
+  type LineageResultManifestProjection,
+} from "../services/lineage/lineageMetadataProjections.js";
 
 export const LINEAGE_METADATA_SCHEMA_VERSION = "lineage-governance-console/metadata-v1";
 const SAFE_ID = /^[A-Za-z0-9._:-]{1,200}$/;
@@ -98,14 +104,41 @@ export interface LineageMetadataOverviewBody {
   > & { coverage: "governed_ready" };
   active_result: AvailableProjection<ActiveResultPointer | null, "pipeline_result_store">;
   results: AvailableProjection<LineageMetadataResultSummary[], "pipeline_result_store">;
-  alignment_metrics: NotBuiltProvenance;
+  alignment_metrics: AvailableProjection<
+    LineageMetadataAlignmentMetrics,
+    "result_manifest"
+  > | NotBuiltProvenance;
   difference_counts: NotBuiltProvenance;
-  warnings: NotBuiltProvenance;
+  warnings: AvailableProjection<
+    LineageMetadataWarnings,
+    "result_manifest"
+  > | NotBuiltProvenance;
+}
+
+/** overview 的 alignment 數字投影：三個 ratio ＋ 十個 count，逐字取自 result manifest。 */
+export interface LineageMetadataAlignmentMetrics {
+  result_id: string;
+  attempt_id: string;
+  result_manifest_digest: string;
+  converter: LineageResultManifestProjection["converter"];
+  metrics: LineageResultManifestProjection["metrics"];
+  counts: LineageResultManifestProjection["counts"];
+}
+
+export interface LineageMetadataWarnings {
+  result_id: string;
+  warning_codes: string[];
 }
 
 export interface LineageMetadataArtifactsBody {
-  source_artifacts: NotBuiltProvenance;
-  result_artifacts: NotBuiltProvenance;
+  source_artifacts: AvailableProjection<
+    LineageArtifactProjection[],
+    "source_bundle_manifest"
+  > | NotBuiltProvenance;
+  result_artifacts: AvailableProjection<
+    LineageArtifactProjection[],
+    "result_manifest"
+  > | NotBuiltProvenance;
 }
 
 export interface LineageMetadataAlignmentBody {
@@ -141,6 +174,11 @@ export interface LineageMetadataReadRouteDeps {
     "listResults" | "getActiveResultPointer" | "listActivationAudit"
   >;
   authorization: ExternalLineageAuthorizationPort | null;
+  /**
+   * manifest 投影讀取面（task 3.4 收尾刀）。省略／null＝這個部署沒建這條讀取路徑，
+   * 對應欄位誠實維持 `NOT_BUILT`／`reader_not_wired`——**絕不**改回空陣列假裝沒有 artifact。
+   */
+  projections?: LineageMetadataProjectionReaderPort | null;
   now: () => string;
 }
 
@@ -167,16 +205,65 @@ const SURFACES: readonly SurfaceConfig[] = [
   { surface: "audit", capability: "bundle.read", resourceKind: "pipeline_job_audit" },
 ] as const;
 
-function notBuilt(source: NotBuiltProvenance["source"]): NotBuiltProvenance {
+function notBuilt(
+  source: NotBuiltProvenance["source"],
+  reason: NotBuiltProvenance["reason_code"] = source === "admission_record" ||
+  source === "release_audit"
+    ? "store_not_present"
+    : "reader_not_wired",
+): NotBuiltProvenance {
   return {
     state: "NOT_BUILT",
     contract: "rvt-ifc-usdc-lineage/3.4",
     source,
-    reason_code: source === "admission_record" || source === "release_audit"
-      ? "store_not_present"
-      : "reader_not_wired",
+    reason_code: reason,
     read_model_owner: "bim-review-coordinator",
   };
+}
+
+function isNotBuilt(value: unknown): value is NotBuiltProvenance {
+  return (value as NotBuiltProvenance | null)?.state === "NOT_BUILT";
+}
+
+/**
+ * 讀 active result 的 manifest 投影。
+ *
+ * 兩種 `NOT_BUILT` 的理由必須分開，否則運維無從判斷該去接 reader 還是該去發佈 result：
+ *   * reader 沒接（`projections` 為 null）→ `reader_not_wired`
+ *   * reader 接了但這個 job 還沒有 active result → `store_not_present`
+ *
+ * 讀取本身失敗（manifest 不見／digest 漂移／allowlist 拒絕）**不會**變成 `NOT_BUILT`：
+ * `LineageMetadataProjectionUnavailableError` 會冒到 handler 變成 503。
+ */
+async function activeResultManifest(
+  job: PipelineJobRecord,
+  deps: LineageMetadataReadRouteDeps,
+): Promise<LineageResultManifestProjection | NotBuiltProvenance> {
+  if (!deps.projections) return notBuilt("result_manifest");
+  const pointer = deps.results.getActiveResultPointer(job.pipeline_job_id);
+  const active = pointer
+    ? deps.results
+        .listResults(job.pipeline_job_id)
+        .find((item) => item.result_id === pointer.result_id) ?? null
+    : null;
+  if (!active) return notBuilt("result_manifest", "store_not_present");
+  return deps.projections.readResultManifest(active);
+}
+
+async function sourceBundleArtifacts(
+  job: PipelineJobRecord,
+  deps: LineageMetadataReadRouteDeps,
+): Promise<LineageArtifactProjection[] | NotBuiltProvenance> {
+  if (!deps.projections) return notBuilt("source_bundle_manifest");
+  const bundle = deps.bundles.get(job.source_bundle_id);
+  if (
+    !bundle ||
+    bundle.bundle_state !== "READY" ||
+    bundle.external_model_version_id !== job.external_model_version_id
+  ) {
+    return notBuilt("source_bundle_manifest", "store_not_present");
+  }
+  return deps.projections.readSourceBundleArtifacts(bundle);
 }
 
 function requestContext(request: express.Request): ExternalLineageRequestContext {
@@ -303,14 +390,19 @@ function handleError(error: unknown, response: express.Response): void {
     response.status(503).json({ error: error.code });
     return;
   }
+  // 投影讀取失敗 ≠ 這個部署沒建讀取路徑：誠實 503，不偽裝成 NOT_BUILT。
+  if (error instanceof LineageMetadataProjectionUnavailableError) {
+    response.status(503).json({ error: error.code });
+    return;
+  }
   response.status(500).json({ error: "lineage_metadata_internal_error" });
 }
 
-function buildBody(
+async function buildBody(
   surface: LineageMetadataSurface,
   job: PipelineJobRecord,
   deps: LineageMetadataReadRouteDeps,
-): LineageMetadataBody {
+): Promise<LineageMetadataBody> {
   switch (surface) {
     case "overview": {
       const bundle = deps.bundles.get(job.source_bundle_id);
@@ -324,6 +416,7 @@ function buildBody(
           `pipeline job ${job.pipeline_job_id} lacks matching authoritative READY bundle evidence`,
         );
       }
+      const manifest = await activeResultManifest(job, deps);
       return {
         job: jobSummary(job),
         source_bundle: {
@@ -349,16 +442,57 @@ function buildBody(
           source: "pipeline_result_store" as const,
           value: deps.results.listResults(job.pipeline_job_id).map(resultSummary),
         },
-        alignment_metrics: notBuilt("result_manifest"),
+        alignment_metrics: isNotBuilt(manifest)
+          ? manifest
+          : {
+              state: "AVAILABLE" as const,
+              source: "result_manifest" as const,
+              value: {
+                result_id: manifest.result_id,
+                attempt_id: manifest.attempt_id,
+                result_manifest_digest: manifest.result_manifest_digest,
+                converter: manifest.converter,
+                metrics: manifest.metrics,
+                counts: manifest.counts,
+              },
+            },
+        // difference_counts 的來源是 alignment_report（逐 element 的差異集合），
+        // 不是 result manifest 的摘要數字；本刀未建那條讀取路徑，維持誠實 NOT_BUILT。
         difference_counts: notBuilt("alignment_report"),
-        warnings: notBuilt("result_manifest"),
+        warnings: isNotBuilt(manifest)
+          ? manifest
+          : {
+              state: "AVAILABLE" as const,
+              source: "result_manifest" as const,
+              value: {
+                result_id: manifest.result_id,
+                warning_codes: manifest.warning_codes,
+              },
+            },
       };
     }
-    case "artifacts":
+    case "artifacts": {
+      const [source, result] = await Promise.all([
+        sourceBundleArtifacts(job, deps),
+        activeResultManifest(job, deps),
+      ]);
       return {
-        source_artifacts: notBuilt("source_bundle_manifest"),
-        result_artifacts: notBuilt("result_manifest"),
+        source_artifacts: isNotBuilt(source)
+          ? source
+          : {
+              state: "AVAILABLE" as const,
+              source: "source_bundle_manifest" as const,
+              value: source,
+            },
+        result_artifacts: isNotBuilt(result)
+          ? result
+          : {
+              state: "AVAILABLE" as const,
+              source: "result_manifest" as const,
+              value: result.artifacts,
+            },
       };
+    }
     case "alignment":
       return {
         summary: notBuilt("alignment_report"),
@@ -422,7 +556,7 @@ export function registerLineageGovernanceMetadataRoutes(
             surface: config.surface,
             pipeline_job_id: pipelineJobId,
             observed_at: now,
-            body: buildBody(config.surface, job, deps),
+            body: await buildBody(config.surface, job, deps),
           });
         } catch (error) {
           handleError(error, response);
