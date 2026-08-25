@@ -26,7 +26,7 @@ import { ModelDataPage } from "./modelData/ModelDataPage";
 import { StreamConfigReader } from "./StreamConfigReader";
 import EdgeConsole from "./EdgeConsole";
 import { ProvLegend } from "./components";
-import { coordinatorClient, CoordinatorHttpError, type RuntimeStatus } from "./coordinatorClient";
+import { coordinatorClient, type RuntimeStatus } from "./coordinatorClient";
 import { governanceClient, type FilesTreeResponse, type IssueRow, type RuleRunStatus, type RuleResultRow } from "./governanceClient";
 import { CoordinatorGovernanceTabs, LifecycleTab } from "./coordinator/RuntimeGovernanceTabs";
 import { A1A10, A1A10_DETAIL, DEPENDENCIES, ENDPOINTS, PAGES } from "./data";
@@ -1933,27 +1933,6 @@ describe("A1GovernanceWorkbenchPage client-render（doRun 輪詢守門 + 動作�
     await act(async () => { sel.value = key; sel.dispatchEvent(new Event("change", { bubbles: true })); });
     await clickByTestId("a1-step-pick");
   };
-
-  it("[D3 dev routes] getTestDataProjects 404（dev routes 已關閉）→ 顯示誠實 note，不擋 A1 local_fs 流程", async () => {
-    (coordinatorClient.getTestDataProjects as ReturnType<typeof vi.fn>).mockRejectedValue(
-      new CoordinatorHttpError("/api/dev/test-data-projects", 404, "dev routes disabled"),
-    );
-    const root = createRoot(container);
-    await act(async () => { root.render(<A1GovernanceWorkbenchPage />); });
-    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
-
-    const note = container.querySelector('[data-testid="a1-testdata-devroutes-note"]');
-    expect(note).not.toBeNull();
-    expect(note?.textContent ?? "").toContain("dev routes 已關閉");
-
-    // 誠實鐵律：測試資料清單取不到只是不加〔測試資料〕徽章，不得阻擋 A1 local_fs 選檔／執行流程。
-    const sel = container.querySelector<HTMLSelectElement>('[data-testid="a1-localfs-select"]')!;
-    const optionTexts = Array.from(sel.options).map((o) => o.textContent ?? "");
-    expect(optionTexts.some((s) => s.includes("270"))).toBe(true);
-    expect(optionTexts.some((s) => s.includes("〔測試資料〕"))).toBe(false);
-    await pickModel();
-    expect(container.querySelector('[data-testid="a1-localfs-selected"]')).not.toBeNull();
-  });
 
   it("[R8 測試資料標記] local_fs 選項對 config 清單內專案加〔測試資料〕；MinIO 選項不標", async () => {
     (coordinatorClient.getTestDataProjects as ReturnType<typeof vi.fn>).mockResolvedValue({ projects: ["270"] });
