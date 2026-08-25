@@ -1965,6 +1965,25 @@
       "archive_debt": null
     },
     {
+      "id": "unified-console-runtime-truth",
+      "status": "active",
+      "owner": "web-viewer-sample",
+      "current_slice": "2026-08-25 開立（使用者明確口令）：spec-only PR；§0 六個 owner 裁決點（D1 設計閘 P|H、D2 授權 T4|T2|T1、D3 canonical-linux ENABLE_DEV_ROUTES=false、D4 align thaw 判定、canon 入口、A4 放置）未裁決前 §5 HELD；§1–§4 可先做；UI task 只憑 canonical-linux 181 證據勾選",
+      "blocked_by": [],
+      "last_verified": "2026-08-25T08:30:00Z",
+      "task_ledger": {
+        "completed": 0,
+        "total": 43
+      },
+      "evidence_refs": [
+        "openspec/changes/unified-console-runtime-truth/proposal.md",
+        "openspec/changes/unified-console-runtime-truth/tasks.md"
+      ],
+      "subject_commit": "7e94fb088d1a3c46a5b38bcb7bbea90c91a62c35",
+      "subject_binding": "introduction",
+      "archive_debt": null
+    },
+    {
       "id": "sessions-terminate",
       "status": "archived",
       "owner": "repository-maintainer",
