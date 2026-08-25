@@ -137,6 +137,17 @@ $script:SelfReferentialAdjudicatorPaths = @(
     'scripts/lib/windows-verification-scope.ps1'
     'scripts/tests/check-pr-body-evidence.ps1'
     'docs/agents/self-referential-bootstrap.md'
+    # NEW_RUN changes durable state adjudication and therefore cannot use the
+    # ordinary bootstrap=no mechanism lane after preregistration. Keep this
+    # list exact so adjacent skill files and tests do not inherit authority.
+    '.claude/skills/spec-to-done/validate-state.mjs'
+    '.claude/skills/spec-to-done/append-new-run.mjs'
+    '.claude/skills/spec-to-done/SKILL.md'
+    '.claude/skills/spec-to-done/GROK.md'
+    '.codex/skills/spec-to-done/SKILL.md'
+    'tests/test_spec_to_done_state_contract.py'
+    'tests/test_spec_to_done_budget_contract.py'
+    'tests/test_spec_to_done_closeout_contract.py'
 )
 
 $script:GenericReasonBlocklist = @(

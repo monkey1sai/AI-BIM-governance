@@ -1346,6 +1346,48 @@ try {
         }
     }
 
+    foreach ($futureSelfAdjudicator in @($futureSpecToDoneNewRunPaths)) {
+        Assert-Throws -Context "future NEW_RUN adjudicator under bootstrap=no: $futureSelfAdjudicator" `
+            -MessagePattern 'must declare bootstrap=yes' -Action {
+            Invoke-BodyGate -Rows @{ 'Self-referential bootstrap' = 'no' } `
+                -ChangedPaths @($futureSelfAdjudicator) `
+                -HeadJson $emptyJson -BaseJson $emptyJson
+        }
+    }
+
+    $futureNewRunEntryId = 'spec-to-done-new-run-boundary-implementation'
+    $futureNewRunRows = @{
+        'Self-referential bootstrap' = 'yes'
+        'Bootstrap ledger entry' = $futureNewRunEntryId
+        'Bootstrap reason' = $goodReason
+    }
+    Assert-Throws -Context 'future NEW_RUN bootstrap=yes still requires new debt' `
+        -MessagePattern 'does not ADD it' -Action {
+        Invoke-BodyGate -Rows $futureNewRunRows `
+            -ChangedPaths @($futureSpecToDoneNewRunPaths) `
+            -HeadJson $emptyJson -BaseJson $emptyJson
+    }
+
+    $futureNewRunEvidenceRef = 'docs/evidence/spec-to-done-new-run-boundary-implementation/self-referential-bootstrap/summary.md'
+    $futureNewRunMechanismPaths = @(
+        'scripts/self-referential-bootstrap-ledger.json'
+    ) + @($futureSpecToDoneNewRunPaths)
+    $futureNewRunLedger = New-LedgerJson -Entries @(
+        (New-Entry -Override @{
+            id = $futureNewRunEntryId
+            verification_mechanism_paths = $futureNewRunMechanismPaths
+            bootstrap_evidence_refs = @($futureNewRunEvidenceRef)
+        })
+    )
+    $futureNewRunBaseSha = New-FixtureHeadCommit -Json $emptyJson 'future NEW_RUN clean base'
+    & $write $futureNewRunEvidenceRef "future NEW_RUN bootstrap evidence $([Guid]::NewGuid().ToString('N'))"
+    $null = Invoke-FixtureGit -Arguments @('add', '--', $futureNewRunEvidenceRef)
+    $futureNewRunHeadSha = New-FixtureHeadCommit -Json $futureNewRunLedger 'future NEW_RUN bound opening'
+    Invoke-BodyGate -Rows $futureNewRunRows `
+        -ChangedPaths @($futureNewRunMechanismPaths + $futureNewRunEvidenceRef) `
+        -HeadJson $futureNewRunLedger -BaseJson $emptyJson -GateRepoRoot $gitRoot `
+        -BaseSha $futureNewRunBaseSha -HeadSha $futureNewRunHeadSha
+
     # --- inherited open debt blocks (declared no, entry untouched) ------------------
     Assert-Throws -Context 'inherited open debt blocks mechanism PRs' -MessagePattern 'open ledger debt' -Action {
         Invoke-BodyGate -Rows @{ 'Self-referential bootstrap' = 'no' } -ChangedPaths $mechanism -HeadJson $openBase -BaseJson $openBase
