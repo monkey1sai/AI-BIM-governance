@@ -3116,7 +3116,7 @@ git commit -m "task#7: 假資料 export 移至 test-only（D1=P），provider se
 
 gate 環境事實（`design-system-visual.spec.ts:199`）：`**/api/**` 一律 503 → 三屏所有真值 cell 為 `—`／`data-state="offline"`、svc-dot 全 `unknown`、chip 全 `unknown`、badge `—`、「最後更新 —」；`[data-uc="toast"]` 不會出現（本 slice 三頁沒有任何 toast 動作）。
 
-- [ ] **Step 1: 拆 `runtimeTruthCase`**
+- [x] **Step 1: 拆 `runtimeTruthCase`**
 
 把既有：
 
@@ -3158,7 +3158,7 @@ const truthRuntimeTruthCase = (primaryValueUc: string): SemanticCaseDefinition =
 
 （ops 頁沒有 `last-updated`，Step 4 的 `opsCases.runtime_truth` 用自己的三條斷言，不呼叫 `truthRuntimeTruthCase`。）
 
-- [ ] **Step 2: 整段重寫 `homeCases()`**
+- [x] **Step 2: 整段重寫 `homeCases()`**
 
 ```ts
 /* ═══ console.home.default（#home）— 真值頁：gate 503 → 全部誠實 offline ═══ */
@@ -3250,7 +3250,7 @@ function homeCases(): ScreenCases {
 }
 ```
 
-- [ ] **Step 3: `workspaceCases` 的 `warning` 一案**
+- [x] **Step 3: `workspaceCases` 的 `warning` 一案**
 
 把：
 
@@ -3278,7 +3278,7 @@ function homeCases(): ScreenCases {
     },
 ```
 
-- [ ] **Step 4: 整段重寫 `pipelineCases()` 與 `opsCases()`**
+- [x] **Step 4: 整段重寫 `pipelineCases()` 與 `opsCases()`**
 
 ```ts
 /* ═══ pipeline.default（#pipeline）— 真值頁 ═══ */
@@ -3469,7 +3469,7 @@ function opsCases(): ScreenCases {
 
 檔頭的「誠實原則」註解（`// - runtime_truth 一律斷言 data-prov="fixture" 揭露屬性與…`）改為：`// - runtime_truth：fixture 殼（workspace.a1–a3／concept）斷言 data-prov="fixture"；真值頁（home／pipeline／ops，unified-console-runtime-truth）斷言 page-root 內 data-prov="asbuilt" 且主值 cell 為 offline（gate 503 環境）。`
 
-- [ ] **Step 5: 乾淨工作樹後跑四屏 design gate（semantic 必綠；pixel 預期紅）**
+- [x] **Step 5: 乾淨工作樹後跑四屏 design gate（semantic 必綠；pixel 預期紅）**
 
 先 commit（gate 要求工作樹乾淨，`design-system-visual.spec.ts:187`）：
 
@@ -3511,7 +3511,7 @@ npm run build:ui
 # 啟動前先清 host-native port（scripts/dev/ensure-host-native-ports-free.ps1，若存在）。
 ```
 
-- [ ] **Step 1: 建立 spec**
+- [x] **Step 1: 建立 spec**
 
 ```ts
 import { test, expect, type APIRequestContext, type Page, type Request } from "@playwright/test";
@@ -3704,7 +3704,7 @@ test.describe("unified-console-runtime-truth slice 1：/ui 預設入口真值（
 });
 ```
 
-- [ ] **Step 2: 執行（真後端）**
+- [x] **Step 2: 執行（真後端）**
 
 ```powershell
 Set-Location $F
@@ -3715,7 +3715,7 @@ Remove-Item Env:E2E_DISABLE_WEBSERVER
 
 預期：`7 passed`；若前置未備妥則每案 `skipped` 且訊息以 `stack_down:` 開頭（**不是 pass**；不得以 skip 交差——備妥 stack 後重跑）。四張截圖落在 `$W\artifacts\e2e\unified-console-runtime-truth-*.png`。
 
-- [ ] **Step 3: Commit（截圖 `git add -f`）**
+- [x] **Step 3: Commit（截圖 `git add -f`）**
 
 ```powershell
 Set-Location $W
@@ -3734,7 +3734,7 @@ git commit -m "task#9: Playwright E2E——/ui 預設入口真值 vertical slice
 - Modify: `docs/superpowers/plans/2026-08-25-unified-console-runtime-truth-s1.md`（勾選）
 - 產出（ignored，供 coordinator 組 PR body）：`$W\artifacts\slice1-impact.txt`、`slice1-shape-inventory.md`、`slice1-design-gate-summary.txt`、`slice1-gates.txt`
 
-- [ ] **Step 1: 前端全量（5.7）＋ lint baseline**
+- [x] **Step 1: 前端全量（5.7）＋ lint baseline**
 
 ```powershell
 Set-Location $F
@@ -3746,7 +3746,7 @@ npm run build:ui
 
 預期：tsc exit 0；vitest 0 failed（新增 9 個測試檔皆綠）；`lint:baseline` 不得回報超出既有 baseline 的新錯誤（若新檔有 lint 錯誤，只修新檔）；build 成功。把四個指令的最後結果行貼進 `$W\artifacts\slice1-gates.txt`。
 
-- [ ] **Step 2: 乾淨工作樹跑兩道 required gate（5.6）**
+- [x] **Step 2: 乾淨工作樹跑兩道 required gate（5.6）**
 
 ```powershell
 Set-Location $W
@@ -3763,7 +3763,7 @@ npm run test:functional-runtime
 
 預期：design gate `status failed`（**預期**：`console.home.default`／`pipeline.default`／`runtime.ops.default`／`workspace.a1.default`／`workspace.a2.default`／`workspace.a3.default` 六屏 `diff > 0.01`——golden 仍為 fixture 畫面，5.5 rebaseline 由 coordinator 於 owner 明示後執行），13 屏 `semantic_parity=1`，`non-pixel failures: []`，`workspace.a4.default` 與 `concept.a5–a10` 的 diff ≤ 0.01；`verify-design-system-reference.ps1 -VerifyOrigin` 通過（`workspace.a4.default` digest 未動）；`functional-runtime-conv` 需本機 stack——通過則記 result 路徑 `artifacts/e2e/functional-runtime/functional-runtime-result.json`，stack 不可用則在 `slice1-gates.txt` 記 `functional-runtime-conv: stack_down（未跑，非 pass）`。
 
-- [ ] **Step 3: GitNexus detect-changes**
+- [x] **Step 3: GitNexus detect-changes**
 
 ```powershell
 Set-Location $W
@@ -3772,7 +3772,7 @@ npx gitnexus@1.6.9 detect-changes --scope compare --base-ref main
 
 預期：列出的變更 symbol 只在 `web-viewer-sample/src/console/coordinatorClient.ts`（`jsonGet`、`coordinatorClient`、`CoordinatorHttpError`）、`src/console/unified/**`（`UnifiedShell`／`ShellFrame`／`UnifiedStateProvider`／`HomePage`／`PipelinePage`／`OpsPage`／新模組）、測試檔與 `e2e/**`。linked worktree 看不到 staged／commit 時：`git diff --name-only main...HEAD` 並在 `slice1-gates.txt` 記 `detectVerdict='fallback'`。任何 `bim-review-coordinator/**` 或 `docs/plans/**` 出現在清單 → 立即停下（超出 slice 範圍）。
 
-- [ ] **Step 4: `tasks.md` 只加子彈（不打勾）**
+- [x] **Step 4: `tasks.md` 只加子彈（不打勾）**
 
 ```powershell
 Set-Location $W
@@ -3800,7 +3800,7 @@ $sha = git rev-parse --short HEAD
 
 （`<sha>` 以 `$sha` 實際值取代；所有 `- [ ]` 維持未勾。）
 
-- [ ] **Step 5: 最終 commit 與回報**
+- [x] **Step 5: 最終 commit 與回報**
 
 ```powershell
 Set-Location $W
