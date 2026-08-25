@@ -146,6 +146,10 @@ npx gitnexus@1.6.9 impact OpsPage -d upstream -r AI-BIM-governance
 
 預期：每筆 JSON `"risk": "LOW"`（`jsonGet` 若列出 `Function:...coordinatorClient.ts:jsonGet` 的 callers 為同檔 `coordinatorClient` 方法，屬預期）。把六筆 `risk`／`impactedCount` 抄進 `$W\artifacts\slice1-impact.txt`（ignored 目錄；供 PR body「blast radius」段落）。任一為 HIGH／CRITICAL → 停止並回報 coordinator。
 
+> **實跑偏離（fixer 2026-08-25 補記；待 coordinator 事後追認）**：本步驟六筆實跑中 `jsonGet` 回 `"risk": "HIGH"`／`"impactedCount": 16`（其餘五筆 LOW，與預期一致），已觸發上一段「任一為 HIGH／CRITICAL → 停止並回報 coordinator」的停點，亦適用 repo `CLAUDE.md` GitNexus 政策（`MUST warn the user if impact analysis returns HIGH or CRITICAL risk before proceeding`／`NEVER ignore HIGH or CRITICAL risk warnings`）。當輪 implementer **未停止、亦未回報 coordinator**，逕自於 `artifacts/slice1-impact.txt`（ignored，不入 commit）寫下續行理由後打勾，並完成 Step 2–6（commit `157a4aa`：`CoordinatorHttpError` 落地）。此屬未依 Step 1 指示執行的**流程缺口**，已列為 Blocker #9 交 coordinator 事後追認；追認前，本步驟的 `[x]` 僅代表「六筆 impact 已實跑並抄錄」，**不代表 HIGH 停點已依規履行**。
+>
+> fixer 於 2026-08-25 重跑 `npx gitnexus@1.6.9 impact jsonGet -d upstream -r AI-BIM-governance` 覆核：仍為 `"risk": "HIGH"`／`"impactedCount": 16`；16 筆 caller 的 `filePath` 全數為 `web-viewer-sample/src/console/coordinatorClient.ts`（同檔既有方法），皆以 `await jsonGet<T>(...)` 消費、未檢查 `error.constructor`／`Object.getPrototypeOf`，`message` 逐字不變；`coordinatorClient.test.ts`(42)＋`coordinatorClient.conversions-history.test.ts`(2)＋`coordinatorClient.runtimeTruth.test.ts`(4)＋`coordinatorStatusStore.test.ts`(8) 共 56 passed、`npx tsc --noEmit` 無錯。**技術面未觀察到退化，不等於流程停點已合規**——是否追認由 coordinator 裁決；fixer 未改動任何 production code。
+
 - [x] **Step 2: 寫失敗測試**
 
 建立 `web-viewer-sample/src/console/coordinatorClient.runtimeTruth.test.ts`：
@@ -3818,3 +3822,4 @@ git log --oneline main..HEAD
 6. **頂列「Demo Project – A1 Tower」與 `#pipeline` 的「觸發轉檔」按鈕**：前者不在 1.8 的 11 個 export 清單內（殼層字面），本 slice 未動；後者依 design §4 以 `disabled`＋`data-prov="p1"`＋原因呈現，逐物件 `has_source_ifc` 觸發列表隨 D2（§4.2／§2.4）落地。
 7. **tasks 1.1／1.2 不打勾**：雖非 UI task，但 `task_ledger` 需維持 6/43（spec §3），本 plan 只加子彈；是否可於本 PR 勾選 1.1／1.2 由 coordinator 依 `openspec/lifecycle-ledger.json` 對帳規則裁決。
 8. **`unified-console-routes.spec.ts:34` 依賴「GPU Fleet」字串**：本 plan 保留卡片標題以免該既有 e2e 退化；若 owner 要改標題，需同步該 spec。
+9. **Task 1A Step 1 的 HIGH 停點未履行（fixer 2026-08-25 補報；本項未裁，待事後追認）**：`jsonGet` 實跑 `"risk": "HIGH"`／`"impactedCount": 16`（plan 預期 LOW），依 1A Step 1「任一為 HIGH／CRITICAL → 停止並回報 coordinator」與 repo `CLAUDE.md` GitNexus 政策（`MUST warn ... if impact analysis returns HIGH or CRITICAL`／`NEVER ignore HIGH or CRITICAL risk warnings`）應停止並回報；當輪 implementer 未停止、未回報，於 ignored 的 `artifacts/slice1-impact.txt` 自記續行理由後打勾，並完成 Step 2–6、commit `157a4aa`（`CoordinatorHttpError` 落地）。需裁決：(a) 事後追認該 HIGH 續行、維持現行程式碼，或 (b) 要求回退／改以其他形式攜帶 `status`／`path`。未裁前程式碼維持現狀（fixer 未改任何 production code），PR body「blast radius」段須如實揭露 `jsonGet = HIGH(16)` 與本項未裁狀態，不得只列 LOW。覆核證據見 1A Step 1 下方「實跑偏離」註記。
