@@ -39,6 +39,10 @@ describe("UnifiedConsole smoke（approved 鍵 → UnifiedShell + 新頁）", () 
     expect(html).toContain("活躍 Sessions"); // kpi_sess
     expect(html).toContain("未結 Issue"); // kpi_issue
     expect(html).toContain("Outbox 待送"); // kpi_outbox
+    // unified-console-runtime-truth：KPI 為真值 cell（SSR 快照＝尚未連線 → — / offline），fixture 固定值不得出現。
+    expect(html).toContain('data-uc="kpi-conv-val" data-prov="asbuilt" data-state="offline"');
+    expect(html).toContain("最後更新 —");
+    for (const lit of ["2026-07-14", "990_model.ifc", "S-240601", "rule-run #88", "OB-201"]) expect(html, lit).not.toContain(lit);
   });
 
   it("#a1 渲染 workspace：dockTabs 5 顆 + DATACHANNEL 字條 + A1 dock 規則集 3 條", () => {
@@ -98,9 +102,15 @@ describe("UnifiedConsole smoke（approved 鍵 → UnifiedShell + 新頁）", () 
     ]) expect(html, name).toContain(name);
   });
 
-  it("誠實標記契約：每個 approved 路由的 fixture 面板帶 data-prov=\"fixture\"", () => {
-    for (const hash of ["#home", "#a1", "#a3", "#a5", "#pipeline", "#runtime"]) {
+  it("誠實標記契約：fixture 殼（#a1/#a3/#a5）帶 data-prov=\"fixture\"；真值頁（#home）page-root 內帶 asbuilt", () => {
+    for (const hash of ["#a1", "#a3", "#a5"]) {
       expect(renderAtHash(hash), hash).toContain('data-prov="fixture"');
+    }
+    for (const hash of ["#home"]) {
+      const html = renderAtHash(hash);
+      const pageRoot = html.slice(html.indexOf('data-uc="page-root"'));
+      expect(pageRoot, hash).toContain('data-prov="asbuilt"');
+      expect(pageRoot, hash).not.toContain('data-prov="fixture" style="display:grid'); // 舊 KPI grid 的 fixture 標記已移除
     }
   });
 });

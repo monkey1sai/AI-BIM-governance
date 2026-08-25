@@ -1,72 +1,84 @@
 // ═══════════════════════════════════════════════════════════════════════
 // UnifiedConsole — Home（總覽 · Mission Control）
-// 像素級移植正本：scratchpad/design-origin/app.js（s.page === "home" 區段）
-// 視覺標的：docs/plans/design-system-baseline/console.home.default/1440x900.png
-// 所有 inline style / 文案 byte-identical；互動為 fixture 語意（hash 導覽），
-// 不打任何 /api。fixture 資料一律 import 自 ./fixtures。
+// unified-console-runtime-truth slice 1（tasks 1.4）：四 KPI＋六 svc-dot 綁 coordinator :8004 既有端點（共用 poller）；
+// 每值附 data-prov="asbuilt"＋data-state；offline 顯示 —／未連線；無遙測顯示未取得；永不以 0 佔位。
+// 版面沿用設計原型（inline style 不改）；KPI 卡為 data-action="nav" 導向真頁；導覽設定／i18n／style helper 仍來自 ./fixtures。
+// 應用啟動器的 A1–A4 badge 文字仍為 fixture（tasks §2.3 承接），該區塊維持 data-prov="fixture" 誠實標記。
 // ═══════════════════════════════════════════════════════════════════════
-import type { ReactNode } from "react";
 import { useLang } from "../i18n";
+import { MONO, SHOW_CONCEPT_APPS, getL, apps, appEn, badgeTone, chipBox } from "./fixtures";
+import { useConsoleData } from "./ConsoleDataProvider";
+import type { EndpointKey } from "./coordinatorStatusStore";
+import { ServiceHealthList } from "./ServiceHealthList";
 import {
-  MONO, SHOW_CONCEPT_APPS, getL, apps, appEn, alerts, badgeTone, chipBox,
-} from "./fixtures";
-import { useUnifiedState } from "./UnifiedShell";
+  activeSessions, cell, cellSub, cellText, conversionCounts, lastUpdatedText, openIssueCount, outboxPending, stateColor,
+} from "./runtimeTruth";
+import type { DataState } from "./runtimeTruth";
+
+const HOME_KEYS: readonly EndpointKey[] = ["runtimeStatus", "ifcReady", "conversionRecords", "issues", "outboxSummary", "ruleRuns", "kitHealth", "minioWatch"];
 
 export function HomePage() {
   const lang = useLang();
   const zh = lang === "zh";
   const L = getL(zh);
-  const { intake, conv, sessions, outbox, issues } = useUnifiedState();
+  const snap = useConsoleData(HOME_KEYS);
 
   const nav = (hash: string) => { window.location.hash = hash; };
 
-  /* ---- pipeSnap 4 步（① INTAKE → ② CONVERT → ③ SESSION → ⑤ OUTBOX）---- */
-  const pipeSnap = [
-    { step: "① INTAKE", n: String(intake.length), label: zh ? "進件" : "intake", arrow: true },
-    { step: "② CONVERT", n: String(conv.filter((c) => c.st === "running").length), label: zh ? "轉檔中" : "running", arrow: true },
-    { step: "③ SESSION", n: String(sessions.length), label: zh ? "活躍" : "active", arrow: true },
-    { step: "⑤ OUTBOX", n: String(outbox.filter((o) => o.st === "待送").length), label: zh ? "待送" : "pending", arrow: false },
-  ];
+  /* ---- 真值投影（design §3.3）---- */
+  const conv = cell(snap.conversionRecords, conversionCounts);
+  const sess = cell(snap.runtimeStatus, (rt) => ({ active: activeSessions(rt), participants: rt.sessions.participant_count }));
+  const issue = cell(snap.issues, openIssueCount);
+  const outbox = cell(snap.outboxSummary, outboxPending);
+  const intake = cell(snap.ifcReady, (r) => r.count);
+  const updated = lastUpdatedText([snap.runtimeStatus, snap.conversionRecords, snap.issues, snap.outboxSummary]);
 
-  /* ---- KPI 卡產生器（1:1 對應原型 kpi(actId,label,val,sub,valColor)）----
-     uc 參數僅掛 data-uc 定位屬性（design gate semantic contract 用），像素中性。 */
-  const kpi = (hash: string, label: string, val: string, sub: ReactNode, valColor?: string, uc?: string) => (
-    <div className="hv-accent-border" data-uc={uc} onClick={() => nav(hash)} style={{ ...chipBox, padding: 16, display: "flex", flexDirection: "column", gap: 6, cursor: "pointer" }}>
+  /* ---- KPI 卡（版面 1:1 原型 kpi(actId,label,val,sub,valColor)；值／副標／data-state 為真值）---- */
+  const kpi = (hash: string, label: string, uc: string, state: DataState, val: string, sub: string) => (
+    <div className="hv-accent-border" data-uc={uc} data-action="nav" role="link" onClick={() => nav(hash)} style={{ ...chipBox, padding: 16, display: "flex", flexDirection: "column", gap: 6, cursor: "pointer" }}>
       <span style={{ fontFamily: MONO, fontSize: "9.5px", letterSpacing: ".1em", color: "var(--ab-text-dim)", textTransform: "uppercase" }}>{label}</span>
-      <span data-uc={uc ? uc + "-val" : undefined} style={valColor ? { fontSize: 26, fontWeight: 700, fontFamily: MONO, color: valColor } : { fontSize: 26, fontWeight: 700, fontFamily: MONO }}>{val}</span>
-      <span style={{ fontSize: 11, color: "var(--ab-text-muted)" }}>{sub}</span>
+      <span data-uc={uc + "-val"} data-prov="asbuilt" data-state={state} style={{ fontSize: 26, fontWeight: 700, fontFamily: MONO, color: stateColor(state) }}>{val}</span>
+      <span data-uc={uc + "-sub"} style={{ fontSize: 11, color: "var(--ab-text-muted)" }}>{sub}</span>
     </div>
   );
+
+  /* ---- pipeSnap 4 步（① INTAKE → ② CONVERT → ③ SESSION → ⑤ OUTBOX；同一份真值）---- */
+  const pipeSnap = [
+    { step: "① INTAKE", uc: "snap-intake", state: intake.state, n: cellText(intake, L), label: "ifc-ready", arrow: true },
+    { step: "② CONVERT", uc: "snap-convert", state: conv.state, n: cellText(conv, L, (c) => String(c.running)), label: zh ? "轉檔中" : "running", arrow: true },
+    { step: "③ SESSION", uc: "snap-session", state: sess.state, n: cellText(sess, L, (s) => String(s.active)), label: zh ? "活躍" : "active", arrow: true },
+    { step: "⑤ OUTBOX", uc: "snap-outbox", state: outbox.state, n: cellText(outbox, L, (o) => String(o.pending)), label: zh ? "待送" : "pending", arrow: false },
+  ];
 
   const launcherApps = apps.filter((a) => SHOW_CONCEPT_APPS || a.tone === "live");
 
   return (
     <div style={{ flex: 1, overflow: "auto", padding: "22px 26px", display: "flex", flexDirection: "column", gap: 18 }}>
-      {/* ---- 標題列 ---- */}
+      {/* ---- 標題列：最後更新（只有 live 才有時間；否則 —，gate 環境確定性）---- */}
       <div style={{ display: "flex", alignItems: "baseline", gap: 12 }}>
         <span style={{ fontSize: 20, fontWeight: 700 }}>{L.home_title}</span>
-        <span style={{ fontFamily: MONO, fontSize: "10.5px", color: "var(--ab-text-dim)" }}>2026-07-14 · Demo Project – A1 Tower</span>
+        <span data-uc="last-updated" style={{ fontFamily: MONO, fontSize: "10.5px", color: "var(--ab-text-dim)" }}>{`${L.last_updated} ${updated}`}</span>
       </div>
-      {/* ---- KPI 卡 ×4 ---- */}
-      <div data-prov="fixture" style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 12 }}>
-        {kpi("#pipeline", L.kpi_conv, String(conv.filter((c) => c.st === "running").length), <>990_model.ifc 62% · <span style={{ color: "var(--ab-danger)" }}>1 失敗</span></>, undefined, "kpi-conv")}
-        {kpi("#pipeline", L.kpi_sess, String(sessions.length), "editor lease 1 · spectator 1", undefined, "kpi-sess")}
-        {kpi("#issues", L.kpi_issue, String(issues.length + 10), L.kpi_issue_sub, "var(--ab-danger)", "kpi-issue")}
-        {kpi("#runtime", L.kpi_outbox, String(outbox.filter((o) => o.st === "待送").length), "metadata-only callback", "var(--ab-warn)", "kpi-outbox")}
+      {/* ---- KPI 卡 ×4（真值）---- */}
+      <div data-prov="asbuilt" style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 12 }}>
+        {kpi("#conv", L.kpi_conv, "kpi-conv", conv.state, cellText(conv, L, (c) => String(c.running)), cellSub(conv, L, (c) => `ready ${c.ready} · failed ${c.failed}`))}
+        {kpi("#sessions", L.kpi_sess, "kpi-sess", sess.state, cellText(sess, L, (s) => String(s.active)), cellSub(sess, L, (s) => `participants ${s.participants}`))}
+        {kpi("#issues", L.kpi_issue, "kpi-issue", issue.state, cellText(issue, L), cellSub(issue, L, () => (zh ? "非 resolved／rejected" : "not resolved/rejected")))}
+        {kpi("#pipeline", L.kpi_outbox, "kpi-outbox", outbox.state, cellText(outbox, L, (o) => String(o.pending)), cellSub(outbox, L, (o) => `attempts ${o.attempts}/${o.maxAttempts}`))}
       </div>
-      {/* ---- 資料生產線快照 + 警示/事件 ---- */}
+      {/* ---- 資料生產線快照 + 服務健康 ---- */}
       <div style={{ display: "grid", gridTemplateColumns: "1.7fr 1fr", gap: 12 }}>
-        <div data-prov="fixture" style={{ ...chipBox, padding: 16, display: "flex", flexDirection: "column", gap: 12 }}>
+        <div data-prov="asbuilt" style={{ ...chipBox, padding: 16, display: "flex", flexDirection: "column", gap: 12 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <span style={{ fontSize: "13.5px", fontWeight: 700 }}>{L.pipe_snap}</span>
-            <span data-uc="enter-pipeline" onClick={() => nav("#pipeline")} style={{ marginLeft: "auto", fontSize: 11, color: "var(--ab-accent)", cursor: "pointer" }}>{L.enter} →</span>
+            <span data-uc="enter-pipeline" data-action="nav" role="link" onClick={() => nav("#pipeline")} style={{ marginLeft: "auto", fontSize: 11, color: "var(--ab-accent)", cursor: "pointer" }}>{L.enter} →</span>
           </div>
           <div style={{ display: "flex", alignItems: "stretch", gap: 0 }}>
             {pipeSnap.map((p) => (
               <div key={p.step} style={{ flex: 1, display: "flex", alignItems: "center", gap: 0, minWidth: 0 }}>
-                <div className="hv-accent-border-strong" onClick={() => nav("#pipeline")} style={{ flex: 1, background: "var(--ab-inset)", border: "1px solid rgba(120,160,210,.14)", borderRadius: 10, padding: "10px 12px", display: "flex", flexDirection: "column", gap: 3, cursor: "pointer" }}>
+                <div className="hv-accent-border-strong" data-action="nav" role="link" onClick={() => nav("#pipeline")} style={{ flex: 1, background: "var(--ab-inset)", border: "1px solid rgba(120,160,210,.14)", borderRadius: 10, padding: "10px 12px", display: "flex", flexDirection: "column", gap: 3, cursor: "pointer" }}>
                   <span style={{ fontFamily: MONO, fontSize: 9, letterSpacing: ".08em", color: "var(--ab-text-code)" }}>{p.step}</span>
-                  <div style={{ display: "flex", alignItems: "baseline", gap: 6 }}><span style={{ fontSize: 19, fontWeight: 700, fontFamily: MONO }}>{p.n}</span><span style={{ fontSize: 11, color: "var(--ab-text-muted)" }}>{p.label}</span></div>
+                  <div style={{ display: "flex", alignItems: "baseline", gap: 6 }}><span data-uc={p.uc} data-prov="asbuilt" data-state={p.state} style={{ fontSize: 19, fontWeight: 700, fontFamily: MONO, color: stateColor(p.state) }}>{p.n}</span><span style={{ fontSize: 11, color: "var(--ab-text-muted)" }}>{p.label}</span></div>
                 </div>
                 {p.arrow ? <span style={{ color: "var(--ab-text-faint)", padding: "0 6px", fontFamily: MONO }}>→</span> : null}
               </div>
@@ -77,18 +89,12 @@ export function HomePage() {
             <span>{L.f1_desc}</span>
           </div>
         </div>
-        <div data-prov="fixture" style={{ ...chipBox, padding: 16, display: "flex", flexDirection: "column", gap: 10 }}>
-          <span style={{ fontSize: "13.5px", fontWeight: 700 }}>{L.alerts}</span>
-          {alerts.map((a, i) => (
-            <div key={i} style={{ display: "flex", alignItems: "center", gap: 9 }}>
-              <span style={{ width: 7, height: 7, borderRadius: "50%", background: a.c, flex: "none" }} />
-              <span style={{ flex: 1, fontSize: 12, color: "var(--ab-text-2)" }}>{zh ? a.msgZh : a.msgEn}</span>
-              <span style={{ fontFamily: MONO, fontSize: "9.5px", color: "var(--ab-text-dimmer)" }}>{a.t}</span>
-            </div>
-          ))}
+        <div data-prov="asbuilt" style={{ ...chipBox, padding: 16, display: "flex", flexDirection: "column", gap: 10 }}>
+          <span style={{ fontSize: "13.5px", fontWeight: 700 }}>{L.svc_health}</span>
+          <ServiceHealthList snap={snap} zh={zh} />
         </div>
       </div>
-      {/* ---- 應用啟動器 ---- */}
+      {/* ---- 應用啟動器（導覽設定；A1–A4 badge 文字仍為 fixture，tasks §2.3 承接）---- */}
       <div data-prov="fixture" style={{ display: "flex", flexDirection: "column", gap: 10 }}>
         <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
           <span style={{ fontSize: "13.5px", fontWeight: 700 }}>{L.launcher}</span>

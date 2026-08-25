@@ -58,9 +58,7 @@ describe("EdgeConsole shared status polling（legacy rail 一次；unified 共�
     expect(spies.runtimeStatus).toHaveBeenCalledTimes(1);
     expect(spies.getConversionRecords).toHaveBeenCalledTimes(1);
     expect(spies.getConversionRecords).toHaveBeenCalledWith(100);
-    // Task 4 完成後才綠：HomePage 尚未訂閱 store，本 task 先要求恰 0 次。
-    expect(spies.getCallbackOutboxSummary).toHaveBeenCalledTimes(0);
-    // Task 4 改為 toHaveBeenCalledWith(200)
+    expect(spies.getCallbackOutboxSummary).toHaveBeenCalledWith(200);
 
     await act(async () => { root.unmount(); });
   });
