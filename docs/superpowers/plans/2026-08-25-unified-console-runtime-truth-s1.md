@@ -132,7 +132,7 @@ Read 確認清單（每個 task 動手前先 Read 對應檔案，不憑記憶改
 - Modify: `web-viewer-sample/src/console/coordinatorClient.ts`（`jsonGet` 錯誤型別；`KitHealth`；`coordinatorClient` 加 3 個方法）
 - Test: `web-viewer-sample/src/console/coordinatorClient.runtimeTruth.test.ts`（新）
 
-- [ ] **Step 1: impact 分析（tasks 1.1）並記錄**
+- [x] **Step 1: impact 分析（tasks 1.1）並記錄**
 
 ```powershell
 $W = 'C:\Repos\active\iot\AI-BIM-governance.worktrees\unified-console-runtime-truth-s1'; Set-Location $W
@@ -146,7 +146,7 @@ npx gitnexus@1.6.9 impact OpsPage -d upstream -r AI-BIM-governance
 
 預期：每筆 JSON `"risk": "LOW"`（`jsonGet` 若列出 `Function:...coordinatorClient.ts:jsonGet` 的 callers 為同檔 `coordinatorClient` 方法，屬預期）。把六筆 `risk`／`impactedCount` 抄進 `$W\artifacts\slice1-impact.txt`（ignored 目錄；供 PR body「blast radius」段落）。任一為 HIGH／CRITICAL → 停止並回報 coordinator。
 
-- [ ] **Step 2: 寫失敗測試**
+- [x] **Step 2: 寫失敗測試**
 
 建立 `web-viewer-sample/src/console/coordinatorClient.runtimeTruth.test.ts`：
 
@@ -195,7 +195,7 @@ describe("coordinatorClient runtime-truth 擴充", () => {
 });
 ```
 
-- [ ] **Step 3: 跑測試確認失敗**
+- [x] **Step 3: 跑測試確認失敗**
 
 ```powershell
 $F = 'C:\Repos\active\iot\AI-BIM-governance.worktrees\unified-console-runtime-truth-s1\web-viewer-sample'; Set-Location $F
@@ -204,7 +204,7 @@ npx vitest run src/console/coordinatorClient.runtimeTruth.test.ts
 
 預期：`Tests  4 failed (4)`；第一筆錯誤含 `coordinatorClient.kitHealth is not a function`，最後一筆含 `expected Error ... to be an instance of CoordinatorHttpError`。
 
-- [ ] **Step 4: 最小實作**
+- [x] **Step 4: 最小實作**
 
 `coordinatorClient.ts` 四處編輯（Read 後以精確字串定位）：
 
@@ -264,7 +264,7 @@ export interface KitHealth {
   governanceRuleRuns: (limit = 5) => jsonGet<RuleRunHistoryResponse>(`/api/governance/rule-runs?limit=${limit}`),
 ```
 
-- [ ] **Step 5: 跑測試確認通過（含既有 client 測試不退化）＋型別**
+- [x] **Step 5: 跑測試確認通過（含既有 client 測試不退化）＋型別**
 
 ```powershell
 Set-Location $F
@@ -274,7 +274,7 @@ npx tsc --noEmit
 
 預期：`Test Files  4 passed (4)`；tsc 無輸出（exit 0）。
 
-- [ ] **Step 6: 產出盤點表並 commit**
+- [x] **Step 6: 產出盤點表並 commit**
 
 把本 plan「十端點欄位 shape 盤點」表逐字複製到 `$W\artifacts\slice1-shape-inventory.md`（ignored；Task 10 貼進 PR body），並在表下加一行「行號重定位：`rg -n "api/kit/health|api/kit/instances/current|api/callback-outbox/summary|api/conversion/records|api/external/minio-watch/status|api/minio/objects|api/runtime/status|api/external/ifc-ready\"" bim-review-coordinator/src/app.ts` 與 `rg -n "api/governance/issues|api/governance/rule-runs" bim-review-coordinator/src/routes/governanceProxy.ts` 於 `<今日日期>` 輸出」（貼上實際輸出）。
 
@@ -297,7 +297,7 @@ git commit -m "task#1: coordinatorClient 加性擴充（CoordinatorHttpError、k
 - Create: `web-viewer-sample/src/console/unified/__testdata__/coordinatorMocks.ts`
 - Test: `web-viewer-sample/src/console/unified/coordinatorStatusStore.test.ts`
 
-- [ ] **Step 1: 建立測試 mock 模組（test-only；production 不得 import，Task 7 的符號測試守門）**
+- [x] **Step 1: 建立測試 mock 模組（test-only；production 不得 import，Task 7 的符號測試守門）**
 
 建立 `web-viewer-sample/src/console/unified/__testdata__/coordinatorMocks.ts`：
 
@@ -404,7 +404,7 @@ export function spyCoordinatorEndpointsOffline() {
 }
 ```
 
-- [ ] **Step 2: 寫失敗測試 `coordinatorStatusStore.test.ts`**
+- [x] **Step 2: 寫失敗測試 `coordinatorStatusStore.test.ts`**
 
 ```ts
 // unified-console-runtime-truth slice 1（tasks 1.3）：共用 poller 的五條義務——同端點單一 in-flight、
@@ -516,7 +516,7 @@ describe("CoordinatorStatusStore", () => {
 });
 ```
 
-- [ ] **Step 3: 跑測試確認失敗**
+- [x] **Step 3: 跑測試確認失敗**
 
 ```powershell
 Set-Location $F
@@ -525,7 +525,7 @@ npx vitest run src/console/unified/coordinatorStatusStore.test.ts
 
 預期：`Failed to resolve import "./coordinatorStatusStore"`（模組不存在）。
 
-- [ ] **Step 4: 實作 `coordinatorStatusStore.ts`**
+- [x] **Step 4: 實作 `coordinatorStatusStore.ts`**
 
 ```ts
 // ═══════════════════════════════════════════════════════════════════════
@@ -765,7 +765,7 @@ export function useCoordinatorStatus(store: CoordinatorStatusStore, keys: readon
 }
 ```
 
-- [ ] **Step 5: 實作 `ConsoleDataProvider.tsx`**
+- [x] **Step 5: 實作 `ConsoleDataProvider.tsx`**
 
 ```tsx
 // UnifiedConsole — ConsoleDataProvider（unified-console-runtime-truth design §1.4）：頁面資料來源的單一注入點。
@@ -788,7 +788,7 @@ export function useConsoleData(keys: readonly EndpointKey[]): CoordinatorStatusS
 }
 ```
 
-- [ ] **Step 6: 跑測試確認通過＋型別**
+- [x] **Step 6: 跑測試確認通過＋型別**
 
 ```powershell
 Set-Location $F
@@ -798,7 +798,7 @@ npx tsc --noEmit
 
 預期：`Tests  8 passed (8)`；tsc exit 0。若 tsc 對 `__testdata__/coordinatorMocks.ts` 報 `vi` 型別問題，確認檔案在 `src/` 下（tsconfig `types: ["vitest/globals"]` 已含 vitest 型別）。
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```powershell
 Set-Location $W
