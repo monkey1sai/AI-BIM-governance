@@ -12,11 +12,10 @@ import {
 import type { CSSProperties, ReactNode } from "react";
 import { setLang, useLang } from "../i18n";
 import {
-  MONO, getL, navMain, apps, badgeTone, navItem,
-  initialIntake, initialConv, initialSessions, initialOutbox, initialIssues, INITIAL_ISSUE_SEQ,
+  MONO, getL, navMain, apps, badgeTone, navItem, INITIAL_ISSUE_SEQ,
 } from "./fixtures";
 import type {
-  ConceptKey, ConvItem, DockKey, IntakeItem, IssueItem, OutboxItem, PageKey, SessionItem,
+  ConceptKey, DockKey, IssueItem, OutboxItem, PageKey,
 } from "./fixtures";
 import { ConsoleDataProvider } from "./ConsoleDataProvider";
 import { useConsoleData } from "./consoleData";
@@ -26,14 +25,11 @@ import { HEALTH_DOT, cell, cellText, conversionCounts, healthOf } from "./runtim
 import type { HealthState } from "./runtimeTruth";
 import "./unified.css";
 
-/* ═══ UnifiedState context（conv/intake/sessions/outbox/issues fixture + toast）═══ */
+/* ═══ UnifiedState context（docks／WorkspacePage 的 issues/outbox local state + toast；intake/conv/sessions 已由共用 poller 取代）═══ */
 
 export interface UnifiedStateShape {
-  intake: IntakeItem[];
-  conv: ConvItem[];
-  sessions: SessionItem[];
-  outbox: OutboxItem[];
   issues: IssueItem[];
+  outbox: OutboxItem[];
   issueSeq: number;
 }
 
@@ -55,11 +51,8 @@ export function useUnifiedState(): UnifiedStateApi {
 
 export function UnifiedStateProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<UnifiedStateShape>(() => ({
-    intake: [...initialIntake],
-    conv: [...initialConv],
-    sessions: [...initialSessions],
-    outbox: [...initialOutbox],
-    issues: [...initialIssues],
+    issues: [],
+    outbox: [],
     issueSeq: INITIAL_ISSUE_SEQ,
   }));
   const [toastMsg, setToastMsg] = useState("");

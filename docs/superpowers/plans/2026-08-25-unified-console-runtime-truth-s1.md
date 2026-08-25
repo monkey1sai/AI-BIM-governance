@@ -2833,7 +2833,7 @@ git commit -m "task#6: #runtime 真值 OpsPage（Kit instance／GPU 未取得／
 
 **範圍誠實揭露**：tasks 1.8 列 11 個 export；其中 `failDefs`／`diffDefs`／`fedMembers`（`docks.tsx`）與 `stageTree`（`WorkspacePage.tsx`）的消費者屬 spec §3 明示「out of scope」的 §2／§3 面（A1–A3 dock 互動、A1 視區），本 slice **不改 `docks.tsx`／`WorkspacePage.tsx`**，該 4 個 export 暫留 `fixtures.ts`，由 `fixtureNotInProduction.test.ts` 的 `SLICE2_DEBT` ratchet 釘住「只能縮、不能擴、不得新增 importer」；其餘 7 個（`initialIntake`／`initialConv`／`initialSessions`／`initialOutbox`／`initialIssues`／`alerts`／`services`）本 task 移到 test-only。此決定已在 plan 回傳中列為 blocker 交 coordinator 裁決（擴大 slice 1 或留 slice 2）。
 
-- [ ] **Step 1: impact 分析**
+- [x] **Step 1: impact 分析**
 
 ```powershell
 Set-Location $W
@@ -2843,7 +2843,7 @@ npx gitnexus@1.6.9 impact useUnifiedState -d upstream -r AI-BIM-governance
 
 預期 LOW；`useUnifiedState` callers＝`ShellFrame`、`WorkspacePage`、docks 五個元件（皆只用 `issues`／`outbox`／`issueSeq`／`patch`／`toast`，不用 `intake`／`conv`／`sessions`——執行時以 `rg -n "u\.(intake|conv|sessions)|{ intake| conv,| sessions" web-viewer-sample/src/console/unified/docks.tsx web-viewer-sample/src/console/unified/WorkspacePage.tsx` 確認為零命中）。
 
-- [ ] **Step 2: 寫失敗測試 `fixtureNotInProduction.test.ts`**
+- [x] **Step 2: 寫失敗測試 `fixtureNotInProduction.test.ts`**
 
 ```ts
 // unified-console-runtime-truth slice 1（tasks 1.8；spec scenario「fixture 假值不在 production 顯示路徑（符號層驗證）」）：
@@ -2945,7 +2945,7 @@ describe("fixture 假資料不在 production 顯示路徑", () => {
 });
 ```
 
-- [ ] **Step 3: 跑測試確認失敗**
+- [x] **Step 3: 跑測試確認失敗**
 
 ```powershell
 Set-Location $F
@@ -2954,7 +2954,7 @@ npx vitest run src/console/unified/fixtureNotInProduction.test.ts
 
 預期：`Failed to resolve import "./__testdata__/prototypeFixtures"`。
 
-- [ ] **Step 4: 建立 `__testdata__/prototypeFixtures.ts`**（內容自 `fixtures.ts` 逐字搬移，含兩個介面）
+- [x] **Step 4: 建立 `__testdata__/prototypeFixtures.ts`**（內容自 `fixtures.ts` 逐字搬移，含兩個介面）
 
 ```ts
 // 設計原型（scratchpad/design-origin/app.js）的假資料 export——unified-console-runtime-truth slice 1（D1=P）自
@@ -3009,11 +3009,11 @@ export const alerts: AlertDef[] = [
 ];
 ```
 
-- [ ] **Step 5: `fixtures.ts` 移除 7 個 export 與 2 個介面**
+- [x] **Step 5: `fixtures.ts` 移除 7 個 export 與 2 個介面**
 
 刪除下列區塊（Read 後逐字定位）：`export const initialIntake…];`、`export const initialConv…];`、`export const initialSessions…];`、`export const initialOutbox…];`、`export const initialIssues…];`、`/* ── ops 服務健康 6 項 ── */` 起至 `services` 陣列結尾、`/* ── home 警示 / 事件 4 項 ── */` 起至 `alerts` 陣列結尾。保留：`INITIAL_ISSUE_SEQ`、`initialRuleOn`、`initialFlags`、`INITIAL_DC_LOG`（WorkspacePage）、`ruleDefs`（docks；不在禁用清單）、`failDefs`／`diffDefs`／`fedMembers`／`stageTree`（slice-2 欠帳，見上）、所有型別、i18n、導覽、style helper。檔頭第 5 行註解 `// 本檔只含 fixture 資料與 style helper，不打任何 /api。` 改為 `// 本檔含 i18n 字典、導覽設定、style helper 與 A1–A3 dock 仍使用的原型資料（slice 2 承接）；home／pipeline／ops 的假資料已移至 __testdata__/prototypeFixtures.ts。`
 
-- [ ] **Step 6: `UnifiedShell.tsx` provider seeds 縮為 issues／outbox／issueSeq**
+- [x] **Step 6: `UnifiedShell.tsx` provider seeds 縮為 issues／outbox／issueSeq**
 
 (a) import 改為：
 
@@ -3048,7 +3048,7 @@ export interface UnifiedStateShape {
 
 （`docks.tsx` 的 `IssuesDock` 因此初始為空列表；其 `+ 10 open` 字面與 BCF／deliver 假 toast 屬 tasks §2.2／§2.3，本 slice 不動。）
 
-- [ ] **Step 7: 5.2 解凍——`a1DockLive.test.tsx` 案 (b)**
+- [x] **Step 7: 5.2 解凍——`a1DockLive.test.tsx` 案 (b)**
 
 把案 (b) 末段：
 
@@ -3070,7 +3070,7 @@ export interface UnifiedStateShape {
 
 案名 `"(b) health 成功：live 區塊出現（data-prov=asbuilt）、近期 rule-runs 真資料渲染，fixture 區塊不變"` 改為 `"(b) health 成功：live 區塊出現（data-prov=asbuilt）、近期 rule-runs 真資料渲染"`。
 
-- [ ] **Step 8: 跑測試、型別、全量**
+- [x] **Step 8: 跑測試、型別、全量**
 
 ```powershell
 Set-Location $F
@@ -3081,7 +3081,7 @@ npx vitest run
 
 預期：三檔 `passed`；tsc exit 0（若 `docks.tsx` 或 `WorkspacePage.tsx` 因 `UnifiedStateShape` 縮減報型別錯，代表它們有讀 `intake`／`conv`／`sessions`——回 Step 1 的 `rg` 確認；2026-08-25 查證為零命中）；全量 0 failed。
 
-- [ ] **Step 9: production bundle 掃描（tasks 1.8 驗證條件）**
+- [x] **Step 9: production bundle 掃描（tasks 1.8 驗證條件）**
 
 ```powershell
 Set-Location $F
@@ -3092,7 +3092,7 @@ rg -c "990_model.ifc|S-240601|OB-201|rule-run #88" dist-ui; if ($LASTEXITCODE -e
 
 預期：`vite build` 成功（`dist-ui/index.html` 存在）；兩個 `rg` 皆無命中並印出 OK 行。（`A1_Tower_v12.ifc`／`/Models/ARCH/A1_Tower.usd` 等 docks／WorkspacePage 字面仍在 bundle，屬 slice-2 欠帳，不在本步驟斷言。）
 
-- [ ] **Step 10: Commit**
+- [x] **Step 10: Commit**
 
 ```powershell
 Set-Location $W
