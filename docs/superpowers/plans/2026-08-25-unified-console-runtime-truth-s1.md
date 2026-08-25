@@ -12,6 +12,8 @@
 
 ---
 
+> **Task 編號對照（coordinator 2026-08-25 合併後）**：原 Task 1、2 → **Task 1**；原 Task 3a、3b、3c → **Task 2**；原 Task 4、5 → **Task 3**；原 Task 6、7 → **Task 4**；原 Task 8、9、10 → **Task 5**。文中所有「Task N Step M」引用一律指**原**編號，各子段標題已標「原 Task N」。合併原因：run 剩餘 agent 額度（32）不足以支撐 10 個 task 的 per-task review。
+
 ## Global Constraints（來自 spec §1–§5 與 OpenSpec change，逐條遵守）
 
 - **唯一忠實源**：`openspec/changes/unified-console-runtime-truth/`（`proposal.md`、`design.md`、`tasks.md`、`specs/**`）；本 plan 只界定 slice 1 的執行順序與程式細節，與 change 衝突時以 change 為準。
@@ -120,7 +122,11 @@ Read 確認清單（每個 task 動手前先 Read 對應檔案，不憑記憶改
 
 ---
 
-### Task 1: coordinatorClient 加性擴充（tasks 1.1 impact ＋ 1.2 shape 盤點）
+### Task 1: coordinatorClient 加性擴充＋共用 poller store（tasks 1.1／1.2／1.3）
+
+> 本 task 由多個原 task 併成（額度／commit 錨點考量，coordinator 2026-08-25）：各子段（#### nA／nB…）的步驟、驗證與 commit 指令**逐字照做**，每段結尾的 commit 都要做；本 task 所有 commit message 一律以「task#<本 task 在 implementer 提示中的 index>: 」開頭再接原訊息。子段標題括號內的「原 Task N」對應文中所有「Task N Step M」的引用。
+
+#### 1A. coordinatorClient 加性擴充（tasks 1.1 impact ＋ 1.2 shape 盤點）（原 Task 1）
 
 **Files:**
 - Modify: `web-viewer-sample/src/console/coordinatorClient.ts`（`jsonGet` 錯誤型別；`KitHealth`；`coordinatorClient` 加 3 個方法）
@@ -213,20 +219,24 @@ import type { IssueRow, RuleRunHistoryResponse } from "./governanceClient";
 (b) `async function jsonGet<T>(path: string): Promise<T> {` 之前加：
 
 ```ts
-// unified-console-runtime-truth（slice 1）：GET 非 2xx 以帶 status 的錯誤型別丟出，讓共用 poller
-// （unified/coordinatorStatusStore.ts）能區分 502／503／504（未連線）與其他非 2xx（誠實顯示狀態碼）。
-// message 逐字維持既有格式 `coordinator <path> -> <status> <detail>`，既有呼叫端與測試不受影響。
+// unified-console-runtime-truth slice 2（D3）：呼叫端需要區分「404＝dev routes 已關閉（canonical-linux）」
+// 與其他失敗，但既有 `coordinator <path> -> <status> <detail>` 訊息格式已被多處 String(e) 顯示依賴——
+// 故以 Error 子類攜帶 status／path，message 逐字不變。目前只有 jsonGet 丟此類（消費者：getTestDataProjects、
+// getConversionsHistory）；其他原語維持既有 Error（不在本切片範圍）。
 export class CoordinatorHttpError extends Error {
-  readonly status: number;
-  readonly path: string;
-  constructor(path: string, status: number, detail: string) {
+  constructor(readonly path: string, readonly status: number, detail: string) {
     super(`coordinator ${path} -> ${status} ${detail}`);
     this.name = "CoordinatorHttpError";
-    this.status = status;
-    this.path = path;
   }
 }
+
+/** 404 專屬判定：/api/dev/* 於 ENABLE_DEV_ROUTES=false 回 404 → 消費者顯示「dev routes 已關閉」而非泛用錯誤。 */
+export function isCoordinatorNotFound(error: unknown): boolean {
+  return error instanceof CoordinatorHttpError && error.status === 404;
+}
 ```
+
+（上述 class＋`isCoordinatorNotFound` 與 slice 2 plan 4A **逐字相同**（含註解），兩切片在同一位置加入相同內容，merge 不衝突；`isCoordinatorNotFound` 本切片不使用但**必須一併加入且不得改動**。）
 
 (c) `jsonGet` 內的 `throw new Error(\`coordinator ${path} -> ${res.status} ${await errorDetail(res)}\`);`（只改 `jsonGet` 這一處；`jsonPost`／`jsonPut`／`jsonPostWithHeaders` 不動）改為：
 
@@ -279,7 +289,7 @@ git commit -m "task#1: coordinatorClient 加性擴充（CoordinatorHttpError、k
 
 ---
 
-### Task 2: 共用 poller store `CoordinatorStatusStore`＋`ConsoleDataProvider`＋測試 mock（tasks 1.3）
+#### 1B. 共用 poller store `CoordinatorStatusStore`＋`ConsoleDataProvider`＋測試 mock（tasks 1.3）（原 Task 2）
 
 **Files:**
 - Create: `web-viewer-sample/src/console/unified/coordinatorStatusStore.ts`
@@ -801,7 +811,11 @@ git commit -m "task#2: 共用 poller store（單一 in-flight／退避 ≤60s／
 
 ---
 
-### Task 3a: 既有 unified-mount 測試的前置防護 sweep（三檔逐字 patch；不改任何斷言）
+### Task 2: 真值投影＋殼層 `UnifiedShell` 綁真值＋5.1 翻轉（tasks 1.7、5.1）
+
+> 本 task 由多個原 task 併成（額度／commit 錨點考量，coordinator 2026-08-25）：各子段（#### nA／nB…）的步驟、驗證與 commit 指令**逐字照做**，每段結尾的 commit 都要做；本 task 所有 commit message 一律以「task#<本 task 在 implementer 提示中的 index>: 」開頭再接原訊息。子段標題括號內的「原 Task N」對應文中所有「Task N Step M」的引用。
+
+#### 2A. 既有 unified-mount 測試的前置防護 sweep（三檔逐字 patch；不改任何斷言）（原 Task 3a）
 
 **為何獨立成一個 task：** Task 3c 會讓 `UnifiedShell` 開始經共用 poller 打十端點。凡是「`import EdgeConsole` 且以 `createRoot` 真掛載於 approved 鍵（`#home`／`#pipeline`／`#a1`…）」的既有測試，屆時都會在 jsdom 下打真網路。本 task 先把防護補齊，**不改任何斷言**：語意零變化、sweep 前後全量同綠，因此與「殼層行為改變」分屬兩個 scope、分開 commit。每個檔案改完立刻有自己的單檔檢查點（2–5 分鐘內能把錯誤定位到剛才那一個 patch），不必等殼層改完才發現插錯位置。
 
@@ -1094,7 +1108,7 @@ git commit -m "task#3a: 既有 unified-mount 測試補共用 poller 十端點 sp
 
 ---
 
-### Task 3b: 真值投影層——`runtimeTruth.ts` 純函式＋狀態文案 key＋測試 mock builders（tasks 1.7 的投影規則）
+#### 2B. 真值投影層——`runtimeTruth.ts` 純函式＋狀態文案 key＋測試 mock builders（tasks 1.7 的投影規則）（原 Task 3b）
 
 **Scope（單一）：** 只產出「端點切片 → 畫面 cell」的純函式、它們的單元測試，以及這層要用到的狀態文案 key 與 mock builder。**不動任何 production 元件**（`UnifiedShell.tsx` 在 Task 3c 才改），所以本 task 結尾生產行為零變化、全量測試必綠，紅燈只可能來自本 task 自己的新檔。
 
@@ -1373,7 +1387,7 @@ git commit -m "task#3b: 真值投影純函式 runtimeTruth（cell／pickers／he
 
 ---
 
-### Task 3c: 殼層 `UnifiedShell` 綁真值（頂列四 chip、GPU chip 移除 `82%`、側欄 badge、provider 注入）＋ 5.1 同步翻轉（tasks 1.7、5.1）
+#### 2C. 殼層 `UnifiedShell` 綁真值（頂列四 chip、GPU chip 移除 `82%`、側欄 badge、provider 注入）＋ 5.1 同步翻轉（tasks 1.7、5.1）（原 Task 3c）
 
 **Scope（單一）：** 殼層這一次行為改變——「UnifiedConsole 從 fixture-first 改為經共用 poller 讀真值」——以及它自己的回歸護欄。
 
@@ -1848,7 +1862,11 @@ git commit -m "task#3c: UnifiedShell 頂列 chips／GPU chip／側欄 badge 綁�
 
 ---
 
-### Task 4: `#home` 四 KPI＋六 svc-dot 真值綁定（tasks 1.4）＋ 5.3 的 home 斷言
+### Task 3: `#home`＋`#pipeline` 真值綁定（tasks 1.4、1.5＋5.3）
+
+> 本 task 由多個原 task 併成（額度／commit 錨點考量，coordinator 2026-08-25）：各子段（#### nA／nB…）的步驟、驗證與 commit 指令**逐字照做**，每段結尾的 commit 都要做；本 task 所有 commit message 一律以「task#<本 task 在 implementer 提示中的 index>: 」開頭再接原訊息。子段標題括號內的「原 Task N」對應文中所有「Task N Step M」的引用。
+
+#### 3A. `#home` 四 KPI＋六 svc-dot 真值綁定（tasks 1.4）＋ 5.3 的 home 斷言（原 Task 4）
 
 **Files:**
 - Create: `web-viewer-sample/src/console/unified/ServiceHealthList.tsx`（Home／Ops 共用）
@@ -2215,7 +2233,7 @@ git commit -m "task#4: #home 四 KPI＋六 svc-dot 綁 coordinator 真值（asbu
 
 ---
 
-### Task 5: `#pipeline` 五段＋治理／報表列真值綁定（tasks 1.5）＋ 5.3 的 pipeline 斷言
+#### 3B. `#pipeline` 五段＋治理／報表列真值綁定（tasks 1.5）＋ 5.3 的 pipeline 斷言（原 Task 5）
 
 **Files:**
 - Modify: `web-viewer-sample/src/console/unified/PipelinePage.tsx`（整檔重寫）
@@ -2559,7 +2577,11 @@ git commit -m "task#5: #pipeline 五段＋治理／報表列綁真值；outbox �
 
 ---
 
-### Task 6: `#runtime` 真值 OpsPage（tasks 1.6）＋ 5.3 的 runtime 斷言＋ `82%` 全面歸零
+### Task 4: `#runtime` 真值 OpsPage＋假資料 export 退出 production（tasks 1.6、1.8、5.2）
+
+> 本 task 由多個原 task 併成（額度／commit 錨點考量，coordinator 2026-08-25）：各子段（#### nA／nB…）的步驟、驗證與 commit 指令**逐字照做**，每段結尾的 commit 都要做；本 task 所有 commit message 一律以「task#<本 task 在 implementer 提示中的 index>: 」開頭再接原訊息。子段標題括號內的「原 Task N」對應文中所有「Task N Step M」的引用。
+
+#### 4A. `#runtime` 真值 OpsPage（tasks 1.6）＋ 5.3 的 runtime 斷言＋ `82%` 全面歸零（原 Task 6）
 
 **Files:**
 - Modify: `web-viewer-sample/src/console/unified/OpsPage.tsx`（整檔重寫）
@@ -2792,7 +2814,7 @@ git commit -m "task#6: #runtime 真值 OpsPage（Kit instance／GPU 未取得／
 
 ---
 
-### Task 7: 假資料 export 退出 production 顯示路徑（tasks 1.8，D1=P → test-only）＋ 5.2 解凍＋bundle 掃描
+#### 4B. 假資料 export 退出 production 顯示路徑（tasks 1.8，D1=P → test-only）＋ 5.2 解凍＋bundle 掃描（原 Task 7）
 
 **Files:**
 - Create: `web-viewer-sample/src/console/unified/__testdata__/prototypeFixtures.ts`
@@ -3073,7 +3095,11 @@ git commit -m "task#7: 假資料 export 移至 test-only（D1=P），provider se
 
 ---
 
-### Task 8: design-system semantic cases 改為誠實狀態斷言（tasks 5.4；case id 一律保留）
+### Task 5: semantic cases＋Playwright E2E＋收官（tasks 5.4、5.6、5.7）
+
+> 本 task 由多個原 task 併成（額度／commit 錨點考量，coordinator 2026-08-25）：各子段（#### nA／nB…）的步驟、驗證與 commit 指令**逐字照做**，每段結尾的 commit 都要做；本 task 所有 commit message 一律以「task#<本 task 在 implementer 提示中的 index>: 」開頭再接原訊息。子段標題括號內的「原 Task N」對應文中所有「Task N Step M」的引用。
+
+#### 5A. design-system semantic cases 改為誠實狀態斷言（tasks 5.4；case id 一律保留）（原 Task 8）
 
 **Files:**
 - Modify: `web-viewer-sample/e2e/design-system-semantic-cases.ts`（`homeCases`／`pipelineCases`／`opsCases` 三函式整段重寫；`workspaceCases` 的 `warning` 一案；`runtimeTruthCase` 拆成 fixture／truth 兩版）
@@ -3462,7 +3488,7 @@ node -e "const r=require('./artifacts/e2e/design-system-visual-result.json'); fo
 
 ---
 
-### Task 9: Playwright E2E（P4 browser evidence：真後端 `:8004` 的 vertical slice）
+#### 5B. Playwright E2E（P4 browser evidence：真後端 `:8004` 的 vertical slice）（原 Task 9）
 
 **Files:**
 - Create: `web-viewer-sample/e2e/unified-console-runtime-truth.spec.ts`
@@ -3693,7 +3719,7 @@ git commit -m "task#9: Playwright E2E——/ui 預設入口真值 vertical slice
 
 ---
 
-### Task 10: 收官——全量 gate（5.6／5.7）、detect-changes、tasks.md 子彈、PR 證據包
+#### 5C. 收官——全量 gate（5.6／5.7）、detect-changes、tasks.md 子彈、PR 證據包（原 Task 10）
 
 **Files:**
 - Modify: `openspec/changes/unified-console-runtime-truth/tasks.md`（只加子彈，不打勾）
@@ -3781,6 +3807,8 @@ git log --oneline main..HEAD
 ---
 
 ## Blocker／裁決點（plan 作者回傳 coordinator；未裁前依本 plan 的保守處置執行）
+
+> **coordinator 裁決（2026-08-25，依 owner 授權）**：#1 維持保守處置——4 個 export 留 §2／§3 切片、ratchet 釘住，tasks 1.8 子彈如實寫「7/11」。#2 依機器真相不登記；`Self-referential bootstrap` 欄位由 coordinator 於 P6 依 checker 實際規則定案，implementer 不撰寫 PR body。#3 接受（5.2 只解凍）。#4 rebaseline 由 coordinator 於 P3 完成後親自執行（owner 已明示授權），implementer 不得執行任何 `--rebaseline`。#5、#6、#8 接受。#7 維持不打勾 1.1／1.2（`task_ledger` 6/43 不變）。
 
 1. **tasks 1.8 的 docks／WorkspacePage 部分與 spec §3「§2／§3 out of scope」衝突**：`failDefs`／`diffDefs`／`fedMembers`（`docks.tsx`）與 `stageTree`（`WorkspacePage.tsx`）的唯一消費者是 A1–A3 dock 互動與 A1 視區（§2.2／§2.3／§3.1）。本 plan 只搬 7 個、以 `fixtureNotInProduction.test.ts` ratchet 釘住 4 個欠帳；`tasks.md` 1.8 子彈如實揭露。需裁決：擴大 slice 1 納入 docks／WorkspacePage 的資料移除，或維持留 slice 2。
 2. **tasks 5.4／spec「登記 bootstrap ledger」與機器分類不一致**：`Get-SelfReferentialMechanismPaths` 未列 `web-viewer-sample/e2e/**`（只列 `verify-design-system-pixels.mjs`／`png-preflight.mjs`），且 ledger 現有 open entry（`autonomous-linux-delivery-contracts`, PR #557）會擋新 entry。本 plan 依機器真相不登記、PR body 填 `Self-referential bootstrap: no`。需裁決是否改機制清單（那屬 mechanism-surface 修改，另開 successor）。
