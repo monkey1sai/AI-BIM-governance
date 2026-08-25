@@ -18,18 +18,18 @@ export function deriveServiceRows(snap: CoordinatorStatusSnapshot, zh: boolean):
   return [
     {
       id: "coordinator", name: "bim-review-coordinator",
-      detail: rt ? `:${rt.configured_endpoints.coordinator.port}` : "—",
-      health: healthOf(snap.runtimeStatus, (d) => d.service.status !== "ok"),
+      detail: rt?.configured_endpoints?.coordinator?.port != null ? `:${rt.configured_endpoints.coordinator.port}` : "—",
+      health: healthOf(snap.runtimeStatus, (d) => d.service?.status !== "ok"),
     },
     { id: "governance", name: "governance-service", detail: "/api/governance/* proxy", health: healthOf(snap.ruleRuns) },
     {
       id: "conversion", name: "conversion authority",
-      detail: rt && rt.configured_endpoints.conversion_authority.base_url ? `${rt.configured_endpoints.conversion_authority.base_url} · ${noProbe}` : noProbe,
+      detail: rt?.configured_endpoints?.conversion_authority?.base_url ? `${rt.configured_endpoints.conversion_authority.base_url} · ${noProbe}` : noProbe,
       health: "unknown",
     },
     {
       id: "kit", name: "Kit signaling / WebRTC",
-      detail: rt && rt.configured_endpoints.kit.length > 0 ? `signaling :${rt.configured_endpoints.kit[0].signalingPort} · ${noProbe}` : noProbe,
+      detail: rt?.configured_endpoints?.kit?.[0]?.signalingPort != null ? `signaling :${rt.configured_endpoints.kit[0].signalingPort} · ${noProbe}` : noProbe,
       health: "unknown",
     },
     { id: "kitmgr", name: "kit-manager-api", detail: "/api/kit/health proxy", health: healthOf(snap.kitHealth) },

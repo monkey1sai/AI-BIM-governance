@@ -1,7 +1,7 @@
 // 設計原型（scratchpad/design-origin/app.js）的假資料 export——unified-console-runtime-truth slice 1（D1=P）自
 // production 的 ./fixtures 搬出，只供測試作負向 oracle（fixtureNotInProduction.test.ts：畫面不得出現這些固定值）。
 // production 元件不得 import 本檔（同一測試守門）。
-import type { ConvItem, IntakeItem, IssueItem, OutboxItem, SessionItem } from "../fixtures";
+import type { ConvItem, IntakeItem, OutboxItem, SessionItem } from "../fixtures";
 
 export const initialIntake: IntakeItem[] = [
   { file: "demo_lib_2026.ifc", src: "MinIO bucket/incoming" },
@@ -24,10 +24,8 @@ export const initialOutbox: OutboxItem[] = [
   { id: "OB-200", kind: "conversion-result", st: "已送" },
 ];
 
-export const initialIssues: IssueItem[] = [
-  { id: "ISS-101", title: "FD-4F-02 防火時效不足(30min < 60min)", st: "open", src: "rule-run #87" },
-  { id: "ISS-098", title: "B-3F-12 樑位移 +42mm 超容差", st: "in-review", src: "diff v11→v12" },
-];
+// initialIssues 留在 production fixtures.ts（slice-2 欠帳，見 fixtures.ts 註解）；此處 re-export 供測試負向 oracle 使用。
+export { initialIssues } from "../fixtures";
 
 /* ── ops 服務健康 6 項（原型固定 ok:true）── */
 export interface ServiceDef { name: string; port: string; ok: boolean; }

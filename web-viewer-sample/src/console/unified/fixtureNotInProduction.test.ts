@@ -1,6 +1,6 @@
 // unified-console-runtime-truth slice 1（tasks 1.8；spec scenario「fixture 假值不在 production 顯示路徑（符號層驗證）」）：
 // (1) import graph：production 元件不得 import 假資料 export；docks／WorkspacePage 的 4 個 slice-2 欠帳以 ratchet 釘住。
-// (2) fixtures.ts 不再 export 已搬走的 7 個名稱。(3) src 下非測試檔不得 import __testdata__。
+// (2) fixtures.ts 不再 export 已搬走的 6 個名稱（initialIssues 留在 production：a3 Issues dock 種入，見 SLICE2_DEBT）。(3) src 下非測試檔不得 import __testdata__。
 // (4) 渲染層負向 oracle：#home／#pipeline／#runtime 的 SSR 輸出不含任何原型固定值字串。
 import { readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -19,12 +19,13 @@ const FORBIDDEN = [
   "initialIntake", "initialConv", "initialSessions", "initialOutbox", "initialIssues", "alerts", "services",
   "failDefs", "diffDefs", "fedMembers", "stageTree",
 ] as const;
-const RELOCATED = ["initialIntake", "initialConv", "initialSessions", "initialOutbox", "initialIssues", "alerts", "services"] as const;
+const RELOCATED = ["initialIntake", "initialConv", "initialSessions", "initialOutbox", "alerts", "services"] as const;
 const PRODUCTION = ["HomePage.tsx", "PipelinePage.tsx", "OpsPage.tsx", "UnifiedShell.tsx", "docks.tsx", "WorkspacePage.tsx", "A1DockLive.tsx", "ConceptPage.tsx", "ServiceHealthList.tsx"] as const;
 /** slice 1 誠實欠帳（spec §3 out of scope：§2 dock 互動／§3 A1 視區）；只能縮、不能擴。 */
 const SLICE2_DEBT: Record<string, readonly string[]> = {
   "docks.tsx": ["diffDefs", "failDefs", "fedMembers"],
   "WorkspacePage.tsx": ["stageTree"],
+  "UnifiedShell.tsx": ["initialIssues"], // Issues/BCF dock 種入（§2 範圍；P3 f1）
 };
 
 function importedNamesFromFixtures(source: string): string[] {

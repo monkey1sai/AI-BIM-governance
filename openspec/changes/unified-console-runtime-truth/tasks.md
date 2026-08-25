@@ -20,7 +20,7 @@
 ## 1. web-viewer-sample：真值綁定（R1、R2）
 
 - [ ] 1.1 impact 分析：`gitnexus impact UnifiedShell -d upstream -r AI-BIM-governance`；同樣對 `HomePage`、`PipelinePage`、`OpsPage`、`coordinatorClient` 執行並記錄 blast radius
-  - 本機完成：六 symbol 皆 LOW（artifacts/slice1-impact.txt，PR body 附），待 181 隨 slice 1 勾選（commit `57d29d3`）
+  - 本機完成（slice 1）：五個 UI symbol（`UnifiedShell`／`HomePage`／`PipelinePage`／`OpsPage`／`coordinatorClient`）LOW；`jsonGet` **HIGH**（16 個同檔 caller、0 process），coordinator 2026-08-25 追認續行（spec-to-done：HIGH 非停下點），補強＝error message 逐字不變＋既有 client 測試全綠；PR body 揭露。
 - [ ] 1.2 端點欄位 shape 盤點（十個端點皆已存在：`app.ts:1363,2374,2399,2462,3215,3779,3785`、`routes/governanceProxy.ts:223`）：逐一記錄欄位與型別對映；缺欄位者畫面標 `data-state="unavailable"`，不新增端點。驗證：盤點表附於 PR 描述；`rg -n "runtime/status|external/ifc-ready|conversion/records|callback-outbox/summary|governance/issues|governance/rule-runs|minio-watch/status|minio/objects|kit/health|kit/instances/current" bim-review-coordinator/src`
   - 本機完成：盤點表附於 PR body（十端點皆存在，無新增），待 181 隨 slice 1 勾選（commit `57d29d3`）
 - [ ] 1.3 共用 poller store `useCoordinatorStatusStore`（單一 in-flight／指數退避 ≤60s／hidden 暫停），沿用 `coordinatorClient`，以 `ConsoleDataProvider` 介面注入。驗證：`npx vitest run src/console/unified/coordinatorStatusStore.test.ts`；`npx tsc --noEmit`
@@ -32,7 +32,7 @@
 - [ ] 1.6 `#runtime` 真值 OpsPage（Kit instance／GPU 未取得／服務健康／事件誠實停用）。驗證：`npx vitest run src/console/unified/opsLiveBinding.test.tsx`
   - 本機綠，待 181（slice 1，commit `57d29d3`）
 - [ ] 1.7 頂列 GPU chip 綁定，移除字面 `82%`（`UnifiedShell.tsx:143`）。驗證：`npx vitest run src/console/unified/topbarGpuChip.test.tsx`；`rg -n "82%" web-viewer-sample/src/console/unified` 為空
-  - 本機綠，待 181（slice 1，commit `57d29d3`；`rg -n "82%" web-viewer-sample/src/console/unified` 為空）
+  - 本機綠，待 181（slice 1）：production 檔（排除 `*.test.*`）`rg -n "82%" web-viewer-sample/src/console/unified` 為空；三個測試檔含該字面僅作負向 oracle（斷言渲染輸出不含 `82%`）。
 - [ ] 1.8 假資料 export 退出 production 顯示路徑（`initialIntake`／`initialConv`／`initialSessions`／`initialOutbox`／`initialIssues`／`alerts`／`services`／`failDefs`／`diffDefs`／`fedMembers`／`stageTree`；D1=P 移到 test-only、D1=H 只由 preview provider 載入）；i18n／導覽／style helper 保留。驗證：`npx vitest run src/console/unified/fixtureNotInProduction.test.ts`；`npm run build:ui` 後 `rg -c "GPU/Stream 82%" dist-ui` 為 0
   - 本機綠，待 181（slice 1，commit `57d29d3`；7 個 export 已移 test-only，`failDefs`／`diffDefs`／`fedMembers`／`stageTree` 由 docks／WorkspacePage 續用，以 fixtureNotInProduction.test.ts ratchet 釘住，§2／§3 切片承接）
 

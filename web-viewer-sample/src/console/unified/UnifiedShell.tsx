@@ -12,7 +12,7 @@ import {
 import type { CSSProperties, ReactNode } from "react";
 import { setLang, useLang } from "../i18n";
 import {
-  MONO, getL, navMain, apps, badgeTone, navItem, INITIAL_ISSUE_SEQ,
+  MONO, getL, navMain, apps, badgeTone, navItem, INITIAL_ISSUE_SEQ, initialIssues,
 } from "./fixtures";
 import type {
   ConceptKey, DockKey, IssueItem, OutboxItem, PageKey,
@@ -51,7 +51,7 @@ export function useUnifiedState(): UnifiedStateApi {
 
 export function UnifiedStateProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<UnifiedStateShape>(() => ({
-    issues: [],
+    issues: [...initialIssues], // slice-2 欠帳：Issues/BCF dock（§2）仍 fixture 種入（P3 f1）
     outbox: [],
     issueSeq: INITIAL_ISSUE_SEQ,
   }));

@@ -100,6 +100,13 @@ export interface SelItem { name: string; path: string; }
 export type RuleKey = "r1" | "r2" | "r3";
 export type RuleOn = Record<RuleKey, boolean>;
 
+// slice-1 誠實欠帳（P3 final review f1）：Issues/BCF dock（docks.tsx，§2 範圍）仍以 fixture issue 種入；
+// 若移到 test-only，workspace.a3 的 failure semantic case（open chip／防火時效不足）會空掉。留在 production、
+// 由 fixtureNotInProduction.test.ts 的 SLICE2_DEBT ratchet 釘住（UnifiedShell.tsx 唯一消費者），隨 §2 dock 真值化一併移除。
+export const initialIssues: IssueItem[] = [
+  { id: "ISS-101", title: "FD-4F-02 防火時效不足(30min < 60min)", st: "open", src: "rule-run #87" },
+  { id: "ISS-098", title: "B-3F-12 樑位移 +42mm 超容差", st: "in-review", src: "diff v11→v12" },
+];
 export const INITIAL_ISSUE_SEQ = 102;
 export const initialRuleOn: RuleOn = { r1: true, r2: true, r3: false };
 export const initialFlags = {
