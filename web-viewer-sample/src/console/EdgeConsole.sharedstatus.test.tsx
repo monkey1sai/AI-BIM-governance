@@ -2,24 +2,15 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import EdgeConsole from "./EdgeConsole";
-import { coordinatorClient, type RuntimeStatus } from "./coordinatorClient";
-
-const RT: RuntimeStatus = {
-  service: { status: "ok", name: "coordinator", uptime_seconds: 1, generated_at: "" },
-  configured_endpoints: {
-    coordinator: { host: "127.0.0.1", port: 8004, public_host: "127.0.0.1", public_base_url: "http://127.0.0.1:8004" },
-    viewer: { browser_url_base: "http://127.0.0.1:5173", handoff_path: "/" },
-    conversion_authority: { base_url: "", authority: "" }, kit: [],
-  },
-  sessions: { count: 0, active_count: 0, participant_count: 0, items: [] },
-  kit_instance_bindings: [], ifc_ready_jobs: { count: 0, recent: [] },
-  observations: { classification: "demo", note: "", web_plane: { coordinator_port: 8004, viewer_port: 5173 }, host_native_plane: { conversion_api_base: "", kit_signal_ports: [], kit_media_ports: [] } },
-};
+import { coordinatorClient } from "./coordinatorClient";
+import { coordinatorStatusStore } from "./unified/coordinatorStatusStore";
+import { RT_IDLE, spyCoordinatorEndpoints } from "./unified/__testdata__/coordinatorMocks";
 
 // IA v2 雙殼：SharedStatusRail（含 SharedStatusProvider 的 5000ms 輪詢）是 legacy 殼專屬；
-// approved 鍵 {home,a1..a10,conv,runtime} 走 UnifiedShell（fixture-first，不打 /api、不掛 rail）。
-// 原本用 #a1 驗 rail，#a1 現已讓位給 UnifiedConsole workspace → 改用 legacy 路由 #sessions。
-describe("EdgeConsole mounts shared status rail once (legacy shell only)", () => {
+// approved 鍵 {home,a1..a10,pipeline,runtime} 走 UnifiedShell。
+// unified-console-runtime-truth（5.1）：UnifiedShell 不再 fixture-first——#home 經共用 poller 呼叫 runtimeStatus，
+// 殼層與 HomePage 同訂閱同一端點時仍只有一個 in-flight（同一輪恰一個請求）。
+describe("EdgeConsole shared status polling（legacy rail 一次；unified 共用 poller 單一 in-flight）", () => {
   let container: HTMLDivElement;
   let prevHash: string;
   beforeEach(() => {
@@ -27,6 +18,7 @@ describe("EdgeConsole mounts shared status rail once (legacy shell only)", () =>
     container = document.createElement("div");
     document.body.appendChild(container);
     prevHash = window.location.hash;
+    coordinatorStatusStore.reset();
   });
   afterEach(() => {
     document.body.removeChild(container);
@@ -36,7 +28,7 @@ describe("EdgeConsole mounts shared status rail once (legacy shell only)", () =>
 
   it("legacy 路由（#sessions）：renders the rail and polls runtimeStatus once for the whole console", async () => {
     window.location.hash = "#sessions";
-    const spy = vi.spyOn(coordinatorClient, "runtimeStatus").mockResolvedValue(RT);
+    const spy = vi.spyOn(coordinatorClient, "runtimeStatus").mockResolvedValue(RT_IDLE);
     vi.spyOn(coordinatorClient, "getConversionRecords").mockResolvedValue({ count: 0, items: [] });
     const root = createRoot(container);
     await act(async () => { root.render(<EdgeConsole />); });
@@ -51,20 +43,24 @@ describe("EdgeConsole mounts shared status rail once (legacy shell only)", () =>
     await act(async () => { root.unmount(); });
   });
 
-  it("approved 路由（#home）：UnifiedShell 不渲染 rail、也不啟動 runtimeStatus 輪詢", async () => {
+  it("approved 路由（#home）：UnifiedShell 不渲染 rail；runtimeStatus 經共用 poller 恰呼叫一次（殼層＋Home 同訂閱＝單一 in-flight）", async () => {
     window.location.hash = "#home";
-    const spy = vi.spyOn(coordinatorClient, "runtimeStatus").mockResolvedValue(RT);
-    vi.spyOn(coordinatorClient, "getConversionRecords").mockResolvedValue({ count: 0, items: [] });
+    const spies = spyCoordinatorEndpoints();
     const root = createRoot(container);
     await act(async () => { root.render(<EdgeConsole />); });
-    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    for (let i = 0; i < 6; i += 1) await act(async () => { await Promise.resolve(); });
 
     // 確認真的渲染了 UnifiedShell（非空白誤判）：側欄 footer 簽名存在。
     expect(container.innerHTML).toContain(":8004/ui · UnifiedConsole");
     // approved 鍵不掛 SharedStatusRail（rail 是 legacy 殼專屬）。
     expect(container.querySelector('[data-testid="shared-status-rail"]')).toBeNull();
-    // UnifiedConsole fixture-first：不打 /api/runtime/status。
-    expect(spy).not.toHaveBeenCalled();
+    // 共用 poller：同端點同一輪只有一個請求（殼層 SHELL_KEYS 與 HomePage 都訂閱 runtimeStatus）。
+    expect(spies.runtimeStatus).toHaveBeenCalledTimes(1);
+    expect(spies.getConversionRecords).toHaveBeenCalledTimes(1);
+    expect(spies.getConversionRecords).toHaveBeenCalledWith(100);
+    // Task 4 完成後才綠：HomePage 尚未訂閱 store，本 task 先要求恰 0 次。
+    expect(spies.getCallbackOutboxSummary).toHaveBeenCalledTimes(0);
+    // Task 4 改為 toHaveBeenCalledWith(200)
 
     await act(async () => { root.unmount(); });
   });

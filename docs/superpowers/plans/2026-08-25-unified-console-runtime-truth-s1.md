@@ -1406,7 +1406,7 @@ git commit -m "task#3b: 真值投影純函式 runtimeTruth（cell／pickers／he
 
 **前置：** Task 3a（既有測試已補 spy）、Task 3b（`runtimeTruth.ts`、`fixtures.ts` 三個 key、`coordinatorMocks` builders 均已在樹上）。前置未完成就開工，Step 6 的全量會出現與本 task 無關的紅燈，無法定位。
 
-- [ ] **Step 1: impact 分析**
+- [x] **Step 1: impact 分析**
 
 ```powershell
 Set-Location $W
@@ -1416,7 +1416,7 @@ npx gitnexus@1.6.9 impact UnifiedStateProvider -d upstream -r AI-BIM-governance
 
 預期：皆 LOW（唯一上游為 `EdgeConsole.tsx:renderUnified`）。CRITICAL → 停下回報 coordinator；HIGH → 把 blast radius 記入本步驟註記（供 PR body 補強段）後**續行，不停**（spec-to-done skill：HIGH 非停下點；coordinator 2026-08-25 已追認 `jsonGet` HIGH 的前例）。
 
-- [ ] **Step 2: 寫失敗測試 `topbarGpuChip.test.tsx`**
+- [x] **Step 2: 寫失敗測試 `topbarGpuChip.test.tsx`**
 
 ```tsx
 // unified-console-runtime-truth slice 1（tasks 1.7）：頂列 GPU chip 綁 /api/runtime/status（盤點：無 GPU 欄位→「GPU 未取得」；
@@ -1499,7 +1499,7 @@ describe("UnifiedShell 頂列 chips 與側欄 badge（真值）", () => {
 });
 ```
 
-- [ ] **Step 3: 跑新測試確認失敗（紅燈）**
+- [x] **Step 3: 跑新測試確認失敗（紅燈）**
 
 ```powershell
 Set-Location $F
@@ -1508,7 +1508,7 @@ npx vitest run src/console/unified/topbarGpuChip.test.tsx
 
 預期：四案全失敗——前三案 `chip-gpu` 為 null（`Cannot read properties of null`），第四案原始碼仍含 `82%`。此時 `EdgeConsole.sharedstatus.test.tsx` 尚未動、仍為綠（殼層還沒改）。
 
-- [ ] **Step 4: 整檔重寫 `UnifiedShell.tsx`**（provider seeds 暫留；Task 7 再縮）
+- [x] **Step 4: 整檔重寫 `UnifiedShell.tsx`**（provider seeds 暫留；Task 7 再縮）
 
 ```tsx
 // ═══════════════════════════════════════════════════════════════════════
@@ -1763,7 +1763,9 @@ function ShellFrame({ page, dock, concept, children }: UnifiedShellProps) {
 }
 ```
 
-- [ ] **Step 5: 5.1 翻轉——整檔重寫 `EdgeConsole.sharedstatus.test.tsx`**（Step 4 完成後立刻做，同一個 commit）
+> **實跑偏離（implementer 2026-08-25 補記；待 coordinator 事後追認）**：上列 `coordinatorHealth` 一行逐字實作後，全量 vitest 在本 Step 全量檢查點出現 1 個既有測試回歸——`EdgeConsole.aliasRedirect.test.tsx`「malformed higher-priority session values do not erase a valid stored session」（該案以 `vi.mocked(coordinatorClient.runtimeStatus).mockResolvedValue({ sessions: {...} } as never)` 故意餵入缺 `service` 欄位的簡化 payload 測試 session/hash 邏輯，與本 task 的 chip 綁定無關；該檔在 Task 3a 只被列管兩處逐字 patch，此案不在列管清單內）。經 `healthOf(snap.runtimeStatus, (rt) => rt.service.status !== "ok")` 讀取 `rt.service.status` 時因 `rt.service` 為 `undefined` 而 throw `TypeError`，`ShellFrame` 整棵樹炸掉。已改為防禦性讀取 `rt.service?.status !== "ok"`（產出程式碼區塊已反映此版本；差異只在該行加 `?.` 與其上方三行註解）。`RuntimeStatus.service` 型別本身非 optional（後端契約保證必存在），故此為容錯既有測試的簡化 mock，不改變任何真實／完整 payload 的健康判定。**同樣的 `d.service.status`（無 `?.`）模式亦逐字出現於本 plan 檔 Task 3（HomePage 重寫，`grep -n "service.status"` 命中該行）**——若該處沿用相同 unguarded 寫法，遇到同類「缺 service 的簡化 mock＋approved 路由掛載」測試會重現同一崩潰；已於本次 StructuredOutput 的 concerns 提醒 coordinator，供指派 Task 3 時參考（是否要求 Task 3 同步防禦或改測試 mock，由 coordinator 裁決）。全量 vitest 於此修正後綠（85 files／1156 tests，與 Step 6 預期的 Task 3b＋1 file／＋4 tests 完全吻合）。
+
+- [x] **Step 5: 5.1 翻轉——整檔重寫 `EdgeConsole.sharedstatus.test.tsx`**（Step 4 完成後立刻做，同一個 commit）
 
 ```tsx
 import { act } from "react";
@@ -1835,7 +1837,7 @@ describe("EdgeConsole shared status polling（legacy rail 一次；unified 共�
 
 （本 task 時 HomePage 尚未訂閱 store，第二案的 `getCallbackOutboxSummary` 斷言會失敗——**Task 4 完成後才綠**；本 task 結尾只要求前兩個 `expect` 與 `runtimeStatus` 恰一次成立。為避免 Task 3c commit 帶紅燈，本 task 先把 `getCallbackOutboxSummary` 那行寫成 `expect(spies.getCallbackOutboxSummary).toHaveBeenCalledTimes(0);` 並加註 `// Task 4 改為 toHaveBeenCalledWith(200)`，Task 4 Step 6 再改回。）
 
-- [ ] **Step 6: 跑目標測試與全量**
+- [x] **Step 6: 跑目標測試與全量**
 
 ```powershell
 Set-Location $F
@@ -1854,7 +1856,7 @@ npx vitest run
 | `dockLiveLink`／`a1DockLive`／`aliasRedirect` 變紅或噴真網路錯誤 | Task 3a 的 sweep 沒做完或 patch 插錯位置 | 回 Task 3a 對應 Step 的檢查點，不要在本 task 內改那三個檔 |
 | `sharedstatus` 第二案 `runtimeStatus` 不是恰一次 | 殼層與頁面各自建 store（未走 `ConsoleDataProvider` 單例） | 回 Step 4 核對 `UnifiedShell` 是否以 `coordinatorStatusStore` 注入 |
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```powershell
 Set-Location $W
