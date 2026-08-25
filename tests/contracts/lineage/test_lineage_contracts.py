@@ -127,7 +127,7 @@ FIXTURE_MINIMUMS = {
     "model_version_bundle_manifest": (9, 30, 8),
     "lineage_alignment_report": (6, 48, 24),
     "pipeline_job_attempt": (27, 54, 9),
-    "result_manifest": (15, 38, 5),
+    "result_manifest": (15, 38, 6),
     "source_bundle_ready": (2, 13, 0),
     CLOUD_CONTRACT: (10, 41, 22),
 }
