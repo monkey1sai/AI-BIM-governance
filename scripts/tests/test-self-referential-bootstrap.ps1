@@ -342,6 +342,28 @@ try {
         'scripts/lib/autonomous-delivery-contract.mjs',
         'scripts/tests/test-autonomous-linux-delivery-contracts.mjs',
         'tests/test_autonomous_delivery_contract_schemas.py',
+        # Pre-register the exact protected ship-packet, attestation, and
+        # approval runtime surface. The later repair must be classified by its
+        # base rather than by the candidate classifier that it is repairing.
+        'scripts/agent-tooling/blip-approve/bot/bots.json',
+        'scripts/agent-tooling/blip-approve/bot/scripts/app_auth.py',
+        'scripts/agent-tooling/blip-approve/bot/scripts/bind_ship_attestation.py',
+        'scripts/agent-tooling/blip-approve/bot/scripts/blip_review.py',
+        'scripts/agent-tooling/blip-approve/bot/scripts/codex_ship_gate.py',
+        'scripts/agent-tooling/blip-approve/bot/scripts/collect_ship_gate_packet.py',
+        'scripts/agent-tooling/blip-approve/bot/scripts/post_review.py',
+        'scripts/agent-tooling/blip-approve/bot/scripts/run_blip_live_approve_once.ps1',
+        'scripts/agent-tooling/blip-approve/bot/scripts/run_codex_bound_ship_gate_once.ps1',
+        'scripts/agent-tooling/blip-approve/bot/scripts/ship_gate_packet.py',
+        'scripts/agent-tooling/blip-approve/bot/scripts/test_app_auth.py',
+        'scripts/agent-tooling/blip-approve/bot/scripts/test_bind_ship_attestation.py',
+        'scripts/agent-tooling/blip-approve/bot/scripts/test_blip_review.py',
+        'scripts/agent-tooling/blip-approve/bot/scripts/test_codex_ship_gate.py',
+        'scripts/agent-tooling/blip-approve/bot/scripts/test_collect_ship_gate_packet.py',
+        'scripts/agent-tooling/blip-approve/bot/scripts/test_post_review.py',
+        'scripts/agent-tooling/blip-approve/bot/scripts/test_run_blip_live_approve_once.ps1',
+        'scripts/agent-tooling/blip-approve/bot/scripts/test_run_codex_bound_ship_gate_once.ps1',
+        'scripts/agent-tooling/blip-approve/bot/scripts/test_ship_gate_packet.py',
         'scripts/verification-manifest.json',
         'scripts/tests/verify-functional-runtime-result.ps1',
         'scripts/tests/verify-security-exceptions.ps1',
@@ -422,10 +444,22 @@ try {
     $adjacentAutonomousMatches = @(Get-SelfReferentialMechanismPaths -ChangedPaths $adjacentAutonomousPaths)
     Assert-True ($adjacentAutonomousMatches.Count -eq 0) `
         "adjacent autonomous-delivery names must not broaden mechanism scope (matched: $($adjacentAutonomousMatches -join ', '))"
+    $adjacentBlipPacketPaths = @(
+        'scripts/agent-tooling/blip-approve/bot/scripts/ship_gate_packet.py.bak',
+        'scripts/agent-tooling/blip-approve/bot/scripts/test_ship_gate_packet_extra.py',
+        'scripts/agent-tooling/blip-approve/bot/scripts/post_ship_attestation.py',
+        'scripts/agent-tooling/blip-approve/bot/README.md',
+        'scripts/agent-tooling/blip-approve/build_blip_candidate.ps1',
+        'scripts/agent-tooling/blip-approve/install_blip_auto_approval.ps1'
+    )
+    $adjacentBlipPacketMatches = @(Get-SelfReferentialMechanismPaths -ChangedPaths $adjacentBlipPacketPaths)
+    Assert-True ($adjacentBlipPacketMatches.Count -eq 0) `
+        "adjacent blip packet paths must not broaden mechanism scope (matched: $($adjacentBlipPacketMatches -join ', '))"
     Assert-True ($matched -notcontains 'web-viewer-sample/src/Window.tsx') 'ordinary product code must NOT classify as mechanism'
     $wrongCaseMechanismPaths = @(Get-SelfReferentialMechanismPaths -ChangedPaths @(
         'Scripts/Deploy.ps1',
         '.github/workflows/CI.yml',
+        'Scripts/agent-tooling/blip-approve/bot/scripts/ship_gate_packet.py',
         'agent-contracts/Autonomous-delivery-terminal-record.schema.json',
         'scripts/Agent-governance-rules.json',
         'scripts/tests/Agent-governance-rules.schema.json'
