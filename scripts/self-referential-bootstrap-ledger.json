@@ -878,12 +878,13 @@
     },
     {
       "id": "autonomous-linux-delivery-contracts",
-      "status": "open",
+      "status": "closed",
       "pr": 557,
       "opened_at": "2026-08-17T06:51:31Z",
       "reason": "new delivery contracts and their evidence parser classify and adjudicate the future merge and deployment mechanism, so the current trusted mechanism cannot prove their post-merge behavior before this pull request merges",
       "repair_prs": [
-        692
+        692,
+        695
       ],
       "verification_mechanism_paths": [
         "agent-contracts/autonomous-delivery-adjudication-packet.schema.json",
@@ -920,6 +921,49 @@
         "docs/evidence/autonomous-linux-delivery-contracts/self-referential-bootstrap/README.md",
         "docs/evidence/autonomous-linux-delivery-contracts/self-referential-bootstrap/gate-suites.txt"
       ],
+      "fixpoint": {
+        "reverified_at": "2026-08-25T12:22:05Z",
+        "mechanism_commit": "ea6b20ae38ceb5d06856bb3f696bf6e94e8f90cd",
+        "evidence_refs": [
+          "docs/evidence/autonomous-linux-delivery-contracts/fixpoint/attestation.json",
+          "docs/evidence/autonomous-linux-delivery-contracts/fixpoint/summary.md"
+        ]
+      }
+    },
+    {
+      "id": "blip-compare-head-compat-r1",
+      "status": "open",
+      "pr": 695,
+      "opened_at": "2026-08-25T09:27:16Z",
+      "reason": "the protected collector cannot prove its post-change exact-head behavior with the pre-change parser because the live GitHub Compare payload omits head_commit and the repair modifies classified packet paths outside the active root surface",
+      "verification_mechanism_paths": [
+        "scripts/agent-tooling/blip-approve/bot/scripts/ship_gate_packet.py",
+        "scripts/agent-tooling/blip-approve/bot/scripts/test_ship_gate_packet.py",
+        "scripts/self-referential-bootstrap-ledger.json"
+      ],
+      "verification_contract": {
+        "id": "blip-compare-head-compat-r1/v1",
+        "command_ids": [
+          "test-autonomous-delivery-contracts",
+          "test-autonomous-delivery-contract-schemas",
+          "test-self-referential-bootstrap",
+          "test-trusted-host-merge",
+          "test-review-risk",
+          "test-agent-governance-check",
+          "test-rebuild-test-deploy-pwsh",
+          "test-rebuild-test-deploy-windows-powershell",
+          "verify-openspec-autonomous-linux-delivery",
+          "verify-openspec-repository-lifecycle",
+          "scan-secret-patterns",
+          "test-ship-gate-packet"
+        ],
+        "contract_sha256": "2e84405553903ab005689ab2add48fa2c72b2aa1e6fb25e7f7f8988c4d537e7d"
+      },
+      "bootstrap_evidence_refs": [
+        "docs/evidence/blip-compare-head-compat-r1/self-referential-bootstrap/README.md",
+        "docs/evidence/blip-compare-head-compat-r1/self-referential-bootstrap/verification.txt"
+      ],
+      "successor_of": "autonomous-linux-delivery-contracts",
       "fixpoint": null
     }
   ]

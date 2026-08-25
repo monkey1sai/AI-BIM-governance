@@ -184,6 +184,87 @@ class ShipGatePacketTests(unittest.TestCase):
                 511,
             )
 
+    def test_collection_fetches_pinned_head_commit_when_compare_omits_it(self) -> None:
+        calls: list[str] = []
+        compare = raw_compare()
+        compare.pop("head_commit")
+        compare["commits"] = [{"sha": "d" * 40}]
+        responses: list[object] = [
+            raw_pr(),
+            compare,
+            {"sha": HEAD, "commit": {"tree": {"sha": HEAD_TREE}}},
+            raw_tree(BASE_TREE, git_blob_sha(BASE_TEXT)),
+            raw_tree(HEAD_TREE, git_blob_sha(HEAD_TEXT)),
+            raw_blob(BASE_TEXT),
+            raw_blob(HEAD_TEXT),
+            raw_pr(),
+        ]
+
+        def fetch(_method: str, url: str, **_kwargs: object) -> object:
+            calls.append(url)
+            return responses.pop(0)
+
+        value = packet.collect_pr_snapshot(
+            fetch, "https://api.github.test", "opaque", packet.FIXED_REPO, 511
+        )
+
+        self.assertEqual(
+            calls[2],
+            f"https://api.github.test/repos/monkey1sai/AI-BIM-governance/commits/{HEAD}",
+        )
+        self.assertEqual(value["meta"]["headRefOid"], HEAD)
+        self.assertEqual(responses, [])
+
+    def test_collection_fallback_commit_failures_remain_closed(self) -> None:
+        missing = raw_compare()
+        missing.pop("head_commit")
+        malformed_cases = (
+            (
+                "wrong sha",
+                {"sha": "b" * 40, "commit": {"tree": {"sha": HEAD_TREE}}},
+                "not bound to the requested",
+            ),
+            (
+                "malformed tree",
+                {"sha": HEAD, "commit": {"tree": None}},
+                "immutable comparison head tree SHA is malformed",
+            ),
+        )
+        for label, head_commit, message in malformed_cases:
+            calls: list[str] = []
+            responses: list[object] = [raw_pr(), missing, head_commit]
+
+            def fetch(_method: str, url: str, **_kwargs: object) -> object:
+                calls.append(url)
+                return responses.pop(0)
+
+            with self.subTest(label=label), self.assertRaisesRegex(RuntimeError, message):
+                packet.collect_pr_snapshot(
+                    fetch, "https://api.github.test", "opaque", packet.FIXED_REPO, 511
+                )
+            self.assertEqual(len(calls), 3)
+            self.assertEqual(responses, [])
+
+        explicit_null = raw_compare()
+        explicit_null["head_commit"] = None
+        calls = []
+        responses = [raw_pr(), explicit_null]
+
+        def fetch_null(_method: str, url: str, **_kwargs: object) -> object:
+            calls.append(url)
+            return responses.pop(0)
+
+        with self.assertRaisesRegex(RuntimeError, "commit tuple is malformed"):
+            packet.collect_pr_snapshot(
+                fetch_null,
+                "https://api.github.test",
+                "opaque",
+                packet.FIXED_REPO,
+                511,
+            )
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(responses, [])
+
     def test_collection_rejects_gitmodules_before_tree_or_blob_fetch(self) -> None:
         for label, changed in (
             ("current", {"filename": ".gitmodules", "status": "modified"}),
