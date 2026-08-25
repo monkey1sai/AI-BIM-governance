@@ -1,0 +1,113 @@
+{
+  "slug": "unified-console-runtime-truth-s2",
+  "phase": "P4",
+  "engine": "playwright",
+  "executor": "coordinator (main session) — std-evidence workflow run wf_7fcfc785-e1e was refused by the apex-first gate (scope objection: probe prompt authorised installs outside declared roots); identical spec/config executed manually, 0 agent calls",
+  "capturedAtUtc": "2026-08-25T14:26Z",
+  "subjectHead": "ca4f66090d04ad89d266ce23fa6064e603ecc9a9",
+  "worktree": "AI-BIM-governance.worktrees/unified-console-runtime-truth-s2",
+  "backend": {
+    "coordinator": "branch coordinator http://127.0.0.1:8005 (tsx src/index.ts from this worktree; ENABLE_DEV_ROUTES=false, EXTERNAL_INTAKE_IP_ALLOWLIST=10.0.0.0/8 (loopback excluded), DEV_AUTH_TOKEN=e2e-operator-token (test-only value from plan), MINIO_WATCH_ENABLED=false, conversion/governance/kit bases pointed at 127.0.0.1:1)",
+    "viewer": "fresh vite :5180 via playwright webServer (VITE_COORDINATOR_API_BASE=http://127.0.0.1:8005)",
+    "stoppedAfterRun": true
+  },
+  "command": "cd web-viewer-sample && E2E_COORDINATOR_BASE_URL=http://127.0.0.1:8005 npx playwright test e2e/dev-routes-disabled-operator-token.spec.ts --trace on --reporter=list",
+  "result": "3 passed (8.2s)",
+  "log": "artifacts/e2e/unified-console-runtime-truth-s2-playwright.log",
+  "routes": [
+    {
+      "route": "#demo-control",
+      "buttons": [
+        "Refresh ./storage IFC list（enabled）",
+        "註冊並轉檔（真實）（disabled）"
+      ],
+      "fixture": "none — dev routes 404 → IFC fixture list empty（no DEMO DATA）",
+      "backendApi": [
+        "GET /api/dev/ifc-sources → 404（real coordinator, ENABLE_DEV_ROUTES=false）"
+      ],
+      "observed": [
+        "notice「dev routes 已關閉（ENABLE_DEV_ROUTES=false）…」visible",
+        "ifc-runtime-state contains dev_routes_disabled（not storage_empty）",
+        "register button disabled",
+        "header：使用中 session 0／GPU 未取得／Health ok／資料時間 timestamp"
+      ],
+      "screenshot": {
+        "route": "#demo-control",
+        "file": "artifacts/e2e/unified-console-runtime-truth-s2-demo-control.png",
+        "sha256": "bffad79b91dbdbcc2b84ca9e281d265d1c45482a18b08b8b20f506d55c07cb09"
+      }
+    },
+    {
+      "route": "#a1-workbench",
+      "buttons": [
+        "選取模型（disabled，local_fs 檔案庫不可用）",
+        "重試載入檔案庫 GET /api/governance/files/tree（enabled）"
+      ],
+      "fixture": "none",
+      "backendApi": [
+        "GET /api/dev/test-data-projects → 404",
+        "GET /api/governance/files/tree → 502 governance-service unreachable at http://127.0.0.1:1（honest error, governance stub port）"
+      ],
+      "observed": [
+        "note「測試資料清單暫時不可用（dev routes 已關閉，ENABLE_DEV_ROUTES=false）：local_fs 選項不會加註（測試資料）徽章，但不影響選檔」visible",
+        "a1-localfs-select visible（shows「local_fs 檔案庫不可用」because governance is stubbed）"
+      ],
+      "screenshot": {
+        "route": "#a1-workbench",
+        "file": "artifacts/e2e/unified-console-runtime-truth-s2-a1-workbench.png",
+        "sha256": "8303e56b320f9e14be765085d4595b74e98841bc88a9b79e4d395b133865016b"
+      }
+    }
+  ],
+  "apiProbe": {
+    "route": "POST /api/conversion/jobs/ifcready_nope/prioritize（+ lineage preview, /api/dev/*）",
+    "observed": [
+      "no token → 403 {\"detail\":\"caller ip not in allowlist\"}",
+      "x-operator-token=e2e-operator-token → 404（authorised path reaches existing job-not-found）",
+      "wrong token → 403 {\"detail\":\"operator token invalid (x-operator-token)\"}",
+      "token path >10/min → 429 with Retry-After",
+      "GET /api/lineage/legacy-unmanaged/preview with token → 403（token does not unlock lineage）",
+      "POST /api/dev/conversions → 404；GET /api/dev/test-data-projects → 404"
+    ]
+  },
+  "runtimeIds": [],
+  "runtimeIdsNote": "disabled-state slice by design：UI shows no job/session ID；API probe references job path ifcready_nope（→404 on the authorised path）and the 429 Retry-After header",
+  "verticalSlice": {
+    "routeReachable": true,
+    "explicitButtons": true,
+    "defaultFixture": "n/a（404 honesty; no fixture by design, nothing labelled DEMO DATA）",
+    "realBackendApi": true,
+    "runtimeIdVisible": "not applicable（see runtimeIdsNote）",
+    "states": "failure/disabled states visible；loading/retry：retry button present on #a1-workbench（GET /api/governance/files/tree）",
+    "artifactsOnDisk": true,
+    "verticalSliceOk": true
+  },
+  "notObserved": [],
+  "gaps": [
+    {
+      "id": "e1",
+      "q": "runtime ID 在 UI 不可見（dev routes 關閉態本質無 job/session ID）；「真後端」證據只靠 404/403/429 狀態碼與 detail 字串，若 :8005 其實不是本分支碼（例如殘留舊 process），畫面與探針無法分辨"
+    },
+    {
+      "id": "e2",
+      "q": "#a1-workbench 同時出現 governance 502 錯誤與 dev-routes-disabled note；若 note 是由 502 而非 /api/dev/test-data-projects 的 404 觸發，E2E 斷言可能偽綠"
+    }
+  ],
+  "traces": [
+    "artifacts/e2e/unified-console-runtime-truth-s2-trace/dev-routes-disabled-operat-092d1--→-notice-＋-選檔／註冊鈕-disabled-chromium/trace.zip",
+    "artifacts/e2e/unified-console-runtime-truth-s2-trace/dev-routes-disabled-operat-8c905-n-解鎖-＋-四路由-T4-授權-＋-速率限制-429-chromium/trace.zip",
+    "artifacts/e2e/unified-console-runtime-truth-s2-trace/dev-routes-disabled-operat-eb123-ojects-404-→-測試資料標記不可用-note-chromium/trace.zip"
+  ],
+  "screenshots": [
+    {
+      "route": "#demo-control",
+      "file": "artifacts/e2e/unified-console-runtime-truth-s2-demo-control.png",
+      "sha256": "bffad79b91dbdbcc2b84ca9e281d265d1c45482a18b08b8b20f506d55c07cb09"
+    },
+    {
+      "route": "#a1-workbench",
+      "file": "artifacts/e2e/unified-console-runtime-truth-s2-a1-workbench.png",
+      "sha256": "8303e56b320f9e14be765085d4595b74e98841bc88a9b79e4d395b133865016b"
+    }
+  ]
+}
