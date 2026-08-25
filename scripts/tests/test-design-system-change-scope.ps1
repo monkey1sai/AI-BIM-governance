@@ -22,7 +22,9 @@ Assert-True (($partial.reference_missing_items -join '|') -eq 'surface:kit-manag
 $mixed = Get-DesignSystemChangeScope -RepoRoot $repoRoot -ChangedPaths @('web-viewer-sample/src/App.tsx')
 Assert-True ($mixed.status -eq 'mixed') 'shared EdgeConsole bundle is mixed'
 Assert-True $mixed.visual_required 'mixed EdgeConsole scope requires visual gate'
-Assert-True ($mixed.required_screen_ids.Count -eq 13) 'mixed EdgeConsole scope requires all approved screens'
+$approvedScreenCount = @($manifest.screens).Count
+Assert-True ($approvedScreenCount -gt 0) 'manifest declares at least one approved screen'
+Assert-True ($mixed.required_screen_ids.Count -eq $approvedScreenCount) 'mixed EdgeConsole scope requires all approved screens'
 Assert-True ($mixed.reference_missing_items -contains '#viewer') 'mixed EdgeConsole scope discloses missing routes'
 Assert-True (-not $mixed.full_completion_allowed) 'semantic state variants currently prevent full completion'
 Assert-True ($manifest.fidelity_contract.dependency_tree_status -eq 'resolved_snapshot_pinned') 'resolved dependency snapshot is pinned'
