@@ -2,8 +2,11 @@
 
 - stack_kind=self_referential_bootstrap
 - Originating PR: #687
-- Base commit: bfba0f061edc9b62e7d6edfb5fd412358ef22666
-- Classifier subject commit: 61b12f8471a7eb2ecc649cf076efcfcd4568aff6
+- Opening base commit: bfba0f061edc9b62e7d6edfb5fd412358ef22666
+- Opening classifier subject commit: 61b12f8471a7eb2ecc649cf076efcfcd4568aff6
+- Synchronized PR base commit: 14a6ac6d912e1cacadd0de5cf862772124aab00d
+- Functional-fix subject before this evidence-only correction: eddece2ba2d75875173197369d3008cf7bf68b25
+- Final candidate head binding: live PR metadata and exact-head checks; intentionally not self-embedded because changing this tracked file changes that commit
 - Ledger entry: spec-to-done-new-run-boundary-classifier
 - Verification contract: spec-to-done-new-run-boundary-classifier/v1
 - Contract SHA-256: 82d607837a5a7d78ca3e1b2100082f9d018e4333e68c3016931d9a1b95bbd9e3
@@ -66,12 +69,12 @@ provenance is not authorized to construct or append a boundary even if it can ca
 8. Keep every P0-P7 phase, browser evidence, adversarial review, approval, and merge gate
    unchanged. Old evidence and approvals do not cross the boundary.
 
-This classifier PR may register only its own mechanism paths already recognized by base
+At historical opening, this classifier PR could register only its own mechanism paths already recognized by base
 `bfba0f061edc9b62e7d6edfb5fd412358ef22666`. It must not claim the future validator or helper
 as changed or verified. Those paths become eligible for complete debt registration only after
 this preregistration and its ledger-only fixpoint are merged.
 
-## Baseline evidence
+## Opening baseline evidence (historical classifier admission)
 
 Exact worktree HEAD and freshly fetched `origin/main` were both
 `bfba0f061edc9b62e7d6edfb5fd412358ef22666`; the tracked worktree was clean.
@@ -84,3 +87,31 @@ Exact worktree HEAD and freshly fetched `origin/main` were both
   POSIX-only terminal-P7 Git proxy cases.
 - `scripts/tests/test-self-referential-bootstrap.ps1`: all assertions passed.
 - `scripts/tests/test-agent-governance-check.ps1`: all assertions passed.
+
+## Synchronized functional-fix evidence
+
+The PR was synchronized to base `14a6ac6d912e1cacadd0de5cf862772124aab00d` and the
+mandatory-adjudicator repair was committed as
+`eddece2ba2d75875173197369d3008cf7bf68b25`. This section binds the executable repair subject
+that existed immediately before this evidence-only correction; it does not claim that SHA is
+the final containing commit. The final candidate head is necessarily external live PR/CI
+evidence, because embedding a commit's own hash in this tracked file would change that hash.
+
+- Branch: `codex/governance/spec-to-done-new-run-boundary`.
+- GitNexus CLI: `1.6.9`; exact worktree index and current commit were both `eddece2`.
+- GitNexus detect-changes: `LOW`; 6 files, 5 indexed symbols, 0 affected processes.
+- PowerShell impact target `Assert-SelfReferentialBootstrapBody`: `UNKNOWN/target not found`;
+  this remains the owner-accepted exact-path unavailable risk and is not an impact pass.
+- Future NEW_RUN paths: mechanism classifier 8/8; mandatory-adjudicator clean-ledger rejection
+  8/8; trusted-host coverage 8/8; adjacent/wrong-case matches 0/8.
+- `scripts/tests/test-self-referential-bootstrap.ps1`: exit 0; all assertions passed.
+- `scripts/tests/test-agent-governance-check.ps1`: exit 0; all assertions passed.
+- `node scripts/tests/test-trusted-host-merge.mjs`: exit 0; 18 passed and 1 expected
+  Windows-platform skip for the Linux gitlink fixture.
+- `scripts/tests/invoke-powershell-static.ps1`, `scripts/tests/scan-secret-patterns.ps1`, and
+  `git diff --check`: exit 0.
+- Exact-subject workflow dispatch `32873419853`: success; Windows
+  `rebuild/test-deploy contracts` job `97885719300` and host-native launcher PowerShell 7 passed.
+
+Any approval or merge decision must ignore stale embedded SHA claims and instead verify the
+live PR base/head tuple, current-head checks, reviews, and zero unresolved threads.

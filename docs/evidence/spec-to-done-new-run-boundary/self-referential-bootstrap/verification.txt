@@ -1,13 +1,20 @@
 stack_kind=self_referential_bootstrap
 pr=687
-base=bfba0f061edc9b62e7d6edfb5fd412358ef22666
-classifier_subject=61b12f8471a7eb2ecc649cf076efcfcd4568aff6
+evidence_scope=historical-opening-and-pre-evidence-fix-synchronized-subject
+opening_base=bfba0f061edc9b62e7d6edfb5fd412358ef22666
+opening_classifier_subject=61b12f8471a7eb2ecc649cf076efcfcd4568aff6
+synchronized_pr_base=14a6ac6d912e1cacadd0de5cf862772124aab00d
+synchronized_functional_fix_subject=eddece2ba2d75875173197369d3008cf7bf68b25
+final_candidate_head_binding=live-pr-metadata-and-exact-head-checks-not-self-embedded
 activation=HELD
 verification_contract=spec-to-done-new-run-boundary-classifier/v1
 contract_sha256=82d607837a5a7d78ca3e1b2100082f9d018e4333e68c3016931d9a1b95bbd9e3
 gitnexus_version=1.6.9
-gitnexus_indexed_commit=bfba0f0
-gitnexus_status=up-to-date
+opening_gitnexus_indexed_commit=bfba0f0
+opening_gitnexus_status=up-to-date
+synchronized_subject_gitnexus_indexed_commit=eddece2
+synchronized_subject_gitnexus_status=up-to-date
+synchronized_subject_gitnexus_detect_changes=LOW;files=6;symbols=5;affected_processes=0
 gitnexus_required_path_impact=UNKNOWN-owner-accepted
 owner_message_sha256=0907a87c4408a3e80b1995433af494a3735921ad72cc4259b79ba52f139f9176
 previous_ledger_sha256=a3ace2ba9a0eb7db5aea36682866309974e3214ba544068de05db194a56a5f59
@@ -16,7 +23,7 @@ previous_ledger_checkpoints=28
 
 classifier-probe
 command=dot-source scripts/lib/self-referential-bootstrap.ps1 and classify the frozen eight future and eight adjacent paths against both classifiers
-result=exit 0; self-ref future 8/8; trusted-host future 8/8; adjacent self-ref 0/8
+result=exit 0; self-ref future 8/8; mandatory-adjudicator rejection 8/8; trusted-host future 8/8; adjacent self-ref 0/8; bootstrap=yes without debt rejected; properly bound open debt accepted
 
 test-self-referential-bootstrap
 command=pwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/tests/test-self-referential-bootstrap.ps1
@@ -38,5 +45,11 @@ scan-secret-patterns
 command=pwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/tests/scan-secret-patterns.ps1
 result=exit 0; passed
 
-Baseline targeted Python governance contract was 51 passed and 9 expected POSIX-only terminal-P7 skips.
+exact-subject-ci
+subject=eddece2ba2d75875173197369d3008cf7bf68b25
+workflow_dispatch_run=32873419853
+windows_job=97885719300
+result=success; rebuild/test-deploy contracts and host-native launcher PowerShell 7 passed
+
+Opening baseline targeted Python governance contract was 51 passed and 9 expected POSIX-only terminal-P7 skips.
 No external service, port 49100, credential value, deployment, approval, or merge action was touched.
