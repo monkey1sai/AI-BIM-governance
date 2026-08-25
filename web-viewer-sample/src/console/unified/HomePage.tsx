@@ -95,7 +95,7 @@ export function HomePage() {
         </div>
       </div>
       {/* ---- 應用啟動器（導覽設定；A1–A4 badge 文字仍為 fixture，tasks §2.3 承接）---- */}
-      <div data-prov="fixture" style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+      <div data-prov="demo" style={{ display: "flex", flexDirection: "column", gap: 10 }}>
         <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
           <span style={{ fontSize: "13.5px", fontWeight: 700 }}>{L.launcher}</span>
           <span style={{ fontSize: 11, color: "var(--ab-text-dim)" }}>A1–A4 live · A5–A10 Concept Preview</span>

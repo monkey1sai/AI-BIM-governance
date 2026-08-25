@@ -59,7 +59,7 @@ describe("fixture 假資料不在 production 顯示路徑", () => {
     }
   });
 
-  it("(2) fixtures.ts 不再 export 已搬走的 7 個假資料名稱", () => {
+  it("(2) fixtures.ts 不再 export 已搬走的 6 個假資料名稱（initialIssues 留在 production 供 a3 Issues dock 種入，見 SLICE2_DEBT）", () => {
     const src = readFileSync(path.join(here, "fixtures.ts"), "utf8");
     for (const name of RELOCATED) expect(src, name).not.toMatch(new RegExp(`export\\s+const\\s+${name}\\b`));
     expect(src).not.toContain("export interface AlertDef");

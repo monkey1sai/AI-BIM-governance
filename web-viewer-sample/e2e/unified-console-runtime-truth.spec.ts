@@ -5,7 +5,7 @@ import { test, expect, type APIRequestContext, type Page, type Request } from "@
 //   1. cd web-viewer-sample && npm run build:ui        # 用本 branch 的碼重 build dist-ui
 //   2. 重啟服務 :8004 的 coordinator（CONSOLE_DIST_DIR 指向該 dist-ui；docker 佔 :8004 時須重建容器）
 //   3. coordinator 跑別的 port 只允許用 E2E_COORDINATOR_BASE_URL 指向「本機」stack；不得改打其他 host。
-// 不可達 → test.skip 訊息前綴 `stack_down:`（E2E_REQUIRE_REAL=1 時 forbid-skipped reporter 視 skip 為失敗，不假綠）。
+// 不可達 → test.skip 訊息前綴 `stack_down:`。誠實揭露（P5 e4）：本 spec 不由 require-real 守門——E2E_REQUIRE_REAL=1 會讓 playwright.config 的 loadIsolatedStackConfig 要求 E2E_STACK_MANIFEST（isolated-stack 語意，與本 spec 只打本機 :8004／E2E_COORDINATOR_BASE_URL 的設計相衝）；skip-free 以 reporter stats（expected 7／skipped 0）確認，未來可比照 slice 2 spec 改為 preflight 硬 fail。
 // 執行：$env:E2E_DISABLE_WEBSERVER='1'; npx playwright test e2e/unified-console-runtime-truth.spec.ts --reporter=list
 const COORDINATOR = process.env.E2E_COORDINATOR_BASE_URL || "http://127.0.0.1:8004";
 const SHOT = (name: string) => `../artifacts/e2e/unified-console-runtime-truth-${name}.png`;

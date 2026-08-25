@@ -12,6 +12,8 @@
 
 ## 2. 5.5 rebaseline 的歸屬（不列為 implementer task）
 
+> **落地實況（2026-08-26）**：雙旗標 capture 腳本只重拍設計原型，產品 offline 態需以 #429 型升格（`canonical_product_surface`）落地；且 change-scope 政策禁止產品與 golden 同 PR，故走「降級 reference PR → 產品 PR → 重新核准 reference PR」三段；R-A2 偏離已在 tasks.md 5.5 與 PR body 揭露。
+
 - D1=P 的 golden rebaseline（`node web-viewer-sample/scripts/capture-design-system-reference.mjs --rebaseline --confirm-rebaseline`，R-A2 雙旗標）只能由 coordinator 在 owner 明示後親自執行並單獨 commit；plan **不得**把它列為 implementer 步驟，implementer 也不得執行任何 `--rebaseline`。
 - 因此 P3 完成時 `design-semantic-visual` 的 pixel 比對預期為紅（golden 仍是 fixture 畫面）；semantic case（5.4）本身須以誠實狀態斷言撰寫，使 rebaseline 之後整道 gate 可綠。
 
@@ -35,4 +37,4 @@
 - GitNexus：本 worktree 於 HEAD 已 `npx gitnexus@1.6.9 analyze --index-only`；每個既有 symbol 修改前 `gitnexus impact <Symbol> -d upstream -r AI-BIM-governance`，HIGH／CRITICAL 先回報；commit 前 `gitnexus detect-changes --scope compare --base-ref main`（linked worktree 看不到 staged 時 fallback `git diff --name-only --cached` 並記 `detectVerdict='fallback'`）。
 - 十端點皆已存在於 `bim-review-coordinator/src/app.ts`（`/api/runtime/status` :1363、`/api/conversion/records` :2374、`/api/minio/objects` :2399、`/api/external/minio-watch/status` :2462、`/api/callback-outbox/summary` :3215、`/api/kit/health` :3779、`/api/kit/instances/current` :3785）與 `routes/governanceProxy.ts:223`（`/api/governance/issues`、`/api/governance/rule-runs`）＋`/api/external/ifc-ready`；行號以 `rg -n` 重新定位為準。
 - mock 一律於 `coordinatorClient` 層注入（vitest），不打真網路；production 只注入 live store；`data-prov` 只允許 `asbuilt`／`artifact`／`demo`／`p1`／`p15`／`p3`／`p4`；`data-state` ∈ {`live`,`unavailable`,`offline`,`error`}；永不以 0 作佔位；gate 環境（`/api/**` 503 stub）下「最後更新」固定顯示 `—`。
-- 假資料 export（`fixtures.ts`：`initialIntake`／`initialConv`／`initialSessions`／`initialOutbox`／`initialIssues`／`alerts`／`services`／`failDefs`／`diffDefs`／`fedMembers`／`stageTree`）移到 test-only 模組；i18n／導覽／style helper 保留；`fixtureNotInProduction.test.ts` 以符號層（import graph）驗證 production 元件不 import 假資料；`npm run build:ui` 後 `dist-ui` 內不得出現 `GPU/Stream 82%`。
+- 假資料 export（`fixtures.ts`：`initialIntake`／`initialConv`／`initialSessions`／`initialOutbox`／`initialIssues`／`alerts`／`services`／`failDefs`／`diffDefs`／`fedMembers`／`stageTree`）移到 test-only 模組（**落地實況**：6 個移到 test-only；`initialIssues` 留在 production 供 a3 Issues dock 種入，`failDefs`／`diffDefs`／`fedMembers`／`stageTree` 留給 §2／§3，皆由 ratchet 釘住）；i18n／導覽／style helper 保留；`fixtureNotInProduction.test.ts` 以符號層（import graph）驗證 production 元件不 import 假資料；`npm run build:ui` 後 `dist-ui` 內不得出現 `GPU/Stream 82%`。
