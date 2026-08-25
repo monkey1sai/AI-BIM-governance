@@ -2,6 +2,8 @@
 
 **Status**：approved slice。owner 2026-08-25 口令：「§4 coordinator 的 T4 operator-token per-route 授權與 D3 ENABLE_DEV_ROUTES=false 可平行開第二片」。
 
+> **本 PR＝slice 2 後端半部（coordinator／compose／env template／tasks.md §4）。** 前端半部（web-viewer dev-routes 404 誠實狀態、`web-viewer-sample/e2e/dev-routes-disabled-operator-token.spec.ts`、瀏覽器證據、實作 plan）在姊妹分支 `codex/openspec/unified-console-runtime-truth-s2`（另一 PR，後端 PR 合併後跟進）。拆分原因：spec-to-done P5 對抗複驗的供給上限 400k 字元（coordinator 2026-08-25）。
+
 **唯一忠實源**：`openspec/changes/unified-console-runtime-truth/`（`proposal.md`、`design.md` §2.1–§2.4、`tasks.md` §4 與 §0 裁決 0.2／0.3、`specs/unified-console-runtime-truth/spec.md` 的 requirement「canonical-linux 上 operator SHALL 能由 UI 觸發既有 MinIO 物件轉檔，授權 SHALL 以 per-route 方式落地且 SHALL NOT 放寬 lineage 與 webhook 面」及其「dev 路徑不是產品路徑且 canonical-linux 關閉 dev routes」scenario）。本檔只界定切片範圍與執行環境事實，**不新增需求**；衝突時以 change 為準。
 
 ## 1. Scope（本切片必做：tasks 4.1–4.5）

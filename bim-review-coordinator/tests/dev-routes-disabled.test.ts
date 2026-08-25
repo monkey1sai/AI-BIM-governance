@@ -55,6 +55,7 @@ describe("ENABLE_DEV_ROUTES=false → /api/dev/* 一律 404", () => {
     ["GET", "/api/dev/ifc-sources"],
     ["POST", "/api/dev/ifc-sources/ifcsrc_x/register"],
     ["GET", "/api/dev/test-data-projects"],
+    ["GET", "/api/dev/ifc-file/sample.ifc"],
   ];
   it.each(cases)("%s %s → 404 dev routes disabled", async (method, url) => {
     process.env.ENABLE_DEV_ROUTES = "false";

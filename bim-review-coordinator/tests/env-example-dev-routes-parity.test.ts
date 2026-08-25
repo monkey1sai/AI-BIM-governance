@@ -4,77 +4,78 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 /**
- * unified-console-runtime-truth slice 2 task 4.4(owner D3 裁決):ENABLE_DEV_ROUTES 的 deploy-time
- * parity guard,沿用 env-example-lineage-parity.test.ts(PR #693)模式。
+ * unified-console-runtime-truth slice 2 task 4.4（owner D3 裁決）：ENABLE_DEV_ROUTES／DEV_AUTH_TOKEN 的
+ * deploy-time parity guard，沿用 env-example-lineage-parity.test.ts（PR #693）模式並擴到 canonical 路徑。
  *
- * deploy.ps1 Phase 2 的 missing-key merge 以 .env.example 為 key source;compose.host-kit.yml 又是
- * dockerized coordinator 唯一的 env 透傳管道(.env 不掛進容器)。兩處缺任一,canonical-linux 的
- * `ENABLE_DEV_ROUTES=false` 就會靜默失效(容器內未定義=dev routes 開)。
- *
- * 讀取點 source of truth:src/app.ts 的 `process.env.ENABLE_DEV_ROUTES`(devRoutesEnabled)。
- * owner 動作(AI 不讀不改任何 .env*):.env.example 只留一行 `ENABLE_DEV_ROUTES=`(空=維持開啟;
- * canonical-linux 由 owner 在私有 canonical env 設 false)。
- *
- * 2026-08-25 實測狀態(C — 已宣告但重複衝突,非「尚未宣告」):.env.example 有兩行 ENABLE_DEV_ROUTES,
- * L66 `=true`(e1c3578／PR #222 舊宣告)排在 L75 `=`(ded6901 owner 追加的空值)之前。
- * scripts/lib/preflight-env.ps1 的 Get-EnvExampleDefaultValue(首個非註解相符行即 return)與本測試
- * 同為 first-match-wins,取到的是 L66 的 `true`,missing-key merge 會把 `true` 寫進所有部署目標,
- * 這道 guard 因此形同虛設。owner 刪掉 L66 前,「必須為空值」與「只宣告一次」兩個 it 預期為紅——
- * 這是要交付給 owner 的誠實訊號,不是要繞過的失敗;AI 一律不修 .env*(計畫檔 Task 3B Step 2 (C) 停手規則)。
+ * 讀取點 source of truth：src/app.ts 的 `process.env.ENABLE_DEV_ROUTES`（devRoutesEnabled）。
+ * 容器內 env 只來自 compose `environment:`（.dockerignore 排除 .env／.env.*），compose 變數替換來源是
+ * `--env-file .env.web-plane.host-kit`（scripts/deploy.ps1），其 missing-key merge 的 key source 是
+ * `.env.web-plane.host-kit.example`（scripts/lib/preflight-env.ps1）。因此 guard 必須同時釘住：
+ *   (1) bim-review-coordinator/.env.example（本 sub-repo 本機執行的 key source）恰宣告一次且為空值；
+ *   (2) compose.host-kit.yml coordinator environment 透傳 `ENABLE_DEV_ROUTES: ${ENABLE_DEV_ROUTES:-}`；
+ *   (3) .env.web-plane.host-kit.example（canonical 路徑 missing-key source）宣告 ENABLE_DEV_ROUTES=（空）與 DEV_AUTH_TOKEN=；
+ *   (4) .env.web-plane.host-kit.canonical-linux.example 宣告 ENABLE_DEV_ROUTES=false 與 DEV_AUTH_TOKEN=（不放真值）。
+ * 真值（canonical-linux 的 false 與非預設 token）只存在 owner 私有 env；本測試不讀任何私有 env。
  */
-describe(".env.example ↔ compose.host-kit.yml ↔ app.ts ENABLE_DEV_ROUTES parity(IMPORTANT — deploy-time missing-key safety net)", () => {
+describe("ENABLE_DEV_ROUTES／DEV_AUTH_TOKEN deploy-time parity（IMPORTANT — missing-key safety net on both key sources）", () => {
   const here = path.dirname(fileURLToPath(import.meta.url));
-  const envExampleText = readFileSync(path.join(here, "..", ".env.example"), "utf8");
-  const appSrc = readFileSync(path.join(here, "..", "src", "app.ts"), "utf8");
-  const composeText = readFileSync(path.join(here, "..", "..", "compose.host-kit.yml"), "utf8");
+  const repoRoot = path.join(here, "..", "..");
+  const read = (...parts: string[]): string => readFileSync(path.join(...parts), "utf8");
+  const envExampleText = read(here, "..", ".env.example");
+  const appSrc = read(here, "..", "src", "app.ts");
+  const composeText = read(repoRoot, "compose.host-kit.yml");
+  const webPlaneExampleText = read(repoRoot, ".env.web-plane.host-kit.example");
+  const canonicalLinuxExampleText = read(repoRoot, ".env.web-plane.host-kit.canonical-linux.example");
 
-  const envLines = envExampleText.split(/\r?\n/).map((line) => line.trim());
-  const declaredKeys = new Set(
-    envLines
-      .map((line) => {
-        const m = /^([A-Z0-9_]+)=/.exec(line);
-        return m ? m[1] : null;
-      })
-      .filter((k): k is string => k !== null),
-  );
-  const lineValue = (key: string): string | null => {
-    const line = envLines.find((candidate) => candidate.startsWith(`${key}=`));
-    return line === undefined ? null : line.slice(key.length + 1);
-  };
-  const declarationsOf = (key: string): { lineNumber: number; text: string }[] =>
-    envExampleText
+  const declarationsIn = (text: string, key: string): { lineNumber: number; text: string }[] =>
+    text
       .split(/\r?\n/)
-      .map((text, index) => ({ lineNumber: index + 1, text: text.trim() }))
+      .map((line, index) => ({ lineNumber: index + 1, text: line.trim() }))
       .filter((entry) => entry.text.startsWith(`${key}=`));
+  const valueIn = (text: string, key: string): string | null => {
+    const first = declarationsIn(text, key)[0];
+    return first === undefined ? null : first.text.slice(key.length + 1);
+  };
+  const expectDeclaredOnce = (label: string, text: string, key: string, expectedValue: string | null) => {
+    const declarations = declarationsIn(text, key);
+    const inventory = declarations.map((entry) => `L${entry.lineNumber}:${entry.text}`).join(" / ");
+    expect(
+      declarations.length,
+      `${key} 在 ${label} 出現 ${declarations.length} 次（${inventory}）；missing-key merge 與本測試皆 first-match-wins，必須恰宣告一次。`,
+    ).toBe(1);
+    if (expectedValue !== null) {
+      expect(valueIn(text, key), `${key} 在 ${label} 的值必須為「${expectedValue}」`).toBe(expectedValue);
+    }
+  };
   const appReadKeys = Array.from(new Set(Array.from(appSrc.matchAll(/process\.env\.(ENABLE_DEV_ROUTES)/g)).map((m) => m[1])));
 
-  it("app.ts 恰有一個 ENABLE_DEV_ROUTES 讀取點(devRoutesEnabled)", () => {
+  it("app.ts 恰有一個 ENABLE_DEV_ROUTES 讀取點（devRoutesEnabled）", () => {
     expect(appReadKeys).toEqual(["ENABLE_DEV_ROUTES"]);
     expect(appSrc.match(/process\.env\.ENABLE_DEV_ROUTES/g)).toHaveLength(1);
   });
 
-  it("app.ts 讀取的 ENABLE_DEV_ROUTES 在 .env.example 有 `ENABLE_DEV_ROUTES=` 宣告且為空值(owner 動作;落地前預期紅)", () => {
-    for (const key of appReadKeys) {
-      expect(declaredKeys.has(key), `${key} 未在 .env.example 宣告(owner 需加 \`${key}=\`)`).toBe(true);
-      expect(lineValue(key), `${key} 在 .env.example 必須為空值:帶 false 會被 missing-key merge 寫進所有部署目標`).toBe("");
-    }
+  it("bim-review-coordinator/.env.example 恰宣告一次 ENABLE_DEV_ROUTES= 且為空值", () => {
+    for (const key of appReadKeys) expectDeclaredOnce("bim-review-coordinator/.env.example", envExampleText, key, "");
   });
 
-  it("ENABLE_DEV_ROUTES 在 .env.example 只宣告一次(重複鍵會讓 first-match-wins 的 missing-key merge 取到過期值;落地前預期紅)", () => {
-    for (const key of appReadKeys) {
-      const declarations = declarationsOf(key);
-      const inventory = declarations.map((entry) => `L${entry.lineNumber}:${entry.text}`).join(" / ");
-      expect(
-        declarations.length,
-        `${key} 在 .env.example 出現 ${declarations.length} 次(${inventory});` +
-          `scripts/lib/preflight-env.ps1 的 Get-EnvExampleDefaultValue 與本測試同為 first-match-wins,` +
-          `排在前面的過期宣告會蓋掉後面的空值宣告,parity guard 因此失去意義。` +
-          `owner 待辦:刪掉過期的重複行,只留一行 \`${key}=\`(空值)。AI 不讀不改任何 .env*。`,
-      ).toBe(1);
-    }
+  it("compose.host-kit.yml 的 coordinator environment 區塊內透傳 ENABLE_DEV_ROUTES（未設＝空＝維持開啟）", () => {
+    const lines = composeText.split(/\r?\n/);
+    const coordinatorIdx = lines.findIndex((line) => /^  coordinator:\s*$/.test(line));
+    expect(coordinatorIdx, "compose.host-kit.yml 缺 services.coordinator").toBeGreaterThanOrEqual(0);
+    let nextServiceIdx = lines.findIndex((line, index) => index > coordinatorIdx && /^  [A-Za-z0-9_-]+:\s*$/.test(line));
+    if (nextServiceIdx < 0) nextServiceIdx = lines.length;
+    const block = lines.slice(coordinatorIdx, nextServiceIdx);
+    const passthrough = block.filter((line) => line.trim() === "ENABLE_DEV_ROUTES: ${ENABLE_DEV_ROUTES:-}" && !line.trim().startsWith("#"));
+    expect(passthrough, "ENABLE_DEV_ROUTES 透傳行必須位於 services.coordinator 區塊且未被註解").toHaveLength(1);
   });
 
-  it("compose.host-kit.yml coordinator environment 透傳 ENABLE_DEV_ROUTES(未設=空=維持開啟)", () => {
-    expect(composeText).toContain("ENABLE_DEV_ROUTES: ${ENABLE_DEV_ROUTES:-}");
+  it(".env.web-plane.host-kit.example（canonical missing-key source）宣告 ENABLE_DEV_ROUTES=（空）與 DEV_AUTH_TOKEN=", () => {
+    expectDeclaredOnce(".env.web-plane.host-kit.example", webPlaneExampleText, "ENABLE_DEV_ROUTES", "");
+    expectDeclaredOnce(".env.web-plane.host-kit.example", webPlaneExampleText, "DEV_AUTH_TOKEN", "");
+  });
+
+  it(".env.web-plane.host-kit.canonical-linux.example 宣告 ENABLE_DEV_ROUTES=false 與 DEV_AUTH_TOKEN=（不放真值）", () => {
+    expectDeclaredOnce(".env.web-plane.host-kit.canonical-linux.example", canonicalLinuxExampleText, "ENABLE_DEV_ROUTES", "false");
+    expectDeclaredOnce(".env.web-plane.host-kit.canonical-linux.example", canonicalLinuxExampleText, "DEV_AUTH_TOKEN", "");
   });
 });

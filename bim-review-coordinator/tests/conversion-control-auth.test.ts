@@ -83,7 +83,7 @@ for (const route of ROUTES) {
     });
 
     it("token 路徑未啟用（devAuthToken 仍為預設 dev-token）：即使帶 dev-token 也 403 逐字（fail-closed）", async () => {
-      const app = makeApp({ externalIntakeIpAllowlist: LAN_ONLY_ALLOWLIST });
+      const app = makeApp({ externalIntakeIpAllowlist: LAN_ONLY_ALLOWLIST, devAuthToken: "dev-token" }); // hermetic：不依賴 ambient DEV_AUTH_TOKEN（P5 c16）
       expect(app.config.devAuthToken).toBe("dev-token");
       const res = await route.send(app, { "x-operator-token": "dev-token" });
       expect(res.status).toBe(403);
