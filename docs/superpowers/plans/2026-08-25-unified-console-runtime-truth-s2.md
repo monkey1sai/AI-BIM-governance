@@ -12,6 +12,8 @@
 
 ## 0. 執行者零脈絡導航（先做，再動手）
 
+> **Task 編號對照（coordinator 2026-08-25 合併後）**：原 Task 1、2 → **Task 1**；原 Task 3、4 → **Task 2**；原 Task 5、6 → **Task 3**；原 Task 7、8、10 → **Task 4**；原 Task 11、12 → **Task 5**；原 Task 9 為 HELD 保留稿（Appendix A，不是 task）。文中所有「Task N Step M」引用一律指**原**編號，各子段標題已標「原 Task N」。合併原因：std-implement 每 task 必須至少一個 commit（原 Task 1 無檔案變更），且 run 剩餘 agent 額度不足以支撐 11 個 task。
+
 - worktree 根：`C:/Repos/active/iot/AI-BIM-governance.worktrees/unified-console-runtime-truth-s2`，branch `codex/openspec/unified-console-runtime-truth-s2`（自 `origin/main` `2ef725a`；`af8d34c` 為 slice 2 spec 檔，`064ac40` 為本 plan 檔＝2026-08-25 實測 HEAD）。以下所有相對路徑相對此根；「cwd `bim-review-coordinator`」＝該根下的子目錄。**工作區非全乾淨**：已知有一行 ` M bim-review-coordinator/.env.example`（owner 未提交的宣告行），處置見下方硬規則與 Task 1 Step 1。
 - 唯一忠實源：`docs/superpowers/specs/2026-08-25-unified-console-runtime-truth-s2-design.md` 與 `openspec/changes/unified-console-runtime-truth/`（`design.md` §2.1–§2.4、`tasks.md` §0 裁決 0.2／0.3 與 §4、`specs/unified-console-runtime-truth/spec.md` requirement「canonical-linux 上 operator SHALL 能由 UI 觸發既有 MinIO 物件轉檔…」）。衝突時以 change 為準——slice spec 檔第 5 行自己就這樣寫（「本檔只界定切片範圍與執行環境事實，**不新增需求**；衝突時以 change 為準」）。本 plan 已據此裁掉一處落差：slice spec §1 4.4 把「`/api/dev/conversions` 消費者」掛進「A1 workbench」括號內，但 canonical scenario（`spec.md`「dev 路徑不是產品路徑且 canonical-linux 關閉 dev routes」的 AND 子句）與 canonical `design.md` §2.4 都**只列兩頁**：`#demo-control` 與 A1 workbench local_fs 清單 → 判為範圍外加，Task 9 HELD（見該節「D5 owner 裁決點」）。
 - GitNexus 導航（cwd 為 worktree 根；index 已於 HEAD `af8d34c` 建好，`npx gitnexus@1.6.9 status` 應回 `up-to-date`）：
@@ -65,7 +67,11 @@
 
 ---
 
-### Task 1: Preflight、baseline 與 4.1 impact 紀錄
+### Task 1: 前置 baseline＋釘樁測試（4.1／4.3）
+
+> 本 task 由多個原 task 併成（額度／commit 錨點考量，coordinator 2026-08-25）：各子段（#### nA／nB…）的步驟、驗證與 commit 指令**逐字照做**，每段結尾的 commit 都要做；本 task 所有 commit message 一律以「task#<本 task 在 implementer 提示中的 index>: 」開頭再接原訊息。子段標題括號內的「原 Task N」對應文中所有「Task N Step M」的引用。
+
+#### 1A. 前置：Preflight、baseline 與 4.1 impact 紀錄（原 Task 1；本段無檔案變更、不 commit，commit 在 1B 結尾）
 
 **Files:**
 - 無 repo 檔案變更（產物寫到 session scratchpad）。
@@ -121,7 +127,7 @@ cd "C:/Repos/active/iot/AI-BIM-governance.worktrees/unified-console-runtime-trut
 
 ---
 
-### Task 2: 釘樁測試（4.3）— lineage／webhook 授權面 baseline（app.ts 改動前先綠）
+#### 1B. 釘樁測試（4.3）— lineage／webhook 授權面 baseline（app.ts 改動前先綠）（原 Task 2）
 
 **Files:**
 - Create: `bim-review-coordinator/tests/lineage/conversion-control-auth-pins.test.ts`
@@ -266,7 +272,11 @@ cd "C:/Repos/active/iot/AI-BIM-governance.worktrees/unified-console-runtime-trut
 
 ---
 
-### Task 3: `conversionControlAuthorization` 模組（token 路徑判定＋滑動視窗速率限制＋guard 工廠）
+### Task 2: 授權模組＋四條 conversion 控制路由 per-route guard（4.2）
+
+> 本 task 由多個原 task 併成（額度／commit 錨點考量，coordinator 2026-08-25）：各子段（#### nA／nB…）的步驟、驗證與 commit 指令**逐字照做**，每段結尾的 commit 都要做；本 task 所有 commit message 一律以「task#<本 task 在 implementer 提示中的 index>: 」開頭再接原訊息。子段標題括號內的「原 Task N」對應文中所有「Task N Step M」的引用。
+
+#### 2A. `conversionControlAuthorization` 模組（token 路徑判定＋滑動視窗速率限制＋guard 工廠）（原 Task 3）
 
 **Files:**
 - Create: `bim-review-coordinator/src/services/conversionControlAuthorization.ts`
@@ -462,7 +472,7 @@ cd "C:/Repos/active/iot/AI-BIM-governance.worktrees/unified-console-runtime-trut
 
 ---
 
-### Task 4: 四條 conversion 控制路由接上 per-route guard（4.2）
+#### 2B. 四條 conversion 控制路由接上 per-route guard（4.2）（原 Task 4）
 
 **Files:**
 - Modify: `bim-review-coordinator/src/app.ts`（import；`createCoordinatorApp` 內新增 guard 建構；四條路由的守門呼叫替換）
@@ -797,7 +807,11 @@ cd "C:/Repos/active/iot/AI-BIM-governance.worktrees/unified-console-runtime-trut
 
 ---
 
-### Task 5: D3 後端 — `/api/dev` prefix gate（4.4 後端）
+### Task 3: D3 — `/api/dev` prefix gate＋compose 透傳＋`.env.example` parity guard（4.4 後端與部署面）
+
+> 本 task 由多個原 task 併成（額度／commit 錨點考量，coordinator 2026-08-25）：各子段（#### nA／nB…）的步驟、驗證與 commit 指令**逐字照做**，每段結尾的 commit 都要做；本 task 所有 commit message 一律以「task#<本 task 在 implementer 提示中的 index>: 」開頭再接原訊息。子段標題括號內的「原 Task N」對應文中所有「Task N Step M」的引用。
+
+#### 3A. D3 後端 — `/api/dev` prefix gate（4.4 後端）（原 Task 5）
 
 **Files:**
 - Modify: `bim-review-coordinator/src/app.ts`（`createCoordinatorApp` 內、第一條 `/api/dev/*` 路由之前）
@@ -956,7 +970,7 @@ cd "C:/Repos/active/iot/AI-BIM-governance.worktrees/unified-console-runtime-trut
 
 ---
 
-### Task 6: D3 compose 透傳＋ `.env.example` parity guard（4.4 部署面；宣告案例預期綠＝(B)，見 Step 2）
+#### 3B. D3 compose 透傳＋ `.env.example` parity guard（4.4 部署面；宣告案例預期綠＝(B)，見 Step 2）（原 Task 6）
 
 **Files:**
 - Modify: `compose.host-kit.yml`
@@ -1077,7 +1091,11 @@ cd "C:/Repos/active/iot/AI-BIM-governance.worktrees/unified-console-runtime-trut
 
 ---
 
-### Task 7: 前端 client — `CoordinatorHttpError`／`isCoordinatorNotFound`（404 可辨識，message 逐字不變）
+### Task 4: 前端 dev routes 404 誠實狀態（client 可辨識 404＋`#demo-control`＋A1 workbench 測試資料清單）
+
+> 本 task 由多個原 task 併成（額度／commit 錨點考量，coordinator 2026-08-25）：各子段（#### nA／nB…）的步驟、驗證與 commit 指令**逐字照做**，每段結尾的 commit 都要做；本 task 所有 commit message 一律以「task#<本 task 在 implementer 提示中的 index>: 」開頭再接原訊息。子段標題括號內的「原 Task N」對應文中所有「Task N Step M」的引用。
+
+#### 4A. 前端 client — `CoordinatorHttpError`／`isCoordinatorNotFound`（404 可辨識，message 逐字不變）（原 Task 7）
 
 **Files:**
 - Modify: `web-viewer-sample/src/console/coordinatorClient.ts`（`jsonGet`）
@@ -1199,7 +1217,7 @@ cd "C:/Repos/active/iot/AI-BIM-governance.worktrees/unified-console-runtime-trut
 
 ---
 
-### Task 8: 前端 `#demo-control`（`RealIfcConsolePage`）— dev routes 404 誠實狀態
+#### 4B. 前端 `#demo-control`（`RealIfcConsolePage`）— dev routes 404 誠實狀態（原 Task 8）
 
 **Files:**
 - Modify: `web-viewer-sample/src/console/RealIfcConsolePage.tsx`
@@ -1405,7 +1423,7 @@ cd "C:/Repos/active/iot/AI-BIM-governance.worktrees/unified-console-runtime-trut
 
 > **Task 9（`/api/dev/conversions` 消費者）HELD／待 owner D5 裁決——不是本 PR 的 task。** 保留稿移至文末「Appendix A」；執行者做完 Task 8 直接做 Task 10（task 編號刻意留空 9）。
 
-### Task 10: 前端 A1 workbench 測試資料清單 404 誠實 note
+#### 4C. 前端 A1 workbench 測試資料清單 404 誠實 note（原 Task 10）
 
 **Files:**
 - Modify: `web-viewer-sample/src/console/A1GovernanceWorkbenchPage.tsx`
@@ -1547,7 +1565,11 @@ cd "C:/Repos/active/iot/AI-BIM-governance.worktrees/unified-console-runtime-trut
 
 ---
 
-### Task 11: Browser E2E（Playwright）— dev routes 已關閉 UI 垂直切片＋T4 API 契約探針
+### Task 5: Browser E2E＋全量驗證（4.5）＋tasks.md 勾選／註記＋openspec validate＋detect-changes
+
+> 本 task 由多個原 task 併成（額度／commit 錨點考量，coordinator 2026-08-25）：各子段（#### nA／nB…）的步驟、驗證與 commit 指令**逐字照做**，每段結尾的 commit 都要做；本 task 所有 commit message 一律以「task#<本 task 在 implementer 提示中的 index>: 」開頭再接原訊息。子段標題括號內的「原 Task N」對應文中所有「Task N Step M」的引用。
+
+#### 5A. Browser E2E（Playwright）— dev routes 已關閉 UI 垂直切片＋T4 API 契約探針（原 Task 11）
 
 **Files:**
 - Create: `web-viewer-sample/e2e/dev-routes-disabled-operator-token.spec.ts`
@@ -1706,7 +1728,7 @@ cd "C:/Repos/active/iot/AI-BIM-governance.worktrees/unified-console-runtime-trut
 
 ---
 
-### Task 12: 全量驗證（4.5）、tasks.md 勾選／註記、openspec validate、detect-changes
+#### 5B. 全量驗證（4.5）、tasks.md 勾選／註記、openspec validate、detect-changes（原 Task 12）
 
 **Files:**
 - Modify: `openspec/changes/unified-console-runtime-truth/tasks.md`
