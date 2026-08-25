@@ -157,6 +157,7 @@
         "^agent-contracts/autonomous-delivery-transition\\.contract\\.json$",
         "^scripts/lib/autonomous-delivery-contract\\.mjs$",
         "^scripts/tests/test-autonomous-linux-delivery-contracts\\.mjs$",
+        "^scripts/agent-tooling/blip-approve/bot/scripts/(?:ship_gate_packet|test_(?:ship_gate_packet|blip_review|bind_ship_attestation))\\.py$",
         "^scripts/verification-manifest\\.json$",
         "^scripts/dev/check-pr-local-preflight\\.ps1$",
         "^scripts/hooks/require-gstack-evidence\\.ps1$",

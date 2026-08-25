@@ -44,6 +44,10 @@ $script:SelfReferentialMechanismPattern = @(
     '^scripts/lib/autonomous-delivery-contract\.mjs$'
     '^scripts/tests/test-autonomous-linux-delivery-contracts\.mjs$'
     '^tests/test_autonomous_delivery_contract_schemas\.py$'
+    # The protected ship packet collector determines the immutable PR tuple
+    # consumed by approval and attestation gates. Its direct compare-fixture
+    # regressions are pre-registered so a later repair is judged by its base.
+    '^scripts/agent-tooling/blip-approve/bot/scripts/(?:ship_gate_packet|test_(?:ship_gate_packet|blip_review|bind_ship_attestation))\.py$'
     '^scripts/verification-manifest\.json$'
     '^scripts/dev/check-pr-local-preflight\.ps1$'
     '^scripts/hooks/require-gstack-evidence\.ps1$'
