@@ -2596,7 +2596,7 @@ git commit -m "task#5: #pipeline 五段＋治理／報表列綁真值；outbox �
 - Test: `web-viewer-sample/src/console/unified/opsLiveBinding.test.tsx`（新）
 - Modify: `web-viewer-sample/src/console/unified/unified.test.tsx`（`#runtime` 案＋誠實標記契約案）
 
-- [ ] **Step 1: impact 分析**
+- [x] **Step 1: impact 分析**
 
 ```powershell
 Set-Location $W
@@ -2605,7 +2605,7 @@ npx gitnexus@1.6.9 impact OpsPage -d upstream -r AI-BIM-governance
 
 預期 LOW（caller 只有 `renderUnified`；`gpuBar` 為檔內私有函式，隨重寫刪除）。
 
-- [ ] **Step 2: 寫失敗測試 `opsLiveBinding.test.tsx`**
+- [x] **Step 2: 寫失敗測試 `opsLiveBinding.test.tsx`**
 
 ```tsx
 // unified-console-runtime-truth slice 1（tasks 1.6）：#runtime 真值 OpsPage——Kit instance（GET /api/kit/instances/current）、
@@ -2686,7 +2686,7 @@ describe("OpsPage 真值綁定", () => {
 });
 ```
 
-- [ ] **Step 3: 跑測試確認失敗**
+- [x] **Step 3: 跑測試確認失敗**
 
 ```powershell
 Set-Location $F
@@ -2695,7 +2695,7 @@ npx vitest run src/console/unified/opsLiveBinding.test.tsx
 
 預期：`Tests  3 failed (3)`（`kit-instance-id` 為 null）。
 
-- [ ] **Step 4: 整檔重寫 `OpsPage.tsx`**（卡片標題保留「GPU Fleet」，`e2e/unified-console-routes.spec.ts:34` 以該字串定位）
+- [x] **Step 4: 整檔重寫 `OpsPage.tsx`**（卡片標題保留「GPU Fleet」，`e2e/unified-console-routes.spec.ts:34` 以該字串定位）
 
 ```tsx
 // ═══════════════════════════════════════════════════════════════════════
@@ -2787,7 +2787,7 @@ export function OpsPage() {
 export default OpsPage;
 ```
 
-- [ ] **Step 5: 更新 `unified.test.tsx` 的 `#runtime` 案與誠實標記契約案**
+- [x] **Step 5: 更新 `unified.test.tsx` 的 `#runtime` 案與誠實標記契約案**
 
 (a) `#runtime` 案在六列名稱 `for` 迴圈之後追加：
 
@@ -2800,7 +2800,7 @@ export default OpsPage;
 
 (b) 誠實標記契約案的 `for (const hash of ["#home", "#pipeline"]) {` 改為 `for (const hash of ["#home", "#pipeline", "#runtime"]) {`。
 
-- [ ] **Step 6: 跑測試、型別、`82%` 歸零檢查**
+- [x] **Step 6: 跑測試、型別、`82%` 歸零檢查**
 
 ```powershell
 Set-Location $F
@@ -2811,7 +2811,7 @@ rg -n "82%" src/console/unified; if ($LASTEXITCODE -eq 1) { "OK: no 82% under sr
 
 預期：`Test Files  3 passed (3)`；tsc exit 0；`rg` 無命中並印出 `OK: no 82% under src/console/unified`（tasks 1.7 驗證條件）。
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```powershell
 Set-Location $W

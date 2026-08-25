@@ -105,13 +105,17 @@ describe("UnifiedConsole smoke（approved 鍵 → UnifiedShell + 新頁）", () 
       "kit-manager-api",
       "MinIO watch",
     ]) expect(html, name).toContain(name);
+    // 真值 cell（SSR＝尚未連線 → —）；固定 GPU／VRAM／structLog 值不得出現。
+    expect(html).toContain('data-uc="gpu-val" data-prov="asbuilt" data-state="offline"');
+    expect(html).toContain("GPU Fleet"); // e2e/unified-console-routes.spec.ts:34 以此定位
+    for (const lit of ["82%", "24%", "14.6/24 GB", "S-240601", "lease_8812", "cj_0117"]) expect(html, lit).not.toContain(lit);
   });
 
   it("誠實標記契約：fixture 殼（#a1/#a3/#a5）帶 data-prov=\"fixture\"；真值頁（#home）page-root 內帶 asbuilt", () => {
     for (const hash of ["#a1", "#a3", "#a5"]) {
       expect(renderAtHash(hash), hash).toContain('data-prov="fixture"');
     }
-    for (const hash of ["#home", "#pipeline"]) {
+    for (const hash of ["#home", "#pipeline", "#runtime"]) {
       const html = renderAtHash(hash);
       const pageRoot = html.slice(html.indexOf('data-uc="page-root"'));
       expect(pageRoot, hash).toContain('data-prov="asbuilt"');
