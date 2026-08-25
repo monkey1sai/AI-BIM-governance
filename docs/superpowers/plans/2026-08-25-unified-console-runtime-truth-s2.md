@@ -32,10 +32,10 @@
   - 不改 `rejectIfIpNotAllowed` 本體、不改 `EXTERNAL_INTAKE_IP_ALLOWLIST` 語意、`/api/external/*` 逐字不變、`/api/dev/*` 不作產品路徑、不動 lineage 後端契約、不新增生產依賴、不新增端點、不改 `openspec/lifecycle-ledger.json`／`docs/plans/NOW.md`。
   - `/ui` 殼層 operator token 輸入與「觸發轉檔」按鈕啟用 **不在本切片**（另切片）。
   - **`.env*` 一律不讀、不改、不繞道**（protect-secrets hook；連 Bash 指令字串出現該檔名都會被擋，所以 `git diff`／`cat`／`rg` 該檔一律**不要嘗試**）。`bim-review-coordinator/.env.example` 加 `ENABLE_DEV_ROUTES=` 是 owner 動作。
-  - **已知 baseline 髒污（2026-08-25 實測，不是異常）**：本 worktree 的 `git status --short` 有**一行** ` M bim-review-coordinator/.env.example`——owner 已在**工作區（未提交）**加上該宣告行（含 canonical-linux 註解）。處置固定為「原樣保留、完全不碰」：**不 `git add`、不 `git restore`／`git checkout --`、不 `git stash`、不 `git diff`、不讀**。（restore／checkout 會毀掉 owner 未提交的工作，屬不可逆；讀寫都撞 hook。）
+  - **coordinator 更新 2026-08-25（覆寫本 plan 其他段落對 ` M bim-review-coordinator/.env.example` 的敘述）**：`ENABLE_DEV_ROUTES=` 宣告行已由 owner 親自追加，並經 owner 明示授權以 commit `ded6901` 進入本分支（agent 未讀、未改該檔）。baseline `git status --short` 應為**完全乾淨**；`git diff --name-only origin/main...HEAD` 出現 `bim-review-coordinator/.env.example` 屬預期。parity「宣告案例」預期**綠**＝(B)，且這個綠同時是 CI 的綠。`.env*` 仍一律不讀、不改。
   - **所有 commit 一律逐檔列舉 `git add <path...>`（本 plan 每個 commit 步驟都已列好）；禁止 `git add -A`／`git add .`／`git add -u`／`git commit -a`**——否則會把該 `.env*` 檔掃進本 PR。
   - **唯一可用的判定管道＝parity 測試本身**（測試碼讀檔，agent 不讀）。「宣告行是否已落地、值是否為空」不得用眼睛確認，只能看 Task 6 Step 2／Step 4 的紅綠與失敗訊息；plan 對 (A) 未落地／(B) 已落地且空值／(C) 已落地但非空 三種狀態都給了預期輸出。**不得為了讓某一種預期成立而動該檔。**
-  - **本機綠 ≠ CI 綠**：owner 的宣告行若只在工作區未提交，本機 parity 會綠，但 PR／CI 只看已提交內容，仍為紅。此情形下 4.4／4.5 **一律不打勾**，且 PR body 必須誠實寫「本機 parity 綠來自**未提交**的工作區 `.env.example` 修改；CI 仍紅，待 owner 自行提交該行」。
+  - **本機綠＝CI 綠（coordinator 更新 2026-08-25）**：宣告行已 commit（`ded6901`），parity 全綠即 CI 綠；4.5 依 slice spec §4 於 Task 12 全量綠後打勾（Edit E），4.4 仍只註記（含 UI 顯示與 canonical env，待 181）。
   - 每個既有 symbol 修改前 `npx gitnexus@1.6.9 impact <Symbol> -d upstream -r AI-BIM-governance`（同名者加 `-f <file>`），HIGH／CRITICAL 先回報停手；commit 前 `git diff --cached --check`；最後 `npx gitnexus@1.6.9 detect-changes --scope compare --base-ref main -r AI-BIM-governance`。
   - Python venv 不在 worktree，本切片不需要。`web-viewer-sample/node_modules` 在 worktree 內**尚未安裝**（Task 1 先 `npm ci`）。
 
@@ -61,7 +61,7 @@
 | `web-viewer-sample/e2e/dev-routes-disabled-operator-token.spec.ts` | Create | browser 垂直切片＋API 契約探針 |
 | `openspec/changes/unified-console-runtime-truth/tasks.md` | Modify | 4.1／4.2／4.3 打勾＋註記；4.4／4.5 只註記 |
 
-不建立／不修改：`rejectIfIpNotAllowed` 本體、`src/routes/lineageSourceBundleRoutes.ts`、`src/routes/devMeta.ts`、`src/config.ts`、**任何 `.env*`（含工作區已存在的 ` M bim-review-coordinator/.env.example`——原樣留著，不 add／不 restore／不讀）**、`openspec/lifecycle-ledger.json`、`docs/plans/**`、`web-viewer-sample/src/console/unified/**`、**Task 9 那 8 個 `/api/dev/conversions` 消費者檔（HELD）**。
+不建立／不修改：`rejectIfIpNotAllowed` 本體、`src/routes/lineageSourceBundleRoutes.ts`、`src/routes/devMeta.ts`、`src/config.ts`、**任何 `.env*`（宣告行已在 commit `ded6901`，工作區應乾淨；仍不讀、不改）**、`openspec/lifecycle-ledger.json`、`docs/plans/**`、`web-viewer-sample/src/console/unified/**`、**Task 9 那 8 個 `/api/dev/conversions` 消費者檔（HELD）**。
 
 ---
 
@@ -81,7 +81,7 @@ cd "C:/Repos/active/iot/AI-BIM-governance.worktrees/unified-console-runtime-trut
 `git status --short` **允許且只允許**下列兩種狀態，其一即通過：
 
 1. 無任何行（完全乾淨）。
-2. **恰好一行** ` M bim-review-coordinator/.env.example`——2026-08-25 實測即為此狀態：owner 已在**工作區（未提交）**加上 `ENABLE_DEV_ROUTES=` 宣告行。這是**已知且被允許**的 baseline 髒污，**不是**要你修的問題。
+2. （coordinator 更新 2026-08-25：宣告行已 commit 為 `ded6901`，預期為狀態 1；本狀態僅為歷史保留）**恰好一行** ` M bim-review-coordinator/.env.example`——若仍出現，代表有人在 `ded6901` 之後又動了該檔：停手回報，不 add／不 restore／不讀。
 
 狀態 2 的處置固定為「原樣不動」：**不 `git add`、不 `git restore`／`git checkout --`、不 `git stash`、不 `git diff` 該檔、不讀該檔**（§0 硬規則；`.env*` 全被 protect-secrets hook 保護，且 restore／checkout 會不可逆地毀掉 owner 未提交的工作）。後續每個 commit 都只用本 plan 逐檔列舉的 `git add <path...>`，因此這一行會原封不動留在工作區直到最後——Task 11 Step 4 與 Task 12 Step 6 的 `git status` 預期都已據此放寬。
 
@@ -117,7 +117,7 @@ cd "C:/Repos/active/iot/AI-BIM-governance.worktrees/unified-console-runtime-trut
 cd "C:/Repos/active/iot/AI-BIM-governance.worktrees/unified-console-runtime-truth-s2/web-viewer-sample" && npm ci --no-audit --no-fund && npx tsc --noEmit && npx vitest run src/console/modelData src/console/coordinatorClient.conversions-history.test.ts
 ```
 
-預期輸出：`npm ci` 結尾 `added <n> packages`；`tsc --noEmit` 無輸出、exit 0；vitest 全 pass。若 `git status --short` 出現**除了已知的 ` M bim-review-coordinator/.env.example` 以外**的任何檔案（例如 `scripts/sync-design-assets.mjs` 產物），停下回報，不要 commit 它們。
+預期輸出：`npm ci` 結尾 `added <n> packages`；`tsc --noEmit` 無輸出、exit 0；vitest 全 pass。若 `git status --short` 出現任何檔案（coordinator 更新 2026-08-25：`.env.example` 已 commit `ded6901`，工作區應乾淨）（例如 `scripts/sync-design-assets.mjs` 產物），停下回報，不要 commit 它們。
 
 ---
 
@@ -956,7 +956,7 @@ cd "C:/Repos/active/iot/AI-BIM-governance.worktrees/unified-console-runtime-trut
 
 ---
 
-### Task 6: D3 compose 透傳＋ `.env.example` parity guard（4.4 部署面；宣告案例紅綠皆可能——見 Step 2 的 (A)／(B)／(C) 分支）
+### Task 6: D3 compose 透傳＋ `.env.example` parity guard（4.4 部署面；宣告案例預期綠＝(B)，見 Step 2）
 
 **Files:**
 - Modify: `compose.host-kit.yml`
@@ -1027,7 +1027,7 @@ describe(".env.example ↔ compose.host-kit.yml ↔ app.ts ENABLE_DEV_ROUTES par
 cd "C:/Repos/active/iot/AI-BIM-governance.worktrees/unified-console-runtime-truth-s2/bim-review-coordinator" && npx vitest run tests/env-example-dev-routes-parity.test.ts
 ```
 
-預期輸出：第一個 it（app.ts 恰一個讀取點）**必綠**；第三個 it（compose `toContain`）此刻**必紅**（compose 尚未透傳）。第二個 it（宣告案例）取決於 owner 那行未提交修改的實際內容，下列三種都是合法觀測——**記下實際是哪一種，Step 4／Task 12 Step 1 的預期都依它分支**：
+預期輸出：第一個 it（app.ts 恰一個讀取點）**必綠**；第三個 it（compose `toContain`）此刻**必紅**（compose 尚未透傳）。第二個 it（宣告案例）**預期綠＝(B)**（coordinator 更新 2026-08-25：宣告行已 commit `ded6901`）；(A)／(C) 只保留為異常處置——觀測到 (A) 或 (C) 即停手回報，不改 `.env*`：
 
 - **(A) 宣告未落地** → `Tests  2 failed | 1 passed (3)`；第二個 it 的失敗訊息含 `ENABLE_DEV_ROUTES 未在 .env.example 宣告`。
 - **(B) 宣告已落地且值為空** → `Tests  1 failed | 2 passed (3)`；唯一紅是 compose 案例。（依 2026-08-25 baseline 的 ` M .env.example` 觀察，這是最可能的一種。）
@@ -1062,7 +1062,7 @@ cd "C:/Repos/active/iot/AI-BIM-governance.worktrees/unified-console-runtime-trut
 預期輸出：compose 案例轉綠；`static-exit=0`（守衛只斷言既有字串存在，加行不影響）。vitest 結果承接 Step 2 觀測到的分支：
 
 - Step 2 為 **(A)** → `Tests  1 failed | 2 passed (3)`，**唯一**紅是「.env.example 宣告」案例（owner 動作，刻意保留，已在 tasks.md／PR body 揭露）。
-- Step 2 為 **(B)** → `Tests  3 passed (3)` **全綠**。⚠️ 這是**本機工作區**的綠，不是 PR／CI 的綠：那行宣告尚未提交，CI 只看已提交內容仍為紅。此分支下 **4.4／4.5 仍不打勾**，Task 12 Step 1 的全量預期改為全綠，且 PR body 必須寫明「本機 parity 綠來自未提交的工作區 `.env.example`；CI 仍紅，待 owner 自行提交」。
+- Step 2 為 **(B)**（預期） → `Tests  3 passed (3)` **全綠**。coordinator 更新 2026-08-25：宣告行已 commit（`ded6901`），這個綠同時是 CI 的綠；Task 12 Step 1 全量預期全綠；4.5 於 Task 12 打勾（Edit E），4.4 仍只註記。
 - Step 2 為 **(C)** → 仍 `Tests  1 failed | 2 passed (3)`，紅的是宣告案例的「必須為空值」斷言；照 Step 2 (C) 停手回報，不改 `.env*`。
 
 若 `docker` 可用可再跑 `docker compose -f compose.yml -f compose.host-kit.yml config --quiet`（exit 0）；不可用則記為 skipped gap。
@@ -1403,7 +1403,453 @@ cd "C:/Repos/active/iot/AI-BIM-governance.worktrees/unified-console-runtime-trut
 
 ---
 
-### Task 9 【HELD — 本 PR 不執行】: 前端轉檔歷史消費者（`useConversionData`／`GlobalConversionPane`／`ConversionHistoryPanel`／`ConversionPage`）— 404 誠實標示
+> **Task 9（`/api/dev/conversions` 消費者）HELD／待 owner D5 裁決——不是本 PR 的 task。** 保留稿移至文末「Appendix A」；執行者做完 Task 8 直接做 Task 10（task 編號刻意留空 9）。
+
+### Task 10: 前端 A1 workbench 測試資料清單 404 誠實 note
+
+**Files:**
+- Modify: `web-viewer-sample/src/console/A1GovernanceWorkbenchPage.tsx`
+- Modify: `web-viewer-sample/src/console/console.test.tsx`（A1 describe 內新增案例）
+
+- [ ] **Step 1: impact**
+
+```bash
+cd "C:/Repos/active/iot/AI-BIM-governance.worktrees/unified-console-runtime-truth-s2" && npx gitnexus@1.6.9 impact A1GovernanceWorkbenchPage -d upstream -r AI-BIM-governance --summary-only
+```
+
+預期輸出：`risk: "LOW"`，`direct: 1`（`EdgeConsole.tsx` `renderBody`）。
+
+- [ ] **Step 2: 寫失敗測試（插在既有 R8 案例之前，沿用該 describe 的 beforeEach mocks）**
+
+先把 `console.test.tsx` 的 import
+
+```ts
+import { coordinatorClient, type RuntimeStatus } from "./coordinatorClient";
+```
+
+改成
+
+```ts
+import { CoordinatorHttpError, coordinatorClient, type RuntimeStatus } from "./coordinatorClient";
+```
+
+再把
+
+```tsx
+  it("[R8 測試資料標記] local_fs 選項對 config 清單內專案加〔測試資料〕；MinIO 選項不標", async () => {
+```
+
+改成
+
+```tsx
+  it("[D3 dev routes 已關閉] getTestDataProjects 404 → 顯示測試資料標記不可用 note；local_fs select 仍在", async () => {
+    (coordinatorClient.getTestDataProjects as ReturnType<typeof vi.fn>).mockRejectedValue(
+      new CoordinatorHttpError("/api/dev/test-data-projects", 404, "dev routes disabled"),
+    );
+    const root = createRoot(container);
+    await act(async () => { root.render(<A1GovernanceWorkbenchPage />); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+
+    expect(container.querySelector('[data-testid="a1-test-data-dev-routes-disabled"]')?.textContent).toContain("dev routes 已關閉");
+    expect(container.querySelector('[data-testid="a1-localfs-select"]')).not.toBeNull();
+  });
+
+  it("[R8 測試資料標記] local_fs 選項對 config 清單內專案加〔測試資料〕；MinIO 選項不標", async () => {
+```
+
+- [ ] **Step 3: 跑，確認新案例失敗**
+
+```bash
+cd "C:/Repos/active/iot/AI-BIM-governance.worktrees/unified-console-runtime-truth-s2/web-viewer-sample" && npx vitest run src/console/console.test.tsx -t "D3 dev routes"
+```
+
+預期輸出：`Tests  1 failed`（note 元素為 undefined），其餘 skipped。
+
+- [ ] **Step 4: 實作**
+
+把 `A1GovernanceWorkbenchPage.tsx` 的 import
+
+```ts
+import { coordinatorClient, IfcReadyListItem, IfcReadyReviewSessionResponse, RuntimeSessionSummary, RuntimeStatus } from "./coordinatorClient";
+```
+
+改成
+
+```ts
+import { coordinatorClient, IfcReadyListItem, IfcReadyReviewSessionResponse, isCoordinatorNotFound, RuntimeSessionSummary, RuntimeStatus } from "./coordinatorClient";
+```
+
+把
+
+```ts
+  const [testDataProjects, setTestDataProjects] = useState<string[]>([]);
+  useEffect(() => {
+    let alive = true;
+    coordinatorClient.getTestDataProjects()
+      .then((r) => { if (alive) setTestDataProjects(r.projects); })
+      .catch(() => { /* 取不到就不標；不擋 A1 流程 */ });
+    return () => { alive = false; };
+  }, []);
+```
+
+改成
+
+```ts
+  const [testDataProjects, setTestDataProjects] = useState<string[]>([]);
+  // D3（unified-console-runtime-truth 4.4）：canonical-linux ENABLE_DEV_ROUTES=false → /api/dev/test-data-projects 404。
+  // 誠實標示「測試資料標記不可用」，仍不阻塞 A1 流程；其他失敗維持靜默不標。
+  const [testDataDevRoutesDisabled, setTestDataDevRoutesDisabled] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    coordinatorClient.getTestDataProjects()
+      .then((r) => { if (alive) { setTestDataProjects(r.projects); setTestDataDevRoutesDisabled(false); } })
+      .catch((error: unknown) => { if (alive && isCoordinatorNotFound(error)) setTestDataDevRoutesDisabled(true); /* 其他失敗：不標；不擋 A1 流程 */ });
+    return () => { alive = false; };
+  }, []);
+```
+
+把
+
+```tsx
+          {sourceKind === "local_fs" ? (
+            <>
+              {/* option value = 唯一邏輯鍵 {projectId}/{modelId}/{version.name}（＝modelVersionId）。
+```
+
+改成
+
+```tsx
+          {sourceKind === "local_fs" ? (
+            <>
+              {testDataDevRoutesDisabled && (
+                <p className="ec-note" data-testid="a1-test-data-dev-routes-disabled">
+                  {t("測試資料標記不可用：dev routes 已關閉（canonical-linux：ENABLE_DEV_ROUTES=false，GET /api/dev/test-data-projects 404）。", "Test-data badge unavailable: dev routes are disabled (canonical-linux: ENABLE_DEV_ROUTES=false, GET /api/dev/test-data-projects 404).")}
+                </p>
+              )}
+              {/* option value = 唯一邏輯鍵 {projectId}/{modelId}/{version.name}（＝modelVersionId）。
+```
+
+- [ ] **Step 5: 跑 tsc＋console.test.tsx 全檔＋A1 相關測試**
+
+```bash
+cd "C:/Repos/active/iot/AI-BIM-governance.worktrees/unified-console-runtime-truth-s2/web-viewer-sample" && npx tsc --noEmit && npx vitest run src/console/console.test.tsx src/console/A1IssueSnapshot.test.tsx src/console/A1CrossLinks.test.tsx
+```
+
+預期輸出：tsc 無輸出；全 pass（`console.test.tsx` pass 數＝baseline＋1）。
+
+- [ ] **Step 6: commit**
+
+```bash
+cd "C:/Repos/active/iot/AI-BIM-governance.worktrees/unified-console-runtime-truth-s2" && git add web-viewer-sample/src/console/A1GovernanceWorkbenchPage.tsx web-viewer-sample/src/console/console.test.tsx && git diff --cached --check && git commit -m "feat(web-viewer): A1 workbench 測試資料清單 404 誠實 note（dev routes 已關閉）"
+```
+
+預期輸出：2 files changed。
+
+---
+
+### Task 11: Browser E2E（Playwright）— dev routes 已關閉 UI 垂直切片＋T4 API 契約探針
+
+**Files:**
+- Create: `web-viewer-sample/e2e/dev-routes-disabled-operator-token.spec.ts`
+- 執行環境：branch coordinator `:8005`（本 worktree 最新碼）＋ Playwright webServer 起的 viewer `:5180`（`playwright.config.ts` 既有）。
+
+誠實邊界（寫進 spec 檔頭）：本切片 **沒有** `/ui` 殼層 operator token 輸入（spec §3 out of scope，另切片）——UI 面「LAN 觸發轉檔」仍是 403，屬 NOT BUILT，本 E2E 不假裝可觸發；T4 token 路徑／速率限制／lineage＋webhook 面不變改以 Playwright `request`（server-side）驗；UI 只驗 D3 的 404 誠實狀態。無 skip 偽綠：以 `E2E_REQUIRE_REAL=1` 跑，前置缺失＝fail。
+
+- [ ] **Step 1: 寫 spec**
+
+```ts
+import { test, expect, type APIRequestContext } from "@playwright/test";
+
+// unified-console-runtime-truth slice 2（§4 coordinator：T4 operator-token per-route 授權＋D3 dev routes 關閉）
+// browser 垂直切片。前置：branch coordinator :8005 以下列 env 啟動（plan Task 11 Step 2）：
+//   ENABLE_DEV_ROUTES=false  EXTERNAL_INTAKE_IP_ALLOWLIST=10.0.0.0/8  DEV_AUTH_TOKEN=e2e-operator-token
+//   MINIO_WATCH_ENABLED=false  CORS_ORIGINS=http://127.0.0.1:5180
+// viewer 由 playwright.config.ts webServer 在 :5180 起（VITE_COORDINATOR_API_BASE=E2E_COORDINATOR_BASE_URL）。
+// 誠實鐵律：
+//   - UI 面：本切片 **沒有** /ui 殼層 operator token 輸入（spec §3 out of scope，另切片）；LAN 瀏覽器觸發轉檔仍 403，
+//     屬 NOT BUILT——本 spec 不假裝可觸發，UI 只驗 D3「dev routes 已關閉」誠實狀態，且只驗 canonical scenario
+//     明列的兩頁（#demo-control、#a1-workbench）；#conv／#minio 的 /api/dev/conversions 消費者為 HELD（plan Task 9 D5）。
+//   - API 面：T4 token 路徑／速率限制／lineage＋webhook 面不變，以 Playwright request（server-side，非瀏覽器）驗。
+//   - skip-gate：前置缺失 → skip；E2E_REQUIRE_REAL=1 時 skip 即 fail（reporter forbid-skipped-when-real）。
+const COORDINATOR = process.env.E2E_COORDINATOR_BASE_URL || "http://127.0.0.1:8005";
+const OPERATOR_TOKEN = process.env.E2E_OPERATOR_TOKEN || "e2e-operator-token";
+const PRIORITIZE_URL = `${COORDINATOR}/api/conversion/jobs/ifcready_nope/prioritize`;
+
+async function preflight(request: APIRequestContext): Promise<string | null> {
+  try {
+    const health = await request.get(`${COORDINATOR}/health`);
+    if (!health.ok()) return `coordinator ${COORDINATOR}/health 非 2xx（${health.status()}）`;
+    const dev = await request.get(`${COORDINATOR}/api/dev/ifc-sources`);
+    if (dev.status() !== 404) return `coordinator 未以 ENABLE_DEV_ROUTES=false 啟動（GET /api/dev/ifc-sources → ${dev.status()}）`;
+    const bare = await request.post(PRIORITIZE_URL, { data: {} });
+    if (bare.status() !== 403) return `coordinator allowlist 未排除 loopback（無 token prioritize → ${bare.status()}，預期 403）`;
+    return null;
+  } catch (error) {
+    return `coordinator ${COORDINATOR} 不可達：${String(error)}`;
+  }
+}
+
+test.describe("slice 2：dev routes 已關閉（UI 誠實）＋ T4 operator token（API）", () => {
+  test.setTimeout(150_000);
+  let skipReason: string | null = null;
+
+  test.beforeAll(async ({ request }) => { skipReason = await preflight(request); });
+  test.beforeEach(() => { test.skip(skipReason !== null, skipReason ?? ""); });
+
+  test("#demo-control：GET /api/dev/ifc-sources 404 → notice、runtime=dev_routes_disabled、註冊鈕 disabled", async ({ page }) => {
+    const [devRes] = await Promise.all([
+      page.waitForResponse((r) => r.url().includes("/api/dev/ifc-sources"), { timeout: 30_000 }),
+      page.goto("/#demo-control"),
+    ]);
+    expect(devRes.status()).toBe(404);
+    await expect(page.getByTestId("dev-routes-disabled-notice")).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByTestId("ifc-runtime-state")).toContainText("dev_routes_disabled");
+    await expect(page.getByTestId("ifc-runtime-state")).not.toContainText("storage_empty");
+    await expect(page.getByTestId("ifc-register-btn")).toBeDisabled();
+    await page.screenshot({ path: "../artifacts/e2e/s2-demo-control-dev-routes-disabled.png", fullPage: true });
+  });
+
+  // Task 9（`/api/dev/conversions` 消費者 → `#conv`／`#minio` 專屬「dev routes 已關閉」字樣）為 HELD——
+  // canonical scenario 只列 #demo-control 與 A1 workbench local_fs 清單。故本 spec **不寫** #conv／#minio
+  // 案例（`conv-history-dev-routes-disabled` 這個 testid 在本 PR 根本不存在，寫了必紅＝假需求）。
+  // 現況殘留行為（誠實揭露，不在此斷言）：兩頁會顯示既有籠統訊息「轉檔歷史更新失敗；保留上一份結果。」
+  // owner D5 若裁「納入」，屆時再補本案例與對應 screenshot。
+
+  test("#a1-workbench：GET /api/dev/test-data-projects 404 → 測試資料標記不可用 note（不阻塞 A1）", async ({ page }) => {
+    await page.goto("/#a1-workbench");
+    await expect(page.getByTestId("a1-test-data-dev-routes-disabled")).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByTestId("a1-localfs-select")).toBeVisible();
+    await page.screenshot({ path: "../artifacts/e2e/s2-a1-test-data-dev-routes-disabled.png", fullPage: true });
+  });
+
+  test("API：T4 token 路徑（無 token 403 → 正確 token 通過 → 錯誤 token 403 → 超額 429）＋ lineage 不解鎖 ＋ dev 404", async ({ request }) => {
+    const bare = await request.post(PRIORITIZE_URL, { data: {} });
+    expect(bare.status()).toBe(403);
+    expect(await bare.json()).toEqual({ detail: "caller ip not in allowlist" });
+
+    // 對「一分鐘內重跑」穩健：若一開始就 429，等 Retry-After 再試一次。
+    let ok = await request.post(PRIORITIZE_URL, { data: {}, headers: { "x-operator-token": OPERATOR_TOKEN } });
+    if (ok.status() === 429) {
+      const waitSeconds = Number(ok.headers()["retry-after"] ?? "60");
+      await new Promise((resolve) => setTimeout(resolve, (waitSeconds + 1) * 1000));
+      ok = await request.post(PRIORITIZE_URL, { data: {}, headers: { "x-operator-token": OPERATOR_TOKEN } });
+    }
+    expect(ok.status()).toBe(404); // 授權通過 → 落到既有「job 不存在」
+
+    const wrong = await request.post(PRIORITIZE_URL, { data: {}, headers: { "x-operator-token": "wrong-token" } });
+    expect(wrong.status()).toBe(403);
+    expect(await wrong.json()).toEqual({ detail: "operator token invalid (x-operator-token)" });
+
+    // 速率：同來源 token 路徑每分鐘 10 次；上面已用 2 次，最多再 12 次內必見 429。
+    let limitedRetryAfter: string | null = null;
+    for (let i = 0; i < 12 && limitedRetryAfter === null; i += 1) {
+      const res = await request.post(PRIORITIZE_URL, { data: {}, headers: { "x-operator-token": OPERATOR_TOKEN } });
+      if (res.status() === 429) limitedRetryAfter = res.headers()["retry-after"] ?? "missing";
+      else expect(res.status()).toBe(404);
+    }
+    expect(limitedRetryAfter).not.toBeNull();
+    expect(Number(limitedRetryAfter)).toBeGreaterThanOrEqual(1);
+
+    // lineage 面不變：token 不解鎖（deps 注入的 rejectIfIpNotAllowed 逐字）。
+    const preview = await request.get(`${COORDINATOR}/api/lineage/legacy-unmanaged/preview?grouping_key=tenant-a/legacy`, {
+      headers: { "x-operator-token": OPERATOR_TOKEN },
+    });
+    expect(preview.status()).toBe(403);
+    expect(await preview.json()).toEqual({ detail: "caller ip not in allowlist" });
+
+    // D3：/api/dev/* 整組 404。
+    expect((await request.post(`${COORDINATOR}/api/dev/conversions`, { data: {} })).status()).toBe(404);
+    expect((await request.get(`${COORDINATOR}/api/dev/test-data-projects`)).status()).toBe(404);
+  });
+});
+```
+
+- [ ] **Step 2: 起 branch coordinator :8005（背景；資料目錄全部指到 tmp，不污染 worktree）**
+
+```bash
+cd "C:/Repos/active/iot/AI-BIM-governance.worktrees/unified-console-runtime-truth-s2/bim-review-coordinator" && S2TMP="$(mktemp -d -t s2e2e.XXXXXX)" && echo "S2TMP=$S2TMP" && mkdir -p "$S2TMP/sessions" "$S2TMP/events" && PORT=8005 HOST=127.0.0.1 PUBLIC_HOST=127.0.0.1 CORS_ORIGINS=http://127.0.0.1:5180 ENABLE_DEV_ROUTES=false EXTERNAL_INTAKE_IP_ALLOWLIST=10.0.0.0/8 DEV_AUTH_TOKEN=e2e-operator-token MINIO_WATCH_ENABLED=false STREAMING_CONVERSION_API_BASE=http://127.0.0.1:1 CONVERSION_API_BASE=http://127.0.0.1:1 GOVERNANCE_API_BASE=http://127.0.0.1:1 KIT_MANAGER_API_BASE=http://127.0.0.1:1 EDGE_RUNTIME_DATA_ROOT="$S2TMP" SESSION_STORE_DIR="$S2TMP/sessions" EVENT_LOG_DIR="$S2TMP/events" CALLBACK_OUTBOX_STORE_PATH="$S2TMP/callback-outbox.json" CONVERSION_LEDGER_STORE_PATH="$S2TMP/conversion-ledger.json" EXTERNAL_IFC_READY_STORE_PATH="$S2TMP/ifc-ready-store.json" STORAGE_ROOT="$S2TMP/storage" nohup npx tsx src/index.ts > "$S2TMP/coordinator.log" 2>&1 & echo $! > "$S2TMP/coordinator.pid"; sleep 8; curl -s http://127.0.0.1:8005/health; echo; curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:8005/api/dev/ifc-sources
+```
+
+（Bash tool 請以背景模式執行本段第一個 `nohup … &`，或整段一次執行。）預期輸出：`S2TMP=<tmp 路徑>`；`{"status":"ok","service":"bim-review-coordinator","kit_signaling_port":49100}`；`404`。若 `:8005` 已被佔用（`address already in use`），先 `netstat -ano | grep ":8005 "` 找 PID 再 `taskkill //PID <pid> //F`，或改 `PORT=8006` 並在 Step 3 以 `E2E_COORDINATOR_BASE_URL=http://127.0.0.1:8006` 覆寫。記下 `S2TMP` 供 Step 5 收尾。
+
+- [ ] **Step 3: 跑 E2E（`E2E_REQUIRE_REAL=1`：skip 即 fail）**
+
+```bash
+cd "C:/Repos/active/iot/AI-BIM-governance.worktrees/unified-console-runtime-truth-s2/web-viewer-sample" && E2E_COORDINATOR_BASE_URL=http://127.0.0.1:8005 E2E_REQUIRE_REAL=1 npx playwright test e2e/dev-routes-disabled-operator-token.spec.ts
+```
+
+預期輸出：`3 passed`（`#demo-control`、`#a1-workbench`、API 探針三個 test；`#conv`／`#minio` 案例已隨 Task 9 HELD 移除）；`artifacts/e2e/` 產生三張 `s2-*.png`（該目錄 `*.png` 為 gitignored，不入 commit）。若回 `Executable doesn't exist … chromium`，先 `npx playwright install chromium` 再重跑。若 preflight skip 訊息出現（且 exit 1），依訊息修正 Step 2 的 env 後重跑；不得改 `E2E_REQUIRE_REAL`。
+
+- [ ] **Step 4: 確認 worktree 未被 runtime 檔污染**
+
+```bash
+cd "C:/Repos/active/iot/AI-BIM-governance.worktrees/unified-console-runtime-truth-s2" && git status --short
+```
+
+預期輸出：恰好一行——`?? web-viewer-sample/e2e/dev-routes-disabled-operator-token.spec.ts`（coordinator 更新 2026-08-25：`.env.example` 宣告行已 commit `ded6901`，不應再有 ` M` 行）。若出現 `bim-review-coordinator/data/**` 或其他 runtime 檔，刪除它們並回報缺哪個 `*_STORE_PATH` env（不要 commit）。
+
+- [ ] **Step 5: 停 coordinator**
+
+```bash
+kill "$(cat "<S2TMP>/coordinator.pid")" 2>/dev/null; sleep 2; curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:8005/health || echo "stopped"
+```
+
+（`<S2TMP>` 換成 Step 2 印出的路徑。）預期輸出：`stopped`（或 curl 失敗訊息）。`kill` 無效時用 `netstat -ano | grep ":8005 "` 取 PID → `taskkill //PID <pid> //F`。
+
+- [ ] **Step 6: commit**
+
+```bash
+cd "C:/Repos/active/iot/AI-BIM-governance.worktrees/unified-console-runtime-truth-s2" && git add web-viewer-sample/e2e/dev-routes-disabled-operator-token.spec.ts && git diff --cached --check && git commit -m "test(e2e): slice 2 dev routes 已關閉 UI 垂直切片＋T4 operator token API 探針"
+```
+
+預期輸出：1 file changed。
+
+---
+
+### Task 12: 全量驗證（4.5）、tasks.md 勾選／註記、openspec validate、detect-changes
+
+**Files:**
+- Modify: `openspec/changes/unified-console-runtime-truth/tasks.md`
+
+- [ ] **Step 1: coordinator 全量（4.5）**
+
+```bash
+cd "C:/Repos/active/iot/AI-BIM-governance.worktrees/unified-console-runtime-truth-s2/bim-review-coordinator" && npm run build && npx vitest run 2>&1 | tail -15
+```
+
+預期輸出：build 無輸出；vitest 依 Task 6 Step 2 觀測到的分支二選一：
+
+- Step 2 為 **(A)** 或 **(C)** → `Test Files  1 failed | N passed`、`Tests  1 failed | M passed`，**唯一**失敗必須是 `tests/env-example-dev-routes-parity.test.ts` 的「.env.example 宣告」案例（(A) 是「未宣告」、(C) 是「必須為空值」）。
+- Step 2 為 **(B)**（預期） → **全綠**（`Tests  M passed`，0 failed）。coordinator 更新 2026-08-25：宣告行已 commit（`ded6901`），全綠即 CI 綠；4.5 可打勾（Edit E），4.4 仍只註記。
+
+任何**其他**紅燈都要先修再往下。若觀測到的分支與 Step 2 記錄的不一致（例如 Step 2 是 (A)、這裡卻全綠），代表 `.env*` 在期間被改動過——停手回報，不要自行調查該檔內容。
+
+- [ ] **Step 2: 前端受影響檔（4.5）**
+
+```bash
+cd "C:/Repos/active/iot/AI-BIM-governance.worktrees/unified-console-runtime-truth-s2/web-viewer-sample" && npx tsc --noEmit && npx vitest run src/console/RealIfcConsolePage.test.tsx src/console/coordinatorClient.httpError.test.ts src/console/coordinatorClient.test.ts src/console/coordinatorClient.conversions-history.test.ts src/console/modelData src/console/ConversionPage.test.tsx src/console/console.test.tsx src/console/A1IssueSnapshot.test.tsx 2>&1 | tail -8
+```
+
+預期輸出：tsc 無輸出；vitest 全 pass。（`src/console/modelData`／`ConversionPage.test.tsx` 在本 PR 屬**未改動的回歸檢查**——Task 9 HELD，這些檔一行未動；它們全綠正好證明 `jsonGet` 改丟 `CoordinatorHttpError`（Task 7）沒有波及 `/api/dev/conversions` 消費鏈。）
+
+- [ ] **Step 3: tasks.md 勾選與註記（六個 Edit；4.4／4.5 依誠實鐵律不打勾）**
+
+Edit A（4.1 打勾）：把 `- [ ] 4.1 impact：` 改成 `- [x] 4.1 impact：`。
+
+Edit B（4.1 註記，插在 4.2 之前）：把
+
+```
+- [ ] 4.2 依 D2 以 per-route wrapper
+```
+
+改成
+
+```
+  - 2026-08-25 slice 2：`gitnexus impact rejectIfIpNotAllowed -f bim-review-coordinator/src/app.ts -d upstream` → risk LOW、direct 1（`createCoordinatorApp`）、impacted 2；呼叫點＝`app.ts` prioritize／retry／watch／trigger 四條（本切片改為 `rejectIfConversionControlUnauthorized`）＋`lineageSourceBundleRoutes.ts` preview／confirm（deps 注入，不動）；helper 本體逐字未改。完整 JSON 附 PR body。
+- [x] 4.2 依 D2 以 per-route wrapper
+```
+
+Edit C（4.2 註記＋4.3 打勾）：把
+
+```
+- [ ] 4.3 lineage 釘樁
+```
+
+改成
+
+```
+  - 驗證指令更正（2026-08-25 slice 2 P0 自檢，非新需求）：`bim-review-coordinator/tests/` 為 vitest（無任何 `.py`／pytest），上列 pytest 指令為工具名誤植；實際驗證 `npx vitest run tests/conversion-control-auth.test.ts tests/services/conversionControlAuthorization.test.ts`（cwd `bim-review-coordinator`）本機綠（含：無憑證且非 allowlist → 403；速率限制 → 429；token 路徑於預設 `dev-token` fail-closed）。
+- [x] 4.3 lineage 釘樁
+```
+
+Edit D（4.3 註記）：把
+
+```
+- [ ] 4.4 D3：
+```
+
+改成
+
+```
+  - 2026-08-25 slice 2：釘樁 `tests/lineage/conversion-control-auth-pins.test.ts`（app.ts 改動前後皆綠；operator token 對 preview／confirm／`/api/external/ifc-ready` 零效果）；`npx vitest run tests/lineage` 本機綠。
+- [ ] 4.4 D3：
+```
+
+Edit E（4.4 註記，插在 4.5 之前；4.4 不打勾）：把
+
+```
+- [ ] 4.5 coordinator 全量
+```
+
+改成
+
+```
+  - 驗證指令更正（2026-08-25 slice 2 P0 自檢，非新需求）：實際驗證 `npx vitest run tests/dev-routes-disabled.test.ts tests/env-example-dev-routes-parity.test.ts`（cwd `bim-review-coordinator`），非 pytest。
+  - 2026-08-25 slice 2：後端 `/api/dev` prefix gate 與 `compose.host-kit.yml` 透傳本機綠；前端 canonical scenario 明列的兩頁（`#demo-control`、`#a1-workbench` local_fs／測試資料清單）404 誠實狀態本機 vitest＋Playwright（`e2e/dev-routes-disabled-operator-token.spec.ts`）綠；`#conv`／`#minio` 的 `/api/dev/conversions` 消費者**不在本 change scenario 範圍**，本 PR 未改（維持既有誠實訊息「轉檔歷史更新失敗；保留上一份結果。」，不崩潰不假資料），是否納入待 owner D5 裁決（需先更新 canonical scenario）；canonical env `ENABLE_DEV_ROUTES=false` 與 181 `POST /api/dev/conversions` 404 驗證待 owner；`.env.example` 的 `ENABLE_DEV_ROUTES=`（空值）宣告已由 owner 追加並提交（commit `ded6901`），parity 綠。
+- [x] 4.5 coordinator 全量
+```
+
+Edit F（4.5 註記；4.5 已於 Edit E 打勾——全量全綠）：把
+
+```
+
+
+## 5. design gate／rebaseline／semantic cases／既有測試
+```
+
+改成
+
+```
+
+  - 2026-08-25 slice 2：`npm run build` 綠；`npx vitest run` 全綠（含 `tests/env-example-dev-routes-parity.test.ts`，宣告行已在 commit `ded6901`）；前端 `npx tsc --noEmit` 與受影響 vitest 綠。
+
+## 5. design gate／rebaseline／semantic cases／既有測試
+```
+
+- [ ] **Step 4: openspec validate＋docs/plans 未動確認**
+
+```bash
+cd "C:/Repos/active/iot/AI-BIM-governance.worktrees/unified-console-runtime-truth-s2" && npx openspec validate unified-console-runtime-truth --strict && git diff --name-only origin/main -- docs/plans openspec/lifecycle-ledger.json
+```
+
+預期輸出：`Change 'unified-console-runtime-truth' is valid`；第二行無輸出（`docs/plans/**` 與 ledger 未動，spec §3）。
+
+- [ ] **Step 5: detect-changes（commit 前）**
+
+```bash
+cd "C:/Repos/active/iot/AI-BIM-governance.worktrees/unified-console-runtime-truth-s2" && git add openspec/changes/unified-console-runtime-truth/tasks.md && npx gitnexus@1.6.9 detect-changes --scope compare --base-ref main -r AI-BIM-governance
+```
+
+預期輸出：changed symbols 只落在 `createCoordinatorApp`（app.ts）、`conversionControlAuthorization.ts` 新 symbols、`jsonGet`／`CoordinatorHttpError`／`isCoordinatorNotFound`（coordinatorClient.ts）、`RealIfcConsolePage`、`A1GovernanceWorkbenchPage` 與測試檔；無 HIGH／CRITICAL。**`useConversionData`／`GlobalConversionPane`／`ConversionHistoryPanel`／`ConversionPage` 不得出現**——它們出現代表 HELD 的 Task 9 被誤做進來，回頭撤掉。`bim-review-coordinator/.env.example` 出現在 changed files 屬預期（owner 宣告行 commit `ded6901`），不是異常。若 linked worktree 讓 detect-changes 看不到 diff（回空或報錯），fallback：`git diff --name-only main...HEAD` 並在 PR body 記 `detectVerdict='fallback'`（spec §5）。
+
+- [ ] **Step 6: commit**
+
+```bash
+cd "C:/Repos/active/iot/AI-BIM-governance.worktrees/unified-console-runtime-truth-s2" && git diff --cached --check && git commit -m "docs(openspec): unified-console-runtime-truth §4 slice 2 勾選（4.1／4.2／4.3）與 4.4／4.5 驗證指令更正註記"
+```
+
+預期輸出：1 file changed。之後 `git status --short` **應為空**（coordinator 更新 2026-08-25：宣告行已 commit `ded6901`）——出現任何行都要回報。`git log --oneline origin/main..HEAD` ＝ **10 個實作 commit**（Task 2／3／4／5／6／7／8／10／11／12 各一；**Task 9 為 HELD，沒有它的 commit**）＋ Task 1 開工前既有的文件 commit（slice 2 spec 檔 `af8d34c`、本 plan 檔 `064ac40` 及其後續修訂、owner 的 `.env.example` 宣告行 `ded6901`）。實作 commit 若多於 10 個，先確認是不是把 HELD 的 Task 9 做進來了。
+
+---
+
+## 交付與 owner 交接（寫進 PR body）
+
+- 本機綠：coordinator `npm run build`＋`npx vitest run`（parity 全綠，宣告行在 commit `ded6901`）、前端 `npx tsc --noEmit`＋受影響 vitest、Playwright `dev-routes-disabled-operator-token.spec.ts` 3 passed（附 `artifacts/e2e/s2-*.png` 摘要，不入檔）。
+- **owner 動作（AI 不得代做）**：
+  - (a) ✅ 已完成：`bim-review-coordinator/.env.example` 的 `ENABLE_DEV_ROUTES=`（空值）宣告由 owner 親自追加、經 owner 明示授權以 commit `ded6901` 進入本分支（agent 未讀、未改）。
+  - (b) canonical-linux 私有 canonical env 設 `ENABLE_DEV_ROUTES=false` 並確認 `DEV_AUTH_TOKEN` 非預設值（否則 T4 token 路徑不啟用，UI 觸發只剩 allowlist）。
+  - (c) 部署後 `curl -i` 三組（無憑證非 allowlist trigger → 403；`/api/external/ifc-ready` 授權回應不變；`POST /api/dev/conversions` → 404）供 tasks 6.4／4.4 勾選。
+  - (d) **D5 裁決**：`/api/dev/conversions` 消費者（`#conv`／`#minio` 的轉檔歷史面板）要不要納入本 change 的「dev routes 已關閉」誠實顯示範圍。canonical scenario 與 `design.md` §2.4 只列 `#demo-control` 與 A1 workbench local_fs 清單，本 PR 依此修剪；若要納入，需先更新 canonical scenario 的 AND 子句，再由後續 PR 依 plan Task 9 Step 1–8 執行。
+- Known gaps（誠實）：
+  - `/ui` 殼層 token 輸入未建（另切片，tasks 2.4／§6.3）。
+  - `#conv`／`#minio` 在 dev routes 關閉時只顯示既有籠統訊息「轉檔歷史更新失敗；保留上一份結果。」，沒有 `#demo-control`／A1 那種「dev routes 已關閉（canonical-linux）」專屬字樣——**不崩潰、不假資料**，但不是最誠實的措辭；待 owner D5 裁決（見上 (d)）。
+  - `docker compose config` 若本機無 docker 則 skipped。
+
+---
+
+## Appendix A：保留稿（原 Task 9，HELD／D5，本 PR 不執行；不是 task）
+
+### （保留稿，非 task）原 Task 9: 前端轉檔歷史消費者（`useConversionData`／`GlobalConversionPane`／`ConversionHistoryPanel`／`ConversionPage`）— 404 誠實標示
 
 > **⛔ 執行者：跳過整個 Task 9，直接做 Task 10。** 下方 Step 1–8 完整保留，是為了 owner 裁決 D5 若判「納入」時可直接照做，不必重新推導；在裁決落地前**一個檔都不要改、一個 commit 都不要建**。
 
@@ -1786,443 +2232,3 @@ cd "C:/Repos/active/iot/AI-BIM-governance.worktrees/unified-console-runtime-trut
 
 ---
 
-### Task 10: 前端 A1 workbench 測試資料清單 404 誠實 note
-
-**Files:**
-- Modify: `web-viewer-sample/src/console/A1GovernanceWorkbenchPage.tsx`
-- Modify: `web-viewer-sample/src/console/console.test.tsx`（A1 describe 內新增案例）
-
-- [ ] **Step 1: impact**
-
-```bash
-cd "C:/Repos/active/iot/AI-BIM-governance.worktrees/unified-console-runtime-truth-s2" && npx gitnexus@1.6.9 impact A1GovernanceWorkbenchPage -d upstream -r AI-BIM-governance --summary-only
-```
-
-預期輸出：`risk: "LOW"`，`direct: 1`（`EdgeConsole.tsx` `renderBody`）。
-
-- [ ] **Step 2: 寫失敗測試（插在既有 R8 案例之前，沿用該 describe 的 beforeEach mocks）**
-
-先把 `console.test.tsx` 的 import
-
-```ts
-import { coordinatorClient, type RuntimeStatus } from "./coordinatorClient";
-```
-
-改成
-
-```ts
-import { CoordinatorHttpError, coordinatorClient, type RuntimeStatus } from "./coordinatorClient";
-```
-
-再把
-
-```tsx
-  it("[R8 測試資料標記] local_fs 選項對 config 清單內專案加〔測試資料〕；MinIO 選項不標", async () => {
-```
-
-改成
-
-```tsx
-  it("[D3 dev routes 已關閉] getTestDataProjects 404 → 顯示測試資料標記不可用 note；local_fs select 仍在", async () => {
-    (coordinatorClient.getTestDataProjects as ReturnType<typeof vi.fn>).mockRejectedValue(
-      new CoordinatorHttpError("/api/dev/test-data-projects", 404, "dev routes disabled"),
-    );
-    const root = createRoot(container);
-    await act(async () => { root.render(<A1GovernanceWorkbenchPage />); });
-    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
-
-    expect(container.querySelector('[data-testid="a1-test-data-dev-routes-disabled"]')?.textContent).toContain("dev routes 已關閉");
-    expect(container.querySelector('[data-testid="a1-localfs-select"]')).not.toBeNull();
-  });
-
-  it("[R8 測試資料標記] local_fs 選項對 config 清單內專案加〔測試資料〕；MinIO 選項不標", async () => {
-```
-
-- [ ] **Step 3: 跑，確認新案例失敗**
-
-```bash
-cd "C:/Repos/active/iot/AI-BIM-governance.worktrees/unified-console-runtime-truth-s2/web-viewer-sample" && npx vitest run src/console/console.test.tsx -t "D3 dev routes"
-```
-
-預期輸出：`Tests  1 failed`（note 元素為 undefined），其餘 skipped。
-
-- [ ] **Step 4: 實作**
-
-把 `A1GovernanceWorkbenchPage.tsx` 的 import
-
-```ts
-import { coordinatorClient, IfcReadyListItem, IfcReadyReviewSessionResponse, RuntimeSessionSummary, RuntimeStatus } from "./coordinatorClient";
-```
-
-改成
-
-```ts
-import { coordinatorClient, IfcReadyListItem, IfcReadyReviewSessionResponse, isCoordinatorNotFound, RuntimeSessionSummary, RuntimeStatus } from "./coordinatorClient";
-```
-
-把
-
-```ts
-  const [testDataProjects, setTestDataProjects] = useState<string[]>([]);
-  useEffect(() => {
-    let alive = true;
-    coordinatorClient.getTestDataProjects()
-      .then((r) => { if (alive) setTestDataProjects(r.projects); })
-      .catch(() => { /* 取不到就不標；不擋 A1 流程 */ });
-    return () => { alive = false; };
-  }, []);
-```
-
-改成
-
-```ts
-  const [testDataProjects, setTestDataProjects] = useState<string[]>([]);
-  // D3（unified-console-runtime-truth 4.4）：canonical-linux ENABLE_DEV_ROUTES=false → /api/dev/test-data-projects 404。
-  // 誠實標示「測試資料標記不可用」，仍不阻塞 A1 流程；其他失敗維持靜默不標。
-  const [testDataDevRoutesDisabled, setTestDataDevRoutesDisabled] = useState(false);
-  useEffect(() => {
-    let alive = true;
-    coordinatorClient.getTestDataProjects()
-      .then((r) => { if (alive) { setTestDataProjects(r.projects); setTestDataDevRoutesDisabled(false); } })
-      .catch((error: unknown) => { if (alive && isCoordinatorNotFound(error)) setTestDataDevRoutesDisabled(true); /* 其他失敗：不標；不擋 A1 流程 */ });
-    return () => { alive = false; };
-  }, []);
-```
-
-把
-
-```tsx
-          {sourceKind === "local_fs" ? (
-            <>
-              {/* option value = 唯一邏輯鍵 {projectId}/{modelId}/{version.name}（＝modelVersionId）。
-```
-
-改成
-
-```tsx
-          {sourceKind === "local_fs" ? (
-            <>
-              {testDataDevRoutesDisabled && (
-                <p className="ec-note" data-testid="a1-test-data-dev-routes-disabled">
-                  {t("測試資料標記不可用：dev routes 已關閉（canonical-linux：ENABLE_DEV_ROUTES=false，GET /api/dev/test-data-projects 404）。", "Test-data badge unavailable: dev routes are disabled (canonical-linux: ENABLE_DEV_ROUTES=false, GET /api/dev/test-data-projects 404).")}
-                </p>
-              )}
-              {/* option value = 唯一邏輯鍵 {projectId}/{modelId}/{version.name}（＝modelVersionId）。
-```
-
-- [ ] **Step 5: 跑 tsc＋console.test.tsx 全檔＋A1 相關測試**
-
-```bash
-cd "C:/Repos/active/iot/AI-BIM-governance.worktrees/unified-console-runtime-truth-s2/web-viewer-sample" && npx tsc --noEmit && npx vitest run src/console/console.test.tsx src/console/A1IssueSnapshot.test.tsx src/console/A1CrossLinks.test.tsx
-```
-
-預期輸出：tsc 無輸出；全 pass（`console.test.tsx` pass 數＝baseline＋1）。
-
-- [ ] **Step 6: commit**
-
-```bash
-cd "C:/Repos/active/iot/AI-BIM-governance.worktrees/unified-console-runtime-truth-s2" && git add web-viewer-sample/src/console/A1GovernanceWorkbenchPage.tsx web-viewer-sample/src/console/console.test.tsx && git diff --cached --check && git commit -m "feat(web-viewer): A1 workbench 測試資料清單 404 誠實 note（dev routes 已關閉）"
-```
-
-預期輸出：2 files changed。
-
----
-
-### Task 11: Browser E2E（Playwright）— dev routes 已關閉 UI 垂直切片＋T4 API 契約探針
-
-**Files:**
-- Create: `web-viewer-sample/e2e/dev-routes-disabled-operator-token.spec.ts`
-- 執行環境：branch coordinator `:8005`（本 worktree 最新碼）＋ Playwright webServer 起的 viewer `:5180`（`playwright.config.ts` 既有）。
-
-誠實邊界（寫進 spec 檔頭）：本切片 **沒有** `/ui` 殼層 operator token 輸入（spec §3 out of scope，另切片）——UI 面「LAN 觸發轉檔」仍是 403，屬 NOT BUILT，本 E2E 不假裝可觸發；T4 token 路徑／速率限制／lineage＋webhook 面不變改以 Playwright `request`（server-side）驗；UI 只驗 D3 的 404 誠實狀態。無 skip 偽綠：以 `E2E_REQUIRE_REAL=1` 跑，前置缺失＝fail。
-
-- [ ] **Step 1: 寫 spec**
-
-```ts
-import { test, expect, type APIRequestContext } from "@playwright/test";
-
-// unified-console-runtime-truth slice 2（§4 coordinator：T4 operator-token per-route 授權＋D3 dev routes 關閉）
-// browser 垂直切片。前置：branch coordinator :8005 以下列 env 啟動（plan Task 11 Step 2）：
-//   ENABLE_DEV_ROUTES=false  EXTERNAL_INTAKE_IP_ALLOWLIST=10.0.0.0/8  DEV_AUTH_TOKEN=e2e-operator-token
-//   MINIO_WATCH_ENABLED=false  CORS_ORIGINS=http://127.0.0.1:5180
-// viewer 由 playwright.config.ts webServer 在 :5180 起（VITE_COORDINATOR_API_BASE=E2E_COORDINATOR_BASE_URL）。
-// 誠實鐵律：
-//   - UI 面：本切片 **沒有** /ui 殼層 operator token 輸入（spec §3 out of scope，另切片）；LAN 瀏覽器觸發轉檔仍 403，
-//     屬 NOT BUILT——本 spec 不假裝可觸發，UI 只驗 D3「dev routes 已關閉」誠實狀態，且只驗 canonical scenario
-//     明列的兩頁（#demo-control、#a1-workbench）；#conv／#minio 的 /api/dev/conversions 消費者為 HELD（plan Task 9 D5）。
-//   - API 面：T4 token 路徑／速率限制／lineage＋webhook 面不變，以 Playwright request（server-side，非瀏覽器）驗。
-//   - skip-gate：前置缺失 → skip；E2E_REQUIRE_REAL=1 時 skip 即 fail（reporter forbid-skipped-when-real）。
-const COORDINATOR = process.env.E2E_COORDINATOR_BASE_URL || "http://127.0.0.1:8005";
-const OPERATOR_TOKEN = process.env.E2E_OPERATOR_TOKEN || "e2e-operator-token";
-const PRIORITIZE_URL = `${COORDINATOR}/api/conversion/jobs/ifcready_nope/prioritize`;
-
-async function preflight(request: APIRequestContext): Promise<string | null> {
-  try {
-    const health = await request.get(`${COORDINATOR}/health`);
-    if (!health.ok()) return `coordinator ${COORDINATOR}/health 非 2xx（${health.status()}）`;
-    const dev = await request.get(`${COORDINATOR}/api/dev/ifc-sources`);
-    if (dev.status() !== 404) return `coordinator 未以 ENABLE_DEV_ROUTES=false 啟動（GET /api/dev/ifc-sources → ${dev.status()}）`;
-    const bare = await request.post(PRIORITIZE_URL, { data: {} });
-    if (bare.status() !== 403) return `coordinator allowlist 未排除 loopback（無 token prioritize → ${bare.status()}，預期 403）`;
-    return null;
-  } catch (error) {
-    return `coordinator ${COORDINATOR} 不可達：${String(error)}`;
-  }
-}
-
-test.describe("slice 2：dev routes 已關閉（UI 誠實）＋ T4 operator token（API）", () => {
-  test.setTimeout(150_000);
-  let skipReason: string | null = null;
-
-  test.beforeAll(async ({ request }) => { skipReason = await preflight(request); });
-  test.beforeEach(() => { test.skip(skipReason !== null, skipReason ?? ""); });
-
-  test("#demo-control：GET /api/dev/ifc-sources 404 → notice、runtime=dev_routes_disabled、註冊鈕 disabled", async ({ page }) => {
-    const [devRes] = await Promise.all([
-      page.waitForResponse((r) => r.url().includes("/api/dev/ifc-sources"), { timeout: 30_000 }),
-      page.goto("/#demo-control"),
-    ]);
-    expect(devRes.status()).toBe(404);
-    await expect(page.getByTestId("dev-routes-disabled-notice")).toBeVisible({ timeout: 15_000 });
-    await expect(page.getByTestId("ifc-runtime-state")).toContainText("dev_routes_disabled");
-    await expect(page.getByTestId("ifc-runtime-state")).not.toContainText("storage_empty");
-    await expect(page.getByTestId("ifc-register-btn")).toBeDisabled();
-    await page.screenshot({ path: "../artifacts/e2e/s2-demo-control-dev-routes-disabled.png", fullPage: true });
-  });
-
-  // Task 9（`/api/dev/conversions` 消費者 → `#conv`／`#minio` 專屬「dev routes 已關閉」字樣）為 HELD——
-  // canonical scenario 只列 #demo-control 與 A1 workbench local_fs 清單。故本 spec **不寫** #conv／#minio
-  // 案例（`conv-history-dev-routes-disabled` 這個 testid 在本 PR 根本不存在，寫了必紅＝假需求）。
-  // 現況殘留行為（誠實揭露，不在此斷言）：兩頁會顯示既有籠統訊息「轉檔歷史更新失敗；保留上一份結果。」
-  // owner D5 若裁「納入」，屆時再補本案例與對應 screenshot。
-
-  test("#a1-workbench：GET /api/dev/test-data-projects 404 → 測試資料標記不可用 note（不阻塞 A1）", async ({ page }) => {
-    await page.goto("/#a1-workbench");
-    await expect(page.getByTestId("a1-test-data-dev-routes-disabled")).toBeVisible({ timeout: 15_000 });
-    await expect(page.getByTestId("a1-localfs-select")).toBeVisible();
-    await page.screenshot({ path: "../artifacts/e2e/s2-a1-test-data-dev-routes-disabled.png", fullPage: true });
-  });
-
-  test("API：T4 token 路徑（無 token 403 → 正確 token 通過 → 錯誤 token 403 → 超額 429）＋ lineage 不解鎖 ＋ dev 404", async ({ request }) => {
-    const bare = await request.post(PRIORITIZE_URL, { data: {} });
-    expect(bare.status()).toBe(403);
-    expect(await bare.json()).toEqual({ detail: "caller ip not in allowlist" });
-
-    // 對「一分鐘內重跑」穩健：若一開始就 429，等 Retry-After 再試一次。
-    let ok = await request.post(PRIORITIZE_URL, { data: {}, headers: { "x-operator-token": OPERATOR_TOKEN } });
-    if (ok.status() === 429) {
-      const waitSeconds = Number(ok.headers()["retry-after"] ?? "60");
-      await new Promise((resolve) => setTimeout(resolve, (waitSeconds + 1) * 1000));
-      ok = await request.post(PRIORITIZE_URL, { data: {}, headers: { "x-operator-token": OPERATOR_TOKEN } });
-    }
-    expect(ok.status()).toBe(404); // 授權通過 → 落到既有「job 不存在」
-
-    const wrong = await request.post(PRIORITIZE_URL, { data: {}, headers: { "x-operator-token": "wrong-token" } });
-    expect(wrong.status()).toBe(403);
-    expect(await wrong.json()).toEqual({ detail: "operator token invalid (x-operator-token)" });
-
-    // 速率：同來源 token 路徑每分鐘 10 次；上面已用 2 次，最多再 12 次內必見 429。
-    let limitedRetryAfter: string | null = null;
-    for (let i = 0; i < 12 && limitedRetryAfter === null; i += 1) {
-      const res = await request.post(PRIORITIZE_URL, { data: {}, headers: { "x-operator-token": OPERATOR_TOKEN } });
-      if (res.status() === 429) limitedRetryAfter = res.headers()["retry-after"] ?? "missing";
-      else expect(res.status()).toBe(404);
-    }
-    expect(limitedRetryAfter).not.toBeNull();
-    expect(Number(limitedRetryAfter)).toBeGreaterThanOrEqual(1);
-
-    // lineage 面不變：token 不解鎖（deps 注入的 rejectIfIpNotAllowed 逐字）。
-    const preview = await request.get(`${COORDINATOR}/api/lineage/legacy-unmanaged/preview?grouping_key=tenant-a/legacy`, {
-      headers: { "x-operator-token": OPERATOR_TOKEN },
-    });
-    expect(preview.status()).toBe(403);
-    expect(await preview.json()).toEqual({ detail: "caller ip not in allowlist" });
-
-    // D3：/api/dev/* 整組 404。
-    expect((await request.post(`${COORDINATOR}/api/dev/conversions`, { data: {} })).status()).toBe(404);
-    expect((await request.get(`${COORDINATOR}/api/dev/test-data-projects`)).status()).toBe(404);
-  });
-});
-```
-
-- [ ] **Step 2: 起 branch coordinator :8005（背景；資料目錄全部指到 tmp，不污染 worktree）**
-
-```bash
-cd "C:/Repos/active/iot/AI-BIM-governance.worktrees/unified-console-runtime-truth-s2/bim-review-coordinator" && S2TMP="$(mktemp -d -t s2e2e.XXXXXX)" && echo "S2TMP=$S2TMP" && mkdir -p "$S2TMP/sessions" "$S2TMP/events" && PORT=8005 HOST=127.0.0.1 PUBLIC_HOST=127.0.0.1 CORS_ORIGINS=http://127.0.0.1:5180 ENABLE_DEV_ROUTES=false EXTERNAL_INTAKE_IP_ALLOWLIST=10.0.0.0/8 DEV_AUTH_TOKEN=e2e-operator-token MINIO_WATCH_ENABLED=false STREAMING_CONVERSION_API_BASE=http://127.0.0.1:1 CONVERSION_API_BASE=http://127.0.0.1:1 GOVERNANCE_API_BASE=http://127.0.0.1:1 KIT_MANAGER_API_BASE=http://127.0.0.1:1 EDGE_RUNTIME_DATA_ROOT="$S2TMP" SESSION_STORE_DIR="$S2TMP/sessions" EVENT_LOG_DIR="$S2TMP/events" CALLBACK_OUTBOX_STORE_PATH="$S2TMP/callback-outbox.json" CONVERSION_LEDGER_STORE_PATH="$S2TMP/conversion-ledger.json" EXTERNAL_IFC_READY_STORE_PATH="$S2TMP/ifc-ready-store.json" STORAGE_ROOT="$S2TMP/storage" nohup npx tsx src/index.ts > "$S2TMP/coordinator.log" 2>&1 & echo $! > "$S2TMP/coordinator.pid"; sleep 8; curl -s http://127.0.0.1:8005/health; echo; curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:8005/api/dev/ifc-sources
-```
-
-（Bash tool 請以背景模式執行本段第一個 `nohup … &`，或整段一次執行。）預期輸出：`S2TMP=<tmp 路徑>`；`{"status":"ok","service":"bim-review-coordinator","kit_signaling_port":49100}`；`404`。若 `:8005` 已被佔用（`address already in use`），先 `netstat -ano | grep ":8005 "` 找 PID 再 `taskkill //PID <pid> //F`，或改 `PORT=8006` 並在 Step 3 以 `E2E_COORDINATOR_BASE_URL=http://127.0.0.1:8006` 覆寫。記下 `S2TMP` 供 Step 5 收尾。
-
-- [ ] **Step 3: 跑 E2E（`E2E_REQUIRE_REAL=1`：skip 即 fail）**
-
-```bash
-cd "C:/Repos/active/iot/AI-BIM-governance.worktrees/unified-console-runtime-truth-s2/web-viewer-sample" && E2E_COORDINATOR_BASE_URL=http://127.0.0.1:8005 E2E_REQUIRE_REAL=1 npx playwright test e2e/dev-routes-disabled-operator-token.spec.ts
-```
-
-預期輸出：`3 passed`（`#demo-control`、`#a1-workbench`、API 探針三個 test；`#conv`／`#minio` 案例已隨 Task 9 HELD 移除）；`artifacts/e2e/` 產生三張 `s2-*.png`（該目錄 `*.png` 為 gitignored，不入 commit）。若回 `Executable doesn't exist … chromium`，先 `npx playwright install chromium` 再重跑。若 preflight skip 訊息出現（且 exit 1），依訊息修正 Step 2 的 env 後重跑；不得改 `E2E_REQUIRE_REAL`。
-
-- [ ] **Step 4: 確認 worktree 未被 runtime 檔污染**
-
-```bash
-cd "C:/Repos/active/iot/AI-BIM-governance.worktrees/unified-console-runtime-truth-s2" && git status --short
-```
-
-預期輸出：恰好兩行——`?? web-viewer-sample/e2e/dev-routes-disabled-operator-token.spec.ts` 與**已知的** ` M bim-review-coordinator/.env.example`（owner 未提交的宣告行，Task 1 Step 1 已記錄；原樣留著，不 add／不 restore／不讀）。若出現 `bim-review-coordinator/data/**` 或其他 runtime 檔，刪除它們並回報缺哪個 `*_STORE_PATH` env（不要 commit）。
-
-- [ ] **Step 5: 停 coordinator**
-
-```bash
-kill "$(cat "<S2TMP>/coordinator.pid")" 2>/dev/null; sleep 2; curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:8005/health || echo "stopped"
-```
-
-（`<S2TMP>` 換成 Step 2 印出的路徑。）預期輸出：`stopped`（或 curl 失敗訊息）。`kill` 無效時用 `netstat -ano | grep ":8005 "` 取 PID → `taskkill //PID <pid> //F`。
-
-- [ ] **Step 6: commit**
-
-```bash
-cd "C:/Repos/active/iot/AI-BIM-governance.worktrees/unified-console-runtime-truth-s2" && git add web-viewer-sample/e2e/dev-routes-disabled-operator-token.spec.ts && git diff --cached --check && git commit -m "test(e2e): slice 2 dev routes 已關閉 UI 垂直切片＋T4 operator token API 探針"
-```
-
-預期輸出：1 file changed。
-
----
-
-### Task 12: 全量驗證（4.5）、tasks.md 勾選／註記、openspec validate、detect-changes
-
-**Files:**
-- Modify: `openspec/changes/unified-console-runtime-truth/tasks.md`
-
-- [ ] **Step 1: coordinator 全量（4.5）**
-
-```bash
-cd "C:/Repos/active/iot/AI-BIM-governance.worktrees/unified-console-runtime-truth-s2/bim-review-coordinator" && npm run build && npx vitest run 2>&1 | tail -15
-```
-
-預期輸出：build 無輸出；vitest 依 Task 6 Step 2 觀測到的分支二選一：
-
-- Step 2 為 **(A)** 或 **(C)** → `Test Files  1 failed | N passed`、`Tests  1 failed | M passed`，**唯一**失敗必須是 `tests/env-example-dev-routes-parity.test.ts` 的「.env.example 宣告」案例（(A) 是「未宣告」、(C) 是「必須為空值」）。
-- Step 2 為 **(B)** → **全綠**（`Tests  M passed`，0 failed）。這不是意外，也**不代表**可以打勾 4.4／4.5：綠來自 owner **未提交**的工作區 `.env.example`，CI 只看已提交內容仍為紅。照 §0 硬規則在 PR body 誠實標註。
-
-任何**其他**紅燈都要先修再往下。若觀測到的分支與 Step 2 記錄的不一致（例如 Step 2 是 (A)、這裡卻全綠），代表 `.env*` 在期間被改動過——停手回報，不要自行調查該檔內容。
-
-- [ ] **Step 2: 前端受影響檔（4.5）**
-
-```bash
-cd "C:/Repos/active/iot/AI-BIM-governance.worktrees/unified-console-runtime-truth-s2/web-viewer-sample" && npx tsc --noEmit && npx vitest run src/console/RealIfcConsolePage.test.tsx src/console/coordinatorClient.httpError.test.ts src/console/coordinatorClient.test.ts src/console/coordinatorClient.conversions-history.test.ts src/console/modelData src/console/ConversionPage.test.tsx src/console/console.test.tsx src/console/A1IssueSnapshot.test.tsx 2>&1 | tail -8
-```
-
-預期輸出：tsc 無輸出；vitest 全 pass。（`src/console/modelData`／`ConversionPage.test.tsx` 在本 PR 屬**未改動的回歸檢查**——Task 9 HELD，這些檔一行未動；它們全綠正好證明 `jsonGet` 改丟 `CoordinatorHttpError`（Task 7）沒有波及 `/api/dev/conversions` 消費鏈。）
-
-- [ ] **Step 3: tasks.md 勾選與註記（六個 Edit；4.4／4.5 依誠實鐵律不打勾）**
-
-Edit A（4.1 打勾）：把 `- [ ] 4.1 impact：` 改成 `- [x] 4.1 impact：`。
-
-Edit B（4.1 註記，插在 4.2 之前）：把
-
-```
-- [ ] 4.2 依 D2 以 per-route wrapper
-```
-
-改成
-
-```
-  - 2026-08-25 slice 2：`gitnexus impact rejectIfIpNotAllowed -f bim-review-coordinator/src/app.ts -d upstream` → risk LOW、direct 1（`createCoordinatorApp`）、impacted 2；呼叫點＝`app.ts` prioritize／retry／watch／trigger 四條（本切片改為 `rejectIfConversionControlUnauthorized`）＋`lineageSourceBundleRoutes.ts` preview／confirm（deps 注入，不動）；helper 本體逐字未改。完整 JSON 附 PR body。
-- [x] 4.2 依 D2 以 per-route wrapper
-```
-
-Edit C（4.2 註記＋4.3 打勾）：把
-
-```
-- [ ] 4.3 lineage 釘樁
-```
-
-改成
-
-```
-  - 驗證指令更正（2026-08-25 slice 2 P0 自檢，非新需求）：`bim-review-coordinator/tests/` 為 vitest（無任何 `.py`／pytest），上列 pytest 指令為工具名誤植；實際驗證 `npx vitest run tests/conversion-control-auth.test.ts tests/services/conversionControlAuthorization.test.ts`（cwd `bim-review-coordinator`）本機綠（含：無憑證且非 allowlist → 403；速率限制 → 429；token 路徑於預設 `dev-token` fail-closed）。
-- [x] 4.3 lineage 釘樁
-```
-
-Edit D（4.3 註記）：把
-
-```
-- [ ] 4.4 D3：
-```
-
-改成
-
-```
-  - 2026-08-25 slice 2：釘樁 `tests/lineage/conversion-control-auth-pins.test.ts`（app.ts 改動前後皆綠；operator token 對 preview／confirm／`/api/external/ifc-ready` 零效果）；`npx vitest run tests/lineage` 本機綠。
-- [ ] 4.4 D3：
-```
-
-Edit E（4.4 註記，插在 4.5 之前；4.4 不打勾）：把
-
-```
-- [ ] 4.5 coordinator 全量
-```
-
-改成
-
-```
-  - 驗證指令更正（2026-08-25 slice 2 P0 自檢，非新需求）：實際驗證 `npx vitest run tests/dev-routes-disabled.test.ts tests/env-example-dev-routes-parity.test.ts`（cwd `bim-review-coordinator`），非 pytest。
-  - 2026-08-25 slice 2：後端 `/api/dev` prefix gate 與 `compose.host-kit.yml` 透傳本機綠；前端 canonical scenario 明列的兩頁（`#demo-control`、`#a1-workbench` local_fs／測試資料清單）404 誠實狀態本機 vitest＋Playwright（`e2e/dev-routes-disabled-operator-token.spec.ts`）綠；`#conv`／`#minio` 的 `/api/dev/conversions` 消費者**不在本 change scenario 範圍**，本 PR 未改（維持既有誠實訊息「轉檔歷史更新失敗；保留上一份結果。」，不崩潰不假資料），是否納入待 owner D5 裁決（需先更新 canonical scenario）；canonical env `ENABLE_DEV_ROUTES=false` 與 181 `POST /api/dev/conversions` 404 驗證待 owner；`.env.example` 加 `ENABLE_DEV_ROUTES=`（空值）待 owner **提交**——該行僅存在於本機工作區時 CI 仍紅。
-- [ ] 4.5 coordinator 全量
-```
-
-Edit F（4.5 註記；4.5 不打勾——全量含一顆 owner-gated 紅燈）：把
-
-```
-
-
-## 5. design gate／rebaseline／semantic cases／既有測試
-```
-
-改成
-
-```
-
-  - 2026-08-25 slice 2：`npm run build` 綠；`npx vitest run` 除 `tests/env-example-dev-routes-parity.test.ts` 的「.env.example 宣告」案例（待 owner）外全綠；前端 `npx tsc --noEmit` 與受影響 vitest 綠。**owner 把 `ENABLE_DEV_ROUTES=`（空值）提交進 repo 後，CI 重跑全綠再打勾**——若該行只存在於本機工作區，本機雖全綠但 CI 仍紅，不構成打勾依據。
-
-## 5. design gate／rebaseline／semantic cases／既有測試
-```
-
-- [ ] **Step 4: openspec validate＋docs/plans 未動確認**
-
-```bash
-cd "C:/Repos/active/iot/AI-BIM-governance.worktrees/unified-console-runtime-truth-s2" && npx openspec validate unified-console-runtime-truth --strict && git diff --name-only origin/main -- docs/plans openspec/lifecycle-ledger.json
-```
-
-預期輸出：`Change 'unified-console-runtime-truth' is valid`；第二行無輸出（`docs/plans/**` 與 ledger 未動，spec §3）。
-
-- [ ] **Step 5: detect-changes（commit 前）**
-
-```bash
-cd "C:/Repos/active/iot/AI-BIM-governance.worktrees/unified-console-runtime-truth-s2" && git add openspec/changes/unified-console-runtime-truth/tasks.md && npx gitnexus@1.6.9 detect-changes --scope compare --base-ref main -r AI-BIM-governance
-```
-
-預期輸出：changed symbols 只落在 `createCoordinatorApp`（app.ts）、`conversionControlAuthorization.ts` 新 symbols、`jsonGet`／`CoordinatorHttpError`／`isCoordinatorNotFound`（coordinatorClient.ts）、`RealIfcConsolePage`、`A1GovernanceWorkbenchPage` 與測試檔；無 HIGH／CRITICAL。**`useConversionData`／`GlobalConversionPane`／`ConversionHistoryPanel`／`ConversionPage` 不得出現**——它們出現代表 HELD 的 Task 9 被誤做進來，回頭撤掉。同理 `bim-review-coordinator/.env.example` 不得出現在 changed files。若 linked worktree 讓 detect-changes 看不到 diff（回空或報錯），fallback：`git diff --name-only main...HEAD` 並在 PR body 記 `detectVerdict='fallback'`（spec §5）。
-
-- [ ] **Step 6: commit**
-
-```bash
-cd "C:/Repos/active/iot/AI-BIM-governance.worktrees/unified-console-runtime-truth-s2" && git diff --cached --check && git commit -m "docs(openspec): unified-console-runtime-truth §4 slice 2 勾選（4.1／4.2／4.3）與 4.4／4.5 驗證指令更正註記"
-```
-
-預期輸出：1 file changed。之後 `git status --short` **只剩已知的一行** ` M bim-review-coordinator/.env.example`（owner 未提交的宣告行；原樣留著交還 owner，**不 add／不 restore／不讀**）——出現任何其他行都要回報。`git log --oneline origin/main..HEAD` ＝ **10 個實作 commit**（Task 2／3／4／5／6／7／8／10／11／12 各一；**Task 9 為 HELD，沒有它的 commit**）＋ Task 1 開工前既有的文件 commit（slice 2 spec 檔 `af8d34c`、本 plan 檔 `064ac40` 及其後續修訂）。實作 commit 若多於 10 個，先確認是不是把 HELD 的 Task 9 做進來了。
-
----
-
-## 交付與 owner 交接（寫進 PR body）
-
-- 本機綠：coordinator `npm run build`＋`npx vitest run`（parity 的「.env.example 宣告」案例依 Task 6 Step 2 分支可能紅、可能綠——**照實寫是哪一種，並寫明綠是否來自未提交的工作區修改**）、前端 `npx tsc --noEmit`＋受影響 vitest、Playwright `dev-routes-disabled-operator-token.spec.ts` 3 passed（附 `artifacts/e2e/s2-*.png` 摘要，不入檔）。
-- **owner 動作（AI 不得代做）**：
-  - (a) `bim-review-coordinator/.env.example` 加 `ENABLE_DEV_ROUTES=`（**空值**；註解「canonical-linux 設 false；空＝維持開啟」）並**提交進 repo**。⚠️ 2026-08-25 開工時本 worktree 已有一行未提交的 ` M bim-review-coordinator/.env.example`——看起來這件事已在工作區做了一半：**該修改未進本 PR**（agent 依 protect-secrets 硬規則全程沒讀、沒改、沒 stage），請 owner 自行確認值為空字串後提交。提交前 CI `npm run verify` 仍紅（本機可能已綠，那是工作區假象）；提交後 parity 全綠、4.4／4.5 才可打勾。
-  - (b) canonical-linux 私有 canonical env 設 `ENABLE_DEV_ROUTES=false` 並確認 `DEV_AUTH_TOKEN` 非預設值（否則 T4 token 路徑不啟用，UI 觸發只剩 allowlist）。
-  - (c) 部署後 `curl -i` 三組（無憑證非 allowlist trigger → 403；`/api/external/ifc-ready` 授權回應不變；`POST /api/dev/conversions` → 404）供 tasks 6.4／4.4 勾選。
-  - (d) **D5 裁決**：`/api/dev/conversions` 消費者（`#conv`／`#minio` 的轉檔歷史面板）要不要納入本 change 的「dev routes 已關閉」誠實顯示範圍。canonical scenario 與 `design.md` §2.4 只列 `#demo-control` 與 A1 workbench local_fs 清單，本 PR 依此修剪；若要納入，需先更新 canonical scenario 的 AND 子句，再由後續 PR 依 plan Task 9 Step 1–8 執行。
-- Known gaps（誠實）：
-  - `/ui` 殼層 token 輸入未建（另切片，tasks 2.4／§6.3）。
-  - `#conv`／`#minio` 在 dev routes 關閉時只顯示既有籠統訊息「轉檔歷史更新失敗；保留上一份結果。」，沒有 `#demo-control`／A1 那種「dev routes 已關閉（canonical-linux）」專屬字樣——**不崩潰、不假資料**，但不是最誠實的措辭；待 owner D5 裁決（見上 (d)）。
-  - `docker compose config` 若本機無 docker 則 skipped。
-  - CI 在 owner 把 `.env.example` 宣告行**提交**前為紅（刻意，spec §4(a)）；本機若已綠，是未提交的工作區修改造成的，不得拿來當 CI 綠的證據。
