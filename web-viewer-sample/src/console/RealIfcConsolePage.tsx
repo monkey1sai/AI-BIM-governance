@@ -24,6 +24,10 @@ export function RealIfcConsolePage() {
   const [runtime, setRuntime] = useState<string>("runtime: idle");
   const [lin, setLin] = useState<Lineage>({});
   const [viewerUrl, setViewerUrl] = useState<string>("");
+  // Task 4B：ENABLE_DEV_ROUTES=false 時 coordinator 對 /api/dev/* 整組回 404（PR #691 D3 後端
+  // prefix gate）。#demo-control 全頁都靠 /api/dev/ifc-sources[/:id/register]；誠實顯示「dev routes
+  // 已關閉」而非誤導成 storage_empty，並 disable 選檔／註冊避免使用者對已知會 404 的端點重試。
+  const [devRoutesDisabled, setDevRoutesDisabled] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const set = (k: string, v: unknown) => setLin((prev) => ({ ...prev, [k]: v == null || v === "" ? DASH : String(v) }));
@@ -32,7 +36,17 @@ export function RealIfcConsolePage() {
 
   async function loadSources() {
     try {
+      // 原樣顯示 HTTP 狀態碼（W4 raw fetch 語意；非 2xx 是值不是錯誤）：dev routes 關閉時
+      // r.status===404，直接判斷，不經過 coordinatorClient 的 jsonGet/CoordinatorHttpError。
       const r = await fetch(coordinatorUrl("/api/dev/ifc-sources"));
+      if (r.status === 404) {
+        setDevRoutesDisabled(true);
+        setSources([]);
+        setSelected("");
+        setRuntime("runtime: dev_routes_disabled (ENABLE_DEV_ROUTES=false；#demo-control 需後端啟用 dev routes)");
+        return;
+      }
+      setDevRoutesDisabled(false);
       const j = await r.json();
       const items: IfcSource[] = j.items ?? [];
       setSources(items);
@@ -92,6 +106,10 @@ export function RealIfcConsolePage() {
 
   async function register() {
     stop();
+    if (devRoutesDisabled) {
+      setRuntime("runtime: dev_routes_disabled (ENABLE_DEV_ROUTES=false；#demo-control 需後端啟用 dev routes)");
+      return;
+    }
     const meta = sources.find((s) => s.source_id === selected);
     if (!selected || !meta) { setRuntime("runtime: no_fixture_selected"); return; }
     const mv = "mv_realifc_" + Date.now() + "_" + Math.floor(Math.random() * 1e6);
@@ -135,9 +153,17 @@ export function RealIfcConsolePage() {
       <p style={{ color: "var(--ab-text-muted)", fontSize: 13 }}>
         {t("從", "From")} <code>./storage</code> {t("選真實 IFC → 真 coordinator", "select a real IFC → real coordinator")} <code>register</code>{t("（內部 loopback）→ 真轉檔 → 審查 session → viewer。誠實顯示 runtime 狀態。", " (internal loopback) → real conversion → review session → viewer. Runtime state shown honestly.")}
       </p>
+      {devRoutesDisabled && (
+        <p data-testid="ifc-dev-routes-notice" style={{ color: "var(--ab-accent)", fontWeight: 600 }}>
+          {t(
+            "dev routes 已關閉（ENABLE_DEV_ROUTES=false）：coordinator /api/dev/* 整組回 404，#demo-control 需後端啟用 dev routes 才能列出／註冊 IFC fixture。",
+            "Dev routes are disabled (ENABLE_DEV_ROUTES=false): coordinator /api/dev/* returns 404 across the board. #demo-control requires the backend to enable dev routes to list/register IFC fixtures.",
+          )}
+        </p>
+      )}
       <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", margin: "10px 0" }}>
         <label htmlFor="ifcFixtureSelect">IFC fixture</label>
-        <select id="ifcFixtureSelect" data-testid="ifc-fixture-select" value={selected} onChange={(e) => setSelected(e.target.value)} style={{ minWidth: 360 }}>
+        <select id="ifcFixtureSelect" data-testid="ifc-fixture-select" value={selected} onChange={(e) => setSelected(e.target.value)} disabled={devRoutesDisabled} style={{ minWidth: 360 }}>
           {sources.length === 0 ? (
             <option value="">（No real IFC files found under ./storage）</option>
           ) : (
@@ -149,7 +175,7 @@ export function RealIfcConsolePage() {
           )}
         </select>
         <button data-testid="ifc-refresh-btn" onClick={() => void loadSources()}>Refresh ./storage IFC list</button>
-        <button data-testid="ifc-register-btn" onClick={() => void register()}>{t("註冊並轉檔（真實）", "Register and convert (real)")}</button>
+        <button data-testid="ifc-register-btn" disabled={devRoutesDisabled} onClick={() => void register()}>{t("註冊並轉檔（真實）", "Register and convert (real)")}</button>
       </div>
       <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, textAlign: "left" }}>
         <tbody>
