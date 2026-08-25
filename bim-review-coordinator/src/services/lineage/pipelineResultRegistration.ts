@@ -130,10 +130,48 @@ export class PipelineResultLocationError extends Error {
   }
 }
 
-/** log 欄位的長度地板：ref／prefix 只留可辨識的前綴，不把全文灌進 log。 */
+/**
+ * log 欄位的長度地板 ＋ governed locator 遮蔽。
+ *
+ * 長度：>120 字元一律截斷（ref／prefix 不灌全文）。
+ *
+ * 遮蔽：任何 `minio://…` 形狀的值只留 scheme。這是刻意的**分層**——`expected`／`observed`
+ * 在 error 物件上是完整值（呼叫端要靠它 debug），但 log 是長期保存、會被複製貼上的串流：
+ * 把 authority／bucket／完整 object key 灌進去等於把儲存拓撲寫進每一筆失敗紀錄。
+ * 需要精確 locator 時看 error 本身，不是看 log。
+ */
+/**
+ * presign 樣式偵測（形狀與 `minioLocator.ts` 的 `PRESIGN_PATTERN` 相同）。
+ *
+ * 刻意在本檔重寫一份而不是共用：那一份是**安全 gate**（決定 locator 收不收），
+ * 這一份是**log 遮蔽謂詞**，必須比 gate 更寬——它要能命中任何位置帶 presign
+ * 參數的字串，不只是 governed locator。兩者用途不同，不是重複的權威。
+ */
+const PRESIGN_SHAPE = /[?&][Xx]-[Aa][Mm][Zz]-/;
+
 function boundedDetail(value: unknown): string | null {
   if (typeof value !== "string") return null;
+  // governed locator 與**任何**帶 presign 參數的值都不得進 log：後者更嚴重——
+  // presigned URL 帶 `X-Amz-Signature`／`X-Amz-Credential`，等於把可用的下載憑證
+  // 寫進一個長期保存、會被複製貼上的串流。
+  if (value.startsWith("minio://") || PRESIGN_SHAPE.test(value)) {
+    return "<redacted>";
+  }
   return value.length <= 120 ? value : `${value.slice(0, 117)}...`;
+}
+
+/**
+ * 從未知的 throw 值上安全取欄位。
+ *
+ * `catch (error)` 的型別是 `unknown`：可能是 `null`、字串、或任何非物件的值
+ * （例如某個相依套件 `throw "boom"`）。直接 `(error as {code?}).code` 對 `null`
+ * 會是 TypeError，把「註冊失敗」升級成「log 這行本身炸掉」——失敗面的可觀測性
+ * 不該有自己的失敗模式。
+ */
+function errorField(error: unknown, field: string): unknown {
+  return typeof error === "object" && error !== null
+    ? (error as Record<string, unknown>)[field]
+    : undefined;
 }
 
 export interface PipelineResultRegistrationDeps extends PipelineResultManifestReadDeps {
@@ -192,11 +230,11 @@ export function createPipelineResultRegistrationService(
           pipeline_job_id: input.expected_identity.pipeline_job_id,
           result_id: input.expected_identity.result_id,
           attempt_id: input.expected_identity.attempt_id,
-          code: boundedDetail((error as { code?: unknown }).code) ?? "unclassified",
-          role: boundedDetail((error as { role?: unknown }).role),
-          field: boundedDetail((error as { field?: unknown }).field),
-          expected: boundedDetail((error as { expected?: unknown }).expected),
-          observed: boundedDetail((error as { observed?: unknown }).observed),
+          code: boundedDetail(errorField(error, "code")) ?? "unclassified",
+          role: boundedDetail(errorField(error, "role")),
+          field: boundedDetail(errorField(error, "field")),
+          expected: boundedDetail(errorField(error, "expected")),
+          observed: boundedDetail(errorField(error, "observed")),
         });
         throw error;
       }

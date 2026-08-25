@@ -13,6 +13,24 @@ import type {
 } from "../../src/services/lineage/externalLineageAuthorization.js";
 import { PipelineJobStore } from "../../src/services/lineage/pipelineJobStore.js";
 import { SourceBundleStore } from "../../src/services/lineage/sourceBundleStore.js";
+import { createS3LineageMetadataProjectionReader } from "../../src/services/lineage/lineageMetadataProjections.js";
+import { createFakeSourceBundleObjectPort } from "../helpers/fakeSourceBundleObjectPort.js";
+import {
+  seedGovernedBundle,
+  TEST_BUCKET,
+} from "../helpers/governedBundleFixtures.js";
+import {
+  RESULT_ATTEMPT_ID,
+  RESULT_AUTHORITY,
+  RESULT_BUCKET,
+  RESULT_COMPLETED_AT,
+  RESULT_EXTERNAL_MODEL_VERSION_ID,
+  RESULT_RESULT_ID,
+  RESULT_SOURCE_BUNDLE_ID,
+  resultPrefix,
+  seedResultManifest,
+  sha256Hex,
+} from "../helpers/resultManifestFixtures.js";
 import {
   PipelineResultStateUnavailableError,
   PipelineResultStore,
@@ -405,5 +423,285 @@ describe("lineage governance metadata routes", () => {
       .set("x-lineage-authorization-decision", DECISION_HEADER);
     expect(response.status).toBe(503);
     expect(response.body).toEqual({ error: "pipeline_result_state_unavailable" });
+  });
+});
+
+/**
+ * Task 3.4 收尾刀：manifest 投影接真值後的 metadata surfaces。
+ *
+ * 上方的既有測試（`makeHarness()` 不帶 projections）已經是「reader 缺席時回 NOT_BUILT
+ * 不回假值」的斷言；本區塊補的是另一半：reader 接上之後值從哪裡來、以及讀失敗時
+ * **不得**降級成 NOT_BUILT。
+ */
+function makeProjectionHarness(
+  options: {
+    registerResult?: boolean;
+    digestDrift?: boolean;
+    bundleDigestDrift?: boolean;
+    /** 覆寫 bundle 的 back-reference；`undefined` = 正確指回本 job。 */
+    bundlePipelineJobId?: string | null;
+  } = {},
+) {
+  const objects = createFakeSourceBundleObjectPort({
+    allowedAuthorities: [RESULT_AUTHORITY],
+    // 一個 port 同時服務 source bundle 與 result 兩個 bucket。
+    allowedBuckets: [RESULT_BUCKET, TEST_BUCKET],
+  });
+  const jobs = new PipelineJobStore(null);
+  const { job } = jobs.ensureJobForSourceBundle({
+    sourceBundleId: RESULT_SOURCE_BUNDLE_ID,
+    externalModelVersionId: RESULT_EXTERNAL_MODEL_VERSION_ID,
+    eventId: "ready-event-projection-0001",
+    now: "2026-07-16T08:00:00.000Z",
+  });
+  const bundle = seedGovernedBundle(objects);
+  const bundles = new SourceBundleStore(null);
+  bundles.admit({
+    source_bundle_id: job.source_bundle_id,
+    external_model_version_id: job.external_model_version_id,
+    tenant_id: "tenant-test",
+    project_id: "project-test",
+    project_display_name: null,
+    model_category: null,
+    manifest_ref: bundle.manifestRef,
+    manifest_sha256: options.bundleDigestDrift ? "e".repeat(64) : bundle.manifestSha256,
+    bundle_state: "READY",
+    integrity_diagnostics: [],
+    producer_id: "ifc-worker-edge-01",
+    producer_kind: "external_ifc_worker",
+    claimed_at: "2026-07-16T07:58:20.000Z",
+    validated_at: "2026-07-16T08:00:00.000Z",
+    pipeline_job_id:
+      options.bundlePipelineJobId === undefined
+        ? job.pipeline_job_id
+        : options.bundlePipelineJobId,
+    created_at: "2026-07-16T08:00:00.000Z",
+    updated_at: "2026-07-16T08:00:00.000Z",
+  });
+  const seeded = seedResultManifest(objects, {
+    body: { pipeline_job_id: job.pipeline_job_id },
+  });
+  const results = new PipelineResultStore(jobs, null);
+  if (options.registerResult !== false) {
+    results.registerResult({
+      result_id: RESULT_RESULT_ID,
+      attempt_id: RESULT_ATTEMPT_ID,
+      pipeline_job_id: job.pipeline_job_id,
+      source_bundle_id: RESULT_SOURCE_BUNDLE_ID,
+      external_model_version_id: RESULT_EXTERNAL_MODEL_VERSION_ID,
+      attempt_number: 1,
+      result_prefix: resultPrefix(),
+      result_manifest_ref: seeded.locator.ref,
+      result_manifest_digest: options.digestDrift ? "f".repeat(64) : sha256Hex(seeded.bytes),
+      attempt_outcome: "succeeded",
+      publication_state: "AVAILABLE",
+      completed_at: RESULT_COMPLETED_AT,
+      correlation_id: "corr-lineage-0007",
+      now: "2026-07-16T08:41:07.500Z",
+    });
+  }
+  const app = express();
+  registerLineageGovernanceMetadataRoutes(app, {
+    jobs,
+    bundles,
+    results,
+    authorization: new FakeAuthorization(),
+    projections: createS3LineageMetadataProjectionReader({ objects }),
+    now: () => NOW,
+  });
+  return { app, objects, results, pipelineJobId: job.pipeline_job_id, seeded, bundle };
+}
+
+function getSurface(app: express.Express, pipelineJobId: string, surface: string) {
+  return request(app)
+    .get(`/api/lineage/pipeline-jobs/${pipelineJobId}/${surface}`)
+    .set("authorization", "test-principal-credential")
+    .set("x-lineage-authorization-decision", DECISION_HEADER);
+}
+
+describe("lineage governance metadata surfaces：manifest 投影接真值", () => {
+  it("overview 的 alignment_metrics／warnings 由 MinIO 實讀的 result manifest 供給", async () => {
+    const harness = makeProjectionHarness();
+
+    const response = await getSurface(harness.app, harness.pipelineJobId, "overview");
+
+    expect(response.status).toBe(200);
+    expect(response.body.body.alignment_metrics).toMatchObject({
+      state: "AVAILABLE",
+      source: "result_manifest",
+      value: {
+        result_id: RESULT_RESULT_ID,
+        attempt_id: RESULT_ATTEMPT_ID,
+        result_manifest_digest: sha256Hex(harness.seeded.bytes),
+        converter: { converter_id: "ifc-usdc-converter" },
+        metrics: {
+          ifc_usdc_coverage_ratio: {
+            numerator: 1200,
+            denominator: 1200,
+            ratio: 1,
+            status: "complete",
+          },
+        },
+        counts: { full_lineage_matched_count: 1000, eligible_ifc_product_count: 1200 },
+      },
+    });
+    expect(response.body.body.warnings).toMatchObject({
+      state: "AVAILABLE",
+      source: "result_manifest",
+      value: { result_id: RESULT_RESULT_ID, warning_codes: [] },
+    });
+    // difference_counts 的來源是 alignment_report（逐 element 差異集合），本刀未建。
+    expect(response.body.body.difference_counts).toMatchObject({
+      state: "NOT_BUILT",
+      source: "alignment_report",
+      reason_code: "reader_not_wired",
+    });
+  });
+
+  it("artifacts surface 的兩側都由各自的 manifest 供給（source bundle ＋ result）", async () => {
+    const harness = makeProjectionHarness();
+
+    const response = await getSurface(harness.app, harness.pipelineJobId, "artifacts");
+
+    expect(response.status).toBe(200);
+    const source = response.body.body.source_artifacts;
+    expect(source.state).toBe("AVAILABLE");
+    expect(source.source).toBe("source_bundle_manifest");
+    expect(source.value.map((item: { role: string }) => item.role).sort()).toEqual([
+      "schedule_csv",
+      "source_ifc",
+      "source_rvt",
+    ]);
+    // source bundle manifest 契約不帶 published_at；不得補值。
+    expect(source.value.every((item: { published_at: unknown }) => item.published_at === null)).toBe(
+      true,
+    );
+
+    const result = response.body.body.result_artifacts;
+    expect(result.state).toBe("AVAILABLE");
+    expect(result.source).toBe("result_manifest");
+    expect(result.value.map((item: { role: string }) => item.role).sort()).toEqual([
+      "alignment_report_csv",
+      "alignment_report_json",
+      "element_mapping",
+      "usdc",
+    ]);
+    expect(result.value[0]).toMatchObject({
+      role: "usdc",
+      published_at: "2026-07-16T08:39:00Z",
+      filename: "model.usdc",
+      content_type: "application/octet-stream",
+    });
+  });
+
+  it("alignment surface 仍誠實 NOT_BUILT（alignment report 讀取路徑未建）", async () => {
+    const harness = makeProjectionHarness();
+
+    const response = await getSurface(harness.app, harness.pipelineJobId, "alignment");
+
+    expect(response.status).toBe(200);
+    expect(response.body.body).toEqual({
+      summary: {
+        state: "NOT_BUILT",
+        contract: "rvt-ifc-usdc-lineage/3.4",
+        source: "alignment_report",
+        reason_code: "reader_not_wired",
+        read_model_owner: "bim-review-coordinator",
+      },
+      differences: {
+        state: "NOT_BUILT",
+        contract: "rvt-ifc-usdc-lineage/3.4",
+        source: "alignment_report",
+        reason_code: "reader_not_wired",
+        read_model_owner: "bim-review-coordinator",
+      },
+    });
+  });
+
+  it("reader 接上但這個 job 還沒有 active result → NOT_BUILT/store_not_present（不是 reader_not_wired）", async () => {
+    const harness = makeProjectionHarness({ registerResult: false });
+
+    const overview = await getSurface(harness.app, harness.pipelineJobId, "overview");
+    const artifacts = await getSurface(harness.app, harness.pipelineJobId, "artifacts");
+
+    expect(overview.body.body.alignment_metrics).toMatchObject({
+      state: "NOT_BUILT",
+      source: "result_manifest",
+      reason_code: "store_not_present",
+    });
+    expect(overview.body.body.warnings).toMatchObject({ reason_code: "store_not_present" });
+    expect(artifacts.body.body.result_artifacts).toMatchObject({
+      reason_code: "store_not_present",
+    });
+    // source bundle 側不受影響：它不依賴 active result。
+    expect(artifacts.body.body.source_artifacts.state).toBe("AVAILABLE");
+  });
+
+  it("result manifest digest 漂移時誠實 503，**不**降級成 NOT_BUILT", async () => {
+    const harness = makeProjectionHarness({ digestDrift: true });
+
+    const response = await getSurface(harness.app, harness.pipelineJobId, "overview");
+
+    expect(response.status).toBe(503);
+    expect(response.body).toEqual({ error: "lineage_metadata_projection_unavailable" });
+  });
+
+  it("source bundle manifest digest 漂移時同樣誠實 503", async () => {
+    const harness = makeProjectionHarness({ bundleDigestDrift: true });
+
+    const response = await getSurface(harness.app, harness.pipelineJobId, "artifacts");
+
+    expect(response.status).toBe(503);
+    expect(response.body).toEqual({ error: "lineage_metadata_projection_unavailable" });
+  });
+
+  it("bundle 的 back-reference 指向另一個 job 時，overview 與 artifacts 兩面都 503", async () => {
+    // 這一案專門守 `requireMatchingReadyBundle` 的 back-reference 條件：拿掉那一行
+    // （只比 source_bundle_id／bundle_state／external_model_version_id）其餘測試仍會全綠，
+    // 而 metadata 會把**另一個 job 的** source artifacts 端到這個 job 的面板上。
+    const harness = makeProjectionHarness({ bundlePipelineJobId: "pj_some_other_job" });
+
+    const overview = await getSurface(harness.app, harness.pipelineJobId, "overview");
+    const artifacts = await getSurface(harness.app, harness.pipelineJobId, "artifacts");
+
+    for (const response of [overview, artifacts]) {
+      expect(response.status).toBe(503);
+      expect(response.body).toEqual({ error: "lineage_metadata_state_unavailable" });
+    }
+  });
+
+  it("back-reference 尚未回寫（null）時 HTTP 形狀與綁定衝突相同（內部語意才分兩種）", async () => {
+    // 3.1 收下 bundle 時 pipeline_job_id 為 null，由 3.2 auto-enqueue 補寫——一個會自癒的
+    // 窗口。對外必須與「指向別的 job」同一個 503／同一個 code（不洩漏內部拓撲）；
+    // 兩者的差別只存在於 error detail 與註解，給 operator 判斷該等還是該查。
+    const harness = makeProjectionHarness({ bundlePipelineJobId: null });
+
+    const overview = await getSurface(harness.app, harness.pipelineJobId, "overview");
+    const artifacts = await getSurface(harness.app, harness.pipelineJobId, "artifacts");
+
+    for (const response of [overview, artifacts]) {
+      expect(response.status).toBe(503);
+      expect(response.body).toEqual({ error: "lineage_metadata_state_unavailable" });
+    }
+  });
+
+  it("reader 缺席時四個欄位一律 NOT_BUILT/reader_not_wired（與接上後同一組欄位對照）", async () => {
+    // 同一組欄位、同一組請求，唯一差別是 deps 沒有 projections——證明「有無真值」
+    // 完全由 composition root 決定，route 不會自己編一個空陣列出來。
+    const harness = makeHarness();
+
+    const overview = await getSurface(harness.app, harness.pipelineJobId, "overview");
+    const artifacts = await getSurface(harness.app, harness.pipelineJobId, "artifacts");
+
+    for (const provenance of [
+      overview.body.body.alignment_metrics,
+      overview.body.body.warnings,
+      artifacts.body.body.source_artifacts,
+      artifacts.body.body.result_artifacts,
+    ]) {
+      expect(provenance.state).toBe("NOT_BUILT");
+      expect(provenance.reason_code).toBe("reader_not_wired");
+      expect(provenance.value).toBeUndefined();
+    }
   });
 });

@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { createLogger, type StructLogger } from "../../src/lib/structLog.js";
 import request from "supertest";
 import { afterEach, describe, expect, it } from "vitest";
 import { createCoordinatorApp, type CoordinatorApp } from "../../src/app.js";
@@ -65,10 +66,18 @@ function tmpRoot(): string {
   return root;
 }
 
+/** 讀 logger 寫出的 jsonl（照 tests/conversion-control-routes.test.ts 的既有慣例）。 */
+function readRecords(logger: StructLogger): Array<Record<string, unknown>> {
+  const text = fs.readFileSync(logger.currentFile(), "utf-8").trim();
+  if (!text) return [];
+  return text.split("\n").map((line) => JSON.parse(line.trim()) as Record<string, unknown>);
+}
+
 function makeApp(
   root: string,
   overrides: Partial<CoordinatorConfig> = {},
   port: FakeSourceBundleObjectPort | null = null,
+  structLog?: StructLogger,
 ): CoordinatorApp {
   const storageRoot = path.join(root, "storage");
   active = createCoordinatorApp(
@@ -88,7 +97,10 @@ function makeApp(
       corsOrigins: ["http://127.0.0.1:5173"],
       ...overrides,
     },
-    port ? { sourceBundleObjectStoreFactory: () => port } : {},
+    {
+      ...(port ? { sourceBundleObjectStoreFactory: () => port } : {}),
+      ...(structLog ? { structLog } : {}),
+    },
   );
   return active;
 }
@@ -339,5 +351,143 @@ describe("app 接線：detail reader wiring", () => {
 
     expect(app.pipelineResultDetails).toBeNull();
     expect(app.pipelineResultRegistration).toBeNull();
+  });
+});
+
+describe("app 接線：task 3.4 artifact / metadata 生產面", () => {
+  const POLICY_JSON = JSON.stringify([
+    {
+      authority: RESULT_AUTHORITY,
+      bucket: RESULT_BUCKET,
+      public_origin: "https://lineage-download.example.test",
+      object_path_prefix: `/${RESULT_BUCKET}/`,
+    },
+  ]);
+
+  it("governed port 已注入時 reader／signer／projections 三者同生，且 policy env 被解析", () => {
+    const port = createFakeSourceBundleObjectPort(RESULT_ALLOWLIST);
+    const app = makeApp(tmpRoot(), { lineageDownloadTargetPolicies: POLICY_JSON }, port);
+
+    expect(app.lineageArtifactSurfaces.reader).not.toBeNull();
+    expect(app.lineageArtifactSurfaces.signer).not.toBeNull();
+    expect(app.lineageArtifactSurfaces.projections).not.toBeNull();
+    expect(app.lineageArtifactSurfaces.target_policies).toEqual([
+      {
+        authority: RESULT_AUTHORITY,
+        bucket: RESULT_BUCKET,
+        public_origin: "https://lineage-download.example.test",
+        object_path_prefix: `/${RESULT_BUCKET}/`,
+      },
+    ]);
+  });
+
+  it("governed 端未設定時三者同滅（null 傳染與 registration／details 同一條件）", () => {
+    const app = makeApp(tmpRoot(), { lineageDownloadTargetPolicies: POLICY_JSON });
+
+    expect(app.lineageArtifactSurfaces.reader).toBeNull();
+    expect(app.lineageArtifactSurfaces.signer).toBeNull();
+    expect(app.lineageArtifactSurfaces.projections).toBeNull();
+    // policy 是獨立的 env：port 沒接不代表 policy 解析失敗，但下載面本來就打不開。
+    expect(app.lineageArtifactSurfaces.target_policies).toHaveLength(1);
+  });
+
+  it("policy env 未設定＝空清單＝fail-closed（181 的誠實現狀：沒有 HTTPS public origin）", () => {
+    const port = createFakeSourceBundleObjectPort(RESULT_ALLOWLIST);
+    const app = makeApp(tmpRoot(), {}, port);
+
+    expect(app.config.lineageDownloadTargetPolicies).toBe("");
+    expect(app.lineageArtifactSurfaces.target_policies).toEqual([]);
+    // reader／signer 都在，唯獨沒有任何 public target 可解析 → download route 仍關閉。
+    expect(app.lineageArtifactSurfaces.reader).not.toBeNull();
+    expect(app.lineageArtifactSurfaces.signer).not.toBeNull();
+  });
+
+  it("policy env 設了但打壞時收斂成空清單，**並且一定吵**（startup warn）", () => {
+    const root = tmpRoot();
+    const logger = createLogger("coordinator", {
+      logRoot: path.join(root, "logs"),
+      runId: "run_20260716_084107_policy1",
+      skipEnvSnapshot: true,
+    });
+    const port = createFakeSourceBundleObjectPort(RESULT_ALLOWLIST);
+    const app = makeApp(
+      root,
+      { lineageDownloadTargetPolicies: POLICY_JSON.replace("https://", "http://") },
+      port,
+      logger,
+    );
+
+    expect(app.lineageArtifactSurfaces.target_policies).toEqual([]);
+    // 空清單本身分不出「沒設定」與「設錯了」；沒有這筆 warn，運維會以為下載面
+    // 只是還沒開通，而不是自己打錯字。
+    const warns = readRecords(logger).filter(
+      (record) => record.level === "warn" && record.component === "lineage-artifact-download",
+    );
+    expect(warns).toHaveLength(1);
+    expect(warns[0].data).toMatchObject({ configured: true, policy_count: 0 });
+  });
+
+  it("policy env 未設定時**不吵**（沒設定不是錯誤，只是還沒開通）", () => {
+    const root = tmpRoot();
+    const logger = createLogger("coordinator", {
+      logRoot: path.join(root, "logs"),
+      runId: "run_20260716_084107_policy2",
+      skipEnvSnapshot: true,
+    });
+    const port = createFakeSourceBundleObjectPort(RESULT_ALLOWLIST);
+
+    makeApp(root, {}, port, logger);
+
+    expect(
+      readRecords(logger).filter(
+        (record) => record.component === "lineage-artifact-download",
+      ),
+    ).toHaveLength(0);
+  });
+
+  it("download route 在 external verifier 未接時仍 fail closed（reader/signer 已接也一樣）", async () => {
+    const port = createFakeSourceBundleObjectPort(RESULT_ALLOWLIST);
+    const app = makeApp(tmpRoot(), { lineageDownloadTargetPolicies: POLICY_JSON }, port);
+    const { job } = seedJobAndManifest(app, port);
+
+    const response = await request(app.app)
+      .get(
+        `/api/lineage/pipeline-jobs/${job.pipeline_job_id}/results/${RESULT_RESULT_ID}/artifacts/usdc/download`,
+      )
+      .set("x-lineage-authorization-decision", "synthetic-decision");
+
+    expect(response.status).toBe(503);
+    expect(response.body).toEqual({ error: "authorization_unavailable" });
+    // 擋住它的是 authorization，不是 reader/signer 缺席（兩者都已接上）。
+    expect(app.lineageArtifactSurfaces.reader).not.toBeNull();
+    expect(app.lineageArtifactSurfaces.signer).not.toBeNull();
+  });
+
+  it("accessor 層驗證 reader 真的可讀 fake manifest（HTTP 綠路徑被 Q6 authorization 擋住）", async () => {
+    const port = createFakeSourceBundleObjectPort(RESULT_ALLOWLIST);
+    const app = makeApp(tmpRoot(), { lineageDownloadTargetPolicies: POLICY_JSON }, port);
+    const { job, seeded } = seedJobAndManifest(app, port);
+    const registered = await app.pipelineResultRegistration!.registerFromManifest(
+      registrationInputFor(job.pipeline_job_id, seeded.locator),
+    );
+
+    const descriptor = await app.lineageArtifactSurfaces.reader!.readArtifact(
+      registered.registration.result,
+      "usdc",
+    );
+
+    expect(descriptor).toMatchObject({
+      pipeline_job_id: job.pipeline_job_id,
+      result_id: RESULT_RESULT_ID,
+      artifact_id: "usdc",
+      role: "usdc",
+    });
+    // 同一個 reader 對缺席 role 回 null（route 據此 404，不是 503）。
+    expect(
+      await app.lineageArtifactSurfaces.reader!.readArtifact(
+        registered.registration.result,
+        "quality_report",
+      ),
+    ).toBeNull();
   });
 });

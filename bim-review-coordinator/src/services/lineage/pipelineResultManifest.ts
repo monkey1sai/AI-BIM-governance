@@ -29,7 +29,6 @@ import {
   utcTimestampToMicros,
   type MinioLocator,
 } from "./minioLocator.js";
-import { PIPELINE_RESULT_ARTIFACT_IDS } from "./pipelineResultArtifactReader.js";
 import { sha256Hex } from "./sourceBundleManifest.js";
 import {
   SourceBundleObjectTooLargeError,
@@ -52,8 +51,31 @@ export const RESULT_MANIFEST_OBJECT_NAME = "result-manifest.json";
  */
 export const RESULT_MANIFEST_MAX_BYTES = 1024 * 1024;
 
-/** 契約 `$defs/resultArtifactRole` 的封閉詞彙（與 task 3.4 的 artifact id 同一份正本）。 */
-export type PipelineResultManifestArtifactRole = (typeof PIPELINE_RESULT_ARTIFACT_IDS)[number];
+/**
+ * 契約 `$defs/resultArtifactRole` 的封閉詞彙。
+ *
+ * **正本住在這裡**（manifest 是 role 的來源），`pipelineResultArtifactReader.ts` 以
+ * `PIPELINE_RESULT_ARTIFACT_IDS` re-export 它當 task 3.4 的 artifact id。
+ *
+ * 方向不可反轉：曾經反過來（manifest 從 artifact reader import 這個常數），一旦 reader
+ * 也要 import manifest 的讀取管道就形成 ESM 循環，`z.enum(PIPELINE_RESULT_ARTIFACT_IDS)`
+ * 會在模組求值期拿到 `undefined`——**role 驗證靜默失效**，且只在錯誤訊息路徑才炸
+ * （`joinValues(undefined)`）。這條註解就是那個坑的墓碑。
+ */
+export const RESULT_MANIFEST_ARTIFACT_ROLES = [
+  "usdc",
+  "element_mapping",
+  "entity_index",
+  "bbox_index",
+  "spatial_index",
+  "pset_index",
+  "alignment_report_json",
+  "alignment_report_csv",
+  "quality_report",
+] as const;
+
+export type PipelineResultManifestArtifactRole =
+  (typeof RESULT_MANIFEST_ARTIFACT_ROLES)[number];
 
 /** 契約 `artifacts` 的四個 `contains` 子句：缺一即非完整 result。 */
 export const RESULT_MANIFEST_REQUIRED_ROLES = [
@@ -193,7 +215,7 @@ const manifestCountsSchema = z
 
 const manifestArtifactSchema = z
   .object({
-    role: z.enum(PIPELINE_RESULT_ARTIFACT_IDS),
+    role: z.enum(RESULT_MANIFEST_ARTIFACT_ROLES),
     ref: z.string().min(1).max(4_096),
     object_version_id: z.string().min(1).max(512),
     etag: z.string().min(1).max(512),

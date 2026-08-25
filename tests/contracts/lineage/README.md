@@ -1,8 +1,10 @@
 # `tests/contracts/lineage/` — rvt-ifc-usdc-lineage 可執行契約
 
 本目錄是 `openspec/changes/rvt-ifc-usdc-lineage` tasks 2.1–2.7 的機器可讀正本：
-七支 JSON Schema（放在上一層 `tests/contracts/`）、363 個 fixture、語意 validator、
-wire-protocol validator，以及把它們綁在一起的兩支 runner。
+七支 JSON Schema（放在上一層 `tests/contracts/`）、365 個 fixture（`fixtures/` 之下的
+全部 JSON，含 `protocol/` 那 2 支表驅動語料；§5 表的 valid/invalid/semantic 合計是
+其中的 363 支 schema fixture）、語意 validator、wire-protocol validator，以及把它們
+綁在一起的兩支 runner。
 
 ```
 tests/contracts/
@@ -315,10 +317,10 @@ validator 該開槍時會開槍，這條證明它其餘時候會閉嘴——少�
 | `model_version_bundle_manifest` | 9 | 30 | 8 | 2.1 |
 | `lineage_alignment_report` | 6 | 48 | 24 | 2.2 |
 | `pipeline_job_attempt` | 27 | 54 | 9 | 2.3 |
-| `result_manifest` | 15 | 38 | 5 | 2.3 |
+| `result_manifest` | 15 | 38 | 7 | 2.3 |
 | `source_bundle_ready` | 2 | 13 | 0 | 2.4 |
 | `cloud_lineage_publication` | 10 | 41 | 22 | 2.5 |
-| **合計** | **69** | **224** | **68** | |
+| **合計** | **69** | **224** | **70** | |
 
 另有 `fixtures/protocol/` 2 個（2.6 的 HMAC golden vectors 與 ACK 分類語料），
 不進 `FIXTURE_MINIMUMS`——它們不是 schema fixture，是表驅動語料。
@@ -401,9 +403,29 @@ schema pattern 維持 `G_[A-Za-z0-9_]+` 不釘長度。
 |---|---|---|
 | `result_manifest` | `manifest_published_before_artifacts` | manifest 的 `published_at` 不得早於任何 artifact 的 `published_at` |
 | `result_manifest` | `alignment_summary_denominator_mismatch` | 三個 denominator 與 counts 的綁定，委派給 `validate_alignment_summary`，把它的三個 `*_DENOMINATOR_MISMATCH` 收斂成這一個 wire code |
+| `result_manifest` | `result_prefix_not_attempt_scoped` | `result_prefix` 必須是 **canonical** 前綴（object-key 部分非空、恰以一個 `/` 結尾、無空／`.`／`..` segment），且最後一個 path segment 逐字等於 `attempt_id`（design.md §5：每個 attempt 用獨立 result prefix）|
 | `result_publication_outcome` | `second_formal_result_for_attempt` | `prior_result_id` 非 null 時必須等於 `result_id` |
 | `result_publication_outcome` | `non_idempotent_replay_reported_as_created` | 同一 result 同 digest 重放必須回報 `replay_same_digest`，不得回報 `created` |
 | `result_publication_outcome` | `manifest_digest_conflict` | digest 與 prior 不同時必須回報 `conflict_different_digest` |
+
+`result_prefix_not_attempt_scoped` 為什麼是語意層而不是 schema：
+`result_prefix` 與 `attempt_id` 是兩個獨立欄位，JSON Schema 表達不了「這個字串的
+末段等於另一個欄位」。它也**不是** prefix containment 檢查——`.../attempt-0007/` 對
+`attempt-00070` 不算「夠接近」，逐字相等才擋得住兩個 attempt 宣告同一個 prefix、
+互相 conditional-create 覆蓋對方 immutable 物件。coordinator 的 registration 層
+（`PipelineResultLocationError`）用的是同一個 code；語意層先擋，語料就不會再出現
+任何 runtime 都不可能收下的 manifest。反例語料
+`semantic/semantic-result-prefix-not-attempt-scoped.json` 是 `valid-result-manifest-full.json`
+**只改 `attempt_id` 一欄**的副本，改動即違規本身。
+
+**canonical 前綴是規則的一部分，不是形狀細節**：tail 比較之前，object-key 部分必須
+非空、恰以一個 `/` 結尾、且不含空／`.`／`..` segment；違反任一項即發同一個
+`result_prefix_not_attempt_scoped`。這條與 coordinator 的 `parseMinioPrefix`
+（`bim-review-coordinator/src/services/lineage/minioLocator.ts`）逐條對齊——validator
+若在此放寬（例如先丟掉空 segment 再取 tail），語料就會認證一份 runtime 必然拒收的
+manifest。反例語料 `semantic/semantic-result-prefix-empty-segment.json` 是
+`valid-result-manifest-full.json` **只把 `results/` 與 `attempt-0007/` 之間多插一個 `/`**
+的副本：schema 的 `attemptResultPrefix` pattern 仍然通過，語意層必須擋下。
 
 **判斷順序是規格的一部分**：`second_formal_result_for_attempt` 先判、且單獨成立。
 一旦 prior result 是「另一個 result」，後面的 digest 比較是在比兩份不同文件，

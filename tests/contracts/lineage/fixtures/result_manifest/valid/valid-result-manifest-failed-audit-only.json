@@ -14,13 +14,13 @@
       "converter_version": "2.4.1",
       "runtime_profile": "kit-gpu-exclusive"
     },
-    "result_prefix": "minio://edge-tpe-01/lineage-results/tenant-a/project-library/model-version-20260715-001/results/attempt-0007/",
+    "result_prefix": "minio://edge-tpe-01/lineage-results/tenant-a/project-library/model-version-20260715-001/results/attempt-0009/",
     "created_at": "2026-07-16T08:38:40Z",
     "published_at": "2026-07-16T08:40:22.750Z",
     "artifacts": [
       {
         "role": "usdc",
-        "ref": "minio://edge-tpe-01/lineage-results/tenant-a/project-library/model-version-20260715-001/results/attempt-0007/model.usdc?versionId=v-0007-usdc",
+        "ref": "minio://edge-tpe-01/lineage-results/tenant-a/project-library/model-version-20260715-001/results/attempt-0009/model.usdc?versionId=v-0007-usdc",
         "object_version_id": "v-0007-usdc",
         "etag": "etag-v-0007-usdc",
         "sha256": "ac44a1163bacc9201a2df24ea2049e79f2d34d7f1ad46f07e33794156bced4cc",
@@ -31,7 +31,7 @@
       },
       {
         "role": "element_mapping",
-        "ref": "minio://edge-tpe-01/lineage-results/tenant-a/project-library/model-version-20260715-001/results/attempt-0007/element_mapping.json?versionId=v-0007-element-mapping",
+        "ref": "minio://edge-tpe-01/lineage-results/tenant-a/project-library/model-version-20260715-001/results/attempt-0009/element_mapping.json?versionId=v-0007-element-mapping",
         "object_version_id": "v-0007-element-mapping",
         "etag": "etag-v-0007-element-mapping",
         "sha256": "49ca81b7129e91cf01227d0253dde6a3d29939edb5efc1ac0b9b19f624379302",
@@ -42,7 +42,7 @@
       },
       {
         "role": "entity_index",
-        "ref": "minio://edge-tpe-01/lineage-results/tenant-a/project-library/model-version-20260715-001/results/attempt-0007/entity_index.json?versionId=v-0007-entity-index",
+        "ref": "minio://edge-tpe-01/lineage-results/tenant-a/project-library/model-version-20260715-001/results/attempt-0009/entity_index.json?versionId=v-0007-entity-index",
         "object_version_id": "v-0007-entity-index",
         "etag": "etag-v-0007-entity-index",
         "sha256": "2fa2b283932df712e43f2269a9166c28f8f3899afba242dcf07e14fa9775ebbc",
@@ -53,7 +53,7 @@
       },
       {
         "role": "bbox_index",
-        "ref": "minio://edge-tpe-01/lineage-results/tenant-a/project-library/model-version-20260715-001/results/attempt-0007/bbox_index.json?versionId=v-0007-bbox-index",
+        "ref": "minio://edge-tpe-01/lineage-results/tenant-a/project-library/model-version-20260715-001/results/attempt-0009/bbox_index.json?versionId=v-0007-bbox-index",
         "object_version_id": "v-0007-bbox-index",
         "etag": "etag-v-0007-bbox-index",
         "sha256": "0bd9d2955e9dc8d1bfad7cfc6547e3d02d39caed6e880adf13e8438e21c8f7a9",
@@ -64,7 +64,7 @@
       },
       {
         "role": "spatial_index",
-        "ref": "minio://edge-tpe-01/lineage-results/tenant-a/project-library/model-version-20260715-001/results/attempt-0007/spatial_index.json?versionId=v-0007-spatial-index",
+        "ref": "minio://edge-tpe-01/lineage-results/tenant-a/project-library/model-version-20260715-001/results/attempt-0009/spatial_index.json?versionId=v-0007-spatial-index",
         "object_version_id": "v-0007-spatial-index",
         "etag": "etag-v-0007-spatial-index",
         "sha256": "64a5b261cf422fdce83b4d735d22bb3d463e88d0650e3e682b33b91dd97feacd",
@@ -75,7 +75,7 @@
       },
       {
         "role": "pset_index",
-        "ref": "minio://edge-tpe-01/lineage-results/tenant-a/project-library/model-version-20260715-001/results/attempt-0007/pset_index.json?versionId=v-0007-pset-index",
+        "ref": "minio://edge-tpe-01/lineage-results/tenant-a/project-library/model-version-20260715-001/results/attempt-0009/pset_index.json?versionId=v-0007-pset-index",
         "object_version_id": "v-0007-pset-index",
         "etag": "etag-v-0007-pset-index",
         "sha256": "b4936b4459ffc654e040b61087b011055e7630954f5f33be77db7ec34d436548",
@@ -86,7 +86,7 @@
       },
       {
         "role": "alignment_report_json",
-        "ref": "minio://edge-tpe-01/lineage-results/tenant-a/project-library/model-version-20260715-001/results/attempt-0007/alignment_report.json?versionId=v-0007-alignment-report-json",
+        "ref": "minio://edge-tpe-01/lineage-results/tenant-a/project-library/model-version-20260715-001/results/attempt-0009/alignment_report.json?versionId=v-0007-alignment-report-json",
         "object_version_id": "v-0007-alignment-report-json",
         "etag": "etag-v-0007-alignment-report-json",
         "sha256": "c481e17bce0675de5741c9e86f149a71d33aa3f42f084e7da1b1f2df40a06bd5",
@@ -97,7 +97,7 @@
       },
       {
         "role": "alignment_report_csv",
-        "ref": "minio://edge-tpe-01/lineage-results/tenant-a/project-library/model-version-20260715-001/results/attempt-0007/alignment_report.csv?versionId=v-0007-alignment-report-csv",
+        "ref": "minio://edge-tpe-01/lineage-results/tenant-a/project-library/model-version-20260715-001/results/attempt-0009/alignment_report.csv?versionId=v-0007-alignment-report-csv",
         "object_version_id": "v-0007-alignment-report-csv",
         "etag": "etag-v-0007-alignment-report-csv",
         "sha256": "c169135c6a1b5e985bb2bba79956e09587986184615433092eb226fd23deb24e",
@@ -108,7 +108,7 @@
       },
       {
         "role": "quality_report",
-        "ref": "minio://edge-tpe-01/lineage-results/tenant-a/project-library/model-version-20260715-001/results/attempt-0007/quality_report.json?versionId=v-0007-quality-report",
+        "ref": "minio://edge-tpe-01/lineage-results/tenant-a/project-library/model-version-20260715-001/results/attempt-0009/quality_report.json?versionId=v-0007-quality-report",
         "object_version_id": "v-0007-quality-report",
         "etag": "etag-v-0007-quality-report",
         "sha256": "2dffbb71c51af48aea71b5a50ad404818a2b2365dc3f869cd9f08068ad19f114",
