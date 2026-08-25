@@ -46,7 +46,7 @@ exit=0
   "byDepth": {}
 }
 
-## path-identity proof vs slice-2 combined branch d5b1702 (backend paths)
+## path-identity proof vs slice-2 combined branch d5b1702 (backend paths) — SHA pair: d5b1702 vs 5a05927 (pre-fix split commit only). After the P5 round-1 fix commit 7c406ad (and the origin/main merge 3667b4d) five backend paths intentionally differ from d5b1702: .env.web-plane.host-kit.example, .env.web-plane.host-kit.canonical-linux.example, tests/conversion-control-auth.test.ts, tests/dev-routes-disabled.test.ts, tests/env-example-dev-routes-parity.test.ts (see commit 7c406ad message).
 (empty diff = byte-identical)
 
 ## deploy_dryrun tier evidence (Windows host, worktree root)

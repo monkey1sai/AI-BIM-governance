@@ -27,7 +27,7 @@
 ## 4. 勾選與 owner 動作
 
 - `tasks.md` §4 task 為後端／測試 task：4.2／4.3／4.5 可於本切片 PR 以本機 vitest 綠打勾（非 UI task）；4.4 含 UI 顯示與 canonical env，只在下方註記「後端與 compose 透傳本機綠；canonical env 與 181 404 驗證待 owner」，不打勾；4.1 以 impact 輸出附於 PR body 後打勾。
-- **owner 動作（AI 不得代做）**：(a) 在 `bim-review-coordinator/.env.example` 加一行 `ENABLE_DEV_ROUTES=`（附註解「canonical-linux 設 false；空＝維持開啟」）——本 session 的 protect-secrets hook 保護所有 `.env*`（含 `.env.example`），agent 不讀不改不繞道；parity 測試在該行落地前預期為紅。(b) 在 canonical-linux 私有 canonical env 設 `ENABLE_DEV_ROUTES=false`，並確認 `DEV_AUTH_TOKEN` 非預設值（否則 T4 token 路徑不啟用，UI 觸發只剩 allowlist）。
+- **owner 動作（AI 不得代做）**：(a) ✅ 已完成（2026-08-25：owner 追加 `ENABLE_DEV_ROUTES=` 並移除 PR #222 遺留的重複 `=true`；後端 PR 另在根目錄 `.env.web-plane.host-kit*.example` 宣告兩鍵）——原文：在 `bim-review-coordinator/.env.example` 加一行 `ENABLE_DEV_ROUTES=`（附註解「canonical-linux 設 false；空＝維持開啟」）——本 session 的 protect-secrets hook 保護所有 `.env*`（含 `.env.example`），agent 不讀不改不繞道；parity 測試在該行落地前預期為紅。(b) 在 canonical-linux 私有 canonical env 設 `ENABLE_DEV_ROUTES=false`，並確認 `DEV_AUTH_TOKEN` 非預設值（否則 T4 token 路徑不啟用，UI 觸發只剩 allowlist）。
 
 ## 5. 執行環境事實（worktree）
 
