@@ -1,0 +1,165 @@
+{
+  "slug": "unified-console-runtime-truth-s1",
+  "phase": "P4",
+  "engine": "playwright",
+  "engineDetail": "@playwright/test 1.61.1, project chromium (Desktop Chrome), headless; playwright.config.ts of web-viewer-sample (trace on, screenshot on, video retain-on-failure, viewport 1440x900, workers 1, retries 0)",
+  "executor": "browser-evidence subagent (Fable 5) spawned by the spec-to-done coordinator; spec executed unmodified from the sibling worktree; supplementary DOM capture script authored by the executor in the scratchpad (not part of the branch)",
+  "capturedAtUtc": "2026-08-25T15:55:03Z..2026-08-25T15:55:50Z (spec run); 2026-08-25T15:58:31Z..15:59:30Z (supplementary capture)",
+  "subjectHead": "4e73c1019ab6a5560fc37987614945f5ad1aa498",
+  "branch": "codex/openspec/unified-console-runtime-truth-s1",
+  "worktree": "C:/Repos/active/iot/AI-BIM-governance.worktrees/unified-console-runtime-truth-s1",
+  "spec": "web-viewer-sample/e2e/unified-console-runtime-truth.spec.ts (7 tests; unchanged)",
+  "backend": {
+    "coordinator": "branch coordinator http://127.0.0.1:8006 — `node node_modules/tsx/dist/cli.mjs src/index.ts` run from this worktree's bim-review-coordinator at HEAD 4e73c10 (the slice touches no bim-review-coordinator file; coordinator code == origin/main merge 7705389). Real coordinator process, not a mock.",
+    "consoleDist": "CONSOLE_DIST_DIR = worktree web-viewer-sample/dist-ui rebuilt at HEAD via `npm run build:ui` (2026-08-25 23:53 local; asset /ui/assets/index-DQ_DRZL4.js; bundle contains page-root / kit-instance-val / handoff-none markers and does NOT contain `GPU/Stream 82%` or `14.6/24`). UI served same-origin from /ui, so the console's coordinatorBase resolves to http://127.0.0.1:8006 (defaultCoordinatorBase: /ui on non-dev port → window.location.origin).",
+    "isolation": "HOST=127.0.0.1 PORT=8006 PUBLIC_HOST=127.0.0.1; all mutable stores (SESSION_STORE_DIR, EVENT_LOG_DIR, LOG_ROOT, CALLBACK_OUTBOX_STORE_PATH, CONVERSION_LEDGER_STORE_PATH, SOURCE_BUNDLE_STORE_PATH, PIPELINE_JOB_STORE_PATH, ARTIFACT_HEALTH_LEDGER_STORE_PATH, STORAGE_ROOT/STORAGE_HOST_ROOT/RUNTIME_STORAGE_ROOT, EDGE_RUNTIME_DATA_ROOT) pointed at the session scratchpad; MINIO_WATCH_ENABLED=false; CONVERSION_POLL_ENABLED=false; no .env file in the worktree (dotenv found nothing; defaults + explicit env only).",
+    "upstreams": {
+      "governance-service": "default GOVERNANCE_API_BASE http://127.0.0.1:49102 → real host-native uvicorn governance-service (PID observed listening); GET /api/governance/issues → 200 {issues:[]}, GET /api/governance/rule-runs → 200 {total:0}",
+      "kit-manager-api": "default KIT_MANAGER_API_BASE http://127.0.0.1:8010 → real host-native uvicorn kit-manager (PID observed listening); GET /api/kit/instances/current → 200 {instance_id:\"kit_local_001\",status:\"idle\",control_status:\"not_sent\"}; GET /api/kit/health → 200 {status:\"ok\",kit_instance_id:\"kit_local_001\"}",
+      "conversion authority": "http://127.0.0.1:49101 not listening — UI shows 未取得/unknown (no probe endpoint); no conversion request is made by this slice",
+      "minio": "watch disabled — GET /api/minio/objects → 200 {count:0, note:\"MinIO watch 未設定（未取得）\"}; GET /api/external/minio-watch/status → 200 {enabled:false}"
+    },
+    "whyNot8004": "deployment :8004 is the docker container ai-bim-web-plane-host-kit-coordinator-1 (image created 2026-08-18T10:30Z, up 6 days) whose baked /workspace/console-dist bundle (/ui/assets/index-CZ3UFOBI.js) lacks this branch's markers (page-root=false, kit-instance-val=false) and still contains the literal `82%` / `14.6/24` → the spec's beforeEach would `stack_down:` skip every test. :8005 belongs to the sibling unified-console-runtime-truth-s2 worktree coordinator (another session) and was not touched. Per spec header rule 3, a different LOCAL port was used via E2E_COORDINATOR_BASE_URL.",
+    "stoppedAfterRun": true,
+    "stopEvidence": "taskkill PID 34376 → SUCCESS; netstat shows :8006 freed; :8004 (docker) and :8005 (s2) listeners unchanged"
+  },
+  "harness": {
+    "command": "cd web-viewer-sample && E2E_DISABLE_WEBSERVER=1 E2E_COORDINATOR_BASE_URL=http://127.0.0.1:8006 npx playwright test e2e/unified-console-runtime-truth.spec.ts",
+    "reporters": "config default: list + ./e2e/support/forbid-skipped-when-real.ts + html (html report left in worktree artifacts/e2e/report, ignored)",
+    "webServer": "disabled (E2E_DISABLE_WEBSERVER=1) — this spec navigates to the coordinator-served /ui, the vite :5180 viewer is not used by design (spec header)",
+    "E2E_REQUIRE_REAL": "NOT set. First attempt with E2E_REQUIRE_REAL=1 aborted at config load: `Error: E2E_STACK_MANIFEST is required in require-real mode` (e2e/support/isolated-stack.ts:246 — the repo's isolated-branch-stack manifest contract, not available for a coordinator-served dist-ui run). Skip status was therefore verified by reading the list reporter output: 7 ✓, 0 skipped.",
+    "exitCode": 0,
+    "result": "7 passed (45.4s); 0 failed; 0 skipped",
+    "log": "artifacts/e2e/unified-console-runtime-truth-s1-playwright.log"
+  },
+  "tests": [
+    { "n": 1, "title": "#home 四 KPI 與同分鐘 API JSON 一致；值帶 asbuilt＋四值 data-state；無 fixture 固定值", "status": "passed", "duration": "3.8s", "trace": "artifacts/e2e/unified-console-runtime-truth-s1-trace/unified-console-runtime-tr-82ce4-四值-data-state；無-fixture-固定值-chromium/trace.zip" },
+    { "n": 2, "title": "#home KPI 卡為 nav：點「活躍 Sessions」導向 #sessions（legacy 真頁，無 page-root）", "status": "passed", "duration": "1.0s", "trace": "artifacts/e2e/unified-console-runtime-truth-s1-trace/unified-console-runtime-tr-5c74a-ions（legacy-真頁，無-page-root）-chromium/trace.zip" },
+    { "n": 3, "title": "#pipeline 五段真值＋runtime ID（Kit instance／session handoff）；不打 /api/internal、/api/dev；觸發轉檔 disabled 不發請求", "status": "passed", "duration": "1.9s", "trace": "artifacts/e2e/unified-console-runtime-truth-s1-trace/unified-console-runtime-tr-c934d--api-dev；觸發轉檔-disabled-不發請求-chromium/trace.zip" },
+    { "n": 4, "title": "#runtime：GPU 未取得（unavailable，非數字）、Kit instance 真值、六 svc-dot、事件列 disabled", "status": "passed", "duration": "965ms", "trace": "artifacts/e2e/unified-console-runtime-truth-s1-trace/unified-console-runtime-tr-a0674-e-真值、六-svc-dot、事件列-disabled-chromium/trace.zip" },
+    { "n": 5, "title": "failure → retry：/api/** 503 時 KPI 顯示 —／未連線；解除後於退避上限內恢復 live", "status": "passed", "duration": "21.4s", "trace": "artifacts/e2e/unified-console-runtime-truth-s1-trace/unified-console-runtime-tr-5e188-I-顯示-—／未連線；解除後於退避上限內恢復-live-chromium/trace.zip" },
+    { "n": 6, "title": "loading：API 延遲時先顯示 —（永不以 0 佔位），回應後轉 live", "status": "passed", "duration": "3.3s", "trace": "artifacts/e2e/unified-console-runtime-truth-s1-trace/unified-console-runtime-tr-d35aa-遲時先顯示-—（永不以-0-佔位），回應後轉-live-chromium/trace.zip" },
+    { "n": 7, "title": "共用 poller：#pipeline（殼層與頁面同訂閱 /api/runtime/status）10.5s 內同端點請求 ≤ 2（初次＋一輪）", "status": "passed", "duration": "11.3s", "trace": "artifacts/e2e/unified-console-runtime-truth-s1-trace/unified-console-runtime-tr-3073f-tus）10-5s-內同端點請求-≤-2（初次＋一輪）-chromium/trace.zip" }
+  ],
+  "networkEvidence": {
+    "source": "*.network entries inside the Playwright trace.zip files (expanded and aggregated by the executor)",
+    "apiOrigins": ["http://127.0.0.1:8006"],
+    "internalOrDevCalls": 0,
+    "endpointsObservedFromBrowser": [
+      "GET /api/runtime/status", "GET /api/conversion/records", "GET /api/minio/objects", "GET /api/external/minio-watch/status",
+      "GET /api/callback-outbox/summary", "GET /api/kit/health", "GET /api/kit/instances/current",
+      "GET /api/governance/issues", "GET /api/governance/rule-runs", "GET /api/external/ifc-ready"
+    ],
+    "offlineTest": "trace 5e188: every one of the 8 #home endpoints shows one 503 (page.route stub, test-only) followed by 200s after unroute",
+    "sharedPollerTimeline": "trace 3073f GET /api/runtime/status from the browser: 15:55:38.857Z (beforeEach /ui#home), 15:55:39.092Z (fresh /ui#pipeline initial), 15:55:49.173Z (+10.08s, one poll round) → 2 browser requests inside the 10.5s assertion window, no overlapping in-flight; the 15:55:38.591Z entry is the APIRequestContext probe, not the browser",
+    "conversionTrigger": "no /api/conversion/trigger request after force-clicking the disabled 觸發轉檔 control (test 3)"
+  },
+  "routes": [
+    {
+      "route": "#home（/ui#home, UnifiedConsole 總覽 · Mission Control）",
+      "buttons": ["KPI 卡 活躍 Sessions（data-action=nav → #sessions，已點擊）", "KPI 卡 轉檔中／未結 Issue／Outbox 待送（data-action=nav）", "進入生產線 →", "top-bar chips Coordinator／Governance／Kit Runtime／GPU"],
+      "fixture": "none in production path — KPI values come from the shared poller; no 2026-07-14 / 990_model.ifc fixture strings (asserted); nothing on this route is labelled DEMO DATA, and the top-bar project selector text 'Demo Project – A1 Tower' is static shell text (see gaps)",
+      "backendApi": ["GET /api/runtime/status → 200 sessions.active_count=0", "GET /api/conversion/records?limit=100 → 200 count=0", "GET /api/governance/issues → 200 issues=[]", "GET /api/callback-outbox/summary?limit=200 → 200 total=0", "GET /api/kit/health → 200", "GET /api/governance/rule-runs → 200", "GET /api/external/ifc-ready → 200", "GET /api/external/minio-watch/status → 200"],
+      "observed": [
+        "kpi-sess-val='0' data-prov=asbuilt data-state=live; sub 'participants 0'",
+        "kpi-conv-val='0' asbuilt live; sub 'ready 0 · failed 0'",
+        "kpi-issue-val='0' asbuilt live; sub '非 resolved／rejected'",
+        "kpi-outbox-val='0' asbuilt live; sub 'attempts 0/0'",
+        "last-updated '最後更新 23:55:08' (spec run) / '最後更新 23:58:32' (supplementary)",
+        "chip-coordinator 'Coordinator OK' data-health=ok; chip-gpu 'GPU 未取得' data-state=unavailable (no literal 82%)",
+        "6 svc-dot: bim-review-coordinator :8006 ok; governance-service /api/governance/* proxy ok; conversion authority 127.0.0.1:49101 無探測端點·未取得 unknown; Kit signaling :49100 無探測端點·未取得 unknown; kit-manager-api /api/kit/health proxy ok; MinIO watch 停用 degraded",
+        "UI KPI text == API-derived expectation (spec test 1 expect.poll matched)"
+      ],
+      "screenshot": { "file": "artifacts/e2e/unified-console-runtime-truth-s1-home.png", "sha256": "302c49a4db7232673d66d5244dc32704b5086a7296af09466d0776a5d322c3ce" }
+    },
+    {
+      "route": "#pipeline（/ui#pipeline, 模型資料與轉檔生產線）",
+      "buttons": ["MinIO 物件 →", "轉檔排程 →", "Session 管理 →", "Issues →", "報表 →", "觸發轉檔（aria-disabled=true, data-action=disabled, data-prov=p1; force-click sends no request）"],
+      "fixture": "none — five stages bound to coordinator endpoints; RVT stage rendered as 已退役 with unavailable state",
+      "backendApi": ["GET /api/kit/instances/current → 200 instance_id=kit_local_001 status=idle", "GET /api/runtime/status → 200", "GET /api/minio/objects → 200", "GET /api/external/ifc-ready → 200", "GET /api/conversion/records → 200", "GET /api/callback-outbox/summary → 200", "GET /api/governance/rule-runs → 200", "GET /api/governance/issues → 200"],
+      "observed": [
+        "kit-instance-val='kit_local_001 idle' data-prov=asbuilt data-state=live (== `${instance_id} ${status}` from /api/kit/instances/current)",
+        "sess-active-val='0' asbuilt live; handoff-none '無可 handoff session' visible; handoff-link count 0 (0 sessions)",
+        "rvt-retired contains 已退役, data-state=unavailable",
+        "trigger-conv aria-disabled=true; trigger-conv-reason '需 allowlist 來源：瀏覽器授權（D2＝T4 operator token，tasks §4.2）落地前停用；請至 #minio 由 allowlist 來源觸發。'",
+        "intake: 0 ifc-ready, 未取得 資料夾/含 source IFC, MinIO watch off; 治理／報表 0 rule-runs 0 未結 issue; outbox 0 待送 attempts 0/0 metadata-only",
+        "iframe count 0; no /api/internal or /api/dev requests"
+      ],
+      "screenshot": { "file": "artifacts/e2e/unified-console-runtime-truth-s1-pipeline.png", "sha256": "7b62cd099b245213a5aa8941215f55fc4fdbcb975374a0baabf5f55b973144bf" }
+    },
+    {
+      "route": "#runtime（/ui#runtime, Runtime / Kit · GPU 營運, OpsPage）",
+      "buttons": ["Kit / GPU 機隊 →", "Session 管理 →", "GPU 審查室 →", "事件流（aria-disabled=true, data-prov=p1）"],
+      "fixture": "none — GPU shows 未取得 (unavailable) instead of a number; no literal 82% / 14.6/24 GB",
+      "backendApi": ["GET /api/kit/instances/current → 200", "GET /api/runtime/status → 200", "GET /api/kit/health → 200", "+ the other shared-poller endpoints"],
+      "observed": [
+        "kit-instance-id='kit_local_001' data-prov=asbuilt data-state=live; badge idle; 'control not_sent · last — · opened 0'",
+        "gpu-val='未取得' asbuilt data-state=unavailable; gpu-sub '未取得：/api/runtime/status 與 /api/kit/instances/current 皆無 GPU 使用率欄位'",
+        "6 svc-dot with data-health ∈ {ok, unknown, degraded} (same six rows as #home)",
+        "events-disabled aria-disabled=true; '事件流未提供（coordinator 無事件端點，不捏造事件列表）'"
+      ],
+      "screenshot": { "file": "artifacts/e2e/unified-console-runtime-truth-s1-runtime.png", "sha256": "1b4007c15f9f65582cbc693c89bcd7e9e7446268c3984ffbcd7c37f57ce0aa2e" }
+    },
+    {
+      "route": "#sessions（nav target of the 活躍 Sessions KPI card; legacy EdgeConsole page, no page-root）",
+      "buttons": ["重新整理 GET /api/runtime/status", "Open primary/spectator URL rows (後端待建 · P1, disabled)"],
+      "fixture": "legacy page out of slice-1 scope; shows 使用中 session 0 / GPU 未取得 / Health ok / 資料時間 2026-08-25T15:58:55.794Z from the real /api/runtime/status",
+      "backendApi": ["GET /api/runtime/status → 200"],
+      "observed": ["URL http://127.0.0.1:8006/ui#sessions; page-root count 0 (spec test 2 passed)"],
+      "screenshot": { "file": "artifacts/e2e/unified-console-runtime-truth-s1-sessions-nav.png", "sha256": "10ddff98aa272819b0ecd29ca59e56fb96f71a5741a9f61e7f465ac1dbd06f34", "source": "supplementary capture" }
+    }
+  ],
+  "states": {
+    "loading": "supplementary: with /api/runtime/status delayed 2.5s, first paint kpi-sess-val='—' data-state=offline (never 0) while the other three KPIs were already live '0'; became '0' live after the response (spec test 6 passed the same way). screenshot artifacts/e2e/unified-console-runtime-truth-s1-loading.png sha256 c51616e487085725f090aca59766a35450397520811c1ffa2dcbb0dbbc48f97c",
+    "success": "home/pipeline/runtime screenshots: all bound cells data-state=live with 最後更新 hh:mm:ss",
+    "failure": "spec test 5 + screenshot offline: /api/** 503 → all KPI '—' with sub '未連線', 最後更新 '—', chips Coordinator／Governance／Kit Runtime 未連線, GPU '—', svc-dots '—'/未取得, sidebar 轉檔 badge '—'. sha256 557c738718906d3e7a377b3fdfc3a973d8f81ab3c85da151389dba17597f5e25 (byte-identical to the PNG committed in 57d29d3)",
+    "retry": "spec test 5: after unroute, kpi-sess-val returned to data-state=live and 最後更新 hh:mm:ss within the 21.4s test (limit 75s). supplementary: recovered in 18.5s; screenshot artifacts/e2e/unified-console-runtime-truth-s1-recovered.png sha256 2c14525fae78629decddb2377377afd3f306a6ea1dbd431cab4e6401d8d214af (Coordinator OK, 最後更新 23:58:55)"
+  },
+  "runtimeIds": ["kit_local_001"],
+  "runtimeIdsNote": "instance_id `kit_local_001` (status idle, control_status not_sent) came from the real host-native kit-manager :8010 through the coordinator proxy GET /api/kit/instances/current and is rendered in #pipeline (kit-instance-val 'kit_local_001 idle') and #runtime (kit-instance-id). No review_session_id / job_id / issue id / model_version_id was visible because the isolated branch stack had 0 sessions, 0 conversion records, 0 issues; the /ui/open?session=<id> handoff-link branch of test 3 was therefore not exercised (handoff-none path only).",
+  "privacy": "screenshots and this summary contain only 127.0.0.1 loopback data; body text checked for 192.168.x.x on every captured route → none; no bucket keys, hostnames or tokens",
+  "worktreeSideEffects": "the spec writes artifacts/e2e/unified-console-runtime-truth-{home,pipeline,runtime,offline}.png inside the worktree (tracked since 57d29d3). Fresh HEAD captures differ for home/pipeline/runtime (timestamps; offline identical). The three modified tracked PNGs were restored with `git checkout --` to keep the worktree clean; the fresh captures live in the main workspace (s1-*.png) and in docs/evidence/unified-console-runtime-truth-s1/ (untracked, for the coordinator to add). dist-ui (ignored) was rebuilt; artifacts/e2e/_output and report (ignored) hold the raw run.",
+  "verticalSlice": {
+    "routeReachable": true,
+    "explicitButtons": true,
+    "defaultFixture": "no manual curl needed — shared poller loads all ten endpoints on page load; slice removes fixture values (asserted: no fixture strings, no 82%); nothing on the three routes is labelled DEMO DATA and none of the bound cells is demo — but the static shell strings 'Demo Project – A1 Tower' (no data-prov) and the sidebar wrapper data-prov=\"fixture\" (UnifiedShell.tsx:194, outside the allowed seven prov values) are flagged in gaps",
+    "realBackendApi": true,
+    "runtimeIdVisible": "partial — kit instance_id kit_local_001 (real kit-manager via coordinator proxy); session/job/issue ids not observed (empty stack)",
+    "states": "loading / success / failure / retry all observed (spec tests 5–6 + screenshots loading/offline/recovered)",
+    "artifactsOnDisk": true,
+    "verticalSliceOk": true,
+    "caveat": "green on the isolated branch stack (host-native coordinator :8006 at HEAD); NOT evidence for the canonical :8004 deployment nor for 181 — OpenSpec UI task checkboxes stay owner-gated per spec §4"
+  },
+  "notObserved": [
+    "review_session_id handoff link ([data-uc=handoff-link] → /ui/open?session=<id>, target=_blank): not observed — 0 active sessions on the isolated stack; only the handoff-none branch ran",
+    "job_id / conversion record rows and the 未取得 truncation branch (count > items.length): not observed — 0 conversion records",
+    "governance issue ids / rule-run ids: not observed — host-native governance-service returned empty lists",
+    "GPU-backed review session / stage truth (expected vs loaded artifact URL) / first frame: not observed — no 3D viewer route in slice 1; GPU cell shows 未取得 by design; no claim of 3D completion is made",
+    "canonical-linux 181 and local :8004 deployment serving this branch's bundle: not observed — :8004 docker (image 2026-08-18) still serves the pre-slice bundle",
+    "E2E_REQUIRE_REAL=1 enforced run: not observed — config demands E2E_STACK_MANIFEST (isolated-stack launcher contract); skip-free result verified manually from the list reporter (7 ✓, 0 skipped)",
+    "MinIO watch enabled / real bucket objects: not observed — MINIO_WATCH_ENABLED=false on the isolated stack",
+    "conversion authority (:49101) and Kit signaling (:49100) health: not observed — no probe endpoint; UI shows 未取得/unknown",
+    "back-off ceiling behaviour (10s→20s→40s, cap 60s): only the first back-off step was observed (recovery in 18–21s)",
+    "video: not observed — video=retain-on-failure and all tests passed"
+  ],
+  "gaps": [
+    { "id": "e1", "q": "唯一可見 runtime ID 是 kit_local_001，與 coordinator config 的 defaultKitEndpoint.id 預設值同名；雖 trace c934d 顯示 GET /api/kit/instances/current → 200 且 body 含 control_status/opened_runtime_uris 等 kit-manager 欄位，但未直接比對 :8010 回應。宣稱失效模式：若 proxy 失敗時 UI 退回 config 預設 id，畫面無法分辨真值與預設值。" },
+    { "id": "e2", "q": "session handoff 真值（/ui/open?session=<review_session_id>、target=_blank）分支未走到（0 sessions）；spec 對該分支的斷言只在 items.length>0 時執行，本輪等於未驗證。宣稱失效模式：handoff-link href 組裝或 session_id 取值錯誤在空狀態下不會被此 spec 抓到。" },
+    { "id": "e3", "q": "evidence 來自 host-native 隔離 stack :8006（空狀態），而非 canonical :8004；HEAD 已 commit 的四張截圖（57d29d3，22:32）早於 d9b40de／4e73c10，與本輪 HEAD 截圖 home/pipeline/runtime 位元不同（offline 相同）。宣稱失效模式：PR 內截圖被誤讀為 HEAD 證據；:8004 部署仍是舊 bundle（含 82%），181 驗收前不得勾 OpenSpec UI task。" },
+    { "id": "e4", "q": "E2E_REQUIRE_REAL=1 在此 spec 的設計（coordinator 服務 dist-ui、無 isolated-stack manifest）下於 config 載入即拋 `E2E_STACK_MANIFEST is required`，spec 檔頭宣稱的「E2E_REQUIRE_REAL=1 時 skip 視為失敗」實際不可達；skip-free 只靠人工讀 reporter。宣稱失效模式：未來 stack 不對齊時 7 個 conditional skip 會以 exit 0 假綠通過。" },
+    { "id": "e5", "q": "殼層靜態字串未帶誠實標示：頂列專案選擇器 'Demo Project – A1 Tower'（UnifiedShell.tsx:169，無 data-prov）、側欄容器 data-prov=\"fixture\"（UnifiedShell.tsx:194，不在允許的七個 prov 值內）、頁腳 runtime-note ':8004/ui · UnifiedConsole'（UnifiedShell.tsx:223，在 :8006 服務下仍顯示 :8004）。spec §3 將 §2 控制項/badge 列為他切片，但 vertical slice 準則要求 mock 處已標 DEMO DATA——需裁決是否屬 slice-1『字面固定值』清除範圍或明確記為 follow-up。" },
+    { "id": "e6", "q": "governance-service :49102 與 kit-manager :8010 是主機上既有的 host-native 行程（cwd／版本未查證，非本 worktree 啟動）；本輪把它們當真後端讀取（只 GET）。宣稱失效模式：若這兩個行程來自其他 worktree／舊版，『真 backend』的版本一致性證據薄弱（僅 coordinator 與 UI 可證為 HEAD）。" },
+    { "id": "e7", "q": "共用 poller 斷言只涵蓋 /api/runtime/status ≤2 次/10.5s；其餘九端點只從 trace 觀察到「初次＋一輪」的節奏（例如 c934d／3073f 各端點 2–3 次，未見重疊 in-flight），但無自動斷言。宣稱失效模式：某端點在殼層與頁面各自訂閱造成重複 in-flight 時，此 spec 不會失敗。" }
+  ],
+  "traces": "artifacts/e2e/unified-console-runtime-truth-s1-trace/ (7 test folders, each trace.zip + test-finished-1.png; copied verbatim from the worktree artifacts/e2e/_output of this run)",
+  "screenshots": [
+    { "route": "#home", "file": "artifacts/e2e/unified-console-runtime-truth-s1-home.png", "sha256": "302c49a4db7232673d66d5244dc32704b5086a7296af09466d0776a5d322c3ce", "source": "spec test 1" },
+    { "route": "#pipeline", "file": "artifacts/e2e/unified-console-runtime-truth-s1-pipeline.png", "sha256": "7b62cd099b245213a5aa8941215f55fc4fdbcb975374a0baabf5f55b973144bf", "source": "spec test 3" },
+    { "route": "#runtime", "file": "artifacts/e2e/unified-console-runtime-truth-s1-runtime.png", "sha256": "1b4007c15f9f65582cbc693c89bcd7e9e7446268c3984ffbcd7c37f57ce0aa2e", "source": "spec test 4" },
+    { "route": "#home (offline 503)", "file": "artifacts/e2e/unified-console-runtime-truth-s1-offline.png", "sha256": "557c738718906d3e7a377b3fdfc3a973d8f81ab3c85da151389dba17597f5e25", "source": "spec test 5" },
+    { "route": "#home (loading, runtime/status delayed)", "file": "artifacts/e2e/unified-console-runtime-truth-s1-loading.png", "sha256": "c51616e487085725f090aca59766a35450397520811c1ffa2dcbb0dbbc48f97c", "source": "supplementary capture" },
+    { "route": "#home (recovered after 503→unroute)", "file": "artifacts/e2e/unified-console-runtime-truth-s1-recovered.png", "sha256": "2c14525fae78629decddb2377377afd3f306a6ea1dbd431cab4e6401d8d214af", "source": "supplementary capture" },
+    { "route": "#sessions (after KPI click)", "file": "artifacts/e2e/unified-console-runtime-truth-s1-sessions-nav.png", "sha256": "10ddff98aa272819b0ecd29ca59e56fb96f71a5741a9f61e7f465ac1dbd06f34", "source": "supplementary capture" }
+  ],
+  "docsEvidenceCopy": "docs/evidence/unified-console-runtime-truth-s1/ in the worktree: summary.json (this file) + sampled screenshots home/pipeline/runtime/offline (product-operability §5 convention: summary + samples only; traces stay in the main workspace)"
+}
