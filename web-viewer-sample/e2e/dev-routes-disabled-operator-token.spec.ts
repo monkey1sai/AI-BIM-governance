@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { test, expect, type APIResponse } from "@playwright/test";
 
 // unified-console-runtime-truth slice 2 §5A（原 Task 11）：dev routes 已關閉的 UI 垂直切片
 // ＋ D2=T4 operator token API 契約探針。
@@ -39,6 +39,23 @@ import { test, expect } from "@playwright/test";
 //   a1-testdata-devroutes-note、ifc-fixture-select、ifc-register-btn、a1-localfs-select）；plan 草稿裡的
 //   dev-routes-disabled-notice／ifc-runtime-state／a1-test-data-dev-routes-disabled 在本 branch 不存在，
 //   照抄必紅。
+//
+// *** 速率視窗是共用外部狀態：本 spec 必須可重複執行（task#4 quality 修復，2026-08-25）***
+//   operator token 的速率限制由 bim-review-coordinator/src/services/conversionControlAuthorization.ts
+//   的 SlidingWindowRateLimiter 實作：key 只有來源 IP、視窗跨四條 conversion 控制路由共用、
+//   實例在 app.ts 建立一次並活在 coordinator process 生命週期內、**沒有 reset hook**。
+//   branch coordinator 是長生命週期行程（不隨每次 playwright run 重啟），因此「視窗殘量」對本 spec
+//   而言是無法獨佔、也無法從外部唯讀查詢的狀態。
+//   初版本檔假設視窗一定是空的（寫死「第 1 次錯 token、第 2–5 次四路由、第 6–10 次補滿、第 11 次 429」），
+//   實測會讓上方那條「可重現指令」在 60 秒內重跑時假紅：第一發帶 token 的請求就被前一次執行的殘量
+//   擋成 429，斷在 expect(403)，看起來像 regression 其實只是視窗沒過期（已於修復前實測重現）。
+//   修法（本檔現況）：
+//     (1) 語意斷言（錯 token 403／四路由授權通過）一律經 withRateWindowRetry() 送出——遇 429 就依
+//         Retry-After 等到殘量離開視窗後重試，等待次數與總時長皆有上限，逾限**直接 fail 並說明原因**
+//         （不吞、不 skip，維持本檔「前置不齊備就大聲失敗」的一致設計）。
+//     (2) 速率限制本身改成「連打到 429 為止」（上限 OPERATOR_TOKEN_RATE_LIMIT+1 次，視窗全空時必收斂），
+//         不再斷言「剛好第 11 次」這個絕對次數。
+//   結果：上方那條指令連續重跑皆為 3 passed；視窗乾淨時零額外等待，60 秒內重跑則自動等一次視窗到期。
 
 const COORDINATOR = process.env.E2E_COORDINATOR_BASE_URL || "http://127.0.0.1:8005";
 const OPERATOR_TOKEN = process.env.E2E_DEV_AUTH_TOKEN || "e2e-operator-token";
@@ -47,8 +64,53 @@ const PRIORITIZE_PATH = "/api/conversion/jobs/ifcready_nope/prioritize";
 
 const PREFLIGHT_TIMEOUT_MS = 10_000;
 
+/** 與 conversionControlAuthorization.ts:8-9 的 OPERATOR_TOKEN_RATE_LIMIT／_WINDOW_MS 同步。 */
+const OPERATOR_TOKEN_RATE_LIMIT = 10;
+const OPERATOR_TOKEN_RATE_WINDOW_SECONDS = 60;
+
+/** 等待視窗到期時多給的邊際：涵蓋 Retry-After 的 ceil 誤差與前一次執行那串命中的時間跨度（實測 <0.3s）。 */
+const RATE_WINDOW_WAIT_MARGIN_MS = 1_500;
+/** 整個 test 允許等待視窗到期的總次數上限（正常情況 0 次；60 秒內重跑 1 次即可清空）。 */
+const RATE_WINDOW_MAX_WAITS = 2;
+
+let rateWindowWaitsUsed = 0;
+
 function fetchWithTimeout(url: string, init: RequestInit = {}): Promise<Response> {
   return fetch(url, { ...init, signal: AbortSignal.timeout(PREFLIGHT_TIMEOUT_MS) });
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * 送出一次帶 operator token 的 conversion 控制路由請求，並吸收「前一次執行殘留在滑動視窗裡的名額」
+ * 造成的 429（見檔頭「速率視窗是共用外部狀態」）。
+ *
+ * 這裡的 429 不是待驗的產品行為，而是本 spec 無法獨佔的外部狀態；真正要驗速率限制的那段刻意
+ * **不**經本函式（直接用 request.*），以免把要斷言的行為重試掉。
+ *
+ * 等待次數用光仍為 429 → 直接 throw 一則說得出原因的錯誤，而不是讓 429 流到 expect(403) 變成
+ * 看起來像 regression 的假紅。
+ */
+async function withRateWindowRetry(label: string, call: () => Promise<APIResponse>): Promise<APIResponse> {
+  for (;;) {
+    const response = await call();
+    if (response.status() !== 429) return response;
+    if (rateWindowWaitsUsed >= RATE_WINDOW_MAX_WAITS) {
+      throw new Error(
+        `${label}：operator token 速率視窗在等待 ${rateWindowWaitsUsed} 次後仍為 429。` +
+          "該視窗以來源 IP 為 key、由 coordinator process 共用且無 reset hook，" +
+          `請確認沒有其他程序同時在打 ${COORDINATOR}/api/conversion/* 的 token 路徑，` +
+          `或等 ${OPERATOR_TOKEN_RATE_WINDOW_SECONDS} 秒後重跑。`,
+      );
+    }
+    rateWindowWaitsUsed += 1;
+    const retryAfter = Number(response.headers()["retry-after"]);
+    const waitSeconds =
+      Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter : OPERATOR_TOKEN_RATE_WINDOW_SECONDS;
+    await sleep(waitSeconds * 1000 + RATE_WINDOW_WAIT_MARGIN_MS);
+  }
 }
 
 /**
@@ -58,7 +120,8 @@ function fetchWithTimeout(url: string, init: RequestInit = {}): Promise<Response
  *   EXTERNAL_INTAKE_IP_ALLOWLIST 排除 loopback（無 token prioritize → 403）。
  * 注意：這裡的無 token POST 在 guard 內於讀 token header 前就短路（見
  * bim-review-coordinator/src/services/conversionControlAuthorization.ts:81-86），不計入速率視窗，
- * 因此不會干擾下方 API 探針 test 精確數到第 11 次的 429 斷言。
+ * 因此 preflight 本身不會消耗下方 API 探針 test 要用的 token 名額（每次執行都跑 preflight，
+ * 若它會計數，光是重跑就會提早吃掉視窗）。
  */
 async function preflight(): Promise<string | null> {
   try {
@@ -133,7 +196,11 @@ test.describe("dev routes 已關閉：UI 垂直切片誠實狀態", () => {
 });
 
 test.describe("D2=T4 operator token API 契約探針（真 process、真 HTTP）", () => {
-  test.setTimeout(90_000);
+  // 視窗乾淨時整個 test 約 0.1s；預算要涵蓋最壞情況：RATE_WINDOW_MAX_WAITS 次「等整個
+  // 速率視窗到期」的等待（各 ≤ OPERATOR_TOKEN_RATE_WINDOW_SECONDS + 邊際）。
+  test.setTimeout(
+    90_000 + RATE_WINDOW_MAX_WAITS * (OPERATOR_TOKEN_RATE_WINDOW_SECONDS * 1000 + RATE_WINDOW_WAIT_MARGIN_MS),
+  );
 
   const RETRY_PATH = "/api/conversion/jobs/ifcready_nope/retry";
   const WATCH_PATH = "/api/conversion/watch";
@@ -182,55 +249,77 @@ test.describe("D2=T4 operator token API 契約探針（真 process、真 HTTP）
     expect(bare.status()).toBe(403);
     expect(await bare.json()).toEqual(IP_REJECTED_BODY);
 
-    // 錯誤 token → 403 operator token invalid（token header 存在即計入速率，第 1 次）。
-    const wrongToken = await request.post(`${COORDINATOR}${PRIORITIZE_PATH}`, {
-      headers: { "x-operator-token": "not-the-real-token" },
-      data: {},
-    });
+    // 以下開始為「帶 token header ＝ 計入速率視窗」的語意斷言。視窗是 coordinator process 共用、
+    // 本 spec 無法獨佔的外部狀態（見檔頭），故一律經 withRateWindowRetry 送出：遇 429 先等殘量
+    // 到期再重試，而不是把它當成待驗行為。
+    // 錯誤 token → 403 operator token invalid。
+    const wrongToken = await withRateWindowRetry("錯誤 token → 403", () =>
+      request.post(`${COORDINATOR}${PRIORITIZE_PATH}`, {
+        headers: { "x-operator-token": "not-the-real-token" },
+        data: {},
+      }),
+    );
     expect(wrongToken.status()).toBe(403);
     expect(await wrongToken.json()).toEqual(TOKEN_INVALID_BODY);
 
-    // 正確 token → 四條路由皆授權通過（落到既有下一判定，非 403／429；第 2–5 次）。
-    const prioritizeOk = await request.post(`${COORDINATOR}${PRIORITIZE_PATH}`, {
-      headers: { "x-operator-token": OPERATOR_TOKEN },
-      data: {},
-    });
+    // 正確 token → 四條路由皆授權通過（落到既有下一判定，非 403／429）。
+    const prioritizeOk = await withRateWindowRetry("prioritize 授權通過", () =>
+      request.post(`${COORDINATOR}${PRIORITIZE_PATH}`, {
+        headers: { "x-operator-token": OPERATOR_TOKEN },
+        data: {},
+      }),
+    );
     expect(prioritizeOk.status()).toBe(404); // job 不存在（授權通過後的下一判定）
 
-    const retryOk = await request.post(`${COORDINATOR}${RETRY_PATH}`, {
-      headers: { "x-operator-token": OPERATOR_TOKEN },
-      data: {},
-    });
+    const retryOk = await withRateWindowRetry("retry 授權通過", () =>
+      request.post(`${COORDINATOR}${RETRY_PATH}`, {
+        headers: { "x-operator-token": OPERATOR_TOKEN },
+        data: {},
+      }),
+    );
     expect(retryOk.status()).toBe(404);
 
-    const watchOk = await request.put(`${COORDINATOR}${WATCH_PATH}`, {
-      headers: { "x-operator-token": OPERATOR_TOKEN },
-      data: { enabled: true },
-    });
+    const watchOk = await withRateWindowRetry("watch 授權通過", () =>
+      request.put(`${COORDINATOR}${WATCH_PATH}`, {
+        headers: { "x-operator-token": OPERATOR_TOKEN },
+        data: { enabled: true },
+      }),
+    );
     expect(watchOk.status()).toBe(422); // MinIO watch 未配置（本環境未設 MINIO_WATCH_* 憑證）
 
-    const triggerOk = await request.post(`${COORDINATOR}${TRIGGER_PATH}`, {
-      headers: { "x-operator-token": OPERATOR_TOKEN },
-      data: { key: "e2e/probe/model.ifc" },
-    });
+    const triggerOk = await withRateWindowRetry("trigger 授權通過", () =>
+      request.post(`${COORDINATOR}${TRIGGER_PATH}`, {
+        headers: { "x-operator-token": OPERATOR_TOKEN },
+        data: { key: "e2e/probe/model.ifc" },
+      }),
+    );
     expect(triggerOk.status()).toBe(503); // MinIO 未設定，短路於 key 驗證之前，無 I/O 副作用
 
-    // --- 速率限制：同來源 IP 每分鐘 10 次（四路由共用同一滑動視窗）；上面已計 5 次，補到第 10 次 ---
-    for (let i = 0; i < 5; i += 1) {
+    // --- 速率限制：同來源 IP 每分鐘 OPERATOR_TOKEN_RATE_LIMIT 次（四路由共用同一滑動視窗）---
+    // 刻意不斷言「剛好第 11 次」這個絕對次數：視窗殘量是外部狀態（上面幾發已計入，且可能還有
+    // 前一次執行未到期的命中），寫死次數就是把「本 spec 獨佔 coordinator」當成前提。改為連打到
+    // 429 為止；上限 LIMIT+1 次——即使視窗全空，第 LIMIT+1 次也必定被擋，故迴圈必然收斂。
+    let limited: APIResponse | null = null;
+    for (let i = 0; i < OPERATOR_TOKEN_RATE_LIMIT + 1; i += 1) {
       const res = await request.post(`${COORDINATOR}${PRIORITIZE_PATH}`, {
         headers: { "x-operator-token": OPERATOR_TOKEN },
         data: {},
       });
-      expect(res.status()).toBe(404);
+      if (res.status() === 429) {
+        limited = res;
+        break;
+      }
+      expect(res.status()).toBe(404); // 未被擋下時必為授權通過後的下一判定
     }
-    const limited = await request.post(`${COORDINATOR}${PRIORITIZE_PATH}`, {
-      headers: { "x-operator-token": OPERATOR_TOKEN },
-      data: {},
-    });
-    expect(limited.status()).toBe(429);
+    if (limited === null) {
+      throw new Error(
+        `連打 ${OPERATOR_TOKEN_RATE_LIMIT + 1} 次帶正確 token 的 prioritize 仍未觸發 429：` +
+          `速率限制未生效（預期每來源 IP 每 ${OPERATOR_TOKEN_RATE_WINDOW_SECONDS} 秒 ${OPERATOR_TOKEN_RATE_LIMIT} 次）。`,
+      );
+    }
     expect(await limited.json()).toEqual(RATE_LIMITED_BODY);
     const retryAfter = Number(limited.headers()["retry-after"]);
     expect(retryAfter).toBeGreaterThanOrEqual(1);
-    expect(retryAfter).toBeLessThanOrEqual(60);
+    expect(retryAfter).toBeLessThanOrEqual(OPERATOR_TOKEN_RATE_WINDOW_SECONDS);
   });
 });
