@@ -23,6 +23,7 @@ import {
   assertLocatorConsistent,
   isRefParseFailure,
   isUtcTimestamp,
+  minioRefBelongsToPrefix,
   parseMinioPrefix,
   parseMinioRef,
   utcTimestampToMicros,
@@ -125,7 +126,15 @@ export interface PipelineResultManifest {
   alignment_summary: PipelineResultManifestAlignmentSummary;
 }
 
-const identifierSchema = z.string().min(1).max(200);
+// 契約 `$defs/identifier` 只限 1..200 字元、不限 charset。runtime 收斂到與
+// `routes/lineageResultRoutes.ts` 的 `SAFE_ID` 同一字集：這些 id 會進 route path／query／
+// log，放行控制字元或分隔符等於把注入面往下游推。已對六支 canonical valid
+// result_manifest fixture 逐欄驗過無誤殺；「runtime 比 schema 嚴」是本 repo 既有先例。
+const identifierSchema = z
+  .string()
+  .min(1)
+  .max(200)
+  .regex(/^[A-Za-z0-9._:-]+$/);
 const sourceBundleIdSchema = z
   .string()
   .min(1)
@@ -241,7 +250,9 @@ const manifestBodySchema = z
       .refine((prefix) => parseMinioPrefix(prefix) !== null),
     created_at: utcTimestampSchema,
     published_at: utcTimestampSchema,
-    artifacts: z.array(manifestArtifactSchema).min(4),
+    // 契約只要求 `minItems:4`。上限 32 是 runtime 的有界性地板（role 詞彙才 9 個，
+    // canonical valid fixture 最多 9 筆），避免一份 1 MiB 內的 manifest 逼出上千次 HEAD。
+    artifacts: z.array(manifestArtifactSchema).min(4).max(32),
     alignment_summary: z
       .object({
         metrics: z
@@ -285,6 +296,67 @@ const manifestBodySchema = z
         });
       }
     }
+    // 同一 role 兩筆時「那份 usdc」成了歧義引用；task 3.4 的 artifact download 以 role
+    // 當穩定 artifact id，重複等於讓下游自己猜要拿兩個 object 中的哪一個。
+    const roles = body.artifacts.map((artifact) => artifact.role);
+    if (new Set(roles).size !== roles.length) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["artifacts"],
+        message: "result manifest declares the same artifact role twice",
+      });
+    }
+
+    // semantic 規則 alignment_summary_denominator_mismatch（`semantic_validators.py` 的
+    // `validate_alignment_summary` 三條 `*_DENOMINATOR_MISMATCH`，由
+    // `validate_result_publication_scenario` 收斂成同一個 wire code）。
+    //
+    // 這三條必須在**這一層**就擋：`pipelineResultDetailReader` 的 compare-side schema
+    // 已經帶同一組綁定；這裡放行、那裡拒絕的話，result 會被註冊成 AVAILABLE
+    // 卻永遠讀不出 detail（503）——一個無法憑重試逆轉的不一致狀態。
+    const metrics = body.alignment_summary.metrics;
+    const counts = body.alignment_summary.counts;
+    const denominatorBindings: Array<[string, number, number]> = [
+      [
+        "ifc_usdc_coverage_ratio",
+        metrics.ifc_usdc_coverage_ratio.denominator,
+        counts.eligible_ifc_product_count,
+      ],
+      [
+        "rvt_ifc_alignment_ratio",
+        metrics.rvt_ifc_alignment_ratio.denominator,
+        counts.csv_valid_count,
+      ],
+      [
+        "rvt_ifc_usdc_lineage_ratio",
+        metrics.rvt_ifc_usdc_lineage_ratio.denominator,
+        counts.csv_valid_count,
+      ],
+    ];
+    for (const [name, declared, bound] of denominatorBindings) {
+      if (declared !== bound) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["alignment_summary", "metrics", name, "denominator"],
+          message: "alignment summary denominator is not bound to its count",
+        });
+      }
+    }
+
+    // **守衛（P1，已實測證實）**：zod v3 的欄位級 `.refine(isUtcTimestamp)` 失敗只標
+    // dirty 不 abort，而 object 級 superRefine 在 dirty 時仍會執行（zod v3
+    // `ZodEffects._parse` 的 refinement 分支），所以這裡拿到的可能是**未通過校驗**的字串。
+    // `utcTimestampToMicros` 對它會擲 `RangeError`，而 `parsePipelineResultManifest`
+    // 的 try 只包 `JSON.parse`——RangeError 會逃出 typed-error 契約，把 detail reader
+    // 本該誠實的 503 變成 500。canonical 反例：
+    // `invalid-manifest-offset-published-at.json`（manifest 本身）與
+    // `invalid-manifest-lowercase-z-artifact-published-at.json`（artifact），兩者在修復前
+    // 實測皆擲 RangeError。欄位級 issue 已存在、parse 終究回 null，故直接跳過時間比較。
+    const timestampsCanonical =
+      isUtcTimestamp(body.published_at) &&
+      body.artifacts.every((artifact) => isUtcTimestamp(artifact.published_at));
+    if (!timestampsCanonical) return;
+
     // semantic 規則 manifest_published_before_artifacts：manifest 先發布就可能被讀到
     // 一個 object 還在上傳的 result。時間一律當 instant 比，不比字串。
     const manifestPublishedAt = utcTimestampToMicros(body.published_at);
@@ -452,6 +524,18 @@ export async function readPipelineResultManifest(
     );
   }
 
+  // 有界讀的**第一道**：HEAD 已經回報了 size，超過上限就別開 body stream。
+  // 第二道（`getBytesVersioned` 的 chunk tally）保留：HEAD 的 ContentLength 是 server
+  // 宣告值，body 實際長度才是事實，兩道都留才擋得住「宣告小、送很多」。
+  if (head.sizeBytes > RESULT_MANIFEST_MAX_BYTES) {
+    throw new PipelineResultManifestReadError(
+      "object_too_large",
+      "result manifest HEAD reports a size above the bounded read limit",
+      `<= ${RESULT_MANIFEST_MAX_BYTES} bytes`,
+      String(head.sizeBytes),
+    );
+  }
+
   let rawBytes: Buffer;
   try {
     rawBytes = await deps.objects.getBytesVersioned(parsedRef, RESULT_MANIFEST_MAX_BYTES);
@@ -503,7 +587,9 @@ export type PipelineResultArtifactObservationFailure =
   /** manifest 引用的 object version 在 MinIO 上不存在（已刪／從未寫入）。 */
   | "artifact_not_found"
   /** object 在，但 ETag 或 size 與 manifest 宣告不符（被重寫）。 */
-  | "artifact_integrity_mismatch";
+  | "artifact_integrity_mismatch"
+  /** artifact ref 不在 manifest 宣告的 `result_prefix` 之下（跨 attempt／跨 bucket 引用）。 */
+  | "artifact_outside_result_prefix";
 
 /**
  * referenced artifact 的觀測失敗。
@@ -518,8 +604,8 @@ export class PipelineResultArtifactObservationError extends Error {
   constructor(
     readonly failure: PipelineResultArtifactObservationFailure,
     readonly role: PipelineResultManifestArtifactRole,
-    /** integrity mismatch 時是 `etag`／`size_bytes`；not found 時為 null。 */
-    readonly field: "etag" | "size_bytes" | null,
+    /** integrity mismatch 時是 `etag`／`size_bytes`，containment 違規是 `ref`；not found 為 null。 */
+    readonly field: "etag" | "size_bytes" | "ref" | null,
     detail: string,
     readonly expected: string | null = null,
     readonly observed: string | null = null,
@@ -558,6 +644,20 @@ export async function observeReferencedArtifacts(
         "schema_invalid",
         `result manifest ${artifact.role} ref is not a governed immutable locator`,
         "minio://<authority>/<bucket>/<key>?versionId=<id>",
+        null,
+      );
+    }
+    // **授權邊界縱深（在發任何請求之前）**：artifact 必須落在 manifest 自己宣告的
+    // `result_prefix` 之下。少了這一條，一份合約合格的 manifest 就能把 coordinator
+    // 指向**別的 attempt／別的 bucket** 的 object——而 task 3.4 的 presigned download
+    // 正是拿這些 ref 去簽章，等於讓 manifest 自帶越權能力。
+    if (!minioRefBelongsToPrefix(manifest.result_prefix, artifact.ref)) {
+      throw new PipelineResultArtifactObservationError(
+        "artifact_outside_result_prefix",
+        artifact.role,
+        "ref",
+        `referenced ${artifact.role} ref is not inside the manifest result_prefix`,
+        manifest.result_prefix,
         null,
       );
     }

@@ -24,11 +24,15 @@
 //   * `publication_state` 由本服務**導出**為 `AVAILABLE`：它的定義就是「formal result
 //     的 bytes 已可在不可變 locator 上讀到並通過完整性驗證」，而那正是抵達這一行的前提。
 import type { StructLogger } from "../../lib/structLog.js";
-import type { MinioLocator } from "./minioLocator.js";
+import {
+  isAttemptScopedMinioResultLocation,
+  type MinioLocator,
+} from "./minioLocator.js";
 import {
   locatorExpectation,
   observeReferencedArtifacts,
   readPipelineResultManifest,
+  RESULT_MANIFEST_OBJECT_NAME,
   type PipelineResultManifest,
   type PipelineResultManifestReadDeps,
 } from "./pipelineResultManifest.js";
@@ -104,9 +108,42 @@ export class PipelineResultIdentityMismatchError extends Error {
   }
 }
 
+/**
+ * manifest 宣告的 `result_prefix` 不是 attempt-scoped 的（末段不等於 `attempt_id`，
+ * 或 manifest 不是該 prefix 之下的 `result-manifest.json`）。
+ *
+ * `PipelineResultStore.registerResult()` 內部的 `validateResultLocation` 也會擋，但它擲的是
+ * 泛用的 `PipelineResultInvariantError`（route → 409 且無可讀原因）。在寫入之前先做一次
+ * typed 檢查，讓「位置不對」與「其他不變式違規」在呼叫端是兩件可分辨的事。
+ */
+export class PipelineResultLocationError extends Error {
+  readonly code = "result_prefix_not_attempt_scoped";
+
+  constructor(
+    readonly result_prefix: string,
+    readonly attempt_id: string,
+  ) {
+    super(
+      `result_prefix must end with the ${attempt_id} segment and contain the manifest as ${RESULT_MANIFEST_OBJECT_NAME}`,
+    );
+    this.name = "PipelineResultLocationError";
+  }
+}
+
+/** log 欄位的長度地板：ref／prefix 只留可辨識的前綴，不把全文灌進 log。 */
+function boundedDetail(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  return value.length <= 120 ? value : `${value.slice(0, 117)}...`;
+}
+
 export interface PipelineResultRegistrationDeps extends PipelineResultManifestReadDeps {
   results: PipelineResultStore;
-  structLog?: StructLogger;
+  /**
+   * 只取本服務真正會用到的兩個 level。窄化不是為了測試方便，而是讓型別本身說出
+   * 「registration 只會 info 成功／warn 拒絕，不會 error／fatal／audit」這件事；
+   * `createCoordinatorApp` 傳的完整 `StructLogger` 自然滿足它。
+   */
+  structLog?: Pick<StructLogger, "info" | "warn">;
 }
 
 export interface PipelineResultRegistrationService {
@@ -147,64 +184,101 @@ export function createPipelineResultRegistrationService(
     async registerFromManifest(
       input: RegisterPipelineResultFromManifestInput,
     ): Promise<RegisterPipelineResultFromManifestOutcome> {
-      // 1. locator 自洽 → HEAD → 有界讀 → digest 重算 → 契約解析。
-      //    任何一關失敗都是 typed `PipelineResultManifestReadError`，原樣向上拋。
-      const read = await readPipelineResultManifest(
-        locatorExpectation(input.manifest_locator),
-        { objects: deps.objects },
-      );
-
-      // 2. identity 逐欄比對（manifest 合格 ≠ 這份 manifest 屬於這個 attempt）。
-      assertIdentityMatches(read.manifest, input.expected_identity);
-
-      // 3. referenced artifacts 的 head-level 實體觀測（design.md §5）。
-      //    少了這一步，「manifest 完好但 USDC 已被刪／改寫」的 result 會被誤判為 AVAILABLE。
-      //    必須在 `registerResult()` **之前**：一旦進 store 就是不可變的 formal result。
-      await observeReferencedArtifacts(read.manifest, { objects: deps.objects });
-
-      // 4. 組 store 輸入。identity／outcome／prefix 一律取 manifest 實讀值；
-      //    attempt_number 與 completed_at 取 attempt 文件；digest 取實讀 SHA-256。
-      //    `result_prefix` 與 `result_manifest_ref` 的 attempt-scoped 關係由
-      //    store 的 `validateResultLocation` 判定（不在此重做第二套檢查）。
-      const registerInput: RegisterPipelineResultInput = {
-        result_id: read.manifest.result_id,
-        attempt_id: read.manifest.attempt_id,
-        pipeline_job_id: read.manifest.pipeline_job_id,
-        source_bundle_id: read.manifest.source_bundle_id,
-        external_model_version_id: read.manifest.external_model_version_id,
-        attempt_number: input.attempt.attempt_number,
-        result_prefix: read.manifest.result_prefix,
-        result_manifest_ref: input.manifest_locator.ref,
-        result_manifest_digest: read.observed_sha256,
-        attempt_outcome: read.manifest.attempt_outcome,
-        // 讀得到、驗得過 = AVAILABLE。failed／cancelled 的 audit-only manifest 同樣
-        // 是 AVAILABLE，但 `isSelectableResult` 會擋掉它的 activation —— publication
-        // 與 selection 是兩條互不覆蓋的軸（契約 `$defs/attempt` 的 selectable matrix）。
-        publication_state: "AVAILABLE",
-        completed_at: input.attempt.completed_at,
-        now: input.now,
-        correlation_id: input.correlation_id,
-      };
-
-      // 5. 唯一寫入點。replay 冪等／attempt 已綁他 result／revision 衝突都由 store 判。
-      const registration = deps.results.registerResult(registerInput);
-
-      deps.structLog?.info(LOG_COMPONENT, "formal result registered from manifest", {
-        pipeline_job_id: registration.result.pipeline_job_id,
-        result_id: registration.result.result_id,
-        attempt_id: registration.result.attempt_id,
-        attempt_outcome: registration.result.attempt_outcome,
-        publication_state: registration.result.publication_state,
-        selection_state: registration.result.selection_state,
-        replay: registration.replay,
-        auto_activated: registration.activation_audit_entry !== null,
-      });
-
-      return {
-        registration,
-        manifest: read.manifest,
-        observed_manifest_sha256: read.observed_sha256,
-      };
+      try {
+        return await register(deps, input);
+      } catch (error) {
+        // 失敗面的可觀測性：只記 id 與 typed 分類，ref／prefix 一律截斷（不灌全文）。
+        deps.structLog?.warn(LOG_COMPONENT, "formal result registration rejected", {
+          pipeline_job_id: input.expected_identity.pipeline_job_id,
+          result_id: input.expected_identity.result_id,
+          attempt_id: input.expected_identity.attempt_id,
+          code: boundedDetail((error as { code?: unknown }).code) ?? "unclassified",
+          role: boundedDetail((error as { role?: unknown }).role),
+          field: boundedDetail((error as { field?: unknown }).field),
+          expected: boundedDetail((error as { expected?: unknown }).expected),
+          observed: boundedDetail((error as { observed?: unknown }).observed),
+        });
+        throw error;
+      }
     },
+  };
+}
+
+async function register(
+  deps: PipelineResultRegistrationDeps,
+  input: RegisterPipelineResultFromManifestInput,
+): Promise<RegisterPipelineResultFromManifestOutcome> {
+  // 1. locator 自洽 → HEAD → 有界讀 → digest 重算 → 契約解析。
+  //    任何一關失敗都是 typed `PipelineResultManifestReadError`，原樣向上拋。
+  const read = await readPipelineResultManifest(
+    locatorExpectation(input.manifest_locator),
+    { objects: deps.objects },
+  );
+
+  // 2. identity 逐欄比對（manifest 合格 ≠ 這份 manifest 屬於這個 attempt）。
+  assertIdentityMatches(read.manifest, input.expected_identity);
+
+  // 3. attempt-scoped 位置檢查（typed）。store 深處也會擋，但那是泛用 InvariantError；
+  //    這裡先給一個能讀懂的原因，且在任何 MinIO artifact 觀測之前就收斂。
+  if (
+    !isAttemptScopedMinioResultLocation({
+      resultPrefix: read.manifest.result_prefix,
+      attemptId: read.manifest.attempt_id,
+      manifestRef: input.manifest_locator.ref,
+    })
+  ) {
+    throw new PipelineResultLocationError(
+      read.manifest.result_prefix,
+      read.manifest.attempt_id,
+    );
+  }
+
+  // 4. referenced artifacts 的 containment ＋ head-level 實體觀測（design.md §5）。
+  //    少了這一步，「manifest 完好但 USDC 已被刪／改寫」的 result 會被誤判為 AVAILABLE。
+  //    必須在 `registerResult()` **之前**：一旦進 store 就是不可變的 formal result。
+  await observeReferencedArtifacts(read.manifest, { objects: deps.objects });
+
+  // 5. 組 store 輸入。identity／outcome／prefix 一律取 manifest 實讀值；
+  //    attempt_number 與 completed_at 取 attempt 文件；digest 取實讀 SHA-256。
+  //    `result_prefix` 與 `result_manifest_ref` 的 attempt-scoped 關係由
+  //    store 的 `validateResultLocation` 判定（不在此重做第二套檢查）。
+  const registerInput: RegisterPipelineResultInput = {
+    result_id: read.manifest.result_id,
+    attempt_id: read.manifest.attempt_id,
+    pipeline_job_id: read.manifest.pipeline_job_id,
+    source_bundle_id: read.manifest.source_bundle_id,
+    external_model_version_id: read.manifest.external_model_version_id,
+    attempt_number: input.attempt.attempt_number,
+    result_prefix: read.manifest.result_prefix,
+    result_manifest_ref: input.manifest_locator.ref,
+    result_manifest_digest: read.observed_sha256,
+    attempt_outcome: read.manifest.attempt_outcome,
+    // 讀得到、驗得過 = AVAILABLE。failed／cancelled 的 audit-only manifest 同樣
+    // 是 AVAILABLE，但 `isSelectableResult` 會擋掉它的 activation —— publication
+    // 與 selection 是兩條互不覆蓋的軸（契約 `$defs/attempt` 的 selectable matrix）。
+    publication_state: "AVAILABLE",
+    completed_at: input.attempt.completed_at,
+    now: input.now,
+    correlation_id: input.correlation_id,
+  };
+
+  // 6. 唯一寫入點。replay 冪等／attempt 已綁他 result／revision 衝突都由 store 判。
+  const registration = deps.results.registerResult(registerInput);
+
+  deps.structLog?.info(LOG_COMPONENT, "formal result registered from manifest", {
+    pipeline_job_id: registration.result.pipeline_job_id,
+    result_id: registration.result.result_id,
+    attempt_id: registration.result.attempt_id,
+    attempt_outcome: registration.result.attempt_outcome,
+    publication_state: registration.result.publication_state,
+    selection_state: registration.result.selection_state,
+    replay: registration.replay,
+    auto_activated: registration.activation_audit_entry !== null,
+  });
+
+  return {
+    registration,
+    manifest: read.manifest,
+    observed_manifest_sha256: read.observed_sha256,
   };
 }

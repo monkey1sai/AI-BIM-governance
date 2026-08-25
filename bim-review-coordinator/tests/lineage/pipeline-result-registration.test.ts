@@ -6,6 +6,7 @@ import {
   type PipelineResultView,
 } from "../../src/services/lineage/pipelineResultStore.js";
 import {
+  parsePipelineResultManifest,
   PipelineResultArtifactObservationError,
   PipelineResultManifestReadError,
   RESULT_MANIFEST_MAX_BYTES,
@@ -14,8 +15,10 @@ import {
 import {
   createPipelineResultRegistrationService,
   PipelineResultIdentityMismatchError,
+  PipelineResultLocationError,
   type RegisterPipelineResultFromManifestInput,
 } from "../../src/services/lineage/pipelineResultRegistration.js";
+import { SourceBundleAccessDeniedError } from "../../src/services/lineage/sourceBundleObjectPort.js";
 import {
   createS3PipelineResultDetailReader,
   PipelineResultDetailUnavailableError,
@@ -41,6 +44,7 @@ import {
   type SeedResultManifestOptions,
 } from "../helpers/resultManifestFixtures.js";
 import type { MinioLocator } from "../../src/services/lineage/minioLocator.js";
+import type { SourceBundleAllowlist } from "../../src/services/lineage/sourceBundleObjectPort.js";
 
 const NOW = "2026-07-16T08:41:07.500Z";
 
@@ -52,7 +56,7 @@ interface Harness {
   pipelineJobId: string;
 }
 
-function harness(): Harness {
+function harness(allow: SourceBundleAllowlist = RESULT_ALLOWLIST): Harness {
   const jobStore = new PipelineJobStore(null);
   const { job } = jobStore.ensureJobForSourceBundle({
     sourceBundleId: RESULT_SOURCE_BUNDLE_ID,
@@ -61,7 +65,7 @@ function harness(): Harness {
     now: "2026-07-16T08:00:00.000Z",
   });
   const resultStore = new PipelineResultStore(jobStore, null);
-  const objects = createFakeSourceBundleObjectPort(RESULT_ALLOWLIST);
+  const objects = createFakeSourceBundleObjectPort(allow);
   return {
     jobStore,
     resultStore,
@@ -320,16 +324,66 @@ describe("createPipelineResultRegistrationService.registerFromManifest", () => {
     expect(h.resultStore.listResults(h.pipelineJobId)).toHaveLength(0);
   });
 
-  it("超過 bounded 讀取上限時 fail-closed，不截斷也不半解析", async () => {
+  // 有界讀有兩道門：HEAD 宣告的 size（第一道）與 body chunk tally（第二道）。
+  // 兩案分別把其中一道單獨打亮，證明第二道不是第一道的裝飾。
+  it("第一道門：HEAD 宣告超過上限時，body stream 從未開啟", async () => {
     const h = harness();
-    const seeded = seed(h, {
-      rawManifestBytes: Buffer.alloc(RESULT_MANIFEST_MAX_BYTES + 1, 0x61),
+    const bytes = Buffer.from(
+      JSON.stringify(resultManifestDocument({ body: { pipeline_job_id: h.pipelineJobId } })),
+      "utf-8",
+    );
+    const ref = h.objects.seed({
+      authority: RESULT_AUTHORITY,
+      bucket: RESULT_BUCKET,
+      objectKey: manifestObjectKey(),
+      versionId: "v-manifest-head-oversized",
+      bytes,
+      sizeBytes: RESULT_MANIFEST_MAX_BYTES + 1,
     });
 
     await expectReadFailure(
-      h.registration.registerFromManifest(registrationInput(h, seeded.locator)),
+      h.registration.registerFromManifest(
+        registrationInput(h, {
+          ref,
+          object_version_id: "v-manifest-head-oversized",
+          etag: fakeEtag(bytes),
+          sha256: sha256Hex(bytes),
+          // claim 與 HEAD 一致，否則會先撞 size_mismatch 而測不到本門。
+          size_bytes: RESULT_MANIFEST_MAX_BYTES + 1,
+        }),
+      ),
       "object_too_large",
     );
+    expect(h.objects.getBytesCalls).toBe(0);
+    expect(h.resultStore.listResults(h.pipelineJobId)).toHaveLength(0);
+  });
+
+  it("第二道門：HEAD 宣告在限內但 body 實際超限時仍 fail-closed（宣告小、送很多）", async () => {
+    const h = harness();
+    const oversized = Buffer.alloc(RESULT_MANIFEST_MAX_BYTES + 1, 0x61);
+    const ref = h.objects.seed({
+      authority: RESULT_AUTHORITY,
+      bucket: RESULT_BUCKET,
+      objectKey: manifestObjectKey(),
+      versionId: "v-manifest-body-oversized",
+      bytes: oversized,
+      // server 宣告一個小 size；事實在 body 裡。
+      sizeBytes: 512,
+    });
+
+    await expectReadFailure(
+      h.registration.registerFromManifest(
+        registrationInput(h, {
+          ref,
+          object_version_id: "v-manifest-body-oversized",
+          etag: fakeEtag(oversized),
+          sha256: sha256Hex(oversized),
+          size_bytes: 512,
+        }),
+      ),
+      "object_too_large",
+    );
+    expect(h.objects.getBytesCalls).toBe(1);
     expect(h.resultStore.listResults(h.pipelineJobId)).toHaveLength(0);
   });
 
@@ -394,6 +448,180 @@ describe("createPipelineResultRegistrationService.registerFromManifest", () => {
     expect((error as PipelineResultArtifactObservationError).field).toBe("size_bytes");
     expect((error as PipelineResultArtifactObservationError).observed).toBe("999999");
     expect(h.resultStore.listResults(h.pipelineJobId)).toHaveLength(0);
+  });
+
+  it("artifact ref 不在 result_prefix 之下時拒絕（授權邊界縱深，發請求之前就擋）", async () => {
+    const h = harness();
+    const seeded = seed(h, {
+      artifacts: {
+        usdc: {
+          // 宣告一個指向**別的 attempt** 的 ref：合約形狀合格，但越出本 result 的邊界。
+          declaredRef: `minio://${RESULT_AUTHORITY}/${RESULT_BUCKET}/${RESULT_EXTERNAL_MODEL_VERSION_ID}/results/attempt-9999/model.usdc?versionId=v-0007-usdc`,
+        },
+      },
+    });
+
+    const error = await caught(
+      h.registration.registerFromManifest(registrationInput(h, seeded.locator)),
+    );
+
+    expect(error).toBeInstanceOf(PipelineResultArtifactObservationError);
+    expect((error as PipelineResultArtifactObservationError).code).toBe(
+      "result_manifest_artifact_outside_result_prefix",
+    );
+    expect((error as PipelineResultArtifactObservationError).role).toBe("usdc");
+    expect((error as PipelineResultArtifactObservationError).field).toBe("ref");
+    // manifest 那一次之外零 HEAD：越界的 ref 連請求都不該發出去。
+    expect(h.objects.headCalls).toBe(1);
+    expect(h.resultStore.listResults(h.pipelineJobId)).toHaveLength(0);
+  });
+
+  it("result_prefix 末段不等於 attempt_id 時擲 typed location error（不是 store 深處的泛用 InvariantError）", async () => {
+    const h = harness();
+    // attempt_id 換成另一個 attempt；prefix 仍是 .../attempt-0007/，兩者不再對齊。
+    const seeded = seed(h, { body: { attempt_id: "attempt-0009" } });
+
+    const error = await caught(
+      h.registration.registerFromManifest(
+        registrationInput(h, seeded.locator, {
+          expected_identity: {
+            result_id: RESULT_RESULT_ID,
+            attempt_id: "attempt-0009",
+            pipeline_job_id: h.pipelineJobId,
+            source_bundle_id: RESULT_SOURCE_BUNDLE_ID,
+            external_model_version_id: RESULT_EXTERNAL_MODEL_VERSION_ID,
+          },
+        }),
+      ),
+    );
+
+    expect(error).toBeInstanceOf(PipelineResultLocationError);
+    expect((error as PipelineResultLocationError).code).toBe("result_prefix_not_attempt_scoped");
+    expect((error as Error).message).toContain("result-manifest.json");
+    // 位置不對就不必去觀測 artifacts：manifest 那一次之外零 HEAD。
+    expect(h.objects.headCalls).toBe(1);
+    expect(h.resultStore.listResults(h.pipelineJobId)).toHaveLength(0);
+  });
+
+  it("同一 result_id 以不同 manifest digest 重放時 fail-closed（不可變 result 不得被覆寫）", async () => {
+    const h = harness();
+    const first = seed(h);
+    await h.registration.registerFromManifest(registrationInput(h, first.locator));
+
+    // 同 result_id／attempt_id，只改 created_at → bytes 不同 → digest 不同。
+    const second = seed(h, {
+      body: { created_at: "2026-07-16T08:38:41Z" },
+      manifestVersionId: "v-manifest-0007-second-digest",
+    });
+    expect(sha256Hex(second.bytes)).not.toBe(sha256Hex(first.bytes));
+
+    const error = await caught(
+      h.registration.registerFromManifest(registrationInput(h, second.locator)),
+    );
+
+    expect(error).toBeInstanceOf(PipelineResultConflictError);
+    // 既有 result 的 digest 未被改寫。
+    expect(h.resultStore.getResult(RESULT_RESULT_ID)!.result_manifest_digest).toBe(
+      sha256Hex(first.bytes),
+    );
+    expect(h.resultStore.listResults(h.pipelineJobId)).toHaveLength(1);
+  });
+
+  it("manifest locator 不在 allowlist 時 access-denied 原樣向上拋，不偽裝成 manifest 有問題", async () => {
+    // port 的 bucket allowlist 不含 fixture 的 bucket → D-3 fail-closed 在 HEAD 就擋下。
+    const h = harness({
+      allowedAuthorities: [RESULT_AUTHORITY],
+      allowedBuckets: ["another-governed-bucket"],
+    });
+    const seeded = seed(h);
+
+    const error = await caught(
+      h.registration.registerFromManifest(registrationInput(h, seeded.locator)),
+    );
+
+    expect(error).toBeInstanceOf(SourceBundleAccessDeniedError);
+    expect((error as SourceBundleAccessDeniedError).code).toBe(
+      "source_bundle_locator_not_allowlisted",
+    );
+    // 分類邊界：registration 端**不**把部署邊界錯誤收斂成 manifest 讀取失敗。
+    expect(error).not.toBeInstanceOf(PipelineResultManifestReadError);
+    expect(h.resultStore.listResults(h.pipelineJobId)).toHaveLength(0);
+  });
+
+  it("失敗時寫一筆 structLog warn，只帶 id 與 typed 分類（ref 全文不入 log）", async () => {
+    const h = harness();
+    const warns: Array<{
+      component: string;
+      msg: string;
+      data?: Record<string, unknown>;
+    }> = [];
+    const service = createPipelineResultRegistrationService({
+      objects: h.objects,
+      results: h.resultStore,
+      structLog: {
+        info: () => {},
+        warn: (component, msg, data) => {
+          warns.push({ component, msg, data });
+        },
+      },
+    });
+    const seeded = seed(h, { artifacts: { usdc: { omit: true } } });
+
+    await caught(service.registerFromManifest(registrationInput(h, seeded.locator)));
+
+    expect(warns).toHaveLength(1);
+    expect(warns[0].component).toBe("pipeline-result-registration");
+    expect(warns[0].data).toMatchObject({
+      pipeline_job_id: h.pipelineJobId,
+      result_id: RESULT_RESULT_ID,
+      attempt_id: RESULT_ATTEMPT_ID,
+      code: "result_manifest_artifact_not_found",
+      role: "usdc",
+    });
+    // governed locator 的全文不得進 log（欄位只留 id／分類／截斷後的 expected/observed）。
+    expect(JSON.stringify(warns[0].data)).not.toContain("?versionId=");
+    expect(JSON.stringify(warns[0].data)).not.toContain("minio://");
+  });
+});
+
+describe("parsePipelineResultManifest 的 runtime 收斂規則", () => {
+  function parse(body: Record<string, unknown>): unknown {
+    return parsePipelineResultManifest(
+      Buffer.from(JSON.stringify(resultManifestDocument({ body })), "utf-8"),
+    );
+  }
+
+  it("同一 role 宣告兩次時拒絕（role 是 task 3.4 的穩定 artifact id，不得歧義）", () => {
+    const base = resultManifestDocument().body as { artifacts: unknown[] };
+    expect(parse({ artifacts: [...base.artifacts, base.artifacts[0]] })).toBeNull();
+  });
+
+  it("artifacts 超過 32 筆時拒絕（有界性地板）", () => {
+    const base = resultManifestDocument().body as { artifacts: unknown[] };
+    const inflated = Array.from({ length: 33 }, (_, index) => base.artifacts[index % 4]);
+    expect(parse({ artifacts: inflated })).toBeNull();
+  });
+
+  it("alignment_summary 的 denominator 未綁定到 count 時拒絕（semantic rule 2）", () => {
+    const summary = resultAlignmentSummary();
+    expect(
+      parse({
+        alignment_summary: {
+          ...summary,
+          counts: {
+            ...(summary.counts as Record<string, unknown>),
+            // eligible 改了但 coverage.denominator 沒跟著改 → IFC_USDC_DENOMINATOR_MISMATCH。
+            eligible_ifc_product_count: 1199,
+            ifc_only_count: 199,
+          },
+        },
+      }),
+    ).toBeNull();
+  });
+
+  it("identifier 含 SAFE_ID 之外的字元時拒絕（runtime 比契約嚴）", () => {
+    expect(parse({ result_id: "result 0007" })).toBeNull();
+    expect(parse({ external_model_version_id: "model\nversion" })).toBeNull();
   });
 });
 
@@ -528,6 +756,28 @@ describe("createS3PipelineResultDetailReader.readCompareSide", () => {
 
     expect(error).toBeInstanceOf(PipelineResultDetailUnavailableError);
     expect((error as Error).message).toContain("contract-valid compare side");
+  });
+
+  it("locator 不在 allowlist 時收斂成 503（與 registration 的 propagate 分類相反，刻意）", async () => {
+    // 同一個部署邊界條件，兩端刻意不同分類：registration 是寫入路徑，必須讓
+    // 部署設定錯誤大聲冒出來；compare 是唯讀讀取面，對呼叫端而言就是「這份 detail
+    // 對本部署不可得」＝誠實 503。這條 catch 分支先前零覆蓋。
+    const h = harness({
+      allowedAuthorities: [RESULT_AUTHORITY],
+      allowedBuckets: ["another-governed-bucket"],
+    });
+    const seeded = seed(h);
+    // store 不做 allowlist 判斷，所以記錄本身建得起來（模擬 allowlist 事後被縮小）。
+    const view = registerRaw(h, seeded.locator, sha256Hex(seeded.bytes));
+    const reader = createS3PipelineResultDetailReader({ objects: h.objects });
+
+    const error = await caught(reader.readCompareSide(view));
+
+    expect(error).toBeInstanceOf(PipelineResultDetailUnavailableError);
+    expect((error as PipelineResultDetailUnavailableError).code).toBe(
+      "result_detail_unavailable",
+    );
+    expect((error as Error).message).toContain("not governed by this deployment");
   });
 
   it("store 記錄與 manifest 的 attempt_outcome 不一致時誠實 503（不選邊站）", async () => {

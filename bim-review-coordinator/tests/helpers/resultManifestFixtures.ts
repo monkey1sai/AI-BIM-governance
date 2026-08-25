@@ -74,6 +74,8 @@ export interface ArtifactStoreOverride {
   storedSizeBytes?: number;
   /** true = 不播種這個 object（製造 artifact_not_found）。 */
   omit?: boolean;
+  /** 覆寫 manifest body 內**宣告**的 ref（製造 containment / locator 違規）。 */
+  declaredRef?: string;
 }
 
 export interface SeedResultManifestOptions {
@@ -102,11 +104,14 @@ function declaredArtifact(
   filename: string,
   contentType: string,
   attemptId: string,
+  declaredRef?: string,
 ): Record<string, unknown> {
   const bytes = artifactBytes(role);
   return {
     role,
-    ref: `minio://${RESULT_AUTHORITY}/${RESULT_BUCKET}/${attemptKeyPrefix(attemptId)}${filename}?versionId=v-0007-${role}`,
+    ref:
+      declaredRef ??
+      `minio://${RESULT_AUTHORITY}/${RESULT_BUCKET}/${attemptKeyPrefix(attemptId)}${filename}?versionId=v-0007-${role}`,
     object_version_id: `v-0007-${role}`,
     etag: fakeEtag(bytes),
     sha256: sha256Hex(bytes),
@@ -142,7 +147,13 @@ export function resultManifestDocument(
       created_at: "2026-07-16T08:38:40Z",
       published_at: RESULT_MANIFEST_PUBLISHED_AT,
       artifacts: RESULT_FIXTURE_ROLES.map(([role, filename, contentType]) =>
-        declaredArtifact(role, filename, contentType, attemptId),
+        declaredArtifact(
+          role,
+          filename,
+          contentType,
+          attemptId,
+          options.artifacts?.[role]?.declaredRef,
+        ),
       ),
       alignment_summary: resultAlignmentSummary(),
       ...options.body,
