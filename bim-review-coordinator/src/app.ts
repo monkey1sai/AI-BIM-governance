@@ -96,6 +96,20 @@ import {
   type PipelineResultRegistrationService,
 } from "./services/lineage/pipelineResultRegistration.js";
 import {
+  createS3LineageArtifactDownloadSigner,
+  parseLineageArtifactDownloadTargetPolicies,
+  type LineageArtifactDownloadSignerPort,
+  type LineageArtifactDownloadTargetPolicy,
+} from "./services/lineage/lineageArtifactDownloadSigner.js";
+import {
+  createS3PipelineResultArtifactReader,
+  type PipelineResultArtifactReaderPort,
+} from "./services/lineage/pipelineResultArtifactReader.js";
+import {
+  createS3LineageMetadataProjectionReader,
+  type LineageMetadataProjectionReaderPort,
+} from "./services/lineage/lineageMetadataProjections.js";
+import {
   createS3PipelineResultDetailReader,
   type PipelineResultDetailReaderPort,
 } from "./services/lineage/pipelineResultDetailReader.js";
@@ -604,6 +618,23 @@ export interface CoordinatorApp {
    * 測試變紅。
    */
   pipelineResultDetails: PipelineResultDetailReaderPort | null;
+  /**
+   * @internal task 3.4 的生產讀取／簽章面。**不是** production 介面：production 只經
+   * `/api/lineage/**` routes 使用它們。
+   *
+   * 之所以群組成一個欄位而不是攤成四個 accessor：四者共用**同一個** fail-closed 條件
+   * （governed object port 是否存在），分開暴露只會讓「它們必須同生同滅」這件事變得不明顯。
+   *
+   * 為什麼需要 accessor：download／metadata 兩條 HTTP 路徑都在 external authorization
+   * （`authorization: null`）之後才碰到 reader／signer，所以「它們真的被接上」在 route 層
+   * 無法被 falsify——沒有這個 accessor，一個把 reader 接回 null 的迴歸不會讓任何測試變紅。
+   */
+  lineageArtifactSurfaces: {
+    reader: PipelineResultArtifactReaderPort | null;
+    signer: LineageArtifactDownloadSignerPort | null;
+    projections: LineageMetadataProjectionReaderPort | null;
+    target_policies: readonly LineageArtifactDownloadTargetPolicy[];
+  };
   eventLog: EventLog;
   structLog: StructLogger;
   // coordinator-auto-poll-streaming-conversion §6:cancel 全部 in-process auto-poll
@@ -837,6 +868,37 @@ export function createCoordinatorApp(
   const pipelineResultDetails = sourceBundleObjectPort
     ? createS3PipelineResultDetailReader({ objects: sourceBundleObjectPort })
     : null;
+  // Task 3.4：artifact descriptor reader、metadata 投影 reader、presign signer。
+  // 三者與 registration／details 共用同一個 fail-closed 條件（governed object port 存在），
+  // 且共用同一組 GOVERNED_SOURCE_* credentials——**MUST NOT** 用 legacy watcher 的
+  // MINIO_WATCH_* 頂替（design.md §11.2 規則 3／5）。
+  const pipelineResultArtifactReader = sourceBundleObjectPort
+    ? createS3PipelineResultArtifactReader({ objects: sourceBundleObjectPort })
+    : null;
+  const lineageMetadataProjections = sourceBundleObjectPort
+    ? createS3LineageMetadataProjectionReader({ objects: sourceBundleObjectPort })
+    : null;
+  const lineageArtifactDownloadSigner = sourceBundleObjectPort
+    ? createS3LineageArtifactDownloadSigner({
+        accessKey: config.governedSourceMinioAccessKey,
+        secretKey: config.governedSourceMinioSecretKey,
+      })
+    : null;
+  // Public download target policy。**181 的誠實現狀：這個 env 沒有值。**
+  // canonical Linux 測試區只有內網 http endpoint，沒有瀏覽器可見的 HTTPS public origin，
+  // 因此 policy 清單為空、`resolveLineageArtifactDownloadTarget` 永遠找不到唯一命中、
+  // download route 一律誠實 503。這不是待修的 bug，是「還沒有 HTTPS 對外入口」這件事
+  // 在程式碼裡的忠實投影；有了 public origin 之後只要設這個 env，不必改任何程式碼。
+  const lineageDownloadTargetPolicies = parseLineageArtifactDownloadTargetPolicies(
+    config.lineageDownloadTargetPolicies,
+  );
+  if (lineageDownloadTargetPolicies.malformed) {
+    // 設了卻解析不出來＝fail-closed 成空清單。這一定要吵，否則運維會以為下載面已開通。
+    structLog.warn("lineage-artifact-download", "target policy env is malformed; download stays closed", {
+      configured: true,
+      policy_count: 0,
+    });
+  }
   pipelineJobStore.recoverOnStart(nowIso(), newReadyEventId);
   // READY governed bundle → stable job 的冪等 auto-enqueue。同一個 source_bundle_id
   // 永遠回同一個 job（決定性 job id ＋ 單一寫入點），replay 不建第二個 logical job。
@@ -4220,6 +4282,10 @@ export function createCoordinatorApp(
     bundles: sourceBundleStore,
     results: pipelineResultStore,
     authorization: null,
+    // manifest 投影已接上：alignment_metrics／warnings／artifacts 由 MinIO 實讀的
+    // manifest 供給；alignment report（逐 element 差異集合）尚未建讀取路徑，
+    // summary／differences／difference_counts 誠實維持 NOT_BUILT。
+    projections: lineageMetadataProjections,
     now: nowIso,
   });
   // Task 3.4 download endpoint is mounted so the public path fails closed instead of 404. The
@@ -4229,9 +4295,9 @@ export function createCoordinatorApp(
     jobs: pipelineJobStore,
     results: pipelineResultStore,
     authorization: null,
-    reader: null,
-    signer: null,
-    target_policies: [],
+    reader: pipelineResultArtifactReader,
+    signer: lineageArtifactDownloadSigner,
+    target_policies: lineageDownloadTargetPolicies.policies,
     now: nowIso,
   });
 
@@ -4300,6 +4366,12 @@ export function createCoordinatorApp(
     pipelineResultStore,
     pipelineResultRegistration,
     pipelineResultDetails,
+    lineageArtifactSurfaces: {
+      reader: pipelineResultArtifactReader,
+      signer: lineageArtifactDownloadSigner,
+      projections: lineageMetadataProjections,
+      target_policies: lineageDownloadTargetPolicies.policies,
+    },
     eventLog,
     structLog,
     dispose,

@@ -582,6 +582,41 @@ def _is_presigned(ref: str) -> bool:
     return "?x-amz-" in lowered or "&x-amz-" in lowered
 
 
+def _result_prefix_tail(result_prefix: str) -> str | None:
+    """Return the attempt segment of a *canonical* ``result_prefix``.
+
+    ``minio://edge-tpe-01/bucket/.../results/attempt-0007/`` yields
+    ``attempt-0007``.
+
+    Canonical means, for the object-key part after ``authority/bucket``:
+    non-empty, terminated by exactly one ``/``, and free of empty, ``.`` and
+    ``..`` segments. Anything else returns ``None``, which the caller turns
+    into ``result_prefix_not_attempt_scoped``.
+
+    Why this is strict rather than forgiving: an earlier version dropped empty
+    segments before taking the tail, so ``.../results//attempt-0007/`` and
+    ``.../results/./attempt-0007/`` were *accepted* here while the receiving
+    coordinator rejects them (``parseMinioPrefix`` in
+    ``bim-review-coordinator/src/services/lineage/minioLocator.ts`` refuses
+    empty/dot segments outright). A corpus that certifies documents no runtime
+    will accept is worse than no corpus: it is a green light pointing at a wall.
+    The two sides are now the same shape rule, stated twice on purpose.
+    """
+    remainder = str(result_prefix).split("://", 1)[-1]
+    parts = remainder.split("/")
+    # parts == [authority, bucket, *object-key segments, ""]  for a canonical prefix.
+    if len(parts) < 4 or not parts[0] or not parts[1]:
+        return None
+    if parts[-1] != "":
+        # No trailing separator at all; the schema pattern requires one.
+        return None
+    segments = parts[2:-1]
+    if not segments or any(segment in ("", ".", "..") for segment in segments):
+        # Empty tail segment also catches a doubled trailing separator.
+        return None
+    return segments[-1]
+
+
 def _check_object_refs(artifacts: Sequence[Mapping[str, Any]]) -> list[str]:
     """Per-artifact locator / completeness diagnostics, in array order.
 
@@ -855,18 +890,26 @@ def validate_result_publication_scenario(document: Mapping[str, Any]) -> list[st
            ``*_DENOMINATOR_MISMATCH`` codes into the one wire-level code, so
            producer, result manifest and cloud publication cannot drift apart
            (``spec.md`` requires one implementation of the binding).
+        3. ``result_prefix_not_attempt_scoped`` -- the last path segment of
+           ``result_prefix`` must equal ``attempt_id`` verbatim.
+           ``design.md`` §5 gives every attempt its own result prefix, so
+           two attempts that name the same prefix would conditional-create
+           over each other's immutable objects. The receiving coordinator
+           already refuses such a manifest at registration time with the
+           same code (``PipelineResultLocationError``); stating it here
+           keeps the corpus from shipping documents no runtime can accept.
 
     ``result_publication_outcome``
-        3. ``second_formal_result_for_attempt`` -- a non-null
+        4. ``second_formal_result_for_attempt`` -- a non-null
            ``prior_result_id`` must equal ``result_id``. A resumed publication
            continues the same formal result; a different id means the attempt
            grew a second one. This is diagnosed first and on its own: once the
            prior result is a *different* result, the digest comparison below is
            comparing two documents and can say nothing about idempotence.
-        4. ``non_idempotent_replay_reported_as_created`` -- re-publishing the
+        5. ``non_idempotent_replay_reported_as_created`` -- re-publishing the
            same result with the same manifest digest must report
            ``replay_same_digest``, never ``created``.
-        5. ``manifest_digest_conflict`` -- a digest that differs from the prior
+        6. ``manifest_digest_conflict`` -- a digest that differs from the prior
            digest must be reported as ``conflict_different_digest``; claiming
            ``replay_same_digest`` (or ``created``) would overwrite an immutable
            formal result.
@@ -895,6 +938,13 @@ def validate_result_publication_scenario(document: Mapping[str, Any]) -> list[st
         )
         if any(code.endswith("_DENOMINATOR_MISMATCH") for code in binding_codes):
             codes.append("alignment_summary_denominator_mismatch")
+
+        # Attempt-scoped result prefix: compared verbatim, never by prefix
+        # containment. ``.../attempt-0007/`` is not "close enough" for
+        # ``attempt-00070``, and a longer key under someone else's attempt
+        # is exactly the collision this rule exists to name.
+        if _result_prefix_tail(body["result_prefix"]) != body["attempt_id"]:
+            codes.append("result_prefix_not_attempt_scoped")
 
     elif document_type == "result_publication_outcome":
         result_id = body["result_id"]
