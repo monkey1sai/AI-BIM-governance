@@ -3,7 +3,7 @@
 // （fixtureNotInProduction.test.ts 守門）。
 import { vi } from "vitest";
 import { CoordinatorHttpError, coordinatorClient } from "../../coordinatorClient";
-import type { RuntimeStatus } from "../../coordinatorClient";
+import type { CallbackOutboxSummaryEntry, ConversionRecord, RuntimeSessionSummary, RuntimeStatus } from "../../coordinatorClient";
 import type { EndpointData, EndpointFetchers, EndpointKey } from "../coordinatorStatusStore";
 
 export const RT_IDLE: RuntimeStatus = {
@@ -97,4 +97,25 @@ export function spyCoordinatorEndpointsOffline() {
     minioWatch: offline503("minioWatch"), minioFolder: offline503("minioFolder"), kitHealth: offline503("kitHealth"),
     kitInstance: offline503("kitInstance"),
   });
+}
+
+export function conversionRecord(key: string, status: ConversionRecord["status"]): ConversionRecord {
+  return {
+    idempotency_key: key, project_id: "270", project_display_name: "270", category: "building", external_model_version_id: "v1",
+    conversion_job_id: null, status, usdc_key: null, coverage_report: null, object_key: null, detected_at: "2026-08-12T00:00:00Z", updated_at: "2026-08-12T00:00:00Z",
+  };
+}
+
+export function outboxEntries(n: number, attempts: number, maxAttempts: number): CallbackOutboxSummaryEntry[] {
+  return Array.from({ length: n }, (_, i) => ({
+    outbox_id: `ob_${i}`, event: "conversion-result", status: "pending" as const, attempts, max_attempts: maxAttempts,
+    last_error: null, created_at: "2026-08-25T00:00:00Z", delivered_at: null, correlation_id: null, conversion_job_id: null,
+  }));
+}
+
+export function sessionItem(id: string, status = "active"): RuntimeSessionSummary {
+  return {
+    session_id: id, status, project_id: "270", model_version_id: "v1", participant_count: 1, expected_stage_url: null,
+    conversion_status: "ready", kit_instance_ids: [], created_at: "2026-08-25T00:00:00Z", updated_at: "2026-08-25T00:00:00Z",
+  };
 }

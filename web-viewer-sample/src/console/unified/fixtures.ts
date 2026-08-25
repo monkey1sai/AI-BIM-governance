@@ -39,6 +39,8 @@ export interface Dict {
   ops_title: string; svc_health: string; empty: string;
   concept_note: string;
   dock_issues: string; outbox: string;
+  /* unified-console-runtime-truth：真值狀態文案 */
+  offline: string; unavailable: string; last_updated: string;
 }
 
 export function getL(zh: boolean): Dict {
@@ -60,6 +62,7 @@ export function getL(zh: boolean): Dict {
     ops_title: "Runtime / Kit · GPU 營運", svc_health: "服務健康", empty: "無待進件",
     concept_note: "點左欄 A1–A4 體驗 live 模組;本頁為概念稿",
     dock_issues: "Issues", outbox: "回拋 Outbox",
+    offline: "未連線", unavailable: "未取得", last_updated: "最後更新",
   } : {
     sub: "BIM Governance Console", search: "Search projects, models, issues, BCF…", project: "Project",
     g_work: "Workspace", g_apps: "AI App Modules", designdoc: "Design Doc (FE/BE)",
@@ -78,6 +81,7 @@ export function getL(zh: boolean): Dict {
     ops_title: "Runtime / Kit · GPU Operations", svc_health: "Service health", empty: "No pending intake",
     concept_note: "Click A1–A4 in sidebar for live modules; this page is a concept mock",
     dock_issues: "Issues", outbox: "Deliver Outbox",
+    offline: "offline", unavailable: "not observed", last_updated: "Last updated",
   };
 }
 

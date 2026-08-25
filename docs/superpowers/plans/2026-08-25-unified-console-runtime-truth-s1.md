@@ -1124,7 +1124,7 @@ git commit -m "task#3a: 既有 unified-mount 測試補共用 poller 十端點 sp
 - Modify: `web-viewer-sample/src/console/unified/__testdata__/coordinatorMocks.ts`（檔尾加 3 個 builder）
 - Modify: `web-viewer-sample/src/console/unified/fixtures.ts`（`Dict`＋`getL` 加 3 個 key）
 
-- [ ] **Step 1: impact 分析（本 task 只有 `fixtures.ts` 動到既有 symbol）**
+- [x] **Step 1: impact 分析（本 task 只有 `fixtures.ts` 動到既有 symbol）**
 
 ```powershell
 Set-Location $W
@@ -1133,7 +1133,7 @@ npx gitnexus@1.6.9 impact getL -d upstream -r AI-BIM-governance
 
 預期 LOW（`getL` 的 callers 為 unified 五頁＋docks；本 task 只加 key，不改既有 key 的名稱、值或型別）。CRITICAL → 停下回報 coordinator；HIGH → 把 blast radius 記入本步驟註記（供 PR body 補強段）後**續行，不停**（spec-to-done skill：HIGH 非停下點；coordinator 2026-08-25 已追認 `jsonGet` HIGH 的前例）。
 
-- [ ] **Step 2: 寫失敗測試 `runtimeTruth.test.ts`**
+- [x] **Step 2: 寫失敗測試 `runtimeTruth.test.ts`**
 
 ```ts
 // unified-console-runtime-truth slice 1：真值投影純函式（design §3.2 渲染規則＋§3.3 pickers）。
@@ -1196,7 +1196,7 @@ describe("pickers（截斷窗不對子集算數）", () => {
 });
 ```
 
-- [ ] **Step 3: 補 `coordinatorMocks.ts` 三個 builder**（檔尾追加）
+- [x] **Step 3: 補 `coordinatorMocks.ts` 三個 builder**（檔尾追加）
 
 ```ts
 export function conversionRecord(key: string, status: ConversionRecord["status"]): ConversionRecord {
@@ -1223,7 +1223,7 @@ export function sessionItem(id: string, status = "active"): RuntimeSessionSummar
 
 並把該檔 type import 改為：`import type { CallbackOutboxSummaryEntry, ConversionRecord, RuntimeSessionSummary, RuntimeStatus } from "../../coordinatorClient";`。
 
-- [ ] **Step 4: 跑測試確認失敗（紅燈）**
+- [x] **Step 4: 跑測試確認失敗（紅燈）**
 
 ```powershell
 Set-Location $F
@@ -1232,7 +1232,7 @@ npx vitest run src/console/unified/runtimeTruth.test.ts
 
 預期：整檔因 `Failed to resolve import "./runtimeTruth"` 失敗（`Test Files  1 failed`）。若改成「某幾案失敗」而非 import 失敗，代表 `runtimeTruth.ts` 已存在（前一輪殘留）——先 `git status` 確認再決定。
 
-- [ ] **Step 5: 實作 `runtimeTruth.ts`**
+- [x] **Step 5: 實作 `runtimeTruth.ts`**
 
 ```ts
 // ═══════════════════════════════════════════════════════════════════════
@@ -1350,7 +1350,7 @@ export function lastUpdatedText(slices: ReadonlyArray<EndpointSlice<unknown>>): 
 }
 ```
 
-- [ ] **Step 6: `fixtures.ts` 加 3 個字典 key**
+- [x] **Step 6: `fixtures.ts` 加 3 個字典 key**
 
 `Dict` 介面 `dock_issues: string; outbox: string;` 之後加：
 
@@ -1371,7 +1371,7 @@ en 物件 `dock_issues: "Issues", outbox: "Deliver Outbox",` 之後加：
     offline: "offline", unavailable: "not observed", last_updated: "Last updated",
 ```
 
-- [ ] **Step 7: 跑目標測試與全量**
+- [x] **Step 7: 跑目標測試與全量**
 
 ```powershell
 Set-Location $F
@@ -1382,7 +1382,7 @@ npx vitest run
 
 預期：`runtimeTruth.test.ts` → `Test Files  1 passed (1)`、`Tests  7 passed`（2 案 cell／cellText／cellSub ＋ 5 案 pickers）；tsc exit 0；全量 `0 failed`，且**既有測試檔的案數與 Task 3a 結束時完全相同**（本 task 沒碰 production 元件，任何既有檔變紅代表 `fixtures.ts` 的 `Dict` 加 key 破壞了型別 → 回 Step 6 核對 zh／en 兩個物件是否都補齊）。
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```powershell
 Set-Location $W
