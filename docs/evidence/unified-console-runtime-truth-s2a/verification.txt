@@ -2,6 +2,7 @@
 worktree: AI-BIM-governance.worktrees/unified-console-runtime-truth-s2a
 base (origin/main): d4f37fecf887d1dabaadd2b60bf18a2c56ed6fdd
 pre-fix subject (P5 round 1): 5a05927d5dcc1abfa15d1d1defd2d94420ea6aaf
+build/vitest/targeted runs below executed on the post-fix tree committed as 7c406ad (coordinator src unchanged through 8958faa; only tests, env templates, docs differ from 5a05927)
 
 ## npm run build (tsc -p tsconfig.json)
 > @ai-bim-governance/bim-review-coordinator@0.1.0 build

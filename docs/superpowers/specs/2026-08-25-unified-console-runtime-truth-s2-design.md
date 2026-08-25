@@ -31,6 +31,8 @@
 
 ## 5. 執行環境事實（worktree）
 
+> 以下為姊妹分支 s2 的環境事實（前端半部）；後端 PR（分支 `codex/openspec/unified-console-runtime-truth-s2a`）的 worktree 根為 `C:/Repos/active/iot/AI-BIM-governance.worktrees/unified-console-runtime-truth-s2a`，自 `origin/main` `d4f37fe` 依路徑拆出、其後併入 `14a6ac6`；GitNexus 索引各自於各 worktree HEAD 建立。
+
 - worktree 根：`C:\Repos\active\iot\AI-BIM-governance.worktrees\unified-console-runtime-truth-s2`；branch `codex/openspec/unified-console-runtime-truth-s2`（自 `origin/main` `2ef725a`）。
 - `bim-review-coordinator` 已 `npm ci`；指令 cwd 為 `bim-review-coordinator`：`npm run build`、`npx vitest run <檔>`。前端若需驗證，`web-viewer-sample` 內先 `npm ci`。
 - 既有相關測試：`tests/conversion-control-routes.test.ts`、`tests/conversion-trigger.test.ts`、`tests/lineage/external-lineage-authorization.test.ts`、`tests/dev-console.test.ts`、`tests/env-example-minio-watch-parity.test.ts`、`tests/env-example-lineage-parity.test.ts`；新測試沿用其 app 建構與 supertest／fetch 模式。
