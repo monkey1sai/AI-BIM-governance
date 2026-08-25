@@ -932,7 +932,7 @@
     },
     {
       "id": "blip-compare-head-compat-r1",
-      "status": "open",
+      "status": "closed",
       "pr": 695,
       "opened_at": "2026-08-25T09:27:16Z",
       "reason": "the protected collector cannot prove its post-change exact-head behavior with the pre-change parser because the live GitHub Compare payload omits head_commit and the repair modifies classified packet paths outside the active root surface",
@@ -964,7 +964,14 @@
         "docs/evidence/blip-compare-head-compat-r1/self-referential-bootstrap/verification.txt"
       ],
       "successor_of": "autonomous-linux-delivery-contracts",
-      "fixpoint": null
+      "fixpoint": {
+        "reverified_at": "2026-08-25T13:50:59Z",
+        "mechanism_commit": "7b46a50a4f41f771e73c50fa17b5709b24614690",
+        "evidence_refs": [
+          "docs/evidence/blip-compare-head-compat-r1/fixpoint/attestation.json",
+          "docs/evidence/blip-compare-head-compat-r1/fixpoint/summary.md"
+        ]
+      }
     }
   ]
 }
