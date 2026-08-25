@@ -2248,7 +2248,7 @@ git commit -m "task#4: #home 四 KPI＋六 svc-dot 綁 coordinator 真值（asbu
 - Test: `web-viewer-sample/src/console/unified/pipelineLiveBinding.test.tsx`（新）
 - Modify: `web-viewer-sample/src/console/unified/unified.test.tsx`（`#pipeline` 案＋誠實標記契約案）
 
-- [ ] **Step 1: impact 分析**
+- [x] **Step 1: impact 分析**
 
 ```powershell
 Set-Location $W
@@ -2257,7 +2257,7 @@ npx gitnexus@1.6.9 impact PipelinePage -d upstream -r AI-BIM-governance
 
 預期 LOW。
 
-- [ ] **Step 2: 寫失敗測試 `pipelineLiveBinding.test.tsx`**
+- [x] **Step 2: 寫失敗測試 `pipelineLiveBinding.test.tsx`**
 
 ```tsx
 // unified-console-runtime-truth slice 1（tasks 1.5）：#pipeline 五段＋治理／報表列綁真值（spec scenario「Pipeline 五段對照」）；
@@ -2377,7 +2377,7 @@ describe("PipelinePage 真值綁定", () => {
 });
 ```
 
-- [ ] **Step 3: 跑測試確認失敗**
+- [x] **Step 3: 跑測試確認失敗**
 
 ```powershell
 Set-Location $F
@@ -2386,7 +2386,7 @@ npx vitest run src/console/unified/pipelineLiveBinding.test.tsx
 
 預期：`Tests  4 failed (4)`（`intake-ifc-ready-val` 為 null）。
 
-- [ ] **Step 4: 整檔重寫 `PipelinePage.tsx`**
+- [x] **Step 4: 整檔重寫 `PipelinePage.tsx`**
 
 ```tsx
 // ═══════════════════════════════════════════════════════════════════════
@@ -2550,7 +2550,7 @@ export function PipelinePage() {
 }
 ```
 
-- [ ] **Step 5: 更新 `unified.test.tsx` 的 `#pipeline` 案與誠實標記契約案**
+- [x] **Step 5: 更新 `unified.test.tsx` 的 `#pipeline` 案與誠實標記契約案**
 
 (a) `#pipeline` 案（`it("#pipeline 渲染 PipelinePage：…")`）最後一行 `expect(html).toContain("⑤ Callback Outbox");` 之後追加：
 
@@ -2564,7 +2564,7 @@ export function PipelinePage() {
 
 (b) 誠實標記契約案的 `for (const hash of ["#home"]) {` 改為 `for (const hash of ["#home", "#pipeline"]) {`。
 
-- [ ] **Step 6: 跑測試確認通過＋型別**
+- [x] **Step 6: 跑測試確認通過＋型別**
 
 ```powershell
 Set-Location $F
@@ -2574,7 +2574,7 @@ npx tsc --noEmit
 
 預期：`Test Files  3 passed (3)`；tsc exit 0。
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```powershell
 Set-Location $W

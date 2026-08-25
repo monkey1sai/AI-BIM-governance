@@ -85,6 +85,11 @@ describe("UnifiedConsole smoke（approved 鍵 → UnifiedShell + 新頁）", () 
     expect(html).toContain("② 轉檔"); // st_conv 欄
     expect(html).toContain("③ Review Sessions");
     expect(html).toContain("⑤ Callback Outbox");
+    expect(html).toContain("④ 3D Handoff");
+    // 真值 cell（SSR＝尚未連線 → —）與 RVT 退役標示；fixture 固定值不得出現。
+    expect(html).toContain('data-uc="conv-ready-val" data-prov="asbuilt" data-state="offline"');
+    expect(html).toContain("已退役");
+    for (const lit of ["demo_lib_2026.ifc", "990_model.ifc", "cj_0116", "S-240601", "OB-201"]) expect(html, lit).not.toContain(lit);
   });
 
   it("#runtime 渲染 OpsPage：標題 + 服務健康 6 列", () => {
@@ -106,7 +111,7 @@ describe("UnifiedConsole smoke（approved 鍵 → UnifiedShell + 新頁）", () 
     for (const hash of ["#a1", "#a3", "#a5"]) {
       expect(renderAtHash(hash), hash).toContain('data-prov="fixture"');
     }
-    for (const hash of ["#home"]) {
+    for (const hash of ["#home", "#pipeline"]) {
       const html = renderAtHash(hash);
       const pageRoot = html.slice(html.indexOf('data-uc="page-root"'));
       expect(pageRoot, hash).toContain('data-prov="asbuilt"');

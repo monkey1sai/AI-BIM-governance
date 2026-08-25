@@ -1,29 +1,75 @@
 // ═══════════════════════════════════════════════════════════════════════
 // UnifiedConsole — Pipeline 頁（模型資料與轉檔生產線）
-// 像素級移植正本：scratchpad/design-origin/app.js 的 pipe 區段
-// 所有 inline style / 文案 byte-identical；互動為 fixture 語意（local state +
-// toast 假 API 字串），不打任何 /api。導覽一律 window.location.hash 賦值。
+// unified-console-runtime-truth slice 1（tasks 1.5）：五段（進件／轉檔／Session／3D handoff／回拋）＋治理／報表列綁
+// coordinator :8004 既有端點（共用 poller）。outbox 只用 GET /api/callback-outbox/summary（redacted 投影，不打 /api/internal/*）。
+// RVT 段固定標示外部產製／已退役（PR #63）、無 RVT 轉檔按鈕。
+// 「觸發轉檔」：瀏覽器授權（D2＝T4 operator token）於 slice 2（tasks §4.2／§2.4）落地前為 disabled＋原因（data-prov="p1"）。
+// 3D handoff 為 anchor（target=_blank）指向 /ui/open?session=<id>：不內嵌 iframe、不自動 claim。
+// 版面沿用設計原型；導覽一律 window.location.hash 賦值。
 // ═══════════════════════════════════════════════════════════════════════
+import type { CSSProperties, ReactNode } from "react";
 import { useLang } from "../i18n";
-import { ACCENT, MONO, chipBox, getL, innerBox, stChip } from "./fixtures";
-import type { ConvItem, OutboxItem } from "./fixtures";
-import { useUnifiedState } from "./UnifiedShell";
+import { coordinatorClient } from "../coordinatorClient";
+import type { MinioWatchStatus } from "../coordinatorClient";
+import { MONO, chipBox, getL, innerBox } from "./fixtures";
+import { useConsoleData } from "./ConsoleDataProvider";
+import type { EndpointKey } from "./coordinatorStatusStore";
+import {
+  activeSessions, cell, cellSub, cellText, conversionCounts, lastUpdatedText, openIssueCount, outboxPending, stateColor,
+} from "./runtimeTruth";
+import type { Cell } from "./runtimeTruth";
+
+const PIPELINE_KEYS: readonly EndpointKey[] = [
+  "ifcReady", "minioFolder", "minioWatch", "conversionRecords", "runtimeStatus", "kitInstance", "outboxSummary", "issues", "ruleRuns",
+];
+
+const col: CSSProperties = { ...chipBox, padding: 14, display: "flex", flexDirection: "column", gap: 10 };
+const navLink: CSSProperties = { fontSize: 11, color: "var(--ab-accent)", cursor: "pointer", textDecoration: "none" };
+const disabledBtn: CSSProperties = { textAlign: "center", fontSize: 11, color: "var(--ab-text-dimmer)", border: "1px solid rgba(120,160,210,.14)", borderRadius: 7, padding: 6, cursor: "not-allowed", fontWeight: 700 };
+const reasonText: CSSProperties = { fontSize: "9.5px", color: "var(--ab-text-dim)", lineHeight: 1.4 };
+const handoffBtn: CSSProperties = { textAlign: "center", fontSize: "10.5px", color: "var(--ab-on-accent)", background: "linear-gradient(135deg,var(--ab-accent),var(--ab-accent-2))", borderRadius: 7, padding: 5, fontWeight: 700, textDecoration: "none" };
 
 export function PipelinePage() {
   const lang = useLang();
   const zh = lang === "zh";
   const L = getL(zh);
-  const { intake, conv, sessions, outbox, patch, toast } = useUnifiedState();
-  /* 誠實停用：全部已送後 deliver 不再有事可做（design gate disabled case 依 aria-disabled 斷言）。
-     預設態（2 筆待送）aria-disabled="false"，不改任何預設像素。 */
-  const outboxPending = outbox.filter((o) => o.st === "待送").length;
+  const snap = useConsoleData(PIPELINE_KEYS);
+  const nav = (hash: string) => { window.location.hash = hash; };
+
+  /* ---- 真值投影（design §3.3 pipeline 各列）---- */
+  const ifcReady = cell(snap.ifcReady, (r) => r.count);
+  // note＝MinIO 未設定（app.ts 未設定分支回 200＋note）→ 未取得，不是 0／0。
+  const bucket = cell(snap.minioFolder, (f) => (f.note ? null : { folders: f.folders.length, withIfc: f.folders.filter((x) => x.has_source_ifc).length }));
+  const watch = cell(snap.minioWatch, (w) => w);
+  const conv = cell(snap.conversionRecords, conversionCounts);
+  const sess = cell(snap.runtimeStatus, (rt) => ({ active: activeSessions(rt), items: rt.sessions.items }));
+  const kit = cell(snap.kitInstance, (k) => `${k.instance_id} ${k.status}`);
+  const outbox = cell(snap.outboxSummary, outboxPending);
+  const issues = cell(snap.issues, openIssueCount);
+  const ruleRuns = cell(snap.ruleRuns, (r) => r.total);
+  const updated = lastUpdatedText([
+    snap.ifcReady, snap.minioFolder, snap.minioWatch, snap.conversionRecords, snap.runtimeStatus, snap.kitInstance, snap.outboxSummary, snap.issues, snap.ruleRuns,
+  ]);
+  const watchText = (w: MinioWatchStatus) => (w.enabled
+    ? `on · baseline ${w.baseline_count ?? L.unavailable} · seen ${w.seen_count ?? L.unavailable} · triggered ${w.triggered_total ?? L.unavailable}`
+    : "off");
 
   /* colHead（1:1 對應原型 colHead(title, right)）*/
-  const colHead = (title: string, right: string) => (
+  const colHead = (title: string, right: ReactNode) => (
     <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
       <span style={{ fontFamily: MONO, fontSize: "9.5px", letterSpacing: ".1em", color: "var(--ab-text-code)", textTransform: "uppercase" }}>{title}</span>
       <span style={{ marginLeft: "auto", fontFamily: MONO, fontSize: 10, color: "var(--ab-text-muted)" }}>{right}</span>
     </div>
+  );
+  /** 一列真值：主值（data-uc／data-prov／data-state）＋標籤 */
+  const stat = <T,>(uc: string, c: Cell<T>, format: (v: T) => string, label: string) => (
+    <div style={{ display: "flex", alignItems: "baseline", gap: 6 }}>
+      <span data-uc={uc} data-prov="asbuilt" data-state={c.state} style={{ fontFamily: MONO, fontSize: 19, fontWeight: 700, color: stateColor(c.state) }}>{cellText(c, L, format)}</span>
+      <span style={{ fontSize: 11, color: "var(--ab-text-muted)" }}>{label}</span>
+    </div>
+  );
+  const link = (uc: string, hash: string, label: string) => (
+    <a data-uc={uc} data-action="nav" href={hash} onClick={(e) => { e.preventDefault(); nav(hash); }} className="hv-text" style={navLink}>{label}</a>
   );
 
   return (
@@ -37,147 +83,76 @@ export function PipelinePage() {
           <span style={{ color: "var(--ab-accent-text)" }}>④ 3D Handoff</span><span style={{ color: "var(--ab-text-faint)" }}>→</span>
           <span style={{ color: "var(--ab-accent-text)" }}>{"⑤ " + L.st_callback}</span>
         </div>
-        <span style={{ marginLeft: "auto", fontFamily: MONO, fontSize: 10, color: "var(--ab-text-dimmer)" }}>MinIO watch ● · conversion API :49101 ●</span>
+        <span data-uc="last-updated" style={{ marginLeft: "auto", fontFamily: MONO, fontSize: 10, color: "var(--ab-text-dimmer)" }}>{`${L.last_updated} ${updated}`}</span>
       </div>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 12, alignItems: "start" }}>
-        <div data-prov="fixture" style={{ ...chipBox, padding: 14, display: "flex", flexDirection: "column", gap: 10 }}>
-          {colHead("① " + L.st_intake, String(intake.length))}
-          {intake.map((c) => (
-            <div key={c.file} style={{ ...innerBox, padding: 11, display: "flex", flexDirection: "column", gap: 7 }}>
-              <span style={{ fontFamily: MONO, fontSize: 11, color: "var(--ab-text)", wordBreak: "break-all" }}>{c.file}</span>
-              <div style={{ display: "flex", gap: 5, alignItems: "center" }}>
-                <span style={{ fontSize: "9.5px", color: "var(--ab-accent-text)", background: "rgba(65,199,232,.08)", border: "1px solid rgba(65,199,232,.2)", borderRadius: 4, padding: "1px 6px" }}>ifc-ready</span>
-                <span style={{ fontFamily: MONO, fontSize: 9, color: "var(--ab-text-dimmer)" }}>{c.src}</span>
-              </div>
-              <span
-                data-uc="trigger-conv"
-                onClick={() => {
-                  const next: ConvItem[] = [{ file: c.file, st: "running" }, ...conv];
-                  patch({ intake: intake.filter((x) => x.file !== c.file), conv: next });
-                  toast("POST /api/conversion/trigger → 202 Accepted · " + c.file);
-                }}
-                className="hv-bright"
-                style={{ textAlign: "center", fontSize: 11, color: "var(--ab-on-accent)", background: `linear-gradient(135deg,${ACCENT},var(--ab-accent-2))`, borderRadius: 7, padding: 6, cursor: "pointer", fontWeight: 700 }}
-              >{L.trigger + " →"}</span>
-            </div>
-          ))}
-          {intake.length === 0 ? <span style={{ fontSize: 11, color: "var(--ab-text-dimmer)", textAlign: "center", padding: "8px 0" }}>{L.empty}</span> : null}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(5,1fr)", gap: 12, alignItems: "start" }}>
+        {/* ① 進件：ifc-ready 計數、bucket 資料夾／含 source IFC、MinIO watch 狀態 */}
+        <div data-prov="asbuilt" style={col}>
+          {colHead("① " + L.st_intake, link("to-minio", "#minio", zh ? "MinIO 物件 →" : "MinIO objects →"))}
+          {stat("intake-ifc-ready-val", ifcReady, String, "ifc-ready")}
+          {stat("intake-bucket-val", bucket, (b) => `${b.folders}／${b.withIfc}`, zh ? "資料夾／含 source IFC" : "folders / with source IFC")}
+          <div style={{ ...innerBox, padding: 10, display: "flex", flexDirection: "column", gap: 4 }}>
+            <span style={{ fontFamily: MONO, fontSize: 9, color: "var(--ab-text-dimmer)" }}>MinIO watch</span>
+            <span data-uc="intake-watch-val" data-prov="asbuilt" data-state={watch.state} style={{ fontFamily: MONO, fontSize: 10, color: stateColor(watch.state) ?? "var(--ab-text)" }}>{cellText(watch, L, watchText)}</span>
+          </div>
         </div>
-        <div data-prov="fixture" style={{ ...chipBox, padding: 14, display: "flex", flexDirection: "column", gap: 10 }}>
-          {colHead("② " + L.st_conv, String(conv.length))}
-          {conv.map((c) => (
-            <div key={c.file} style={{ ...innerBox, padding: 11, display: "flex", flexDirection: "column", gap: 7 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 6 }}><span style={{ fontFamily: MONO, fontSize: 11, color: "var(--ab-text)", flex: 1, wordBreak: "break-all" }}>{c.file}</span><span style={stChip(c.st)}>{c.st === "running" ? (zh ? "轉檔中" : "running") : c.st === "failed" ? (zh ? "失敗" : "failed") : (zh ? "完成" : "done")}</span></div>
-              {c.st === "running" ? (
-                <>
-                  <div style={{ height: 5, borderRadius: 3, background: "rgba(120,160,210,.12)", overflow: "hidden" }}><div style={{ height: "100%", width: "62%", background: "linear-gradient(90deg,var(--ab-accent-2),var(--ab-accent))", borderRadius: 3, animation: "convbar 3s ease-in-out infinite alternate" }} /></div>
-                  <span style={{ fontFamily: MONO, fontSize: 9, color: "var(--ab-text-dim)" }}>IFC→USDC · ifcopenshell + usd-core</span>
-                </>
-              ) : null}
-              {c.st === "failed" ? (
-                <span
-                  onClick={() => {
-                    patch({ conv: conv.map((x): ConvItem => (x.file === c.file ? { ...x, st: "running" } : x)) });
-                    toast("POST /api/conversion/jobs/cj_0116/retry → 202");
-                  }}
-                  className="hv-danger-bg"
-                  style={{ textAlign: "center", fontSize: 11, color: "var(--ab-danger)", border: "1px solid rgba(232,97,92,.35)", borderRadius: 7, padding: 5, cursor: "pointer" }}
-                >{L.retry}</span>
-              ) : null}
-              {c.st === "done" ? (
-                <>
-                  <div style={{ display: "flex", gap: 5 }}><span style={{ fontFamily: MONO, fontSize: 9, color: "var(--ab-text-dim)" }}>model.usdc</span><span style={{ fontFamily: MONO, fontSize: 9, color: "var(--ab-text-dim)" }}>element_mapping.json</span><span style={{ marginLeft: "auto", fontFamily: MONO, fontSize: 9, color: "var(--ab-ok-text)" }}>{c.metrics ?? ""}</span></div>
-                  <span
-                    onClick={() => {
-                      const id = "S-2407" + String(14 + sessions.length);
-                      patch({ sessions: [...sessions, { id, lease: "unclaimed", stage: "/artifacts/" + c.file.replace(".ifc", "") + "/model.usdc" }] });
-                      toast("POST /api/review-sessions → 201 · " + id);
-                    }}
-                    className="hv-bright"
-                    style={{ textAlign: "center", fontSize: 11, color: "var(--ab-on-accent)", background: `linear-gradient(135deg,${ACCENT},var(--ab-accent-2))`, borderRadius: 7, padding: 6, cursor: "pointer", fontWeight: 700 }}
-                  >{L.mksession + " →"}</span>
-                </>
-              ) : null}
-            </div>
-          ))}
-        </div>
-        <div data-prov="fixture" style={{ ...chipBox, padding: 14, display: "flex", flexDirection: "column", gap: 10 }}>
-          {colHead("③ Review Sessions", String(sessions.length))}
-          {sessions.map((x) => (
-            <div key={x.id} style={{ ...innerBox, padding: 11, display: "flex", flexDirection: "column", gap: 7 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                <span style={{ fontFamily: MONO, fontSize: 11, color: "var(--ab-accent-text)" }}>{x.id}</span>
-                <span style={{ marginLeft: "auto", fontSize: "9.5px", color: "var(--ab-ok-text)", background: "rgba(49,197,109,.08)", border: "1px solid rgba(49,197,109,.22)", borderRadius: 4, padding: "1px 6px" }}>{x.lease}</span>
-              </div>
-              <span style={{ fontFamily: MONO, fontSize: "9.5px", color: "var(--ab-text-dim)", wordBreak: "break-all" }}>{x.stage}</span>
-              <div style={{ display: "flex", gap: 6 }}>
-                <span
-                  onClick={() => {
-                    window.location.hash = "#a1";
-                    toast("GET /ui/open?session=" + x.id + " → 302 viewer");
-                  }}
-                  className="hv-bright"
-                  style={{ flex: 1, textAlign: "center", fontSize: "10.5px", color: "var(--ab-on-accent)", background: `linear-gradient(135deg,${ACCENT},var(--ab-accent-2))`, borderRadius: 7, padding: 5, cursor: "pointer", fontWeight: 700 }}
-                >{"④ " + L.enter3d + " →"}</span>
-                <span
-                  onClick={() => toast("已複製 /ui/open?session=" + x.id)}
-                  className="hv-text"
-                  style={{ textAlign: "center", fontSize: "10.5px", color: "var(--ab-text-muted)", border: "1px solid rgba(120,160,210,.16)", borderRadius: 7, padding: "5px 8px", cursor: "pointer" }}
-                >⧉ /ui/open</span>
-                <span
-                  onClick={() => toast("已複製 Spectator 邀請連結 /ui/open?session=" + x.id + "&streamRole=spectator(唯讀)")}
-                  className="hv-accent-bg"
-                  style={{ textAlign: "center", fontSize: "10.5px", color: "var(--ab-accent-text)", border: "1px solid rgba(65,199,232,.3)", borderRadius: 7, padding: "5px 8px", cursor: "pointer", whiteSpace: "nowrap" }}
-                >+ Spectator</span>
-              </div>
-            </div>
-          ))}
-        </div>
-        <div data-prov="fixture" style={{ ...chipBox, padding: 14, display: "flex", flexDirection: "column", gap: 10 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}><span style={{ fontFamily: MONO, fontSize: "9.5px", letterSpacing: ".1em", color: "var(--ab-text-code)", textTransform: "uppercase" }}>⑤ Callback Outbox</span><span style={{ marginLeft: "auto", fontFamily: MONO, fontSize: 10, color: "var(--ab-warn)" }}>{`${outbox.filter((o) => o.st === "待送").length} ${L.pending}`}</span></div>
-          {outbox.map((o) => (
-            <div key={o.id} style={{ ...innerBox, padding: 10, display: "flex", alignItems: "center", gap: 8 }}>
-              <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 2 }}>
-                <span style={{ fontFamily: MONO, fontSize: 10, color: "var(--ab-text)" }}>{o.id + " · " + o.kind}</span>
-                <span style={{ fontSize: "9.5px", color: "var(--ab-text-dim)" }}>metadata-only → 雲端 bim-control</span>
-              </div>
-              <span style={o.st === "待送"
-                ? { fontSize: "9.5px", color: "var(--ab-warn)", background: "rgba(230,178,62,.08)", border: "1px solid rgba(230,178,62,.3)", borderRadius: 4, padding: "2px 7px", fontFamily: MONO }
-                : { fontSize: "9.5px", color: "var(--ab-ok-text)", background: "rgba(49,197,109,.08)", border: "1px solid rgba(49,197,109,.25)", borderRadius: 4, padding: "2px 7px", fontFamily: MONO }}
-              >{o.st === "待送" ? (zh ? "待送" : "pending") : (zh ? "已送 ✓" : "sent ✓")}</span>
-            </div>
-          ))}
+        {/* ② 轉檔：ledger 三組計數、RVT 退役、觸發轉檔（disabled 附原因） */}
+        <div data-prov="asbuilt" style={col}>
+          {colHead("② " + L.st_conv, link("to-conv", "#conv", zh ? "轉檔排程 →" : "queue →"))}
+          {stat("conv-ready-val", conv, (c) => String(c.ready), "ready")}
+          {stat("conv-running-val", conv, (c) => String(c.running), "running")}
+          {stat("conv-failed-val", conv, (c) => String(c.failed), "failed")}
           <span
-            data-uc="deliver-outbox"
-            role="button"
-            aria-disabled={outboxPending === 0 ? "true" : "false"}
-            onClick={() => {
-              if (outboxPending === 0) return;
-              patch({ outbox: outbox.map((o): OutboxItem => ({ ...o, st: "已送" })) });
-              toast("POST /api/internal/callback-outbox/deliver → ✓ metadata-only");
-            }}
-            className="hv-accent-bg"
-            style={{ textAlign: "center", fontSize: 11, color: "var(--ab-accent-text)", border: "1px solid rgba(65,199,232,.3)", borderRadius: 8, padding: 7, cursor: "pointer" }}
-          >{L.deliver}</span>
+            data-uc="trigger-conv" role="button" aria-disabled="true" tabIndex={-1}
+            data-action="disabled" data-prov="p1" aria-describedby="trigger-conv-reason"
+            style={disabledBtn}
+          >{L.trigger}</span>
+          <span id="trigger-conv-reason" data-uc="trigger-conv-reason" style={reasonText}>{zh
+            ? "需 allowlist 來源：瀏覽器授權（D2＝T4 operator token，tasks §4.2）落地前停用；請至 #minio 由 allowlist 來源觸發。"
+            : "Requires an allowlisted origin: disabled until browser authorization (D2=T4 operator token, tasks §4.2) lands; trigger from #minio on an allowlisted host."}</span>
+          <span data-uc="rvt-retired" data-prov="asbuilt" data-state="unavailable" style={reasonText}>{zh
+            ? "RVT：外部產製／已退役（PR #63），不可由本站轉檔；source_rvt 存在與否未取得（/api/minio/objects 不揭露 rvt role）。"
+            : "RVT: produced externally / retired (PR #63); not convertible here. source_rvt presence not observed (/api/minio/objects exposes no rvt role)."}</span>
+        </div>
+        {/* ③ Session：active 計數＋Kit instance */}
+        <div data-prov="asbuilt" style={col}>
+          {colHead("③ Review Sessions", link("to-sessions", "#sessions", zh ? "Session 管理 →" : "sessions →"))}
+          {stat("sess-active-val", sess, (s) => String(s.active), zh ? "活躍" : "active")}
+          <div style={{ ...innerBox, padding: 10, display: "flex", flexDirection: "column", gap: 4 }}>
+            <span style={{ fontFamily: MONO, fontSize: 9, color: "var(--ab-text-dimmer)" }}>Kit instance</span>
+            <span data-uc="kit-instance-val" data-prov="asbuilt" data-state={kit.state} style={{ fontFamily: MONO, fontSize: 11, color: stateColor(kit.state) ?? "var(--ab-text)" }}>{cellText(kit, L)}</span>
+          </div>
+        </div>
+        {/* ④ 3D handoff：review session → /ui/open?session=<id> anchor（新分頁，非 iframe，不自動 claim） */}
+        <div data-prov="asbuilt" style={col}>
+          {colHead("④ 3D Handoff", <span data-uc="handoff-count" data-state={sess.state}>{cellText(sess, L, (s) => String(s.items.length))}</span>)}
+          {sess.state === "live" && sess.value !== null
+            ? (sess.value.items.length === 0
+              ? <span data-uc="handoff-none" style={{ fontSize: 11, color: "var(--ab-text-dimmer)", textAlign: "center", padding: "8px 0" }}>{zh ? "無可 handoff session" : "no session to hand off"}</span>
+              : sess.value.items.map((s) => (
+                <div key={s.session_id} style={{ ...innerBox, padding: 10, display: "flex", flexDirection: "column", gap: 6 }}>
+                  <span style={{ fontFamily: MONO, fontSize: 10, color: "var(--ab-accent-text)", wordBreak: "break-all" }}>{s.session_id} · {s.status}</span>
+                  <a data-uc="handoff-link" data-action="nav" href={coordinatorClient.openInViewerUrl(s.session_id)} target="_blank" rel="noopener noreferrer" className="hv-bright" style={handoffBtn}>{zh ? "開啟即時視圖（新分頁）" : "Open live view (new tab)"}</a>
+                </div>
+              )))
+            : <span data-uc="handoff-state" data-state={sess.state} style={{ fontSize: 11, color: stateColor(sess.state), textAlign: "center", padding: "8px 0" }}>{cellSub(sess, L, () => "")}</span>}
+        </div>
+        {/* ⑤ 回拋：redacted 摘要（pending＋attempts） */}
+        <div data-prov="asbuilt" style={col}>
+          {colHead("⑤ Callback Outbox", <span style={{ fontFamily: MONO, fontSize: 9, color: "var(--ab-text-dimmer)" }}>GET /api/callback-outbox/summary</span>)}
+          {stat("outbox-pending-val", outbox, (o) => String(o.pending), L.pending)}
+          <span data-uc="outbox-attempts" style={{ fontSize: "9.5px", color: "var(--ab-text-dim)" }}>{cellSub(outbox, L, (o) => `attempts ${o.attempts}/${o.maxAttempts} · metadata-only`)}</span>
         </div>
       </div>
-      <div data-prov="fixture" style={{ ...chipBox, padding: 16, display: "flex", flexDirection: "column", gap: 10 }}>
-        <div style={{ display: "flex", alignItems: "center" }}><span style={{ fontSize: "13.5px", fontWeight: 700 }}>{"MinIO " + L.browse}</span><span style={{ marginLeft: "auto", fontFamily: MONO, fontSize: "9.5px", color: "var(--ab-text-dimmer)" }}>GET /api/minio/objects?delimiter=/</span></div>
-        <div style={{ display: "flex", gap: 20, fontFamily: MONO, fontSize: 11 }}>
-          <div style={{ display: "flex", flexDirection: "column", gap: 5, color: "var(--ab-text-muted)" }}>
-            <span>▾ bucket/incoming</span>
-            <span style={{ paddingLeft: 16, color: "var(--ab-text)" }}>demo_lib_2026.ifc <span style={{ color: "var(--ab-text-dimmer)" }}>· 48 MB</span></span>
-            <span style={{ paddingLeft: 16, color: "var(--ab-text)" }}>松風庵_v3.ifc <span style={{ color: "var(--ab-text-dimmer)" }}>· 132 MB</span></span>
-            <span>▸ bucket/processed</span>
-            <span>▸ bucket/artifacts</span>
-          </div>
-          <div style={{ flex: 1, borderLeft: "1px solid rgba(120,160,210,.10)", paddingLeft: 20, display: "flex", flexDirection: "column", gap: 5, color: "var(--ab-text-dim)", fontSize: "10.5px" }}>
-            <span style={{ color: "var(--ab-text-muted)" }}>{L.recent}</span>
-            <span>10:20 · 990_model.ifc → conversion job cj_0117 <span style={{ color: "var(--ab-ok-text)" }}>202</span></span>
-            <span>10:05 · s3:ObjectCreated demo_lib_2026.ifc</span>
-            <span>09:41 · conversion cj_0116 failed <span style={{ color: "var(--ab-danger)" }}>ifcopenshell parse error</span></span>
-          </div>
-        </div>
+      {/* 治理／報表列 */}
+      <div data-prov="asbuilt" style={{ ...chipBox, padding: 16, display: "flex", alignItems: "center", gap: 24 }}>
+        <span style={{ fontSize: "13.5px", fontWeight: 700 }}>{zh ? "治理／報表" : "Governance / Reports"}</span>
+        {stat("gov-rule-runs-val", ruleRuns, String, "rule-runs")}
+        {stat("gov-open-issues-val", issues, String, zh ? "未結 issue" : "open issues")}
+        <span style={{ marginLeft: "auto", display: "flex", gap: 14 }}>
+          {link("to-issues", "#issues", "Issues →")}
+          {link("to-reports", "#reports", zh ? "報表 →" : "Reports →")}
+        </span>
       </div>
     </div>
   );
