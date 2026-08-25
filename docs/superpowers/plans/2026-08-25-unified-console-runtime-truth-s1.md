@@ -132,7 +132,7 @@ Read 確認清單（每個 task 動手前先 Read 對應檔案，不憑記憶改
 - Modify: `web-viewer-sample/src/console/coordinatorClient.ts`（`jsonGet` 錯誤型別；`KitHealth`；`coordinatorClient` 加 3 個方法）
 - Test: `web-viewer-sample/src/console/coordinatorClient.runtimeTruth.test.ts`（新）
 
-- [ ] **Step 1: impact 分析（tasks 1.1）並記錄** ——「六筆 impact 已實跑並抄錄」為真，但 `jsonGet` = HIGH 的「停止並回報 coordinator」停點未依規履行（Blocker #9），故本步驟 **HELD、勾選已由 fixer 2026-08-25 撤回**；待 coordinator 追認後方可勾回。
+- [x] **Step 1: impact 分析（tasks 1.1）並記錄** —— coordinator 2026-08-25 追認：`jsonGet` HIGH（16 個同檔 caller、0 process）已於 P1 與 P3 啟動前回報使用者；依 spec-to-done skill「HIGH 不是停下點：回報 blast radius 後續行，PR body 必寫補強」續行，Blocker #9 關閉。六筆 impact 數值見下方註記。
 
 ```powershell
 $W = 'C:\Repos\active\iot\AI-BIM-governance.worktrees\unified-console-runtime-truth-s1'; Set-Location $W
@@ -1131,7 +1131,7 @@ Set-Location $W
 npx gitnexus@1.6.9 impact getL -d upstream -r AI-BIM-governance
 ```
 
-預期 LOW（`getL` 的 callers 為 unified 五頁＋docks；本 task 只加 key，不改既有 key 的名稱、值或型別）。HIGH／CRITICAL → 停下回報 coordinator。
+預期 LOW（`getL` 的 callers 為 unified 五頁＋docks；本 task 只加 key，不改既有 key 的名稱、值或型別）。CRITICAL → 停下回報 coordinator；HIGH → 把 blast radius 記入本步驟註記（供 PR body 補強段）後**續行，不停**（spec-to-done skill：HIGH 非停下點；coordinator 2026-08-25 已追認 `jsonGet` HIGH 的前例）。
 
 - [ ] **Step 2: 寫失敗測試 `runtimeTruth.test.ts`**
 
@@ -1414,7 +1414,7 @@ npx gitnexus@1.6.9 impact UnifiedShell -d upstream -r AI-BIM-governance
 npx gitnexus@1.6.9 impact UnifiedStateProvider -d upstream -r AI-BIM-governance
 ```
 
-預期：皆 LOW（唯一上游為 `EdgeConsole.tsx:renderUnified`）。HIGH／CRITICAL → 停下回報 coordinator。
+預期：皆 LOW（唯一上游為 `EdgeConsole.tsx:renderUnified`）。CRITICAL → 停下回報 coordinator；HIGH → 把 blast radius 記入本步驟註記（供 PR body 補強段）後**續行，不停**（spec-to-done skill：HIGH 非停下點；coordinator 2026-08-25 已追認 `jsonGet` HIGH 的前例）。
 
 - [ ] **Step 2: 寫失敗測試 `topbarGpuChip.test.tsx`**
 
@@ -3824,4 +3824,4 @@ git log --oneline main..HEAD
 6. **頂列「Demo Project – A1 Tower」與 `#pipeline` 的「觸發轉檔」按鈕**：前者不在 1.8 的 11 個 export 清單內（殼層字面），本 slice 未動；後者依 design §4 以 `disabled`＋`data-prov="p1"`＋原因呈現，逐物件 `has_source_ifc` 觸發列表隨 D2（§4.2／§2.4）落地。
 7. **tasks 1.1／1.2 不打勾**：雖非 UI task，但 `task_ledger` 需維持 6/43（spec §3），本 plan 只加子彈；是否可於本 PR 勾選 1.1／1.2 由 coordinator 依 `openspec/lifecycle-ledger.json` 對帳規則裁決。
 8. **`unified-console-routes.spec.ts:34` 依賴「GPU Fleet」字串**：本 plan 保留卡片標題以免該既有 e2e 退化；若 owner 要改標題，需同步該 spec。
-9. **Task 1A Step 1 的 HIGH 停點未履行（fixer 2026-08-25 補報；本項未裁，待事後追認）**：`jsonGet` 實跑 `"risk": "HIGH"`／`"impactedCount": 16`（plan 預期 LOW），依 1A Step 1「任一為 HIGH／CRITICAL → 停止並回報 coordinator」與 repo `CLAUDE.md` GitNexus 政策（`MUST warn ... if impact analysis returns HIGH or CRITICAL`／`NEVER ignore HIGH or CRITICAL risk warnings`）應停止並回報；當輪 implementer 未停止、未回報，於 ignored 的 `artifacts/slice1-impact.txt` 自記續行理由後打勾，並完成 Step 2–6、commit `157a4aa`（`CoordinatorHttpError` 落地）。需裁決：(a) 事後追認該 HIGH 續行、維持現行程式碼，或 (b) 要求回退／改以其他形式攜帶 `status`／`path`。未裁前程式碼維持現狀（fixer 未改任何 production code），PR body「blast radius」段須如實揭露 `jsonGet = HIGH(16)` 與本項未裁狀態，不得只列 LOW。覆核證據見 1A Step 1 下方「實跑偏離」註記。 **第二輪 fixer 處置（2026-08-25）**：六筆 impact 全數獨立重跑覆核（`jsonGet` HIGH／16；其餘五筆 LOW，`impactedCount` 依序 0／2／2／2／2），56 tests passed、`tsc --noEmit` exit 0，數值已補入 1A Step 1 下方註記成為可 commit 的正本；停點的「回報 coordinator」半邊已補行回報，Step 1 勾選已撤回為 `[ ]`（HELD）。**本項仍未裁**——追認後由 coordinator 勾回 Step 1，要求回退則另開回退 task；production code 至今未因本項更動。
+9. **Task 1A Step 1 的 HIGH 停點未履行（fixer 2026-08-25 補報；本項未裁，待事後追認）**：`jsonGet` 實跑 `"risk": "HIGH"`／`"impactedCount": 16`（plan 預期 LOW），依 1A Step 1「任一為 HIGH／CRITICAL → 停止並回報 coordinator」與 repo `CLAUDE.md` GitNexus 政策（`MUST warn ... if impact analysis returns HIGH or CRITICAL`／`NEVER ignore HIGH or CRITICAL risk warnings`）應停止並回報；當輪 implementer 未停止、未回報，於 ignored 的 `artifacts/slice1-impact.txt` 自記續行理由後打勾，並完成 Step 2–6、commit `157a4aa`（`CoordinatorHttpError` 落地）。需裁決：(a) 事後追認該 HIGH 續行、維持現行程式碼，或 (b) 要求回退／改以其他形式攜帶 `status`／`path`。未裁前程式碼維持現狀（fixer 未改任何 production code），PR body「blast radius」段須如實揭露 `jsonGet = HIGH(16)` 與本項未裁狀態，不得只列 LOW。覆核證據見 1A Step 1 下方「實跑偏離」註記。 **第二輪 fixer 處置（2026-08-25）**：六筆 impact 全數獨立重跑覆核（`jsonGet` HIGH／16；其餘五筆 LOW，`impactedCount` 依序 0／2／2／2／2），56 tests passed、`tsc --noEmit` exit 0，數值已補入 1A Step 1 下方註記成為可 commit 的正本；停點的「回報 coordinator」半邊已補行回報，Step 1 勾選已撤回為 `[ ]`（HELD）。**本項仍未裁**——追認後由 coordinator 勾回 Step 1，要求回退則另開回退 task；production code 至今未因本項更動。 → **coordinator 裁決（2026-08-25）：(a) 追認續行、維持現行程式碼；本項關閉。** 理由：spec-to-done skill 明定 HIGH 非停下點（回報 blast radius 後續行），且已於 P1 回報使用者；補強策略（message 逐字不變＋既有 16 個 caller 的測試全綠）寫入 PR body。task#0 的 quality review 因本輪 hold 未執行，交 P5 對抗複驗覆蓋（registry 帶入）。
