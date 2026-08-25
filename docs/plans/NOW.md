@@ -16,7 +16,8 @@
     { "id": "align-frontend-design-system-reference", "status": "deferred" },
     { "id": "gpu-session-baseline-and-idle-reclaim", "status": "active" },
     { "id": "introduce-viewer-app-integration-surface", "status": "deferred" },
-    { "id": "rvt-ifc-usdc-lineage", "status": "active" }
+    { "id": "rvt-ifc-usdc-lineage", "status": "active" },
+    { "id": "unified-console-runtime-truth", "status": "active" }
   ]
 }
 ```
@@ -36,6 +37,8 @@
 > **2026-08-19 owner 裁決（R-2026-08-19，lineage thaw）：** 使用者明示採納，`rvt-ifc-usdc-lineage` 由 deferred/frozen thaw 為 active（切片制，「禁止直接 apply」原則保留）。(1) tasks 1.1 的順序前置降級：`align-frontend-design-system-reference` archive 與 `migrate-console-to-hifi-design` closeout 不再擋 lineage coding，align successor 鏈（#649 起）與 lineage 平行進行；lineage 不得重建 align 目錄、不得重複宣告其 delta、不得動 `docs/plans/*.html` 唯一 authority 的衝突面禁令全數保留為 fail-closed 硬約束。(2) 切片：L1 = tasks 2.1–2.7（contract fixtures → `tests/contracts/`，不接 runtime、不動 legacy path）；L2 = tasks 1.2/1.3（compatibility matrix＋五個既有 spec 的 MODIFIED deltas＋strict validate）；**L2 完成前不得進行 3.x runtime 接線**（原 gate 保留）。(3) WIP 記帳：thaw 當日 non-deferred active 5→6，仍在 ≤6 內，未 defer 任何 change。(4) 既有 `/api/external/ifc-ready` 與 callback 路徑不變、cloud-lineage-publication 不得雙 authority、MySQL DDL 維持 REFERENCE ONLY。執行路由：coordinator（Fable）接手原 Codex 分支 `codex/openspec/rvt-ifc-usdc-lineage`。
 
 > **2026-08-20 owner 裁決（R2，終局處置限縮）：** (1) `cross-service-structured-log-baseline` 終局關帳並 archive（93/93；13.11 terminal deferred-this-change；`--skip-specs`，canonical spec 已 byte-identical）；不另開 evidence-only successor。(2) `a4-semantic-search-model-qa` 維持 deferred；ledger `blocked_by` 不再指向已 archived 的 `a4-console-convergence`。真實外部條件（credential rotation／host-native Kit lab／獨立 reviewer）寫在 `current_slice`，不進 `blocked_by`（該欄僅允許既有 change id）。(3) `align-frontend-design-system-reference` 明列 **frozen-historical**、status 維持 deferred；不新增 `abandoned` STATUS enum。(4) `introduce-viewer-app-integration-surface` thaw 僅「使用者明確口令升 active」；deferred/frozen 不因額度增加自動 thaw。
+
+> **2026-08-25 P0 例外揭露（使用者明確口令）：** 使用者在 canonical-linux 181 `:8004/ui` 實測回饋預設殼層（UnifiedConsole）全為 fixture 假數字／假按鈕、無法觸發轉檔，並指示「制定一個 spec-to-done 的 OpenSpec 修復此落差」。依本檔優先序「使用者最新口令 > 本檔」覆寫上方「本週不做：新 OpenSpec」，開立 `unified-console-runtime-truth`（spec-only PR；根因＝`migrate-console-to-hifi-design` 以 pixel parity 為 done、`converge-console-specs-to-shipped-behavior` 把 canonical 措辭收斂成替 fixture 背書、真資料接線散在 deferred change、且無 change 要求 `/ui` 預設入口為真值面）。non-deferred active 由 3 增為 4，仍在 ≤6 上限內，未 defer 任何 change。六個 owner 裁決點（D1 設計閘 P|H、D2 授權、D3 canonical-linux 關閉 dev routes、D4 align thaw 判定、canon 入口、A4 放置）未裁決前實作 §5 HELD；UI task 只憑 181 證據勾選（同 lineage 9.1 裁決）。（同日稍後 owner 已裁決六點：D1=P、D2=T4、D3=關閉 dev routes、D4=carve-out 不 thaw、不加側欄入口、A4 同意；記於 tasks §0。）
 
 > **2026-08-17 P0 例外揭露：** 使用者明確要求建立 `autonomous-linux-delivery` OpenSpec，依本檔優先序「使用者最新口令 > 本檔」覆寫上方「本週不做：新 OpenSpec」。此 change 是目前最高優先治理項目；non-deferred active 由 3 增為 4，仍在 ≤6 上限內，沒有暗中 defer 或取代其他 active change。本次只接受規格，不宣稱 GitHub machine authority、canonical Linux deployment或 live activation 已完成；live truth 維持 `HELD/ACTIVATION_UNATTESTED`。
 
