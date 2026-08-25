@@ -1049,6 +1049,8 @@ cd "C:/Repos/active/iot/AI-BIM-governance.worktrees/unified-console-runtime-trut
 
 三種狀態一律**不得**為了讓某個預期成立而改動 `.env*`；紅燈本身就是要交付給 owner 的誠實訊號。
 
+> **實測結果（2026-08-25，implementer 補記）：觀測到 (C)，非 coordinator 預期的 (B)。** 失敗訊息為 `expected 'true' to be ''`。根因是 `.env.example` **重複鍵**而非 owner 寫錯值：L66 `ENABLE_DEV_ROUTES=true`（`e1c3578`／PR #222 舊宣告）排在 L75 `ENABLE_DEV_ROUTES=`（`ded6901` owner 追加的空值）之前，而 `scripts/lib/preflight-env.ps1` 的 `Get-EnvExampleDefaultValue`（首個非註解相符行即 `return`）與本測試同為 first-match-wins。依本 (C) 分支停手：**未改任何 `.env*`**；改為（1）在測試補一個「只宣告一次」的 it，讓紅燈直接指出重複鍵這個真因，（2）把停手發現與 owner 待辦寫進 `openspec/changes/unified-console-runtime-truth/tasks.md` §4.4。owner 刪掉 L66 後，本檔應為 `4 passed (4)`（案例數由 3 增為 4）。此期間 4.4／4.5 不打勾，coordinator `npx vitest run` 全量為紅——刻意且已揭露。
+
 - [ ] **Step 3: compose 透傳（放在 `TEST_DATA_PROJECT_IDS` 之後，同一「compose 透傳」型式）**
 
 以 Edit 把 `compose.host-kit.yml` 的
