@@ -25,7 +25,7 @@
 - **測試檔命名照 tasks.md**：`coordinatorStatusStore.test.ts`、`homeLiveBinding.test.tsx`、`pipelineLiveBinding.test.tsx`、`opsLiveBinding.test.tsx`、`topbarGpuChip.test.tsx`、`fixtureNotInProduction.test.ts`（皆在 `web-viewer-sample/src/console/unified/`）。
 - **Playwright E2E**：新 spec 放 `web-viewer-sample/e2e/`，檔名不得以 `design-system-` 為前綴；真後端固定 `http://127.0.0.1:8004`（`E2E_COORDINATOR_BASE_URL` 只允許指向本機 stack）；不可達時以 `stack_down:` 前綴 `test.skip`，不得改打其他 host。
 - **GitNexus**：worktree 已於 HEAD `analyze --index-only`。每個**既有** symbol 修改前跑 `npx gitnexus@1.6.9 impact <Symbol> -d upstream -r AI-BIM-governance`（cwd＝worktree 根），HIGH／CRITICAL 先回報 coordinator 再動手；commit 前 `npx gitnexus@1.6.9 detect-changes --scope compare --base-ref main`，linked worktree 看不到 staged 時 fallback `git diff --name-only --cached` 並在回報記 `detectVerdict='fallback'`。
-- **每個 task 結尾**：`npx tsc --noEmit` 綠、該 task 的目標測試綠、`git diff --cached --check` 無 whitespace 錯誤、獨立 commit（訊息前綴 `task#N:`，繁中，結尾 `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`）。commit 前把本 plan 檔該 task 的 checkbox 勾為 `- [x]`，並把 `docs/superpowers/plans/2026-08-25-unified-console-runtime-truth-s1.md` 一併 `git add`（各 task 的 `git add` 指令未列本檔，執行時自行加上）。
+- **每個 task 結尾**：`npx tsc --noEmit` 綠、該 task 的目標測試綠、`git diff --cached --check` 無 whitespace 錯誤、獨立 commit（訊息前綴 `task#N:`；Task 3 已拆為 3a／3b／3c，前綴各為 `task#3a:`／`task#3b:`／`task#3c:`，繁中，結尾 `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`）。commit 前把本 plan 檔該 task 的 checkbox 勾為 `- [x]`，並把 `docs/superpowers/plans/2026-08-25-unified-console-runtime-truth-s1.md` 一併 `git add`（各 task 的 `git add` 指令未列本檔，執行時自行加上）。
 
 ## 執行環境（worktree 事實）
 
@@ -87,7 +87,8 @@ Read 確認清單（每個 task 動手前先 Read 對應檔案，不憑記憶改
 | `src/console/unified/HomePage.tsx`、`PipelinePage.tsx`、`OpsPage.tsx` | Modify（整檔重寫） | 真值綁定 |
 | `src/console/unified/homeLiveBinding.test.tsx`、`pipelineLiveBinding.test.tsx`、`opsLiveBinding.test.tsx`、`topbarGpuChip.test.tsx`、`fixtureNotInProduction.test.ts` | Create | tasks 1.4–1.8 驗證 |
 | `src/console/unified/fixtures.ts` | Modify | `Dict` 加 `offline`／`unavailable`／`last_updated`；Task 7 移除 7 個假資料 export |
-| `src/console/EdgeConsole.sharedstatus.test.tsx`、`src/console/unified/unified.test.tsx`、`src/console/unified/a1DockLive.test.tsx`、`src/console/EdgeConsole.aliasRedirect.test.tsx`、`src/console/unified/dockLiveLink.test.tsx`、`src/console/incomingHandoff.test.tsx` | Modify | 5.1／5.3／5.2 翻轉；其餘只補十端點 spy（殼層改輪詢後不得打真網路） |
+| `src/console/EdgeConsole.sharedstatus.test.tsx`、`src/console/unified/unified.test.tsx`、`src/console/unified/a1DockLive.test.tsx`、`src/console/EdgeConsole.aliasRedirect.test.tsx`、`src/console/unified/dockLiveLink.test.tsx` | Modify | 5.1（Task 3c）／5.3（Task 4–6）／5.2（Task 7）翻轉；`aliasRedirect`／`dockLiveLink`／`a1DockLive` 於 Task 3a 只補十端點 spy＋store reset、不改斷言（殼層改輪詢後不得打真網路） |
+| `src/console/incomingHandoff.test.tsx` | **不改**（Task 3a Step 8 核實） | 該檔不掛 `EdgeConsole`／`UnifiedShell`（`rg -n "EdgeConsole"` 0 命中），共用 poller 不會啟動；補 spy 反而會覆蓋它自身的 `runtimeStatus` mock |
 | `e2e/design-system-semantic-cases.ts` | Modify | 5.4：home／pipeline／ops 三屏 11 案改誠實狀態斷言；workspace `warning` badge；`runtime_truth` 分 fixture／truth 兩版；case id 不變 |
 | `e2e/unified-console-runtime-truth.spec.ts` | Create | P4 browser evidence（真後端 :8004） |
 | `$W/openspec/changes/unified-console-runtime-truth/tasks.md` | Modify（Task 10） | 只加「本機綠，待 181」子彈 |
@@ -800,28 +801,317 @@ git commit -m "task#2: 共用 poller store（單一 in-flight／退避 ≤60s／
 
 ---
 
-### Task 3: 真值投影 `runtimeTruth.ts`＋殼層 `UnifiedShell`（頂列四 chip、GPU chip 移除 `82%`、側欄 badge、provider 注入）＋ 5.1 翻轉（tasks 1.7、5.1）
+### Task 3a: 既有 unified-mount 測試的前置防護 sweep（三檔逐字 patch；不改任何斷言）
+
+**為何獨立成一個 task：** Task 3c 會讓 `UnifiedShell` 開始經共用 poller 打十端點。凡是「`import EdgeConsole` 且以 `createRoot` 真掛載於 approved 鍵（`#home`／`#pipeline`／`#a1`…）」的既有測試，屆時都會在 jsdom 下打真網路。本 task 先把防護補齊，**不改任何斷言**：語意零變化、sweep 前後全量同綠，因此與「殼層行為改變」分屬兩個 scope、分開 commit。每個檔案改完立刻有自己的單檔檢查點（2–5 分鐘內能把錯誤定位到剛才那一個 patch），不必等殼層改完才發現插錯位置。
+
+**Files:**
+- Modify: `web-viewer-sample/src/console/EdgeConsole.aliasRedirect.test.tsx`
+- Modify: `web-viewer-sample/src/console/unified/dockLiveLink.test.tsx`
+- Modify: `web-viewer-sample/src/console/unified/a1DockLive.test.tsx`
+- 核實後**不改**（Step 8 出證據）：`web-viewer-sample/src/console/incomingHandoff.test.tsx`
+
+**前置：** Task 2 已建立 `src/console/unified/coordinatorStatusStore.ts`（含 `coordinatorStatusStore.reset()`）與 `src/console/unified/__testdata__/coordinatorMocks.ts`（含 `spyCoordinatorEndpointsOffline()`）；Task 1 已在 `coordinatorClient` 補上 `kitHealth`／`governanceIssues`／`governanceRuleRuns`（否則 `vi.spyOn` 這三個方法會丟 "does not exist"）。
+
+**逐字 patch 慣例：** 下列每個 patch 給 `old`／`new` 兩段。`old` 是 2026-08-25 的檔案現況逐字片段（含縮排），在該檔內唯一；`new` 是替換後全文。動手前先 Read 該檔確認 `old` 仍逐字存在；不存在就停下回報 coordinator（檔案已漂移，不得猜插入點）。
+
+- [ ] **Step 1: 核實「哪些既有測試會掛到 UnifiedShell」（只讀）**
+
+```powershell
+Set-Location $F
+rg -n "^import EdgeConsole|renderToString\(<EdgeConsole" src/console/EdgeConsole.aliasRedirect.test.tsx src/console/unified/dockLiveLink.test.tsx src/console/unified/a1DockLive.test.tsx src/console/incomingHandoff.test.tsx src/console/unified/unified.test.tsx
+```
+
+2026-08-25 實測（plan 作者親跑）：
+
+| 檔案 | 掛載方式 | 殼層會不會輪詢 | 本 task 處置 |
+|---|---|---|---|
+| `EdgeConsole.aliasRedirect.test.tsx` | `import EdgeConsole` ＋ `createRoot`（`#pipeline`／`#minio`／`#conv`／`#/workspace?dock=a4`…） | 會 | Step 2 patch |
+| `unified/dockLiveLink.test.tsx` | `import EdgeConsole` ＋ `createRoot`（`#a1`／`#a2`） | 會 | Step 4 patch |
+| `unified/a1DockLive.test.tsx` | `import EdgeConsole` ＋ `createRoot`（`#a1`） | 會 | Step 6 patch |
+| `incomingHandoff.test.tsx` | **無 `EdgeConsole`**（直接掛 `A1GovernanceWorkbenchPage`／`ModelDataPage`／`SessionManagementPage`／`KitGpuFleetPage`） | 不會 | Step 8 核實後不改 |
+| `unified/unified.test.tsx` | `renderToString(<EdgeConsole/>)` | 不會（SSR 不跑 effect，快照走 `getServerSnapshot`） | 不改（5.3 斷言翻轉屬 Task 4／5／6） |
+
+若執行時 `rg` 結果與上表不同（檔案已漂移），先回報 coordinator 再調整清單，不得自行擴大或縮小 sweep。
+
+- [ ] **Step 2: patch `src/console/EdgeConsole.aliasRedirect.test.tsx`（逐字）**
+
+patch (1)：import 區（現況 :10-11）。old：
+
+```ts
+import { coordinatorClient } from "./coordinatorClient";
+import { governanceClient } from "./governanceClient";
+```
+
+new：
+
+```ts
+import { coordinatorClient } from "./coordinatorClient";
+import { governanceClient } from "./governanceClient";
+import { coordinatorStatusStore } from "./unified/coordinatorStatusStore";
+import { spyCoordinatorEndpointsOffline } from "./unified/__testdata__/coordinatorMocks";
+```
+
+patch (2)：`beforeEach` **開頭**（現況 :20-22）。old：
+
+```ts
+  beforeEach(() => {
+    prevActEnv = (globalThis as Record<string, unknown>)[actEnvKey];
+    (globalThis as Record<string, unknown>)[actEnvKey] = true;
+```
+
+new：
+
+```ts
+  beforeEach(() => {
+    prevActEnv = (globalThis as Record<string, unknown>)[actEnvKey];
+    (globalThis as Record<string, unknown>)[actEnvKey] = true;
+    // unified-console-runtime-truth（slice 1）：#pipeline／#/workspace 會掛 UnifiedShell，殼層改用共用 poller
+    // 後會打十端點。先把十端點釘成 503（離線語意），再讓本檔下方既有的空值 stub 覆蓋它自己關心的方法。
+    // 順序不可顛倒：若把這兩行移到既有 vi.spyOn 之後，getMinioFolder／getConversionRecords／listIfcReady／
+    // minioWatchStatus／runtimeStatus 會被 503 蓋掉，ModelDataPage 改走錯誤分支（本檔 #intake→#minio 案會退化）。
+    coordinatorStatusStore.reset();
+    spyCoordinatorEndpointsOffline();
+```
+
+**不需要**補 `vi.restoreAllMocks()`：該檔 `afterEach`（現況 :59-61）已有。斷言一律不動。
+
+- [ ] **Step 3: 檢查點——單檔 vitest**
+
+```powershell
+Set-Location $F
+npx vitest run src/console/EdgeConsole.aliasRedirect.test.tsx
+```
+
+預期：與 patch 前同綠（`Test Files  1 passed`）。紅燈只可能來自剛才那兩個 patch——最常見是把 patch (2) 插到既有 `vi.spyOn` 之後（見上方註解），或 import 路徑寫成 `./coordinatorStatusStore`（本檔在 `src/console/`，必須是 `./unified/…`）。修正後重跑，不往下走。
+
+- [ ] **Step 4: patch `src/console/unified/dockLiveLink.test.tsx`（逐字）**
+
+patch (1)：import 區（現況 :10-11）。old：
+
+```ts
+import EdgeConsole from "../EdgeConsole";
+import { coordinatorClient, type CoordinatorHealth } from "../coordinatorClient";
+```
+
+new：
+
+```ts
+import EdgeConsole from "../EdgeConsole";
+import { coordinatorClient, type CoordinatorHealth } from "../coordinatorClient";
+import { coordinatorStatusStore } from "./coordinatorStatusStore";
+import { spyCoordinatorEndpointsOffline } from "./__testdata__/coordinatorMocks";
+```
+
+patch (2)：`beforeEach` 末尾（現況 :29-32）。old：
+
+```ts
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    prevHash = window.location.hash;
+  });
+```
+
+new：
+
+```ts
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    prevHash = window.location.hash;
+    coordinatorStatusStore.reset(); // 單例跨測試會殘留上一輪快照
+  });
+```
+
+patch (3)：案 (b) 首行（現況 :61-62）。old：
+
+```ts
+  it("(b) health 成功 stub：fixture dock chip 導向正確；A4 只導向 canonical live surface", async () => {
+    const spy = vi.spyOn(coordinatorClient, "health").mockResolvedValue(HEALTH);
+```
+
+new：
+
+```ts
+  it("(b) health 成功 stub：fixture dock chip 導向正確；A4 只導向 canonical live surface", async () => {
+    spyCoordinatorEndpointsOffline(); // 殼層共用 poller：十端點釘 503，不打真網路（不碰 health probe）
+    const spy = vi.spyOn(coordinatorClient, "health").mockResolvedValue(HEALTH);
+```
+
+patch (4)：案 (c) 首行（現況 :87-88）。old：
+
+```ts
+  it("(c) probe 例外（health 同步 throw）：頁面不炸、無 chip", async () => {
+    vi.spyOn(coordinatorClient, "health").mockImplementation(() => { throw new Error("boom"); });
+```
+
+new：
+
+```ts
+  it("(c) probe 例外（health 同步 throw）：頁面不炸、無 chip", async () => {
+    spyCoordinatorEndpointsOffline();
+    vi.spyOn(coordinatorClient, "health").mockImplementation(() => { throw new Error("boom"); });
+```
+
+案 (a)（現況 :51-52）**不加**：它已 `vi.stubGlobal("fetch", vi.fn().mockRejectedValue(...))`，十端點經 `coordinatorClient` 走同一個 `fetch` → 自然全部 reject → store 分類為 offline；再加 spy 反而遮蔽「真離線」語意。
+
+- [ ] **Step 5: 檢查點——單檔 vitest**
+
+```powershell
+Set-Location $F
+npx vitest run src/console/unified/dockLiveLink.test.tsx
+```
+
+預期：與 patch 前同綠（3 案）。若案 (b) 的 `expect(spy).toHaveBeenCalledTimes(1)` 變紅，代表 `spyCoordinatorEndpointsOffline()` 誤把 `health` 一起 spy 了——回 Task 2 Step 1 檢查該 helper 的方法清單（它只該覆蓋十端點，不含 `health`）。
+
+- [ ] **Step 6: patch `src/console/unified/a1DockLive.test.tsx`（逐字）**
+
+patch (1)：import 區（現況 :11）。old：
+
+```ts
+import type { FilesTreeResponse, RuleRunHistoryItem, RuleRunStatus } from "../governanceClient";
+```
+
+new：
+
+```ts
+import type { FilesTreeResponse, RuleRunHistoryItem, RuleRunStatus } from "../governanceClient";
+import { coordinatorStatusStore } from "./coordinatorStatusStore";
+import { spyCoordinatorEndpointsOffline } from "./__testdata__/coordinatorMocks";
+```
+
+patch (2)：`beforeEach` 末尾（現況 :53-56）。old：
+
+```ts
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    prevHash = window.location.hash;
+  });
+```
+
+new：
+
+```ts
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    prevHash = window.location.hash;
+    coordinatorStatusStore.reset();
+  });
+```
+
+patch (3)：案 (b) 首行（現況 :82-83）。old：
+
+```ts
+  it("(b) health 成功：live 區塊出現（data-prov=asbuilt）、近期 rule-runs 真資料渲染，fixture 區塊不變", async () => {
+    vi.spyOn(coordinatorClient, "health").mockResolvedValue(HEALTH);
+```
+
+new：
+
+```ts
+  it("(b) health 成功：live 區塊出現（data-prov=asbuilt）、近期 rule-runs 真資料渲染，fixture 區塊不變", async () => {
+    spyCoordinatorEndpointsOffline(); // 殼層共用 poller：十端點釘 503，不打真網路
+    vi.spyOn(coordinatorClient, "health").mockResolvedValue(HEALTH);
+```
+
+patch (4)：案 (b2) 首行（現況 :108-109）。old：
+
+```ts
+  it("(b2) health 成功但 governance 清單失敗：誠實顯錯，不偽造資料", async () => {
+    vi.spyOn(coordinatorClient, "health").mockResolvedValue(HEALTH);
+```
+
+new：
+
+```ts
+  it("(b2) health 成功但 governance 清單失敗：誠實顯錯，不偽造資料", async () => {
+    spyCoordinatorEndpointsOffline();
+    vi.spyOn(coordinatorClient, "health").mockResolvedValue(HEALTH);
+```
+
+patch (5)：案 (c) 首行（現況 :122-123）。old：
+
+```ts
+  it("(c) 選檔 → 執行 → useRuleRun for-library 真跑 → 結果摘要出現、近期清單 refresh", async () => {
+    vi.spyOn(coordinatorClient, "health").mockResolvedValue(HEALTH);
+```
+
+new：
+
+```ts
+  it("(c) 選檔 → 執行 → useRuleRun for-library 真跑 → 結果摘要出現、近期清單 refresh", async () => {
+    spyCoordinatorEndpointsOffline();
+    vi.spyOn(coordinatorClient, "health").mockResolvedValue(HEALTH);
+```
+
+案 (a)（現況 :74-75）**不加**（同 dockLiveLink 案 (a)：已 stub 全域 `fetch` 失敗）。本檔只補 spy、不改斷言；5.2 的「liveBackend 真值取代 fixture」解凍在 Task 7。
+
+- [ ] **Step 7: 檢查點——單檔 vitest**
+
+```powershell
+Set-Location $F
+npx vitest run src/console/unified/a1DockLive.test.tsx
+```
+
+預期：與 patch 前同綠（4 案）。
+
+- [ ] **Step 8: `incomingHandoff.test.tsx` 核實——本 slice 不改（出證據，不是省略）**
+
+```powershell
+Set-Location $F
+rg -n "EdgeConsole" src/console/incomingHandoff.test.tsx
+```
+
+2026-08-25 實測：**0 命中**。該檔一律直接掛頁面元件（`A1GovernanceWorkbenchPage`／`ModelDataPage`／`SessionManagementPage`／`KitGpuFleetPage`／`SharedStatusProvider`），從不經 `EdgeConsole` → `UnifiedShell`，共用 poller 不會啟動，故**不需要**補 spy，本 task 對該檔零改動。
+
+反例警告（不得照舊指示做）：該檔四個 A1 案（現況 :249／:261／:273／:287）的形狀是
+
+```ts
+    vi.spyOn(coordinatorClient, "getMinioObjects").mockResolvedValue(/* … */);
+    vi.spyOn(coordinatorClient, "runtimeStatus").mockResolvedValue(status([]));
+    window.location.hash = `#a1?source=minio&minio_key=${encodeURIComponent(CN_KEY)}`;
+```
+
+若照「在設定 hash 那行之前插 `spyCoordinatorEndpointsOffline();`」動手，會**覆蓋該檔自己的 `runtimeStatus` mock**（改成 503 reject），破壞該檔註解明載的「mock it empty so the effect resolves deterministically」，四案退化。日後該檔若真的改成掛 `EdgeConsole`（Step 8 的 `rg` 有命中），補 spy 必須插在該檔**自身 `vi.spyOn(coordinatorClient, …)` 之前**，語意同 Step 2 patch (2)。
+
+- [ ] **Step 9: 型別與全量（sweep 不得改變任何既有結果）**
+
+```powershell
+Set-Location $F
+npx tsc --noEmit
+npx vitest run
+```
+
+預期：tsc exit 0；全量 `0 failed`，且**測試檔數與案數與 sweep 前完全相同**（本 task 不新增測試檔、不新增／刪除 `it`）。任何數字變動代表改到了斷言 → 還原重來。
+
+- [ ] **Step 10: Commit**
+
+```powershell
+Set-Location $W
+git add web-viewer-sample/src/console/EdgeConsole.aliasRedirect.test.tsx web-viewer-sample/src/console/unified/dockLiveLink.test.tsx web-viewer-sample/src/console/unified/a1DockLive.test.tsx docs/superpowers/plans/2026-08-25-unified-console-runtime-truth-s1.md
+git diff --cached --check
+git commit -m "task#3a: 既有 unified-mount 測試補共用 poller 十端點 spy 與 store reset（不改斷言）" -m "Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
+```
+
+---
+
+### Task 3b: 真值投影層——`runtimeTruth.ts` 純函式＋狀態文案 key＋測試 mock builders（tasks 1.7 的投影規則）
+
+**Scope（單一）：** 只產出「端點切片 → 畫面 cell」的純函式、它們的單元測試，以及這層要用到的狀態文案 key 與 mock builder。**不動任何 production 元件**（`UnifiedShell.tsx` 在 Task 3c 才改），所以本 task 結尾生產行為零變化、全量測試必綠，紅燈只可能來自本 task 自己的新檔。
 
 **Files:**
 - Create: `web-viewer-sample/src/console/unified/runtimeTruth.ts`
 - Test: `web-viewer-sample/src/console/unified/runtimeTruth.test.ts`（新）
+- Modify: `web-viewer-sample/src/console/unified/__testdata__/coordinatorMocks.ts`（檔尾加 3 個 builder）
 - Modify: `web-viewer-sample/src/console/unified/fixtures.ts`（`Dict`＋`getL` 加 3 個 key）
-- Modify: `web-viewer-sample/src/console/unified/__testdata__/coordinatorMocks.ts`（加 3 個 builder）
-- Modify: `web-viewer-sample/src/console/unified/UnifiedShell.tsx`（整檔重寫；provider seeds 本 task 仍保留，Task 7 再縮）
-- Test: `web-viewer-sample/src/console/unified/topbarGpuChip.test.tsx`（新）
-- Modify: `web-viewer-sample/src/console/EdgeConsole.sharedstatus.test.tsx`（5.1：整檔重寫）
-- Modify: `web-viewer-sample/src/console/EdgeConsole.aliasRedirect.test.tsx`、`web-viewer-sample/src/console/unified/dockLiveLink.test.tsx`、`web-viewer-sample/src/console/unified/a1DockLive.test.tsx`、`web-viewer-sample/src/console/incomingHandoff.test.tsx`（只補十端點 spy＋store reset）
 
-- [ ] **Step 1: impact 分析**
+- [ ] **Step 1: impact 分析（本 task 只有 `fixtures.ts` 動到既有 symbol）**
 
 ```powershell
 Set-Location $W
-npx gitnexus@1.6.9 impact UnifiedShell -d upstream -r AI-BIM-governance
-npx gitnexus@1.6.9 impact UnifiedStateProvider -d upstream -r AI-BIM-governance
 npx gitnexus@1.6.9 impact getL -d upstream -r AI-BIM-governance
 ```
 
-預期：皆 LOW（`getL` 的 callers 為 unified 五頁＋docks；只加 key 不改既有 key）。HIGH／CRITICAL → 停。
+預期 LOW（`getL` 的 callers 為 unified 五頁＋docks；本 task 只加 key，不改既有 key 的名稱、值或型別）。HIGH／CRITICAL → 停下回報 coordinator。
 
 - [ ] **Step 2: 寫失敗測試 `runtimeTruth.test.ts`**
 
@@ -913,99 +1203,16 @@ export function sessionItem(id: string, status = "active"): RuntimeSessionSummar
 
 並把該檔 type import 改為：`import type { CallbackOutboxSummaryEntry, ConversionRecord, RuntimeSessionSummary, RuntimeStatus } from "../../coordinatorClient";`。
 
-- [ ] **Step 4: 寫失敗測試 `topbarGpuChip.test.tsx`**
-
-```tsx
-// unified-console-runtime-truth slice 1（tasks 1.7）：頂列 GPU chip 綁 /api/runtime/status（盤點：無 GPU 欄位→「GPU 未取得」；
-// 離線→「GPU —」；其他非 2xx→狀態碼）；Coordinator／Governance／Kit chip 與側欄轉檔 badge 亦為真值；殼層原始碼不含字面 82%。
-import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import EdgeConsole from "../EdgeConsole";
-import { CoordinatorHttpError } from "../coordinatorClient";
-import { coordinatorStatusStore } from "./coordinatorStatusStore";
-import { conversionRecord, spyCoordinatorEndpoints, spyCoordinatorEndpointsOffline } from "./__testdata__/coordinatorMocks";
-
-describe("UnifiedShell 頂列 chips 與側欄 badge（真值）", () => {
-  let container: HTMLDivElement;
-  let prevHash: string;
-  let root: Root | null;
-  beforeEach(() => {
-    (globalThis as Record<string, unknown>)["IS_REACT_ACT_ENVIRONMENT"] = true;
-    container = document.createElement("div"); document.body.appendChild(container);
-    prevHash = window.location.hash; root = null;
-    coordinatorStatusStore.reset();
-  });
-  afterEach(async () => {
-    if (root) await act(async () => { root!.unmount(); });
-    document.body.removeChild(container); vi.restoreAllMocks(); window.location.hash = prevHash;
-  });
-  async function mountAt(hash: string) {
-    window.location.hash = hash;
-    root = createRoot(container);
-    await act(async () => { root!.render(<EdgeConsole />); });
-    for (let i = 0; i < 6; i += 1) await act(async () => { await Promise.resolve(); });
-  }
-  const uc = (id: string) => container.querySelector<HTMLElement>(`[data-uc="${id}"]`)!;
-
-  it("live：無 GPU 欄位 → 「GPU 未取得」unavailable；三 chip ok；badge＝running+failed", async () => {
-    spyCoordinatorEndpoints({ conversionRecords: { count: 3, items: [conversionRecord("a", "converting"), conversionRecord("b", "failed"), conversionRecord("c", "ready")] } });
-    await mountAt("#home");
-    expect(uc("chip-gpu").textContent).toBe("GPU 未取得");
-    expect(uc("chip-gpu").getAttribute("data-state")).toBe("unavailable");
-    expect(uc("chip-coordinator").getAttribute("data-health")).toBe("ok");
-    expect(uc("chip-coordinator").textContent).toContain("Coordinator OK");
-    expect(uc("chip-governance").getAttribute("data-health")).toBe("ok");
-    expect(uc("chip-kit").getAttribute("data-health")).toBe("ok");
-    expect(uc("nav-pipe-badge").textContent).toBe("2");
-    expect(uc("nav-pipe-badge").getAttribute("data-state")).toBe("live");
-    expect(container.querySelector('[data-uc="page-root"]')).not.toBeNull();
-    expect(container.innerHTML).not.toContain("82%");
-  });
-
-  it("offline（十端點 503）：「GPU —」offline；三 chip unknown＋未連線；badge —", async () => {
-    spyCoordinatorEndpointsOffline();
-    await mountAt("#home");
-    expect(uc("chip-gpu").textContent).toBe("GPU —");
-    expect(uc("chip-gpu").getAttribute("data-state")).toBe("offline");
-    for (const id of ["chip-coordinator", "chip-governance", "chip-kit"]) {
-      expect(uc(id).getAttribute("data-health"), id).toBe("unknown");
-      expect(uc(id).textContent, id).toContain("未連線");
-    }
-    expect(uc("nav-pipe-badge").textContent).toBe("—");
-    expect(uc("nav-pipe-badge").getAttribute("data-state")).toBe("offline");
-  });
-
-  it("error（runtime/status 500）：Coordinator chip degraded 顯示 500；GPU chip「GPU 500」", async () => {
-    spyCoordinatorEndpoints({ runtimeStatus: new CoordinatorHttpError("/api/runtime/status", 500, "boom") });
-    await mountAt("#home");
-    expect(uc("chip-coordinator").getAttribute("data-health")).toBe("degraded");
-    expect(uc("chip-coordinator").textContent).toContain("500");
-    expect(uc("chip-gpu").textContent).toBe("GPU 500");
-    expect(uc("chip-gpu").getAttribute("data-state")).toBe("error");
-  });
-
-  it("殼層原始碼不含字面 82%／GPU/Stream", () => {
-    const src = readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), "UnifiedShell.tsx"), "utf8");
-    expect(src).not.toContain("82%");
-    expect(src).not.toContain("GPU/Stream");
-  });
-});
-```
-
-- [ ] **Step 5: 跑三個測試確認失敗**
+- [ ] **Step 4: 跑測試確認失敗（紅燈）**
 
 ```powershell
 Set-Location $F
-npx vitest run src/console/unified/runtimeTruth.test.ts src/console/unified/topbarGpuChip.test.tsx src/console/EdgeConsole.sharedstatus.test.tsx
+npx vitest run src/console/unified/runtimeTruth.test.ts
 ```
 
-預期：`runtimeTruth.test.ts` 因 `Failed to resolve import "./runtimeTruth"` 失敗；`topbarGpuChip` 四案中前三案失敗（`chip-gpu` 為 null → `Cannot read properties of null`），第四案失敗（原始碼含 `82%`）；`sharedstatus` 兩案仍綠（尚未翻轉）。
+預期：整檔因 `Failed to resolve import "./runtimeTruth"` 失敗（`Test Files  1 failed`）。若改成「某幾案失敗」而非 import 失敗，代表 `runtimeTruth.ts` 已存在（前一輪殘留）——先 `git status` 確認再決定。
 
-- [ ] **Step 6: 實作 `runtimeTruth.ts`**
+- [ ] **Step 5: 實作 `runtimeTruth.ts`**
 
 ```ts
 // ═══════════════════════════════════════════════════════════════════════
@@ -1123,7 +1330,7 @@ export function lastUpdatedText(slices: ReadonlyArray<EndpointSlice<unknown>>): 
 }
 ```
 
-- [ ] **Step 7: `fixtures.ts` 加 3 個字典 key**
+- [ ] **Step 6: `fixtures.ts` 加 3 個字典 key**
 
 `Dict` 介面 `dock_issues: string; outbox: string;` 之後加：
 
@@ -1144,7 +1351,144 @@ en 物件 `dock_issues: "Issues", outbox: "Deliver Outbox",` 之後加：
     offline: "offline", unavailable: "not observed", last_updated: "Last updated",
 ```
 
-- [ ] **Step 8: 整檔重寫 `UnifiedShell.tsx`**（provider seeds 暫留；Task 7 再縮）
+- [ ] **Step 7: 跑目標測試與全量**
+
+```powershell
+Set-Location $F
+npx vitest run src/console/unified/runtimeTruth.test.ts
+npx tsc --noEmit
+npx vitest run
+```
+
+預期：`runtimeTruth.test.ts` → `Test Files  1 passed (1)`、`Tests  7 passed`（2 案 cell／cellText／cellSub ＋ 5 案 pickers）；tsc exit 0；全量 `0 failed`，且**既有測試檔的案數與 Task 3a 結束時完全相同**（本 task 沒碰 production 元件，任何既有檔變紅代表 `fixtures.ts` 的 `Dict` 加 key 破壞了型別 → 回 Step 6 核對 zh／en 兩個物件是否都補齊）。
+
+- [ ] **Step 8: Commit**
+
+```powershell
+Set-Location $W
+git add web-viewer-sample/src/console/unified/runtimeTruth.ts web-viewer-sample/src/console/unified/runtimeTruth.test.ts web-viewer-sample/src/console/unified/__testdata__/coordinatorMocks.ts web-viewer-sample/src/console/unified/fixtures.ts docs/superpowers/plans/2026-08-25-unified-console-runtime-truth-s1.md
+git diff --cached --check
+git commit -m "task#3b: 真值投影純函式 runtimeTruth（cell／pickers／healthOf／lastUpdatedText）＋狀態文案 key＋mock builders" -m "Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
+```
+
+---
+
+### Task 3c: 殼層 `UnifiedShell` 綁真值（頂列四 chip、GPU chip 移除 `82%`、側欄 badge、provider 注入）＋ 5.1 同步翻轉（tasks 1.7、5.1）
+
+**Scope（單一）：** 殼層這一次行為改變——「UnifiedConsole 從 fixture-first 改為經共用 poller 讀真值」——以及它自己的回歸護欄。
+
+**為何 5.1 不再拆成另一個 commit：** 現況 `web-viewer-sample/src/console/EdgeConsole.sharedstatus.test.tsx:67` 是 `expect(spy).not.toHaveBeenCalled();`，逐字凍結「UnifiedConsole fixture-first：不打 /api/runtime/status」。殼層一旦改用共用 poller，這一行**當場**變紅；把 5.1 挪到後續 commit 會讓本 commit 帶紅燈，違反 Global Constraints「每個 task 結尾…該 task 的目標測試綠」。5.1 就是本次行為改變的回歸護欄，與殼層同一個 scope，必須同 commit。與此相對，先前版本 Step 10 的「四檔 spy sweep」與本 scope 無關，已抽成 Task 3a；純函式投影層已抽成 Task 3b。
+
+**Files:**
+- Modify: `web-viewer-sample/src/console/unified/UnifiedShell.tsx`（整檔重寫；provider seeds 本 task 仍保留，Task 7 再縮）
+- Test: `web-viewer-sample/src/console/unified/topbarGpuChip.test.tsx`（新）
+- Modify: `web-viewer-sample/src/console/EdgeConsole.sharedstatus.test.tsx`（5.1：整檔重寫）
+
+**前置：** Task 3a（既有測試已補 spy）、Task 3b（`runtimeTruth.ts`、`fixtures.ts` 三個 key、`coordinatorMocks` builders 均已在樹上）。前置未完成就開工，Step 6 的全量會出現與本 task 無關的紅燈，無法定位。
+
+- [ ] **Step 1: impact 分析**
+
+```powershell
+Set-Location $W
+npx gitnexus@1.6.9 impact UnifiedShell -d upstream -r AI-BIM-governance
+npx gitnexus@1.6.9 impact UnifiedStateProvider -d upstream -r AI-BIM-governance
+```
+
+預期：皆 LOW（唯一上游為 `EdgeConsole.tsx:renderUnified`）。HIGH／CRITICAL → 停下回報 coordinator。
+
+- [ ] **Step 2: 寫失敗測試 `topbarGpuChip.test.tsx`**
+
+```tsx
+// unified-console-runtime-truth slice 1（tasks 1.7）：頂列 GPU chip 綁 /api/runtime/status（盤點：無 GPU 欄位→「GPU 未取得」；
+// 離線→「GPU —」；其他非 2xx→狀態碼）；Coordinator／Governance／Kit chip 與側欄轉檔 badge 亦為真值；殼層原始碼不含字面 82%。
+import { act } from "react";
+import { createRoot, type Root } from "react-dom/client";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import path from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import EdgeConsole from "../EdgeConsole";
+import { CoordinatorHttpError } from "../coordinatorClient";
+import { coordinatorStatusStore } from "./coordinatorStatusStore";
+import { conversionRecord, spyCoordinatorEndpoints, spyCoordinatorEndpointsOffline } from "./__testdata__/coordinatorMocks";
+
+describe("UnifiedShell 頂列 chips 與側欄 badge（真值）", () => {
+  let container: HTMLDivElement;
+  let prevHash: string;
+  let root: Root | null;
+  beforeEach(() => {
+    (globalThis as Record<string, unknown>)["IS_REACT_ACT_ENVIRONMENT"] = true;
+    container = document.createElement("div"); document.body.appendChild(container);
+    prevHash = window.location.hash; root = null;
+    coordinatorStatusStore.reset();
+  });
+  afterEach(async () => {
+    if (root) await act(async () => { root!.unmount(); });
+    document.body.removeChild(container); vi.restoreAllMocks(); window.location.hash = prevHash;
+  });
+  async function mountAt(hash: string) {
+    window.location.hash = hash;
+    root = createRoot(container);
+    await act(async () => { root!.render(<EdgeConsole />); });
+    for (let i = 0; i < 6; i += 1) await act(async () => { await Promise.resolve(); });
+  }
+  const uc = (id: string) => container.querySelector<HTMLElement>(`[data-uc="${id}"]`)!;
+
+  it("live：無 GPU 欄位 → 「GPU 未取得」unavailable；三 chip ok；badge＝running+failed", async () => {
+    spyCoordinatorEndpoints({ conversionRecords: { count: 3, items: [conversionRecord("a", "converting"), conversionRecord("b", "failed"), conversionRecord("c", "ready")] } });
+    await mountAt("#home");
+    expect(uc("chip-gpu").textContent).toBe("GPU 未取得");
+    expect(uc("chip-gpu").getAttribute("data-state")).toBe("unavailable");
+    expect(uc("chip-coordinator").getAttribute("data-health")).toBe("ok");
+    expect(uc("chip-coordinator").textContent).toContain("Coordinator OK");
+    expect(uc("chip-governance").getAttribute("data-health")).toBe("ok");
+    expect(uc("chip-kit").getAttribute("data-health")).toBe("ok");
+    expect(uc("nav-pipe-badge").textContent).toBe("2");
+    expect(uc("nav-pipe-badge").getAttribute("data-state")).toBe("live");
+    expect(container.querySelector('[data-uc="page-root"]')).not.toBeNull();
+    expect(container.innerHTML).not.toContain("82%");
+  });
+
+  it("offline（十端點 503）：「GPU —」offline；三 chip unknown＋未連線；badge —", async () => {
+    spyCoordinatorEndpointsOffline();
+    await mountAt("#home");
+    expect(uc("chip-gpu").textContent).toBe("GPU —");
+    expect(uc("chip-gpu").getAttribute("data-state")).toBe("offline");
+    for (const id of ["chip-coordinator", "chip-governance", "chip-kit"]) {
+      expect(uc(id).getAttribute("data-health"), id).toBe("unknown");
+      expect(uc(id).textContent, id).toContain("未連線");
+    }
+    expect(uc("nav-pipe-badge").textContent).toBe("—");
+    expect(uc("nav-pipe-badge").getAttribute("data-state")).toBe("offline");
+  });
+
+  it("error（runtime/status 500）：Coordinator chip degraded 顯示 500；GPU chip「GPU 500」", async () => {
+    spyCoordinatorEndpoints({ runtimeStatus: new CoordinatorHttpError("/api/runtime/status", 500, "boom") });
+    await mountAt("#home");
+    expect(uc("chip-coordinator").getAttribute("data-health")).toBe("degraded");
+    expect(uc("chip-coordinator").textContent).toContain("500");
+    expect(uc("chip-gpu").textContent).toBe("GPU 500");
+    expect(uc("chip-gpu").getAttribute("data-state")).toBe("error");
+  });
+
+  it("殼層原始碼不含字面 82%／GPU/Stream", () => {
+    const src = readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), "UnifiedShell.tsx"), "utf8");
+    expect(src).not.toContain("82%");
+    expect(src).not.toContain("GPU/Stream");
+  });
+});
+```
+
+- [ ] **Step 3: 跑新測試確認失敗（紅燈）**
+
+```powershell
+Set-Location $F
+npx vitest run src/console/unified/topbarGpuChip.test.tsx
+```
+
+預期：四案全失敗——前三案 `chip-gpu` 為 null（`Cannot read properties of null`），第四案原始碼仍含 `82%`。此時 `EdgeConsole.sharedstatus.test.tsx` 尚未動、仍為綠（殼層還沒改）。
+
+- [ ] **Step 4: 整檔重寫 `UnifiedShell.tsx`**（provider seeds 暫留；Task 7 再縮）
 
 ```tsx
 // ═══════════════════════════════════════════════════════════════════════
@@ -1399,7 +1743,7 @@ function ShellFrame({ page, dock, concept, children }: UnifiedShellProps) {
 }
 ```
 
-- [ ] **Step 9: 5.1 翻轉——整檔重寫 `EdgeConsole.sharedstatus.test.tsx`**
+- [ ] **Step 5: 5.1 翻轉——整檔重寫 `EdgeConsole.sharedstatus.test.tsx`**（Step 4 完成後立刻做，同一個 commit）
 
 ```tsx
 import { act } from "react";
@@ -1469,47 +1813,38 @@ describe("EdgeConsole shared status polling（legacy rail 一次；unified 共�
 });
 ```
 
-（本 task 時 HomePage 尚未訂閱 store，第二案的 `getCallbackOutboxSummary` 斷言會失敗——**Task 4 完成後才綠**；本 task 結尾只要求前兩個 `expect` 與 `runtimeStatus` 恰一次成立。為避免 Task 3 commit 帶紅燈，本 task 先把 `getCallbackOutboxSummary` 那行寫成 `expect(spies.getCallbackOutboxSummary).toHaveBeenCalledTimes(0);` 並加註 `// Task 4 改為 toHaveBeenCalledWith(200)`，Task 4 Step 6 再改回。）
+（本 task 時 HomePage 尚未訂閱 store，第二案的 `getCallbackOutboxSummary` 斷言會失敗——**Task 4 完成後才綠**；本 task 結尾只要求前兩個 `expect` 與 `runtimeStatus` 恰一次成立。為避免 Task 3c commit 帶紅燈，本 task 先把 `getCallbackOutboxSummary` 那行寫成 `expect(spies.getCallbackOutboxSummary).toHaveBeenCalledTimes(0);` 並加註 `// Task 4 改為 toHaveBeenCalledWith(200)`，Task 4 Step 6 再改回。）
 
-- [ ] **Step 10: 其他掛載 unified 路由的既有測試補十端點 spy（殼層改輪詢後不得打真網路）**
-
-對下列四檔各做兩件事（先 Read 定位）：(1) 檔頭加 import：
-
-```ts
-import { coordinatorStatusStore } from "<相對路徑>/coordinatorStatusStore";
-import { spyCoordinatorEndpointsOffline } from "<相對路徑>/__testdata__/coordinatorMocks";
-```
-
-（`src/console/*.test.tsx` 用 `./unified/coordinatorStatusStore`／`./unified/__testdata__/coordinatorMocks`；`src/console/unified/*.test.tsx` 用 `./coordinatorStatusStore`／`./__testdata__/coordinatorMocks`。）(2) 在該檔設定 `IS_REACT_ACT_ENVIRONMENT` 的 `beforeEach` 區塊末尾加一行 `coordinatorStatusStore.reset();`，並依檔案在指定位置加 `spyCoordinatorEndpointsOffline();`：
-
-| 檔案 | 插入 `spyCoordinatorEndpointsOffline();` 的位置 |
-|---|---|
-| `src/console/EdgeConsole.aliasRedirect.test.tsx` | 同一個 `beforeEach` 末尾（該檔多案掛 `#pipeline`／`#/workspace?dock=a4`／`#semantic-search?…`）；若該檔 `afterEach` 沒有 `vi.restoreAllMocks()` 則補上 |
-| `src/console/unified/dockLiveLink.test.tsx` | 案 (b)、(c)（`vi.spyOn(coordinatorClient, "health")` 那兩案）的 `it` 第一行；案 (a) 已 `vi.stubGlobal("fetch", reject)`，不加 |
-| `src/console/unified/a1DockLive.test.tsx` | 案 (b)、(b2)、(c) 的 `it` 第一行（在各自 `vi.spyOn(coordinatorClient, "health")` 之前）；案 (a) 不加 |
-| `src/console/incomingHandoff.test.tsx` | 每個把 hash 設為 `#a1?source=…` 的 `it`（2026-08-25 為 :249／:261／:273／:287 四處）在設定 hash 那行之前 |
-
-（這些檔案本 task 只補 spy，不改斷言；`a1DockLive.test.tsx` 的 5.2 斷言翻轉在 Task 7。）
-
-- [ ] **Step 11: 跑目標測試與全量**
+- [ ] **Step 6: 跑目標測試與全量**
 
 ```powershell
 Set-Location $F
-npx vitest run src/console/unified/runtimeTruth.test.ts src/console/unified/topbarGpuChip.test.tsx src/console/EdgeConsole.sharedstatus.test.tsx
+npx vitest run src/console/unified/topbarGpuChip.test.tsx src/console/EdgeConsole.sharedstatus.test.tsx
 npx tsc --noEmit
 npx vitest run
 ```
 
-預期：三檔 `Test Files  3 passed (3)`（`Tests  12 passed`）；tsc exit 0；全量 `Test Files  N passed (N)`（N 為既有數＋3；0 failed）。若 `unified.test.tsx` 或其他檔出現 `getServerSnapshot` 相關錯誤，代表 `useCoordinatorStatus` 第三參數漏傳，回 Task 2 Step 4 核對。
+預期：兩檔 `Test Files  2 passed (2)`、`Tests  6 passed`（topbarGpuChip 4 案＋sharedstatus 2 案）；tsc exit 0；全量 `0 failed`，測試檔數 = Task 3b 結束時 ＋1（`topbarGpuChip.test.tsx`）。
 
-- [ ] **Step 12: Commit**
+定位提示（紅燈時先看是哪一類，不要亂改）：
+
+| 症狀 | 最可能原因 | 處置 |
+|---|---|---|
+| `unified.test.tsx` 或其他 SSR 測試出現 `getServerSnapshot` 相關錯誤 | `useCoordinatorStatus` 第三參數漏傳 | 回 Task 2 Step 4 核對 |
+| `dockLiveLink`／`a1DockLive`／`aliasRedirect` 變紅或噴真網路錯誤 | Task 3a 的 sweep 沒做完或 patch 插錯位置 | 回 Task 3a 對應 Step 的檢查點，不要在本 task 內改那三個檔 |
+| `sharedstatus` 第二案 `runtimeStatus` 不是恰一次 | 殼層與頁面各自建 store（未走 `ConsoleDataProvider` 單例） | 回 Step 4 核對 `UnifiedShell` 是否以 `coordinatorStatusStore` 注入 |
+
+- [ ] **Step 7: Commit**
 
 ```powershell
 Set-Location $W
-git add web-viewer-sample/src/console/unified/runtimeTruth.ts web-viewer-sample/src/console/unified/runtimeTruth.test.ts web-viewer-sample/src/console/unified/fixtures.ts web-viewer-sample/src/console/unified/__testdata__/coordinatorMocks.ts web-viewer-sample/src/console/unified/UnifiedShell.tsx web-viewer-sample/src/console/unified/topbarGpuChip.test.tsx web-viewer-sample/src/console/EdgeConsole.sharedstatus.test.tsx web-viewer-sample/src/console/EdgeConsole.aliasRedirect.test.tsx web-viewer-sample/src/console/unified/dockLiveLink.test.tsx web-viewer-sample/src/console/unified/a1DockLive.test.tsx web-viewer-sample/src/console/incomingHandoff.test.tsx
+git add web-viewer-sample/src/console/unified/UnifiedShell.tsx web-viewer-sample/src/console/unified/topbarGpuChip.test.tsx web-viewer-sample/src/console/EdgeConsole.sharedstatus.test.tsx docs/superpowers/plans/2026-08-25-unified-console-runtime-truth-s1.md
 git diff --cached --check
-git commit -m "task#3: UnifiedShell 頂列 chips／GPU chip／側欄 badge 綁真值（移除字面 82%），注入共用 poller；5.1 翻轉" -m "Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
+git commit -m "task#3c: UnifiedShell 頂列 chips／GPU chip／側欄 badge 綁真值（移除字面 82%），注入共用 poller；5.1 同步翻轉" -m "Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 ```
+
+---
+
 
 ---
 
@@ -1857,7 +2192,7 @@ export function HomePage() {
   });
 ```
 
-`EdgeConsole.sharedstatus.test.tsx`：把 Task 3 暫寫的 `expect(spies.getCallbackOutboxSummary).toHaveBeenCalledTimes(0);`（含註解）改回 `expect(spies.getCallbackOutboxSummary).toHaveBeenCalledWith(200);`。
+`EdgeConsole.sharedstatus.test.tsx`：把 Task 3c 暫寫的 `expect(spies.getCallbackOutboxSummary).toHaveBeenCalledTimes(0);`（含註解）改回 `expect(spies.getCallbackOutboxSummary).toHaveBeenCalledWith(200);`。
 
 - [ ] **Step 7: 跑測試確認通過＋型別**
 
@@ -3441,7 +3776,7 @@ git commit -m "task#10: tasks.md 註記本機綠待 181；plan 勾選收官" -m 
 git log --oneline main..HEAD
 ```
 
-預期：`main..HEAD` 顯示 `task#1`…`task#10` 十個 commit（加上本 plan 的 `plan:` commit 與既有 `docs(spec-to-done)` commit）。push 與開 PR（tasks 7.5：`Design gate status` 逐字＝機器算出值、bootstrap 三欄、frontend Known gaps 表、`kit_gpu` 表＋Actions URL）由 coordinator 執行；`scripts/dev/check-pr-local-preflight.ps1 -PrNumber <PR 號>` 於 PR 開立後由 coordinator 跑。回報 coordinator 時附：`artifacts/slice1-*.txt`／`.md` 四檔、四張截圖路徑、design gate 六屏預期紅的 diff ratio、`detectVerdict`。
+預期：`main..HEAD` 顯示 `task#1`、`task#2`、`task#3a`、`task#3b`、`task#3c`、`task#4`…`task#10` 共十二個 commit（加上本 plan 的 `plan:` commit 與既有 `docs(spec-to-done)` commit）。push 與開 PR（tasks 7.5：`Design gate status` 逐字＝機器算出值、bootstrap 三欄、frontend Known gaps 表、`kit_gpu` 表＋Actions URL）由 coordinator 執行；`scripts/dev/check-pr-local-preflight.ps1 -PrNumber <PR 號>` 於 PR 開立後由 coordinator 跑。回報 coordinator 時附：`artifacts/slice1-*.txt`／`.md` 四檔、四張截圖路徑、design gate 六屏預期紅的 diff ratio、`detectVerdict`。
 
 ---
 
