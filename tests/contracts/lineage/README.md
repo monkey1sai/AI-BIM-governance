@@ -1,8 +1,10 @@
 # `tests/contracts/lineage/` — rvt-ifc-usdc-lineage 可執行契約
 
 本目錄是 `openspec/changes/rvt-ifc-usdc-lineage` tasks 2.1–2.7 的機器可讀正本：
-七支 JSON Schema（放在上一層 `tests/contracts/`）、363 個 fixture、語意 validator、
-wire-protocol validator，以及把它們綁在一起的兩支 runner。
+七支 JSON Schema（放在上一層 `tests/contracts/`）、365 個 fixture（`fixtures/` 之下的
+全部 JSON，含 `protocol/` 那 2 支表驅動語料；§5 表的 valid/invalid/semantic 合計是
+其中的 363 支 schema fixture）、語意 validator、wire-protocol validator，以及把它們
+綁在一起的兩支 runner。
 
 ```
 tests/contracts/
@@ -315,10 +317,10 @@ validator 該開槍時會開槍，這條證明它其餘時候會閉嘴——少�
 | `model_version_bundle_manifest` | 9 | 30 | 8 | 2.1 |
 | `lineage_alignment_report` | 6 | 48 | 24 | 2.2 |
 | `pipeline_job_attempt` | 27 | 54 | 9 | 2.3 |
-| `result_manifest` | 15 | 38 | 6 | 2.3 |
+| `result_manifest` | 15 | 38 | 7 | 2.3 |
 | `source_bundle_ready` | 2 | 13 | 0 | 2.4 |
 | `cloud_lineage_publication` | 10 | 41 | 22 | 2.5 |
-| **合計** | **69** | **224** | **69** | |
+| **合計** | **69** | **224** | **70** | |
 
 另有 `fixtures/protocol/` 2 個（2.6 的 HMAC golden vectors 與 ACK 分類語料），
 不進 `FIXTURE_MINIMUMS`——它們不是 schema fixture，是表驅動語料。

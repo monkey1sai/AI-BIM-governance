@@ -21,6 +21,7 @@ import {
   LineageArtifactDownloadUnavailableError,
   parseLineageArtifactDownloadTargetPolicies,
   parseLineageArtifactSignedDownload,
+  resolveLineageArtifactDownloadTarget,
   type LineageArtifactDownloadTarget,
 } from "../../src/services/lineage/lineageArtifactDownloadSigner.js";
 import { createFakeSourceBundleObjectPort } from "../helpers/fakeSourceBundleObjectPort.js";
@@ -413,6 +414,39 @@ describe("parseLineageArtifactDownloadTargetPolicies", () => {
       const parsed = parseLineageArtifactDownloadTargetPolicies(raw);
       expect(parsed.policies, name).toEqual([]);
       expect(parsed.malformed, name).toBe(true);
+    }
+  });
+
+  it("直接建構的 policy 繞過 schema 時，resolver 自己擋下錯誤的 object_path_prefix", () => {
+    // env 路徑有 schema refine，但 `target_policies` 是一個可直接建構的參數（測試、
+    // 未來的 config 來源、任何繞過 env 解析的呼叫端）。少了 resolver 的自證，這種
+    // policy 會被當成唯一命中並簽出一個 pathname 永遠對不上的 URL。
+    const parsedRef = parsedRefOf(
+      `minio://${RESULT_AUTHORITY}/${RESULT_BUCKET}/${RESULT_EXTERNAL_MODEL_VERSION_ID}/results/${RESULT_ATTEMPT_ID}/model.usdc?versionId=v-0007-usdc`,
+    );
+    const base = {
+      authority: RESULT_AUTHORITY,
+      bucket: RESULT_BUCKET,
+      public_origin: PUBLIC_ORIGIN,
+    };
+
+    // 正確的 `/<bucket>/` 仍然命中。
+    expect(
+      resolveLineageArtifactDownloadTarget({
+        policies: [{ ...base, object_path_prefix: OBJECT_PATH_PREFIX }],
+        parsed_ref: parsedRef,
+      }),
+    ).toMatchObject({ public_origin: PUBLIC_ORIGIN });
+
+    // 形狀合法但不等於 `/<bucket>/` 的 prefix 一律不命中。
+    for (const prefix of ["/downloads/", "/another-governed-bucket/", "/"]) {
+      expect(
+        resolveLineageArtifactDownloadTarget({
+          policies: [{ ...base, object_path_prefix: prefix }],
+          parsed_ref: parsedRef,
+        }),
+        prefix,
+      ).toBeNull();
     }
   });
 

@@ -269,11 +269,32 @@ function requireMatchingReadyBundle(
   if (
     !bundle ||
     bundle.bundle_state !== "READY" ||
-    bundle.external_model_version_id !== job.external_model_version_id ||
-    bundle.pipeline_job_id !== job.pipeline_job_id
+    bundle.external_model_version_id !== job.external_model_version_id
   ) {
     throw new LineageMetadataStateUnavailableError(
       `pipeline job ${job.pipeline_job_id} lacks matching authoritative READY bundle evidence`,
+    );
+  }
+  // back-reference 的兩種失敗對 operator 是**完全不同的事**，HTTP 上同為 503
+  // `lineage_metadata_state_unavailable`（對外不洩漏內部拓撲），但 detail 必須分開：
+  //
+  //   * `pipeline_job_id === null`：3.1 收下 bundle 時尚未回寫 job id（由 3.2 的
+  //     auto-enqueue 補上）。這是一個**會自癒的窗口**，operator 該做的是等下一輪
+  //     reconcile／確認 enqueue 有跑，不是去查資料損毀。
+  //   * 指向另一個 job：兩份 store 對同一個 source bundle 的歸屬說法互相矛盾。
+  //     這**不會**自癒，需要人去看是哪一側寫錯。
+  //
+  // 合成同一句話會讓前者被當成後者調查，或更糟——後者被當成前者「再等等」。
+  // 這裡刻意不引入 structLog：本 route 的 deps 沒有 logger，為了兩行訊息新增一個
+  // log 基建會把「誰擁有這條 route 的可觀測性」這個決定偷偷做掉。
+  if (bundle.pipeline_job_id === null) {
+    throw new LineageMetadataStateUnavailableError(
+      `pipeline job ${job.pipeline_job_id} source bundle has no pipeline_job_id back-reference yet (task 3.1 admission precedes the 3.2 write-back; this self-heals)`,
+    );
+  }
+  if (bundle.pipeline_job_id !== job.pipeline_job_id) {
+    throw new LineageMetadataStateUnavailableError(
+      `pipeline job ${job.pipeline_job_id} source bundle back-reference points at a different job (binding conflict; does not self-heal)`,
     );
   }
   return bundle;

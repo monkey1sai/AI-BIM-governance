@@ -17,7 +17,18 @@ export interface LineageArtifactDownloadTargetPolicy {
   bucket: string;
   /** Exact browser-visible HTTPS origin; IP literals and local-only host suffixes are forbidden. */
   public_origin: string;
-  /** Exact path-style prefix which already includes the bucket, for example `/lineage-results/`. */
+  /**
+   * The path-style prefix the signed URL will carry, which **must be exactly**
+   * `` `/${bucket}/` `` — a leading slash, the same bucket named above, one trailing slash.
+   *
+   * This is an equality rule, not a shape rule with an illustrative example. Under
+   * `forcePathStyle: true` with a `public_origin` whose pathname is `/`, the SigV4 signer
+   * emits `/<bucket>/<objectKey>` and the route compares the resulting pathname to
+   * `object_path_prefix + objectKey` verbatim. Any other value — a different bucket, a
+   * `/downloads/` style vanity path — produces a URL whose pathname can never match, so the
+   * download surface returns 503 for every artifact. Both the env schema and
+   * `resolveLineageArtifactDownloadTarget` assert the equality.
+   */
   object_path_prefix: string;
 }
 
@@ -141,7 +152,14 @@ export function resolveLineageArtifactDownloadTarget(input: {
       policy.authority === input.parsed_ref.authority &&
       policy.bucket === input.parsed_ref.bucket &&
       normalizedPublicOrigin(policy.public_origin) !== null &&
-      isCanonicalObjectPathPrefix(policy.object_path_prefix),
+      isCanonicalObjectPathPrefix(policy.object_path_prefix) &&
+      // 簽章邊界再自證一次（與 `createS3LineageArtifactDownloadSigner` 對 public_origin
+      // 的重驗同一哲學）：`parseLineageArtifactDownloadTargetPolicies` 的 schema 已經擋過
+      // 這條，但 policy 陣列是一個**可直接建構**的參數——測試、未來的 config 來源或任何
+      // 繞過 env 解析的呼叫端都能塞進一個 `/downloads/`。沒有這一行，那種 policy 會被
+      // 當成唯一命中、簽出一個 pathname 永遠對不上的 URL，然後在 route 的綁定檢查才
+      // 以無因的 503 收場。
+      policy.object_path_prefix === `/${policy.bucket}/`,
   );
   if (matches.length !== 1) return null;
   return {

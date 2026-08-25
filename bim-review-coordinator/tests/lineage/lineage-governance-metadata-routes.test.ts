@@ -434,7 +434,13 @@ describe("lineage governance metadata routes", () => {
  * **不得**降級成 NOT_BUILT。
  */
 function makeProjectionHarness(
-  options: { registerResult?: boolean; digestDrift?: boolean; bundleDigestDrift?: boolean } = {},
+  options: {
+    registerResult?: boolean;
+    digestDrift?: boolean;
+    bundleDigestDrift?: boolean;
+    /** 覆寫 bundle 的 back-reference；`undefined` = 正確指回本 job。 */
+    bundlePipelineJobId?: string | null;
+  } = {},
 ) {
   const objects = createFakeSourceBundleObjectPort({
     allowedAuthorities: [RESULT_AUTHORITY],
@@ -465,7 +471,10 @@ function makeProjectionHarness(
     producer_kind: "external_ifc_worker",
     claimed_at: "2026-07-16T07:58:20.000Z",
     validated_at: "2026-07-16T08:00:00.000Z",
-    pipeline_job_id: job.pipeline_job_id,
+    pipeline_job_id:
+      options.bundlePipelineJobId === undefined
+        ? job.pipeline_job_id
+        : options.bundlePipelineJobId,
     created_at: "2026-07-16T08:00:00.000Z",
     updated_at: "2026-07-16T08:00:00.000Z",
   });
@@ -644,6 +653,36 @@ describe("lineage governance metadata surfaces：manifest 投影接真值", () =
 
     expect(response.status).toBe(503);
     expect(response.body).toEqual({ error: "lineage_metadata_projection_unavailable" });
+  });
+
+  it("bundle 的 back-reference 指向另一個 job 時，overview 與 artifacts 兩面都 503", async () => {
+    // 這一案專門守 `requireMatchingReadyBundle` 的 back-reference 條件：拿掉那一行
+    // （只比 source_bundle_id／bundle_state／external_model_version_id）其餘測試仍會全綠，
+    // 而 metadata 會把**另一個 job 的** source artifacts 端到這個 job 的面板上。
+    const harness = makeProjectionHarness({ bundlePipelineJobId: "pj_some_other_job" });
+
+    const overview = await getSurface(harness.app, harness.pipelineJobId, "overview");
+    const artifacts = await getSurface(harness.app, harness.pipelineJobId, "artifacts");
+
+    for (const response of [overview, artifacts]) {
+      expect(response.status).toBe(503);
+      expect(response.body).toEqual({ error: "lineage_metadata_state_unavailable" });
+    }
+  });
+
+  it("back-reference 尚未回寫（null）時 HTTP 形狀與綁定衝突相同（內部語意才分兩種）", async () => {
+    // 3.1 收下 bundle 時 pipeline_job_id 為 null，由 3.2 auto-enqueue 補寫——一個會自癒的
+    // 窗口。對外必須與「指向別的 job」同一個 503／同一個 code（不洩漏內部拓撲）；
+    // 兩者的差別只存在於 error detail 與註解，給 operator 判斷該等還是該查。
+    const harness = makeProjectionHarness({ bundlePipelineJobId: null });
+
+    const overview = await getSurface(harness.app, harness.pipelineJobId, "overview");
+    const artifacts = await getSurface(harness.app, harness.pipelineJobId, "artifacts");
+
+    for (const response of [overview, artifacts]) {
+      expect(response.status).toBe(503);
+      expect(response.body).toEqual({ error: "lineage_metadata_state_unavailable" });
+    }
   });
 
   it("reader 缺席時四個欄位一律 NOT_BUILT/reader_not_wired（與接上後同一組欄位對照）", async () => {
