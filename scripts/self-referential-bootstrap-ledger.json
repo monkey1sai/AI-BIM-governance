@@ -878,7 +878,7 @@
     },
     {
       "id": "autonomous-linux-delivery-contracts",
-      "status": "open",
+      "status": "closed",
       "pr": 557,
       "opened_at": "2026-08-17T06:51:31Z",
       "reason": "new delivery contracts and their evidence parser classify and adjudicate the future merge and deployment mechanism, so the current trusted mechanism cannot prove their post-merge behavior before this pull request merges",
@@ -917,7 +917,14 @@
         "docs/evidence/autonomous-linux-delivery-contracts/self-referential-bootstrap/README.md",
         "docs/evidence/autonomous-linux-delivery-contracts/self-referential-bootstrap/gate-suites.txt"
       ],
-      "fixpoint": null
+      "fixpoint": {
+        "reverified_at": "2026-08-25T03:07:02Z",
+        "mechanism_commit": "ea6b20ae38ceb5d06856bb3f696bf6e94e8f90cd",
+        "evidence_refs": [
+          "docs/evidence/autonomous-linux-delivery-contracts/fixpoint/attestation.json",
+          "docs/evidence/autonomous-linux-delivery-contracts/fixpoint/summary.md"
+        ]
+      }
     }
   ]
 }

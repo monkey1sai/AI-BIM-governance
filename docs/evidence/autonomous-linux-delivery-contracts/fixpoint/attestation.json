@@ -1,0 +1,53 @@
+{
+  "schema_version": "self-referential-fixpoint-attestation/v1",
+  "entry_id": "autonomous-linux-delivery-contracts",
+  "mechanism_commit": "ea6b20ae38ceb5d06856bb3f696bf6e94e8f90cd",
+  "verification_contract_sha256": "2b03b006e23998453d0f62a440af5dcbccc680f2771d2f7e1abc65330b321856",
+  "result": "pass",
+  "commands": [
+    {
+      "id": "test-autonomous-delivery-contracts",
+      "exit_code": 0
+    },
+    {
+      "id": "test-autonomous-delivery-contract-schemas",
+      "exit_code": 0
+    },
+    {
+      "id": "test-self-referential-bootstrap",
+      "exit_code": 0
+    },
+    {
+      "id": "test-trusted-host-merge",
+      "exit_code": 0
+    },
+    {
+      "id": "test-review-risk",
+      "exit_code": 0
+    },
+    {
+      "id": "test-agent-governance-check",
+      "exit_code": 0
+    },
+    {
+      "id": "test-rebuild-test-deploy-pwsh",
+      "exit_code": 0
+    },
+    {
+      "id": "test-rebuild-test-deploy-windows-powershell",
+      "exit_code": 0
+    },
+    {
+      "id": "verify-openspec-autonomous-linux-delivery",
+      "exit_code": 0
+    },
+    {
+      "id": "verify-openspec-repository-lifecycle",
+      "exit_code": 0
+    },
+    {
+      "id": "scan-secret-patterns",
+      "exit_code": 0
+    }
+  ]
+}
