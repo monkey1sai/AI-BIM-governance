@@ -1,0 +1,67 @@
+stack_kind=self_referential_bootstrap
+pr=695
+base=c3a7bf3bb2704df1602bed6a2bfbb73eb0d78a8c
+implementation_checkpoint=b6580bbe0a4aaf229c8669c67b788acaef7f1ff9
+verified_at=2026-08-25T09:38:41Z
+repair_target=autonomous-linux-delivery-contracts
+linked_successor=blip-compare-head-compat-r1
+verification_contract=blip-compare-head-compat-r1/v1
+contract_sha256=2e84405553903ab005689ab2add48fa2c72b2aa1e6fb25e7f7f8988c4d537e7d
+
+test-autonomous-delivery-contracts
+command=node --test scripts/tests/test-autonomous-linux-delivery-contracts.mjs
+result=exit 0; 12 passed; 0 failed; 0 skipped
+
+test-autonomous-delivery-contract-schemas
+command=python -c "import runpy; ns=runpy.run_path(r'tests/test_autonomous_delivery_contract_schemas.py'); names=sorted(n for n in ns if n.startswith('test_')); [ns[n]() for n in names]; print('direct_schema_assertions_passed=' + str(len(names)))"
+result=exit 0; 5 direct schema assertions passed
+
+test-self-referential-bootstrap
+command=pwsh -NoProfile -NonInteractive -File scripts/tests/test-self-referential-bootstrap.ps1
+result=exit 0; all assertions passed
+
+test-trusted-host-merge
+command=node --test scripts/tests/test-trusted-host-merge.mjs scripts/tests/test-trusted-host-merge-runtime.mjs
+result=exit 0; 44 passed; 0 failed; 1 expected Linux-only gitlink skip
+
+test-review-risk
+command=node --test scripts/tests/test-review-risk.mjs
+result=exit 0; 65 passed; 0 failed; 0 skipped
+
+test-agent-governance-check
+command=pwsh -NoProfile -NonInteractive -File scripts/tests/test-agent-governance-check.ps1
+result=exit 0; all assertions passed; lifecycle 46 passed
+
+test-rebuild-test-deploy-pwsh
+command=pwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/tests/test-rebuild-test-deploy.ps1
+result=exit 0; PASS; test-owned temporary fixtures only
+
+test-rebuild-test-deploy-windows-powershell
+command=powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/tests/test-rebuild-test-deploy.ps1
+result=exit 0; PASS; test-owned temporary fixtures only
+
+verify-openspec-autonomous-linux-delivery
+command=openspec validate autonomous-linux-delivery --strict
+result=exit 0; change is valid
+
+verify-openspec-repository-lifecycle
+command=node scripts/tests/verify-openspec-repository-lifecycle.mjs --repo-root . --format text
+result=exit 0; current=7; archived=119; repository lifecycle OK
+
+scan-secret-patterns
+command=pwsh -NoProfile -NonInteractive -File scripts/tests/scan-secret-patterns.ps1
+result=exit 0; passed; process-local exact-worktree safe.directory supplied to child git; no config write and no secret values emitted
+
+test-ship-gate-packet
+command=python -I -S -B scripts/agent-tooling/blip-approve/bot/scripts/test_ship_gate_packet.py
+result=exit 0; 9 passed; 0 failed; 0 skipped
+
+gitnexus-impact
+command=gitnexus impact collect_pr_snapshot -d upstream --repo <exact-worktree-path>
+result=LOW; 9 impacted symbols; 3 direct callers; 2 approval flows
+
+gitnexus-detect-changes
+command=gitnexus detect-changes --scope compare --base-ref c3a7bf3bb2704df1602bed6a2bfbb73eb0d78a8c --repo <exact-worktree-path>
+result=LOW; 3 changed files; 5 symbols; 0 affected processes
+
+external_side_effects=none; no secrets, private inventory, deployment, service/process control, external runtime, or :49100 probe
