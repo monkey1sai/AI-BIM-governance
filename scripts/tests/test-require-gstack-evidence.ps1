@@ -75,6 +75,7 @@ $oldHead = $env:FAKE_PR_HEAD_SHA
 $oldExpectedSelector = $env:FAKE_EXPECT_SELECTOR
 $oldExpectedRepo = $env:FAKE_EXPECT_REPO
 $oldValidatorThrow = $env:FAKE_VALIDATOR_THROW
+$oldExpectedScreenCount = $env:FAKE_EXPECTED_SCREEN_COUNT
 New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
 try {
     Push-Location $tempRoot
@@ -98,6 +99,8 @@ try {
         git add .
         git commit -q -m 'mixed frontend change'
         $featureHead = (git rev-parse HEAD).Trim()
+        # The fake validator must expect exactly the screen set the copied manifest declares; never hard-code the count.
+        $env:FAKE_EXPECTED_SCREEN_COUNT = [string]@((Get-Content -LiteralPath 'docs/plans/design-system-reference.manifest.json' -Raw | ConvertFrom-Json).screens).Count
 
         New-Item -ItemType Directory -Path 'bin' -Force | Out-Null
         @'
@@ -142,7 +145,7 @@ param(
     [switch] $AllowUntrackedArtifacts
 )
 if ($env:FAKE_VALIDATOR_THROW -eq '1') { throw 'synthetic validator failure' }
-if (-not $AllowUntrackedArtifacts -or $RequiredScreenIds.Count -ne 13 -or $TargetCommit -ne $env:FAKE_PR_HEAD_SHA) { exit 9 }
+if (-not $AllowUntrackedArtifacts -or $RequiredScreenIds.Count -ne [int]$env:FAKE_EXPECTED_SCREEN_COUNT -or $TargetCommit -ne $env:FAKE_PR_HEAD_SHA) { exit 9 }
 exit 0
 '@ | Set-Content -LiteralPath 'scripts/tests/verify-design-system-visual-result.ps1' -Encoding utf8
         Set-Content -LiteralPath 'artifacts/e2e/design-system-visual-result.json' -Value '{}' -Encoding utf8
@@ -186,6 +189,7 @@ exit 0
     $env:FAKE_EXPECT_SELECTOR = $oldExpectedSelector
     $env:FAKE_EXPECT_REPO = $oldExpectedRepo
     $env:FAKE_VALIDATOR_THROW = $oldValidatorThrow
+    $env:FAKE_EXPECTED_SCREEN_COUNT = $oldExpectedScreenCount
     Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
 }
 
