@@ -663,6 +663,10 @@ try {
         }
         'test-remote-deploy-transport' = @{ Path = 'scripts/tests/test-remote-deploy-transport.ps1'; Invocation = @($pwshPrefix + 'scripts/tests/test-remote-deploy-transport.ps1') }
         'test-self-referential-bootstrap' = @{ Path = 'scripts/tests/test-self-referential-bootstrap.ps1'; Invocation = @($pwshPrefix + 'scripts/tests/test-self-referential-bootstrap.ps1') }
+        'test-ship-gate-packet' = @{
+            Path = 'scripts/agent-tooling/blip-approve/bot/scripts/test_ship_gate_packet.py'
+            Invocation = @('python', '-I', '-S', '-B', 'scripts/agent-tooling/blip-approve/bot/scripts/test_ship_gate_packet.py')
+        }
         'test-review-risk' = @{ Path = 'scripts/tests/test-review-risk.mjs'; Invocation = @('node', '--test', 'scripts/tests/test-review-risk.mjs') }
         'test-routing-consistency' = @{ Path = 'tests/test_routing_consistency.py'; Invocation = @('python', '-m', 'pytest', 'tests/test_routing_consistency.py', '-q', '-p', 'no:cacheprovider') }
         'test-ship-item-runtime' = @{ Path = 'tests/test_ship_item_runtime.mjs'; Invocation = @('node', '--test', 'tests/test_ship_item_runtime.mjs') }

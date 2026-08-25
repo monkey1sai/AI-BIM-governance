@@ -479,7 +479,11 @@ def collect_pr_snapshot(
     if not isinstance(raw_compare, dict):
         raise RuntimeError("immutable comparison payload is malformed")
     compare_base = raw_compare.get("base_commit")
-    compare_head = raw_compare.get("head_commit")
+    if "head_commit" in raw_compare:
+        compare_head = raw_compare.get("head_commit")
+    else:
+        head_commit_url = f"{api}/repos/{owner}/{name}/commits/{head_sha}"
+        compare_head = fetch_json("GET", head_commit_url, token=token)
     merge_base = raw_compare.get("merge_base_commit")
     if not isinstance(compare_base, dict) or not isinstance(compare_head, dict) or not isinstance(merge_base, dict):
         raise RuntimeError("immutable comparison commit tuple is malformed")
