@@ -1,5 +1,12 @@
 import { z } from "zod";
 import { assertLocatorConsistent } from "./minioLocator.js";
+import {
+  PipelineResultManifestReadError,
+  readPipelineResultManifest,
+  type PipelineResultManifest,
+  type PipelineResultManifestReadDeps,
+} from "./pipelineResultManifest.js";
+import { SourceBundleAccessDeniedError } from "./sourceBundleObjectPort.js";
 import type { PipelineResultView } from "./pipelineResultStore.js";
 
 export type PipelineResultMetricName =
@@ -304,5 +311,122 @@ export function buildPipelineResultCompareDifferences(
     ),
     warning_codes_added: [...rightWarnings].filter((code) => !leftWarnings.has(code)).sort(),
     warning_codes_removed: [...leftWarnings].filter((code) => !rightWarnings.has(code)).sort(),
+  };
+}
+
+/**
+ * 生產 adapter 的相依：與 registration service **同一條** manifest 讀取／驗證管道
+ * （`pipelineResultManifest.ts`），因此 compare 面與註冊面不可能長出兩套 parse。
+ */
+export type S3PipelineResultDetailReaderDeps = PipelineResultManifestReadDeps;
+
+/** manifest 讀得到但與 store 記錄的不可變證據不符時的統一訊息前綴。 */
+function evidenceMismatch(result: PipelineResultView, detail: string): never {
+  throw new PipelineResultDetailUnavailableError(
+    `result ${result.result_id} manifest evidence mismatch: ${detail}`,
+  );
+}
+
+/**
+ * 由已驗證的 manifest 投影出 compare side。
+ *
+ * identity 三欄與 `attempt_outcome` 取 **store 記錄**與 **manifest 實讀值**的交集：
+ * 兩邊必須逐字相同，否則這份 manifest 描述的不是這個 result，誠實 503 而不是選一邊。
+ * `publication_state` 一律取 store（publication 軸的權威在 coordinator，不在 manifest）。
+ */
+function projectCompareSide(
+  result: PipelineResultView,
+  manifest: PipelineResultManifest,
+  locator: PipelineResultCompareSide["result_manifest_ref"],
+): unknown {
+  if (manifest.result_id !== result.result_id) {
+    evidenceMismatch(result, "result_id");
+  }
+  if (manifest.attempt_id !== result.attempt_id) {
+    evidenceMismatch(result, "attempt_id");
+  }
+  if (manifest.pipeline_job_id !== result.pipeline_job_id) {
+    evidenceMismatch(result, "pipeline_job_id");
+  }
+  if (manifest.attempt_outcome !== result.attempt_outcome) {
+    evidenceMismatch(result, "attempt_outcome");
+  }
+  return {
+    result_id: result.result_id,
+    attempt_id: result.attempt_id,
+    pipeline_job_id: result.pipeline_job_id,
+    publication_state: result.publication_state,
+    attempt_outcome: manifest.attempt_outcome,
+    result_manifest_digest: locator.sha256,
+    result_manifest_ref: locator,
+    converter: { ...manifest.converter },
+    metrics: { ...manifest.alignment_summary.metrics },
+    counts: { ...manifest.alignment_summary.counts },
+    warning_codes: [...manifest.alignment_summary.warning_codes],
+  };
+}
+
+/**
+ * 生產 detail reader：從 governed MinIO 讀 `result-manifest.json` 並投影成 compare side。
+ *
+ * 三條誠實鐵律：
+ *   1. **不捏造** metrics／counts —— 讀不到、驗不過、與 store 記錄不符，一律
+ *      `PipelineResultDetailUnavailableError`（route → 503），不回半份或預設值。
+ *   2. digest 以 MinIO 實讀 bytes 為準，並與 store 的 `result_manifest_digest`
+ *      比對（由 `readPipelineResultManifest` 的 expectation 完成）。
+ *   3. 回傳前用**本檔既有**的 `parsePipelineResultCompareSide` 重驗；那份 schema 比
+ *      manifest 契約更嚴（截斷比、count↔metric 綁定），投影不合格就等於沒有可信 detail。
+ *
+ * `SourceBundleAccessDeniedError`（allowlist fail-closed）也收斂成 503：locator 不在
+ * 治理允許範圍內時，這個 result 的 detail 對本部署而言就是不可得。其餘上游錯誤
+ * （憑證／連線／5xx）向上 propagate，不謊報成「detail 不可用」。
+ */
+export function createS3PipelineResultDetailReader(
+  deps: S3PipelineResultDetailReaderDeps,
+): PipelineResultDetailReaderPort {
+  return {
+    async readCompareSide(result: PipelineResultView): Promise<PipelineResultCompareSide> {
+      let read;
+      try {
+        read = await readPipelineResultManifest(
+          {
+            ref: result.result_manifest_ref,
+            // store 記錄只釘 ref 與 digest；etag／size 由 HEAD 觀測後才知道，
+            // 沒有 claim 就沒有可比的東西（null = 不比，不是「比過了」）。
+            sha256: result.result_manifest_digest,
+            etag: null,
+            size_bytes: null,
+          },
+          { objects: deps.objects },
+        );
+      } catch (error) {
+        if (error instanceof SourceBundleAccessDeniedError) {
+          throw new PipelineResultDetailUnavailableError(
+            `result ${result.result_id} manifest locator is not governed by this deployment`,
+          );
+        }
+        if (error instanceof PipelineResultManifestReadError) {
+          throw new PipelineResultDetailUnavailableError(
+            `result ${result.result_id} manifest is unreadable (${error.code}): ${error.message}`,
+          );
+        }
+        throw error;
+      }
+
+      const projected = projectCompareSide(result, read.manifest, {
+        ref: result.result_manifest_ref,
+        object_version_id: read.object_version_id,
+        etag: read.observed_etag,
+        sha256: read.observed_sha256,
+        size_bytes: read.observed_size_bytes,
+      });
+      const side = parsePipelineResultCompareSide(projected);
+      if (side === null) {
+        throw new PipelineResultDetailUnavailableError(
+          `result ${result.result_id} manifest does not project a contract-valid compare side`,
+        );
+      }
+      return side;
+    },
   };
 }
