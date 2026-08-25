@@ -1883,7 +1883,7 @@ git commit -m "task#3c: UnifiedShell 頂列 chips／GPU chip／側欄 badge 綁�
 - Modify: `web-viewer-sample/src/console/unified/unified.test.tsx`（`#home` 案＋誠實標記契約案）
 - Modify: `web-viewer-sample/src/console/EdgeConsole.sharedstatus.test.tsx`（改回 `toHaveBeenCalledWith(200)`）
 
-- [ ] **Step 1: impact 分析**
+- [x] **Step 1: impact 分析**
 
 ```powershell
 Set-Location $W
@@ -1892,7 +1892,7 @@ npx gitnexus@1.6.9 impact "Function:web-viewer-sample/src/console/unified/HomePa
 
 預期 LOW（caller 只有 `renderUnified`）。
 
-- [ ] **Step 2: 寫失敗測試 `homeLiveBinding.test.tsx`**
+- [x] **Step 2: 寫失敗測試 `homeLiveBinding.test.tsx`**
 
 ```tsx
 // unified-console-runtime-truth slice 1（tasks 1.4）：#home 四 KPI＋六 svc-dot 綁真值；live／offline／unavailable／error 四態；
@@ -1989,7 +1989,7 @@ describe("HomePage 真值綁定", () => {
 });
 ```
 
-- [ ] **Step 3: 跑測試確認失敗**
+- [x] **Step 3: 跑測試確認失敗**
 
 ```powershell
 Set-Location $F
@@ -1998,7 +1998,7 @@ npx vitest run src/console/unified/homeLiveBinding.test.tsx
 
 預期：`Tests  5 failed (5)`（`kpi-conv-val` 存在但文字為 fixture `1`；`kpi-conv-sub` 為 null 等）。
 
-- [ ] **Step 4: 建立 `ServiceHealthList.tsx`**
+- [x] **Step 4: 建立 `ServiceHealthList.tsx`**
 
 ```tsx
 // ═══════════════════════════════════════════════════════════════════════
@@ -2059,7 +2059,7 @@ export function ServiceHealthList({ snap, zh }: { snap: CoordinatorStatusSnapsho
 }
 ```
 
-- [ ] **Step 5: 整檔重寫 `HomePage.tsx`**
+- [x] **Step 5: 整檔重寫 `HomePage.tsx`**
 
 ```tsx
 // ═══════════════════════════════════════════════════════════════════════
@@ -2189,7 +2189,7 @@ export function HomePage() {
 }
 ```
 
-- [ ] **Step 6: 更新 `unified.test.tsx` 的 `#home` 案與誠實標記契約案；`sharedstatus` 改回 outbox 斷言**
+- [x] **Step 6: 更新 `unified.test.tsx` 的 `#home` 案與誠實標記契約案；`sharedstatus` 改回 outbox 斷言**
 
 `unified.test.tsx`：
 
@@ -2220,7 +2220,7 @@ export function HomePage() {
 
 `EdgeConsole.sharedstatus.test.tsx`：把 Task 3c 暫寫的 `expect(spies.getCallbackOutboxSummary).toHaveBeenCalledTimes(0);`（含註解）改回 `expect(spies.getCallbackOutboxSummary).toHaveBeenCalledWith(200);`。
 
-- [ ] **Step 7: 跑測試確認通過＋型別**
+- [x] **Step 7: 跑測試確認通過＋型別**
 
 ```powershell
 Set-Location $F
@@ -2230,7 +2230,7 @@ npx tsc --noEmit
 
 預期：`Test Files  4 passed (4)`；tsc exit 0（若報 `'ReactNode' is declared but never used` 之類，依訊息刪除未用 import；`noUnusedLocals` 為硬規則）。
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```powershell
 Set-Location $W
