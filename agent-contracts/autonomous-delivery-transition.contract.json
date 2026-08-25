@@ -1,0 +1,121 @@
+{
+  "schema_version": "autonomous-delivery-transition/v1",
+  "compatibility": {
+    "legacy_trusted_host_merge_v1": "preserved_unwired",
+    "active_policy_migration": false,
+    "activation_phase": "LEGACY_GUARDED"
+  },
+  "phases": [
+    "COLLECTING",
+    "VERIFYING",
+    "READY_TO_MERGE",
+    "MERGING",
+    "MERGED",
+    "DEPLOYING",
+    "VERIFYING_DEPLOYMENT",
+    "RETRYING_DEPLOYMENT",
+    "CLOSED"
+  ],
+  "initial_phases": [
+    "COLLECTING",
+    "RETRYING_DEPLOYMENT"
+  ],
+  "transitions": {
+    "COLLECTING": ["VERIFYING", "CLOSED"],
+    "VERIFYING": ["READY_TO_MERGE", "CLOSED"],
+    "READY_TO_MERGE": ["MERGING", "CLOSED"],
+    "MERGING": ["MERGED", "CLOSED"],
+    "MERGED": ["DEPLOYING", "CLOSED"],
+    "DEPLOYING": ["VERIFYING_DEPLOYMENT", "CLOSED"],
+    "VERIFYING_DEPLOYMENT": ["CLOSED"],
+    "RETRYING_DEPLOYMENT": ["DEPLOYING", "CLOSED"],
+    "CLOSED": []
+  },
+  "terminal_classes": [
+    "DELIVERED",
+    "FAILED",
+    "HELD"
+  ],
+  "reason_codes": [
+    "DELIVERY_VERIFIED",
+    "PREMERGE_EVIDENCE_INVALID",
+    "PREMERGE_AUTHORITY_UNAVAILABLE",
+    "POLICY_OR_SETTINGS_DRIFT",
+    "MERGE_OUTCOME_UNVERIFIED",
+    "DEPLOYMENT_BLOCKED",
+    "MERGED_NOT_DELIVERED",
+    "DELIVERY_PENDING_FIXPOINT",
+    "ACTIVATION_UNATTESTED"
+  ],
+  "terminal_reason_map": {
+    "DELIVERED": ["DELIVERY_VERIFIED"],
+    "FAILED": ["MERGED_NOT_DELIVERED"],
+    "HELD": [
+      "PREMERGE_EVIDENCE_INVALID",
+      "PREMERGE_AUTHORITY_UNAVAILABLE",
+      "POLICY_OR_SETTINGS_DRIFT",
+      "MERGE_OUTCOME_UNVERIFIED",
+      "DEPLOYMENT_BLOCKED",
+      "DELIVERY_PENDING_FIXPOINT",
+      "ACTIVATION_UNATTESTED"
+    ]
+  },
+  "reason_allowed_last_phases": {
+    "DELIVERY_VERIFIED": ["VERIFYING_DEPLOYMENT", "RETRYING_DEPLOYMENT"],
+    "PREMERGE_EVIDENCE_INVALID": ["COLLECTING", "VERIFYING", "READY_TO_MERGE"],
+    "PREMERGE_AUTHORITY_UNAVAILABLE": ["COLLECTING", "VERIFYING", "READY_TO_MERGE"],
+    "POLICY_OR_SETTINGS_DRIFT": [
+      "COLLECTING",
+      "VERIFYING",
+      "READY_TO_MERGE",
+      "MERGING",
+      "MERGED",
+      "DEPLOYING",
+      "VERIFYING_DEPLOYMENT",
+      "RETRYING_DEPLOYMENT"
+    ],
+    "MERGE_OUTCOME_UNVERIFIED": ["MERGING"],
+    "DEPLOYMENT_BLOCKED": ["MERGED", "DEPLOYING"],
+    "MERGED_NOT_DELIVERED": ["DEPLOYING", "VERIFYING_DEPLOYMENT", "RETRYING_DEPLOYMENT"],
+    "DELIVERY_PENDING_FIXPOINT": ["VERIFYING_DEPLOYMENT", "RETRYING_DEPLOYMENT"],
+    "ACTIVATION_UNATTESTED": [
+      "COLLECTING",
+      "VERIFYING",
+      "READY_TO_MERGE",
+      "MERGING",
+      "MERGED",
+      "DEPLOYING",
+      "VERIFYING_DEPLOYMENT",
+      "RETRYING_DEPLOYMENT"
+    ]
+  },
+  "pr_classes": [
+    "draft_report_only",
+    "ordinary",
+    "repair",
+    "reconciliation",
+    "activation_canary",
+    "activation_closure",
+    "revert",
+    "release_hotfix"
+  ],
+  "activation_phases": [
+    "LEGACY_GUARDED",
+    "SHADOW_DUAL",
+    "CUTOVER_ARMED",
+    "CANARY_ACTIVE",
+    "AUTONOMOUS_ACTIVE"
+  ],
+  "queue_policy": {
+    "activation_canary/DELIVERED/DELIVERY_VERIFIED": ["activation_closure"],
+    "DELIVERED/DELIVERY_VERIFIED": ["ordinary"],
+    "FAILED/MERGED_NOT_DELIVERED": ["repair", "revert"],
+    "HELD/MERGE_OUTCOME_UNVERIFIED": ["reconciliation"],
+    "HELD/DELIVERY_PENDING_FIXPOINT": ["reconciliation"]
+  },
+  "attestation": {
+    "max_lifetime_seconds": 900,
+    "clock_skew_seconds": 60,
+    "algorithm": "ed25519"
+  }
+}

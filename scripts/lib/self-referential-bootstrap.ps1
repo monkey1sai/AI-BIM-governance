@@ -51,6 +51,12 @@ $script:SelfReferentialMechanismPattern = @(
     '^scripts/lib/autonomous-delivery-contract\.mjs$'
     '^scripts/tests/test-autonomous-linux-delivery-contracts\.mjs$'
     '^tests/test_autonomous_delivery_contract_schemas\.py$'
+    # The protected ship packet, attestation, and approval runtime decides the
+    # immutable PR tuple and the review event. Register its exact production
+    # inputs and paired regressions so a later repair is judged by its base.
+    '^scripts/agent-tooling/blip-approve/bot/bots\.json$'
+    '^scripts/agent-tooling/blip-approve/bot/scripts/(?:test_)?(?:app_auth|bind_ship_attestation|blip_review|codex_ship_gate|collect_ship_gate_packet|post_review|ship_gate_packet)\.py$'
+    '^scripts/agent-tooling/blip-approve/bot/scripts/(?:test_)?(?:run_blip_live_approve_once|run_codex_bound_ship_gate_once)\.ps1$'
     '^scripts/verification-manifest\.json$'
     '^scripts/dev/check-pr-local-preflight\.ps1$'
     '^scripts/hooks/require-gstack-evidence\.ps1$'
@@ -118,6 +124,14 @@ $script:SelfReferentialAdjudicatorPaths = @(
     'agent-contracts/trusted-host-merge-result.schema.json'
     'agent-contracts/spec-to-done.contract.json'
     'agent-contracts/spec-to-done.contract.schema.json'
+    'agent-contracts/autonomous-delivery-adjudication-packet.schema.json'
+    'agent-contracts/autonomous-delivery-attestation-envelope.schema.json'
+    'agent-contracts/autonomous-delivery-classifier-input.schema.json'
+    'agent-contracts/autonomous-delivery-terminal-record.schema.json'
+    'agent-contracts/autonomous-delivery-transition.contract.json'
+    'scripts/lib/autonomous-delivery-contract.mjs'
+    'scripts/tests/test-autonomous-linux-delivery-contracts.mjs'
+    'tests/test_autonomous_delivery_contract_schemas.py'
     'scripts/lib/detect-base-gate-capability.sh'
     'scripts/lib/self-referential-bootstrap.ps1'
     'scripts/lib/windows-verification-scope.ps1'

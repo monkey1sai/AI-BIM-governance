@@ -1,0 +1,315 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "autonomous-delivery-terminal-record.schema.json",
+  "title": "Autonomous delivery closed terminal record v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "delivery_id",
+    "attempt_id",
+    "pr_class",
+    "supersedes_delivery_id",
+    "supersedes_attempt_id",
+    "previous_attempt_sha256",
+    "repository",
+    "pull_request",
+    "phase",
+    "last_phase",
+    "terminal_class",
+    "reason_code",
+    "merge_observed",
+    "merge_commit_oid",
+    "fetched_origin_main_oid",
+    "deployed_commit_oid",
+    "command_state",
+    "target_id",
+    "runner_ids",
+    "gates",
+    "artifacts",
+    "failure_detail",
+    "closed_at"
+  ],
+  "properties": {
+    "schema_version": { "const": "autonomous-delivery-terminal-record/v1" },
+    "delivery_id": { "$ref": "#/definitions/opaque_identifier" },
+    "attempt_id": { "$ref": "#/definitions/opaque_identifier" },
+    "pr_class": {
+      "enum": [
+        "ordinary",
+        "repair",
+        "reconciliation",
+        "activation_canary",
+        "activation_closure",
+        "revert",
+        "release_hotfix"
+      ]
+    },
+    "supersedes_delivery_id": {
+      "type": ["string", "null"],
+      "minLength": 3,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*(?::[A-Za-z0-9][A-Za-z0-9._-]*)?$"
+    },
+    "supersedes_attempt_id": {
+      "type": ["string", "null"],
+      "minLength": 3,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*(?::[A-Za-z0-9][A-Za-z0-9._-]*)?$"
+    },
+    "previous_attempt_sha256": {
+      "type": ["string", "null"],
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "repository": { "$ref": "#/definitions/repository" },
+    "pull_request": { "$ref": "#/definitions/pull_request" },
+    "phase": { "const": "CLOSED" },
+    "last_phase": {
+      "enum": [
+        "COLLECTING",
+        "VERIFYING",
+        "READY_TO_MERGE",
+        "MERGING",
+        "MERGED",
+        "DEPLOYING",
+        "VERIFYING_DEPLOYMENT",
+        "RETRYING_DEPLOYMENT"
+      ]
+    },
+    "terminal_class": { "enum": ["DELIVERED", "FAILED", "HELD"] },
+    "reason_code": {
+      "enum": [
+        "DELIVERY_VERIFIED",
+        "PREMERGE_EVIDENCE_INVALID",
+        "PREMERGE_AUTHORITY_UNAVAILABLE",
+        "POLICY_OR_SETTINGS_DRIFT",
+        "MERGE_OUTCOME_UNVERIFIED",
+        "DEPLOYMENT_BLOCKED",
+        "MERGED_NOT_DELIVERED",
+        "DELIVERY_PENDING_FIXPOINT",
+        "ACTIVATION_UNATTESTED"
+      ]
+    },
+    "merge_observed": { "type": "boolean" },
+    "merge_commit_oid": { "$ref": "#/definitions/nullable_sha1" },
+    "fetched_origin_main_oid": { "$ref": "#/definitions/nullable_sha1" },
+    "deployed_commit_oid": { "$ref": "#/definitions/nullable_sha1" },
+    "command_state": { "enum": ["not_started", "started", "completed"] },
+    "target_id": {
+      "type": ["string", "null"],
+      "minLength": 3,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*(?::[A-Za-z0-9][A-Za-z0-9._-]*)?$"
+    },
+    "runner_ids": {
+      "type": "array",
+      "maxItems": 32,
+      "uniqueItems": true,
+      "items": { "$ref": "#/definitions/opaque_identifier" }
+    },
+    "gates": {
+      "type": "array",
+      "maxItems": 256,
+      "items": { "$ref": "#/definitions/gate" }
+    },
+    "artifacts": {
+      "type": "array",
+      "maxItems": 512,
+      "items": { "$ref": "#/definitions/artifact" }
+    },
+    "failure_detail": {
+      "type": "array",
+      "maxItems": 64,
+      "items": { "$ref": "#/definitions/failure_detail" }
+    },
+    "closed_at": { "type": "string", "format": "date-time" }
+  },
+  "allOf": [
+    {
+      "oneOf": [
+        {
+          "properties": {
+            "supersedes_delivery_id": { "type": "null" },
+            "supersedes_attempt_id": { "type": "null" },
+            "previous_attempt_sha256": { "type": "null" }
+          }
+        },
+        {
+          "properties": {
+            "supersedes_delivery_id": { "$ref": "#/definitions/opaque_identifier" },
+            "supersedes_attempt_id": { "$ref": "#/definitions/opaque_identifier" },
+            "previous_attempt_sha256": { "$ref": "#/definitions/sha256" }
+          }
+        }
+      ]
+    },
+    {
+      "if": { "properties": { "terminal_class": { "const": "DELIVERED" } } },
+      "then": {
+        "properties": {
+          "reason_code": { "const": "DELIVERY_VERIFIED" },
+          "merge_observed": { "const": true },
+          "merge_commit_oid": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+          "fetched_origin_main_oid": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+          "deployed_commit_oid": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+          "command_state": { "const": "completed" },
+          "target_id": { "$ref": "#/definitions/opaque_identifier" },
+          "runner_ids": { "minItems": 2 },
+          "gates": {
+            "minItems": 1,
+            "items": { "properties": { "status": { "enum": ["passed", "not_applicable"] } } },
+            "contains": { "properties": { "status": { "const": "passed" } }, "required": ["status"] }
+          },
+          "artifacts": { "minItems": 1 },
+          "failure_detail": { "maxItems": 0 }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "terminal_class": { "const": "FAILED" } } },
+      "then": {
+        "properties": {
+          "reason_code": { "const": "MERGED_NOT_DELIVERED" },
+          "merge_observed": { "const": true },
+          "merge_commit_oid": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+          "fetched_origin_main_oid": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+          "command_state": { "const": "completed" },
+          "target_id": { "$ref": "#/definitions/opaque_identifier" },
+          "runner_ids": { "minItems": 1 },
+          "gates": {
+            "minItems": 1,
+            "contains": { "properties": { "status": { "const": "failed" } }, "required": ["status"] }
+          },
+          "artifacts": { "minItems": 1 },
+          "failure_detail": { "minItems": 1 }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "terminal_class": { "const": "HELD" } } },
+      "then": {
+        "properties": {
+          "reason_code": {
+            "enum": [
+              "PREMERGE_EVIDENCE_INVALID",
+              "PREMERGE_AUTHORITY_UNAVAILABLE",
+              "POLICY_OR_SETTINGS_DRIFT",
+              "MERGE_OUTCOME_UNVERIFIED",
+              "DEPLOYMENT_BLOCKED",
+              "DELIVERY_PENDING_FIXPOINT",
+              "ACTIVATION_UNATTESTED"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "reason_code": { "enum": ["PREMERGE_EVIDENCE_INVALID", "PREMERGE_AUTHORITY_UNAVAILABLE"] }
+        }
+      },
+      "then": {
+        "properties": {
+          "last_phase": { "enum": ["COLLECTING", "VERIFYING", "READY_TO_MERGE"] },
+          "merge_observed": { "const": false },
+          "merge_commit_oid": { "type": "null" },
+          "fetched_origin_main_oid": { "type": "null" },
+          "deployed_commit_oid": { "type": "null" },
+          "command_state": { "const": "not_started" },
+          "target_id": { "type": "null" }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "reason_code": { "const": "MERGE_OUTCOME_UNVERIFIED" } } },
+      "then": {
+        "properties": {
+          "last_phase": { "const": "MERGING" },
+          "merge_observed": { "const": false },
+          "merge_commit_oid": { "type": "null" },
+          "fetched_origin_main_oid": { "type": "null" },
+          "deployed_commit_oid": { "type": "null" },
+          "command_state": { "const": "not_started" }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "reason_code": { "const": "DEPLOYMENT_BLOCKED" } } },
+      "then": {
+        "properties": {
+          "last_phase": { "enum": ["MERGED", "DEPLOYING"] },
+          "merge_observed": { "const": true },
+          "merge_commit_oid": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+          "fetched_origin_main_oid": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+          "deployed_commit_oid": { "type": "null" },
+          "command_state": { "const": "not_started" }
+        }
+      }
+    }
+  ],
+  "definitions": {
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "nullable_sha1": {
+      "type": ["string", "null"],
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "opaque_identifier": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*(?::[A-Za-z0-9][A-Za-z0-9._-]*)?$"
+    },
+    "repository": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["full_name", "repository_id"],
+      "properties": {
+        "full_name": { "type": "string", "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$", "maxLength": 200 },
+        "repository_id": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 }
+      }
+    },
+    "pull_request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["number", "base_oid", "head_oid"],
+      "properties": {
+        "number": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+        "base_oid": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+        "head_oid": { "type": "string", "pattern": "^[0-9a-f]{40}$" }
+      }
+    },
+    "gate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["gate_id", "status", "result_sha256"],
+      "properties": {
+        "gate_id": { "$ref": "#/definitions/opaque_identifier" },
+        "status": { "enum": ["passed", "failed", "held", "not_applicable"] },
+        "result_sha256": { "$ref": "#/definitions/sha256" }
+      }
+    },
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["artifact_id", "sha256", "size_bytes", "media_type", "retention_class"],
+      "properties": {
+        "artifact_id": { "$ref": "#/definitions/opaque_identifier" },
+        "sha256": { "$ref": "#/definitions/sha256" },
+        "size_bytes": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+        "media_type": { "type": "string", "minLength": 3, "maxLength": 200 },
+        "retention_class": { "enum": ["ephemeral_24h", "delivery_30d", "audit_1y"] }
+      }
+    },
+    "failure_detail": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["namespace", "code", "evidence_sha256"],
+      "properties": {
+        "namespace": { "$ref": "#/definitions/opaque_identifier" },
+        "code": { "$ref": "#/definitions/opaque_identifier" },
+        "evidence_sha256": { "$ref": "#/definitions/sha256" }
+      }
+    }
+  }
+}

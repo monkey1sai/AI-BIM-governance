@@ -132,6 +132,18 @@ export interface CoordinatorConfig {
   // governed discovery prefix（reconciliation 與 legacy preview 用）。MUST NOT 重用
   // MINIO_WATCH_PREFIX。非空時 normalize 為以 '/' 結尾（同 watcher prefix 的 boundary 對齊理由）。
   governedSourcePrefix: string;          // GOVERNED_SOURCE_PREFIX
+  /**
+   * rvt-ifc-usdc-lineage task 3.4：artifact download 的 public target policy（單一 JSON
+   * 陣列 env `LINEAGE_DOWNLOAD_TARGET_POLICIES`，形如
+   * `[{"authority":"...","bucket":"...","public_origin":"https://...","object_path_prefix":"/<bucket>/"}]`）。
+   *
+   * 這裡刻意存**原始字串**而不是解析後的物件：config 是扁平的 env 快照，解析／驗證
+   * 屬 composition root（`parseLineageArtifactDownloadTargetPolicies`），測試也因此能用
+   * 與 operator 完全相同的輸入形式覆寫。
+   *
+   * 未設定＝空字串＝空清單＝**fail-closed**（沒有任何 bucket 可被簽章下載）。
+   */
+  lineageDownloadTargetPolicies: string; // LINEAGE_DOWNLOAD_TARGET_POLICIES
   // ── rvt-ifc-usdc-lineage task 3.2（durable stable pipeline job）───────────
   // governed pipeline job 的 durable store。env PIPELINE_JOB_STORE_PATH；
   // default data/pipeline-jobs.json（同 conversionLedgerStorePath 的 <cwd>/data 慣例）。
@@ -512,6 +524,7 @@ export function loadConfig(overrides: Partial<CoordinatorConfig> = {}): Coordina
     governedSourceAuthorityAllowlist: csvFromEnv("GOVERNED_SOURCE_AUTHORITY_ALLOWLIST", []),
     governedSourceBucketAllowlist: csvFromEnv("GOVERNED_SOURCE_BUCKET_ALLOWLIST", []),
     governedSourcePrefix: process.env.GOVERNED_SOURCE_PREFIX || "",
+    lineageDownloadTargetPolicies: process.env.LINEAGE_DOWNLOAD_TARGET_POLICIES || "",
     // rvt-ifc-usdc-lineage task 3.2（durable stable pipeline job；env 與 MINIO_WATCH_* 分離）
     pipelineJobStorePath:
       process.env.PIPELINE_JOB_STORE_PATH || path.join(cwd, "data", "pipeline-jobs.json"),

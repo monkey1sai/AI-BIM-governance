@@ -1,0 +1,93 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "autonomous-delivery-classifier-input.schema.json",
+  "title": "Autonomous delivery authoritative PR classifier input v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "source",
+    "repository",
+    "pull_request",
+    "activation_phase",
+    "draft",
+    "queue_state",
+    "complete_paths_sha256",
+    "classifier_policy_sha256",
+    "signed_lease_sha256",
+    "lineage"
+  ],
+  "properties": {
+    "schema_version": { "const": "autonomous-delivery-classifier-input/v1" },
+    "source": { "const": "server_authoritative" },
+    "repository": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["full_name", "repository_id"],
+      "properties": {
+        "full_name": { "type": "string", "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$", "maxLength": 200 },
+        "repository_id": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 }
+      }
+    },
+    "pull_request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["number", "base_ref", "base_oid", "head_ref", "head_oid"],
+      "properties": {
+        "number": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+        "base_ref": { "$ref": "#/definitions/identifier" },
+        "base_oid": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+        "head_ref": { "$ref": "#/definitions/identifier" },
+        "head_oid": { "type": "string", "pattern": "^[0-9a-f]{40}$" }
+      }
+    },
+    "activation_phase": {
+      "enum": ["LEGACY_GUARDED", "SHADOW_DUAL", "CUTOVER_ARMED", "CANARY_ACTIVE", "AUTONOMOUS_ACTIVE"]
+    },
+    "draft": { "type": "boolean" },
+    "queue_state": { "enum": ["open", "frozen", "activation_exclusive"] },
+    "complete_paths_sha256": { "$ref": "#/definitions/sha256" },
+    "classifier_policy_sha256": { "$ref": "#/definitions/sha256" },
+    "signed_lease_sha256": {
+      "type": ["string", "null"],
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "lineage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "remediation_kind",
+        "failure_delivery_id",
+        "reconciliation_delivery_id",
+        "debt_id",
+        "activation_plan_id",
+        "canary_delivery_id",
+        "release_id"
+      ],
+      "properties": {
+        "remediation_kind": { "type": ["string", "null"], "enum": ["repair", "revert", null] },
+        "failure_delivery_id": { "$ref": "#/definitions/nullable_identifier" },
+        "reconciliation_delivery_id": { "$ref": "#/definitions/nullable_identifier" },
+        "debt_id": { "$ref": "#/definitions/nullable_identifier" },
+        "activation_plan_id": { "$ref": "#/definitions/nullable_identifier" },
+        "canary_delivery_id": { "$ref": "#/definitions/nullable_identifier" },
+        "release_id": { "$ref": "#/definitions/nullable_identifier" }
+      }
+    }
+  },
+  "definitions": {
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "identifier": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$"
+    },
+    "nullable_identifier": {
+      "type": ["string", "null"],
+      "minLength": 3,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*(?::[A-Za-z0-9][A-Za-z0-9._-]*)?$"
+    }
+  }
+}

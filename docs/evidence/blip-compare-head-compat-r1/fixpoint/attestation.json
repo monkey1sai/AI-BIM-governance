@@ -1,0 +1,57 @@
+{
+  "schema_version": "self-referential-fixpoint-attestation/v1",
+  "entry_id": "blip-compare-head-compat-r1",
+  "mechanism_commit": "7b46a50a4f41f771e73c50fa17b5709b24614690",
+  "verification_contract_sha256": "2e84405553903ab005689ab2add48fa2c72b2aa1e6fb25e7f7f8988c4d537e7d",
+  "result": "pass",
+  "commands": [
+    {
+      "id": "test-autonomous-delivery-contracts",
+      "exit_code": 0
+    },
+    {
+      "id": "test-autonomous-delivery-contract-schemas",
+      "exit_code": 0
+    },
+    {
+      "id": "test-self-referential-bootstrap",
+      "exit_code": 0
+    },
+    {
+      "id": "test-trusted-host-merge",
+      "exit_code": 0
+    },
+    {
+      "id": "test-review-risk",
+      "exit_code": 0
+    },
+    {
+      "id": "test-agent-governance-check",
+      "exit_code": 0
+    },
+    {
+      "id": "test-rebuild-test-deploy-pwsh",
+      "exit_code": 0
+    },
+    {
+      "id": "test-rebuild-test-deploy-windows-powershell",
+      "exit_code": 0
+    },
+    {
+      "id": "verify-openspec-autonomous-linux-delivery",
+      "exit_code": 0
+    },
+    {
+      "id": "verify-openspec-repository-lifecycle",
+      "exit_code": 0
+    },
+    {
+      "id": "scan-secret-patterns",
+      "exit_code": 0
+    },
+    {
+      "id": "test-ship-gate-packet",
+      "exit_code": 0
+    }
+  ]
+}

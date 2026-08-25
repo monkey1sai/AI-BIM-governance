@@ -1,0 +1,126 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "autonomous-delivery-attestation-envelope.schema.json",
+  "title": "Autonomous delivery adjudication attestation envelope v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "attestation_id",
+    "purpose",
+    "audience",
+    "canonicalization",
+    "signature_domain",
+    "repository",
+    "pull_request",
+    "packet_sha256",
+    "diff_sha256",
+    "policy_sha256",
+    "manifest_sha256",
+    "review_surface_sha256",
+    "artifacts_sha256",
+    "issuer",
+    "key_id",
+    "algorithm",
+    "nonce",
+    "nonce_consumption",
+    "issued_at",
+    "expires_at",
+    "signature"
+  ],
+  "properties": {
+    "schema_version": { "const": "autonomous-delivery-attestation-envelope/v1" },
+    "attestation_id": { "$ref": "#/definitions/opaque_identifier" },
+    "purpose": { "const": "critical_machine_adjudication" },
+    "audience": { "const": "autonomous-delivery-merge-executor/v1" },
+    "canonicalization": { "const": "RFC8785" },
+    "signature_domain": { "const": "ai-bim-autonomous-delivery-attestation/v1" },
+    "repository": { "$ref": "#/definitions/repository" },
+    "pull_request": { "$ref": "#/definitions/pull_request" },
+    "packet_sha256": { "$ref": "#/definitions/sha256" },
+    "diff_sha256": { "$ref": "#/definitions/sha256" },
+    "policy_sha256": { "$ref": "#/definitions/sha256" },
+    "manifest_sha256": { "$ref": "#/definitions/sha256" },
+    "review_surface_sha256": { "$ref": "#/definitions/sha256" },
+    "artifacts_sha256": { "$ref": "#/definitions/sha256" },
+    "issuer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "app_id"],
+      "properties": {
+        "kind": { "const": "github_app" },
+        "app_id": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        }
+      }
+    },
+    "key_id": { "$ref": "#/definitions/opaque_identifier" },
+    "algorithm": { "const": "ed25519" },
+    "nonce": {
+      "type": "string",
+      "minLength": 32,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9_-]+$"
+    },
+    "nonce_consumption": { "const": "atomic_single_use" },
+    "issued_at": { "type": "string", "format": "date-time" },
+    "expires_at": { "type": "string", "format": "date-time" },
+    "signature": {
+      "type": "string",
+      "minLength": 43,
+      "maxLength": 1024,
+      "pattern": "^[A-Za-z0-9_-]+$"
+    }
+  },
+  "definitions": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "identifier": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$"
+    },
+    "opaque_identifier": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*(?::[A-Za-z0-9][A-Za-z0-9._-]*)?$"
+    },
+    "repository": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["full_name", "repository_id"],
+      "properties": {
+        "full_name": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$",
+          "maxLength": 200
+        },
+        "repository_id": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        }
+      }
+    },
+    "pull_request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["number", "base_oid", "head_oid"],
+      "properties": {
+        "number": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "base_oid": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+        "head_oid": { "type": "string", "pattern": "^[0-9a-f]{40}$" }
+      }
+    }
+  }
+}

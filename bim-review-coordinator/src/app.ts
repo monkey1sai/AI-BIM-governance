@@ -89,6 +89,30 @@ import {
 // ＋ 撿漏用的 polling reconciliation（預設關閉）。
 import { PipelineJobStore } from "./services/lineage/pipelineJobStore.js";
 import { PipelineResultStore } from "./services/lineage/pipelineResultStore.js";
+// rvt-ifc-usdc-lineage task 3.3 收尾刀：result manifest 的生產 registration／detail 面。
+// 兩者共用 `pipelineResultManifest.ts` 的同一條讀取＋驗證管道（不會長出兩套 parse）。
+import {
+  createPipelineResultRegistrationService,
+  type PipelineResultRegistrationService,
+} from "./services/lineage/pipelineResultRegistration.js";
+import {
+  createS3LineageArtifactDownloadSigner,
+  parseLineageArtifactDownloadTargetPolicies,
+  type LineageArtifactDownloadSignerPort,
+  type LineageArtifactDownloadTargetPolicy,
+} from "./services/lineage/lineageArtifactDownloadSigner.js";
+import {
+  createS3PipelineResultArtifactReader,
+  type PipelineResultArtifactReaderPort,
+} from "./services/lineage/pipelineResultArtifactReader.js";
+import {
+  createS3LineageMetadataProjectionReader,
+  type LineageMetadataProjectionReaderPort,
+} from "./services/lineage/lineageMetadataProjections.js";
+import {
+  createS3PipelineResultDetailReader,
+  type PipelineResultDetailReaderPort,
+} from "./services/lineage/pipelineResultDetailReader.js";
 import {
   autoEnqueueGovernedBundle,
   newReadyEventId,
@@ -570,6 +594,47 @@ export interface CoordinatorApp {
    * `SOURCE_BUNDLE_RECONCILE_ENABLED` 的 auto tick 驅動（預設關閉）。
    */
   sourceBundleReconciler: SourceBundleReconciler;
+  /**
+   * @internal rvt-ifc-usdc-lineage task 3.3 的 active-result／activation audit sidecar。
+   * 與 `pipelineJobStore` 同性質的 test-only read accessor；**不是** production 介面
+   * （production 只經 `/api/lineage/pipeline-jobs/:id/result-...` route 與 registration service）。
+   * 建構時已做過 sidecar commitment 驗證，測試讀到的即為可用狀態。
+   */
+  pipelineResultStore: PipelineResultStore;
+  /**
+   * @internal task 3.3 收尾刀的 result registration application service。
+   * **不是** production 介面：正式 caller 屬 task 4.1／4.5 的 attempt 完成路徑，
+   * 此 accessor 只讓整合測試在不開新 HTTP route 的前提下驅動同一條 composition。
+   * governed object port 未設定時為 null（與 `details` 同一個 fail-closed 條件）。
+   */
+  pipelineResultRegistration: PipelineResultRegistrationService | null;
+  /**
+   * @internal task 3.3 收尾刀的 result-manifest detail reader（compare 面的生產 adapter）。
+   * **不是** production 介面：production 只經 compare route 使用它。
+   *
+   * 為什麼需要這個 accessor：HTTP 面的 compare 綠路徑被 fail-closed 的 external
+   * authorization（`authorization: null`）擋在前面，所以「details 真的被接上」在
+   * route 層無法被 falsify——沒有它，一個把 `details` 接回 null 的迴歸不會讓任何
+   * 測試變紅。
+   */
+  pipelineResultDetails: PipelineResultDetailReaderPort | null;
+  /**
+   * @internal task 3.4 的生產讀取／簽章面。**不是** production 介面：production 只經
+   * `/api/lineage/**` routes 使用它們。
+   *
+   * 之所以群組成一個欄位而不是攤成四個 accessor：四者共用**同一個** fail-closed 條件
+   * （governed object port 是否存在），分開暴露只會讓「它們必須同生同滅」這件事變得不明顯。
+   *
+   * 為什麼需要 accessor：download／metadata 兩條 HTTP 路徑都在 external authorization
+   * （`authorization: null`）之後才碰到 reader／signer，所以「它們真的被接上」在 route 層
+   * 無法被 falsify——沒有這個 accessor，一個把 reader 接回 null 的迴歸不會讓任何測試變紅。
+   */
+  lineageArtifactSurfaces: {
+    reader: PipelineResultArtifactReaderPort | null;
+    signer: LineageArtifactDownloadSignerPort | null;
+    projections: LineageMetadataProjectionReaderPort | null;
+    target_policies: readonly LineageArtifactDownloadTargetPolicy[];
+  };
   eventLog: EventLog;
   structLog: StructLogger;
   // coordinator-auto-poll-streaming-conversion §6:cancel 全部 in-process auto-poll
@@ -788,6 +853,52 @@ export function createCoordinatorApp(
   // Result sidecar commitment 必須先驗證；若已初始化 sidecar 遺失／digest 漂移，startup
   // fail closed，不得先由 3.2 recovery 改寫 job snapshot 後再發現 pointer/audit 已丟失。
   pipelineResultStore.assertAvailable();
+  // Task 3.3 收尾刀：result manifest 的生產 composition。兩者都接在 governed object
+  // port 上（與 3.1 同一組 credentials／allowlist）；port 未設定時一律維持 null——
+  // compare route 誠實回 503，註冊面不存在。**MUST NOT** 用 legacy watcher 的
+  // MINIO_WATCH_* credentials 頂替（design.md §11.2 規則 3／5）。
+  const pipelineResultRegistration: PipelineResultRegistrationService | null =
+    sourceBundleObjectPort
+      ? createPipelineResultRegistrationService({
+          objects: sourceBundleObjectPort,
+          results: pipelineResultStore,
+          structLog,
+        })
+      : null;
+  const pipelineResultDetails = sourceBundleObjectPort
+    ? createS3PipelineResultDetailReader({ objects: sourceBundleObjectPort })
+    : null;
+  // Task 3.4：artifact descriptor reader、metadata 投影 reader、presign signer。
+  // 三者與 registration／details 共用同一個 fail-closed 條件（governed object port 存在），
+  // 且共用同一組 GOVERNED_SOURCE_* credentials——**MUST NOT** 用 legacy watcher 的
+  // MINIO_WATCH_* 頂替（design.md §11.2 規則 3／5）。
+  const pipelineResultArtifactReader = sourceBundleObjectPort
+    ? createS3PipelineResultArtifactReader({ objects: sourceBundleObjectPort })
+    : null;
+  const lineageMetadataProjections = sourceBundleObjectPort
+    ? createS3LineageMetadataProjectionReader({ objects: sourceBundleObjectPort })
+    : null;
+  const lineageArtifactDownloadSigner = sourceBundleObjectPort
+    ? createS3LineageArtifactDownloadSigner({
+        accessKey: config.governedSourceMinioAccessKey,
+        secretKey: config.governedSourceMinioSecretKey,
+      })
+    : null;
+  // Public download target policy。**181 的誠實現狀：這個 env 沒有值。**
+  // canonical Linux 測試區只有內網 http endpoint，沒有瀏覽器可見的 HTTPS public origin，
+  // 因此 policy 清單為空、`resolveLineageArtifactDownloadTarget` 永遠找不到唯一命中、
+  // download route 一律誠實 503。這不是待修的 bug，是「還沒有 HTTPS 對外入口」這件事
+  // 在程式碼裡的忠實投影；有了 public origin 之後只要設這個 env，不必改任何程式碼。
+  const lineageDownloadTargetPolicies = parseLineageArtifactDownloadTargetPolicies(
+    config.lineageDownloadTargetPolicies,
+  );
+  if (lineageDownloadTargetPolicies.malformed) {
+    // 設了卻解析不出來＝fail-closed 成空清單。這一定要吵，否則運維會以為下載面已開通。
+    structLog.warn("lineage-artifact-download", "target policy env is malformed; download stays closed", {
+      configured: true,
+      policy_count: 0,
+    });
+  }
   pipelineJobStore.recoverOnStart(nowIso(), newReadyEventId);
   // READY governed bundle → stable job 的冪等 auto-enqueue。同一個 source_bundle_id
   // 永遠回同一個 job（決定性 job id ＋ 單一寫入點），replay 不建第二個 logical job。
@@ -4150,14 +4261,15 @@ export function createCoordinatorApp(
   });
 
   // rvt-ifc-usdc-lineage task 3.3：additive result compare / intent / confirm routes。
-  // External decision wire/JWKS/principal adapter 與 result-manifest detail reader 尚無 owner
-  // contract，因此 production wiring 明確為 null，protected routes 回 authorization_unavailable
-  // 而不是沿用 LocalDevUserAuthProvider 或捏造 compare metrics。
+  // External decision wire/JWKS/principal adapter 尚無 owner contract，因此 authorization
+  // 明確為 null，protected routes 回 authorization_unavailable，不沿用 LocalDevUserAuthProvider。
   registerLineageResultRoutes(app, {
     jobs: pipelineJobStore,
     results: pipelineResultStore,
     authorization: null,
-    details: null,
+    // detail reader 已接上生產 adapter：compare 的 metrics／counts 一律來自 MinIO 實讀、
+    // digest 驗過的 result manifest；governed object port 未設定時仍為 null（誠實 503）。
+    details: pipelineResultDetails,
     now: nowIso,
     newIntentId: () => `intent_${randomBytes(16).toString("hex")}`,
     newIntentNonce: () => randomBytes(32).toString("base64url"),
@@ -4170,6 +4282,10 @@ export function createCoordinatorApp(
     bundles: sourceBundleStore,
     results: pipelineResultStore,
     authorization: null,
+    // manifest 投影已接上：alignment_metrics／warnings／artifacts 由 MinIO 實讀的
+    // manifest 供給；alignment report（逐 element 差異集合）尚未建讀取路徑，
+    // summary／differences／difference_counts 誠實維持 NOT_BUILT。
+    projections: lineageMetadataProjections,
     now: nowIso,
   });
   // Task 3.4 download endpoint is mounted so the public path fails closed instead of 404. The
@@ -4179,9 +4295,9 @@ export function createCoordinatorApp(
     jobs: pipelineJobStore,
     results: pipelineResultStore,
     authorization: null,
-    reader: null,
-    signer: null,
-    target_policies: [],
+    reader: pipelineResultArtifactReader,
+    signer: lineageArtifactDownloadSigner,
+    target_policies: lineageDownloadTargetPolicies.policies,
     now: nowIso,
   });
 
@@ -4247,6 +4363,15 @@ export function createCoordinatorApp(
     sourceBundleStore,
     pipelineJobStore,
     sourceBundleReconciler,
+    pipelineResultStore,
+    pipelineResultRegistration,
+    pipelineResultDetails,
+    lineageArtifactSurfaces: {
+      reader: pipelineResultArtifactReader,
+      signer: lineageArtifactDownloadSigner,
+      projections: lineageMetadataProjections,
+      target_policies: lineageDownloadTargetPolicies.policies,
+    },
     eventLog,
     structLog,
     dispose,
