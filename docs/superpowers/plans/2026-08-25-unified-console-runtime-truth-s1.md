@@ -835,7 +835,7 @@ git commit -m "task#2: 共用 poller store（單一 in-flight／退避 ≤60s／
 
 **逐字 patch 慣例：** 下列每個 patch 給 `old`／`new` 兩段。`old` 是 2026-08-25 的檔案現況逐字片段（含縮排），在該檔內唯一；`new` 是替換後全文。動手前先 Read 該檔確認 `old` 仍逐字存在；不存在就停下回報 coordinator（檔案已漂移，不得猜插入點）。
 
-- [ ] **Step 1: 核實「哪些既有測試會掛到 UnifiedShell」（只讀）**
+- [x] **Step 1: 核實「哪些既有測試會掛到 UnifiedShell」（只讀）**
 
 ```powershell
 Set-Location $F
@@ -854,7 +854,7 @@ rg -n "^import EdgeConsole|renderToString\(<EdgeConsole" src/console/EdgeConsole
 
 若執行時 `rg` 結果與上表不同（檔案已漂移），先回報 coordinator 再調整清單，不得自行擴大或縮小 sweep。
 
-- [ ] **Step 2: patch `src/console/EdgeConsole.aliasRedirect.test.tsx`（逐字）**
+- [x] **Step 2: patch `src/console/EdgeConsole.aliasRedirect.test.tsx`（逐字）**
 
 patch (1)：import 區（現況 :10-11）。old：
 
@@ -896,7 +896,7 @@ new：
 
 **不需要**補 `vi.restoreAllMocks()`：該檔 `afterEach`（現況 :59-61）已有。斷言一律不動。
 
-- [ ] **Step 3: 檢查點——單檔 vitest**
+- [x] **Step 3: 檢查點——單檔 vitest**
 
 ```powershell
 Set-Location $F
@@ -905,7 +905,7 @@ npx vitest run src/console/EdgeConsole.aliasRedirect.test.tsx
 
 預期：與 patch 前同綠（`Test Files  1 passed`）。紅燈只可能來自剛才那兩個 patch——最常見是把 patch (2) 插到既有 `vi.spyOn` 之後（見上方註解），或 import 路徑寫成 `./coordinatorStatusStore`（本檔在 `src/console/`，必須是 `./unified/…`）。修正後重跑，不往下走。
 
-- [ ] **Step 4: patch `src/console/unified/dockLiveLink.test.tsx`（逐字）**
+- [x] **Step 4: patch `src/console/unified/dockLiveLink.test.tsx`（逐字）**
 
 patch (1)：import 區（現況 :10-11）。old：
 
@@ -974,7 +974,7 @@ new：
 
 案 (a)（現況 :51-52）**不加**：它已 `vi.stubGlobal("fetch", vi.fn().mockRejectedValue(...))`，十端點經 `coordinatorClient` 走同一個 `fetch` → 自然全部 reject → store 分類為 offline；再加 spy 反而遮蔽「真離線」語意。
 
-- [ ] **Step 5: 檢查點——單檔 vitest**
+- [x] **Step 5: 檢查點——單檔 vitest**
 
 ```powershell
 Set-Location $F
@@ -983,7 +983,7 @@ npx vitest run src/console/unified/dockLiveLink.test.tsx
 
 預期：與 patch 前同綠（3 案）。若案 (b) 的 `expect(spy).toHaveBeenCalledTimes(1)` 變紅，代表 `spyCoordinatorEndpointsOffline()` 誤把 `health` 一起 spy 了——回 Task 2 Step 1 檢查該 helper 的方法清單（它只該覆蓋十端點，不含 `health`）。
 
-- [ ] **Step 6: patch `src/console/unified/a1DockLive.test.tsx`（逐字）**
+- [x] **Step 6: patch `src/console/unified/a1DockLive.test.tsx`（逐字）**
 
 patch (1)：import 區（現況 :11）。old：
 
@@ -1065,7 +1065,7 @@ new：
 
 案 (a)（現況 :74-75）**不加**（同 dockLiveLink 案 (a)：已 stub 全域 `fetch` 失敗）。本檔只補 spy、不改斷言；5.2 的「liveBackend 真值取代 fixture」解凍在 Task 7。
 
-- [ ] **Step 7: 檢查點——單檔 vitest**
+- [x] **Step 7: 檢查點——單檔 vitest**
 
 ```powershell
 Set-Location $F
@@ -1074,7 +1074,7 @@ npx vitest run src/console/unified/a1DockLive.test.tsx
 
 預期：與 patch 前同綠（4 案）。
 
-- [ ] **Step 8: `incomingHandoff.test.tsx` 核實——本 slice 不改（出證據，不是省略）**
+- [x] **Step 8: `incomingHandoff.test.tsx` 核實——本 slice 不改（出證據，不是省略）**
 
 ```powershell
 Set-Location $F
@@ -1093,7 +1093,7 @@ rg -n "EdgeConsole" src/console/incomingHandoff.test.tsx
 
 若照「在設定 hash 那行之前插 `spyCoordinatorEndpointsOffline();`」動手，會**覆蓋該檔自己的 `runtimeStatus` mock**（改成 503 reject），破壞該檔註解明載的「mock it empty so the effect resolves deterministically」，四案退化。日後該檔若真的改成掛 `EdgeConsole`（Step 8 的 `rg` 有命中），補 spy 必須插在該檔**自身 `vi.spyOn(coordinatorClient, …)` 之前**，語意同 Step 2 patch (2)。
 
-- [ ] **Step 9: 型別與全量（sweep 不得改變任何既有結果）**
+- [x] **Step 9: 型別與全量（sweep 不得改變任何既有結果）**
 
 ```powershell
 Set-Location $F
@@ -1103,7 +1103,7 @@ npx vitest run
 
 預期：tsc exit 0；全量 `0 failed`，且**測試檔數與案數與 sweep 前完全相同**（本 task 不新增測試檔、不新增／刪除 `it`）。任何數字變動代表改到了斷言 → 還原重來。
 
-- [ ] **Step 10: Commit**
+- [x] **Step 10: Commit**
 
 ```powershell
 Set-Location $W
