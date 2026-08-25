@@ -140,9 +140,23 @@ export class PipelineResultLocationError extends Error {
  * 把 authority／bucket／完整 object key 灌進去等於把儲存拓撲寫進每一筆失敗紀錄。
  * 需要精確 locator 時看 error 本身，不是看 log。
  */
+/**
+ * presign 樣式偵測（形狀與 `minioLocator.ts` 的 `PRESIGN_PATTERN` 相同）。
+ *
+ * 刻意在本檔重寫一份而不是共用：那一份是**安全 gate**（決定 locator 收不收），
+ * 這一份是**log 遮蔽謂詞**，必須比 gate 更寬——它要能命中任何位置帶 presign
+ * 參數的字串，不只是 governed locator。兩者用途不同，不是重複的權威。
+ */
+const PRESIGN_SHAPE = /[?&][Xx]-[Aa][Mm][Zz]-/;
+
 function boundedDetail(value: unknown): string | null {
   if (typeof value !== "string") return null;
-  if (value.startsWith("minio://")) return "minio://<redacted>";
+  // governed locator 與**任何**帶 presign 參數的值都不得進 log：後者更嚴重——
+  // presigned URL 帶 `X-Amz-Signature`／`X-Amz-Credential`，等於把可用的下載憑證
+  // 寫進一個長期保存、會被複製貼上的串流。
+  if (value.startsWith("minio://") || PRESIGN_SHAPE.test(value)) {
+    return "<redacted>";
+  }
   return value.length <= 120 ? value : `${value.slice(0, 117)}...`;
 }
 

@@ -583,7 +583,7 @@ describe("createPipelineResultRegistrationService.registerFromManifest", () => {
     expect(JSON.stringify(warns[0].data)).not.toContain(RESULT_BUCKET);
   });
 
-  it("containment 失敗同樣寫 warn，且帶 prefix 的 expected 被遮蔽成 minio://<redacted>", async () => {
+  it("containment 失敗同樣寫 warn，且帶 prefix 的 expected 被遮蔽成 <redacted>", async () => {
     // 這一案是上一案的補集：`artifact_outside_result_prefix` 的 `expected` 是完整的
     // `result_prefix`（一個 governed locator prefix），正好證明遮蔽規則有作用。
     const h = harness();
@@ -617,10 +617,44 @@ describe("createPipelineResultRegistrationService.registerFromManifest", () => {
       code: "result_manifest_artifact_outside_result_prefix",
       role: "usdc",
       field: "ref",
-      expected: "minio://<redacted>",
+      expected: "<redacted>",
     });
     // 遮蔽必須真的擋住拓撲：bucket 名不得出現在整筆 log record 裡。
     expect(JSON.stringify(warns[0].data)).not.toContain(RESULT_BUCKET);
+  });
+
+  it("帶 presign 參數的值一律遮蔽（簽章憑證絕不進 log）", async () => {
+    const h = harness();
+    const warns: Array<{ data?: Record<string, unknown> }> = [];
+    const service = createPipelineResultRegistrationService({
+      objects: {
+        ...h.objects,
+        // 模擬上游擲出一個把 presigned URL 放進 observed 的 typed 錯誤。
+        headVersioned: async () => {
+          throw Object.assign(new Error("upstream"), {
+            code: "result_manifest_object_not_found",
+            observed:
+              "https://minio.example.test/bucket/key?X-Amz-Signature=deadbeef&X-Amz-Credential=AKIA",
+          });
+        },
+      },
+      results: h.resultStore,
+      structLog: {
+        info: () => {},
+        warn: (_component, _msg, data) => {
+          warns.push({ data });
+        },
+      },
+    });
+    const seeded = seed(h);
+
+    await caught(service.registerFromManifest(registrationInput(h, seeded.locator)));
+
+    expect(warns).toHaveLength(1);
+    expect(warns[0].data).toMatchObject({ observed: "<redacted>" });
+    const serialized = JSON.stringify(warns[0].data);
+    expect(serialized).not.toContain("X-Amz-Signature");
+    expect(serialized).not.toContain("X-Amz-Credential");
   });
 
   it("非物件的 throw 值不會讓失敗面的 log 自己炸掉", async () => {

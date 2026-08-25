@@ -21,9 +21,9 @@ import type { PipelineResultView } from "./pipelineResultStore.js";
  * 正本定義在 `pipelineResultManifest.ts`；這裡只 re-export，**不得**改成本地副本——
  * 兩份清單一旦漂移，download route 認得的 id 就會與 manifest 能提供的 role 不同。
  */
-export const PIPELINE_RESULT_ARTIFACT_IDS = RESULT_MANIFEST_ARTIFACT_ROLES;
+export { RESULT_MANIFEST_ARTIFACT_ROLES as PIPELINE_RESULT_ARTIFACT_IDS } from "./pipelineResultManifest.js";
 
-export type PipelineResultArtifactId = (typeof PIPELINE_RESULT_ARTIFACT_IDS)[number];
+export type PipelineResultArtifactId = (typeof RESULT_MANIFEST_ARTIFACT_ROLES)[number];
 
 export interface PipelineResultArtifactDescriptor {
   pipeline_job_id: string;
@@ -92,8 +92,8 @@ const descriptorSchema = z
     external_model_version_id: safeId,
     result_manifest_ref: boundedPrintable(8_192),
     result_manifest_digest: z.string().refine(isSha256),
-    artifact_id: z.enum(PIPELINE_RESULT_ARTIFACT_IDS),
-    role: z.enum(PIPELINE_RESULT_ARTIFACT_IDS),
+    artifact_id: z.enum(RESULT_MANIFEST_ARTIFACT_ROLES),
+    role: z.enum(RESULT_MANIFEST_ARTIFACT_ROLES),
     locator: z
       .object({
         ref: boundedPrintable(8_192),
@@ -128,7 +128,7 @@ const descriptorSchema = z
 export function isPipelineResultArtifactId(value: unknown): value is PipelineResultArtifactId {
   return (
     typeof value === "string" &&
-    (PIPELINE_RESULT_ARTIFACT_IDS as readonly string[]).includes(value)
+    (RESULT_MANIFEST_ARTIFACT_ROLES as readonly string[]).includes(value)
   );
 }
 
@@ -165,10 +165,20 @@ function classifyManifestReadFailure(error: PipelineResultManifestReadError): Er
       return new PipelineResultArtifactIntegrityUnavailableError(
         `result manifest evidence failed validation (${error.code})`,
       );
-    default:
+    case "object_not_found":
+    case "object_too_large":
       return new PipelineResultArtifactDetailUnavailableError(
         `result manifest is unreadable (${error.code})`,
       );
+    default: {
+      // 刻意不寫 catch-all：新增一個 failure 成員時，這裡會**編譯失敗**，逼作者
+      // 顯式決定它屬於 integrity（證據自相矛盾）還是 detail（拿不到）。
+      // 沉默的 default 會讓新成員預設落進 detail，把一個新的完整性破口說成可用性問題。
+      const exhaustive: never = error.failure;
+      return new PipelineResultArtifactDetailUnavailableError(
+        `result manifest is unreadable (${String(exhaustive)})`,
+      );
+    }
   }
 }
 

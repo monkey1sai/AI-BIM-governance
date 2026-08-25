@@ -400,6 +400,12 @@ describe("parseLineageArtifactDownloadTargetPolicies", () => {
       ["prefix 無前導斜線", valid.replace(OBJECT_PATH_PREFIX, `${RESULT_BUCKET}/`)],
       ["prefix 無結尾斜線", valid.replace(OBJECT_PATH_PREFIX, `/${RESULT_BUCKET}`)],
       ["prefix 含 ..", valid.replace(OBJECT_PATH_PREFIX, "/../")],
+      // path-style 簽章下唯一合法值是 `/<bucket>/`；typo 必須吵，不得靜默 malformed:false。
+      ["prefix 不等於 /<bucket>/", valid.replace(OBJECT_PATH_PREFIX, "/downloads/")],
+      [
+        "prefix 是別的 bucket",
+        valid.replace(OBJECT_PATH_PREFIX, "/another-governed-bucket/"),
+      ],
       ["多餘欄位", valid.replace('"authority"', '"extra":1,"authority"')],
       ["authority 含空白", valid.replace(RESULT_AUTHORITY, "edge test 01")],
     ];

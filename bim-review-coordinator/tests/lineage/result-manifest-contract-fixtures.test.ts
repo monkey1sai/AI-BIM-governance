@@ -127,6 +127,15 @@ const SEMANTIC_PARSE_EXPECTATIONS: Record<string, { parsed: boolean; why: string
     parsed: true,
     why: "result_prefix_not_attempt_scoped：schema 層合格，由 registration 層的 isAttemptScopedMinioResultLocation 擋",
   },
+  // 新增語料（round-1 review P2-1）：prefix 帶空 segment。這一支 schema 層就擋得下——
+  // `attemptResultPrefix` 的 pattern 放行 `results//attempt-0007/`（`[^?#\s]*` 含空 segment），
+  // 但 runtime 的 `parseMinioPrefix` 拒絕空／`.`／`..` segment，所以 zod refine 失敗。
+  // 這正是 Python semantic validator 現在也收緊到同一形狀規則的理由：語料不得認證
+  // 一份 runtime 必然拒收的 manifest。
+  "semantic-result-prefix-empty-segment.json": {
+    parsed: false,
+    why: "result_prefix 帶空 segment：parseMinioPrefix 拒絕，body schema 的 result_prefix refine 失敗",
+  },
   // 其餘三支是 `result_publication_outcome`，本 parser 一律不認（不越權解析）。
   "semantic-publication-resume-same-attempt-no-second-result.json": {
     parsed: false,

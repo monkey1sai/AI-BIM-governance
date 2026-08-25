@@ -250,20 +250,41 @@ async function activeResultManifest(
   return deps.projections.readResultManifest(active);
 }
 
+/**
+ * 取得與這個 job 互相對照得上的 authoritative READY bundle，否則 503。
+ *
+ * 四個條件缺一不可，其中 `bundle.pipeline_job_id === job.pipeline_job_id` 是
+ * **back-reference**：少了它，一個指向別的 job 的 bundle 也能通過前三項，
+ * metadata 就會把另一個 job 的 source artifacts 端到這個 job 的面板上。
+ *
+ * 為什麼是 503 而不是 `NOT_BUILT`：兩份 store 都在、卻互相對照不上，這是
+ * **狀態不一致**，不是「這個部署沒建這條讀取路徑」。overview 一直是這個語意；
+ * artifacts 先前回 `store_not_present`，等於同一個事實在兩個 surface 上有兩種說法。
+ */
+function requireMatchingReadyBundle(
+  job: PipelineJobRecord,
+  deps: LineageMetadataReadRouteDeps,
+): SourceBundleRecord {
+  const bundle = deps.bundles.get(job.source_bundle_id);
+  if (
+    !bundle ||
+    bundle.bundle_state !== "READY" ||
+    bundle.external_model_version_id !== job.external_model_version_id ||
+    bundle.pipeline_job_id !== job.pipeline_job_id
+  ) {
+    throw new LineageMetadataStateUnavailableError(
+      `pipeline job ${job.pipeline_job_id} lacks matching authoritative READY bundle evidence`,
+    );
+  }
+  return bundle;
+}
+
 async function sourceBundleArtifacts(
   job: PipelineJobRecord,
   deps: LineageMetadataReadRouteDeps,
 ): Promise<LineageArtifactProjection[] | NotBuiltProvenance> {
   if (!deps.projections) return notBuilt("source_bundle_manifest");
-  const bundle = deps.bundles.get(job.source_bundle_id);
-  if (
-    !bundle ||
-    bundle.bundle_state !== "READY" ||
-    bundle.external_model_version_id !== job.external_model_version_id
-  ) {
-    return notBuilt("source_bundle_manifest", "store_not_present");
-  }
-  return deps.projections.readSourceBundleArtifacts(bundle);
+  return deps.projections.readSourceBundleArtifacts(requireMatchingReadyBundle(job, deps));
 }
 
 function requestContext(request: express.Request): ExternalLineageRequestContext {
@@ -405,17 +426,7 @@ async function buildBody(
 ): Promise<LineageMetadataBody> {
   switch (surface) {
     case "overview": {
-      const bundle = deps.bundles.get(job.source_bundle_id);
-      if (
-        !bundle ||
-        bundle.bundle_state !== "READY" ||
-        bundle.external_model_version_id !== job.external_model_version_id ||
-        bundle.pipeline_job_id !== job.pipeline_job_id
-      ) {
-        throw new LineageMetadataStateUnavailableError(
-          `pipeline job ${job.pipeline_job_id} lacks matching authoritative READY bundle evidence`,
-        );
-      }
+      const bundle = requireMatchingReadyBundle(job, deps);
       const manifest = await activeResultManifest(job, deps);
       return {
         job: jobSummary(job),
@@ -551,12 +562,16 @@ export function registerLineageGovernanceMetadataRoutes(
             response.status(404).json({ error: "pipeline_job_not_found" });
             return;
           }
+          // body 先算完再送：`await` 留在 response literal 裡的話，「投影失敗時
+          // status/headers 還沒被寫出去」就成了隱形承重——某天有人把 status 提前
+          // 或加一個早寫的欄位，503 就會退化成一個帶 200 的半截 JSON。
+          const body = await buildBody(config.surface, job, deps);
           response.status(200).json({
             schema_version: LINEAGE_METADATA_SCHEMA_VERSION,
             surface: config.surface,
             pipeline_job_id: pipelineJobId,
             observed_at: now,
-            body: await buildBody(config.surface, job, deps),
+            body,
           });
         } catch (error) {
           handleError(error, response);

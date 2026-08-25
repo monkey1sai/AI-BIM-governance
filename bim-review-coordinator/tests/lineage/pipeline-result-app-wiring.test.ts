@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { createLogger, type StructLogger } from "../../src/lib/structLog.js";
 import request from "supertest";
 import { afterEach, describe, expect, it } from "vitest";
 import { createCoordinatorApp, type CoordinatorApp } from "../../src/app.js";
@@ -65,10 +66,18 @@ function tmpRoot(): string {
   return root;
 }
 
+/** 讀 logger 寫出的 jsonl（照 tests/conversion-control-routes.test.ts 的既有慣例）。 */
+function readRecords(logger: StructLogger): Array<Record<string, unknown>> {
+  const text = fs.readFileSync(logger.currentFile(), "utf-8").trim();
+  if (!text) return [];
+  return text.split("\n").map((line) => JSON.parse(line.trim()) as Record<string, unknown>);
+}
+
 function makeApp(
   root: string,
   overrides: Partial<CoordinatorConfig> = {},
   port: FakeSourceBundleObjectPort | null = null,
+  structLog?: StructLogger,
 ): CoordinatorApp {
   const storageRoot = path.join(root, "storage");
   active = createCoordinatorApp(
@@ -88,7 +97,10 @@ function makeApp(
       corsOrigins: ["http://127.0.0.1:5173"],
       ...overrides,
     },
-    port ? { sourceBundleObjectStoreFactory: () => port } : {},
+    {
+      ...(port ? { sourceBundleObjectStoreFactory: () => port } : {}),
+      ...(structLog ? { structLog } : {}),
+    },
   );
   return active;
 }
@@ -390,15 +402,47 @@ describe("app 接線：task 3.4 artifact / metadata 生產面", () => {
     expect(app.lineageArtifactSurfaces.signer).not.toBeNull();
   });
 
-  it("policy env 設了但打壞時收斂成空清單（不退化成差不多的 origin）", () => {
+  it("policy env 設了但打壞時收斂成空清單，**並且一定吵**（startup warn）", () => {
+    const root = tmpRoot();
+    const logger = createLogger("coordinator", {
+      logRoot: path.join(root, "logs"),
+      runId: "run_20260716_084107_policy1",
+      skipEnvSnapshot: true,
+    });
     const port = createFakeSourceBundleObjectPort(RESULT_ALLOWLIST);
     const app = makeApp(
-      tmpRoot(),
+      root,
       { lineageDownloadTargetPolicies: POLICY_JSON.replace("https://", "http://") },
       port,
+      logger,
     );
 
     expect(app.lineageArtifactSurfaces.target_policies).toEqual([]);
+    // 空清單本身分不出「沒設定」與「設錯了」；沒有這筆 warn，運維會以為下載面
+    // 只是還沒開通，而不是自己打錯字。
+    const warns = readRecords(logger).filter(
+      (record) => record.level === "warn" && record.component === "lineage-artifact-download",
+    );
+    expect(warns).toHaveLength(1);
+    expect(warns[0].data).toMatchObject({ configured: true, policy_count: 0 });
+  });
+
+  it("policy env 未設定時**不吵**（沒設定不是錯誤，只是還沒開通）", () => {
+    const root = tmpRoot();
+    const logger = createLogger("coordinator", {
+      logRoot: path.join(root, "logs"),
+      runId: "run_20260716_084107_policy2",
+      skipEnvSnapshot: true,
+    });
+    const port = createFakeSourceBundleObjectPort(RESULT_ALLOWLIST);
+
+    makeApp(root, {}, port, logger);
+
+    expect(
+      readRecords(logger).filter(
+        (record) => record.component === "lineage-artifact-download",
+      ),
+    ).toHaveLength(0);
   });
 
   it("download route 在 external verifier 未接時仍 fail closed（reader/signer 已接也一樣）", async () => {

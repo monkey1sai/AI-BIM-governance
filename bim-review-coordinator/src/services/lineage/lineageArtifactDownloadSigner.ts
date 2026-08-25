@@ -106,6 +106,21 @@ function isCanonicalObjectPathPrefix(value: string): boolean {
   );
 }
 
+/**
+ * 可簽章 object key 的字集，刻意窄於 S3 允許的 key 空間。
+ *
+ * **這是 documented limit，不是疏漏**：只放行 `A-Za-z0-9._~-` 與 `/`。因此 key 含
+ * `+`、`=`、`(`、`)`、空白或任何非 ASCII 字元的 artifact **永久回 503**，不會被簽出
+ * 一個 URL——那是刻意的 fail-closed：這些字元在 presign 的 canonical URI 編碼、
+ * 瀏覽器位址列與中介 proxy 三者之間的處理並不一致，簽章能過不代表下載端拿到的是
+ * 同一個 key。與其簽一個「可能對」的 URL，不如拒絕。
+ *
+ * 本 repo 的 key 慣例不受影響：governed result prefix 是
+ * `<model-version>/results/<attempt-id>/<filename>`，watcher 端的中文物件名也早已
+ * 正規化成 `mv_<hash8>`（見 CONTEXT.md 的 MinIO key 慣例）。真的需要更寬的字集時，
+ * 應該是先擴 `resolveLineageArtifactDownloadTarget` 的 canonical 規則並補反例語料，
+ * 不是在這裡放寬。
+ */
 function isCanonicalDownloadObjectKey(value: string): boolean {
   return (
     value.length <= 8_192 &&
@@ -201,7 +216,16 @@ const ALLOWED_SIGV4_QUERY_KEYS = new Set<string>([
   ...OPTIONAL_SIGV4_QUERY_KEYS,
 ]);
 
-/** Executable binding between the returned URL and the exact pinned-SDK SigV4 object request. */
+/**
+ * Executable binding between the returned URL and the SigV4 object request the adapter signs.
+ *
+ * The query-key set below is a **closed set**, not a claim that the SDK version is pinned:
+ * `@aws-sdk/*` is declared as `^3.1067.0`, so a lockfile bump can legitimately add or rename a
+ * query parameter. That is exactly why the set is closed — an unexpected key makes this
+ * predicate return `false`, the route raises `artifact_download_unavailable`, and the adapter
+ * test turns red on the bump instead of silently widening what a signed URL may contain.
+ * Fail-closed by construction: the review happens when the SDK changes, not after.
+ */
 export function isLineageArtifactSignedTargetBound(input: {
   download: LineageArtifactSignedDownload;
   target: LineageArtifactDownloadTarget;
@@ -280,7 +304,24 @@ const targetPolicySchema = z
     public_origin: z.string().min(1).refine((value) => normalizedPublicOrigin(value) !== null),
     object_path_prefix: z.string().min(1).refine(isCanonicalObjectPathPrefix),
   })
-  .strict();
+  .strict()
+  .superRefine((policy, context) => {
+    // path-style 簽章（`forcePathStyle: true`）＋ `public_origin.pathname === "/"` 之下，
+    // 簽出的 URL pathname 恆為 `/<bucket>/<objectKey>`，而 route 的綁定檢查要求
+    // `pathname === object_path_prefix + objectKey` 逐字相符。因此 `object_path_prefix`
+    // 的**唯一**合法值就是 `/<bucket>/`。
+    //
+    // 沒有這一條，一個 typo（`/downloads/` 之類）會是 `malformed: false`、零告警、
+    // 而下載面全數 503 且無從診斷——正好違反本模組「設錯要吵」的宣言。
+    const expected = `/${policy.bucket}/`;
+    if (policy.object_path_prefix !== expected) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["object_path_prefix"],
+        message: `object_path_prefix must be exactly ${expected} for path-style signing`,
+      });
+    }
+  });
 
 export interface LineageArtifactDownloadTargetPolicyParseResult {
   policies: LineageArtifactDownloadTargetPolicy[];

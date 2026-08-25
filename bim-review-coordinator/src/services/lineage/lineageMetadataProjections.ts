@@ -149,10 +149,15 @@ export function createS3LineageMetadataProjectionReader(
         throw error;
       }
       const manifest = read.manifest;
+      // 五欄逐字比對，與 `pipelineResultArtifactReader` 的 identity 檢查同一組——
+      // 少比 source_bundle_id／external_model_version_id 的話，同一個 job 底下
+      // 換了 bundle 的 manifest 也能通過，metadata 面板就會顯示另一份來源的數字。
       if (
         manifest.result_id !== result.result_id ||
         manifest.attempt_id !== result.attempt_id ||
-        manifest.pipeline_job_id !== result.pipeline_job_id
+        manifest.pipeline_job_id !== result.pipeline_job_id ||
+        manifest.source_bundle_id !== result.source_bundle_id ||
+        manifest.external_model_version_id !== result.external_model_version_id
       ) {
         throw new LineageMetadataProjectionUnavailableError(
           `result ${result.result_id} manifest identity does not match the result record`,

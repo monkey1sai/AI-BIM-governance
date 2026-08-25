@@ -583,18 +583,38 @@ def _is_presigned(ref: str) -> bool:
 
 
 def _result_prefix_tail(result_prefix: str) -> str | None:
-    """Return the last non-empty path segment of a ``result_prefix``.
+    """Return the attempt segment of a *canonical* ``result_prefix``.
 
     ``minio://edge-tpe-01/bucket/.../results/attempt-0007/`` yields
-    ``attempt-0007``. Empty segments are dropped rather than trusted: the
-    schema already requires the prefix to end in exactly one ``/``, but the
-    semantic layer must not *depend* on that -- a doubled or missing
-    separator has to reach the rule below, not break it. ``None`` is
-    returned only for a prefix carrying no path segment at all.
+    ``attempt-0007``.
+
+    Canonical means, for the object-key part after ``authority/bucket``:
+    non-empty, terminated by exactly one ``/``, and free of empty, ``.`` and
+    ``..`` segments. Anything else returns ``None``, which the caller turns
+    into ``result_prefix_not_attempt_scoped``.
+
+    Why this is strict rather than forgiving: an earlier version dropped empty
+    segments before taking the tail, so ``.../results//attempt-0007/`` and
+    ``.../results/./attempt-0007/`` were *accepted* here while the receiving
+    coordinator rejects them (``parseMinioPrefix`` in
+    ``bim-review-coordinator/src/services/lineage/minioLocator.ts`` refuses
+    empty/dot segments outright). A corpus that certifies documents no runtime
+    will accept is worse than no corpus: it is a green light pointing at a wall.
+    The two sides are now the same shape rule, stated twice on purpose.
     """
     remainder = str(result_prefix).split("://", 1)[-1]
-    segments = [segment for segment in remainder.split("/") if segment]
-    return segments[-1] if segments else None
+    parts = remainder.split("/")
+    # parts == [authority, bucket, *object-key segments, ""]  for a canonical prefix.
+    if len(parts) < 4 or not parts[0] or not parts[1]:
+        return None
+    if parts[-1] != "":
+        # No trailing separator at all; the schema pattern requires one.
+        return None
+    segments = parts[2:-1]
+    if not segments or any(segment in ("", ".", "..") for segment in segments):
+        # Empty tail segment also catches a doubled trailing separator.
+        return None
+    return segments[-1]
 
 
 def _check_object_refs(artifacts: Sequence[Mapping[str, Any]]) -> list[str]:
