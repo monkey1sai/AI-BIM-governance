@@ -2,14 +2,20 @@
 
 **勾選規則**：UI 相關 task（§1–§3、§5 semantic、§6）只能以 canonical-linux `:8004/ui` 截圖＋同分鐘 API JSON 對照勾選；本機通過只能註記「本機綠，待 181」，不得打勾。每個 task 附最小驗證指令；指令 cwd 為 repo root（或對應 worktree）；vitest／tsc 指令 cwd 為 `web-viewer-sample`。編輯任何 symbol 前先 `gitnexus impact <Symbol> -d upstream -r AI-BIM-governance`，HIGH／CRITICAL 先回報。§0 裁決未寫入前，對應段落 HELD（0.1／0.4 → §5；0.2 → §4.2；0.3 → §4.4；0.5 → 側欄入口；0.6 → §3.2）。
 
-## 0. Owner 裁決 gate（HELD）
+## 0. Owner 裁決 gate（2026-08-25 owner 已全數裁決；§5 解除 HELD）
 
-- [ ] 0.1 D1 裁決：owner 在本行下方寫「D1 裁決：P｜H，日期」。驗證：`rg -n "D1 裁決" openspec/changes/unified-console-runtime-truth/tasks.md`
-- [ ] 0.2 D2 裁決：conversion 控制路由瀏覽器授權（T4 operator token（建議）｜T2 獨立 allowlist env｜T1 LAN 匿名（CSRF-only，速率限制唯一緩解）｜T4+T2）；速率限制 N（預設 10/分鐘）。驗證：`rg -n "D2 裁決" openspec/changes/unified-console-runtime-truth/tasks.md`
-- [ ] 0.3 D3 裁決：canonical-linux 是否設 `ENABLE_DEV_ROUTES=false`（compose 透傳＋`.env.example` parity）；若否，R5 授權主張降級並於 proposal Risks 揭露。驗證：`rg -n "D3 裁決" openspec/changes/unified-console-runtime-truth/tasks.md`
-- [ ] 0.4 D4 裁決：`align-frontend-design-system-reference` 是否需先 thaw，或本 change 適用 `console-design-token-authority:60-64` carve-out。驗證：`rg -n "D4 裁決" openspec/changes/unified-console-runtime-truth/tasks.md`
-- [ ] 0.5 canon 側欄是否新增「完整工具」入口；若是，依 R-A1 開提案 PR（不自行編輯 docs/plans）。驗證：本 change 實作 PR 內 `git diff --name-only origin/main -- docs/plans` 為空
-- [ ] 0.6 R6 放置位置：確認 `workspace.a4.default` 捕捉路由是否等於 `#a4`；若等於，owner 裁決放置方式。驗證：`rg -n "workspace.a4.default" docs/plans/design-system-reference.manifest.json web-viewer-sample/e2e`
+- [x] 0.1 D1 裁決：owner 在本行下方寫「D1 裁決：P｜H，日期」。驗證：`rg -n "D1 裁決" openspec/changes/unified-console-runtime-truth/tasks.md`
+  - D1 裁決：P（六屏改以產品面誠實 offline／empty 狀態為 golden，owner 明示後雙旗標 rebaseline），2026-08-25 owner 口令「D1–D4 的選擇建議選項」。
+- [x] 0.2 D2 裁決：conversion 控制路由瀏覽器授權（T4 operator token（建議）｜T2 獨立 allowlist env｜T1 LAN 匿名（CSRF-only，速率限制唯一緩解）｜T4+T2）；速率限制 N（預設 10/分鐘）。驗證：`rg -n "D2 裁決" openspec/changes/unified-console-runtime-truth/tasks.md`
+  - D2 裁決：T4（沿用既有 Kit mutation dev token 型 operator token；per-route wrapper；速率限制 N=10/分鐘），2026-08-25 owner 口令。
+- [x] 0.3 D3 裁決：canonical-linux 是否設 `ENABLE_DEV_ROUTES=false`（compose 透傳＋`.env.example` parity）；若否，R5 授權主張降級並於 proposal Risks 揭露。驗證：`rg -n "D3 裁決" openspec/changes/unified-console-runtime-truth/tasks.md`
+  - D3 裁決：是——canonical-linux 設 `ENABLE_DEV_ROUTES=false`（compose 透傳＋`.env.example` parity），2026-08-25 owner 口令。
+- [x] 0.4 D4 裁決：`align-frontend-design-system-reference` 是否需先 thaw，或本 change 適用 `console-design-token-authority:60-64` carve-out。驗證：`rg -n "D4 裁決" openspec/changes/unified-console-runtime-truth/tasks.md`
+  - D4 裁決：適用 `console-design-token-authority:60-64` carve-out，不 thaw `align-frontend-design-system-reference`，2026-08-25 owner 口令。
+- [x] 0.5 canon 側欄是否新增「完整工具」入口；若是，依 R-A1 開提案 PR（不自行編輯 docs/plans）。驗證：本 change 實作 PR 內 `git diff --name-only origin/main -- docs/plans` 為空
+  - 裁決：不新增側欄「完整工具」入口。owner 2026-08-25：「完整工具只是保留之前的功能，但真實操作頁面已經收斂到新需求上」——即「完整工具 ↗」僅作舊功能保留；本 change 的 unified 頁本身即真實操作面（R3 以 `api` 為首選、`nav` 為過渡）；canon 不改、無 R-A1 提案。
+- [x] 0.6 R6 放置位置：確認 `workspace.a4.default` 捕捉路由是否等於 `#a4`；若等於，owner 裁決放置方式。驗證：`rg -n "workspace.a4.default" docs/plans/design-system-reference.manifest.json web-viewer-sample/e2e`
+  - 裁決：同意預設方案——A4 頁首說明只在非 pinned 路由的 unified `#a4` 頁首渲染，`workspace.a4.default` pinned digest 不變，2026-08-25 owner 口令。
 
 ## 1. web-viewer-sample：真值綁定（R1、R2）
 

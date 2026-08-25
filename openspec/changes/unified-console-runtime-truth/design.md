@@ -7,7 +7,7 @@
 - 本 design 的行號與端點皆於 2026-08-25 以 `rg -n` 對 `7e94fb0` 查證；落地時以 `rg -n` 重新定位。
 - 六個 owner 裁決點（D1–D4、canon 入口、A4 放置）集中於 tasks §0；未裁決者對應段落 HELD。
 
-## 1. D1 owner 裁決點：真值面 vs pixel 設計閘（tasks 0.1）
+## 1. D1 owner 裁決點：真值面 vs pixel 設計閘（tasks 0.1；2026-08-25 owner 裁決＝P）
 
 ### 1.1 衝突本質
 
@@ -34,13 +34,13 @@
 - tasks 0.1 未寫入裁決前：§5（rebaseline／harness／semantic cases）不得動工；§1–§4 可先做，因為兩選項下真值綁定與控制項政策完全相同，差別只在假資料的去向（P：移到 test-only；H：留在 preview provider）。
 - §1 以 `ConsoleDataProvider` 介面收斂資料來源：production 只注入 live store；vitest 注入 mock；H 才有 preview provider。
 
-### 1.5 D4 owner 裁決點：`align-frontend-design-system-reference` 是否需先 thaw（tasks 0.4）
+### 1.5 D4 owner 裁決點：`align-frontend-design-system-reference` 是否需先 thaw（tasks 0.4；2026-08-25 owner 裁決＝適用 carve-out，不 thaw）
 
 - `openspec/changes/align-frontend-design-system-reference/proposal.md:3`：「Status: deferred 2026-07-21…動前端 visual full gate 前再 thaw」。D1 的 P 與 H 都會動 visual gate。
 - 兩種處置：(a) owner 裁定本 change 適用 `openspec/specs/console-design-token-authority/spec.md:50,60-64` 的 carve-out（frozen deferred 不阻塞、其 tasks 2.4–2.8 為 non-canonical delta），不 thaw align；(b) owner 裁定先 thaw align 並由其承接 gate 面，本 change §5 依附其結果。
 - 未裁定前 §5 全段 HELD；proposal Risks 已揭露 (b) 可能否決 D1=P。
 
-## 2. D2 owner 裁決點：conversion 控制路由的瀏覽器授權（tasks 0.2）
+## 2. D2 owner 裁決點：conversion 控制路由的瀏覽器授權（tasks 0.2；2026-08-25 owner 裁決＝T4）
 
 ### 2.1 現況與威脅模型
 
@@ -63,7 +63,7 @@
 - 不新增生產依賴（比對用標準庫）。
 - 負向測試：無憑證且非 allowlist IP → 403；external 路徑與 lineage 路徑回應逐字相同；速率限制超額 → 429。
 
-### 2.4 D3 owner 裁決點：canonical-linux 關閉 dev routes（tasks 0.3）
+### 2.4 D3 owner 裁決點：canonical-linux 關閉 dev routes（tasks 0.3；2026-08-25 owner 裁決＝關閉）
 
 - `devRoutesEnabled()`（`app.ts:4524-4526`）只有 `ENABLE_DEV_ROUTES="false"` 才關；compose 未透傳該 env，canonical-linux 容器內為未定義 → dev routes 開。`POST /api/dev/conversions` 直達 streaming server 且無 caller auth，是與 R5 等價的零授權入口；不關閉則 D2 的授權只是形式。
 - 建議：canonical env 設 `ENABLE_DEV_ROUTES=false`（compose `environment:` 透傳＋`.env.example` parity guard）；受影響的 Edge Console 頁（`#demo-control` 的 `/api/dev/ifc-sources*`、A1 workbench local_fs 清單）在 404 時誠實顯示「dev routes 已關閉（canonical-linux）」，不崩潰、不假資料。
@@ -115,7 +115,7 @@
 - **#a2／#a3**：移除 `docks.tsx:168,191,223,229` 的 local-state 假成功 toast；主要控制項 `data-action="nav"` 導向 `#version-diff`／`#federation`；其餘 `disabled` 附原因；badge 依 `data.ts` prov。
 - **#a4**：真 dock 不動；頁首說明（用途／輸入來源／空表原因／下一步）。放置前提：`#a4` 若即為 `workspace.a4.default` 捕捉路由，任何可見變更都會改 pinned digest → tasks 0.6 owner 裁決；預設方案為只在非 pinned 路由的 unified `#a4` 頁首渲染。
 - **#a5–#a10**：版面保留，控制項全數 `disabled`，原因文字含 roadmap／承接 change 名稱，`data-prov` 依 `data.ts`（A5 `p3`、A6–A10 `p4`）。
-- **頂列**：GPU chip 綁 `/api/runtime/status`；「完整工具 ↗」保留於 dock（是否升格到側欄為 tasks 0.5，因涉 canon）。
+- **頂列**：GPU chip 綁 `/api/runtime/status`；「完整工具 ↗」保留於 dock（owner 2026-08-25 裁決 tasks 0.5：不升格到側欄——「完整工具」僅作舊功能保留，真實操作面收斂到本 change 的 unified 頁；R3 以 `api` 為首選、`nav` 為過渡）。
 - **導向後仍受 IP 守門的動作**（`#conv` prioritize／retry、`#minio` 觸發）：D2 落地前，UnifiedConsole 側對應控制項 `disabled` 附「需 allowlist 來源」，避免把使用者導去按 403。
 
 ## 5. 控制項政策（R3）機器化

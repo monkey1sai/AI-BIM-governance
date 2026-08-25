@@ -1968,11 +1968,11 @@
       "id": "unified-console-runtime-truth",
       "status": "active",
       "owner": "web-viewer-sample",
-      "current_slice": "2026-08-25 開立（使用者明確口令）：spec-only PR；§0 六個 owner 裁決點（D1 設計閘 P|H、D2 授權 T4|T2|T1、D3 canonical-linux ENABLE_DEV_ROUTES=false、D4 align thaw 判定、canon 入口、A4 放置）未裁決前 §5 HELD；§1–§4 可先做；UI task 只憑 canonical-linux 181 證據勾選",
+      "current_slice": "2026-08-25 owner 已裁決 §0 六點（D1=P、D2=T4、D3=canonical-linux ENABLE_DEV_ROUTES=false、D4=carve-out 不 thaw align、不加側欄入口、A4 同意預設方案）；spec-only PR #694；下一片＝§1 真值綁定（web-viewer-sample）；UI task 只憑 canonical-linux 181 證據勾選",
       "blocked_by": [],
       "last_verified": "2026-08-25T08:30:00Z",
       "task_ledger": {
-        "completed": 0,
+        "completed": 6,
         "total": 43
       },
       "evidence_refs": [
