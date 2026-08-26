@@ -207,6 +207,16 @@ try {
     $mechanism = @('scripts/deploy.ps1')
     $emptyJson = New-LedgerJson -Entries @()
 
+    $trustedGitAvailable = $true
+    try {
+        $null = Get-SelfReferentialTrustedGitIdentity
+    } catch {
+        if ($_.Exception.Message -notmatch 'no approved system-owned, read-only Git executable was found') {
+            throw
+        }
+        $trustedGitAvailable = $false
+    }
+
     # A caller-writable executable can still make a ReadWrite probe throw
     # IOException by holding a deny-write sharing handle. That ambiguity must
     # reject the candidate before Invoke-SelfReferentialTrustedGit starts it.
@@ -239,39 +249,47 @@ try {
     # ProgramFiles, ProgramW6432, and SystemRoot are caller-controlled process
     # environment. Even a caller-created fake made read-only after creation must
     # never become a production candidate or child-process PATH authority.
-    $previousProgramFiles = [Environment]::GetEnvironmentVariable('ProgramFiles', 'Process')
-    $previousProgramW6432 = [Environment]::GetEnvironmentVariable('ProgramW6432', 'Process')
-    $previousSystemRoot = [Environment]::GetEnvironmentVariable('SystemRoot', 'Process')
-    $previousWindowsHost = $script:IsWindowsHost
-    $previousFakeAttributes = [IO.File]::GetAttributes($callerWritableGit)
-    try {
-        [IO.File]::SetAttributes($callerWritableGit, $previousFakeAttributes -bor [IO.FileAttributes]::ReadOnly)
-        [Environment]::SetEnvironmentVariable('ProgramFiles', $trustedGitFixtureRoot, 'Process')
-        [Environment]::SetEnvironmentVariable('ProgramW6432', $trustedGitFixtureRoot, 'Process')
-        [Environment]::SetEnvironmentVariable('SystemRoot', $trustedGitFixtureRoot, 'Process')
-        $script:IsWindowsHost = $true
+    # This Windows-negative assertion remains runnable on hosted Windows even
+    # when that runner cannot supply a positive read-only Git identity.
+    if ($script:IsWindowsHost) {
+        $previousProgramFiles = [Environment]::GetEnvironmentVariable('ProgramFiles', 'Process')
+        $previousProgramW6432 = [Environment]::GetEnvironmentVariable('ProgramW6432', 'Process')
+        $previousSystemRoot = [Environment]::GetEnvironmentVariable('SystemRoot', 'Process')
+        $previousFakeAttributes = [IO.File]::GetAttributes($callerWritableGit)
+        try {
+            [IO.File]::SetAttributes($callerWritableGit, $previousFakeAttributes -bor [IO.FileAttributes]::ReadOnly)
+            [Environment]::SetEnvironmentVariable('ProgramFiles', $trustedGitFixtureRoot, 'Process')
+            [Environment]::SetEnvironmentVariable('ProgramW6432', $trustedGitFixtureRoot, 'Process')
+            [Environment]::SetEnvironmentVariable('SystemRoot', $trustedGitFixtureRoot, 'Process')
 
-        $trustedIdentity = Get-SelfReferentialTrustedGitIdentity
-        Assert-True ($trustedIdentity.Path -cne $callerWritableGit) 'process environment cannot redirect trusted Git to a caller-created read-only fake'
-        $knownProgramRoots = @(
-            [Environment]::GetFolderPath([Environment+SpecialFolder]::ProgramFiles)
-            [Environment]::GetFolderPath([Environment+SpecialFolder]::ProgramFilesX86)
-        ) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
-        $insideKnownProgramRoot = @($knownProgramRoots | Where-Object {
-            $prefix = ([IO.Path]::GetFullPath($_)).TrimEnd('\') + '\'
-            $trustedIdentity.Path.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)
-        }).Count -gt 0
-        Assert-True $insideKnownProgramRoot 'trusted Git remains rooted in an OS known Program Files directory'
+            if ($trustedGitAvailable) {
+                $trustedIdentity = Get-SelfReferentialTrustedGitIdentity
+                Assert-True ($trustedIdentity.Path -cne $callerWritableGit) 'process environment cannot redirect trusted Git to a caller-created read-only fake'
+                $knownProgramRoots = @(
+                    [Environment]::GetFolderPath([Environment+SpecialFolder]::ProgramFiles)
+                    [Environment]::GetFolderPath([Environment+SpecialFolder]::ProgramFilesX86)
+                ) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+                $insideKnownProgramRoot = @($knownProgramRoots | Where-Object {
+                    $prefix = ([IO.Path]::GetFullPath($_)).TrimEnd('\') + '\'
+                    $trustedIdentity.Path.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)
+                }).Count -gt 0
+                Assert-True $insideKnownProgramRoot 'trusted Git remains rooted in an OS known Program Files directory'
 
-        $trustedGitVersion = @(Invoke-SelfReferentialTrustedGit -RepoRoot $repoRoot -Arguments @('--version'))
-        Assert-True ($script:SelfReferentialGitExitCode -eq 0) 'trusted Git still executes after process environment poisoning'
-        Assert-True (($trustedGitVersion -join [Environment]::NewLine) -match '^git version ') 'trusted Git execution returns the real Git version'
-    } finally {
-        [IO.File]::SetAttributes($callerWritableGit, $previousFakeAttributes)
-        [Environment]::SetEnvironmentVariable('ProgramFiles', $previousProgramFiles, 'Process')
-        [Environment]::SetEnvironmentVariable('ProgramW6432', $previousProgramW6432, 'Process')
-        [Environment]::SetEnvironmentVariable('SystemRoot', $previousSystemRoot, 'Process')
-        $script:IsWindowsHost = $previousWindowsHost
+                $trustedGitVersion = @(Invoke-SelfReferentialTrustedGit -RepoRoot $repoRoot -Arguments @('--version'))
+                Assert-True ($script:SelfReferentialGitExitCode -eq 0) 'trusted Git still executes after process environment poisoning'
+                Assert-True (($trustedGitVersion -join [Environment]::NewLine) -match '^git version ') 'trusted Git execution returns the real Git version'
+            } else {
+                Assert-Throws -Context 'poisoned Windows paths without a trusted host Git' `
+                    -MessagePattern 'no approved system-owned, read-only Git executable was found' -Action {
+                    Get-SelfReferentialTrustedGitIdentity
+                }
+            }
+        } finally {
+            [IO.File]::SetAttributes($callerWritableGit, $previousFakeAttributes)
+            [Environment]::SetEnvironmentVariable('ProgramFiles', $previousProgramFiles, 'Process')
+            [Environment]::SetEnvironmentVariable('ProgramW6432', $previousProgramW6432, 'Process')
+            [Environment]::SetEnvironmentVariable('SystemRoot', $previousSystemRoot, 'Process')
+        }
     }
     $writeAfterPoisoning = [IO.File]::Open(
         $callerWritableGit,
@@ -280,6 +298,14 @@ try {
         [IO.FileShare]::ReadWrite
     )
     $writeAfterPoisoning.Dispose()
+
+    if (-not $trustedGitAvailable) {
+        if ($env:SPEC_TO_DONE_REQUIRE_TRUSTED_GIT_TESTS -eq '1') {
+            throw 'required trusted-Git coverage cannot run because no approved system-owned, read-only Git executable was found.'
+        }
+        Write-Host '[test-self-referential-bootstrap] Windows negative assertions passed; full positive suite is required on canonical Linux.'
+        return
+    }
 
     # A trusted executable path is insufficient when the child inherits dynamic
     # loader controls. Invalid sentinels make an unsanitized Linux/macOS launch
@@ -338,8 +364,17 @@ try {
     Assert-True $newRunJobMatch.Success 'agent-governance declares a bounded NEW_RUN platform gate'
     $newRunJob = $newRunJobMatch.Groups[1].Value
     Assert-True ($newRunJob -match '(?m)^      fail-fast: false[ \t]*\r?$') 'NEW_RUN matrix preserves both platform results'
-    Assert-True ($newRunJob -match '(?ms)^          - platform: windows-negative[ \t]*\r?$\s+runner: windows-latest[ \t]*\r?$\s+test: test_new_run_rejects_caller_controlled_git_even_when_named_git[ \t]*\r?$') 'Windows leg binds the Windows runner to the fail-closed Git negative test'
-    Assert-True ($newRunJob -match '(?ms)^          - platform: linux-positive[ \t]*\r?$\s+runner: ubuntu-latest[ \t]*\r?$\s+test: test_new_run_appender_preserves_prefix_and_emits_valid_p0[ \t]*\r?$') 'Linux leg binds the Ubuntu runner to the real NEW_RUN positive test'
+    Assert-True ($newRunJob -match '(?ms)^          - platform: windows-negative[ \t]*\r?$\s+runner: windows-latest[ \t]*\r?$\s+test_expression: test_new_run_rejects_caller_controlled_git_even_when_named_git[ \t]*\r?$') 'Windows leg binds the Windows runner to the fail-closed Git negative test'
+    Assert-True ($newRunJob -match '(?ms)^          - platform: linux-positive[ \t]*\r?$\s+runner: ubuntu-latest[ \t]*\r?$\s+test_expression: >-[ \t]*\r?$') 'Linux leg binds the Ubuntu runner to required positive tests'
+    foreach ($positiveNewRunTest in @(
+        'test_new_run_appender_preserves_prefix_and_emits_valid_p0'
+        'test_new_run_lock_snapshot_preserves_first_completed_boundary'
+        'test_new_run_post_write_failure_restores_locked_target_bytes'
+    )) {
+        Assert-True ($newRunJob.Contains($positiveNewRunTest)) "Linux leg includes required positive test $positiveNewRunTest"
+    }
+    Assert-True ($newRunJob.Contains('-k "${{ matrix.test_expression }}"')) 'NEW_RUN job executes the exact matrix-owned test expression'
+    Assert-True ($newRunJob -match '(?ms)^      - name: Run full PowerShell self-referential contract on trusted Linux[ \t]*\r?$\s+if: matrix\.platform == ''linux-positive''[ \t]*\r?$\s+shell: pwsh[ \t]*\r?$\s+env:[ \t]*\r?$\s+SPEC_TO_DONE_REQUIRE_TRUSTED_GIT_TESTS: ''1''[ \t]*\r?$\s+run: pwsh -NoProfile -NonInteractive -File scripts/tests/test-self-referential-bootstrap\.ps1[ \t]*\r?$') 'Linux leg runs the full PowerShell self-referential contract with capability skips promoted to failure'
     Assert-True ($newRunJob -match '(?m)^          SPEC_TO_DONE_REQUIRE_TRUSTED_GIT_TESTS: ''1''[ \t]*\r?$') 'NEW_RUN platform tests convert capability skips into failures'
     Assert-True ($newRunJob.Contains('test -x /usr/bin/git')) 'Linux leg requires the canonical Git executable'
     Assert-True ($newRunJob.Contains('test "$(realpath /usr/bin/git)" = /usr/bin/git')) 'Linux leg rejects a canonical Git symlink drift'

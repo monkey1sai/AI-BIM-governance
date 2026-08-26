@@ -631,6 +631,10 @@ def test_new_run_rejects_lock_and_repeat(tmp_path):
     assert code == 2 and result["held"] == "resume_state_invalid"
 
 
+@pytest.mark.skipif(
+    os.name == "nt",
+    reason="trusted-Git positive atomicity coverage runs on canonical Linux",
+)
 def test_new_run_lock_snapshot_preserves_first_completed_boundary(tmp_path):
     repo, branch, _, head, source, _, expected = _new_run_fixture(tmp_path)
     ready = tmp_path / "before-lock.ready"
@@ -705,6 +709,10 @@ try {{
     assert not pathlib.Path(f"{target}.new-run.lock").exists()
 
 
+@pytest.mark.skipif(
+    os.name == "nt",
+    reason="trusted-Git positive rollback coverage runs on canonical Linux",
+)
 def test_new_run_post_write_failure_restores_locked_target_bytes(tmp_path):
     repo, branch, _, head, source, source_bytes, expected = _new_run_fixture(tmp_path)
     target = repo / "artifacts/spec-to-done/demo-state.md"

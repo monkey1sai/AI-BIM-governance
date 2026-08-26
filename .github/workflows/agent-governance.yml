@@ -244,10 +244,13 @@ jobs:
         include:
           - platform: windows-negative
             runner: windows-latest
-            test: test_new_run_rejects_caller_controlled_git_even_when_named_git
+            test_expression: test_new_run_rejects_caller_controlled_git_even_when_named_git
           - platform: linux-positive
             runner: ubuntu-latest
-            test: test_new_run_appender_preserves_prefix_and_emits_valid_p0
+            test_expression: >-
+              test_new_run_appender_preserves_prefix_and_emits_valid_p0 or
+              test_new_run_lock_snapshot_preserves_first_completed_boundary or
+              test_new_run_post_write_failure_restores_locked_target_bytes
     steps:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
@@ -285,7 +288,14 @@ jobs:
         shell: pwsh
         env:
           SPEC_TO_DONE_REQUIRE_TRUSTED_GIT_TESTS: '1'
-        run: python -m pytest "tests/test_spec_to_done_state_contract.py::${{ matrix.test }}" -q -p no:cacheprovider
+        run: python -m pytest tests/test_spec_to_done_state_contract.py -k "${{ matrix.test_expression }}" -q -p no:cacheprovider
+
+      - name: Run full PowerShell self-referential contract on trusted Linux
+        if: matrix.platform == 'linux-positive'
+        shell: pwsh
+        env:
+          SPEC_TO_DONE_REQUIRE_TRUSTED_GIT_TESTS: '1'
+        run: pwsh -NoProfile -NonInteractive -File scripts/tests/test-self-referential-bootstrap.ps1
 
   agent-governance:
     name: ${{ github.event_name == 'pull_request' && 'agent-governance' || 'agent-governance-diagnostic' }}
