@@ -36,9 +36,10 @@ import { test, expect, type APIResponse } from "@playwright/test";
 //     cd web-viewer-sample
 //     E2E_COORDINATOR_BASE_URL=http://127.0.0.1:8005 npx playwright test e2e/dev-routes-disabled-operator-token.spec.ts
 //   另一項與 plan 逐字稿的差異：本檔的 testid 取自 task#3 實際落地的 UI（ifc-dev-routes-notice、
-//   a1-testdata-devroutes-note、ifc-fixture-select、ifc-register-btn、a1-localfs-select）；plan 草稿裡的
-//   dev-routes-disabled-notice／ifc-runtime-state／a1-test-data-dev-routes-disabled 在本 branch 不存在，
-//   照抄必紅。
+//   a1-testdata-devroutes-note、ifc-fixture-select、ifc-register-btn、ifc-refresh-btn、a1-localfs-select，
+//   以及既有的 ifc-runtime-state）；plan 草稿裡的 dev-routes-disabled-notice／a1-test-data-dev-routes-disabled
+//   在本 branch 不存在，照抄必紅。（P4 attempt 1 修正：早先此段誤稱 ifc-runtime-state 不存在，實則
+//   RealIfcConsolePage.tsx 一直渲染它；現已用它斷言 runtime 行為 dev_routes_disabled、而非 storage_empty。）
 //
 // *** 速率視窗是共用外部狀態：本 spec 必須可重複執行（task#4 quality 修復，2026-08-25）***
 //   operator token 的速率限制由 bim-review-coordinator/src/services/conversionControlAuthorization.ts
@@ -164,9 +165,18 @@ test.beforeEach(() => {
 
 test.describe("dev routes 已關閉：UI 垂直切片誠實狀態", () => {
   test("#demo-control：/api/dev/ifc-sources 404 → notice ＋ 選檔／註冊鈕 disabled", async ({ page }) => {
+    // 綁定真後端回應：notice 必須是由瀏覽器實際收到的 404 {detail:"dev routes disabled"} 觸發，
+    // 而非任何其他 404（P4 attempt 1 gap e1）。
+    const devSourcesResponse = page.waitForResponse(
+      (response) => response.url().includes("/api/dev/ifc-sources") && response.request().method() === "GET",
+      { timeout: 20_000 },
+    );
     await page.goto("/#demo-control");
     const panel = page.getByTestId("real-ifc-demo-control");
     await expect(panel).toBeVisible({ timeout: 20_000 });
+    const devSources = await devSourcesResponse;
+    expect(devSources.status()).toBe(404);
+    expect(await devSources.json()).toEqual({ detail: "dev routes disabled" });
 
     const notice = page.getByTestId("ifc-dev-routes-notice");
     await expect(notice).toBeVisible({ timeout: 20_000 });
@@ -175,6 +185,22 @@ test.describe("dev routes 已關閉：UI 垂直切片誠實狀態", () => {
 
     await expect(page.getByTestId("ifc-fixture-select")).toBeDisabled();
     await expect(page.getByTestId("ifc-register-btn")).toBeDisabled();
+
+    // runtime 行必須是 dev_routes_disabled，不得退回 storage_empty 假空狀態（P4 attempt 1 gap e4）。
+    const runtimeState = page.getByTestId("ifc-runtime-state");
+    await expect(runtimeState).toContainText("runtime: dev_routes_disabled");
+    await expect(runtimeState).not.toContainText("storage_empty");
+
+    // 重新整理清單會再打一次 /api/dev/ifc-sources（仍 404）：notice／disabled／runtime 行必須維持（P4 attempt 1 gap e5）。
+    const refreshResponse = page.waitForResponse(
+      (response) => response.url().includes("/api/dev/ifc-sources") && response.request().method() === "GET",
+      { timeout: 20_000 },
+    );
+    await page.getByTestId("ifc-refresh-btn").click();
+    expect((await refreshResponse).status()).toBe(404);
+    await expect(notice).toBeVisible();
+    await expect(page.getByTestId("ifc-register-btn")).toBeDisabled();
+    await expect(runtimeState).toContainText("runtime: dev_routes_disabled");
 
     await page.screenshot({ path: "../artifacts/e2e/dev-routes-disabled-demo-control.png", fullPage: true });
   });
