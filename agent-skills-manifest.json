@@ -58,6 +58,33 @@
       }
     },
     {
+      "name": "blip-approve",
+      "locations": {
+        "claude": ".claude/skills/blip-approve",
+        "codex": ".codex/skills/blip-approve"
+      },
+      "sync": {
+        "mode": "mirror",
+        "source": "claude",
+        "targets": [
+          "codex"
+        ]
+      },
+      "provenance": {
+        "kind": "repo-authored",
+        "source": "AI-BIM-governance",
+        "notes": "Introduced by the commit containing this manifest entry. Claude is the canonical tracked source and Codex is a byte-identical mirror. The protected ProgramData broker and user-level installations remain separately provisioned operational dependencies."
+      },
+      "integrity": {
+        "format": "agent-skill-tree/v2",
+        "algorithm": "sha256",
+        "trees": {
+          "claude": "1167e12490028783fdb001f707e76fdb494d1694a4eb6a3f8cc7fa76aa161591",
+          "codex": "1167e12490028783fdb001f707e76fdb494d1694a4eb6a3f8cc7fa76aa161591"
+        }
+      }
+    },
+    {
       "name": "deploy-linux-test-environment",
       "locations": {
         "claude": ".claude/skills/deploy-linux-test-environment",
