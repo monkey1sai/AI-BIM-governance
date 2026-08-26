@@ -1,20 +1,16 @@
 # AGENTS.md
 ## 0. 文件目的
-
-本文件是 `AI-BIM-governance/` workspace 的 **agent 入口** — 定義 agent 行為對齊與 repo 邊界的 source of truth。為了控制每次 session 啟動的 context 預算，細節已 lazy-load 到 `docs/agents/*.md` sub-files（見下方 index）。
-
-衝突解析優先序：使用者最新明確指令 > 本文件（AGENTS.md） > `CLAUDE.md` > installed skills / generated wiki / generated skills。`docs/agents/*.md` sub-files 是本文件的 lazy-load 細節，不另成優先序層級。不要把「agent 指令優先序」和「runtime/product 行為真相」混在一起；後者見 §3。
+本文件是 `AI-BIM-governance/` workspace 的 **agent 入口** — 定義 agent 行為對齊與 repo 邊界的 source of truth。為了控制每次 session 啟動的 context 預算，細節已 lazy-load 到 `docs/agents/*.md` sub-files。
+衝突解析優先序：使用者最新明確指令 > 本文件（AGENTS.md） > `CLAUDE.md` > installed skills / generated wiki / generated skills。不要把「agent 指令優先序」和「runtime/product 行為真相」混在一起；後者見 §3。
 
 ## 0.0 Lean Governance & Subtraction Directive（元治理減法方針）
-
-為避免「元治理反噬」與流程摩擦力過大導致開發停滯，全體 Agent 一律遵守下列減法原則：
-1. **廢除 3-PR Demote/Reapprove 儀式**：禁止將單一功能或 UI 變更拆成 Demote ➔ Feat ➔ Reapprove 三個 PR。所有畫面改動與 Design Baseline 更新**一律在單一 PR 內同時交付**。
-2. **凍結元治理工具自我修復循環**：禁止 Agent 主動開立或遞迴開立 Fixpoint rebuild、Classifier repair、Ledger reconciliation、Watermark alignment 等純治理工具修復 PR。非阻塞之治理工具告警改為 Warning，不阻擋業務代碼交付。
-3. **前端驗收以 Functional & Semantic E2E 為主**：開發迭代期著重於「按鈕可點、API 通暢、轉檔狀態正確」的 Playwright 語意與功能驗收，放寬 1% 嚴苛 Pixel Diff 的硬阻斷。
-4. **Single Active Writer 原則**：同一時間只由一個主要 Coordinator Agent 負責寫入與開 PR，其他 Agent 僅擔任唯讀 Research 或局部 Debugger，根除多 Writer 爭搶 main 造成的 stale base 與 lock 衝突。
+為避免「元治理反噬」與流程摩擦力過大導致開發停滯，全體 Agent 一律遵守減法原則：
+1. **廢除 3-PR Demote/Reapprove 儀式**：禁止將 UI 變更拆成 3 個 PR，畫面改動與 Design Baseline 更新**一律在單一 PR 內同時交付**。
+2. **凍結元治理工具自我修復循環**：禁止主動開立 Fixpoint rebuild、Classifier repair、Ledger reconciliation 等純治理工具 PR。非阻塞告警改為 Warning，不阻擋業務代碼交付。
+3. **前端驗收以 Functional & Semantic E2E 為主**：著重於 Playwright 語意與功能驗收，放寬 1% 嚴苛 Pixel Diff 硬阻斷。
+4. **Single Active Writer 原則**：同一時間只由 1 個主要 Coordinator 負責寫入與開 PR，其他 Agent 僅擔任唯讀 Research 或局部 Debugger。
 
 ## 0.1 Agent 工作方式
-
 ### AI Coding Governance Lanes
 
 日常任務預設走 Lane F 或 Lane B；Superpowers 與 `spec-to-done` 是 opt-in，不是一般實作主線。不得只因任務「非平凡」、文字含「完成」、或 changed path 位於 code/tests 就升級 Lane S。
@@ -25,21 +21,17 @@
 | **B — Bounded Change** | 單一 service 內清楚且有限的功能；不改 architecture/public API/schema/security/deploy | single coordinator + 3–5 項 inline checklist；最多一個 debugger 或完成後一個 read-only reviewer；禁止 parallel writers；affected tests；對 task/主要 entry symbol 跑一次 GitNexus impact |
 | **G — Governed Change** | 跨 ≥2 services、public API/event/DB schema、user-facing route/workflow、Kit/WebRTC/GPU、deploy/auth/permission/migration/destructive script、architecture boundary、GitNexus HIGH/CRITICAL | dedicated branch/worktree；簡潔 plan；GitNexus impact + detect_changes；按風險 reviewer/debugger/security_auditor；integration tests；user-facing browser E2E；PR local preflight |
 | **S — Spec-to-Done** | 使用者明確輸入 `spec-to-done`、明確要求完整 Superpowers，或指定已核准 spec 並要求自主推進至 merged PR | 保留完整 P0/P1/P3/P4/P5/P6/P7；只能明確啟動，不得由模型自行升級 |
-
 只有工作可安全平行、需要獨立風險檢查，或符合 Lane G/S 條件時才派 worker。coordinator 擁有所有寫入與最終決策；F 不派 subagent，B 禁止多個 writer 並行。多終端機／多 CLI（Claude Code、Codex、Grok）並行 session 以 gitignored `.agents/board/` 看板互相感知——所有 CLI 都明確執行開工 `node scripts/dev/agents-board.mjs register --agent <cli>`、動工前 `status`、收工 `done`；repo 不分發自動 command hooks。看板僅提供感知，不取代 Lane 隔離規則，契約見 `docs/agents/parallel-session-board.md`。
 
 ### Superpowers invocation policy
-
 預設為 repo-native lean mode。Superpowers 重流程 skill 採 explicit-only；task complexity 不等於使用者授權，且單一 skill 不得自動串接下一階段。詳細 routing 見 `docs/agents/superpowers-invocation-policy.md`。
 
 ### Karpathy-style 工作守則
-
 - Lane B/G/S 先列出假設、成功標準、最小改動面；若需求或 repo 邊界不清楚，先查 local source of truth，仍有重大分歧才釐清。
 - 先判定 F/B/G/S；只有 G/S 或獨立風險檢查有實質價值時才 dispatch worker。最終回覆區分 verified facts / inferences / unverified risks。
 - 優先採用能解決當前問題的最簡單方案；不要新增未要求的抽象、設定層、擴充點或 production dependency。
 - 只修改與任務直接相關的檔案與程式碼；不要順手重構、格式化、刪除註解或清理不理解的既有內容。
 - 每個實作切片都要能被驗證；完成時回報改動檔案、驗證指令、未跑測試原因與已知風險。
-
 完整 task complexity tiers、reasoning effort routing、worker output contract、reviewer perspectives 與 evidence labels 見 `docs/agents/advanced-agent-reasoning-contract.md`。
 
 ### 產品定位與完成標準
