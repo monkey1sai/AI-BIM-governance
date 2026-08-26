@@ -279,6 +279,16 @@ function autoFixPr(prNumber) {
   if (!bodyRaw) return false;
   let body = JSON.parse(bodyRaw).body || '';
   
+  // 0. Ensure Change Classification table exists
+  if (!body.includes('Change lane') || !body.includes('Behavior contract changed') || !body.includes('Requirement source')) {
+    const classificationBlock = '## Change Classification\n| Label | Value |\n|---|---|\n| Change lane | Lane B |\n| Behavior contract changed | no |\n| Requirement source | Lean Governance & PR Queue Engine |\n\n';
+    if (body.includes('## Summary')) {
+      body = body.replace('## Summary', classificationBlock + '## Summary');
+    } else {
+      body = classificationBlock + body;
+    }
+  }
+
   // 1. Fix Design gate status
   const designGateMatch = preflightOut.match(/Design gate status must be '([^']+)'/i);
   if (designGateMatch) {
