@@ -112,6 +112,17 @@ closeoutTaskIds `evidence-closeout` 必填:明確且不重複的 task IDs(禁 wi
 maxAgentCalls=40; maxP5VerifierBatches=2; maxP5Rounds=2; maxEvidenceAttempts=2
 ```
 
+`resume`、retry、換 session／CLI 永遠不得重設 counter。唯一例外是有效 terminal
+`HELD@P<n> reason=run_budget_exhausted`、至少一個固定 counter 精確到頂，且 owner 對舊 state tuple 與
+fresh descendant worktree 明確啟動新 run。先唯讀執行
+`node .claude/skills/spec-to-done/append-new-run.mjs status --state <absolute-state-path> --json`；不得靠聊天
+記憶猜測。只有當輪 exact owner message 存在時才能呼叫同檔 `append`，不得手寫 `NEW_RUN@P0`。
+helper 保留舊 state 每個 byte，綁定全檔 hash/size/checkpoint count、terminal hash、舊/新 Git identity
+與 ancestry，再以 lock + atomic replace + validator readback 寫入。provenance marker 明說它只是 SHA-256
+tuple binding，不是數位簽章或 owner 身分驗證。`status --json` 的 `nextAction` 與
+`appendRequiredArguments` 是後續 session 的 machine-readable 指引；NEW_RUN 只建立 P0 rollback point，
+不得宣稱任何 P0–P7 gate 已通過。
+
 `remainingAgentCalls=maxAgentCalls-agentCalls.used` 必須傳入每個 `std-*` / `fu-*` 等價 workflow；回傳的
 `agentCallsUsed` 立即累加後才可決定下一步。P6 每次 `ship-item` 等價 workflow 呼叫另計 1 call。任何計數到頂、
 workflow 試圖超額、或 resume 缺少可信計數，一律 fail-closed，不可用新 session / 新 run ID 歸零。
@@ -318,7 +329,7 @@ P1 內含 plan 四軸 review(Completeness/Spec Alignment/Task Decomposition/Buil
 |---|---|---|
 | `bad_args` | 任一 std-* / fu-generic(必填 args/SHA/domainContext 缺、malformed 或被字串化) | 修正 args 為正確 object；只在對應 run/P5 額度內重呼 |
 | `bad_findings` | P5 registry 缺欄、重複 id、q 過長、型別錯或 suspectFile 非 canonical repo-relative path | 修正 bounded registry；只在 P5 round 尚有額度時重呼，不得丟棄 finding 或灌 review 全文 |
-| `run_budget_exhausted` | 任一 phase 的 agentCalls / P5 / evidence 上限已到，或 findings >32 | **HELD**；拆小 change 或由使用者明確啟動新 run，禁止 resume 靜默歸零 |
+| `run_budget_exhausted` | 任一 phase 的 agentCalls / P5 / evidence 上限已到，或 findings >32 | **HELD**；一般 resume 永不可歸零。只有 exact owner 啟動後由 `append-new-run.mjs` 建立 machine-bound `NEW_RUN@P0`；手寫或複製 boundary 一律無效 |
 | `resume_state_invalid` | state 缺必要欄位、假 run ID、計數器/HEAD 不可信或 schema 漂移 | **HELD**；依 git/artifact 建立新格式 checkpoint，通過 validator 前不啟 agent |
 | `scope_drift` | evidence-closeout 需要 production/UI/contract/config 變更 | **HELD**；改用另一個已核准 full change，不得在 closeout 內擴張 |
 | `evidence_stale` / `evidence_not_closing` | P5 worktree/HEAD/target/base/subject identity 漂移、空 review range，或 closeout evidence 未綁目前 HEAD/兩次仍未閉合 | 丟棄舊 verdict；fetch/commit/clean 後重取完整 SHA；只在剩餘額度內重跑，禁止第三輪自動重試 |
@@ -364,6 +375,9 @@ HELD@P<n> | reason=<held 值> | spec=<specPath/changePath> | slug=<slug> | userF
 
 ## Resume(使用者一句話重入;支援跨 session)
 
+- 任何 resume 先跑 `append-new-run.mjs status --state <absolute-state-path> --json`。若
+  `canStartNewRun=true`，沒有當輪 exact owner authorization 時只能回報 tuple，不得啟 agent；有授權也只能
+  用 helper 遷移到 freshly fetched main descendant worktree，舊 state 不得修改或截斷。
 - **State 檔(durable,跨 session 唯一座標)**:`agent-contracts/spec-to-done.contract.json` 固定 canonical path
   `artifacts/spec-to-done/{slug}-state.md`。validator 單一正本位於 `.claude` 側，`.codex` 不放副本。
   先把 durable history 完整複製到 sibling temp，再 append 候選行（禁止單行 temp），執行
@@ -393,7 +407,9 @@ HELD@P<n> | reason=<held 值> | spec=<specPath/changePath> | slug=<slug> | userF
 state 檔是跨 session / 跨 CLI 的唯一 resume 座標；新寫入的行一律遵守下列詞彙。歷史行保留作 audit，
 但必須先正規化並通過 validator，禁止直接「盡力解析」後啟 agent：
 
-- **行首 token 只允許四種**:`HELD@P<n>`(hold block 格式)、`DONE@P<n>`(phase 完成;task 級進度寫進 `taskIndex=`/`commit=` 欄位,不另創行首)、`RESUMED@P<n>`(使用者重入,附 `decision=`)、`AUTHORIZATION@P<n>`(簽核委派,見下)。
+- **行首 token 只允許五種**:`HELD@P<n>`、`DONE@P<n>`、`RESUMED@P<n>`、
+  `AUTHORIZATION@P<n>`，以及只准 `append-new-run.mjs` 生成的 `NEW_RUN@P0`。後者只可直接接在有效
+  `run_budget_exhausted` terminal 後，且不是一般 resume。
 - **`reason=` 的 held 值 MUST 取自 `agent-contracts/spec-to-done.contract.json` 的 closed enum**；本檔處置表不是完整名單。不得發明表外值、不得把多個值併成複合值（一行一個主因，其餘寫 `heldDetail`／診斷欄）。host/環境層阻斷一律用 `host_env_blocked`。
 - **欄位鍵固定 hold block 契約**，包含 `head/executionMode/closeoutTaskIds/runIds/agentCalls/p5Rounds/evidenceAttempts/evidenceHead` 與中文鍵
   (`診斷=`、`需要使用者決定=`)；不得混入同義欄位(`diagnosis=` / `need=` / `stateSchema=`)。

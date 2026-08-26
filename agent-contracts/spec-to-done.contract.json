@@ -4,6 +4,24 @@
   "phases": ["P0", "P1", "P3", "P4", "P5", "P6", "P7"],
   "durable_state": {
     "canonical_relative_path": "artifacts/spec-to-done/{slug}-state.md",
+    "new_run_boundary": {
+      "schema_version": "spec-to-done-new-run/v1",
+      "token": "NEW_RUN@P0",
+      "required_previous_reason": "run_budget_exhausted",
+      "owner_provenance": "sha256-tuple-binding-not-digital-signature",
+      "counter_resets": {
+        "agentCalls": "0/40",
+        "p5Rounds": "0/2",
+        "evidenceAttempts": "0/2"
+      },
+      "field_resets": {
+        "planPath": "",
+        "taskIndex": "0",
+        "prNumber": "",
+        "runIds": "none",
+        "evidenceHead": ""
+      }
+    },
     "held_reasons": [
       "arbiter_denied",
       "arbiter_identity_mismatch",

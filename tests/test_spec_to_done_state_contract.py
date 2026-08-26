@@ -1,3 +1,4 @@
+import hashlib
 import json
 import os
 import pathlib
@@ -11,6 +12,7 @@ from jsonschema import Draft7Validator
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 CLAUDE_VALIDATOR = ROOT / ".claude/skills/spec-to-done/validate-state.mjs"
+NEW_RUN_APPENDER = ROOT / ".claude/skills/spec-to-done/append-new-run.mjs"
 CODEX_VALIDATOR = ROOT / ".codex/skills/spec-to-done/validate-state.mjs"
 CLAUDE_SKILL = ROOT / ".claude/skills/spec-to-done/SKILL.md"
 CODEX_SKILL = ROOT / ".codex/skills/spec-to-done/SKILL.md"
@@ -123,6 +125,128 @@ def _run(
     return proc.returncode, json.loads(proc.stdout)
 
 
+def _run_new_run(*args, env_overrides=None):
+    proc = subprocess.run(
+        ["node", str(NEW_RUN_APPENDER), *map(str, args)],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        env={**os.environ, **(env_overrides or {})},
+    )
+    return proc.returncode, json.loads(proc.stdout)
+
+
+def _validate_state_path(state, repo, expected_head, *, platform="codex"):
+    if GIT is None:
+        pytest.skip("git is required")
+    proc = subprocess.run(
+        [
+            "node",
+            str(CLAUDE_VALIDATOR),
+            "--state",
+            str(state),
+            "--platform",
+            platform,
+            "--git-exe",
+            GIT,
+            "--expected-head",
+            expected_head,
+            "--expected-worktree",
+            repo.as_posix(),
+            "--expected-agent-limit",
+            "40",
+            "--expected-p5-limit",
+            "2",
+            "--expected-evidence-limit",
+            "2",
+            "--trusted-main-ref",
+            "refs/heads/main",
+        ],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+    return proc.returncode, json.loads(proc.stdout)
+
+
+def _new_run_fixture(tmp_path, *, held_reason="run_budget_exhausted", exhausted=True):
+    repo, _ = _new_repo(tmp_path, "new-run-repo")
+    change = repo / "openspec/changes/demo"
+    change.mkdir(parents=True)
+    (change / "proposal.md").write_text("# demo\n", encoding="utf-8")
+    (repo / ".gitignore").write_text("artifacts/\n", encoding="utf-8")
+    _git(repo, "add", "openspec/changes/demo/proposal.md", ".gitignore")
+    _git(repo, "commit", "-m", "add demo change")
+    previous_head = _git(repo, "rev-parse", "HEAD")
+    branch = _git(repo, "branch", "--show-current")
+    source_line = _line(
+        repo,
+        previous_head,
+        "HELD@P1",
+        spec=change.as_posix(),
+        reason=held_reason,
+        branch=branch,
+        agentCalls="40/40" if exhausted else "39/40",
+        p5Rounds="0/2",
+        evidenceAttempts="0/2",
+        evidenceHead="",
+    )
+    source = tmp_path / "legacy-state.md"
+    source_bytes = (source_line + "\r\n").encode("utf-8")
+    source.write_bytes(source_bytes)
+    _git(repo, "commit", "--allow-empty", "-m", "fresh new-run base")
+    current_head = _git(repo, "rev-parse", "HEAD")
+    expected = {
+        "sha256": hashlib.sha256(source_bytes).hexdigest(),
+        "bytes": len(source_bytes),
+        "checkpoints": 1,
+    }
+    return repo, branch, previous_head, current_head, source, source_bytes, expected
+
+
+def _append_new_run(
+    repo,
+    branch,
+    current_head,
+    source,
+    expected,
+    *,
+    expected_overrides=None,
+    owner_sha256="09" * 32,
+    owner_bytes="479",
+    date_stamp="2026-08-26",
+    env_overrides=None,
+):
+    expected = {**expected, **(expected_overrides or {})}
+    return _run_new_run(
+        "append",
+        "--source-state",
+        source,
+        "--target-worktree",
+        repo,
+        "--git-exe",
+        GIT,
+        "--expected-branch",
+        branch,
+        "--expected-head",
+        current_head,
+        "--expected-source-sha256",
+        expected["sha256"],
+        "--expected-source-bytes",
+        expected["bytes"],
+        "--expected-source-checkpoints",
+        expected["checkpoints"],
+        "--owner-message-sha256",
+        owner_sha256,
+        "--owner-message-bytes",
+        owner_bytes,
+        "--date-stamp",
+        date_stamp,
+        "--json",
+        env_overrides=env_overrides,
+    )
+
+
 def _make_git_proxy(tmp_path, name, repo, ls_remote_output, *, status=0):
     if os.name == "nt":
         pytest.skip("terminal P7 git proxy integration is POSIX-only")
@@ -184,6 +308,166 @@ def test_machine_contract_is_schema_valid_closed_and_deterministic():
         "merge_commit_equals_remote_main": "required",
         "pr_head_and_merge_commit_same_tree": "required",
     }
+
+
+def test_machine_contract_pins_the_owner_only_new_run_boundary():
+    contract = json.loads(MACHINE_CONTRACT.read_text(encoding="utf-8"))
+    boundary = contract["durable_state"]["new_run_boundary"]
+    assert boundary == {
+        "schema_version": "spec-to-done-new-run/v1",
+        "token": "NEW_RUN@P0",
+        "required_previous_reason": "run_budget_exhausted",
+        "owner_provenance": "sha256-tuple-binding-not-digital-signature",
+        "counter_resets": {
+            "agentCalls": "0/40",
+            "p5Rounds": "0/2",
+            "evidenceAttempts": "0/2",
+        },
+        "field_resets": {
+            "planPath": "",
+            "taskIndex": "0",
+            "prNumber": "",
+            "runIds": "none",
+            "evidenceHead": "",
+        },
+    }
+
+
+def test_new_run_appender_preserves_prefix_and_emits_valid_p0(tmp_path):
+    repo, branch, old_head, new_head, source, source_bytes, expected = (
+        _new_run_fixture(tmp_path)
+    )
+    code, status = _run_new_run("status", "--state", source, "--json")
+    assert code == 0 and status["canStartNewRun"] is True
+    assert status["ownerAuthorizationRequired"] is True
+    assert status["nextAction"] == "obtain-exact-owner-authorization-then-run-append"
+    assert "owner-message-sha256" in status["appendRequiredArguments"]
+    code, result = _append_new_run(repo, branch, new_head, source, expected)
+    assert code == 0 and result["ok"] is True, result
+    target = repo / "artifacts/spec-to-done/demo-state.md"
+    target_bytes = target.read_bytes()
+    assert target_bytes.startswith(source_bytes)
+    assert result["sourceSha256"] == expected["sha256"]
+    assert result["previousHead"] == old_head
+    assert result["head"] == new_head
+    assert result["runSequence"] == 2
+    assert result["ownerProvenance"] == "sha256-tuple-binding-not-digital-signature"
+
+    code, validated = _validate_state_path(target, repo, new_head)
+    assert code == 0 and validated["ok"] is True
+    assert validated["kind"] == "NEW_RUN"
+    assert validated["phase"] == "P0"
+    assert validated["counters"]["agentCalls"]["used"] == 0
+
+    code, status = _run_new_run("status", "--state", target, "--json")
+    assert code == 0 and status["ok"] is True
+    assert status["canStartNewRun"] is False
+    assert status["runSequence"] == 2
+    assert status["nextAction"] == "continue-or-hold-current-run-without-counter-reset"
+    assert status["appendRequiredArguments"] == []
+
+
+@pytest.mark.parametrize(
+    ("held_reason", "exhausted"),
+    [("external_blocked", True), ("run_budget_exhausted", False)],
+)
+def test_new_run_rejects_nonbudget_or_unexhausted_history(
+    tmp_path, held_reason, exhausted
+):
+    fixture = _new_run_fixture(
+        tmp_path, held_reason=held_reason, exhausted=exhausted
+    )
+    repo, branch, _, head, source, _, expected = fixture
+    code, result = _append_new_run(repo, branch, head, source, expected)
+    assert code == 2 and result["held"] == "resume_state_invalid"
+
+
+def test_validator_rejects_a_fabricated_new_run_line(tmp_path):
+    repo, head = _new_repo(tmp_path)
+    fabricated = _line(
+        repo,
+        head,
+        "NEW_RUN@P0",
+        runIds="none",
+        taskIndex="0",
+        evidenceHead="",
+        agentCalls="0/40",
+        p5Rounds="0/2",
+        evidenceAttempts="0/2",
+    )
+    code, result = _run(tmp_path, repo, fabricated, platform="codex")
+    assert code == 2 and result["held"] == "resume_state_invalid"
+
+
+def test_new_run_rejects_stale_source_tuple(tmp_path):
+    repo, branch, _, head, source, _, expected = _new_run_fixture(tmp_path)
+    code, result = _append_new_run(
+        repo,
+        branch,
+        head,
+        source,
+        expected,
+        expected_overrides={"sha256": "00" * 32},
+    )
+    assert code == 2 and result["held"] == "resume_state_invalid"
+
+
+def test_new_run_rejects_dirty_target_worktree(tmp_path):
+    repo, branch, _, head, source, _, expected = _new_run_fixture(tmp_path)
+    dirty = repo / "src/dirty.txt"
+    dirty.write_text("not committed\n", encoding="utf-8")
+    code, result = _append_new_run(repo, branch, head, source, expected)
+    assert code == 2 and result["held"] == "resume_state_invalid"
+    assert "clean" in result["detail"]
+
+
+def test_new_run_ignores_ambient_git_directory_injection(tmp_path):
+    repo, branch, _, head, source, _, expected = _new_run_fixture(tmp_path)
+    code, result = _append_new_run(
+        repo,
+        branch,
+        head,
+        source,
+        expected,
+        env_overrides={"GIT_DIR": str(tmp_path / "attacker")},
+    )
+    assert code == 0 and result["ok"] is True, result
+
+
+def test_new_run_rejects_bad_owner_tuple_or_worktree_identity(tmp_path):
+    repo, branch, _, head, source, _, expected = _new_run_fixture(tmp_path)
+    code, result = _append_new_run(
+        repo, branch, head, source, expected, owner_sha256="bad"
+    )
+    assert code == 2 and result["held"] == "bad_args"
+    code, result = _append_new_run(repo, "wrong/branch", head, source, expected)
+    assert code == 2 and result["held"] == "resume_state_invalid"
+
+
+def test_new_run_rejects_lock_and_repeat(tmp_path):
+    repo, branch, _, head, source, _, expected = _new_run_fixture(tmp_path)
+    target = repo / "artifacts/spec-to-done/demo-state.md"
+    target.parent.mkdir(parents=True)
+    lock = pathlib.Path(f"{target}.new-run.lock")
+    lock.write_text("occupied\n", encoding="utf-8")
+    code, result = _append_new_run(repo, branch, head, source, expected)
+    assert code == 2 and result["held"] == "resume_state_invalid"
+    lock.unlink()
+
+    code, result = _append_new_run(repo, branch, head, source, expected)
+    assert code == 0 and result["ok"] is True, result
+    code, result = _append_new_run(repo, branch, head, source, expected)
+    assert code == 2 and result["held"] == "resume_state_invalid"
+
+
+def test_validator_rejects_tampered_new_run_boundary(tmp_path):
+    repo, branch, _, head, source, _, expected = _new_run_fixture(tmp_path)
+    code, result = _append_new_run(repo, branch, head, source, expected)
+    assert code == 0 and result["ok"] is True, result
+    target = repo / "artifacts/spec-to-done/demo-state.md"
+    target.write_bytes(target.read_bytes().replace(b"ownerMessageBytes=479", b"ownerMessageBytes=480"))
+    code, result = _validate_state_path(target, repo, head)
+    assert code == 2 and result["held"] == "resume_state_invalid"
 
 
 def test_valid_claude_and_codex_states_and_single_canonical_validator(tmp_path):
