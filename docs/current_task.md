@@ -1,24 +1,28 @@
-# 任務：創建新 branch 與理解專案
+# 任務：實施「元治理減法」（Lean Governance & Subtraction）
 
 ## Objective (目標)
-- 創建新的 Git 分支以進行後續開發。
-- 深入理解專案的目錄結構、各模組的職責、資料流向以及驗證方式。
+- 針對專案中過度繁重、阻礙開發效率的「元治理 (Meta-Governance)」機制進行減法改動。
+- 廢除 3-PR Demote/Reapprove 繁瑣流程，改為單 PR 交付。
+- 凍結元治理工具的自我修復無限循環（禁止 Agent 自動開立 fixpoint/classifier/ledger 純治理 PR）。
+- 放寬開發期前端 Design Gate 的過度嚴苛限制（從 1% pixel diff 轉為以 Functional & Semantic E2E 為主）。
+- 確立 Single Active Writer 原則，根除多 Agent 搶 main 導致的 stale base 與 lock 衝突。
+- 透過 git worktree + new branch 進行變更，完成 commit、push、open PR 並 merge to main。
 
 ## Plan (執行計畫)
-- [x] 1. 建立並切換至新 Git 分支。
-- [x] 2. 檢索並閱讀專案核心說明文件（`AGENTS.md`、`README.md`）。
-- [x] 3. 深入探索專案結構（各個子模組：`bim-review-coordinator`、`bim-streaming-server`、`web-viewer-sample` 等）。
-- [x] 4. 進行初步的環境與測試驗證。
-- [x] 5. 撰寫專案理解總結。
-- [x] 6. 將專案理解、本地環境驗證與 AI Coding 方案寫入本分支的 `docs/PROJECT_UNDERSTANDING.md`。
-- [x] 7. 以 OpenSpec 建立 `project-risks-mitigation` 規格，並為 5 個風險給予 Requirement ID。
+- [x] 1. 建立 Dedicated Git Worktree (`C:\Repos\active\iot\AI-BIM-governance.worktrees\lean-governance-subtraction`) 與分支 `chore/lean-governance-subtraction`。
+- [x] 2. 修改 `AGENTS.md`：引入 Lean Governance & Subtraction 指令。
+- [x] 3. 修改 `CLAUDE.md`：同步更新精簡治理規範。
+- [x] 4. 修改 `docs/agents/github-workflow.md` 與 `docs/agents/agent-governance-policy.md`：更新單 PR 交付與治理減法方針。
+- [x] 5. 執行本地驗證檢查，確保無語法或格式錯誤。
+- [ ] 6. 提交 Git Commit。
+- [ ] 7. Push 分支至遠端 GitHub。
+- [ ] 8. 建立 Pull Request。
+- [ ] 9. Merge PR 至 main 分支。
+- [ ] 10. 收斂並更新任務狀態。
 
 ## Context & Thoughts (上下文與思考)
-- 我們已經成功為專案建立 `.venv` 並安裝所有必要的依賴，包括 `fastapi`、`usd-core` (用於 openusd 測試的 `pxr`)、`ifcopenshell` 等。
-- 順利跑通了整個 repo 目前現存的所有單元與合約測試。
-- 順利建立並寫入了本分支的正式文檔 `docs/PROJECT_UNDERSTANDING.md`。
-- 成功透過 `openspec` 建立變更，並將五個風險編寫為具有 Scenario 與 ID 的規格文件。
+- 專案分析顯示：專案開發緩慢的主要瓶頸不是業務邏輯複雜，而是治理系統本身過於龐大脆弱（scripts 目錄 180MB、openspec 近 800 檔），近 7 成 PR 全在修治理工具（fixpoint/classifier/ledger/watermark）。
+- 透過本次減法改動，建立明確的 Lean Mode，讓所有 AI Agent（Codex、Claude、CLI、Gemini）將焦點徹底轉移回 BIM 核心業務價值（IFC 轉檔、A1~A10 規則檢核、WebRTC 3D 串流）。
 
 ## Handoff Note (交接說明)
-- 任務已全部圓滿完成！所有規格文件、本地驗證測試、以及風險對齊工作皆已到位。
-- 分支 `feat/understand-project` 已處於乾淨且準備妥當的開發狀態。
+- 本地 106 項 Governance Policy 斷言全部通過，準備進行 commit、push 與 open PR。
