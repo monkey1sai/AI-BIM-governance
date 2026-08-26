@@ -1,5 +1,6 @@
 # P3: 巨石單檔領域架構重構實施計畫 (Slice 1 to Slice 3)
 
+> **✅ 全數完成並合入 main（2026-08-26）**：PR #711，Commit `f83e20b`。
 > **Implementation authorization:** 本計畫落實 P3 階段之巨石單檔領域架構重構，涵蓋 Slice 1 (Coordinator 路由模組化)、Slice 2 (Viewer USD 樹與視圖容器抽離) 與 Slice 3 (Viewer 治理面板與工具列抽離)。依照 Superpowers 生命週期執行：Plan -> Worktree -> Implement & Verify -> PR -> Review & Merge。
 
 **目標:**
@@ -9,20 +10,20 @@
 
 ## 執行進度清單
 ### Slice 1: Coordinator 路由模組化
-- [ ] Step 1.1: 建立 streamRoutes.ts 處理 WebRTC 串流端點與 Token 驗證
-- [ ] Step 1.2: 建立 healthRoutes.ts 處理健康檢查與 Artifact 探針
-- [ ] Step 1.3: 建立 sessionRoutes.ts 處理 Review Session 協同與生命週期
-- [ ] Step 1.4: 建立 conversionRoutes.ts 處理 IFC 轉檔派發與佇列控制
-- [ ] Step 1.5: 收斂 app.ts 並全通 bim-review-coordinator 全部 1573 筆測試
+- [x] Step 1.1: 建立 streamRoutes.ts 處理 WebRTC 串流端點與 Token 驗證
+- [x] Step 1.2: 建立 healthRoutes.ts 處理健康檢查與 Artifact 探針
+- [x] Step 1.3: 建立 sessionRoutes.ts 處理 Review Session 協同與生命週期
+- [x] Step 1.4: 建立 conversionRoutes.ts 處理 IFC 轉檔派發與佇列控制
+- [x] Step 1.5: 收斂 app.ts 並全通 bim-review-coordinator 全部 1573 筆測試
 
 ### Slice 2: Viewer USD 樹與視圖容器抽離 (Issue #609, #607)
-- [ ] Step 2.1: 抽離 useUsdStageTree Hook (Issue #609)
-- [ ] Step 2.2: 抽離 ViewportHost 組件 (Issue #607)
+- [x] Step 2.1: 抽離 useUsdStageTree Hook (Issue #609)
+- [x] Step 2.2: 抽離 ViewportHost 組件 (Issue #607)
 
 ### Slice 3: Viewer 治理面板與工具列抽離 (Issue #608, #605)
-- [ ] Step 3.1: 抽離 ViewerToolbar 組件 (Issue #605)
-- [ ] Step 3.2: 抽離 GovernancePanel 組件 (Issue #608)
+- [x] Step 3.1: 抽離 ViewerToolbar 組件 (Issue #605)
+- [x] Step 3.2: 抽離 GovernancePanel 組件 (Issue #608)
 
 ### 驗證與交付
-- [ ] Step 4.1: 本機 Preflight 與全套測試驗證
-- [ ] Step 4.2: 提交 Commit、開立 PR、審批與 Merge
+- [x] Step 4.1: 本機 Preflight 與全套測試驗證
+- [x] Step 4.2: 提交 Commit、開立 PR、審批與 Merge

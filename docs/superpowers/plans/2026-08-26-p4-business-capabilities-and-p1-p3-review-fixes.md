@@ -1,5 +1,6 @@
 # P4 業務能力爆發與 P1~P3 全面 Code Review & Fix 實施計畫
 
+> **✅ 全數完成並合入 main（2026-08-26）**：PR #713，Commit `f19afb0`。
 > **Implementation Directive:** 本計畫在單一 Dedicated Worktree 與單一 PR 內同時交付：
 > 1. P4 A1~A10 核心業務能力（3D 測量、剖切盒、IFC 構件著色、BCF 議題連動）。
 > 2. P1~P3 全面 Code Review 與強化修復（PR Queue 智能 Metadata 自動修補、組件健全度與測試補強）。
@@ -25,11 +26,11 @@
 
 ## 2. 執行步驟清單 (Plan Checklist)
 
-- [ ] Step 1: 建立 Dedicated Worktree (feat/p4-business-capabilities-and-review-fixes)
-- [ ] Step 2: 實作 P4 核心業務能力 (streamMessages 擴充, useUsdStageTree 著色/過濾, GovernancePanel 連動)
-- [ ] Step 3: 執行 P1~P3 Code Review 修復 (manage-pr-queue 增強, ViewportHost / ViewerToolbar / healthProbeRoutes 強化)
-- [ ] Step 4: 為 P3/P4 組件與擴充功能建立單元測試並執行完整驗證
-- [ ] Step 5: 提交 Commit 並 Push 分支至遠端 GitHub
-- [ ] Step 6: 開立 PR (Single PR 交付)
-- [ ] Step 7: 執行 Blip Approval、驗證 CI 23 項全綠並 Squash Merge
-- [ ] Step 8: 收斂分支與清理 Worktree
+- [x] Step 1: 建立 Dedicated Worktree (feat/p4-business-capabilities-and-review-fixes)
+- [x] Step 2: 實作 P4 核心業務能力 (streamMessages 擴充, useUsdStageTree 著色/過濾, GovernancePanel 連動)
+- [x] Step 3: 執行 P1~P3 Code Review 修復 (manage-pr-queue 增強, ViewportHost / ViewerToolbar / healthProbeRoutes 強化)
+- [x] Step 4: 為 P3/P4 組件與擴充功能建立單元測試並執行完整驗證
+- [x] Step 5: 提交 Commit 並 Push 分支至遠端 GitHub
+- [x] Step 6: 開立 PR (Single PR 交付)
+- [x] Step 7: 執行 Blip Approval、驗證 CI 23 項全綠並 Squash Merge
+- [x] Step 8: 收斂分支與清理 Worktree
