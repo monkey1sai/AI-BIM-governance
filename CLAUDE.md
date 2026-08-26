@@ -1,10 +1,13 @@
 # CLAUDE.md
-
 ## 0. 文件目的
+本檔是 `AGENTS.md` 的 Claude 鏡像入口。`AI-BIM-governance/` 的 repo 邊界、agent 行為、GitHub workflow、GitNexus 規範全部以 [`AGENTS.md`](AGENTS.md) 為 source of truth。若本檔與 `AGENTS.md` 衝突，採用 `AGENTS.md`。
 
-本檔是 `AGENTS.md` 的 Claude 鏡像入口。`AI-BIM-governance/` 的 repo 邊界、agent 行為、GitHub workflow、GitNexus 規範、B 方案閉環全部以 [`AGENTS.md`](AGENTS.md) 為 source of truth。
-
-若本檔、generated wiki、generated skills 或任何歷史文件與 `AGENTS.md` 衝突，採用 `AGENTS.md`。
+## 0.1 Lean Governance & Subtraction 指令
+遵循 `AGENTS.md` §0.0 減法原則：
+- 廢除 3-PR Demote/Reapprove 流程，改為單 PR 交付程式碼與 Snapshot/Baseline。
+- 凍結元治理工具自我修復（禁止自動開立 Fixpoint rebuild、Classifier repair PR）。
+- 前端驗收以 Functional & Semantic Playwright 為主，放寬 1% Pixel-diff 阻斷。
+- 實施 Single Active Writer 原則，禁止多 Writer 並行搶 main。
 
 ## 1. Claude 行為對齊
 
