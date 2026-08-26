@@ -1279,7 +1279,7 @@ describe("RealIfcConsolePage（#demo-control）dev routes 已關閉", () => {
     await act(async () => { root.render(<RealIfcConsolePage />); });
     await flush();
 
-    expect(container.querySelector('[data-testid="dev-routes-disabled-notice"]')?.textContent).toContain("dev routes 已關閉");
+    expect(container.querySelector('[data-testid="ifc-dev-routes-notice"]')?.textContent).toContain("dev routes 已關閉");
     expect(container.querySelector('[data-testid="ifc-runtime-state"]')?.textContent).toContain("dev_routes_disabled");
     expect(container.querySelector<HTMLButtonElement>('[data-testid="ifc-register-btn"]')?.disabled).toBe(true);
     expect(container.textContent).not.toContain("storage_empty");
@@ -1291,7 +1291,7 @@ describe("RealIfcConsolePage（#demo-control）dev routes 已關閉", () => {
     await act(async () => { root.render(<RealIfcConsolePage />); });
     await flush();
 
-    expect(container.querySelector('[data-testid="dev-routes-disabled-notice"]')).toBeNull();
+    expect(container.querySelector('[data-testid="ifc-dev-routes-notice"]')).toBeNull();
     expect(container.querySelector('[data-testid="ifc-runtime-state"]')?.textContent).toContain("storage_empty");
     expect(container.querySelector<HTMLButtonElement>('[data-testid="ifc-register-btn"]')?.disabled).toBe(false);
   });
@@ -1304,7 +1304,7 @@ describe("RealIfcConsolePage（#demo-control）dev routes 已關閉", () => {
 cd "C:/Repos/active/iot/AI-BIM-governance.worktrees/unified-console-runtime-truth-s2/web-viewer-sample" && npx vitest run src/console/RealIfcConsolePage.test.tsx
 ```
 
-預期輸出：`Tests  1 failed | 1 passed (2)`，失敗於 `dev-routes-disabled-notice` 為 `undefined`。
+預期輸出：`Tests  1 failed | 1 passed (2)`，失敗於 `ifc-dev-routes-notice` 為 `undefined`。
 
 - [ ] **Step 4: 實作（四個 Edit）**
 
@@ -1381,7 +1381,7 @@ cd "C:/Repos/active/iot/AI-BIM-governance.worktrees/unified-console-runtime-trut
 
 ```tsx
       {devRoutesDisabled && (
-        <p className="ec-warn-note" role="status" data-testid="dev-routes-disabled-notice">
+        <p className="ec-warn-note" role="status" data-testid="ifc-dev-routes-notice">
           {t("dev routes 已關閉（canonical-linux：ENABLE_DEV_ROUTES=false）。此頁依賴 /api/dev/ifc-sources，於本部署不可用；請改由 #minio 對 bucket 物件觸發轉檔。", "dev routes are disabled (canonical-linux: ENABLE_DEV_ROUTES=false). This page depends on /api/dev/ifc-sources and is unavailable on this deployment; trigger conversions from #minio instead.")}
         </p>
       )}
@@ -1470,7 +1470,7 @@ import { CoordinatorHttpError, coordinatorClient, type RuntimeStatus } from "./c
     await act(async () => { root.render(<A1GovernanceWorkbenchPage />); });
     await act(async () => { await vi.advanceTimersByTimeAsync(0); });
 
-    expect(container.querySelector('[data-testid="a1-test-data-dev-routes-disabled"]')?.textContent).toContain("dev routes 已關閉");
+    expect(container.querySelector('[data-testid="a1-testdata-devroutes-note"]')?.textContent).toContain("dev routes 已關閉");
     expect(container.querySelector('[data-testid="a1-localfs-select"]')).not.toBeNull();
   });
 
@@ -1542,7 +1542,7 @@ import { coordinatorClient, IfcReadyListItem, IfcReadyReviewSessionResponse, isC
           {sourceKind === "local_fs" ? (
             <>
               {testDataDevRoutesDisabled && (
-                <p className="ec-note" data-testid="a1-test-data-dev-routes-disabled">
+                <p className="ec-note" data-testid="a1-testdata-devroutes-note">
                   {t("測試資料標記不可用：dev routes 已關閉（canonical-linux：ENABLE_DEV_ROUTES=false，GET /api/dev/test-data-projects 404）。", "Test-data badge unavailable: dev routes are disabled (canonical-linux: ENABLE_DEV_ROUTES=false, GET /api/dev/test-data-projects 404).")}
                 </p>
               )}
@@ -1577,7 +1577,7 @@ cd "C:/Repos/active/iot/AI-BIM-governance.worktrees/unified-console-runtime-trut
 - Create: `web-viewer-sample/e2e/dev-routes-disabled-operator-token.spec.ts`
 - 執行環境：branch coordinator `:8005`（本 worktree 最新碼）＋ Playwright webServer 起的 viewer `:5180`（`playwright.config.ts` 既有）。
 
-誠實邊界（寫進 spec 檔頭）：本切片 **沒有** `/ui` 殼層 operator token 輸入（spec §3 out of scope，另切片）——UI 面「LAN 觸發轉檔」仍是 403，屬 NOT BUILT，本 E2E 不假裝可觸發；T4 token 路徑／速率限制／lineage＋webhook 面不變改以 Playwright `request`（server-side）驗；UI 只驗 D3 的 404 誠實狀態。無 skip 偽綠：以 `E2E_REQUIRE_REAL=1` 跑，前置缺失＝fail。
+誠實邊界（寫進 spec 檔頭）：本切片 **沒有** `/ui` 殼層 operator token 輸入（spec §3 out of scope，另切片）——UI 面「LAN 觸發轉檔」仍是 403，屬 NOT BUILT，本 E2E 不假裝可觸發；T4 token 路徑／速率限制／lineage＋webhook 面不變改以 Playwright `request`（server-side）驗；UI 只驗 D3 的 404 誠實狀態。無 skip 偽綠：以 `E2E_REQUIRE_REAL=1` 跑，前置缺失＝fail。credential-bearing API probe 使用獨立 `apiTest` worker 並固定 `trace: "off"`；兩個 UI tests 保留 trace。
 
 - [ ] **Step 1: 寫 spec**
 
@@ -1586,7 +1586,8 @@ import { test, expect, type APIRequestContext } from "@playwright/test";
 
 // unified-console-runtime-truth slice 2（§4 coordinator：T4 operator-token per-route 授權＋D3 dev routes 關閉）
 // browser 垂直切片。前置：branch coordinator :8005 以下列 env 啟動（plan Task 11 Step 2）：
-//   ENABLE_DEV_ROUTES=false  EXTERNAL_INTAKE_IP_ALLOWLIST=10.0.0.0/8  DEV_AUTH_TOKEN=e2e-operator-token
+//   ENABLE_DEV_ROUTES=false  EXTERNAL_INTAKE_IP_ALLOWLIST=10.0.0.0/8
+//   DEV_AUTH_TOKEN=<ephemeral test-only value>，並由 E2E_DEV_AUTH_TOKEN 傳同一值；不得落盤到 evidence。
 //   MINIO_WATCH_ENABLED=false  CORS_ORIGINS=http://127.0.0.1:5180
 // viewer 由 playwright.config.ts webServer 在 :5180 起（VITE_COORDINATOR_API_BASE=E2E_COORDINATOR_BASE_URL）。
 // 誠實鐵律：
@@ -1594,9 +1595,9 @@ import { test, expect, type APIRequestContext } from "@playwright/test";
 //     屬 NOT BUILT——本 spec 不假裝可觸發，UI 只驗 D3「dev routes 已關閉」誠實狀態，且只驗 canonical scenario
 //     明列的兩頁（#demo-control、#a1-workbench）；#conv／#minio 的 /api/dev/conversions 消費者為 HELD（plan Task 9 D5）。
 //   - API 面：T4 token 路徑／速率限制／lineage＋webhook 面不變，以 Playwright request（server-side，非瀏覽器）驗。
-//   - skip-gate：前置缺失 → skip；E2E_REQUIRE_REAL=1 時 skip 即 fail（reporter forbid-skipped-when-real）。
+//   - fail-gate：前置缺失直接 fail（不 skip）；E2E_REQUIRE_REAL=1 reporter 另拒絕任何意外 skip。
 const COORDINATOR = process.env.E2E_COORDINATOR_BASE_URL || "http://127.0.0.1:8005";
-const OPERATOR_TOKEN = process.env.E2E_OPERATOR_TOKEN || "e2e-operator-token";
+const OPERATOR_TOKEN = (process.env.E2E_DEV_AUTH_TOKEN ?? "").trim();
 const PRIORITIZE_URL = `${COORDINATOR}/api/conversion/jobs/ifcready_nope/prioritize`;
 
 async function preflight(request: APIRequestContext): Promise<string | null> {
@@ -1626,11 +1627,11 @@ test.describe("slice 2：dev routes 已關閉（UI 誠實）＋ T4 operator toke
       page.goto("/#demo-control"),
     ]);
     expect(devRes.status()).toBe(404);
-    await expect(page.getByTestId("dev-routes-disabled-notice")).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByTestId("ifc-dev-routes-notice")).toBeVisible({ timeout: 15_000 });
     await expect(page.getByTestId("ifc-runtime-state")).toContainText("dev_routes_disabled");
     await expect(page.getByTestId("ifc-runtime-state")).not.toContainText("storage_empty");
     await expect(page.getByTestId("ifc-register-btn")).toBeDisabled();
-    await page.screenshot({ path: "../artifacts/e2e/s2-demo-control-dev-routes-disabled.png", fullPage: true });
+    await page.screenshot({ path: "../artifacts/e2e/dev-routes-disabled-demo-control.png", fullPage: true });
   });
 
   // Task 9（`/api/dev/conversions` 消費者 → `#conv`／`#minio` 專屬「dev routes 已關閉」字樣）為 HELD——
@@ -1641,9 +1642,9 @@ test.describe("slice 2：dev routes 已關閉（UI 誠實）＋ T4 operator toke
 
   test("#a1-workbench：GET /api/dev/test-data-projects 404 → 測試資料標記不可用 note（不阻塞 A1）", async ({ page }) => {
     await page.goto("/#a1-workbench");
-    await expect(page.getByTestId("a1-test-data-dev-routes-disabled")).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByTestId("a1-testdata-devroutes-note")).toBeVisible({ timeout: 15_000 });
     await expect(page.getByTestId("a1-localfs-select")).toBeVisible();
-    await page.screenshot({ path: "../artifacts/e2e/s2-a1-test-data-dev-routes-disabled.png", fullPage: true });
+    await page.screenshot({ path: "../artifacts/e2e/dev-routes-disabled-a1-workbench.png", fullPage: true });
   });
 
   test("API：T4 token 路徑（無 token 403 → 正確 token 通過 → 錯誤 token 403 → 超額 429）＋ lineage 不解鎖 ＋ dev 404", async ({ request }) => {
@@ -1690,19 +1691,19 @@ test.describe("slice 2：dev routes 已關閉（UI 誠實）＋ T4 operator toke
 
 - [ ] **Step 2: 起 branch coordinator :8005（背景；資料目錄全部指到 tmp，不污染 worktree）**
 
-```bash
-cd "C:/Repos/active/iot/AI-BIM-governance.worktrees/unified-console-runtime-truth-s2/bim-review-coordinator" && S2TMP="$(mktemp -d -t s2e2e.XXXXXX)" && echo "S2TMP=$S2TMP" && mkdir -p "$S2TMP/sessions" "$S2TMP/events" && PORT=8005 HOST=127.0.0.1 PUBLIC_HOST=127.0.0.1 CORS_ORIGINS=http://127.0.0.1:5180 ENABLE_DEV_ROUTES=false EXTERNAL_INTAKE_IP_ALLOWLIST=10.0.0.0/8 DEV_AUTH_TOKEN=e2e-operator-token MINIO_WATCH_ENABLED=false STREAMING_CONVERSION_API_BASE=http://127.0.0.1:1 CONVERSION_API_BASE=http://127.0.0.1:1 GOVERNANCE_API_BASE=http://127.0.0.1:1 KIT_MANAGER_API_BASE=http://127.0.0.1:1 EDGE_RUNTIME_DATA_ROOT="$S2TMP" SESSION_STORE_DIR="$S2TMP/sessions" EVENT_LOG_DIR="$S2TMP/events" CALLBACK_OUTBOX_STORE_PATH="$S2TMP/callback-outbox.json" CONVERSION_LEDGER_STORE_PATH="$S2TMP/conversion-ledger.json" EXTERNAL_IFC_READY_STORE_PATH="$S2TMP/ifc-ready-store.json" STORAGE_ROOT="$S2TMP/storage" nohup npx tsx src/index.ts > "$S2TMP/coordinator.log" 2>&1 & echo $! > "$S2TMP/coordinator.pid"; sleep 8; curl -s http://127.0.0.1:8005/health; echo; curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:8005/api/dev/ifc-sources
+```text
+使用本次 run 的 ownership-gated P4 launcher：它在記憶體產生 32-byte ephemeral token，將同一值只注入 branch coordinator 的 `DEV_AUTH_TOKEN` 與 Playwright process 的 `E2E_DEV_AUTH_TOKEN`，建立隔離 runtime stores，並在啟動／停止前後以 entrypoint、listener lineage、creation identity 重驗。launcher 不得把 token 值輸出到 stdout、summary、trace 或 report；缺任一 ownership postcondition 即 fail closed。
 ```
 
-（Bash tool 請以背景模式執行本段第一個 `nohup … &`，或整段一次執行。）預期輸出：`S2TMP=<tmp 路徑>`；`{"status":"ok","service":"bim-review-coordinator","kit_signaling_port":49100}`；`404`。若 `:8005` 已被佔用（`address already in use`），先 `netstat -ano | grep ":8005 "` 找 PID 再 `taskkill //PID <pid> //F`，或改 `PORT=8006` 並在 Step 3 以 `E2E_COORDINATOR_BASE_URL=http://127.0.0.1:8006` 覆寫。記下 `S2TMP` 供 Step 5 收尾。
+預期 preflight：`/health=200`、`/api/dev/ifc-sources=404`、無 token prioritize `403`、授權後 nonexistent-job prioritize `404`。若 `:8005` 已被佔用（`address already in use`），不得依裸 PID 強制停止；只可由本次 launcher 以 entrypoint、listener lineage 與 creation identity 重驗後停止其 owned process，無法證明 ownership 即 HELD。也可改用未佔用的 `PORT=8006`，並在 Step 3 覆寫 `E2E_COORDINATOR_BASE_URL=http://127.0.0.1:8006`。
 
-- [ ] **Step 3: 跑 E2E（`E2E_REQUIRE_REAL=1`：skip 即 fail）**
+- [ ] **Step 3: 跑 E2E（`E2E_REQUIRE_REAL=1`：skip 即 fail；token 不落 trace）**
 
 ```bash
-cd "C:/Repos/active/iot/AI-BIM-governance.worktrees/unified-console-runtime-truth-s2/web-viewer-sample" && E2E_COORDINATOR_BASE_URL=http://127.0.0.1:8005 E2E_REQUIRE_REAL=1 npx playwright test e2e/dev-routes-disabled-operator-token.spec.ts
+cd "C:/Repos/active/iot/AI-BIM-governance.worktrees/unified-console-runtime-truth-s2/web-viewer-sample" && test -n "${E2E_DEV_AUTH_TOKEN:-}" && E2E_COORDINATOR_BASE_URL=http://127.0.0.1:8005 E2E_REQUIRE_REAL=1 npx playwright test --config=s2-r5.local/playwright.config.ts e2e/dev-routes-disabled-operator-token.spec.ts
 ```
 
-預期輸出：`3 passed`（`#demo-control`、`#a1-workbench`、API 探針三個 test；`#conv`／`#minio` 案例已隨 Task 9 HELD 移除）；`artifacts/e2e/` 產生三張 `s2-*.png`（該目錄 `*.png` 為 gitignored，不入 commit）。若回 `Executable doesn't exist … chromium`，先 `npx playwright install chromium` 再重跑。若 preflight skip 訊息出現（且 exit 1），依訊息修正 Step 2 的 env 後重跑；不得改 `E2E_REQUIRE_REAL`。
+預期輸出：`3 passed`（`#demo-control`、`#a1-workbench`、API 探針三個 test；`#conv`／`#minio` 案例已隨 Task 9 HELD 移除）；`artifacts/e2e/` 產生兩張 UI 截圖與兩條 UI traces，API probe 因 credential header 固定不產 trace。若回 `Executable doesn't exist … chromium`，先 `npx playwright install chromium` 再重跑。若 preflight fail 訊息出現（且 exit 1），依訊息修正 Step 2 的 env 後重跑；不得移除 `E2E_REQUIRE_REAL`、不得為 API probe 開啟 trace。
 
 - [ ] **Step 4: 確認 worktree 未被 runtime 檔污染**
 
@@ -1710,23 +1711,23 @@ cd "C:/Repos/active/iot/AI-BIM-governance.worktrees/unified-console-runtime-trut
 cd "C:/Repos/active/iot/AI-BIM-governance.worktrees/unified-console-runtime-truth-s2" && git status --short
 ```
 
-預期輸出：恰好一行——`?? web-viewer-sample/e2e/dev-routes-disabled-operator-token.spec.ts`（coordinator 更新 2026-08-25：`.env.example` 宣告行已 commit `ded6901`，不應再有 ` M` 行）。若出現 `bim-review-coordinator/data/**` 或其他 runtime 檔，刪除它們並回報缺哪個 `*_STORE_PATH` env（不要 commit）。
+預期輸出只包含本 task 已審核的 tracked paths；gitignored evidence/runtime stores 另由 launcher custody manifest 列舉。若出現未知 tracked/untracked runtime 檔，保留現況並 HELD，回報缺哪個 `*_STORE_PATH` env；不得自行刪除或 clean。
 
 - [ ] **Step 5: 停 coordinator**
 
-```bash
-kill "$(cat "<S2TMP>/coordinator.pid")" 2>/dev/null; sleep 2; curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:8005/health || echo "stopped"
+```text
+由本次 ownership-gated launcher 的 finally/closeout 停止：停止前重新驗證 executable、entrypoint、listener owner 與 creation identity；停止後驗證 run-owned PID 消失、port 無 listener、generated .env 已移除。
 ```
 
-（`<S2TMP>` 換成 Step 2 印出的路徑。）預期輸出：`stopped`（或 curl 失敗訊息）。`kill` 無效時用 `netstat -ano | grep ":8005 "` 取 PID → `taskkill //PID <pid> //F`。
+任一 ownership 證據不一致即拒絕停止並 HELD；不得改用裸 `kill`、`taskkill /F` 或只憑 pidfile／port 的替代流程。
 
 - [ ] **Step 6: commit**
 
 ```bash
-cd "C:/Repos/active/iot/AI-BIM-governance.worktrees/unified-console-runtime-truth-s2" && git add web-viewer-sample/e2e/dev-routes-disabled-operator-token.spec.ts && git diff --cached --check && git commit -m "test(e2e): slice 2 dev routes 已關閉 UI 垂直切片＋T4 operator token API 探針"
+cd "C:/Repos/active/iot/AI-BIM-governance.worktrees/unified-console-runtime-truth-s2" && git add docs/superpowers/plans/2026-08-25-unified-console-runtime-truth-s2.md openspec/changes/unified-console-runtime-truth/tasks.md web-viewer-sample/e2e/dev-routes-disabled-operator-token.spec.ts web-viewer-sample/src/console/A1GovernanceWorkbenchPage.devRoutes.test.tsx && git diff --cached --check && git commit -m "test(e2e): 防止 operator token 寫入追蹤證據"
 ```
 
-預期輸出：1 file changed。
+預期輸出：只包含上述四個 reviewed paths；commit 後 hooks 為 reviewed no-op replacement 且三者正常 exit 0。
 
 ---
 

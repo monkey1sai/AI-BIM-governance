@@ -9,7 +9,8 @@ import { test, expect, type APIResponse } from "@playwright/test";
 //     可用 E2E_COORDINATOR_BASE_URL 覆寫）。前置（見 plan Task 11 Step 2 一行指令）：branch
 //     coordinator 須以 PORT=8005、ENABLE_DEV_ROUTES=false、
 //     EXTERNAL_INTAKE_IP_ALLOWLIST=10.0.0.0/8（排除 loopback，token 路徑才有事可驗）、
-//     DEV_AUTH_TOKEN=e2e-operator-token、CORS_ORIGINS=http://127.0.0.1:5180 起。
+//     DEV_AUTH_TOKEN=<test-only value>、CORS_ORIGINS=http://127.0.0.1:5180 起；執行測試時
+//     E2E_DEV_AUTH_TOKEN 必須提供相同值，且不得寫入 trace／report artifact。
 //
 // 三個 test：
 //   1. #demo-control：綁定初次與 refresh 的 /api/dev/ifc-sources 404 body → 誠實 notice ＋ 選檔／註冊鈕 disabled。
@@ -32,9 +33,12 @@ import { test, expect, type APIResponse } from "@playwright/test";
 //     （playwright.config.ts:56）只收 a3／a4 兩支 spec，本檔仍不會被選中。
 //   故本檔改採「preflight 前置缺失＝直接 fail（不 skip）」：比 skip + reporter 更強（不存在
 //   「conditional skip 計為 pass」的縫，比照 conversion-artifact-id-sanitize.spec.ts:26-35 的先例揭露），
-//   且不依賴一個在本 worktree 設不起來的旗標。實際可重現指令（**不帶** E2E_REQUIRE_REAL=1）：
+//   r5 以 narrow compatibility config 保留 E2E_REQUIRE_REAL reporter，而不觸發 branch-wide isolated
+//   manifest loader。實際可重現指令：
 //     cd web-viewer-sample
-//     E2E_COORDINATOR_BASE_URL=http://127.0.0.1:8005 npx playwright test e2e/dev-routes-disabled-operator-token.spec.ts
+//     E2E_COORDINATOR_BASE_URL=http://127.0.0.1:8005 E2E_DEV_AUTH_TOKEN=<same test-only value>
+//       E2E_REQUIRE_REAL=1 npx playwright test --config=s2-r5.local/playwright.config.ts
+//       e2e/dev-routes-disabled-operator-token.spec.ts
 //   另一項與 plan 逐字稿的差異：本檔的 testid 取自 task#3 實際落地的 UI（ifc-dev-routes-notice、
 //   a1-testdata-devroutes-note、ifc-fixture-select、ifc-register-btn、ifc-refresh-btn、a1-localfs-select，
 //   以及既有的 ifc-runtime-state）；plan 草稿裡的 dev-routes-disabled-notice／a1-test-data-dev-routes-disabled
@@ -59,7 +63,12 @@ import { test, expect, type APIResponse } from "@playwright/test";
 //   結果：上方那條指令連續重跑皆為 3 passed；視窗乾淨時零額外等待，60 秒內重跑則自動等一次視窗到期。
 
 const COORDINATOR = process.env.E2E_COORDINATOR_BASE_URL || "http://127.0.0.1:8005";
-const OPERATOR_TOKEN = process.env.E2E_DEV_AUTH_TOKEN || "e2e-operator-token";
+const OPERATOR_TOKEN = (process.env.E2E_DEV_AUTH_TOKEN ?? "").trim();
+
+// API probe 會送出 credential header。使用獨立 fixture type 讓 trace 在 worker 啟動前關閉；
+// 上方兩個純 UI tests 仍使用 base test 的 trace 設定。
+const apiTest = test.extend({});
+apiTest.use({ trace: "off" });
 
 const PRIORITIZE_PATH = "/api/conversion/jobs/ifcready_nope/prioritize";
 
@@ -125,6 +134,9 @@ async function withRateWindowRetry(label: string, call: () => Promise<APIRespons
  * 若它會計數，光是重跑就會提早吃掉視窗）。
  */
 async function preflight(): Promise<string | null> {
+  if (!OPERATOR_TOKEN) {
+    return "E2E_DEV_AUTH_TOKEN 未設定；拒絕執行會送出 operator token header 的 API 探針";
+  }
   try {
     const health = await fetchWithTimeout(`${COORDINATOR}/health`);
     if (!health.ok) return `coordinator ${COORDINATOR}/health 非 2xx（${health.status}）`;
@@ -158,7 +170,8 @@ test.beforeEach(() => {
   throw new Error(
     `前置不齊備，本 spec 直接 fail（刻意不 skip）：${preflightReason}。` +
       "請先依 plan Task 11 Step 2 起 branch coordinator（PORT=8005、ENABLE_DEV_ROUTES=false、" +
-      "EXTERNAL_INTAKE_IP_ALLOWLIST=10.0.0.0/8、DEV_AUTH_TOKEN=e2e-operator-token、" +
+      "EXTERNAL_INTAKE_IP_ALLOWLIST=10.0.0.0/8、DEV_AUTH_TOKEN=<test-only value>、" +
+      "E2E_DEV_AUTH_TOKEN=<same test-only value>、" +
       "CORS_ORIGINS=http://127.0.0.1:5180）後重跑。",
   );
 });
@@ -230,10 +243,10 @@ test.describe("dev routes 已關閉：UI 垂直切片誠實狀態", () => {
   });
 });
 
-test.describe("D2=T4 operator token API 契約探針（真 process、真 HTTP）", () => {
+apiTest.describe("D2=T4 operator token API 契約探針（真 process、真 HTTP）", () => {
   // 視窗乾淨時整個 test 約 0.1s；預算要涵蓋最壞情況：RATE_WINDOW_MAX_WAITS 次「等整個
   // 速率視窗到期」的等待（各 ≤ OPERATOR_TOKEN_RATE_WINDOW_SECONDS + 邊際）。
-  test.setTimeout(
+  apiTest.setTimeout(
     90_000 + RATE_WINDOW_MAX_WAITS * (OPERATOR_TOKEN_RATE_WINDOW_SECONDS * 1000 + RATE_WINDOW_WAIT_MARGIN_MS),
   );
 
@@ -246,9 +259,9 @@ test.describe("D2=T4 operator token API 契約探針（真 process、真 HTTP）
     detail: "operator token rate limit exceeded (10 requests per minute per source ip)",
   };
 
-  test("dev routes 404（token 不解鎖）＋ lineage 不因 token 解鎖 ＋ 四路由 T4 授權 ＋ 速率限制 429", async ({
-    request,
-  }) => {
+  apiTest(
+    "dev routes 404（token 不解鎖）＋ lineage 不因 token 解鎖 ＋ 四路由 T4 授權 ＋ 速率限制 429",
+    async ({ request }) => {
     // --- dev routes：ENABLE_DEV_ROUTES=false 整組 404，operator token 對此 prefix 沒有任何效果 ---
     const devBare = await request.get(`${COORDINATOR}/api/dev/ifc-sources`);
     expect(devBare.status()).toBe(404);
@@ -359,5 +372,6 @@ test.describe("D2=T4 operator token API 契約探針（真 process、真 HTTP）
     const retryAfter = Number(limited.headers()["retry-after"]);
     expect(retryAfter).toBeGreaterThanOrEqual(1);
     expect(retryAfter).toBeLessThanOrEqual(OPERATOR_TOKEN_RATE_WINDOW_SECONDS);
-  });
+    },
+  );
 });

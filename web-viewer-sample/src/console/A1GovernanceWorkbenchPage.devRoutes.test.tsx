@@ -26,6 +26,7 @@ describe("A1GovernanceWorkbenchPage client-render（doRun 輪詢守門 + 動作�
     }],
   };
   let container: HTMLDivElement;
+  let root: ReturnType<typeof createRoot> | null;
   let prevActEnv: unknown;
 
   beforeEach(() => {
@@ -33,6 +34,7 @@ describe("A1GovernanceWorkbenchPage client-render（doRun 輪詢守門 + 動作�
     (globalThis as Record<string, unknown>)[actEnvKey] = true;
     vi.useFakeTimers();
     container = document.createElement("div");
+    root = null;
     document.body.appendChild(container);
     // A1 v2：治理檢核直接對已選 IFC 跑 createRuleRun；review session 只保留給 3D/Review Room handoff。
     // A1 3D 解耦後仍不 auto-select 第一個 active session，避免 handoff 指向錯模型。
@@ -56,7 +58,13 @@ describe("A1GovernanceWorkbenchPage client-render（doRun 輪詢守門 + 動作�
     // R8：A1 mount 會打 getTestDataProjects()；預設 stub 空清單（不標），個別測試可覆寫。
     vi.spyOn(coordinatorClient, "getTestDataProjects").mockResolvedValue({ projects: [] });
   });
-  afterEach(() => {
+  afterEach(async () => {
+    if (root) {
+      await act(async () => {
+        root?.unmount();
+      });
+      root = null;
+    }
     document.body.removeChild(container);
     vi.restoreAllMocks();
     vi.useRealTimers();
@@ -82,8 +90,9 @@ describe("A1GovernanceWorkbenchPage client-render（doRun 輪詢守門 + 動作�
     (coordinatorClient.getTestDataProjects as ReturnType<typeof vi.fn>).mockRejectedValue(
       new CoordinatorHttpError("/api/dev/test-data-projects", 404, "dev routes disabled"),
     );
-    const root = createRoot(container);
-    await act(async () => { root.render(<A1GovernanceWorkbenchPage />); });
+    const mountedRoot = createRoot(container);
+    root = mountedRoot;
+    await act(async () => { mountedRoot.render(<A1GovernanceWorkbenchPage />); });
     await act(async () => { await vi.advanceTimersByTimeAsync(0); });
 
     const note = container.querySelector('[data-testid="a1-testdata-devroutes-note"]');
@@ -106,8 +115,9 @@ describe("A1GovernanceWorkbenchPage client-render（doRun 輪詢守門 + 動作�
     ["plain Error", new Error("network unavailable")],
   ])("[D3 dev routes] %s → 不誤顯示 dev routes 已關閉 note，A1 local_fs select 仍可操作", async (_label, error) => {
     (coordinatorClient.getTestDataProjects as ReturnType<typeof vi.fn>).mockRejectedValue(error);
-    const root = createRoot(container);
-    await act(async () => { root.render(<A1GovernanceWorkbenchPage />); });
+    const mountedRoot = createRoot(container);
+    root = mountedRoot;
+    await act(async () => { mountedRoot.render(<A1GovernanceWorkbenchPage />); });
     await act(async () => { await vi.advanceTimersByTimeAsync(0); });
 
     expect(container.querySelector('[data-testid="a1-testdata-devroutes-note"]')).toBeNull();
