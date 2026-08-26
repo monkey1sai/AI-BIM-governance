@@ -13,14 +13,6 @@ const isWithinPath = (value, root) => {
   return target === base || target.startsWith(`${base}/`)
 }
 
-const isSystemGitPath = (resolvedGit) => {
-  const normalized = normalizedPath(resolvedGit)
-  if (process.platform === 'win32') {
-    return /^[a-z]:\/program files\/git\/(?:cmd|bin|mingw64\/bin)\/git\.exe$/.test(normalized)
-  }
-  return ['/usr/bin/git', '/usr/local/bin/git'].includes(normalized)
-}
-
 const assertSystemGitNotCallerWritable = (resolvedGit) => {
   const stat = fs.statSync(resolvedGit)
   if (!stat.isFile()) throw new Error('trusted Git path is not a regular file')
@@ -43,16 +35,40 @@ const assertSystemGitNotCallerWritable = (resolvedGit) => {
   }
 }
 
-export const sanitizedGitEnvironment = (resolvedGit = '') => {
-  const env = { ...process.env }
-  const unsafeExactKeys = new Set([
-    'CURL_CA_BUNDLE', 'SSL_CERT_FILE', 'SSL_CERT_DIR', 'SSH_ASKPASS',
-    'GIT_ASKPASS', 'GIT_PROXY_COMMAND', 'GIT_SSH', 'GIT_SSH_COMMAND',
-  ])
-  for (const key of Object.keys(env)) {
-    const upper = key.toUpperCase()
-    if (upper.startsWith('GIT_') || upper.startsWith('SSH_') || unsafeExactKeys.has(upper)) delete env[key]
+const windowsRuntimeAuthority = () => {
+  if (process.platform !== 'win32') return null
+  const runtimeRoot = path.parse(fs.realpathSync(process.execPath)).root
+  const programFiles = path.join(runtimeRoot, 'Program Files')
+  const windowsDirectory = path.join(runtimeRoot, 'Windows')
+  const systemDirectory = path.join(windowsDirectory, 'System32')
+  for (const directory of [programFiles, windowsDirectory, systemDirectory]) {
+    const stat = fs.lstatSync(directory)
+    if (!stat.isDirectory() || stat.isSymbolicLink() ||
+        normalizedPath(fs.realpathSync(directory)) !== normalizedPath(directory)) {
+      throw new Error('trusted Windows runtime directory authority is unavailable')
+    }
   }
+  return { programFiles, windowsDirectory, systemDirectory }
+}
+
+export const isSystemGitPath = (resolvedGit) => {
+  const normalized = normalizedPath(resolvedGit)
+  if (process.platform === 'win32') {
+    const authority = windowsRuntimeAuthority()
+    return [
+      path.join(authority.programFiles, 'Git', 'cmd', 'git.exe'),
+      path.join(authority.programFiles, 'Git', 'bin', 'git.exe'),
+      path.join(authority.programFiles, 'Git', 'mingw64', 'bin', 'git.exe'),
+    ].some((candidate) => normalizedPath(candidate) === normalized)
+  }
+  return ['/usr/bin/git', '/usr/local/bin/git'].includes(normalized)
+}
+
+export const sanitizedGitEnvironment = (resolvedGit = '') => {
+  // Never copy caller process state. Loader/runtime variables (LD_*, DYLD_*,
+  // NODE_OPTIONS), proxy/TLS variables, and language-specific startup hooks can
+  // execute or redirect code before an identity-bound child reaches main().
+  const env = {}
   env.GIT_CONFIG_GLOBAL = process.platform === 'win32' ? 'NUL' : '/dev/null'
   env.GIT_CONFIG_SYSTEM = process.platform === 'win32' ? 'NUL' : '/dev/null'
   env.GIT_CONFIG_NOSYSTEM = '1'
@@ -61,10 +77,19 @@ export const sanitizedGitEnvironment = (resolvedGit = '') => {
   env.GIT_NO_REPLACE_OBJECTS = '1'
   env.GIT_LITERAL_PATHSPECS = '1'
   if (resolvedGit) {
+    if (!isSystemGitPath(fs.realpathSync(resolvedGit))) {
+      throw new Error('trusted child environment requires an approved system Git path')
+    }
     const gitDir = path.dirname(resolvedGit)
-    const safePath = process.platform === 'win32'
-      ? [gitDir, `${process.env.SystemRoot || 'C:\\Windows'}\\System32`]
-      : [gitDir, '/usr/bin', '/bin', '/usr/local/bin']
+    let safePath
+    if (process.platform === 'win32') {
+      const authority = windowsRuntimeAuthority()
+      env.SystemRoot = authority.windowsDirectory
+      env.WINDIR = authority.windowsDirectory
+      safePath = [gitDir, authority.systemDirectory]
+    } else {
+      safePath = [gitDir, '/usr/bin', '/bin', '/usr/local/bin']
+    }
     env.PATH = safePath.join(path.delimiter)
   }
   return env

@@ -282,7 +282,11 @@ def _append_new_run(
 
 
 def _run_trusted_git_pure(export_name, payload):
-    allowed_exports = {"assertTerminalP7Facts", "parseTrustedRemoteMainResult"}
+    allowed_exports = {
+        "assertTerminalP7Facts",
+        "isSystemGitPath",
+        "parseTrustedRemoteMainResult",
+    }
     assert export_name in allowed_exports
     source = f"""
 import {{ {export_name} as subject }} from {json.dumps(TRUSTED_GIT_MODULE.as_uri())}
@@ -290,6 +294,44 @@ const input = {json.dumps(payload)}
 try {{
   const value = subject(input)
   process.stdout.write(JSON.stringify({{ ok: true, value: value ?? null }}))
+}} catch (error) {{
+  process.stdout.write(JSON.stringify({{ ok: false, detail: String(error?.message || error) }}))
+  process.exitCode = 2
+}}
+"""
+    proc = subprocess.run(
+        ["node", "--input-type=module", "--eval", source],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+    return proc.returncode, json.loads(proc.stdout)
+
+
+def _run_sanitized_git_environment(git_exe):
+    poison = {
+        "LD_PRELOAD": "/self-referential-loader-sentinel/ld-preload.invalid",
+        "LD_LIBRARY_PATH": "/self-referential-loader-sentinel/ld-library.invalid",
+        "LD_AUDIT": "/self-referential-loader-sentinel/ld-audit.invalid",
+        "DYLD_INSERT_LIBRARIES": "/self-referential-loader-sentinel/dyld.invalid",
+        "DYLD_LIBRARY_PATH": "/self-referential-loader-sentinel/dyld-library.invalid",
+        "NODE_OPTIONS": "--no-warnings",
+        "HTTP_PROXY": "http://self-referential-loader-sentinel.invalid",
+        "HTTPS_PROXY": "http://self-referential-loader-sentinel.invalid",
+        "ProgramFiles": "C:\\self-referential-loader-sentinel",
+        "SystemRoot": "C:\\self-referential-loader-sentinel",
+        "PATH": "C:\\self-referential-loader-sentinel",
+    }
+    source = f"""
+import {{ sanitizedGitEnvironment }} from {json.dumps(TRUSTED_GIT_MODULE.as_uri())}
+const poison = {json.dumps(poison)}
+for (const [key, value] of Object.entries(poison)) process.env[key] = value
+try {{
+  const env = sanitizedGitEnvironment({json.dumps(str(git_exe))})
+  const inherited = Object.fromEntries(
+    Object.keys(poison).filter((key) => env[key] === poison[key]).map((key) => [key, env[key]])
+  )
+  process.stdout.write(JSON.stringify({{ ok: true, keys: Object.keys(env).sort(), inherited }}))
 }} catch (error) {{
   process.stdout.write(JSON.stringify({{ ok: false, detail: String(error?.message || error) }}))
   process.exitCode = 2
@@ -507,6 +549,39 @@ def test_validator_ignores_ambient_git_repository_object_and_config_injection(tm
         },
     )
     assert code == 0 and result["ok"] is True, result
+
+
+def test_trusted_git_child_environment_is_a_fixed_allowlist():
+    code, result = _run_sanitized_git_environment(GIT)
+
+    assert code == 0 and result["ok"] is True, result
+    assert result["inherited"] == {}
+    expected_keys = {
+        "GIT_CONFIG_GLOBAL",
+        "GIT_CONFIG_SYSTEM",
+        "GIT_CONFIG_NOSYSTEM",
+        "GIT_TERMINAL_PROMPT",
+        "GIT_OPTIONAL_LOCKS",
+        "GIT_NO_REPLACE_OBJECTS",
+        "GIT_LITERAL_PATHSPECS",
+        "PATH",
+    }
+    if os.name == "nt":
+        expected_keys.update({"SystemRoot", "WINDIR"})
+    assert set(result["keys"]) == expected_keys
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows runtime-volume binding")
+def test_windows_system_git_rejects_an_arbitrary_program_files_drive():
+    actual_drive = pathlib.PureWindowsPath(GIT).drive.lower()
+    fake_drive = "Z:" if actual_drive != "z:" else "Y:"
+    fake_git = str(pathlib.PureWindowsPath(fake_drive, "/Program Files/Git/cmd/git.exe"))
+
+    code, result = _run_trusted_git_pure("isSystemGitPath", fake_git)
+    assert code == 0 and result == {"ok": True, "value": False}
+
+    code, result = _run_trusted_git_pure("isSystemGitPath", GIT)
+    assert code == 0 and result == {"ok": True, "value": True}
 
 
 def test_new_run_rejects_caller_controlled_git_even_when_named_git(tmp_path):
