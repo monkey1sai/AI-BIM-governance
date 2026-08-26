@@ -16,6 +16,13 @@ import {
   isIpAllowed,
   opaqueLocalDevSubject,
 } from "./services/authProvider.js";
+import {
+  createConversionControlGuard,
+  isOperatorTokenPathEnabled,
+  OPERATOR_TOKEN_RATE_LIMIT,
+  OPERATOR_TOKEN_RATE_WINDOW_MS,
+  SlidingWindowRateLimiter,
+} from "./services/conversionControlAuthorization.js";
 import { CallbackOutbox, MetadataOnlyViolation } from "./services/callbackOutbox.js";
 import { EventLog } from "./services/eventLog.js";
 import { GovernanceLibraryHttpAdapter } from "./services/governanceLibraryHttpAdapter.js";
@@ -1612,8 +1619,22 @@ export function createCoordinatorApp(
     return false;
   }
 
+  // unified-console-runtime-truth slice 2（owner D2 裁決 T4，2026-08-25）：四條 conversion 控制路由的
+  // per-route wrapper——「IP allowlist 通過 **或** operator token 通過」。rejectIfIpNotAllowed 本體不改
+  //（lineage source-bundle 路由仍經 deps 注入使用它，授權逐字不變；釘樁見 tests/lineage/conversion-control-auth-pins）。
+  // allowlist 路徑（含 loopback 的 minio-watcher self-POST）行為逐字不變且不計速率；token 路徑沿用
+  // isKitMutationAuthorized 同型比對，config.devAuthToken 仍為預設 "dev-token" 時 token 路徑視為未啟用
+  //（fail-closed，只剩 allowlist）；token 路徑每來源 IP 每分鐘 10 次（in-memory 滑動視窗），超額 429＋Retry-After。
+  const rejectIfConversionControlUnauthorized = createConversionControlGuard({
+    isCallerIpAllowed: (clientIp) =>
+      !(config.externalIntakeIpAllowlist.length > 0 && !isIpAllowed(clientIp, config.externalIntakeIpAllowlist)),
+    operatorTokenPathEnabled: () => isOperatorTokenPathEnabled(config.devAuthToken),
+    isOperatorTokenValid: (request) => isKitMutationAuthorized(request, config.devAuthToken),
+    rateLimiter: new SlidingWindowRateLimiter(OPERATOR_TOKEN_RATE_LIMIT, OPERATOR_TOKEN_RATE_WINDOW_MS),
+  });
+
   app.post("/api/conversion/jobs/:id/prioritize", (request, response) => {
-    if (rejectIfIpNotAllowed(request, response)) return;
+    if (rejectIfConversionControlUnauthorized(request, response)) return;
     const id = request.params.id;
     if (!isSafeIfcReadyJobId(id)) {
       response.status(400).json({ detail: "Invalid ifc-ready job id." });
@@ -1639,7 +1660,7 @@ export function createCoordinatorApp(
   });
 
   app.post("/api/conversion/jobs/:id/retry", (request, response) => {
-    if (rejectIfIpNotAllowed(request, response)) return;
+    if (rejectIfConversionControlUnauthorized(request, response)) return;
     const id = request.params.id;
     if (!isSafeIfcReadyJobId(id)) {
       response.status(400).json({ detail: "Invalid ifc-ready job id." });
@@ -1675,7 +1696,7 @@ export function createCoordinatorApp(
   // 模式 3 危險動作：① IP allowlist 守門（CR-A）② busy 鎖防競態（CR-B）③ 未配置誠實 422（CR-C）
   // ④ audit 一筆。body { enabled: boolean; reason?: string }。
   app.put("/api/conversion/watch", async (request, response) => {
-    if (rejectIfIpNotAllowed(request, response)) return;                 // CR-A：沿用 IP allowlist 守門
+    if (rejectIfConversionControlUnauthorized(request, response)) return; // CR-A：IP allowlist 或 operator token（slice 2 T4）
     const body = request.body as { enabled?: unknown } | undefined;
     if (typeof body?.enabled !== "boolean") {
       response.status(400).json({ detail: "Body must include boolean 'enabled'." });
@@ -1725,7 +1746,7 @@ export function createCoordinatorApp(
   // intake 邏輯 self-POST /api/external/ifc-ready。冪等鍵 mw_<hash16>，同 key 回既有 job。
   // 守門比照其他 /api/conversion/* 控制路由（rejectIfIpNotAllowed）。
   app.post("/api/conversion/trigger", async (request, response) => {
-    if (rejectIfIpNotAllowed(request, response)) return;
+    if (rejectIfConversionControlUnauthorized(request, response)) return;
     // 連線參數須齊全（endpoint/bucket/accessKey/secretKey）。僅檢 endpoint/bucket 會放行空憑證，
     // presign 仍以空憑證簽出 URL、self-POST 過關，IFC 下載卻在 MinIO 認證靜默失敗（job failed）。
     // 複用 surface.configured()（四欄全檢，與 PUT /api/conversion/watch 422 判斷同一把尺）。
@@ -3607,6 +3628,18 @@ export function createCoordinatorApp(
     } catch (error) {
       next(error);
     }
+  });
+
+  // unified-console-runtime-truth slice 2 task 4.4(owner D3 裁決):/api/dev/* 整組 prefix gate——
+  // ENABLE_DEV_ROUTES=false 時一律 404(含下方 conversions pass-through 與 routes/devMeta.ts 在後面 mount 的
+  // test-data-projects;Express 依註冊順序執行,故本 middleware 必須排在所有 /api/dev/* 路由之前)。
+  // 既有三條路由內的 devRoutesEnabled() 逐路由檢查保留(防禦縱深,行為等價)。/api/dev/* 不是產品路徑。
+  app.use("/api/dev", (_request, response, next) => {
+    if (!devRoutesEnabled()) {
+      response.status(404).json({ detail: "dev routes disabled" });
+      return;
+    }
+    next();
   });
 
   app.post("/api/dev/conversions", async (request, response) => {

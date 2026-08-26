@@ -39,10 +39,10 @@ export type SemanticCaseDefinition = {
 // 誠實原則：
 // - 全程 **/api/** 已被 spec 以 503 stub，所有互動都是 UnifiedConsole 的
 //   local fixture 行為（state patch + toast 假 API 字串），不宣稱任何後端事實。
-// - runtime_truth 一律斷言 data-prov="fixture" 揭露屬性與
-//   「:8004/ui · UnifiedConsole」註記——明示資料為 fixture。
 // - 找不到天然對映的 case（例：home/ops 的 disabled、ops 的 failure）以
 //   count_equals 0 誠實斷言「該狀態表面目前為空」，逐案附註解，不造假 DOM。
+// - runtime_truth：fixture 殼（workspace.a1–a3／concept）斷言 data-prov="fixture"；真值頁（home／pipeline／ops，
+//   unified-console-runtime-truth）斷言 page-root 內 data-prov="asbuilt" 且主值 cell 為 offline（gate 503 環境）。
 //
 // state 隔離設計（重要）：
 // - hash-only 的 page.goto 是 same-document navigation，React state（含
@@ -93,11 +93,23 @@ const langZhActive: SemanticAssertionDefinition = {
   expected: "true",
 };
 
-/** runtime_truth：data-prov="fixture" 揭露屬性存在 + 殼層 UnifiedConsole 註記。 */
+/** runtime_truth（fixture 殼：workspace.a1–a3／concept）：data-prov="fixture" 揭露屬性存在 + 殼層 UnifiedConsole 註記。 */
 const runtimeTruthCase = (): SemanticCaseDefinition => ({
   prepare: gotoFreshRoute,
   assertions: [
     { id: "fixture-provenance-marker", locator: '[data-prov="fixture"] >> nth=0', expectation: "visible" },
+    { id: "console-runtime-note", locator: '[data-uc="runtime-note"]', expectation: "text_contains", expected: RUNTIME_NOTE },
+  ],
+});
+
+/** runtime_truth（真值頁：home／pipeline／ops；unified-console-runtime-truth）：page-root 內帶 data-prov="asbuilt"、
+    主值 cell 於 gate 503 環境為 offline、「最後更新 —」（無時間戳，確定性）+ 殼層註記。 */
+const truthRuntimeTruthCase = (primaryValueUc: string): SemanticCaseDefinition => ({
+  prepare: gotoFreshRoute,
+  assertions: [
+    { id: "asbuilt-provenance-marker", locator: '[data-uc="page-root"] [data-prov="asbuilt"] >> nth=0', expectation: "visible" },
+    { id: "primary-value-offline-state", locator: `[data-uc="${primaryValueUc}"]`, expectation: "attribute_equals", attribute: "data-state", expected: "offline" },
+    { id: "last-updated-deterministic-dash", locator: '[data-uc="last-updated"]', expectation: "text_contains", expected: "—" },
     { id: "console-runtime-note", locator: '[data-uc="runtime-note"]', expectation: "text_contains", expected: RUNTIME_NOTE },
   ],
 });
@@ -117,7 +129,7 @@ type ScreenCases = Record<
   SemanticCaseDefinition
 >;
 
-/* ═══ console.home.default（#home）═══ */
+/* ═══ console.home.default（#home）— 真值頁：gate 503 → 全部誠實 offline ═══ */
 
 function homeCases(): ScreenCases {
   return {
@@ -134,57 +146,57 @@ function homeCases(): ScreenCases {
         { id: "enter-pipeline-cta-visible", locator: '[data-uc="enter-pipeline"]', expectation: "visible" },
         { id: "enter-pipeline-cta-enabled", locator: '[data-uc="enter-pipeline"]', expectation: "enabled" },
         { id: "enter-pipeline-cta-label", locator: '[data-uc="enter-pipeline"]', expectation: "text_equals", expected: "進入生產線 →" },
+        { id: "enter-pipeline-cta-is-nav", locator: '[data-uc="enter-pipeline"]', expectation: "attribute_equals", attribute: "data-action", expected: "nav" },
       ],
     },
     loading: {
-      // 進行中狀態：KPI「轉檔中」= 1（fixture conv 有一筆 running，990_model.ifc 62%）。
+      // 進行中狀態的誠實表面：「轉檔中」KPI 在後端不可達時不得顯示任何數字（— + offline），不宣稱有進行中轉檔。
       prepare: gotoRoute,
       assertions: [
-        { id: "kpi-converting-count", locator: '[data-uc="kpi-conv-val"]', expectation: "text_equals", expected: "1" },
-        { id: "kpi-converting-progress-sub", locator: '[data-uc="kpi-conv"]', expectation: "text_contains", expected: "62%" },
+        { id: "kpi-converting-count", locator: '[data-uc="kpi-conv-val"]', expectation: "text_equals", expected: "—" },
+        { id: "kpi-converting-offline-state", locator: '[data-uc="kpi-conv-val"]', expectation: "attribute_equals", attribute: "data-state", expected: "offline" },
       ],
     },
     empty: {
-      // 可達空狀態：home 初始無 toast → toast host 不渲染（count 0 = 誠實的空通知區）。
+      // 可達空狀態：home 無 toast 動作 → toast host 不渲染；服務健康列表存在但無任何 ok 宣稱。
       prepare: gotoRoute,
       assertions: [
         { id: "toast-host-empty", locator: '[data-uc="toast"]', expectation: "count_equals", expected: 0 },
+        { id: "service-dots-present", locator: '[data-uc="svc-dot"]', expectation: "count_equals", expected: 6 },
       ],
     },
     success: {
-      // 成功狀態：警示/事件流裡的綠點完成事件（fixture alerts）。
+      // 成功表面（綠點）機制存在；gate 環境不可達 → 不得有任何綠點（誠實：0 個 ok）。
       prepare: gotoRoute,
       assertions: [
-        { id: "conversion-done-alert", locator: "text=990_model.ifc 轉檔完成,品質 98%", expectation: "visible" },
+        { id: "no-ok-service-dots-offline", locator: '[data-uc="svc-dot"][data-health="ok"]', expectation: "count_equals", expected: 0 },
       ],
     },
     warning: {
-      // 琥珀狀態：Outbox 待送 KPI = 2 + Outbox 重試事件。
+      // 琥珀狀態：Outbox 待送 KPI 與 Coordinator chip 誠實標未連線（琥珀）。
       prepare: gotoRoute,
       assertions: [
-        { id: "kpi-outbox-pending-count", locator: '[data-uc="kpi-outbox-val"]', expectation: "text_equals", expected: "2" },
-        { id: "outbox-retry-alert", locator: "text=Outbox OB-201 重試 ×2", expectation: "visible" },
+        { id: "kpi-outbox-pending-count", locator: '[data-uc="kpi-outbox-val"]', expectation: "text_equals", expected: "—" },
+        { id: "coordinator-chip-unknown", locator: '[data-uc="chip-coordinator"]', expectation: "attribute_equals", attribute: "data-health", expected: "unknown" },
       ],
     },
     failure: {
-      // 紅色狀態：KPI 轉檔卡的「1 失敗」紅字 + rule-run 嚴重事件。
+      // 紅色表面：既無捏造的「1 失敗」紅字，也無紅點（不可達 ≠ 失敗）。
       prepare: gotoRoute,
       assertions: [
-        { id: "kpi-conv-failed-red-text", locator: "text=1 失敗", expectation: "visible" },
-        { id: "rule-run-critical-alert", locator: "text=rule-run #88 完成:嚴重 18 項", expectation: "visible" },
+        { id: "kpi-conv-failed-red-text", locator: "text=1 失敗", expectation: "count_equals", expected: 0 },
+        { id: "no-degraded-service-dots-offline", locator: '[data-uc="svc-dot"][data-health="degraded"]', expectation: "count_equals", expected: 0 },
       ],
     },
     disabled: {
-      // 誠實對映：home 沒有可停用的控制項（launcher P3/P4 卡是可點的概念預覽，
-      // 不是停用態）。以 aria-disabled="true" 計數 0 誠實斷言「無停用/無假停用」。
+      // 誠實對映：home 沒有可停用的控制項（KPI 卡與快照皆為 nav）；aria-disabled="true" 計數 0。
       prepare: gotoRoute,
       assertions: [
         { id: "no-disabled-controls-on-home", locator: '[aria-disabled="true"]', expectation: "count_equals", expected: 0 },
       ],
     },
     confirmation: {
-      // 誠實調整：home 沒有會發 toast 的 fixture 動作（互動皆為導覽）。
-      // 主 CTA 的確認回饋 = 點「進入生產線」後生產線頁標題出現。
+      // 主 CTA 的確認回饋 = 點「進入生產線」後生產線頁標題出現（導覽，非假 toast）。
       prepare: async (context) => {
         await gotoRoute(context);
         await clickFirst(context.page, '[data-uc="enter-pipeline"]');
@@ -197,10 +209,11 @@ function homeCases(): ScreenCases {
       prepare: gotoRoute,
       assertions: [
         { id: "zh-home-title", locator: "text=總覽 · Mission Control", expectation: "visible" },
+        { id: "zh-offline-label", locator: '[data-uc="kpi-conv-sub"]', expectation: "text_equals", expected: "未連線" },
         langZhActive,
       ],
     },
-    runtime_truth: runtimeTruthCase(),
+    runtime_truth: truthRuntimeTruthCase("kpi-conv-val"),
   };
 }
 
@@ -300,11 +313,11 @@ function workspaceCases(dock: WsDock): ScreenCases {
     },
     success,
     warning: {
-      // 琥珀狀態：側欄「模型資料與轉檔」的 warn badge = 未完成轉檔數 2（running+failed）。
+      // 琥珀狀態：側欄「模型資料與轉檔」badge 為真值（running+failed）；gate 503 → 誠實顯示 —（offline），不捏造數字。
       prepare: gotoRoute,
       assertions: [
         { id: "nav-pipe-warn-badge-visible", locator: '[data-uc="nav-pipe-badge"]', expectation: "visible" },
-        { id: "nav-pipe-warn-badge-count", locator: '[data-uc="nav-pipe-badge"]', expectation: "text_equals", expected: "2" },
+        { id: "nav-pipe-warn-badge-count", locator: '[data-uc="nav-pipe-badge"]', expectation: "text_equals", expected: "—" },
       ],
     },
     failure,
@@ -450,7 +463,7 @@ function a4Cases(): ScreenCases {
   };
 }
 
-/* ═══ pipeline.default（#pipeline）═══ */
+/* ═══ pipeline.default（#pipeline）— 真值頁 ═══ */
 
 function pipelineCases(): ScreenCases {
   return {
@@ -458,95 +471,90 @@ function pipelineCases(): ScreenCases {
       prepare: gotoRoute,
       assertions: [
         { id: "sidebar-nav-pipe-active", locator: '[data-uc="nav-pipe"]', expectation: "attribute_equals", attribute: "data-active", expected: "true" },
-        { id: "nav-pipe-badge-initial", locator: '[data-uc="nav-pipe-badge"]', expectation: "text_equals", expected: "2" },
+        { id: "nav-pipe-badge-initial", locator: '[data-uc="nav-pipe-badge"]', expectation: "text_equals", expected: "—" },
       ],
     },
     primary_actions: {
+      // 主要動作面：「觸發轉檔」存在但誠實停用（D2 授權於 slice 2）；真頁導向連結可用。
       prepare: gotoRoute,
       assertions: [
-        { id: "trigger-conv-visible", locator: '[data-uc="trigger-conv"] >> nth=0', expectation: "visible" },
-        { id: "trigger-conv-enabled", locator: '[data-uc="trigger-conv"] >> nth=0', expectation: "enabled" },
-        { id: "trigger-conv-label", locator: '[data-uc="trigger-conv"] >> nth=0', expectation: "text_equals", expected: "觸發轉檔 →" },
+        { id: "trigger-conv-visible", locator: '[data-uc="trigger-conv"]', expectation: "visible" },
+        { id: "trigger-conv-honest-disabled", locator: '[data-uc="trigger-conv"]', expectation: "attribute_equals", attribute: "data-action", expected: "disabled" },
+        { id: "trigger-conv-label", locator: '[data-uc="trigger-conv"]', expectation: "text_equals", expected: "觸發轉檔" },
+        { id: "to-minio-nav-enabled", locator: '[data-uc="to-minio"]', expectation: "enabled" },
       ],
     },
     loading: {
-      // 進行中狀態：990_model.ifc running →「轉檔中」chip + 進度說明字條。
+      // 進行中狀態：running 計數在不可達時為 — / offline，不宣稱任何進行中轉檔。
       prepare: gotoRoute,
       assertions: [
-        { id: "converting-chip", locator: 'text="轉檔中"', expectation: "visible" },
-        { id: "converting-progress-note", locator: "text=IFC→USDC · ifcopenshell + usd-core", expectation: "visible" },
+        { id: "converting-count-offline", locator: '[data-uc="conv-running-val"]', expectation: "text_equals", expected: "—" },
+        { id: "converting-offline-state", locator: '[data-uc="conv-running-val"]', expectation: "attribute_equals", attribute: "data-state", expected: "offline" },
       ],
     },
     empty: {
-      // 把兩張進件卡都觸發轉檔 → 進件欄出現「無待進件」空狀態（真實 fixture 行為）。
-      prepare: async (context) => {
-        await gotoRoute(context);
-        await clickFirst(context.page, '[data-uc="trigger-conv"]');
-        await clickFirst(context.page, '[data-uc="trigger-conv"]');
-      },
+      // 可達空狀態：3D handoff 段無 session anchor（不可達時不渲染任何 /ui/open 連結，亦無 iframe）。
+      prepare: gotoRoute,
       assertions: [
-        { id: "intake-empty-state", locator: "text=無待進件", expectation: "visible" },
-        { id: "no-trigger-buttons-left", locator: '[data-uc="trigger-conv"]', expectation: "count_equals", expected: 0 },
+        { id: "no-handoff-links", locator: '[data-uc="handoff-link"]', expectation: "count_equals", expected: 0 },
+        { id: "no-live-iframe", locator: "iframe", expectation: "count_equals", expected: 0 },
       ],
     },
     success: {
-      // 完成狀態：許良宇圖書館「完成」chip + Outbox OB-200「已送 ✓」。
+      // 完成表面：ready 計數 cell 存在，不可達時不得顯示任何完成數字。
       prepare: gotoRoute,
       assertions: [
-        { id: "conversion-done-chip", locator: 'text="完成"', expectation: "visible" },
-        { id: "outbox-sent-chip", locator: "text=已送 ✓", expectation: "visible" },
+        { id: "ready-count-offline", locator: '[data-uc="conv-ready-val"]', expectation: "text_equals", expected: "—" },
       ],
     },
     warning: {
-      // 琥珀狀態：Outbox 兩筆「待送」chip + 欄頭「2 待送」。
+      // 琥珀狀態：Outbox 待送與 MinIO watch 皆誠實 —（offline）。
       prepare: gotoRoute,
       assertions: [
-        { id: "outbox-pending-chips", locator: 'text="待送"', expectation: "count_equals", expected: 2 },
-        { id: "outbox-pending-header", locator: "text=2 待送", expectation: "visible" },
+        { id: "outbox-pending-offline", locator: '[data-uc="outbox-pending-val"]', expectation: "text_equals", expected: "—" },
+        { id: "watch-status-offline", locator: '[data-uc="intake-watch-val"]', expectation: "attribute_equals", attribute: "data-state", expected: "offline" },
       ],
     },
     failure: {
-      // 紅色狀態：fixture-bytes.ifc「失敗」chip + 重試鈕。
+      // 紅色表面：failed 計數不可達為 —；無捏造的重試鈕。
       prepare: gotoRoute,
       assertions: [
-        { id: "conversion-failed-chip", locator: 'text="失敗"', expectation: "visible" },
-        { id: "conversion-retry-button", locator: "text=重試", expectation: "visible" },
+        { id: "failed-count-offline", locator: '[data-uc="conv-failed-val"]', expectation: "text_equals", expected: "—" },
+        { id: "no-fake-retry-button", locator: "text=重試", expectation: "count_equals", expected: 0 },
       ],
     },
     disabled: {
-      // 誠實停用（互動後）：點「立即回拋 deliver」→ 全部已送 → deliver 置
-      // aria-disabled（元件行為，onClick no-op）；預設態（2 待送）不變。
-      prepare: async (context) => {
-        await gotoRoute(context);
-        await clickFirst(context.page, '[data-uc="deliver-outbox"]');
-      },
+      // 誠實停用：觸發轉檔 aria-disabled + 原因（aria-describedby）。
+      prepare: gotoRoute,
       assertions: [
-        { id: "deliver-aria-disabled", locator: '[data-uc="deliver-outbox"]', expectation: "attribute_equals", attribute: "aria-disabled", expected: "true" },
-        { id: "deliver-disabled-state", locator: '[data-uc="deliver-outbox"]', expectation: "disabled" },
+        { id: "trigger-aria-disabled", locator: '[data-uc="trigger-conv"]', expectation: "attribute_equals", attribute: "aria-disabled", expected: "true" },
+        { id: "trigger-disabled-state", locator: '[data-uc="trigger-conv"]', expectation: "disabled" },
+        { id: "trigger-reason-visible", locator: '[data-uc="trigger-conv-reason"]', expectation: "visible" },
       ],
     },
     confirmation: {
-      // fresh reload（前面 case 已清空進件）→ 點觸發轉檔 → toast 假 API 字串。
+      // 點停用的觸發鈕 → 不得出現任何成功回饋（無 toast）。
       prepare: async (context) => {
-        await gotoFreshRoute(context);
-        await clickFirst(context.page, '[data-uc="trigger-conv"]');
+        await gotoRoute(context);
+        await context.page.locator('[data-uc="trigger-conv"]').first().click({ force: true });
       },
       assertions: [
-        { id: "trigger-conv-toast", locator: '[data-uc="toast"]', expectation: "text_contains", expected: "POST /api/conversion/trigger → 202 Accepted" },
+        { id: "no-fake-success-toast", locator: '[data-uc="toast"]', expectation: "count_equals", expected: 0 },
       ],
     },
     i18n_zh_tw: {
       prepare: gotoRoute,
       assertions: [
         { id: "zh-pipeline-title", locator: "text=模型資料與轉檔生產線", expectation: "visible" },
+        { id: "zh-rvt-retired", locator: '[data-uc="rvt-retired"]', expectation: "text_contains", expected: "已退役" },
         langZhActive,
       ],
     },
-    runtime_truth: runtimeTruthCase(),
+    runtime_truth: truthRuntimeTruthCase("conv-ready-val"),
   };
 }
 
-/* ═══ runtime.ops.default（#runtime）═══ */
+/* ═══ runtime.ops.default（#runtime）— 真值頁 ═══ */
 
 function opsCases(): ScreenCases {
   return {
@@ -560,65 +568,65 @@ function opsCases(): ScreenCases {
     primary_actions: {
       prepare: gotoRoute,
       assertions: [
-        { id: "open-stage-visible", locator: '[data-uc="open-stage"]', expectation: "visible" },
-        { id: "open-stage-enabled", locator: '[data-uc="open-stage"]', expectation: "enabled" },
-        { id: "open-stage-label", locator: '[data-uc="open-stage"]', expectation: "text_equals", expected: "open stage" },
+        { id: "to-instances-visible", locator: '[data-uc="to-instances"]', expectation: "visible" },
+        { id: "to-instances-enabled", locator: '[data-uc="to-instances"]', expectation: "enabled" },
+        { id: "to-instances-is-nav", locator: '[data-uc="to-instances"]', expectation: "attribute_equals", attribute: "data-action", expected: "nav" },
       ],
     },
     loading: {
-      // 進行中狀態：Kit Instance「running」chip + 載入中的 stage 路徑。
+      // 進行中狀態：Kit instance 不可達 → — / offline（不宣稱 running）。
       prepare: gotoRoute,
       assertions: [
-        { id: "kit-instance-running-chip", locator: 'text="running"', expectation: "visible" },
-        { id: "kit-stage-path", locator: "text=stage: /Review/A1_Tower_fed.usd", expectation: "visible" },
+        { id: "kit-instance-offline", locator: '[data-uc="kit-instance-id"]', expectation: "text_equals", expected: "—" },
+        { id: "kit-instance-offline-state", locator: '[data-uc="kit-instance-id"]', expectation: "attribute_equals", attribute: "data-state", expected: "offline" },
       ],
     },
     empty: {
-      // 可達空狀態：ops 初始無 toast/彈出通知 → toast host 不渲染（誠實計數 0）。
       prepare: gotoRoute,
       assertions: [
         { id: "toast-host-empty", locator: '[data-uc="toast"]', expectation: "count_equals", expected: 0 },
       ],
     },
     success: {
-      // 全綠：服務健康 6 顆綠點（data-ok 由 fixture services.ok 誠實渲染）。
+      // 六顆服務點存在；不可達 → 0 個 ok（不捏造全綠）。
       prepare: gotoRoute,
       assertions: [
-        { id: "all-service-dots-green", locator: '[data-uc="svc-dot"][data-ok="true"]', expectation: "count_equals", expected: 6 },
         { id: "service-dots-total", locator: '[data-uc="svc-dot"]', expectation: "count_equals", expected: 6 },
+        { id: "no-ok-service-dots-offline", locator: '[data-uc="svc-dot"][data-health="ok"]', expectation: "count_equals", expected: 0 },
       ],
     },
     warning: {
-      // 琥珀狀態：structLog WARN 行（callback-outbox retry ×2）。
+      // 琥珀狀態：Kit Runtime chip 未連線；GPU 卡 —。
       prepare: gotoRoute,
       assertions: [
-        { id: "structlog-warn-level", locator: 'text="WARN"', expectation: "visible" },
-        { id: "structlog-outbox-retry-line", locator: "text=callback-outbox retry ×2 OB-201", expectation: "visible" },
+        { id: "kit-chip-unknown", locator: '[data-uc="chip-kit"]', expectation: "attribute_equals", attribute: "data-health", expected: "unknown" },
+        { id: "gpu-card-offline", locator: '[data-uc="gpu-val"]', expectation: "text_equals", expected: "—" },
       ],
     },
     failure: {
-      // 誠實對映：ops 的失敗表面 = 服務紅點（data-ok="false"）。fixture 全綠，
-      // 故誠實斷言紅點計數 0——失敗表示機制存在（同一 dot 元素），當前無失敗。
+      // 紅色表面：紅點機制存在，不可達 ≠ 失敗 → 0 個 degraded。
       prepare: gotoRoute,
       assertions: [
-        { id: "failed-service-dots-count", locator: '[data-uc="svc-dot"][data-ok="false"]', expectation: "count_equals", expected: 0 },
+        { id: "failed-service-dots-count", locator: '[data-uc="svc-dot"][data-health="degraded"]', expectation: "count_equals", expected: 0 },
       ],
     },
     disabled: {
-      // 誠實對映：ops 所有控制（open stage / close）均可用，無停用控制項；
-      // 以 aria-disabled="true" 計數 0 誠實斷言。
+      // 誠實停用：事件流控制項 aria-disabled + 原因。
       prepare: gotoRoute,
       assertions: [
-        { id: "no-disabled-controls-on-ops", locator: '[aria-disabled="true"]', expectation: "count_equals", expected: 0 },
+        { id: "events-aria-disabled", locator: '[data-uc="events-disabled"]', expectation: "attribute_equals", attribute: "aria-disabled", expected: "true" },
+        { id: "events-disabled-state", locator: '[data-uc="events-disabled"]', expectation: "disabled" },
+        { id: "events-reason-visible", locator: '[data-uc="events-reason"]', expectation: "visible" },
       ],
     },
     confirmation: {
+      // 點停用的事件流控制項 → 無任何成功回饋（無 toast）。
       prepare: async (context) => {
         await gotoRoute(context);
-        await clickFirst(context.page, '[data-uc="open-stage"]');
+        await context.page.locator('[data-uc="events-disabled"]').first().click({ force: true });
       },
       assertions: [
-        { id: "open-stage-toast", locator: '[data-uc="toast"]', expectation: "text_contains", expected: "POST /api/kit/instances/current/open" },
+        { id: "no-fake-success-toast", locator: '[data-uc="toast"]', expectation: "count_equals", expected: 0 },
       ],
     },
     i18n_zh_tw: {
@@ -628,7 +636,15 @@ function opsCases(): ScreenCases {
         langZhActive,
       ],
     },
-    runtime_truth: runtimeTruthCase(),
+    runtime_truth: {
+      prepare: gotoFreshRoute,
+      assertions: [
+        { id: "asbuilt-provenance-marker", locator: '[data-uc="page-root"] [data-prov="asbuilt"] >> nth=0', expectation: "visible" },
+        { id: "gpu-offline-state-no-number", locator: '[data-uc="gpu-val"]', expectation: "attribute_equals", attribute: "data-state", expected: "offline" },
+        { id: "no-fixed-gpu-percent", locator: "text=82%", expectation: "count_equals", expected: 0 },
+        { id: "console-runtime-note", locator: '[data-uc="runtime-note"]', expectation: "text_contains", expected: RUNTIME_NOTE },
+      ],
+    },
   };
 }
 

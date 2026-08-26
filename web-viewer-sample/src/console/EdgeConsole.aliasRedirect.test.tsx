@@ -9,6 +9,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import EdgeConsole from "./EdgeConsole";
 import { coordinatorClient } from "./coordinatorClient";
 import { governanceClient } from "./governanceClient";
+import { coordinatorStatusStore } from "./unified/coordinatorStatusStore";
+import { spyCoordinatorEndpointsOffline } from "./unified/__testdata__/coordinatorMocks";
 
 describe("EdgeConsole：#conv 獨立頁與 #intake alias", () => {
   const actEnvKey = "IS_REACT_ACT_ENVIRONMENT" as const;
@@ -20,6 +22,12 @@ describe("EdgeConsole：#conv 獨立頁與 #intake alias", () => {
   beforeEach(() => {
     prevActEnv = (globalThis as Record<string, unknown>)[actEnvKey];
     (globalThis as Record<string, unknown>)[actEnvKey] = true;
+    // unified-console-runtime-truth（slice 1）：#pipeline／#/workspace 會掛 UnifiedShell，殼層改用共用 poller
+    // 後會打十端點。先把十端點釘成 503（離線語意），再讓本檔下方既有的空值 stub 覆蓋它自己關心的方法。
+    // 順序不可顛倒：若把這兩行移到既有 vi.spyOn 之後，getMinioFolder／getConversionRecords／listIfcReady／
+    // minioWatchStatus／runtimeStatus 會被 503 蓋掉，ModelDataPage 改走錯誤分支（本檔 #intake→#minio 案會退化）。
+    coordinatorStatusStore.reset();
+    spyCoordinatorEndpointsOffline();
     prevUrl = `${window.location.pathname}${window.location.search}${window.location.hash}`;
     previousA4SessionContext = window.sessionStorage.getItem("aibim:a4-session-context");
     window.sessionStorage.removeItem("aibim:a4-session-context");

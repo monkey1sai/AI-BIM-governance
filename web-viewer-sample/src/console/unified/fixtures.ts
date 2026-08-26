@@ -2,7 +2,8 @@
 // UnifiedConsole — fixtures / 字典（1:1 移植自 design-origin/app.js）
 // 像素級移植正本：scratchpad/design-origin/app.js（vanilla JS 原型）
 // 所有色值 / px / 字串 byte-identical；不要「優化」任何值。
-// 本檔只含 fixture 資料與 style helper，不打任何 /api。
+// 本檔含 i18n 字典、導覽設定、style helper 與 A1–A3 dock 仍使用的原型資料（slice 2 承接）；home／pipeline／ops 的假資料
+// 已移至測試專用的 prototypeFixtures 模組（__testdata__ 目錄下，production 不得 import，見 fixtureNotInProduction.test.ts）。
 // ═══════════════════════════════════════════════════════════════════════
 import type { CSSProperties } from "react";
 
@@ -39,6 +40,8 @@ export interface Dict {
   ops_title: string; svc_health: string; empty: string;
   concept_note: string;
   dock_issues: string; outbox: string;
+  /* unified-console-runtime-truth：真值狀態文案 */
+  offline: string; unavailable: string; last_updated: string;
 }
 
 export function getL(zh: boolean): Dict {
@@ -60,6 +63,7 @@ export function getL(zh: boolean): Dict {
     ops_title: "Runtime / Kit · GPU 營運", svc_health: "服務健康", empty: "無待進件",
     concept_note: "點左欄 A1–A4 體驗 live 模組;本頁為概念稿",
     dock_issues: "Issues", outbox: "回拋 Outbox",
+    offline: "未連線", unavailable: "未取得", last_updated: "最後更新",
   } : {
     sub: "BIM Governance Console", search: "Search projects, models, issues, BCF…", project: "Project",
     g_work: "Workspace", g_apps: "AI App Modules", designdoc: "Design Doc (FE/BE)",
@@ -78,6 +82,7 @@ export function getL(zh: boolean): Dict {
     ops_title: "Runtime / Kit · GPU Operations", svc_health: "Service health", empty: "No pending intake",
     concept_note: "Click A1–A4 in sidebar for live modules; this page is a concept mock",
     dock_issues: "Issues", outbox: "Deliver Outbox",
+    offline: "offline", unavailable: "not observed", last_updated: "Last updated",
   };
 }
 
@@ -95,32 +100,13 @@ export interface SelItem { name: string; path: string; }
 export type RuleKey = "r1" | "r2" | "r3";
 export type RuleOn = Record<RuleKey, boolean>;
 
-export const initialIntake: IntakeItem[] = [
-  { file: "demo_lib_2026.ifc", src: "MinIO bucket/incoming" },
-  { file: "松風庵_v3.ifc", src: "MinIO bucket/incoming" },
-];
-
-export const initialConv: ConvItem[] = [
-  { file: "990_model.ifc", st: "running" },
-  { file: "fixture-bytes.ifc", st: "failed" },
-  { file: "許良宇圖書館建築_2026.ifc", st: "done", metrics: "12.4M tris · 98%" },
-];
-
-export const initialSessions: SessionItem[] = [
-  { id: "S-240601", lease: "editor lease", stage: "/Review/A1_Tower_fed.usd" },
-];
-
-export const initialOutbox: OutboxItem[] = [
-  { id: "OB-201", kind: "conversion-result", st: "待送" },
-  { id: "OB-202", kind: "issue-snapshot", st: "待送" },
-  { id: "OB-200", kind: "conversion-result", st: "已送" },
-];
-
+// slice-1 誠實欠帳（P3 final review f1）：Issues/BCF dock（docks.tsx，§2 範圍）仍以 fixture issue 種入；
+// 若移到 test-only，workspace.a3 的 failure semantic case（open chip／防火時效不足）會空掉。留在 production、
+// 由 fixtureNotInProduction.test.ts 的 SLICE2_DEBT ratchet 釘住（UnifiedShell.tsx 唯一消費者），隨 §2 dock 真值化一併移除。
 export const initialIssues: IssueItem[] = [
   { id: "ISS-101", title: "FD-4F-02 防火時效不足(30min < 60min)", st: "open", src: "rule-run #87" },
   { id: "ISS-098", title: "B-3F-12 樑位移 +42mm 超容差", st: "in-review", src: "diff v11→v12" },
 ];
-
 export const INITIAL_ISSUE_SEQ = 102;
 export const initialRuleOn: RuleOn = { r1: true, r2: true, r3: false };
 export const initialFlags = {
@@ -256,26 +242,6 @@ export const fedMembers: FedMember[] = [
   { name: "MEP", ver: "v15", path: "/Models/MEP/A1_Tower.usd" },
   { name: "CIVIL", ver: "v04", path: "/Models/CIVIL/A1_Tower.usd" },
   { name: "LAND", ver: "v06", path: "/Models/LAND/A1_Tower.usd" },
-];
-
-/* ── ops 服務健康 6 項 ── */
-export interface ServiceDef { name: string; port: string; ok: boolean; }
-export const services: ServiceDef[] = [
-  { name: "bim-review-coordinator", port: ":8004", ok: true },
-  { name: "governance-service", port: ":49102", ok: true },
-  { name: "conversion authority", port: ":49101", ok: true },
-  { name: "Kit signaling / WebRTC", port: ":49100 / :47998", ok: true },
-  { name: "kit-manager-api", port: ":8010", ok: true },
-  { name: "MinIO watch", port: "s3 events", ok: true },
-];
-
-/* ── home 警示 / 事件 4 項 ── */
-export interface AlertDef { msgZh: string; msgEn: string; t: string; c: string; }
-export const alerts: AlertDef[] = [
-  { msgZh: "rule-run #88 完成:嚴重 18 項", msgEn: "rule-run #88 done: 18 critical", t: "10:53", c: "var(--ab-danger)" },
-  { msgZh: "990_model.ifc 轉檔完成,品質 98%", msgEn: "990_model.ifc converted, quality 98%", t: "10:20", c: "var(--ab-ok)" },
-  { msgZh: "Outbox OB-201 重試 ×2", msgEn: "Outbox OB-201 retry ×2", t: "10:41", c: "var(--ab-warn)" },
-  { msgZh: "S-240601 first-frame 1.84s", msgEn: "S-240601 first-frame 1.84s", t: "10:53", c: "var(--ab-accent)" },
 ];
 
 /* ── concept（A5–A10）標題 + uploads 圖檔名 ── */

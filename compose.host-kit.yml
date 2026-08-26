@@ -43,6 +43,10 @@ services:
       # 的 runtime env 只能走 compose 透傳（.env 不掛進容器——與 MINIO_WATCH_* 同型）；
       # 預設空＝不標，部署區在 .env.web-plane.host-kit 設 TEST_DATA_PROJECT_IDS=270,889,990,271。
       TEST_DATA_PROJECT_IDS: ${TEST_DATA_PROJECT_IDS:-}
+      # unified-console-runtime-truth(owner D3 裁決 2026-08-25):/api/dev/* demo 路由開關透傳。
+      # 未設定＝空字串＝維持開啟(local-windows／隔離 branch stack 不受影響);canonical-linux 由 owner
+      # 在私有 canonical env 設 ENABLE_DEV_ROUTES=false → 容器內 /api/dev/* 一律 404(coordinator prefix gate)。
+      ENABLE_DEV_ROUTES: ${ENABLE_DEV_ROUTES:-}
       # IFC_DOWNLOAD_STRICT:控制 HTTP 取 IFC 失敗時的行為。
       # false(此 dev default):fetch 失敗時 fallback 寫 placeholder,demo loop 不中斷。
       # production MUST 設 "true":strict 下 HTTP 拿不到 IFC(non-2xx)直接回 502 +
