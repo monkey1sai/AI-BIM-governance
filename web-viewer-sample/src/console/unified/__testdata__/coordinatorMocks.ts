@@ -11,7 +11,7 @@ export const RT_IDLE: RuntimeStatus = {
   configured_endpoints: {
     coordinator: { host: "127.0.0.1", port: 8004, public_host: "127.0.0.1", public_base_url: "http://127.0.0.1:8004" },
     viewer: { browser_url_base: "http://127.0.0.1:5173", handoff_path: "/" },
-    conversion_authority: { base_url: "http://127.0.0.1:49101", authority: "bim-streaming-server" },
+    conversion_authority: { base_url: "http://conversion-authority.test", authority: "bim-streaming-server" },
     kit: [{ id: "kit_local_001", signalingServer: "127.0.0.1", signalingPort: 49100, mediaServer: "127.0.0.1", mediaPort: 47998 }],
   },
   sessions: { count: 0, active_count: 0, participant_count: 0, items: [] },
