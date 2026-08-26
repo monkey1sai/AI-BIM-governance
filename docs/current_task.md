@@ -1,24 +1,25 @@
-# 任務：P3 Slice 4 — Window.tsx 容器化與全面組裝收斂 (Issue #610)
+# 任務：P4 核心業務能力爆發與 P1~P3 全面 Code Review & Fix
 
 ## Objective (目標)
-- 完成 P3 最終階段 Slice 4：將 web-viewer-sample/src/Window.tsx (Issue #610) 容器化。
-- 正式裝配 ViewportHost (Issue #607)、ViewerToolbar (Issue #605)、GovernancePanel (Issue #608) 與 useUsdStageTree (Issue #609)。
-- 達成 0 回歸與 Clean Architecture，並以 Superpowers 完整生命週期交付合入 main。
+- 啟動 P4：以三層交叉對抗驗證實作 3D 測量 (Issue #604)、剖切盒 (Issue #603)、構件著色與 BCF 議題連動。
+- 執行 P1~P3 全面 Code Review 與強化修復（PR Queue 智能自動修復、組件健全度提升）。
+- 嚴格遵守 Lean Governance 方針，在單一 PR 內同時交付並通過 CI 合入 main。
 
 ## Plan (執行計畫)
-- [x] 1. 建立 P3 Slice 4 實施計畫 (docs/superpowers/plans/2026-08-26-p3-slice4-window-containerization.md)。
-- [ ] 2. 建立 Dedicated Git Worktree (../AI-BIM-governance.worktrees/p3-slice4-window-containerization) 與分支 feat/p3-slice4-window-containerization。
-- [ ] 3. 於 web-viewer-sample 進行 Window.tsx 容器化重構與組裝。
-- [ ] 4. 驗證 TypeScript 編譯與本地 Preflight 檢查。
-- [ ] 5. 提交 Git Commit 並 Push 分支至遠端 GitHub。
-- [ ] 6. 開立 Pull Request。
-- [ ] 7. 執行 Code Review 與 Blip Approval。
-- [ ] 8. Merge PR 至 main 分支。
-- [ ] 9. 收斂分支並清理 Worktree。
+- [x] 1. 完成三層交叉對抗驗證分析並建立 P4 實施計畫 (docs/superpowers/plans/2026-08-26-p4-business-capabilities-and-p1-p3-review-fixes.md)。
+- [ ] 2. 建立 Dedicated Git Worktree (../AI-BIM-governance.worktrees/p4-business-capabilities-and-review-fixes) 與分支 feat/p4-business-capabilities-and-review-fixes。
+- [ ] 3. 實作 P4 業務能力：擴充 streamMessages (3D 測量、剖面、著色請求)、強化 useUsdStageTree 與 GovernancePanel 3D 連動。
+- [ ] 4. 實作 P1~P3 Code Review 修復：強化 manage-pr-queue.mjs (自動修補 metadata)、補強 ViewportHost、ViewerToolbar 與 healthProbeRoutes。
+- [ ] 5. 執行 sub-repo 測試套件（Coordinator 1573 筆、Governance 301 筆、Layer Contract 79 筆）與本地 preflight。
+- [ ] 6. 提交 Git Commit 並 Push 分支至遠端 GitHub。
+- [ ] 7. 開立 Pull Request (Single PR)。
+- [ ] 8. 執行 Code Review 與 Blip Approval。
+- [ ] 9. GitHub Actions 23 項 CI 全綠，Squash Merge 至 main。
+- [ ] 10. 收斂分支並清理 Worktree。
 
 ## Context & Thoughts (上下文與思考)
-- 遵循 Single Active Writer 與單 PR 交付原則。
-- 採用絞殺者模式進行容器化裝配，保持既有 WebRTC、Socket.IO 與 DataChannel 介面相容。
+- 採用三層交叉對抗驗證（實作邊界、串流狀態機、工程治理）指導開發。
+- 保持 DataChannel、WebRTC 與 REST API 1:1 向後相容。
 
 ## Handoff Note (交接說明)
-- 正在建立專屬 Worktree 進行 Window.tsx 容器化重構。
+- 正在建立 Worktree 推進 P4 業務與 P1~P3 Review 修復。

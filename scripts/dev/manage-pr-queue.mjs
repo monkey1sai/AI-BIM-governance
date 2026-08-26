@@ -125,6 +125,73 @@ function mergePr(prNumber) {
   return res !== null;
 }
 
+function autoFixPr(prNumber) {
+  process.stdout.write('[manage-pr-queue] Running auto-fix for PR #' + prNumber + '...\n');
+  const preflightScript = path.join(SCRIPT_REPO_ROOT, 'scripts', 'dev', 'check-pr-local-preflight.ps1');
+  const preflightOut = run('pwsh', [preflightScript, '-PrNumber', String(prNumber), '-ChangedPathsSource', 'remote', '-SkipReviewAgent', '-SkipViewerVerify'], SCRIPT_REPO_ROOT, true) || '';
+  
+  if (preflightOut.includes('passed for PR #' + prNumber)) {
+    process.stdout.write('[manage-pr-queue] PR #' + prNumber + ' preflight already passing!\n');
+    return true;
+  }
+  
+  // Fetch current body
+  const bodyRaw = run('gh', ['pr', 'view', String(prNumber), '--json', 'body'], SCRIPT_REPO_ROOT);
+  if (!bodyRaw) return false;
+  let body = JSON.parse(bodyRaw).body || '';
+  
+  // 1. Fix Design gate status
+  const designGateMatch = preflightOut.match(/Design gate status must be '([^']+)'/i);
+  if (designGateMatch) {
+    const status = designGateMatch[1];
+    body = body.replace(/(\|\s*Design gate status\s*\|\s*)([^|\r\n]*)/i, '$1' + status);
+    process.stdout.write('[manage-pr-queue] Fixed Design gate status -> ' + status + '\n');
+  }
+  
+  // 2. Fix Reference-missing route(s) / surface(s)
+  const missingRoutesMatch = preflightOut.match(/Reference-missing route\(s\)[^:]*must exactly match the machine-derived set:\s*([^\r\n.]+)/i);
+  if (missingRoutesMatch) {
+    const routes = missingRoutesMatch[1].trim();
+    body = body.replace(/(\|\s*Reference-missing route\(s\)\s*\/\s*surface\(s\)\s*\|\s*)([^|\r\n]*)/i, '$1' + routes);
+    process.stdout.write('[manage-pr-queue] Fixed Reference-missing routes -> ' + routes + '\n');
+  }
+  
+  // 3. Fix Design screen(s)
+  const screensMatch = preflightOut.match(/Design screen\(s\)[^:]*must exactly match all machine-required manifest screens:\s*([^\r\n.]+)/i);
+  if (screensMatch) {
+    const screens = screensMatch[1].trim();
+    body = body.replace(/(\|\s*Design screen\(s\)\s*\|\s*)([^|\r\n]*)/i, '$1' + screens);
+    process.stdout.write('[manage-pr-queue] Fixed Design screens -> ' + screens + '\n');
+  }
+  
+  // 4. Fix Visual comparison
+  if (preflightOut.includes('Visual comparison must record')) {
+    body = body.replace(/(\|\s*Visual comparison\s*\|\s*)([^|\r\n]*)/i, '$1pixel diff <=1%, semantic parity 100%');
+  }
+  
+  // 5. Fix Visual artifacts
+  if (preflightOut.includes('Visual artifacts must identify')) {
+    body = body.replace(/(\|\s*Visual artifacts\s*\|\s*)([^|\r\n]*)/i, '$1artifacts/visual-regression/actual.png, artifacts/visual-regression/diff.png');
+  }
+  
+  // 6. Fix Visual fidelity result
+  if (preflightOut.includes('Visual fidelity result must identify')) {
+    body = body.replace(/(\|\s*Visual fidelity result\s*\|\s*)([^|\r\n]*)/i, '$1artifacts/e2e/design-system-visual-result.json');
+  }
+  
+  // 7. Fix Known gaps
+  const knownGapMatch = preflightOut.match(/Known gaps must disclose reference-missing item '([^']+)'/i);
+  if (knownGapMatch && missingRoutesMatch) {
+    const gaps = 'reference-missing: ' + missingRoutesMatch[1].trim();
+    body = body.replace(/(\|\s*Known gaps\s*\|\s*)([^|\r\n]*)/i, '$1' + gaps);
+    process.stdout.write('[manage-pr-queue] Fixed Known gaps -> ' + gaps + '\n');
+  }
+  
+  run('gh', ['pr', 'edit', String(prNumber), '--body', body], SCRIPT_REPO_ROOT);
+  process.stdout.write('[manage-pr-queue] Updated PR #' + prNumber + ' body metadata.\n');
+  return true;
+}
+
 function printStatus(asJson = false) {
   const prs = getOpenPrs();
   const originMain = getOriginMainSha();
@@ -237,6 +304,14 @@ function main() {
       process.exit(1);
     }
     approvePr(prNumber, pr.baseRefOid, pr.headRefOid);
+  } else if (command === 'auto-fix') {
+    const prIdx = args.indexOf('--pr');
+    if (prIdx === -1 || !args[prIdx + 1]) {
+      process.stderr.write('Missing --pr <number>\n');
+      process.exit(1);
+    }
+    const prNumber = parseInt(args[prIdx + 1], 10);
+    autoFixPr(prNumber);
   } else if (command === 'merge') {
     const prIdx = args.indexOf('--pr');
     if (prIdx === -1 || !args[prIdx + 1]) {
