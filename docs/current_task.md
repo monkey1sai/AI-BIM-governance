@@ -14,15 +14,16 @@
 - [x] 3. 修改 `CLAUDE.md`：同步更新精簡治理規範。
 - [x] 4. 修改 `docs/agents/github-workflow.md` 與 `docs/agents/agent-governance-policy.md`：更新單 PR 交付與治理減法方針。
 - [x] 5. 執行本地驗證檢查，確保無語法或格式錯誤。
-- [ ] 6. 提交 Git Commit。
-- [ ] 7. Push 分支至遠端 GitHub。
-- [ ] 8. 建立 Pull Request。
-- [ ] 9. Merge PR 至 main 分支。
-- [ ] 10. 收斂並更新任務狀態。
+- [x] 6. 提交 Git Commit。
+- [x] 7. Push 分支至遠端 GitHub。
+- [x] 8. 建立 Pull Request（PR #706）。
+- [x] 9. 執行 blip-approve 並完成 Merge PR 至 main 分支。
+- [x] 10. 收斂並更新任務狀態與清理 Worktree。
 
 ## Context & Thoughts (上下文與思考)
 - 專案分析顯示：專案開發緩慢的主要瓶頸不是業務邏輯複雜，而是治理系統本身過於龐大脆弱（scripts 目錄 180MB、openspec 近 800 檔），近 7 成 PR 全在修治理工具（fixpoint/classifier/ledger/watermark）。
 - 透過本次減法改動，建立明確的 Lean Mode，讓所有 AI Agent（Codex、Claude、CLI、Gemini）將焦點徹底轉移回 BIM 核心業務價值（IFC 轉檔、A1~A10 規則檢核、WebRTC 3D 串流）。
 
 ## Handoff Note (交接說明)
-- 本地 106 項 Governance Policy 斷言全部通過，準備進行 commit、push 與 open PR。
+- 任務已全部圓滿完成！PR #706 已獲 `monkey1sai-blip` 批准並成功 squash merge 至 `main` 分支（commit `2a759f4`）。
+- 本地 `main` 分支已完全對齊最新主線，臨時 worktree 與分支已收斂清理完畢。
