@@ -223,31 +223,98 @@ try {
     )
     $writeProof.Dispose()
 
-    $previousProgramFiles = [Environment]::GetEnvironmentVariable('ProgramFiles', 'Process')
-    $previousProgramW6432 = [Environment]::GetEnvironmentVariable('ProgramW6432', 'Process')
-    $previousWindowsHost = $script:IsWindowsHost
     $denyWriteHandle = $null
     try {
-        [Environment]::SetEnvironmentVariable('ProgramFiles', $trustedGitFixtureRoot, 'Process')
-        [Environment]::SetEnvironmentVariable('ProgramW6432', $trustedGitFixtureRoot, 'Process')
-        $script:IsWindowsHost = $true
         $denyWriteHandle = [IO.File]::Open(
             $callerWritableGit,
             [IO.FileMode]::Open,
             [IO.FileAccess]::Read,
             [IO.FileShare]::Read
         )
-        Assert-Throws -Context 'sharing-locked caller-writable Git identity' -MessagePattern 'no approved system-owned, read-only Git executable' -Action {
-            Get-SelfReferentialTrustedGitIdentity | Out-Null
-        }
-        Assert-Throws -Context 'sharing-locked caller-writable Git execution' -MessagePattern 'no approved system-owned, read-only Git executable' -Action {
-            Invoke-SelfReferentialTrustedGit -RepoRoot $repoRoot -Arguments @('--version') | Out-Null
-        }
+        Assert-True (-not (Test-SelfReferentialGitWriteDenied -Path $callerWritableGit)) 'sharing-locked caller-writable Git is not classified as permission-denied'
     } finally {
         if ($null -ne $denyWriteHandle) { $denyWriteHandle.Dispose() }
+    }
+
+    # ProgramFiles, ProgramW6432, and SystemRoot are caller-controlled process
+    # environment. Even a caller-created fake made read-only after creation must
+    # never become a production candidate or child-process PATH authority.
+    $previousProgramFiles = [Environment]::GetEnvironmentVariable('ProgramFiles', 'Process')
+    $previousProgramW6432 = [Environment]::GetEnvironmentVariable('ProgramW6432', 'Process')
+    $previousSystemRoot = [Environment]::GetEnvironmentVariable('SystemRoot', 'Process')
+    $previousWindowsHost = $script:IsWindowsHost
+    $previousFakeAttributes = [IO.File]::GetAttributes($callerWritableGit)
+    try {
+        [IO.File]::SetAttributes($callerWritableGit, $previousFakeAttributes -bor [IO.FileAttributes]::ReadOnly)
+        [Environment]::SetEnvironmentVariable('ProgramFiles', $trustedGitFixtureRoot, 'Process')
+        [Environment]::SetEnvironmentVariable('ProgramW6432', $trustedGitFixtureRoot, 'Process')
+        [Environment]::SetEnvironmentVariable('SystemRoot', $trustedGitFixtureRoot, 'Process')
+        $script:IsWindowsHost = $true
+
+        $trustedIdentity = Get-SelfReferentialTrustedGitIdentity
+        Assert-True ($trustedIdentity.Path -cne $callerWritableGit) 'process environment cannot redirect trusted Git to a caller-created read-only fake'
+        $knownProgramRoots = @(
+            [Environment]::GetFolderPath([Environment+SpecialFolder]::ProgramFiles)
+            [Environment]::GetFolderPath([Environment+SpecialFolder]::ProgramFilesX86)
+        ) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+        $insideKnownProgramRoot = @($knownProgramRoots | Where-Object {
+            $prefix = ([IO.Path]::GetFullPath($_)).TrimEnd('\') + '\'
+            $trustedIdentity.Path.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)
+        }).Count -gt 0
+        Assert-True $insideKnownProgramRoot 'trusted Git remains rooted in an OS known Program Files directory'
+
+        $trustedGitVersion = @(Invoke-SelfReferentialTrustedGit -RepoRoot $repoRoot -Arguments @('--version'))
+        Assert-True ($script:SelfReferentialGitExitCode -eq 0) 'trusted Git still executes after process environment poisoning'
+        Assert-True (($trustedGitVersion -join [Environment]::NewLine) -match '^git version ') 'trusted Git execution returns the real Git version'
+    } finally {
+        [IO.File]::SetAttributes($callerWritableGit, $previousFakeAttributes)
         [Environment]::SetEnvironmentVariable('ProgramFiles', $previousProgramFiles, 'Process')
         [Environment]::SetEnvironmentVariable('ProgramW6432', $previousProgramW6432, 'Process')
+        [Environment]::SetEnvironmentVariable('SystemRoot', $previousSystemRoot, 'Process')
         $script:IsWindowsHost = $previousWindowsHost
+    }
+    $writeAfterPoisoning = [IO.File]::Open(
+        $callerWritableGit,
+        [IO.FileMode]::Open,
+        [IO.FileAccess]::ReadWrite,
+        [IO.FileShare]::ReadWrite
+    )
+    $writeAfterPoisoning.Dispose()
+
+    # A trusted executable path is insufficient when the child inherits dynamic
+    # loader controls. Invalid sentinels make an unsanitized Linux/macOS launch
+    # fail or emit the sentinel before Git starts; a clean invocation proves the
+    # caller's loader environment did not cross the process boundary.
+    $loaderVariables = @(
+        'LD_PRELOAD'
+        'LD_LIBRARY_PATH'
+        'LD_AUDIT'
+        'DYLD_INSERT_LIBRARIES'
+        'DYLD_LIBRARY_PATH'
+        'DYLD_FRAMEWORK_PATH'
+    )
+    $previousLoaderEnvironment = @{}
+    try {
+        foreach ($loaderVariable in $loaderVariables) {
+            $previousLoaderEnvironment[$loaderVariable] = [Environment]::GetEnvironmentVariable($loaderVariable, 'Process')
+            [Environment]::SetEnvironmentVariable(
+                $loaderVariable,
+                "/self-referential-loader-sentinel/$($loaderVariable.ToLowerInvariant()).invalid",
+                'Process'
+            )
+        }
+        $trustedGitVersion = @(Invoke-SelfReferentialTrustedGit -RepoRoot $repoRoot -Arguments @('--version'))
+        Assert-True ($script:SelfReferentialGitExitCode -eq 0) 'trusted Git rejects hostile caller loader environment'
+        Assert-True (($trustedGitVersion -join [Environment]::NewLine) -match '^git version ') 'trusted Git remains executable with hostile caller loader environment'
+        Assert-True ($script:SelfReferentialGitError -notmatch 'self-referential-loader-sentinel') 'trusted Git stderr proves loader variables were not inherited'
+    } finally {
+        foreach ($loaderVariable in $loaderVariables) {
+            [Environment]::SetEnvironmentVariable(
+                $loaderVariable,
+                [string]$previousLoaderEnvironment[$loaderVariable],
+                'Process'
+            )
+        }
     }
 
     # #704 is the only bridge from the historical fixpoint ledger to the Lean

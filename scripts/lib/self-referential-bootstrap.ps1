@@ -160,19 +160,42 @@ $script:SelfReferentialGitExitCode = $null
 $script:SelfReferentialGitError = ''
 $script:IsWindowsHost = $PSVersionTable.Platform -eq 'Win32NT'
 
+function Test-SelfReferentialGitWriteDenied {
+    [CmdletBinding()]
+    param([Parameter(Mandatory = $true)][string] $Path)
+
+    $writeHandle = $null
+    try {
+        $writeHandle = [IO.File]::Open(
+            $Path,
+            [IO.FileMode]::Open,
+            [IO.FileAccess]::ReadWrite,
+            [IO.FileShare]::Read
+        )
+        return $false
+    } catch [UnauthorizedAccessException] {
+        return $true
+    } catch [IO.IOException] {
+        # A sharing violation or transient lock is not permission evidence.
+        return $false
+    } finally {
+        if ($null -ne $writeHandle) { $writeHandle.Dispose() }
+    }
+}
+
 function Get-SelfReferentialTrustedGitIdentity {
     [CmdletBinding()]
     param()
 
-    $programFiles = [Environment]::GetEnvironmentVariable('ProgramFiles', 'Process')
-    $programW6432 = [Environment]::GetEnvironmentVariable('ProgramW6432', 'Process')
     $candidates = if ($script:IsWindowsHost) {
-        @(
-            (Join-Path $programFiles 'Git\cmd\git.exe'),
-            (Join-Path $programFiles 'Git\bin\git.exe'),
-            (Join-Path $programW6432 'Git\cmd\git.exe'),
-            (Join-Path $programW6432 'Git\bin\git.exe')
-        )
+        $programFileRoots = @(
+            [Environment]::GetFolderPath([Environment+SpecialFolder]::ProgramFiles)
+            [Environment]::GetFolderPath([Environment+SpecialFolder]::ProgramFilesX86)
+        ) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Unique
+        @($programFileRoots | ForEach-Object {
+            Join-Path $_ 'Git\cmd\git.exe'
+            Join-Path $_ 'Git\bin\git.exe'
+        })
     } else {
         @('/usr/bin/git', '/usr/local/bin/git')
     }
@@ -185,19 +208,8 @@ function Get-SelfReferentialTrustedGitIdentity {
                 continue
             }
             $resolved = $item.FullName
-            $writeHandle = $null
-            try {
-                $writeHandle = [IO.File]::Open($resolved, [IO.FileMode]::Open, [IO.FileAccess]::ReadWrite, [IO.FileShare]::Read)
+            if (-not (Test-SelfReferentialGitWriteDenied -Path $resolved)) {
                 continue
-            } catch [UnauthorizedAccessException] { }
-            catch [IO.IOException] {
-                # A sharing violation or transient lock does not prove that the
-                # caller lacks write permission. Reject the candidate instead
-                # of treating an ambiguous I/O failure as a trust signal.
-                continue
-            }
-            finally {
-                if ($null -ne $writeHandle) { $writeHandle.Dispose() }
             }
             $hash = (Get-FileHash -LiteralPath $resolved -Algorithm SHA256 -ErrorAction Stop).Hash.ToLowerInvariant()
             return [pscustomobject]@{
@@ -236,21 +248,33 @@ function Invoke-SelfReferentialTrustedGit {
     ) + @($Arguments)
     foreach ($argument in $gitArguments) { [void]$startInfo.ArgumentList.Add([string]$argument) }
     $startInfo.Environment.Clear()
-    foreach ($entry in [Environment]::GetEnvironmentVariables('Process').GetEnumerator()) {
-        $key = [string]$entry.Key
-        $upper = $key.ToUpperInvariant()
-        if ($upper.StartsWith('GIT_') -or $upper.StartsWith('SSH_') -or
-            $upper -in @('CURL_CA_BUNDLE', 'SSL_CERT_FILE', 'SSL_CERT_DIR', 'PATH')) {
-            continue
-        }
-        $startInfo.Environment[$key] = [string]$entry.Value
-    }
+    # Do not inherit caller process state. In particular, loader variables such
+    # as LD_PRELOAD, LD_AUDIT, and DYLD_INSERT_LIBRARIES can execute code before
+    # the identity-bound Git binary reaches main(). Build the complete child
+    # environment below from OS-known directories and fixed literals instead.
     $gitDirectory = Split-Path -Parent $identity.Path
-    $systemRoot = [Environment]::GetEnvironmentVariable('SystemRoot', 'Process')
+    $systemDirectory = if ($script:IsWindowsHost) {
+        [Environment]::GetFolderPath([Environment+SpecialFolder]::System)
+    } else {
+        ''
+    }
+    $windowsDirectory = if ($script:IsWindowsHost) {
+        [Environment]::GetFolderPath([Environment+SpecialFolder]::Windows)
+    } else {
+        ''
+    }
+    if ($script:IsWindowsHost -and
+        ([string]::IsNullOrWhiteSpace($systemDirectory) -or [string]::IsNullOrWhiteSpace($windowsDirectory))) {
+        throw 'self_referential_bootstrap: Windows system directory authority is unavailable.'
+    }
     $startInfo.Environment['PATH'] = if ($script:IsWindowsHost) {
-        "$gitDirectory;$(Join-Path ($systemRoot ?? 'C:\Windows') 'System32')"
+        "$gitDirectory;$systemDirectory"
     } else {
         "${gitDirectory}:/usr/bin:/bin:/usr/local/bin"
+    }
+    if ($script:IsWindowsHost) {
+        $startInfo.Environment['SystemRoot'] = $windowsDirectory
+        $startInfo.Environment['WINDIR'] = $windowsDirectory
     }
     $startInfo.Environment['GIT_CONFIG_GLOBAL'] = if ($script:IsWindowsHost) { 'NUL' } else { '/dev/null' }
     $startInfo.Environment['GIT_CONFIG_SYSTEM'] = if ($script:IsWindowsHost) { 'NUL' } else { '/dev/null' }
