@@ -18,6 +18,7 @@ import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 import { syncMainSafely } from './sync-main-safely.mjs';
 import { triggerPrQueueHook } from './manage-pr-queue.mjs';
+import { cleanupOrphanDevProcesses } from './cleanup-orphan-dev-processes.mjs';
 
 const STALE_MINUTES = 120;
 const PRUNE_ENDED_HOURS = 24;
@@ -283,6 +284,7 @@ function runManual(command, args) {
     appendEvent(boardDir, { ts: nowIso(), agent, session, event: 'done', detail: '' });
     process.stdout.write(`done agent=${agent} session=${session}\n`);
     syncMainSafely(cwd);
+    cleanupOrphanDevProcesses();
     triggerPrQueueHook(true);
     return;
   }
@@ -308,6 +310,7 @@ function runHook(args) {
   if (event === 'SessionStart') {
     pruneSessions(boardDir);
     syncMainSafely(cwd);
+    cleanupOrphanDevProcesses();
     triggerPrQueueHook(true);
     const others = readSessions(boardDir).filter((s) => !(s.agent === agent && s.session === session) && s.status !== 'ended');
     upsertSession(boardDir, { agent, session, cwd, task: '(session 已啟動)', status: 'active' });
@@ -337,6 +340,7 @@ function runHook(args) {
   }
   if (event === 'Stop') {
     upsertSession(boardDir, { agent, session, cwd, status: 'idle' });
+    cleanupOrphanDevProcesses();
     triggerPrQueueHook(true);
     return;
   }
@@ -344,6 +348,7 @@ function runHook(args) {
     upsertSession(boardDir, { agent, session, cwd, status: 'ended' });
     appendEvent(boardDir, { ts: nowIso(), agent, session, event: 'session-end', detail: '' });
     syncMainSafely(cwd);
+    cleanupOrphanDevProcesses();
     triggerPrQueueHook(true);
   }
 }
@@ -368,6 +373,7 @@ function runCodexNotify(jsonArg) {
   const task = sanitizeTask(inputMessages[0] || '');
   upsertSession(boardDir, { agent: 'codex', session, cwd, task: task || undefined, status: 'idle' });
   appendEvent(boardDir, { ts: nowIso(), agent, session, event: 'turn-complete', detail: task });
+  cleanupOrphanDevProcesses();
   triggerPrQueueHook(true);
 }
 
