@@ -57,6 +57,14 @@ $script:SelfReferentialMechanismPattern = @(
     '^scripts/agent-tooling/blip-approve/bot/bots\.json$'
     '^scripts/agent-tooling/blip-approve/bot/scripts/(?:test_)?(?:app_auth|bind_ship_attestation|blip_review|codex_ship_gate|collect_ship_gate_packet|post_review|ship_gate_packet)\.py$'
     '^scripts/agent-tooling/blip-approve/bot/scripts/(?:test_)?(?:run_blip_live_approve_once|run_codex_bound_ship_gate_once)\.ps1$'
+    # The tracked approval policy, its byte-identical mirror/integrity manifest,
+    # and the repository PR runbook jointly decide whether a counted vote can be
+    # attempted. Keep these exact: adjacent skills and workflow docs are not
+    # approval adjudicators.
+    '^\.claude/skills/blip-approve/SKILL\.md$'
+    '^\.codex/skills/blip-approve/SKILL\.md$'
+    '^agent-skills-manifest\.json$'
+    '^docs/agents/github-workflow\.md$'
     '^scripts/verification-manifest\.json$'
     '^scripts/dev/check-pr-local-preflight\.ps1$'
     '^scripts/hooks/require-gstack-evidence\.ps1$'
@@ -148,6 +156,13 @@ $script:SelfReferentialAdjudicatorPaths = @(
     'tests/test_spec_to_done_state_contract.py'
     'tests/test_spec_to_done_budget_contract.py'
     'tests/test_spec_to_done_closeout_contract.py'
+    # A candidate approval policy cannot decide that its own changed authority
+    # needs no fixpoint debt. These four exact policy/integrity surfaces must use
+    # bootstrap=yes when changed.
+    '.claude/skills/blip-approve/SKILL.md'
+    '.codex/skills/blip-approve/SKILL.md'
+    'agent-skills-manifest.json'
+    'docs/agents/github-workflow.md'
 )
 
 $script:GenericReasonBlocklist = @(
