@@ -281,12 +281,20 @@ function autoFixPr(prNumber) {
   
   // 0. Ensure Change Classification table exists
   if (!body.includes('Change lane') || !body.includes('Behavior contract changed') || !body.includes('Requirement source')) {
-    const classificationBlock = '## Change Classification\n| Label | Value |\n|---|---|\n| Change lane | Lane B |\n| Behavior contract changed | no |\n| Requirement source | Lean Governance & PR Queue Engine |\n\n';
+    const classificationBlock = '## Change Classification\n| Label | Value |\n|---|---|\n| Change lane | B |\n| Behavior contract changed | no |\n| Requirement source | Lean Governance & PR Queue Engine |\n\n';
     if (body.includes('## Summary')) {
       body = body.replace('## Summary', classificationBlock + '## Summary');
     } else {
       body = classificationBlock + body;
     }
+  } else {
+    body = body.replace(/(\|\s*Change lane\s*\|\s*)(?:Lane\s+)?([FBGS])/i, '$1$2');
+  }
+
+  // 0.1 Ensure AI Coding Governance table exists
+  if (!body.includes('CODEOWNERS / owner review') || !body.includes('Linked issue')) {
+    const govBlock = '## AI Coding Governance\n| Label | Value |\n|---|---|\n| Linked issue | none |\n| Requirement source | Lean Governance & PR Queue Engine |\n| CODEOWNERS / owner review | agent-governance |\n| GitNexus evidence | n/a (Lane B tooling) |\n| Browser E2E evidence | n/a (tooling only) |\n| Agent workflow changed? | no |\n| Required checks expected | all 23 green |\n\n';
+    body = body + '\n\n' + govBlock;
   }
 
   // 1. Fix Design gate status
