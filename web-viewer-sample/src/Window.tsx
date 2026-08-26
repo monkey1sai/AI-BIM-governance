@@ -19,9 +19,6 @@ import { headerHeight } from './App';
 import { fetchUSDAssets, type USDAsset as USDAssetType } from './assetsApi';
 import DemoControlPanel from "./components/DemoControlPanel";
 import { StructuredLogDiagnostics } from "./components/StructuredLogDiagnostics";
-import { ViewportHost } from "./components/ViewportHost";
-import { ViewerToolbar } from "./components/ViewerToolbar";
-import { GovernancePanel } from "./components/GovernancePanel";
 import { isBlockedLifecycle, lifecycleStatusText, sameStreamEndpoint, sameStreamTransportEndpoint, selectSpectatorBinding, type StreamEndpoint } from "./utils/windowHelpers";
 // viewer-edge-bim-server-console:ReviewLauncher / PresencePanel 已刪(fast
 // MVP 不需多人協作 UI;spec REMOVED「Viewer separates runtime commands from

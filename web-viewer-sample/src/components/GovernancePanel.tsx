@@ -108,40 +108,57 @@ export const GovernancePanel: React.FC<GovernancePanelProps> = ({
                     </span>
                   </div>
 
-                  {r.status === "failed" && (
-                    <div style={{ marginTop: 8, display: "flex", gap: 6 }}>
-                      <button
-                        type="button"
-                        onClick={() => onSelectViolations && onSelectViolations(r.ruleId)}
-                        style={{
-                          fontSize: 11,
-                          padding: "3px 6px",
-                          background: "#374151",
-                          color: "#F9FAFB",
-                          border: "none",
-                          borderRadius: 4,
-                          cursor: "pointer",
-                        }}
-                      >
-                        聚焦違規物件
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => onCreateBcfTopic && onCreateBcfTopic(r.ruleId)}
-                        style={{
-                          fontSize: 11,
-                          padding: "3px 6px",
-                          background: "#2563EB",
-                          color: "#FFFFFF",
-                          border: "none",
-                          borderRadius: 4,
-                          cursor: "pointer",
-                        }}
-                      >
-                        建立 BCF 議題
-                      </button>
-                    </div>
-                  )}
+                  <div style={{ marginTop: 8, display: "flex", gap: 6 }}>
+                    <button
+                      type="button"
+                      onClick={() => onRunRule && onRunRule(r.ruleId)}
+                      style={{
+                        fontSize: 11,
+                        padding: "3px 6px",
+                        background: "#4B5563",
+                        color: "#FFFFFF",
+                        border: "none",
+                        borderRadius: 4,
+                        cursor: "pointer",
+                      }}
+                    >
+                      執行檢核
+                    </button>
+                    {r.status === "failed" && (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => onSelectViolations && onSelectViolations(r.ruleId)}
+                          style={{
+                            fontSize: 11,
+                            padding: "3px 6px",
+                            background: "#374151",
+                            color: "#F9FAFB",
+                            border: "none",
+                            borderRadius: 4,
+                            cursor: "pointer",
+                          }}
+                        >
+                          聚焦違規物件
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => onCreateBcfTopic && onCreateBcfTopic(r.ruleId)}
+                          style={{
+                            fontSize: 11,
+                            padding: "3px 6px",
+                            background: "#2563EB",
+                            color: "#FFFFFF",
+                            border: "none",
+                            borderRadius: 4,
+                            cursor: "pointer",
+                          }}
+                        >
+                          建立 BCF 議題
+                        </button>
+                      </>
+                    )}
+                  </div>
                 </div>
               ))
             )}
