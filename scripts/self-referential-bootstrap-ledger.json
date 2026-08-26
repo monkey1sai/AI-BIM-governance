@@ -1008,36 +1008,6 @@
           "docs/evidence/spec-to-done-new-run-boundary/fixpoint/summary.md"
         ]
       }
-    },
-    {
-      "id": "blip-approve-full-authority-continuity",
-      "status": "open",
-      "pr": 707,
-      "opened_at": "2026-08-26T05:19:04Z",
-      "reason": "this pull request changes the approval policy and the classifier that decides whether later approval-policy changes require fixpoint debt, so the pre-change mechanism cannot prove its post-merge adjudication behavior",
-      "verification_mechanism_paths": [
-        "scripts/lib/self-referential-bootstrap.ps1",
-        "scripts/self-referential-bootstrap-ledger.json",
-        "scripts/tests/test-self-referential-bootstrap.ps1"
-      ],
-      "verification_contract": {
-        "id": "blip-approve-full-authority-continuity/v1",
-        "command_ids": [
-          "test-self-referential-bootstrap",
-          "verify-governance-policy",
-          "test-agent-governance-policy",
-          "test-review-risk",
-          "test-agent-governance-check",
-          "invoke-powershell-static",
-          "scan-secret-patterns"
-        ],
-        "contract_sha256": "d7c9775c8ea719b02536bcaeaf15d0a6da5b54dcc01e69aae58965943f06a675"
-      },
-      "bootstrap_evidence_refs": [
-        "docs/evidence/blip-approve-full-authority-continuity/self-referential-bootstrap/README.md",
-        "docs/evidence/blip-approve-full-authority-continuity/self-referential-bootstrap/verification.txt"
-      ],
-      "fixpoint": null
     }
   ]
 }

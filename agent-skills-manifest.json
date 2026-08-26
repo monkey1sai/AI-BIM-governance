@@ -73,14 +73,14 @@
       "provenance": {
         "kind": "repo-authored",
         "source": "AI-BIM-governance",
-        "notes": "Introduced by the commit containing this manifest entry. Claude is the canonical tracked source and Codex is a byte-identical mirror. The protected ProgramData broker and user-level installations remain separately provisioned operational dependencies."
+        "notes": "Introduced by the commit containing this manifest entry. Claude is the canonical tracked source and Codex is a byte-identical mirror. User-level installations, credentials, and the live helper remain separately provisioned operational dependencies."
       },
       "integrity": {
         "format": "agent-skill-tree/v2",
         "algorithm": "sha256",
         "trees": {
-          "claude": "655663a282a900406d86e2f1d4398b7c467cb8f237969ac93a4280a8607591fa",
-          "codex": "655663a282a900406d86e2f1d4398b7c467cb8f237969ac93a4280a8607591fa"
+          "claude": "c75df8c6960c9313c50433ba0859a62bfdbb80c672781dcd90aad633fd97f266",
+          "codex": "c75df8c6960c9313c50433ba0859a62bfdbb80c672781dcd90aad633fd97f266"
         }
       }
     },

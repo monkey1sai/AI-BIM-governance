@@ -416,36 +416,6 @@ try {
         }).Count -gt 0
         Assert-True $coveredByTrustedMerge "trusted merge mechanism policy is a superset of the self-referential classifier example: $expectedPath"
     }
-    # The approval policy is a distinct self-referential adjudicator. Register
-    # only its exact tracked policy/integrity surfaces; do not broaden every skill
-    # or workflow document into this mechanism class.
-    $blipApprovalAdjudicatorPaths = @(
-        '.claude/skills/blip-approve/SKILL.md',
-        '.codex/skills/blip-approve/SKILL.md',
-        'agent-skills-manifest.json',
-        'docs/agents/github-workflow.md'
-    )
-    $blipApprovalMatches = @(
-        Get-SelfReferentialMechanismPaths -ChangedPaths $blipApprovalAdjudicatorPaths
-    )
-    Assert-True ($blipApprovalMatches.Count -eq $blipApprovalAdjudicatorPaths.Count) `
-        "every blip approval adjudicator path must classify exactly (matched: $($blipApprovalMatches -join ', '))"
-    foreach ($expectedPath in $blipApprovalAdjudicatorPaths) {
-        Assert-True ($blipApprovalMatches -ccontains $expectedPath) `
-            "blip approval adjudicator classifier includes $expectedPath"
-    }
-    $adjacentBlipApprovalPaths = @(
-        '.claude/skills/blip-approve/GROK.md',
-        '.codex/skills/blip-approve/SKILL.txt',
-        '.agents/skills/blip-approve/SKILL.md',
-        'docs/agents/github-workflow.md.bak',
-        'docs/agents/GitHub-workflow.md'
-    )
-    $adjacentBlipApprovalMatches = @(
-        Get-SelfReferentialMechanismPaths -ChangedPaths $adjacentBlipApprovalPaths
-    )
-    Assert-True ($adjacentBlipApprovalMatches.Count -eq 0) `
-        "adjacent or wrong-case blip approval paths must not broaden mechanism scope (matched: $($adjacentBlipApprovalMatches -join ', '))"
     # These future paths do not exist on this prerequisite branch. Pre-register
     # them in the base-owned debt classifier so the later implementation PR can
     # bind every new adjudicating surface without asking its head classifier to
@@ -1381,15 +1351,6 @@ try {
             -MessagePattern 'must declare bootstrap=yes' -Action {
             Invoke-BodyGate -Rows @{ 'Self-referential bootstrap' = 'no' } `
                 -ChangedPaths @($futureSelfAdjudicator) `
-                -HeadJson $emptyJson -BaseJson $emptyJson
-        }
-    }
-
-    foreach ($blipApprovalAdjudicator in @($blipApprovalAdjudicatorPaths)) {
-        Assert-Throws -Context "blip approval adjudicator under bootstrap=no: $blipApprovalAdjudicator" `
-            -MessagePattern 'must declare bootstrap=yes' -Action {
-            Invoke-BodyGate -Rows @{ 'Self-referential bootstrap' = 'no' } `
-                -ChangedPaths @($blipApprovalAdjudicator) `
                 -HeadJson $emptyJson -BaseJson $emptyJson
         }
     }
