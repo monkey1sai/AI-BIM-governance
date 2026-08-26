@@ -207,6 +207,49 @@ try {
     $mechanism = @('scripts/deploy.ps1')
     $emptyJson = New-LedgerJson -Entries @()
 
+    # A caller-writable executable can still make a ReadWrite probe throw
+    # IOException by holding a deny-write sharing handle. That ambiguity must
+    # reject the candidate before Invoke-SelfReferentialTrustedGit starts it.
+    $trustedGitFixtureRoot = Join-Path $tempRoot 'trusted-git-sharing-lock'
+    $trustedGitCmdRoot = Join-Path $trustedGitFixtureRoot 'Git\cmd'
+    New-Item -ItemType Directory -Path $trustedGitCmdRoot -Force | Out-Null
+    $callerWritableGit = Join-Path $trustedGitCmdRoot 'git.exe'
+    [IO.File]::WriteAllText($callerWritableGit, 'caller-writable fixture')
+    $writeProof = [IO.File]::Open(
+        $callerWritableGit,
+        [IO.FileMode]::Open,
+        [IO.FileAccess]::ReadWrite,
+        [IO.FileShare]::ReadWrite
+    )
+    $writeProof.Dispose()
+
+    $previousProgramFiles = [Environment]::GetEnvironmentVariable('ProgramFiles', 'Process')
+    $previousProgramW6432 = [Environment]::GetEnvironmentVariable('ProgramW6432', 'Process')
+    $previousWindowsHost = $script:IsWindowsHost
+    $denyWriteHandle = $null
+    try {
+        [Environment]::SetEnvironmentVariable('ProgramFiles', $trustedGitFixtureRoot, 'Process')
+        [Environment]::SetEnvironmentVariable('ProgramW6432', $trustedGitFixtureRoot, 'Process')
+        $script:IsWindowsHost = $true
+        $denyWriteHandle = [IO.File]::Open(
+            $callerWritableGit,
+            [IO.FileMode]::Open,
+            [IO.FileAccess]::Read,
+            [IO.FileShare]::Read
+        )
+        Assert-Throws -Context 'sharing-locked caller-writable Git identity' -MessagePattern 'no approved system-owned, read-only Git executable' -Action {
+            Get-SelfReferentialTrustedGitIdentity | Out-Null
+        }
+        Assert-Throws -Context 'sharing-locked caller-writable Git execution' -MessagePattern 'no approved system-owned, read-only Git executable' -Action {
+            Invoke-SelfReferentialTrustedGit -RepoRoot $repoRoot -Arguments @('--version') | Out-Null
+        }
+    } finally {
+        if ($null -ne $denyWriteHandle) { $denyWriteHandle.Dispose() }
+        [Environment]::SetEnvironmentVariable('ProgramFiles', $previousProgramFiles, 'Process')
+        [Environment]::SetEnvironmentVariable('ProgramW6432', $previousProgramW6432, 'Process')
+        $script:IsWindowsHost = $previousWindowsHost
+    }
+
     # #704 is the only bridge from the historical fixpoint ledger to the Lean
     # single-PR policy. The bridge is a literal PR/base/owner/path tuple and never
     # mutates the closed ledger; future mechanism changes use advisory mode.

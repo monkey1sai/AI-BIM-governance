@@ -190,7 +190,12 @@ function Get-SelfReferentialTrustedGitIdentity {
                 $writeHandle = [IO.File]::Open($resolved, [IO.FileMode]::Open, [IO.FileAccess]::ReadWrite, [IO.FileShare]::Read)
                 continue
             } catch [UnauthorizedAccessException] { }
-            catch [IO.IOException] { }
+            catch [IO.IOException] {
+                # A sharing violation or transient lock does not prove that the
+                # caller lacks write permission. Reject the candidate instead
+                # of treating an ambiguous I/O failure as a trust signal.
+                continue
+            }
             finally {
                 if ($null -ne $writeHandle) { $writeHandle.Dispose() }
             }
