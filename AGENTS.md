@@ -5,6 +5,14 @@
 
 衝突解析優先序：使用者最新明確指令 > 本文件（AGENTS.md） > `CLAUDE.md` > installed skills / generated wiki / generated skills。`docs/agents/*.md` sub-files 是本文件的 lazy-load 細節，不另成優先序層級。不要把「agent 指令優先序」和「runtime/product 行為真相」混在一起；後者見 §3。
 
+## 0.0 Lean Governance & Subtraction Directive（元治理減法方針）
+
+為避免「元治理反噬」與流程摩擦力過大導致開發停滯，全體 Agent 一律遵守下列減法原則：
+1. **廢除 3-PR Demote/Reapprove 儀式**：禁止將單一功能或 UI 變更拆成 Demote ➔ Feat ➔ Reapprove 三個 PR。所有畫面改動與 Design Baseline 更新**一律在單一 PR 內同時交付**。
+2. **凍結元治理工具自我修復循環**：禁止 Agent 主動開立或遞迴開立 Fixpoint rebuild、Classifier repair、Ledger reconciliation、Watermark alignment 等純治理工具修復 PR。非阻塞之治理工具告警改為 Warning，不阻擋業務代碼交付。
+3. **前端驗收以 Functional & Semantic E2E 為主**：開發迭代期著重於「按鈕可點、API 通暢、轉檔狀態正確」的 Playwright 語意與功能驗收，放寬 1% 嚴苛 Pixel Diff 的硬阻斷。
+4. **Single Active Writer 原則**：同一時間只由一個主要 Coordinator Agent 負責寫入與開 PR，其他 Agent 僅擔任唯讀 Research 或局部 Debugger，根除多 Writer 爭搶 main 造成的 stale base 與 lock 衝突。
+
 ## 0.1 Agent 工作方式
 
 ### AI Coding Governance Lanes
@@ -40,10 +48,10 @@
 - 前端相關改動動工前必讀設計文件 §04 API 契約與 §08 R1–R4（後端凍結面：前端只打 coordinator `:8004`、proxy 路徑 byte-identical、禁改 governance `app.py`、coordinator `governanceProxy.ts`、streaming `conversion_authority.py`；R2 API 三態，絕不臆造後端）。
 - 主系統架構以 `https://bim-docs.jackshappybot.com/` 分頁「01 系統架構」的「BIM 模型管理平台 — 系統架構」為準：採雲端與客戶落地端分離，外部公司雲端是 control-plane，客戶落地端是 IFC / Kit / MCP runtime data-plane。
 - `https://bim-docs.jackshappybot.com/` 分頁「05 BIM治理與模型檢核」中的 A1–A10 是本 repo 的 10 大主要開發項目；產品架構／定位仍可參考該站，但 production 2D UX、資訊架構、視覺與互動狀態以前述 pinned design reference 為準。
-- 凡是 user-facing capability，不得以「後端 / API / 測試完成」或單張 screenshot 宣告 done。必須同時通過：(a) Windows runner 上的 Chromium DPR1、1440×900＋1920×1080、pixel diff≤1% 與 branch-protected Playwright semantic 100% 的 design fidelity gate；(b) route/button/fixture/真 API/runtime ID/loading/success/failure/retry/trace/network 的 operability gate。scope 由 base/head manifest＋changed paths 推導；`mixed`／`partial_reference_missing` 可做誠實局部修復，但不得宣稱 99% 或 full completion，unknown path fail closed。
-- 最終回報 user-facing work 時必須列出 PR machine truth：Frontend route、Main button(s) tested、Fixture used、Backend API called、Runtime action（含 observed runtime ID）、Visible success state、E2E command、Screenshot / trace、Design gate status、Design screen(s)、Reference-missing route(s) / surface(s)、Full completion claimed、Design reference manifest、Visual fidelity result、Visual comparison、Visual artifacts、Known gaps。Frontend URL 可加列但不得取代前述 labels。
+- 凡是 user-facing capability，以可執行的 Functional & Semantic Playwright 驗證與真 API/runtime 為完成標準（route/button/fixture/真 API/runtime ID/loading/success/failure/retry/trace/network）。在功能迭代期，UI 與 Design Baseline 變更採單 PR 一併提交，不再強制 Demote/Reapprove 多輪 PR。
+- 最終回報 user-facing work 時列出 PR machine truth：Frontend route、Main button(s) tested、Fixture used、Backend API called、Runtime action（含 observed runtime ID）、Visible success state、E2E command、Screenshot / trace、Design gate status、Known gaps。
 - 真實 IFC semantic viewer E2E 的核心輸入為主工作區 local `storage/` 內 IFC；new worktree 不會自動帶這些 ignored/local artifact，測試應讀主工作區絕對路徑或用 gitignored junction/symlink，不得把 IFC 或大型 `model.usdc` commit 進 repo。
-- Design fidelity 與 runtime evidence 互不代替；不得宣告 full-system E2E complete，除非同時具備 governance CPU semantic E2E、Kit WebRTC first-frame/stage/DataChannel runtime evidence，以及適用 route 的 design fidelity result。live WebRTC frame 不作 design pixel golden。
+- Design fidelity 與 runtime evidence 互不代替；具備 governance CPU semantic E2E、Kit WebRTC first-frame/stage/DataChannel runtime evidence，以及適用 route 的驗證結果即屬完整。live WebRTC frame 不作 design pixel golden。
 - 當使用者要求「請測試部署區重建」或同義口令時，agent MUST 執行 `.\scripts\dev\rebuild-test-deploy.ps1 -Build -InventoryPath '<repo-external target.local.json>'`（或先設定 `AI_BIM_DEPLOY_TARGET_INVENTORY`）；無 `-TargetId` 時 helper 選 canonical Linux target，用 freshly fetched `origin/main` 重建 owner-controlled deployment checkout、排除 agent/tooling 檔案與 root `docs/`、`openspec/`、`patches/`，保留必要 production asset，並在 target 內執行 `scripts/deploy.ps1 -Build`。private inventory 必須由 owner/provisioning 預先建立，transport 不得上傳或覆寫。`-TargetId local-windows` 僅供明確 on-demand Windows verification。禁止使用 `-DryRun`、stale `origin/main`、目前 worktree 或 sub-repo 啟動命令取代此流程。
 - 當使用者要求「以 origin main 為 baseline 建立隔離區執行」或同義口令時，agent MUST 先 `git fetch origin --prune`，再 `git worktree add -b <type>/<slug> <repo-sibling-path> origin/main`，並在開工前實證 `git rev-parse HEAD` 等於 `git rev-parse origin/main` 且 `git status --porcelain` 為空；不成立即停工回報。禁止以 local `main`、目前 checkout、其他 branch 或 stale `origin/main` 當 baseline；禁止落腳於 repo 內 gitignored 路徑（`.claude/worktrees/`、`.worktrees/`）。此契約對所有 Lane 生效，Lane F/B 的「乾淨時可直接切 branch」豁免在此不適用。完整位置／命名／closeout 見 `docs/agents/github-workflow.md`。
 - 已授權但限縮：(a) 明確啟動的 `spec-to-done` 可在目前 spec PR 已 merge、commit 可由 freshly fetched `origin/main` 取得後，於真實測試部署前執行 ownership-gated preflight；無參數預設只偵測。只有明確選擇 `-TargetId local-windows` 並傳入 `-StopOwnedRuntime -DeploymentRoot '<resolved local-windows deploy root>'`，且 listener 符合 per-port service role、deployment pidfile ancestor、精確 launcher entrypoint與雙快照 creation identity，才可用 exact process handle 停止。canonical Linux inventory／runtime 由 owner 控制，transport 不得自動停止或改寫。pidfile 僅供 lineage 佐證，caller 不得覆寫 topology；必須記錄 port / PID / process name / ownership kind，再執行同一條 target-scoped `-Build`。(b) 既有一般 Phase 3 重試能力保留，但所有自動停止也 MUST 走同一 helper 與相同閘門，再重跑同一條 `-Build`；helper 無法證明 ownership 時必須 HELD，只有使用者逐次確認明確 PID 與證據後才可人工例外。不得改用 `-Force` / `-DryRun`、驗證未 merge branch，或停止無關 process。

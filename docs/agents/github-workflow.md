@@ -64,8 +64,10 @@ gh api user --jq .login
 
 ## PR 與 merge
 
+- **單一 PR 交付原則（Lean PR Delivery）**：依據 `AGENTS.md` §0.0，嚴禁將單一需求拆成「Demote Baseline ➔ 實作功能 ➔ Re-approve Baseline」的三部曲（3-PR Route）。程式碼實作、測試與 Snapshot/Baseline 更新應在**同一個 PR 內一次完成交付**，以消除不必要的分支管理與 CI 重複等待時間。
+- **凍結純治理修復 PR**：禁止開立 Fixpoint rebuild、Classifier repair、Ledger reconciliation、Watermark alignment 等純治理工具維護 PR。治理工具告警改為 Warning，不阻擋業務 PR。
 - 開 PR 前跑 affected validation 並回報結果；Lane B 只在 code symbol/flow 變更時跑 detect_changes，Lane G/S commit 前必跑。PR 由 GitHub Actions 做遠端確認，但不得把 Actions 當第一輪錯誤發現工具。
-- **Local PR preflight 是硬 gate**：凡 GitHub workflow 可在本機等效檢查，必須先本機跑到綠再 push / watch CI；跳過本機 preflight 導致 PR 等待或重跑，視為嚴重開發時間浪費。最低要求：
+- **Local PR preflight**：凡 GitHub workflow 可在本機等效檢查，必須先本機跑過再 push / watch CI。最低要求：
 
   ```powershell
   .\scripts\dev\check-pr-local-preflight.ps1 -PrNumber <pr-number>

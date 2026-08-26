@@ -6,6 +6,14 @@
 
 若本檔、generated wiki、generated skills 或任何歷史文件與 `AGENTS.md` 衝突，採用 `AGENTS.md`。
 
+## 0.1 Lean Governance & Subtraction 指令
+
+遵循 `AGENTS.md` §0.0 減法原則：
+- 廢除 3-PR Demote/Reapprove 流程，改為單 PR 交付程式碼與 Snapshot/Baseline。
+- 凍結元治理工具自我修復（禁止自動開立 Fixpoint rebuild、Classifier repair、Ledger reconciliation PR）。
+- 前端驗收以 Functional & Semantic Playwright 為主，放寬 1% Pixel-diff 阻斷。
+- 實施 Single Active Writer 原則，禁止多 Writer 並行搶 main。
+
 ## 1. Claude 行為對齊
 
 日常任務預設使用 Lane F 或 Lane B。不得因任務非平凡、文字含「完成」、或 touched path 位於 code/tests 就自動呼叫 Superpowers；只有使用者明確要求完整 Superpowers / `spec-to-done`，或明確符合 Lane S 觸發句型時，才啟動完整 lifecycle。
