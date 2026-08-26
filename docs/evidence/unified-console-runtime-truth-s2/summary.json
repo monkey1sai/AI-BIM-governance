@@ -1,113 +1,121 @@
 {
   "slug": "unified-console-runtime-truth-s2",
-  "run": "unified-console-runtime-truth-s2-r3",
+  "run": "unified-console-runtime-truth-s2-r4",
   "phase": "P4",
   "verdict": "pass_with_declared_gaps",
   "engine": "playwright",
   "playwrightVersion": "1.61.1",
   "nodeVersion": "22.22.0",
   "browser": "chromium (Desktop Chrome profile, headless, viewport 1440x900)",
-  "executor": "Codex root coordinator; production/test files unchanged during capture; supplemental helper is gitignored",
+  "executor": "Codex root coordinator; repo launcher owned governance/coordinator; Playwright webServer owned viewer; no tracked source changed during capture",
   "capturedAtUtc": {
-    "spec": "2026-08-26T08:06:41.0693153Z/2026-08-26T08:06:51.0959445Z",
-    "supplemental": "2026-08-26T08:14:21.854Z/2026-08-26T08:14:23.370Z",
-    "copiesVerified": "2026-08-26T08:15:50.9838135Z"
+    "invocation": "2026-08-26T11:56:15.794Z",
+    "lastTrace": "2026-08-26T11:56:26.2280924Z",
+    "backendStarted": "2026-08-26T11:51:27.240426Z",
+    "backendStopped": "2026-08-26T11:57:22.3007672Z"
   },
-  "subjectHead": "9916f3fb855a8f20095b10b5082168e03177df9a",
-  "subjectBase": "d807f9af905a537d82842ef7d77408c2c366344c",
-  "subjectHeadNote": "branch codex/openspec/unified-console-runtime-truth-s2; merge-base(HEAD, origin/main) and origin/main both d807f9af905a537d82842ef7d77408c2c366344c at capture preparation; ahead 18, behind 0; tracked worktree clean before runtime. The capture update changes only this summary and four tracked PNGs.",
+  "subjectHead": "79e74596c788ded02be349f7b988120cdeb0c9e2",
+  "subjectBase": "2480939cd7bf11144e9c4eeb44dd6a332eb5801d",
+  "subjectHeadNote": "branch codex/openspec/unified-console-runtime-truth-s2; freshly fetched origin/main and merge-base(HEAD, origin/main) both 2480939cd7bf11144e9c4eeb44dd6a332eb5801d; tracked and nonignored-untracked worktree clean before capture and after runtime cleanup",
   "worktree": "C:/Repos/active/iot/AI-BIM-governance.worktrees/unified-console-runtime-truth-s2",
-  "authorization": "Owner authorized historical backend conflicts to retain fresh origin/main truth and replay only branch-only plan/frontend/r3 evidence. Rebased range contains exactly 13 authorized delivery paths; audited backend/spec truth paths equal origin/main.",
+  "authorization": "Owner explicitly authorized retaining origin/main spec and newer historical backend truth while preserving branch-only plan/frontend delivery commits.",
   "evidenceAttempts": {
-    "used": 2,
+    "used": 1,
     "limit": 2,
-    "attempt1": "Fresh coordinator and the 3-test spec passed. A supplemental browser assertion rejected the freshly richer governance 502 body because the scratch helper expected the old reduced body; its outputs were not promoted and were preserved.",
-    "attempt2": "Same owned coordinator, same HEAD/base, and same fresh viewer contract. The helper asserted the complete observed 502 body including error=TypeError: fetch failed; both after-action screenshots and the supplemental trace passed and were promoted.",
-    "preBrowserImportFailure": "A CommonJS named-import error occurred before chromium launch and was preserved; it did not consume a browser attempt."
+    "attempt1": "Real-manifest Chromium execution reached the browser and passed 3 of 3 tests with zero skipped tests.",
+    "preBrowserDiagnostics": [
+      "First launcher start failed before backend creation because Get-Command pwsh returned two executables; no manifest, reservation, listener or browser remained.",
+      "Second launcher start used a process-local de-duplicated PATH but rolled back before browser launch because the worktree lacked an ignored venv and system Python lacked uvicorn; all listeners and reservations were released.",
+      "First Playwright start timed out before Chromium because the ignored compatibility config merged two webServer entries; it was corrected to one exact-cwd server before attempt 1."
+    ]
   },
-  "supersedes": {
-    "priorSubjectHead": "d2e080504d6ccce591fff96a3ecc615cf4db1460",
-    "priorEvidenceBackup": "artifacts/e2e/unified-console-runtime-truth-s2-superseded-d2e0805-20260826T160404",
-    "reason": "Prior screenshots, traces, hashes, backend provenance and base claim predated the rebased head and the visible dev-routes placeholder change."
+  "stack": {
+    "kind": "isolated_branch_stack",
+    "changeId": "unified-console-runtime-truth-s2",
+    "runId": "r4-p4-79e7459-20260826-194619c",
+    "offset": 1,
+    "manifest": "artifacts/e2e/unified-console-runtime-truth-s2/r4-p4-79e7459-20260826-194619c/stack-manifest.json",
+    "manifestSha256": "06b7ef67aa972ed18811ef30514a93e4d8febdc77317b27caba509062ea89068",
+    "invocation": "artifacts/e2e/unified-console-runtime-truth-s2/r4-p4-79e7459-20260826-194619c/evidence-invocation.json",
+    "invocationGeneration": "ef0d0721-f69b-4a1e-ab19-ef1391a6435a",
+    "ports": {
+      "coordinator": 8006,
+      "governance": 49104,
+      "viewer": 5181
+    },
+    "processes": [
+      {
+        "role": "governance",
+        "pid": 10028,
+        "creationIdentity": "2026-08-26T11:51:21.918088Z",
+        "stopStatus": "stopped"
+      },
+      {
+        "role": "coordinator",
+        "pid": 26884,
+        "creationIdentity": "2026-08-26T11:51:25.382945Z",
+        "stopStatus": "stopped"
+      }
+    ],
+    "closeout": "launcher status=stopped; exact process identities absent; ports 8006, 49104 and 5181 each had zero listeners; only run-owned processes were stopped"
   },
-  "backend": {
+  "testConfiguration": {
     "coordinator": {
-      "baseUrl": "http://127.0.0.1:8006",
-      "sourceHead": "9916f3fb855a8f20095b10b5082168e03177df9a",
-      "runId": "run_20260826_080507_ce484b",
-      "launcher": {
-        "pid": 25408,
-        "created": "2026-08-26T16:05:06.4355490+08:00",
-        "entrypoint": "node.exe node_modules/tsx/dist/cli.mjs src/index.ts"
-      },
-      "listener": {
-        "pid": 44680,
-        "parentPid": 25408,
-        "created": "2026-08-26T16:05:06.5709870+08:00",
-        "port": 8006,
-        "entrypoint": "node.exe with tsx preflight/loader, src/index.ts"
-      },
-      "environment": {
-        "ENABLE_DEV_ROUTES": "false",
-        "EXTERNAL_INTAKE_IP_ALLOWLIST": "10.0.0.0/8",
-        "DEV_AUTH_TOKEN": "loaded from the approved test-only plan value; value not echoed here",
-        "MINIO_WATCH_ENABLED": "false",
-        "CORS_ORIGINS": "http://127.0.0.1:5180",
-        "dependencyBases": "conversion/governance/kit pointed to http://127.0.0.1:1",
-        "stores": "all session/event/outbox/ledger/intake/storage/log paths under the run scratch"
-      },
-      "preflight": [
-        "GET /health -> 200 {status:ok, service:bim-review-coordinator}",
-        "GET /api/dev/ifc-sources -> 404 {detail:dev routes disabled}",
-        "GET /api/dev/test-data-projects -> 404 {detail:dev routes disabled}",
-        "GET /api/dev/ifc-sources with the test token -> 404 same body",
-        "POST /api/conversion/jobs/ifcready_nope/prioritize without token -> 403 {detail:caller ip not in allowlist}",
-        "GET /api/runtime/status -> 200 and configured_endpoints.coordinator.port=8006"
-      ],
-      "stoppedAtUtc": "2026-08-26T08:17:00.6187509Z",
-      "closeout": "listener, launcher and viewer PIDs absent; ports 8006 and 5180 each have zero listeners; only run-owned exact creation identities were stopped"
+      "ENABLE_DEV_ROUTES": "false",
+      "EXTERNAL_INTAKE_IP_ALLOWLIST": "10.0.0.0/8",
+      "DEV_AUTH_TOKEN": "test-only value loaded from an ignored temporary .env; value not recorded here",
+      "CORS_ORIGINS": "http://127.0.0.1:5181",
+      "mutableStores": "launcher-bound under this run directory",
+      "temporaryEnvRemoved": true
     },
     "viewer": {
-      "spec": "playwright.config.ts started a fresh strictPort :5180 webServer with reuseExistingServer=false and VITE_COORDINATOR_API_BASE=http://127.0.0.1:8006",
-      "supplemental": {
-        "origin": "http://127.0.0.1:5180",
-        "pid": 31828,
-        "created": "2026-08-26T16:12:20.8108500+08:00",
-        "entrypoint": "node.exe node_modules/vite/bin/vite.js --host 127.0.0.1 --port 5180 --strictPort",
-        "stopped": true
-      }
-    }
+      "baseUrl": "http://127.0.0.1:5181",
+      "coordinatorBaseUrl": "http://127.0.0.1:8006",
+      "owner": "Playwright webServer",
+      "reuseExistingServer": false,
+      "compatibilityConfig": "ignored and removed after the run; retained canonical isolated global setup, manifest checks and forbid-skipped reporter; narrowed testMatch to the target spec and enabled trace/screenshot",
+      "temporaryConfigRemoved": true
+    },
+    "venv": "ignored junction to the same repository main checkout venv; removed after the run; target venv remained intact"
   },
-  "command": "E2E_COORDINATOR_BASE_URL=http://127.0.0.1:8006 E2E_DEV_AUTH_TOKEN=<approved test value> npx playwright test e2e/dev-routes-disabled-operator-token.spec.ts",
-  "requireRealGate": "E2E_REQUIRE_REAL was intentionally not set because this config's isolated-stack gate excludes this spec; the spec itself hard-fails missing preflight and the result has zero skipped tests.",
+  "preflight": [
+    "launcher status -> active with governance and coordinator owned=true ready=true",
+    "manifest head_sha -> 79e74596c788ded02be349f7b988120cdeb0c9e2",
+    "GET http://127.0.0.1:8006/health -> 200",
+    "GET http://127.0.0.1:8006/api/dev/ifc-sources -> 404",
+    "POST prioritize without token -> 403",
+    "real-mode list gate selected exactly 3 tests in the target spec"
+  ],
+  "command": "E2E_REQUIRE_REAL=1 E2E_STACK_MANIFEST=<run manifest> E2E_COORDINATOR_BASE_URL=http://127.0.0.1:8006 E2E_DEV_AUTH_TOKEN=<test-only value> npx playwright test --config <ignored r4 compatibility config> e2e/dev-routes-disabled-operator-token.spec.ts",
+  "requireRealGate": true,
   "result": {
     "exitCode": 0,
-    "durationSeconds": 10.027,
+    "durationSeconds": 13.3,
     "tests": 3,
     "passed": 3,
     "failed": 0,
     "skipped": 0,
-    "stdout": "artifacts/e2e/unified-console-runtime-truth-s2-r3-run-9916f3f-20260826T160404/playwright.stdout.log",
-    "htmlReport": "artifacts/e2e/unified-console-runtime-truth-s2-r3-report-9916f3f-20260826T160404"
+    "durableStatus": "artifacts/e2e/unified-console-runtime-truth-s2/r4-p4-79e7459-20260826-194619c/playwright-output/r4-target-spec/.last-run.json",
+    "htmlReport": "artifacts/e2e/unified-console-runtime-truth-s2/r4-p4-79e7459-20260826-194619c/playwright-report/r4-target-spec"
   },
   "tests": [
     {
       "line": 167,
       "name": "#demo-control: dev routes 404 -> honest notice and disabled controls",
-      "result": "passed in 4.2s",
-      "networkBinding": "GET /api/dev/ifc-sources initial and after Refresh each returned exact 404 {detail:dev routes disabled}"
+      "result": "passed in 3.9s",
+      "networkBinding": "initial and Refresh GET /api/dev/ifc-sources each returned exact 404 {detail:dev routes disabled}"
     },
     {
       "line": 210,
       "name": "#a1-workbench: test-data projects 404 -> dev-routes note",
-      "result": "passed in 991ms",
+      "result": "passed in 836ms",
       "networkBinding": "GET /api/dev/test-data-projects returned exact 404 {detail:dev routes disabled}"
     },
     {
       "line": 249,
       "name": "D2=T4 operator-token API contract probe",
-      "result": "passed in 110ms",
-      "networkBinding": "real server-side HTTP to :8006; no browser UI token flow claimed"
+      "result": "passed in 66ms",
+      "networkBinding": "Playwright request fixture sent real server-side HTTP to the run-owned coordinator"
     }
   ],
   "routes": [
@@ -118,139 +126,121 @@
         "register-and-convert asserted disabled"
       ],
       "fixture": "none by design because dev routes are closed",
-      "backendApi": "browser GET http://127.0.0.1:8006/api/dev/ifc-sources -> exact 404 {detail:dev routes disabled}, twice",
-      "visibleState": "notice contains dev routes closed and ENABLE_DEV_ROUTES=false; select disabled with placeholder （dev routes 已關閉）; register disabled; runtime: dev_routes_disabled and not storage_empty; ID rows render —",
-      "screenshots": [
-        "unified-console-runtime-truth-s2-demo-control.png: spec fullPage after Refresh; runtime row is below the page crop",
-        "unified-console-runtime-truth-s2-demo-control-after-refresh.png: panel element after Refresh; runtime row visible"
-      ]
+      "backendApi": "browser GET http://127.0.0.1:8006/api/dev/ifc-sources -> exact 404 twice",
+      "runtimeId": null,
+      "visibleState": "dev routes disabled notice; disabled selector and register action; runtime: dev_routes_disabled rather than storage_empty"
     },
     {
       "route": "#a1-workbench",
       "mainButtons": [
-        "local_fs select visible",
-        "retry filesystem library clicked and re-hit live 502"
+        "local_fs source selected by default"
       ],
       "fixture": "none",
-      "backendApi": "browser GET /api/dev/test-data-projects -> exact 404; GET /api/governance/files/tree -> exact 502 {detail:governance-service unreachable at http://127.0.0.1:1,error:TypeError: fetch failed}, on mount and retry",
-      "visibleState": "dev-routes note visible; local_fs unavailable error and retry remain visible; note persists after the second 502",
-      "screenshots": [
-        "unified-console-runtime-truth-s2-a1-workbench.png: spec fullPage at initial mount; note is clipped at the lower edge",
-        "unified-console-runtime-truth-s2-a1-workbench-after-retry.png: viewport after retry; note, 502 error and retry affordance visible"
-      ]
+      "backendApi": "browser GET http://127.0.0.1:8006/api/dev/test-data-projects -> exact 404; governance backend was separately launcher-owned and healthy",
+      "runtimeId": null,
+      "visibleState": "local_fs UI remains usable and the test-data badge limitation explicitly states dev routes are disabled"
     }
   ],
   "apiProbe": {
-    "boundary": "Playwright request fixture/server-side HTTP, not a LAN browser operator-token UI flow",
+    "boundary": "Playwright request fixture/server-side HTTP, not a browser token-entry UI flow",
     "observed": [
       "dev source without and with token -> 404; token does not unlock /api/dev/*",
-      "lineage preview without/with token and lineage confirm with token -> 403 caller ip not in allowlist",
-      "prioritize without token -> 403 caller ip not in allowlist",
-      "prioritize with wrong token -> 403 operator token invalid",
+      "lineage preview/confirm remain 403 with token",
+      "prioritize without token -> 403",
+      "prioritize with wrong token -> 403",
       "prioritize and retry with the correct test token -> 404 next-stage job-not-found",
-      "PUT /api/conversion/watch with empty body -> fresh trace status 400; body is not claimed here",
-      "POST /api/conversion/trigger with empty body -> fresh trace status 503; body is not claimed here",
-      "repeated correct-token prioritize -> 429 exact rate-limit body with Retry-After=60"
+      "watch with an empty body -> 400 after authorization",
+      "trigger with an empty body -> 400 or 503 after authorization",
+      "repeated correct-token prioritize -> 429 with Retry-After within 1..60 seconds"
     ]
   },
-  "supplementalCapture": {
-    "script": "artifacts/spec-to-done/unified-console-runtime-truth-s2-r3/p4-9916f3f-20260826T160404/supplemental-capture.mjs (gitignored)",
-    "observations": "artifacts/e2e/unified-console-runtime-truth-s2-r3-trace-9916f3f-20260826T160404/supplemental-observations.json",
-    "noRouteMocks": true,
-    "assertions": "exact 404 bodies for demo initial/refresh and A1 test-data; exact complete 502 bodies for A1 mount/retry; visible notices, disabled controls, runtime state and retry/error affordances"
-  },
   "runtimeIds": [],
-  "runtimeIdsNote": "No user-facing runtime ID exists in this disabled-state slice: no fixture, job, session or stage was created. The server run_id is log provenance only and was not visible in UI.",
+  "runtimeIdsNote": "No user-facing runtime ID exists in this disabled-state slice; no fixture, conversion job, review session or stage was created.",
   "verticalSlice": {
     "routeReachable": true,
     "buttonsTested": true,
     "realBackendApi": true,
     "runtimeIdVisible": false,
-    "visibleFailureAndRetry": true,
+    "visibleFailureAndRetry": false,
     "loadingVisible": false,
     "successVisible": false,
     "gpuStageTruth": "not applicable; no 3D/WebRTC/DataChannel claim",
-    "designGateStatus": "Functional and Semantic Playwright is primary under Lean Governance; four fresh screenshots are evidence, not a 1% pixel hard gate",
-    "verdictBasis": "Pass only for the scoped D3 honest dev-routes-disabled UI and T4 server-side API contract. No canonical-linux, UI token input, conversion success, runtime ID or GPU claim."
+    "designGateStatus": "Functional and Semantic Playwright is primary under Lean Governance; fresh screenshots are evidence, not a 1 percent pixel hard gate",
+    "verdictBasis": "Pass only for the scoped D3 dev-routes-disabled UI and T4 server-side API contract."
   },
   "notObserved": [
-    "runtime ID in UI",
-    "loading affordance",
+    "runtime ID, loading state or success state in UI",
     "fixture registration or conversion success",
-    "operator-token entry in the UI and LAN browser-triggered conversion",
-    "rate-window expiry or per-source-IP behavior",
-    "canonical-linux target 181",
+    "operator-token entry in the UI or LAN browser-triggered conversion",
+    "canonical Linux target",
     "3D viewer first frame, stage match or DataChannel acknowledgement"
   ],
   "gaps": [
     {
       "id": "g1",
-      "q": "The shell still displays static COORDINATOR 8004 / COORD :8004 while this local evidence used :8006; screenshots alone cannot prove the endpoint without the trace/process provenance."
+      "q": "The shell labels still show canonical 8004/49102 while this isolated evidence used 8006/49104; manifest and trace provenance, not the labels, prove the endpoint."
     },
     {
       "id": "g2",
-      "q": "A1 dev-routes note and governance 502 co-occur in browser evidence. Page-level Vitest covers 502/plain-error negative classification, but no browser run isolates dev routes enabled plus governance 502."
+      "q": "The user-facing token input and LAN browser conversion trigger are not built in this slice; token evidence is request-fixture HTTP only."
     },
     {
       "id": "g3",
-      "q": "The user-facing T4 token input and LAN browser-triggered conversion are not built in this slice; token evidence is server-side request-fixture HTTP only."
+      "q": "Canonical Linux remains owner-controlled and unverified; isolated branch evidence cannot imply deploy-target truth."
     },
     {
       "id": "g4",
-      "q": "Rate limiting reached 429 with Retry-After=60, but expiry/reset and per-source-IP keying were not observed."
+      "q": "The disabled state intentionally exposes no runtime ID, loading affordance or success state."
     },
     {
       "id": "g5",
-      "q": "All runtime evidence is local and isolated; canonical-linux 181 remains owner-controlled and unverified."
+      "q": "GitNexus 1.6.9 exact file impacts are LOW, but detect-changes compare is polluted by cross-language common identifiers and reports unrelated critical flows; the exact 13-path git range and executable checks are the fallback."
     },
     {
       "id": "g6",
-      "q": "The disabled state intentionally exposes no runtime ID, loading affordance or success state; none is claimed."
+      "q": "The canonical isolated Playwright testMatch excludes this target spec and disables traces/screenshots; an ignored compatibility config retained all real gates while selecting the spec. This is a non-blocking harness composability warning, not a claimed source fix."
     },
     {
       "id": "g7",
-      "q": "GitNexus 1.6.9 exact index is current, but detect-changes compare is polluted by linked-worktree paths and reports a non-actionable critical result; exact Git ancestry and the 13-path git diff are the fallback, not a GitNexus pass."
+      "q": "The isolated launcher payload does not expose this scenario's dev-route/token/allowlist settings; a test-only ignored .env was absent before the run and removed afterward."
     }
   ],
   "screenshots": [
     {
-      "route": "#demo-control (spec fullPage after Refresh)",
-      "file": "artifacts/e2e/unified-console-runtime-truth-s2-demo-control.png",
-      "sha256": "d11aa7ee5493e51f9e7291de33734982f7cc4e572468a623842b80d68ddb0388"
+      "route": "#demo-control after live Refresh",
+      "file": "docs/evidence/unified-console-runtime-truth-s2/unified-console-runtime-truth-s2-demo-control.png",
+      "sha256": "300ffb606708b06d7e0371e7f81b51e072ed7375b470fb1603c3f6c8da70fae1"
     },
     {
-      "route": "#demo-control (panel after Refresh)",
-      "file": "artifacts/e2e/unified-console-runtime-truth-s2-demo-control-after-refresh.png",
-      "sha256": "08fd3544573a570e4a073196216957e6c4c07e5e2a66a6a24e5933e9ee9c73b7"
-    },
-    {
-      "route": "#a1-workbench (spec initial mount)",
-      "file": "artifacts/e2e/unified-console-runtime-truth-s2-a1-workbench.png",
-      "sha256": "9c86c9e1719ba129aad9c35ab9a0075a0ffcffe0fb5aec8fb3ad3b354959ea5f"
-    },
-    {
-      "route": "#a1-workbench (after retry)",
-      "file": "artifacts/e2e/unified-console-runtime-truth-s2-a1-workbench-after-retry.png",
-      "sha256": "ae676122dbb469edec0eb36b39279e10b20d51b7f4d6f7b3ce26708ee00d87d6"
+      "route": "#a1-workbench with dev-routes note and live governance backend",
+      "file": "docs/evidence/unified-console-runtime-truth-s2/unified-console-runtime-truth-s2-a1-workbench.png",
+      "sha256": "3ab20b04f12c0d8b6decda484d3c5ff23eaa8658617e869eee6b825295a006fb"
     }
   ],
   "traces": [
     {
-      "file": "artifacts/e2e/unified-console-runtime-truth-s2-r3-trace-9916f3f-20260826T160404/supplemental-capture-trace.zip",
-      "sha256": "f2badfa9f166b06f054fb7320693078fd55552efd4f73fb329fa3113d4c99a9b"
+      "file": "artifacts/e2e/unified-console-runtime-truth-s2/r4-p4-79e7459-20260826-194619c/playwright-output/r4-target-spec/dev-routes-disabled-operat-092d1--→-notice-＋-選檔／註冊鈕-disabled-chromium/trace.zip",
+      "sha256": "e6f621a1c3a86bd344fb8b0d051e96d0cd9819d430adab1c0f7dfd16075f4465"
     },
     {
-      "file": "artifacts/e2e/unified-console-runtime-truth-s2-r3-trace-9916f3f-20260826T160404/dev-routes-disabled-operat-092d1--→-notice-＋-選檔／註冊鈕-disabled-chromium/trace.zip",
-      "sha256": "04b5e06bcf63663b91c25ab8356df39b943743ac85b6565009b5276b98fb73bb"
+      "file": "artifacts/e2e/unified-console-runtime-truth-s2/r4-p4-79e7459-20260826-194619c/playwright-output/r4-target-spec/dev-routes-disabled-operat-eb123-ojects-404-→-測試資料標記不可用-note-chromium/trace.zip",
+      "sha256": "b3469bff80c238c68563355e46d98d6fe226678c9829f2be35be02473915550c"
     },
     {
-      "file": "artifacts/e2e/unified-console-runtime-truth-s2-r3-trace-9916f3f-20260826T160404/dev-routes-disabled-operat-eb123-ojects-404-→-測試資料標記不可用-note-chromium/trace.zip",
-      "sha256": "dded4100d5f689147c813e927d2f357084f41bda1d7ed0035a00353b9b31e0ee"
-    },
-    {
-      "file": "artifacts/e2e/unified-console-runtime-truth-s2-r3-trace-9916f3f-20260826T160404/dev-routes-disabled-operat-8c905-n-解鎖-＋-四路由-T4-授權-＋-速率限制-429-chromium/trace.zip",
-      "sha256": "cbf9ab96fb523e0d5fbd187b38433e52d9fd5c1e4201d6d7d07cb26eaa6625e4"
+      "file": "artifacts/e2e/unified-console-runtime-truth-s2/r4-p4-79e7459-20260826-194619c/playwright-output/r4-target-spec/dev-routes-disabled-operat-8c905-n-解鎖-＋-四路由-T4-授權-＋-速率限制-429-chromium/trace.zip",
+      "sha256": "796fa82ff345711d61d603a841372a3cebc87557484030edee489166e55161bb"
     }
   ],
-  "trackedCopy": "docs/evidence/unified-console-runtime-truth-s2/{summary.json, unified-console-runtime-truth-s2-demo-control.png, unified-console-runtime-truth-s2-demo-control-after-refresh.png, unified-console-runtime-truth-s2-a1-workbench.png, unified-console-runtime-truth-s2-a1-workbench-after-retry.png}"
+  "trackedPromotion": {
+    "files": [
+      "docs/evidence/unified-console-runtime-truth-s2/summary.json",
+      "docs/evidence/unified-console-runtime-truth-s2/unified-console-runtime-truth-s2-demo-control.png",
+      "docs/evidence/unified-console-runtime-truth-s2/unified-console-runtime-truth-s2-a1-workbench.png"
+    ],
+    "removedStaleR3Artifacts": [
+      "docs/evidence/unified-console-runtime-truth-s2/unified-console-runtime-truth-s2-demo-control-after-refresh.png",
+      "docs/evidence/unified-console-runtime-truth-s2/unified-console-runtime-truth-s2-a1-workbench-after-retry.png"
+    ],
+    "rollbackBackup": "artifacts/tmp/unified-console-runtime-truth-s2-r4/p4-r4-p4-79e7459-20260826-194619/pre-promotion-backup"
+  }
 }
