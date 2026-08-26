@@ -20,13 +20,22 @@
 ## 1. web-viewer-sample：真值綁定（R1、R2）
 
 - [ ] 1.1 impact 分析：`gitnexus impact UnifiedShell -d upstream -r AI-BIM-governance`；同樣對 `HomePage`、`PipelinePage`、`OpsPage`、`coordinatorClient` 執行並記錄 blast radius
+  - 本機完成（slice 1）：五個 UI symbol（`UnifiedShell`／`HomePage`／`PipelinePage`／`OpsPage`／`coordinatorClient`）LOW；`jsonGet` **HIGH**（16 個同檔 caller、0 process），coordinator 2026-08-25 追認續行（spec-to-done：HIGH 非停下點），補強＝error message 逐字不變＋既有 client 測試全綠；PR body 揭露。
 - [ ] 1.2 端點欄位 shape 盤點（十個端點皆已存在：`app.ts:1363,2374,2399,2462,3215,3779,3785`、`routes/governanceProxy.ts:223`）：逐一記錄欄位與型別對映；缺欄位者畫面標 `data-state="unavailable"`，不新增端點。驗證：盤點表附於 PR 描述；`rg -n "runtime/status|external/ifc-ready|conversion/records|callback-outbox/summary|governance/issues|governance/rule-runs|minio-watch/status|minio/objects|kit/health|kit/instances/current" bim-review-coordinator/src`
+  - 本機完成：盤點表附於 PR body（十端點皆存在，無新增），待 181 隨 slice 1 勾選（commit `57d29d3`）
 - [ ] 1.3 共用 poller store `useCoordinatorStatusStore`（單一 in-flight／指數退避 ≤60s／hidden 暫停），沿用 `coordinatorClient`，以 `ConsoleDataProvider` 介面注入。驗證：`npx vitest run src/console/unified/coordinatorStatusStore.test.ts`；`npx tsc --noEmit`
+  - 本機綠，待 181（slice 1，commit `57d29d3`）
 - [ ] 1.4 `#home` 四 KPI＋六 svc-dot 綁定；`data-prov="asbuilt"`＋`data-state`；offline 顯示 `—`／未連線。驗證：`npx vitest run src/console/unified/homeLiveBinding.test.tsx`
+  - 本機綠，待 181（slice 1，commit `57d29d3`）
+  - 揭露（P5 c1）：`#home` 應用啟動器容器（`HomePage.tsx`）原標 `data-prov="fixture"`（非 canonical 七值），本切片改為 `demo`（設計原型示範內容）；A1–A4 逐 badge 的 prov／`LIVE` 文字屬 §2.3 切片。
 - [ ] 1.5 `#pipeline` 五段＋治理／報表列綁定；RVT 段退役標示；outbox 只用 `/api/callback-outbox/summary`。驗證：`npx vitest run src/console/unified/pipelineLiveBinding.test.tsx`
+  - 本機綠，待 181（slice 1，commit `57d29d3`；has_source_ifc 逐物件觸發列表隨 D2 授權於 §4.2／§2.4 落地，本 slice 為 disabled＋原因）
 - [ ] 1.6 `#runtime` 真值 OpsPage（Kit instance／GPU 未取得／服務健康／事件誠實停用）。驗證：`npx vitest run src/console/unified/opsLiveBinding.test.tsx`
+  - 本機綠，待 181（slice 1，commit `57d29d3`）
 - [ ] 1.7 頂列 GPU chip 綁定，移除字面 `82%`（`UnifiedShell.tsx:143`）。驗證：`npx vitest run src/console/unified/topbarGpuChip.test.tsx`；`rg -n "82%" web-viewer-sample/src/console/unified` 為空
+  - 本機綠，待 181（slice 1）：production 檔（排除 `*.test.*`）`rg -n "82%" web-viewer-sample/src/console/unified` 為空；三個測試檔含該字面僅作負向 oracle（斷言渲染輸出不含 `82%`）。
 - [ ] 1.8 假資料 export 退出 production 顯示路徑（`initialIntake`／`initialConv`／`initialSessions`／`initialOutbox`／`initialIssues`／`alerts`／`services`／`failDefs`／`diffDefs`／`fedMembers`／`stageTree`；D1=P 移到 test-only、D1=H 只由 preview provider 載入）；i18n／導覽／style helper 保留。驗證：`npx vitest run src/console/unified/fixtureNotInProduction.test.ts`；`npm run build:ui` 後 `rg -c "GPU/Stream 82%" dist-ui` 為 0
+  - 本機綠，待 181（slice 1，commit `57d29d3`；6 個 export（`initialIntake`／`initialConv`／`initialSessions`／`initialOutbox`／`alerts`／`services`）已移 test-only；`initialIssues` 留在 production 供 Issues/BCF dock（§2）種入（P3 f1：移走會讓 workspace.a3 failure semantic case 空掉），`failDefs`／`diffDefs`／`fedMembers`／`stageTree` 由 docks／WorkspacePage 續用，以 fixtureNotInProduction.test.ts ratchet 釘住，§2／§3 切片承接）
 
 ## 2. web-viewer-sample：控制項與 badge（R3）
 
@@ -63,12 +72,19 @@
 ## 5. design gate／rebaseline／semantic cases／既有測試（R8；HELD 直到 0.1 與 0.4）
 
 - [ ] 5.1 更新 `src/console/EdgeConsole.sharedstatus.test.tsx:54-67`：改為「`#home` 經共用 poller 呼叫 runtimeStatus，同端點單一 in-flight」。驗證：`npx vitest run src/console/EdgeConsole.sharedstatus.test.tsx`
+  - 本機綠，待 181（slice 1，commit `57d29d3`）
 - [ ] 5.2 更新 `src/console/unified/a1DockLive.test.tsx:100-104`：liveBackend 時 fixture 區塊由真值取代（不再斷言 `A1_Tower_v12.ifc` 與 `data-prov="fixture"` 根）。驗證：`npx vitest run src/console/unified/a1DockLive.test.tsx`
+  - 本機綠（解凍 fixture 斷言），待 181；「真值取代」正向斷言隨 §2.2／§3.1 落地（slice 1，commit `57d29d3`）
 - [ ] 5.3 更新 `src/console/unified/unified.test.tsx`（KPI 標籤斷言改為 mock API 值與 offline 狀態）。驗證：`npx vitest run src/console/unified/unified.test.tsx`
+  - 本機綠，待 181（slice 1，commit `57d29d3`）
 - [ ] 5.4 更新 `web-viewer-sample/e2e/design-system-semantic-cases.ts`：`kpi-conv-val`／`kpi-outbox-val`／`svc-dot` 等 fixture 值斷言改為誠實狀態斷言；因 `implemented_case_ids`＝`required_case_ids` 且每屏執行（`design-system-visual.spec.ts:182-184,217`），以全屏規模評估；登記 bootstrap ledger（`verification_mechanism_paths` ⊆ changed paths）。驗證：依 `scripts/verification-manifest.json:423-436` 的 `design-semantic-visual` 項目執行
+  - 本機：12/13 屏 semantic_parity=1（home／pipeline／ops／workspace.a1／a2／a4／concept.a5–a10 全綠；`workspace.a3.default:failure` 曾因 af88ecd 把 initialIssues 移到 test-only 而空掉（**是本 slice 造成，非 pre-existing**；P3 final review f1），於 d9b40de 修復後 13/13——本機 console 輸出未 tracked（`artifacts/*.txt` 受 .gitignore 排除，range 內不可查證），承重驗證為 CI required check `design-semantic-visual` 於 PR 上重跑；PR body concerns 為揭露管道）；pixel 三屏（home／pipeline／ops）預期紅（**57d29d3 時點、#698 之前**的敘述；#698 後三屏為 reference_missing 不進 pixel 比對，見 5.5 三段路線）；`web-viewer-sample/e2e/**` 非 `Get-SelfReferentialMechanismPaths` 機制面，bootstrap ledger 未登記（PR body `Self-referential bootstrap: no`），待 181（slice 1，commit `57d29d3`）
 - [ ] 5.5 D1=P：owner 明示後執行 `node web-viewer-sample/scripts/capture-design-system-reference.mjs --rebaseline --confirm-rebaseline`（非 `canonical_product_surface` 屏重拍；`workspace.a4.default` digest 不變）。D1=H：實作 design-preview harness＋capture 機制變更＋production bundle 不可達測試＋bootstrap ledger。驗證：`pwsh scripts/tests/verify-design-system-reference.ps1 -VerifyOrigin`
+  - **落地實況（coordinator 2026-08-25／26，owner 明示「rebaseline go」）**：雙旗標 capture 腳本只重拍設計原型（authoring origin 未變 → golden 不變），無法表達產品在 503 stub 下的 offline 態；依 `console-design-token-authority` 與 PR #429 先例，三屏改以 `design-system-visual.spec.ts` 的 actual 截圖升格為 `baseline_provenance.authority=canonical_product_surface`（manifest approval 記 owner 明示）。`pwsh scripts/tests/verify-design-system-reference.ps1 -VerifyOrigin` 於 4e73c10：`[design-reference-gate] passed — 13 screens, 26 golden files, source=2f414d9d4bd96adbd3102e417f2465eb4aa609b0c3a12d118f41c1ccff30c9c8`；`npm run test:visual:design-system` 乾淨樹 13/13 passed、三屏 diff 0。**PR 切分（owner 核准三段路線，2026-08-26）**：change-scope 政策（`reference_authority_mixed_fail_closed`）禁止產品與 golden 同 PR；reference-first 換 golden（PR #697，已關）又因 manifest／baseline 屬 `full_dispatch_globs` 而在 CI 以產品 offline golden 比對 main 的 fixture UI 而紅。故走三段：(1) 降級 PR **#698**（已合併）把三屏移出 manifest→`reference_missing`（10 屏／20 golden 不變；`-VerifyOrigin` 於 main：`passed — 10 screens, 20 golden files`）；(2) 本產品 PR（scope `mixed`，10 屏 pixel 比對；`#home`／`#pipeline`／`#runtime` 此刻**無** pixel golden，由 gate 誠實列為 reference_missing）；(3) 重新核准 PR：以合併後產品面的 actual 截圖升格三屏為 `canonical_product_surface`（待做，未完成前三屏 pixel 比對缺口持續存在）。上文「13 screens／13/13 屏」為 #698 之前在本分支（4e73c10）以升格 golden 所做的本機驗證，不是 main 現況；R-A2「快照只由 capture 腳本雙旗標寫入」的偏離（第二條路徑＝#429 型升格）屬既有治理欠帳（D-15），已揭露。
 - [ ] 5.6 乾淨工作樹跑兩道 required gate（`design-semantic-visual`、`functional-runtime-conv`）；PR body `Design gate status` 逐字＝機器算出的 `mixed`。驗證：`git status --porcelain=v1 --untracked-files=all` 為空；gate 命令依 `scripts/verification-manifest.json:423-450`
+  - 本機（4e73c10，#698 之前）：design-semantic-visual 13/13 屏 semantic_parity=1（a3 迴歸已於 d9b40de 修復）；pixel 三屏（home／pipeline／runtime.ops）以升格 golden 比對 diff 0。**#698 之後**：本分支併入 main 後 gate 以 10 屏比對（三屏 reference_missing），結果見 PR body `Design gate status`；functional-runtime-conv passed（FUNCTIONAL_COORDINATOR_PORT=18005 避開被占用之預設 8005，未動該既有程序）；結果見 PR body（slice 1，commit `57d29d3`）
 - [ ] 5.7 前端全量：`npx tsc --noEmit && npx vitest run`（cwd `web-viewer-sample`）
+  - 本機綠，待 181（slice 1，commit `57d29d3`；tsc exit 0、vitest 89 files/1175 tests passed、lint:baseline 0 regressions）
 
 ## 6. canonical-linux 部署驗收（R7）
 

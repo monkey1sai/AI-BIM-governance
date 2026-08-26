@@ -1,40 +1,42 @@
 // ═══════════════════════════════════════════════════════════════════════
 // UnifiedConsole — 殼層（頂列 + 側欄 + Toast host + state provider）
 // 像素級移植正本：scratchpad/design-origin/app.js（topbar / sidebar / toast 區塊）
-// 所有 inline style / 文案 byte-identical；互動為 fixture 語意（local state +
-// toast 假 API 字串），不打任何 /api。導覽一律 window.location.hash 賦值。
-// data-uc / data-active 屬性為 design gate semantic contract 專用的像素中性
-// 附加（e2e/design-system-semantic-cases.ts 以其定位/斷言），不影響渲染輸出。
+// unified-console-runtime-truth slice 1：頂列狀態 chips（Coordinator／Governance／Kit Runtime／GPU）與側欄
+// 「模型資料與轉檔」badge 改綁 coordinator :8004 真值（共用 poller，ConsoleDataProvider 注入 live 單例）；
+// 字面 GPU chip 已移除。導覽一律 window.location.hash 賦值。
+// data-uc / data-active / data-state / data-health 屬性為 design gate semantic contract 與 vitest 定位用，像素中性。
 // ═══════════════════════════════════════════════════════════════════════
 import {
   createContext, useCallback, useContext, useEffect, useMemo, useRef, useState,
 } from "react";
-import type { ReactNode } from "react";
+import type { CSSProperties, ReactNode } from "react";
 import { setLang, useLang } from "../i18n";
 import {
-  MONO, getL, navMain, apps, badgeTone, navItem,
-  initialIntake, initialConv, initialSessions, initialOutbox, initialIssues, INITIAL_ISSUE_SEQ,
+  MONO, getL, navMain, apps, badgeTone, navItem, INITIAL_ISSUE_SEQ, initialIssues,
 } from "./fixtures";
 import type {
-  ConceptKey, ConvItem, DockKey, IntakeItem, IssueItem, OutboxItem, PageKey, SessionItem,
+  ConceptKey, DockKey, IssueItem, OutboxItem, PageKey,
 } from "./fixtures";
+import { ConsoleDataProvider } from "./ConsoleDataProvider";
+import { useConsoleData } from "./consoleData";
+import { coordinatorStatusStore } from "./coordinatorStatusStore";
+import type { EndpointKey } from "./coordinatorStatusStore";
+import { HEALTH_DOT, cell, cellText, conversionCounts, healthOf } from "./runtimeTruth";
+import type { HealthState } from "./runtimeTruth";
 import "./unified.css";
 
-/* ═══ UnifiedState context（conv/intake/sessions/outbox/issues fixture + toast）═══ */
+/* ═══ UnifiedState context（docks／WorkspacePage 的 issues/outbox local state + toast；intake/conv/sessions 已由共用 poller 取代）═══ */
 
 export interface UnifiedStateShape {
-  intake: IntakeItem[];
-  conv: ConvItem[];
-  sessions: SessionItem[];
-  outbox: OutboxItem[];
   issues: IssueItem[];
+  outbox: OutboxItem[];
   issueSeq: number;
 }
 
 export interface UnifiedStateApi extends UnifiedStateShape {
   /** setState 類 API：淺合併 patch（對應原型 setState(patch)）。 */
   patch: (p: Partial<UnifiedStateShape>) => void;
-  /** 顯示 toast（假 API 字串），2600ms 自動消失；重複呼叫重置計時器。 */
+  /** 顯示 toast，2600ms 自動消失；重複呼叫重置計時器。 */
   toast: (msg: string) => void;
   toastMsg: string;
 }
@@ -49,11 +51,8 @@ export function useUnifiedState(): UnifiedStateApi {
 
 export function UnifiedStateProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<UnifiedStateShape>(() => ({
-    intake: [...initialIntake],
-    conv: [...initialConv],
-    sessions: [...initialSessions],
-    outbox: [...initialOutbox],
-    issues: [...initialIssues],
+    issues: [...initialIssues], // slice-2 欠帳：Issues/BCF dock（§2）仍 fixture 種入（P3 f1）
+    outbox: [],
     issueSeq: INITIAL_ISSUE_SEQ,
   }));
   const [toastMsg, setToastMsg] = useState("");
@@ -93,19 +92,33 @@ export interface UnifiedShellProps {
   children?: ReactNode;
 }
 
+/** 殼層自身訂閱的端點（頂列三 chip、GPU chip、側欄轉檔 badge）。模組層常數：identity 穩定。 */
+const SHELL_KEYS: readonly EndpointKey[] = ["runtimeStatus", "ruleRuns", "kitHealth", "conversionRecords"];
+
 export function UnifiedShell(props: UnifiedShellProps) {
   return (
-    <UnifiedStateProvider>
-      <ShellFrame {...props} />
-    </UnifiedStateProvider>
+    <ConsoleDataProvider store={coordinatorStatusStore}>
+      <UnifiedStateProvider>
+        <ShellFrame {...props} />
+      </UnifiedStateProvider>
+    </ConsoleDataProvider>
   );
 }
+
+const chipBase: CSSProperties = { display: "flex", alignItems: "center", gap: 6, padding: "5px 10px", borderRadius: 999, fontSize: 11 };
+const chipByHealth: Record<HealthState, CSSProperties> = {
+  ok: { ...chipBase, background: "rgba(49,197,109,.10)", border: "1px solid rgba(49,197,109,.25)", color: "var(--ab-ok-text)" },
+  degraded: { ...chipBase, background: "rgba(232,97,92,.10)", border: "1px solid rgba(232,97,92,.3)", color: "var(--ab-danger)" },
+  unknown: { ...chipBase, background: "rgba(230,178,62,.08)", border: "1px solid rgba(230,178,62,.3)", color: "var(--ab-warn)" },
+};
+const chipUnavailable: CSSProperties = { ...chipBase, background: "rgba(120,160,210,.06)", border: "1px solid rgba(120,160,210,.14)", color: "var(--ab-text-dim)", fontFamily: MONO };
 
 function ShellFrame({ page, dock, concept, children }: UnifiedShellProps) {
   const lang = useLang();
   const zh = lang === "zh";
   const L = getL(zh);
-  const { conv, toastMsg } = useUnifiedState();
+  const { toastMsg } = useUnifiedState();
+  const snap = useConsoleData(SHELL_KEYS);
 
   /* body.uc-body：html/body 級樣式（背景/overflow/字體）由殼層掛載切換 */
   useEffect(() => {
@@ -115,7 +128,28 @@ function ShellFrame({ page, dock, concept, children }: UnifiedShellProps) {
 
   const nav = (hash: string) => { window.location.hash = hash; };
 
-  /* ---- topbar ---- */
+  /* ---- 頂列狀態 chips（真值；design §3.3 頂列 GPU chip 列）---- */
+  // 防禦性讀取（rt.service?.）：/api/runtime/status 契約保證 service 必存在（coordinatorClient.ts RuntimeStatus
+  // 非 optional），但既有測試（EdgeConsole.aliasRedirect.test.tsx「malformed higher-priority session values…」）
+  // 以 `as never` 餵入缺 service 的簡化 payload 測試無關的 session/hash 邏輯——殼層一旦真讀 service 會 crash 整棵樹。
+  // 不強改該測試（非本 task 列管的 patch 清單），改在讀取點防禦，缺欄位時誠實地不宣稱 ok（degraded）。
+  const coordinatorHealth = healthOf(snap.runtimeStatus, (rt) => rt.service?.status !== "ok");
+  const governanceHealth = healthOf(snap.ruleRuns);
+  const kitHealth = healthOf(snap.kitHealth);
+  // 盤點（tasks 1.2）：/api/runtime/status 無 GPU 使用率欄位 → live 即「未取得」；不讀任何臆測欄位、不捏造。
+  const gpu = cell(snap.runtimeStatus, () => null);
+  const healthText = (h: HealthState, httpStatus: number | null) =>
+    h === "ok" ? "OK" : h === "degraded" ? (httpStatus === null ? "degraded" : String(httpStatus)) : L.offline;
+  const chip = (uc: string, label: string, h: HealthState, httpStatus: number | null) => (
+    <div data-uc={uc} data-health={h} style={chipByHealth[h]}>
+      <span style={{ width: 6, height: 6, borderRadius: "50%", background: HEALTH_DOT[h] }} />{label} {healthText(h, httpStatus)}
+    </div>
+  );
+  const gpuText = gpu.state === "unavailable" ? `GPU ${L.unavailable}` : gpu.state === "error" ? `GPU ${gpu.httpStatus ?? "error"}` : "GPU —";
+  const gpuStyle: CSSProperties = gpu.state === "unavailable"
+    ? chipUnavailable
+    : { ...chipByHealth[gpu.state === "error" ? "degraded" : "unknown"], fontFamily: MONO };
+
   const topbar = (
     <div style={{ display: "flex", alignItems: "center", gap: 14, height: 56, padding: "0 16px", background: "var(--ab-bar)", borderBottom: "1px solid rgba(120,160,210,.12)", flex: "none" }}>
       <div onClick={() => nav("#home")} style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer" }}>
@@ -136,11 +170,11 @@ function ShellFrame({ page, dock, concept, children }: UnifiedShellProps) {
         <span style={{ color: "var(--ab-text-dim)", fontSize: 10 }}>▾</span>
       </div>
       <div style={{ flex: 1 }} />
-      <div data-prov="fixture" style={{ display: "flex", alignItems: "center", gap: 6 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "5px 10px", borderRadius: 999, background: "rgba(49,197,109,.10)", border: "1px solid rgba(49,197,109,.25)", fontSize: 11, color: "var(--ab-ok-text)" }}><span style={{ width: 6, height: 6, borderRadius: "50%", background: "var(--ab-ok)" }} />Coordinator OK</div>
-        <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "5px 10px", borderRadius: 999, background: "rgba(49,197,109,.10)", border: "1px solid rgba(49,197,109,.25)", fontSize: 11, color: "var(--ab-ok-text)" }}><span style={{ width: 6, height: 6, borderRadius: "50%", background: "var(--ab-ok)" }} />Governance OK</div>
-        <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "5px 10px", borderRadius: 999, background: "rgba(65,199,232,.10)", border: "1px solid rgba(65,199,232,.25)", fontSize: 11, color: "var(--ab-accent-text)" }}><span style={{ width: 6, height: 6, borderRadius: "50%", background: "var(--ab-accent)" }} />Kit Runtime</div>
-        <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "5px 10px", borderRadius: 999, background: "rgba(49,197,109,.10)", border: "1px solid rgba(49,197,109,.25)", fontFamily: MONO, fontSize: 11, color: "var(--ab-ok-text)" }}>GPU/Stream 82%</div>
+      <div data-prov="asbuilt" style={{ display: "flex", alignItems: "center", gap: 6 }}>
+        {chip("chip-coordinator", "Coordinator", coordinatorHealth, snap.runtimeStatus.httpStatus)}
+        {chip("chip-governance", "Governance", governanceHealth, snap.ruleRuns.httpStatus)}
+        {chip("chip-kit", "Kit Runtime", kitHealth, snap.kitHealth.httpStatus)}
+        <div data-uc="chip-gpu" data-state={gpu.state} style={gpuStyle}>{gpuText}</div>
       </div>
       <div onClick={() => setLang(zh ? "en" : "zh")} style={{ display: "flex", alignItems: "center", gap: 0, border: "1px solid rgba(120,160,210,.16)", borderRadius: 8, overflow: "hidden", cursor: "pointer", fontFamily: MONO, fontSize: "10.5px" }}>
         <span data-uc="lang-zh" data-active={zh ? "true" : "false"} style={zh ? { padding: "4px 9px", background: "rgba(65,199,232,.16)", color: "var(--ab-accent-bright)" } : { padding: "4px 9px", color: "var(--ab-text-dim)" }}>中</span>
@@ -151,8 +185,11 @@ function ShellFrame({ page, dock, concept, children }: UnifiedShellProps) {
     </div>
   );
 
-  /* ---- sidebar ---- */
-  const convBadge = String(conv.filter((c) => c.st !== "done").length);
+  /* ---- sidebar（導覽設定來自 fixtures；A1–A4 badge 文字仍為 fixture，§2.3 承接；轉檔 badge 為真值）---- */
+  const convBadge = cell(snap.conversionRecords, (r) => {
+    const c = conversionCounts(r);
+    return c === null ? null : c.running + c.failed;
+  });
   const sidebar = (
     <div data-prov="fixture" style={{ width: 212, flex: "none", background: "var(--ab-bar)", borderRight: "1px solid rgba(120,160,210,.10)", padding: "14px 10px 10px", display: "flex", flexDirection: "column", gap: 16, overflow: "auto" }}>
       <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
@@ -161,7 +198,7 @@ function ShellFrame({ page, dock, concept, children }: UnifiedShellProps) {
           <div key={n.id} className="hv-bg" data-uc={"nav-" + n.id} data-active={page === n.id ? "true" : "false"} style={navItem(page === n.id)} onClick={() => nav(n.hash)}>
             <span style={{ width: 16, textAlign: "center", fontSize: 12, opacity: 0.85 }}>{n.icon}</span>
             <span style={{ flex: 1, fontSize: "12.5px" }}>{L[n.labelKey]}</span>
-            {n.id === "pipe" ? <span data-uc="nav-pipe-badge" style={badgeTone("warn")}>{convBadge}</span> : null}
+            {n.id === "pipe" ? <span data-uc="nav-pipe-badge" data-prov="asbuilt" data-state={convBadge.state} style={badgeTone("warn")}>{cellText(convBadge, L)}</span> : null}
           </div>
         ))}
       </div>
@@ -201,7 +238,7 @@ function ShellFrame({ page, dock, concept, children }: UnifiedShellProps) {
       {topbar}
       <div style={{ display: "flex", flex: 1, minHeight: 0 }}>
         {sidebar}
-        <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", minHeight: 0 }}>
+        <div data-uc="page-root" style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", minHeight: 0 }}>
           {children}
         </div>
       </div>

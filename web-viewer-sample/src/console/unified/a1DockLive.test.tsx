@@ -9,6 +9,8 @@ import EdgeConsole from "../EdgeConsole";
 import { coordinatorClient, type CoordinatorHealth } from "../coordinatorClient";
 import { governanceClient } from "../governanceClient";
 import type { FilesTreeResponse, RuleRunHistoryItem, RuleRunStatus } from "../governanceClient";
+import { coordinatorStatusStore } from "./coordinatorStatusStore";
+import { spyCoordinatorEndpointsOffline } from "./__testdata__/coordinatorMocks";
 
 const HEALTH: CoordinatorHealth = { status: "ok", service: "bim-review-coordinator", kit_signaling_port: 49100 };
 
@@ -53,6 +55,7 @@ describe("A1Dock live 增強區塊（health probe 後接真 API）", () => {
     container = document.createElement("div");
     document.body.appendChild(container);
     prevHash = window.location.hash;
+    coordinatorStatusStore.reset();
   });
   afterEach(() => {
     document.body.removeChild(container);
@@ -79,7 +82,8 @@ describe("A1Dock live 增強區塊（health probe 後接真 API）", () => {
     await act(async () => { root.unmount(); });
   });
 
-  it("(b) health 成功：live 區塊出現（data-prov=asbuilt）、近期 rule-runs 真資料渲染，fixture 區塊不變", async () => {
+  it("(b) health 成功：live 區塊出現（data-prov=asbuilt）、近期 rule-runs 真資料渲染", async () => {
+    spyCoordinatorEndpointsOffline(); // 殼層共用 poller：十端點釘 503，不打真網路
     vi.spyOn(coordinatorClient, "health").mockResolvedValue(HEALTH);
     const listSpy = vi.spyOn(governanceClient, "listRuleRuns").mockResolvedValue({
       filters: {}, limit: 5, offset: 0, total: 2,
@@ -97,15 +101,14 @@ describe("A1Dock live 增強區塊（health probe 後接真 API）", () => {
     expect(history).not.toBeNull();
     expect(history!.textContent).toContain("rr_001");
     expect(history!.textContent).toContain("rr_002");
-    // fixture 區塊維持原樣：dock 根仍 data-prov="fixture"、fixture CTA / 檔案列仍在。
+    // unified-console-runtime-truth（5.2）：不再凍結 fixture 區塊（A1_Tower_v12.ifc／data-prov="fixture" 根）；
+    // 「liveBackend 時 fixture 互動由真值與真頁導向取代」的正向斷言隨 slice 2（tasks §2.2／§3.1）落地。
     expect(container.querySelector('[data-uc="dock-cta"]')).not.toBeNull();
-    expect(container.innerHTML).toContain("A1_Tower_v12.ifc");
-    const dockRoot = container.querySelector('[data-prov="fixture"]');
-    expect(dockRoot).not.toBeNull();
     await act(async () => { root.unmount(); });
   });
 
   it("(b2) health 成功但 governance 清單失敗：誠實顯錯，不偽造資料", async () => {
+    spyCoordinatorEndpointsOffline();
     vi.spyOn(coordinatorClient, "health").mockResolvedValue(HEALTH);
     vi.spyOn(governanceClient, "listRuleRuns").mockRejectedValue(new Error("governance proxy /api/governance/rule-runs -> 502"));
     vi.spyOn(governanceClient, "filesTree").mockRejectedValue(new Error("governance proxy /api/governance/files/tree -> 502"));
@@ -120,6 +123,7 @@ describe("A1Dock live 增強區塊（health probe 後接真 API）", () => {
   });
 
   it("(c) 選檔 → 執行 → useRuleRun for-library 真跑 → 結果摘要出現、近期清單 refresh", async () => {
+    spyCoordinatorEndpointsOffline();
     vi.spyOn(coordinatorClient, "health").mockResolvedValue(HEALTH);
     const listSpy = vi.spyOn(governanceClient, "listRuleRuns").mockResolvedValue({
       filters: {}, limit: 5, offset: 0, total: 1, items: [historyItem("rr_001", "succeeded")],

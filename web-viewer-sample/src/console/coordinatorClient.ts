@@ -20,6 +20,7 @@
 import { defaultCoordinatorBase } from "./coordinatorBase";
 import type { ConversionQualityMetricsSummary } from "../types/review";
 import type { components as kitManagerComponents } from "../generated/kit-manager-api";
+import type { IssueRow, RuleRunHistoryResponse } from "./governanceClient";
 
 const COORD_BASE: string =
   import.meta.env.VITE_COORDINATOR_API_BASE
@@ -45,13 +46,29 @@ function fetchTimeoutSignal(): AbortSignal {
   return AbortSignal.timeout(FETCH_TIMEOUT_MS);
 }
 
+// unified-console-runtime-truth slice 2（D3）：呼叫端需要區分「404＝dev routes 已關閉（canonical-linux）」
+// 與其他失敗，但既有 `coordinator <path> -> <status> <detail>` 訊息格式已被多處 String(e) 顯示依賴——
+// 故以 Error 子類攜帶 status／path，message 逐字不變。目前只有 jsonGet 丟此類（消費者：getTestDataProjects、
+// getConversionsHistory）；其他原語維持既有 Error（不在本切片範圍）。
+export class CoordinatorHttpError extends Error {
+  constructor(readonly path: string, readonly status: number, detail: string) {
+    super(`coordinator ${path} -> ${status} ${detail}`);
+    this.name = "CoordinatorHttpError";
+  }
+}
+
+/** 404 專屬判定：/api/dev/* 於 ENABLE_DEV_ROUTES=false 回 404 → 消費者顯示「dev routes 已關閉」而非泛用錯誤。 */
+export function isCoordinatorNotFound(error: unknown): boolean {
+  return error instanceof CoordinatorHttpError && error.status === 404;
+}
+
 async function jsonGet<T>(path: string): Promise<T> {
   const res = await fetch(`${COORD_BASE}${path}`, { headers: { Accept: "application/json" }, signal: fetchTimeoutSignal() });
   if (!res.ok) {
     // 與 jsonPost/jsonPut 一致萃取 coordinator `{ detail }`（誠實鐵律）：getIfcReadyJob 等輪詢 GET
     // 失敗時，A1 狀態行直接把 .message 顯給操作員；只 throw statusText 會把後端「job 不存在 /
     // 未配置」等可操作提示吞成無意義的 "404 Not Found"。errorDetail best-effort，無 body 才退 statusText。
-    throw new Error(`coordinator ${path} -> ${res.status} ${await errorDetail(res)}`);
+    throw new CoordinatorHttpError(path, res.status, await errorDetail(res));
   }
   return res.json() as Promise<T>;
 }
@@ -527,6 +544,13 @@ export interface ConversionRecord {
 // 不改前端行為；欄位名稱與型別仍完全由生成契約供給。
 export type KitInstanceState = Required<kitManagerComponents["schemas"]["KitInstanceState"]>;
 
+// unified-console-runtime-truth：GET /api/kit/health 是 coordinator 對 kit-manager /health 的 forward-only proxy
+// （app.ts `proxyConversionService`）。body 形狀由 kit-manager 決定；前端只據 HTTP 2xx 判「可達」，不解讀、不捏造。
+export interface KitHealth {
+  status?: string;
+  [k: string]: unknown;
+}
+
 // Task 5 MinIO 閉環 Phase 1：GET /api/minio/objects 回應中的物件形狀。
 // 對齊後端 MinioObjectView（key/etag/role/project_id/project_display_name/category/version）。
 // Task 6：加 idempotency_key（後端預計算 mw_<hash16>，前端 chip 用以查 ConversionRecord map）。
@@ -728,4 +752,10 @@ export const coordinatorClient = {
       `/api/review-sessions/${encodeURIComponent(sessionId)}/issue-snapshot`,
       body,
     ),
+  // unified-console-runtime-truth（edge-console-operator-frontend MODIFIED：允許端點清單擴充）。
+  // 三者皆為既有 :8004 端點（app.ts:3779、governanceProxy.ts:521,223）；共用 poller 唯一入口，
+  // 讓 vitest 一律於 coordinatorClient 層 spy 注入 mock。
+  kitHealth: () => jsonGet<KitHealth>("/api/kit/health"),
+  governanceIssues: () => jsonGet<{ issues: IssueRow[] }>("/api/governance/issues"),
+  governanceRuleRuns: (limit = 5) => jsonGet<RuleRunHistoryResponse>(`/api/governance/rule-runs?limit=${limit}`),
 };

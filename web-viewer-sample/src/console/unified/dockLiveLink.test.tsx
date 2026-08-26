@@ -9,6 +9,8 @@ import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import EdgeConsole from "../EdgeConsole";
 import { coordinatorClient, type CoordinatorHealth } from "../coordinatorClient";
+import { coordinatorStatusStore } from "./coordinatorStatusStore";
+import { spyCoordinatorEndpointsOffline } from "./__testdata__/coordinatorMocks";
 
 const HEALTH: CoordinatorHealth = { status: "ok", service: "bim-review-coordinator", kit_signaling_port: 49100 };
 
@@ -29,6 +31,7 @@ describe("workspace dock live link（health probe 導流 chip）", () => {
     container = document.createElement("div");
     document.body.appendChild(container);
     prevHash = window.location.hash;
+    coordinatorStatusStore.reset(); // 單例跨測試會殘留上一輪快照
   });
   afterEach(() => {
     document.body.removeChild(container);
@@ -59,6 +62,7 @@ describe("workspace dock live link（health probe 導流 chip）", () => {
   });
 
   it("(b) health 成功 stub：fixture dock chip 導向正確；A4 只導向 canonical live surface", async () => {
+    spyCoordinatorEndpointsOffline(); // 殼層共用 poller：十端點釘 503，不打真網路（不碰 health probe）
     const spy = vi.spyOn(coordinatorClient, "health").mockResolvedValue(HEALTH);
     const root = await mountAt("#a1");
     expect(spy).toHaveBeenCalledTimes(1); // probe 只在 mount 打一次，切 dock 不重打。
@@ -85,6 +89,7 @@ describe("workspace dock live link（health probe 導流 chip）", () => {
   });
 
   it("(c) probe 例外（health 同步 throw）：頁面不炸、無 chip", async () => {
+    spyCoordinatorEndpointsOffline();
     vi.spyOn(coordinatorClient, "health").mockImplementation(() => { throw new Error("boom"); });
     const root = await mountAt("#a2");
     // 頁面照常渲染（dock tabs + DATACHANNEL 字條存在）。
