@@ -58,6 +58,33 @@
       }
     },
     {
+      "name": "autonomous-pr-queue",
+      "locations": {
+        "claude": ".claude/skills/autonomous-pr-queue",
+        "codex": ".codex/skills/autonomous-pr-queue"
+      },
+      "sync": {
+        "mode": "mirror",
+        "source": "claude",
+        "targets": [
+          "codex"
+        ]
+      },
+      "provenance": {
+        "kind": "repo-authored",
+        "source": "AI-BIM-governance",
+        "notes": "Introduced for cross-session PR queue lifecycle management, auto-update, auto-fix, and auto-merge."
+      },
+      "integrity": {
+        "format": "agent-skill-tree/v2",
+        "algorithm": "sha256",
+        "trees": {
+          "claude": "fb891136448855d727429ce46e1cee60cccdf94f6c414e883be28792ef956d97",
+          "codex": "fb891136448855d727429ce46e1cee60cccdf94f6c414e883be28792ef956d97"
+        }
+      }
+    },
+    {
       "name": "blip-approve",
       "locations": {
         "claude": ".claude/skills/blip-approve",

@@ -199,6 +199,10 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install pytest jsonschema
 
+      - name: Run agent persona and skill-root parity
+        shell: pwsh
+        run: python -m pytest tests/test_agent_persona_parity.py tests/test_skill_manifest_roots.py -q -p no:cacheprovider
+
       - name: Run root contracts and fakes
         shell: pwsh
         run: python -m pytest tests -q -p no:cacheprovider
