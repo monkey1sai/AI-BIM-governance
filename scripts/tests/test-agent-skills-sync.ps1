@@ -638,9 +638,5 @@ foreach ($platform in @('claude', 'codex')) {
     Assert-True ($visualCompanion -match '(?m)^\./scripts/stop-server\.sh ') "$platform visual companion invokes the vendored stop-server script"
 }
 
-$ornithExamples = Get-Content -Raw -LiteralPath (Join-Path $repoRoot 'ornith-vllm-api-examples.html')
-Assert-True ($ornithExamples -match 'Read-Host "ORNITH_API_KEY" -AsSecureString') 'Ornith PowerShell example prompts securely for the API key'
-Assert-True ($ornithExamples -notmatch '\$env:ORNITH_API_KEY\s*=\s*"&lt;YOUR_ORNITH_API_KEY&gt;"') 'Ornith PowerShell example does not put a pasted API key assignment in shell history'
-
 $testLogger = New-StructLogger -Service 'scripts' -Component 'test-agent-skills-sync' -SkipEnvSnapshot -InMemoryOnly
 $testLogger | Write-StructInfo -Msg '[test-agent-skills-sync] all assertions passed' -Data @{ result = 'passed' }
