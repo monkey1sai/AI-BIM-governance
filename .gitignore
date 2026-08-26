@@ -75,6 +75,7 @@ Thumbs.db
 !.claude/skills/writing-plans/
 !.claude/skills/writing-skills/
 !.claude/skills/pr-queue-manager/
+!.claude/skills/autonomous-pr-queue/
 # Tracked agent assets: workflows/commands/agents/settings (2026-06-10)
 !.claude/workflows/
 !.claude/commands/
@@ -91,6 +92,7 @@ Thumbs.db
 !/\.codex/agents/*.toml
 !/.codex/skills/
 /.codex/skills/*
+!/.codex/skills/autonomous-pr-queue/
 !/.codex/skills/gitnexus-blast-radius/
 !/.codex/skills/spec-to-done/
 !/.codex/skills/ai-bim-fast-fix/
