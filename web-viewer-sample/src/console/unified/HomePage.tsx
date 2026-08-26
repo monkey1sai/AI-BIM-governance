@@ -3,7 +3,7 @@
 // unified-console-runtime-truth slice 1（tasks 1.4）：四 KPI＋六 svc-dot 綁 coordinator :8004 既有端點（共用 poller）；
 // 每值附 data-prov="asbuilt"＋data-state；offline 顯示 —／未連線；無遙測顯示未取得；永不以 0 佔位。
 // 版面沿用設計原型（inline style 不改）；KPI 卡為 data-action="nav" 導向真頁；導覽設定／i18n／style helper 仍來自 ./fixtures。
-// 應用啟動器的 A1–A4 badge 文字仍為 fixture（tasks §2.3 承接），該區塊維持 data-prov="fixture" 誠實標記。
+// 應用啟動器的 A1–A4 badge 文字仍為 fixture（tasks §2.3 承接）；該區塊容器標 data-prov="demo"（canonical 七值，P5 c1），badge 文字本身尚未改綁真值。
 // ═══════════════════════════════════════════════════════════════════════
 import { useLang } from "../i18n";
 import { MONO, SHOW_CONCEPT_APPS, getL, apps, appEn, badgeTone, chipBox } from "./fixtures";
