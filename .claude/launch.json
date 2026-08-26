@@ -1,0 +1,26 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "bim-review-coordinator",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev"],
+      "port": 8004,
+      "cwd": "bim-review-coordinator"
+    },
+    {
+      "name": "web-viewer-sample",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev"],
+      "port": 5173,
+      "cwd": "web-viewer-sample"
+    },
+    {
+      "name": "bim-streaming-server",
+      "runtimeExecutable": "powershell",
+      "runtimeArgs": ["-File", ".\\scripts\\start-streaming-server.ps1", "-SkipAutoLoad"],
+      "port": 49100,
+      "cwd": "bim-streaming-server"
+    }
+  ]
+}
