@@ -16,6 +16,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
+import { syncMainSafely } from './sync-main-safely.mjs';
 
 const STALE_MINUTES = 120;
 const PRUNE_ENDED_HOURS = 24;
@@ -279,6 +280,7 @@ function runManual(command, args) {
     upsertSession(boardDir, { agent, session, cwd, status: 'ended' });
     appendEvent(boardDir, { ts: nowIso(), agent, session, event: 'done', detail: '' });
     process.stdout.write(`done agent=${agent} session=${session}\n`);
+    syncMainSafely(cwd);
     return;
   }
   process.stderr.write(`agents-board: 未知指令 ${command}\n`);
@@ -302,6 +304,7 @@ function runHook(args) {
 
   if (event === 'SessionStart') {
     pruneSessions(boardDir);
+    syncMainSafely(cwd);
     const others = readSessions(boardDir).filter((s) => !(s.agent === agent && s.session === session) && s.status !== 'ended');
     upsertSession(boardDir, { agent, session, cwd, task: '(session 已啟動)', status: 'active' });
     appendEvent(boardDir, { ts: nowIso(), agent, session, event: 'session-start', detail: '' });
@@ -335,6 +338,7 @@ function runHook(args) {
   if (event === 'SessionEnd') {
     upsertSession(boardDir, { agent, session, cwd, status: 'ended' });
     appendEvent(boardDir, { ts: nowIso(), agent, session, event: 'session-end', detail: '' });
+    syncMainSafely(cwd);
   }
 }
 
