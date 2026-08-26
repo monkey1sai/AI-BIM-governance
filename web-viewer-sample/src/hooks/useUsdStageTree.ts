@@ -20,6 +20,11 @@ export interface UseUsdStageTreeReturn {
   expandedPaths: Set<string>;
   searchQuery: string;
   setSearchQuery: (query: string) => void;
+  categoryFilter: string | null;
+  setCategoryFilter: (category: string | null) => void;
+  customColors: Record<string, [number, number, number, number]>;
+  setPrimColor: (primPath: string, rgba: [number, number, number, number]) => void;
+  clearCustomColors: () => void;
   filteredPrims: USDPrimNode[];
   toggleExpand: (primPath: string) => void;
   expandAll: () => void;
@@ -30,16 +35,17 @@ export interface UseUsdStageTreeReturn {
   findNodeByPath: (path: string) => USDPrimNode | null;
 }
 
-function filterPrimsRecursive(nodes: USDPrimNode[], query: string): USDPrimNode[] {
-  if (!query.trim()) return nodes;
+function filterPrimsRecursive(nodes: USDPrimNode[], query: string, category: string | null = null): USDPrimNode[] {
+  if (!query.trim() && !category) return nodes;
   const q = query.toLowerCase();
   const results: USDPrimNode[] = [];
 
   for (const node of nodes) {
-    const nameMatch = (node.name || "").toLowerCase().includes(q) || (node.path || "").toLowerCase().includes(q);
-    const filteredChildren = node.children ? filterPrimsRecursive(node.children, query) : [];
+    const nameMatch = !q || (node.name || "").toLowerCase().includes(q) || (node.path || "").toLowerCase().includes(q);
+    const categoryMatch = !category || (node.type || "").toLowerCase() === category.toLowerCase() || (node.name || "").toLowerCase().includes(category.toLowerCase());
+    const filteredChildren = node.children ? filterPrimsRecursive(node.children, query, category) : [];
 
-    if (nameMatch || filteredChildren.length > 0) {
+    if ((nameMatch && categoryMatch) || filteredChildren.length > 0) {
       results.push({
         ...node,
         children: filteredChildren.length > 0 ? filteredChildren : node.children,
@@ -67,6 +73,8 @@ export function useUsdStageTree(options: UseUsdStageTreeOptions = {}): UseUsdSta
   const [selectedPrims, setSelectedPrims] = useState<Set<string>>(new Set());
   const [expandedPaths, setExpandedPaths] = useState<Set<string>>(new Set());
   const [searchQuery, setSearchQuery] = useState<string>("");
+  const [categoryFilter, setCategoryFilter] = useState<string | null>(null);
+  const [customColors, setCustomColors] = useState<Record<string, [number, number, number, number]>>({});
 
   const toggleExpand = useCallback((primPath: string) => {
     setExpandedPaths((prev) => {
@@ -105,10 +113,23 @@ export function useUsdStageTree(options: UseUsdStageTreeOptions = {}): UseUsdSta
     setSelectedPrims(new Set());
   }, []);
 
+  const setPrimColor = useCallback((primPath: string, rgba: [number, number, number, number]) => {
+    setCustomColors((prev) => ({
+      ...prev,
+      [primPath]: rgba,
+    }));
+  }, []);
+
+  const clearCustomColors = useCallback(() => {
+    setCustomColors({});
+  }, []);
+
   const resetTree = useCallback(() => {
     setSelectedPrims(new Set());
     setExpandedPaths(new Set());
     setSearchQuery("");
+    setCategoryFilter(null);
+    setCustomColors({});
   }, []);
 
   const findNodeByPath = useCallback((targetPath: string): USDPrimNode | null => {
@@ -126,8 +147,8 @@ export function useUsdStageTree(options: UseUsdStageTreeOptions = {}): UseUsdSta
   }, [usdPrims]);
 
   const filteredPrims = useMemo(() => {
-    return filterPrimsRecursive(usdPrims, searchQuery);
-  }, [usdPrims, searchQuery]);
+    return filterPrimsRecursive(usdPrims, searchQuery, categoryFilter);
+  }, [usdPrims, searchQuery, categoryFilter]);
 
   return {
     usdPrims,
@@ -136,6 +157,11 @@ export function useUsdStageTree(options: UseUsdStageTreeOptions = {}): UseUsdSta
     expandedPaths,
     searchQuery,
     setSearchQuery,
+    categoryFilter,
+    setCategoryFilter,
+    customColors,
+    setPrimColor,
+    clearCustomColors,
     filteredPrims,
     toggleExpand,
     expandAll,
@@ -146,3 +172,4 @@ export function useUsdStageTree(options: UseUsdStageTreeOptions = {}): UseUsdSta
     findNodeByPath,
   };
 }
+

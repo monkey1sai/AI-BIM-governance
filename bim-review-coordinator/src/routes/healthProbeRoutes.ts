@@ -28,4 +28,28 @@ export function registerHealthProbeRoutes(app: Express, options: HealthProbeRout
       timestamp: new Date().toISOString(),
     });
   });
+
+  app.get("/ready", (_req: Request, res: Response) => {
+    res.status(200).json({
+      status: "ready",
+      service: "bim-review-coordinator",
+      timestamp: new Date().toISOString(),
+    });
+  });
+
+  app.get("/api/health/artifacts/:edgeArtifactId", (req: Request, res: Response) => {
+    const ledger = options.artifactHealthLedger;
+    const targetId = req.params.edgeArtifactId;
+    const records = ledger ? ledger.list().filter((r) => r.edge_artifact_id === targetId) : [];
+    if (records.length === 0) {
+      res.status(404).json({ detail: "Artifact health record not found." });
+      return;
+    }
+    res.status(200).json({
+      status: "healthy",
+      artifacts: records,
+    });
+  });
 }
+
+
