@@ -86,10 +86,8 @@
     "README*.md",
     "docs/**",
     "patches/**",
-    ".superpowers/sdd/task-*-report.md",
     ".github/ISSUE_TEMPLATE/**",
-    ".github/PULL_REQUEST_TEMPLATE.md",
-    "ornith-vllm-api-examples.html"
+    ".github/PULL_REQUEST_TEMPLATE.md"
   ],
   "path_classes": [
     {
@@ -100,7 +98,9 @@
         "bim-review-coordinator/**", "bim-streaming-server/**", "docs/**", "governance-service/**",
         "infra/**", "openspec/**", "patches/**", "rules/**", "scripts/**", "services/**", "tests/**",
         "web-viewer-sample/**",
-        "architecture/**"
+        "architecture/**",
+        ".superpowers/sdd/task-1-report.md", ".superpowers/sdd/task-4-report.md",
+        ".superpowers/sdd/task-7-report.md", "ornith-vllm-api-examples.html"
       ]
     },
     {
@@ -156,7 +156,9 @@
         "docs/PR_REVIEW_AGENT.md", "docs/agents/**", "docs/contracts/**", "docs/plans/**", "docs/superpowers/**",
         "governance-service/**", "infra/**", "openspec/**", "rules/**", "scripts/**", "services/**",
         "tests/**", "web-viewer-sample/**", "architecture/**",
-        "compose.*.yml", ".env*.example", "agent-skills-manifest.json", "skills-lock.json"
+        "compose.*.yml", ".env*.example", "agent-skills-manifest.json", "skills-lock.json",
+        ".superpowers/sdd/task-1-report.md", ".superpowers/sdd/task-4-report.md",
+        ".superpowers/sdd/task-7-report.md", "ornith-vllm-api-examples.html"
       ]
     },
     { "id": "compose-config", "path_globs": ["compose.*.yml", ".env*.example", "infra/docker/**"] },
