@@ -98,4 +98,23 @@ describe("A1GovernanceWorkbenchPage client-render（doRun 輪詢守門 + 動作�
     await pickModel();
     expect(container.querySelector('[data-testid="a1-localfs-selected"]')).not.toBeNull();
   });
+
+  it.each([
+    ["Coordinator 502", new CoordinatorHttpError("/api/dev/test-data-projects", 502, "upstream unavailable")],
+    ["plain Error", new Error("network unavailable")],
+  ])("[D3 dev routes] %s → 不誤顯示 dev routes 已關閉 note，A1 local_fs select 仍可操作", async (_label, error) => {
+    (coordinatorClient.getTestDataProjects as ReturnType<typeof vi.fn>).mockRejectedValue(error);
+    const root = createRoot(container);
+    await act(async () => { root.render(<A1GovernanceWorkbenchPage />); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+
+    expect(container.querySelector('[data-testid="a1-testdata-devroutes-note"]')).toBeNull();
+
+    const sel = container.querySelector<HTMLSelectElement>('[data-testid="a1-localfs-select"]');
+    expect(sel).not.toBeNull();
+    expect(sel?.disabled).toBe(false);
+    expect(Array.from(sel?.options ?? []).some((option) => (option.textContent ?? "").includes("270"))).toBe(true);
+    await pickModel();
+    expect(container.querySelector('[data-testid="a1-localfs-selected"]')).not.toBeNull();
+  });
 });

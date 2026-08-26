@@ -24,7 +24,7 @@ export function RealIfcConsolePage() {
   const [runtime, setRuntime] = useState<string>("runtime: idle");
   const [lin, setLin] = useState<Lineage>({});
   const [viewerUrl, setViewerUrl] = useState<string>("");
-  // Task 4B：ENABLE_DEV_ROUTES=false 時 coordinator 對 /api/dev/* 整組回 404（PR #691 D3 後端
+  // Task 4B：ENABLE_DEV_ROUTES=false 時 coordinator 對 /api/dev/* 整組回 404（PR #699 D3 後端
   // prefix gate）。#demo-control 全頁都靠 /api/dev/ifc-sources[/:id/register]；誠實顯示「dev routes
   // 已關閉」而非誤導成 storage_empty，並 disable 選檔／註冊避免使用者對已知會 404 的端點重試。
   const [devRoutesDisabled, setDevRoutesDisabled] = useState(false);
@@ -165,7 +165,7 @@ export function RealIfcConsolePage() {
         <label htmlFor="ifcFixtureSelect">IFC fixture</label>
         <select id="ifcFixtureSelect" data-testid="ifc-fixture-select" value={selected} onChange={(e) => setSelected(e.target.value)} disabled={devRoutesDisabled} style={{ minWidth: 360 }}>
           {sources.length === 0 ? (
-            <option value="">（No real IFC files found under ./storage）</option>
+            <option value="">{devRoutesDisabled ? "（dev routes 已關閉）" : "（No real IFC files found under ./storage）"}</option>
           ) : (
             sources.map((it) => (
               <option key={it.source_id} value={it.source_id}>

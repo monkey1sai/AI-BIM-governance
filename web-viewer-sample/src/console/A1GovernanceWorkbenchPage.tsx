@@ -154,7 +154,7 @@ export function A1GovernanceWorkbenchPage() {
   // 誠實降級不阻塞選檔（MinIO 為真實資料監控來源，不標測試資料）。
   const [testDataProjects, setTestDataProjects] = useState<string[]>([]);
   // Task 4C：ENABLE_DEV_ROUTES=false 時 GET /api/dev/test-data-projects 也在 /api/dev/* 404 gate 內
-  // （PR #691 D3）。誠實鐵律：404 是「dev routes 已關閉」這個可解釋的已知狀態，不是普通取不到——
+  // （PR #699 D3）。誠實鐵律：404 是「dev routes 已關閉」這個可解釋的已知狀態，不是普通取不到——
   // 顯示 note 讓操作員知道〔測試資料〕徽章暫時不會出現的原因；非 404 的其他失敗維持既有靜默降級
   // （取不到就不標；不擋 A1 流程），不誤報成 dev routes 問題。
   const [testDataDevRoutesDisabled, setTestDataDevRoutesDisabled] = useState(false);

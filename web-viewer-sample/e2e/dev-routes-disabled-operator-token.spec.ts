@@ -12,11 +12,11 @@ import { test, expect, type APIResponse } from "@playwright/test";
 //     DEV_AUTH_TOKEN=e2e-operator-token、CORS_ORIGINS=http://127.0.0.1:5180 起。
 //
 // 三個 test：
-//   1. #demo-control：/api/dev/ifc-sources 404 → 誠實 notice ＋ 選檔／註冊鈕 disabled。
-//   2. #a1-workbench：/api/dev/test-data-projects 404 → 誠實測試資料標記不可用 note。
+//   1. #demo-control：綁定初次與 refresh 的 /api/dev/ifc-sources 404 body → 誠實 notice ＋ 選檔／註冊鈕 disabled。
+//   2. #a1-workbench：綁定 /api/dev/test-data-projects 404 body → 誠實測試資料標記不可用 note。
 //   3. API 契約探針（非 browser render）：四條 conversion 控制路由 T4 token 路徑（無憑證 403／
-//      錯 token 403／速率限制 429）、lineage legacy-unmanaged 兩路由不因 token 解鎖、
-//      dev routes 整組 404 且 token 對此 prefix 無效。
+//      錯 token 403／速率限制 429），watch／trigger 授權探針使用無副作用的空 body；lineage
+//      legacy-unmanaged 兩路由不因 token 解鎖、dev routes 整組 404 且 token 對此 prefix 無效。
 // 深度因果已由 bim-review-coordinator 的 conversion-control-auth.test.ts／
 // conversion-control-auth-pins.test.ts／dev-routes-disabled.test.ts 兜底；本檔只證明
 // 「真 process 起、真 HTTP、行為與單元測試一致」這條 browser／HTTP 垂直切片。
@@ -197,7 +197,9 @@ test.describe("dev routes 已關閉：UI 垂直切片誠實狀態", () => {
       { timeout: 20_000 },
     );
     await page.getByTestId("ifc-refresh-btn").click();
-    expect((await refreshResponse).status()).toBe(404);
+    const refreshed = await refreshResponse;
+    expect(refreshed.status()).toBe(404);
+    expect(await refreshed.json()).toEqual({ detail: "dev routes disabled" });
     await expect(notice).toBeVisible();
     await expect(page.getByTestId("ifc-register-btn")).toBeDisabled();
     await expect(runtimeState).toContainText("runtime: dev_routes_disabled");
@@ -206,7 +208,14 @@ test.describe("dev routes 已關閉：UI 垂直切片誠實狀態", () => {
   });
 
   test("#a1-workbench：/api/dev/test-data-projects 404 → 測試資料標記不可用 note", async ({ page }) => {
+    const testDataProjectsResponse = page.waitForResponse(
+      (response) => response.url().includes("/api/dev/test-data-projects") && response.request().method() === "GET",
+      { timeout: 20_000 },
+    );
     await page.goto("/#a1-workbench");
+    const testDataProjects = await testDataProjectsResponse;
+    expect(testDataProjects.status()).toBe(404);
+    expect(await testDataProjects.json()).toEqual({ detail: "dev routes disabled" });
     // 預設 executable source 即 local_fs（A1GovernanceWorkbenchPage 初始 state），note 掛在
     // sourceKind==="local_fs" 分支下，故不需切換分頁即可觀察到。
     const localSelect = page.getByTestId("a1-localfs-select");
@@ -308,18 +317,21 @@ test.describe("D2=T4 operator token API 契約探針（真 process、真 HTTP）
     const watchOk = await withRateWindowRetry("watch 授權通過", () =>
       request.put(`${COORDINATOR}${WATCH_PATH}`, {
         headers: { "x-operator-token": OPERATOR_TOKEN },
-        data: { enabled: true },
+        data: {},
       }),
     );
-    expect(watchOk.status()).toBe(422); // MinIO watch 未配置（本環境未設 MINIO_WATCH_* 憑證）
+    expect(watchOk.status()).toBe(400); // 授權通過後落到 body validation，未觸發 watcher lifecycle。
+    expect([403, 429]).not.toContain(watchOk.status());
 
     const triggerOk = await withRateWindowRetry("trigger 授權通過", () =>
       request.post(`${COORDINATOR}${TRIGGER_PATH}`, {
         headers: { "x-operator-token": OPERATOR_TOKEN },
-        data: { key: "e2e/probe/model.ifc" },
+        data: {},
       }),
     );
-    expect(triggerOk.status()).toBe(503); // MinIO 未設定，短路於 key 驗證之前，無 I/O 副作用
+    // 未配置時先回 503；已配置時缺 key 回 400。兩條都只證明授權已通過，不建立 intake job。
+    expect([403, 429]).not.toContain(triggerOk.status());
+    expect([400, 503]).toContain(triggerOk.status());
 
     // --- 速率限制：同來源 IP 每分鐘 OPERATOR_TOKEN_RATE_LIMIT 次（四路由共用同一滑動視窗）---
     // 刻意不斷言「剛好第 11 次」這個絕對次數：視窗殘量是外部狀態（上面幾發已計入，且可能還有

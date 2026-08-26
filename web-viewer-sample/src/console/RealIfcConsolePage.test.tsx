@@ -1,5 +1,5 @@
 // Task 4B：#demo-control（RealIfcConsolePage）於 /api/dev/ifc-sources 404 時誠實顯示
-// 「dev routes 已關閉」（PR #691 D3 後端 prefix gate：ENABLE_DEV_ROUTES=false 時 /api/dev/* 整組 404）。
+// 「dev routes 已關閉」（PR #699 D3 後端 prefix gate：ENABLE_DEV_ROUTES=false 時 /api/dev/* 整組 404）。
 // loadSources 走 raw fetch（W4 語意：非 2xx 是值不是錯誤，非 jsonGet/CoordinatorHttpError），
 // 故本頁直接判 r.status===404，不透過 coordinatorClient。
 import { act } from "react";
@@ -47,6 +47,7 @@ describe("RealIfcConsolePage（#demo-control）：dev routes 404 誠實狀態", 
 
     const select = container.querySelector<HTMLSelectElement>('[data-testid="ifc-fixture-select"]');
     expect(select?.disabled).toBe(true);
+    expect(select?.options[0]?.textContent ?? "").toBe("（dev routes 已關閉）");
 
     const registerBtn = container.querySelector<HTMLButtonElement>('[data-testid="ifc-register-btn"]');
     expect(registerBtn?.disabled).toBe(true);
