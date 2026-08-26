@@ -1,38 +1,41 @@
 {
   "slug": "unified-console-runtime-truth-s2",
-  "run": "unified-console-runtime-truth-s2-r2 (continuation run; P4 re-capture after backend PR #699 merged and origin/main merged into the branch)",
+  "run": "unified-console-runtime-truth-s2-r2 (continuation run) — P4 browser evidence re-capture at HEAD d2e0805 (after P5 gap fixes e1/e4/e5 landed in the spec)",
   "phase": "P4",
   "engine": "playwright",
   "playwrightVersion": "1.61.1",
-  "browser": "chromium (Desktop Chrome device profile, viewport 1440x900)",
-  "executor": "browser-evidence subagent (Claude Code), spec/config unchanged, no packages installed",
-  "capturedAtUtc": "2026-08-26T01:46:29.848Z",
-  "subjectHead": "ecc2dd9274e5f88d77c28af58a2e3071c34a0db3",
-  "subjectHeadNote": "merge of origin/main d5f2d77 (#700) into codex/openspec/unified-console-runtime-truth-s2; backend T4/D3 code comes from origin/main e775595 (#699); worktree tracked files clean before and after the run",
+  "browser": "chromium (Desktop Chrome device profile, viewport 1440x900, headless)",
+  "executor": "browser-evidence subagent (Claude Code); feature spec and playwright.config.ts unchanged; no packages installed",
+  "capturedAtUtc": "2026-08-26T02:04:13Z (spec run) / 2026-08-26T02:08:45Z (supplemental capture)",
+  "subjectHead": "d2e080504d6ccce591fff96a3ecc615cf4db1460",
+  "subjectHeadNote": "branch codex/openspec/unified-console-runtime-truth-s2; commits since the prior evidence head ecc2dd9: a2a3bbb docs(evidence) + d2e0805 test(e2e) (spec now binds the 404 body, pins runtime dev_routes_disabled, clicks Refresh). merge-base with origin/main = d5f2d77 (#700); origin/main has since advanced to 75e9aab (#701), which is NOT in this branch. Worktree tracked files clean before and after the run (git status --porcelain empty).",
   "supersedes": {
-    "priorSubjectHead": "ca4f66090d04ad89d266ce23fa6064e603ecc9a9",
-    "priorEvidenceMovedTo": "artifacts/e2e/unified-console-runtime-truth-s2-trace-superseded-ca4f660/ (old trace dirs, old screenshots, old summary.json); the old playwright.log was overwritten by this run (its content was '3 passed (8.2s)', same three spec lines 166/182/214)"
+    "priorSubjectHead": "ecc2dd9274e5f88d77c28af58a2e3071c34a0db3",
+    "priorEvidenceMovedTo": "artifacts/e2e/unified-console-runtime-truth-s2-trace-superseded-ecc2dd9/ (old trace dir, old screenshots, old summary.json, old playwright.log and playwright-report.json — nothing overwritten this time)"
   },
   "worktree": "C:/Repos/active/iot/AI-BIM-governance.worktrees/unified-console-runtime-truth-s2",
   "backend": {
-    "coordinator": "fresh branch coordinator http://127.0.0.1:8006 started by this run from the worktree at HEAD ecc2dd9 (npx tsx src/index.ts, node PID 39552, created 2026-08-26 09:45:32 +08, coordinator run_id run_20260826_014532_ce87e2); env per plan Task 11 Step 2: ENABLE_DEV_ROUTES=false, EXTERNAL_INTAKE_IP_ALLOWLIST=10.0.0.0/8 (loopback excluded), DEV_AUTH_TOKEN=e2e-operator-token (test-only value from the plan), MINIO_WATCH_ENABLED=false, CORS_ORIGINS=http://127.0.0.1:5180, conversion/governance/kit bases pointed at http://127.0.0.1:1, all data/store paths under the session scratchpad (worktree not polluted)",
-    "whyNot8005": "a pre-existing coordinator on :8005 (node PID 4708, same worktree path, started 2026-08-25 22:43:35 +08) predates the 2026-08-26 09:23 merge that brought bim-review-coordinator/src/app.ts and src/services/conversionControlAuthorization.ts to their current content; it was NOT used and NOT killed (not owned by this run). Using a fresh process on :8006 removes the 'stale process' objection (prior gap e1).",
+    "coordinator": "fresh branch coordinator http://127.0.0.1:8006 started by this run from the worktree at HEAD d2e0805 (wrapper script → npx tsx src/index.ts; node PID 25608, started 2026-08-26T02:03:09Z; coordinator run_id run_20260826_020310_105d40; log line 'bim-review-coordinator listening on http://127.0.0.1:8006'). env per plan Task 11 Step 2 verbatim except PORT=8006: ENABLE_DEV_ROUTES=false, EXTERNAL_INTAKE_IP_ALLOWLIST=10.0.0.0/8 (loopback excluded), DEV_AUTH_TOKEN=e2e-operator-token (test-only value from the plan), MINIO_WATCH_ENABLED=false, CORS_ORIGINS=http://127.0.0.1:5180, conversion/governance/kit bases pointed at http://127.0.0.1:1, all *_STORE_PATH / EDGE_RUNTIME_DATA_ROOT / SESSION_STORE_DIR / EVENT_LOG_DIR / STORAGE_ROOT under the session scratchpad",
+    "whyNot8005": "a pre-existing coordinator on :8005 (node PID 4708, same worktree path, started 2026-08-25 22:43:35 +08) predates the merges that brought the T4/D3 backend into this worktree; it was NOT used and NOT killed (not owned by this run)",
     "preflightBeforeRun": {
       "GET /health": "200 {\"status\":\"ok\",\"service\":\"bim-review-coordinator\",\"kit_signaling_port\":49100}",
       "GET /api/dev/ifc-sources": "404 {\"detail\":\"dev routes disabled\"}",
       "GET /api/dev/test-data-projects": "404 {\"detail\":\"dev routes disabled\"}",
-      "POST /api/conversion/jobs/ifcready_nope/prioritize (no token)": "403 {\"detail\":\"caller ip not in allowlist\"}"
+      "GET /api/dev/ifc-sources (with x-operator-token)": "404 {\"detail\":\"dev routes disabled\"}",
+      "POST /api/conversion/jobs/ifcready_nope/prioritize (no token)": "403 {\"detail\":\"caller ip not in allowlist\"}",
+      "GET /api/runtime/status": "200 (configured_endpoints.coordinator.port = 8006)"
     },
-    "viewer": "fresh vite dev server on http://127.0.0.1:5180 started by playwright.config.ts webServer (reuseExistingServer=false, strictPort) with VITE_COORDINATOR_API_BASE=http://127.0.0.1:8006",
+    "viewer": "fresh vite dev server on http://127.0.0.1:5180 started by playwright.config.ts webServer (reuseExistingServer=false, strictPort) with VITE_COORDINATOR_API_BASE=http://127.0.0.1:8006; for the supplemental capture the same command/env was started again on :5180 (node PID 24304) and stopped afterwards",
+    "worktreeWritesOutsideScratchpad": "only the gitignored bim-review-coordinator/logs/coordinator/2026-08-26/coordinator-run_20260826_020310_105d40.jsonl (structLog root defaults to <cwd>/logs; env LOG_ROOT is not in the plan's Step 2 env list). git status stays clean; the file was deleted after the coordinator was stopped.",
     "stoppedAfterRun": true
   },
-  "command": "cd web-viewer-sample && E2E_COORDINATOR_BASE_URL=http://127.0.0.1:8006 PLAYWRIGHT_JSON_OUTPUT_NAME=<main>/artifacts/e2e/unified-console-runtime-truth-s2-playwright-report.json npx playwright test e2e/dev-routes-disabled-operator-token.spec.ts --reporter=list,json",
-  "requireRealGate": "E2E_REQUIRE_REAL=1 was NOT set: playwright.config.ts calls loadIsolatedStackConfig(), which throws 'E2E_STACK_MANIFEST is required in require-real mode' at config load (e2e/support/isolated-stack.ts:245-246) and its isolated testMatch only selects a3/a4 specs; this spec instead fails (does not skip) on missing preflight (beforeEach throws). JSON report stats: expected=3, skipped=0, unexpected=0, flaky=0.",
-  "result": "3 passed (8.6s); exit code 0",
+  "command": "cd web-viewer-sample && E2E_COORDINATOR_BASE_URL=http://127.0.0.1:8006 PLAYWRIGHT_JSON_OUTPUT_NAME=<main>/artifacts/e2e/unified-console-runtime-truth-s2-playwright-report.json npx playwright test e2e/dev-routes-disabled-operator-token.spec.ts --reporter=list,json > <main>/artifacts/e2e/unified-console-runtime-truth-s2-playwright.log",
+  "requireRealGate": "E2E_REQUIRE_REAL=1 was NOT set: playwright.config.ts calls loadIsolatedStackConfig(), which throws 'E2E_STACK_MANIFEST is required in require-real mode' at config load (e2e/support/isolated-stack.ts) and its isolated testMatch only selects a3/a4 specs; this spec instead fails (does not skip) when preflight is missing (beforeEach throws). JSON report stats: expected=3, skipped=0, unexpected=0, flaky=0.",
+  "result": "3 passed (6.9s); exit code 0; .last-run.json status=passed",
   "tests": [
-    { "line": 166, "title": "#demo-control：/api/dev/ifc-sources 404 → notice ＋ 選檔／註冊鈕 disabled", "status": "passed", "durationMs": 4084 },
-    { "line": 182, "title": "#a1-workbench：/api/dev/test-data-projects 404 → 測試資料標記不可用 note", "status": "passed", "durationMs": 928 },
-    { "line": 214, "title": "D2=T4 operator token API 契約探針（真 process、真 HTTP）", "status": "passed", "durationMs": 125 }
+    { "line": 167, "title": "#demo-control：/api/dev/ifc-sources 404 → notice ＋ 選檔／註冊鈕 disabled", "status": "passed", "durationMs": 3844 },
+    { "line": 208, "title": "#a1-workbench：/api/dev/test-data-projects 404 → 測試資料標記不可用 note", "status": "passed", "durationMs": 767 },
+    { "line": 240, "title": "D2=T4 operator token API 契約探針（真 process、真 HTTP）: dev routes 404（token 不解鎖）＋ lineage 不因 token 解鎖 ＋ 四路由 T4 授權 ＋ 速率限制 429", "status": "passed", "durationMs": 74 }
   ],
   "log": "artifacts/e2e/unified-console-runtime-truth-s2-playwright.log",
   "jsonReport": "artifacts/e2e/unified-console-runtime-truth-s2-playwright-report.json",
@@ -40,110 +43,125 @@
     {
       "route": "#demo-control (RealIfcConsolePage, data-testid=real-ifc-demo-control)",
       "buttons": [
-        "Refresh ./storage IFC list (data-testid=ifc-refresh-btn; enabled; not clicked by the spec)",
-        "註冊並轉檔（真實） (data-testid=ifc-register-btn; asserted disabled)",
-        "IFC fixture select (data-testid=ifc-fixture-select; asserted disabled; shows '(No real IFC files found under ./storage)')"
+        "Refresh ./storage IFC list (data-testid=ifc-refresh-btn; enabled; CLICKED by the spec and by the supplemental capture → second real GET /api/dev/ifc-sources 404; notice / disabled state / runtime line persist)",
+        "註冊並轉檔（真實） (data-testid=ifc-register-btn; asserted disabled; cannot be clicked by design)",
+        "IFC fixture select (data-testid=ifc-fixture-select; asserted disabled; shows '（No real IFC files found under ./storage）')"
       ],
-      "fixture": "none — dev routes closed → fixture list empty by design; nothing rendered as DEMO DATA; no manual curl needed (page loads and calls the coordinator itself)",
+      "fixture": "none — dev routes closed → fixture list empty by design; nothing rendered as DEMO DATA; no manual curl (the page fetches the coordinator itself on mount)",
       "backendApi": [
-        "GET /api/dev/ifc-sources → 404 (browser fetch, Origin http://127.0.0.1:5180 → http://127.0.0.1:8006; from trace network log)",
-        "GET /api/runtime/status → 200; GET /api/conversion/records?limit=100 → 200 (shell status/poller, same trace)"
+        "GET http://127.0.0.1:8006/api/dev/ifc-sources → 404 {\"detail\":\"dev routes disabled\"} (browser fetch, Origin http://127.0.0.1:5180; asserted in-browser by the spec via waitForResponse status+body; seen twice in the trace network log: 02:04:18.468Z mount, 02:04:18.671Z after Refresh click)",
+        "GET /api/runtime/status → 200; GET /api/conversion/records?limit=100 → 200 {\"count\":0,\"items\":[]} (shell status/poller, same trace)"
       ],
       "observed": [
-        "notice data-testid=ifc-dev-routes-notice visible with text 'dev routes 已關閉（ENABLE_DEV_ROUTES=false）：coordinator /api/dev/* 整組回 404，#demo-control 需後端啟用 dev routes 才能列出／註冊 IFC fixture。' (asserted by spec; visible in screenshot)",
-        "runtime state line data-testid=ifc-runtime-state = 'runtime: dev_routes_disabled (ENABLE_DEV_ROUTES=false；#demo-control 需後端啟用 dev routes)' — present in the trace DOM snapshot (1 occurrence) and 'storage_empty' absent (0 occurrences); NOT asserted by the spec (checked post-hoc by grepping the extracted trace)",
-        "ifc-fixture-select disabled and ifc-register-btn disabled (asserted by spec)",
-        "shell header: 使用中 session 0 / GPU 未取得 / Health ok / 資料時間 2026-08-26T01:46:36.352Z",
-        "field list source_id / ifc_ready_job_id / model_version_id / conversion_job_id / conversion_status / download_status all '—' (no runtime IDs, by design of the disabled state)"
+        "notice data-testid=ifc-dev-routes-notice visible: 'dev routes 已關閉（ENABLE_DEV_ROUTES=false）：coordinator /api/dev/* 整組回 404，#demo-control 需後端啟用 dev routes 才能列出／註冊 IFC fixture。' (asserted by spec; visible in screenshots)",
+        "runtime line data-testid=ifc-runtime-state = 'runtime: dev_routes_disabled (ENABLE_DEV_ROUTES=false；#demo-control 需後端啟用 dev routes)' — asserted by the spec (toContainText + not.toContainText('storage_empty')) before and after the Refresh click; the single 'storage_empty' occurrence in the trace file is the not-toContainText expectation parameter, not DOM content; visible in the supplemental panel screenshots (the spec's fullPage screenshot stops at the Edge Console scroll container, so the line is below its fold)",
+        "ifc-fixture-select disabled and ifc-register-btn disabled (asserted by spec; re-checked after Refresh)",
+        "ID rows source_id / source_ifc_relative_path / source_ifc_filename / source_ifc_size_bytes / ifc_ready_job_id / model_version_id / conversion_job_id / conversion_status / download_status / artifact_id / usdc_url / mapping_summary / review_session_id / viewer_url all '—' (no runtime IDs, by design of the disabled state)",
+        "shell header: 使用中 session 0 / GPU 未取得 / Health ok / 資料時間 2026-08-26T02:04:18.485Z; static label 'EDGE CONSOLE · COORDINATOR 8004' / 'COORD :8004' (EdgeConsole.tsx, pre-existing, not runtime truth — traffic went to :8006)"
       ],
-      "screenshot": {
-        "file": "artifacts/e2e/unified-console-runtime-truth-s2-demo-control.png",
-        "absolute": "C:/Repos/active/iot/AI-BIM-governance/artifacts/e2e/unified-console-runtime-truth-s2-demo-control.png",
-        "sha256": "a98b973cdd96264f96e6e414a1cc86ae425edf9b1e97ef7e65803856d51f2b36",
-        "source": "spec page.screenshot fullPage (worktree artifacts/e2e/dev-routes-disabled-demo-control.png), identical bytes to trace test-finished-1.png"
-      }
+      "screenshots": [
+        { "file": "artifacts/e2e/unified-console-runtime-truth-s2-demo-control.png", "absolute": "C:/Repos/active/iot/AI-BIM-governance/artifacts/e2e/unified-console-runtime-truth-s2-demo-control.png", "sha256": "0fb5961f448245e34b40b4a032aec842759d59f53d26f2e622851ea74d45eb24", "source": "spec page.screenshot fullPage after the Refresh click (worktree artifacts/e2e/dev-routes-disabled-demo-control.png, same bytes)" },
+        { "file": "artifacts/e2e/unified-console-runtime-truth-s2-demo-control-panel.png", "absolute": "C:/Repos/active/iot/AI-BIM-governance/artifacts/e2e/unified-console-runtime-truth-s2-demo-control-panel.png", "sha256": "c96ade1f1f21aba36852ba4731c8d87173cc31d9e0398a21575a45b73a48afef", "source": "supplemental capture: element screenshot of data-testid=real-ifc-demo-control after mount (notice + disabled select/register + all ID rows '—' + runtime: dev_routes_disabled)" },
+        { "file": "artifacts/e2e/unified-console-runtime-truth-s2-demo-control-after-refresh.png", "absolute": "C:/Repos/active/iot/AI-BIM-governance/artifacts/e2e/unified-console-runtime-truth-s2-demo-control-after-refresh.png", "sha256": "26cd5d1ef104c925c4624f6549ea38abd1a1b4faf7c0d664ecb79c1e1c910b0e", "source": "supplemental capture: same element after clicking Refresh ./storage IFC list (second real 404; state unchanged)" }
+      ]
     },
     {
       "route": "#a1-workbench (A1GovernanceWorkbenchPage, local_fs source)",
       "buttons": [
-        "選取模型 (disabled — no local_fs file selectable because governance file tree is unreachable in this stub environment)",
-        "重試載入檔案庫 GET /api/governance/files/tree (data-testid=a1-fs-retry; enabled; not clicked by the spec)",
+        "選取模型 (disabled — no local_fs file selectable because the governance file tree is unreachable in this stub environment)",
+        "重試載入檔案庫 GET /api/governance/files/tree (data-testid=a1-fs-retry; enabled; CLICKED by the supplemental capture → second real 502; dev-routes note persists)",
         "local_fs select (data-testid=a1-localfs-select; asserted visible; shows '（local_fs 檔案庫不可用）')"
       ],
       "fixture": "none",
       "backendApi": [
-        "GET /api/dev/test-data-projects → 404 (browser fetch to :8006; trace network log)",
-        "GET /api/governance/files/tree → 502 governance-service unreachable at http://127.0.0.1:1 (honest proxy error; governance base deliberately stubbed)",
-        "GET /api/runtime/status → 200; GET /api/minio/objects → 200; GET /api/external/ifc-ready?limit=100 → 200; GET /api/conversion/records?limit=100 → 200"
+        "GET http://127.0.0.1:8006/api/dev/test-data-projects → 404 {\"detail\":\"dev routes disabled\"} (browser fetch, Origin :5180; trace network log 02:04:19.419Z; supplemental capture read the same status/body in-browser)",
+        "GET /api/governance/files/tree → 502 {\"detail\":\"governance-service unreachable at http://127.0.0.1:1\"} (honest proxy error; governance base deliberately stubbed) — twice in the supplemental capture (mount + retry click)",
+        "GET /api/runtime/status → 200 (x2); GET /api/minio/objects → 200; GET /api/external/ifc-ready?limit=100 → 200; GET /api/conversion/records?limit=100 → 200"
       ],
       "observed": [
-        "note data-testid=a1-testdata-devroutes-note visible with text '測試資料清單暫時不可用（dev routes 已關閉，ENABLE_DEV_ROUTES=false）：local_fs 選項不會加註〔測試資料〕徽章，但不影響選檔與檢核。' (asserted by spec; visible at the bottom edge of the screenshot)",
-        "a1-fs-error visible: 'local_fs 檔案庫不可用：Error: governance proxy /api/governance/files/tree -> 502 governance-service unreachable at http://127.0.0.1:1' with retry button (failure + retry affordance visible)",
-        "note gating in code: A1GovernanceWorkbenchPage.tsx catch → isCoordinatorNotFound(e) (coordinatorClient.ts:61-63: CoordinatorHttpError && status === 404); the 502 path does not set the flag"
+        "note data-testid=a1-testdata-devroutes-note visible: '測試資料清單暫時不可用（dev routes 已關閉，ENABLE_DEV_ROUTES=false）：local_fs 選項不會加註〔測試資料〕徽章，但不影響選檔與檢核。' (asserted by spec; clipped at the bottom edge of the spec screenshot, fully visible in the supplemental screenshots)",
+        "a1-fs-error visible: 'local_fs 檔案庫不可用：Error: governance proxy /api/governance/files/tree -> 502 governance-service unreachable at http://127.0.0.1:1' with retry button (failure + retry affordance)",
+        "after clicking 重試載入檔案庫: governance tree → 502 again, note still visible, fs-error still visible (the 502 path does not touch the 404 flag; gating in code: catch → isCoordinatorNotFound(e) = CoordinatorHttpError && status === 404)",
+        "shell header: 使用中 session 0 / GPU 未取得 / Health ok / 資料時間 2026-08-26T02:04:19.438Z (spec) / 02:08:47.443Z (supplemental)"
       ],
-      "screenshot": {
-        "file": "artifacts/e2e/unified-console-runtime-truth-s2-a1-workbench.png",
-        "absolute": "C:/Repos/active/iot/AI-BIM-governance/artifacts/e2e/unified-console-runtime-truth-s2-a1-workbench.png",
-        "sha256": "fe783675e3e0ca9ce5728a0e49de15a8b309c69988903a07d67d9718da006bb5",
-        "source": "spec page.screenshot fullPage (worktree artifacts/e2e/dev-routes-disabled-a1-workbench.png), identical bytes to trace test-finished-1.png"
-      }
+      "screenshots": [
+        { "file": "artifacts/e2e/unified-console-runtime-truth-s2-a1-workbench.png", "absolute": "C:/Repos/active/iot/AI-BIM-governance/artifacts/e2e/unified-console-runtime-truth-s2-a1-workbench.png", "sha256": "91b7e2dcff72ad512f7103d0168ad61c7061e44c05d0edb272884a8d553c5947", "source": "spec page.screenshot fullPage (worktree artifacts/e2e/dev-routes-disabled-a1-workbench.png, same bytes)" },
+        { "file": "artifacts/e2e/unified-console-runtime-truth-s2-a1-workbench-note.png", "absolute": "C:/Repos/active/iot/AI-BIM-governance/artifacts/e2e/unified-console-runtime-truth-s2-a1-workbench-note.png", "sha256": "c946085bad849db6239dbfc18c8d0e0eb00e906503bfc39e43bbea05dcd445b5", "source": "supplemental capture: viewport after scrolling the note into view (502 error + retry button + dev-routes note)" },
+        { "file": "artifacts/e2e/unified-console-runtime-truth-s2-a1-workbench-after-retry.png", "absolute": "C:/Repos/active/iot/AI-BIM-governance/artifacts/e2e/unified-console-runtime-truth-s2-a1-workbench-after-retry.png", "sha256": "bdba6a01b885fdcc537d11b9aef0063de9a5db2756f9f372a37c7cbf55348dd0", "source": "supplemental capture: same viewport after clicking 重試載入檔案庫 (second 502; note persists)" }
+      ]
     }
   ],
   "apiProbe": {
-    "note": "Playwright request fixture (server-side HTTP to :8006, not the browser); sequence reconstructed from the trace network log of test line 214",
+    "note": "Playwright request fixture (server-side HTTP to :8006, not the browser); sequence taken from the trace network log of test line 240 (17 entries, all to 127.0.0.1:8006, 02:04:19.908Z–02:04:19.965Z)",
     "observed": [
-      "GET /api/dev/ifc-sources → 404 (no token) and → 404 (with x-operator-token): token does not unlock the dev prefix",
-      "GET /api/lineage/legacy-unmanaged/preview?grouping_key=tenant-a%2Flegacy → 403 (no token) and → 403 (with token) {\"detail\":\"caller ip not in allowlist\"}",
+      "GET /api/dev/ifc-sources → 404 {\"detail\":\"dev routes disabled\"} (no token) and → 404 same body (x-operator-token=correct): token does not unlock the dev prefix",
+      "GET /api/lineage/legacy-unmanaged/preview?grouping_key=tenant-a%2Flegacy → 403 {\"detail\":\"caller ip not in allowlist\"} (no token) and → 403 same body (with token)",
       "POST /api/lineage/legacy-unmanaged/confirm (with token) → 403 {\"detail\":\"caller ip not in allowlist\"}",
       "POST /api/conversion/jobs/ifcready_nope/prioritize (no token) → 403 {\"detail\":\"caller ip not in allowlist\"}",
-      "POST prioritize (wrong token) → 403 {\"detail\":\"operator token invalid (x-operator-token)\"}",
-      "POST prioritize (correct token) → 404 (authorised; job not found)",
-      "POST /api/conversion/jobs/ifcready_nope/retry (token) → 404 (authorised; job not found)",
-      "PUT /api/conversion/watch (token) → 422 (authorised; MinIO watch not configured)",
-      "POST /api/conversion/trigger (token) → 503 (authorised; MinIO not configured, short-circuit before key validation)",
-      "5 more POST prioritize (token) → 404, then the 11th token-path request → 429 {\"detail\":\"operator token rate limit exceeded (10 requests per minute per source ip)\"} with Retry-After=60 (window was empty because the coordinator process was fresh; no-token 403s did not consume the window)"
+      "POST prioritize (x-operator-token='not-the-real-token') → 403 {\"detail\":\"operator token invalid (x-operator-token)\"}",
+      "POST prioritize (correct token) → 404 {\"detail\":\"Ifc-ready job not found.\"} (authorised; next check)",
+      "POST /api/conversion/jobs/ifcready_nope/retry (token) → 404 {\"detail\":\"Ifc-ready job not found.\"}",
+      "PUT /api/conversion/watch (token) → 422 {\"detail\":\"MinIO watch not configured (endpoint/bucket/credentials missing); cannot enable.\"} (coordinator audit log: conversion.watch.toggle actor=local-operator target=watch:enable:rejected-not-configured)",
+      "POST /api/conversion/trigger (token) → 503 {\"detail\":\"MinIO 未設定（endpoint/bucket/credentials 不齊全）\"} (short-circuit before key validation, no I/O side effect)",
+      "5 more POST prioritize (token) → 404, then the 11th token-path request → 429 {\"detail\":\"operator token rate limit exceeded (10 requests per minute per source ip)\"} with Retry-After=60 (window was empty because the coordinator process was fresh; the no-token 403 did not consume the window)"
     ]
   },
+  "supplementalCapture": {
+    "why": "the spec's fullPage screenshots stop at the Edge Console scroll container, so the runtime line (#demo-control) and the full note (#a1-workbench) are not visible in them; also to observe the after-refresh / after-retry states as pixels",
+    "how": "playwright library API (chromium 1.61.1, headless, viewport 1440x900) driving the same viewer command/env on :5180 against the same :8006 coordinator; no route mocking or fulfilment; every status/body is what the browser received; the script throws on any mismatch (exit 0)",
+    "script": "session scratchpad s2e2e/supplemental-capture.mjs (not part of the repo)",
+    "observations": "scratchpad s2e2e/supplemental-observations.json; coordinator calls seen by the browser: GET /api/dev/ifc-sources 404 x2, GET /api/dev/test-data-projects 404, GET /api/governance/files/tree 502 x2, plus 200s for runtime/status, conversion/records, minio/objects, external/ifc-ready",
+    "trace": "artifacts/e2e/unified-console-runtime-truth-s2-trace/supplemental-capture-trace.zip",
+    "window": "2026-08-26T02:08:45.339Z – 02:08:49.733Z"
+  },
   "runtimeIds": [],
-  "runtimeIdsNote": "No user-facing runtime ID exists in this slice by design: the slice's user-facing behaviour is the honest 'dev routes closed' state (no fixture registered, no job/session created). The only identifiers in play are the synthetic job path 'ifcready_nope' (→404 on the authorised path) and the server-side coordinator run_id run_20260826_014532_ce87e2 (coordinator log only, not shown in UI).",
+  "runtimeIdsNote": "No user-facing runtime ID exists in this slice by design: the user-facing behaviour is the honest 'dev routes closed' state (no fixture registered, no job / session created; all 14 ID rows render '—'). Identifiers in play are the synthetic job path 'ifcready_nope' (→ 404 on the authorised path) and the server-side coordinator run_id run_20260826_020310_105d40 (coordinator log only, not shown in the UI).",
   "verticalSlice": {
-    "routeReachable": true,
-    "explicitButtons": "present (refresh/register/retry); enabled/disabled states asserted or visible; no button was clicked by the spec",
-    "defaultFixture": "not applicable (dev routes closed → fixture list empty by design; no DEMO DATA anywhere; no manual curl)",
-    "realBackendApi": true,
-    "runtimeIdVisible": "not observed (none exists in the disabled state; see runtimeIdsNote)",
-    "states": "failure/disabled states visible (dev-routes notice, runtime: dev_routes_disabled, 502 governance error with retry button); loading state not captured; success state not applicable in this slice",
-    "artifactsOnDisk": true,
-    "gpuStageTruth": "not applicable (this spec has no 3D viewer / review session / stage truth; nothing GPU-related is claimed)",
+    "routeReachable": "evidenced (#demo-control and #a1-workbench rendered from the fresh :5180 viewer)",
+    "explicitButtons": "evidenced (Refresh ./storage IFC list clicked → real 404; 重試載入檔案庫 clicked → real 502; 註冊並轉檔 asserted disabled by design)",
+    "defaultFixture": "structurally not applicable (dev routes closed → fixture list empty by design; nothing labelled DEMO DATA; the page fetches the coordinator itself, no manual curl)",
+    "realBackendApi": "evidenced (browser Origin http://127.0.0.1:5180 → http://127.0.0.1:8006, fresh process from HEAD d2e0805; 404 body 'dev routes disabled' asserted in-browser; no mocks)",
+    "runtimeIdVisible": "not observed — structurally none exists in the disabled state (see runtimeIdsNote)",
+    "states": "failure/disabled evidenced (dev-routes notice, runtime: dev_routes_disabled, governance 502 error); retry evidenced (Refresh and 重試 clicks re-hit the real backend, honest state persists); loading not observed (initial runtime text is 'runtime: idle' and the 404 resolves within ~200 ms; no loading affordance exists on these pages); success not applicable while dev routes are closed",
+    "artifactsOnDisk": "evidenced (3 spec traces + supplemental trace, 6 screenshots, list log, JSON report, this summary in main artifacts/e2e; tracked copy in worktree docs/evidence)",
+    "gpuStageTruth": "not applicable (no 3D viewer / review session / stage truth in this spec; nothing GPU-related is claimed)",
     "verticalSliceOk": true,
-    "verdictBasis": "all three tests passed on the current HEAD against a fresh coordinator built from the same HEAD; every asserted UI/API behaviour was cross-checked in the trace network log and DOM snapshots; items that cannot exist in this slice are listed under notObserved rather than counted as failures"
+    "verdictBasis": "Green for the slice AS SCOPED by the approved spec (D3 honest 'dev routes closed' UI on the two canonical pages + T4 API contract): all 3 tests passed at HEAD d2e0805 against a fresh coordinator built from the same HEAD; every asserted UI/API behaviour was cross-checked in the trace network log, the DOM snapshots and the supplemental pixel captures. The rubric rows that cannot exist in this slice (runtime ID, success state, loading affordance) are declared above as not observed / not applicable rather than counted as failures. NOT claimed: a UI-triggered LAN conversion via operator token (NOT BUILT in this slice, spec §3 out of scope — the T4 path was exercised only server-side), and any canonical-linux (181) behaviour."
   },
   "notObserved": [
-    "runtime ID in UI (job_id / model_version_id / review_session_id / prim_path / ifc_guid): not observed — the disabled state renders all ID fields as '—'",
-    "button click interaction: not observed — the spec asserts enabled/disabled state only; 'Refresh ./storage IFC list' and '重試載入檔案庫' were not clicked",
-    "loading state: not observed — the 404 resolves before a loading frame could be captured; only the resolved failure/disabled states are on disk",
-    "success state (fixture registered / conversion started): not observed — not reachable while dev routes are closed (by design of this slice)",
+    "runtime ID in UI (job_id / model_version_id / review_session_id / prim_path / ifc_guid): not observed — the disabled state renders all 14 ID rows as '—' by design",
+    "loading state: not observed — initial runtime text is 'runtime: idle' and the /api/dev/ifc-sources 404 resolves within ~200 ms; the pages have no explicit loading affordance",
+    "success state (fixture registered / conversion started / job or session created): not observed — unreachable while dev routes are closed (by design of this slice)",
+    "clicking 註冊並轉檔（真實）: not observed — the button is disabled by design (cannot be clicked)",
     "operator token entry in the /ui shell and LAN browser-triggered conversion: not observed — NOT BUILT in this slice (spec §3 out of scope); the T4 token path was exercised only via Playwright request (server-side)",
-    "canonical-linux (181) ENABLE_DEV_ROUTES=false and non-default DEV_AUTH_TOKEN: not observed — owner action; this run used a local branch coordinator only",
-    "#conv / #minio (/api/dev/conversions consumers): not observed — HELD pending owner D5 ruling (plan Task 9 / Appendix A); not part of this spec",
+    "rate-window expiry (a token request succeeding again after Retry-After=60 s): not observed — the spec only asserts the 429 and the Retry-After bounds",
+    "canonical-linux (181) with ENABLE_DEV_ROUTES=false and a non-default DEV_AUTH_TOKEN: not observed — owner action; this run used a local branch coordinator only",
+    "#conv / #minio (/api/dev/conversions consumers): not observed — HELD pending owner D5 ruling (plan Appendix A); not part of this spec",
     "E2E_REQUIRE_REAL=1 skip-forbidding reporter: not used — config-level guard requires E2E_STACK_MANIFEST (see requireRealGate); JSON report shows skipped=0",
     "3D viewer / GPU-backed review session / stage truth: not applicable to this spec — no claim made"
   ],
   "gaps": [
-    { "id": "e1", "q": "UI evidence for 'real backend' rests on the 404 notice plus the trace network log (browser → http://127.0.0.1:8006, Origin :5180); the two UI tests do not assert the response status or the body detail 'dev routes disabled' in-browser. Claimed failure mode: a route-not-found 404 from an unrelated cause would render the same notice and pass the same assertions." },
-    { "id": "e2", "q": "On #a1-workbench the dev-routes note co-occurs with a governance 502 (files/tree). The gating is isCoordinatorNotFound (status===404) in code and the same page load shows /api/dev/test-data-projects → 404 in the trace, but no browser run isolates the two (e.g. dev routes enabled + governance 502 → note must be absent). Claimed failure mode: note shown for a non-404 failure would be a false 'dev routes closed' message; only vitest covers that branch." },
-    { "id": "e3", "q": "The Edge Console shell header renders static text 'COORDINATOR 8004' / 'COORD :8004' (EdgeConsole.tsx:355/358) while every request in this run went to :8006. Pre-existing and outside this slice's scope, but the screenshots therefore show a port label that is not runtime truth. Claimed failure mode: a reviewer reading the screenshot could believe the evidence hit :8004 (the default deployment port) instead of the fresh branch coordinator." },
-    { "id": "e4", "q": "The spec header states that testid ifc-runtime-state 'does not exist on this branch', but RealIfcConsolePage.tsx:191 renders it; consequently the spec never asserts 'runtime: dev_routes_disabled' (only this run's post-hoc trace grep shows it and confirms storage_empty is absent). Claimed failure mode: a regression flipping the runtime line back to storage_empty would not be caught by the E2E." },
-    { "id": "e5", "q": "No button was clicked: after the 404 notice, clicking 'Refresh ./storage IFC list' (enabled) re-calls /api/dev/ifc-sources; the code path sets devRoutesDisabled again on 404, but this was not observed in the browser. Claimed failure mode: refresh could transiently clear the notice or re-enable the register button between the two fetch states." }
+    { "id": "e1", "q": "The Edge Console header still renders the static text 'EDGE CONSOLE · COORDINATOR 8004' / 'COORD :8004' (EdgeConsole.tsx:355/358) while every request in this run went to :8006 (trace network log + supplemental observations). Pre-existing and outside this slice, but every screenshot therefore carries a port label that is not runtime truth. Claimed failure mode: a reviewer reading the screenshots could believe the evidence hit the default :8004 deployment coordinator instead of the fresh branch process." },
+    { "id": "e2", "q": "On #a1-workbench the dev-routes note co-occurs with a governance 502. The supplemental capture shows the note persists across a second 502 (retry click) and the code gates it on isCoordinatorNotFound (status===404), but no browser run isolates the two conditions (dev routes enabled + governance 502 → note must be absent); only vitest covers that branch. Claimed failure mode: the note could be shown for a non-404 failure, i.e. a false 'dev routes closed' message." },
+    { "id": "e3", "q": "The user-facing half of T4 (LAN operator triggering a conversion from the UI with an operator token) does not exist in this slice: every T4 observation is a server-side Playwright request; in the browser the conversion trigger path is still allowlist-only (403 for a LAN origin). Claimed failure mode: the slice could be read as 'operator can trigger conversion on canonical-linux' when the UI cannot do it yet (spec §3 defers the /ui token input to another slice)." },
+    { "id": "e4", "q": "Rate limiting was observed only as 'the 11th token request on a fresh process → 429 + Retry-After=60'; the spec's loop tolerates any 429 within 11 attempts and nothing observes the window actually expiring (a token request succeeding again after 60 s) or the per-IP keying across sources. Claimed failure mode: a limiter that never resets, or one keyed globally instead of per source IP, would pass this evidence unchanged." },
+    { "id": "e5", "q": "All evidence is from a local branch coordinator with the plan's test-only env; canonical-linux (181) with ENABLE_DEV_ROUTES=false and a non-default DEV_AUTH_TOKEN is owner action and unobserved. tasks.md itself records a deployment-order hazard (setting ENABLE_DEV_ROUTES=false before this frontend PR is deployed makes main's #demo-control show a misleading storage_empty). Claimed failure mode: D3/T4 could be 'green' locally yet not in effect, or in effect with the misleading empty state, on 181." },
+    { "id": "e6", "q": "The rubric's 'runtime ID visible' and 'loading state visible' rows are not observed: the disabled state has no job/session ID by design and the page's pre-fetch text is 'runtime: idle' (not a loading indicator) for the ~200 ms before the 404 lands. Claimed failure mode: an operator opening #demo-control on a slow link sees 'runtime: idle' and an empty fixture list for that interval, which is the same shape as the misleading storage_empty state, before the honest notice appears." },
+    { "id": "e7", "q": "The subject head d2e0805 is one commit behind origin/main (75e9aab #701 landed after the branch's merge-base d5f2d77). Claimed failure mode: if P6 merges main before the PR, the merged tree differs from the evidenced tree (base freshness) and this P4 capture would no longer describe the head being shipped." }
   ],
   "traces": [
     "artifacts/e2e/unified-console-runtime-truth-s2-trace/dev-routes-disabled-operat-092d1--→-notice-＋-選檔／註冊鈕-disabled-chromium/trace.zip",
     "artifacts/e2e/unified-console-runtime-truth-s2-trace/dev-routes-disabled-operat-eb123-ojects-404-→-測試資料標記不可用-note-chromium/trace.zip",
-    "artifacts/e2e/unified-console-runtime-truth-s2-trace/dev-routes-disabled-operat-8c905-n-解鎖-＋-四路由-T4-授權-＋-速率限制-429-chromium/trace.zip"
+    "artifacts/e2e/unified-console-runtime-truth-s2-trace/dev-routes-disabled-operat-8c905-n-解鎖-＋-四路由-T4-授權-＋-速率限制-429-chromium/trace.zip",
+    "artifacts/e2e/unified-console-runtime-truth-s2-trace/supplemental-capture-trace.zip"
   ],
   "screenshots": [
-    { "route": "#demo-control", "file": "artifacts/e2e/unified-console-runtime-truth-s2-demo-control.png", "sha256": "a98b973cdd96264f96e6e414a1cc86ae425edf9b1e97ef7e65803856d51f2b36" },
-    { "route": "#a1-workbench", "file": "artifacts/e2e/unified-console-runtime-truth-s2-a1-workbench.png", "sha256": "fe783675e3e0ca9ce5728a0e49de15a8b309c69988903a07d67d9718da006bb5" }
+    { "route": "#demo-control", "file": "artifacts/e2e/unified-console-runtime-truth-s2-demo-control.png", "sha256": "0fb5961f448245e34b40b4a032aec842759d59f53d26f2e622851ea74d45eb24" },
+    { "route": "#demo-control (panel element, after mount)", "file": "artifacts/e2e/unified-console-runtime-truth-s2-demo-control-panel.png", "sha256": "c96ade1f1f21aba36852ba4731c8d87173cc31d9e0398a21575a45b73a48afef" },
+    { "route": "#demo-control (panel element, after Refresh click)", "file": "artifacts/e2e/unified-console-runtime-truth-s2-demo-control-after-refresh.png", "sha256": "26cd5d1ef104c925c4624f6549ea38abd1a1b4faf7c0d664ecb79c1e1c910b0e" },
+    { "route": "#a1-workbench", "file": "artifacts/e2e/unified-console-runtime-truth-s2-a1-workbench.png", "sha256": "91b7e2dcff72ad512f7103d0168ad61c7061e44c05d0edb272884a8d553c5947" },
+    { "route": "#a1-workbench (note scrolled into view)", "file": "artifacts/e2e/unified-console-runtime-truth-s2-a1-workbench-note.png", "sha256": "c946085bad849db6239dbfc18c8d0e0eb00e906503bfc39e43bbea05dcd445b5" },
+    { "route": "#a1-workbench (after 重試載入檔案庫 click)", "file": "artifacts/e2e/unified-console-runtime-truth-s2-a1-workbench-after-retry.png", "sha256": "bdba6a01b885fdcc537d11b9aef0063de9a5db2756f9f372a37c7cbf55348dd0" }
   ],
-  "trackedCopy": "docs/evidence/unified-console-runtime-truth-s2/{summary.json, unified-console-runtime-truth-s2-demo-control.png, unified-console-runtime-truth-s2-a1-workbench.png} in the worktree (replaces the ca4f660 set; to be committed by the coordinator)"
+  "trackedCopy": "docs/evidence/unified-console-runtime-truth-s2/{summary.json, unified-console-runtime-truth-s2-demo-control.png, unified-console-runtime-truth-s2-a1-workbench.png, unified-console-runtime-truth-s2-demo-control-after-refresh.png, unified-console-runtime-truth-s2-a1-workbench-after-retry.png} in the worktree (replaces the ecc2dd9 set; to be committed by the coordinator)"
 }
