@@ -22,6 +22,8 @@ export const ViewportHost: React.FC<ViewportHostProps> = ({
   return (
     <div
       className="viewport-host-container"
+      data-stage-url={stageUrl ?? undefined}
+      data-aspect-ratio={aspectRatio}
       style={{
         position: "relative",
         width: "100%",
@@ -81,6 +83,7 @@ export const ViewportHost: React.FC<ViewportHostProps> = ({
         >
           {streamState === "connected" ? "● 3D 串流已連線" : "○ 串流準備中"}
           {selectedPrimPath ? " | 選取: " + selectedPrimPath : ""}
+          {onResetView && onFitView ? " | 可重置" : ""}
         </div>
       </div>
     </div>
