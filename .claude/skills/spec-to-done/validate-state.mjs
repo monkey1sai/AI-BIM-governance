@@ -4,10 +4,11 @@ import path from 'node:path'
 import crypto from 'node:crypto'
 import { spawnSync } from 'node:child_process'
 import {
+  assertTerminalP7Facts,
   gitInvocationArguments,
+  parseTrustedRemoteMainResult,
   resolveTrustedGit,
   sanitizedGitEnvironment,
-  TEST_GIT_FIXTURE_TOKEN,
 } from './trusted-git.mjs'
 
 const MACHINE_CONTRACT_URL = new URL('../../../agent-contracts/spec-to-done.contract.json', import.meta.url)
@@ -314,27 +315,23 @@ const isEvidenceOnlyPath = (value, fields) => {
   )
 }
 
-const trustedGit = (gitExe, expectedWorktree, allowTestFixture = false) => {
+const trustedGit = (gitExe, expectedWorktree) => {
   try {
-    const identity = resolveTrustedGit(gitExe, expectedWorktree, {
-      allowTestFixture: allowTestFixture ? TEST_GIT_FIXTURE_TOKEN : '',
-    })
-    if (!allowTestFixture && identity.trustClass !== 'system-owned-read-only') {
-      reject('resume_state_invalid', 'validator requires a system-owned, read-only Git executable')
+    const identity = resolveTrustedGit(gitExe, expectedWorktree)
+    if (identity.trustClass !== 'system-owned-read-only') {
+      reject('host_env_blocked', 'validator requires a system-owned, read-only Git executable')
     }
     return identity
   } catch (error) {
-    reject('resume_state_invalid', error.message)
+    if (error instanceof ContractError) throw error
+    reject('host_env_blocked', error.message)
   }
 }
 
 const runGit = (worktree, gitArgs) => {
   let current
   try {
-    current = resolveTrustedGit(TRUSTED_GIT_EXE, worktree, {
-      allowTestFixture: TRUSTED_GIT_IDENTITY?.trustClass === 'pytest-temporary-fixture'
-        ? TEST_GIT_FIXTURE_TOKEN : '',
-    })
+    current = resolveTrustedGit(TRUSTED_GIT_EXE, worktree)
   } catch (error) {
     return { error }
   }
@@ -378,18 +375,16 @@ const resolveTrustedRemoteMain = () => {
     maxBuffer: 16 * 1024,
     },
   )
-  if (result.error || result.status !== 0) {
-    reject('evidence_stale', `could not resolve live remote ${TERMINAL_EVIDENCE.remote_main_ref} from the fixed trusted remote`)
+  try {
+    return parseTrustedRemoteMainResult({
+      error: result.error,
+      status: result.status,
+      stdout: result.stdout,
+      expectedRef: TERMINAL_EVIDENCE.remote_main_ref,
+    })
+  } catch (error) {
+    reject('evidence_stale', error.message)
   }
-  const lines = result.stdout.split(/\r?\n/).filter((line) => line.length > 0)
-  if (lines.length !== 1) {
-    reject('evidence_stale', 'live trusted remote resolution returned malformed or multiple refs')
-  }
-  const match = /^([0-9a-f]{40})\t(refs\/heads\/main)$/i.exec(lines[0])
-  if (!match || match[2] !== TERMINAL_EVIDENCE.remote_main_ref) {
-    reject('evidence_stale', 'live trusted remote resolution did not return the exact remote main ref')
-  }
-  return match[1].toLowerCase()
 }
 
 const gitPathList = (fields, gitArgs, held, detail) => {
@@ -481,16 +476,28 @@ const validateEvidenceAncestry = (fields, subjectHead = fields.head) => {
 const validateTerminalP7 = (fields) => {
   validateEvidenceAncestry(fields, fields.prHead)
   const ancestor = runGit(fields.worktree, ['merge-base', '--is-ancestor', fields.prHead, fields.mergeCommit])
-  if (ancestor.error || ancestor.status !== 0) {
-    reject('evidence_stale', 'P7 merge commit is not a proven descendant of the independently evidenced PR head')
+  const mergeDescendsFromPrHead = !ancestor.error && ancestor.status === 0
+  try {
+    assertTerminalP7Facts({
+      mergeDescendsFromPrHead,
+      liveRemoteMain: fields.mergeCommit,
+      mergeCommit: fields.mergeCommit,
+      prHeadAndMergeSameTree: true,
+    })
+  } catch (error) {
+    reject('evidence_stale', error.message)
   }
   const remoteMain = resolveTrustedRemoteMain()
-  if (remoteMain !== fields.mergeCommit.toLowerCase()) {
-    reject('evidence_stale', `P7 merge commit does not equal live remote ${TERMINAL_EVIDENCE.remote_main_ref}`)
-  }
   const sameTree = runGit(fields.worktree, ['diff', '--quiet', '--no-ext-diff', fields.prHead, fields.mergeCommit, '--'])
-  if (sameTree.error || sameTree.status !== 0) {
-    reject('evidence_stale', 'P7 merge commit tree differs from the independently evidenced PR head')
+  try {
+    assertTerminalP7Facts({
+      mergeDescendsFromPrHead,
+      liveRemoteMain: remoteMain,
+      mergeCommit: fields.mergeCommit,
+      prHeadAndMergeSameTree: !sameTree.error && sameTree.status === 0,
+    })
+  } catch (error) {
+    reject('evidence_stale', error.message)
   }
 }
 
@@ -826,6 +833,11 @@ const main = () => {
   const statePath = cli.state
   const platform = cli.platform
   const requiredCli = ['state', 'platform', 'git-exe', 'expected-head', 'expected-worktree', 'expected-agent-limit', 'expected-p5-limit', 'expected-evidence-limit', 'trusted-main-ref']
+  const allowedCli = new Set(requiredCli)
+  const unknownCli = Object.keys(cli).filter((key) => !allowedCli.has(key))
+  if (unknownCli.length) {
+    reject('resume_state_invalid', `unknown validator arguments: ${unknownCli.join(',')}`)
+  }
   const missingCli = requiredCli.filter((key) => !cli[key])
   if (missingCli.length || !['claude', 'codex', 'grok'].includes(platform)) {
     reject('resume_state_invalid', `missing or invalid validator arguments: ${missingCli.join(',') || 'platform'}`)
@@ -841,11 +853,7 @@ const main = () => {
   if (limits.agentCalls !== MAX_AGENT_CALLS || limits.p5Rounds !== MAX_P5_ROUNDS || limits.evidenceAttempts !== MAX_EVIDENCE_ATTEMPTS) {
     reject('resume_state_invalid', 'validator limits must be exactly agentCalls=40, p5Rounds=2, evidenceAttempts=2')
   }
-  const allowTestFixture = cli['test-git-fixture'] === TEST_GIT_FIXTURE_TOKEN
-  if (Object.hasOwn(cli, 'test-git-fixture') && !allowTestFixture) {
-    reject('resume_state_invalid', '--test-git-fixture has an invalid test-only token')
-  }
-  const trusted = trustedGit(cli['git-exe'], cli['expected-worktree'], allowTestFixture)
+  const trusted = trustedGit(cli['git-exe'], cli['expected-worktree'])
   TRUSTED_GIT_EXE = trusted.resolvedGit
   TRUSTED_GIT_IDENTITY = trusted
   if (!fs.existsSync(statePath) || !fs.statSync(statePath).isFile()) {

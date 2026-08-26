@@ -216,6 +216,28 @@ try {
         RepairEntries = @()
         OpenDebt = @()
     }
+    Assert-True ($script:SelfReferentialLeanMigrationBase -ceq '2480939cd7bf11144e9c4eeb44dd6a332eb5801d') 'migration pins the owner-authorized #704 base'
+    Assert-True ($script:SelfReferentialLeanMigrationOwnerTuple -ceq 'sha256=ccb6cca014b86b2f653b859dd8f447b5af002112723096e55352c0a3ea0a13fb;bytes=3265') 'migration pins the current owner-message provenance tuple'
+    Assert-True ($script:SelfReferentialLeanMigrationPaths.Count -eq 16) 'migration changed-path tuple contains exactly 16 paths'
+    Assert-True ($script:SelfReferentialLeanMigrationPaths -ccontains '.github/workflows/agent-governance.yml') 'migration tuple includes required Linux NEW_RUN workflow coverage'
+    $agentGovernanceWorkflow = Get-Content -Raw -LiteralPath (Join-Path $repoRoot '.github\workflows\agent-governance.yml')
+    $newRunJobMatch = [regex]::Match(
+        $agentGovernanceWorkflow,
+        '(?ms)^  new-run-boundary:[ \t]*\r?$(.*?)^  agent-governance:[ \t]*\r?$'
+    )
+    Assert-True $newRunJobMatch.Success 'agent-governance declares a bounded NEW_RUN platform gate'
+    $newRunJob = $newRunJobMatch.Groups[1].Value
+    Assert-True ($newRunJob -match '(?m)^      fail-fast: false[ \t]*\r?$') 'NEW_RUN matrix preserves both platform results'
+    Assert-True ($newRunJob -match '(?ms)^          - platform: windows-negative[ \t]*\r?$\s+runner: windows-latest[ \t]*\r?$\s+test: test_new_run_rejects_caller_controlled_git_even_when_named_git[ \t]*\r?$') 'Windows leg binds the Windows runner to the fail-closed Git negative test'
+    Assert-True ($newRunJob -match '(?ms)^          - platform: linux-positive[ \t]*\r?$\s+runner: ubuntu-latest[ \t]*\r?$\s+test: test_new_run_appender_preserves_prefix_and_emits_valid_p0[ \t]*\r?$') 'Linux leg binds the Ubuntu runner to the real NEW_RUN positive test'
+    Assert-True ($newRunJob -match '(?m)^          SPEC_TO_DONE_REQUIRE_TRUSTED_GIT_TESTS: ''1''[ \t]*\r?$') 'NEW_RUN platform tests convert capability skips into failures'
+    Assert-True ($newRunJob.Contains('test -x /usr/bin/git')) 'Linux leg requires the canonical Git executable'
+    Assert-True ($newRunJob.Contains('test "$(realpath /usr/bin/git)" = /usr/bin/git')) 'Linux leg rejects a canonical Git symlink drift'
+    Assert-True ($newRunJob.Contains('test "$(realpath "$(command -v git)")" = /usr/bin/git')) 'Linux leg binds PATH resolution to the canonical Git executable'
+    Assert-True ($newRunJob.Contains('test ! -w /usr/bin/git')) 'Linux leg requires canonical Git to be read-only to the runner identity'
+    Assert-True ($agentGovernanceWorkflow -match '(?m)^\s+- new-run-boundary\s*$') 'required aggregate depends on the NEW_RUN platform gate'
+    Assert-True ($agentGovernanceWorkflow -match 'NEW_RUN_BOUNDARY_RESULT') 'required aggregate imports the NEW_RUN platform result'
+    Assert-True ($agentGovernanceWorkflow -match '\$newRunBoundaryResult -ne ''success''') 'required aggregate rejects skipped or failed NEW_RUN evidence'
     $leanRows = @{
         'Self-referential bootstrap' = 'owner-authorized-migration'
         'Lean migration owner message' = $script:SelfReferentialLeanMigrationOwnerTuple
@@ -230,6 +252,15 @@ try {
         -BaseLedgerJson $emptyJson -HeadLedgerJson $emptyJson `
         -PrNumber 704 -BaseSha $script:SelfReferentialLeanMigrationBase -HeadSha ('a' * 40) -HasExactHeadContext $true 3>$null
 
+    Assert-Throws -Context 'migration rejects wrong pinned base' -MessagePattern 'restricted to PR #704 at base' -Action {
+        Assert-SelfReferentialLeanPolicyBody -Declared 'owner-authorized-migration' -Body 'body' `
+            -ChangedPaths $script:SelfReferentialLeanMigrationPaths `
+            -MechanismPaths @('scripts/lib/self-referential-bootstrap.ps1') `
+            -Transition $leanTransition -GetTableValue { param($b, $label) $leanRows[$label] }.GetNewClosure() `
+            -BaseLedgerJson $emptyJson -HeadLedgerJson $emptyJson `
+            -PrNumber 704 -BaseSha ('0' * 40) -HeadSha ('a' * 40) -HasExactHeadContext $true
+    }
+
     Assert-Throws -Context 'migration rejects an extra changed path' -MessagePattern 'must equal its one-time migration allowlist' -Action {
         Assert-SelfReferentialLeanPolicyBody -Declared 'owner-authorized-migration' -Body 'body' `
             -ChangedPaths @($script:SelfReferentialLeanMigrationPaths + 'scripts/deploy.ps1') `
@@ -238,9 +269,25 @@ try {
             -BaseLedgerJson $emptyJson -HeadLedgerJson $emptyJson `
             -PrNumber 704 -BaseSha $script:SelfReferentialLeanMigrationBase -HeadSha ('a' * 40) -HasExactHeadContext $true
     }
+    Assert-Throws -Context 'migration rejects a missing changed path' -MessagePattern 'must equal its one-time migration allowlist' -Action {
+        Assert-SelfReferentialLeanPolicyBody -Declared 'owner-authorized-migration' -Body 'body' `
+            -ChangedPaths @($script:SelfReferentialLeanMigrationPaths | Where-Object { $_ -cne '.github/workflows/agent-governance.yml' }) `
+            -MechanismPaths @('scripts/lib/self-referential-bootstrap.ps1') `
+            -Transition $leanTransition -GetTableValue { param($b, $label) $leanRows[$label] }.GetNewClosure() `
+            -BaseLedgerJson $emptyJson -HeadLedgerJson $emptyJson `
+            -PrNumber 704 -BaseSha $script:SelfReferentialLeanMigrationBase -HeadSha ('a' * 40) -HasExactHeadContext $true
+    }
+    Assert-Throws -Context 'migration rejects a duplicate changed path' -MessagePattern 'contains duplicate path' -Action {
+        Assert-SelfReferentialLeanPolicyBody -Declared 'owner-authorized-migration' -Body 'body' `
+            -ChangedPaths @($script:SelfReferentialLeanMigrationPaths + $script:SelfReferentialLeanMigrationPaths[0]) `
+            -MechanismPaths @('scripts/lib/self-referential-bootstrap.ps1') `
+            -Transition $leanTransition -GetTableValue { param($b, $label) $leanRows[$label] }.GetNewClosure() `
+            -BaseLedgerJson $emptyJson -HeadLedgerJson $emptyJson `
+            -PrNumber 704 -BaseSha $script:SelfReferentialLeanMigrationBase -HeadSha ('a' * 40) -HasExactHeadContext $true
+    }
     Assert-Throws -Context 'migration rejects wrong owner tuple' -MessagePattern 'bind the exact owner-message tuple' -Action {
         $wrongRows = @{} + $leanRows
-        $wrongRows['Lean migration owner message'] = 'sha256=' + ('0' * 64) + ';bytes=19'
+        $wrongRows['Lean migration owner message'] = 'sha256=' + ('0' * 64) + ';bytes=3265'
         Assert-SelfReferentialLeanPolicyBody -Declared 'owner-authorized-migration' -Body 'body' `
             -ChangedPaths $script:SelfReferentialLeanMigrationPaths `
             -MechanismPaths @('scripts/lib/self-referential-bootstrap.ps1') `

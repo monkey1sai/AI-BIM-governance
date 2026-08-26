@@ -1,14 +1,11 @@
 import crypto from 'node:crypto'
 import fs from 'node:fs'
-import os from 'node:os'
 import path from 'node:path'
 
 const normalizedPath = (value) => {
   const normalized = path.resolve(String(value || '')).replace(/\\/g, '/').replace(/\/$/, '')
   return process.platform === 'win32' ? normalized.toLowerCase() : normalized
 }
-
-export const TEST_GIT_FIXTURE_TOKEN = 'spec-to-done-test-fixture-v1'
 
 const isWithinPath = (value, root) => {
   const target = normalizedPath(value)
@@ -22,19 +19,6 @@ const isSystemGitPath = (resolvedGit) => {
     return /^[a-z]:\/program files\/git\/(?:cmd|bin|mingw64\/bin)\/git\.exe$/.test(normalized)
   }
   return ['/usr/bin/git', '/usr/local/bin/git'].includes(normalized)
-}
-
-const isPytestFixtureGit = (resolvedGit, resolvedWorktree, allowTestFixture) => {
-  if (!allowTestFixture || !process.env.PYTEST_CURRENT_TEST) return false
-  let temporaryRoot
-  try {
-    temporaryRoot = fs.realpathSync(os.tmpdir())
-  } catch {
-    return false
-  }
-  return isWithinPath(resolvedGit, temporaryRoot) &&
-    isWithinPath(resolvedWorktree, temporaryRoot) &&
-    !isWithinPath(resolvedGit, resolvedWorktree)
 }
 
 const assertSystemGitNotCallerWritable = (resolvedGit) => {
@@ -99,7 +83,44 @@ export const gitInvocationArguments = (args) => [
   ...args,
 ]
 
-export const resolveTrustedGit = (gitExe, expectedWorktree, options = {}) => {
+export const parseTrustedRemoteMainResult = ({
+  error = null,
+  status = null,
+  stdout = '',
+  expectedRef = 'refs/heads/main',
+} = {}) => {
+  if (error || status !== 0) {
+    throw new Error(`could not resolve live remote ${expectedRef} from the fixed trusted remote`)
+  }
+  const lines = String(stdout).split(/\r?\n/).filter((line) => line.length > 0)
+  if (lines.length !== 1) {
+    throw new Error('live trusted remote resolution returned malformed or multiple refs')
+  }
+  const match = /^([0-9a-f]{40})\t(.+)$/i.exec(lines[0])
+  if (!match || match[2] !== expectedRef) {
+    throw new Error('live trusted remote resolution did not return the exact remote main ref')
+  }
+  return match[1].toLowerCase()
+}
+
+export const assertTerminalP7Facts = ({
+  mergeDescendsFromPrHead = false,
+  liveRemoteMain = '',
+  mergeCommit = '',
+  prHeadAndMergeSameTree = false,
+} = {}) => {
+  if (!mergeDescendsFromPrHead) {
+    throw new Error('P7 merge commit is not a proven descendant of the independently evidenced PR head')
+  }
+  if (String(liveRemoteMain).toLowerCase() !== String(mergeCommit).toLowerCase()) {
+    throw new Error('P7 merge commit does not equal live remote refs/heads/main')
+  }
+  if (!prHeadAndMergeSameTree) {
+    throw new Error('P7 merge commit tree differs from the independently evidenced PR head')
+  }
+}
+
+export const resolveTrustedGit = (gitExe, expectedWorktree) => {
   if (!path.isAbsolute(gitExe || '') || !fs.existsSync(gitExe)) {
     throw new Error('--git-exe must name an existing absolute Git executable')
   }
@@ -123,9 +144,6 @@ export const resolveTrustedGit = (gitExe, expectedWorktree, options = {}) => {
   if (isSystemGitPath(resolvedGit)) {
     assertSystemGitNotCallerWritable(resolvedGit)
     trustClass = 'system-owned-read-only'
-  } else if (options.allowTestFixture === TEST_GIT_FIXTURE_TOKEN &&
-             isPytestFixtureGit(resolvedGit, resolvedWorktree, true)) {
-    trustClass = 'pytest-temporary-fixture'
   } else {
     throw new Error('--git-exe is not an approved system Git path')
   }

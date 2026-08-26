@@ -153,9 +153,9 @@ $script:SelfReferentialAdjudicatorPaths = @(
 
 $script:SelfReferentialLeanPolicyCommit = '2a759f4ac488750c4f3e1e1945b4d5de9f936b50'
 $script:SelfReferentialLeanMigrationPr = 704
-$script:SelfReferentialLeanMigrationBase = 'f83e20b6d53e13768335aa7c05759947fab407c2'
+$script:SelfReferentialLeanMigrationBase = '2480939cd7bf11144e9c4eeb44dd6a332eb5801d'
 $script:SelfReferentialLeanMigrationDeclaration = 'owner-authorized-migration'
-$script:SelfReferentialLeanMigrationOwnerTuple = 'sha256=2fdd481cbf4247c93d1dc0aba65d4907b0059b6ce24fa0aae2c9c51139545ba3;bytes=19'
+$script:SelfReferentialLeanMigrationOwnerTuple = 'sha256=ccb6cca014b86b2f653b859dd8f447b5af002112723096e55352c0a3ea0a13fb;bytes=3265'
 $script:SelfReferentialGitExitCode = $null
 $script:SelfReferentialGitError = ''
 $script:IsWindowsHost = $PSVersionTable.Platform -eq 'Win32NT'
@@ -276,6 +276,7 @@ $script:SelfReferentialLeanMigrationPaths = @(
     '.claude/skills/spec-to-done/validate-state.mjs'
     '.codex/skills/spec-to-done/SKILL.md'
     '.github/PULL_REQUEST_TEMPLATE.md'
+    '.github/workflows/agent-governance.yml'
     'agent-contracts/spec-to-done.contract.json'
     'agent-contracts/spec-to-done.contract.schema.json'
     'agent-contracts/trusted-host-merge.contract.json'

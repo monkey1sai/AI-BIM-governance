@@ -50,11 +50,11 @@ gate 必須同時驗證：
 
 - PR number：`704`
 - base：
-  `f83e20b6d53e13768335aa7c05759947fab407c2`
+  `2480939cd7bf11144e9c4eeb44dd6a332eb5801d`
 - declaration：`owner-authorized-migration`
-- owner user-message：UTF-8、無 BOM、無尾端 newline、19 bytes、
+- owner user-message：UTF-8、無 BOM、無尾端 newline、3265 bytes、37 lines、
   SHA-256
-  `2fdd481cbf4247c93d1dc0aba65d4907b0059b6ce24fa0aae2c9c51139545ba3`
+  `ccb6cca014b86b2f653b859dd8f447b5af002112723096e55352c0a3ea0a13fb`
 - changed paths：精確等於
   `$script:SelfReferentialLeanMigrationPaths`
 - ledger：與 base 完全一致，且 PR body 不得宣稱 entry、reason 或 future
@@ -68,7 +68,7 @@ PR body：
 | Item | Result |
 |---|---|
 | Self-referential bootstrap | `owner-authorized-migration` |
-| Lean migration owner message | `sha256=2fdd481cbf4247c93d1dc0aba65d4907b0059b6ce24fa0aae2c9c51139545ba3;bytes=19` |
+| Lean migration owner message | `sha256=ccb6cca014b86b2f653b859dd8f447b5af002112723096e55352c0a3ea0a13fb;bytes=3265` |
 | Current candidate head | exact 40-character PR head SHA |
 | Bootstrap ledger entry | `not applicable` |
 | Bootstrap reason | `not applicable` |

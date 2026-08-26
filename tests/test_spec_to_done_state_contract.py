@@ -3,7 +3,6 @@ import json
 import os
 import pathlib
 import re
-import shlex
 import shutil
 import subprocess
 import time
@@ -15,6 +14,7 @@ from jsonschema import Draft7Validator
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 CLAUDE_VALIDATOR = ROOT / ".claude/skills/spec-to-done/validate-state.mjs"
 NEW_RUN_APPENDER = ROOT / ".claude/skills/spec-to-done/append-new-run.mjs"
+TRUSTED_GIT_MODULE = ROOT / ".claude/skills/spec-to-done/trusted-git.mjs"
 CODEX_VALIDATOR = ROOT / ".codex/skills/spec-to-done/validate-state.mjs"
 CLAUDE_SKILL = ROOT / ".claude/skills/spec-to-done/SKILL.md"
 CODEX_SKILL = ROOT / ".codex/skills/spec-to-done/SKILL.md"
@@ -28,9 +28,25 @@ EXCLUSIONS = (
 )
 
 
+def _require_git():
+    if GIT is not None:
+        return
+    if os.environ.get("SPEC_TO_DONE_REQUIRE_TRUSTED_GIT_TESTS") == "1":
+        pytest.fail("required trusted-Git coverage cannot run because git is unavailable")
+    pytest.skip("git is required")
+
+
+def _handle_host_env_blocked(result, *, expected=False):
+    if result.get("held") != "host_env_blocked" or expected:
+        return
+    detail = result.get("detail", "trusted Git unavailable")
+    if os.environ.get("SPEC_TO_DONE_REQUIRE_TRUSTED_GIT_TESTS") == "1":
+        pytest.fail(f"required trusted-Git coverage was blocked: {detail}")
+    pytest.skip(f"expected host capability boundary: {detail}")
+
+
 def _git(repo, *args):
-    if GIT is None:
-        pytest.skip("git is required")
+    _require_git()
     return subprocess.run(
         [GIT, *args], cwd=repo, capture_output=True, text=True, check=True
     ).stdout.strip()
@@ -89,10 +105,10 @@ def _run(
     git_exe=None,
     env_overrides=None,
     trusted_main_ref="refs/heads/main",
-    allow_test_fixture=False,
+    extra_args=(),
+    expect_host_env_blocked=False,
 ):
-    if GIT is None:
-        pytest.skip("git is required")
+    _require_git()
     state = tmp_path / "state.md"
     if isinstance(state_lines, str):
         state_lines = [state_lines]
@@ -119,8 +135,7 @@ def _run(
             "--trusted-main-ref",
             trusted_main_ref,
     ]
-    if allow_test_fixture:
-        args.extend(["--test-git-fixture", "spec-to-done-test-fixture-v1"])
+    args.extend(extra_args)
     proc = subprocess.run(
         args,
         capture_output=True,
@@ -128,7 +143,9 @@ def _run(
         encoding="utf-8",
         env={**os.environ, **(env_overrides or {})},
     )
-    return proc.returncode, json.loads(proc.stdout)
+    result = json.loads(proc.stdout)
+    _handle_host_env_blocked(result, expected=expect_host_env_blocked)
+    return proc.returncode, result
 
 
 def _run_new_run(*args, env_overrides=None):
@@ -143,8 +160,7 @@ def _run_new_run(*args, env_overrides=None):
 
 
 def _validate_state_path(state, repo, expected_head, *, platform="codex"):
-    if GIT is None:
-        pytest.skip("git is required")
+    _require_git()
     proc = subprocess.run(
         [
             "node",
@@ -231,9 +247,10 @@ def _append_new_run(
     date_stamp="2026-08-26",
     env_overrides=None,
     git_exe=None,
+    expect_host_env_blocked=False,
 ):
     expected = {**expected, **(expected_overrides or {})}
-    return _run_new_run(
+    code, result = _run_new_run(
         "append",
         "--source-state",
         source,
@@ -260,49 +277,31 @@ def _append_new_run(
         "--json",
         env_overrides=env_overrides,
     )
+    _handle_host_env_blocked(result, expected=expect_host_env_blocked)
+    return code, result
 
 
-def _make_git_proxy(tmp_path, name, repo, ls_remote_output, *, status=0):
-    if os.name == "nt":
-        pytest.skip("terminal P7 git proxy integration is POSIX-only")
-    if GIT is None:
-        pytest.skip("git is required")
-    proxy_dir = tmp_path / name
-    proxy_dir.mkdir()
-    proxy = proxy_dir / "git"
-    fixed_remote = "https://github.com/monkey1sai/AI-BIM-governance.git"
-    script = f"""#!/bin/sh
-is_ls_remote=0
-for arg in "$@"; do
-  if [ "$arg" = "ls-remote" ]; then
-    is_ls_remote=1
-  fi
-done
-if [ "$is_ls_remote" -eq 1 ]; then
-  if [ "${{GIT_CONFIG_COUNT+x}}" = x ] || [ "${{GIT_CONFIG_KEY_0+x}}" = x ] || [ "${{GIT_CONFIG_VALUE_0+x}}" = x ] || [ "${{GIT_EXEC_PATH+x}}" = x ]; then
-    exit 91
-  fi
-  if [ "${{GIT_SSL_NO_VERIFY+x}}" = x ] || [ "${{CURL_CA_BUNDLE+x}}" = x ] || [ "${{SSL_CERT_FILE+x}}" = x ]; then
-    exit 92
-  fi
-  if [ "$GIT_CONFIG_GLOBAL" != /dev/null ] || [ "$GIT_CONFIG_SYSTEM" != /dev/null ] || [ "$GIT_CONFIG_NOSYSTEM" != 1 ]; then
-    exit 93
-  fi
-  case " $* " in
-    *" {fixed_remote} refs/heads/main "*) ;;
-    *) exit 94 ;;
-  esac
-  case "$PWD/" in
-    {shlex.quote(repo.as_posix() + '/')}*) exit 95 ;;
-  esac
-  printf '%s' {shlex.quote(ls_remote_output)}
-  exit {status}
-fi
-exec {shlex.quote(GIT)} "$@"
+def _run_trusted_git_pure(export_name, payload):
+    allowed_exports = {"assertTerminalP7Facts", "parseTrustedRemoteMainResult"}
+    assert export_name in allowed_exports
+    source = f"""
+import {{ {export_name} as subject }} from {json.dumps(TRUSTED_GIT_MODULE.as_uri())}
+const input = {json.dumps(payload)}
+try {{
+  const value = subject(input)
+  process.stdout.write(JSON.stringify({{ ok: true, value: value ?? null }}))
+}} catch (error) {{
+  process.stdout.write(JSON.stringify({{ ok: false, detail: String(error?.message || error) }}))
+  process.exitCode = 2
+}}
 """
-    proxy.write_text(script, encoding="utf-8")
-    proxy.chmod(0o755)
-    return proxy.as_posix()
+    proc = subprocess.run(
+        ["node", "--input-type=module", "--eval", source],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+    return proc.returncode, json.loads(proc.stdout)
 
 
 def test_machine_contract_is_schema_valid_closed_and_deterministic():
@@ -524,6 +523,7 @@ def test_new_run_rejects_caller_controlled_git_even_when_named_git(tmp_path):
         source,
         expected,
         git_exe=str(fake_git),
+        expect_host_env_blocked=True,
     )
 
     assert code == 2 and result["held"] == "host_env_blocked"
@@ -761,33 +761,53 @@ def test_grok_platform_requires_grok_run_ids_except_p0_none(tmp_path):
 
 def test_non_terminal_validation_does_not_resolve_the_remote(tmp_path):
     repo, head = _new_repo(tmp_path)
-    proxy = _make_git_proxy(
-        tmp_path,
-        "non-terminal-git",
-        repo,
-        "remote resolution must not run for P5\n",
-        status=97,
-    )
-
     code, result = _run(
-        tmp_path, repo, _line(repo, head), git_exe=proxy, allow_test_fixture=True
+        tmp_path,
+        repo,
+        _line(repo, head),
+        env_overrides={
+            "HTTP_PROXY": "http://127.0.0.1:9",
+            "HTTPS_PROXY": "http://127.0.0.1:9",
+            "NO_PROXY": "",
+        },
     )
 
     assert code == 0 and result["ok"] is True
 
 
-def test_validator_rejects_test_git_fixture_without_explicit_test_seam(tmp_path):
-    repo, head = _new_repo(tmp_path, "fixture-seam-repo")
-    proxy = _make_git_proxy(
+def test_validator_rejects_removed_test_git_fixture_flag(tmp_path):
+    repo, head = _new_repo(tmp_path, "removed-fixture-seam-repo")
+    code, result = _run(
         tmp_path,
-        "fixture-seam-git",
         repo,
-        "fixture seam must be explicitly enabled\n",
+        _line(repo, head),
+        extra_args=("--test-git-fixture", "spec-to-done-test-fixture-v1"),
     )
 
-    code, result = _run(tmp_path, repo, _line(repo, head), git_exe=proxy)
-
     assert code == 2 and result["held"] == "resume_state_invalid"
+    assert "unknown validator arguments" in result["detail"]
+
+
+def test_validator_rejects_caller_controlled_git_without_escape(tmp_path):
+    repo, head = _new_repo(tmp_path, "caller-controlled-validator-git")
+    suffix = ".exe" if os.name == "nt" else ""
+    fake_git = tmp_path / f"git{suffix}"
+    shutil.copyfile(GIT, fake_git)
+    fake_git.chmod(0o755)
+
+    code, result = _run(
+        tmp_path,
+        repo,
+        _line(repo, head),
+        git_exe=str(fake_git),
+        env_overrides={
+            "PYTEST_CURRENT_TEST": "caller-controlled fixture",
+            "SPEC_TO_DONE_TEST_GIT_FIXTURE": "spec-to-done-test-fixture-v1",
+        },
+        expect_host_env_blocked=True,
+    )
+
+    assert code == 2 and result["held"] == "host_env_blocked"
 
 
 def test_cli_rejects_a_local_tracking_ref_as_the_trust_marker(tmp_path):
@@ -1296,43 +1316,61 @@ def _terminal_state(tmp_path, name, change_merge_tree):
     return repo, [previous, terminal], merge
 
 
-def test_terminal_p7_requires_evidenced_pr_tree_equivalence(tmp_path):
-    repo, lines, merge = _terminal_state(tmp_path, "same-tree", False)
-    proxy = _make_git_proxy(
-        tmp_path,
-        "same-tree-git",
-        repo,
-        f"{merge}\trefs/heads/main\n",
+def test_terminal_p7_fact_adjudication_accepts_only_all_true_facts():
+    merge = "a" * 40
+    code, result = _run_trusted_git_pure(
+        "assertTerminalP7Facts",
+        {
+            "mergeDescendsFromPrHead": True,
+            "liveRemoteMain": merge,
+            "mergeCommit": merge,
+            "prHeadAndMergeSameTree": True,
+        },
     )
-    code, result = _run(
-        tmp_path, repo, lines, expected_head=merge, git_exe=proxy, allow_test_fixture=True
-    )
-    assert code == 0 and result["ok"] is True
 
+    assert code == 0 and result == {"ok": True, "value": None}
+
+
+@pytest.mark.parametrize(
+    ("override", "detail"),
+    [
+        (
+            {"mergeDescendsFromPrHead": False},
+            "not a proven descendant",
+        ),
+        (
+            {"liveRemoteMain": "b" * 40},
+            "does not equal live remote refs/heads/main",
+        ),
+        (
+            {"prHeadAndMergeSameTree": False},
+            "tree differs",
+        ),
+    ],
+)
+def test_terminal_p7_fact_adjudication_fails_closed(override, detail):
+    merge = "a" * 40
+    facts = {
+        "mergeDescendsFromPrHead": True,
+        "liveRemoteMain": merge,
+        "mergeCommit": merge,
+        "prHeadAndMergeSameTree": True,
+    }
+    facts.update(override)
+
+    code, result = _run_trusted_git_pure("assertTerminalP7Facts", facts)
+
+    assert code == 2 and result["ok"] is False
+    assert detail in result["detail"]
+
+
+def test_terminal_p7_rejects_dirty_worktree_before_live_remote(tmp_path):
+    repo, lines, merge = _terminal_state(tmp_path, "dirty-before-remote", False)
     dirty = repo / "src/dirty.txt"
     dirty.write_text("uncommitted product drift\n", encoding="utf-8")
-    code, result = _run(
-        tmp_path, repo, lines, expected_head=merge, git_exe=proxy, allow_test_fixture=True
-    )
-    assert code == 2 and result["held"] == "evidence_stale"
-    dirty.unlink()
 
-    illegal_jump = [lines[0].replace("DONE@P6", "DONE@P0"), lines[1]]
-    code, result = _run(
-        tmp_path, repo, illegal_jump, expected_head=merge, git_exe=proxy, allow_test_fixture=True
-    )
-    assert code == 2 and result["held"] == "resume_state_invalid"
+    code, result = _run(tmp_path, repo, lines, expected_head=merge)
 
-    repo, lines, merge = _terminal_state(tmp_path, "different-tree", True)
-    proxy = _make_git_proxy(
-        tmp_path,
-        "different-tree-git",
-        repo,
-        f"{merge}\trefs/heads/main\n",
-    )
-    code, result = _run(
-        tmp_path, repo, lines, expected_head=merge, git_exe=proxy, allow_test_fixture=True
-    )
     assert code == 2 and result["held"] == "evidence_stale"
 
 
@@ -1358,73 +1396,28 @@ def test_terminal_p7_rejects_same_tree_from_unrelated_history(tmp_path):
         mergeCommit=unrelated,
     )
 
-    proxy = _make_git_proxy(
-        tmp_path,
-        "unrelated-history-git",
-        repo,
-        f"{unrelated}\trefs/heads/main\n",
-    )
     code, result = _run(
         tmp_path,
         repo,
         [previous, terminal],
         expected_head=unrelated,
-        git_exe=proxy,
-        allow_test_fixture=True,
     )
 
     assert code == 2 and result["held"] == "evidence_stale"
 
 
-def test_terminal_p7_ignores_local_tracking_ref_and_obeys_live_remote(tmp_path):
-    repo, lines, merge = _terminal_state(tmp_path, "remote-trust", False)
-    pr_head = lines[-1].split("prHead=", 1)[1].split(" |", 1)[0]
-    _git(repo, "update-ref", "refs/remotes/origin/main", pr_head)
-    trusted_proxy = _make_git_proxy(
-        tmp_path,
-        "trusted-remote-git",
-        repo,
-        f"{merge}\trefs/heads/main\n",
-    )
-
-    code, result = _run(
-        tmp_path,
-        repo,
-        lines,
-        expected_head=merge,
-        git_exe=trusted_proxy,
-        allow_test_fixture=True,
-        env_overrides={
-            "GIT_CONFIG_COUNT": "1",
-            "GIT_CONFIG_KEY_0": "http.sslVerify",
-            "GIT_CONFIG_VALUE_0": "false",
-            "GIT_EXEC_PATH": "/untrusted/git-core",
-            "GIT_SSL_NO_VERIFY": "1",
-            "CURL_CA_BUNDLE": "/untrusted/ca-bundle",
-            "SSL_CERT_FILE": "/untrusted/certificate",
+def test_terminal_p7_remote_parser_accepts_exact_single_main_ref():
+    merge = "a" * 40
+    code, result = _run_trusted_git_pure(
+        "parseTrustedRemoteMainResult",
+        {
+            "status": 0,
+            "stdout": f"{merge}\trefs/heads/main\n",
+            "expectedRef": "refs/heads/main",
         },
     )
 
-    assert code == 0 and result["ok"] is True
-
-    _git(repo, "update-ref", "refs/remotes/origin/main", merge)
-    stale_remote_proxy = _make_git_proxy(
-        tmp_path,
-        "stale-remote-git",
-        repo,
-        f"{pr_head}\trefs/heads/main\n",
-    )
-
-    code, result = _run(
-        tmp_path,
-        repo,
-        lines,
-        expected_head=merge,
-        git_exe=stale_remote_proxy,
-        allow_test_fixture=True,
-    )
-
-    assert code == 2 and result["held"] == "evidence_stale"
+    assert code == 0 and result == {"ok": True, "value": merge}
 
 
 @pytest.mark.parametrize(
@@ -1438,24 +1431,15 @@ def test_terminal_p7_ignores_local_tracking_ref_and_obeys_live_remote(tmp_path):
     ],
 )
 def test_terminal_p7_fails_closed_on_invalid_live_remote_resolution(
-    tmp_path, remote_output, status
+    remote_output, status
 ):
-    repo, lines, merge = _terminal_state(tmp_path, "malformed-remote", False)
-    proxy = _make_git_proxy(
-        tmp_path,
-        "malformed-remote-git",
-        repo,
-        remote_output,
-        status=status,
+    code, result = _run_trusted_git_pure(
+        "parseTrustedRemoteMainResult",
+        {
+            "status": status,
+            "stdout": remote_output,
+            "expectedRef": "refs/heads/main",
+        },
     )
 
-    code, result = _run(
-        tmp_path,
-        repo,
-        lines,
-        expected_head=merge,
-        git_exe=proxy,
-        allow_test_fixture=True,
-    )
-
-    assert code == 2 and result["held"] == "evidence_stale"
+    assert code == 2 and result["ok"] is False
