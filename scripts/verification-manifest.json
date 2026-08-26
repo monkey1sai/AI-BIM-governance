@@ -86,8 +86,10 @@
     "README*.md",
     "docs/**",
     "patches/**",
+    ".superpowers/sdd/task-*-report.md",
     ".github/ISSUE_TEMPLATE/**",
-    ".github/PULL_REQUEST_TEMPLATE.md"
+    ".github/PULL_REQUEST_TEMPLATE.md",
+    "ornith-vllm-api-examples.html"
   ],
   "path_classes": [
     {
