@@ -100,6 +100,8 @@ describe("A1GovernanceWorkbenchPage client-render（doRun 輪詢守門 + 動作�
   });
 
   it.each([
+    ["generic Coordinator 404", new CoordinatorHttpError("/api/dev/test-data-projects", 404, "route not found")],
+    ["其他 dev path 的 disabled 404", new CoordinatorHttpError("/api/dev/other", 404, "dev routes disabled")],
     ["Coordinator 502", new CoordinatorHttpError("/api/dev/test-data-projects", 502, "upstream unavailable")],
     ["plain Error", new Error("network unavailable")],
   ])("[D3 dev routes] %s → 不誤顯示 dev routes 已關閉 note，A1 local_fs select 仍可操作", async (_label, error) => {

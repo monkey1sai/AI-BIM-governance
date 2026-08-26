@@ -6,7 +6,7 @@ import { uiSteps } from "./a1Machine";
 import { useRuleRun } from "./hooks/useRuleRun";
 import type { RuleRunSource } from "./hooks/useRuleRun";
 import { FileProjectRow, FileVersionRow, governanceClient, IssueRow, LIBRARY_IFC_PREFIX, parseLibraryIfcPath, RuleResultRow, RuleRunHistoryFilters, RuleRunHistoryItem } from "./governanceClient";
-import { coordinatorClient, isCoordinatorNotFound, IfcReadyListItem, IfcReadyReviewSessionResponse, RuntimeSessionSummary, RuntimeStatus } from "./coordinatorClient";
+import { coordinatorClient, CoordinatorHttpError, IfcReadyListItem, IfcReadyReviewSessionResponse, RuntimeSessionSummary, RuntimeStatus } from "./coordinatorClient";
 import { LifecycleStrip } from "./modelData/conversionShared";
 import { ReviewSessionViewerPane, type ReviewRoomHandoff } from "./ReviewSessionViewerPane";
 import { ElementMappingDocument, isFakeMappingDocument, isFakeMappingItem } from "../types/mapping";
@@ -19,6 +19,15 @@ type NativeFilePickerWindow = Window & {
     types?: Array<{ description?: string; accept: Record<string, string[]> }>;
   }) => Promise<Array<{ name: string }>>;
 };
+
+const TEST_DATA_PROJECTS_PATH = "/api/dev/test-data-projects";
+
+function isTestDataDevRoutesDisabled(error: unknown): boolean {
+  return error instanceof CoordinatorHttpError
+    && error.status === 404
+    && error.path === TEST_DATA_PROJECTS_PATH
+    && error.message === `coordinator ${TEST_DATA_PROJECTS_PATH} -> 404 dev routes disabled`;
+}
 
 function defaultA1IdsPath(): string {
   return import.meta.env.VITE_A1_DEFAULT_IDS_PATH || "rules/sample-fire-rating.ids";
@@ -164,7 +173,7 @@ export function A1GovernanceWorkbenchPage() {
       .then((r) => { if (alive) { setTestDataProjects(r.projects); setTestDataDevRoutesDisabled(false); } })
       .catch((e) => {
         if (!alive) return;
-        if (isCoordinatorNotFound(e)) setTestDataDevRoutesDisabled(true);
+        if (isTestDataDevRoutesDisabled(e)) setTestDataDevRoutesDisabled(true);
         /* 非 404：取不到就不標；不擋 A1 流程 */
       });
     return () => { alive = false; };

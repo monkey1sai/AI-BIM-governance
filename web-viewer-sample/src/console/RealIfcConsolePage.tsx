@@ -36,15 +36,27 @@ export function RealIfcConsolePage() {
 
   async function loadSources() {
     try {
-      // 原樣顯示 HTTP 狀態碼（W4 raw fetch 語意；非 2xx 是值不是錯誤）：dev routes 關閉時
-      // r.status===404，直接判斷，不經過 coordinatorClient 的 jsonGet/CoordinatorHttpError。
+      // 原樣顯示 HTTP 狀態碼（W4 raw fetch 語意）：只有後端 D3 的 exact 404 body 才代表
+      // dev routes 關閉；一般 route/deploy 404 或 upstream 5xx 必須維持一般載入失敗，不能誤導
+      // 操作員並禁用控制項。
       const r = await fetch(coordinatorUrl("/api/dev/ifc-sources"));
-      if (r.status === 404) {
-        setDevRoutesDisabled(true);
-        setSources([]);
-        setSelected("");
-        setRuntime("runtime: dev_routes_disabled (ENABLE_DEV_ROUTES=false；#demo-control 需後端啟用 dev routes)");
-        return;
+      if (!r.ok) {
+        let detail = r.statusText;
+        try {
+          const body = await r.json() as { detail?: unknown };
+          if (typeof body.detail === "string" && body.detail) detail = body.detail;
+        } catch {
+          /* 非 JSON／空 body：保留 statusText。 */
+        }
+        if (r.status === 404 && detail === "dev routes disabled") {
+          setDevRoutesDisabled(true);
+          setSources([]);
+          setSelected("");
+          setRuntime("runtime: dev_routes_disabled (ENABLE_DEV_ROUTES=false；#demo-control 需後端啟用 dev routes)");
+          return;
+        }
+        setDevRoutesDisabled(false);
+        throw new Error(`HTTP ${r.status}${detail ? ` ${detail}` : ""}`);
       }
       setDevRoutesDisabled(false);
       const j = await r.json();

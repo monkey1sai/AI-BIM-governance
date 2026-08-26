@@ -82,4 +82,35 @@ describe("RealIfcConsolePage（#demo-control）：dev routes 404 誠實狀態", 
       root.unmount();
     });
   });
+
+  it.each([
+    ["generic 404", 404, "route not found"],
+    ["JSON 502", 502, "upstream unavailable"],
+  ])("%s 不得誤標為 dev routes 已關閉，顯示一般載入失敗且控制項保持可用", async (_label, status, detail) => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ detail }), {
+        status,
+        statusText: status === 404 ? "Not Found" : "Bad Gateway",
+      }),
+    );
+    const root = createRoot(container);
+    await act(async () => {
+      root.render(<RealIfcConsolePage />);
+    });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(container.querySelector('[data-testid="ifc-dev-routes-notice"]')).toBeNull();
+    const runtimeEl = container.querySelector('[data-testid="ifc-runtime-state"]');
+    expect(runtimeEl?.textContent ?? "").toContain(`runtime: load_sources_failed: HTTP ${status}`);
+    expect(runtimeEl?.textContent ?? "").toContain(detail);
+    expect(container.querySelector<HTMLSelectElement>('[data-testid="ifc-fixture-select"]')?.disabled).toBe(false);
+    expect(container.querySelector<HTMLButtonElement>('[data-testid="ifc-register-btn"]')?.disabled).toBe(false);
+
+    await act(async () => {
+      root.unmount();
+    });
+  });
 });
