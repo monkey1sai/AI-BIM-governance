@@ -81,6 +81,7 @@ Thumbs.db
 !.claude/agents/
 !.claude/settings.json
 !.claude/output-styles/
+!.claude/launch.json
 # 所有層級的 .codex 預設忽略（含子專案 web-viewer-sample/.codex 等）
 .codex/
 # root .codex 例外：追蹤 config + repo 專用 skills；其餘（cache/worktrees / installed skills）仍忽略
