@@ -3,6 +3,11 @@ import fs from 'node:fs'
 import path from 'node:path'
 import crypto from 'node:crypto'
 import { spawnSync } from 'node:child_process'
+import {
+  gitInvocationArguments,
+  resolveTrustedGit,
+  sanitizedGitEnvironment,
+} from './trusted-git.mjs'
 
 const MACHINE_CONTRACT_URL = new URL('../../../agent-contracts/spec-to-done.contract.json', import.meta.url)
 const STATE_PREFIX = /^(HELD|DONE|RESUMED|AUTHORIZATION|NEW_RUN)@(P\d+)$/
@@ -24,6 +29,14 @@ const CONTRACT_V1_NEW_RUN_BOUNDARY = {
   token: 'NEW_RUN@P0',
   required_previous_reason: 'run_budget_exhausted',
   owner_provenance: 'sha256-tuple-binding-not-digital-signature',
+  git_identity: {
+    executable_policy: 'system-owned-read-only',
+    executable_path: 'required',
+    executable_sha256: 'required',
+    executable_bytes: 'required',
+    git_directory: 'required',
+    git_common_directory: 'required',
+  },
   counter_resets: { agentCalls: '0/40', p5Rounds: '0/2', evidenceAttempts: '0/2' },
   field_resets: { planPath: '', taskIndex: '0', prNumber: '', runIds: 'none', evidenceHead: '' },
 }
@@ -37,6 +50,8 @@ const NEW_RUN_FIELDS = [
   'previousStateSha256', 'previousStateBytes', 'previousCheckpointCount',
   'previousTerminalSha256', 'previousSpec', 'previousSlug', 'previousBranch',
   'previousWorktree', 'previousHead', 'ownerProvenance',
+  'gitExecutablePath', 'gitExecutableSha256', 'gitExecutableBytes', 'gitTrustClass',
+  'gitDirectory', 'gitCommonDirectory',
   'ownerMessageSha256', 'ownerMessageBytes', 'ownerTupleSha256',
 ]
 const AUTH_SCOPES = new Set(['impact-signoff', 'detect-signoff', 'review-signoff', 'repo-workflow-signoff'])
@@ -53,6 +68,7 @@ const ALLOWED_PHASE_TRANSITIONS = new Set([
   'P7>P7',
 ])
 let TRUSTED_GIT_EXE = null
+let TRUSTED_GIT_IDENTITY = null
 let ALLOWED_PHASES = null
 let ALLOWED_HELD_REASONS = null
 let TERMINAL_EVIDENCE = null
@@ -148,6 +164,12 @@ const newRunSeed = (fields) => ({
   previousBranch: fields.previousBranch,
   previousWorktree: fields.previousWorktree,
   previousHead: fields.previousHead,
+  gitExecutablePath: fields.gitExecutablePath,
+  gitExecutableSha256: fields.gitExecutableSha256,
+  gitExecutableBytes: parseExactInteger(fields.gitExecutableBytes, 'gitExecutableBytes'),
+  gitTrustClass: fields.gitTrustClass,
+  gitDirectory: fields.gitDirectory,
+  gitCommonDirectory: fields.gitCommonDirectory,
   spec: fields.spec, slug: fields.slug, userFacing: fields.userFacing,
   branch: fields.branch, worktree: fields.worktree, head: fields.head,
   executionMode: fields.executionMode, closeoutTaskIds: fields.closeoutTaskIds,
@@ -291,67 +313,45 @@ const isEvidenceOnlyPath = (value, fields) => {
   )
 }
 
-const validateTrustedGit = (gitExe, expectedWorktree) => {
-  if (!path.isAbsolute(gitExe || '') || !fs.existsSync(gitExe)) {
-    reject('resume_state_invalid', '--git-exe must name an existing absolute Git executable')
+const trustedGit = (gitExe, expectedWorktree) => {
+  try {
+    return resolveTrustedGit(gitExe, expectedWorktree)
+  } catch (error) {
+    reject('resume_state_invalid', error.message)
   }
-  if (!fs.existsSync(expectedWorktree) || !fs.statSync(expectedWorktree).isDirectory()) {
-    reject('resume_state_invalid', `expected worktree is not a directory: ${expectedWorktree}`)
-  }
-  const resolvedGit = fs.realpathSync(gitExe)
-  const resolvedWorktree = fs.realpathSync(expectedWorktree)
-  if (!['git', 'git.exe'].includes(path.basename(resolvedGit).toLowerCase())) {
-    reject('resume_state_invalid', '--git-exe basename must be git or git.exe')
-  }
-  if (isWithinPath(resolvedGit, resolvedWorktree)) {
-    reject('resume_state_invalid', '--git-exe must resolve outside the governed worktree')
-  }
-  return { resolvedGit, resolvedWorktree }
 }
 
-const runGit = (worktree, gitArgs) => spawnSync(TRUSTED_GIT_EXE, gitArgs, {
-  cwd: worktree,
-  encoding: 'utf8',
-  windowsHide: true,
-  maxBuffer: 1024 * 1024,
-})
-
-const sanitizedRemoteGitEnvironment = () => {
-  const env = { ...process.env }
-  const unsafeExactKeys = new Set([
-    'CURL_CA_BUNDLE',
-    'SSL_CERT_FILE',
-    'SSL_CERT_DIR',
-  ])
-  for (const key of Object.keys(env)) {
-    const normalizedKey = key.toUpperCase()
-    if (normalizedKey.startsWith('GIT_') || unsafeExactKeys.has(normalizedKey)) delete env[key]
-  }
-  const gitDirectory = path.dirname(TRUSTED_GIT_EXE)
-  env.GIT_CONFIG_GLOBAL = process.platform === 'win32' ? 'NUL' : '/dev/null'
-  env.GIT_CONFIG_SYSTEM = process.platform === 'win32' ? 'NUL' : '/dev/null'
-  env.GIT_CONFIG_NOSYSTEM = '1'
-  env.GIT_CEILING_DIRECTORIES = gitDirectory
-  env.GIT_DISCOVERY_ACROSS_FILESYSTEM = '0'
-  env.GIT_TERMINAL_PROMPT = '0'
-  return env
-}
+const runGit = (worktree, gitArgs) => spawnSync(
+  TRUSTED_GIT_EXE,
+  gitInvocationArguments(gitArgs),
+  {
+    cwd: worktree,
+    env: sanitizedGitEnvironment(),
+    encoding: 'utf8',
+    windowsHide: true,
+    maxBuffer: 1024 * 1024,
+  },
+)
 
 const resolveTrustedRemoteMain = () => {
   const gitDirectory = path.dirname(TRUSTED_GIT_EXE)
-  const result = spawnSync(TRUSTED_GIT_EXE, [
-    '-c', 'http.sslVerify=true',
-    'ls-remote', '--exit-code', '--refs',
-    TERMINAL_EVIDENCE.trusted_remote_url,
-    TERMINAL_EVIDENCE.remote_main_ref,
-  ], {
+  const result = spawnSync(
+    TRUSTED_GIT_EXE,
+    gitInvocationArguments([
+      '-c', 'http.sslVerify=true',
+      'ls-remote', '--exit-code', '--refs',
+      TERMINAL_EVIDENCE.trusted_remote_url,
+      TERMINAL_EVIDENCE.remote_main_ref,
+    ]),
+    {
     cwd: gitDirectory,
-    env: sanitizedRemoteGitEnvironment(),
+    env: sanitizedGitEnvironment(),
     encoding: 'utf8',
     windowsHide: true,
     timeout: 30_000,
     maxBuffer: 16 * 1024,
-  })
+    },
+  )
   if (result.error || result.status !== 0) {
     reject('evidence_stale', `could not resolve live remote ${TERMINAL_EVIDENCE.remote_main_ref} from the fixed trusted remote`)
   }
@@ -392,6 +392,30 @@ const validateActualBranch = (fields) => {
   if (actual.error || actual.status !== 0 || !actual.stdout.trim() ||
       actual.stdout.trim() !== fields.branch) {
     reject('resume_state_invalid', 'NEW_RUN branch does not match the attached target worktree')
+  }
+}
+
+const validateActualRepositoryIdentity = (fields) => {
+  const gitDirectory = runGit(fields.worktree, ['rev-parse', '--absolute-git-dir'])
+  const gitCommonDirectory = runGit(fields.worktree, ['rev-parse', '--git-common-dir'])
+  if (gitDirectory.error || gitDirectory.status !== 0 ||
+      gitCommonDirectory.error || gitCommonDirectory.status !== 0) {
+    reject('resume_state_invalid', 'could not resolve the target Git repository identity')
+  }
+  const actualGitDirectory = gitDirectory.stdout.trim()
+  const rawGitCommonDirectory = gitCommonDirectory.stdout.trim()
+  const actualGitCommonDirectory = path.isAbsolute(rawGitCommonDirectory)
+    ? rawGitCommonDirectory
+    : path.resolve(fields.worktree, rawGitCommonDirectory)
+  for (const [label, actual, expected] of [
+    ['Git directory', actualGitDirectory, fields.gitDirectory],
+    ['Git common directory', actualGitCommonDirectory, fields.gitCommonDirectory],
+  ]) {
+    if (!path.isAbsolute(actual) || !fs.existsSync(actual) || !fs.statSync(actual).isDirectory() ||
+        fs.lstatSync(actual).isSymbolicLink() ||
+        normalizedPath(fs.realpathSync(actual)) !== normalizedPath(expected)) {
+      reject('resume_state_invalid', `NEW_RUN ${label} does not match the owner-bound repository identity`)
+    }
   }
 }
 
@@ -518,7 +542,7 @@ const validateNewRunSchema = (checkpoint) => {
   }
   for (const key of [
     'previousStateSha256', 'previousTerminalSha256',
-    'ownerMessageSha256', 'ownerTupleSha256',
+    'gitExecutableSha256', 'ownerMessageSha256', 'ownerTupleSha256',
   ]) {
     if (!/^[0-9a-f]{64}$/.test(fields[key] || '')) {
       reject('resume_state_invalid', `${key} must be lowercase SHA-256`)
@@ -530,8 +554,15 @@ const validateNewRunSchema = (checkpoint) => {
   }
   if (parseExactInteger(fields.runSequence, 'runSequence') < 2 ||
       parseExactInteger(fields.previousCheckpointCount, 'previousCheckpointCount') < 1 ||
+      parseExactInteger(fields.gitExecutableBytes, 'gitExecutableBytes') < 1 ||
       parseExactInteger(fields.ownerMessageBytes, 'ownerMessageBytes') < 1) {
-    reject('resume_state_invalid', 'NEW_RUN sequence, checkpoint count, and owner bytes must be positive')
+    reject('resume_state_invalid', 'NEW_RUN sequence, checkpoint count, Git bytes, and owner bytes must be positive')
+  }
+  if (!path.isAbsolute(fields.gitExecutablePath || '') ||
+      !path.isAbsolute(fields.gitDirectory || '') ||
+      !path.isAbsolute(fields.gitCommonDirectory || '') ||
+      fields.gitTrustClass !== NEW_RUN_BOUNDARY.git_identity.executable_policy) {
+    reject('resume_state_invalid', 'NEW_RUN Git executable or repository identity is noncanonical')
   }
   if (fields.newRunId !== expectedNewRunId(fields) ||
       fields.ownerTupleSha256 !== expectedOwnerTupleSha256(fields)) {
@@ -776,8 +807,9 @@ const main = () => {
   if (limits.agentCalls !== MAX_AGENT_CALLS || limits.p5Rounds !== MAX_P5_ROUNDS || limits.evidenceAttempts !== MAX_EVIDENCE_ATTEMPTS) {
     reject('resume_state_invalid', 'validator limits must be exactly agentCalls=40, p5Rounds=2, evidenceAttempts=2')
   }
-  const trusted = validateTrustedGit(cli['git-exe'], cli['expected-worktree'])
+  const trusted = trustedGit(cli['git-exe'], cli['expected-worktree'])
   TRUSTED_GIT_EXE = trusted.resolvedGit
+  TRUSTED_GIT_IDENTITY = trusted
   if (!fs.existsSync(statePath) || !fs.statSync(statePath).isFile()) {
     reject('resume_state_invalid', `state file not found: ${statePath}`)
   }
@@ -797,6 +829,15 @@ const main = () => {
     if (normalizedPath(fs.realpathSync(statePath)) !== normalizedPath(canonicalState)) {
       reject('resume_state_invalid', 'NEW_RUN must be stored at the canonical durable-state path')
     }
+    if (normalizedPath(fields.gitExecutablePath) !== normalizedPath(TRUSTED_GIT_IDENTITY.resolvedGit)) {
+      reject('resume_state_invalid', 'NEW_RUN Git executable path does not match the current trusted executable')
+    }
+    if (fields.gitExecutableSha256 !== TRUSTED_GIT_IDENTITY.executableSha256 ||
+        Number(fields.gitExecutableBytes) !== TRUSTED_GIT_IDENTITY.executableBytes ||
+        fields.gitTrustClass !== TRUSTED_GIT_IDENTITY.trustClass) {
+      reject('resume_state_invalid', 'NEW_RUN Git executable hash, size, or trust class drifted')
+    }
+    validateActualRepositoryIdentity(fields)
     validateActualBranch(fields)
   }
   if (!/^[0-9a-f]{7,40}$/i.test(cli['expected-head']) || fields.head.toLowerCase() !== cli['expected-head'].toLowerCase()) {

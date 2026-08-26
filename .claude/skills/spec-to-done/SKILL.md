@@ -73,8 +73,11 @@ node .claude/skills/spec-to-done/append-new-run.mjs status --state <absolute-sta
 ```
 
 只有 exact owner message 已存在時，才可呼叫同檔 `append`；不得手寫、copy/paste 或一般 append
-`NEW_RUN@P0`。helper 會保留舊 state 的每個 byte，綁定舊全檔 SHA-256/bytes/checkpoint count、terminal
-line hash、舊/新 spec/branch/worktree/HEAD ancestry、owner message SHA-256/bytes，取得 exclusive lock 後
+`NEW_RUN@P0`。`--git-exe` 只能選 owner 安裝的 system Git：Windows 的
+`C:\Program Files\Git\{cmd,bin,mingw64\bin}\git.exe`，或 POSIX 的 `/usr/bin/git`／`/usr/local/bin/git`；
+不得使用 `Get-Command git`、PATH proxy、repo 內工具或 caller-writable binary。helper 會保留舊 state 的每個 byte，
+綁定舊全檔 SHA-256/bytes/checkpoint count、terminal line hash、舊/新 spec/branch/worktree/HEAD ancestry、
+Git executable path/hash/size/trust class、git-dir/common-dir 與 owner message SHA-256/bytes，取得 exclusive lock 後
 atomic replace 並立即用 canonical validator readback。`ownerProvenance=sha256-tuple-binding-not-digital-signature`
 只是可稽核 tuple binding，**不是數位簽章或 owner 身分驗證**；coordinator 仍須親眼確認當輪 owner 訊息。
 `status --json` 會列出 `nextAction` 與 `appendRequiredArguments`；不得省略、補猜或從舊對話沿用值。
@@ -340,7 +343,7 @@ HELD@P<n> | reason=<held 值> | spec=<specPath/changePath> | slug=<slug> | userF
 - **State 檔(durable,跨 session 唯一座標)**:`agent-contracts/spec-to-done.contract.json` 固定 canonical path
   `artifacts/spec-to-done/{slug}-state.md`。每個 phase 完成或 HELD 時，先把 durable history 完整複製到
   sibling temp，再 append 候選行（禁止只寫單一候選行），執行
-  `node .claude/skills/spec-to-done/validate-state.mjs --state <temp> --platform claude --git-exe <(Get-Command git).Source 的絕對路徑> --expected-head <git SHA> --expected-worktree <worktreeRoot> --expected-agent-limit 40 --expected-p5-limit 2 --expected-evidence-limit 2 --trusted-main-ref refs/heads/main`；exit 0 才把候選 append 到 canonical durable state。`--trusted-main-ref` 只是 machine contract 所定 remote ref 的固定 marker，不接受 local tracking ref。validator 會載入 machine contract，檢查完整 history 的每一行、所有相鄰 transition、實際 Git HEAD、dirty/staged/untracked、rename source，並只在 DONE@P7 獨立 live-resolve 固定 trusted remote、驗 remote main SHA、prHead ancestry 與 same tree。若既有 history 無法通過行或 transition 驗證，只能追加 counters 全到上限的 `HELD ... reason=resume_state_invalid` 作終端封存；該行不能用來繼續 progress，必須先修復或正規化歷史。
+  `node .claude/skills/spec-to-done/validate-state.mjs --state <temp> --platform claude --git-exe <上述 system Git 的絕對路徑> --expected-head <git SHA> --expected-worktree <worktreeRoot> --expected-agent-limit 40 --expected-p5-limit 2 --expected-evidence-limit 2 --trusted-main-ref refs/heads/main`；若 allowlist 內沒有 caller 不可寫的 system Git，回 `host_env_blocked`，不得改傳其他 binary。exit 0 才把候選 append 到 canonical durable state。`--trusted-main-ref` 只是 machine contract 所定 remote ref 的固定 marker，不接受 local tracking ref。validator 會清除 ambient `GIT_*`／config injection，載入 machine contract，檢查完整 history 的每一行、所有相鄰 transition、實際 Git executable 與 git-dir/common-dir identity、HEAD、dirty/staged/untracked、rename source，並只在 DONE@P7 獨立 live-resolve 固定 trusted remote、驗 remote main SHA、prHead ancestry 與 same tree。若既有 history 無法通過行或 transition 驗證，只能追加 counters 全到上限的 `HELD ... reason=resume_state_invalid` 作終端封存；該行不能用來繼續 progress，必須先修復或正規化歷史。
 - 「繼續 spec-to-done」→ 先對 durable state 跑同一 validator；通過後還原全部 args 與累計計數，只重跑該 phase：
   `Workflow({name:<phase>, args:{...還原,remainingAgentCalls:40-agentCalls.used}, resumeFromRunId:<該 phase 實際 runId>})`。
   state HEAD 與目前 worktree HEAD 不同即 `evidence_stale`；不得靠 resumeFromRunId 或新 session 跳過。

@@ -54,10 +54,14 @@ Keep the canonical args object. Do not stringify args. Count every spawn / workf
 Same binary as Claude/Codex. Grok current line uses `--platform grok`. P0 may still use `runIds=none`.
 
 ```powershell
-node .claude/skills/spec-to-done/validate-state.mjs --state <temp> --platform grok --git-exe <absolute git.exe> --expected-head <SHA> --expected-worktree <worktreeRoot> --expected-agent-limit 40 --expected-p5-limit 2 --expected-evidence-limit 2 --trusted-main-ref refs/heads/main
+node .claude/skills/spec-to-done/validate-state.mjs --state <temp> --platform grok --git-exe <approved system Git absolute path> --expected-head <SHA> --expected-worktree <worktreeRoot> --expected-agent-limit 40 --expected-p5-limit 2 --expected-evidence-limit 2 --trusted-main-ref refs/heads/main
 ```
 
-Prefer `C:\Program Files\Git\mingw64\bin\git.exe` so `--git-exe` is a real `git.exe` outside the worktree.
+Use only owner-installed system Git: Windows
+`C:\Program Files\Git\{cmd,bin,mingw64\bin}\git.exe`, or POSIX `/usr/bin/git`/`/usr/local/bin/git`.
+Do not use PATH discovery, a repository-local tool, or a caller-writable proxy. The validator strips ambient
+`GIT_*`/config injection and binds executable path/hash/size/trust class plus git-dir/common-dir. If no approved
+read-only system Git exists, return `host_env_blocked`; do not substitute another executable.
 
 ## Isolation (P0)
 

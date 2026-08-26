@@ -1,15 +1,15 @@
 # scripts/lib/self-referential-bootstrap.ps1
-# Self-referential change bootstrap: ledger parsing, integrity validation, and the
-# PR-time debt gate. Portable rule text lives in docs/agents/self-referential-bootstrap.md.
+# Self-referential change governance: historical-ledger integrity, Lean-policy
+# admission, and the one-time #704 migration. Portable rule text lives in
+# docs/agents/self-referential-bootstrap.md.
 #
-# Design constraints (decision D-7, plan docs/plans/remote-linux-test-deploy-target.plan.md):
-# - The rule is a general capability, not a one-off exception: it triggers whenever a PR
-#   edits the verification mechanism itself (deploy path / evidence harness / gate script /
-#   the workflows that enforce this gate).
-# - Enforcement is machine-checked AGAINST THE BASE: the gate evaluates the ledger
-#   transition from the PR base to the PR head. Deleting or mutating entries, impersonating
-#   an earlier PR's entry, or fabricating a fixpoint all fail closed (PR #459 review round).
-# - The ledger FORMAT is scaffold (portable); the CONTENT is product-owned.
+# Design constraints:
+# - Enforcement is machine-checked AGAINST THE BASE. Historical ledger rows and
+#   referenced evidence remain immutable and malformed transitions fail closed.
+# - Lean Governance commit 2a759f4 retires NEW fixpoint/classifier/ledger debt.
+#   Mechanism changes on a Lean-policy base stay single-PR and emit an advisory.
+# - PR #704 is the only bootstrap bridge: exact PR/base/owner-message/path tuple,
+#   unchanged ledger, and no reusable migration registry.
 
 Set-StrictMode -Version Latest
 
@@ -42,7 +42,7 @@ $script:SelfReferentialMechanismPattern = @(
     # These exact future paths must be visible to the immutable base classifier
     # before the NEW_RUN implementation PR changes them. Directory-wide patterns
     # would silently widen the mechanism surface and are intentionally rejected.
-    '^\.claude/skills/spec-to-done/(?:validate-state|append-new-run)\.mjs$'
+    '^\.claude/skills/spec-to-done/(?:validate-state|append-new-run|trusted-git)\.mjs$'
     '^\.claude/skills/spec-to-done/(?:SKILL|GROK)\.md$'
     '^\.codex/skills/spec-to-done/SKILL\.md$'
     '^tests/test_spec_to_done_(?:state_contract|budget_contract|closeout_contract)\.py$'
@@ -142,6 +142,7 @@ $script:SelfReferentialAdjudicatorPaths = @(
     # list exact so adjacent skill files and tests do not inherit authority.
     '.claude/skills/spec-to-done/validate-state.mjs'
     '.claude/skills/spec-to-done/append-new-run.mjs'
+    '.claude/skills/spec-to-done/trusted-git.mjs'
     '.claude/skills/spec-to-done/SKILL.md'
     '.claude/skills/spec-to-done/GROK.md'
     '.codex/skills/spec-to-done/SKILL.md'
@@ -150,9 +151,122 @@ $script:SelfReferentialAdjudicatorPaths = @(
     'tests/test_spec_to_done_closeout_contract.py'
 )
 
+$script:SelfReferentialLeanPolicyCommit = '2a759f4ac488750c4f3e1e1945b4d5de9f936b50'
+$script:SelfReferentialLeanMigrationPr = 704
+$script:SelfReferentialLeanMigrationBase = '7a51a3821086ac79a41e0062b1ef35ae7c8b278a'
+$script:SelfReferentialLeanMigrationDeclaration = 'owner-authorized-migration'
+$script:SelfReferentialLeanMigrationOwnerTuple = 'sha256=2fdd481cbf4247c93d1dc0aba65d4907b0059b6ce24fa0aae2c9c51139545ba3;bytes=19'
+$script:SelfReferentialLeanMigrationPaths = @(
+    '.claude/skills/spec-to-done/GROK.md'
+    '.claude/skills/spec-to-done/SKILL.md'
+    '.claude/skills/spec-to-done/append-new-run.mjs'
+    '.claude/skills/spec-to-done/trusted-git.mjs'
+    '.claude/skills/spec-to-done/validate-state.mjs'
+    '.codex/skills/spec-to-done/SKILL.md'
+    '.github/PULL_REQUEST_TEMPLATE.md'
+    'agent-contracts/spec-to-done.contract.json'
+    'agent-contracts/spec-to-done.contract.schema.json'
+    'agent-contracts/trusted-host-merge.contract.json'
+    'agent-skills-manifest.json'
+    'docs/agents/self-referential-bootstrap.md'
+    'scripts/lib/self-referential-bootstrap.ps1'
+    'scripts/tests/test-self-referential-bootstrap.ps1'
+    'tests/test_spec_to_done_state_contract.py'
+)
+
 $script:GenericReasonBlocklist = @(
     'bootstrap', 'needed', 'required', 'self-referential', 'chicken', 'egg', 'because', 'necessary'
 )
+
+function Test-SelfReferentialLeanPolicyBase {
+    param(
+        [Parameter(Mandatory = $true)][string] $RepoRoot,
+        [Parameter(Mandatory = $true)][string] $BaseSha
+    )
+
+    if ([string]::IsNullOrWhiteSpace($RepoRoot) -or [string]::IsNullOrWhiteSpace($BaseSha)) {
+        return $false
+    }
+    if ($BaseSha -ceq $script:SelfReferentialLeanPolicyCommit) {
+        return $true
+    }
+
+    & git -C $RepoRoot cat-file -e "$($script:SelfReferentialLeanPolicyCommit)^{commit}" 2>$null
+    if ($LASTEXITCODE -ne 0) {
+        return $false
+    }
+    & git -C $RepoRoot merge-base --is-ancestor $script:SelfReferentialLeanPolicyCommit $BaseSha 2>$null
+    if ($LASTEXITCODE -eq 0) {
+        return $true
+    }
+    if ($LASTEXITCODE -eq 1) {
+        return $false
+    }
+    throw "self_referential_bootstrap: unable to determine whether base $BaseSha contains the Lean Governance policy."
+}
+
+function Assert-SelfReferentialLeanPolicyBody {
+    param(
+        [Parameter(Mandatory = $true)][string] $Declared,
+        [Parameter(Mandatory = $true)][string] $Body,
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][string[]] $ChangedPaths,
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][string[]] $MechanismPaths,
+        [Parameter(Mandatory = $true)] $Transition,
+        [Parameter(Mandatory = $true)][scriptblock] $GetTableValue,
+        [Parameter(Mandatory = $true)][string] $BaseLedgerJson,
+        [Parameter(Mandatory = $true)][string] $HeadLedgerJson,
+        [int] $PrNumber = 0,
+        [string] $BaseSha = '',
+        [bool] $HasExactHeadContext = $false
+    )
+
+    if (-not $HasExactHeadContext -or [string]::IsNullOrWhiteSpace($BaseSha)) {
+        throw 'self_referential_bootstrap: Lean-policy adjudication requires exact base and head context.'
+    }
+    if ($BaseLedgerJson -cne $HeadLedgerJson -or
+        @($Transition.NewEntries).Count -ne 0 -or
+        @($Transition.ClosedEntries).Count -ne 0 -or
+        @($Transition.RepairEntries).Count -ne 0 -or
+        @($Transition.OpenDebt).Count -ne 0 -or
+        ($ChangedPaths -ccontains 'scripts/self-referential-bootstrap-ledger.json')) {
+        throw 'self_referential_bootstrap: the Lean-policy ledger is a closed historical archive; new debt, repair, closure, or any ledger edit is forbidden.'
+    }
+
+    if ($Declared -ceq $script:SelfReferentialLeanMigrationDeclaration) {
+        if ($PrNumber -ne $script:SelfReferentialLeanMigrationPr -or
+            $BaseSha -cne $script:SelfReferentialLeanMigrationBase) {
+            throw "self_referential_bootstrap: owner-authorized-migration is restricted to PR #$($script:SelfReferentialLeanMigrationPr) at base $($script:SelfReferentialLeanMigrationBase)."
+        }
+        $ownerTuple = ([string](& $GetTableValue $Body 'Lean migration owner message')).Trim().ToLowerInvariant()
+        if ($ownerTuple -cne $script:SelfReferentialLeanMigrationOwnerTuple) {
+            throw "self_referential_bootstrap: PR #704 must bind the exact owner-message tuple '$($script:SelfReferentialLeanMigrationOwnerTuple)'."
+        }
+        if (([string](& $GetTableValue $Body 'Bootstrap ledger entry')).Trim().ToLowerInvariant() -cne 'not applicable' -or
+            ([string](& $GetTableValue $Body 'Bootstrap reason')).Trim().ToLowerInvariant() -cne 'not applicable') {
+            throw 'self_referential_bootstrap: PR #704 must not claim a bootstrap ledger entry, reason, or future fixpoint.'
+        }
+
+        $actual = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
+        foreach ($path in $ChangedPaths) {
+            if (-not $actual.Add([string]$path)) {
+                throw "self_referential_bootstrap: PR #704 changed-path tuple contains duplicate path '$path'."
+            }
+        }
+        $missing = @($script:SelfReferentialLeanMigrationPaths | Where-Object { -not $actual.Contains($_) })
+        $extra = @($ChangedPaths | Where-Object { -not ($script:SelfReferentialLeanMigrationPaths -ccontains $_) })
+        if ($missing.Count -gt 0 -or $extra.Count -gt 0 -or
+            $actual.Count -ne $script:SelfReferentialLeanMigrationPaths.Count) {
+            throw "self_referential_bootstrap: PR #704 changed paths must equal its one-time migration allowlist; missing=[$($missing -join ', ')], extra=[$($extra -join ', ')]."
+        }
+        Write-Warning 'self_referential_bootstrap: accepting tuple-bound PR #704 as the one-time Lean migration; exact-head review and normal repository gates remain mandatory.'
+        return
+    }
+
+    if ($Declared -cne 'no') {
+        throw "self_referential_bootstrap: Lean Governance retires new bootstrap debt; declare 'no' and keep the historical ledger unchanged."
+    }
+    Write-Warning "self_referential_bootstrap: Lean Governance advisory for verification-mechanism paths: $($MechanismPaths -join ', ')."
+}
 
 function Assert-SelfReferentialStringList {
     # The schema says these fields are LISTS. `@($value).Count` cannot enforce that:
@@ -1570,6 +1684,23 @@ function Assert-SelfReferentialBootstrapBody {
         -PrNumber $PrNumber -RepoRoot $RepoRoot -BaseSha $BaseSha -HeadSha $HeadSha
     $newIds = @($transition.NewEntries | ForEach-Object { [string]$_.id })
 
+    $declared = & $GetTableValue $Body 'Self-referential bootstrap'
+    if ([string]::IsNullOrWhiteSpace($declared)) {
+        throw "This PR changes the verification mechanism ($($mechanismPaths -join ', ')); the PR body must declare 'Self-referential bootstrap'."
+    }
+    $declared = $declared.Trim().ToLowerInvariant()
+
+    $leanPolicyActive = $hasExactHeadContext -and
+        (Test-SelfReferentialLeanPolicyBase -RepoRoot $RepoRoot -BaseSha $BaseSha)
+    if ($leanPolicyActive) {
+        Assert-SelfReferentialLeanPolicyBody -Declared $declared -Body $Body `
+            -ChangedPaths $ChangedPaths -MechanismPaths $mechanismPaths `
+            -Transition $transition -GetTableValue $GetTableValue `
+            -BaseLedgerJson $BaseLedgerJson -HeadLedgerJson $headLedgerJson `
+            -PrNumber $PrNumber -BaseSha $BaseSha -HasExactHeadContext $hasExactHeadContext
+        return
+    }
+
     if (@($transition.ClosedEntries).Count -gt 0) {
         if (@($transition.NewEntries).Count -gt 0) {
             throw "self_referential_bootstrap: a fixpoint closure PR cannot also open new debt; close the existing entry and introduce the next mechanism change in separate PRs."
@@ -1585,11 +1716,6 @@ function Assert-SelfReferentialBootstrapBody {
         }
     }
 
-    $declared = & $GetTableValue $Body 'Self-referential bootstrap'
-    if ([string]::IsNullOrWhiteSpace($declared)) {
-        throw "This PR changes the verification mechanism ($($mechanismPaths -join ', ')); the PR body must declare 'Self-referential bootstrap' as yes or no."
-    }
-    $declared = $declared.Trim().ToLowerInvariant()
     if ($declared -notin @('yes', 'no')) {
         throw "PR body 'Self-referential bootstrap' must be yes or no; actual='$declared'."
     }

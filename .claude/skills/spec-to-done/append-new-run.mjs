@@ -4,7 +4,13 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
+import {
+  gitInvocationArguments,
+  resolveTrustedGit,
+  sanitizedGitEnvironment,
+} from './trusted-git.mjs'
 
+const APPENDER = fileURLToPath(import.meta.url)
 const VALIDATOR = fileURLToPath(new URL('./validate-state.mjs', import.meta.url))
 const SCHEMA_VERSION = 'spec-to-done-new-run/v1'
 const OWNER_PROVENANCE = 'sha256-tuple-binding-not-digital-signature'
@@ -18,6 +24,8 @@ const NEW_RUN_FIELDS = [
   'previousStateSha256', 'previousStateBytes', 'previousCheckpointCount',
   'previousTerminalSha256', 'previousSpec', 'previousSlug', 'previousBranch',
   'previousWorktree', 'previousHead', 'ownerProvenance',
+  'gitExecutablePath', 'gitExecutableSha256', 'gitExecutableBytes', 'gitTrustClass',
+  'gitDirectory', 'gitCommonDirectory',
   'ownerMessageSha256', 'ownerMessageBytes', 'ownerTupleSha256',
 ]
 
@@ -116,52 +124,22 @@ const parseCounter = (value, name, limit) => {
   return { used: Number(match[1]), limit }
 }
 
-const sanitizedGitEnvironment = () => {
-  const env = { ...process.env }
-  for (const key of Object.keys(env)) {
-    const upper = key.toUpperCase()
-    if (upper.startsWith('GIT_') || ['CURL_CA_BUNDLE', 'SSL_CERT_FILE', 'SSL_CERT_DIR'].includes(upper)) {
-      delete env[key]
-    }
+const trustedGit = (gitExe, worktree, held = 'bad_args') => {
+  try {
+    return resolveTrustedGit(gitExe, worktree)
+  } catch (error) {
+    reject(held, error.message)
   }
-  env.GIT_CONFIG_GLOBAL = process.platform === 'win32' ? 'NUL' : '/dev/null'
-  env.GIT_CONFIG_SYSTEM = process.platform === 'win32' ? 'NUL' : '/dev/null'
-  env.GIT_CONFIG_NOSYSTEM = '1'
-  env.GIT_TERMINAL_PROMPT = '0'
-  return env
 }
 
-const sanitizedValidatorEnvironment = () => {
-  const env = { ...process.env }
-  for (const key of Object.keys(env)) {
-    const upper = key.toUpperCase()
-    if (upper.startsWith('GIT_') || ['CURL_CA_BUNDLE', 'SSL_CERT_FILE', 'SSL_CERT_DIR'].includes(upper)) {
-      delete env[key]
-    }
-  }
-  return env
-}
-
-const validateTrustedGit = (gitExe, worktree) => {
-  if (!path.isAbsolute(gitExe || '') || !fs.existsSync(gitExe)) reject('bad_args', '--git-exe must be an existing absolute path')
-  const resolvedGit = fs.realpathSync(gitExe)
-  const resolvedWorktree = fs.realpathSync(worktree)
-  if (!['git', 'git.exe'].includes(path.basename(resolvedGit).toLowerCase()) ||
-      normalizedPath(resolvedGit).startsWith(`${normalizedPath(resolvedWorktree)}/`)) {
-    reject('bad_args', '--git-exe must be trusted and outside the target worktree')
-  }
-  return { resolvedGit, resolvedWorktree }
-}
-
-const runGit = (gitExe, worktree, args) => spawnSync(gitExe, [
-  '-c', `core.hooksPath=${process.platform === 'win32' ? 'NUL' : '/dev/null'}`,
-  '-c', `core.autocrlf=${process.platform === 'win32' ? 'true' : 'false'}`,
-  '-c', 'core.fsmonitor=false', '-c', 'diff.external=', '-c', 'core.attributesfile=',
-  ...args,
-], {
+const runGit = (gitExe, worktree, args) => spawnSync(
+  gitExe,
+  gitInvocationArguments(args),
+  {
   cwd: worktree, env: sanitizedGitEnvironment(), encoding: 'utf8', windowsHide: true,
   maxBuffer: 1024 * 1024,
-})
+  },
+)
 
 const gitText = (gitExe, worktree, args, detail) => {
   const result = runGit(gitExe, worktree, args)
@@ -171,6 +149,21 @@ const gitText = (gitExe, worktree, args, detail) => {
 
 const validateTargetGit = (gitExe, worktree, expectedBranch, expectedHead, previousHead) => {
   const top = gitText(gitExe, worktree, ['rev-parse', '--show-toplevel'], 'target is not a Git worktree')
+  const rawGitDirectory = gitText(
+    gitExe,
+    worktree,
+    ['rev-parse', '--absolute-git-dir'],
+    'target Git directory is unavailable',
+  )
+  const rawGitCommonDirectory = gitText(
+    gitExe,
+    worktree,
+    ['rev-parse', '--git-common-dir'],
+    'target Git common directory is unavailable',
+  )
+  const gitCommonDirectory = path.isAbsolute(rawGitCommonDirectory)
+    ? rawGitCommonDirectory
+    : path.resolve(worktree, rawGitCommonDirectory)
   const branch = gitText(gitExe, worktree, ['branch', '--show-current'], 'target branch is detached')
   const head = gitText(gitExe, worktree, ['rev-parse', '--verify', 'HEAD'], 'target HEAD is unavailable').toLowerCase()
   if (normalizedPath(top) !== normalizedPath(worktree) || branch !== expectedBranch ||
@@ -185,7 +178,21 @@ const validateTargetGit = (gitExe, worktree, expectedBranch, expectedHead, previ
     'status', '--porcelain=v1', '--untracked-files=all',
   ], 'could not inspect target cleanliness')
   if (status) reject('resume_state_invalid', 'target worktree must be clean before NEW_RUN migration', { status })
-  return { branch, head }
+  for (const [label, value] of [
+    ['Git directory', rawGitDirectory],
+    ['Git common directory', gitCommonDirectory],
+  ]) {
+    if (!path.isAbsolute(value) || !fs.existsSync(value) || !fs.statSync(value).isDirectory() ||
+        fs.lstatSync(value).isSymbolicLink()) {
+      reject('resume_state_invalid', `target ${label} is not a canonical plain directory`)
+    }
+  }
+  return {
+    branch,
+    head,
+    gitDirectory: portablePath(fs.realpathSync(rawGitDirectory)),
+    gitCommonDirectory: portablePath(fs.realpathSync(gitCommonDirectory)),
+  }
 }
 
 const assertNoSymlinkPath = (root, target) => {
@@ -247,6 +254,12 @@ const newRunSeed = (fields) => ({
   previousSpec: fields.previousSpec, previousSlug: fields.previousSlug,
   previousBranch: fields.previousBranch, previousWorktree: fields.previousWorktree,
   previousHead: fields.previousHead,
+  gitExecutablePath: fields.gitExecutablePath,
+  gitExecutableSha256: fields.gitExecutableSha256,
+  gitExecutableBytes: Number(fields.gitExecutableBytes),
+  gitTrustClass: fields.gitTrustClass,
+  gitDirectory: fields.gitDirectory,
+  gitCommonDirectory: fields.gitCommonDirectory,
   spec: fields.spec, slug: fields.slug, userFacing: fields.userFacing,
   branch: fields.branch, worktree: fields.worktree, head: fields.head,
   executionMode: fields.executionMode, closeoutTaskIds: fields.closeoutTaskIds,
@@ -265,7 +278,14 @@ const finishBoundaryIdentity = (fields) => {
   return fields
 }
 
-const buildBoundaryFields = (cli, sourceBuffer, sourceInfo, targetWorktree, gitIdentity) => {
+const buildBoundaryFields = (
+  cli,
+  sourceBuffer,
+  sourceInfo,
+  targetWorktree,
+  gitIdentity,
+  gitTrust,
+) => {
   if (!/^[0-9a-f]{64}$/.test(cli['owner-message-sha256']) ||
       !/^\d{4}-\d{2}-\d{2}$/.test(cli['date-stamp'])) {
     reject('bad_args', 'owner SHA-256 or date stamp is invalid')
@@ -295,6 +315,12 @@ const buildBoundaryFields = (cli, sourceBuffer, sourceInfo, targetWorktree, gitI
     previousSpec: old.spec, previousSlug: old.slug, previousBranch: old.branch,
     previousWorktree: old.worktree, previousHead: old.head,
     ownerProvenance: OWNER_PROVENANCE,
+    gitExecutablePath: portablePath(gitTrust.resolvedGit),
+    gitExecutableSha256: gitTrust.executableSha256,
+    gitExecutableBytes: String(gitTrust.executableBytes),
+    gitTrustClass: gitTrust.trustClass,
+    gitDirectory: gitIdentity.gitDirectory,
+    gitCommonDirectory: gitIdentity.gitCommonDirectory,
     ownerMessageSha256: cli['owner-message-sha256'], ownerMessageBytes: String(ownerBytes),
     ownerTupleSha256: '',
   }
@@ -332,7 +358,7 @@ const validateWrittenState = (target, worktree, gitExe, head) => {
     '--expected-agent-limit', '40', '--expected-p5-limit', '2',
     '--expected-evidence-limit', '2', '--trusted-main-ref', 'refs/heads/main',
   ], {
-    cwd: worktree, env: sanitizedValidatorEnvironment(), encoding: 'utf8', windowsHide: true,
+    cwd: worktree, env: sanitizedGitEnvironment(), encoding: 'utf8', windowsHide: true,
     maxBuffer: 1024 * 1024,
   })
   let output
@@ -378,7 +404,24 @@ const statusCommand = (cli) => {
   }
 }
 
-const appendCommand = (cli) => {
+const readAuthorizedSource = (cli) => {
+  if (fs.lstatSync(cli['source-state']).isSymbolicLink()) {
+    reject('resume_state_invalid', 'source state symlink is forbidden')
+  }
+  const sourceBuffer = fs.readFileSync(cli['source-state'])
+  const sourceInfo = inspectSource(sourceBuffer)
+  const expectedBytes = canonicalInteger(cli['expected-source-bytes'], 'expected-source-bytes', { positive: true })
+  const expectedCheckpoints = canonicalInteger(
+    cli['expected-source-checkpoints'], 'expected-source-checkpoints', { positive: true },
+  )
+  if (sourceBuffer.length !== expectedBytes || sha256(sourceBuffer) !== cli['expected-source-sha256'] ||
+      sourceInfo.records.length !== expectedCheckpoints) {
+    reject('resume_state_invalid', 'source state drifted from the exact owner-authorized tuple')
+  }
+  return { sourceBuffer, sourceInfo }
+}
+
+export const appendCommand = (cli, hooks = {}) => {
   const required = [
     'source-state', 'target-worktree', 'git-exe', 'expected-branch', 'expected-head',
     'expected-source-sha256', 'expected-source-bytes', 'expected-source-checkpoints',
@@ -395,63 +438,110 @@ const appendCommand = (cli) => {
       /[|\r\n]/.test(cli['expected-branch'])) {
     reject('bad_args', 'expected Git or source identity is invalid')
   }
-  if (fs.lstatSync(cli['source-state']).isSymbolicLink()) reject('resume_state_invalid', 'source state symlink is forbidden')
-  const sourceBuffer = fs.readFileSync(cli['source-state'])
-  const sourceInfo = inspectSource(sourceBuffer)
-  const expectedBytes = canonicalInteger(cli['expected-source-bytes'], 'expected-source-bytes', { positive: true })
-  const expectedCheckpoints = canonicalInteger(
-    cli['expected-source-checkpoints'], 'expected-source-checkpoints', { positive: true },
-  )
-  if (sourceBuffer.length !== expectedBytes || sha256(sourceBuffer) !== cli['expected-source-sha256'] ||
-      sourceInfo.records.length !== expectedCheckpoints) {
-    reject('resume_state_invalid', 'source state drifted from the exact owner-authorized tuple')
+  const initialSource = readAuthorizedSource(cli)
+  const initialTrust = trustedGit(cli['git-exe'], cli['target-worktree'])
+  if (initialTrust.trustClass !== 'system-owned-read-only') {
+    reject('host_env_blocked', 'NEW_RUN append requires an approved system-owned, read-only Git executable')
   }
-  const trusted = validateTrustedGit(cli['git-exe'], cli['target-worktree'])
-  const targetWorktree = trusted.resolvedWorktree
-  const gitIdentity = validateTargetGit(
-    trusted.resolvedGit, targetWorktree, cli['expected-branch'],
-    cli['expected-head'], sourceInfo.terminal.fields.head,
+  const targetWorktree = initialTrust.resolvedWorktree
+  const target = path.join(
+    targetWorktree,
+    'artifacts',
+    'spec-to-done',
+    `${initialSource.sourceInfo.terminal.fields.slug}-state.md`,
   )
-  const fields = buildBoundaryFields(cli, sourceBuffer, sourceInfo, targetWorktree, gitIdentity)
-  const target = path.join(targetWorktree, 'artifacts', 'spec-to-done', `${fields.slug}-state.md`)
-  assertNoSymlinkPath(targetWorktree, target)
-  if (fs.existsSync(target) &&
-      (fs.lstatSync(target).isSymbolicLink() || !fs.statSync(target).isFile())) {
-    reject('resume_state_invalid', 'canonical target state is not a plain file')
-  }
-  const newline = sourceBuffer.length >= 2 && sourceBuffer.subarray(-2).equals(Buffer.from('\r\n'))
-    ? '\r\n' : '\n'
-  const boundaryLine = canonicalBoundaryLine(fields)
-  const candidate = Buffer.concat([sourceBuffer, Buffer.from(`${boundaryLine}${newline}`, 'utf8')])
+  assertNoSymlinkPath(targetWorktree, path.dirname(target))
   fs.mkdirSync(path.dirname(target), { recursive: true })
+  assertNoSymlinkPath(targetWorktree, path.dirname(target))
   const lockPath = `${target}.new-run.lock`
   let lock
   let wrote = false
-  const hadTarget = fs.existsSync(target)
+  let lockIdentity
+  let priorTargetBuffer = null
+  let candidate = null
+  let fields = null
+  let sourceBuffer = null
   try {
+    if (typeof hooks.beforeLock === 'function') hooks.beforeLock({ lockPath, target })
     try {
       lock = fs.openSync(lockPath, 'wx', 0o600)
+      lockIdentity = fs.fstatSync(lock)
     } catch (error) {
       reject('resume_state_invalid', `NEW_RUN lock is unavailable: ${error.code || error.message}`)
     }
-    const lockedSource = fs.readFileSync(cli['source-state'])
-    if (!lockedSource.equals(sourceBuffer)) reject('resume_state_invalid', 'source changed while acquiring NEW_RUN lock')
-    if (hadTarget && !fs.readFileSync(target).equals(sourceBuffer)) {
-      reject('resume_state_invalid', 'target already differs from the exact source; repeat or overwrite refused')
+
+    const lockedTrust = trustedGit(cli['git-exe'], cli['target-worktree'], 'resume_state_invalid')
+    if (normalizedPath(lockedTrust.resolvedGit) !== normalizedPath(initialTrust.resolvedGit) ||
+        normalizedPath(lockedTrust.resolvedWorktree) !== normalizedPath(initialTrust.resolvedWorktree) ||
+        lockedTrust.executableSha256 !== initialTrust.executableSha256 ||
+        lockedTrust.executableBytes !== initialTrust.executableBytes ||
+        lockedTrust.trustClass !== initialTrust.trustClass) {
+      reject('resume_state_invalid', 'trusted Git or target worktree identity changed while acquiring NEW_RUN lock')
     }
+
+    const lockedSource = readAuthorizedSource(cli)
+    sourceBuffer = lockedSource.sourceBuffer
+    assertNoSymlinkPath(targetWorktree, target)
+    if (fs.existsSync(target)) {
+      const targetStat = fs.lstatSync(target)
+      if (targetStat.isSymbolicLink() || !targetStat.isFile()) {
+        reject('resume_state_invalid', 'canonical target state is not a plain file')
+      }
+      priorTargetBuffer = fs.readFileSync(target)
+    }
+
+    const gitIdentity = validateTargetGit(
+      lockedTrust.resolvedGit,
+      targetWorktree,
+      cli['expected-branch'],
+      cli['expected-head'],
+      lockedSource.sourceInfo.terminal.fields.head,
+    )
+    fields = buildBoundaryFields(
+      cli,
+      sourceBuffer,
+      lockedSource.sourceInfo,
+      targetWorktree,
+      gitIdentity,
+      lockedTrust,
+    )
+    const newline = sourceBuffer.length >= 2 && sourceBuffer.subarray(-2).equals(Buffer.from('\r\n'))
+      ? '\r\n' : '\n'
+    const boundaryLine = canonicalBoundaryLine(fields)
+    candidate = Buffer.concat([sourceBuffer, Buffer.from(`${boundaryLine}${newline}`, 'utf8')])
+    if (priorTargetBuffer?.equals(candidate)) {
+      reject('resume_state_invalid', 'target already contains the completed NEW_RUN boundary; repeat refused')
+    }
+    if (priorTargetBuffer != null && !priorTargetBuffer.equals(sourceBuffer)) {
+      reject('resume_state_invalid', 'target already differs from the exact source; overwrite refused')
+    }
+
     atomicReplace(target, candidate)
     wrote = true
+    if (typeof hooks.afterWrite === 'function') hooks.afterWrite({ target })
     if (!fs.readFileSync(target).equals(candidate)) reject('resume_state_invalid', 'NEW_RUN atomic readback mismatch')
-    validateWrittenState(target, targetWorktree, trusted.resolvedGit, gitIdentity.head)
+    validateWrittenState(target, targetWorktree, lockedTrust.resolvedGit, gitIdentity.head)
   } catch (error) {
     if (wrote) {
-      if (hadTarget) atomicReplace(target, sourceBuffer)
-      else if (fs.existsSync(target)) fs.unlinkSync(target)
+      if (priorTargetBuffer != null) {
+        atomicReplace(target, priorTargetBuffer)
+      } else if (fs.existsSync(target)) {
+        const current = fs.readFileSync(target)
+        if (!candidate || !current.equals(candidate)) {
+          reject('resume_state_invalid', 'NEW_RUN rollback refused because target changed after write')
+        }
+        fs.unlinkSync(target)
+      }
     }
     throw error
   } finally {
     if (lock != null) fs.closeSync(lock)
-    if (lock != null && fs.existsSync(lockPath)) fs.unlinkSync(lockPath)
+    if (lockIdentity && fs.existsSync(lockPath)) {
+      const currentLock = fs.lstatSync(lockPath)
+      if (currentLock.dev === lockIdentity.dev && currentLock.ino === lockIdentity.ino) {
+        fs.unlinkSync(lockPath)
+      }
+    }
   }
   return {
     ok: true, state: portablePath(target), sourceSha256: sha256(sourceBuffer),
@@ -461,14 +551,16 @@ const appendCommand = (cli) => {
   }
 }
 
-try {
-  const cli = parseCli(process.argv.slice(2))
-  const result = cli.command === 'status' ? statusCommand(cli) : appendCommand(cli)
-  process.stdout.write(JSON.stringify(result))
-} catch (error) {
-  const held = error instanceof BoundaryError ? error.held : 'resume_state_invalid'
-  const detail = error instanceof Error ? error.message : String(error)
-  const extra = error instanceof BoundaryError ? error.extra : {}
-  process.stdout.write(JSON.stringify({ ok: false, held, detail, ...extra }))
-  process.exitCode = 2
+if (process.argv[1] && normalizedPath(process.argv[1]) === normalizedPath(APPENDER)) {
+  try {
+    const cli = parseCli(process.argv.slice(2))
+    const result = cli.command === 'status' ? statusCommand(cli) : appendCommand(cli)
+    process.stdout.write(JSON.stringify(result))
+  } catch (error) {
+    const held = error instanceof BoundaryError ? error.held : 'resume_state_invalid'
+    const detail = error instanceof Error ? error.message : String(error)
+    const extra = error instanceof BoundaryError ? error.extra : {}
+    process.stdout.write(JSON.stringify({ ok: false, held, detail, ...extra }))
+    process.exitCode = 2
+  }
 }

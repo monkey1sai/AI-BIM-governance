@@ -74,6 +74,7 @@ Thumbs.db
 !.claude/skills/verification-before-completion/
 !.claude/skills/writing-plans/
 !.claude/skills/writing-skills/
+!.claude/skills/pr-queue-manager/
 # Tracked agent assets: workflows/commands/agents/settings (2026-06-10)
 !.claude/workflows/
 !.claude/commands/
@@ -121,6 +122,7 @@ Thumbs.db
 !/.codex/skills/verification-before-completion/
 !/.codex/skills/writing-plans/
 !/.codex/skills/writing-skills/
+!/.codex/skills/pr-queue-manager/
 # generated/（cluster-* 等生成知識圖）為可重生生成物，不入庫
 /.codex/skills/generated/
 .superpowers/

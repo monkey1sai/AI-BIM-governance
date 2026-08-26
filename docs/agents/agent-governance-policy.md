@@ -149,3 +149,10 @@ When a load-bearing rule changes deliberately, refresh its pin in the same commi
 ```powershell
 pwsh -File scripts/tests/test-agent-governance-policy.ps1 -DumpFingerprints
 ```
+
+## Lean Governance Policy (減法方針)
+
+1. **禁止元治理無限自我維護**：Agent 不得將產能消耗在連續開立 fixpoint rebuild、ledger debt repair 等純內部治理 PR。
+2. **單 PR 閉環**：所有需求與變更在單一 PR 內完成，杜絕 3-PR 分段開立。
+3. **業務優先原則**：若治理機制與業務交付產生摩擦，以業務功能交付為第一優先，治理警告改為 non-blocking advisory。
+

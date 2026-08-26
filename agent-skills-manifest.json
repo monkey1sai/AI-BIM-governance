@@ -58,6 +58,61 @@
       }
     },
     {
+      "name": "blip-approve",
+      "locations": {
+        "claude": ".claude/skills/blip-approve",
+        "codex": ".codex/skills/blip-approve"
+      },
+      "sync": {
+        "mode": "mirror",
+        "source": "claude",
+        "targets": [
+          "codex"
+        ]
+      },
+      "provenance": {
+        "kind": "repo-authored",
+        "source": "AI-BIM-governance",
+        "notes": "Introduced by the commit containing this manifest entry. Claude is the canonical tracked source and Codex is a byte-identical mirror. User-level installations, credentials, and the live helper remain separately provisioned operational dependencies."
+      },
+      "integrity": {
+        "format": "agent-skill-tree/v2",
+        "algorithm": "sha256",
+        "trees": {
+          "claude": "20fce0c1be06f4e8d14ff3ecf0f023c6df62b04bac42014e447c05192edc1c25",
+          "codex": "20fce0c1be06f4e8d14ff3ecf0f023c6df62b04bac42014e447c05192edc1c25"
+        }
+      }
+    },
+    {
+      "name": "brainstorming",
+      "locations": {
+        "claude": ".claude/skills/brainstorming",
+        "codex": ".codex/skills/brainstorming"
+      },
+      "sync": {
+        "mode": "mirror",
+        "source": "claude",
+        "targets": [
+          "codex"
+        ]
+      },
+      "provenance": {
+        "kind": "vendored-official",
+        "source": "obra/superpowers@v6.1.1",
+        "import_commit": "d884ae04edebef577e82ff7c4e143debd0bbec99",
+        "license": "MIT"
+      },
+      "integrity": {
+        "format": "agent-skill-tree/v2",
+        "algorithm": "sha256",
+        "trees": {
+          "claude": "d981f24448d4f1ee696cfb4e2f923c32aa800558861450b3d39898b74e981a67",
+          "codex": "d981f24448d4f1ee696cfb4e2f923c32aa800558861450b3d39898b74e981a67"
+        }
+      }
+    },
+    {
       "name": "deploy-linux-test-environment",
       "locations": {
         "claude": ".claude/skills/deploy-linux-test-environment",
@@ -112,10 +167,10 @@
       }
     },
     {
-      "name": "verify-minio-real-data-e2e",
+      "name": "dispatching-parallel-agents",
       "locations": {
-        "claude": ".claude/skills/verify-minio-real-data-e2e",
-        "codex": ".codex/skills/verify-minio-real-data-e2e"
+        "claude": ".claude/skills/dispatching-parallel-agents",
+        "codex": ".codex/skills/dispatching-parallel-agents"
       },
       "sync": {
         "mode": "mirror",
@@ -125,16 +180,45 @@
         ]
       },
       "provenance": {
-        "kind": "repo-authored",
-        "source": "AI-BIM-governance",
-        "notes": "Public-safe, read-only real-MinIO acceptance procedure. It intentionally contains no historical production snapshot or customer/model metadata. Claude is canonical and Codex is a byte-identical mirror."
+        "kind": "vendored-official",
+        "source": "obra/superpowers@v6.1.1",
+        "import_commit": "d884ae04edebef577e82ff7c4e143debd0bbec99",
+        "license": "MIT"
       },
       "integrity": {
         "format": "agent-skill-tree/v2",
         "algorithm": "sha256",
         "trees": {
-          "claude": "f149ecd419a5b0228f30d8b051776c34183f78c40189ca93fd0030e608f1f83d",
-          "codex": "f149ecd419a5b0228f30d8b051776c34183f78c40189ca93fd0030e608f1f83d"
+          "claude": "82340e3f871574c3570122a9bd90cd46e10b54b22f2845c6ff9b72e10eb211df",
+          "codex": "82340e3f871574c3570122a9bd90cd46e10b54b22f2845c6ff9b72e10eb211df"
+        }
+      }
+    },
+    {
+      "name": "executing-plans",
+      "locations": {
+        "claude": ".claude/skills/executing-plans",
+        "codex": ".codex/skills/executing-plans"
+      },
+      "sync": {
+        "mode": "mirror",
+        "source": "claude",
+        "targets": [
+          "codex"
+        ]
+      },
+      "provenance": {
+        "kind": "vendored-official",
+        "source": "obra/superpowers@v6.1.1",
+        "import_commit": "d884ae04edebef577e82ff7c4e143debd0bbec99",
+        "license": "MIT"
+      },
+      "integrity": {
+        "format": "agent-skill-tree/v2",
+        "algorithm": "sha256",
+        "trees": {
+          "claude": "fc5f85e168205e81344de99a8762b0b807206679d8cb58725627d191f3523f60",
+          "codex": "fc5f85e168205e81344de99a8762b0b807206679d8cb58725627d191f3523f60"
         }
       }
     },
@@ -247,6 +331,34 @@
       }
     },
     {
+      "name": "finishing-a-development-branch",
+      "locations": {
+        "claude": ".claude/skills/finishing-a-development-branch",
+        "codex": ".codex/skills/finishing-a-development-branch"
+      },
+      "sync": {
+        "mode": "mirror",
+        "source": "claude",
+        "targets": [
+          "codex"
+        ]
+      },
+      "provenance": {
+        "kind": "vendored-official",
+        "source": "obra/superpowers@v6.1.1",
+        "import_commit": "d884ae04edebef577e82ff7c4e143debd0bbec99",
+        "license": "MIT"
+      },
+      "integrity": {
+        "format": "agent-skill-tree/v2",
+        "algorithm": "sha256",
+        "trees": {
+          "claude": "506c76b64b1ba5bba683528fc1e64893c8fb31957564844b3ffcab2fbd8ddcc6",
+          "codex": "506c76b64b1ba5bba683528fc1e64893c8fb31957564844b3ffcab2fbd8ddcc6"
+        }
+      }
+    },
+    {
       "name": "gitnexus",
       "locations": {
         "claude": ".claude/skills/gitnexus"
@@ -291,6 +403,30 @@
         "trees": {
           "claude": "ee58c522dd0c53e742c3838a10cfa36c73179ac684fa4c8957f5d9cc29c98aa8",
           "codex": "ee58c522dd0c53e742c3838a10cfa36c73179ac684fa4c8957f5d9cc29c98aa8"
+        }
+      }
+    },
+    {
+      "name": "mapping-coverage-loop",
+      "locations": {
+        "claude": ".claude/skills/mapping-coverage-loop",
+        "codex": ".codex/skills/mapping-coverage-loop"
+      },
+      "sync": {
+        "mode": "independent"
+      },
+      "provenance": {
+        "kind": "repo-authored-platform-variants",
+        "source": "AI-BIM-governance",
+        "import_commit": "71cfa3a5ba03058648021a021e6c4f7b4c5f19fc",
+        "notes": "bim-workflows-pack (#454): Claude commander handbook and Codex per-phase SOP intentionally differ; gate/held semantics kept in sync per SKILL.md sync rule."
+      },
+      "integrity": {
+        "format": "agent-skill-tree/v2",
+        "algorithm": "sha256",
+        "trees": {
+          "claude": "86734baf4a45027fae57c2cf86f05ef34fe6542225fc5dd42fe33cd3fb3c4266",
+          "codex": "7d6d3f889404a945da6de8054f4f62476b404b47254bbcad773506954111bad3"
         }
       }
     },
@@ -376,106 +512,10 @@
       }
     },
     {
-      "name": "repo-health",
+      "name": "pr-queue-manager",
       "locations": {
-        "claude": ".claude/skills/repo-health",
-        "codex": ".codex/skills/repo-health"
-      },
-      "sync": {
-        "mode": "independent"
-      },
-      "provenance": {
-        "kind": "repo-authored-platform-variants",
-        "source": "AI-BIM-governance",
-        "import_commit": "6f07f969fd17ae568b4c39876ce743a5cd06e82a",
-        "notes": "Claude uses the repo-health-scan workflow; Codex performs the same dimensions directly with local read-only discovery and reporting."
-      },
-      "integrity": {
-        "format": "agent-skill-tree/v2",
-        "algorithm": "sha256",
-        "trees": {
-          "claude": "dccdc76d9d57d9133e7453963a3120dc2b59a924e4a7cd5f39b2053a8bd209ce",
-          "codex": "0eceb7a786417521b894f3818bc73327a40c75e5d7fb81c5b87c81474d65fb24"
-        }
-      }
-    },
-    {
-      "name": "spec-to-done",
-      "locations": {
-        "claude": ".claude/skills/spec-to-done",
-        "codex": ".codex/skills/spec-to-done"
-      },
-      "sync": {
-        "mode": "independent"
-      },
-      "provenance": {
-        "kind": "repo-authored-platform-variants",
-        "source": "AI-BIM-governance",
-        "import_commit": "c414e1cd4ca46ae3443db76a1a43a5334695db01",
-        "notes": "Claude and Codex adapter prose intentionally differs; agent-contracts/spec-to-done.contract.json owns the shared phases, canonical state path, durable HELD reasons, and terminal evidence constraints, with agent-governance tests enforcing adapter parity. Grok host adapter is tracked as .claude/skills/spec-to-done/GROK.md."
-      },
-      "integrity": {
-        "format": "agent-skill-tree/v2",
-        "algorithm": "sha256",
-        "trees": {
-          "claude": "93877ebf909c087f501b8b74aaa2cb7b28bd168e39666e5439d8507d75a2d37f",
-          "codex": "ba92625a395298907aa9128723673426c8b5afecc1ea5db1806f4c629115b85e"
-        }
-      }
-    },
-    {
-      "name": "mapping-coverage-loop",
-      "locations": {
-        "claude": ".claude/skills/mapping-coverage-loop",
-        "codex": ".codex/skills/mapping-coverage-loop"
-      },
-      "sync": {
-        "mode": "independent"
-      },
-      "provenance": {
-        "kind": "repo-authored-platform-variants",
-        "source": "AI-BIM-governance",
-        "import_commit": "71cfa3a5ba03058648021a021e6c4f7b4c5f19fc",
-        "notes": "bim-workflows-pack (#454): Claude commander handbook and Codex per-phase SOP intentionally differ; gate/held semantics kept in sync per SKILL.md sync rule."
-      },
-      "integrity": {
-        "format": "agent-skill-tree/v2",
-        "algorithm": "sha256",
-        "trees": {
-          "claude": "86734baf4a45027fae57c2cf86f05ef34fe6542225fc5dd42fe33cd3fb3c4266",
-          "codex": "7d6d3f889404a945da6de8054f4f62476b404b47254bbcad773506954111bad3"
-        }
-      }
-    },
-    {
-      "name": "token-strategy-tournament",
-      "locations": {
-        "claude": ".claude/skills/token-strategy-tournament",
-        "codex": ".codex/skills/token-strategy-tournament"
-      },
-      "sync": {
-        "mode": "independent"
-      },
-      "provenance": {
-        "kind": "repo-authored-platform-variants",
-        "source": "AI-BIM-governance",
-        "import_commit": "71cfa3a5ba03058648021a021e6c4f7b4c5f19fc",
-        "notes": "bim-workflows-pack (#454): Claude commander handbook and Codex per-phase SOP intentionally differ; gate/held semantics kept in sync per SKILL.md sync rule."
-      },
-      "integrity": {
-        "format": "agent-skill-tree/v2",
-        "algorithm": "sha256",
-        "trees": {
-          "claude": "e96146dfa8425d03e68ff80a64d28174622c3ee075e4db1165888ce2314ba479",
-          "codex": "951ba37a23f996b22266329e5def36d5bed1603c7efae6030ce14c59444f4937"
-        }
-      }
-    },
-    {
-      "name": "brainstorming",
-      "locations": {
-        "claude": ".claude/skills/brainstorming",
-        "codex": ".codex/skills/brainstorming"
+        "claude": ".claude/skills/pr-queue-manager",
+        "codex": ".codex/skills/pr-queue-manager"
       },
       "sync": {
         "mode": "mirror",
@@ -485,101 +525,16 @@
         ]
       },
       "provenance": {
-        "kind": "vendored-official",
-        "source": "obra/superpowers@v6.1.1",
-        "import_commit": "d884ae04edebef577e82ff7c4e143debd0bbec99",
-        "license": "MIT"
+        "kind": "repo-authored",
+        "source": "AI-BIM-governance",
+        "import_commit": "c2ab5a706b4d34a413d31b2c4bf29ad9c6d3ff36"
       },
       "integrity": {
         "format": "agent-skill-tree/v2",
         "algorithm": "sha256",
         "trees": {
-          "claude": "d981f24448d4f1ee696cfb4e2f923c32aa800558861450b3d39898b74e981a67",
-          "codex": "d981f24448d4f1ee696cfb4e2f923c32aa800558861450b3d39898b74e981a67"
-        }
-      }
-    },
-    {
-      "name": "dispatching-parallel-agents",
-      "locations": {
-        "claude": ".claude/skills/dispatching-parallel-agents",
-        "codex": ".codex/skills/dispatching-parallel-agents"
-      },
-      "sync": {
-        "mode": "mirror",
-        "source": "claude",
-        "targets": [
-          "codex"
-        ]
-      },
-      "provenance": {
-        "kind": "vendored-official",
-        "source": "obra/superpowers@v6.1.1",
-        "import_commit": "d884ae04edebef577e82ff7c4e143debd0bbec99",
-        "license": "MIT"
-      },
-      "integrity": {
-        "format": "agent-skill-tree/v2",
-        "algorithm": "sha256",
-        "trees": {
-          "claude": "82340e3f871574c3570122a9bd90cd46e10b54b22f2845c6ff9b72e10eb211df",
-          "codex": "82340e3f871574c3570122a9bd90cd46e10b54b22f2845c6ff9b72e10eb211df"
-        }
-      }
-    },
-    {
-      "name": "executing-plans",
-      "locations": {
-        "claude": ".claude/skills/executing-plans",
-        "codex": ".codex/skills/executing-plans"
-      },
-      "sync": {
-        "mode": "mirror",
-        "source": "claude",
-        "targets": [
-          "codex"
-        ]
-      },
-      "provenance": {
-        "kind": "vendored-official",
-        "source": "obra/superpowers@v6.1.1",
-        "import_commit": "d884ae04edebef577e82ff7c4e143debd0bbec99",
-        "license": "MIT"
-      },
-      "integrity": {
-        "format": "agent-skill-tree/v2",
-        "algorithm": "sha256",
-        "trees": {
-          "claude": "fc5f85e168205e81344de99a8762b0b807206679d8cb58725627d191f3523f60",
-          "codex": "fc5f85e168205e81344de99a8762b0b807206679d8cb58725627d191f3523f60"
-        }
-      }
-    },
-    {
-      "name": "finishing-a-development-branch",
-      "locations": {
-        "claude": ".claude/skills/finishing-a-development-branch",
-        "codex": ".codex/skills/finishing-a-development-branch"
-      },
-      "sync": {
-        "mode": "mirror",
-        "source": "claude",
-        "targets": [
-          "codex"
-        ]
-      },
-      "provenance": {
-        "kind": "vendored-official",
-        "source": "obra/superpowers@v6.1.1",
-        "import_commit": "d884ae04edebef577e82ff7c4e143debd0bbec99",
-        "license": "MIT"
-      },
-      "integrity": {
-        "format": "agent-skill-tree/v2",
-        "algorithm": "sha256",
-        "trees": {
-          "claude": "506c76b64b1ba5bba683528fc1e64893c8fb31957564844b3ffcab2fbd8ddcc6",
-          "codex": "506c76b64b1ba5bba683528fc1e64893c8fb31957564844b3ffcab2fbd8ddcc6"
+          "claude": "b9f2d0a006b5544acb996ffd35a33129e271185f986dd3b15ae914ff33dd8f76",
+          "codex": "b9f2d0a006b5544acb996ffd35a33129e271185f986dd3b15ae914ff33dd8f76"
         }
       }
     },
@@ -612,6 +567,30 @@
       }
     },
     {
+      "name": "repo-health",
+      "locations": {
+        "claude": ".claude/skills/repo-health",
+        "codex": ".codex/skills/repo-health"
+      },
+      "sync": {
+        "mode": "independent"
+      },
+      "provenance": {
+        "kind": "repo-authored-platform-variants",
+        "source": "AI-BIM-governance",
+        "import_commit": "6f07f969fd17ae568b4c39876ce743a5cd06e82a",
+        "notes": "Claude uses the repo-health-scan workflow; Codex performs the same dimensions directly with local read-only discovery and reporting."
+      },
+      "integrity": {
+        "format": "agent-skill-tree/v2",
+        "algorithm": "sha256",
+        "trees": {
+          "claude": "dccdc76d9d57d9133e7453963a3120dc2b59a924e4a7cd5f39b2053a8bd209ce",
+          "codex": "0eceb7a786417521b894f3818bc73327a40c75e5d7fb81c5b87c81474d65fb24"
+        }
+      }
+    },
+    {
       "name": "requesting-code-review",
       "locations": {
         "claude": ".claude/skills/requesting-code-review",
@@ -636,6 +615,30 @@
         "trees": {
           "claude": "b216b91dedc75de9a7a4c57bfe0a51876044b325de7f0b5a165c39c65cfaac5a",
           "codex": "b216b91dedc75de9a7a4c57bfe0a51876044b325de7f0b5a165c39c65cfaac5a"
+        }
+      }
+    },
+    {
+      "name": "spec-to-done",
+      "locations": {
+        "claude": ".claude/skills/spec-to-done",
+        "codex": ".codex/skills/spec-to-done"
+      },
+      "sync": {
+        "mode": "independent"
+      },
+      "provenance": {
+        "kind": "repo-authored-platform-variants",
+        "source": "AI-BIM-governance",
+        "import_commit": "c414e1cd4ca46ae3443db76a1a43a5334695db01",
+        "notes": "Claude and Codex adapter prose intentionally differs; agent-contracts/spec-to-done.contract.json owns the shared phases, canonical state path, durable HELD reasons, and terminal evidence constraints, with agent-governance tests enforcing adapter parity. Grok host adapter is tracked as .claude/skills/spec-to-done/GROK.md."
+      },
+      "integrity": {
+        "format": "agent-skill-tree/v2",
+        "algorithm": "sha256",
+        "trees": {
+          "claude": "6b4cf8e6e59fef3b6f8e4367d05bf090a4993e5893d36fddf22b43484f775d9c",
+          "codex": "da24807bff575867fb1053b1aa44b89cd123248c6bc6a14544a86c4d4011ce98"
         }
       }
     },
@@ -724,6 +727,30 @@
       }
     },
     {
+      "name": "token-strategy-tournament",
+      "locations": {
+        "claude": ".claude/skills/token-strategy-tournament",
+        "codex": ".codex/skills/token-strategy-tournament"
+      },
+      "sync": {
+        "mode": "independent"
+      },
+      "provenance": {
+        "kind": "repo-authored-platform-variants",
+        "source": "AI-BIM-governance",
+        "import_commit": "71cfa3a5ba03058648021a021e6c4f7b4c5f19fc",
+        "notes": "bim-workflows-pack (#454): Claude commander handbook and Codex per-phase SOP intentionally differ; gate/held semantics kept in sync per SKILL.md sync rule."
+      },
+      "integrity": {
+        "format": "agent-skill-tree/v2",
+        "algorithm": "sha256",
+        "trees": {
+          "claude": "e96146dfa8425d03e68ff80a64d28174622c3ee075e4db1165888ce2314ba479",
+          "codex": "951ba37a23f996b22266329e5def36d5bed1603c7efae6030ce14c59444f4937"
+        }
+      }
+    },
+    {
       "name": "using-git-worktrees",
       "locations": {
         "claude": ".claude/skills/using-git-worktrees",
@@ -804,6 +831,33 @@
         "trees": {
           "claude": "e98143913b016fca3d383992a7e38f8e7f78d54cf635bfd0a4ee110095970daf",
           "codex": "e98143913b016fca3d383992a7e38f8e7f78d54cf635bfd0a4ee110095970daf"
+        }
+      }
+    },
+    {
+      "name": "verify-minio-real-data-e2e",
+      "locations": {
+        "claude": ".claude/skills/verify-minio-real-data-e2e",
+        "codex": ".codex/skills/verify-minio-real-data-e2e"
+      },
+      "sync": {
+        "mode": "mirror",
+        "source": "claude",
+        "targets": [
+          "codex"
+        ]
+      },
+      "provenance": {
+        "kind": "repo-authored",
+        "source": "AI-BIM-governance",
+        "notes": "Public-safe, read-only real-MinIO acceptance procedure. It intentionally contains no historical production snapshot or customer/model metadata. Claude is canonical and Codex is a byte-identical mirror."
+      },
+      "integrity": {
+        "format": "agent-skill-tree/v2",
+        "algorithm": "sha256",
+        "trees": {
+          "claude": "f149ecd419a5b0228f30d8b051776c34183f78c40189ca93fd0030e608f1f83d",
+          "codex": "f149ecd419a5b0228f30d8b051776c34183f78c40189ca93fd0030e608f1f83d"
         }
       }
     },

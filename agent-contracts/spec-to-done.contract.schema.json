@@ -26,6 +26,22 @@
         "runIds": { "const": "none" },
         "evidenceHead": { "const": "" }
       }
+    },
+    "newRunGitIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "executable_policy", "executable_path", "executable_sha256",
+        "executable_bytes", "git_directory", "git_common_directory"
+      ],
+      "properties": {
+        "executable_policy": { "const": "system-owned-read-only" },
+        "executable_path": { "const": "required" },
+        "executable_sha256": { "const": "required" },
+        "executable_bytes": { "const": "required" },
+        "git_directory": { "const": "required" },
+        "git_common_directory": { "const": "required" }
+      }
     }
   },
   "properties": {
@@ -47,13 +63,14 @@
           "additionalProperties": false,
           "required": [
             "schema_version", "token", "required_previous_reason",
-            "owner_provenance", "counter_resets", "field_resets"
+            "owner_provenance", "git_identity", "counter_resets", "field_resets"
           ],
           "properties": {
             "schema_version": { "const": "spec-to-done-new-run/v1" },
             "token": { "const": "NEW_RUN@P0" },
             "required_previous_reason": { "const": "run_budget_exhausted" },
             "owner_provenance": { "const": "sha256-tuple-binding-not-digital-signature" },
+            "git_identity": { "$ref": "#/definitions/newRunGitIdentity" },
             "counter_resets": { "$ref": "#/definitions/newRunCounterResets" },
             "field_resets": { "$ref": "#/definitions/newRunFieldResets" }
           }

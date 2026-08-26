@@ -117,7 +117,11 @@ maxAgentCalls=40; maxP5VerifierBatches=2; maxP5Rounds=2; maxEvidenceAttempts=2
 fresh descendant worktree 明確啟動新 run。先唯讀執行
 `node .claude/skills/spec-to-done/append-new-run.mjs status --state <absolute-state-path> --json`；不得靠聊天
 記憶猜測。只有當輪 exact owner message 存在時才能呼叫同檔 `append`，不得手寫 `NEW_RUN@P0`。
-helper 保留舊 state 每個 byte，綁定全檔 hash/size/checkpoint count、terminal hash、舊/新 Git identity
+`--git-exe` 只能選 owner 安裝的 system Git：Windows 的
+`C:\Program Files\Git\{cmd,bin,mingw64\bin}\git.exe`，或 POSIX 的 `/usr/bin/git`／`/usr/local/bin/git`；
+不得使用 `Get-Command git`、PATH proxy、repo 內工具或 caller-writable binary。helper 保留舊 state 每個 byte，
+綁定全檔 hash/size/checkpoint count、terminal hash、Git executable path/hash/size/trust class、
+git-dir/common-dir 與舊/新 Git identity
 與 ancestry，再以 lock + atomic replace + validator readback 寫入。provenance marker 明說它只是 SHA-256
 tuple binding，不是數位簽章或 owner 身分驗證。`status --json` 的 `nextAction` 與
 `appendRequiredArguments` 是後續 session 的 machine-readable 指引；NEW_RUN 只建立 P0 rollback point，
@@ -382,10 +386,12 @@ HELD@P<n> | reason=<held 值> | spec=<specPath/changePath> | slug=<slug> | userF
   `artifacts/spec-to-done/{slug}-state.md`。validator 單一正本位於 `.claude` 側，`.codex` 不放副本。
   先把 durable history 完整複製到 sibling temp，再 append 候選行（禁止單行 temp），執行
   `node .claude/skills/spec-to-done/validate-state.mjs --state <temp>
-  --platform codex --git-exe <(Get-Command git).Source 的絕對路徑> --expected-head <git SHA>
+  --platform codex --git-exe <上述 system Git 的絕對路徑> --expected-head <git SHA>
   --expected-worktree <worktreeRoot> --expected-agent-limit 40 --expected-p5-limit 2
   --expected-evidence-limit 2 --trusted-main-ref refs/heads/main`；exit 0 才 append canonical durable state。
+  allowlist 內沒有 caller 不可寫的 system Git 時回 `host_env_blocked`，不得改傳其他 binary。
   `--trusted-main-ref` 只是 machine contract 所定 remote ref 的固定 marker，不接受 local tracking ref。validator
+  會清除 ambient `GIT_*`／config injection，並驗證 Git executable 與 git-dir/common-dir identity；它
   會載入 machine contract，檢查完整 history 的每一行、所有相鄰 transition、實際 HEAD、dirty/staged/untracked
   與 rename source，並只在 DONE@P7 獨立 live-resolve 固定 trusted remote、驗 remote main SHA、prHead ancestry
   與 same tree。若既有 history 無法通過行或

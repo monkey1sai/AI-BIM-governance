@@ -207,6 +207,67 @@ try {
     $mechanism = @('scripts/deploy.ps1')
     $emptyJson = New-LedgerJson -Entries @()
 
+    # #704 is the only bridge from the historical fixpoint ledger to the Lean
+    # single-PR policy. The bridge is a literal PR/base/owner/path tuple and never
+    # mutates the closed ledger; future mechanism changes use advisory mode.
+    $leanTransition = [pscustomobject]@{
+        NewEntries = @()
+        ClosedEntries = @()
+        RepairEntries = @()
+        OpenDebt = @()
+    }
+    $leanRows = @{
+        'Self-referential bootstrap' = 'owner-authorized-migration'
+        'Lean migration owner message' = $script:SelfReferentialLeanMigrationOwnerTuple
+        'Bootstrap ledger entry' = 'not applicable'
+        'Bootstrap reason' = 'not applicable'
+    }
+    Assert-SelfReferentialLeanPolicyBody -Declared 'owner-authorized-migration' -Body 'body' `
+        -ChangedPaths $script:SelfReferentialLeanMigrationPaths `
+        -MechanismPaths @('scripts/lib/self-referential-bootstrap.ps1') `
+        -Transition $leanTransition -GetTableValue { param($b, $label) $leanRows[$label] }.GetNewClosure() `
+        -BaseLedgerJson $emptyJson -HeadLedgerJson $emptyJson `
+        -PrNumber 704 -BaseSha $script:SelfReferentialLeanMigrationBase -HasExactHeadContext $true 3>$null
+
+    Assert-Throws -Context 'migration rejects an extra changed path' -MessagePattern 'must equal its one-time migration allowlist' -Action {
+        Assert-SelfReferentialLeanPolicyBody -Declared 'owner-authorized-migration' -Body 'body' `
+            -ChangedPaths @($script:SelfReferentialLeanMigrationPaths + 'scripts/deploy.ps1') `
+            -MechanismPaths @('scripts/lib/self-referential-bootstrap.ps1') `
+            -Transition $leanTransition -GetTableValue { param($b, $label) $leanRows[$label] }.GetNewClosure() `
+            -BaseLedgerJson $emptyJson -HeadLedgerJson $emptyJson `
+            -PrNumber 704 -BaseSha $script:SelfReferentialLeanMigrationBase -HasExactHeadContext $true
+    }
+    Assert-Throws -Context 'migration rejects wrong owner tuple' -MessagePattern 'bind the exact owner-message tuple' -Action {
+        $wrongRows = @{} + $leanRows
+        $wrongRows['Lean migration owner message'] = 'sha256=' + ('0' * 64) + ';bytes=19'
+        Assert-SelfReferentialLeanPolicyBody -Declared 'owner-authorized-migration' -Body 'body' `
+            -ChangedPaths $script:SelfReferentialLeanMigrationPaths `
+            -MechanismPaths @('scripts/lib/self-referential-bootstrap.ps1') `
+            -Transition $leanTransition -GetTableValue { param($b, $label) $wrongRows[$label] }.GetNewClosure() `
+            -BaseLedgerJson $emptyJson -HeadLedgerJson $emptyJson `
+            -PrNumber 704 -BaseSha $script:SelfReferentialLeanMigrationBase -HasExactHeadContext $true
+    }
+    Assert-Throws -Context 'migration rejects ledger drift' -MessagePattern 'closed historical archive' -Action {
+        Assert-SelfReferentialLeanPolicyBody -Declared 'owner-authorized-migration' -Body 'body' `
+            -ChangedPaths $script:SelfReferentialLeanMigrationPaths `
+            -MechanismPaths @('scripts/lib/self-referential-bootstrap.ps1') `
+            -Transition $leanTransition -GetTableValue { param($b, $label) $leanRows[$label] }.GetNewClosure() `
+            -BaseLedgerJson $emptyJson -HeadLedgerJson ($emptyJson + ' ') `
+            -PrNumber 704 -BaseSha $script:SelfReferentialLeanMigrationBase -HasExactHeadContext $true
+    }
+    Assert-SelfReferentialLeanPolicyBody -Declared 'no' -Body 'body' `
+        -ChangedPaths @('scripts/deploy.ps1') -MechanismPaths @('scripts/deploy.ps1') `
+        -Transition $leanTransition -GetTableValue { param($b, $label) '' }.GetNewClosure() `
+        -BaseLedgerJson $emptyJson -HeadLedgerJson $emptyJson `
+        -PrNumber 705 -BaseSha $script:SelfReferentialLeanMigrationBase -HasExactHeadContext $true 3>$null
+    Assert-Throws -Context 'Lean policy rejects new bootstrap debt mode' -MessagePattern 'retires new bootstrap debt' -Action {
+        Assert-SelfReferentialLeanPolicyBody -Declared 'yes' -Body 'body' `
+            -ChangedPaths @('scripts/deploy.ps1') -MechanismPaths @('scripts/deploy.ps1') `
+            -Transition $leanTransition -GetTableValue { param($b, $label) '' }.GetNewClosure() `
+            -BaseLedgerJson $emptyJson -HeadLedgerJson $emptyJson `
+            -PrNumber 705 -BaseSha $script:SelfReferentialLeanMigrationBase -HasExactHeadContext $true
+    }
+
     # --- git fixture repo: mechanism_commit must touch a declared path, and
     # fixpoint evidence must be introduced at/after that commit (review round 4) ------
     $gitRoot = Join-Path $tempRoot 'gitfx'
@@ -451,6 +512,7 @@ try {
     $futureSpecToDoneNewRunPaths = @(
         '.claude/skills/spec-to-done/validate-state.mjs',
         '.claude/skills/spec-to-done/append-new-run.mjs',
+        '.claude/skills/spec-to-done/trusted-git.mjs',
         '.claude/skills/spec-to-done/SKILL.md',
         '.codex/skills/spec-to-done/SKILL.md',
         '.claude/skills/spec-to-done/GROK.md',

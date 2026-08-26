@@ -9,6 +9,14 @@
       "token": "NEW_RUN@P0",
       "required_previous_reason": "run_budget_exhausted",
       "owner_provenance": "sha256-tuple-binding-not-digital-signature",
+      "git_identity": {
+        "executable_policy": "system-owned-read-only",
+        "executable_path": "required",
+        "executable_sha256": "required",
+        "executable_bytes": "required",
+        "git_directory": "required",
+        "git_common_directory": "required"
+      },
       "counter_resets": {
         "agentCalls": "0/40",
         "p5Rounds": "0/2",

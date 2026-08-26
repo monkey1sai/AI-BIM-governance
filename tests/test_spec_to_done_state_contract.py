@@ -2,9 +2,11 @@ import hashlib
 import json
 import os
 import pathlib
+import re
 import shlex
 import shutil
 import subprocess
+import time
 
 import pytest
 from jsonschema import Draft7Validator
@@ -216,6 +218,7 @@ def _append_new_run(
     owner_bytes="479",
     date_stamp="2026-08-26",
     env_overrides=None,
+    git_exe=None,
 ):
     expected = {**expected, **(expected_overrides or {})}
     return _run_new_run(
@@ -225,7 +228,7 @@ def _append_new_run(
         "--target-worktree",
         repo,
         "--git-exe",
-        GIT,
+        git_exe or GIT,
         "--expected-branch",
         branch,
         "--expected-head",
@@ -318,6 +321,14 @@ def test_machine_contract_pins_the_owner_only_new_run_boundary():
         "token": "NEW_RUN@P0",
         "required_previous_reason": "run_budget_exhausted",
         "owner_provenance": "sha256-tuple-binding-not-digital-signature",
+        "git_identity": {
+            "executable_policy": "system-owned-read-only",
+            "executable_path": "required",
+            "executable_sha256": "required",
+            "executable_bytes": "required",
+            "git_directory": "required",
+            "git_common_directory": "required",
+        },
         "counter_resets": {
             "agentCalls": "0/40",
             "p5Rounds": "0/2",
@@ -358,6 +369,22 @@ def test_new_run_appender_preserves_prefix_and_emits_valid_p0(tmp_path):
     assert validated["kind"] == "NEW_RUN"
     assert validated["phase"] == "P0"
     assert validated["counters"]["agentCalls"]["used"] == 0
+    assert pathlib.Path(validated["fields"]["gitExecutablePath"]).is_absolute()
+    assert re.fullmatch(r"[0-9a-f]{64}", validated["fields"]["gitExecutableSha256"])
+    assert int(validated["fields"]["gitExecutableBytes"]) > 0
+    assert validated["fields"]["gitTrustClass"] == "system-owned-read-only"
+    assert pathlib.Path(validated["fields"]["gitDirectory"]).is_absolute()
+    assert pathlib.Path(validated["fields"]["gitCommonDirectory"]).is_absolute()
+    actual_git_dir = pathlib.Path(_git(repo, "rev-parse", "--absolute-git-dir")).resolve()
+    raw_common_dir = pathlib.Path(_git(repo, "rev-parse", "--git-common-dir"))
+    actual_common_dir = (
+        raw_common_dir if raw_common_dir.is_absolute() else repo / raw_common_dir
+    ).resolve()
+    assert pathlib.Path(validated["fields"]["gitDirectory"]).resolve() == actual_git_dir
+    assert (
+        pathlib.Path(validated["fields"]["gitCommonDirectory"]).resolve()
+        == actual_common_dir
+    )
 
     code, status = _run_new_run("status", "--state", target, "--json")
     assert code == 0 and status["ok"] is True
@@ -434,6 +461,51 @@ def test_new_run_ignores_ambient_git_directory_injection(tmp_path):
     assert code == 0 and result["ok"] is True, result
 
 
+def test_validator_ignores_ambient_git_repository_object_and_config_injection(tmp_path):
+    repo, head = _new_repo(tmp_path, "trusted-repo")
+    attacker, _ = _new_repo(tmp_path, "attacker-repo")
+    code, result = _run(
+        tmp_path,
+        repo,
+        _line(repo, head),
+        env_overrides={
+            "GIT_DIR": str(attacker / ".git"),
+            "GIT_WORK_TREE": str(attacker),
+            "GIT_COMMON_DIR": str(attacker / ".git"),
+            "GIT_OBJECT_DIRECTORY": str(attacker / ".git/objects"),
+            "GIT_ALTERNATE_OBJECT_DIRECTORIES": str(attacker / ".git/objects"),
+            "GIT_REPLACE_REF_BASE": "refs/replace-attacker/",
+            "GIT_CEILING_DIRECTORIES": str(attacker),
+            "GIT_DISCOVERY_ACROSS_FILESYSTEM": "1",
+            "GIT_CONFIG_COUNT": "1",
+            "GIT_CONFIG_KEY_0": "core.hooksPath",
+            "GIT_CONFIG_VALUE_0": str(attacker),
+            "GIT_EXEC_PATH": str(attacker),
+        },
+    )
+    assert code == 0 and result["ok"] is True, result
+
+
+def test_new_run_rejects_caller_controlled_git_even_when_named_git(tmp_path):
+    repo, branch, _, head, source, _, expected = _new_run_fixture(tmp_path)
+    suffix = ".exe" if os.name == "nt" else ""
+    fake_git = tmp_path / f"git{suffix}"
+    shutil.copyfile(GIT, fake_git)
+    fake_git.chmod(0o755)
+
+    code, result = _append_new_run(
+        repo,
+        branch,
+        head,
+        source,
+        expected,
+        git_exe=str(fake_git),
+    )
+
+    assert code == 2 and result["held"] == "host_env_blocked"
+    assert not (repo / "artifacts/spec-to-done/demo-state.md").exists()
+
+
 def test_new_run_rejects_bad_owner_tuple_or_worktree_identity(tmp_path):
     repo, branch, _, head, source, _, expected = _new_run_fixture(tmp_path)
     code, result = _append_new_run(
@@ -458,6 +530,132 @@ def test_new_run_rejects_lock_and_repeat(tmp_path):
     assert code == 0 and result["ok"] is True, result
     code, result = _append_new_run(repo, branch, head, source, expected)
     assert code == 2 and result["held"] == "resume_state_invalid"
+
+
+def test_new_run_lock_snapshot_preserves_first_completed_boundary(tmp_path):
+    repo, branch, _, head, source, _, expected = _new_run_fixture(tmp_path)
+    ready = tmp_path / "before-lock.ready"
+    release = tmp_path / "before-lock.release"
+    driver = tmp_path / "append-driver.mjs"
+    driver.write_text(
+        f"""
+import fs from 'node:fs'
+import {{ appendCommand }} from {json.dumps(NEW_RUN_APPENDER.as_uri())}
+const cli = JSON.parse(process.argv[2])
+try {{
+  const result = appendCommand(cli, {{
+    beforeLock() {{
+      fs.writeFileSync(process.argv[3], 'ready')
+      const waiter = new Int32Array(new SharedArrayBuffer(4))
+      while (!fs.existsSync(process.argv[4])) Atomics.wait(waiter, 0, 0, 10)
+    }},
+  }})
+  process.stdout.write(JSON.stringify(result))
+}} catch (error) {{
+  process.stdout.write(JSON.stringify({{
+    ok: false,
+    held: error.held || 'resume_state_invalid',
+    detail: error.message,
+  }}))
+  process.exitCode = 2
+}}
+""",
+        encoding="utf-8",
+    )
+    cli = {
+        "command": "append",
+        "source-state": str(source),
+        "target-worktree": str(repo),
+        "git-exe": GIT,
+        "expected-branch": branch,
+        "expected-head": head,
+        "expected-source-sha256": expected["sha256"],
+        "expected-source-bytes": str(expected["bytes"]),
+        "expected-source-checkpoints": str(expected["checkpoints"]),
+        "owner-message-sha256": "10" * 32,
+        "owner-message-bytes": "480",
+        "date-stamp": "2026-08-27",
+        "json": True,
+    }
+    blocked = subprocess.Popen(
+        ["node", str(driver), json.dumps(cli), str(ready), str(release)],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        encoding="utf-8",
+        env=os.environ.copy(),
+    )
+    deadline = time.monotonic() + 10
+    while not ready.exists() and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert ready.exists(), "blocked appender did not reach its pre-lock barrier"
+
+    first_code, first = _append_new_run(repo, branch, head, source, expected)
+    assert first_code == 0 and first["ok"] is True, first
+    target = repo / "artifacts/spec-to-done/demo-state.md"
+    first_bytes = target.read_bytes()
+    release.write_text("release\n", encoding="utf-8")
+    stdout, stderr = blocked.communicate(timeout=10)
+    second = json.loads(stdout)
+
+    assert blocked.returncode == 2, stderr
+    assert second["held"] == "resume_state_invalid"
+    assert "overwrite refused" in second["detail"]
+    assert target.read_bytes() == first_bytes
+    assert first_bytes.count(b"NEW_RUN@P0 |") == 1
+    assert not pathlib.Path(f"{target}.new-run.lock").exists()
+
+
+def test_new_run_post_write_failure_restores_locked_target_bytes(tmp_path):
+    repo, branch, _, head, source, source_bytes, expected = _new_run_fixture(tmp_path)
+    target = repo / "artifacts/spec-to-done/demo-state.md"
+    target.parent.mkdir(parents=True)
+    target.write_bytes(source_bytes)
+    driver = tmp_path / "rollback-driver.mjs"
+    driver.write_text(
+        f"""
+import {{ appendCommand }} from {json.dumps(NEW_RUN_APPENDER.as_uri())}
+const cli = JSON.parse(process.argv[2])
+try {{
+  appendCommand(cli, {{ afterWrite() {{ throw new Error('forced post-write failure') }} }})
+}} catch (error) {{
+  process.stdout.write(JSON.stringify({{
+    ok: false,
+    held: error.held || 'resume_state_invalid',
+    detail: error.message,
+  }}))
+  process.exitCode = 2
+}}
+""",
+        encoding="utf-8",
+    )
+    cli = {
+        "command": "append",
+        "source-state": str(source),
+        "target-worktree": str(repo),
+        "git-exe": GIT,
+        "expected-branch": branch,
+        "expected-head": head,
+        "expected-source-sha256": expected["sha256"],
+        "expected-source-bytes": str(expected["bytes"]),
+        "expected-source-checkpoints": str(expected["checkpoints"]),
+        "owner-message-sha256": "09" * 32,
+        "owner-message-bytes": "479",
+        "date-stamp": "2026-08-26",
+        "json": True,
+    }
+    proc = subprocess.run(
+        ["node", str(driver), json.dumps(cli)],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        env=os.environ.copy(),
+    )
+    result = json.loads(proc.stdout)
+
+    assert proc.returncode == 2 and "forced post-write failure" in result["detail"]
+    assert target.read_bytes() == source_bytes
+    assert not pathlib.Path(f"{target}.new-run.lock").exists()
 
 
 def test_validator_rejects_tampered_new_run_boundary(tmp_path):
