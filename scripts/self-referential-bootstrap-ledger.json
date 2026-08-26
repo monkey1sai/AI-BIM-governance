@@ -1008,6 +1008,40 @@
           "docs/evidence/spec-to-done-new-run-boundary/fixpoint/summary.md"
         ]
       }
+    },
+    {
+      "id": "spec-to-done-new-run-boundary-implementation",
+      "status": "open",
+      "pr": 704,
+      "opened_at": "2026-08-26T04:25:33Z",
+      "reason": "the owner-only NEW_RUN implementation changes the preregistered durable-state validator, append authority, machine contract, procedure adapters, and enforcement test, so the pre-change mechanism cannot prove its post-merge behavior",
+      "verification_mechanism_paths": [
+        ".claude/skills/spec-to-done/GROK.md",
+        ".claude/skills/spec-to-done/SKILL.md",
+        ".claude/skills/spec-to-done/append-new-run.mjs",
+        ".claude/skills/spec-to-done/validate-state.mjs",
+        ".codex/skills/spec-to-done/SKILL.md",
+        "agent-contracts/spec-to-done.contract.json",
+        "agent-contracts/spec-to-done.contract.schema.json",
+        "scripts/self-referential-bootstrap-ledger.json",
+        "tests/test_spec_to_done_state_contract.py"
+      ],
+      "verification_contract": {
+        "id": "spec-to-done-new-run-boundary-implementation/v1",
+        "command_ids": [
+          "test-self-referential-bootstrap",
+          "test-agent-governance-check",
+          "test-trusted-host-merge",
+          "invoke-powershell-static",
+          "scan-secret-patterns"
+        ],
+        "contract_sha256": "79fb7c5610955b41f9f8a7bd21348b79e126f5206184f4887e31f65f9738e3ef"
+      },
+      "bootstrap_evidence_refs": [
+        "docs/evidence/spec-to-done-new-run-boundary-implementation/self-referential-bootstrap/summary.md",
+        "docs/evidence/spec-to-done-new-run-boundary-implementation/self-referential-bootstrap/verification.txt"
+      ],
+      "fixpoint": null
     }
   ]
 }
