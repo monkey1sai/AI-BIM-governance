@@ -1,7 +1,5 @@
 # A4 Ornith vLLM 語意解譯
 
-Reference UI 範例：`ornith-vllm-api-examples.html`（主工作區；**勿把 key 寫進 repo**）。
-
 ## Endpoint
 
 | Item | Value |
