@@ -80,6 +80,7 @@ treat the classifier output as advisory. The tuple-bound
 |---|---|
 | Self-referential bootstrap | yes / no |
 | Lean migration owner message | `not applicable`, or the exact #704 owner-message SHA-256/byte tuple |
+| Current candidate head | exact 40-character PR head SHA for `owner-authorized-migration` |
 | Bootstrap ledger entry | `not applicable` on a Lean Governance base |
 | Bootstrap reason | `not applicable` on a Lean Governance base |
 

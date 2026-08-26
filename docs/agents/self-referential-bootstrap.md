@@ -69,6 +69,7 @@ PR body：
 |---|---|
 | Self-referential bootstrap | `owner-authorized-migration` |
 | Lean migration owner message | `sha256=2fdd481cbf4247c93d1dc0aba65d4907b0059b6ce24fa0aae2c9c51139545ba3;bytes=19` |
+| Current candidate head | exact 40-character PR head SHA |
 | Bootstrap ledger entry | `not applicable` |
 | Bootstrap reason | `not applicable` |
 

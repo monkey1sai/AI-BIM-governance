@@ -8,6 +8,8 @@ const normalizedPath = (value) => {
   return process.platform === 'win32' ? normalized.toLowerCase() : normalized
 }
 
+export const TEST_GIT_FIXTURE_TOKEN = 'spec-to-done-test-fixture-v1'
+
 const isWithinPath = (value, root) => {
   const target = normalizedPath(value)
   const base = normalizedPath(root)
@@ -22,8 +24,8 @@ const isSystemGitPath = (resolvedGit) => {
   return ['/usr/bin/git', '/usr/local/bin/git'].includes(normalized)
 }
 
-const isPytestFixtureGit = (resolvedGit, resolvedWorktree) => {
-  if (!process.env.PYTEST_CURRENT_TEST) return false
+const isPytestFixtureGit = (resolvedGit, resolvedWorktree, allowTestFixture) => {
+  if (!allowTestFixture || !process.env.PYTEST_CURRENT_TEST) return false
   let temporaryRoot
   try {
     temporaryRoot = fs.realpathSync(os.tmpdir())
@@ -57,12 +59,15 @@ const assertSystemGitNotCallerWritable = (resolvedGit) => {
   }
 }
 
-export const sanitizedGitEnvironment = () => {
+export const sanitizedGitEnvironment = (resolvedGit = '') => {
   const env = { ...process.env }
-  const unsafeExactKeys = new Set(['CURL_CA_BUNDLE', 'SSL_CERT_FILE', 'SSL_CERT_DIR'])
+  const unsafeExactKeys = new Set([
+    'CURL_CA_BUNDLE', 'SSL_CERT_FILE', 'SSL_CERT_DIR', 'SSH_ASKPASS',
+    'GIT_ASKPASS', 'GIT_PROXY_COMMAND', 'GIT_SSH', 'GIT_SSH_COMMAND',
+  ])
   for (const key of Object.keys(env)) {
     const upper = key.toUpperCase()
-    if (upper.startsWith('GIT_') || unsafeExactKeys.has(upper)) delete env[key]
+    if (upper.startsWith('GIT_') || upper.startsWith('SSH_') || unsafeExactKeys.has(upper)) delete env[key]
   }
   env.GIT_CONFIG_GLOBAL = process.platform === 'win32' ? 'NUL' : '/dev/null'
   env.GIT_CONFIG_SYSTEM = process.platform === 'win32' ? 'NUL' : '/dev/null'
@@ -71,6 +76,13 @@ export const sanitizedGitEnvironment = () => {
   env.GIT_OPTIONAL_LOCKS = '0'
   env.GIT_NO_REPLACE_OBJECTS = '1'
   env.GIT_LITERAL_PATHSPECS = '1'
+  if (resolvedGit) {
+    const gitDir = path.dirname(resolvedGit)
+    const safePath = process.platform === 'win32'
+      ? [gitDir, `${process.env.SystemRoot || 'C:\\Windows'}\\System32`]
+      : [gitDir, '/usr/bin', '/bin', '/usr/local/bin']
+    env.PATH = safePath.join(path.delimiter)
+  }
   return env
 }
 
@@ -79,6 +91,7 @@ export const gitInvocationArguments = (args) => [
   '--no-replace-objects',
   '-c', `core.hooksPath=${process.platform === 'win32' ? 'NUL' : '/dev/null'}`,
   '-c', `core.autocrlf=${process.platform === 'win32' ? 'true' : 'false'}`,
+  '-c', 'core.longpaths=true',
   '-c', 'core.fsmonitor=false',
   '-c', 'core.pager=cat',
   '-c', 'diff.external=',
@@ -86,7 +99,7 @@ export const gitInvocationArguments = (args) => [
   ...args,
 ]
 
-export const resolveTrustedGit = (gitExe, expectedWorktree) => {
+export const resolveTrustedGit = (gitExe, expectedWorktree, options = {}) => {
   if (!path.isAbsolute(gitExe || '') || !fs.existsSync(gitExe)) {
     throw new Error('--git-exe must name an existing absolute Git executable')
   }
@@ -110,7 +123,8 @@ export const resolveTrustedGit = (gitExe, expectedWorktree) => {
   if (isSystemGitPath(resolvedGit)) {
     assertSystemGitNotCallerWritable(resolvedGit)
     trustClass = 'system-owned-read-only'
-  } else if (isPytestFixtureGit(resolvedGit, resolvedWorktree)) {
+  } else if (options.allowTestFixture === TEST_GIT_FIXTURE_TOKEN &&
+             isPytestFixtureGit(resolvedGit, resolvedWorktree, true)) {
     trustClass = 'pytest-temporary-fixture'
   } else {
     throw new Error('--git-exe is not an approved system Git path')

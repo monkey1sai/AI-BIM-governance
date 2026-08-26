@@ -89,6 +89,7 @@ def _run(
     git_exe=None,
     env_overrides=None,
     trusted_main_ref="refs/heads/main",
+    allow_test_fixture=False,
 ):
     if GIT is None:
         pytest.skip("git is required")
@@ -96,8 +97,7 @@ def _run(
     if isinstance(state_lines, str):
         state_lines = [state_lines]
     state.write_text("\n".join(state_lines) + "\n", encoding="utf-8")
-    proc = subprocess.run(
-        [
+    args = [
             "node",
             str(CLAUDE_VALIDATOR),
             "--state",
@@ -118,7 +118,11 @@ def _run(
             limits[2],
             "--trusted-main-ref",
             trusted_main_ref,
-        ],
+    ]
+    if allow_test_fixture:
+        args.extend(["--test-git-fixture", "spec-to-done-test-fixture-v1"])
+    proc = subprocess.run(
+        args,
         capture_output=True,
         text=True,
         encoding="utf-8",
@@ -172,17 +176,17 @@ def _validate_state_path(state, repo, expected_head, *, platform="codex"):
 
 
 def _new_run_fixture(tmp_path, *, held_reason="run_budget_exhausted", exhausted=True):
-    repo, _ = _new_repo(tmp_path, "new-run-repo")
-    change = repo / "openspec/changes/demo"
+    source_repo, _ = _new_repo(tmp_path, "new-run-source-repo")
+    change = source_repo / "openspec/changes/demo"
     change.mkdir(parents=True)
     (change / "proposal.md").write_text("# demo\n", encoding="utf-8")
-    (repo / ".gitignore").write_text("artifacts/\n", encoding="utf-8")
-    _git(repo, "add", "openspec/changes/demo/proposal.md", ".gitignore")
-    _git(repo, "commit", "-m", "add demo change")
-    previous_head = _git(repo, "rev-parse", "HEAD")
-    branch = _git(repo, "branch", "--show-current")
+    (source_repo / ".gitignore").write_text("artifacts/\n", encoding="utf-8")
+    _git(source_repo, "add", "openspec/changes/demo/proposal.md", ".gitignore")
+    _git(source_repo, "commit", "-m", "add demo change")
+    previous_head = _git(source_repo, "rev-parse", "HEAD")
+    branch = _git(source_repo, "branch", "--show-current")
     source_line = _line(
-        repo,
+        source_repo,
         previous_head,
         "HELD@P1",
         spec=change.as_posix(),
@@ -193,11 +197,19 @@ def _new_run_fixture(tmp_path, *, held_reason="run_budget_exhausted", exhausted=
         evidenceAttempts="0/2",
         evidenceHead="",
     )
-    source = tmp_path / "legacy-state.md"
+    source = source_repo / "artifacts/spec-to-done/demo-state.md"
+    source.parent.mkdir(parents=True)
     source_bytes = (source_line + "\r\n").encode("utf-8")
     source.write_bytes(source_bytes)
-    _git(repo, "commit", "--allow-empty", "-m", "fresh new-run base")
-    current_head = _git(repo, "rev-parse", "HEAD")
+    _git(source_repo, "commit", "--allow-empty", "-m", "fresh new-run base")
+    current_head = _git(source_repo, "rev-parse", "HEAD")
+    repo = tmp_path / "new-run-target-repo"
+    subprocess.run(
+        [GIT, "clone", "--no-hardlinks", source_repo.as_posix(), repo.as_posix()],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
     expected = {
         "sha256": hashlib.sha256(source_bytes).hexdigest(),
         "bytes": len(source_bytes),
@@ -446,6 +458,18 @@ def test_new_run_rejects_dirty_target_worktree(tmp_path):
     code, result = _append_new_run(repo, branch, head, source, expected)
     assert code == 2 and result["held"] == "resume_state_invalid"
     assert "clean" in result["detail"]
+
+
+def test_new_run_rejects_reusing_the_prior_worktree(tmp_path):
+    _, branch, _, head, source, _, expected = _new_run_fixture(tmp_path)
+    prior_worktree = source.parents[2]
+
+    code, result = _append_new_run(
+        prior_worktree, branch, head, source, expected
+    )
+
+    assert code == 2 and result["held"] == "resume_state_invalid"
+    assert "fresh sibling worktree" in result["detail"]
 
 
 def test_new_run_ignores_ambient_git_directory_injection(tmp_path):
@@ -745,9 +769,25 @@ def test_non_terminal_validation_does_not_resolve_the_remote(tmp_path):
         status=97,
     )
 
-    code, result = _run(tmp_path, repo, _line(repo, head), git_exe=proxy)
+    code, result = _run(
+        tmp_path, repo, _line(repo, head), git_exe=proxy, allow_test_fixture=True
+    )
 
     assert code == 0 and result["ok"] is True
+
+
+def test_validator_rejects_test_git_fixture_without_explicit_test_seam(tmp_path):
+    repo, head = _new_repo(tmp_path, "fixture-seam-repo")
+    proxy = _make_git_proxy(
+        tmp_path,
+        "fixture-seam-git",
+        repo,
+        "fixture seam must be explicitly enabled\n",
+    )
+
+    code, result = _run(tmp_path, repo, _line(repo, head), git_exe=proxy)
+
+    assert code == 2 and result["held"] == "resume_state_invalid"
 
 
 def test_cli_rejects_a_local_tracking_ref_as_the_trust_marker(tmp_path):
@@ -1264,17 +1304,23 @@ def test_terminal_p7_requires_evidenced_pr_tree_equivalence(tmp_path):
         repo,
         f"{merge}\trefs/heads/main\n",
     )
-    code, result = _run(tmp_path, repo, lines, expected_head=merge, git_exe=proxy)
+    code, result = _run(
+        tmp_path, repo, lines, expected_head=merge, git_exe=proxy, allow_test_fixture=True
+    )
     assert code == 0 and result["ok"] is True
 
     dirty = repo / "src/dirty.txt"
     dirty.write_text("uncommitted product drift\n", encoding="utf-8")
-    code, result = _run(tmp_path, repo, lines, expected_head=merge, git_exe=proxy)
+    code, result = _run(
+        tmp_path, repo, lines, expected_head=merge, git_exe=proxy, allow_test_fixture=True
+    )
     assert code == 2 and result["held"] == "evidence_stale"
     dirty.unlink()
 
     illegal_jump = [lines[0].replace("DONE@P6", "DONE@P0"), lines[1]]
-    code, result = _run(tmp_path, repo, illegal_jump, expected_head=merge, git_exe=proxy)
+    code, result = _run(
+        tmp_path, repo, illegal_jump, expected_head=merge, git_exe=proxy, allow_test_fixture=True
+    )
     assert code == 2 and result["held"] == "resume_state_invalid"
 
     repo, lines, merge = _terminal_state(tmp_path, "different-tree", True)
@@ -1284,7 +1330,9 @@ def test_terminal_p7_requires_evidenced_pr_tree_equivalence(tmp_path):
         repo,
         f"{merge}\trefs/heads/main\n",
     )
-    code, result = _run(tmp_path, repo, lines, expected_head=merge, git_exe=proxy)
+    code, result = _run(
+        tmp_path, repo, lines, expected_head=merge, git_exe=proxy, allow_test_fixture=True
+    )
     assert code == 2 and result["held"] == "evidence_stale"
 
 
@@ -1322,6 +1370,7 @@ def test_terminal_p7_rejects_same_tree_from_unrelated_history(tmp_path):
         [previous, terminal],
         expected_head=unrelated,
         git_exe=proxy,
+        allow_test_fixture=True,
     )
 
     assert code == 2 and result["held"] == "evidence_stale"
@@ -1344,6 +1393,7 @@ def test_terminal_p7_ignores_local_tracking_ref_and_obeys_live_remote(tmp_path):
         lines,
         expected_head=merge,
         git_exe=trusted_proxy,
+        allow_test_fixture=True,
         env_overrides={
             "GIT_CONFIG_COUNT": "1",
             "GIT_CONFIG_KEY_0": "http.sslVerify",
@@ -1371,6 +1421,7 @@ def test_terminal_p7_ignores_local_tracking_ref_and_obeys_live_remote(tmp_path):
         lines,
         expected_head=merge,
         git_exe=stale_remote_proxy,
+        allow_test_fixture=True,
     )
 
     assert code == 2 and result["held"] == "evidence_stale"
@@ -1404,6 +1455,7 @@ def test_terminal_p7_fails_closed_on_invalid_live_remote_resolution(
         lines,
         expected_head=merge,
         git_exe=proxy,
+        allow_test_fixture=True,
     )
 
     assert code == 2 and result["held"] == "evidence_stale"

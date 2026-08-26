@@ -219,6 +219,7 @@ try {
     $leanRows = @{
         'Self-referential bootstrap' = 'owner-authorized-migration'
         'Lean migration owner message' = $script:SelfReferentialLeanMigrationOwnerTuple
+        'Current candidate head' = ('a' * 40)
         'Bootstrap ledger entry' = 'not applicable'
         'Bootstrap reason' = 'not applicable'
     }
@@ -227,7 +228,7 @@ try {
         -MechanismPaths @('scripts/lib/self-referential-bootstrap.ps1') `
         -Transition $leanTransition -GetTableValue { param($b, $label) $leanRows[$label] }.GetNewClosure() `
         -BaseLedgerJson $emptyJson -HeadLedgerJson $emptyJson `
-        -PrNumber 704 -BaseSha $script:SelfReferentialLeanMigrationBase -HasExactHeadContext $true 3>$null
+        -PrNumber 704 -BaseSha $script:SelfReferentialLeanMigrationBase -HeadSha ('a' * 40) -HasExactHeadContext $true 3>$null
 
     Assert-Throws -Context 'migration rejects an extra changed path' -MessagePattern 'must equal its one-time migration allowlist' -Action {
         Assert-SelfReferentialLeanPolicyBody -Declared 'owner-authorized-migration' -Body 'body' `
@@ -235,7 +236,7 @@ try {
             -MechanismPaths @('scripts/lib/self-referential-bootstrap.ps1') `
             -Transition $leanTransition -GetTableValue { param($b, $label) $leanRows[$label] }.GetNewClosure() `
             -BaseLedgerJson $emptyJson -HeadLedgerJson $emptyJson `
-            -PrNumber 704 -BaseSha $script:SelfReferentialLeanMigrationBase -HasExactHeadContext $true
+            -PrNumber 704 -BaseSha $script:SelfReferentialLeanMigrationBase -HeadSha ('a' * 40) -HasExactHeadContext $true
     }
     Assert-Throws -Context 'migration rejects wrong owner tuple' -MessagePattern 'bind the exact owner-message tuple' -Action {
         $wrongRows = @{} + $leanRows
@@ -245,7 +246,17 @@ try {
             -MechanismPaths @('scripts/lib/self-referential-bootstrap.ps1') `
             -Transition $leanTransition -GetTableValue { param($b, $label) $wrongRows[$label] }.GetNewClosure() `
             -BaseLedgerJson $emptyJson -HeadLedgerJson $emptyJson `
-            -PrNumber 704 -BaseSha $script:SelfReferentialLeanMigrationBase -HasExactHeadContext $true
+            -PrNumber 704 -BaseSha $script:SelfReferentialLeanMigrationBase -HeadSha ('a' * 40) -HasExactHeadContext $true
+    }
+    Assert-Throws -Context 'migration rejects a drifted candidate head' -MessagePattern 'exact current candidate head' -Action {
+        $driftedRows = @{} + $leanRows
+        $driftedRows['Current candidate head'] = ('b' * 40)
+        Assert-SelfReferentialLeanPolicyBody -Declared 'owner-authorized-migration' -Body 'body' `
+            -ChangedPaths $script:SelfReferentialLeanMigrationPaths `
+            -MechanismPaths @('scripts/lib/self-referential-bootstrap.ps1') `
+            -Transition $leanTransition -GetTableValue { param($b, $label) $driftedRows[$label] }.GetNewClosure() `
+            -BaseLedgerJson $emptyJson -HeadLedgerJson $emptyJson `
+            -PrNumber 704 -BaseSha $script:SelfReferentialLeanMigrationBase -HeadSha ('a' * 40) -HasExactHeadContext $true
     }
     Assert-Throws -Context 'migration rejects ledger drift' -MessagePattern 'closed historical archive' -Action {
         Assert-SelfReferentialLeanPolicyBody -Declared 'owner-authorized-migration' -Body 'body' `
@@ -253,7 +264,7 @@ try {
             -MechanismPaths @('scripts/lib/self-referential-bootstrap.ps1') `
             -Transition $leanTransition -GetTableValue { param($b, $label) $leanRows[$label] }.GetNewClosure() `
             -BaseLedgerJson $emptyJson -HeadLedgerJson ($emptyJson + ' ') `
-            -PrNumber 704 -BaseSha $script:SelfReferentialLeanMigrationBase -HasExactHeadContext $true
+            -PrNumber 704 -BaseSha $script:SelfReferentialLeanMigrationBase -HeadSha ('a' * 40) -HasExactHeadContext $true
     }
     Assert-SelfReferentialLeanPolicyBody -Declared 'no' -Body 'body' `
         -ChangedPaths @('scripts/deploy.ps1') -MechanismPaths @('scripts/deploy.ps1') `

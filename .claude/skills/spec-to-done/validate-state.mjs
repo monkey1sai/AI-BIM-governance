@@ -7,6 +7,7 @@ import {
   gitInvocationArguments,
   resolveTrustedGit,
   sanitizedGitEnvironment,
+  TEST_GIT_FIXTURE_TOKEN,
 } from './trusted-git.mjs'
 
 const MACHINE_CONTRACT_URL = new URL('../../../agent-contracts/spec-to-done.contract.json', import.meta.url)
@@ -313,25 +314,50 @@ const isEvidenceOnlyPath = (value, fields) => {
   )
 }
 
-const trustedGit = (gitExe, expectedWorktree) => {
+const trustedGit = (gitExe, expectedWorktree, allowTestFixture = false) => {
   try {
-    return resolveTrustedGit(gitExe, expectedWorktree)
+    const identity = resolveTrustedGit(gitExe, expectedWorktree, {
+      allowTestFixture: allowTestFixture ? TEST_GIT_FIXTURE_TOKEN : '',
+    })
+    if (!allowTestFixture && identity.trustClass !== 'system-owned-read-only') {
+      reject('resume_state_invalid', 'validator requires a system-owned, read-only Git executable')
+    }
+    return identity
   } catch (error) {
     reject('resume_state_invalid', error.message)
   }
 }
 
-const runGit = (worktree, gitArgs) => spawnSync(
-  TRUSTED_GIT_EXE,
-  gitInvocationArguments(gitArgs),
-  {
-    cwd: worktree,
-    env: sanitizedGitEnvironment(),
-    encoding: 'utf8',
-    windowsHide: true,
-    maxBuffer: 1024 * 1024,
-  },
-)
+const runGit = (worktree, gitArgs) => {
+  let current
+  try {
+    current = resolveTrustedGit(TRUSTED_GIT_EXE, worktree, {
+      allowTestFixture: TRUSTED_GIT_IDENTITY?.trustClass === 'pytest-temporary-fixture'
+        ? TEST_GIT_FIXTURE_TOKEN : '',
+    })
+  } catch (error) {
+    return { error }
+  }
+  if (TRUSTED_GIT_IDENTITY && (
+    current.resolvedGit !== TRUSTED_GIT_IDENTITY.resolvedGit ||
+    current.executableSha256 !== TRUSTED_GIT_IDENTITY.executableSha256 ||
+    current.executableBytes !== TRUSTED_GIT_IDENTITY.executableBytes ||
+    current.trustClass !== TRUSTED_GIT_IDENTITY.trustClass
+  )) {
+    return { error: new Error('trusted Git executable identity changed during validation') }
+  }
+  return spawnSync(
+    current.resolvedGit,
+    gitInvocationArguments(gitArgs),
+    {
+      cwd: worktree,
+      env: sanitizedGitEnvironment(current.resolvedGit),
+      encoding: 'utf8',
+      windowsHide: true,
+      maxBuffer: 1024 * 1024,
+    },
+  )
+}
 
 const resolveTrustedRemoteMain = () => {
   const gitDirectory = path.dirname(TRUSTED_GIT_EXE)
@@ -345,7 +371,7 @@ const resolveTrustedRemoteMain = () => {
     ]),
     {
     cwd: gitDirectory,
-    env: sanitizedGitEnvironment(),
+      env: sanitizedGitEnvironment(TRUSTED_GIT_EXE),
     encoding: 'utf8',
     windowsHide: true,
     timeout: 30_000,
@@ -677,6 +703,14 @@ const validateNewRunTransition = (previous, current) => {
       reject('resume_state_invalid', `NEW_RUN changed inherited ${key}`)
     }
   }
+  if (!path.isAbsolute(previous.fields.worktree) || !path.isAbsolute(current.fields.worktree) ||
+      normalizedPath(previous.fields.worktree) === normalizedPath(current.fields.worktree)) {
+    reject('resume_state_invalid', 'NEW_RUN target must be a fresh worktree distinct from the prior worktree')
+  }
+  if (normalizedPath(path.dirname(previous.fields.worktree)) !==
+      normalizedPath(path.dirname(current.fields.worktree))) {
+    reject('resume_state_invalid', 'NEW_RUN target worktree must be a sibling of the prior worktree')
+  }
   const oldSpec = relativeToWorktree(previous.fields.spec, previous.fields.worktree)
   const newSpec = relativeToWorktree(current.fields.spec, current.fields.worktree)
   const canonicalSpec = `openspec/changes/${current.fields.slug}`.toLowerCase()
@@ -807,7 +841,11 @@ const main = () => {
   if (limits.agentCalls !== MAX_AGENT_CALLS || limits.p5Rounds !== MAX_P5_ROUNDS || limits.evidenceAttempts !== MAX_EVIDENCE_ATTEMPTS) {
     reject('resume_state_invalid', 'validator limits must be exactly agentCalls=40, p5Rounds=2, evidenceAttempts=2')
   }
-  const trusted = trustedGit(cli['git-exe'], cli['expected-worktree'])
+  const allowTestFixture = cli['test-git-fixture'] === TEST_GIT_FIXTURE_TOKEN
+  if (Object.hasOwn(cli, 'test-git-fixture') && !allowTestFixture) {
+    reject('resume_state_invalid', '--test-git-fixture has an invalid test-only token')
+  }
+  const trusted = trustedGit(cli['git-exe'], cli['expected-worktree'], allowTestFixture)
   TRUSTED_GIT_EXE = trusted.resolvedGit
   TRUSTED_GIT_IDENTITY = trusted
   if (!fs.existsSync(statePath) || !fs.statSync(statePath).isFile()) {

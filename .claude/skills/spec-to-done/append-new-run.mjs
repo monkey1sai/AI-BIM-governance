@@ -132,14 +132,22 @@ const trustedGit = (gitExe, worktree, held = 'bad_args') => {
   }
 }
 
-const runGit = (gitExe, worktree, args) => spawnSync(
-  gitExe,
-  gitInvocationArguments(args),
-  {
-  cwd: worktree, env: sanitizedGitEnvironment(), encoding: 'utf8', windowsHide: true,
-  maxBuffer: 1024 * 1024,
-  },
-)
+const runGit = (gitExe, worktree, args) => {
+  let identity
+  try {
+    identity = resolveTrustedGit(gitExe, worktree)
+  } catch (error) {
+    return { error }
+  }
+  return spawnSync(
+    identity.resolvedGit,
+    gitInvocationArguments(args),
+    {
+      cwd: worktree, env: sanitizedGitEnvironment(identity.resolvedGit), encoding: 'utf8', windowsHide: true,
+      maxBuffer: 1024 * 1024,
+    },
+  )
+}
 
 const gitText = (gitExe, worktree, args, detail) => {
   const result = runGit(gitExe, worktree, args)
@@ -147,7 +155,19 @@ const gitText = (gitExe, worktree, args, detail) => {
   return result.stdout.trim()
 }
 
-const validateTargetGit = (gitExe, worktree, expectedBranch, expectedHead, previousHead) => {
+const validateTargetGit = (gitExe, worktree, expectedBranch, expectedHead, previousHead, expectedTrust) => {
+  let currentTrust
+  try { currentTrust = resolveTrustedGit(gitExe, worktree) } catch (error) {
+    return reject('resume_state_invalid', `trusted Git changed while validating target: ${error.message}`)
+  }
+  if (expectedTrust && (
+    normalizedPath(currentTrust.resolvedGit) !== normalizedPath(expectedTrust.resolvedGit) ||
+    currentTrust.executableSha256 !== expectedTrust.executableSha256 ||
+    currentTrust.executableBytes !== expectedTrust.executableBytes ||
+    currentTrust.trustClass !== expectedTrust.trustClass
+  )) {
+    reject('resume_state_invalid', 'trusted Git identity changed while validating target')
+  }
   const top = gitText(gitExe, worktree, ['rev-parse', '--show-toplevel'], 'target is not a Git worktree')
   const rawGitDirectory = gitText(
     gitExe,
@@ -221,6 +241,9 @@ const inspectSource = (buffer) => {
   }
   const missing = [...COMMON_FIELDS, 'reason'].filter((key) => !Object.hasOwn(terminal.fields, key))
   if (missing.length) reject('resume_state_invalid', `source terminal checkpoint is missing: ${missing.join(',')}`)
+  const allowed = new Set([...COMMON_FIELDS, 'reason'])
+  const unknown = Object.keys(terminal.fields).filter((key) => !allowed.has(key))
+  if (unknown.length) reject('resume_state_invalid', `source terminal checkpoint has unknown fields: ${unknown.join(',')}`)
   if (!/^[a-z0-9][a-z0-9._-]{0,119}$/.test(terminal.fields.slug) ||
       !/^[0-9a-f]{40}$/.test(terminal.fields.head)) {
     reject('resume_state_invalid', 'source slug or prior HEAD is noncanonical')
@@ -344,6 +367,15 @@ const atomicReplace = (target, buffer) => {
     fs.closeSync(handle)
     handle = null
     fs.renameSync(temporary, target)
+    let directoryHandle
+    try {
+      directoryHandle = fs.openSync(path.dirname(target), fs.constants.O_RDONLY)
+      fs.fsyncSync(directoryHandle)
+    } catch (error) {
+      if (!['EINVAL', 'EISDIR', 'EPERM', 'ENOTSUP'].includes(error?.code)) throw error
+    } finally {
+      if (directoryHandle != null) fs.closeSync(directoryHandle)
+    }
   } finally {
     if (handle != null) fs.closeSync(handle)
     if (fs.existsSync(temporary)) fs.unlinkSync(temporary)
@@ -358,7 +390,7 @@ const validateWrittenState = (target, worktree, gitExe, head) => {
     '--expected-agent-limit', '40', '--expected-p5-limit', '2',
     '--expected-evidence-limit', '2', '--trusted-main-ref', 'refs/heads/main',
   ], {
-    cwd: worktree, env: sanitizedGitEnvironment(), encoding: 'utf8', windowsHide: true,
+    cwd: worktree, env: sanitizedGitEnvironment(gitExe), encoding: 'utf8', windowsHide: true,
     maxBuffer: 1024 * 1024,
   })
   let output
@@ -405,7 +437,8 @@ const statusCommand = (cli) => {
 }
 
 const readAuthorizedSource = (cli) => {
-  if (fs.lstatSync(cli['source-state']).isSymbolicLink()) {
+  const sourceStat = fs.lstatSync(cli['source-state'])
+  if (sourceStat.isSymbolicLink()) {
     reject('resume_state_invalid', 'source state symlink is forbidden')
   }
   const sourceBuffer = fs.readFileSync(cli['source-state'])
@@ -418,7 +451,28 @@ const readAuthorizedSource = (cli) => {
       sourceInfo.records.length !== expectedCheckpoints) {
     reject('resume_state_invalid', 'source state drifted from the exact owner-authorized tuple')
   }
-  return { sourceBuffer, sourceInfo }
+  return { sourceBuffer, sourceInfo, sourceIdentity: sourceStat }
+}
+
+const assertSourceTargetIsolation = (cli, sourceInfo, targetWorktree) => {
+  const oldWorktree = sourceInfo.terminal.fields.worktree
+  if (!path.isAbsolute(oldWorktree) || !fs.existsSync(oldWorktree) ||
+      !fs.statSync(oldWorktree).isDirectory() || fs.lstatSync(oldWorktree).isSymbolicLink()) {
+    reject('resume_state_invalid', 'source state worktree must be a canonical absolute directory')
+  }
+  const oldRoot = fs.realpathSync(oldWorktree)
+  const expectedSource = path.join(
+    oldRoot, 'artifacts', 'spec-to-done', `${sourceInfo.terminal.fields.slug}-state.md`,
+  )
+  if (normalizedPath(cli['source-state']) !== normalizedPath(expectedSource)) {
+    reject('resume_state_invalid', 'source state must be the canonical durable state in the prior worktree')
+  }
+  if (normalizedPath(oldRoot) === normalizedPath(targetWorktree)) {
+    reject('resume_state_invalid', 'NEW_RUN target must be a fresh sibling worktree, not the prior worktree')
+  }
+  if (normalizedPath(path.dirname(oldRoot)) !== normalizedPath(path.dirname(targetWorktree))) {
+    reject('resume_state_invalid', 'NEW_RUN target must be a sibling of the prior worktree')
+  }
 }
 
 export const appendCommand = (cli, hooks = {}) => {
@@ -439,11 +493,16 @@ export const appendCommand = (cli, hooks = {}) => {
     reject('bad_args', 'expected Git or source identity is invalid')
   }
   const initialSource = readAuthorizedSource(cli)
-  const initialTrust = trustedGit(cli['git-exe'], cli['target-worktree'])
+  const initialTrust = trustedGit(
+    cli['git-exe'],
+    cli['target-worktree'],
+    'host_env_blocked',
+  )
   if (initialTrust.trustClass !== 'system-owned-read-only') {
     reject('host_env_blocked', 'NEW_RUN append requires an approved system-owned, read-only Git executable')
   }
   const targetWorktree = initialTrust.resolvedWorktree
+  assertSourceTargetIsolation(cli, initialSource.sourceInfo, targetWorktree)
   const target = path.join(
     targetWorktree,
     'artifacts',
@@ -453,11 +512,13 @@ export const appendCommand = (cli, hooks = {}) => {
   assertNoSymlinkPath(targetWorktree, path.dirname(target))
   fs.mkdirSync(path.dirname(target), { recursive: true })
   assertNoSymlinkPath(targetWorktree, path.dirname(target))
+  const expectedTargetParentRealpath = fs.realpathSync(path.dirname(target))
   const lockPath = `${target}.new-run.lock`
   let lock
   let wrote = false
   let lockIdentity
   let priorTargetBuffer = null
+  let priorTargetIdentity = null
   let candidate = null
   let fields = null
   let sourceBuffer = null
@@ -466,6 +527,13 @@ export const appendCommand = (cli, hooks = {}) => {
     try {
       lock = fs.openSync(lockPath, 'wx', 0o600)
       lockIdentity = fs.fstatSync(lock)
+      const lockPayload = Buffer.from(JSON.stringify({
+        pid: process.pid,
+        target: portablePath(target),
+        sourceSha256: sha256(sourceBuffer || initialSource.sourceBuffer),
+      }) + '\n', 'utf8')
+      fs.writeFileSync(lock, lockPayload)
+      fs.fsyncSync(lock)
     } catch (error) {
       reject('resume_state_invalid', `NEW_RUN lock is unavailable: ${error.code || error.message}`)
     }
@@ -480,13 +548,24 @@ export const appendCommand = (cli, hooks = {}) => {
     }
 
     const lockedSource = readAuthorizedSource(cli)
+    if (lockedSource.sourceIdentity.dev !== initialSource.sourceIdentity.dev ||
+        lockedSource.sourceIdentity.ino !== initialSource.sourceIdentity.ino ||
+        lockedSource.sourceIdentity.size !== initialSource.sourceIdentity.size ||
+        lockedSource.sourceIdentity.mtimeMs !== initialSource.sourceIdentity.mtimeMs) {
+      reject('resume_state_invalid', 'source state identity changed while acquiring NEW_RUN lock')
+    }
     sourceBuffer = lockedSource.sourceBuffer
+    const lockedTargetParentRealpath = fs.realpathSync(path.dirname(target))
+    if (normalizedPath(lockedTargetParentRealpath) !== normalizedPath(expectedTargetParentRealpath)) {
+      reject('resume_state_invalid', 'NEW_RUN target parent changed while acquiring the lock')
+    }
     assertNoSymlinkPath(targetWorktree, target)
     if (fs.existsSync(target)) {
       const targetStat = fs.lstatSync(target)
       if (targetStat.isSymbolicLink() || !targetStat.isFile()) {
         reject('resume_state_invalid', 'canonical target state is not a plain file')
       }
+      priorTargetIdentity = targetStat
       priorTargetBuffer = fs.readFileSync(target)
     }
 
@@ -496,6 +575,7 @@ export const appendCommand = (cli, hooks = {}) => {
       cli['expected-branch'],
       cli['expected-head'],
       lockedSource.sourceInfo.terminal.fields.head,
+      lockedTrust,
     )
     fields = buildBoundaryFields(
       cli,
@@ -515,6 +595,12 @@ export const appendCommand = (cli, hooks = {}) => {
     if (priorTargetBuffer != null && !priorTargetBuffer.equals(sourceBuffer)) {
       reject('resume_state_invalid', 'target already differs from the exact source; overwrite refused')
     }
+    if (priorTargetIdentity != null) {
+      const beforeWrite = fs.lstatSync(target)
+      if (beforeWrite.dev !== priorTargetIdentity.dev || beforeWrite.ino !== priorTargetIdentity.ino) {
+        reject('resume_state_invalid', 'target identity changed before NEW_RUN write')
+      }
+    }
 
     atomicReplace(target, candidate)
     wrote = true
@@ -524,6 +610,10 @@ export const appendCommand = (cli, hooks = {}) => {
   } catch (error) {
     if (wrote) {
       if (priorTargetBuffer != null) {
+        const current = fs.readFileSync(target)
+        if (!current.equals(candidate)) {
+          reject('resume_state_invalid', 'NEW_RUN rollback refused because target changed after write')
+        }
         atomicReplace(target, priorTargetBuffer)
       } else if (fs.existsSync(target)) {
         const current = fs.readFileSync(target)
