@@ -124,6 +124,33 @@ test('agent governance defaults to code and security inputs and skips only bound
   }
 });
 
+test('retired tombstone paths stay governed without widening their namespaces', () => {
+  for (const changedPath of [
+    '.superpowers/sdd/task-1-report.md',
+    '.superpowers/sdd/task-4-report.md',
+    '.superpowers/sdd/task-7-report.md',
+    'ornith-vllm-api-examples.html',
+  ]) {
+    const plan = createVerificationPlan(manifest, { changedPaths: [changedPath] });
+    assert.equal(plan.result, 'planned', `${changedPath} must remain classified`);
+    assert.deepEqual(plan.unknown_paths, []);
+    assert.deepEqual(
+      requiredIds(plan),
+      ['agent-governance', 'secret-pattern-scan'],
+      `${changedPath} must run governance and secret scanning`,
+    );
+  }
+
+  for (const changedPath of [
+    '.superpowers/sdd/task-arbitrary-report.md',
+    'ornith-vllm-api-examples-copy.html',
+  ]) {
+    const plan = createVerificationPlan(manifest, { changedPaths: [changedPath] });
+    assert.equal(plan.result, 'fail_closed', `${changedPath} must not inherit a tombstone exception`);
+    assert.deepEqual(plan.unknown_paths, [changedPath]);
+  }
+});
+
 test('workflow and manifest self-changes force every target', () => {
   for (const changedPath of [
     '.github/workflows/ci.yml',
