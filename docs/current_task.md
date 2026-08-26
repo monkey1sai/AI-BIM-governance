@@ -17,10 +17,14 @@
   - 範疇：依據 `docs/plans/NOW.md` 與設計文件 §07/§08，推進 A4 議題持久化與高保真 UI 整合。
 
 ## Context & Thoughts (跨 CLI 治理與架構上下文)
-1. **治理與規則共用**：AGY CLI 與 Codex CLI 均遵循根目錄 [`AGENTS.md`](file:///C:/Repos/active/iot/AI-BIM-governance/AGENTS.md)（含四大車道 Lane F/B/G/S、Lean Governance 減法方針、Single PR 交付、:8004 唯一後端等鐵律）。
-2. **技能樹同步**：專案 Canonical 技能維護於 [`.agents/skills/`](file:///C:/Repos/active/iot/AI-BIM-governance/.agents/skills)，自動同步至 `.codex/skills/` 與 `.claude/skills/`，AGY 亦自 `.gemini/config/skills` 與 `.agents/skills` 載入完整 Superpowers。
-3. **安全同步與看板**：開工/收工一律經由 `scripts/dev/agents-board.mjs` 感知並調用 `sync-main-safely`（已合入 PR #708）。
-4. **自主 PR 佇列與 Hook 引擎**：已建立 `scripts/dev/manage-pr-queue.mjs` 與看板/Git Hooks 雙向串接，實現多 Session 並行時全自動多 PR 追蹤、智慧解衝突、預檢修復、Blip 審批與快進合入。
+1. **主工作區絕對乾淨與強制 Worktree 隔離（永久記憶鐵律）**：
+   - 主工作區 (`AI-BIM-governance/`) 永遠保持 `main == origin/main` 且無 dirty files。
+   - 任何變更/新增受版控檔案或 code 一律在獨立 Worktree（`AI-BIM-governance.worktrees/<name>`）實作。
+   - 所有 Task 必須經由真實測試與 **Chrome E2E 語意驗證（Playwright / Agent in Chrome）** 驗收；無實證數據絕不宣稱完成。全體 Agent（Codex、Claude、AGY、Grok）一體嚴格遵守。
+2. **治理與規則共用**：AGY CLI 與 Codex CLI 均遵循根目錄 [`AGENTS.md`](file:///C:/Repos/active/iot/AI-BIM-governance/AGENTS.md)（含四大車道 Lane F/B/G/S、Lean Governance 減法方針、Single PR 交付、:8004 唯一後端等鐵律）。
+3. **技能樹同步**：專案 Canonical 技能維護於 [`.agents/skills/`](file:///C:/Repos/active/iot/AI-BIM-governance/.agents/skills)，自動同步至 `.codex/skills/` 與 `.claude/skills/`，AGY 亦自 `.gemini/config/skills` 與 `.agents/skills` 載入完整 Superpowers。
+4. **安全同步與看板**：開工/收工一律經由 `scripts/dev/agents-board.mjs` 感知並調用 `sync-main-safely`，並自動觸發進程垃圾回收（`cleanup-orphan-dev-processes`）。
+5. **自主 PR 佇列與 Hook 引擎**：已建立 `scripts/dev/manage-pr-queue.mjs` 與看板/Git Hooks 雙向串接，實現多 Session 並行時全自動多 PR 追蹤、智慧解衝突、預檢修復、Blip 審批與快進合入。
 
 ## Handoff Note for Next Session (下個 Session 啟動指引)
 1. **開工登記**：執行 `node scripts/dev/agents-board.mjs register --agent agy`（或 `codex`）。

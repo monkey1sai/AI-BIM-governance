@@ -197,6 +197,8 @@ _worker/data/
 _worker/pytest-cache-files-*/
 _bim-control/pytest-cache-files-*/
 bim-review-coordinator/data/
+/data/
+artifacts/e2e/*-report-*/
 
 # ----------------------------
 # Fake storage generated outputs
