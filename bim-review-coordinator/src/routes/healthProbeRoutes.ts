@@ -37,17 +37,19 @@ export function registerHealthProbeRoutes(app: Express, options: HealthProbeRout
     });
   });
 
-  app.get("/api/health/artifacts/:artifactId", (req: Request, res: Response) => {
+  app.get("/api/health/artifacts/:edgeArtifactId", (req: Request, res: Response) => {
     const ledger = options.artifactHealthLedger;
-    const record = ledger ? ledger.get(req.params.artifactId) : null;
-    if (!record) {
+    const targetId = req.params.edgeArtifactId;
+    const records = ledger ? ledger.list().filter((r) => r.edge_artifact_id === targetId) : [];
+    if (records.length === 0) {
       res.status(404).json({ detail: "Artifact health record not found." });
       return;
     }
     res.status(200).json({
       status: "healthy",
-      artifact: record,
+      artifacts: records,
     });
   });
 }
+
 
