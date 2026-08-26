@@ -153,7 +153,7 @@ $script:SelfReferentialAdjudicatorPaths = @(
 
 $script:SelfReferentialLeanPolicyCommit = '2a759f4ac488750c4f3e1e1945b4d5de9f936b50'
 $script:SelfReferentialLeanMigrationPr = 704
-$script:SelfReferentialLeanMigrationBase = '7a51a3821086ac79a41e0062b1ef35ae7c8b278a'
+$script:SelfReferentialLeanMigrationBase = 'f83e20b6d53e13768335aa7c05759947fab407c2'
 $script:SelfReferentialLeanMigrationDeclaration = 'owner-authorized-migration'
 $script:SelfReferentialLeanMigrationOwnerTuple = 'sha256=2fdd481cbf4247c93d1dc0aba65d4907b0059b6ce24fa0aae2c9c51139545ba3;bytes=19'
 $script:SelfReferentialLeanMigrationPaths = @(
