@@ -2255,4 +2255,3 @@ cd "C:/Repos/active/iot/AI-BIM-governance.worktrees/unified-console-runtime-trut
 預期輸出：8 files changed。**（HELD：owner D5 未裁「納入」前不得執行本 commit；這 8 個檔不進本 PR。）**
 
 ---
-
