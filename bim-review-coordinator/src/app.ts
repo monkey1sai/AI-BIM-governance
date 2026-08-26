@@ -77,6 +77,8 @@ import {
 } from "./routes/a4HandoffRoutes.js";
 // R8＋加性慣例（手冊 §1.13）：devMeta 為 routes/*.ts 模組，app.ts 僅此 import＋單行 mount。
 import { registerDevMetaRoutes } from "./routes/devMeta.js";
+import { registerHealthProbeRoutes } from "./routes/healthProbeRoutes.js";
+import { registerStreamConfigRoutes } from "./routes/streamConfigRoutes.js";
 // rvt-ifc-usdc-lineage task 3.1：governed source-bundle intake／讀取面。同一加性慣例——
 // app.ts 只有 import ＋ 一段 mount，路由本體在 routes/lineageSourceBundleRoutes.ts。
 import { registerLineageSourceBundleRoutes } from "./routes/lineageSourceBundleRoutes.js";
@@ -4272,6 +4274,8 @@ export function createCoordinatorApp(
   });
 
   registerDevMetaRoutes(app, config); // R8：唯讀 test-data-projects meta（routes/devMeta.ts，加性慣例單行 mount）
+  registerHealthProbeRoutes(app, { artifactHealthLedger, structLog, startedAt });
+  registerStreamConfigRoutes(app, { config, structLog });
 
   // rvt-ifc-usdc-lineage task 3.1：governed source-bundle intake／讀取（加性 mount）。
   // legacy `/api/external/ifc-ready*` 路由已在上方註冊且**逐字不動**；此處只新增
