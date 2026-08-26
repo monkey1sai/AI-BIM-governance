@@ -12,6 +12,8 @@ export interface GovernancePanelProps {
   onRunRule?: (ruleId: string) => void;
   onSelectViolations?: (ruleId: string) => void;
   onCreateBcfTopic?: (ruleId: string) => void;
+  onColorPrim?: (primPath: string, rgba: [number, number, number, number]) => void;
+  onClearColoring?: () => void;
 }
 
 export const GovernancePanel: React.FC<GovernancePanelProps> = ({
@@ -19,6 +21,8 @@ export const GovernancePanel: React.FC<GovernancePanelProps> = ({
   onRunRule,
   onSelectViolations,
   onCreateBcfTopic,
+  onColorPrim,
+  onClearColoring,
 }) => {
   const [activeTab, setActiveTab] = useState<"rules" | "issues">("rules");
 
@@ -78,6 +82,25 @@ export const GovernancePanel: React.FC<GovernancePanelProps> = ({
       <div className="panel-content" style={{ flex: 1, overflowY: "auto", padding: 12 }}>
         {activeTab === "rules" ? (
           <div className="rules-list" style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {onClearColoring && (
+              <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 4 }}>
+                <button
+                  type="button"
+                  onClick={onClearColoring}
+                  style={{
+                    fontSize: 11,
+                    padding: "2px 8px",
+                    background: "#374151",
+                    color: "#9CA3AF",
+                    border: "none",
+                    borderRadius: 4,
+                    cursor: "pointer",
+                  }}
+                >
+                  ✕ 清除 3D 著色
+                </button>
+              </div>
+            )}
             {rules.length === 0 ? (
               <div style={{ color: "#9CA3AF", fontSize: 13, textAlign: "center", marginTop: 24 }}>
                 尚無執行的檢核規則
@@ -108,40 +131,72 @@ export const GovernancePanel: React.FC<GovernancePanelProps> = ({
                     </span>
                   </div>
 
-                  {r.status === "failed" && (
-                    <div style={{ marginTop: 8, display: "flex", gap: 6 }}>
-                      <button
-                        type="button"
-                        onClick={() => onSelectViolations && onSelectViolations(r.ruleId)}
-                        style={{
-                          fontSize: 11,
-                          padding: "3px 6px",
-                          background: "#374151",
-                          color: "#F9FAFB",
-                          border: "none",
-                          borderRadius: 4,
-                          cursor: "pointer",
-                        }}
-                      >
-                        聚焦違規物件
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => onCreateBcfTopic && onCreateBcfTopic(r.ruleId)}
-                        style={{
-                          fontSize: 11,
-                          padding: "3px 6px",
-                          background: "#2563EB",
-                          color: "#FFFFFF",
-                          border: "none",
-                          borderRadius: 4,
-                          cursor: "pointer",
-                        }}
-                      >
-                        建立 BCF 議題
-                      </button>
-                    </div>
-                  )}
+                  <div style={{ marginTop: 8, display: "flex", gap: 6 }}>
+                    <button
+                      type="button"
+                      onClick={() => onRunRule && onRunRule(r.ruleId)}
+                      style={{
+                        fontSize: 11,
+                        padding: "3px 6px",
+                        background: "#4B5563",
+                        color: "#FFFFFF",
+                        border: "none",
+                        borderRadius: 4,
+                        cursor: "pointer",
+                      }}
+                    >
+                      執行檢核
+                    </button>
+                    {r.status === "failed" && (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => onSelectViolations && onSelectViolations(r.ruleId)}
+                          style={{
+                            fontSize: 11,
+                            padding: "3px 6px",
+                            background: "#374151",
+                            color: "#F9FAFB",
+                            border: "none",
+                            borderRadius: 4,
+                            cursor: "pointer",
+                          }}
+                        >
+                          聚焦違規物件
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => onColorPrim && onColorPrim(`/World/Violations/${r.ruleId}`, [1, 0, 0, 1])}
+                          style={{
+                            fontSize: 11,
+                            padding: "3px 6px",
+                            background: "#DC2626",
+                            color: "#FFFFFF",
+                            border: "none",
+                            borderRadius: 4,
+                            cursor: "pointer",
+                          }}
+                        >
+                          3D 著色
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => onCreateBcfTopic && onCreateBcfTopic(r.ruleId)}
+                          style={{
+                            fontSize: 11,
+                            padding: "3px 6px",
+                            background: "#2563EB",
+                            color: "#FFFFFF",
+                            border: "none",
+                            borderRadius: 4,
+                            cursor: "pointer",
+                          }}
+                        >
+                          建立 BCF 議題
+                        </button>
+                      </>
+                    )}
+                  </div>
                 </div>
               ))
             )}
