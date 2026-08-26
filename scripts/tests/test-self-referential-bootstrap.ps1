@@ -444,6 +444,48 @@ try {
     $adjacentAutonomousMatches = @(Get-SelfReferentialMechanismPaths -ChangedPaths $adjacentAutonomousPaths)
     Assert-True ($adjacentAutonomousMatches.Count -eq 0) `
         "adjacent autonomous-delivery names must not broaden mechanism scope (matched: $($adjacentAutonomousMatches -join ', '))"
+    # The state validator, append authority, procedure adapters, and the three
+    # required root pytest enforcement files are a single future NEW_RUN trust
+    # surface. Pre-register them before their implementation PR so its base-owned
+    # classifier can bind complete bootstrap debt.
+    $futureSpecToDoneNewRunPaths = @(
+        '.claude/skills/spec-to-done/validate-state.mjs',
+        '.claude/skills/spec-to-done/append-new-run.mjs',
+        '.claude/skills/spec-to-done/SKILL.md',
+        '.codex/skills/spec-to-done/SKILL.md',
+        '.claude/skills/spec-to-done/GROK.md',
+        'tests/test_spec_to_done_state_contract.py',
+        'tests/test_spec_to_done_budget_contract.py',
+        'tests/test_spec_to_done_closeout_contract.py'
+    )
+    $futureSpecToDoneNewRunMatches = @(
+        Get-SelfReferentialMechanismPaths -ChangedPaths $futureSpecToDoneNewRunPaths
+    )
+    Assert-True ($futureSpecToDoneNewRunMatches.Count -eq $futureSpecToDoneNewRunPaths.Count) "every future spec-to-done NEW_RUN path must classify exactly (matched: $($futureSpecToDoneNewRunMatches -join ', '))"
+    foreach ($expectedPath in $futureSpecToDoneNewRunPaths) {
+        Assert-True ($futureSpecToDoneNewRunMatches -ccontains $expectedPath) "future spec-to-done NEW_RUN classifier includes $expectedPath"
+        $coveredByTrustedMerge = @($trustedMergePatterns | Where-Object {
+            [regex]::IsMatch(
+                $expectedPath,
+                [string]$_,
+                [System.Text.RegularExpressions.RegexOptions]::CultureInvariant)
+        }).Count -gt 0
+        Assert-True $coveredByTrustedMerge "trusted merge mechanism policy covers future spec-to-done NEW_RUN path: $expectedPath"
+    }
+    $adjacentSpecToDoneNewRunPaths = @(
+        '.claude/skills/spec-to-done/validate-state.test.mjs',
+        '.claude/skills/spec-to-done/append-new-run.ps1',
+        '.claude/skills/spec-to-done/subdir/validate-state.mjs',
+        '.Claude/skills/spec-to-done/validate-state.mjs',
+        '.claude/skills/spec-to-done/SKILL.txt',
+        '.codex/skills/spec-to-done/GROK.md',
+        'tests/test_spec_to_done_state_contract_extra.py',
+        'tests/Test_spec_to_done_budget_contract.py'
+    )
+    $adjacentSpecToDoneNewRunMatches = @(
+        Get-SelfReferentialMechanismPaths -ChangedPaths $adjacentSpecToDoneNewRunPaths
+    )
+    Assert-True ($adjacentSpecToDoneNewRunMatches.Count -eq 0) "adjacent or wrong-case spec-to-done NEW_RUN paths must not broaden mechanism scope (matched: $($adjacentSpecToDoneNewRunMatches -join ', '))"
     $adjacentBlipPacketPaths = @(
         'scripts/agent-tooling/blip-approve/bot/scripts/ship_gate_packet.py.bak',
         'scripts/agent-tooling/blip-approve/bot/scripts/test_ship_gate_packet_extra.py',
@@ -1303,6 +1345,48 @@ try {
                 -HeadJson $emptyJson -BaseJson $emptyJson
         }
     }
+
+    foreach ($futureSelfAdjudicator in @($futureSpecToDoneNewRunPaths)) {
+        Assert-Throws -Context "future NEW_RUN adjudicator under bootstrap=no: $futureSelfAdjudicator" `
+            -MessagePattern 'must declare bootstrap=yes' -Action {
+            Invoke-BodyGate -Rows @{ 'Self-referential bootstrap' = 'no' } `
+                -ChangedPaths @($futureSelfAdjudicator) `
+                -HeadJson $emptyJson -BaseJson $emptyJson
+        }
+    }
+
+    $futureNewRunEntryId = 'spec-to-done-new-run-boundary-implementation'
+    $futureNewRunRows = @{
+        'Self-referential bootstrap' = 'yes'
+        'Bootstrap ledger entry' = $futureNewRunEntryId
+        'Bootstrap reason' = $goodReason
+    }
+    Assert-Throws -Context 'future NEW_RUN bootstrap=yes still requires new debt' `
+        -MessagePattern 'does not ADD it' -Action {
+        Invoke-BodyGate -Rows $futureNewRunRows `
+            -ChangedPaths @($futureSpecToDoneNewRunPaths) `
+            -HeadJson $emptyJson -BaseJson $emptyJson
+    }
+
+    $futureNewRunEvidenceRef = 'docs/evidence/spec-to-done-new-run-boundary-implementation/self-referential-bootstrap/summary.md'
+    $futureNewRunMechanismPaths = @(
+        'scripts/self-referential-bootstrap-ledger.json'
+    ) + @($futureSpecToDoneNewRunPaths)
+    $futureNewRunLedger = New-LedgerJson -Entries @(
+        (New-Entry -Override @{
+            id = $futureNewRunEntryId
+            verification_mechanism_paths = $futureNewRunMechanismPaths
+            bootstrap_evidence_refs = @($futureNewRunEvidenceRef)
+        })
+    )
+    $futureNewRunBaseSha = New-FixtureHeadCommit -Json $emptyJson 'future NEW_RUN clean base'
+    & $write $futureNewRunEvidenceRef "future NEW_RUN bootstrap evidence $([Guid]::NewGuid().ToString('N'))"
+    $null = Invoke-FixtureGit -Arguments @('add', '--', $futureNewRunEvidenceRef)
+    $futureNewRunHeadSha = New-FixtureHeadCommit -Json $futureNewRunLedger 'future NEW_RUN bound opening'
+    Invoke-BodyGate -Rows $futureNewRunRows `
+        -ChangedPaths @($futureNewRunMechanismPaths + $futureNewRunEvidenceRef) `
+        -HeadJson $futureNewRunLedger -BaseJson $emptyJson -GateRepoRoot $gitRoot `
+        -BaseSha $futureNewRunBaseSha -HeadSha $futureNewRunHeadSha
 
     # --- inherited open debt blocks (declared no, entry untouched) ------------------
     Assert-Throws -Context 'inherited open debt blocks mechanism PRs' -MessagePattern 'open ledger debt' -Action {

@@ -39,6 +39,13 @@ $script:SelfReferentialMechanismPattern = @(
     '^scripts/tests/fixtures/trusted-host-merge-machine-fixtures\.json$'
     '^agent-contracts/trusted-host-merge(?:[.-][a-z-]+)?(?:\.schema)?\.json$'
     '^agent-contracts/spec-to-done\.contract(?:\.schema)?\.json$'
+    # These exact future paths must be visible to the immutable base classifier
+    # before the NEW_RUN implementation PR changes them. Directory-wide patterns
+    # would silently widen the mechanism surface and are intentionally rejected.
+    '^\.claude/skills/spec-to-done/(?:validate-state|append-new-run)\.mjs$'
+    '^\.claude/skills/spec-to-done/(?:SKILL|GROK)\.md$'
+    '^\.codex/skills/spec-to-done/SKILL\.md$'
+    '^tests/test_spec_to_done_(?:state_contract|budget_contract|closeout_contract)\.py$'
     '^agent-contracts/autonomous-delivery-(?:adjudication-packet|attestation-envelope|classifier-input|terminal-record)\.schema\.json$'
     '^agent-contracts/autonomous-delivery-transition\.contract\.json$'
     '^scripts/lib/autonomous-delivery-contract\.mjs$'
@@ -130,6 +137,17 @@ $script:SelfReferentialAdjudicatorPaths = @(
     'scripts/lib/windows-verification-scope.ps1'
     'scripts/tests/check-pr-body-evidence.ps1'
     'docs/agents/self-referential-bootstrap.md'
+    # NEW_RUN changes durable state adjudication and therefore cannot use the
+    # ordinary bootstrap=no mechanism lane after preregistration. Keep this
+    # list exact so adjacent skill files and tests do not inherit authority.
+    '.claude/skills/spec-to-done/validate-state.mjs'
+    '.claude/skills/spec-to-done/append-new-run.mjs'
+    '.claude/skills/spec-to-done/SKILL.md'
+    '.claude/skills/spec-to-done/GROK.md'
+    '.codex/skills/spec-to-done/SKILL.md'
+    'tests/test_spec_to_done_state_contract.py'
+    'tests/test_spec_to_done_budget_contract.py'
+    'tests/test_spec_to_done_closeout_contract.py'
 )
 
 $script:GenericReasonBlocklist = @(
