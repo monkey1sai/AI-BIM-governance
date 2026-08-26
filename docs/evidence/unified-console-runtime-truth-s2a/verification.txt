@@ -1,0 +1,54 @@
+# unified-console-runtime-truth-s2a verification (coordinator-run, 2026-08-25)
+worktree: AI-BIM-governance.worktrees/unified-console-runtime-truth-s2a
+base (origin/main): d4f37fecf887d1dabaadd2b60bf18a2c56ed6fdd
+pre-fix subject (P5 round 1): 5a05927d5dcc1abfa15d1d1defd2d94420ea6aaf
+build/vitest/targeted runs below executed on the post-fix tree committed as 7c406ad (coordinator src unchanged through 8958faa; only tests, env templates, docs differ from 5a05927)
+
+## npm run build (tsc -p tsconfig.json)
+> @ai-bim-governance/bim-review-coordinator@0.1.0 build
+> tsc -p tsconfig.json
+
+exit=0
+
+## npx vitest run (cwd bim-review-coordinator)
+ Test Files  100 passed (100)
+      Tests  1573 passed (1573)
+   Duration  70.64s (transform 5.45s, setup 0ms, collect 50.97s, tests 124.55s, environment 25ms, prepare 15.35s)
+
+## targeted: parity / dev-routes-disabled / conversion-control-auth / lineage pins / services
+ ✓ tests/env-example-dev-routes-parity.test.ts (5 tests) 6ms
+ ✓ tests/services/conversionControlAuthorization.test.ts (6 tests) 5ms
+ ✓ tests/lineage/conversion-control-auth-pins.test.ts (5 tests) 140ms
+ ✓ tests/dev-routes-disabled.test.ts (13 tests) 191ms
+ ✓ tests/conversion-control-auth.test.ts (28 tests) 453ms
+ Test Files  5 passed (5)
+      Tests  57 passed (57)
+
+## gitnexus impact rejectIfIpNotAllowed -d upstream (index at 5a05927 = subject tree; direct callers replaced by createConversionControlGuard deps, helper still injected into lineage deps at app.ts:4292)
+{
+  "target": {
+    "id": "Function:bim-review-coordinator/src/app.ts:rejectIfIpNotAllowed",
+    "name": "rejectIfIpNotAllowed",
+    "type": "Function",
+    "filePath": "bim-review-coordinator/src/app.ts"
+  },
+  "direction": "upstream",
+  "impactedCount": 0,
+  "risk": "LOW",
+  "epistemic": "exact",
+  "summary": {
+    "direct": 0,
+    "processes_affected": 0,
+    "modules_affected": 0
+  },
+  "byDepthCounts": {},
+  "affected_processes": [],
+  "affected_modules": [],
+  "byDepth": {}
+}
+
+## path-identity proof vs slice-2 combined branch d5b1702 (backend paths) — SHA pair: d5b1702 vs 5a05927 (pre-fix split commit only). After the P5 round-1 fix commit 7c406ad (and the origin/main merge 3667b4d) five backend paths intentionally differ from d5b1702: .env.web-plane.host-kit.example, .env.web-plane.host-kit.canonical-linux.example, tests/conversion-control-auth.test.ts, tests/dev-routes-disabled.test.ts, tests/env-example-dev-routes-parity.test.ts (see commit 7c406ad message).
+(empty diff = byte-identical)
+
+## deploy_dryrun tier evidence (Windows host, worktree root)
+pwsh -NoProfile -NonInteractive -File scripts/deploy.ps1 -DryRun -> exit 0, elapsed 0m 5s, Phase 2 auto-fix DRY-RUN (no actions executed), all host-native ports FREE, storage root ALIGNED (log kept out of repo: contains LAN IP)
