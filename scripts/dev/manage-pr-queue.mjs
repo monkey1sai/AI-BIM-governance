@@ -9,6 +9,7 @@ import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 import { syncMainSafely } from './sync-main-safely.mjs';
+import { cleanupOrphanDevProcesses } from './cleanup-orphan-dev-processes.mjs';
 
 const SCRIPT_REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const BLIP_SCRIPT = 'C:\\Users\\IOT\\.grok\\github-bot\\scripts\\run_blip_human_equivalent_approve_once.ps1';
@@ -222,6 +223,7 @@ export function updateBranch(prNumber, prHeadRef) {
   } finally {
     run('git', ['worktree', 'remove', '--force', wtDir], SCRIPT_REPO_ROOT, true);
     run('git', ['worktree', 'prune'], SCRIPT_REPO_ROOT, true);
+    cleanupOrphanDevProcesses();
   }
 }
 
@@ -257,10 +259,12 @@ export function mergePr(prNumber) {
       const parsed = JSON.parse(raw);
       if (parsed.state === 'MERGED') {
         process.stdout.write('[manage-pr-queue] PR #' + prNumber + ' confirmed MERGED (commit: ' + (parsed.mergeCommit?.oid?.slice(0, 7) || 'unknown') + ')\n');
+        cleanupOrphanDevProcesses();
         return true;
       }
     } catch {}
   }
+  cleanupOrphanDevProcesses();
   return res !== null;
 }
 
@@ -395,6 +399,7 @@ export async function runQueue(auto = false) {
   }
   
   try {
+    cleanupOrphanDevProcesses();
     process.stdout.write('=== Processing Autonomous PR Queue ===\n');
     let maxCycles = 5;
 
@@ -464,6 +469,7 @@ export async function runQueue(auto = false) {
     }
     process.stdout.write('\n=== PR Queue Cycle Complete ===\n');
   } finally {
+    cleanupOrphanDevProcesses();
     releaseLock();
   }
 }
