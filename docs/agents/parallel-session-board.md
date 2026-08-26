@@ -48,14 +48,35 @@ notify = ["node", "C:\\Repos\\active\\iot\\AI-BIM-governance\\scripts\\dev\\agen
 - 基本盤:xAI Grok Build 與社群 grok-cli 都自動讀 `AGENTS.md`,同樣執行通用契約,`--agent grok`。
 - 不依賴 Claude-compatible hooks；Grok 也明確使用 `register/status/update/done`，避免 checkout 內容自動執行。
 
+## 自主 PR 佇列 Hook 與自動合併引擎 (Autonomous PR Queue Engine)
+
+為實現多 session 同步開發、避免 PR 積壓與手動衝突摩擦，專案內建自主 PR 佇列引擎（`scripts/dev/manage-pr-queue.mjs`）與多通道 Hook 機制：
+
+1. **觸發途徑 (Trigger Pathways)**：
+   - **看板生命週期 Hook**：任何 CLI（AGY、Codex、Claude、Grok）於 `register`、`done`、`Stop`、`codex-notify` 時自動背景非同步觸發 `manage-pr-queue.mjs hook`。
+   - **Git 本地 Hook**：執行 `node scripts/dev/manage-pr-queue.mjs install-hooks`（或 `install-git-hooks.ps1`），將 `post-commit`、`post-merge`、`post-checkout` 掛入背景佇列觸發。
+   - **主動巡航 / Daemon**：可執行 `node scripts/dev/manage-pr-queue.mjs watch --interval 30` 或單次 `run-queue`。
+
+2. **自動化處理流水線**：
+   - **智慧解衝突與分支更新**：自動偵測 `[BEHIND MAIN]`，於隔離工作區合併最新 `origin/main`；針對 `.gitignore`（規則聯集）、`docs/current_task.md`、`docs/superpowers/plans/`、`artifacts/`、`.agents/` 實施智慧非破壞性自動解衝突。
+   - **預檢與元數據自動修復 (`auto-fix`)**：自動執行 `check-pr-local-preflight.ps1`，校正 Design gate status、Manifest 畫面與 missing 路由等標記。
+   - **自動審批 (Code Review & Blip Approval)**：CI 檢查 100% 綠燈後自動調用 Blip 人工等效審批協議。
+   - **自動合併與快進同步**：審批與 CI 均通過後自動執行 Squash Merge，清理鎖定工作區，並以 `syncMainSafely()` 快進更新本地 `main`。
+   - **並發安全鎖**：以 `.agents/board/pr-queue.lock` 確保多終端機並行時不會重複爭搶資源。
+
 ## 驗證
 
 ```powershell
 # 看板總覽(任一終端機/任一 CLI)
 node scripts/dev/agents-board.mjs status
 
-# 明確註冊後結束一個測試 session
-node scripts/dev/agents-board.mjs register --agent claude --task "board smoke test"
+# 檢查 PR 佇列狀態
+node scripts/dev/manage-pr-queue.mjs status
 
-# worktree 共用驗證:在 linked worktree 內跑 status,應指向主 checkout 的 .agents/board
+# 單次觸發 PR 佇列自主處理
+node scripts/dev/manage-pr-queue.mjs run-queue
+
+# 安裝本機 Git Hooks
+node scripts/dev/manage-pr-queue.mjs install-hooks
 ```
+

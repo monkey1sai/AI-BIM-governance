@@ -9,6 +9,9 @@
 2. **凍結元治理工具自我修復循環**：禁止主動開立 Fixpoint rebuild、Classifier repair、Ledger reconciliation 等純治理工具 PR。非阻塞告警改為 Warning，不阻擋業務代碼交付。
 3. **前端驗收以 Functional & Semantic E2E 為主**：著重於 Playwright 語意與功能驗收，放寬 1% 嚴苛 Pixel Diff 硬阻斷。
 4. **Single Active Writer 原則**：同一時間只由 1 個主要 Coordinator 負責寫入與開 PR，其他 Agent 僅擔任唯讀 Research 或局部 Debugger。
+5. **主工作區絕對乾淨與強制 Worktree 隔離（全體 Agent 永久鐵律）**：
+   - **主工作區**永遠保持 `main == origin/main` 且無 dirty files；任何受版控檔案或 code 變更**一律在獨立 Worktree（`AI-BIM-governance.worktrees/<name>`）實作**。
+   - 所有 Task 必須經由真實測試與 **Chrome E2E 語意驗證（Playwright / Agent in Chrome）** 驗收；無實證數據絕不宣稱完成。全體 Agent（Codex、Claude、AGY、Grok）一體嚴格遵守。
 
 ## 0.1 Agent 工作方式
 ### AI Coding Governance Lanes
@@ -55,9 +58,7 @@
 - 不允許：修改既有 `.env` 的實際機密值。
 - Evidence 規則：agent 可為本機驗證載入 `.env`，但不得在回覆、log 摘要或 PR body echo 任何值；`.env` / `.env.example` 差異檢查預設只列 key 名稱與缺漏，不列值。
 - 此 carve-out 僅覆蓋全域「不得修改環境檔」規則中關於本 repo `.env.example` 讀寫、`.env` 讀取與複製的部分；其餘 secrets / credentials / private keys 規則不變。
-
 ---
-
 ## 1. Workspace 範圍（一句話）
 ```mermaid
 flowchart LR
@@ -122,18 +123,14 @@ _worker / _bim-control = 已自 repo 刪除（2026-05-18 B 方案落地），僅
 | 新增／修改 repo 治理規則（機器可讀 artifact 的結構規則、rule ratchet、PINNED 承重規則） | `docs/agents/agent-governance-policy.md` |
 | 查 domain vocabulary、GitHub issue workflow 或 triage labels | `docs/agents/domain.md`、`docs/agents/issue-tracker.md`、`docs/agents/triage-labels.md` |
 
-新增 sub-file 時：先在 `docs/agents/` 建檔，再同步更新本表與 `CLAUDE.md` index（兩份主檔的 sub-file 集合必須一致）。本文件行數預算 ≤ 250 行（目標 ≤ 200）；CLAUDE.md ≤ 130 行（目標 ≤ 100）。預算規範見 spec `agent-doc-context-budget`。
-
+新增 sub-file 時：先在 `docs/agents/` 建檔，再更新本表；`AGENTS.md` 是唯一 sub-file index，`CLAUDE.md` 透過 `@AGENTS.md` 匯入，不另行同步 index。本文件行數預算 ≤ 250 行（目標 ≤ 200）；CLAUDE.md ≤ 130 行（目標 ≤ 100）。預算規範見 spec `agent-doc-context-budget`。
 ---
 ## 3. 探索輔助與 Source of Truth
-
 本 repo 有兩條不同優先序，禁止混用：
-
 - **Agent instruction priority**：使用者最新明確指令 > 本文件（含已載入的 `docs/agents/*.md` lazy-load 細節）> `CLAUDE.md` > installed skills / generated artifacts。
 - **Runtime/product behavior truth**：程式碼實作與可執行測試 / contracts 描述目前行為；`docs/plans/` 描述目標需求與驗收語意；兩者不一致時不得用 docs 宣稱 runtime 已完成，必須標成 implementation gap。
 
 Runtime/product 行為真相優先順序：
-
 ```txt
 1. 程式碼實作
 2. 可執行 tests / contracts 文件
@@ -143,9 +140,7 @@ Runtime/product 行為真相優先順序：
 ```
 
 目前 checkout **沒有** generated wiki 產物（`docs/wiki/` 不存在；graphify corpus 已於 2026-06-10 移除）。Lane F 可直接 Read/grep；Lane B/G/S 的陌生 code discovery 優先用 GitNexus **CLI** `gitnexus query` / `gitnexus context`（shell）。`codebase-memory-mcp` 只能作並列第二意見、加速定位後的交叉確認，或 GitNexus UNKNOWN/crash/unavailable 時的 advisory fallback，不得取代 GitNexus risk 判定。兩圖譜衝突時 MUST 用原始碼裁決；不得逕信單邊 exact 標籤，也不得把不存在的 wiki 寫成現有入口。
-
 ---
-
 ## 4. GitNexus 入口
 
 ### 政策：CLI-only（Grok / Claude / Codex 共用）

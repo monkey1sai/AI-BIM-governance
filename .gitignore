@@ -75,6 +75,7 @@ Thumbs.db
 !.claude/skills/writing-plans/
 !.claude/skills/writing-skills/
 !.claude/skills/pr-queue-manager/
+!.claude/skills/autonomous-pr-queue/
 # Tracked agent assets: workflows/commands/agents/settings (2026-06-10)
 !.claude/workflows/
 !.claude/commands/
@@ -87,8 +88,11 @@ Thumbs.db
 !/.codex/
 /.codex/*
 !/.codex/config.toml
+!/\.codex/agents/
+!/\.codex/agents/*.toml
 !/.codex/skills/
 /.codex/skills/*
+!/.codex/skills/autonomous-pr-queue/
 !/.codex/skills/gitnexus-blast-radius/
 !/.codex/skills/spec-to-done/
 !/.codex/skills/ai-bim-fast-fix/
@@ -193,6 +197,8 @@ _worker/data/
 _worker/pytest-cache-files-*/
 _bim-control/pytest-cache-files-*/
 bim-review-coordinator/data/
+/data/
+artifacts/e2e/*-report-*/
 
 # ----------------------------
 # Fake storage generated outputs
