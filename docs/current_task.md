@@ -1,24 +1,25 @@
-# 任務：創建新 branch 與理解專案
+# 任務：P4 核心業務能力爆發與 P1~P3 全面 Code Review & Fix
 
 ## Objective (目標)
-- 創建新的 Git 分支以進行後續開發。
-- 深入理解專案的目錄結構、各模組的職責、資料流向以及驗證方式。
+- 啟動 P4：以三層交叉對抗驗證實作 3D 測量 (Issue #604)、剖切盒 (Issue #603)、構件著色與 BCF 議題連動。
+- 執行 P1~P3 全面 Code Review 與強化修復（PR Queue 智能自動修復、組件健全度提升）。
+- 嚴格遵守 Lean Governance 方針，在單一 PR 內同時交付並通過 CI 合入 main。
 
 ## Plan (執行計畫)
-- [x] 1. 建立並切換至新 Git 分支。
-- [x] 2. 檢索並閱讀專案核心說明文件（`AGENTS.md`、`README.md`）。
-- [x] 3. 深入探索專案結構（各個子模組：`bim-review-coordinator`、`bim-streaming-server`、`web-viewer-sample` 等）。
-- [x] 4. 進行初步的環境與測試驗證。
-- [x] 5. 撰寫專案理解總結。
-- [x] 6. 將專案理解、本地環境驗證與 AI Coding 方案寫入本分支的 `docs/PROJECT_UNDERSTANDING.md`。
-- [x] 7. 以 OpenSpec 建立 `project-risks-mitigation` 規格，並為 5 個風險給予 Requirement ID。
+- [x] 1. 完成三層交叉對抗驗證分析並建立 P4 實施計畫 (docs/superpowers/plans/2026-08-26-p4-business-capabilities-and-p1-p3-review-fixes.md)。
+- [ ] 2. 建立 Dedicated Git Worktree (../AI-BIM-governance.worktrees/p4-business-capabilities-and-review-fixes) 與分支 feat/p4-business-capabilities-and-review-fixes。
+- [ ] 3. 實作 P4 業務能力：擴充 streamMessages (3D 測量、剖面、著色請求)、強化 useUsdStageTree 與 GovernancePanel 3D 連動。
+- [ ] 4. 實作 P1~P3 Code Review 修復：強化 manage-pr-queue.mjs (自動修補 metadata)、補強 ViewportHost、ViewerToolbar 與 healthProbeRoutes。
+- [ ] 5. 執行 sub-repo 測試套件（Coordinator 1573 筆、Governance 301 筆、Layer Contract 79 筆）與本地 preflight。
+- [ ] 6. 提交 Git Commit 並 Push 分支至遠端 GitHub。
+- [ ] 7. 開立 Pull Request (Single PR)。
+- [ ] 8. 執行 Code Review 與 Blip Approval。
+- [ ] 9. GitHub Actions 23 項 CI 全綠，Squash Merge 至 main。
+- [ ] 10. 收斂分支並清理 Worktree。
 
 ## Context & Thoughts (上下文與思考)
-- 我們已經成功為專案建立 `.venv` 並安裝所有必要的依賴，包括 `fastapi`、`usd-core` (用於 openusd 測試的 `pxr`)、`ifcopenshell` 等。
-- 順利跑通了整個 repo 目前現存的所有單元與合約測試。
-- 順利建立並寫入了本分支的正式文檔 `docs/PROJECT_UNDERSTANDING.md`。
-- 成功透過 `openspec` 建立變更，並將五個風險編寫為具有 Scenario 與 ID 的規格文件。
+- 採用三層交叉對抗驗證（實作邊界、串流狀態機、工程治理）指導開發。
+- 保持 DataChannel、WebRTC 與 REST API 1:1 向後相容。
 
 ## Handoff Note (交接說明)
-- 任務已全部圓滿完成！所有規格文件、本地驗證測試、以及風險對齊工作皆已到位。
-- 分支 `feat/understand-project` 已處於乾淨且準備妥當的開發狀態。
+- 正在建立 Worktree 推進 P4 業務與 P1~P3 Review 修復。

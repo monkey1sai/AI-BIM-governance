@@ -114,3 +114,57 @@ export function severityToColor(severity: string): number[] {
     if (severity === "warning") return [1, 0.75, 0, 1];
     return [0.2, 0.55, 1, 1];
 }
+
+export interface MeasurePayload {
+    mode: "distance" | "angle" | "area";
+    points?: Array<[number, number, number]>;
+    requestId?: string;
+}
+
+export function buildMeasureRequest(params: MeasurePayload): StreamMessage {
+    return {
+        event_type: "measureRequest",
+        payload: {
+            ...(params.requestId ? { request_id: params.requestId } : {}),
+            mode: params.mode,
+            points: params.points ?? [],
+        },
+    };
+}
+
+export interface ClipPlanePayload {
+    enabled: boolean;
+    axis?: "x" | "y" | "z";
+    position?: number;
+    normal?: [number, number, number];
+    requestId?: string;
+}
+
+export function buildClipPlaneRequest(params: ClipPlanePayload): StreamMessage {
+    return {
+        event_type: "clipPlaneRequest",
+        payload: {
+            ...(params.requestId ? { request_id: params.requestId } : {}),
+            enabled: params.enabled,
+            axis: params.axis ?? "z",
+            position: params.position ?? 0,
+            normal: params.normal ?? [0, 0, 1],
+        },
+    };
+}
+
+export interface ColoringItem {
+    prim_path: string;
+    color_rgba: [number, number, number, number];
+}
+
+export function buildColoringRequest(items: ColoringItem[], requestId?: string): StreamMessage {
+    return {
+        event_type: "coloringRequest",
+        payload: {
+            ...(requestId ? { request_id: requestId } : {}),
+            items,
+        },
+    };
+}
+

@@ -628,6 +628,11 @@
         },
         {
           "match": "prefix",
+          "value": "hooks/",
+          "layer": "application"
+        },
+        {
+          "match": "prefix",
           "value": "console/hooks/",
           "layer": "application"
         },
