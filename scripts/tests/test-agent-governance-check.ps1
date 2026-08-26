@@ -591,22 +591,20 @@ try {
     )) {
         Assert-True ($githubWorkflowBody -match [regex]::Escape($authRoutingMarker)) "GitHub workflow preserves gh auth routing marker: $authRoutingMarker"
     }
-    foreach ($entrypoint in @(@{ Name = 'AGENTS.md'; Body = $agentsBody }, @{ Name = 'CLAUDE.md'; Body = $claudeBody })) {
-        $entrypointLf = $entrypoint.Body.Replace("`r`n", "`n")
-        foreach ($entrypointVariant in @($entrypointLf, $entrypointLf.Replace("`n", "`r`n"))) {
-            Assert-True ($entrypointVariant -match '(?m)^\|[^\r\n]*gh[^\r\n]*docs/agents/github-workflow\.md[^\r\n]*\r?$') "$($entrypoint.Name) routes gh auth work to the GitHub workflow runbook under LF and CRLF"
-        }
+    $agentsBodyLf = $agentsBody.Replace("`r`n", "`n")
+    foreach ($entrypointVariant in @($agentsBodyLf, $agentsBodyLf.Replace("`n", "`r`n"))) {
+        Assert-True ($entrypointVariant -match '(?m)^\|[^\r\n]*gh[^\r\n]*docs/agents/github-workflow\.md[^\r\n]*\r?$') 'AGENTS.md routes gh auth work to the GitHub workflow runbook under LF and CRLF'
     }
-    foreach ($generatedBody in @($agentsBody, $claudeBody)) {
-        $generatedMatch = [regex]::Match($generatedBody, '(?s)<!-- gitnexus:start -->.*?<!-- gitnexus:end -->')
-        Assert-True $generatedMatch.Success 'GitNexus generated block has both markers'
-        Assert-True (($generatedMatch.Value -split "`r?`n").Count -gt 1) 'GitNexus generated block remains multiline'
-    }
+    Assert-True ($claudeBody -match '(?m)^@AGENTS\.md\s*$') 'CLAUDE.md imports the AGENTS.md source of truth'
+    Assert-True (-not ($claudeBody -match '<!-- gitnexus:start -->|<!-- gitnexus:end -->')) 'CLAUDE.md has no duplicated GitNexus generated block'
+    $agentsGeneratedMatch = [regex]::Match($agentsBody, '(?s)<!-- gitnexus:start -->.*?<!-- gitnexus:end -->')
+    Assert-True $agentsGeneratedMatch.Success 'AGENTS.md owns the GitNexus generated block'
+    Assert-True (($agentsGeneratedMatch.Value -split "`r?`n").Count -gt 1) 'AGENTS.md GitNexus generated block remains multiline'
     $agentsLineCount = @(Get-Content -LiteralPath 'AGENTS.md').Count
     $claudeLineCount = @(Get-Content -LiteralPath 'CLAUDE.md').Count
     foreach ($budget in @(
         @{ Path = 'AGENTS.md'; Min = 150; Max = 200 },
-        @{ Path = 'CLAUDE.md'; Min = 40; Max = 100 },
+        @{ Path = 'CLAUDE.md'; Min = 1; Max = 30 },
         @{ Path = 'docs/agents/advanced-agent-reasoning-contract.md'; Min = 40; Max = 70 },
         @{ Path = 'docs/agents/codex-loop-workflows.md'; Min = 50; Max = 90 }
     )) {
@@ -616,7 +614,7 @@ try {
     Assert-True ($agentsLineCount -le 250) "AGENTS.md within 250-line budget (actual: $agentsLineCount); split into docs/agents/*.md or amend agent-doc-context-budget spec"
     Assert-True ($claudeLineCount -le 130) "CLAUDE.md within 130-line budget (actual: $claudeLineCount); split into docs/agents/*.md or amend agent-doc-context-budget spec"
 
-    Assert-True ($claudeBody -match 'AGENTS\.md') 'CLAUDE.md references AGENTS.md'
+    Assert-True ($claudeBody -match '(?m)^@AGENTS\.md\s*$') 'CLAUDE.md imports AGENTS.md'
     Assert-True ($claudeBody -match 'source of truth') 'CLAUDE.md declares AGENTS.md as source of truth'
 
     & (Join-Path $repoRoot 'scripts/dev/sync-agent-skills.ps1') -Mode Check -RepoRoot $repoRoot
@@ -694,7 +692,7 @@ try {
         Assert-True ($superpowersPolicy -match [regex]::Escape($policyTerm)) "Superpowers invocation policy contains: $policyTerm"
     }
     Assert-True ($agentsBody -match [regex]::Escape('docs/agents/superpowers-invocation-policy.md')) 'AGENTS.md indexes the Superpowers invocation policy'
-    Assert-True ($claudeBody -match [regex]::Escape('docs/agents/superpowers-invocation-policy.md')) 'CLAUDE.md indexes the Superpowers invocation policy'
+    Assert-True (-not ($claudeBody -match 'docs/agents/')) 'CLAUDE.md does not duplicate the AGENTS.md sub-file index'
 
     $codexSpecToDone = Get-Content -LiteralPath '.codex/skills/spec-to-done/SKILL.md' -Raw -Encoding UTF8
     $claudeSpecToDone = Get-Content -LiteralPath '.claude/skills/spec-to-done/SKILL.md' -Raw -Encoding UTF8
@@ -1099,27 +1097,24 @@ try {
             Assert-True (-not ((Get-Content -LiteralPath $activePath -Raw) -match [regex]::Escape($stalePattern))) "$activePath excludes stale rule: $stalePattern"
         }
     }
-    # GitNexus generated blocks are required in both root entrypoints and must
-    # advertise the same current index metadata and multiline marker structure.
+    # AGENTS.md owns the GitNexus generated block; CLAUDE.md imports it and must
+    # not carry a second generated copy that can drift.
     $gitNexusMetadata = '17817 symbols, 28581 relationships, 300 execution flows'
-    foreach ($entrypoint in @(@{ Name = 'AGENTS.md'; Body = $agentsBody }, @{ Name = 'CLAUDE.md'; Body = $claudeBody })) {
-        Assert-True ($entrypoint.Body -match '<!-- gitnexus:start -->') "$($entrypoint.Name) has GitNexus start marker"
-        Assert-True ($entrypoint.Body -match '<!-- gitnexus:end -->') "$($entrypoint.Name) has GitNexus end marker"
-        $blockMatch = [regex]::Match($entrypoint.Body, '(?s)<!-- gitnexus:start -->.*?<!-- gitnexus:end -->')
-        Assert-True $blockMatch.Success "$($entrypoint.Name) has multiline GitNexus block"
-        Assert-True ($blockMatch.Value -match [regex]::Escape($gitNexusMetadata)) "$($entrypoint.Name) has current GitNexus metadata"
-    }
+    Assert-True ($agentsBody -match '<!-- gitnexus:start -->') 'AGENTS.md has GitNexus start marker'
+    Assert-True ($agentsBody -match '<!-- gitnexus:end -->') 'AGENTS.md has GitNexus end marker'
+    $agentsBlockMatch = [regex]::Match($agentsBody, '(?s)<!-- gitnexus:start -->.*?<!-- gitnexus:end -->')
+    Assert-True ($agentsBlockMatch.Value -match [regex]::Escape($gitNexusMetadata)) 'AGENTS.md has current GitNexus metadata'
+    Assert-True (-not ($claudeBody -match '<!-- gitnexus:start -->|<!-- gitnexus:end -->')) 'CLAUDE.md has no GitNexus generated markers'
     $agentsGitNexusBlock = [regex]::Match($agentsBody, '(?s)<!-- gitnexus:start -->.*?<!-- gitnexus:end -->').Value
-    $claudeGitNexusBlock = [regex]::Match($claudeBody, '(?s)<!-- gitnexus:start -->.*?<!-- gitnexus:end -->').Value
     $metadataPattern = '17817 symbols, 28581 relationships, 300 execution flows'
-    Assert-True (($agentsGitNexusBlock -match $metadataPattern) -and ($claudeGitNexusBlock -match $metadataPattern)) 'AGENTS.md and CLAUDE.md GitNexus blocks carry matching metadata'
+    Assert-True ($agentsGitNexusBlock -match $metadataPattern) 'AGENTS.md GitNexus block carries current metadata'
 
-    # No orphan sub-files: every tracked docs/agents/*.md must appear in BOTH root entrypoint index tables
+    # No orphan sub-files: every tracked docs/agents/*.md must appear in the
+    # canonical AGENTS.md index; CLAUDE.md imports that index wholesale.
     $subFiles = @(git ls-files 'docs/agents/*.md')
     Assert-True ($subFiles.Count -ge 5) 'docs/agents sub-file inventory resolved via git ls-files'
     foreach ($subFile in $subFiles) {
         Assert-True ($agentsBody -match [regex]::Escape($subFile)) "AGENTS.md index covers $subFile (no orphan sub-files)"
-        Assert-True ($claudeBody -match [regex]::Escape($subFile)) "CLAUDE.md index covers $subFile (no orphan sub-files)"
         $subFileLineCount = @(Get-Content -LiteralPath $subFile).Count
         if ($subFileLineCount -gt 400) {
             Write-Warning "$subFile exceeds 400 lines ($subFileLineCount); agent-doc-context-budget spec suggests splitting (SHOULD, non-blocking)"
