@@ -15,6 +15,7 @@
 # Local agent workflow/tooling assets that affect how code is changed.
 /.claude/workflows/ @monkey1sai-blip
 /.claude/settings.json @monkey1sai-blip
+/.claude/skills/ @monkey1sai-blip
 /.codex/skills/ @monkey1sai-blip
 
 # Script contract and deploy/verification tooling.

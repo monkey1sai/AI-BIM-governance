@@ -88,6 +88,8 @@ Thumbs.db
 !/.codex/
 /.codex/*
 !/.codex/config.toml
+!/\.codex/agents/
+!/\.codex/agents/*.toml
 !/.codex/skills/
 /.codex/skills/*
 !/.codex/skills/autonomous-pr-queue/

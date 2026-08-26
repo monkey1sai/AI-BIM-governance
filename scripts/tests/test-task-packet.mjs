@@ -205,7 +205,7 @@ test('CLI is an executable bounded consumer of the golden corpus', () => {
 
 test('root startup context does not grow and legacy skill lock remains absent', () => {
   assert(lineCount(resolve(repositoryRoot, 'AGENTS.md')) <= 200);
-  assert(lineCount(resolve(repositoryRoot, 'CLAUDE.md')) <= 99);
+  assert(lineCount(resolve(repositoryRoot, 'CLAUDE.md')) <= 30);
   assert.equal(existsSync(resolve(repositoryRoot, 'skills-lock.json')), false);
   const readme = readFileSync(resolve(repositoryRoot, '.claude', 'skills', 'README.md'), 'utf8');
   assert.match(readme, /唯一 inventory\/provenance truth/);
