@@ -50,7 +50,7 @@ gate 必須同時驗證：
 
 - PR number：`704`
 - base：
-  `2480939cd7bf11144e9c4eeb44dd6a332eb5801d`
+  `c9c9ebff649e2bf7dadebca2eaaeb646e5307ac3`
 - declaration：`owner-authorized-migration`
 - owner user-message：UTF-8、無 BOM、無尾端 newline、3265 bytes、37 lines、
   SHA-256

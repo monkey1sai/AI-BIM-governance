@@ -352,7 +352,7 @@ try {
         RepairEntries = @()
         OpenDebt = @()
     }
-    Assert-True ($script:SelfReferentialLeanMigrationBase -ceq '2480939cd7bf11144e9c4eeb44dd6a332eb5801d') 'migration pins the owner-authorized #704 base'
+    Assert-True ($script:SelfReferentialLeanMigrationBase -ceq 'c9c9ebff649e2bf7dadebca2eaaeb646e5307ac3') 'migration pins the owner-authorized #704 base'
     Assert-True ($script:SelfReferentialLeanMigrationOwnerTuple -ceq 'sha256=ccb6cca014b86b2f653b859dd8f447b5af002112723096e55352c0a3ea0a13fb;bytes=3265') 'migration pins the current owner-message provenance tuple'
     Assert-True ($script:SelfReferentialLeanMigrationPaths.Count -eq 16) 'migration changed-path tuple contains exactly 16 paths'
     Assert-True ($script:SelfReferentialLeanMigrationPaths -ccontains '.github/workflows/agent-governance.yml') 'migration tuple includes required Linux NEW_RUN workflow coverage'

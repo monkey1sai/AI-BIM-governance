@@ -153,7 +153,7 @@ $script:SelfReferentialAdjudicatorPaths = @(
 
 $script:SelfReferentialLeanPolicyCommit = '2a759f4ac488750c4f3e1e1945b4d5de9f936b50'
 $script:SelfReferentialLeanMigrationPr = 704
-$script:SelfReferentialLeanMigrationBase = '2480939cd7bf11144e9c4eeb44dd6a332eb5801d'
+$script:SelfReferentialLeanMigrationBase = 'c9c9ebff649e2bf7dadebca2eaaeb646e5307ac3'
 $script:SelfReferentialLeanMigrationDeclaration = 'owner-authorized-migration'
 $script:SelfReferentialLeanMigrationOwnerTuple = 'sha256=ccb6cca014b86b2f653b859dd8f447b5af002112723096e55352c0a3ea0a13fb;bytes=3265'
 $script:SelfReferentialGitExitCode = $null
