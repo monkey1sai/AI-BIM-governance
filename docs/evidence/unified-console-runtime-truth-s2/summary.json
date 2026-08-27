@@ -1,121 +1,93 @@
 {
   "slug": "unified-console-runtime-truth-s2",
-  "run": "unified-console-runtime-truth-s2-r4",
+  "run": "unified-console-runtime-truth-s2-r6",
   "phase": "P4",
   "verdict": "pass_with_declared_gaps",
   "engine": "playwright",
-  "playwrightVersion": "1.61.1",
+  "playwrightVersion": "1.59.1",
   "nodeVersion": "22.22.0",
   "browser": "chromium (Desktop Chrome profile, headless, viewport 1440x900)",
-  "executor": "Codex root coordinator; repo launcher owned governance/coordinator; Playwright webServer owned viewer; no tracked source changed during capture",
-  "capturedAtUtc": {
-    "invocation": "2026-08-26T11:56:15.794Z",
-    "lastTrace": "2026-08-26T11:56:26.2280924Z",
-    "backendStarted": "2026-08-26T11:51:27.240426Z",
-    "backendStopped": "2026-08-26T11:57:22.3007672Z"
-  },
-  "subjectHead": "79e74596c788ded02be349f7b988120cdeb0c9e2",
-  "subjectBase": "2480939cd7bf11144e9c4eeb44dd6a332eb5801d",
-  "subjectHeadNote": "branch codex/openspec/unified-console-runtime-truth-s2; freshly fetched origin/main and merge-base(HEAD, origin/main) both 2480939cd7bf11144e9c4eeb44dd6a332eb5801d; tracked and nonignored-untracked worktree clean before capture and after runtime cleanup",
+  "subjectHead": "8081c2a12308adcb2b04b566c87e168d7c77be9c",
+  "subjectBase": "5d1186e6f798425c7948d0d422719c70e50b9d3d",
+  "subjectHeadNote": "branch codex/openspec/unified-console-runtime-truth-s2 rebased without conflict onto freshly merged origin/main 5d1186e6f798425c7948d0d422719c70e50b9d3d; merge-base matched origin/main; tracked worktree was clean before and after capture",
   "worktree": "C:/Repos/active/iot/AI-BIM-governance.worktrees/unified-console-runtime-truth-s2",
-  "authorization": "Owner explicitly authorized retaining origin/main spec and newer historical backend truth while preserving branch-only plan/frontend delivery commits.",
+  "authorization": "Owner explicitly authorized retaining the origin/main spec and continuing the successor run while preserving newer origin/main runtime truth.",
+  "capturedAtUtc": {
+    "started": "2026-08-27T05:32:17.3725784Z",
+    "completed": "2026-08-27T05:33:00.8680599Z"
+  },
   "evidenceAttempts": {
-    "used": 1,
+    "used": 2,
     "limit": 2,
-    "attempt1": "Real-manifest Chromium execution reached the browser and passed 3 of 3 tests with zero skipped tests.",
-    "preBrowserDiagnostics": [
-      "First launcher start failed before backend creation because Get-Command pwsh returned two executables; no manifest, reservation, listener or browser remained.",
-      "Second launcher start used a process-local de-duplicated PATH but rolled back before browser launch because the worktree lacked an ignored venv and system Python lacked uvicorn; all listeners and reservations were released.",
-      "First Playwright start timed out before Chromium because the ignored compatibility config merged two webServer entries; it was corrected to one exact-cwd server before attempt 1."
-    ]
+    "attempt1": "Chromium and API projects passed 3 of 3, but the run failed closed because secret scanning started while coordinator.stderr.log was still held by the launcher. The complete failed evidence set was moved to an ignored, non-overwriting quarantine.",
+    "attempt2": "After read-only review required exact listener and launcher WaitForExit gates, the final attempt passed all browser, API, secret-scan, cleanup, port, queue and Git-cleanliness checks."
   },
-  "stack": {
-    "kind": "isolated_branch_stack",
-    "changeId": "unified-console-runtime-truth-s2",
-    "runId": "r4-p4-79e7459-20260826-194619c",
-    "offset": 1,
-    "manifest": "artifacts/e2e/unified-console-runtime-truth-s2/r4-p4-79e7459-20260826-194619c/stack-manifest.json",
-    "manifestSha256": "06b7ef67aa972ed18811ef30514a93e4d8febdc77317b27caba509062ea89068",
-    "invocation": "artifacts/e2e/unified-console-runtime-truth-s2/r4-p4-79e7459-20260826-194619c/evidence-invocation.json",
-    "invocationGeneration": "ef0d0721-f69b-4a1e-ab19-ef1391a6435a",
-    "ports": {
-      "coordinator": 8006,
-      "governance": 49104,
-      "viewer": 5181
-    },
-    "processes": [
-      {
-        "role": "governance",
-        "pid": 10028,
-        "creationIdentity": "2026-08-26T11:51:21.918088Z",
-        "stopStatus": "stopped"
-      },
-      {
-        "role": "coordinator",
-        "pid": 26884,
-        "creationIdentity": "2026-08-26T11:51:25.382945Z",
-        "stopStatus": "stopped"
-      }
-    ],
-    "closeout": "launcher status=stopped; exact process identities absent; ports 8006, 49104 and 5181 each had zero listeners; only run-owned processes were stopped"
-  },
-  "testConfiguration": {
+  "configuration": {
     "coordinator": {
+      "baseUrl": "http://127.0.0.1:8005",
       "ENABLE_DEV_ROUTES": "false",
       "EXTERNAL_INTAKE_IP_ALLOWLIST": "10.0.0.0/8",
-      "DEV_AUTH_TOKEN": "test-only value loaded from an ignored temporary .env; value not recorded here",
-      "CORS_ORIGINS": "http://127.0.0.1:5181",
-      "mutableStores": "launcher-bound under this run directory",
-      "temporaryEnvRemoved": true
+      "credentials": "three cryptographically random process-local test secrets; values were not persisted in this summary",
+      "mutableStores": "run-local under artifacts/tmp/unified-console-s2-r6-p4-attempt2.local"
     },
     "viewer": {
-      "baseUrl": "http://127.0.0.1:5181",
-      "coordinatorBaseUrl": "http://127.0.0.1:8006",
-      "owner": "Playwright webServer",
-      "reuseExistingServer": false,
-      "compatibilityConfig": "ignored and removed after the run; retained canonical isolated global setup, manifest checks and forbid-skipped reporter; narrowed testMatch to the target spec and enabled trace/screenshot",
-      "temporaryConfigRemoved": true
+      "baseUrl": "http://127.0.0.1:5180",
+      "workers": 1,
+      "retries": 0,
+      "trace": "on for the two UI tests",
+      "screenshot": "on for the two UI tests",
+      "video": "off",
+      "reuseExistingServer": false
     },
-    "venv": "ignored junction to the same repository main checkout venv; removed after the run; target venv remained intact"
+    "apiProbe": {
+      "project": "api",
+      "workers": 1,
+      "retries": 0,
+      "trace": "off",
+      "screenshot": "off",
+      "video": "off",
+      "boundary": "separate Playwright worker/file using the request fixture; no browser page receives the operator token"
+    }
   },
-  "preflight": [
-    "launcher status -> active with governance and coordinator owned=true ready=true",
-    "manifest head_sha -> 79e74596c788ded02be349f7b988120cdeb0c9e2",
-    "GET http://127.0.0.1:8006/health -> 200",
-    "GET http://127.0.0.1:8006/api/dev/ifc-sources -> 404",
-    "POST prioritize without token -> 403",
-    "real-mode list gate selected exactly 3 tests in the target spec"
-  ],
-  "command": "E2E_REQUIRE_REAL=1 E2E_STACK_MANIFEST=<run manifest> E2E_COORDINATOR_BASE_URL=http://127.0.0.1:8006 E2E_DEV_AUTH_TOKEN=<test-only value> npx playwright test --config <ignored r4 compatibility config> e2e/dev-routes-disabled-operator-token.spec.ts",
-  "requireRealGate": true,
+  "preflight": {
+    "GET /health": 200,
+    "GET /api/dev/ifc-sources": 404,
+    "POST prioritize without operator token": 403,
+    "POST prioritize with correct process-local operator token": 404
+  },
+  "command": "pwsh -NoProfile -NonInteractive -File web-viewer-sample/s2-r6.local/run-p4.ps1",
   "result": {
     "exitCode": 0,
-    "durationSeconds": 13.3,
-    "tests": 3,
+    "listed": 3,
     "passed": 3,
     "failed": 0,
     "skipped": 0,
-    "durableStatus": "artifacts/e2e/unified-console-runtime-truth-s2/r4-p4-79e7459-20260826-194619c/playwright-output/r4-target-spec/.last-run.json",
-    "htmlReport": "artifacts/e2e/unified-console-runtime-truth-s2/r4-p4-79e7459-20260826-194619c/playwright-report/r4-target-spec"
+    "flaky": 0,
+    "uiTraceCount": 2,
+    "apiTraceCount": 0,
+    "uiScreenshotCount": 2
   },
   "tests": [
     {
-      "line": 167,
-      "name": "#demo-control: dev routes 404 -> honest notice and disabled controls",
-      "result": "passed in 3.9s",
-      "networkBinding": "initial and Refresh GET /api/dev/ifc-sources each returned exact 404 {detail:dev routes disabled}"
+      "file": "web-viewer-sample/e2e/dev-routes-disabled-operator-token.spec.ts",
+      "line": 45,
+      "name": "#demo-control: /api/dev/ifc-sources 404 -> notice and disabled select/register controls",
+      "worker": "UI Chromium",
+      "result": "passed"
     },
     {
-      "line": 210,
-      "name": "#a1-workbench: test-data projects 404 -> dev-routes note",
-      "result": "passed in 836ms",
-      "networkBinding": "GET /api/dev/test-data-projects returned exact 404 {detail:dev routes disabled}"
+      "file": "web-viewer-sample/e2e/dev-routes-disabled-operator-token.spec.ts",
+      "line": 88,
+      "name": "#a1-workbench: /api/dev/test-data-projects 404 -> test-data-unavailable note",
+      "worker": "UI Chromium",
+      "result": "passed"
     },
     {
-      "line": 249,
-      "name": "D2=T4 operator-token API contract probe",
-      "result": "passed in 66ms",
-      "networkBinding": "Playwright request fixture sent real server-side HTTP to the run-owned coordinator"
+      "file": "web-viewer-sample/e2e/dev-routes-disabled-operator-token.api.spec.ts",
+      "line": 129,
+      "name": "dev routes stay closed; lineage stays locked; four operator routes enforce T4; rate limit returns 429",
+      "worker": "API request fixture with trace, screenshot and video disabled",
+      "result": "passed"
     }
   ],
   "routes": [
@@ -126,9 +98,9 @@
         "register-and-convert asserted disabled"
       ],
       "fixture": "none by design because dev routes are closed",
-      "backendApi": "browser GET http://127.0.0.1:8006/api/dev/ifc-sources -> exact 404 twice",
+      "backendApi": "browser GET http://127.0.0.1:8005/api/dev/ifc-sources -> 404",
       "runtimeId": null,
-      "visibleState": "dev routes disabled notice; disabled selector and register action; runtime: dev_routes_disabled rather than storage_empty"
+      "visibleState": "dev routes disabled notice; disabled selector and register action"
     },
     {
       "route": "#a1-workbench",
@@ -136,111 +108,94 @@
         "local_fs source selected by default"
       ],
       "fixture": "none",
-      "backendApi": "browser GET http://127.0.0.1:8006/api/dev/test-data-projects -> exact 404; governance backend was separately launcher-owned and healthy",
+      "backendApi": "browser GET http://127.0.0.1:8005/api/dev/test-data-projects -> 404",
       "runtimeId": null,
-      "visibleState": "local_fs UI remains usable and the test-data badge limitation explicitly states dev routes are disabled"
+      "visibleState": "local_fs UI remains visible and the test-data badge states that dev routes are disabled"
     }
   ],
   "apiProbe": {
-    "boundary": "Playwright request fixture/server-side HTTP, not a browser token-entry UI flow",
     "observed": [
       "dev source without and with token -> 404; token does not unlock /api/dev/*",
-      "lineage preview/confirm remain 403 with token",
-      "prioritize without token -> 403",
-      "prioritize with wrong token -> 403",
-      "prioritize and retry with the correct test token -> 404 next-stage job-not-found",
+      "lineage preview and confirm remain 403 with token",
+      "prioritize without token and with a wrong token -> 403",
+      "prioritize and retry with the correct process-local token -> 404 job-not-found",
       "watch with an empty body -> 400 after authorization",
       "trigger with an empty body -> 400 or 503 after authorization",
       "repeated correct-token prioritize -> 429 with Retry-After within 1..60 seconds"
     ]
   },
-  "runtimeIds": [],
-  "runtimeIdsNote": "No user-facing runtime ID exists in this disabled-state slice; no fixture, conversion job, review session or stage was created.",
-  "verticalSlice": {
-    "routeReachable": true,
-    "buttonsTested": true,
-    "realBackendApi": true,
-    "runtimeIdVisible": false,
-    "visibleFailureAndRetry": false,
-    "loadingVisible": false,
-    "successVisible": false,
-    "gpuStageTruth": "not applicable; no 3D/WebRTC/DataChannel claim",
-    "designGateStatus": "Functional and Semantic Playwright is primary under Lean Governance; fresh screenshots are evidence, not a 1 percent pixel hard gate",
-    "verdictBasis": "Pass only for the scoped D3 dev-routes-disabled UI and T4 server-side API contract."
+  "secretScan": {
+    "complete": true,
+    "scannedFiles": 235,
+    "scannedSecrets": 3,
+    "hits": 0,
+    "roots": [
+      "attempt2 run root",
+      "UI and API Playwright outputs",
+      "UI and API HTML reports",
+      "explicit screenshot root"
+    ]
   },
-  "notObserved": [
-    "runtime ID, loading state or success state in UI",
-    "fixture registration or conversion success",
-    "operator-token entry in the UI or LAN browser-triggered conversion",
-    "canonical Linux target",
-    "3D viewer first frame, stage match or DataChannel acknowledgement"
-  ],
-  "gaps": [
-    {
-      "id": "g1",
-      "q": "The shell labels still show canonical 8004/49102 while this isolated evidence used 8006/49104; manifest and trace provenance, not the labels, prove the endpoint."
-    },
-    {
-      "id": "g2",
-      "q": "The user-facing token input and LAN browser conversion trigger are not built in this slice; token evidence is request-fixture HTTP only."
-    },
-    {
-      "id": "g3",
-      "q": "Canonical Linux remains owner-controlled and unverified; isolated branch evidence cannot imply deploy-target truth."
-    },
-    {
-      "id": "g4",
-      "q": "The disabled state intentionally exposes no runtime ID, loading affordance or success state."
-    },
-    {
-      "id": "g5",
-      "q": "GitNexus 1.6.9 exact file impacts are LOW, but detect-changes compare is polluted by cross-language common identifiers and reports unrelated critical flows; the exact 13-path git range and executable checks are the fallback."
-    },
-    {
-      "id": "g6",
-      "q": "The canonical isolated Playwright testMatch excludes this target spec and disables traces/screenshots; an ignored compatibility config retained all real gates while selecting the spec. This is a non-blocking harness composability warning, not a claimed source fix."
-    },
-    {
-      "id": "g7",
-      "q": "The isolated launcher payload does not expose this scenario's dev-route/token/allowlist settings; a test-only ignored .env was absent before the run and removed afterward."
-    }
-  ],
+  "runtimeCleanup": {
+    "listenerOwnershipVerified": true,
+    "listenerAncestryVerified": true,
+    "coordinatorOwnedStopVerified": true,
+    "listenerExitVerifiedBeforeScan": true,
+    "launcherExitVerifiedBeforeScan": true,
+    "ports8005And5180Clean": true,
+    "queueProcessCount": 0,
+    "queueLockPresent": false,
+    "trackedWorktreeClean": true
+  },
   "screenshots": [
     {
       "route": "#demo-control after live Refresh",
       "file": "docs/evidence/unified-console-runtime-truth-s2/unified-console-runtime-truth-s2-demo-control.png",
-      "sha256": "300ffb606708b06d7e0371e7f81b51e072ed7375b470fb1603c3f6c8da70fae1"
+      "sha256": "cb7215f624413fe7b1fdea5ba614e4047c8c4de46cc037213f94ebcc875a08c5"
     },
     {
-      "route": "#a1-workbench with dev-routes note and live governance backend",
+      "route": "#a1-workbench with dev-routes-disabled note",
       "file": "docs/evidence/unified-console-runtime-truth-s2/unified-console-runtime-truth-s2-a1-workbench.png",
-      "sha256": "3ab20b04f12c0d8b6decda484d3c5ff23eaa8658617e869eee6b825295a006fb"
+      "sha256": "67fab89cb7068d01a3d627f255802ecfd408b98622b19116945ff8d49cbd96e2"
     }
   ],
   "traces": [
     {
-      "file": "artifacts/e2e/unified-console-runtime-truth-s2/r4-p4-79e7459-20260826-194619c/playwright-output/r4-target-spec/dev-routes-disabled-operat-092d1--→-notice-＋-選檔／註冊鈕-disabled-chromium/trace.zip",
-      "sha256": "e6f621a1c3a86bd344fb8b0d051e96d0cd9819d430adab1c0f7dfd16075f4465"
+      "scope": "#demo-control UI Chromium",
+      "storage": "ignored local-only web-viewer-sample/s2-r6.local/ui-output/**/trace.zip",
+      "sha256": "8068e1dd1650ad437c201a62fcf63738b951c5f9b105152b309ad04bdf96c260"
     },
     {
-      "file": "artifacts/e2e/unified-console-runtime-truth-s2/r4-p4-79e7459-20260826-194619c/playwright-output/r4-target-spec/dev-routes-disabled-operat-eb123-ojects-404-→-測試資料標記不可用-note-chromium/trace.zip",
-      "sha256": "b3469bff80c238c68563355e46d98d6fe226678c9829f2be35be02473915550c"
-    },
-    {
-      "file": "artifacts/e2e/unified-console-runtime-truth-s2/r4-p4-79e7459-20260826-194619c/playwright-output/r4-target-spec/dev-routes-disabled-operat-8c905-n-解鎖-＋-四路由-T4-授權-＋-速率限制-429-chromium/trace.zip",
-      "sha256": "796fa82ff345711d61d603a841372a3cebc87557484030edee489166e55161bb"
+      "scope": "#a1-workbench UI Chromium",
+      "storage": "ignored local-only web-viewer-sample/s2-r6.local/ui-output/**/trace.zip",
+      "sha256": "1929531f95766edb41e90eac13ec78df008e4c17000ca5bb93fb6124af44cb31"
     }
   ],
-  "trackedPromotion": {
-    "files": [
-      "docs/evidence/unified-console-runtime-truth-s2/summary.json",
-      "docs/evidence/unified-console-runtime-truth-s2/unified-console-runtime-truth-s2-demo-control.png",
-      "docs/evidence/unified-console-runtime-truth-s2/unified-console-runtime-truth-s2-a1-workbench.png"
-    ],
-    "removedStaleR3Artifacts": [
-      "docs/evidence/unified-console-runtime-truth-s2/unified-console-runtime-truth-s2-demo-control-after-refresh.png",
-      "docs/evidence/unified-console-runtime-truth-s2/unified-console-runtime-truth-s2-a1-workbench-after-retry.png"
-    ],
-    "rollbackBackup": "artifacts/tmp/unified-console-runtime-truth-s2-r4/p4-r4-p4-79e7459-20260826-194619/pre-promotion-backup"
+  "verticalSlice": {
+    "routeReachable": true,
+    "buttonsTested": true,
+    "realCoordinatorApi": true,
+    "runtimeIdVisible": false,
+    "gpuStageTruth": "not applicable; no 3D/WebRTC/DataChannel claim",
+    "designGateStatus": "Functional and Semantic Playwright is primary under Lean Governance; fresh screenshots are evidence, not a one-percent pixel hard gate",
+    "verdictBasis": "Pass only for the scoped dev-routes-disabled UI and server-side operator-token API contract."
+  },
+  "notObserved": [
+    "runtime ID, conversion loading state or success state",
+    "fixture registration or conversion success",
+    "operator-token entry in the browser UI or a LAN browser-triggered conversion",
+    "governance-service health; this r6 runner intentionally launched only the coordinator authority needed by the slice",
+    "canonical Linux deployment",
+    "3D viewer first frame, stage match or DataChannel acknowledgement"
+  ],
+  "knownGaps": [
+    "The UI shell still labels canonical coordinator 8004 and governance 49102 while isolated evidence used coordinator 8005 and viewer 5180; runner result and trace provenance identify the tested endpoints.",
+    "The A1 screenshot visibly reports governance-service unreachable because this focused r6 runner did not launch governance-service; this is not claimed as a governance-runtime pass.",
+    "GitNexus 1.6.9 detect-changes remains advisory UNKNOWN because exact-index rebuild failed on an internal invalid-UTF8 database error even though strict tracked and ignored file scans found no invalid UTF-8.",
+    "Canonical Linux deployment remains a post-merge P7 gate and is not implied by isolated branch evidence."
+  ],
+  "rollback": {
+    "attempt1Quarantine": "web-viewer-sample/s2-r6.local/sensitive-quarantine.local/p4-attempt-1-secret-scan-lock",
+    "trackedEvidence": "restore these three tracked evidence files from the parent commit"
   }
 }
