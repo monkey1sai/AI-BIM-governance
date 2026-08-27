@@ -1706,7 +1706,7 @@ test.describe("slice 2：dev routes 已關閉（UI 誠實）＋ T4 operator toke
 pwsh -NoProfile -NonInteractive -File web-viewer-sample/s2-r6.local/run-p4.ps1
 ```
 
-r6 的既有證據只綁定 `subjectHead=8081c2a12308adcb2b04b566c87e168d7c77be9c`；上述 ignored runner 對其他 HEAD 會 fail closed，且目前僅保留作 provenance／future template，**不得在新 HEAD 直接重跑**。不得使用 `s2-r5.local/playwright.config.ts` 同時執行 UI 與 credential-bearing API spec，因該舊 config 會對 API worker 開啟 trace／screenshot。若新 HEAD 需要重取證據，必須先建立經 security/process review 的新 rN runner，將 `expectedHead` 綁定新 immutable SHA，並重新產生 split UI/API outputs、result JSON 與 summary。預期契約仍為兩檔共 `3 passed`、兩張 UI 截圖、UI output 兩條 trace、API output 0 trace／0 screenshot／0 video；不得移除 `E2E_REQUIRE_REAL` 或為 API probe 開啟 trace。
+r6 的既有證據只綁定 `subjectHead=8081c2a12308adcb2b04b566c87e168d7c77be9c`；上述 ignored runner 對其他 HEAD 會 fail closed，且目前僅保留作 provenance／future template，**不得在新 HEAD 直接重跑**。不得使用 `s2-r5.local/playwright.config.ts` 取代 r6 runner；現行 API spec 的 file-level `test.use` 雖仍關閉 trace／screenshot／video，但該舊 config 不提供 r6 的分離 API project/output、artifact cardinality、exact-head 與 cleanup gates。若新 HEAD 需要重取證據，必須先建立經 security/process review 的新 rN runner，將 `expectedHead` 綁定新 immutable SHA，並重新產生 split UI/API outputs、result JSON 與 summary。預期契約仍為兩檔共 `3 passed`、兩張 UI 截圖、UI output 兩條 trace、API output 0 trace／0 screenshot／0 video；不得移除 `E2E_REQUIRE_REAL` 或為 API probe 開啟 trace。
 
 - [ ] **Step 4: 確認 worktree 未被 runtime 檔污染**
 
