@@ -2,7 +2,8 @@
   "slug": "unified-console-runtime-truth-s2",
   "run": "unified-console-runtime-truth-s2-r6",
   "phase": "P4",
-  "verdict": "pass_with_declared_gaps",
+  "verdict": "held",
+  "heldReason": "P5 security review found that attempt2 stopped Windows processes by PID after identity checks rather than killing through the already-validated process handles. Functional, trace, secret-scan and post-run port evidence remains recorded, but exact handle-bound ownership cleanup is unverified and the 2/2 evidence-attempt budget is exhausted.",
   "engine": "playwright",
   "playwrightVersion": "1.59.1",
   "nodeVersion": "22.22.0",
@@ -20,7 +21,7 @@
     "used": 2,
     "limit": 2,
     "attempt1": "Chromium and API projects passed 3 of 3, but the run failed closed because secret scanning started while coordinator.stderr.log was still held by the launcher. The complete failed evidence set was moved to an ignored, non-overwriting quarantine.",
-    "attempt2": "After read-only review required exact listener and launcher WaitForExit gates, the final attempt passed all browser, API, secret-scan, cleanup, port, queue and Git-cleanliness checks."
+    "attempt2": "The final attempt recorded 3 of 3 tests, the required UI/API trace split, zero secret hits, both original Process objects observed exited before scanning, clean evidence ports and a clean tracked worktree. Later P5 security review found that Stop-Process targeted PIDs after identity checks, so exact handle-bound ownership cleanup is unverified."
   },
   "configuration": {
     "coordinator": {
@@ -139,13 +140,21 @@
   "runtimeCleanup": {
     "listenerOwnershipVerified": true,
     "listenerAncestryVerified": true,
-    "coordinatorOwnedStopVerified": true,
-    "listenerExitVerifiedBeforeScan": true,
-    "launcherExitVerifiedBeforeScan": true,
+    "runnerRecordedCoordinatorOwnedStopVerified": true,
+    "securityReviewExactHandleBoundStop": "UNVERIFIED: attempt2 used Stop-Process -Id after identity checks, leaving a process-ID reuse race between validation and kill",
+    "originalListenerProcessObservedExitedBeforeScan": true,
+    "originalLauncherProcessObservedExitedBeforeScan": true,
     "ports8005And5180Clean": true,
-    "queueProcessCount": 0,
-    "queueLockPresent": false,
     "trackedWorktreeClean": true
+  },
+  "independentPostRunSnapshot": {
+    "provenance": "fresh host-owner observation outside runner result.json",
+    "observedAtUtc": "2026-08-27T05:52:17.4027949Z",
+    "head": "24eae95781f3d26c961e07a6b7d289829af400ed",
+    "trackedStatus": "clean",
+    "ports8005And5180ListenerCount": 0,
+    "queueProcessCount": 0,
+    "queueLockPresent": false
   },
   "screenshots": [
     {
@@ -191,8 +200,9 @@
   "knownGaps": [
     "The UI shell still labels canonical coordinator 8004 and governance 49102 while isolated evidence used coordinator 8005 and viewer 5180; runner result and trace provenance identify the tested endpoints.",
     "The A1 screenshot visibly reports governance-service unreachable because this focused r6 runner did not launch governance-service; this is not claimed as a governance-runtime pass.",
+    "Attempt2 verified identity and ancestry immediately before a PID-based stop and later observed the original Process objects exited, but did not kill through those validated handles. Exact handle-bound ownership cleanup therefore remains unverified and blocks P4 completion.",
     "GitNexus 1.6.9 detect-changes remains advisory UNKNOWN because exact-index rebuild failed on an internal invalid-UTF8 database error even though strict tracked and ignored file scans found no invalid UTF-8.",
-    "Canonical Linux deployment remains a post-merge P7 gate and is not implied by isolated branch evidence."
+    "Canonical Linux deployment was not reached because this run is HELD at P4; a successor run must obtain new exact-head evidence before PR or deployment work resumes."
   ],
   "rollback": {
     "attempt1Quarantine": "web-viewer-sample/s2-r6.local/sensitive-quarantine.local/p4-attempt-1-secret-scan-lock",

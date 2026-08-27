@@ -1700,13 +1700,13 @@ test.describe("slice 2：dev routes 已關閉（UI 誠實）＋ T4 operator toke
 
 預期 preflight：`/health=200`、`/api/dev/ifc-sources=404`、無 token prioritize `403`、授權後 nonexistent-job prioritize `404`。若 `:8005` 已被佔用（`address already in use`），不得依裸 PID 強制停止；只可由本次 launcher 以 entrypoint、listener lineage 與 creation identity 重驗後停止其 owned process，無法證明 ownership 即 HELD。也可改用未佔用的 `PORT=8006`，並在 Step 3 覆寫 `E2E_COORDINATOR_BASE_URL=http://127.0.0.1:8006`。
 
-- [ ] **Step 3: 跑 E2E（`E2E_REQUIRE_REAL=1`：skip 即 fail；token 不落 trace）**
+- [ ] **Step 3: 使用 exact-HEAD、ownership-gated runner 取得 E2E 證據**
 
-```bash
-cd "C:/Repos/active/iot/AI-BIM-governance.worktrees/unified-console-runtime-truth-s2/web-viewer-sample" && test -n "${E2E_DEV_AUTH_TOKEN:-}" && E2E_COORDINATOR_BASE_URL=http://127.0.0.1:8005 E2E_REQUIRE_REAL=1 npx playwright test --config=s2-r5.local/playwright.config.ts e2e/dev-routes-disabled-operator-token.spec.ts e2e/dev-routes-disabled-operator-token.api.spec.ts
+```powershell
+pwsh -NoProfile -NonInteractive -File web-viewer-sample/s2-r6.local/run-p4.ps1
 ```
 
-預期輸出：兩個明確檔案共 `3 passed`（`#demo-control`、`#a1-workbench`、API 探針；`#conv`／`#minio` 案例已隨 Task 9 HELD 移除）；`artifacts/e2e/` 產生兩張 UI 截圖，UI output 恰有兩條 trace，API output 為 0 trace／0 screenshot／0 video。若回 `Executable doesn't exist … chromium`，先 `npx playwright install chromium` 再重跑。若 preflight fail 訊息出現（且 exit 1），依訊息修正 Step 2 的 env 後重跑；不得移除 `E2E_REQUIRE_REAL`、不得為 API probe 開啟 trace。
+r6 的既有證據只綁定 `subjectHead=8081c2a12308adcb2b04b566c87e168d7c77be9c`；上述 ignored runner 對其他 HEAD 會 fail closed，且目前僅保留作 provenance／future template，**不得在新 HEAD 直接重跑**。不得使用 `s2-r5.local/playwright.config.ts` 同時執行 UI 與 credential-bearing API spec，因該舊 config 會對 API worker 開啟 trace／screenshot。若新 HEAD 需要重取證據，必須先建立經 security/process review 的新 rN runner，將 `expectedHead` 綁定新 immutable SHA，並重新產生 split UI/API outputs、result JSON 與 summary。預期契約仍為兩檔共 `3 passed`、兩張 UI 截圖、UI output 兩條 trace、API output 0 trace／0 screenshot／0 video；不得移除 `E2E_REQUIRE_REAL` 或為 API probe 開啟 trace。
 
 - [ ] **Step 4: 確認 worktree 未被 runtime 檔污染**
 
