@@ -83,6 +83,41 @@ describe("RealIfcConsolePage（#demo-control）：dev routes 404 誠實狀態", 
     });
   });
 
+  it("disabled 後重新整理遇到 network failure：清除 stale disabled notice 並顯示當前載入失敗", async () => {
+    vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ detail: "dev routes disabled" }), { status: 404, statusText: "Not Found" }),
+      )
+      .mockRejectedValueOnce(new Error("coordinator unavailable"));
+    const root = createRoot(container);
+    await act(async () => {
+      root.render(<RealIfcConsolePage />);
+    });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(container.querySelector('[data-testid="ifc-dev-routes-notice"]')).not.toBeNull();
+    const refreshBtn = container.querySelector<HTMLButtonElement>('[data-testid="ifc-refresh-btn"]')!;
+    await act(async () => {
+      refreshBtn.click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(container.querySelector('[data-testid="ifc-dev-routes-notice"]')).toBeNull();
+    expect(container.querySelector('[data-testid="ifc-runtime-state"]')?.textContent ?? "").toContain(
+      "runtime: load_sources_failed: coordinator unavailable",
+    );
+    expect(container.querySelector<HTMLSelectElement>('[data-testid="ifc-fixture-select"]')?.disabled).toBe(false);
+    expect(container.querySelector<HTMLButtonElement>('[data-testid="ifc-register-btn"]')?.disabled).toBe(false);
+
+    await act(async () => {
+      root.unmount();
+    });
+  });
+
   it("清單載入後 backend 關閉 dev routes：register exact 404 轉成 notice 並停用控制項", async () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch")
       .mockResolvedValueOnce(new Response(JSON.stringify({
@@ -172,6 +207,167 @@ describe("RealIfcConsolePage（#demo-control）：dev routes 404 誠實狀態", 
       root.unmount();
     });
   });
+
+  it("既有 job 後 register exact disabled 404：清除所有 stale job-derived lineage", async () => {
+    vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        items: [{
+          source_id: "source-1",
+          filename: "fixture.ifc",
+          relative_path: "fixture.ifc",
+          size_bytes: 1024,
+          modified_at: "2026-08-27T00:00:00Z",
+        }],
+      }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        ifc_ready_job_id: "job-old",
+        download_status: "failed",
+        conversion_status: "failed",
+      }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ detail: "dev routes disabled" }), {
+        status: 404,
+        statusText: "Not Found",
+      }));
+
+    const root = createRoot(container);
+    await act(async () => {
+      root.render(<RealIfcConsolePage />);
+    });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const registerBtn = container.querySelector<HTMLButtonElement>('[data-testid="ifc-register-btn"]')!;
+    await act(async () => {
+      registerBtn.click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(container.querySelector('[data-testid="lin-job-id"]')?.textContent).toBe("job-old");
+    expect(container.querySelector('[data-testid="lin-download-status"]')?.textContent).toBe("failed");
+    expect(container.querySelector('[data-testid="lin-conversion-status"]')?.textContent).toBe("failed");
+
+    await act(async () => {
+      registerBtn.click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(container.querySelector('[data-testid="ifc-dev-routes-notice"]')).not.toBeNull();
+    for (const testId of [
+      "lin-job-id",
+      "lin-conversion-job",
+      "lin-conversion-status",
+      "lin-download-status",
+      "lin-artifact-id",
+      "lin-usdc-url",
+      "lin-mapping",
+      "lin-session-id",
+      "lin-viewer-url",
+    ]) {
+      expect(container.querySelector(`[data-testid="${testId}"]`)?.textContent).toBe("—");
+    }
+
+    await act(async () => {
+      root.unmount();
+    });
+  });
+
+  it.each(["resolve", "reject"] as const)(
+    "active poll 晚到 %s 時 refresh exact disabled 404：清除 lineage 並禁止舊 poll 覆寫",
+    async (lateOutcome) => {
+    let resolvePoll!: (response: Response) => void;
+    let rejectPoll!: (reason: Error) => void;
+    const pendingPoll = new Promise<Response>((resolve, reject) => {
+      resolvePoll = resolve;
+      rejectPoll = reject;
+    });
+    const fetchSpy = vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        items: [{
+          source_id: "source-1",
+          filename: "fixture.ifc",
+          relative_path: "fixture.ifc",
+          size_bytes: 1024,
+          modified_at: "2026-08-27T00:00:00Z",
+        }],
+      }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        ifc_ready_job_id: "job-old",
+        download_status: "downloaded",
+        conversion_status: "queued",
+      }), { status: 200 }))
+      .mockReturnValueOnce(pendingPoll)
+      .mockResolvedValueOnce(new Response(JSON.stringify({ detail: "dev routes disabled" }), {
+        status: 404,
+        statusText: "Not Found",
+      }));
+
+    const root = createRoot(container);
+    await act(async () => {
+      root.render(<RealIfcConsolePage />);
+    });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const registerBtn = container.querySelector<HTMLButtonElement>('[data-testid="ifc-register-btn"]')!;
+    await act(async () => {
+      registerBtn.click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(container.querySelector('[data-testid="lin-job-id"]')?.textContent).toBe("job-old");
+    expect(fetchSpy).toHaveBeenCalledTimes(3);
+
+    const refreshBtn = container.querySelector<HTMLButtonElement>('[data-testid="ifc-refresh-btn"]')!;
+    await act(async () => {
+      refreshBtn.click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      if (lateOutcome === "resolve") {
+        resolvePoll(new Response(JSON.stringify({
+          download_status: "downloaded",
+          conversion_status: "ready",
+          conversion_job_id: "conversion-old",
+          web_view_session_id: "session-old",
+          viewer_url: "/ui/open?session=session-old",
+        }), { status: 200 }));
+      } else {
+        rejectPoll(new Error("old poll failed"));
+      }
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(container.querySelector('[data-testid="ifc-dev-routes-notice"]')).not.toBeNull();
+    expect(container.querySelector('[data-testid="ifc-runtime-state"]')?.textContent ?? "").toContain(
+      "runtime: dev_routes_disabled",
+    );
+    for (const testId of [
+      "lin-job-id",
+      "lin-conversion-job",
+      "lin-conversion-status",
+      "lin-download-status",
+      "lin-artifact-id",
+      "lin-usdc-url",
+      "lin-mapping",
+      "lin-session-id",
+      "lin-viewer-url",
+    ]) {
+      expect(container.querySelector(`[data-testid="${testId}"]`)?.textContent).toBe("—");
+    }
+
+    await act(async () => {
+      root.unmount();
+    });
+    },
+  );
 
   it.each([
     ["generic 404", 404, "route not found"],

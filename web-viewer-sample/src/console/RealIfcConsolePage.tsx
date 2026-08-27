@@ -31,9 +31,27 @@ export function RealIfcConsolePage() {
   // 已關閉」而非誤導成 storage_empty，並 disable 選檔／註冊避免使用者對已知會 404 的端點重試。
   const [devRoutesDisabled, setDevRoutesDisabled] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const pollGenerationRef = useRef(0);
 
   const set = (k: string, v: unknown) => setLin((prev) => ({ ...prev, [k]: v == null || v === "" ? DASH : String(v) }));
-  const stop = () => { if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; } };
+  const clearJobDerivedLineage = () => {
+    [
+      "lin-job-id",
+      "lin-conversion-job",
+      "lin-conversion-status",
+      "lin-download-status",
+      "lin-artifact-id",
+      "lin-usdc-url",
+      "lin-mapping",
+      "lin-session-id",
+      "lin-viewer-url",
+    ].forEach((k) => set(k, ""));
+    setViewerUrl("");
+  };
+  const stop = () => {
+    pollGenerationRef.current += 1;
+    if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+  };
   useEffect(() => () => stop(), []);
 
   async function loadSources() {
@@ -51,9 +69,11 @@ export function RealIfcConsolePage() {
           /* 非 JSON／空 body：保留 statusText。 */
         }
         if (r.status === 404 && detail === "dev routes disabled") {
+          stop();
           setDevRoutesDisabled(true);
           setSources([]);
           setSelected("");
+          clearJobDerivedLineage();
           setRuntime(DEV_ROUTES_DISABLED_RUNTIME);
           return;
         }
@@ -75,18 +95,20 @@ export function RealIfcConsolePage() {
       setSelected(preferred ? preferred.source_id : items[0].source_id);
       setRuntime("runtime: idle");
     } catch (e) {
+      setDevRoutesDisabled(false);
       setRuntime("runtime: load_sources_failed: " + (e instanceof Error ? e.message : String(e)));
     }
   }
   useEffect(() => { void loadSources(); }, []);
 
-  async function enrich(job: Record<string, unknown>) {
+  async function enrich(job: Record<string, unknown>, pollGeneration: number) {
     try {
       const sid = job.web_view_session_id as string | undefined;
       if (!sid) return;
       const r = await fetch(coordinatorUrl("/api/review-sessions/" + encodeURIComponent(sid) + "/stream-config"));
       if (!r.ok) return;
       const sc = await r.json();
+      if (pollGeneration !== pollGenerationRef.current) return;
       set("lin-artifact-id", sc.model?.artifact_id);
       set("lin-usdc-url", sc.model?.url);
       if (sc.model?.mapping_url) set("lin-mapping", "mapping_url: " + sc.model.mapping_url);
@@ -95,24 +117,30 @@ export function RealIfcConsolePage() {
 
   function startPoll(jobId: string) {
     let n = 0;
+    const pollGeneration = ++pollGenerationRef.current;
     const tick = async () => {
+      if (pollGeneration !== pollGenerationRef.current) return;
       n++;
       try {
         const r = await fetch(coordinatorUrl("/api/external/ifc-ready/" + encodeURIComponent(jobId)));
         const j = await r.json();
+        if (pollGeneration !== pollGenerationRef.current) return;
         set("lin-download-status", j.download_status);
         set("lin-conversion-status", j.conversion_status);
         set("lin-conversion-job", j.conversion_job_id);
         set("lin-session-id", j.web_view_session_id);
         if (j.viewer_url) { set("lin-viewer-url", j.viewer_url); setViewerUrl(j.viewer_url); }
         const cs = String(j.conversion_status ?? "").toLowerCase();
-        if (j.viewer_url) { setRuntime("runtime: ready"); await enrich(j); stop(); }
+        if (j.viewer_url) { setRuntime("runtime: ready"); await enrich(j, pollGeneration); if (pollGeneration === pollGenerationRef.current) stop(); }
         else if (j.download_status === "failed") { setRuntime("runtime: download_failed"); stop(); }
         else if (cs === "failed") { setRuntime("runtime: conversion_failed"); stop(); }
         else if (cs.indexOf("block") >= 0) { setRuntime("runtime: runtime_blocked"); stop(); }
         else if (n >= 36) { setRuntime("runtime: conversion_timeout (still " + (j.conversion_status ?? "pending") + " after ~180s)"); stop(); }
         else { setRuntime("runtime: converting (" + (j.conversion_status ?? "queued") + ")"); }
-      } catch (e) { setRuntime("runtime: poll_error: " + (e instanceof Error ? e.message : String(e))); }
+      } catch (e) {
+        if (pollGeneration !== pollGenerationRef.current) return;
+        setRuntime("runtime: poll_error: " + (e instanceof Error ? e.message : String(e)));
+      }
     };
     pollRef.current = setInterval(() => void tick(), 5000);
     void tick();
@@ -132,8 +160,7 @@ export function RealIfcConsolePage() {
     set("lin-source-filename", meta.filename);
     set("lin-source-size", (meta.size_bytes || 0) + " bytes");
     set("lin-model-version", mv);
-    ["lin-conversion-job", "lin-artifact-id", "lin-usdc-url", "lin-mapping", "lin-session-id", "lin-viewer-url"].forEach((k) => set(k, ""));
-    setViewerUrl("");
+    clearJobDerivedLineage();
     setRuntime("runtime: registering");
     try {
       const r = await fetch(coordinatorUrl("/api/dev/ifc-sources/" + encodeURIComponent(selected) + "/register"), {
