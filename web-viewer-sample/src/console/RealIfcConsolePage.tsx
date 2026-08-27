@@ -17,6 +17,8 @@ interface IfcSource {
 type Lineage = Record<string, string>;
 
 const DASH = "—";
+const DEV_ROUTES_DISABLED_RUNTIME =
+  "runtime: dev_routes_disabled (ENABLE_DEV_ROUTES=false；#demo-control 需後端啟用 dev routes)";
 
 export function RealIfcConsolePage() {
   const [sources, setSources] = useState<IfcSource[]>([]);
@@ -52,7 +54,7 @@ export function RealIfcConsolePage() {
           setDevRoutesDisabled(true);
           setSources([]);
           setSelected("");
-          setRuntime("runtime: dev_routes_disabled (ENABLE_DEV_ROUTES=false；#demo-control 需後端啟用 dev routes)");
+          setRuntime(DEV_ROUTES_DISABLED_RUNTIME);
           return;
         }
         setDevRoutesDisabled(false);
@@ -119,7 +121,7 @@ export function RealIfcConsolePage() {
   async function register() {
     stop();
     if (devRoutesDisabled) {
-      setRuntime("runtime: dev_routes_disabled (ENABLE_DEV_ROUTES=false；#demo-control 需後端啟用 dev routes)");
+      setRuntime(DEV_ROUTES_DISABLED_RUNTIME);
       return;
     }
     const meta = sources.find((s) => s.source_id === selected);
@@ -139,7 +141,16 @@ export function RealIfcConsolePage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ model_version_id: mv, project_id: "project_real_ifc_demo" }),
       });
-      const j = await r.json().catch(() => ({}));
+      const j = await r.json().catch(() => ({})) as Record<string, string | undefined>;
+      // 後端可能在清單載入後重啟並關閉 dev routes。POST 的 exact D3 404 與 GET 具有
+      // 同一個權威語意；立即切換成 disabled 狀態，避免控制項繼續邀請無效重試。
+      if (r.status === 404 && j.detail === "dev routes disabled") {
+        setDevRoutesDisabled(true);
+        setSources([]);
+        setSelected("");
+        setRuntime(DEV_ROUTES_DISABLED_RUNTIME);
+        return;
+      }
       set("lin-job-id", j.ifc_ready_job_id);
       if (j.external_model_version_id) set("lin-model-version", j.external_model_version_id);
       set("lin-download-status", j.download_status);

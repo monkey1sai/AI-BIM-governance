@@ -52,7 +52,9 @@ const webServer = process.env.E2E_DISABLE_WEBSERVER === "1"
 export default defineConfig({
   metadata: isolated ? { isolatedEvidenceGeneration } : {},
   testDir: "./e2e",
-  testIgnore: ["**/support/**/*.test.ts"],
+  // 這兩支需要外部 :8005 coordinator；API spec 還會送出 ephemeral operator token。
+  // 它們只可經 s2-r7.local/run-p4.ps1 的 dedicated UI/API configs 執行。
+  testIgnore: ["**/support/**/*.test.ts", "**/dev-routes-disabled-operator-token*.spec.ts"],
   ...(isolated ? { testMatch: ["**/a3-federated-session-chain.spec.ts", "**/a4-closeout.spec.ts"] } : {}),
   globalSetup: isolated ? "./e2e/support/isolated-stack-global-setup.ts" : undefined,
   outputDir: isolated ? path.join(isolated.runDir, "playwright-output", isolatedEvidenceGeneration!) : "../artifacts/e2e/_output",

@@ -83,6 +83,96 @@ describe("RealIfcConsolePage（#demo-control）：dev routes 404 誠實狀態", 
     });
   });
 
+  it("清單載入後 backend 關閉 dev routes：register exact 404 轉成 notice 並停用控制項", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        items: [{
+          source_id: "source-1",
+          filename: "fixture.ifc",
+          relative_path: "fixture.ifc",
+          size_bytes: 1024,
+          modified_at: "2026-08-27T00:00:00Z",
+        }],
+      }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ detail: "dev routes disabled" }), {
+        status: 404,
+        statusText: "Not Found",
+      }));
+
+    const root = createRoot(container);
+    await act(async () => {
+      root.render(<RealIfcConsolePage />);
+    });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const registerBtn = container.querySelector<HTMLButtonElement>('[data-testid="ifc-register-btn"]')!;
+    expect(registerBtn.disabled).toBe(false);
+    await act(async () => {
+      registerBtn.click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    expect(container.querySelector('[data-testid="ifc-dev-routes-notice"]')).not.toBeNull();
+    expect(container.querySelector('[data-testid="ifc-runtime-state"]')?.textContent ?? "").toContain(
+      "runtime: dev_routes_disabled",
+    );
+    expect(container.querySelector<HTMLSelectElement>('[data-testid="ifc-fixture-select"]')?.disabled).toBe(true);
+    expect(registerBtn.disabled).toBe(true);
+
+    await act(async () => {
+      root.unmount();
+    });
+  });
+
+  it("register 一般 404 保留 rejected 語意，不得誤標為 dev routes disabled", async () => {
+    vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        items: [{
+          source_id: "source-1",
+          filename: "fixture.ifc",
+          relative_path: "fixture.ifc",
+          size_bytes: 1024,
+          modified_at: "2026-08-27T00:00:00Z",
+        }],
+      }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ detail: "unknown or stale source_id" }), {
+        status: 404,
+        statusText: "Not Found",
+      }));
+
+    const root = createRoot(container);
+    await act(async () => {
+      root.render(<RealIfcConsolePage />);
+    });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const registerBtn = container.querySelector<HTMLButtonElement>('[data-testid="ifc-register-btn"]')!;
+    await act(async () => {
+      registerBtn.click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(container.querySelector('[data-testid="ifc-dev-routes-notice"]')).toBeNull();
+    expect(container.querySelector('[data-testid="ifc-runtime-state"]')?.textContent ?? "").toContain(
+      "runtime: register_rejected (404)",
+    );
+    expect(container.querySelector<HTMLSelectElement>('[data-testid="ifc-fixture-select"]')?.disabled).toBe(false);
+    expect(registerBtn.disabled).toBe(false);
+
+    await act(async () => {
+      root.unmount();
+    });
+  });
+
   it.each([
     ["generic 404", 404, "route not found"],
     ["JSON 502", 502, "upstream unavailable"],
