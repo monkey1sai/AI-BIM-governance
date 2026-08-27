@@ -380,6 +380,15 @@ try {
     Assert-True ($newRunJob.Contains('test "$(realpath /usr/bin/git)" = /usr/bin/git')) 'Linux leg rejects a canonical Git symlink drift'
     Assert-True ($newRunJob.Contains('test "$(realpath "$(command -v git)")" = /usr/bin/git')) 'Linux leg binds PATH resolution to the canonical Git executable'
     Assert-True ($newRunJob.Contains('test ! -w /usr/bin/git')) 'Linux leg requires canonical Git to be read-only to the runner identity'
+    Assert-True (-not $newRunJob.Contains('pip install --upgrade pip')) 'NEW_RUN job must not execute a mutable pip upgrade'
+    Assert-True ($newRunJob.Contains('--only-binary=:all: --require-hashes')) 'NEW_RUN dependencies are binary-only and hash locked'
+    foreach ($lockedRequirement in @(
+        'pytest==9.1.1 --hash=sha256:37a86b45efb9a47a61a36449063e8e18d0cab3161329fc099eb21783169c4f0c'
+        'jsonschema==4.26.0 --hash=sha256:d489f15263b8d200f8387e64b4c3a75f06629559fb73deb8fdfb525f2dab50ce'
+        'rpds-py==2026.6.3 --hash=sha256:2c958bf94822e9290a40aaf2a822d4bc5c88099093e3948ad6c571eca9272e5f --hash=sha256:ecabd69db66de867690f9797f2f8fa27ba501bbc24540cbdbdc649cd15888ba6'
+    )) {
+        Assert-True ($newRunJob.Contains($lockedRequirement)) "NEW_RUN dependency lock contains exact requirement $lockedRequirement"
+    }
     Assert-True ($agentGovernanceWorkflow -match '(?m)^\s+- new-run-boundary\s*$') 'required aggregate depends on the NEW_RUN platform gate'
     Assert-True ($agentGovernanceWorkflow -match 'NEW_RUN_BOUNDARY_RESULT') 'required aggregate imports the NEW_RUN platform result'
     Assert-True ($agentGovernanceWorkflow -match '\$newRunBoundaryResult -ne ''success''') 'required aggregate rejects skipped or failed NEW_RUN evidence'
@@ -396,6 +405,31 @@ try {
         -Transition $leanTransition -GetTableValue { param($b, $label) $leanRows[$label] }.GetNewClosure() `
         -BaseLedgerJson $emptyJson -HeadLedgerJson $emptyJson `
         -PrNumber 704 -BaseSha $script:SelfReferentialLeanMigrationBase -HeadSha ('a' * 40) -HasExactHeadContext $true 3>$null
+
+    $leanPublicHead = New-FixtureLedgerRevision -RepoRoot $repoRoot -TempRoot $tempRoot -LedgerJson $emptyJson
+    $leanPublicLedgerJson = (@(Invoke-SelfReferentialTrustedGit -RepoRoot $repoRoot -Arguments @(
+        'show', "${leanPublicHead}:scripts/self-referential-bootstrap-ledger.json"
+    )) -join "`n")
+    Assert-True ($script:SelfReferentialGitExitCode -eq 0) 'public migration fixture exposes its exact head ledger'
+    $leanPublicRows = @{} + $leanRows
+    $leanPublicRows['Current candidate head'] = $leanPublicHead
+    Invoke-BodyGate -Rows $leanPublicRows -ChangedPaths $script:SelfReferentialLeanMigrationPaths `
+        -HeadJson $leanPublicLedgerJson -BaseJson $leanPublicLedgerJson -PrNumber 704 -GateRepoRoot $repoRoot `
+        -BaseSha $script:SelfReferentialLeanMigrationBase -HeadSha $leanPublicHead 3>$null
+    Assert-Throws -Context 'PR #704 cannot bypass its owner tuple with declaration no' `
+        -MessagePattern 'must declare.*owner-authorized-migration' -Action {
+        Invoke-BodyGate -Rows @{ 'Self-referential bootstrap' = 'no' } `
+            -ChangedPaths $script:SelfReferentialLeanMigrationPaths `
+            -HeadJson $leanPublicLedgerJson -BaseJson $leanPublicLedgerJson -PrNumber 704 -GateRepoRoot $repoRoot `
+            -BaseSha $script:SelfReferentialLeanMigrationBase -HeadSha $leanPublicHead
+    }
+    Assert-Throws -Context 'exact migration path tuple cannot bypass owner binding under another PR number' `
+        -MessagePattern 'must declare.*owner-authorized-migration' -Action {
+        Invoke-BodyGate -Rows @{ 'Self-referential bootstrap' = 'no' } `
+            -ChangedPaths $script:SelfReferentialLeanMigrationPaths `
+            -HeadJson $leanPublicLedgerJson -BaseJson $leanPublicLedgerJson -PrNumber 705 -GateRepoRoot $repoRoot `
+            -BaseSha $script:SelfReferentialLeanMigrationBase -HeadSha $leanPublicHead
+    }
 
     Assert-Throws -Context 'migration rejects wrong pinned base' -MessagePattern 'restricted to PR #704 at base' -Action {
         Assert-SelfReferentialLeanPolicyBody -Declared 'owner-authorized-migration' -Body 'body' `

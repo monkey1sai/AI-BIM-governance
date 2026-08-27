@@ -379,6 +379,14 @@ function Assert-SelfReferentialLeanPolicyBody {
         throw 'self_referential_bootstrap: the Lean-policy ledger is a closed historical archive; new debt, repair, closure, or any ledger edit is forbidden.'
     }
 
+    $isExactMigrationPathTuple = $ChangedPaths.Count -eq $script:SelfReferentialLeanMigrationPaths.Count -and
+        @($ChangedPaths | Where-Object { -not ($script:SelfReferentialLeanMigrationPaths -ccontains $_) }).Count -eq 0 -and
+        @($script:SelfReferentialLeanMigrationPaths | Where-Object { -not ($ChangedPaths -ccontains $_) }).Count -eq 0
+    if (($PrNumber -eq $script:SelfReferentialLeanMigrationPr -or $isExactMigrationPathTuple) -and
+        $Declared -cne $script:SelfReferentialLeanMigrationDeclaration) {
+        throw "self_referential_bootstrap: PR #704 and its exact one-time migration path tuple must declare '$($script:SelfReferentialLeanMigrationDeclaration)'."
+    }
+
     if ($Declared -ceq $script:SelfReferentialLeanMigrationDeclaration) {
         if ($PrNumber -ne $script:SelfReferentialLeanMigrationPr -or
             $BaseSha -cne $script:SelfReferentialLeanMigrationBase) {
@@ -1858,7 +1866,8 @@ function Assert-SelfReferentialBootstrapBody {
             -ChangedPaths $ChangedPaths -MechanismPaths $mechanismPaths `
             -Transition $transition -GetTableValue $GetTableValue `
             -BaseLedgerJson $BaseLedgerJson -HeadLedgerJson $headLedgerJson `
-            -PrNumber $PrNumber -BaseSha $BaseSha -HasExactHeadContext $hasExactHeadContext
+            -PrNumber $PrNumber -BaseSha $BaseSha -HeadSha $HeadSha `
+            -HasExactHeadContext $hasExactHeadContext
         return
     }
 
