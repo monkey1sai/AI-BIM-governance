@@ -1,57 +1,12 @@
 ---
 name: pr-queue-manager
-description: Autonomous PR queue management skill for AI coding agents. Enables full automation of auto-merge, auto-fix, auto-update branch, and auto-resolving non-semantic conflicts across open PRs.
+description: Use when legacy instructions refer to pr-queue-manager while observing or delivering one named repository PR.
 ---
 
-# Autonomous PR Queue Manager (pr-queue-manager)
+# PR queue manager compatibility alias
 
-## Overview
-This skill empowers any AI coding agent (Gemini, Claude, Codex, Grok, CLI) to autonomously manage the repository's Pull Request queue.
+**REQUIRED SUB-SKILL:** Use autonomous-pr-queue before any command.
 
-The core design philosophy is:
-**The repo's PR queue management is self-driving — auto-updating stale branches, auto-resolving non-semantic conflicts, auto-fixing metadata, auto-approving via counted review, and auto-merging upon green CI.**
+This name is retained for discovery only. The queue is not FIFO automation and never processes all open PRs. Repository helper commands require `--pr <number>` and are GitHub-read-only; lifecycle events may run strictly owned-process cleanup; preflight never rewrites evidence; counted approval and native merge remain independent coordinator actions under the canonical exact-tuple policy.
 
----
-
-## Capabilities
-
-### 1. Auto-Detect Queue Status (status)
-Inspects all open PRs, their base/head SHAs, mergeability, CI check outcomes, and approval states:
-`ash
-node scripts/dev/manage-pr-queue.mjs status
-`
-
-### 2. Auto-Update Branch (update-branch)
-Automatically updates a PR branch when it falls behind origin/main:
-`ash
-node scripts/dev/manage-pr-queue.mjs update-branch --pr <PR_NUMBER>
-`
-- Creates an isolated temporary worktree.
-- Merges latest origin/main.
-- Automatically resolves trivial / non-semantic conflicts (e.g. docs/current_task.md, agent-skills-manifest.json, plan files).
-- Pushes updated commit to origin.
-
-### 3. Auto-Approve (approve)
-Submits a counted human-equivalent review as monkey1sai-blip (User ID 311287868) when PR criteria are met:
-`ash
-node scripts/dev/manage-pr-queue.mjs approve --pr <PR_NUMBER>
-`
-
-### 4. Auto-Merge (merge)
-Executes squash merge when all required checks are passing and review is APPROVED:
-`ash
-node scripts/dev/manage-pr-queue.mjs merge --pr <PR_NUMBER>
-`
-
-### 5. Full Autonomous Pipeline (run-queue)
-Iteratively processes the entire PR queue in FIFO order:
-`ash
-node scripts/dev/manage-pr-queue.mjs run-queue --auto
-`
-
----
-
-## Governance & Rules
-1. **Single Active Writer**: Only one coordinating agent writes to a PR branch at a time.
-2. **Honesty Contract**: Semantic code conflicts in product files require domain analysis, not blind overwrite.
-3. **Single PR Delivery**: Avoid multi-PR rituals; all fixes and metadata must be delivered atomically.
+If the named PR, authority, exact head, fixed reviewer, review mode, source-bound checks, or human-critical override is missing, return `HELD`.

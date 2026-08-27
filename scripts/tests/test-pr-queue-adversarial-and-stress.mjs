@@ -1,156 +1,479 @@
-#!/usr/bin/env node
-// test-pr-queue-adversarial-and-stress.mjs
-// 3-Layer Cross-Adversarial Verification & Multi-Worker Stress Test for PR Queue Engine
-
 import assert from 'node:assert/strict';
-import { execFileSync, spawn } from 'node:child_process';
+import { spawn, execFileSync } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import {
-  resolveGitignoreConflict,
-  autoResolveConflicts,
-  getPrChecks,
-} from '../dev/manage-pr-queue.mjs';
+  buildGitArgs,
+  buildIsolatedGitEnv,
+  resolveGitCommonDir,
+  resolveSharedBoardDir,
+} from '../dev/agents-board-path.mjs';
+import {
+  acquirePrQueueLock,
+  cleanupStalePrQueueLock,
+  getProcessCreationIdentity,
+  isAllowedPrQueueLockGitCommand,
+  PR_QUEUE_LOCK_REF,
+  PR_QUEUE_LOCK_SCHEMA,
+} from '../dev/pr-queue-lock.mjs';
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
-const REPO_ROOT = path.resolve(SCRIPT_DIR, '..', '..');
-const QUEUE_SCRIPT = path.join(REPO_ROOT, 'scripts', 'dev', 'manage-pr-queue.mjs');
+const WORKER = path.join(SCRIPT_DIR, 'fixtures', 'pr-queue-lock-worker.mjs');
+const BOARD_SCRIPT = path.join(SCRIPT_DIR, '..', 'dev', 'agents-board.mjs');
 
-console.log('================================================================');
-console.log('🛡️  PR Queue 3-Layer Cross-Adversarial & Stress Verification Suite');
-console.log('================================================================\n');
-
-// -----------------------------------------------------------------------------
-// Layer 1: 收斂性與防無窮遞迴 / 遞迴 PR 阻斷驗證 (Anti-Recursion & Bounded Convergence)
-// -----------------------------------------------------------------------------
-console.log('--- [Layer 1] 驗證：防無窮遞迴、收斂上限與遞迴 PR 阻斷 ---');
-
-// 1.1 驗證最大輪次邊界限制 (Bounded Iterations)
-const scriptContent = fs.readFileSync(QUEUE_SCRIPT, 'utf8').replace(/\r\n/g, '\n');
-assert.ok(scriptContent.includes('let maxCycles = 5'), 'Queue engine must enforce a hardcoded maximum cycle limit (<= 5)');
-assert.ok(scriptContent.includes('if (!progressMade) {\n        break;'), 'Queue engine must break immediately when no forward progress is made');
-console.log('✔ Layer 1.1: 輪次上限 (maxCycles <= 5) 與無進展即跳出 (progressMade === false break) 驗證通過');
-
-// 1.2 驗證鎖定與防連鎖觸發機制 (Anti-Storm Concurrency Lock)
-assert.ok(scriptContent.includes('acquireLock()'), 'Queue engine must require an atomic lock before executing');
-assert.ok(scriptContent.includes('pr-queue.lock'), 'Queue engine must maintain a dedicated lock file');
-assert.ok(scriptContent.includes('300000'), 'Lock file must have a stale timeout (5 minutes)');
-console.log('✔ Layer 1.2: 防暴風觸發原子互斥鎖 (Atomic Lock & Stale TTL) 驗證通過');
-
-// 1.3 驗證元治理減法方針（禁止主動開立遞迴修復 PR）
-assert.ok(!scriptContent.includes('gh pr create'), 'Queue engine must NEVER create new autonomous PRs (prevents PR explosion)');
-console.log('✔ Layer 1.3: 絕不自動產生新 PR（杜絕遞迴 PR 爆炸與 Fixpoint 循環）驗證通過\n');
-
-// -----------------------------------------------------------------------------
-// Layer 2: 語意邊界與破壞性衝突防禦 (Semantic Conflict & Code Boundary Defense)
-// -----------------------------------------------------------------------------
-console.log('--- [Layer 2] 驗證：語意衝突精確識別與白名單邊界防禦 ---');
-
-// 建立暫時測試工作目錄模擬 Git 衝突場景
-const tempTestDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pr-queue-test-'));
-
-try {
-  execFileSync('git', ['init'], { cwd: tempTestDir, stdio: 'ignore' });
-  execFileSync('git', ['config', 'user.name', 'TestBot'], { cwd: tempTestDir, stdio: 'ignore' });
-  execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: tempTestDir, stdio: 'ignore' });
-
-  // 2.1 測試白名單非關鍵衝突：.gitignore 合併（規則聯集）
-  fs.writeFileSync(path.join(tempTestDir, '.gitignore'), '# Initial\n!.claude/commands/\n!.claude/settings.json\n', 'utf8');
-  execFileSync('git', ['add', '.gitignore'], { cwd: tempTestDir, stdio: 'ignore' });
-  execFileSync('git', ['commit', '-m', 'initial'], { cwd: tempTestDir, stdio: 'ignore' });
-
-  execFileSync('git', ['checkout', '-b', 'branch-a'], { cwd: tempTestDir, stdio: 'ignore' });
-  fs.writeFileSync(path.join(tempTestDir, '.gitignore'), '# Initial\n!.claude/commands/\n!.claude/settings.json\n!.claude/launch.json\n', 'utf8');
-  execFileSync('git', ['commit', '-am', 'add launch.json'], { cwd: tempTestDir, stdio: 'ignore' });
-
-  execFileSync('git', ['checkout', 'master'], { cwd: tempTestDir, stdio: 'ignore' });
-  execFileSync('git', ['checkout', '-b', 'branch-b'], { cwd: tempTestDir, stdio: 'ignore' });
-  fs.writeFileSync(path.join(tempTestDir, '.gitignore'), '# Initial\n!.claude/commands/\n!.claude/settings.json\n!.claude/output-styles/\n', 'utf8');
-  execFileSync('git', ['commit', '-am', 'add output-styles'], { cwd: tempTestDir, stdio: 'ignore' });
-
-  // 嘗試在 branch-b 合併 branch-a 產生 .gitignore 衝突
-  let mergeFailed = false;
-  try {
-    execFileSync('git', ['merge', 'branch-a'], { cwd: tempTestDir, stdio: 'pipe' });
-  } catch {
-    mergeFailed = true;
-  }
-  assert.ok(mergeFailed, 'Branch merge must produce conflict on .gitignore');
-
-  // 執行我們的 resolveGitignoreConflict
-  const resolvedGitignore = resolveGitignoreConflict(tempTestDir);
-  assert.ok(resolvedGitignore, 'resolveGitignoreConflict must successfully resolve .gitignore conflict');
-  const finalGitignore = fs.readFileSync(path.join(tempTestDir, '.gitignore'), 'utf8');
-  assert.ok(finalGitignore.includes('!.claude/launch.json'), 'Combined .gitignore must include launch.json');
-  assert.ok(finalGitignore.includes('!.claude/output-styles/'), 'Combined .gitignore must include output-styles');
-  console.log('✔ Layer 2.1: .gitignore 白名單非破壞性規則聯集解衝突測試 100% 通過');
-
-  // 2.2 測試對抗情境：核心程式碼 (Semantic Code) 衝突必須「嚴格拒絕自動解」並保護代碼
-  fs.writeFileSync(path.join(tempTestDir, 'app.ts'), 'export function run() { return 1; }\n', 'utf8');
-  execFileSync('git', ['add', 'app.ts'], { cwd: tempTestDir, stdio: 'ignore' });
-  execFileSync('git', ['commit', '-m', 'add app.ts'], { cwd: tempTestDir, stdio: 'ignore' });
-
-  // 測試 autoResolveConflicts 對業務代碼檔案的回應
-  const adversarialFiles = ['app.ts', 'src/coordinator.ts', 'services/api/index.py', 'contracts/schema.json'];
-  const resolutionResult = autoResolveConflicts(tempTestDir, adversarialFiles, 999);
-  assert.equal(resolutionResult, false, 'autoResolveConflicts MUST return false on code/schema conflict');
-  console.log('✔ Layer 2.2: 業務代碼/合約衝突之防禦閘門（嚴格拒絕自動覆蓋、強制保護原碼）驗證通過\n');
-} finally {
-  try {
-    fs.rmSync(tempTestDir, { recursive: true, force: true });
-  } catch {}
+function withTempDir(t, prefix) {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  return directory;
 }
 
-// -----------------------------------------------------------------------------
-// Layer 3: 審批與 CI 綠燈安全性防線 (Security Gate & Blip Review Barrier)
-// -----------------------------------------------------------------------------
-console.log('--- [Layer 3] 驗證：CI 綠燈防線與 Blip 審批精確性 ---');
+function initGitRepo(t, prefix) {
+  const repo = path.join(withTempDir(t, prefix), 'repo');
+  fs.mkdirSync(repo, { recursive: true });
+  execFileSync('git', ['init'], { cwd: repo, stdio: 'ignore' });
+  return repo;
+}
 
-// 3.1 驗證只要有 failing check 就絕不審批與合入
-assert.ok(scriptContent.includes('if (checks.failed > 0)'), 'Queue engine must abort PR when failed > 0');
-assert.ok(scriptContent.includes('checks.allGreen'), 'Approve & Merge must strictly check checks.allGreen');
+function git(repo, args, input) {
+  return execFileSync('git', args, {
+    cwd: repo,
+    encoding: 'utf8',
+    input,
+    stdio: ['pipe', 'pipe', 'pipe'],
+  }).trim();
+}
 
-// 3.2 驗證 Blip 人工等效審批協議綁定 exact base/head SHA
-assert.ok(scriptContent.includes('-ExpectedBaseSha'), 'Blip approval must pass ExpectedBaseSha to prevent commit spoofing');
-assert.ok(scriptContent.includes('-ExpectedHeadSha'), 'Blip approval must pass ExpectedHeadSha to prevent commit spoofing');
-console.log('✔ Layer 3.1 & 3.2: 嚴格 CI 檢查防線與 Blip SHA 綁定審批協議驗證通過\n');
+function writeLockRef(repo, record) {
+  const objectId = git(repo, ['hash-object', '-w', '--stdin'], `${JSON.stringify(record)}\n`);
+  git(repo, ['update-ref', PR_QUEUE_LOCK_REF, objectId, '0'.repeat(40)]);
+  return objectId;
+}
 
-// -----------------------------------------------------------------------------
-// 壓力測試 (Stress Test): 多 Session / 多 Worker 高並發競爭測試
-// -----------------------------------------------------------------------------
-console.log('--- [壓力測試] 20 並行 Worker 互斥鎖爭搶與負載壓力測試 ---');
+function readLockRef(repo) {
+  try {
+    return git(repo, ['rev-parse', '--verify', PR_QUEUE_LOCK_REF]);
+  } catch {
+    return '';
+  }
+}
 
-const NUM_WORKERS = 20;
-console.log(`正在啟動 ${NUM_WORKERS} 個背景程序同時觸發 manage-pr-queue.mjs hook...`);
+test('Windows creation identity passes PID out-of-band and returns one timestamp', () => {
+  let invocation;
+  const identity = getProcessCreationIdentity(4242, {
+    platform: 'win32',
+    execFileSyncImpl: (...args) => {
+      invocation = args;
+      return '2026-08-26T01:02:03.0000000Z\r\n';
+    },
+  });
+  assert.equal(identity, '2026-08-26T01:02:03.0000000Z');
+  assert.equal(invocation[2].env.AI_BIM_PR_QUEUE_PID, '4242');
+  assert.doesNotMatch(invocation[1].join(' '), /(?:^|\s)4242(?:\s|$)/);
+  assert.match(invocation[1][invocation[1].indexOf('-Command') + 1], /AI_BIM_PR_QUEUE_PID/);
+});
 
-const promises = [];
-const startTs = Date.now();
+test('Linux creation identity is stable across executable replacement', () => {
+  const reads = [];
+  const identity = getProcessCreationIdentity(4242, {
+    platform: 'linux',
+    fsImpl: {
+      readFileSync(file) {
+        reads.push(file);
+        if (file === '/proc/4242/stat') {
+          const tail = ['S', ...Array.from({ length: 18 }, () => '0'), '987654', '0'];
+          return `4242 (node) ${tail.join(' ')}`;
+        }
+        if (file === '/proc/sys/kernel/random/boot_id') {
+          return '11111111-2222-3333-4444-555555555555\n';
+        }
+        throw new Error(`unexpected read: ${file}`);
+      },
+      readlinkSync() {
+        throw new Error('executable path must not define process generation');
+      },
+    },
+  });
+  assert.equal(identity, 'linux:11111111-2222-3333-4444-555555555555:987654');
+  assert.deepEqual(reads, [
+    '/proc/4242/stat',
+    '/proc/sys/kernel/random/boot_id',
+  ]);
+});
 
-for (let i = 0; i < NUM_WORKERS; i++) {
-  promises.push(new Promise((resolve) => {
-    const child = spawn(process.execPath, [QUEUE_SCRIPT, 'status'], {
-      cwd: REPO_ROOT,
+test('nested Git calls never alter the ownership trust boundary', () => {
+  assert.deepEqual(buildGitArgs(['status', '--porcelain']), ['status', '--porcelain']);
+  assert.equal(buildGitArgs(['status']).some((arg) => arg.includes('safe.directory')), false);
+  assert.deepEqual(
+    buildIsolatedGitEnv({
+      Path: 'fixture',
+      GIT_DIR: 'C:\\untrusted\\.git',
+      git_work_tree: 'C:\\untrusted',
+      GIT_CONFIG_COUNT: '1',
+    }),
+    { Path: 'fixture' },
+  );
+});
+
+test('ambient Git repository selectors cannot redirect canonical resolution or lock CAS', (t) => {
+  const intended = initGitRepo(t, 'queue-env-intended-');
+  const unrelated = initGitRepo(t, 'queue-env-unrelated-');
+  const poisonedEnv = {
+    ...process.env,
+    GIT_DIR: path.join(unrelated, '.git'),
+    GIT_WORK_TREE: unrelated,
+    GIT_CONFIG_COUNT: '1',
+    GIT_CONFIG_KEY_0: 'core.hooksPath',
+    GIT_CONFIG_VALUE_0: 'NUL',
+  };
+  assert.equal(
+    path.resolve(resolveGitCommonDir(intended, { env: poisonedEnv })),
+    path.join(intended, '.git'),
+  );
+  const lock = acquirePrQueueLock({
+    repoRoot: intended,
+    env: poisonedEnv,
+    getProcessCreationIdentityImpl: (pid) => `fixture-process:${pid}`,
+  });
+  assert.ok(lock);
+  assert.equal(readLockRef(intended), lock.objectId);
+  assert.equal(readLockRef(unrelated), '');
+  assert.equal(lock.release(), true);
+});
+
+test('Git ownership failure is returned fail-closed without a trust-override retry', () => {
+  const calls = [];
+  const result = resolveGitCommonDir('C:\\fixture', {
+    execFileSyncImpl: (command, args) => {
+      calls.push([command, args]);
+      const error = new Error('fatal: detected dubious ownership');
+      error.status = 128;
+      throw error;
+    },
+  });
+  assert.equal(result, '');
+  assert.deepEqual(calls, [[
+    'git',
+    ['rev-parse', '--path-format=absolute', '--git-common-dir'],
+  ]]);
+});
+
+test('AGENTS_BOARD_DIR cannot prune unless status is an explicit read-only snapshot', (t) => {
+  const fixtureRoot = withTempDir(t, 'queue-board-override-');
+  const boardDir = path.join(fixtureRoot, 'board');
+  const sessions = path.join(boardDir, 'sessions');
+  const recordPath = path.join(sessions, 'fixture.json');
+  fs.mkdirSync(sessions, { recursive: true });
+  fs.writeFileSync(recordPath, `${JSON.stringify({
+    agent: 'fixture',
+    session: 'old',
+    status: 'ended',
+    updatedAt: '2000-01-01T00:00:00.000Z',
+  })}\n`, 'utf8');
+  const env = { ...process.env, AGENTS_BOARD_DIR: boardDir };
+  let failure;
+  try {
+    execFileSync(process.execPath, [BOARD_SCRIPT, 'status'], {
+      cwd: SCRIPT_DIR,
+      env,
       stdio: 'pipe',
+    });
+  } catch (error) {
+    failure = error;
+  }
+  assert.equal(failure?.status, 2);
+  assert.equal(fs.existsSync(recordPath), true);
+  failure = undefined;
+  try {
+    execFileSync(
+      process.execPath,
+      [BOARD_SCRIPT, 'status', '--json', 'true', '--no-prune', 'true'],
+      { cwd: SCRIPT_DIR, env, stdio: 'pipe' },
+    );
+  } catch (error) {
+    failure = error;
+  }
+  assert.equal(failure?.status, 2);
+  assert.equal(fs.existsSync(recordPath), true);
+  const snapshot = JSON.parse(execFileSync(
+    process.execPath,
+    [BOARD_SCRIPT, 'status', '--json', '--no-prune'],
+    { cwd: SCRIPT_DIR, env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
+  ));
+  assert.equal(path.resolve(snapshot.boardDir), path.resolve(boardDir));
+  assert.equal(snapshot.sessions.length, 1);
+  assert.equal(fs.existsSync(recordPath), true);
+
+  const deniedEntrypoints = [
+    {
+      args: ['register', '--agent', 'fixture', '--session', 'no-write'],
+    },
+    {
+      args: ['hook', '--event', 'SessionStart'],
+      input: JSON.stringify({ hook_event_name: 'SessionStart', cwd: fixtureRoot }),
+    },
+    {
+      args: ['codex-notify', JSON.stringify({
+        type: 'agent-turn-complete',
+        cwd: fixtureRoot,
+        'thread-id': 'no-write',
+      })],
+    },
+  ];
+  for (const attempt of deniedEntrypoints) {
+    failure = undefined;
+    try {
+      execFileSync(process.execPath, [BOARD_SCRIPT, ...attempt.args], {
+        cwd: fixtureRoot,
+        env,
+        input: attempt.input,
+        stdio: ['pipe', 'pipe', 'pipe'],
+      });
+    } catch (error) {
+      failure = error;
+    }
+    assert.equal(failure?.status, 2, attempt.args[0]);
+  }
+  assert.equal(fs.existsSync(recordPath), true);
+  assert.equal(fs.existsSync(path.join(sessions, 'fixture--no-write.json')), false);
+});
+
+test('queue lock Git plumbing is exact and rejects hook or trust overrides', () => {
+  assert.equal(isAllowedPrQueueLockGitCommand([
+    'rev-parse', '--verify', '--quiet', PR_QUEUE_LOCK_REF,
+  ]), true);
+  assert.equal(isAllowedPrQueueLockGitCommand([
+    'rev-parse', '--path-format=absolute', '--git-common-dir',
+  ]), true);
+  assert.equal(isAllowedPrQueueLockGitCommand([
+    'config', '--path', '--get', 'core.hooksPath',
+  ]), true);
+  for (const args of [
+    ['-c', 'safe.directory=C:/fixture', 'rev-parse', '--verify', '--quiet', PR_QUEUE_LOCK_REF],
+    ['-c', 'core.hooksPath=NUL', 'update-ref', PR_QUEUE_LOCK_REF, 'a'.repeat(40)],
+    ['config', '--global', '--path', '--get', 'core.hooksPath'],
+    ['commit', '-m', 'bypass'],
+    ['update-ref', PR_QUEUE_LOCK_REF, 'a'.repeat(40), '0'.repeat(40)],
+  ]) {
+    assert.equal(isAllowedPrQueueLockGitCommand(args), false, args.join(' '));
+  }
+});
+
+test('queue lock refuses to invoke a reference-transaction hook', (t) => {
+  const repo = initGitRepo(t, 'queue-reference-hook-');
+  const marker = path.join(path.dirname(repo), 'reference-hook-ran.txt');
+  const hook = path.join(repo, '.git', 'hooks', 'reference-transaction');
+  const markerForShell = marker.replace(/\\/g, '/').replace(/'/g, "'\\''");
+  fs.writeFileSync(hook, `#!/bin/sh\nprintf invoked > '${markerForShell}'\n`, 'utf8');
+  fs.chmodSync(hook, 0o755);
+  const lock = acquirePrQueueLock({
+    repoRoot: repo,
+    getProcessCreationIdentityImpl: (pid) => `fixture-process:${pid}`,
+  });
+  if (lock) lock.release();
+  assert.equal(lock, null);
+  assert.equal(fs.existsSync(marker), false);
+  assert.equal(readLockRef(repo), '');
+});
+
+test('canonical checkout and linked worktree resolve one shared board', (t) => {
+  const container = withTempDir(t, 'queue-board-');
+  const repo = path.join(container, 'repo');
+  const linked = path.join(container, 'linked');
+  fs.mkdirSync(repo);
+  execFileSync('git', ['init'], { cwd: repo, stdio: 'ignore' });
+  execFileSync('git', ['config', 'user.name', 'Fixture'], { cwd: repo });
+  execFileSync('git', ['config', 'user.email', 'fixture@example.invalid'], { cwd: repo });
+  fs.writeFileSync(path.join(repo, 'README.md'), 'fixture\n', 'utf8');
+  execFileSync('git', ['add', 'README.md'], { cwd: repo });
+  execFileSync('git', ['commit', '-m', 'fixture'], { cwd: repo, stdio: 'ignore' });
+  execFileSync('git', ['worktree', 'add', '-b', 'fixture-linked', linked], { cwd: repo, stdio: 'ignore' });
+  assert.equal(resolveSharedBoardDir(linked), resolveSharedBoardDir(repo));
+  const commonDir = path.join(repo, '.git');
+  assert.equal(resolveSharedBoardDir(repo, {
+    env: { AGENTS_BOARD_DIR: path.join(repo, 'alternate-board') },
+    execFileSyncImpl: () => commonDir,
+  }), path.join(repo, '.agents', 'board'));
+});
+
+test('release retries transient ref-file contention only for its current generation', () => {
+  const objectId = 'a'.repeat(40);
+  let deleteAttempts = 0;
+  let currentGenerationReads = 0;
+  const execFileSyncImpl = (_command, args) => {
+    if (args[0] === 'hash-object') return `${objectId}\n`;
+    if (args[0] === 'update-ref' && args[2] !== '-d') return '';
+    if (args[0] === 'update-ref' && args[2] === '-d') {
+      deleteAttempts += 1;
+      if (deleteAttempts === 1) {
+        const error = new Error('transient ref-file contention');
+        error.status = 1;
+        throw error;
+      }
+      return '';
+    }
+    if (args[0] === 'rev-parse') {
+      currentGenerationReads += 1;
+      return `${objectId}\n`;
+    }
+    throw new Error(`unexpected git args: ${args.join(' ')}`);
+  };
+  const lock = acquirePrQueueLock({
+    repoRoot: 'C:\\fixture',
+    getProcessCreationIdentityImpl: (pid) => `fixture-process:${pid}`,
+    execFileSyncImpl,
+    isReferenceTransactionHookSafeImpl: () => true,
+  });
+  assert.ok(lock);
+  assert.equal(lock.release(), true);
+  assert.equal(deleteAttempts, 2);
+  assert.equal(currentGenerationReads, 1);
+});
+
+test('release does not retry after the exact ref advances to a successor', () => {
+  const objectId = 'a'.repeat(40);
+  const successorId = 'b'.repeat(40);
+  let deleteAttempts = 0;
+  let currentGenerationReads = 0;
+  const execFileSyncImpl = (_command, args) => {
+    if (args[0] === 'hash-object') return `${objectId}\n`;
+    if (args[0] === 'update-ref' && args[2] !== '-d') return '';
+    if (args[0] === 'update-ref' && args[2] === '-d') {
+      deleteAttempts += 1;
+      const error = new Error('generation changed');
+      error.status = 1;
+      throw error;
+    }
+    if (args[0] === 'rev-parse') {
+      currentGenerationReads += 1;
+      return `${successorId}\n`;
+    }
+    throw new Error(`unexpected git args: ${args.join(' ')}`);
+  };
+  const lock = acquirePrQueueLock({
+    repoRoot: 'C:\\fixture',
+    getProcessCreationIdentityImpl: (pid) => `fixture-process:${pid}`,
+    execFileSyncImpl,
+    isReferenceTransactionHookSafeImpl: () => true,
+  });
+  assert.ok(lock);
+  assert.equal(lock.release(), false);
+  assert.equal(deleteAttempts, 1);
+  assert.equal(currentGenerationReads, 1);
+});
+
+test('owner-token release cannot delete a successor generation', (t) => {
+  const repo = initGitRepo(t, 'queue-successor-');
+  const identityForPid = (pid) => `fixture-process:${pid}`;
+  const first = acquirePrQueueLock({
+    repoRoot: repo,
+    getProcessCreationIdentityImpl: identityForPid,
+  });
+  assert.ok(first);
+  git(repo, ['update-ref', '-d', PR_QUEUE_LOCK_REF, first.objectId]);
+  const successor = {
+    schema_version: PR_QUEUE_LOCK_SCHEMA,
+    pid: process.pid,
+    owner_token: randomUUID(),
+    creation_identity: identityForPid(process.pid),
+    created_at: new Date().toISOString(),
+  };
+  const successorId = writeLockRef(repo, successor);
+  assert.equal(first.release(), false);
+  assert.equal(readLockRef(repo), successorId);
+});
+
+test('stale cleanup uses compare-and-swap and cannot delete a racing successor', (t) => {
+  const repo = initGitRepo(t, 'queue-reclaim-race-');
+  const stale = {
+    schema_version: PR_QUEUE_LOCK_SCHEMA,
+    pid: 31337,
+    owner_token: randomUUID(),
+    creation_identity: 'dead-generation',
+    created_at: '2000-01-01T00:00:00.000Z',
+  };
+  const staleId = writeLockRef(repo, stale);
+  const successor = {
+    schema_version: PR_QUEUE_LOCK_SCHEMA,
+    pid: process.pid,
+    owner_token: randomUUID(),
+    creation_identity: `fixture-process:${process.pid}`,
+    created_at: new Date().toISOString(),
+  };
+  let successorId = '';
+  let injected = false;
+  const racingExec = (command, args, options) => {
+    const updateIndex = args.indexOf('update-ref');
+    const deleteIndex = args.indexOf('-d');
+    if (!injected && command === 'git' && updateIndex >= 0 && deleteIndex > updateIndex) {
+      injected = true;
+      git(repo, ['update-ref', '-d', PR_QUEUE_LOCK_REF, staleId]);
+      successorId = writeLockRef(repo, successor);
+    }
+    return execFileSync(command, args, options);
+  };
+  const result = cleanupStalePrQueueLock(repo, {
+    isPidAliveImpl: () => false,
+    execFileSyncImpl: racingExec,
+  });
+  assert.equal(result.cleaned, false);
+  assert.equal(result.reason, 'reclaim_race');
+  assert.equal(readLockRef(repo), successorId);
+});
+
+test('PID reuse is reclaimable without applying a TTL to a live owner', (t) => {
+  const repo = initGitRepo(t, 'queue-pid-reuse-');
+  writeLockRef(repo, {
+    schema_version: PR_QUEUE_LOCK_SCHEMA,
+    pid: 31337,
+    owner_token: randomUUID(),
+    creation_identity: 'old-generation',
+    created_at: '2000-01-01T00:00:00.000Z',
+  });
+  const result = cleanupStalePrQueueLock(repo, {
+    isPidAliveImpl: () => true,
+    getProcessCreationIdentityImpl: () => 'new-generation',
+  });
+  assert.deepEqual({ cleaned: result.cleaned, reason: result.reason }, {
+    cleaned: true,
+    reason: 'pid_reused',
+  });
+  assert.equal(readLockRef(repo), '');
+});
+
+test('20 workers serialize through the real atomic queue lock', { timeout: 30_000 }, async (t) => {
+  const root = withTempDir(t, 'queue-stress-');
+  const repo = path.join(root, 'repo');
+  const stateDir = path.join(root, 'state');
+  const resultsFile = path.join(root, 'results.txt');
+  fs.mkdirSync(repo, { recursive: true });
+  fs.mkdirSync(stateDir, { recursive: true });
+  execFileSync('git', ['init'], { cwd: repo, stdio: 'ignore' });
+
+  const workers = Array.from({ length: 20 }, (_, index) => new Promise((resolve) => {
+    const child = spawn(process.execPath, [WORKER, repo, stateDir, resultsFile], {
+      cwd: root,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      windowsHide: true,
     });
     let stdout = '';
     let stderr = '';
-    child.stdout.on('data', d => { stdout += d.toString(); });
-    child.stderr.on('data', d => { stderr += d.toString(); });
-    child.on('close', code => {
-      resolve({ index: i, code, stdout, stderr });
-    });
+    child.stdout.on('data', (chunk) => { stdout += chunk; });
+    child.stderr.on('data', (chunk) => { stderr += chunk; });
+    child.on('close', (code) => resolve({ index, code, stdout, stderr }));
   }));
-}
-
-const results = await Promise.all(promises);
-const durationMs = Date.now() - startTs;
-
-const successCount = results.filter(r => r.code === 0).length;
-console.log(`✔ 壓力測試完成：${NUM_WORKERS} 個並發 Worker 在 ${durationMs}ms 內全數安全退出 (成功率: ${successCount}/${NUM_WORKERS} 100%)`);
-assert.equal(successCount, NUM_WORKERS, 'All concurrent workers must exit with code 0 without crash or deadlock');
-
-console.log('\n================================================================');
-console.log('🎉  所有 3 層交叉對抗驗證與 20 並發壓力測試 100% 通過！');
-console.log('================================================================\n');
+  const outcomes = await Promise.all(workers);
+  assert.deepEqual(
+    outcomes.filter((outcome) => outcome.code !== 0),
+    [],
+    JSON.stringify(outcomes.filter((outcome) => outcome.code !== 0)),
+  );
+  const records = fs.readFileSync(resultsFile, 'utf8').trim().split(/\r?\n/);
+  assert.equal(records.length, 20);
+  assert.equal(new Set(records).size, 20);
+  assert.equal(fs.existsSync(path.join(stateDir, 'critical-section.guard')), false);
+  assert.equal(readLockRef(repo), '');
+});
