@@ -1,591 +1,482 @@
 #!/usr/bin/env node
-// manage-pr-queue.mjs — Autonomous PR Queue Lifecycle Manager & Multi-Session Hook Engine
-// Automates: auto-detect, auto-update branch, smart auto-resolve conflict (.gitignore/docs/tasks),
-// auto-fix preflight metadata, auto-review & blip approval, auto-merge, and multi-session background hooks.
+// Explicit, named-PR queue helper. Lifecycle hooks never mutate GitHub state.
 
-import { execFileSync, spawn } from 'node:child_process';
-import fs from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
-import { syncMainSafely } from './sync-main-safely.mjs';
-import { cleanupOrphanDevProcesses } from './cleanup-orphan-dev-processes.mjs';
+import {
+  buildGitArgs,
+  buildIsolatedGitEnv,
+} from './agents-board-path.mjs';
+import { triggerOrphanCleanup } from './cleanup-orphan-dev-processes.mjs';
+import { acquirePrQueueLock } from './pr-queue-lock.mjs';
 
-const SCRIPT_REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
-const BLIP_SCRIPT = 'C:\\Users\\IOT\\.grok\\github-bot\\scripts\\run_blip_human_equivalent_approve_once.ps1';
+const SCRIPT_PATH = fileURLToPath(import.meta.url);
+const SCRIPT_REPO_ROOT = path.resolve(path.dirname(SCRIPT_PATH), '..', '..');
+const GITHUB_HOST = 'github.com';
+const GITHUB_REPO = `${GITHUB_HOST}/monkey1sai/AI-BIM-governance`;
+const GITHUB_OWNER = 'monkey1sai';
+const GITHUB_NAME = 'AI-BIM-governance';
+const REQUIRED_REVIEWER_LOGIN = 'monkey1sai-blip';
+const REQUIRED_REVIEWER_ID = 311287868;
+const PR_VIEW_JSON_FIELDS = 'number,title,headRefName,headRefOid,baseRefName,baseRefOid,mergeable,mergeStateStatus,reviewDecision,isDraft,state,url';
+const PR_CHECKS_JSON_FIELDS = 'name,state,bucket,workflow,link';
+const PR_OBSERVATION_FIELDS = Object.freeze(PR_VIEW_JSON_FIELDS.split(','));
+const UNRESOLVED_THREADS_QUERY = [
+  'query($owner:String!,$name:String!,$number:Int!){',
+  'repository(owner:$owner,name:$name){pullRequest(number:$number){',
+  'reviewThreads(first:100){nodes{isResolved}pageInfo{hasNextPage}}',
+  '}}}',
+].join('');
+const EXACT_HEAD_APPROVAL_QUERY = [
+  'query($owner:String!,$name:String!,$number:Int!){',
+  'repository(owner:$owner,name:$name){pullRequest(number:$number){',
+  'reviews(first:100){nodes{state author{login __typename ... on User {databaseId}} commit{oid}}pageInfo{hasNextPage}}',
+  '}}}',
+].join('');
 
-function run(cmd, args, cwd = SCRIPT_REPO_ROOT, silent = false) {
+function exactArgs(actual, expected) {
+  return (
+    Array.isArray(actual)
+    && actual.length === expected.length
+    && actual.every((value, index) => value === expected[index])
+  );
+}
+
+function buildIsolatedGitHubEnv(env = process.env) {
+  return Object.fromEntries(
+    Object.entries(env || {}).filter(([key]) => (
+      !/^(?:GH_HOST|GH_REPO|GH_CONFIG_DIR|XDG_CONFIG_HOME)$/i.test(key)
+    )),
+  );
+}
+
+export function classifyQueueCommand(command, args) {
+  const prNumber = String(args?.[2] || '');
+  const validPrNumber = /^[1-9]\d*$/.test(prNumber);
+  if (command === 'git') {
+    const allowed = (
+      exactArgs(args, ['rev-parse', 'HEAD'])
+      || exactArgs(args, ['rev-parse', 'origin/main'])
+    );
+    return { allowed, reason: allowed ? 'allowlisted_git_read' : 'git_command_not_allowlisted' };
+  }
+  if (command !== 'gh') {
+    return { allowed: false, reason: 'executable_not_allowlisted' };
+  }
+  if (
+    validPrNumber
+    && exactArgs(args, [
+      'pr', 'view', prNumber, '--json', PR_VIEW_JSON_FIELDS, '--repo', GITHUB_REPO,
+    ])
+  ) return { allowed: true, reason: 'allowlisted_pr_view' };
+  if (
+    validPrNumber
+    && exactArgs(args, [
+      'pr', 'checks', prNumber, '--required', '--json', PR_CHECKS_JSON_FIELDS,
+      '--repo', GITHUB_REPO,
+    ])
+  ) return { allowed: true, reason: 'allowlisted_pr_checks' };
+  const queryValue = String(args?.[3] || '');
+  const graphqlNumber = String(args?.[9] || '');
+  const validGraphqlNumber = /^[1-9]\d*$/.test(graphqlNumber.replace(/^number=/, ''));
+  const graphqlShape = [
+    'api', 'graphql', '-f', queryValue,
+    '-F', `owner=${GITHUB_OWNER}`,
+    '-F', `name=${GITHUB_NAME}`,
+    '-F', graphqlNumber,
+    '--hostname', GITHUB_HOST,
+  ];
+  const allowedGraphqlQuery = (
+    queryValue === `query=${UNRESOLVED_THREADS_QUERY}`
+    || queryValue === `query=${EXACT_HEAD_APPROVAL_QUERY}`
+  );
+  if (validGraphqlNumber && allowedGraphqlQuery && exactArgs(args, graphqlShape)) {
+    return { allowed: true, reason: 'allowlisted_graphql_query' };
+  }
+  return { allowed: false, reason: 'github_command_not_allowlisted' };
+}
+
+export function runCommand(
+  command,
+  args,
+  cwd = SCRIPT_REPO_ROOT,
+  {
+    silent = false,
+    execFileSyncImpl = execFileSync,
+    env = process.env,
+  } = {},
+) {
+  const policy = classifyQueueCommand(command, args);
+  if (!policy.allowed) {
+    const stderr = `[manage-pr-queue] denied ${command}: ${policy.reason}`;
+    if (!silent) process.stderr.write(`${stderr}\n`);
+    return { ok: false, stdout: '', stderr, exitCode: 2 };
+  }
   try {
-    return execFileSync(cmd, args, { cwd, encoding: 'utf8', stdio: silent ? ['ignore', 'pipe', 'ignore'] : ['ignore', 'pipe', 'pipe'] }).trim();
-  } catch (err) {
+    const effectiveArgs = command === 'git' ? buildGitArgs(args) : args;
+    const effectiveEnv = command === 'git'
+      ? buildIsolatedGitEnv(env)
+      : buildIsolatedGitHubEnv(env);
+    const stdout = execFileSyncImpl(command, effectiveArgs, {
+      cwd,
+      encoding: 'utf8',
+      env: effectiveEnv,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      windowsHide: true,
+    });
+    return { ok: true, stdout: stdout.trim(), stderr: '', exitCode: 0 };
+  } catch (error) {
+    const stdout = String(error?.stdout || '').trim();
+    const stderr = String(error?.stderr || error?.message || '').trim();
     if (!silent) {
-      process.stderr.write('[manage-pr-queue] Command failed: ' + cmd + ' ' + args.join(' ') + '\n' + err.message + '\n');
+      process.stderr.write(`[manage-pr-queue] ${command} ${args.join(' ')} failed\n${stderr}\n`);
     }
-    return null;
-  }
-}
-
-function resolveBoardDir(cwd = SCRIPT_REPO_ROOT) {
-  if (process.env.AGENTS_BOARD_DIR) return path.resolve(process.env.AGENTS_BOARD_DIR);
-  return path.join(cwd, '.agents', 'board');
-}
-
-function isPidRunning(pid) {
-  if (!pid) return false;
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (e) {
-    return e.code === 'EPERM';
-  }
-}
-
-function acquireLock() {
-  const boardDir = resolveBoardDir(SCRIPT_REPO_ROOT);
-  if (!fs.existsSync(boardDir)) {
-    try { fs.mkdirSync(boardDir, { recursive: true }); } catch {}
-  }
-  const lockFile = path.join(boardDir, 'pr-queue.lock');
-  try {
-    if (fs.existsSync(lockFile)) {
-      const content = fs.readFileSync(lockFile, 'utf8');
-      const lockData = JSON.parse(content || '{}');
-      const now = Date.now();
-      if (lockData.timestamp && (now - lockData.timestamp < 300000)) {
-        if (isPidRunning(lockData.pid)) {
-          return null; // Active lock exists
-        }
-      }
-    }
-    const data = { pid: process.pid, timestamp: Date.now() };
-    fs.writeFileSync(lockFile, JSON.stringify(data), 'utf8');
-    return () => {
-      try {
-        if (fs.existsSync(lockFile)) fs.unlinkSync(lockFile);
-      } catch {}
+    return {
+      ok: false,
+      stdout,
+      stderr,
+      exitCode: Number(error?.status ?? 1),
     };
-  } catch {
-    return null;
   }
 }
 
-export function getOpenPrs() {
-  const raw = run('gh', ['pr', 'list', '--state', 'open', '--json', 'number,title,author,headRefName,headRefOid,baseRefOid,mergeable,reviewDecision,url'], SCRIPT_REPO_ROOT, true);
-  if (!raw) return [];
+function run(command, args, cwd = SCRIPT_REPO_ROOT, silent = false) {
+  const result = runCommand(command, args, cwd, { silent });
+  return result.ok ? result.stdout : null;
+}
+
+function parseJson(text, fallback) {
   try {
-    return JSON.parse(raw);
+    return JSON.parse(text);
   } catch {
-    return [];
+    return fallback;
   }
+}
+
+function requirePrNumber(args) {
+  const index = args.indexOf('--pr');
+  const value = index >= 0 ? Number(args[index + 1]) : 0;
+  return Number.isSafeInteger(value) && value > 0 ? value : 0;
+}
+
+export function getPrSnapshot(prNumber) {
+  const raw = run(
+    'gh',
+    [
+      'pr', 'view', String(prNumber), '--json',
+      PR_VIEW_JSON_FIELDS,
+      '--repo', GITHUB_REPO,
+    ],
+    SCRIPT_REPO_ROOT,
+    true,
+  );
+  return raw ? parseJson(raw, null) : null;
 }
 
 export function getOriginMainSha() {
-  run('git', ['fetch', 'origin', '--prune'], SCRIPT_REPO_ROOT, true);
   return run('git', ['rev-parse', 'origin/main'], SCRIPT_REPO_ROOT, true);
 }
 
 export function getPrChecks(prNumber) {
-  const raw = run('gh', ['pr', 'checks', String(prNumber)], SCRIPT_REPO_ROOT, true);
-  if (!raw) return { allGreen: false, pending: 0, failed: 0, passed: 0, details: [] };
-  const lines = raw.split(/\r?\n/).filter(Boolean);
-  let pending = 0, failed = 0, passed = 0;
-  const details = [];
-  for (const line of lines) {
-    const parts = line.split(/\t+/);
-    if (parts.length >= 2) {
-      const name = parts[0].trim();
-      const status = parts[1].trim();
-      details.push({ name, status });
-      if (status === 'pass') passed++;
-      else if (status === 'fail') failed++;
-      else if (status === 'pending' || status === 'in_progress') pending++;
-    }
+  const result = runCommand(
+    'gh',
+    ['pr', 'checks', String(prNumber), '--required', '--json', PR_CHECKS_JSON_FIELDS, '--repo', GITHUB_REPO],
+    SCRIPT_REPO_ROOT,
+    { silent: true },
+  );
+  const details = parseJson(result.stdout, []);
+  if (!Array.isArray(details)) {
+    return { allGreen: false, pending: 0, failed: 1, passed: 0, details: [] };
   }
-  const allGreen = failed === 0 && pending === 0 && passed > 0;
-  return { allGreen, pending, failed, passed, details };
+  let pending = 0;
+  let failed = 0;
+  let passed = 0;
+  for (const check of details) {
+    const bucket = String(check.bucket || '').toLowerCase();
+    if (bucket === 'pass') passed += 1;
+    else if (bucket === 'pending') pending += 1;
+    else failed += 1;
+  }
+  return {
+    allGreen: result.ok && details.length > 0 && failed === 0 && pending === 0,
+    pending,
+    failed,
+    passed,
+    details,
+  };
 }
 
-function cleanWorktreesForBranch(branchName) {
-  try {
-    const listRaw = run('git', ['worktree', 'list'], SCRIPT_REPO_ROOT, true) || '';
-    const lines = listRaw.split(/\r?\n/).filter(Boolean);
-    for (const line of lines) {
-      if (line.includes(`[${branchName}]`)) {
-        const wtPath = line.split(/\s+/)[0];
-        if (wtPath && wtPath !== SCRIPT_REPO_ROOT) {
-          process.stdout.write(`[manage-pr-queue] Removing locking worktree for branch ${branchName}: ${wtPath}\n`);
-          run('git', ['worktree', 'remove', '--force', wtPath], SCRIPT_REPO_ROOT, true);
-        }
-      }
-    }
-    run('git', ['worktree', 'prune'], SCRIPT_REPO_ROOT, true);
-  } catch {}
+export function getUnresolvedThreadCount(prNumber) {
+  const raw = run(
+    'gh',
+    [
+      'api', 'graphql',
+      '-f', `query=${UNRESOLVED_THREADS_QUERY}`,
+      '-F', `owner=${GITHUB_OWNER}`,
+      '-F', `name=${GITHUB_NAME}`,
+      '-F', `number=${prNumber}`,
+      '--hostname', GITHUB_HOST,
+    ],
+    SCRIPT_REPO_ROOT,
+    true,
+  );
+  const connection = raw
+    ? parseJson(raw, {})?.data?.repository?.pullRequest?.reviewThreads
+    : null;
+  if (!connection || connection.pageInfo?.hasNextPage) {
+    return { count: null, complete: false };
+  }
+  return {
+    count: connection.nodes.filter((thread) => !thread.isResolved).length,
+    complete: true,
+  };
 }
 
-export function resolveGitignoreConflict(wtDir) {
-  try {
-    const gitignorePath = path.join(wtDir, '.gitignore');
-    if (!fs.existsSync(gitignorePath)) return false;
-
-    const ours = run('git', ['show', ':2:.gitignore'], wtDir, true);
-    const theirs = run('git', ['show', ':3:.gitignore'], wtDir, true);
-    if (!ours || !theirs) return false;
-
-    const ourLines = ours.split(/\r?\n/);
-    const theirLines = theirs.split(/\r?\n/);
-
-    const combined = [...ourLines];
-    for (const line of theirLines) {
-      const trimmed = line.trim();
-      if (!trimmed || trimmed.startsWith('#')) continue;
-      if (!combined.some(l => l.trim() === trimmed)) {
-        if (trimmed.startsWith('!.claude/')) {
-          const lastClaudeIdx = combined.findLastIndex(l => l.trim().startsWith('!.claude/'));
-          if (lastClaudeIdx !== -1) {
-            combined.splice(lastClaudeIdx + 1, 0, line);
-            continue;
-          }
-        }
-        combined.push(line);
-      }
-    }
-
-    fs.writeFileSync(gitignorePath, combined.join('\n') + '\n', 'utf8');
-    run('git', ['add', '.gitignore'], wtDir, true);
-    process.stdout.write('[manage-pr-queue] Auto-resolved non-critical conflict in: .gitignore\n');
-    return true;
-  } catch (err) {
-    process.stderr.write('[manage-pr-queue] Failed to auto-resolve .gitignore: ' + err.message + '\n');
-    return false;
+export function getExactHeadApproval(prNumber, expectedHeadSha) {
+  if (!/^[0-9a-f]{40}$/i.test(String(expectedHeadSha || ''))) {
+    return { count: null, complete: false, reviewers: [] };
   }
+  const raw = run(
+    'gh',
+    [
+      'api', 'graphql',
+      '-f', `query=${EXACT_HEAD_APPROVAL_QUERY}`,
+      '-F', `owner=${GITHUB_OWNER}`,
+      '-F', `name=${GITHUB_NAME}`,
+      '-F', `number=${prNumber}`,
+      '--hostname', GITHUB_HOST,
+    ],
+    SCRIPT_REPO_ROOT,
+    true,
+  );
+  const connection = raw
+    ? parseJson(raw, {})?.data?.repository?.pullRequest?.reviews
+    : null;
+  if (!connection || connection.pageInfo?.hasNextPage || !Array.isArray(connection.nodes)) {
+    return { count: null, complete: false, reviewers: [] };
+  }
+  const matching = connection.nodes.filter((review) => (
+    review?.state === 'APPROVED'
+    && review?.commit?.oid === expectedHeadSha
+    && review?.author?.login === REQUIRED_REVIEWER_LOGIN
+    && review?.author?.__typename === 'User'
+    && review?.author?.databaseId === REQUIRED_REVIEWER_ID
+  ));
+  return {
+    count: matching.length,
+    complete: true,
+    reviewers: [...new Set(matching.map((review) => review.author.login))],
+  };
 }
 
-export function autoResolveConflicts(wtDir, conflictFiles, prNumber) {
-  let allResolved = true;
-  for (const file of conflictFiles) {
-    if (file === '.gitignore') {
-      const ok = resolveGitignoreConflict(wtDir);
-      if (!ok) allResolved = false;
-    } else if (
-      file.includes('current_task.md') ||
-      file.includes('docs/superpowers/plans/') ||
-      file.includes('docs/plans/') ||
-      file.includes('docs/archive-') ||
-      file.includes('artifacts/') ||
-      file.includes('.agents/')
-    ) {
-      run('git', ['checkout', '--theirs', file], wtDir, true);
-      run('git', ['add', file], wtDir, true);
-      process.stdout.write('[manage-pr-queue] Auto-resolved non-critical conflict in: ' + file + '\n');
-    } else {
-      allResolved = false;
-      process.stderr.write('[manage-pr-queue] Semantic code conflict in: ' + file + '. Manual resolution required.\n');
-    }
-  }
-  return allResolved;
-}
-
-export function updateBranch(prNumber, prHeadRef) {
-  process.stdout.write('[manage-pr-queue] Updating PR #' + prNumber + ' (branch: ' + prHeadRef + ') with latest origin/main...\n');
-  run('git', ['fetch', 'origin', '--prune'], SCRIPT_REPO_ROOT);
-  
-  const wtDir = path.join(path.dirname(SCRIPT_REPO_ROOT), 'AI-BIM-governance.worktrees', 'tmp-pr-' + prNumber);
-  if (fs.existsSync(wtDir)) {
-    run('git', ['worktree', 'remove', '--force', wtDir], SCRIPT_REPO_ROOT, true);
-  }
-  
-  const addRes = run('git', ['worktree', 'add', wtDir, 'origin/' + prHeadRef], SCRIPT_REPO_ROOT, true);
-  if (!addRes && !fs.existsSync(wtDir)) {
-    process.stderr.write('[manage-pr-queue] Failed to create worktree for PR #' + prNumber + '\n');
-    return false;
-  }
-  
-  try {
-    const mergeRes = run('git', ['merge', 'origin/main', '-m', 'chore(merge): sync with origin/main into #' + prNumber], wtDir, true);
-    if (mergeRes === null) {
-      process.stdout.write('[manage-pr-queue] Conflict detected during merge. Attempting auto-resolve...\n');
-      const status = run('git', ['status', '--porcelain'], wtDir, true) || '';
-      const conflictFiles = status.split(/\r?\n/).filter(l => l.startsWith('UU ') || l.startsWith('AA ') || l.startsWith('DU ') || l.startsWith('UD ')).map(l => l.slice(3).trim());
-      
-      const allResolved = autoResolveConflicts(wtDir, conflictFiles, prNumber);
-      
-      if (allResolved) {
-        run('git', ['commit', '-m', 'chore(merge): auto-resolve conflict syncing with origin/main for #' + prNumber], wtDir);
-      } else {
-        run('git', ['merge', '--abort'], wtDir, true);
-        return false;
-      }
-    }
-    
-    run('git', ['push', 'origin', 'HEAD:' + prHeadRef], wtDir);
-    process.stdout.write('[manage-pr-queue] Successfully updated PR #' + prNumber + ' branch!\n');
-    return true;
-  } finally {
-    run('git', ['worktree', 'remove', '--force', wtDir], SCRIPT_REPO_ROOT, true);
-    run('git', ['worktree', 'prune'], SCRIPT_REPO_ROOT, true);
-    cleanupOrphanDevProcesses();
-  }
-}
-
-export function approvePr(prNumber, baseSha, headSha) {
-  process.stdout.write('[manage-pr-queue] Submitting counted blip approval for PR #' + prNumber + '...\n');
-  if (!fs.existsSync(BLIP_SCRIPT)) {
-    process.stderr.write('[manage-pr-queue] Blip approve script not found at ' + BLIP_SCRIPT + '\n');
-    return false;
-  }
-  const res = run('pwsh', [BLIP_SCRIPT, '-PrNumber', String(prNumber), '-ExpectedBaseSha', baseSha, '-ExpectedHeadSha', headSha, '-Live'], SCRIPT_REPO_ROOT, true);
-  if (res === null) return false;
-  if (res.includes('APPROVAL_RESULT=APPROVED') || res.includes('reason=duplicate_blip_approval')) {
-    process.stdout.write('[manage-pr-queue] PR #' + prNumber + ' approval confirmed!\n');
-    return true;
-  }
-  process.stdout.write('[manage-pr-queue] Blip review result: ' + res + '\n');
+export function updateBranch(prNumber, expectedHeadRef = '') {
+  process.stderr.write(
+    `[manage-pr-queue] HELD PR #${prNumber}: branch mutation is outside this read-only helper${expectedHeadRef ? ` (${expectedHeadRef})` : ''}.\n`,
+  );
   return false;
 }
 
-export function mergePr(prNumber) {
-  process.stdout.write('[manage-pr-queue] Merging PR #' + prNumber + ' via squash merge...\n');
-  const openPr = getOpenPrs().find(p => p.number === prNumber);
-  const headBranch = openPr ? openPr.headRefName : '';
-  if (headBranch) {
-    cleanWorktreesForBranch(headBranch);
-  }
-
-  const res = run('gh', ['pr', 'merge', String(prNumber), '--squash', '--delete-branch'], SCRIPT_REPO_ROOT, true);
-  
-  const raw = run('gh', ['pr', 'view', String(prNumber), '--json', 'state,mergeCommit'], SCRIPT_REPO_ROOT, true);
-  if (raw) {
-    try {
-      const parsed = JSON.parse(raw);
-      if (parsed.state === 'MERGED') {
-        process.stdout.write('[manage-pr-queue] PR #' + prNumber + ' confirmed MERGED (commit: ' + (parsed.mergeCommit?.oid?.slice(0, 7) || 'unknown') + ')\n');
-        cleanupOrphanDevProcesses();
-        return true;
-      }
-    } catch {}
-  }
-  cleanupOrphanDevProcesses();
-  return res !== null;
+export function approvePr(prNumber) {
+  process.stderr.write(
+    `[manage-pr-queue] HELD PR #${prNumber}: counted approval is an external, independent action; use the governed blip-approve workflow.\n`,
+  );
+  return false;
 }
 
-function autoFixPr(prNumber) {
-  process.stdout.write('[manage-pr-queue] Running auto-fix for PR #' + prNumber + '...\n');
-  const preflightScript = path.join(SCRIPT_REPO_ROOT, 'scripts', 'dev', 'check-pr-local-preflight.ps1');
-  const preflightOut = run('pwsh', [preflightScript, '-PrNumber', String(prNumber), '-ChangedPathsSource', 'remote', '-SkipReviewAgent', '-SkipViewerVerify'], SCRIPT_REPO_ROOT, true) || '';
-  
-  if (preflightOut.includes('passed for PR #' + prNumber)) {
-    process.stdout.write('[manage-pr-queue] PR #' + prNumber + ' preflight already passing!\n');
-    return true;
+export function validatePrPreflight(prNumber) {
+  const pr = getPrSnapshot(prNumber);
+  const localHead = run('git', ['rev-parse', 'HEAD'], SCRIPT_REPO_ROOT, true);
+  if (!pr || !localHead || localHead !== pr.headRefOid) {
+    process.stderr.write(`[manage-pr-queue] HELD PR #${prNumber}: local HEAD is not the exact PR head.\n`);
+    return false;
   }
-  
-  // Fetch current body
-  const bodyRaw = run('gh', ['pr', 'view', String(prNumber), '--json', 'body'], SCRIPT_REPO_ROOT);
-  if (!bodyRaw) return false;
-  let body = JSON.parse(bodyRaw).body || '';
-  
-  // 0. Ensure Change Classification table exists
-  if (!body.includes('Change lane') || !body.includes('Behavior contract changed') || !body.includes('Requirement source')) {
-    const classificationBlock = '## Change Classification\n| Label | Value |\n|---|---|\n| Change lane | B |\n| Behavior contract changed | no |\n| Requirement source | Lean Governance & PR Queue Engine |\n\n';
-    if (body.includes('## Summary')) {
-      body = body.replace('## Summary', classificationBlock + '## Summary');
-    } else {
-      body = classificationBlock + body;
-    }
-  } else {
-    body = body.replace(/(\|\s*Change lane\s*\|\s*)(?:Lane\s+)?([FBGS])/i, '$1$2');
-  }
-
-  // 0.1 Ensure AI Coding Governance table exists
-  if (!body.includes('CODEOWNERS / owner review') || !body.includes('Linked issue')) {
-    const govBlock = '## AI Coding Governance\n| Label | Value |\n|---|---|\n| Linked issue | none |\n| Requirement source | Lean Governance & PR Queue Engine |\n| CODEOWNERS / owner review | agent-governance |\n| GitNexus evidence | n/a (Lane B tooling) |\n| Browser E2E evidence | n/a (tooling only) |\n| Agent workflow changed? | no |\n| Required checks expected | all 23 green |\n\n';
-    body = body + '\n\n' + govBlock;
-  }
-
-  // 1. Fix Design gate status
-  const designGateMatch = preflightOut.match(/Design gate status must be '([^']+)'/i);
-  if (designGateMatch) {
-    const status = designGateMatch[1];
-    body = body.replace(/(\|\s*Design gate status\s*\|\s*)([^|\r\n]*)/i, '$1' + status);
-    process.stdout.write('[manage-pr-queue] Fixed Design gate status -> ' + status + '\n');
-  }
-  
-  // 2. Fix Reference-missing route(s) / surface(s)
-  const missingRoutesMatch = preflightOut.match(/Reference-missing route\(s\)[^:]*must exactly match the machine-derived set:\s*([^\r\n.]+)/i);
-  if (missingRoutesMatch) {
-    const routes = missingRoutesMatch[1].trim();
-    body = body.replace(/(\|\s*Reference-missing route\(s\)\s*\/\s*surface\(s\)\s*\|\s*)([^|\r\n]*)/i, '$1' + routes);
-    process.stdout.write('[manage-pr-queue] Fixed Reference-missing routes -> ' + routes + '\n');
-  }
-  
-  // 3. Fix Design screen(s)
-  const screensMatch = preflightOut.match(/Design screen\(s\)[^:]*must exactly match all machine-required manifest screens:\s*([^\r\n.]+)/i);
-  if (screensMatch) {
-    const screens = screensMatch[1].trim();
-    body = body.replace(/(\|\s*Design screen\(s\)\s*\|\s*)([^|\r\n]*)/i, '$1' + screens);
-    process.stdout.write('[manage-pr-queue] Fixed Design screens -> ' + screens + '\n');
-  }
-  
-  // 4. Fix Visual comparison
-  if (preflightOut.includes('Visual comparison must record')) {
-    body = body.replace(/(\|\s*Visual comparison\s*\|\s*)([^|\r\n]*)/i, '$1pixel diff <=1%, semantic parity 100%');
-  }
-  
-  // 5. Fix Visual artifacts
-  if (preflightOut.includes('Visual artifacts must identify')) {
-    body = body.replace(/(\|\s*Visual artifacts\s*\|\s*)([^|\r\n]*)/i, '$1artifacts/visual-regression/actual.png, artifacts/visual-regression/diff.png');
-  }
-  
-  // 6. Fix Visual fidelity result
-  if (preflightOut.includes('Visual fidelity result must identify')) {
-    body = body.replace(/(\|\s*Visual fidelity result\s*\|\s*)([^|\r\n]*)/i, '$1artifacts/e2e/design-system-visual-result.json');
-  }
-  
-  // 7. Fix Known gaps
-  const knownGapMatch = preflightOut.match(/Known gaps must disclose reference-missing item '([^']+)'/i);
-  if (knownGapMatch && missingRoutesMatch) {
-    const gaps = 'reference-missing: ' + missingRoutesMatch[1].trim();
-    body = body.replace(/(\|\s*Known gaps\s*\|\s*)([^|\r\n]*)/i, '$1' + gaps);
-    process.stdout.write('[manage-pr-queue] Fixed Known gaps -> ' + gaps + '\n');
-  }
-  
-  run('gh', ['pr', 'edit', String(prNumber), '--body', body], SCRIPT_REPO_ROOT);
-  process.stdout.write('[manage-pr-queue] Updated PR #' + prNumber + ' body metadata.\n');
-  return true;
+  process.stderr.write(
+    `[manage-pr-queue] HELD PR #${prNumber}: executable preflight is external to this read-only observer.\n`,
+  );
+  return false;
 }
 
-function printStatus(asJson = false) {
-  const prs = getOpenPrs();
+export function evaluateMergeReadiness({ pr, checks, threads, approval, expectedHeadSha }) {
+  const reasons = [];
+  if (!pr || pr.state !== 'OPEN') reasons.push('pr_not_open');
+  if (pr?.baseRefName !== 'main') reasons.push('base_not_main');
+  if (pr?.isDraft) reasons.push('draft');
+  if (!expectedHeadSha || pr?.headRefOid !== expectedHeadSha) reasons.push('head_mismatch');
+  if (pr?.mergeable !== 'MERGEABLE') reasons.push('not_mergeable');
+  if (pr?.mergeStateStatus === 'BEHIND') reasons.push('behind_main');
+  else if (pr?.mergeStateStatus !== 'CLEAN') reasons.push('merge_state_not_clean');
+  if (pr?.reviewDecision !== 'APPROVED') reasons.push('approval_missing');
+  if (!checks?.allGreen) reasons.push('required_checks_not_green');
+  if (!threads?.complete) reasons.push('thread_state_unknown');
+  else if (threads.count !== 0) reasons.push('unresolved_threads');
+  if (!approval?.complete) reasons.push('exact_head_approval_unknown');
+  else if (approval.count < 1) reasons.push('exact_head_approval_missing');
+  const observedReady = reasons.length === 0;
+  reasons.push('canonical_merge_authority_external');
+  return { ready: false, observedReady, reasons };
+}
+
+export function isSamePrObservation(initial, final) {
+  return Boolean(
+    initial
+    && final
+    && PR_OBSERVATION_FIELDS.every((field) => initial[field] === final[field]),
+  );
+}
+
+export function mergePr(prNumber, expectedHeadSha = '') {
+  process.stderr.write(
+    `[manage-pr-queue] HELD PR #${prNumber}: native merge is coordinator-owned and requires the canonical exact-tuple authority gate${expectedHeadSha ? ` (${expectedHeadSha})` : ''}.\n`,
+  );
+  return false;
+}
+
+function printStatus(prNumber, asJson = false) {
   const originMain = getOriginMainSha();
-  
-  const report = prs.map(pr => {
-    const isBehind = pr.baseRefOid !== originMain;
+  const prs = [getPrSnapshot(prNumber)].filter(Boolean);
+  const report = prs.map((pr) => {
     const checks = getPrChecks(pr.number);
     return {
       number: pr.number,
       title: pr.title,
       branch: pr.headRefName,
-      baseSha: pr.baseRefOid ? pr.baseRefOid.slice(0, 7) : 'unknown',
-      headSha: pr.headRefOid ? pr.headRefOid.slice(0, 7) : 'unknown',
-      isBehind,
+      baseSha: pr.baseRefOid || null,
+      headSha: pr.headRefOid || null,
+      mergeStateStatus: pr.mergeStateStatus || 'UNKNOWN',
       reviewDecision: pr.reviewDecision || 'PENDING',
       ciAllGreen: checks.allGreen,
-      ciSummary: 'passed: ' + checks.passed + ', pending: ' + checks.pending + ', fail: ' + checks.failed
+      ciSummary: { passed: checks.passed, pending: checks.pending, failed: checks.failed },
     };
   });
-  
   if (asJson) {
-    process.stdout.write(JSON.stringify({ originMain: originMain ? originMain.slice(0, 7) : 'unknown', prs: report }, null, 2) + '\n');
+    process.stdout.write(`${JSON.stringify({ originMain, prs: report }, null, 2)}\n`);
     return;
   }
-  
-  process.stdout.write('=== Autonomous PR Queue Status (origin/main: ' + (originMain ? originMain.slice(0, 7) : 'unknown') + ') ===\n');
-  if (report.length === 0) {
-    process.stdout.write('No open PRs in queue.\n');
-    return;
+  process.stdout.write(`=== Named PR Queue Status (origin/main: ${originMain?.slice(0, 7) || 'unknown'}) ===\n`);
+  for (const item of report) {
+    process.stdout.write(`#${item.number} [${item.reviewDecision}] [${item.mergeStateStatus}] ${item.title}\n`);
+    process.stdout.write(`    ${item.branch} head=${item.headSha?.slice(0, 7) || 'unknown'} CI=${JSON.stringify(item.ciSummary)}\n`);
   }
-  for (const r of report) {
-    const behindTag = r.isBehind ? ' [BEHIND MAIN]' : ' [UP TO DATE]';
-    process.stdout.write('#' + r.number + ' [' + r.reviewDecision + ']' + behindTag + ' ' + r.title + '\n');
-    process.stdout.write('    Branch: ' + r.branch + ' (base: ' + r.baseSha + ', head: ' + r.headSha + ')\n');
-    process.stdout.write('    CI: ' + r.ciSummary + ' (Green: ' + r.ciAllGreen + ')\n\n');
-  }
+  if (report.length === 0) process.stdout.write('No matching open PR.\n');
 }
 
-export async function runQueue(auto = false) {
-  const releaseLock = acquireLock();
-  if (!releaseLock) {
-    process.stdout.write('[manage-pr-queue] Another PR queue worker is currently active. Skipping this cycle.\n');
-    return;
+export async function runQueue({ prNumber, auto = false } = {}) {
+  if (!Number.isSafeInteger(prNumber) || prNumber <= 0) {
+    process.stderr.write('[manage-pr-queue] run-queue requires --pr <number>.\n');
+    return false;
   }
-  
+  const lock = acquirePrQueueLock({ repoRoot: SCRIPT_REPO_ROOT });
+  if (!lock) {
+    process.stdout.write('[manage-pr-queue] Another named PR queue worker is active; skipped.\n');
+    return false;
+  }
   try {
-    cleanupOrphanDevProcesses();
-    process.stdout.write('=== Processing Autonomous PR Queue ===\n');
-    let maxCycles = 5;
-
-    while (maxCycles-- > 0) {
-      const prs = getOpenPrs();
-      const originMain = getOriginMainSha();
-      if (prs.length === 0) {
-        process.stdout.write('No open PRs to process.\n');
-        break;
-      }
-      
-      let progressMade = false;
-
-      for (const pr of prs) {
-        process.stdout.write('\n--- Processing PR #' + pr.number + ': ' + pr.title + ' ---\n');
-        let currentPr = pr;
-        
-        // 1. Auto-Fix Metadata / Preflight if needed
-        autoFixPr(currentPr.number);
-
-        // 2. Auto-Update branch against latest origin/main if behind
-        if (currentPr.baseRefOid !== originMain) {
-          process.stdout.write('PR #' + currentPr.number + ' is behind origin/main. Auto-updating...\n');
-          const updated = updateBranch(currentPr.number, currentPr.headRefName);
-          if (!updated) {
-            process.stderr.write('Skipping PR #' + currentPr.number + ' due to branch update failure.\n');
-            continue;
-          }
-          const refreshed = getOpenPrs().find(p => p.number === currentPr.number);
-          if (refreshed) currentPr = refreshed;
-          progressMade = true;
-        }
-        
-        // 3. Check CI
-        const checks = getPrChecks(currentPr.number);
-        if (checks.failed > 0) {
-          process.stderr.write('PR #' + currentPr.number + ' has failing checks (' + checks.failed + '). Needs fix.\n');
-          continue;
-        }
-        
-        // 4. Auto-Approve if green
-        if (currentPr.reviewDecision !== 'APPROVED' && checks.allGreen) {
-          process.stdout.write('PR #' + currentPr.number + ' checks are green. Submitting auto-approval...\n');
-          const approved = approvePr(currentPr.number, currentPr.baseRefOid, currentPr.headRefOid);
-          if (approved) {
-            currentPr.reviewDecision = 'APPROVED';
-            progressMade = true;
-          }
-        }
-        
-        // 5. Auto-Merge if approved and green
-        if (currentPr.reviewDecision === 'APPROVED' && checks.allGreen) {
-          process.stdout.write('PR #' + currentPr.number + ' is approved and all checks green. Executing auto-merge...\n');
-          const merged = mergePr(currentPr.number);
-          if (merged) {
-            process.stdout.write('Successfully auto-merged PR #' + currentPr.number + '!\n');
-            syncMainSafely(SCRIPT_REPO_ROOT);
-            progressMade = true;
-            break; // Restart cycle with fresh main
-          }
-        }
-      }
-
-      if (!progressMade) {
-        break;
-      }
+    triggerOrphanCleanup(true);
+    const pr = getPrSnapshot(prNumber);
+    if (!pr || pr.state !== 'OPEN') return false;
+    if (pr.mergeStateStatus === 'BEHIND') {
+      process.stderr.write(`[manage-pr-queue] HELD PR #${prNumber}: behind main; update requires an external exact-head CAS action.\n`);
+      return false;
     }
-    process.stdout.write('\n=== PR Queue Cycle Complete ===\n');
+    const checks = getPrChecks(prNumber);
+    const threads = getUnresolvedThreadCount(prNumber);
+    const approval = getExactHeadApproval(prNumber, pr.headRefOid);
+    const finalPr = getPrSnapshot(prNumber);
+    if (!isSamePrObservation(pr, finalPr)) {
+      process.stderr.write(
+        `[manage-pr-queue] HELD PR #${prNumber}: pr_observation_changed\n`,
+      );
+      return false;
+    }
+    process.stdout.write(
+      `#${finalPr.number} [${finalPr.reviewDecision || 'PENDING'}] `
+      + `[${finalPr.mergeStateStatus || 'UNKNOWN'}] ${finalPr.title}\n`
+      + `    ${finalPr.headRefName} head=${finalPr.headRefOid?.slice(0, 7) || 'unknown'} `
+      + `CI=${JSON.stringify({ passed: checks.passed, pending: checks.pending, failed: checks.failed })}\n`,
+    );
+    const readiness = evaluateMergeReadiness({
+      pr: finalPr,
+      checks,
+      threads,
+      approval,
+      expectedHeadSha: pr.headRefOid,
+    });
+    if (auto) {
+      process.stderr.write('[manage-pr-queue] --auto is compatibility-only; GitHub mutation remains disabled.\n');
+    }
+    process.stderr.write(
+      `[manage-pr-queue] HELD PR #${prNumber}: ${readiness.reasons.join(', ')}\n`,
+    );
+    return false;
   } finally {
-    cleanupOrphanDevProcesses();
-    releaseLock();
-  }
-}
-
-export function triggerPrQueueHook(nonBlocking = true) {
-  if (nonBlocking) {
-    try {
-      const child = spawn(process.execPath, [fileURLToPath(import.meta.url), 'run-queue', '--auto'], {
-        cwd: SCRIPT_REPO_ROOT,
-        detached: true,
-        stdio: 'ignore',
-        windowsHide: true,
-      });
-      child.unref();
-    } catch {}
-  } else {
-    runQueue(true);
+    triggerOrphanCleanup(true);
+    lock.release();
   }
 }
 
 export function installGitHooks() {
-  const gitHooksDir = path.join(SCRIPT_REPO_ROOT, '.git', 'hooks');
-  if (!fs.existsSync(gitHooksDir)) {
-    try { fs.mkdirSync(gitHooksDir, { recursive: true }); } catch {}
-  }
-
-  const hookContent = `#!/usr/bin/env sh
-# Autonomous PR Queue Hook for AI-BIM-governance
-node "${path.join(SCRIPT_REPO_ROOT, 'scripts', 'dev', 'manage-pr-queue.mjs')}" hook >/dev/null 2>&1 &
-`;
-
-  const hooks = ['post-commit', 'post-merge', 'post-checkout'];
-  for (const h of hooks) {
-    const target = path.join(gitHooksDir, h);
-    fs.writeFileSync(target, hookContent, { mode: 0o755 });
-    process.stdout.write(`[manage-pr-queue] Installed git hook: .git/hooks/${h}\n`);
-  }
-  return true;
+  process.stderr.write(
+    '[manage-pr-queue] HELD: repository-controlled Git hook installation is disabled; use explicit lifecycle commands.\n',
+  );
+  return false;
 }
 
-export async function watchQueue(intervalSeconds = 30) {
-  process.stdout.write(`[manage-pr-queue] Starting PR queue watcher (interval: ${intervalSeconds}s)...\n`);
-  while (true) {
-    try {
-      await runQueue(true);
-    } catch (e) {
-      process.stderr.write(`[manage-pr-queue] Watcher loop error: ${e.message}\n`);
-    }
-    await new Promise(r => setTimeout(r, intervalSeconds * 1000));
-  }
+export function runHookMaintenance({
+  triggerOrphanCleanupImpl = triggerOrphanCleanup,
+} = {}) {
+  return triggerOrphanCleanupImpl(true);
 }
 
-function main() {
+async function main() {
   const args = process.argv.slice(2);
   const command = args[0] || 'status';
-  
+  const prNumber = requirePrNumber(args);
   if (command === 'status') {
-    printStatus(args.includes('--json'));
-  } else if (command === 'hook') {
-    triggerPrQueueHook(true);
-  } else if (command === 'install-hooks') {
-    installGitHooks();
-  } else if (command === 'update-branch') {
-    const prIdx = args.indexOf('--pr');
-    if (prIdx === -1 || !args[prIdx + 1]) {
-      process.stderr.write('Missing --pr <number>\n');
-      process.exit(1);
+    if (!prNumber) {
+      process.stderr.write('status requires --pr <number>.\n');
+      process.exitCode = 2;
+      return;
     }
-    const prNumber = parseInt(args[prIdx + 1], 10);
-    const pr = getOpenPrs().find(p => p.number === prNumber);
-    if (!pr) {
-      process.stderr.write('PR #' + prNumber + ' not found.\n');
-      process.exit(1);
-    }
-    updateBranch(prNumber, pr.headRefName);
+    printStatus(prNumber, args.includes('--json'));
+    return;
+  }
+  if (command === 'install-hooks') {
+    if (!installGitHooks()) process.exitCode = 2;
+    return;
+  }
+  if (command === 'hook') {
+    runHookMaintenance();
+    return;
+  }
+  if (!prNumber) {
+    process.stderr.write(`${command} requires --pr <number>.\n`);
+    process.exitCode = 2;
+    return;
+  }
+  if (command === 'update-branch') {
+    const pr = getPrSnapshot(prNumber);
+    if (!pr || !updateBranch(prNumber, pr.headRefName)) process.exitCode = 2;
   } else if (command === 'approve') {
-    const prIdx = args.indexOf('--pr');
-    if (prIdx === -1 || !args[prIdx + 1]) {
-      process.stderr.write('Missing --pr <number>\n');
-      process.exit(1);
-    }
-    const prNumber = parseInt(args[prIdx + 1], 10);
-    const pr = getOpenPrs().find(p => p.number === prNumber);
-    if (!pr) {
-      process.stderr.write('PR #' + prNumber + ' not found.\n');
-      process.exit(1);
-    }
-    approvePr(prNumber, pr.baseRefOid, pr.headRefOid);
+    approvePr(prNumber);
+    process.exitCode = 2;
   } else if (command === 'auto-fix') {
-    const prIdx = args.indexOf('--pr');
-    if (prIdx === -1 || !args[prIdx + 1]) {
-      process.stderr.write('Missing --pr <number>\n');
-      process.exit(1);
-    }
-    const prNumber = parseInt(args[prIdx + 1], 10);
-    autoFixPr(prNumber);
+    if (!validatePrPreflight(prNumber)) process.exitCode = 2;
   } else if (command === 'merge') {
-    const prIdx = args.indexOf('--pr');
-    if (prIdx === -1 || !args[prIdx + 1]) {
-      process.stderr.write('Missing --pr <number>\n');
-      process.exit(1);
-    }
-    const prNumber = parseInt(args[prIdx + 1], 10);
-    mergePr(prNumber);
+    const pr = getPrSnapshot(prNumber);
+    if (!pr || !mergePr(prNumber, pr.headRefOid)) process.exitCode = 2;
   } else if (command === 'run-queue') {
-    runQueue(args.includes('--auto'));
-  } else if (command === 'watch') {
-    const intervalIdx = args.indexOf('--interval');
-    const interval = intervalIdx !== -1 && args[intervalIdx + 1] ? parseInt(args[intervalIdx + 1], 10) : 30;
-    watchQueue(interval);
+    if (!await runQueue({ prNumber, auto: args.includes('--auto') })) process.exitCode = 2;
   } else {
-    process.stderr.write('Unknown command: ' + command + '\n');
-    process.exit(1);
+    process.stderr.write(`Unknown command: ${command}\n`);
+    process.exitCode = 2;
   }
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(fileURLToPath(import.meta.url))) {
-  main();
+if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(SCRIPT_PATH)) {
+  main().catch((error) => {
+    process.stderr.write(`[manage-pr-queue] ${error?.stack || error}\n`);
+    process.exitCode = 1;
+  });
 }

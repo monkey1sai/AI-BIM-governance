@@ -1,19 +1,13 @@
 <#
 .SYNOPSIS
-  Installs git hooks to trigger autonomous PR queue processing on git actions.
+  Compatibility shim for the retired repository-controlled Git hook installer.
 .DESCRIPTION
-  Installs .git/hooks/post-commit, post-merge, and post-checkout to execute
-  node scripts/dev/manage-pr-queue.mjs hook asynchronously.
+  Git hook installation is intentionally disabled. Use explicit agents-board
+  lifecycle commands; existing legacy hooks are never overwritten here.
 #>
 
 [CmdletBinding()]
 param()
 
-$repoRoot = Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..')
-Push-Location $repoRoot.Path
-try {
-    node (Join-Path $PSScriptRoot 'manage-pr-queue.mjs') install-hooks
-}
-finally {
-    Pop-Location
-}
+Write-Error 'HELD: repository-controlled Git hook installation is disabled; use explicit lifecycle commands.'
+exit 2

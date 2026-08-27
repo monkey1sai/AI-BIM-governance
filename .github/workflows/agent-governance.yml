@@ -82,6 +82,11 @@ jobs:
         shell: pwsh
         run: pwsh -NoProfile -NonInteractive -File scripts/tests/test-agent-governance-check.ps1
 
+      - name: Run orphan cleanup and named PR queue safety tests
+        if: matrix.shard == 'core'
+        shell: pwsh
+        run: pwsh -NoProfile -NonInteractive -Command "node --test scripts/tests/test-cleanup-orphan-dev-processes.mjs scripts/tests/test-manage-pr-queue.mjs scripts/tests/test-pr-queue-adversarial-and-stress.mjs"
+
       - name: Verify governance policy rules
         if: matrix.shard == 'core'
         shell: pwsh
