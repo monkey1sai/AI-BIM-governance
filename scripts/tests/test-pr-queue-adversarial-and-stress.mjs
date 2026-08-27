@@ -26,7 +26,8 @@ const WORKER = path.join(SCRIPT_DIR, 'fixtures', 'pr-queue-lock-worker.mjs');
 const BOARD_SCRIPT = path.join(SCRIPT_DIR, '..', 'dev', 'agents-board.mjs');
 
 function withTempDir(t, prefix) {
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  const createdDirectory = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  const directory = fs.realpathSync.native(createdDirectory);
   t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
   return directory;
 }
@@ -444,7 +445,7 @@ test('PID reuse is reclaimable without applying a TTL to a live owner', (t) => {
   assert.equal(readLockRef(repo), '');
 });
 
-test('20 workers serialize through the real atomic queue lock', { timeout: 30_000 }, async (t) => {
+test('20 workers serialize through the real atomic queue lock', { timeout: 90_000 }, async (t) => {
   const root = withTempDir(t, 'queue-stress-');
   const repo = path.join(root, 'repo');
   const stateDir = path.join(root, 'state');

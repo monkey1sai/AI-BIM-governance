@@ -22,7 +22,8 @@ import {
 } from '../dev/pr-queue-lock.mjs';
 
 function withTempDir(t, prefix) {
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  const createdDirectory = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  const directory = fs.realpathSync.native(createdDirectory);
   t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
   return directory;
 }

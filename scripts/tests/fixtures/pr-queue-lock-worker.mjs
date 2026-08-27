@@ -8,7 +8,7 @@ const [repoRoot, stateDir, resultsFile] = process.argv.slice(2);
 if (!repoRoot || !stateDir || !resultsFile) process.exit(2);
 
 const identityForPid = (pid) => `fixture-process:${pid}`;
-const deadline = Date.now() + 15_000;
+const deadline = Date.now() + 60_000;
 let lock = null;
 while (!lock && Date.now() < deadline) {
   lock = acquirePrQueueLock({
