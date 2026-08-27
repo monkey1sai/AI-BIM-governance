@@ -79,8 +79,8 @@
         "format": "agent-skill-tree/v2",
         "algorithm": "sha256",
         "trees": {
-          "claude": "fb891136448855d727429ce46e1cee60cccdf94f6c414e883be28792ef956d97",
-          "codex": "fb891136448855d727429ce46e1cee60cccdf94f6c414e883be28792ef956d97"
+          "claude": "c7d990da9f47f61838d1328424966d5a8087913c3a6c6035ce0a8dfacb8b90b9",
+          "codex": "c7d990da9f47f61838d1328424966d5a8087913c3a6c6035ce0a8dfacb8b90b9"
         }
       }
     },
@@ -560,8 +560,8 @@
         "format": "agent-skill-tree/v2",
         "algorithm": "sha256",
         "trees": {
-          "claude": "b9f2d0a006b5544acb996ffd35a33129e271185f986dd3b15ae914ff33dd8f76",
-          "codex": "b9f2d0a006b5544acb996ffd35a33129e271185f986dd3b15ae914ff33dd8f76"
+          "claude": "0e376e7d41637bd192c15ead900bc49e3d872396e3b69242a6f665953b69043d",
+          "codex": "0e376e7d41637bd192c15ead900bc49e3d872396e3b69242a6f665953b69043d"
         }
       }
     },

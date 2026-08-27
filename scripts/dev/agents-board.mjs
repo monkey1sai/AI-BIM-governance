@@ -16,9 +16,13 @@ import fs from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
-import { syncMainSafely } from './sync-main-safely.mjs';
-import { triggerPrQueueHook } from './manage-pr-queue.mjs';
-import { cleanupOrphanDevProcesses } from './cleanup-orphan-dev-processes.mjs';
+import {
+  buildGitArgs,
+  buildIsolatedGitEnv,
+  resolveCanonicalRepoRoot,
+  resolveSharedBoardDir,
+} from './agents-board-path.mjs';
+import { triggerOrphanCleanup } from './cleanup-orphan-dev-processes.mjs';
 
 const STALE_MINUTES = 120;
 const PRUNE_ENDED_HOURS = 24;
@@ -27,11 +31,24 @@ const EVENTS_MAX_BYTES = 512 * 1024;
 const RECENT_FILES_MAX = 5;
 const TASK_MAX_CHARS = 160;
 
-const SCRIPT_REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
+const SCRIPT_PATH = fileURLToPath(import.meta.url);
+const SCRIPT_REPO_ROOT = path.resolve(path.dirname(SCRIPT_PATH), '..', '..');
+const CANONICAL_REPO_ROOT = resolveCanonicalRepoRoot(SCRIPT_REPO_ROOT) || SCRIPT_REPO_ROOT;
+
+export function runLifecycleMaintenance({
+  triggerOrphanCleanupImpl = triggerOrphanCleanup,
+} = {}) {
+  return triggerOrphanCleanupImpl(true);
+}
 
 function git(args, cwd) {
   try {
-    return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+    return execFileSync('git', buildGitArgs(args), {
+      cwd,
+      encoding: 'utf8',
+      env: buildIsolatedGitEnv(),
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim();
   } catch {
     return '';
   }
@@ -43,11 +60,9 @@ function normalizeForCompare(p) {
 }
 
 // 解析看板位置:主 checkout 根目錄 /.agents/board(worktree 內執行也會解析回主 checkout)
-function resolveBoardDir(cwd) {
-  if (process.env.AGENTS_BOARD_DIR) return path.resolve(process.env.AGENTS_BOARD_DIR);
-  const commonDir = git(['rev-parse', '--path-format=absolute', '--git-common-dir'], cwd);
-  if (!commonDir) return '';
-  return path.join(path.dirname(commonDir), '.agents', 'board');
+function resolveBoardDir(cwd, readOnlyOverride = '') {
+  if (readOnlyOverride) return path.resolve(readOnlyOverride);
+  return resolveSharedBoardDir(cwd);
 }
 
 function sessionsDir(boardDir) {
@@ -246,11 +261,34 @@ function resolveManualSession(boardDir, agent, requested) {
   return '';
 }
 
+function enforceReadOnlyBoardOverride(command, args) {
+  const readOnlyOverride = String(process.env.AGENTS_BOARD_DIR || '');
+  if (!readOnlyOverride) return '';
+  const overrideArgsAreExact = (
+    command === 'status'
+    && args?.json === true
+    && args?.['no-prune'] === true
+    && args?._?.length === 0
+    && Object.keys(args).every((key) => ['_', 'json', 'no-prune'].includes(key))
+  );
+  if (!overrideArgsAreExact) {
+    process.stderr.write(
+      'agents-board: AGENTS_BOARD_DIR 僅允許 status --json --no-prune\n',
+    );
+    process.exit(2);
+  }
+  return readOnlyOverride;
+}
+
 function runManual(command, args) {
   const cwd = process.cwd();
-  const boardDir = resolveBoardDir(cwd);
+  const readOnlyOverride = enforceReadOnlyBoardOverride(command, args);
+  const boardDir = resolveBoardDir(
+    cwd,
+    readOnlyOverride,
+  );
   if (!boardDir) {
-    process.stderr.write('agents-board: 不在 git repo 內,無法解析看板位置(或設定 AGENTS_BOARD_DIR)\n');
+    process.stderr.write('agents-board: 不在 git repo 內,無法解析共用看板位置\n');
     process.exit(1);
   }
   if (command === 'status') {
@@ -265,7 +303,7 @@ function runManual(command, args) {
     appendEvent(boardDir, { ts: nowIso(), agent, session, event: 'register', detail: record.branch || '' });
     process.stdout.write(`registered agent=${agent} session=${session}(後續指令帶 --session ${session})\n`);
     printStatus(boardDir, false);
-    triggerPrQueueHook(true);
+    runLifecycleMaintenance();
     return;
   }
   const session = resolveManualSession(boardDir, agent, args.session);
@@ -283,9 +321,7 @@ function runManual(command, args) {
     upsertSession(boardDir, { agent, session, cwd, status: 'ended' });
     appendEvent(boardDir, { ts: nowIso(), agent, session, event: 'done', detail: '' });
     process.stdout.write(`done agent=${agent} session=${session}\n`);
-    syncMainSafely(cwd);
-    cleanupOrphanDevProcesses();
-    triggerPrQueueHook(true);
+    runLifecycleMaintenance();
     return;
   }
   process.stderr.write(`agents-board: 未知指令 ${command}\n`);
@@ -309,9 +345,7 @@ function runHook(args) {
 
   if (event === 'SessionStart') {
     pruneSessions(boardDir);
-    syncMainSafely(cwd);
-    cleanupOrphanDevProcesses();
-    triggerPrQueueHook(true);
+    runLifecycleMaintenance();
     const others = readSessions(boardDir).filter((s) => !(s.agent === agent && s.session === session) && s.status !== 'ended');
     upsertSession(boardDir, { agent, session, cwd, task: '(session 已啟動)', status: 'active' });
     appendEvent(boardDir, { ts: nowIso(), agent, session, event: 'session-start', detail: '' });
@@ -340,16 +374,13 @@ function runHook(args) {
   }
   if (event === 'Stop') {
     upsertSession(boardDir, { agent, session, cwd, status: 'idle' });
-    cleanupOrphanDevProcesses();
-    triggerPrQueueHook(true);
+    runLifecycleMaintenance();
     return;
   }
   if (event === 'SessionEnd') {
     upsertSession(boardDir, { agent, session, cwd, status: 'ended' });
     appendEvent(boardDir, { ts: nowIso(), agent, session, event: 'session-end', detail: '' });
-    syncMainSafely(cwd);
-    cleanupOrphanDevProcesses();
-    triggerPrQueueHook(true);
+    runLifecycleMaintenance();
   }
 }
 
@@ -367,18 +398,19 @@ function runCodexNotify(jsonArg) {
   const boardDir = resolveBoardDir(cwd);
   if (!boardDir) return;
   const boardRoot = path.dirname(path.dirname(boardDir));
-  if (!process.env.AGENTS_BOARD_DIR && normalizeForCompare(boardRoot) !== normalizeForCompare(SCRIPT_REPO_ROOT)) return;
+  if (normalizeForCompare(boardRoot) !== normalizeForCompare(CANONICAL_REPO_ROOT)) return;
   const session = sanitizeId(String(payload['thread-id'] || payload['session-id'] || payload['conversation-id'] || 'notify').slice(0, 8));
   const inputMessages = Array.isArray(payload['input-messages']) ? payload['input-messages'] : (Array.isArray(payload.input_messages) ? payload.input_messages : []);
   const task = sanitizeTask(inputMessages[0] || '');
   upsertSession(boardDir, { agent: 'codex', session, cwd, task: task || undefined, status: 'idle' });
   appendEvent(boardDir, { ts: nowIso(), agent, session, event: 'turn-complete', detail: task });
-  cleanupOrphanDevProcesses();
-  triggerPrQueueHook(true);
+  runLifecycleMaintenance();
 }
 
 function main() {
   const [command, ...rest] = process.argv.slice(2);
+  const parsedStatusArgs = command === 'status' ? parseArgs(rest) : null;
+  enforceReadOnlyBoardOverride(command, parsedStatusArgs || { _: [] });
   if (!command) {
     process.stderr.write('用法見檔頭註解或 docs/agents/parallel-session-board.md\n');
     process.exit(1);
@@ -399,7 +431,9 @@ function main() {
     }
     process.exit(0);
   }
-  runManual(command, parseArgs(rest));
+  runManual(command, parsedStatusArgs || parseArgs(rest));
 }
 
-main();
+if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(SCRIPT_PATH)) {
+  main();
+}
