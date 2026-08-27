@@ -1,27 +1,40 @@
 {
   "slug": "unified-console-runtime-truth-s2",
-  "run": "unified-console-runtime-truth-s2-r6",
+  "run": "unified-console-runtime-truth-s2-r7",
   "phase": "P4",
-  "verdict": "held",
-  "heldReason": "P5 security review found that attempt2 stopped Windows processes by PID after identity checks rather than killing through the already-validated process handles. Functional, trace, secret-scan and post-run port evidence remains recorded, but exact handle-bound ownership cleanup is unverified and the 2/2 evidence-attempt budget is exhausted.",
+  "verdict": "pass",
   "engine": "playwright",
-  "playwrightVersion": "1.59.1",
+  "playwrightVersion": "1.61.1",
   "nodeVersion": "22.22.0",
   "browser": "chromium (Desktop Chrome profile, headless, viewport 1440x900)",
-  "subjectHead": "8081c2a12308adcb2b04b566c87e168d7c77be9c",
+  "subjectHead": "eb6e73dac45ee94aacb397a3c3dd72cb0e40f0a6",
   "subjectBase": "5d1186e6f798425c7948d0d422719c70e50b9d3d",
-  "subjectHeadNote": "branch codex/openspec/unified-console-runtime-truth-s2 rebased without conflict onto freshly merged origin/main 5d1186e6f798425c7948d0d422719c70e50b9d3d; merge-base matched origin/main; tracked worktree was clean before and after capture",
+  "subjectHeadNote": "branch codex/openspec/unified-console-runtime-truth-s2 had merge-base exactly at freshly verified origin/main 5d1186e6f798425c7948d0d422719c70e50b9d3d; tracked worktree was clean before capture and in the independent post-run snapshot",
   "worktree": "C:/Repos/active/iot/AI-BIM-governance.worktrees/unified-console-runtime-truth-s2",
   "authorization": "Owner explicitly authorized retaining the origin/main spec and continuing the successor run while preserving newer origin/main runtime truth.",
   "capturedAtUtc": {
-    "started": "2026-08-27T05:32:17.3725784Z",
-    "completed": "2026-08-27T05:33:00.8680599Z"
+    "started": "2026-08-27T07:04:43.7980467Z",
+    "completed": "2026-08-27T07:05:06.475105Z"
   },
   "evidenceAttempts": {
-    "used": 2,
+    "used": 1,
     "limit": 2,
-    "attempt1": "Chromium and API projects passed 3 of 3, but the run failed closed because secret scanning started while coordinator.stderr.log was still held by the launcher. The complete failed evidence set was moved to an ignored, non-overwriting quarantine.",
-    "attempt2": "The final attempt recorded 3 of 3 tests, the required UI/API trace split, zero secret hits, both original Process objects observed exited before scanning, clean evidence ports and a clean tracked worktree. Later P5 security review found that Stop-Process targeted PIDs after identity checks, so exact handle-bound ownership cleanup is unverified."
+    "attempt1": "Passed 3 of 3 tests with two UI traces, zero API traces, two explicit screenshots, zero secret hits, exact SafeHandle-bound owned-process cleanup, clean evidence ports, no queue process or lock, and a clean tracked worktree."
+  },
+  "immutableHarness": {
+    "runner": {
+      "file": "web-viewer-sample/s2-r7.local/run-p4.ps1",
+      "sha256": "7FC3B5FAA6D6543FB5CD3A11AEEAD2C55854C45A3AF60D3056C6F0B2DD10D42F"
+    },
+    "uiConfig": {
+      "file": "web-viewer-sample/s2-r7.local/playwright.ui.config.ts",
+      "sha256": "43DE1B3819C96F4D73AF5316BB9C50AC2A7A5D43FC82707A2A90CF77EFBBE5"
+    },
+    "apiConfig": {
+      "file": "web-viewer-sample/s2-r7.local/playwright.api.config.ts",
+      "sha256": "9C68F1A6909BD6042ECC14317B4CFFAC119E7C1F551C90D4F42263660AAA0D02"
+    },
+    "review": "Static correctness and security reviews passed for these exact three digests before the browser attempt."
   },
   "configuration": {
     "coordinator": {
@@ -29,14 +42,14 @@
       "ENABLE_DEV_ROUTES": "false",
       "EXTERNAL_INTAKE_IP_ALLOWLIST": "10.0.0.0/8",
       "credentials": "three cryptographically random process-local test secrets; values were not persisted in this summary",
-      "mutableStores": "run-local under artifacts/tmp/unified-console-s2-r6-p4-attempt2.local"
+      "mutableStores": "run-local under artifacts/tmp/unified-console-s2-r7-p4-attempt1.local"
     },
     "viewer": {
       "baseUrl": "http://127.0.0.1:5180",
       "workers": 1,
       "retries": 0,
       "trace": "on for the two UI tests",
-      "screenshot": "on for the two UI tests",
+      "screenshot": "Playwright automatic screenshots off; two explicit screenshots captured by the UI test",
       "video": "off",
       "reuseExistingServer": false
     },
@@ -47,7 +60,7 @@
       "trace": "off",
       "screenshot": "off",
       "video": "off",
-      "boundary": "separate Playwright worker/file using the request fixture; no browser page receives the operator token"
+      "boundary": "separate Playwright worker/file using the request fixture; server-side secrets were cleared before this child and no browser page receives the operator token"
     }
   },
   "preflight": {
@@ -56,7 +69,7 @@
     "POST prioritize without operator token": 403,
     "POST prioritize with correct process-local operator token": 404
   },
-  "command": "pwsh -NoProfile -NonInteractive -File web-viewer-sample/s2-r6.local/run-p4.ps1",
+  "command": "pwsh -NoProfile -NonInteractive -File web-viewer-sample/s2-r7.local/run-p4.ps1 -ExpectedRunnerSha256 7FC3B5FAA6D6543FB5CD3A11AEEAD2C55854C45A3AF60D3056C6F0B2DD10D42F -ExpectedUiConfigSha256 43DE1B3819C96F4D73AF5316BB9C50AC2A7A5D43FC82707A2A90CF77EFBBE5 -ExpectedApiConfigSha256 9C68F1A6909BD6042ECC14317B4CFFAC119E7C1F551C90D4F42263660AAA0D02",
   "result": {
     "exitCode": 0,
     "listed": 3,
@@ -66,7 +79,8 @@
     "flaky": 0,
     "uiTraceCount": 2,
     "apiTraceCount": 0,
-    "uiScreenshotCount": 2
+    "uiScreenshotCount": 2,
+    "freshArtifactEvidence": true
   },
   "tests": [
     {
@@ -127,57 +141,69 @@
   },
   "secretScan": {
     "complete": true,
-    "scannedFiles": 235,
+    "scannedFiles": 41,
     "scannedSecrets": 3,
     "hits": 0,
+    "timing": "performed only after verified launcher and listener process exit",
     "roots": [
-      "attempt2 run root",
+      "attempt1 run root",
       "UI and API Playwright outputs",
       "UI and API HTML reports",
       "explicit screenshot root"
     ]
   },
   "runtimeCleanup": {
+    "coordinatorLauncherPid": 35372,
+    "coordinatorListenerPid": 26476,
     "listenerOwnershipVerified": true,
     "listenerAncestryVerified": true,
     "runnerRecordedCoordinatorOwnedStopVerified": true,
-    "securityReviewExactHandleBoundStop": "UNVERIFIED: attempt2 used Stop-Process -Id after identity checks, leaving a process-ID reuse race between validation and kill",
+    "securityReviewExactHandleBoundStop": "VERIFIED: the runner pinned SafeHandles before start-time comparison, revalidated current identity, ancestry, launcher and command immediately before using the same Process objects to Kill and WaitForExit",
     "originalListenerProcessObservedExitedBeforeScan": true,
     "originalLauncherProcessObservedExitedBeforeScan": true,
     "ports8005And5180Clean": true,
-    "trackedWorktreeClean": true
+    "trackedWorktreeClean": true,
+    "queueProcessCountBeforeAndAfter": 0,
+    "queueLockPresentBeforeAndAfter": false
   },
   "independentPostRunSnapshot": {
     "provenance": "fresh host-owner observation outside runner result.json",
-    "observedAtUtc": "2026-08-27T05:52:17.4027949Z",
-    "head": "24eae95781f3d26c961e07a6b7d289829af400ed",
+    "observedAtUtc": "2026-08-27T07:06:03.4729001Z",
+    "head": "eb6e73dac45ee94aacb397a3c3dd72cb0e40f0a6",
     "trackedStatus": "clean",
     "ports8005And5180ListenerCount": 0,
     "queueProcessCount": 0,
-    "queueLockPresent": false
+    "queueLockPresent": false,
+    "runnerSha256": "7FC3B5FAA6D6543FB5CD3A11AEEAD2C55854C45A3AF60D3056C6F0B2DD10D42F",
+    "uiConfigSha256": "43DE1B3819C96F4D73AF5316BB9C50AC2A7A5D43FC82707A2A90CF77EFBBE5",
+    "apiConfigSha256": "9C68F1A6909BD6042ECC14317B4CFFAC119E7C1F551C90D4F42263660AAA0D02"
   },
   "screenshots": [
     {
       "route": "#demo-control after live Refresh",
       "file": "docs/evidence/unified-console-runtime-truth-s2/unified-console-runtime-truth-s2-demo-control.png",
-      "sha256": "cb7215f624413fe7b1fdea5ba614e4047c8c4de46cc037213f94ebcc875a08c5"
+      "sha256": "57B0597699A798DB432B7625B3A6F0958654574CAC166AB96746DBCD670CBC04",
+      "bytes": 197800
     },
     {
       "route": "#a1-workbench with dev-routes-disabled note",
       "file": "docs/evidence/unified-console-runtime-truth-s2/unified-console-runtime-truth-s2-a1-workbench.png",
-      "sha256": "67fab89cb7068d01a3d627f255802ecfd408b98622b19116945ff8d49cbd96e2"
+      "sha256": "3263EAB6FBDE00AC1B9ECABA4B163523057FB13DFAAB1773E2539671719E4717",
+      "bytes": 230757
     }
   ],
   "traces": [
     {
       "scope": "#demo-control UI Chromium",
-      "storage": "ignored local-only web-viewer-sample/s2-r6.local/ui-output/**/trace.zip",
-      "sha256": "8068e1dd1650ad437c201a62fcf63738b951c5f9b105152b309ad04bdf96c260"
+      "storage": "ignored local-only web-viewer-sample/s2-r7.local/ui-output/**/trace.zip",
+      "sha256": "2AC5C5649AB1ECA1B2F91E90C452C23C9FBCF2ADD288869C5214F1A9A11D78AB",
+      "bytes": 1662073
     },
     {
       "scope": "#a1-workbench UI Chromium",
-      "storage": "ignored local-only web-viewer-sample/s2-r6.local/ui-output/**/trace.zip",
-      "sha256": "1929531f95766edb41e90eac13ec78df008e4c17000ca5bb93fb6124af44cb31"
+      "storage": "ignored local-only web-viewer-sample/s2-r7.local/ui-output/**/trace.zip",
+      "sha256": "C760D6302B5D7021A0BE571BB7393DBBB47C4E0CE6DE6FAFF8A350CE67B298EC",
+      "bytes": 1541703
     }
   ],
   "verticalSlice": {
@@ -193,19 +219,18 @@
     "runtime ID, conversion loading state or success state",
     "fixture registration or conversion success",
     "operator-token entry in the browser UI or a LAN browser-triggered conversion",
-    "governance-service health; this r6 runner intentionally launched only the coordinator authority needed by the slice",
+    "governance-service health; this r7 runner intentionally launched only the coordinator authority needed by the slice",
     "canonical Linux deployment",
     "3D viewer first frame, stage match or DataChannel acknowledgement"
   ],
   "knownGaps": [
     "The UI shell still labels canonical coordinator 8004 and governance 49102 while isolated evidence used coordinator 8005 and viewer 5180; runner result and trace provenance identify the tested endpoints.",
-    "The A1 screenshot visibly reports governance-service unreachable because this focused r6 runner did not launch governance-service; this is not claimed as a governance-runtime pass.",
-    "Attempt2 verified identity and ancestry immediately before a PID-based stop and later observed the original Process objects exited, but did not kill through those validated handles. Exact handle-bound ownership cleanup therefore remains unverified and blocks P4 completion.",
-    "GitNexus 1.6.9 detect-changes remains advisory UNKNOWN because exact-index rebuild failed on an internal invalid-UTF8 database error even though strict tracked and ignored file scans found no invalid UTF-8.",
-    "Canonical Linux deployment was not reached because this run is HELD at P4; a successor run must obtain new exact-head evidence before PR or deployment work resumes."
+    "The A1 screenshot visibly reports governance-service unreachable because this focused r7 runner did not launch governance-service; this is not claimed as a governance-runtime pass.",
+    "GitNexus 1.6.9 was rebuilt for the exact eb6e73d checkout and detect-changes reported MEDIUM impact across 10 files, 33 symbols and one expected flow; this is scoped impact evidence rather than runtime proof.",
+    "Canonical Linux deployment remains pending until the branch is merged and the deploy-main-to-linux-test phase runs from freshly fetched origin/main."
   ],
   "rollback": {
-    "attempt1Quarantine": "web-viewer-sample/s2-r6.local/sensitive-quarantine.local/p4-attempt-1-secret-scan-lock",
+    "preBrowserFailureQuarantine": "web-viewer-sample/s2-r7.local/sensitive-quarantine.local/pre-browser-handle-precision-failure",
     "trackedEvidence": "restore these three tracked evidence files from the parent commit"
   }
 }
