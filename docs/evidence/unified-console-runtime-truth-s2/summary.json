@@ -10,6 +10,17 @@
   "subjectHead": "eb6e73dac45ee94aacb397a3c3dd72cb0e40f0a6",
   "subjectBase": "5d1186e6f798425c7948d0d422719c70e50b9d3d",
   "subjectHeadNote": "branch codex/openspec/unified-console-runtime-truth-s2 had merge-base exactly at freshly verified origin/main 5d1186e6f798425c7948d0d422719c70e50b9d3d; tracked worktree was clean before capture and in the independent post-run snapshot",
+  "evidenceContinuity": {
+    "runtimeSubjectHead": "eb6e73dac45ee94aacb397a3c3dd72cb0e40f0a6",
+    "firstTrackedEvidencePromotionCommit": "37a5a72a8a1e310747478308d39bdddab471220a",
+    "runtimeSubjectToFirstPromotionChangedFiles": [
+      "docs/evidence/unified-console-runtime-truth-s2/summary.json",
+      "docs/evidence/unified-console-runtime-truth-s2/unified-console-runtime-truth-s2-a1-workbench.png",
+      "docs/evidence/unified-console-runtime-truth-s2/unified-console-runtime-truth-s2-demo-control.png"
+    ],
+    "applicationOrE2eCodeChanged": false,
+    "interpretation": "Runtime, independent snapshot and GitNexus claims remain bound to eb6e73d. A later exact PR head is continuous with this runtime evidence only when an independent Git diff proves every post-subject change is evidence-only; this field does not claim that Playwright was rerun at an evidence-promotion commit."
+  },
   "worktree": "C:/Repos/active/iot/AI-BIM-governance.worktrees/unified-console-runtime-truth-s2",
   "authorization": "Owner explicitly authorized retaining the origin/main spec and continuing the successor run while preserving newer origin/main runtime truth.",
   "capturedAtUtc": {
