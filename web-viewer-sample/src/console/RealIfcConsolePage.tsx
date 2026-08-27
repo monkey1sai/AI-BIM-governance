@@ -19,6 +19,17 @@ type Lineage = Record<string, string>;
 const DASH = "—";
 const DEV_ROUTES_DISABLED_RUNTIME =
   "runtime: dev_routes_disabled (ENABLE_DEV_ROUTES=false；#demo-control 需後端啟用 dev routes)";
+const JOB_DERIVED_LINEAGE_KEYS = [
+  "lin-job-id",
+  "lin-conversion-job",
+  "lin-conversion-status",
+  "lin-download-status",
+  "lin-artifact-id",
+  "lin-usdc-url",
+  "lin-mapping",
+  "lin-session-id",
+  "lin-viewer-url",
+] as const;
 
 export function RealIfcConsolePage() {
   const [sources, setSources] = useState<IfcSource[]>([]);
@@ -34,20 +45,6 @@ export function RealIfcConsolePage() {
   const pollGenerationRef = useRef(0);
 
   const set = (k: string, v: unknown) => setLin((prev) => ({ ...prev, [k]: v == null || v === "" ? DASH : String(v) }));
-  const clearJobDerivedLineage = () => {
-    [
-      "lin-job-id",
-      "lin-conversion-job",
-      "lin-conversion-status",
-      "lin-download-status",
-      "lin-artifact-id",
-      "lin-usdc-url",
-      "lin-mapping",
-      "lin-session-id",
-      "lin-viewer-url",
-    ].forEach((k) => set(k, ""));
-    setViewerUrl("");
-  };
   const stop = () => {
     pollGenerationRef.current += 1;
     if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
@@ -73,7 +70,8 @@ export function RealIfcConsolePage() {
           setDevRoutesDisabled(true);
           setSources([]);
           setSelected("");
-          clearJobDerivedLineage();
+          JOB_DERIVED_LINEAGE_KEYS.forEach((k) => set(k, ""));
+          setViewerUrl("");
           setRuntime(DEV_ROUTES_DISABLED_RUNTIME);
           return;
         }
@@ -99,6 +97,7 @@ export function RealIfcConsolePage() {
       setRuntime("runtime: load_sources_failed: " + (e instanceof Error ? e.message : String(e)));
     }
   }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { void loadSources(); }, []);
 
   async function enrich(job: Record<string, unknown>, pollGeneration: number) {
@@ -160,7 +159,8 @@ export function RealIfcConsolePage() {
     set("lin-source-filename", meta.filename);
     set("lin-source-size", (meta.size_bytes || 0) + " bytes");
     set("lin-model-version", mv);
-    clearJobDerivedLineage();
+    JOB_DERIVED_LINEAGE_KEYS.forEach((k) => set(k, ""));
+    setViewerUrl("");
     setRuntime("runtime: registering");
     try {
       const r = await fetch(coordinatorUrl("/api/dev/ifc-sources/" + encodeURIComponent(selected) + "/register"), {
