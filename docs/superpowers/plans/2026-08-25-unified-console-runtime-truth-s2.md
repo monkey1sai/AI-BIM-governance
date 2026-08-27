@@ -1574,12 +1574,15 @@ cd "C:/Repos/active/iot/AI-BIM-governance.worktrees/unified-console-runtime-trut
 #### 5A. Browser E2E（Playwright）— dev routes 已關閉 UI 垂直切片＋T4 API 契約探針（原 Task 11）
 
 **Files:**
-- Create: `web-viewer-sample/e2e/dev-routes-disabled-operator-token.spec.ts`
+- Modify: `web-viewer-sample/e2e/dev-routes-disabled-operator-token.spec.ts`（兩個 UI tests；trace on）
+- Create: `web-viewer-sample/e2e/dev-routes-disabled-operator-token.api.spec.ts`（單一 API probe；trace/screenshot/video off）
 - 執行環境：branch coordinator `:8005`（本 worktree 最新碼）＋ Playwright webServer 起的 viewer `:5180`（`playwright.config.ts` 既有）。
 
-誠實邊界（寫進 spec 檔頭）：本切片 **沒有** `/ui` 殼層 operator token 輸入（spec §3 out of scope，另切片）——UI 面「LAN 觸發轉檔」仍是 403，屬 NOT BUILT，本 E2E 不假裝可觸發；T4 token 路徑／速率限制／lineage＋webhook 面不變改以 Playwright `request`（server-side）驗；UI 只驗 D3 的 404 誠實狀態。無 skip 偽綠：以 `E2E_REQUIRE_REAL=1` 跑，前置缺失＝fail。credential-bearing API probe 使用獨立 `apiTest` worker 並固定 `trace: "off"`；兩個 UI tests 保留 trace。
+誠實邊界（寫進 spec 檔頭）：本切片 **沒有** `/ui` 殼層 operator token 輸入（spec §3 out of scope，另切片）——UI 面「LAN 觸發轉檔」仍是 403，屬 NOT BUILT，本 E2E 不假裝可觸發；T4 token 路徑／速率限制／lineage＋webhook 面不變改以 Playwright `request`（server-side）驗；UI 只驗 D3 的 404 誠實狀態。無 skip 偽綠：以 `E2E_REQUIRE_REAL=1` 跑，前置缺失＝fail。credential-bearing API probe 使用獨立 `.api.spec.ts` 檔案與 worker scope，並固定 `trace: "off"`、`screenshot: "off"`、`video: "off"`；兩個 UI tests 留在原檔並明確 `trace: "on"`。
 
 - [ ] **Step 1: 寫 spec**
+
+> **r6 executable correction（2026-08-27）**：下方單檔 code fence 是歷史草稿，不再是可執行 source。現行 source of truth 是上述兩檔：UI 檔只含兩個 browser tests；API 檔只含一個 token probe，並各自 fail closed preflight。正式 discovery 必須精確得到兩檔共 3 tests。
 
 ```ts
 import { test, expect, type APIRequestContext } from "@playwright/test";
@@ -1700,10 +1703,10 @@ test.describe("slice 2：dev routes 已關閉（UI 誠實）＋ T4 operator toke
 - [ ] **Step 3: 跑 E2E（`E2E_REQUIRE_REAL=1`：skip 即 fail；token 不落 trace）**
 
 ```bash
-cd "C:/Repos/active/iot/AI-BIM-governance.worktrees/unified-console-runtime-truth-s2/web-viewer-sample" && test -n "${E2E_DEV_AUTH_TOKEN:-}" && E2E_COORDINATOR_BASE_URL=http://127.0.0.1:8005 E2E_REQUIRE_REAL=1 npx playwright test --config=s2-r5.local/playwright.config.ts e2e/dev-routes-disabled-operator-token.spec.ts
+cd "C:/Repos/active/iot/AI-BIM-governance.worktrees/unified-console-runtime-truth-s2/web-viewer-sample" && test -n "${E2E_DEV_AUTH_TOKEN:-}" && E2E_COORDINATOR_BASE_URL=http://127.0.0.1:8005 E2E_REQUIRE_REAL=1 npx playwright test --config=s2-r5.local/playwright.config.ts e2e/dev-routes-disabled-operator-token.spec.ts e2e/dev-routes-disabled-operator-token.api.spec.ts
 ```
 
-預期輸出：`3 passed`（`#demo-control`、`#a1-workbench`、API 探針三個 test；`#conv`／`#minio` 案例已隨 Task 9 HELD 移除）；`artifacts/e2e/` 產生兩張 UI 截圖與兩條 UI traces，API probe 因 credential header 固定不產 trace。若回 `Executable doesn't exist … chromium`，先 `npx playwright install chromium` 再重跑。若 preflight fail 訊息出現（且 exit 1），依訊息修正 Step 2 的 env 後重跑；不得移除 `E2E_REQUIRE_REAL`、不得為 API probe 開啟 trace。
+預期輸出：兩個明確檔案共 `3 passed`（`#demo-control`、`#a1-workbench`、API 探針；`#conv`／`#minio` 案例已隨 Task 9 HELD 移除）；`artifacts/e2e/` 產生兩張 UI 截圖，UI output 恰有兩條 trace，API output 為 0 trace／0 screenshot／0 video。若回 `Executable doesn't exist … chromium`，先 `npx playwright install chromium` 再重跑。若 preflight fail 訊息出現（且 exit 1），依訊息修正 Step 2 的 env 後重跑；不得移除 `E2E_REQUIRE_REAL`、不得為 API probe 開啟 trace。
 
 - [ ] **Step 4: 確認 worktree 未被 runtime 檔污染**
 
