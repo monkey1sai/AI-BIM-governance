@@ -69,13 +69,20 @@ Required when changed paths can alter Windows platform behavior. The tier is mac
 
 ## Self-Referential Bootstrap
 
-Required when the PR changes the verification mechanism itself (deploy path / evidence harness / gate script). Rule: `docs/agents/self-referential-bootstrap.md`. Open ledger debt in `scripts/self-referential-bootstrap-ledger.json` blocks further mechanism PRs until fixpoint closure.
+Required when the PR changes the verification mechanism itself (deploy path /
+evidence harness / gate script). Rule:
+`docs/agents/self-referential-bootstrap.md`. On a Lean Governance base the
+ledger is a closed historical archive: declare `no`, keep it unchanged, and
+treat the classifier output as advisory. The tuple-bound
+`owner-authorized-migration` value exists only for PR #704.
 
 | Item | Result |
 |---|---|
 | Self-referential bootstrap | yes / no |
-| Bootstrap ledger entry | entry id, or `not applicable` when `no` |
-| Bootstrap reason | concrete mechanism gap (>=30 chars), or `not applicable` when `no` |
+| Lean migration owner message | `not applicable`, or the exact #704 owner-message SHA-256/byte tuple |
+| Current candidate head | exact 40-character PR head SHA for `owner-authorized-migration` |
+| Bootstrap ledger entry | `not applicable` on a Lean Governance base |
+| Bootstrap reason | `not applicable` on a Lean Governance base |
 
 ## Validation
 

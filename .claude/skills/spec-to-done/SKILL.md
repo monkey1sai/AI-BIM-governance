@@ -64,6 +64,27 @@ closeoutTaskIds `evidence-closeout` 必填:明確且不重複的 task IDs(禁 wi
 maxAgentCalls=40; maxP5VerifierBatches=2; maxP5Rounds=2; maxEvidenceAttempts=2
 ```
 
+`resume`、retry、換 session／CLI 永遠不得重設上述 counter。唯一合法例外是前一行已是有效
+`HELD@P<n> reason=run_budget_exhausted`、至少一個固定 counter 精確到頂，且 owner 對舊 state tuple 與
+fresh descendant worktree 明確啟動**新 run**。先用唯讀命令判讀，不得靠聊天記憶猜測：
+
+```powershell
+node .claude/skills/spec-to-done/append-new-run.mjs status --state <absolute-state-path> --json
+```
+
+只有 exact owner message 已存在時，才可呼叫同檔 `append`；不得手寫、copy/paste 或一般 append
+`NEW_RUN@P0`。`--git-exe` 只能選 owner 安裝的 system Git：Windows 的
+`C:\Program Files\Git\{cmd,bin,mingw64\bin}\git.exe`，或 POSIX 的 `/usr/bin/git`／`/usr/local/bin/git`；
+不得使用 `Get-Command git`、PATH proxy、repo 內工具或 caller-writable binary。helper 會保留舊 state 的每個 byte，
+綁定舊全檔 SHA-256/bytes/checkpoint count、terminal line hash、舊/新 spec/branch/worktree/HEAD ancestry、
+Git executable path/hash/size/trust class、git-dir/common-dir 與 owner message SHA-256/bytes，取得 exclusive lock 後
+atomic replace 並立即用 canonical validator readback。`ownerProvenance=sha256-tuple-binding-not-digital-signature`
+只是可稽核 tuple binding，**不是數位簽章或 owner 身分驗證**；coordinator 仍須親眼確認當輪 owner 訊息。
+`status --json` 會列出 `nextAction` 與 `appendRequiredArguments`；不得省略、補猜或從舊對話沿用值。
+成功 append 後產生新的 `runSequence`，三個 counter 依 machine contract 歸零，plan/task/PR/run/evidence
+欄位清空；歷史 ledger/hash 不刪不改。`NEW_RUN@P0` 只建立 P0 rollback point，不代表任何 P0–P7
+gate 已通過。
+
 `remainingAgentCalls=maxAgentCalls-agentCalls.used` 必須傳入每個 `std-*` / `fu-*` workflow；回傳的
 `agentCallsUsed` 立即累加後才可決定下一步。P6 每次 `ship-item` workflow 呼叫另計 1 call。任何計數到頂、
 workflow 試圖超額、或 resume 缺少可信計數，一律 fail-closed，不可用新 session / 新 run ID 歸零。
@@ -269,7 +290,7 @@ P1 內含 plan 四軸 review(Completeness/Spec Alignment/Task Decomposition/Buil
 |---|---|---|
 | `bad_args` | 任一 std-* / fu-generic(必填 args/SHA/domainContext 缺、malformed 或被字串化) | 修正 args 為正確 object；只在對應 run/P5 額度內重呼 |
 | `bad_findings` | P5 registry 缺欄、重複 id、q 過長、型別錯或 suspectFile 非 canonical repo-relative path | 修正 bounded registry；只在 P5 round 尚有額度時重呼，不得丟棄 finding 或灌 review 全文 |
-| `run_budget_exhausted` | 任一 phase 的 agentCalls / P5 / evidence 上限已到，或 findings >32 | **HELD**；拆小 change 或由使用者明確啟動新 run，禁止 resume 靜默歸零 |
+| `run_budget_exhausted` | 任一 phase 的 agentCalls / P5 / evidence 上限已到，或 findings >32 | **HELD**；一般 resume 永不可歸零。只有 exact owner 啟動後由 `append-new-run.mjs` 建立 machine-bound `NEW_RUN@P0`；手寫或複製 boundary 一律無效 |
 | `resume_state_invalid` | state 缺必要欄位、假 run ID、計數器/HEAD 不可信或 schema 漂移 | **HELD**；依 git/artifact 建立新格式 checkpoint，通過 validator 前不啟 agent |
 | `scope_drift` | evidence-closeout 需要 production/UI/contract/config 變更 | **HELD**；改用另一個已核准 full change，不得在 closeout 內擴張 |
 | `evidence_stale` / `evidence_not_closing` | P5 worktree/HEAD/target/base/subject identity 漂移、空 review range，或 closeout evidence 未綁目前 HEAD/兩次仍未閉合 | 丟棄舊 verdict；fetch/commit/clean 後重取完整 SHA；只在剩餘額度內重跑，禁止第三輪自動重試 |
@@ -315,10 +336,14 @@ HELD@P<n> | reason=<held 值> | spec=<specPath/changePath> | slug=<slug> | userF
 
 ## Resume(使用者一句話重入;支援跨 session)
 
+- 任何 resume 先跑 `append-new-run.mjs status --state <absolute-state-path> --json`。若
+  `canStartNewRun=true`，目前 audit chain 仍是 terminal HELD；沒有當輪 exact owner authorization 時只回報
+  所需 tuple，不得啟 agent。取得 authorization 後也只能由該 helper 的 `append` action 遷移到 freshly
+  fetched main descendant worktree，再對 canonical state 跑 validator；不得修改或截斷舊 state。
 - **State 檔(durable,跨 session 唯一座標)**:`agent-contracts/spec-to-done.contract.json` 固定 canonical path
   `artifacts/spec-to-done/{slug}-state.md`。每個 phase 完成或 HELD 時，先把 durable history 完整複製到
   sibling temp，再 append 候選行（禁止只寫單一候選行），執行
-  `node .claude/skills/spec-to-done/validate-state.mjs --state <temp> --platform claude --git-exe <(Get-Command git).Source 的絕對路徑> --expected-head <git SHA> --expected-worktree <worktreeRoot> --expected-agent-limit 40 --expected-p5-limit 2 --expected-evidence-limit 2 --trusted-main-ref refs/heads/main`；exit 0 才把候選 append 到 canonical durable state。`--trusted-main-ref` 只是 machine contract 所定 remote ref 的固定 marker，不接受 local tracking ref。validator 會載入 machine contract，檢查完整 history 的每一行、所有相鄰 transition、實際 Git HEAD、dirty/staged/untracked、rename source，並只在 DONE@P7 獨立 live-resolve 固定 trusted remote、驗 remote main SHA、prHead ancestry 與 same tree。若既有 history 無法通過行或 transition 驗證，只能追加 counters 全到上限的 `HELD ... reason=resume_state_invalid` 作終端封存；該行不能用來繼續 progress，必須先修復或正規化歷史。
+  `node .claude/skills/spec-to-done/validate-state.mjs --state <temp> --platform claude --git-exe <上述 system Git 的絕對路徑> --expected-head <git SHA> --expected-worktree <worktreeRoot> --expected-agent-limit 40 --expected-p5-limit 2 --expected-evidence-limit 2 --trusted-main-ref refs/heads/main`；若 allowlist 內沒有 caller 不可寫的 system Git，回 `host_env_blocked`，不得改傳其他 binary。exit 0 才把候選 append 到 canonical durable state。`--trusted-main-ref` 只是 machine contract 所定 remote ref 的固定 marker，不接受 local tracking ref。validator 會清除 ambient `GIT_*`／config injection，載入 machine contract，檢查完整 history 的每一行、所有相鄰 transition、實際 Git executable 與 git-dir/common-dir identity、HEAD、dirty/staged/untracked、rename source，並只在 DONE@P7 獨立 live-resolve 固定 trusted remote、驗 remote main SHA、prHead ancestry 與 same tree。若既有 history 無法通過行或 transition 驗證，只能追加 counters 全到上限的 `HELD ... reason=resume_state_invalid` 作終端封存；該行不能用來繼續 progress，必須先修復或正規化歷史。
 - 「繼續 spec-to-done」→ 先對 durable state 跑同一 validator；通過後還原全部 args 與累計計數，只重跑該 phase：
   `Workflow({name:<phase>, args:{...還原,remainingAgentCalls:40-agentCalls.used}, resumeFromRunId:<該 phase 實際 runId>})`。
   state HEAD 與目前 worktree HEAD 不同即 `evidence_stale`；不得靠 resumeFromRunId 或新 session 跳過。
@@ -335,7 +360,9 @@ HELD@P<n> | reason=<held 值> | spec=<specPath/changePath> | slug=<slug> | userF
 state 檔是跨 session / 跨 CLI 的唯一 resume 座標；新寫入的行一律遵守下列詞彙。歷史行保留作 audit，
 但必須先正規化並通過 validator，禁止直接「盡力解析」後啟 agent：
 
-- **行首 token 只允許四種**:`HELD@P<n>`(hold block 格式)、`DONE@P<n>`(phase 完成;task 級進度寫進 `taskIndex=`/`commit=` 欄位,不另創行首)、`RESUMED@P<n>`(使用者重入,附 `decision=`)、`AUTHORIZATION@P<n>`(簽核委派,見下)。
+- **行首 token 只允許五種**:`HELD@P<n>`、`DONE@P<n>`、`RESUMED@P<n>`、
+  `AUTHORIZATION@P<n>`，以及只准 `append-new-run.mjs` 生成的 `NEW_RUN@P0`。後者不是 resume；它是
+  owner-only 新 run boundary，且只能直接接在有效 `run_budget_exhausted` terminal 後。
 - **`reason=` 的 held 值 MUST 取自 `agent-contracts/spec-to-done.contract.json` 的 closed enum**；本檔處置表不是完整名單。不得發明表外值、不得把多個值併成複合值（一行一個主因，其餘寫 `heldDetail`／診斷欄）。host/環境層阻斷一律用 `host_env_blocked`。
 - **欄位鍵固定 hold block 契約**，包含 `head/executionMode/closeoutTaskIds/runIds/agentCalls/p5Rounds/evidenceAttempts/evidenceHead` 與中文鍵
   (`診斷=`、`需要使用者決定=`)；不得混入同義欄位(`diagnosis=` / `need=` / `stateSchema=`)。

@@ -1,10 +1,18 @@
 #!/usr/bin/env node
 import fs from 'node:fs'
 import path from 'node:path'
+import crypto from 'node:crypto'
 import { spawnSync } from 'node:child_process'
+import {
+  assertTerminalP7Facts,
+  gitInvocationArguments,
+  parseTrustedRemoteMainResult,
+  resolveTrustedGit,
+  sanitizedGitEnvironment,
+} from './trusted-git.mjs'
 
 const MACHINE_CONTRACT_URL = new URL('../../../agent-contracts/spec-to-done.contract.json', import.meta.url)
-const STATE_PREFIX = /^(HELD|DONE|RESUMED|AUTHORIZATION)@(P\d+)$/
+const STATE_PREFIX = /^(HELD|DONE|RESUMED|AUTHORIZATION|NEW_RUN)@(P\d+)$/
 const MAX_AGENT_CALLS = 40
 const MAX_P5_ROUNDS = 2
 const MAX_EVIDENCE_ATTEMPTS = 2
@@ -18,10 +26,35 @@ const CONTRACT_V1_TERMINAL_EVIDENCE = {
   merge_commit_equals_remote_main: 'required',
   pr_head_and_merge_commit_same_tree: 'required',
 }
+const CONTRACT_V1_NEW_RUN_BOUNDARY = {
+  schema_version: 'spec-to-done-new-run/v1',
+  token: 'NEW_RUN@P0',
+  required_previous_reason: 'run_budget_exhausted',
+  owner_provenance: 'sha256-tuple-binding-not-digital-signature',
+  git_identity: {
+    executable_policy: 'system-owned-read-only',
+    executable_path: 'required',
+    executable_sha256: 'required',
+    executable_bytes: 'required',
+    git_directory: 'required',
+    git_common_directory: 'required',
+  },
+  counter_resets: { agentCalls: '0/40', p5Rounds: '0/2', evidenceAttempts: '0/2' },
+  field_resets: { planPath: '', taskIndex: '0', prNumber: '', runIds: 'none', evidenceHead: '' },
+}
 const COMMON_FIELDS = [
   'spec', 'slug', 'userFacing', 'dateStamp', 'branch', 'worktree', 'head', 'executionMode',
   'closeoutTaskIds', 'planPath', 'taskIndex', 'prNumber', 'runIds', 'agentCalls', 'p5Rounds',
   'evidenceAttempts', 'evidenceHead', '診斷', '需要使用者決定',
+]
+const NEW_RUN_FIELDS = [
+  'boundarySchema', 'runSequence', 'newRunId',
+  'previousStateSha256', 'previousStateBytes', 'previousCheckpointCount',
+  'previousTerminalSha256', 'previousSpec', 'previousSlug', 'previousBranch',
+  'previousWorktree', 'previousHead', 'ownerProvenance',
+  'gitExecutablePath', 'gitExecutableSha256', 'gitExecutableBytes', 'gitTrustClass',
+  'gitDirectory', 'gitCommonDirectory',
+  'ownerMessageSha256', 'ownerMessageBytes', 'ownerTupleSha256',
 ]
 const AUTH_SCOPES = new Set(['impact-signoff', 'detect-signoff', 'review-signoff', 'repo-workflow-signoff'])
 const REQUIRED_AUTH_EXCLUSIONS = new Set([
@@ -37,9 +70,11 @@ const ALLOWED_PHASE_TRANSITIONS = new Set([
   'P7>P7',
 ])
 let TRUSTED_GIT_EXE = null
+let TRUSTED_GIT_IDENTITY = null
 let ALLOWED_PHASES = null
 let ALLOWED_HELD_REASONS = null
 let TERMINAL_EVIDENCE = null
+let NEW_RUN_BOUNDARY = null
 const NON_RESUMABLE_HELD_REASONS = new Set([
   'branch_requires_separate_authorization',
   'trusted_elevated_authorization_unavailable',
@@ -67,6 +102,7 @@ const loadMachineContract = () => {
   const durableState = contract && typeof contract === 'object' ? contract.durable_state : null
   const phases = contract && contract.phases
   const reasons = durableState && durableState.held_reasons
+  const newRunBoundary = durableState && durableState.new_run_boundary
   const terminalEvidence = contract && contract.terminal_evidence
   if (
     !contract || typeof contract !== 'object' ||
@@ -75,6 +111,7 @@ const loadMachineContract = () => {
     !Array.isArray(phases) || JSON.stringify(phases) !== JSON.stringify(CONTRACT_V1_PHASES) ||
     !Array.isArray(reasons) || reasons.length === 0 || new Set(reasons).size !== reasons.length ||
     reasons.some((reason) => !/^[a-z][a-z0-9_]*$/.test(reason)) ||
+    JSON.stringify(newRunBoundary) !== JSON.stringify(CONTRACT_V1_NEW_RUN_BOUNDARY) ||
     !terminalEvidence ||
     JSON.stringify(terminalEvidence) !== JSON.stringify(CONTRACT_V1_TERMINAL_EVIDENCE)
   ) {
@@ -83,6 +120,7 @@ const loadMachineContract = () => {
   ALLOWED_PHASES = new Set(phases)
   ALLOWED_HELD_REASONS = new Set(reasons)
   TERMINAL_EVIDENCE = terminalEvidence
+  NEW_RUN_BOUNDARY = newRunBoundary
 }
 
 const parseCli = (argv) => {
@@ -106,6 +144,57 @@ const parsePositiveInteger = (value, name) => {
   }
   return Number(value)
 }
+
+const sha256 = (value) => crypto.createHash('sha256').update(value).digest('hex')
+
+const parseExactInteger = (value, name) => {
+  if (!/^(0|[1-9]\d*)$/.test(String(value || ''))) {
+    reject('resume_state_invalid', `${name} must be a canonical non-negative integer`)
+  }
+  return Number(value)
+}
+
+const newRunSeed = (fields) => ({
+  boundarySchema: fields.boundarySchema,
+  runSequence: parseExactInteger(fields.runSequence, 'runSequence'),
+  previousStateSha256: fields.previousStateSha256,
+  previousStateBytes: parseExactInteger(fields.previousStateBytes, 'previousStateBytes'),
+  previousCheckpointCount: parseExactInteger(fields.previousCheckpointCount, 'previousCheckpointCount'),
+  previousTerminalSha256: fields.previousTerminalSha256,
+  previousSpec: fields.previousSpec,
+  previousSlug: fields.previousSlug,
+  previousBranch: fields.previousBranch,
+  previousWorktree: fields.previousWorktree,
+  previousHead: fields.previousHead,
+  gitExecutablePath: fields.gitExecutablePath,
+  gitExecutableSha256: fields.gitExecutableSha256,
+  gitExecutableBytes: parseExactInteger(fields.gitExecutableBytes, 'gitExecutableBytes'),
+  gitTrustClass: fields.gitTrustClass,
+  gitDirectory: fields.gitDirectory,
+  gitCommonDirectory: fields.gitCommonDirectory,
+  spec: fields.spec, slug: fields.slug, userFacing: fields.userFacing,
+  branch: fields.branch, worktree: fields.worktree, head: fields.head,
+  executionMode: fields.executionMode, closeoutTaskIds: fields.closeoutTaskIds,
+  dateStamp: fields.dateStamp,
+  ownerMessageSha256: fields.ownerMessageSha256,
+  ownerMessageBytes: parseExactInteger(fields.ownerMessageBytes, 'ownerMessageBytes'),
+})
+
+const expectedNewRunId = (fields) => {
+  const digest = sha256(JSON.stringify(newRunSeed(fields)))
+  return `run-${fields.runSequence}-${digest.slice(0, 16)}`
+}
+
+const expectedOwnerTupleSha256 = (fields) => sha256(JSON.stringify({
+  ...newRunSeed(fields),
+  newRunId: fields.newRunId,
+  ownerProvenance: fields.ownerProvenance,
+}))
+
+const canonicalNewRunLine = (fields) => `NEW_RUN@P0 | ${[
+  ...COMMON_FIELDS,
+  ...NEW_RUN_FIELDS,
+].map((key) => `${key}=${fields[key]}`).join(' | ')}`
 
 const parseCounter = (raw, name, expectedLimit) => {
   const match = /^(\d+)\/(\d+)$/.exec(raw || '')
@@ -135,6 +224,25 @@ const parseFields = (segments) => {
     if (Object.hasOwn(fields, alias)) reject('resume_state_invalid', `noncanonical state key: ${alias}`)
   }
   return fields
+}
+
+const stateRecords = (buffer) => {
+  const text = buffer.toString('utf8')
+  if (!Buffer.from(text, 'utf8').equals(buffer)) {
+    reject('resume_state_invalid', 'state file must be valid UTF-8')
+  }
+  const records = []
+  let start = 0
+  for (let index = 0; index <= buffer.length; index += 1) {
+    if (index !== buffer.length && buffer[index] !== 0x0a) continue
+    let end = index
+    if (end > start && buffer[end - 1] === 0x0d) end -= 1
+    const rawLine = buffer.subarray(start, end)
+    const line = rawLine.toString('utf8').trim()
+    if (line) records.push({ line, rawLine, start })
+    start = index + 1
+  }
+  return records
 }
 
 const requireFields = (fields, required) => {
@@ -207,79 +315,76 @@ const isEvidenceOnlyPath = (value, fields) => {
   )
 }
 
-const validateTrustedGit = (gitExe, expectedWorktree) => {
-  if (!path.isAbsolute(gitExe || '') || !fs.existsSync(gitExe)) {
-    reject('resume_state_invalid', '--git-exe must name an existing absolute Git executable')
+const trustedGit = (gitExe, expectedWorktree) => {
+  try {
+    const identity = resolveTrustedGit(gitExe, expectedWorktree)
+    if (identity.trustClass !== 'system-owned-read-only') {
+      reject('host_env_blocked', 'validator requires a system-owned, read-only Git executable')
+    }
+    return identity
+  } catch (error) {
+    if (error instanceof ContractError) throw error
+    reject('host_env_blocked', error.message)
   }
-  if (!fs.existsSync(expectedWorktree) || !fs.statSync(expectedWorktree).isDirectory()) {
-    reject('resume_state_invalid', `expected worktree is not a directory: ${expectedWorktree}`)
-  }
-  const resolvedGit = fs.realpathSync(gitExe)
-  const resolvedWorktree = fs.realpathSync(expectedWorktree)
-  if (!['git', 'git.exe'].includes(path.basename(resolvedGit).toLowerCase())) {
-    reject('resume_state_invalid', '--git-exe basename must be git or git.exe')
-  }
-  if (isWithinPath(resolvedGit, resolvedWorktree)) {
-    reject('resume_state_invalid', '--git-exe must resolve outside the governed worktree')
-  }
-  return { resolvedGit, resolvedWorktree }
 }
 
-const runGit = (worktree, gitArgs) => spawnSync(TRUSTED_GIT_EXE, gitArgs, {
-  cwd: worktree,
-  encoding: 'utf8',
-  windowsHide: true,
-  maxBuffer: 1024 * 1024,
-})
-
-const sanitizedRemoteGitEnvironment = () => {
-  const env = { ...process.env }
-  const unsafeExactKeys = new Set([
-    'CURL_CA_BUNDLE',
-    'SSL_CERT_FILE',
-    'SSL_CERT_DIR',
-  ])
-  for (const key of Object.keys(env)) {
-    const normalizedKey = key.toUpperCase()
-    if (normalizedKey.startsWith('GIT_') || unsafeExactKeys.has(normalizedKey)) delete env[key]
+const runGit = (worktree, gitArgs) => {
+  let current
+  try {
+    current = resolveTrustedGit(TRUSTED_GIT_EXE, worktree)
+  } catch (error) {
+    return { error }
   }
-  const gitDirectory = path.dirname(TRUSTED_GIT_EXE)
-  env.GIT_CONFIG_GLOBAL = process.platform === 'win32' ? 'NUL' : '/dev/null'
-  env.GIT_CONFIG_SYSTEM = process.platform === 'win32' ? 'NUL' : '/dev/null'
-  env.GIT_CONFIG_NOSYSTEM = '1'
-  env.GIT_CEILING_DIRECTORIES = gitDirectory
-  env.GIT_DISCOVERY_ACROSS_FILESYSTEM = '0'
-  env.GIT_TERMINAL_PROMPT = '0'
-  return env
+  if (TRUSTED_GIT_IDENTITY && (
+    current.resolvedGit !== TRUSTED_GIT_IDENTITY.resolvedGit ||
+    current.executableSha256 !== TRUSTED_GIT_IDENTITY.executableSha256 ||
+    current.executableBytes !== TRUSTED_GIT_IDENTITY.executableBytes ||
+    current.trustClass !== TRUSTED_GIT_IDENTITY.trustClass
+  )) {
+    return { error: new Error('trusted Git executable identity changed during validation') }
+  }
+  return spawnSync(
+    current.resolvedGit,
+    gitInvocationArguments(gitArgs),
+    {
+      cwd: worktree,
+      env: sanitizedGitEnvironment(current.resolvedGit),
+      encoding: 'utf8',
+      windowsHide: true,
+      maxBuffer: 1024 * 1024,
+    },
+  )
 }
 
 const resolveTrustedRemoteMain = () => {
   const gitDirectory = path.dirname(TRUSTED_GIT_EXE)
-  const result = spawnSync(TRUSTED_GIT_EXE, [
-    '-c', 'http.sslVerify=true',
-    'ls-remote', '--exit-code', '--refs',
-    TERMINAL_EVIDENCE.trusted_remote_url,
-    TERMINAL_EVIDENCE.remote_main_ref,
-  ], {
+  const result = spawnSync(
+    TRUSTED_GIT_EXE,
+    gitInvocationArguments([
+      '-c', 'http.sslVerify=true',
+      'ls-remote', '--exit-code', '--refs',
+      TERMINAL_EVIDENCE.trusted_remote_url,
+      TERMINAL_EVIDENCE.remote_main_ref,
+    ]),
+    {
     cwd: gitDirectory,
-    env: sanitizedRemoteGitEnvironment(),
+      env: sanitizedGitEnvironment(TRUSTED_GIT_EXE),
     encoding: 'utf8',
     windowsHide: true,
     timeout: 30_000,
     maxBuffer: 16 * 1024,
-  })
-  if (result.error || result.status !== 0) {
-    reject('evidence_stale', `could not resolve live remote ${TERMINAL_EVIDENCE.remote_main_ref} from the fixed trusted remote`)
+    },
+  )
+  try {
+    return parseTrustedRemoteMainResult({
+      error: result.error,
+      status: result.status,
+      stdout: result.stdout,
+      expectedRef: TERMINAL_EVIDENCE.remote_main_ref,
+    })
+  } catch (error) {
+    reject('evidence_stale', error.message)
   }
-  const lines = result.stdout.split(/\r?\n/).filter((line) => line.length > 0)
-  if (lines.length !== 1) {
-    reject('evidence_stale', 'live trusted remote resolution returned malformed or multiple refs')
-  }
-  const match = /^([0-9a-f]{40})\t(refs\/heads\/main)$/i.exec(lines[0])
-  if (!match || match[2] !== TERMINAL_EVIDENCE.remote_main_ref) {
-    reject('evidence_stale', 'live trusted remote resolution did not return the exact remote main ref')
-  }
-  return match[1].toLowerCase()
 }
 
 const gitPathList = (fields, gitArgs, held, detail) => {
@@ -300,6 +405,38 @@ const validateActualHead = (fields, expectedHead) => {
   const actualHead = actual.stdout.trim().toLowerCase()
   if (actualHead !== fields.head.toLowerCase() || actualHead !== expectedHead.toLowerCase()) {
     reject('evidence_stale', `actual worktree HEAD ${actualHead || '<empty>'} does not match state/expected HEAD`)
+  }
+}
+
+const validateActualBranch = (fields) => {
+  const actual = runGit(fields.worktree, ['branch', '--show-current'])
+  if (actual.error || actual.status !== 0 || !actual.stdout.trim() ||
+      actual.stdout.trim() !== fields.branch) {
+    reject('resume_state_invalid', 'NEW_RUN branch does not match the attached target worktree')
+  }
+}
+
+const validateActualRepositoryIdentity = (fields) => {
+  const gitDirectory = runGit(fields.worktree, ['rev-parse', '--absolute-git-dir'])
+  const gitCommonDirectory = runGit(fields.worktree, ['rev-parse', '--git-common-dir'])
+  if (gitDirectory.error || gitDirectory.status !== 0 ||
+      gitCommonDirectory.error || gitCommonDirectory.status !== 0) {
+    reject('resume_state_invalid', 'could not resolve the target Git repository identity')
+  }
+  const actualGitDirectory = gitDirectory.stdout.trim()
+  const rawGitCommonDirectory = gitCommonDirectory.stdout.trim()
+  const actualGitCommonDirectory = path.isAbsolute(rawGitCommonDirectory)
+    ? rawGitCommonDirectory
+    : path.resolve(fields.worktree, rawGitCommonDirectory)
+  for (const [label, actual, expected] of [
+    ['Git directory', actualGitDirectory, fields.gitDirectory],
+    ['Git common directory', actualGitCommonDirectory, fields.gitCommonDirectory],
+  ]) {
+    if (!path.isAbsolute(actual) || !fs.existsSync(actual) || !fs.statSync(actual).isDirectory() ||
+        fs.lstatSync(actual).isSymbolicLink() ||
+        normalizedPath(fs.realpathSync(actual)) !== normalizedPath(expected)) {
+      reject('resume_state_invalid', `NEW_RUN ${label} does not match the owner-bound repository identity`)
+    }
   }
 }
 
@@ -339,16 +476,28 @@ const validateEvidenceAncestry = (fields, subjectHead = fields.head) => {
 const validateTerminalP7 = (fields) => {
   validateEvidenceAncestry(fields, fields.prHead)
   const ancestor = runGit(fields.worktree, ['merge-base', '--is-ancestor', fields.prHead, fields.mergeCommit])
-  if (ancestor.error || ancestor.status !== 0) {
-    reject('evidence_stale', 'P7 merge commit is not a proven descendant of the independently evidenced PR head')
+  const mergeDescendsFromPrHead = !ancestor.error && ancestor.status === 0
+  try {
+    assertTerminalP7Facts({
+      mergeDescendsFromPrHead,
+      liveRemoteMain: fields.mergeCommit,
+      mergeCommit: fields.mergeCommit,
+      prHeadAndMergeSameTree: true,
+    })
+  } catch (error) {
+    reject('evidence_stale', error.message)
   }
   const remoteMain = resolveTrustedRemoteMain()
-  if (remoteMain !== fields.mergeCommit.toLowerCase()) {
-    reject('evidence_stale', `P7 merge commit does not equal live remote ${TERMINAL_EVIDENCE.remote_main_ref}`)
-  }
   const sameTree = runGit(fields.worktree, ['diff', '--quiet', '--no-ext-diff', fields.prHead, fields.mergeCommit, '--'])
-  if (sameTree.error || sameTree.status !== 0) {
-    reject('evidence_stale', 'P7 merge commit tree differs from the independently evidenced PR head')
+  try {
+    assertTerminalP7Facts({
+      mergeDescendsFromPrHead,
+      liveRemoteMain: remoteMain,
+      mergeCommit: fields.mergeCommit,
+      prHeadAndMergeSameTree: !sameTree.error && sameTree.status === 0,
+    })
+  } catch (error) {
+    reject('evidence_stale', error.message)
   }
 }
 
@@ -409,10 +558,60 @@ const validateCheckpointKind = (checkpoint) => {
   }
 }
 
+const validateNewRunSchema = (checkpoint) => {
+  const { kind, phase, fields } = checkpoint
+  if (kind !== 'NEW_RUN') return
+  if (phase !== 'P0') reject('resume_state_invalid', 'NEW_RUN is valid only at P0')
+  requireFields(fields, NEW_RUN_FIELDS)
+  if (fields.boundarySchema !== NEW_RUN_BOUNDARY.schema_version ||
+      fields.ownerProvenance !== NEW_RUN_BOUNDARY.owner_provenance) {
+    reject('resume_state_invalid', 'NEW_RUN schema or owner provenance marker changed')
+  }
+  for (const [key, value] of Object.entries(NEW_RUN_BOUNDARY.counter_resets)) {
+    if (fields[key] !== value) reject('resume_state_invalid', `NEW_RUN must reset ${key}`)
+  }
+  for (const [key, value] of Object.entries(NEW_RUN_BOUNDARY.field_resets)) {
+    if (fields[key] !== value) reject('resume_state_invalid', `NEW_RUN must reset ${key}`)
+  }
+  for (const key of [
+    'previousStateSha256', 'previousTerminalSha256',
+    'gitExecutableSha256', 'ownerMessageSha256', 'ownerTupleSha256',
+  ]) {
+    if (!/^[0-9a-f]{64}$/.test(fields[key] || '')) {
+      reject('resume_state_invalid', `${key} must be lowercase SHA-256`)
+    }
+  }
+  if (!/^[0-9a-f]{40}$/.test(fields.previousHead || '') ||
+      !/^[0-9a-f]{40}$/.test(fields.head || '')) {
+    reject('resume_state_invalid', 'NEW_RUN old and new HEADs must be full lowercase SHAs')
+  }
+  if (parseExactInteger(fields.runSequence, 'runSequence') < 2 ||
+      parseExactInteger(fields.previousCheckpointCount, 'previousCheckpointCount') < 1 ||
+      parseExactInteger(fields.gitExecutableBytes, 'gitExecutableBytes') < 1 ||
+      parseExactInteger(fields.ownerMessageBytes, 'ownerMessageBytes') < 1) {
+    reject('resume_state_invalid', 'NEW_RUN sequence, checkpoint count, Git bytes, and owner bytes must be positive')
+  }
+  if (!path.isAbsolute(fields.gitExecutablePath || '') ||
+      !path.isAbsolute(fields.gitDirectory || '') ||
+      !path.isAbsolute(fields.gitCommonDirectory || '') ||
+      fields.gitTrustClass !== NEW_RUN_BOUNDARY.git_identity.executable_policy) {
+    reject('resume_state_invalid', 'NEW_RUN Git executable or repository identity is noncanonical')
+  }
+  if (fields.newRunId !== expectedNewRunId(fields) ||
+      fields.ownerTupleSha256 !== expectedOwnerTupleSha256(fields)) {
+    reject('resume_state_invalid', 'NEW_RUN identity or owner tuple binding is invalid')
+  }
+  if (fields['診斷'] !== 'owner-authorized-new-run-boundary' ||
+      fields['需要使用者決定'] !== 'none') {
+    reject('resume_state_invalid', 'NEW_RUN diagnostic fields are noncanonical')
+  }
+}
+
 const validateCheckpointSchema = (checkpoint, limits, platform = null) => {
   const { phase, fields } = checkpoint
   requireFields(fields, COMMON_FIELDS)
   validateCheckpointKind(checkpoint)
+  validateNewRunSchema(checkpoint)
   if (!/^[a-z0-9][a-z0-9._-]{0,119}$/.test(fields.slug) || !fields.spec || !fields.branch || !/^\d{4}-\d{2}-\d{2}$/.test(fields.dateStamp)) {
     reject('resume_state_invalid', 'bounded lowercase slug, spec, branch, and ISO dateStamp are required')
   }
@@ -459,10 +658,80 @@ const parseHistoricalCheckpoint = (line, limits) => {
   return validateCheckpointSchema(parseStateLine(line), limits)
 }
 
+const validateNewRunRawBinding = (checkpoint, record, recordIndex, buffer) => {
+  if (checkpoint.kind !== 'NEW_RUN') return
+  const { fields } = checkpoint
+  const previousBytes = parseExactInteger(fields.previousStateBytes, 'previousStateBytes')
+  if (previousBytes !== record.start || recordIndex < 1) {
+    reject('resume_state_invalid', 'NEW_RUN does not begin at the bound previous-state byte offset')
+  }
+  const previous = buffer.subarray(0, record.start)
+  if (sha256(previous) !== fields.previousStateSha256 ||
+      recordIndex !== parseExactInteger(fields.previousCheckpointCount, 'previousCheckpointCount')) {
+    reject('resume_state_invalid', 'NEW_RUN previous-state hash, size, or checkpoint count changed')
+  }
+  if (sha256(stateRecords(previous).at(-1).rawLine) !== fields.previousTerminalSha256) {
+    reject('resume_state_invalid', 'NEW_RUN previous terminal checkpoint hash changed')
+  }
+  const expectedSequence = stateRecords(previous)
+    .filter(({ line }) => line.startsWith('NEW_RUN@P0 |')).length + 2
+  if (parseExactInteger(fields.runSequence, 'runSequence') !== expectedSequence) {
+    reject('resume_state_invalid', 'NEW_RUN runSequence does not increment the audit chain')
+  }
+  if (record.line !== canonicalNewRunLine(fields)) {
+    reject('resume_state_invalid', 'NEW_RUN line is not in exact canonical field order')
+  }
+}
+
 const isMaxBudgetInvalidRecovery = (checkpoint) =>
   checkpoint.kind === 'HELD' &&
   checkpoint.fields.reason === 'resume_state_invalid' &&
   Object.values(checkpoint.counters).every((counter) => counter.used === counter.limit)
+
+const validateNewRunTransition = (previous, current) => {
+  if (previous.kind !== 'HELD' ||
+      previous.fields.reason !== NEW_RUN_BOUNDARY.required_previous_reason) {
+    reject('resume_state_invalid', 'NEW_RUN requires terminal HELD reason=run_budget_exhausted')
+  }
+  if (!Object.values(previous.counters).some(({ used, limit }) => used === limit)) {
+    reject('resume_state_invalid', 'NEW_RUN requires at least one exactly exhausted fixed counter')
+  }
+  const bindings = {
+    previousSpec: 'spec', previousSlug: 'slug', previousBranch: 'branch',
+    previousWorktree: 'worktree', previousHead: 'head',
+  }
+  for (const [currentKey, previousKey] of Object.entries(bindings)) {
+    if (current.fields[currentKey] !== previous.fields[previousKey]) {
+      reject('resume_state_invalid', `NEW_RUN changed bound ${currentKey}`)
+    }
+  }
+  for (const key of ['userFacing', 'executionMode', 'closeoutTaskIds']) {
+    if (current.fields[key] !== previous.fields[key]) {
+      reject('resume_state_invalid', `NEW_RUN changed inherited ${key}`)
+    }
+  }
+  if (!path.isAbsolute(previous.fields.worktree) || !path.isAbsolute(current.fields.worktree) ||
+      normalizedPath(previous.fields.worktree) === normalizedPath(current.fields.worktree)) {
+    reject('resume_state_invalid', 'NEW_RUN target must be a fresh worktree distinct from the prior worktree')
+  }
+  if (normalizedPath(path.dirname(previous.fields.worktree)) !==
+      normalizedPath(path.dirname(current.fields.worktree))) {
+    reject('resume_state_invalid', 'NEW_RUN target worktree must be a sibling of the prior worktree')
+  }
+  const oldSpec = relativeToWorktree(previous.fields.spec, previous.fields.worktree)
+  const newSpec = relativeToWorktree(current.fields.spec, current.fields.worktree)
+  const canonicalSpec = `openspec/changes/${current.fields.slug}`.toLowerCase()
+  if (!oldSpec || !newSpec || oldSpec.toLowerCase() !== canonicalSpec ||
+      newSpec.toLowerCase() !== canonicalSpec) {
+    reject('resume_state_invalid', 'NEW_RUN must migrate the same canonical OpenSpec change')
+  }
+  const ancestor = runGit(current.fields.worktree, [
+    'merge-base', '--is-ancestor', previous.fields.head, current.fields.head,
+  ])
+  if (ancestor.error || ancestor.status !== 0) {
+    reject('resume_state_invalid', 'NEW_RUN target HEAD is not a proven descendant of the prior run HEAD')
+  }
+}
 
 const validateParsedTransition = (previous, current) => {
   if (previous.kind === 'DONE' && previous.phase === 'P7') {
@@ -473,6 +742,13 @@ const validateParsedTransition = (previous, current) => {
   }
   if (isMaxBudgetInvalidRecovery(previous)) {
     reject('resume_state_invalid', 'max-budget resume_state_invalid recovery is terminal and cannot be extended')
+  }
+  if (current.kind === 'NEW_RUN') {
+    validateNewRunTransition(previous, current)
+    return
+  }
+  if (previous.kind === 'HELD' && previous.fields.reason === 'run_budget_exhausted') {
+    reject('resume_state_invalid', 'run_budget_exhausted can be extended only by owner-bound NEW_RUN@P0')
   }
   if (!ALLOWED_PHASE_TRANSITIONS.has(`${previous.phase}>${current.phase}`)) {
     reject('resume_state_invalid', `illegal phase transition: ${previous.phase} -> ${current.phase}`)
@@ -528,12 +804,17 @@ const validateParsedTransition = (previous, current) => {
   }
 }
 
-const validateAuditChain = (lines, current, limits) => {
-  if (lines.length < 2) return
+const validateAuditChain = (records, current, limits, buffer) => {
+  if (records.length < 2) {
+    validateNewRunRawBinding(current, records[0], 0, buffer)
+    return
+  }
   const historical = []
   try {
-    for (const line of lines.slice(0, -1)) {
-      historical.push(parseHistoricalCheckpoint(line, limits))
+    for (let index = 0; index < records.length - 1; index += 1) {
+      const parsed = parseHistoricalCheckpoint(records[index].line, limits)
+      validateNewRunRawBinding(parsed, records[index], index, buffer)
+      historical.push(parsed)
     }
     for (let index = 1; index < historical.length; index += 1) {
       validateParsedTransition(historical[index - 1], historical[index])
@@ -542,6 +823,7 @@ const validateAuditChain = (lines, current, limits) => {
     if (isMaxBudgetInvalidRecovery(current)) return
     reject('resume_state_invalid', 'previous checkpoint is invalid; append only a max-budget HELD@... reason=resume_state_invalid checkpoint')
   }
+  validateNewRunRawBinding(current, records.at(-1), records.length - 1, buffer)
   validateParsedTransition(historical.at(-1), current)
 }
 
@@ -551,6 +833,11 @@ const main = () => {
   const statePath = cli.state
   const platform = cli.platform
   const requiredCli = ['state', 'platform', 'git-exe', 'expected-head', 'expected-worktree', 'expected-agent-limit', 'expected-p5-limit', 'expected-evidence-limit', 'trusted-main-ref']
+  const allowedCli = new Set(requiredCli)
+  const unknownCli = Object.keys(cli).filter((key) => !allowedCli.has(key))
+  if (unknownCli.length) {
+    reject('resume_state_invalid', `unknown validator arguments: ${unknownCli.join(',')}`)
+  }
   const missingCli = requiredCli.filter((key) => !cli[key])
   if (missingCli.length || !['claude', 'codex', 'grok'].includes(platform)) {
     reject('resume_state_invalid', `missing or invalid validator arguments: ${missingCli.join(',') || 'platform'}`)
@@ -566,20 +853,38 @@ const main = () => {
   if (limits.agentCalls !== MAX_AGENT_CALLS || limits.p5Rounds !== MAX_P5_ROUNDS || limits.evidenceAttempts !== MAX_EVIDENCE_ATTEMPTS) {
     reject('resume_state_invalid', 'validator limits must be exactly agentCalls=40, p5Rounds=2, evidenceAttempts=2')
   }
-  const trusted = validateTrustedGit(cli['git-exe'], cli['expected-worktree'])
+  const trusted = trustedGit(cli['git-exe'], cli['expected-worktree'])
   TRUSTED_GIT_EXE = trusted.resolvedGit
+  TRUSTED_GIT_IDENTITY = trusted
   if (!fs.existsSync(statePath) || !fs.statSync(statePath).isFile()) {
     reject('resume_state_invalid', `state file not found: ${statePath}`)
   }
   if (fs.statSync(statePath).size > 1024 * 1024) reject('resume_state_invalid', 'state file exceeds the 1 MiB audit limit')
-  const lines = fs.readFileSync(statePath, 'utf8').split(/\r?\n/).map((line) => line.trim()).filter(Boolean)
-  if (!lines.length) reject('resume_state_invalid', 'state file has no non-empty lines')
-  if (lines.length > 500) reject('resume_state_invalid', 'state file exceeds the 500-checkpoint audit limit')
-  const current = validateCheckpointSchema(parseStateLine(lines.at(-1)), limits, platform)
+  const stateBuffer = fs.readFileSync(statePath)
+  const records = stateRecords(stateBuffer)
+  if (!records.length) reject('resume_state_invalid', 'state file has no non-empty lines')
+  if (records.length > 500) reject('resume_state_invalid', 'state file exceeds the 500-checkpoint audit limit')
+  const current = validateCheckpointSchema(parseStateLine(records.at(-1).line), limits, platform)
   const { kind, phase, fields, counters, closeoutTaskIds } = current
   if (!fields.worktree || !fs.existsSync(fields.worktree) || !fs.statSync(fields.worktree).isDirectory() ||
       normalizedPath(fs.realpathSync(fields.worktree)) !== normalizedPath(trusted.resolvedWorktree)) {
     reject('resume_state_invalid', `state worktree ${fields.worktree} does not match expected worktree ${cli['expected-worktree']}`)
+  }
+  if (kind === 'NEW_RUN') {
+    const canonicalState = path.join(fields.worktree, 'artifacts', 'spec-to-done', `${fields.slug}-state.md`)
+    if (normalizedPath(fs.realpathSync(statePath)) !== normalizedPath(canonicalState)) {
+      reject('resume_state_invalid', 'NEW_RUN must be stored at the canonical durable-state path')
+    }
+    if (normalizedPath(fields.gitExecutablePath) !== normalizedPath(TRUSTED_GIT_IDENTITY.resolvedGit)) {
+      reject('resume_state_invalid', 'NEW_RUN Git executable path does not match the current trusted executable')
+    }
+    if (fields.gitExecutableSha256 !== TRUSTED_GIT_IDENTITY.executableSha256 ||
+        Number(fields.gitExecutableBytes) !== TRUSTED_GIT_IDENTITY.executableBytes ||
+        fields.gitTrustClass !== TRUSTED_GIT_IDENTITY.trustClass) {
+      reject('resume_state_invalid', 'NEW_RUN Git executable hash, size, or trust class drifted')
+    }
+    validateActualRepositoryIdentity(fields)
+    validateActualBranch(fields)
   }
   if (!/^[0-9a-f]{7,40}$/i.test(cli['expected-head']) || fields.head.toLowerCase() !== cli['expected-head'].toLowerCase()) {
     reject('evidence_stale', `state HEAD ${fields.head} does not match current HEAD ${cli['expected-head']}`)
@@ -591,7 +896,7 @@ const main = () => {
   } else {
     if (fields.evidenceHead) validateEvidenceAncestry(fields)
   }
-  validateAuditChain(lines, current, limits)
+  validateAuditChain(records, current, limits, stateBuffer)
   process.stdout.write(JSON.stringify({
     ok: true,
     kind,
