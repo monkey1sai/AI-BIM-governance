@@ -4,7 +4,8 @@ export default defineConfig({
   testDir: "./e2e",
   testMatch: "design-system-visual.spec.ts",
   outputDir: "../artifacts/e2e/design-system-visual/_playwright-output",
-  timeout: 180_000,
+  // 13 screens × 2 viewports exceeded 180s on windows-2025 (PR #728: 3.2m).
+  timeout: 360_000,
   expect: { timeout: 15_000 },
   fullyParallel: false,
   workers: 1,

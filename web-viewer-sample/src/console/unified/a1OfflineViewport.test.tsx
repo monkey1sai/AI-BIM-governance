@@ -5,7 +5,7 @@ import { WorkspacePage } from "./WorkspacePage";
 import { ConsoleDataProvider } from "./ConsoleDataProvider";
 import { coordinatorStatusStore } from "./coordinatorStatusStore";
 import { UnifiedStateProvider } from "./UnifiedShell";
-import { spyCoordinatorEndpoints, RT_IDLE, sessionItem } from "./__testdata__/coordinatorMocks";
+import { spyCoordinatorEndpoints, RT_IDLE } from "./__testdata__/coordinatorMocks";
 
 describe("a1OfflineViewport (Task 3.1)", () => {
   let container: HTMLDivElement;
@@ -68,7 +68,7 @@ describe("a1OfflineViewport (Task 3.1)", () => {
           count: 1,
           active_count: 1,
           participant_count: 2,
-          items: [sessionItem("S-12345")],
+          items: [{ session_id: "S-12345", status: "active" } as any],
         },
       },
     });
