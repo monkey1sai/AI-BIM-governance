@@ -4,12 +4,13 @@ Document version: `parallel-delivery-fabric-operator-policy/v1`
 
 Requirement map version: `parallel-delivery-fabric-acceptance-requirements/v1`
 
-Requirement map SHA-256: `eb88f419f9a2bc72379c688db3d13ca93e608e448324f8efad0e3a4f1a37faf1`
+Requirement map SHA-256: `ea2c14aa511a7ced3a95af174252ff6dbe9335b388aba3c6ead2a29ed740667d`
 
 This is a descriptive, shadow-only operator policy. It records the approved
-acceptance obligations and their authority boundaries; it does not create a
-verification target, a CI registration, a manifest registry entry, or any
-runtime, remote, review, merge, deployment, host, or recovery action.
+acceptance obligations and their authority boundaries. The local
+`parallel-delivery-fabric-static-policy` gate verifies this source contract,
+but neither the document nor that gate creates any runtime, remote, review,
+merge, deployment, host, recovery, or activation action.
 
 ## Operating boundary
 
@@ -20,6 +21,14 @@ contention and overlapping or unknown touch-sets remain blockers. Direct
 stack delivery and autonomous promotion still require an externally attested,
 base-pinned activation record. This document cannot create that record or
 advance a review phase.
+
+The local CLI permits exactly `submit`, `advance`, `reconcile`, `drain`,
+`release`, and `inspect`. Its default delivery status remains
+`HELD_EXTERNAL_ACTIVATION`. Releasing a writer lease does not delete its
+branch or worktree; task resources remain `RETAINED_FOR_REVIEW` until a
+separately authorized lifecycle action. Session count is not a capacity gate.
+Only a separately attested physical Kit/WebRTC resource limit may return
+`WRITER_CAPACITY`.
 
 ## Activation record and review migration
 

@@ -1476,7 +1476,7 @@ const createManagedFixture = ({ branch = managedBranchRecord(), raceBarrier = un
   return { store, clock, registry: createManagedBranchRegistry({ store, clock }) }
 }
 
-test('AC-39 RED — managed record is closed, digest-stable, and renew changes only its expiry transition', async () => {
+test('AC-39 — managed record is closed, digest-stable, and renew changes only its expiry transition', async () => {
   const branch = managedBranchRecord()
   const parsed = parseManagedBranchRecord(branch)
   assert.deepEqual(parsed, branch)

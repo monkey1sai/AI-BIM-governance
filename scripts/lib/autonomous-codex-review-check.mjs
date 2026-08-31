@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { existsSync, readdirSync, readFileSync } from 'node:fs'
+import { closeSync, existsSync, fstatSync, lstatSync, openSync, opendirSync, readSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -32,6 +32,7 @@ const POLICY_INVENTORY_SUBTREES = Object.freeze(['scripts'])
 const POLICY_INVENTORY_IGNORED_DIRECTORIES = Object.freeze(['.generated', '.git', 'generated', 'node_modules'])
 const POLICY_INVENTORY_MAX_DEPTH = 12
 const POLICY_INVENTORY_MAX_ENTRIES = 512
+const POLICY_FILE_MAX_BYTES = 8 * 1024
 
 export class AutonomousCodexReviewPolicyError extends Error {
   constructor(code, detail) {
@@ -234,36 +235,61 @@ export function inspectPolicyFileInventory(repositoryRoot) {
   for (const subtree of POLICY_INVENTORY_SUBTREES) {
     const absolute = path.join(root, subtree)
     if (!existsSync(absolute)) fail('policy_missing', 'inventory_subtree_missing')
-    stack.push({ absolute, relative: subtree, depth: 0 })
+    let expected
+    try { expected = lstatSync(absolute, { bigint: true }) } catch { fail('policy_inventory_io_race', 'inventory_io') }
+    if (expected.isSymbolicLink()) fail('policy_inventory_symlink', 'inventory_symlink')
+    if (!expected.isDirectory()) fail('policy_inventory_unknown_entry', 'inventory_unknown_entry')
+    stack.push({ absolute, relative: subtree, depth: 0, expected })
   }
   let entriesSeen = 0
   while (stack.length > 0) {
     const current = stack.pop()
-    let entries
-    try { entries = readdirSync(current.absolute, { withFileTypes: true }) } catch { fail('policy_inventory_io_race', 'inventory_io') }
-    entries.sort((left, right) => left.name < right.name ? -1 : left.name > right.name ? 1 : 0)
-    for (const entry of entries) {
-      entriesSeen += 1
-      if (entriesSeen > POLICY_INVENTORY_MAX_ENTRIES) fail('policy_inventory_budget_exceeded', 'max_entries')
-      const childRelative = `${current.relative}/${entry.name}`.replaceAll('\\', '/')
-      let isDirectory
-      let isFile
-      let isSymbolicLink
-      try {
-        isDirectory = entry.isDirectory()
-        isFile = entry.isFile()
-        isSymbolicLink = entry.isSymbolicLink()
-      } catch { fail('policy_inventory_io_race', 'inventory_io') }
-      if (isSymbolicLink) fail('policy_inventory_symlink', 'inventory_symlink')
-      if (isDirectory) {
-        if (POLICY_INVENTORY_IGNORED_DIRECTORIES.includes(entry.name.toLowerCase())) continue
-        if (current.depth >= POLICY_INVENTORY_MAX_DEPTH) fail('policy_inventory_budget_exceeded', 'max_depth')
-        stack.push({ absolute: path.join(current.absolute, entry.name), relative: childRelative, depth: current.depth + 1 })
-      } else if (isFile) {
-        if (/autonomous-codex-review-policy.*\.json(?:[.~_-].*)?$/iu.test(entry.name)) candidates.push(childRelative)
-      } else {
-        fail('policy_inventory_unknown_entry', 'inventory_unknown_entry')
+    let directoryBefore
+    try { directoryBefore = lstatSync(current.absolute, { bigint: true }) } catch { fail('policy_inventory_io_race', 'inventory_io') }
+    if (directoryBefore.isSymbolicLink()) fail('policy_inventory_symlink', 'inventory_symlink')
+    if (!directoryBefore.isDirectory()) fail('policy_inventory_unknown_entry', 'inventory_unknown_entry')
+    if (directoryBefore.dev !== current.expected.dev || directoryBefore.ino !== current.expected.ino ||
+        directoryBefore.mtimeNs !== current.expected.mtimeNs || directoryBefore.ctimeNs !== current.expected.ctimeNs) {
+      fail('policy_inventory_io_race', 'inventory_io')
+    }
+    let directory
+    try { directory = opendirSync(current.absolute) } catch { fail('policy_inventory_io_race', 'inventory_io') }
+    let pendingError
+    try {
+      while (true) {
+        let entry
+        try { entry = directory.readSync() } catch { fail('policy_inventory_io_race', 'inventory_io') }
+        if (entry === null) break
+        entriesSeen += 1
+        if (entriesSeen > POLICY_INVENTORY_MAX_ENTRIES) fail('policy_inventory_budget_exceeded', 'max_entries')
+        const childRelative = `${current.relative}/${entry.name}`.replaceAll('\\', '/')
+        const childAbsolute = path.join(current.absolute, entry.name)
+        let child
+        try { child = lstatSync(childAbsolute, { bigint: true }) } catch { fail('policy_inventory_io_race', 'inventory_io') }
+        if (child.isSymbolicLink()) fail('policy_inventory_symlink', 'inventory_symlink')
+        if (child.isDirectory()) {
+          if (POLICY_INVENTORY_IGNORED_DIRECTORIES.includes(entry.name.toLowerCase())) continue
+          if (current.depth >= POLICY_INVENTORY_MAX_DEPTH) fail('policy_inventory_budget_exceeded', 'max_depth')
+          stack.push({ absolute: childAbsolute, relative: childRelative, depth: current.depth + 1, expected: child })
+        } else if (child.isFile()) {
+          if (/autonomous-codex-review-policy.*\.json(?:[.~_-].*)?$/iu.test(entry.name)) candidates.push(childRelative)
+        } else {
+          fail('policy_inventory_unknown_entry', 'inventory_unknown_entry')
+        }
       }
+    } catch (error) {
+      pendingError = error
+    }
+    try { directory.closeSync() } catch {
+      if (pendingError === undefined) fail('policy_inventory_io_race', 'inventory_io')
+    }
+    if (pendingError !== undefined) throw pendingError
+    let directoryAfter
+    try { directoryAfter = lstatSync(current.absolute, { bigint: true }) } catch { fail('policy_inventory_io_race', 'inventory_io') }
+    if (directoryAfter.isSymbolicLink() || !directoryAfter.isDirectory() ||
+        directoryAfter.dev !== directoryBefore.dev || directoryAfter.ino !== directoryBefore.ino ||
+        directoryAfter.mtimeNs !== directoryBefore.mtimeNs || directoryAfter.ctimeNs !== directoryBefore.ctimeNs) {
+      fail('policy_inventory_io_race', 'inventory_io')
     }
   }
   const canonical = POLICY_RELATIVE
@@ -276,19 +302,91 @@ export function inspectPolicyFileInventory(repositoryRoot) {
   return freeze({ canonical_policy_count: canonicalCount, scanned_policy_names: candidates.sort() })
 }
 
+const sameFileState = (left, right) => (
+  left.dev === right.dev &&
+  left.ino === right.ino &&
+  left.size === right.size &&
+  left.mtimeNs === right.mtimeNs &&
+  left.ctimeNs === right.ctimeNs
+)
+
+const sameFileIdentity = (left, right) => left.dev === right.dev && left.ino === right.ino && left.mode === right.mode
+
+const readCanonicalFile = (filePath, missingCode, label) => {
+  const resolved = path.resolve(filePath)
+  const relative = path.relative(ROOT, resolved)
+  if (relative === '' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) fail('policy_source_untrusted', label)
+  let cursor = ROOT
+  const componentStates = []
+  for (const segment of relative.split(path.sep)) {
+    cursor = path.join(cursor, segment)
+    let component
+    try { component = lstatSync(cursor, { bigint: true }) } catch { fail(missingCode, label) }
+    if (component.isSymbolicLink()) fail('policy_source_untrusted', label)
+    componentStates.push([cursor, component])
+  }
+
+  let pathBefore
+  try { pathBefore = lstatSync(resolved, { bigint: true }) } catch { fail(missingCode, label) }
+  if (!pathBefore.isFile()) fail('policy_source_untrusted', label)
+  if (pathBefore.size > BigInt(POLICY_FILE_MAX_BYTES)) fail('policy_file_budget_exceeded', label)
+
+  let descriptor
+  try { descriptor = openSync(resolved, 'r') } catch { fail('policy_file_io_race', label) }
+  try {
+    let before
+    try { before = fstatSync(descriptor, { bigint: true }) } catch { fail('policy_file_io_race', label) }
+    if (!before.isFile() || !sameFileState(pathBefore, before)) fail('policy_file_io_race', label)
+    if (before.size > BigInt(POLICY_FILE_MAX_BYTES)) fail('policy_file_budget_exceeded', label)
+
+    const buffer = Buffer.alloc(POLICY_FILE_MAX_BYTES + 1)
+    let length = 0
+    while (length < buffer.length) {
+      let bytesRead
+      try { bytesRead = readSync(descriptor, buffer, length, buffer.length - length, null) } catch { fail('policy_file_io_race', label) }
+      if (bytesRead === 0) break
+      length += bytesRead
+    }
+
+    let after
+    let pathAfter
+    try {
+      after = fstatSync(descriptor, { bigint: true })
+      pathAfter = lstatSync(resolved, { bigint: true })
+    } catch { fail('policy_file_io_race', label) }
+    for (const [componentPath, componentBefore] of componentStates) {
+      let componentAfter
+      try { componentAfter = lstatSync(componentPath, { bigint: true }) } catch { fail('policy_file_io_race', label) }
+      if (componentAfter.isSymbolicLink() || !sameFileIdentity(componentBefore, componentAfter)) fail('policy_file_io_race', label)
+    }
+    if (length > POLICY_FILE_MAX_BYTES) fail('policy_file_budget_exceeded', label)
+    if (BigInt(length) !== before.size || !sameFileState(before, after) || !sameFileState(after, pathAfter)) {
+      fail('policy_file_io_race', label)
+    }
+    return buffer.subarray(0, length)
+  } finally {
+    closeSync(descriptor)
+  }
+}
+
+const decodeUtf8 = (bytes, label) => {
+  try { return new TextDecoder('utf-8', { fatal: true }).decode(bytes) } catch { fail('policy_json_invalid', label) }
+}
+
 const loadCanonical = () => {
-  inspectPolicyFileInventory(ROOT)
+  const inventoryBefore = inspectPolicyFileInventory(ROOT)
   const policyPath = path.join(ROOT, POLICY_RELATIVE)
   const schemaPath = path.join(ROOT, SCHEMA_RELATIVE)
-  if (!existsSync(policyPath)) fail('policy_missing', policyPath)
-  if (!existsSync(schemaPath)) fail('policy_schema_missing', schemaPath)
   const policy = validateAutonomousCodexReviewPolicy(validatePolicySchemaDocument(
-    parse(readFileSync(schemaPath, 'utf8'), schemaPath),
-    parse(readFileSync(policyPath, 'utf8'), policyPath),
+    parse(decodeUtf8(readCanonicalFile(schemaPath, 'policy_schema_missing', SCHEMA_RELATIVE), SCHEMA_RELATIVE), SCHEMA_RELATIVE),
+    parse(decodeUtf8(readCanonicalFile(policyPath, 'policy_missing', POLICY_RELATIVE), POLICY_RELATIVE), POLICY_RELATIVE),
   ))
   const sourcePath = path.resolve(ROOT, policy.open_spec.source_path)
-  if (sourcePath !== path.resolve(ROOT, OPEN_SPEC_RELATIVE) || !existsSync(sourcePath)) fail('policy_source_untrusted', 'open_spec_path')
-  if (createHash('sha256').update(readFileSync(sourcePath)).digest('hex') !== policy.open_spec.source_sha256) fail('policy_source_digest_mismatch', policy.open_spec.source_path)
+  if (sourcePath !== path.resolve(ROOT, OPEN_SPEC_RELATIVE)) fail('policy_source_untrusted', 'open_spec_path')
+  const sourceBytes = readCanonicalFile(sourcePath, 'policy_source_untrusted', OPEN_SPEC_RELATIVE)
+  if (createHash('sha256').update(sourceBytes).digest('hex') !== policy.open_spec.source_sha256) fail('policy_source_digest_mismatch', policy.open_spec.source_path)
+  const inventoryAfter = inspectPolicyFileInventory(ROOT)
+  if (!same(inventoryBefore, inventoryAfter)) fail('policy_inventory_io_race', 'inventory_io')
   return policy
 }
 

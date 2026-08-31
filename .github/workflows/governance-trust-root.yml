@@ -6,6 +6,12 @@ name: Governance Base Audit
 # binds pull_request_target runs to the default-branch SHA, so this workflow is
 # deliberately diagnostic. A separately credentialed GitHub App must publish
 # the required, source-pinned check on the candidate head.
+# Review-migration contract: the trusted-base checker consumes only the
+# canonical policy (scripts/autonomous-codex-review-policy.json), its committed
+# schema (scripts/tests/autonomous-codex-review-policy.schema.json), and the
+# committed OpenSpec source (openspec/changes/parallel-delivery-fabric/specs/parallel-delivery-fabric/spec.md).
+# Candidate copies cannot override those inputs. The default LEGACY_GUARDED
+# phase retains the counted review; this workflow does not advance phases.
 on:
   pull_request_target:
     types: [opened, synchronize, reopened, ready_for_review]

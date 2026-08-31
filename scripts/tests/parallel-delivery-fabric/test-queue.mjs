@@ -195,10 +195,10 @@ test('AC-30 / Task7B P1-B — shared queue policy uses a closed interpolation al
   }
 })
 
-test('Task7B P1-C — CI keeps merge_group base immutable and has no workflow-wide queue authority', async () => {
+test('Task7B P1-C — CI keeps merge_group base immutable without acquiring queue authority', async () => {
   const workflow = await readFile(new URL('../../../.github/workflows/ci.yml', import.meta.url), 'utf8')
   assert.match(workflow, /^\s{2}merge_group:\r?\n\s{4}types: \[checks_requested\]/mu)
-  assert.doesNotMatch(workflow, /^concurrency:/mu)
+  assert.match(workflow, /^concurrency:\r?\n\s{2}group: \$\{\{ github\.workflow \}\}-\$\{\{ github\.ref \}\}-\$\{\{ github\.event\.action == 'edited' && github\.event\.changes\.base == null && 'metadata-only' \|\| 'verification' \}\}\r?\n\s{2}cancel-in-progress: true$/mu)
   assert.doesNotMatch(workflow, /^\s+queue:\s*max\s*$/mu)
   assert.doesNotMatch(workflow, /^\s+cancel-in-progress:\s*false\s*$/mu)
   assert.match(workflow, /MERGE_GROUP_BASE_SHA:\s*\$\{\{ github\.event\.merge_group\.base_sha \}\}/u)

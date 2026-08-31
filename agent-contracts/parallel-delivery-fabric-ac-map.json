@@ -387,7 +387,7 @@
         {
           "kind": "positive",
           "test_file": "scripts/tests/parallel-delivery-fabric/test-registry.mjs",
-          "test_name": "AC-39 RED \u2014 managed record is closed, digest-stable, and renew changes only its expiry transition"
+          "test_name": "AC-39 \u2014 managed record is closed, digest-stable, and renew changes only its expiry transition"
         }
       ]
     },

@@ -497,34 +497,26 @@ const directStackInput = () => {
   return input
 }
 
-const authorityUseReceipt = (request, overrides = {}) => ({
-  schema_version: 'parallel-delivery-fabric-authority-use-receipt/v1',
-  authority_id: request.authority_id,
-  bundle_id: request.bundle_id,
-  bundle_payload_digest: request.bundle_payload_digest,
-  key_id: request.key_id,
-  current_revocation_epoch: request.current_revocation_epoch,
-  expected_revocation_epoch: request.expected_revocation_epoch,
-  revoked: false,
-  candidate_tuple_digest: request.candidate_tuple_digest,
-  record_set_digest: request.record_set_digest,
-  purpose: request.purpose,
-  use_id: request.use_id,
-  nonce: request.nonce,
-  intent_digest: request.intent_digest,
-  prior_handoff_use: structuredClone(request.prior_handoff_use),
-  request_digest: digestCanonical(request),
-  receipt_id: `receipt:${request.use_id}`,
-  observed_at: '2026-08-30T00:00:00.000Z',
-  expires_at: '2036-08-30T00:00:00.000Z',
-  cas_winner: true,
-  ...overrides,
-})
 const boundHandoff = (input, authority) => promotionBridgeModule.createPromotionBridge({
-  authorityUsePort: { rereadAndConsume: (request) => authorityUseReceipt(request) },
+  authorityUsePort: { rereadAndConsume: () => ({ cas_winner: true }) },
 }).buildPromotionHandoff(input, authority)
-const buildOrdinaryHandoff = (input = ordinaryInput()) => boundHandoff(input, trustedAuthorityBundle())
-const buildDirectHandoff = (input = directStackInput()) => boundHandoff(input, directTrustedAuthorityBundle())
+const freezeFixture = (value) => {
+  if (value && typeof value === 'object' && !Object.isFrozen(value)) {
+    for (const nested of Object.values(value)) freezeFixture(nested)
+    Object.freeze(value)
+  }
+  return value
+}
+const projectionFixtureHandoff = (input, authority) => {
+  const { schema_version: ignoredSchemaVersion, ...candidate } = structuredClone(input)
+  return freezeFixture({
+    ...candidate,
+    schema_version: 'parallel-delivery-fabric-promotion-handoff/v4',
+    trusted_authority_bundle: structuredClone(authority),
+  })
+}
+const buildOrdinaryHandoff = (input = ordinaryInput()) => projectionFixtureHandoff(input, trustedAuthorityBundle())
+const buildDirectHandoff = (input = directStackInput()) => projectionFixtureHandoff(input, directTrustedAuthorityBundle())
 const assertEvidenceHeld = (value, message = undefined) => assert.deepEqual(value, {
   phase: 'CLOSED', terminal_class: 'HELD', reason_code: 'PREMERGE_EVIDENCE_INVALID',
 }, message)
@@ -903,8 +895,9 @@ const failedDirectStackOutcome = (direct_stack) => ({
 
 test('AC-32 — ordinary handoff binds the candidate exact tuple to an immutable external packet', () => {
   const input = ordinaryInput()
-
-  const handoff = buildOrdinaryHandoff(input)
+  const authority = trustedAuthorityBundle()
+  const handoff = projectionFixtureHandoff(input, authority)
+  const ordinary = ordinaryDeliveryProof(handoff)
 
   assert.equal(handoff.handoff_kind, 'ordinary_single_pr')
   assert.deepEqual(handoff.plan, input.plan)
@@ -916,23 +909,35 @@ test('AC-32 — ordinary handoff binds the candidate exact tuple to an immutable
   assert.equal(handoff.check_run.payload.source.check_name, 'monkey1sai-codex/ready')
   assert.equal(Object.isFrozen(handoff), true)
   assert.equal(Object.isFrozen(handoff.candidate), true)
+
+  assert.deepEqual(projectPromotionTerminal({ handoff, ordinary }, authority), {
+    phase: 'CLOSED',
+    terminal_class: 'DELIVERED',
+    reason_code: 'DELIVERY_VERIFIED',
+  })
+
+  const tupleTamper = structuredClone(handoff)
+  tupleTamper.candidate.head_sha = sha('f')
+  assertEvidenceHeld(projectPromotionTerminal({ handoff: tupleTamper, ordinary }, authority))
+
+  const authorityTamper = structuredClone(handoff)
+  authorityTamper.trusted_authority_bundle.bundle_id = 'bundle:promotion-forged'
+  assertEvidenceHeld(projectPromotionTerminal({ handoff: authorityTamper, ordinary }, authority))
 })
 
-test('Task9C A P0 RED — only a canonical Ed25519-signed AUTONOMOUS_ACTIVE authority bundle can enter the public handoff seam', () => {
+test('Task9C A P0 — a signed authority bundle still cannot activate the public handoff seam locally', () => {
   const authority = trustedAuthorityBundle()
   const input = canonicalInputForAuthority(authority)
 
   const handoff = boundHandoff(input, authority)
 
-  assert.equal(handoff.schema_version, 'parallel-delivery-fabric-promotion-handoff/v5')
-  assert.deepEqual(handoff.observed_activation, authority.payload.activation_record)
-  assert.equal(handoff.trusted_authority_bundle.payload_digest, authority.payload_digest)
+  assertAuthorityHeld(handoff)
 })
 
 test('Task9C A P0 GREEN — legacy ACTIVE, unsigned/self-signed, envelope mutation, and coordinated payload substitution never replace the signed authority bundle', () => {
   const authority = trustedAuthorityBundle()
   const baseline = ordinaryInput(authority)
-  assert.equal(boundHandoff(baseline, authority).schema_version, 'parallel-delivery-fabric-promotion-handoff/v5')
+  assertAuthorityHeld(boundHandoff(baseline, authority))
 
   const legacyActive = {
     schema_version: 'parallel-delivery-fabric-trusted-activation/v1',
@@ -1054,10 +1059,7 @@ test('Task9D D1 P0 GREEN — root-pinned producer envelopes admit only their pre
   const authority = trustedAuthorityBundle()
   const input = ordinaryInput(authority)
 
-  assert.equal(
-    boundHandoff(input, authority).schema_version,
-    'parallel-delivery-fabric-promotion-handoff/v5',
-  )
+  assertAuthorityHeld(boundHandoff(input, authority))
 
   const handwrittenSuccess = structuredClone(input)
   handwrittenSuccess.independent_review.signature = Buffer.alloc(64).toString('base64')
@@ -1124,30 +1126,30 @@ test('AC-13/25 — every generation, scope, lease, context, worktree, evidence, 
   for (const [name, mutate] of cases) {
     const input = ordinaryInput()
     mutate(input)
-    assertEvidenceHeld(buildOrdinaryHandoff(input), name)
+    assertEvidenceHeld(boundHandoff(input, trustedAuthorityBundle()), name)
   }
 })
 
 test('AC-33 — every promotion role is identity-separated and capability-closed', () => {
   const collidingReviewer = ordinaryInput()
   collidingReviewer.roles.independent_reviewer.identity = collidingReviewer.roles.writer.identity
-  assertEvidenceHeld(buildOrdinaryHandoff(collidingReviewer))
+  assertEvidenceHeld(boundHandoff(collidingReviewer, trustedAuthorityBundle()))
 
   const candidateOwnedPublisher = ordinaryInput()
   candidateOwnedPublisher.roles.checkrun_publisher.identity = candidateOwnedPublisher.candidate.owner_identity
-  assertEvidenceHeld(buildOrdinaryHandoff(candidateOwnedPublisher))
+  assertEvidenceHeld(boundHandoff(candidateOwnedPublisher, trustedAuthorityBundle()))
 
   const widenedPublisher = ordinaryInput()
   widenedPublisher.roles.checkrun_publisher.capabilities.push('merge_exact_head')
-  assertEvidenceHeld(buildOrdinaryHandoff(widenedPublisher))
+  assertEvidenceHeld(boundHandoff(widenedPublisher, trustedAuthorityBundle()))
 
   const selfReview = ordinaryInput()
   selfReview.self_diagnostic.verdict = 'clear'
-  assertEvidenceHeld(buildOrdinaryHandoff(selfReview))
+  assertEvidenceHeld(boundHandoff(selfReview, trustedAuthorityBundle()))
 
   const candidateReview = ordinaryInput()
   candidateReview.independent_review.payload.identity = candidateReview.candidate.owner_identity
-  assertEvidenceHeld(buildOrdinaryHandoff(candidateReview))
+  assertEvidenceHeld(boundHandoff(candidateReview, trustedAuthorityBundle()))
 })
 
 test('AC-34 — only a complete prior-pinned monkey1sai-codex exact-head success check can enter a handoff', () => {
@@ -1171,17 +1173,17 @@ test('AC-34 — only a complete prior-pinned monkey1sai-codex exact-head success
   for (const [name, mutate] of cases) {
     const input = ordinaryInput()
     mutate(input)
-    assertEvidenceHeld(buildOrdinaryHandoff(input), name)
+    assertEvidenceHeld(boundHandoff(input, trustedAuthorityBundle()), name)
   }
 })
 
 test('AC-33 — the published CheckRun must bind its own identity, never just a detached role declaration', () => {
   const missingPublisher = ordinaryInput()
   delete missingPublisher.check_run.payload.publisher_identity
-  assertEvidenceHeld(buildOrdinaryHandoff(missingPublisher))
+  assertEvidenceHeld(boundHandoff(missingPublisher, trustedAuthorityBundle()))
   const candidateOwnedPublisher = ordinaryInput()
   candidateOwnedPublisher.check_run.payload.publisher_identity = candidateOwnedPublisher.candidate.owner_identity
-  assertEvidenceHeld(buildOrdinaryHandoff(candidateOwnedPublisher))
+  assertEvidenceHeld(boundHandoff(candidateOwnedPublisher, trustedAuthorityBundle()))
 })
 
 test('AC-35 — recursive secret, raw host-identity, transcript, and external-sink inputs are rejected before handoff', () => {
@@ -1199,13 +1201,13 @@ test('AC-35 — recursive secret, raw host-identity, transcript, and external-si
   for (const [name, mutate] of cases) {
     const input = ordinaryInput()
     mutate(input)
-    assertEvidenceHeld(buildOrdinaryHandoff(input), name)
+    assertEvidenceHeld(boundHandoff(input, trustedAuthorityBundle()), name)
   }
 
   let externalSinkCalls = 0
   const sinkAttempt = ordinaryInput()
   sinkAttempt.external_sink = () => { externalSinkCalls += 1 }
-  assertEvidenceHeld(buildOrdinaryHandoff(sinkAttempt))
+  assertEvidenceHeld(boundHandoff(sinkAttempt, trustedAuthorityBundle()))
   assert.equal(externalSinkCalls, 0)
 })
 
@@ -1305,7 +1307,7 @@ test('Task9B C P1 — a candidate cannot be reused under a different plan genera
   const input = ordinaryInput()
   input.plan.generation = 999
 
-  assertEvidenceHeld(buildOrdinaryHandoff(input))
+  assertEvidenceHeld(boundHandoff(input, trustedAuthorityBundle()))
 })
 
 test('Task9B C P1 GREEN — plan, candidate, review, verifier, binder, CheckRun, and delivery evidence share one exact tuple and closed ref set', () => {
@@ -1322,7 +1324,7 @@ test('Task9B C P1 GREEN — plan, candidate, review, verifier, binder, CheckRun,
   for (const [name, mutate] of cases) {
     const input = ordinaryInput()
     mutate(input)
-    assertEvidenceHeld(buildOrdinaryHandoff(input), name)
+    assertEvidenceHeld(boundHandoff(input, trustedAuthorityBundle()), name)
   }
 
   const handoff = buildDirectHandoff()
@@ -1450,19 +1452,6 @@ test('AC-14/42 — the external projector emits only CLOSED DELIVERED, FAILED, o
   assertEvidenceHeld(projectPromotionTerminal({ handoff, direct_stack: legacy }, directTrustedAuthorityBundle()))
 })
 
-const recordingAuthorityUsePort = () => {
-  const calls = []
-  return {
-    calls,
-    port: {
-      rereadAndConsume: (request) => {
-        calls.push(structuredClone(request))
-        return Promise.resolve(authorityUseReceipt(request))
-      },
-    },
-  }
-}
-
 test('Task9 repair RED — legacy direct promotion exports synchronously close without a base-owned authority-use port', () => {
   const authority = trustedAuthorityBundle()
 
@@ -1472,17 +1461,28 @@ test('Task9 repair RED — legacy direct promotion exports synchronously close w
   assert.equal(Object.isFrozen(result), true)
 })
 
-test('Task9 repair RED — a locally valid handoff consumes one promotion_handoff authority use through the bound factory', async () => {
+test('Task9 P1 — a caller-forged cas_winner authority-use receipt cannot mint a v5 handoff', async () => {
   const authority = trustedAuthorityBundle()
-  const { calls, port } = recordingAuthorityUsePort()
+  let calls = 0
+  const bridge = promotionBridgeModule.createPromotionBridge({
+    authorityUsePort: { rereadAndConsume: () => { calls += 1; return { cas_winner: true } } },
+  })
+
+  const result = await bridge.buildPromotionHandoff(ordinaryInput(authority), authority)
+
+  assertAuthorityHeld(result)
+  assert.equal(calls, 0)
+})
+
+test('Task9 P1 — an async candidate authority-use port is also inert before external activation', async () => {
+  const authority = trustedAuthorityBundle()
+  let calls = 0
+  const port = { rereadAndConsume: async () => { calls += 1; return { cas_winner: true } } }
 
   assert.equal(typeof promotionBridgeModule.createPromotionBridge, 'function')
   const bridge = promotionBridgeModule.createPromotionBridge({ authorityUsePort: port })
   const handoff = await bridge.buildPromotionHandoff(ordinaryInput(authority), authority)
 
-  assert.equal(handoff.schema_version, 'parallel-delivery-fabric-promotion-handoff/v5')
-  assert.equal(handoff.authority_use.purpose, 'promotion_handoff')
-  assert.equal(calls.length, 1)
-  assert.equal(calls[0].purpose, 'promotion_handoff')
-  assert.equal(calls[0].prior_handoff_use, null)
+  assertAuthorityHeld(handoff)
+  assert.equal(calls, 0)
 })

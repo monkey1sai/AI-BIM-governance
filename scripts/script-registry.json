@@ -92,6 +92,12 @@
       "notes": "Backend-only branch evidence adapter; Playwright owns viewer lifecycle. Not a canonical operator entrypoint."
     },
     {
+      "path": "scripts/dev/parallel-delivery-fabric.mjs",
+      "role": "shadow-control-plane",
+      "owner": "agent-governance",
+      "notes": "Local shadow-only Fabric CLI; no network, review, merge, deploy, cleanup, or activation authority."
+    },
+    {
       "path": "scripts/demo-health-check.ps1",
       "role": "verifier",
       "owner": "scripts",

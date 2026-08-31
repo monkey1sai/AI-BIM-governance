@@ -3,13 +3,14 @@ import { cp, mkdtemp, mkdir, readFile, rm, symlink, unlink, writeFile } from 'no
 import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..')
 const policyPath = path.join(repoRoot, 'scripts', 'autonomous-codex-review-policy.json')
 const schemaPath = path.join(repoRoot, 'scripts', 'tests', 'autonomous-codex-review-policy.schema.json')
 const openSpecPath = path.join(repoRoot, 'openspec', 'changes', 'parallel-delivery-fabric', 'specs', 'parallel-delivery-fabric', 'spec.md')
 const moduleUrl = new URL('../lib/autonomous-codex-review-check.mjs', import.meta.url)
+const POLICY_FILE_MAX_BYTES = 8 * 1024
 
 const PHASES = [
   'LEGACY_GUARDED',
@@ -23,6 +24,22 @@ const clone = (value) => JSON.parse(JSON.stringify(value))
 const readCanonical = async () => JSON.parse(await readFile(policyPath, 'utf8'))
 const readSchema = async () => JSON.parse(await readFile(schemaPath, 'utf8'))
 const loadApi = async () => import(moduleUrl.href)
+
+const createIsolatedPolicyRoot = async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'autonomous-codex-review-policy-root-'))
+  const modulePath = path.join(root, 'scripts', 'lib', 'autonomous-codex-review-check.mjs')
+  const isolatedPolicyPath = path.join(root, 'scripts', 'autonomous-codex-review-policy.json')
+  const isolatedSchemaPath = path.join(root, 'scripts', 'tests', 'autonomous-codex-review-policy.schema.json')
+  const isolatedOpenSpecPath = path.join(root, 'openspec', 'changes', 'parallel-delivery-fabric', 'specs', 'parallel-delivery-fabric', 'spec.md')
+  await mkdir(path.dirname(modulePath), { recursive: true })
+  await mkdir(path.dirname(isolatedSchemaPath), { recursive: true })
+  await mkdir(path.dirname(isolatedOpenSpecPath), { recursive: true })
+  await cp(fileURLToPath(moduleUrl), modulePath)
+  await cp(policyPath, isolatedPolicyPath)
+  await cp(schemaPath, isolatedSchemaPath)
+  await cp(openSpecPath, isolatedOpenSpecPath)
+  return { root, modulePath, isolatedPolicyPath, isolatedSchemaPath, isolatedOpenSpecPath }
+}
 
 const expectCode = (code, action, label) => {
   assert.throws(action, (error) => error?.code === code, label)
@@ -242,6 +259,61 @@ test('AC-36 — alternate policy inventory errors redact hostile filename detail
   }
 })
 
+test('Task11 P2 RED — canonical files use exact bounded stable reads and reject linked path components', async () => {
+  const exact = await createIsolatedPolicyRoot()
+  try {
+    const bytes = await readFile(exact.isolatedPolicyPath)
+    assert.equal(bytes.length < POLICY_FILE_MAX_BYTES, true)
+    await writeFile(exact.isolatedPolicyPath, Buffer.concat([
+      bytes,
+      Buffer.alloc(POLICY_FILE_MAX_BYTES - bytes.length, 0x20),
+    ]))
+    const schemaBytes = await readFile(exact.isolatedSchemaPath)
+    await writeFile(exact.isolatedSchemaPath, Buffer.concat([
+      schemaBytes,
+      Buffer.alloc(POLICY_FILE_MAX_BYTES - schemaBytes.length, 0x20),
+    ]))
+    const exactApi = await import(pathToFileURL(exact.modulePath).href)
+    assert.equal(exactApi.loadAutonomousCodexReviewPolicy().phase, 'LEGACY_GUARDED')
+  } finally {
+    await rm(exact.root, { recursive: true, force: true })
+  }
+
+  for (const [label, property] of [
+    ['policy', 'isolatedPolicyPath'],
+    ['schema', 'isolatedSchemaPath'],
+    ['OpenSpec', 'isolatedOpenSpecPath'],
+  ]) {
+    const oversized = await createIsolatedPolicyRoot()
+    try {
+      const target = oversized[property]
+      const bytes = await readFile(target)
+      await writeFile(target, Buffer.concat([
+        bytes,
+        Buffer.alloc(POLICY_FILE_MAX_BYTES + 1 - bytes.length, 0x20),
+      ]))
+      const oversizedApi = await import(pathToFileURL(oversized.modulePath).href)
+      expectCode('policy_file_budget_exceeded', () => oversizedApi.loadAutonomousCodexReviewPolicy(), `max plus one ${label}`)
+    } finally {
+      await rm(oversized.root, { recursive: true, force: true })
+    }
+  }
+
+  const linked = await createIsolatedPolicyRoot()
+  try {
+    const linkedDirectory = path.dirname(linked.isolatedOpenSpecPath)
+    const externalDirectory = path.join(linked.root, 'external-openspec')
+    await mkdir(externalDirectory)
+    await cp(openSpecPath, path.join(externalDirectory, 'spec.md'))
+    await rm(linkedDirectory, { recursive: true, force: true })
+    await symlink(externalDirectory, linkedDirectory, 'junction')
+    const linkedApi = await import(pathToFileURL(linked.modulePath).href)
+    expectCode('policy_source_untrusted', () => linkedApi.loadAutonomousCodexReviewPolicy(), 'linked OpenSpec parent')
+  } finally {
+    await rm(linked.root, { recursive: true, force: true })
+  }
+})
+
 test('AC-36 — inventory traversal limits and reparse entries fail closed before policy loading', async () => {
   const { inspectPolicyFileInventory } = await loadApi()
   const root = await mkdtemp(path.join(os.tmpdir(), 'autonomous-codex-review-policy-limits-'))
@@ -252,7 +324,9 @@ test('AC-36 — inventory traversal limits and reparse entries fail closed befor
 
     const wide = path.join(root, 'scripts', 'wide')
     await mkdir(wide)
-    await Promise.all(Array.from({ length: 513 }, (_, index) => writeFile(path.join(wide, `entry-${index}.txt`), 'x')))
+    await Promise.all(Array.from({ length: 508 }, (_, index) => writeFile(path.join(wide, `entry-${index}.txt`), 'x')))
+    assert.equal(inspectPolicyFileInventory(root).canonical_policy_count, 1)
+    await writeFile(path.join(wide, 'entry-508.txt'), 'x')
     expectCode('policy_inventory_budget_exceeded', () => inspectPolicyFileInventory(root), 'wide inventory')
     await rm(wide, { recursive: true, force: true })
 
@@ -272,6 +346,21 @@ test('AC-36 — inventory traversal limits and reparse entries fail closed befor
   } finally {
     await rm(root, { recursive: true, force: true })
   }
+
+  const linkedRoot = await mkdtemp(path.join(os.tmpdir(), 'autonomous-codex-review-policy-linked-root-'))
+  try {
+    const externalScripts = path.join(linkedRoot, 'external-scripts')
+    await mkdir(path.join(externalScripts, 'tests'), { recursive: true })
+    await cp(policyPath, path.join(externalScripts, 'autonomous-codex-review-policy.json'))
+    await cp(schemaPath, path.join(externalScripts, 'tests', 'autonomous-codex-review-policy.schema.json'))
+    await symlink(externalScripts, path.join(linkedRoot, 'scripts'), 'junction')
+    expectCode('policy_inventory_symlink', () => inspectPolicyFileInventory(linkedRoot), 'linked inventory root')
+  } finally {
+    await rm(linkedRoot, { recursive: true, force: true })
+  }
+
+  const source = await readFile(fileURLToPath(moduleUrl), 'utf8')
+  assert.equal(source.split('inspectPolicyFileInventory(ROOT)').length - 1, 2, 'load revalidates inventory after canonical reads')
 })
 
 test('AC-33 — writer and fixer identities cannot be the reviewer identity', async () => {

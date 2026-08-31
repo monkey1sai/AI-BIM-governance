@@ -1193,3 +1193,94 @@ test('apex verdict must echo every immutable approval field before merge', () =>
   assert.equal(terminalResultExitCode(mergedResult(invocation, 'c'.repeat(40), 'fetch_failed')), 2)
   assert.equal(terminalResultExitCode(mergeOutcomeUnverifiedResult(invocation, 'unreadable')), 2)
 })
+
+test('base-owned LEGACY_GUARDED policy keeps the pinned App CheckRun out of branch protection', () => {
+  const externalCheck = {
+    context: 'monkey1sai-codex/ready',
+    app_id: 481516,
+    verification_target: 'monkey1sai-codex-shadow',
+    workflow_path: '.github/workflows/governance-trust-root.yml',
+  }
+  const liveProtection = protection()
+  liveProtection.required_status_checks.contexts.push(externalCheck.context)
+  liveProtection.required_status_checks.checks.push({
+    context: externalCheck.context,
+    app_id: externalCheck.app_id,
+  })
+
+  expectHold('review_policy_held', () => verifyBranchProtection(
+    liveProtection,
+    [...checkSources, externalCheck],
+  ))
+})
+
+test('base-owned LEGACY_GUARDED policy retains the counted human approval and rejects caller policy overrides', () => {
+  const invocation = prepareInvocation(rawInput(), context(), contract, NOW)
+  assert.equal(selectCanonicalApproval([review(invocation)], invocation, contract).id, 77)
+  expectHold('human_approval_required', () => selectCanonicalApproval([], invocation, contract))
+  expectHold('review_policy_call_override_forbidden', () => selectCanonicalApproval(
+    [review(invocation)],
+    invocation,
+    contract,
+    { activationState: 'active', policyRoot: 'candidate-controlled' },
+  ))
+})
+
+test('base-owned LEGACY_GUARDED policy rejects promoting the pinned App CheckRun through required-check verification', () => {
+  const externalCheck = {
+    context: 'monkey1sai-codex/ready',
+    app_id: 481516,
+    verification_target: 'monkey1sai-codex-shadow',
+    workflow_path: '.github/workflows/governance-trust-root.yml',
+  }
+  const invocation = prepareInvocation(rawInput(), context(), contract, NOW)
+  const verificationPlanWithShadow = verificationPlan()
+  verificationPlanWithShadow.targets.push({
+    id: externalCheck.verification_target,
+    required: true,
+    reason: 'affected_path',
+    ci_job: externalCheck.context,
+  })
+  const protectionSnapshot = {
+    requiredChecks: [
+      ...verifyBranchProtection(protection(), checkSources).requiredChecks,
+      {
+        context: externalCheck.context,
+        appId: externalCheck.app_id,
+        verificationTarget: externalCheck.verification_target,
+        workflowPath: externalCheck.workflow_path,
+      },
+    ],
+  }
+  const checkRuns = [
+    checkRun({ id: 10, name: 'ci/root', appId: 100, conclusion: 'success', checkSuiteId: 1000, workflowRunId: 2000 }),
+    checkRun({ id: 11, name: 'governance/review', appId: 200, conclusion: 'success', checkSuiteId: 1001, workflowRunId: 2001 }),
+    checkRun({ id: 12, name: externalCheck.context, appId: externalCheck.app_id, conclusion: 'success', checkSuiteId: 1002, workflowRunId: 2002 }),
+  ]
+  const workflowRuns = [
+    workflowRun({ id: 2000, checkSuiteId: 1000, path: '.github/workflows/ci.yml' }),
+    workflowRun({ id: 2001, checkSuiteId: 1001, path: '.github/workflows/agent-governance.yml' }),
+    workflowRun({ id: 2002, checkSuiteId: 1002, path: externalCheck.workflow_path }),
+  ]
+
+  expectHold('review_policy_held', () => verifyRequiredChecks(
+    checkRuns,
+    workflowRuns,
+    protectionSnapshot,
+    invocation,
+    verificationPlanWithShadow,
+    [...checkSources, externalCheck],
+  ))
+  expectHold('review_policy_call_override_forbidden', () => verifyRequiredChecks(
+    [
+      checkRun({ id: 10, name: 'ci/root', appId: 100, conclusion: 'success', checkSuiteId: 1000, workflowRunId: 2000 }),
+      checkRun({ id: 11, name: 'governance/review', appId: 200, conclusion: 'success', checkSuiteId: 1001, workflowRunId: 2001 }),
+    ],
+    workflowRuns.slice(0, 2),
+    verifyBranchProtection(protection(), checkSources),
+    invocation,
+    verificationPlan(),
+    checkSources,
+    { policy: 'candidate-controlled' },
+  ))
+})

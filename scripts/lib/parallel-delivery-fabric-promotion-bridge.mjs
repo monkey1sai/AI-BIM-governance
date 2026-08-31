@@ -863,7 +863,7 @@ const projectPromotionTerminalStrict = (input = undefined, trustedAuthorityBundl
     fail('projection_input_invalid')
   }
   if (!isPlainObject(sanitized.handoff) ||
-      !['parallel-delivery-fabric-promotion-handoff/v4', 'parallel-delivery-fabric-promotion-handoff/v5'].includes(sanitized.handoff.schema_version)) {
+      sanitized.handoff.schema_version !== 'parallel-delivery-fabric-promotion-handoff/v4') {
     fail('projection_handoff_invalid')
   }
   const { trusted_authority_bundle, authority_use, schema_version, ...candidateHandoff } = sanitized.handoff
@@ -871,10 +871,8 @@ const projectPromotionTerminalStrict = (input = undefined, trustedAuthorityBundl
     ...candidateHandoff,
     schema_version: 'parallel-delivery-fabric-promotion-request/v2',
   }, trustedAuthorityBundle)
-  const expectedHandoff = schema_version === 'parallel-delivery-fabric-promotion-handoff/v5'
-    ? { ...rebuilt, schema_version, authority_use }
-    : rebuilt
-  if (!equalValue(trusted_authority_bundle, rebuilt.trusted_authority_bundle) || !equalValue(sanitized.handoff, expectedHandoff)) {
+  if (authority_use !== undefined || schema_version !== 'parallel-delivery-fabric-promotion-handoff/v4' ||
+      !equalValue(trusted_authority_bundle, rebuilt.trusted_authority_bundle) || !equalValue(sanitized.handoff, rebuilt)) {
     fail('projection_trusted_authority_binding_invalid')
   }
   const handoff = rebuilt
@@ -898,97 +896,23 @@ const trustedAuthorityAvailable = (trustedAuthorityBundle) => {
 
 const safeHeldTerminal = (reasonCode) => deepFreeze(heldTerminal(reasonCode))
 
-const AUTHORITY_USE_REQUEST_KEYS = Object.freeze([
-  'authority_id', 'bundle_id', 'bundle_payload_digest', 'key_id', 'current_revocation_epoch',
-  'expected_revocation_epoch', 'candidate_tuple_digest', 'record_set_digest', 'purpose', 'use_id',
-  'nonce', 'intent_digest', 'prior_handoff_use',
-])
-const AUTHORITY_USE_RECEIPT_KEYS = Object.freeze([
-  'schema_version', 'authority_id', 'bundle_id', 'bundle_payload_digest', 'key_id', 'current_revocation_epoch',
-  'expected_revocation_epoch', 'revoked', 'candidate_tuple_digest', 'record_set_digest', 'purpose', 'use_id',
-  'nonce', 'intent_digest', 'prior_handoff_use', 'request_digest', 'receipt_id', 'observed_at', 'expires_at',
-  'cas_winner',
-])
-
-const makeAuthorityUseRequest = (built, trusted) => deepFreeze({
-  authority_id: trusted.payload.authority_id,
-  bundle_id: trusted.bundle_id,
-  bundle_payload_digest: trusted.payload_digest,
-  key_id: trusted.key_id,
-  current_revocation_epoch: trusted.revocation.epoch,
-  expected_revocation_epoch: trusted.revocation.epoch,
-  candidate_tuple_digest: digestCanonical(built.candidate),
-  record_set_digest: digestCanonical(built.candidate.evidence_refs),
-  purpose: 'promotion_handoff',
-  use_id: `use:${digestCanonical({ bundle_id: trusted.bundle_id, candidate: built.candidate.pr_number }).slice(0, 24)}`,
-  nonce: `nonce-${digestCanonical({ bundle_id: trusted.bundle_id, head: built.candidate.head_sha }).slice(0, 32)}`,
-  intent_digest: digestCanonical(built),
-  prior_handoff_use: null,
-})
-
-const validAuthorityUseReceipt = (receipt, request) => exactKeys(receipt, AUTHORITY_USE_RECEIPT_KEYS) &&
-  receipt.schema_version === 'parallel-delivery-fabric-authority-use-receipt/v1' &&
-  receipt.purpose === 'promotion_handoff' &&
-  receipt.prior_handoff_use === null &&
-  receipt.cas_winner === true &&
-  receipt.revoked === false &&
-  receipt.request_digest === digestCanonical(request) &&
-  AUTHORITY_USE_REQUEST_KEYS.every((key) => equalValue(receipt[key], request[key])) &&
-  isCanonicalOpaqueReference(receipt.receipt_id) &&
-  timestampMs(receipt.observed_at) !== null &&
-  timestampMs(receipt.expires_at) !== null &&
-  timestampMs(receipt.observed_at) < timestampMs(receipt.expires_at)
-
-const attachAuthorityUse = (built, receipt, request) => deepFreeze({
-  ...built,
-  schema_version: 'parallel-delivery-fabric-promotion-handoff/v5',
-  authority_use: deepFreeze({
-    purpose: 'promotion_handoff',
-    receipt_id: receipt.receipt_id,
-    use_id: receipt.use_id,
-    request_digest: receipt.request_digest,
-    nonce: request.nonce,
-  }),
-})
-
-const finishBoundHandoff = (input, trustedAuthorityBundle, receipt, request) => {
-  if (!validAuthorityUseReceipt(sanitizedCanonicalInput(receipt), request)) {
-    fail('authority_use_receipt_invalid')
-  }
-  const built = buildPromotionHandoffStrict(input, trustedAuthorityBundle)
-  return attachAuthorityUse(built, sanitizedCanonicalInput(receipt), request)
-}
-
 /**
- * Bound factory. The only path that can produce a live handoff packet is a
- * base-owned authority-use port that rereads and consumes one promotion use.
+ * Shadow factory. Until an independently authenticated authority-use consumer
+ * is externally activated, candidate-supplied ports are inert and no live
+ * handoff packet can be minted.
  */
-export function createPromotionBridge(ports = undefined) {
-  const authorityUsePort = isPlainObject(ports) ? ports.authorityUsePort : undefined
-  if (!isPlainObject(authorityUsePort) || typeof authorityUsePort.rereadAndConsume !== 'function') {
-    return Object.freeze({
-      buildPromotionHandoff: () => safeHeldTerminal('PREMERGE_AUTHORITY_UNAVAILABLE'),
-    })
-  }
-  const buildBound = (input = undefined, trustedAuthorityBundle = undefined) => {
+export function createPromotionBridge(_ports = undefined) {
+  const buildHeld = (input = undefined, trustedAuthorityBundle = undefined) => {
     const authorityAvailable = trustedAuthorityAvailable(trustedAuthorityBundle)
+    if (!authorityAvailable) return safeHeldTerminal('PREMERGE_AUTHORITY_UNAVAILABLE')
     try {
-      const trusted = parseTrustedPromotionAuthorityBundle(trustedAuthorityBundle)
-      const built = buildPromotionHandoffStrict(input, trusted)
-      const request = makeAuthorityUseRequest(built, trusted)
-      if (!exactKeys(request, AUTHORITY_USE_REQUEST_KEYS)) fail('authority_use_request_invalid')
-      const pending = authorityUsePort.rereadAndConsume(request)
-      if (pending && typeof pending.then === 'function') {
-        return pending.then((receipt) => finishBoundHandoff(input, trusted, receipt, request)).catch(() => (
-          safeHeldTerminal(authorityAvailable ? 'PREMERGE_EVIDENCE_INVALID' : 'PREMERGE_AUTHORITY_UNAVAILABLE')
-        ))
-      }
-      return finishBoundHandoff(input, trusted, pending, request)
+      buildPromotionHandoffStrict(input, trustedAuthorityBundle)
     } catch {
-      return safeHeldTerminal(authorityAvailable ? 'PREMERGE_EVIDENCE_INVALID' : 'PREMERGE_AUTHORITY_UNAVAILABLE')
+      return safeHeldTerminal('PREMERGE_EVIDENCE_INVALID')
     }
+    return safeHeldTerminal('PREMERGE_AUTHORITY_UNAVAILABLE')
   }
-  return Object.freeze({ buildPromotionHandoff: buildBound })
+  return Object.freeze({ buildPromotionHandoff: buildHeld })
 }
 
 /**

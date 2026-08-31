@@ -9,6 +9,10 @@ on:
     branches: [main]
   workflow_dispatch:
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event.action == 'edited' && github.event.changes.base == null && 'metadata-only' || 'verification' }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
@@ -64,7 +68,7 @@ jobs:
           SUBJECT_SHA: ${{ github.sha }}
           MERGE_GROUP_BASE_SHA: ${{ github.event.merge_group.base_sha }}
         run: |
-          if [ "$EVENT_NAME" = "pull_request" ]; then
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
             base_sha="$PULL_REQUEST_BASE_SHA"
             head_sha="$PULL_REQUEST_HEAD_SHA"
             git -c core.quotepath=false diff --no-renames --name-only -z "$base_sha...$head_sha" > changed-paths.bin
