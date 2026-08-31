@@ -17,7 +17,7 @@ const operatorDocPath = path.join(repoRoot, 'docs', 'agents', 'parallel-delivery
 const reducerPath = path.join(repoRoot, 'scripts', 'lib', 'parallel-delivery-fabric-evidence.mjs');
 
 const REQUIREMENTS_VERSION = 'parallel-delivery-fabric-acceptance-requirements/v1';
-const OPERATOR_DOC_VERSION = 'parallel-delivery-fabric-operator-policy/v1';
+const OPERATOR_DOC_VERSION = 'parallel-delivery-fabric-operator-policy/v2';
 const ACTIVATION_RECORD_FIELDS = [
   'phase',
   'base_sha',
@@ -57,7 +57,7 @@ const DISTINCT_AUTHORITY_ROLES = [
 ];
 // This is intentionally a pinned canonical digest. A map edit is a normative
 // contract edit and must update this test and the operator document together.
-const EXPECTED_REQUIREMENTS_SHA256 = 'e019c1112015b23f0b43ead124fe6e0fab427bafd0f872266371068f2c7d38df';
+const EXPECTED_REQUIREMENTS_SHA256 = 'd3c1c7f9747f2de7abed7e4fe60cda3b7c13358085ad33fb8023729efe14e82f';
 const ACCEPTANCE_IDS = Array.from({ length: 45 }, (_, index) => `AC-${String(index + 1).padStart(2, '0')}`);
 const REQUIREMENT_KEYS = [
   'activation_requirement',

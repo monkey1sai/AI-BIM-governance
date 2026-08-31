@@ -85,9 +85,9 @@ test('AC-14 — the sole review policy is legacy-guarded and pinned to an ancest
   assert.deepEqual(policy.phase_order, PHASES)
   assert.deepEqual(policy.open_spec, {
     source_kind: 'base_pinned_openspec',
-    source_path: 'openspec/specs/ai-coding-governance/spec.md',
-    base_sha: 'a0ab7065131914e548e1d79a1c683c8b14b07de4',
-    source_sha256: '27c687fff38b1f791565708090611114970a993bd3b126addf34829cc8e11168',
+    source_path: 'openspec/changes/parallel-delivery-fabric/specs/parallel-delivery-fabric/spec.md',
+    base_sha: '9e2bd849465b7b7b2d6b8866f1227dfb3edb60db',
+    source_sha256: '152515cf902663e88014ca4b4915b352312e2a2b50f900cc94d12224e75bcbba',
   })
   assert.deepEqual(policy.external_check, {
     source_kind: 'github_app',

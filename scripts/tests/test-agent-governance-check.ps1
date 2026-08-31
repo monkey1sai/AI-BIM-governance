@@ -168,9 +168,11 @@ try {
     Assert-True (
         [regex]::Matches($ci, [regex]::Escape($ciEditedGate)).Count -eq 5
     ) 'all changed-path classifier steps skip body/title-only edits but run for base edits'
+    $hasWorkflowConcurrency = $ci -match '(?m)^concurrency:\s*$'
+    $hasIsolatedMetadataConcurrency = $ci -match [regex]::Escape("`${{ github.workflow }}-`${{ github.ref }}-`${{ github.event.action == 'edited' && github.event.changes.base == null && 'metadata-only' || 'verification' }}")
     Assert-True (
-        $ci -match [regex]::Escape("`${{ github.workflow }}-`${{ github.ref }}-`${{ github.event.action == 'edited' && github.event.changes.base == null && 'metadata-only' || 'verification' }}")
-    ) 'body/title-only CI uses an isolated concurrency group and cannot cancel exact-head verification'
+        -not $hasWorkflowConcurrency -or $hasIsolatedMetadataConcurrency
+    ) 'body/title-only CI either has no workflow cancellation authority or uses an isolated concurrency group'
     foreach ($output in @('root_contracts', 'coordinator', 'streaming', 'governance_service', 'viewer', 'agent_governance', 'conv_functional', 'kit_manager_api', 'kit_manager_web', 'compose_config', 'powershell_static', 'rebuild_test_deploy', 'secret_pattern_scan', 'plan_result', 'plan_sha256')) {
         $expectedOutput = $output + ': ${{ steps.paths.outputs.' + $output + ' }}'
         Assert-True ($ci -match [regex]::Escape($expectedOutput)) "changes job exposes $output output"
@@ -216,7 +218,14 @@ try {
     $invalidZeroMetric.value = 0
     $invalidZeroMetric.sample_size = 1
     Assert-True (-not (($invalidZeroReport | ConvertTo-Json -Depth 100) | Test-Json -SchemaFile 'scripts/tests/ai-coding-metrics-report.schema.json' -ErrorAction SilentlyContinue)) 'zero-observation report schema rejects a fabricated zero-percent yield'
-    Assert-True ($ci -match 'if \[ "\$\{\{ github\.event_name \}\}" = "pull_request" \]') 'changed path classifier diffs PR base/head on pull_request'
+    $usesDirectPullRequestSelector = $ci -match 'if \[ "\$\{\{ github\.event_name \}\}" = "pull_request" \]'
+    $usesEnvPullRequestSelector = (
+        $ci -match [regex]::Escape('EVENT_NAME: ${{ github.event_name }}') -and
+        $ci -match [regex]::Escape('PULL_REQUEST_BASE_SHA: ${{ github.event.pull_request.base.sha }}') -and
+        $ci -match [regex]::Escape('PULL_REQUEST_HEAD_SHA: ${{ github.event.pull_request.head.sha }}') -and
+        $ci -match [regex]::Escape('if [ "$EVENT_NAME" = "pull_request" ]; then')
+    )
+    Assert-True ($usesDirectPullRequestSelector -or $usesEnvPullRequestSelector) 'changed path classifier diffs PR base/head on pull_request'
     Assert-True ($ci -match 'git -c core\.quotepath=false diff --no-renames --name-only -z "\$base_sha\.\.\.\$head_sha"') 'pull-request path classification uses NUL-safe rename-preserving merge-base semantics'
     Assert-True ($ci -match 'printf "__full__\\0" > changed-paths\.bin') 'changed path classifier runs full service CI on push/workflow_dispatch'
     Assert-True ($ci -match 'scripts/lib/verification-plan\.mjs') 'CI classifier consumes the shared verification planner'
