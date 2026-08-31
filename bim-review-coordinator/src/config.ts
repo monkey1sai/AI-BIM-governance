@@ -32,6 +32,7 @@ export interface CoordinatorConfig {
   devAuthToken: string;
   sessionStoreDir: string;
   eventLogDir: string;
+  sessionIdleTimeoutMs?: number;
   corsOrigins: string[];
   internalApiAuthToken: string;
   // B-scheme（local-coordinator-ifc-ready-intake-boundary T3）：對外 IFC-ready intake。
@@ -452,6 +453,9 @@ export function loadConfig(overrides: Partial<CoordinatorConfig> = {}): Coordina
     devAuthToken: process.env.DEV_AUTH_TOKEN || "dev-token",
     sessionStoreDir: process.env.SESSION_STORE_DIR || path.join(cwd, "data", "sessions"),
     eventLogDir: process.env.EVENT_LOG_DIR || path.join(cwd, "data", "events"),
+    sessionIdleTimeoutMs: process.env.SESSION_IDLE_TIMEOUT_MS
+      ? parseInt(process.env.SESSION_IDLE_TIMEOUT_MS, 10)
+      : 300000,
     corsOrigins: csvFromEnv("CORS_ORIGINS", uniqueStrings([
       "http://127.0.0.1:5173",
       "http://localhost:5173",

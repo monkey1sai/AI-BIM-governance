@@ -10,4 +10,4 @@
 
 ## 2. session-lifecycle（回收倒數與互動保活）
 
-- [ ] 2.1（coordinator＋web-viewer-sample）無互動軟門檻第二回收路徑（2026-07-22 使用者裁決）：viewer 互動事件（輸入／DataChannel 指令）上報彙整、連續 T_inactivity 無互動觸發回收倒數、倒數 10 秒廣播至該 session 全部已連線 viewer、前端倒數 UI 顯示、任一互動取消並重置、歸零經既有 session close 路徑 teardown（reason=inactivity 入 session ledger）；測試：忘關分頁回收、倒數中互動取消、活躍會議不因時長回收；前端倒數 UI 有 E2E 截圖/trace（「佇列中下一位獲派」不在本 change，屬母 change 佇列語意）
+- [x] 2.1（coordinator＋web-viewer-sample）無互動軟門檻第二回收路徑（2026-07-22 使用者裁決）：viewer 互動事件（輸入／DataChannel 指令）上報彙整、連續 T_inactivity 無互動觸發回收倒數、倒數 10 秒廣播至該 session 全部已連線 viewer、前端倒數 UI 顯示、任一互動取消並重置、歸零經既有 session close 路徑 teardown（reason=inactivity 入 session ledger）；測試：忘關分頁回收、倒數中互動取消、活躍會議不因時長回收；前端倒數 UI 有 E2E 截圖/trace（「佇列中下一位獲派」不在本 change，屬母 change 佇列語意）

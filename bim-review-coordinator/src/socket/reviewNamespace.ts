@@ -7,6 +7,7 @@ import {
 } from "../services/sessionStore.js";
 import type { SessionStore } from "../services/sessionStore.js";
 import type { SessionTraceResolver } from "../services/sessionTraceResolver.js";
+import type { SessionIdleReclaimService } from "../services/sessionIdleReclaimService.js";
 
 interface SessionPayload {
   session_id?: string;
@@ -21,6 +22,7 @@ export function registerReviewNamespace(
   store: SessionStore,
   eventLog: EventLog,
   traceResolver: SessionTraceResolver,
+  idleReclaim?: SessionIdleReclaimService,
 ): void {
   // eventLog 保留為 future lifecycle audit 拓展,join/leave/heartbeat 路徑暫未直接寫入。
   void eventLog;
@@ -64,6 +66,7 @@ export function registerReviewNamespace(
         return;
       }
       membership = { sessionId, userId, traceId: traceCheck.traceId };
+      idleReclaim?.recordActivity(sessionId);
       socket.join(sessionId);
       namespace.to(sessionId).emit("presenceUpdated", {
         session_id: sessionId,
@@ -88,11 +91,30 @@ export function registerReviewNamespace(
         ack?.(traceCheck);
         return;
       }
+      idleReclaim?.recordActivity(sessionCheck.sessionId);
       ack?.({
         ok: true,
         received_at: new Date().toISOString(),
         session_id: sessionCheck.sessionId,
         trace_id: traceCheck.traceId,
+      });
+    });
+
+    socket.on("userActivity", (payload: SessionPayload, ack?: (response: unknown) => void) => {
+      const sessionCheck = validateExistingSession(store, payload);
+      if (!sessionCheck.ok) {
+        ack?.(sessionCheck);
+        return;
+      }
+      if (!membership || membership.sessionId !== sessionCheck.sessionId) {
+        ack?.({ ok: false, error: "Socket is not joined to this review session." });
+        return;
+      }
+      idleReclaim?.recordActivity(sessionCheck.sessionId);
+      ack?.({
+        ok: true,
+        session_id: sessionCheck.sessionId,
+        received_at: new Date().toISOString(),
       });
     });
 

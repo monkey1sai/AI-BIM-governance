@@ -153,6 +153,7 @@ import {
   SessionStore,
 } from "./services/sessionStore.js";
 import { SessionTraceResolver, type SessionTracePlan } from "./services/sessionTraceResolver.js";
+import { SessionIdleReclaimService } from "./services/sessionIdleReclaimService.js";
 import { registerReviewNamespace } from "./socket/reviewNamespace.js";
 import { registerConsoleRoutes } from "./routes/consoleRoutes.js";
 import { buildRuntimeStatus, expectedStageBinding, summarizeIfcReadyJob } from "./runtimeStatus.js";
@@ -646,6 +647,7 @@ export interface CoordinatorApp {
   };
   eventLog: EventLog;
   structLog: StructLogger;
+  idleReclaimService: SessionIdleReclaimService;
   // coordinator-auto-poll-streaming-conversion §6:cancel 全部 in-process auto-poll
   // timer。process shutdown / 測試 teardown 必呼叫,避免 timer keep-alive 阻 exit。
   // async（回 Promise）:minioWatchSurface.dispose() 需 await 其 in-flight tick settle 後才
@@ -752,6 +754,93 @@ export function createCoordinatorApp(
     },
   });
   const viewerLeaseStore = new ViewerLeaseStore();
+
+  let idleReclaimService: SessionIdleReclaimService;
+
+  const closeReviewSessionInternal = (
+    sessionId: string,
+    options: {
+      reason?: string;
+      actor?: string;
+      finalEvents?: unknown[];
+    } = {},
+  ): ReviewSession | null => {
+    if (!isSafeSessionId(sessionId)) return null;
+    const session = store.get(sessionId);
+    if (!session) return null;
+    if (session.status === "closed" || session.status === "closing") {
+      return session;
+    }
+    const finalEvents = Array.isArray(options.finalEvents) ? options.finalEvents : [];
+    const reason = typeof options.reason === "string" ? (options.reason.trim().slice(0, 500) || undefined) : undefined;
+    const actor = typeof options.actor === "string" ? (options.actor.trim().slice(0, 500) || undefined) : undefined;
+    const auditFields = reason ? { reason, ...(actor ? { actor } : {}) } : {};
+    const releasedViewerLeases = viewerLeaseStore.releaseSession(session.session_id);
+    const closing = store.update(session.session_id, {
+      status: "closing",
+      kit_instance_bindings: markKitBindingsDraining(session.kit_instance_bindings),
+    });
+    eventLog.append(session.session_id, "sessionClosing", {
+      final_events: finalEvents.length,
+      released_viewer_leases: releasedViewerLeases.map((lease) => lease.lease_id),
+      ...auditFields,
+    });
+    for (const event of finalEvents) {
+      eventLog.append(session.session_id, "finalReviewEvent", event);
+    }
+    const closed = store.update(session.session_id, {
+      status: "closed",
+      participants: [],
+      kit_instance_bindings: releaseKitBindings(closing?.kit_instance_bindings || session.kit_instance_bindings),
+    });
+    eventLog.append(session.session_id, "sessionClosed", { ...auditFields });
+    eventLog.append(session.session_id, "kitInstanceReleased", {
+      kit_instance_bindings: closed?.kit_instance_bindings.map((binding) => binding.kit_instance_id) || [],
+    });
+    const traceAuthority = sessionTraceResolver.resolveAndCommit(session.session_id);
+    if (traceAuthority.ok && traceAuthority.canonicalTraceId.startsWith("ifcready_")) {
+      structLog
+        .withTraceId(traceAuthority.canonicalTraceId)
+        .lifecycle("ifcReadyReviewSession", "IFC-ready review session closed", {
+          phase: "closed",
+          subject_kind: "review_session",
+          subject_id: session.session_id,
+          ifc_ready_job_id: traceAuthority.canonicalTraceId,
+        });
+    }
+    idleReclaimService?.removeSession(session.session_id);
+    return closed;
+  };
+
+  idleReclaimService = new SessionIdleReclaimService(store, {
+    idleTimeoutMs: config.sessionIdleTimeoutMs,
+    onCountdown: (sessionId, remainingSeconds) => {
+      io.of("/review").to(sessionId).emit("session:idle_countdown", {
+        session_id: sessionId,
+        remaining_seconds: remainingSeconds,
+        reason: "inactivity",
+      });
+    },
+    onCountdownCancelled: (sessionId) => {
+      io.of("/review").to(sessionId).emit("session:idle_countdown_cancelled", {
+        session_id: sessionId,
+        cancelled_at: nowIso(),
+      });
+    },
+    onReclaimTeardown: (sessionId) => {
+      closeReviewSessionInternal(sessionId, {
+        reason: "inactivity",
+        actor: "system:idle_reclaimer",
+      });
+      io.of("/review").to(sessionId).emit("session:closed", {
+        session_id: sessionId,
+        reason: "inactivity",
+        closed_at: nowIso(),
+      });
+    },
+  });
+  idleReclaimService.start();
+
   const runtimeMutationAuthority = new RuntimeMutationAuthority({
     now: Date.now,
     generateId: (prefix) => `${prefix}_${randomBytes(12).toString("hex")}`,
@@ -2114,43 +2203,49 @@ export function createCoordinatorApp(
     // （sessionClosing:{final_events}、sessionClosed:{}），符合 §3「不改既有 cooperative close 行為」。
     const rawReason = (request.body as { reason?: unknown } | undefined)?.reason;
     const reason = typeof rawReason === "string" ? (rawReason.trim().slice(0, 500) || undefined) : undefined;
-    // truthy 檢查（與 resolveActor 的 `header.trim().length > 0` 對稱）：空白 reason 視同無 reason，
-    // 否則 { reason: "   " } 會讓 auditFields 帶入 actor，污染既有 cooperative close payload 形狀（IMPORTANT-1）。
-    const auditFields = reason ? { reason, actor: resolveActor(request) } : {};
-    const releasedViewerLeases = viewerLeaseStore.releaseSession(session.session_id);
-    const closing = store.update(session.session_id, {
-      status: "closing",
-      kit_instance_bindings: markKitBindingsDraining(session.kit_instance_bindings),
+    const closed = closeReviewSessionInternal(session.session_id, {
+      reason,
+      actor: resolveActor(request),
+      finalEvents,
     });
-    eventLog.append(session.session_id, "sessionClosing", {
-      final_events: finalEvents.length,
-      released_viewer_leases: releasedViewerLeases.map((lease) => lease.lease_id),
-      ...auditFields,
-    });
-    for (const event of finalEvents) {
-      eventLog.append(session.session_id, "finalReviewEvent", event);
-    }
-    const closed = store.update(session.session_id, {
-      status: "closed",
-      participants: [],
-      kit_instance_bindings: releaseKitBindings(closing?.kit_instance_bindings || session.kit_instance_bindings),
-    });
-    eventLog.append(session.session_id, "sessionClosed", { ...auditFields });
-    eventLog.append(session.session_id, "kitInstanceReleased", {
-      kit_instance_bindings: closed?.kit_instance_bindings.map((binding) => binding.kit_instance_id) || [],
-    });
-    const traceAuthority = sessionTraceResolver.resolveAndCommit(session.session_id);
-    if (traceAuthority.ok && traceAuthority.canonicalTraceId.startsWith("ifcready_")) {
-      structLog
-        .withTraceId(traceAuthority.canonicalTraceId)
-        .lifecycle("ifcReadyReviewSession", "IFC-ready review session closed", {
-          phase: "closed",
-          subject_kind: "review_session",
-          subject_id: session.session_id,
-          ifc_ready_job_id: traceAuthority.canonicalTraceId,
-        });
-    }
     response.json(closed);
+  });
+
+  app.post("/api/review-sessions/:sessionId/activity", (request, response) => {
+    if (!isSafeSessionId(request.params.sessionId)) {
+      response.status(400).json({ detail: "Invalid review session id." });
+      return;
+    }
+    const session = store.get(request.params.sessionId);
+    if (!session) {
+      response.status(404).json({ detail: "Review session not found." });
+      return;
+    }
+    const recorded = idleReclaimService.recordActivity(request.params.sessionId);
+    response.json({
+      ok: recorded,
+      session_id: request.params.sessionId,
+      recorded_at: nowIso(),
+    });
+  });
+
+  app.get("/api/review-sessions/:sessionId/idle-status", (request, response) => {
+    if (!isSafeSessionId(request.params.sessionId)) {
+      response.status(400).json({ detail: "Invalid review session id." });
+      return;
+    }
+    const session = store.get(request.params.sessionId);
+    if (!session) {
+      response.status(404).json({ detail: "Review session not found." });
+      return;
+    }
+    const state = idleReclaimService.getSessionState(request.params.sessionId);
+    response.json({
+      session_id: request.params.sessionId,
+      is_counting_down: state?.isCountingDown ?? false,
+      remaining_seconds: state?.countdownRemainingSec ?? 10,
+      last_activity_at: state?.lastActivityAt ? new Date(state.lastActivityAt).toISOString() : session.created_at,
+    });
   });
 
   // Stage composition authority is a server-resolved, bounded transaction.
@@ -4362,7 +4457,7 @@ export function createCoordinatorApp(
     response.status(500).json({ detail: error instanceof Error ? error.message : String(error) });
   });
 
-  registerReviewNamespace(io, store, eventLog, sessionTraceResolver);
+  registerReviewNamespace(io, store, eventLog, sessionTraceResolver, idleReclaimService);
 
   // coordinator-auto-poll-streaming-conversion §6:dispose 清空所有 in-process auto
   // poller timer。process shutdown / 測試 teardown 必呼叫,避免 keep-alive 阻 exit。
@@ -4376,6 +4471,7 @@ export function createCoordinatorApp(
     // markDroppedOnRestart/clear 會造成重複 store 寫入,二次起一律 no-op。
     if (disposed) return;
     disposed = true;
+    idleReclaimService.stop();
     // 先結束 SSE 訂閱端、停 intake 並 await in-flight tick settle（皆由 surface 擁有）；
     // 其最後一筆 enqueue 必須在 pipeline drain 前完成，否則 shutdown 後仍可能遺留 queued job。
     await minioWatchSurface.dispose();
@@ -4411,6 +4507,7 @@ export function createCoordinatorApp(
     },
     eventLog,
     structLog,
+    idleReclaimService,
     dispose,
     minioWatchSurface,
     // test-only boolean getter：委派 pipeline.hasPendingDispatch（不外洩 pending map）。

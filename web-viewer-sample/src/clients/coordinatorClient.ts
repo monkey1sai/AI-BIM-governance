@@ -150,6 +150,24 @@ export class CoordinatorClient {
         return parsed;
     }
 
+    async recordSessionActivity(sessionId: string): Promise<{ ok: boolean; session_id: string; recorded_at: string }> {
+        return this.request<{ ok: boolean; session_id: string; recorded_at: string }>(
+            `/api/review-sessions/${encodeURIComponent(sessionId)}/activity`,
+            { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({}) },
+        );
+    }
+
+    async getSessionIdleStatus(sessionId: string): Promise<{
+        session_id: string;
+        is_counting_down: boolean;
+        remaining_seconds: number;
+        last_activity_at: string;
+    }> {
+        return this.request(
+            `/api/review-sessions/${encodeURIComponent(sessionId)}/idle-status`,
+        );
+    }
+
     private async request<T>(path: string, init?: RequestInit): Promise<T> {
         const response = await this.fetchImpl(`${this.baseUrl}${path}`, {
             headers: { Accept: "application/json", ...(init?.headers || {}) },
