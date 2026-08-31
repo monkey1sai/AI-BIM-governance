@@ -281,8 +281,14 @@ try {
     Assert-Equal 2 $LASTEXITCODE 'logged Create failure preserves the governed HELD exit code'
     $failurePayload = ($failureOutput -join [Environment]::NewLine) | ConvertFrom-Json
     Assert-Equal 'governed-worktree-error/v1' ([string]$failurePayload.schema_version) 'logged failure schema'
-    Assert-Equal 'primary_checkout_invariant_failed: primary_checkout_dirty' `
-        ([string]$failurePayload.error) 'logged failure preserves the original held reason'
+    $expectedFailureReason = if ($currentEligibility.Eligible) {
+        'primary_checkout_invariant_failed: primary_checkout_dirty'
+    }
+    else {
+        "worktree_identity_rejected: $($currentEligibility.Reason)"
+    }
+    Assert-Equal $expectedFailureReason ([string]$failurePayload.error) `
+        'logged failure preserves the first observed held reason'
     Assert-True (-not (Test-Path -LiteralPath $failureFixtureTarget)) 'logged failure creates no worktree target'
     & git -C $failureFixtureRepo show-ref --verify --quiet refs/heads/fix/failure-log-contract
     Assert-Equal 1 $LASTEXITCODE 'logged failure creates no branch'
