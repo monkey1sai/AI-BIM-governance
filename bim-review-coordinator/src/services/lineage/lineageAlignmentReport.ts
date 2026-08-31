@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { TextDecoder } from "node:util";
 import { isUtcTimestamp } from "./minioLocator.js";
 
 /** 整份 JSON report 的 bounded-read 上限；超過者仍可走既有個別下載 API。 */
@@ -242,7 +243,7 @@ export type LineageAlignmentDifferenceItem =
 export function parseLineageAlignmentReport(rawBytes: Buffer): LineageAlignmentReportBody | null {
   let document: unknown;
   try {
-    document = JSON.parse(rawBytes.toString("utf-8"));
+    document = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(rawBytes));
   } catch {
     return null;
   }
@@ -315,7 +316,7 @@ function validateIdentityChains(
   });
   sets.ifc_only.forEach((row, index) => {
     check(row.ifc_uuid36, row.ifc_global_id22, ["difference_sets", "ifc_only", index]);
-    if (row.usd_prim_path && row.usd_prim_path !== usdRoot(row.ifc_class, row.ifc_global_id22)) {
+    if (row.usd_prim_path && row.usd_prim_path.split("/").at(-1) !== usdGuidToken(row.ifc_global_id22)) {
       issue(["difference_sets", "ifc_only", index, "usd_prim_path"], "stable root mismatch");
     }
   });
@@ -384,6 +385,10 @@ function usdSafe(value: string, fallback: string): string {
 }
 
 function usdRoot(ifcClass: string, globalId: string): string {
+  return `/World/Elements/${usdSafe(ifcClass, "Unclassified")}/${usdGuidToken(globalId)}`;
+}
+
+function usdGuidToken(globalId: string): string {
   const body = usdSafe(globalId, "Shape").replace(/^_/, "") || "Shape";
-  return `/World/Elements/${usdSafe(ifcClass, "Unclassified")}/G_${body}`;
+  return `G_${body}`;
 }

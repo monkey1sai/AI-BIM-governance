@@ -47,4 +47,37 @@ describe("lineage alignment report runtime parser", () => {
       }
     }
   });
+
+  it("拒絕 JSON string 內的非法 UTF-8 bytes，不以 replacement character 靜默改寫 identifier", () => {
+    const bytes = Buffer.from(
+      fixtureBytes("valid", "alignment-report-json-all-difference-sets.json"),
+    );
+    const document = JSON.parse(bytes.toString("utf-8")) as {
+      body: { difference_sets: { csv_only: Array<{ rvt_element_id: string }> } };
+    };
+    const marker = Buffer.from(`"${document.body.difference_sets.csv_only[0]!.rvt_element_id}"`, "utf-8");
+    const markerOffset = bytes.indexOf(marker);
+    expect(markerOffset).toBeGreaterThanOrEqual(0);
+    bytes[markerOffset + 1] = 0xc3;
+    bytes[markerOffset + 2] = 0x28;
+
+    expect(parseLineageAlignmentReport(bytes)).toBeNull();
+  });
+
+  it("接受 class segment 與 advisory ifc_class 不同、但 GlobalId stable token 正確的 IFC-only root", () => {
+    const document = JSON.parse(
+      fixtureBytes("valid", "alignment-report-json-all-difference-sets.json").toString("utf-8"),
+    ) as {
+      body: {
+        difference_sets: {
+          ifc_only: Array<{ ifc_class: string; usd_prim_path?: string }>;
+        };
+      };
+    };
+    const row = document.body.difference_sets.ifc_only.find((item) => item.usd_prim_path);
+    expect(row).toBeDefined();
+    row!.ifc_class = row!.ifc_class === "IfcWall" ? "IfcDoor" : "IfcWall";
+
+    expect(parseLineageAlignmentReport(Buffer.from(JSON.stringify(document), "utf-8"))).not.toBeNull();
+  });
 });

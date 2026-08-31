@@ -263,7 +263,9 @@ export function createS3LineageMetadataProjectionReader(
             `result ${result.result_id} alignment report exceeds the bounded read limit`,
           );
         }
-        throw error;
+        throw new LineageMetadataProjectionUnavailableError(
+          `result ${result.result_id} alignment report object store is unavailable`,
+        );
       }
 
       const observedDigest = crypto.createHash("sha256").update(rawBytes).digest("hex");

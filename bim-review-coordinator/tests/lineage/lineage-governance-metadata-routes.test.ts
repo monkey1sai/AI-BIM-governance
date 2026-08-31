@@ -786,6 +786,31 @@ describe("lineage governance metadata surfaces：manifest 投影接真值", () =
     }
   });
 
+  it("alignment report object-store HEAD／GET transient failure 統一 fail closed 503", async () => {
+    for (const operation of ["head", "get"] as const) {
+      for (const surface of ["alignment", "overview"] as const) {
+        const harness = makeProjectionHarness();
+        if (operation === "head") {
+          const realHead = harness.objects.headVersioned.bind(harness.objects);
+          harness.objects.headVersioned = async (ref) => {
+            if (ref.objectKey.endsWith("alignment_report.json")) throw new Error("MinIO timeout");
+            return realHead(ref);
+          };
+        } else {
+          const realGet = harness.objects.getBytesVersioned.bind(harness.objects);
+          harness.objects.getBytesVersioned = async (ref, maxBytes) => {
+            if (ref.objectKey.endsWith("alignment_report.json")) throw new Error("stream reset");
+            return realGet(ref, maxBytes);
+          };
+        }
+
+        const response = await getSurface(harness.app, harness.pipelineJobId, surface);
+        expect(response.status, `${operation}:${surface}`).toBe(503);
+        expect(response.body).toEqual({ error: "lineage_metadata_projection_unavailable" });
+      }
+    }
+  });
+
   it("reader 未接線時 alignment 維持 NOT_BUILT，不以空集合假裝完成", async () => {
     const harness = makeHarness();
     const response = await getSurface(harness.app, harness.pipelineJobId, "alignment");
