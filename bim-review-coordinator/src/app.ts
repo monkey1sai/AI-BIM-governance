@@ -815,25 +815,33 @@ export function createCoordinatorApp(
   idleReclaimService = new SessionIdleReclaimService(store, {
     idleTimeoutMs: config.sessionIdleTimeoutMs,
     onCountdown: (sessionId, remainingSeconds) => {
+      const traceAuthority = sessionTraceResolver.resolveAndCommit(sessionId);
+      if (!traceAuthority.ok) return;
       io.of("/review").to(sessionId).emit("session:idle_countdown", {
         session_id: sessionId,
+        trace_id: traceAuthority.canonicalTraceId,
         remaining_seconds: remainingSeconds,
         reason: "inactivity",
       });
     },
     onCountdownCancelled: (sessionId) => {
+      const traceAuthority = sessionTraceResolver.resolveAndCommit(sessionId);
+      if (!traceAuthority.ok) return;
       io.of("/review").to(sessionId).emit("session:idle_countdown_cancelled", {
         session_id: sessionId,
+        trace_id: traceAuthority.canonicalTraceId,
         cancelled_at: nowIso(),
       });
     },
     onReclaimTeardown: (sessionId) => {
+      const traceAuthority = sessionTraceResolver.resolveAndCommit(sessionId);
       closeReviewSessionInternal(sessionId, {
         reason: "inactivity",
         actor: "system:idle_reclaimer",
       });
       io.of("/review").to(sessionId).emit("session:closed", {
         session_id: sessionId,
+        ...(traceAuthority.ok ? { trace_id: traceAuthority.canonicalTraceId } : {}),
         reason: "inactivity",
         closed_at: nowIso(),
       });
@@ -2222,8 +2230,14 @@ export function createCoordinatorApp(
       return;
     }
     const recorded = idleReclaimService.recordActivity(request.params.sessionId);
+    if (!recorded) {
+      response.status(409).json({
+        detail: "Session activity requires an enabled idle policy and a connected viewer.",
+      });
+      return;
+    }
     response.json({
-      ok: recorded,
+      ok: true,
       session_id: request.params.sessionId,
       recorded_at: nowIso(),
     });
@@ -2242,9 +2256,11 @@ export function createCoordinatorApp(
     const state = idleReclaimService.getSessionState(request.params.sessionId);
     response.json({
       session_id: request.params.sessionId,
+      enabled: config.sessionIdleTimeoutMs !== undefined,
+      has_connected_viewer: state !== null,
       is_counting_down: state?.isCountingDown ?? false,
-      remaining_seconds: state?.countdownRemainingSec ?? 10,
-      last_activity_at: state?.lastActivityAt ? new Date(state.lastActivityAt).toISOString() : session.created_at,
+      remaining_seconds: state?.countdownRemainingSec ?? null,
+      last_activity_at: state?.lastActivityAt ? new Date(state.lastActivityAt).toISOString() : null,
     });
   });
 

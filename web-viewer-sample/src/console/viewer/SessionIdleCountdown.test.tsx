@@ -2,7 +2,6 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { SessionIdleCountdownBanner } from "./SessionIdleCountdownBanner";
-import { coordinatorClient } from "../coordinatorClient";
 
 describe("SessionIdleCountdownBanner (session-lifecycle frontend countdown & keepalive)", () => {
   const sessionId = "review_session_test123";
@@ -30,37 +29,9 @@ describe("SessionIdleCountdownBanner (session-lifecycle frontend countdown & kee
     }
   });
 
-  const createMockSocket = () => {
-    const handlers: Record<string, (payload: { session_id?: string; remaining_seconds?: number; reason?: string }) => void> = {};
-    return {
-      on: vi.fn((event: string, callback: (payload: { session_id?: string; remaining_seconds?: number; reason?: string }) => void) => {
-        handlers[event] = callback;
-      }),
-      off: vi.fn((event: string) => {
-        delete handlers[event];
-      }),
-      emit: vi.fn(),
-      trigger: (event: string, payload: { session_id?: string; remaining_seconds?: number; reason?: string }) => {
-        handlers[event]?.(payload);
-      },
-    };
-  };
-
-  it("renders countdown banner when receiving session:idle_countdown event", async () => {
-    const socket = createMockSocket();
+  it("renders the countdown state supplied by the production Socket event owner", async () => {
     await act(async () => {
-      root?.render(<SessionIdleCountdownBanner sessionId={sessionId} socket={socket} />);
-    });
-
-    expect(container?.querySelector('[data-testid="session-idle-countdown-banner"]')).toBeNull();
-
-    // Trigger idle countdown event
-    await act(async () => {
-      socket.trigger("session:idle_countdown", {
-        session_id: sessionId,
-        remaining_seconds: 10,
-        reason: "inactivity",
-      });
+      root?.render(<SessionIdleCountdownBanner sessionId={sessionId} remainingSeconds={10} closedReason={null} />);
     });
 
     const banner = container?.querySelector('[data-testid="session-idle-countdown-banner"]');
@@ -69,31 +40,18 @@ describe("SessionIdleCountdownBanner (session-lifecycle frontend countdown & kee
     expect(container?.querySelector('[data-testid="session-idle-keepalive-btn"]')).not.toBeNull();
   });
 
-  it("calls coordinatorClient.recordSessionActivity and dismisses banner on keepalive button click", async () => {
-    const socket = createMockSocket();
-    const recordSpy = vi.spyOn(coordinatorClient, "recordSessionActivity").mockResolvedValue({
-      ok: true,
-      session_id: sessionId,
-      recorded_at: new Date().toISOString(),
-    });
-    const onKeepAlive = vi.fn();
+  it("requires a positive coordinator acknowledgement before treating keepalive as accepted", async () => {
+    const recordActivity = vi.fn().mockResolvedValue(false);
 
     await act(async () => {
       root?.render(
         <SessionIdleCountdownBanner
           sessionId={sessionId}
-          socket={socket}
-          onKeepAlive={onKeepAlive}
+          remainingSeconds={8}
+          closedReason={null}
+          recordActivity={recordActivity}
         />,
       );
-    });
-
-    await act(async () => {
-      socket.trigger("session:idle_countdown", {
-        session_id: sessionId,
-        remaining_seconds: 8,
-        reason: "inactivity",
-      });
     });
 
     const btn = container?.querySelector('[data-testid="session-idle-keepalive-btn"]') as HTMLButtonElement | null;
@@ -103,58 +61,36 @@ describe("SessionIdleCountdownBanner (session-lifecycle frontend countdown & kee
       btn?.click();
     });
 
-    expect(recordSpy).toHaveBeenCalledWith(sessionId);
-    expect(socket.emit).toHaveBeenCalledWith("userActivity", { session_id: sessionId });
-    expect(onKeepAlive).toHaveBeenCalled();
-    expect(container?.querySelector('[data-testid="session-idle-countdown-banner"]')).toBeNull();
+    expect(recordActivity).toHaveBeenCalledTimes(1);
+    expect(container?.querySelector('[data-testid="session-idle-countdown-banner"]')).not.toBeNull();
+    expect(container?.querySelector('[data-testid="session-idle-keepalive-error"]')?.textContent).toContain("未獲 coordinator 確認");
   });
 
-  it("dismisses countdown banner when session:idle_countdown_cancelled is received", async () => {
-    const socket = createMockSocket();
+  it("dismisses the banner when the event owner supplies a cancelled state", async () => {
     await act(async () => {
-      root?.render(<SessionIdleCountdownBanner sessionId={sessionId} socket={socket} />);
-    });
-
-    await act(async () => {
-      socket.trigger("session:idle_countdown", {
-        session_id: sessionId,
-        remaining_seconds: 10,
-      });
+      root?.render(<SessionIdleCountdownBanner sessionId={sessionId} remainingSeconds={10} closedReason={null} />);
     });
     expect(container?.querySelector('[data-testid="session-idle-countdown-banner"]')).not.toBeNull();
 
     await act(async () => {
-      socket.trigger("session:idle_countdown_cancelled", {
-        session_id: sessionId,
-      });
+      root?.render(<SessionIdleCountdownBanner sessionId={sessionId} remainingSeconds={null} closedReason={null} />);
     });
     expect(container?.querySelector('[data-testid="session-idle-countdown-banner"]')).toBeNull();
   });
 
-  it("renders session-idle-closed alert when session:closed received with reason=inactivity", async () => {
-    const socket = createMockSocket();
-    const onClosed = vi.fn();
-
+  it("renders session-idle-closed alert from the production session:closed state", async () => {
     await act(async () => {
       root?.render(
         <SessionIdleCountdownBanner
           sessionId={sessionId}
-          socket={socket}
-          onClosed={onClosed}
+          remainingSeconds={null}
+          closedReason="inactivity"
         />,
       );
-    });
-
-    await act(async () => {
-      socket.trigger("session:closed", {
-        session_id: sessionId,
-        reason: "inactivity",
-      });
     });
 
     const closedBanner = container?.querySelector('[data-testid="session-idle-closed"]');
     expect(closedBanner).not.toBeNull();
     expect(closedBanner?.textContent).toContain("會議因長時間未操作已結束");
-    expect(onClosed).toHaveBeenCalled();
   });
 });

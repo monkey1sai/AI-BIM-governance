@@ -11,10 +11,8 @@ Namespace:
 ```txt
 joinSession
 leaveSession
-highlightRequest
-selectionUpdate
-annotationCreate
 heartbeat
+userActivity
 ```
 
 `joinSession` payload:
@@ -24,6 +22,17 @@ heartbeat
   "session_id": "review_session_xxx",
   "user_id": "dev_user_001",
   "display_name": "Dev User"
+}
+```
+
+`heartbeat` proves Socket connectivity only and does not reset inactivity.
+`userActivity` is accepted only after the socket joined the same session and
+must carry that session's canonical `trace_id`:
+
+```json
+{
+  "session_id": "review_session_xxx",
+  "trace_id": "rev_review_session_xxx"
 }
 ```
 
@@ -57,12 +66,18 @@ POST /api/review-sessions/{session_id}/annotations
 
 ```txt
 presenceUpdated
-highlightRequest
-selectionUpdate
-annotationCreated
+session:idle_countdown
+session:idle_countdown_cancelled
+session:closed
 ```
 
 Events are broadcast to the same `session_id` room except the sender where appropriate.
+
+Idle lifecycle events carry both `session_id` and the canonical `trace_id`.
+`session:idle_countdown` also carries `remaining_seconds` and
+`reason=inactivity`; cancellation is emitted only after positively recorded
+user activity. `session:closed` is emitted after the existing close path writes
+`reason=inactivity` to the session event ledger.
 
 `highlightRequest`, `selectionUpdate`, and `annotationCreated` are room scoped: a second browser client joined to the same `session_id` receives the broadcast while other sessions do not. `annotationCreate` returns an ack error if local shadow persistence or the configured external callback path cannot save the annotation, but the namespace stays alive.
 
@@ -85,4 +100,7 @@ Validation failures:
 { "ok": false, "error": "Review session is not active." }
 ```
 
-`joinSession`, `leaveSession`, `highlightRequest`, `selectionUpdate`, and `annotationCreate` must not join a Socket.IO room, write event log entries, or persist annotations when the session does not exist or is `closing`, `closed`, or `failed`.
+`joinSession`, `heartbeat`, `userActivity`, and `leaveSession` must not mutate
+presence or idle state when the session does not exist or is `closing`,
+`closed`, or `failed`. A connectivity `heartbeat` must never count as user
+activity.

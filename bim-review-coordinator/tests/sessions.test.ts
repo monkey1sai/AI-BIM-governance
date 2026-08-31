@@ -651,7 +651,7 @@ describe("bim-review-coordinator", () => {
   });
 
   it("binds join, heartbeat, and leave to one exact canonical trace before side effects", async () => {
-    const app = makeApp();
+    const app = makeApp({ sessionIdleTimeoutMs: 60_000 });
     const created = await request(app.app)
       .post("/api/review-sessions")
       .send({
@@ -696,6 +696,7 @@ describe("bim-review-coordinator", () => {
     expect(await joinedPresence).toMatchObject({ session_id: sessionId, trace_id: traceId });
     expect(app.store.get(sessionId)?.participants.map((item) => item.user_id)).toEqual([serverUserId]);
     expect(app.io.of("/review").adapter.rooms.get(sessionId)?.has(client.id as string)).toBe(true);
+    expect(app.idleReclaimService.recordActivity(sessionId, 1_000)).toBe(true);
     const sessionFile = path.join(activeRoot as string, "sessions", `${sessionId}.json`);
     const joinedSessionJson = fs.readFileSync(sessionFile, "utf8");
     const joinedPresenceCount = presence.length;
@@ -729,6 +730,20 @@ describe("bim-review-coordinator", () => {
       user_id: "viewer_trace_001",
     });
     expect(heartbeat).toMatchObject({ ok: true, session_id: sessionId, trace_id: traceId });
+    expect(app.idleReclaimService.getSessionState(sessionId)?.lastActivityAt).toBe(1_000);
+
+    const untracedActivity = await emitWithAck<Record<string, unknown>>(client, "userActivity", {
+      session_id: sessionId,
+    });
+    expect(untracedActivity).toEqual({ ok: false, error: "Missing trace_id" });
+    expect(app.idleReclaimService.getSessionState(sessionId)?.lastActivityAt).toBe(1_000);
+
+    const activity = await emitWithAck<Record<string, unknown>>(client, "userActivity", {
+      session_id: sessionId,
+      trace_id: traceId,
+    });
+    expect(activity).toMatchObject({ ok: true, session_id: sessionId, trace_id: traceId });
+    expect(app.idleReclaimService.getSessionState(sessionId)?.lastActivityAt).toBeGreaterThan(1_000);
 
     const leftPresence = new Promise<Record<string, unknown>>((resolve) => {
       client.once("presenceUpdated", resolve);
@@ -742,6 +757,7 @@ describe("bim-review-coordinator", () => {
     expect(await leftPresence).toMatchObject({ session_id: sessionId, trace_id: traceId });
     expect(app.store.get(sessionId)?.participants).toEqual([]);
     expect(app.io.of("/review").adapter.rooms.get(sessionId)).toBeUndefined();
+    expect(app.idleReclaimService.getSessionState(sessionId)).toBeNull();
   });
 
   it("binds presence identity to each socket and ignores spoofed join/leave user_id values", async () => {

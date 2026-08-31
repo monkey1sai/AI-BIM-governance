@@ -108,6 +108,21 @@ export function connectHarnessReviewSocket(
       });
     },
 
+    userActivity(): void {
+      if (manuallyDisconnected || !joinAcknowledged || !activeCandidate) return;
+      const expectedCandidate = { ...activeCandidate };
+      const expectedKey = candidateKey(expectedCandidate);
+      schedule(() => {
+        if (
+          !joinAcknowledged
+          || !activeCandidate
+          || candidateKey(activeCandidate) !== expectedKey
+          || !isExactHarnessAuthority(expectedCandidate, authority)
+        ) return;
+        successAck("userActivity", expectedCandidate);
+      });
+    },
+
     leave(): void {
       if (manuallyDisconnected || !joinAcknowledged || !activeCandidate) return;
       const expectedCandidate = { ...activeCandidate };

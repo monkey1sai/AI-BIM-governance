@@ -120,11 +120,12 @@ describe("connectReviewSocket", () => {
         }]);
     });
 
-    it("uses the active candidate for heartbeat and leave without allowing a second root", () => {
+    it("uses the active candidate for heartbeat, activity, and leave without allowing a second root", () => {
         const client = connectReviewSocket("http://127.0.0.1:8004");
         socket.trigger("connect");
         client.join(CANDIDATE_A);
         client.heartbeat();
+        client.userActivity();
         client.leave();
 
         expect(socket.emitted.map(({ event, payload }) => ({ event, payload }))).toEqual([
@@ -142,6 +143,13 @@ describe("connectReviewSocket", () => {
                 payload: {
                     session_id: CANDIDATE_A.sessionId,
                     actor_id: CANDIDATE_A.userId,
+                    trace_id: CANDIDATE_A.traceId,
+                },
+            },
+            {
+                event: "userActivity",
+                payload: {
+                    session_id: CANDIDATE_A.sessionId,
                     trace_id: CANDIDATE_A.traceId,
                 },
             },

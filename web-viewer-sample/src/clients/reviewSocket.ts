@@ -2,7 +2,7 @@ import { io, type Socket } from "socket.io-client";
 
 export const REVIEW_SOCKET_ACK_TIMEOUT_MS = 5_000;
 
-export type ReviewSocketEvent = "joinSession" | "heartbeat" | "leaveSession";
+export type ReviewSocketEvent = "joinSession" | "heartbeat" | "userActivity" | "leaveSession";
 export type ReviewSocketStatus = "connected" | "disconnected";
 
 export interface ReviewSocketCandidate {
@@ -34,6 +34,7 @@ export interface ReviewSocketHandlers {
 export interface ReviewSocketClient {
     join(candidate: ReviewSocketCandidate): void;
     heartbeat(): void;
+    userActivity(): void;
     leave(): void;
     disconnect(): void;
 }
@@ -151,6 +152,13 @@ export function connectReviewSocket(baseUrl: string, handlers: ReviewSocketHandl
             emitWithAck("heartbeat", activeCandidate, {
                 session_id: activeCandidate.sessionId,
                 actor_id: activeCandidate.userId,
+                trace_id: activeCandidate.traceId,
+            });
+        },
+        userActivity() {
+            if (!activeCandidate) return;
+            emitWithAck("userActivity", activeCandidate, {
+                session_id: activeCandidate.sessionId,
                 trace_id: activeCandidate.traceId,
             });
         },

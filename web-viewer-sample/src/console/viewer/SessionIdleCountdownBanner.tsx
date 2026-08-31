@@ -1,99 +1,40 @@
-import React, { useEffect, useState, useCallback } from "react";
+import React, { useState, useCallback } from "react";
 import { coordinatorClient } from "../coordinatorClient";
 
 export interface SessionIdleCountdownBannerProps {
   sessionId: string;
-  socket?: {
-    on?: (event: string, callback: (payload: { session_id?: string; remaining_seconds?: number; reason?: string }) => void) => void;
-    off?: (event: string, callback: (payload: { session_id?: string; remaining_seconds?: number; reason?: string }) => void) => void;
-    emit?: (event: string, payload?: unknown) => void;
-  };
-  onKeepAlive?: () => void;
-  onClosed?: () => void;
+  remainingSeconds: number | null;
+  closedReason: string | null;
+  recordActivity?: () => Promise<boolean>;
 }
 
 export const SessionIdleCountdownBanner: React.FC<SessionIdleCountdownBannerProps> = ({
   sessionId,
-  socket,
-  onKeepAlive,
-  onClosed,
+  remainingSeconds,
+  closedReason,
+  recordActivity,
 }) => {
-  const [isCountingDown, setIsCountingDown] = useState(false);
-  const [remainingSeconds, setRemainingSeconds] = useState(10);
-  const [isClosed, setIsClosed] = useState(false);
-  const [closeReason, setCloseReason] = useState<string | null>(null);
+  const [keepAliveError, setKeepAliveError] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const handleKeepAlive = useCallback(async () => {
+    setIsSubmitting(true);
+    setKeepAliveError(null);
     try {
-      await coordinatorClient.recordSessionActivity(sessionId);
+      const accepted = recordActivity
+        ? await recordActivity()
+        : (await coordinatorClient.recordSessionActivity(sessionId)).ok;
+      if (!accepted) {
+        setKeepAliveError("保活未獲 coordinator 確認，倒數仍持續");
+      }
     } catch {
-      // Ignored if network fails
+      setKeepAliveError("保活失敗，倒數仍持續");
+    } finally {
+      setIsSubmitting(false);
     }
-    if (socket && typeof socket.emit === "function") {
-      socket.emit("userActivity", { session_id: sessionId });
-    }
-    setIsCountingDown(false);
-    onKeepAlive?.();
-  }, [sessionId, socket, onKeepAlive]);
+  }, [recordActivity, sessionId]);
 
-  useEffect(() => {
-    if (!socket || typeof socket.on !== "function") return;
-
-    const onCountdown = (payload: { session_id?: string; remaining_seconds?: number }) => {
-      if (payload.session_id === sessionId) {
-        setIsCountingDown(true);
-        if (typeof payload.remaining_seconds === "number") {
-          setRemainingSeconds(payload.remaining_seconds);
-        }
-      }
-    };
-
-    const onCountdownCancelled = (payload: { session_id?: string }) => {
-      if (payload.session_id === sessionId) {
-        setIsCountingDown(false);
-      }
-    };
-
-    const onSessionClosed = (payload: { session_id?: string; reason?: string }) => {
-      if (payload.session_id === sessionId) {
-        setIsCountingDown(false);
-        setIsClosed(true);
-        setCloseReason(payload.reason || "inactivity");
-        onClosed?.();
-      }
-    };
-
-    socket.on("session:idle_countdown", onCountdown);
-    socket.on("session:idle_countdown_cancelled", onCountdownCancelled);
-    socket.on("session:closed", onSessionClosed);
-
-    return () => {
-      if (typeof socket.off === "function") {
-        socket.off("session:idle_countdown", onCountdown);
-        socket.off("session:idle_countdown_cancelled", onCountdownCancelled);
-        socket.off("session:closed", onSessionClosed);
-      }
-    };
-  }, [sessionId, socket, onClosed]);
-
-  // Global user interaction listener to keep alive while countdown is active
-  useEffect(() => {
-    if (!isCountingDown) return;
-
-    const onUserInteraction = () => {
-      handleKeepAlive();
-    };
-
-    window.addEventListener("keydown", onUserInteraction);
-    window.addEventListener("pointerdown", onUserInteraction);
-
-    return () => {
-      window.removeEventListener("keydown", onUserInteraction);
-      window.removeEventListener("pointerdown", onUserInteraction);
-    };
-  }, [isCountingDown, handleKeepAlive]);
-
-  if (isClosed) {
+  if (closedReason) {
     return (
       <div
         data-testid="session-idle-closed"
@@ -115,13 +56,13 @@ export const SessionIdleCountdownBanner: React.FC<SessionIdleCountdownBannerProp
         }}
       >
         <span style={{ fontWeight: 600 }}>
-          會議因長時間未操作已結束 ({closeReason === "inactivity" ? "閒置自動回收" : closeReason})
+          會議因長時間未操作已結束 ({closedReason === "inactivity" ? "閒置自動回收" : closedReason})
         </span>
       </div>
     );
   }
 
-  if (!isCountingDown) return null;
+  if (remainingSeconds === null) return null;
 
   return (
     <div
@@ -150,6 +91,7 @@ export const SessionIdleCountdownBanner: React.FC<SessionIdleCountdownBannerProp
         type="button"
         data-testid="session-idle-keepalive-btn"
         onClick={handleKeepAlive}
+        disabled={isSubmitting}
         style={{
           background: "#d97706",
           color: "#ffffff",
@@ -160,8 +102,9 @@ export const SessionIdleCountdownBanner: React.FC<SessionIdleCountdownBannerProp
           cursor: "pointer",
         }}
       >
-        繼續使用
+        {isSubmitting ? "確認中…" : "繼續使用"}
       </button>
+      {keepAliveError && <span data-testid="session-idle-keepalive-error">{keepAliveError}</span>}
     </div>
   );
 };

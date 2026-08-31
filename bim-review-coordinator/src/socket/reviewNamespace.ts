@@ -66,8 +66,8 @@ export function registerReviewNamespace(
         return;
       }
       membership = { sessionId, userId, traceId: traceCheck.traceId };
-      idleReclaim?.recordActivity(sessionId);
       socket.join(sessionId);
+      idleReclaim?.connectPeer(sessionId, socket.id);
       namespace.to(sessionId).emit("presenceUpdated", {
         session_id: sessionId,
         trace_id: traceCheck.traceId,
@@ -91,7 +91,6 @@ export function registerReviewNamespace(
         ack?.(traceCheck);
         return;
       }
-      idleReclaim?.recordActivity(sessionCheck.sessionId);
       ack?.({
         ok: true,
         received_at: new Date().toISOString(),
@@ -110,10 +109,19 @@ export function registerReviewNamespace(
         ack?.({ ok: false, error: "Socket is not joined to this review session." });
         return;
       }
-      idleReclaim?.recordActivity(sessionCheck.sessionId);
+      const traceCheck = authorizeCanonicalTrace(traceResolver, sessionCheck.sessionId, payload.trace_id);
+      if (!traceCheck.ok) {
+        ack?.(traceCheck);
+        return;
+      }
+      if (!idleReclaim?.recordActivity(sessionCheck.sessionId)) {
+        ack?.({ ok: false, error: "Session activity was not recorded." });
+        return;
+      }
       ack?.({
         ok: true,
         session_id: sessionCheck.sessionId,
+        trace_id: traceCheck.traceId,
         received_at: new Date().toISOString(),
       });
     });
@@ -139,6 +147,7 @@ export function registerReviewNamespace(
         ack?.({ ok: false, error: "Review session unavailable." });
         return;
       }
+      idleReclaim?.disconnectPeer(sessionId, socket.id);
       membership = null;
       namespace.to(sessionId).emit("presenceUpdated", {
         session_id: sessionId,
@@ -153,6 +162,7 @@ export function registerReviewNamespace(
       const active = membership;
       membership = null;
       if (!active) return;
+      idleReclaim?.disconnectPeer(active.sessionId, socket.id);
       const session = store.leave(active.sessionId, active.userId);
       if (!session) return;
       namespace.to(active.sessionId).emit("presenceUpdated", {

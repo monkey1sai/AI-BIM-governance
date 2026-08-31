@@ -263,6 +263,15 @@ function integerFromEnv(names: string[], fallback: number, options: { min?: numb
   return parsed;
 }
 
+function optionalIntegerFromEnv(
+  name: string,
+  options: { min?: number; max?: number } = {},
+): number | undefined {
+  const raw = process.env[name];
+  if (raw === undefined || raw.trim() === "") return undefined;
+  return integerFromEnv([name], options.min ?? 1, options);
+}
+
 function localIpv4ForStreaming(): string | null {
   const interfaces = os.networkInterfaces();
   for (const addresses of Object.values(interfaces)) {
@@ -453,9 +462,13 @@ export function loadConfig(overrides: Partial<CoordinatorConfig> = {}): Coordina
     devAuthToken: process.env.DEV_AUTH_TOKEN || "dev-token",
     sessionStoreDir: process.env.SESSION_STORE_DIR || path.join(cwd, "data", "sessions"),
     eventLogDir: process.env.EVENT_LOG_DIR || path.join(cwd, "data", "events"),
-    sessionIdleTimeoutMs: process.env.SESSION_IDLE_TIMEOUT_MS
-      ? parseInt(process.env.SESSION_IDLE_TIMEOUT_MS, 10)
-      : 300000,
+    // session-lifecycle: fail closed until the deployment has a measured baseline.
+    // Explicit values must be bounded positive integers; partial parse (for example
+    // "300000ms"), fractions, zero, and unsafe values are configuration errors.
+    sessionIdleTimeoutMs: optionalIntegerFromEnv("SESSION_IDLE_TIMEOUT_MS", {
+      min: 1,
+      max: 2_147_483_647,
+    }),
     corsOrigins: csvFromEnv("CORS_ORIGINS", uniqueStrings([
       "http://127.0.0.1:5173",
       "http://localhost:5173",

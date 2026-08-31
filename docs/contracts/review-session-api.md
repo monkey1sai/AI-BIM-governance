@@ -21,6 +21,8 @@ GET  /api/review-sessions/{session_id}
 POST /api/review-sessions/{session_id}/join
 POST /api/review-sessions/{session_id}/leave
 POST /api/review-sessions/{session_id}/close
+POST /api/review-sessions/{session_id}/activity
+GET  /api/review-sessions/{session_id}/idle-status
 GET  /api/review-sessions/{session_id}/stream-config
 GET  /api/review-sessions/{session_id}/events
 POST /api/review-sessions/{session_id}/events
@@ -126,6 +128,21 @@ failed
 ```
 
 `POST /api/review-sessions/{session_id}/close` moves a session through `closing` to `closed`, appends final events, and then marks every `kit_instance_bindings[]` item as `released`. `closed` means collaboration is closed; Kit release completion is tracked separately in binding status.
+
+## Inactivity Reclaim
+
+Inactivity reclaim is disabled when `SESSION_IDLE_TIMEOUT_MS` is unset. An
+explicit value must be a positive integer from 1 through 2147483647; this value
+is deployment-owned and is not defaulted before the GPU session baseline is
+measured.
+
+The coordinator tracks only sessions with at least one joined `/review` socket.
+`POST /api/review-sessions/{session_id}/activity` returns HTTP 200 with
+`ok=true` only when the policy is enabled and a viewer is connected. Otherwise
+it returns HTTP 409 and does not cancel a countdown. `GET
+/api/review-sessions/{session_id}/idle-status` reports `enabled`,
+`has_connected_viewer`, `is_counting_down`, nullable `remaining_seconds`, and
+nullable `last_activity_at`.
 
 `GET /api/review-sessions/{session_id}/lifecycle-events` returns only lifecycle audit events, sorted by append order and `sequence`:
 

@@ -148,7 +148,7 @@ GET /dev-console
 GET /dev-console-assets/dev-console.js
 ```
 
-The dev console exposes current session, stream, intake, and compatibility event-log controls. The live `/review` namespace accepts only `joinSession`, `leaveSession`, and `heartbeat`, and broadcasts `presenceUpdated`; retired selection / annotation handlers must not be treated as current behavior.
+The dev console exposes current session, stream, intake, and compatibility event-log controls. The live `/review` namespace accepts `joinSession`, `leaveSession`, connectivity-only `heartbeat`, and trace-bound `userActivity`; it broadcasts `presenceUpdated` plus the session idle countdown/cancelled/closed lifecycle events. Retired selection / annotation handlers must not be treated as current behavior. Inactivity reclaim remains disabled until `SESSION_IDLE_TIMEOUT_MS` is explicitly set from measured deployment evidence.
 
 ## Runtime Authority Evidence Boundary
 

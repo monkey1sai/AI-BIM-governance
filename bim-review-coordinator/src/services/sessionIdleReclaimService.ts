@@ -4,7 +4,7 @@ import { isSafeSessionId } from "./sessionStore.js";
 export interface SessionIdleReclaimOptions {
   /**
    * Continuous inactivity in milliseconds before countdown triggers.
-   * Default: 300,000ms (5 minutes).
+   * Omit to keep inactivity reclaim disabled until a measured baseline defines it.
    */
   idleTimeoutMs?: number;
   /**
@@ -40,7 +40,7 @@ export interface SessionActivityState {
 }
 
 export class SessionIdleReclaimService {
-  private readonly idleTimeoutMs: number;
+  private readonly idleTimeoutMs: number | null;
   private readonly countdownSeconds: number;
   private readonly checkIntervalMs: number;
   private readonly onCountdown?: (sessionId: string, remainingSeconds: number) => void;
@@ -48,6 +48,7 @@ export class SessionIdleReclaimService {
   private readonly onReclaimTeardown?: (sessionId: string) => Promise<void> | void;
 
   private readonly sessionStates = new Map<string, SessionActivityState>();
+  private readonly connectedPeers = new Map<string, Set<string>>();
   private timer: NodeJS.Timeout | null = null;
   private isRunning = false;
 
@@ -55,7 +56,7 @@ export class SessionIdleReclaimService {
     private readonly store: SessionStore,
     options: SessionIdleReclaimOptions = {},
   ) {
-    this.idleTimeoutMs = options.idleTimeoutMs ?? parseInt(process.env.SESSION_IDLE_TIMEOUT_MS || "300000", 10);
+    this.idleTimeoutMs = options.idleTimeoutMs ?? null;
     this.countdownSeconds = options.countdownSeconds ?? 10;
     this.checkIntervalMs = options.checkIntervalMs ?? 1000;
     this.onCountdown = options.onCountdown;
@@ -67,10 +68,14 @@ export class SessionIdleReclaimService {
    * Starts the periodic idle-check background loop.
    */
   start(): void {
-    if (this.isRunning) return;
+    if (this.isRunning || this.idleTimeoutMs === null) return;
     this.isRunning = true;
     this.timer = setInterval(() => {
-      this.tick();
+      try {
+        this.tick();
+      } catch (error) {
+        console.error("[SessionIdleReclaim] Idle check failed:", error);
+      }
     }, this.checkIntervalMs);
   }
 
@@ -90,8 +95,13 @@ export class SessionIdleReclaimService {
    * Updates lastActivityAt and cancels any active countdown.
    */
   recordActivity(sessionId: string, timestamp: number = Date.now()): boolean {
-    if (!isSafeSessionId(sessionId)) return false;
-    const session = this.store.get(sessionId);
+    if (this.idleTimeoutMs === null || !isSafeSessionId(sessionId) || !this.hasConnectedPeer(sessionId)) return false;
+    let session;
+    try {
+      session = this.store.get(sessionId);
+    } catch {
+      return false;
+    }
     if (!session || (session.status !== "active" && session.status !== "created")) return false;
 
     let state = this.sessionStates.get(sessionId);
@@ -119,10 +129,16 @@ export class SessionIdleReclaimService {
    * Returns current idle and countdown status for a session.
    */
   getSessionState(sessionId: string): SessionActivityState | null {
-    if (!isSafeSessionId(sessionId)) return null;
-    const session = this.store.get(sessionId);
+    if (this.idleTimeoutMs === null || !isSafeSessionId(sessionId) || !this.hasConnectedPeer(sessionId)) return null;
+    let session;
+    try {
+      session = this.store.get(sessionId);
+    } catch {
+      this.removeSession(sessionId);
+      return null;
+    }
     if (!session || (session.status !== "active" && session.status !== "created")) {
-      this.sessionStates.delete(sessionId);
+      this.removeSession(sessionId);
       return null;
     }
 
@@ -145,19 +161,23 @@ export class SessionIdleReclaimService {
    * Can be called manually in unit tests with simulated timestamps.
    */
   tick(now: number = Date.now()): void {
-    const activeSessions = this.store.list().filter((s) => s.status === "active" || s.status === "created");
-    const activeIds = new Set(activeSessions.map((s) => s.session_id));
-
-    // Clean up states for removed or closed sessions
-    for (const [id] of this.sessionStates) {
-      if (!activeIds.has(id)) {
-        this.sessionStates.delete(id);
+    if (this.idleTimeoutMs === null) return;
+    for (const [sessionId, state] of Array.from(this.sessionStates.entries())) {
+      if (!this.hasConnectedPeer(sessionId)) {
+        this.removeSession(sessionId);
+        continue;
       }
-    }
-
-    for (const session of activeSessions) {
-      const state = this.getSessionState(session.session_id);
-      if (!state) continue;
+      try {
+        const session = this.store.get(sessionId);
+        if (!session || (session.status !== "active" && session.status !== "created")) {
+          this.removeSession(sessionId);
+          continue;
+        }
+      } catch (error) {
+        this.removeSession(sessionId);
+        console.error(`[SessionIdleReclaim] Failed to read session ${sessionId}:`, error);
+        continue;
+      }
 
       const inactiveDurationMs = now - state.lastActivityAt;
 
@@ -167,7 +187,7 @@ export class SessionIdleReclaimService {
           state.isCountingDown = true;
           state.countdownStartedAt = now;
           state.countdownRemainingSec = this.countdownSeconds;
-          this.onCountdown?.(session.session_id, state.countdownRemainingSec);
+          this.onCountdown?.(sessionId, state.countdownRemainingSec);
         }
       } else {
         // Decrement remaining seconds
@@ -177,17 +197,48 @@ export class SessionIdleReclaimService {
 
         if (remaining <= 0) {
           // Countdown expired: teardown session
-          this.sessionStates.delete(session.session_id);
+          this.removeSession(sessionId);
           try {
-            void this.onReclaimTeardown?.(session.session_id);
+            const teardown = this.onReclaimTeardown?.(sessionId);
+            if (teardown && typeof teardown.then === "function") {
+              void teardown.catch((error) => {
+                console.error(`[SessionIdleReclaim] Error tearing down session ${sessionId}:`, error);
+              });
+            }
           } catch (err) {
-            console.error(`[SessionIdleReclaim] Error tearing down session ${session.session_id}:`, err);
+            console.error(`[SessionIdleReclaim] Error tearing down session ${sessionId}:`, err);
           }
         } else {
-          this.onCountdown?.(session.session_id, remaining);
+          this.onCountdown?.(sessionId, remaining);
         }
       }
     }
+  }
+
+  connectPeer(sessionId: string, peerId: string, timestamp: number = Date.now()): boolean {
+    if (this.idleTimeoutMs === null || !isSafeSessionId(sessionId) || peerId.length === 0) return false;
+    let session;
+    try {
+      session = this.store.get(sessionId);
+    } catch {
+      return false;
+    }
+    if (!session || (session.status !== "active" && session.status !== "created")) return false;
+    const peers = this.connectedPeers.get(sessionId) ?? new Set<string>();
+    peers.add(peerId);
+    this.connectedPeers.set(sessionId, peers);
+    return this.recordActivity(sessionId, timestamp);
+  }
+
+  disconnectPeer(sessionId: string, peerId: string): void {
+    const peers = this.connectedPeers.get(sessionId);
+    if (!peers) return;
+    peers.delete(peerId);
+    if (peers.size === 0) this.removeSession(sessionId);
+  }
+
+  private hasConnectedPeer(sessionId: string): boolean {
+    return (this.connectedPeers.get(sessionId)?.size ?? 0) > 0;
   }
 
   /**
@@ -195,5 +246,6 @@ export class SessionIdleReclaimService {
    */
   removeSession(sessionId: string): void {
     this.sessionStates.delete(sessionId);
+    this.connectedPeers.delete(sessionId);
   }
 }

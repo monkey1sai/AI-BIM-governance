@@ -68,6 +68,7 @@ import { deriveOverlayInputs } from "./console/governance/windowOverlayGlue";
 import { HighlightBridge, type FailedElement, type HighlightManyResult, type HighlightResult } from "./console/governance/highlightBridge";
 import { MappingCache } from "./console/governance/mappingCache";
 import { MockViewport } from "./console/viewer/MockViewport";
+import { SessionIdleCountdownBanner } from "./console/viewer/SessionIdleCountdownBanner";
 import "./console/viewer/viewer.css";
 import { evaluateCoverageGate } from "./console/governance/govEndpoints";
 // 統一治理控制台 MVP（W1/W3）：A3 rule-run / A8 issue / BCF 都打 coordinator :8004 的 /api/governance/* proxy。
@@ -150,6 +151,8 @@ interface AppState {
     webrtcLifecycleStatus: "initializing" | "started" | "stopped" | "terminated" | "failed";
     activeStreamEndpoint: StreamEndpoint;
     streamMountKey: number;
+    idleCountdownRemainingSeconds: number | null;
+    idleClosedReason: string | null;
 }
 
 interface StandaloneViewerLease {
@@ -967,6 +970,8 @@ export default class App extends React.Component<AppProps, AppState> {
     private standaloneViewerLeaseClaim: Promise<StandaloneViewerLease | null> | null = null;
     private standaloneViewerLeaseHeartbeatId: number | null = null;
     private componentMounted = false;
+    private idleActivityRequestInFlight = false;
+    private lastIdleActivityReportAt = 0;
     private readonly standaloneViewerId = reviewEnv.sourceClientId;
     // private _streamConfig: StreamConfigType = getConfig();
     
@@ -1033,6 +1038,8 @@ export default class App extends React.Component<AppProps, AppState> {
             isLoading: true,
             activeStreamEndpoint,
             streamMountKey: 0,
+            idleCountdownRemainingSeconds: null,
+            idleClosedReason: null,
         }
     }
 
@@ -1047,6 +1054,8 @@ export default class App extends React.Component<AppProps, AppState> {
         // 嚴格 additive：非嵌入（window.parent === window）時 listener 永遠 reject、不送任何訊息，既有單機/直連行為零變更。
         window.addEventListener("message", this._onParentMessage);
         window.addEventListener("load", this._notifyParentViewerReady);
+        window.addEventListener("keydown", this._onViewerUserActivity);
+        window.addEventListener("pointerdown", this._onViewerUserActivity);
         this._notifyParentViewerReady();
 
         if (reviewEnv.hasExplicitEmptySessionId) {
@@ -1064,6 +1073,8 @@ export default class App extends React.Component<AppProps, AppState> {
         this.verifiedDataChannelAuthority = null;
         window.__structLog?.logger.setDeliveryAuthorityProvider(null);
         window.removeEventListener("load", this._notifyParentViewerReady);
+        window.removeEventListener("keydown", this._onViewerUserActivity);
+        window.removeEventListener("pointerdown", this._onViewerUserActivity);
         this._releaseStandaloneViewerLease();
         this._clearStreamStartTimeout();
         this._clearLoadingStateRetry();
@@ -1102,6 +1113,49 @@ export default class App extends React.Component<AppProps, AppState> {
                 ...state.demoIncomingMessages,
             ].slice(0, 20),
         }));
+    }
+
+    private _onViewerUserActivity = (): void => {
+        this._reportViewerActivity();
+    };
+
+    private _reportViewerActivity(): void {
+        const authority = this.verifiedDataChannelAuthority;
+        const sessionId = this.state.reviewSessionId;
+        if (
+            !authority
+            || !sessionId
+            || authority.sessionId !== sessionId
+            || authority.connectionGeneration !== this.reviewSocketEpoch
+        ) return;
+        const now = Date.now();
+        if (now - this.lastIdleActivityReportAt < 5_000) return;
+        this.lastIdleActivityReportAt = now;
+        this.reviewSocket?.userActivity();
+    }
+
+    private async _recordSessionActivity(): Promise<boolean> {
+        const authority = this.verifiedDataChannelAuthority;
+        const sessionId = this.state.reviewSessionId;
+        if (
+            !authority
+            || !sessionId
+            || authority.sessionId !== sessionId
+            || authority.connectionGeneration !== this.reviewSocketEpoch
+        ) return false;
+        if (this.idleActivityRequestInFlight) return false;
+        this.idleActivityRequestInFlight = true;
+        try {
+            const response = await this.coordinatorClient.recordSessionActivity(sessionId);
+            if (!response.ok || response.session_id !== sessionId) return false;
+            this.lastIdleActivityReportAt = Date.now();
+            if (this.componentMounted) this.setState({ idleCountdownRemainingSeconds: null });
+            return true;
+        } catch {
+            return false;
+        } finally {
+            this.idleActivityRequestInFlight = false;
+        }
     }
 
     private _clearA4HandoffReadinessTimer(): void {
@@ -1910,6 +1964,7 @@ export default class App extends React.Component<AppProps, AppState> {
             });
         onDispatched?.();
         this._appendDemoOutgoing(outgoing.event_type, { ...outgoing, payload: redactStreamPayload(outgoing.payload) });
+        this._reportViewerActivity();
         return true;
     }
 
@@ -3292,6 +3347,7 @@ export default class App extends React.Component<AppProps, AppState> {
         this.verifiedDataChannelAuthority = null;
         this.reviewSocket?.disconnect();
         this.reviewSocket = null;
+        this.setState({ idleCountdownRemainingSeconds: null, idleClosedReason: null });
 
         const routeTraceId = traceIdFromSearch(window.location.search);
         const streamConfig = this.state.latestStreamConfig;
@@ -3333,6 +3389,32 @@ export default class App extends React.Component<AppProps, AppState> {
                         || payload.trace_id !== this.verifiedDataChannelAuthority.traceId
                     )
                 ) return;
+                if (
+                    event === "session:idle_countdown"
+                    || event === "session:idle_countdown_cancelled"
+                    || event === "session:closed"
+                ) {
+                    const authority = this.verifiedDataChannelAuthority;
+                    if (
+                        !isRecord(payload)
+                        || !authority
+                        || authority.connectionGeneration !== socketEpoch
+                        || payload.session_id !== authority.sessionId
+                        || payload.trace_id !== authority.traceId
+                    ) return;
+                    if (event === "session:idle_countdown") {
+                        const remaining = payload.remaining_seconds;
+                        if (!Number.isInteger(remaining) || (remaining as number) < 0 || (remaining as number) > 10) return;
+                        this.setState({ idleCountdownRemainingSeconds: remaining as number, idleClosedReason: null });
+                    } else if (event === "session:idle_countdown_cancelled") {
+                        this.setState({ idleCountdownRemainingSeconds: null });
+                    } else {
+                        this.setState({
+                            idleCountdownRemainingSeconds: null,
+                            idleClosedReason: typeof payload.reason === "string" ? payload.reason : "inactivity",
+                        });
+                    }
+                }
                 this._appendReviewEvent(`收到 Socket.IO 事件：${event}`);
                 this._appendDemoIncoming(`socket:${event}`, payload);
             },
@@ -3367,7 +3449,7 @@ export default class App extends React.Component<AppProps, AppState> {
             this.verifiedDataChannelAuthority = null;
             return;
         }
-        if (event === "heartbeat") {
+        if (event === "heartbeat" || event === "userActivity") {
             const authority = this.verifiedDataChannelAuthority;
             if (
                 !authority
@@ -5437,6 +5519,14 @@ export default class App extends React.Component<AppProps, AppState> {
                     width: '100%',
                 }}
             >
+                {this.state.reviewSessionId && (
+                    <SessionIdleCountdownBanner
+                        sessionId={this.state.reviewSessionId}
+                        remainingSeconds={this.state.idleCountdownRemainingSeconds}
+                        closedReason={this.state.idleClosedReason}
+                        recordActivity={() => this._recordSessionActivity()}
+                    />
+                )}
                 <div style={{
                             position: 'absolute',
                             height: "100%",

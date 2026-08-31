@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
@@ -55,7 +55,7 @@ describe("SessionIdleReclaimService (session-lifecycle idle countdown & reclaim)
     });
 
     const t0 = 1000_000;
-    service.recordActivity(session.session_id, t0);
+    service.connectPeer(session.session_id, "peer-1", t0);
 
     // After 30s: no countdown
     service.tick(t0 + 30_000);
@@ -89,7 +89,7 @@ describe("SessionIdleReclaimService (session-lifecycle idle countdown & reclaim)
     });
 
     const t0 = 1000_000;
-    service.recordActivity(session.session_id, t0);
+    service.connectPeer(session.session_id, "peer-1", t0);
 
     // Trigger countdown at 60s
     service.tick(t0 + 60_000);
@@ -125,7 +125,7 @@ describe("SessionIdleReclaimService (session-lifecycle idle countdown & reclaim)
     });
 
     const t0 = 1000_000;
-    service.recordActivity(session.session_id, t0);
+    service.connectPeer(session.session_id, "peer-1", t0);
 
     // Inactivity triggers countdown at t0 + 60s
     service.tick(t0 + 60_000);
@@ -157,7 +157,7 @@ describe("SessionIdleReclaimService (session-lifecycle idle countdown & reclaim)
     });
 
     let currentT = 1000_000;
-    service.recordActivity(session.session_id, currentT);
+    service.connectPeer(session.session_id, "peer-1", currentT);
 
     // Simulate 3 hours of continuous active session with interaction every 30s
     for (let i = 0; i < 360; i++) {
@@ -168,6 +168,44 @@ describe("SessionIdleReclaimService (session-lifecycle idle countdown & reclaim)
 
     expect(countdowns).toHaveLength(0);
     expect(teardowns).toHaveLength(0);
+  });
+
+  it("does not track or reclaim a session without a connected viewer", () => {
+    const session = createActiveSession();
+    const teardown = vi.fn();
+    const service = new SessionIdleReclaimService(store, {
+      idleTimeoutMs: 1_000,
+      onReclaimTeardown: teardown,
+    });
+
+    expect(service.recordActivity(session.session_id, 1_000)).toBe(false);
+    service.tick(30_000);
+
+    expect(service.getSessionState(session.session_id)).toBeNull();
+    expect(teardown).not.toHaveBeenCalled();
+  });
+
+  it("checks only incrementally tracked connected sessions and contains corrupt session reads", () => {
+    const session = createActiveSession();
+    const service = new SessionIdleReclaimService(store, { idleTimeoutMs: 1_000 });
+    const listSpy = vi.spyOn(store, "list");
+    service.connectPeer(session.session_id, "peer-1", 1_000);
+    vi.spyOn(store, "get").mockImplementation(() => {
+      throw new Error("corrupt session file");
+    });
+
+    expect(() => service.tick(2_000)).not.toThrow();
+    expect(listSpy).not.toHaveBeenCalled();
+    expect(service.getSessionState(session.session_id)).toBeNull();
+  });
+
+  it("remains disabled when no measured inactivity timeout is configured", () => {
+    const session = createActiveSession();
+    const service = new SessionIdleReclaimService(store);
+
+    expect(service.connectPeer(session.session_id, "peer-1", 1_000)).toBe(false);
+    expect(service.recordActivity(session.session_id, 2_000)).toBe(false);
+    expect(service.getSessionState(session.session_id)).toBeNull();
   });
 });
 
@@ -208,7 +246,8 @@ describe("Coordinator App HTTP & Socket integration for Idle Reclaim", () => {
     expect(statusRes.body.session_id).toBe(sessionId);
     expect(statusRes.body.is_counting_down).toBe(false);
 
-    // Report activity
+    appInstance.idleReclaimService.connectPeer(sessionId, "peer-http");
+    // Report activity while a viewer is connected
     const actRes = await request(appInstance.app)
       .post(`/api/review-sessions/${sessionId}/activity`)
       .send({});
@@ -229,7 +268,7 @@ describe("Coordinator App HTTP & Socket integration for Idle Reclaim", () => {
 
     // Fast-forward tick manually on idleReclaimService
     const t0 = 1000_000;
-    appInstance.idleReclaimService.recordActivity(sessionId, t0);
+    appInstance.idleReclaimService.connectPeer(sessionId, "peer-1", t0);
 
     // After 100ms (idleTimeoutMs=50): enters countdown
     appInstance.idleReclaimService.tick(t0 + 100);
