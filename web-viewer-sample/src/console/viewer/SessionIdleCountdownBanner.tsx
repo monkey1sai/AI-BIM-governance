@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from "react";
+import React, { useState, useCallback, useEffect } from "react";
 
 export interface SessionIdleCountdownBannerProps {
   sessionId: string;
@@ -15,6 +15,12 @@ export const SessionIdleCountdownBanner: React.FC<SessionIdleCountdownBannerProp
 }) => {
   const [keepAliveError, setKeepAliveError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const countdownActive = remainingSeconds !== null;
+
+  useEffect(() => {
+    setKeepAliveError(null);
+    setIsSubmitting(false);
+  }, [sessionId, countdownActive, closedReason]);
 
   const handleKeepAlive = useCallback(async () => {
     setIsSubmitting(true);

@@ -6,7 +6,7 @@ export default defineConfig(baseConfig, {
   use: {
     ...baseConfig.use,
     trace: "on",
-    screenshot: "off",
+    screenshot: "on",
     video: "off",
   },
 });

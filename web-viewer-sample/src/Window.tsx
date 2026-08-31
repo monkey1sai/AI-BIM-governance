@@ -3516,6 +3516,9 @@ export default class App extends React.Component<AppProps, AppState> {
             onStatus: (status) => {
                 if (socketEpoch !== this.reviewSocketEpoch) return;
                 this.verifiedDataChannelAuthority = null;
+                if (status === "disconnected") {
+                    this.setState({ idleCountdownRemainingSeconds: null });
+                }
                 this._appendReviewEvent(`Socket.IO ${status === "connected" ? "已連線，等待 trace 驗證" : "已中斷"}`);
             },
             onAck: (event, acknowledgedCandidate, ack) => {

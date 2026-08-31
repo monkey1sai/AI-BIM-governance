@@ -78,6 +78,48 @@ describe("SessionIdleCountdownBanner (session-lifecycle frontend countdown & kee
     expect(container?.querySelector('[data-testid="session-idle-countdown-banner"]')).toBeNull();
   });
 
+  it("clears a stale keepalive error when a later countdown cycle starts", async () => {
+    const recordActivity = vi.fn().mockResolvedValue(false);
+    await act(async () => {
+      root?.render(
+        <SessionIdleCountdownBanner
+          sessionId={sessionId}
+          remainingSeconds={8}
+          closedReason={null}
+          recordActivity={recordActivity}
+        />,
+      );
+    });
+    const btn = container?.querySelector('[data-testid="session-idle-keepalive-btn"]') as HTMLButtonElement;
+    await act(async () => {
+      btn.click();
+    });
+    expect(container?.querySelector('[data-testid="session-idle-keepalive-error"]')).not.toBeNull();
+
+    await act(async () => {
+      root?.render(
+        <SessionIdleCountdownBanner
+          sessionId={sessionId}
+          remainingSeconds={null}
+          closedReason={null}
+          recordActivity={recordActivity}
+        />,
+      );
+    });
+    await act(async () => {
+      root?.render(
+        <SessionIdleCountdownBanner
+          sessionId={sessionId}
+          remainingSeconds={10}
+          closedReason={null}
+          recordActivity={recordActivity}
+        />,
+      );
+    });
+
+    expect(container?.querySelector('[data-testid="session-idle-keepalive-error"]')).toBeNull();
+  });
+
   it("renders session-idle-closed alert from the production session:closed state", async () => {
     await act(async () => {
       root?.render(

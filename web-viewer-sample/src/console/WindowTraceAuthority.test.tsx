@@ -391,24 +391,27 @@ describe("Window Socket canonical trace authority", () => {
         expect(internals(app).verifiedDataChannelAuthority).toBeNull();
     });
 
-    it("clears authority on disconnect and requires a fresh exact reconnect ack", () => {
-        const app = readyApp();
-        internals(app)._connectReviewSocket(SESSION_ID, TRACE_ID);
+    it("clears authority and stale countdown on disconnect, then requires a fresh exact reconnect ack", () => {
+        const app = authorizedApp({ synchronousSetState: true });
+        const target = internals(app);
+        target._connectReviewSocket(SESSION_ID, TRACE_ID);
         const candidate = vi.mocked(socketClient.join).mock.calls[0][0];
         handlers.onStatus?.("connected");
         ack("joinSession", candidate, { ok: true, trace_id: TRACE_ID });
-        expect(internals(app).verifiedDataChannelAuthority).toMatchObject({
+        expect(target.verifiedDataChannelAuthority).toMatchObject({
             sessionId: SESSION_ID,
             traceId: TRACE_ID,
         });
+        target.state = { ...target.state, idleCountdownRemainingSeconds: 6 };
 
         handlers.onStatus?.("disconnected");
-        expect(internals(app).verifiedDataChannelAuthority).toBeNull();
+        expect(target.verifiedDataChannelAuthority).toBeNull();
+        expect(target.state.idleCountdownRemainingSeconds).toBeNull();
 
         handlers.onStatus?.("connected");
-        expect(internals(app).verifiedDataChannelAuthority).toBeNull();
+        expect(target.verifiedDataChannelAuthority).toBeNull();
         ack("joinSession", candidate, { ok: true, trace_id: TRACE_ID });
-        expect(internals(app).verifiedDataChannelAuthority).toMatchObject({
+        expect(target.verifiedDataChannelAuthority).toMatchObject({
             sessionId: SESSION_ID,
             traceId: TRACE_ID,
         });
