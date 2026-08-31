@@ -4319,9 +4319,9 @@ export function createCoordinatorApp(
     bundles: sourceBundleStore,
     results: pipelineResultStore,
     authorization: null,
-    // manifest 投影已接上：alignment_metrics／warnings／artifacts 由 MinIO 實讀的
-    // manifest 供給；alignment report（逐 element 差異集合）尚未建讀取路徑，
-    // summary／differences／difference_counts 誠實維持 NOT_BUILT。
+    // manifest 與 alignment report 投影均已接上：alignment_metrics／warnings／artifacts
+    // 由 MinIO 實讀的 manifest 供給；summary／differences／difference_counts 則來自
+    // 經 bounded read、digest 與語意驗證的 immutable alignment report。
     projections: lineageMetadataProjections,
     now: nowIso,
   });

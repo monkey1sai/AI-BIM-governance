@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import express from "express";
 import request from "supertest";
 import { describe, expect, it } from "vitest";
@@ -14,6 +15,7 @@ import type {
 import { PipelineJobStore } from "../../src/services/lineage/pipelineJobStore.js";
 import { SourceBundleStore } from "../../src/services/lineage/sourceBundleStore.js";
 import { createS3LineageMetadataProjectionReader } from "../../src/services/lineage/lineageMetadataProjections.js";
+import { LINEAGE_ALIGNMENT_REPORT_MAX_BYTES } from "../../src/services/lineage/lineageAlignmentReport.js";
 import { createFakeSourceBundleObjectPort } from "../helpers/fakeSourceBundleObjectPort.js";
 import {
   seedGovernedBundle,
@@ -40,6 +42,64 @@ import {
 const NOW = "2026-07-16T08:51:00.000Z";
 const DECISION_HEADER = "signed-test-decision-not-a-real-credential";
 const SURFACES = ["overview", "artifacts", "alignment", "attempts", "audit"] as const;
+
+interface AlignmentFixtureMetric {
+  numerator: number;
+  denominator: number;
+  ratio: number | null;
+  status: "complete" | "partial" | "not_evaluable";
+  denominator_scope: "eligible_ifc_product_count" | "csv_valid_count";
+}
+
+interface AlignmentFixtureDocument {
+  schema_version: "lineage-alignment-report/v1";
+  document_type: "alignment_report_json";
+  body: {
+    report_schema_version: "alignment-report/v1";
+    source_bundle_id: string;
+    pipeline_job_id: string;
+    attempt_id: string;
+    result_id: string;
+    generated_at: string;
+    scope: Record<string, unknown>;
+    metrics: Record<string, AlignmentFixtureMetric>;
+    counts: Record<string, number>;
+    difference_sets: Record<string, unknown[]>;
+    warning_codes: string[];
+    warning_code_count: number;
+  };
+}
+
+function alignmentFixtureFor(pipelineJobId: string): AlignmentFixtureDocument {
+  const document = JSON.parse(
+    readFileSync(
+      new URL(
+        "../../../tests/contracts/lineage/fixtures/lineage_alignment_report/valid/alignment-report-json-all-difference-sets.json",
+        import.meta.url,
+      ),
+      "utf-8",
+    ),
+  ) as AlignmentFixtureDocument;
+  document.body.source_bundle_id = RESULT_SOURCE_BUNDLE_ID;
+  document.body.pipeline_job_id = pipelineJobId;
+  document.body.attempt_id = RESULT_ATTEMPT_ID;
+  document.body.result_id = RESULT_RESULT_ID;
+  return document;
+}
+
+function manifestSummaryFromAlignment(document: AlignmentFixtureDocument) {
+  return {
+    metrics: Object.fromEntries(
+      Object.entries(document.body.metrics).map(([name, metric]) => {
+        const { denominator_scope: _scope, ...manifestMetric } = metric;
+        return [name, manifestMetric];
+      }),
+    ),
+    counts: document.body.counts,
+    warning_codes: document.body.warning_codes,
+    warning_code_count: document.body.warning_code_count,
+  };
+}
 
 class FakeAuthorization implements ExternalLineageAuthorizationPort {
   readonly expected: ExpectedExternalLineageDecision[] = [];
@@ -440,6 +500,8 @@ function makeProjectionHarness(
     bundleDigestDrift?: boolean;
     /** 覆寫 bundle 的 back-reference；`undefined` = 正確指回本 job。 */
     bundlePipelineJobId?: string | null;
+    alignmentReportBytes?: Buffer;
+    alignmentReportStoredEtag?: string;
   } = {},
 ) {
   const objects = createFakeSourceBundleObjectPort({
@@ -478,8 +540,20 @@ function makeProjectionHarness(
     created_at: "2026-07-16T08:00:00.000Z",
     updated_at: "2026-07-16T08:00:00.000Z",
   });
+  const alignmentDocument = alignmentFixtureFor(job.pipeline_job_id);
+  const validAlignmentReportBytes = Buffer.from(JSON.stringify(alignmentDocument), "utf-8");
+  const alignmentReportBytes = options.alignmentReportBytes ?? validAlignmentReportBytes;
   const seeded = seedResultManifest(objects, {
-    body: { pipeline_job_id: job.pipeline_job_id },
+    body: {
+      pipeline_job_id: job.pipeline_job_id,
+      alignment_summary: manifestSummaryFromAlignment(alignmentDocument),
+    },
+    artifacts: {
+      alignment_report_json: {
+        storedBytes: alignmentReportBytes,
+        storedEtag: options.alignmentReportStoredEtag,
+      },
+    },
   });
   const results = new PipelineResultStore(jobs, null);
   if (options.registerResult !== false) {
@@ -509,7 +583,16 @@ function makeProjectionHarness(
     projections: createS3LineageMetadataProjectionReader({ objects }),
     now: () => NOW,
   });
-  return { app, objects, results, pipelineJobId: job.pipeline_job_id, seeded, bundle };
+  return {
+    app,
+    objects,
+    results,
+    pipelineJobId: job.pipeline_job_id,
+    seeded,
+    bundle,
+    alignmentDocument,
+    alignmentReportBytes,
+  };
 }
 
 function getSurface(app: express.Express, pipelineJobId: string, surface: string) {
@@ -536,25 +619,39 @@ describe("lineage governance metadata surfaces：manifest 投影接真值", () =
         converter: { converter_id: "ifc-usdc-converter" },
         metrics: {
           ifc_usdc_coverage_ratio: {
-            numerator: 1200,
-            denominator: 1200,
-            ratio: 1,
-            status: "complete",
+            numerator: 10,
+            denominator: 12,
+            ratio: 0.8333333333,
+            status: "partial",
           },
         },
-        counts: { full_lineage_matched_count: 1000, eligible_ifc_product_count: 1200 },
+        counts: { full_lineage_matched_count: 7, eligible_ifc_product_count: 12 },
       },
     });
     expect(response.body.body.warnings).toMatchObject({
       state: "AVAILABLE",
       source: "result_manifest",
-      value: { result_id: RESULT_RESULT_ID, warning_codes: [] },
+      value: {
+        result_id: RESULT_RESULT_ID,
+        warning_codes: ["PARTIAL_RVT_IFC_ALIGNMENT", "IFC_USDC_UNMAPPED"],
+      },
     });
-    // difference_counts 的來源是 alignment_report（逐 element 差異集合），本刀未建。
-    expect(response.body.body.difference_counts).toMatchObject({
-      state: "NOT_BUILT",
+    expect(response.body.body.difference_counts).toEqual({
+      state: "AVAILABLE",
       source: "alignment_report",
-      reason_code: "reader_not_wired",
+      value: {
+        result_id: RESULT_RESULT_ID,
+        alignment_report_digest: sha256Hex(harness.alignmentReportBytes),
+        counts: {
+          csv_only: 2,
+          ifc_only: 4,
+          ifc_usdc_unmapped: 2,
+          duplicate_rvt_ids: 1,
+          duplicate_ifc_guids: 1,
+          invalid_rows: 2,
+          full_lineage_matched: 7,
+        },
+      },
     });
   });
 
@@ -594,9 +691,103 @@ describe("lineage governance metadata surfaces：manifest 投影接真值", () =
     });
   });
 
-  it("alignment surface 仍誠實 NOT_BUILT（alignment report 讀取路徑未建）", async () => {
+  it("alignment surface 從 immutable report 投影 summary，且只回指定差異集合的 bounded page", async () => {
     const harness = makeProjectionHarness();
 
+    const response = await request(harness.app)
+      .get(`/api/lineage/pipeline-jobs/${harness.pipelineJobId}/alignment`)
+      .query({ difference_set: "csv_only", offset: 1, limit: 1 })
+      .set("authorization", "test-principal-credential")
+      .set("x-lineage-authorization-decision", DECISION_HEADER);
+
+    expect(response.status).toBe(200);
+    expect(response.body.body.summary).toMatchObject({
+      state: "AVAILABLE",
+      source: "alignment_report",
+      value: {
+        report_schema_version: "alignment-report/v1",
+        source_bundle_id: RESULT_SOURCE_BUNDLE_ID,
+        pipeline_job_id: harness.pipelineJobId,
+        attempt_id: RESULT_ATTEMPT_ID,
+        result_id: RESULT_RESULT_ID,
+        alignment_report_digest: sha256Hex(harness.alignmentReportBytes),
+        counts: { csv_only_count: 2, full_lineage_matched_count: 7 },
+        warning_codes: ["PARTIAL_RVT_IFC_ALIGNMENT", "IFC_USDC_UNMAPPED"],
+      },
+    });
+    expect(response.body.body.differences).toEqual({
+      state: "AVAILABLE",
+      source: "alignment_report",
+      value: {
+        difference_set: "csv_only",
+        items: [harness.alignmentDocument.body.difference_sets.csv_only[1]],
+        page: {
+          offset: 1,
+          limit: 1,
+          returned: 1,
+          enumerated_total: 2,
+          authoritative_total: 2,
+          has_more: false,
+        },
+      },
+    });
+  });
+
+  it("alignment pagination/filter 僅接受 7 個契約集合與 limit <= 200", async () => {
+    const harness = makeProjectionHarness();
+
+    for (const differenceSet of [
+      "csv_only",
+      "ifc_only",
+      "ifc_usdc_unmapped",
+      "duplicate_rvt_ids",
+      "duplicate_ifc_guids",
+      "invalid_rows",
+      "full_lineage_matched",
+    ]) {
+      const response = await request(harness.app)
+        .get(`/api/lineage/pipeline-jobs/${harness.pipelineJobId}/alignment`)
+        .query({ difference_set: differenceSet, offset: 0, limit: 1 })
+        .set("authorization", "test-principal-credential")
+        .set("x-lineage-authorization-decision", DECISION_HEADER);
+      expect(response.status, differenceSet).toBe(200);
+      expect(response.body.body.differences.value.difference_set).toBe(differenceSet);
+      expect(response.body.body.differences.value.items.length).toBeLessThanOrEqual(1);
+    }
+
+    for (const query of [
+      { difference_set: "unknown" },
+      { difference_set: "csv_only", offset: -1 },
+      { difference_set: "csv_only", limit: 201 },
+    ]) {
+      const response = await request(harness.app)
+        .get(`/api/lineage/pipeline-jobs/${harness.pipelineJobId}/alignment`)
+        .query(query)
+        .set("authorization", "test-principal-credential")
+        .set("x-lineage-authorization-decision", DECISION_HEADER);
+      expect(response.status, JSON.stringify(query)).toBe(400);
+      expect(response.body).toEqual({ error: "invalid_alignment_query" });
+    }
+  });
+
+  it("alignment report 超過 bounded-read、bytes 不符合契約或 HEAD 漂移時 fail closed 503", async () => {
+    const invalid = makeProjectionHarness({
+      alignmentReportBytes: Buffer.from("{not-json", "utf-8"),
+    });
+    const drift = makeProjectionHarness({ alignmentReportStoredEtag: "drifted-etag" });
+    const oversized = makeProjectionHarness({
+      alignmentReportBytes: Buffer.alloc(LINEAGE_ALIGNMENT_REPORT_MAX_BYTES + 1, 0x20),
+    });
+
+    for (const harness of [invalid, drift, oversized]) {
+      const response = await getSurface(harness.app, harness.pipelineJobId, "alignment");
+      expect(response.status).toBe(503);
+      expect(response.body).toEqual({ error: "lineage_metadata_projection_unavailable" });
+    }
+  });
+
+  it("reader 未接線時 alignment 維持 NOT_BUILT，不以空集合假裝完成", async () => {
+    const harness = makeHarness();
     const response = await getSurface(harness.app, harness.pipelineJobId, "alignment");
 
     expect(response.status).toBe(200);
