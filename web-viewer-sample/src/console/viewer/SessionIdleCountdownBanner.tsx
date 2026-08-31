@@ -1,5 +1,4 @@
 import React, { useState, useCallback } from "react";
-import { coordinatorClient } from "../coordinatorClient";
 
 export interface SessionIdleCountdownBannerProps {
   sessionId: string;
@@ -21,9 +20,7 @@ export const SessionIdleCountdownBanner: React.FC<SessionIdleCountdownBannerProp
     setIsSubmitting(true);
     setKeepAliveError(null);
     try {
-      const accepted = recordActivity
-        ? await recordActivity()
-        : (await coordinatorClient.recordSessionActivity(sessionId)).ok;
+      const accepted = recordActivity ? await recordActivity() : false;
       if (!accepted) {
         setKeepAliveError("保活未獲 coordinator 確認，倒數仍持續");
       }
@@ -32,12 +29,13 @@ export const SessionIdleCountdownBanner: React.FC<SessionIdleCountdownBannerProp
     } finally {
       setIsSubmitting(false);
     }
-  }, [recordActivity, sessionId]);
+  }, [recordActivity]);
 
   if (closedReason) {
     return (
       <div
         data-testid="session-idle-closed"
+        data-session-id={sessionId}
         role="alert"
         style={{
           position: "fixed",
@@ -67,6 +65,7 @@ export const SessionIdleCountdownBanner: React.FC<SessionIdleCountdownBannerProp
   return (
     <div
       data-testid="session-idle-countdown-banner"
+      data-session-id={sessionId}
       role="alert"
       style={{
         position: "fixed",

@@ -1526,6 +1526,11 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
     internals(app).state = {
       ...internals(app).state,
       reviewSessionId: "review_session_stream_failed",
+      reviewLifecycleStatus: "active",
+      latestStreamConfig: {
+        ...(internals(app).state.latestStreamConfig as Record<string, unknown>),
+        model: { status: "ready", url: "stage://stream-failed.usdc" },
+      },
     };
     vi.spyOn(AppStream, "stop").mockImplementation(() => undefined);
     const staleOnStreamFailed = renderedAppStreamProps(app).onStreamFailed;

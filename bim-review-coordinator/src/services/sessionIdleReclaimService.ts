@@ -49,6 +49,7 @@ export class SessionIdleReclaimService {
 
   private readonly sessionStates = new Map<string, SessionActivityState>();
   private readonly connectedPeers = new Map<string, Set<string>>();
+  private readonly teardownInFlight = new Set<string>();
   private timer: NodeJS.Timeout | null = null;
   private isRunning = false;
 
@@ -95,7 +96,12 @@ export class SessionIdleReclaimService {
    * Updates lastActivityAt and cancels any active countdown.
    */
   recordActivity(sessionId: string, timestamp: number = Date.now()): boolean {
-    if (this.idleTimeoutMs === null || !isSafeSessionId(sessionId) || !this.hasConnectedPeer(sessionId)) return false;
+    if (
+      this.idleTimeoutMs === null
+      || !isSafeSessionId(sessionId)
+      || !this.hasConnectedPeer(sessionId)
+      || this.teardownInFlight.has(sessionId)
+    ) return false;
     let session;
     try {
       session = this.store.get(sessionId);
@@ -167,9 +173,20 @@ export class SessionIdleReclaimService {
         this.removeSession(sessionId);
         continue;
       }
+      if (this.teardownInFlight.has(sessionId)) continue;
       try {
         const session = this.store.get(sessionId);
-        if (!session || (session.status !== "active" && session.status !== "created")) {
+        const retryingInterruptedTeardown = session?.status === "closing"
+          && state.isCountingDown
+          && state.countdownRemainingSec <= 0;
+        if (
+          !session
+          || (
+            session.status !== "active"
+            && session.status !== "created"
+            && !retryingInterruptedTeardown
+          )
+        ) {
           this.removeSession(sessionId);
           continue;
         }
@@ -196,14 +213,21 @@ export class SessionIdleReclaimService {
         state.countdownRemainingSec = remaining;
 
         if (remaining <= 0) {
-          // Countdown expired: teardown session
-          this.removeSession(sessionId);
+          // Retain peer/state ownership until teardown actually succeeds. A failed
+          // close may leave the durable session in `closing`; the next tick must
+          // be able to resume that exact teardown instead of orphaning it.
           try {
             const teardown = this.onReclaimTeardown?.(sessionId);
             if (teardown && typeof teardown.then === "function") {
-              void teardown.catch((error) => {
-                console.error(`[SessionIdleReclaim] Error tearing down session ${sessionId}:`, error);
-              });
+              this.teardownInFlight.add(sessionId);
+              void teardown
+                .then(() => this.removeSession(sessionId))
+                .catch((error) => {
+                  console.error(`[SessionIdleReclaim] Error tearing down session ${sessionId}:`, error);
+                })
+                .finally(() => this.teardownInFlight.delete(sessionId));
+            } else {
+              this.removeSession(sessionId);
             }
           } catch (err) {
             console.error(`[SessionIdleReclaim] Error tearing down session ${sessionId}:`, err);
@@ -247,5 +271,6 @@ export class SessionIdleReclaimService {
   removeSession(sessionId: string): void {
     this.sessionStates.delete(sessionId);
     this.connectedPeers.delete(sessionId);
+    this.teardownInFlight.delete(sessionId);
   }
 }

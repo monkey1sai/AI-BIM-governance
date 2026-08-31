@@ -89,6 +89,7 @@ type AppInternals = {
     _appendDemoIncoming: (label: string, payload: unknown) => void;
     _appendDemoOutgoing: (label: string, payload: unknown) => void;
     _appendReviewEvent: (message: string) => void;
+    _onViewerUserActivity: (event: Event) => void;
     _currentViewerLogDeliveryAuthority: () => {
         reviewSessionId: string;
         leaseId: string;
@@ -407,6 +408,62 @@ describe("Window Socket canonical trace authority", () => {
             sessionId: SESSION_ID,
             traceId: TRACE_ID,
         });
+    });
+
+    it("preserves joined authority when optional user activity is rejected", () => {
+        const app = readyApp();
+        internals(app)._connectReviewSocket(SESSION_ID, TRACE_ID);
+        const candidate = vi.mocked(socketClient.join).mock.calls[0][0];
+        handlers.onStatus?.("connected");
+        ack("joinSession", candidate, { ok: true, trace_id: TRACE_ID });
+
+        ack("userActivity", candidate, { ok: false, error: "idle reclaim disabled" });
+
+        expect(internals(app).verifiedDataChannelAuthority).toMatchObject({
+            sessionId: SESSION_ID,
+            traceId: TRACE_ID,
+        });
+    });
+
+    it("lets the explicit keepalive control own its request instead of pre-cancelling via global activity", () => {
+        const app = readyApp();
+        const target = internals(app);
+        target._connectReviewSocket(SESSION_ID, TRACE_ID);
+        const candidate = vi.mocked(socketClient.join).mock.calls[0][0];
+        handlers.onStatus?.("connected");
+        ack("joinSession", candidate, { ok: true, trace_id: TRACE_ID });
+        vi.mocked(socketClient.userActivity).mockClear();
+        const button = document.createElement("button");
+        button.dataset.testid = "session-idle-keepalive-btn";
+        button.addEventListener("pointerdown", target._onViewerUserActivity);
+
+        button.dispatchEvent(new Event("pointerdown", { bubbles: true }));
+
+        expect(socketClient.userActivity).not.toHaveBeenCalled();
+    });
+
+    it("retires socket, stream, and mutation authority on authoritative session close", () => {
+        const app = authorizedApp({ synchronousSetState: true });
+        const target = internals(app);
+        target._connectReviewSocket(SESSION_ID, TRACE_ID);
+        const candidate = vi.mocked(socketClient.join).mock.calls[0][0];
+        handlers.onStatus?.("connected");
+        ack("joinSession", candidate, { ok: true, trace_id: TRACE_ID });
+        const stopSpy = vi.spyOn(AppStream, "stop").mockImplementation(() => {});
+
+        handlers.onEvent?.("session:closed", {
+            session_id: SESSION_ID,
+            trace_id: TRACE_ID,
+            reason: "inactivity",
+        });
+
+        expect(target.state.reviewLifecycleStatus).toBe("closed");
+        expect(target.state.webrtcLifecycleStatus).toBe("stopped");
+        expect(target.state.showStream).toBe(false);
+        expect(target.verifiedDataChannelAuthority).toBeNull();
+        expect(socketClient.disconnect).toHaveBeenCalledTimes(1);
+        expect(stopSpy).toHaveBeenCalledTimes(1);
+        expect(target._sendStreamMessage({ event_type: "loadingStateQuery", payload: {} })).toBe(false);
     });
 
     it("ignores a late ack from an older socket instance after a session reconnect", () => {

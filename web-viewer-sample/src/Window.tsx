@@ -1115,7 +1115,9 @@ export default class App extends React.Component<AppProps, AppState> {
         }));
     }
 
-    private _onViewerUserActivity = (): void => {
+    private _onViewerUserActivity = (event: Event): void => {
+        const target = event.target;
+        if (target instanceof Element && target.closest('[data-testid="session-idle-keepalive-btn"]')) return;
         this._reportViewerActivity();
     };
 
@@ -1137,16 +1139,23 @@ export default class App extends React.Component<AppProps, AppState> {
     private async _recordSessionActivity(): Promise<boolean> {
         const authority = this.verifiedDataChannelAuthority;
         const sessionId = this.state.reviewSessionId;
+        const leaseAuthority = this._currentViewerLogDeliveryAuthority();
         if (
             !authority
             || !sessionId
+            || !leaseAuthority
+            || leaseAuthority.reviewSessionId !== sessionId
             || authority.sessionId !== sessionId
             || authority.connectionGeneration !== this.reviewSocketEpoch
         ) return false;
         if (this.idleActivityRequestInFlight) return false;
         this.idleActivityRequestInFlight = true;
         try {
-            const response = await this.coordinatorClient.recordSessionActivity(sessionId);
+            const response = await this.coordinatorClient.recordSessionActivity(
+                sessionId,
+                leaseAuthority.leaseId,
+                leaseAuthority.leaseToken,
+            );
             if (!response.ok || response.session_id !== sessionId) return false;
             this.lastIdleActivityReportAt = Date.now();
             if (this.componentMounted) this.setState({ idleCountdownRemainingSeconds: null });
@@ -3409,9 +3418,24 @@ export default class App extends React.Component<AppProps, AppState> {
                     } else if (event === "session:idle_countdown_cancelled") {
                         this.setState({ idleCountdownRemainingSeconds: null });
                     } else {
+                        this.reviewSocketEpoch += 1;
+                        this.verifiedDataChannelAuthority = null;
+                        this.reviewSocket?.disconnect();
+                        this.reviewSocket = null;
+                        const streamMountKey = this._replaceStreamLifecycle();
+                        AppStream.stop();
                         this.setState({
+                            reviewLifecycleStatus: "closed",
                             idleCountdownRemainingSeconds: null,
                             idleClosedReason: typeof payload.reason === "string" ? payload.reason : "inactivity",
+                            isKitReady: false,
+                            isLoading: false,
+                            showStream: false,
+                            loadingText: "會議已結束",
+                            loadedStageUrl: null,
+                            stageLoadStatus: "disconnected",
+                            webrtcLifecycleStatus: "stopped",
+                            streamMountKey,
                         });
                     }
                 }
@@ -3432,6 +3456,16 @@ export default class App extends React.Component<AppProps, AppState> {
         ack: ReviewSocketAck,
     ): void {
         if (socketEpoch !== this.reviewSocketEpoch || !this.componentMounted) return;
+        if (event === "userActivity" && !ack.ok) {
+            const authority = this.verifiedDataChannelAuthority;
+            const matchesJoinedAuthority = authority
+                && authority.connectionGeneration === socketEpoch
+                && authority.sessionId === candidate.sessionId
+                && authority.traceId === candidate.traceId;
+            if (!matchesJoinedAuthority) this.verifiedDataChannelAuthority = null;
+            this._appendReviewEvent("Socket.IO userActivity 未獲接受");
+            return;
+        }
         if (
             !ack.ok
             || ack.trace_id !== candidate.traceId
@@ -3457,6 +3491,7 @@ export default class App extends React.Component<AppProps, AppState> {
                 || authority.sessionId !== candidate.sessionId
                 || authority.traceId !== ack.trace_id
             ) this.verifiedDataChannelAuthority = null;
+            else if (event === "userActivity") this._appendReviewEvent("Socket.IO userActivity 已確認");
             return;
         }
 
@@ -5487,7 +5522,10 @@ export default class App extends React.Component<AppProps, AppState> {
             && !reviewEnv.hasExplicitEmptySessionId;
         const demoPanelRight = showDebugAssetPanel ? sidebarWidth : 0;
         const streamReservedWidth = (showDebugAssetPanel ? sidebarWidth : 0) + (showDemoPanel ? demoPanelWidth : 0);
-            const shouldRenderAppStream = !reviewEnv.hasExplicitEmptySessionId && Boolean(this.state.reviewSessionId);
+            const shouldRenderAppStream = !reviewEnv.hasExplicitEmptySessionId
+                && Boolean(this.state.reviewSessionId)
+                && !isBlockedLifecycle(this.state.reviewLifecycleStatus)
+                && this.state.latestStreamConfig?.model.status === "ready";
             const streamRole = isSpectatorStreamMode() ? "spectator" : "primary";
             const renderedStreamGeneration = this.state.streamMountKey;
             const liveFrameObserved = this._hasRemoteVideoFrame();

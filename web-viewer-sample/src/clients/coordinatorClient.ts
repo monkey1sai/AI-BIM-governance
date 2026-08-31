@@ -150,10 +150,22 @@ export class CoordinatorClient {
         return parsed;
     }
 
-    async recordSessionActivity(sessionId: string): Promise<{ ok: boolean; session_id: string; recorded_at: string }> {
+    async recordSessionActivity(
+        sessionId: string,
+        leaseId: string,
+        leaseToken: string,
+    ): Promise<{ ok: boolean; session_id: string; recorded_at: string }> {
         return this.request<{ ok: boolean; session_id: string; recorded_at: string }>(
             `/api/review-sessions/${encodeURIComponent(sessionId)}/activity`,
-            { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({}) },
+            {
+                method: "POST",
+                headers: {
+                    Accept: "application/json",
+                    "Content-Type": "application/json",
+                    "X-Viewer-Lease-Token": leaseToken,
+                },
+                body: JSON.stringify({ lease_id: leaseId }),
+            },
         );
     }
 

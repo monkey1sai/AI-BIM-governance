@@ -402,6 +402,10 @@ const heartbeatViewerLeaseSchema = z.object({
   datachannel_ready: z.boolean().optional(),
 });
 
+const sessionActivitySchema = z.object({
+  lease_id: z.string().trim().min(1).max(200),
+}).strict();
+
 const releaseViewerLeaseSchema = z.object({
   reason: z.string().trim().max(500).optional(),
 });
@@ -763,30 +767,34 @@ export function createCoordinatorApp(
       reason?: string;
       actor?: string;
       finalEvents?: unknown[];
+      resumeClosing?: boolean;
     } = {},
   ): ReviewSession | null => {
     if (!isSafeSessionId(sessionId)) return null;
     const session = store.get(sessionId);
     if (!session) return null;
-    if (session.status === "closed" || session.status === "closing") {
+    if (session.status === "closed" || (session.status === "closing" && !options.resumeClosing)) {
       return session;
     }
     const finalEvents = Array.isArray(options.finalEvents) ? options.finalEvents : [];
     const reason = typeof options.reason === "string" ? (options.reason.trim().slice(0, 500) || undefined) : undefined;
     const actor = typeof options.actor === "string" ? (options.actor.trim().slice(0, 500) || undefined) : undefined;
     const auditFields = reason ? { reason, ...(actor ? { actor } : {}) } : {};
-    const releasedViewerLeases = viewerLeaseStore.releaseSession(session.session_id);
-    const closing = store.update(session.session_id, {
-      status: "closing",
-      kit_instance_bindings: markKitBindingsDraining(session.kit_instance_bindings),
-    });
-    eventLog.append(session.session_id, "sessionClosing", {
-      final_events: finalEvents.length,
-      released_viewer_leases: releasedViewerLeases.map((lease) => lease.lease_id),
-      ...auditFields,
-    });
-    for (const event of finalEvents) {
-      eventLog.append(session.session_id, "finalReviewEvent", event);
+    let closing = session;
+    if (session.status !== "closing") {
+      const releasedViewerLeases = viewerLeaseStore.releaseSession(session.session_id);
+      closing = store.update(session.session_id, {
+        status: "closing",
+        kit_instance_bindings: markKitBindingsDraining(session.kit_instance_bindings),
+      }) ?? session;
+      eventLog.append(session.session_id, "sessionClosing", {
+        final_events: finalEvents.length,
+        released_viewer_leases: releasedViewerLeases.map((lease) => lease.lease_id),
+        ...auditFields,
+      });
+      for (const event of finalEvents) {
+        eventLog.append(session.session_id, "finalReviewEvent", event);
+      }
     }
     const closed = store.update(session.session_id, {
       status: "closed",
@@ -835,10 +843,14 @@ export function createCoordinatorApp(
     },
     onReclaimTeardown: (sessionId) => {
       const traceAuthority = sessionTraceResolver.resolveAndCommit(sessionId);
-      closeReviewSessionInternal(sessionId, {
+      const closed = closeReviewSessionInternal(sessionId, {
         reason: "inactivity",
         actor: "system:idle_reclaimer",
+        resumeClosing: true,
       });
+      if (!closed || closed.status !== "closed") {
+        throw new Error(`Idle reclaim did not close session ${sessionId}.`);
+      }
       io.of("/review").to(sessionId).emit("session:closed", {
         session_id: sessionId,
         ...(traceAuthority.ok ? { trace_id: traceAuthority.canonicalTraceId } : {}),
@@ -2219,28 +2231,43 @@ export function createCoordinatorApp(
     response.json(closed);
   });
 
-  app.post("/api/review-sessions/:sessionId/activity", (request, response) => {
-    if (!isSafeSessionId(request.params.sessionId)) {
-      response.status(400).json({ detail: "Invalid review session id." });
-      return;
-    }
-    const session = store.get(request.params.sessionId);
-    if (!session) {
-      response.status(404).json({ detail: "Review session not found." });
-      return;
-    }
-    const recorded = idleReclaimService.recordActivity(request.params.sessionId);
-    if (!recorded) {
-      response.status(409).json({
-        detail: "Session activity requires an enabled idle policy and a connected viewer.",
+  app.post("/api/review-sessions/:sessionId/activity", (request, response, next) => {
+    try {
+      if (!isSafeSessionId(request.params.sessionId)) {
+        response.status(400).json({ detail: "Invalid review session id." });
+        return;
+      }
+      const session = store.get(request.params.sessionId);
+      if (!session) {
+        response.status(404).json({ detail: "Review session not found." });
+        return;
+      }
+      const parsedActivity = sessionActivitySchema.safeParse(request.body);
+      if (!parsedActivity.success) {
+        response.status(401).json({ detail: "missing or invalid viewer lease" });
+        return;
+      }
+      const input = parsedActivity.data;
+      const leaseToken = request.header("X-Viewer-Lease-Token") ?? "";
+      if (!viewerLeaseStore.authorizeActive(session.session_id, input.lease_id, leaseToken)) {
+        response.status(401).json({ detail: "missing or invalid viewer lease" });
+        return;
+      }
+      const recorded = idleReclaimService.recordActivity(request.params.sessionId);
+      if (!recorded) {
+        response.status(409).json({
+          detail: "Session activity requires an enabled idle policy and a connected viewer.",
+        });
+        return;
+      }
+      response.json({
+        ok: true,
+        session_id: request.params.sessionId,
+        recorded_at: nowIso(),
       });
-      return;
+    } catch (error) {
+      next(error);
     }
-    response.json({
-      ok: true,
-      session_id: request.params.sessionId,
-      recorded_at: nowIso(),
-    });
   });
 
   app.get("/api/review-sessions/:sessionId/idle-status", (request, response) => {

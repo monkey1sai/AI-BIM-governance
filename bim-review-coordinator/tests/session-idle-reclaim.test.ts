@@ -140,6 +140,64 @@ describe("SessionIdleReclaimService (session-lifecycle idle countdown & reclaim)
     expect(teardowns).toEqual([session.session_id]);
   });
 
+  it("retains idle tracking and retries after a synchronous teardown failure", () => {
+    const session = createActiveSession();
+    const teardown = vi.fn()
+      .mockImplementationOnce(() => { throw new Error("transient teardown failure"); })
+      .mockImplementationOnce(() => undefined);
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const service = new SessionIdleReclaimService(store, {
+      idleTimeoutMs: 1_000,
+      countdownSeconds: 1,
+      onReclaimTeardown: teardown,
+    });
+    const t0 = 1_000_000;
+    service.connectPeer(session.session_id, "peer-1", t0);
+    service.tick(t0 + 1_000);
+
+    service.tick(t0 + 2_000);
+    expect(teardown).toHaveBeenCalledTimes(1);
+    expect(service.getSessionState(session.session_id)).not.toBeNull();
+
+    service.tick(t0 + 2_001);
+    expect(teardown).toHaveBeenCalledTimes(2);
+    expect(service.getSessionState(session.session_id)).toBeNull();
+    expect(errorSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not overlap async teardown and retries after rejection", async () => {
+    const session = createActiveSession();
+    let rejectFirst!: (reason?: unknown) => void;
+    const firstAttempt = new Promise<void>((_resolve, reject) => { rejectFirst = reject; });
+    const teardown = vi.fn()
+      .mockReturnValueOnce(firstAttempt)
+      .mockResolvedValueOnce(undefined);
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const service = new SessionIdleReclaimService(store, {
+      idleTimeoutMs: 1_000,
+      countdownSeconds: 1,
+      onReclaimTeardown: teardown,
+    });
+    const t0 = 1_000_000;
+    service.connectPeer(session.session_id, "peer-1", t0);
+    service.tick(t0 + 1_000);
+
+    service.tick(t0 + 2_000);
+    service.tick(t0 + 2_001);
+    expect(teardown).toHaveBeenCalledTimes(1);
+
+    rejectFirst(new Error("async teardown failure"));
+    await firstAttempt.catch(() => undefined);
+    await Promise.resolve();
+    expect(service.getSessionState(session.session_id)).not.toBeNull();
+
+    service.tick(t0 + 2_002);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(teardown).toHaveBeenCalledTimes(2);
+    expect(service.getSessionState(session.session_id)).toBeNull();
+  });
+
   it("active sessions with regular interaction are never reclaimed (no max-hold cap)", () => {
     const session = createActiveSession();
     const countdowns: Array<{ sessionId: string; remaining: number }> = [];
@@ -228,7 +286,7 @@ describe("Coordinator App HTTP & Socket integration for Idle Reclaim", () => {
     await appInstance.dispose();
   });
 
-  it("supports POST /api/review-sessions/:sessionId/activity and GET /idle-status", async () => {
+  it("requires an active viewer lease for POST activity and exposes GET /idle-status", async () => {
     const createRes = await request(appInstance.app)
       .post("/api/review-sessions")
       .send({
@@ -247,10 +305,31 @@ describe("Coordinator App HTTP & Socket integration for Idle Reclaim", () => {
     expect(statusRes.body.is_counting_down).toBe(false);
 
     appInstance.idleReclaimService.connectPeer(sessionId, "peer-http");
-    // Report activity while a viewer is connected
-    const actRes = await request(appInstance.app)
+    const missingLease = await request(appInstance.app)
       .post(`/api/review-sessions/${sessionId}/activity`)
       .send({});
+    expect(missingLease.status).toBe(401);
+
+    const claimed = await request(appInstance.app)
+      .post(`/api/review-sessions/${sessionId}/viewer-leases/claim`)
+      .set("X-User-Token", "idle-viewer")
+      .send({
+        viewer_id: "idle-viewer",
+        requested_role: "primary",
+        client_nonce: `idle:${sessionId}`,
+      });
+    expect(claimed.status).toBe(200);
+
+    const wrongToken = await request(appInstance.app)
+      .post(`/api/review-sessions/${sessionId}/activity`)
+      .set("X-Viewer-Lease-Token", "wrong-token")
+      .send({ lease_id: claimed.body.lease_id });
+    expect(wrongToken.status).toBe(401);
+
+    const actRes = await request(appInstance.app)
+      .post(`/api/review-sessions/${sessionId}/activity`)
+      .set("X-Viewer-Lease-Token", claimed.body.lease_token)
+      .send({ lease_id: claimed.body.lease_id });
     expect(actRes.status).toBe(200);
     expect(actRes.body.ok).toBe(true);
     expect(actRes.body.session_id).toBe(sessionId);
