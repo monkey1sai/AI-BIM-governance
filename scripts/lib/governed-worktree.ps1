@@ -10,6 +10,71 @@ function ConvertTo-GovernedPathKey {
     return $fullPath
 }
 
+function Test-GovernedPathAtOrBelow {
+    param(
+        [Parameter(Mandatory = $true)][string] $CandidatePath,
+        [Parameter(Mandatory = $true)][string] $RootPath
+    )
+
+    $candidateKey = ConvertTo-GovernedPathKey -Path $CandidatePath
+    $rootKey = ConvertTo-GovernedPathKey -Path $RootPath
+    if ($candidateKey -ceq $rootKey) { return $true }
+    return $candidateKey.StartsWith(
+        $rootKey + [System.IO.Path]::DirectorySeparatorChar,
+        [System.StringComparison]::Ordinal)
+}
+
+function Get-GovernedWorktreeActiveAgents {
+    param(
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][object[]] $Sessions,
+        [Parameter(Mandatory = $true)][string] $WorktreePath
+    )
+
+    return @($Sessions | Where-Object {
+        [string]$_.status -cne 'ended' -and
+        -not [string]::IsNullOrWhiteSpace([string]$_.cwd) -and
+        (Test-GovernedPathAtOrBelow -CandidatePath ([string]$_.cwd) -RootPath $WorktreePath)
+    } | ForEach-Object { [string]$_.agent } | Sort-Object -Unique)
+}
+
+function Test-GovernedPrimaryCheckoutState {
+    param(
+        [Parameter(Mandatory = $true)][string] $BranchRef,
+        [Parameter(Mandatory = $true)][string] $Head,
+        [Parameter(Mandatory = $true)][string] $OriginMain,
+        [Parameter(Mandatory = $true)][bool] $Dirty
+    )
+
+    if ($BranchRef -cne 'refs/heads/main') {
+        return [pscustomobject]@{ Eligible = $false; Reason = 'primary_checkout_not_main' }
+    }
+    if ($Dirty) {
+        return [pscustomobject]@{ Eligible = $false; Reason = 'primary_checkout_dirty' }
+    }
+    if ($Head -cne $OriginMain) {
+        return [pscustomobject]@{ Eligible = $false; Reason = 'primary_checkout_not_aligned' }
+    }
+    return [pscustomobject]@{ Eligible = $true; Reason = 'eligible' }
+}
+
+function Remove-GovernedGitRoutingEnvironment {
+    $saved = [ordered]@{}
+    foreach ($item in @(Get-ChildItem Env:)) {
+        $name = [string]$item.Name
+        if ($name -notmatch '^GIT_') { continue }
+        $saved[$name] = [string]$item.Value
+        Remove-Item -LiteralPath "Env:$name" -ErrorAction SilentlyContinue
+    }
+    return $saved
+}
+
+function Restore-GovernedGitRoutingEnvironment {
+    param([Parameter(Mandatory = $true)][System.Collections.IDictionary] $Saved)
+    foreach ($entry in $Saved.GetEnumerator()) {
+        Set-Item -LiteralPath "Env:$($entry.Key)" -Value ([string]$entry.Value)
+    }
+}
+
 function Test-GovernedWorktreeIdentityObservation {
     param([Parameter(Mandatory = $true)][pscustomobject] $Observation)
 

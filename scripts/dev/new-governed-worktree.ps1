@@ -64,39 +64,17 @@ function Resolve-GovernedGitExecutable {
     return [string]$commands[0].Path
 }
 
-function Remove-GovernedGitRoutingEnvironment {
-    $saved = [ordered]@{}
-    $fixedNames = @(
-        'GIT_DIR', 'GIT_WORK_TREE', 'GIT_COMMON_DIR', 'GIT_INDEX_FILE',
-        'GIT_OBJECT_DIRECTORY', 'GIT_ALTERNATE_OBJECT_DIRECTORIES',
-        'GIT_CONFIG_COUNT', 'GIT_CONFIG_SYSTEM', 'GIT_CONFIG_GLOBAL',
-        'GIT_CONFIG_NOSYSTEM', 'GIT_CEILING_DIRECTORIES',
-        'GIT_DISCOVERY_ACROSS_FILESYSTEM'
-    )
-    foreach ($item in @(Get-ChildItem Env:)) {
-        $name = [string]$item.Name
-        if ($fixedNames -notcontains $name -and $name -notmatch '^GIT_CONFIG_(?:KEY|VALUE)_\d+$') { continue }
-        $saved[$name] = [string]$item.Value
-        Remove-Item -LiteralPath "Env:$name" -ErrorAction SilentlyContinue
-    }
-    return $saved
-}
-
-function Restore-GovernedGitRoutingEnvironment {
-    param([Parameter(Mandatory = $true)][System.Collections.IDictionary] $Saved)
-    foreach ($entry in $Saved.GetEnumerator()) {
-        Set-Item -LiteralPath "Env:$($entry.Key)" -Value ([string]$entry.Value)
-    }
-}
-
 function Invoke-GovernedGit {
     param(
         [Parameter(Mandatory = $true)][string] $WorkingDirectory,
         [Parameter(Mandatory = $true)][AllowEmptyCollection()][string[]] $ArgumentList,
+        [switch] $NoOptionalLocks,
         [switch] $AllowFailure
     )
 
-    $output = @(& $script:GitExecutable -C $WorkingDirectory @ArgumentList 2>&1)
+    $gitGlobalArguments = @()
+    if ($NoOptionalLocks) { $gitGlobalArguments += '--no-optional-locks' }
+    $output = @(& $script:GitExecutable @gitGlobalArguments -C $WorkingDirectory @ArgumentList 2>&1)
     $exitCode = $LASTEXITCODE
     $result = [pscustomobject]@{
         Success = $exitCode -eq 0
@@ -114,21 +92,26 @@ function Invoke-GovernedGit {
 function Get-GovernedGitText {
     param(
         [Parameter(Mandatory = $true)][string] $WorkingDirectory,
-        [Parameter(Mandatory = $true)][string[]] $ArgumentList
+        [Parameter(Mandatory = $true)][string[]] $ArgumentList,
+        [switch] $NoOptionalLocks
     )
-    $result = Invoke-GovernedGit -WorkingDirectory $WorkingDirectory -ArgumentList $ArgumentList
+    $result = Invoke-GovernedGit -WorkingDirectory $WorkingDirectory -ArgumentList $ArgumentList `
+        -NoOptionalLocks:$NoOptionalLocks
     return (@($result.Output) -join [Environment]::NewLine).Trim()
 }
 
 function Resolve-GovernedMainRoot {
+    param([switch] $NoOptionalLocks)
+
     $commonDirectory = Get-GovernedGitText -WorkingDirectory $script:ScriptRoot -ArgumentList @(
-        'rev-parse', '--path-format=absolute', '--git-common-dir')
+        'rev-parse', '--path-format=absolute', '--git-common-dir') -NoOptionalLocks:$NoOptionalLocks
     $resolvedCommon = [System.IO.Path]::GetFullPath($commonDirectory)
     if ([System.IO.Path]::GetFileName($resolvedCommon) -cne '.git') {
         throw 'git_common_directory_unexpected'
     }
     $mainRoot = [System.IO.Directory]::GetParent($resolvedCommon).FullName
-    $topLevel = Get-GovernedGitText -WorkingDirectory $mainRoot -ArgumentList @('rev-parse', '--show-toplevel')
+    $topLevel = Get-GovernedGitText -WorkingDirectory $mainRoot -ArgumentList @(
+        'rev-parse', '--show-toplevel') -NoOptionalLocks:$NoOptionalLocks
     if ((ConvertTo-GovernedPathKey -Path $topLevel) -cne (ConvertTo-GovernedPathKey -Path $mainRoot)) {
         throw 'main_worktree_resolution_mismatch'
     }
@@ -168,11 +151,13 @@ function Get-GovernedWorktreeInventory {
         [Parameter(Mandatory = $true)][pscustomobject] $Identity
     )
 
-    $porcelain = Get-GovernedGitText -WorkingDirectory $MainRoot -ArgumentList @('worktree', 'list', '--porcelain')
+    $porcelain = Get-GovernedGitText -WorkingDirectory $MainRoot -ArgumentList @(
+        'worktree', 'list', '--porcelain') -NoOptionalLocks
     $records = @(ConvertFrom-GitWorktreePorcelain -Text $porcelain)
     $board = Get-GovernedBoardObservation -MainRoot $MainRoot
     $sessions = @($board.Sessions)
-    $observedOriginMain = Get-GovernedGitText -WorkingDirectory $MainRoot -ArgumentList @('rev-parse', 'origin/main')
+    $observedOriginMain = Get-GovernedGitText -WorkingDirectory $MainRoot -ArgumentList @(
+        'rev-parse', 'origin/main') -NoOptionalLocks
     $mainKey = ConvertTo-GovernedPathKey -Path $MainRoot
     $rows = [System.Collections.Generic.List[object]]::new()
 
@@ -182,18 +167,14 @@ function Get-GovernedWorktreeInventory {
         $isMain = $worktreeKey -ceq $mainKey
         $rootOwner = Get-GovernedPathOwnerObservation -Path $worktreePath
         $gitMetadataOwner = Get-GovernedPathOwnerObservation -Path (Join-Path $worktreePath '.git')
-        $status = Invoke-GovernedGit -WorkingDirectory $worktreePath -ArgumentList @('status', '--porcelain=v1', '-z') -AllowFailure
+        $status = Invoke-GovernedGit -WorkingDirectory $worktreePath -ArgumentList @(
+            'status', '--porcelain=v1', '-z') -NoOptionalLocks -AllowFailure
         $gitAccessible = [bool]$status.Success
         $dirty = if ($gitAccessible) { (@($status.Output) -join '') -ne '' } else { $null }
         $mergedResult = Invoke-GovernedGit -WorkingDirectory $MainRoot -ArgumentList @(
-            'merge-base', '--is-ancestor', [string]$record.Head, 'origin/main') -AllowFailure
+            'merge-base', '--is-ancestor', [string]$record.Head, 'origin/main') -NoOptionalLocks -AllowFailure
         $merged = if ($mergedResult.ExitCode -eq 0) { $true } elseif ($mergedResult.ExitCode -eq 1) { $false } else { $null }
-        $activeSessions = @($sessions | Where-Object {
-            [string]$_.status -ceq 'active' -and
-            -not [string]::IsNullOrWhiteSpace([string]$_.cwd) -and
-            (ConvertTo-GovernedPathKey -Path ([string]$_.cwd)) -ceq $worktreeKey
-        })
-        $activeAgents = @($activeSessions | ForEach-Object { [string]$_.agent } | Sort-Object -Unique)
+        $activeAgents = @(Get-GovernedWorktreeActiveAgents -Sessions $sessions -WorktreePath $worktreePath)
         if (-not [bool]$board.Available) {
             $readiness = Get-GovernedWorktreeRemovalReadiness `
                 -IsMain:$isMain `
@@ -301,7 +282,7 @@ try {
         $eligibility = Test-GovernedWorktreeIdentityObservation -Observation $identity
         if (-not $eligibility.Eligible) { throw "worktree_identity_rejected: $($eligibility.Reason)" }
     }
-    $mainRoot = Resolve-GovernedMainRoot
+    $mainRoot = Resolve-GovernedMainRoot -NoOptionalLocks:($PSCmdlet.ParameterSetName -ceq 'Inventory')
 
     if ($PSCmdlet.ParameterSetName -ceq 'Inventory') {
         Write-GovernedPayload -Payload (Get-GovernedWorktreeInventory -MainRoot $mainRoot -Identity $identity)
@@ -348,6 +329,18 @@ try {
     }
     [void](Invoke-GovernedGit -WorkingDirectory $mainRoot -ArgumentList @('fetch', 'origin', '--prune'))
     $baseline = Get-GovernedGitText -WorkingDirectory $mainRoot -ArgumentList @('rev-parse', 'origin/main')
+    $primaryBranch = Get-GovernedGitText -WorkingDirectory $mainRoot -ArgumentList @('symbolic-ref', 'HEAD')
+    $primaryHead = Get-GovernedGitText -WorkingDirectory $mainRoot -ArgumentList @('rev-parse', 'HEAD')
+    $primaryStatus = Get-GovernedGitText -WorkingDirectory $mainRoot -ArgumentList @(
+        'status', '--porcelain=v1', '-z')
+    $primaryState = Test-GovernedPrimaryCheckoutState `
+        -BranchRef $primaryBranch `
+        -Head $primaryHead `
+        -OriginMain $baseline `
+        -Dirty:(-not [string]::IsNullOrEmpty($primaryStatus))
+    if (-not $primaryState.Eligible) {
+        throw "primary_checkout_invariant_failed: $($primaryState.Reason)"
+    }
     $remoteRef = Invoke-GovernedGit -WorkingDirectory $mainRoot -ArgumentList @(
         'show-ref', '--verify', '--quiet', "refs/remotes/origin/$BranchName") -AllowFailure
     if ($remoteRef.ExitCode -eq 0) { throw 'worktree_remote_branch_already_exists' }
@@ -413,7 +406,7 @@ catch {
         $failure = $_
         Invoke-GovernedStructuredLogWrite -Action {
             $script:LifecycleLogger | Write-StructError -Msg 'governed worktree creation failed' `
-                -ErrorRecord $failure -Data @{
+                -ErrorRecord $failure.Exception -Data @{
                     phase = 'closed'
                     subject_kind = 'git_worktree'
                     subject_id = $BranchName

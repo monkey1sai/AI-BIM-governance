@@ -85,6 +85,43 @@ $mismatch = Test-GovernedWorktreeIdentityObservation -Observation ([pscustomobje
 Assert-True (-not $mismatch.Eligible) 'profile SID mismatch must be rejected'
 Assert-Equal 'profile_sid_mismatch' $mismatch.Reason 'profile mismatch reason'
 
+$gitEnvironmentFixtures = [ordered]@{
+    GIT_CONFIG_PARAMETERS = "'remote.origin.url=C:/untrusted'"
+    GIT_FUTURE_ROUTING_CONTROL = 'untrusted'
+}
+foreach ($entry in $gitEnvironmentFixtures.GetEnumerator()) {
+    Set-Item -LiteralPath "Env:$($entry.Key)" -Value ([string]$entry.Value)
+}
+$savedGitEnvironment = Remove-GovernedGitRoutingEnvironment
+try {
+    foreach ($name in $gitEnvironmentFixtures.Keys) {
+        Assert-True (-not (Test-Path -LiteralPath "Env:$name")) "all inherited Git variables must be scrubbed: $name"
+    }
+}
+finally {
+    Restore-GovernedGitRoutingEnvironment -Saved $savedGitEnvironment
+}
+foreach ($entry in $gitEnvironmentFixtures.GetEnumerator()) {
+    Assert-Equal ([string]$entry.Value) ([string](Get-Item -LiteralPath "Env:$($entry.Key)").Value) "Git variable must be restored: $($entry.Key)"
+    Remove-Item -LiteralPath "Env:$($entry.Key)"
+}
+
+$primaryEligible = Test-GovernedPrimaryCheckoutState `
+    -BranchRef 'refs/heads/main' -Head 'abc123' -OriginMain 'abc123' -Dirty:$false
+Assert-True $primaryEligible.Eligible 'clean aligned main checkout is eligible for creation'
+
+$primaryBranchMismatch = Test-GovernedPrimaryCheckoutState `
+    -BranchRef 'refs/heads/feature' -Head 'abc123' -OriginMain 'abc123' -Dirty:$false
+Assert-Equal 'primary_checkout_not_main' $primaryBranchMismatch.Reason 'primary checkout branch mismatch reason'
+
+$primaryDirty = Test-GovernedPrimaryCheckoutState `
+    -BranchRef 'refs/heads/main' -Head 'abc123' -OriginMain 'abc123' -Dirty:$true
+Assert-Equal 'primary_checkout_dirty' $primaryDirty.Reason 'primary checkout dirty reason'
+
+$primaryBehind = Test-GovernedPrimaryCheckoutState `
+    -BranchRef 'refs/heads/main' -Head 'abc123' -OriginMain 'def456' -Dirty:$false
+Assert-Equal 'primary_checkout_not_aligned' $primaryBehind.Reason 'primary checkout alignment reason'
+
 $target = Get-GovernedWorktreeTarget -MainRoot 'C:\Repos\active\iot\AI-BIM-governance' -BranchName 'fix/host-owned-worktree-guard'
 Assert-Equal 'C:\Repos\active\iot\AI-BIM-governance.worktrees\host-owned-worktree-guard' $target 'canonical sibling target'
 
@@ -109,6 +146,21 @@ Assert-Equal 'C:/repo.worktrees/feature' $records[1].Path 'linked worktree path'
 Assert-Equal 'refs/heads/fix/feature' $records[1].Branch 'linked branch'
 Assert-True $records[1].Locked 'locked flag'
 Assert-True (-not $records[1].Prunable) 'prunable defaults false'
+
+$nestedSessionPath = Join-Path $repoRoot 'scripts\dev'
+$siblingSessionPath = "${repoRoot}-sibling"
+$activitySessions = @(
+    [pscustomobject]@{ agent = 'exact'; status = 'active'; cwd = $repoRoot },
+    [pscustomobject]@{ agent = 'nested'; status = 'idle'; cwd = $nestedSessionPath },
+    [pscustomobject]@{ agent = 'ended'; status = 'ended'; cwd = $nestedSessionPath },
+    [pscustomobject]@{ agent = 'sibling'; status = 'active'; cwd = $siblingSessionPath }
+)
+$activeAgents = @(Get-GovernedWorktreeActiveAgents -Sessions $activitySessions -WorktreePath $repoRoot)
+Assert-Equal 2 $activeAgents.Count 'every non-ended exact or descendant session owns the worktree'
+Assert-True ($activeAgents -contains 'exact') 'exact active session is detected'
+Assert-True ($activeAgents -contains 'nested') 'idle descendant session is detected'
+Assert-True ($activeAgents -notcontains 'ended') 'ended descendant session is ignored'
+Assert-True ($activeAgents -notcontains 'sibling') 'sibling path is not treated as a descendant'
 
 $ready = Get-GovernedWorktreeRemovalReadiness -IsMain:$false -BoardAvailable:$true -GitAccessible:$true -Dirty:$false -Merged:$true -Active:$false -Locked:$false -Prunable:$false
 Assert-True $ready.Ready 'clean merged inactive linked worktree can enter manual removal review'
@@ -141,8 +193,11 @@ foreach ($forbiddenPattern in @(
 }
 Assert-True ($cliSource -match "'fetch'\s*,\s*'origin'\s*,\s*'--prune'") 'create mode must freshly fetch origin/main'
 Assert-True ($cliSource -match "'worktree'\s*,\s*'add'\s*,\s*'-b'") 'create mode must use an explicit branch and worktree add'
+Assert-True ($cliSource -match 'primary_checkout_invariant_failed') 'create mode must reject a dirty, non-main, or stale primary checkout'
 Assert-True ($cliSource -match 'StructLog\.psm1') 'mutating create mode must use the repository structured logger'
 Assert-True ($cliSource -match "\.tmp\\logs") 'structured logs must stay in the gitignored repository temp root'
+Assert-True ($cliSource -match "'--no-optional-locks'") 'inventory Git commands must disable optional locks'
+Assert-True ($cliSource -match "'status'.*-NoOptionalLocks") 'inventory status must not refresh a worktree index'
 
 $inventoryText = @(& pwsh -NoProfile -NonInteractive -File $cliPath -Inventory -Json)
 if ($LASTEXITCODE -ne 0) { throw "inventory CLI failed: $($inventoryText -join [Environment]::NewLine)" }
@@ -187,5 +242,60 @@ else {
     ) 'held plan reports the observed identity rejection reason'
 }
 Assert-True (-not (Test-Path -LiteralPath $plannedTarget)) 'plan mode must not create the target'
+
+$failureFixtureRoot = Join-Path ([System.IO.Path]::GetTempPath()) (
+    "governed-worktree-failure-$PID-$([guid]::NewGuid().ToString('N'))")
+$failureFixtureRepo = Join-Path $failureFixtureRoot 'repo'
+$failureFixtureOrigin = Join-Path $failureFixtureRoot 'origin.git'
+$failureFixtureTarget = "${failureFixtureRepo}.worktrees\failure-log-contract"
+try {
+    New-Item -ItemType Directory -Path (Join-Path $failureFixtureRepo 'scripts\dev') -Force | Out-Null
+    New-Item -ItemType Directory -Path (Join-Path $failureFixtureRepo 'scripts\lib') -Force | Out-Null
+    Copy-Item -LiteralPath $cliPath -Destination (Join-Path $failureFixtureRepo 'scripts\dev\new-governed-worktree.ps1')
+    Copy-Item -LiteralPath $libraryPath -Destination (Join-Path $failureFixtureRepo 'scripts\lib\governed-worktree.ps1')
+    Copy-Item -LiteralPath (Join-Path $repoRoot 'scripts\lib\StructLog.psm1') `
+        -Destination (Join-Path $failureFixtureRepo 'scripts\lib\StructLog.psm1')
+    [System.IO.File]::WriteAllText((Join-Path $failureFixtureRepo '.gitignore'), ".tmp/`n")
+
+    & git init --initial-branch=main $failureFixtureRepo 2>&1 | Out-Null
+    Assert-Equal 0 $LASTEXITCODE 'failure fixture repository initializes'
+    & git -C $failureFixtureRepo config user.name 'Governed Worktree Test' 2>&1 | Out-Null
+    Assert-Equal 0 $LASTEXITCODE 'failure fixture user name config'
+    & git -C $failureFixtureRepo config user.email 'governed-worktree-test@example.invalid' 2>&1 | Out-Null
+    Assert-Equal 0 $LASTEXITCODE 'failure fixture user email config'
+    & git -C $failureFixtureRepo add . 2>&1 | Out-Null
+    Assert-Equal 0 $LASTEXITCODE 'failure fixture stages source'
+    & git -C $failureFixtureRepo commit -m 'fixture baseline' 2>&1 | Out-Null
+    Assert-Equal 0 $LASTEXITCODE 'failure fixture creates baseline commit'
+    & git init --bare --initial-branch=main $failureFixtureOrigin 2>&1 | Out-Null
+    Assert-Equal 0 $LASTEXITCODE 'failure fixture bare origin initializes'
+    & git -C $failureFixtureRepo remote add origin $failureFixtureOrigin 2>&1 | Out-Null
+    Assert-Equal 0 $LASTEXITCODE 'failure fixture origin config'
+    & git -C $failureFixtureRepo push --set-upstream origin main 2>&1 | Out-Null
+    Assert-Equal 0 $LASTEXITCODE 'failure fixture pushes baseline'
+
+    [System.IO.File]::WriteAllText((Join-Path $failureFixtureRepo 'dirty.marker'), 'dirty')
+    $failureFixtureCli = Join-Path $failureFixtureRepo 'scripts\dev\new-governed-worktree.ps1'
+    $failureOutput = @(& pwsh -NoProfile -NonInteractive -File $failureFixtureCli `
+        -BranchName 'fix/failure-log-contract' -Json)
+    Assert-Equal 2 $LASTEXITCODE 'logged Create failure preserves the governed HELD exit code'
+    $failurePayload = ($failureOutput -join [Environment]::NewLine) | ConvertFrom-Json
+    Assert-Equal 'governed-worktree-error/v1' ([string]$failurePayload.schema_version) 'logged failure schema'
+    Assert-Equal 'primary_checkout_invariant_failed: primary_checkout_dirty' `
+        ([string]$failurePayload.error) 'logged failure preserves the original held reason'
+    Assert-True (-not (Test-Path -LiteralPath $failureFixtureTarget)) 'logged failure creates no worktree target'
+    & git -C $failureFixtureRepo show-ref --verify --quiet refs/heads/fix/failure-log-contract
+    Assert-Equal 1 $LASTEXITCODE 'logged failure creates no branch'
+}
+finally {
+    $tempKey = ConvertTo-GovernedPathKey -Path ([System.IO.Path]::GetTempPath())
+    $fixtureKey = ConvertTo-GovernedPathKey -Path $failureFixtureRoot
+    Assert-True ($fixtureKey.StartsWith(
+        $tempKey + [System.IO.Path]::DirectorySeparatorChar,
+        [System.StringComparison]::Ordinal)) 'failure fixture cleanup stays inside the temp root'
+    if (Test-Path -LiteralPath $failureFixtureRoot) {
+        Remove-Item -LiteralPath $failureFixtureRoot -Recurse -Force
+    }
+}
 
 Write-Host 'ALL TESTS PASSED' -ForegroundColor Green
