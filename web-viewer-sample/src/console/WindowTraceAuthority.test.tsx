@@ -163,6 +163,7 @@ describe("Window Socket canonical trace authority", () => {
         socketClient = {
             join: vi.fn(),
             heartbeat: vi.fn(),
+            userActivity: vi.fn(),
             leave: vi.fn(),
             disconnect: vi.fn(),
         };
