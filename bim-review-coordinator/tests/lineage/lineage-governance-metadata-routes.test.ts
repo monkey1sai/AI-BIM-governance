@@ -862,6 +862,31 @@ describe("lineage governance metadata surfaces：manifest 投影接真值", () =
     expect(response.body).toEqual({ error: "lineage_metadata_projection_unavailable" });
   });
 
+  it("result manifest object-store HEAD／GET transient failure 統一 fail closed 503", async () => {
+    for (const operation of ["head", "get"] as const) {
+      for (const surface of ["alignment", "overview"] as const) {
+        const harness = makeProjectionHarness();
+        if (operation === "head") {
+          const realHead = harness.objects.headVersioned.bind(harness.objects);
+          harness.objects.headVersioned = async (ref) => {
+            if (ref.objectKey.endsWith("result-manifest.json")) throw new Error("MinIO timeout");
+            return realHead(ref);
+          };
+        } else {
+          const realGet = harness.objects.getBytesVersioned.bind(harness.objects);
+          harness.objects.getBytesVersioned = async (ref, maxBytes) => {
+            if (ref.objectKey.endsWith("result-manifest.json")) throw new Error("stream reset");
+            return realGet(ref, maxBytes);
+          };
+        }
+
+        const response = await getSurface(harness.app, harness.pipelineJobId, surface);
+        expect(response.status, `${operation}:${surface}`).toBe(503);
+        expect(response.body).toEqual({ error: "lineage_metadata_projection_unavailable" });
+      }
+    }
+  });
+
   it("source bundle manifest digest 漂移時同樣誠實 503", async () => {
     const harness = makeProjectionHarness({ bundleDigestDrift: true });
 

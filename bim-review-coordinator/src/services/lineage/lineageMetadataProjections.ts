@@ -159,7 +159,9 @@ async function readVerifiedResultManifest(
         `result ${result.result_id} manifest is unreadable (${error.code})`,
       );
     }
-    throw error;
+    throw new LineageMetadataProjectionUnavailableError(
+      `result ${result.result_id} manifest object store is unavailable`,
+    );
   }
   const manifest = read.manifest;
   if (

@@ -241,14 +241,13 @@ export type LineageAlignmentDifferenceItem =
   LineageAlignmentReportBody["difference_sets"][LineageAlignmentDifferenceSet][number];
 
 export function parseLineageAlignmentReport(rawBytes: Buffer): LineageAlignmentReportBody | null {
-  let document: unknown;
   try {
-    document = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(rawBytes));
+    const document: unknown = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(rawBytes));
+    const parsed = reportDocumentSchema.safeParse(document);
+    return parsed.success ? parsed.data.body : null;
   } catch {
     return null;
   }
-  const parsed = reportDocumentSchema.safeParse(document);
-  return parsed.success ? parsed.data.body : null;
 }
 
 function truncatedRatio(numerator: number, denominator: number): number | null {

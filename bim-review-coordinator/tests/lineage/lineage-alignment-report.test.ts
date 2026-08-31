@@ -80,4 +80,24 @@ describe("lineage alignment report runtime parser", () => {
 
     expect(parseLineageAlignmentReport(Buffer.from(JSON.stringify(document), "utf-8"))).not.toBeNull();
   });
+
+  it("拒絕 fractional count／metric，不讓 BigInt 轉換例外逃出 parser", () => {
+    const document = JSON.parse(
+      fixtureBytes("valid", "alignment-report-json-all-difference-sets.json").toString("utf-8"),
+    ) as {
+      body: {
+        counts: { csv_total_count: number };
+        metrics: { rvt_ifc_alignment_ratio: { numerator: number } };
+      };
+    };
+
+    document.body.counts.csv_total_count = 1.5;
+    expect(() => parseLineageAlignmentReport(Buffer.from(JSON.stringify(document), "utf-8"))).not.toThrow();
+    expect(parseLineageAlignmentReport(Buffer.from(JSON.stringify(document), "utf-8"))).toBeNull();
+
+    document.body.counts.csv_total_count = 3;
+    document.body.metrics.rvt_ifc_alignment_ratio.numerator = 1.5;
+    expect(() => parseLineageAlignmentReport(Buffer.from(JSON.stringify(document), "utf-8"))).not.toThrow();
+    expect(parseLineageAlignmentReport(Buffer.from(JSON.stringify(document), "utf-8"))).toBeNull();
+  });
 });
