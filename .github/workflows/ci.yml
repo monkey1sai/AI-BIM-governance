@@ -403,7 +403,7 @@ jobs:
   design-semantic-visual:
     name: design-semantic-visual
     needs: changes
-    if: github.event_name == 'workflow_dispatch'
+    if: always() && (needs.changes.result != 'success' || needs.changes.outputs.frontend_product == 'true')
     runs-on: windows-2025
     steps:
       - name: Require changed-path classifier success
