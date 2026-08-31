@@ -69,7 +69,7 @@ test.describe("session idle lifecycle functional and semantic evidence", () => {
   if (!isolated) return;
   test.setTimeout(90_000);
 
-  test("countdown, activity cancellation, heartbeat, keepalive failure, and expiry remain truthful", async ({ page, request }, testInfo) => {
+  test("countdown, activity cancellation, heartbeat, successful keepalive, and expiry remain truthful", async ({ page, request }, testInfo) => {
     const forbidden = watchForbiddenRequests(page, isolated.coordinatorBaseUrl);
     const session = await createSession(request, "browser");
     const observer = await joinObserver(session);
@@ -99,8 +99,9 @@ test.describe("session idle lifecycle functional and semantic evidence", () => {
       await expect(countdown).toBeVisible();
 
       await page.getByTestId("session-idle-keepalive-btn").click();
-      await expect(page.getByTestId("session-idle-keepalive-error")).toContainText("未獲 coordinator 確認");
-      await expect(countdown).toBeVisible();
+      await expect(page.getByTestId("session-idle-keepalive-error")).toBeHidden();
+      await expect(countdown).toBeHidden({ timeout: 5_000 });
+      await expect(countdown).toBeVisible({ timeout: 10_000 });
 
       const closedEvent = new Promise<Record<string, unknown>>((resolve) => observer.once("session:closed", resolve));
       await expect(page.getByTestId("session-idle-closed")).toContainText("閒置自動回收", { timeout: 15_000 });
@@ -124,6 +125,26 @@ test.describe("session idle lifecycle functional and semantic evidence", () => {
       });
     } finally {
       observer.disconnect();
+    }
+  });
+
+  test("explicit keepalive reports failure when both browser transports are offline", async ({ page, request }) => {
+    const session = await createSession(request, "offline_keepalive");
+    try {
+      await openViewer(page, session);
+      const countdown = page.getByTestId("session-idle-countdown-banner");
+      await expect(countdown).toBeVisible({ timeout: 10_000 });
+
+      await page.context().setOffline(true);
+      await page.getByTestId("session-idle-keepalive-btn").click();
+
+      await expect(page.getByTestId("session-idle-keepalive-error")).toContainText("未獲 coordinator 確認");
+      await expect(countdown).toBeVisible();
+    } finally {
+      await page.context().setOffline(false);
+      await request.post(`${COORDINATOR}/api/review-sessions/${session.session_id}/close`, {
+        data: { reason: "e2e-cleanup" },
+      });
     }
   });
 

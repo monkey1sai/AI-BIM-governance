@@ -3,7 +3,7 @@ import os from "node:os";
 import fs from "node:fs";
 import request from "supertest";
 import { io as createSocketClient, type Socket as SocketClient } from "socket.io-client";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createCoordinatorApp, type CoordinatorApp } from "../src/app.js";
 import type { CoordinatorConfig } from "../src/config.js";
 import { EventLog } from "../src/services/eventLog.js";
@@ -1039,11 +1039,7 @@ describe("bim-review-coordinator", () => {
     expect(secondClose.body.status).toBe("closed");
   });
 
-  // IMPORTANT-1：close 在 status==="closing" 也須冪等。若一個 session 仍停在 closing
-  // （例如併發第二個 POST 在第一次 store.update(closing) 與 store.update(closed) 之間
-  // 重入），handler 不可重複 append sessionClosing / sessionClosed / kitInstanceReleased
-  // 進 append-only audit ledger，也不可對已 draining 的 binding 再 markKitBindingsDraining。
-  it("close is idempotent for sessions already in closing state (no duplicate audit events)", async () => {
+  it("close resumes a closing session without duplicating its closing audit", async () => {
     const app = makeApp();
     const created = await request(app.app)
       .post("/api/review-sessions")
@@ -1053,8 +1049,12 @@ describe("bim-review-coordinator", () => {
         created_by: "dev_user_001",
       });
 
-    // 模擬 session 停在 closing（併發重入的觀察窗口）。
+    // 模擬 sessionClosing 已落盤、但狀態仍停在 closing 的部分完成窗口。
     app.store.update(created.body.session_id, { status: "closing" });
+    app.eventLog.append(created.body.session_id, "sessionClosing", {
+      final_events: 0,
+      released_viewer_leases: [],
+    });
 
     const lifecycleTypes = () =>
       app.eventLog
@@ -1068,8 +1068,9 @@ describe("bim-review-coordinator", () => {
       .send({});
 
     expect(reClose.status).toBe(200);
-    // closing-state POST 不得新增任何 lifecycle event（沿用 closed-idempotent 語意）。
-    expect(lifecycleTypes()).toEqual(before);
+    expect(reClose.body.status).toBe("closed");
+    expect(lifecycleTypes().filter((type) => type === "sessionClosing")).toHaveLength(1);
+    expect(lifecycleTypes()).toEqual([...before, "sessionClosed", "kitInstanceReleased"]);
   });
 
   it("logs sessionCreated event with review_request_id when provided", async () => {
@@ -1220,6 +1221,55 @@ describe("bim-review-coordinator", () => {
     expect(events.body.items.some((item: { type: string }) => item.type === "sessionClosing")).toBe(true);
     expect(events.body.items.some((item: { type: string }) => item.type === "sessionClosed")).toBe(true);
     expect(events.body.items.some((item: { type: string }) => item.type === "kitInstanceReleased")).toBe(true);
+  });
+
+  it("resumes missing final_events after a transient audit append failure", async () => {
+    const app = makeApp();
+    const created = await request(app.app)
+      .post("/api/review-sessions")
+      .send({
+        project_id: "project_close_retry",
+        model_version_id: "version_close_retry",
+        created_by: "dev_user_close_retry",
+      });
+    const finalEvents = [
+      { type: "annotationFinal", count: 1 },
+      { type: "measurementFinal", count: 2 },
+    ];
+    const originalAppend = app.eventLog.append.bind(app.eventLog);
+    let failSecondFinalEventOnce = true;
+    const appendSpy = vi.spyOn(app.eventLog, "append").mockImplementation((id, type, payload) => {
+      if (
+        type === "finalReviewEvent"
+        && (payload as { type?: string }).type === "measurementFinal"
+        && failSecondFinalEventOnce
+      ) {
+        failSecondFinalEventOnce = false;
+        throw new Error("transient final event append failure");
+      }
+      return originalAppend(id, type, payload);
+    });
+
+    try {
+      const firstClose = await request(app.app)
+        .post(`/api/review-sessions/${created.body.session_id}/close`)
+        .send({ final_events: finalEvents });
+      expect(firstClose.status).toBe(500);
+      expect(app.store.get(created.body.session_id)?.status).toBe("closing");
+
+      const retriedClose = await request(app.app)
+        .post(`/api/review-sessions/${created.body.session_id}/close`)
+        .send({ final_events: finalEvents });
+      expect(retriedClose.status).toBe(200);
+      expect(retriedClose.body.status).toBe("closed");
+
+      const events = app.eventLog.list(created.body.session_id);
+      expect(events.filter((event) => event.type === "sessionClosing")).toHaveLength(1);
+      expect(events.filter((event) => event.type === "finalReviewEvent").map((event) => event.payload)).toEqual(finalEvents);
+      expect(events.filter((event) => event.type === "sessionClosed")).toHaveLength(1);
+    } finally {
+      appendSpy.mockRestore();
+    }
   });
 
   it("close threads reason/actor into sessionClosing and sessionClosed audit payloads", async () => {

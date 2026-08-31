@@ -411,4 +411,46 @@ describe("Coordinator App HTTP & Socket integration for Idle Reclaim", () => {
       errorSpy.mockRestore();
     }
   });
+
+  it("retries a missing sessionClosing audit before closing the session", async () => {
+    const createRes = await request(appInstance.app)
+      .post("/api/review-sessions")
+      .send({
+        project_id: "prj_retry_closing",
+        model_version_id: "mv_retry_closing",
+        created_by: "user_retry_closing",
+      });
+    const sessionId = createRes.body.session_id as string;
+    const originalAppend = appInstance.eventLog.append.bind(appInstance.eventLog);
+    let failSessionClosingOnce = true;
+    const appendSpy = vi.spyOn(appInstance.eventLog, "append").mockImplementation((id, type, payload) => {
+      if (type === "sessionClosing" && failSessionClosingOnce) {
+        failSessionClosingOnce = false;
+        throw new Error("transient sessionClosing append failure");
+      }
+      return originalAppend(id, type, payload);
+    });
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const t0 = 3_000_000;
+
+    try {
+      appInstance.idleReclaimService.connectPeer(sessionId, "peer-retry-closing", t0);
+      appInstance.idleReclaimService.tick(t0 + 100);
+      appInstance.idleReclaimService.tick(t0 + 100 + 11_000);
+
+      expect(appInstance.idleReclaimService.getSessionState(sessionId)).not.toBeNull();
+
+      appInstance.idleReclaimService.tick(t0 + 100 + 11_001);
+
+      expect(appInstance.idleReclaimService.getSessionState(sessionId)).toBeNull();
+      expect(appInstance.store.get(sessionId)?.status).toBe("closed");
+      const events = appInstance.eventLog.list(sessionId);
+      expect(events.filter((event) => event.type === "sessionClosing")).toHaveLength(1);
+      expect(events.filter((event) => event.type === "sessionClosed")).toHaveLength(1);
+      expect(errorSpy).toHaveBeenCalled();
+    } finally {
+      appendSpy.mockRestore();
+      errorSpy.mockRestore();
+    }
+  });
 });

@@ -786,20 +786,39 @@ export function createCoordinatorApp(
     const actor = typeof options.actor === "string" ? (options.actor.trim().slice(0, 500) || undefined) : undefined;
     const auditFields = reason ? { reason, ...(actor ? { actor } : {}) } : {};
     let closing = session;
-    if (session.status !== "closing" && session.status !== "closed") {
-      const releasedViewerLeases = viewerLeaseStore.releaseSession(session.session_id);
-      closing = store.update(session.session_id, {
-        status: "closing",
-        kit_instance_bindings: markKitBindingsDraining(session.kit_instance_bindings),
-      }) ?? session;
-      eventLog.append(session.session_id, "sessionClosing", {
-        final_events: finalEvents.length,
-        released_viewer_leases: releasedViewerLeases.map((lease) => lease.lease_id),
-        ...auditFields,
-      });
-      for (const event of finalEvents) {
-        eventLog.append(session.session_id, "finalReviewEvent", event);
+    if (session.status !== "closed") {
+      let closeEvents = eventLog.list(session.session_id);
+      let closingEvent = closeEvents.find((event) => event.type === "sessionClosing");
+      if (!closingEvent) {
+        const releasedViewerLeases = viewerLeaseStore.releaseSession(session.session_id);
+        closingEvent = eventLog.append(session.session_id, "sessionClosing", {
+          final_events: finalEvents.length,
+          released_viewer_leases: releasedViewerLeases.map((lease) => lease.lease_id),
+          ...auditFields,
+        });
+        closeEvents = [...closeEvents, closingEvent];
       }
+      if (session.status !== "closing") {
+        closing = store.update(session.session_id, {
+          status: "closing",
+          kit_instance_bindings: markKitBindingsDraining(session.kit_instance_bindings),
+        }) ?? session;
+      }
+      const declaredFinalEventCount = (closingEvent.payload as { final_events?: unknown } | null)?.final_events;
+      const expectedFinalEventCount = Number.isSafeInteger(declaredFinalEventCount) && Number(declaredFinalEventCount) >= 0
+        ? Number(declaredFinalEventCount)
+        : 0;
+      const existingFinalEventCount = closeEvents.filter((event) => event.type === "finalReviewEvent").length;
+      if (existingFinalEventCount < expectedFinalEventCount) {
+        if (finalEvents.length < expectedFinalEventCount) return closing;
+        for (let index = existingFinalEventCount; index < expectedFinalEventCount; index += 1) {
+          eventLog.append(session.session_id, "finalReviewEvent", finalEvents[index]);
+        }
+      }
+      const persistedFinalEventCount = eventLog
+        .list(session.session_id)
+        .filter((event) => event.type === "finalReviewEvent").length;
+      if (persistedFinalEventCount < expectedFinalEventCount) return closing;
     }
     const closed = session.status === "closed"
       ? session
@@ -2223,11 +2242,9 @@ export function createCoordinatorApp(
       response.status(404).json({ detail: "Review session not found." });
       return;
     }
-    // IMPORTANT-1：冪等守衛涵蓋 closing 與 closed。append-only audit ledger 不能事後清理，
-    // 故任何已進入 close 流程（closing / closed）的 session 再次 POST /close 一律 no-op 直接回傳
-    // 現狀，避免併發/重入重複 append sessionClosing / sessionClosed / kitInstanceReleased，
-    // 或對已 draining 的 binding 再次 markKitBindingsDraining。
-    if (session.status === "closed" || session.status === "closing") {
+    // closed 已具完整終態 audit，直接冪等回傳；closing 則交由共用 close helper 依既有
+    // sessionClosing.final_events 數量補寫缺少的 finalReviewEvent，未補齊前不得宣告 closed。
+    if (session.status === "closed") {
       response.json(session);
       return;
     }
@@ -2243,6 +2260,7 @@ export function createCoordinatorApp(
       reason,
       actor: resolveActor(request),
       finalEvents,
+      resumeClosing: session.status === "closing",
     });
     response.json(closed);
   });

@@ -90,7 +90,10 @@ type AppInternals = {
     _appendDemoOutgoing: (label: string, payload: unknown) => void;
     _appendReviewEvent: (message: string) => void;
     _onViewerUserActivity: (event: Event) => void;
+    _reportViewerActivity: () => void;
     _recordSessionActivity: () => Promise<boolean>;
+    passiveIdleActivityRequestInFlight: boolean;
+    lastIdleActivityReportAt: number;
     _currentViewerLogDeliveryAuthority: () => {
         reviewSessionId: string;
         leaseId: string;
@@ -441,6 +444,35 @@ describe("Window Socket canonical trace authority", () => {
         button.dispatchEvent(new Event("pointerdown", { bubbles: true }));
 
         expect(socketClient.userActivity).not.toHaveBeenCalled();
+    });
+
+    it("starts passive activity throttling only after a positive acknowledgement", async () => {
+        const app = readyApp();
+        const target = internals(app);
+        target._connectReviewSocket(SESSION_ID, TRACE_ID);
+        const candidate = vi.mocked(socketClient.join).mock.calls[0][0];
+        handlers.onStatus?.("connected");
+        ack("joinSession", candidate, { ok: true, trace_id: TRACE_ID });
+        let resolveActivity: (acknowledged: boolean) => void = () => undefined;
+        vi.mocked(socketClient.userActivity).mockImplementation(
+            () => new Promise<boolean>((resolve) => { resolveActivity = resolve; }),
+        );
+
+        target._reportViewerActivity();
+        target._reportViewerActivity();
+        expect(socketClient.userActivity).toHaveBeenCalledTimes(1);
+        expect(target.lastIdleActivityReportAt).toBe(0);
+
+        resolveActivity(false);
+        await vi.waitFor(() => expect(target.passiveIdleActivityRequestInFlight).toBe(false));
+        expect(target.lastIdleActivityReportAt).toBe(0);
+        target._reportViewerActivity();
+        expect(socketClient.userActivity).toHaveBeenCalledTimes(2);
+
+        resolveActivity(true);
+        await vi.waitFor(() => expect(target.lastIdleActivityReportAt).toBeGreaterThan(0));
+        target._reportViewerActivity();
+        expect(socketClient.userActivity).toHaveBeenCalledTimes(2);
     });
 
     it("accepts explicit keepalive through the trace-authorized socket when no REST lease is available", async () => {

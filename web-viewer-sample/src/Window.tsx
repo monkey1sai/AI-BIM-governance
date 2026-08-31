@@ -973,6 +973,7 @@ export default class App extends React.Component<AppProps, AppState> {
     private standaloneViewerLeaseHeartbeatId: number | null = null;
     private componentMounted = false;
     private idleActivityRequestInFlight = false;
+    private passiveIdleActivityRequestInFlight = false;
     private lastIdleActivityReportAt = 0;
     private readonly standaloneViewerId = reviewEnv.sourceClientId;
     // private _streamConfig: StreamConfigType = getConfig();
@@ -1134,9 +1135,25 @@ export default class App extends React.Component<AppProps, AppState> {
             || authority.connectionGeneration !== this.reviewSocketEpoch
         ) return;
         const now = Date.now();
-        if (now - this.lastIdleActivityReportAt < 5_000) return;
-        this.lastIdleActivityReportAt = now;
-        this.reviewSocket?.userActivity();
+        if (this.passiveIdleActivityRequestInFlight || now - this.lastIdleActivityReportAt < 5_000) return;
+        const socket = this.reviewSocket;
+        if (!socket) return;
+        this.passiveIdleActivityRequestInFlight = true;
+        void socket.userActivity()
+            .then((acknowledged) => {
+                const currentAuthority = this.verifiedDataChannelAuthority;
+                if (
+                    !acknowledged
+                    || this.reviewSocket !== socket
+                    || !currentAuthority
+                    || currentAuthority !== authority
+                    || currentAuthority.connectionGeneration !== this.reviewSocketEpoch
+                ) return;
+                this.lastIdleActivityReportAt = Date.now();
+            })
+            .finally(() => {
+                this.passiveIdleActivityRequestInFlight = false;
+            });
     }
 
     private async _recordSessionActivity(): Promise<boolean> {
