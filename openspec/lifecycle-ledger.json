@@ -2591,6 +2591,25 @@
       "subject_commit": "24aa54d5aedba8a5f0774a095215b9f26d21e198",
       "subject_binding": "introduction",
       "archive_debt": null
+    },
+    {
+      "id": "spec-to-done-parallel-delivery-binding",
+      "status": "active",
+      "owner": "repository-maintainer",
+      "current_slice": "binding contract, shared validator, Claude/Codex adapter parity, deterministic tests and operator policy complete on an isolated branch; pending parent-Fabric integration review and post-merge archive",
+      "blocked_by": [],
+      "last_verified": "2026-08-31T10:50:55Z",
+      "task_ledger": {
+        "completed": 14,
+        "total": 14
+      },
+      "evidence_refs": [
+        "openspec/changes/spec-to-done-parallel-delivery-binding/proposal.md",
+        "openspec/changes/spec-to-done-parallel-delivery-binding/tasks.md"
+      ],
+      "subject_commit": "828e5c19a992dc06ac389318141c90191e810377",
+      "subject_binding": "introduction",
+      "archive_debt": null
     }
   ]
 }

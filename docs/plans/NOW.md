@@ -18,6 +18,7 @@
     { "id": "introduce-viewer-app-integration-surface", "status": "deferred" },
     { "id": "parallel-delivery-fabric", "status": "active" },
     { "id": "rvt-ifc-usdc-lineage", "status": "active" },
+    { "id": "spec-to-done-parallel-delivery-binding", "status": "active" },
     { "id": "unified-console-runtime-truth", "status": "active" }
   ]
 }

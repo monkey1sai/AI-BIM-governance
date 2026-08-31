@@ -26,5 +26,5 @@
 - [x] 5.1 執行 affected Node/Python tests、agent contract/governance checks 與 OpenSpec strict validation
   - Binding 10/10、state/schema 69 passed + 2 skipped、Fabric regression 90/90、ship contract 5/5、OpenSpec 77/77 與 self-referential bootstrap 通過。repo-wide agent-governance 仍在未被本 change 修改的 body/title-only CI concurrency assertion 失敗；固定 base 對應 workflow 與 assertion byte scope 未變，列為 inherited base failure，不宣稱該總 gate 通過。
 - [x] 5.2 執行 GitNexus detect-changes、確認 tracked scope，並在 closeout 前檢查 Fabric 母分支 drift
-  - Exact-commit index 對 tracked mapped scope 回報 LOW（10 files／20 symbols／0 processes）；branch rename 後 incremental reindex 因 GitNexus 1.6.9 `Failed calling LOWER: Invalid UTF-8` 失敗，dotfile／untracked 新檔以 direct references 與 deterministic tests 補證，不宣稱完整 GitNexus pass。fresh fetch 後 local/remote Fabric 母分支仍為 `9e2bd84`；母 worktree 有未提交且與 operator doc 重疊的隔離變更，後續整合須顯式解衝突。
-- [ ] 5.3 登錄 OpenSpec lifecycle ledger 與 NOW current projection，將 task/evidence snapshot 綁定已提交的 implementation subject
+  - Clean-HEAD 對固定 base 的 mapping 回報 MEDIUM（21 files／148 symbols／2 processes）；branch rename 後 incremental reindex 因 GitNexus 1.6.9 `Failed calling LOWER: Invalid UTF-8` 失敗，改用仍對齊 exact path/base commit 的既有 index 執行 compare，故不宣稱完整 GitNexus pass。最終 fresh fetch 後 local/remote Fabric 母分支仍為 `9e2bd84`；母 worktree 有未提交且與 operator doc 重疊的隔離變更，後續整合須顯式解衝突。
+- [x] 5.3 登錄 OpenSpec lifecycle ledger 與 NOW current projection，將 task/evidence snapshot 綁定已提交的 implementation subject

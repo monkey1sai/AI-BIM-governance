@@ -1,3 +1,5 @@
+> **Status: active**
+
 ## Why
 
 目前 Parallel Delivery Fabric 已允許任意數量、以獨立 branch／sibling worktree／touch-set 隔離的 session writer，但 `spec-to-done` 仍只保存單一 slug、worktree、branch 與 state identity，且沒有機器可驗的 Fabric lease／scope 綁定。若直接疊用，任務可能擴張 touch-set、不同切片碰撞同一 state，或在 HELD 後自行釋放／重建執行上下文，造成跨 session 無法收斂。
