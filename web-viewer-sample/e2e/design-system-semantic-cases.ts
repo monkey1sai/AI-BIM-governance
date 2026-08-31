@@ -69,7 +69,7 @@ export function designHarnessRoute(productionRoute: string): string {
 
 /** 任務規約：prepare 一律以 design-owned canonical harness carriers 自行導頁。 */
 const gotoRoute = async ({ page, productionRoute }: SemanticCaseContext): Promise<void> => {
-  await page.goto(designHarnessRoute(productionRoute), { waitUntil: "networkidle" });
+  await page.goto(designHarnessRoute(productionRoute), { waitUntil: "domcontentloaded" });
 };
 
 /** 先經 about:blank 造成 full document load → React/fixture state 全部重置。 */

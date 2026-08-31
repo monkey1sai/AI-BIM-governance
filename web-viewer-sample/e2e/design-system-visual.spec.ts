@@ -278,7 +278,7 @@ test("approved screens match desigin-system golden and semantic contracts", asyn
         window.localStorage.clear();
         window.sessionStorage.clear();
       });
-      await page.goto(designHarnessRoute(productionRoute), { waitUntil: "networkidle" });
+      await page.goto(designHarnessRoute(productionRoute), { waitUntil: "domcontentloaded" });
       const observedDpr = await page.evaluate(() => window.devicePixelRatio);
       if (observedDpr !== manifest.fidelity_contract.device_scale_factor) {
         failures.push(
