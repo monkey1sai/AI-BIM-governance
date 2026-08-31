@@ -3,16 +3,14 @@ name: CI
 on:
   pull_request:
     types: [opened, edited, synchronize, reopened, ready_for_review]
+  merge_group:
+    types: [checks_requested]
   push:
     branches: [main]
   workflow_dispatch:
 
 permissions:
   contents: read
-
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event.action == 'edited' && github.event.changes.base == null && 'metadata-only' || 'verification' }}
-  cancel-in-progress: true
 
 jobs:
   changes:
@@ -58,19 +56,38 @@ jobs:
         id: paths
         if: ${{ github.event.action != 'edited' || github.event.changes.base != null }}
         shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PULL_REQUEST_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PULL_REQUEST_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PUSH_BEFORE_SHA: ${{ github.event.before }}
+          SUBJECT_SHA: ${{ github.sha }}
+          MERGE_GROUP_BASE_SHA: ${{ github.event.merge_group.base_sha }}
         run: |
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            base_sha='${{ github.event.pull_request.base.sha }}'
-            head_sha='${{ github.event.pull_request.head.sha }}'
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            base_sha="$PULL_REQUEST_BASE_SHA"
+            head_sha="$PULL_REQUEST_HEAD_SHA"
             git -c core.quotepath=false diff --no-renames --name-only -z "$base_sha...$head_sha" > changed-paths.bin
-          elif [ "${{ github.event_name }}" = "push" ] && [ -n "${{ github.event.before }}" ] && [ "${{ github.event.before }}" != "0000000000000000000000000000000000000000" ]; then
-            base_sha='${{ github.event.before }}'
-            head_sha='${{ github.sha }}'
+          elif [ "$EVENT_NAME" = "merge_group" ]; then
+            base_sha="$MERGE_GROUP_BASE_SHA"
+            head_sha="$SUBJECT_SHA"
+            if ! [[ "$base_sha" =~ ^[0-9a-f]{40}$ ]] || [[ "$base_sha" =~ ^0{40}$ ]]; then
+              echo "::error::merge_group immutable base SHA is missing or invalid" >&2
+              exit 1
+            fi
+            if ! [[ "$head_sha" =~ ^[0-9a-f]{40}$ ]] || [[ "$head_sha" =~ ^0{40}$ ]]; then
+              echo "::error::merge_group subject SHA is missing or invalid" >&2
+              exit 1
+            fi
+            git -c core.quotepath=false diff --no-renames --name-only -z "$base_sha...$head_sha" > changed-paths.bin
+          elif [ "$EVENT_NAME" = "push" ] && [ -n "$PUSH_BEFORE_SHA" ] && [ "$PUSH_BEFORE_SHA" != "0000000000000000000000000000000000000000" ]; then
+            base_sha="$PUSH_BEFORE_SHA"
+            head_sha="$SUBJECT_SHA"
             git -c core.quotepath=false diff --no-renames --name-only -z "$base_sha" "$head_sha" > changed-paths.bin
           else
             printf "__full__\0" > changed-paths.bin
             base_sha=''
-            head_sha='${{ github.sha }}'
+            head_sha="$SUBJECT_SHA"
           fi
           echo "base_sha=$base_sha" >> "$GITHUB_OUTPUT"
           echo "head_sha=$head_sha" >> "$GITHUB_OUTPUT"
@@ -353,7 +370,8 @@ jobs:
         id: eslint-baseline
         shell: pwsh
         env:
-          TRUSTED_BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+          EVENT_NAME: ${{ github.event_name }}
+          TRUSTED_BASE_SHA: ${{ needs.changes.outputs.base_sha }}
         run: |
           $target = Join-Path $env:RUNNER_TEMP 'viewer-eslint-baseline.json'
           if ($env:TRUSTED_BASE_SHA -match '^[0-9a-f]{40}$' -and $env:TRUSTED_BASE_SHA -notmatch '^0{40}$') {
@@ -386,6 +404,9 @@ jobs:
               }
             }
           } else {
+            if ($env:EVENT_NAME -eq 'merge_group') {
+              throw 'merge_group requires an immutable trusted base SHA; candidate HEAD fallback is forbidden.'
+            }
             Copy-Item -LiteralPath 'web-viewer-sample/scripts/eslint-baseline.json' -Destination $target
           }
           "path=$target" >> $env:GITHUB_OUTPUT

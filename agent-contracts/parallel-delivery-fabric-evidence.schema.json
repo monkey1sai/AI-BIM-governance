@@ -1,0 +1,242 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "parallel-delivery-fabric-evidence.schema.json",
+  "title": "Parallel Delivery Fabric candidate evidence contract v2",
+  "$comment": "Candidate payload shape-only. The standalone reducer never returns COMPLETE; it can only report advisory eligibility as HELD pending a later prior-base-owned authority. An external trusted context and reducer enforcement are mandatory.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "records"],
+  "properties": {
+    "schema_version": { "const": "parallel-delivery-fabric-evidence/v2" },
+    "records": {
+      "type": "array",
+      "minItems": 45,
+      "maxItems": 45,
+      "items": { "$ref": "#/$defs/record" }
+    }
+  },
+  "allOf": [
+    { "properties": { "records": { "contains": { "properties": { "id": { "const": "AC-01" } }, "required": ["id"] }, "minContains": 1, "maxContains": 1 } } },
+    { "properties": { "records": { "contains": { "properties": { "id": { "const": "AC-02" } }, "required": ["id"] }, "minContains": 1, "maxContains": 1 } } },
+    { "properties": { "records": { "contains": { "properties": { "id": { "const": "AC-03" } }, "required": ["id"] }, "minContains": 1, "maxContains": 1 } } },
+    { "properties": { "records": { "contains": { "properties": { "id": { "const": "AC-04" } }, "required": ["id"] }, "minContains": 1, "maxContains": 1 } } },
+    { "properties": { "records": { "contains": { "properties": { "id": { "const": "AC-05" } }, "required": ["id"] }, "minContains": 1, "maxContains": 1 } } },
+    { "properties": { "records": { "contains": { "properties": { "id": { "const": "AC-06" } }, "required": ["id"] }, "minContains": 1, "maxContains": 1 } } },
+    { "properties": { "records": { "contains": { "properties": { "id": { "const": "AC-07" } }, "required": ["id"] }, "minContains": 1, "maxContains": 1 } } },
+    { "properties": { "records": { "contains": { "properties": { "id": { "const": "AC-08" } }, "required": ["id"] }, "minContains": 1, "maxContains": 1 } } },
+    { "properties": { "records": { "contains": { "properties": { "id": { "const": "AC-09" } }, "required": ["id"] }, "minContains": 1, "maxContains": 1 } } },
+    { "properties": { "records": { "contains": { "properties": { "id": { "const": "AC-10" } }, "required": ["id"] }, "minContains": 1, "maxContains": 1 } } },
+    { "properties": { "records": { "contains": { "properties": { "id": { "const": "AC-11" } }, "required": ["id"] }, "minContains": 1, "maxContains": 1 } } },
+    { "properties": { "records": { "contains": { "properties": { "id": { "const": "AC-12" } }, "required": ["id"] }, "minContains": 1, "maxContains": 1 } } },
+    { "properties": { "records": { "contains": { "properties": { "id": { "const": "AC-13" } }, "required": ["id"] }, "minContains": 1, "maxContains": 1 } } },
+    { "properties": { "records": { "contains": { "properties": { "id": { "const": "AC-14" } }, "required": ["id"] }, "minContains": 1, "maxContains": 1 } } },
+    { "properties": { "records": { "contains": { "properties": { "id": { "const": "AC-15" } }, "required": ["id"] }, "minContains": 1, "maxContains": 1 } } },
+    { "properties": { "records": { "contains": { "properties": { "id": { "const": "AC-16" } }, "required": ["id"] }, "minContains": 1, "maxContains": 1 } } },
+    { "properties": { "records": { "contains": { "properties": { "id": { "const": "AC-17" } }, "required": ["id"] }, "minContains": 1, "maxContains": 1 } } },
+    { "properties": { "records": { "contains": { "properties": { "id": { "const": "AC-18" } }, "required": ["id"] }, "minContains": 1, "maxContains": 1 } } },
+    { "properties": { "records": { "contains": { "properties": { "id": { "const": "AC-19" } }, "required": ["id"] }, "minContains": 1, "maxContains": 1 } } },
+    { "properties": { "records": { "contains": { "properties": { "id": { "const": "AC-20" } }, "required": ["id"] }, "minContains": 1, "maxContains": 1 } } },
+    { "properties": { "records": { "contains": { "properties": { "id": { "const": "AC-21" } }, "required": ["id"] }, "minContains": 1, "maxContains": 1 } } },
+    { "properties": { "records": { "contains": { "properties": { "id": { "const": "AC-22" } }, "required": ["id"] }, "minContains": 1, "maxContains": 1 } } },
+    { "properties": { "records": { "contains": { "properties": { "id": { "const": "AC-23" } }, "required": ["id"] }, "minContains": 1, "maxContains": 1 } } },
+    { "properties": { "records": { "contains": { "properties": { "id": { "const": "AC-24" } }, "required": ["id"] }, "minContains": 1, "maxContains": 1 } } },
+    { "properties": { "records": { "contains": { "properties": { "id": { "const": "AC-25" } }, "required": ["id"] }, "minContains": 1, "maxContains": 1 } } },
+    { "properties": { "records": { "contains": { "properties": { "id": { "const": "AC-26" } }, "required": ["id"] }, "minContains": 1, "maxContains": 1 } } },
+    { "properties": { "records": { "contains": { "properties": { "id": { "const": "AC-27" } }, "required": ["id"] }, "minContains": 1, "maxContains": 1 } } },
+    { "properties": { "records": { "contains": { "properties": { "id": { "const": "AC-28" } }, "required": ["id"] }, "minContains": 1, "maxContains": 1 } } },
+    { "properties": { "records": { "contains": { "properties": { "id": { "const": "AC-29" } }, "required": ["id"] }, "minContains": 1, "maxContains": 1 } } },
+    { "properties": { "records": { "contains": { "properties": { "id": { "const": "AC-30" } }, "required": ["id"] }, "minContains": 1, "maxContains": 1 } } },
+    { "properties": { "records": { "contains": { "properties": { "id": { "const": "AC-31" } }, "required": ["id"] }, "minContains": 1, "maxContains": 1 } } },
+    { "properties": { "records": { "contains": { "properties": { "id": { "const": "AC-32" } }, "required": ["id"] }, "minContains": 1, "maxContains": 1 } } },
+    { "properties": { "records": { "contains": { "properties": { "id": { "const": "AC-33" } }, "required": ["id"] }, "minContains": 1, "maxContains": 1 } } },
+    { "properties": { "records": { "contains": { "properties": { "id": { "const": "AC-34" } }, "required": ["id"] }, "minContains": 1, "maxContains": 1 } } },
+    { "properties": { "records": { "contains": { "properties": { "id": { "const": "AC-35" } }, "required": ["id"] }, "minContains": 1, "maxContains": 1 } } },
+    { "properties": { "records": { "contains": { "properties": { "id": { "const": "AC-36" } }, "required": ["id"] }, "minContains": 1, "maxContains": 1 } } },
+    { "properties": { "records": { "contains": { "properties": { "id": { "const": "AC-37" } }, "required": ["id"] }, "minContains": 1, "maxContains": 1 } } },
+    { "properties": { "records": { "contains": { "properties": { "id": { "const": "AC-38" } }, "required": ["id"] }, "minContains": 1, "maxContains": 1 } } },
+    { "properties": { "records": { "contains": { "properties": { "id": { "const": "AC-39" } }, "required": ["id"] }, "minContains": 1, "maxContains": 1 } } },
+    { "properties": { "records": { "contains": { "properties": { "id": { "const": "AC-40" } }, "required": ["id"] }, "minContains": 1, "maxContains": 1 } } },
+    { "properties": { "records": { "contains": { "properties": { "id": { "const": "AC-41" } }, "required": ["id"] }, "minContains": 1, "maxContains": 1 } } },
+    { "properties": { "records": { "contains": { "properties": { "id": { "const": "AC-42" } }, "required": ["id"] }, "minContains": 1, "maxContains": 1 } } },
+    { "properties": { "records": { "contains": { "properties": { "id": { "const": "AC-43" } }, "required": ["id"] }, "minContains": 1, "maxContains": 1 } } },
+    { "properties": { "records": { "contains": { "properties": { "id": { "const": "AC-44" } }, "required": ["id"] }, "minContains": 1, "maxContains": 1 } } },
+    { "properties": { "records": { "contains": { "properties": { "id": { "const": "AC-45" } }, "required": ["id"] }, "minContains": 1, "maxContains": 1 } } }
+  ],
+  "$defs": {
+    "sha1": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "reference_id": { "type": "string", "pattern": "^[a-z][a-z0-9_-]{0,31}:[a-z0-9][a-z0-9._-]{0,119}$" },
+    "ac_id": {
+      "type": "string",
+      "enum": [
+        "AC-01", "AC-02", "AC-03", "AC-04", "AC-05", "AC-06", "AC-07", "AC-08", "AC-09", "AC-10",
+        "AC-11", "AC-12", "AC-13", "AC-14", "AC-15", "AC-16", "AC-17", "AC-18", "AC-19", "AC-20",
+        "AC-21", "AC-22", "AC-23", "AC-24", "AC-25", "AC-26", "AC-27", "AC-28", "AC-29", "AC-30",
+        "AC-31", "AC-32", "AC-33", "AC-34", "AC-35", "AC-36", "AC-37", "AC-38", "AC-39", "AC-40",
+        "AC-41", "AC-42", "AC-43", "AC-44", "AC-45"
+      ]
+    },
+    "classification": {
+      "type": "string",
+      "enum": ["PASSED", "PARTIAL", "HELD", "FAILED", "NOT_APPLICABLE"]
+    },
+    "held_reason_code": {
+      "type": "string",
+      "enum": [
+        "PARTIAL_EVIDENCE", "REQUIRED_GATE_NOT_RUN", "REQUIRED_GATE_SKIPPED", "REQUIRED_GATE_NOT_CONFIGURED",
+        "HELD_PENDING_EVIDENCE", "TASK9_EXTERNAL_ACTIVATION_GAP", "REQUIRED_GATE_NOT_TERMINAL", "REQUIRED_GATE_NOT_CURRENT_EXACT_HEAD",
+        "FAILED_EVIDENCE", "REQUIRED_GATE_FAILED"
+      ]
+    },
+    "gate_kind": {
+      "type": "string",
+      "enum": ["CONTRACT", "POLICY", "STATIC_ANALYSIS", "PLAYWRIGHT", "COMPUTER_USE"]
+    },
+    "source_kind": {
+      "type": "string",
+      "enum": ["DESIGN", "ACTIVATION", "ROLLBACK", "GATE", "APPLICABILITY"]
+    },
+    "source_ref": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "ref", "digest"],
+      "properties": {
+        "kind": { "$ref": "#/$defs/source_kind" },
+        "ref": { "$ref": "#/$defs/reference_id" },
+        "digest": { "$ref": "#/$defs/sha256" }
+      },
+      "allOf": [
+        { "if": { "properties": { "kind": { "const": "DESIGN" } }, "required": ["kind"] }, "then": { "properties": { "ref": { "pattern": "^design:[a-z0-9][a-z0-9._-]{0,119}$" } } } },
+        { "if": { "properties": { "kind": { "const": "ACTIVATION" } }, "required": ["kind"] }, "then": { "properties": { "ref": { "pattern": "^activation:[a-z0-9][a-z0-9._-]{0,119}$" } } } },
+        { "if": { "properties": { "kind": { "const": "ROLLBACK" } }, "required": ["kind"] }, "then": { "properties": { "ref": { "pattern": "^rollback:[a-z0-9][a-z0-9._-]{0,119}$" } } } },
+        { "if": { "properties": { "kind": { "const": "GATE" } }, "required": ["kind"] }, "then": { "properties": { "ref": { "pattern": "^gate:[a-z0-9][a-z0-9._-]{0,119}$" } } } },
+        { "if": { "properties": { "kind": { "const": "APPLICABILITY" } }, "required": ["kind"] }, "then": { "properties": { "ref": { "pattern": "^applicability:[a-z0-9][a-z0-9._-]{0,119}$" } } } }
+      ]
+    },
+    "activation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ref", "digest", "status"],
+      "properties": {
+        "ref": { "type": "string", "pattern": "^activation:[a-z0-9][a-z0-9._-]{0,119}$" },
+        "digest": { "$ref": "#/$defs/sha256" },
+        "status": { "enum": ["CURRENT", "HELD", "NOT_ACTIVATED", "TASK9_EXTERNAL_ACTIVATION_GAP"] }
+      }
+    },
+    "rollback": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ref", "digest"],
+      "properties": {
+        "ref": { "type": "string", "pattern": "^rollback:[a-z0-9][a-z0-9._-]{0,119}$" },
+        "digest": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "gate_outcome": {
+      "$comment": "Candidate gate required flags are cross-checked against the external trusted context by the reducer.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "gate_id", "kind", "required", "status", "terminal", "current_exact_head",
+        "subject_sha", "base_sha", "manifest_digest", "source_ref", "source_digest"
+      ],
+      "properties": {
+        "gate_id": { "type": "string", "pattern": "^gate:[a-z0-9][a-z0-9._-]{0,119}$" },
+        "kind": { "$ref": "#/$defs/gate_kind" },
+        "required": { "type": "boolean" },
+        "status": { "enum": ["passed", "failed", "not_run", "skipped", "not_configured"] },
+        "terminal": { "type": "boolean" },
+        "current_exact_head": { "type": "boolean" },
+        "subject_sha": { "$ref": "#/$defs/sha1" },
+        "base_sha": { "$ref": "#/$defs/sha1" },
+        "manifest_digest": { "$ref": "#/$defs/sha256" },
+        "source_ref": { "type": "string", "pattern": "^gate:[a-z0-9][a-z0-9._-]{0,119}$" },
+        "source_digest": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "applicability": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind"],
+          "properties": { "kind": { "const": "REQUIRED" } }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind", "authority_ref", "authority_digest", "base_sha",
+            "prior_pinned", "immutable", "current_exact_head"
+          ],
+          "properties": {
+            "kind": { "const": "NOT_APPLICABLE" },
+            "authority_ref": { "type": "string", "pattern": "^applicability:[a-z0-9][a-z0-9._-]{0,119}$" },
+            "authority_digest": { "$ref": "#/$defs/sha256" },
+            "base_sha": { "$ref": "#/$defs/sha1" },
+            "prior_pinned": { "const": true },
+            "immutable": { "const": true },
+            "current_exact_head": { "const": true }
+          }
+        }
+      ]
+    },
+    "record": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id", "classification", "subject_sha", "base_sha", "manifest_digest", "source_refs",
+        "gate_outcomes", "held_reasons", "activation", "rollback", "applicability"
+      ],
+      "properties": {
+        "id": { "$ref": "#/$defs/ac_id" },
+        "classification": { "$ref": "#/$defs/classification" },
+        "subject_sha": { "$ref": "#/$defs/sha1" },
+        "base_sha": { "$ref": "#/$defs/sha1" },
+        "manifest_digest": { "$ref": "#/$defs/sha256" },
+        "source_refs": { "type": "array", "minItems": 4, "maxItems": 5, "items": { "$ref": "#/$defs/source_ref" } },
+        "gate_outcomes": { "type": "array", "minItems": 1, "maxItems": 32, "items": { "$ref": "#/$defs/gate_outcome" } },
+        "held_reasons": { "type": "array", "maxItems": 16, "uniqueItems": true, "items": { "$ref": "#/$defs/held_reason_code" } },
+        "activation": { "$ref": "#/$defs/activation" },
+        "rollback": { "$ref": "#/$defs/rollback" },
+        "applicability": { "$ref": "#/$defs/applicability" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "classification": { "enum": ["PASSED", "NOT_APPLICABLE"] } }, "required": ["classification"] },
+          "then": { "properties": { "held_reasons": { "maxItems": 0 } } }
+        },
+        {
+          "if": { "properties": { "classification": { "enum": ["PARTIAL", "HELD", "FAILED"] } }, "required": ["classification"] },
+          "then": { "properties": { "held_reasons": { "minItems": 1 } } }
+        }
+      ]
+    },
+    "trusted_acceptance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "required_gate_kinds", "required_source_kinds", "applicability"],
+      "properties": {
+        "id": { "$ref": "#/$defs/ac_id" },
+        "required_gate_kinds": { "type": "array", "minItems": 1, "maxItems": 5, "uniqueItems": true, "items": { "$ref": "#/$defs/gate_kind" } },
+        "required_source_kinds": { "type": "array", "minItems": 4, "maxItems": 5, "uniqueItems": true, "items": { "$ref": "#/$defs/source_kind" } },
+        "applicability": { "$ref": "#/$defs/applicability" }
+      }
+    },
+    "trusted_expected_context": {
+      "$comment": "Out-of-band trusted context shape. It is not a candidate field and the reducer additionally requires a deeply frozen hostile-safe value.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "subject_sha", "base_sha", "manifest_digest", "activation", "rollback", "acceptance"],
+      "properties": {
+        "schema_version": { "const": "parallel-delivery-fabric-evidence-trusted-context/v1" },
+        "subject_sha": { "$ref": "#/$defs/sha1" },
+        "base_sha": { "$ref": "#/$defs/sha1" },
+        "manifest_digest": { "$ref": "#/$defs/sha256" },
+        "activation": { "$ref": "#/$defs/activation" },
+        "rollback": { "$ref": "#/$defs/rollback" },
+        "acceptance": { "type": "array", "minItems": 45, "maxItems": 45, "items": { "$ref": "#/$defs/trusted_acceptance" } }
+      }
+    }
+  }
+}

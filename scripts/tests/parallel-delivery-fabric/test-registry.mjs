@@ -1,0 +1,1573 @@
+import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
+import { readFile } from 'node:fs/promises'
+import test from 'node:test'
+
+import {
+  ZERO_OID,
+  createGitCasStore,
+  createLeaseRegistry,
+  createManagedBranchRegistry,
+  createPlanRegistry,
+  parseManagedBranchRecord,
+  parseSessionLease,
+  parseSessionLeaseRegistry,
+} from '../../lib/parallel-delivery-fabric-registry.mjs'
+
+import { FABRIC_SCHEMA_VERSION, digestCanonical } from '../../lib/parallel-delivery-fabric-contract.mjs'
+
+const SHA1 = 'a'.repeat(40)
+const SHA256 = 'b'.repeat(64)
+const ENVELOPE_OID = 'e'.repeat(40)
+const REVOKED_ENVELOPE_OID = 'f'.repeat(40)
+const NONCE = (suffix) => `${suffix}`.padEnd(32, 'n').slice(0, 32)
+
+const createClock = (initial = '2026-08-29T00:00:00.000Z') => {
+  let value = initial
+  return {
+    now: () => value,
+    set: (next) => { value = next },
+  }
+}
+
+const createInMemoryGit = ({ raceBarrier = undefined, failUpdateAt = undefined } = {}) => {
+  const refs = new Map()
+  const blobs = new Map()
+  const calls = []
+  let updateCalls = 0
+
+  const oidFor = (value) => createHash('sha1').update(value).digest('hex')
+
+  return {
+    calls,
+    refs,
+    blobs,
+    async run({ args, input, env, commonDir }) {
+      calls.push({ args: [...args], input, env: { ...env }, commonDir })
+      const [command, ...rest] = args
+      if (command === 'hash-object') {
+        assert.deepEqual(rest, ['-w', '--stdin'])
+        const oid = oidFor(input)
+        blobs.set(oid, input)
+        return { exitCode: 0, stdout: `${oid}\n`, stderr: '' }
+      }
+      if (command === 'show-ref') {
+        assert.deepEqual(rest.slice(0, 3), ['--verify', '--hash', '--'])
+        const value = refs.get(rest[3])
+        return value
+          ? { exitCode: 0, stdout: `${value}\n`, stderr: '' }
+          : { exitCode: 1, stdout: '', stderr: '' }
+      }
+      if (command === 'cat-file') {
+        assert.deepEqual(rest.slice(0, 2), ['blob', '--'])
+        const value = blobs.get(rest[2])
+        return value === undefined
+          ? { exitCode: 1, stdout: '', stderr: 'missing blob' }
+          : { exitCode: 0, stdout: value, stderr: '' }
+      }
+      if (command === 'update-ref') {
+        assert.deepEqual(rest.slice(0, 1), ['--no-deref'])
+        const [, ref, nextOid, expectedOid] = rest
+        updateCalls += 1
+        if (updateCalls === failUpdateAt) return { exitCode: 1, stdout: '', stderr: 'forced fake CAS conflict' }
+        if (raceBarrier && updateCalls <= 2) await raceBarrier()
+        const actual = refs.get(ref) ?? ZERO_OID
+        if (actual !== expectedOid) return { exitCode: 1, stdout: '', stderr: 'stale old value' }
+        refs.set(ref, nextOid)
+        return { exitCode: 0, stdout: '', stderr: '' }
+      }
+      throw new Error(`unexpected fake git command: ${args.join(' ')}`)
+    },
+  }
+}
+
+const createEffects = () => ({
+  branch: 0,
+  worktree: 0,
+  network: 0,
+  board: 0,
+  process: 0,
+  cleanup: 0,
+})
+
+const makePlan = ({ planId = 'plan:one', generation = 1 } = {}) => ({
+  schema_version: FABRIC_SCHEMA_VERSION,
+  plan_id: planId,
+  generation,
+  repo_identity: { full_name: 'acme/bim', repository_id: 1, common_dir_digest: SHA256 },
+  created_at: '2026-08-29T00:00:00.000Z',
+  coordinator_session: 'session:coordinator',
+  baseline_ref: 'origin/main',
+  resolved_baseline_sha: SHA1,
+  tasks: [{
+    task_id: 'task:one',
+    outcome: 'registry-contract',
+    provider_preference: 'codex',
+    owner_session: 'session:owner-one',
+    scope: {
+      owning_service: 'delivery-fabric',
+      public_entrypoint: 'scripts/lib/parallel-delivery-fabric-registry.mjs',
+      resources: [{ kind: 'path', path: 'scripts/lib/parallel-delivery-fabric-registry.mjs' }],
+      expected_tests: ['test:registry'],
+      e2e_required: false,
+    },
+    dependencies: [],
+    risk: 'bounded',
+    e2e_required: false,
+  }],
+  requested_capacity: { writers: 2, runtime_leases: 0 },
+  branch_profile: 'trunk',
+  acceptance_criteria: ['criterion:registry'],
+  promotion_mode: 'single_pr',
+  requested_execution_level: 'plan_only',
+  authority_reference: 'authority:plan',
+  governance_source_refs: ['openspec:parallel-delivery-fabric'],
+})
+
+const makeRequest = (store, overrides = {}) => ({
+  lease_id: overrides.lease_id ?? 'lease:one',
+  plan_id: overrides.plan_id ?? 'plan:one',
+  generation: overrides.generation ?? 1,
+  task_id: overrides.task_id ?? 'task:one',
+  provider: overrides.provider ?? 'codex',
+  owner_session: overrides.owner_session ?? 'session:owner-one',
+  provider_session_id: overrides.provider_session_id ?? 'provider:one',
+  execution_context_id: overrides.execution_context_id ?? 'context:one',
+  context_attestation_ref: overrides.context_attestation_ref ?? 'attestation:one',
+  common_dir_digest: overrides.common_dir_digest ?? store.commonDirDigest,
+  worktree_id: overrides.worktree_id ?? 'worktree:one',
+  worktree_path_digest: overrides.worktree_path_digest ?? SHA256,
+  branch: overrides.branch ?? 'codex/registry-one',
+  scope_digest: overrides.scope_digest ?? SHA256,
+  head_sha: overrides.head_sha ?? SHA1,
+  resource_keys: overrides.resource_keys ?? ['path:scripts/lib/parallel-delivery-fabric-registry.mjs'],
+  nonce: overrides.nonce ?? NONCE('admission-one'),
+})
+
+const createTrustedAttestor = () => ({
+  calls: [],
+  async verify({ attestation, lease }) {
+    this.calls.push({ attestation, lease })
+    if (attestation?.force === 'unknown') return { verdict: 'UNKNOWN' }
+    return { verdict: 'TRUSTED', attestation: structuredClone(attestation) }
+  },
+})
+
+const createEnvelopePort = () => {
+  let oid = ENVELOPE_OID
+  let transitionSequence = 0
+  const calls = []
+  return {
+    calls,
+    async revoke(request) {
+      calls.push(structuredClone(request))
+      if (request.expected_envelope_oid !== oid || request.expected_transition_sequence !== transitionSequence) {
+        return { status: 'CONFLICT', actual_oid: oid }
+      }
+      const previousOid = oid
+      oid = REVOKED_ENVELOPE_OID
+      transitionSequence += 1
+      if (request.force_in_flight) {
+        return {
+          status: 'REVOKED', previous_oid: previousOid, oid, transition_sequence: transitionSequence,
+          revocation_epoch: 0, in_flight_command: true,
+        }
+      }
+      return {
+        status: 'REVOKED', previous_oid: previousOid, oid, transition_sequence: transitionSequence,
+        revocation_epoch: 0, in_flight_command: false,
+      }
+    },
+  }
+}
+
+const createFixture = ({ raceBarrier = undefined, writerCap = 2, failUpdateAt = undefined } = {}) => {
+  const git = createInMemoryGit({ raceBarrier, failUpdateAt })
+  const clock = createClock()
+  const store = createGitCasStore({ git, commonDir: 'C:/fake/common-dir' })
+  const attestor = createTrustedAttestor()
+  const envelope = createEnvelopePort()
+  return {
+    git,
+    clock,
+    store,
+    planRegistry: createPlanRegistry({ store, clock }),
+    leaseRegistry: createLeaseRegistry({ store, clock, writerCap, ownerEndAttestor: attestor, executionEnvelope: envelope }),
+    attestor,
+    envelope,
+  }
+}
+
+const latestLeaseOid = async (leaseRegistry) => (await leaseRegistry.inspect()).oid
+
+test('AC-44 — plan-only metadata uses the delivery-plan ref and no forbidden effects', async () => {
+  const { git, planRegistry } = createFixture()
+  const effects = createEffects()
+
+  const submitted = await planRegistry.submit({
+    plan: makePlan(),
+    expected_oid: ZERO_OID,
+    nonce: NONCE('plan-submit'),
+    execution: { level: 'plan_only', side_effect_class: 'CONTROL_METADATA' },
+    effects,
+  })
+
+  assert.equal(submitted.status, 'STORED')
+  assert.equal(submitted.ref, 'refs/ai-bim/delivery-plans')
+  assert.equal(git.blobs.size, 1)
+  assert.deepEqual(effects, createEffects())
+  assert.deepEqual([...git.refs.keys()], ['refs/ai-bim/delivery-plans'])
+  assert.equal(submitted.record.schema_version, 'delivery-plan-registry/v1')
+  assert.equal(submitted.record.generation, 1)
+  assert.equal(submitted.record.nonce, NONCE('plan-submit'))
+  assert.match(submitted.record.canonical_digest, /^[0-9a-f]{64}$/u)
+
+  const stale = await planRegistry.submit({
+    plan: makePlan({ planId: 'plan:stale' }),
+    expected_oid: ZERO_OID,
+    nonce: NONCE('plan-stale'),
+    execution: { level: 'plan_only', side_effect_class: 'CONTROL_METADATA' },
+  })
+  assert.equal(stale.status, 'CONFLICT')
+  assert.equal(stale.reason, 'CAS_CONFLICT')
+  assert.equal(stale.actual_oid, submitted.oid)
+  await assert.rejects(
+    planRegistry.submit({
+      plan: makePlan({ planId: 'plan:forbidden' }),
+      expected_oid: submitted.oid,
+      nonce: NONCE('plan-forbidden'),
+      execution: { level: 'implement_local', side_effect_class: 'CANDIDATE_FILESYSTEM' },
+    }),
+    (error) => error?.code === 'plan_only_metadata_required',
+  )
+})
+
+test('AC-01 — cross-provider admission is bounded', async () => {
+  const { leaseRegistry, store } = createFixture()
+
+  const codex = await leaseRegistry.admit(makeRequest(store, {
+    lease_id: 'lease:codex', provider: 'codex', resource_keys: ['path:src/codex.mjs'], nonce: NONCE('codex'),
+  }))
+  const claude = await leaseRegistry.admit(makeRequest(store, {
+    lease_id: 'lease:claude', provider: 'claude', owner_session: 'session:owner-claude',
+    provider_session_id: 'provider:claude', execution_context_id: 'context:claude',
+    worktree_id: 'worktree:claude', branch: 'claude/registry', resource_keys: ['path:src/claude.mjs'], nonce: NONCE('claude'),
+  }))
+  const third = await leaseRegistry.admit(makeRequest(store, {
+    lease_id: 'lease:third', provider: 'codex', owner_session: 'session:owner-third',
+    provider_session_id: 'provider:third', execution_context_id: 'context:third',
+    worktree_id: 'worktree:third', branch: 'codex/third', resource_keys: ['path:src/third.mjs'], nonce: NONCE('third'),
+  }))
+
+  assert.equal(codex.status, 'ADMITTED')
+  assert.equal(claude.status, 'ADMITTED')
+  assert.equal(third.status, 'QUEUED_FOR_LEASE')
+  assert.equal(third.reason, 'WRITER_CAPACITY')
+  const snapshot = await leaseRegistry.inspect()
+  assert.equal(snapshot.record.leases['lease:codex'].provider, 'codex')
+  assert.equal(snapshot.record.leases['lease:claude'].provider, 'claude')
+  assert.equal(snapshot.record.writer_cap, 2)
+})
+
+test('AC-02 — same-provider sessions cannot bypass the global writer cap', async () => {
+  const { leaseRegistry, store } = createFixture()
+  for (const suffix of ['one', 'two']) {
+    const result = await leaseRegistry.admit(makeRequest(store, {
+      lease_id: `lease:${suffix}`,
+      owner_session: `session:${suffix}`,
+      provider_session_id: `provider:${suffix}`,
+      execution_context_id: `context:${suffix}`,
+      worktree_id: `worktree:${suffix}`,
+      branch: `codex/${suffix}`,
+      resource_keys: [`path:src/${suffix}.mjs`],
+      nonce: NONCE(`same-${suffix}`),
+    }))
+    assert.equal(result.status, 'ADMITTED')
+  }
+  const queued = await leaseRegistry.admit(makeRequest(store, {
+    lease_id: 'lease:three', owner_session: 'session:three', provider_session_id: 'provider:three',
+    execution_context_id: 'context:three', worktree_id: 'worktree:three', branch: 'codex/three',
+    resource_keys: ['path:src/three.mjs'], nonce: NONCE('same-three'),
+  }))
+  assert.deepEqual({ status: queued.status, reason: queued.reason }, {
+    status: 'QUEUED_FOR_LEASE', reason: 'WRITER_CAPACITY',
+  })
+})
+
+test('AC-05 — a resource race has one CAS winner and the loser is queued', async () => {
+  let arrivals = 0
+  let releaseBarrier
+  const barrier = new Promise((resolve) => { releaseBarrier = resolve })
+  const { leaseRegistry, store } = createFixture({
+    raceBarrier: async () => {
+      arrivals += 1
+      if (arrivals === 2) releaseBarrier()
+      await barrier
+    },
+  })
+  const request = (suffix) => makeRequest(store, {
+    lease_id: `lease:race-${suffix}`,
+    owner_session: `session:race-${suffix}`,
+    provider_session_id: `provider:race-${suffix}`,
+    execution_context_id: `context:race-${suffix}`,
+    worktree_id: `worktree:race-${suffix}`,
+    branch: `codex/race-${suffix}`,
+    resource_keys: ['path:src/shared.mjs'],
+    nonce: NONCE(`race-${suffix}`),
+  })
+
+  const [left, right] = await Promise.all([leaseRegistry.admit(request('left')), leaseRegistry.admit(request('right'))])
+  assert.equal([left, right].filter((result) => result.status === 'ADMITTED').length, 1)
+  const queued = [left, right].find((result) => result.status === 'QUEUED_FOR_LEASE')
+  assert.equal(queued.reason, 'RESOURCE_CONFLICT')
+  assert.equal(queued.conflict.code, 'CAS_CONFLICT')
+  const topology = await leaseRegistry.admit(makeRequest(store, {
+    lease_id: 'lease:foreign', common_dir_digest: 'c'.repeat(64), nonce: NONCE('foreign'),
+  }))
+  assert.deepEqual({ status: topology.status, reason: topology.reason }, {
+    status: 'HELD_TOPOLOGY_UNSUPPORTED', reason: 'COMMON_DIR_MISMATCH',
+  })
+})
+
+test('AC-03 — heartbeat is monotonic and timeout marks SUSPECT without releasing a seat', async () => {
+  const { clock, leaseRegistry, store } = createFixture()
+  const admitted = await leaseRegistry.admit(makeRequest(store, { resource_keys: ['path:src/heartbeat.mjs'] }))
+  const heartbeat = await leaseRegistry.heartbeat({
+    lease_id: 'lease:one',
+    expected_oid: admitted.oid,
+    heartbeat_seq: 2,
+    nonce: NONCE('heartbeat'),
+  })
+  assert.equal(heartbeat.status, 'HEARTBEAT_RECORDED')
+  await assert.rejects(
+    leaseRegistry.heartbeat({
+      lease_id: 'lease:one', expected_oid: heartbeat.oid, heartbeat_seq: 2, nonce: NONCE('heartbeat-repeat'),
+    }),
+    (error) => error?.code === 'heartbeat_not_monotonic',
+  )
+  clock.set('2026-08-29T00:05:00.000Z')
+  const suspect = await leaseRegistry.reconcileTimeout({
+    lease_id: 'lease:one', expected_oid: heartbeat.oid, timeout_ms: 30000, nonce: NONCE('timeout'),
+  })
+  assert.equal(suspect.status, 'SUSPECT')
+  const snapshot = await leaseRegistry.inspect()
+  assert.equal(snapshot.record.leases['lease:one'].state, 'SUSPECT')
+  assert.equal(snapshot.record.leases['lease:one'].release_evidence_ref, null)
+  const blocked = await leaseRegistry.admit(makeRequest(store, {
+    lease_id: 'lease:second', owner_session: 'session:second', provider_session_id: 'provider:second',
+    execution_context_id: 'context:second', worktree_id: 'worktree:second', branch: 'codex/second',
+    resource_keys: ['path:src/second.mjs'], nonce: NONCE('after-timeout'),
+  }))
+  assert.equal(blocked.status, 'ADMITTED')
+  const stillFull = await leaseRegistry.admit(makeRequest(store, {
+    lease_id: 'lease:third', owner_session: 'session:third', provider_session_id: 'provider:third',
+    execution_context_id: 'context:third', worktree_id: 'worktree:third', branch: 'codex/third',
+    resource_keys: ['path:src/third.mjs'], nonce: NONCE('third-timeout'),
+  }))
+  assert.deepEqual({ status: stillFull.status, reason: stillFull.reason }, {
+    status: 'QUEUED_FOR_LEASE', reason: 'WRITER_CAPACITY',
+  })
+})
+
+test('AC-04 — a lease cannot be rebound to a new execution context without explicit release authority', async () => {
+  const { leaseRegistry, store } = createFixture()
+  const admitted = await leaseRegistry.admit(makeRequest(store, { resource_keys: ['path:src/rebind.mjs'] }))
+  const rebound = await leaseRegistry.admit(makeRequest(store, {
+    execution_context_id: 'context:replacement', provider_session_id: 'provider:replacement',
+    nonce: NONCE('rebind'), resource_keys: ['path:src/rebind.mjs'],
+  }))
+  assert.equal(admitted.status, 'ADMITTED')
+  assert.deepEqual({ status: rebound.status, reason: rebound.reason }, {
+    status: 'HELD_EXECUTION_AUTHORITY', reason: 'LEASE_ID_ALREADY_BOUND',
+  })
+})
+
+test('AC-43 — trusted owner-end release revokes once, frees only the seat, and retains task resources', async () => {
+  const { attestor, envelope, leaseRegistry, store } = createFixture()
+  const first = await leaseRegistry.admit(makeRequest(store, {
+    lease_id: 'lease:release', resource_keys: ['path:src/retained.mjs', 'branch:codex/release'],
+    worktree_id: 'worktree:release', branch: 'codex/release', nonce: NONCE('release-admit'),
+  }))
+  const end = await leaseRegistry.endRequest({
+    lease_id: 'lease:release', expected_oid: first.oid, nonce: NONCE('end-request'), reason: 'handoff',
+    handoff_or_candidate_reference: 'handoff:release',
+  })
+  const attestation = {
+    attestation_ref: 'attestation:owner-end',
+    attestation_digest: SHA256,
+    issuer_id: 'attestor:owner-end',
+    issuer_version: 'owner-end/v1',
+    owner_session: 'session:owner-one',
+    provider: 'codex',
+    provider_session_id: 'provider:one',
+    execution_context_id: 'context:one',
+    lease_id: 'lease:release',
+    generation: 1,
+    head_sha: SHA1,
+    scope_digest: SHA256,
+    worktree_path_digest: SHA256,
+    observed_at: '2026-08-29T00:00:00.000Z',
+    expires_at: '2026-08-29T00:10:00.000Z',
+    nonce: NONCE('owner-end'),
+    revocation_epoch: 0,
+  }
+  const released = await leaseRegistry.release({
+    lease_id: 'lease:release',
+    expected_oid: end.oid,
+    expected_envelope_oid: ENVELOPE_OID,
+    expected_envelope_transition_sequence: 0,
+    attestation,
+  })
+  assert.equal(released.status, 'RELEASED')
+  assert.equal(attestor.calls.length, 1)
+  assert.equal(envelope.calls.length, 1)
+  const snapshot = await leaseRegistry.inspect()
+  const record = snapshot.record.leases['lease:release']
+  assert.equal(record.state, 'RELEASED')
+  assert.equal(record.retention_state, 'RETAINED_FOR_REVIEW')
+  assert.equal(record.branch, 'codex/release')
+  assert.equal(record.worktree_id, 'worktree:release')
+  assert.deepEqual(record.release_transition, ['RELEASING', 'RELEASED'])
+
+  const disjoint = await leaseRegistry.admit(makeRequest(store, {
+    lease_id: 'lease:after-release', owner_session: 'session:after', provider_session_id: 'provider:after',
+    execution_context_id: 'context:after', worktree_id: 'worktree:after', branch: 'codex/after',
+    resource_keys: ['path:src/disjoint.mjs'], nonce: NONCE('after-release'),
+  }))
+  assert.equal(disjoint.status, 'ADMITTED')
+  const conflict = await leaseRegistry.admit(makeRequest(store, {
+    lease_id: 'lease:retained-conflict', owner_session: 'session:conflict', provider_session_id: 'provider:conflict',
+    execution_context_id: 'context:conflict', worktree_id: 'worktree:conflict', branch: 'codex/conflict',
+    resource_keys: ['path:src/retained.mjs'], nonce: NONCE('retained-conflict'),
+  }))
+  assert.deepEqual({ status: conflict.status, reason: conflict.reason }, {
+    status: 'QUEUED_FOR_LEASE', reason: 'RESOURCE_CONFLICT',
+  })
+})
+
+test('AC-43 — release rejects replay, self-issued, expired, tuple drift, in-flight work, and CAS races', async () => {
+  const fixture = createFixture()
+  const { clock, envelope, leaseRegistry, store } = fixture
+  const admitted = await leaseRegistry.admit(makeRequest(store, { lease_id: 'lease:negative', resource_keys: ['path:src/negative.mjs'] }))
+  const end = await leaseRegistry.endRequest({
+    lease_id: 'lease:negative', expected_oid: admitted.oid, nonce: NONCE('negative-end'), reason: 'aborted',
+    handoff_or_candidate_reference: 'handoff:negative',
+  })
+  const base = {
+    attestation_ref: 'attestation:negative', attestation_digest: SHA256,
+    issuer_id: 'attestor:owner-end', issuer_version: 'owner-end/v1', owner_session: 'session:owner-one',
+    provider: 'codex', provider_session_id: 'provider:one', execution_context_id: 'context:one',
+    lease_id: 'lease:negative', generation: 1, head_sha: SHA1, scope_digest: SHA256,
+    worktree_path_digest: SHA256, observed_at: '2026-08-29T00:00:00.000Z',
+    expires_at: '2026-08-29T00:10:00.000Z', nonce: NONCE('negative-owner-end'), revocation_epoch: 0,
+  }
+  const invalids = [
+    { label: 'self-issued', patch: { issuer_id: 'session:owner-one' }, code: 'owner_end_attestation_untrusted' },
+    { label: 'wrong-owner', patch: { owner_session: 'session:other' }, code: 'owner_end_attestation_tuple_mismatch' },
+    { label: 'wrong-context', patch: { execution_context_id: 'context:other' }, code: 'owner_end_attestation_tuple_mismatch' },
+    { label: 'wrong-head', patch: { head_sha: 'c'.repeat(40) }, code: 'owner_end_attestation_tuple_mismatch' },
+  ]
+  for (const { patch, code } of invalids) {
+    await assert.rejects(
+      leaseRegistry.release({
+        lease_id: 'lease:negative', expected_oid: end.oid, expected_envelope_oid: ENVELOPE_OID, expected_envelope_transition_sequence: 0,
+        attestation: { ...base, ...patch, attestation_ref: `attestation:${code}`, nonce: NONCE(code) },
+      }),
+      (error) => error?.code === code,
+    )
+  }
+  clock.set('2026-08-29T00:11:00.000Z')
+  await assert.rejects(
+    leaseRegistry.release({ lease_id: 'lease:negative', expected_oid: end.oid, expected_envelope_oid: ENVELOPE_OID, expected_envelope_transition_sequence: 0, attestation: base }),
+    (error) => error?.code === 'owner_end_attestation_expired',
+  )
+  clock.set('2026-08-29T00:00:00.000Z')
+  envelope.revoke = async () => ({
+    status: 'REVOKED', previous_oid: ENVELOPE_OID, oid: REVOKED_ENVELOPE_OID, transition_sequence: 1,
+    revocation_epoch: 0, in_flight_command: true,
+  })
+  assert.deepEqual(await leaseRegistry.release({
+    lease_id: 'lease:negative', expected_oid: end.oid, expected_envelope_oid: ENVELOPE_OID,
+    expected_envelope_transition_sequence: 0, attestation: base,
+  }), {
+    status: 'HELD_EXECUTION_AUTHORITY', reason: 'ENVELOPE_REVOKE_EVIDENCE_GAP', reconcile_required: true,
+  })
+})
+
+test('AC-43 — release CAS allows one winner and consumes an owner-end attestation only once', async () => {
+  const { envelope, leaseRegistry, store } = createFixture()
+  const admitted = await leaseRegistry.admit(makeRequest(store, {
+    lease_id: 'lease:release-race', resource_keys: ['path:src/release-race.mjs'], nonce: NONCE('release-race-admit'),
+  }))
+  const end = await leaseRegistry.endRequest({
+    lease_id: 'lease:release-race', expected_oid: admitted.oid, nonce: NONCE('release-race-end'), reason: 'handoff',
+    handoff_or_candidate_reference: 'handoff:release-race',
+  })
+  const attestation = {
+    attestation_ref: 'attestation:release-race', attestation_digest: SHA256,
+    issuer_id: 'attestor:owner-end', issuer_version: 'owner-end/v1', owner_session: 'session:owner-one',
+    provider: 'codex', provider_session_id: 'provider:one', execution_context_id: 'context:one',
+    lease_id: 'lease:release-race', generation: 1, head_sha: SHA1, scope_digest: SHA256,
+    worktree_path_digest: SHA256, observed_at: '2026-08-29T00:00:00.000Z',
+    expires_at: '2026-08-29T00:10:00.000Z', nonce: NONCE('release-race-owner-end'), revocation_epoch: 0,
+  }
+  const results = await Promise.all([
+    leaseRegistry.release({ lease_id: 'lease:release-race', expected_oid: end.oid, expected_envelope_oid: ENVELOPE_OID, expected_envelope_transition_sequence: 0, attestation }),
+    leaseRegistry.release({ lease_id: 'lease:release-race', expected_oid: end.oid, expected_envelope_oid: ENVELOPE_OID, expected_envelope_transition_sequence: 0, attestation }),
+  ])
+  assert.equal(results.filter((result) => result.status === 'RELEASED').length, 1)
+  assert.equal(results.filter((result) => result.status === 'CONFLICT').length, 1)
+  assert.equal(envelope.calls.length, 1)
+
+  const second = await leaseRegistry.admit(makeRequest(store, {
+    lease_id: 'lease:replay-target', owner_session: 'session:replay', provider_session_id: 'provider:replay',
+    execution_context_id: 'context:replay', worktree_id: 'worktree:replay', branch: 'codex/replay',
+    resource_keys: ['path:src/replay.mjs'], nonce: NONCE('replay-admit'),
+  }))
+  const secondEnd = await leaseRegistry.endRequest({
+    lease_id: 'lease:replay-target', expected_oid: second.oid, nonce: NONCE('replay-end'), reason: 'failed',
+    handoff_or_candidate_reference: 'handoff:replay',
+  })
+  await assert.rejects(
+    leaseRegistry.release({
+      lease_id: 'lease:replay-target', expected_oid: secondEnd.oid, expected_envelope_oid: ENVELOPE_OID, expected_envelope_transition_sequence: 0,
+      attestation: {
+        ...attestation,
+        owner_session: 'session:replay', provider_session_id: 'provider:replay', execution_context_id: 'context:replay',
+        lease_id: 'lease:replay-target',
+      },
+    }),
+    (error) => error?.code === 'owner_end_attestation_replayed',
+  )
+})
+
+test('registry uses only sanitized local Git plumbing and cannot reach cleanup or remote commands', async () => {
+  const { git, leaseRegistry, store } = createFixture()
+  const admitted = await leaseRegistry.admit(makeRequest(store, { resource_keys: ['path:src/local-only.mjs'] }))
+  assert.equal(admitted.status, 'ADMITTED')
+  const allowed = new Set(['hash-object', 'show-ref', 'cat-file', 'update-ref'])
+  for (const call of git.calls) {
+    assert.equal(allowed.has(call.args[0]), true, call.args.join(' '))
+    assert.equal(call.env.GIT_CONFIG_NOSYSTEM, '1')
+    assert.equal(call.env.GIT_TERMINAL_PROMPT, '0')
+    assert.equal(Object.hasOwn(call.env, 'GIT_DIR'), false)
+    assert.equal(Object.hasOwn(call.env, 'GIT_WORK_TREE'), false)
+    assert.equal(Object.hasOwn(call.env, 'GIT_INDEX_FILE'), false)
+    assert.doesNotMatch(call.args.join(' '), /\b(?:fetch|push|remote|worktree|branch|prune|clean|reset)\b/u)
+  }
+  assert.deepEqual([...git.refs.keys()], ['refs/ai-bim/session-leases'])
+  const source = await readFile(new URL('../../lib/parallel-delivery-fabric-registry.mjs', import.meta.url), 'utf8')
+  assert.doesNotMatch(source, /node:(?:child_process|fs|http2?|https?|net|tls|worker_threads)/u)
+  assert.doesNotMatch(source, /\b(?:fetch|spawn|exec|cleanup|prune|taskkill|safe\.directory)\s*\(/u)
+})
+
+const stampedFixture = (record) => ({
+  ...record,
+  canonical_digest: digestCanonical(record),
+})
+
+const ownerEndFixture = (overrides = {}) => ({
+  attestation_ref: 'attestation:release-proof',
+  attestation_digest: SHA256,
+  issuer_id: 'attestor:owner-end',
+  issuer_version: 'owner-end/v1',
+  owner_session: 'session:owner-one',
+  provider: 'codex',
+  provider_session_id: 'provider:one',
+  execution_context_id: 'context:one',
+  lease_id: 'lease:release-proof',
+  generation: 1,
+  head_sha: SHA1,
+  scope_digest: SHA256,
+  worktree_path_digest: SHA256,
+  observed_at: '2026-08-29T00:00:00.000Z',
+  expires_at: '2026-08-29T00:10:00.000Z',
+  nonce: NONCE('release-proof'),
+  revocation_epoch: 0,
+  ...overrides,
+})
+
+test('P1 regression — corrupt or wrong-ref persisted records hold before occupancy and zero CAS writes', async () => {
+  const { git, leaseRegistry, planRegistry, store } = createFixture()
+  const malformedLease = stampedFixture({
+    schema_version: 'not-session-lease/v1',
+    generation: 1,
+    nonce: NONCE('malformed-lease'),
+    created_at: '2026-08-29T00:00:00.000Z',
+    updated_at: '2026-08-29T00:00:00.000Z',
+  })
+  const malformedRegistry = stampedFixture({
+    schema_version: 'session-lease-registry/v1',
+    generation: 1,
+    nonce: NONCE('malformed-registry'),
+    created_at: '2026-08-29T00:00:00.000Z',
+    updated_at: '2026-08-29T00:00:00.000Z',
+    writer_cap: 2,
+    leases: { 'lease:corrupt': malformedLease },
+    used_owner_end_attestations: {},
+  })
+  const malformedBlob = JSON.stringify(malformedRegistry)
+  const malformedOid = createHash('sha1').update(malformedBlob).digest('hex')
+  git.blobs.set(malformedOid, malformedBlob)
+  git.refs.set('refs/ai-bim/session-leases', malformedOid)
+  const writesBefore = git.calls.filter((call) => ['hash-object', 'update-ref'].includes(call.args[0])).length
+
+  const heldLease = await leaseRegistry.admit(makeRequest(store, {
+    lease_id: 'lease:after-corruption',
+    resource_keys: ['path:src/after-corruption.mjs'],
+    nonce: NONCE('after-corruption'),
+  }))
+  assert.deepEqual(heldLease, {
+    status: 'HELD_REGISTRY_INTEGRITY',
+    reason: 'PERSISTED_RECORD_INVALID',
+    ref: 'refs/ai-bim/session-leases',
+  })
+  assert.equal(git.calls.filter((call) => ['hash-object', 'update-ref'].includes(call.args[0])).length, writesBefore)
+
+  git.refs.set('refs/ai-bim/delivery-plans', malformedOid)
+  const heldPlan = await planRegistry.inspect()
+  assert.deepEqual(heldPlan, {
+    status: 'HELD_REGISTRY_INTEGRITY',
+    reason: 'PERSISTED_RECORD_INVALID',
+    ref: 'refs/ai-bim/delivery-plans',
+  })
+})
+
+test('P1 regression — Task 2 privacy rules reject sensitive lease metadata before hash or ref mutation', async () => {
+  const cases = [
+    ['raw SID', { owner_session: 'sid:S-1-5-21-1-2-3' }],
+    ['token', { provider_session_id: 'token:ghp_abcdefghijklmnopqrstuvwxyz' }],
+    ['cookie nonce', { nonce: 'cookie_value_that_is_long_enough_for_nonce' }],
+    ['raw path resource', { resource_keys: ['path:C:/Users/private/model.ifc'] }],
+  ]
+  for (const [label, overrides] of cases) {
+    const { git, leaseRegistry, store } = createFixture()
+    await assert.rejects(
+      leaseRegistry.admit(makeRequest(store, {
+        ...overrides,
+        lease_id: `lease:privacy-${label.replaceAll(' ', '-')}`,
+      })),
+      (error) => error?.code === 'secret_material_detected',
+      label,
+    )
+    assert.equal(git.calls.some((call) => ['hash-object', 'update-ref'].includes(call.args[0])), false, label)
+  }
+})
+
+test('P1 regression — neutral raw environment values are rejected before every Git operation', async () => {
+  for (const resourceKey of [
+    'env:PAY_TO_ADDRESS', 'environment:PAY_TO_ADDRESS', '$env:PAY_TO_ADDRESS', '%PAY_TO_ADDRESS%',
+    'path:env:PAY_TO_ADDRESS', 'path:environment:PAY_TO_ADDRESS', 'path:$env:PAY_TO_ADDRESS', 'path:%PAY_TO_ADDRESS%',
+  ]) {
+    const { git, leaseRegistry, store } = createFixture()
+    await assert.rejects(
+      leaseRegistry.admit(makeRequest(store, {
+        lease_id: 'lease:opaque-safe',
+        resource_keys: [resourceKey],
+        nonce: NONCE('neutral-environment'),
+      })),
+      (error) => error?.code === 'secret_material_detected',
+      resourceKey,
+    )
+    assert.equal(git.calls.length, 0, resourceKey)
+  }
+
+  const { git, leaseRegistry, store } = createFixture()
+  const admitted = await leaseRegistry.admit(makeRequest(store, {
+    lease_id: 'lease:opaque-record', resource_keys: ['path:src/opaque-record.mjs'], nonce: NONCE('opaque-record-admit'),
+  }))
+  const persisted = (await leaseRegistry.inspect()).record
+  const leakedLease = { ...persisted.leases['lease:opaque-record'], resource_keys: ['path:env:PAY_TO_ADDRESS'] }
+  delete leakedLease.canonical_digest
+  persisted.leases['lease:opaque-record'] = stampedFixture(leakedLease)
+  delete persisted.canonical_digest
+  const leakedRecord = stampedFixture(persisted)
+  const leakedBlob = JSON.stringify(leakedRecord)
+  const leakedOid = createHash('sha1').update(leakedBlob).digest('hex')
+  git.blobs.set(leakedOid, leakedBlob)
+  git.refs.set(store.refs.sessionLeases, leakedOid)
+  const writesBeforeRead = git.calls.filter((call) => ['hash-object', 'update-ref'].includes(call.args[0])).length
+  assert.deepEqual(await leaseRegistry.inspect(), {
+    status: 'HELD_REGISTRY_INTEGRITY',
+    reason: 'PERSISTED_RECORD_INVALID',
+    ref: store.refs.sessionLeases,
+  })
+  assert.equal(git.calls.filter((call) => ['hash-object', 'update-ref'].includes(call.args[0])).length, writesBeforeRead)
+
+  for (const resourceKey of [
+    'path:src/environmental.mjs', 'path:docs/env-guide.md', 'path:src/env/config.mjs', 'path:src/pay_to_address.mjs',
+  ]) {
+    const { leaseRegistry: normalRegistry, store: normalStore } = createFixture()
+    const normal = await normalRegistry.admit(makeRequest(normalStore, {
+      lease_id: 'lease:normal-canonical', resource_keys: [resourceKey], nonce: NONCE('normal-canonical'),
+    }))
+    assert.equal(normal.status, 'ADMITTED', resourceKey)
+  }
+})
+
+test('P1 regression — every public lease request is closed and privacy-safe before registry access', async () => {
+  const publicRequests = [
+    ['heartbeat non-object', 'heartbeat', null, 'invalid_shape'],
+    ['heartbeat unknown key', 'heartbeat', { lease_id: 'lease:one', expected_oid: ZERO_OID, heartbeat_seq: 2, nonce: NONCE('heartbeat-unknown'), extra: 'value' }, 'invalid_shape'],
+    ['heartbeat token key', 'heartbeat', { lease_id: 'lease:one', expected_oid: ZERO_OID, heartbeat_seq: 2, nonce: NONCE('heartbeat-token'), token: 'opaque' }, 'secret_material_detected'],
+    ['heartbeat nested raw env', 'heartbeat', { lease_id: 'lease:one', expected_oid: ZERO_OID, heartbeat_seq: 2, nonce: NONCE('heartbeat-env'), metadata: { value: 'path:env:PAY_TO_ADDRESS' } }, 'secret_material_detected'],
+    ['reconcile non-object', 'reconcileTimeout', [], 'invalid_shape'],
+    ['reconcile unknown key', 'reconcileTimeout', { lease_id: 'lease:one', expected_oid: ZERO_OID, timeout_ms: 1, nonce: NONCE('reconcile-unknown'), extra: 'value' }, 'invalid_shape'],
+    ['reconcile token value', 'reconcileTimeout', { lease_id: 'lease:one', expected_oid: ZERO_OID, timeout_ms: 1, nonce: NONCE('reconcile-token'), metadata: { value: 'token:abc' } }, 'secret_material_detected'],
+    ['reconcile nested raw env', 'reconcileTimeout', { lease_id: 'lease:one', expected_oid: ZERO_OID, timeout_ms: 1, nonce: NONCE('reconcile-env'), metadata: { value: 'path:$env:PAY_TO_ADDRESS' } }, 'secret_material_detected'],
+    ['end non-object', 'endRequest', 'not-an-object', 'invalid_shape'],
+    ['end unknown key', 'endRequest', { lease_id: 'lease:one', expected_oid: ZERO_OID, nonce: NONCE('end-unknown'), reason: 'handoff', handoff_or_candidate_reference: 'handoff:one', extra: 'value' }, 'invalid_shape'],
+    ['end token key', 'endRequest', { lease_id: 'lease:one', expected_oid: ZERO_OID, nonce: NONCE('end-token'), reason: 'handoff', handoff_or_candidate_reference: 'handoff:one', authorization: 'opaque' }, 'secret_material_detected'],
+    ['end nested raw env', 'endRequest', { lease_id: 'lease:one', expected_oid: ZERO_OID, nonce: NONCE('end-env'), reason: 'handoff', handoff_or_candidate_reference: 'handoff:one', metadata: { value: 'path:%PAY_TO_ADDRESS%' } }, 'secret_material_detected'],
+  ]
+  for (const [label, method, input, code] of publicRequests) {
+    const { git, leaseRegistry } = createFixture()
+    await assert.rejects(
+      async () => leaseRegistry[method](input),
+      (error) => error?.code === code,
+      label,
+    )
+    assert.equal(git.calls.length, 0, label)
+  }
+})
+
+test('P1 regression — registry privacy rejects bare bearer while preserving a legal near-match', async () => {
+  const blocked = createFixture()
+  await assert.rejects(
+    blocked.leaseRegistry.admit(makeRequest(blocked.store, { owner_session: 'session:bearer' })),
+    (error) => error?.code === 'secret_material_detected',
+  )
+  assert.equal(blocked.git.calls.length, 0)
+
+  const allowed = createFixture()
+  assert.equal((await allowed.leaseRegistry.admit(makeRequest(allowed.store, {
+    lease_id: 'lease:bearish-near-match', owner_session: 'session:bearish', nonce: NONCE('bearish-near-match'),
+  }))).status, 'ADMITTED')
+})
+
+test('P1 regression — lease writer cap is ref-pinned before writes and wrong-cap blobs hold on read', async () => {
+  const { git, leaseRegistry, store } = createFixture()
+  const makeRegistry = (writerCap) => stampedFixture({
+    schema_version: 'session-lease-registry/v1',
+    generation: 1,
+    nonce: NONCE('wrong-writer-cap'),
+    created_at: '2026-08-29T00:00:00.000Z',
+    updated_at: '2026-08-29T00:00:00.000Z',
+    writer_cap: writerCap,
+    leases: {},
+    used_owner_end_attestations: {},
+  })
+  for (const writerCap of [0, 1, 3, 99, '2', null]) {
+    await assert.rejects(
+      store.cas({ ref: store.refs.sessionLeases, expected_oid: ZERO_OID, record: makeRegistry(writerCap) }),
+      (error) => error?.code === 'registry_record_invalid',
+      String(writerCap),
+    )
+    assert.equal(git.calls.length, 0, String(writerCap))
+  }
+
+  const forged = JSON.stringify(makeRegistry(99))
+  const forgedOid = createHash('sha1').update(forged).digest('hex')
+  git.blobs.set(forgedOid, forged)
+  git.refs.set(store.refs.sessionLeases, forgedOid)
+  assert.deepEqual(await leaseRegistry.inspect(), {
+    status: 'HELD_REGISTRY_INTEGRITY',
+    reason: 'PERSISTED_RECORD_INVALID',
+    ref: store.refs.sessionLeases,
+  })
+})
+
+test('P1 regression — persisted occupied states cannot bypass the global writer cap', async () => {
+  const timestamp = '2026-08-29T00:00:00.000Z'
+  const occupiedStates = ['ACTIVE', 'SUSPECT', 'END_REQUESTED', 'RELEASING']
+  for (const state of occupiedStates) {
+    const { git, leaseRegistry, store } = createFixture()
+    await leaseRegistry.admit(makeRequest(store, {
+      lease_id: 'lease:cap-one', task_id: 'task:cap-one', resource_keys: ['path:src/cap-one.mjs'], nonce: NONCE('cap-one'),
+    }))
+    await leaseRegistry.admit(makeRequest(store, {
+      lease_id: 'lease:cap-two', task_id: 'task:cap-two', resource_keys: ['path:src/cap-two.mjs'], nonce: NONCE('cap-two'),
+    }))
+    const snapshot = await leaseRegistry.inspect()
+    const third = structuredClone(snapshot.record.leases['lease:cap-one'])
+    third.lease_id = 'lease:cap-three'
+    third.task_id = 'task:cap-three'
+    third.provider_session_id = 'provider:cap-three'
+    third.execution_context_id = 'context:cap-three'
+    third.resource_keys = ['path:src/cap-three.mjs']
+    third.nonce = NONCE(`cap-${state.toLowerCase()}`)
+    if (state === 'SUSPECT') {
+      third.state = 'SUSPECT'
+      third.suspect_at = timestamp
+    }
+    if (state === 'END_REQUESTED' || state === 'RELEASING') {
+      third.state = state
+      third.end_request = {
+        reason: 'failed', requested_at: timestamp, nonce: NONCE(`cap-end-${state.toLowerCase()}`), handoff_or_candidate_reference: 'candidate:cap-three',
+      }
+    }
+    if (state === 'RELEASING') {
+      third.release_reservation = stampedFixture({
+        schema_version: 'lease-release-reservation/v1', generation: 1, nonce: NONCE('cap-reservation'), created_at: timestamp, updated_at: timestamp,
+        release_id: 'release:cap-three', lease_id: 'lease:cap-three', attestation_ref: 'attestation:cap-three', attestation_digest: SHA256,
+        attestor_issuer: 'issuer:cap-three', attestor_version: 'owner-end/v1', observed_at: timestamp, expires_at: '2026-08-29T00:10:00.000Z',
+        revocation_epoch: 0, expected_registry_oid: SHA1, expected_envelope_oid: ENVELOPE_OID, expected_envelope_transition_sequence: 0,
+      })
+      third.nonce = NONCE('cap-reservation')
+    }
+    delete third.canonical_digest
+    const record = structuredClone(snapshot.record)
+    record.leases['lease:cap-three'] = stampedFixture(third)
+    delete record.canonical_digest
+    const forged = stampedFixture(record)
+    const writesBefore = git.calls.filter((call) => ['hash-object', 'update-ref'].includes(call.args[0])).length
+    await assert.rejects(
+      store.cas({ ref: store.refs.sessionLeases, expected_oid: snapshot.oid, record: forged }),
+      (error) => error?.code === 'registry_record_invalid',
+      state,
+    )
+    assert.equal(git.calls.filter((call) => ['hash-object', 'update-ref'].includes(call.args[0])).length, writesBefore, state)
+
+    const blob = JSON.stringify(forged)
+    const oid = createHash('sha1').update(blob).digest('hex')
+    git.blobs.set(oid, blob)
+    git.refs.set(store.refs.sessionLeases, oid)
+    assert.deepEqual(await leaseRegistry.inspect(), {
+      status: 'HELD_REGISTRY_INTEGRITY', reason: 'PERSISTED_RECORD_INVALID', ref: store.refs.sessionLeases,
+    }, state)
+  }
+})
+
+test('P1 regression — END_REQUESTED is immutable and timeout retains its authority boundary', async () => {
+  const { clock, git, leaseRegistry, store } = createFixture()
+  const admitted = await leaseRegistry.admit(makeRequest(store, {
+    lease_id: 'lease:end-immutable', resource_keys: ['path:src/end-immutable.mjs'], nonce: NONCE('end-immutable-admit'),
+  }))
+  const endInput = {
+    lease_id: 'lease:end-immutable', expected_oid: admitted.oid, nonce: NONCE('end-immutable-request'), reason: 'handoff',
+    handoff_or_candidate_reference: 'handoff:end-immutable',
+  }
+  const ended = await leaseRegistry.endRequest(endInput)
+  assert.equal(ended.status, 'END_REQUESTED')
+  const writes = () => git.calls.filter((call) => ['hash-object', 'update-ref'].includes(call.args[0])).length
+  const writesBeforeReplay = writes()
+  const replay = await leaseRegistry.endRequest({ ...endInput, expected_oid: ended.oid })
+  assert.equal(replay.status, 'END_REQUESTED')
+  assert.equal(replay.oid, ended.oid)
+  assert.equal(writes(), writesBeforeReplay)
+  for (const [label, patch] of [
+    ['reason drift', { reason: 'failed' }],
+    ['reference drift', { handoff_or_candidate_reference: 'candidate:end-immutable' }],
+    ['nonce drift', { nonce: NONCE('end-immutable-drift') }],
+  ]) {
+    const writesBeforeDrift = writes()
+    assert.deepEqual(await leaseRegistry.endRequest({ ...endInput, expected_oid: ended.oid, ...patch }), {
+      status: 'HELD_EXECUTION_AUTHORITY', reason: 'END_REQUEST_IMMUTABLE', reconcile_required: false,
+    }, label)
+    assert.equal(writes(), writesBeforeDrift, label)
+  }
+  clock.set('2026-08-29T00:05:00.000Z')
+  const writesBeforeTimeout = writes()
+  const timedOut = await leaseRegistry.reconcileTimeout({
+    lease_id: 'lease:end-immutable', expected_oid: ended.oid, timeout_ms: 1, nonce: NONCE('end-immutable-timeout'),
+  })
+  assert.equal(timedOut.status, 'HELD_EXECUTION_AUTHORITY')
+  assert.equal(timedOut.reason, 'OWNER_END_ATTESTATION_EVIDENCE_GAP')
+  assert.equal(timedOut.reconcile_required, true)
+  assert.equal(timedOut.oid, ended.oid)
+  assert.equal(timedOut.lease.state, 'END_REQUESTED')
+  assert.equal(writes(), writesBeforeTimeout)
+  assert.equal((await leaseRegistry.inspect()).record.leases['lease:end-immutable'].state, 'END_REQUESTED')
+})
+
+const createEnvelopeCasPort = () => {
+  const expectedOid = 'e'.repeat(40)
+  const resultingOid = 'f'.repeat(40)
+  let currentOid = expectedOid
+  let successfulMutations = 0
+  const calls = []
+  return {
+    calls,
+    get successfulMutations() { return successfulMutations },
+    async revoke(request) {
+      calls.push(structuredClone(request))
+      if (request.expected_envelope_oid !== currentOid || request.expected_transition_sequence !== 0) {
+        return { status: 'CONFLICT', actual_oid: currentOid }
+      }
+      currentOid = resultingOid
+      successfulMutations += 1
+      return {
+        status: 'REVOKED',
+        previous_oid: expectedOid,
+        oid: resultingOid,
+        transition_sequence: 1,
+        revocation_epoch: 0,
+        in_flight_command: false,
+      }
+    },
+  }
+}
+
+test('P1 regression — only a release reservation owner can reach the envelope during heartbeat and release races', async () => {
+  const fixture = createFixture()
+  const { attestor, clock, store } = fixture
+  let registry
+  let stateAtEnvelope = undefined
+  let heartbeatDuringRelease = undefined
+  const envelope = {
+    calls: [],
+    async revoke(request) {
+      this.calls.push(structuredClone(request))
+      const snapshot = await registry.inspect()
+      stateAtEnvelope = snapshot.record.leases['lease:reservation-race'].state
+      heartbeatDuringRelease = await registry.heartbeat({
+        lease_id: 'lease:reservation-race',
+        expected_oid: snapshot.oid,
+        heartbeat_seq: 2,
+        nonce: NONCE('reservation-heartbeat'),
+      })
+      return {
+        status: 'REVOKED', previous_oid: ENVELOPE_OID, oid: REVOKED_ENVELOPE_OID,
+        transition_sequence: 1, revocation_epoch: 0, in_flight_command: false,
+      }
+    },
+  }
+  registry = createLeaseRegistry({ store, clock, writerCap: 2, ownerEndAttestor: attestor, executionEnvelope: envelope })
+  const admitted = await registry.admit(makeRequest(store, {
+    lease_id: 'lease:reservation-race', resource_keys: ['path:src/reservation-race.mjs'], nonce: NONCE('reservation-admit'),
+  }))
+  const ended = await registry.endRequest({
+    lease_id: 'lease:reservation-race', expected_oid: admitted.oid, nonce: NONCE('reservation-end'), reason: 'handoff',
+    handoff_or_candidate_reference: 'handoff:reservation-race',
+  })
+  const request = {
+    lease_id: 'lease:reservation-race', expected_oid: ended.oid, expected_envelope_oid: ENVELOPE_OID,
+    expected_envelope_transition_sequence: 0,
+    attestation: ownerEndFixture({ lease_id: 'lease:reservation-race', nonce: NONCE('reservation-attestation') }),
+  }
+  const results = await Promise.all([registry.release(request), registry.release(request)])
+  assert.equal(results.filter((result) => result.status === 'RELEASED').length, 1)
+  assert.equal(envelope.calls.length, 1)
+  assert.equal(stateAtEnvelope, 'RELEASING')
+  assert.deepEqual(heartbeatDuringRelease, {
+    status: 'HELD_EXECUTION_AUTHORITY', reason: 'RELEASE_IN_PROGRESS', reconcile_required: false,
+  })
+})
+
+test('P1 regression — a post-envelope final CAS conflict stays reconcilable and occupied', async () => {
+  const fixture = createFixture()
+  const { attestor, clock, envelope, store } = fixture
+  let rejectFirstFinalization = true
+  const contestedStore = {
+    commonDirDigest: store.commonDirDigest,
+    refs: store.refs,
+    read: store.read,
+    async cas(request) {
+      if (rejectFirstFinalization && request.ref === store.refs.sessionLeases && request.record.leases['lease:finalize-hold']?.state === 'RELEASED') {
+        rejectFirstFinalization = false
+        const current = await store.read(request.ref)
+        return {
+          status: 'CONFLICT', reason: 'CAS_CONFLICT', expected_oid: request.expected_oid,
+          actual_oid: current.oid, current,
+        }
+      }
+      return store.cas(request)
+    },
+  }
+  const registry = createLeaseRegistry({
+    store: contestedStore, clock, writerCap: 2, ownerEndAttestor: attestor, executionEnvelope: envelope,
+  })
+  const admitted = await registry.admit(makeRequest(contestedStore, {
+    lease_id: 'lease:finalize-hold', resource_keys: ['path:src/finalize-hold.mjs'], nonce: NONCE('finalize-admit'),
+  }))
+  const ended = await registry.endRequest({
+    lease_id: 'lease:finalize-hold', expected_oid: admitted.oid, nonce: NONCE('finalize-end'), reason: 'failed',
+    handoff_or_candidate_reference: 'candidate:finalize-hold',
+  })
+  assert.deepEqual(await registry.release({
+    lease_id: 'lease:finalize-hold', expected_oid: ended.oid, expected_envelope_oid: ENVELOPE_OID,
+    expected_envelope_transition_sequence: 0,
+    attestation: ownerEndFixture({ lease_id: 'lease:finalize-hold', nonce: NONCE('finalize-attestation') }),
+  }), {
+    status: 'HELD_EXECUTION_AUTHORITY',
+    reason: 'RELEASE_FINALIZE_CAS_CONFLICT',
+    reconcile_required: true,
+    release_id: `release:${NONCE('finalize-attestation')}`,
+  })
+  const snapshot = await registry.inspect()
+  const releasingLease = snapshot.record.leases['lease:finalize-hold']
+  assert.equal(releasingLease.state, 'RELEASING')
+  assert.equal(envelope.calls.length, 1)
+  assert.equal(releasingLease.envelope_revocation_proof.release_id, `release:${NONCE('finalize-attestation')}`)
+  assert.equal(releasingLease.envelope_revocation_proof.lease_id, 'lease:finalize-hold')
+  assert.equal(releasingLease.envelope_revocation_proof.previous_oid, ENVELOPE_OID)
+  assert.equal(releasingLease.envelope_revocation_proof.oid, 'f'.repeat(40))
+  assert.equal(releasingLease.envelope_revocation_proof.transition_sequence, 1)
+  assert.equal(releasingLease.envelope_revocation_proof.in_flight_command, false)
+  const { canonical_digest: proofDigest, ...proofWithoutDigest } = releasingLease.envelope_revocation_proof
+  assert.equal(proofDigest, digestCanonical(proofWithoutDigest))
+
+  clock.set('2026-08-29T00:05:00.000Z')
+  const restarted = createLeaseRegistry({
+    store: contestedStore, clock, writerCap: 2, ownerEndAttestor: attestor, executionEnvelope: envelope,
+  })
+  const timedOut = await restarted.reconcileTimeout({
+    lease_id: 'lease:finalize-hold', expected_oid: snapshot.oid, timeout_ms: 1,
+    nonce: NONCE('finalize-reconcile'),
+  })
+  assert.equal(timedOut.status, 'HELD_EXECUTION_AUTHORITY')
+  assert.equal(timedOut.reason, 'RELEASE_RECONCILIATION_REQUIRED')
+  assert.equal(timedOut.reconcile_required, true)
+  assert.equal(timedOut.release_id, `release:${NONCE('finalize-attestation')}`)
+  assert.equal(timedOut.oid, snapshot.oid)
+  assert.equal(timedOut.lease.state, 'RELEASING')
+  const afterRestartTimeout = await restarted.inspect()
+  assert.equal(afterRestartTimeout.oid, snapshot.oid)
+  assert.equal(afterRestartTimeout.record.leases['lease:finalize-hold'].state, 'RELEASING')
+  assert.equal(envelope.calls.length, 1)
+  for (const [label, attestation, code] of [
+    ['unknown nested key', { ...ownerEndFixture({ lease_id: 'lease:finalize-hold', nonce: NONCE('finalize-attestation') }), extra: 'forbidden' }, 'invalid_shape'],
+    ['nested raw environment alias', { ...ownerEndFixture({ lease_id: 'lease:finalize-hold', nonce: NONCE('finalize-attestation') }), issuer_id: 'path:env:PAY_TO_ADDRESS' }, 'secret_material_detected'],
+    ['tuple drift', { ...ownerEndFixture({ lease_id: 'lease:finalize-hold', nonce: NONCE('finalize-attestation') }), head_sha: 'c'.repeat(40) }, 'owner_end_attestation_tuple_mismatch'],
+  ]) {
+    const callsBefore = envelope.calls.length
+    await assert.rejects(
+      restarted.release({
+        lease_id: 'lease:finalize-hold', expected_oid: snapshot.oid, expected_envelope_oid: ENVELOPE_OID,
+        expected_envelope_transition_sequence: 0, attestation,
+      }),
+      (error) => error?.code === code,
+      label,
+    )
+    assert.equal((await restarted.inspect()).oid, snapshot.oid, label)
+    assert.equal(envelope.calls.length, callsBefore, label)
+  }
+  const finalized = await restarted.release({
+    lease_id: 'lease:finalize-hold', expected_oid: snapshot.oid, expected_envelope_oid: ENVELOPE_OID,
+    expected_envelope_transition_sequence: 0,
+    attestation: ownerEndFixture({ lease_id: 'lease:finalize-hold', nonce: NONCE('finalize-attestation') }),
+  })
+  assert.equal(finalized.status, 'RELEASED')
+  assert.equal(envelope.calls.length, 1)
+  assert.equal((await restarted.inspect()).record.leases['lease:finalize-hold'].state, 'RELEASED')
+})
+
+const assertDraft2020Value = (schema, definition, value, context) => {
+  if (definition.$ref) return assertDraft2020Value(schema, schema.$defs[definition.$ref.split('/').at(-1)], value, context)
+  if (definition.allOf) definition.allOf.forEach((entry) => assertDraft2020Value(schema, entry, value, context))
+  if (definition.not?.pattern) assert.doesNotMatch(value, new RegExp(definition.not.pattern, 'u'), context)
+  if (Object.hasOwn(definition, 'const')) assert.equal(value, definition.const, context)
+  if (definition.enum) assert.equal(definition.enum.includes(value), true, context)
+  if (definition.type === 'string') {
+    assert.equal(typeof value, 'string', context)
+    if (definition.minLength !== undefined) assert.equal(value.length >= definition.minLength, true, context)
+    if (definition.maxLength !== undefined) assert.equal(value.length <= definition.maxLength, true, context)
+    if (definition.pattern) assert.match(value, new RegExp(definition.pattern, 'u'), context)
+  }
+  if (definition.type === 'integer') {
+    assert.equal(Number.isSafeInteger(value), true, context)
+    if (definition.minimum !== undefined) assert.equal(value >= definition.minimum, true, context)
+  }
+  if (definition.type === 'array') {
+    assert.equal(Array.isArray(value), true, context)
+    if (definition.minItems !== undefined) assert.equal(value.length >= definition.minItems, true, context)
+    if (definition.maxItems !== undefined) assert.equal(value.length <= definition.maxItems, true, context)
+    if (definition.uniqueItems) assert.equal(new Set(value).size, value.length, context)
+    value.forEach((item, index) => assertDraft2020Value(schema, definition.items, item, `${context}[${index}]`))
+  }
+}
+
+const assertDraft2020OwnerEndRelease = async (record) => {
+  const schema = JSON.parse(await readFile(new URL('../../../agent-contracts/parallel-delivery-fabric.schema.json', import.meta.url), 'utf8'))
+  const definition = schema.$defs.owner_end_release
+  assert.equal(definition.additionalProperties, false)
+  assert.deepEqual(Object.keys(record).sort(), [...definition.required].sort())
+  for (const key of definition.required) assertDraft2020Value(schema, definition.properties[key], record[key], `owner_end_release.${key}`)
+}
+
+const createReleasedAuditFixture = async () => {
+  const fixture = createFixture()
+  const { attestor, envelope, leaseRegistry, store } = fixture
+  const admitted = await leaseRegistry.admit(makeRequest(store, {
+    lease_id: 'lease:canonical-boundary', resource_keys: ['path:src/canonical-boundary.mjs'], nonce: NONCE('canonical-boundary-admit'),
+  }))
+  const ended = await leaseRegistry.endRequest({
+    lease_id: 'lease:canonical-boundary', expected_oid: admitted.oid, nonce: NONCE('canonical-boundary-end'), reason: 'handoff',
+    handoff_or_candidate_reference: 'handoff:canonical-boundary',
+  })
+  assert.equal((await leaseRegistry.release({
+    lease_id: 'lease:canonical-boundary', expected_oid: ended.oid, expected_envelope_oid: ENVELOPE_OID,
+    expected_envelope_transition_sequence: 0,
+    attestation: ownerEndFixture({ lease_id: 'lease:canonical-boundary', nonce: NONCE('canonical-boundary-attestation') }),
+  })).status, 'RELEASED')
+  return { leaseRegistry, store, git: fixture.git }
+}
+
+test('RED round6: canonical Task3 parser clones, freezes, and rejects forged lease evidence', async () => {
+  const activeFixture = createFixture()
+  const active = await activeFixture.leaseRegistry.admit(makeRequest(activeFixture.store, {
+    lease_id: 'lease:parser-active', resource_keys: ['path:src/parser-active.mjs'], nonce: NONCE('parser-active'),
+  }))
+  const suspectFixture = createFixture()
+  const suspectAdmitted = await suspectFixture.leaseRegistry.admit(makeRequest(suspectFixture.store, {
+    lease_id: 'lease:parser-suspect', resource_keys: ['path:src/parser-suspect.mjs'], nonce: NONCE('parser-suspect'),
+  }))
+  suspectFixture.clock.set('2026-08-29T00:05:00.000Z')
+  await suspectFixture.leaseRegistry.reconcileTimeout({
+    lease_id: 'lease:parser-suspect', expected_oid: suspectAdmitted.oid, timeout_ms: 1, nonce: NONCE('parser-suspect-timeout'),
+  })
+  const endFixture = createFixture()
+  const endAdmitted = await endFixture.leaseRegistry.admit(makeRequest(endFixture.store, {
+    lease_id: 'lease:parser-end', resource_keys: ['path:src/parser-end.mjs'], nonce: NONCE('parser-end'),
+  }))
+  await endFixture.leaseRegistry.endRequest({
+    lease_id: 'lease:parser-end', expected_oid: endAdmitted.oid, nonce: NONCE('parser-end-request'), reason: 'handoff',
+    handoff_or_candidate_reference: 'handoff:parser-end',
+  })
+  const releasingFixture = createFixture({ failUpdateAt: 5 })
+  const releasingAdmitted = await releasingFixture.leaseRegistry.admit(makeRequest(releasingFixture.store, {
+    lease_id: 'lease:parser-releasing', resource_keys: ['path:src/parser-releasing.mjs'], nonce: NONCE('parser-releasing'),
+  }))
+  const releasingEnd = await releasingFixture.leaseRegistry.endRequest({
+    lease_id: 'lease:parser-releasing', expected_oid: releasingAdmitted.oid, nonce: NONCE('parser-releasing-end'), reason: 'handoff',
+    handoff_or_candidate_reference: 'handoff:parser-releasing',
+  })
+  assert.equal((await releasingFixture.leaseRegistry.release({
+    lease_id: 'lease:parser-releasing', expected_oid: releasingEnd.oid, expected_envelope_oid: ENVELOPE_OID,
+    expected_envelope_transition_sequence: 0,
+    attestation: ownerEndFixture({ lease_id: 'lease:parser-releasing', nonce: NONCE('parser-releasing-owner-end') }),
+  })).status, 'HELD_EXECUTION_AUTHORITY')
+  const { leaseRegistry: releasedRegistry } = await createReleasedAuditFixture()
+  const stateFixtures = [
+    active.lease,
+    (await suspectFixture.leaseRegistry.inspect()).record.leases['lease:parser-suspect'],
+    (await endFixture.leaseRegistry.inspect()).record.leases['lease:parser-end'],
+    (await releasingFixture.leaseRegistry.inspect()).record.leases['lease:parser-releasing'],
+    (await releasedRegistry.inspect()).record.leases['lease:canonical-boundary'],
+  ]
+  for (const raw of stateFixtures) {
+    const parsed = parseSessionLease(raw, raw.lease_id)
+    assert.deepEqual(parsed, raw, raw.state)
+    assert.equal(JSON.stringify(parsed), JSON.stringify(raw), `${raw.state} byte-compatible`)
+    assert.equal(Object.isFrozen(parsed), true, raw.state)
+    assert.equal(Object.isFrozen(parsed.resource_keys), true, raw.state)
+  }
+  const mutable = structuredClone(active.lease)
+  const parsed = parseSessionLease(mutable, mutable.lease_id)
+  mutable.resource_keys[0] = 'path:src/mutated-after-parse.mjs'
+  assert.equal(parsed.resource_keys[0], 'path:src/parser-active.mjs')
+  const parsedRegistry = parseSessionLeaseRegistry((await activeFixture.leaseRegistry.inspect()).record)
+  assert.deepEqual(parsedRegistry, (await activeFixture.leaseRegistry.inspect()).record)
+  assert.equal(JSON.stringify(parsedRegistry), JSON.stringify((await activeFixture.leaseRegistry.inspect()).record))
+  assert.equal(Object.isFrozen(parsedRegistry.leases['lease:parser-active']), true)
+
+  const restamp = (candidate) => {
+    delete candidate.canonical_digest
+    candidate.canonical_digest = digestCanonical(candidate)
+    return candidate
+  }
+  const invalidTimestamp = restamp(structuredClone(active.lease))
+  invalidTimestamp.created_at = '2026-02-31T00:00:00.000Z'
+  restamp(invalidTimestamp)
+  const tooLongResource = restamp(structuredClone(active.lease))
+  tooLongResource.resource_keys = [`path:${'a'.repeat(252)}`]
+  restamp(tooLongResource)
+  const forgedReservation = restamp(structuredClone(stateFixtures.find((candidate) => candidate.state === 'RELEASING')))
+  forgedReservation.release_reservation.created_at = '2026-02-31T00:00:00.000Z'
+  restamp(forgedReservation.release_reservation)
+  restamp(forgedReservation)
+  const forgedProof = restamp(structuredClone(stateFixtures.find((candidate) => candidate.state === 'RELEASING')))
+  forgedProof.envelope_revocation_proof.previous_oid = SHA1
+  restamp(forgedProof.envelope_revocation_proof)
+  restamp(forgedProof)
+  const released = stateFixtures.at(-1)
+  const forgedRelease = restamp(structuredClone(released))
+  forgedRelease.release_record.lease_id = 'lease:forged-release'
+  restamp(forgedRelease)
+  for (const [label, forged] of [
+    ['non-roundtrip timestamp', invalidTimestamp],
+    ['257-byte resource key', tooLongResource],
+    ['forged reservation timestamp', forgedReservation],
+    ['forged envelope proof', forgedProof],
+    ['forged release record', forgedRelease],
+  ]) {
+    assert.throws(() => parseSessionLease(forged, forged.lease_id), undefined, label)
+  }
+})
+
+const forgeReleaseAudit = (snapshot, mutate) => {
+  const record = structuredClone(snapshot.record)
+  const lease = record.leases['lease:canonical-boundary']
+  mutate(lease.release_record)
+  delete lease.canonical_digest
+  record.leases['lease:canonical-boundary'] = stampedFixture(lease)
+  delete record.canonical_digest
+  return stampedFixture(record)
+}
+
+const forgeRegistryLease = (snapshot, leaseId, mutate) => {
+  const record = structuredClone(snapshot.record)
+  const lease = record.leases[leaseId]
+  mutate(lease)
+  delete lease.canonical_digest
+  record.leases[leaseId] = stampedFixture(lease)
+  delete record.canonical_digest
+  return stampedFixture(record)
+}
+
+test('RED round7: parser rejects zero predecessor OIDs and cross-lease release proof', async () => {
+  const { leaseRegistry: releasedRegistry } = await createReleasedAuditFixture()
+  const releasedSnapshot = await releasedRegistry.inspect()
+  assert.doesNotThrow(() => parseSessionLeaseRegistry(releasedSnapshot.record), 'valid RELEASED lease remains canonical')
+
+  const zeroExpectedRegistryOid = forgeRegistryLease(releasedSnapshot, 'lease:canonical-boundary', (lease) => {
+    lease.release_record.expected_registry_oid = ZERO_OID
+  })
+  const zeroExpectedEnvelopeOid = forgeRegistryLease(releasedSnapshot, 'lease:canonical-boundary', (lease) => {
+    lease.release_record.expected_envelope_oid = ZERO_OID
+  })
+
+  const releasingFixture = createFixture({ failUpdateAt: 5 })
+  const admitted = await releasingFixture.leaseRegistry.admit(makeRequest(releasingFixture.store, {
+    lease_id: 'lease:parser-proof-source', resource_keys: ['path:src/parser-proof-source.mjs'], nonce: NONCE('parser-proof-source-admit'),
+  }))
+  const ending = await releasingFixture.leaseRegistry.endRequest({
+    lease_id: 'lease:parser-proof-source', expected_oid: admitted.oid, nonce: NONCE('parser-proof-source-end'), reason: 'handoff',
+    handoff_or_candidate_reference: 'handoff:parser-proof-source',
+  })
+  assert.equal((await releasingFixture.leaseRegistry.release({
+    lease_id: 'lease:parser-proof-source', expected_oid: ending.oid, expected_envelope_oid: ENVELOPE_OID,
+    expected_envelope_transition_sequence: 0,
+    attestation: ownerEndFixture({ lease_id: 'lease:parser-proof-source', nonce: NONCE('parser-proof-source-attestation') }),
+  })).status, 'HELD_EXECUTION_AUTHORITY')
+  const crossLeaseProof = forgeRegistryLease(await releasingFixture.leaseRegistry.inspect(), 'lease:parser-proof-source', (lease) => {
+    lease.envelope_revocation_proof.lease_id = 'lease:parser-proof-other'
+    delete lease.envelope_revocation_proof.canonical_digest
+    lease.envelope_revocation_proof = stampedFixture(lease.envelope_revocation_proof)
+  })
+
+  for (const [label, forged, code] of [
+    ['zero release expected_registry_oid', zeroExpectedRegistryOid, 'invalid_value'],
+    ['zero release expected_envelope_oid', zeroExpectedEnvelopeOid, 'invalid_value'],
+    ['cross-lease release reservation/proof', crossLeaseProof, 'registry_record_invalid'],
+  ]) {
+    assert.throws(() => parseSessionLeaseRegistry(forged), (error) => error?.code === code, label)
+  }
+})
+
+test('P1 regression — local release audit acceptance exactly matches Task 2 owner_end_release boundaries', async () => {
+  const opaque128 = `a:${'a'.repeat(126)}`
+  const opaque129 = `a:${'a'.repeat(127)}`
+  const retained = (count, prefix = 'path:src/canonical') => Array.from({ length: count }, (_, index) => `${prefix}-${index}.mjs`)
+  const cases = [
+    ['opaque ID at 128', (release) => { release.attestor_issuer = opaque128 }, true],
+    ['opaque ID at 129', (release) => { release.attestor_issuer = opaque129 }, false],
+    ['lowercase resource key', (release) => { release.retained_resource_keys = ['path:src/lowercase.mjs'] }, true],
+    ['uppercase resource key', (release) => { release.retained_resource_keys = ['path:Src/Uppercase.mjs'] }, false],
+    ['256 retained resource keys', (release) => { release.retained_resource_keys = retained(256) }, true],
+    ['257 retained resource keys', (release) => { release.retained_resource_keys = retained(257) }, false],
+    ['extra closed key', (release) => { release.extra = 'forbidden' }, false],
+    ['missing closed key', (release) => { delete release.nonce }, false],
+  ]
+  const admissionFixture = createFixture()
+  await assert.rejects(
+    admissionFixture.leaseRegistry.admit(makeRequest(admissionFixture.store, {
+      lease_id: 'lease:over-resource-bound',
+      resource_keys: retained(257, 'path:resource'),
+      nonce: NONCE('over-resource-bound'),
+    })),
+    (error) => error?.code === 'invalid_shape',
+    'admission rejects the 257th resource before registry access',
+  )
+  assert.equal(admissionFixture.git.calls.length, 0)
+  for (const [label, mutate, expectedCanonical] of cases) {
+    const { git, leaseRegistry, store } = await createReleasedAuditFixture()
+    const snapshot = await leaseRegistry.inspect()
+    const forged = forgeReleaseAudit(snapshot, mutate)
+    const release = forged.leases['lease:canonical-boundary'].release_record
+    if (expectedCanonical) await assertDraft2020OwnerEndRelease(release)
+    else await assert.rejects(assertDraft2020OwnerEndRelease(release), undefined, label)
+    const blob = JSON.stringify(forged)
+    const oid = createHash('sha1').update(blob).digest('hex')
+    git.blobs.set(oid, blob)
+    git.refs.set(store.refs.sessionLeases, oid)
+    const inspected = await leaseRegistry.inspect()
+    if (expectedCanonical) assert.equal(inspected.record.leases['lease:canonical-boundary'].release_record.attestor_issuer, release.attestor_issuer, label)
+    else assert.deepEqual(inspected, {
+      status: 'HELD_REGISTRY_INTEGRITY', reason: 'PERSISTED_RECORD_INVALID', ref: store.refs.sessionLeases,
+    }, label)
+  }
+})
+
+test('P1 regression — release requires a proven one-winner envelope CAS and persists a closed audit record', async () => {
+  const fixture = createFixture()
+  const { attestor, leaseRegistry, store } = fixture
+  const envelope = createEnvelopeCasPort()
+  const guardedRegistry = createLeaseRegistry({ store, clock: fixture.clock, writerCap: 2, ownerEndAttestor: attestor, executionEnvelope: envelope })
+  const admitted = await guardedRegistry.admit(makeRequest(store, {
+    lease_id: 'lease:release-proof',
+    resource_keys: ['path:src/release-proof.mjs'],
+    nonce: NONCE('release-proof-admit'),
+  }))
+  const ending = await guardedRegistry.endRequest({
+    lease_id: 'lease:release-proof',
+    expected_oid: admitted.oid,
+    nonce: NONCE('release-proof-end'),
+    reason: 'handoff',
+    handoff_or_candidate_reference: 'handoff:release-proof',
+  })
+  const releaseRequest = {
+    lease_id: 'lease:release-proof',
+    expected_oid: ending.oid,
+    expected_envelope_oid: 'e'.repeat(40),
+    expected_envelope_transition_sequence: 0,
+    attestation: ownerEndFixture(),
+  }
+  const [first, second] = await Promise.all([
+    guardedRegistry.release(releaseRequest),
+    guardedRegistry.release(releaseRequest),
+  ])
+  assert.equal([first, second].filter((result) => result.status === 'RELEASED').length, 1)
+  assert.equal([first, second].filter((result) => result.status === 'CONFLICT').length, 1)
+  assert.equal(envelope.successfulMutations, 1)
+  const released = (await guardedRegistry.inspect()).record.leases['lease:release-proof']
+  await assertDraft2020OwnerEndRelease(released.release_record)
+  assert.equal(released.release_record.expected_envelope_oid, 'e'.repeat(40))
+  assert.equal(released.release_record.transition_sequence, 0)
+  assert.equal(released.release_record.handoff_or_candidate_reference, 'handoff:release-proof')
+
+  const recovered = createLeaseRegistry({ store, clock: fixture.clock, writerCap: 2, ownerEndAttestor: attestor, executionEnvelope: envelope })
+  const recoveredRelease = (await recovered.inspect()).record.leases['lease:release-proof'].release_record
+  assert.equal(recoveredRelease.release_id, released.release_record.release_id)
+  await assertDraft2020OwnerEndRelease(recoveredRelease)
+
+  await assert.rejects(
+    guardedRegistry.release({ ...releaseRequest, expected_envelope_oid: 'envelope:non-sha' }),
+    (error) => error?.code === 'invalid_value',
+  )
+  assert.equal(envelope.successfulMutations, 1)
+})
+
+test('P2 regression — attestor and envelope failures return typed evidence holds without registry mutation', async () => {
+  const fixture = createFixture()
+  const { leaseRegistry, store } = fixture
+  const admitted = await leaseRegistry.admit(makeRequest(store, {
+    lease_id: 'lease:port-failure',
+    resource_keys: ['path:src/port-failure.mjs'],
+    nonce: NONCE('port-failure-admit'),
+  }))
+  const ending = await leaseRegistry.endRequest({
+    lease_id: 'lease:port-failure',
+    expected_oid: admitted.oid,
+    nonce: NONCE('port-failure-end'),
+    reason: 'failed',
+    handoff_or_candidate_reference: 'candidate:port-failure',
+  })
+  const throwingAttestor = { async verify() { throw new Error('attestor unavailable') } }
+  const heldByAttestor = createLeaseRegistry({ store, clock: fixture.clock, writerCap: 2, ownerEndAttestor: throwingAttestor, executionEnvelope: fixture.envelope })
+  assert.deepEqual(await heldByAttestor.release({
+    lease_id: 'lease:port-failure', expected_oid: ending.oid, expected_envelope_oid: 'e'.repeat(40),
+    expected_envelope_transition_sequence: 0, attestation: ownerEndFixture({ lease_id: 'lease:port-failure', nonce: NONCE('port-failure-attestor') }),
+  }), {
+    status: 'HELD_EXECUTION_AUTHORITY',
+    reason: 'OWNER_END_ATTESTATION_EVIDENCE_GAP',
+    reconcile_required: true,
+  })
+  const unchanged = await leaseRegistry.inspect()
+  assert.equal(unchanged.oid, ending.oid)
+})
+
+const MANAGED_BASE_SHA = 'c'.repeat(40)
+const MANAGED_HEAD_SHA = 'd'.repeat(40)
+const MANAGED_REGISTRY_OID = 'e'.repeat(40)
+const MANAGED_PROTECTION_DIGEST = 'f'.repeat(64)
+
+const managedBranchRecord = (overrides = {}) => {
+  const record = {
+    schema_version: 'managed-branch/v1',
+    branch: 'develop',
+    branch_class: 'develop',
+    owner_authority: 'authority:managed-base',
+    protection_profile_digest: MANAGED_PROTECTION_DIGEST,
+    base_ref: 'origin/main',
+    base_sha: MANAGED_BASE_SHA,
+    generation: 7,
+    scope_digest: SHA256,
+    allowed_merge_targets: ['origin/main'],
+    created_at: '2026-08-29T00:00:00.000Z',
+    renewed_at: '2026-08-29T00:00:00.000Z',
+    expires_at: '2026-08-29T01:00:00.000Z',
+    current_head_sha: MANAGED_HEAD_SHA,
+    registry_oid: MANAGED_REGISTRY_OID,
+    managed_base_lease_id: 'lease:managed-base',
+    transition_sequence: 4,
+    state: 'ACTIVE',
+    ...overrides,
+  }
+  const { canonical_digest: ignoredDigest, registry_oid: ignoredRegistryOid, ...digestInput } = record
+  return { ...record, canonical_digest: digestCanonical(digestInput) }
+}
+
+const managedRegistryState = (branch, usedNonces = {}) => ({
+  schema_version: 'managed-branch-registry/v1',
+  branch,
+  used_nonces: usedNonces,
+})
+
+const createInMemoryManagedCas = ({ branch = managedBranchRecord(), raceBarrier = undefined } = {}) => {
+  let current = { oid: branch.registry_oid, record: managedRegistryState(branch) }
+  let casCalls = 0
+  const calls = []
+  const sideEffects = { network: 0, process: 0, delete: 0, worktree: 0, acl: 0 }
+  const oidFor = (value) => createHash('sha1').update(JSON.stringify(value)).digest('hex')
+  return {
+    calls,
+    sideEffects,
+    async read() {
+      calls.push({ kind: 'read' })
+      return structuredClone(current)
+    },
+    async cas({ expected_oid, record }) {
+      calls.push({ kind: 'cas', expected_oid })
+      casCalls += 1
+      if (raceBarrier && casCalls <= 2) await raceBarrier()
+      if (current.oid !== expected_oid) {
+        return {
+          status: 'CONFLICT',
+          expected_oid,
+          actual_oid: current.oid,
+          current: structuredClone(current),
+        }
+      }
+      const previousOid = current.oid
+      const oid = oidFor(record)
+      current = { oid, record: structuredClone(record) }
+      return { status: 'STORED', oid, previous_oid: previousOid, record: structuredClone(record) }
+    },
+  }
+}
+
+const managedRenewCommand = (record, overrides = {}) => ({
+  schema_version: 'managed-branch-command/v1',
+  action: 'renew',
+  operation_id: 'operation:managed-renew',
+  owner_authority: record.owner_authority,
+  managed_base_lease_id: record.managed_base_lease_id,
+  current_generation: record.generation,
+  expected_registry_oid: record.registry_oid,
+  expected_base_sha: record.base_sha,
+  expected_head_sha: record.current_head_sha,
+  expected_protection_profile_digest: record.protection_profile_digest,
+  transition_sequence: record.transition_sequence,
+  nonce: NONCE('managed-renew'),
+  requested_expires_at: '2026-08-29T02:00:00.000Z',
+  authorized_expires_at: '2026-08-29T03:00:00.000Z',
+  ...overrides,
+})
+
+const createManagedFixture = ({ branch = managedBranchRecord(), raceBarrier = undefined } = {}) => {
+  const store = createInMemoryManagedCas({ branch, raceBarrier })
+  const clock = createClock()
+  return { store, clock, registry: createManagedBranchRegistry({ store, clock }) }
+}
+
+test('AC-39 RED — managed record is closed, digest-stable, and renew changes only its expiry transition', async () => {
+  const branch = managedBranchRecord()
+  const parsed = parseManagedBranchRecord(branch)
+  assert.deepEqual(parsed, branch)
+  assert.equal(Object.isFrozen(parsed), true)
+  assert.equal(parsed.canonical_digest, digestCanonical((({ canonical_digest, registry_oid, ...value }) => value)(branch)))
+
+  const { registry, store } = createManagedFixture({ branch })
+  const before = await registry.inspect()
+  assert.equal(before.registry_oid, MANAGED_REGISTRY_OID)
+  const renewed = await registry.renew(managedRenewCommand(before.record))
+  assert.equal(renewed.status, 'RENEWED')
+  assert.notEqual(renewed.registry_oid, before.registry_oid)
+  assert.equal(renewed.record.registry_oid, renewed.registry_oid)
+  assert.equal(renewed.record.expires_at, '2026-08-29T02:00:00.000Z')
+  assert.equal(renewed.record.renewed_at, '2026-08-29T00:00:00.000Z')
+  assert.equal(renewed.record.transition_sequence, 5)
+  assert.notEqual(renewed.record.canonical_digest, before.record.canonical_digest)
+  for (const key of [
+    'schema_version', 'branch', 'branch_class', 'owner_authority', 'protection_profile_digest', 'base_ref', 'base_sha',
+    'generation', 'scope_digest', 'allowed_merge_targets', 'created_at', 'current_head_sha', 'managed_base_lease_id', 'state',
+  ]) assert.deepEqual(renewed.record[key], before.record[key], key)
+  assert.equal(store.calls.filter((call) => call.kind === 'cas').length, 1)
+  assert.deepEqual(store.sideEffects, { network: 0, process: 0, delete: 0, worktree: 0, acl: 0 })
+})
+
+test('AC-39 RED — two same-OID renew operations have exactly one local CAS winner', async () => {
+  let arrivals = 0
+  let releaseBarrier
+  const barrier = new Promise((resolve) => { releaseBarrier = resolve })
+  const { registry } = createManagedFixture({
+    raceBarrier: async () => {
+      arrivals += 1
+      if (arrivals === 2) releaseBarrier()
+      await barrier
+    },
+  })
+  const current = (await registry.inspect()).record
+  const [left, right] = await Promise.all([
+    registry.renew(managedRenewCommand(current, { operation_id: 'operation:managed-left', nonce: NONCE('managed-left') })),
+    registry.renew(managedRenewCommand(current, { operation_id: 'operation:managed-right', nonce: NONCE('managed-right') })),
+  ])
+  assert.equal([left, right].filter((result) => result.status === 'RENEWED').length, 1)
+  const loser = [left, right].find((result) => result.status === 'HELD_MANAGED_BRANCH')
+  assert.equal(loser.reason, 'REGISTRY_CAS_CONFLICT')
+  assert.equal(loser.retention_state, 'RETAINED_FOR_REVIEW')
+})
+
+test('AC-39 RED — renewal rejects drift, replay, direct push, and unsafe fields before a CAS write', async () => {
+  const branch = managedBranchRecord()
+  const checks = [
+    ['owner', { owner_authority: 'authority:other' }, 'OWNER_MISMATCH'],
+    ['managed-base lease', { managed_base_lease_id: 'lease:other' }, 'MANAGED_BASE_LEASE_REQUIRED'],
+    ['head', { expected_head_sha: SHA1 }, 'EXPECTED_HEAD_MISMATCH'],
+    ['base', { expected_base_sha: SHA1 }, 'EXPECTED_BASE_MISMATCH'],
+    ['protection', { expected_protection_profile_digest: SHA256 }, 'PROTECTION_PROFILE_DRIFT'],
+    ['registry OID', { expected_registry_oid: SHA1 }, 'REGISTRY_OID_MISMATCH'],
+    ['generation', { current_generation: branch.generation + 1 }, 'GENERATION_MISMATCH'],
+    ['nonce', { nonce: 'too-short' }, 'NONCE_INVALID'],
+    ['expiry', { requested_expires_at: branch.expires_at }, 'EXPIRY_NOT_EXTENDED'],
+    ['policy expiry', { requested_expires_at: '2026-08-29T04:00:00.000Z' }, 'EXPIRY_POLICY_BOUND'],
+    ['direct push', { action: 'direct_push' }, 'DIRECT_PUSH_FORBIDDEN'],
+    ['unknown field', { unknown_metadata: 'forbidden' }, 'COMMAND_SCHEMA_INVALID'],
+    ['secret field', { owner_authority: 'authority:ghp_abcdefghijklmno' }, 'SECRET_MATERIAL_DETECTED'],
+  ]
+  for (const [label, patch, reason] of checks) {
+    const { registry, store } = createManagedFixture({ branch })
+    const outcome = await registry.renew(managedRenewCommand(branch, patch))
+    assert.equal(outcome.status, 'HELD_MANAGED_BRANCH', label)
+    assert.equal(outcome.reason, reason, label)
+    assert.equal(outcome.retention_state, 'RETAINED_FOR_REVIEW', label)
+    assert.equal(store.calls.filter((call) => call.kind === 'cas').length, 0, label)
+    if (label === 'direct push' || label === 'unknown field' || label === 'secret field' || label === 'nonce') {
+      assert.equal(store.calls.length, 0, label)
+    }
+  }
+
+  const { registry, store, clock } = createManagedFixture({ branch })
+  const renewed = await registry.renew(managedRenewCommand(branch))
+  assert.equal(renewed.status, 'RENEWED')
+  const replay = await registry.renew(managedRenewCommand(renewed.record, {
+    nonce: NONCE('managed-renew'),
+    operation_id: 'operation:managed-replay',
+    requested_expires_at: '2026-08-29T03:00:00.000Z',
+    authorized_expires_at: '2026-08-29T04:00:00.000Z',
+  }))
+  assert.deepEqual({ status: replay.status, reason: replay.reason, retention_state: replay.retention_state }, {
+    status: 'HELD_MANAGED_BRANCH', reason: 'NONCE_REPLAY', retention_state: 'RETAINED_FOR_REVIEW',
+  })
+  assert.equal(store.calls.filter((call) => call.kind === 'cas').length, 1)
+
+  clock.set('2026-08-29T02:00:00.000Z')
+  const expired = await registry.renew(managedRenewCommand(renewed.record, {
+    nonce: NONCE('managed-expired'), operation_id: 'operation:managed-expired',
+    requested_expires_at: '2026-08-29T04:00:00.000Z', authorized_expires_at: '2026-08-29T05:00:00.000Z',
+  }))
+  assert.deepEqual({ status: expired.status, reason: expired.reason, state: expired.state, retention_state: expired.retention_state }, {
+    status: 'HELD_MANAGED_BRANCH', reason: 'MANAGED_BRANCH_EXPIRED', state: 'FROZEN', retention_state: 'RETAINED_FOR_REVIEW',
+  })
+})

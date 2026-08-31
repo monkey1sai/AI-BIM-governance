@@ -1,5 +1,15 @@
 ## ADDED Requirements
 
+### Requirement: Counted review retirement SHALL be add-before-remove and record-gated
+
+Until the canonical Parallel Delivery Fabric activation record for the exact base SHA and policy digest reaches `AUTONOMOUS_ACTIVE`, the existing counted review SHALL remain live. A source-pinned external CheckRun must first be observed active for its exact App ID and check name in `SHADOW_DUAL`; it cannot retire the old review merely because a candidate workflow, status, or document uses the same name. `CUTOVER_ARMED` additionally requires an external-settings lease, immutable rollback snapshot, and authoritative post-change re-read.
+
+#### Scenario: The external check is not active
+
+- **WHEN**the source-pinned external check is absent, inactive, wrong-source, or not bound to the exact activation record
+- **THEN**the counted review SHALL remain live
+- **AND**the machine merge sink SHALL remain `HELD`
+
 ### Requirement: PR review agent evidence SHALL be exact-head and source-pinned
 
 PR review agent SHALL build its decision from a bounded, immutable packet tied to repository、PR number、base branch／SHA、head branch／SHA、merge-base、complete changed-path digest、diff digest、policy digest、verification-manifest digest and required-check source map. Deterministic secret scan SHALL precede model invocation；L1–L3只能接收與packet完整review-semantic diff byte-identical的candidate bytes，任何需要redaction／omission的diff SHALL block而非交給model。Packet SHALL攜帶可驗證issuer／key ID、algorithm、nonce、issued／expires timestamps及payload／artifact digests；unknown／expired／revoked signer或artifact authentication失敗 SHALL fail closed。A source-pinned external GitHub App SHALL publish the required CheckRun only after validating this packet; candidate workflows、caller-supplied SHA、PR comments、reviews或同名commit statuses SHALL NOT constitute merge authority.
@@ -141,4 +151,4 @@ PR review agent SHALL 將每次 run 分類為 `passed`、`warning`、`blocked`�
 
 **Reason**：此 requirement 與 autonomous Linux delivery 的明示目標直接衝突。啟用後，per-PR human／CODEOWNER approval 與「agent不得自動merge」不再是merge authority；安全邊界改由candidate-inaccessible external machine trust root、source-pinned exact-head CheckRun、credential separation與post-merge canonical Linux delivery提供。
 
-**Migration**：先在既有人類gate仍啟用時，以shadow mode建立external App、trusted verifier／executor、three-layer adjudication、single-flight merge/deploy transaction與live negative／positive attestation；先加入machine required check，最後一次性把required approving review count設為0、停用CODEOWNER review requirement與User approval broker。Activation完成前維持 `HELD`，不得由candidate或一般agent自行移除舊gate。
+**Migration**：先在既有人類gate仍啟用時，以shadow mode建立external App、trusted verifier／executor、three-layer adjudication、single-flight merge/deploy transaction與live negative／positive attestation；採add-before-remove，先加入source-pinned machine required check並確認external check active，之後才可依canonical activation record、external-settings lease、immutable rollback snapshot與authoritative reread處理舊gate。Activation完成前維持 `HELD`，不得由candidate或一般agent自行移除old counted review。

@@ -8,7 +8,7 @@
 1. **廢除 3-PR Demote/Reapprove 儀式**：禁止將 UI 變更拆成 3 個 PR，畫面改動與 Design Baseline 更新**一律在單一 PR 內同時交付**。
 2. **凍結元治理工具自我修復循環**：禁止主動開立 Fixpoint rebuild、Classifier repair、Ledger reconciliation 等純治理工具 PR。非阻塞告警改為 Warning，不阻擋業務代碼交付。
 3. **前端驗收以 Functional & Semantic E2E 為主**：著重於 Playwright 語意與功能驗收，放寬 1% 嚴苛 Pixel Diff 硬阻斷。
-4. **Single Active Writer 原則**：同一時間只由 1 個主要 Coordinator 負責寫入與開 PR，其他 Agent 僅擔任唯讀 Research 或局部 Debugger。
+4. **Single Active Writer 原則**：同一時間只由 1 個主要 Coordinator 負責寫入與開 PR，其他 Agent 僅擔任唯讀 Research 或局部 Debugger。Parallel Delivery Fabric 在唯一 canonical activation record 以 exact base、policy digest、外部 CheckRun tuple 驗證前，live writer cap 固定為 `writer_cap=1`；任何第二 writer 或 `direct_stack` 一律 `HELD`，不得以已核准設計或 local fixture 覆寫此規則。
 5. **主工作區絕對乾淨與強制 Worktree 隔離（全體 Agent 永久鐵律）**：
    - **主工作區**永遠保持 `main == origin/main` 且無 dirty files；任何受版控檔案或 code 變更**一律在獨立 Worktree（`AI-BIM-governance.worktrees/<name>`）實作**。
    - 所有 Task 必須經由真實測試與 **Chrome E2E 語意驗證（Playwright / Agent in Chrome）** 驗收；無實證數據絕不宣稱完成。全體 Agent（Codex、Claude、AGY、Grok）一體嚴格遵守。

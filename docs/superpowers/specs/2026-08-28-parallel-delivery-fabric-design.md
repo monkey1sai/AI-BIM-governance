@@ -2,7 +2,7 @@
 
 > 日期：2026-08-28
 >
-> 狀態：Draft — v1 擴充修訂，等待使用者重新審閱
+> 狀態：Approved — Phase 0 canonical-governance reconciliation authorized on 2026-08-28
 >
 > 方法：Superpowers Architectural brainstorming
 >

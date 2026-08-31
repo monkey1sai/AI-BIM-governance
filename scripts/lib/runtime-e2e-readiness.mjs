@@ -9,6 +9,57 @@ export function consoleText(events) {
     .join("\n");
 }
 
+function truthyRequireReal(value) {
+  return value === true || value === 1 || value === "1" || value === "true";
+}
+
+function truthySkipped(value) {
+  return value === true
+    || value === 1
+    || value === "1"
+    || value === "true"
+    || (typeof value === "number" && value > 0);
+}
+
+const REAL_E2E_BYPASS_MODES = new Set(["skip", "skipped", "mock", "simulation", "bypass", "shadow"]);
+
+/**
+ * Apply the explicit real-browser E2E policy without reading process state.
+ * Callers pass launcher-derived values so this predicate remains unit-testable.
+ */
+export function inspectRealE2E(input = {}) {
+  const requireReal = truthyRequireReal(
+    input.requireReal ?? input.e2eRequireReal ?? input.E2E_REQUIRE_REAL,
+  );
+  if (!requireReal) {
+    return { ready: true, reason: "REAL_E2E_NOT_REQUIRED" };
+  }
+
+  const skipped = truthySkipped(input.skipped ?? input.e2eSkipped)
+    || (typeof input.skippedCount === "number" && input.skippedCount > 0);
+  if (skipped) {
+    return { ready: false, reason: "REAL_E2E_SKIPPED" };
+  }
+
+  const mode = input.mode ?? input.e2eMode ?? input.verificationMode;
+  if (typeof mode === "string" && REAL_E2E_BYPASS_MODES.has(mode.trim().toLowerCase())) {
+    return { ready: false, reason: "REAL_E2E_MODE_BYPASS" };
+  }
+
+  const manifest = input.manifestPresent
+    ?? input.e2eManifestPresent
+    ?? (Boolean(input.manifest) || Boolean(input.manifestPath));
+  if (manifest !== true) {
+    return { ready: false, reason: "REAL_E2E_MANIFEST_MISSING" };
+  }
+
+  return { ready: true, reason: "REAL_E2E_EVIDENCE_PRESENT" };
+}
+
+export function isRealE2EReady(input = {}) {
+  return inspectRealE2E(input).ready;
+}
+
 const DATA_CHANNEL_EVIDENCE = [
   ["bodyHasDataChannelReply", (state) => Boolean(state.bodyHasDataChannelReply)],
   ["bodyHasMakePickableResponse", (state) => Boolean(state.bodyHasMakePickableResponse)],
@@ -30,6 +81,7 @@ function dataChannelMatch(state, log, requireDataChannel) {
 export function inspectReadiness(state, consoleEvents, options = {}) {
   const requireDataChannel = options.requireDataChannel !== false;
   const requireStageSuccess = options.requireStageSuccess !== false;
+  const realE2E = inspectRealE2E(options);
   const log = consoleText(consoleEvents);
   const hasOpenedStageSuccess =
     state.bodyHasModelLoaded
@@ -60,11 +112,12 @@ export function inspectReadiness(state, consoleEvents, options = {}) {
     && state.bodyHasArtifactUrl
     && (!requireStageSuccess || hasStageSuccess || state.bodyHasSpectatorReady)
     && (!requireDataChannel || (matchedEvidence && matchedEvidence !== "requireDataChannel:false"))
+    && realE2E.ready
     && !state.bodyHasWaitingText
     && state.pixelStats
     && state.pixelStats.nonBlack > 100
   );
-  return { ready, matchedEvidence };
+  return { ready, matchedEvidence, realE2E };
 }
 
 export function isReady(state, consoleEvents, options = {}) {

@@ -1,0 +1,528 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "parallel-delivery-fabric.schema.json",
+  "title": "Parallel Delivery Fabric durable contracts",
+  "description": "Closed, non-secret data shapes for the Fabric control plane. Host identity and credentials are intentionally represented only by opaque references and digests.",
+  "$comment": "Contract acceptance requires Draft 2020 structural validation followed by validateFabricContract(definition, value) for semantic invariants that Draft 2020 cannot express.",
+  "type": "object",
+  "additionalProperties": false,
+  "$defs": {
+    "secret_safe_string": {
+      "type": "string",
+      "not": { "pattern": "(?:[Bb][Ee][Aa][Rr][Ee][Rr]|[Tt][Oo][Kk][Ee][Nn]|[Cc][Oo][Oo][Kk][Ii][Ee]|[Aa][Uu][Tt][Hh][Oo][Rr][Ii][Zz][Aa][Tt][Ii][Oo][Nn]|[Pp][Rr][Ii][Vv][Aa][Tt][Ee][-_]?[Kk][Ee][Yy]|[Gg][Hh][PpOoUuSsRr]_|[Gg][Ii][Tt][Hh][Uu][Bb]_[Pp][Aa][Tt]_|[Ee][Yy][Jj][A-Za-z0-9_-]{10,}|(?:^|[/:])[Ss]-[0-9]+(?:-[0-9]+){2,}(?=$|[/:]))" }
+    },
+    "opaque_identity_safe_string": {
+      "type": "string",
+      "allOf": [
+        { "$ref": "#/$defs/secret_safe_string" },
+        { "not": { "pattern": "(?:^|[/:])[0-9]+$" } }
+      ]
+    },
+    "opaque_id": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{1,127}$",
+      "allOf": [
+        { "$ref": "#/$defs/opaque_identity_safe_string" }
+      ]
+    },
+    "opaque_reference": {
+      "allOf": [
+        { "$ref": "#/$defs/opaque_id" },
+        { "pattern": "^[a-z][a-z0-9_-]*:[a-z0-9][a-z0-9._:/-]{0,119}$" }
+      ]
+    },
+    "nullable_opaque_id": {
+      "anyOf": [{ "type": "null" }, { "$ref": "#/$defs/opaque_id" }]
+    },
+    "nullable_opaque_reference": {
+      "anyOf": [{ "type": "null" }, { "$ref": "#/$defs/opaque_reference" }]
+    },
+    "nullable_sha1": {
+      "anyOf": [{ "type": "null" }, { "$ref": "#/$defs/sha1" }]
+    },
+    "nullable_sha256": {
+      "anyOf": [{ "type": "null" }, { "$ref": "#/$defs/sha256" }]
+    },
+    "nullable_timestamp": {
+      "anyOf": [{ "type": "null" }, { "$ref": "#/$defs/timestamp" }]
+    },
+    "nullable_secret_safe_string": {
+      "anyOf": [
+        { "type": "null" },
+        {
+          "allOf": [
+            { "$ref": "#/$defs/secret_safe_string" },
+            { "type": "string", "maxLength": 256 }
+          ]
+        }
+      ]
+    },
+    "repository_path": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512,
+      "pattern": "^(?!/)(?![A-Za-z]:[\\\\/])(?!.*[\\\\/]{2})(?!.*(?:^|[\\\\/])\\.{1,2}(?:[\\\\/]|$))[^\\u0000\\r\\n*?\\[\\]{}]+$",
+      "allOf": [{ "$ref": "#/$defs/secret_safe_string" }]
+    },
+    "repository_glob": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512,
+      "pattern": "^(?!/)(?![A-Za-z]:[\\\\/])(?!.*[\\\\/]{2})(?!.*(?:^|[\\\\/])\\.{1,2}(?:[\\\\/]|$))[^\\u0000\\r\\n]+$",
+      "allOf": [{ "$ref": "#/$defs/secret_safe_string" }]
+    },
+    "repository_full_name": {
+      "allOf": [
+        { "$ref": "#/$defs/secret_safe_string" },
+        { "type": "string", "maxLength": 200, "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$" }
+      ]
+    },
+    "nonce": {
+      "allOf": [
+        { "$ref": "#/$defs/secret_safe_string" },
+        { "type": "string", "minLength": 32, "maxLength": 128, "pattern": "^[A-Za-z0-9_-]{32,128}$" }
+      ]
+    },
+    "route": {
+      "allOf": [
+        { "$ref": "#/$defs/secret_safe_string" },
+        { "type": "string", "minLength": 1, "maxLength": 256, "pattern": "^/[^\\r\\n]*$" }
+      ]
+    },
+    "sha1": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$"
+    },
+    "repository_identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["full_name", "repository_id", "common_dir_digest"],
+      "properties": {
+        "full_name": { "$ref": "#/$defs/repository_full_name" },
+        "repository_id": { "type": "integer", "minimum": 1 },
+        "common_dir_digest": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "path_resource": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "path"],
+      "properties": {
+        "kind": { "const": "path" },
+        "path": { "$ref": "#/$defs/repository_path" }
+      }
+    },
+    "glob_resource": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "pattern"],
+      "properties": {
+        "kind": { "const": "glob" },
+        "pattern": { "$ref": "#/$defs/repository_glob" }
+      }
+    },
+    "rename_resource": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "old_path", "new_path"],
+      "properties": {
+        "kind": { "const": "rename" },
+        "old_path": { "$ref": "#/$defs/repository_path" },
+        "new_path": { "$ref": "#/$defs/repository_path" }
+      }
+    },
+    "shared_resource": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "resource_key"],
+      "properties": {
+        "kind": { "enum": ["shared_contract", "exported_symbol", "schema", "event", "migration", "runtime"] },
+        "resource_key": { "$ref": "#/$defs/resource_key" }
+      }
+    },
+    "scope_resource": {
+      "oneOf": [
+        { "$ref": "#/$defs/path_resource" },
+        { "$ref": "#/$defs/glob_resource" },
+        { "$ref": "#/$defs/rename_resource" },
+        { "$ref": "#/$defs/shared_resource" }
+      ]
+    },
+    "scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["owning_service", "public_entrypoint", "resources", "expected_tests", "e2e_required"],
+      "properties": {
+        "owning_service": { "$ref": "#/$defs/opaque_id" },
+        "public_entrypoint": { "$ref": "#/$defs/repository_path" },
+        "resources": { "type": "array", "minItems": 1, "maxItems": 256, "items": { "$ref": "#/$defs/scope_resource" } },
+        "expected_tests": { "type": "array", "minItems": 1, "maxItems": 128, "uniqueItems": true, "items": { "$ref": "#/$defs/opaque_reference" } },
+        "e2e_required": { "type": "boolean" }
+      }
+    },
+    "task": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["task_id", "outcome", "provider_preference", "owner_session", "scope", "dependencies", "risk", "e2e_required"],
+      "properties": {
+        "task_id": { "$ref": "#/$defs/opaque_reference" },
+        "outcome": { "$ref": "#/$defs/opaque_id" },
+        "provider_preference": { "enum": ["codex", "claude"] },
+        "owner_session": { "$ref": "#/$defs/opaque_reference" },
+        "scope": { "$ref": "#/$defs/scope" },
+        "dependencies": { "type": "array", "maxItems": 64, "uniqueItems": true, "items": { "$ref": "#/$defs/opaque_reference" } },
+        "risk": { "enum": ["low", "bounded", "high", "critical"] },
+        "e2e_required": { "type": "boolean" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "scope": { "properties": { "e2e_required": { "const": true } }, "required": ["e2e_required"] } }, "required": ["scope"] },
+          "then": { "properties": { "e2e_required": { "const": true } }, "required": ["e2e_required"] }
+        },
+        {
+          "if": { "properties": { "scope": { "properties": { "e2e_required": { "const": false } }, "required": ["e2e_required"] } }, "required": ["scope"] },
+          "then": { "properties": { "e2e_required": { "const": false } }, "required": ["e2e_required"] }
+        }
+      ]
+    },
+    "capacity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["writers", "runtime_leases"],
+      "properties": {
+        "writers": { "type": "integer", "minimum": 1, "maximum": 2 },
+        "runtime_leases": { "type": "integer", "minimum": 0, "maximum": 3 }
+      }
+    },
+    "plan": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "plan_id", "generation", "repo_identity", "created_at", "coordinator_session", "baseline_ref", "resolved_baseline_sha", "tasks", "requested_capacity", "branch_profile", "acceptance_criteria", "promotion_mode", "requested_execution_level", "authority_reference", "governance_source_refs"],
+      "properties": {
+        "schema_version": { "const": "parallel-delivery-fabric/v1" },
+        "plan_id": { "$ref": "#/$defs/opaque_reference" },
+        "generation": { "type": "integer", "minimum": 1 },
+        "repo_identity": { "$ref": "#/$defs/repository_identity" },
+        "created_at": { "$ref": "#/$defs/timestamp" },
+        "coordinator_session": { "$ref": "#/$defs/opaque_reference" },
+        "baseline_ref": { "$ref": "#/$defs/opaque_id" },
+        "resolved_baseline_sha": { "$ref": "#/$defs/sha1" },
+        "tasks": { "type": "array", "minItems": 1, "maxItems": 64, "items": { "$ref": "#/$defs/task" } },
+        "requested_capacity": { "$ref": "#/$defs/capacity" },
+        "branch_profile": { "enum": ["trunk", "managed_gitflow"] },
+        "acceptance_criteria": { "type": "array", "minItems": 1, "maxItems": 128, "uniqueItems": true, "items": { "$ref": "#/$defs/opaque_reference" } },
+        "promotion_mode": { "enum": ["single_pr", "direct_stack"] },
+        "requested_execution_level": { "enum": ["plan_only", "implement_local", "push_owned_branch", "open_draft_pr", "submit_delivery"] },
+        "authority_reference": { "$ref": "#/$defs/opaque_reference" },
+        "governance_source_refs": { "type": "array", "minItems": 1, "maxItems": 64, "uniqueItems": true, "items": { "$ref": "#/$defs/opaque_reference" } }
+      }
+    },
+    "lease": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "resource_key", "lease_kind", "lease_id", "plan_id", "generation", "task_id", "provider", "owner_session", "execution_context_id", "context_attestation_ref", "context_attestation_digest", "acquired_at", "heartbeat_seq", "heartbeat_at", "expected_registry_sha", "repo_identity_digest", "common_dir_digest", "worktree_id", "worktree_path_digest", "branch", "scope_digest", "state", "release_evidence_ref", "retention_state"],
+      "properties": {
+        "schema_version": { "const": "lease-registry/v1" },
+        "resource_key": { "$ref": "#/$defs/resource_key" },
+        "lease_kind": { "enum": ["writer_seat", "task_resource"] },
+        "lease_id": { "$ref": "#/$defs/opaque_id" }, "plan_id": { "$ref": "#/$defs/opaque_id" },
+        "generation": { "type": "integer", "minimum": 1 }, "task_id": { "$ref": "#/$defs/opaque_id" },
+        "provider": { "enum": ["codex", "claude"] }, "owner_session": { "$ref": "#/$defs/opaque_id" },
+        "execution_context_id": { "$ref": "#/$defs/opaque_id" }, "context_attestation_ref": { "$ref": "#/$defs/opaque_id" },
+        "context_attestation_digest": { "$ref": "#/$defs/sha256" }, "acquired_at": { "$ref": "#/$defs/timestamp" },
+        "heartbeat_seq": { "type": "integer", "minimum": 1 }, "heartbeat_at": { "$ref": "#/$defs/timestamp" },
+        "expected_registry_sha": { "$ref": "#/$defs/sha1" }, "repo_identity_digest": { "$ref": "#/$defs/sha256" },
+        "common_dir_digest": { "$ref": "#/$defs/sha256" }, "worktree_id": { "$ref": "#/$defs/opaque_id" },
+        "worktree_path_digest": { "$ref": "#/$defs/sha256" }, "branch": { "$ref": "#/$defs/opaque_id" },
+        "scope_digest": { "$ref": "#/$defs/sha256" },
+        "state": { "enum": ["ACQUIRING", "ACTIVE", "RELEASING", "RELEASED", "SUSPECT", "HELD_CONFLICT", "HELD_SCOPE_DRIFT", "HELD_EXECUTION_CONTEXT", "HELD_EXECUTION_AUTHORITY", "HELD_PROVIDER_CONFIGURATION", "HELD_TOPOLOGY_UNSUPPORTED"] },
+        "release_evidence_ref": { "$ref": "#/$defs/nullable_opaque_reference" },
+        "retention_state": { "enum": ["ACTIVE", "RETAINED_FOR_REVIEW", "RECLAIM_HANDOFF"] }
+      }
+    },
+    "provider_session": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "plan_id", "generation", "task_id", "provider", "owner_session", "provider_session_id", "execution_context_id", "repo_identity_digest", "common_dir_digest", "worktree_id", "worktree_path_digest", "branch", "baseline_sha", "scope_digest", "resource_keys", "lease_id", "heartbeat_seq", "heartbeat_state", "heartbeat_at", "context_attestation_ref", "context_attestation_digest", "evidence_head_sha", "evidence_refs", "handoff_id", "adapter_version"],
+      "properties": {
+        "schema_version": { "const": "provider-session-envelope/v1" }, "plan_id": { "$ref": "#/$defs/opaque_reference" },
+        "generation": { "type": "integer", "minimum": 1 }, "task_id": { "$ref": "#/$defs/opaque_reference" },
+        "provider": { "enum": ["codex", "claude"] }, "owner_session": { "$ref": "#/$defs/opaque_reference" },
+        "provider_session_id": { "$ref": "#/$defs/opaque_reference" }, "execution_context_id": { "$ref": "#/$defs/opaque_reference" },
+        "repo_identity_digest": { "$ref": "#/$defs/sha256" }, "common_dir_digest": { "$ref": "#/$defs/sha256" },
+        "worktree_id": { "$ref": "#/$defs/opaque_reference" }, "worktree_path_digest": { "$ref": "#/$defs/sha256" },
+        "branch": { "$ref": "#/$defs/opaque_id" }, "baseline_sha": { "$ref": "#/$defs/sha1" },
+        "scope_digest": { "$ref": "#/$defs/sha256" },
+        "resource_keys": { "type": "array", "minItems": 1, "maxItems": 256, "uniqueItems": true, "items": { "$ref": "#/$defs/resource_key" } },
+        "lease_id": { "$ref": "#/$defs/opaque_reference" }, "heartbeat_seq": { "type": "integer", "minimum": 1 },
+        "heartbeat_state": { "enum": ["ACTIVE", "SUSPECT", "HANDOFF_READY"] }, "heartbeat_at": { "$ref": "#/$defs/timestamp" },
+        "context_attestation_ref": { "$ref": "#/$defs/opaque_reference" }, "context_attestation_digest": { "$ref": "#/$defs/sha256" },
+        "evidence_head_sha": { "$ref": "#/$defs/sha1" },
+        "evidence_refs": { "type": "array", "minItems": 1, "maxItems": 128, "uniqueItems": true, "items": { "$ref": "#/$defs/opaque_reference" } },
+        "handoff_id": { "$ref": "#/$defs/nullable_opaque_reference" },
+        "adapter_version": { "$ref": "#/$defs/opaque_id" }
+      }
+    },
+    "candidate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "candidate_id", "task_id", "branch", "pr_number", "head_sha", "base_ref", "base_sha", "scope_digest", "dependency_shas", "checks_digest", "review_packet_digest", "e2e_evidence_refs", "generation", "created_at", "invalidated_at", "invalidation_reason"],
+      "properties": {
+        "schema_version": { "const": "candidate-envelope/v1" }, "candidate_id": { "$ref": "#/$defs/opaque_id" },
+        "task_id": { "$ref": "#/$defs/opaque_id" }, "branch": { "$ref": "#/$defs/opaque_id" }, "pr_number": { "type": "integer", "minimum": 1 },
+        "head_sha": { "$ref": "#/$defs/sha1" }, "base_ref": { "$ref": "#/$defs/opaque_id" }, "base_sha": { "$ref": "#/$defs/sha1" },
+        "scope_digest": { "$ref": "#/$defs/sha256" }, "dependency_shas": { "type": "array", "maxItems": 64, "uniqueItems": true, "items": { "$ref": "#/$defs/sha1" } },
+        "checks_digest": { "$ref": "#/$defs/sha256" }, "review_packet_digest": { "$ref": "#/$defs/sha256" },
+        "e2e_evidence_refs": { "type": "array", "maxItems": 64, "uniqueItems": true, "items": { "$ref": "#/$defs/opaque_id" } },
+        "generation": { "type": "integer", "minimum": 1 }, "created_at": { "$ref": "#/$defs/timestamp" },
+        "invalidated_at": { "$ref": "#/$defs/nullable_timestamp" }, "invalidation_reason": { "$ref": "#/$defs/nullable_secret_safe_string" }
+      }
+    },
+    "managed_branch": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "branch", "branch_class", "owner_authority", "protection_profile_digest", "base_ref", "base_sha", "generation", "scope_digest", "allowed_merge_targets", "created_at", "renewed_at", "expires_at", "current_head_sha", "registry_oid", "managed_base_lease_id", "transition_sequence", "state", "canonical_digest"],
+      "properties": {
+        "schema_version": { "const": "managed-branch/v1" }, "branch": { "$ref": "#/$defs/opaque_id" },
+        "branch_class": { "enum": ["develop", "release", "hotfix"] }, "owner_authority": { "$ref": "#/$defs/opaque_id" },
+        "protection_profile_digest": { "$ref": "#/$defs/sha256" }, "base_ref": { "$ref": "#/$defs/opaque_id" }, "base_sha": { "$ref": "#/$defs/sha1" },
+        "generation": { "type": "integer", "minimum": 1 }, "scope_digest": { "$ref": "#/$defs/sha256" },
+        "allowed_merge_targets": { "type": "array", "minItems": 1, "maxItems": 8, "uniqueItems": true, "items": { "$ref": "#/$defs/opaque_id" } },
+        "created_at": { "$ref": "#/$defs/timestamp" }, "renewed_at": { "$ref": "#/$defs/timestamp" }, "expires_at": { "$ref": "#/$defs/timestamp" },
+        "current_head_sha": { "$ref": "#/$defs/sha1" }, "registry_oid": { "$ref": "#/$defs/sha1" },
+        "managed_base_lease_id": { "$ref": "#/$defs/opaque_reference" }, "transition_sequence": { "type": "integer", "minimum": 0 },
+        "state": { "enum": ["ACTIVE", "FROZEN", "REBASE_REQUIRED"] }, "canonical_digest": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "stack_member": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["pr_number", "node_id", "position", "head_ref", "head_sha", "direct_base_ref", "direct_base_sha", "exact_head_packet_digest", "checks_digest", "independent_review_digest", "e2e_required", "e2e_result_digest", "unresolved_finding_state"],
+      "properties": {
+        "pr_number": { "type": "integer", "minimum": 1 }, "node_id": { "$ref": "#/$defs/opaque_reference" },
+        "position": { "type": "integer", "minimum": 1 }, "head_ref": { "$ref": "#/$defs/opaque_id" }, "head_sha": { "$ref": "#/$defs/sha1" },
+        "direct_base_ref": { "$ref": "#/$defs/opaque_id" }, "direct_base_sha": { "$ref": "#/$defs/sha1" },
+        "exact_head_packet_digest": { "$ref": "#/$defs/sha256" }, "checks_digest": { "$ref": "#/$defs/sha256" }, "independent_review_digest": { "$ref": "#/$defs/sha256" },
+        "e2e_required": { "type": "boolean" }, "e2e_result_digest": { "$ref": "#/$defs/nullable_sha256" }, "unresolved_finding_state": { "const": "none" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "e2e_required": { "const": true } }, "required": ["e2e_required"] },
+          "then": { "properties": { "e2e_result_digest": { "$ref": "#/$defs/sha256" } }, "required": ["e2e_result_digest"] }
+        },
+        {
+          "if": { "properties": { "e2e_required": { "const": false } }, "required": ["e2e_required"] },
+          "then": { "properties": { "e2e_result_digest": { "const": null } }, "required": ["e2e_result_digest"] }
+        }
+      ]
+    },
+    "stack": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "stack_id", "trunk_ref", "trunk_sha", "selected_top_pr", "ordered_member_vector_digest", "merge_action", "merge_method", "members", "expected_protection_digest", "capability_reference", "deployment_target_reference", "created_at", "expires_at"],
+      "properties": {
+        "schema_version": { "const": "stack-delivery-envelope/v1" }, "stack_id": { "$ref": "#/$defs/opaque_reference" }, "trunk_ref": { "$ref": "#/$defs/opaque_id" }, "trunk_sha": { "$ref": "#/$defs/sha1" },
+        "selected_top_pr": { "type": "integer", "minimum": 1 }, "ordered_member_vector_digest": { "$ref": "#/$defs/sha256" }, "merge_action": { "const": "direct_merge" }, "merge_method": { "const": "merge" },
+        "members": { "type": "array", "minItems": 1, "maxItems": 64, "items": { "$ref": "#/$defs/stack_member" } }, "expected_protection_digest": { "$ref": "#/$defs/sha256" },
+        "capability_reference": { "$ref": "#/$defs/opaque_reference" }, "deployment_target_reference": { "$ref": "#/$defs/opaque_reference" },
+        "created_at": { "$ref": "#/$defs/timestamp" }, "expires_at": { "$ref": "#/$defs/timestamp" }
+      }
+    },
+    "train": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "train_id", "generation", "integration_base_ref", "integration_base_sha", "candidate_heads", "dependency_edges_digest", "synthetic_integration_sha", "runtime_manifest_digest", "checks_digest", "interaction_failure_refs", "created_at", "expires_at"],
+      "properties": {
+        "schema_version": { "const": "integration-train/v1" }, "train_id": { "$ref": "#/$defs/opaque_id" }, "generation": { "type": "integer", "minimum": 1 },
+        "integration_base_ref": { "$ref": "#/$defs/opaque_id" }, "integration_base_sha": { "$ref": "#/$defs/sha1" },
+        "candidate_heads": { "type": "array", "minItems": 1, "maxItems": 64, "uniqueItems": true, "items": { "$ref": "#/$defs/sha1" } },
+        "dependency_edges_digest": { "$ref": "#/$defs/sha256" }, "synthetic_integration_sha": { "$ref": "#/$defs/sha1" }, "runtime_manifest_digest": { "$ref": "#/$defs/sha256" },
+        "checks_digest": { "$ref": "#/$defs/sha256" }, "interaction_failure_refs": { "type": "array", "maxItems": 64, "uniqueItems": true, "items": { "$ref": "#/$defs/opaque_id" } },
+        "created_at": { "$ref": "#/$defs/timestamp" }, "expires_at": { "$ref": "#/$defs/timestamp" }
+      }
+    },
+    "execution_envelope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "envelope_id", "plan_id", "generation", "task_id", "owner_session", "provider", "provider_session_id", "execution_context_id", "context_attestation_digest", "issuer_id", "issuer_version", "authority_reference", "authority_digest", "issued_at", "expires_at", "revocation_epoch", "command_nonce", "authorized_highest_level", "current_level", "transition_sequence", "expected_previous_envelope_oid", "expected_lease_registry_oid", "repo_identity_digest", "common_dir_digest", "worktree_id", "worktree_path_digest", "branch", "baseline_sha", "head_sha", "scope_digest", "lease_id", "allowed_remote", "allowed_repository", "allowed_base", "expected_remote_ref", "expected_remote_sha", "promotion_mode", "external_capability_reference", "side_effect_class"],
+      "properties": {
+        "schema_version": { "const": "execution-envelope/v1" }, "envelope_id": { "$ref": "#/$defs/opaque_reference" }, "plan_id": { "$ref": "#/$defs/opaque_reference" }, "generation": { "type": "integer", "minimum": 1 }, "task_id": { "$ref": "#/$defs/opaque_reference" }, "owner_session": { "$ref": "#/$defs/opaque_reference" }, "provider": { "enum": ["codex", "claude"] }, "provider_session_id": { "$ref": "#/$defs/opaque_reference" }, "execution_context_id": { "$ref": "#/$defs/opaque_reference" }, "context_attestation_digest": { "$ref": "#/$defs/sha256" }, "issuer_id": { "$ref": "#/$defs/opaque_reference" }, "issuer_version": { "$ref": "#/$defs/opaque_id" }, "authority_reference": { "$ref": "#/$defs/opaque_reference" }, "authority_digest": { "$ref": "#/$defs/sha256" }, "issued_at": { "$ref": "#/$defs/timestamp" }, "expires_at": { "$ref": "#/$defs/timestamp" }, "revocation_epoch": { "type": "integer", "minimum": 0 }, "command_nonce": { "$ref": "#/$defs/nonce" }, "authorized_highest_level": { "enum": ["plan_only", "implement_local", "push_owned_branch", "open_draft_pr", "submit_delivery"] }, "current_level": { "enum": ["plan_only", "implement_local", "push_owned_branch", "open_draft_pr", "submit_delivery"] }, "transition_sequence": { "type": "integer", "minimum": 0, "maximum": 4 }, "expected_previous_envelope_oid": { "$ref": "#/$defs/sha1" }, "expected_lease_registry_oid": { "$ref": "#/$defs/sha1" }, "repo_identity_digest": { "$ref": "#/$defs/sha256" }, "common_dir_digest": { "$ref": "#/$defs/sha256" }, "worktree_id": { "$ref": "#/$defs/nullable_opaque_reference" }, "worktree_path_digest": { "$ref": "#/$defs/nullable_sha256" }, "branch": { "$ref": "#/$defs/nullable_opaque_id" }, "baseline_sha": { "$ref": "#/$defs/sha1" }, "head_sha": { "$ref": "#/$defs/nullable_sha1" }, "scope_digest": { "$ref": "#/$defs/sha256" }, "lease_id": { "$ref": "#/$defs/nullable_opaque_reference" }, "allowed_remote": { "$ref": "#/$defs/opaque_id" }, "allowed_repository": { "$ref": "#/$defs/opaque_id" }, "allowed_base": { "$ref": "#/$defs/opaque_id" }, "expected_remote_ref": { "$ref": "#/$defs/nullable_opaque_id" }, "expected_remote_sha": { "$ref": "#/$defs/nullable_sha1" }, "promotion_mode": { "enum": ["single_pr", "direct_stack"] }, "external_capability_reference": { "$ref": "#/$defs/nullable_opaque_reference" }, "side_effect_class": { "enum": ["CONTROL_METADATA", "CANDIDATE_FILESYSTEM", "REMOTE_GIT_GITHUB", "HOST_RUNTIME_SECURITY", "EXTERNAL_ENVIRONMENT"] }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "current_level": { "const": "plan_only" } }, "required": ["current_level"] },
+          "then": {
+            "properties": {
+              "transition_sequence": { "const": 0 },
+              "side_effect_class": { "const": "CONTROL_METADATA" },
+              "worktree_id": { "const": null },
+              "worktree_path_digest": { "const": null },
+              "branch": { "const": null },
+              "head_sha": { "const": null },
+              "lease_id": { "const": null },
+              "expected_remote_ref": { "const": null },
+              "expected_remote_sha": { "const": null },
+              "external_capability_reference": { "const": null }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "current_level": { "const": "implement_local" } }, "required": ["current_level"] },
+          "then": { "properties": { "transition_sequence": { "const": 1 }, "authorized_highest_level": { "enum": ["implement_local", "push_owned_branch", "open_draft_pr", "submit_delivery"] } } }
+        },
+        {
+          "if": { "properties": { "current_level": { "const": "push_owned_branch" } }, "required": ["current_level"] },
+          "then": { "properties": { "transition_sequence": { "const": 2 }, "authorized_highest_level": { "enum": ["push_owned_branch", "open_draft_pr", "submit_delivery"] } } }
+        },
+        {
+          "if": { "properties": { "current_level": { "const": "open_draft_pr" } }, "required": ["current_level"] },
+          "then": { "properties": { "transition_sequence": { "const": 3 }, "authorized_highest_level": { "enum": ["open_draft_pr", "submit_delivery"] } } }
+        },
+        {
+          "if": { "properties": { "current_level": { "const": "submit_delivery" } }, "required": ["current_level"] },
+          "then": { "properties": { "transition_sequence": { "const": 4 }, "authorized_highest_level": { "const": "submit_delivery" } } }
+        }
+      ]
+    },
+    "queue_observation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "snapshot_id", "snapshot_generation", "observed_at", "expires_at", "source_digest", "eligibility", "merge_group_sha", "member_vector_digest", "queue_position", "group_checks_digest", "state"],
+      "properties": {
+        "schema_version": { "const": "merge-queue-observation/v1" }, "snapshot_id": { "$ref": "#/$defs/opaque_id" }, "snapshot_generation": { "type": "integer", "minimum": 1 }, "observed_at": { "$ref": "#/$defs/timestamp" }, "expires_at": { "$ref": "#/$defs/timestamp" }, "source_digest": { "$ref": "#/$defs/sha256" }, "eligibility": { "enum": ["eligible", "unsupported", "unknown"] }, "merge_group_sha": { "$ref": "#/$defs/nullable_sha1" }, "member_vector_digest": { "$ref": "#/$defs/sha256" }, "queue_position": { "type": ["integer", "null"], "minimum": 1 }, "group_checks_digest": { "$ref": "#/$defs/sha256" }, "state": { "enum": ["OBSERVED", "INVALIDATED", "HELD_QUEUE_CAPABILITY"] }
+      }
+    },
+    "handoff": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "handoff_id", "plan_id", "generation", "task_id", "from_session", "to_session", "scope_digest", "head_sha", "created_at", "evidence_refs"],
+      "properties": {
+        "schema_version": { "const": "handoff/v1" }, "handoff_id": { "$ref": "#/$defs/opaque_id" }, "plan_id": { "$ref": "#/$defs/opaque_id" }, "generation": { "type": "integer", "minimum": 1 }, "task_id": { "$ref": "#/$defs/opaque_id" }, "from_session": { "$ref": "#/$defs/opaque_id" }, "to_session": { "$ref": "#/$defs/opaque_id" }, "scope_digest": { "$ref": "#/$defs/sha256" }, "head_sha": { "$ref": "#/$defs/sha1" }, "created_at": { "$ref": "#/$defs/timestamp" }, "evidence_refs": { "type": "array", "minItems": 1, "maxItems": 128, "uniqueItems": true, "items": { "$ref": "#/$defs/opaque_id" } }
+      }
+    },
+    "reclaim_intent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "reclaim_id", "issuer", "issuer_version", "observed_at", "expires_at", "nonce", "target_reference", "target_digest", "owner_proof_status", "lease_correlation", "revocation_epoch", "expected_registry_oid"],
+      "properties": {
+        "schema_version": { "const": "reclaim-intent/v1" }, "reclaim_id": { "$ref": "#/$defs/opaque_id" }, "issuer": { "$ref": "#/$defs/opaque_id" }, "issuer_version": { "$ref": "#/$defs/opaque_id" }, "observed_at": { "$ref": "#/$defs/timestamp" }, "expires_at": { "$ref": "#/$defs/timestamp" }, "nonce": { "$ref": "#/$defs/nonce" }, "target_reference": { "$ref": "#/$defs/opaque_id" }, "target_digest": { "$ref": "#/$defs/sha256" }, "owner_proof_status": { "enum": ["MATCH", "MISMATCH", "UNKNOWN"] }, "lease_correlation": { "$ref": "#/$defs/opaque_id" }, "revocation_epoch": { "type": "integer", "minimum": 0 }, "expected_registry_oid": { "$ref": "#/$defs/sha1" }
+      }
+    },
+    "owner_end_release": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "release_id", "plan_id", "generation", "task_id", "lease_id", "lease_kind", "owner_session", "provider", "provider_session_id", "execution_context_id", "final_heartbeat_seq", "final_head_sha", "scope_digest", "worktree_path_digest", "handoff_or_candidate_reference", "release_reason", "owner_end_attestation_ref", "owner_end_attestation_digest", "attestor_issuer", "attestor_version", "observed_at", "expires_at", "nonce", "revocation_epoch", "expected_registry_oid", "expected_envelope_oid", "transition_sequence", "retained_resource_keys"],
+      "properties": {
+        "schema_version": { "const": "lease-release/v1" }, "release_id": { "$ref": "#/$defs/opaque_id" }, "plan_id": { "$ref": "#/$defs/opaque_id" }, "generation": { "type": "integer", "minimum": 1 }, "task_id": { "$ref": "#/$defs/opaque_id" }, "lease_id": { "$ref": "#/$defs/opaque_id" }, "lease_kind": { "const": "writer_seat" }, "owner_session": { "$ref": "#/$defs/opaque_id" }, "provider": { "enum": ["codex", "claude"] }, "provider_session_id": { "$ref": "#/$defs/opaque_id" }, "execution_context_id": { "$ref": "#/$defs/opaque_id" }, "final_heartbeat_seq": { "type": "integer", "minimum": 1 }, "final_head_sha": { "$ref": "#/$defs/sha1" }, "scope_digest": { "$ref": "#/$defs/sha256" }, "worktree_path_digest": { "$ref": "#/$defs/sha256" }, "handoff_or_candidate_reference": { "$ref": "#/$defs/opaque_id" }, "release_reason": { "enum": ["handoff", "failed", "aborted"] }, "owner_end_attestation_ref": { "$ref": "#/$defs/opaque_id" }, "owner_end_attestation_digest": { "$ref": "#/$defs/sha256" }, "attestor_issuer": { "$ref": "#/$defs/opaque_id" }, "attestor_version": { "$ref": "#/$defs/opaque_id" }, "observed_at": { "$ref": "#/$defs/timestamp" }, "expires_at": { "$ref": "#/$defs/timestamp" }, "nonce": { "$ref": "#/$defs/nonce" }, "revocation_epoch": { "type": "integer", "minimum": 0 }, "expected_registry_oid": { "$ref": "#/$defs/sha1" }, "expected_envelope_oid": { "$ref": "#/$defs/sha1" }, "transition_sequence": { "type": "integer", "minimum": 0 }, "retained_resource_keys": { "type": "array", "minItems": 1, "maxItems": 256, "uniqueItems": true, "items": { "$ref": "#/$defs/resource_key" } }
+      }
+    },
+    "e2e_manifest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "manifest_id", "candidate_head_sha", "applicability_record_digest", "manifest_digest", "stack_kind", "head_sha", "tree_digest", "manifest_path_digest", "manifest_sha256", "manifest_sha256_at_start", "manifest_sha256_at_publication", "execution_window", "offset", "ports", "base_urls", "branch", "worktree_id", "worktree_path_digest", "route", "main_buttons", "fixture_reference", "api_reference", "runtime_reference", "visible_state", "network_digest", "trace_sha256", "screenshot_sha256", "trace_reference", "screenshot_reference", "command_records_digest", "runtime_identity_digest", "runtime_lineage_digest", "listener_digest", "reserved_port_guard", "trusted_verifier_sha", "trusted_binder_sha", "verifier_tree_digest", "harness_digest", "computer_use_authority_digest", "verification_mode", "candidate_harness_status", "created_at"],
+      "properties": {
+        "schema_version": { "const": "e2e-manifest/v1" },
+        "manifest_id": { "$ref": "#/$defs/opaque_id" },
+        "candidate_head_sha": { "$ref": "#/$defs/sha1" },
+        "applicability_record_digest": { "$ref": "#/$defs/sha256" },
+        "manifest_digest": { "$ref": "#/$defs/sha256" },
+        "stack_kind": { "const": "isolated_branch_stack" },
+        "head_sha": { "$ref": "#/$defs/sha1" },
+        "tree_digest": { "$ref": "#/$defs/sha256" },
+        "manifest_path_digest": { "$ref": "#/$defs/sha256" },
+        "manifest_sha256": { "$ref": "#/$defs/sha256" },
+        "manifest_sha256_at_start": { "$ref": "#/$defs/sha256" },
+        "manifest_sha256_at_publication": { "$ref": "#/$defs/sha256" },
+        "execution_window": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["started_at", "finished_at"],
+          "properties": {
+            "started_at": { "$ref": "#/$defs/timestamp" },
+            "finished_at": { "$ref": "#/$defs/timestamp" }
+          }
+        },
+        "offset": { "type": "integer", "minimum": 0, "maximum": 4 },
+        "ports": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["coordinator", "governance", "viewer"],
+          "properties": {
+            "coordinator": { "type": "integer", "minimum": 1, "maximum": 65535 },
+            "governance": { "type": "integer", "minimum": 1, "maximum": 65535 },
+            "viewer": { "type": "integer", "minimum": 1, "maximum": 65535 }
+          }
+        },
+        "base_urls": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["coordinator", "governance", "viewer"],
+          "properties": {
+            "coordinator": { "$ref": "#/$defs/secret_safe_string" },
+            "governance": { "$ref": "#/$defs/secret_safe_string" },
+            "viewer": { "$ref": "#/$defs/secret_safe_string" }
+          }
+        },
+        "branch": { "$ref": "#/$defs/opaque_id" },
+        "worktree_id": { "$ref": "#/$defs/opaque_id" },
+        "worktree_path_digest": { "$ref": "#/$defs/sha256" },
+        "route": { "$ref": "#/$defs/secret_safe_string" },
+        "main_buttons": { "type": "array", "minItems": 1, "maxItems": 64, "items": { "$ref": "#/$defs/secret_safe_string" } },
+        "fixture_reference": { "$ref": "#/$defs/secret_safe_string" },
+        "api_reference": { "$ref": "#/$defs/secret_safe_string" },
+        "runtime_reference": { "$ref": "#/$defs/secret_safe_string" },
+        "visible_state": { "$ref": "#/$defs/secret_safe_string" },
+        "network_digest": { "$ref": "#/$defs/sha256" },
+        "trace_sha256": { "$ref": "#/$defs/sha256" },
+        "screenshot_sha256": { "$ref": "#/$defs/sha256" },
+        "trace_reference": { "$ref": "#/$defs/opaque_id" },
+        "screenshot_reference": { "$ref": "#/$defs/opaque_id" },
+        "command_records_digest": { "$ref": "#/$defs/sha256" },
+        "runtime_identity_digest": { "$ref": "#/$defs/sha256" },
+        "runtime_lineage_digest": { "$ref": "#/$defs/sha256" },
+        "listener_digest": { "$ref": "#/$defs/sha256" },
+        "reserved_port_guard": { "const": "clean" },
+        "trusted_verifier_sha": { "$ref": "#/$defs/sha256" },
+        "trusted_binder_sha": { "$ref": "#/$defs/sha256" },
+        "verifier_tree_digest": { "$ref": "#/$defs/sha256" },
+        "harness_digest": { "$ref": "#/$defs/sha256" },
+        "computer_use_authority_digest": { "$ref": "#/$defs/sha256" },
+        "verification_mode": { "const": "canonical" },
+        "candidate_harness_status": { "const": "unchanged" },
+        "created_at": { "$ref": "#/$defs/timestamp" }
+      }
+    },
+    "activation_record": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "phase", "base_sha", "policy_digest", "writer_cap", "external_check_name", "external_app_id", "activated_at"],
+      "properties": {
+        "schema_version": { "const": "parallel-delivery-fabric-activation/v1" }, "phase": { "enum": ["LEGACY_GUARDED", "SHADOW_DUAL", "CUTOVER_ARMED", "CANARY_ACTIVE", "AUTONOMOUS_ACTIVE"] }, "base_sha": { "$ref": "#/$defs/sha1" }, "policy_digest": { "$ref": "#/$defs/sha256" }, "writer_cap": { "enum": [1, 2] }, "external_check_name": { "$ref": "#/$defs/opaque_id" }, "external_app_id": { "type": "integer", "minimum": 1 }, "activated_at": { "$ref": "#/$defs/timestamp" }
+      }
+    },
+    "external_terminal": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["phase", "terminal_class", "reason_code"],
+      "properties": {
+        "phase": { "const": "CLOSED" }, "terminal_class": { "enum": ["DELIVERED", "FAILED", "HELD"] }, "reason_code": { "enum": ["DELIVERY_VERIFIED", "MERGED_NOT_DELIVERED", "MERGE_OUTCOME_UNVERIFIED", "PREMERGE_EVIDENCE_INVALID", "PREMERGE_AUTHORITY_UNAVAILABLE", "POLICY_OR_SETTINGS_DRIFT"] }
+      },
+      "oneOf": [
+        { "properties": { "terminal_class": { "const": "DELIVERED" }, "reason_code": { "const": "DELIVERY_VERIFIED" } } },
+        { "properties": { "terminal_class": { "const": "FAILED" }, "reason_code": { "const": "MERGED_NOT_DELIVERED" } } },
+        { "properties": { "terminal_class": { "const": "HELD" }, "reason_code": { "enum": ["MERGE_OUTCOME_UNVERIFIED", "PREMERGE_EVIDENCE_INVALID", "PREMERGE_AUTHORITY_UNAVAILABLE", "POLICY_OR_SETTINGS_DRIFT"] } } }
+      ]
+    },
+    "resource_key": {
+      "allOf": [
+        { "$ref": "#/$defs/opaque_identity_safe_string" },
+        { "type": "string", "minLength": 3, "maxLength": 256, "pattern": "^[a-z][a-z0-9_-]*:[a-z0-9][a-z0-9._:/-]{0,255}$" }
+      ]
+    }
+  }
+}

@@ -1441,12 +1441,14 @@ function Invoke-IsolatedBranchStack {
         [scriptblock]$StopListenerLookupFn={param($port) Get-IsolatedPortListener -Port $port},
         [scriptblock]$ListenerProcessOwnershipFn={param($expected,$listenerProcessId,$port) Test-IsolatedListenerProcessOwnership -Expected $expected -ListenerProcessId $listenerProcessId -Port $port},
         [scriptblock]$HeadShaFn={param($root) (& git -C $root rev-parse HEAD).Trim()},
-        [scriptblock]$WorktreeStatusFn={param($root) & git -C $root status --porcelain --untracked-files=all},
-        [scriptblock]$ReservationAcquireFn={param($root,$change,$run,$offset) Acquire-IsolatedStackReservations -RepoRoot $root -ChangeId $change -RunId $run -Offset $offset},
-        [scriptblock]$ReservationReleaseFn={param($reservation) Release-IsolatedStackReservations -Reservation $reservation},
-        [scriptblock]$ReservationRecoveryHoldFn={param($reservation) Set-IsolatedStackReservationRecoveryHeld -Reservation $reservation},
-        [int]$TerminationTimeoutMilliseconds=5000,
-        $LifecycleLogger=$null
+      [scriptblock]$WorktreeStatusFn={param($root) & git -C $root status --porcelain --untracked-files=all},
+      [scriptblock]$ReservationAcquireFn={param($root,$change,$run,$offset) Acquire-IsolatedStackReservations -RepoRoot $root -ChangeId $change -RunId $run -Offset $offset},
+      [scriptblock]$ReservationReleaseFn={param($reservation) Release-IsolatedStackReservations -Reservation $reservation},
+      [scriptblock]$ReservationRecoveryHoldFn={param($reservation) Set-IsolatedStackReservationRecoveryHeld -Reservation $reservation},
+      [int]$TerminationTimeoutMilliseconds=5000,
+       $LifecycleLogger=$null,
+       [scriptblock]$SafeEnvironmentContract=$null,
+       [scriptblock]$BrowserSpecFn=$null
     )
     Assert-SafeStackSegment -Name 'ChangeId' -Value $ChangeId
     Assert-SafeStackSegment -Name 'RunId' -Value $RunId
@@ -1478,10 +1480,48 @@ function Invoke-IsolatedBranchStack {
         return $stopResult
     }
 
-    $effectiveOffset = if ([string]::IsNullOrWhiteSpace($OffsetInput)) { '0' } else { $OffsetInput }
-    Assert-IsolatedCleanWorktree -RepoRoot $RepoRoot -StatusFn $WorktreeStatusFn
-    $null = Resolve-IsolatedStackPorts -OffsetInput $effectiveOffset
-    $reservation = & $ReservationAcquireFn $RepoRoot $ChangeId $RunId ([int]$effectiveOffset)
+   $effectiveOffset = if ([string]::IsNullOrWhiteSpace($OffsetInput)) { '0' } else { $OffsetInput }
+   Assert-IsolatedCleanWorktree -RepoRoot $RepoRoot -StatusFn $WorktreeStatusFn
+    $ports = Resolve-IsolatedStackPorts -OffsetInput $effectiveOffset
+    if ($null -ne $SafeEnvironmentContract) {
+        try {
+            $safeEnvironmentResult = & $SafeEnvironmentContract $RepoRoot $ChangeId $RunId ([int]$effectiveOffset) $ports
+        } catch {
+            throw 'Safe environment contract rejected.'
+        }
+        if ($safeEnvironmentResult -isnot [bool] -or -not [bool]$safeEnvironmentResult) {
+            throw 'Safe environment contract rejected.'
+        }
+    }
+   if ($null -ne $BrowserSpecFn) {
+       try {
+           $browserSpec = & $BrowserSpecFn $RepoRoot $ChangeId $RunId ([int]$effectiveOffset) $ports
+            $browserSpecBase = [System.Management.Automation.PSObject]::AsPSObject($browserSpec).BaseObject
+            if ($browserSpecBase -isnot [hashtable]) {
+                throw 'Browser specification rejected.'
+            }
+            if ($browserSpecBase.Count -ne 3 -or
+                -not $browserSpecBase.ContainsKey('schema_version') -or
+                -not $browserSpecBase.ContainsKey('base_url') -or
+                -not $browserSpecBase.ContainsKey('expected_port')) {
+                throw 'Browser specification rejected.'
+            }
+            $schemaVersion = $browserSpecBase['schema_version']
+            $baseUrl = $browserSpecBase['base_url']
+            $expectedPort = $browserSpecBase['expected_port']
+            if ($schemaVersion -isnot [string] -or
+                $baseUrl -isnot [string] -or
+                $expectedPort -isnot [int] -or
+                $schemaVersion -cne 'isolated-browser-spec/v1' -or
+                $baseUrl -cne "http://127.0.0.1:$($ports.viewer)" -or
+                $expectedPort -ne [int]$ports.viewer) {
+                throw 'Browser specification rejected.'
+            }
+        } catch {
+           throw 'Browser specification rejected.'
+       }
+   }
+   $reservation = & $ReservationAcquireFn $RepoRoot $ChangeId $RunId ([int]$effectiveOffset)
     $releaseReservation = $true
     try {
         $preflight=& $PreflightFn $RepoRoot $ChangeId $RunId $effectiveOffset

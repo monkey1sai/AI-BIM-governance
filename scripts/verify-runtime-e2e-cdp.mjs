@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
-import { inspectReadiness } from "./lib/runtime-e2e-readiness.mjs";
+import { inspectReadiness, inspectRealE2E } from "./lib/runtime-e2e-readiness.mjs";
 import { createRuntimeE2eCdpRpc } from "./lib/cdp-rpc.mjs";
 
 const cwd = process.cwd();
@@ -15,6 +15,36 @@ const singleOnly = process.env.RUNTIME_E2E_SINGLE_ONLY === "1";
 const skipSingle = process.env.RUNTIME_E2E_SKIP_SINGLE === "1";
 const separateBrowsers = process.env.RUNTIME_E2E_SEPARATE_BROWSERS === "1";
 const sameKitOnly = process.env.RUNTIME_E2E_SAME_KIT_ONLY === "1";
+const e2eRequireReal = process.env.E2E_REQUIRE_REAL === "1";
+const e2eStackManifest = process.env.E2E_STACK_MANIFEST || "";
+const directNoMedia = process.env.RUNTIME_E2E_DIRECT_NO_MEDIA === "1";
+const e2eSkipObservation = process.env.E2E_SKIP === "1" || skipSingle || sameKitOnly || singleOnly || directNoMedia;
+const e2eModeObservation = process.env.E2E_MODE || process.env.RUNTIME_E2E_MODE || "canonical";
+const realE2EOptions = Object.freeze({
+  requireReal: e2eRequireReal,
+  e2eRequireReal,
+  E2E_REQUIRE_REAL: e2eRequireReal,
+  manifestPath: e2eStackManifest,
+  manifestPresent: e2eStackManifest.trim().length > 0,
+  skipped: e2eSkipObservation,
+  mode: e2eModeObservation,
+});
+const startupRealE2E = inspectRealE2E(realE2EOptions);
+if (e2eRequireReal && !startupRealE2E.ready) {
+  throw new Error(`E2E_REQUIRE_REAL preflight failed: ${startupRealE2E.reason}`);
+}
+
+function readinessOptions(overrides = {}) {
+  const mode = e2eModeObservation.toLowerCase() === "canonical"
+    ? (overrides.mode ?? e2eModeObservation)
+    : e2eModeObservation;
+  return {
+    ...overrides,
+    ...realE2EOptions,
+    skipped: e2eSkipObservation || overrides.skipped === true,
+    mode,
+  };
+}
 
 function numberEnv(name, fallback) {
   const value = Number(process.env[name] || fallback);
@@ -267,7 +297,7 @@ async function waitForRuntimeReady(page, label, options = {}) {
   let last = null;
   while (Date.now() < deadline) {
     last = await page.evaluate(readinessExpression);
-    const inspection = inspectReadiness(last, page.console, options);
+    const inspection = inspectReadiness(last, page.console, readinessOptions(options));
     last.matchedEvidence = inspection.matchedEvidence;
     if (inspection.ready) {
       return last;

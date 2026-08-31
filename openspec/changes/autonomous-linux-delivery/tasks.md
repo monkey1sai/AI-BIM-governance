@@ -7,7 +7,7 @@
 - [x] 1.3 定義並驗證closed `phase`、`terminal_class=DELIVERED|FAILED|HELD`、v1 `reason_code` transition table，以及delivery／attempt／supersedes append-only lineage與queue-lock語意。
 - [ ] 1.4 將 `human_critical` policy輸入遷移成 `critical_machine_adjudication`，為舊值提供明確拒絕／遷移錯誤，且不建立human-approval fallback。
 - [x] 1.5 新增contract parse、unknown-field／enum、illegal transition、attempt rewrite與secret-redaction tests，證明malformed／incomplete input fail closed。
-- [x] 1.6 實作closed PR classifier：`draft_report_only|ordinary|repair|reconciliation|activation_canary|activation_closure|revert|release_hotfix`；固定repair／revert failure lineage、merge ambiguity與post-active fixpoint reconciliation、activation-only closure的互斥適用範圍，證明每個exact tuple恰屬一類且沒有human fallback。
+- [x] 1.6 定義closed PR classifier：`draft_report_only|ordinary|repair|activation_canary|revert|release_hotfix`；promotion mode為mutually exclusive `single_pr|direct_stack`，每個exact tuple恰屬一類且不得切換mode。`reconciliation`與`activation_closure`未來工作 **Superseded by `parallel-delivery-fabric`**，不得以它們修改historical lifecycle ledger。
 
 ## 2. Exact-head evidence 與 deterministic gate
 
@@ -39,9 +39,9 @@
 
 - [ ] 5.1 實作per-repository single-flight lock，涵蓋merge preparation到terminal delivery；concurrent ordinary PR在前一筆完成前不得進入merge sink。
 - [ ] 5.2 建立append-only delivery／attempt ledger，強制 `PR head → merge commit = fetched origin/main = deployed commit`，並綁定supersedes、target／runner descriptors、commands與authenticated evidence references。
-- [ ] 5.3 實作queue freeze與closed lane mapping：merge／fixpoint不可證明的 `HELD` 只開放bound reconciliation，`FAILED/MERGED_NOT_DELIVERED` 只開放bound repair／revert，其他post-merge `HELD`不開放sink；證明merge成功、ancestor包含或部分runtime evidence不會產生 `DELIVERED`。
+- [ ] 5.3 實作queue freeze與closed lane mapping：任何merge或delivery不可證明的 `HELD` 不開放新sink；`FAILED/MERGED_NOT_DELIVERED` 只開放bound repair／revert。future fixpoint／reconciliation lane **Superseded by `parallel-delivery-fabric`**；證明merge成功、ancestor包含或部分runtime evidence不會產生 `DELIVERED`。
 - [ ] 5.4 只允許deterministically classified transient failure對相同commit／command做一次redeploy；其餘失敗建立綁定delivery ID的新repair／revert PR lineage。
-- [ ] 5.5 新增concurrent merge、commit attribution drift、lock recovery、same-commit retry budget、repair／revert／reconciliation互斥lane與append-only history tests。
+- [ ] 5.5 新增concurrent merge、commit attribution drift、lock recovery、same-commit retry budget、repair／revert互斥lane與append-only history tests；不得新增reconciliation lane或terminal state。
 
 ## 6. Canonical Linux rebuild 與 post-deploy verification
 
@@ -51,20 +51,20 @@
 - [ ] 6.4 在啟動 `deploy.ps1` 前實作read-only port／process preflight；blocker只記錄non-secret identity、不得stop且以 `HELD`結案，command啟動後nonzero則唯一映射 `FAILED`。
 - [ ] 6.5 只在target內執行 `scripts\deploy.ps1 -Build`，禁止 `local-windows`、`-DryRun`、`-Force`、當前worktree、stale ref與替代啟動命令。
 - [ ] 6.6 將runner contract拆成Linux build／health／API／integration／Kit／WebRTC／artifact readback與Windows DPR1 design／跨網段browser operability，並綁定runner、target、fixture、runtime IDs與digests。
-- [ ] 6.7 實作sanitized terminal CheckRun／delivery event publisher；只有exact commit與全部required Linux／Windows gates成功才輸出 `DELIVERED/DELIVERY_VERIFIED`，retry／fixpoint建立linked attempt。
+- [ ] 6.7 實作sanitized terminal CheckRun／delivery event publisher；只有exact commit與全部required Linux／Windows gates成功才輸出 `DELIVERED/DELIVERY_VERIFIED`，retry或repair建立linked attempt，historical lifecycle ledger保持byte-frozen。
 - [ ] 6.8 新增inventory missing／ambiguous、non-Linux target、fresh-fetch／exact-equality failure、partial health、Windows runner／network unavailable、signer revoked、artifact auth、egress／quota與secret leakage tests。
 
 ## 7. Self-referential bootstrap 與一次性 activation
 
-- [ ] 7.1 為所有merge／verification／deploy mechanism paths建立bootstrap ledger opening contract，並證明candidate版本只作data、由先前attested external policy裁決。
-- [ ] 7.2 定義並驗證signed `activation-plan`：每phase列exact command／ID、authority、pre-state digest、server observation、artifact schema、pass／failure state與rollback command ID，不保存private topology。
+- [x] 7.1 **Superseded by `parallel-delivery-fabric`**：不再建立bootstrap ledger opening、fixpoint或reconciliation closure；historical lifecycle ledger永久byte-frozen，future mechanism closure只可用一個ordinary protected PR。
+- [x] 7.2 定義canonical activation record：`phase`、`base_sha`、`policy_digest`、`writer_cap`、`external_check_name`、`external_app_id`、`activated_at`；不保存private topology，未驗證前維持 `writer_cap=1`。
 - [ ] 7.3 在 `LEGACY_GUARDED` 且merge sink disabled時完成App、signer／trusted verifier／executor、authenticated artifact store、credential brokers、Linux／Windows runners的一次性owner provisioning及non-secret attestation。
 - [ ] 7.4 在 `SHADOW_DUAL` 執行live negative matrix：wrong／revoked source、head/base與non-head drift、candidate mechanism mutation、credential inheritance、ruleset mismatch、concurrent delivery、commit mismatch、artifact／egress／quota與secret redaction全部fail closed。
-- [ ] 7.5 在舊gate仍為唯一merge authority時先加入source-pinned machine required check並執行shadow observation；machine gate不可用時確認merge保持blocked。
-- [ ] 7.6 進入 `CUTOVER_ARMED`：owner broker取得settings lease與exact rollback snapshot，在sink disabled時把approvals設0／CODEOWNER off／停用User broker，authoritative reread不符即rollback。
-- [ ] 7.7 在 `CANARY_ACTIVE` 先讓manifest-pinned `activation_canary` 以machine-only REST merge與exact delivery完成；再由其merge commit／open debt導出single-use `activation_closure` tuple，只准ledger＋該entry新fixpoint evidence paths。
-- [ ] 7.8 Closure-only PR以machine gates／REST CAS／exact delivery關閉oldest debt；canary與closure皆 `DELIVERED`、settings reread相等後才進入 `AUTONOMOUS_ACTIVE`，任何額外path／PR即rollback `HELD`。
-- [ ] 7.9 在 `AUTONOMOUS_ACTIVE` 以綁定debt與delivery ID的 `reconciliation` PR完成一般self-referential fixpoint closure；fixpoint command已啟動後的可重現negative結果則轉入repair／revert lineage，且ordinary queue全程凍結。
+- [ ] 7.5 在舊counted review仍為唯一merge authority時先加入source-pinned machine required check並執行shadow observation；machine gate不可用時確認merge保持blocked。
+- [ ] 7.6 進入 `CUTOVER_ARMED` 前驗證external CheckRun active、external-settings lease與immutable rollback snapshot；只加入source-pinned machine check並authoritative reread，舊counted review保持live且machine merge sink保持disabled，reread不符即rollback。
+- [ ] 7.7 在 `CANARY_ACTIVE` 只讓manifest-pinned disposable `activation_canary` 以existing counted review加source-pinned external CheckRun的dual-gated exact-head delivery完成，machine merge sink保持disabled；不得產生closure-only tuple、ledger mutation、fixpoint或reconciliation。
+- [ ] 7.8 只有canary以 `DELIVERED` 完成、fresh settings reread與canonical activation record完整驗證為 `AUTONOMOUS_ACTIVE` 後，owner-controlled broker才可retire counted review；任何額外path／PR即rollback `HELD`。
+- [ ] 7.9 在 `AUTONOMOUS_ACTIVE` 維持single-flight ordinary delivery與repair／revert lineage；只有一般PR才可走machine-only exact-head path，不得重新開啟fixpoint、reconciliation或歷史ledger lifecycle。
 
 ## 8. 文件、回歸驗證與 closeout
 
@@ -72,5 +72,5 @@
 - [ ] 8.2 更新或退役 `blip-approve`／`pr-approve-bot` 等approval主路徑文件與技能，保留歷史但不得讓它們成為active merge authority。
 - [ ] 8.3 執行affected typecheck、lint、unit／contract／integration tests，以及repo lifecycle、OpenSpec strict、closed state／G1–G12、signer／artifact／secret-redaction與self-referential bootstrap verifiers。
 - [ ] 8.4 對所有修改的shared symbols依Lane G執行GitNexus impact與commit前detect-changes；HIGH補上測試／隔離策略，CRITICAL取得明示sign-off。
-- [ ] 8.5 執行PR local preflight與machine-truth檢查，逐項記錄G1–G12、checks、exact-head lease／adjudication、App／signer source、merge observation、canonical Linux／Windows runtime與fixpoint evidence。
-- [ ] 8.6 在實作PR merge且fixpoint closure完成後同步canonical specs、archive本change、更新lifecycle ledger／NOW，並只以 `DELIVERED|FAILED|HELD` terminal class加closed reason code完成交接。
+- [ ] 8.5 執行PR local preflight與machine-truth檢查，逐項記錄G1–G12、checks、exact-head lease／adjudication、App／signer source、merge observation、canonical Linux／Windows runtime與activation-record evidence。
+- [ ] 8.6 在實作PR merge後同步canonical specs、archive本change與NOW，但不得更新historical lifecycle ledger；交接僅使用 `DELIVERED|FAILED|HELD` terminal class加closed reason code。

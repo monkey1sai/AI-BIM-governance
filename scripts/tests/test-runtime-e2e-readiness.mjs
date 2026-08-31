@@ -1,6 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { isReady, inspectReadiness, consoleText } from '../lib/runtime-e2e-readiness.mjs';
+import {
+  consoleText,
+  inspectReadiness,
+  inspectRealE2E,
+  isReady,
+  isRealE2EReady,
+} from '../lib/runtime-e2e-readiness.mjs';
 
 // A page state that satisfies every gate except the DataChannel axis, so each test below
 // isolates exactly one variable: which console/body signal supplies DataChannel evidence.
@@ -116,4 +122,37 @@ test('consoleText flattens CDP arg shapes without throwing on empty events', () 
     'a\nb\nc',
   );
   assert.equal(consoleText([{}]), '');
+});
+
+test('require-real readiness rejects skipped or missing-manifest evidence', () => {
+  assert.deepEqual(inspectRealE2E({ requireReal: true, skipped: false, manifestPresent: true }), {
+    ready: true,
+    reason: 'REAL_E2E_EVIDENCE_PRESENT',
+  });
+  assert.equal(isRealE2EReady({ requireReal: true, skipped: true, manifestPresent: true }), false);
+  assert.equal(isRealE2EReady({ requireReal: true, skipped: false, manifestPresent: false }), false);
+  assert.equal(isRealE2EReady({ requireReal: false, skipped: true, manifestPresent: false }), true);
+  assert.equal(
+    inspectReadiness(baseState(), consoleEvents(), { requireReal: true, skipped: true, manifestPresent: true }).ready,
+    false,
+  );
+});
+
+test('require-real readiness accepts a manifestPath fallback and rejects bypass modes', () => {
+  assert.equal(
+    isRealE2EReady({ requireReal: true, skipped: false, manifestPath: 'E2E_STACK_MANIFEST' }),
+    true,
+  );
+  assert.equal(
+    isRealE2EReady({ requireReal: true, skipped: false, manifest: null, manifestPath: 'E2E_STACK_MANIFEST' }),
+    true,
+  );
+  assert.equal(
+    isRealE2EReady({ requireReal: true, skipped: false, manifest: false }),
+    false,
+  );
+  assert.equal(
+    isRealE2EReady({ requireReal: true, skipped: false, mode: 'bypass', manifestPath: 'E2E_STACK_MANIFEST' }),
+    false,
+  );
 });
