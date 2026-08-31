@@ -31,16 +31,16 @@ describe("SessionIdleCountdownBanner (session-lifecycle frontend countdown & kee
   });
 
   const createMockSocket = () => {
-    const handlers: Record<string, Function> = {};
+    const handlers: Record<string, (payload: { session_id?: string; remaining_seconds?: number; reason?: string }) => void> = {};
     return {
-      on: vi.fn((event: string, callback: Function) => {
+      on: vi.fn((event: string, callback: (payload: { session_id?: string; remaining_seconds?: number; reason?: string }) => void) => {
         handlers[event] = callback;
       }),
       off: vi.fn((event: string) => {
         delete handlers[event];
       }),
       emit: vi.fn(),
-      trigger: (event: string, payload: unknown) => {
+      trigger: (event: string, payload: { session_id?: string; remaining_seconds?: number; reason?: string }) => {
         handlers[event]?.(payload);
       },
     };

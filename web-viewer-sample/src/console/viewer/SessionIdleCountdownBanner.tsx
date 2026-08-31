@@ -3,7 +3,11 @@ import { coordinatorClient } from "../coordinatorClient";
 
 export interface SessionIdleCountdownBannerProps {
   sessionId: string;
-  socket?: any;
+  socket?: {
+    on?: (event: string, callback: (payload: { session_id?: string; remaining_seconds?: number; reason?: string }) => void) => void;
+    off?: (event: string, callback: (payload: { session_id?: string; remaining_seconds?: number; reason?: string }) => void) => void;
+    emit?: (event: string, payload?: unknown) => void;
+  };
   onKeepAlive?: () => void;
   onClosed?: () => void;
 }
