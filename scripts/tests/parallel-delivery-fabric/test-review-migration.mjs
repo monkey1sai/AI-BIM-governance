@@ -50,7 +50,7 @@ test('AC-14 — review migration stays LEGACY_GUARDED and cannot retire the coun
   assert.equal(decision.phase, 'LEGACY_GUARDED')
 })
 
-test('AC-08 — second live writer remains HELD until external activation', () => {
+test('AC-08 — direct_stack remains HELD until external activation', () => {
   const policy = loadAutonomousCodexReviewPolicy()
   assert.equal(policy.phase, 'LEGACY_GUARDED')
   assert.notEqual(policy.phase, 'AUTONOMOUS_ACTIVE')

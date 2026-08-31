@@ -675,7 +675,7 @@ test('AC-06 — indeterminate admission overlap queues without exposing scope or
   assert.deepEqual(record, before)
 })
 
-test('5H — evaluateAdmission uses canonical Task3 records for cap-two and resource ownership', async () => {
+test('5H — evaluateAdmission uses canonical Task3 records for disjoint writers and resource ownership', async () => {
   const oneSeat = await canonicalTask3AdmissionRecord()
   assertStatus(evaluateAdmission(oneSeat, request()), 'ADMITTED')
 
@@ -683,7 +683,31 @@ test('5H — evaluateAdmission uses canonical Task3 records for cap-two and reso
     {},
     { provider: 'claude' },
   ])
-  assertStatus(evaluateAdmission(full, request({ provider: 'claude', generation: full.generation })), 'QUEUED_FOR_LEASE', 'WRITER_CAPACITY')
+  assertStatus(evaluateAdmission(full, request({
+    provider: 'claude',
+    generation: full.generation,
+    lease_id: 'lease:third',
+    owner_session: 'session:third',
+    provider_session_id: 'provider:third',
+    execution_context_id: 'context:third',
+    worktree_id: 'worktree:third',
+    worktree_path_digest: SHA256_C,
+    branch: 'codex/task-three',
+    scope: [{ kind: 'path', path: 'src/task-three.mjs' }],
+  })), 'ADMITTED')
+
+  const occupied = await canonicalTask3AdmissionRecord()
+  const existing = Object.values(occupied.leases)[0]
+  assertStatus(evaluateAdmission(occupied, request({
+    lease_id: 'lease:same-branch',
+    owner_session: 'session:same-branch',
+    provider_session_id: 'provider:same-branch',
+    execution_context_id: 'context:same-branch',
+    worktree_id: 'worktree:same-branch',
+    worktree_path_digest: SHA256_C,
+    branch: existing.branch,
+    scope: [{ kind: 'path', path: 'src/other.mjs' }],
+  })), 'QUEUED_FOR_LEASE', 'BRANCH_CONTENTION')
 
   const overlap = await canonicalTask3AdmissionRecord([{ resource_keys: ['path:src/existing.mjs'] }])
   assertStatus(evaluateAdmission(overlap, request({ scope: [{ kind: 'path', path: 'src/existing.mjs' }] })), 'QUEUED_FOR_LEASE', 'RESOURCE_CONFLICT')

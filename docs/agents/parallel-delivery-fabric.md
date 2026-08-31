@@ -4,7 +4,7 @@ Document version: `parallel-delivery-fabric-operator-policy/v1`
 
 Requirement map version: `parallel-delivery-fabric-acceptance-requirements/v1`
 
-Requirement map SHA-256: `dbb5a47b7da01b33b9a0a62f1788053f43ce0935108252cf53546cdf77af4483`
+Requirement map SHA-256: `eb88f419f9a2bc72379c688db3d13ca93e608e448324f8efad0e3a4f1a37faf1`
 
 This is a descriptive, shadow-only operator policy. It records the approved
 acceptance obligations and their authority boundaries; it does not create a
@@ -13,8 +13,11 @@ runtime, remote, review, merge, deployment, host, or recovery action.
 
 ## Operating boundary
 
-The Fabric remains shadow-only with `writer_cap=1`. A second writer, direct
-stack delivery, and autonomous promotion require an externally attested,
+The Fabric remains shadow-only for merge, review cutover, and autonomous
+promotion. Session admission is not count-capped: disjoint writers with an
+independent branch, worktree, and declared touch-set are admitted. Same-branch
+contention and overlapping or unknown touch-sets remain blockers. Direct
+stack delivery and autonomous promotion still require an externally attested,
 base-pinned activation record. This document cannot create that record or
 advance a review phase.
 

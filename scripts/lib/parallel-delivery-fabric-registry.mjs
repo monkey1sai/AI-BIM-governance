@@ -388,24 +388,24 @@ const validateLeaseRequest = (request, store) => {
   return null
 }
 
-const occupancy = (lease) => (
-  lease.lease_kind === 'writer_seat' &&
-  !(lease.state === 'RELEASED' && typeof lease.release_evidence_ref === 'string')
-)
-
 const resourceHeld = (lease) => lease.state !== 'RELEASED' || lease.retention_state === 'RETAINED_FOR_REVIEW'
 
-const findAdmissionBlocker = (record, request, writerCap) => {
+const findAdmissionBlocker = (record, request) => {
   if (record.leases[request.lease_id]) {
     return { status: 'HELD_EXECUTION_AUTHORITY', reason: 'LEASE_ID_ALREADY_BOUND' }
   }
   for (const lease of Object.values(record.leases)) {
-    if (resourceHeld(lease) && request.resource_keys.some((key) => lease.resource_keys.includes(key))) {
+    if (!resourceHeld(lease)) continue
+    if (request.resource_keys.some((key) => lease.resource_keys.includes(key))) {
       return { status: 'QUEUED_FOR_LEASE', reason: 'RESOURCE_CONFLICT' }
     }
+    if (lease.branch === request.branch) {
+      return { status: 'QUEUED_FOR_LEASE', reason: 'BRANCH_CONTENTION' }
+    }
+    if (lease.worktree_id === request.worktree_id) {
+      return { status: 'QUEUED_FOR_LEASE', reason: 'WORKTREE_CONTENTION' }
+    }
   }
-  const occupiedSeats = Object.values(record.leases).filter(occupancy).length
-  if (occupiedSeats >= writerCap) return { status: 'QUEUED_FOR_LEASE', reason: 'WRITER_CAPACITY' }
   return null
 }
 
@@ -613,12 +613,16 @@ const validateLeaseRegistryRecord = (record, writerCap) => {
   if (record.schema_version !== 'session-lease-registry/v1' || record.writer_cap !== writerCap || !isObject(record.leases) ||
       !isObject(record.used_owner_end_attestations)) fail('registry_record_invalid', 'lease_registry_shape')
   assertStamped(record, 'lease_registry')
+  const heldBranches = new Set()
+  const heldWorktrees = new Set()
   for (const [leaseId, lease] of Object.entries(record.leases)) {
     assertTask2OpaqueId(leaseId, 'lease_registry.lease_key')
     validateLeaseRecord(lease, leaseId)
-  }
-  if (Object.values(record.leases).filter(occupancy).length > writerCap) {
-    fail('registry_record_invalid', 'lease_registry_writer_capacity')
+    if (!resourceHeld(lease)) continue
+    if (heldBranches.has(lease.branch)) fail('registry_record_invalid', 'lease_registry_branch_contention')
+    if (heldWorktrees.has(lease.worktree_id)) fail('registry_record_invalid', 'lease_registry_worktree_contention')
+    heldBranches.add(lease.branch)
+    heldWorktrees.add(lease.worktree_id)
   }
   for (const [attestationRef, used] of Object.entries(record.used_owner_end_attestations)) {
     assertTask2OpaqueId(attestationRef, 'lease_registry.used_attestation_ref')
@@ -852,7 +856,7 @@ export function createLeaseRegistry({ store, clock, writerCap = WRITER_CAP_V1, o
     if (topology) return topology
     const snapshot = await registrySnapshot(store, writerCap)
     if (snapshot.status === 'HELD_REGISTRY_INTEGRITY') return snapshot
-    const blocker = findAdmissionBlocker(snapshot.record, request, writerCap)
+    const blocker = findAdmissionBlocker(snapshot.record, request)
     if (blocker) return blocker
     const timestamp = nowFrom(clock)
     const lease = createLeaseRecord(request, timestamp)

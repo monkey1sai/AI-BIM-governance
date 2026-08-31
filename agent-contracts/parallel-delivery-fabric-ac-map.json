@@ -7,7 +7,7 @@
         {
           "kind": "positive",
           "test_file": "scripts/tests/parallel-delivery-fabric/test-registry.mjs",
-          "test_name": "AC-01 \u2014 cross-provider admission is bounded"
+          "test_name": "AC-01 \u2014 cross-provider disjoint writers are admitted"
         }
       ]
     },
@@ -17,7 +17,7 @@
         {
           "kind": "positive",
           "test_file": "scripts/tests/parallel-delivery-fabric/test-registry.mjs",
-          "test_name": "AC-02 \u2014 same-provider sessions cannot bypass the global writer cap"
+          "test_name": "AC-02 \u2014 same-provider disjoint sessions are admitted without a writer-count cap"
         }
       ]
     },
@@ -77,7 +77,7 @@
         {
           "kind": "positive",
           "test_file": "scripts/tests/parallel-delivery-fabric/test-review-migration.mjs",
-          "test_name": "AC-08 \u2014 second live writer remains HELD until external activation"
+          "test_name": "AC-08 \u2014 direct_stack remains HELD until external activation"
         }
       ]
     },

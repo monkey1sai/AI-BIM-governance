@@ -187,7 +187,7 @@ main checkout 或 sibling worktree 開發 → branch → PR → CI 綠 → merge
 
 ### Parallel Delivery Fabric Phase 0 activation boundary
 
-已核准的 Fabric design 不改變目前 GitHub machine truth。直到唯一 canonical activation record 對 exact base SHA、policy digest、`writer_cap`、source-pinned external CheckRun name/App ID 與 activation time 完整驗證前，repo 保持單一 writer、`direct_stack=HELD`，並保留既有 counted review。review migration 必須 add-before-remove：external CheckRun 在 exact tuple 上 active、外部設定 lease/rollback snapshot/re-read 齊全，且 disposable canary 已通過前，不得移除 old counted review 或宣稱 autonomous activation。此段不授權 push、approve、merge、deploy、branch-protection 或 external-settings mutation。
+已核准的 Fabric design 不改變目前 GitHub machine truth。直到唯一 canonical activation record 對 exact base SHA、policy digest、`writer_cap`、source-pinned external CheckRun name/App ID 與 activation time 完整驗證前，session 開發不以 writer 數量為 blocker，但每個 writer 必須獨立 branch／worktree／touch-set；`direct_stack=HELD`，並保留既有 counted review。review migration 必須 add-before-remove：external CheckRun 在 exact tuple 上 active、外部設定 lease/rollback snapshot/re-read 齊全，且 disposable canary 已通過前，不得移除 old counted review 或宣稱 autonomous activation。此段不授權 push、approve、merge、deploy、branch-protection 或 external-settings mutation。
 
 Lane F/B 不自動啟動 ship-cycle。只有使用者明確要求 ship，或 Lane S 的已核准 spec 授權自主推進時，才使用 `.claude/workflows/ship-item.md`（commit→push→PR→local preflight→CI watch→buffered merge→closeout）。Lane G 預設停在 PR ready。完整 gate、reviewer buffer、finding fix 與 trusted-host human-approval contract 以 `ship-item.md` 為準。GitHub native merge（`gh pr merge`，非 trusted-host elevated sink）在 counted `monkey1sai-blip` APPROVE 之後，依下方 2026-08-20 owner 常設授權由 coordinating agent 決定。
 

@@ -321,13 +321,19 @@ test('Phase 0 has one canonical, inactive-until-attested delivery authority', ()
   const recordClause = findClause(activationProse, (value) => value.includes('record SHALL contain'), 'activation record fields');
   assertExactEnum(codeTokens(recordClause), ACTIVATION_RECORD_FIELDS, 'activation record fields');
   const capacityTokens = clauses(activationProse)
-    .filter((value) => value.includes('writer_cap=1') || value.includes('writer_cap=2') || value.includes('direct_stack'))
+    .filter((value) => value.includes('direct_stack'))
     .flatMap(codeTokens);
-  assert.deepEqual(capacityTokens, ['writer_cap=1', 'writer_cap=2', 'direct_stack', 'HELD'],
-    'record-gated capacity must retain cap=1 and hold direct stack before cap=2');
-  const inactiveScenario = scenario(activationRequirement, 'An inactive record cannot expand writer capacity');
-  assert.ok(clauses(inactiveScenario.body).some((value) => value.startsWith('- **THEN**') && value.includes('at most one writer')),
-    'inactive record scenario must admit only one writer');
+  assert.deepEqual(capacityTokens, ['writer_cap', 'direct_stack', 'direct_stack', 'HELD'],
+    'record-gated review authority must hold direct stack until activation');
+  const inactiveScenario = scenario(activationRequirement, 'An inactive record cannot open direct_stack');
+  assert.ok(clauses(inactiveScenario.body).some((value) => value.startsWith('- **THEN**') && value.includes('disjoint session writers') && value.includes('`direct_stack`')),
+    'inactive record scenario must still hold direct_stack while admitting disjoint writers');
+  const isolationRequirement = requirement(fabricSpec, 'Session admission shall isolate by branch, worktree, and touch-set');
+  assert.ok(requirementProse(isolationRequirement).includes('Occupied writer-seat count SHALL NOT'),
+    'session admission must not use writer count as a blocker');
+  const sameBranchScenario = scenario(isolationRequirement, 'Same-branch writers cannot proceed in parallel');
+  assert.ok(clauses(sameBranchScenario.body).some((value) => value.includes('BRANCH_CONTENTION')),
+    'same-branch contention must remain a session blocker');
 
   const phaseRequirement = requirement(fabricSpec, 'Review activation phases shall be closed and one-way');
   assertExactEnum(arrowEnum(phaseRequirement.body, 'phase enum'), CANONICAL_PHASES, 'Fabric review phases');
@@ -349,9 +355,9 @@ test('Phase 0 has one canonical, inactive-until-attested delivery authority', ()
     'closure scenario must preserve historical ledger bytes');
 
   const agents = read('AGENTS.md');
-  const singleWriterRule = lines(agents).find((line) => line.includes('Single Active Writer 原則'));
-  assert.ok(singleWriterRule?.includes('activation record') && singleWriterRule.includes('writer_cap=1') && singleWriterRule.includes('direct_stack') && singleWriterRule.includes('HELD'),
-    'live policy must retain single writer until the activation record validates capacity');
+  const writerRule = lines(agents).find((line) => line.includes('並行 Writer 隔離原則'));
+  assert.ok(writerRule?.includes('不以 writer 數量為 blocker') && writerRule.includes('獨立 sibling worktree') && writerRule.includes('touch-set') && writerRule.includes('direct_stack'),
+    'live policy must allow disjoint writers and keep direct_stack activation-gated');
 
   const autonomousProposal = read('openspec/changes/autonomous-linux-delivery/proposal.md');
   const autonomousDesign = read('openspec/changes/autonomous-linux-delivery/design.md');
@@ -423,8 +429,8 @@ test('Phase 0 has one canonical, inactive-until-attested delivery authority', ()
   assert.deepEqual(nowRows[0], { id: 'parallel-delivery-fabric', status: 'active' },
     'NOW Fabric row must preserve the closed projection shape');
   const phase0Section = headingSection(nowText, '## Parallel Delivery Fabric Phase 0');
-  assert.ok(phase0Section.includes('shadow 並不代表已啟用交付') && phase0Section.includes('不授權第二 writer'),
-    'NOW must retain the shadow/non-live delivery boundary');
+  assert.ok(phase0Section.includes('shadow 並不代表已啟用交付') && phase0Section.includes('不授權 `direct_stack`') && phase0Section.includes('同一 branch 競寫仍禁止'),
+    'NOW must retain the shadow/non-live delivery boundary without a writer-count blocker');
 });
 
 test('structured Phase 0 parser rejects legacy activation fixtures without runtime adapters', () => {

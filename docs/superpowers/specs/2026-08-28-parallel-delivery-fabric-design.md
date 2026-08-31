@@ -14,7 +14,7 @@
 
 使用者可觀察的完成結果是：
 
-1. v1 最多兩個互不重疊的 top-level writer session 可同時開發；Codex App 與 Claude CLI 共用同一個 global cap，第三個 writer 一律排隊，不能用 provider 名稱繞過上限。
+1. 任意數量互不重疊的 top-level writer session 可同時開發；Codex App 與 Claude CLI 共用同一套 branch／worktree／touch-set 隔離，不以 writer 數量為 blocker。同一 branch 或重疊 touch-set 一律排隊。
 2. 每個 session 有不可變的 provider/session/execution-context、owner、worktree、branch、scope、依賴、lease 與證據綁定，不會共同修改同一 checkout。
 3. 無依賴任務使用獨立 PR；線性依賴可選 ordinary base-chained PR，或在 capability、exact-vector、獨立 gates 與外部 delivery authority 全部成立時使用 GitHub `direct_stack`；扇出任務在 root PR 後平行。
 4. PR 的建置、測試與唯讀審查可以並行；共享 runtime、真實瀏覽器、合併與部署維持資源級序列化。
@@ -993,11 +993,25 @@ Executable negative tests 必須對 adapter `start/heartbeat/handoff/end_request
 - 把任意不相依 PR coalesce 成同一 batch/transaction、非線性 DAG batch、跨 repository batch，以及跨 GitHub／deployment 的物理 all-or-nothing transaction；ordinary independent single-PR path 不在此禁令內。
 - 讓 Merge Queue 成為 promotion/deployment authority。
 - 由 Fabric 直接修改 production、deployment target、secret broker、GitHub App activation 或 branch protection。
-- 多 host/multi-clone writer coordination、global writer cap > 2、共用 worktree/branch/context 或 nested agent CLI。
-- 在 Phase 0 canonical governance/OpenSpec activation 前進行 live multi-writer、stack merge 或 delivery mutation。
+- 多 host/multi-clone writer coordination、共用 worktree/branch/context 或 nested agent CLI。
+- 在 canonical activation record 驗證前進行 stack merge 或 delivery mutation。 session 多 writer 以獨立 branch／worktree／touch-set 隔離，不以人數為 blocker。
 
 ## 21. Implementation handoff gate
 
 本次修訂使先前核准失效。本 design spec 經使用者重新明確核准後，才可使用 Superpowers writing-plans 建立 implementation plan。Plan 必須先處理 Phase 0 的 canonical OpenSpec/governance reconciliation，將實作拆成可獨立驗證的小任務，並在任何 runtime、GitHub authority 或 live direct-stack mutation 前通過 strict OpenSpec lifecycle validation。
 
 在使用者核准前，停在 written-spec review gate。
+
+## 22. Addendum 2026-08-31 — writer count is not a session blocker
+
+Approved live-policy delta on `codex/docs/parallel-delivery-fabric-spec`:
+
+- Multiple writers may proceed in parallel.
+- Session admission no longer uses occupied writer seats as a blocker.
+- Each writer requires an independent sibling worktree, an independent branch, and an explicit touch-set.
+- `.agents/board` coordinates perception so two active sessions do not claim the same branch. The board does not authorize writes, approval, or merge.
+- Overlapping or unknown touch-sets remain queued (`RESOURCE_CONFLICT` / `SCOPE_OVERLAP_UNKNOWN`). Same-branch requests remain queued (`BRANCH_CONTENTION`).
+- `direct_stack`, counted-review retirement, merge, and autonomous delivery remain activation-gated.
+- Shared Kit/WebRTC runtime slots remain resource-serialized and may still return `WRITER_CAPACITY` for a third live runtime writer seat.
+
+This addendum supersedes Outcome item 1 (v1 cap=2 / third writer queued) for session admission only.

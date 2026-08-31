@@ -4,7 +4,7 @@
 
 This change owns the activation boundary for the approved Fabric design. The activation order is `shadow -> canary -> active`; a later phase cannot be inferred from documents, a passing local test, or an adapter's own output.
 
-Before a validated activation record exists, the live policy is one writer, the `direct_stack` path is `HELD`, and the existing counted review remains the only review authority. The record is evidence for an external authority; it does not grant an agent permission to push, approve, merge, deploy, stop a process, or alter branch protection.
+Before a validated activation record exists, session writers are not count-capped: each writer uses an independent sibling worktree, an independent branch, and an explicit touch-set, coordinated through `.agents/board` so two sessions do not claim the same branch. The `direct_stack` path is `HELD`, and the existing counted review remains the only review authority. The record is evidence for an external authority; it does not grant an agent permission to push, approve, merge, deploy, stop a process, or alter branch protection.
 
 ## One-way review migration
 

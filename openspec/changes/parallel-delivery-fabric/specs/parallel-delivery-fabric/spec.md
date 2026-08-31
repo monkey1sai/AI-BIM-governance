@@ -2,14 +2,30 @@
 
 ### Requirement: Fabric activation shall be record-gated
 
-The Fabric SHALL treat an activation record as the only evidence that advances its live authority. The record SHALL contain, in order, `phase`, `base_sha`, `policy_digest`, `writer_cap`, `external_check_name`, `external_app_id`, and `activated_at`. These fields are identifiers and evidence metadata only; no credential, token, or mutable delivery authority may be stored in the record.
+The Fabric SHALL treat an activation record as the only evidence that advances its live review and delivery authority. The record SHALL contain, in order, `phase`, `base_sha`, `policy_digest`, `writer_cap`, `external_check_name`, `external_app_id`, and `activated_at`. These fields are identifiers and evidence metadata only; no credential, token, or mutable delivery authority may be stored in the record.
 
-Until an activation record is validated, the Fabric SHALL enforce `writer_cap=1`. Only a validated activation record may prove `writer_cap=2`; before that proof the `direct_stack` path SHALL be `HELD` and the existing counted review SHALL remain live.
+`writer_cap` on the activation record describes review and `direct_stack` authority only. Session admission SHALL NOT use writer count as a blocker. Until an activation record is validated, the `direct_stack` path SHALL be `HELD` and the existing counted review SHALL remain live.
 
-#### Scenario: An inactive record cannot expand writer capacity
+#### Scenario: An inactive record cannot open direct_stack
 
 - **WHEN** a plan lacks a validated activation record for its exact base and policy digest
-- **THEN** admission accepts at most one writer and rejects or holds every second writer and every `direct_stack` request
+- **THEN** disjoint session writers with independent branch, worktree, and touch-set may be admitted, and every `direct_stack` request is `HELD`
+
+### Requirement: Session admission shall isolate by branch, worktree, and touch-set
+
+The Fabric SHALL admit any number of writer sessions that each declare an independent sibling worktree, an independent branch other than `main` or `master`, and an explicit touch-set. Occupied writer-seat count SHALL NOT queue or hold admission.
+
+Same-branch requests SHALL be `QUEUED_FOR_LEASE` with reason `BRANCH_CONTENTION`. Overlapping touch-sets SHALL be `QUEUED_FOR_LEASE` with reason `RESOURCE_CONFLICT`. Unknown overlap SHALL be `QUEUED_FOR_LEASE` with reason `SCOPE_OVERLAP_UNKNOWN`. `.agents/board` coordinates perception only and SHALL NOT authorize writes, approval, or merge.
+
+#### Scenario: A third disjoint writer is admitted
+
+- **WHEN** two writers already occupy leases with disjoint branches, worktrees, and touch-sets
+- **THEN** a third writer with a disjoint branch, worktree, and touch-set is `ADMITTED`
+
+#### Scenario: Same-branch writers cannot proceed in parallel
+
+- **WHEN** an admitted lease still holds a branch and a second request uses that same branch
+- **THEN** admission returns `QUEUED_FOR_LEASE` with reason `BRANCH_CONTENTION`
 
 ### Requirement: Review activation phases shall be closed and one-way
 

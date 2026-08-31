@@ -1,6 +1,6 @@
 {
   "schema_version": "parallel-delivery-fabric-acceptance-requirements/v1",
-  "operator_doc_sha256": "b05ea7a91665c50e161186b02e487727f77b6b43a911f99963b3bb9679c29387",
+  "operator_doc_sha256": "3e6561797d53d0cf720a1ab1a69c233a02c1a8a4fef7e00e59b6df4cb14ca649",
   "policy_mode": "NORMATIVE_ONLY",
   "activation_migration_prerequisites": [
     "settings_lease",
@@ -34,7 +34,7 @@
     },
     {
       "id": "AC-02",
-      "semantic": "PROVIDER_NEUTRAL_WRITER_CAP",
+      "semantic": "PROVIDER_NEUTRAL_TOUCHSET_ISOLATION",
       "required_gate_kinds": ["CONTRACT", "STATIC_ANALYSIS"],
       "source_authority": ["APPROVED_DESIGN", "LOCAL_CONTRACT_AUTHORITY"],
       "evidence_origin": "LOCAL",

@@ -704,7 +704,7 @@ const task3SeatOccupied = (leaseRecord) => leaseRecord.lease_kind === 'writer_se
 const task3ResourceHeld = (leaseRecord) => leaseRecord.state !== 'RELEASED' || leaseRecord.retention_state === 'RETAINED_FOR_REVIEW'
 
 const tupleKeys = [
-  'lease_id', 'worktree_id', 'worktree_path_digest', 'branch', 'execution_context_id', 'provider_session_id', 'owner_session',
+  'lease_id', 'worktree_id', 'worktree_path_digest', 'execution_context_id', 'provider_session_id', 'owner_session',
 ]
 
 const tupleDuplicate = (left, right) => tupleKeys.some((key) => same(left[key], right[key]))
@@ -882,24 +882,21 @@ export const evaluateAdmission = (rawSnapshot, rawRequest) => {
       if (resourcesHeld) retainedResources += 1
       if (seatOccupied) occupiedSeats += 1
       if (!resourcesHeld) continue
+      if (existing.branch && request.branch && existing.branch === request.branch) {
+        return queued('BRANCH_CONTENTION', { seat_occupied: occupiedSeats, resources_retained: retainedResources })
+      }
       if (tupleDuplicate(existing, request)) return held('HELD_CONFLICT', 'DUPLICATE_EXECUTION_TUPLE', { seat_occupied: seatOccupied, resources_retained: retainedResources })
       const conflict = findScopeConflicts(scope, scopeForLease(existing))
       if (conflict.status === 'UNKNOWN') return queued('SCOPE_OVERLAP_UNKNOWN')
       if (conflict.status === 'CONFLICT') return queued('RESOURCE_CONFLICT', { conflict, seat_occupied: occupiedSeats, resources_retained: retainedResources })
     }
 
-    const writerCap = 2
-    const occupiedWriterSeats = occupiedSeats
-    if (occupiedWriterSeats >= writerCap) return queued('WRITER_CAPACITY', {
-      seat_occupied: occupiedWriterSeats,
-      resources_retained: retainedResources,
-    })
     return result('ADMITTED', 'ADMISSION_ALLOWED', {
       scope_digest: digestCanonical(scope),
       resources: scope,
       runtime_kind: runtime,
       writer_seat: request.lease_kind === 'writer_seat' || !runtime,
-      seat_occupied: occupiedWriterSeats,
+      seat_occupied: occupiedSeats,
       resources_retained: retainedResources,
     })
   } catch (error) {

@@ -57,7 +57,7 @@ const DISTINCT_AUTHORITY_ROLES = [
 ];
 // This is intentionally a pinned canonical digest. A map edit is a normative
 // contract edit and must update this test and the operator document together.
-const EXPECTED_REQUIREMENTS_SHA256 = 'dbb5a47b7da01b33b9a0a62f1788053f43ce0935108252cf53546cdf77af4483';
+const EXPECTED_REQUIREMENTS_SHA256 = 'eb88f419f9a2bc72379c688db3d13ca93e608e448324f8efad0e3a4f1a37faf1';
 const ACCEPTANCE_IDS = Array.from({ length: 45 }, (_, index) => `AC-${String(index + 1).padStart(2, '0')}`);
 const REQUIREMENT_KEYS = [
   'activation_requirement',
@@ -402,7 +402,7 @@ test('Phase B normative map has exact closed AC-01..45 coverage without candidat
   assert.deepEqual(Object.keys(requirements).sort(), ROOT_KEYS, 'requirements root keys must be closed');
   assert.equal(requirements.schema_version, REQUIREMENTS_VERSION);
   assert.equal(requirements.policy_mode, 'NORMATIVE_ONLY');
-  assert.equal(requirements.writer_cap, 1, 'the descriptive map must retain shadow-only writer_cap=1');
+  assert.equal(requirements.writer_cap, 1, 'the descriptive map retains activation-record writer_cap=1 for review/direct_stack, not session count');
   assert.deepEqual(requirements.activation_migration_prerequisites, MIGRATION_PREREQUISITES,
     'the map must retain the closed activation-migration prerequisite vocabulary');
   assert.deepEqual(requirements.canary_cutover_policy, CANARY_CUTOVER_POLICY,
@@ -509,7 +509,7 @@ test('Phase B operator policy and immutable requirement-map digest stay aligned'
     'the reciprocal map digest must still match the current canonical policy map');
   for (const requiredPhrase of [
     'shadow-only',
-    'writer_cap=1',
+    'not count-capped',
     'AC-24 HELD',
     'Computer Use',
     'Playwright',
@@ -595,7 +595,7 @@ test('P2 mutation corpus: normalized document pin detects semantic drift that br
   const document = readRequired(operatorDocPath);
   const semanticMutation = document.replace('shadow-only', 'shadow-altered');
   assert.notEqual(semanticMutation, document, 'synthetic semantic mutation must change the document');
-  assert.ok(semanticMutation.includes('shadow-only') && semanticMutation.includes('writer_cap=1'),
+  assert.ok(semanticMutation.includes('shadow-only') && semanticMutation.includes('not count-capped'),
     'the prior broad includes would still accept this semantic mutation');
   assert.notEqual(sha256(normalizeOperatorDocument(semanticMutation)), sha256(normalizeOperatorDocument(document)),
     'the normalized whole-document digest must reject that semantic mutation');

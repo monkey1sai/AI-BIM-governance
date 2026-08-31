@@ -112,7 +112,7 @@ const admissionRequest = (store, index, provider, generation) => {
 }
 
 for (const [leftProvider, rightProvider] of PROVIDER_PAIRS) {
-  test(`AC-02 — ${leftProvider}+${rightProvider} share global writer cap two`, async () => {
+  test(`AC-02 — ${leftProvider}+${rightProvider} admit disjoint writers without a count cap`, async () => {
     const { calls, store } = createInjectedStore()
     const clock = Object.freeze({ now: () => NOW })
     const registry = createLeaseRegistry({ store, clock, writerCap: 2 })
@@ -153,30 +153,38 @@ for (const [leftProvider, rightProvider] of PROVIDER_PAIRS) {
     assert.equal(afterRejected.oid, fullBefore.oid)
     assert.deepEqual(afterRejected.record, fullBefore.record)
 
-    for (const [offset, thirdProvider] of ['codex', 'claude'].entries()) {
-      const thirdInput = leaseRequest(store, offset + 2, thirdProvider)
-      const thirdBefore = structuredClone(thirdInput)
-      const beforeQueued = { ...calls }
-      const third = await registry.admit(thirdInput)
-      assert.deepEqual({ status: third.status, reason: third.reason }, {
-        status: 'QUEUED_FOR_LEASE',
-        reason: 'WRITER_CAPACITY',
-      })
-      assert.equal(calls.read, beforeQueued.read + 1)
-      assert.equal(calls.cas, beforeQueued.cas)
-      assert.deepEqual(thirdInput, thirdBefore)
-      const beforeUnchangedRead = calls.read
-      const unchanged = await registry.inspect()
-      assert.equal(calls.read, beforeUnchangedRead + 1)
-      assert.equal(calls.cas, beforeQueued.cas)
-      assert.deepEqual(unchanged.record, fullBefore.record)
-      assert.equal(unchanged.oid, fullBefore.oid)
+    const thirdInput = leaseRequest(store, 2, 'codex')
+    const thirdBefore = structuredClone(thirdInput)
+    const beforeThird = { ...calls }
+    const third = await registry.admit(thirdInput)
+    assert.equal(third.status, 'ADMITTED')
+    assert.equal(calls.read, beforeThird.read + 1)
+    assert.equal(calls.cas, beforeThird.cas + 1)
+    assert.deepEqual(thirdInput, thirdBefore)
+
+    const afterThird = await registry.inspect()
+    const sameBranchInput = {
+      ...leaseRequest(store, 3, 'claude'),
+      branch: firstInput.branch,
     }
+    const sameBranchBefore = structuredClone(sameBranchInput)
+    const beforeContention = { ...calls }
+    const contended = await registry.admit(sameBranchInput)
+    assert.deepEqual({ status: contended.status, reason: contended.reason }, {
+      status: 'QUEUED_FOR_LEASE',
+      reason: 'BRANCH_CONTENTION',
+    })
+    assert.equal(calls.read, beforeContention.read + 1)
+    assert.equal(calls.cas, beforeContention.cas)
+    assert.deepEqual(sameBranchInput, sameBranchBefore)
+    const unchanged = await registry.inspect()
+    assert.deepEqual(unchanged.record, afterThird.record)
+    assert.equal(unchanged.oid, afterThird.oid)
 
     const beforeEnd = { ...calls }
     const endRequest = await registry.endRequest({
       lease_id: firstInput.lease_id,
-      expected_oid: fullBefore.oid,
+      expected_oid: afterThird.oid,
       nonce: NONCE(`ac02-end-${leftProvider}-${rightProvider}`),
       reason: 'handoff',
       handoff_or_candidate_reference: `handoff:ac02-${leftProvider}-${rightProvider}`,
@@ -189,29 +197,11 @@ for (const [leftProvider, rightProvider] of PROVIDER_PAIRS) {
     assert.equal(pendingLease.state, 'END_REQUESTED')
     assert.equal(pendingLease.release_evidence_ref, null)
 
-    const beforeMissingEvidenceQueue = { ...calls }
-    const blockedAfterMissingEvidence = await registry.admit(leaseRequest(store, 4, 'codex'))
-    assert.deepEqual({ status: blockedAfterMissingEvidence.status, reason: blockedAfterMissingEvidence.reason }, {
-      status: 'QUEUED_FOR_LEASE',
-      reason: 'WRITER_CAPACITY',
-    })
-    assert.equal(calls.read, beforeMissingEvidenceQueue.read + 1)
-    assert.equal(calls.cas, beforeMissingEvidenceQueue.cas)
-    const beforeMissingEvidenceSnapshot = calls.read
-    const afterMissingEvidenceQueue = await registry.inspect()
-    assert.equal(calls.read, beforeMissingEvidenceSnapshot + 1)
-    assert.equal(calls.cas, beforeMissingEvidenceQueue.cas)
-    assert.equal(afterMissingEvidenceQueue.oid, pendingRelease.oid)
-    assert.deepEqual(afterMissingEvidenceQueue.record, pendingRelease.record)
-
     const admissionInput = admissionRequest(store, 9, 'claude', pendingRelease.record.generation)
     const admissionBefore = structuredClone(admissionInput)
     const beforePureAdmission = { ...calls }
     const pureAdmission = evaluateAdmission(pendingRelease.record, admissionInput)
-    assert.deepEqual({ status: pureAdmission.status, reason: pureAdmission.reason }, {
-      status: 'QUEUED_FOR_LEASE',
-      reason: 'WRITER_CAPACITY',
-    })
+    assert.equal(pureAdmission.status, 'ADMITTED')
     assert.equal(Object.isFrozen(pureAdmission), true)
     assert.deepEqual(admissionInput, admissionBefore)
     assert.deepEqual(calls, beforePureAdmission)

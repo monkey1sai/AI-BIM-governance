@@ -8,7 +8,7 @@
 1. **廢除 3-PR Demote/Reapprove 儀式**：禁止將 UI 變更拆成 3 個 PR，畫面改動與 Design Baseline 更新**一律在單一 PR 內同時交付**。
 2. **凍結元治理工具自我修復循環**：禁止主動開立 Fixpoint rebuild、Classifier repair、Ledger reconciliation 等純治理工具 PR。非阻塞告警改為 Warning，不阻擋業務代碼交付。
 3. **前端驗收以 Functional & Semantic E2E 為主**：著重於 Playwright 語意與功能驗收，放寬 1% 嚴苛 Pixel Diff 硬阻斷。
-4. **Single Active Writer 原則**：同一時間只由 1 個主要 Coordinator 負責寫入與開 PR，其他 Agent 僅擔任唯讀 Research 或局部 Debugger。Parallel Delivery Fabric 在唯一 canonical activation record 以 exact base、policy digest、外部 CheckRun tuple 驗證前，live writer cap 固定為 `writer_cap=1`；任何第二 writer 或 `direct_stack` 一律 `HELD`，不得以已核准設計或 local fixture 覆寫此規則。
+4. **並行 Writer 隔離原則**：允許多個 Coordinator 並行寫入與開 PR；不以 writer 數量為 blocker。每個 writer 必須使用獨立 sibling worktree、獨立 branch，以及開工時宣告的明確 touch-set。`.agents/board` 只做 session 感知：同一 branch 出現第二個 active writer 必須停工。touch-set 重疊或未知重疊不得並行寫入。`direct_stack` 與 counted-review 退役仍須等 canonical activation record；不得以多 writer 推論 merge／approve 已放寬。
 5. **主工作區絕對乾淨與強制 Worktree 隔離（全體 Agent 永久鐵律）**：
    - **主工作區**永遠保持 `main == origin/main` 且無 dirty files；任何受版控檔案或 code 變更**一律在獨立 Worktree（`AI-BIM-governance.worktrees/<name>`）實作**。
    - 所有 Task 必須經由真實測試與 **Chrome E2E 語意驗證（Playwright / Agent in Chrome）** 驗收；無實證數據絕不宣稱完成。全體 Agent（Codex、Claude、AGY、Grok）一體嚴格遵守。
@@ -21,10 +21,10 @@
 | Lane | 適用範圍 | 執行與驗證 |
 |---|---|---|
 | **F — Fast Fix** | 單一 service、約 1–3 檔、小 bug/docs/tests/timeout/logging/error handling；不改 contract、user workflow、security/deploy/migration/Kit/WebRTC | single coordinator；無 Superpowers/spec/plan/subagent；checkout 乾淨時不強制 worktree；targeted tests；不自動 push/PR/merge；不強制 GitNexus impact |
-| **B — Bounded Change** | 單一 service 內清楚且有限的功能；不改 architecture/public API/schema/security/deploy | single coordinator + 3–5 項 inline checklist；最多一個 debugger 或完成後一個 read-only reviewer；禁止 parallel writers；affected tests；對 task/主要 entry symbol 跑一次 GitNexus impact |
+| **B — Bounded Change** | 單一 service 內清楚且有限的功能；不改 architecture/public API/schema/security/deploy | single coordinator + 3–5 項 inline checklist；最多一個 debugger 或完成後一個 read-only reviewer；禁止同一 branch／重疊 touch-set 的平行 writer；affected tests；對 task/主要 entry symbol 跑一次 GitNexus impact |
 | **G — Governed Change** | 跨 ≥2 services、public API/event/DB schema、user-facing route/workflow、Kit/WebRTC/GPU、deploy/auth/permission/migration/destructive script、architecture boundary、GitNexus HIGH/CRITICAL | dedicated branch/worktree；簡潔 plan；GitNexus impact + detect_changes；按風險 reviewer/debugger/security_auditor；integration tests；user-facing browser E2E；PR local preflight |
 | **S — Spec-to-Done** | 使用者明確輸入 `spec-to-done`、明確要求完整 Superpowers，或指定已核准 spec 並要求自主推進至 merged PR | 保留完整 P0/P1/P3/P4/P5/P6/P7；只能明確啟動，不得由模型自行升級 |
-只有工作可安全平行、需要獨立風險檢查，或符合 Lane G/S 條件時才派 worker。coordinator 擁有所有寫入與最終決策；F 不派 subagent，B 禁止多個 writer 並行。多終端機／多 CLI（Claude Code、Codex、Grok）並行 session 以 gitignored `.agents/board/` 看板互相感知——所有 CLI 都明確執行開工 `node scripts/dev/agents-board.mjs register --agent <cli>`、動工前 `status`、收工 `done`；repo 不分發自動 command hooks。看板僅提供感知，不取代 Lane 隔離規則，契約見 `docs/agents/parallel-session-board.md`。
+只有工作可安全平行、需要獨立風險檢查，或符合 Lane G/S 條件時才派 worker。coordinator 擁有該 session 的寫入與最終決策；F 不派 subagent，B 禁止同一 branch 或多個 writer 搶同一 touch-set。多終端機／多 CLI（Claude Code、Codex、Grok）並行 session 以 gitignored `.agents/board/` 看板互相感知——所有 CLI 都明確執行開工 `node scripts/dev/agents-board.mjs register --agent <cli>`、動工前 `status`、收工 `done`；repo 不分發自動 command hooks。看板協調 session 感知，機器隔離靠獨立 worktree／branch／touch-set，不靠 writer 人數；契約見 `docs/agents/parallel-session-board.md`。
 
 ### Superpowers invocation policy
 預設為 repo-native lean mode。Superpowers 重流程 skill 採 explicit-only；task complexity 不等於使用者授權，且單一 skill 不得自動串接下一階段。詳細 routing 見 `docs/agents/superpowers-invocation-policy.md`。

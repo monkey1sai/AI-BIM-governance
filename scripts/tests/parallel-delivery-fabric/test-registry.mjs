@@ -242,7 +242,7 @@ test('AC-44 — plan-only metadata uses the delivery-plan ref and no forbidden e
   )
 })
 
-test('AC-01 — cross-provider admission is bounded', async () => {
+test('AC-01 — cross-provider disjoint writers are admitted', async () => {
   const { leaseRegistry, store } = createFixture()
 
   const codex = await leaseRegistry.admit(makeRequest(store, {
@@ -261,17 +261,17 @@ test('AC-01 — cross-provider admission is bounded', async () => {
 
   assert.equal(codex.status, 'ADMITTED')
   assert.equal(claude.status, 'ADMITTED')
-  assert.equal(third.status, 'QUEUED_FOR_LEASE')
-  assert.equal(third.reason, 'WRITER_CAPACITY')
+  assert.equal(third.status, 'ADMITTED')
   const snapshot = await leaseRegistry.inspect()
   assert.equal(snapshot.record.leases['lease:codex'].provider, 'codex')
   assert.equal(snapshot.record.leases['lease:claude'].provider, 'claude')
+  assert.equal(snapshot.record.leases['lease:third'].provider, 'codex')
   assert.equal(snapshot.record.writer_cap, 2)
 })
 
-test('AC-02 — same-provider sessions cannot bypass the global writer cap', async () => {
+test('AC-02 — same-provider disjoint sessions are admitted without a writer-count cap', async () => {
   const { leaseRegistry, store } = createFixture()
-  for (const suffix of ['one', 'two']) {
+  for (const suffix of ['one', 'two', 'three']) {
     const result = await leaseRegistry.admit(makeRequest(store, {
       lease_id: `lease:${suffix}`,
       owner_session: `session:${suffix}`,
@@ -284,13 +284,14 @@ test('AC-02 — same-provider sessions cannot bypass the global writer cap', asy
     }))
     assert.equal(result.status, 'ADMITTED')
   }
-  const queued = await leaseRegistry.admit(makeRequest(store, {
-    lease_id: 'lease:three', owner_session: 'session:three', provider_session_id: 'provider:three',
-    execution_context_id: 'context:three', worktree_id: 'worktree:three', branch: 'codex/three',
-    resource_keys: ['path:src/three.mjs'], nonce: NONCE('same-three'),
+  const contended = await leaseRegistry.admit(makeRequest(store, {
+    lease_id: 'lease:same-branch', owner_session: 'session:same-branch',
+    provider_session_id: 'provider:same-branch', execution_context_id: 'context:same-branch',
+    worktree_id: 'worktree:same-branch', branch: 'codex/one',
+    resource_keys: ['path:src/other.mjs'], nonce: NONCE('same-branch'),
   }))
-  assert.deepEqual({ status: queued.status, reason: queued.reason }, {
-    status: 'QUEUED_FOR_LEASE', reason: 'WRITER_CAPACITY',
+  assert.deepEqual({ status: contended.status, reason: contended.reason }, {
+    status: 'QUEUED_FOR_LEASE', reason: 'BRANCH_CONTENTION',
   })
 })
 
@@ -359,14 +360,12 @@ test('AC-03 — heartbeat is monotonic and timeout marks SUSPECT without releasi
     resource_keys: ['path:src/second.mjs'], nonce: NONCE('after-timeout'),
   }))
   assert.equal(blocked.status, 'ADMITTED')
-  const stillFull = await leaseRegistry.admit(makeRequest(store, {
+  const stillDisjoint = await leaseRegistry.admit(makeRequest(store, {
     lease_id: 'lease:third', owner_session: 'session:third', provider_session_id: 'provider:third',
     execution_context_id: 'context:third', worktree_id: 'worktree:third', branch: 'codex/third',
     resource_keys: ['path:src/third.mjs'], nonce: NONCE('third-timeout'),
   }))
-  assert.deepEqual({ status: stillFull.status, reason: stillFull.reason }, {
-    status: 'QUEUED_FOR_LEASE', reason: 'WRITER_CAPACITY',
-  })
+  assert.equal(stillDisjoint.status, 'ADMITTED')
 })
 
 test('AC-04 — a lease cannot be rebound to a new execution context without explicit release authority', async () => {
@@ -777,16 +776,22 @@ test('P1 regression — lease writer cap is ref-pinned before writes and wrong-c
   })
 })
 
-test('P1 regression — persisted occupied states cannot bypass the global writer cap', async () => {
+test('P1 regression — persisted occupied states cannot share a branch or worktree', async () => {
   const timestamp = '2026-08-29T00:00:00.000Z'
   const occupiedStates = ['ACTIVE', 'SUSPECT', 'END_REQUESTED', 'RELEASING']
   for (const state of occupiedStates) {
     const { git, leaseRegistry, store } = createFixture()
     await leaseRegistry.admit(makeRequest(store, {
-      lease_id: 'lease:cap-one', task_id: 'task:cap-one', resource_keys: ['path:src/cap-one.mjs'], nonce: NONCE('cap-one'),
+      lease_id: 'lease:cap-one', task_id: 'task:cap-one', owner_session: 'session:cap-one',
+      provider_session_id: 'provider:cap-one', execution_context_id: 'context:cap-one',
+      worktree_id: 'worktree:cap-one', worktree_path_digest: 'c'.repeat(64), branch: 'codex/cap-one',
+      resource_keys: ['path:src/cap-one.mjs'], nonce: NONCE('cap-one'),
     }))
     await leaseRegistry.admit(makeRequest(store, {
-      lease_id: 'lease:cap-two', task_id: 'task:cap-two', resource_keys: ['path:src/cap-two.mjs'], nonce: NONCE('cap-two'),
+      lease_id: 'lease:cap-two', task_id: 'task:cap-two', owner_session: 'session:cap-two',
+      provider_session_id: 'provider:cap-two', execution_context_id: 'context:cap-two',
+      worktree_id: 'worktree:cap-two', worktree_path_digest: 'd'.repeat(64), branch: 'codex/cap-two',
+      resource_keys: ['path:src/cap-two.mjs'], nonce: NONCE('cap-two'),
     }))
     const snapshot = await leaseRegistry.inspect()
     const third = structuredClone(snapshot.record.leases['lease:cap-one'])
