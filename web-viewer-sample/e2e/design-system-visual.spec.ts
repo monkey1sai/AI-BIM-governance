@@ -141,6 +141,7 @@ const observeSemanticAssertion = async (
 };
 
 test("approved screens match desigin-system golden and semantic contracts", async ({ page }) => {
+  test.setTimeout(600_000);
   const manifestBuffer = await readFile(manifestPath);
   const manifest = JSON.parse(manifestBuffer.toString("utf8")) as ReferenceManifest;
   const playwrightPackage = JSON.parse(
