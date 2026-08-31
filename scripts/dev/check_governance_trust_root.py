@@ -26,9 +26,9 @@ OBSERVED_BASELINE = "architecture/observed-baseline.json"
 LAYER_BASELINE = "architecture/layer-baseline.json"
 REVIEW_POLICY = "scripts/autonomous-codex-review-policy.json"
 REVIEW_POLICY_SCHEMA = "scripts/tests/autonomous-codex-review-policy.schema.json"
-REVIEW_OPEN_SPEC = "openspec/changes/parallel-delivery-fabric/specs/parallel-delivery-fabric/spec.md"
-REVIEW_OPEN_SPEC_BASE_SHA = "df227cc1e07cb0bb6a683ef4c6df6c9f22284529"
-REVIEW_OPEN_SPEC_SHA256 = "fb3d378d17688721238516061ac8fe9d8e45d2d6d8566adb083269518367a0ae"
+REVIEW_OPEN_SPEC = "openspec/specs/ai-coding-governance/spec.md"
+REVIEW_OPEN_SPEC_BASE_SHA = "a0ab7065131914e548e1d79a1c683c8b14b07de4"
+REVIEW_OPEN_SPEC_SHA256 = "27c687fff38b1f791565708090611114970a993bd3b126addf34829cc8e11168"
 REVIEW_POLICY_INVENTORY_MAX_DEPTH = 12
 REVIEW_POLICY_INVENTORY_MAX_ENTRIES = 512
 REVIEW_POLICY_IGNORED_DIRECTORIES = {".generated", ".git", "generated", "node_modules"}
@@ -320,7 +320,14 @@ def _validate_review_policy_root(root: Path, label: str) -> None:
         raise TrustRootError(f"{label} review policy schema is not the closed canonical schema")
     source = _read_bytes(root, REVIEW_OPEN_SPEC)
     assert source is not None
-    if hashlib.sha256(source).hexdigest() != REVIEW_OPEN_SPEC_SHA256:
+    try:
+        source_text = source.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise TrustRootError(f"{label} review policy OpenSpec source is not UTF-8") from exc
+    if "\r" in source_text.replace("\r\n", ""):
+        raise TrustRootError(f"{label} review policy OpenSpec source has invalid line endings")
+    canonical_source = source_text.replace("\r\n", "\n").encode("utf-8")
+    if hashlib.sha256(canonical_source).hexdigest() != REVIEW_OPEN_SPEC_SHA256:
         raise TrustRootError(f"{label} review policy OpenSpec source digest does not match its pin")
 
 

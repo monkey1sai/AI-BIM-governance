@@ -11,9 +11,9 @@ export const AUTONOMOUS_CODEX_REVIEW_PHASES = Object.freeze([
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..')
 const POLICY_RELATIVE = 'scripts/autonomous-codex-review-policy.json'
 const SCHEMA_RELATIVE = 'scripts/tests/autonomous-codex-review-policy.schema.json'
-const OPEN_SPEC_RELATIVE = 'openspec/changes/parallel-delivery-fabric/specs/parallel-delivery-fabric/spec.md'
-const BASE_SHA = 'df227cc1e07cb0bb6a683ef4c6df6c9f22284529'
-const OPEN_SPEC_SHA256 = 'fb3d378d17688721238516061ac8fe9d8e45d2d6d8566adb083269518367a0ae'
+const OPEN_SPEC_RELATIVE = 'openspec/specs/ai-coding-governance/spec.md'
+const BASE_SHA = 'a0ab7065131914e548e1d79a1c683c8b14b07de4'
+const OPEN_SPEC_SHA256 = '27c687fff38b1f791565708090611114970a993bd3b126addf34829cc8e11168'
 const SHA1 = /^[0-9a-f]{40}$/u
 const SHA256 = /^[0-9a-f]{64}$/u
 const SECRET_KEY = /(?:secret|token|password|credential|private|cookie|authorization|bearer|\benv\b|_env$|^env_|\bsid\b|\bpid\b|transcript)/iu
@@ -384,7 +384,10 @@ const loadCanonical = () => {
   const sourcePath = path.resolve(ROOT, policy.open_spec.source_path)
   if (sourcePath !== path.resolve(ROOT, OPEN_SPEC_RELATIVE)) fail('policy_source_untrusted', 'open_spec_path')
   const sourceBytes = readCanonicalFile(sourcePath, 'policy_source_untrusted', OPEN_SPEC_RELATIVE)
-  if (createHash('sha256').update(sourceBytes).digest('hex') !== policy.open_spec.source_sha256) fail('policy_source_digest_mismatch', policy.open_spec.source_path)
+  const sourceText = decodeUtf8(sourceBytes, OPEN_SPEC_RELATIVE)
+  if (/\r(?!\n)/u.test(sourceText)) fail('policy_source_digest_mismatch', policy.open_spec.source_path)
+  const canonicalSourceBytes = Buffer.from(sourceText.replace(/\r\n/gu, '\n'), 'utf8')
+  if (createHash('sha256').update(canonicalSourceBytes).digest('hex') !== policy.open_spec.source_sha256) fail('policy_source_digest_mismatch', policy.open_spec.source_path)
   const inventoryAfter = inspectPolicyFileInventory(ROOT)
   if (!same(inventoryBefore, inventoryAfter)) fail('policy_inventory_io_race', 'inventory_io')
   return policy

@@ -692,16 +692,6 @@ const validateDirectStackProjection = (directStack, handoff) => {
       'merged', 'deployment', 'source_attestations',
     ])) return heldTerminal()
     const replay = signedReplay.task7_replay
-    if (replay.deployment?.command_state === 'failed' || replay.deployment?.post_deploy_status === 'failed') {
-      const plan = planDirectStackDispatch({
-        stack: handoff.stack,
-        repository: handoff.plan.repository,
-        observation: replay.observation,
-      })
-      const accepted = reduceDirectStackDispatch({ plan, response: replay.response })
-      const merged = reduceDirectStackPoll({ plan, accepted, poll: replay.poll })
-      return terminalFromTask7(reduceStackDeployment({ merged, deployment: replay.deployment }))
-    }
     if (!validDeliveryEvidenceBinding(replay, handoff.candidate)) return heldTerminal()
     const plan = planDirectStackDispatch({
       stack: handoff.stack,
@@ -715,9 +705,6 @@ const validateDirectStackProjection = (directStack, handoff) => {
     if (!equalValue(replay.accepted, accepted)) return heldTerminal()
     const merged = reduceDirectStackPoll({ plan, accepted, poll: replay.poll })
     if (merged.phase !== 'MERGED' || merged.internal_state !== 'STACK_MERGED_PENDING_DEPLOY') return terminalFromTask7(merged)
-    if (replay.deployment?.command_state === 'failed' || replay.deployment?.post_deploy_status === 'failed') {
-      return terminalFromTask7(reduceStackDeployment({ merged, deployment: replay.deployment }))
-    }
     if (!equalValue(replay.merged, merged)) return heldTerminal()
     if (!validDirectSourceAttestations(replay.source_attestations, merged, replay.deployment, handoff)) {
       return heldTerminal()
@@ -727,12 +714,6 @@ const validateDirectStackProjection = (directStack, handoff) => {
     const replay = isPlainObject(directStack) && isPlainObject(directStack.payload)
       ? directStack.payload.task7_replay
       : sanitizedCanonicalInput(directStack)?.payload?.task7_replay
-    if (replay?.deployment?.command_state === 'failed' || replay?.deployment?.post_deploy_status === 'failed') {
-      const expectedDigest = handoff?.trusted_authority_bundle?.payload?.delivery_sources?.postverify?.source?.source_digest
-      const observedDigest = replay?.source_attestations?.postverify?.payload?.source_digest
-      if (typeof expectedDigest === 'string' && observedDigest !== expectedDigest) return heldTerminal()
-      return deepFreeze({ phase: 'CLOSED', terminal_class: 'FAILED', reason_code: 'MERGED_NOT_DELIVERED' })
-    }
     if (replay?.poll?.status === 'timeout' || (isPlainObject(replay?.merged) && Object.keys(replay.merged).length === 0)) {
       return heldTerminal('MERGE_OUTCOME_UNVERIFIED')
     }

@@ -1418,12 +1418,19 @@ test('AC-14/42 — the external projector emits only CLOSED DELIVERED, FAILED, o
     post_deploy_status: 'not_started',
     group_verification_digest: digest('8'),
   })
-  assert.deepEqual(projectPromotionTerminal({ handoff, direct_stack: failed }, directTrustedAuthorityBundle()), {
-    phase: 'CLOSED', terminal_class: 'FAILED', reason_code: 'MERGED_NOT_DELIVERED',
-  })
+  assertEvidenceHeld(
+    projectPromotionTerminal({ handoff, direct_stack: failed }, directTrustedAuthorityBundle()),
+    'a failed deployment without a valid signed failure vector cannot be projected',
+  )
   const wrongFailed = structuredClone(failed)
   wrongFailed.payload.task7_replay.source_attestations.postverify.payload.source_digest = digest('9')
   assertEvidenceHeld(projectPromotionTerminal({ handoff, direct_stack: wrongFailed }, directTrustedAuthorityBundle()))
+  const missingFailedSource = structuredClone(failed)
+  delete missingFailedSource.payload.task7_replay.source_attestations.ancestry
+  assertEvidenceHeld(
+    projectPromotionTerminal({ handoff, direct_stack: missingFailedSource }, directTrustedAuthorityBundle()),
+    'failure projection validates every source attestation before classification',
+  )
 
   const timeout = directStackTask7Replay(handoff)
   timeout.payload.task7_replay.poll = {

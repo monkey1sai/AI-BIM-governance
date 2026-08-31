@@ -9,7 +9,7 @@ name: Governance Base Audit
 # Review-migration contract: the trusted-base checker consumes only the
 # canonical policy (scripts/autonomous-codex-review-policy.json), its committed
 # schema (scripts/tests/autonomous-codex-review-policy.schema.json), and the
-# committed OpenSpec source (openspec/changes/parallel-delivery-fabric/specs/parallel-delivery-fabric/spec.md).
+# committed OpenSpec source (openspec/specs/ai-coding-governance/spec.md).
 # Candidate copies cannot override those inputs. The default LEGACY_GUARDED
 # phase retains the counted review; this workflow does not advance phases.
 on:
@@ -48,7 +48,7 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.base.sha }}
           path: trusted-base
-          fetch-depth: 1
+          fetch-depth: 0
           persist-credentials: false
 
       - name: Checkout candidate as inert data
@@ -59,6 +59,19 @@ jobs:
           path: candidate
           fetch-depth: 1
           persist-credentials: false
+
+      - name: Verify pinned OpenSpec exists in trusted base history
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PINNED_SOURCE_SHA: a0ab7065131914e548e1d79a1c683c8b14b07de4
+          PINNED_SOURCE_PATH: openspec/specs/ai-coding-governance/spec.md
+          PINNED_SOURCE_SHA256: 27c687fff38b1f791565708090611114970a993bd3b126addf34829cc8e11168
+        run: |
+          set -euo pipefail
+          git -C trusted-base merge-base --is-ancestor "$PINNED_SOURCE_SHA" "$BASE_SHA"
+          observed_digest="$(git -C trusted-base cat-file blob "${PINNED_SOURCE_SHA}:${PINNED_SOURCE_PATH}" | sha256sum | awk '{print $1}')"
+          test "$observed_digest" = "$PINNED_SOURCE_SHA256"
 
       - name: Collect server-authoritative review identity
         shell: bash

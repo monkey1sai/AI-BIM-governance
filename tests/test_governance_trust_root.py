@@ -19,7 +19,7 @@ REVIEWER_ID = 311287868
 HEAD = "a" * 40
 REVIEW_POLICY = "scripts/autonomous-codex-review-policy.json"
 REVIEW_POLICY_SCHEMA = "scripts/tests/autonomous-codex-review-policy.schema.json"
-REVIEW_OPEN_SPEC = "openspec/changes/parallel-delivery-fabric/specs/parallel-delivery-fabric/spec.md"
+REVIEW_OPEN_SPEC = "openspec/specs/ai-coding-governance/spec.md"
 
 
 def _read(relative: str) -> object:
@@ -592,6 +592,14 @@ def test_trust_root_workflow_runs_only_the_base_owned_checker() -> None:
     assert "trusted-base/scripts/dev/check_governance_trust_root.py" in workflow
     assert "candidate/scripts/dev/check_governance_trust_root.py" not in workflow
     assert "persist-credentials: false" in workflow
+    assert "fetch-depth: 0" in workflow
+    assert "Verify pinned OpenSpec exists in trusted base history" in workflow
+    assert "git -C trusted-base merge-base --is-ancestor \"$PINNED_SOURCE_SHA\" \"$BASE_SHA\"" in workflow
+    assert "git -C trusted-base cat-file blob \"${PINNED_SOURCE_SHA}:${PINNED_SOURCE_PATH}\"" in workflow
+    open_spec = _read(REVIEW_POLICY)["open_spec"]
+    assert f"PINNED_SOURCE_SHA: {open_spec['base_sha']}" in workflow
+    assert f"PINNED_SOURCE_PATH: {open_spec['source_path']}" in workflow
+    assert f"PINNED_SOURCE_SHA256: {open_spec['source_sha256']}" in workflow
     assert "statuses: write" not in workflow
     assert "checks: write" not in workflow
     assert "repository: ${{ github.event.pull_request.head.repo.full_name }}" in workflow
