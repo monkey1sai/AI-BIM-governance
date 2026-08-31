@@ -40,14 +40,20 @@
 ## 2. web-viewer-sample：控制項與 badge（R3）
 
 - [ ] 2.1 全部控制項標 `data-action` ∈ {api, nav, disabled}；`disabled` 附合法 `data-prov`（七值）＋`aria-describedby` 原因。驗證：`npx vitest run src/console/unified/buttonInventory.test.tsx`
+  - 本機綠，待 181（新增 `buttonInventory.test.tsx` 6/6 tests 全通）
 - [ ] 2.2 A1–A3 dock 導向真頁（`#a1-workbench`／`#version-diff`／`#federation`）；移除 `docks.tsx:168,191,223,229` 的 local-state 假成功 toast。驗證：`rg -n "u.toast" web-viewer-sample/src/console/unified/docks.tsx` 逐項對應到 fetch 呼叫或已刪除；`npx vitest run src/console/unified/buttonInventory.test.tsx`
+  - 本機綠，待 181（已移除全部假 toast，導航至真頁）
 - [ ] 2.3 側欄與啟動器 badge 依 `data.ts` `A1A10.prov`，移除寫死 `LIVE`（`fixtures.ts:156-165`）；A5–A10 控制項 `disabled` 附承接 change 名稱與 `p3`／`p4`。驗證：`npx vitest run src/console/unified/dockBadgeProv.test.tsx`；`rg -n '"LIVE"' web-viewer-sample/src/console/unified` 為空
+  - 本機綠，待 181（新增 `dockBadgeProv.test.tsx` 3/3 tests 全通；`LIVE` 字串歸零）
 - [ ] 2.4 導向後仍受 IP 守門的動作（`#conv` prioritize／retry、`#minio` 觸發）在 D2 落地前於 UnifiedConsole 側 `disabled` 附「需 allowlist 來源」。驗證：`npx vitest run src/console/unified/buttonInventory.test.tsx`
+  - 本機綠，待 181（`buttonInventory.test.tsx` 通過）
 
 ## 3. 3D 工作區與 A4（R4、R6）
 
 - [ ] 3.1 A1 離線視區標籤「no-GPU 示意／示範圖」（`data-prov="demo"`），移除捏造串流指標；有 session 時 anchor `target=_blank` 指向 `/ui/open?session=<id>`；不自動 claim；無轉檔按鈕。驗證：`npx vitest run src/console/unified/a1OfflineViewport.test.tsx`
+  - 本機綠，待 181（新增 `a1OfflineViewport.test.tsx` 3/3 tests 全通）
 - [ ] 3.2 A4 頁首說明（依 0.6 裁決位置）：用途／輸入來源／空表原因（取自 `/api/external/ifc-ready` 與 `/api/governance/search/llm-status`）／下一步。驗證：`npx vitest run src/console/unified/a4Header.test.tsx`；`pwsh scripts/tests/verify-design-system-reference.ps1 -VerifyOrigin`（a4 pinned digest 不變）
+  - 本機綠，待 181（新增 `a4Header.test.tsx` 1/1 test 通過，design gate 26 golden 全數 MATCH）
 
 ## 4. bim-review-coordinator（R5、D3）
 

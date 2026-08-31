@@ -698,6 +698,24 @@ export const coordinatorClient = {
   // 既有 viewer attach 入口（coordinator server-side redirect 至 browser-visible viewer URL）。
   // P4 Review Room「在既有 viewer 開啟」用此組 URL（不動 App.tsx / Window.tsx）。
   openInViewerUrl: (sessionId: string) => `${COORD_BASE}/ui/open?session=${encodeURIComponent(sessionId)}`,
+  // A4 Handoff：建立 session-scoped transient 3D handoff intent。
+  createA4Handoff: (
+    sessionId: string,
+    body: { action: "focus" | "highlight"; evidence_proofs: string[] },
+    userToken: string,
+  ) =>
+    jsonPostWithHeaders<{
+      handoff_id: string;
+      url: string;
+      expires_at: string;
+      action: "focus" | "highlight";
+      prim_paths: string[];
+      binding: unknown;
+    }>(
+      `/api/review-sessions/${encodeURIComponent(sessionId)}/a4-handoffs`,
+      body,
+      { "X-User-Token": userToken },
+    ),
   // Task 5 MinIO 閉環 Phase 1：讀持久 ConversionLedger（GET /api/conversion/records）。
   // detected_at desc；limit 預設 50（符合 Task 3 route 行為）。
   getConversionRecords: (limit = 50) =>
