@@ -15,7 +15,7 @@ import {
   ruleDefs, failDefs, diffDefs, fedMembers,
 } from "./fixtures";
 import type {
-  Dict, DockKey, IssueItem, OutboxItem, RuleOn, SelItem,
+  Dict, DockKey, IssueItem, RuleOn, SelItem,
 } from "./fixtures";
 
 /* ═══ workspace 本地 state（1:1 對應原型 state 的 ws 相關欄位）═══ */
@@ -63,7 +63,7 @@ const liveLinkChip: CSSProperties = { marginLeft: "auto", fontFamily: MONO, font
 /** liveBackend=true 時 dock 標題列尾端的「完整工具 ↗」連結（導流到 legacy 完整工具頁）。 */
 function DockLiveLink({ dock }: { dock: DockKey }) {
   return (
-    <a className="hv-text" data-testid="dock-live-link" data-prov="live" href={LIVE_LINK_HREF[dock]} style={liveLinkChip}>完整工具 ↗</a>
+    <a className="hv-text" data-testid="dock-live-link" data-uc="dock-live-link" data-action="nav" data-prov="live" href={LIVE_LINK_HREF[dock]} style={liveLinkChip}>完整工具 ↗</a>
   );
 }
 
@@ -82,10 +82,9 @@ const plainGhostBtn: CSSProperties = { flex: 1, textAlign: "center", fontSize: "
 
 /* ═══ A1 治理檢核 ═══ */
 export function A1Dock({ zh, L, ws, patch, live }: DockProps) {
-  const u = useUnifiedState();
   return (
     <div data-prov="fixture" style={dockRoot}>
-      <div style={dockHead}><span style={dockTitle}>A1 {L.a1}</span><span style={liveChip}>LIVE</span>{live === true ? <DockLiveLink dock="a1" /> : null}</div>
+      <div style={dockHead}><span style={dockTitle}>A1 {L.a1}</span><span style={liveChip}>asbuilt</span>{live === true ? <DockLiveLink dock="a1" /> : null}</div>
       <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
         <span style={label9}>{L.file}</span>
         <div style={{ display: "flex", alignItems: "center", gap: 8, background: "var(--ab-inset)", border: "1px solid rgba(120,160,210,.14)", borderRadius: 8, padding: "8px 10px" }}>
@@ -103,7 +102,7 @@ export function A1Dock({ zh, L, ws, patch, live }: DockProps) {
           </div>
         ))}
       </div>
-      <div className="hv-bright" data-uc="dock-cta" style={BTN} onClick={() => { patch({ a1Ran: true, dcLog: "highlightPrimsRequest → ack ✓ (18 prims)" }); u.toast("POST /api/rule-runs → 202 · run #88 " + (zh ? "完成:失敗 18" : "done: 18 failures")); }}>{ws.a1Ran ? L.rerun : L.run}</div>
+      <div className="hv-bright" data-uc="dock-cta" data-action="nav" role="button" style={BTN} onClick={() => { window.location.hash = "#a1-workbench"; }}>{ws.a1Ran ? L.rerun : L.run}</div>
       {ws.a1Ran ? (
         <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
@@ -119,14 +118,7 @@ export function A1Dock({ zh, L, ws, patch, live }: DockProps) {
             const opened = ws.opened[f.id];
             const open = (e: MouseEvent<HTMLSpanElement>) => {
               e.stopPropagation();
-              if (ws.opened[f.id]) return;
-              const id = u.issueSeq;
-              patch({ opened: { ...ws.opened, [f.id]: true } });
-              u.patch({
-                issues: [{ id: "ISS-" + id, title: el + " · " + rule, st: "open", src: "rule-run #88" }, ...u.issues],
-                issueSeq: id + 1,
-              });
-              u.toast(`POST /api/issues/from-rule-run/88 → 201 · ISS-${id}`);
+              window.location.hash = "#issues";
             };
             return (
               <div key={f.id} className="hv-accent-border-strong" onClick={() => patch({ sel: { name: el, path: f.path }, dcLog: `highlightPrimsRequest → ack ✓ ${f.path}` })} style={rowBox(ws.sel !== null && ws.sel.path === f.path)}>
@@ -136,13 +128,13 @@ export function A1Dock({ zh, L, ws, patch, live }: DockProps) {
                   <span style={{ fontFamily: MONO, fontSize: 9, color: "var(--ab-text-dim)" }}>{rule}</span>
                 </div>
                 {/* role/aria-disabled：誠實停用語意（已開單後 open() 本就 no-op），design gate disabled case 斷言用，像素中性 */}
-                <span className="hv-bright-more" data-uc="fail-issue-btn" role="button" aria-disabled={opened ? "true" : "false"} onClick={open} style={{ flex: "none", fontSize: 10, padding: "3px 9px", borderRadius: 6, cursor: "pointer", ...(opened ? { color: "var(--ab-ok-text)", border: "1px solid rgba(49,197,109,.3)" } : { color: "var(--ab-on-accent)", background: ACCENT, fontWeight: 700 }) }}>{opened ? "✓" : (zh ? "開單" : "issue")}</span>
+                <span className="hv-bright-more" data-uc="fail-issue-btn" data-action="nav" role="button" aria-disabled={opened ? "true" : "false"} onClick={open} style={{ flex: "none", fontSize: 10, padding: "3px 9px", borderRadius: 6, cursor: "pointer", ...(opened ? { color: "var(--ab-ok-text)", border: "1px solid rgba(49,197,109,.3)" } : { color: "var(--ab-on-accent)", background: ACCENT, fontWeight: 700 }) }}>{opened ? "✓" : (zh ? "開單" : "issue")}</span>
               </div>
             );
           })}
           <div style={{ display: "flex", gap: 8, marginTop: 2 }}>
-            <span className="hv-accent-bg" onClick={() => u.toast("GET /api/bcf/export → bcf_2.1_export.zip (" + u.issues.length + " topics)")} style={accentGhostBtn}>{L.bcf}</span>
-            <span className="hv-text" onClick={() => patch({ sel: null, dcLog: "clearHighlightRequest → ✓" })} style={plainGhostBtn}>{L.clear}</span>
+            <span className="hv-accent-bg" data-action="nav" role="button" onClick={() => { window.location.hash = "#reports"; }} style={accentGhostBtn}>{L.bcf}</span>
+            <span className="hv-text" data-action="api" role="button" onClick={() => patch({ sel: null, dcLog: "clearHighlightRequest → ✓" })} style={plainGhostBtn}>{L.clear}</span>
           </div>
         </div>
       ) : null}
@@ -154,18 +146,17 @@ export function A1Dock({ zh, L, ws, patch, live }: DockProps) {
 }
 
 /* ═══ A2 版本 Diff ═══ */
-export function A2Dock({ zh, L, ws, patch, live }: DockProps) {
-  const u = useUnifiedState();
+export function A2Dock({ zh, L, ws, live }: DockProps) {
   const verBox: CSSProperties = { flex: 1, background: "var(--ab-inset)", border: "1px solid rgba(120,160,210,.14)", borderRadius: 8, padding: "8px 10px", display: "flex", alignItems: "center", gap: 6 };
   return (
     <div data-prov="fixture" style={dockRoot}>
-      <div style={dockHead}><span style={dockTitle}>A2 {L.a2}</span><span style={liveChip}>LIVE</span>{live === true ? <DockLiveLink dock="a2" /> : null}</div>
+      <div style={dockHead}><span style={dockTitle}>A2 {L.a2}</span><span style={liveChip}>asbuilt</span>{live === true ? <DockLiveLink dock="a2" /> : null}</div>
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
         <div style={verBox}><span style={{ fontFamily: MONO, fontSize: 11 }}>v12</span><span style={{ fontSize: 10, color: "var(--ab-text-dim)" }}>2026-06-01</span><span style={{ marginLeft: "auto", color: "var(--ab-text-dim)", fontSize: 10 }}>▾</span></div>
         <span style={{ fontFamily: MONO, color: "var(--ab-text-dim)", fontSize: 11 }}>vs</span>
         <div style={verBox}><span style={{ fontFamily: MONO, fontSize: 11 }}>v15</span><span style={{ fontSize: 10, color: "var(--ab-text-dim)" }}>2026-07-01</span><span style={{ marginLeft: "auto", color: "var(--ab-text-dim)", fontSize: 10 }}>▾</span></div>
       </div>
-      <div className="hv-bright" data-uc="dock-cta" style={BTN} onClick={() => { patch({ a2Ran: true }); u.toast("POST /api/diffs → 202 · diff v12→v15 " + (zh ? "完成" : "done")); }}>{ws.a2Ran ? L.rerun : (zh ? "計算差異" : "Compute diff")}</div>
+      <div className="hv-bright" data-uc="dock-cta" data-action="nav" role="button" style={BTN} onClick={() => { window.location.hash = "#version-diff"; }}>{ws.a2Ran ? L.rerun : (zh ? "計算差異" : "Compute diff")}</div>
       {ws.a2Ran ? (
         <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
           <div style={{ display: "flex", gap: 6 }}>
@@ -178,7 +169,7 @@ export function A2Dock({ zh, L, ws, patch, live }: DockProps) {
             const kind = zh ? d.kindZh : d.kindEn;
             const t = kindTone[d.tone];
             return (
-              <div key={d.detail} className="hv-accent-border-strong" onClick={() => patch({ sel: { name: el, path: "/World/diff/" + i }, dcLog: `focusPrimResult ✓ (${el})` })} style={rowBox(ws.sel !== null && ws.sel.path === "/World/diff/" + i)}>
+              <div key={d.detail} className="hv-accent-border-strong" onClick={() => { window.location.hash = "#version-diff"; }} style={rowBox(ws.sel !== null && ws.sel.path === "/World/diff/" + i)}>
                 <span style={toneChip(t)}>{kind}</span>
                 <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 1 }}>
                   <span style={{ fontSize: "11.5px", color: "var(--ab-text)" }}>{el}</span>
@@ -188,8 +179,8 @@ export function A2Dock({ zh, L, ws, patch, live }: DockProps) {
             );
           })}
           <div style={{ display: "flex", gap: 8, marginTop: 2 }}>
-            <span className="hv-accent-bg" onClick={() => { patch({ overlayOn: true, dcLog: "apply-overlay → highlightPrimsRequest ✓ (44 prims)" }); u.toast("POST /api/diffs/d_031/apply-overlay → ✓"); }} style={accentGhostBtn}>{L.overlay}</span>
-            <span className="hv-text" onClick={() => { u.patch({ issues: [{ id: "ISS-" + u.issueSeq, title: "B-3F-12 樑位移 +42mm(v12→v15)", st: "open", src: "diff v12→v15" }, ...u.issues], issueSeq: u.issueSeq + 1 }); u.toast("POST /api/issues/from-diff/d_031 → 201"); }} style={plainGhostBtn}>{L.fromdiff}</span>
+            <span className="hv-accent-bg" data-action="nav" role="button" onClick={() => { window.location.hash = "#version-diff"; }} style={accentGhostBtn}>{L.overlay}</span>
+            <span className="hv-text" data-action="nav" role="button" onClick={() => { window.location.hash = "#issues"; }} style={plainGhostBtn}>{L.fromdiff}</span>
           </div>
         </div>
       ) : null}
@@ -198,12 +189,11 @@ export function A2Dock({ zh, L, ws, patch, live }: DockProps) {
 }
 
 /* ═══ A3 Federation ═══ */
-export function A3Dock({ zh, L, ws, patch, live }: DockProps) {
-  const u = useUnifiedState();
+export function A3Dock({ zh, L, ws, live }: DockProps) {
   const checkChip: CSSProperties = { flex: 1, display: "flex", alignItems: "center", gap: 6, fontSize: 11, color: "var(--ab-ok-text)", background: "rgba(49,197,109,.08)", border: "1px solid rgba(49,197,109,.22)", borderRadius: 7, padding: "6px 9px" };
   return (
     <div data-prov="fixture" style={dockRoot}>
-      <div style={dockHead}><span style={dockTitle}>A3 Federation</span><span style={liveChip}>LIVE</span>{live === true ? <DockLiveLink dock="a3" /> : null}</div>
+      <div style={dockHead}><span style={dockTitle}>A3 Federation</span><span style={liveChip}>asbuilt</span>{live === true ? <DockLiveLink dock="a3" /> : null}</div>
       <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
         <span style={label9}>SubLayer {L.order}</span>
         {fedMembers.map((m) => (
@@ -220,13 +210,13 @@ export function A3Dock({ zh, L, ws, patch, live }: DockProps) {
         <span style={checkChip}>✓ Coordinate Check OK</span>
         <span style={checkChip}>✓ {L.unit} m · CRS 一致</span>
       </div>
-      <div className="hv-bright" data-uc="dock-cta" style={BTN} onClick={() => { patch({ a3Built: true }); u.toast("POST /api/federated-sets/FS-01/build → Federated USD ✓"); }}>{ws.a3Built ? (zh ? "重新建置" : "Rebuild") : "Build Federated USD"}</div>
+      <div className="hv-bright" data-uc="dock-cta" data-action="nav" role="button" style={BTN} onClick={() => { window.location.hash = "#federation"; }}>{ws.a3Built ? (zh ? "重新建置" : "Rebuild") : "Build Federated USD"}</div>
       {ws.a3Built ? (
         <div style={{ display: "flex", flexDirection: "column", gap: 8, background: "var(--ab-inset)", border: "1px solid rgba(49,197,109,.25)", borderRadius: 10, padding: 12 }}>
           <span style={{ fontFamily: MONO, fontSize: 9, letterSpacing: ".1em", color: "var(--ab-ok-text)", textTransform: "uppercase" }}>Federated Stage ✓</span>
           <span style={{ fontFamily: MONO, fontSize: "10.5px", color: "var(--ab-text-2)" }}>/Review/A1_Tower_fed.usd</span>
           <span style={{ fontSize: "10.5px", color: "var(--ab-text-dim)" }}>5 members · 12.48M tris · flatten off</span>
-          <span className="hv-bright" onClick={() => { patch({ dock: "a1" }); u.toast("GET /api/federated-sets/FS-01/review-room → S-240601"); }} style={{ textAlign: "center", fontSize: "11.5px", color: "var(--ab-on-accent)", background: `linear-gradient(135deg,${ACCENT},var(--ab-accent-2))`, borderRadius: 8, padding: 7, cursor: "pointer", fontWeight: 700 }}>Open in Review Room →</span>
+          <span className="hv-bright" data-action="nav" role="button" onClick={() => { window.location.hash = "#sessions"; }} style={{ textAlign: "center", fontSize: "11.5px", color: "var(--ab-on-accent)", background: `linear-gradient(135deg,${ACCENT},var(--ab-accent-2))`, borderRadius: 8, padding: 7, cursor: "pointer", fontWeight: 700 }}>Open in Review Room →</span>
         </div>
       ) : null}
     </div>
@@ -234,15 +224,27 @@ export function A3Dock({ zh, L, ws, patch, live }: DockProps) {
 }
 
 /* ═══ A4 語意查詢 ═══ */
-export function A4Dock({ L }: DockProps) {
+export function A4Dock({ zh, L }: DockProps) {
   return (
-    <div data-prov="redirect" style={dockRoot}>
-      <div style={dockHead}><span style={dockTitle}>A4 {L.a4}</span></div>
-      <p style={{ margin: 0, fontSize: 12, lineHeight: 1.5, color: "var(--ab-text-2)" }}>
-        A4 live search is session-scoped and table-only until trusted proof and C-M4 runtime capability are available.
-      </p>
-      <a data-uc="a4-canonical-link" href="#workspace?dock=a4" style={{ ...BTN, textAlign: "center", textDecoration: "none" }}>
-        Open A4 search →
+    <div data-prov="redirect" data-uc="a4-dock" style={dockRoot}>
+      <div style={dockHead}><span style={dockTitle}>A4 {L.a4}</span><span style={liveChip}>asbuilt</span></div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 8, fontSize: 12, lineHeight: 1.5, color: "var(--ab-text-2)" }}>
+        <p style={{ margin: 0, fontWeight: 600, color: "var(--ab-text)" }}>
+          {zh ? "A4 語意查詢與檢核證據檢索" : "A4 Semantic Query & Evidence Retrieval"}
+        </p>
+        <p style={{ margin: 0 }}>
+          {zh
+            ? "輸入來源：已進件之 IFC 模型（/api/external/ifc-ready）與 LLM 服務狀態（/api/governance/search/llm-status）。"
+            : "Input source: Ingested IFC models (/api/external/ifc-ready) and LLM search status (/api/governance/search/llm-status)."}
+        </p>
+        <p style={{ margin: 0, color: "var(--ab-text-dim)" }}>
+          {zh
+            ? "若查無資料，可能為尚無完成轉檔之模型，或 LLM 索引建立中；請至生產線確認進件與轉檔狀態。"
+            : "If empty, no converted models are ready or LLM indexing is in progress; verify intake/queue in pipeline."}
+        </p>
+      </div>
+      <a data-uc="a4-canonical-link" data-action="nav" href="#workspace?dock=a4" style={{ ...BTN, textAlign: "center", textDecoration: "none" }}>
+        {zh ? "前往 A4 查詢頁 →" : "Open A4 search →"}
       </a>
     </div>
   );
@@ -269,8 +271,8 @@ export function IssuesDock({ L, live }: DockProps) {
         );
       })}
       <div style={{ display: "flex", gap: 8 }}>
-        <span className="hv-bright" onClick={() => u.toast("GET /api/bcf/export → bcf_2.1_export.zip (" + u.issues.length + " topics)")} style={{ flex: 1, textAlign: "center", fontSize: "11.5px", color: "var(--ab-on-accent)", background: `linear-gradient(135deg,${ACCENT},var(--ab-accent-2))`, borderRadius: 8, padding: 8, cursor: "pointer", fontWeight: 700 }}>{L.bcf}</span>
-        <span className="hv-text" onClick={() => { u.patch({ outbox: u.outbox.map((o): OutboxItem => ({ ...o, st: "已送" })) }); u.toast("POST /api/internal/callback-outbox/deliver → ✓ metadata-only"); }} style={{ flex: 1, textAlign: "center", fontSize: "11.5px", color: "var(--ab-text-muted)", border: "1px solid rgba(120,160,210,.16)", borderRadius: 8, padding: 8, cursor: "pointer" }}>{L.outbox}</span>
+        <span className="hv-bright" data-action="nav" role="button" onClick={() => { window.location.hash = "#reports"; }} style={{ flex: 1, textAlign: "center", fontSize: "11.5px", color: "var(--ab-on-accent)", background: `linear-gradient(135deg,${ACCENT},var(--ab-accent-2))`, borderRadius: 8, padding: 8, cursor: "pointer", fontWeight: 700 }}>{L.bcf}</span>
+        <span className="hv-text" data-action="nav" role="button" onClick={() => { window.location.hash = "#minio"; }} style={{ flex: 1, textAlign: "center", fontSize: "11.5px", color: "var(--ab-text-muted)", border: "1px solid rgba(120,160,210,.16)", borderRadius: 8, padding: 8, cursor: "pointer" }}>{L.outbox}</span>
       </div>
     </div>
   );

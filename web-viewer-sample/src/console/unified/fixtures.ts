@@ -129,7 +129,7 @@ export const navMain: NavMainItem[] = [
 ];
 
 /* ── AI 應用模組 10 項（A1–A4 LIVE → #a1..#a4；A5 P3 / A6–A10 P4 → #a5..#a10）── */
-export type AppTone = "live" | "p3" | "p4";
+export type AppTone = "live" | "asbuilt" | "p3" | "p4";
 export interface AppDef {
   code: AppCode;
   labelZh: string;
@@ -139,10 +139,10 @@ export interface AppDef {
   hash: string;
 }
 export const apps: AppDef[] = [
-  { code: "A1", labelZh: "治理檢核", labelEn: "Rule Check", badge: "LIVE", tone: "live", hash: "#a1" },
-  { code: "A2", labelZh: "版本 Diff", labelEn: "Version Diff", badge: "LIVE", tone: "live", hash: "#a2" },
-  { code: "A3", labelZh: "Federation", labelEn: "Federation", badge: "LIVE", tone: "live", hash: "#a3" },
-  { code: "A4", labelZh: "語意查詢", labelEn: "Semantic Query", badge: "LIVE", tone: "live", hash: "#a4" },
+  { code: "A1", labelZh: "治理檢核", labelEn: "Rule Check", badge: "asbuilt", tone: "asbuilt", hash: "#a1" },
+  { code: "A2", labelZh: "版本 Diff", labelEn: "Version Diff", badge: "asbuilt", tone: "asbuilt", hash: "#a2" },
+  { code: "A3", labelZh: "Federation", labelEn: "Federation", badge: "asbuilt", tone: "asbuilt", hash: "#a3" },
+  { code: "A4", labelZh: "語意查詢", labelEn: "Semantic Query", badge: "asbuilt", tone: "asbuilt", hash: "#a4" },
   { code: "A5", labelZh: "IoT / FM", labelEn: "IoT / FM", badge: "P3", tone: "p3", hash: "#a5" },
   { code: "A6", labelZh: "4D / 5D", labelEn: "4D / 5D", badge: "P4", tone: "p4", hash: "#a6" },
   { code: "A7", labelZh: "Scan Compare", labelEn: "Scan Compare", badge: "P4", tone: "p4", hash: "#a7" },
@@ -293,6 +293,7 @@ export const VP_BASE: Record<DockKey, string> = {
 /** badge tone 色組：[文字色, 背景色, 邊框色] */
 export const badgeToneColors: Record<AppTone | "warn", readonly [string, string, string]> = {
   live: ["var(--ab-ok-text)", "rgba(49,197,109,.1)", "rgba(49,197,109,.3)"],
+  asbuilt: ["var(--ab-ok-text)", "rgba(49,197,109,.1)", "rgba(49,197,109,.3)"],
   p3: ["var(--ab-violet-text)", "rgba(157,140,255,.1)", "rgba(157,140,255,.3)"],
   p4: ["var(--ab-violet-dim)", "rgba(157,140,255,.07)", "rgba(157,140,255,.2)"],
   warn: ["var(--ab-warn)", "rgba(230,178,62,.1)", "rgba(230,178,62,.3)"],

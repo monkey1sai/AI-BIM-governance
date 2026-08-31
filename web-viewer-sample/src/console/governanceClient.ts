@@ -388,6 +388,29 @@ export const governanceClient = {
     ),
 
   // Issue tracking
+  createIssueFromA4Session: async (
+    sessionId: string,
+    body: {
+      title: string;
+      description?: string | null;
+      severity: "low" | "medium" | "high" | "critical";
+      assignee?: string | null;
+      ifc_guid: string;
+      usd_prim_path?: string | null;
+      evidence_proof: string;
+      a4_evidence_snapshot: Record<string, unknown>;
+    },
+    userToken: string,
+  ) =>
+    jsonFetch<{ issue: IssueRow; replayed: boolean }>(
+      `/api/governance/issues/from-a4-session/${encodeURIComponent(sessionId)}`,
+      {
+        method: "POST",
+        headers: localDevPrincipalHeaders(userToken),
+        body: JSON.stringify(body),
+      },
+      { safeError: true },
+    ),
   createIssue: (req: IssueCreateRequest) =>
     jsonFetch<IssueRow>("/api/governance/issues", {
       method: "POST",
@@ -495,6 +518,8 @@ export interface ModelSearchResultRow {
   confidence: number | null;
   confidence_basis?: string | null;
   evidence_refs: string[];
+  evidence_proof?: string;
+  a4_evidence_snapshot?: Record<string, unknown>;
   action_eligible?: boolean;
   proof_eligible?: boolean;
   issue_eligible?: boolean;
