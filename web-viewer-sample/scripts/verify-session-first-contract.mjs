@@ -211,8 +211,8 @@ assert.doesNotMatch(
 );
 assert.match(
     windowSource,
-    /const shouldRenderAppStream = !reviewEnv\.hasExplicitEmptySessionId && Boolean\(this\.state\.reviewSessionId\);/,
-    "viewer must not mount AppStream before a coordinator review session is bound",
+    /const shouldRenderAppStream = !reviewEnv\.hasExplicitEmptySessionId\s*&& Boolean\(this\.state\.reviewSessionId\)\s*&& !isBlockedLifecycle\(this\.state\.reviewLifecycleStatus\)\s*&& this\.state\.latestStreamConfig\?\.model\.status === "ready";/,
+    "viewer must not mount AppStream before a ready coordinator review session is bound or after its lifecycle is blocked",
 );
 assert.match(
     windowSource,
