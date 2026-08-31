@@ -454,6 +454,7 @@ interface StageAttempt {
 const STAGE_AUTHORIZATION_TIMEOUT_MS = 45_000;
 const STAGE_AUTHORIZATION_CANCEL_TIMEOUT_MS = 5_000;
 const STAGE_LOAD_TIMEOUT_MS = 45_000;
+const STREAM_CONFIG_REFRESH_INTERVAL_MS = 3_000;
 // Let the user-facing proof deadline claim the terminal result first. The
 // SDK slot watchdog runs immediately after it and only fences lifecycle reuse.
 const NATIVE_OPEN_STAGE_SLOT_TIMEOUT_MS = STAGE_LOAD_TIMEOUT_MS + 1;
@@ -886,6 +887,7 @@ export default class App extends React.Component<AppProps, AppState> {
     private verifiedDataChannelAuthority: VerifiedDataChannelAuthority | null = null;
     private reviewSocketEpoch = 0;
     private streamStartTimeoutId: number | null = null;
+    private streamConfigRefreshTimeoutId: number | null = null;
     private loadingStateRetryId: number | null = null;
     private stageLoadTimeoutId: number | null = null;
     private deferredOpenStageId: number | null = null;
@@ -1077,6 +1079,7 @@ export default class App extends React.Component<AppProps, AppState> {
         window.removeEventListener("pointerdown", this._onViewerUserActivity);
         this._releaseStandaloneViewerLease();
         this._clearStreamStartTimeout();
+        this._clearStreamConfigRefresh();
         this._clearLoadingStateRetry();
         this._clearStageLoadTimeout();
         this._clearDeferredOpenStage();
@@ -2006,7 +2009,12 @@ export default class App extends React.Component<AppProps, AppState> {
 
     private _scheduleStreamStartTimeout(): void {
         this._clearStreamStartTimeout();
-        if (StreamConfig.source === "gfn") return;
+        if (
+            StreamConfig.source === "gfn"
+            || !this.state.reviewSessionId
+            || isBlockedLifecycle(this.state.reviewLifecycleStatus)
+            || this.state.latestStreamConfig?.model.status !== "ready"
+        ) return;
         this.streamStartTimeoutId = window.setTimeout(() => {
             this._handleStreamStartTimeout();
         }, reviewEnv.streamStartTimeoutMs);
@@ -2016,6 +2024,26 @@ export default class App extends React.Component<AppProps, AppState> {
         if (this.streamStartTimeoutId === null) return;
         window.clearTimeout(this.streamStartTimeoutId);
         this.streamStartTimeoutId = null;
+    }
+
+    private _scheduleStreamConfigRefresh(sessionId: string): void {
+        this._clearStreamConfigRefresh();
+        if (
+            !this.componentMounted
+            || this.state.reviewSessionId !== sessionId
+            || isBlockedLifecycle(this.state.reviewLifecycleStatus)
+            || this.state.latestStreamConfig?.model.status === "ready"
+        ) return;
+        this.streamConfigRefreshTimeoutId = window.setTimeout(() => {
+            this.streamConfigRefreshTimeoutId = null;
+            void this._bootstrapReview(sessionId);
+        }, STREAM_CONFIG_REFRESH_INTERVAL_MS);
+    }
+
+    private _clearStreamConfigRefresh(): void {
+        if (this.streamConfigRefreshTimeoutId === null) return;
+        window.clearTimeout(this.streamConfigRefreshTimeoutId);
+        this.streamConfigRefreshTimeoutId = null;
     }
 
     private _scheduleLoadingStateQuery(delayMs = 1000): void {
@@ -3737,7 +3765,8 @@ export default class App extends React.Component<AppProps, AppState> {
         });
     }
 
-    private async _bootstrapReview(): Promise<void> {
+    private async _bootstrapReview(sessionIdOverride?: string): Promise<void> {
+        this._clearStreamConfigRefresh();
         if (harnessEnabled()) {
             this._bootstrapHarnessSession();
             this._rejectA4HandoffBeforeConsume("harness_handoff_not_authorized");
@@ -3794,11 +3823,12 @@ export default class App extends React.Component<AppProps, AppState> {
                 }
             }
 
-            const loadedSession: ReviewSession | null = reviewEnv.defaultSessionId
-                ? await this.coordinatorClient.getReviewSession(reviewEnv.defaultSessionId)
+            const loadedSessionId = sessionIdOverride || reviewEnv.defaultSessionId;
+            const loadedSession: ReviewSession | null = loadedSessionId
+                ? await this.coordinatorClient.getReviewSession(loadedSessionId)
                 : null;
             let createdSession: ReviewSession | null = null;
-            if (!reviewEnv.defaultSessionId && !reviewRequest?.session_id) {
+            if (!sessionIdOverride && !reviewEnv.defaultSessionId && !reviewRequest?.session_id) {
                 try {
                     createdSession = await this.coordinatorClient.createReviewSession({
                         review_request_id: reviewRequest?.review_request_id,
@@ -3910,7 +3940,11 @@ export default class App extends React.Component<AppProps, AppState> {
                 ],
             }, () => {
                 this._connectReviewSocket(sessionId, streamConfig.trace_id);
-                this._scheduleStreamStartTimeout();
+                if (streamConfig.model.status === "ready" && !isBlockedLifecycle(streamConfig.lifecycle_status)) {
+                    this._scheduleStreamStartTimeout();
+                } else if (streamConfig.model.status === "missing" && !isBlockedLifecycle(streamConfig.lifecycle_status)) {
+                    this._scheduleStreamConfigRefresh(sessionId);
+                }
                 if (!streamEndpointChanged && this.state.isKitReady && this.state.selectedUSDAsset && streamConfig.model.status === "ready" && !isBlockedLifecycle(streamConfig.lifecycle_status)) {
                     this._openSelectedAsset();
                 }
@@ -3919,6 +3953,15 @@ export default class App extends React.Component<AppProps, AppState> {
         }
         catch (error) {
             console.warn("Review bootstrap unavailable.", error);
+            if (
+                sessionIdOverride
+                && this.componentMounted
+                && this.state.reviewSessionId === sessionIdOverride
+                && !isBlockedLifecycle(this.state.reviewLifecycleStatus)
+            ) {
+                this._scheduleStreamConfigRefresh(sessionIdOverride);
+                return;
+            }
             this.setState({
                 reviewStatus: "Review coordinator 無法連線",
                 reviewEvents: [...this.state.reviewEvents, "review bootstrap 載入失敗"],

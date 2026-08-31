@@ -82,7 +82,8 @@ for (const token of [
     "viewer-role",
     "showUsdStageDock",
     "Boolean(this.state.reviewSessionId)",
-    "this.coordinatorClient.getReviewSession(reviewEnv.defaultSessionId)",
+    "const loadedSessionId = sessionIdOverride || reviewEnv.defaultSessionId",
+    "this.coordinatorClient.getReviewSession(loadedSessionId)",
     "isSpectatorStreamMode",
     "const spectatorBinding = isSpectatorStreamMode()",
     // remove-conflict-review-from-fast-mvp:review-bootstrap endpoint 與 getReviewBootstrap 已退役;
@@ -216,8 +217,8 @@ assert.match(
 );
 assert.match(
     windowSource,
-    /this\.setState\(\{[\s\S]*?reviewSessionId: sessionId,[\s\S]*?latestStreamConfig: streamConfig,[\s\S]*?\}, \(\) => \{[\s\S]*?this\._scheduleStreamStartTimeout\(\);/,
-    "viewer must start the WebRTC timeout only after session stream-config has bound AppStream inputs",
+    /this\.setState\(\{[\s\S]*?reviewSessionId: sessionId,[\s\S]*?latestStreamConfig: streamConfig,[\s\S]*?\}, \(\) => \{[\s\S]*?if \(streamConfig\.model\.status === "ready"[\s\S]*?this\._scheduleStreamStartTimeout\(\);[\s\S]*?else if \(streamConfig\.model\.status === "missing"[\s\S]*?this\._scheduleStreamConfigRefresh\(sessionId\);/,
+    "viewer must start the WebRTC timeout only for a ready mounted stream and refresh a missing model until it is ready",
 );
 assert.match(
     windowSource,
@@ -305,7 +306,7 @@ for (const callback of [
 // remove-conflict-review-from-fast-mvp:review-bootstrap 已退役,改驗 session-first 順序到 stream-config 的鏈
 assert.match(
     windowSource,
-    /this\.coordinatorClient\.getReviewSession\(reviewEnv\.defaultSessionId\)[\s\S]*?this\.coordinatorClient\.getStreamConfig\(sessionId\)/,
+    /const loadedSessionId = sessionIdOverride \|\| reviewEnv\.defaultSessionId;[\s\S]*?this\.coordinatorClient\.getReviewSession\(loadedSessionId\)[\s\S]*?this\.coordinatorClient\.getStreamConfig\(sessionId\)/,
     "sessionId bootstrap must call getReviewSession before getStreamConfig (session-first contract; review-bootstrap retired)",
 );
 

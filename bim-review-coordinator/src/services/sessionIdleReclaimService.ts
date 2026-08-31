@@ -143,12 +143,20 @@ export class SessionIdleReclaimService {
       this.removeSession(sessionId);
       return null;
     }
-    if (!session || (session.status !== "active" && session.status !== "created")) {
+    const trackedState = this.sessionStates.get(sessionId);
+    const retryingInterruptedTeardown = (
+      session?.status === "closing" || session?.status === "closed"
+    ) && trackedState?.isCountingDown === true && trackedState.countdownRemainingSec <= 0;
+    if (!session || (
+      session.status !== "active"
+      && session.status !== "created"
+      && !retryingInterruptedTeardown
+    )) {
       this.removeSession(sessionId);
       return null;
     }
 
-    let state = this.sessionStates.get(sessionId);
+    let state = trackedState;
     if (!state) {
       const createdAtMs = Date.parse(session.created_at) || Date.now();
       state = {
@@ -176,7 +184,9 @@ export class SessionIdleReclaimService {
       if (this.teardownInFlight.has(sessionId)) continue;
       try {
         const session = this.store.get(sessionId);
-        const retryingInterruptedTeardown = session?.status === "closing"
+        const retryingInterruptedTeardown = (
+          session?.status === "closing" || session?.status === "closed"
+        )
           && state.isCountingDown
           && state.countdownRemainingSec <= 0;
         if (

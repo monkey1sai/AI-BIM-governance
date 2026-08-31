@@ -1712,6 +1712,87 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
     }
   });
 
+  it("waits for a missing model to become ready before starting the WebRTC timeout", async () => {
+    vi.useFakeTimers();
+    const app = operableApp();
+    useSynchronousSetState(app);
+    const privateApp = internals(app) as unknown as {
+      _bootstrapReview: (sessionIdOverride?: string) => Promise<void>;
+      _connectReviewSocket: (sessionId: string, traceId: string) => void;
+      _scheduleStreamStartTimeout: () => void;
+      _beginA4Handoff: (sessionId: string) => Promise<void>;
+      coordinatorClient: {
+        getReviewSession: (sessionId: string) => Promise<unknown>;
+        getStreamConfig: (sessionId: string) => Promise<unknown>;
+      };
+      componentMounted: boolean;
+    };
+    const previousReviewEnv = {
+      defaultSessionId: reviewEnv.defaultSessionId,
+      defaultReviewRequestId: reviewEnv.defaultReviewRequestId,
+      autoCreateSession: reviewEnv.autoCreateSession,
+      hasExplicitEmptySessionId: reviewEnv.hasExplicitEmptySessionId,
+    };
+    const streamConfig = (status: "missing" | "ready") => ({
+      session_id: "review_session_x",
+      trace_id: DATA_CHANNEL_TRACE_ID,
+      lifecycle_status: "active",
+      source: "local_fixed",
+      webrtc: {
+        signalingServer: "127.0.0.1",
+        signalingPort: 49100,
+        mediaServer: "127.0.0.1",
+        mediaPort: null,
+      },
+      model: {
+        status,
+        artifact_id: status === "ready" ? "artifact_ready" : null,
+        url: status === "ready" ? "stage://ready.usdc" : null,
+        mapping_url: null,
+        conversion_job_id: "conversion_pending",
+      },
+      artifacts: [],
+      artifact_bindings: [],
+      kit_instance_bindings: [],
+    });
+
+    try {
+      privateApp.componentMounted = true;
+      reviewEnv.defaultSessionId = "review_session_x";
+      reviewEnv.defaultReviewRequestId = "";
+      reviewEnv.autoCreateSession = true;
+      reviewEnv.hasExplicitEmptySessionId = false;
+      vi.spyOn(privateApp.coordinatorClient, "getReviewSession").mockResolvedValue({
+        session_id: "review_session_x",
+        project_id: "project_x",
+        model_version_id: "version_x",
+      } as never);
+      const getStreamConfig = vi.spyOn(privateApp.coordinatorClient, "getStreamConfig")
+        .mockResolvedValueOnce(streamConfig("missing") as never)
+        .mockResolvedValueOnce(streamConfig("ready") as never);
+      vi.spyOn(privateApp, "_connectReviewSocket").mockImplementation(() => undefined);
+      const scheduleStreamStart = vi.spyOn(privateApp, "_scheduleStreamStartTimeout").mockImplementation(() => undefined);
+      vi.spyOn(privateApp, "_beginA4Handoff").mockResolvedValue(undefined);
+
+      await privateApp._bootstrapReview();
+
+      expect(getStreamConfig).toHaveBeenCalledTimes(1);
+      expect(scheduleStreamStart).not.toHaveBeenCalled();
+      expect(internals(app).state.latestStreamConfig).toMatchObject({ model: { status: "missing" } });
+
+      await vi.advanceTimersByTimeAsync(3_000);
+
+      expect(getStreamConfig).toHaveBeenCalledTimes(2);
+      expect(internals(app).state.latestStreamConfig).toMatchObject({ model: { status: "ready" } });
+      expect(scheduleStreamStart).toHaveBeenCalledTimes(1);
+    } finally {
+      privateApp.componentMounted = false;
+      vi.clearAllTimers();
+      vi.useRealTimers();
+      Object.assign(reviewEnv, previousReviewEnv);
+    }
+  });
+
   it("keeps a new stage attempt intact when old sendMessage resolve and rejection settle after reconnect", async () => {
     reviewEnv.sourceClientId = "viewer_lease_primary";
     reviewEnv.viewerLeaseToken = "lease_token_primary";

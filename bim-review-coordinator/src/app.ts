@@ -768,12 +768,17 @@ export function createCoordinatorApp(
       actor?: string;
       finalEvents?: unknown[];
       resumeClosing?: boolean;
+      resumeClosed?: boolean;
+      retainIdleTracking?: boolean;
     } = {},
   ): ReviewSession | null => {
     if (!isSafeSessionId(sessionId)) return null;
     const session = store.get(sessionId);
     if (!session) return null;
-    if (session.status === "closed" || (session.status === "closing" && !options.resumeClosing)) {
+    if (
+      (session.status === "closed" && !options.resumeClosed)
+      || (session.status === "closing" && !options.resumeClosing)
+    ) {
       return session;
     }
     const finalEvents = Array.isArray(options.finalEvents) ? options.finalEvents : [];
@@ -781,7 +786,7 @@ export function createCoordinatorApp(
     const actor = typeof options.actor === "string" ? (options.actor.trim().slice(0, 500) || undefined) : undefined;
     const auditFields = reason ? { reason, ...(actor ? { actor } : {}) } : {};
     let closing = session;
-    if (session.status !== "closing") {
+    if (session.status !== "closing" && session.status !== "closed") {
       const releasedViewerLeases = viewerLeaseStore.releaseSession(session.session_id);
       closing = store.update(session.session_id, {
         status: "closing",
@@ -796,17 +801,26 @@ export function createCoordinatorApp(
         eventLog.append(session.session_id, "finalReviewEvent", event);
       }
     }
-    const closed = store.update(session.session_id, {
-      status: "closed",
-      participants: [],
-      kit_instance_bindings: releaseKitBindings(closing?.kit_instance_bindings || session.kit_instance_bindings),
-    });
-    eventLog.append(session.session_id, "sessionClosed", { ...auditFields });
-    eventLog.append(session.session_id, "kitInstanceReleased", {
-      kit_instance_bindings: closed?.kit_instance_bindings.map((binding) => binding.kit_instance_id) || [],
-    });
+    const closed = session.status === "closed"
+      ? session
+      : store.update(session.session_id, {
+          status: "closed",
+          participants: [],
+          kit_instance_bindings: releaseKitBindings(closing?.kit_instance_bindings || session.kit_instance_bindings),
+        });
+    const existingCloseEventTypes = new Set(eventLog.list(session.session_id).map((event) => event.type));
+    let appendedSessionClosed = false;
+    if (!existingCloseEventTypes.has("sessionClosed")) {
+      eventLog.append(session.session_id, "sessionClosed", { ...auditFields });
+      appendedSessionClosed = true;
+    }
+    if (!existingCloseEventTypes.has("kitInstanceReleased")) {
+      eventLog.append(session.session_id, "kitInstanceReleased", {
+        kit_instance_bindings: closed?.kit_instance_bindings.map((binding) => binding.kit_instance_id) || [],
+      });
+    }
     const traceAuthority = sessionTraceResolver.resolveAndCommit(session.session_id);
-    if (traceAuthority.ok && traceAuthority.canonicalTraceId.startsWith("ifcready_")) {
+    if (appendedSessionClosed && traceAuthority.ok && traceAuthority.canonicalTraceId.startsWith("ifcready_")) {
       structLog
         .withTraceId(traceAuthority.canonicalTraceId)
         .lifecycle("ifcReadyReviewSession", "IFC-ready review session closed", {
@@ -816,7 +830,7 @@ export function createCoordinatorApp(
           ifc_ready_job_id: traceAuthority.canonicalTraceId,
         });
     }
-    idleReclaimService?.removeSession(session.session_id);
+    if (!options.retainIdleTracking) idleReclaimService?.removeSession(session.session_id);
     return closed;
   };
 
@@ -847,6 +861,8 @@ export function createCoordinatorApp(
         reason: "inactivity",
         actor: "system:idle_reclaimer",
         resumeClosing: true,
+        resumeClosed: true,
+        retainIdleTracking: true,
       });
       if (!closed || closed.status !== "closed") {
         throw new Error(`Idle reclaim did not close session ${sessionId}.`);

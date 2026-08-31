@@ -137,9 +137,14 @@ is deployment-owned and is not defaulted before the GPU session baseline is
 measured.
 
 The coordinator tracks only sessions with at least one joined `/review` socket.
-`POST /api/review-sessions/{session_id}/activity` returns HTTP 200 with
-`ok=true` only when the policy is enabled and a viewer is connected. Otherwise
-it returns HTTP 409 and does not cancel a countdown. `GET
+`POST /api/review-sessions/{session_id}/activity` requires an active viewer
+lease. Send JSON `{ "lease_id": "viewer_lease_xxx" }` together with the
+matching `X-Viewer-Lease-Token` header. Missing, malformed, expired, released,
+or mismatched lease credentials return HTTP 401 without disclosing which
+credential failed. With valid credentials, the endpoint returns HTTP 200 with
+`ok=true` only when the inactivity policy is enabled and a viewer is connected.
+If those runtime conditions are not met it returns HTTP 409 and does not cancel
+a countdown. `GET
 /api/review-sessions/{session_id}/idle-status` reports `enabled`,
 `has_connected_viewer`, `is_counting_down`, nullable `remaining_seconds`, and
 nullable `last_activity_at`.
