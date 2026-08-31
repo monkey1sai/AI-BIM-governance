@@ -15,6 +15,7 @@ $cadAclLibrary = Get-Content -Raw (Join-Path $RepoRoot 'scripts\lib\cad-extensio
 $kitGateway = Get-Content -Raw (Join-Path $RepoRoot 'services\kit-manager-api\app\kit_gateway.py')
 $stopAll = Get-Content -Raw (Join-Path $RepoRoot 'scripts\stop-all.ps1')
 $hostKitCompose = Get-Content -Raw (Join-Path $RepoRoot 'compose.host-kit.yml')
+$runtimeManagerCompose = Get-Content -Raw (Join-Path $RepoRoot 'compose.runtime-manager.yml')
 $hostKitExample = Get-Content -Raw (Join-Path $RepoRoot '.env.web-plane.host-kit.example')
 
 function Assert-Contains {
@@ -758,6 +759,9 @@ if ($hostKitCompose -notmatch 'depends_on:\s*!override\s*\[\]') {
 }
 if ($hostKitCompose -notmatch 'KIT_MANAGER_API_BASE:\s*\$\{HOST_KIT_MANAGER_API_BASE:-http://host\.docker\.internal:8010\}') {
     throw 'compose.host-kit.yml must route the coordinator to the HOST-NATIVE kit-manager (host.docker.internal:8010); clearing depends_on without this would leave it with no kit-manager at all'
+}
+if ($runtimeManagerCompose -notmatch 'SESSION_IDLE_TIMEOUT_MS:\s*\$\{SESSION_IDLE_TIMEOUT_MS:-\}') {
+    throw 'compose.runtime-manager.yml must forward the optional SESSION_IDLE_TIMEOUT_MS policy into the deployed coordinator'
 }
 
 $legacyCleanupStart = $deploy.IndexOf('$legacyKitManagerRmArgs')

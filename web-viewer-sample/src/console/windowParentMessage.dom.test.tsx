@@ -1777,12 +1777,14 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
       await privateApp._bootstrapReview();
 
       expect(getStreamConfig).toHaveBeenCalledTimes(1);
+      expect(privateApp._connectReviewSocket).toHaveBeenCalledTimes(1);
       expect(scheduleStreamStart).not.toHaveBeenCalled();
       expect(internals(app).state.latestStreamConfig).toMatchObject({ model: { status: "missing" } });
 
       await vi.advanceTimersByTimeAsync(3_000);
 
       expect(getStreamConfig).toHaveBeenCalledTimes(2);
+      expect(privateApp._connectReviewSocket).toHaveBeenCalledTimes(1);
       expect(internals(app).state.latestStreamConfig).toMatchObject({ model: { status: "ready" } });
       expect(scheduleStreamStart).toHaveBeenCalledTimes(1);
     } finally {

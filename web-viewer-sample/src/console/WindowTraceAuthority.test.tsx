@@ -90,6 +90,7 @@ type AppInternals = {
     _appendDemoOutgoing: (label: string, payload: unknown) => void;
     _appendReviewEvent: (message: string) => void;
     _onViewerUserActivity: (event: Event) => void;
+    _recordSessionActivity: () => Promise<boolean>;
     _currentViewerLogDeliveryAuthority: () => {
         reviewSessionId: string;
         leaseId: string;
@@ -164,7 +165,7 @@ describe("Window Socket canonical trace authority", () => {
         socketClient = {
             join: vi.fn(),
             heartbeat: vi.fn(),
-            userActivity: vi.fn(),
+            userActivity: vi.fn(async () => true),
             leave: vi.fn(),
             disconnect: vi.fn(),
         };
@@ -440,6 +441,21 @@ describe("Window Socket canonical trace authority", () => {
         button.dispatchEvent(new Event("pointerdown", { bubbles: true }));
 
         expect(socketClient.userActivity).not.toHaveBeenCalled();
+    });
+
+    it("accepts explicit keepalive through the trace-authorized socket when no REST lease is available", async () => {
+        const app = authorizedApp({ synchronousSetState: true });
+        const target = internals(app);
+        target._connectReviewSocket(SESSION_ID, TRACE_ID);
+        const candidate = vi.mocked(socketClient.join).mock.calls[0][0];
+        handlers.onStatus?.("connected");
+        ack("joinSession", candidate, { ok: true, trace_id: TRACE_ID, session_id: SESSION_ID });
+        vi.spyOn(target, "_ensureViewerLogDeliveryAuthority").mockResolvedValue(null);
+        vi.mocked(socketClient.userActivity).mockResolvedValue(true);
+
+        await expect(target._recordSessionActivity()).resolves.toBe(true);
+        expect(socketClient.userActivity).toHaveBeenCalledTimes(1);
+        expect(target.state.idleCountdownRemainingSeconds).toBeNull();
     });
 
     it("retires socket, stream, and mutation authority on authoritative session close", () => {

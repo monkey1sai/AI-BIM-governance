@@ -1142,29 +1142,42 @@ export default class App extends React.Component<AppProps, AppState> {
     private async _recordSessionActivity(): Promise<boolean> {
         const authority = this.verifiedDataChannelAuthority;
         const sessionId = this.state.reviewSessionId;
-        const leaseAuthority = this._currentViewerLogDeliveryAuthority();
         if (
             !authority
             || !sessionId
-            || !leaseAuthority
-            || leaseAuthority.reviewSessionId !== sessionId
             || authority.sessionId !== sessionId
             || authority.connectionGeneration !== this.reviewSocketEpoch
         ) return false;
         if (this.idleActivityRequestInFlight) return false;
         this.idleActivityRequestInFlight = true;
         try {
-            const response = await this.coordinatorClient.recordSessionActivity(
-                sessionId,
-                leaseAuthority.leaseId,
-                leaseAuthority.leaseToken,
-            );
-            if (!response.ok || response.session_id !== sessionId) return false;
+            const leaseAuthority = await this._ensureViewerLogDeliveryAuthority();
+            const currentAuthority = this.verifiedDataChannelAuthority;
+            if (
+                !currentAuthority
+                || currentAuthority !== authority
+                || currentAuthority.connectionGeneration !== this.reviewSocketEpoch
+            ) return false;
+
+            let acknowledged = false;
+            if (leaseAuthority?.reviewSessionId === sessionId) {
+                try {
+                    const response = await this.coordinatorClient.recordSessionActivity(
+                        sessionId,
+                        leaseAuthority.leaseId,
+                        leaseAuthority.leaseToken,
+                    );
+                    acknowledged = response.ok && response.session_id === sessionId;
+                } catch {
+                    // The process-local lease may be stale after a coordinator restart.
+                    // Fall through to the already trace-authorized review socket.
+                }
+            }
+            if (!acknowledged) acknowledged = await (this.reviewSocket?.userActivity() ?? Promise.resolve(false));
+            if (!acknowledged) return false;
             this.lastIdleActivityReportAt = Date.now();
             if (this.componentMounted) this.setState({ idleCountdownRemainingSeconds: null });
             return true;
-        } catch {
-            return false;
         } finally {
             this.idleActivityRequestInFlight = false;
         }
@@ -2036,8 +2049,84 @@ export default class App extends React.Component<AppProps, AppState> {
         ) return;
         this.streamConfigRefreshTimeoutId = window.setTimeout(() => {
             this.streamConfigRefreshTimeoutId = null;
-            void this._bootstrapReview(sessionId);
+            void this._refreshStreamConfig(sessionId);
         }, STREAM_CONFIG_REFRESH_INTERVAL_MS);
+    }
+
+    private async _refreshStreamConfig(sessionId: string): Promise<void> {
+        try {
+            const streamConfig = await this.coordinatorClient.getStreamConfig(sessionId);
+            if (
+                !this.componentMounted
+                || this.state.reviewSessionId !== sessionId
+                || isBlockedLifecycle(this.state.reviewLifecycleStatus)
+                || streamConfig.session_id !== sessionId
+                || streamConfig.trace_id !== this.state.latestStreamConfig?.trace_id
+            ) return;
+
+            const artifacts = streamConfig.artifacts;
+            const usdAssets = this._mergeAssets(
+                this._assetsFromArtifactBindings(streamConfig.artifact_bindings || []),
+                this._assetsFromReviewArtifacts(artifacts),
+            );
+            const expectedStageUrl = expectedStageUrlFromStreamConfig(streamConfig);
+            const expectedStageAsset = expectedStageUrl
+                ? (usdAssets.find((asset) => asset.url === expectedStageUrl)
+                    || { name: displayNameFromStageUrl(expectedStageUrl), url: expectedStageUrl })
+                : null;
+            const mergedUSDAssets = this._mergeAssets(
+                this.state.usdAssets,
+                expectedStageAsset ? [expectedStageAsset, ...usdAssets] : usdAssets,
+            );
+            const selectedUSDAsset = expectedStageAsset
+                ?? usdAssets.find((asset) => asset.url === streamConfig.model.url)
+                ?? usdAssets[0]
+                ?? this.state.selectedUSDAsset;
+            const activeStreamEndpoint = this._resolveStreamEndpoint(streamConfig);
+            const streamEndpointChanged = !sameStreamEndpoint(this.state.activeStreamEndpoint, activeStreamEndpoint);
+            const streamMountKey = streamEndpointChanged
+                ? this._replaceStreamLifecycle()
+                : this.streamGeneration;
+
+            this.setState({
+                reviewLifecycleStatus: streamConfig.lifecycle_status,
+                reviewStatus: `${lifecycleStatusText(streamConfig.lifecycle_status)}，模型狀態：${streamConfig.model.status}`,
+                reviewArtifacts: artifacts,
+                latestStreamConfig: streamConfig,
+                mappingUrl: this._resolveMappingUrl(streamConfig, artifacts),
+                usdAssets: mergedUSDAssets,
+                selectedUSDAsset,
+                expectedStageUrl,
+                loadedStageUrl: streamEndpointChanged ? null : this.state.loadedStageUrl,
+                stageLoadStatus: streamEndpointChanged ? (expectedStageUrl ? "pending" : "unproven") : this.state.stageLoadStatus,
+                isKitReady: streamEndpointChanged ? false : this.state.isKitReady,
+                showStream: streamEndpointChanged ? false : this.state.showStream,
+                webrtcLifecycleStatus: streamEndpointChanged ? "initializing" : this.state.webrtcLifecycleStatus,
+                streamDiagnostic: streamEndpointChanged ? null : this.state.streamDiagnostic,
+                activeStreamEndpoint,
+                streamMountKey,
+            }, () => {
+                if (streamConfig.model.status === "ready" && !isBlockedLifecycle(streamConfig.lifecycle_status)) {
+                    this._scheduleStreamStartTimeout();
+                } else if (streamConfig.model.status === "missing" && !isBlockedLifecycle(streamConfig.lifecycle_status)) {
+                    this._scheduleStreamConfigRefresh(sessionId);
+                }
+                if (
+                    !streamEndpointChanged
+                    && this.state.isKitReady
+                    && this.state.selectedUSDAsset
+                    && streamConfig.model.status === "ready"
+                    && !isBlockedLifecycle(streamConfig.lifecycle_status)
+                ) this._openSelectedAsset();
+            });
+        } catch (error) {
+            console.warn("Stream config refresh unavailable.", error);
+            if (
+                this.componentMounted
+                && this.state.reviewSessionId === sessionId
+                && !isBlockedLifecycle(this.state.reviewLifecycleStatus)
+            ) this._scheduleStreamConfigRefresh(sessionId);
+        }
     }
 
     private _clearStreamConfigRefresh(): void {

@@ -36,32 +36,6 @@ must carry that session's canonical `trace_id`:
 }
 ```
 
-`highlightRequest` payload:
-
-```json
-{
-  "session_id": "review_session_xxx",
-  "user_id": "dev_user_001",
-  "source": "issue_panel",
-  "issue_id": "ISSUE-DEMO-001",
-  "items": [
-    {
-      "usd_prim_path": "/World",
-      "ifc_guid": "2VJ3sK9L000fake001",
-      "color": [1, 0, 0, 1],
-      "label": "測試：BIM issue highlight"
-    }
-  ]
-}
-```
-
-`annotationCreate` also appends local coordinator shadow metadata and can be
-forwarded to the external control-plane callback path:
-
-```http
-POST /api/review-sessions/{session_id}/annotations
-```
-
 ## Coordinator To Clients
 
 ```txt
@@ -79,7 +53,10 @@ Idle lifecycle events carry both `session_id` and the canonical `trace_id`.
 user activity. `session:closed` is emitted after the existing close path writes
 `reason=inactivity` to the session event ledger.
 
-`highlightRequest`, `selectionUpdate`, and `annotationCreated` are room scoped: a second browser client joined to the same `session_id` receives the broadcast while other sessions do not. `annotationCreate` returns an ack error if local shadow persistence or the configured external callback path cannot save the annotation, but the namespace stays alive.
+Legacy collaboration events (`highlightRequest`, `selectionUpdate`,
+`annotationCreate`, and `annotationCreated`) are retired and are not registered
+by the live `/review` namespace. Clients must not use them as current product
+contracts.
 
 ## Ack And Session Validation
 

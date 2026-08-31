@@ -164,6 +164,25 @@ describe("connectReviewSocket", () => {
         ]);
     });
 
+    it("resolves explicit activity only after an exact authority acknowledgement", async () => {
+        const client = connectReviewSocket("http://127.0.0.1:8004");
+        socket.trigger("connect");
+        client.join(CANDIDATE_A);
+        socket.emitted[0].ack?.({ ok: true, trace_id: CANDIDATE_A.traceId });
+
+        const accepted = client.userActivity();
+        socket.emitted[1].ack?.({
+            ok: true,
+            trace_id: CANDIDATE_A.traceId,
+            session_id: CANDIDATE_A.sessionId,
+        });
+        await expect(accepted).resolves.toBe(true);
+
+        const mismatched = client.userActivity();
+        socket.emitted[2].ack?.({ ok: true, trace_id: CANDIDATE_B.traceId });
+        await expect(mismatched).resolves.toBe(false);
+    });
+
     it("normalizes rejected, malformed, and timed-out acknowledgements without inventing a trace", () => {
         const acknowledgements: ReviewSocketAck[] = [];
         const client = connectReviewSocket("http://127.0.0.1:8004", {

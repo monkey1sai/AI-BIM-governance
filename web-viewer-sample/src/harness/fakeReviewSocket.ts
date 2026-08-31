@@ -108,18 +108,22 @@ export function connectHarnessReviewSocket(
       });
     },
 
-    userActivity(): void {
-      if (manuallyDisconnected || !joinAcknowledged || !activeCandidate) return;
+    userActivity(): Promise<boolean> {
+      if (manuallyDisconnected || !joinAcknowledged || !activeCandidate) return Promise.resolve(false);
       const expectedCandidate = { ...activeCandidate };
       const expectedKey = candidateKey(expectedCandidate);
-      schedule(() => {
-        if (
-          !joinAcknowledged
-          || !activeCandidate
-          || candidateKey(activeCandidate) !== expectedKey
-          || !isExactHarnessAuthority(expectedCandidate, authority)
-        ) return;
-        successAck("userActivity", expectedCandidate);
+      const expectedGeneration = generation;
+      return new Promise((resolve) => {
+        queueMicrotask(() => {
+          const acknowledged = !manuallyDisconnected
+            && generation === expectedGeneration
+            && joinAcknowledged
+            && Boolean(activeCandidate)
+            && candidateKey(activeCandidate ?? expectedCandidate) === expectedKey
+            && isExactHarnessAuthority(expectedCandidate, authority);
+          if (acknowledged) successAck("userActivity", expectedCandidate);
+          resolve(acknowledged);
+        });
       });
     },
 
