@@ -135,6 +135,8 @@ test('AC-14 — static policy keeps one review-policy source and a closed AC-01.
   assert.equal(cliEntries[0].role, 'shadow-control-plane')
 
   const wrapper = readFileSync(STATIC_WRAPPER, 'utf8')
+  assert.match(wrapper, /Get-ChildItem[\s\S]*parallel-delivery-fabric[\s\S]*-Filter ['"]\*\.mjs['"]/u)
+  assert.match(wrapper, /node --test @behavioralTests/u)
   assert.match(wrapper, /test-autonomous-codex-review-policy\.mjs/)
   assert.match(wrapper, /tests[\\/]test_parallel_delivery_fabric_schema\.py/)
   assert.match(wrapper, /-p['\"]?,?\s*['\"]?no:cacheprovider/)

@@ -13,6 +13,7 @@ from jsonschema import Draft202012Validator, FormatChecker
 ROOT = Path(__file__).resolve().parents[1]
 SCHEMA_PATH = ROOT / "agent-contracts" / "parallel-delivery-fabric.schema.json"
 WORKFLOW_PATH = ROOT / ".github" / "workflows" / "agent-governance.yml"
+ROOT_CI_PATH = ROOT / ".github" / "workflows" / "ci.yml"
 NODE_CONTRACT_TEST_PATH = ROOT / "scripts" / "tests" / "parallel-delivery-fabric" / "test-contract.mjs"
 CONTRACT_MODULE_PATH = ROOT / "scripts" / "lib" / "parallel-delivery-fabric-contract.mjs"
 SHA1 = "a" * 40
@@ -439,6 +440,13 @@ def semantic_differential_cases() -> dict[str, tuple[str, dict]]:
 def test_schema_uses_the_existing_hash_pinned_jsonschema_job() -> None:
     workflow = WORKFLOW_PATH.read_text(encoding="utf-8")
     assert "jsonschema==4.26.0 --hash=sha256:d489f15263b8d200f8387e64b4c3a75f06629559fb73deb8fdfb525f2dab50ce" in workflow
+    root_ci = ROOT_CI_PATH.read_text(encoding="utf-8")
+    root_contracts = root_ci.split("\n  root-contracts:", 1)[1].split("\n  coordinator:", 1)[0]
+    assert "root-contracts-requirements.txt" in root_contracts
+    assert "jsonschema==4.26.0 --hash=sha256:d489f15263b8d200f8387e64b4c3a75f06629559fb73deb8fdfb525f2dab50ce" in root_contracts
+    assert "--only-binary=:all: --require-hashes" in root_contracts
+    assert "python -m pip install --upgrade pip" not in root_contracts
+    assert "python -m pip install pytest jsonschema==4.26.0" not in root_contracts
 
 
 def test_node_contract_test_stays_parser_only_without_python_or_process_dependency() -> None:

@@ -479,6 +479,22 @@ test('RED command journal rejects unknown, extra, and mismatched committed recei
   }
 })
 
+test('persisted RESERVED receipt enters explicit recovery hold without replaying semantic ports', async () => {
+  await assertPersistedReceiptHeld(
+    'reserved-recovery',
+    (command) => reservedJournalReceipt(command),
+    'COMMAND_RECEIPT_RECOVERY_REQUIRED',
+  )
+  await assertPersistedReceiptHeld(
+    'reserved-extra-field',
+    (command) => reservedJournalReceipt(command, { unexpected: true }),
+  )
+  await assertPersistedReceiptHeld(
+    'reserved-not-acquired',
+    (command) => reservedJournalReceipt(command, { acquired: false }),
+  )
+})
+
 test('hostile port results are snapshotted before execution status can reach admission', async () => {
   for (const hostile of [Object.defineProperty({}, 'status', { enumerable: true, get: () => 'SHADOW_INTENT' }), new Proxy({}, { ownKeys: () => { throw new Error('trap') } }), { status: 'SHADOW_INTENT', bad: BigInt(1) }]) {
     const fixture = createPorts()

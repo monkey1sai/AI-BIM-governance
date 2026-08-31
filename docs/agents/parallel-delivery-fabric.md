@@ -4,7 +4,7 @@ Document version: `parallel-delivery-fabric-operator-policy/v1`
 
 Requirement map version: `parallel-delivery-fabric-acceptance-requirements/v1`
 
-Requirement map SHA-256: `ea2c14aa511a7ced3a95af174252ff6dbe9335b388aba3c6ead2a29ed740667d`
+Requirement map SHA-256: `e019c1112015b23f0b43ead124fe6e0fab427bafd0f872266371068f2c7d38df`
 
 This is a descriptive, shadow-only operator policy. It records the approved
 acceptance obligations and their authority boundaries. The local
@@ -102,19 +102,19 @@ a writer seat is safely released. A real rollback is externally governed and
 must restore the prior required gate before any newer gate is disabled. This
 policy creates neither a rollback record nor a recovery command.
 
-## Two known Node RED observations
+## Historical Node RED observations (resolved)
 
-These are implementation observations, not acceptance results and not proof of
-the target state:
+The following implementation observations were recorded during Task 12 and are
+retained as history rather than current readiness claims:
 
 - `test-admission.mjs:665` expects `QUEUED_FOR_LEASE` and observed
   `HELD_SCOPE_CONFLICT`.
 - `test-promotion-bridge.mjs:1373` expects `MERGED_NOT_DELIVERED` and observed
   `PREMERGE_EVIDENCE_INVALID`.
 
-They remain visible so an operator does not treat a broad test invocation as a
-clean readiness signal. The normative map must not be altered to mask either
-RED observation.
+Both referenced test files now pass together (`70 passed`, 2026-08-31). Operators
+must use the current `parallel-delivery-fabric-static-policy` result and exact
+test output; this historical section must not override executable evidence.
 
 ## Change control
 

@@ -20,19 +20,28 @@ const e2eStackManifest = process.env.E2E_STACK_MANIFEST || "";
 const directNoMedia = process.env.RUNTIME_E2E_DIRECT_NO_MEDIA === "1";
 const e2eSkipObservation = process.env.E2E_SKIP === "1" || skipSingle || sameKitOnly || singleOnly || directNoMedia;
 const e2eModeObservation = process.env.E2E_MODE || process.env.RUNTIME_E2E_MODE || "canonical";
+// This legacy direct CDP runner cannot establish prior-trusted Kit/WebRTC process
+// authority. Candidate-controlled environment values or a worktree-local launcher
+// are not acceptable substitutes. The pure manifest inspector remains available to
+// an external/base-owned collector; this direct entrypoint stays fail closed until
+// that collector supplies a pinned Kit authority packet.
+const startupManifest = e2eRequireReal
+  ? { ready: false, reason: "REAL_E2E_AUTHORITY_UNAVAILABLE", binding: null }
+  : { ready: true, reason: "REAL_E2E_NOT_REQUIRED" };
 const realE2EOptions = Object.freeze({
   requireReal: e2eRequireReal,
   e2eRequireReal,
   E2E_REQUIRE_REAL: e2eRequireReal,
   manifestPath: e2eStackManifest,
-  manifestPresent: e2eStackManifest.trim().length > 0,
+  manifestPresent: startupManifest.ready,
+  kitAuthorityPresent: false,
   skipped: e2eSkipObservation,
   mode: e2eModeObservation,
 });
-const startupRealE2E = inspectRealE2E(realE2EOptions);
-if (e2eRequireReal && !startupRealE2E.ready) {
-  throw new Error(`E2E_REQUIRE_REAL preflight failed: ${startupRealE2E.reason}`);
+if (e2eRequireReal && !startupManifest.ready) {
+  throw new Error(`E2E_REQUIRE_REAL preflight failed: ${startupManifest.reason}`);
 }
+const startupRealE2E = inspectRealE2E(realE2EOptions);
 
 function readinessOptions(overrides = {}) {
   const mode = e2eModeObservation.toLowerCase() === "canonical"
@@ -78,7 +87,8 @@ const sessions = {
 };
 
 function pageUrl(sessionId, endpoint, userId, displayName) {
-  const url = new URL("http://127.0.0.1:5173/");
+  const viewerBaseUrl = startupManifest.binding?.viewer_base_url || "http://127.0.0.1:5173/";
+  const url = new URL(viewerBaseUrl);
   url.searchParams.set("sessionId", sessionId);
   url.searchParams.set("streamTimeoutMs", String(streamTimeoutMs));
   if (endpoint?.kitInstanceId) {

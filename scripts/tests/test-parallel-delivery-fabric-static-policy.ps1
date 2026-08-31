@@ -6,10 +6,10 @@ if (-not (Test-Path -LiteralPath (Join-Path $root 'agent-contracts\parallel-deli
 if (-not (Test-Path -LiteralPath (Join-Path $root 'scripts\autonomous-codex-review-policy.json'))) {
   throw 'missing review policy'
 }
-node --test `
-  (Join-Path $root 'scripts\tests\parallel-delivery-fabric\test-static-policy.mjs') `
-  (Join-Path $root 'scripts\tests\test-autonomous-codex-review-policy.mjs')
-if ($LASTEXITCODE -ne 0) { throw 'static policy tests failed' }
+$behavioralTests = @(Get-ChildItem -LiteralPath (Join-Path $root 'scripts\tests\parallel-delivery-fabric') -Filter '*.mjs' -File | Sort-Object Name | ForEach-Object FullName)
+if ($behavioralTests.Count -eq 0) { throw 'Fabric behavioral tests are missing' }
+node --test @behavioralTests (Join-Path $root 'scripts\tests\test-autonomous-codex-review-policy.mjs')
+if ($LASTEXITCODE -ne 0) { throw 'Fabric behavioral or policy tests failed' }
 
 $python = Join-Path $root '.venv\Scripts\python.exe'
 if (-not (Test-Path -LiteralPath $python -PathType Leaf)) { $python = 'python' }

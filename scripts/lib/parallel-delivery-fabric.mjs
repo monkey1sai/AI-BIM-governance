@@ -241,6 +241,8 @@ export function createParallelDeliveryFabric(ports) {
         const persisted = safeSnapshot(existing)
         if (!persisted || persisted.command_digest !== commandDigest || persisted.command_id !== command.command_id) return outcome(command.command_id, type, 'HELD', 'COMMAND_ID_REUSE')
         const expectedReservation = typeof persisted.attempt_id === 'string' ? reservationId(command.command_id, commandDigest, persisted.attempt_id) : undefined
+        const priorReservation = receipt(persisted, command, commandDigest, expectedReservation, 'RESERVED', undefined, persisted.attempt_id, journal)
+        if (priorReservation) return outcome(command.command_id, type, 'HELD', 'COMMAND_RECEIPT_RECOVERY_REQUIRED')
         const prior = receipt(persisted, command, commandDigest, expectedReservation, 'COMMITTED', undefined, undefined, journal)
         return prior === undefined ? outcome(command.command_id, type, 'HELD', 'COMMAND_RECEIPT_INVALID') : prior.outcome
       }
