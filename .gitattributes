@@ -1,4 +1,5 @@
 *.sh text eol=lf
+openspec/changes/parallel-delivery-fabric/specs/parallel-delivery-fabric/spec.md text eol=lf
 .claude/skills/spec-to-done/** text eol=lf
 .codex/skills/spec-to-done/** text eol=lf
 .claude/skills/token-strategy-tournament/** text eol=lf
