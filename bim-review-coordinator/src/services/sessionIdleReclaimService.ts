@@ -302,7 +302,8 @@ export class SessionIdleReclaimService {
     }
   }
 
-  private hasConnectedPeer(sessionId: string): boolean {
+  /** Returns actual ready-peer presence, independent of retained teardown retry state. */
+  hasConnectedPeer(sessionId: string): boolean {
     return (this.connectedPeers.get(sessionId)?.size ?? 0) > 0;
   }
 

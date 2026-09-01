@@ -103,10 +103,17 @@ type AppInternals = {
         leaseToken: string;
     } | null;
     _ensureViewerLogDeliveryAuthority: () => Promise<{
-        reviewSessionId: string;
-        leaseId: string;
-        leaseToken: string;
+      reviewSessionId: string;
+      leaseId: string;
+      leaseToken: string;
     } | null>;
+    coordinatorClient: {
+        recordSessionActivity: (
+            sessionId: string,
+            leaseId: string,
+            leaseToken: string,
+        ) => Promise<{ ok: boolean; session_id: string }>;
+    };
 };
 
 const internals = (app: App): AppInternals => app as unknown as AppInternals;
@@ -551,6 +558,34 @@ describe("Window Socket canonical trace authority", () => {
             handlers.onStatus?.("connected");
             ack("joinSession", candidate, { ok: true, trace_id: TRACE_ID, session_id: SESSION_ID });
             vi.spyOn(target, "_ensureViewerLogDeliveryAuthority").mockReturnValue(new Promise(() => {}));
+            vi.mocked(socketClient.userActivity).mockResolvedValue(true);
+
+            const keepalive = target._recordSessionActivity();
+            await vi.advanceTimersByTimeAsync(1_000);
+
+            await expect(keepalive).resolves.toBe(true);
+            expect(socketClient.userActivity).toHaveBeenCalledTimes(1);
+            expect(target.state.idleCountdownRemainingSeconds).toBeNull();
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it("falls back to the trace-authorized socket when the REST activity request exceeds its deadline", async () => {
+        vi.useFakeTimers();
+        try {
+            const app = authorizedApp({ synchronousSetState: true });
+            const target = internals(app);
+            target._connectReviewSocket(SESSION_ID, TRACE_ID);
+            const candidate = vi.mocked(socketClient.join).mock.calls[0][0];
+            handlers.onStatus?.("connected");
+            ack("joinSession", candidate, { ok: true, trace_id: TRACE_ID, session_id: SESSION_ID });
+            vi.spyOn(target, "_ensureViewerLogDeliveryAuthority").mockResolvedValue({
+                reviewSessionId: SESSION_ID,
+                leaseId: "lease_hanging_activity",
+                leaseToken: "lease_token_hanging_activity",
+            });
+            vi.spyOn(target.coordinatorClient, "recordSessionActivity").mockReturnValue(new Promise(() => {}));
             vi.mocked(socketClient.userActivity).mockResolvedValue(true);
 
             const keepalive = target._recordSessionActivity();

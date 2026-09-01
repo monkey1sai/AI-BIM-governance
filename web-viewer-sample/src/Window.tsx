@@ -455,6 +455,7 @@ const STAGE_AUTHORIZATION_TIMEOUT_MS = 45_000;
 const STAGE_AUTHORIZATION_CANCEL_TIMEOUT_MS = 5_000;
 const STAGE_LOAD_TIMEOUT_MS = 45_000;
 const STREAM_CONFIG_REFRESH_INTERVAL_MS = 3_000;
+const IDLE_ACTIVITY_TRANSPORT_TIMEOUT_MS = 1_000;
 // Let the user-facing proof deadline claim the terminal result first. The
 // SDK slot watchdog runs immediately after it and only fences lifecycle reuse.
 const NATIVE_OPEN_STAGE_SLOT_TIMEOUT_MS = STAGE_LOAD_TIMEOUT_MS + 1;
@@ -1174,7 +1175,7 @@ export default class App extends React.Component<AppProps, AppState> {
             const leaseAuthority = await Promise.race([
                 this._ensureViewerLogDeliveryAuthority().catch(() => null),
                 new Promise<null>((resolve) => {
-                    leaseDeadlineId = window.setTimeout(() => resolve(null), 1_000);
+                    leaseDeadlineId = window.setTimeout(() => resolve(null), IDLE_ACTIVITY_TRANSPORT_TIMEOUT_MS);
                 }),
             ]).finally(() => {
                 if (leaseDeadlineId !== null) window.clearTimeout(leaseDeadlineId);
@@ -1188,17 +1189,23 @@ export default class App extends React.Component<AppProps, AppState> {
 
             let acknowledged = false;
             if (leaseAuthority?.reviewSessionId === sessionId) {
-                try {
-                    const response = await this.coordinatorClient.recordSessionActivity(
+                let activityDeadlineId: number | null = null;
+                const response = await Promise.race([
+                    this.coordinatorClient.recordSessionActivity(
                         sessionId,
                         leaseAuthority.leaseId,
                         leaseAuthority.leaseToken,
-                    );
-                    acknowledged = response.ok && response.session_id === sessionId;
-                } catch {
-                    // The process-local lease may be stale after a coordinator restart.
-                    // Fall through to the already trace-authorized review socket.
-                }
+                    ).catch(() => null),
+                    new Promise<null>((resolve) => {
+                        activityDeadlineId = window.setTimeout(
+                            () => resolve(null),
+                            IDLE_ACTIVITY_TRANSPORT_TIMEOUT_MS,
+                        );
+                    }),
+                ]).finally(() => {
+                    if (activityDeadlineId !== null) window.clearTimeout(activityDeadlineId);
+                });
+                acknowledged = response?.ok === true && response.session_id === sessionId;
             }
             if (!acknowledged) acknowledged = await (this.reviewSocket?.userActivity() ?? Promise.resolve(false));
             if (!acknowledged) return false;

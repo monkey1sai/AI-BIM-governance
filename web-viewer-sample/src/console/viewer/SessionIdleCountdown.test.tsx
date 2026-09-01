@@ -135,4 +135,20 @@ describe("SessionIdleCountdownBanner (session-lifecycle frontend countdown & kee
     expect(closedBanner).not.toBeNull();
     expect(closedBanner?.textContent).toContain("會議因長時間未操作已結束");
   });
+
+  it("renders generic close copy for a recovered non-idle terminal state", async () => {
+    await act(async () => {
+      root?.render(
+        <SessionIdleCountdownBanner
+          sessionId={sessionId}
+          remainingSeconds={null}
+          closedReason="recovered_close"
+        />,
+      );
+    });
+
+    const closedBanner = container?.querySelector('[data-testid="session-idle-closed"]');
+    expect(closedBanner?.textContent).toBe("會議已結束");
+    expect(closedBanner?.textContent).not.toContain("長時間未操作");
+  });
 });

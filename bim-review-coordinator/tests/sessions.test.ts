@@ -1428,6 +1428,47 @@ describe("bim-review-coordinator", () => {
     }
   });
 
+  it("resumes missing terminal audit when a closed session close request is retried", async () => {
+    const app = makeApp();
+    const created = await request(app.app)
+      .post("/api/review-sessions")
+      .send({
+        project_id: "project_closed_audit_retry",
+        model_version_id: "version_closed_audit_retry",
+        created_by: "dev_user_closed_audit_retry",
+      });
+    const sessionId = created.body.session_id as string;
+    const originalAppend = app.eventLog.appendServerCloseCheckpoint.bind(app.eventLog);
+    let failKitReleaseOnce = true;
+    const appendSpy = vi.spyOn(app.eventLog, "appendServerCloseCheckpoint").mockImplementation((id, type, payload, checkpointId) => {
+      if (type === "kitInstanceReleased" && failKitReleaseOnce) {
+        failKitReleaseOnce = false;
+        throw new Error("transient terminal audit failure");
+      }
+      return originalAppend(id, type, payload, checkpointId);
+    });
+
+    try {
+      const firstClose = await request(app.app)
+        .post(`/api/review-sessions/${sessionId}/close`)
+        .send({});
+      expect(firstClose.status).toBe(500);
+      expect(app.store.get(sessionId)?.status).toBe("closed");
+
+      const retriedClose = await request(app.app)
+        .post(`/api/review-sessions/${sessionId}/close`)
+        .send({});
+      expect(retriedClose.status).toBe(200);
+      expect(retriedClose.body.status).toBe("closed");
+
+      const events = app.eventLog.list(sessionId);
+      expect(events.filter((event) => event.type === "sessionClosed")).toHaveLength(1);
+      expect(events.filter((event) => event.type === "kitInstanceReleased")).toHaveLength(1);
+    } finally {
+      appendSpy.mockRestore();
+    }
+  });
+
   it("close threads reason/actor into sessionClosing and sessionClosed audit payloads", async () => {
     const app = makeApp();
     const created = await request(app.app)

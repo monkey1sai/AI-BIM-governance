@@ -2308,14 +2308,6 @@ export function createCoordinatorApp(
       response.status(404).json({ detail: "Review session not found." });
       return;
     }
-    // closed 已具完整終態 audit，直接冪等回傳；closing 則交由共用 close helper 依既有
-    // server-owned close checkpoint 數量補寫缺少的 finalReviewEvent，未補齊前不得宣告 closed；
-    // generic event type 永遠不是 close resumption authority。
-    if (session.status === "closed") {
-      response.json(session);
-      return;
-    }
-
     const finalEvents = Array.isArray(request.body?.final_events) ? request.body.final_events : [];
     // IX-SS-04 spec §2.1/§4.1：reason 缺省為 undefined（不沿用共用 parseReason 的 "" 缺省，
     // 那會讓 cooperative close payload 退化）。只有 operator terminate 真帶 reason 時才把
@@ -2328,6 +2320,7 @@ export function createCoordinatorApp(
       actor: resolveActor(request),
       finalEvents,
       resumeClosing: session.status === "closing",
+      resumeClosed: session.status === "closed",
     });
     response.json(closed);
   });
@@ -2385,7 +2378,7 @@ export function createCoordinatorApp(
     response.json({
       session_id: request.params.sessionId,
       enabled: config.sessionIdleTimeoutMs !== undefined,
-      has_connected_viewer: state !== null,
+      has_connected_viewer: idleReclaimService.hasConnectedPeer(request.params.sessionId),
       is_counting_down: state?.isCountingDown ?? false,
       remaining_seconds: state?.countdownRemainingSec ?? null,
       last_activity_at: state?.lastActivityAt ? new Date(state.lastActivityAt).toISOString() : null,

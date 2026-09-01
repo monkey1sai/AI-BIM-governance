@@ -459,6 +459,11 @@ describe("Coordinator App HTTP & Socket integration for Idle Reclaim", () => {
 
       expect(appInstance.store.get(sessionId)?.status).toBe("closed");
       expect(appInstance.idleReclaimService.getSessionState(sessionId)).not.toBeNull();
+      appInstance.idleReclaimService.disconnectPeer(sessionId, "peer-retry");
+      expect(appInstance.idleReclaimService.getSessionState(sessionId)).not.toBeNull();
+      const retainedRetryStatus = await request(appInstance.app)
+        .get(`/api/review-sessions/${sessionId}/idle-status`);
+      expect(retainedRetryStatus.body.has_connected_viewer).toBe(false);
 
       appInstance.idleReclaimService.tick(t0 + 100 + 11_001);
 

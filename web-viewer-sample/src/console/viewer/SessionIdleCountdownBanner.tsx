@@ -16,6 +16,9 @@ export const SessionIdleCountdownBanner: React.FC<SessionIdleCountdownBannerProp
   const [keepAliveError, setKeepAliveError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const countdownActive = remainingSeconds !== null;
+  const closedMessage = closedReason === "inactivity"
+    ? "會議因長時間未操作已結束 (閒置自動回收)"
+    : "會議已結束";
 
   useEffect(() => {
     setKeepAliveError(null);
@@ -59,9 +62,7 @@ export const SessionIdleCountdownBanner: React.FC<SessionIdleCountdownBannerProp
           gap: 12,
         }}
       >
-        <span style={{ fontWeight: 600 }}>
-          會議因長時間未操作已結束 ({closedReason === "inactivity" ? "閒置自動回收" : closedReason})
-        </span>
+        <span style={{ fontWeight: 600 }}>{closedMessage}</span>
       </div>
     );
   }
