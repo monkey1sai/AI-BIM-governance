@@ -961,12 +961,32 @@ export function runLinuxContinuousDeployment(requestRaw, {
     })
     const acquisition = acquireSingleFlight(requestRaw.ledger, requestRaw)
     controllerLease = acquisition.entry
-    if (acquisition.idempotent) fail('duplicate_controller', 'idempotent replay is already owned by an active controller')
-    if (requestRaw.retry_history.length > 0) {
-      if (!isObject(requestRaw.retry_event)) fail('retry_budget_exhausted', 'retry event is required for a retry attempt')
+    if (acquisition.idempotent) {
+      states.length = 0
+      ledgerAppends.length = 0
+      return cloneFrozen({
+        controller_disposition: 'idempotent_active',
+        final_state: null,
+        active_state: acquisition.entry.state,
+        states,
+        attestation: null,
+        terminal_record: null,
+        controller_lease: acquisition.entry,
+        retry_record: null,
+        ledger_appends: ledgerAppends,
+        target: targetRaw,
+      })
+    }
+    if (!Array.isArray(requestRaw.retry_history)) fail('invalid_shape', 'retry history must be an array')
+    if (isObject(requestRaw.retry_event)) {
       retryRecord = evaluateRetry(requestRaw.retry_history, requestRaw.retry_event).record
+      if (requestRaw.attempt.supersedes_delivery_id === null) {
+        fail('invalid_value', 'retry attempt must link its superseded terminal attempt')
+      }
     } else if (requestRaw.retry_event !== null) {
-      fail('invalid_value', 'first attempt must not include a retry event')
+      fail('invalid_shape', 'retry event must be an object or null')
+    } else if (requestRaw.retry_history.length > 0) {
+      fail('retry_budget_exhausted', 'retry event is required for a retry attempt')
     }
     transition('PRE_DEPLOY_CHECK')
     validateKnownGood(requestRaw.previous_known_good, targetRaw, {

@@ -433,7 +433,7 @@ Artifact authority SHALL為exact merge commit建立一次immutable artifact，cl
 
 ### Requirement: Deployment target and single-flight ownership SHALL be exact and secret-safe
 
-Target resolver SHALL只接受owner-controlled inventory唯一解析的 `target_id=canonical-linux`，對contract只揭露target ID、kind、role、fingerprint與opaque lease ID；request不得覆寫repository或target allowlist，opaque lease亦必須由external verifier驗證payload binding與有效期。Single-flight key SHALL為 `environment + service`；active lock SHALL綁定delivery ID與artifact digest。相同tuple MAY辨識為idempotent active ownership但 SHALL停止而不得重跑deployment；不同delivery或digest SHALL被拒絕且不得平行部署同一service。
+Target resolver SHALL只接受owner-controlled inventory唯一解析的 `target_id=canonical-linux`，對contract只揭露target ID、kind、role、fingerprint與opaque lease ID；request不得覆寫repository或target allowlist，opaque lease亦必須由external verifier驗證payload binding與有效期。Single-flight key SHALL為 `environment + service`；active lock SHALL綁定delivery ID與artifact digest。相同tuple MAY辨識為idempotent active ownership，但 SHALL以typed non-terminal `idempotent_active` response停止、不得append新transition或terminal failure，且不得重跑deployment；不同delivery或digest SHALL被拒絕且不得平行部署同一service。
 
 #### Scenario: Duplicate controller races for the same service
 
@@ -473,7 +473,7 @@ Canary、promotion或post-deploy failure SHALL進入 `ROLLBACK_TO_PINNED_KNOWN_G
 
 ### Requirement: Missing external CD provisioning SHALL be explicit HELD evidence
 
-Repo-local workflow與controller SHALL NOT持有live deployment credential或讀取private inventory。External artifact store、trusted runner、credential broker、protected GitHub Environment或canonical target live attestation任一尚未由owner provision時，workflow SHALL產生sanitized internal `PROVISIONING_REQUIRED → HELD` state sequence並以既有closed outer reason結案，且不得執行production或把contract test描述為deployment。
+Repo-local workflow與controller SHALL NOT持有live deployment credential或讀取private inventory。External artifact store、trusted runner、credential broker、protected GitHub Environment或canonical target live attestation任一尚未由owner provision時，workflow SHALL產生sanitized internal `PROVISIONING_REQUIRED → HELD` state sequence，且不得執行production或把contract test描述為deployment。已有independently verified `fetched origin/main == merge commit` 的trusted request SHALL以outer `HELD/DEPLOYMENT_BLOCKED`一致結案；direct GitHub event boundary尚無該proof時 SHALL以outer `HELD/ACTIVATION_UNATTESTED`一致結案，不得讓attestation與outer terminal reason互相矛盾。
 
 #### Scenario: Repository workflow在未provision狀態執行
 

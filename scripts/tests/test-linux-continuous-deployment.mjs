@@ -331,8 +331,13 @@ test('public run path rejects self-consistent repository, target and provenance 
 test('controller path enforces active ownership, retry budget and append-only transition integration', () => {
   const acquired = acquireSingleFlight([], request())
   const replay = runRequest(request({ ledger: [acquired.entry] }))
-  assert.equal(replay.final_state, 'HELD')
-  assert.equal(replay.states.includes('PRE_DEPLOY_CHECK'), false)
+  assert.equal(replay.controller_disposition, 'idempotent_active')
+  assert.equal(replay.final_state, null)
+  assert.equal(replay.active_state, 'TRUSTED_MERGED')
+  assert.equal(replay.attestation, null)
+  assert.equal(replay.terminal_record, null)
+  assert.deepEqual(replay.states, [])
+  assert.deepEqual(replay.ledger_appends, [])
 
   const priorRetry = evaluateRetry([], {
     failure_class: 'network_transient', evidence_sha256: SHA('1'), event_id: 'retry-event-1',
@@ -353,6 +358,43 @@ test('controller path enforces active ownership, retry budget and append-only tr
   for (let index = 1; index < success.ledger_appends.length; index += 1) {
     assert.equal(success.ledger_appends[index].previous_sha256, success.ledger_appends[index - 1].record_sha256)
   }
+})
+
+test('public controller path accepts the first linked transient retry and keeps it bounded', () => {
+  const initial = runLinuxContinuousDeployment(request({
+    canary: verification({ gates: [
+      { id: 'health', status: 'failed', evidence_sha256: SHA('8') },
+      { id: 'smoke', status: 'held', evidence_sha256: SHA('9') },
+      { id: 'e2e', status: 'held', evidence_sha256: SHA('a') },
+    ] }),
+    rollback: {
+      attempted: true,
+      artifact_sha256: SHA('d'),
+      verification: verification({ artifact_sha256: SHA('d') }),
+    },
+  }), {
+    now: new Date('2026-09-01T01:50:00.000Z'),
+    trustBoundary: TRUST_BOUNDARY,
+  })
+  const retried = runRequest(request({
+    attempt: {
+      attempt_id: 'attempt:737.2',
+      pr_class: 'ordinary',
+      supersedes_delivery_id: initial.terminal_record.delivery_id,
+      supersedes_attempt_id: initial.terminal_record.attempt_id,
+      previous_attempt_sha256: sha256(canonicalJson(initial.terminal_record)),
+    },
+    terminal_history: [initial.terminal_record],
+    retry_event: {
+      failure_class: 'network_transient', evidence_sha256: SHA('1'), event_id: 'retry-event-1',
+    },
+  }))
+
+  assert.equal(retried.final_state, 'ACTIVATED')
+  assert.deepEqual(retried.retry_record, {
+    failure_class: 'network_transient', evidence_sha256: SHA('1'), event_id: 'retry-event-1', ordinal: 1,
+  })
+  assert.equal(retried.terminal_record.supersedes_attempt_id, initial.terminal_record.attempt_id)
 })
 
 test('canary failure rolls back only to pinned known-good artifact and verifies rollback', () => {
@@ -472,9 +514,10 @@ test('repo-owned controller materializes a no-clobber provisioning-held attestat
   }
   const result = buildProvisioningBoundaryFromGithubEvent(githubEvent, { now: NOW })
   assert.equal(result.final_state, 'HELD')
-  assert.equal(result.attestation.reason_code, 'DEPLOYMENT_BLOCKED')
+  assert.equal(result.attestation.reason_code, 'ACTIVATION_UNATTESTED')
   assert.equal(result.attestation.trusted_merge_sha, OID('b'))
-  assert.equal(parseTerminalRecord(canonicalJson(result.terminal_record)).reason_code, 'ACTIVATION_UNATTESTED')
+  assert.equal(parseTerminalRecord(canonicalJson(result.terminal_record)).reason_code,
+    result.attestation.reason_code)
 
   assert.throws(() => buildProvisioningBoundaryFromGithubEvent({
     ...githubEvent,
@@ -486,7 +529,7 @@ test('repo-owned controller materializes a no-clobber provisioning-held attestat
   try {
     await writeControllerResult(output, result)
     await assert.rejects(writeControllerResult(output, result), { code: 'EEXIST' })
-    assert.equal(JSON.parse(await readFile(output, 'utf8')).attestation.reason_code, 'DEPLOYMENT_BLOCKED')
+    assert.equal(JSON.parse(await readFile(output, 'utf8')).attestation.reason_code, 'ACTIVATION_UNATTESTED')
   } finally {
     await rm(temp, { recursive: true, force: true })
   }
@@ -508,6 +551,9 @@ test('closed schemas, workflow and skill pressure fixture remain machine-verifia
   assert.deepEqual(transition.states, linuxContinuousDeploymentVocabulary.states)
   assert.equal(transition.activation.default_state, 'PROVISIONING_REQUIRED')
   assert.equal(transition.deployment.method, 'scripts/dev/rebuild-test-deploy.ps1 -Build')
+  assert.equal(transition.controller.active_idempotent_disposition, 'idempotent_active')
+  assert.equal(transition.controller.active_idempotent_transition_appends, false)
+  assert.equal(transition.controller.active_idempotent_terminal_record, false)
 
   const workflow = await readFile(new URL('../../.github/workflows/linux-continuous-deployment.yml', import.meta.url), 'utf8')
   assert.match(workflow, /pull_request:\s*\n\s+types:\s*\[closed\]/u)
@@ -552,7 +598,12 @@ test('closed schemas, workflow and skill pressure fixture remain machine-verifia
     }),
     'artifact.observed_sha256': request({ artifact: artifact({ observed_sha256: SHA('e') }) }),
     'target.observed_fingerprint': request({ target: target({ observed_fingerprint: SHA('e') }) }),
-    'ledger.active_controller': request({ ledger: [activeLease] }),
+    'ledger.active_controller': request({
+      delivery_id: 'delivery-738',
+      replay_key: 'merge:738:c',
+      controller: { owner_id: 'controller-2', lease_id: 'controller-lease-2' },
+      ledger: [activeLease],
+    }),
     'ledger.replay_key': request({ ledger: [{ ...activeLease, state: 'ACTIVATED' }] }),
     'canary.verification': request({ canary: failedCanary, rollback: verifiedRollback }),
     'promotion.artifact_sha256': request({
@@ -605,7 +656,8 @@ test('closed schemas, workflow and skill pressure fixture remain machine-verifia
     'PROVISIONING_REQUIRED',
   ]) assert.match(claudeSkill, new RegExp(`\\b${state}\\b`, 'u'))
   assert.match(claudeSkill, /same immutable artifact digest/iu)
-  assert.match(claudeSkill, /bounded, failure-class deduplicated, and event-driven/iu)
+  assert.match(claudeSkill, /typed non-terminal `idempotent_active` ownership/iu)
+  assert.match(claudeSkill, /bounded, failure-class deduplicated, linked to its prior terminal attempt, and event-driven/iu)
 })
 
 test('contract module stays pure and cannot execute deployment or read ambient secrets', async () => {

@@ -75,7 +75,7 @@ export function buildProvisioningBoundaryFromGithubEvent(eventRaw, { now = new D
     state_history_sha256: sha256(canonicalJson(states)),
     final_state: 'HELD',
     terminal_class: 'HELD',
-    reason_code: 'DEPLOYMENT_BLOCKED',
+    reason_code: 'ACTIVATION_UNATTESTED',
   }
   const terminalRecord = parseTerminalRecord(canonicalJson({
     schema_version: 'autonomous-delivery-terminal-record/v1',
@@ -163,7 +163,8 @@ async function main(argv) {
   process.stdout.write(`${canonicalJson({
     schema_version: 'linux-continuous-deployment-controller-summary/v1',
     final_state: result.final_state,
-    reason_code: result.attestation.reason_code,
+    controller_disposition: result.controller_disposition ?? 'terminal',
+    reason_code: result.attestation?.reason_code ?? null,
   })}\n`)
   process.exitCode = result.final_state === 'HELD' ? 2 : 0
 }

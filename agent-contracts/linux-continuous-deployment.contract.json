@@ -100,7 +100,10 @@
     "scope": ["environment", "service"],
     "single_flight": true,
     "idempotency_key": ["delivery_id", "replay_key"],
-    "replay_guard": true
+    "replay_guard": true,
+    "active_idempotent_disposition": "idempotent_active",
+    "active_idempotent_transition_appends": false,
+    "active_idempotent_terminal_record": false
   },
   "retry": {
     "max_per_failure_class": 1,
