@@ -568,6 +568,44 @@ describe("Coordinator App HTTP & Socket integration for Idle Reclaim", () => {
     expect(events.filter((event) => event.type === "kitInstanceReleased")).toHaveLength(1);
   });
 
+  it("recovers a payload-complete active close checkpoint on coordinator restart", async () => {
+    const createRes = await request(appInstance.app)
+      .post("/api/review-sessions")
+      .send({
+        project_id: "prj_active_restart_recovery",
+        model_version_id: "mv_active_restart_recovery",
+        created_by: "user_active_restart_recovery",
+      });
+    const sessionId = createRes.body.session_id as string;
+    const checkpoint = {
+      checkpoint_id: "close_active_restart_recovery",
+      expected_final_event_count: 1,
+    };
+    appInstance.store.update(sessionId, { status: "active", close_checkpoint: checkpoint });
+    appInstance.eventLog.appendServerCloseCheckpoint(sessionId, "sessionClosing", {
+      final_events: 1,
+      reason: "inactivity",
+      actor: "system:idle_reclaimer",
+    }, checkpoint.checkpoint_id);
+    appInstance.eventLog.appendServerCloseCheckpoint(sessionId, "finalReviewEvent", {
+      kind: "recovery-proof",
+    }, checkpoint.checkpoint_id);
+    await appInstance.dispose();
+
+    appInstance = createCoordinatorApp({
+      sessionStoreDir: tmpSessionsDir,
+      eventLogDir: tmpEventsDir,
+      sessionIdleTimeoutMs: 50,
+    });
+
+    expect(appInstance.store.get(sessionId)?.status).toBe("closed");
+    const events = appInstance.eventLog.list(sessionId);
+    expect(events.filter((event) => event.type === "sessionClosing")).toHaveLength(1);
+    expect(events.filter((event) => event.type === "finalReviewEvent")).toHaveLength(1);
+    expect(events.filter((event) => event.type === "sessionClosed")).toHaveLength(1);
+    expect(events.filter((event) => event.type === "kitInstanceReleased")).toHaveLength(1);
+  });
+
   it("retries a transient startup close recovery failure without requiring another restart", async () => {
     const createRes = await request(appInstance.app)
       .post("/api/review-sessions")

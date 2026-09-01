@@ -976,13 +976,20 @@ export function createCoordinatorApp(
   });
   for (const session of store.list()) {
     const checkpoint = session.close_checkpoint;
-    if (!checkpoint || (session.status !== "closing" && session.status !== "closed")) continue;
+    if (!checkpoint || (
+      session.status !== "active"
+      && session.status !== "closing"
+      && session.status !== "closed"
+    )) continue;
     const checkpointEvents = eventLog
       .list(session.session_id)
       .filter((event) => event.close_checkpoint_id === checkpoint.checkpoint_id);
     const persistedFinalEventCount = checkpointEvents.filter((event) => event.type === "finalReviewEvent").length;
     const eventTypes = new Set(checkpointEvents.map((event) => event.type));
-    const hasRecoverablePayload = persistedFinalEventCount >= checkpoint.expected_final_event_count;
+    const hasRecoverablePayload = (
+      persistedFinalEventCount >= checkpoint.expected_final_event_count
+      && (session.status !== "active" || eventTypes.has("sessionClosing"))
+    );
     const isIncomplete = session.status === "closing"
       || !eventTypes.has("sessionClosed")
       || !eventTypes.has("kitInstanceReleased");
