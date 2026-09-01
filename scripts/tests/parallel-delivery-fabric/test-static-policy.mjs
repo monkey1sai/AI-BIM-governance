@@ -27,6 +27,10 @@ const TRUSTED_GIT_STEP = `      - name: Require canonical read-only Linux Git
           test "$(realpath /usr/bin/git)" = /usr/bin/git
           test "$(realpath "$(command -v git)")" = /usr/bin/git
           test ! -w /usr/bin/git`
+const TRUSTED_MERGE_POLICY_STEP = `      - name: Run trusted host merge policy tests on trusted Linux
+        if: matrix.platform == 'linux-positive'
+        shell: pwsh
+        run: node --test scripts/tests/test-trusted-host-merge.mjs`
 const STATIC_POLICY_STEP = `      - name: Run Parallel Delivery Fabric static policy
         if: matrix.platform == 'linux-positive'
         shell: pwsh
@@ -43,10 +47,12 @@ const assertTrustedLinuxBoundary = (workflow) => {
   const [windowsSuite, linuxBoundary] = sections
   assert.doesNotMatch(windowsSuite, /Run Parallel Delivery Fabric static policy/u)
   assert.doesNotMatch(windowsSuite, /test-manage-pr-queue\.mjs/u)
+  assert.doesNotMatch(windowsSuite, /test-trusted-host-merge\.mjs/u)
   assert.match(linuxBoundary, /- platform: linux-positive\n\s+runner: ubuntu-latest/u)
   assert.match(linuxBoundary, /Setup pinned Python for NEW_RUN contract tests[\s\S]*python-version: '3\.12'/u)
   assert.match(linuxBoundary, /Install NEW_RUN test dependencies[\s\S]*jsonschema==4\.26\.0 --hash=sha256:/u)
-  assert.equal(linuxBoundary.includes(`${TRUSTED_GIT_STEP}\n\n${STATIC_POLICY_STEP}\n\n${QUEUE_POLICY_STEP}`), true)
+  assert.equal(linuxBoundary.includes(`${TRUSTED_GIT_STEP}\n\n${TRUSTED_MERGE_POLICY_STEP}\n\n${STATIC_POLICY_STEP}\n\n${QUEUE_POLICY_STEP}`), true)
+  assert.equal(linuxBoundary.split('Run trusted host merge policy tests on trusted Linux').length - 1, 1)
   assert.equal(linuxBoundary.split('Run Parallel Delivery Fabric static policy').length - 1, 1)
   assert.equal(linuxBoundary.split('Run canonical review-policy queue tests').length - 1, 1)
 }
@@ -120,8 +126,8 @@ test('trusted Linux boundary rejects no-op, incomplete, misrouted, and non-adjac
       "      - name: Require canonical read-only Linux Git\n        if: matrix.platform == 'windows-negative'",
     ),
     workflow.replace(
-      `${TRUSTED_GIT_STEP}\n\n${STATIC_POLICY_STEP}`,
-      `${TRUSTED_GIT_STEP}\n\n${insertedStep}\n\n${STATIC_POLICY_STEP}`,
+      `${TRUSTED_GIT_STEP}\n\n${TRUSTED_MERGE_POLICY_STEP}`,
+      `${TRUSTED_GIT_STEP}\n\n${insertedStep}\n\n${TRUSTED_MERGE_POLICY_STEP}`,
     ),
   ]
   for (const mutant of mutants) assert.throws(() => assertTrustedLinuxBoundary(mutant))

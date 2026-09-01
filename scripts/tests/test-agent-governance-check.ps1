@@ -24,13 +24,14 @@ function Test-TrustedLinuxBoundary {
         if ($linuxEntries.Count -ne 1 -or ([string]$linuxEntries[0]['runner']) -cne 'ubuntu-latest') { return $false }
 
         $suiteRuns = @($suiteJob['steps'] | Where-Object { $_.Contains('run') } | ForEach-Object { [string]$_['run'] }) -join "`n"
-        if ($suiteRuns -match 'test-manage-pr-queue\.mjs|test-parallel-delivery-fabric-static-policy\.ps1') { return $false }
+        if ($suiteRuns -match 'test-manage-pr-queue\.mjs|test-parallel-delivery-fabric-static-policy\.ps1|test-trusted-host-merge\.mjs') { return $false }
 
         $boundarySteps = @($boundaryJob['steps'])
         $gitSteps = @($boundarySteps | Where-Object { ([string]$_['name']) -ceq 'Require canonical read-only Linux Git' })
+        $trustedMergeSteps = @($boundarySteps | Where-Object { ([string]$_['name']) -ceq 'Run trusted host merge policy tests on trusted Linux' })
         $staticSteps = @($boundarySteps | Where-Object { ([string]$_['name']) -ceq 'Run Parallel Delivery Fabric static policy' })
         $queueSteps = @($boundarySteps | Where-Object { ([string]$_['name']) -ceq 'Run canonical review-policy queue tests' })
-        if ($gitSteps.Count -ne 1 -or $staticSteps.Count -ne 1 -or $queueSteps.Count -ne 1) { return $false }
+        if ($gitSteps.Count -ne 1 -or $trustedMergeSteps.Count -ne 1 -or $staticSteps.Count -ne 1 -or $queueSteps.Count -ne 1) { return $false }
 
         $expectedGitRun = @(
             'set -euo pipefail'
@@ -44,6 +45,11 @@ function Test-TrustedLinuxBoundary {
             ([string]$gitStep['shell']) -cne 'bash' -or
             ([string]$gitStep['run']).Replace("`r`n", "`n").Trim() -cne $expectedGitRun) { return $false }
 
+        $trustedMergeStep = $trustedMergeSteps[0]
+        if (([string]$trustedMergeStep['if']) -cne "matrix.platform == 'linux-positive'" -or
+            ([string]$trustedMergeStep['shell']) -cne 'pwsh' -or
+            ([string]$trustedMergeStep['run']) -cne 'node --test scripts/tests/test-trusted-host-merge.mjs') { return $false }
+
         $staticStep = $staticSteps[0]
         if (([string]$staticStep['if']) -cne "matrix.platform == 'linux-positive'" -or
             ([string]$staticStep['shell']) -cne 'pwsh' -or
@@ -56,9 +62,11 @@ function Test-TrustedLinuxBoundary {
 
         $stepNames = @($boundarySteps | ForEach-Object { [string]$_['name'] })
         $gitIndex = [array]::IndexOf($stepNames, 'Require canonical read-only Linux Git')
+        $trustedMergeIndex = [array]::IndexOf($stepNames, 'Run trusted host merge policy tests on trusted Linux')
         $staticIndex = [array]::IndexOf($stepNames, 'Run Parallel Delivery Fabric static policy')
         $queueIndex = [array]::IndexOf($stepNames, 'Run canonical review-policy queue tests')
-        return $gitIndex -ge 0 -and $staticIndex -eq ($gitIndex + 1) -and $queueIndex -eq ($staticIndex + 1)
+        return $gitIndex -ge 0 -and $trustedMergeIndex -eq ($gitIndex + 1) -and
+            $staticIndex -eq ($trustedMergeIndex + 1) -and $queueIndex -eq ($staticIndex + 1)
     } catch {
         return $false
     }
@@ -345,7 +353,8 @@ try {
     Assert-True ($governanceWorkflow -match 'scripts/tests/test-agent-governance-check\.ps1') 'agent-governance workflow runs static check'
     Assert-True ($governanceWorkflow -match 'node --test scripts/tests/test-cleanup-orphan-dev-processes\.mjs scripts/tests/test-pr-queue-adversarial-and-stress\.mjs') 'Windows governance suite runs OS-specific orphan cleanup and queue safety tests'
     Assert-True ($governanceWorkflow -match 'node --test scripts/tests/test-manage-pr-queue\.mjs') 'trusted Linux boundary runs canonical review-policy queue tests'
-    Assert-True ($governanceWorkflow -match 'node --test scripts/tests/test-trusted-host-merge\.mjs scripts/tests/test-trusted-host-merge-runtime\.mjs') 'agent-governance runs trusted host executor and broker contract tests'
+    Assert-True ($governanceWorkflow -match 'node --test scripts/tests/test-trusted-host-merge\.mjs') 'trusted Linux boundary runs canonical trusted-host policy tests'
+    Assert-True ($governanceWorkflow -match 'node --test scripts/tests/test-trusted-host-merge-runtime\.mjs') 'Windows governance suite retains trusted-host runtime contract tests'
     Assert-True ($governanceWorkflow -match 'pwsh -NoProfile -NonInteractive -File scripts/tests/test-isolated-branch-stack\.ps1') 'agent-governance workflow runs isolated branch stack machine tests'
     Assert-True ($governanceWorkflow -match 'scripts/tests/test-openspec-ledger-reconciliation\.ps1') 'agent-governance workflow runs OpenSpec ledger reconciliation tests'
     Assert-True ($governanceWorkflow -match 'node --test scripts/tests/test-openspec-machine-truth\.mjs scripts/tests/test-openspec-machine-truth-cli\.mjs scripts/tests/test-collect-openspec-github-state\.mjs') 'agent-governance workflow runs machine-truth core, CLI, and GitHub collector tests'

@@ -97,10 +97,10 @@ jobs:
         shell: pwsh
         run: pwsh -NoProfile -NonInteractive -File scripts/tests/test-agent-governance-policy.ps1
 
-      - name: Run trusted host merge contract tests
+      - name: Run trusted host merge runtime tests (Windows)
         if: matrix.shard == 'core'
         shell: pwsh
-        run: pwsh -NoProfile -NonInteractive -Command "node --test scripts/tests/test-trusted-host-merge.mjs scripts/tests/test-trusted-host-merge-runtime.mjs"
+        run: pwsh -NoProfile -NonInteractive -Command "node --test scripts/tests/test-trusted-host-merge-runtime.mjs"
 
       - name: Run isolated branch stack machine tests
         if: matrix.shard == 'core'
@@ -302,6 +302,11 @@ jobs:
           test "$(realpath /usr/bin/git)" = /usr/bin/git
           test "$(realpath "$(command -v git)")" = /usr/bin/git
           test ! -w /usr/bin/git
+
+      - name: Run trusted host merge policy tests on trusted Linux
+        if: matrix.platform == 'linux-positive'
+        shell: pwsh
+        run: node --test scripts/tests/test-trusted-host-merge.mjs
 
       - name: Run Parallel Delivery Fabric static policy
         if: matrix.platform == 'linux-positive'
