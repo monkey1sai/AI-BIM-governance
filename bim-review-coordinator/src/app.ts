@@ -785,11 +785,26 @@ export function createCoordinatorApp(
     const reason = typeof options.reason === "string" ? (options.reason.trim().slice(0, 500) || undefined) : undefined;
     const actor = typeof options.actor === "string" ? (options.actor.trim().slice(0, 500) || undefined) : undefined;
     const auditFields = reason ? { reason, ...(actor ? { actor } : {}) } : {};
-    const closeCheckpoint = session.close_checkpoint ?? {
+    let closeCheckpoint = session.close_checkpoint;
+    if (closeCheckpoint && session.status !== "closing" && session.status !== "closed") {
+      const persistedFinalEventCount = eventLog
+        .list(session.session_id)
+        .filter((event) => (
+          event.type === "finalReviewEvent"
+          && event.close_checkpoint_id === closeCheckpoint?.checkpoint_id
+        )).length;
+      if (
+        persistedFinalEventCount < closeCheckpoint.expected_final_event_count
+        && finalEvents.length < closeCheckpoint.expected_final_event_count
+      ) {
+        closeCheckpoint = undefined;
+      }
+    }
+    closeCheckpoint ??= {
       checkpoint_id: `close_${randomBytes(12).toString("hex")}`,
       expected_final_event_count: finalEvents.length,
     };
-    if (!session.close_checkpoint) {
+    if (session.close_checkpoint?.checkpoint_id !== closeCheckpoint.checkpoint_id) {
       session = store.update(session.session_id, { close_checkpoint: closeCheckpoint }) ?? session;
     }
     let closing = session;

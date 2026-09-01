@@ -284,6 +284,34 @@ describe("Window Socket canonical trace authority", () => {
         });
     });
 
+    it("reasserts stream readiness when a started stream replaces its review socket", () => {
+        const app = readyApp();
+        const target = internals(app);
+        target._connectReviewSocket(SESSION_ID, TRACE_ID);
+        const firstSocket = socketClient;
+
+        target.state = { ...target.state, webrtcLifecycleStatus: "started" };
+        const replacementSocket: ReviewSocketClient = {
+            join: vi.fn(),
+            heartbeat: vi.fn(),
+            setStreamReady: vi.fn(),
+            userActivity: vi.fn(async () => true),
+            leave: vi.fn(),
+            disconnect: vi.fn(),
+        };
+        socketClient = replacementSocket;
+        const sendSpy = vi.spyOn(AppStream, "sendMessage").mockImplementation(() => new Promise(() => {}));
+
+        target._connectReviewSocket(SESSION_ID, TRACE_ID);
+        const replacementCandidate = vi.mocked(replacementSocket.join).mock.calls[0][0];
+        handlers.onStatus?.("connected");
+        ack("joinSession", replacementCandidate, { ok: true, trace_id: TRACE_ID });
+
+        expect(firstSocket.disconnect).toHaveBeenCalledTimes(1);
+        expect(replacementSocket.setStreamReady).toHaveBeenCalledWith(true);
+        expect(sendSpy).toHaveBeenCalled();
+    });
+
     it("spectator Flush cannot claim a primary viewer lease", async () => {
         window.history.replaceState(
             {},

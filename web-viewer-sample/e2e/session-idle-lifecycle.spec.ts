@@ -17,7 +17,16 @@ async function createSession(request: APIRequestContext, suffix: string): Promis
       project_id: `idle_e2e_${suffix}`,
       model_version_id: `idle_e2e_${suffix}`,
       created_by: "session-idle-lifecycle-e2e",
-      artifact_bindings: [],
+      artifact_bindings: [
+        {
+          artifact_group_id: `idle_e2e_group_${suffix}`,
+          artifact_id: `idle_e2e_artifact_${suffix}`,
+          artifact_role: "derived",
+          url: "edge-local://artifacts/idle-e2e-model.usdc",
+          load_order: 0,
+          ready_status: "ready",
+        },
+      ],
     },
   });
   requireReal(response.ok(), `session create failed: ${response.status()}`);

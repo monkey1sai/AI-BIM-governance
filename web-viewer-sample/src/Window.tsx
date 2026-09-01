@@ -3682,7 +3682,10 @@ export default class App extends React.Component<AppProps, AppState> {
         };
         window.__structLog?.logger.setTraceId(ack.trace_id);
         this._appendReviewEvent(`Socket.IO trace 已驗證：${ack.trace_id}`);
-        if (this.state.webrtcLifecycleStatus === "started") this._queryLoadingState();
+        if (this.state.webrtcLifecycleStatus === "started") {
+            this.reviewSocket?.setStreamReady(true);
+            this._queryLoadingState();
+        }
     }
 
     private _getReadyLoadingText(): string {
