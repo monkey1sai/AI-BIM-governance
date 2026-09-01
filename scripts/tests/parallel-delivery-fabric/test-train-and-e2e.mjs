@@ -1359,6 +1359,40 @@ test('P2 regressions — binder recomputes command lineage and compares every ne
   assert.equal(commandResult.status, 'HELD_EVIDENCE_BINDING')
   assert.equal(commandResult.reason, 'COMMAND_RECORDS_DIGEST_MISMATCH')
 
+  const failedCommands = commandRecords()
+  failedCommands[0].exit_code = 1
+  const failedPacket = browserPacket('playwright', {
+    command_records: failedCommands,
+    command_records_digest: digestCanonical(failedCommands),
+  })
+  const failedResult = bindBrowserEvidence({
+    candidate: candidate(), manifest: manifest(), playwright: failedPacket,
+    computerUse: browserPacket('computer_use', {
+      verifier_identity: 'computer-use:one', command_records: failedCommands,
+      command_records_digest: digestCanonical(failedCommands),
+    }),
+    trustedPins: trustedPins(),
+  })
+  assert.equal(failedResult.status, 'HELD_EVIDENCE_BINDING')
+  assert.equal(failedResult.reason, 'COMMAND_RECORD_FAILED')
+
+  const staleCommands = commandRecords().map((record) => ({
+    ...record,
+    started_at: '2026-08-28T01:00:00.000Z',
+    finished_at: '2026-08-28T02:00:00.000Z',
+  }))
+  const staleCommandDigest = digestCanonical(staleCommands)
+  const staleResult = bindBrowserEvidence({
+    candidate: candidate(), manifest: manifest(),
+    playwright: browserPacket('playwright', { command_records: staleCommands, command_records_digest: staleCommandDigest }),
+    computerUse: browserPacket('computer_use', {
+      verifier_identity: 'computer-use:one', command_records: staleCommands, command_records_digest: staleCommandDigest,
+    }),
+    trustedPins: trustedPins(),
+  })
+  assert.equal(staleResult.status, 'HELD_EVIDENCE_BINDING')
+  assert.equal(staleResult.reason, 'COMMAND_RECORD_WINDOW_MISMATCH')
+
   for (const computerUse of [
     browserPacket('computer_use', { verifier_identity: 'computer-use:one', network_result: 'network:other' }),
     browserPacket('computer_use', { verifier_identity: 'computer-use:one', network_sha256: SHA256('0') }),

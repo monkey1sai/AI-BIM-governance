@@ -17,6 +17,8 @@ const MANAGED_BRANCH_REF = 'refs/ai-bim/managed-branches'
 const REFS = new Set([PLAN_REF, LEASE_REF, QUEUE_REF, JOURNAL_REF, MANAGED_BRANCH_REF])
 const WRITER_CAP_V1 = 2
 const COMMAND_JOURNAL_RECEIPT_LIMIT = 4096
+const LEASE_HEARTBEAT_TIMEOUT_MS = 30_000
+const MANAGED_BRANCH_NONCE_RECEIPT_LIMIT = 4096
 const OID = /^[0-9a-f]{40}$/u
 const DIGEST = /^[0-9a-f]{64}$/u
 const NONCE = /^[A-Za-z0-9_-]{32,128}$/u
@@ -1360,7 +1362,7 @@ export function createLeaseRegistry({ store, clock, writerCap = WRITER_CAP_V1, o
     assertTask2OpaqueId(lease_id, 'reconcile_timeout_lease_id')
     assertOid(expected_oid, 'reconcile_timeout_expected_oid')
     assertNonce(nonce, 'reconcile_timeout_nonce')
-    if (!Number.isSafeInteger(timeout_ms) || timeout_ms < 1) fail('invalid_value', 'timeout_ms_invalid')
+    if (timeout_ms !== LEASE_HEARTBEAT_TIMEOUT_MS) fail('invalid_value', 'timeout_ms_policy_mismatch')
     return (async () => {
       const snapshot = await registrySnapshot(store, writerCap)
       if (snapshot.status === 'HELD_REGISTRY_INTEGRITY') return snapshot
@@ -1388,7 +1390,7 @@ export function createLeaseRegistry({ store, clock, writerCap = WRITER_CAP_V1, o
         }
       }
       const timestamp = nowFrom(clock)
-      if (Date.parse(timestamp) - Date.parse(lease.heartbeat_at) < timeout_ms) {
+      if (Date.parse(timestamp) - Date.parse(lease.heartbeat_at) < LEASE_HEARTBEAT_TIMEOUT_MS) {
         return { status: lease.state, oid: snapshot.oid, lease }
       }
       const nextLease = updateLease(lease, {
@@ -2002,6 +2004,9 @@ const validateManagedRegistryState = (record) => {
     fail('registry_record_invalid', 'managed_branch_registry_shape')
   }
   validateManagedBranchRecord(record.branch, 'managed_branch_registry.branch')
+  if (Object.keys(record.used_nonces).length > MANAGED_BRANCH_NONCE_RECEIPT_LIMIT) {
+    fail('registry_record_invalid', 'managed_branch_registry_nonce_receipt_limit')
+  }
   for (const [nonce, receipt] of Object.entries(record.used_nonces)) {
     assertNonce(nonce, 'managed_branch_registry.used_nonce')
     exactKeys(receipt, ['operation_id', 'consumed_at'], 'managed_branch_registry.used_nonce_receipt')
@@ -2096,6 +2101,9 @@ const renewFailure = (snapshot, command, now) => {
   if (Object.hasOwn(snapshot.state.used_nonces, command.nonce) ||
       Object.values(snapshot.state.used_nonces).some((receipt) => receipt.operation_id === command.operation_id)) {
     return managedHeld('NONCE_REPLAY')
+  }
+  if (Object.keys(snapshot.state.used_nonces).length >= MANAGED_BRANCH_NONCE_RECEIPT_LIMIT) {
+    return managedHeld('NONCE_LEDGER_CAPACITY_EXCEEDED')
   }
   const requestedExpiresAt = parseTimestamp(command.requested_expires_at, 'managed_branch_renew.requested_expires_at')
   if (requestedExpiresAt <= parseTimestamp(record.expires_at, 'managed_branch_renew.current_expires_at')) return managedHeld('EXPIRY_NOT_EXTENDED')

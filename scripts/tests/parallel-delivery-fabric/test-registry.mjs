@@ -683,6 +683,21 @@ test('AC-03 — heartbeat is monotonic and timeout marks SUSPECT without releasi
   assert.equal(stillDisjoint.status, 'ADMITTED')
 })
 
+test('P2 regression — timeout reconciliation uses the coordinator-owned heartbeat policy', async () => {
+  const { leaseRegistry, store } = createFixture()
+  const admitted = await leaseRegistry.admit(makeRequest(store, {
+    lease_id: 'lease:timeout-policy', resource_keys: ['path:src/timeout-policy.mjs'], nonce: NONCE('timeout-policy-admit'),
+  }))
+  const before = await leaseRegistry.inspect()
+  assert.throws(
+    () => leaseRegistry.reconcileTimeout({
+      lease_id: 'lease:timeout-policy', expected_oid: admitted.oid, timeout_ms: 1, nonce: NONCE('timeout-policy-reconcile'),
+    }),
+    (error) => error?.code === 'invalid_value' && error?.detail === 'timeout_ms_policy_mismatch',
+  )
+  assert.deepEqual(await leaseRegistry.inspect(), before)
+})
+
 test('P2 regression — an admitted unnamespaced opaque lease ID remains usable across its lifecycle', async () => {
   const { attestor, clock, envelope, leaseRegistry, store } = createFixture()
   const admitted = await leaseRegistry.admit(makeRequest(store, {
@@ -1310,7 +1325,7 @@ test('P1 regression — END_REQUESTED is immutable and timeout retains its autho
   clock.set('2026-08-29T00:05:00.000Z')
   const writesBeforeTimeout = writes()
   const timedOut = await leaseRegistry.reconcileTimeout({
-    lease_id: 'lease:end-immutable', expected_oid: ended.oid, timeout_ms: 1, nonce: NONCE('end-immutable-timeout'),
+    lease_id: 'lease:end-immutable', expected_oid: ended.oid, timeout_ms: 30000, nonce: NONCE('end-immutable-timeout'),
   })
   assert.equal(timedOut.status, 'HELD_EXECUTION_AUTHORITY')
   assert.equal(timedOut.reason, 'OWNER_END_ATTESTATION_EVIDENCE_GAP')
@@ -1531,7 +1546,7 @@ test('P1 regression — a post-envelope final CAS conflict stays reconcilable an
     store: contestedStore, clock, writerCap: 2, ownerEndAttestor: attestor, executionEnvelope: envelope,
   })
   const timedOut = await restarted.reconcileTimeout({
-    lease_id: 'lease:finalize-hold', expected_oid: snapshot.oid, timeout_ms: 1,
+    lease_id: 'lease:finalize-hold', expected_oid: snapshot.oid, timeout_ms: 30000,
     nonce: NONCE('finalize-reconcile'),
   })
   assert.equal(timedOut.status, 'HELD_EXECUTION_AUTHORITY')
@@ -1633,7 +1648,7 @@ test('RED round6: canonical Task3 parser clones, freezes, and rejects forged lea
   }))
   suspectFixture.clock.set('2026-08-29T00:05:00.000Z')
   await suspectFixture.leaseRegistry.reconcileTimeout({
-    lease_id: 'lease:parser-suspect', expected_oid: suspectAdmitted.oid, timeout_ms: 1, nonce: NONCE('parser-suspect-timeout'),
+    lease_id: 'lease:parser-suspect', expected_oid: suspectAdmitted.oid, timeout_ms: 30000, nonce: NONCE('parser-suspect-timeout'),
   })
   const endFixture = createFixture()
   const endAdmitted = await endFixture.leaseRegistry.admit(makeRequest(endFixture.store, {
@@ -1933,8 +1948,8 @@ const managedRegistryState = (branch, usedNonces = {}) => ({
   used_nonces: usedNonces,
 })
 
-const createInMemoryManagedCas = ({ branch = managedBranchRecord(), raceBarrier = undefined } = {}) => {
-  let current = { oid: branch.registry_oid, record: managedRegistryState(branch) }
+const createInMemoryManagedCas = ({ branch = managedBranchRecord(), raceBarrier = undefined, usedNonces = {} } = {}) => {
+  let current = { oid: branch.registry_oid, record: managedRegistryState(branch, usedNonces) }
   let casCalls = 0
   const calls = []
   const sideEffects = { network: 0, process: 0, delete: 0, worktree: 0, acl: 0 }
@@ -2004,8 +2019,8 @@ const createManagedRenewalAuthority = ({
   }
 }
 
-const createManagedFixture = ({ branch = managedBranchRecord(), raceBarrier = undefined } = {}) => {
-  const store = createInMemoryManagedCas({ branch, raceBarrier })
+const createManagedFixture = ({ branch = managedBranchRecord(), raceBarrier = undefined, usedNonces = {} } = {}) => {
+  const store = createInMemoryManagedCas({ branch, raceBarrier, usedNonces })
   const clock = createClock()
   const managedBranchAuthority = createManagedRenewalAuthority()
   return {
@@ -2097,6 +2112,22 @@ test('AC-39 — managed renewal requires a trusted authority decision bound to t
     assert.equal(rejected.reason, expectedReason, label)
     assert.equal(rejectedStore.calls.filter((call) => call.kind === 'cas').length, 0, label)
   }
+})
+
+test('P2 regression — managed renewal stops at the bounded nonce ledger without weakening replay protection', async () => {
+  const usedNonces = Object.fromEntries(Array.from({ length: 4096 }, (_, index) => [
+    NONCE(`managed-capacity-${index}`),
+    { operation_id: `operation:managed-capacity-${index}`, consumed_at: '2026-08-29T00:00:00.000Z' },
+  ]))
+  const { registry, store, managedBranchAuthority } = createManagedFixture({ usedNonces })
+  const current = (await registry.inspect()).record
+  const outcome = await registry.renew(managedRenewCommand(current, {
+    operation_id: 'operation:managed-capacity-new', nonce: NONCE('managed-capacity-new'),
+  }))
+  assert.equal(outcome.status, 'HELD_MANAGED_BRANCH')
+  assert.equal(outcome.reason, 'NONCE_LEDGER_CAPACITY_EXCEEDED')
+  assert.equal(managedBranchAuthority.calls.length, 0)
+  assert.equal(store.calls.filter((call) => call.kind === 'cas').length, 0)
 })
 
 test('AC-39 RED — two same-OID renew operations have exactly one local CAS winner', async () => {

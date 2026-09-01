@@ -928,8 +928,10 @@ const packetCompletenessFailure = (packet) => {
   return null
 }
 
-const commandRecordFailure = (packets) => {
+const commandRecordFailure = (packets, executionWindow) => {
   if (packets.some((packet) => !Array.isArray(packet?.command_records) || packet.command_records.length === 0)) return 'COMMAND_RECORDS_MISSING'
+  const boundedWindow = validExecutionWindow(executionWindow)
+  if (!boundedWindow) return 'EXECUTION_WINDOW_REQUIRED'
   const records = packets.flatMap((packet) => packet.command_records)
   const roles = new Set()
   for (const record of records) {
@@ -959,6 +961,14 @@ const commandRecordFailure = (packets) => {
     for (const alias of ['command_records_digest', 'command_lineage_digest']) {
       if (own(packet, alias) && packet[alias] !== computed) return 'COMMAND_RECORDS_DIGEST_MISMATCH'
     }
+  }
+  const windowStartedAt = Date.parse(boundedWindow.started_at)
+  const windowFinishedAt = Date.parse(boundedWindow.finished_at)
+  for (const record of records) {
+    if (record.exit_code !== 0) return 'COMMAND_RECORD_FAILED'
+    const startedAt = Date.parse(first(record, ['started_at', 'start_time']))
+    const finishedAt = Date.parse(first(record, ['finished_at', 'end_time']))
+    if (startedAt < windowStartedAt || finishedAt > windowFinishedAt) return 'COMMAND_RECORD_WINDOW_MISMATCH'
   }
   return null
 }
@@ -1127,7 +1137,7 @@ export function bindBrowserEvidence({ candidate, manifest, playwright, computerU
   const computerUseRuntimeLineage = first(computerUse, ['runtime_lineage_digest', 'runtime_identity_digest'])
   if (playwrightCommandDigest !== computerUseCommandDigest || playwrightRuntimeLineage !== computerUseRuntimeLineage) return bindingHold('COMMAND_OR_RUNTIME_LINEAGE_MISMATCH', candidate)
   if (!equalCanonical(packetExecutionWindows[0], packetExecutionWindows[1])) return bindingHold('EXECUTION_WINDOW_MISMATCH', candidate)
-  const commandFailure = commandRecordFailure([playwright, computerUse])
+  const commandFailure = commandRecordFailure([playwright, computerUse], packetExecutionWindows[0])
   if (commandFailure) return bindingHold(commandFailure, candidate)
   const networkDigest = sanitizedNetworkDigest(playwright)
   const computerUseNetworkDigest = sanitizedNetworkDigest(computerUse)

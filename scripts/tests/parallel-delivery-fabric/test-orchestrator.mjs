@@ -217,7 +217,7 @@ const advanceCommand = (overrides = {}) => {
 
 const reconcileCommand = (overrides = {}) => ({
   type: 'reconcile', command_id: 'command:reconcile-one',
-  reconcile_request: { lease_id: 'lease:one', expected_oid: 'a'.repeat(40), timeout_ms: 1, nonce: 'nonce-reconcile-one' }, ...overrides,
+  reconcile_request: { lease_id: 'lease:one', expected_oid: 'a'.repeat(40), timeout_ms: 30000, nonce: 'nonce-reconcile-one' }, ...overrides,
 })
 
 const drainCommand = (overrides = {}) => ({
