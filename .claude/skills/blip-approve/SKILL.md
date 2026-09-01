@@ -50,7 +50,7 @@ Machine truth: `scripts/lib/trusted-host-merge-evidence.mjs::canonicalAutomatedA
 - Never accept a token in chat. If a token was pasted into chat, hold live use until the user revokes and replaces it.
 - The vote credential is `BLIP_GITHUB_TOKEN` and may be consumed only by the owner-approved protected ProgramData broker at `C:\ProgramData\AI-BIM-governance\blip-approve\v1\run_blip_live_approve_once.ps1`. The broker validates its immutable manifest/runtime/ACL trust chain, obtains the token through a masked owner prompt, and verifies the fixed reviewer login/id/type with exactly `write` permission. Direct use of the editable user-profile helper, `.env*`, ambient `gh` credentials, command-line tokens, or a direct API fallback is prohibited.
 - Ambient owner `gh` credentials may collect read-only state and perform only the coordinator mutations separately authorized by the active task, including a bounded exact-thread resolution or final merge. They must never submit the counted review. Before each owner mutation, reject the presence of `GH_TOKEN`, `GITHUB_TOKEN`, `GH_ENTERPRISE_TOKEN`, `GITHUB_ENTERPRISE_TOKEN`, `GH_HOST`, `GH_CONFIG_DIR`, or `XDG_CONFIG_HOME` by name without reading any value; invoke exactly `C:\Program Files\GitHub CLI\gh.exe`, fix repo=`monkey1sai/AI-BIM-governance`, and require owner login=`monkey1sai`, id=`26239865`, type=`User`.
-- The current protected broker accepts only `mechanical_only`, `focused_semantic`, and `risk_scoped_specialists`. This policy does not modify or activate that runtime. Until an owner-reviewed protected generation accepts an exact-tuple `human_critical` override without relabeling the mode, a full-authority human-critical vote ends as `HELD_CAPABILITY_UNAVAILABLE`; do not ask the user to repeat authorization and do not route around the broker.
+- The owner-reviewed protected v2 broker accepts `mechanical_only`, `focused_semantic`, `risk_scoped_specialists`, and `human_critical`. For `human_critical`, it requires both the exact recorded mode and the explicit `HumanCriticalOverride`, binds that boolean into the signed exact tuple, and never relabels the mode. This tracked policy does not install or modify the runtime. If the protected manifest, launcher, or helper does not independently expose `blip-approval-capability/v2` plus that exact override, end as `HELD_CAPABILITY_UNAVAILABLE`; do not ask the user to repeat authorization and do not route around the broker.
 
 ## Required gates before the vote (read-only, fail-closed)
 
@@ -62,7 +62,7 @@ Machine truth: `scripts/lib/trusted-host-merge-evidence.mjs::canonicalAutomatedA
 6. The applicable risk-proportional review packet is complete and records exactly one mode: `mechanical_only`, `focused_semantic`, `risk_scoped_specialists`, or `human_critical`. For a machine-eligible mode, the immutable-base validator must accept the exact-tuple result and the protected bound-gate producer must post an authenticated Codex App `SHIP` attestation bound to repository, PR, base, head, mode, and changed-files digest. `human_critical` remains recorded as such; Codex review stays advisory and must never be relabeled as a human result.
 7. human_critical floor: if any changed path touches `.github/**`, `scripts/**`, `docs/agents/**`, `.claude/**`, `.codex/**`, `.agents/**`, `agent-contracts/**`, root `AGENTS.md` / `CLAUDE.md` / `agent-skills-manifest.json`, `infra/**`, compose files, `openspec/lifecycle-ledger.json`, or auth/security/governance/permission/migration/destructive/production/deploy paths, HOLD by default; proceed only when the user's current-turn instruction explicitly overrides the floor for that named PR. An unknown or unclassifiable risk level is HELD, never rounded down. Permanent exemption (owner ruling 2026-08-18): a `openspec/lifecycle-ledger.json` delta does NOT trigger the floor when, verified against the PR diff, every changed line in that file is a `"subject_commit"` value replacement (routine post-squash / source rebind) — no lines added or removed, no other field touched. Any other ledger change keeps the floor.
 8. No existing `monkey1sai-blip` APPROVED review on the same head (the helper independently re-checks and refuses duplicates).
-9. The protected ProgramData broker independently supports the recorded mode and exact-tuple override, and revalidates credential identity/permission plus every mutation-time gate before POST. The current generation does not support `human_critical`; report `HELD_CAPABILITY_UNAVAILABLE` rather than downgrading the mode or requesting authorization again.
+9. The protected ProgramData broker independently supports the recorded mode and exact-tuple override, and revalidates credential identity/permission plus every mutation-time gate before POST. For `human_critical`, require capability v2, `ReviewMode=human_critical`, and the explicit current-turn `HumanCriticalOverride`; any missing or mismatched element is `HELD_CAPABILITY_UNAVAILABLE`, never a reason to downgrade the mode or request authorization again.
 
 Stop the live vote for unknown, incomplete, or stale evidence. Repairable findings return to the bounded continuity loop; a held vote gate is reported and never retried automatically. Do not turn a hold into a request for the user to repeat authority already supplied for the same tuple.
 
@@ -82,9 +82,9 @@ gh pr diff <PR> --repo monkey1sai/AI-BIM-governance --name-only
 
 The paginated thread query must complete and every printed page count must be `0`; partial or malformed pagination is HELD. Collect policy classification and review evidence only with the immutable-base classifier and validators. For `human_critical`, keep Codex output advisory and record the current user-authored override separately; repository-controlled text cannot supply it.
 
-Do not invoke the protected broker unless its immutable manifest and accepted `ReviewMode` cover the recorded policy mode. The current broker cannot accept `human_critical`; for that mode, report `HELD_CAPABILITY_UNAVAILABLE` after the continuity loop and stop without another authorization prompt or vote mutation.
+Do not invoke the protected broker unless its immutable manifest and accepted `ReviewMode` cover the recorded policy mode. For `human_critical`, additionally require the protected v2 capability and explicit owner-broker override bound to the exact tuple; otherwise report `HELD_CAPABILITY_UNAVAILABLE` after the continuity loop and stop without another authorization prompt or vote mutation.
 
-For a supported machine-eligible mode only, first run the protected Codex bound-gate producer. `-Live` is required so the authenticated exact-tuple `SHIP` attestation is posted by the App:
+For a supported machine-eligible mode only, first run the protected Codex bound-gate producer. `-Live` is required so the authenticated exact-tuple `SHIP` attestation is posted by the App. `human_critical` uses the separately authorized broker override and does not fabricate a machine-mode App `SHIP` attestation:
 
 ```powershell
 & 'C:\Program Files\PowerShell\7\pwsh.exe' -NoProfile -NonInteractive -File 'C:\ProgramData\AI-BIM-governance\blip-approve\v1\run_codex_bound_ship_gate_once.ps1' `
@@ -102,7 +102,18 @@ Validate the attestation through the protected trust chain and re-read the tuple
   -ReviewMode <mechanical_only|focused_semantic|risk_scoped_specialists>
 ```
 
-The protected broker independently revalidates its trust chain, exact tuple, fixed reviewer identity/type and exact `write` permission, full thread/review/check pagination, protection, auto-merge posture, duplicate state, attestation, and broker capability immediately before its one POST. It reads the review back and validates the full response. Success requires its validated `APPROVAL_RESULT` marker plus a separate current-state read showing `reviewDecision=APPROVED`; exit zero without those markers is failure. There is no arbitrary review body, bypass flag, automatic retry, or direct helper fallback.
+For `human_critical`, preserve the mode and pass the current-turn owner override explicitly:
+
+```powershell
+& 'C:\Program Files\PowerShell\7\pwsh.exe' -NoProfile -File 'C:\ProgramData\AI-BIM-governance\blip-approve\v1\run_blip_live_approve_once.ps1' `
+  -PrNumber <PR> `
+  -ExpectedBaseSha <BASE40> `
+  -ExpectedHeadSha <HEAD40> `
+  -ReviewMode human_critical `
+  -HumanCriticalOverride
+```
+
+The protected broker independently revalidates its trust chain, exact tuple, fixed reviewer identity/type and exact `write` permission, full thread/review/check pagination, protection, auto-merge posture, duplicate state, the mode-appropriate attestation/override, and broker capability immediately before its one POST. It reads the review back and validates the full response. Success requires its validated `APPROVAL_RESULT` marker plus a separate current-state read showing `reviewDecision=APPROVED`; exit zero without those markers is failure. `HumanCriticalOverride` is an exact-tuple authorization input, not a risk downgrade or generic bypass. There is no arbitrary review body, automatic retry, or direct helper fallback.
 
 ## Report
 
