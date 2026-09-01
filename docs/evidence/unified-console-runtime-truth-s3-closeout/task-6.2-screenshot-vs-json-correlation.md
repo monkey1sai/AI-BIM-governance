@@ -72,7 +72,7 @@ viewport, not a claim of a live GPU-backed session. Cross-check against the ten-
 | Cross-check | Displayed | JSON source | JSON value | Match |
 |---|---|---|---|---|
 | No live review session backing the viewport | (no session banner; `review session` control shown, not an active session) | `task-6.2-endpoint-runtime-status.json` | `body.sessions.count=0`, `body.kit_instance_bindings=[]` | **更正（P5 FB，2026-09-01）**：backend 0 sessions 為真值；但同屏 demo 視區仍渲染 fixture 來源的 live-session 樣貌字串（`lease: editor · spectator ×1`、`openedStageResult ✓`，Q2b 已入帳 slice debt），原「absence of any live-session claim on screen」全稱宣稱撤回，改判「真值一致＋已揭露 slice-debt fixture 字串」 |
-| Kit instance idle (no GPU stream claimed) | corner label reads `no-GPU`, not a fabricated FPS/ms figure | `task-6.2-endpoint-kit-instances-current.json` | `body.status="idle"`, `control_status="not_sent"` | **更正（P5 FG，2026-09-01）**：`#a1` 角標 no-GPU 屬實；但 `task-6.2-screen-a3.png` 的 `#a3` 示意圖素材像素內烙有捏造串流 chip「Streaming ⚡ 28 ms」（來源為 design-assets vp 靜態圖素材、非 DOM，grep/regex 掃不到；已併入 Q2b slice debt——素材重製），原「not a fabricated FPS/ms figure」全稱宣稱撤回 |
+| Kit instance idle (no GPU stream claimed) | corner label reads `no-GPU`, not a fabricated FPS/ms figure | `task-6.2-endpoint-kit-instances-current.json` | `body.status="idle"`, `control_status="not_sent"` | **更正（P5 FG，2026-09-01）**：`#a1` 角標 no-GPU 屬實；但 `task-6.2-screen-a3.png` 的 `#a3` 示意圖素材像素內烙有捏造串流 chip「Streaming ⚡ 28 ms」（來源為 design-assets vp 靜態圖素材、非 DOM，grep/regex 掃不到；已併入 Q2b slice debt——素材重製），原「not a fabricated FPS/ms figure」全稱宣稱撤回；P5 CR2 補列：同截圖另兩枚無條件捏造合規 chip「✓ Coordinate Check OK」「✓ 單位 m · CRS 一致」（`docks.tsx:210-211` 靜態 JSX，同入 Q2b slice debt） |
 
 ## `#a4` — A4 語意查詢與證據
 
