@@ -122,6 +122,26 @@ $primaryBehind = Test-GovernedPrimaryCheckoutState `
     -BranchRef 'refs/heads/main' -Head 'abc123' -OriginMain 'def456' -Dirty:$false
 Assert-Equal 'primary_checkout_not_aligned' $primaryBehind.Reason 'primary checkout alignment reason'
 
+$preMutationFailure = New-GovernedWorktreeFailurePayload `
+    -ErrorMessage 'primary_checkout_invariant_failed' `
+    -MutationState 'not_started' `
+    -Branch 'fix/example' `
+    -Target 'C:\repo.worktrees\example'
+Assert-True (-not [bool]$preMutationFailure.mutation_may_have_occurred) `
+    'pre-mutation failures must report that no Git artifact mutation may have occurred'
+
+$postAddFailure = New-GovernedWorktreeFailurePayload `
+    -ErrorMessage 'worktree_owner_postcondition_failed' `
+    -MutationState 'worktree_added' `
+    -Branch 'fix/example' `
+    -Target 'C:\repo.worktrees\example'
+Assert-True ([bool]$postAddFailure.mutation_may_have_occurred) `
+    'post-add failures must expose possible partial Git artifacts'
+Assert-Equal 'worktree_added' ([string]$postAddFailure.mutation_state) `
+    'post-add failures preserve the exact mutation state'
+Assert-Equal 'fix/example' ([string]$postAddFailure.branch) 'failure payload preserves branch identity'
+Assert-Equal 'C:\repo.worktrees\example' ([string]$postAddFailure.target) 'failure payload preserves target identity'
+
 $target = Get-GovernedWorktreeTarget -MainRoot 'C:\Repos\active\iot\AI-BIM-governance' -BranchName 'fix/host-owned-worktree-guard'
 Assert-Equal 'C:\Repos\active\iot\AI-BIM-governance.worktrees\host-owned-worktree-guard' $target 'canonical sibling target'
 
@@ -162,17 +182,22 @@ Assert-True ($activeAgents -contains 'nested') 'idle descendant session is detec
 Assert-True ($activeAgents -notcontains 'ended') 'ended descendant session is ignored'
 Assert-True ($activeAgents -notcontains 'sibling') 'sibling path is not treated as a descendant'
 
-$ready = Get-GovernedWorktreeRemovalReadiness -IsMain:$false -BoardAvailable:$true -GitAccessible:$true -Dirty:$false -Merged:$true -Active:$false -Locked:$false -Prunable:$false
+$ready = Get-GovernedWorktreeRemovalReadiness -IsMain:$false -BoardAvailable:$true -GitAccessible:$true -Dirty:$false -HeadAncestor:$true -Active:$false -Locked:$false -Prunable:$false
 Assert-True $ready.Ready 'clean merged inactive linked worktree can enter manual removal review'
 Assert-Equal 'eligible_for_manual_review' $ready.Reason 'manual review reason'
 
-$active = Get-GovernedWorktreeRemovalReadiness -IsMain:$false -BoardAvailable:$true -GitAccessible:$true -Dirty:$false -Merged:$true -Active:$true -Locked:$false -Prunable:$false
+$active = Get-GovernedWorktreeRemovalReadiness -IsMain:$false -BoardAvailable:$true -GitAccessible:$true -Dirty:$false -HeadAncestor:$true -Active:$true -Locked:$false -Prunable:$false
 Assert-True (-not $active.Ready) 'active worktree must not enter removal review'
 Assert-Equal 'active_writer' $active.Reason 'active writer rejection reason'
 
-$boardUnknown = Get-GovernedWorktreeRemovalReadiness -IsMain:$false -BoardAvailable:$false -GitAccessible:$true -Dirty:$false -Merged:$true -Active:$false -Locked:$false -Prunable:$false
+$boardUnknown = Get-GovernedWorktreeRemovalReadiness -IsMain:$false -BoardAvailable:$false -GitAccessible:$true -Dirty:$false -HeadAncestor:$true -Active:$false -Locked:$false -Prunable:$false
 Assert-True (-not $boardUnknown.Ready) 'unknown board state must not enter removal review'
 Assert-Equal 'board_status_unknown' $boardUnknown.Reason 'unknown board rejection reason'
+
+$squashUnknown = Get-GovernedWorktreeRemovalReadiness -IsMain:$false -BoardAvailable:$true -GitAccessible:$true -Dirty:$false -HeadAncestor:$false -Active:$false -Locked:$false -Prunable:$false
+Assert-True (-not $squashUnknown.Ready) 'non-ancestor worktree must stay in manual cross-check state'
+Assert-Equal 'merge_requires_pr_or_branch_diff_crosscheck' $squashUnknown.Reason `
+    'ancestry failure must not be presented as definitive not-merged evidence'
 
 $cliPath = Join-Path $repoRoot 'scripts\dev\new-governed-worktree.ps1'
 if (-not (Test-Path -LiteralPath $cliPath -PathType Leaf)) {
@@ -191,13 +216,21 @@ foreach ($forbiddenPattern in @(
 )) {
     Assert-True ($cliSource -notmatch $forbiddenPattern) "CLI must not contain forbidden operation: $forbiddenPattern"
 }
-Assert-True ($cliSource -match "'fetch'\s*,\s*'origin'\s*,\s*'--prune'") 'create mode must freshly fetch origin/main'
+Assert-True ($cliSource -match "'fetch'\s*,\s*'origin'\s*,\s*'--prune'\s*,\s*'\+refs/heads/main:refs/remotes/origin/main'") `
+    'create mode must explicitly fetch main even when remote.origin.fetch omits it'
+Assert-True ($cliSource -match "'ls-remote'\s*,\s*'--exit-code'\s*,\s*'origin'\s*,\s*'refs/heads/main'") `
+    'create mode must verify the fetched SHA against remote main'
 Assert-True ($cliSource -match "'worktree'\s*,\s*'add'\s*,\s*'-b'") 'create mode must use an explicit branch and worktree add'
 Assert-True ($cliSource -match 'primary_checkout_invariant_failed') 'create mode must reject a dirty, non-main, or stale primary checkout'
 Assert-True ($cliSource -match 'StructLog\.psm1') 'mutating create mode must use the repository structured logger'
 Assert-True ($cliSource -match "\.tmp\\logs") 'structured logs must stay in the gitignored repository temp root'
 Assert-True ($cliSource -match "'--no-optional-locks'") 'inventory Git commands must disable optional locks'
 Assert-True ($cliSource -match "'status'.*-NoOptionalLocks") 'inventory status must not refresh a worktree index'
+
+$workflowPath = Join-Path $repoRoot 'docs\agents\github-workflow.md'
+$workflowSource = Get-Content -Raw -LiteralPath $workflowPath
+Assert-True ($workflowSource -match 'new-governed-worktree\.ps1') `
+    'the canonical Windows worktree workflow must route through the governed helper'
 
 $inventoryText = @(& pwsh -NoProfile -NonInteractive -File $cliPath -Inventory -Json)
 if ($LASTEXITCODE -ne 0) { throw "inventory CLI failed: $($inventoryText -join [Environment]::NewLine)" }
@@ -213,6 +246,11 @@ $currentRows = @($inventory.worktrees | Where-Object {
     (ConvertTo-GovernedPathKey -Path ([string]$_.path)) -ceq $currentRootKey
 })
 Assert-Equal 1 $currentRows.Count 'inventory includes the current worktree exactly once'
+$expectedGitMetadataPath = (& git -C $repoRoot rev-parse --path-format=absolute --absolute-git-dir).Trim()
+Assert-Equal 0 $LASTEXITCODE 'current worktree Git metadata path resolves'
+$actualGitMetadataPathKey = ConvertTo-GovernedPathKey -Path ([string]$currentRows[0].git_metadata_path)
+Assert-Equal (ConvertTo-GovernedPathKey -Path $expectedGitMetadataPath) $actualGitMetadataPathKey `
+    'inventory observes the actual linked-worktree Git directory'
 $currentSid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value
 $expectedOwnerMatch = (
     [string]$currentRows[0].root_filesystem_owner_sid -ceq $currentSid -and
@@ -273,6 +311,10 @@ try {
     Assert-Equal 0 $LASTEXITCODE 'failure fixture origin config'
     & git -C $failureFixtureRepo push --set-upstream origin main 2>&1 | Out-Null
     Assert-Equal 0 $LASTEXITCODE 'failure fixture pushes baseline'
+    & git -C $failureFixtureRepo config remote.origin.fetch '+refs/heads/omitted:refs/remotes/origin/omitted' 2>&1 | Out-Null
+    Assert-Equal 0 $LASTEXITCODE 'failure fixture narrows the configured fetch mapping'
+    & git -C $failureFixtureRepo update-ref -d refs/remotes/origin/main 2>&1 | Out-Null
+    Assert-Equal 0 $LASTEXITCODE 'failure fixture removes the pre-existing origin/main tracking ref'
 
     [System.IO.File]::WriteAllText((Join-Path $failureFixtureRepo 'dirty.marker'), 'dirty')
     $failureFixtureCli = Join-Path $failureFixtureRepo 'scripts\dev\new-governed-worktree.ps1'
@@ -289,9 +331,19 @@ try {
     }
     Assert-Equal $expectedFailureReason ([string]$failurePayload.error) `
         'logged failure preserves the first observed held reason'
+    Assert-Equal 'not_started' ([string]$failurePayload.mutation_state) `
+        'pre-add failures report an unmutated Git artifact state'
+    Assert-True (-not [bool]$failurePayload.mutation_may_have_occurred) `
+        'pre-add failures report no possible partial branch or worktree'
     Assert-True (-not (Test-Path -LiteralPath $failureFixtureTarget)) 'logged failure creates no worktree target'
     & git -C $failureFixtureRepo show-ref --verify --quiet refs/heads/fix/failure-log-contract
     Assert-Equal 1 $LASTEXITCODE 'logged failure creates no branch'
+    if ($currentEligibility.Eligible) {
+        $fetchedOriginMain = (& git -C $failureFixtureRepo rev-parse refs/remotes/origin/main).Trim()
+        Assert-Equal 0 $LASTEXITCODE 'explicit main refspec recreates origin/main despite narrowed fetch config'
+        $fixtureHead = (& git -C $failureFixtureRepo rev-parse HEAD).Trim()
+        Assert-Equal $fixtureHead $fetchedOriginMain 'explicitly fetched origin/main matches remote fixture HEAD'
+    }
 }
 finally {
     $tempKey = ConvertTo-GovernedPathKey -Path ([System.IO.Path]::GetTempPath())

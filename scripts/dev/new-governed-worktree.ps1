@@ -8,7 +8,7 @@ canonical sibling worktree, and verifies its branch, baseline, cleanliness, and
 filesystem owner SID. It rejects sandbox identities, elevated tokens, and Windows
 profile/SID mismatches before repository discovery.
 
-Inventory mode is read-only. It reports branch, HEAD, owner, dirty/merged state,
+Inventory mode is read-only. It reports branch, HEAD, owner, dirty/ancestry state,
 parallel-session activity, and eligibility for later manual removal review. This
 helper does not weaken Git trust, rewrite ACLs, or remove/prune worktrees.
 
@@ -166,14 +166,25 @@ function Get-GovernedWorktreeInventory {
         $worktreeKey = ConvertTo-GovernedPathKey -Path $worktreePath
         $isMain = $worktreeKey -ceq $mainKey
         $rootOwner = Get-GovernedPathOwnerObservation -Path $worktreePath
-        $gitMetadataOwner = Get-GovernedPathOwnerObservation -Path (Join-Path $worktreePath '.git')
+        $gitMetadataPathResult = Invoke-GovernedGit -WorkingDirectory $worktreePath -ArgumentList @(
+            'rev-parse', '--path-format=absolute', '--absolute-git-dir') -NoOptionalLocks -AllowFailure
+        $gitMetadataPath = if ($gitMetadataPathResult.Success) {
+            (@($gitMetadataPathResult.Output) -join [Environment]::NewLine).Trim()
+        }
+        else { '' }
+        $gitMetadataOwner = if ([string]::IsNullOrWhiteSpace($gitMetadataPath)) {
+            [pscustomobject]@{ Available = $false; Name = ''; Sid = ''; Error = 'git_metadata_path_unavailable' }
+        }
+        else {
+            Get-GovernedPathOwnerObservation -Path $gitMetadataPath
+        }
         $status = Invoke-GovernedGit -WorkingDirectory $worktreePath -ArgumentList @(
             'status', '--porcelain=v1', '-z') -NoOptionalLocks -AllowFailure
         $gitAccessible = [bool]$status.Success
         $dirty = if ($gitAccessible) { (@($status.Output) -join '') -ne '' } else { $null }
         $mergedResult = Invoke-GovernedGit -WorkingDirectory $MainRoot -ArgumentList @(
             'merge-base', '--is-ancestor', [string]$record.Head, 'origin/main') -NoOptionalLocks -AllowFailure
-        $merged = if ($mergedResult.ExitCode -eq 0) { $true } elseif ($mergedResult.ExitCode -eq 1) { $false } else { $null }
+        $headAncestor = if ($mergedResult.ExitCode -eq 0) { $true } elseif ($mergedResult.ExitCode -eq 1) { $false } else { $null }
         $activeAgents = @(Get-GovernedWorktreeActiveAgents -Sessions $sessions -WorktreePath $worktreePath)
         if (-not [bool]$board.Available) {
             $readiness = Get-GovernedWorktreeRemovalReadiness `
@@ -181,7 +192,7 @@ function Get-GovernedWorktreeInventory {
                 -BoardAvailable:$false `
                 -GitAccessible:$gitAccessible `
                 -Dirty:$false `
-                -Merged:$false `
+                -HeadAncestor:$false `
                 -Active:$false `
                 -Locked:([bool]$record.Locked) `
                 -Prunable:([bool]$record.Prunable)
@@ -189,7 +200,7 @@ function Get-GovernedWorktreeInventory {
         elseif ($null -eq $dirty) {
             $readiness = [pscustomobject]@{ Ready = $false; Reason = 'git_access_unknown' }
         }
-        elseif ($null -eq $merged) {
+        elseif ($null -eq $headAncestor) {
             $readiness = [pscustomobject]@{ Ready = $false; Reason = 'merge_status_unknown' }
         }
         else {
@@ -198,7 +209,7 @@ function Get-GovernedWorktreeInventory {
                 -BoardAvailable:$true `
                 -GitAccessible:$gitAccessible `
                 -Dirty:$dirty `
-                -Merged:$merged `
+                -HeadAncestor:$headAncestor `
                 -Active:($activeAgents.Count -gt 0) `
                 -Locked:([bool]$record.Locked) `
                 -Prunable:([bool]$record.Prunable)
@@ -209,6 +220,7 @@ function Get-GovernedWorktreeInventory {
             head = [string]$record.Head
             root_filesystem_owner_name = [string]$rootOwner.Name
             root_filesystem_owner_sid = [string]$rootOwner.Sid
+            git_metadata_path = $gitMetadataPath
             git_metadata_owner_name = [string]$gitMetadataOwner.Name
             git_metadata_owner_sid = [string]$gitMetadataOwner.Sid
             owners_match_current_identity = if ($rootOwner.Available -and $gitMetadataOwner.Available) {
@@ -217,7 +229,14 @@ function Get-GovernedWorktreeInventory {
             else { $null }
             git_accessible = $gitAccessible
             dirty = $dirty
-            merged_into_origin_main = $merged
+            head_ancestor_of_origin_main = $headAncestor
+            merge_assessment = if ($headAncestor -eq $true) {
+                'head_ancestor_observed'
+            }
+            elseif ($headAncestor -eq $false) {
+                'pr_or_branch_diff_crosscheck_required'
+            }
+            else { 'unknown' }
             active = if ([bool]$board.Available) { $activeAgents.Count -gt 0 } else { $null }
             active_agents = @($activeAgents)
             locked = [bool]$record.Locked
@@ -267,7 +286,7 @@ function Write-GovernedPayload {
     }
     if ([string]$Payload.schema_version -ceq 'governed-worktree-inventory/v1') {
         $Payload.worktrees | Format-Table path, branch, git_metadata_owner_name, git_accessible, dirty,
-            merged_into_origin_main, active, @{Name = 'review'; Expression = { $_.manual_removal_review.reason }} -AutoSize
+            head_ancestor_of_origin_main, active, @{Name = 'review'; Expression = { $_.manual_removal_review.reason }} -AutoSize
         return
     }
     $Payload | Format-List
@@ -275,6 +294,9 @@ function Write-GovernedPayload {
 
 $script:GitExecutable = Resolve-GovernedGitExecutable
 $script:LifecycleLogger = $null
+$script:MutationState = 'not_started'
+$script:MutationBranch = if ($PSCmdlet.ParameterSetName -ceq 'Create') { $BranchName } else { $null }
+$script:MutationTarget = $null
 $savedGitEnvironment = Remove-GovernedGitRoutingEnvironment
 try {
     $identity = Get-GovernedWorktreeIdentityObservation
@@ -290,6 +312,7 @@ try {
     }
 
     $target = Get-GovernedWorktreeTarget -MainRoot $mainRoot -BranchName $BranchName
+    $script:MutationTarget = $target
     $localRef = Invoke-GovernedGit -WorkingDirectory $mainRoot -ArgumentList @(
         'show-ref', '--verify', '--quiet', "refs/heads/$BranchName") -AllowFailure
     if ($localRef.ExitCode -eq 0) { throw 'worktree_branch_already_exists' }
@@ -327,8 +350,16 @@ try {
             baseline_ref = 'origin/main'
         } | Out-Null
     }
-    [void](Invoke-GovernedGit -WorkingDirectory $mainRoot -ArgumentList @('fetch', 'origin', '--prune'))
-    $baseline = Get-GovernedGitText -WorkingDirectory $mainRoot -ArgumentList @('rev-parse', 'origin/main')
+    [void](Invoke-GovernedGit -WorkingDirectory $mainRoot -ArgumentList @(
+        'fetch', 'origin', '--prune', '+refs/heads/main:refs/remotes/origin/main'))
+    $baseline = Get-GovernedGitText -WorkingDirectory $mainRoot -ArgumentList @(
+        'rev-parse', 'refs/remotes/origin/main')
+    $remoteMain = Get-GovernedGitText -WorkingDirectory $mainRoot -ArgumentList @(
+        'ls-remote', '--exit-code', 'origin', 'refs/heads/main')
+    $remoteMainSha = (@($remoteMain -split '\s+') | Select-Object -First 1)
+    if ($remoteMainSha -notmatch '^[0-9a-fA-F]{40,64}$' -or $baseline -cne $remoteMainSha) {
+        throw 'origin_main_fetch_verification_failed'
+    }
     $primaryBranch = Get-GovernedGitText -WorkingDirectory $mainRoot -ArgumentList @('symbolic-ref', 'HEAD')
     $primaryHead = Get-GovernedGitText -WorkingDirectory $mainRoot -ArgumentList @('rev-parse', 'HEAD')
     $primaryStatus = Get-GovernedGitText -WorkingDirectory $mainRoot -ArgumentList @(
@@ -358,21 +389,26 @@ try {
         New-Item -ItemType Directory -Path $container | Out-Null
     }
 
+    $script:MutationState = 'worktree_add_started'
     [void](Invoke-GovernedGit -WorkingDirectory $mainRoot -ArgumentList @(
         'worktree', 'add', '-b', $BranchName, $target, 'origin/main'))
+    $script:MutationState = 'worktree_added'
     $head = Get-GovernedGitText -WorkingDirectory $target -ArgumentList @('rev-parse', 'HEAD')
     $targetOriginMain = Get-GovernedGitText -WorkingDirectory $target -ArgumentList @('rev-parse', 'origin/main')
     $branch = Get-GovernedGitText -WorkingDirectory $target -ArgumentList @('symbolic-ref', 'HEAD')
     $status = Get-GovernedGitText -WorkingDirectory $target -ArgumentList @('status', '--porcelain=v1', '-z')
     $rootOwner = Get-GovernedPathOwnerObservation -Path $target
-    $dotGitOwner = Get-GovernedPathOwnerObservation -Path (Join-Path $target '.git')
+    $gitMetadataPath = Get-GovernedGitText -WorkingDirectory $target -ArgumentList @(
+        'rev-parse', '--path-format=absolute', '--absolute-git-dir')
+    $gitMetadataOwner = Get-GovernedPathOwnerObservation -Path $gitMetadataPath
     if ($head -cne $baseline -or $targetOriginMain -cne $baseline) { throw 'worktree_baseline_postcondition_failed' }
     if ($branch -cne "refs/heads/$BranchName") { throw 'worktree_branch_postcondition_failed' }
     if (-not [string]::IsNullOrEmpty($status)) { throw 'worktree_clean_postcondition_failed' }
-    if (-not $rootOwner.Available -or -not $dotGitOwner.Available) { throw 'worktree_owner_postcondition_unavailable' }
-    if ($rootOwner.Sid -cne $identity.IdentitySid -or $dotGitOwner.Sid -cne $identity.IdentitySid) {
+    if (-not $rootOwner.Available -or -not $gitMetadataOwner.Available) { throw 'worktree_owner_postcondition_unavailable' }
+    if ($rootOwner.Sid -cne $identity.IdentitySid -or $gitMetadataOwner.Sid -cne $identity.IdentitySid) {
         throw 'worktree_owner_postcondition_failed'
     }
+    $script:MutationState = 'postconditions_verified'
 
     Invoke-GovernedStructuredLogWrite -Action {
         $script:LifecycleLogger | Write-StructLifecycle -Msg 'governed worktree creation completed' -Data @{
@@ -396,8 +432,9 @@ try {
         clean = $true
         root_filesystem_owner_name = [string]$rootOwner.Name
         root_filesystem_owner_sid = [string]$rootOwner.Sid
-        git_metadata_owner_name = [string]$dotGitOwner.Name
-        git_metadata_owner_sid = [string]$dotGitOwner.Sid
+        git_metadata_path = $gitMetadataPath
+        git_metadata_owner_name = [string]$gitMetadataOwner.Name
+        git_metadata_owner_sid = [string]$gitMetadataOwner.Sid
     })
     exit 0
 }
@@ -410,16 +447,19 @@ catch {
                     phase = 'closed'
                     subject_kind = 'git_worktree'
                     subject_id = $BranchName
+                    target = $script:MutationTarget
+                    mutation_state = $script:MutationState
                     status = 'failed'
                 } | Out-Null
         }
     }
     if ($Json) {
-        [pscustomobject][ordered]@{
-            schema_version = 'governed-worktree-error/v1'
-            status = 'held'
-            error = $_.Exception.Message
-        } | ConvertTo-Json -Depth 4
+        New-GovernedWorktreeFailurePayload `
+            -ErrorMessage $_.Exception.Message `
+            -MutationState $script:MutationState `
+            -Branch $script:MutationBranch `
+            -Target $script:MutationTarget |
+            ConvertTo-Json -Depth 4
     }
     else {
         Write-Error $_

@@ -219,7 +219,7 @@ function Get-GovernedWorktreeRemovalReadiness {
         [Parameter(Mandatory = $true)][bool] $BoardAvailable,
         [Parameter(Mandatory = $true)][bool] $GitAccessible,
         [Parameter(Mandatory = $true)][bool] $Dirty,
-        [Parameter(Mandatory = $true)][bool] $Merged,
+        [Parameter(Mandatory = $true)][bool] $HeadAncestor,
         [Parameter(Mandatory = $true)][bool] $Active,
         [Parameter(Mandatory = $true)][bool] $Locked,
         [Parameter(Mandatory = $true)][bool] $Prunable
@@ -232,8 +232,32 @@ function Get-GovernedWorktreeRemovalReadiness {
     if ($Prunable) { return [pscustomobject]@{ Ready = $false; Reason = 'prunable_requires_exact_inspection' } }
     if (-not $GitAccessible) { return [pscustomobject]@{ Ready = $false; Reason = 'git_access_unknown' } }
     if ($Dirty) { return [pscustomobject]@{ Ready = $false; Reason = 'worktree_dirty' } }
-    if (-not $Merged) { return [pscustomobject]@{ Ready = $false; Reason = 'not_merged_into_origin_main' } }
+    if (-not $HeadAncestor) {
+        return [pscustomobject]@{ Ready = $false; Reason = 'merge_requires_pr_or_branch_diff_crosscheck' }
+    }
     return [pscustomobject]@{ Ready = $true; Reason = 'eligible_for_manual_review' }
+}
+
+function New-GovernedWorktreeFailurePayload {
+    param(
+        [Parameter(Mandatory = $true)][string] $ErrorMessage,
+        [Parameter(Mandatory = $true)][string] $MutationState,
+        [AllowNull()][string] $Branch,
+        [AllowNull()][string] $Target
+    )
+
+    $knownStates = @('not_started', 'worktree_add_started', 'worktree_added', 'postconditions_verified')
+    if ($MutationState -notin $knownStates) { throw 'worktree_mutation_state_invalid' }
+
+    return [pscustomobject][ordered]@{
+        schema_version = 'governed-worktree-error/v1'
+        status = 'held'
+        error = $ErrorMessage
+        mutation_state = $MutationState
+        mutation_may_have_occurred = $MutationState -cne 'not_started'
+        branch = $Branch
+        target = $Target
+    }
 }
 
 function Get-GovernedPathOwnerObservation {
