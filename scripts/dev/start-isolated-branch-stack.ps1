@@ -708,6 +708,9 @@ function New-IsolatedBackendEnvironment {
     if (-not [string]::IsNullOrWhiteSpace($env:A4_INTERNAL_CONTEXT_TOKEN)) {
         $coordinatorEnvironment.A4_INTERNAL_CONTEXT_TOKEN = $env:A4_INTERNAL_CONTEXT_TOKEN
     }
+    if (-not [string]::IsNullOrWhiteSpace($env:SESSION_IDLE_TIMEOUT_MS)) {
+        $coordinatorEnvironment.SESSION_IDLE_TIMEOUT_MS = $env:SESSION_IDLE_TIMEOUT_MS
+    }
     $coordinatorEnvironment
 }
 

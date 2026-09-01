@@ -1,0 +1,16 @@
+{
+  "endpoint": "/api/governance/rule-runs",
+  "captured_at_window": {
+    "start": "2026-08-31T11:49:17.302Z",
+    "end": "2026-08-31T11:49:17.370Z"
+  },
+  "status": 200,
+  "body": {
+    "filters": {},
+    "limit": 20,
+    "offset": 0,
+    "total": 0,
+    "items": []
+  },
+  "ms": 4
+}

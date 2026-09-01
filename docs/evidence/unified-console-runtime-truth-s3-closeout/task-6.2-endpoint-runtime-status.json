@@ -1,0 +1,117 @@
+{
+  "endpoint": "/api/runtime/status",
+  "captured_at_window": {
+    "start": "2026-08-31T11:49:17.302Z",
+    "end": "2026-08-31T11:49:17.370Z"
+  },
+  "status": 200,
+  "body": {
+    "service": {
+      "status": "ok",
+      "name": "bim-review-coordinator",
+      "uptime_seconds": 2797,
+      "generated_at": "2026-08-31T11:49:17.209Z"
+    },
+    "configured_endpoints": {
+      "coordinator": {
+        "host": "0.0.0.0",
+        "port": 8004,
+        "public_host": "<canonical-host>",
+        "public_base_url": "http://<canonical-host>:8004"
+      },
+      "viewer": {
+        "browser_url_base": "http://<canonical-host>:5173",
+        "handoff_path": "/ui/open?session=<review_session_id>",
+        "coordinator_api_base": "http://<canonical-host>:8004",
+        "coordinator_socket_url": "http://<canonical-host>:8004"
+      },
+      "conversion_authority": {
+        "base_url": "http://<internal-docker-host>:49101",
+        "authority": "bim-streaming-server"
+      },
+      "kit": [
+        {
+          "id": "kit_local_001",
+          "signalingServer": "<canonical-host>",
+          "signalingPort": 49100,
+          "mediaServer": "<canonical-host>",
+          "mediaPort": 47998
+        },
+        {
+          "id": "kit_local_001_spectator_01",
+          "signalingServer": "<canonical-host>",
+          "signalingPort": 49110,
+          "mediaServer": "<canonical-host>",
+          "mediaPort": 48008
+        },
+        {
+          "id": "kit_local_001_spectator_02",
+          "signalingServer": "<canonical-host>",
+          "signalingPort": 49120,
+          "mediaServer": "<canonical-host>",
+          "mediaPort": 48018
+        },
+        {
+          "id": "kit_local_001_spectator_03",
+          "signalingServer": "<canonical-host>",
+          "signalingPort": 49130,
+          "mediaServer": "<canonical-host>",
+          "mediaPort": 48028
+        },
+        {
+          "id": "kit_local_001_spectator_04",
+          "signalingServer": "<canonical-host>",
+          "signalingPort": 49140,
+          "mediaServer": "<canonical-host>",
+          "mediaPort": 48038
+        },
+        {
+          "id": "kit_local_001_spectator_05",
+          "signalingServer": "<canonical-host>",
+          "signalingPort": 49150,
+          "mediaServer": "<canonical-host>",
+          "mediaPort": 48048
+        }
+      ]
+    },
+    "sessions": {
+      "count": 0,
+      "active_count": 0,
+      "participant_count": 0,
+      "items": []
+    },
+    "kit_instance_bindings": [],
+    "ifc_ready_jobs": {
+      "count": 0,
+      "recent": []
+    },
+    "observations": {
+      "classification": "coordinator_visible_runtime_summary",
+      "note": "read-only coordinator observations; Kit internal stage state still requires DataChannel or Kit log evidence.",
+      "web_plane": {
+        "coordinator_port": 8004,
+        "viewer_port": 5173
+      },
+      "host_native_plane": {
+        "conversion_api_base": "http://<internal-docker-host>:49101",
+        "kit_signal_ports": [
+          49100,
+          49110,
+          49120,
+          49130,
+          49140,
+          49150
+        ],
+        "kit_media_ports": [
+          47998,
+          48008,
+          48018,
+          48028,
+          48038,
+          48048
+        ]
+      }
+    }
+  },
+  "ms": 32
+}

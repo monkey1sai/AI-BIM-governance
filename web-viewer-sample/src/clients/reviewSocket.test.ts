@@ -120,11 +120,68 @@ describe("connectReviewSocket", () => {
         }]);
     });
 
-    it("uses the active candidate for heartbeat and leave without allowing a second root", () => {
+    it("preserves exact terminal session truth from a rejected join acknowledgement", () => {
+        const acknowledgements: ReviewSocketAck[] = [];
+        const client = connectReviewSocket("http://127.0.0.1:8004", {
+            onAck: (_event, _candidate, ack) => acknowledgements.push(ack),
+        });
+        socket.trigger("connect");
+        client.join(CANDIDATE_A);
+
+        socket.emitted[0].ack?.({
+            ok: false,
+            error: "Review session is not active.",
+            session_id: CANDIDATE_A.sessionId,
+            trace_id: CANDIDATE_A.traceId,
+            lifecycle_status: "closed",
+            reason: "recovered_close",
+        });
+
+        expect(acknowledgements).toEqual([{
+            ok: false,
+            error: "Review session is not active.",
+            session_id: CANDIDATE_A.sessionId,
+            trace_id: CANDIDATE_A.traceId,
+            lifecycle_status: "closed",
+            reason: "recovered_close",
+        }]);
+    });
+
+    it("emits stream readiness only after join authority and reasserts it after reconnect", async () => {
+        const client = connectReviewSocket("http://127.0.0.1:8004");
+        client.join(CANDIDATE_A);
+        client.setStreamReady(true);
+
+        socket.trigger("connect");
+        expect(socket.emitted.map(({ event }) => event)).toEqual(["joinSession"]);
+        socket.emitted[0].ack?.({ ok: true, trace_id: CANDIDATE_A.traceId });
+        await Promise.resolve();
+        expect(socket.emitted[1]).toMatchObject({
+            event: "streamReadiness",
+            payload: {
+                session_id: CANDIDATE_A.sessionId,
+                trace_id: CANDIDATE_A.traceId,
+                ready: true,
+            },
+        });
+
+        socket.trigger("disconnect", "transport close");
+        socket.trigger("connect");
+        expect(socket.emitted[2].event).toBe("joinSession");
+        socket.emitted[2].ack?.({ ok: true, trace_id: CANDIDATE_A.traceId });
+        await Promise.resolve();
+        expect(socket.emitted[3]).toMatchObject({ event: "streamReadiness", payload: { ready: true } });
+
+        client.setStreamReady(false);
+        expect(socket.emitted[4]).toMatchObject({ event: "streamReadiness", payload: { ready: false } });
+    });
+
+    it("uses the active candidate for heartbeat, activity, and leave without allowing a second root", () => {
         const client = connectReviewSocket("http://127.0.0.1:8004");
         socket.trigger("connect");
         client.join(CANDIDATE_A);
         client.heartbeat();
+        client.userActivity();
         client.leave();
 
         expect(socket.emitted.map(({ event, payload }) => ({ event, payload }))).toEqual([
@@ -146,6 +203,13 @@ describe("connectReviewSocket", () => {
                 },
             },
             {
+                event: "userActivity",
+                payload: {
+                    session_id: CANDIDATE_A.sessionId,
+                    trace_id: CANDIDATE_A.traceId,
+                },
+            },
+            {
                 event: "leaveSession",
                 payload: {
                     session_id: CANDIDATE_A.sessionId,
@@ -154,6 +218,25 @@ describe("connectReviewSocket", () => {
                 },
             },
         ]);
+    });
+
+    it("resolves explicit activity only after an exact authority acknowledgement", async () => {
+        const client = connectReviewSocket("http://127.0.0.1:8004");
+        socket.trigger("connect");
+        client.join(CANDIDATE_A);
+        socket.emitted[0].ack?.({ ok: true, trace_id: CANDIDATE_A.traceId });
+
+        const accepted = client.userActivity();
+        socket.emitted[1].ack?.({
+            ok: true,
+            trace_id: CANDIDATE_A.traceId,
+            session_id: CANDIDATE_A.sessionId,
+        });
+        await expect(accepted).resolves.toBe(true);
+
+        const mismatched = client.userActivity();
+        socket.emitted[2].ack?.({ ok: true, trace_id: CANDIDATE_B.traceId });
+        await expect(mismatched).resolves.toBe(false);
     });
 
     it("normalizes rejected, malformed, and timed-out acknowledgements without inventing a trace", () => {

@@ -3,7 +3,7 @@ import os from "node:os";
 import fs from "node:fs";
 import request from "supertest";
 import { io as createSocketClient, type Socket as SocketClient } from "socket.io-client";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createCoordinatorApp, type CoordinatorApp } from "../src/app.js";
 import type { CoordinatorConfig } from "../src/config.js";
 import { EventLog } from "../src/services/eventLog.js";
@@ -18,6 +18,7 @@ afterEach(async () => {
     client.disconnect();
   }
   if (active) {
+    await active.dispose();
     active.io.close();
     await new Promise<void>((resolve) => active?.server.close(() => resolve()));
     active = null;
@@ -651,7 +652,7 @@ describe("bim-review-coordinator", () => {
   });
 
   it("binds join, heartbeat, and leave to one exact canonical trace before side effects", async () => {
-    const app = makeApp();
+    const app = makeApp({ sessionIdleTimeoutMs: 60_000 });
     const created = await request(app.app)
       .post("/api/review-sessions")
       .send({
@@ -696,6 +697,24 @@ describe("bim-review-coordinator", () => {
     expect(await joinedPresence).toMatchObject({ session_id: sessionId, trace_id: traceId });
     expect(app.store.get(sessionId)?.participants.map((item) => item.user_id)).toEqual([serverUserId]);
     expect(app.io.of("/review").adapter.rooms.get(sessionId)?.has(client.id as string)).toBe(true);
+    expect(app.idleReclaimService.getSessionState(sessionId)).toBeNull();
+    expect(app.idleReclaimService.recordActivity(sessionId, 1_000)).toBe(false);
+
+    const missingReadiness = await emitWithAck<Record<string, unknown>>(client, "streamReadiness", {
+      session_id: sessionId,
+      trace_id: traceId,
+    });
+    expect(missingReadiness).toEqual({ ok: false, error: "Missing stream readiness state." });
+    expect(app.idleReclaimService.getSessionState(sessionId)).toBeNull();
+
+    const streamReady = await emitWithAck<Record<string, unknown>>(client, "streamReadiness", {
+      session_id: sessionId,
+      trace_id: traceId,
+      ready: true,
+    });
+    expect(streamReady).toMatchObject({ ok: true, session_id: sessionId, trace_id: traceId });
+    expect(app.idleReclaimService.getSessionState(sessionId)).not.toBeNull();
+    const streamReadyAt = app.idleReclaimService.getSessionState(sessionId)?.lastActivityAt;
     const sessionFile = path.join(activeRoot as string, "sessions", `${sessionId}.json`);
     const joinedSessionJson = fs.readFileSync(sessionFile, "utf8");
     const joinedPresenceCount = presence.length;
@@ -729,6 +748,35 @@ describe("bim-review-coordinator", () => {
       user_id: "viewer_trace_001",
     });
     expect(heartbeat).toMatchObject({ ok: true, session_id: sessionId, trace_id: traceId });
+    expect(app.idleReclaimService.getSessionState(sessionId)?.lastActivityAt).toBe(streamReadyAt);
+
+    const untracedActivity = await emitWithAck<Record<string, unknown>>(client, "userActivity", {
+      session_id: sessionId,
+    });
+    expect(untracedActivity).toEqual({ ok: false, error: "Missing trace_id" });
+    expect(app.idleReclaimService.getSessionState(sessionId)?.lastActivityAt).toBe(streamReadyAt);
+
+    const activity = await emitWithAck<Record<string, unknown>>(client, "userActivity", {
+      session_id: sessionId,
+      trace_id: traceId,
+    });
+    expect(activity).toMatchObject({ ok: true, session_id: sessionId, trace_id: traceId });
+    expect(app.idleReclaimService.getSessionState(sessionId)?.lastActivityAt).toBeGreaterThanOrEqual(streamReadyAt as number);
+
+    const streamStopped = await emitWithAck<Record<string, unknown>>(client, "streamReadiness", {
+      session_id: sessionId,
+      trace_id: traceId,
+      ready: false,
+    });
+    expect(streamStopped).toMatchObject({ ok: true, session_id: sessionId, trace_id: traceId });
+    expect(app.idleReclaimService.getSessionState(sessionId)).toBeNull();
+
+    const streamRestarted = await emitWithAck<Record<string, unknown>>(client, "streamReadiness", {
+      session_id: sessionId,
+      trace_id: traceId,
+      ready: true,
+    });
+    expect(streamRestarted).toMatchObject({ ok: true, session_id: sessionId, trace_id: traceId });
 
     const leftPresence = new Promise<Record<string, unknown>>((resolve) => {
       client.once("presenceUpdated", resolve);
@@ -742,6 +790,40 @@ describe("bim-review-coordinator", () => {
     expect(await leftPresence).toMatchObject({ session_id: sessionId, trace_id: traceId });
     expect(app.store.get(sessionId)?.participants).toEqual([]);
     expect(app.io.of("/review").adapter.rooms.get(sessionId)).toBeUndefined();
+    expect(app.idleReclaimService.getSessionState(sessionId)).toBeNull();
+  });
+
+  it("rejects user activity from a joined socket that has not declared stream readiness", async () => {
+    const app = makeApp({ sessionIdleTimeoutMs: 60_000 });
+    const created = await request(app.app)
+      .post("/api/review-sessions")
+      .send({ project_id: "project_ready_owner", model_version_id: "version_ready_owner" });
+    const sessionId = created.body.session_id as string;
+    const traceId = created.body.trace_id as string;
+    const socketUrl = await listen(app);
+    const readyClient = await connectReviewSocket(socketUrl);
+    const spectatorClient = await connectReviewSocket(socketUrl);
+
+    for (const client of [readyClient, spectatorClient]) {
+      expect(await emitWithAck<Record<string, unknown>>(client, "joinSession", {
+        session_id: sessionId,
+        trace_id: traceId,
+      })).toMatchObject({ ok: true, trace_id: traceId });
+    }
+    expect(await emitWithAck<Record<string, unknown>>(readyClient, "streamReadiness", {
+      session_id: sessionId,
+      trace_id: traceId,
+      ready: true,
+    })).toMatchObject({ ok: true, trace_id: traceId });
+
+    expect(await emitWithAck<Record<string, unknown>>(spectatorClient, "userActivity", {
+      session_id: sessionId,
+      trace_id: traceId,
+    })).toEqual({ ok: false, error: "Session activity was not recorded." });
+    expect(await emitWithAck<Record<string, unknown>>(readyClient, "userActivity", {
+      session_id: sessionId,
+      trace_id: traceId,
+    })).toMatchObject({ ok: true, session_id: sessionId, trace_id: traceId });
   });
 
   it("binds presence identity to each socket and ignores spoofed join/leave user_id values", async () => {
@@ -781,6 +863,27 @@ describe("bim-review-coordinator", () => {
     });
     expect(spoofedLeave).toEqual({ ok: true, trace_id: traceId });
     expect(app.store.get(sessionId)?.participants.map((item) => item.user_id)).toEqual([firstUserId]);
+  });
+
+  it("acknowledges stream readiness without tracking when the idle policy is disabled", async () => {
+    const app = makeApp();
+    const created = await request(app.app)
+      .post("/api/review-sessions")
+      .send({ project_id: "project_idle_disabled", model_version_id: "version_idle_disabled" });
+    const sessionId = created.body.session_id as string;
+    const traceId = created.body.trace_id as string;
+    const client = await connectReviewSocket(await listen(app));
+
+    expect(await emitWithAck<Record<string, unknown>>(client, "joinSession", {
+      session_id: sessionId,
+      trace_id: traceId,
+    })).toMatchObject({ ok: true, trace_id: traceId });
+    expect(await emitWithAck<Record<string, unknown>>(client, "streamReadiness", {
+      session_id: sessionId,
+      trace_id: traceId,
+      ready: true,
+    })).toMatchObject({ ok: true, session_id: sessionId, trace_id: traceId });
+    expect(app.idleReclaimService.getSessionState(sessionId)).toBeNull();
   });
 
   it("does not backfill a legacy linked session until an exact candidate succeeds", async () => {
@@ -925,12 +1028,25 @@ describe("bim-review-coordinator", () => {
     await request(app.app).post(`/api/review-sessions/${created.body.session_id}/close`).send({});
     const client = await connectReviewSocket(await listen(app));
 
-    const response = await emitWithAck<{ ok: boolean; error?: string }>(client, "joinSession", {
+    const untraced = await emitWithAck<Record<string, unknown>>(client, "joinSession", {
       session_id: created.body.session_id,
       user_id: "dev_user_001",
     });
+    expect(untraced).toEqual({ ok: false, error: "Review session is not active." });
 
-    expect(response).toEqual({ ok: false, error: "Review session is not active." });
+    const response = await emitWithAck<Record<string, unknown>>(client, "joinSession", {
+      session_id: created.body.session_id,
+      trace_id: created.body.trace_id,
+      user_id: "dev_user_001",
+    });
+    expect(response).toEqual({
+      ok: false,
+      error: "Review session is not active.",
+      session_id: created.body.session_id,
+      trace_id: created.body.trace_id,
+      lifecycle_status: "closed",
+      reason: "recovered_close",
+    });
   });
 
   it("rejects unsafe session ids before touching the filesystem", async () => {
@@ -1023,11 +1139,30 @@ describe("bim-review-coordinator", () => {
     expect(secondClose.body.status).toBe("closed");
   });
 
-  // IMPORTANT-1：close 在 status==="closing" 也須冪等。若一個 session 仍停在 closing
-  // （例如併發第二個 POST 在第一次 store.update(closing) 與 store.update(closed) 之間
-  // 重入），handler 不可重複 append sessionClosing / sessionClosed / kitInstanceReleased
-  // 進 append-only audit ledger，也不可對已 draining 的 binding 再 markKitBindingsDraining。
-  it("close is idempotent for sessions already in closing state (no duplicate audit events)", async () => {
+  it("does not synthesize a checkpoint or duplicate events for a legacy closed session", async () => {
+    const app = makeApp();
+    const created = await request(app.app)
+      .post("/api/review-sessions")
+      .send({
+        project_id: "project_legacy_closed",
+        model_version_id: "version_legacy_closed",
+        created_by: "dev_user_legacy_closed",
+      });
+    const sessionId = created.body.session_id as string;
+    app.store.update(sessionId, { status: "closed" });
+    const eventsBeforeRetry = app.eventLog.list(sessionId);
+
+    const retriedClose = await request(app.app)
+      .post(`/api/review-sessions/${sessionId}/close`)
+      .send({ reason: "late retry", final_events: [{ type: "lateFinal" }] });
+
+    expect(retriedClose.status).toBe(200);
+    expect(retriedClose.body.status).toBe("closed");
+    expect(retriedClose.body.close_checkpoint).toBeUndefined();
+    expect(app.eventLog.list(sessionId)).toEqual(eventsBeforeRetry);
+  });
+
+  it("close resumes a closing session without duplicating its closing audit", async () => {
     const app = makeApp();
     const created = await request(app.app)
       .post("/api/review-sessions")
@@ -1037,8 +1172,16 @@ describe("bim-review-coordinator", () => {
         created_by: "dev_user_001",
       });
 
-    // 模擬 session 停在 closing（併發重入的觀察窗口）。
-    app.store.update(created.body.session_id, { status: "closing" });
+    // 模擬 sessionClosing 已落盤、但狀態仍停在 closing 的部分完成窗口。
+    const closeCheckpoint = {
+      checkpoint_id: "close_resume_closing_session",
+      expected_final_event_count: 0,
+    };
+    app.store.update(created.body.session_id, { status: "closing", close_checkpoint: closeCheckpoint });
+    app.eventLog.appendServerCloseCheckpoint(created.body.session_id, "sessionClosing", {
+      final_events: 0,
+      released_viewer_leases: [],
+    }, closeCheckpoint.checkpoint_id);
 
     const lifecycleTypes = () =>
       app.eventLog
@@ -1052,8 +1195,61 @@ describe("bim-review-coordinator", () => {
       .send({});
 
     expect(reClose.status).toBe(200);
-    // closing-state POST 不得新增任何 lifecycle event（沿用 closed-idempotent 語意）。
-    expect(lifecycleTypes()).toEqual(before);
+    expect(reClose.body.status).toBe("closed");
+    expect(lifecycleTypes().filter((type) => type === "sessionClosing")).toHaveLength(1);
+    expect(lifecycleTypes()).toEqual([...before, "sessionClosed", "kitInstanceReleased"]);
+  });
+
+  it("does not trust generic event types as server-owned close checkpoints", async () => {
+    const app = makeApp();
+    const created = await request(app.app)
+      .post("/api/review-sessions")
+      .send({
+        project_id: "project_close_checkpoint",
+        model_version_id: "version_close_checkpoint",
+        created_by: "dev_user_close_checkpoint",
+      });
+    const sessionId = created.body.session_id as string;
+    const finalEvent = { type: "annotationFinal", count: 1 };
+
+    for (const event of [
+      { type: "sessionClosing", final_events: 999 },
+      { type: "finalReviewEvent", count: finalEvent.count },
+      { type: "sessionClosed" },
+      { type: "kitInstanceReleased" },
+    ]) {
+      const appended = await request(app.app)
+        .post(`/api/review-sessions/${sessionId}/events`)
+        .send(event);
+      expect(appended.status).toBe(200);
+    }
+
+    const closed = await request(app.app)
+      .post(`/api/review-sessions/${sessionId}/close`)
+      .send({ final_events: [finalEvent] });
+
+    expect(closed.status).toBe(200);
+    expect(closed.body.status).toBe("closed");
+    expect(closed.body.close_checkpoint).toEqual({
+      checkpoint_id: expect.stringMatching(/^close_[A-Za-z0-9_-]+$/),
+      expected_final_event_count: 1,
+    });
+
+    const checkpointId = closed.body.close_checkpoint.checkpoint_id as string;
+    const events = app.eventLog.list(sessionId) as Array<{
+      type: string;
+      payload: unknown;
+      close_checkpoint_id?: string;
+    }>;
+    const authoritative = events.filter((event) => event.close_checkpoint_id === checkpointId);
+    expect(authoritative.map((event) => event.type)).toEqual([
+      "sessionClosing",
+      "finalReviewEvent",
+      "sessionClosed",
+      "kitInstanceReleased",
+    ]);
+    expect(authoritative.find((event) => event.type === "finalReviewEvent")?.payload).toEqual(finalEvent);
+    expect(events.filter((event) => event.type === "sessionClosing")).toHaveLength(2);
   });
 
   it("logs sessionCreated event with review_request_id when provided", async () => {
@@ -1204,6 +1400,204 @@ describe("bim-review-coordinator", () => {
     expect(events.body.items.some((item: { type: string }) => item.type === "sessionClosing")).toBe(true);
     expect(events.body.items.some((item: { type: string }) => item.type === "sessionClosed")).toBe(true);
     expect(events.body.items.some((item: { type: string }) => item.type === "kitInstanceReleased")).toBe(true);
+  });
+
+  it("resumes missing final_events after a transient audit append failure", async () => {
+    const app = makeApp();
+    const created = await request(app.app)
+      .post("/api/review-sessions")
+      .send({
+        project_id: "project_close_retry",
+        model_version_id: "version_close_retry",
+        created_by: "dev_user_close_retry",
+      });
+    const finalEvents = [
+      { type: "annotationFinal", count: 1 },
+      { type: "measurementFinal", count: 2 },
+    ];
+    const originalAppend = app.eventLog.appendServerCloseCheckpoint.bind(app.eventLog);
+    let failSecondFinalEventOnce = true;
+    const appendSpy = vi.spyOn(app.eventLog, "appendServerCloseCheckpoint").mockImplementation((id, type, payload, checkpointId) => {
+      if (
+        type === "finalReviewEvent"
+        && (payload as { type?: string }).type === "measurementFinal"
+        && failSecondFinalEventOnce
+      ) {
+        failSecondFinalEventOnce = false;
+        throw new Error("transient final event append failure");
+      }
+      return originalAppend(id, type, payload, checkpointId);
+    });
+
+    try {
+      const firstClose = await request(app.app)
+        .post(`/api/review-sessions/${created.body.session_id}/close`)
+        .send({ final_events: finalEvents });
+      expect(firstClose.status).toBe(500);
+      expect(app.store.get(created.body.session_id)?.status).toBe(created.body.status);
+
+      const retriedClose = await request(app.app)
+        .post(`/api/review-sessions/${created.body.session_id}/close`)
+        .send({ final_events: finalEvents });
+      expect(retriedClose.status).toBe(200);
+      expect(retriedClose.body.status).toBe("closed");
+
+      const events = app.eventLog.list(created.body.session_id);
+      expect(events.filter((event) => event.type === "sessionClosing")).toHaveLength(1);
+      expect(events.filter((event) => event.type === "finalReviewEvent").map((event) => event.payload)).toEqual(finalEvents);
+      expect(events.filter((event) => event.type === "sessionClosed")).toHaveLength(1);
+    } finally {
+      appendSpy.mockRestore();
+    }
+  });
+
+  it("allows a later close to supersede an abandoned active close checkpoint", async () => {
+    const app = makeApp();
+    const created = await request(app.app)
+      .post("/api/review-sessions")
+      .send({
+        project_id: "project_abandoned_close",
+        model_version_id: "version_abandoned_close",
+        created_by: "dev_user_abandoned_close",
+      });
+    const sessionId = created.body.session_id as string;
+    const originalAppend = app.eventLog.appendServerCloseCheckpoint.bind(app.eventLog);
+    let failSecondFinalEventOnce = true;
+    const appendSpy = vi.spyOn(app.eventLog, "appendServerCloseCheckpoint").mockImplementation((id, type, payload, checkpointId) => {
+      if (type === "finalReviewEvent" && failSecondFinalEventOnce) {
+        const persisted = app.eventLog
+          .list(sessionId)
+          .filter((event) => event.type === "finalReviewEvent" && event.close_checkpoint_id === checkpointId);
+        if (persisted.length === 1) {
+          failSecondFinalEventOnce = false;
+          throw new Error("transient second final event append failure");
+        }
+      }
+      return originalAppend(id, type, payload, checkpointId);
+    });
+
+    try {
+      const firstClose = await request(app.app)
+        .post(`/api/review-sessions/${sessionId}/close`)
+        .send({ final_events: [{ type: "annotationFinal" }, { type: "measurementFinal" }] });
+      expect(firstClose.status).toBe(500);
+      const abandonedCheckpoint = app.store.get(sessionId)?.close_checkpoint?.checkpoint_id;
+      expect(app.store.get(sessionId)?.status).toBe(created.body.status);
+
+      const retriedClose = await request(app.app)
+        .post(`/api/review-sessions/${sessionId}/close`)
+        .send({ reason: "operator-retry-without-browser-payload" });
+      expect(retriedClose.status).toBe(200);
+      expect(retriedClose.body.status).toBe("closed");
+      expect(retriedClose.body.close_checkpoint.checkpoint_id).not.toBe(abandonedCheckpoint);
+
+      const events = app.eventLog.list(sessionId);
+      const authoritative = events.filter((event) => (
+        event.close_checkpoint_id === retriedClose.body.close_checkpoint.checkpoint_id
+      ));
+      expect(authoritative.map((event) => event.type)).toEqual([
+        "sessionClosing",
+        "sessionClosed",
+        "kitInstanceReleased",
+      ]);
+      expect(events.filter((event) => event.close_checkpoint_id === abandonedCheckpoint).map((event) => event.type)).toEqual([
+        "sessionClosing",
+        "finalReviewEvent",
+      ]);
+    } finally {
+      appendSpy.mockRestore();
+    }
+  });
+
+  it("does not reuse a zero-prefix close checkpoint for a different same-length payload", async () => {
+    const app = makeApp();
+    const created = await request(app.app)
+      .post("/api/review-sessions")
+      .send({
+        project_id: "project_changed_close_payload",
+        model_version_id: "version_changed_close_payload",
+        created_by: "dev_user_changed_close_payload",
+      });
+    const sessionId = created.body.session_id as string;
+    const originalAppend = app.eventLog.appendServerCloseCheckpoint.bind(app.eventLog);
+    let failFirstFinalEventOnce = true;
+    const appendSpy = vi.spyOn(app.eventLog, "appendServerCloseCheckpoint").mockImplementation((id, type, payload, checkpointId) => {
+      if (type === "finalReviewEvent" && failFirstFinalEventOnce) {
+        failFirstFinalEventOnce = false;
+        throw new Error("transient first final event append failure");
+      }
+      return originalAppend(id, type, payload, checkpointId);
+    });
+
+    try {
+      const firstPayload = [{ type: "oldAnnotation" }, { type: "oldMeasurement" }];
+      const firstClose = await request(app.app)
+        .post(`/api/review-sessions/${sessionId}/close`)
+        .send({ final_events: firstPayload });
+      expect(firstClose.status).toBe(500);
+      const abandonedCheckpoint = app.store.get(sessionId)?.close_checkpoint?.checkpoint_id;
+
+      const replacementPayload = [{ type: "newAnnotation" }, { type: "newMeasurement" }];
+      const replacementClose = await request(app.app)
+        .post(`/api/review-sessions/${sessionId}/close`)
+        .send({ final_events: replacementPayload });
+      expect(replacementClose.status).toBe(200);
+      expect(replacementClose.body.status).toBe("closed");
+      expect(replacementClose.body.close_checkpoint.checkpoint_id).not.toBe(abandonedCheckpoint);
+
+      const events = app.eventLog.list(sessionId);
+      const replacementEvents = events.filter((event) => (
+        event.type === "finalReviewEvent"
+        && event.close_checkpoint_id === replacementClose.body.close_checkpoint.checkpoint_id
+      ));
+      expect(replacementEvents.map((event) => event.payload)).toEqual(replacementPayload);
+      expect(events.filter((event) => (
+        event.type === "finalReviewEvent" && event.close_checkpoint_id === abandonedCheckpoint
+      )).map((event) => event.payload)).toEqual([]);
+    } finally {
+      appendSpy.mockRestore();
+    }
+  });
+
+  it("resumes missing terminal audit when a closed session close request is retried", async () => {
+    const app = makeApp();
+    const created = await request(app.app)
+      .post("/api/review-sessions")
+      .send({
+        project_id: "project_closed_audit_retry",
+        model_version_id: "version_closed_audit_retry",
+        created_by: "dev_user_closed_audit_retry",
+      });
+    const sessionId = created.body.session_id as string;
+    const originalAppend = app.eventLog.appendServerCloseCheckpoint.bind(app.eventLog);
+    let failKitReleaseOnce = true;
+    const appendSpy = vi.spyOn(app.eventLog, "appendServerCloseCheckpoint").mockImplementation((id, type, payload, checkpointId) => {
+      if (type === "kitInstanceReleased" && failKitReleaseOnce) {
+        failKitReleaseOnce = false;
+        throw new Error("transient terminal audit failure");
+      }
+      return originalAppend(id, type, payload, checkpointId);
+    });
+
+    try {
+      const firstClose = await request(app.app)
+        .post(`/api/review-sessions/${sessionId}/close`)
+        .send({});
+      expect(firstClose.status).toBe(500);
+      expect(app.store.get(sessionId)?.status).toBe("closed");
+
+      const retriedClose = await request(app.app)
+        .post(`/api/review-sessions/${sessionId}/close`)
+        .send({});
+      expect(retriedClose.status).toBe(200);
+      expect(retriedClose.body.status).toBe("closed");
+
+      const events = app.eventLog.list(sessionId);
+      expect(events.filter((event) => event.type === "sessionClosed")).toHaveLength(1);
+      expect(events.filter((event) => event.type === "kitInstanceReleased")).toHaveLength(1);
+    } finally {
+      appendSpy.mockRestore();
+    }
   });
 
   it("close threads reason/actor into sessionClosing and sessionClosed audit payloads", async () => {
