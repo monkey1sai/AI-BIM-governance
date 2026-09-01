@@ -1,0 +1,93 @@
+=== 1.2 endpoint inventory (十端點皆存在) ===
+bim-review-coordinator/src\runtimeStatus.ts:126:    first_frame_at: session.first_frame_at ?? null, // VG-01 型別鏈：runtime/status 透出真首幀證據
+bim-review-coordinator/src\types.ts:171: * Worker → coordinator `POST /api/external/ifc-ready` 的事件。契約權威：
+bim-review-coordinator/src\tools\seedIsolatedIfcReady.ts:22: * `POST /api/external/ifc-ready` intake → coordinator 真的從 MinIO 下載 bytes 進 per-run storage。
+bim-review-coordinator/src\tools\seedIsolatedIfcReady.ts:577: * `GET /api/external/ifc-ready/:jobId` 再確認一次 `download_status`，避免把 202 當成
+bim-review-coordinator/src\tools\seedIsolatedIfcReady.ts:626:    new URL("/api/external/ifc-ready", target).toString(),
+bim-review-coordinator/src\tools\seedIsolatedIfcReady.ts:660:      new URL(`/api/external/ifc-ready/${encodeURIComponent(jobId)}`, target).toString(),
+bim-review-coordinator/src\config.ts:72:  ifcDownloadTimeoutSeconds: number;     // POST /api/external/ifc-ready 同步下載 timeout
+bim-review-coordinator/src\config.ts:95:  // 自打 loopback POST /api/external/ifc-ready；既有 intake/去重/dispatch 契約零變動。
+bim-review-coordinator/src\routes\governanceProxy.ts:211:  app.post("/api/governance/rule-runs", (request, response) => {
+bim-review-coordinator/src\routes\governanceProxy.ts:223:  app.get("/api/governance/rule-runs", (request, response) => {
+bim-review-coordinator/src\routes\governanceProxy.ts:233:  app.post("/api/governance/rule-runs/for-session/:sessionId", (request, response) => {
+bim-review-coordinator/src\routes\governanceProxy.ts:262:  // model (/api/external/ifc-ready and /api/minio/objects are browser-visible).
+bim-review-coordinator/src\routes\governanceProxy.ts:266:  app.post("/api/governance/rule-runs/for-ifc-ready/:jobId", (request, response) => {
+bim-review-coordinator/src\routes\governanceProxy.ts:344:  app.get("/api/governance/rule-runs/:runId", (request, response) => {
+bim-review-coordinator/src\routes\governanceProxy.ts:347:  app.get("/api/governance/rule-runs/:runId/results", (request, response) => {
+bim-review-coordinator/src\routes\governanceProxy.ts:356:  app.get("/api/governance/rule-runs/:runId/failures", (request, response) => {
+bim-review-coordinator/src\routes\governanceProxy.ts:363:  app.get("/api/governance/rule-runs/:runId/export", (request, response) => {
+bim-review-coordinator/src\routes\governanceProxy.ts:518:  app.post("/api/governance/issues", (request, response) => {
+bim-review-coordinator/src\routes\governanceProxy.ts:521:  app.get("/api/governance/issues", (request, response) => {
+bim-review-coordinator/src\routes\governanceProxy.ts:524:  app.get("/api/governance/issues/:issueId", (request, response) => {
+bim-review-coordinator/src\routes\governanceProxy.ts:527:  app.post("/api/governance/issues/:issueId/transition", (request, response) => {
+bim-review-coordinator/src\routes\governanceProxy.ts:530:  app.post("/api/governance/issues/from-rule-run/:runId", (request, response) => {
+bim-review-coordinator/src\routes\governanceProxy.ts:533:  app.post("/api/governance/issues/from-diff/:diffId", (request, response) => {
+bim-review-coordinator/src\routes\a4IssueRoutes.ts:291:  app.post("/api/governance/issues/from-a4-search/for-session/:sessionId", (request, response) => {
+bim-review-coordinator/src\app.ts:814:  // 也不可能重新引入 TDZ。watcher 偵測即寫 queued（Task 2）、GET /api/conversion/records 讀取
+bim-review-coordinator/src\app.ts:943:  // POST /api/external/ifc-ready，既有 intake/去重/dispatch 鏈零變動。
+bim-review-coordinator/src\app.ts:976:    // /api/external/ifc-ready 的 IP allowlist（authProvider 在 secret 之前先檢查 IP）。
+bim-review-coordinator/src\app.ts:1372:  app.get("/api/runtime/status", (_request, response) => {
+bim-review-coordinator/src\app.ts:1606:  // 控制路由的最小守門：沿用 /api/external/ifc-ready 的 IP allowlist（isIpAllowed +
+bim-review-coordinator/src\app.ts:1748:  // intake 邏輯 self-POST /api/external/ifc-ready。冪等鍵 mw_<hash16>，同 key 回既有 job。
+bim-review-coordinator/src\app.ts:2313:  app.post("/api/external/ifc-ready", async (request, response, next) => {
+bim-review-coordinator/src\app.ts:2380:  app.get("/api/external/ifc-ready", (request, response) => {
+bim-review-coordinator/src\app.ts:2396:  // /api/external/ifc-ready 模式）。插在 /api/external/ifc-ready 之後、/:jobId 之前（避免 param 吃掉）。
+bim-review-coordinator/src\app.ts:2397:  app.get("/api/conversion/records", (request, response) => {
+bim-review-coordinator/src\app.ts:2421:  // 插在 /api/external/ifc-ready 後、/:jobId 之前（避免 param 吃掉）。
+bim-review-coordinator/src\app.ts:2422:  app.get("/api/minio/objects", async (request, response) => {
+bim-review-coordinator/src\app.ts:2485:  app.get("/api/external/minio-watch/status", (_request, response) => {
+bim-review-coordinator/src\app.ts:2569:  app.post("/api/external/ifc-ready/:jobId/review-session", async (request, response, next) => {
+bim-review-coordinator/src\app.ts:2647:  app.get("/api/external/ifc-ready/:jobId", async (request, response, next) => {
+bim-review-coordinator/src\app.ts:2677:  app.get("/api/external/ifc-ready/:jobId/shadow", (request, response) => {
+bim-review-coordinator/src\app.ts:3238:  app.get("/api/callback-outbox/summary", (request, response) => {
+bim-review-coordinator/src\app.ts:3755:  // 以 source_id 註冊真實 ./storage IFC 進審查流程：coordinator 內部 self-POST /api/external/ifc-ready
+bim-review-coordinator/src\app.ts:3776:      const upstream = await fetch(`${selfBase}/api/external/ifc-ready`, {
+bim-review-coordinator/src\app.ts:3814:  app.get("/api/kit/health", async (_request, response) => {
+bim-review-coordinator/src\app.ts:3820:  app.get("/api/kit/instances/current", async (_request, response) => {
+bim-review-coordinator/src\app.ts:3821:    await proxyConversionService(response, config.kitManagerApiBase, "GET", "/api/kit/instances/current");
+bim-review-coordinator/src\app.ts:3823:  app.post("/api/kit/instances/current/open", async (request, response) => {
+bim-review-coordinator/src\app.ts:3828:    await proxyConversionService(response, config.kitManagerApiBase, "POST", "/api/kit/instances/current/open", request.body ?? {});
+bim-review-coordinator/src\app.ts:3830:  app.post("/api/kit/instances/current/close", async (request, response) => {
+bim-review-coordinator/src\app.ts:3835:    await proxyConversionService(response, config.kitManagerApiBase, "POST", "/api/kit/instances/current/close", request.body ?? {});
+bim-review-coordinator/src\app.ts:3894:  // `POST /api/governance/rule-runs/for-session/:sessionId` 能用瀏覽器手上唯一
+bim-review-coordinator/src\app.ts:4265:            "No IFC-ready job linked to this session; rule-run requires an IFC ingested via /api/external/ifc-ready.",
+bim-review-coordinator/src\app.ts:4281:  // legacy `/api/external/ifc-ready*` 路由已在上方註冊且**逐字不動**；此處只新增
+bim-review-coordinator/src\public\dev-console.html:196:            從 <code>POST /api/external/ifc-ready</code> 到 download、conversion、review session、Kit / WebRTC、viewer handoff 分層觀察。
+bim-review-coordinator/src\public\dev-console.html:210:          <div class="demo-summary-item__hint">read-only list: <code>GET /api/external/ifc-ready</code></div>
+bim-review-coordinator/src\public\dev-console.html:271:        從 <code>./storage</code> 選真實 IFC → 真 coordinator <code>POST /api/external/ifc-ready</code> →
+bim-review-coordinator/src\public\dev-console.html:361:              const r = await fetch('/api/external/ifc-ready/' + encodeURIComponent(jobId));
+bim-review-coordinator/src\public\dev-console.html:430:          <tr><td style="color:#94a3b8; padding:3px 8px;">GET /api/kit/health</td><td data-testid="kit-health">—</td></tr>
+bim-review-coordinator/src\public\dev-console.html:431:          <tr><td style="color:#94a3b8; padding:3px 8px;">GET /api/kit/instances/current</td><td data-testid="kit-instance">—</td></tr>
+bim-review-coordinator/src\public\dev-console.html:445:          try { const r = await fetch('/api/kit/health'); const j = await r.json().catch(() => ({})); set('kit-health', r.status + ' ' + (j.status || j.kit_status || JSON.stringify(j).slice(0, 60))); } catch (e) { set('kit-health', 'error: ' + e.message); }
+bim-review-coordinator/src\public\dev-console.html:446:          try { const r = await fetch('/api/kit/instances/current'); const j = await r.json().catch(() => ({})); set('kit-instance', r.status + ' status=' + (j.status || j.state || JSON.stringify(j).slice(0, 50))); } catch (e) { set('kit-instance', 'error: ' + e.message); }
+bim-review-coordinator/src\public\dev-console.html:554:      <p class="demo-card__subtitle">每 5 秒自動 polling <code>GET /api/external/ifc-ready/{jobId}</code>。download → conversion → viewer ready 三段狀態。</p>
+bim-review-coordinator/src\public\dev-console.html:626:        並以 `POST /api/external/ifc-ready` 交給 coordinator。
+bim-review-coordinator/src\public\dev-console.html:1021:          fetch('/api/runtime/status'),
+bim-review-coordinator/src\public\dev-console.html:1022:          fetch('/api/external/ifc-ready?limit=8'),
+bim-review-coordinator/src\public\dev-console.html:1209:      const response = await coordinatorConversionCall('POST', '/api/external/ifc-ready', payload, {
+bim-review-coordinator/src\public\dev-console.html:1636:        const response = await fetch('/api/external/ifc-ready', {
+bim-review-coordinator/src\public\dev-console.html:1680:        const response = await fetch(`/api/external/ifc-ready/${encodeURIComponent(jobId)}`);
+bim-review-coordinator/src\routes\lineageSourceBundleRoutes.ts:9://   - governed intake 與 legacy `POST /api/external/ifc-ready` 是**兩個分離的 contract**，
+bim-review-coordinator/src\routes\lineageSourceBundleRoutes.ts:185: * `GET /api/external/ifc-ready/:jobId/shadow` 逐字不動；governed 欄位不得塞進
+bim-review-coordinator/src\routes\lineageSourceBundleRoutes.ts:214:  // auth 先於 payload（與 legacy `/api/external/ifc-ready` 的順序相反，刻意）：
+bim-review-coordinator/src\routes\lineageSourceBundleRoutes.ts:395:  // 唯讀、無 auth：比照 legacy `GET /api/external/ifc-ready` 的既有模式。
+bim-review-coordinator/src\routes\lineageSourceBundleRoutes.ts:464:  // 與 legacy `GET /api/external/ifc-ready`）。
+bim-review-coordinator/src\services\ledgerChipStatus.ts:20: * @param records         ConversionLedger.list() 或 GET /api/conversion/records 回傳值
+bim-review-coordinator/src\services\minioWatchSurface.ts:193:   * /api/external/ifc-ready。冪等鍵以 key 為穩定來源（無 etag）；force retrigger 以
+bim-review-coordinator/src\services\minioWatchSurface.ts:294:      const resp = await fetch(`${r.selfBaseUrl}/api/external/ifc-ready`, {
+bim-review-coordinator/src\services\minioWatchSurface.ts:717:        const upstream = await fetch(`${selfBase}/api/external/ifc-ready`, {
+bim-review-coordinator/src\services\minioWatcher.ts:122: * watcher run 的 status 投影（GET /api/external/minio-watch/status 的啟用態 payload；
+bim-review-coordinator/src\services\minioWatcher.ts:143: * selfBaseUrl 安全約束（SSRF 防護）：watcher 對 selfBaseUrl 自打 `POST /api/external/ifc-ready`
+bim-review-coordinator/src\services\lineage\pipelineResultRegistration.ts:15://   * 不碰 `ObjectStorePort`、不碰 legacy `/api/external/ifc-ready*`。
+
+=== 1.7 literal 82% not in production (excluding test files) ===
+rg exit for 1.7 production scan: 1
+
+=== 2.2 u.toast occurrences in docks.tsx ===
+rg exit for 2.2: 1
+
+=== 2.3 literal "LIVE" string gone from unified console ===
+web-viewer-sample/src/console/unified\dockBadgeProv.test.tsx:32:      expect(app.badge).not.toBe("LIVE");
+web-viewer-sample/src/console/unified\dockBadgeProv.test.tsx:51:    expect(container.textContent).not.toContain("LIVE");
+web-viewer-sample/src/console/unified\dockBadgeProv.test.tsx:67:    expect(container.textContent).not.toContain("LIVE");
+rg exit for 2.3 (expect 1 = no matches): 0

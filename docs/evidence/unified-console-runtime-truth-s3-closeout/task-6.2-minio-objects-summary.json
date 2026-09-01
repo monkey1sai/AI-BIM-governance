@@ -1,0 +1,107 @@
+{
+  "captured_at": "2026-08-31T11:49:26.303Z",
+  "status": 200,
+  "fetch_ms": 23431,
+  "bucket_placeholder": "<canonical-bucket>",
+  "prefix": "",
+  "total_object_count": 1745,
+  "distinct_top_level_folders": 7,
+  "folders_matching_source_ifc_pattern": 3,
+  "folder_summary": [
+    {
+      "folder_placeholder": "<project-B>",
+      "object_count": 1074,
+      "roles": [
+        "other",
+        "source_ifc"
+      ],
+      "extensions": [
+        ".csv",
+        ".ifc",
+        ".json",
+        ".rvt"
+      ],
+      "has_source_ifc_pattern": true
+    },
+    {
+      "folder_placeholder": "<project-A>",
+      "object_count": 384,
+      "roles": [
+        "other",
+        "source_ifc"
+      ],
+      "extensions": [
+        ".csv",
+        ".ifc",
+        ".json",
+        ".rvt"
+      ],
+      "has_source_ifc_pattern": true
+    },
+    {
+      "folder_placeholder": "<project-C>",
+      "object_count": 132,
+      "roles": [
+        "other",
+        "source_ifc"
+      ],
+      "extensions": [
+        ".csv",
+        ".ifc",
+        ".json",
+        ".rvt"
+      ],
+      "has_source_ifc_pattern": true
+    },
+    {
+      "folder_placeholder": "<project-E>",
+      "object_count": 80,
+      "roles": [
+        "other"
+      ],
+      "extensions": [
+        ".csv",
+        ".json",
+        ".rvt"
+      ],
+      "has_source_ifc_pattern": false
+    },
+    {
+      "folder_placeholder": "<project-D>",
+      "object_count": 55,
+      "roles": [
+        "other"
+      ],
+      "extensions": [
+        ".csv",
+        ".json",
+        ".rvt"
+      ],
+      "has_source_ifc_pattern": false
+    },
+    {
+      "folder_placeholder": "<folder-anon-1>",
+      "object_count": 11,
+      "roles": [
+        "other"
+      ],
+      "extensions": [
+        ".jpg",
+        ".png"
+      ],
+      "has_source_ifc_pattern": false
+    },
+    {
+      "folder_placeholder": "<folder-anon-2>",
+      "object_count": 9,
+      "roles": [
+        "other"
+      ],
+      "extensions": [
+        ".jpg"
+      ],
+      "has_source_ifc_pattern": false
+    }
+  ],
+  "note": "Full 1745-object key listing intentionally NOT included verbatim (would leak real project/customer folder names into a public repo per standing privacy rule). This summary preserves the counts needed to cross-check the #pipeline screen \"7 資料夾／3 含 source IFC\" claim: distinct_top_level_folders vs folders_matching_source_ifc_pattern. Digest fields (bucket_sha256_16/folder_sha256_16) removed 2026-09-01 per round-2 verifier finding F-A: unsalted truncated digests over low-entropy names are reversible via candidate-list matching and functioned as a confirmation oracle in a public repo."
+}

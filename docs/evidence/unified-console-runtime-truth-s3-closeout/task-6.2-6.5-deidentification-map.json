@@ -1,0 +1,15 @@
+{
+  "note": "Placeholder legend only. Real values (LAN IP / internal hostname / bucket / project names) never appear in this public-repo bundle, and per round-2 verifier finding F-A the earlier per-entry truncated-sha256 confirmation digests were removed as well: unsalted short digests over low-entropy values were demonstrated reversible via a candidate-list hash-and-match, so they functioned as a confirmation oracle. Owner verification of placeholder-to-real correspondence is done out-of-repo against the owner-held deployment inventory. Decision applied 2026-09-01 (coordinator, fail-safe default): drop digests entirely; owner may later opt for salted digests held outside the repo.",
+  "entries": [
+    { "placeholder": "<canonical-host>", "meaning": "canonical Linux test-deploy host LAN address" },
+    { "placeholder": "<internal-docker-host>", "meaning": "docker-internal hostname used by the coordinator to reach the conversion authority" },
+    { "placeholder": "<canonical-bucket>", "meaning": "MinIO watch bucket name" },
+    { "placeholder": "<project-A>", "meaning": "real project/customer folder name A (with <project-A-id> its object-key id form)" },
+    { "placeholder": "<project-A-id>", "meaning": "object-key id form of project A" },
+    { "placeholder": "<project-B>", "meaning": "real project/customer folder name B" },
+    { "placeholder": "<project-B-id>", "meaning": "object-key id form of project B" },
+    { "placeholder": "<project-C>", "meaning": "real project/customer folder name C" },
+    { "placeholder": "<project-D>", "meaning": "real project/customer folder name D" },
+    { "placeholder": "<project-E>", "meaning": "real project/customer folder name E" }
+  ]
+}

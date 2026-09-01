@@ -1,0 +1,94 @@
+# unified-console-runtime-truth-s3-closeout verification (evidence-only closeout round, 2026-08-31)
+worktree: C:\Repos\active\iot\AI-BIM-governance\.claude\worktrees\openspec-changes-next-ed87ad
+evidenceHead (bound product HEAD for this round): a0ab7065131914e548e1d79a1c683c8b14b07de4
+# reconciliation (2026-09-01): later rounds bind the evidence-branch HEAD (an evidence-only descendant
+# of a0ab7065 with byte-identical product tree, verified by `git diff a0ab7065..<evidence-head> -- . ":(exclude)docs/**" ":(exclude)openspec/**"` empty).
+# The DEPLOYED commit on canonical-linux is a0ab7065 (deploy tag deploy-20260831-639237709604722760-001).
+repo HEAD at time of run: a0ab7065131914e548e1d79a1c683c8b14b07de4 (git status clean except this new evidence dir)
+scope: re-verify local test/build evidence for task IDs 1.2-1.8, 2.1-2.4, 3.1-3.2 at the exact evidenceHead
+        (source tree = this worktree at a0ab706, unmodified); complete task 6.1 via git-tag evidence;
+        determine reachability for 6.2 / 6.5 (canonical-linux live evidence).
+node_modules note: web-viewer-sample/node_modules had never been installed in this worktree. package-lock.json
+        is byte-identical (diff empty, CRLF-normalized) to sibling worktree
+        AI-BIM-governance.worktrees/unified-console-runtime-truth-s2 (commit c42034a). A Windows directory
+        JUNCTION was created at web-viewer-sample/node_modules -> that sibling worktree's node_modules
+        (read-only reference; nothing in the sibling worktree was modified) so tests/build below execute
+        against THIS worktree's a0ab706 source tree with real installed deps. The junction is removed via
+        `rmdir` (breaks the link only, does not touch the target) at the end of this closeout round;
+        node_modules/dist-ui are gitignored and do not appear in `git status`.
+
+## npx vitest run (cwd web-viewer-sample) -- tasks 1.3,1.4,1.5,1.6,1.7,1.8,2.1,2.2/2.4,2.3,3.1,3.2
+see: vitest-tasks-1.3-1.8-2.1-2.4-3.1-3.2.txt
+ Test Files  10 passed (10)
+      Tests  44 passed (44)
+   coordinatorStatusStore.test.ts (8) / homeLiveBinding.test.tsx (6) / pipelineLiveBinding.test.tsx (4) /
+   opsLiveBinding.test.tsx (3) / topbarGpuChip.test.tsx (4) / fixtureNotInProduction.test.ts (6) /
+   buttonInventory.test.tsx (6) / dockBadgeProv.test.tsx (3) / a1OfflineViewport.test.tsx (3) / a4Header.test.tsx (1)
+
+## npx tsc --noEmit (cwd web-viewer-sample) -- task 1.3
+see: tsc-noemit.txt
+exit=0, no output (clean)
+
+## rg checks -- tasks 1.2, 1.7, 2.2, 2.3
+see: rg-checks.txt
+- 1.2: all ten endpoint patterns (runtime/status, external/ifc-ready, conversion/records, callback-outbox/summary,
+  governance/issues, governance/rule-runs, minio-watch/status, minio/objects, kit/health, kit/instances/current)
+  matched inside bim-review-coordinator/src -- endpoints exist as claimed, no new endpoint added.
+- 1.7: `rg -n "82%" web-viewer-sample/src/console/unified --glob '!*.test.*'` -> exit 1 (no matches). Literal
+  "82%" absent from production sources (task's own annotation already disclosed the 3 test-file negative-oracle
+  matches; this scoped rerun confirms zero in production).
+- 2.2: `rg -n "u.toast" web-viewer-sample/src/console/unified/docks.tsx` -> exit 1 (no matches). All local-state
+  fake-success toasts removed.
+- 2.3 (raw task command, includes tests): `rg -n '"LIVE"' web-viewer-sample/src/console/unified` -> 3 matches,
+  all three inside dockBadgeProv.test.tsx as `.not.toBe("LIVE")` / `.not.toContain("LIVE")` negative assertions
+  (not production usage).
+- 2.3 (production-scoped, `--glob '!*.test.*'`) -> exit 1 (no matches). Confirms the "LIVE 字面歸零" claim holds
+  for production code; the task's literal verification command as written does not exclude test files, so the
+  raw command alone would show 3 hits -- documented here for honesty, not silently reconciled in tasks.md.
+
+## npx vite build --base=/ui/ --outDir dist-ui (cwd web-viewer-sample) -- task 1.8
+see: build-ui.txt
+exit=0, 184 modules transformed, built in 2.46s
+
+## rg -c "GPU/Stream 82%" dist-ui (cwd web-viewer-sample) -- task 1.8
+see: dist-ui-82pct-check.txt
+exit=1 (no matches) -- literal absent from the production bundle.
+
+## pwsh scripts/tests/verify-design-system-reference.ps1 -VerifyOrigin -- task 3.2 (a4 pinned digest)
+see: design-system-reference-verify-origin.txt
+exit=0: "[design-reference-gate] passed -- 13 screens, 26 golden files,
+source=2f414d9d4bd96adbd3102e417f2465eb4aa609b0c3a12d118f41c1ccff30c9c8"
+(current manifest has 13 screen_id entries incl. workspace.a4.default; no drift reported for any screen)
+
+## task 6.1 -- deploy tag vs evidenceHead
+see: task-6.1-deploy-tag-match.txt
+`git tag -l 'deploy-*' --sort=-creatordate | head -1` -> deploy-20260831-639237709604722760-001
+tag message: deploy target=canonical-linux exit=0 snapshot=20260831T110240Z-effective-env.json
+             deployed=a0ab7065131914e548e1d79a1c683c8b14b07de4
+Matches evidenceHead a0ab7065131914e548e1d79a1c683c8b14b07de4 exactly (byte-for-byte). Confirms canonical-linux
+was rebuilt/deployed at this exact HEAD (2026-08-31 19:02:43 +0800), fully satisfying 6.1's own stated
+verification command. Task box checked.
+
+## tasks 6.2 / 6.5 -- BLOCKED, no live canonical-linux access in this session
+Checked and ruled out before concluding BLOCKED:
+- No `target.local.json` (repo-external, owner-controlled deploy inventory) anywhere under this repo tree or
+  under C:\Repos\active\iot\AI-BIM-governance* (Glob search, no results).
+- `C:\Users\IOT\.bim-deploy` exists on this host and is documented (session memory) as the owner's PRIVATE
+  deployment root holding SSH keys / canonical env / inventory -- reading it is out of this evidence-only
+  closeout's authorized scope (secrets/credentials boundary) and was NOT opened.
+- `.claude/settings.local.json` (this worktree) has no pre-approved canonical-linux host/IP/URL.
+- `netstat -ano` on this host shows no local listener/tunnel forwarding ports 8004 / 49102 / 9000
+  (i.e. no active SSH port-forward to canonical-linux from this machine right now).
+No canonical-linux `:8004/ui` screenshots or same-minute API JSON were captured. 6.2 cannot be completed from
+this session. 6.5 (secret-pattern-scan of the 6.2/6.3/6.4 evidence bundle) has nothing new to scan without 6.2's
+output and is likewise not completed here. Neither task's checkbox was touched; tasks.md is unchanged for 6.2/6.5.
+
+## Result
+No regressions found for 1.2-1.8 / 2.1-2.4 / 3.1-3.2 at evidenceHead a0ab706 (all referenced local commands
+pass identically to what the existing tasks.md sub-notes already claimed, now reconfirmed at the current HEAD
+rather than the older commits those notes cite). Per the file's own top-of-file rule ("UI 相關 task（§1–§3、§5
+semantic、§6）只能以 canonical-linux `:8004/ui` 截圖＋同分鐘 API JSON 對照勾選；本機通過只能註記「本機綠，待
+181」，不得打勾"), none of 1.2-1.8 / 2.1-2.4 / 3.1-3.2 can be checked off from local evidence alone -- their
+existing "本機綠，待 181" annotations remain the correct state and were left as-is (not edited, to avoid
+duplicate/conflicting ledger entries with other in-flight rounds); this file is the traceable supplement.
+Only 6.1 was checked off in tasks.md, backed by task-6.1-deploy-tag-match.txt.
