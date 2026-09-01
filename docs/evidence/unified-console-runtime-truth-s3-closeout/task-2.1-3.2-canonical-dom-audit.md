@@ -1,7 +1,7 @@
 # canonical-linux live DOM audit — tasks 1.7, 2.1, 2.2, 2.3, 2.4, 3.1, 3.2
 
 Captured live against `http://<canonical-host>:8004/ui` (redacted; see
-`task-6.2-6.5-deidentification-map.json` for the real-value cross-reference digest), 2026-08-31
+`task-6.2-6.5-deidentification-map.json` for the placeholder legend（P5 FH 更正：digest 對照已依 owner Q1a 於 2026-09-01 剝除）), 2026-08-31
 ~11:44Z-11:47Z, evidenceHead `d04de191ec48d4e34c6744f9201d5e37a4f11b6c` (bound product HEAD
 assigned to this evidence-only closeout round). **Correction (round-2 verification F1):** the
 actual deployment observed is task 6.1's `deploy-20260831-639237709604722760-001` tag, deployed
@@ -23,7 +23,7 @@ static screenshot pixel comparison cannot verify by itself.
 - `[data-prov]` value counts: `asbuilt: 13`, `demo: 1`, `fixture: 1`. No `LIVE` enum value present
   (canonical seven-value set: `asbuilt`/`artifact`/`demo`/`p1`/`p15`/`p3`/`p4` — confirms task
   2.3's "移除寫死 LIVE" for the A1-A10 badge system). The one residual `fixture` value is
-  consistent with tasks.md's own disclosed carve-out ("i18n／導覽／style helper 保留").
+  consistent with tasks.md's own disclosed carve-out ("i18n／導覽／style helper 保留"). **更正（Q3a，2026-09-01）：此歸因不充分（該子句是保留 helper「模組」，非 prov「值」白名單）；正確依據是 owner Q3a 明示 carve-out——`fixture`/`live`/`redirect` 屬容器（非 badge）prov 值白名單。**
 - Literal substring `LIVE` (uppercase, uppercase check only, case-sensitive): **not present** on
   `#home`.
 

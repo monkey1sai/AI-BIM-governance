@@ -1,15 +1,53 @@
 {
-  "note": "Placeholder legend only. Real values (LAN IP / internal hostname / bucket / project names) never appear in this public-repo bundle, and per round-2 verifier finding F-A the earlier per-entry truncated-sha256 confirmation digests were removed as well: unsalted short digests over low-entropy values were demonstrated reversible via a candidate-list hash-and-match, so they functioned as a confirmation oracle. Owner verification of placeholder-to-real correspondence is done out-of-repo against the owner-held deployment inventory. Decision applied 2026-09-01 (coordinator, fail-safe default): drop digests entirely; owner may later opt for salted digests held outside the repo.",
+  "note": "Placeholder legend only. Scope correction (P5 FI, 2026-09-01): real values (LAN IP / internal hostname / bucket / customer project names) appear in NO text/JSON file of this bundle; the PNG pixel plane was additionally eyeball-audited and shows one placeholder-protected value, the generic Docker alias host.docker.internal (rendered inside the service-health panel of task-6.2-screen-home/no-hash/runtime.png). That alias is identical on every Docker install and identifies no deployment, so it is recorded as a disclosed non-identifying exception rather than redacted pixel-by-pixel. Digest history: the earlier per-entry truncated-sha256 digests were removed per owner ruling Q1a (2026-09-01) because unsalted short digests over low-entropy values were demonstrated reversible; owner may later opt for salted digests held outside the repo. Runtime identifiers kept (P5 FJ disposition): mw_<hash16> idempotency keys and minio-watch-<hash8> correlation ids in task-6.2-endpoint-conversion-records.json / task-6.2-endpoint-callback-outbox-summary.json are sha256 over bucket|key|etag where the ETag is a high-entropy content hash - candidate-list reversal does not apply, and these ARE the runtime IDs the acceptance evidence must show; subject to owner veto. Bucket-name status (P5 FM): the real bucket name has been public repo content since this change's own proposal.md (out of this range), so the <canonical-bucket> placeholder here is defense-in-depth, not a secrecy claim; formal sensitivity re-scoping is left to the owner. Owner verification of placeholder-to-real correspondence is done out-of-repo against the owner-held deployment inventory.",
   "entries": [
-    { "placeholder": "<canonical-host>", "meaning": "canonical Linux test-deploy host LAN address" },
-    { "placeholder": "<internal-docker-host>", "meaning": "docker-internal hostname used by the coordinator to reach the conversion authority" },
-    { "placeholder": "<canonical-bucket>", "meaning": "MinIO watch bucket name" },
-    { "placeholder": "<project-A>", "meaning": "real project/customer folder name A (with <project-A-id> its object-key id form)" },
-    { "placeholder": "<project-A-id>", "meaning": "object-key id form of project A" },
-    { "placeholder": "<project-B>", "meaning": "real project/customer folder name B" },
-    { "placeholder": "<project-B-id>", "meaning": "object-key id form of project B" },
-    { "placeholder": "<project-C>", "meaning": "real project/customer folder name C" },
-    { "placeholder": "<project-D>", "meaning": "real project/customer folder name D" },
-    { "placeholder": "<project-E>", "meaning": "real project/customer folder name E" }
+    {
+      "placeholder": "<canonical-host>",
+      "meaning": "canonical Linux test-deploy host LAN address"
+    },
+    {
+      "placeholder": "<internal-docker-host>",
+      "meaning": "docker-internal hostname used by the coordinator to reach the conversion authority"
+    },
+    {
+      "placeholder": "<canonical-bucket>",
+      "meaning": "MinIO watch bucket name"
+    },
+    {
+      "placeholder": "<project-A>",
+      "meaning": "real project/customer folder name A (with <project-A-id> its object-key id form)"
+    },
+    {
+      "placeholder": "<project-A-id>",
+      "meaning": "object-key id form of project A"
+    },
+    {
+      "placeholder": "<project-B>",
+      "meaning": "real project/customer folder name B"
+    },
+    {
+      "placeholder": "<project-B-id>",
+      "meaning": "object-key id form of project B"
+    },
+    {
+      "placeholder": "<project-C>",
+      "meaning": "real project/customer folder name C"
+    },
+    {
+      "placeholder": "<project-D>",
+      "meaning": "real project/customer folder name D"
+    },
+    {
+      "placeholder": "<project-E>",
+      "meaning": "real project/customer folder name E"
+    },
+    {
+      "placeholder": "<folder-anon-1>",
+      "meaning": "anonymous top-level MinIO folder 1 (images only), name withheld"
+    },
+    {
+      "placeholder": "<folder-anon-2>",
+      "meaning": "anonymous top-level MinIO folder 2 (images only), name withheld"
+    }
   ]
 }

@@ -1,4 +1,5 @@
 # unified-console-runtime-truth-s3-closeout verification (evidence-only closeout round, 2026-08-31)
+# [PARTIALLY SUPERSEDED 2026-09-01] 本檔「tasks 6.2 / 6.5 -- BLOCKED, no live canonical-linux access」與「Only 6.1 was checked off」等不可達結論是 false negative（依據僅為 localhost netstat/inventory 掃描），已被同日 live capture 輪（task-6.2-*.json / task-6.2-screen-*.png）與現行 tasks.md 6.2/6.5 註記推翻；本檔的本機 test/build 證據段落仍有效。
 worktree: C:\Repos\active\iot\AI-BIM-governance\.claude\worktrees\openspec-changes-next-ed87ad
 evidenceHead (bound product HEAD for this round): a0ab7065131914e548e1d79a1c683c8b14b07de4
 # reconciliation (2026-09-01): later rounds bind the evidence-branch HEAD (an evidence-only descendant
