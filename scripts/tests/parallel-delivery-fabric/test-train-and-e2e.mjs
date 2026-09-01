@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
 import test from 'node:test'
 import { digestCanonical } from '../../lib/parallel-delivery-fabric-contract.mjs'
 
@@ -31,6 +32,7 @@ const LISTENER = SHA256('b')
 const NOW = '2026-08-29T01:00:00.000Z'
 const LATER = '2026-08-29T02:00:00.000Z'
 const TRAIN_CLOCK = Object.freeze({ now: NOW })
+const sha256Text = value => createHash('sha256').update(value, 'utf8').digest('hex')
 
 const trainPlan = (overrides = {}) => ({
   plan_id: 'plan:train',
@@ -1343,4 +1345,46 @@ test('binder requires complete canonical identity and command lineage packets', 
     assert.equal(result.freeze_scope, 'candidate', label)
     assert.equal(result.other_candidates_continue, true, label)
   }
+})
+
+test('binder preserves POSIX path case while folding Windows physical path identity', () => {
+  const upperPath = '/repo/Artifacts/e2e/change-a/run-a/stack-manifest.json'
+  const lowerPath = '/repo/artifacts/e2e/change-a/run-a/stack-manifest.json'
+  const upperDigest = sha256Text(upperPath)
+  const lowerDigest = sha256Text(lowerPath)
+  const upperIdentity = { manifest_path: upperPath, manifest_path_digest: upperDigest }
+  const accepted = bindBrowserEvidence({
+    candidate: candidate(upperIdentity),
+    manifest: manifest(upperIdentity),
+    playwright: browserPacket('playwright', upperIdentity),
+    computerUse: browserPacket('computer_use', { verifier_identity: 'computer-use:one', ...upperIdentity }),
+    trustedPins: trustedPins(),
+  })
+  assert.equal(accepted.status, 'READY_FOR_TRAIN')
+
+  const mismatched = bindBrowserEvidence({
+    candidate: candidate(upperIdentity),
+    manifest: manifest(upperIdentity),
+    playwright: browserPacket('playwright', upperIdentity),
+    computerUse: browserPacket('computer_use', {
+      verifier_identity: 'computer-use:one', manifest_path: lowerPath, manifest_path_digest: lowerDigest,
+    }),
+    trustedPins: trustedPins(),
+  })
+  assert.equal(mismatched.status, 'HELD_EVIDENCE_BINDING')
+  assert.equal(mismatched.reason, 'MANIFEST_PATH_MISMATCH')
+
+  const windowsPath = 'C:\\Repo\\Artifacts\\e2e\\change-a\\run-a\\stack-manifest.json'
+  const windowsVariant = 'c:/repo/artifacts/e2e/change-a/run-a/stack-manifest.json'
+  const windowsDigest = sha256Text(windowsVariant)
+  const windowsAccepted = bindBrowserEvidence({
+    candidate: candidate({ manifest_path: windowsPath, manifest_path_digest: windowsDigest }),
+    manifest: manifest({ manifest_path: windowsVariant, manifest_path_digest: windowsDigest }),
+    playwright: browserPacket('playwright', { manifest_path: windowsPath, manifest_path_digest: windowsDigest }),
+    computerUse: browserPacket('computer_use', {
+      verifier_identity: 'computer-use:one', manifest_path: windowsVariant, manifest_path_digest: windowsDigest,
+    }),
+    trustedPins: trustedPins(),
+  })
+  assert.equal(windowsAccepted.status, 'READY_FOR_TRAIN')
 })

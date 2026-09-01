@@ -880,7 +880,7 @@ function Start-IsolatedBackend {
                 '-Role',$role,'-ExpectedPortMarkerBase64',$markerBase64,'-ExpectedPort',$expectedPort,
                 '-BindingMarker',"isolated-$role-port-$expectedPort $expectedPortMarker $expectedPort"
             )
-            $pwsh = (Get-Command pwsh -CommandType Application -ErrorAction Stop).Source
+            $pwsh = ((Get-Command pwsh -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source)
             Start-Process -FilePath $pwsh -ArgumentList (ConvertTo-IsolatedWindowsArgumentLine -Arguments $wrapperArguments) -WorkingDirectory $cwd `
               -UseNewEnvironment -WindowStyle Hidden -PassThru `
               -RedirectStandardOutput $stdout -RedirectStandardError $stderr
@@ -1484,46 +1484,48 @@ function Invoke-IsolatedBranchStack {
     }
 
    $effectiveOffset = if ([string]::IsNullOrWhiteSpace($OffsetInput)) { '0' } else { $OffsetInput }
+   if ($null -eq $SafeEnvironmentContract) {
+       throw 'Safe environment contract authority is required for start.'
+   }
+   if ($null -eq $BrowserSpecFn) {
+       throw 'Browser specification authority is required for start.'
+   }
    Assert-IsolatedCleanWorktree -RepoRoot $RepoRoot -StatusFn $WorktreeStatusFn
     $ports = Resolve-IsolatedStackPorts -OffsetInput $effectiveOffset
-    if ($null -ne $SafeEnvironmentContract) {
-        try {
-            $safeEnvironmentResult = & $SafeEnvironmentContract $RepoRoot $ChangeId $RunId ([int]$effectiveOffset) $ports
-        } catch {
-            throw 'Safe environment contract rejected.'
-        }
-        if ($safeEnvironmentResult -isnot [bool] -or -not [bool]$safeEnvironmentResult) {
-            throw 'Safe environment contract rejected.'
-        }
+    try {
+        $safeEnvironmentResult = & $SafeEnvironmentContract $RepoRoot $ChangeId $RunId ([int]$effectiveOffset) $ports
+    } catch {
+        throw 'Safe environment contract rejected.'
     }
-   if ($null -ne $BrowserSpecFn) {
-       try {
-           $browserSpec = & $BrowserSpecFn $RepoRoot $ChangeId $RunId ([int]$effectiveOffset) $ports
-            $browserSpecBase = [System.Management.Automation.PSObject]::AsPSObject($browserSpec).BaseObject
-            if ($browserSpecBase -isnot [hashtable]) {
-                throw 'Browser specification rejected.'
-            }
-            if ($browserSpecBase.Count -ne 3 -or
-                -not $browserSpecBase.ContainsKey('schema_version') -or
-                -not $browserSpecBase.ContainsKey('base_url') -or
-                -not $browserSpecBase.ContainsKey('expected_port')) {
-                throw 'Browser specification rejected.'
-            }
-            $schemaVersion = $browserSpecBase['schema_version']
-            $baseUrl = $browserSpecBase['base_url']
-            $expectedPort = $browserSpecBase['expected_port']
-            if ($schemaVersion -isnot [string] -or
-                $baseUrl -isnot [string] -or
-                $expectedPort -isnot [int] -or
-                $schemaVersion -cne 'isolated-browser-spec/v1' -or
-                $baseUrl -cne "http://127.0.0.1:$($ports.viewer)" -or
-                $expectedPort -ne [int]$ports.viewer) {
-                throw 'Browser specification rejected.'
-            }
-        } catch {
-           throw 'Browser specification rejected.'
-       }
-   }
+    if ($safeEnvironmentResult -isnot [bool] -or -not [bool]$safeEnvironmentResult) {
+        throw 'Safe environment contract rejected.'
+    }
+    try {
+        $browserSpec = & $BrowserSpecFn $RepoRoot $ChangeId $RunId ([int]$effectiveOffset) $ports
+        if ($browserSpec -isnot [hashtable]) {
+            throw 'Browser specification rejected.'
+        }
+        $browserSpecBase = $browserSpec
+        if ($browserSpecBase.Count -ne 3 -or
+            -not $browserSpecBase.ContainsKey('schema_version') -or
+            -not $browserSpecBase.ContainsKey('base_url') -or
+            -not $browserSpecBase.ContainsKey('expected_port')) {
+            throw 'Browser specification rejected.'
+        }
+        $schemaVersion = $browserSpecBase['schema_version']
+        $baseUrl = $browserSpecBase['base_url']
+        $expectedPort = $browserSpecBase['expected_port']
+        if ($schemaVersion -isnot [string] -or
+            $baseUrl -isnot [string] -or
+            $expectedPort -isnot [int] -or
+            $schemaVersion -cne 'isolated-browser-spec/v1' -or
+            $baseUrl -cne "http://127.0.0.1:$($ports.viewer)" -or
+            $expectedPort -ne [int]$ports.viewer) {
+            throw 'Browser specification rejected.'
+        }
+    } catch {
+        throw 'Browser specification rejected.'
+    }
    $reservation = & $ReservationAcquireFn $RepoRoot $ChangeId $RunId ([int]$effectiveOffset)
     $releaseReservation = $true
     try {

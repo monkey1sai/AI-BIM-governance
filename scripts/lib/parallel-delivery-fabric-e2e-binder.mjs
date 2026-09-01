@@ -248,7 +248,11 @@ const held = (status, reason, extras = {}) => freezeCopy({ status, reason, ...ex
 
 const normalizedPhysicalPath = (value) => {
   if (typeof value !== 'string' || value.trim() === '') return null
-  const parts = value.replaceAll('\\', '/').split('/')
+  const drive = /^([A-Za-z]):[\\/]/u.exec(value)
+  const unc = /^\\\\/u.test(value)
+  const windowsPath = drive !== null || unc
+  const pathValue = drive === null ? value : value.slice(2)
+  const parts = pathValue.replaceAll('\\', '/').split('/')
   const normalized = []
   for (const part of parts) {
     if (part === '' || part === '.') continue
@@ -257,8 +261,9 @@ const normalizedPhysicalPath = (value) => {
       else normalized.push(part)
     } else normalized.push(part)
   }
-  const prefix = /^[A-Za-z]:/u.test(value) ? `${value[0].toLowerCase()}:` : value.startsWith('/') ? '/' : ''
-  return `${prefix}${normalized.join('/')}`.replace(/^\/+/, prefix === '/' ? '/' : '').toLowerCase()
+  const prefix = drive !== null ? `${drive[1].toLowerCase()}:/` : unc ? '//' : value.startsWith('/') ? '/' : ''
+  const physicalPath = `${prefix}${normalized.join('/')}`
+  return windowsPath ? physicalPath.toLowerCase() : physicalPath
 }
 
 const pathDigest = (value) => {

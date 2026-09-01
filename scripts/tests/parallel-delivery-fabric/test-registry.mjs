@@ -1951,10 +1951,36 @@ const managedRenewCommand = (record, overrides = {}) => ({
   ...overrides,
 })
 
+const createManagedRenewalAuthority = ({
+  authorizedExpiresAt = '2026-08-29T03:00:00.000Z',
+  decisionPatch = {},
+} = {}) => {
+  const calls = []
+  return {
+    calls,
+    async verifyRenewal(request) {
+      calls.push(structuredClone(request))
+      return {
+        schema_version: 'managed-branch-renewal-authority-decision/v1',
+        verdict: 'AUTHORIZED',
+        request_digest: request.request_digest,
+        authorized_expires_at: authorizedExpiresAt,
+        ...decisionPatch,
+      }
+    },
+  }
+}
+
 const createManagedFixture = ({ branch = managedBranchRecord(), raceBarrier = undefined } = {}) => {
   const store = createInMemoryManagedCas({ branch, raceBarrier })
   const clock = createClock()
-  return { store, clock, registry: createManagedBranchRegistry({ store, clock }) }
+  const managedBranchAuthority = createManagedRenewalAuthority()
+  return {
+    store,
+    clock,
+    managedBranchAuthority,
+    registry: createManagedBranchRegistry({ store, clock, managedBranchAuthority }),
+  }
 }
 
 test('AC-39 — managed registry composes with the namespaced Git CAS store', async () => {
@@ -1966,7 +1992,9 @@ test('AC-39 — managed registry composes with the namespaced Git CAS store', as
     record: managedRegistryState(managedBranchRecord()),
   })
   assert.equal(seeded.status, 'STORED')
-  const registry = createManagedBranchRegistry({ store, clock: createClock() })
+  const registry = createManagedBranchRegistry({
+    store, clock: createClock(), managedBranchAuthority: createManagedRenewalAuthority(),
+  })
   const before = await registry.inspect()
   assert.equal(before.status, 'READY')
   const renewed = await registry.renew(managedRenewCommand(before.record))
@@ -2001,6 +2029,41 @@ test('AC-39 — managed record is closed, digest-stable, and renew changes only 
   assert.equal(store.calls.find((call) => call.kind === 'cas').ref, 'refs/ai-bim/managed-branches')
   assert.equal(store.calls.filter((call) => call.kind === 'read').every((call) => call.ref === 'refs/ai-bim/managed-branches'), true)
   assert.deepEqual(store.sideEffects, { network: 0, process: 0, delete: 0, worktree: 0, acl: 0 })
+})
+
+test('AC-39 — managed renewal requires a trusted authority decision bound to the exact request', async () => {
+  const branch = managedBranchRecord()
+  const missingStore = createInMemoryManagedCas({ branch })
+  const missing = createManagedBranchRegistry({ store: missingStore, clock: createClock() })
+  const unavailable = await missing.renew(managedRenewCommand(branch))
+  assert.equal(unavailable.status, 'HELD_MANAGED_BRANCH')
+  assert.equal(unavailable.reason, 'RENEWAL_AUTHORITY_UNAVAILABLE')
+  assert.equal(missingStore.calls.filter((call) => call.kind === 'cas').length, 0)
+
+  const store = createInMemoryManagedCas({ branch })
+  const authority = createManagedRenewalAuthority()
+  const registry = createManagedBranchRegistry({ store, clock: createClock(), managedBranchAuthority: authority })
+  const callerExtended = await registry.renew(managedRenewCommand(branch, {
+    authorized_expires_at: '2026-08-30T00:00:00.000Z',
+  }))
+  assert.equal(callerExtended.status, 'HELD_MANAGED_BRANCH')
+  assert.equal(callerExtended.reason, 'RENEWAL_AUTHORITY_MISMATCH')
+  assert.equal(authority.calls.length, 1)
+  assert.equal(store.calls.filter((call) => call.kind === 'cas').length, 0)
+
+  for (const [label, managedBranchAuthority, expectedReason] of [
+    ['throwing verifier', { verifyRenewal: async () => { throw new Error('authority unavailable') } }, 'RENEWAL_AUTHORITY_REJECTED'],
+    ['wrong request digest', createManagedRenewalAuthority({ decisionPatch: { request_digest: SHA256 } }), 'RENEWAL_AUTHORITY_MISMATCH'],
+  ]) {
+    const rejectedStore = createInMemoryManagedCas({ branch })
+    const rejectedRegistry = createManagedBranchRegistry({
+      store: rejectedStore, clock: createClock(), managedBranchAuthority,
+    })
+    const rejected = await rejectedRegistry.renew(managedRenewCommand(branch))
+    assert.equal(rejected.status, 'HELD_MANAGED_BRANCH', label)
+    assert.equal(rejected.reason, expectedReason, label)
+    assert.equal(rejectedStore.calls.filter((call) => call.kind === 'cas').length, 0, label)
+  }
 })
 
 test('AC-39 RED — two same-OID renew operations have exactly one local CAS winner', async () => {

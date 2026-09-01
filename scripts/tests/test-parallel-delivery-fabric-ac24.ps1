@@ -106,6 +106,40 @@ Assert-Equal 0 $effects.runtime 'invalid offset does not resolve a runtime'
 Assert-Equal 0 $effects.safe_environment 'invalid offset does not evaluate the safe environment contract'
 Assert-Equal 0 $effects.browser_descriptor 'invalid offset does not produce a browser descriptor'
 
+$effects = New-Ac24Effects
+$missingSafeMessage = Get-Ac24ThrownMessage {
+    Invoke-IsolatedBranchStack -Action start -ChangeId 'change-ac24' -RunId 'run-missing-safe-authority' -OffsetInput '0' -RepoRoot $repoRoot `
+        -WorktreeStatusFn { param($root) $effects.worktree_status++; @() } `
+        -ReservationAcquireFn { param($root,$change,$run,$offset) $effects.reservation_acquire++; throw 'reservation must not be reached' }
+}
+Assert-Equal 'Safe environment contract authority is required for start.' $missingSafeMessage 'missing safe-environment authority fails closed'
+Assert-Equal 0 $effects.worktree_status 'missing safe-environment authority stops before worktree inspection'
+Assert-Ac24NoPreflightEffects -Effects $effects -Context 'missing safe-environment authority'
+
+$effects = New-Ac24Effects
+$missingBrowserMessage = Get-Ac24ThrownMessage {
+    Invoke-IsolatedBranchStack -Action start -ChangeId 'change-ac24' -RunId 'run-missing-browser-authority' -OffsetInput '0' -RepoRoot $repoRoot `
+        -SafeEnvironmentContract { param($root,$change,$run,$offset,$ports) $effects.safe_environment++; $true } `
+        -WorktreeStatusFn { param($root) $effects.worktree_status++; @() } `
+        -ReservationAcquireFn { param($root,$change,$run,$offset) $effects.reservation_acquire++; throw 'reservation must not be reached' }
+}
+Assert-Equal 'Browser specification authority is required for start.' $missingBrowserMessage 'missing browser authority fails closed'
+Assert-Equal 0 $effects.safe_environment 'missing browser authority stops before evaluating the remaining authority'
+Assert-Equal 0 $effects.worktree_status 'missing browser authority stops before worktree inspection'
+Assert-Ac24NoPreflightEffects -Effects $effects -Context 'missing browser authority'
+
+$cliSandbox = New-TestSandbox -Prefix 'parallel-delivery-fabric-ac24-cli'
+try {
+    $cliMessage = Get-Ac24ThrownMessage {
+        Invoke-IsolatedBranchStackCli -Action start -ChangeId 'change-ac24' -RunId 'run-cli-missing-authority' -OffsetInput '0' -RepoRoot $cliSandbox
+    }
+    Assert-Equal 'Safe environment contract authority is required for start.' $cliMessage 'actual CLI start fails closed without runtime-preflight authority'
+    $cliManifestPath = Resolve-IsolatedStackManifestPath -RepoRoot $cliSandbox -ChangeId 'change-ac24' -RunId 'run-cli-missing-authority'
+    Assert-True (-not (Test-Path -LiteralPath $cliManifestPath)) 'authority-held CLI start writes no success manifest'
+} finally {
+    Remove-TestSandbox -Path $cliSandbox
+}
+
 foreach ($reservedPort in $script:IsolatedStackPolicy.reserved) {
     Assert-Throws {
         Assert-IsolatedPortSetDisjoint -Ports ([pscustomobject]@{ coordinator = $reservedPort; governance = 49103; viewer = 5180 })

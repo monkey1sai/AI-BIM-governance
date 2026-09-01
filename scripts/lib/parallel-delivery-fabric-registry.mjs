@@ -2010,9 +2010,8 @@ const readManagedSnapshot = async (store) => {
   }
 }
 
-const renewFailure = (snapshot, command, clock) => {
+const renewFailure = (snapshot, command, now) => {
   const record = snapshot.record
-  const now = nowFrom(clock)
   const nowMilliseconds = parseTimestamp(now, 'managed_branch_renew.now')
   if (record.state !== 'ACTIVE') return managedHeld('MANAGED_BRANCH_NOT_ACTIVE', { state: record.state })
   if (parseTimestamp(record.expires_at, 'managed_branch_renew.expires_at') <= nowMilliseconds) {
@@ -2031,10 +2030,54 @@ const renewFailure = (snapshot, command, clock) => {
     return managedHeld('NONCE_REPLAY')
   }
   const requestedExpiresAt = parseTimestamp(command.requested_expires_at, 'managed_branch_renew.requested_expires_at')
-  const authorizedExpiresAt = parseTimestamp(command.authorized_expires_at, 'managed_branch_renew.authorized_expires_at')
   if (requestedExpiresAt <= parseTimestamp(record.expires_at, 'managed_branch_renew.current_expires_at')) return managedHeld('EXPIRY_NOT_EXTENDED')
-  if (requestedExpiresAt > authorizedExpiresAt || requestedExpiresAt <= nowMilliseconds) return managedHeld('EXPIRY_POLICY_BOUND')
+  if (requestedExpiresAt <= nowMilliseconds) return managedHeld('EXPIRY_POLICY_BOUND')
   return null
+}
+
+const verifyManagedRenewalAuthority = async (authority, snapshot, command, now) => {
+  if (!authority || typeof authority.verifyRenewal !== 'function') return managedHeld('RENEWAL_AUTHORITY_UNAVAILABLE')
+  const requestPayload = {
+    schema_version: 'managed-branch-renewal-authority-request/v1',
+    action: 'renew',
+    operation_id: command.operation_id,
+    nonce: command.nonce,
+    owner_authority: snapshot.record.owner_authority,
+    managed_base_lease_id: snapshot.record.managed_base_lease_id,
+    registry_oid: snapshot.registry_oid,
+    branch_digest: snapshot.record.canonical_digest,
+    generation: snapshot.record.generation,
+    transition_sequence: snapshot.record.transition_sequence,
+    base_sha: snapshot.record.base_sha,
+    head_sha: snapshot.record.current_head_sha,
+    protection_profile_digest: snapshot.record.protection_profile_digest,
+    current_expires_at: snapshot.record.expires_at,
+    requested_expires_at: command.requested_expires_at,
+    claimed_authorized_expires_at: command.authorized_expires_at,
+    observed_at: now,
+  }
+  const request = freezeIJson({ ...requestPayload, request_digest: digestCanonical(requestPayload) })
+  try {
+    const decision = await authority.verifyRenewal(request)
+    exactKeys(decision, [
+      'schema_version', 'verdict', 'request_digest', 'authorized_expires_at',
+    ], 'managed_branch_renewal_authority_decision')
+    if (decision.schema_version !== 'managed-branch-renewal-authority-decision/v1' || decision.verdict !== 'AUTHORIZED') {
+      return managedHeld('RENEWAL_AUTHORITY_REJECTED')
+    }
+    assertDigest(decision.request_digest, 'managed_branch_renewal_authority_decision.request_digest')
+    parseTimestamp(decision.authorized_expires_at, 'managed_branch_renewal_authority_decision.authorized_expires_at')
+    if (decision.request_digest !== request.request_digest || decision.authorized_expires_at !== command.authorized_expires_at) {
+      return managedHeld('RENEWAL_AUTHORITY_MISMATCH')
+    }
+    if (parseTimestamp(command.requested_expires_at, 'managed_branch_renew.requested_expires_at') >
+        parseTimestamp(decision.authorized_expires_at, 'managed_branch_renew.authorized_expires_at')) {
+      return managedHeld('EXPIRY_POLICY_BOUND')
+    }
+    return null
+  } catch {
+    return managedHeld('RENEWAL_AUTHORITY_REJECTED')
+  }
 }
 
 export function parseManagedBranchRecord(raw) {
@@ -2049,7 +2092,7 @@ export function parseManagedBranchRegistry(raw) {
   return freezeIJson(parsed)
 }
 
-export function createManagedBranchRegistry({ store, clock }) {
+export function createManagedBranchRegistry({ store, clock, managedBranchAuthority }) {
   if (!store || typeof store.read !== 'function' || typeof store.cas !== 'function') fail('invalid_port', 'managed_branch_store_required')
 
   const inspect = async () => {
@@ -2063,9 +2106,13 @@ export function createManagedBranchRegistry({ store, clock }) {
     if (commandResult.reason) return managedHeld(commandResult.reason)
     const snapshot = await readManagedSnapshot(store)
     if (snapshot.status !== 'READY') return snapshot
-    const failure = renewFailure(snapshot, commandResult.command, clock)
-    if (failure) return failure
     const timestamp = nowFrom(clock)
+    const failure = renewFailure(snapshot, commandResult.command, timestamp)
+    if (failure) return failure
+    const authorityFailure = await verifyManagedRenewalAuthority(
+      managedBranchAuthority, snapshot, commandResult.command, timestamp,
+    )
+    if (authorityFailure) return authorityFailure
     const branch = hydrateManagedBranch({
       ...snapshot.record,
       expires_at: commandResult.command.requested_expires_at,
