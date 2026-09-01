@@ -30,9 +30,15 @@ import {
 import {
   LineageMetadataProjectionUnavailableError,
   type LineageArtifactProjection,
+  type LineageAlignmentReportProjection,
   type LineageMetadataProjectionReaderPort,
   type LineageResultManifestProjection,
 } from "../services/lineage/lineageMetadataProjections.js";
+import {
+  LINEAGE_ALIGNMENT_DIFFERENCE_SETS,
+  type LineageAlignmentDifferenceItem,
+  type LineageAlignmentDifferenceSet,
+} from "../services/lineage/lineageAlignmentReport.js";
 
 export const LINEAGE_METADATA_SCHEMA_VERSION = "lineage-governance-console/metadata-v1";
 const SAFE_ID = /^[A-Za-z0-9._:-]{1,200}$/;
@@ -108,7 +114,10 @@ export interface LineageMetadataOverviewBody {
     LineageMetadataAlignmentMetrics,
     "result_manifest"
   > | NotBuiltProvenance;
-  difference_counts: NotBuiltProvenance;
+  difference_counts: AvailableProjection<
+    LineageMetadataDifferenceCounts,
+    "alignment_report"
+  > | NotBuiltProvenance;
   warnings: AvailableProjection<
     LineageMetadataWarnings,
     "result_manifest"
@@ -130,6 +139,12 @@ export interface LineageMetadataWarnings {
   warning_codes: string[];
 }
 
+export interface LineageMetadataDifferenceCounts {
+  result_id: string;
+  alignment_report_digest: string;
+  counts: Record<LineageAlignmentDifferenceSet, number>;
+}
+
 export interface LineageMetadataArtifactsBody {
   source_artifacts: AvailableProjection<
     LineageArtifactProjection[],
@@ -141,9 +156,27 @@ export interface LineageMetadataArtifactsBody {
   > | NotBuiltProvenance;
 }
 
+export type LineageMetadataAlignmentSummary = Omit<
+  LineageAlignmentReportProjection,
+  "difference_sets"
+>;
+
+export interface LineageMetadataAlignmentDifferences {
+  difference_set: LineageAlignmentDifferenceSet;
+  items: LineageAlignmentDifferenceItem[];
+  page: {
+    offset: number;
+    limit: number;
+    returned: number;
+    enumerated_total: number;
+    authoritative_total: number;
+    has_more: boolean;
+  };
+}
+
 export interface LineageMetadataAlignmentBody {
-  summary: NotBuiltProvenance;
-  differences: NotBuiltProvenance;
+  summary: AvailableProjection<LineageMetadataAlignmentSummary, "alignment_report"> | NotBuiltProvenance;
+  differences: AvailableProjection<LineageMetadataAlignmentDifferences, "alignment_report"> | NotBuiltProvenance;
 }
 
 export interface LineageMetadataAttemptsBody {
@@ -188,6 +221,15 @@ export class LineageMetadataStateUnavailableError extends Error {
   constructor(detail: string) {
     super(detail);
     this.name = "LineageMetadataStateUnavailableError";
+  }
+}
+
+class LineageAlignmentQueryInvalidError extends Error {
+  readonly code = "invalid_alignment_query";
+
+  constructor() {
+    super("alignment query is outside the bounded read policy");
+    this.name = "LineageAlignmentQueryInvalidError";
   }
 }
 
@@ -248,6 +290,74 @@ async function activeResultManifest(
     : null;
   if (!active) return notBuilt("result_manifest", "store_not_present");
   return deps.projections.readResultManifest(active);
+}
+
+/**
+ * alignment report 的獨立 active-result 投影路徑。
+ *
+ * 刻意不重構 `activeResultManifest`：該 helper 已承重 overview/artifacts 的既有 production
+ * flow；本 slice 以 sibling path 接線，避免為共用七行 lookup 擴大回歸面。
+ */
+async function activeAlignmentReport(
+  job: PipelineJobRecord,
+  deps: LineageMetadataReadRouteDeps,
+): Promise<LineageAlignmentReportProjection | NotBuiltProvenance> {
+  if (!deps.projections) return notBuilt("alignment_report");
+  const pointer = deps.results.getActiveResultPointer(job.pipeline_job_id);
+  const active = pointer
+    ? deps.results
+        .listResults(job.pipeline_job_id)
+        .find((item) => item.result_id === pointer.result_id) ?? null
+    : null;
+  if (!active) return notBuilt("alignment_report", "store_not_present");
+  return deps.projections.readAlignmentReport(active);
+}
+
+interface AlignmentPageQuery {
+  differenceSet: LineageAlignmentDifferenceSet;
+  offset: number;
+  limit: number;
+}
+
+function parseAlignmentPageQuery(query: express.Request["query"]): AlignmentPageQuery {
+  const single = (name: string): string | undefined => {
+    const value = query[name];
+    if (value === undefined) return undefined;
+    if (typeof value !== "string") throw new LineageAlignmentQueryInvalidError();
+    return value;
+  };
+  const differenceSet = single("difference_set") ?? "csv_only";
+  if (!(LINEAGE_ALIGNMENT_DIFFERENCE_SETS as readonly string[]).includes(differenceSet)) {
+    throw new LineageAlignmentQueryInvalidError();
+  }
+  const parseInteger = (name: string, fallback: number): number => {
+    const raw = single(name);
+    if (raw === undefined) return fallback;
+    if (!/^(0|[1-9][0-9]*)$/.test(raw)) throw new LineageAlignmentQueryInvalidError();
+    const value = Number(raw);
+    if (!Number.isSafeInteger(value)) throw new LineageAlignmentQueryInvalidError();
+    return value;
+  };
+  const offset = parseInteger("offset", 0);
+  const limit = parseInteger("limit", 50);
+  if (limit < 1 || limit > 200) throw new LineageAlignmentQueryInvalidError();
+  return { differenceSet: differenceSet as LineageAlignmentDifferenceSet, offset, limit };
+}
+
+function differenceCounts(report: LineageAlignmentReportProjection): LineageMetadataDifferenceCounts {
+  return {
+    result_id: report.result_id,
+    alignment_report_digest: report.alignment_report_digest,
+    counts: {
+      csv_only: report.counts.csv_only_count,
+      ifc_only: report.counts.ifc_only_count,
+      ifc_usdc_unmapped: report.counts.ifc_usdc_unmapped_count,
+      duplicate_rvt_ids: report.counts.duplicate_rvt_id_count,
+      duplicate_ifc_guids: report.counts.duplicate_ifc_guid_count,
+      invalid_rows: report.counts.invalid_row_count,
+      full_lineage_matched: report.counts.full_lineage_matched_count,
+    },
+  };
 }
 
 /**
@@ -416,6 +526,10 @@ function activationAuditSummary(entry: ActivationAuditEntry): ActivationAuditEnt
 }
 
 function handleError(error: unknown, response: express.Response): void {
+  if (error instanceof LineageAlignmentQueryInvalidError) {
+    response.status(400).json({ error: error.code });
+    return;
+  }
   if (error instanceof LineageAuthorizationUnavailableError) {
     response.status(503).json({ error: error.code });
     return;
@@ -444,11 +558,15 @@ async function buildBody(
   surface: LineageMetadataSurface,
   job: PipelineJobRecord,
   deps: LineageMetadataReadRouteDeps,
+  query: express.Request["query"],
 ): Promise<LineageMetadataBody> {
   switch (surface) {
     case "overview": {
       const bundle = requireMatchingReadyBundle(job, deps);
-      const manifest = await activeResultManifest(job, deps);
+      const [manifest, report] = await Promise.all([
+        activeResultManifest(job, deps),
+        activeAlignmentReport(job, deps),
+      ]);
       return {
         job: jobSummary(job),
         source_bundle: {
@@ -488,9 +606,13 @@ async function buildBody(
                 counts: manifest.counts,
               },
             },
-        // difference_counts 的來源是 alignment_report（逐 element 的差異集合），
-        // 不是 result manifest 的摘要數字；本刀未建那條讀取路徑，維持誠實 NOT_BUILT。
-        difference_counts: notBuilt("alignment_report"),
+        difference_counts: isNotBuilt(report)
+          ? report
+          : {
+              state: "AVAILABLE" as const,
+              source: "alignment_report" as const,
+              value: differenceCounts(report),
+            },
         warnings: isNotBuilt(manifest)
           ? manifest
           : {
@@ -525,11 +647,38 @@ async function buildBody(
             },
       };
     }
-    case "alignment":
+    case "alignment": {
+      const pageQuery = parseAlignmentPageQuery(query);
+      const report = await activeAlignmentReport(job, deps);
+      if (isNotBuilt(report)) return { summary: report, differences: report };
+      const { difference_sets: differenceSets, ...summary } = report;
+      const allItems = differenceSets[pageQuery.differenceSet] as LineageAlignmentDifferenceItem[];
+      const items = allItems.slice(pageQuery.offset, pageQuery.offset + pageQuery.limit);
+      const authoritativeTotal = differenceCounts(report).counts[pageQuery.differenceSet];
       return {
-        summary: notBuilt("alignment_report"),
-        differences: notBuilt("alignment_report"),
+        summary: {
+          state: "AVAILABLE" as const,
+          source: "alignment_report" as const,
+          value: summary,
+        },
+        differences: {
+          state: "AVAILABLE" as const,
+          source: "alignment_report" as const,
+          value: {
+            difference_set: pageQuery.differenceSet,
+            items,
+            page: {
+              offset: pageQuery.offset,
+              limit: pageQuery.limit,
+              returned: items.length,
+              enumerated_total: allItems.length,
+              authoritative_total: authoritativeTotal,
+              has_more: pageQuery.offset + items.length < allItems.length,
+            },
+          },
+        },
       };
+    }
     case "attempts":
       return {
         items: {
@@ -586,7 +735,7 @@ export function registerLineageGovernanceMetadataRoutes(
           // body 先算完再送：`await` 留在 response literal 裡的話，「投影失敗時
           // status/headers 還沒被寫出去」就成了隱形承重——某天有人把 status 提前
           // 或加一個早寫的欄位，503 就會退化成一個帶 200 的半截 JSON。
-          const body = await buildBody(config.surface, job, deps);
+          const body = await buildBody(config.surface, job, deps, request.query);
           response.status(200).json({
             schema_version: LINEAGE_METADATA_SCHEMA_VERSION,
             surface: config.surface,
