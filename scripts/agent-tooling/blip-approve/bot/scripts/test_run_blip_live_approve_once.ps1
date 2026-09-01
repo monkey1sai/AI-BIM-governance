@@ -112,6 +112,37 @@ function Invoke-StrictMetadataSchemaRegression {
     Write-Output 'strict-runtime-metadata-regression-ok'
 }
 
+function Invoke-ApprovalCapabilityTupleRegression {
+    $definitions = Get-ProductionFunctions -Names @('New-ApprovalCapability')
+    . ([ScriptBlock]::Create(($definitions -join "`n")))
+    $capabilityVersion = 'blip-approval-capability/v2'
+    $repository = 'monkey1sai/AI-BIM-governance'
+    $PrNumber = 511
+    $ExpectedBaseSha = 'c' * 40
+    $ExpectedHeadSha = 'a' * 40
+    $reviewer = 'monkey1sai-blip'
+    $ReviewMode = 'human_critical'
+    $HumanCriticalOverride = [System.Management.Automation.SwitchParameter]$true
+    $tokenBytes = $null
+    $capabilityBytes = $null
+    $capabilityId = $null
+    $raw = New-ApprovalCapability -Token 'opaque-test-token'
+    $encoded = $raw.Split('.')[0].Replace('-', '+').Replace('_', '/')
+    $encoded = $encoded.PadRight($encoded.Length + ((4 - ($encoded.Length % 4)) % 4), '=')
+    $payload = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($encoded))
+    $fields = $payload.Split("`n")
+    Assert-True ($fields.Count -eq 12) 'Capability v2 field count is not exact.'
+    Assert-True ($fields[0] -ceq 'blip-approval-capability/v2') 'Capability version is not v2.'
+    Assert-True ($fields[7] -ceq 'human_critical') 'Capability review mode is not exact.'
+    Assert-True ($fields[8] -ceq 'human_critical_override=true') 'Capability override is not tuple-bound.'
+    if ($null -ne $script:tokenBytes) {
+        [Array]::Clear($script:tokenBytes, 0, $script:tokenBytes.Length)
+    }
+    if ($null -ne $script:capabilityBytes) {
+        [Array]::Clear($script:capabilityBytes, 0, $script:capabilityBytes.Length)
+    }
+}
+
 function Invoke-WrapperBootstrapRootRegression {
     $tokens = $null
     $errors = $null
@@ -312,7 +343,9 @@ function Invoke-BrokerCase {
         [Parameter(Mandatory)][string]$MarkerMode,
         [Parameter(Mandatory)][bool]$ValidManifest,
         [Parameter(Mandatory)][int]$ExpectedExit,
-        [Parameter(Mandatory)][string]$ExpectedStatus
+        [Parameter(Mandatory)][string]$ExpectedStatus,
+        [string]$ReviewMode = 'focused_semantic',
+        [switch]$HumanCriticalOverride
     )
     Clear-StateRoot
     $fakePython = (@(
@@ -331,11 +364,14 @@ function Invoke-BrokerCase {
     Set-Content -LiteralPath $pythonPath -Value $fakePython -Encoding utf8NoBOM
     Write-Manifest -ValidBrokerHash $ValidManifest
     $global:LASTEXITCODE = $null
-    & (Join-Path $runtimeRoot 'run_blip_live_approve_once.ps1') `
-        -PrNumber 511 `
-        -ExpectedBaseSha ('c' * 40) `
-        -ExpectedHeadSha ('a' * 40) `
-        -ReviewMode focused_semantic
+    $invokeParameters = @{
+        PrNumber = 511
+        ExpectedBaseSha = 'c' * 40
+        ExpectedHeadSha = 'a' * 40
+        ReviewMode = $ReviewMode
+    }
+    if ($HumanCriticalOverride.IsPresent) { $invokeParameters.HumanCriticalOverride = $true }
+    & (Join-Path $runtimeRoot 'run_blip_live_approve_once.ps1') @invokeParameters
     Assert-True ($LASTEXITCODE -eq $ExpectedExit) "Expected exit $ExpectedExit, got $LASTEXITCODE"
     $results = @(Get-ChildItem -LiteralPath $stateRoot -Filter 'blip-live-approve-pr511-*.json')
     Assert-True ($results.Count -eq 1) "Expected one result JSON, got $($results.Count)"
@@ -343,12 +379,18 @@ function Invoke-BrokerCase {
     Assert-True ($result.status -ceq $ExpectedStatus) "Expected status $ExpectedStatus, got $($result.status)"
     Assert-True ($result.stdout -notmatch 'opaque-test-token') 'Token leaked into stdout result'
     Assert-True ($result.stderr -notmatch 'opaque-test-token') 'Token leaked into stderr result'
+    Assert-True ($result.review_mode -ceq $ReviewMode.ToLowerInvariant()) `
+        'Review mode was not persisted canonically.'
+    Assert-True (
+        [bool]$result.human_critical_override -eq $HumanCriticalOverride.IsPresent
+    ) 'Human-critical override was not persisted exactly.'
     return $result
 }
 
 try {
     Invoke-WrapperBootstrapRootRegression
     Invoke-StrictMetadataSchemaRegression
+    Invoke-ApprovalCapabilityTupleRegression
     if ($SafeOnly) {
         $tokens = $null
         $errors = $null
@@ -363,7 +405,9 @@ try {
             'Counted-approval wrapper is no longer model-free.'
         Assert-True ($safeText -match "'--approve', '--live'") `
             'Counted-approval wrapper can no longer be proven approve-only.'
-        Write-Output 'broker-safe-tests-ok (parse, masked prompt, model-free, approve-only)'
+        Assert-True ($safeText -match "'--human-critical-override'") `
+            'Counted-approval wrapper does not bind the human-critical override to the child CLI.'
+        Write-Output 'broker-safe-tests-ok (parse, v2 tuple, masked prompt, model-free, approve-only)'
         return
     }
 
@@ -431,6 +475,27 @@ try {
     Assert-True ($valid.review_id -eq 4242) 'Validated marker review id was not persisted'
     Assert-True ($valid.expected_head_sha -ceq ('a' * 40)) 'Expected head was not persisted'
 
+    $human = Invoke-BrokerCase -MarkerMode valid -ValidManifest $true `
+        -ExpectedExit 0 -ExpectedStatus approve_succeeded `
+        -ReviewMode human_critical -HumanCriticalOverride
+    Assert-True ([bool]$human.human_critical_override) 'Human-critical override was not recorded.'
+
+    $humanCasing = Invoke-BrokerCase -MarkerMode valid -ValidManifest $true `
+        -ExpectedExit 0 -ExpectedStatus approve_succeeded `
+        -ReviewMode HUMAN_CRITICAL -HumanCriticalOverride
+    Assert-True ($humanCasing.review_mode -ceq 'human_critical') `
+        'PowerShell/Python review-mode casing was not canonicalized.'
+
+    $missingOverride = Invoke-BrokerCase -MarkerMode valid -ValidManifest $true `
+        -ExpectedExit 1 -ExpectedStatus broker_failed -ReviewMode human_critical
+    Assert-True ($missingOverride.stderr -match 'requires -HumanCriticalOverride') `
+        'Human-critical mode without an override did not fail closed.'
+
+    $machineOverride = Invoke-BrokerCase -MarkerMode valid -ValidManifest $true `
+        -ExpectedExit 1 -ExpectedStatus broker_failed -HumanCriticalOverride
+    Assert-True ($machineOverride.stderr -match 'forbidden for machine') `
+        'Machine mode accepted a human-critical override.'
+
     $malformed = Invoke-BrokerCase -MarkerMode malformed -ValidManifest $true -ExpectedExit 1 -ExpectedStatus approve_failed
     Assert-True ($malformed.stderr -match 'required validated APPROVAL_RESULT marker') 'Malformed marker did not fail closed'
 
@@ -448,7 +513,7 @@ try {
     $aclPayload = Get-Content -Raw -LiteralPath $aclResult.FullName | ConvertFrom-Json
     Assert-True ($aclPayload.stderr -match 'complete explicit write denial') 'Missing deny failure was not attributable'
 
-    Write-Output 'broker-tests-ok (5 cases including real Python trust)'
+    Write-Output 'broker-tests-ok (9 cases including v2 tuple and real Python trust)'
 }
 finally {
     if (Test-Path -LiteralPath $sandboxRoot) { Remove-Item -LiteralPath $sandboxRoot -Recurse -Force }
