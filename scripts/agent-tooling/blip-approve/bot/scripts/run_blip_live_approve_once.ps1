@@ -19,8 +19,10 @@ param(
     [string]$ExpectedHeadSha,
 
     [Parameter(Mandatory)]
-    [ValidateSet('mechanical_only', 'focused_semantic', 'risk_scoped_specialists')]
-    [string]$ReviewMode
+    [ValidateSet('mechanical_only', 'focused_semantic', 'risk_scoped_specialists', 'human_critical')]
+    [string]$ReviewMode,
+
+    [switch]$HumanCriticalOverride
 )
 
 $ErrorActionPreference = 'Stop'
@@ -245,7 +247,7 @@ Microsoft.PowerShell.Core\Set-StrictMode -Version Latest
 
 $repository = 'monkey1sai/AI-BIM-governance'
 $reviewer = 'monkey1sai-blip'
-$capabilityVersion = 'blip-approval-capability/v1'
+$capabilityVersion = 'blip-approval-capability/v2'
 $trustedRoot = $PSScriptRoot
 $stateRoot = Join-Path $trustedRoot 'state'
 $powerShellPath = 'C:\Program Files\PowerShell\7\pwsh.exe'
@@ -291,6 +293,7 @@ $brokerPath = $PSCommandPath
 $stamp = [DateTimeOffset]::Now.ToString('yyyyMMddTHHmmssfff')
 $ExpectedBaseSha = $ExpectedBaseSha.ToLowerInvariant()
 $ExpectedHeadSha = $ExpectedHeadSha.ToLowerInvariant()
+$ReviewMode = $ReviewMode.ToLowerInvariant()
 $resultPath = Join-Path $stateRoot "blip-live-approve-pr$PrNumber-$stamp.json"
 $lockPath = Join-Path $stateRoot "blip-live-approve-pr$PrNumber-$($ExpectedHeadSha.Substring(0,12)).lock"
 $tokenEnvironmentName = 'BLIP_GITHUB_TOKEN'
@@ -704,6 +707,7 @@ function New-ApprovalCapability {
         $ExpectedHeadSha,
         $reviewer,
         $ReviewMode,
+        ('human_critical_override=' + $HumanCriticalOverride.IsPresent.ToString().ToLowerInvariant()),
         [string]$issuedAt,
         [string]$expiresAt,
         $nonce
@@ -745,6 +749,7 @@ function Save-BrokerResult {
         expected_base_sha = $ExpectedBaseSha
         expected_head_sha = $ExpectedHeadSha
         review_mode = $ReviewMode
+        human_critical_override = $HumanCriticalOverride.IsPresent
         mode = 'automated_service_account_approval'
         mutation_requested = $true
         auto_merge_allowed = $false
@@ -776,6 +781,14 @@ function Save-BrokerResult {
 
 try {
     Assert-SystemProtectedProgramData
+    if ($ReviewMode -ceq 'human_critical') {
+        if (-not $HumanCriticalOverride.IsPresent) {
+            throw 'human_critical review mode requires -HumanCriticalOverride from an explicit owner authorization.'
+        }
+    }
+    elseif ($HumanCriticalOverride.IsPresent) {
+        throw '-HumanCriticalOverride is forbidden for machine review modes.'
+    }
     $hostPath = [System.IO.Path]::GetFullPath([Environment]::ProcessPath)
     if ($hostPath -cne $powerShellPath) {
         throw "Protected approval broker must run with the fixed PowerShell host: $powerShellPath"
@@ -878,7 +891,7 @@ try {
     if (Test-Path -LiteralPath $resultPath) { throw 'The one-shot result path already exists.' }
 
     Write-Information "PR #$PrNumber automatic approval broker" -InformationAction Continue
-    Write-Information "Exact tuple: base=$($ExpectedBaseSha.Substring(0,7)) head=$($ExpectedHeadSha.Substring(0,7)) mode=$ReviewMode" -InformationAction Continue
+    Write-Information "Exact tuple: base=$($ExpectedBaseSha.Substring(0,7)) head=$($ExpectedHeadSha.Substring(0,7)) mode=$ReviewMode human_critical_override=$($HumanCriticalOverride.IsPresent.ToString().ToLowerInvariant())" -InformationAction Continue
     Write-Information 'This can submit one counted APPROVED review; it refuses auto-merge and never merges.' -InformationAction Continue
     Write-Information 'Enter the fixed User PAT only in the masked prompt. Do not paste it into chat or a command line.' -InformationAction Continue
     $secureToken = Read-Host -Prompt 'Enter BLIP_GITHUB_TOKEN' -AsSecureString
@@ -895,14 +908,16 @@ try {
     $startInfo.CreateNoWindow = $true
     $startInfo.RedirectStandardOutput = $true
     $startInfo.RedirectStandardError = $true
-    foreach ($argument in @(
+    $childArguments = @(
         '-I', '-S', '-B', '-c', $pythonBootstrap, $helperPath, $authHelperPath, $packetModulePath,
         '--pr', [string]$PrNumber,
         '--expected-base', $ExpectedBaseSha,
         '--expected-head', $ExpectedHeadSha,
-        '--review-mode', $ReviewMode,
-        '--approve', '--live'
-    )) {
+        '--review-mode', $ReviewMode
+    )
+    if ($HumanCriticalOverride.IsPresent) { $childArguments += '--human-critical-override' }
+    $childArguments += @('--approve', '--live')
+    foreach ($argument in $childArguments) {
         [void]$startInfo.ArgumentList.Add($argument)
     }
     $preservedEnvironment = [ordered]@{}
