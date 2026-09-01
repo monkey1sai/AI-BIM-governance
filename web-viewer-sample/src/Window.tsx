@@ -1909,6 +1909,7 @@ export default class App extends React.Component<AppProps, AppState> {
     private _sendStreamMessage(
         message: AppStreamMessageType | StreamMessage,
         nativeOpenStageDispatch?: NativeOpenStageDispatch,
+        activitySource: "background" | "user" = "user",
     ): boolean {
         const onDispatched = nativeOpenStageDispatch?.onDispatched
             || this.stageDispatchCallbacks.get(message);
@@ -2006,7 +2007,7 @@ export default class App extends React.Component<AppProps, AppState> {
             });
         onDispatched?.();
         this._appendDemoOutgoing(outgoing.event_type, { ...outgoing, payload: redactStreamPayload(outgoing.payload) });
-        this._reportViewerActivity();
+        if (activitySource === "user") this._reportViewerActivity();
         return true;
     }
 
@@ -4181,11 +4182,11 @@ export default class App extends React.Component<AppProps, AppState> {
     * Sends Kit a message to find out what the loading state is.
     * Receives a 'loadingStateResponse' event type
     */
-    private _queryLoadingState(): void {
+    private _queryLoadingState(activitySource: "background" | "user" = "background"): void {
         const message: AppStreamMessageType = {
             ...buildLoadingStateQuery()
         };
-        this._sendStreamMessage(message);
+        this._sendStreamMessage(message, undefined, activitySource);
     }
 
     /**
@@ -5923,7 +5924,7 @@ export default class App extends React.Component<AppProps, AppState> {
                             onCreateOrLoadSession={() => void this._bootstrapReview()}
                             onConnectSocket={() => this._connectDemoSocket()}
                             onOpenStage={() => this._openSelectedAsset()}
-                            onLoadingState={() => this._queryLoadingState()}
+                            onLoadingState={() => this._queryLoadingState("user")}
                             onGetChildren={() => this._getChildren()}
                             onFocusWorld={() => this._sendDemoFocusWorld()}
                             onClearHighlight={() => this._sendDemoClearHighlight()}

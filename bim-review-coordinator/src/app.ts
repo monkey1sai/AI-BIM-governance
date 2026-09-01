@@ -773,7 +773,7 @@ export function createCoordinatorApp(
     } = {},
   ): ReviewSession | null => {
     if (!isSafeSessionId(sessionId)) return null;
-    const session = store.get(sessionId);
+    let session = store.get(sessionId);
     if (!session) return null;
     if (
       (session.status === "closed" && !options.resumeClosed)
@@ -785,17 +785,27 @@ export function createCoordinatorApp(
     const reason = typeof options.reason === "string" ? (options.reason.trim().slice(0, 500) || undefined) : undefined;
     const actor = typeof options.actor === "string" ? (options.actor.trim().slice(0, 500) || undefined) : undefined;
     const auditFields = reason ? { reason, ...(actor ? { actor } : {}) } : {};
+    const closeCheckpoint = session.close_checkpoint ?? {
+      checkpoint_id: `close_${randomBytes(12).toString("hex")}`,
+      expected_final_event_count: finalEvents.length,
+    };
+    if (!session.close_checkpoint) {
+      session = store.update(session.session_id, { close_checkpoint: closeCheckpoint }) ?? session;
+    }
     let closing = session;
     if (session.status !== "closed") {
       let closeEvents = eventLog.list(session.session_id);
-      let closingEvent = closeEvents.find((event) => event.type === "sessionClosing");
+      let closingEvent = closeEvents.find((event) => (
+        event.type === "sessionClosing"
+        && event.close_checkpoint_id === closeCheckpoint.checkpoint_id
+      ));
       if (!closingEvent) {
         const releasedViewerLeases = viewerLeaseStore.releaseSession(session.session_id);
-        closingEvent = eventLog.append(session.session_id, "sessionClosing", {
+        closingEvent = eventLog.appendServerCloseCheckpoint(session.session_id, "sessionClosing", {
           final_events: finalEvents.length,
           released_viewer_leases: releasedViewerLeases.map((lease) => lease.lease_id),
           ...auditFields,
-        });
+        }, closeCheckpoint.checkpoint_id);
         closeEvents = [...closeEvents, closingEvent];
       }
       if (session.status !== "closing") {
@@ -804,20 +814,28 @@ export function createCoordinatorApp(
           kit_instance_bindings: markKitBindingsDraining(session.kit_instance_bindings),
         }) ?? session;
       }
-      const declaredFinalEventCount = (closingEvent.payload as { final_events?: unknown } | null)?.final_events;
-      const expectedFinalEventCount = Number.isSafeInteger(declaredFinalEventCount) && Number(declaredFinalEventCount) >= 0
-        ? Number(declaredFinalEventCount)
-        : 0;
-      const existingFinalEventCount = closeEvents.filter((event) => event.type === "finalReviewEvent").length;
+      const expectedFinalEventCount = closeCheckpoint.expected_final_event_count;
+      const existingFinalEventCount = closeEvents.filter((event) => (
+        event.type === "finalReviewEvent"
+        && event.close_checkpoint_id === closeCheckpoint.checkpoint_id
+      )).length;
       if (existingFinalEventCount < expectedFinalEventCount) {
         if (finalEvents.length < expectedFinalEventCount) return closing;
         for (let index = existingFinalEventCount; index < expectedFinalEventCount; index += 1) {
-          eventLog.append(session.session_id, "finalReviewEvent", finalEvents[index]);
+          eventLog.appendServerCloseCheckpoint(
+            session.session_id,
+            "finalReviewEvent",
+            finalEvents[index],
+            closeCheckpoint.checkpoint_id,
+          );
         }
       }
       const persistedFinalEventCount = eventLog
         .list(session.session_id)
-        .filter((event) => event.type === "finalReviewEvent").length;
+        .filter((event) => (
+          event.type === "finalReviewEvent"
+          && event.close_checkpoint_id === closeCheckpoint.checkpoint_id
+        )).length;
       if (persistedFinalEventCount < expectedFinalEventCount) return closing;
     }
     const closed = session.status === "closed"
@@ -827,16 +845,26 @@ export function createCoordinatorApp(
           participants: [],
           kit_instance_bindings: releaseKitBindings(closing?.kit_instance_bindings || session.kit_instance_bindings),
         });
-    const existingCloseEventTypes = new Set(eventLog.list(session.session_id).map((event) => event.type));
+    const existingCloseEventTypes = new Set(
+      eventLog
+        .list(session.session_id)
+        .filter((event) => event.close_checkpoint_id === closeCheckpoint.checkpoint_id)
+        .map((event) => event.type),
+    );
     let appendedSessionClosed = false;
     if (!existingCloseEventTypes.has("sessionClosed")) {
-      eventLog.append(session.session_id, "sessionClosed", { ...auditFields });
+      eventLog.appendServerCloseCheckpoint(
+        session.session_id,
+        "sessionClosed",
+        { ...auditFields },
+        closeCheckpoint.checkpoint_id,
+      );
       appendedSessionClosed = true;
     }
     if (!existingCloseEventTypes.has("kitInstanceReleased")) {
-      eventLog.append(session.session_id, "kitInstanceReleased", {
+      eventLog.appendServerCloseCheckpoint(session.session_id, "kitInstanceReleased", {
         kit_instance_bindings: closed?.kit_instance_bindings.map((binding) => binding.kit_instance_id) || [],
-      });
+      }, closeCheckpoint.checkpoint_id);
     }
     const traceAuthority = sessionTraceResolver.resolveAndCommit(session.session_id);
     if (appendedSessionClosed && traceAuthority.ok && traceAuthority.canonicalTraceId.startsWith("ifcready_")) {
@@ -2243,7 +2271,8 @@ export function createCoordinatorApp(
       return;
     }
     // closed 已具完整終態 audit，直接冪等回傳；closing 則交由共用 close helper 依既有
-    // sessionClosing.final_events 數量補寫缺少的 finalReviewEvent，未補齊前不得宣告 closed。
+    // server-owned close checkpoint 數量補寫缺少的 finalReviewEvent，未補齊前不得宣告 closed；
+    // generic event type 永遠不是 close resumption authority。
     if (session.status === "closed") {
       response.json(session);
       return;

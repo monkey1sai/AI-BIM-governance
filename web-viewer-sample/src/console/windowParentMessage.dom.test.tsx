@@ -34,6 +34,8 @@ type AppInternals = {
   _overlayHighlightMany: (f: unknown[]) => unknown;
   _postToParent: (m: Record<string, unknown>, allowedOriginsCache?: ReadonlySet<string>) => void;
   _sendStreamMessage: (m: { event_type: string; payload?: unknown }) => void;
+  _queryLoadingState: (activitySource?: "background" | "user") => void;
+  _reportViewerActivity: () => void;
   _runtimeMutatorBlockReason: (eventType: string) => string | null;
   _appendReviewEvent: (event: string) => void;
   _appendDemoOutgoing: (label: string, payload: unknown) => void;
@@ -438,6 +440,20 @@ describe("C M4 runtime command bridge：central send path classifies UI-local/re
       },
     });
     stubGet.mockRestore();
+  });
+
+  it("does not treat background loading-state probes as viewer activity", () => {
+    const app = operableApp();
+    const privateApp = internals(app);
+    vi.spyOn(AppStream, "sendMessage").mockResolvedValue({});
+    vi.spyOn(privateApp, "_appendDemoOutgoing").mockImplementation(() => {});
+    const activitySpy = vi.spyOn(privateApp, "_reportViewerActivity").mockImplementation(() => {});
+
+    privateApp._queryLoadingState();
+    expect(activitySpy).not.toHaveBeenCalled();
+
+    privateApp._queryLoadingState("user");
+    expect(activitySpy).toHaveBeenCalledTimes(1);
   });
 
   it("primary mutator without viewer lease token is rejected before AppStream.sendMessage", () => {
@@ -5057,7 +5073,11 @@ describe("Important #4（修訂）：visible-stream 完成路徑不得把 pendin
       });
       expect(internals(app).pendingStageUrl).toBeNull();
       expect(internals(app).state.loadingText).toBe("模型載入逾時");
-      expect(sendSpy).toHaveBeenCalledWith(expect.objectContaining({ event_type: "loadingStateQuery" }));
+      expect(sendSpy).toHaveBeenCalledWith(
+        expect.objectContaining({ event_type: "loadingStateQuery" }),
+        undefined,
+        "background",
+      );
     } finally {
       reviewEnv.streamStartTimeoutMs = originalStreamStartTimeoutMs;
     }

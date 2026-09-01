@@ -377,14 +377,14 @@ describe("Coordinator App HTTP & Socket integration for Idle Reclaim", () => {
         created_by: "user_retry",
       });
     const sessionId = createRes.body.session_id as string;
-    const originalAppend = appInstance.eventLog.append.bind(appInstance.eventLog);
+    const originalAppend = appInstance.eventLog.appendServerCloseCheckpoint.bind(appInstance.eventLog);
     let failSessionClosedOnce = true;
-    const appendSpy = vi.spyOn(appInstance.eventLog, "append").mockImplementation((id, type, payload) => {
+    const appendSpy = vi.spyOn(appInstance.eventLog, "appendServerCloseCheckpoint").mockImplementation((id, type, payload, checkpointId) => {
       if (type === "sessionClosed" && failSessionClosedOnce) {
         failSessionClosedOnce = false;
         throw new Error("transient sessionClosed append failure");
       }
-      return originalAppend(id, type, payload);
+      return originalAppend(id, type, payload, checkpointId);
     });
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const t0 = 2_000_000;
@@ -421,14 +421,14 @@ describe("Coordinator App HTTP & Socket integration for Idle Reclaim", () => {
         created_by: "user_retry_closing",
       });
     const sessionId = createRes.body.session_id as string;
-    const originalAppend = appInstance.eventLog.append.bind(appInstance.eventLog);
+    const originalAppend = appInstance.eventLog.appendServerCloseCheckpoint.bind(appInstance.eventLog);
     let failSessionClosingOnce = true;
-    const appendSpy = vi.spyOn(appInstance.eventLog, "append").mockImplementation((id, type, payload) => {
+    const appendSpy = vi.spyOn(appInstance.eventLog, "appendServerCloseCheckpoint").mockImplementation((id, type, payload, checkpointId) => {
       if (type === "sessionClosing" && failSessionClosingOnce) {
         failSessionClosingOnce = false;
         throw new Error("transient sessionClosing append failure");
       }
-      return originalAppend(id, type, payload);
+      return originalAppend(id, type, payload, checkpointId);
     });
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const t0 = 3_000_000;

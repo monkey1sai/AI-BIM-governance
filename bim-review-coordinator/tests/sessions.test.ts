@@ -1050,11 +1050,15 @@ describe("bim-review-coordinator", () => {
       });
 
     // 模擬 sessionClosing 已落盤、但狀態仍停在 closing 的部分完成窗口。
-    app.store.update(created.body.session_id, { status: "closing" });
-    app.eventLog.append(created.body.session_id, "sessionClosing", {
+    const closeCheckpoint = {
+      checkpoint_id: "close_resume_closing_session",
+      expected_final_event_count: 0,
+    };
+    app.store.update(created.body.session_id, { status: "closing", close_checkpoint: closeCheckpoint });
+    app.eventLog.appendServerCloseCheckpoint(created.body.session_id, "sessionClosing", {
       final_events: 0,
       released_viewer_leases: [],
-    });
+    }, closeCheckpoint.checkpoint_id);
 
     const lifecycleTypes = () =>
       app.eventLog
@@ -1071,6 +1075,58 @@ describe("bim-review-coordinator", () => {
     expect(reClose.body.status).toBe("closed");
     expect(lifecycleTypes().filter((type) => type === "sessionClosing")).toHaveLength(1);
     expect(lifecycleTypes()).toEqual([...before, "sessionClosed", "kitInstanceReleased"]);
+  });
+
+  it("does not trust generic event types as server-owned close checkpoints", async () => {
+    const app = makeApp();
+    const created = await request(app.app)
+      .post("/api/review-sessions")
+      .send({
+        project_id: "project_close_checkpoint",
+        model_version_id: "version_close_checkpoint",
+        created_by: "dev_user_close_checkpoint",
+      });
+    const sessionId = created.body.session_id as string;
+    const finalEvent = { type: "annotationFinal", count: 1 };
+
+    for (const event of [
+      { type: "sessionClosing", final_events: 999 },
+      { type: "finalReviewEvent", count: finalEvent.count },
+      { type: "sessionClosed" },
+      { type: "kitInstanceReleased" },
+    ]) {
+      const appended = await request(app.app)
+        .post(`/api/review-sessions/${sessionId}/events`)
+        .send(event);
+      expect(appended.status).toBe(200);
+    }
+
+    const closed = await request(app.app)
+      .post(`/api/review-sessions/${sessionId}/close`)
+      .send({ final_events: [finalEvent] });
+
+    expect(closed.status).toBe(200);
+    expect(closed.body.status).toBe("closed");
+    expect(closed.body.close_checkpoint).toEqual({
+      checkpoint_id: expect.stringMatching(/^close_[A-Za-z0-9_-]+$/),
+      expected_final_event_count: 1,
+    });
+
+    const checkpointId = closed.body.close_checkpoint.checkpoint_id as string;
+    const events = app.eventLog.list(sessionId) as Array<{
+      type: string;
+      payload: unknown;
+      close_checkpoint_id?: string;
+    }>;
+    const authoritative = events.filter((event) => event.close_checkpoint_id === checkpointId);
+    expect(authoritative.map((event) => event.type)).toEqual([
+      "sessionClosing",
+      "finalReviewEvent",
+      "sessionClosed",
+      "kitInstanceReleased",
+    ]);
+    expect(authoritative.find((event) => event.type === "finalReviewEvent")?.payload).toEqual(finalEvent);
+    expect(events.filter((event) => event.type === "sessionClosing")).toHaveLength(2);
   });
 
   it("logs sessionCreated event with review_request_id when provided", async () => {
@@ -1236,9 +1292,9 @@ describe("bim-review-coordinator", () => {
       { type: "annotationFinal", count: 1 },
       { type: "measurementFinal", count: 2 },
     ];
-    const originalAppend = app.eventLog.append.bind(app.eventLog);
+    const originalAppend = app.eventLog.appendServerCloseCheckpoint.bind(app.eventLog);
     let failSecondFinalEventOnce = true;
-    const appendSpy = vi.spyOn(app.eventLog, "append").mockImplementation((id, type, payload) => {
+    const appendSpy = vi.spyOn(app.eventLog, "appendServerCloseCheckpoint").mockImplementation((id, type, payload, checkpointId) => {
       if (
         type === "finalReviewEvent"
         && (payload as { type?: string }).type === "measurementFinal"
@@ -1247,7 +1303,7 @@ describe("bim-review-coordinator", () => {
         failSecondFinalEventOnce = false;
         throw new Error("transient final event append failure");
       }
-      return originalAppend(id, type, payload);
+      return originalAppend(id, type, payload, checkpointId);
     });
 
     try {
