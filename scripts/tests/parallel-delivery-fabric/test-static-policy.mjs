@@ -142,9 +142,12 @@ test('AC-14 — static policy keeps one review-policy source and a closed AC-01.
   assert.match(wrapper, /-p['\"]?,?\s*['\"]?no:cacheprovider/)
 
   const governanceWorkflow = readFileSync(GOVERNANCE_WORKFLOW, 'utf8')
-  assert.match(governanceWorkflow, /Run Parallel Delivery Fabric static policy[\s\S]*matrix\.shard == 'core'[\s\S]*test-parallel-delivery-fabric-static-policy\.ps1/u)
-  assert.match(governanceWorkflow, /Setup pinned Python for governance tests[\s\S]*python-version: '3\.12'/u)
-  assert.match(governanceWorkflow, /Install Parallel Delivery Fabric static-policy dependencies[\s\S]*jsonschema==4\.26\.0 --hash=sha256:/u)
+  const [windowsSuite, linuxBoundary] = governanceWorkflow.split(/\r?\n  new-run-boundary:/u)
+  assert.ok(linuxBoundary)
+  assert.doesNotMatch(windowsSuite, /Run Parallel Delivery Fabric static policy/u)
+  assert.match(linuxBoundary, /Setup pinned Python for NEW_RUN contract tests[\s\S]*python-version: '3\.12'/u)
+  assert.match(linuxBoundary, /Install NEW_RUN test dependencies[\s\S]*jsonschema==4\.26\.0 --hash=sha256:/u)
+  assert.match(linuxBoundary, /Require canonical read-only Linux Git[\s\S]*Run Parallel Delivery Fabric static policy\r?\n\s+if: matrix\.platform == 'linux-positive'[\s\S]*test-parallel-delivery-fabric-static-policy\.ps1/u)
 
   const operatorDoc = readFileSync(OPERATOR_DOC, 'utf8')
   assert.match(operatorDoc, /HELD_EXTERNAL_ACTIVATION/)

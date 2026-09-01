@@ -314,6 +314,22 @@ try {
     Import-Module (Join-Path $repoRoot 'scripts/lib/agent-governance-policy.psm1') -Force
     $governanceWorkflowTree = ConvertFrom-AgentGovernanceYaml -Text $governanceWorkflow -Origin '.github/workflows/agent-governance.yml'
     $suiteJob = $governanceWorkflowTree['jobs']['suite']
+    $newRunBoundaryJob = $governanceWorkflowTree['jobs']['new-run-boundary']
+    $staticPolicySuiteSteps = @($suiteJob['steps'] | Where-Object {
+        ([string]$_['name']) -ceq 'Run Parallel Delivery Fabric static policy'
+    })
+    $staticPolicyBoundarySteps = @($newRunBoundaryJob['steps'] | Where-Object {
+        ([string]$_['name']) -ceq 'Run Parallel Delivery Fabric static policy'
+    })
+    Assert-True ($staticPolicySuiteSteps.Count -eq 0) 'caller-writable Windows suite never runs the trusted-Git-positive Fabric static policy'
+    Assert-True ($staticPolicyBoundarySteps.Count -eq 1) 'trusted Linux boundary runs the Fabric static policy exactly once'
+    $staticPolicyBoundaryStep = $staticPolicyBoundarySteps[0]
+    Assert-True (([string]$staticPolicyBoundaryStep['if']) -ceq "matrix.platform == 'linux-positive'") 'Fabric static policy is restricted to the trusted Linux-positive leg'
+    Assert-True (([string]$staticPolicyBoundaryStep['run']) -match 'scripts/tests/test-parallel-delivery-fabric-static-policy\.ps1') 'trusted Linux boundary executes the real Fabric static-policy suite'
+    $newRunStepNames = @($newRunBoundaryJob['steps'] | ForEach-Object { [string]$_['name'] })
+    $linuxGitAuthorityIndex = [array]::IndexOf($newRunStepNames, 'Require canonical read-only Linux Git')
+    $staticPolicyIndex = [array]::IndexOf($newRunStepNames, 'Run Parallel Delivery Fabric static policy')
+    Assert-True ($linuxGitAuthorityIndex -ge 0 -and $staticPolicyIndex -gt $linuxGitAuthorityIndex) 'Fabric static policy runs only after the Linux Git authority gate'
     Assert-True ($suiteJob.Contains('strategy') -and $suiteJob['strategy'].Contains('matrix') -and $suiteJob['strategy']['matrix'].Contains('shard')) 'agent-governance suite declares its shard matrix'
     Assert-True (([string]$suiteJob['strategy']['fail-fast']) -ceq 'false') 'one failing shard never cancels the others, so a single red leg cannot hide a second failure'
     $declaredShards = @(@($suiteJob['strategy']['matrix']['shard']) | ForEach-Object { [string]$_ })
