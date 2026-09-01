@@ -52,7 +52,7 @@
 ## 2. web-viewer-sample：控制項與 badge（R3）
 
 - [x] 2.1 全部控制項標 `data-action` ∈ {api, nav, disabled}；`disabled` 附合法 `data-prov`（七值）＋`aria-describedby` 原因。驗證：`npx vitest run src/console/unified/buttonInventory.test.tsx`
-  - **owner 裁決 Q3a（2026-09-01）：prov 容器值 carve-out 解除 enum 爭點；`#a1` 一處 disabled 元素 prov/aria 未入 audit 實錄與 `#a4` 零 `[data-action]`（A4 查詢控制項在盤點面外）均以揭露列 known gap（A4 承接於其後續切片）。重勾。**
+  - **owner 裁決 Q3a（2026-09-01）：prov 容器值 carve-out 解除 enum 爭點；`#a1` 一處 disabled 元素 prov/aria 未入 audit 實錄與 `#a4` 零 `[data-action]`（A4 查詢控制項在盤點面外）均以揭露列 known gap（A4 承接於其後續切片）。重勾。**PR #734 review T2 補列（2026-09-01）：另有多處 `onClick` 互動 div 未標 `data-action`（`UnifiedShell.tsx:155,179` logo 導航／語言切換、`WorkspacePage.tsx:156` member 列、`docks.tsx:98,124,172` rule 開關／finding 列／diff 列），`buttonInventory` 的 `checkControlInventory()` 只驗 `if (action)` 內元素故未攔截——與上列 known gap 同族，入 §2 slice debt（補標 `data-action`＋測試改為掃 `onClick`/`cursor:pointer` 全集），本 task 維持 owner 揭露＋入帳處置模式重勾，owner 可否決。****
   - **r2 獨立 verifier 駁回（2026-09-01 fail-closed 改回未勾）：(a) 下方註記「每一個 disabled 元素皆帶 data-prov（七值內）」超出 audit 實錄——`task-2.1-3.2-canonical-dom-audit.md:40` 對 `#a1` 的 disabled:1 未記錄該元素的 data-prov 與 aria 文字；(b) `#a4` 零 `[data-action]` 元素，A4 查詢控制項整批在盤點面之外。待補齊 audit 或 owner 裁決範圍後重勾。**
   - 本機綠，待 181（新增 `buttonInventory.test.tsx` 6/6 tests 全通）
   - **181 canonical-linux 收斂（2026-08-31）**：即時 DOM 查詢 `#home`／`#pipeline`／`#a1`／`#a2`／`#a3`／`#runtime` 六屏的 `[data-action]` 元素，值集合僅見 `{api, nav, disabled}` 三種（無其他值）；每一個 `disabled` 元素皆帶 `data-prov` 與可解析的 `aria-describedby`（更正：`#a1` 一處 disabled 元素的 prov/aria 未入 audit 實錄，「七值內」宣稱超出實錄，見上方駁回註記）（實測文字見下列各屏），無缺欄位案例，見 `task-2.1-3.2-canonical-dom-audit.md`。
