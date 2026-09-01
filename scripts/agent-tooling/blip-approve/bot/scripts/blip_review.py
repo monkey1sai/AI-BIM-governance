@@ -235,8 +235,20 @@ def fetch_pr(token: str, owner: str, name: str, number: int) -> dict:
     if expected_identity[0] != number or any(not isinstance(value, str) or not value for value in expected_identity[1:]):
         raise SystemExit("PR identity is missing or malformed during review pagination")
     total_count, all_reviews, has_next_page, cursor = review_page(pr.get("reviews"), "PR reviews")
+    review_ids = [review.get("id") for review in all_reviews]
+    if any(not isinstance(review_id, str) or not review_id for review_id in review_ids):
+        raise SystemExit("PR reviews contain a missing or malformed review id")
+    seen_review_ids = set(review_ids)
+    if len(seen_review_ids) != len(review_ids):
+        raise SystemExit("PR reviews pagination returned duplicate review ids; refusing incomplete state")
+    if has_next_page and not all_reviews:
+        raise SystemExit("PR reviews pagination made no progress; refusing incomplete state")
     seen_cursors: set[str] = set()
+    page_count = 1
+    max_page_count = max(1, total_count + 1)
     while has_next_page:
+        if page_count >= max_page_count:
+            raise SystemExit("PR reviews pagination exceeded its safe page bound; refusing incomplete state")
         if cursor in seen_cursors:
             raise SystemExit("PR reviews pagination repeated a cursor; refusing incomplete state")
         seen_cursors.add(cursor)
@@ -256,12 +268,18 @@ def fetch_pr(token: str, owner: str, name: str, number: int) -> dict:
         )
         if page_total != total_count:
             raise SystemExit("PR reviews totalCount changed during pagination; refusing incomplete state")
+        if not page_reviews:
+            raise SystemExit("PR reviews pagination made no progress; refusing incomplete state")
+        page_review_ids = [review.get("id") for review in page_reviews]
+        if any(not isinstance(review_id, str) or not review_id for review_id in page_review_ids):
+            raise SystemExit("PR reviews contain a missing or malformed review id")
+        if len(set(page_review_ids)) != len(page_review_ids) or seen_review_ids.intersection(page_review_ids):
+            raise SystemExit("PR reviews pagination returned duplicate review ids; refusing incomplete state")
+        seen_review_ids.update(page_review_ids)
         all_reviews.extend(page_reviews)
-    review_ids = [review.get("id") for review in all_reviews]
-    if any(not isinstance(review_id, str) or not review_id for review_id in review_ids):
-        raise SystemExit("PR reviews contain a missing or malformed review id")
-    if len(set(review_ids)) != len(review_ids):
-        raise SystemExit("PR reviews pagination returned duplicate review ids; refusing incomplete state")
+        page_count += 1
+        if len(all_reviews) > total_count or (has_next_page and len(all_reviews) >= total_count):
+            raise SystemExit("PR reviews pagination exceeded totalCount; refusing mixed review state")
     if len(all_reviews) != total_count:
         raise SystemExit(
             f"PR reviews pagination returned {len(all_reviews)} of {total_count} reviews; refusing incomplete state"
@@ -272,6 +290,32 @@ def fetch_pr(token: str, owner: str, name: str, number: int) -> dict:
         "nodes": all_reviews,
     }
     return pr
+
+
+def review_snapshot(pr: dict) -> dict:
+    normalized = []
+    for review in review_nodes(pr):
+        author = review.get("author") if isinstance(review.get("author"), dict) else {}
+        commit = review.get("commit") if isinstance(review.get("commit"), dict) else {}
+        normalized.append(
+            {
+                "id": review.get("id"),
+                "databaseId": review.get("databaseId"),
+                "state": review.get("state"),
+                "body": review.get("body"),
+                "submittedAt": review.get("submittedAt"),
+                "url": review.get("url"),
+                "commitOid": commit.get("oid"),
+                "authorType": author.get("__typename"),
+                "authorLogin": author.get("login"),
+                "authorDatabaseId": author.get("databaseId"),
+            }
+        )
+    normalized.sort(key=lambda review: str(review["id"]))
+    digest = hashlib.sha256(
+        json.dumps(normalized, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    return {"count": len(normalized), "sha256": digest}
 
 
 def verify_identity(token: str, repo: str) -> dict:
@@ -1230,6 +1274,7 @@ def approval_preflight(
         show_threads(remaining)
         raise SystemExit(f"Refusing to approve: {len(remaining)} unresolved review thread(s) remain")
     reviews = review_nodes(pr)
+    reviews_snapshot = review_snapshot(pr)
     duplicates = [
         review
         for review in reviews
@@ -1289,6 +1334,7 @@ def approval_preflight(
         "repository_safety": repository_safety,
         "policy": policy,
         "checks": checks,
+        "reviews_snapshot": reviews_snapshot,
     }
 
 
@@ -1381,6 +1427,8 @@ def submit_automated_approval(
             raise SystemExit("Approval authority evidence changed during approval preflight")
         if ready["checks"]["sha256"] != first["checks"]["sha256"]:
             raise SystemExit("Required-check evidence changed during approval preflight")
+        if ready["reviews_snapshot"] != first["reviews_snapshot"]:
+            raise SystemExit("Review evidence changed during approval preflight")
 
         capability = verify_approval_capability(
             token=token,

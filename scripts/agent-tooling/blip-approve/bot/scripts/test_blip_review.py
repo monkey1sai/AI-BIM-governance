@@ -478,6 +478,28 @@ class ReviewPaginationTests(unittest.TestCase):
             with self.assertRaisesRegex(SystemExit, "valid endCursor"):
                 blip.fetch_pr("test-token", "monkey1sai", "AI-BIM-governance", PR_NUMBER)
 
+    def test_fetch_pr_rejects_page_without_progress(self) -> None:
+        with patch.object(
+            blip,
+            "graphql",
+            side_effect=[
+                make_review_page(
+                    ["PRR_000"], total_count=2, has_next_page=True, end_cursor="cursor-1"
+                ),
+                make_review_page([], total_count=2, has_next_page=True, end_cursor="cursor-2"),
+            ],
+        ):
+            with self.assertRaisesRegex(SystemExit, "made no progress"):
+                blip.fetch_pr("test-token", "monkey1sai", "AI-BIM-governance", PR_NUMBER)
+
+    def test_review_snapshot_detects_same_count_state_replacement(self) -> None:
+        original = make_approval_pr(reviews=[make_review("reviewer", "COMMENTED", "ok", review_id=1)])
+        replaced = make_approval_pr(
+            reviews=[make_review("reviewer", "CHANGES_REQUESTED", "block", review_id=1)]
+        )
+
+        self.assertNotEqual(blip.review_snapshot(original), blip.review_snapshot(replaced))
+
 
 class CodexThreadFixTests(unittest.TestCase):
     def test_body_is_bounded_and_does_not_copy_thread_text(self) -> None:
@@ -1833,6 +1855,55 @@ class AutomatedApprovalTests(unittest.TestCase):
                     capability_raw=make_capability(token),
                 )
         http_mock.assert_not_called()
+
+    def test_live_approval_never_posts_after_same_count_review_replacement(self) -> None:
+        token = "test-token-not-secret"
+        files = [make_changed_file(".claude/launch.json")]
+        first = make_approval_pr(
+            reviews=[make_review("reviewer", "COMMENTED", "first", review_id=7)], files=files
+        )
+        second = make_approval_pr(
+            reviews=[make_review("reviewer", "COMMENTED", "replaced", review_id=7)], files=files
+        )
+        identity = {
+            "login": blip.DEFAULT_REVIEWER,
+            "id": blip.DEFAULT_REVIEWER_ID,
+            "type": "User",
+            "permission": "write",
+        }
+        with patch.object(blip, "fetch_pr", side_effect=[first, second]), patch.object(
+            blip, "fetch_protection_policy", return_value=make_policy()
+        ), patch.object(
+            blip, "fetch_repository_safety", return_value=make_repo_safety()
+        ), patch.object(
+            blip, "fetch_immutable_pr_snapshot", return_value=make_immutable_snapshot(first)
+        ), patch.object(
+            blip, "verify_identity", return_value=identity
+        ), patch.object(
+            blip, "consume_capability_nonce"
+        ) as consume_mock, patch.object(
+            blip, "http_json"
+        ) as post_mock, self.assertRaisesRegex(
+            SystemExit, "Review evidence changed"
+        ):
+            blip.submit_automated_approval(
+                token=token,
+                owner="monkey1sai",
+                name="AI-BIM-governance",
+                repo=blip.DEFAULT_REPO,
+                pr_number=PR_NUMBER,
+                base=BASE,
+                head=HEAD,
+                review_mode="human_critical",
+                capability_raw=make_capability(
+                    token,
+                    review_mode="human_critical",
+                    human_critical_override=True,
+                ),
+                human_critical_override=True,
+            )
+        consume_mock.assert_not_called()
+        post_mock.assert_not_called()
 
     def test_permission_drift_prevents_post(self) -> None:
         token = "test-token-not-secret"
