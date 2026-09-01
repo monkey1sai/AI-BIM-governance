@@ -406,6 +406,10 @@ try {
     Assert-True ($governanceWorkflow -match 'MERGE_GROUP_BASE_SHA.*github\.event\.merge_group\.base_sha') 'agent-governance reads the immutable merge-group base SHA'
     Assert-True ($governanceWorkflow -match 'merge_group immutable base SHA is missing or invalid') 'agent-governance fails closed when merge-group base identity is unavailable'
     Assert-True ($governanceWorkflow -match 'merge_group subject SHA is missing or invalid') 'agent-governance fails closed when merge-group subject identity is unavailable'
+    Assert-True ($governanceWorkflow -match '(?m)^\s+base_sha:\s*\$\{\{ steps\.plan\.outputs\.base_sha \}\}\s*$') 'agent-governance exports the classifier-bound base SHA to suite jobs'
+    Assert-True ($governanceWorkflow -match 'printf ''base_sha=%s\\n'' "\$base_sha" >> "\$GITHUB_OUTPUT"') 'agent-governance publishes the validated base SHA as a closed step output'
+    $suiteBaseRefMatches = [regex]::Matches($governanceWorkflow, "-BaseRef '\$\{\{ needs\.scope\.outputs\.base_sha \}\}'")
+    Assert-True ($suiteBaseRefMatches.Count -eq 2) 'agent-governance base-sensitive suite gates consume the classifier-bound base SHA'
     Assert-True ($governanceWorkflow -match '--changed-paths0-file agent-governance-changed-paths\.bin') 'agent-governance scope preserves NUL-delimited changed paths through the shared planner file contract'
     Assert-True (-not ($governanceWorkflow -match '< <\(')) 'agent-governance scope does not hide git diff failures inside process substitution'
     Assert-True ($governanceWorkflow -match '(?m)^\s{2}suite:\s*$') 'agent-governance workflow isolates the expensive suite'

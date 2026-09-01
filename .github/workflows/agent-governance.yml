@@ -21,6 +21,7 @@ jobs:
     timeout-minutes: 5
     outputs:
       agent_governance: ${{ steps.plan.outputs.agent_governance }}
+      base_sha: ${{ steps.plan.outputs.base_sha }}
       plan_result: ${{ steps.plan.outputs.plan_result }}
       plan_sha256: ${{ steps.plan.outputs.plan_sha256 }}
     steps:
@@ -46,6 +47,7 @@ jobs:
           MERGE_GROUP_BASE_SHA: ${{ github.event.merge_group.base_sha }}
         run: |
           set -euo pipefail
+          base_sha=''
           planner_args=(
             --manifest scripts/verification-manifest.json
             --json-out verification-plan.json
@@ -73,6 +75,7 @@ jobs:
             planner_args+=(--subject "$SUBJECT_SHA" --full)
           fi
           node scripts/lib/verification-plan.mjs "${planner_args[@]}"
+          printf 'base_sha=%s\n' "$base_sha" >> "$GITHUB_OUTPUT"
 
   suite:
     name: agent-governance suite
@@ -142,7 +145,7 @@ jobs:
       - name: Verify governance policy rules
         if: matrix.shard == 'core'
         shell: pwsh
-        run: pwsh -NoProfile -NonInteractive -File scripts/tests/verify-governance-policy.ps1 -BaseRef '${{ github.event.pull_request.base.sha }}'
+        run: pwsh -NoProfile -NonInteractive -File scripts/tests/verify-governance-policy.ps1 -BaseRef '${{ needs.scope.outputs.base_sha }}'
 
       - name: Run governance policy module behaviour tests
         if: matrix.shard == 'core'
@@ -197,7 +200,7 @@ jobs:
       - name: Verify OpenSpec lifecycle state
         if: matrix.shard == 'openspec'
         shell: pwsh
-        run: pwsh -NoProfile -NonInteractive -File scripts/tests/verify-openspec-lifecycle.ps1 -BaseRef '${{ github.event.pull_request.base.sha }}'
+        run: pwsh -NoProfile -NonInteractive -File scripts/tests/verify-openspec-lifecycle.ps1 -BaseRef '${{ needs.scope.outputs.base_sha }}'
 
       - name: Test OpenSpec archive diff guard
         if: matrix.shard == 'openspec'
