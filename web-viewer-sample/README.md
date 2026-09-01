@@ -134,7 +134,7 @@ The current product surface is the Edge Console / Review Room route. The legacy 
 VITE_SHOW_DEMO_PANEL=true
 ```
 
-The supported runtime diagnostics include session loading, mapping checks, and DataChannel scene commands. The current coordinator Socket.IO contract is limited to `joinSession`, `leaveSession`, `heartbeat`, and `presenceUpdated`; legacy `review-bootstrap`, coordinator `highlightRequest`, and annotation controls are not product contracts and must not be used as acceptance evidence.
+The supported runtime diagnostics include session loading, mapping checks, and DataChannel scene commands. The current coordinator Socket.IO contract includes `joinSession`, `leaveSession`, connectivity-only `heartbeat`, trace-bound `streamReadiness`, trace-bound `userActivity`, `presenceUpdated`, and the `session:idle_countdown`, `session:idle_countdown_cancelled`, and `session:closed` lifecycle events. The production viewer reports `streamReadiness.ready=true` only after WebRTC starts and clears it on stream stop/replacement; it reports key/pointer input and successfully dispatched DataChannel commands through trace-bound `userActivity`. The countdown button uses `recordSessionActivity` and stays visible unless coordinator returns a positive acknowledgement. Legacy `review-bootstrap`, coordinator `highlightRequest`, and annotation controls are not product contracts and must not be used as acceptance evidence.
 
 The coordinator dev console opens the viewer with query params:
 

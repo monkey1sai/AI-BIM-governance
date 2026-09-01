@@ -1,0 +1,16 @@
+{
+  "endpoint": "/api/kit/health",
+  "captured_at_window": {
+    "start": "2026-08-31T11:49:17.302Z",
+    "end": "2026-08-31T11:49:17.370Z"
+  },
+  "status": 200,
+  "body": {
+    "status": "ok",
+    "runtime_mode": "hybrid-web-plane-host-native-kit",
+    "host_local_runtime_allowed": true,
+    "kit_instance_id": "kit_local_001",
+    "kit_control_url": ""
+  },
+  "ms": 5
+}

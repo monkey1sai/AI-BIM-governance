@@ -34,6 +34,7 @@ let stub: http.Server | null = null;
 
 afterEach(async () => {
   if (active) {
+    await active.dispose();
     active.io.close();
     await new Promise<void>((resolve) => active?.server.close(() => resolve()));
     active = null;
@@ -402,6 +403,66 @@ describe("conversion-ready auto-session handoff", () => {
       "active",
       "closed",
     ]);
+  });
+
+  it("emits the IFC-ready close lifecycle after resumed terminal audit work", async () => {
+    const base = await startStreamingStub(READY_RESULT);
+    const logRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bim-review-coordinator-root-trace-retry-"));
+    const structLog = createLogger("coordinator", {
+      logRoot,
+      runId: "run_ifc_ready_root_trace_retry",
+      skipEnvSnapshot: true,
+    });
+    const app = makeApp(base, { sessionIdleTimeoutMs: 50 }, structLog);
+    const ifcReadyJobId = await seedIfcReadyJob(app);
+    const ingest = await request(app.app)
+      .post("/api/internal/conversions/stream_conv_test_001/ingest")
+      .set({ "X-Internal-Token": INTERNAL_TOKEN })
+      .send({});
+    expect(ingest.status).toBe(202);
+    const sessionId = ingest.body.session.session_id as string;
+    const originalAppend = app.eventLog.appendServerCloseCheckpoint.bind(app.eventLog);
+    let failKitReleaseOnce = true;
+    const appendSpy = vi.spyOn(app.eventLog, "appendServerCloseCheckpoint").mockImplementation((id, type, payload, checkpointId) => {
+      if (type === "kitInstanceReleased" && failKitReleaseOnce) {
+        failKitReleaseOnce = false;
+        throw new Error("transient kitInstanceReleased append failure");
+      }
+      return originalAppend(id, type, payload, checkpointId);
+    });
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const t0 = 4_000_000;
+
+    try {
+      app.idleReclaimService.connectPeer(sessionId, "peer-ifc-retry", t0);
+      app.idleReclaimService.tick(t0 + 100);
+      app.idleReclaimService.tick(t0 + 100 + 11_000);
+      expect(app.store.get(sessionId)?.status).toBe("closed");
+      expect(app.idleReclaimService.getSessionState(sessionId)).not.toBeNull();
+
+      app.idleReclaimService.tick(t0 + 100 + 11_001);
+
+      expect(app.idleReclaimService.getSessionState(sessionId)).toBeNull();
+      const lifecycle = fs
+        .readFileSync(structLog.currentFile(), "utf-8")
+        .trim()
+        .split("\n")
+        .filter(Boolean)
+        .map((line) => JSON.parse(line) as Record<string, unknown>)
+        .filter((record) => (
+          record.component === "ifcReadyReviewSession"
+          && (record.data as Record<string, unknown>).phase === "closed"
+        ));
+      expect(lifecycle).toHaveLength(1);
+      expect(lifecycle[0]).toMatchObject({
+        trace_id: ifcReadyJobId,
+        data: { subject_id: sessionId },
+      });
+      expect(errorSpy).toHaveBeenCalled();
+    } finally {
+      appendSpy.mockRestore();
+      errorSpy.mockRestore();
+    }
   });
 
   it("ready ingestion 自動建立綁 USDC + Kit binding 的 session（spec: auto-creates a review session under retired _bim-control）", async () => {

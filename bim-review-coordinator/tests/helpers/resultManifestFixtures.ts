@@ -68,6 +68,8 @@ export function artifactBytes(role: string): Buffer {
 }
 
 export interface ArtifactStoreOverride {
+  /** 覆寫 artifact 實際 bytes；manifest claim 會同步以這份 bytes 計算。 */
+  storedBytes?: Buffer;
   /** fake store 實際回報的 ETag（改它可製造 integrity mismatch）。 */
   storedEtag?: string;
   /** fake store 實際回報的 size（改它可製造 integrity mismatch）。 */
@@ -104,9 +106,9 @@ function declaredArtifact(
   filename: string,
   contentType: string,
   attemptId: string,
+  bytes: Buffer,
   declaredRef?: string,
 ): Record<string, unknown> {
-  const bytes = artifactBytes(role);
   return {
     role,
     ref:
@@ -152,6 +154,7 @@ export function resultManifestDocument(
           filename,
           contentType,
           attemptId,
+          options.artifacts?.[role]?.storedBytes ?? artifactBytes(role),
           options.artifacts?.[role]?.declaredRef,
         ),
       ),
@@ -216,7 +219,7 @@ export function seedResultManifest(
   for (const [role, filename] of RESULT_FIXTURE_ROLES) {
     const override = options.artifacts?.[role] ?? {};
     if (override.omit) continue;
-    const bytes = artifactBytes(role);
+    const bytes = override.storedBytes ?? artifactBytes(role);
     port.seed({
       authority: RESULT_AUTHORITY,
       bucket: RESULT_BUCKET,

@@ -68,6 +68,7 @@ import { deriveOverlayInputs } from "./console/governance/windowOverlayGlue";
 import { HighlightBridge, type FailedElement, type HighlightManyResult, type HighlightResult } from "./console/governance/highlightBridge";
 import { MappingCache } from "./console/governance/mappingCache";
 import { MockViewport } from "./console/viewer/MockViewport";
+import { SessionIdleCountdownBanner } from "./console/viewer/SessionIdleCountdownBanner";
 import "./console/viewer/viewer.css";
 import { evaluateCoverageGate } from "./console/governance/govEndpoints";
 // 統一治理控制台 MVP（W1/W3）：A3 rule-run / A8 issue / BCF 都打 coordinator :8004 的 /api/governance/* proxy。
@@ -150,6 +151,8 @@ interface AppState {
     webrtcLifecycleStatus: "initializing" | "started" | "stopped" | "terminated" | "failed";
     activeStreamEndpoint: StreamEndpoint;
     streamMountKey: number;
+    idleCountdownRemainingSeconds: number | null;
+    idleClosedReason: string | null;
 }
 
 interface StandaloneViewerLease {
@@ -451,6 +454,8 @@ interface StageAttempt {
 const STAGE_AUTHORIZATION_TIMEOUT_MS = 45_000;
 const STAGE_AUTHORIZATION_CANCEL_TIMEOUT_MS = 5_000;
 const STAGE_LOAD_TIMEOUT_MS = 45_000;
+const STREAM_CONFIG_REFRESH_INTERVAL_MS = 3_000;
+const IDLE_ACTIVITY_TRANSPORT_TIMEOUT_MS = 1_000;
 // Let the user-facing proof deadline claim the terminal result first. The
 // SDK slot watchdog runs immediately after it and only fences lifecycle reuse.
 const NATIVE_OPEN_STAGE_SLOT_TIMEOUT_MS = STAGE_LOAD_TIMEOUT_MS + 1;
@@ -883,6 +888,7 @@ export default class App extends React.Component<AppProps, AppState> {
     private verifiedDataChannelAuthority: VerifiedDataChannelAuthority | null = null;
     private reviewSocketEpoch = 0;
     private streamStartTimeoutId: number | null = null;
+    private streamConfigRefreshTimeoutId: number | null = null;
     private loadingStateRetryId: number | null = null;
     private stageLoadTimeoutId: number | null = null;
     private deferredOpenStageId: number | null = null;
@@ -967,6 +973,9 @@ export default class App extends React.Component<AppProps, AppState> {
     private standaloneViewerLeaseClaim: Promise<StandaloneViewerLease | null> | null = null;
     private standaloneViewerLeaseHeartbeatId: number | null = null;
     private componentMounted = false;
+    private idleActivityRequestInFlight = false;
+    private passiveIdleActivityRequestInFlight = false;
+    private lastIdleActivityReportAt = 0;
     private readonly standaloneViewerId = reviewEnv.sourceClientId;
     // private _streamConfig: StreamConfigType = getConfig();
     
@@ -1033,6 +1042,8 @@ export default class App extends React.Component<AppProps, AppState> {
             isLoading: true,
             activeStreamEndpoint,
             streamMountKey: 0,
+            idleCountdownRemainingSeconds: null,
+            idleClosedReason: null,
         }
     }
 
@@ -1047,6 +1058,9 @@ export default class App extends React.Component<AppProps, AppState> {
         // 嚴格 additive：非嵌入（window.parent === window）時 listener 永遠 reject、不送任何訊息，既有單機/直連行為零變更。
         window.addEventListener("message", this._onParentMessage);
         window.addEventListener("load", this._notifyParentViewerReady);
+        window.addEventListener("keydown", this._onViewerUserActivity);
+        window.addEventListener("pointerdown", this._onViewerUserActivity);
+        window.addEventListener("wheel", this._onViewerUserActivity, { passive: true });
         this._notifyParentViewerReady();
 
         if (reviewEnv.hasExplicitEmptySessionId) {
@@ -1064,8 +1078,12 @@ export default class App extends React.Component<AppProps, AppState> {
         this.verifiedDataChannelAuthority = null;
         window.__structLog?.logger.setDeliveryAuthorityProvider(null);
         window.removeEventListener("load", this._notifyParentViewerReady);
+        window.removeEventListener("keydown", this._onViewerUserActivity);
+        window.removeEventListener("pointerdown", this._onViewerUserActivity);
+        window.removeEventListener("wheel", this._onViewerUserActivity);
         this._releaseStandaloneViewerLease();
         this._clearStreamStartTimeout();
+        this._clearStreamConfigRefresh();
         this._clearLoadingStateRetry();
         this._clearStageLoadTimeout();
         this._clearDeferredOpenStage();
@@ -1102,6 +1120,112 @@ export default class App extends React.Component<AppProps, AppState> {
                 ...state.demoIncomingMessages,
             ].slice(0, 20),
         }));
+    }
+
+    private _onViewerUserActivity = (event: Event): void => {
+        const target = event.target;
+        if (target instanceof Element && target.closest('[data-testid="session-idle-keepalive-btn"]')) return;
+        this._reportViewerActivity();
+    };
+
+    private _reportViewerActivity(): void {
+        const authority = this.verifiedDataChannelAuthority;
+        const sessionId = this.state.reviewSessionId;
+        if (
+            !authority
+            || !sessionId
+            || authority.sessionId !== sessionId
+            || authority.connectionGeneration !== this.reviewSocketEpoch
+        ) return;
+        const now = Date.now();
+        if (this.passiveIdleActivityRequestInFlight || now - this.lastIdleActivityReportAt < 5_000) return;
+        this.passiveIdleActivityRequestInFlight = true;
+        void this._recordSessionActivity()
+            .finally(() => {
+                this.passiveIdleActivityRequestInFlight = false;
+            });
+    }
+
+    private async _recordSessionActivity(): Promise<boolean> {
+        const authority = this.verifiedDataChannelAuthority;
+        const sessionId = this.state.reviewSessionId;
+        if (
+            !authority
+            || !sessionId
+            || authority.sessionId !== sessionId
+            || authority.connectionGeneration !== this.reviewSocketEpoch
+        ) return false;
+        if (this.idleActivityRequestInFlight) return false;
+        this.idleActivityRequestInFlight = true;
+        try {
+            let leaseDeadlineId: number | null = null;
+            const leaseAuthority = await Promise.race([
+                this._ensureViewerLogDeliveryAuthority().catch(() => null),
+                new Promise<null>((resolve) => {
+                    leaseDeadlineId = window.setTimeout(() => resolve(null), IDLE_ACTIVITY_TRANSPORT_TIMEOUT_MS);
+                }),
+            ]).finally(() => {
+                if (leaseDeadlineId !== null) window.clearTimeout(leaseDeadlineId);
+            });
+            const currentAuthority = this.verifiedDataChannelAuthority;
+            if (
+                !currentAuthority
+                || currentAuthority !== authority
+                || currentAuthority.connectionGeneration !== this.reviewSocketEpoch
+            ) return false;
+
+            let acknowledged = false;
+            if (leaseAuthority?.reviewSessionId === sessionId) {
+                let activityDeadlineId: number | null = null;
+                const response = await Promise.race([
+                    this.coordinatorClient.recordSessionActivity(
+                        sessionId,
+                        leaseAuthority.leaseId,
+                        leaseAuthority.leaseToken,
+                    ).catch(() => null),
+                    new Promise<null>((resolve) => {
+                        activityDeadlineId = window.setTimeout(
+                            () => resolve(null),
+                            IDLE_ACTIVITY_TRANSPORT_TIMEOUT_MS,
+                        );
+                    }),
+                ]).finally(() => {
+                    if (activityDeadlineId !== null) window.clearTimeout(activityDeadlineId);
+                });
+                acknowledged = response?.ok === true && response.session_id === sessionId;
+            }
+            let fallbackSocket: ReviewSocketClient | null = null;
+            if (!acknowledged) {
+                fallbackSocket = this.reviewSocket;
+                if (fallbackSocket) {
+                    let socketDeadlineId: number | null = null;
+                    acknowledged = await Promise.race([
+                        fallbackSocket.userActivity().catch(() => false),
+                        new Promise<false>((resolve) => {
+                            socketDeadlineId = window.setTimeout(
+                                () => resolve(false),
+                                IDLE_ACTIVITY_TRANSPORT_TIMEOUT_MS,
+                            );
+                        }),
+                    ]).finally(() => {
+                        if (socketDeadlineId !== null) window.clearTimeout(socketDeadlineId);
+                    });
+                }
+            }
+            const finalAuthority = this.verifiedDataChannelAuthority;
+            if (
+                !acknowledged
+                || !finalAuthority
+                || finalAuthority !== authority
+                || finalAuthority.connectionGeneration !== this.reviewSocketEpoch
+                || (fallbackSocket !== null && fallbackSocket !== this.reviewSocket)
+            ) return false;
+            this.lastIdleActivityReportAt = Date.now();
+            if (this.componentMounted) this.setState({ idleCountdownRemainingSeconds: null });
+            return true;
+        } finally {
+            this.idleActivityRequestInFlight = false;
+        }
     }
 
     private _clearA4HandoffReadinessTimer(): void {
@@ -1813,6 +1937,7 @@ export default class App extends React.Component<AppProps, AppState> {
     private _sendStreamMessage(
         message: AppStreamMessageType | StreamMessage,
         nativeOpenStageDispatch?: NativeOpenStageDispatch,
+        activitySource: "background" | "user" = "user",
     ): boolean {
         const onDispatched = nativeOpenStageDispatch?.onDispatched
             || this.stageDispatchCallbacks.get(message);
@@ -1910,6 +2035,7 @@ export default class App extends React.Component<AppProps, AppState> {
             });
         onDispatched?.();
         this._appendDemoOutgoing(outgoing.event_type, { ...outgoing, payload: redactStreamPayload(outgoing.payload) });
+        if (activitySource === "user") this._reportViewerActivity();
         return true;
     }
 
@@ -1942,7 +2068,12 @@ export default class App extends React.Component<AppProps, AppState> {
 
     private _scheduleStreamStartTimeout(): void {
         this._clearStreamStartTimeout();
-        if (StreamConfig.source === "gfn") return;
+        if (
+            StreamConfig.source === "gfn"
+            || !this.state.reviewSessionId
+            || isBlockedLifecycle(this.state.reviewLifecycleStatus)
+            || this.state.latestStreamConfig?.model.status !== "ready"
+        ) return;
         this.streamStartTimeoutId = window.setTimeout(() => {
             this._handleStreamStartTimeout();
         }, reviewEnv.streamStartTimeoutMs);
@@ -1952,6 +2083,104 @@ export default class App extends React.Component<AppProps, AppState> {
         if (this.streamStartTimeoutId === null) return;
         window.clearTimeout(this.streamStartTimeoutId);
         this.streamStartTimeoutId = null;
+    }
+
+    private _scheduleStreamConfigRefresh(sessionId: string): void {
+        this._clearStreamConfigRefresh();
+        if (
+            !this.componentMounted
+            || this.state.reviewSessionId !== sessionId
+            || isBlockedLifecycle(this.state.reviewLifecycleStatus)
+            || this.state.latestStreamConfig?.model.status === "ready"
+        ) return;
+        this.streamConfigRefreshTimeoutId = window.setTimeout(() => {
+            this.streamConfigRefreshTimeoutId = null;
+            void this._refreshStreamConfig(sessionId);
+        }, STREAM_CONFIG_REFRESH_INTERVAL_MS);
+    }
+
+    private async _refreshStreamConfig(sessionId: string): Promise<void> {
+        try {
+            const streamConfig = await this.coordinatorClient.getStreamConfig(sessionId);
+            if (
+                !this.componentMounted
+                || this.state.reviewSessionId !== sessionId
+                || isBlockedLifecycle(this.state.reviewLifecycleStatus)
+                || streamConfig.session_id !== sessionId
+                || streamConfig.trace_id !== this.state.latestStreamConfig?.trace_id
+            ) return;
+
+            const artifacts = streamConfig.artifacts;
+            const usdAssets = this._mergeAssets(
+                this._assetsFromArtifactBindings(streamConfig.artifact_bindings || []),
+                this._assetsFromReviewArtifacts(artifacts),
+            );
+            const expectedStageUrl = expectedStageUrlFromStreamConfig(streamConfig);
+            const expectedStageAsset = expectedStageUrl
+                ? (usdAssets.find((asset) => asset.url === expectedStageUrl)
+                    || { name: displayNameFromStageUrl(expectedStageUrl), url: expectedStageUrl })
+                : null;
+            const mergedUSDAssets = this._mergeAssets(
+                this.state.usdAssets,
+                expectedStageAsset ? [expectedStageAsset, ...usdAssets] : usdAssets,
+            );
+            const selectedUSDAsset = expectedStageAsset
+                ?? usdAssets.find((asset) => asset.url === streamConfig.model.url)
+                ?? usdAssets[0]
+                ?? this.state.selectedUSDAsset;
+            const activeStreamEndpoint = this._resolveStreamEndpoint(streamConfig);
+            const streamEndpointChanged = !sameStreamEndpoint(this.state.activeStreamEndpoint, activeStreamEndpoint);
+            const streamMountKey = streamEndpointChanged
+                ? this._replaceStreamLifecycle()
+                : this.streamGeneration;
+
+            this.setState({
+                reviewLifecycleStatus: streamConfig.lifecycle_status,
+                reviewStatus: `${lifecycleStatusText(streamConfig.lifecycle_status)}，模型狀態：${streamConfig.model.status}`,
+                reviewArtifacts: artifacts,
+                latestStreamConfig: streamConfig,
+                mappingUrl: this._resolveMappingUrl(streamConfig, artifacts),
+                usdAssets: mergedUSDAssets,
+                selectedUSDAsset,
+                expectedStageUrl,
+                loadedStageUrl: streamEndpointChanged ? null : this.state.loadedStageUrl,
+                stageLoadStatus: streamEndpointChanged ? (expectedStageUrl ? "pending" : "unproven") : this.state.stageLoadStatus,
+                isKitReady: streamEndpointChanged ? false : this.state.isKitReady,
+                showStream: streamEndpointChanged ? false : this.state.showStream,
+                webrtcLifecycleStatus: streamEndpointChanged ? "initializing" : this.state.webrtcLifecycleStatus,
+                streamDiagnostic: streamEndpointChanged ? null : this.state.streamDiagnostic,
+                activeStreamEndpoint,
+                streamMountKey,
+            }, () => {
+                if (streamConfig.model.status === "ready" && !isBlockedLifecycle(streamConfig.lifecycle_status)) {
+                    this._scheduleStreamStartTimeout();
+                } else if (streamConfig.model.status === "missing" || streamConfig.model.status === "converting") {
+                    if (!isBlockedLifecycle(streamConfig.lifecycle_status)) {
+                        this._scheduleStreamConfigRefresh(sessionId);
+                    }
+                }
+                if (
+                    !streamEndpointChanged
+                    && this.state.isKitReady
+                    && this.state.selectedUSDAsset
+                    && streamConfig.model.status === "ready"
+                    && !isBlockedLifecycle(streamConfig.lifecycle_status)
+                ) this._openSelectedAsset();
+            });
+        } catch (error) {
+            console.warn("Stream config refresh unavailable.", error);
+            if (
+                this.componentMounted
+                && this.state.reviewSessionId === sessionId
+                && !isBlockedLifecycle(this.state.reviewLifecycleStatus)
+            ) this._scheduleStreamConfigRefresh(sessionId);
+        }
+    }
+
+    private _clearStreamConfigRefresh(): void {
+        if (this.streamConfigRefreshTimeoutId === null) return;
+        window.clearTimeout(this.streamConfigRefreshTimeoutId);
+        this.streamConfigRefreshTimeoutId = null;
     }
 
     private _scheduleLoadingStateQuery(delayMs = 1000): void {
@@ -2024,6 +2253,8 @@ export default class App extends React.Component<AppProps, AppState> {
     }
 
     private _replaceStreamLifecycle(): number {
+        this.reviewSocket?.setStreamReady(false);
+        this.setState({ idleCountdownRemainingSeconds: null });
         // Advance before stopping or remounting AppStream: its callbacks and sendMessage
         // continuations may settle synchronously while React still exposes the old state key.
         this.streamGeneration += 1;
@@ -2540,9 +2771,14 @@ export default class App extends React.Component<AppProps, AppState> {
     }
 
     private _hasRemoteVideoFrame(): boolean {
-        const video = document.getElementById("remote-video") as HTMLVideoElement | null;
-        if (!video) return false;
-        return video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA && video.videoWidth > 0 && video.videoHeight > 0;
+        const videos = ["remote-video", "gfn-stream-player-video"]
+            .map((id) => document.getElementById(id) as HTMLVideoElement | null)
+            .filter((video): video is HTMLVideoElement => video !== null);
+        return videos.some((video) => (
+            video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA
+            && video.videoWidth > 0
+            && video.videoHeight > 0
+        ));
     }
 
     // 統一治理控制台 MVP：治理失敗構件 → HighlightBridge 經既有 DataChannel 在 3D 標紅（client 主動拉）。
@@ -3282,6 +3518,28 @@ export default class App extends React.Component<AppProps, AppState> {
         };
     }
 
+    private _applyAuthoritativeSessionClosed(reason: string): void {
+        this.reviewSocketEpoch += 1;
+        this.verifiedDataChannelAuthority = null;
+        this.reviewSocket?.disconnect();
+        this.reviewSocket = null;
+        const streamMountKey = this._replaceStreamLifecycle();
+        AppStream.stop();
+        this.setState({
+            reviewLifecycleStatus: "closed",
+            idleCountdownRemainingSeconds: null,
+            idleClosedReason: reason,
+            isKitReady: false,
+            isLoading: false,
+            showStream: false,
+            loadingText: "會議已結束",
+            loadedStageUrl: null,
+            stageLoadStatus: "disconnected",
+            webrtcLifecycleStatus: "stopped",
+            streamMountKey,
+        });
+    }
+
     private _connectReviewSocket(sessionId: string, traceId: string): void {
         if (isBlockedLifecycle(this.state.reviewLifecycleStatus)) {
             this._appendReviewEvent(`略過 Socket.IO join：session lifecycle=${this.state.reviewLifecycleStatus}`);
@@ -3292,6 +3550,7 @@ export default class App extends React.Component<AppProps, AppState> {
         this.verifiedDataChannelAuthority = null;
         this.reviewSocket?.disconnect();
         this.reviewSocket = null;
+        this.setState({ idleCountdownRemainingSeconds: null, idleClosedReason: null });
 
         const routeTraceId = traceIdFromSearch(window.location.search);
         const streamConfig = this.state.latestStreamConfig;
@@ -3317,6 +3576,9 @@ export default class App extends React.Component<AppProps, AppState> {
             onStatus: (status) => {
                 if (socketEpoch !== this.reviewSocketEpoch) return;
                 this.verifiedDataChannelAuthority = null;
+                if (status === "disconnected") {
+                    this.setState({ idleCountdownRemainingSeconds: null });
+                }
                 this._appendReviewEvent(`Socket.IO ${status === "connected" ? "已連線，等待 trace 驗證" : "已中斷"}`);
             },
             onAck: (event, acknowledgedCandidate, ack) => {
@@ -3333,6 +3595,31 @@ export default class App extends React.Component<AppProps, AppState> {
                         || payload.trace_id !== this.verifiedDataChannelAuthority.traceId
                     )
                 ) return;
+                if (
+                    event === "session:idle_countdown"
+                    || event === "session:idle_countdown_cancelled"
+                    || event === "session:closed"
+                ) {
+                    const authority = this.verifiedDataChannelAuthority;
+                    if (
+                        !isRecord(payload)
+                        || !authority
+                        || authority.connectionGeneration !== socketEpoch
+                        || payload.session_id !== authority.sessionId
+                        || payload.trace_id !== authority.traceId
+                    ) return;
+                    if (event === "session:idle_countdown") {
+                        const remaining = payload.remaining_seconds;
+                        if (!Number.isInteger(remaining) || (remaining as number) < 0 || (remaining as number) > 10) return;
+                        this.setState({ idleCountdownRemainingSeconds: remaining as number, idleClosedReason: null });
+                    } else if (event === "session:idle_countdown_cancelled") {
+                        this.setState({ idleCountdownRemainingSeconds: null });
+                    } else {
+                        this._applyAuthoritativeSessionClosed(
+                            typeof payload.reason === "string" ? payload.reason : "inactivity",
+                        );
+                    }
+                }
                 this._appendReviewEvent(`收到 Socket.IO 事件：${event}`);
                 this._appendDemoIncoming(`socket:${event}`, payload);
             },
@@ -3351,6 +3638,31 @@ export default class App extends React.Component<AppProps, AppState> {
     ): void {
         if (socketEpoch !== this.reviewSocketEpoch || !this.componentMounted) return;
         if (
+            event === "joinSession"
+            && !ack.ok
+            && ack.lifecycle_status === "closed"
+            && ack.session_id === candidate.sessionId
+            && ack.trace_id === candidate.traceId
+            && candidate.sessionId === this.state.reviewSessionId
+            && candidate.traceId === this.state.latestStreamConfig?.trace_id
+            && candidate.traceId === traceIdFromSearch(window.location.search)
+            && this._harnessRouteAuthorityMatches(candidate.sessionId, candidate.traceId)
+        ) {
+            this._applyAuthoritativeSessionClosed(ack.reason ?? "recovered_close");
+            this._appendReviewEvent("Socket.IO 已同步會議關閉狀態");
+            return;
+        }
+        if (event === "userActivity" && !ack.ok) {
+            const authority = this.verifiedDataChannelAuthority;
+            const matchesJoinedAuthority = authority
+                && authority.connectionGeneration === socketEpoch
+                && authority.sessionId === candidate.sessionId
+                && authority.traceId === candidate.traceId;
+            if (!matchesJoinedAuthority) this.verifiedDataChannelAuthority = null;
+            this._appendReviewEvent("Socket.IO userActivity 未獲接受");
+            return;
+        }
+        if (
             !ack.ok
             || ack.trace_id !== candidate.traceId
             || (ack.session_id !== undefined && ack.session_id !== candidate.sessionId)
@@ -3367,7 +3679,7 @@ export default class App extends React.Component<AppProps, AppState> {
             this.verifiedDataChannelAuthority = null;
             return;
         }
-        if (event === "heartbeat") {
+        if (event === "heartbeat" || event === "streamReadiness" || event === "userActivity") {
             const authority = this.verifiedDataChannelAuthority;
             if (
                 !authority
@@ -3375,6 +3687,7 @@ export default class App extends React.Component<AppProps, AppState> {
                 || authority.sessionId !== candidate.sessionId
                 || authority.traceId !== ack.trace_id
             ) this.verifiedDataChannelAuthority = null;
+            else if (event === "userActivity") this._appendReviewEvent("Socket.IO userActivity 已確認");
             return;
         }
 
@@ -3385,7 +3698,7 @@ export default class App extends React.Component<AppProps, AppState> {
         };
         window.__structLog?.logger.setTraceId(ack.trace_id);
         this._appendReviewEvent(`Socket.IO trace 已驗證：${ack.trace_id}`);
-        if (this.state.webrtcLifecycleStatus === "started") this._queryLoadingState();
+        this._reportStreamReadinessIfFrame();
     }
 
     private _getReadyLoadingText(): string {
@@ -3620,7 +3933,8 @@ export default class App extends React.Component<AppProps, AppState> {
         });
     }
 
-    private async _bootstrapReview(): Promise<void> {
+    private async _bootstrapReview(sessionIdOverride?: string): Promise<void> {
+        this._clearStreamConfigRefresh();
         if (harnessEnabled()) {
             this._bootstrapHarnessSession();
             this._rejectA4HandoffBeforeConsume("harness_handoff_not_authorized");
@@ -3677,11 +3991,12 @@ export default class App extends React.Component<AppProps, AppState> {
                 }
             }
 
-            const loadedSession: ReviewSession | null = reviewEnv.defaultSessionId
-                ? await this.coordinatorClient.getReviewSession(reviewEnv.defaultSessionId)
+            const loadedSessionId = sessionIdOverride || reviewEnv.defaultSessionId;
+            const loadedSession: ReviewSession | null = loadedSessionId
+                ? await this.coordinatorClient.getReviewSession(loadedSessionId)
                 : null;
             let createdSession: ReviewSession | null = null;
-            if (!reviewEnv.defaultSessionId && !reviewRequest?.session_id) {
+            if (!sessionIdOverride && !reviewEnv.defaultSessionId && !reviewRequest?.session_id) {
                 try {
                     createdSession = await this.coordinatorClient.createReviewSession({
                         review_request_id: reviewRequest?.review_request_id,
@@ -3793,7 +4108,13 @@ export default class App extends React.Component<AppProps, AppState> {
                 ],
             }, () => {
                 this._connectReviewSocket(sessionId, streamConfig.trace_id);
-                this._scheduleStreamStartTimeout();
+                if (streamConfig.model.status === "ready" && !isBlockedLifecycle(streamConfig.lifecycle_status)) {
+                    this._scheduleStreamStartTimeout();
+                } else if (streamConfig.model.status === "missing" || streamConfig.model.status === "converting") {
+                    if (!isBlockedLifecycle(streamConfig.lifecycle_status)) {
+                        this._scheduleStreamConfigRefresh(sessionId);
+                    }
+                }
                 if (!streamEndpointChanged && this.state.isKitReady && this.state.selectedUSDAsset && streamConfig.model.status === "ready" && !isBlockedLifecycle(streamConfig.lifecycle_status)) {
                     this._openSelectedAsset();
                 }
@@ -3802,6 +4123,15 @@ export default class App extends React.Component<AppProps, AppState> {
         }
         catch (error) {
             console.warn("Review bootstrap unavailable.", error);
+            if (
+                sessionIdOverride
+                && this.componentMounted
+                && this.state.reviewSessionId === sessionIdOverride
+                && !isBlockedLifecycle(this.state.reviewLifecycleStatus)
+            ) {
+                this._scheduleStreamConfigRefresh(sessionIdOverride);
+                return;
+            }
             this.setState({
                 reviewStatus: "Review coordinator 無法連線",
                 reviewEvents: [...this.state.reviewEvents, "review bootstrap 載入失敗"],
@@ -3912,11 +4242,11 @@ export default class App extends React.Component<AppProps, AppState> {
     * Sends Kit a message to find out what the loading state is.
     * Receives a 'loadingStateResponse' event type
     */
-    private _queryLoadingState(): void {
+    private _queryLoadingState(activitySource: "background" | "user" = "background"): void {
         const message: AppStreamMessageType = {
             ...buildLoadingStateQuery()
         };
-        this._sendStreamMessage(message);
+        this._sendStreamMessage(message, undefined, activitySource);
     }
 
     /**
@@ -3927,6 +4257,16 @@ export default class App extends React.Component<AppProps, AppState> {
      * is not sent. Instead, we wait for the streamed application to send a
      * openedStageResult message.
      */
+    private _reportStreamReadinessIfFrame(streamGeneration = this.streamGeneration): void {
+        if (
+            !this._isCurrentStreamCallback(streamGeneration, "video-ready")
+            || this.state.webrtcLifecycleStatus !== "started"
+            || !this._hasRemoteVideoFrame()
+        ) return;
+        this.reviewSocket?.setStreamReady(true);
+        this._queryLoadingState();
+    }
+
         private _onStreamStarted(streamGeneration = this.streamGeneration): void {
             if (!this._isCurrentStreamCallback(streamGeneration, "started")) return;
         if (this.nativeOpenStagePoisonedGeneration === streamGeneration) {
@@ -3937,7 +4277,10 @@ export default class App extends React.Component<AppProps, AppState> {
             this.nativeOpenStagePoisonedGeneration = null;
             this.nativeOpenStageReplacementStartGeneration = null;
         }
-        this.setState({ streamDiagnostic: null, webrtcLifecycleStatus: "started" });
+        this.setState(
+            { streamDiagnostic: null, webrtcLifecycleStatus: "started" },
+            () => this._reportStreamReadinessIfFrame(streamGeneration),
+        );
             this._clearStreamStartTimeout();
             if (isSpectatorStreamMode()) {
                 // viewer-edge-bim-server-console:spectator 沿用 primary 已載入的 Kit stage,
@@ -4040,6 +4383,7 @@ export default class App extends React.Component<AppProps, AppState> {
         streamGeneration = this.streamGeneration,
     ): void {
         if (!this._isCurrentStreamCallback(streamGeneration, kind)) return;
+        this.reviewSocket?.setStreamReady(false);
         // A stopped AppStreamer lifecycle can still deliver a late callback.
         // Advance synchronously before React remounts so focus/highlight/A4
         // results cannot mutate the terminal disconnect state.
@@ -4088,6 +4432,7 @@ export default class App extends React.Component<AppProps, AppState> {
             loadedStageUrl: null,
             stageLoadStatus: "disconnected",
             webrtcLifecycleStatus: kind,
+            idleCountdownRemainingSeconds: null,
             reviewEvents: [...state.reviewEvents, `WebRTC ${kind}`].slice(-80),
         }));
     }
@@ -5405,7 +5750,10 @@ export default class App extends React.Component<AppProps, AppState> {
             && !reviewEnv.hasExplicitEmptySessionId;
         const demoPanelRight = showDebugAssetPanel ? sidebarWidth : 0;
         const streamReservedWidth = (showDebugAssetPanel ? sidebarWidth : 0) + (showDemoPanel ? demoPanelWidth : 0);
-            const shouldRenderAppStream = !reviewEnv.hasExplicitEmptySessionId && Boolean(this.state.reviewSessionId);
+            const shouldRenderAppStream = !reviewEnv.hasExplicitEmptySessionId
+                && Boolean(this.state.reviewSessionId)
+                && !isBlockedLifecycle(this.state.reviewLifecycleStatus)
+                && this.state.latestStreamConfig?.model.status === "ready";
             const streamRole = isSpectatorStreamMode() ? "spectator" : "primary";
             const renderedStreamGeneration = this.state.streamMountKey;
             const liveFrameObserved = this._hasRemoteVideoFrame();
@@ -5437,6 +5785,14 @@ export default class App extends React.Component<AppProps, AppState> {
                     width: '100%',
                 }}
             >
+                {this.state.reviewSessionId && (
+                    <SessionIdleCountdownBanner
+                        sessionId={this.state.reviewSessionId}
+                        remainingSeconds={this.state.idleCountdownRemainingSeconds}
+                        closedReason={this.state.idleClosedReason}
+                        recordActivity={() => this._recordSessionActivity()}
+                    />
+                )}
                 <div style={{
                             position: 'absolute',
                             height: "100%",
@@ -5595,6 +5951,7 @@ export default class App extends React.Component<AppProps, AppState> {
                     mediaport={this.state.activeStreamEndpoint.mediaport}
                     accessToken={this.props.accessToken}
                     onStarted={() => this._onStreamStarted(renderedStreamGeneration)}
+                    onVideoReady={() => this._reportStreamReadinessIfFrame(renderedStreamGeneration)}
                     onFocus={() => this._handleAppStreamFocus()}
                     onBlur={() => this._handleAppStreamBlur()}
                     style={{
@@ -5643,7 +6000,7 @@ export default class App extends React.Component<AppProps, AppState> {
                             onCreateOrLoadSession={() => void this._bootstrapReview()}
                             onConnectSocket={() => this._connectDemoSocket()}
                             onOpenStage={() => this._openSelectedAsset()}
-                            onLoadingState={() => this._queryLoadingState()}
+                            onLoadingState={() => this._queryLoadingState("user")}
                             onGetChildren={() => this._getChildren()}
                             onFocusWorld={() => this._sendDemoFocusWorld()}
                             onClearHighlight={() => this._sendDemoClearHighlight()}

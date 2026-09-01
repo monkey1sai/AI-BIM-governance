@@ -492,11 +492,13 @@ function New-ConversionRuntimeSignature {
 function New-WebPlaneRuntimeSignature {
     param(
         [Parameter(Mandatory = $true)][string] $A4ConversionArtifactsHostRoot,
-        [Parameter(Mandatory = $true)][string] $A4InternalContextTokenFingerprint
+        [Parameter(Mandatory = $true)][string] $A4InternalContextTokenFingerprint,
+        [Parameter(Mandatory = $true)][AllowEmptyString()][string] $SessionIdleTimeoutMs
     )
     return ([pscustomobject]@{
         a4ConversionArtifactsHostRoot      = $A4ConversionArtifactsHostRoot
         a4InternalContextTokenFingerprint = $A4InternalContextTokenFingerprint
+        sessionIdleTimeoutMs               = $SessionIdleTimeoutMs
     } | ConvertTo-Json -Compress)
 }
 
@@ -786,6 +788,7 @@ $resolvedCoordinatorPort = Resolve-DeployIntValue -Name 'COORDINATOR_PORT' -EnvF
 $runtimeAuthorityTokenExplicitlyConfigured = Test-DeployValueConfigured -Name 'INTERNAL_API_AUTH_TOKEN' -EnvFile $resolvedEnvFile
 $resolvedInternalApiAuthToken = Get-DeployEnvValue -Name 'INTERNAL_API_AUTH_TOKEN' -EnvFile $resolvedEnvFile -Default 'dev-internal-token'
 $resolvedA4InternalContextToken = (Get-DeployEnvValue -Name 'A4_INTERNAL_CONTEXT_TOKEN' -EnvFile $resolvedEnvFile -Default '').Trim()
+$resolvedSessionIdleTimeoutMs = (Get-DeployEnvValue -Name 'SESSION_IDLE_TIMEOUT_MS' -EnvFile $resolvedEnvFile -Default '').Trim()
 if ($resolvedA4InternalContextToken.Length -gt 0 -and ($resolvedA4InternalContextToken.Length -lt 16 -or $resolvedA4InternalContextToken.Length -gt 4096)) {
     throw 'A4_INTERNAL_CONTEXT_TOKEN must be blank (A4 disabled) or between 16 and 4096 characters.'
 }
@@ -869,7 +872,8 @@ $shouldRefreshWebPlane = Test-WebPlaneRefreshRequired `
     -EnvFile $resolvedEnvFile
 $webPlaneRuntimeSignature = New-WebPlaneRuntimeSignature `
     -A4ConversionArtifactsHostRoot $resolvedConversionArtifactsRoot `
-    -A4InternalContextTokenFingerprint $a4InternalContextTokenFingerprint
+    -A4InternalContextTokenFingerprint $a4InternalContextTokenFingerprint `
+    -SessionIdleTimeoutMs $resolvedSessionIdleTimeoutMs
 if (-not (Test-KitRuntimeSignatureMatches -Path $script:webPlaneRuntimeSignaturePath -Expected $webPlaneRuntimeSignature)) {
     $shouldRefreshWebPlane = $true
 }
