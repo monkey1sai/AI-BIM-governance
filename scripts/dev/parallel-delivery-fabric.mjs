@@ -3,6 +3,8 @@ import path from 'node:path'
 import { types } from 'node:util'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
+import { createLocalParallelDeliveryFabric } from '../lib/parallel-delivery-fabric-local.mjs'
+
 const COMMANDS = new Set(['submit', 'advance', 'reconcile', 'drain', 'release', 'inspect'])
 const REPOSITORY_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 const MAX_INPUT = 256 * 1024
@@ -14,13 +16,13 @@ const COMMAND_ID = /^[A-Za-z][A-Za-z0-9._:-]{2,127}$/u
 const PLAN_ID = /^[A-Za-z][A-Za-z0-9._:-]{2,127}$/u
 const SAFE_REASON = /^[A-Za-z0-9_:-]{1,128}$/u
 const FORBIDDEN_KEY = /^(?:__proto__|prototype|constructor)$/iu
-const UNSAFE_KEY = /(?:api[_-]?key|secret|token|password|credential|private|cookie|authorization|bearer|transcript|process[_-]?id|worker[_-]?pid|owner[_-]?sid|host[_-]?name|file[_-]?path|(?:^|[_-])pid$|(?:^|[_-])sid$|absolute[_-]?path|(?:^|[_-])path$|(?:^|[_-])env(?:$|[_-])|^env_)/iu
+const UNSAFE_KEY = /(?:api[_-]?key|secret|token|password|credential|private|cookie|authorization|bearer|transcript|process[_-]?id|worker[_-]?pid|owner[_-]?sid|host[_-]?name|file[_-]?path|(?:^|[_-])pid$|(?:^|[_-])sid$|absolute[_-]?path|(?:^|[_-])env(?:$|[_-])|^env_)/iu
 const UNSAFE_VALUE = /(?:bearer|gh[pousr]_|github_pat_|-----BEGIN|eyJ[A-Za-z0-9_-]{10,}|(?:^|[/:])S-\d+(?:-\d+){2,}|(?:^|:)\d{1,10}$|(?:^|:)[A-Za-z]:[\\/]|^(?:\\\\|\/)|\$env:|%[A-Za-z_][A-Za-z0-9_]*%|(?:^|\b)(?:pid|process(?:[_-]?id)?|worker[_-]?pid|owner[_-]?sid)\s*[:=]\s*\d+|(?:^|\b)(?:host(?:name)?|machine)\s*[:=]\s*[^\s]+|\b(?:DESKTOP|LAPTOP|WIN|HOST)-[A-Za-z0-9-]+\b|^\/)/iu
 const DISPATCH_KEYS = Object.freeze({
   submit: ['command_id', 'plan', 'expected_oid', 'nonce', 'execution', 'effects'],
   advance: ['command_id', 'envelope', 'advance_command', 'admission', 'provider_request'],
   reconcile: ['command_id', 'reconcile_request'],
-  drain: ['command_id', 'end_request'],
+  drain: ['command_id', 'drain_request'],
   release: ['command_id', 'release_request'],
 })
 const SUCCESS_STATUSES = Object.freeze({
@@ -358,10 +360,12 @@ if (typeof process.argv[1] === 'string' && import.meta.url === pathToFileURL(pat
     readStdin: async () => process.stdin,
     write: (line) => process.stdout.write(`${line}\n`),
   }
-  const inert = Object.freeze({
-    dispatch: async () => ({ status: 'HELD', reason: 'SHADOW_ONLY_INERT' }),
-    inspect: async (plan_id) => ({ plan_id, status: 'HELD', reason: 'SHADOW_ONLY_INERT' }),
+  let fabric
+  try { fabric = await createLocalParallelDeliveryFabric({ repositoryRoot: REPOSITORY_ROOT }) } catch {}
+  const unavailable = Object.freeze({
+    dispatch: async () => { throw new Error('fabric_unavailable') },
+    inspect: async () => { throw new Error('fabric_unavailable') },
   })
-  const result = await runParallelDeliveryFabricCli(process.argv.slice(2), { fabric: inert, io, repositoryRoot: REPOSITORY_ROOT })
+  const result = await runParallelDeliveryFabricCli(process.argv.slice(2), { fabric: fabric ?? unavailable, io, repositoryRoot: REPOSITORY_ROOT })
   process.exitCode = result.exitCode
 }

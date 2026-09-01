@@ -2,6 +2,7 @@ import {
   FABRIC_SCHEMA_VERSION,
   canonicalize,
   digestCanonical,
+  normalizeScopeResource,
   parseDeliveryPlan,
 } from './parallel-delivery-fabric-contract.mjs'
 
@@ -9,7 +10,9 @@ export const ZERO_OID = '0'.repeat(40)
 
 const PLAN_REF = 'refs/ai-bim/delivery-plans'
 const LEASE_REF = 'refs/ai-bim/session-leases'
-const REFS = new Set([PLAN_REF, LEASE_REF])
+const QUEUE_REF = 'refs/ai-bim/queue-mappings'
+const JOURNAL_REF = 'refs/ai-bim/command-journal'
+const REFS = new Set([PLAN_REF, LEASE_REF, QUEUE_REF, JOURNAL_REF])
 const WRITER_CAP_V1 = 2
 const OID = /^[0-9a-f]{40}$/u
 const DIGEST = /^[0-9a-f]{64}$/u
@@ -17,7 +20,7 @@ const NONCE = /^[A-Za-z0-9_-]{32,128}$/u
 const OPAQUE_REFERENCE = /^[a-z][a-z0-9_-]*:[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}$/u
 const OPAQUE_IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._:/-]{1,255}$/u
 const TASK2_OPAQUE_ID = /^[A-Za-z0-9][A-Za-z0-9._:/-]{1,127}$/u
-const TASK2_RESOURCE_KEY = /^[a-z][a-z0-9_-]*:[a-z0-9][a-z0-9._:/-]{0,255}$/u
+const TASK2_RESOURCE_KEY = /^[a-z][a-z0-9_-]*:[a-z0-9][a-z0-9._:/\-*?\[\]{},!^]{0,255}$/u
 const TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u
 const RAW_WINDOWS_SID_SEGMENT = /(?:^|[/:])S-\d+(?:-\d+){2,}(?=$|[/:])/iu
 const TERMINAL_PROCESS_ID_SEGMENT = /(?:^|[/:])\d+$/u
@@ -124,10 +127,62 @@ const assertTask2OpaqueId = (value, context) => {
   if (opaqueId.length < 3 || opaqueId.length > 128) fail('invalid_value', `${context}_invalid`)
   return opaqueId
 }
+const resourceCandidateFromKey = (key) => {
+  const separator = key.indexOf(':')
+  if (separator < 1) return undefined
+  const kind = key.slice(0, separator)
+  const value = key.slice(separator + 1)
+  if (kind === 'path') return { kind, path: value }
+  if (kind === 'glob') return { kind, pattern: value }
+  if (kind === 'rename') {
+    const endpoints = value.split(':')
+    return endpoints.length === 2 ? { kind, old_path: endpoints[0], new_path: endpoints[1] } : undefined
+  }
+  if (['shared_contract', 'exported_symbol', 'schema', 'event', 'migration', 'runtime'].includes(kind)) {
+    return { kind, resource_key: value }
+  }
+  return undefined
+}
+
+const normalizedScopeResourceFromKey = (key) => {
+  const candidate = resourceCandidateFromKey(key)
+  if (!candidate) return undefined
+  try {
+    return normalizeScopeResource(candidate)
+  } catch {
+    return undefined
+  }
+}
+
+const scopeResourceKey = (resource) => resource.kind === 'path'
+  ? `path:${resource.path}`
+  : resource.kind === 'glob'
+    ? `glob:${resource.pattern}`
+    : resource.kind === 'rename'
+      ? `rename:${resource.old_path}:${resource.new_path}`
+      : `${resource.kind}:${resource.resource_key}`
+
 const assertTask2ResourceKey = (value, context) => {
-  const resourceKey = assertString(value, context, TASK2_RESOURCE_KEY)
+  const resourceKey = assertString(value, context)
   if (resourceKey.length < 3 || resourceKey.length > 256) fail('invalid_value', `${context}_invalid`)
+  const candidate = resourceCandidateFromKey(resourceKey)
+  const normalized = candidate ? normalizedScopeResourceFromKey(resourceKey) : undefined
+  if (candidate && (!normalized || scopeResourceKey(normalized) !== resourceKey)) {
+    fail('invalid_value', `${context}_invalid`)
+  }
+  if (!candidate && !TASK2_RESOURCE_KEY.test(resourceKey)) fail('invalid_value', `${context}_invalid`)
   return resourceKey
+}
+
+const canonicalScopeFromResourceKeys = (resourceKeys, context) => {
+  const resources = resourceKeys.map((key, index) => {
+    assertTask2ResourceKey(key, `${context}[${index}]`)
+    const resource = normalizedScopeResourceFromKey(key)
+    if (!resource) fail('invalid_value', `${context}[${index}]_unsupported`)
+    return resource
+  })
+  resources.sort((left, right) => scopeResourceKey(left).localeCompare(scopeResourceKey(right)))
+  return resources
 }
 
 const parseTimestamp = (value, context) => {
@@ -200,8 +255,10 @@ export function createGitCasStore({ git, commonDir }) {
 
   const read = async (ref) => {
     const safeRef = refOf(ref)
+    const existsResult = await command(git, commonDir, ['show-ref', '--verify', '--quiet', '--', safeRef])
+    if (existsResult.exitCode === 1) return { ref: safeRef, oid: ZERO_OID, record: null }
+    if (existsResult.exitCode !== 0) fail('git_read_ref_failed', safeRef)
     const refResult = await command(git, commonDir, ['show-ref', '--verify', '--hash', '--', safeRef])
-    if (refResult.exitCode === 1) return { ref: safeRef, oid: ZERO_OID, record: null }
     if (refResult.exitCode !== 0) fail('git_read_ref_failed', safeRef)
     const oid = refResult.stdout.trim()
     assertOid(oid, `${safeRef}_oid`, { zero: false })
@@ -228,8 +285,8 @@ export function createGitCasStore({ git, commonDir }) {
     assertOid(oid, 'written_blob_oid', { zero: false })
     const updateResult = await command(git, commonDir, ['update-ref', '--no-deref', safeRef, oid, expected_oid])
     if (updateResult.exitCode === 0) return { status: 'STORED', ref: safeRef, oid, previous_oid: expected_oid, record }
-    if (updateResult.exitCode !== 1) fail('git_update_ref_failed', safeRef)
     const current = await read(safeRef)
+    if (current.oid === expected_oid) fail('git_update_ref_failed', safeRef)
     return {
       status: 'CONFLICT',
       reason: 'CAS_CONFLICT',
@@ -240,11 +297,46 @@ export function createGitCasStore({ git, commonDir }) {
     }
   }
 
+  const casGuarded = async ({ ref, expected_oid, record, guard_ref, guard_oid }) => {
+    const safeRef = refOf(ref)
+    const safeGuardRef = refOf(guard_ref)
+    if (safeRef === safeGuardRef) fail('invalid_value', 'guard_ref_must_be_distinct')
+    assertOid(expected_oid, 'expected_oid')
+    assertOid(guard_oid, 'guard_oid', { zero: false })
+    validatePersistedRecordForRef(safeRef, record)
+    const serialized = JSON.stringify(canonicalize(record))
+    const blobResult = await command(git, commonDir, ['hash-object', '-w', '--stdin'], serialized)
+    if (blobResult.exitCode !== 0) fail('git_write_blob_failed', safeRef)
+    const oid = blobResult.stdout.trim()
+    assertOid(oid, 'written_blob_oid', { zero: false })
+    const transaction = [
+      'start',
+      `verify ${safeGuardRef} ${guard_oid}`,
+      `update ${safeRef} ${oid} ${expected_oid}`,
+      'prepare',
+      'commit',
+      '',
+    ].join('\n')
+    const updateResult = await command(git, commonDir, ['update-ref', '--no-deref', '--stdin'], transaction)
+    if (updateResult.exitCode === 0) {
+      return { status: 'STORED', ref: safeRef, oid, previous_oid: expected_oid, guard_ref: safeGuardRef, guard_oid, record }
+    }
+    const [current, guard] = await Promise.all([read(safeRef), read(safeGuardRef)])
+    if (guard.oid !== guard_oid) {
+      return { status: 'CONFLICT', reason: 'GUARD_CONFLICT', ref: safeRef, expected_oid, actual_oid: current.oid, guard_ref: safeGuardRef, guard_oid, actual_guard_oid: guard.oid }
+    }
+    if (current.oid !== expected_oid) {
+      return { status: 'CONFLICT', reason: 'CAS_CONFLICT', ref: safeRef, expected_oid, actual_oid: current.oid, current }
+    }
+    fail('git_update_ref_failed', safeRef)
+  }
+
   return Object.freeze({
-    refs: Object.freeze({ deliveryPlans: PLAN_REF, sessionLeases: LEASE_REF }),
+    refs: Object.freeze({ deliveryPlans: PLAN_REF, sessionLeases: LEASE_REF, queueMappings: QUEUE_REF, commandJournal: JOURNAL_REF }),
     commonDirDigest,
     read,
     cas,
+    casGuarded,
   })
 }
 
@@ -321,6 +413,20 @@ export function createPlanRegistry({ store, clock }) {
         current: snapshot,
       }
     }
+    if (snapshot.record !== null) {
+      const currentPlan = parseDeliveryPlan(snapshot.record.plan)
+      if (currentPlan.plan_id === parsedPlan.plan_id) {
+        if (parsedPlan.generation < currentPlan.generation) {
+          return { status: 'CONFLICT', reason: 'PLAN_GENERATION_REGRESSION', ref: PLAN_REF, expected_oid, actual_oid: snapshot.oid }
+        }
+        if (parsedPlan.generation === currentPlan.generation) {
+          if (digestCanonical(parsedPlan) !== digestCanonical(currentPlan)) {
+            return { status: 'CONFLICT', reason: 'PLAN_SAME_GENERATION_REWRITE', ref: PLAN_REF, expected_oid, actual_oid: snapshot.oid }
+          }
+          return { status: 'STORED', ref: PLAN_REF, oid: snapshot.oid, previous_oid: snapshot.oid, record: clone(snapshot.record) }
+        }
+      }
+    }
     const timestamp = nowFrom(clock)
     const record = stamp({
       schema_version: 'delivery-plan-registry/v1',
@@ -345,7 +451,19 @@ export function createPlanRegistry({ store, clock }) {
   }
 
   const inspect = () => readValidatedPlanSnapshot(store)
-  return Object.freeze({ submit, inspect })
+  const validateGeneration = async (input) => {
+    const { plan_id, generation } = validateClosedRequest(input, ['plan_id', 'generation'], 'plan_generation_request')
+    assertTask2OpaqueId(plan_id, 'plan_generation_request.plan_id')
+    if (!Number.isSafeInteger(generation) || generation < 1) fail('invalid_value', 'plan_generation_request_generation_invalid')
+    const snapshot = await readValidatedPlanSnapshot(store)
+    if (snapshot.status === 'HELD_REGISTRY_INTEGRITY') return snapshot
+    if (snapshot.record === null) return { status: 'HELD_EXECUTION_AUTHORITY', reason: 'PLAN_NOT_FOUND' }
+    const parsed = parseDeliveryPlan(snapshot.record.plan)
+    return parsed.plan_id === plan_id && parsed.generation === generation
+      ? { status: 'ACTIVE', plan_id, generation, oid: snapshot.oid }
+      : { status: 'HELD_EXECUTION_AUTHORITY', reason: 'PLAN_GENERATION_MISMATCH' }
+  }
+  return Object.freeze({ submit, validateGeneration, inspect })
 }
 
 const emptyLeaseRegistry = (writerCap) => ({
@@ -353,6 +471,7 @@ const emptyLeaseRegistry = (writerCap) => ({
   generation: 0,
   writer_cap: writerCap,
   leases: {},
+  draining_plans: {},
   used_owner_end_attestations: {},
 })
 
@@ -361,6 +480,7 @@ const validateLeaseRequest = (request, store) => {
     'lease_id', 'plan_id', 'generation', 'task_id', 'provider', 'owner_session',
     'provider_session_id', 'execution_context_id', 'context_attestation_ref', 'common_dir_digest',
     'worktree_id', 'worktree_path_digest', 'branch', 'scope_digest', 'head_sha', 'resource_keys', 'nonce',
+    'expected_plan_oid',
   ], 'lease_request')
   for (const field of [
     'lease_id', 'plan_id', 'task_id', 'owner_session', 'provider_session_id',
@@ -376,12 +496,14 @@ const validateLeaseRequest = (request, store) => {
   assertDigest(request.worktree_path_digest, 'lease_request.worktree_path_digest')
   assertDigest(request.scope_digest, 'lease_request.scope_digest')
   assertOid(request.head_sha, 'lease_request.head_sha', { zero: false })
+  assertOid(request.expected_plan_oid, 'lease_request.expected_plan_oid', { zero: false })
   assertNonce(request.nonce, 'lease_request.nonce')
   if (!Array.isArray(request.resource_keys) || request.resource_keys.length === 0 || request.resource_keys.length > 256) {
     fail('invalid_shape', 'lease_request.resource_keys_invalid')
   }
-  request.resource_keys.forEach((key, index) => assertTask2ResourceKey(key, `lease_request.resource_keys[${index}]`))
+  const requestScope = canonicalScopeFromResourceKeys(request.resource_keys, 'lease_request.resource_keys')
   if (new Set(request.resource_keys).size !== request.resource_keys.length) fail('invalid_value', 'lease_request.resource_keys_duplicate')
+  if (digestCanonical(requestScope) !== request.scope_digest) fail('invalid_value', 'lease_request.scope_binding_invalid')
   if (request.common_dir_digest !== store.commonDirDigest) {
     return { status: 'HELD_TOPOLOGY_UNSUPPORTED', reason: 'COMMON_DIR_MISMATCH' }
   }
@@ -390,13 +512,66 @@ const validateLeaseRequest = (request, store) => {
 
 const resourceHeld = (lease) => lease.state !== 'RELEASED' || lease.retention_state === 'RETAINED_FOR_REVIEW'
 
+const pathOfScopeResource = (resource) => resource.kind === 'path'
+  ? resource.path
+  : resource.kind === 'glob'
+    ? resource.pattern
+    : undefined
+
+const pathHierarchyOverlaps = (left, right) => left === right || left.startsWith(`${right}/`) || right.startsWith(`${left}/`)
+
+const globStaticPrefix = (pattern) => {
+  const wildcard = pattern.search(/[\*?\[\{]/u)
+  if (wildcard < 0) return pattern
+  const slash = pattern.slice(0, wildcard).lastIndexOf('/')
+  return slash < 0 ? '' : pattern.slice(0, slash)
+}
+
+const pathLikeScopeOverlap = (left, right) => {
+  const leftPath = pathOfScopeResource(left)
+  const rightPath = pathOfScopeResource(right)
+  if (left.kind === 'path' && right.kind === 'path') return pathHierarchyOverlaps(leftPath, rightPath)
+  const leftPrefix = left.kind === 'glob' ? globStaticPrefix(leftPath) : leftPath
+  const rightPrefix = right.kind === 'glob' ? globStaticPrefix(rightPath) : rightPath
+  if (!leftPrefix || !rightPrefix) return true
+  return pathHierarchyOverlaps(leftPrefix, rightPrefix)
+}
+
+const conservativeScopeOverlap = (left, right) => {
+  const sharedKinds = new Set(['shared_contract', 'exported_symbol', 'schema', 'event', 'migration', 'runtime'])
+  if (sharedKinds.has(left.kind) || sharedKinds.has(right.kind)) {
+    return left.resource_key === right.resource_key
+  }
+  if (left.kind === 'rename' || right.kind === 'rename') {
+    const leftResources = left.kind === 'rename'
+      ? [left.old_path, left.new_path].map((path) => ({ kind: 'path', path }))
+      : [left]
+    const rightResources = right.kind === 'rename'
+      ? [right.old_path, right.new_path].map((path) => ({ kind: 'path', path }))
+      : [right]
+    return leftResources.some((leftResource) => rightResources.some((rightResource) => pathLikeScopeOverlap(leftResource, rightResource)))
+  }
+  return pathLikeScopeOverlap(left, right)
+}
+
+const resourceKeysConflict = (left, right) => {
+  if (left === right) return true
+  const leftResource = normalizedScopeResourceFromKey(left)
+  const rightResource = normalizedScopeResourceFromKey(right)
+  if (!leftResource || !rightResource) return false
+  return conservativeScopeOverlap(leftResource, rightResource)
+}
+
 const findAdmissionBlocker = (record, request) => {
+  if (Object.hasOwn(record.draining_plans, request.plan_id)) {
+    return { status: 'QUEUED_FOR_LEASE', reason: 'PLAN_DRAINING' }
+  }
   if (record.leases[request.lease_id]) {
     return { status: 'HELD_EXECUTION_AUTHORITY', reason: 'LEASE_ID_ALREADY_BOUND' }
   }
   for (const lease of Object.values(record.leases)) {
     if (!resourceHeld(lease)) continue
-    if (request.resource_keys.some((key) => lease.resource_keys.includes(key))) {
+    if (request.resource_keys.some((key) => lease.resource_keys.some((heldKey) => resourceKeysConflict(key, heldKey)))) {
       return { status: 'QUEUED_FOR_LEASE', reason: 'RESOURCE_CONFLICT' }
     }
     if (lease.branch === request.branch) {
@@ -566,8 +741,9 @@ const validateLeaseRecord = (lease, leaseId) => {
       !Array.isArray(lease.resource_keys) || lease.resource_keys.length === 0 || lease.resource_keys.length > 256) {
     fail('registry_record_invalid', `lease.${leaseId}_shape`)
   }
-  lease.resource_keys.forEach((key, index) => assertTask2ResourceKey(key, `lease.${leaseId}.resource_keys[${index}]`))
+  const leaseScope = canonicalScopeFromResourceKeys(lease.resource_keys, `lease.${leaseId}.resource_keys`)
   if (new Set(lease.resource_keys).size !== lease.resource_keys.length) fail('registry_record_invalid', `lease.${leaseId}_resources`)
+  if (digestCanonical(leaseScope) !== lease.scope_digest) fail('registry_record_invalid', `lease.${leaseId}_scope_binding`)
   parseTimestamp(lease.heartbeat_at, `lease.${leaseId}.heartbeat_at`)
   if (lease.state === 'RELEASED') {
     if (lease.retention_state !== 'RETAINED_FOR_REVIEW' || typeof lease.release_evidence_ref !== 'string' ||
@@ -608,10 +784,10 @@ const validateLeaseRecord = (lease, leaseId) => {
 
 const validateLeaseRegistryRecord = (record, writerCap) => {
   exactKeys(record, [
-    'schema_version', 'generation', 'nonce', 'created_at', 'updated_at', 'writer_cap', 'leases', 'used_owner_end_attestations', 'canonical_digest',
+    'schema_version', 'generation', 'nonce', 'created_at', 'updated_at', 'writer_cap', 'leases', 'draining_plans', 'used_owner_end_attestations', 'canonical_digest',
   ], 'lease_registry')
   if (record.schema_version !== 'session-lease-registry/v1' || record.writer_cap !== writerCap || !isObject(record.leases) ||
-      !isObject(record.used_owner_end_attestations)) fail('registry_record_invalid', 'lease_registry_shape')
+      !isObject(record.draining_plans) || !isObject(record.used_owner_end_attestations)) fail('registry_record_invalid', 'lease_registry_shape')
   assertStamped(record, 'lease_registry')
   const heldBranches = new Set()
   const heldWorktrees = new Set()
@@ -623,6 +799,14 @@ const validateLeaseRegistryRecord = (record, writerCap) => {
     if (heldWorktrees.has(lease.worktree_id)) fail('registry_record_invalid', 'lease_registry_worktree_contention')
     heldBranches.add(lease.branch)
     heldWorktrees.add(lease.worktree_id)
+  }
+  for (const [planId, drain] of Object.entries(record.draining_plans)) {
+    assertTask2OpaqueId(planId, 'lease_registry.draining_plan_key')
+    exactKeys(drain, ['plan_id', 'generation', 'requested_at', 'reason', 'nonce'], 'lease_registry.draining_plan')
+    if (drain.plan_id !== planId || !Number.isSafeInteger(drain.generation) || drain.generation < 1 ||
+        !['handoff', 'failed', 'aborted'].includes(drain.reason)) fail('registry_record_invalid', 'lease_registry_draining_plan')
+    parseTimestamp(drain.requested_at, 'lease_registry.draining_plan.requested_at')
+    assertNonce(drain.nonce, 'lease_registry.draining_plan.nonce')
   }
   for (const [attestationRef, used] of Object.entries(record.used_owner_end_attestations)) {
     assertTask2OpaqueId(attestationRef, 'lease_registry.used_attestation_ref')
@@ -665,16 +849,124 @@ export function parseSessionLeaseRegistry(raw, writerCap = WRITER_CAP_V1) {
   return freezeIJson(parsed)
 }
 
+const validateCommandJournalReceipt = (receipt, journalKey) => {
+  assertNoSensitiveMaterial(receipt, 'command_journal.receipt')
+  assertTask2OpaqueId(journalKey, 'command_journal.receipt_key')
+  const reserved = receipt?.status === 'RESERVED'
+  exactKeys(receipt, reserved
+    ? ['journal_key', 'command_id', 'command_digest', 'attempt_id', 'reservation_id', 'status', 'acquired']
+    : ['journal_key', 'command_id', 'command_digest', 'attempt_id', 'reservation_id', 'status', 'outcome_digest', 'outcome'], 'command_journal.receipt')
+  if (receipt.journal_key !== journalKey || !['RESERVED', 'COMMITTED'].includes(receipt.status)) fail('registry_record_invalid', 'command_journal_receipt_binding')
+  for (const field of ['journal_key', 'command_id', 'attempt_id', 'reservation_id']) assertTask2OpaqueId(receipt[field], `command_journal.receipt.${field}`)
+  assertDigest(receipt.command_digest, 'command_journal.receipt.command_digest')
+  if (reserved) {
+    if (receipt.acquired !== true) fail('registry_record_invalid', 'command_journal_receipt_not_acquired')
+    return receipt
+  }
+  assertDigest(receipt.outcome_digest, 'command_journal.receipt.outcome_digest')
+  if (!isObject(receipt.outcome) || receipt.outcome.command_id !== receipt.command_id ||
+      !['submit', 'advance', 'reconcile', 'drain', 'release'].includes(receipt.outcome.type) ||
+      !['HELD', 'SHADOW_STORED', 'SHADOW_INTENT', 'QUEUED'].includes(receipt.outcome.status) ||
+      typeof receipt.outcome.reason !== 'string' || receipt.outcome.reason.length < 1 || receipt.outcome.reason.length > 128 ||
+      digestCanonical(receipt.outcome) !== receipt.outcome_digest) fail('registry_record_invalid', 'command_journal_outcome_invalid')
+  return receipt
+}
+
+const validateCommandJournalRecord = (record) => {
+  exactKeys(record, ['schema_version', 'generation', 'nonce', 'created_at', 'updated_at', 'receipts', 'canonical_digest'], 'command_journal')
+  if (record.schema_version !== 'command-journal-registry/v1' || !isObject(record.receipts)) fail('registry_record_invalid', 'command_journal_shape')
+  assertStamped(record, 'command_journal')
+  for (const [journalKey, receipt] of Object.entries(record.receipts)) validateCommandJournalReceipt(receipt, journalKey)
+  return record
+}
+
 function validatePersistedRecordForRef(ref, record) {
   if (ref === PLAN_REF) return validatePlanRegistryRecord(record)
-  if (ref === LEASE_REF) {
-    if (isObject(record) && record.schema_version === 'queue-registry/v1') return validateQueueRegistryRecord(record)
-    return validateLeaseRegistryRecord(record, WRITER_CAP_V1)
-  }
+  if (ref === LEASE_REF) return validateLeaseRegistryRecord(record, WRITER_CAP_V1)
+  if (ref === QUEUE_REF) return validateQueueRegistryRecord(record)
+  if (ref === JOURNAL_REF) return validateCommandJournalRecord(record)
   fail('registry_ref_forbidden', String(ref))
 }
 
-const nextRegistryRecord = ({ current, writerCap, nonce, timestamp, leases, usedOwnerEndAttestations }) => {
+const commandJournalSnapshot = async (store) => {
+  const snapshot = await store.read(JOURNAL_REF)
+  if (snapshot.record !== null) validateCommandJournalRecord(snapshot.record)
+  return snapshot
+}
+
+export function createCommandJournal({ store, clock }) {
+  if (!store || typeof store.read !== 'function' || typeof store.cas !== 'function') fail('invalid_port', 'command_journal_store_required')
+  const retryLimit = 8
+  const read = async (input) => {
+    const { journal_key, command_id } = validateClosedRequest(input, ['journal_key', 'command_id'], 'command_journal_read')
+    assertTask2OpaqueId(journal_key, 'command_journal_read.journal_key')
+    assertTask2OpaqueId(command_id, 'command_journal_read.command_id')
+    const snapshot = await commandJournalSnapshot(store)
+    const receipt = snapshot.record?.receipts?.[journal_key] ?? null
+    if (receipt !== null && receipt.command_id !== command_id) fail('command_journal_conflict', 'command_id_mismatch')
+    return receipt === null ? null : clone(receipt)
+  }
+  const reserve = async (input) => {
+    const request = validateClosedRequest(input, ['journal_key', 'command_id', 'command_digest', 'attempt_id', 'reservation_id'], 'command_journal_reserve')
+    const receipt = { ...request, status: 'RESERVED', acquired: true }
+    validateCommandJournalReceipt(receipt, request.journal_key)
+    for (let attempt = 0; attempt < retryLimit; attempt += 1) {
+      const snapshot = await commandJournalSnapshot(store)
+      const existing = snapshot.record?.receipts?.[request.journal_key]
+      if (existing) return clone(existing)
+      const timestamp = nowFrom(clock)
+      const receipts = clone(snapshot.record?.receipts ?? {})
+      receipts[request.journal_key] = receipt
+      const record = stamp({
+        schema_version: 'command-journal-registry/v1',
+        generation: (snapshot.record?.generation ?? 0) + 1,
+        nonce: request.command_digest,
+        created_at: snapshot.record?.created_at ?? timestamp,
+        updated_at: timestamp,
+        receipts,
+      })
+      const result = await store.cas({ ref: JOURNAL_REF, expected_oid: snapshot.oid, record })
+      if (result.status === 'STORED') return clone(receipt)
+    }
+    fail('command_journal_conflict', request.journal_key)
+  }
+  const commit = async (input) => {
+    const request = validateClosedRequest(input, [
+      'journal_key', 'command_id', 'command_digest', 'attempt_id', 'reservation_id', 'outcome_digest', 'outcome',
+    ], 'command_journal_commit')
+    const receipt = { ...request, status: 'COMMITTED' }
+    validateCommandJournalReceipt(receipt, request.journal_key)
+    for (let attempt = 0; attempt < retryLimit; attempt += 1) {
+      const snapshot = await commandJournalSnapshot(store)
+      const reserved = snapshot.record?.receipts?.[request.journal_key]
+      if (!reserved) fail('command_journal_missing', request.journal_key)
+      if (reserved.status === 'COMMITTED') {
+        if (digestCanonical(reserved) === digestCanonical(receipt)) return clone(reserved)
+        fail('command_journal_conflict', request.journal_key)
+      }
+      for (const field of ['journal_key', 'command_id', 'command_digest', 'attempt_id', 'reservation_id']) {
+        if (reserved[field] !== request[field]) fail('command_journal_conflict', field)
+      }
+      const timestamp = nowFrom(clock)
+      const receipts = clone(snapshot.record.receipts)
+      receipts[request.journal_key] = receipt
+      const record = stamp({
+        schema_version: 'command-journal-registry/v1',
+        generation: snapshot.record.generation + 1,
+        nonce: request.command_digest,
+        created_at: snapshot.record.created_at,
+        updated_at: timestamp,
+        receipts,
+      })
+      const result = await store.cas({ ref: JOURNAL_REF, expected_oid: snapshot.oid, record })
+      if (result.status === 'STORED') return clone(receipt)
+    }
+    fail('command_journal_conflict', request.journal_key)
+  }
+  return Object.freeze({ read, reserve, commit })
+}
+
+const nextRegistryRecord = ({ current, writerCap, nonce, timestamp, leases, drainingPlans = clone(current?.draining_plans ?? {}), usedOwnerEndAttestations }) => {
   const record = stamp({
     schema_version: 'session-lease-registry/v1',
     generation: (current?.generation ?? 0) + 1,
@@ -683,6 +975,7 @@ const nextRegistryRecord = ({ current, writerCap, nonce, timestamp, leases, used
     updated_at: timestamp,
     writer_cap: writerCap,
     leases,
+    draining_plans: drainingPlans,
     used_owner_end_attestations: usedOwnerEndAttestations,
   })
   validateLeaseRegistryRecord(record, writerCap)
@@ -845,10 +1138,38 @@ const validateReservedOwnerEndAttestation = (attestation, lease, reservation) =>
 }
 
 export function createLeaseRegistry({ store, clock, writerCap = WRITER_CAP_V1, ownerEndAttestor = undefined, executionEnvelope = undefined }) {
-  if (!store || typeof store.read !== 'function' || typeof store.cas !== 'function') fail('invalid_port', 'lease_store_required')
+  if (!store || typeof store.read !== 'function' || typeof store.cas !== 'function' || typeof store.casGuarded !== 'function') fail('invalid_port', 'lease_store_required')
   if (writerCap !== WRITER_CAP_V1) fail('invalid_value', 'writer_cap_must_equal_two')
 
   const inspect = () => registrySnapshot(store, writerCap)
+
+  const validateActive = async (request) => {
+    const topology = validateLeaseRequest(request, store)
+    if (topology) return topology
+    const planSnapshot = await readValidatedPlanSnapshot(store)
+    if (planSnapshot.status === 'HELD_REGISTRY_INTEGRITY') return planSnapshot
+    if (planSnapshot.record === null || planSnapshot.oid !== request.expected_plan_oid) {
+      return { status: 'HELD_EXECUTION_AUTHORITY', reason: 'PLAN_REGISTRY_CHANGED' }
+    }
+    const activePlan = parseDeliveryPlan(planSnapshot.record.plan)
+    if (activePlan.plan_id !== request.plan_id || activePlan.generation !== request.generation) {
+      return { status: 'HELD_EXECUTION_AUTHORITY', reason: 'PLAN_GENERATION_MISMATCH' }
+    }
+    const snapshot = await registrySnapshot(store, writerCap)
+    if (snapshot.status === 'HELD_REGISTRY_INTEGRITY') return snapshot
+    const lease = snapshot.record.leases[request.lease_id]
+    if (!lease || lease.state !== 'ACTIVE') return { status: 'HELD_EXECUTION_AUTHORITY', reason: 'ACTIVE_LEASE_REQUIRED' }
+    const fields = [
+      'plan_id', 'generation', 'task_id', 'provider', 'owner_session', 'provider_session_id',
+      'execution_context_id', 'context_attestation_ref', 'common_dir_digest', 'worktree_id',
+      'worktree_path_digest', 'branch', 'scope_digest', 'head_sha',
+    ]
+    if (fields.some((field) => lease[field] !== request[field]) ||
+        digestCanonical(lease.resource_keys) !== digestCanonical(request.resource_keys)) {
+      return { status: 'HELD_EXECUTION_AUTHORITY', reason: 'ACTIVE_LEASE_BINDING_MISMATCH' }
+    }
+    return { status: 'ACTIVE', lease_id: lease.lease_id }
+  }
 
   const admit = async (request) => {
     assertNoSensitiveMaterial(request, 'lease_request')
@@ -870,8 +1191,17 @@ export function createLeaseRegistry({ store, clock, writerCap = WRITER_CAP_V1, o
       leases,
       usedOwnerEndAttestations: clone(snapshot.record.used_owner_end_attestations),
     })
-    const result = await store.cas({ ref: LEASE_REF, expected_oid: snapshot.oid, record })
+    const result = await store.casGuarded({
+      ref: LEASE_REF,
+      expected_oid: snapshot.oid,
+      record,
+      guard_ref: PLAN_REF,
+      guard_oid: request.expected_plan_oid,
+    })
     if (result.status === 'STORED') return { ...result, status: 'ADMITTED', lease }
+    if (result.reason === 'GUARD_CONFLICT') {
+      return { status: 'HELD_EXECUTION_AUTHORITY', reason: 'PLAN_REGISTRY_CHANGED' }
+    }
     return queueAfterConflict(result.current, request, writerCap, result)
   }
 
@@ -1000,6 +1330,53 @@ export function createLeaseRegistry({ store, clock, writerCap = WRITER_CAP_V1, o
         })
       },
     }).then((result) => result.status === 'STORED' ? { ...result, status: 'END_REQUESTED' } : result)
+  }
+
+  const drainPlan = async (input) => {
+    const { plan_id, generation, expected_oid, expected_plan_oid, nonce, reason } = validateClosedRequest(input, [
+      'plan_id', 'generation', 'expected_oid', 'expected_plan_oid', 'nonce', 'reason',
+    ], 'plan_drain_request')
+    assertTask2OpaqueId(plan_id, 'plan_drain_request.plan_id')
+    if (!Number.isSafeInteger(generation) || generation < 1) fail('invalid_value', 'plan_drain_request_generation_invalid')
+    assertOid(expected_oid, 'plan_drain_request.expected_oid')
+    assertOid(expected_plan_oid, 'plan_drain_request.expected_plan_oid', { zero: false })
+    assertNonce(nonce, 'plan_drain_request.nonce')
+    if (!['handoff', 'failed', 'aborted'].includes(reason)) fail('invalid_value', 'plan_drain_request_reason_invalid')
+    const snapshot = await registrySnapshot(store, writerCap)
+    if (snapshot.status === 'HELD_REGISTRY_INTEGRITY') return snapshot
+    const stale = validateExpectedSnapshot(snapshot, expected_oid)
+    if (stale) return stale
+    const existing = snapshot.record.draining_plans[plan_id]
+    if (existing) {
+      return existing.generation === generation && existing.nonce === nonce && existing.reason === reason
+        ? { status: 'DRAINING', plan_id, oid: snapshot.oid }
+        : { status: 'HELD_EXECUTION_AUTHORITY', reason: 'PLAN_DRAIN_IMMUTABLE' }
+    }
+    const timestamp = nowFrom(clock)
+    const drainingPlans = clone(snapshot.record.draining_plans)
+    drainingPlans[plan_id] = { plan_id, generation, requested_at: timestamp, reason, nonce }
+    const record = nextRegistryRecord({
+      current: snapshot.record,
+      writerCap,
+      nonce,
+      timestamp,
+      leases: clone(snapshot.record.leases),
+      drainingPlans,
+      usedOwnerEndAttestations: clone(snapshot.record.used_owner_end_attestations),
+    })
+    const result = await store.casGuarded({
+      ref: LEASE_REF,
+      expected_oid,
+      record,
+      guard_ref: PLAN_REF,
+      guard_oid: expected_plan_oid,
+    })
+    if (result.reason === 'GUARD_CONFLICT') {
+      return { status: 'HELD_EXECUTION_AUTHORITY', reason: 'PLAN_REGISTRY_CHANGED' }
+    }
+    return result.status === 'STORED'
+      ? { status: 'DRAINING', plan_id, oid: result.oid }
+      : casConflict(result)
   }
 
   const finalizeReservedRelease = async ({ snapshot, lease, input }) => {
@@ -1351,7 +1728,7 @@ export function createLeaseRegistry({ store, clock, writerCap = WRITER_CAP_V1, o
     }
   }
 
-  return Object.freeze({ inspect, admit, heartbeat, reconcileTimeout, endRequest, release })
+  return Object.freeze({ inspect, admit, validateActive, heartbeat, reconcileTimeout, drainPlan, endRequest, release })
 }
 
 const MANAGED_BRANCH_KEYS = Object.freeze([
@@ -1599,7 +1976,6 @@ export function createManagedBranchRegistry({ store, clock }) {
   return Object.freeze({ inspect, renew })
 }
 
-const QUEUE_REF = LEASE_REF
 const QUEUE_MAPPING_LIMIT = 1024
 const QUEUE_OPERATION_LIMIT = 4096
 const QUEUE_HELD = (reason) => Object.freeze({ status: 'HELD_QUEUE_CAPABILITY', shadow: 'SHADOW_ONLY', reason })
@@ -1618,6 +1994,7 @@ const QUEUE_MAPPING_KEYS = Object.freeze([
   'candidate_id', 'run_id', 'lease_id', 'resource_key', 'workflow', 'candidate_head_sha', 'lease_generation',
   'source_digest', 'observation_digest', 'state',
 ])
+const QUEUE_OPERATION_KEYS = Object.freeze(['nonce', 'consumed_at', 'kind'])
 
 const validateQueueRegistryRecord = (record) => {
   exactKeys(record, [
@@ -1631,7 +2008,31 @@ const validateQueueRegistryRecord = (record) => {
   for (const [key, mapping] of Object.entries(record.queue_mappings)) {
     assertTask2OpaqueId(key, 'queue_mapping_key')
     exactKeys(mapping, QUEUE_MAPPING_KEYS, 'queue_mapping')
+    for (const field of ['candidate_id', 'run_id', 'lease_id', 'resource_key', 'workflow']) {
+      assertTask2OpaqueId(mapping[field], `queue_mapping.${field}`)
+    }
+    assertOid(mapping.candidate_head_sha, 'queue_mapping.candidate_head_sha', { zero: false })
+    if (!Number.isSafeInteger(mapping.lease_generation) || mapping.lease_generation < 1) fail('registry_record_invalid', 'queue_mapping_generation')
+    assertDigest(mapping.source_digest, 'queue_mapping.source_digest')
+    assertDigest(mapping.observation_digest, 'queue_mapping.observation_digest')
+    const suffix = (value) => value.slice(value.indexOf(':') + 1)
+    if (key !== mapping.candidate_id || new Set([suffix(mapping.candidate_id), suffix(mapping.run_id), suffix(mapping.lease_id)]).size !== 1) {
+      fail('registry_record_invalid', 'queue_mapping_tuple_binding')
+    }
     if (!['RESERVED', 'CANCELLED'].includes(mapping.state)) fail('registry_record_invalid', 'queue_mapping_state')
+  }
+  const operationNonces = new Set()
+  const createdAt = Date.parse(record.created_at)
+  const updatedAt = Date.parse(record.updated_at)
+  for (const [operationId, operation] of Object.entries(record.used_queue_operations)) {
+    assertTask2OpaqueId(operationId, 'queue_operation_key')
+    exactKeys(operation, QUEUE_OPERATION_KEYS, 'queue_operation')
+    assertNonce(operation.nonce, 'queue_operation.nonce')
+    const consumedAt = parseTimestamp(operation.consumed_at, 'queue_operation.consumed_at')
+    if (consumedAt < createdAt || consumedAt > updatedAt || !['reserve', 'cancel'].includes(operation.kind) || operationNonces.has(operation.nonce)) {
+      fail('registry_record_invalid', 'queue_operation_binding')
+    }
+    operationNonces.add(operation.nonce)
   }
   return record
 }
@@ -1655,14 +2056,6 @@ const readQueueSnapshot = async (store) => {
       try {
         validateQueueRegistryRecord(snapshot.record)
         return { oid: snapshot.oid, record: snapshot.record, kind: 'queue' }
-      } catch {
-        return QUEUE_HELD('REGISTRY_UNKNOWN')
-      }
-    }
-    if (isObject(snapshot.record) && snapshot.record.schema_version === 'session-lease-registry/v1') {
-      try {
-        validateLeaseRegistryRecord(snapshot.record, WRITER_CAP_V1)
-        return { oid: snapshot.oid, record: snapshot.record, kind: 'lease' }
       } catch {
         return QUEUE_HELD('REGISTRY_UNKNOWN')
       }
@@ -1774,6 +2167,23 @@ const queueFreshnessHeld = (request, clock) => {
   }
 }
 
+const queueLeaseBindingHeld = async (store, request) => {
+  try {
+    const snapshot = await store.read(LEASE_REF)
+    if (!isObject(snapshot) || !OID.test(snapshot.oid) || snapshot.oid === ZERO_OID || snapshot.record === null) return QUEUE_HELD('LEASE_REGISTRY_UNKNOWN')
+    validateLeaseRegistryRecord(snapshot.record, WRITER_CAP_V1)
+    const lease = snapshot.record.leases[request.lease_id]
+    if (!lease || lease.state !== 'ACTIVE') return QUEUE_HELD('LEASE_NOT_ACTIVE')
+    if (lease.generation !== request.lease_generation || lease.head_sha !== request.candidate_head_sha ||
+        !lease.resource_keys.includes(request.resource_key)) {
+      return QUEUE_HELD('TUPLE_DRIFT')
+    }
+    return { guard_oid: snapshot.oid }
+  } catch {
+    return QUEUE_HELD('LEASE_REGISTRY_UNKNOWN')
+  }
+}
+
 export function createQueueMappingRegistry({ store, clock }) {
   if (!store || typeof store.read !== 'function' || typeof store.cas !== 'function') {
     return Object.freeze({
@@ -1788,11 +2198,10 @@ export function createQueueMappingRegistry({ store, clock }) {
     const snapshot = await readQueueSnapshot(store)
     if (snapshot.status === 'HELD_QUEUE_CAPABILITY') return snapshot
     if (snapshot.kind === 'empty' || snapshot.record === null) return QUEUE_HELD('REGISTRY_UNKNOWN')
-    if (snapshot.kind === 'lease') return queueView(snapshot.oid, null)
     return queueView(snapshot.oid, snapshot.record)
   }
 
-  const writeQueue = async (expectedOid, current, request, transform) => {
+  const writeQueue = async (expectedOid, current, request, guardOid, transform) => {
     const timestamp = nowFrom(clock)
     const nextMaps = transform(current)
     if (nextMaps.status === 'HELD_QUEUE_CAPABILITY') return nextMaps
@@ -1805,7 +2214,23 @@ export function createQueueMappingRegistry({ store, clock }) {
       queue_mappings: nextMaps.queue_mappings,
       used_queue_operations: nextMaps.used_queue_operations,
     })
-    const result = await store.cas({ ref: QUEUE_REF, expected_oid: expectedOid, record })
+    let result
+    try {
+      result = guardOid === undefined
+        ? await store.cas({ ref: QUEUE_REF, expected_oid: expectedOid, record })
+        : typeof store.casGuarded === 'function'
+          ? await store.casGuarded({
+            ref: QUEUE_REF,
+            expected_oid: expectedOid,
+            record,
+            guard_ref: LEASE_REF,
+            guard_oid: guardOid,
+          })
+          : QUEUE_HELD('REGISTRY_UNKNOWN')
+    } catch {
+      return QUEUE_HELD('REGISTRY_UNKNOWN')
+    }
+    if (result?.status === 'HELD_QUEUE_CAPABILITY') return result
     if (isObject(result) && result.status === 'STORED') {
       return Object.freeze({
         status: nextMaps.resultStatus,
@@ -1814,7 +2239,7 @@ export function createQueueMappingRegistry({ store, clock }) {
         mapping: nextMaps.mapping,
       })
     }
-    return QUEUE_HELD('REGISTRY_CAS_CONFLICT')
+    return QUEUE_HELD(result?.reason === 'GUARD_CONFLICT' ? 'LEASE_REGISTRY_CHANGED' : 'REGISTRY_CAS_CONFLICT')
   }
 
   const currentQueueState = (snapshot) => {
@@ -1833,6 +2258,8 @@ export function createQueueMappingRegistry({ store, clock }) {
     const request = parsed.request
     const freshness = queueFreshnessHeld(request, clock)
     if (freshness) return freshness
+    const leaseBinding = await queueLeaseBindingHeld(store, request)
+    if (leaseBinding.status === 'HELD_QUEUE_CAPABILITY') return leaseBinding
     if (Number.isSafeInteger(request.queue_mapping_count) && request.queue_mapping_count > QUEUE_MAPPING_LIMIT) {
       return QUEUE_HELD('LEDGER_CAPACITY_EXCEEDED')
     }
@@ -1841,14 +2268,7 @@ export function createQueueMappingRegistry({ store, clock }) {
     }
     const snapshot = await readQueueSnapshot(store)
     if (snapshot.status === 'HELD_QUEUE_CAPABILITY') return snapshot
-    if (snapshot.kind === 'empty' || snapshot.record === null) return QUEUE_HELD('REGISTRY_UNKNOWN')
     if (snapshot.oid !== request.expected_oid) return QUEUE_HELD('REGISTRY_CAS_CONFLICT')
-    if (snapshot.kind === 'lease') {
-      const leases = Object.values(snapshot.record.leases || {})
-      if (leases.length > 0 && !leases.some((lease) => lease.head_sha === request.candidate_head_sha && lease.generation === request.lease_generation)) {
-        return QUEUE_HELD('TUPLE_DRIFT')
-      }
-    }
     const current = currentQueueState(snapshot)
     if (Object.keys(current.used_queue_operations).some((key) => current.used_queue_operations[key]?.nonce === request.nonce)) {
       return QUEUE_HELD('NONCE_REPLAY')
@@ -1857,7 +2277,7 @@ export function createQueueMappingRegistry({ store, clock }) {
     if (Object.keys(current.queue_mappings).length >= QUEUE_MAPPING_LIMIT) return QUEUE_HELD('LEDGER_CAPACITY_EXCEEDED')
     if (Object.keys(current.used_queue_operations).length >= QUEUE_OPERATION_LIMIT) return QUEUE_HELD('LEDGER_CAPACITY_EXCEEDED')
     const mapping = mappingFromRequest(request, 'RESERVED')
-    return writeQueue(request.expected_oid, current, request, (state) => {
+    return writeQueue(request.expected_oid, current, request, leaseBinding.guard_oid, (state) => {
       const queue_mappings = clone(state.queue_mappings)
       const used_queue_operations = clone(state.used_queue_operations)
       queue_mappings[mappingKey(request)] = mapping
@@ -1901,7 +2321,7 @@ export function createQueueMappingRegistry({ store, clock }) {
       if (existing[key] !== expected[key]) return QUEUE_HELD('TUPLE_DRIFT')
     }
     const mapping = mappingFromRequest(request, 'CANCELLED')
-    return writeQueue(request.expected_oid, current, request, (state) => {
+    return writeQueue(request.expected_oid, current, request, undefined, (state) => {
       const queue_mappings = clone(state.queue_mappings)
       const used_queue_operations = clone(state.used_queue_operations)
       queue_mappings[mappingKey(request)] = mapping

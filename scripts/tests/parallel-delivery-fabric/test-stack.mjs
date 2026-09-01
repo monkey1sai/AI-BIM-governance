@@ -184,6 +184,21 @@ test('AC-15 — stack planner treats unavailable direct-stack authority as a typ
   })
 })
 
+test('direct-stack planner rejects not-yet-valid and expired stack envelopes', () => {
+  for (const [name, observed_at] of [
+    ['not-yet-valid', '2026-08-28T11:59:59.999Z'],
+    ['expired', '2026-08-28T13:00:00.000Z'],
+  ]) {
+    const stack = stackEnvelope()
+    const observation = { ...directStackObservation(stack), observed_at }
+    assert.deepEqual(planDirectStackDispatch({ stack, repository: 'acme/bim', observation }), {
+      phase: 'CLOSED',
+      internal_state: 'PREMERGE_EVIDENCE_INVALID',
+      reason: 'stack_envelope_outside_validity_window',
+    }, name)
+  }
+})
+
 test('Task7B P1-A1 — accepted direct-stack operations bind the frozen request and every identity field', () => {
   const stack = stackEnvelope()
   const plan = planDirectStackDispatch({ stack, repository: 'acme/bim', observation: directStackObservation(stack) })
@@ -484,7 +499,7 @@ test('AC-42 — stack keeps only typed internal outcomes and omits retired termi
   assert.equal(Object.hasOwn(held, 'terminal_class'), false)
 })
 
-test('Task7B P1-A0 — stack rejects member-identity drift before the sink and sends a complete frozen CAS packet', () => {
+test('Task7B P1-A0 — stack rejects member drift and keeps the Phase 0 merge sink inert', () => {
   const stack = stackEnvelope()
   const plan = planDirectStackDispatch({ stack, repository: 'acme/bim', observation: directStackObservation(stack) })
   const nodeDrift = directStackObservation(stack)
@@ -509,22 +524,19 @@ test('Task7B P1-A0 — stack rejects member-identity drift before the sink and s
       return { status: 202, operation_uuid: OPERATION_UUID }
     },
   })
-  assert.equal(dispatch.phase, 'MERGING')
-  assert.deepEqual(Object.keys(sent).sort(), [
-    'capability_reference', 'capability_state', 'cas_precondition', 'deployment_target_reference',
-    'expected_head_sha', 'expected_protection_digest', 'expected_state', 'members', 'merge_action',
-    'merge_method', 'ordered_member_vector_digest', 'repository', 'schema_version', 'selected_top_pr',
-    'stack_id', 'trunk_ref', 'trunk_sha',
-  ])
-  assert.equal(sent.members[0].node_id, stack.members[0].node_id)
-  assert.deepEqual(sent.cas_precondition, {
-    stack_id: stack.stack_id,
-    repository: 'acme/bim',
-    trunk_sha: stack.trunk_sha,
-    selected_top_pr: stack.selected_top_pr,
-    expected_head_sha: stack.members.at(-1).head_sha,
-    ordered_member_vector_digest: stack.ordered_member_vector_digest,
-    expected_protection_digest: stack.expected_protection_digest,
-    capability_reference: stack.capability_reference,
+  assert.deepEqual(dispatch, {
+    phase: 'CLOSED',
+    internal_state: 'PREMERGE_AUTHORITY_UNAVAILABLE',
+    reason: 'direct_stack_activation_held',
   })
+  assert.equal(sent, null)
+
+  let asyncCalls = 0
+  const asyncDispatch = dispatchDirectStackMerge({
+    plan,
+    observation: directStackObservation(stack),
+    send: async () => { asyncCalls += 1; return { status: 202 } },
+  })
+  assert.equal(asyncDispatch.internal_state, 'PREMERGE_AUTHORITY_UNAVAILABLE')
+  assert.equal(asyncCalls, 0)
 })

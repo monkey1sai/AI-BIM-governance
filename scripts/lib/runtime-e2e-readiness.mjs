@@ -2,6 +2,8 @@
 // readiness rules can be unit-tested without launching Chrome. Pure functions only —
 // no I/O, no CDP, no module-level side effects.
 
+import { createHash } from "node:crypto";
+
 export function consoleText(events) {
   return events
     .flatMap((event) => event.args || [])
@@ -26,10 +28,13 @@ const STACK_MANIFEST_SCHEMA = "isolated-branch-stack/v1";
 const STACK_MANIFEST_KIND = "isolated_branch_stack";
 const STACK_PROCESS_ROLES = Object.freeze(["coordinator", "governance"]);
 const SHA256_PATTERN = /^[0-9a-f]{64}$/u;
+const MAX_MANIFEST_BYTES = 1024 * 1024;
 
-const samePath = (left, right) => left.toLowerCase() === right.toLowerCase();
-const isInside = (candidate, root, separator) => samePath(candidate, root)
-  || candidate.toLowerCase().startsWith(`${root.toLowerCase()}${separator}`);
+const comparablePath = (value, separator) => separator === "\\" ? value.toLowerCase() : value;
+const samePath = (left, right, separator) => comparablePath(left, separator) === comparablePath(right, separator);
+const isInside = (candidate, root, separator) => samePath(candidate, root, separator)
+  || comparablePath(candidate, separator).startsWith(`${comparablePath(root, separator)}${separator}`);
+const pathSeparatorForRoot = (root) => /^[A-Za-z]:[\\/]/u.test(root) || root.startsWith("\\\\") ? "\\" : root.startsWith("/") ? "/" : undefined;
 
 /**
  * Verify the physical isolated-stack manifest through injected, read-only host ports.
@@ -52,14 +57,26 @@ export async function inspectRealE2EManifest(input = {}, ports = {}) {
     if (typeof resolvedRoot !== "string" || typeof resolvedManifestPath !== "string") {
       return { ready: false, reason: "REAL_E2E_MANIFEST_IDENTITY_INVALID" };
     }
-    const evidenceRoot = `${resolvedRoot}${input.separator ?? "/"}artifacts${input.separator ?? "/"}e2e`;
-    if (!isInside(resolvedManifestPath, evidenceRoot, input.separator ?? "/")) {
+    const separator = pathSeparatorForRoot(resolvedRoot);
+    if (!separator || (input.separator !== undefined && input.separator !== separator)) {
+      return { ready: false, reason: "REAL_E2E_MANIFEST_IDENTITY_INVALID" };
+    }
+    const evidenceRoot = `${resolvedRoot}${separator}artifacts${separator}e2e`;
+    if (!isInside(resolvedManifestPath, evidenceRoot, separator)) {
       return { ready: false, reason: "REAL_E2E_MANIFEST_PATH_MISMATCH" };
     }
 
-    const manifestRecord = await ports.readManifest(resolvedManifestPath);
-    const manifest = manifestRecord?.manifest;
-    const manifestDigest = manifestRecord?.digest;
+    const manifestBytes = await ports.readManifest(resolvedManifestPath);
+    if (!(manifestBytes instanceof Uint8Array) || manifestBytes.byteLength === 0 || manifestBytes.byteLength > MAX_MANIFEST_BYTES) {
+      return { ready: false, reason: "REAL_E2E_MANIFEST_CONTENT_INVALID" };
+    }
+    const manifestDigest = createHash("sha256").update(manifestBytes).digest("hex");
+    let manifest;
+    try {
+      manifest = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(manifestBytes));
+    } catch {
+      return { ready: false, reason: "REAL_E2E_MANIFEST_CONTENT_INVALID" };
+    }
     if (!manifest || typeof manifest !== "object" || Array.isArray(manifest)
       || !SHA256_PATTERN.test(manifestDigest)
       || manifest.schema_version !== STACK_MANIFEST_SCHEMA || manifest.stack_kind !== STACK_MANIFEST_KIND
@@ -70,7 +87,7 @@ export async function inspectRealE2EManifest(input = {}, ports = {}) {
     }
 
     const manifestRoot = await ports.realpath(manifest.worktree_root);
-    if (!samePath(manifestRoot, resolvedRoot)) return { ready: false, reason: "REAL_E2E_MANIFEST_WORKTREE_MISMATCH" };
+    if (!samePath(manifestRoot, resolvedRoot, separator)) return { ready: false, reason: "REAL_E2E_MANIFEST_WORKTREE_MISMATCH" };
     const head = String(await ports.readHead(resolvedRoot)).trim();
     if (!/^[0-9a-f]{40}$/u.test(head) || manifest.head_sha !== head) {
       return { ready: false, reason: "REAL_E2E_MANIFEST_HEAD_MISMATCH" };
@@ -122,7 +139,7 @@ export async function inspectRealE2EManifest(input = {}, ports = {}) {
       ? await ports.realpath(status.manifest_path)
       : "";
     if (!status || status.status !== "active" || status.stack_kind !== STACK_MANIFEST_KIND
-      || !samePath(statusManifestPath, resolvedManifestPath) || !Array.isArray(status.backend)
+      || !samePath(statusManifestPath, resolvedManifestPath, separator) || !Array.isArray(status.backend)
       || status.backend.length !== STACK_PROCESS_ROLES.length
       || status.viewer?.expected_port !== manifest.viewer.expected_port
       || status.viewer?.owner !== "playwright_webserver"

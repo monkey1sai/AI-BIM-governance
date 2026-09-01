@@ -34,7 +34,7 @@ const nodeTree = (nodes) => {
   return Array.from({ length: childCount }, (_unused, index) => nodeTree(index === 0 ? remaining + 1 : 1))
 }
 
-const noCalls = () => ({ admit: 0, advance: 0, commit: 0, endRequest: 0, inspectLeases: 0, inspectPlan: 0, journalRead: 0, journalReserve: 0, planSubmit: 0, preflight: 0, projection: 0, reconcile: 0, release: 0 })
+const noCalls = () => ({ admit: 0, advance: 0, commit: 0, drainPlan: 0, inspectLeases: 0, inspectPlan: 0, journalRead: 0, journalReserve: 0, planSubmit: 0, preflight: 0, projection: 0, reconcile: 0, release: 0, validateActive: 0, validatePlan: 0 })
 const stableJournalKey = (commandId) => `journal:${digestCanonical({ command_id: commandId })}`
 const canonicalAttemptId = 'attempt:123e4567-e89b-42d3-a456-426614174000'
 
@@ -123,12 +123,14 @@ const createPorts = () => {
     },
     planRegistry: {
       submit: async ({ plan }) => { calls.planSubmit += 1; return { status: 'STORED', plan_id: plan.plan_id } },
+      validateGeneration: async ({ plan_id, generation }) => { calls.validatePlan += 1; return { status: 'ACTIVE', plan_id, generation, oid: 'f'.repeat(40) } },
       inspect: async () => { calls.inspectPlan += 1; return { oid: '0'.repeat(40), record: null } },
     },
     leaseRegistry: {
       admit: async ({ lease_id }) => { calls.admit += 1; return { status: 'ADMITTED', lease_id } },
+      validateActive: async ({ lease_id }) => { calls.validateActive += 1; return { status: 'ACTIVE', lease_id } },
       reconcileTimeout: async ({ lease_id }) => { calls.reconcile += 1; return { status: 'ACTIVE', lease_id } },
-      endRequest: async ({ lease_id }) => { calls.endRequest += 1; return { status: 'END_REQUESTED', lease_id } },
+      drainPlan: async ({ plan_id }) => { calls.drainPlan += 1; return { status: 'DRAINING', plan_id } },
       release: async () => { calls.release += 1; return { status: 'RELEASED', oid: 'b'.repeat(40), lease: { lease_id: 'lease:one', state: 'RELEASED', retention_state: 'RETAINED_FOR_REVIEW', release_record: { owner_end_attestation_ref: 'attestation:owner-end-one', owner_end_attestation_digest: 'c'.repeat(64) } } } },
       inspect: async () => { calls.inspectLeases += 1; return { oid: '0'.repeat(40), record: null } },
     },
@@ -151,10 +153,53 @@ const submitCommand = (overrides = {}) => ({
   execution: { level: 'plan_only', side_effect_class: 'CONTROL_METADATA' }, effects: { filesystem: 0, git: 0, network: 0, process: 0, provider: 0, github: 0, deploy: 0, cleanup: 0, promotion: 0 }, ...overrides,
 })
 
-const advanceCommand = (overrides = {}) => ({
-  type: 'advance', command_id: 'command:advance-one', envelope: { provider: 'codex', current_level: 'plan_only' }, advance_command: { next_level: 'implement_local' },
-  admission: { lease_id: 'lease:one' }, provider_request: { command: 'shadow-status', execution_context: { expected: { provider: 'codex' } } }, ...overrides,
+const ADVANCE_RESOURCE_KEYS = Object.freeze(['path:scripts/fabric.mjs'])
+const ADVANCE_SCOPE_DIGEST = digestCanonical([{ kind: 'path', path: 'scripts/fabric.mjs' }])
+const advanceTuple = Object.freeze({
+  plan_id: 'plan:one', generation: 1, task_id: 'task:one', owner_session: 'session:owner-one', provider: 'codex',
+  provider_session_id: 'provider:one', execution_context_id: 'context:one', repo_identity_digest: 'a'.repeat(64),
+  common_dir_digest: 'b'.repeat(64), worktree_id: 'worktree:one', worktree_path_digest: 'c'.repeat(64),
+  branch: 'codex/fabric-one', baseline_sha: 'a'.repeat(40), head_sha: 'b'.repeat(40), scope_digest: ADVANCE_SCOPE_DIGEST,
+  lease_id: 'lease:one',
 })
+
+const advanceCommand = (overrides = {}) => {
+  const base = {
+    type: 'advance', command_id: 'command:advance-one',
+    envelope: { ...advanceTuple, current_level: 'plan_only' },
+    advance_command: { next_level: 'implement_local', next_envelope: { ...advanceTuple, current_level: 'implement_local' } },
+    admission: {
+      ...advanceTuple, context_attestation_ref: 'attestation:one', resource_keys: [...ADVANCE_RESOURCE_KEYS], nonce: 'n'.repeat(32),
+    },
+    provider_request: {
+      command: 'shadow-status',
+      execution_context: { expected: { ...advanceTuple }, attestation: { attestation_ref: 'attestation:one' } },
+    },
+  }
+  return {
+    ...base,
+    ...overrides,
+    envelope: { ...base.envelope, ...(overrides.envelope ?? {}) },
+    advance_command: {
+      ...base.advance_command,
+      ...(overrides.advance_command ?? {}),
+      next_envelope: {
+        ...base.advance_command.next_envelope,
+        current_level: overrides.advance_command?.next_level ?? base.advance_command.next_level,
+        ...(overrides.advance_command?.next_envelope ?? {}),
+      },
+    },
+    admission: { ...base.admission, ...(overrides.admission ?? {}) },
+    provider_request: {
+      ...base.provider_request,
+      ...(overrides.provider_request ?? {}),
+      execution_context: {
+        ...base.provider_request.execution_context,
+        ...(overrides.provider_request?.execution_context ?? {}),
+      },
+    },
+  }
+}
 
 const reconcileCommand = (overrides = {}) => ({
   type: 'reconcile', command_id: 'command:reconcile-one',
@@ -163,7 +208,7 @@ const reconcileCommand = (overrides = {}) => ({
 
 const drainCommand = (overrides = {}) => ({
   type: 'drain', command_id: 'command:drain-one',
-  end_request: { lease_id: 'lease:one', expected_oid: 'a'.repeat(40), nonce: 'nonce-drain-one', reason: 'handoff', handoff_or_candidate_reference: 'candidate:one' }, ...overrides,
+  drain_request: { plan_id: 'plan:one', generation: 1, expected_oid: 'a'.repeat(40), nonce: 'n'.repeat(32), reason: 'handoff' }, ...overrides,
 })
 
 const releaseCommand = (overrides = {}) => ({
@@ -189,7 +234,7 @@ test('unknown and secret-shaped commands fail closed before every downstream por
 
   assert.deepEqual(unknown, { command_id: 'command:unknown', type: 'merge', status: 'HELD', reason: 'COMMAND_TYPE_INVALID' })
   assert.deepEqual(secret, { command_id: undefined, type: undefined, status: 'HELD', reason: 'COMMAND_INPUT_UNSAFE' })
-  assert.deepEqual(calls, { admit: 0, advance: 0, commit: 0, endRequest: 0, inspectLeases: 0, inspectPlan: 0, journalRead: 0, journalReserve: 0, planSubmit: 0, preflight: 0, projection: 0, reconcile: 0, release: 0 })
+  assert.deepEqual(calls, noCalls())
 })
 
 const assertSnapshotInputAccepted = async (command, label) => {
@@ -378,9 +423,9 @@ test('AC-13 — legal plan_only writes only control metadata while every other e
   assert.deepEqual(extraEffect, { command_id: 'command:submit-extra-effect', type: 'submit', status: 'HELD', reason: 'PLAN_ONLY_REQUIRED' })
   assert.equal(calls.planSubmit, 1)
   assert.equal(calls.commit, 1)
-  assert.deepEqual(calls, { admit: 0, advance: 0, commit: 1, endRequest: 0, inspectLeases: 0, inspectPlan: 0, journalRead: 3, journalReserve: 1, planSubmit: 1, preflight: 0, projection: 0, reconcile: 0, release: 0 })
+  assert.deepEqual(calls, { ...noCalls(), commit: 1, journalRead: 3, journalReserve: 1, planSubmit: 1 })
   for (const fixture of [nonMetadataFixture, extraEffectFixture]) {
-    assert.deepEqual(fixture.calls, { admit: 0, advance: 0, commit: 0, endRequest: 0, inspectLeases: 0, inspectPlan: 0, journalRead: 0, journalReserve: 0, planSubmit: 0, preflight: 0, projection: 0, reconcile: 0, release: 0 })
+    assert.deepEqual(fixture.calls, noCalls())
   }
 })
 
@@ -525,6 +570,46 @@ test('advance stops scope, head, and evidence drift before admission or prefligh
   assert.equal(fixture.calls.preflight, 0)
 })
 
+test('advance rejects mixed plan, lease, provider, and context bindings before every semantic port', async () => {
+  const cases = [
+    ['transition plan', { advance_command: { next_level: 'implement_local', next_envelope: { plan_id: 'plan:other' } } }],
+    ['admission lease', { admission: { lease_id: 'lease:other' } }],
+    ['underdeclared resources', { admission: { resource_keys: ['path:docs/unrelated.mjs'] } }],
+    ['provider head', { provider_request: { execution_context: { expected: { ...advanceTuple, head_sha: 'c'.repeat(40) } } } }],
+    ['context attestation', { admission: { context_attestation_ref: 'attestation:other' } }],
+  ]
+  for (const [label, patch] of cases) {
+    const fixture = createPorts()
+    const result = await createParallelDeliveryFabric(fixture.ports).dispatch(advanceCommand({
+      command_id: `command:mixed-${label.replace(' ', '-')}`,
+      ...patch,
+    }))
+    assert.deepEqual(result, {
+      command_id: `command:mixed-${label.replace(' ', '-')}`,
+      type: 'advance', status: 'HELD', reason: 'ADVANCE_BINDING_MISMATCH',
+    }, label)
+    assert.equal(fixture.calls.advance, 0, label)
+    assert.equal(fixture.calls.preflight, 0, label)
+    assert.equal(fixture.calls.admit, 0, label)
+    assert.equal(fixture.calls.validateActive, 0, label)
+  }
+})
+
+test('advance rejects an ACTIVE plan response with a zero OID before execution, provider, or lease ports', async () => {
+  const fixture = createPorts()
+  fixture.ports.planRegistry.validateGeneration = async ({ plan_id, generation }) => {
+    fixture.calls.validatePlan += 1
+    return { status: 'ACTIVE', plan_id, generation, oid: '0'.repeat(40) }
+  }
+  const result = await createParallelDeliveryFabric(fixture.ports).dispatch(advanceCommand({ command_id: 'command:zero-plan-oid' }))
+  assert.deepEqual(result, {
+    command_id: 'command:zero-plan-oid', type: 'advance', status: 'HELD', reason: 'PLAN_GENERATION_UNAVAILABLE',
+  })
+  assert.equal(fixture.calls.advance, 0)
+  assert.equal(fixture.calls.preflight, 0)
+  assert.equal(fixture.calls.admit, 0)
+})
+
 test('advance keeps cap conflict and adapter context failure as typed non-live outcomes', async () => {
   const queuedFixture = createPorts()
   queuedFixture.ports.leaseRegistry.admit = async () => { queuedFixture.calls.admit += 1; return { status: 'QUEUED_FOR_LEASE', reason: 'WRITER_CAPACITY' } }
@@ -536,7 +621,8 @@ test('advance keeps cap conflict and adapter context failure as typed non-live o
 
   assert.deepEqual(queued, { command_id: 'command:advance-one', type: 'advance', status: 'QUEUED', reason: 'WRITER_CAPACITY' })
   assert.deepEqual(context, { command_id: 'command:advance-context', type: 'advance', status: 'HELD', reason: 'context_unverified' })
-  assert.equal(queuedFixture.calls.preflight, 0)
+  assert.equal(queuedFixture.calls.preflight, 1)
+  assert.equal(contextFixture.calls.admit, 0)
 })
 
 test('AC-14 — submit_delivery is a fixed Task9 hold and candidate delivery capabilities never reach a sink', async () => {
@@ -564,7 +650,7 @@ test('AC-14 — submit_delivery is a fixed Task9 hold and candidate delivery cap
     advance_command: { next_level: 'submit_delivery', merge_credential: 'candidate-supplied' },
   }))
   assert.equal(credential.status, 'HELD')
-  assert.deepEqual(credentialFixture.calls, { admit: 0, advance: 0, commit: 0, endRequest: 0, inspectLeases: 0, inspectPlan: 0, journalRead: 0, journalReserve: 0, planSubmit: 0, preflight: 0, projection: 0, reconcile: 0, release: 0 })
+  assert.deepEqual(credentialFixture.calls, noCalls())
 
   const sinkFixture = createPorts()
   const sinks = { approve: 0, credential: 0, deploy: 0, merge: 0, push: 0 }
@@ -583,7 +669,7 @@ test('AC-14 — submit_delivery is a fixed Task9 hold and candidate delivery cap
   }))
   assert.equal(injectedPorts.status, 'HELD')
   assert.deepEqual(sinks, { approve: 0, credential: 0, deploy: 0, merge: 0, push: 0 })
-  assert.deepEqual(sinkFixture.calls, { admit: 0, advance: 0, commit: 0, endRequest: 0, inspectLeases: 0, inspectPlan: 0, journalRead: 0, journalReserve: 0, planSubmit: 0, preflight: 0, projection: 0, reconcile: 0, release: 0 })
+  assert.deepEqual(sinkFixture.calls, noCalls())
 })
 
 test('advance rejects an unknown next level before admission or preflight', async () => {
@@ -625,18 +711,18 @@ test('reconcile cannot release and a degraded projection fails closed', async ()
   assert.equal(releasedFixture.calls.release, 0)
 })
 
-test('drain only requests end; release stays held until a base-owned OwnerEndAttestor descriptor exists; inspect is read-only', async () => {
+test('drain persists a plan-level freeze; release stays held until a base-owned OwnerEndAttestor descriptor exists; inspect is read-only', async () => {
   const fixture = createPorts()
   const fabric = createParallelDeliveryFabric(fixture.ports)
   const drain = await fabric.dispatch(drainCommand())
   const release = await fabric.dispatch(releaseCommand())
   const snapshot = await fabric.inspect('plan:one')
 
-  assert.deepEqual(drain, { command_id: 'command:drain-one', type: 'drain', status: 'SHADOW_STORED', reason: 'END_REQUESTED' })
+  assert.deepEqual(drain, { command_id: 'command:drain-one', type: 'drain', status: 'SHADOW_STORED', reason: 'PLAN_DRAINING' })
   assert.deepEqual(release, { command_id: 'command:release-one', type: 'release', status: 'HELD', reason: 'RELEASE_AUTHORITY_UNAVAILABLE' })
   assert.deepEqual(snapshot, { plan_id: 'plan:one', plan: { oid: '0'.repeat(40), record: null }, leases: { oid: '0'.repeat(40), record: null } })
   assert.equal(Object.isFrozen(snapshot), true)
-  assert.equal(fixture.calls.endRequest, 1)
+  assert.equal(fixture.calls.drainPlan, 1)
   assert.equal(fixture.calls.release, 0)
   assert.equal(fixture.calls.projection, 0)
 })

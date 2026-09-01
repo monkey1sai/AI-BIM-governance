@@ -270,7 +270,12 @@ const globMatches = (pattern, path) => {
   return unknown ? null : false
 }
 
-const staticPrefix = (pattern) => pattern.split(/[\*?\[\{]/u, 1)[0].replace(/\/[^/]*$/u, '')
+const staticPrefix = (pattern) => {
+  const wildcard = pattern.search(/[\*?\[\{]/u)
+  if (wildcard < 0) return pattern
+  const slash = pattern.slice(0, wildcard).lastIndexOf('/')
+  return slash < 0 ? '' : pattern.slice(0, slash)
+}
 const pathOverlaps = (left, right) => left === right || left.startsWith(`${right}/`) || right.startsWith(`${left}/`)
 
 const pathLikeOverlap = (left, right) => {
@@ -283,6 +288,7 @@ const pathLikeOverlap = (left, right) => {
       if (matched === true) return true
       if (matched === null) return null
       const prefix = staticPrefix(leftPath)
+      if (!prefix) return true
       return rightPath === prefix || rightPath.startsWith(`${prefix}/`) || prefix.startsWith(`${rightPath}/`)
     }
     if (left.kind === 'path' && right.kind === 'glob') {
@@ -290,6 +296,7 @@ const pathLikeOverlap = (left, right) => {
       if (matched === true) return true
       if (matched === null) return null
       const prefix = staticPrefix(rightPath)
+      if (!prefix) return true
       return leftPath === prefix || leftPath.startsWith(`${prefix}/`) || prefix.startsWith(`${leftPath}/`)
     }
     const leftPrefix = staticPrefix(leftPath)

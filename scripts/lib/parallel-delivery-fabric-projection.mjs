@@ -498,7 +498,7 @@ export function createBoardProjection(config = {}) {
     } catch {
       return projectionFailure(operation, 'projection_write_failed', currentLease)
     }
-    if (acknowledgement === null || !hasExactKeys(acknowledgement, ['status', 'oid']) || acknowledgement.status !== 'STORED' || !isOid(acknowledgement.oid)) {
+    if (acknowledgement === null || !hasExactKeys(acknowledgement, ['status', 'oid']) || acknowledgement.status !== 'STORED' || !isNonzeroOid(acknowledgement.oid)) {
       return projectionFailure(operation, 'projection_write_conflict', currentLease)
     }
     return durableOutcome || durableResult({ status: 'PROJECTION_READY', operation }, currentLease)

@@ -30,6 +30,7 @@ const AUTHORITY = SHA256('a')
 const LISTENER = SHA256('b')
 const NOW = '2026-08-29T01:00:00.000Z'
 const LATER = '2026-08-29T02:00:00.000Z'
+const TRAIN_CLOCK = Object.freeze({ now: NOW })
 
 const trainPlan = (overrides = {}) => ({
   plan_id: 'plan:train',
@@ -356,7 +357,7 @@ const trappedProxy = (value, counts) => new Proxy(value, {
 })
 
 test('AC-21 — integration train freezes exact base and ordered candidate SHAs', () => {
-  const planned = createIntegrationTrain(trainPlan())
+  const planned = createIntegrationTrain(trainPlan(), TRAIN_CLOCK)
   assert.equal(planned.phase, 'READY_FOR_TRAIN')
   assert.equal(planned.internal_state, 'TRAIN_REQUEST_READY')
   assert.equal(planned.train.integration_base_ref, 'origin/main')
@@ -369,19 +370,36 @@ test('AC-21 — integration train freezes exact base and ordered candidate SHAs'
 })
 
 test('train base, ordered inputs, and synthetic result drift fail closed and never become merge/deploy candidates', () => {
-  const baseDrift = createIntegrationTrain(trainPlan({ observed_base_sha: SHA1('0') }))
+  const baseDrift = createIntegrationTrain(trainPlan({ observed_base_sha: SHA1('0') }), TRAIN_CLOCK)
   assert.equal(baseDrift.phase, 'CLOSED')
   assert.equal(baseDrift.internal_state, 'TRAIN_EVIDENCE_INVALID')
   assert.equal(baseDrift.reason, 'BASE_SHA_DRIFT')
-  const inputDrift = createIntegrationTrain(trainPlan({ observed_candidate_heads: [HEAD_B, HEAD_A] }))
+  const inputDrift = createIntegrationTrain(trainPlan({ observed_candidate_heads: [HEAD_B, HEAD_A] }), TRAIN_CLOCK)
   assert.equal(inputDrift.reason, 'ORDERED_INPUT_SHA_DRIFT')
-  const syntheticDrift = createIntegrationTrain(trainPlan({ observed_synthetic_integration_sha: SHA1('0') }))
+  const syntheticDrift = createIntegrationTrain(trainPlan({ observed_synthetic_integration_sha: SHA1('0') }), TRAIN_CLOCK)
   assert.equal(syntheticDrift.reason, 'SYNTHETIC_SHA_DRIFT')
-  const manifestDrift = createIntegrationTrain(trainPlan({ observed_runtime_manifest_digest: SHA256('0') }))
+  const manifestDrift = createIntegrationTrain(trainPlan({ observed_runtime_manifest_digest: SHA256('0') }), TRAIN_CLOCK)
   assert.equal(manifestDrift.reason, 'RUNTIME_MANIFEST_DRIFT')
-  const candidateTrain = createIntegrationTrain(trainPlan({ is_merge_candidate: true }))
+  const candidateTrain = createIntegrationTrain(trainPlan({ is_merge_candidate: true }), TRAIN_CLOCK)
   assert.equal(candidateTrain.phase, 'CLOSED')
   assert.equal(candidateTrain.reason, 'TRAIN_NOT_PROMOTION_SOURCE')
+})
+
+test('integration train requires an explicit active authority window and trusted current time', () => {
+  for (const missing of ['created_at', 'expires_at']) {
+    const plan = trainPlan()
+    delete plan[missing]
+    assert.equal(createIntegrationTrain(plan, TRAIN_CLOCK).reason, 'TRAIN_WINDOW_INVALID', missing)
+  }
+  assert.equal(createIntegrationTrain(trainPlan(), undefined).reason, 'TRAIN_WINDOW_INVALID')
+  assert.equal(createIntegrationTrain(trainPlan({ expires_at: NOW }), TRAIN_CLOCK).reason, 'TRAIN_WINDOW_INVALID')
+  assert.equal(createIntegrationTrain(trainPlan({ created_at: LATER, expires_at: '2026-08-29T03:00:00.000Z' }), TRAIN_CLOCK).reason, 'TRAIN_WINDOW_INVALID')
+  let reads = 0
+  const hostileClock = {}
+  Object.defineProperty(hostileClock, 'now', { enumerable: true, get: () => { reads += 1; return reads === 1 ? NOW : undefined } })
+  assert.equal(createIntegrationTrain(trainPlan(), hostileClock).reason, 'TRAIN_WINDOW_INVALID')
+  assert.equal(reads, 0)
+  assert.equal(createIntegrationTrain(trainPlan(), new Proxy({ now: NOW }, {})).reason, 'TRAIN_WINDOW_INVALID')
 })
 
 test('runtime admission allows two writers plus one train or Computer Use, but never both shared slots', () => {

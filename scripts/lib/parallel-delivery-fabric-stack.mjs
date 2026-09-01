@@ -253,6 +253,10 @@ export function planDirectStackDispatch(input = {}) {
     }
     const observation = parseObservation(value.observation)
     if (observation === null) return closed('PREMERGE_EVIDENCE_INVALID', 'stack_observation_invalid')
+    const observedAt = Date.parse(observation.observed_at)
+    if (observedAt < Date.parse(frozenStack.created_at) || observedAt >= Date.parse(frozenStack.expires_at)) {
+      return closed('PREMERGE_EVIDENCE_INVALID', 'stack_envelope_outside_validity_window')
+    }
     if (observation.capability_state !== 'enabled') return closed('PREMERGE_AUTHORITY_UNAVAILABLE', 'direct_stack_capability_unavailable')
     const vectorMatches = selectedPrefixIsValid(frozenStack, observation.chain, value.repository) && stackIsLinear(frozenStack) &&
       observation.repository === value.repository && observation.trunk_ref === frozenStack.trunk_ref &&
@@ -289,14 +293,10 @@ export function dispatchDirectStackMerge(input = {}) {
     })
     if (reread.phase !== 'READY_TO_MERGE' || !sameCanonical(reread, plan)) return reread
     if (typeof input.send !== 'function') return closed('PREMERGE_AUTHORITY_UNAVAILABLE', 'stack_dispatch_port_unavailable')
-    const response = canonicalCopy(input.send(structuredClone(reread.request)))
-    if (response === null) return closed('MERGE_OUTCOME_UNVERIFIED', 'stack_dispatch_response_privacy_or_shape_invalid')
-    return deepFreeze({
-      phase: 'MERGING',
-      internal_state: 'STACK_DISPATCH_RESPONSE_PENDING_REDUCTION',
-      plan: reread,
-      response,
-    })
+    // Phase 0 deliberately has no activation authority. Keep the sink inert even
+    // when a caller injects a function; reducers can still validate recorded
+    // responses without turning this candidate-owned module into a merge sink.
+    return closed('PREMERGE_AUTHORITY_UNAVAILABLE', 'direct_stack_activation_held')
   } catch {
     return closed('PREMERGE_AUTHORITY_UNAVAILABLE', 'stack_dispatch_port_failed')
   }

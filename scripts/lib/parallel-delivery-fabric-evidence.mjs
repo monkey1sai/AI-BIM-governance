@@ -465,7 +465,7 @@ const parseTrustedAcceptance = (value, baseSha) => {
     reject('TRUSTED_CONTEXT_ACCEPTANCE_INVALID')
   }
   const mandatoryGate = REQUIRED_GATES_BY_ACCEPTANCE.get(value.id)
-  if (mandatoryGate && !requiredGateKinds.has(mandatoryGate)) reject('TRUSTED_CONTEXT_ACCEPTANCE_INVALID')
+  if (applicability.kind === 'REQUIRED' && mandatoryGate && !requiredGateKinds.has(mandatoryGate)) reject('TRUSTED_CONTEXT_ACCEPTANCE_INVALID')
   return { id: value.id, required_gate_kinds: requiredGateKinds, required_source_kinds: requiredSourceKinds, applicability }
 }
 
@@ -591,6 +591,9 @@ export function reduceEvidenceContract(candidate = {}, trustedExpectedContext) {
     const blockers = new Set()
     let hasPlaywright = false
     let hasComputerUse = false
+    const trustedAcceptances = [...parsed.trustedContext.acceptance.values()]
+    const requiresPlaywright = trustedAcceptances.some(value => value.applicability.kind === 'REQUIRED' && value.required_gate_kinds.has('PLAYWRIGHT'))
+    const requiresComputerUse = trustedAcceptances.some(value => value.applicability.kind === 'REQUIRED' && value.required_gate_kinds.has('COMPUTER_USE'))
     for (const record of parsed.records) {
       if (record.classification !== 'PASSED' && record.classification !== 'NOT_APPLICABLE') {
         blockers.add(`ACCEPTANCE_${record.classification}`)
@@ -606,8 +609,8 @@ export function reduceEvidenceContract(candidate = {}, trustedExpectedContext) {
     }
     if (parsed.activation.status === 'TASK9_EXTERNAL_ACTIVATION_GAP') blockers.add('TASK9_EXTERNAL_ACTIVATION_GAP')
     else if (parsed.activation.status !== 'CURRENT') blockers.add(`ACTIVATION_${parsed.activation.status}`)
-    if (!hasPlaywright) blockers.add('PLAYWRIGHT_EVIDENCE_MISSING')
-    if (!hasComputerUse) blockers.add('COMPUTER_USE_EVIDENCE_MISSING')
+    if (requiresPlaywright && !hasPlaywright) blockers.add('PLAYWRIGHT_EVIDENCE_MISSING')
+    if (requiresComputerUse && !hasComputerUse) blockers.add('COMPUTER_USE_EVIDENCE_MISSING')
 
     const orderedBlockers = [...blockers].sort()
     const advisoryEligible = orderedBlockers.length === 0

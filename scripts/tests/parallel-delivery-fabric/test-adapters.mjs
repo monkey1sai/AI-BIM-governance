@@ -508,6 +508,22 @@ test('provider adapter accepts only a top-level provider with the fixed command 
   assert.deepEqual(calls, Object.fromEntries(Object.keys(calls).map((name) => [name, 0])))
 })
 
+test('provider adapter consumes one static command-policy nonce only after a valid request shape', () => {
+  let policyConsumes = 0
+  const adapter = createProviderAdapter({
+    provider: 'codex',
+    attestor: { verify_execution_context: (input) => verifyExecutionContextAttestation(input, executionPins()) },
+    commandPolicy: commandPolicy({ consume: () => { policyConsumes += 1; return true } }),
+    effects: {},
+  })
+
+  assert.equal(adapter.preflight({}).status, 'HELD_EXECUTION_CONTEXT')
+  assert.equal(policyConsumes, 0)
+  assert.equal(adapter.preflight({ execution_context: executionInput(), command: 'control-metadata:record' }).status, 'READY_FOR_SHADOW')
+  assert.equal(adapter.preflight({ execution_context: executionInput(), command: 'control-metadata:record' }).status, 'READY_FOR_SHADOW')
+  assert.equal(policyConsumes, 1)
+})
+
 test('provider adapter rejects nested agents and forbidden commands before every effect port', () => {
   const forbidden = [
     'codex exec', 'claude -p', 'agent-cli run', 'powershell -Command Get-ChildItem', 'taskkill /pid 42',

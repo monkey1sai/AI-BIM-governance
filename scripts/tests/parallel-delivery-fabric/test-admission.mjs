@@ -156,31 +156,58 @@ const createInMemoryTask3LeaseRegistry = ({ rejectFirstFinalization = false } = 
       current = { ref: current.ref, oid, record: clone(record) }
       return { status: 'STORED', ref: current.ref, oid, previous_oid: expectedOid, record: clone(record) }
     },
+    async casGuarded({ ref, expected_oid: expectedOid, record, guard_oid: guardOid }) {
+      if (guardOid !== SHA1_D) {
+        return { status: 'CONFLICT', reason: 'GUARD_CONFLICT', ref, expected_oid: expectedOid, actual_oid: current.oid, actual_guard_oid: ZERO_OID }
+      }
+      return this.cas({ ref, expected_oid: expectedOid, record })
+    },
   }
   const clock = { now: () => NOW }
   const registry = createLeaseRegistry({ store, clock })
   return { store, registry }
 }
 
-const task3LeaseRequest = (store, overrides = {}) => ({
-  lease_id: overrides.lease_id ?? 'lease:task3-one',
-  plan_id: overrides.plan_id ?? 'plan:one',
-  generation: overrides.generation ?? 1,
-  task_id: overrides.task_id ?? 'task:task3-one',
-  provider: overrides.provider ?? 'codex',
-  owner_session: overrides.owner_session ?? 'session:task3-one',
-  provider_session_id: overrides.provider_session_id ?? 'provider:task3-one',
-  execution_context_id: overrides.execution_context_id ?? 'context:task3-one',
-  context_attestation_ref: overrides.context_attestation_ref ?? 'attestation:task3-one',
-  common_dir_digest: overrides.common_dir_digest ?? store.commonDirDigest,
-  worktree_id: overrides.worktree_id ?? 'worktree:task3-one',
-  worktree_path_digest: overrides.worktree_path_digest ?? SHA256_B,
-  branch: overrides.branch ?? 'codex/task3-one',
-  scope_digest: overrides.scope_digest ?? SHA256_C,
-  head_sha: overrides.head_sha ?? SHA1_A,
-  resource_keys: overrides.resource_keys ?? ['path:src/task3-one.mjs'],
-  nonce: overrides.nonce ?? NONCE('task3-one'),
-})
+const scopeDigestFromResourceKeys = (resourceKeys) => {
+  try {
+    return digestCanonical(normalizeScope(resourceKeys.map((key) => {
+      const separator = key.indexOf(':')
+      const kind = key.slice(0, separator)
+      const value = key.slice(separator + 1)
+      if (kind === 'path') return { kind, path: value }
+      if (kind === 'glob') return { kind, pattern: value }
+      if (kind === 'rename') {
+        const [old_path, new_path] = value.split(':')
+        return { kind, old_path, new_path }
+      }
+      return { kind, resource_key: value }
+    })))
+  } catch { return SHA256_C }
+}
+
+const task3LeaseRequest = (store, overrides = {}) => {
+  const resourceKeys = overrides.resource_keys ?? ['path:src/task3-one.mjs']
+  return {
+    lease_id: overrides.lease_id ?? 'lease:task3-one',
+    plan_id: overrides.plan_id ?? 'plan:one',
+    generation: overrides.generation ?? 1,
+    task_id: overrides.task_id ?? 'task:task3-one',
+    provider: overrides.provider ?? 'codex',
+    owner_session: overrides.owner_session ?? 'session:task3-one',
+    provider_session_id: overrides.provider_session_id ?? 'provider:task3-one',
+    execution_context_id: overrides.execution_context_id ?? 'context:task3-one',
+    context_attestation_ref: overrides.context_attestation_ref ?? 'attestation:task3-one',
+    common_dir_digest: overrides.common_dir_digest ?? store.commonDirDigest,
+    worktree_id: overrides.worktree_id ?? 'worktree:task3-one',
+    worktree_path_digest: overrides.worktree_path_digest ?? SHA256_B,
+    branch: overrides.branch ?? 'codex/task3-one',
+    scope_digest: overrides.scope_digest ?? scopeDigestFromResourceKeys(resourceKeys),
+    head_sha: overrides.head_sha ?? SHA1_A,
+    resource_keys: resourceKeys,
+    nonce: overrides.nonce ?? NONCE('task3-one'),
+    expected_plan_oid: overrides.expected_plan_oid ?? SHA1_D,
+  }
+}
 
 const canonicalTask3AdmissionRecord = async (leaseOverrides = [{}]) => {
   const { store, registry } = createInMemoryTask3LeaseRegistry()
@@ -260,7 +287,7 @@ const releaseTask3Lease = async ({ rejectFirstFinalization = false, leaseId = 'l
       issuer_id: `attestor:${suffix}-end`, issuer_version: 'owner-end/v1',
       owner_session: `session:${suffix}`, provider: 'codex', provider_session_id: `provider:${suffix}`,
       execution_context_id: `context:${suffix}`, lease_id: leaseId, generation: 1,
-      head_sha: SHA1_A, scope_digest: SHA256_C, worktree_path_digest: SHA256_B,
+      head_sha: SHA1_A, scope_digest: admitted.lease.scope_digest, worktree_path_digest: SHA256_B,
       observed_at: NOW, expires_at: LATER, nonce: NONCE(`${suffix}-attestation`), revocation_epoch: 0,
     },
   })
@@ -635,6 +662,10 @@ test('normalizeScope rejects traversal, absolute paths, duplicates, and unknown 
     [{ kind: 'path', path: '..\\secret.txt' }],
     [{ kind: 'path', path: 'C:\\secret.txt' }],
     [{ kind: 'path', path: 'src/a.mjs' }, { kind: 'path', path: 'SRC\\a.mjs' }],
+    [{ kind: 'glob', pattern: 'src/[abc' }],
+    [{ kind: 'glob', pattern: 'src/{a,b' }],
+    [{ kind: 'glob', pattern: 'src/[]/*.mjs' }],
+    [{ kind: 'glob', pattern: 'src/orphan]/*.mjs' }],
     [{ kind: 'unknown', resource_key: 'contract:x' }],
   ]) {
     assert.throws(() => normalizeScope(resources), /scope|resource|path|duplicate|invalid/i)
@@ -647,6 +678,13 @@ test('findScopeConflicts detects exact, parent, glob, rename, shared, runtime, a
     [[{ kind: 'path', path: 'src' }], [{ kind: 'path', path: 'src/new.ts' }], 'CONFLICT'],
     [[{ kind: 'glob', pattern: 'src/**/*.ts' }], [{ kind: 'path', path: 'src/new.ts' }], 'CONFLICT'],
     [[{ kind: 'glob', pattern: 'src/**/*.ts' }], [{ kind: 'glob', pattern: 'tests/**/*.ts' }], 'DISJOINT'],
+    [[{ kind: 'glob', pattern: 'src*/*.mjs' }], [{ kind: 'path', path: 'src-other/a.mjs' }], 'CONFLICT'],
+    [[{ kind: 'glob', pattern: 'src*/*.mjs' }], [{ kind: 'path', path: 'src-other' }], 'CONFLICT'],
+    [[{ kind: 'path', path: 'src-other' }], [{ kind: 'glob', pattern: 'src*/*.mjs' }], 'CONFLICT'],
+    [[{ kind: 'glob', pattern: 'foo?bar/*.mjs' }], [{ kind: 'glob', pattern: 'fooxbar/*.mjs' }], 'CONFLICT'],
+    [[{ kind: 'glob', pattern: 'foo?bar/*.mjs' }], [{ kind: 'path', path: 'fooxbar' }], 'CONFLICT'],
+    [[{ kind: 'glob', pattern: 'src[0-9]/*.mjs' }], [{ kind: 'path', path: 'src1/a.mjs' }], 'CONFLICT'],
+    [[{ kind: 'glob', pattern: 'src[0-9]/*.mjs' }], [{ kind: 'path', path: 'src1' }], 'CONFLICT'],
     [[{ kind: 'rename', old_path: 'src/old.ts', new_path: 'src/new.ts' }], [{ kind: 'path', path: 'src/new.ts' }], 'CONFLICT'],
     [[{ kind: 'shared_contract', resource_key: 'contract:api' }], [{ kind: 'exported_symbol', resource_key: 'contract:api' }], 'CONFLICT'],
     [[{ kind: 'runtime', resource_key: 'runtime:offset-1' }], [{ kind: 'runtime', resource_key: 'runtime:offset-1' }], 'CONFLICT'],
@@ -1337,7 +1375,7 @@ test('5D — released seats are free but retained resources still block only ove
       attestation_ref: 'attestation:task3-end', attestation_digest: SHA256_A, issuer_id: 'attestor:task3-end',
       issuer_version: 'owner-end/v1', owner_session: 'session:task3-release', provider: 'codex',
       provider_session_id: 'provider:task3-release', execution_context_id: 'context:task3-release',
-      lease_id: 'lease:task3-release', generation: 1, head_sha: SHA1_A, scope_digest: SHA256_C,
+      lease_id: 'lease:task3-release', generation: 1, head_sha: SHA1_A, scope_digest: admitted.lease.scope_digest,
       worktree_path_digest: SHA256_B, observed_at: NOW, expires_at: LATER, nonce: NONCE('task3-end-attestation'),
       revocation_epoch: 0,
     },

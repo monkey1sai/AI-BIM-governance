@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import test from 'node:test';
 import {
   consoleText,
@@ -185,8 +186,10 @@ test('physical real-E2E manifest binds path, worktree, head, and live process li
       { role: 'coordinator', pid: 102, entrypoint: 'src/index.ts', command_line: 'node index', creation_identity: 'c2' },
     ],
   };
+  const manifestBytes = (value = manifest) => Buffer.from(JSON.stringify(value), 'utf8');
+  const manifestDigest = createHash('sha256').update(manifestBytes()).digest('hex');
   const ports = {
-    readManifest: async () => ({ manifest: structuredClone(manifest), digest: 'd'.repeat(64) }),
+    readManifest: async () => manifestBytes(),
     realpath: async (value) => value,
     readHead: async () => 'a'.repeat(40),
     readStatus: async () => '',
@@ -205,14 +208,14 @@ test('physical real-E2E manifest binds path, worktree, head, and live process li
   assert.equal(verified.ready, true);
   assert.equal(verified.reason, 'REAL_E2E_MANIFEST_VERIFIED');
   assert.equal(verified.binding.viewer_base_url, 'http://127.0.0.1:5180');
-  assert.equal(verified.binding.manifest_digest, 'd'.repeat(64));
+  assert.equal(verified.binding.manifest_digest, manifestDigest);
 
   for (const mutate of [
     (copy) => { copy.head_sha = 'b'.repeat(40); },
     (copy) => { copy.worktree_root = 'C:\\other'; },
     (copy) => { copy.processes[0].creation_identity = ''; },
   ]) {
-    const hostilePorts = { ...ports, readManifest: async () => { const copy = structuredClone(manifest); mutate(copy); return { manifest: copy, digest: 'd'.repeat(64) }; } };
+    const hostilePorts = { ...ports, readManifest: async () => { const copy = structuredClone(manifest); mutate(copy); return manifestBytes(copy); } };
     assert.equal((await inspectRealE2EManifest({ manifestPath, worktreeRoot: root, separator: '\\' }, hostilePorts)).ready, false);
   }
   assert.equal((await inspectRealE2EManifest({ manifestPath: 'C:\\tmp\\forged.json', worktreeRoot: root, separator: '\\' }, ports)).ready, false);
@@ -226,6 +229,21 @@ test('physical real-E2E manifest binds path, worktree, head, and live process li
   })).reason, 'REAL_E2E_WORKTREE_DIRTY');
   assert.equal((await inspectRealE2EManifest({ manifestPath, worktreeRoot: root, separator: '\\' }, {
     ...ports,
-    readManifest: async () => ({ manifest: { ...structuredClone(manifest), base_urls: { ...manifest.base_urls, viewer: 'http://127.0.0.1:5173' } }, digest: 'd'.repeat(64) }),
+    readManifest: async () => manifestBytes({ ...structuredClone(manifest), base_urls: { ...manifest.base_urls, viewer: 'http://127.0.0.1:5173' } }),
   })).reason, 'REAL_E2E_MANIFEST_ENDPOINT_MISMATCH');
+
+  const posixRoot = '/repo';
+  const caseVariantPath = '/repo/Artifacts/e2e/change-one/run-one/isolated-stack.json';
+  assert.equal((await inspectRealE2EManifest({ manifestPath: caseVariantPath, worktreeRoot: posixRoot, separator: '/' }, {
+    ...ports,
+    realpath: async (value) => value,
+  })).reason, 'REAL_E2E_MANIFEST_PATH_MISMATCH');
+  assert.equal((await inspectRealE2EManifest({
+    manifestPath: '/tmp/repo\\artifacts\\e2e\\change-one\\run-one\\isolated-stack.json',
+    worktreeRoot: '/tmp/repo',
+    separator: '\\',
+  }, {
+    ...ports,
+    realpath: async (value) => value,
+  })).reason, 'REAL_E2E_MANIFEST_IDENTITY_INVALID');
 });

@@ -53,12 +53,19 @@ const createInjectedStore = () => {
       current = { ref, oid, record: structuredClone(record) }
       return { status: 'STORED', ref, oid, previous_oid: expectedOid, record: structuredClone(record) }
     },
+    async casGuarded({ ref: guardedRef, expected_oid: expectedOid, record, guard_oid: guardOid }) {
+      if (guardOid !== SHA1('f')) {
+        return { status: 'CONFLICT', reason: 'GUARD_CONFLICT', ref: guardedRef, expected_oid: expectedOid, actual_oid: current.oid, actual_guard_oid: ZERO_OID }
+      }
+      return this.cas({ ref: guardedRef, expected_oid: expectedOid, record })
+    },
   }
   return { calls, store: Object.freeze(store) }
 }
 
 const leaseRequest = (store, index, provider) => {
   const tag = `${provider}-${index}`
+  const resourceKeys = [`path:src/ac02-${tag}.mjs`]
   return deepFreeze({
     lease_id: `lease:ac02-${tag}`,
     plan_id: 'plan:ac02-matrix',
@@ -73,10 +80,11 @@ const leaseRequest = (store, index, provider) => {
     worktree_id: `worktree:ac02-${tag}`,
     worktree_path_digest: SHA256(['a', 'b', 'c', 'd', 'e', 'f'][index]),
     branch: `${provider}/ac02-${tag}`,
-    scope_digest: SHA256(['f', 'e', 'd', 'c', 'b', 'a'][index]),
+    scope_digest: digestCanonical([{ kind: 'path', path: `src/ac02-${tag}.mjs` }]),
     head_sha: SHA1(['a', 'b', 'c', 'd', 'e', 'f'][index]),
-    resource_keys: [`path:src/ac02-${tag}.mjs`],
+    resource_keys: resourceKeys,
     nonce: NONCE(`ac02-${tag}`),
+    expected_plan_oid: SHA1('f'),
   })
 }
 
@@ -118,7 +126,7 @@ for (const [leftProvider, rightProvider] of PROVIDER_PAIRS) {
     const registry = createLeaseRegistry({ store, clock, writerCap: 2 })
     assert.equal(Object.isFrozen(registry), true)
     assert.equal(Object.isFrozen(store), true)
-    assert.deepEqual(Object.keys(store).sort(), ['cas', 'commonDirDigest', 'read'])
+    assert.deepEqual(Object.keys(store).sort(), ['cas', 'casGuarded', 'commonDirDigest', 'read'])
 
     const firstInput = leaseRequest(store, 0, leftProvider)
     const secondInput = leaseRequest(store, 1, rightProvider)

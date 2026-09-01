@@ -17,8 +17,6 @@ import {
 
 const SHA1 = /^[0-9a-f]{40}$/u
 const SHA256 = /^[0-9a-f]{64}$/u
-const DEFAULT_CREATED_AT = '1970-01-01T00:00:00.000Z'
-const DEFAULT_EXPIRES_AT = '9999-12-31T23:59:59.999Z'
 const CANONICAL_OFFSETS = Object.freeze([0, 1, 2, 3, 4])
 const CANONICAL_RESERVED_PORTS = new Set([
   8004, 49102, 49101, 8010, 5173, 5174, 49100,
@@ -83,6 +81,16 @@ const isOpaqueRef = (value) => isCanonicalOpaqueReference(value)
 const exactKeys = (value, keys) => !utilTypes.isProxy(value) && isPlainObject(value) &&
   Reflect.ownKeys(value).every((key) => typeof key === 'string') &&
   Reflect.ownKeys(value).length === keys.length && keys.every((key) => own(value, key))
+
+const trustedClockNow = (value) => {
+  try {
+    if (!exactKeys(value, ['now'])) return undefined
+    const descriptor = Object.getOwnPropertyDescriptor(value, 'now')
+    return descriptor && Object.hasOwn(descriptor, 'value') && isTimestamp(descriptor.value) ? descriptor.value : undefined
+  } catch {
+    return undefined
+  }
+}
 
 const normalizedKey = (key) => String(key)
   .replace(/([a-z0-9])([A-Z])/gu, '$1_$2')
@@ -643,8 +651,10 @@ const trainFailure = (reason, extras = {}) => held('HELD_EVIDENCE_BINDING', reas
  * The returned wrapper follows the stack/queue adapters' phase vocabulary;
  * `train` itself is the closed `integration-train/v1` durable record.
  */
-export function createIntegrationTrain(plan = {}) {
+export function createIntegrationTrain(plan = {}, trustedClock = undefined) {
   if (!isPlainObject(plan) || !safeInput(plan)) return trainFailure('TRAIN_INPUT_INVALID')
+  const observedAt = trustedClockNow(trustedClock)
+  if (observedAt === undefined) return trainFailure('TRAIN_WINDOW_INVALID')
   const baseRef = first(plan, ['integration_base_ref', 'baseline_ref', 'base_ref'])
   const baseSha = first(plan, ['integration_base_sha', 'resolved_baseline_sha', 'base_sha'])
   if (!isOpaqueId(baseRef) || !isSha1(baseSha)) return trainFailure('TRAIN_BASE_INVALID')
@@ -696,9 +706,11 @@ export function createIntegrationTrain(plan = {}) {
   }
   if (plan.synthetic_sha_drift === true) return trainFailure('SYNTHETIC_SHA_DRIFT')
   if (plan.runtime_manifest_drift === true) return trainFailure('RUNTIME_MANIFEST_DRIFT')
-  const createdAt = first(plan, ['created_at', 'started_at']) || DEFAULT_CREATED_AT
-  const expiresAt = first(plan, ['expires_at', 'ends_at']) || DEFAULT_EXPIRES_AT
-  if (!isTimestamp(createdAt) || !isTimestamp(expiresAt) || expiresAt <= createdAt) return trainFailure('TRAIN_WINDOW_INVALID')
+  const createdAt = first(plan, ['created_at', 'started_at'])
+  const expiresAt = first(plan, ['expires_at', 'ends_at'])
+  if (!isTimestamp(createdAt) || !isTimestamp(expiresAt) || expiresAt <= createdAt || observedAt < createdAt || observedAt >= expiresAt) {
+    return trainFailure('TRAIN_WINDOW_INVALID')
+  }
   const failures = first(plan, ['interaction_failure_refs', 'failure_refs']) ?? []
   if (!Array.isArray(failures) || failures.some((value) => !isOpaqueId(value)) || new Set(failures).size !== failures.length) return trainFailure('TRAIN_FAILURE_REFS_INVALID')
   const train = {

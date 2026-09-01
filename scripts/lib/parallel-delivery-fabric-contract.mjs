@@ -259,6 +259,44 @@ const assertUnique = (values, context) => {
   if (new Set(values).size !== values.length) fail('invalid_value', `${context}_duplicates_forbidden`)
 }
 
+const supportedGlobAlternatives = (pattern, depth = 0) => {
+  if (depth > 8) return null
+  const start = pattern.indexOf('{')
+  if (start < 0) return [pattern]
+  const end = pattern.indexOf('}', start + 1)
+  if (end < 0) return null
+  const choices = pattern.slice(start + 1, end).split(',')
+  if (choices.length < 2 || choices.some((choice) => choice.length === 0 || choice.includes('/'))) return null
+  const expanded = []
+  for (const choice of choices) {
+    const nested = supportedGlobAlternatives(`${pattern.slice(0, start)}${choice}${pattern.slice(end + 1)}`, depth + 1)
+    if (nested === null) return null
+    expanded.push(...nested)
+    if (expanded.length > 32) return null
+  }
+  return expanded
+}
+
+const supportedGlobTokens = (pattern) => {
+  for (let index = 0; index < pattern.length; index += 1) {
+    const character = pattern[index]
+    if (character === '[') {
+      const end = pattern.indexOf(']', index + 1)
+      if (end < 0) return false
+      const content = pattern.slice(index + 1, end)
+      const unprefixed = content[0] === '!' || content[0] === '^' ? content.slice(1) : content
+      if (!unprefixed || content.includes('/') || content.includes('[')) return false
+      index = end
+    } else if (character === ']' || character === '{' || character === '}') return false
+  }
+  return true
+}
+
+const supportedGlobPattern = (pattern) => {
+  const alternatives = supportedGlobAlternatives(pattern)
+  return alternatives !== null && alternatives.every(supportedGlobTokens)
+}
+
 const normalizeRelativePath = (value, context, { glob = false } = {}) => {
   assertString(value, context, { min: 1, max: 512 })
   if (value.includes('\u0000') || /[\r\n]/u.test(value)) fail('ambiguous_path', `${context}_control_character`)
@@ -268,6 +306,7 @@ const normalizeRelativePath = (value, context, { glob = false } = {}) => {
     slashed.split('/').some((segment) => segment === '' || segment === '.' || segment === '..')
   ) fail('ambiguous_path', `${context}_not_repository_relative`)
   if (!glob && /[*?\[\]{}]/u.test(slashed)) fail('ambiguous_path', `${context}_wildcard_not_path`)
+  if (glob && !supportedGlobPattern(slashed)) fail('ambiguous_path', `${context}_glob_syntax_unsupported`)
   return slashed.toLowerCase()
 }
 

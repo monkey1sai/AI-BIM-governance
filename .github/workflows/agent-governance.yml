@@ -3,6 +3,8 @@ name: Agent Governance
 on:
   pull_request:
     types: [opened, edited, synchronize, reopened, ready_for_review]
+  merge_group:
+    types: [checks_requested]
   workflow_dispatch:
 
 permissions:
@@ -36,6 +38,12 @@ jobs:
       - name: Classify Agent Governance scope
         id: plan
         shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PULL_REQUEST_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PULL_REQUEST_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          SUBJECT_SHA: ${{ github.sha }}
+          MERGE_GROUP_BASE_SHA: ${{ github.event.merge_group.base_sha }}
         run: |
           set -euo pipefail
           planner_args=(
@@ -43,13 +51,26 @@ jobs:
             --json-out verification-plan.json
             --github-output "$GITHUB_OUTPUT"
           )
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            base_sha='${{ github.event.pull_request.base.sha }}'
-            head_sha='${{ github.event.pull_request.head.sha }}'
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            base_sha="$PULL_REQUEST_BASE_SHA"
+            head_sha="$PULL_REQUEST_HEAD_SHA"
+            git -c core.quotepath=false diff --no-renames --name-only -z "$base_sha...$head_sha" > agent-governance-changed-paths.bin
+            planner_args+=(--changed-paths0-file agent-governance-changed-paths.bin --base "$base_sha" --subject "$head_sha")
+          elif [ "$EVENT_NAME" = "merge_group" ]; then
+            base_sha="$MERGE_GROUP_BASE_SHA"
+            head_sha="$SUBJECT_SHA"
+            if ! [[ "$base_sha" =~ ^[0-9a-f]{40}$ ]] || [[ "$base_sha" =~ ^0{40}$ ]]; then
+              echo "::error::merge_group immutable base SHA is missing or invalid" >&2
+              exit 1
+            fi
+            if ! [[ "$head_sha" =~ ^[0-9a-f]{40}$ ]] || [[ "$head_sha" =~ ^0{40}$ ]]; then
+              echo "::error::merge_group subject SHA is missing or invalid" >&2
+              exit 1
+            fi
             git -c core.quotepath=false diff --no-renames --name-only -z "$base_sha...$head_sha" > agent-governance-changed-paths.bin
             planner_args+=(--changed-paths0-file agent-governance-changed-paths.bin --base "$base_sha" --subject "$head_sha")
           else
-            planner_args+=(--subject '${{ github.sha }}' --full)
+            planner_args+=(--subject "$SUBJECT_SHA" --full)
           fi
           node scripts/lib/verification-plan.mjs "${planner_args[@]}"
 
@@ -355,7 +376,7 @@ jobs:
         run: pwsh -NoProfile -NonInteractive -File scripts/tests/test-preflight-prnumber-forwarding.ps1
 
   agent-governance:
-    name: ${{ github.event_name == 'pull_request' && 'agent-governance' || 'agent-governance-diagnostic' }}
+    name: ${{ (github.event_name == 'pull_request' || github.event_name == 'merge_group') && 'agent-governance' || 'agent-governance-diagnostic' }}
     needs:
       - scope
       - suite

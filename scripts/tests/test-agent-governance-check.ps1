@@ -36,8 +36,10 @@ function Test-MarkdownLineIsActive {
     $rawHtmlEndsAtBlank = $false
     $fenceCharacter = ''
     $fenceLength = 0
+    $paragraphOpen = $false
     $blockTagNames = 'address|article|aside|base|basefont|blockquote|body|caption|center|col|colgroup|dd|details|dialog|dir|div|dl|dt|fieldset|figcaption|figure|footer|form|frame|frameset|h1|h2|h3|h4|h5|h6|head|header|hr|html|iframe|legend|li|link|main|menu|menuitem|nav|noframes|ol|optgroup|option|p|param|search|section|summary|table|tbody|td|tfoot|th|thead|title|tr|track|ul'
-    $genericTagPattern = '^[ ]{0,3}</?[A-Za-z][A-Za-z0-9-]*(?:[ \t]+[A-Za-z_:][A-Za-z0-9_.:-]*(?:[ \t]*=[ \t]*(?:"[^"]*"|''[^'']*''|[^ "''=<>`]+))?)*[ \t]*/?>[ \t]*$'
+    $genericOpenTagPattern = '^[ ]{0,3}<[A-Za-z][A-Za-z0-9-]*(?:[ \t]+[A-Za-z_:][A-Za-z0-9_.:-]*(?:[ \t]*=[ \t]*(?:"[^"]*"|''[^'']*''|[^ "''=<>`]+))?)*[ \t]*/?>[ \t]*$'
+    $genericClosingTagPattern = '^[ ]{0,3}</[A-Za-z][A-Za-z0-9-]*>[ \t]*$'
 
     for ($index = 0; $index -lt $LineIndex; $index++) {
         $line = $Lines[$index]
@@ -48,6 +50,10 @@ function Test-MarkdownLineIsActive {
                 $fenceLength = 0
             }
             continue
+        }
+
+        if (-not $line.Trim()) {
+            $paragraphOpen = $false
         }
 
         if ($rawHtmlEndsAtBlank) {
@@ -62,21 +68,23 @@ function Test-MarkdownLineIsActive {
 
         if (-not $inHtmlComment) {
             # A raw fence opener takes precedence over HTML-like tokens in its info string.
-            $openingFence = [regex]::Match($line, '^[ ]{0,3}(?<marker>`{3,}|~{3,})')
-            if ($openingFence.Success) {
+            $openingFence = [regex]::Match($line, '^[ ]{0,3}(?<marker>`{3,}|~{3,})(?<info>.*)$')
+            $backtickInfoIsValid = -not ($openingFence.Success -and $openingFence.Groups['marker'].Value[0] -eq [char] 96 -and $openingFence.Groups['info'].Value.Contains('`'))
+            if ($openingFence.Success -and $backtickInfoIsValid) {
                 $marker = $openingFence.Groups['marker'].Value
                 $fenceCharacter = [string] $marker[0]
                 $fenceLength = $marker.Length
+                $paragraphOpen = $false
                 continue
             }
 
             $rawHtmlStart = [regex]::Match($line, '^[ ]{0,3}<(?<tag>script|pre|style|textarea)(?:[ \t]|>|$)', [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
             if ($rawHtmlStart.Success) {
-                $tagName = [regex]::Escape($rawHtmlStart.Groups['tag'].Value)
-                $closingTagPattern = '(?i)</' + $tagName + '[ \t]*>'
+                $closingTagPattern = '(?i)</(?:script|pre|style|textarea)[ \t]*>'
                 if ($line.Substring($rawHtmlStart.Index + $rawHtmlStart.Length) -notmatch $closingTagPattern) {
                     $rawHtmlEndPattern = $closingTagPattern
                 }
+                $paragraphOpen = $false
                 continue
             }
 
@@ -87,14 +95,16 @@ function Test-MarkdownLineIsActive {
             )) {
                 if ($line -match $rawBlock.Start) {
                     if ($line -notmatch $rawBlock.End) { $rawHtmlEndPattern = $rawBlock.End }
+                    $paragraphOpen = $false
                     break
                 }
             }
             if ($rawHtmlEndPattern -or $line -match '^[ ]{0,3}(?:<\?|<!\[CDATA\[|<![A-Z])') { continue }
 
             $blockTagPattern = '^[ ]{0,3}</?(?:' + $blockTagNames + ')(?:[ \t]+|/?>|$)'
-            if ($line -match $blockTagPattern -or $line -match $genericTagPattern) {
+            if ($line -match $blockTagPattern -or (-not $paragraphOpen -and ($line -match $genericOpenTagPattern -or $line -match $genericClosingTagPattern))) {
                 $rawHtmlEndsAtBlank = $true
+                $paragraphOpen = $false
                 continue
             }
         }
@@ -119,6 +129,14 @@ function Test-MarkdownLineIsActive {
             }
             $inHtmlComment = $true
             $cursor = $commentStart + 4
+        }
+
+        $isThematicBreak = $line -match '^[ ]{0,3}(?:(?:\*[ \t]*){3,}|(?:_[ \t]*){3,}|(?:-[ \t]*){3,})$'
+        $isSetextUnderline = $paragraphOpen -and $line -match '^[ ]{0,3}(?:=+|-+)[ \t]*$'
+        if ($line -match '^[ ]{0,3}#{1,6}(?:[ \t]+|$)' -or $line -match '^[ ]{0,3}<!--' -or $isThematicBreak -or $isSetextUnderline) {
+            $paragraphOpen = $false
+        } elseif ($line.Trim()) {
+            $paragraphOpen = $true
         }
     }
 
@@ -381,9 +399,13 @@ try {
     $governanceWorkflow = Get-Content -LiteralPath '.github/workflows/agent-governance.yml' -Raw
     Assert-True (-not ($governanceWorkflow -match '(?m)^\s+paths:\s*$')) 'agent-governance workflow does not use path filters because it is a required-check candidate'
     Assert-True ($governanceWorkflow -match 'types:\s*\[opened, edited, synchronize, reopened, ready_for_review\]') 'agent-governance reclassifies the exact path set after base retarget edits'
+    Assert-True ($governanceWorkflow -match '(?ms)^\s{2}merge_group:\s*\r?\n\s{4}types:\s*\[checks_requested\]') 'agent-governance publishes its required context for merge queue candidates'
     Assert-True ($governanceWorkflow -match '(?m)^\s{2}scope:\s*$') 'agent-governance workflow has an internal scope classifier job'
     Assert-True ($governanceWorkflow -match 'scripts/lib/verification-plan\.mjs') 'agent-governance scope consumes the shared verification planner'
     Assert-True ($governanceWorkflow -match 'git -c core\.quotepath=false diff --no-renames --name-only -z .* > agent-governance-changed-paths\.bin') 'agent-governance scope makes git diff failure terminal before planning'
+    Assert-True ($governanceWorkflow -match 'MERGE_GROUP_BASE_SHA.*github\.event\.merge_group\.base_sha') 'agent-governance reads the immutable merge-group base SHA'
+    Assert-True ($governanceWorkflow -match 'merge_group immutable base SHA is missing or invalid') 'agent-governance fails closed when merge-group base identity is unavailable'
+    Assert-True ($governanceWorkflow -match 'merge_group subject SHA is missing or invalid') 'agent-governance fails closed when merge-group subject identity is unavailable'
     Assert-True ($governanceWorkflow -match '--changed-paths0-file agent-governance-changed-paths\.bin') 'agent-governance scope preserves NUL-delimited changed paths through the shared planner file contract'
     Assert-True (-not ($governanceWorkflow -match '< <\(')) 'agent-governance scope does not hide git diff failures inside process substitution'
     Assert-True ($governanceWorkflow -match '(?m)^\s{2}suite:\s*$') 'agent-governance workflow isolates the expensive suite'
@@ -403,7 +425,7 @@ try {
     Assert-True ($governanceWorkflow -match 'scripts/tests/test-task-ledger-parser-parity\.mjs') 'agent-governance workflow runs the task-ledger parser parity contract'
     Assert-True ($governanceWorkflow -match 'scripts/tests/test-verification-runner\.mjs') 'agent-governance workflow runs verification outcome fixtures'
     Assert-True ($governanceWorkflow -match 'scripts/tests/test-security-exceptions\.mjs') 'agent-governance workflow runs security exception lifecycle fixtures'
-    Assert-True ($governanceWorkflow -match "github\.event_name == 'pull_request'.*agent-governance.*agent-governance-diagnostic") 'manual dispatch uses a diagnostic check name that cannot satisfy merge authority'
+    Assert-True ($governanceWorkflow -match "github\.event_name == 'pull_request'.*github\.event_name == 'merge_group'.*agent-governance.*agent-governance-diagnostic") 'only pull-request and merge-group events publish the required agent-governance context'
     Assert-True ($governanceWorkflow -match 'scripts/tests/test-pr-body-evidence\.ps1') 'agent-governance workflow runs PR body evidence tests'
     Assert-True ($governanceWorkflow -match 'scripts/tests/test-require-gstack-evidence\.ps1') 'agent-governance workflow runs browser-evidence hook tests'
     Assert-True ($governanceWorkflow -match 'scripts/tests/test-design-system-reference\.ps1') 'agent-governance workflow runs design-system reference tests'
@@ -735,12 +757,24 @@ try {
     $syntheticCommentedGovernance = @('<!--', $leanGovernanceHeading, $agentWorkflowHeading, '-->')
     $syntheticHtmlBlockGovernance = @('<div>', $leanGovernanceHeading, $agentWorkflowHeading, '</div>')
     $syntheticScriptBlockGovernance = @('<script>', '', $leanGovernanceHeading, '</script>', $agentWorkflowHeading)
+    $syntheticMismatchedScriptEndGovernance = @($leanGovernanceHeading, '<script>', '</pre>', $leanGovernanceHeading, $agentWorkflowHeading)
+    $syntheticParagraphGenericTagGovernance = @($leanGovernanceHeading, 'ordinary paragraph', '<custom-element>', $leanGovernanceHeading, $agentWorkflowHeading)
+    $syntheticThematicBreakGenericTagGovernance = @($leanGovernanceHeading, '---', '<custom-element>', $leanGovernanceHeading, $agentWorkflowHeading)
+    $syntheticInvalidClosingTagAttributeGovernance = @($leanGovernanceHeading, '</custom-element bad="x">', $leanGovernanceHeading, $agentWorkflowHeading)
+    $syntheticInvalidSelfClosingEndTagGovernance = @($leanGovernanceHeading, '</custom-element/>', $leanGovernanceHeading, $agentWorkflowHeading)
+    $syntheticInvalidBacktickFenceGovernance = @($leanGovernanceHeading, '```markdown`invalid', $leanGovernanceHeading, $agentWorkflowHeading)
     $syntheticDuplicateGovernance = @($leanGovernanceHeading, " $leanGovernanceHeading", $agentWorkflowHeading)
     Assert-True (-not (Test-MarkdownLineIsActive -Lines $syntheticFencedGovernance -LineIndex 1)) 'Markdown fence enclosing Lean Governance is rejected'
     Assert-True (-not (Test-MarkdownLineIsActive -Lines $syntheticInterleavedFenceGovernance -LineIndex 2)) 'Markdown fence opener wins over an HTML comment token in its info string'
     Assert-True (-not (Test-MarkdownLineIsActive -Lines $syntheticCommentedGovernance -LineIndex 1)) 'HTML comment enclosing Lean Governance is rejected'
     Assert-True (-not (Test-MarkdownLineIsActive -Lines $syntheticHtmlBlockGovernance -LineIndex 1)) 'CommonMark raw HTML block enclosing Lean Governance is rejected'
     Assert-True (-not (Test-MarkdownLineIsActive -Lines $syntheticScriptBlockGovernance -LineIndex 2)) 'CommonMark script block remains inert across blank lines'
+    Assert-True (@(Get-ActiveMarkdownHeadingIndexes -Lines $syntheticMismatchedScriptEndGovernance -HeadingText $leanGovernanceHeadingText).Count -eq 2) 'CommonMark type-1 HTML block ends at any type-1 closing tag'
+    Assert-True (@(Get-ActiveMarkdownHeadingIndexes -Lines $syntheticParagraphGenericTagGovernance -HeadingText $leanGovernanceHeadingText).Count -eq 2) 'CommonMark type-7 HTML block cannot interrupt an open paragraph'
+    Assert-True (@(Get-ActiveMarkdownHeadingIndexes -Lines $syntheticThematicBreakGenericTagGovernance -HeadingText $leanGovernanceHeadingText).Count -eq 1) 'CommonMark thematic break closes the paragraph before a type-7 HTML block'
+    Assert-True (@(Get-ActiveMarkdownHeadingIndexes -Lines $syntheticInvalidClosingTagAttributeGovernance -HeadingText $leanGovernanceHeadingText).Count -eq 2) 'CommonMark closing tag attributes cannot hide an active duplicate heading'
+    Assert-True (@(Get-ActiveMarkdownHeadingIndexes -Lines $syntheticInvalidSelfClosingEndTagGovernance -HeadingText $leanGovernanceHeadingText).Count -eq 2) 'CommonMark self-closing end tags cannot hide an active duplicate heading'
+    Assert-True (@(Get-ActiveMarkdownHeadingIndexes -Lines $syntheticInvalidBacktickFenceGovernance -HeadingText $leanGovernanceHeadingText).Count -eq 2) 'backtick fence info containing a backtick cannot hide an active duplicate heading'
     Assert-True (@(Get-ActiveMarkdownHeadingIndexes -Lines $syntheticDuplicateGovernance -HeadingText $leanGovernanceHeadingText).Count -eq 2) 'Markdown-equivalent duplicate Lean Governance headings are detected'
     $leanGovernanceSection = if ($leanGovernanceHeadingIndex -ge 0 -and $agentWorkflowHeadingIndex -gt $leanGovernanceHeadingIndex) {
         ($agentsLines[$leanGovernanceHeadingIndex..($agentWorkflowHeadingIndex - 1)] -join "`n")

@@ -16,34 +16,56 @@ const DIGEST_NEXT = 'd'.repeat(64)
 const NOW = '2026-08-30T00:00:00.000Z'
 const LATER = '2026-08-30T00:10:00.000Z'
 const NONCE = (suffix) => suffix.padEnd(32, 'n').slice(0, 32)
+const LEASE_REF = 'refs/ai-bim/session-leases'
+const QUEUE_REF = 'refs/ai-bim/queue-mappings'
+const PLAN_REF = 'refs/ai-bim/delivery-plans'
 
 const canonicalDigest = (value) => digestCanonical(value)
+const restamp = (value) => {
+  const record = structuredClone(value)
+  delete record.canonical_digest
+  return { ...record, canonical_digest: canonicalDigest(record) }
+}
 
 const createClock = (now = NOW) => ({ now: () => now })
 
 const createLegacyStore = () => {
-  let current = { oid: ZERO_OID, record: null }
+  const states = new Map([[PLAN_REF, { oid: SHA1, record: {} }]])
   const calls = []
+  const snapshot = (ref) => structuredClone(states.get(ref) ?? { oid: ZERO_OID, record: null })
   return {
     commonDirDigest: DIGEST,
     calls,
     async read(ref) {
       calls.push({ kind: 'read', ref })
-      return structuredClone(current)
+      return snapshot(ref)
     },
     async cas({ ref, expected_oid, record }) {
       calls.push({ kind: 'cas', ref, expected_oid })
+      const current = snapshot(ref)
       if (expected_oid !== current.oid) return { status: 'CONFLICT', actual_oid: current.oid }
       const oid = createHash('sha1').update(JSON.stringify(record)).digest('hex')
-      current = { oid, record: structuredClone(record) }
+      states.set(ref, { oid, record: structuredClone(record) })
       return { status: 'STORED', oid, record: structuredClone(record) }
     },
-    snapshot: () => structuredClone(current),
+    async casGuarded({ ref, expected_oid, record, guard_ref, guard_oid }) {
+      calls.push({ kind: 'cas', ref, expected_oid, guard_ref, guard_oid })
+      const current = snapshot(ref)
+      const guard = snapshot(guard_ref)
+      if (guard.oid !== guard_oid) {
+        return { status: 'CONFLICT', reason: 'GUARD_CONFLICT', actual_oid: current.oid, actual_guard_oid: guard.oid }
+      }
+      if (expected_oid !== current.oid) return { status: 'CONFLICT', reason: 'CAS_CONFLICT', actual_oid: current.oid }
+      const oid = createHash('sha1').update(JSON.stringify(record)).digest('hex')
+      states.set(ref, { oid, record: structuredClone(record) })
+      return { status: 'STORED', oid, record: structuredClone(record) }
+    },
+    snapshot,
   }
 }
 
 const legacyLeaseRequest = (overrides = {}) => ({
-  lease_id: 'lease:queue-root',
+  lease_id: 'lease:one',
   plan_id: 'plan:queue-root',
   generation: 1,
   task_id: 'task:queue-root',
@@ -56,17 +78,18 @@ const legacyLeaseRequest = (overrides = {}) => ({
   worktree_id: 'worktree:queue-root',
   worktree_path_digest: DIGEST,
   branch: 'codex/queue-root',
-  scope_digest: DIGEST,
+  scope_digest: canonicalDigest([{ kind: 'runtime', resource_key: 'resource:kit-runtime' }]),
   head_sha: SHA1,
-  resource_keys: ['path:scripts/tests/parallel-delivery-fabric/test-queue-registry.mjs'],
+  resource_keys: ['runtime:resource:kit-runtime'],
   nonce: NONCE('legacy-root'),
+  expected_plan_oid: SHA1,
   ...overrides,
 })
 
 const source = () => ({
   repository: 'acme/bim',
   workflow: 'workflow:ci',
-  resource_key: 'resource:kit-runtime',
+  resource_key: 'runtime:resource:kit-runtime',
 })
 
 const observation = (overrides = {}) => ({
@@ -81,14 +104,14 @@ const observation = (overrides = {}) => ({
 })
 
 const reserveRequest = (overrides = {}) => ({
-  registry_ref: 'refs/ai-bim/session-leases',
+  registry_ref: QUEUE_REF,
   expected_oid: ZERO_OID,
   operation_id: 'operation:queue-reserve-one',
   nonce: NONCE('queue-reserve-one'),
   candidate_id: 'candidate:one',
   run_id: 'run:one',
   lease_id: 'lease:one',
-  resource_key: 'resource:kit-runtime',
+  resource_key: 'runtime:resource:kit-runtime',
   workflow: 'workflow:ci',
   candidate_head_sha: SHA1,
   lease_generation: 1,
@@ -115,49 +138,73 @@ const expectHeld = (result, reason = undefined) => {
   if (reason) assert.equal(result.reason, reason)
 }
 
-test('AC-30 — legacy session-lease root normalizes queue fields without CAS or byte/OID mutation', async () => {
+test('AC-30 — missing queue root is held without mutating the legacy lease root', async () => {
   const store = createLegacyStore()
   const leases = createLeaseRegistry({ store, clock: createClock(), writerCap: 2 })
   const admitted = await leases.admit(legacyLeaseRequest())
   assert.equal(admitted.status, 'ADMITTED')
-  const before = store.snapshot()
+  const before = store.snapshot(LEASE_REF)
   const queue = createQueueMappingRegistry({ store, clock: createClock() })
-  const restored = await queue.restore({ registry_ref: 'refs/ai-bim/session-leases' })
-  assert.equal(restored.status, 'SHADOW_QUEUE_MAPPING_RESTORED')
-  assert.equal(restored.registry_oid, before.oid)
-  assert.deepEqual(restored.record.queue_mappings, {})
-  assert.deepEqual(restored.record.used_queue_operations, {})
-  assert.deepEqual(store.snapshot(), before)
+  expectHeld(await queue.restore({ registry_ref: QUEUE_REF }), 'REGISTRY_UNKNOWN')
+  assert.deepEqual(store.snapshot(LEASE_REF), before)
+  assert.deepEqual(store.snapshot(QUEUE_REF), { oid: ZERO_OID, record: null })
   assert.equal(store.calls.filter((call) => call.kind === 'cas').length, 1)
 })
 
-test('AC-30 — first legal reserve upgrades the same LEASE_REF with exact tuple and digests', async () => {
+test('AC-30 — first legal reserve writes a separate queue root and preserves the lease root', async () => {
   const store = createLegacyStore()
   const leases = createLeaseRegistry({ store, clock: createClock(), writerCap: 2 })
   await leases.admit(legacyLeaseRequest())
-  const before = store.snapshot()
+  const leaseBefore = store.snapshot(LEASE_REF)
   const queue = createQueueMappingRegistry({ store, clock: createClock() })
-  const result = await queue.reserve(reserveRequest({ expected_oid: before.oid }))
+  const result = await queue.reserve(reserveRequest({ expected_oid: ZERO_OID }))
   assert.equal(result.status, 'SHADOW_QUEUE_MAPPING_STORED')
   assert.equal(result.shadow, 'SHADOW_ONLY')
   assert.equal(result.mapping.candidate_id, 'candidate:one')
   assert.equal(result.mapping.source_digest, canonicalDigest(source()))
   assert.equal(result.mapping.observation_digest, canonicalDigest(observation()))
-  assert.notEqual(result.registry_oid, before.oid)
+  assert.notEqual(result.registry_oid, ZERO_OID)
+  assert.deepEqual(store.snapshot(LEASE_REF), leaseBefore)
+  assert.equal(store.snapshot(QUEUE_REF).oid, result.registry_oid)
 })
 
 test('AC-30 — same-OID reserve race has one winner and preserves the loser tuple', async () => {
   const store = createLegacyStore()
   const leases = createLeaseRegistry({ store, clock: createClock(), writerCap: 2 })
   await leases.admit(legacyLeaseRequest())
-  const expected = store.snapshot().oid
+  const expected = store.snapshot(QUEUE_REF).oid
   const queue = createQueueMappingRegistry({ store, clock: createClock() })
   const [left, right] = await Promise.all([
     queue.reserve(reserveRequest({ expected_oid: expected, operation_id: 'operation:left', nonce: NONCE('left') })),
-    queue.reserve(reserveRequest({ expected_oid: expected, operation_id: 'operation:right', nonce: NONCE('right'), candidate_id: 'candidate:right', run_id: 'run:right', lease_id: 'lease:right' })),
+    queue.reserve(reserveRequest({ expected_oid: expected, operation_id: 'operation:right', nonce: NONCE('right') })),
   ])
   assert.equal([left, right].filter((item) => item.status === 'SHADOW_QUEUE_MAPPING_STORED').length, 1)
   assert.equal([left, right].filter((item) => item.status === 'HELD_QUEUE_CAPABILITY').length, 1)
+})
+
+test('AC-30 — lease rotation between validation and queue CAS prevents a stale reservation', async () => {
+  const store = createLegacyStore()
+  const leases = createLeaseRegistry({ store, clock: createClock(), writerCap: 2 })
+  await leases.admit(legacyLeaseRequest())
+  const originalCasGuarded = store.casGuarded.bind(store)
+  let rotated = false
+  store.casGuarded = async (input) => {
+    if (!rotated) {
+      rotated = true
+      const leaseSnapshot = store.snapshot(LEASE_REF)
+      const heartbeat = await leases.heartbeat({
+        lease_id: 'lease:one',
+        expected_oid: leaseSnapshot.oid,
+        heartbeat_seq: 2,
+        nonce: NONCE('lease-rotated'),
+      })
+      assert.equal(heartbeat.status, 'HEARTBEAT_RECORDED')
+    }
+    return originalCasGuarded(input)
+  }
+  const queue = createQueueMappingRegistry({ store, clock: createClock() })
+  expectHeld(await queue.reserve(reserveRequest()), 'LEASE_REGISTRY_CHANGED')
+  assert.deepEqual(store.snapshot(QUEUE_REF), { oid: ZERO_OID, record: null })
 })
 
 test('AC-30 — duplicate nonce and operation replay remain held after restart with zero CAS', async () => {
@@ -165,12 +212,12 @@ test('AC-30 — duplicate nonce and operation replay remain held after restart w
   const leases = createLeaseRegistry({ store, clock: createClock(), writerCap: 2 })
   await leases.admit(legacyLeaseRequest())
   const queue = createQueueMappingRegistry({ store, clock: createClock() })
-  const first = await queue.reserve({ ...reserveRequest(), expected_oid: store.snapshot().oid })
+  const first = await queue.reserve({ ...reserveRequest(), expected_oid: store.snapshot(QUEUE_REF).oid })
   assert.equal(first.status, 'SHADOW_QUEUE_MAPPING_STORED')
   const restarted = createQueueMappingRegistry({ store, clock: createClock() })
   const before = store.calls.filter((call) => call.kind === 'cas').length
-  expectHeld(await restarted.reserve({ ...reserveRequest(), expected_oid: store.snapshot().oid }), 'NONCE_REPLAY')
-  expectHeld(await restarted.reserve({ ...reserveRequest({ nonce: NONCE('fresh-nonce'), expected_oid: store.snapshot().oid }), operation_id: 'operation:queue-reserve-one' }), 'OPERATION_REPLAY')
+  expectHeld(await restarted.reserve({ ...reserveRequest(), expected_oid: store.snapshot(QUEUE_REF).oid }), 'NONCE_REPLAY')
+  expectHeld(await restarted.reserve({ ...reserveRequest({ nonce: NONCE('fresh-nonce'), expected_oid: store.snapshot(QUEUE_REF).oid }), operation_id: 'operation:queue-reserve-one' }), 'OPERATION_REPLAY')
   assert.equal(store.calls.filter((call) => call.kind === 'cas').length, before)
 })
 
@@ -181,11 +228,43 @@ test('AC-30 — restore rejects missing/corrupt/unknown state and digest records
     ['bad-root-digest', { schema_version: 'queue-registry/v1', generation: 1, queue_mappings: {}, used_queue_operations: {}, canonical_digest: DIGEST }],
   ]) {
     const store = createLegacyStore()
-    store.cas({ ref: 'refs/ai-bim/session-leases', expected_oid: ZERO_OID, record })
+    if (record !== null) await store.cas({ ref: QUEUE_REF, expected_oid: ZERO_OID, record })
     const queue = createQueueMappingRegistry({ store, clock: createClock() })
     const before = store.calls.filter((call) => call.kind === 'cas').length
-    expectHeld(await queue.restore({ registry_ref: 'refs/ai-bim/session-leases' }), label === 'missing' ? 'REGISTRY_UNKNOWN' : undefined)
+    expectHeld(await queue.restore({ registry_ref: QUEUE_REF }), label === 'missing' ? 'REGISTRY_UNKNOWN' : undefined)
     assert.equal(store.calls.filter((call) => call.kind === 'cas').length, before)
+  }
+})
+
+test('AC-30 — restore fail-closes every persisted mapping and operation binding after a recomputed root digest', async () => {
+  const corruptions = [
+    ['mapping-key', (record) => {
+      record.queue_mappings['candidate:other'] = record.queue_mappings['candidate:one']
+      delete record.queue_mappings['candidate:one']
+    }],
+    ['mapping-run', (record) => { record.queue_mappings['candidate:one'].run_id = 'run:other' }],
+    ['mapping-head', (record) => { record.queue_mappings['candidate:one'].candidate_head_sha = ZERO_OID }],
+    ['mapping-generation', (record) => { record.queue_mappings['candidate:one'].lease_generation = 0 }],
+    ['mapping-digest', (record) => { record.queue_mappings['candidate:one'].source_digest = 'not-a-digest' }],
+    ['operation-shape', (record) => { record.used_queue_operations['operation:queue-reserve-one'].unexpected = true }],
+    ['operation-nonce', (record) => { record.used_queue_operations['operation:queue-reserve-one'].nonce = 'short' }],
+    ['operation-time', (record) => { record.used_queue_operations['operation:queue-reserve-one'].consumed_at = '2026-08-29T23:59:59.999Z' }],
+    ['operation-kind', (record) => { record.used_queue_operations['operation:queue-reserve-one'].kind = 'execute' }],
+  ]
+  for (const [label, corrupt] of corruptions) {
+    const store = createLegacyStore()
+    const leases = createLeaseRegistry({ store, clock: createClock(), writerCap: 2 })
+    await leases.admit(legacyLeaseRequest())
+    const queue = createQueueMappingRegistry({ store, clock: createClock() })
+    const stored = await queue.reserve(reserveRequest())
+    assert.equal(stored.status, 'SHADOW_QUEUE_MAPPING_STORED')
+    const snapshot = store.snapshot(QUEUE_REF)
+    const corrupted = structuredClone(snapshot.record)
+    corrupt(corrupted)
+    await store.cas({ ref: QUEUE_REF, expected_oid: snapshot.oid, record: restamp(corrupted) })
+    const before = store.calls.filter((call) => call.kind === 'cas').length
+    expectHeld(await createQueueMappingRegistry({ store, clock: createClock() }).restore({ registry_ref: QUEUE_REF }), 'REGISTRY_UNKNOWN')
+    assert.equal(store.calls.filter((call) => call.kind === 'cas').length, before, label)
   }
 })
 
@@ -203,7 +282,7 @@ test('AC-30 — tuple/resource/workflow/head/generation/source/snapshot/freshnes
     await leases.admit(legacyLeaseRequest())
     const queue = createQueueMappingRegistry({ store, clock: createClock() })
     const before = store.calls.filter((call) => call.kind === 'cas').length
-    const request = reserveRequest({ [label]: value, expected_oid: store.snapshot().oid })
+    const request = reserveRequest({ [label]: value, expected_oid: store.snapshot(QUEUE_REF).oid })
     expectHeld(await queue.reserve(request))
     assert.equal(store.calls.filter((call) => call.kind === 'cas').length, before, label)
   }
@@ -215,8 +294,8 @@ test('AC-30 — stale OID, 1025 mappings, and 4097 operations are bounded HELD o
   await leases.admit(legacyLeaseRequest())
   const queue = createQueueMappingRegistry({ store, clock: createClock() })
   expectHeld(await queue.reserve(reserveRequest({ expected_oid: SHA1_NEXT })), 'REGISTRY_CAS_CONFLICT')
-  expectHeld(await queue.reserve(reserveRequest({ expected_oid: store.snapshot().oid, queue_mapping_count: 1025 })), 'LEDGER_CAPACITY_EXCEEDED')
-  expectHeld(await queue.reserve(reserveRequest({ expected_oid: store.snapshot().oid, operation_count: 4097 })), 'LEDGER_CAPACITY_EXCEEDED')
+  expectHeld(await queue.reserve(reserveRequest({ expected_oid: store.snapshot(QUEUE_REF).oid, queue_mapping_count: 1025 })), 'LEDGER_CAPACITY_EXCEEDED')
+  expectHeld(await queue.reserve(reserveRequest({ expected_oid: store.snapshot(QUEUE_REF).oid, operation_count: 4097 })), 'LEDGER_CAPACITY_EXCEEDED')
 })
 
 test('AC-30 — only exact 101st cancellation cross-binds source, snapshot, tuple, and mapping', async () => {
@@ -224,7 +303,7 @@ test('AC-30 — only exact 101st cancellation cross-binds source, snapshot, tupl
   const leases = createLeaseRegistry({ store, clock: createClock(), writerCap: 2 })
   await leases.admit(legacyLeaseRequest())
   const queue = createQueueMappingRegistry({ store, clock: createClock() })
-  const reserved = await queue.reserve({ ...reserveRequest(), expected_oid: store.snapshot().oid })
+  const reserved = await queue.reserve({ ...reserveRequest(), expected_oid: store.snapshot(QUEUE_REF).oid })
   assert.equal(reserved.status, 'SHADOW_QUEUE_MAPPING_STORED')
   const cancelled = await queue.reconcileCancelled(cancellationRequest({ expected_oid: reserved.registry_oid }))
   assert.equal(cancelled.status, 'SHADOW_QUEUE_CANCELLATION_RECORDED')
@@ -235,7 +314,7 @@ test('AC-30 — only exact 101st cancellation cross-binds source, snapshot, tupl
     { observation_digest: DIGEST_NEXT }, { observation: observation({ snapshot_generation: 2 }) },
   ]) {
     const before = store.calls.filter((call) => call.kind === 'cas').length
-    expectHeld(await queue.reconcileCancelled(cancellationRequest({ ...patch, expected_oid: store.snapshot().oid })))
+    expectHeld(await queue.reconcileCancelled(cancellationRequest({ ...patch, expected_oid: store.snapshot(QUEUE_REF).oid })))
     assert.equal(store.calls.filter((call) => call.kind === 'cas').length, before)
   }
 })
