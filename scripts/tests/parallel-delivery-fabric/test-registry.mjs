@@ -271,24 +271,36 @@ test('AC-44 — plan-only metadata uses the delivery-plan ref and no forbidden e
   })
 
   assert.equal(submitted.status, 'STORED')
-  assert.equal(submitted.ref, 'refs/ai-bim/delivery-plans')
+  assert.match(submitted.ref, /^refs\/ai-bim\/delivery-plans\/[0-9a-f]{64}$/u)
   assert.equal(git.blobs.size, 1)
   assert.deepEqual(effects, createEffects())
-  assert.deepEqual([...git.refs.keys()], ['refs/ai-bim/delivery-plans'])
+  assert.deepEqual([...git.refs.keys()], [submitted.ref])
   assert.equal(submitted.record.schema_version, 'delivery-plan-registry/v1')
   assert.equal(submitted.record.generation, 1)
   assert.equal(submitted.record.nonce, NONCE('plan-submit'))
   assert.match(submitted.record.canonical_digest, /^[0-9a-f]{64}$/u)
 
+  const second = await planRegistry.submit({
+    plan: makePlan({ planId: 'plan:second' }),
+    expected_oid: ZERO_OID,
+    nonce: NONCE('plan-second'),
+    execution: { level: 'plan_only', side_effect_class: 'CONTROL_METADATA' },
+  })
+  assert.equal(second.status, 'STORED')
+  assert.notEqual(second.ref, submitted.ref)
+  assert.equal(git.refs.get(submitted.ref), submitted.oid)
+  assert.equal((await planRegistry.inspect('plan:one')).oid, submitted.oid)
+  assert.equal((await planRegistry.inspect('plan:second')).oid, second.oid)
+
   const stale = await planRegistry.submit({
-    plan: makePlan({ planId: 'plan:stale' }),
+    plan: makePlan({ planId: 'plan:second' }),
     expected_oid: ZERO_OID,
     nonce: NONCE('plan-stale'),
     execution: { level: 'plan_only', side_effect_class: 'CONTROL_METADATA' },
   })
   assert.equal(stale.status, 'CONFLICT')
   assert.equal(stale.reason, 'CAS_CONFLICT')
-  assert.equal(stale.actual_oid, submitted.oid)
+  assert.equal(stale.actual_oid, second.oid)
   await assert.rejects(
     planRegistry.submit({
       plan: makePlan({ planId: 'plan:forbidden' }),
@@ -497,7 +509,7 @@ test('malformed glob resources fail closed before a lease can be persisted', asy
 })
 
 test('plan drain is durable and blocks every later admission for the same plan', async () => {
-  const { leaseRegistry, store } = createFixture()
+  const { leaseRegistry, planRegistry, store } = createFixture()
   assert.equal((await leaseRegistry.admit(makeRequest(store))).status, 'ADMITTED')
   const beforeDrain = await leaseRegistry.inspect()
   const drained = await leaseRegistry.drainPlan({
@@ -517,11 +529,18 @@ test('plan drain is durable and blocks every later admission for the same plan',
     resource_keys: ['path:docs/after-drain.mjs'], nonce: NONCE('same-plan-after-drain'),
   }))
   assert.deepEqual({ status: blocked.status, reason: blocked.reason }, { status: 'QUEUED_FOR_LEASE', reason: 'PLAN_DRAINING' })
+  const otherPlanSnapshot = await planRegistry.submit({
+    plan: makePlan({ planId: 'plan:other' }),
+    expected_oid: ZERO_OID,
+    nonce: NONCE('other-plan-submit'),
+    execution: { level: 'plan_only', side_effect_class: 'CONTROL_METADATA' },
+  })
+  assert.equal(otherPlanSnapshot.status, 'STORED')
   const otherPlan = await leaseRegistry.admit(makeRequest(store, {
     lease_id: 'lease:other-plan', plan_id: 'plan:other', owner_session: 'session:other-plan',
     provider_session_id: 'provider:other-plan', execution_context_id: 'context:other-plan',
     worktree_id: 'worktree:other-plan', branch: 'codex/other-plan',
-    resource_keys: ['path:docs/other-plan.mjs'], nonce: NONCE('other-plan'),
+    resource_keys: ['path:docs/other-plan.mjs'], nonce: NONCE('other-plan'), expected_plan_oid: otherPlanSnapshot.oid,
   }))
   assert.equal(otherPlan.status, 'ADMITTED')
 })
@@ -806,6 +825,8 @@ test('registry uses only sanitized local Git plumbing and cannot reach cleanup o
     assert.equal(allowed.has(call.args[0]), true, call.args.join(' '))
     assert.equal(call.env.GIT_CONFIG_NOSYSTEM, '1')
     assert.equal(call.env.GIT_TERMINAL_PROMPT, '0')
+    assert.equal(call.env.GIT_CONFIG_VALUE_0, process.platform === 'win32' ? 'NUL' : '/dev/null')
+    assert.equal(call.env.GIT_CONFIG_GLOBAL, process.platform === 'win32' ? 'NUL' : '/dev/null')
     assert.equal(Object.hasOwn(call.env, 'GIT_DIR'), false)
     assert.equal(Object.hasOwn(call.env, 'GIT_WORK_TREE'), false)
     assert.equal(Object.hasOwn(call.env, 'GIT_INDEX_FILE'), false)
@@ -1729,12 +1750,12 @@ const createInMemoryManagedCas = ({ branch = managedBranchRecord(), raceBarrier 
   return {
     calls,
     sideEffects,
-    async read() {
-      calls.push({ kind: 'read' })
+    async read(ref) {
+      calls.push({ kind: 'read', ref })
       return structuredClone(current)
     },
-    async cas({ expected_oid, record }) {
-      calls.push({ kind: 'cas', expected_oid })
+    async cas({ ref, expected_oid, record }) {
+      calls.push({ kind: 'cas', ref, expected_oid })
       casCalls += 1
       if (raceBarrier && casCalls <= 2) await raceBarrier()
       if (current.oid !== expected_oid) {
@@ -1777,6 +1798,24 @@ const createManagedFixture = ({ branch = managedBranchRecord(), raceBarrier = un
   return { store, clock, registry: createManagedBranchRegistry({ store, clock }) }
 }
 
+test('AC-39 — managed registry composes with the namespaced Git CAS store', async () => {
+  const git = createInMemoryGit()
+  const store = createGitCasStore({ git, commonDir: 'C:/fake/common-dir' })
+  const seeded = await store.cas({
+    ref: store.refs.managedBranches,
+    expected_oid: ZERO_OID,
+    record: managedRegistryState(managedBranchRecord()),
+  })
+  assert.equal(seeded.status, 'STORED')
+  const registry = createManagedBranchRegistry({ store, clock: createClock() })
+  const before = await registry.inspect()
+  assert.equal(before.status, 'READY')
+  const renewed = await registry.renew(managedRenewCommand(before.record))
+  assert.equal(renewed.status, 'RENEWED')
+  assert.notEqual(renewed.registry_oid, seeded.oid)
+  assert.deepEqual([...git.refs.keys()], ['refs/ai-bim/managed-branches'])
+})
+
 test('AC-39 — managed record is closed, digest-stable, and renew changes only its expiry transition', async () => {
   const branch = managedBranchRecord()
   const parsed = parseManagedBranchRecord(branch)
@@ -1800,6 +1839,8 @@ test('AC-39 — managed record is closed, digest-stable, and renew changes only 
     'generation', 'scope_digest', 'allowed_merge_targets', 'created_at', 'current_head_sha', 'managed_base_lease_id', 'state',
   ]) assert.deepEqual(renewed.record[key], before.record[key], key)
   assert.equal(store.calls.filter((call) => call.kind === 'cas').length, 1)
+  assert.equal(store.calls.find((call) => call.kind === 'cas').ref, 'refs/ai-bim/managed-branches')
+  assert.equal(store.calls.filter((call) => call.kind === 'read').every((call) => call.ref === 'refs/ai-bim/managed-branches'), true)
   assert.deepEqual(store.sideEffects, { network: 0, process: 0, delete: 0, worktree: 0, acl: 0 })
 })
 

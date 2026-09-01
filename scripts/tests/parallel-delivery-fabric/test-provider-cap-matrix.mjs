@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import test from 'node:test'
 
-import { digestCanonical } from '../../lib/parallel-delivery-fabric-contract.mjs'
+import { FABRIC_SCHEMA_VERSION, digestCanonical } from '../../lib/parallel-delivery-fabric-contract.mjs'
 import { createLeaseRegistry } from '../../lib/parallel-delivery-fabric-registry.mjs'
 import { evaluateAdmission } from '../../lib/parallel-delivery-fabric-admission.mjs'
 
@@ -26,14 +26,62 @@ const deepFreeze = (value) => {
   return value
 }
 
+const planRecord = () => {
+  const plan = {
+    schema_version: FABRIC_SCHEMA_VERSION,
+    plan_id: 'plan:ac02-matrix',
+    generation: 1,
+    repo_identity: { full_name: 'acme/bim', repository_id: 1, common_dir_digest: COMMON_DIR_DIGEST },
+    created_at: NOW,
+    coordinator_session: 'session:ac02-coordinator',
+    baseline_ref: 'origin/main',
+    resolved_baseline_sha: SHA1('a'),
+    tasks: [{
+      task_id: 'task:ac02-matrix',
+      outcome: 'provider-cap-matrix',
+      provider_preference: 'codex',
+      owner_session: 'session:ac02-owner',
+      scope: {
+        owning_service: 'delivery-fabric',
+        public_entrypoint: 'scripts/lib/parallel-delivery-fabric-registry.mjs',
+        resources: [{ kind: 'path', path: 'src/ac02-matrix.mjs' }],
+        expected_tests: ['test:provider-cap-matrix'],
+        e2e_required: false,
+      },
+      dependencies: [],
+      risk: 'bounded',
+      e2e_required: false,
+    }],
+    requested_capacity: { writers: 2, runtime_leases: 0 },
+    branch_profile: 'trunk',
+    acceptance_criteria: ['criterion:provider-cap-matrix'],
+    promotion_mode: 'single_pr',
+    requested_execution_level: 'plan_only',
+    authority_reference: 'authority:ac02-plan',
+    governance_source_refs: ['openspec:parallel-delivery-fabric'],
+  }
+  const base = {
+    schema_version: 'delivery-plan-registry/v1', generation: 1, nonce: NONCE('ac02-plan'),
+    created_at: NOW, updated_at: NOW, plan, plan_digest: digestCanonical(plan),
+    execution: { level: 'plan_only', side_effect_class: 'CONTROL_METADATA' },
+  }
+  return { ...base, canonical_digest: digestCanonical(base) }
+}
+
 const createInjectedStore = () => {
   const calls = { read: 0, cas: 0 }
   const ref = 'refs/ai-bim/session-leases'
+  const planRef = 'refs/ai-bim/delivery-plans'
+  const plan = { ref: planRef, oid: SHA1('f'), record: planRecord() }
   let sequence = 0
   let current = { ref, oid: ZERO_OID, record: null }
   const store = {
     commonDirDigest: COMMON_DIR_DIGEST,
-    async read() {
+    async read(requestedRef) {
+      if (requestedRef === planRef) return structuredClone(plan)
+      if (typeof requestedRef === 'string' && requestedRef.startsWith(`${planRef}/`)) {
+        return { ref: requestedRef, oid: ZERO_OID, record: null }
+      }
       calls.read += 1
       return structuredClone(current)
     },
@@ -53,8 +101,8 @@ const createInjectedStore = () => {
       current = { ref, oid, record: structuredClone(record) }
       return { status: 'STORED', ref, oid, previous_oid: expectedOid, record: structuredClone(record) }
     },
-    async casGuarded({ ref: guardedRef, expected_oid: expectedOid, record, guard_oid: guardOid }) {
-      if (guardOid !== SHA1('f')) {
+    async casGuarded({ ref: guardedRef, expected_oid: expectedOid, record, guard_ref: guardRef, guard_oid: guardOid }) {
+      if (guardRef !== planRef || guardOid !== plan.oid) {
         return { status: 'CONFLICT', reason: 'GUARD_CONFLICT', ref: guardedRef, expected_oid: expectedOid, actual_oid: current.oid, actual_guard_oid: ZERO_OID }
       }
       return this.cas({ ref: guardedRef, expected_oid: expectedOid, record })

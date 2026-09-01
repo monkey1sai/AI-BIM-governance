@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import test from 'node:test'
 
-import { digestCanonical } from '../../lib/parallel-delivery-fabric-contract.mjs'
+import { FABRIC_SCHEMA_VERSION, digestCanonical } from '../../lib/parallel-delivery-fabric-contract.mjs'
 import {
   createLeaseRegistry,
   createQueueMappingRegistry,
@@ -27,10 +27,57 @@ const restamp = (value) => {
   return { ...record, canonical_digest: canonicalDigest(record) }
 }
 
+const legacyPlanRecord = () => {
+  const plan = {
+    schema_version: FABRIC_SCHEMA_VERSION,
+    plan_id: 'plan:queue-root',
+    generation: 1,
+    repo_identity: { full_name: 'acme/bim', repository_id: 1, common_dir_digest: DIGEST },
+    created_at: NOW,
+    coordinator_session: 'session:queue-root',
+    baseline_ref: 'origin/main',
+    resolved_baseline_sha: SHA1,
+    tasks: [{
+      task_id: 'task:queue-root',
+      outcome: 'queue-shadow-contract',
+      provider_preference: 'codex',
+      owner_session: 'session:queue-root',
+      scope: {
+        owning_service: 'delivery-fabric',
+        public_entrypoint: 'scripts/lib/parallel-delivery-fabric-registry.mjs',
+        resources: [{ kind: 'runtime', resource_key: 'resource:kit-runtime' }],
+        expected_tests: ['test:queue-registry'],
+        e2e_required: false,
+      },
+      dependencies: [],
+      risk: 'bounded',
+      e2e_required: false,
+    }],
+    requested_capacity: { writers: 2, runtime_leases: 1 },
+    branch_profile: 'trunk',
+    acceptance_criteria: ['criterion:queue-shadow'],
+    promotion_mode: 'single_pr',
+    requested_execution_level: 'plan_only',
+    authority_reference: 'authority:queue-plan',
+    governance_source_refs: ['openspec:parallel-delivery-fabric'],
+  }
+  const base = {
+    schema_version: 'delivery-plan-registry/v1',
+    generation: 1,
+    nonce: NONCE('legacy-plan'),
+    created_at: NOW,
+    updated_at: NOW,
+    plan,
+    plan_digest: canonicalDigest(plan),
+    execution: { level: 'plan_only', side_effect_class: 'CONTROL_METADATA' },
+  }
+  return { ...base, canonical_digest: canonicalDigest(base) }
+}
+
 const createClock = (now = NOW) => ({ now: () => now })
 
 const createLegacyStore = () => {
-  const states = new Map([[PLAN_REF, { oid: SHA1, record: {} }]])
+  const states = new Map([[PLAN_REF, { oid: SHA1, record: legacyPlanRecord() }]])
   const calls = []
   const snapshot = (ref) => structuredClone(states.get(ref) ?? { oid: ZERO_OID, record: null })
   return {
@@ -286,6 +333,20 @@ test('AC-30 — tuple/resource/workflow/head/generation/source/snapshot/freshnes
     expectHeld(await queue.reserve(request))
     assert.equal(store.calls.filter((call) => call.kind === 'cas').length, before, label)
   }
+})
+
+test('AC-30 — a future-dated queue observation is stale even when its expiry is later', async () => {
+  const store = createLegacyStore()
+  const leases = createLeaseRegistry({ store, clock: createClock(), writerCap: 2 })
+  await leases.admit(legacyLeaseRequest())
+  const queue = createQueueMappingRegistry({ store, clock: createClock() })
+  const future = observation({ observed_at: '2026-08-30T00:01:00.000Z' })
+  const before = store.calls.filter((call) => call.kind === 'cas').length
+  expectHeld(await queue.reserve(reserveRequest({
+    observation: future,
+    observation_digest: canonicalDigest(future),
+  })), 'SNAPSHOT_STALE')
+  assert.equal(store.calls.filter((call) => call.kind === 'cas').length, before)
 })
 
 test('AC-30 — stale OID, 1025 mappings, and 4097 operations are bounded HELD outcomes', async () => {

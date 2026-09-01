@@ -9,10 +9,12 @@ import {
 export const ZERO_OID = '0'.repeat(40)
 
 const PLAN_REF = 'refs/ai-bim/delivery-plans'
+const PLAN_REF_PREFIX = `${PLAN_REF}/`
 const LEASE_REF = 'refs/ai-bim/session-leases'
 const QUEUE_REF = 'refs/ai-bim/queue-mappings'
 const JOURNAL_REF = 'refs/ai-bim/command-journal'
-const REFS = new Set([PLAN_REF, LEASE_REF, QUEUE_REF, JOURNAL_REF])
+const MANAGED_BRANCH_REF = 'refs/ai-bim/managed-branches'
+const REFS = new Set([PLAN_REF, LEASE_REF, QUEUE_REF, JOURNAL_REF, MANAGED_BRANCH_REF])
 const WRITER_CAP_V1 = 2
 const OID = /^[0-9a-f]{40}$/u
 const DIGEST = /^[0-9a-f]{64}$/u
@@ -27,13 +29,14 @@ const TERMINAL_PROCESS_ID_SEGMENT = /(?:^|[/:])\d+$/u
 const SECRET_VALUE_MARKER = /(?:bearer|token|cookie|authorization|private[-_]?key|gh[pousr]_|github_pat_|eyJ[A-Za-z0-9_-]{10,})/iu
 const RAW_ENV_SEGMENT = /(?:^|[/:])(?:(?:env|environment):[A-Za-z_][A-Za-z0-9_]*|\$env:[A-Za-z_][A-Za-z0-9_]*|%[A-Za-z_][A-Za-z0-9_]*%)(?=$|[/:])/iu
 
+const NULL_DEVICE = process.platform === 'win32' ? 'NUL' : '/dev/null'
 const SANITIZED_GIT_ENV = Object.freeze({
   GIT_CONFIG_NOSYSTEM: '1',
   GIT_TERMINAL_PROMPT: '0',
   GIT_CONFIG_COUNT: '1',
   GIT_CONFIG_KEY_0: 'core.hooksPath',
-  GIT_CONFIG_VALUE_0: 'NUL',
-  GIT_CONFIG_GLOBAL: 'NUL',
+  GIT_CONFIG_VALUE_0: NULL_DEVICE,
+  GIT_CONFIG_GLOBAL: NULL_DEVICE,
 })
 
 class FabricRegistryError extends Error {
@@ -244,8 +247,13 @@ const command = async (git, commonDir, args, input = undefined) => {
   return response
 }
 
+const isPlanRef = (ref) => typeof ref === 'string' && (ref === PLAN_REF ||
+  (ref.startsWith(PLAN_REF_PREFIX) && DIGEST.test(ref.slice(PLAN_REF_PREFIX.length))))
+
+const planRefForId = (planId) => `${PLAN_REF_PREFIX}${digestCanonical({ plan_id: planId })}`
+
 const refOf = (ref) => {
-  if (!REFS.has(ref)) fail('registry_ref_forbidden', String(ref))
+  if (!REFS.has(ref) && !isPlanRef(ref)) fail('registry_ref_forbidden', String(ref))
   return ref
 }
 
@@ -332,7 +340,14 @@ export function createGitCasStore({ git, commonDir }) {
   }
 
   return Object.freeze({
-    refs: Object.freeze({ deliveryPlans: PLAN_REF, sessionLeases: LEASE_REF, queueMappings: QUEUE_REF, commandJournal: JOURNAL_REF }),
+    refs: Object.freeze({
+      deliveryPlans: PLAN_REF,
+      deliveryPlanPrefix: PLAN_REF_PREFIX,
+      sessionLeases: LEASE_REF,
+      queueMappings: QUEUE_REF,
+      commandJournal: JOURNAL_REF,
+      managedBranches: MANAGED_BRANCH_REF,
+    }),
     commonDirDigest,
     read,
     cas,
@@ -376,14 +391,30 @@ const heldRegistryIntegrity = (ref) => Object.freeze({
   ref,
 })
 
-const readValidatedPlanSnapshot = async (store) => {
+const readPlanRef = async (store, ref, planId = undefined) => {
   try {
-    const snapshot = await store.read(PLAN_REF)
-    if (snapshot.record !== null) validatePlanRegistryRecord(snapshot.record)
-    return snapshot
+    const snapshot = await store.read(ref)
+    if (!isObject(snapshot) || !OID.test(snapshot.oid) || !Object.hasOwn(snapshot, 'record') ||
+        (Object.hasOwn(snapshot, 'ref') && snapshot.ref !== ref)) return heldRegistryIntegrity(ref)
+    if (snapshot.record !== null) {
+      validatePlanRegistryRecord(snapshot.record)
+      if (planId !== undefined && snapshot.record.plan.plan_id !== planId) return heldRegistryIntegrity(ref)
+    }
+    return { ref, oid: snapshot.oid, record: snapshot.record }
   } catch {
-    return heldRegistryIntegrity(PLAN_REF)
+    return heldRegistryIntegrity(ref)
   }
+}
+
+const readValidatedPlanSnapshot = async (store, planId = undefined) => {
+  if (planId === undefined) return readPlanRef(store, PLAN_REF)
+  const scopedRef = planRefForId(planId)
+  const scoped = await readPlanRef(store, scopedRef, planId)
+  if (scoped.status === 'HELD_REGISTRY_INTEGRITY' || scoped.record !== null) return scoped
+  const legacy = await readPlanRef(store, PLAN_REF)
+  if (legacy.status === 'HELD_REGISTRY_INTEGRITY') return legacy
+  if (legacy.record !== null && legacy.record.plan.plan_id === planId) return legacy
+  return scoped
 }
 
 export function createPlanRegistry({ store, clock }) {
@@ -396,9 +427,9 @@ export function createPlanRegistry({ store, clock }) {
       fail('invalid_shape', 'plan_submit_keys_invalid')
     }
     const { plan, expected_oid, nonce, execution, effects = undefined } = input
-    const snapshot = await readValidatedPlanSnapshot(store)
-    if (snapshot.status === 'HELD_REGISTRY_INTEGRITY') return snapshot
     const parsedPlan = parseDeliveryPlan(plan)
+    const snapshot = await readValidatedPlanSnapshot(store, parsedPlan.plan_id)
+    if (snapshot.status === 'HELD_REGISTRY_INTEGRITY') return snapshot
     assertOid(expected_oid, 'plan_expected_oid')
     assertNonce(nonce, 'plan_nonce')
     const validatedExecution = validatePlanOnlyExecution(execution)
@@ -407,7 +438,7 @@ export function createPlanRegistry({ store, clock }) {
       return {
         status: 'CONFLICT',
         reason: 'CAS_CONFLICT',
-        ref: PLAN_REF,
+        ref: snapshot.ref,
         expected_oid,
         actual_oid: snapshot.oid,
         current: snapshot,
@@ -417,13 +448,13 @@ export function createPlanRegistry({ store, clock }) {
       const currentPlan = parseDeliveryPlan(snapshot.record.plan)
       if (currentPlan.plan_id === parsedPlan.plan_id) {
         if (parsedPlan.generation < currentPlan.generation) {
-          return { status: 'CONFLICT', reason: 'PLAN_GENERATION_REGRESSION', ref: PLAN_REF, expected_oid, actual_oid: snapshot.oid }
+          return { status: 'CONFLICT', reason: 'PLAN_GENERATION_REGRESSION', ref: snapshot.ref, expected_oid, actual_oid: snapshot.oid }
         }
         if (parsedPlan.generation === currentPlan.generation) {
           if (digestCanonical(parsedPlan) !== digestCanonical(currentPlan)) {
-            return { status: 'CONFLICT', reason: 'PLAN_SAME_GENERATION_REWRITE', ref: PLAN_REF, expected_oid, actual_oid: snapshot.oid }
+            return { status: 'CONFLICT', reason: 'PLAN_SAME_GENERATION_REWRITE', ref: snapshot.ref, expected_oid, actual_oid: snapshot.oid }
           }
-          return { status: 'STORED', ref: PLAN_REF, oid: snapshot.oid, previous_oid: snapshot.oid, record: clone(snapshot.record) }
+          return { status: 'STORED', ref: snapshot.ref, oid: snapshot.oid, previous_oid: snapshot.oid, record: clone(snapshot.record) }
         }
       }
     }
@@ -439,23 +470,26 @@ export function createPlanRegistry({ store, clock }) {
       execution: validatedExecution,
     })
     validatePlanRegistryRecord(record)
-    const result = await store.cas({ ref: PLAN_REF, expected_oid, record })
+    const result = await store.cas({ ref: snapshot.ref, expected_oid, record })
     return result.status === 'STORED' ? result : {
       status: 'CONFLICT',
       reason: 'CAS_CONFLICT',
-      ref: PLAN_REF,
+      ref: snapshot.ref,
       expected_oid,
       actual_oid: result.actual_oid,
       current: result.current,
     }
   }
 
-  const inspect = () => readValidatedPlanSnapshot(store)
+  const inspect = (planId = undefined) => {
+    if (planId !== undefined) assertTask2OpaqueId(planId, 'plan_inspect.plan_id')
+    return readValidatedPlanSnapshot(store, planId)
+  }
   const validateGeneration = async (input) => {
     const { plan_id, generation } = validateClosedRequest(input, ['plan_id', 'generation'], 'plan_generation_request')
     assertTask2OpaqueId(plan_id, 'plan_generation_request.plan_id')
     if (!Number.isSafeInteger(generation) || generation < 1) fail('invalid_value', 'plan_generation_request_generation_invalid')
-    const snapshot = await readValidatedPlanSnapshot(store)
+    const snapshot = await readValidatedPlanSnapshot(store, plan_id)
     if (snapshot.status === 'HELD_REGISTRY_INTEGRITY') return snapshot
     if (snapshot.record === null) return { status: 'HELD_EXECUTION_AUTHORITY', reason: 'PLAN_NOT_FOUND' }
     const parsed = parseDeliveryPlan(snapshot.record.plan)
@@ -881,10 +915,11 @@ const validateCommandJournalRecord = (record) => {
 }
 
 function validatePersistedRecordForRef(ref, record) {
-  if (ref === PLAN_REF) return validatePlanRegistryRecord(record)
+  if (isPlanRef(ref)) return validatePlanRegistryRecord(record)
   if (ref === LEASE_REF) return validateLeaseRegistryRecord(record, WRITER_CAP_V1)
   if (ref === QUEUE_REF) return validateQueueRegistryRecord(record)
   if (ref === JOURNAL_REF) return validateCommandJournalRecord(record)
+  if (ref === MANAGED_BRANCH_REF) return validateManagedRegistryState(record)
   fail('registry_ref_forbidden', String(ref))
 }
 
@@ -1143,18 +1178,24 @@ export function createLeaseRegistry({ store, clock, writerCap = WRITER_CAP_V1, o
 
   const inspect = () => registrySnapshot(store, writerCap)
 
+  const resolvePlanGuard = async ({ plan_id, generation, expected_plan_oid }) => {
+    const snapshot = await readValidatedPlanSnapshot(store, plan_id)
+    if (snapshot.status === 'HELD_REGISTRY_INTEGRITY') return snapshot
+    if (snapshot.record === null || snapshot.oid !== expected_plan_oid) {
+      return { status: 'HELD_EXECUTION_AUTHORITY', reason: 'PLAN_REGISTRY_CHANGED' }
+    }
+    const activePlan = parseDeliveryPlan(snapshot.record.plan)
+    if (activePlan.plan_id !== plan_id || activePlan.generation !== generation) {
+      return { status: 'HELD_EXECUTION_AUTHORITY', reason: 'PLAN_GENERATION_MISMATCH' }
+    }
+    return { status: 'READY', snapshot }
+  }
+
   const validateActive = async (request) => {
     const topology = validateLeaseRequest(request, store)
     if (topology) return topology
-    const planSnapshot = await readValidatedPlanSnapshot(store)
-    if (planSnapshot.status === 'HELD_REGISTRY_INTEGRITY') return planSnapshot
-    if (planSnapshot.record === null || planSnapshot.oid !== request.expected_plan_oid) {
-      return { status: 'HELD_EXECUTION_AUTHORITY', reason: 'PLAN_REGISTRY_CHANGED' }
-    }
-    const activePlan = parseDeliveryPlan(planSnapshot.record.plan)
-    if (activePlan.plan_id !== request.plan_id || activePlan.generation !== request.generation) {
-      return { status: 'HELD_EXECUTION_AUTHORITY', reason: 'PLAN_GENERATION_MISMATCH' }
-    }
+    const planGuard = await resolvePlanGuard(request)
+    if (planGuard.status !== 'READY') return planGuard
     const snapshot = await registrySnapshot(store, writerCap)
     if (snapshot.status === 'HELD_REGISTRY_INTEGRITY') return snapshot
     const lease = snapshot.record.leases[request.lease_id]
@@ -1175,6 +1216,8 @@ export function createLeaseRegistry({ store, clock, writerCap = WRITER_CAP_V1, o
     assertNoSensitiveMaterial(request, 'lease_request')
     const topology = validateLeaseRequest(request, store)
     if (topology) return topology
+    const planGuard = await resolvePlanGuard(request)
+    if (planGuard.status !== 'READY') return planGuard
     const snapshot = await registrySnapshot(store, writerCap)
     if (snapshot.status === 'HELD_REGISTRY_INTEGRITY') return snapshot
     const blocker = findAdmissionBlocker(snapshot.record, request)
@@ -1195,7 +1238,7 @@ export function createLeaseRegistry({ store, clock, writerCap = WRITER_CAP_V1, o
       ref: LEASE_REF,
       expected_oid: snapshot.oid,
       record,
-      guard_ref: PLAN_REF,
+      guard_ref: planGuard.snapshot.ref,
       guard_oid: request.expected_plan_oid,
     })
     if (result.status === 'STORED') return { ...result, status: 'ADMITTED', lease }
@@ -1342,6 +1385,8 @@ export function createLeaseRegistry({ store, clock, writerCap = WRITER_CAP_V1, o
     assertOid(expected_plan_oid, 'plan_drain_request.expected_plan_oid', { zero: false })
     assertNonce(nonce, 'plan_drain_request.nonce')
     if (!['handoff', 'failed', 'aborted'].includes(reason)) fail('invalid_value', 'plan_drain_request_reason_invalid')
+    const planGuard = await resolvePlanGuard({ plan_id, generation, expected_plan_oid })
+    if (planGuard.status !== 'READY') return planGuard
     const snapshot = await registrySnapshot(store, writerCap)
     if (snapshot.status === 'HELD_REGISTRY_INTEGRITY') return snapshot
     const stale = validateExpectedSnapshot(snapshot, expected_oid)
@@ -1368,7 +1413,7 @@ export function createLeaseRegistry({ store, clock, writerCap = WRITER_CAP_V1, o
       ref: LEASE_REF,
       expected_oid,
       record,
-      guard_ref: PLAN_REF,
+      guard_ref: planGuard.snapshot.ref,
       guard_oid: expected_plan_oid,
     })
     if (result.reason === 'GUARD_CONFLICT') {
@@ -1865,8 +1910,9 @@ const hydrateManagedBranch = (branch, registryOid) => stampManagedBranch({ ...br
 
 const readManagedSnapshot = async (store) => {
   try {
-    const snapshot = await store.read()
-    exactKeys(snapshot, ['oid', 'record'], 'managed_branch_store_snapshot')
+    const snapshot = await store.read(MANAGED_BRANCH_REF)
+    exactKeys(snapshot, Object.hasOwn(snapshot, 'ref') ? ['ref', 'oid', 'record'] : ['oid', 'record'], 'managed_branch_store_snapshot')
+    if (Object.hasOwn(snapshot, 'ref') && snapshot.ref !== MANAGED_BRANCH_REF) fail('registry_record_invalid', 'managed_branch_ref_binding')
     assertOid(snapshot.oid, 'managed_branch_store_snapshot.oid', { zero: false })
     if (snapshot.record === null) return managedHeld('REGISTRY_UNKNOWN')
     validateManagedRegistryState(snapshot.record)
@@ -1955,7 +2001,7 @@ export function createManagedBranchRegistry({ store, clock }) {
     }
     try {
       validateManagedRegistryState(next)
-      const result = await store.cas({ expected_oid: snapshot.registry_oid, record: next })
+      const result = await store.cas({ ref: MANAGED_BRANCH_REF, expected_oid: snapshot.registry_oid, record: next })
       if (isObject(result) && result.status === 'STORED') {
         assertOid(result.oid, 'managed_branch_renew.result_oid', { zero: false })
         const record = hydrateManagedBranch(branch, result.oid)
@@ -2160,7 +2206,11 @@ const mappingKey = (request) => request.candidate_id
 const queueFreshnessHeld = (request, clock) => {
   try {
     const now = nowFrom(clock)
-    if (Date.parse(now) >= Date.parse(request.observation.expires_at)) return QUEUE_HELD('SNAPSHOT_STALE')
+    const nowMilliseconds = Date.parse(now)
+    const observedMilliseconds = Date.parse(request.observation.observed_at)
+    const expiresMilliseconds = Date.parse(request.observation.expires_at)
+    if (![nowMilliseconds, observedMilliseconds, expiresMilliseconds].every(Number.isFinite)) return QUEUE_HELD('REQUEST_INVALID')
+    if (observedMilliseconds > nowMilliseconds || nowMilliseconds >= expiresMilliseconds) return QUEUE_HELD('SNAPSHOT_STALE')
     return null
   } catch {
     return QUEUE_HELD('REQUEST_INVALID')

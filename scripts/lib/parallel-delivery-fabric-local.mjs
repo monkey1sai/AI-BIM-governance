@@ -13,6 +13,7 @@ import { createParallelDeliveryFabric } from './parallel-delivery-fabric.mjs'
 
 const MAX_GIT_OUTPUT = 1024 * 1024
 const ZERO_OID = '0'.repeat(40)
+const PLAN_REF = /^refs\/ai-bim\/delivery-plans(?:\/[0-9a-f]{64})?$/u
 const SAFE_REASON = /^[A-Za-z0-9_:-]{1,128}$/u
 
 const safeReason = (value, fallback) => typeof value === 'string' && SAFE_REASON.test(value) ? value : fallback
@@ -88,6 +89,10 @@ const snapshot = (value, expectedRef) => {
   if (value.record === null || typeof value.record !== 'object' || Array.isArray(value.record)) throw new TypeError('registry_snapshot_invalid')
   return Object.freeze({ oid: value.oid, record: value.record })
 }
+const planSnapshot = (value) => {
+  if (!PLAN_REF.test(value?.ref ?? '')) throw new TypeError('registry_snapshot_invalid')
+  return snapshot(value, value.ref)
+}
 const projectHeld = (value, fallback) => held(safeReason(value?.reason, fallback))
 
 const projectPlanRegistry = (registry) => Object.freeze({
@@ -98,7 +103,7 @@ const projectPlanRegistry = (registry) => Object.freeze({
       : projectHeld(result, 'PLAN_REGISTRY_UNAVAILABLE')
   },
   validateGeneration: (input) => registry.validateGeneration(input),
-  async inspect() { return snapshot(await registry.inspect(), 'refs/ai-bim/delivery-plans') },
+  async inspect(planId) { return planSnapshot(await registry.inspect(planId)) },
 })
 
 const projectLeaseRegistry = (registry) => Object.freeze({

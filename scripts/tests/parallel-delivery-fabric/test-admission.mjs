@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
 
-import { digestCanonical } from '../../lib/parallel-delivery-fabric-contract.mjs'
+import { FABRIC_SCHEMA_VERSION, digestCanonical } from '../../lib/parallel-delivery-fabric-contract.mjs'
 import { createLeaseRegistry, parseSessionLeaseRegistry } from '../../lib/parallel-delivery-fabric-registry.mjs'
 import * as admissionModule from '../../lib/parallel-delivery-fabric-admission.mjs'
 import {
@@ -118,6 +118,53 @@ const snapshot = (overrides = {}) => ({
   ...overrides,
 })
 
+const task3PlanRecord = () => {
+  const plan = {
+    schema_version: FABRIC_SCHEMA_VERSION,
+    plan_id: 'plan:one',
+    generation: 1,
+    repo_identity: { full_name: 'acme/bim', repository_id: 1, common_dir_digest: SHA256_A },
+    created_at: NOW,
+    coordinator_session: 'session:coordinator',
+    baseline_ref: 'origin/main',
+    resolved_baseline_sha: SHA1_A,
+    tasks: [{
+      task_id: 'task:task3-one',
+      outcome: 'task3-admission-contract',
+      provider_preference: 'codex',
+      owner_session: 'session:task3-one',
+      scope: {
+        owning_service: 'delivery-fabric',
+        public_entrypoint: 'scripts/lib/parallel-delivery-fabric-registry.mjs',
+        resources: [{ kind: 'path', path: 'src/task3-one.mjs' }],
+        expected_tests: ['test:admission'],
+        e2e_required: false,
+      },
+      dependencies: [],
+      risk: 'bounded',
+      e2e_required: false,
+    }],
+    requested_capacity: { writers: 2, runtime_leases: 0 },
+    branch_profile: 'trunk',
+    acceptance_criteria: ['criterion:task3-admission'],
+    promotion_mode: 'single_pr',
+    requested_execution_level: 'plan_only',
+    authority_reference: 'authority:task3-plan',
+    governance_source_refs: ['openspec:parallel-delivery-fabric'],
+  }
+  const base = {
+    schema_version: 'delivery-plan-registry/v1',
+    generation: 1,
+    nonce: NONCE('task3-plan'),
+    created_at: NOW,
+    updated_at: NOW,
+    plan,
+    plan_digest: digestCanonical(plan),
+    execution: { level: 'plan_only', side_effect_class: 'CONTROL_METADATA' },
+  }
+  return { ...base, canonical_digest: digestCanonical(base) }
+}
+
 const createInMemoryTask3LeaseRegistry = ({ rejectFirstFinalization = false } = {}) => {
   let current = {
     ref: 'refs/ai-bim/session-leases',
@@ -126,9 +173,12 @@ const createInMemoryTask3LeaseRegistry = ({ rejectFirstFinalization = false } = 
   }
   let nextOid = SHA1_A
   let rejectFinalization = rejectFirstFinalization
+  const plan = { ref: 'refs/ai-bim/delivery-plans', oid: SHA1_D, record: task3PlanRecord() }
   const store = {
     commonDirDigest: SHA256_A,
-    async read() {
+    async read(ref) {
+      if (ref === plan.ref) return clone(plan)
+      if (typeof ref === 'string' && ref.startsWith(`${plan.ref}/`)) return { ref, oid: ZERO_OID, record: null }
       return clone(current)
     },
     async cas({ expected_oid: expectedOid, record }) {
@@ -156,8 +206,8 @@ const createInMemoryTask3LeaseRegistry = ({ rejectFirstFinalization = false } = 
       current = { ref: current.ref, oid, record: clone(record) }
       return { status: 'STORED', ref: current.ref, oid, previous_oid: expectedOid, record: clone(record) }
     },
-    async casGuarded({ ref, expected_oid: expectedOid, record, guard_oid: guardOid }) {
-      if (guardOid !== SHA1_D) {
+    async casGuarded({ ref, expected_oid: expectedOid, record, guard_ref: guardRef, guard_oid: guardOid }) {
+      if (guardRef !== plan.ref || guardOid !== plan.oid) {
         return { status: 'CONFLICT', reason: 'GUARD_CONFLICT', ref, expected_oid: expectedOid, actual_oid: current.oid, actual_guard_oid: ZERO_OID }
       }
       return this.cas({ ref, expected_oid: expectedOid, record })
