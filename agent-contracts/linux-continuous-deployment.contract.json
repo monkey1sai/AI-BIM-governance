@@ -1,0 +1,112 @@
+{
+  "schema_version": "linux-continuous-deployment-contract/v1",
+  "states": [
+    "TRUSTED_MERGED",
+    "BUILD_IMMUTABLE_ARTIFACT",
+    "VERIFY_ARTIFACT_PROVENANCE",
+    "RESOLVE_DEPLOYMENT_TARGET",
+    "PRE_DEPLOY_CHECK",
+    "DEPLOY_CANARY",
+    "VERIFY_HEALTH_SMOKE_E2E",
+    "PROMOTE",
+    "POST_DEPLOY_VERIFY",
+    "ACTIVATED",
+    "TERMINAL_DELIVERY_ATTESTATION",
+    "PROVISIONING_REQUIRED",
+    "ROLLBACK_TO_PINNED_KNOWN_GOOD_ARTIFACT",
+    "VERIFY_ROLLBACK",
+    "ROLLED_BACK",
+    "HELD"
+  ],
+  "success_path": [
+    "TRUSTED_MERGED",
+    "BUILD_IMMUTABLE_ARTIFACT",
+    "VERIFY_ARTIFACT_PROVENANCE",
+    "RESOLVE_DEPLOYMENT_TARGET",
+    "PRE_DEPLOY_CHECK",
+    "DEPLOY_CANARY",
+    "VERIFY_HEALTH_SMOKE_E2E",
+    "PROMOTE",
+    "POST_DEPLOY_VERIFY",
+    "ACTIVATED",
+    "TERMINAL_DELIVERY_ATTESTATION"
+  ],
+  "failure_paths": {
+    "authority_or_provenance": ["HELD"],
+    "missing_live_provisioning": ["PROVISIONING_REQUIRED", "HELD"],
+    "deploy_or_verify": [
+      "ROLLBACK_TO_PINNED_KNOWN_GOOD_ARTIFACT",
+      "VERIFY_ROLLBACK",
+      "ROLLED_BACK"
+    ],
+    "rollback_unverified": ["ROLLBACK_TO_PINNED_KNOWN_GOOD_ARTIFACT", "VERIFY_ROLLBACK", "HELD"]
+  },
+  "terminal_mapping": {
+    "ACTIVATED": { "terminal_class": "DELIVERED", "reason_code": "DELIVERY_VERIFIED" },
+    "ROLLED_BACK": { "terminal_class": "FAILED", "reason_code": "MERGED_NOT_DELIVERED" },
+    "HELD": {
+      "terminal_class": "HELD",
+      "reason_codes": [
+        "PROVISIONING_REQUIRED",
+        "CONTRACT_INVALID",
+        "DEPLOYMENT_BLOCKED",
+        "ROLLBACK_UNVERIFIED",
+        "RETRY_BUDGET_EXHAUSTED",
+        "DUPLICATE_CONTROLLER",
+        "REPLAY_REJECTED"
+      ]
+    }
+  },
+  "activation": {
+    "default_state": "PROVISIONING_REQUIRED",
+    "live_activation_in_repository": false,
+    "required_external_authorities": [
+      "server_authoritative_inventory",
+      "opaque_target_lease",
+      "authenticated_artifact_store",
+      "owner_provisioned_linux_runner",
+      "owner_provisioned_environment_policy"
+    ]
+  },
+  "deployment": {
+    "target_id": "canonical-linux",
+    "target_role": "canonical_test_deploy",
+    "target_kind": "linux_host_native",
+    "method": "scripts/dev/rebuild-test-deploy.ps1 -Build",
+    "promotion_rebuild_allowed": false,
+    "rollback_rebuild_allowed": false,
+    "required_preflight_sources": [
+      "scripts/deploy-target-registry.json",
+      "scripts/deploy.ps1",
+      "scripts/dev/provision-linux-deploy-target.sh",
+      "compose.runtime-manager.yml",
+      "compose.host-kit.yml",
+      ".env.web-plane.host-kit.canonical-linux"
+    ],
+    "required_preflight_capabilities": [
+      "docker_engine",
+      "docker_compose_v2",
+      "nvidia_gpu_driver",
+      "python_3_12_with_venv",
+      "powershell_7",
+      "git",
+      "curl",
+      "canonical_ports",
+      "target_scoped_storage",
+      "service_configuration"
+    ]
+  },
+  "controller": {
+    "scope": ["environment", "service"],
+    "single_flight": true,
+    "idempotency_key": ["delivery_id", "replay_key"],
+    "replay_guard": true
+  },
+  "retry": {
+    "max_per_failure_class": 1,
+    "deduplicate_failure_class": true,
+    "event_driven_re_evaluation": true,
+    "unchanged_evidence_retry_allowed": false,
+    "terminal_record_required": true
+  }
+}

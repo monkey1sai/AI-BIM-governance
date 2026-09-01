@@ -302,7 +302,7 @@ Transaction phase SHALL只允許 `COLLECTING`、`VERIFYING`、`READY_TO_MERGE`�
 
 ### Requirement: Failed delivery SHALL freeze the queue and enter a bounded repair lineage
 
-已mergecommit若部署或post-deploy驗證可重現地失敗，attempt SHALL以 `FAILED/MERGED_NOT_DELIVERED`結案，保留原始merge與deployment evidence並凍結 `ordinary` merge queue。只有failure明確分類為transient、輸入與commit未漂移且不需code change時，系統 MAY對同一commit建立一次 `RETRYING_DEPLOYMENT` attempt並執行相同command；否則 SHALL建立綁定原delivery ID與failure evidence的新exact-head repair／revert PR。系統 SHALL NOT reset／force-push main、把last-known-good runtime冒充本次成功、改寫原attempt為 `DELIVERED`或無限重試。
+已mergecommit若部署或post-deploy驗證可重現地失敗，attempt SHALL保留原始merge與deployment evidence並凍結 `ordinary` merge queue。若attempt開始前已有provenance與digest驗證完成的pinned known-good immutable artifact，系統 SHALL先以相同target identity執行rollback；只有rollback artifact readback、health與required smoke全部成功才可輸出 `ROLLED_BACK`，並以outer `FAILED/MERGED_NOT_DELIVERED`結案。缺少pinned artifact、provenance／digest／target／credential漂移或rollback驗證不完整 SHALL以 `HELD/DEPLOYMENT_BLOCKED`結案。只有failure明確分類為transient、輸入與commit未漂移且不需code change時，系統 MAY對同一commit建立一次 `RETRYING_DEPLOYMENT` attempt並執行相同command；否則 SHALL建立綁定原delivery ID與failure evidence的新exact-head repair／revert PR。系統 SHALL NOT reset／force-push main、重新build舊source作rollback、把last-known-good runtime冒充本次成功、改寫原attempt為 `DELIVERED`或無限重試。
 
 #### Scenario: 同一commit的transient redeploy成功
 
@@ -408,3 +408,75 @@ GitHub CheckRun、PR summary與對話回報 SHALL只包含sanitized terminal evi
 - **WHEN**collector或runtime output偵測到token、private inventory、raw env、host/user/path或其他private topology
 - **THEN**publisher SHALL拒絕發布原文
 - **AND**result SHALL標示evidence redaction failure且不得宣稱 `DELIVERED`
+
+### Requirement: Linux Continuous Deployment SHALL start only from a trusted merged event
+
+Dispatcher SHALL只接受server-observed、closed且merged、base為 `main`、repository在allowlist內，且merge前 `source_head_sha = fresh_ci_convergence_head_sha` 的事件；merge後另由trusted observation固定唯一 `merge_commit_sha`，兩個identity不得混用。Event contract SHALL closed；wrong repository、stale convergence SHA、partial pagination、未知欄位或candidate自述的trusted flag SHALL fail closed。
+
+#### Scenario: Stale merge event嘗試啟動deployment
+
+- **GIVEN**PR已merged但collector保存的fresh convergence SHA與observed merge commit不同
+- **WHEN**dispatcher驗證事件
+- **THEN**不得build artifact或取得target lease
+- **AND**attempt SHALL以 `HELD` 結案並保存sanitized drift evidence
+
+### Requirement: One immutable artifact SHALL cross build, canary, promotion, and verification
+
+Artifact authority SHALL為exact merge commit建立一次immutable artifact，closed provenance SHALL綁定source commit、content digest、builder identity、policy digest與attestation reference。Canary、promotion、post-deploy verification與terminal attestation SHALL引用同一content digest；任何artifact mismatch、unknown provenance field或readback drift SHALL不得進 `ACTIVATED`。
+
+#### Scenario: Promotion digest與canary digest不同
+
+- **GIVEN**canary以artifact digest A完成health、smoke與E2E
+- **WHEN**promotion readback回報digest B
+- **THEN**promotion SHALL失敗
+- **AND**attempt SHALL進入pinned known-good rollback路徑，不得輸出 `ACTIVATED`
+
+### Requirement: Deployment target and single-flight ownership SHALL be exact and secret-safe
+
+Target resolver SHALL只接受owner-controlled inventory唯一解析的canonical Linux target，對contract只揭露target ID、kind、role、fingerprint與opaque lease ID。Single-flight key SHALL為 `environment + service`；active lock SHALL綁定delivery ID與artifact digest。相同tuple MAY idempotent replay，不同delivery或digest SHALL被拒絕且不得平行部署同一service。
+
+#### Scenario: Duplicate controller races for the same service
+
+- **WHEN**兩個controller以不同delivery ID要求相同environment與service
+- **THEN**只有既有lock owner可繼續
+- **AND**第二個controller SHALL fail closed，不得取得deployment credential或覆寫ledger
+
+### Requirement: Canary promotion SHALL use a closed success path
+
+Linux CD success state sequence SHALL精確為 `TRUSTED_MERGED → BUILD_IMMUTABLE_ARTIFACT → VERIFY_ARTIFACT_PROVENANCE → RESOLVE_DEPLOYMENT_TARGET → PRE_DEPLOY_CHECK → DEPLOY_CANARY → VERIFY_HEALTH_SMOKE_E2E → PROMOTE → POST_DEPLOY_VERIFY → ACTIVATED → TERMINAL_DELIVERY_ATTESTATION`。任一required state、health、smoke、E2E或readback缺漏 SHALL不得跳到後續state。
+
+#### Scenario: Canary驗證全部成功
+
+- **WHEN**trusted event、artifact provenance、target、preflight、canary health／smoke／E2E、promotion與post-deploy readback全部對同一digest成功
+- **THEN**attempt SHALL進入 `ACTIVATED`
+- **AND**sanitized terminal attestation SHALL映射outer `DELIVERED/DELIVERY_VERIFIED`
+
+### Requirement: Failed canary or promotion SHALL rollback only to a pinned known-good artifact
+
+Canary、promotion或post-deploy failure SHALL進入 `ROLLBACK_TO_PINNED_KNOWN_GOOD_ARTIFACT → VERIFY_ROLLBACK`。Rollback artifact SHALL在attempt開始前已pinned、provenance可驗證且content digest immutable；不得以branch checkout、重新build舊source、reset或force-push main代替。Readback、health與required smoke全部成功時 SHALL輸出 `ROLLED_BACK` 並映射outer `FAILED/MERGED_NOT_DELIVERED`；任何evidence不完整 SHALL輸出 `HELD/DEPLOYMENT_BLOCKED`。
+
+#### Scenario: Pinned rollback artifact不可驗證
+
+- **WHEN**failure發生後known-good artifact缺失、digest不符、signer revoked或target readback不完整
+- **THEN**系統 SHALL NOT猜測runtime已恢復
+- **AND**attempt SHALL以 `HELD/DEPLOYMENT_BLOCKED` 結案並凍結ordinary queue
+
+### Requirement: Retry and terminal delivery history SHALL be bounded and append-only
+
+同一exact event、artifact、target與command只允許policy明定的bounded transient retry；retry SHALL建立linked attempt並保留前一筆terminal evidence，不得改寫。Terminal attestation SHALL closed且sanitized，至少包含delivery／attempt IDs、repository／PR、merge commit、artifact／provenance digests、non-secret target descriptor、state sequence、retry lineage、rollback result、terminal mapping與known gaps。
+
+#### Scenario: Retry budget耗盡
+
+- **WHEN**同一exact input已用完允許的transient retry
+- **THEN**dispatcher SHALL拒絕新的automatic attempt
+- **AND**既有attempt與ledger SHALL保持append-only
+
+### Requirement: Missing external CD provisioning SHALL be explicit HELD evidence
+
+Repo-local workflow與controller SHALL NOT持有live deployment credential或讀取private inventory。External artifact store、trusted runner、credential broker、protected GitHub Environment或canonical target live attestation任一尚未由owner provision時，workflow SHALL產生sanitized `PROVISIONING_REQUIRED → HELD` attestation，且不得執行production或把contract test描述為deployment。
+
+#### Scenario: Repository workflow在未provision狀態執行
+
+- **WHEN**trusted merged event觸發repo-local workflow但external capability descriptor不完整
+- **THEN**workflow SHALL驗證contracts與negative tests後輸出 `PROVISIONING_REQUIRED → HELD`
+- **AND**不得呼叫production target、揭露secret或宣稱 `ACTIVATED`

@@ -1,0 +1,280 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "linux-continuous-deployment-request/v1",
+  "title": "Linux Continuous Deployment Request",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "delivery_id",
+    "repository",
+    "replay_key",
+    "trusted_merge",
+    "artifact",
+    "target",
+    "controller",
+    "ledger",
+    "canary",
+    "promotion",
+    "post_deploy",
+    "previous_known_good",
+    "rollback",
+    "retry_history",
+    "timestamps"
+  ],
+  "properties": {
+    "schema_version": { "const": "linux-continuous-deployment-request/v1" },
+    "delivery_id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$" },
+    "repository": { "const": "monkey1sai/AI-BIM-governance" },
+    "replay_key": { "type": "string", "minLength": 1, "maxLength": 200 },
+    "trusted_merge": { "$ref": "#/definitions/trusted_merge" },
+    "artifact": { "oneOf": [{ "$ref": "#/definitions/artifact" }, { "type": "null" }] },
+    "target": { "oneOf": [{ "$ref": "#/definitions/target" }, { "type": "null" }] },
+    "controller": { "$ref": "#/definitions/controller" },
+    "ledger": { "type": "array", "maxItems": 1000, "items": { "$ref": "#/definitions/controller_lease" } },
+    "canary": { "$ref": "#/definitions/verification" },
+    "promotion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["artifact_sha256", "approved_at"],
+      "properties": {
+        "artifact_sha256": { "$ref": "#/definitions/sha256" },
+        "approved_at": { "$ref": "#/definitions/timestamp" }
+      }
+    },
+    "post_deploy": { "$ref": "#/definitions/verification" },
+    "previous_known_good": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["artifact_sha256", "provenance_sha256", "release_id", "target_fingerprint"],
+      "properties": {
+        "artifact_sha256": { "$ref": "#/definitions/sha256" },
+        "provenance_sha256": { "$ref": "#/definitions/sha256" },
+        "release_id": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "target_fingerprint": { "$ref": "#/definitions/sha256" }
+      }
+    },
+    "rollback": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["attempted", "artifact_sha256", "verification"],
+      "properties": {
+        "attempted": { "type": "boolean" },
+        "artifact_sha256": { "$ref": "#/definitions/sha256" },
+        "verification": { "oneOf": [{ "$ref": "#/definitions/verification" }, { "type": "null" }] }
+      }
+    },
+    "retry_history": { "type": "array", "maxItems": 32, "items": { "$ref": "#/definitions/retry_record" } },
+    "timestamps": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["requested_at"],
+      "properties": { "requested_at": { "$ref": "#/definitions/timestamp" } }
+    }
+  },
+  "definitions": {
+    "sha1": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "timestamp": { "type": "string", "format": "date-time", "pattern": "Z$" },
+    "trusted_merge": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version", "repository", "event_name", "event_id", "pull_request", "merged",
+        "base_ref", "source_head_ref", "source_head_sha", "trusted_merge_sha",
+        "merge_authority", "collector", "ci_convergence", "observed_at"
+      ],
+      "properties": {
+        "schema_version": { "const": "linux-cd-trusted-merge-event/v1" },
+        "repository": { "const": "monkey1sai/AI-BIM-governance" },
+        "event_name": { "const": "pull_request.closed" },
+        "event_id": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "pull_request": { "type": "integer", "minimum": 1 },
+        "merged": { "const": true },
+        "base_ref": { "const": "main" },
+        "source_head_ref": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "source_head_sha": { "$ref": "#/definitions/sha1" },
+        "trusted_merge_sha": { "$ref": "#/definitions/sha1" },
+        "merge_authority": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "actor_id", "evidence_sha256"],
+          "properties": {
+            "kind": { "const": "github_server_trusted_merge" },
+            "actor_id": { "type": "string", "minLength": 1, "maxLength": 200 },
+            "evidence_sha256": { "$ref": "#/definitions/sha256" }
+          }
+        },
+        "collector": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["complete", "pages_fetched", "expected_pages", "evidence_sha256"],
+          "properties": {
+            "complete": { "const": true },
+            "pages_fetched": { "type": "integer", "minimum": 1 },
+            "expected_pages": { "type": "integer", "minimum": 1 },
+            "evidence_sha256": { "$ref": "#/definitions/sha256" }
+          }
+        },
+        "ci_convergence": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["head_sha", "converged", "attestation_sha256", "required_checks"],
+          "properties": {
+            "head_sha": { "$ref": "#/definitions/sha1" },
+            "converged": { "const": true },
+            "attestation_sha256": { "$ref": "#/definitions/sha256" },
+            "required_checks": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["name", "conclusion", "source_app_id"],
+                "properties": {
+                  "name": { "type": "string", "minLength": 1, "maxLength": 200 },
+                  "conclusion": { "const": "success" },
+                  "source_app_id": { "type": "integer", "minimum": 1 }
+                }
+              }
+            }
+          }
+        },
+        "observed_at": { "$ref": "#/definitions/timestamp" }
+      }
+    },
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version", "repository", "merge_sha", "source_tree_sha", "artifact_sha256",
+        "observed_sha256", "artifact_size_bytes", "artifact_uri", "build_run", "provenance", "built_at"
+      ],
+      "properties": {
+        "schema_version": { "const": "linux-cd-artifact-provenance/v1" },
+        "repository": { "const": "monkey1sai/AI-BIM-governance" },
+        "merge_sha": { "$ref": "#/definitions/sha1" },
+        "source_tree_sha": { "$ref": "#/definitions/sha1" },
+        "artifact_sha256": { "$ref": "#/definitions/sha256" },
+        "observed_sha256": { "$ref": "#/definitions/sha256" },
+        "artifact_size_bytes": { "type": "integer", "minimum": 1 },
+        "artifact_uri": { "type": "string", "pattern": "^artifact:[A-Za-z0-9._:/-]+$" },
+        "build_run": {
+          "type": "object", "additionalProperties": false,
+          "required": ["provider", "run_id", "run_attempt"],
+          "properties": {
+            "provider": { "const": "github-actions" },
+            "run_id": { "type": "string", "minLength": 1, "maxLength": 200 },
+            "run_attempt": { "type": "integer", "minimum": 1 }
+          }
+        },
+        "provenance": {
+          "type": "object", "additionalProperties": false,
+          "required": ["issuer", "key_id", "evidence_sha256"],
+          "properties": {
+            "issuer": { "type": "string", "minLength": 1, "maxLength": 200 },
+            "key_id": { "type": "string", "minLength": 1, "maxLength": 200 },
+            "evidence_sha256": { "$ref": "#/definitions/sha256" }
+          }
+        },
+        "built_at": { "$ref": "#/definitions/timestamp" }
+      }
+    },
+    "target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version", "source", "target_id", "role", "kind", "environment", "service",
+        "expected_fingerprint", "observed_fingerprint", "profile_sha256", "deployment_method",
+        "credential_authority"
+      ],
+      "properties": {
+        "schema_version": { "const": "linux-cd-deployment-target/v1" },
+        "source": { "const": "server_authoritative_inventory" },
+        "target_id": { "const": "canonical-linux" },
+        "role": { "const": "canonical_test_deploy" },
+        "kind": { "const": "linux_host_native" },
+        "environment": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "service": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "expected_fingerprint": { "$ref": "#/definitions/sha256" },
+        "observed_fingerprint": { "$ref": "#/definitions/sha256" },
+        "profile_sha256": { "$ref": "#/definitions/sha256" },
+        "deployment_method": { "const": "scripts/dev/rebuild-test-deploy.ps1 -Build" },
+        "credential_authority": {
+          "type": "object", "additionalProperties": false,
+          "required": ["kind", "issuer", "key_id", "lease_id", "expires_at"],
+          "properties": {
+            "kind": { "const": "opaque_target_lease" },
+            "issuer": { "type": "string", "minLength": 1, "maxLength": 200 },
+            "key_id": { "type": "string", "minLength": 1, "maxLength": 200 },
+            "lease_id": { "type": "string", "minLength": 1, "maxLength": 200 },
+            "expires_at": { "$ref": "#/definitions/timestamp" }
+          }
+        }
+      }
+    },
+    "controller": {
+      "type": "object", "additionalProperties": false,
+      "required": ["owner_id", "lease_id"],
+      "properties": {
+        "owner_id": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "lease_id": { "type": "string", "minLength": 1, "maxLength": 200 }
+      }
+    },
+    "controller_lease": {
+      "type": "object", "additionalProperties": false,
+      "required": [
+        "schema_version", "environment", "service", "delivery_id", "replay_key",
+        "artifact_sha256", "owner_id", "lease_id", "state"
+      ],
+      "properties": {
+        "schema_version": { "const": "linux-cd-controller-lease/v1" },
+        "environment": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "service": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "delivery_id": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "replay_key": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "artifact_sha256": { "$ref": "#/definitions/sha256" },
+        "owner_id": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "lease_id": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "state": {
+          "enum": [
+            "TRUSTED_MERGED", "BUILD_IMMUTABLE_ARTIFACT", "VERIFY_ARTIFACT_PROVENANCE",
+            "RESOLVE_DEPLOYMENT_TARGET", "PRE_DEPLOY_CHECK", "DEPLOY_CANARY",
+            "VERIFY_HEALTH_SMOKE_E2E", "PROMOTE", "POST_DEPLOY_VERIFY", "ACTIVATED",
+            "TERMINAL_DELIVERY_ATTESTATION", "PROVISIONING_REQUIRED",
+            "ROLLBACK_TO_PINNED_KNOWN_GOOD_ARTIFACT", "VERIFY_ROLLBACK", "ROLLED_BACK", "HELD"
+          ]
+        }
+      }
+    },
+    "retry_record": {
+      "type": "object", "additionalProperties": false,
+      "required": ["failure_class", "evidence_sha256", "event_id", "ordinal"],
+      "properties": {
+        "failure_class": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "evidence_sha256": { "$ref": "#/definitions/sha256" },
+        "event_id": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "ordinal": { "type": "integer", "minimum": 1, "maximum": 1 }
+      }
+    },
+    "verification_gate": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "status", "evidence_sha256"],
+      "properties": {
+        "id": { "enum": ["health", "smoke", "e2e"] },
+        "status": { "enum": ["passed", "failed", "held"] },
+        "evidence_sha256": { "$ref": "#/definitions/sha256" }
+      }
+    },
+    "verification": {
+      "type": "object", "additionalProperties": false,
+      "required": ["observation_started_at", "observation_ended_at", "artifact_sha256", "gates"],
+      "properties": {
+        "observation_started_at": { "$ref": "#/definitions/timestamp" },
+        "observation_ended_at": { "$ref": "#/definitions/timestamp" },
+        "artifact_sha256": { "$ref": "#/definitions/sha256" },
+        "gates": { "type": "array", "minItems": 3, "maxItems": 3, "items": { "$ref": "#/definitions/verification_gate" } }
+      }
+    }
+  }
+}

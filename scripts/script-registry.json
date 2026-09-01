@@ -206,6 +206,12 @@
       "notes": "Default-branch workflow adapter for protected-environment approval and exact-head merge. Never run candidate code; hosted activation remains owner-provisioned."
     },
     {
+      "path": "scripts/dev/linux-continuous-deployment-controller.mjs",
+      "role": "post-merge-contract-wrapper",
+      "owner": "agent-governance",
+      "notes": "Materializes closed Linux CD terminal attestations. It never replaces scripts/dev/rebuild-test-deploy.ps1 -Build and defaults to PROVISIONING_REQUIRED -> HELD until external authorities are owner-provisioned."
+    },
+    {
       "path": "scripts/measure-session-baseline.ps1",
       "role": "measurement-harness",
       "owner": "scripts",

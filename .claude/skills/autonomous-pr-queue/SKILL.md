@@ -24,6 +24,21 @@ Operate on exactly one named PR. Repository code and the coordinator may collect
 10. The privileged finalizer may consume a short-lived single-use lease only after a final server reread matches the exact tuple, then use compare-and-swap `sha=<frozen head>`. If the external sink is unavailable, report `HELD`; repository helpers must not simulate the mutation.
 11. After merge, keep the delivery lock until freshly fetched `origin/main` equals the observed merge commit and that exact commit passes canonical Linux rebuild and applicable runtime verification. Only then is the terminal class `DELIVERED`.
 
+## Linux Continuous Deployment continuation
+
+The post-merge controller is fail-closed and follows this exact success path: `TRUSTED_MERGED` → `BUILD_IMMUTABLE_ARTIFACT` → `VERIFY_ARTIFACT_PROVENANCE` → `RESOLVE_DEPLOYMENT_TARGET` → `PRE_DEPLOY_CHECK` → `DEPLOY_CANARY` → `VERIFY_HEALTH_SMOKE_E2E` → `PROMOTE` → `POST_DEPLOY_VERIFY` → `ACTIVATED` → `TERMINAL_DELIVERY_ATTESTATION`.
+
+- Enter `TRUSTED_MERGED` only from a server-observed merged PR event whose repository, `main` base, source head, trusted merge SHA, merge authority, complete collector pagination, and CI convergence attestation all match. An old approval, old head, incomplete page set, or wrong authority is `HELD`.
+- Build one immutable artifact bound to the merge SHA, source tree, digest, build run, issuer, and provenance. Canary, promotion, post-deploy verification, and attestation must use the same immutable artifact digest; a promotion-time rebuild or digest substitution is forbidden.
+- Resolve only owner-controlled server-authoritative inventory to the repo-declared canonical Linux profile, verify the pinned target fingerprint, and consume only an opaque credential lease. Do not guess host, IP, environment, service, path, account, or secret values.
+- Hold one environment-plus-service controller lease from merge preparation through terminal attestation. Repeated identical requests are idempotent; another controller or a consumed replay key is `HELD`.
+- Canary requires a bounded observation window plus health, smoke, and E2E evidence. Promotion is a state transition over the already verified digest, not another build or deployment.
+- A canary, promotion, or post-deploy failure must enter `ROLLBACK_TO_PINNED_KNOWN_GOOD_ARTIFACT` → `VERIFY_ROLLBACK` → `ROLLED_BACK`. The rollback artifact must already be pinned with provenance and target fingerprint; temporary rebuilds are forbidden. Unverified rollback is `HELD`.
+- Retry is bounded, failure-class deduplicated, and event-driven. One failure class gets at most one retry, unchanged evidence cannot trigger re-evaluation, and every path ends with a terminal record.
+- Repository source does not prove live artifact store, target lease, environment policy, runner, or activation authority. If any is absent, record `PROVISIONING_REQUIRED` → `HELD`; do not run production deployment or claim activation.
+
+`ACTIVATED` plus a valid `TERMINAL_DELIVERY_ATTESTATION` maps to the existing outer `DELIVERED/DELIVERY_VERIFIED` terminal record. `ROLLED_BACK` and `HELD` retain the original merge fact and never become `DELIVERED`.
+
 The current repository queue helper remains read-only and named-PR scoped:
 
 ```powershell

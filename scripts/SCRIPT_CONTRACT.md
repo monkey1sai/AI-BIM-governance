@@ -58,6 +58,13 @@ tuple digest；executor 在 merge sink 前重驗相同 gate。`attesting_negativ
 deploy/verify/stop operator 入口。所有 pre-sink GitHub snapshot、candidate fetch、App mint 與 apex request 都
 必須受 contract shared deadline 約束，且合成上限保留 result persistence 時間並小於 workflow job timeout。
 
+`scripts/dev/linux-continuous-deployment-controller.mjs` 是 post-merge closed-contract wrapper，不是新的
+deploy entrypoint。它只接受 merged `pull_request.closed` event 或完整
+`linux-continuous-deployment-request/v1`，寫入 no-clobber、secret-free terminal attestation；真正部署方法仍唯一是
+`scripts/dev/rebuild-test-deploy.ps1 -Build`。repo 尚未具備可證實的 artifact store、target lease、environment
+policy 或 owner-provisioned runner 時，wrapper 必須以 exit 2 輸出 `PROVISIONING_REQUIRED → HELD`，不得讀取
+credential、呼叫部署、promotion、rollback 或 production activation。
+
 `scripts/dev/seed-isolated-stack-ifc-ready.ps1`（branch-only dev tool）：對隔離 branch stack 的
 coordinator 灌入一筆來自真實 MinIO 的 IFC-ready job，供 A4 browser E2E preflight 取得
 `download_status=downloaded` 的 job。呼叫邊界：
