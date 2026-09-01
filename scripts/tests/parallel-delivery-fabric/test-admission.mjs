@@ -33,8 +33,11 @@ const LATER = '2026-08-29T05:05:00.000Z'
 const LATER_2 = '2026-08-29T05:10:00.000Z'
 const EXPIRED = '2026-08-29T04:55:00.000Z'
 const NONCE = (suffix) => `${suffix}`.padEnd(32, 'n').slice(0, 32)
+const requestScopeDigest = (scope) => {
+  try { return digestCanonical(normalizeScope(scope)) } catch { return SHA256_D }
+}
 const REQUEST_SCOPE = [{ kind: 'path', path: 'src/task-one.mjs' }]
-const REQUEST_SCOPE_DIGEST = digestCanonical(REQUEST_SCOPE.map((resource) => ({ kind: resource.kind, path: resource.path.toLowerCase() })))
+const REQUEST_SCOPE_DIGEST = requestScopeDigest(REQUEST_SCOPE)
 const EXECUTION_SCOPE = [{ kind: 'path', path: 'src' }]
 const EXECUTION_SCOPE_DIGEST = digestCanonical(EXECUTION_SCOPE)
 const EXECUTION_CHANGED_EVIDENCE = 'M\0src/task-one.mjs\0'
@@ -93,13 +96,7 @@ const request = (overrides = {}) => {
     ...overrides,
   }
   if (Object.hasOwn(overrides, 'scope') && !Object.hasOwn(overrides, 'scope_digest')) {
-    value.scope_digest = digestCanonical(value.scope.map((resource) => ({
-      kind: resource.kind,
-      ...(resource.path ? { path: resource.path.toLowerCase() } : {}),
-      ...(resource.pattern ? { pattern: resource.pattern.toLowerCase() } : {}),
-      ...(resource.old_path ? { old_path: resource.old_path.toLowerCase(), new_path: resource.new_path.toLowerCase() } : {}),
-      ...(resource.resource_key ? { resource_key: resource.resource_key.toLowerCase() } : {}),
-    })))
+    value.scope_digest = requestScopeDigest(value.scope)
   }
   return value
 }
@@ -622,9 +619,9 @@ test('normalizeScope canonicalizes Windows paths, renames, globs, and shared res
     { kind: 'runtime', resource_key: 'runtime:offset-1' },
   ]
   assert.deepEqual(normalizeScope(raw), [
-    { kind: 'glob', pattern: 'src/**/\u0060*.ts' },
-    { kind: 'path', path: 'src/feature/one.ts' },
-    { kind: 'rename', old_path: 'docs/old.md', new_path: 'docs/new.md' },
+    { kind: 'glob', pattern: 'SRC/**/\u0060*.TS' },
+    { kind: 'path', path: 'Src/Feature/One.ts' },
+    { kind: 'rename', old_path: 'Docs/Old.md', new_path: 'docs/New.md' },
     { kind: 'runtime', resource_key: 'runtime:offset-1' },
     { kind: 'shared_contract', resource_key: 'contract:delivery-plan' },
   ])
@@ -634,7 +631,7 @@ test('normalizeScope rejects traversal, absolute paths, duplicates, and unknown 
   for (const resources of [
     [{ kind: 'path', path: '..\\secret.txt' }],
     [{ kind: 'path', path: 'C:\\secret.txt' }],
-    [{ kind: 'path', path: 'src/a.mjs' }, { kind: 'path', path: 'SRC\\a.mjs' }],
+    [{ kind: 'path', path: 'src/a.mjs' }, { kind: 'path', path: 'src\\a.mjs' }],
     [{ kind: 'unknown', resource_key: 'contract:x' }],
   ]) {
     assert.throws(() => normalizeScope(resources), /scope|resource|path|duplicate|invalid/i)
@@ -643,7 +640,7 @@ test('normalizeScope rejects traversal, absolute paths, duplicates, and unknown 
 
 test('findScopeConflicts detects exact, parent, glob, rename, shared, runtime, and disjoint scopes', () => {
   const cases = [
-    [[{ kind: 'path', path: 'src/Feature.ts' }], [{ kind: 'path', path: 'SRC/feature.ts' }], 'CONFLICT'],
+    [[{ kind: 'path', path: 'src/Feature.ts' }], [{ kind: 'path', path: 'SRC/feature.ts' }], 'DISJOINT'],
     [[{ kind: 'path', path: 'src' }], [{ kind: 'path', path: 'src/new.ts' }], 'CONFLICT'],
     [[{ kind: 'glob', pattern: 'src/**/*.ts' }], [{ kind: 'path', path: 'src/new.ts' }], 'CONFLICT'],
     [[{ kind: 'glob', pattern: 'src/**/*.ts' }], [{ kind: 'glob', pattern: 'tests/**/*.ts' }], 'DISJOINT'],
@@ -968,7 +965,7 @@ test('AC-06 — deterministic scope normalization and conservative overlap evide
   assert.equal(findScopeConflicts(
     [{ kind: 'path', path: 'Src\\Feature.ts' }],
     [{ kind: 'path', path: 'src/feature.ts' }],
-  ).status, 'CONFLICT')
+  ).status, 'DISJOINT')
   assert.equal(findScopeConflicts(
     [{ kind: 'shared_contract', resource_key: 'contract:api' }],
     [{ kind: 'exported_symbol', resource_key: 'CONTRACT:API' }],
@@ -1023,7 +1020,7 @@ test('AC-06 — deterministic scope normalization and conservative overlap evide
     ['missing terminator', 'A\0src/file.ts'],
     ['traversal', 'A\0../escape.ts\0'],
     ['absolute', 'A\0C:/escape.ts\0'],
-    ['duplicate', 'A\0src/file.ts\0A\0SRC\\file.ts\0'],
+    ['duplicate', 'A\0src/file.ts\0A\0src\\file.ts\0'],
     ['unknown status', 'Q\0src/file.ts\0'],
   ]) {
     assert.throws(() => parseChangedScopeEvidence(frame), /evidence|path|nul|duplicate|status|invalid/i, label)

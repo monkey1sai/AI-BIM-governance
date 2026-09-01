@@ -19,7 +19,7 @@ REVIEWER_ID = 311287868
 HEAD = "a" * 40
 REVIEW_POLICY = "scripts/autonomous-codex-review-policy.json"
 REVIEW_POLICY_SCHEMA = "scripts/tests/autonomous-codex-review-policy.schema.json"
-REVIEW_OPEN_SPEC = "openspec/specs/ai-coding-governance/spec.md"
+REVIEW_OPEN_SPEC = "openspec/changes/parallel-delivery-fabric/specs/parallel-delivery-fabric/spec.md"
 
 
 def _read(relative: str) -> object:

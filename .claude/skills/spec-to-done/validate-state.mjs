@@ -416,6 +416,49 @@ const gitPathList = (fields, gitArgs, held, detail) => {
   return result.stdout.split('\0').filter(Boolean)
 }
 
+const committedPathsFromNameStatus = (output) => {
+  if (output === '') return []
+  const tokens = output.split('\0')
+  if (tokens.at(-1) !== '') reject('scope_drift', 'committed path scope could not be proven')
+  tokens.pop()
+  const paths = []
+  for (let index = 0; index < tokens.length;) {
+    const status = tokens[index++]
+    if (!/^(?:[ADMTUXB]|[RC][0-9]{1,3})$/u.test(status)) {
+      reject('scope_drift', 'committed path scope could not be proven')
+    }
+    const pathCount = /^[RC][0-9]{1,3}$/u.test(status) ? 2 : 1
+    if (index + pathCount > tokens.length) reject('scope_drift', 'committed path scope could not be proven')
+    for (let offset = 0; offset < pathCount; offset += 1) {
+      const candidate = tokens[index++]
+      if (candidate !== candidate.normalize('NFC') || normalizeRepoPath(candidate) !== candidate || /[\r\n\u0000]/u.test(candidate)) {
+        reject('scope_drift', 'committed path identity is not canonical')
+      }
+      paths.push(candidate)
+    }
+  }
+  return [...new Set(paths)]
+}
+
+const validateCommittedFabricScope = (fields, outcome) => {
+  const baseline = outcome.binding.fabric_tuple.baseline_sha
+  const head = outcome.current_head_sha
+  const ancestry = runGit(fields.worktree, ['merge-base', '--is-ancestor', baseline, head])
+  if (ancestry.error || ancestry.status !== 0) {
+    reject('scope_drift', 'Fabric baseline is not a proven ancestor of the bound HEAD')
+  }
+  const changed = runGit(fields.worktree, [
+    'diff', '--name-status', '--find-renames', '--no-ext-diff', '-z', `${baseline}..${head}`, '--',
+  ])
+  if (changed.error || changed.status !== 0) reject('scope_drift', 'committed path scope could not be proven')
+  const committedPaths = committedPathsFromNameStatus(changed.stdout)
+  const allowedPaths = new Set(outcome.binding.allowed_paths)
+  const outsideCount = committedPaths.filter((candidate) => !allowedPaths.has(candidate)).length
+  if (outsideCount > 0) {
+    reject('scope_drift', `committed changes exceed Fabric allowed_paths (${outsideCount} path(s))`)
+  }
+}
+
 const productionFilesFrom = (files, fields) => [
   ...new Set(files.filter((file) => !isEvidenceOnlyPath(file, fields))),
 ]
@@ -960,6 +1003,7 @@ const validateManagedFabricBinding = ({ cli, current, statePath }) => {
   }
 
   validateActualBranch(fields)
+  validateCommittedFabricScope(fields, outcome)
   return {
     mode: fabric.mode,
     bindingId: fabric.bindingId,

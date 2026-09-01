@@ -259,10 +259,10 @@ test('canonicalization sorts keys without mutation and hashes canonical JSON', (
 
 test('scope resources normalize Windows paths, preserve rename endpoints, and retain shared keys', () => {
   assert.deepEqual(normalizeScopeResource({ kind: 'path', path: 'Src\\Contracts\\Plan.json' }), {
-    kind: 'path', path: 'src/contracts/plan.json',
+    kind: 'path', path: 'Src/Contracts/Plan.json',
   })
   assert.deepEqual(normalizeScopeResource({ kind: 'rename', old_path: 'Src\\Old.ts', new_path: 'src\\New.ts' }), {
-    kind: 'rename', old_path: 'src/old.ts', new_path: 'src/new.ts',
+    kind: 'rename', old_path: 'Src/Old.ts', new_path: 'src/New.ts',
   })
   assert.deepEqual(normalizeScopeResource({ kind: 'shared_contract', resource_key: 'contract:Delivery-Plan' }), {
     kind: 'shared_contract', resource_key: 'contract:delivery-plan',
@@ -407,7 +407,7 @@ test('secret marker detection aligns with schema for bare bearer without rejecti
   assert.equal(parseExecutionEnvelope(normalNearWord).authority_reference, 'authority:bearing')
 })
 
-test('scope paths apply NFC before case-folding and collide deterministically', () => {
+test('scope paths apply NFC while preserving case-sensitive Git identity', () => {
   const composed = 'src/caf\u00e9.mjs'
   const decomposed = 'src/cafe\u0301.mjs'
   assert.deepEqual(
@@ -416,7 +416,7 @@ test('scope paths apply NFC before case-folding and collide deterministically', 
   )
   assert.deepEqual(
     normalizeScopeResource({ kind: 'rename', old_path: decomposed, new_path: `src/${'CAFE\u0301'}.mjs` }),
-    { kind: 'rename', old_path: composed, new_path: composed },
+    { kind: 'rename', old_path: composed, new_path: 'src/CAF\u00c9.mjs' },
   )
 
   const normalizedPlan = plan()
@@ -432,6 +432,13 @@ test('scope paths apply NFC before case-folding and collide deterministically', 
     { kind: 'path', path: decomposed },
   ]
   expectCode('invalid_value', () => parseDeliveryPlan(colliding))
+
+  const caseDistinct = plan()
+  caseDistinct.tasks[0].scope.resources = [
+    { kind: 'path', path: composed },
+    { kind: 'path', path: 'src/CAF\u00c9.mjs' },
+  ]
+  assert.equal(parseDeliveryPlan(caseDistinct).tasks[0].scope.resources.length, 2)
 })
 
 test('provider-session envelope keeps identity opaque and keys closed', () => {

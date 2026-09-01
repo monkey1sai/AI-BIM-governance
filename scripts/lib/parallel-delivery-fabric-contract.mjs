@@ -268,7 +268,7 @@ const normalizeRelativePath = (value, context, { glob = false } = {}) => {
     slashed.split('/').some((segment) => segment === '' || segment === '.' || segment === '..')
   ) fail('ambiguous_path', `${context}_not_repository_relative`)
   if (!glob && /[*?\[\]{}]/u.test(slashed)) fail('ambiguous_path', `${context}_wildcard_not_path`)
-  return slashed.toLowerCase()
+  return slashed
 }
 
 const normalizeResourceKey = (value, context) => {

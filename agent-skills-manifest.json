@@ -664,7 +664,7 @@
         "format": "agent-skill-tree/v2",
         "algorithm": "sha256",
         "trees": {
-          "claude": "8e991e0cfad0e2311d9881f6b087e71b0cefbc415a28d7ac83e0c378bc6a19b7",
+          "claude": "b10af99d03af26a635362b621054b4b930e9581d3db453fcb4324bfc3674c8bd",
           "codex": "aa42ec29fb9fe36eed1c7e8da3664e14ed0f55a7663199125a1f60bf56f4ae71"
         }
       }

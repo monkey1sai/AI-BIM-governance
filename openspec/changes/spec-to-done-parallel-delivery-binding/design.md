@@ -53,7 +53,7 @@ Standalone run 繼續使用 `artifacts/spec-to-done/{slug}-state.md`。Fabric-ma
 
 ### 5. Scope containment 重用 Fabric predicate
 
-`allowed_paths` 必須是 canonical、去重的 repo-relative exact paths，並以既有 `evaluateScopeDrift` 對 selected task 的 scope resources 驗證。path／glob／rename 可被覆蓋；shared contract／symbol 未能解析成 path 時不推測，回 `scope_drift`。執行中的 changed paths 仍需通過既有 Fabric scope revalidation 與 GitNexus gate。
+`allowed_paths` 必須是 canonical、去重且保留 Git 大小寫身分的 repo-relative exact paths，並以既有 `evaluateScopeDrift` 對 selected task 的 scope resources 驗證。path／glob／rename 可被覆蓋；shared contract／symbol 未能解析成 path 時不推測，回 `scope_drift`。state validator 另以 NUL-delimited name-status 驗證 `baseline_sha..current_head_sha` 的 committed paths（rename 同時檢查 old/new path）；任何未列入 `allowed_paths` 的路徑皆回 `scope_drift`。執行中的 dirty changed paths 仍需通過既有 Fabric scope revalidation 與 GitNexus gate。
 
 ### 6. HELD 保留 lease；v1 禁止 local resume
 

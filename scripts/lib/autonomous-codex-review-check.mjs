@@ -1,7 +1,13 @@
 import { createHash } from 'node:crypto'
+import { spawnSync } from 'node:child_process'
 import { closeSync, existsSync, fstatSync, lstatSync, openSync, opendirSync, readSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import {
+  gitInvocationArguments,
+  resolveTrustedGit,
+  sanitizedGitEnvironment,
+} from '../../.claude/skills/spec-to-done/trusted-git.mjs'
 
 export const AUTONOMOUS_CODEX_REVIEW_POLICY_VERSION = 'autonomous-codex-review-policy/v1'
 export const AUTONOMOUS_CODEX_REVIEW_PHASES = Object.freeze([
@@ -12,7 +18,7 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '.
 const POLICY_RELATIVE = 'scripts/autonomous-codex-review-policy.json'
 const SCHEMA_RELATIVE = 'scripts/tests/autonomous-codex-review-policy.schema.json'
 const OPEN_SPEC_RELATIVE = 'openspec/changes/parallel-delivery-fabric/specs/parallel-delivery-fabric/spec.md'
-const BASE_SHA = '9e2bd849465b7b7b2d6b8866f1227dfb3edb60db'
+const BASE_SHA = 'a024a13a2ea2b7037acbf6a916d5dda8d125d27f'
 const OPEN_SPEC_SHA256 = 'fb3d378d17688721238516061ac8fe9d8e45d2d6d8566adb083269518367a0ae'
 const SHA1 = /^[0-9a-f]{40}$/u
 const SHA256 = /^[0-9a-f]{64}$/u
@@ -373,6 +379,60 @@ const decodeUtf8 = (bytes, label) => {
   try { return new TextDecoder('utf-8', { fatal: true }).decode(bytes) } catch { fail('policy_json_invalid', label) }
 }
 
+const resolvePolicyGit = () => {
+  const runtimeRoot = path.parse(process.execPath).root
+  const candidates = process.platform === 'win32'
+    ? [
+        path.join(runtimeRoot, 'Program Files', 'Git', 'cmd', 'git.exe'),
+        path.join(runtimeRoot, 'Program Files', 'Git', 'bin', 'git.exe'),
+        path.join(runtimeRoot, 'Program Files', 'Git', 'mingw64', 'bin', 'git.exe'),
+      ]
+    : ['/usr/bin/git', '/usr/local/bin/git']
+  for (const candidate of candidates) {
+    if (!existsSync(candidate)) continue
+    try { return resolveTrustedGit(candidate, ROOT) } catch { /* try the next fixed system path */ }
+  }
+  fail('policy_source_pin_invalid', 'trusted_git_unavailable')
+}
+
+const runPolicyGit = (identity, args, { maxBuffer = 16 * 1024 } = {}) => spawnSync(
+  identity.resolvedGit,
+  gitInvocationArguments(args),
+  {
+    cwd: ROOT,
+    env: sanitizedGitEnvironment(identity.resolvedGit),
+    encoding: 'buffer',
+    windowsHide: true,
+    maxBuffer,
+  },
+)
+
+const validatePinnedOpenSpec = () => {
+  const identity = resolvePolicyGit()
+  const pinnedCommit = runPolicyGit(identity, ['rev-parse', '--verify', `${BASE_SHA}^{commit}`])
+  if (pinnedCommit.error || pinnedCommit.status !== 0 || pinnedCommit.stdout.toString('utf8').trim().toLowerCase() !== BASE_SHA) {
+    fail('policy_source_pin_invalid', 'pinned_commit_unavailable')
+  }
+  const headCommit = runPolicyGit(identity, ['rev-parse', '--verify', 'HEAD^{commit}'])
+  if (headCommit.error || headCommit.status !== 0 || !SHA1.test(headCommit.stdout.toString('utf8').trim().toLowerCase())) {
+    fail('policy_source_pin_invalid', 'head_commit_unavailable')
+  }
+  const ancestry = runPolicyGit(identity, ['merge-base', '--is-ancestor', BASE_SHA, 'HEAD'])
+  if (ancestry.error || ancestry.status !== 0) fail('policy_source_pin_invalid', 'pinned_commit_not_ancestor')
+  const blob = runPolicyGit(identity, ['cat-file', 'blob', `${BASE_SHA}:${OPEN_SPEC_RELATIVE}`], {
+    maxBuffer: POLICY_FILE_MAX_BYTES + 1,
+  })
+  if (blob.error || blob.status !== 0 || blob.stdout.length > POLICY_FILE_MAX_BYTES) {
+    fail('policy_source_pin_invalid', 'pinned_blob_unavailable')
+  }
+  const blobText = decodeUtf8(blob.stdout, 'pinned_open_spec_blob')
+  if (/\r(?!\n)/u.test(blobText)) fail('policy_source_pin_invalid', 'pinned_blob_line_endings')
+  const canonicalBlob = Buffer.from(blobText.replace(/\r\n/gu, '\n'), 'utf8')
+  if (createHash('sha256').update(canonicalBlob).digest('hex') !== OPEN_SPEC_SHA256) {
+    fail('policy_source_pin_invalid', 'pinned_blob_digest_mismatch')
+  }
+}
+
 const loadCanonical = () => {
   const inventoryBefore = inspectPolicyFileInventory(ROOT)
   const policyPath = path.join(ROOT, POLICY_RELATIVE)
@@ -388,6 +448,7 @@ const loadCanonical = () => {
   if (/\r(?!\n)/u.test(sourceText)) fail('policy_source_digest_mismatch', policy.open_spec.source_path)
   const canonicalSourceBytes = Buffer.from(sourceText.replace(/\r\n/gu, '\n'), 'utf8')
   if (createHash('sha256').update(canonicalSourceBytes).digest('hex') !== policy.open_spec.source_sha256) fail('policy_source_digest_mismatch', policy.open_spec.source_path)
+  validatePinnedOpenSpec()
   const inventoryAfter = inspectPolicyFileInventory(ROOT)
   if (!same(inventoryBefore, inventoryAfter)) fail('policy_inventory_io_race', 'inventory_io')
   return policy
