@@ -254,6 +254,12 @@ $boardOverrideRoot = Join-Path ([System.IO.Path]::GetTempPath()) (
     "governed-worktree-board-override-$PID-$([guid]::NewGuid().ToString('N'))")
 $boardOverrideSessions = Join-Path $boardOverrideRoot 'sessions'
 New-Item -ItemType Directory -Path $boardOverrideSessions -Force | Out-Null
+$unrelatedRepoRoot = Join-Path ([System.IO.Path]::GetTempPath()) (
+    "governed-worktree-unrelated-repo-$PID-$([guid]::NewGuid().ToString('N'))")
+$unrelatedBoardSessions = Join-Path $unrelatedRepoRoot '.agents\board\sessions'
+New-Item -ItemType Directory -Path $unrelatedBoardSessions -Force | Out-Null
+& git init --initial-branch=main $unrelatedRepoRoot 2>&1 | Out-Null
+Assert-Equal 0 $LASTEXITCODE 'unrelated cwd fixture repository initializes'
 $overrideSession = [ordered]@{
     agent = 'override-only'
     session = 'fixture'
@@ -269,16 +275,35 @@ $overrideSession = [ordered]@{
     (Join-Path $boardOverrideSessions 'override-only--fixture.json'),
     ($overrideSession | ConvertTo-Json -Depth 4)
 )
+$unrelatedSession = [ordered]@{
+    agent = 'unrelated-only'
+    session = 'fixture'
+    status = 'active'
+    task = 'must-not-be-observed'
+    cwd = $repoRoot
+    branch = 'fixture'
+    head = 'fixture'
+    recentFiles = @()
+    updatedAt = [DateTime]::UtcNow.ToString('o')
+}
+[System.IO.File]::WriteAllText(
+    (Join-Path $unrelatedBoardSessions 'unrelated-only--fixture.json'),
+    ($unrelatedSession | ConvertTo-Json -Depth 4)
+)
 $savedBoardOverride = $env:AGENTS_BOARD_DIR
+$savedLocation = (Get-Location).Path
 try {
     $env:AGENTS_BOARD_DIR = $boardOverrideRoot
+    Set-Location -LiteralPath $unrelatedRepoRoot
     $inventoryText = @(& pwsh -NoProfile -NonInteractive -File $cliPath -Inventory -Json)
     if ($LASTEXITCODE -ne 0) { throw "inventory CLI failed: $($inventoryText -join [Environment]::NewLine)" }
 }
 finally {
+    Set-Location -LiteralPath $savedLocation
     if ($null -eq $savedBoardOverride) { Remove-Item -LiteralPath 'Env:AGENTS_BOARD_DIR' -ErrorAction SilentlyContinue }
     else { $env:AGENTS_BOARD_DIR = $savedBoardOverride }
     Remove-Item -LiteralPath $boardOverrideRoot -Recurse -Force
+    Remove-Item -LiteralPath $unrelatedRepoRoot -Recurse -Force
 }
 $inventory = ($inventoryText -join [Environment]::NewLine) | ConvertFrom-Json
 Assert-Equal 'governed-worktree-inventory/v1' ([string]$inventory.schema_version) 'inventory schema'
@@ -295,6 +320,8 @@ $currentRows = @($inventory.worktrees | Where-Object {
 Assert-Equal 1 $currentRows.Count 'inventory includes the current worktree exactly once'
 Assert-True (@($currentRows[0].active_agents) -notcontains 'override-only') `
     'inventory ignores the inherited test-only board override'
+Assert-True (@($currentRows[0].active_agents) -notcontains 'unrelated-only') `
+    'inventory observes the canonical main checkout board instead of the caller cwd board'
 $expectedGitMetadataPath = (& git -C $repoRoot rev-parse --path-format=absolute --absolute-git-dir).Trim()
 Assert-Equal 0 $LASTEXITCODE 'current worktree Git metadata path resolves'
 $actualGitMetadataPathKey = ConvertTo-GovernedPathKey -Path ([string]$currentRows[0].git_metadata_path)
