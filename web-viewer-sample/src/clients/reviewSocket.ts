@@ -23,6 +23,10 @@ export type ReviewSocketAck =
     | {
         ok: false;
         error: string;
+        session_id?: string;
+        trace_id?: string;
+        lifecycle_status?: "closed";
+        reason?: string;
     };
 
 export interface ReviewSocketHandlers {
@@ -58,7 +62,14 @@ function normalizeAck(value: unknown): ReviewSocketAck {
         };
     }
     if (value.ok === false && typeof value.error === "string" && value.error.length > 0) {
-        return { ok: false, error: value.error };
+        return {
+            ok: false,
+            error: value.error,
+            ...(typeof value.session_id === "string" ? { session_id: value.session_id } : {}),
+            ...(typeof value.trace_id === "string" ? { trace_id: value.trace_id } : {}),
+            ...(value.lifecycle_status === "closed" ? { lifecycle_status: "closed" as const } : {}),
+            ...(typeof value.reason === "string" ? { reason: value.reason } : {}),
+        };
     }
     return { ok: false, error: "Malformed Socket.IO acknowledgement." };
 }

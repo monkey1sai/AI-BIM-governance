@@ -144,7 +144,7 @@ export function registerReviewNamespace(
         ack?.(traceCheck);
         return;
       }
-      if (!idleReclaim?.recordActivity(sessionCheck.sessionId)) {
+      if (!idleReclaim?.recordPeerActivity(sessionCheck.sessionId, socket.id)) {
         ack?.({ ok: false, error: "Session activity was not recorded." });
         return;
       }
@@ -207,7 +207,14 @@ export function registerReviewNamespace(
 function validateExistingSession(
   store: SessionStore,
   payload: SessionPayload,
-): { ok: true; sessionId: string } | { ok: false; error: string } {
+): { ok: true; sessionId: string } | {
+  ok: false;
+  error: string;
+  session_id?: string;
+  trace_id?: string;
+  lifecycle_status?: "closed";
+  reason?: string;
+} {
   const sessionId = payload.session_id;
   if (!sessionId) {
     return { ok: false, error: "Missing session_id" };
@@ -225,6 +232,21 @@ function validateExistingSession(
     return { ok: false, error: "Review session not found." };
   }
   if (!isSessionMutable(session)) {
+    if (
+      session.status === "closed"
+      && typeof payload.trace_id === "string"
+      && payload.trace_id === session.trace_id
+      && isCanonicalSessionTraceId(payload.trace_id, sessionId)
+    ) {
+      return {
+        ok: false,
+        error: "Review session is not active.",
+        session_id: sessionId,
+        trace_id: payload.trace_id,
+        lifecycle_status: "closed",
+        reason: "recovered_close",
+      };
+    }
     return { ok: false, error: "Review session is not active." };
   }
   return { ok: true, sessionId };

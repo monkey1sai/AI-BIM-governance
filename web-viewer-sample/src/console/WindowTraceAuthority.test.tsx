@@ -588,6 +588,30 @@ describe("Window Socket canonical trace authority", () => {
         expect(target._sendStreamMessage({ event_type: "loadingStateQuery", payload: {} })).toBe(false);
     });
 
+    it("replays authoritative closed state when reconnect join is rejected as terminal", () => {
+        const app = authorizedApp({ synchronousSetState: true });
+        const target = internals(app);
+        target._connectReviewSocket(SESSION_ID, TRACE_ID);
+        const candidate = vi.mocked(socketClient.join).mock.calls[0][0];
+        const stopSpy = vi.spyOn(AppStream, "stop").mockImplementation(() => {});
+
+        handlers.onStatus?.("connected");
+        ack("joinSession", candidate, {
+            ok: false,
+            error: "Review session is not active.",
+            session_id: SESSION_ID,
+            trace_id: TRACE_ID,
+            lifecycle_status: "closed",
+            reason: "recovered_close",
+        });
+
+        expect(target.state.reviewLifecycleStatus).toBe("closed");
+        expect(target.state.idleClosedReason).toBe("recovered_close");
+        expect(target.state.webrtcLifecycleStatus).toBe("stopped");
+        expect(socketClient.disconnect).toHaveBeenCalledTimes(1);
+        expect(stopSpy).toHaveBeenCalledTimes(1);
+    });
+
     it("ignores a late ack from an older socket instance after a session reconnect", () => {
         const app = readyApp();
         internals(app)._connectReviewSocket(SESSION_ID, TRACE_ID);

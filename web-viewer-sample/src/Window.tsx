@@ -2136,7 +2136,10 @@ export default class App extends React.Component<AppProps, AppState> {
             }, () => {
                 if (streamConfig.model.status === "ready" && !isBlockedLifecycle(streamConfig.lifecycle_status)) {
                     this._scheduleStreamStartTimeout();
-                } else if (streamConfig.model.status === "missing" && !isBlockedLifecycle(streamConfig.lifecycle_status)) {
+                } else if (
+                    (streamConfig.model.status === "missing" || streamConfig.model.status === "converting")
+                    && !isBlockedLifecycle(streamConfig.lifecycle_status)
+                ) {
                     this._scheduleStreamConfigRefresh(sessionId);
                 }
                 if (
@@ -3493,6 +3496,28 @@ export default class App extends React.Component<AppProps, AppState> {
         };
     }
 
+    private _applyAuthoritativeSessionClosed(reason: string): void {
+        this.reviewSocketEpoch += 1;
+        this.verifiedDataChannelAuthority = null;
+        this.reviewSocket?.disconnect();
+        this.reviewSocket = null;
+        const streamMountKey = this._replaceStreamLifecycle();
+        AppStream.stop();
+        this.setState({
+            reviewLifecycleStatus: "closed",
+            idleCountdownRemainingSeconds: null,
+            idleClosedReason: reason,
+            isKitReady: false,
+            isLoading: false,
+            showStream: false,
+            loadingText: "會議已結束",
+            loadedStageUrl: null,
+            stageLoadStatus: "disconnected",
+            webrtcLifecycleStatus: "stopped",
+            streamMountKey,
+        });
+    }
+
     private _connectReviewSocket(sessionId: string, traceId: string): void {
         if (isBlockedLifecycle(this.state.reviewLifecycleStatus)) {
             this._appendReviewEvent(`略過 Socket.IO join：session lifecycle=${this.state.reviewLifecycleStatus}`);
@@ -3568,25 +3593,9 @@ export default class App extends React.Component<AppProps, AppState> {
                     } else if (event === "session:idle_countdown_cancelled") {
                         this.setState({ idleCountdownRemainingSeconds: null });
                     } else {
-                        this.reviewSocketEpoch += 1;
-                        this.verifiedDataChannelAuthority = null;
-                        this.reviewSocket?.disconnect();
-                        this.reviewSocket = null;
-                        const streamMountKey = this._replaceStreamLifecycle();
-                        AppStream.stop();
-                        this.setState({
-                            reviewLifecycleStatus: "closed",
-                            idleCountdownRemainingSeconds: null,
-                            idleClosedReason: typeof payload.reason === "string" ? payload.reason : "inactivity",
-                            isKitReady: false,
-                            isLoading: false,
-                            showStream: false,
-                            loadingText: "會議已結束",
-                            loadedStageUrl: null,
-                            stageLoadStatus: "disconnected",
-                            webrtcLifecycleStatus: "stopped",
-                            streamMountKey,
-                        });
+                        this._applyAuthoritativeSessionClosed(
+                            typeof payload.reason === "string" ? payload.reason : "inactivity",
+                        );
                     }
                 }
                 this._appendReviewEvent(`收到 Socket.IO 事件：${event}`);
@@ -3606,6 +3615,21 @@ export default class App extends React.Component<AppProps, AppState> {
         ack: ReviewSocketAck,
     ): void {
         if (socketEpoch !== this.reviewSocketEpoch || !this.componentMounted) return;
+        if (
+            event === "joinSession"
+            && !ack.ok
+            && ack.lifecycle_status === "closed"
+            && ack.session_id === candidate.sessionId
+            && ack.trace_id === candidate.traceId
+            && candidate.sessionId === this.state.reviewSessionId
+            && candidate.traceId === this.state.latestStreamConfig?.trace_id
+            && candidate.traceId === traceIdFromSearch(window.location.search)
+            && this._harnessRouteAuthorityMatches(candidate.sessionId, candidate.traceId)
+        ) {
+            this._applyAuthoritativeSessionClosed(ack.reason ?? "recovered_close");
+            this._appendReviewEvent("Socket.IO 已同步會議關閉狀態");
+            return;
+        }
         if (event === "userActivity" && !ack.ok) {
             const authority = this.verifiedDataChannelAuthority;
             const matchesJoinedAuthority = authority
@@ -4064,7 +4088,10 @@ export default class App extends React.Component<AppProps, AppState> {
                 this._connectReviewSocket(sessionId, streamConfig.trace_id);
                 if (streamConfig.model.status === "ready" && !isBlockedLifecycle(streamConfig.lifecycle_status)) {
                     this._scheduleStreamStartTimeout();
-                } else if (streamConfig.model.status === "missing" && !isBlockedLifecycle(streamConfig.lifecycle_status)) {
+                } else if (
+                    (streamConfig.model.status === "missing" || streamConfig.model.status === "converting")
+                    && !isBlockedLifecycle(streamConfig.lifecycle_status)
+                ) {
                     this._scheduleStreamConfigRefresh(sessionId);
                 }
                 if (!streamEndpointChanged && this.state.isKitReady && this.state.selectedUSDAsset && streamConfig.model.status === "ready" && !isBlockedLifecycle(streamConfig.lifecycle_status)) {

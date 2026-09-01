@@ -135,7 +135,11 @@ export class SessionIdleReclaimService {
    * Returns current idle and countdown status for a session.
    */
   getSessionState(sessionId: string): SessionActivityState | null {
-    if (this.idleTimeoutMs === null || !isSafeSessionId(sessionId) || !this.hasConnectedPeer(sessionId)) return null;
+    if (this.idleTimeoutMs === null || !isSafeSessionId(sessionId)) return null;
+    const trackedState = this.sessionStates.get(sessionId);
+    const retryingTeardown = trackedState?.isCountingDown === true
+      && trackedState.countdownRemainingSec <= 0;
+    if (!this.hasConnectedPeer(sessionId) && !retryingTeardown && !this.teardownInFlight.has(sessionId)) return null;
     let session;
     try {
       session = this.store.get(sessionId);
@@ -143,7 +147,6 @@ export class SessionIdleReclaimService {
       this.removeSession(sessionId);
       return null;
     }
-    const trackedState = this.sessionStates.get(sessionId);
     const retryingInterruptedTeardown = (
       session?.status === "closing" || session?.status === "closed"
     ) && trackedState?.isCountingDown === true && trackedState.countdownRemainingSec <= 0;
@@ -177,7 +180,8 @@ export class SessionIdleReclaimService {
   tick(now: number = Date.now()): void {
     if (this.idleTimeoutMs === null) return;
     for (const [sessionId, state] of Array.from(this.sessionStates.entries())) {
-      if (!this.hasConnectedPeer(sessionId)) {
+      const retryingTeardown = state.isCountingDown && state.countdownRemainingSec <= 0;
+      if (!this.hasConnectedPeer(sessionId) && !retryingTeardown && !this.teardownInFlight.has(sessionId)) {
         this.removeSession(sessionId);
         continue;
       }
@@ -264,12 +268,20 @@ export class SessionIdleReclaimService {
     return this.recordActivity(sessionId, timestamp);
   }
 
+  recordPeerActivity(sessionId: string, peerId: string, timestamp: number = Date.now()): boolean {
+    if (!this.connectedPeers.get(sessionId)?.has(peerId)) return false;
+    return this.recordActivity(sessionId, timestamp);
+  }
+
   disconnectPeer(sessionId: string, peerId: string): void {
     const peers = this.connectedPeers.get(sessionId);
     if (!peers) return;
     peers.delete(peerId);
     if (peers.size === 0) {
-      if (this.sessionStates.get(sessionId)?.isCountingDown) {
+      const state = this.sessionStates.get(sessionId);
+      const retryingTeardown = state?.isCountingDown === true && state.countdownRemainingSec <= 0;
+      if (retryingTeardown || this.teardownInFlight.has(sessionId)) return;
+      if (state?.isCountingDown) {
         this.onCountdownCancelled?.(sessionId);
       }
       this.removeSession(sessionId);

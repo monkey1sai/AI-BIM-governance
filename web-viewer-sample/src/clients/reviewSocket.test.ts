@@ -120,6 +120,33 @@ describe("connectReviewSocket", () => {
         }]);
     });
 
+    it("preserves exact terminal session truth from a rejected join acknowledgement", () => {
+        const acknowledgements: ReviewSocketAck[] = [];
+        const client = connectReviewSocket("http://127.0.0.1:8004", {
+            onAck: (_event, _candidate, ack) => acknowledgements.push(ack),
+        });
+        socket.trigger("connect");
+        client.join(CANDIDATE_A);
+
+        socket.emitted[0].ack?.({
+            ok: false,
+            error: "Review session is not active.",
+            session_id: CANDIDATE_A.sessionId,
+            trace_id: CANDIDATE_A.traceId,
+            lifecycle_status: "closed",
+            reason: "recovered_close",
+        });
+
+        expect(acknowledgements).toEqual([{
+            ok: false,
+            error: "Review session is not active.",
+            session_id: CANDIDATE_A.sessionId,
+            trace_id: CANDIDATE_A.traceId,
+            lifecycle_status: "closed",
+            reason: "recovered_close",
+        }]);
+    });
+
     it("emits stream readiness only after join authority and reasserts it after reconnect", async () => {
         const client = connectReviewSocket("http://127.0.0.1:8004");
         client.join(CANDIDATE_A);

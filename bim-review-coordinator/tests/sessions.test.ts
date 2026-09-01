@@ -792,6 +792,39 @@ describe("bim-review-coordinator", () => {
     expect(app.idleReclaimService.getSessionState(sessionId)).toBeNull();
   });
 
+  it("rejects user activity from a joined socket that has not declared stream readiness", async () => {
+    const app = makeApp({ sessionIdleTimeoutMs: 60_000 });
+    const created = await request(app.app)
+      .post("/api/review-sessions")
+      .send({ project_id: "project_ready_owner", model_version_id: "version_ready_owner" });
+    const sessionId = created.body.session_id as string;
+    const traceId = created.body.trace_id as string;
+    const socketUrl = await listen(app);
+    const readyClient = await connectReviewSocket(socketUrl);
+    const spectatorClient = await connectReviewSocket(socketUrl);
+
+    for (const client of [readyClient, spectatorClient]) {
+      expect(await emitWithAck<Record<string, unknown>>(client, "joinSession", {
+        session_id: sessionId,
+        trace_id: traceId,
+      })).toMatchObject({ ok: true, trace_id: traceId });
+    }
+    expect(await emitWithAck<Record<string, unknown>>(readyClient, "streamReadiness", {
+      session_id: sessionId,
+      trace_id: traceId,
+      ready: true,
+    })).toMatchObject({ ok: true, trace_id: traceId });
+
+    expect(await emitWithAck<Record<string, unknown>>(spectatorClient, "userActivity", {
+      session_id: sessionId,
+      trace_id: traceId,
+    })).toEqual({ ok: false, error: "Session activity was not recorded." });
+    expect(await emitWithAck<Record<string, unknown>>(readyClient, "userActivity", {
+      session_id: sessionId,
+      trace_id: traceId,
+    })).toMatchObject({ ok: true, session_id: sessionId, trace_id: traceId });
+  });
+
   it("binds presence identity to each socket and ignores spoofed join/leave user_id values", async () => {
     const app = makeApp();
     const created = await request(app.app)
@@ -994,12 +1027,25 @@ describe("bim-review-coordinator", () => {
     await request(app.app).post(`/api/review-sessions/${created.body.session_id}/close`).send({});
     const client = await connectReviewSocket(await listen(app));
 
-    const response = await emitWithAck<{ ok: boolean; error?: string }>(client, "joinSession", {
+    const untraced = await emitWithAck<Record<string, unknown>>(client, "joinSession", {
       session_id: created.body.session_id,
       user_id: "dev_user_001",
     });
+    expect(untraced).toEqual({ ok: false, error: "Review session is not active." });
 
-    expect(response).toEqual({ ok: false, error: "Review session is not active." });
+    const response = await emitWithAck<Record<string, unknown>>(client, "joinSession", {
+      session_id: created.body.session_id,
+      trace_id: created.body.trace_id,
+      user_id: "dev_user_001",
+    });
+    expect(response).toEqual({
+      ok: false,
+      error: "Review session is not active.",
+      session_id: created.body.session_id,
+      trace_id: created.body.trace_id,
+      lifecycle_status: "closed",
+      reason: "recovered_close",
+    });
   });
 
   it("rejects unsafe session ids before touching the filesystem", async () => {
@@ -1364,7 +1410,7 @@ describe("bim-review-coordinator", () => {
         .post(`/api/review-sessions/${created.body.session_id}/close`)
         .send({ final_events: finalEvents });
       expect(firstClose.status).toBe(500);
-      expect(app.store.get(created.body.session_id)?.status).toBe("closing");
+      expect(app.store.get(created.body.session_id)?.status).toBe(created.body.status);
 
       const retriedClose = await request(app.app)
         .post(`/api/review-sessions/${created.body.session_id}/close`)

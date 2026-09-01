@@ -808,12 +808,6 @@ export function createCoordinatorApp(
         }, closeCheckpoint.checkpoint_id);
         closeEvents = [...closeEvents, closingEvent];
       }
-      if (session.status !== "closing") {
-        closing = store.update(session.session_id, {
-          status: "closing",
-          kit_instance_bindings: markKitBindingsDraining(session.kit_instance_bindings),
-        }) ?? session;
-      }
       const expectedFinalEventCount = closeCheckpoint.expected_final_event_count;
       const existingFinalEventCount = closeEvents.filter((event) => (
         event.type === "finalReviewEvent"
@@ -837,6 +831,12 @@ export function createCoordinatorApp(
           && event.close_checkpoint_id === closeCheckpoint.checkpoint_id
         )).length;
       if (persistedFinalEventCount < expectedFinalEventCount) return closing;
+      if (session.status !== "closing") {
+        closing = store.update(session.session_id, {
+          status: "closing",
+          kit_instance_bindings: markKitBindingsDraining(session.kit_instance_bindings),
+        }) ?? session;
+      }
     }
     const closed = session.status === "closed"
       ? session
@@ -956,13 +956,6 @@ export function createCoordinatorApp(
         retainIdleTracking: true,
       });
       if (!recovered || recovered.status !== "closed") continue;
-      const traceAuthority = sessionTraceResolver.resolveAndCommit(session.session_id);
-      io.of("/review").to(session.session_id).emit("session:closed", {
-        session_id: session.session_id,
-        ...(traceAuthority.ok ? { trace_id: traceAuthority.canonicalTraceId } : {}),
-        reason: reason ?? "recovered_close",
-        closed_at: nowIso(),
-      });
     } catch (error) {
       console.error(`[SessionIdleReclaim] Failed to recover close checkpoint for ${session.session_id}:`, error);
     }

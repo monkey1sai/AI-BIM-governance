@@ -1728,7 +1728,7 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
     }
   });
 
-  it("waits for a missing model to become ready before starting the WebRTC timeout", async () => {
+  it.each(["missing", "converting"] as const)("waits for a %s model to become ready before starting the WebRTC timeout", async (initialStatus) => {
     vi.useFakeTimers();
     const app = operableApp();
     useSynchronousSetState(app);
@@ -1749,7 +1749,7 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
       autoCreateSession: reviewEnv.autoCreateSession,
       hasExplicitEmptySessionId: reviewEnv.hasExplicitEmptySessionId,
     };
-    const streamConfig = (status: "missing" | "ready") => ({
+    const streamConfig = (status: "missing" | "converting" | "ready") => ({
       session_id: "review_session_x",
       trace_id: DATA_CHANNEL_TRACE_ID,
       lifecycle_status: "active",
@@ -1784,7 +1784,7 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
         model_version_id: "version_x",
       } as never);
       const getStreamConfig = vi.spyOn(privateApp.coordinatorClient, "getStreamConfig")
-        .mockResolvedValueOnce(streamConfig("missing") as never)
+        .mockResolvedValueOnce(streamConfig(initialStatus) as never)
         .mockResolvedValueOnce(streamConfig("ready") as never);
       vi.spyOn(privateApp, "_connectReviewSocket").mockImplementation(() => undefined);
       const scheduleStreamStart = vi.spyOn(privateApp, "_scheduleStreamStartTimeout").mockImplementation(() => undefined);
@@ -1795,7 +1795,7 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
       expect(getStreamConfig).toHaveBeenCalledTimes(1);
       expect(privateApp._connectReviewSocket).toHaveBeenCalledTimes(1);
       expect(scheduleStreamStart).not.toHaveBeenCalled();
-      expect(internals(app).state.latestStreamConfig).toMatchObject({ model: { status: "missing" } });
+      expect(internals(app).state.latestStreamConfig).toMatchObject({ model: { status: initialStatus } });
 
       await vi.advanceTimersByTimeAsync(3_000);
 

@@ -183,6 +183,30 @@ describe("SessionIdleReclaimService (session-lifecycle idle countdown & reclaim)
     expect(errorSpy).toHaveBeenCalledTimes(1);
   });
 
+  it("retains a zero-second teardown retry after the final ready peer disconnects", () => {
+    const session = createActiveSession();
+    const teardown = vi.fn()
+      .mockImplementationOnce(() => { throw new Error("transient teardown failure"); })
+      .mockImplementationOnce(() => undefined);
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const service = new SessionIdleReclaimService(store, {
+      idleTimeoutMs: 1_000,
+      countdownSeconds: 1,
+      onReclaimTeardown: teardown,
+    });
+    const t0 = 1_000_000;
+    service.connectPeer(session.session_id, "peer-1", t0);
+    service.tick(t0 + 1_000);
+    service.tick(t0 + 2_000);
+
+    service.disconnectPeer(session.session_id, "peer-1");
+    expect(service.getSessionState(session.session_id)).not.toBeNull();
+
+    service.tick(t0 + 2_001);
+    expect(teardown).toHaveBeenCalledTimes(2);
+    expect(service.getSessionState(session.session_id)).toBeNull();
+  });
+
   it("does not overlap async teardown and retries after rejection", async () => {
     const session = createActiveSession();
     let rejectFirst!: (reason?: unknown) => void;
