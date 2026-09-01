@@ -330,19 +330,28 @@ $webPlaneSignatureRootA = 'C:\edge-data\artifacts-a'
 $webPlaneSignatureRootB = 'C:\edge-data\artifacts-b'
 $webPlaneSignatureA = New-WebPlaneRuntimeSignature `
     -A4ConversionArtifactsHostRoot $webPlaneSignatureRootA `
-    -A4InternalContextTokenFingerprint (Get-DeploySecretFingerprint -Value $signatureTokenA)
+    -A4InternalContextTokenFingerprint (Get-DeploySecretFingerprint -Value $signatureTokenA) `
+    -SessionIdleTimeoutMs '600000'
 $webPlaneSignatureSame = New-WebPlaneRuntimeSignature `
     -A4ConversionArtifactsHostRoot $webPlaneSignatureRootA `
-    -A4InternalContextTokenFingerprint (Get-DeploySecretFingerprint -Value $signatureTokenA)
+    -A4InternalContextTokenFingerprint (Get-DeploySecretFingerprint -Value $signatureTokenA) `
+    -SessionIdleTimeoutMs '600000'
 $webPlaneSignatureRootChanged = New-WebPlaneRuntimeSignature `
     -A4ConversionArtifactsHostRoot $webPlaneSignatureRootB `
-    -A4InternalContextTokenFingerprint (Get-DeploySecretFingerprint -Value $signatureTokenA)
+    -A4InternalContextTokenFingerprint (Get-DeploySecretFingerprint -Value $signatureTokenA) `
+    -SessionIdleTimeoutMs '600000'
 $webPlaneSignatureTokenChanged = New-WebPlaneRuntimeSignature `
     -A4ConversionArtifactsHostRoot $webPlaneSignatureRootA `
-    -A4InternalContextTokenFingerprint (Get-DeploySecretFingerprint -Value $signatureTokenB)
+    -A4InternalContextTokenFingerprint (Get-DeploySecretFingerprint -Value $signatureTokenB) `
+    -SessionIdleTimeoutMs '600000'
+$webPlaneSignatureIdlePolicyChanged = New-WebPlaneRuntimeSignature `
+    -A4ConversionArtifactsHostRoot $webPlaneSignatureRootA `
+    -A4InternalContextTokenFingerprint (Get-DeploySecretFingerprint -Value $signatureTokenA) `
+    -SessionIdleTimeoutMs '900000'
 Assert-Equal $webPlaneSignatureA $webPlaneSignatureSame 'unchanged effective A4 web-plane inputs keep the same signature'
 Assert-True ($webPlaneSignatureA -ne $webPlaneSignatureRootChanged) 'effective A4 artifacts root change updates web-plane signature'
 Assert-True ($webPlaneSignatureA -ne $webPlaneSignatureTokenChanged) 'A4 token rotation updates web-plane signature'
+Assert-True ($webPlaneSignatureA -ne $webPlaneSignatureIdlePolicyChanged) 'session idle policy change updates web-plane signature'
 Assert-True (-not $webPlaneSignatureA.Contains($signatureTokenA)) 'web-plane signature excludes raw A4 token'
 Assert-True (-not $webPlaneSignatureTokenChanged.Contains($signatureTokenB)) 'rotated raw A4 token is excluded from web-plane signature'
 $webPlaneSignaturePath = Join-Path $repoRoot 'scripts\.run\deploy-web-plane-signature-test.params.json'
@@ -352,6 +361,7 @@ Set-KitRuntimeSignature -Path $webPlaneSignaturePath -Value $webPlaneSignatureA
 Assert-True (Test-KitRuntimeSignatureMatches -Path $webPlaneSignaturePath -Expected $webPlaneSignatureSame) 'unchanged effective A4 inputs skip repeated reconcile'
 Assert-True (-not (Test-KitRuntimeSignatureMatches -Path $webPlaneSignaturePath -Expected $webPlaneSignatureRootChanged)) 'changed A4 artifacts root requires reconcile'
 Assert-True (-not (Test-KitRuntimeSignatureMatches -Path $webPlaneSignaturePath -Expected $webPlaneSignatureTokenChanged)) 'rotated A4 token requires reconcile'
+Assert-True (-not (Test-KitRuntimeSignatureMatches -Path $webPlaneSignaturePath -Expected $webPlaneSignatureIdlePolicyChanged)) 'changed session idle policy requires reconcile'
 Remove-Item -LiteralPath $webPlaneSignaturePath -ErrorAction SilentlyContinue
 Write-TestPass 'effective A4 web-plane signature is stable and secret-safe'
 

@@ -72,8 +72,8 @@ describe("a1OfflineViewport (Task 3.1)", () => {
             {
               session_id: "S-12345",
               status: "active",
-              project_id: "proj_a1_test",
-              model_version_id: "mv_a1_test",
+              project_id: "p1",
+              model_version_id: "m1",
               participant_count: 2,
               expected_stage_url: null,
               conversion_status: null,
