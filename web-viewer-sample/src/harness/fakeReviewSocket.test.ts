@@ -160,4 +160,25 @@ describe("connectHarnessReviewSocket", () => {
       expect.objectContaining({ ok: true, trace_id: HARNESS_TRACE_ID }),
     );
   });
+
+  it("acknowledges user activity only while the joined stream is ready", async () => {
+    const onAck = vi.fn();
+    const client = connectHarnessReviewSocket({ onAck });
+
+    client.join(candidate());
+    await flushMicrotasks();
+    await expect(client.userActivity()).resolves.toBe(false);
+
+    client.setStreamReady(true);
+    await flushMicrotasks();
+    await expect(client.userActivity()).resolves.toBe(true);
+    expect(onAck).toHaveBeenLastCalledWith(
+      "userActivity",
+      candidate(),
+      expect.objectContaining({ ok: true, trace_id: HARNESS_TRACE_ID }),
+    );
+
+    client.setStreamReady(false);
+    await expect(client.userActivity()).resolves.toBe(false);
+  });
 });

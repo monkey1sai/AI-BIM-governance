@@ -42,6 +42,7 @@ export function connectHarnessReviewSocket(
 ): ReviewSocketClient {
   let activeCandidate: ReviewSocketCandidate | null = null;
   let joinAcknowledged = false;
+  let streamReady = false;
   let generation = 0;
   let manuallyDisconnected = false;
   const pendingCallbacks = new Set<PendingCallback>();
@@ -76,6 +77,7 @@ export function connectHarnessReviewSocket(
       invalidatePending();
       activeCandidate = { ...candidate };
       joinAcknowledged = false;
+      streamReady = false;
       const expectedCandidate = { ...activeCandidate };
       const expectedKey = candidateKey(expectedCandidate);
       schedule(() => {
@@ -108,8 +110,9 @@ export function connectHarnessReviewSocket(
       });
     },
 
-    setStreamReady(): void {
+    setStreamReady(ready: boolean): void {
       if (manuallyDisconnected || !joinAcknowledged || !activeCandidate) return;
+      streamReady = ready;
       const expectedCandidate = { ...activeCandidate };
       const expectedKey = candidateKey(expectedCandidate);
       schedule(() => {
@@ -128,6 +131,7 @@ export function connectHarnessReviewSocket(
           const acknowledged = !manuallyDisconnected
             && generation === expectedGeneration
             && joinAcknowledged
+            && streamReady
             && Boolean(activeCandidate)
             && candidateKey(activeCandidate ?? expectedCandidate) === expectedKey
             && isExactHarnessAuthority(expectedCandidate, authority);
@@ -143,6 +147,7 @@ export function connectHarnessReviewSocket(
       invalidatePending();
       activeCandidate = null;
       joinAcknowledged = false;
+      streamReady = false;
       schedule(() => successAck("leaveSession", expectedCandidate));
     },
 
@@ -152,6 +157,7 @@ export function connectHarnessReviewSocket(
       manuallyDisconnected = true;
       activeCandidate = null;
       joinAcknowledged = false;
+      streamReady = false;
       schedule(() => handlers.onStatus?.("disconnected"), true);
     },
   };

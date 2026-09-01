@@ -35,6 +35,15 @@ async function createSession(request: APIRequestContext, suffix: string): Promis
     typeof payload.session_id === "string" && typeof payload.trace_id === "string",
     "session create response is missing canonical ids",
   );
+  const idleStatus = await request.get(`${COORDINATOR}/api/review-sessions/${payload.session_id}/idle-status`);
+  requireReal(idleStatus.ok(), `idle policy precondition failed: ${idleStatus.status()}`);
+  const idlePolicy = await idleStatus.json() as { enabled?: boolean };
+  if (idlePolicy.enabled !== true) {
+    await request.post(`${COORDINATOR}/api/review-sessions/${payload.session_id}/close`, {
+      data: { reason: "e2e-precondition-cleanup" },
+    });
+    requireReal(false, "SESSION_IDLE_TIMEOUT_MS must be enabled before session idle lifecycle E2E starts");
+  }
   return payload as CreatedSession;
 }
 

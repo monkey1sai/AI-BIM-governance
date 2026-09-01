@@ -2,7 +2,7 @@ import path from "node:path";
 import os from "node:os";
 import fs from "node:fs";
 import request from "supertest";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createCoordinatorApp, type CoordinatorApp } from "../src/app.js";
 import type { CoordinatorConfig } from "../src/config.js";
 
@@ -322,5 +322,64 @@ describe("review session viewer leases", () => {
     expect(found.status).toBe("released");
     expect(status.body.primary.available).toBe(true);
     expect(status.body.primary.owned_by_caller).toBe(false);
+  });
+
+  it("keeps leases active until close payloads are durable and reuses the checkpoint audit", async () => {
+    const app = makeApp();
+    const sessionId = await createSession(app);
+    const lease = await claimPrimary(app, sessionId);
+    const finalEvents = [{ type: "annotationFinal", count: 1 }];
+    const originalAppend = app.eventLog.appendServerCloseCheckpoint.bind(app.eventLog);
+    let failFinalEventOnce = true;
+    const appendSpy = vi.spyOn(app.eventLog, "appendServerCloseCheckpoint").mockImplementation((id, type, payload, checkpointId) => {
+      if (type === "finalReviewEvent" && failFinalEventOnce) {
+        failFinalEventOnce = false;
+        throw new Error("transient final event append failure");
+      }
+      return originalAppend(id, type, payload, checkpointId);
+    });
+
+    try {
+      const firstClose = await request(app.app)
+        .post(`/api/review-sessions/${sessionId}/close`)
+        .set("X-User-Token", "original-operator")
+        .send({ reason: "original close reason", final_events: finalEvents });
+      expect(firstClose.status).toBe(500);
+      expect(app.store.get(sessionId)?.status).toBe("active");
+
+      const heartbeat = await request(app.app)
+        .post(`/api/review-sessions/${sessionId}/viewer-leases/${lease.lease_id}/heartbeat`)
+        .set("X-Viewer-Lease-Token", lease.lease_token)
+        .send({ datachannel_ready: true });
+      expect(heartbeat.status).toBe(200);
+
+      const retriedClose = await request(app.app)
+        .post(`/api/review-sessions/${sessionId}/close`)
+        .set("X-User-Token", "replacement-operator")
+        .send({ reason: "replacement close reason", final_events: finalEvents });
+      expect(retriedClose.status).toBe(200);
+      expect(retriedClose.body.status).toBe("closed");
+
+      const status = await request(app.app)
+        .get(`/api/review-sessions/${sessionId}/viewer-leases/status`)
+        .set("X-User-Token", "user_viewer_a");
+      const storedLease = status.body.leases.find((item: { lease_id: string }) => item.lease_id === lease.lease_id);
+      expect(storedLease.status).toBe("released");
+
+      const checkpointEvents = app.eventLog
+        .list(sessionId)
+        .filter((event) => event.close_checkpoint_id === retriedClose.body.close_checkpoint.checkpoint_id);
+      const closingPayload = checkpointEvents.find((event) => event.type === "sessionClosing")?.payload;
+      const closedPayload = checkpointEvents.find((event) => event.type === "sessionClosed")?.payload;
+      expect(closingPayload).toMatchObject({ reason: "original close reason" });
+      expect(closedPayload).toEqual(closingPayload && typeof closingPayload === "object"
+        ? {
+            reason: (closingPayload as { reason: string }).reason,
+            actor: (closingPayload as { actor: string }).actor,
+          }
+        : null);
+    } finally {
+      appendSpy.mockRestore();
+    }
   });
 });

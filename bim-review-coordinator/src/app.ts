@@ -785,7 +785,7 @@ export function createCoordinatorApp(
     const finalEvents = Array.isArray(options.finalEvents) ? options.finalEvents : [];
     const reason = typeof options.reason === "string" ? (options.reason.trim().slice(0, 500) || undefined) : undefined;
     const actor = typeof options.actor === "string" ? (options.actor.trim().slice(0, 500) || undefined) : undefined;
-    const auditFields = reason ? { reason, ...(actor ? { actor } : {}) } : {};
+    const requestedAuditFields = reason ? { reason, ...(actor ? { actor } : {}) } : {};
     let closeCheckpoint = session.close_checkpoint;
     if (closeCheckpoint && session.status !== "closing" && session.status !== "closed") {
       const persistedFinalEvents = eventLog
@@ -812,6 +812,24 @@ export function createCoordinatorApp(
     if (session.close_checkpoint?.checkpoint_id !== closeCheckpoint.checkpoint_id) {
       session = store.update(session.session_id, { close_checkpoint: closeCheckpoint }) ?? session;
     }
+    const persistedClosingPayload = eventLog
+      .list(session.session_id)
+      .find((event) => (
+        event.type === "sessionClosing"
+        && event.close_checkpoint_id === closeCheckpoint.checkpoint_id
+      ))?.payload;
+    const persistedClosingAudit = persistedClosingPayload && typeof persistedClosingPayload === "object"
+      ? persistedClosingPayload as { reason?: unknown; actor?: unknown }
+      : null;
+    const persistedReason = typeof persistedClosingAudit?.reason === "string"
+      ? persistedClosingAudit.reason
+      : undefined;
+    const persistedActor = typeof persistedClosingAudit?.actor === "string"
+      ? persistedClosingAudit.actor
+      : undefined;
+    let checkpointAuditFields = persistedClosingAudit
+      ? (persistedReason ? { reason: persistedReason, ...(persistedActor ? { actor: persistedActor } : {}) } : {})
+      : requestedAuditFields;
     let closing = session;
     if (session.status !== "closed") {
       let closeEvents = eventLog.list(session.session_id);
@@ -820,12 +838,11 @@ export function createCoordinatorApp(
         && event.close_checkpoint_id === closeCheckpoint.checkpoint_id
       ));
       if (!closingEvent) {
-        const releasedViewerLeases = viewerLeaseStore.releaseSession(session.session_id);
         closingEvent = eventLog.appendServerCloseCheckpoint(session.session_id, "sessionClosing", {
           final_events: finalEvents.length,
-          released_viewer_leases: releasedViewerLeases.map((lease) => lease.lease_id),
-          ...auditFields,
+          ...requestedAuditFields,
         }, closeCheckpoint.checkpoint_id);
+        checkpointAuditFields = requestedAuditFields;
         closeEvents = [...closeEvents, closingEvent];
       }
       const expectedFinalEventCount = closeCheckpoint.expected_final_event_count;
@@ -857,6 +874,9 @@ export function createCoordinatorApp(
           kit_instance_bindings: markKitBindingsDraining(session.kit_instance_bindings),
         }) ?? session;
       }
+      if (closing.status !== "closing") return closing;
+      viewerLeaseStore.releaseSession(session.session_id);
+      session = closing;
     }
     const closed = session.status === "closed"
       ? session
@@ -877,7 +897,7 @@ export function createCoordinatorApp(
       eventLog.appendServerCloseCheckpoint(
         session.session_id,
         "sessionClosed",
-        { ...auditFields },
+        { ...checkpointAuditFields },
         closeCheckpoint.checkpoint_id,
       );
       appendedSessionClosed = true;
