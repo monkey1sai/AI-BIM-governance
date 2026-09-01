@@ -70,8 +70,10 @@ DEFAULT_BASE_BRANCH = "main"
 APPROVAL_CAPABILITY_ENV = "BLIP_APPROVAL_CAPABILITY"
 APPROVAL_CAPABILITY_VERSION = "blip-approval-capability/v2"
 PROTECTION_ATTESTATION_ENV = "BLIP_PROTECTION_ATTESTATION"
+PROTECTION_ATTESTATION_KEY_ENV = "BLIP_PROTECTION_ATTESTATION_KEY"
 PROTECTION_ATTESTATION_VERSION = "blip-protection-attestation/v1"
-PROTECTION_ATTESTATION_MAX_VALIDITY_SECONDS = 30 * 24 * 3600
+PROTECTION_ATTESTATION_MAX_AGE_SECONDS = 600
+PROTECTION_ATTESTATION_MAX_VALIDITY_SECONDS = 600
 PROTECTION_ATTESTATION_MAX_CHARS = 262144
 MACHINE_REVIEW_MODES = frozenset({"mechanical_only", "focused_semantic", "risk_scoped_specialists"})
 HUMAN_CRITICAL_REVIEW_MODE = "human_critical"
@@ -385,13 +387,14 @@ def fetch_repository_safety(token: str, owner: str, name: str) -> dict:
     return normalized
 
 
-def verify_protection_attestation(*, token: str, raw: str, base_branch: str) -> dict:
+def verify_protection_attestation(*, signing_key: str, raw: str, base_branch: str) -> dict:
     """Verify the owner-minted signed protection snapshot.
 
     The write-scope reviewer receives HTTP 404 from the admin-only legacy
-    protection endpoint, so the full policy arrives as an owner-signed packet
-    (same shared-secret HMAC idiom as the approval capability). The broker
-    still re-validates every policy field itself on the embedded snapshot.
+    protection endpoint, so the full policy arrives as a freshly owner-signed
+    packet using a dedicated attestation key. The counted-reviewer PAT is never
+    reused for this purpose. The broker still re-validates every policy field
+    itself on the embedded snapshot.
     """
     if not raw:
         raise SystemExit(
@@ -409,7 +412,11 @@ def verify_protection_attestation(*, token: str, raw: str, base_branch: str) -> 
         payload_text = base64.urlsafe_b64decode((encoded + padding).encode("ascii")).decode("utf-8")
     except (ValueError, UnicodeError):
         raise SystemExit("Protection attestation encoding is invalid") from None
-    expected_signature = hmac.new(token.encode("utf-8"), payload_text.encode("utf-8"), hashlib.sha256).hexdigest()
+    if not 32 <= len(signing_key) <= 4096:
+        raise SystemExit("Protection attestation signing key is missing or malformed")
+    expected_signature = hmac.new(
+        signing_key.encode("utf-8"), payload_text.encode("utf-8"), hashlib.sha256
+    ).hexdigest()
     if not hmac.compare_digest(signature.lower(), expected_signature):
         raise SystemExit("Protection attestation signature is invalid")
     try:
@@ -436,6 +443,8 @@ def verify_protection_attestation(*, token: str, raw: str, base_branch: str) -> 
         raise SystemExit("Protection attestation issue time is in the future")
     if expires_at <= issued_at or expires_at <= now:
         raise SystemExit("Protection attestation is expired; ask the owner to re-mint it")
+    if issued_at < now - PROTECTION_ATTESTATION_MAX_AGE_SECONDS:
+        raise SystemExit("Protection attestation is stale; the owner must re-mint it immediately before approval")
     if expires_at - issued_at > PROTECTION_ATTESTATION_MAX_VALIDITY_SECONDS:
         raise SystemExit("Protection attestation validity window is overlong")
     if payload.get("active_rules") != []:
@@ -659,7 +668,7 @@ def fetch_protection_policy(token: str, owner: str, name: str, base_branch: str)
         raise SystemExit("Active rulesets are present but this approval broker only supports verified legacy protection")
 
     attested = verify_protection_attestation(
-        token=token,
+        signing_key=os.environ.get(PROTECTION_ATTESTATION_KEY_ENV, "").strip(),
         raw=os.environ.get(PROTECTION_ATTESTATION_ENV, "").strip(),
         base_branch=base_branch,
     )

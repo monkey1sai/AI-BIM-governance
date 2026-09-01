@@ -299,7 +299,9 @@ $lockPath = Join-Path $stateRoot "blip-live-approve-pr$PrNumber-$($ExpectedHeadS
 $tokenEnvironmentName = 'BLIP_GITHUB_TOKEN'
 $capabilityEnvironmentName = 'BLIP_APPROVAL_CAPABILITY'
 $protectionAttestationEnvironmentName = 'BLIP_PROTECTION_ATTESTATION'
+$protectionAttestationKeyEnvironmentName = 'BLIP_PROTECTION_ATTESTATION_KEY'
 $protectionAttestationPath = Join-Path (Split-Path -Parent $trustedRoot) 'secrets\blip-protection-attestation.v1.txt'
+$protectionAttestationKeyPath = Join-Path (Split-Path -Parent $trustedRoot) 'secrets\blip-protection-attestation-key.v1.txt'
 $pythonBootstrap = @'
 import sys
 import types
@@ -342,6 +344,8 @@ $tokenBstr = [IntPtr]::Zero
 $tokenBytes = $null
 $capability = $null
 $capabilityBytes = $null
+$protectionAttestation = $null
+$protectionAttestationKey = $null
 $childProcess = $null
 $childStarted = $false
 $lockStream = $null
@@ -898,10 +902,17 @@ try {
     if (-not (Test-Path -LiteralPath $protectionAttestationPath)) {
         throw "Owner protection attestation is missing: $protectionAttestationPath (mint one with mint_protection_attestation.py)"
     }
+    if (-not (Test-Path -LiteralPath $protectionAttestationKeyPath)) {
+        throw "Dedicated protection attestation key is missing: $protectionAttestationKeyPath"
+    }
     $protectionAttestation = ([System.IO.File]::ReadAllText($protectionAttestationPath)).Trim()
     if ($protectionAttestation.Length -eq 0 -or $protectionAttestation.Length -gt 262144 -or
         $protectionAttestation -notmatch '^[A-Za-z0-9_\-=]+\.[0-9a-fA-F]{64}$') {
         throw "Owner protection attestation is malformed: $protectionAttestationPath"
+    }
+    $protectionAttestationKey = ([System.IO.File]::ReadAllText($protectionAttestationKeyPath)).Trim()
+    if ($protectionAttestationKey.Length -lt 32 -or $protectionAttestationKey.Length -gt 4096) {
+        throw "Dedicated protection attestation key is malformed: $protectionAttestationKeyPath"
     }
     Write-Information 'Enter the fixed User PAT only in the masked prompt. Do not paste it into chat or a command line.' -InformationAction Continue
     $secureToken = Read-Host -Prompt 'Enter BLIP_GITHUB_TOKEN' -AsSecureString
@@ -940,6 +951,7 @@ try {
     $startInfo.Environment[$tokenEnvironmentName] = $plainToken
     $startInfo.Environment[$capabilityEnvironmentName] = $capability
     $startInfo.Environment[$protectionAttestationEnvironmentName] = $protectionAttestation
+    $startInfo.Environment[$protectionAttestationKeyEnvironmentName] = $protectionAttestationKey
 
     $childProcess = [System.Diagnostics.Process]::new()
     $childProcess.StartInfo = $startInfo
@@ -986,6 +998,9 @@ catch {
     $message = $_.Exception.Message
     if (-not [string]::IsNullOrEmpty($plainToken)) { $message = $message.Replace($plainToken, '[REDACTED]') }
     if (-not [string]::IsNullOrEmpty($capability)) { $message = $message.Replace($capability, '[REDACTED-CAPABILITY]') }
+    if (-not [string]::IsNullOrEmpty($protectionAttestationKey)) {
+        $message = $message.Replace($protectionAttestationKey, '[REDACTED-ATTESTATION-KEY]')
+    }
     if (-not $resultWritten -and (Test-Path -LiteralPath $stateRoot)) {
         try { Save-BrokerResult -ExitCode 1 -StdOut '' -StdErr $message -Status 'broker_failed' } catch { }
     }
@@ -1011,6 +1026,8 @@ finally {
     if ($tokenBstr -ne [IntPtr]::Zero) { [System.Runtime.InteropServices.Marshal]::ZeroFreeBSTR($tokenBstr) }
     $plainToken = $null
     $capability = $null
+    $protectionAttestation = $null
+    $protectionAttestationKey = $null
     if ($null -ne $secureToken) { $secureToken.Dispose() }
     foreach ($stream in $trustedPowerShellInputStreams) { try { $stream.Dispose() } catch { } }
 }

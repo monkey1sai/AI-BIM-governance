@@ -409,9 +409,13 @@ try {
             'Counted-approval wrapper does not bind the human-critical override to the child CLI.'
         Assert-True ($safeText.Contains('secrets\blip-protection-attestation.v1.txt')) `
             'Counted-approval wrapper lost the owner protection attestation input.'
+        Assert-True ($safeText.Contains('secrets\blip-protection-attestation-key.v1.txt')) `
+            'Counted-approval wrapper lost the dedicated protection attestation key input.'
         Assert-True ($safeText.Contains('$startInfo.Environment[$protectionAttestationEnvironmentName] = $protectionAttestation')) `
             'Counted-approval wrapper no longer injects the owner protection attestation.'
-        Write-Output 'broker-safe-tests-ok (parse, v2 tuple, masked prompt, model-free, approve-only, protection attestation)'
+        Assert-True ($safeText.Contains('$startInfo.Environment[$protectionAttestationKeyEnvironmentName] = $protectionAttestationKey')) `
+            'Counted-approval wrapper no longer injects the dedicated attestation key.'
+        Write-Output 'broker-safe-tests-ok (parse, v2 tuple, masked prompt, model-free, approve-only, short-lived protection attestation)'
         return
     }
 
@@ -428,6 +432,8 @@ try {
     New-Item -ItemType Directory -Path $attestationDir | Out-Null
     $attestationPath = Join-Path $attestationDir 'blip-protection-attestation.v1.txt'
     Set-Content -LiteralPath $attestationPath -Value ('dGVzdA' + '.' + ('a' * 64)) -Encoding ascii
+    $attestationKeyPath = Join-Path $attestationDir 'blip-protection-attestation-key.v1.txt'
+    Set-Content -LiteralPath $attestationKeyPath -Value ('k' * 64) -Encoding ascii
     $brokerText = Get-Content -Raw -LiteralPath $sourceBroker
     $pythonAssignment = "`$pythonPath = 'C:\Program Files\Python312\python.exe'"
     if ($brokerText.IndexOf($pythonAssignment, [StringComparison]::Ordinal) -lt 0) {
@@ -522,6 +528,18 @@ try {
         'Malformed owner protection attestation did not fail closed before child execution'
     Set-Content -LiteralPath $attestationPath -Value ('dGVzdA' + '.' + ('a' * 64)) -Encoding ascii
 
+    Rename-Item -LiteralPath $attestationKeyPath -NewName 'blip-protection-attestation-key.v1.txt.bak'
+    $missingAttestationKey = Invoke-BrokerCase -MarkerMode valid -ValidManifest $true -ExpectedExit 1 -ExpectedStatus broker_failed
+    Assert-True ($missingAttestationKey.stderr -match 'attestation key is missing') `
+        'Missing dedicated attestation key did not fail closed before child execution'
+    Rename-Item -LiteralPath ($attestationKeyPath + '.bak') -NewName 'blip-protection-attestation-key.v1.txt'
+
+    Set-Content -LiteralPath $attestationKeyPath -Value 'too-short' -Encoding ascii
+    $malformedAttestationKey = Invoke-BrokerCase -MarkerMode valid -ValidManifest $true -ExpectedExit 1 -ExpectedStatus broker_failed
+    Assert-True ($malformedAttestationKey.stderr -match 'attestation key is malformed') `
+        'Malformed dedicated attestation key did not fail closed before child execution'
+    Set-Content -LiteralPath $attestationKeyPath -Value ('k' * 64) -Encoding ascii
+
     Clear-StateRoot
     Write-Manifest -ValidBrokerHash $true `
         -BrokerPathOverride $badBrokerPath -AuthPathOverride $badAclPath
@@ -533,7 +551,7 @@ try {
     $aclPayload = Get-Content -Raw -LiteralPath $aclResult.FullName | ConvertFrom-Json
     Assert-True ($aclPayload.stderr -match 'complete explicit write denial') 'Missing deny failure was not attributable'
 
-    Write-Output 'broker-tests-ok (11 cases including v2 tuple, protection attestation, and real Python trust)'
+    Write-Output 'broker-tests-ok (13 cases including v2 tuple, short-lived protection attestation, and real Python trust)'
 }
 finally {
     if (Test-Path -LiteralPath $sandboxRoot) { Remove-Item -LiteralPath $sandboxRoot -Recurse -Force }

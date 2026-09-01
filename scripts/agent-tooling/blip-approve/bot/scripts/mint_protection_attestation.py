@@ -18,9 +18,9 @@ write-visible field.
 
 Secrets: the admin credential is read only from the environment variable named
 by --admin-token-env and is used solely for two read-only GETs. The signing
-key is the fixed reviewer token (--signing-token-env), reusing the same
-shared-secret HMAC idiom as the approval capability. Neither value is ever
-printed; the emitted attestation contains only branch-protection settings.
+key is a dedicated protection-attestation secret, never the counted-reviewer
+PAT. Neither value is ever printed; the emitted attestation contains only
+branch-protection settings and expires within ten minutes.
 """
 
 from __future__ import annotations
@@ -41,8 +41,10 @@ sys.path.insert(0, str(SOURCE_PARENT))
 import blip_review as blip  # noqa: E402
 
 DEFAULT_ADMIN_TOKEN_ENV = "BLIP_PROTECTION_ADMIN_TOKEN"
-DEFAULT_VALID_DAYS = 7
-MAX_VALID_DAYS = blip.PROTECTION_ATTESTATION_MAX_VALIDITY_SECONDS // 86400
+DEFAULT_SIGNING_KEY_ENV = blip.PROTECTION_ATTESTATION_KEY_ENV
+DEFAULT_VALID_SECONDS = 600
+MIN_VALID_SECONDS = 60
+MAX_VALID_SECONDS = blip.PROTECTION_ATTESTATION_MAX_VALIDITY_SECONDS
 
 
 def read_required_env(name: str, purpose: str) -> str:
@@ -78,14 +80,14 @@ def fetch_protection_snapshot(admin_token: str, base_branch: str) -> dict:
 
 def build_attestation(
     *,
-    signing_token: str,
+    signing_key: str,
     protection: dict,
     base_branch: str,
-    valid_days: int,
+    valid_seconds: int,
     now: int | None = None,
 ) -> str:
     issued_at = int(time.time()) if now is None else int(now)
-    expires_at = issued_at + valid_days * 86400
+    expires_at = issued_at + valid_seconds
     payload_text = json.dumps(
         {
             "version": blip.PROTECTION_ATTESTATION_VERSION,
@@ -101,7 +103,7 @@ def build_attestation(
         ensure_ascii=False,
     )
     signature = hmac.new(
-        signing_token.encode("utf-8"), payload_text.encode("utf-8"), hashlib.sha256
+        signing_key.encode("utf-8"), payload_text.encode("utf-8"), hashlib.sha256
     ).hexdigest()
     encoded = base64.urlsafe_b64encode(payload_text.encode("utf-8")).decode("ascii").rstrip("=")
     return f"{encoded}.{signature}"
@@ -114,10 +116,13 @@ def main() -> int:
     parser.add_argument("--repo", default=blip.DEFAULT_REPO, choices=[blip.DEFAULT_REPO])
     parser.add_argument("--base-branch", default=blip.DEFAULT_BASE_BRANCH, choices=[blip.DEFAULT_BASE_BRANCH])
     parser.add_argument(
-        "--valid-days",
+        "--valid-seconds",
         type=int,
-        default=DEFAULT_VALID_DAYS,
-        help=f"Attestation validity in days (1..{MAX_VALID_DAYS}); re-mint after any protection change",
+        default=DEFAULT_VALID_SECONDS,
+        help=(
+            "Short attestation validity in seconds "
+            f"({MIN_VALID_SECONDS}..{MAX_VALID_SECONDS}); re-mint immediately before every approval"
+        ),
     )
     parser.add_argument(
         "--admin-token-env",
@@ -125,9 +130,9 @@ def main() -> int:
         help="Environment variable holding the owner's read-only admin-scope credential",
     )
     parser.add_argument(
-        "--signing-token-env",
-        default=blip.DEFAULT_TOKEN_ENV,
-        help="Environment variable holding the fixed reviewer token used as the HMAC signing key",
+        "--signing-key-env",
+        default=DEFAULT_SIGNING_KEY_ENV,
+        help="Environment variable holding the dedicated protection-attestation HMAC key",
     )
     parser.add_argument(
         "--out",
@@ -137,21 +142,25 @@ def main() -> int:
     )
     cli = parser.parse_args()
 
-    if not 1 <= cli.valid_days <= MAX_VALID_DAYS:
-        raise SystemExit(f"--valid-days must be between 1 and {MAX_VALID_DAYS}")
+    if not MIN_VALID_SECONDS <= cli.valid_seconds <= MAX_VALID_SECONDS:
+        raise SystemExit(
+            f"--valid-seconds must be between {MIN_VALID_SECONDS} and {MAX_VALID_SECONDS}"
+        )
     admin_token = read_required_env(cli.admin_token_env, "read-only admin protection reads")
-    signing_token = read_required_env(cli.signing_token_env, "attestation HMAC signing key")
+    signing_key = read_required_env(cli.signing_key_env, "dedicated attestation HMAC key")
+    if not 32 <= len(signing_key) <= 4096:
+        raise SystemExit("The dedicated attestation HMAC key must contain 32..4096 characters")
 
     protection = fetch_protection_snapshot(admin_token, cli.base_branch)
     normalized = blip.validate_protection_payload(protection, cli.base_branch)
     attestation = build_attestation(
-        signing_token=signing_token,
+        signing_key=signing_key,
         protection=protection,
         base_branch=cli.base_branch,
-        valid_days=cli.valid_days,
+        valid_seconds=cli.valid_seconds,
     )
     verified = blip.verify_protection_attestation(
-        token=signing_token, raw=attestation, base_branch=cli.base_branch
+        signing_key=signing_key, raw=attestation, base_branch=cli.base_branch
     )
     if blip.validate_protection_payload(verified["protection"], cli.base_branch) != normalized:
         raise SystemExit("Round-trip verification of the minted attestation failed")

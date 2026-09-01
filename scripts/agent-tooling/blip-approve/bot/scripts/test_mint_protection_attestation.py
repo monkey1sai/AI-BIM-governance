@@ -18,6 +18,7 @@ FAKE_APP_AUTH.http_json = Mock()
 
 BLIP_PATH = Path(__file__).with_name("blip_review.py")
 MINT_PATH = Path(__file__).with_name("mint_protection_attestation.py")
+SIGNING_KEY = "k" * 64
 
 _PREVIOUS_APP_AUTH = sys.modules.get("app_auth")
 _PREVIOUS_BLIP = sys.modules.get("blip_review")
@@ -77,37 +78,41 @@ class BuildAttestationTests(unittest.TestCase):
     def test_round_trip_verifies_with_the_broker_verifier(self) -> None:
         protection = make_protection_payload()
         raw = mint.build_attestation(
-            signing_token="signing-token",
+            signing_key=SIGNING_KEY,
             protection=protection,
             base_branch="main",
-            valid_days=7,
+            valid_seconds=600,
         )
         verified = blip.verify_protection_attestation(
-            token="signing-token", raw=raw, base_branch="main"
+            signing_key=SIGNING_KEY, raw=raw, base_branch="main"
         )
         self.assertEqual(verified["protection"], protection)
-        self.assertEqual(verified["expires_at"] - verified["issued_at"], 7 * 86400)
+        self.assertEqual(verified["expires_at"] - verified["issued_at"], 600)
 
     def test_wrong_signing_token_fails_verification(self) -> None:
         raw = mint.build_attestation(
-            signing_token="signing-token",
+            signing_key=SIGNING_KEY,
             protection=make_protection_payload(),
             base_branch="main",
-            valid_days=1,
+            valid_seconds=600,
         )
         with self.assertRaisesRegex(SystemExit, "signature is invalid"):
-            blip.verify_protection_attestation(token="other-token", raw=raw, base_branch="main")
+            blip.verify_protection_attestation(
+                signing_key="x" * 64, raw=raw, base_branch="main"
+            )
 
     def test_expired_build_is_rejected(self) -> None:
         raw = mint.build_attestation(
-            signing_token="signing-token",
+            signing_key=SIGNING_KEY,
             protection=make_protection_payload(),
             base_branch="main",
-            valid_days=1,
-            now=int(time.time()) - 2 * 86400,
+            valid_seconds=600,
+            now=int(time.time()) - 1200,
         )
         with self.assertRaisesRegex(SystemExit, "expired"):
-            blip.verify_protection_attestation(token="signing-token", raw=raw, base_branch="main")
+            blip.verify_protection_attestation(
+                signing_key=SIGNING_KEY, raw=raw, base_branch="main"
+            )
 
 
 class FetchSnapshotTests(unittest.TestCase):
@@ -136,7 +141,7 @@ class MintMainTests(unittest.TestCase):
         protection = make_protection_payload()
         env = {
             mint.DEFAULT_ADMIN_TOKEN_ENV: "admin-token",
-            blip.DEFAULT_TOKEN_ENV: "signing-token",
+            mint.DEFAULT_SIGNING_KEY_ENV: SIGNING_KEY,
         }
         with tempfile.TemporaryDirectory(prefix="mint-attestation-") as workdir:
             out_path = Path(workdir) / "attestation.txt"
@@ -145,24 +150,24 @@ class MintMainTests(unittest.TestCase):
             self.assertEqual(exit_code, 0)
             raw = out_path.read_text(encoding="ascii").strip()
         verified = blip.verify_protection_attestation(
-            token="signing-token", raw=raw, base_branch="main"
+            signing_key=SIGNING_KEY, raw=raw, base_branch="main"
         )
         self.assertEqual(verified["protection"], protection)
 
     def test_main_enforces_validity_bounds_and_required_envs(self) -> None:
         env = {
             mint.DEFAULT_ADMIN_TOKEN_ENV: "admin-token",
-            blip.DEFAULT_TOKEN_ENV: "signing-token",
+            mint.DEFAULT_SIGNING_KEY_ENV: SIGNING_KEY,
         }
-        for days in ("0", "31"):
-            with self.subTest(days=days), self.assertRaisesRegex(SystemExit, "--valid-days"):
-                self.run_main(["--valid-days", days], env)
+        for seconds in ("59", "601"):
+            with self.subTest(seconds=seconds), self.assertRaisesRegex(SystemExit, "--valid-seconds"):
+                self.run_main(["--valid-seconds", seconds], env)
         with patch.dict(mint.os.environ, {mint.DEFAULT_ADMIN_TOKEN_ENV: ""}), self.assertRaisesRegex(
             SystemExit, mint.DEFAULT_ADMIN_TOKEN_ENV
         ):
-            self.run_main([], {blip.DEFAULT_TOKEN_ENV: "signing-token"})
-        with patch.dict(mint.os.environ, {blip.DEFAULT_TOKEN_ENV: ""}), self.assertRaisesRegex(
-            SystemExit, blip.DEFAULT_TOKEN_ENV
+            self.run_main([], {mint.DEFAULT_SIGNING_KEY_ENV: SIGNING_KEY})
+        with patch.dict(mint.os.environ, {mint.DEFAULT_SIGNING_KEY_ENV: ""}), self.assertRaisesRegex(
+            SystemExit, mint.DEFAULT_SIGNING_KEY_ENV
         ):
             self.run_main([], {mint.DEFAULT_ADMIN_TOKEN_ENV: "admin-token"})
 
