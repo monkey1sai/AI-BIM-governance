@@ -74,16 +74,30 @@ function Invoke-GovernedGit {
 
     $gitGlobalArguments = @()
     if ($NoOptionalLocks) { $gitGlobalArguments += '--no-optional-locks' }
-    $output = @(& $script:GitExecutable @gitGlobalArguments -C $WorkingDirectory @ArgumentList 2>&1)
-    $exitCode = $LASTEXITCODE
+    $stderrPath = Join-Path ([System.IO.Path]::GetTempPath()) (
+        "governed-git-stderr-$PID-$([guid]::NewGuid().ToString('N')).log")
+    try {
+        $output = @(& $script:GitExecutable @gitGlobalArguments -C $WorkingDirectory @ArgumentList 2> $stderrPath)
+        $exitCode = $LASTEXITCODE
+        $errorOutput = if (Test-Path -LiteralPath $stderrPath -PathType Leaf) {
+            @(Get-Content -LiteralPath $stderrPath | ForEach-Object { [string]$_ })
+        }
+        else { @() }
+    }
+    finally {
+        Remove-Item -LiteralPath $stderrPath -Force -ErrorAction SilentlyContinue
+    }
     $result = [pscustomobject]@{
         Success = $exitCode -eq 0
         ExitCode = [int]$exitCode
         Output = @($output | ForEach-Object { [string]$_ })
+        ErrorOutput = @($errorOutput)
     }
     if (-not $result.Success -and -not $AllowFailure) {
         $operation = if ($ArgumentList.Count -gt 0) { $ArgumentList[0] } else { 'unknown' }
-        $detail = (@($result.Output) | Select-Object -First 1)
+        $detail = @(@($result.ErrorOutput) + @($result.Output) | Where-Object {
+            -not [string]::IsNullOrWhiteSpace([string]$_)
+        } | Select-Object -First 1)
         throw "git_${operation}_failed: $detail"
     }
     return $result
@@ -171,6 +185,7 @@ function Get-GovernedWorktreeInventory {
         [Parameter(Mandatory = $true)][pscustomobject] $Identity
     )
 
+    $identityEligibility = Test-GovernedWorktreeIdentityObservation -Observation $Identity
     $porcelain = Get-GovernedGitText -WorkingDirectory $MainRoot -ArgumentList @(
         'worktree', 'list', '--porcelain') -NoOptionalLocks
     $records = @(ConvertFrom-GitWorktreePorcelain -Text $porcelain)
@@ -231,7 +246,8 @@ function Get-GovernedWorktreeInventory {
                 -Locked:([bool]$record.Locked) `
                 -Prunable:([bool]$record.Prunable) `
                 -OwnerObservationsAvailable:$ownerObservationsAvailable `
-                -OwnersMatchCurrentIdentity:$ownersMatchCurrentIdentity
+                -OwnersMatchCurrentIdentity:$ownersMatchCurrentIdentity `
+                -IdentityEligible:([bool]$identityEligibility.Eligible)
         }
         elseif ($null -eq $dirty) {
             $readiness = [pscustomobject]@{ Ready = $false; Reason = 'git_access_unknown' }
@@ -250,7 +266,8 @@ function Get-GovernedWorktreeInventory {
                 -Locked:([bool]$record.Locked) `
                 -Prunable:([bool]$record.Prunable) `
                 -OwnerObservationsAvailable:$ownerObservationsAvailable `
-                -OwnersMatchCurrentIdentity:$ownersMatchCurrentIdentity
+                -OwnersMatchCurrentIdentity:$ownersMatchCurrentIdentity `
+                -IdentityEligible:([bool]$identityEligibility.Eligible)
         }
         $rows.Add([pscustomobject][ordered]@{
             path = $worktreePath
@@ -285,7 +302,6 @@ function Get-GovernedWorktreeInventory {
         })
     }
 
-    $identityEligibility = Test-GovernedWorktreeIdentityObservation -Observation $Identity
     return [pscustomobject][ordered]@{
         schema_version = 'governed-worktree-inventory/v1'
         generated_at_utc = [DateTime]::UtcNow.ToString('o')

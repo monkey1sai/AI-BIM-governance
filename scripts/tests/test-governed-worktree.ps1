@@ -182,27 +182,31 @@ Assert-True ($activeAgents -contains 'nested') 'idle descendant session is detec
 Assert-True ($activeAgents -notcontains 'ended') 'ended descendant session is ignored'
 Assert-True ($activeAgents -notcontains 'sibling') 'sibling path is not treated as a descendant'
 
-$ready = Get-GovernedWorktreeRemovalReadiness -IsMain:$false -BoardAvailable:$true -GitAccessible:$true -Dirty:$false -HeadAncestor:$true -Active:$false -Locked:$false -Prunable:$false -OwnerObservationsAvailable:$true -OwnersMatchCurrentIdentity:$true
+$ready = Get-GovernedWorktreeRemovalReadiness -IsMain:$false -BoardAvailable:$true -GitAccessible:$true -Dirty:$false -HeadAncestor:$true -Active:$false -Locked:$false -Prunable:$false -OwnerObservationsAvailable:$true -OwnersMatchCurrentIdentity:$true -IdentityEligible:$true
 Assert-True $ready.Ready 'clean merged inactive linked worktree can enter manual removal review'
 Assert-Equal 'eligible_for_manual_review' $ready.Reason 'manual review reason'
 
-$ownerUnknown = Get-GovernedWorktreeRemovalReadiness -IsMain:$false -BoardAvailable:$true -GitAccessible:$true -Dirty:$false -HeadAncestor:$true -Active:$false -Locked:$false -Prunable:$false -OwnerObservationsAvailable:$false -OwnersMatchCurrentIdentity:$false
+$identityRejected = Get-GovernedWorktreeRemovalReadiness -IsMain:$false -BoardAvailable:$true -GitAccessible:$true -Dirty:$false -HeadAncestor:$true -Active:$false -Locked:$false -Prunable:$false -OwnerObservationsAvailable:$true -OwnersMatchCurrentIdentity:$true -IdentityEligible:$false
+Assert-True (-not $identityRejected.Ready) 'a rejected current identity must not enter removal review'
+Assert-Equal 'current_identity_ineligible' $identityRejected.Reason 'rejected identity rejection reason'
+
+$ownerUnknown = Get-GovernedWorktreeRemovalReadiness -IsMain:$false -BoardAvailable:$true -GitAccessible:$true -Dirty:$false -HeadAncestor:$true -Active:$false -Locked:$false -Prunable:$false -OwnerObservationsAvailable:$false -OwnersMatchCurrentIdentity:$false -IdentityEligible:$true
 Assert-True (-not $ownerUnknown.Ready) 'unavailable owner observations must not enter removal review'
 Assert-Equal 'owner_observation_unavailable' $ownerUnknown.Reason 'unavailable owner observation rejection reason'
 
-$ownerMismatch = Get-GovernedWorktreeRemovalReadiness -IsMain:$false -BoardAvailable:$true -GitAccessible:$true -Dirty:$false -HeadAncestor:$true -Active:$false -Locked:$false -Prunable:$false -OwnerObservationsAvailable:$true -OwnersMatchCurrentIdentity:$false
+$ownerMismatch = Get-GovernedWorktreeRemovalReadiness -IsMain:$false -BoardAvailable:$true -GitAccessible:$true -Dirty:$false -HeadAncestor:$true -Active:$false -Locked:$false -Prunable:$false -OwnerObservationsAvailable:$true -OwnersMatchCurrentIdentity:$false -IdentityEligible:$true
 Assert-True (-not $ownerMismatch.Ready) 'mismatched owner SIDs must not enter removal review'
 Assert-Equal 'owner_identity_mismatch' $ownerMismatch.Reason 'owner mismatch rejection reason'
 
-$active = Get-GovernedWorktreeRemovalReadiness -IsMain:$false -BoardAvailable:$true -GitAccessible:$true -Dirty:$false -HeadAncestor:$true -Active:$true -Locked:$false -Prunable:$false -OwnerObservationsAvailable:$true -OwnersMatchCurrentIdentity:$true
+$active = Get-GovernedWorktreeRemovalReadiness -IsMain:$false -BoardAvailable:$true -GitAccessible:$true -Dirty:$false -HeadAncestor:$true -Active:$true -Locked:$false -Prunable:$false -OwnerObservationsAvailable:$true -OwnersMatchCurrentIdentity:$true -IdentityEligible:$true
 Assert-True (-not $active.Ready) 'active worktree must not enter removal review'
 Assert-Equal 'active_writer' $active.Reason 'active writer rejection reason'
 
-$boardUnknown = Get-GovernedWorktreeRemovalReadiness -IsMain:$false -BoardAvailable:$false -GitAccessible:$true -Dirty:$false -HeadAncestor:$true -Active:$false -Locked:$false -Prunable:$false -OwnerObservationsAvailable:$true -OwnersMatchCurrentIdentity:$true
+$boardUnknown = Get-GovernedWorktreeRemovalReadiness -IsMain:$false -BoardAvailable:$false -GitAccessible:$true -Dirty:$false -HeadAncestor:$true -Active:$false -Locked:$false -Prunable:$false -OwnerObservationsAvailable:$true -OwnersMatchCurrentIdentity:$true -IdentityEligible:$true
 Assert-True (-not $boardUnknown.Ready) 'unknown board state must not enter removal review'
 Assert-Equal 'board_status_unknown' $boardUnknown.Reason 'unknown board rejection reason'
 
-$squashUnknown = Get-GovernedWorktreeRemovalReadiness -IsMain:$false -BoardAvailable:$true -GitAccessible:$true -Dirty:$false -HeadAncestor:$false -Active:$false -Locked:$false -Prunable:$false -OwnerObservationsAvailable:$true -OwnersMatchCurrentIdentity:$true
+$squashUnknown = Get-GovernedWorktreeRemovalReadiness -IsMain:$false -BoardAvailable:$true -GitAccessible:$true -Dirty:$false -HeadAncestor:$false -Active:$false -Locked:$false -Prunable:$false -OwnerObservationsAvailable:$true -OwnersMatchCurrentIdentity:$true -IdentityEligible:$true
 Assert-True (-not $squashUnknown.Ready) 'non-ancestor worktree must stay in manual cross-check state'
 Assert-Equal 'merge_requires_pr_or_branch_diff_crosscheck' $squashUnknown.Reason `
     'ancestry failure must not be presented as definitive not-merged evidence'
@@ -394,8 +398,9 @@ try {
     & git -C $failureFixtureRepo update-ref -d refs/remotes/origin/main 2>&1 | Out-Null
     Assert-Equal 0 $LASTEXITCODE 'failure fixture removes the pre-existing origin/main tracking ref'
 
+    $failureFixtureCli = Join-Path $failureFixtureRepo 'scripts\dev\new-governed-worktree.ps1'
     $missingBasisOutput = @(& pwsh -NoProfile -NonInteractive -File `
-        (Join-Path $failureFixtureRepo 'scripts\dev\new-governed-worktree.ps1') -Inventory -Json)
+        $failureFixtureCli -Inventory -Json)
     Assert-Equal 0 $LASTEXITCODE 'inventory remains available when origin/main is absent'
     $missingBasisInventory = ($missingBasisOutput -join [Environment]::NewLine) | ConvertFrom-Json
     Assert-True (-not [bool]$missingBasisInventory.merge_basis.available) `
@@ -406,6 +411,31 @@ try {
         'inventory still returns worktree diagnostics without origin/main'
     Assert-True (-not [bool]$missingBasisInventory.worktrees[0].manual_removal_review.ready) `
         'missing merge basis keeps removal readiness held'
+
+    $fsmonitorHook = Join-Path $failureFixtureRoot 'fsmonitor-warning.sh'
+    [System.IO.File]::WriteAllText($fsmonitorHook, @'
+#!/bin/sh
+printf '%s\n' 'warning: governed fixture fsmonitor diagnostic' >&2
+exit 1
+'@)
+    if (-not $IsWindows) {
+        & chmod +x $fsmonitorHook
+        Assert-Equal 0 $LASTEXITCODE 'fsmonitor fixture hook is executable'
+    }
+    & git -C $failureFixtureRepo config core.fsmonitor $fsmonitorHook 2>&1 | Out-Null
+    Assert-Equal 0 $LASTEXITCODE 'failure fixture configures a noisy fsmonitor hook'
+    $stderrInventoryOutput = @(& pwsh -NoProfile -NonInteractive -File $failureFixtureCli -Inventory -Json)
+    Assert-Equal 0 $LASTEXITCODE 'inventory succeeds when clean status emits a stderr diagnostic'
+    $stderrInventory = ($stderrInventoryOutput -join [Environment]::NewLine) | ConvertFrom-Json
+    $stderrInventoryRows = @($stderrInventory.worktrees | Where-Object {
+        (ConvertTo-GovernedPathKey -Path ([string]$_.path)) -ceq `
+            (ConvertTo-GovernedPathKey -Path $failureFixtureRepo)
+    })
+    Assert-Equal 1 $stderrInventoryRows.Count 'stderr fixture inventory contains its main worktree'
+    Assert-True (-not [bool]$stderrInventoryRows[0].dirty) `
+        'successful Git stderr diagnostics are not parsed as porcelain status output'
+    & git -C $failureFixtureRepo config --unset core.fsmonitor 2>&1 | Out-Null
+    Assert-Equal 0 $LASTEXITCODE 'failure fixture removes the noisy fsmonitor hook'
 
     $uploadPackWrapper = Join-Path $failureFixtureRoot 'upload-pack-warning.sh'
     $uploadPackScript = @'
@@ -421,7 +451,6 @@ exec git-upload-pack "$@"
     Assert-Equal 0 $LASTEXITCODE 'failure fixture hides untracked files in inherited Git config'
 
     [System.IO.File]::WriteAllText((Join-Path $failureFixtureRepo 'dirty.marker'), 'dirty')
-    $failureFixtureCli = Join-Path $failureFixtureRepo 'scripts\dev\new-governed-worktree.ps1'
     $failureOutput = @(& pwsh -NoProfile -NonInteractive -File $failureFixtureCli `
         -BranchName 'fix/failure-log-contract' -Json)
     Assert-Equal 2 $LASTEXITCODE 'logged Create failure preserves the governed HELD exit code'

@@ -224,7 +224,8 @@ function Get-GovernedWorktreeRemovalReadiness {
         [Parameter(Mandatory = $true)][bool] $Locked,
         [Parameter(Mandatory = $true)][bool] $Prunable,
         [Parameter(Mandatory = $true)][bool] $OwnerObservationsAvailable,
-        [Parameter(Mandatory = $true)][bool] $OwnersMatchCurrentIdentity
+        [Parameter(Mandatory = $true)][bool] $OwnersMatchCurrentIdentity,
+        [Parameter(Mandatory = $true)][bool] $IdentityEligible
     )
 
     if ($IsMain) { return [pscustomobject]@{ Ready = $false; Reason = 'main_worktree' } }
@@ -233,6 +234,9 @@ function Get-GovernedWorktreeRemovalReadiness {
     if ($Locked) { return [pscustomobject]@{ Ready = $false; Reason = 'worktree_locked' } }
     if ($Prunable) { return [pscustomobject]@{ Ready = $false; Reason = 'prunable_requires_exact_inspection' } }
     if (-not $GitAccessible) { return [pscustomobject]@{ Ready = $false; Reason = 'git_access_unknown' } }
+    if (-not $IdentityEligible) {
+        return [pscustomobject]@{ Ready = $false; Reason = 'current_identity_ineligible' }
+    }
     if (-not $OwnerObservationsAvailable) {
         return [pscustomobject]@{ Ready = $false; Reason = 'owner_observation_unavailable' }
     }
