@@ -120,6 +120,35 @@ describe("connectReviewSocket", () => {
         }]);
     });
 
+    it("emits stream readiness only after join authority and reasserts it after reconnect", async () => {
+        const client = connectReviewSocket("http://127.0.0.1:8004");
+        client.join(CANDIDATE_A);
+        client.setStreamReady(true);
+
+        socket.trigger("connect");
+        expect(socket.emitted.map(({ event }) => event)).toEqual(["joinSession"]);
+        socket.emitted[0].ack?.({ ok: true, trace_id: CANDIDATE_A.traceId });
+        await Promise.resolve();
+        expect(socket.emitted[1]).toMatchObject({
+            event: "streamReadiness",
+            payload: {
+                session_id: CANDIDATE_A.sessionId,
+                trace_id: CANDIDATE_A.traceId,
+                ready: true,
+            },
+        });
+
+        socket.trigger("disconnect", "transport close");
+        socket.trigger("connect");
+        expect(socket.emitted[2].event).toBe("joinSession");
+        socket.emitted[2].ack?.({ ok: true, trace_id: CANDIDATE_A.traceId });
+        await Promise.resolve();
+        expect(socket.emitted[3]).toMatchObject({ event: "streamReadiness", payload: { ready: true } });
+
+        client.setStreamReady(false);
+        expect(socket.emitted[4]).toMatchObject({ event: "streamReadiness", payload: { ready: false } });
+    });
+
     it("uses the active candidate for heartbeat, activity, and leave without allowing a second root", () => {
         const client = connectReviewSocket("http://127.0.0.1:8004");
         socket.trigger("connect");

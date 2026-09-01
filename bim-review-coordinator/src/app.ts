@@ -852,6 +852,7 @@ export function createCoordinatorApp(
         .map((event) => event.type),
     );
     let appendedSessionClosed = false;
+    let appendedKitInstanceReleased = false;
     if (!existingCloseEventTypes.has("sessionClosed")) {
       eventLog.appendServerCloseCheckpoint(
         session.session_id,
@@ -865,9 +866,14 @@ export function createCoordinatorApp(
       eventLog.appendServerCloseCheckpoint(session.session_id, "kitInstanceReleased", {
         kit_instance_bindings: closed?.kit_instance_bindings.map((binding) => binding.kit_instance_id) || [],
       }, closeCheckpoint.checkpoint_id);
+      appendedKitInstanceReleased = true;
     }
     const traceAuthority = sessionTraceResolver.resolveAndCommit(session.session_id);
-    if (appendedSessionClosed && traceAuthority.ok && traceAuthority.canonicalTraceId.startsWith("ifcready_")) {
+    if (
+      (appendedSessionClosed || appendedKitInstanceReleased)
+      && traceAuthority.ok
+      && traceAuthority.canonicalTraceId.startsWith("ifcready_")
+    ) {
       structLog
         .withTraceId(traceAuthority.canonicalTraceId)
         .lifecycle("ifcReadyReviewSession", "IFC-ready review session closed", {

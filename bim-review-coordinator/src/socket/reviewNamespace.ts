@@ -67,7 +67,6 @@ export function registerReviewNamespace(
       }
       membership = { sessionId, userId, traceId: traceCheck.traceId };
       socket.join(sessionId);
-      idleReclaim?.connectPeer(sessionId, socket.id);
       namespace.to(sessionId).emit("presenceUpdated", {
         session_id: sessionId,
         trace_id: traceCheck.traceId,
@@ -94,6 +93,37 @@ export function registerReviewNamespace(
       ack?.({
         ok: true,
         received_at: new Date().toISOString(),
+        session_id: sessionCheck.sessionId,
+        trace_id: traceCheck.traceId,
+      });
+    });
+
+    socket.on("streamReadiness", (payload: SessionPayload, ack?: (response: unknown) => void) => {
+      const sessionCheck = validateExistingSession(store, payload);
+      if (!sessionCheck.ok) {
+        ack?.(sessionCheck);
+        return;
+      }
+      if (!membership || membership.sessionId !== sessionCheck.sessionId) {
+        ack?.({ ok: false, error: "Socket is not joined to this review session." });
+        return;
+      }
+      const traceCheck = authorizeCanonicalTrace(traceResolver, sessionCheck.sessionId, payload.trace_id);
+      if (!traceCheck.ok) {
+        ack?.(traceCheck);
+        return;
+      }
+      if (typeof payload.ready !== "boolean") {
+        ack?.({ ok: false, error: "Missing stream readiness state." });
+        return;
+      }
+      if (payload.ready) {
+        idleReclaim?.connectPeer(sessionCheck.sessionId, socket.id);
+      } else {
+        idleReclaim?.disconnectPeer(sessionCheck.sessionId, socket.id);
+      }
+      ack?.({
+        ok: true,
         session_id: sessionCheck.sessionId,
         trace_id: traceCheck.traceId,
       });

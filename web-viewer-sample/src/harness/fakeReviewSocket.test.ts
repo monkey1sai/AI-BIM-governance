@@ -140,4 +140,24 @@ describe("connectHarnessReviewSocket", () => {
     await flushMicrotasks();
     expect(onAck).toHaveBeenCalledTimes(callsAfterLeave);
   });
+
+  it("acknowledges stream readiness only for the joined harness authority", async () => {
+    const onAck = vi.fn();
+    const client = connectHarnessReviewSocket({ onAck });
+
+    client.setStreamReady(true);
+    await flushMicrotasks();
+    expect(onAck).not.toHaveBeenCalled();
+
+    client.join(candidate());
+    await flushMicrotasks();
+    client.setStreamReady(true);
+    await flushMicrotasks();
+
+    expect(onAck).toHaveBeenLastCalledWith(
+      "streamReadiness",
+      candidate(),
+      expect.objectContaining({ ok: true, trace_id: HARNESS_TRACE_ID }),
+    );
+  });
 });

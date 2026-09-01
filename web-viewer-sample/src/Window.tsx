@@ -2223,6 +2223,8 @@ export default class App extends React.Component<AppProps, AppState> {
     }
 
     private _replaceStreamLifecycle(): number {
+        this.reviewSocket?.setStreamReady(false);
+        this.setState({ idleCountdownRemainingSeconds: null });
         // Advance before stopping or remounting AppStream: its callbacks and sendMessage
         // continuations may settle synchronously while React still exposes the old state key.
         this.streamGeneration += 1;
@@ -3621,7 +3623,7 @@ export default class App extends React.Component<AppProps, AppState> {
             this.verifiedDataChannelAuthority = null;
             return;
         }
-        if (event === "heartbeat" || event === "userActivity") {
+        if (event === "heartbeat" || event === "streamReadiness" || event === "userActivity") {
             const authority = this.verifiedDataChannelAuthority;
             if (
                 !authority
@@ -4199,6 +4201,7 @@ export default class App extends React.Component<AppProps, AppState> {
      */
         private _onStreamStarted(streamGeneration = this.streamGeneration): void {
             if (!this._isCurrentStreamCallback(streamGeneration, "started")) return;
+            this.reviewSocket?.setStreamReady(true);
         if (this.nativeOpenStagePoisonedGeneration === streamGeneration) {
             if (this.nativeOpenStageReplacementStartGeneration !== streamGeneration) {
                 this._appendReviewEvent("ignored same-lifecycle AppStreamer start; reconnect is required before native stage retry");
@@ -4310,6 +4313,7 @@ export default class App extends React.Component<AppProps, AppState> {
         streamGeneration = this.streamGeneration,
     ): void {
         if (!this._isCurrentStreamCallback(streamGeneration, kind)) return;
+        this.reviewSocket?.setStreamReady(false);
         // A stopped AppStreamer lifecycle can still deliver a late callback.
         // Advance synchronously before React remounts so focus/highlight/A4
         // results cannot mutate the terminal disconnect state.
@@ -4358,6 +4362,7 @@ export default class App extends React.Component<AppProps, AppState> {
             loadedStageUrl: null,
             stageLoadStatus: "disconnected",
             webrtcLifecycleStatus: kind,
+            idleCountdownRemainingSeconds: null,
             reviewEvents: [...state.reviewEvents, `WebRTC ${kind}`].slice(-80),
         }));
     }

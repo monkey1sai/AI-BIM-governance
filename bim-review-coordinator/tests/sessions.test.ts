@@ -696,7 +696,24 @@ describe("bim-review-coordinator", () => {
     expect(await joinedPresence).toMatchObject({ session_id: sessionId, trace_id: traceId });
     expect(app.store.get(sessionId)?.participants.map((item) => item.user_id)).toEqual([serverUserId]);
     expect(app.io.of("/review").adapter.rooms.get(sessionId)?.has(client.id as string)).toBe(true);
-    expect(app.idleReclaimService.recordActivity(sessionId, 1_000)).toBe(true);
+    expect(app.idleReclaimService.getSessionState(sessionId)).toBeNull();
+    expect(app.idleReclaimService.recordActivity(sessionId, 1_000)).toBe(false);
+
+    const missingReadiness = await emitWithAck<Record<string, unknown>>(client, "streamReadiness", {
+      session_id: sessionId,
+      trace_id: traceId,
+    });
+    expect(missingReadiness).toEqual({ ok: false, error: "Missing stream readiness state." });
+    expect(app.idleReclaimService.getSessionState(sessionId)).toBeNull();
+
+    const streamReady = await emitWithAck<Record<string, unknown>>(client, "streamReadiness", {
+      session_id: sessionId,
+      trace_id: traceId,
+      ready: true,
+    });
+    expect(streamReady).toMatchObject({ ok: true, session_id: sessionId, trace_id: traceId });
+    expect(app.idleReclaimService.getSessionState(sessionId)).not.toBeNull();
+    const streamReadyAt = app.idleReclaimService.getSessionState(sessionId)?.lastActivityAt;
     const sessionFile = path.join(activeRoot as string, "sessions", `${sessionId}.json`);
     const joinedSessionJson = fs.readFileSync(sessionFile, "utf8");
     const joinedPresenceCount = presence.length;
@@ -730,20 +747,35 @@ describe("bim-review-coordinator", () => {
       user_id: "viewer_trace_001",
     });
     expect(heartbeat).toMatchObject({ ok: true, session_id: sessionId, trace_id: traceId });
-    expect(app.idleReclaimService.getSessionState(sessionId)?.lastActivityAt).toBe(1_000);
+    expect(app.idleReclaimService.getSessionState(sessionId)?.lastActivityAt).toBe(streamReadyAt);
 
     const untracedActivity = await emitWithAck<Record<string, unknown>>(client, "userActivity", {
       session_id: sessionId,
     });
     expect(untracedActivity).toEqual({ ok: false, error: "Missing trace_id" });
-    expect(app.idleReclaimService.getSessionState(sessionId)?.lastActivityAt).toBe(1_000);
+    expect(app.idleReclaimService.getSessionState(sessionId)?.lastActivityAt).toBe(streamReadyAt);
 
     const activity = await emitWithAck<Record<string, unknown>>(client, "userActivity", {
       session_id: sessionId,
       trace_id: traceId,
     });
     expect(activity).toMatchObject({ ok: true, session_id: sessionId, trace_id: traceId });
-    expect(app.idleReclaimService.getSessionState(sessionId)?.lastActivityAt).toBeGreaterThan(1_000);
+    expect(app.idleReclaimService.getSessionState(sessionId)?.lastActivityAt).toBeGreaterThanOrEqual(streamReadyAt as number);
+
+    const streamStopped = await emitWithAck<Record<string, unknown>>(client, "streamReadiness", {
+      session_id: sessionId,
+      trace_id: traceId,
+      ready: false,
+    });
+    expect(streamStopped).toMatchObject({ ok: true, session_id: sessionId, trace_id: traceId });
+    expect(app.idleReclaimService.getSessionState(sessionId)).toBeNull();
+
+    const streamRestarted = await emitWithAck<Record<string, unknown>>(client, "streamReadiness", {
+      session_id: sessionId,
+      trace_id: traceId,
+      ready: true,
+    });
+    expect(streamRestarted).toMatchObject({ ok: true, session_id: sessionId, trace_id: traceId });
 
     const leftPresence = new Promise<Record<string, unknown>>((resolve) => {
       client.once("presenceUpdated", resolve);
@@ -797,6 +829,27 @@ describe("bim-review-coordinator", () => {
     });
     expect(spoofedLeave).toEqual({ ok: true, trace_id: traceId });
     expect(app.store.get(sessionId)?.participants.map((item) => item.user_id)).toEqual([firstUserId]);
+  });
+
+  it("acknowledges stream readiness without tracking when the idle policy is disabled", async () => {
+    const app = makeApp();
+    const created = await request(app.app)
+      .post("/api/review-sessions")
+      .send({ project_id: "project_idle_disabled", model_version_id: "version_idle_disabled" });
+    const sessionId = created.body.session_id as string;
+    const traceId = created.body.trace_id as string;
+    const client = await connectReviewSocket(await listen(app));
+
+    expect(await emitWithAck<Record<string, unknown>>(client, "joinSession", {
+      session_id: sessionId,
+      trace_id: traceId,
+    })).toMatchObject({ ok: true, trace_id: traceId });
+    expect(await emitWithAck<Record<string, unknown>>(client, "streamReadiness", {
+      session_id: sessionId,
+      trace_id: traceId,
+      ready: true,
+    })).toMatchObject({ ok: true, session_id: sessionId, trace_id: traceId });
+    expect(app.idleReclaimService.getSessionState(sessionId)).toBeNull();
   });
 
   it("does not backfill a legacy linked session until an exact candidate succeeds", async () => {

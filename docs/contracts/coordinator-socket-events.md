@@ -12,6 +12,7 @@ Namespace:
 joinSession
 leaveSession
 heartbeat
+streamReadiness
 userActivity
 ```
 
@@ -26,8 +27,11 @@ userActivity
 ```
 
 `heartbeat` proves Socket connectivity only and does not reset inactivity.
-`userActivity` is accepted only after the socket joined the same session and
-must carry that session's canonical `trace_id`:
+`streamReadiness` carries the canonical `trace_id` plus `ready: true|false`.
+Presence alone never starts idle tracking: `ready: true` marks this peer as a
+qualifying WebRTC stream, while `ready: false`, leave, and disconnect remove it.
+`userActivity` is accepted only after the socket joined the same session, its
+stream is ready, and the event carries that session's canonical `trace_id`:
 
 ```json
 {
@@ -77,7 +81,7 @@ Validation failures:
 { "ok": false, "error": "Review session is not active." }
 ```
 
-`joinSession`, `heartbeat`, `userActivity`, and `leaveSession` must not mutate
+`joinSession`, `heartbeat`, `streamReadiness`, `userActivity`, and `leaveSession` must not mutate
 presence or idle state when the session does not exist or is `closing`,
 `closed`, or `failed`. A connectivity `heartbeat` must never count as user
 activity.

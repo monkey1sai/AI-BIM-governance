@@ -101,3 +101,24 @@ describe("CoordinatorClient.recordSessionActivity", () => {
         );
     });
 });
+
+describe("CoordinatorClient.getSessionIdleStatus", () => {
+    it("preserves disabled and untracked nullable status fields", async () => {
+        const payload = {
+            session_id: "review_session_idle_x",
+            enabled: false,
+            has_connected_viewer: false,
+            is_counting_down: false,
+            remaining_seconds: null,
+            last_activity_at: null,
+        };
+        const fetchImpl = vi.fn(async () => jsonResponse(200, payload));
+        const client = new CoordinatorClient("http://127.0.0.1:8004", fetchImpl as typeof fetch);
+
+        await expect(client.getSessionIdleStatus(payload.session_id)).resolves.toEqual(payload);
+        expect(fetchImpl).toHaveBeenCalledWith(
+            "http://127.0.0.1:8004/api/review-sessions/review_session_idle_x/idle-status",
+            { headers: { Accept: "application/json" } },
+        );
+    });
+});

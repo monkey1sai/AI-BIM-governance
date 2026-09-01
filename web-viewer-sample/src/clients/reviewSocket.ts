@@ -2,7 +2,7 @@ import { io, type Socket } from "socket.io-client";
 
 export const REVIEW_SOCKET_ACK_TIMEOUT_MS = 5_000;
 
-export type ReviewSocketEvent = "joinSession" | "heartbeat" | "userActivity" | "leaveSession";
+export type ReviewSocketEvent = "joinSession" | "heartbeat" | "streamReadiness" | "userActivity" | "leaveSession";
 export type ReviewSocketStatus = "connected" | "disconnected";
 
 export interface ReviewSocketCandidate {
@@ -34,6 +34,7 @@ export interface ReviewSocketHandlers {
 export interface ReviewSocketClient {
     join(candidate: ReviewSocketCandidate): void;
     heartbeat(): void;
+    setStreamReady(ready: boolean): void;
     userActivity(): Promise<boolean>;
     leave(): void;
     disconnect(): void;
@@ -79,6 +80,8 @@ export function connectReviewSocket(baseUrl: string, handlers: ReviewSocketHandl
     const pendingTimers = new Set<ReturnType<typeof setTimeout>>();
     const pendingCancels = new Map<ReturnType<typeof setTimeout>, () => void>();
     let activeCandidate: ReviewSocketCandidate | null = null;
+    let joinedCandidateKey: string | null = null;
+    let streamReady = false;
     let connectionGeneration = 0;
     let manuallyDisconnected = false;
 
@@ -114,7 +117,10 @@ export function connectReviewSocket(baseUrl: string, handlers: ReviewSocketHandl
                     resolve({ ok: false, error: "Socket.IO authority changed before acknowledgement." });
                     return;
                 }
-                if (event === "leaveSession" && ack.ok) activeCandidate = null;
+                if (event === "leaveSession" && ack.ok) {
+                    activeCandidate = null;
+                    joinedCandidateKey = null;
+                }
                 handlers.onAck?.(event, candidate, ack);
                 resolve(ack);
             };
@@ -136,12 +142,25 @@ export function connectReviewSocket(baseUrl: string, handlers: ReviewSocketHandl
         });
     };
 
+    const emitReadiness = (candidate: ReviewSocketCandidate, ready: boolean): void => {
+        void emitWithAck("streamReadiness", candidate, {
+            session_id: candidate.sessionId,
+            trace_id: candidate.traceId,
+            ready,
+        });
+    };
+
     const emitJoin = (candidate: ReviewSocketCandidate): void => {
+        const expectedKey = candidateKey(candidate);
         void emitWithAck("joinSession", candidate, {
             session_id: candidate.sessionId,
             user_id: candidate.userId,
             display_name: candidate.displayName,
             trace_id: candidate.traceId,
+        }).then((ack) => {
+            if (!ack.ok || !activeCandidate || candidateKey(activeCandidate) !== expectedKey) return;
+            joinedCandidateKey = expectedKey;
+            if (streamReady) emitReadiness(candidate, true);
         });
     };
 
@@ -152,6 +171,7 @@ export function connectReviewSocket(baseUrl: string, handlers: ReviewSocketHandl
     });
     socket.on("disconnect", () => {
         connectionGeneration += 1;
+        joinedCandidateKey = null;
         clearPendingTimers();
         handlers.onStatus?.("disconnected");
     });
@@ -170,6 +190,11 @@ export function connectReviewSocket(baseUrl: string, handlers: ReviewSocketHandl
                 trace_id: activeCandidate.traceId,
             });
         },
+        setStreamReady(ready: boolean) {
+            streamReady = ready;
+            if (!activeCandidate || joinedCandidateKey !== candidateKey(activeCandidate)) return;
+            emitReadiness({ ...activeCandidate }, ready);
+        },
         userActivity() {
             if (!activeCandidate) return Promise.resolve(false);
             const candidate = { ...activeCandidate };
@@ -182,6 +207,7 @@ export function connectReviewSocket(baseUrl: string, handlers: ReviewSocketHandl
         },
         leave() {
             if (!activeCandidate) return;
+            streamReady = false;
             void emitWithAck("leaveSession", activeCandidate, {
                 session_id: activeCandidate.sessionId,
                 user_id: activeCandidate.userId,
@@ -191,6 +217,8 @@ export function connectReviewSocket(baseUrl: string, handlers: ReviewSocketHandl
         disconnect() {
             manuallyDisconnected = true;
             activeCandidate = null;
+            joinedCandidateKey = null;
+            streamReady = false;
             connectionGeneration += 1;
             clearPendingTimers();
             socket.disconnect();

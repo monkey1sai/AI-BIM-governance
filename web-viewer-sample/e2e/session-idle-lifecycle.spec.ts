@@ -56,6 +56,12 @@ async function joinObserver(session: CreatedSession): Promise<Socket> {
     display_name: "Idle E2E observer",
   });
   requireReal(ack.ok === true, "observer join was rejected");
+  const readiness = await emitAck<{ ok?: boolean }>(socket, "streamReadiness", {
+    session_id: session.session_id,
+    trace_id: session.trace_id,
+    ready: true,
+  });
+  requireReal(readiness.ok === true, "observer stream readiness was rejected");
   return socket;
 }
 

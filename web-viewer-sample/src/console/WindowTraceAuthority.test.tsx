@@ -77,6 +77,9 @@ type AppInternals = {
     runtimeCommandContexts: Map<string, unknown>;
     runtimeCommandTerminalClaims: Map<string, unknown>;
     _connectReviewSocket: (sessionId: string, traceId: string) => void;
+    _onStreamStarted: (streamGeneration?: number) => void;
+    _replaceStreamLifecycle: () => number;
+    _pollForKitReady: () => void;
     _bootstrapHarnessSession: () => void;
     _beginStageAttempt: (url: string) => number;
     _sendStreamMessage: (message: { event_type: string; payload: unknown }) => boolean;
@@ -168,6 +171,7 @@ describe("Window Socket canonical trace authority", () => {
         socketClient = {
             join: vi.fn(),
             heartbeat: vi.fn(),
+            setStreamReady: vi.fn(),
             userActivity: vi.fn(async () => true),
             leave: vi.fn(),
             disconnect: vi.fn(),
@@ -415,6 +419,35 @@ describe("Window Socket canonical trace authority", () => {
             sessionId: SESSION_ID,
             traceId: TRACE_ID,
         });
+    });
+
+    it("reports WebRTC readiness and clears it before replacing the stream lifecycle", () => {
+        const app = readyApp();
+        const target = internals(app);
+        vi.spyOn(app, "setState").mockImplementation((update: unknown, callback?: () => void) => {
+            const patch = typeof update === "function"
+                ? (update as (state: Record<string, unknown>) => Record<string, unknown>)(target.state)
+                : update;
+            if (patch && typeof patch === "object") target.state = { ...target.state, ...(patch as Record<string, unknown>) };
+            callback?.();
+        });
+        vi.spyOn(target, "_pollForKitReady").mockImplementation(() => undefined);
+        target._connectReviewSocket(SESSION_ID, TRACE_ID);
+        const candidate: ReviewSocketCandidate = {
+            sessionId: SESSION_ID,
+            userId: reviewEnv.defaultUserId,
+            displayName: reviewEnv.defaultDisplayName,
+            traceId: TRACE_ID,
+        };
+        ack("joinSession", candidate, { ok: true, trace_id: TRACE_ID });
+
+        target._onStreamStarted();
+        expect(socketClient.setStreamReady).toHaveBeenCalledWith(true);
+
+        target.state = { ...target.state, idleCountdownRemainingSeconds: 5 };
+        target._replaceStreamLifecycle();
+        expect(socketClient.setStreamReady).toHaveBeenLastCalledWith(false);
+        expect(target.state.idleCountdownRemainingSeconds).toBeNull();
     });
 
     it("preserves joined authority when optional user activity is rejected", () => {

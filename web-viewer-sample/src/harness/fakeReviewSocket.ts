@@ -108,6 +108,16 @@ export function connectHarnessReviewSocket(
       });
     },
 
+    setStreamReady(): void {
+      if (manuallyDisconnected || !joinAcknowledged || !activeCandidate) return;
+      const expectedCandidate = { ...activeCandidate };
+      const expectedKey = candidateKey(expectedCandidate);
+      schedule(() => {
+        if (!joinAcknowledged || !activeCandidate || candidateKey(activeCandidate) !== expectedKey) return;
+        successAck("streamReadiness", expectedCandidate);
+      });
+    },
+
     userActivity(): Promise<boolean> {
       if (manuallyDisconnected || !joinAcknowledged || !activeCandidate) return Promise.resolve(false);
       const expectedCandidate = { ...activeCandidate };
