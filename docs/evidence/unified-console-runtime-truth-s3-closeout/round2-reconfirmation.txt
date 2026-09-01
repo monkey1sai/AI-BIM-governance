@@ -1,0 +1,63 @@
+# [SUPERSEDED 2026-09-01] This file records the round-2 executor's claim that canonical-linux (181)
+# was structurally unreachable from this host and that 1.2-1.8/2.1-2.4/3.1-3.2 must stay unchecked.
+# That claim was a false negative: its only basis was a localhost netstat/inventory scan, which cannot
+# establish LAN unreachability. It was empirically reversed the same day: the coordinator deployed to
+# 181 over SSH (deploy tag deploy-20260831-639237709604722760-001) and the round-3 executor captured
+# live HTTP evidence from <canonical-host>:8004 (see task-6.2-*.json / task-6.2-screen-*.png).
+# Kept for audit only; nothing below should be read as a current claim.
+
+# unified-console-runtime-truth-s3-closeout — round 2 reconfirmation (evidence-only closeout, second invocation)
+
+Scope of this pass: same task-ID set as round 1 (1.2-1.8, 2.1-2.4, 3.1-3.2, 6.1, 6.2, 6.5), same
+evidenceHead a0ab7065131914e548e1d79a1c683c8b14b07de4. This pass was invoked with the round-1 gaps
+report as input ("6.2-no-canonical-access", "6.5-depends-on-6.2",
+"1.2-1.8-2.1-2.4-3.1-3.2-canonical-gate").
+
+## State check at start of round 2
+- `git rev-parse HEAD` -> a0ab7065131914e548e1d79a1c683c8b14b07de4 (unchanged from round 1's
+  evidenceHead; no new commits landed on this branch between round 1 and round 2).
+- `git status --porcelain` -> identical to round 1's end state: `M openspec/changes/unified-console-runtime-truth/tasks.md`
+  (round 1's 6.1 checkbox edit) + `?? docs/evidence/unified-console-runtime-truth-s3-closeout/`
+  (round 1's evidence bundle, all files present and non-empty, spot-checked below).
+- Because the source tree is byte-identical to round 1 (same HEAD, no intervening changes), the
+  local vitest/tsc/rg/build/design-gate re-runs captured in round 1's verification.txt,
+  vitest-tasks-1.3-1.8-2.1-2.4-3.1-3.2.txt, rg-checks.txt, tsc-noemit.txt, build-ui.txt,
+  dist-ui-82pct-check.txt, and design-system-reference-verify-origin.txt remain valid as-is;
+  re-running them here would reproduce identical output and does not constitute "new implementation"
+  per this task's constraint against duplicating existing runner output. Spot-checked
+  vitest-tasks-*.txt, rg-checks.txt, build-ui.txt, and design-system-reference-verify-origin.txt by
+  reading them in full in this round -- content matches round 1's verification.txt summary exactly
+  (10 test files / 44 tests passed; ten endpoint rg hits; 1.7/2.2/2.3 production-scope rg exit=1;
+  vite build 184 modules / exit 0; design-reference-gate passed 13 screens / 26 golden files).
+
+## 6.2 / 6.5 canonical-linux access -- re-checked in this round, still unavailable
+- `netstat -ano | grep -E ":8004|:49102|:9000"` -> no output, exit 1 (no local listener or
+  port-forward toward canonical-linux's coordinator/governance/MinIO ports from this host, right now).
+- `Glob **/target.local.json` (repo-external owner-controlled deploy inventory) -> no files found,
+  repo-wide.
+- `ListAgents` -> 34 peer sessions listed; none are online/active, and none are scoped to this
+  change's canonical-linux (181) evidence capture. (Two historically-named peers reference an
+  unrelated "M3"/staging-proof project context and are offline; not this change's canonical access
+  path.)
+- `C:\Users\IOT\.bim-deploy` (owner-private deployment root: SSH keys / canonical env / inventory)
+  was NOT opened -- reading it remains outside this evidence-only closeout's secrets/credentials
+  boundary, consistent with round 1's determination.
+- `.claude/settings.local.json` -> no pre-approved canonical-linux host/IP/URL entry (unchanged from
+  round 1).
+
+## Conclusion for round 2
+No new capability or access path to canonical-linux appeared between round 1 and round 2; the
+blocker is structural (this session/host has no owner-provisioned inventory, no live tunnel, and is
+correctly barred from the private secrets root that would supply either) rather than something a
+same-shaped repeat evidence-only closeout invocation can resolve. Task 6.2 (canonical `:8004/ui`
+screenshots + same-minute ten-endpoint JSON) and task 6.5 (secret-pattern-scan of the 6.2/6.3/6.4
+bundle, which does not yet exist) remain incomplete. No tasks.md edits were made in this round beyond
+what round 1 already staged (6.1's checkbox + evidence note); 1.2-1.8/2.1-2.4/3.1-3.2 checkboxes
+remain unchecked per the file's own top-of-file rule (canonical-linux screenshot + same-minute API
+JSON required to check UI-related boxes; local pass only supports the existing "本機綠，待 181"
+annotations, already present in tasks.md prior to this change).
+
+Recommendation carried forward unchanged from round 1: closing 6.2/6.5 (and then the follow-on
+checkbox flips for 1.2-1.8/2.1-2.4/3.1-3.2/5.x that 6.2's evidence would unlock) requires a session
+or the human owner with actual canonical-linux (181) network/inventory access -- not a further
+same-shaped evidence-only closeout re-invocation against this worktree/host.

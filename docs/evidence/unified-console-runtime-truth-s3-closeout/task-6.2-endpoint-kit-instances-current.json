@@ -1,0 +1,17 @@
+{
+  "endpoint": "/api/kit/instances/current",
+  "captured_at_window": {
+    "start": "2026-08-31T11:49:17.302Z",
+    "end": "2026-08-31T11:49:17.370Z"
+  },
+  "status": 200,
+  "body": {
+    "instance_id": "kit_local_001",
+    "status": "idle",
+    "selected_artifact_ids": [],
+    "opened_runtime_uris": [],
+    "last_command": null,
+    "control_status": "not_sent"
+  },
+  "ms": 4
+}
