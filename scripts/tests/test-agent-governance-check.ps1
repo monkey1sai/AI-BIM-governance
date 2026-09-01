@@ -18,6 +18,7 @@ function Test-TrustedLinuxBoundary {
     try {
         $suiteJob = $WorkflowTree['jobs']['suite']
         $boundaryJob = $WorkflowTree['jobs']['new-run-boundary']
+        if (([string]$suiteJob['runs-on']) -cne 'windows-latest') { return $false }
         $linuxEntries = @($boundaryJob['strategy']['matrix']['include'] | Where-Object {
             ([string]$_['platform']) -ceq 'linux-positive'
         })
@@ -408,6 +409,10 @@ try {
     $wrongConditionGate = @($wrongCondition['jobs']['new-run-boundary']['steps'] | Where-Object { ([string]$_['name']) -ceq 'Require canonical read-only Linux Git' })[0]
     $wrongConditionGate['if'] = "matrix.platform == 'windows-negative'"
     Assert-True (-not (Test-TrustedLinuxBoundary -WorkflowTree $wrongCondition)) 'a misrouted trusted-Git gate is rejected in memory'
+
+    $linuxSuite = Copy-WorkflowTree -WorkflowTree $governanceWorkflowTree
+    $linuxSuite['jobs']['suite']['runs-on'] = 'ubuntu-latest'
+    Assert-True (-not (Test-TrustedLinuxBoundary -WorkflowTree $linuxSuite)) 'a Linux suite runner cannot replace required Windows runtime coverage'
 
     $missingRuntime = Copy-WorkflowTree -WorkflowTree $governanceWorkflowTree
     $missingRuntime['jobs']['suite']['steps'] = @($missingRuntime['jobs']['suite']['steps'] | Where-Object {

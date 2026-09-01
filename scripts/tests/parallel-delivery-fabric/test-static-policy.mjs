@@ -49,6 +49,7 @@ const assertTrustedLinuxBoundary = (workflow) => {
   const sections = normalized.split('\n  new-run-boundary:')
   assert.equal(sections.length, 2)
   const [windowsSuite, linuxBoundary] = sections
+  assert.match(windowsSuite, /\n  suite:\n[\s\S]*?\n    runs-on: windows-latest\n/u)
   assert.equal(windowsSuite.includes(WINDOWS_RUNTIME_STEP), true)
   assert.equal(windowsSuite.split('Run trusted host merge runtime tests (Windows)').length - 1, 1)
   assert.doesNotMatch(windowsSuite, /Run Parallel Delivery Fabric static policy/u)
@@ -141,7 +142,12 @@ test('trusted Linux boundary rejects no-op, incomplete, misrouted, and non-adjac
     `${TRUSTED_GIT_STEP}\n\n`,
     `${TRUSTED_GIT_STEP}\n\n${WINDOWS_RUNTIME_STEP}\n\n`,
   )
+  const linuxWindowsSuite = workflow.replace(
+    '    runs-on: windows-latest\n    timeout-minutes: 30',
+    '    runs-on: ubuntu-latest\n    timeout-minutes: 30',
+  )
   const mutants = [
+    linuxWindowsSuite,
     withoutWindowsRuntime,
     noOpWindowsRuntime,
     wrongWindowsRuntimeShard,
