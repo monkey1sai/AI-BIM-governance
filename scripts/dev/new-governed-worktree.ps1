@@ -179,7 +179,7 @@ function Get-GovernedWorktreeInventory {
             Get-GovernedPathOwnerObservation -Path $gitMetadataPath
         }
         $status = Invoke-GovernedGit -WorkingDirectory $worktreePath -ArgumentList @(
-            'status', '--porcelain=v1', '-z') -NoOptionalLocks -AllowFailure
+            'status', '--porcelain=v1', '-z', '--untracked-files=all') -NoOptionalLocks -AllowFailure
         $gitAccessible = [bool]$status.Success
         $dirty = if ($gitAccessible) { (@($status.Output) -join '') -ne '' } else { $null }
         $mergedResult = Invoke-GovernedGit -WorkingDirectory $MainRoot -ArgumentList @(
@@ -356,14 +356,19 @@ try {
         'rev-parse', 'refs/remotes/origin/main')
     $remoteMain = Get-GovernedGitText -WorkingDirectory $mainRoot -ArgumentList @(
         'ls-remote', '--exit-code', 'origin', 'refs/heads/main')
-    $remoteMainSha = (@($remoteMain -split '\s+') | Select-Object -First 1)
+    $remoteMainMatches = @($remoteMain -split "\r?\n" | ForEach-Object {
+        if ($_ -match '^(?<sha>[0-9a-fA-F]{40,64})\s+refs/heads/main$') {
+            $Matches.sha
+        }
+    })
+    $remoteMainSha = if ($remoteMainMatches.Count -eq 1) { [string]$remoteMainMatches[0] } else { '' }
     if ($remoteMainSha -notmatch '^[0-9a-fA-F]{40,64}$' -or $baseline -cne $remoteMainSha) {
         throw 'origin_main_fetch_verification_failed'
     }
     $primaryBranch = Get-GovernedGitText -WorkingDirectory $mainRoot -ArgumentList @('symbolic-ref', 'HEAD')
     $primaryHead = Get-GovernedGitText -WorkingDirectory $mainRoot -ArgumentList @('rev-parse', 'HEAD')
     $primaryStatus = Get-GovernedGitText -WorkingDirectory $mainRoot -ArgumentList @(
-        'status', '--porcelain=v1', '-z')
+        'status', '--porcelain=v1', '-z', '--untracked-files=all')
     $primaryState = Test-GovernedPrimaryCheckoutState `
         -BranchRef $primaryBranch `
         -Head $primaryHead `
@@ -396,7 +401,8 @@ try {
     $head = Get-GovernedGitText -WorkingDirectory $target -ArgumentList @('rev-parse', 'HEAD')
     $targetOriginMain = Get-GovernedGitText -WorkingDirectory $target -ArgumentList @('rev-parse', 'origin/main')
     $branch = Get-GovernedGitText -WorkingDirectory $target -ArgumentList @('symbolic-ref', 'HEAD')
-    $status = Get-GovernedGitText -WorkingDirectory $target -ArgumentList @('status', '--porcelain=v1', '-z')
+    $status = Get-GovernedGitText -WorkingDirectory $target -ArgumentList @(
+        'status', '--porcelain=v1', '-z', '--untracked-files=all')
     $rootOwner = Get-GovernedPathOwnerObservation -Path $target
     $gitMetadataPath = Get-GovernedGitText -WorkingDirectory $target -ArgumentList @(
         'rev-parse', '--path-format=absolute', '--absolute-git-dir')
@@ -462,7 +468,7 @@ catch {
             ConvertTo-Json -Depth 4
     }
     else {
-        Write-Error $_
+        Write-Error $_ -ErrorAction Continue
     }
     exit 2
 }

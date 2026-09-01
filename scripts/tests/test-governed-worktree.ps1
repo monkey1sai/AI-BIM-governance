@@ -228,6 +228,14 @@ Assert-True ($cliSource -match 'StructLog\.psm1') 'mutating create mode must use
 Assert-True ($cliSource -match "\.tmp\\logs") 'structured logs must stay in the gitignored repository temp root'
 Assert-True ($cliSource -match "'--no-optional-locks'") 'inventory Git commands must disable optional locks'
 Assert-True ($cliSource -match "'status'.*-NoOptionalLocks") 'inventory status must not refresh a worktree index'
+$explicitUntrackedStatusChecks = @([regex]::Matches(
+    $cliSource,
+    "'status'\s*,\s*'--porcelain=v1'\s*,\s*'-z'\s*,\s*'--untracked-files=all'"
+))
+Assert-Equal 3 $explicitUntrackedStatusChecks.Count `
+    'primary, post-create, and inventory cleanliness checks must include all untracked files'
+Assert-True ($cliSource -match 'Write-Error\s+\$_\s+-ErrorAction\s+Continue') `
+    'human-readable failures must preserve the explicit governed HELD exit code'
 
 $workflowPath = Join-Path $repoRoot 'docs\agents\github-workflow.md'
 $workflowSource = Get-Content -Raw -LiteralPath $workflowPath
@@ -318,6 +326,19 @@ try {
     & git -C $failureFixtureRepo update-ref -d refs/remotes/origin/main 2>&1 | Out-Null
     Assert-Equal 0 $LASTEXITCODE 'failure fixture removes the pre-existing origin/main tracking ref'
 
+    $uploadPackWrapper = Join-Path $failureFixtureRoot 'upload-pack-warning.sh'
+    $uploadPackScript = @'
+#!/bin/sh
+printf '%s\n' 'warning: governed fixture transport diagnostic' >&2
+exec git-upload-pack "$@"
+'@
+    [System.IO.File]::WriteAllText($uploadPackWrapper, $uploadPackScript)
+    $uploadPackCommand = "sh '$($uploadPackWrapper.Replace("'", "'\\''"))'"
+    & git -C $failureFixtureRepo config remote.origin.uploadpack $uploadPackCommand 2>&1 | Out-Null
+    Assert-Equal 0 $LASTEXITCODE 'failure fixture configures a successful transport warning'
+    & git -C $failureFixtureRepo config status.showUntrackedFiles no 2>&1 | Out-Null
+    Assert-Equal 0 $LASTEXITCODE 'failure fixture hides untracked files in inherited Git config'
+
     [System.IO.File]::WriteAllText((Join-Path $failureFixtureRepo 'dirty.marker'), 'dirty')
     $failureFixtureCli = Join-Path $failureFixtureRepo 'scripts\dev\new-governed-worktree.ps1'
     $failureOutput = @(& pwsh -NoProfile -NonInteractive -File $failureFixtureCli `
@@ -340,6 +361,12 @@ try {
     Assert-True (-not (Test-Path -LiteralPath $failureFixtureTarget)) 'logged failure creates no worktree target'
     & git -C $failureFixtureRepo show-ref --verify --quiet refs/heads/fix/failure-log-contract
     Assert-Equal 1 $LASTEXITCODE 'logged failure creates no branch'
+
+    $humanFailureOutput = @(& pwsh -NoProfile -NonInteractive -File $failureFixtureCli `
+        -BranchName 'fix/failure-log-contract' 2>&1)
+    Assert-Equal 2 $LASTEXITCODE 'human-readable Create failure preserves the governed HELD exit code'
+    Assert-True (($humanFailureOutput -join [Environment]::NewLine) -match [regex]::Escape($expectedFailureReason)) `
+        'human-readable Create failure reports the first observed held reason'
     if ($currentEligibility.Eligible) {
         $fetchedOriginMain = (& git -C $failureFixtureRepo rev-parse refs/remotes/origin/main).Trim()
         Assert-Equal 0 $LASTEXITCODE 'explicit main refspec recreates origin/main despite narrowed fetch config'
