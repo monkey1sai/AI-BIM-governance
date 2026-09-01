@@ -213,6 +213,8 @@ export default class AppStream extends Component<AppStreamProps, AppStreamState>
     private _requested: boolean;
     private _negotiatedSize: { w: number; h: number } | null;
     private _disposed: boolean;
+    private _gfnPlayer: HTMLVideoElement | null = null;
+    private _gfnPlayerObserver: MutationObserver | null = null;
     // 每個掛載實例各自一份：remount 後重置等於放行（fail-open），
     // 絕不讓跨連線的舊記憶誤殺新 stream 的第一則回應。
     private _kitResponseDeduper: KitRuntimeResponseDeduper;
@@ -404,19 +406,47 @@ export default class AppStream extends Component<AppStreamProps, AppStreamState>
 
     componentWillUnmount() {
         this._disposed = true;
+        this._gfnPlayerObserver?.disconnect();
+        this._gfnPlayerObserver = null;
+        this._gfnPlayer?.removeEventListener('loadeddata', this._onGfnVideoReady);
+        this._gfnPlayer = null;
         void terminateStreamer();
     }
 
     componentDidUpdate(_prevProps: AppStreamProps, prevState: AppStreamState) {
         if (prevState.streamReady === false && this.state.streamReady === true) {
-            const player = document.getElementById("gfn-stream-player-video") as HTMLVideoElement;
-            if (player) {
-                player.tabIndex = -1;
-                player.playsInline = true;
-                player.muted = true;
-                player.play();
-            }
+            this._observeGfnPlayer();
         }
+    }
+
+    private readonly _onGfnVideoReady = (): void => {
+        this.props.onVideoReady?.();
+    };
+
+    private _observeGfnPlayer(): void {
+        if (StreamConfig.source !== 'gfn') return;
+        const attach = (): boolean => {
+            const player = document.getElementById("gfn-stream-player-video") as HTMLVideoElement | null;
+            if (!player) return false;
+            if (this._gfnPlayer !== player) {
+                this._gfnPlayer?.removeEventListener('loadeddata', this._onGfnVideoReady);
+                this._gfnPlayer = player;
+                player.addEventListener('loadeddata', this._onGfnVideoReady);
+            }
+            player.tabIndex = -1;
+            player.playsInline = true;
+            player.muted = true;
+            void player.play().catch(() => undefined);
+            if (player.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) this._onGfnVideoReady();
+            this._gfnPlayerObserver?.disconnect();
+            this._gfnPlayerObserver = null;
+            return true;
+        };
+        if (attach() || this._gfnPlayerObserver) return;
+        const view = document.getElementById("view");
+        if (!view) return;
+        this._gfnPlayerObserver = new MutationObserver(() => attach());
+        this._gfnPlayerObserver.observe(view, { childList: true, subtree: true });
     }
 
     static sendMessage(message: unknown): Promise<unknown> {

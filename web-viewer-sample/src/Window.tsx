@@ -2771,9 +2771,14 @@ export default class App extends React.Component<AppProps, AppState> {
     }
 
     private _hasRemoteVideoFrame(): boolean {
-        const video = document.getElementById("remote-video") as HTMLVideoElement | null;
-        if (!video) return false;
-        return video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA && video.videoWidth > 0 && video.videoHeight > 0;
+        const videos = ["remote-video", "gfn-stream-player-video"]
+            .map((id) => document.getElementById(id) as HTMLVideoElement | null)
+            .filter((video): video is HTMLVideoElement => video !== null);
+        return videos.some((video) => (
+            video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA
+            && video.videoWidth > 0
+            && video.videoHeight > 0
+        ));
     }
 
     // 統一治理控制台 MVP：治理失敗構件 → HighlightBridge 經既有 DataChannel 在 3D 標紅（client 主動拉）。

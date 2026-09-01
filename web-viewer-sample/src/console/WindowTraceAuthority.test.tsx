@@ -1089,4 +1089,22 @@ describe("Window Socket canonical trace authority", () => {
 
         expect(inboundSpy).not.toHaveBeenCalled();
     });
+
+    it("accepts a decoded frame from the injected GFN video player", () => {
+        const app = readyApp();
+        const player = document.createElement("video");
+        player.id = "gfn-stream-player-video";
+        Object.defineProperties(player, {
+            readyState: { configurable: true, value: HTMLMediaElement.HAVE_CURRENT_DATA },
+            videoWidth: { configurable: true, value: 1280 },
+            videoHeight: { configurable: true, value: 720 },
+        });
+        document.body.appendChild(player);
+
+        try {
+            expect(internals(app)._hasRemoteVideoFrame()).toBe(true);
+        } finally {
+            player.remove();
+        }
+    });
 });

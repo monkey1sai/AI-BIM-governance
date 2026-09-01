@@ -112,22 +112,35 @@ describe("SessionIdleReclaimService (session-lifecycle idle countdown & reclaim)
     expect(state?.isCountingDown).toBe(false);
   });
 
-  it("broadcasts countdown cancellation before removing the last ready peer", () => {
+  it("preserves the absolute countdown deadline across a zero-peer reconnect window", () => {
     const session = createActiveSession();
     const cancellations: string[] = [];
+    const teardowns: string[] = [];
     const service = new SessionIdleReclaimService(store, {
       idleTimeoutMs: 1_000,
       countdownSeconds: 10,
       onCountdownCancelled: (sessionId) => cancellations.push(sessionId),
+      onReclaimTeardown: (sessionId) => {
+        teardowns.push(sessionId);
+      },
     });
     const t0 = 1_000_000;
     service.connectPeer(session.session_id, "ready-peer", t0);
     service.tick(t0 + 1_000);
+    service.tick(t0 + 6_000);
 
     service.disconnectPeer(session.session_id, "ready-peer");
-
-    expect(cancellations).toEqual([session.session_id]);
+    expect(cancellations).toEqual([]);
     expect(service.getSessionState(session.session_id)).toBeNull();
+
+    service.connectPeer(session.session_id, "reconnected-peer", t0 + 9_000);
+    expect(service.getSessionState(session.session_id)).toMatchObject({
+      isCountingDown: true,
+      countdownRemainingSec: 2,
+      countdownStartedAt: t0 + 1_000,
+    });
+    service.tick(t0 + 11_000);
+    expect(teardowns).toEqual([session.session_id]);
   });
 
   it("does not refresh inactivity when readiness is replayed or a transport reconnects", () => {

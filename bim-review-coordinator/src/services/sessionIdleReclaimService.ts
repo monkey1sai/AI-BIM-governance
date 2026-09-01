@@ -52,6 +52,7 @@ export class SessionIdleReclaimService {
   private readonly sessionStates = new Map<string, SessionActivityState>();
   private readonly connectedPeers = new Map<string, Set<string>>();
   private readonly lastActivityAtBySession = new Map<string, number>();
+  private readonly countdownStartedAtBySession = new Map<string, number>();
   private readonly teardownInFlight = new Set<string>();
   private readonly teardownRetryCallbacks = new Map<string, SessionTeardownCallback>();
   private timer: NodeJS.Timeout | null = null;
@@ -133,6 +134,7 @@ export class SessionIdleReclaimService {
       }
     }
     this.lastActivityAtBySession.set(sessionId, timestamp);
+    this.countdownStartedAtBySession.delete(sessionId);
     return true;
   }
 
@@ -222,6 +224,7 @@ export class SessionIdleReclaimService {
         if (this.idleTimeoutMs !== null && inactiveDurationMs >= this.idleTimeoutMs) {
           state.isCountingDown = true;
           state.countdownStartedAt = now;
+          this.countdownStartedAtBySession.set(sessionId, now);
           state.countdownRemainingSec = this.countdownSeconds;
           this.onCountdown?.(sessionId, state.countdownRemainingSec);
         }
@@ -301,11 +304,16 @@ export class SessionIdleReclaimService {
     if (alreadyReady && this.sessionStates.has(sessionId)) return true;
     if (!this.sessionStates.has(sessionId)) {
       const lastActivityAt = this.lastActivityAtBySession.get(sessionId) ?? timestamp;
+      const countdownStartedAt = this.countdownStartedAtBySession.get(sessionId);
+      const countdownRemainingSec = countdownStartedAt === undefined
+        ? this.countdownSeconds
+        : Math.max(0, this.countdownSeconds - Math.floor((timestamp - countdownStartedAt) / 1000));
       this.sessionStates.set(sessionId, {
         sessionId,
         lastActivityAt,
-        isCountingDown: false,
-        countdownRemainingSec: this.countdownSeconds,
+        isCountingDown: countdownStartedAt !== undefined,
+        countdownRemainingSec,
+        ...(countdownStartedAt === undefined ? {} : { countdownStartedAt }),
       });
       this.lastActivityAtBySession.set(sessionId, lastActivityAt);
     }
@@ -325,9 +333,6 @@ export class SessionIdleReclaimService {
       const state = this.sessionStates.get(sessionId);
       const retryingTeardown = state?.isCountingDown === true && state.countdownRemainingSec <= 0;
       if (retryingTeardown || this.teardownInFlight.has(sessionId)) return;
-      if (state?.isCountingDown) {
-        this.onCountdownCancelled?.(sessionId);
-      }
       this.untrackConnectedSession(sessionId);
     }
   }
@@ -343,6 +348,7 @@ export class SessionIdleReclaimService {
   removeSession(sessionId: string): void {
     this.untrackConnectedSession(sessionId);
     this.lastActivityAtBySession.delete(sessionId);
+    this.countdownStartedAtBySession.delete(sessionId);
     this.teardownRetryCallbacks.delete(sessionId);
   }
 

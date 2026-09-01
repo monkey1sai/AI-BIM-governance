@@ -74,18 +74,21 @@ async function joinObserver(session: CreatedSession): Promise<Socket> {
     display_name: "Idle E2E observer",
   });
   requireReal(ack.ok === true, "observer join was rejected");
-  const readiness = await emitAck<{ ok?: boolean }>(socket, "streamReadiness", {
-    session_id: session.session_id,
-    trace_id: session.trace_id,
-    ready: true,
-  });
-  requireReal(readiness.ok === true, "observer stream readiness was rejected");
   return socket;
 }
 
 async function openViewer(page: Page, session: CreatedSession): Promise<void> {
   await page.goto(`/?session=${encodeURIComponent(session.session_id)}&trace_id=${encodeURIComponent(session.trace_id)}&debug=1`);
   await expect(page.locator("body")).toContainText("Socket.IO trace 已驗證", { timeout: 15_000 });
+}
+
+async function expectBrowserReadyPeer(request: APIRequestContext, session: CreatedSession): Promise<void> {
+  await expect.poll(async () => {
+    const response = await request.get(`${COORDINATOR}/api/review-sessions/${session.session_id}/idle-status`);
+    if (!response.ok()) return false;
+    const status = await response.json() as { has_connected_viewer?: boolean };
+    return status.has_connected_viewer === true;
+  }, { timeout: 15_000 }).toBe(true);
 }
 
 test.describe("session idle lifecycle functional and semantic evidence", () => {
@@ -99,6 +102,7 @@ test.describe("session idle lifecycle functional and semantic evidence", () => {
     const observer = await joinObserver(session);
     try {
       await openViewer(page, session);
+      await expectBrowserReadyPeer(request, session);
       const countdown = page.getByTestId("session-idle-countdown-banner");
       await expect(countdown).toBeVisible({ timeout: 10_000 });
 
