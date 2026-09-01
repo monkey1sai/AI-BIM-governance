@@ -242,13 +242,42 @@ $workflowSource = Get-Content -Raw -LiteralPath $workflowPath
 Assert-True ($workflowSource -match 'new-governed-worktree\.ps1') `
     'the canonical Windows worktree workflow must route through the governed helper'
 
-$inventoryText = @(& pwsh -NoProfile -NonInteractive -File $cliPath -Inventory -Json)
-if ($LASTEXITCODE -ne 0) { throw "inventory CLI failed: $($inventoryText -join [Environment]::NewLine)" }
+$boardOverrideRoot = Join-Path ([System.IO.Path]::GetTempPath()) (
+    "governed-worktree-board-override-$PID-$([guid]::NewGuid().ToString('N'))")
+$boardOverrideSessions = Join-Path $boardOverrideRoot 'sessions'
+New-Item -ItemType Directory -Path $boardOverrideSessions -Force | Out-Null
+$overrideSession = [ordered]@{
+    agent = 'override-only'
+    session = 'fixture'
+    status = 'active'
+    task = 'must-not-be-observed'
+    cwd = $repoRoot
+    branch = 'fixture'
+    head = 'fixture'
+    recentFiles = @()
+    updatedAt = [DateTime]::UtcNow.ToString('o')
+}
+[System.IO.File]::WriteAllText(
+    (Join-Path $boardOverrideSessions 'override-only--fixture.json'),
+    ($overrideSession | ConvertTo-Json -Depth 4)
+)
+$savedBoardOverride = $env:AGENTS_BOARD_DIR
+try {
+    $env:AGENTS_BOARD_DIR = $boardOverrideRoot
+    $inventoryText = @(& pwsh -NoProfile -NonInteractive -File $cliPath -Inventory -Json)
+    if ($LASTEXITCODE -ne 0) { throw "inventory CLI failed: $($inventoryText -join [Environment]::NewLine)" }
+}
+finally {
+    if ($null -eq $savedBoardOverride) { Remove-Item -LiteralPath 'Env:AGENTS_BOARD_DIR' -ErrorAction SilentlyContinue }
+    else { $env:AGENTS_BOARD_DIR = $savedBoardOverride }
+    Remove-Item -LiteralPath $boardOverrideRoot -Recurse -Force
+}
 $inventory = ($inventoryText -join [Environment]::NewLine) | ConvertFrom-Json
 Assert-Equal 'governed-worktree-inventory/v1' ([string]$inventory.schema_version) 'inventory schema'
 Assert-True ([bool]$inventory.read_only) 'inventory must declare read-only behavior'
 Assert-True ([bool]$inventory.board.available) 'inventory must observe the no-prune board status'
 Assert-Equal 'origin/main' ([string]$inventory.merge_basis.ref) 'inventory declares its merge basis'
+Assert-True ([bool]$inventory.merge_basis.available) 'current inventory observes the local origin/main tracking ref'
 Assert-True (-not [bool]$inventory.merge_basis.refreshed) 'read-only inventory must not claim it fetched origin/main'
 Assert-True (@($inventory.worktrees).Count -gt 0) 'inventory must include registered worktrees'
 $currentRootKey = ConvertTo-GovernedPathKey -Path $repoRoot
@@ -256,6 +285,8 @@ $currentRows = @($inventory.worktrees | Where-Object {
     (ConvertTo-GovernedPathKey -Path ([string]$_.path)) -ceq $currentRootKey
 })
 Assert-Equal 1 $currentRows.Count 'inventory includes the current worktree exactly once'
+Assert-True (@($currentRows[0].active_agents) -notcontains 'override-only') `
+    'inventory ignores the inherited test-only board override'
 $expectedGitMetadataPath = (& git -C $repoRoot rev-parse --path-format=absolute --absolute-git-dir).Trim()
 Assert-Equal 0 $LASTEXITCODE 'current worktree Git metadata path resolves'
 $actualGitMetadataPathKey = ConvertTo-GovernedPathKey -Path ([string]$currentRows[0].git_metadata_path)
@@ -303,6 +334,8 @@ try {
     Copy-Item -LiteralPath $libraryPath -Destination (Join-Path $failureFixtureRepo 'scripts\lib\governed-worktree.ps1')
     Copy-Item -LiteralPath (Join-Path $repoRoot 'scripts\lib\StructLog.psm1') `
         -Destination (Join-Path $failureFixtureRepo 'scripts\lib\StructLog.psm1')
+    Copy-Item -LiteralPath (Join-Path $repoRoot 'scripts\dev\agents-board.mjs') `
+        -Destination (Join-Path $failureFixtureRepo 'scripts\dev\agents-board.mjs')
     [System.IO.File]::WriteAllText((Join-Path $failureFixtureRepo '.gitignore'), ".tmp/`n")
 
     & git init --initial-branch=main $failureFixtureRepo 2>&1 | Out-Null
@@ -325,6 +358,19 @@ try {
     Assert-Equal 0 $LASTEXITCODE 'failure fixture narrows the configured fetch mapping'
     & git -C $failureFixtureRepo update-ref -d refs/remotes/origin/main 2>&1 | Out-Null
     Assert-Equal 0 $LASTEXITCODE 'failure fixture removes the pre-existing origin/main tracking ref'
+
+    $missingBasisOutput = @(& pwsh -NoProfile -NonInteractive -File `
+        (Join-Path $failureFixtureRepo 'scripts\dev\new-governed-worktree.ps1') -Inventory -Json)
+    Assert-Equal 0 $LASTEXITCODE 'inventory remains available when origin/main is absent'
+    $missingBasisInventory = ($missingBasisOutput -join [Environment]::NewLine) | ConvertFrom-Json
+    Assert-True (-not [bool]$missingBasisInventory.merge_basis.available) `
+        'inventory marks a missing origin/main tracking ref unavailable'
+    Assert-Equal 'local_tracking_ref_unavailable' ([string]$missingBasisInventory.merge_basis.reason) `
+        'inventory reports the exact missing merge-basis reason'
+    Assert-True (@($missingBasisInventory.worktrees).Count -gt 0) `
+        'inventory still returns worktree diagnostics without origin/main'
+    Assert-True (-not [bool]$missingBasisInventory.worktrees[0].manual_removal_review.ready) `
+        'missing merge basis keeps removal readiness held'
 
     $uploadPackWrapper = Join-Path $failureFixtureRoot 'upload-pack-warning.sh'
     $uploadPackScript = @'

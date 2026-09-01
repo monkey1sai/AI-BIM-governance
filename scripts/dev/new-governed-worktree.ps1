@@ -131,8 +131,18 @@ function Get-GovernedBoardObservation {
     if (-not (Test-Path -LiteralPath $boardScript -PathType Leaf)) {
         return [pscustomobject]@{ Available = $false; Reason = 'board_script_missing'; Sessions = @() }
     }
-    $output = @(& $node[0].Path $boardScript status --json --no-prune 2>$null)
-    if ($LASTEXITCODE -ne 0) {
+    $hadBoardOverride = Test-Path -LiteralPath 'Env:AGENTS_BOARD_DIR'
+    $savedBoardOverride = if ($hadBoardOverride) { [string](Get-Item -LiteralPath 'Env:AGENTS_BOARD_DIR').Value } else { '' }
+    try {
+        Remove-Item -LiteralPath 'Env:AGENTS_BOARD_DIR' -ErrorAction SilentlyContinue
+        $output = @(& $node[0].Path $boardScript status --json --no-prune 2>$null)
+        $boardExitCode = $LASTEXITCODE
+    }
+    finally {
+        if ($hadBoardOverride) { Set-Item -LiteralPath 'Env:AGENTS_BOARD_DIR' -Value $savedBoardOverride }
+        else { Remove-Item -LiteralPath 'Env:AGENTS_BOARD_DIR' -ErrorAction SilentlyContinue }
+    }
+    if ($boardExitCode -ne 0) {
         return [pscustomobject]@{ Available = $false; Reason = 'board_command_failed'; Sessions = @() }
     }
     try {
@@ -156,8 +166,13 @@ function Get-GovernedWorktreeInventory {
     $records = @(ConvertFrom-GitWorktreePorcelain -Text $porcelain)
     $board = Get-GovernedBoardObservation -MainRoot $MainRoot
     $sessions = @($board.Sessions)
-    $observedOriginMain = Get-GovernedGitText -WorkingDirectory $MainRoot -ArgumentList @(
-        'rev-parse', 'origin/main') -NoOptionalLocks
+    $originMainResult = Invoke-GovernedGit -WorkingDirectory $MainRoot -ArgumentList @(
+        'rev-parse', 'origin/main') -NoOptionalLocks -AllowFailure
+    $observedOriginMain = if ($originMainResult.Success) {
+        (@($originMainResult.Output) -join [Environment]::NewLine).Trim()
+    }
+    else { '' }
+    $originMainAvailable = $originMainResult.Success -and $observedOriginMain -match '^[0-9a-fA-F]{40,64}$'
     $mainKey = ConvertTo-GovernedPathKey -Path $MainRoot
     $rows = [System.Collections.Generic.List[object]]::new()
 
@@ -182,9 +197,12 @@ function Get-GovernedWorktreeInventory {
             'status', '--porcelain=v1', '-z', '--untracked-files=all') -NoOptionalLocks -AllowFailure
         $gitAccessible = [bool]$status.Success
         $dirty = if ($gitAccessible) { (@($status.Output) -join '') -ne '' } else { $null }
-        $mergedResult = Invoke-GovernedGit -WorkingDirectory $MainRoot -ArgumentList @(
-            'merge-base', '--is-ancestor', [string]$record.Head, 'origin/main') -NoOptionalLocks -AllowFailure
-        $headAncestor = if ($mergedResult.ExitCode -eq 0) { $true } elseif ($mergedResult.ExitCode -eq 1) { $false } else { $null }
+        $headAncestor = $null
+        if ($originMainAvailable) {
+            $mergedResult = Invoke-GovernedGit -WorkingDirectory $MainRoot -ArgumentList @(
+                'merge-base', '--is-ancestor', [string]$record.Head, 'origin/main') -NoOptionalLocks -AllowFailure
+            $headAncestor = if ($mergedResult.ExitCode -eq 0) { $true } elseif ($mergedResult.ExitCode -eq 1) { $false } else { $null }
+        }
         $activeAgents = @(Get-GovernedWorktreeActiveAgents -Sessions $sessions -WorktreePath $worktreePath)
         if (-not [bool]$board.Available) {
             $readiness = Get-GovernedWorktreeRemovalReadiness `
@@ -270,6 +288,8 @@ function Get-GovernedWorktreeInventory {
         merge_basis = [pscustomobject]@{
             ref = 'origin/main'
             head = $observedOriginMain
+            available = $originMainAvailable
+            reason = if ($originMainAvailable) { 'observed' } else { 'local_tracking_ref_unavailable' }
             refreshed = $false
             source = 'local_tracking_ref'
         }
