@@ -92,11 +92,12 @@
       "oneOf": [
         {
           "type": "object", "additionalProperties": false,
-          "required": ["failure_class", "evidence_sha256", "event_id"],
+          "required": ["failure_class", "evidence_sha256", "event_id", "classification_authority"],
           "properties": {
-            "failure_class": { "type": "string", "minLength": 1, "maxLength": 200 },
+            "failure_class": { "const": "network_transient" },
             "evidence_sha256": { "$ref": "#/definitions/sha256" },
-            "event_id": { "type": "string", "minLength": 1, "maxLength": 200 }
+            "event_id": { "type": "string", "minLength": 1, "maxLength": 200 },
+            "classification_authority": { "$ref": "#/definitions/retry_classification_authority" }
           }
         },
         { "type": "null" }
@@ -327,7 +328,7 @@
       "type": "object", "additionalProperties": false,
       "required": [
         "schema_version", "environment", "service", "delivery_id", "replay_key",
-        "artifact_sha256", "owner_id", "lease_id", "state"
+        "artifact_sha256", "target_fingerprint", "deployment_method", "owner_id", "lease_id", "state"
       ],
       "properties": {
         "schema_version": { "const": "linux-cd-controller-lease/v1" },
@@ -336,6 +337,8 @@
         "delivery_id": { "type": "string", "minLength": 1, "maxLength": 200 },
         "replay_key": { "type": "string", "minLength": 1, "maxLength": 200 },
         "artifact_sha256": { "$ref": "#/definitions/sha256" },
+        "target_fingerprint": { "$ref": "#/definitions/sha256" },
+        "deployment_method": { "const": "scripts/dev/rebuild-test-deploy.ps1 -Build" },
         "owner_id": { "type": "string", "minLength": 1, "maxLength": 200 },
         "lease_id": { "type": "string", "minLength": 1, "maxLength": 200 },
         "state": {
@@ -351,12 +354,30 @@
     },
     "retry_record": {
       "type": "object", "additionalProperties": false,
-      "required": ["failure_class", "evidence_sha256", "event_id", "ordinal"],
+      "required": ["failure_class", "evidence_sha256", "event_id", "classification_sha256", "ordinal"],
       "properties": {
-        "failure_class": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "failure_class": { "const": "network_transient" },
         "evidence_sha256": { "$ref": "#/definitions/sha256" },
         "event_id": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "classification_sha256": { "$ref": "#/definitions/sha256" },
         "ordinal": { "type": "integer", "minimum": 1, "maximum": 1 }
+      }
+    },
+    "retry_classification_authority": {
+      "type": "object", "additionalProperties": false,
+      "required": [
+        "kind", "issuer", "key_id", "algorithm", "issued_at", "expires_at",
+        "payload_sha256", "signature"
+      ],
+      "properties": {
+        "kind": { "const": "owner_policy_retry_classifier" },
+        "issuer": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "key_id": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "algorithm": { "const": "ed25519" },
+        "issued_at": { "$ref": "#/definitions/timestamp" },
+        "expires_at": { "$ref": "#/definitions/timestamp" },
+        "payload_sha256": { "$ref": "#/definitions/sha256" },
+        "signature": { "type": "string", "minLength": 1, "maxLength": 200 }
       }
     },
     "verification_gate": {

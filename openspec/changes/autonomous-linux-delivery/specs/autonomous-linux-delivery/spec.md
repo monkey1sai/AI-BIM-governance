@@ -302,7 +302,7 @@ Transaction phase SHALL只允許 `COLLECTING`、`VERIFYING`、`READY_TO_MERGE`�
 
 ### Requirement: Failed delivery SHALL freeze the queue and enter a bounded repair lineage
 
-已mergecommit若部署或post-deploy驗證可重現地失敗，attempt SHALL保留原始merge與deployment evidence並凍結 `ordinary` merge queue。若attempt開始前已有provenance與digest驗證完成的pinned known-good immutable artifact，系統 SHALL先以相同target identity執行rollback；只有rollback artifact readback、health與required smoke全部成功才可輸出 `ROLLED_BACK`，並以outer `FAILED/MERGED_NOT_DELIVERED`結案。Operator command啟動前缺少pinned artifact、provenance／digest／target／credential漂移 SHALL以 `HELD/DEPLOYMENT_BLOCKED`結案；command啟動後rollback command或驗證無法形成可信terminal evidence SHALL以 `HELD/ACTIVATION_UNATTESTED`結案。只有failure明確分類為transient、輸入與commit未漂移且不需code change時，系統 MAY對同一commit建立一次 `RETRYING_DEPLOYMENT` attempt並執行相同command；否則 SHALL建立綁定原delivery ID與failure evidence的新exact-head repair／revert PR。系統 SHALL NOT reset／force-push main、重新build舊source作rollback、把last-known-good runtime冒充本次成功、改寫原attempt為 `DELIVERED`或無限重試。
+已mergecommit若部署或post-deploy驗證可重現地失敗，attempt SHALL保留原始merge與deployment evidence並凍結 `ordinary` merge queue。若attempt開始前已有provenance與digest驗證完成的pinned known-good immutable artifact，系統 SHALL先以相同target identity執行rollback；只有rollback artifact readback、health與required smoke全部成功才可輸出 `ROLLED_BACK`，並以outer `FAILED/MERGED_NOT_DELIVERED`結案。Operator command啟動前缺少pinned artifact、provenance／digest／target／credential漂移 SHALL以 `HELD/DEPLOYMENT_BLOCKED`結案；command啟動後rollback command或驗證無法形成可信terminal evidence SHALL以 `HELD/ACTIVATION_UNATTESTED`結案。只有原始root attempt為同一merge與target的 `FAILED/MERGED_NOT_DELIVERED`、owner policy broker以短效簽章將closed `network_transient` class綁定parent digest、failure evidence、artifact、target fingerprint、deployment command與policy digest，且輸入與commit未漂移、不需code change時，系統 MAY對該exact commit建立總計一次 `RETRYING_DEPLOYMENT` attempt並執行相同command。Retry-of-retry、改名failure class、`DELIVERED`／`HELD` parent、缺少外部分類authority或任一binding漂移 SHALL拒絕；否則 SHALL建立綁定原delivery ID與failure evidence的新exact-head repair／revert PR。系統 SHALL NOT reset／force-push main、重新build舊source作rollback、把last-known-good runtime冒充本次成功、改寫原attempt為 `DELIVERED`或無限重試。
 
 #### Scenario: 同一commit的transient redeploy成功
 
@@ -433,7 +433,7 @@ Artifact authority SHALL為exact merge commit建立一次immutable artifact，cl
 
 ### Requirement: Deployment target and single-flight ownership SHALL be exact and secret-safe
 
-Target resolver SHALL只接受owner-controlled inventory唯一解析的 `target_id=canonical-linux`，對contract只揭露target ID、kind、role、fingerprint與opaque lease ID；request不得覆寫repository或target allowlist，opaque lease亦必須由external verifier驗證payload binding與有效期。Single-flight key SHALL為 `environment + service`；active lock SHALL綁定delivery ID與artifact digest。相同tuple MAY辨識為idempotent active ownership，但 SHALL以typed non-terminal `idempotent_active` response停止、不得append新transition或terminal failure，且不得重跑deployment；不同delivery或digest SHALL被拒絕且不得平行部署同一service。
+Target resolver SHALL只接受owner-controlled inventory唯一解析的 `target_id=canonical-linux`，對contract只揭露target ID、kind、role、fingerprint與opaque lease ID；request不得覆寫repository或target allowlist，opaque lease亦必須由external verifier驗證payload binding與有效期。Single-flight key SHALL為 `environment + service`；active lock SHALL綁定delivery ID、replay key、artifact digest、environment、service、target fingerprint與deployment method。只有全部欄位相同的tuple MAY辨識為idempotent active ownership，但 SHALL以typed non-terminal `idempotent_active` response停止、不得append新transition或terminal failure，且不得重跑deployment；任一欄位不同 SHALL被拒絕且不得平行部署同一service。
 
 #### Scenario: Duplicate controller races for the same service
 

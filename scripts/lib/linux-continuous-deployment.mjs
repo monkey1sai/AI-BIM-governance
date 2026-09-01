@@ -53,6 +53,7 @@ const REPOSITORY = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u
 const UTC_TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u
 const EXPECTED_REPOSITORY = 'monkey1sai/AI-BIM-governance'
 const EXPECTED_TARGET_ID = 'canonical-linux'
+const ALLOWED_RETRY_CLASSES = Object.freeze(['network_transient'])
 const REQUIRED_VERIFICATION_GATES = Object.freeze(['health', 'smoke', 'e2e'])
 const PROHIBITED_TARGET_KEYS = /^(?:host|hostname|ip|address|user|username|password|secret|token|private_key|ssh_key|inventory_path|deploy_root|runtime_data_root)$/iu
 const SECRET_VALUE = /(?:gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,}|-----BEGIN [A-Z ]*PRIVATE KEY-----|(?:password|secret|token)\s*[=:]\s*\S+)/iu
@@ -434,12 +435,16 @@ export function acquireSingleFlight(historyRaw, requestRaw) {
   text(requestRaw.replay_key, 'replay_key')
   text(requestRaw.target.environment, 'target.environment')
   text(requestRaw.target.service, 'target.service')
+  digest(requestRaw.target.expected_fingerprint, 'target.expected_fingerprint')
+  if (requestRaw.target.deployment_method !== linuxContinuousDeploymentVocabulary.deploymentMethod) {
+    fail('invalid_value', 'target.deployment_method is invalid')
+  }
   if (!isObject(requestRaw.artifact)) fail('artifact_provenance_unavailable', 'immutable artifact is missing')
   digest(requestRaw.artifact.artifact_sha256, 'artifact.artifact_sha256')
   for (const entry of historyRaw) {
     exactKeys(entry, [
       'schema_version', 'environment', 'service', 'delivery_id', 'replay_key',
-      'artifact_sha256', 'owner_id', 'lease_id', 'state',
+      'artifact_sha256', 'target_fingerprint', 'deployment_method', 'owner_id', 'lease_id', 'state',
     ])
     if (entry.schema_version !== 'linux-cd-controller-lease/v1') fail('invalid_value', 'controller lease schema is invalid')
     text(entry.environment, 'controller_ledger.environment')
@@ -447,6 +452,10 @@ export function acquireSingleFlight(historyRaw, requestRaw) {
     text(entry.delivery_id, 'controller_ledger.delivery_id')
     text(entry.replay_key, 'controller_ledger.replay_key')
     digest(entry.artifact_sha256, 'controller_ledger.artifact_sha256')
+    digest(entry.target_fingerprint, 'controller_ledger.target_fingerprint')
+    if (entry.deployment_method !== linuxContinuousDeploymentVocabulary.deploymentMethod) {
+      fail('invalid_value', 'controller ledger deployment method is invalid')
+    }
     text(entry.owner_id, 'controller_ledger.owner_id')
     text(entry.lease_id, 'controller_ledger.lease_id')
     if (!STATES.includes(entry.state)) fail('invalid_value', 'controller lease state is unknown')
@@ -456,6 +465,10 @@ export function acquireSingleFlight(historyRaw, requestRaw) {
   if (sameReplay) {
     if (sameReplay.delivery_id === requestRaw.delivery_id
       && sameReplay.artifact_sha256 === requestRaw.artifact.artifact_sha256
+      && sameReplay.environment === requestRaw.target.environment
+      && sameReplay.service === requestRaw.target.service
+      && sameReplay.target_fingerprint === requestRaw.target.expected_fingerprint
+      && sameReplay.deployment_method === requestRaw.target.deployment_method
       && activeControllerState(sameReplay.state)) {
       return { idempotent: true, entry: cloneFrozen(sameReplay) }
     }
@@ -474,6 +487,8 @@ export function acquireSingleFlight(historyRaw, requestRaw) {
     delivery_id: requestRaw.delivery_id,
     replay_key: requestRaw.replay_key,
     artifact_sha256: requestRaw.artifact.artifact_sha256,
+    target_fingerprint: requestRaw.target.expected_fingerprint,
+    deployment_method: requestRaw.target.deployment_method,
     owner_id: requestRaw.controller.owner_id,
     lease_id: requestRaw.controller.lease_id,
     state: 'TRUSTED_MERGED',
@@ -484,23 +499,110 @@ export function acquireSingleFlight(historyRaw, requestRaw) {
 export function evaluateRetry(historyRaw, candidateRaw) {
   if (!Array.isArray(historyRaw)) fail('invalid_shape', 'retry history must be an array')
   for (const entry of historyRaw) {
-    exactKeys(entry, ['failure_class', 'evidence_sha256', 'event_id', 'ordinal'])
+    exactKeys(entry, ['failure_class', 'evidence_sha256', 'event_id', 'classification_sha256', 'ordinal'])
     text(entry.failure_class, 'retry_history.failure_class')
+    if (!ALLOWED_RETRY_CLASSES.includes(entry.failure_class)) {
+      fail('retry_classification_invalid', 'retry history contains an unapproved failure class')
+    }
     digest(entry.evidence_sha256, 'retry_history.evidence_sha256')
     text(entry.event_id, 'retry_history.event_id')
+    digest(entry.classification_sha256, 'retry_history.classification_sha256')
     safeInteger(entry.ordinal, 'retry_history.ordinal', 1)
   }
-  exactKeys(candidateRaw, ['failure_class', 'evidence_sha256', 'event_id'])
+  exactKeys(candidateRaw, ['failure_class', 'evidence_sha256', 'event_id', 'classification_sha256'])
   text(candidateRaw.failure_class, 'retry.failure_class')
   digest(candidateRaw.evidence_sha256, 'retry.evidence_sha256')
   text(candidateRaw.event_id, 'retry.event_id')
-  const sameClass = historyRaw.filter((entry) => entry.failure_class === candidateRaw.failure_class)
-  if (sameClass.some((entry) => entry.evidence_sha256 === candidateRaw.evidence_sha256)) {
-    fail('retry_evidence_unchanged', 'event-driven evidence did not change')
+  digest(candidateRaw.classification_sha256, 'retry.classification_sha256')
+  if (historyRaw.length >= 1) fail('retry_budget_exhausted', 'exact-commit retry budget is exhausted')
+  if (!ALLOWED_RETRY_CLASSES.includes(candidateRaw.failure_class)) {
+    fail('retry_classification_invalid', 'failure class is not approved for same-commit retry')
   }
-  if (sameClass.length >= 1) fail('retry_budget_exhausted', 'failure class retry budget is exhausted')
   if (historyRaw.some((entry) => entry.event_id === candidateRaw.event_id)) fail('replay_detected', 'retry event was replayed')
   return { allowed: true, record: cloneFrozen({ ...candidateRaw, ordinal: 1 }) }
+}
+
+const parseRetryClassification = (raw, requestRaw, trusted, artifactRaw, targetRaw, {
+  now,
+  verifyRetryClassification,
+}) => {
+  exactKeys(raw, ['failure_class', 'evidence_sha256', 'event_id', 'classification_authority'])
+  text(raw.failure_class, 'retry.failure_class')
+  digest(raw.evidence_sha256, 'retry.evidence_sha256')
+  text(raw.event_id, 'retry.event_id')
+  exactKeys(raw.classification_authority, [
+    'kind', 'issuer', 'key_id', 'algorithm', 'issued_at', 'expires_at', 'payload_sha256', 'signature',
+  ])
+  const authority = raw.classification_authority
+  if (authority.kind !== 'owner_policy_retry_classifier' || authority.algorithm !== 'ed25519') {
+    fail('retry_classification_invalid', 'retry classification authority is not allowed')
+  }
+  text(authority.issuer, 'retry.classification_authority.issuer')
+  text(authority.key_id, 'retry.classification_authority.key_id')
+  timestamp(authority.issued_at, 'retry.classification_authority.issued_at')
+  timestamp(authority.expires_at, 'retry.classification_authority.expires_at')
+  digest(authority.payload_sha256, 'retry.classification_authority.payload_sha256')
+  text(authority.signature, 'retry.classification_authority.signature')
+  if (Date.parse(authority.expires_at) <= now.getTime() || Date.parse(authority.issued_at) > now.getTime()) {
+    fail('retry_classification_invalid', 'retry classification authority is not active')
+  }
+  const payload = {
+    repository: requestRaw.repository,
+    delivery_id: requestRaw.delivery_id,
+    attempt_id: requestRaw.attempt.attempt_id,
+    supersedes_delivery_id: requestRaw.attempt.supersedes_delivery_id,
+    supersedes_attempt_id: requestRaw.attempt.supersedes_attempt_id,
+    previous_attempt_sha256: requestRaw.attempt.previous_attempt_sha256,
+    trusted_merge_sha: trusted.trusted_merge_sha,
+    artifact_sha256: artifactRaw.artifact_sha256,
+    target_id: targetRaw.target_id,
+    target_fingerprint: targetRaw.expected_fingerprint,
+    deployment_method: targetRaw.deployment_method,
+    policy_sha256: trusted.policy_sha256,
+    failure_class: raw.failure_class,
+    evidence_sha256: raw.evidence_sha256,
+    event_id: raw.event_id,
+  }
+  if (authority.payload_sha256 !== sha256(canonicalJson(payload))) {
+    fail('retry_classification_invalid', 'retry classification payload digest drifted')
+  }
+  if (typeof verifyRetryClassification !== 'function'
+    || verifyRetryClassification(cloneFrozen({ payload, authority })) !== true) {
+    fail('external_authority_unavailable', 'retry classification was not externally verified')
+  }
+  assertNoSecretValues(raw)
+  return cloneFrozen({
+    failure_class: raw.failure_class,
+    evidence_sha256: raw.evidence_sha256,
+    event_id: raw.event_id,
+    classification_sha256: sha256(canonicalJson(authority)),
+  })
+}
+
+const validateRetryParent = (requestRaw, trusted, targetRaw) => {
+  const attempt = requestRaw.attempt
+  const parentRaw = requestRaw.terminal_history.find((entry) => (
+    entry?.delivery_id === attempt.supersedes_delivery_id
+    && entry?.attempt_id === attempt.supersedes_attempt_id
+  ))
+  if (!parentRaw) fail('retry_parent_invalid', 'retry parent terminal attempt was not found')
+  const parent = parseTerminalRecord(canonicalJson(parentRaw))
+  if (sha256(canonicalJson(parent)) !== attempt.previous_attempt_sha256) {
+    fail('retry_parent_invalid', 'retry parent digest does not match the linked terminal attempt')
+  }
+  if (parent.terminal_class !== 'FAILED'
+    || parent.reason_code !== 'MERGED_NOT_DELIVERED'
+    || parent.supersedes_delivery_id !== null
+    || parent.supersedes_attempt_id !== null
+    || parent.previous_attempt_sha256 !== null
+    || parent.merge_observed !== true
+    || parent.command_state !== 'completed'
+    || parent.merge_commit_oid !== trusted.trusted_merge_sha
+    || parent.fetched_origin_main_oid !== trusted.trusted_merge_sha
+    || parent.target_id !== targetRaw.target_id) {
+    fail('retry_parent_invalid', 'retry parent is not a failed transient delivery of the exact merge and target')
+  }
+  return parent
 }
 
 export function appendDeliveryLedger(historyRaw, candidateRaw) {
@@ -979,10 +1081,15 @@ export function runLinuxContinuousDeployment(requestRaw, {
     }
     if (!Array.isArray(requestRaw.retry_history)) fail('invalid_shape', 'retry history must be an array')
     if (isObject(requestRaw.retry_event)) {
-      retryRecord = evaluateRetry(requestRaw.retry_history, requestRaw.retry_event).record
+      const retryCandidate = parseRetryClassification(requestRaw.retry_event, requestRaw, trusted, artifactRaw, targetRaw, {
+        now,
+        verifyRetryClassification: trustBoundary.verifyRetryClassification,
+      })
+      retryRecord = evaluateRetry(requestRaw.retry_history, retryCandidate).record
       if (requestRaw.attempt.supersedes_delivery_id === null) {
         fail('invalid_value', 'retry attempt must link its superseded terminal attempt')
       }
+      validateRetryParent(requestRaw, trusted, targetRaw)
     } else if (requestRaw.retry_event !== null) {
       fail('invalid_shape', 'retry event must be an object or null')
     } else if (requestRaw.retry_history.length > 0) {

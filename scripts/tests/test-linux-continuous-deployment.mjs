@@ -191,6 +191,11 @@ const TRUST_BOUNDARY = Object.freeze({
     value.issuer === 'owner-artifact-authority'
     && value.key_id === 'artifact-key-2026-09'
   ),
+  verifyRetryClassification: ({ authority }) => (
+    authority.issuer === 'owner-policy-broker'
+    && authority.key_id === 'retry-policy-key-1'
+    && authority.signature === 'signed-retry-classification'
+  ),
 })
 
 const request = (overrides = {}) => ({
@@ -228,6 +233,55 @@ const request = (overrides = {}) => ({
   retry_history: [],
   retry_event: null,
   timestamps: { requested_at: '2026-09-01T01:00:00.000Z' },
+  ...overrides,
+})
+
+const retryEvent = (requestValue, {
+  failureClass = 'network_transient',
+  evidenceSha256 = SHA('1'),
+  eventId = 'retry-event-1',
+  authorityOverrides = {},
+} = {}) => {
+  const payload = {
+    repository: requestValue.repository,
+    delivery_id: requestValue.delivery_id,
+    attempt_id: requestValue.attempt.attempt_id,
+    supersedes_delivery_id: requestValue.attempt.supersedes_delivery_id,
+    supersedes_attempt_id: requestValue.attempt.supersedes_attempt_id,
+    previous_attempt_sha256: requestValue.attempt.previous_attempt_sha256,
+    trusted_merge_sha: requestValue.trusted_merge.trusted_merge_sha,
+    artifact_sha256: requestValue.artifact.artifact_sha256,
+    target_id: requestValue.target.target_id,
+    target_fingerprint: requestValue.target.expected_fingerprint,
+    deployment_method: requestValue.target.deployment_method,
+    policy_sha256: requestValue.trusted_merge.policy_sha256,
+    failure_class: failureClass,
+    evidence_sha256: evidenceSha256,
+    event_id: eventId,
+  }
+  return {
+    failure_class: failureClass,
+    evidence_sha256: evidenceSha256,
+    event_id: eventId,
+    classification_authority: {
+      kind: 'owner_policy_retry_classifier',
+      issuer: 'owner-policy-broker',
+      key_id: 'retry-policy-key-1',
+      algorithm: 'ed25519',
+      issued_at: '2026-09-01T01:45:00.000Z',
+      expires_at: '2026-09-01T03:00:00.000Z',
+      payload_sha256: sha256(canonicalJson(payload)),
+      signature: 'signed-retry-classification',
+      ...authorityOverrides,
+    },
+  }
+}
+
+const retryCandidate = (overrides = {}) => ({
+  failure_class: 'network_transient',
+  evidence_sha256: SHA('1'),
+  event_id: 'retry-event-1',
+  classification_sha256: SHA('c'),
   ...overrides,
 })
 
@@ -288,6 +342,9 @@ test('single-flight is environment and service scoped, idempotent and replay gua
   expectCode('replay_detected', () => acquireSingleFlight([{ ...acquired.entry, state: 'ACTIVATED' }], request({
     delivery_id: 'delivery-738', controller: { owner_id: 'controller-2', lease_id: 'controller-lease-2' },
   })))
+  expectCode('replay_detected', () => acquireSingleFlight([acquired.entry], request({
+    target: target({ expected_fingerprint: SHA('e'), observed_fingerprint: SHA('e') }),
+  })))
 })
 
 test('successful delivery uses the exact canary digest through promotion and terminal attestation', () => {
@@ -339,14 +396,16 @@ test('controller path enforces active ownership, retry budget and append-only tr
   assert.deepEqual(replay.states, [])
   assert.deepEqual(replay.ledger_appends, [])
 
-  const priorRetry = evaluateRetry([], {
-    failure_class: 'network_transient', evidence_sha256: SHA('1'), event_id: 'retry-event-1',
-  }).record
+  const priorRetry = evaluateRetry([], retryCandidate()).record
+  const exhaustedRequest = request({
+    retry_history: [priorRetry],
+  })
+  exhaustedRequest.retry_event = retryEvent(exhaustedRequest, {
+    evidenceSha256: SHA('2'), eventId: 'retry-event-2',
+  })
   const exhausted = runRequest(request({
     retry_history: [priorRetry],
-    retry_event: {
-      failure_class: 'network_transient', evidence_sha256: SHA('2'), event_id: 'retry-event-2',
-    },
+    retry_event: exhaustedRequest.retry_event,
   }))
   assert.equal(exhausted.final_state, 'HELD')
   assert.equal(exhausted.attestation.reason_code, 'DEPLOYMENT_BLOCKED')
@@ -376,7 +435,7 @@ test('public controller path accepts the first linked transient retry and keeps 
     now: new Date('2026-09-01T01:50:00.000Z'),
     trustBoundary: TRUST_BOUNDARY,
   })
-  const retried = runRequest(request({
+  const retryRequest = request({
     attempt: {
       attempt_id: 'attempt:737.2',
       pr_class: 'ordinary',
@@ -385,16 +444,79 @@ test('public controller path accepts the first linked transient retry and keeps 
       previous_attempt_sha256: sha256(canonicalJson(initial.terminal_record)),
     },
     terminal_history: [initial.terminal_record],
-    retry_event: {
-      failure_class: 'network_transient', evidence_sha256: SHA('1'), event_id: 'retry-event-1',
-    },
-  }))
+  })
+  retryRequest.retry_event = retryEvent(retryRequest)
+  const retried = runRequest(retryRequest)
 
   assert.equal(retried.final_state, 'ACTIVATED')
   assert.deepEqual(retried.retry_record, {
-    failure_class: 'network_transient', evidence_sha256: SHA('1'), event_id: 'retry-event-1', ordinal: 1,
+    failure_class: 'network_transient', evidence_sha256: SHA('1'), event_id: 'retry-event-1',
+    classification_sha256: sha256(canonicalJson(retryRequest.retry_event.classification_authority)), ordinal: 1,
   })
   assert.equal(retried.terminal_record.supersedes_attempt_id, initial.terminal_record.attempt_id)
+
+  const deliveredParent = runRequest(request()).terminal_record
+  const invalidParentRequest = request({
+    attempt: {
+      attempt_id: 'attempt:737.2', pr_class: 'ordinary',
+      supersedes_delivery_id: deliveredParent.delivery_id,
+      supersedes_attempt_id: deliveredParent.attempt_id,
+      previous_attempt_sha256: sha256(canonicalJson(deliveredParent)),
+    },
+    terminal_history: [deliveredParent],
+  })
+  invalidParentRequest.retry_event = retryEvent(invalidParentRequest)
+  const invalidParent = runRequest(invalidParentRequest)
+  assert.equal(invalidParent.final_state, 'HELD')
+  assert.equal(invalidParent.states.includes('PRE_DEPLOY_CHECK'), false)
+
+  const renamedClassRequest = structuredClone(retryRequest)
+  renamedClassRequest.attempt.attempt_id = 'attempt:737.3'
+  renamedClassRequest.retry_event = retryEvent(renamedClassRequest, {
+    failureClass: 'renamed_transient', eventId: 'retry-event-renamed',
+  })
+  const renamedClass = runRequest(renamedClassRequest)
+  assert.equal(renamedClass.final_state, 'HELD')
+  assert.equal(renamedClass.states.includes('PRE_DEPLOY_CHECK'), false)
+
+  const forgedAuthorityRequest = structuredClone(retryRequest)
+  forgedAuthorityRequest.attempt.attempt_id = 'attempt:737.4'
+  forgedAuthorityRequest.retry_event = retryEvent(forgedAuthorityRequest, {
+    eventId: 'retry-event-forged', authorityOverrides: { signature: 'candidate-self-signed' },
+  })
+  const forgedAuthority = runRequest(forgedAuthorityRequest)
+  assert.equal(forgedAuthority.final_state, 'HELD')
+  assert.equal(forgedAuthority.states.includes('PRE_DEPLOY_CHECK'), false)
+
+  const failedRetryRequest = structuredClone(retryRequest)
+  failedRetryRequest.attempt.attempt_id = 'attempt:737.5'
+  failedRetryRequest.retry_event = retryEvent(failedRetryRequest, { eventId: 'retry-event-failed' })
+  failedRetryRequest.canary = verification({ gates: [
+    { id: 'health', status: 'failed', evidence_sha256: SHA('8') },
+    { id: 'smoke', status: 'held', evidence_sha256: SHA('9') },
+    { id: 'e2e', status: 'held', evidence_sha256: SHA('a') },
+  ] })
+  failedRetryRequest.rollback = {
+    attempted: true, artifact_sha256: SHA('d'),
+    verification: verification({ artifact_sha256: SHA('d') }),
+  }
+  const failedRetry = runRequest(failedRetryRequest)
+  assert.equal(failedRetry.final_state, 'ROLLED_BACK')
+
+  const secondRetryRequest = request({
+    attempt: {
+      attempt_id: 'attempt:737.6', pr_class: 'ordinary',
+      supersedes_delivery_id: failedRetry.terminal_record.delivery_id,
+      supersedes_attempt_id: failedRetry.terminal_record.attempt_id,
+      previous_attempt_sha256: sha256(canonicalJson(failedRetry.terminal_record)),
+    },
+    terminal_history: [initial.terminal_record, failedRetry.terminal_record],
+    retry_history: [],
+  })
+  secondRetryRequest.retry_event = retryEvent(secondRetryRequest, { eventId: 'retry-event-second' })
+  const secondRetry = runRequest(secondRetryRequest)
+  assert.equal(secondRetry.final_state, 'HELD')
+  assert.equal(secondRetry.states.includes('PRE_DEPLOY_CHECK'), false)
 })
 
 test('canary failure rolls back only to pinned known-good artifact and verifies rollback', () => {
@@ -450,17 +572,22 @@ test('promotion digest mismatch rolls back, while rollback failure becomes HELD'
   assert.equal(held.terminal_record.reason_code, 'ACTIVATION_UNATTESTED')
 })
 
-test('retry is bounded, failure-class deduplicated and requires changed event evidence', () => {
-  const first = evaluateRetry([], {
-    failure_class: 'network_transient', evidence_sha256: SHA('1'), event_id: 'event-1',
-  })
+test('retry uses a closed failure class and a total exact-commit budget', () => {
+  const first = evaluateRetry([], retryCandidate({ event_id: 'event-1' }))
   assert.equal(first.allowed, true)
-  expectCode('retry_evidence_unchanged', () => evaluateRetry([first.record], {
-    failure_class: 'network_transient', evidence_sha256: SHA('1'), event_id: 'event-2',
-  }))
-  expectCode('retry_budget_exhausted', () => evaluateRetry([first.record], {
-    failure_class: 'network_transient', evidence_sha256: SHA('2'), event_id: 'event-3',
-  }))
+  expectCode('retry_budget_exhausted', () => evaluateRetry([first.record], retryCandidate({
+    failure_class: 'renamed_transient', evidence_sha256: SHA('2'), event_id: 'event-2',
+  })))
+  expectCode('retry_classification_invalid', () => evaluateRetry([], retryCandidate({
+    failure_class: 'renamed_transient', event_id: 'event-3',
+  })))
+})
+
+test('workflow fail-closed predicate preserves the controller and outer reason code', async () => {
+  const workflow = await readFile('.github/workflows/linux-continuous-deployment.yml', 'utf8')
+  assert.match(workflow, /r\.attestation\.reason_code!==['"]ACTIVATION_UNATTESTED['"]/)
+  assert.match(workflow, /parseTerminalRecord\(canonicalJson\(r\.terminal_record\)\)\.reason_code!==['"]ACTIVATION_UNATTESTED['"]/)
+  assert.doesNotMatch(workflow, /r\.attestation\.reason_code!==['"]DEPLOYMENT_BLOCKED['"]/)
 })
 
 test('append-only delivery ledger rejects rewrites and forks', () => {
@@ -554,6 +681,11 @@ test('closed schemas, workflow and skill pressure fixture remain machine-verifia
   assert.equal(transition.controller.active_idempotent_disposition, 'idempotent_active')
   assert.equal(transition.controller.active_idempotent_transition_appends, false)
   assert.equal(transition.controller.active_idempotent_terminal_record, false)
+  assert.deepEqual(transition.retry.allowed_failure_classes, ['network_transient'])
+  assert.equal(transition.retry.max_per_exact_commit, 1)
+  assert.equal(transition.retry.external_classification_authority_required, true)
+  assert.equal(transition.retry.eligible_parent_terminal_class, 'FAILED')
+  assert.equal(transition.retry.eligible_parent_reason_code, 'MERGED_NOT_DELIVERED')
 
   const workflow = await readFile(new URL('../../.github/workflows/linux-continuous-deployment.yml', import.meta.url), 'utf8')
   assert.match(workflow, /pull_request:\s*\n\s+types:\s*\[closed\]/u)
@@ -582,9 +714,7 @@ test('closed schemas, workflow and skill pressure fixture remain machine-verifia
     verification: verification({ artifact_sha256: SHA('d') }),
   }
   const activeLease = acquireSingleFlight([], request()).entry
-  const retryRecord = evaluateRetry([], {
-    failure_class: 'network_transient', evidence_sha256: SHA('1'), event_id: 'pressure-retry-1',
-  }).record
+  const retryRecord = evaluateRetry([], retryCandidate({ event_id: 'pressure-retry-1' })).record
   const pressureRequests = {
     none: request(),
     'trusted_merge.repository': request({ trusted_merge: trustedMerge({ repository: 'other/repo' }) }),
@@ -622,12 +752,11 @@ test('closed schemas, workflow and skill pressure fixture remain machine-verifia
         ] }),
       },
     }),
-    'retry.failure_class': request({
-      retry_history: [retryRecord],
-      retry_event: {
-        failure_class: 'network_transient', evidence_sha256: SHA('2'), event_id: 'pressure-retry-2',
-      },
-    }),
+    'retry.failure_class': (() => {
+      const value = request({ retry_history: [retryRecord] })
+      value.retry_event = retryEvent(value, { evidenceSha256: SHA('2'), eventId: 'pressure-retry-2' })
+      return value
+    })(),
     'target.credential_authority': request({ target: target({ credential_authority: null }) }),
   }
   for (const scenario of pressure.scenarios) {
@@ -657,7 +786,10 @@ test('closed schemas, workflow and skill pressure fixture remain machine-verifia
   ]) assert.match(claudeSkill, new RegExp(`\\b${state}\\b`, 'u'))
   assert.match(claudeSkill, /same immutable artifact digest/iu)
   assert.match(claudeSkill, /typed non-terminal `idempotent_active` ownership/iu)
-  assert.match(claudeSkill, /bounded, failure-class deduplicated, linked to its prior terminal attempt, and event-driven/iu)
+  assert.match(claudeSkill, /bounded to one total same-commit attempt/iu)
+  assert.match(claudeSkill, /closed `network_transient` class/iu)
+  assert.match(claudeSkill, /original root `FAILED\/MERGED_NOT_DELIVERED` terminal record/iu)
+  assert.match(claudeSkill, /owner policy broker must externally verify/iu)
 })
 
 test('contract module stays pure and cannot execute deployment or read ambient secrets', async () => {

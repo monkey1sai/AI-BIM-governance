@@ -48,7 +48,7 @@ jobs:
         run: |
           set -euo pipefail
           test '${{ steps.controller.outcome }}' = 'failure'
-          node --input-type=module -e "import fs from 'node:fs';import{canonicalJson,parseTerminalRecord}from './scripts/lib/autonomous-delivery-contract.mjs';const r=JSON.parse(fs.readFileSync('artifacts/linux-cd/terminal-attestation.json','utf8'));if(r.final_state!=='HELD'||r.attestation.reason_code!=='DEPLOYMENT_BLOCKED'||parseTerminalRecord(canonicalJson(r.terminal_record)).reason_code!=='ACTIVATION_UNATTESTED')process.exit(1)"
+          node --input-type=module -e "import fs from 'node:fs';import{canonicalJson,parseTerminalRecord}from './scripts/lib/autonomous-delivery-contract.mjs';const r=JSON.parse(fs.readFileSync('artifacts/linux-cd/terminal-attestation.json','utf8'));if(r.final_state!=='HELD'||r.attestation.reason_code!=='ACTIVATION_UNATTESTED'||parseTerminalRecord(canonicalJson(r.terminal_record)).reason_code!=='ACTIVATION_UNATTESTED')process.exit(1)"
 
       - name: Upload sanitized terminal attestation
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
