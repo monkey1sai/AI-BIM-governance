@@ -220,6 +220,8 @@ Assert-True ($cliSource -match "'fetch'\s*,\s*'origin'\s*,\s*'--prune'\s*,\s*'\+
     'create mode must explicitly fetch main even when remote.origin.fetch omits it'
 Assert-True ($cliSource -match "'ls-remote'\s*,\s*'--exit-code'\s*,\s*'origin'\s*,\s*'refs/heads/main'") `
     'create mode must verify the fetched SHA against remote main'
+Assert-True ($cliSource -match '''ls-remote''\s*,\s*''--exit-code''\s*,\s*''origin''\s*,\s*"refs/heads/\$BranchName"') `
+    'candidate branch existence must be checked against the remote, not a local tracking ref'
 Assert-True ($cliSource -match "'worktree'\s*,\s*'add'\s*,\s*'-b'") 'create mode must use an explicit branch and worktree add'
 Assert-True ($cliSource -match 'primary_checkout_invariant_failed') 'create mode must reject a dirty, non-main, or stale primary checkout'
 Assert-True ($cliSource -match 'StructLog\.psm1') 'mutating create mode must use the repository structured logger'
@@ -343,6 +345,26 @@ try {
         Assert-Equal 0 $LASTEXITCODE 'explicit main refspec recreates origin/main despite narrowed fetch config'
         $fixtureHead = (& git -C $failureFixtureRepo rev-parse HEAD).Trim()
         Assert-Equal $fixtureHead $fetchedOriginMain 'explicitly fetched origin/main matches remote fixture HEAD'
+
+        Remove-Item -LiteralPath (Join-Path $failureFixtureRepo 'dirty.marker')
+        & git -C $failureFixtureRepo push origin 'HEAD:refs/heads/fix/remote-conflict' 2>&1 | Out-Null
+        Assert-Equal 0 $LASTEXITCODE 'failure fixture creates a candidate branch only on the remote'
+        & git -C $failureFixtureRepo show-ref --verify --quiet refs/remotes/origin/fix/remote-conflict
+        Assert-Equal 1 $LASTEXITCODE 'narrowed fetch config leaves the candidate tracking ref absent locally'
+
+        $remoteConflictTarget = "${failureFixtureRepo}.worktrees\remote-conflict"
+        $remoteConflictOutput = @(& pwsh -NoProfile -NonInteractive -File $failureFixtureCli `
+            -BranchName 'fix/remote-conflict' -Json)
+        Assert-Equal 2 $LASTEXITCODE 'remote-only candidate branch is rejected'
+        $remoteConflictPayload = ($remoteConflictOutput -join [Environment]::NewLine) | ConvertFrom-Json
+        Assert-Equal 'worktree_remote_branch_already_exists' ([string]$remoteConflictPayload.error) `
+            'remote-only candidate branch reports the exact conflict reason'
+        Assert-Equal 'not_started' ([string]$remoteConflictPayload.mutation_state) `
+            'remote conflict is rejected before worktree mutation'
+        Assert-True (-not (Test-Path -LiteralPath $remoteConflictTarget)) `
+            'remote conflict creates no worktree target'
+        & git -C $failureFixtureRepo show-ref --verify --quiet refs/heads/fix/remote-conflict
+        Assert-Equal 1 $LASTEXITCODE 'remote conflict creates no local branch'
     }
 }
 finally {

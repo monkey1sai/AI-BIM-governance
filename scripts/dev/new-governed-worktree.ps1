@@ -373,9 +373,9 @@ try {
         throw "primary_checkout_invariant_failed: $($primaryState.Reason)"
     }
     $remoteRef = Invoke-GovernedGit -WorkingDirectory $mainRoot -ArgumentList @(
-        'show-ref', '--verify', '--quiet', "refs/remotes/origin/$BranchName") -AllowFailure
+        'ls-remote', '--exit-code', 'origin', "refs/heads/$BranchName") -AllowFailure
     if ($remoteRef.ExitCode -eq 0) { throw 'worktree_remote_branch_already_exists' }
-    if ($remoteRef.ExitCode -ne 1) { throw 'worktree_remote_branch_probe_failed' }
+    if ($remoteRef.ExitCode -ne 2) { throw 'worktree_remote_branch_probe_failed' }
 
     $container = Split-Path -Parent $target
     if (Test-Path -LiteralPath $container) {
