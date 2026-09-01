@@ -1,4 +1,9 @@
-import { canonicalJson, sha256 } from './autonomous-delivery-contract.mjs'
+import {
+  canonicalJson,
+  parseTerminalRecord,
+  sha256,
+  validateAttemptAppend,
+} from './autonomous-delivery-contract.mjs'
 
 export class LinuxContinuousDeploymentError extends Error {
   constructor(code, message) {
@@ -32,14 +37,14 @@ const FINAL_STATES = Object.freeze(['ACTIVATED', 'ROLLED_BACK', 'HELD'])
 const TERMINAL_CLASSES = Object.freeze(['DELIVERED', 'FAILED', 'HELD'])
 const REASON_CODES = Object.freeze([
   'DELIVERY_VERIFIED',
-  'MERGED_NOT_DELIVERED',
-  'PROVISIONING_REQUIRED',
-  'CONTRACT_INVALID',
+  'PREMERGE_EVIDENCE_INVALID',
+  'PREMERGE_AUTHORITY_UNAVAILABLE',
+  'POLICY_OR_SETTINGS_DRIFT',
+  'MERGE_OUTCOME_UNVERIFIED',
   'DEPLOYMENT_BLOCKED',
-  'ROLLBACK_UNVERIFIED',
-  'RETRY_BUDGET_EXHAUSTED',
-  'DUPLICATE_CONTROLLER',
-  'REPLAY_REJECTED',
+  'MERGED_NOT_DELIVERED',
+  'DELIVERY_PENDING_FIXPOINT',
+  'ACTIVATION_UNATTESTED',
 ])
 const SHA1 = /^[0-9a-f]{40}$/u
 const SHA256 = /^[0-9a-f]{64}$/u
@@ -47,6 +52,7 @@ const IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$/u
 const REPOSITORY = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u
 const UTC_TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u
 const EXPECTED_REPOSITORY = 'monkey1sai/AI-BIM-governance'
+const EXPECTED_TARGET_ID = 'canonical-linux'
 const REQUIRED_VERIFICATION_GATES = Object.freeze(['health', 'smoke', 'e2e'])
 const PROHIBITED_TARGET_KEYS = /^(?:host|hostname|ip|address|user|username|password|secret|token|private_key|ssh_key|inventory_path|deploy_root|runtime_data_root)$/iu
 const SECRET_VALUE = /(?:gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,}|-----BEGIN [A-Z ]*PRIVATE KEY-----|(?:password|secret|token)\s*[=:]\s*\S+)/iu
@@ -136,21 +142,26 @@ const terminalClassForState = (state) => ({
   HELD: 'HELD',
 })[state]
 
-const terminalReasonForError = (error) => {
+const terminalReasonForError = (error, states = []) => {
   const code = error instanceof LinuxContinuousDeploymentError ? error.code : 'unexpected_contract_failure'
-  if (['rollback_unavailable', 'rollback_unverified'].includes(code)) return 'ROLLBACK_UNVERIFIED'
+  if (['rollback_unavailable', 'rollback_unverified'].includes(code)) return 'ACTIVATION_UNATTESTED'
   if (['credential_authority_unavailable', 'target_authority_invalid', 'target_profile_invalid',
     'target_fingerprint_drift', 'deployment_method_invalid', 'known_good_target_mismatch',
-    'known_good_unavailable'].includes(code)) {
+    'known_good_unavailable', 'external_authority_unavailable'].includes(code)) {
     return 'DEPLOYMENT_BLOCKED'
   }
-  if (code === 'duplicate_controller') return 'DUPLICATE_CONTROLLER'
-  if (code === 'replay_detected') return 'REPLAY_REJECTED'
-  if (['retry_budget_exhausted', 'retry_evidence_unchanged'].includes(code)) return 'RETRY_BUDGET_EXHAUSTED'
-  return 'CONTRACT_INVALID'
+  if (['duplicate_controller', 'replay_detected'].includes(code)) return 'DEPLOYMENT_BLOCKED'
+  if (['retry_budget_exhausted', 'retry_evidence_unchanged'].includes(code)) return 'DEPLOYMENT_BLOCKED'
+  return states.includes('TRUSTED_MERGED') ? 'POLICY_OR_SETTINGS_DRIFT' : 'PREMERGE_EVIDENCE_INVALID'
 }
 
-const terminalFallback = (request, states, reasonCode, outcome = {}) => ({
+const failureDetailFor = (code) => Object.freeze({
+  namespace: 'linux-cd',
+  code,
+  evidence_sha256: sha256(canonicalJson({ namespace: 'linux-cd', code })),
+})
+
+const terminalFallback = (request, states, reasonCode, outcome = {}, failureCode = 'provisioning-required') => ({
   schema_version: 'linux-continuous-deployment-attestation/v1',
   repository: typeof request?.repository === 'string' ? request.repository : EXPECTED_REPOSITORY,
   pull_request: Number.isSafeInteger(request?.trusted_merge?.pull_request)
@@ -185,10 +196,15 @@ const terminalFallback = (request, states, reasonCode, outcome = {}) => ({
   },
   release_lineage: {
     delivery_id: typeof request?.delivery_id === 'string' ? request.delivery_id : 'unknown-delivery',
+    attempt_id: typeof request?.attempt?.attempt_id === 'string' ? request.attempt.attempt_id : 'attempt:unknown',
+    supersedes_delivery_id: request?.attempt?.supersedes_delivery_id ?? null,
+    supersedes_attempt_id: request?.attempt?.supersedes_attempt_id ?? null,
+    previous_attempt_sha256: request?.attempt?.previous_attempt_sha256 ?? null,
     previous_known_good_release_id: typeof request?.previous_known_good?.release_id === 'string'
       ? request.previous_known_good.release_id
       : null,
   },
+  failure_detail: [failureDetailFor(failureCode)],
   state_history_sha256: sha256(canonicalJson(states)),
   final_state: 'HELD',
   terminal_class: 'HELD',
@@ -200,22 +216,31 @@ export function parseTrustedMergeEvent(raw, {
   expectedBaseRef = 'main',
 } = {}) {
   exactKeys(raw, [
-    'schema_version', 'repository', 'event_name', 'event_id', 'pull_request', 'merged',
-    'base_ref', 'source_head_ref', 'source_head_sha', 'trusted_merge_sha',
+    'schema_version', 'repository', 'repository_id', 'event_name', 'event_id', 'pull_request', 'merged',
+    'base_ref', 'base_sha', 'source_head_ref', 'source_head_sha', 'trusted_merge_sha',
+    'merge_tree_sha', 'fetched_origin_main_sha', 'policy_sha256',
     'merge_authority', 'collector', 'ci_convergence', 'observed_at',
   ])
   if (raw.schema_version !== 'linux-cd-trusted-merge-event/v1') fail('invalid_value', 'unsupported trusted merge schema')
   text(raw.repository, 'repository', REPOSITORY)
   if (raw.repository !== expectedRepository) fail('trusted_merge_repository_invalid', 'repository is not trusted')
+  safeInteger(raw.repository_id, 'repository_id', 1)
   if (raw.event_name !== 'pull_request.closed' || raw.merged !== true) {
     fail('trusted_merge_event_invalid', 'only a merged pull_request.closed event is trusted')
   }
   if (raw.base_ref !== expectedBaseRef) fail('trusted_merge_base_invalid', 'base ref is not trusted')
+  oid(raw.base_sha, 'base_sha')
   text(raw.event_id, 'event_id')
   safeInteger(raw.pull_request, 'pull_request', 1)
   text(raw.source_head_ref, 'source_head_ref')
   oid(raw.source_head_sha, 'source_head_sha')
   oid(raw.trusted_merge_sha, 'trusted_merge_sha')
+  oid(raw.merge_tree_sha, 'merge_tree_sha')
+  oid(raw.fetched_origin_main_sha, 'fetched_origin_main_sha')
+  digest(raw.policy_sha256, 'policy_sha256')
+  if (raw.fetched_origin_main_sha !== raw.trusted_merge_sha) {
+    fail('origin_main_drift', 'fresh origin/main does not equal the trusted merge commit')
+  }
   timestamp(raw.observed_at, 'observed_at')
 
   exactKeys(raw.merge_authority, ['kind', 'actor_id', 'evidence_sha256'])
@@ -256,11 +281,15 @@ export function parseTrustedMergeEvent(raw, {
   return cloneFrozen(raw)
 }
 
-export function parseArtifactProvenance(raw, trustedMergeRaw) {
+export function parseArtifactProvenance(raw, trustedMergeRaw, {
+  now = new Date(),
+  verifyArtifactProvenance,
+} = {}) {
   const trusted = parseTrustedMergeEvent(trustedMergeRaw)
   exactKeys(raw, [
     'schema_version', 'repository', 'merge_sha', 'source_tree_sha', 'artifact_sha256',
-    'observed_sha256', 'artifact_size_bytes', 'artifact_uri', 'build_run', 'provenance', 'built_at',
+    'observed_sha256', 'artifact_size_bytes', 'artifact_uri', 'policy_sha256', 'build_run',
+    'provenance', 'built_at',
   ])
   if (raw.schema_version !== 'linux-cd-artifact-provenance/v1') fail('invalid_value', 'unsupported artifact schema')
   if (raw.repository !== trusted.repository) fail('artifact_repository_mismatch', 'artifact repository drifted')
@@ -270,22 +299,57 @@ export function parseArtifactProvenance(raw, trustedMergeRaw) {
   digest(raw.observed_sha256, 'artifact.observed_sha256')
   safeInteger(raw.artifact_size_bytes, 'artifact.artifact_size_bytes', 1)
   text(raw.artifact_uri, 'artifact.artifact_uri')
+  digest(raw.policy_sha256, 'artifact.policy_sha256')
   timestamp(raw.built_at, 'artifact.built_at')
   if (raw.merge_sha !== trusted.trusted_merge_sha) fail('artifact_merge_mismatch', 'artifact is not bound to trusted merge SHA')
+  if (raw.source_tree_sha !== trusted.merge_tree_sha) fail('artifact_tree_mismatch', 'artifact source tree is not the trusted merge tree')
+  if (raw.policy_sha256 !== trusted.policy_sha256) fail('artifact_policy_mismatch', 'artifact policy is not the trusted policy')
   if (raw.artifact_sha256 !== raw.observed_sha256) fail('artifact_digest_mismatch', 'artifact digest readback failed')
   exactKeys(raw.build_run, ['provider', 'run_id', 'run_attempt'])
   if (raw.build_run.provider !== 'github-actions') fail('artifact_provenance_invalid', 'build provider is not trusted')
   text(raw.build_run.run_id, 'artifact.build_run.run_id')
   safeInteger(raw.build_run.run_attempt, 'artifact.build_run.run_attempt', 1)
-  exactKeys(raw.provenance, ['issuer', 'key_id', 'evidence_sha256'])
+  exactKeys(raw.provenance, [
+    'issuer', 'key_id', 'algorithm', 'nonce', 'issued_at', 'expires_at',
+    'payload_sha256', 'signature', 'evidence_sha256',
+  ])
   text(raw.provenance.issuer, 'artifact.provenance.issuer')
   text(raw.provenance.key_id, 'artifact.provenance.key_id')
+  if (raw.provenance.algorithm !== 'ed25519') fail('artifact_provenance_invalid', 'artifact provenance algorithm is not allowed')
+  text(raw.provenance.nonce, 'artifact.provenance.nonce')
+  timestamp(raw.provenance.issued_at, 'artifact.provenance.issued_at')
+  timestamp(raw.provenance.expires_at, 'artifact.provenance.expires_at')
+  digest(raw.provenance.payload_sha256, 'artifact.provenance.payload_sha256')
+  text(raw.provenance.signature, 'artifact.provenance.signature')
   digest(raw.provenance.evidence_sha256, 'artifact.provenance.evidence_sha256')
+  if (Date.parse(raw.provenance.issued_at) > now.getTime()
+    || Date.parse(raw.provenance.expires_at) <= now.getTime()) {
+    fail('artifact_provenance_invalid', 'artifact provenance is outside its validity window')
+  }
+  const payload = {
+    repository: raw.repository,
+    merge_sha: raw.merge_sha,
+    source_tree_sha: raw.source_tree_sha,
+    artifact_sha256: raw.artifact_sha256,
+    artifact_size_bytes: raw.artifact_size_bytes,
+    policy_sha256: raw.policy_sha256,
+    builder: raw.build_run,
+  }
+  if (raw.provenance.payload_sha256 !== sha256(canonicalJson(payload))) {
+    fail('artifact_provenance_invalid', 'artifact provenance payload digest drifted')
+  }
+  if (typeof verifyArtifactProvenance !== 'function'
+    || verifyArtifactProvenance(cloneFrozen({ payload, provenance: raw.provenance })) !== true) {
+    fail('external_authority_unavailable', 'artifact provenance authority was not externally verified')
+  }
   assertNoSecretValues(raw)
   return cloneFrozen(raw)
 }
 
-export function parseDeploymentTarget(raw, { now = new Date() } = {}) {
+export function parseDeploymentTarget(raw, {
+  now = new Date(),
+  verifyTargetLease,
+} = {}) {
   assertNoTargetTopology(raw)
   exactKeys(raw, [
     'schema_version', 'source', 'target_id', 'role', 'kind', 'environment', 'service',
@@ -297,6 +361,7 @@ export function parseDeploymentTarget(raw, { now = new Date() } = {}) {
     fail('target_authority_invalid', 'target source is not authoritative')
   }
   text(raw.target_id, 'target.target_id')
+  if (raw.target_id !== EXPECTED_TARGET_ID) fail('target_profile_invalid', 'target ID is not canonical-linux')
   if (raw.role !== 'canonical_test_deploy' || raw.kind !== 'linux_host_native') {
     fail('target_profile_invalid', 'target is not the canonical Linux profile')
   }
@@ -314,16 +379,47 @@ export function parseDeploymentTarget(raw, { now = new Date() } = {}) {
   if (!isObject(raw.credential_authority)) {
     fail('credential_authority_unavailable', 'opaque credential authority is missing')
   }
-  exactKeys(raw.credential_authority, ['kind', 'issuer', 'key_id', 'lease_id', 'expires_at'])
+  exactKeys(raw.credential_authority, [
+    'kind', 'issuer', 'key_id', 'algorithm', 'lease_id', 'nonce', 'issued_at',
+    'expires_at', 'payload_sha256', 'signature',
+  ])
   if (raw.credential_authority.kind !== 'opaque_target_lease') {
     fail('credential_authority_unavailable', 'credential authority is not an opaque target lease')
   }
   text(raw.credential_authority.issuer, 'target.credential_authority.issuer')
   text(raw.credential_authority.key_id, 'target.credential_authority.key_id')
+  if (raw.credential_authority.algorithm !== 'ed25519') {
+    fail('credential_authority_unavailable', 'target lease algorithm is not allowed')
+  }
   text(raw.credential_authority.lease_id, 'target.credential_authority.lease_id')
+  text(raw.credential_authority.nonce, 'target.credential_authority.nonce')
+  timestamp(raw.credential_authority.issued_at, 'target.credential_authority.issued_at')
   timestamp(raw.credential_authority.expires_at, 'target.credential_authority.expires_at')
+  digest(raw.credential_authority.payload_sha256, 'target.credential_authority.payload_sha256')
+  text(raw.credential_authority.signature, 'target.credential_authority.signature')
   if (Date.parse(raw.credential_authority.expires_at) <= now.getTime()) {
     fail('credential_authority_unavailable', 'credential authority expired')
+  }
+  if (Date.parse(raw.credential_authority.issued_at) > now.getTime()) {
+    fail('credential_authority_unavailable', 'credential authority is not active yet')
+  }
+  const targetPayload = {
+    target_id: raw.target_id,
+    role: raw.role,
+    kind: raw.kind,
+    environment: raw.environment,
+    service: raw.service,
+    expected_fingerprint: raw.expected_fingerprint,
+    profile_sha256: raw.profile_sha256,
+    deployment_method: raw.deployment_method,
+    lease_id: raw.credential_authority.lease_id,
+  }
+  if (raw.credential_authority.payload_sha256 !== sha256(canonicalJson(targetPayload))) {
+    fail('credential_authority_unavailable', 'target lease payload digest drifted')
+  }
+  if (typeof verifyTargetLease !== 'function'
+    || verifyTargetLease(cloneFrozen({ payload: targetPayload, authority: raw.credential_authority })) !== true) {
+    fail('external_authority_unavailable', 'target lease authority was not externally verified')
   }
   assertNoSecretValues(raw)
   return cloneFrozen(raw)
@@ -461,33 +557,54 @@ const buildVerificationSummary = (stage, raw) => raw.gates.map((gate) => ({
   evidence_sha256: gate.evidence_sha256,
 }))
 
-const validateKnownGood = (raw, targetRaw) => {
+const validateKnownGood = (raw, targetRaw, {
+  expectedPolicySha256,
+  verifyKnownGoodProvenance,
+} = {}) => {
   if (!isObject(raw)) fail('known_good_unavailable', 'pinned known-good artifact is missing')
-  exactKeys(raw, ['artifact_sha256', 'provenance_sha256', 'release_id', 'target_fingerprint'])
+  exactKeys(raw, [
+    'artifact_sha256', 'provenance_sha256', 'release_id', 'source_merge_sha',
+    'source_tree_sha', 'policy_sha256', 'issuer', 'key_id', 'target_fingerprint',
+  ])
   digest(raw.artifact_sha256, 'known_good.artifact_sha256')
   digest(raw.provenance_sha256, 'known_good.provenance_sha256')
   text(raw.release_id, 'known_good.release_id')
+  oid(raw.source_merge_sha, 'known_good.source_merge_sha')
+  oid(raw.source_tree_sha, 'known_good.source_tree_sha')
+  digest(raw.policy_sha256, 'known_good.policy_sha256')
+  text(raw.issuer, 'known_good.issuer')
+  text(raw.key_id, 'known_good.key_id')
   digest(raw.target_fingerprint, 'known_good.target_fingerprint')
   if (raw.target_fingerprint !== targetRaw.expected_fingerprint) {
     fail('known_good_target_mismatch', 'known-good artifact belongs to another target')
   }
+  if (raw.policy_sha256 !== expectedPolicySha256) {
+    fail('known_good_unavailable', 'known-good artifact policy drifted')
+  }
+  if (typeof verifyKnownGoodProvenance !== 'function'
+    || verifyKnownGoodProvenance(cloneFrozen(raw)) !== true) {
+    fail('external_authority_unavailable', 'known-good provenance authority was not externally verified')
+  }
   return cloneFrozen(raw)
 }
 
-const rollbackResult = (requestRaw, states, verificationSummary) => {
+const rollbackResult = (requestRaw, states, verificationSummary, transition, trustBoundary) => {
   try {
-    const knownGood = validateKnownGood(requestRaw.previous_known_good, requestRaw.target)
-    states.push('ROLLBACK_TO_PINNED_KNOWN_GOOD_ARTIFACT')
+    const knownGood = validateKnownGood(requestRaw.previous_known_good, requestRaw.target, {
+      expectedPolicySha256: requestRaw.trusted_merge.policy_sha256,
+      verifyKnownGoodProvenance: trustBoundary?.verifyKnownGoodProvenance,
+    })
+    transition('ROLLBACK_TO_PINNED_KNOWN_GOOD_ARTIFACT')
     if (!isObject(requestRaw.rollback) || requestRaw.rollback.attempted !== true
       || requestRaw.rollback.artifact_sha256 !== knownGood.artifact_sha256
       || !isObject(requestRaw.rollback.verification)) {
       fail('rollback_unavailable', 'pinned known-good rollback was not executed')
     }
-    states.push('VERIFY_ROLLBACK')
+    transition('VERIFY_ROLLBACK')
     const rollback = parseVerification(requestRaw.rollback.verification, knownGood.artifact_sha256)
     verificationSummary.push(...buildVerificationSummary('rollback', rollback.parsed))
     if (!rollback.passed) fail('rollback_unverified', 'rollback verification did not pass')
-    states.push('ROLLED_BACK')
+    transition('ROLLED_BACK')
     return {
       finalState: 'ROLLED_BACK',
       reasonCode: 'MERGED_NOT_DELIVERED',
@@ -495,10 +612,10 @@ const rollbackResult = (requestRaw, states, verificationSummary) => {
       rollback: 'verified',
     }
   } catch (error) {
-    states.push('HELD')
+    transition('HELD')
     return {
       finalState: 'HELD',
-      reasonCode: terminalReasonForError(error),
+      reasonCode: terminalReasonForError(error, states),
       promotion: 'failed',
       rollback: 'unverified',
     }
@@ -528,8 +645,13 @@ const buildAttestation = (requestRaw, states, finalState, reasonCode, verificati
   outcome: { promotion, rollback },
   release_lineage: {
     delivery_id: requestRaw.delivery_id,
+    attempt_id: requestRaw.attempt.attempt_id,
+    supersedes_delivery_id: requestRaw.attempt.supersedes_delivery_id,
+    supersedes_attempt_id: requestRaw.attempt.supersedes_attempt_id,
+    previous_attempt_sha256: requestRaw.attempt.previous_attempt_sha256,
     previous_known_good_release_id: requestRaw.previous_known_good?.release_id ?? null,
   },
+  failure_detail: reasonCode === 'DELIVERY_VERIFIED' ? [] : [failureDetailFor(reasonCode.toLowerCase())],
   state_history_sha256: sha256(canonicalJson(states)),
   final_state: finalState,
   terminal_class: terminalClassForState(finalState),
@@ -541,7 +663,7 @@ export function parseTerminalDeliveryAttestation(raw) {
     'schema_version', 'repository', 'pull_request', 'source_head_sha', 'trusted_merge_sha',
     'artifact_sha256', 'environment', 'service', 'target_fingerprint', 'deployment_method',
     'timestamps', 'verification', 'outcome', 'release_lineage', 'state_history_sha256',
-    'final_state', 'terminal_class', 'reason_code',
+    'failure_detail', 'final_state', 'terminal_class', 'reason_code',
   ])
   if (raw.schema_version !== 'linux-continuous-deployment-attestation/v1') fail('invalid_value', 'unsupported attestation schema')
   text(raw.repository, 'attestation.repository', REPOSITORY)
@@ -573,12 +695,36 @@ export function parseTerminalDeliveryAttestation(raw) {
   exactKeys(raw.outcome, ['promotion', 'rollback'])
   if (!['verified', 'failed', 'not_started'].includes(raw.outcome.promotion)) fail('invalid_value', 'promotion outcome is invalid')
   if (!['verified', 'unverified', 'not_started'].includes(raw.outcome.rollback)) fail('invalid_value', 'rollback outcome is invalid')
-  exactKeys(raw.release_lineage, ['delivery_id', 'previous_known_good_release_id'])
+  exactKeys(raw.release_lineage, [
+    'delivery_id', 'attempt_id', 'supersedes_delivery_id', 'supersedes_attempt_id',
+    'previous_attempt_sha256', 'previous_known_good_release_id',
+  ])
   text(raw.release_lineage.delivery_id, 'attestation.release_lineage.delivery_id')
+  text(raw.release_lineage.attempt_id, 'attestation.release_lineage.attempt_id')
+  const supersedes = [
+    raw.release_lineage.supersedes_delivery_id,
+    raw.release_lineage.supersedes_attempt_id,
+    raw.release_lineage.previous_attempt_sha256,
+  ]
+  if (!supersedes.every((value) => value === null) && !supersedes.every((value) => value !== null)) {
+    fail('terminal_attestation_incomplete', 'attestation supersedes lineage is partial')
+  }
+  if (raw.release_lineage.supersedes_delivery_id !== null) {
+    text(raw.release_lineage.supersedes_delivery_id, 'attestation.supersedes_delivery_id')
+    text(raw.release_lineage.supersedes_attempt_id, 'attestation.supersedes_attempt_id')
+    digest(raw.release_lineage.previous_attempt_sha256, 'attestation.previous_attempt_sha256')
+  }
   if (raw.release_lineage.previous_known_good_release_id !== null) {
     text(raw.release_lineage.previous_known_good_release_id, 'attestation.previous_known_good_release_id')
   }
   digest(raw.state_history_sha256, 'attestation.state_history_sha256')
+  if (!Array.isArray(raw.failure_detail)) fail('invalid_shape', 'attestation failure detail must be an array')
+  for (const detail of raw.failure_detail) {
+    exactKeys(detail, ['namespace', 'code', 'evidence_sha256'])
+    text(detail.namespace, 'attestation.failure_detail.namespace')
+    text(detail.code, 'attestation.failure_detail.code')
+    digest(detail.evidence_sha256, 'attestation.failure_detail.evidence_sha256')
+  }
   if (!FINAL_STATES.includes(raw.final_state)) fail('invalid_value', 'attestation final state is invalid')
   if (!TERMINAL_CLASSES.includes(raw.terminal_class)
     || raw.terminal_class !== terminalClassForState(raw.final_state)) {
@@ -604,84 +750,290 @@ export function parseTerminalDeliveryAttestation(raw) {
   return cloneFrozen(raw)
 }
 
-export function runLinuxContinuousDeployment(requestRaw, { now = new Date() } = {}) {
+const outerArtifact = (artifactId, artifactSha256, sizeBytes = 1) => ({
+  artifact_id: artifactId,
+  sha256: artifactSha256,
+  size_bytes: sizeBytes,
+  media_type: 'application/json',
+  retention_class: 'delivery_30d',
+})
+
+export function buildOuterTerminalRecord(requestRaw, attestationRaw, statesRaw) {
+  const attestation = parseTerminalDeliveryAttestation(attestationRaw)
+  if (!Array.isArray(statesRaw) || statesRaw.some((state) => !STATES.includes(state))) {
+    fail('invalid_shape', 'outer terminal state history is invalid')
+  }
+  const trusted = requestRaw.trusted_merge
+  const mergeObserved = statesRaw.includes('TRUSTED_MERGED')
+    && trusted?.repository === EXPECTED_REPOSITORY
+    && Number.isSafeInteger(trusted?.repository_id)
+    && SHA1.test(trusted?.trusted_merge_sha ?? '')
+    && SHA1.test(trusted?.fetched_origin_main_sha ?? '')
+    && trusted.fetched_origin_main_sha === trusted.trusted_merge_sha
+  const afterCommand = statesRaw.some((state) => [
+    'DEPLOY_CANARY', 'VERIFY_HEALTH_SMOKE_E2E', 'PROMOTE', 'POST_DEPLOY_VERIFY',
+    'ROLLBACK_TO_PINNED_KNOWN_GOOD_ARTIFACT', 'VERIFY_ROLLBACK', 'ROLLED_BACK', 'ACTIVATED',
+  ].includes(state))
+  let reasonCode = attestation.reason_code
+  if (!mergeObserved && !['PREMERGE_EVIDENCE_INVALID', 'PREMERGE_AUTHORITY_UNAVAILABLE'].includes(reasonCode)) {
+    reasonCode = 'PREMERGE_EVIDENCE_INVALID'
+  }
+  if (afterCommand && reasonCode === 'DEPLOYMENT_BLOCKED') reasonCode = 'ACTIVATION_UNATTESTED'
+  const terminalClass = attestation.final_state === 'ACTIVATED'
+    ? 'DELIVERED'
+    : attestation.final_state === 'ROLLED_BACK' ? 'FAILED' : 'HELD'
+  const gates = [...attestation.verification].map((gate) => ({
+    gate_id: `${gate.stage}-${gate.gate_id}`,
+    status: gate.status,
+    result_sha256: gate.evidence_sha256,
+  })).sort((left, right) => left.gate_id.localeCompare(right.gate_id))
+  const artifacts = []
+  if (SHA256.test(attestation.artifact_sha256 ?? '')) {
+    artifacts.push(outerArtifact('linux-cd:immutable-artifact', attestation.artifact_sha256,
+      requestRaw.artifact?.artifact_size_bytes ?? 1))
+  }
+  for (const detail of attestation.failure_detail) {
+    artifacts.push(outerArtifact(`linux-cd-failure:${detail.code}`, detail.evidence_sha256))
+  }
+  artifacts.sort((left, right) => left.artifact_id.localeCompare(right.artifact_id))
+  const failureDetail = attestation.failure_detail.map((detail) => ({ ...detail }))
+    .sort((left, right) => `${left.namespace}\0${left.code}`.localeCompare(`${right.namespace}\0${right.code}`))
+  if (terminalClass === 'FAILED' && !gates.some((gate) => gate.status === 'failed')) {
+    gates.push({
+      gate_id: 'linux-cd-terminal-failure',
+      status: 'failed',
+      result_sha256: failureDetail[0].evidence_sha256,
+    })
+    gates.sort((left, right) => left.gate_id.localeCompare(right.gate_id))
+  }
+  const attempt = requestRaw.attempt ?? {}
+  const runnerIds = Array.isArray(requestRaw.runner_ids)
+    ? [...new Set(requestRaw.runner_ids)].sort()
+    : []
+  const record = {
+    schema_version: 'autonomous-delivery-terminal-record/v1',
+    delivery_id: attestation.release_lineage.delivery_id,
+    attempt_id: attestation.release_lineage.attempt_id,
+    pr_class: attempt.pr_class ?? 'ordinary',
+    supersedes_delivery_id: attestation.release_lineage.supersedes_delivery_id,
+    supersedes_attempt_id: attestation.release_lineage.supersedes_attempt_id,
+    previous_attempt_sha256: attestation.release_lineage.previous_attempt_sha256,
+    repository: {
+      full_name: EXPECTED_REPOSITORY,
+      repository_id: mergeObserved ? trusted.repository_id : (requestRaw.repository_id ?? 1),
+    },
+    pull_request: {
+      number: Number.isSafeInteger(trusted?.pull_request) ? trusted.pull_request : 1,
+      base_oid: SHA1.test(trusted?.base_sha ?? '') ? trusted.base_sha : '0'.repeat(40),
+      head_oid: SHA1.test(trusted?.source_head_sha ?? '') ? trusted.source_head_sha : '0'.repeat(40),
+    },
+    phase: 'CLOSED',
+    last_phase: mergeObserved ? (afterCommand ? 'VERIFYING_DEPLOYMENT' : 'MERGED') : 'VERIFYING',
+    terminal_class: terminalClass,
+    reason_code: reasonCode,
+    merge_observed: mergeObserved,
+    merge_commit_oid: mergeObserved ? trusted.trusted_merge_sha : null,
+    fetched_origin_main_oid: mergeObserved ? trusted.fetched_origin_main_sha : null,
+    deployed_commit_oid: terminalClass === 'DELIVERED' ? trusted.trusted_merge_sha : null,
+    command_state: afterCommand ? 'completed' : 'not_started',
+    target_id: afterCommand && requestRaw.target?.target_id === EXPECTED_TARGET_ID
+      ? EXPECTED_TARGET_ID
+      : null,
+    runner_ids: afterCommand ? runnerIds : [],
+    gates,
+    artifacts,
+    failure_detail: failureDetail,
+    closed_at: attestation.timestamps.terminal_at,
+  }
+  const parsed = parseTerminalRecord(canonicalJson(record))
+  validateAttemptAppend(requestRaw.terminal_history ?? [], parsed)
+  return parsed
+}
+
+export function runLinuxContinuousDeployment(requestRaw, {
+  now = new Date(),
+  trustBoundary = {},
+} = {}) {
   const states = []
   const verificationSummary = []
+  const ledgerAppends = []
+  let transitionHistory = Array.isArray(requestRaw?.transition_ledger)
+    ? [...requestRaw.transition_ledger]
+    : []
   let trusted
   let artifactRaw
   let targetRaw
+  let controllerLease = null
+  let retryRecord = null
+
+  const transition = (state) => {
+    const eventId = `${requestRaw.delivery_id}:${requestRaw.attempt.attempt_id}:${transitionHistory.length + 1}:${state}`
+    const record = appendDeliveryLedger(transitionHistory, {
+      delivery_id: requestRaw.delivery_id,
+      event_id: eventId,
+      state,
+      evidence_sha256: sha256(canonicalJson({ event_id: eventId, state })),
+      previous_sha256: transitionHistory.at(-1)?.record_sha256 ?? null,
+    })
+    transitionHistory.push(record)
+    ledgerAppends.push(record)
+    states.push(state)
+  }
+
+  const close = (finalState, attestationRaw) => {
+    const attestation = parseTerminalDeliveryAttestation(attestationRaw)
+    const terminalRecord = buildOuterTerminalRecord(requestRaw, attestation, states)
+    return {
+      final_state: finalState,
+      states: cloneFrozen(states),
+      attestation,
+      terminal_record: terminalRecord,
+      controller_lease: controllerLease,
+      retry_record: retryRecord,
+      ledger_appends: cloneFrozen(ledgerAppends),
+      ...(targetRaw ? { target: targetRaw } : {}),
+    }
+  }
+
   try {
     exactKeys(requestRaw, [
       'schema_version', 'delivery_id', 'repository', 'replay_key', 'trusted_merge', 'artifact',
-      'target', 'controller', 'ledger', 'canary', 'promotion', 'post_deploy',
-      'previous_known_good', 'rollback', 'retry_history', 'timestamps',
+      'target', 'controller', 'ledger', 'transition_ledger', 'attempt', 'terminal_history',
+      'runner_ids', 'canary', 'promotion', 'post_deploy', 'previous_known_good', 'rollback',
+      'retry_history', 'retry_event', 'timestamps',
     ])
     if (requestRaw.schema_version !== 'linux-continuous-deployment-request/v1') fail('invalid_value', 'unsupported delivery request schema')
     text(requestRaw.delivery_id, 'delivery_id')
-    text(requestRaw.repository, 'repository', REPOSITORY)
+    if (requestRaw.repository !== EXPECTED_REPOSITORY) fail('trusted_merge_repository_invalid', 'request repository is not trusted')
     text(requestRaw.replay_key, 'replay_key')
+    exactKeys(requestRaw.attempt, [
+      'attempt_id', 'pr_class', 'supersedes_delivery_id', 'supersedes_attempt_id', 'previous_attempt_sha256',
+    ])
+    text(requestRaw.attempt.attempt_id, 'attempt.attempt_id')
+    if (!['ordinary', 'repair', 'revert', 'release_hotfix', 'activation_canary', 'activation_closure', 'reconciliation'].includes(requestRaw.attempt.pr_class)) {
+      fail('invalid_value', 'attempt PR class is invalid')
+    }
+    const supersedes = [requestRaw.attempt.supersedes_delivery_id, requestRaw.attempt.supersedes_attempt_id,
+      requestRaw.attempt.previous_attempt_sha256]
+    if (!supersedes.every((value) => value === null) && !supersedes.every((value) => value !== null)) {
+      fail('invalid_value', 'attempt lineage is partial')
+    }
+    if (requestRaw.attempt.supersedes_delivery_id !== null) {
+      text(requestRaw.attempt.supersedes_delivery_id, 'attempt.supersedes_delivery_id')
+      text(requestRaw.attempt.supersedes_attempt_id, 'attempt.supersedes_attempt_id')
+      digest(requestRaw.attempt.previous_attempt_sha256, 'attempt.previous_attempt_sha256')
+    }
+    if (!Array.isArray(requestRaw.terminal_history) || !Array.isArray(requestRaw.runner_ids)
+      || requestRaw.runner_ids.length > 32 || new Set(requestRaw.runner_ids).size !== requestRaw.runner_ids.length) {
+      fail('invalid_shape', 'terminal history or runner IDs are invalid')
+    }
+    requestRaw.runner_ids.forEach((runnerId) => text(runnerId, 'runner_id'))
     exactKeys(requestRaw.timestamps, ['requested_at'])
     timestamp(requestRaw.timestamps.requested_at, 'timestamps.requested_at')
-    trusted = parseTrustedMergeEvent(requestRaw.trusted_merge, { expectedRepository: requestRaw.repository })
-    states.push('TRUSTED_MERGED')
+    trusted = parseTrustedMergeEvent(requestRaw.trusted_merge, { expectedRepository: EXPECTED_REPOSITORY })
+    transition('TRUSTED_MERGED')
     if (!isObject(requestRaw.artifact)) {
-      states.push('PROVISIONING_REQUIRED', 'HELD')
-      const attestation = terminalFallback(requestRaw, states, 'PROVISIONING_REQUIRED')
+      transition('PROVISIONING_REQUIRED')
+      transition('HELD')
+      transition('TERMINAL_DELIVERY_ATTESTATION')
+      const attestation = terminalFallback(requestRaw, states, 'DEPLOYMENT_BLOCKED')
       attestation.timestamps.terminal_at = now.toISOString()
-      return { final_state: 'HELD', states, attestation: parseTerminalDeliveryAttestation(attestation) }
+      return close('HELD', attestation)
     }
-    states.push('BUILD_IMMUTABLE_ARTIFACT')
-    artifactRaw = parseArtifactProvenance(requestRaw.artifact, trusted)
-    states.push('VERIFY_ARTIFACT_PROVENANCE')
-    states.push('RESOLVE_DEPLOYMENT_TARGET')
+    transition('BUILD_IMMUTABLE_ARTIFACT')
+    artifactRaw = parseArtifactProvenance(requestRaw.artifact, trusted, {
+      now,
+      verifyArtifactProvenance: trustBoundary.verifyArtifactProvenance,
+    })
+    transition('VERIFY_ARTIFACT_PROVENANCE')
+    transition('RESOLVE_DEPLOYMENT_TARGET')
     if (!isObject(requestRaw.target)) {
-      states.push('PROVISIONING_REQUIRED', 'HELD')
-      const attestation = terminalFallback(requestRaw, states, 'PROVISIONING_REQUIRED')
+      transition('PROVISIONING_REQUIRED')
+      transition('HELD')
+      transition('TERMINAL_DELIVERY_ATTESTATION')
+      const attestation = terminalFallback(requestRaw, states, 'DEPLOYMENT_BLOCKED')
       attestation.timestamps.terminal_at = now.toISOString()
-      return { final_state: 'HELD', states, attestation: parseTerminalDeliveryAttestation(attestation) }
+      return close('HELD', attestation)
     }
-    targetRaw = parseDeploymentTarget(requestRaw.target, { now })
-    acquireSingleFlight(requestRaw.ledger, requestRaw)
-    states.push('PRE_DEPLOY_CHECK')
-    validateKnownGood(requestRaw.previous_known_good, targetRaw)
-    states.push('DEPLOY_CANARY')
+    targetRaw = parseDeploymentTarget(requestRaw.target, {
+      now,
+      verifyTargetLease: trustBoundary.verifyTargetLease,
+    })
+    const acquisition = acquireSingleFlight(requestRaw.ledger, requestRaw)
+    controllerLease = acquisition.entry
+    if (acquisition.idempotent) fail('duplicate_controller', 'idempotent replay is already owned by an active controller')
+    if (requestRaw.retry_history.length > 0) {
+      if (!isObject(requestRaw.retry_event)) fail('retry_budget_exhausted', 'retry event is required for a retry attempt')
+      retryRecord = evaluateRetry(requestRaw.retry_history, requestRaw.retry_event).record
+    } else if (requestRaw.retry_event !== null) {
+      fail('invalid_value', 'first attempt must not include a retry event')
+    }
+    transition('PRE_DEPLOY_CHECK')
+    validateKnownGood(requestRaw.previous_known_good, targetRaw, {
+      expectedPolicySha256: trusted.policy_sha256,
+      verifyKnownGoodProvenance: trustBoundary.verifyKnownGoodProvenance,
+    })
+    transition('DEPLOY_CANARY')
     const canary = parseVerification(requestRaw.canary, artifactRaw.artifact_sha256)
-    states.push('VERIFY_HEALTH_SMOKE_E2E')
+    transition('VERIFY_HEALTH_SMOKE_E2E')
     verificationSummary.push(...buildVerificationSummary('canary', canary.parsed))
     if (!canary.passed) {
-      const rollback = rollbackResult(requestRaw, states, verificationSummary)
+      const rollback = rollbackResult(requestRaw, states, verificationSummary, transition, trustBoundary)
+      transition('TERMINAL_DELIVERY_ATTESTATION')
       const attestation = buildAttestation(requestRaw, states, rollback.finalState, rollback.reasonCode,
         verificationSummary, { promotion: rollback.promotion, rollback: rollback.rollback, terminalAt: now.toISOString() })
-      return { final_state: rollback.finalState, states, attestation: parseTerminalDeliveryAttestation(attestation) }
+      return close(rollback.finalState, attestation)
     }
     exactKeys(requestRaw.promotion, ['artifact_sha256', 'approved_at'])
     digest(requestRaw.promotion.artifact_sha256, 'promotion.artifact_sha256')
     timestamp(requestRaw.promotion.approved_at, 'promotion.approved_at')
-    states.push('PROMOTE')
+    transition('PROMOTE')
     if (requestRaw.promotion.artifact_sha256 !== artifactRaw.artifact_sha256) {
-      const rollback = rollbackResult(requestRaw, states, verificationSummary)
+      const rollback = rollbackResult(requestRaw, states, verificationSummary, transition, trustBoundary)
+      transition('TERMINAL_DELIVERY_ATTESTATION')
       const attestation = buildAttestation(requestRaw, states, rollback.finalState, rollback.reasonCode,
         verificationSummary, { promotion: rollback.promotion, rollback: rollback.rollback, terminalAt: now.toISOString() })
-      return { final_state: rollback.finalState, states, attestation: parseTerminalDeliveryAttestation(attestation) }
+      return close(rollback.finalState, attestation)
     }
-    states.push('POST_DEPLOY_VERIFY')
+    transition('POST_DEPLOY_VERIFY')
     const postDeploy = parseVerification(requestRaw.post_deploy, artifactRaw.artifact_sha256)
     verificationSummary.push(...buildVerificationSummary('post_deploy', postDeploy.parsed))
     if (!postDeploy.passed) {
-      const rollback = rollbackResult(requestRaw, states, verificationSummary)
+      const rollback = rollbackResult(requestRaw, states, verificationSummary, transition, trustBoundary)
+      transition('TERMINAL_DELIVERY_ATTESTATION')
       const attestation = buildAttestation(requestRaw, states, rollback.finalState, rollback.reasonCode,
         verificationSummary, { promotion: rollback.promotion, rollback: rollback.rollback, terminalAt: now.toISOString() })
-      return { final_state: rollback.finalState, states, attestation: parseTerminalDeliveryAttestation(attestation) }
+      return close(rollback.finalState, attestation)
     }
-    states.push('ACTIVATED', 'TERMINAL_DELIVERY_ATTESTATION')
+    transition('ACTIVATED')
+    transition('TERMINAL_DELIVERY_ATTESTATION')
     const attestation = buildAttestation(requestRaw, states, 'ACTIVATED', 'DELIVERY_VERIFIED',
       verificationSummary, { promotion: 'verified', rollback: 'not_started', terminalAt: now.toISOString() })
-    return { final_state: 'ACTIVATED', states, attestation: parseTerminalDeliveryAttestation(attestation), target: targetRaw }
+    return close('ACTIVATED', attestation)
   } catch (error) {
-    if (!states.includes('HELD')) states.push('HELD')
-    const reasonCode = terminalReasonForError(error)
-    const attestation = terminalFallback(requestRaw, states, reasonCode)
+    try {
+      if (!states.includes('HELD')) transition('HELD')
+      if (!states.includes('TERMINAL_DELIVERY_ATTESTATION')) transition('TERMINAL_DELIVERY_ATTESTATION')
+    } catch {
+      if (!states.includes('HELD')) states.push('HELD')
+      if (!states.includes('TERMINAL_DELIVERY_ATTESTATION')) states.push('TERMINAL_DELIVERY_ATTESTATION')
+    }
+    const reasonCode = terminalReasonForError(error, states)
+    const failureCode = error instanceof LinuxContinuousDeploymentError ? error.code : 'unexpected-contract-failure'
+    const attestation = terminalFallback(requestRaw, states, reasonCode, {}, failureCode)
     attestation.timestamps.terminal_at = now.toISOString()
-    return { final_state: 'HELD', states, attestation: parseTerminalDeliveryAttestation(attestation) }
+    try {
+      return close('HELD', attestation)
+    } catch {
+      return {
+        final_state: 'HELD',
+        states: cloneFrozen(states),
+        attestation: parseTerminalDeliveryAttestation(attestation),
+        terminal_record: null,
+        controller_lease: controllerLease,
+        retry_record: retryRecord,
+        ledger_appends: cloneFrozen(ledgerAppends),
+      }
+    }
   }
 }

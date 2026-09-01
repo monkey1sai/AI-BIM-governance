@@ -2,7 +2,7 @@ import { mkdir, open, readFile } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { canonicalJson, sha256 } from '../lib/autonomous-delivery-contract.mjs'
+import { canonicalJson, parseTerminalRecord, sha256 } from '../lib/autonomous-delivery-contract.mjs'
 import {
   parseTerminalDeliveryAttestation,
   runLinuxContinuousDeployment,
@@ -34,12 +34,21 @@ export function buildProvisioningBoundaryFromGithubEvent(eventRaw, { now = new D
   const head = requiredObject(pullRequest.head, 'event.pull_request.head')
   if (event.action !== 'closed' || pullRequest.merged !== true) invalid('only merged pull_request.closed is accepted')
   if (repository.full_name !== EXPECTED_REPOSITORY) invalid('repository is not the expected repository')
+  if (!Number.isSafeInteger(repository.id) || repository.id < 1) invalid('repository id is invalid')
   if (base.ref !== 'main') invalid('base ref must be main')
   if (!Number.isSafeInteger(pullRequest.number) || pullRequest.number < 1) invalid('pull request number is invalid')
   const sourceHeadSha = requiredSha(head.sha, 'event.pull_request.head.sha')
+  const baseSha = requiredSha(base.sha, 'event.pull_request.base.sha')
   const mergeSha = requiredSha(pullRequest.merge_commit_sha, 'event.pull_request.merge_commit_sha')
   const requestedAt = new Date(pullRequest.merged_at ?? now).toISOString()
   const states = ['PROVISIONING_REQUIRED', 'HELD']
+  const failureDetail = {
+    namespace: 'linux-cd',
+    code: 'provisioning-required',
+    evidence_sha256: sha256(canonicalJson({ namespace: 'linux-cd', code: 'provisioning-required' })),
+  }
+  const deliveryId = `github-pr-${pullRequest.number}-merge-${mergeSha}`
+  const attemptId = `attempt:github-pr-${pullRequest.number}.1`
   const attestation = {
     schema_version: 'linux-continuous-deployment-attestation/v1',
     repository: repository.full_name,
@@ -55,19 +64,57 @@ export function buildProvisioningBoundaryFromGithubEvent(eventRaw, { now = new D
     verification: [],
     outcome: { promotion: 'not_started', rollback: 'not_started' },
     release_lineage: {
-      delivery_id: `github-pr-${pullRequest.number}-merge-${mergeSha}`,
+      delivery_id: deliveryId,
+      attempt_id: attemptId,
+      supersedes_delivery_id: null,
+      supersedes_attempt_id: null,
+      previous_attempt_sha256: null,
       previous_known_good_release_id: null,
     },
+    failure_detail: [failureDetail],
     state_history_sha256: sha256(canonicalJson(states)),
     final_state: 'HELD',
     terminal_class: 'HELD',
-    reason_code: 'PROVISIONING_REQUIRED',
+    reason_code: 'DEPLOYMENT_BLOCKED',
   }
+  const terminalRecord = parseTerminalRecord(canonicalJson({
+    schema_version: 'autonomous-delivery-terminal-record/v1',
+    delivery_id: deliveryId,
+    attempt_id: attemptId,
+    pr_class: 'ordinary',
+    supersedes_delivery_id: null,
+    supersedes_attempt_id: null,
+    previous_attempt_sha256: null,
+    repository: { full_name: repository.full_name, repository_id: repository.id },
+    pull_request: { number: pullRequest.number, base_oid: baseSha, head_oid: sourceHeadSha },
+    phase: 'CLOSED',
+    last_phase: 'MERGED',
+    terminal_class: 'HELD',
+    reason_code: 'ACTIVATION_UNATTESTED',
+    merge_observed: true,
+    merge_commit_oid: mergeSha,
+    fetched_origin_main_oid: null,
+    deployed_commit_oid: null,
+    command_state: 'not_started',
+    target_id: null,
+    runner_ids: [],
+    gates: [],
+    artifacts: [{
+      artifact_id: 'linux-cd-failure:provisioning-required',
+      sha256: failureDetail.evidence_sha256,
+      size_bytes: 1,
+      media_type: 'application/json',
+      retention_class: 'delivery_30d',
+    }],
+    failure_detail: [failureDetail],
+    closed_at: now.toISOString(),
+  }))
   return {
     schema_version: 'linux-continuous-deployment-controller-result/v1',
     final_state: 'HELD',
     states,
     attestation: parseTerminalDeliveryAttestation(attestation),
+    terminal_record: terminalRecord,
   }
 }
 

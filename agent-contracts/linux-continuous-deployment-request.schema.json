@@ -14,12 +14,17 @@
     "target",
     "controller",
     "ledger",
+    "transition_ledger",
+    "attempt",
+    "terminal_history",
+    "runner_ids",
     "canary",
     "promotion",
     "post_deploy",
     "previous_known_good",
     "rollback",
     "retry_history",
+    "retry_event",
     "timestamps"
   ],
   "properties": {
@@ -32,6 +37,16 @@
     "target": { "oneOf": [{ "$ref": "#/definitions/target" }, { "type": "null" }] },
     "controller": { "$ref": "#/definitions/controller" },
     "ledger": { "type": "array", "maxItems": 1000, "items": { "$ref": "#/definitions/controller_lease" } },
+    "transition_ledger": { "type": "array", "maxItems": 1000, "items": { "$ref": "#/definitions/transition_record" } },
+    "attempt": { "$ref": "#/definitions/attempt" },
+    "terminal_history": {
+      "type": "array", "maxItems": 32,
+      "items": { "$ref": "autonomous-delivery-terminal-record.schema.json" }
+    },
+    "runner_ids": {
+      "type": "array", "minItems": 2, "maxItems": 32, "uniqueItems": true,
+      "items": { "type": "string", "minLength": 1, "maxLength": 200 }
+    },
     "canary": { "$ref": "#/definitions/verification" },
     "promotion": {
       "type": "object",
@@ -46,11 +61,19 @@
     "previous_known_good": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["artifact_sha256", "provenance_sha256", "release_id", "target_fingerprint"],
+      "required": [
+        "artifact_sha256", "provenance_sha256", "release_id", "source_merge_sha",
+        "source_tree_sha", "policy_sha256", "issuer", "key_id", "target_fingerprint"
+      ],
       "properties": {
         "artifact_sha256": { "$ref": "#/definitions/sha256" },
         "provenance_sha256": { "$ref": "#/definitions/sha256" },
         "release_id": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "source_merge_sha": { "$ref": "#/definitions/sha1" },
+        "source_tree_sha": { "$ref": "#/definitions/sha1" },
+        "policy_sha256": { "$ref": "#/definitions/sha256" },
+        "issuer": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "key_id": { "type": "string", "minLength": 1, "maxLength": 200 },
         "target_fingerprint": { "$ref": "#/definitions/sha256" }
       }
     },
@@ -65,6 +88,20 @@
       }
     },
     "retry_history": { "type": "array", "maxItems": 32, "items": { "$ref": "#/definitions/retry_record" } },
+    "retry_event": {
+      "oneOf": [
+        {
+          "type": "object", "additionalProperties": false,
+          "required": ["failure_class", "evidence_sha256", "event_id"],
+          "properties": {
+            "failure_class": { "type": "string", "minLength": 1, "maxLength": 200 },
+            "evidence_sha256": { "$ref": "#/definitions/sha256" },
+            "event_id": { "type": "string", "minLength": 1, "maxLength": 200 }
+          }
+        },
+        { "type": "null" }
+      ]
+    },
     "timestamps": {
       "type": "object",
       "additionalProperties": false,
@@ -80,21 +117,27 @@
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "schema_version", "repository", "event_name", "event_id", "pull_request", "merged",
-        "base_ref", "source_head_ref", "source_head_sha", "trusted_merge_sha",
+        "schema_version", "repository", "repository_id", "event_name", "event_id", "pull_request", "merged",
+        "base_ref", "base_sha", "source_head_ref", "source_head_sha", "trusted_merge_sha",
+        "merge_tree_sha", "fetched_origin_main_sha", "policy_sha256",
         "merge_authority", "collector", "ci_convergence", "observed_at"
       ],
       "properties": {
         "schema_version": { "const": "linux-cd-trusted-merge-event/v1" },
         "repository": { "const": "monkey1sai/AI-BIM-governance" },
+        "repository_id": { "type": "integer", "minimum": 1 },
         "event_name": { "const": "pull_request.closed" },
         "event_id": { "type": "string", "minLength": 1, "maxLength": 200 },
         "pull_request": { "type": "integer", "minimum": 1 },
         "merged": { "const": true },
         "base_ref": { "const": "main" },
+        "base_sha": { "$ref": "#/definitions/sha1" },
         "source_head_ref": { "type": "string", "minLength": 1, "maxLength": 200 },
         "source_head_sha": { "$ref": "#/definitions/sha1" },
         "trusted_merge_sha": { "$ref": "#/definitions/sha1" },
+        "merge_tree_sha": { "$ref": "#/definitions/sha1" },
+        "fetched_origin_main_sha": { "$ref": "#/definitions/sha1" },
+        "policy_sha256": { "$ref": "#/definitions/sha256" },
         "merge_authority": {
           "type": "object",
           "additionalProperties": false,
@@ -148,7 +191,7 @@
       "additionalProperties": false,
       "required": [
         "schema_version", "repository", "merge_sha", "source_tree_sha", "artifact_sha256",
-        "observed_sha256", "artifact_size_bytes", "artifact_uri", "build_run", "provenance", "built_at"
+        "observed_sha256", "artifact_size_bytes", "artifact_uri", "policy_sha256", "build_run", "provenance", "built_at"
       ],
       "properties": {
         "schema_version": { "const": "linux-cd-artifact-provenance/v1" },
@@ -159,6 +202,7 @@
         "observed_sha256": { "$ref": "#/definitions/sha256" },
         "artifact_size_bytes": { "type": "integer", "minimum": 1 },
         "artifact_uri": { "type": "string", "pattern": "^artifact:[A-Za-z0-9._:/-]+$" },
+        "policy_sha256": { "$ref": "#/definitions/sha256" },
         "build_run": {
           "type": "object", "additionalProperties": false,
           "required": ["provider", "run_id", "run_attempt"],
@@ -170,10 +214,19 @@
         },
         "provenance": {
           "type": "object", "additionalProperties": false,
-          "required": ["issuer", "key_id", "evidence_sha256"],
+          "required": [
+            "issuer", "key_id", "algorithm", "nonce", "issued_at", "expires_at",
+            "payload_sha256", "signature", "evidence_sha256"
+          ],
           "properties": {
             "issuer": { "type": "string", "minLength": 1, "maxLength": 200 },
             "key_id": { "type": "string", "minLength": 1, "maxLength": 200 },
+            "algorithm": { "const": "ed25519" },
+            "nonce": { "type": "string", "minLength": 1, "maxLength": 200 },
+            "issued_at": { "$ref": "#/definitions/timestamp" },
+            "expires_at": { "$ref": "#/definitions/timestamp" },
+            "payload_sha256": { "$ref": "#/definitions/sha256" },
+            "signature": { "type": "string", "minLength": 16, "maxLength": 1024 },
             "evidence_sha256": { "$ref": "#/definitions/sha256" }
           }
         },
@@ -202,13 +255,21 @@
         "deployment_method": { "const": "scripts/dev/rebuild-test-deploy.ps1 -Build" },
         "credential_authority": {
           "type": "object", "additionalProperties": false,
-          "required": ["kind", "issuer", "key_id", "lease_id", "expires_at"],
+          "required": [
+            "kind", "issuer", "key_id", "algorithm", "lease_id", "nonce", "issued_at",
+            "expires_at", "payload_sha256", "signature"
+          ],
           "properties": {
             "kind": { "const": "opaque_target_lease" },
             "issuer": { "type": "string", "minLength": 1, "maxLength": 200 },
             "key_id": { "type": "string", "minLength": 1, "maxLength": 200 },
+            "algorithm": { "const": "ed25519" },
             "lease_id": { "type": "string", "minLength": 1, "maxLength": 200 },
-            "expires_at": { "$ref": "#/definitions/timestamp" }
+            "nonce": { "type": "string", "minLength": 1, "maxLength": 200 },
+            "issued_at": { "$ref": "#/definitions/timestamp" },
+            "expires_at": { "$ref": "#/definitions/timestamp" },
+            "payload_sha256": { "$ref": "#/definitions/sha256" },
+            "signature": { "type": "string", "minLength": 16, "maxLength": 1024 }
           }
         }
       }
@@ -219,6 +280,47 @@
       "properties": {
         "owner_id": { "type": "string", "minLength": 1, "maxLength": 200 },
         "lease_id": { "type": "string", "minLength": 1, "maxLength": 200 }
+      }
+    },
+    "attempt": {
+      "type": "object", "additionalProperties": false,
+      "required": [
+        "attempt_id", "pr_class", "supersedes_delivery_id", "supersedes_attempt_id",
+        "previous_attempt_sha256"
+      ],
+      "properties": {
+        "attempt_id": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "pr_class": {
+          "enum": [
+            "ordinary", "repair", "revert", "release_hotfix", "activation_canary",
+            "activation_closure", "reconciliation"
+          ]
+        },
+        "supersedes_delivery_id": { "type": ["string", "null"], "minLength": 1, "maxLength": 200 },
+        "supersedes_attempt_id": { "type": ["string", "null"], "minLength": 1, "maxLength": 200 },
+        "previous_attempt_sha256": { "oneOf": [{ "$ref": "#/definitions/sha256" }, { "type": "null" }] }
+      }
+    },
+    "transition_record": {
+      "type": "object", "additionalProperties": false,
+      "required": [
+        "delivery_id", "event_id", "state", "evidence_sha256", "previous_sha256", "record_sha256"
+      ],
+      "properties": {
+        "delivery_id": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "event_id": { "type": "string", "minLength": 1, "maxLength": 512 },
+        "state": {
+          "enum": [
+            "TRUSTED_MERGED", "BUILD_IMMUTABLE_ARTIFACT", "VERIFY_ARTIFACT_PROVENANCE",
+            "RESOLVE_DEPLOYMENT_TARGET", "PRE_DEPLOY_CHECK", "DEPLOY_CANARY",
+            "VERIFY_HEALTH_SMOKE_E2E", "PROMOTE", "POST_DEPLOY_VERIFY", "ACTIVATED",
+            "TERMINAL_DELIVERY_ATTESTATION", "PROVISIONING_REQUIRED",
+            "ROLLBACK_TO_PINNED_KNOWN_GOOD_ARTIFACT", "VERIFY_ROLLBACK", "ROLLED_BACK", "HELD"
+          ]
+        },
+        "evidence_sha256": { "$ref": "#/definitions/sha256" },
+        "previous_sha256": { "oneOf": [{ "$ref": "#/definitions/sha256" }, { "type": "null" }] },
+        "record_sha256": { "$ref": "#/definitions/sha256" }
       }
     },
     "controller_lease": {

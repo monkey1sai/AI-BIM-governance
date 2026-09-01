@@ -8,7 +8,7 @@
     "schema_version", "repository", "pull_request", "source_head_sha", "trusted_merge_sha",
     "artifact_sha256", "environment", "service", "target_fingerprint", "deployment_method",
     "timestamps", "verification", "outcome", "release_lineage", "state_history_sha256",
-    "final_state", "terminal_class", "reason_code"
+    "failure_detail", "final_state", "terminal_class", "reason_code"
   ],
   "properties": {
     "schema_version": { "const": "linux-continuous-deployment-attestation/v1" },
@@ -52,26 +52,39 @@
     },
     "release_lineage": {
       "type": "object", "additionalProperties": false,
-      "required": ["delivery_id", "previous_known_good_release_id"],
+      "required": [
+        "delivery_id", "attempt_id", "supersedes_delivery_id", "supersedes_attempt_id",
+        "previous_attempt_sha256", "previous_known_good_release_id"
+      ],
       "properties": {
         "delivery_id": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "attempt_id": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "supersedes_delivery_id": { "type": ["string", "null"], "minLength": 1, "maxLength": 200 },
+        "supersedes_attempt_id": { "type": ["string", "null"], "minLength": 1, "maxLength": 200 },
+        "previous_attempt_sha256": { "$ref": "#/definitions/nullable_sha256" },
         "previous_known_good_release_id": { "type": ["string", "null"], "minLength": 1, "maxLength": 200 }
       }
     },
     "state_history_sha256": { "$ref": "#/definitions/sha256" },
+    "failure_detail": {
+      "type": "array", "maxItems": 64,
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["namespace", "code", "evidence_sha256"],
+        "properties": {
+          "namespace": { "type": "string", "minLength": 1, "maxLength": 200 },
+          "code": { "type": "string", "minLength": 1, "maxLength": 200 },
+          "evidence_sha256": { "$ref": "#/definitions/sha256" }
+        }
+      }
+    },
     "final_state": { "enum": ["ACTIVATED", "ROLLED_BACK", "HELD"] },
     "terminal_class": { "enum": ["DELIVERED", "FAILED", "HELD"] },
     "reason_code": {
       "enum": [
-        "DELIVERY_VERIFIED",
-        "MERGED_NOT_DELIVERED",
-        "PROVISIONING_REQUIRED",
-        "CONTRACT_INVALID",
-        "DEPLOYMENT_BLOCKED",
-        "ROLLBACK_UNVERIFIED",
-        "RETRY_BUDGET_EXHAUSTED",
-        "DUPLICATE_CONTROLLER",
-        "REPLAY_REJECTED"
+        "DELIVERY_VERIFIED", "PREMERGE_EVIDENCE_INVALID", "PREMERGE_AUTHORITY_UNAVAILABLE",
+        "POLICY_OR_SETTINGS_DRIFT", "MERGE_OUTCOME_UNVERIFIED", "DEPLOYMENT_BLOCKED",
+        "MERGED_NOT_DELIVERED", "DELIVERY_PENDING_FIXPOINT", "ACTIVATION_UNATTESTED"
       ]
     }
   },

@@ -33,7 +33,7 @@
   ],
   "failure_paths": {
     "authority_or_provenance": ["HELD"],
-    "missing_live_provisioning": ["PROVISIONING_REQUIRED", "HELD"],
+    "missing_live_provisioning": ["PROVISIONING_REQUIRED", "HELD", "TERMINAL_DELIVERY_ATTESTATION"],
     "deploy_or_verify": [
       "ROLLBACK_TO_PINNED_KNOWN_GOOD_ARTIFACT",
       "VERIFY_ROLLBACK",
@@ -47,13 +47,13 @@
     "HELD": {
       "terminal_class": "HELD",
       "reason_codes": [
-        "PROVISIONING_REQUIRED",
-        "CONTRACT_INVALID",
+        "PREMERGE_EVIDENCE_INVALID",
+        "PREMERGE_AUTHORITY_UNAVAILABLE",
+        "POLICY_OR_SETTINGS_DRIFT",
+        "MERGE_OUTCOME_UNVERIFIED",
         "DEPLOYMENT_BLOCKED",
-        "ROLLBACK_UNVERIFIED",
-        "RETRY_BUDGET_EXHAUSTED",
-        "DUPLICATE_CONTROLLER",
-        "REPLAY_REJECTED"
+        "DELIVERY_PENDING_FIXPOINT",
+        "ACTIVATION_UNATTESTED"
       ]
     }
   },
