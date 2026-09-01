@@ -68,7 +68,20 @@ describe("a1OfflineViewport (Task 3.1)", () => {
           count: 1,
           active_count: 1,
           participant_count: 2,
-          items: [{ session_id: "S-12345", status: "active" } as any],
+          items: [
+            {
+              session_id: "S-12345",
+              status: "active",
+              project_id: "proj_a1_test",
+              model_version_id: "mv_a1_test",
+              participant_count: 2,
+              expected_stage_url: null,
+              conversion_status: null,
+              kit_instance_ids: [],
+              created_at: "2026-08-25T00:00:00Z",
+              updated_at: "2026-08-25T00:00:00Z",
+            },
+          ],
         },
       },
     });
