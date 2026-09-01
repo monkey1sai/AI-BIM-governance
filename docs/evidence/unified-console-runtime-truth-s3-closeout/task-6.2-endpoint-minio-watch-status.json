@@ -1,0 +1,23 @@
+{
+  "endpoint": "/api/external/minio-watch/status",
+  "captured_at_window": {
+    "start": "2026-08-31T11:49:17.302Z",
+    "end": "2026-08-31T11:49:17.370Z"
+  },
+  "status": 200,
+  "body": {
+    "enabled": true,
+    "bucket": "<canonical-bucket>",
+    "prefix": "",
+    "interval_seconds": 60,
+    "last_poll_at": "2026-08-31T11:48:53.579Z",
+    "poll_count": 34,
+    "last_error": null,
+    "baseline_count": 12,
+    "seen_count": 12,
+    "triggered_total": 0,
+    "skipped_malformed_total": 0,
+    "last_triggered": []
+  },
+  "ms": 4
+}
