@@ -12,6 +12,63 @@ function Assert-True {
     if (-not $Condition) { throw "ASSERT FAILED: $Message" }
 }
 
+function Test-TrustedLinuxBoundary {
+    param([Parameter(Mandatory = $true)] $WorkflowTree)
+
+    try {
+        $suiteJob = $WorkflowTree['jobs']['suite']
+        $boundaryJob = $WorkflowTree['jobs']['new-run-boundary']
+        $linuxEntries = @($boundaryJob['strategy']['matrix']['include'] | Where-Object {
+            ([string]$_['platform']) -ceq 'linux-positive'
+        })
+        if ($linuxEntries.Count -ne 1 -or ([string]$linuxEntries[0]['runner']) -cne 'ubuntu-latest') { return $false }
+
+        $suiteRuns = @($suiteJob['steps'] | Where-Object { $_.Contains('run') } | ForEach-Object { [string]$_['run'] }) -join "`n"
+        if ($suiteRuns -match 'test-manage-pr-queue\.mjs|test-parallel-delivery-fabric-static-policy\.ps1') { return $false }
+
+        $boundarySteps = @($boundaryJob['steps'])
+        $gitSteps = @($boundarySteps | Where-Object { ([string]$_['name']) -ceq 'Require canonical read-only Linux Git' })
+        $staticSteps = @($boundarySteps | Where-Object { ([string]$_['name']) -ceq 'Run Parallel Delivery Fabric static policy' })
+        $queueSteps = @($boundarySteps | Where-Object { ([string]$_['name']) -ceq 'Run canonical review-policy queue tests' })
+        if ($gitSteps.Count -ne 1 -or $staticSteps.Count -ne 1 -or $queueSteps.Count -ne 1) { return $false }
+
+        $expectedGitRun = @(
+            'set -euo pipefail'
+            'test -x /usr/bin/git'
+            'test "$(realpath /usr/bin/git)" = /usr/bin/git'
+            'test "$(realpath "$(command -v git)")" = /usr/bin/git'
+            'test ! -w /usr/bin/git'
+        ) -join "`n"
+        $gitStep = $gitSteps[0]
+        if (([string]$gitStep['if']) -cne "matrix.platform == 'linux-positive'" -or
+            ([string]$gitStep['shell']) -cne 'bash' -or
+            ([string]$gitStep['run']).Replace("`r`n", "`n").Trim() -cne $expectedGitRun) { return $false }
+
+        $staticStep = $staticSteps[0]
+        if (([string]$staticStep['if']) -cne "matrix.platform == 'linux-positive'" -or
+            ([string]$staticStep['shell']) -cne 'pwsh' -or
+            ([string]$staticStep['run']) -cne 'pwsh -NoProfile -NonInteractive -File scripts/tests/test-parallel-delivery-fabric-static-policy.ps1') { return $false }
+
+        $queueStep = $queueSteps[0]
+        if (([string]$queueStep['if']) -cne "matrix.platform == 'linux-positive'" -or
+            ([string]$queueStep['shell']) -cne 'pwsh' -or
+            ([string]$queueStep['run']) -cne 'node --test scripts/tests/test-manage-pr-queue.mjs') { return $false }
+
+        $stepNames = @($boundarySteps | ForEach-Object { [string]$_['name'] })
+        $gitIndex = [array]::IndexOf($stepNames, 'Require canonical read-only Linux Git')
+        $staticIndex = [array]::IndexOf($stepNames, 'Run Parallel Delivery Fabric static policy')
+        $queueIndex = [array]::IndexOf($stepNames, 'Run canonical review-policy queue tests')
+        return $gitIndex -ge 0 -and $staticIndex -eq ($gitIndex + 1) -and $queueIndex -eq ($staticIndex + 1)
+    } catch {
+        return $false
+    }
+}
+
+function Copy-WorkflowTree {
+    param([Parameter(Mandatory = $true)] $WorkflowTree)
+    return ($WorkflowTree | ConvertTo-Json -Depth 100 | ConvertFrom-Json -AsHashtable)
+}
+
 function Assert-FileContains {
     param(
         [Parameter(Mandatory = $true)][string] $Path,
@@ -286,7 +343,8 @@ try {
     Assert-True ($governanceWorkflow -match 'publishing explicit no-op success') 'unaffected paths produce an explicit successful terminal result'
     Assert-True ($governanceWorkflow -match '(?m)^\s+timeout-minutes:\s*30\s*$') 'agent-governance workflow has a bounded runtime'
     Assert-True ($governanceWorkflow -match 'scripts/tests/test-agent-governance-check\.ps1') 'agent-governance workflow runs static check'
-    Assert-True ($governanceWorkflow -match 'node --test scripts/tests/test-cleanup-orphan-dev-processes\.mjs scripts/tests/test-manage-pr-queue\.mjs scripts/tests/test-pr-queue-adversarial-and-stress\.mjs') 'agent-governance workflow runs isolated orphan cleanup and named PR queue tests'
+    Assert-True ($governanceWorkflow -match 'node --test scripts/tests/test-cleanup-orphan-dev-processes\.mjs scripts/tests/test-pr-queue-adversarial-and-stress\.mjs') 'Windows governance suite runs OS-specific orphan cleanup and queue safety tests'
+    Assert-True ($governanceWorkflow -match 'node --test scripts/tests/test-manage-pr-queue\.mjs') 'trusted Linux boundary runs canonical review-policy queue tests'
     Assert-True ($governanceWorkflow -match 'node --test scripts/tests/test-trusted-host-merge\.mjs scripts/tests/test-trusted-host-merge-runtime\.mjs') 'agent-governance runs trusted host executor and broker contract tests'
     Assert-True ($governanceWorkflow -match 'pwsh -NoProfile -NonInteractive -File scripts/tests/test-isolated-branch-stack\.ps1') 'agent-governance workflow runs isolated branch stack machine tests'
     Assert-True ($governanceWorkflow -match 'scripts/tests/test-openspec-ledger-reconciliation\.ps1') 'agent-governance workflow runs OpenSpec ledger reconciliation tests'
@@ -315,21 +373,38 @@ try {
     $governanceWorkflowTree = ConvertFrom-AgentGovernanceYaml -Text $governanceWorkflow -Origin '.github/workflows/agent-governance.yml'
     $suiteJob = $governanceWorkflowTree['jobs']['suite']
     $newRunBoundaryJob = $governanceWorkflowTree['jobs']['new-run-boundary']
-    $staticPolicySuiteSteps = @($suiteJob['steps'] | Where-Object {
-        ([string]$_['name']) -ceq 'Run Parallel Delivery Fabric static policy'
-    })
-    $staticPolicyBoundarySteps = @($newRunBoundaryJob['steps'] | Where-Object {
-        ([string]$_['name']) -ceq 'Run Parallel Delivery Fabric static policy'
-    })
-    Assert-True ($staticPolicySuiteSteps.Count -eq 0) 'caller-writable Windows suite never runs the trusted-Git-positive Fabric static policy'
-    Assert-True ($staticPolicyBoundarySteps.Count -eq 1) 'trusted Linux boundary runs the Fabric static policy exactly once'
-    $staticPolicyBoundaryStep = $staticPolicyBoundarySteps[0]
-    Assert-True (([string]$staticPolicyBoundaryStep['if']) -ceq "matrix.platform == 'linux-positive'") 'Fabric static policy is restricted to the trusted Linux-positive leg'
-    Assert-True (([string]$staticPolicyBoundaryStep['run']) -match 'scripts/tests/test-parallel-delivery-fabric-static-policy\.ps1') 'trusted Linux boundary executes the real Fabric static-policy suite'
-    $newRunStepNames = @($newRunBoundaryJob['steps'] | ForEach-Object { [string]$_['name'] })
-    $linuxGitAuthorityIndex = [array]::IndexOf($newRunStepNames, 'Require canonical read-only Linux Git')
-    $staticPolicyIndex = [array]::IndexOf($newRunStepNames, 'Run Parallel Delivery Fabric static policy')
-    Assert-True ($linuxGitAuthorityIndex -ge 0 -and $staticPolicyIndex -gt $linuxGitAuthorityIndex) 'Fabric static policy runs only after the Linux Git authority gate'
+    Assert-True (Test-TrustedLinuxBoundary -WorkflowTree $governanceWorkflowTree) 'trusted Linux boundary locks runner, exact Git authority, adjacent Fabric policy, and canonical queue tests'
+
+    $noOpGate = Copy-WorkflowTree -WorkflowTree $governanceWorkflowTree
+    $noOpGateStep = @($noOpGate['jobs']['new-run-boundary']['steps'] | Where-Object { ([string]$_['name']) -ceq 'Require canonical read-only Linux Git' })[0]
+    $noOpGateStep['run'] = 'echo bypass'
+    Assert-True (-not (Test-TrustedLinuxBoundary -WorkflowTree $noOpGate)) 'a no-op trusted-Git gate is rejected in memory'
+
+    $missingCommand = Copy-WorkflowTree -WorkflowTree $governanceWorkflowTree
+    $missingCommandGate = @($missingCommand['jobs']['new-run-boundary']['steps'] | Where-Object { ([string]$_['name']) -ceq 'Require canonical read-only Linux Git' })[0]
+    $missingCommandGate['run'] = ([string]$missingCommandGate['run']).Replace("test -x /usr/bin/git`n", '')
+    Assert-True (-not (Test-TrustedLinuxBoundary -WorkflowTree $missingCommand)) 'an incomplete trusted-Git gate is rejected in memory'
+
+    $wrongCondition = Copy-WorkflowTree -WorkflowTree $governanceWorkflowTree
+    $wrongConditionGate = @($wrongCondition['jobs']['new-run-boundary']['steps'] | Where-Object { ([string]$_['name']) -ceq 'Require canonical read-only Linux Git' })[0]
+    $wrongConditionGate['if'] = "matrix.platform == 'windows-negative'"
+    Assert-True (-not (Test-TrustedLinuxBoundary -WorkflowTree $wrongCondition)) 'a misrouted trusted-Git gate is rejected in memory'
+
+    $intermediary = Copy-WorkflowTree -WorkflowTree $governanceWorkflowTree
+    $intermediarySteps = [System.Collections.Generic.List[object]]::new()
+    foreach ($step in @($intermediary['jobs']['new-run-boundary']['steps'])) {
+        $intermediarySteps.Add($step)
+        if (([string]$step['name']) -ceq 'Require canonical read-only Linux Git') {
+            $intermediarySteps.Add([ordered]@{
+                name = 'Injected intermediary'
+                if = "matrix.platform == 'linux-positive'"
+                shell = 'pwsh'
+                run = 'Write-Host bypass'
+            })
+        }
+    }
+    $intermediary['jobs']['new-run-boundary']['steps'] = @($intermediarySteps)
+    Assert-True (-not (Test-TrustedLinuxBoundary -WorkflowTree $intermediary)) 'a non-adjacent Fabric policy step is rejected in memory'
     Assert-True ($suiteJob.Contains('strategy') -and $suiteJob['strategy'].Contains('matrix') -and $suiteJob['strategy']['matrix'].Contains('shard')) 'agent-governance suite declares its shard matrix'
     Assert-True (([string]$suiteJob['strategy']['fail-fast']) -ceq 'false') 'one failing shard never cancels the others, so a single red leg cannot hide a second failure'
     $declaredShards = @(@($suiteJob['strategy']['matrix']['shard']) | ForEach-Object { [string]$_ })
