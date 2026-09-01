@@ -207,6 +207,304 @@ try {
     $mechanism = @('scripts/deploy.ps1')
     $emptyJson = New-LedgerJson -Entries @()
 
+    $trustedGitAvailable = $true
+    try {
+        $null = Get-SelfReferentialTrustedGitIdentity
+    } catch {
+        if ($_.Exception.Message -notmatch 'no approved system-owned, read-only Git executable was found') {
+            throw
+        }
+        $trustedGitAvailable = $false
+    }
+
+    # A caller-writable executable can still make a ReadWrite probe throw
+    # IOException by holding a deny-write sharing handle. That ambiguity must
+    # reject the candidate before Invoke-SelfReferentialTrustedGit starts it.
+    $trustedGitFixtureRoot = Join-Path $tempRoot 'trusted-git-sharing-lock'
+    $trustedGitCmdRoot = Join-Path $trustedGitFixtureRoot 'Git\cmd'
+    New-Item -ItemType Directory -Path $trustedGitCmdRoot -Force | Out-Null
+    $callerWritableGit = Join-Path $trustedGitCmdRoot 'git.exe'
+    [IO.File]::WriteAllText($callerWritableGit, 'caller-writable fixture')
+    $writeProof = [IO.File]::Open(
+        $callerWritableGit,
+        [IO.FileMode]::Open,
+        [IO.FileAccess]::ReadWrite,
+        [IO.FileShare]::ReadWrite
+    )
+    $writeProof.Dispose()
+
+    $denyWriteHandle = $null
+    try {
+        $denyWriteHandle = [IO.File]::Open(
+            $callerWritableGit,
+            [IO.FileMode]::Open,
+            [IO.FileAccess]::Read,
+            [IO.FileShare]::Read
+        )
+        Assert-True (-not (Test-SelfReferentialGitWriteDenied -Path $callerWritableGit)) 'sharing-locked caller-writable Git is not classified as permission-denied'
+    } finally {
+        if ($null -ne $denyWriteHandle) { $denyWriteHandle.Dispose() }
+    }
+
+    # ProgramFiles, ProgramW6432, and SystemRoot are caller-controlled process
+    # environment. Even a caller-created fake made read-only after creation must
+    # never become a production candidate or child-process PATH authority.
+    # This Windows-negative assertion remains runnable on hosted Windows even
+    # when that runner cannot supply a positive read-only Git identity.
+    if ($script:IsWindowsHost) {
+        $previousProgramFiles = [Environment]::GetEnvironmentVariable('ProgramFiles', 'Process')
+        $previousProgramW6432 = [Environment]::GetEnvironmentVariable('ProgramW6432', 'Process')
+        $previousSystemRoot = [Environment]::GetEnvironmentVariable('SystemRoot', 'Process')
+        $previousFakeAttributes = [IO.File]::GetAttributes($callerWritableGit)
+        try {
+            [IO.File]::SetAttributes($callerWritableGit, $previousFakeAttributes -bor [IO.FileAttributes]::ReadOnly)
+            [Environment]::SetEnvironmentVariable('ProgramFiles', $trustedGitFixtureRoot, 'Process')
+            [Environment]::SetEnvironmentVariable('ProgramW6432', $trustedGitFixtureRoot, 'Process')
+            [Environment]::SetEnvironmentVariable('SystemRoot', $trustedGitFixtureRoot, 'Process')
+
+            if ($trustedGitAvailable) {
+                $trustedIdentity = Get-SelfReferentialTrustedGitIdentity
+                Assert-True ($trustedIdentity.Path -cne $callerWritableGit) 'process environment cannot redirect trusted Git to a caller-created read-only fake'
+                $knownProgramRoots = @(
+                    [Environment]::GetFolderPath([Environment+SpecialFolder]::ProgramFiles)
+                    [Environment]::GetFolderPath([Environment+SpecialFolder]::ProgramFilesX86)
+                ) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+                $insideKnownProgramRoot = @($knownProgramRoots | Where-Object {
+                    $prefix = ([IO.Path]::GetFullPath($_)).TrimEnd('\') + '\'
+                    $trustedIdentity.Path.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)
+                }).Count -gt 0
+                Assert-True $insideKnownProgramRoot 'trusted Git remains rooted in an OS known Program Files directory'
+
+                $trustedGitVersion = @(Invoke-SelfReferentialTrustedGit -RepoRoot $repoRoot -Arguments @('--version'))
+                Assert-True ($script:SelfReferentialGitExitCode -eq 0) 'trusted Git still executes after process environment poisoning'
+                Assert-True (($trustedGitVersion -join [Environment]::NewLine) -match '^git version ') 'trusted Git execution returns the real Git version'
+            } else {
+                Assert-Throws -Context 'poisoned Windows paths without a trusted host Git' `
+                    -MessagePattern 'no approved system-owned, read-only Git executable was found' -Action {
+                    Get-SelfReferentialTrustedGitIdentity
+                }
+            }
+        } finally {
+            [IO.File]::SetAttributes($callerWritableGit, $previousFakeAttributes)
+            [Environment]::SetEnvironmentVariable('ProgramFiles', $previousProgramFiles, 'Process')
+            [Environment]::SetEnvironmentVariable('ProgramW6432', $previousProgramW6432, 'Process')
+            [Environment]::SetEnvironmentVariable('SystemRoot', $previousSystemRoot, 'Process')
+        }
+    }
+    $writeAfterPoisoning = [IO.File]::Open(
+        $callerWritableGit,
+        [IO.FileMode]::Open,
+        [IO.FileAccess]::ReadWrite,
+        [IO.FileShare]::ReadWrite
+    )
+    $writeAfterPoisoning.Dispose()
+
+    if (-not $trustedGitAvailable) {
+        if ($env:SPEC_TO_DONE_REQUIRE_TRUSTED_GIT_TESTS -eq '1') {
+            throw 'required trusted-Git coverage cannot run because no approved system-owned, read-only Git executable was found.'
+        }
+        Write-Host '[test-self-referential-bootstrap] Windows negative assertions passed; full positive suite is required on canonical Linux.'
+        return
+    }
+
+    # A trusted executable path is insufficient when the child inherits dynamic
+    # loader controls. Invalid sentinels make an unsanitized Linux/macOS launch
+    # fail or emit the sentinel before Git starts; a clean invocation proves the
+    # caller's loader environment did not cross the process boundary.
+    $loaderVariables = @(
+        'LD_PRELOAD'
+        'LD_LIBRARY_PATH'
+        'LD_AUDIT'
+        'DYLD_INSERT_LIBRARIES'
+        'DYLD_LIBRARY_PATH'
+        'DYLD_FRAMEWORK_PATH'
+    )
+    $previousLoaderEnvironment = @{}
+    try {
+        foreach ($loaderVariable in $loaderVariables) {
+            $previousLoaderEnvironment[$loaderVariable] = [Environment]::GetEnvironmentVariable($loaderVariable, 'Process')
+            [Environment]::SetEnvironmentVariable(
+                $loaderVariable,
+                "/self-referential-loader-sentinel/$($loaderVariable.ToLowerInvariant()).invalid",
+                'Process'
+            )
+        }
+        $trustedGitVersion = @(Invoke-SelfReferentialTrustedGit -RepoRoot $repoRoot -Arguments @('--version'))
+        Assert-True ($script:SelfReferentialGitExitCode -eq 0) 'trusted Git rejects hostile caller loader environment'
+        Assert-True (($trustedGitVersion -join [Environment]::NewLine) -match '^git version ') 'trusted Git remains executable with hostile caller loader environment'
+        Assert-True ($script:SelfReferentialGitError -notmatch 'self-referential-loader-sentinel') 'trusted Git stderr proves loader variables were not inherited'
+    } finally {
+        foreach ($loaderVariable in $loaderVariables) {
+            [Environment]::SetEnvironmentVariable(
+                $loaderVariable,
+                [string]$previousLoaderEnvironment[$loaderVariable],
+                'Process'
+            )
+        }
+    }
+
+    # #704 is the only bridge from the historical fixpoint ledger to the Lean
+    # single-PR policy. The bridge is a literal PR/base/owner/path tuple and never
+    # mutates the closed ledger; future mechanism changes use advisory mode.
+    $leanTransition = [pscustomobject]@{
+        NewEntries = @()
+        ClosedEntries = @()
+        RepairEntries = @()
+        OpenDebt = @()
+    }
+    Assert-True ($script:SelfReferentialLeanMigrationBase -ceq 'c9c9ebff649e2bf7dadebca2eaaeb646e5307ac3') 'migration pins the owner-authorized #704 base'
+    Assert-True ($script:SelfReferentialLeanMigrationOwnerTuple -ceq 'sha256=ccb6cca014b86b2f653b859dd8f447b5af002112723096e55352c0a3ea0a13fb;bytes=3265') 'migration pins the current owner-message provenance tuple'
+    Assert-True ($script:SelfReferentialLeanMigrationPaths.Count -eq 16) 'migration changed-path tuple contains exactly 16 paths'
+    Assert-True ($script:SelfReferentialLeanMigrationPaths -ccontains '.github/workflows/agent-governance.yml') 'migration tuple includes required Linux NEW_RUN workflow coverage'
+    $agentGovernanceWorkflow = Get-Content -Raw -LiteralPath (Join-Path $repoRoot '.github\workflows\agent-governance.yml')
+    $newRunJobMatch = [regex]::Match(
+        $agentGovernanceWorkflow,
+        '(?ms)^  new-run-boundary:[ \t]*\r?$(.*?)^  agent-governance:[ \t]*\r?$'
+    )
+    Assert-True $newRunJobMatch.Success 'agent-governance declares a bounded NEW_RUN platform gate'
+    $newRunJob = $newRunJobMatch.Groups[1].Value
+    Assert-True ($newRunJob -match '(?m)^      fail-fast: false[ \t]*\r?$') 'NEW_RUN matrix preserves both platform results'
+    Assert-True ($newRunJob -match '(?ms)^          - platform: windows-negative[ \t]*\r?$\s+runner: windows-latest[ \t]*\r?$\s+test_expression: test_new_run_rejects_caller_controlled_git_even_when_named_git[ \t]*\r?$') 'Windows leg binds the Windows runner to the fail-closed Git negative test'
+    Assert-True ($newRunJob -match '(?ms)^          - platform: linux-positive[ \t]*\r?$\s+runner: ubuntu-latest[ \t]*\r?$\s+test_expression: >-[ \t]*\r?$') 'Linux leg binds the Ubuntu runner to required positive tests'
+    foreach ($positiveNewRunTest in @(
+        'test_new_run_appender_preserves_prefix_and_emits_valid_p0'
+        'test_new_run_lock_snapshot_preserves_first_completed_boundary'
+        'test_new_run_post_write_failure_restores_locked_target_bytes'
+    )) {
+        Assert-True ($newRunJob.Contains($positiveNewRunTest)) "Linux leg includes required positive test $positiveNewRunTest"
+    }
+    Assert-True ($newRunJob.Contains('-k "${{ matrix.test_expression }}"')) 'NEW_RUN job executes the exact matrix-owned test expression'
+    Assert-True ($newRunJob -match '(?ms)^      - name: Run full PowerShell self-referential contract on trusted Linux[ \t]*\r?$\s+if: matrix\.platform == ''linux-positive''[ \t]*\r?$\s+shell: pwsh[ \t]*\r?$\s+env:[ \t]*\r?$\s+SPEC_TO_DONE_REQUIRE_TRUSTED_GIT_TESTS: ''1''[ \t]*\r?$\s+run: pwsh -NoProfile -NonInteractive -File scripts/tests/test-self-referential-bootstrap\.ps1[ \t]*\r?$') 'Linux leg runs the full PowerShell self-referential contract with capability skips promoted to failure'
+    Assert-True ($newRunJob -match '(?m)^          SPEC_TO_DONE_REQUIRE_TRUSTED_GIT_TESTS: ''1''[ \t]*\r?$') 'NEW_RUN platform tests convert capability skips into failures'
+    Assert-True ($newRunJob.Contains('test -x /usr/bin/git')) 'Linux leg requires the canonical Git executable'
+    Assert-True ($newRunJob.Contains('test "$(realpath /usr/bin/git)" = /usr/bin/git')) 'Linux leg rejects a canonical Git symlink drift'
+    Assert-True ($newRunJob.Contains('test "$(realpath "$(command -v git)")" = /usr/bin/git')) 'Linux leg binds PATH resolution to the canonical Git executable'
+    Assert-True ($newRunJob.Contains('test ! -w /usr/bin/git')) 'Linux leg requires canonical Git to be read-only to the runner identity'
+    Assert-True (-not $newRunJob.Contains('pip install --upgrade pip')) 'NEW_RUN job must not execute a mutable pip upgrade'
+    Assert-True ($newRunJob.Contains('--only-binary=:all: --require-hashes')) 'NEW_RUN dependencies are binary-only and hash locked'
+    foreach ($lockedRequirement in @(
+        'pytest==9.1.1 --hash=sha256:37a86b45efb9a47a61a36449063e8e18d0cab3161329fc099eb21783169c4f0c'
+        'jsonschema==4.26.0 --hash=sha256:d489f15263b8d200f8387e64b4c3a75f06629559fb73deb8fdfb525f2dab50ce'
+        'rpds-py==2026.6.3 --hash=sha256:2c958bf94822e9290a40aaf2a822d4bc5c88099093e3948ad6c571eca9272e5f --hash=sha256:ecabd69db66de867690f9797f2f8fa27ba501bbc24540cbdbdc649cd15888ba6'
+    )) {
+        Assert-True ($newRunJob.Contains($lockedRequirement)) "NEW_RUN dependency lock contains exact requirement $lockedRequirement"
+    }
+    Assert-True ($agentGovernanceWorkflow -match '(?m)^\s+- new-run-boundary\s*$') 'required aggregate depends on the NEW_RUN platform gate'
+    Assert-True ($agentGovernanceWorkflow -match 'NEW_RUN_BOUNDARY_RESULT') 'required aggregate imports the NEW_RUN platform result'
+    Assert-True ($agentGovernanceWorkflow -match '\$newRunBoundaryResult -ne ''success''') 'required aggregate rejects skipped or failed NEW_RUN evidence'
+    $leanRows = @{
+        'Self-referential bootstrap' = 'owner-authorized-migration'
+        'Lean migration owner message' = $script:SelfReferentialLeanMigrationOwnerTuple
+        'Current candidate head' = ('a' * 40)
+        'Bootstrap ledger entry' = 'not applicable'
+        'Bootstrap reason' = 'not applicable'
+    }
+    Assert-SelfReferentialLeanPolicyBody -Declared 'owner-authorized-migration' -Body 'body' `
+        -ChangedPaths $script:SelfReferentialLeanMigrationPaths `
+        -MechanismPaths @('scripts/lib/self-referential-bootstrap.ps1') `
+        -Transition $leanTransition -GetTableValue { param($b, $label) $leanRows[$label] }.GetNewClosure() `
+        -BaseLedgerJson $emptyJson -HeadLedgerJson $emptyJson `
+        -PrNumber 704 -BaseSha $script:SelfReferentialLeanMigrationBase -HeadSha ('a' * 40) -HasExactHeadContext $true 3>$null
+
+    $leanPublicHead = New-FixtureLedgerRevision -RepoRoot $repoRoot -TempRoot $tempRoot -LedgerJson $emptyJson
+    $leanPublicLedgerJson = (@(Invoke-SelfReferentialTrustedGit -RepoRoot $repoRoot -Arguments @(
+        'show', "${leanPublicHead}:scripts/self-referential-bootstrap-ledger.json"
+    )) -join "`n")
+    Assert-True ($script:SelfReferentialGitExitCode -eq 0) 'public migration fixture exposes its exact head ledger'
+    $leanPublicRows = @{} + $leanRows
+    $leanPublicRows['Current candidate head'] = $leanPublicHead
+    Invoke-BodyGate -Rows $leanPublicRows -ChangedPaths $script:SelfReferentialLeanMigrationPaths `
+        -HeadJson $leanPublicLedgerJson -BaseJson $leanPublicLedgerJson -PrNumber 704 -GateRepoRoot $repoRoot `
+        -BaseSha $script:SelfReferentialLeanMigrationBase -HeadSha $leanPublicHead 3>$null
+    Assert-Throws -Context 'PR #704 cannot bypass its owner tuple with declaration no' `
+        -MessagePattern 'must declare.*owner-authorized-migration' -Action {
+        Invoke-BodyGate -Rows @{ 'Self-referential bootstrap' = 'no' } `
+            -ChangedPaths $script:SelfReferentialLeanMigrationPaths `
+            -HeadJson $leanPublicLedgerJson -BaseJson $leanPublicLedgerJson -PrNumber 704 -GateRepoRoot $repoRoot `
+            -BaseSha $script:SelfReferentialLeanMigrationBase -HeadSha $leanPublicHead
+    }
+    Assert-Throws -Context 'exact migration path tuple cannot bypass owner binding under another PR number' `
+        -MessagePattern 'must declare.*owner-authorized-migration' -Action {
+        Invoke-BodyGate -Rows @{ 'Self-referential bootstrap' = 'no' } `
+            -ChangedPaths $script:SelfReferentialLeanMigrationPaths `
+            -HeadJson $leanPublicLedgerJson -BaseJson $leanPublicLedgerJson -PrNumber 705 -GateRepoRoot $repoRoot `
+            -BaseSha $script:SelfReferentialLeanMigrationBase -HeadSha $leanPublicHead
+    }
+
+    Assert-Throws -Context 'migration rejects wrong pinned base' -MessagePattern 'restricted to PR #704 at base' -Action {
+        Assert-SelfReferentialLeanPolicyBody -Declared 'owner-authorized-migration' -Body 'body' `
+            -ChangedPaths $script:SelfReferentialLeanMigrationPaths `
+            -MechanismPaths @('scripts/lib/self-referential-bootstrap.ps1') `
+            -Transition $leanTransition -GetTableValue { param($b, $label) $leanRows[$label] }.GetNewClosure() `
+            -BaseLedgerJson $emptyJson -HeadLedgerJson $emptyJson `
+            -PrNumber 704 -BaseSha ('0' * 40) -HeadSha ('a' * 40) -HasExactHeadContext $true
+    }
+
+    Assert-Throws -Context 'migration rejects an extra changed path' -MessagePattern 'must equal its one-time migration allowlist' -Action {
+        Assert-SelfReferentialLeanPolicyBody -Declared 'owner-authorized-migration' -Body 'body' `
+            -ChangedPaths @($script:SelfReferentialLeanMigrationPaths + 'scripts/deploy.ps1') `
+            -MechanismPaths @('scripts/lib/self-referential-bootstrap.ps1') `
+            -Transition $leanTransition -GetTableValue { param($b, $label) $leanRows[$label] }.GetNewClosure() `
+            -BaseLedgerJson $emptyJson -HeadLedgerJson $emptyJson `
+            -PrNumber 704 -BaseSha $script:SelfReferentialLeanMigrationBase -HeadSha ('a' * 40) -HasExactHeadContext $true
+    }
+    Assert-Throws -Context 'migration rejects a missing changed path' -MessagePattern 'must equal its one-time migration allowlist' -Action {
+        Assert-SelfReferentialLeanPolicyBody -Declared 'owner-authorized-migration' -Body 'body' `
+            -ChangedPaths @($script:SelfReferentialLeanMigrationPaths | Where-Object { $_ -cne '.github/workflows/agent-governance.yml' }) `
+            -MechanismPaths @('scripts/lib/self-referential-bootstrap.ps1') `
+            -Transition $leanTransition -GetTableValue { param($b, $label) $leanRows[$label] }.GetNewClosure() `
+            -BaseLedgerJson $emptyJson -HeadLedgerJson $emptyJson `
+            -PrNumber 704 -BaseSha $script:SelfReferentialLeanMigrationBase -HeadSha ('a' * 40) -HasExactHeadContext $true
+    }
+    Assert-Throws -Context 'migration rejects a duplicate changed path' -MessagePattern 'contains duplicate path' -Action {
+        Assert-SelfReferentialLeanPolicyBody -Declared 'owner-authorized-migration' -Body 'body' `
+            -ChangedPaths @($script:SelfReferentialLeanMigrationPaths + $script:SelfReferentialLeanMigrationPaths[0]) `
+            -MechanismPaths @('scripts/lib/self-referential-bootstrap.ps1') `
+            -Transition $leanTransition -GetTableValue { param($b, $label) $leanRows[$label] }.GetNewClosure() `
+            -BaseLedgerJson $emptyJson -HeadLedgerJson $emptyJson `
+            -PrNumber 704 -BaseSha $script:SelfReferentialLeanMigrationBase -HeadSha ('a' * 40) -HasExactHeadContext $true
+    }
+    Assert-Throws -Context 'migration rejects wrong owner tuple' -MessagePattern 'bind the exact owner-message tuple' -Action {
+        $wrongRows = @{} + $leanRows
+        $wrongRows['Lean migration owner message'] = 'sha256=' + ('0' * 64) + ';bytes=3265'
+        Assert-SelfReferentialLeanPolicyBody -Declared 'owner-authorized-migration' -Body 'body' `
+            -ChangedPaths $script:SelfReferentialLeanMigrationPaths `
+            -MechanismPaths @('scripts/lib/self-referential-bootstrap.ps1') `
+            -Transition $leanTransition -GetTableValue { param($b, $label) $wrongRows[$label] }.GetNewClosure() `
+            -BaseLedgerJson $emptyJson -HeadLedgerJson $emptyJson `
+            -PrNumber 704 -BaseSha $script:SelfReferentialLeanMigrationBase -HeadSha ('a' * 40) -HasExactHeadContext $true
+    }
+    Assert-Throws -Context 'migration rejects a drifted candidate head' -MessagePattern 'exact current candidate head' -Action {
+        $driftedRows = @{} + $leanRows
+        $driftedRows['Current candidate head'] = ('b' * 40)
+        Assert-SelfReferentialLeanPolicyBody -Declared 'owner-authorized-migration' -Body 'body' `
+            -ChangedPaths $script:SelfReferentialLeanMigrationPaths `
+            -MechanismPaths @('scripts/lib/self-referential-bootstrap.ps1') `
+            -Transition $leanTransition -GetTableValue { param($b, $label) $driftedRows[$label] }.GetNewClosure() `
+            -BaseLedgerJson $emptyJson -HeadLedgerJson $emptyJson `
+            -PrNumber 704 -BaseSha $script:SelfReferentialLeanMigrationBase -HeadSha ('a' * 40) -HasExactHeadContext $true
+    }
+    Assert-Throws -Context 'migration rejects ledger drift' -MessagePattern 'closed historical archive' -Action {
+        Assert-SelfReferentialLeanPolicyBody -Declared 'owner-authorized-migration' -Body 'body' `
+            -ChangedPaths $script:SelfReferentialLeanMigrationPaths `
+            -MechanismPaths @('scripts/lib/self-referential-bootstrap.ps1') `
+            -Transition $leanTransition -GetTableValue { param($b, $label) $leanRows[$label] }.GetNewClosure() `
+            -BaseLedgerJson $emptyJson -HeadLedgerJson ($emptyJson + ' ') `
+            -PrNumber 704 -BaseSha $script:SelfReferentialLeanMigrationBase -HeadSha ('a' * 40) -HasExactHeadContext $true
+    }
+    Assert-SelfReferentialLeanPolicyBody -Declared 'no' -Body 'body' `
+        -ChangedPaths @('scripts/deploy.ps1') -MechanismPaths @('scripts/deploy.ps1') `
+        -Transition $leanTransition -GetTableValue { param($b, $label) '' }.GetNewClosure() `
+        -BaseLedgerJson $emptyJson -HeadLedgerJson $emptyJson `
+        -PrNumber 705 -BaseSha $script:SelfReferentialLeanMigrationBase -HasExactHeadContext $true 3>$null
+    Assert-Throws -Context 'Lean policy rejects new bootstrap debt mode' -MessagePattern 'retires new bootstrap debt' -Action {
+        Assert-SelfReferentialLeanPolicyBody -Declared 'yes' -Body 'body' `
+            -ChangedPaths @('scripts/deploy.ps1') -MechanismPaths @('scripts/deploy.ps1') `
+            -Transition $leanTransition -GetTableValue { param($b, $label) '' }.GetNewClosure() `
+            -BaseLedgerJson $emptyJson -HeadLedgerJson $emptyJson `
+            -PrNumber 705 -BaseSha $script:SelfReferentialLeanMigrationBase -HasExactHeadContext $true
+    }
+
     # --- git fixture repo: mechanism_commit must touch a declared path, and
     # fixpoint evidence must be introduced at/after that commit (review round 4) ------
     $gitRoot = Join-Path $tempRoot 'gitfx'
@@ -451,6 +749,7 @@ try {
     $futureSpecToDoneNewRunPaths = @(
         '.claude/skills/spec-to-done/validate-state.mjs',
         '.claude/skills/spec-to-done/append-new-run.mjs',
+        '.claude/skills/spec-to-done/trusted-git.mjs',
         '.claude/skills/spec-to-done/SKILL.md',
         '.codex/skills/spec-to-done/SKILL.md',
         '.claude/skills/spec-to-done/GROK.md',

@@ -1,8 +1,8 @@
 # 任務：跨 Session 待辦任務佇列與治理交接樞紐 (Active Handoff Hub)
 
 ## Objective (目標)
-- 統籌當前主分支（`main` Commit `dc8c373`）後續待辦任務佇列。
-- 確保 **AGY CLI (Antigravity)** 與 **Codex CLI** 於下次啟動 Session 時能直接無縫接續推進。
+- 統籌當前主分支後續待辦任務佇列；實際 SHA 必須由 `git rev-parse origin/main` 即時取得，不在交接文件固定舊值。
+- 讓 Codex、Claude、AGY 與 Grok 透過同一個明確看板契約接續；不假設 provider-local hooks、personas 或 skills 已由 repo 自動安裝。
 - 維護單一真相源：技能、看板、同步腳本與 AGENTS.md 治理全體一致。
 
 ## Pending Task Queue (依序執行之待辦任務清單)
@@ -21,12 +21,12 @@
    - 主工作區 (`AI-BIM-governance/`) 永遠保持 `main == origin/main` 且無 dirty files。
    - 任何變更/新增受版控檔案或 code 一律在獨立 Worktree（`AI-BIM-governance.worktrees/<name>`）實作。
    - 所有 Task 必須經由真實測試與 **Chrome E2E 語意驗證（Playwright / Agent in Chrome）** 驗收；無實證數據絕不宣稱完成。全體 Agent（Codex、Claude、AGY、Grok）一體嚴格遵守。
-2. **治理與規則共用**：AGY CLI 與 Codex CLI 均遵循根目錄 [`AGENTS.md`](file:///C:/Repos/active/iot/AI-BIM-governance/AGENTS.md)（含四大車道 Lane F/B/G/S、Lean Governance 減法方針、Single PR 交付、:8004 唯一後端等鐵律）。
-3. **技能樹同步**：專案 Canonical 技能維護於 [`.agents/skills/`](file:///C:/Repos/active/iot/AI-BIM-governance/.agents/skills)，自動同步至 `.codex/skills/` 與 `.claude/skills/`，AGY 亦自 `.gemini/config/skills` 與 `.agents/skills` 載入完整 Superpowers。
-4. **安全同步與看板**：開工/收工一律經由 `scripts/dev/agents-board.mjs` 感知並調用 `sync-main-safely`，並自動觸發進程垃圾回收（`cleanup-orphan-dev-processes`）。
-5. **自主 PR 佇列與 Hook 引擎**：已建立 `scripts/dev/manage-pr-queue.mjs` 與看板/Git Hooks 雙向串接，實現多 Session 並行時全自動多 PR 追蹤、智慧解衝突、預檢修復、Blip 審批與快進合入。
+2. **治理與規則共用**：根目錄 `AGENTS.md` 是 repo 正本，`CLAUDE.md` 是 thin mirror；AGY／Grok 的自動載入能力屬外部 launcher，repo 只提供相同的明確命令契約，不宣稱 provider 設定 byte-equal。
+3. **技能樹同步**：tracked parity 只涵蓋 `agent-skills-manifest.json` 宣告的 `.claude/skills` 與 `.codex/skills`。本機 gitignored `.agents/skills`、AGY／Grok provider-local skills 不屬於 repo parity root。
+4. **安全同步與看板**：開工／收工由 `scripts/dev/agents-board.mjs` 感知；生命週期只背景觸發 fail-closed orphan cleanup，不暗中修改 GitHub PR。
+5. **Named PR 佇列**：`scripts/dev/manage-pr-queue.mjs` 只讀取一個 `--pr <number>`；不執行 arbitrary local preflight script，也不含 GitHub mutation、approval、merge 或 hook 安裝 sink。Local preflight、counted approval 與 native merge 由外部獨立治理流程在 exact-head authority gate 後完成。
 
 ## Handoff Note for Next Session (下個 Session 啟動指引)
 1. **開工登記**：執行 `node scripts/dev/agents-board.mjs register --agent agy`（或 `codex`）。
-2. **狀態確認**：執行 `node scripts/dev/manage-pr-queue.mjs status` 檢查 PR 佇列。
+2. **狀態確認**：執行 `node scripts/dev/manage-pr-queue.mjs status --pr <number>` 檢查指定 PR。
 3. **任務接續**：依上述 **Pending Task Queue** 由「任務 2 (PR #704)」接續推進！

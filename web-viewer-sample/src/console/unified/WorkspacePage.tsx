@@ -24,8 +24,10 @@ import {
   initialFlags, initialRuleOn, INITIAL_DC_LOG,
 } from "./fixtures";
 import type { DockKey } from "./fixtures";
+import { useConsoleData } from "./consoleData";
 
 const DOCK_KEYS: readonly DockKey[] = ["a1", "a2", "a3", "a4", "issues"];
+const WS_KEYS = ["runtimeStatus"] as const;
 
 /** hash query（如 "#a1?dock=issues"）取 dock 覆寫值；無 / 不合法 → null。 */
 function dockFromHashQuery(): DockKey | null {
@@ -50,6 +52,7 @@ export function WorkspacePage({ initialDock }: WorkspacePageProps) {
   const zh = lang === "zh";
   const L = getL(zh);
   const u = useUnifiedState();
+  const snap = useConsoleData(WS_KEYS);
 
   const [ws, setWs] = useState<WsLocal>(() => ({
     dock: dockFromHashQuery() ?? initialDock ?? "a1",
@@ -92,21 +95,56 @@ export function WorkspacePage({ initialDock }: WorkspacePageProps) {
     issues: [zh ? "◉ Issue 錨點 ×" + u.issues.length : "◉ Issue anchors ×" + u.issues.length, "rgba(65,199,232"],
   };
   const lg = legends[ws.dock];
-  // BASE_URL 感知：dev/preview base='/'（design gate 像素跑）、build:ui base='/ui/'（:8004/ui 產品入口）。
-  // 根絕對 '/design-assets/…' 在 /ui/ base 下會 404（viewport 背景整個破圖）。
   const vpImage = `${import.meta.env.BASE_URL}design-assets/${VP_BASE[ws.dock]}.png`;
+
+  const activeSession = snap.runtimeStatus.data?.sessions.items[0];
 
   return (
     <div style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>
-      {/* ---- 頂條：dock tabs + session 膠囊 + Spectator + FPS ---- */}
+      {/* ---- 頂條：dock tabs + session 膠囊 + handoff link ---- */}
       <div data-prov="fixture" style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 14px", borderBottom: "1px solid rgba(120,160,210,.10)", background: "var(--ab-bar)", flex: "none" }}>
         {dockTabs.map((d) => (
-          <div key={d.id} className="hv-text" data-uc={"dock-tab-" + d.id} data-active={ws.dock === d.id ? "true" : "false"} onClick={() => patch({ dock: d.id, sel: null })} style={{ padding: "6px 13px", borderRadius: 8, fontSize: 12, cursor: "pointer", fontWeight: ws.dock === d.id ? 700 : 400, color: ws.dock === d.id ? "var(--ab-on-accent)" : "var(--ab-text-muted)", background: ws.dock === d.id ? `linear-gradient(135deg,${ACCENT},var(--ab-accent-2))` : "transparent" }}>{d.label(L)}</div>
+          <div key={d.id} className="hv-text" data-uc={"dock-tab-" + d.id} data-action="nav" role="tab" data-active={ws.dock === d.id ? "true" : "false"} onClick={() => patch({ dock: d.id, sel: null })} style={{ padding: "6px 13px", borderRadius: 8, fontSize: 12, cursor: "pointer", fontWeight: ws.dock === d.id ? 700 : 400, color: ws.dock === d.id ? "var(--ab-on-accent)" : "var(--ab-text-muted)", background: ws.dock === d.id ? `linear-gradient(135deg,${ACCENT},var(--ab-accent-2))` : "transparent" }}>{d.label(L)}</div>
         ))}
         <div style={{ flex: 1 }} />
-        <span style={{ display: "flex", alignItems: "center", gap: 6, fontFamily: MONO, fontSize: "10.5px", color: "var(--ab-accent-text)", background: "rgba(65,199,232,.08)", border: "1px solid rgba(65,199,232,.22)", borderRadius: 999, padding: "4px 10px" }}><span style={{ width: 6, height: 6, borderRadius: "50%", background: "var(--ab-accent)", animation: "pulse 2s infinite" }} />S-240601 · editor lease</span>
-        <span className="hv-bright" onClick={() => u.toast("已複製 Spectator 邀請連結 /ui/open?session=S-240601&streamRole=spectator(唯讀,resolveGovPanelState gate)")} style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11, color: "var(--ab-on-accent)", fontWeight: 700, background: `linear-gradient(135deg,${ACCENT},var(--ab-accent-2))`, borderRadius: 999, padding: "4px 12px", cursor: "pointer", whiteSpace: "nowrap" }}>+ 邀請 Spectator</span>
-        <span style={{ fontFamily: MONO, fontSize: "10.5px", color: "var(--ab-text-dim)" }}>60 FPS · 28 ms</span>
+        {activeSession ? (
+          <>
+            <span style={{ display: "flex", alignItems: "center", gap: 6, fontFamily: MONO, fontSize: "10.5px", color: "var(--ab-accent-text)", background: "rgba(65,199,232,.08)", border: "1px solid rgba(65,199,232,.22)", borderRadius: 999, padding: "4px 10px" }}>
+              <span style={{ width: 6, height: 6, borderRadius: "50%", background: "var(--ab-accent)", animation: "pulse 2s infinite" }} />
+              {activeSession.session_id} · {activeSession.status}
+            </span>
+            <a
+              data-uc="live-handoff-link"
+              data-action="nav"
+              href={coordinatorClient.openInViewerUrl(activeSession.session_id)}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="hv-bright"
+              style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11, color: "var(--ab-on-accent)", fontWeight: 700, background: `linear-gradient(135deg,${ACCENT},var(--ab-accent-2))`, borderRadius: 999, padding: "4px 12px", cursor: "pointer", whiteSpace: "nowrap", textDecoration: "none" }}
+            >
+              + {zh ? "開啟即時視圖（新分頁）" : "Open live view (new tab)"}
+            </a>
+          </>
+        ) : (
+          <>
+            <span style={{ display: "flex", alignItems: "center", gap: 6, fontFamily: MONO, fontSize: "10.5px", color: "var(--ab-text-dim)", background: "rgba(120,160,210,.06)", border: "1px solid rgba(120,160,210,.14)", borderRadius: 999, padding: "4px 10px" }}>
+              <span style={{ width: 6, height: 6, borderRadius: "50%", background: "var(--ab-text-dim)" }} />
+              {zh ? "無 review session" : "No review session"}
+            </span>
+            <span
+              role="button"
+              aria-disabled="true"
+              tabIndex={-1}
+              data-action="disabled"
+              data-prov="demo"
+              aria-describedby="a1-no-session-desc"
+              style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11, color: "var(--ab-text-dimmer)", border: "1px solid rgba(120,160,210,.14)", borderRadius: 999, padding: "4px 12px", cursor: "not-allowed", whiteSpace: "nowrap" }}
+            >
+              {zh ? "啟動即時視圖" : "Start live view"}
+            </span>
+            <span id="a1-no-session-desc" style={{ display: "none" }}>{zh ? "無 review session" : "No review session"}</span>
+          </>
+        )}
       </div>
       {/* ---- 三欄：stage 樹 / viewport / dock 面板 ---- */}
       <div style={{ flex: 1, display: "grid", gridTemplateColumns: "230px 1fr 316px", minHeight: 0 }}>
@@ -128,7 +166,7 @@ export function WorkspacePage({ initialDock }: WorkspacePageProps) {
             <span style={{ fontSize: "10.5px", color: "var(--ab-text-dim)" }}>12.48M tris · 1.17 GB</span>
           </div>
         </div>
-        <div data-prov="fixture" style={{ position: "relative", minWidth: 0, background: `var(--ab-black) url('${vpImage}') center/cover no-repeat` }}>
+        <div data-uc="viewport" data-prov="demo" style={{ position: "relative", minWidth: 0, background: `var(--ab-black) url('${vpImage}') center/cover no-repeat` }}>
           <div style={{ position: "absolute", inset: 0, background: "linear-gradient(180deg,rgba(5,8,13,.55),rgba(5,8,13,0) 22%,rgba(5,8,13,0) 72%,rgba(5,8,13,.6))" }} />
           <div style={{ position: "absolute", top: 10, left: 12, display: "flex", gap: 6, alignItems: "center" }}>
             <span style={{ fontFamily: MONO, fontSize: 10, background: "rgba(10,16,24,.8)", border: "1px solid rgba(120,160,210,.18)", borderRadius: 6, padding: "3px 8px", color: "var(--ab-text-2)", whiteSpace: "nowrap" }}>/Review/A1_Tower_fed.usd</span>
@@ -147,8 +185,9 @@ export function WorkspacePage({ initialDock }: WorkspacePageProps) {
             </div>
           ) : null}
           <div style={{ position: "absolute", bottom: 10, left: 12, display: "flex", gap: 6 }}>
-            <span data-uc="streaming-pill" style={{ fontFamily: MONO, fontSize: 10, background: "rgba(10,16,24,.8)", border: "1px solid rgba(120,160,210,.18)", borderRadius: 6, padding: "3px 8px", color: "var(--ab-ok-text)" }}>● Streaming · 28 ms</span>
-            <span style={{ fontFamily: MONO, fontSize: 10, background: "rgba(10,16,24,.8)", border: "1px solid rgba(120,160,210,.18)", borderRadius: 6, padding: "3px 8px", color: "var(--ab-text-muted)" }}>Omniverse RTX · 60 FPS</span>
+            <span style={{ fontFamily: MONO, fontSize: 10, background: "rgba(10,16,24,.8)", border: "1px solid rgba(120,160,210,.18)", borderRadius: 6, padding: "3px 8px", color: "var(--ab-text-dim)" }}>
+              {zh ? "no-GPU 示意／示範圖（非即時渲染）" : "no-GPU mock / demo view (not real-time)"}
+            </span>
           </div>
           <div style={{ position: "absolute", bottom: 10, right: 12, width: 44, height: 44, background: "rgba(10,16,24,.8)", border: "1px solid rgba(120,160,210,.2)", borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: MONO, fontSize: 9, color: "var(--ab-text-muted)" }}>前│右</div>
         </div>
@@ -161,7 +200,7 @@ export function WorkspacePage({ initialDock }: WorkspacePageProps) {
         </div>
       </div>
       {/* ---- DATACHANNEL 字條 ---- */}
-      <div data-prov="fixture" style={{ display: "flex", alignItems: "center", gap: 10, padding: "7px 14px", borderTop: "1px solid rgba(120,160,210,.10)", background: "var(--ab-bar)", flex: "none", fontFamily: MONO, fontSize: "9.5px", color: "var(--ab-text-dimmer)" }}>
+      <div data-prov="demo" style={{ display: "flex", alignItems: "center", gap: 10, padding: "7px 14px", borderTop: "1px solid rgba(120,160,210,.10)", background: "var(--ab-bar)", flex: "none", fontFamily: MONO, fontSize: "9.5px", color: "var(--ab-text-dimmer)" }}>
         <span style={{ letterSpacing: ".1em", textTransform: "uppercase", color: "var(--ab-text-faint)" }}>DataChannel</span>
         <span>openedStageResult <span style={{ color: "var(--ab-ok-text)" }}>✓</span></span>
         <span>{ws.dcLog}</span>

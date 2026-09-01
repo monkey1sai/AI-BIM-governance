@@ -4,6 +4,46 @@
   "type": "object",
   "additionalProperties": false,
   "required": ["schema_version", "phases", "durable_state", "terminal_evidence", "ship"],
+  "definitions": {
+    "newRunCounterResets": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["agentCalls", "p5Rounds", "evidenceAttempts"],
+      "properties": {
+        "agentCalls": { "const": "0/40" },
+        "p5Rounds": { "const": "0/2" },
+        "evidenceAttempts": { "const": "0/2" }
+      }
+    },
+    "newRunFieldResets": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["planPath", "taskIndex", "prNumber", "runIds", "evidenceHead"],
+      "properties": {
+        "planPath": { "const": "" },
+        "taskIndex": { "const": "0" },
+        "prNumber": { "const": "" },
+        "runIds": { "const": "none" },
+        "evidenceHead": { "const": "" }
+      }
+    },
+    "newRunGitIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "executable_policy", "executable_path", "executable_sha256",
+        "executable_bytes", "git_directory", "git_common_directory"
+      ],
+      "properties": {
+        "executable_policy": { "const": "system-owned-read-only" },
+        "executable_path": { "const": "required" },
+        "executable_sha256": { "const": "required" },
+        "executable_bytes": { "const": "required" },
+        "git_directory": { "const": "required" },
+        "git_common_directory": { "const": "required" }
+      }
+    }
+  },
   "properties": {
     "$schema": { "type": "string" },
     "schema_version": { "const": "spec-to-done-contract/v1" },
@@ -13,10 +53,27 @@
     "durable_state": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["canonical_relative_path", "held_reasons"],
+      "required": ["canonical_relative_path", "new_run_boundary", "held_reasons"],
       "properties": {
         "canonical_relative_path": {
           "const": "artifacts/spec-to-done/{slug}-state.md"
+        },
+        "new_run_boundary": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "schema_version", "token", "required_previous_reason",
+            "owner_provenance", "git_identity", "counter_resets", "field_resets"
+          ],
+          "properties": {
+            "schema_version": { "const": "spec-to-done-new-run/v1" },
+            "token": { "const": "NEW_RUN@P0" },
+            "required_previous_reason": { "const": "run_budget_exhausted" },
+            "owner_provenance": { "const": "sha256-tuple-binding-not-digital-signature" },
+            "git_identity": { "$ref": "#/definitions/newRunGitIdentity" },
+            "counter_resets": { "$ref": "#/definitions/newRunCounterResets" },
+            "field_resets": { "$ref": "#/definitions/newRunFieldResets" }
+          }
         },
         "held_reasons": {
           "type": "array",

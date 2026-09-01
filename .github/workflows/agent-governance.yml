@@ -82,6 +82,11 @@ jobs:
         shell: pwsh
         run: pwsh -NoProfile -NonInteractive -File scripts/tests/test-agent-governance-check.ps1
 
+      - name: Run orphan cleanup and named PR queue safety tests
+        if: matrix.shard == 'core'
+        shell: pwsh
+        run: pwsh -NoProfile -NonInteractive -Command "node --test scripts/tests/test-cleanup-orphan-dev-processes.mjs scripts/tests/test-manage-pr-queue.mjs scripts/tests/test-pr-queue-adversarial-and-stress.mjs"
+
       - name: Verify governance policy rules
         if: matrix.shard == 'core'
         shell: pwsh
@@ -125,7 +130,12 @@ jobs:
       - name: Test verification outcomes and security exception policy
         if: matrix.shard == 'core'
         shell: pwsh
-        run: pwsh -NoProfile -NonInteractive -Command "node --test scripts/tests/test-verification-plan.mjs scripts/tests/test-verification-command-policy.mjs scripts/tests/test-verification-runner.mjs scripts/tests/test-security-exceptions.mjs"
+        run: pwsh -NoProfile -NonInteractive -Command "node --test scripts/tests/test-verification-plan.mjs scripts/tests/test-verification-command-policy.mjs scripts/tests/test-verification-runner.mjs"
+
+      - name: Test security exception policy
+        if: matrix.shard == 'core'
+        shell: pwsh
+        run: pwsh -NoProfile -NonInteractive -Command "node --test scripts/tests/test-security-exceptions.mjs"
 
       - name: Test AI coding metrics privacy and truth contract
         if: matrix.shard == 'core'
@@ -166,11 +176,6 @@ jobs:
         if: matrix.shard == 'capability'
         shell: pwsh
         run: pwsh -NoProfile -NonInteractive -File scripts/tests/test-base-gate-capability.ps1
-
-      - name: Run local preflight PrNumber forwarding tests
-        if: matrix.shard == 'evidence'
-        shell: pwsh
-        run: pwsh -NoProfile -NonInteractive -File scripts/tests/test-preflight-prnumber-forwarding.ps1
 
       - name: Run deploy target registry tests
         if: matrix.shard == 'evidence'
@@ -232,11 +237,98 @@ jobs:
         shell: pwsh
         run: pwsh -NoProfile -NonInteractive -Command "node --test scripts/tests/test-png-preflight.mjs"
 
+  new-run-boundary:
+    name: agent-governance NEW_RUN (${{ matrix.platform }})
+    needs: scope
+    if: needs.scope.result == 'success' && needs.scope.outputs.agent_governance == 'true'
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows-negative
+            runner: windows-latest
+            test_expression: test_new_run_rejects_caller_controlled_git_even_when_named_git
+          - platform: linux-positive
+            runner: ubuntu-latest
+            test_expression: >-
+              test_new_run_appender_preserves_prefix_and_emits_valid_p0 or
+              test_new_run_lock_snapshot_preserves_first_completed_boundary or
+              test_new_run_post_write_failure_restores_locked_target_bytes
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Setup pinned Node.js for NEW_RUN contract tests
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '20.20.2'
+
+      - name: Setup pinned Python for NEW_RUN contract tests
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12'
+
+      - name: Install NEW_RUN test dependencies
+        shell: pwsh
+        run: |
+          $requirements = Join-Path '${{ runner.temp }}' 'new-run-requirements.txt'
+          @'
+          attrs==26.1.0 --hash=sha256:c647aa4a12dfbad9333ca4e71fe62ddc36f4e63b2d260a37a8b83d2f043ac309
+          colorama==0.4.6; sys_platform == 'win32' --hash=sha256:4f1d9991f5acc0ca119f9d443620b77f9d6b33703e51011c16baf57afb285fc6
+          iniconfig==2.3.0 --hash=sha256:f631c04d2c48c52b84d0d0549c99ff3859c98df65b3101406327ecc7d53fbf12
+          jsonschema==4.26.0 --hash=sha256:d489f15263b8d200f8387e64b4c3a75f06629559fb73deb8fdfb525f2dab50ce
+          jsonschema-specifications==2025.9.1 --hash=sha256:98802fee3a11ee76ecaca44429fda8a41bff98b00a0f2838151b113f210cc6fe
+          packaging==26.3 --hash=sha256:d7193f7c8e4e93f444fde0262bf90af30e16fa0ad0ad44cb553c87339b23cd1c
+          pluggy==1.6.0 --hash=sha256:e920276dd6813095e9377c0bc5566d94c932c33b27a3e3945d8389c374dd4746
+          pygments==2.21.0 --hash=sha256:2363c69b61c4a97c838da3b130dcd6468f4848992b21a82f2a63ec34377137d9
+          pytest==9.1.1 --hash=sha256:37a86b45efb9a47a61a36449063e8e18d0cab3161329fc099eb21783169c4f0c
+          referencing==0.37.0 --hash=sha256:381329a9f99628c9069361716891d34ad94af76e461dcb0335825aecc7692231
+          rpds-py==2026.6.3 --hash=sha256:2c958bf94822e9290a40aaf2a822d4bc5c88099093e3948ad6c571eca9272e5f --hash=sha256:ecabd69db66de867690f9797f2f8fa27ba501bbc24540cbdbdc649cd15888ba6
+          typing-extensions==4.16.0 --hash=sha256:481caa481374e813c1b176ada14e97f1f67a4539ce9cfeb3f350d78d6370c2e8
+          '@ | Set-Content -LiteralPath $requirements -Encoding utf8NoBOM
+          python -m pip install --disable-pip-version-check --only-binary=:all: --require-hashes -r $requirements
+
+      - name: Require canonical read-only Linux Git
+        if: matrix.platform == 'linux-positive'
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -x /usr/bin/git
+          test "$(realpath /usr/bin/git)" = /usr/bin/git
+          test "$(realpath "$(command -v git)")" = /usr/bin/git
+          test ! -w /usr/bin/git
+
+      - name: Run exact NEW_RUN platform contract
+        shell: pwsh
+        env:
+          SPEC_TO_DONE_REQUIRE_TRUSTED_GIT_TESTS: '1'
+        run: python -m pytest tests/test_spec_to_done_state_contract.py -k "${{ matrix.test_expression }}" -q -p no:cacheprovider
+
+      - name: Run full PowerShell self-referential contract on trusted Linux
+        if: matrix.platform == 'linux-positive'
+        shell: pwsh
+        env:
+          SPEC_TO_DONE_REQUIRE_TRUSTED_GIT_TESTS: '1'
+        run: pwsh -NoProfile -NonInteractive -File scripts/tests/test-self-referential-bootstrap.ps1
+
+      - name: Run local preflight PrNumber forwarding tests on trusted Linux
+        if: matrix.platform == 'linux-positive'
+        shell: pwsh
+        env:
+          SPEC_TO_DONE_REQUIRE_TRUSTED_GIT_TESTS: '1'
+        run: pwsh -NoProfile -NonInteractive -File scripts/tests/test-preflight-prnumber-forwarding.ps1
+
   agent-governance:
     name: ${{ github.event_name == 'pull_request' && 'agent-governance' || 'agent-governance-diagnostic' }}
     needs:
       - scope
       - suite
+      - new-run-boundary
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -247,10 +339,12 @@ jobs:
           SCOPE_RESULT: ${{ needs.scope.result }}
           AGENT_GOVERNANCE_REQUIRED: ${{ needs.scope.outputs.agent_governance }}
           SUITE_RESULT: ${{ needs.suite.result }}
+          NEW_RUN_BOUNDARY_RESULT: ${{ needs.new-run-boundary.result }}
         run: |
           $scopeResult = $env:SCOPE_RESULT
           $required = $env:AGENT_GOVERNANCE_REQUIRED
           $suiteResult = $env:SUITE_RESULT
+          $newRunBoundaryResult = $env:NEW_RUN_BOUNDARY_RESULT
           if ($scopeResult -ne 'success') {
             throw 'agent-governance scope classifier did not succeed; refusing a skipped-success required check.'
           }
@@ -263,5 +357,8 @@ jobs:
           }
           if ($suiteResult -ne 'success') {
             throw "agent-governance suite did not succeed (result=$suiteResult)."
+          }
+          if ($newRunBoundaryResult -ne 'success') {
+            throw "agent-governance NEW_RUN boundary did not succeed (result=$newRunBoundaryResult)."
           }
           Write-Host 'agent-governance suite passed for this exact path set.'

@@ -1,9 +1,11 @@
+import hashlib
 import json
 import os
 import pathlib
-import shlex
+import re
 import shutil
 import subprocess
+import time
 
 import pytest
 from jsonschema import Draft7Validator
@@ -11,6 +13,8 @@ from jsonschema import Draft7Validator
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 CLAUDE_VALIDATOR = ROOT / ".claude/skills/spec-to-done/validate-state.mjs"
+NEW_RUN_APPENDER = ROOT / ".claude/skills/spec-to-done/append-new-run.mjs"
+TRUSTED_GIT_MODULE = ROOT / ".claude/skills/spec-to-done/trusted-git.mjs"
 CODEX_VALIDATOR = ROOT / ".codex/skills/spec-to-done/validate-state.mjs"
 CLAUDE_SKILL = ROOT / ".claude/skills/spec-to-done/SKILL.md"
 CODEX_SKILL = ROOT / ".codex/skills/spec-to-done/SKILL.md"
@@ -24,9 +28,25 @@ EXCLUSIONS = (
 )
 
 
+def _require_git():
+    if GIT is not None:
+        return
+    if os.environ.get("SPEC_TO_DONE_REQUIRE_TRUSTED_GIT_TESTS") == "1":
+        pytest.fail("required trusted-Git coverage cannot run because git is unavailable")
+    pytest.skip("git is required")
+
+
+def _handle_host_env_blocked(result, *, expected=False):
+    if result.get("held") != "host_env_blocked" or expected:
+        return
+    detail = result.get("detail", "trusted Git unavailable")
+    if os.environ.get("SPEC_TO_DONE_REQUIRE_TRUSTED_GIT_TESTS") == "1":
+        pytest.fail(f"required trusted-Git coverage was blocked: {detail}")
+    pytest.skip(f"expected host capability boundary: {detail}")
+
+
 def _git(repo, *args):
-    if GIT is None:
-        pytest.skip("git is required")
+    _require_git()
     return subprocess.run(
         [GIT, *args], cwd=repo, capture_output=True, text=True, check=True
     ).stdout.strip()
@@ -85,15 +105,15 @@ def _run(
     git_exe=None,
     env_overrides=None,
     trusted_main_ref="refs/heads/main",
+    extra_args=(),
+    expect_host_env_blocked=False,
 ):
-    if GIT is None:
-        pytest.skip("git is required")
+    _require_git()
     state = tmp_path / "state.md"
     if isinstance(state_lines, str):
         state_lines = [state_lines]
     state.write_text("\n".join(state_lines) + "\n", encoding="utf-8")
-    proc = subprocess.run(
-        [
+    args = [
             "node",
             str(CLAUDE_VALIDATOR),
             "--state",
@@ -114,7 +134,23 @@ def _run(
             limits[2],
             "--trusted-main-ref",
             trusted_main_ref,
-        ],
+    ]
+    args.extend(extra_args)
+    proc = subprocess.run(
+        args,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        env={**os.environ, **(env_overrides or {})},
+    )
+    result = json.loads(proc.stdout)
+    _handle_host_env_blocked(result, expected=expect_host_env_blocked)
+    return proc.returncode, result
+
+
+def _run_new_run(*args, env_overrides=None):
+    proc = subprocess.run(
+        ["node", str(NEW_RUN_APPENDER), *map(str, args)],
         capture_output=True,
         text=True,
         encoding="utf-8",
@@ -123,47 +159,191 @@ def _run(
     return proc.returncode, json.loads(proc.stdout)
 
 
-def _make_git_proxy(tmp_path, name, repo, ls_remote_output, *, status=0):
-    if os.name == "nt":
-        pytest.skip("terminal P7 git proxy integration is POSIX-only")
-    if GIT is None:
-        pytest.skip("git is required")
-    proxy_dir = tmp_path / name
-    proxy_dir.mkdir()
-    proxy = proxy_dir / "git"
-    fixed_remote = "https://github.com/monkey1sai/AI-BIM-governance.git"
-    script = f"""#!/bin/sh
-is_ls_remote=0
-for arg in "$@"; do
-  if [ "$arg" = "ls-remote" ]; then
-    is_ls_remote=1
-  fi
-done
-if [ "$is_ls_remote" -eq 1 ]; then
-  if [ "${{GIT_CONFIG_COUNT+x}}" = x ] || [ "${{GIT_CONFIG_KEY_0+x}}" = x ] || [ "${{GIT_CONFIG_VALUE_0+x}}" = x ] || [ "${{GIT_EXEC_PATH+x}}" = x ]; then
-    exit 91
-  fi
-  if [ "${{GIT_SSL_NO_VERIFY+x}}" = x ] || [ "${{CURL_CA_BUNDLE+x}}" = x ] || [ "${{SSL_CERT_FILE+x}}" = x ]; then
-    exit 92
-  fi
-  if [ "$GIT_CONFIG_GLOBAL" != /dev/null ] || [ "$GIT_CONFIG_SYSTEM" != /dev/null ] || [ "$GIT_CONFIG_NOSYSTEM" != 1 ]; then
-    exit 93
-  fi
-  case " $* " in
-    *" {fixed_remote} refs/heads/main "*) ;;
-    *) exit 94 ;;
-  esac
-  case "$PWD/" in
-    {shlex.quote(repo.as_posix() + '/')}*) exit 95 ;;
-  esac
-  printf '%s' {shlex.quote(ls_remote_output)}
-  exit {status}
-fi
-exec {shlex.quote(GIT)} "$@"
+def _validate_state_path(state, repo, expected_head, *, platform="codex"):
+    _require_git()
+    proc = subprocess.run(
+        [
+            "node",
+            str(CLAUDE_VALIDATOR),
+            "--state",
+            str(state),
+            "--platform",
+            platform,
+            "--git-exe",
+            GIT,
+            "--expected-head",
+            expected_head,
+            "--expected-worktree",
+            repo.as_posix(),
+            "--expected-agent-limit",
+            "40",
+            "--expected-p5-limit",
+            "2",
+            "--expected-evidence-limit",
+            "2",
+            "--trusted-main-ref",
+            "refs/heads/main",
+        ],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+    return proc.returncode, json.loads(proc.stdout)
+
+
+def _new_run_fixture(tmp_path, *, held_reason="run_budget_exhausted", exhausted=True):
+    source_repo, _ = _new_repo(tmp_path, "new-run-source-repo")
+    change = source_repo / "openspec/changes/demo"
+    change.mkdir(parents=True)
+    (change / "proposal.md").write_text("# demo\n", encoding="utf-8")
+    (source_repo / ".gitignore").write_text("artifacts/\n", encoding="utf-8")
+    _git(source_repo, "add", "openspec/changes/demo/proposal.md", ".gitignore")
+    _git(source_repo, "commit", "-m", "add demo change")
+    previous_head = _git(source_repo, "rev-parse", "HEAD")
+    branch = _git(source_repo, "branch", "--show-current")
+    source_line = _line(
+        source_repo,
+        previous_head,
+        "HELD@P1",
+        spec=change.as_posix(),
+        reason=held_reason,
+        branch=branch,
+        agentCalls="40/40" if exhausted else "39/40",
+        p5Rounds="0/2",
+        evidenceAttempts="0/2",
+        evidenceHead="",
+    )
+    source = source_repo / "artifacts/spec-to-done/demo-state.md"
+    source.parent.mkdir(parents=True)
+    source_bytes = (source_line + "\r\n").encode("utf-8")
+    source.write_bytes(source_bytes)
+    _git(source_repo, "commit", "--allow-empty", "-m", "fresh new-run base")
+    current_head = _git(source_repo, "rev-parse", "HEAD")
+    repo = tmp_path / "new-run-target-repo"
+    subprocess.run(
+        [GIT, "clone", "--no-hardlinks", source_repo.as_posix(), repo.as_posix()],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    expected = {
+        "sha256": hashlib.sha256(source_bytes).hexdigest(),
+        "bytes": len(source_bytes),
+        "checkpoints": 1,
+    }
+    return repo, branch, previous_head, current_head, source, source_bytes, expected
+
+
+def _append_new_run(
+    repo,
+    branch,
+    current_head,
+    source,
+    expected,
+    *,
+    expected_overrides=None,
+    owner_sha256="09" * 32,
+    owner_bytes="479",
+    date_stamp="2026-08-26",
+    env_overrides=None,
+    git_exe=None,
+    expect_host_env_blocked=False,
+):
+    expected = {**expected, **(expected_overrides or {})}
+    code, result = _run_new_run(
+        "append",
+        "--source-state",
+        source,
+        "--target-worktree",
+        repo,
+        "--git-exe",
+        git_exe or GIT,
+        "--expected-branch",
+        branch,
+        "--expected-head",
+        current_head,
+        "--expected-source-sha256",
+        expected["sha256"],
+        "--expected-source-bytes",
+        expected["bytes"],
+        "--expected-source-checkpoints",
+        expected["checkpoints"],
+        "--owner-message-sha256",
+        owner_sha256,
+        "--owner-message-bytes",
+        owner_bytes,
+        "--date-stamp",
+        date_stamp,
+        "--json",
+        env_overrides=env_overrides,
+    )
+    _handle_host_env_blocked(result, expected=expect_host_env_blocked)
+    return code, result
+
+
+def _run_trusted_git_pure(export_name, payload):
+    allowed_exports = {
+        "assertTerminalP7Facts",
+        "isSystemGitPath",
+        "parseTrustedRemoteMainResult",
+    }
+    assert export_name in allowed_exports
+    source = f"""
+import {{ {export_name} as subject }} from {json.dumps(TRUSTED_GIT_MODULE.as_uri())}
+const input = {json.dumps(payload)}
+try {{
+  const value = subject(input)
+  process.stdout.write(JSON.stringify({{ ok: true, value: value ?? null }}))
+}} catch (error) {{
+  process.stdout.write(JSON.stringify({{ ok: false, detail: String(error?.message || error) }}))
+  process.exitCode = 2
+}}
 """
-    proxy.write_text(script, encoding="utf-8")
-    proxy.chmod(0o755)
-    return proxy.as_posix()
+    proc = subprocess.run(
+        ["node", "--input-type=module", "--eval", source],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+    return proc.returncode, json.loads(proc.stdout)
+
+
+def _run_sanitized_git_environment(git_exe):
+    poison = {
+        "LD_PRELOAD": "/self-referential-loader-sentinel/ld-preload.invalid",
+        "LD_LIBRARY_PATH": "/self-referential-loader-sentinel/ld-library.invalid",
+        "LD_AUDIT": "/self-referential-loader-sentinel/ld-audit.invalid",
+        "DYLD_INSERT_LIBRARIES": "/self-referential-loader-sentinel/dyld.invalid",
+        "DYLD_LIBRARY_PATH": "/self-referential-loader-sentinel/dyld-library.invalid",
+        "NODE_OPTIONS": "--no-warnings",
+        "HTTP_PROXY": "http://self-referential-loader-sentinel.invalid",
+        "HTTPS_PROXY": "http://self-referential-loader-sentinel.invalid",
+        "ProgramFiles": "C:\\self-referential-loader-sentinel",
+        "SystemRoot": "C:\\self-referential-loader-sentinel",
+        "PATH": "C:\\self-referential-loader-sentinel",
+    }
+    source = f"""
+import {{ sanitizedGitEnvironment }} from {json.dumps(TRUSTED_GIT_MODULE.as_uri())}
+const poison = {json.dumps(poison)}
+for (const [key, value] of Object.entries(poison)) process.env[key] = value
+try {{
+  const env = sanitizedGitEnvironment({json.dumps(str(git_exe))})
+  const inherited = Object.fromEntries(
+    Object.keys(poison).filter((key) => env[key] === poison[key]).map((key) => [key, env[key]])
+  )
+  process.stdout.write(JSON.stringify({{ ok: true, keys: Object.keys(env).sort(), inherited }}))
+}} catch (error) {{
+  process.stdout.write(JSON.stringify({{ ok: false, detail: String(error?.message || error) }}))
+  process.exitCode = 2
+}}
+"""
+    proc = subprocess.run(
+        ["node", "--input-type=module", "--eval", source],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+    return proc.returncode, json.loads(proc.stdout)
 
 
 def test_machine_contract_is_schema_valid_closed_and_deterministic():
@@ -184,6 +364,415 @@ def test_machine_contract_is_schema_valid_closed_and_deterministic():
         "merge_commit_equals_remote_main": "required",
         "pr_head_and_merge_commit_same_tree": "required",
     }
+
+
+def test_machine_contract_pins_the_owner_only_new_run_boundary():
+    contract = json.loads(MACHINE_CONTRACT.read_text(encoding="utf-8"))
+    boundary = contract["durable_state"]["new_run_boundary"]
+    assert boundary == {
+        "schema_version": "spec-to-done-new-run/v1",
+        "token": "NEW_RUN@P0",
+        "required_previous_reason": "run_budget_exhausted",
+        "owner_provenance": "sha256-tuple-binding-not-digital-signature",
+        "git_identity": {
+            "executable_policy": "system-owned-read-only",
+            "executable_path": "required",
+            "executable_sha256": "required",
+            "executable_bytes": "required",
+            "git_directory": "required",
+            "git_common_directory": "required",
+        },
+        "counter_resets": {
+            "agentCalls": "0/40",
+            "p5Rounds": "0/2",
+            "evidenceAttempts": "0/2",
+        },
+        "field_resets": {
+            "planPath": "",
+            "taskIndex": "0",
+            "prNumber": "",
+            "runIds": "none",
+            "evidenceHead": "",
+        },
+    }
+
+
+def test_new_run_appender_preserves_prefix_and_emits_valid_p0(tmp_path):
+    repo, branch, old_head, new_head, source, source_bytes, expected = (
+        _new_run_fixture(tmp_path)
+    )
+    code, status = _run_new_run("status", "--state", source, "--json")
+    assert code == 0 and status["canStartNewRun"] is True
+    assert status["ownerAuthorizationRequired"] is True
+    assert status["nextAction"] == "obtain-exact-owner-authorization-then-run-append"
+    assert "owner-message-sha256" in status["appendRequiredArguments"]
+    code, result = _append_new_run(repo, branch, new_head, source, expected)
+    assert code == 0 and result["ok"] is True, result
+    target = repo / "artifacts/spec-to-done/demo-state.md"
+    target_bytes = target.read_bytes()
+    assert target_bytes.startswith(source_bytes)
+    assert result["sourceSha256"] == expected["sha256"]
+    assert result["previousHead"] == old_head
+    assert result["head"] == new_head
+    assert result["runSequence"] == 2
+    assert result["ownerProvenance"] == "sha256-tuple-binding-not-digital-signature"
+
+    code, validated = _validate_state_path(target, repo, new_head)
+    assert code == 0 and validated["ok"] is True
+    assert validated["kind"] == "NEW_RUN"
+    assert validated["phase"] == "P0"
+    assert validated["counters"]["agentCalls"]["used"] == 0
+    assert pathlib.Path(validated["fields"]["gitExecutablePath"]).is_absolute()
+    assert re.fullmatch(r"[0-9a-f]{64}", validated["fields"]["gitExecutableSha256"])
+    assert int(validated["fields"]["gitExecutableBytes"]) > 0
+    assert validated["fields"]["gitTrustClass"] == "system-owned-read-only"
+    assert pathlib.Path(validated["fields"]["gitDirectory"]).is_absolute()
+    assert pathlib.Path(validated["fields"]["gitCommonDirectory"]).is_absolute()
+    actual_git_dir = pathlib.Path(_git(repo, "rev-parse", "--absolute-git-dir")).resolve()
+    raw_common_dir = pathlib.Path(_git(repo, "rev-parse", "--git-common-dir"))
+    actual_common_dir = (
+        raw_common_dir if raw_common_dir.is_absolute() else repo / raw_common_dir
+    ).resolve()
+    assert pathlib.Path(validated["fields"]["gitDirectory"]).resolve() == actual_git_dir
+    assert (
+        pathlib.Path(validated["fields"]["gitCommonDirectory"]).resolve()
+        == actual_common_dir
+    )
+
+    code, status = _run_new_run("status", "--state", target, "--json")
+    assert code == 0 and status["ok"] is True
+    assert status["canStartNewRun"] is False
+    assert status["runSequence"] == 2
+    assert status["nextAction"] == "continue-or-hold-current-run-without-counter-reset"
+    assert status["appendRequiredArguments"] == []
+
+
+@pytest.mark.parametrize(
+    ("held_reason", "exhausted"),
+    [("external_blocked", True), ("run_budget_exhausted", False)],
+)
+def test_new_run_rejects_nonbudget_or_unexhausted_history(
+    tmp_path, held_reason, exhausted
+):
+    fixture = _new_run_fixture(
+        tmp_path, held_reason=held_reason, exhausted=exhausted
+    )
+    repo, branch, _, head, source, _, expected = fixture
+    code, result = _append_new_run(repo, branch, head, source, expected)
+    assert code == 2 and result["held"] == "resume_state_invalid"
+
+
+def test_validator_rejects_a_fabricated_new_run_line(tmp_path):
+    repo, head = _new_repo(tmp_path)
+    fabricated = _line(
+        repo,
+        head,
+        "NEW_RUN@P0",
+        runIds="none",
+        taskIndex="0",
+        evidenceHead="",
+        agentCalls="0/40",
+        p5Rounds="0/2",
+        evidenceAttempts="0/2",
+    )
+    code, result = _run(tmp_path, repo, fabricated, platform="codex")
+    assert code == 2 and result["held"] == "resume_state_invalid"
+
+
+def test_new_run_rejects_stale_source_tuple(tmp_path):
+    repo, branch, _, head, source, _, expected = _new_run_fixture(tmp_path)
+    code, result = _append_new_run(
+        repo,
+        branch,
+        head,
+        source,
+        expected,
+        expected_overrides={"sha256": "00" * 32},
+    )
+    assert code == 2 and result["held"] == "resume_state_invalid"
+
+
+def test_new_run_rejects_dirty_target_worktree(tmp_path):
+    repo, branch, _, head, source, _, expected = _new_run_fixture(tmp_path)
+    dirty = repo / "src/dirty.txt"
+    dirty.write_text("not committed\n", encoding="utf-8")
+    code, result = _append_new_run(repo, branch, head, source, expected)
+    assert code == 2 and result["held"] == "resume_state_invalid"
+    assert "clean" in result["detail"]
+
+
+def test_new_run_rejects_reusing_the_prior_worktree(tmp_path):
+    _, branch, _, head, source, _, expected = _new_run_fixture(tmp_path)
+    prior_worktree = source.parents[2]
+
+    code, result = _append_new_run(
+        prior_worktree, branch, head, source, expected
+    )
+
+    assert code == 2 and result["held"] == "resume_state_invalid"
+    assert "fresh sibling worktree" in result["detail"]
+
+
+def test_new_run_ignores_ambient_git_directory_injection(tmp_path):
+    repo, branch, _, head, source, _, expected = _new_run_fixture(tmp_path)
+    code, result = _append_new_run(
+        repo,
+        branch,
+        head,
+        source,
+        expected,
+        env_overrides={"GIT_DIR": str(tmp_path / "attacker")},
+    )
+    assert code == 0 and result["ok"] is True, result
+
+
+def test_validator_ignores_ambient_git_repository_object_and_config_injection(tmp_path):
+    repo, head = _new_repo(tmp_path, "trusted-repo")
+    attacker, _ = _new_repo(tmp_path, "attacker-repo")
+    code, result = _run(
+        tmp_path,
+        repo,
+        _line(repo, head),
+        env_overrides={
+            "GIT_DIR": str(attacker / ".git"),
+            "GIT_WORK_TREE": str(attacker),
+            "GIT_COMMON_DIR": str(attacker / ".git"),
+            "GIT_OBJECT_DIRECTORY": str(attacker / ".git/objects"),
+            "GIT_ALTERNATE_OBJECT_DIRECTORIES": str(attacker / ".git/objects"),
+            "GIT_REPLACE_REF_BASE": "refs/replace-attacker/",
+            "GIT_CEILING_DIRECTORIES": str(attacker),
+            "GIT_DISCOVERY_ACROSS_FILESYSTEM": "1",
+            "GIT_CONFIG_COUNT": "1",
+            "GIT_CONFIG_KEY_0": "core.hooksPath",
+            "GIT_CONFIG_VALUE_0": str(attacker),
+            "GIT_EXEC_PATH": str(attacker),
+        },
+    )
+    assert code == 0 and result["ok"] is True, result
+
+
+def test_trusted_git_child_environment_is_a_fixed_allowlist():
+    code, result = _run_sanitized_git_environment(GIT)
+
+    assert code == 0 and result["ok"] is True, result
+    assert result["inherited"] == {}
+    expected_keys = {
+        "GIT_CONFIG_GLOBAL",
+        "GIT_CONFIG_SYSTEM",
+        "GIT_CONFIG_NOSYSTEM",
+        "GIT_TERMINAL_PROMPT",
+        "GIT_OPTIONAL_LOCKS",
+        "GIT_NO_REPLACE_OBJECTS",
+        "GIT_LITERAL_PATHSPECS",
+        "PATH",
+    }
+    if os.name == "nt":
+        expected_keys.update({"SystemRoot", "WINDIR"})
+    assert set(result["keys"]) == expected_keys
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows runtime-volume binding")
+def test_windows_system_git_rejects_an_arbitrary_program_files_drive():
+    actual_drive = pathlib.PureWindowsPath(GIT).drive.lower()
+    fake_drive = "Z:" if actual_drive != "z:" else "Y:"
+    fake_git = str(pathlib.PureWindowsPath(fake_drive, "/Program Files/Git/cmd/git.exe"))
+
+    code, result = _run_trusted_git_pure("isSystemGitPath", fake_git)
+    assert code == 0 and result == {"ok": True, "value": False}
+
+    code, result = _run_trusted_git_pure("isSystemGitPath", GIT)
+    assert code == 0 and result == {"ok": True, "value": True}
+
+
+def test_new_run_rejects_caller_controlled_git_even_when_named_git(tmp_path):
+    repo, branch, _, head, source, _, expected = _new_run_fixture(tmp_path)
+    suffix = ".exe" if os.name == "nt" else ""
+    fake_git = tmp_path / f"git{suffix}"
+    shutil.copyfile(GIT, fake_git)
+    fake_git.chmod(0o755)
+
+    code, result = _append_new_run(
+        repo,
+        branch,
+        head,
+        source,
+        expected,
+        git_exe=str(fake_git),
+        expect_host_env_blocked=True,
+    )
+
+    assert code == 2 and result["held"] == "host_env_blocked"
+    assert not (repo / "artifacts/spec-to-done/demo-state.md").exists()
+
+
+def test_new_run_rejects_bad_owner_tuple_or_worktree_identity(tmp_path):
+    repo, branch, _, head, source, _, expected = _new_run_fixture(tmp_path)
+    code, result = _append_new_run(
+        repo, branch, head, source, expected, owner_sha256="bad"
+    )
+    assert code == 2 and result["held"] == "bad_args"
+    code, result = _append_new_run(repo, "wrong/branch", head, source, expected)
+    assert code == 2 and result["held"] == "resume_state_invalid"
+
+
+def test_new_run_rejects_lock_and_repeat(tmp_path):
+    repo, branch, _, head, source, _, expected = _new_run_fixture(tmp_path)
+    target = repo / "artifacts/spec-to-done/demo-state.md"
+    target.parent.mkdir(parents=True)
+    lock = pathlib.Path(f"{target}.new-run.lock")
+    lock.write_text("occupied\n", encoding="utf-8")
+    code, result = _append_new_run(repo, branch, head, source, expected)
+    assert code == 2 and result["held"] == "resume_state_invalid"
+    lock.unlink()
+
+    code, result = _append_new_run(repo, branch, head, source, expected)
+    assert code == 0 and result["ok"] is True, result
+    code, result = _append_new_run(repo, branch, head, source, expected)
+    assert code == 2 and result["held"] == "resume_state_invalid"
+
+
+@pytest.mark.skipif(
+    os.name == "nt",
+    reason="trusted-Git positive atomicity coverage runs on canonical Linux",
+)
+def test_new_run_lock_snapshot_preserves_first_completed_boundary(tmp_path):
+    repo, branch, _, head, source, _, expected = _new_run_fixture(tmp_path)
+    ready = tmp_path / "before-lock.ready"
+    release = tmp_path / "before-lock.release"
+    driver = tmp_path / "append-driver.mjs"
+    driver.write_text(
+        f"""
+import fs from 'node:fs'
+import {{ appendCommand }} from {json.dumps(NEW_RUN_APPENDER.as_uri())}
+const cli = JSON.parse(process.argv[2])
+try {{
+  const result = appendCommand(cli, {{
+    beforeLock() {{
+      fs.writeFileSync(process.argv[3], 'ready')
+      const waiter = new Int32Array(new SharedArrayBuffer(4))
+      while (!fs.existsSync(process.argv[4])) Atomics.wait(waiter, 0, 0, 10)
+    }},
+  }})
+  process.stdout.write(JSON.stringify(result))
+}} catch (error) {{
+  process.stdout.write(JSON.stringify({{
+    ok: false,
+    held: error.held || 'resume_state_invalid',
+    detail: error.message,
+  }}))
+  process.exitCode = 2
+}}
+""",
+        encoding="utf-8",
+    )
+    cli = {
+        "command": "append",
+        "source-state": str(source),
+        "target-worktree": str(repo),
+        "git-exe": GIT,
+        "expected-branch": branch,
+        "expected-head": head,
+        "expected-source-sha256": expected["sha256"],
+        "expected-source-bytes": str(expected["bytes"]),
+        "expected-source-checkpoints": str(expected["checkpoints"]),
+        "owner-message-sha256": "10" * 32,
+        "owner-message-bytes": "480",
+        "date-stamp": "2026-08-27",
+        "json": True,
+    }
+    blocked = subprocess.Popen(
+        ["node", str(driver), json.dumps(cli), str(ready), str(release)],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        encoding="utf-8",
+        env=os.environ.copy(),
+    )
+    deadline = time.monotonic() + 10
+    while not ready.exists() and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert ready.exists(), "blocked appender did not reach its pre-lock barrier"
+
+    first_code, first = _append_new_run(repo, branch, head, source, expected)
+    assert first_code == 0 and first["ok"] is True, first
+    target = repo / "artifacts/spec-to-done/demo-state.md"
+    first_bytes = target.read_bytes()
+    release.write_text("release\n", encoding="utf-8")
+    stdout, stderr = blocked.communicate(timeout=10)
+    second = json.loads(stdout)
+
+    assert blocked.returncode == 2, stderr
+    assert second["held"] == "resume_state_invalid"
+    assert "overwrite refused" in second["detail"]
+    assert target.read_bytes() == first_bytes
+    assert first_bytes.count(b"NEW_RUN@P0 |") == 1
+    assert not pathlib.Path(f"{target}.new-run.lock").exists()
+
+
+@pytest.mark.skipif(
+    os.name == "nt",
+    reason="trusted-Git positive rollback coverage runs on canonical Linux",
+)
+def test_new_run_post_write_failure_restores_locked_target_bytes(tmp_path):
+    repo, branch, _, head, source, source_bytes, expected = _new_run_fixture(tmp_path)
+    target = repo / "artifacts/spec-to-done/demo-state.md"
+    target.parent.mkdir(parents=True)
+    target.write_bytes(source_bytes)
+    driver = tmp_path / "rollback-driver.mjs"
+    driver.write_text(
+        f"""
+import {{ appendCommand }} from {json.dumps(NEW_RUN_APPENDER.as_uri())}
+const cli = JSON.parse(process.argv[2])
+try {{
+  appendCommand(cli, {{ afterWrite() {{ throw new Error('forced post-write failure') }} }})
+}} catch (error) {{
+  process.stdout.write(JSON.stringify({{
+    ok: false,
+    held: error.held || 'resume_state_invalid',
+    detail: error.message,
+  }}))
+  process.exitCode = 2
+}}
+""",
+        encoding="utf-8",
+    )
+    cli = {
+        "command": "append",
+        "source-state": str(source),
+        "target-worktree": str(repo),
+        "git-exe": GIT,
+        "expected-branch": branch,
+        "expected-head": head,
+        "expected-source-sha256": expected["sha256"],
+        "expected-source-bytes": str(expected["bytes"]),
+        "expected-source-checkpoints": str(expected["checkpoints"]),
+        "owner-message-sha256": "09" * 32,
+        "owner-message-bytes": "479",
+        "date-stamp": "2026-08-26",
+        "json": True,
+    }
+    proc = subprocess.run(
+        ["node", str(driver), json.dumps(cli)],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        env=os.environ.copy(),
+    )
+    result = json.loads(proc.stdout)
+
+    assert proc.returncode == 2 and "forced post-write failure" in result["detail"]
+    assert target.read_bytes() == source_bytes
+    assert not pathlib.Path(f"{target}.new-run.lock").exists()
+
+
+def test_validator_rejects_tampered_new_run_boundary(tmp_path):
+    repo, branch, _, head, source, _, expected = _new_run_fixture(tmp_path)
+    code, result = _append_new_run(repo, branch, head, source, expected)
+    assert code == 0 and result["ok"] is True, result
+    target = repo / "artifacts/spec-to-done/demo-state.md"
+    target.write_bytes(target.read_bytes().replace(b"ownerMessageBytes=479", b"ownerMessageBytes=480"))
+    code, result = _validate_state_path(target, repo, head)
+    assert code == 2 and result["held"] == "resume_state_invalid"
 
 
 def test_valid_claude_and_codex_states_and_single_canonical_validator(tmp_path):
@@ -255,17 +844,53 @@ def test_grok_platform_requires_grok_run_ids_except_p0_none(tmp_path):
 
 def test_non_terminal_validation_does_not_resolve_the_remote(tmp_path):
     repo, head = _new_repo(tmp_path)
-    proxy = _make_git_proxy(
+    code, result = _run(
         tmp_path,
-        "non-terminal-git",
         repo,
-        "remote resolution must not run for P5\n",
-        status=97,
+        _line(repo, head),
+        env_overrides={
+            "HTTP_PROXY": "http://127.0.0.1:9",
+            "HTTPS_PROXY": "http://127.0.0.1:9",
+            "NO_PROXY": "",
+        },
     )
 
-    code, result = _run(tmp_path, repo, _line(repo, head), git_exe=proxy)
-
     assert code == 0 and result["ok"] is True
+
+
+def test_validator_rejects_removed_test_git_fixture_flag(tmp_path):
+    repo, head = _new_repo(tmp_path, "removed-fixture-seam-repo")
+    code, result = _run(
+        tmp_path,
+        repo,
+        _line(repo, head),
+        extra_args=("--test-git-fixture", "spec-to-done-test-fixture-v1"),
+    )
+
+    assert code == 2 and result["held"] == "resume_state_invalid"
+    assert "unknown validator arguments" in result["detail"]
+
+
+def test_validator_rejects_caller_controlled_git_without_escape(tmp_path):
+    repo, head = _new_repo(tmp_path, "caller-controlled-validator-git")
+    suffix = ".exe" if os.name == "nt" else ""
+    fake_git = tmp_path / f"git{suffix}"
+    shutil.copyfile(GIT, fake_git)
+    fake_git.chmod(0o755)
+
+    code, result = _run(
+        tmp_path,
+        repo,
+        _line(repo, head),
+        git_exe=str(fake_git),
+        env_overrides={
+            "PYTEST_CURRENT_TEST": "caller-controlled fixture",
+            "SPEC_TO_DONE_TEST_GIT_FIXTURE": "spec-to-done-test-fixture-v1",
+        },
+        expect_host_env_blocked=True,
+    )
+
+    assert code == 2 and result["held"] == "host_env_blocked"
 
 
 def test_cli_rejects_a_local_tracking_ref_as_the_trust_marker(tmp_path):
@@ -774,35 +1399,61 @@ def _terminal_state(tmp_path, name, change_merge_tree):
     return repo, [previous, terminal], merge
 
 
-def test_terminal_p7_requires_evidenced_pr_tree_equivalence(tmp_path):
-    repo, lines, merge = _terminal_state(tmp_path, "same-tree", False)
-    proxy = _make_git_proxy(
-        tmp_path,
-        "same-tree-git",
-        repo,
-        f"{merge}\trefs/heads/main\n",
+def test_terminal_p7_fact_adjudication_accepts_only_all_true_facts():
+    merge = "a" * 40
+    code, result = _run_trusted_git_pure(
+        "assertTerminalP7Facts",
+        {
+            "mergeDescendsFromPrHead": True,
+            "liveRemoteMain": merge,
+            "mergeCommit": merge,
+            "prHeadAndMergeSameTree": True,
+        },
     )
-    code, result = _run(tmp_path, repo, lines, expected_head=merge, git_exe=proxy)
-    assert code == 0 and result["ok"] is True
 
+    assert code == 0 and result == {"ok": True, "value": None}
+
+
+@pytest.mark.parametrize(
+    ("override", "detail"),
+    [
+        (
+            {"mergeDescendsFromPrHead": False},
+            "not a proven descendant",
+        ),
+        (
+            {"liveRemoteMain": "b" * 40},
+            "does not equal live remote refs/heads/main",
+        ),
+        (
+            {"prHeadAndMergeSameTree": False},
+            "tree differs",
+        ),
+    ],
+)
+def test_terminal_p7_fact_adjudication_fails_closed(override, detail):
+    merge = "a" * 40
+    facts = {
+        "mergeDescendsFromPrHead": True,
+        "liveRemoteMain": merge,
+        "mergeCommit": merge,
+        "prHeadAndMergeSameTree": True,
+    }
+    facts.update(override)
+
+    code, result = _run_trusted_git_pure("assertTerminalP7Facts", facts)
+
+    assert code == 2 and result["ok"] is False
+    assert detail in result["detail"]
+
+
+def test_terminal_p7_rejects_dirty_worktree_before_live_remote(tmp_path):
+    repo, lines, merge = _terminal_state(tmp_path, "dirty-before-remote", False)
     dirty = repo / "src/dirty.txt"
     dirty.write_text("uncommitted product drift\n", encoding="utf-8")
-    code, result = _run(tmp_path, repo, lines, expected_head=merge, git_exe=proxy)
-    assert code == 2 and result["held"] == "evidence_stale"
-    dirty.unlink()
 
-    illegal_jump = [lines[0].replace("DONE@P6", "DONE@P0"), lines[1]]
-    code, result = _run(tmp_path, repo, illegal_jump, expected_head=merge, git_exe=proxy)
-    assert code == 2 and result["held"] == "resume_state_invalid"
+    code, result = _run(tmp_path, repo, lines, expected_head=merge)
 
-    repo, lines, merge = _terminal_state(tmp_path, "different-tree", True)
-    proxy = _make_git_proxy(
-        tmp_path,
-        "different-tree-git",
-        repo,
-        f"{merge}\trefs/heads/main\n",
-    )
-    code, result = _run(tmp_path, repo, lines, expected_head=merge, git_exe=proxy)
     assert code == 2 and result["held"] == "evidence_stale"
 
 
@@ -828,70 +1479,28 @@ def test_terminal_p7_rejects_same_tree_from_unrelated_history(tmp_path):
         mergeCommit=unrelated,
     )
 
-    proxy = _make_git_proxy(
-        tmp_path,
-        "unrelated-history-git",
-        repo,
-        f"{unrelated}\trefs/heads/main\n",
-    )
     code, result = _run(
         tmp_path,
         repo,
         [previous, terminal],
         expected_head=unrelated,
-        git_exe=proxy,
     )
 
     assert code == 2 and result["held"] == "evidence_stale"
 
 
-def test_terminal_p7_ignores_local_tracking_ref_and_obeys_live_remote(tmp_path):
-    repo, lines, merge = _terminal_state(tmp_path, "remote-trust", False)
-    pr_head = lines[-1].split("prHead=", 1)[1].split(" |", 1)[0]
-    _git(repo, "update-ref", "refs/remotes/origin/main", pr_head)
-    trusted_proxy = _make_git_proxy(
-        tmp_path,
-        "trusted-remote-git",
-        repo,
-        f"{merge}\trefs/heads/main\n",
-    )
-
-    code, result = _run(
-        tmp_path,
-        repo,
-        lines,
-        expected_head=merge,
-        git_exe=trusted_proxy,
-        env_overrides={
-            "GIT_CONFIG_COUNT": "1",
-            "GIT_CONFIG_KEY_0": "http.sslVerify",
-            "GIT_CONFIG_VALUE_0": "false",
-            "GIT_EXEC_PATH": "/untrusted/git-core",
-            "GIT_SSL_NO_VERIFY": "1",
-            "CURL_CA_BUNDLE": "/untrusted/ca-bundle",
-            "SSL_CERT_FILE": "/untrusted/certificate",
+def test_terminal_p7_remote_parser_accepts_exact_single_main_ref():
+    merge = "a" * 40
+    code, result = _run_trusted_git_pure(
+        "parseTrustedRemoteMainResult",
+        {
+            "status": 0,
+            "stdout": f"{merge}\trefs/heads/main\n",
+            "expectedRef": "refs/heads/main",
         },
     )
 
-    assert code == 0 and result["ok"] is True
-
-    _git(repo, "update-ref", "refs/remotes/origin/main", merge)
-    stale_remote_proxy = _make_git_proxy(
-        tmp_path,
-        "stale-remote-git",
-        repo,
-        f"{pr_head}\trefs/heads/main\n",
-    )
-
-    code, result = _run(
-        tmp_path,
-        repo,
-        lines,
-        expected_head=merge,
-        git_exe=stale_remote_proxy,
-    )
-
-    assert code == 2 and result["held"] == "evidence_stale"
+    assert code == 0 and result == {"ok": True, "value": merge}
 
 
 @pytest.mark.parametrize(
@@ -905,23 +1514,15 @@ def test_terminal_p7_ignores_local_tracking_ref_and_obeys_live_remote(tmp_path):
     ],
 )
 def test_terminal_p7_fails_closed_on_invalid_live_remote_resolution(
-    tmp_path, remote_output, status
+    remote_output, status
 ):
-    repo, lines, merge = _terminal_state(tmp_path, "malformed-remote", False)
-    proxy = _make_git_proxy(
-        tmp_path,
-        "malformed-remote-git",
-        repo,
-        remote_output,
-        status=status,
+    code, result = _run_trusted_git_pure(
+        "parseTrustedRemoteMainResult",
+        {
+            "status": status,
+            "stdout": remote_output,
+            "expectedRef": "refs/heads/main",
+        },
     )
 
-    code, result = _run(
-        tmp_path,
-        repo,
-        lines,
-        expected_head=merge,
-        git_exe=proxy,
-    )
-
-    assert code == 2 and result["held"] == "evidence_stale"
+    assert code == 2 and result["ok"] is False

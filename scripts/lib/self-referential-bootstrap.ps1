@@ -1,15 +1,15 @@
 # scripts/lib/self-referential-bootstrap.ps1
-# Self-referential change bootstrap: ledger parsing, integrity validation, and the
-# PR-time debt gate. Portable rule text lives in docs/agents/self-referential-bootstrap.md.
+# Self-referential change governance: historical-ledger integrity, Lean-policy
+# admission, and the one-time #704 migration. Portable rule text lives in
+# docs/agents/self-referential-bootstrap.md.
 #
-# Design constraints (decision D-7, plan docs/plans/remote-linux-test-deploy-target.plan.md):
-# - The rule is a general capability, not a one-off exception: it triggers whenever a PR
-#   edits the verification mechanism itself (deploy path / evidence harness / gate script /
-#   the workflows that enforce this gate).
-# - Enforcement is machine-checked AGAINST THE BASE: the gate evaluates the ledger
-#   transition from the PR base to the PR head. Deleting or mutating entries, impersonating
-#   an earlier PR's entry, or fabricating a fixpoint all fail closed (PR #459 review round).
-# - The ledger FORMAT is scaffold (portable); the CONTENT is product-owned.
+# Design constraints:
+# - Enforcement is machine-checked AGAINST THE BASE. Historical ledger rows and
+#   referenced evidence remain immutable and malformed transitions fail closed.
+# - Lean Governance commit 2a759f4 retires NEW fixpoint/classifier/ledger debt.
+#   Mechanism changes on a Lean-policy base stay single-PR and emit an advisory.
+# - PR #704 is the only bootstrap bridge: exact PR/base/owner-message/path tuple,
+#   unchanged ledger, and no reusable migration registry.
 
 Set-StrictMode -Version Latest
 
@@ -42,7 +42,7 @@ $script:SelfReferentialMechanismPattern = @(
     # These exact future paths must be visible to the immutable base classifier
     # before the NEW_RUN implementation PR changes them. Directory-wide patterns
     # would silently widen the mechanism surface and are intentionally rejected.
-    '^\.claude/skills/spec-to-done/(?:validate-state|append-new-run)\.mjs$'
+    '^\.claude/skills/spec-to-done/(?:validate-state|append-new-run|trusted-git)\.mjs$'
     '^\.claude/skills/spec-to-done/(?:SKILL|GROK)\.md$'
     '^\.codex/skills/spec-to-done/SKILL\.md$'
     '^tests/test_spec_to_done_(?:state_contract|budget_contract|closeout_contract)\.py$'
@@ -142,6 +142,7 @@ $script:SelfReferentialAdjudicatorPaths = @(
     # list exact so adjacent skill files and tests do not inherit authority.
     '.claude/skills/spec-to-done/validate-state.mjs'
     '.claude/skills/spec-to-done/append-new-run.mjs'
+    '.claude/skills/spec-to-done/trusted-git.mjs'
     '.claude/skills/spec-to-done/SKILL.md'
     '.claude/skills/spec-to-done/GROK.md'
     '.codex/skills/spec-to-done/SKILL.md'
@@ -150,9 +151,282 @@ $script:SelfReferentialAdjudicatorPaths = @(
     'tests/test_spec_to_done_closeout_contract.py'
 )
 
+$script:SelfReferentialLeanPolicyCommit = '2a759f4ac488750c4f3e1e1945b4d5de9f936b50'
+$script:SelfReferentialLeanMigrationPr = 704
+$script:SelfReferentialLeanMigrationBase = 'c9c9ebff649e2bf7dadebca2eaaeb646e5307ac3'
+$script:SelfReferentialLeanMigrationDeclaration = 'owner-authorized-migration'
+$script:SelfReferentialLeanMigrationOwnerTuple = 'sha256=ccb6cca014b86b2f653b859dd8f447b5af002112723096e55352c0a3ea0a13fb;bytes=3265'
+$script:SelfReferentialGitExitCode = $null
+$script:SelfReferentialGitError = ''
+$script:IsWindowsHost = $PSVersionTable.Platform -eq 'Win32NT'
+
+function Test-SelfReferentialGitWriteDenied {
+    [CmdletBinding()]
+    param([Parameter(Mandatory = $true)][string] $Path)
+
+    $writeHandle = $null
+    try {
+        $writeHandle = [IO.File]::Open(
+            $Path,
+            [IO.FileMode]::Open,
+            [IO.FileAccess]::ReadWrite,
+            [IO.FileShare]::Read
+        )
+        return $false
+    } catch [UnauthorizedAccessException] {
+        return $true
+    } catch [IO.IOException] {
+        # A sharing violation or transient lock is not permission evidence.
+        return $false
+    } finally {
+        if ($null -ne $writeHandle) { $writeHandle.Dispose() }
+    }
+}
+
+function Get-SelfReferentialTrustedGitIdentity {
+    [CmdletBinding()]
+    param()
+
+    $candidates = if ($script:IsWindowsHost) {
+        $programFileRoots = @(
+            [Environment]::GetFolderPath([Environment+SpecialFolder]::ProgramFiles)
+            [Environment]::GetFolderPath([Environment+SpecialFolder]::ProgramFilesX86)
+        ) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Unique
+        @($programFileRoots | ForEach-Object {
+            Join-Path $_ 'Git\cmd\git.exe'
+            Join-Path $_ 'Git\bin\git.exe'
+        })
+    } else {
+        @('/usr/bin/git', '/usr/local/bin/git')
+    }
+    foreach ($candidate in ($candidates | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })) {
+        try {
+            $item = Get-Item -LiteralPath $candidate -Force -ErrorAction Stop
+            if ($item.PSIsContainer -or
+                (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) -or
+                $item.Name.ToLowerInvariant() -ne $(if ($script:IsWindowsHost) { 'git.exe' } else { 'git' })) {
+                continue
+            }
+            $resolved = $item.FullName
+            if (-not (Test-SelfReferentialGitWriteDenied -Path $resolved)) {
+                continue
+            }
+            $hash = (Get-FileHash -LiteralPath $resolved -Algorithm SHA256 -ErrorAction Stop).Hash.ToLowerInvariant()
+            return [pscustomobject]@{
+                Path = $resolved
+                Sha256 = $hash
+                Bytes = [int64]$item.Length
+            }
+        } catch {
+            continue
+        }
+    }
+    throw 'self_referential_bootstrap: no approved system-owned, read-only Git executable was found.'
+}
+
+function Invoke-SelfReferentialTrustedGit {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string] $RepoRoot,
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][string[]] $Arguments
+    )
+
+    $identity = Get-SelfReferentialTrustedGitIdentity
+    $root = (Resolve-Path -LiteralPath $RepoRoot -ErrorAction Stop).Path
+    $startInfo = [Diagnostics.ProcessStartInfo]::new()
+    $startInfo.FileName = $identity.Path
+    $startInfo.WorkingDirectory = $root
+    $startInfo.UseShellExecute = $false
+    $startInfo.RedirectStandardOutput = $true
+    $startInfo.RedirectStandardError = $true
+    $gitArguments = @(
+        '--no-optional-locks', '--no-replace-objects',
+        '-c', $(if ($script:IsWindowsHost) { 'core.hooksPath=NUL' } else { 'core.hooksPath=/dev/null' }),
+        '-c', 'core.fsmonitor=false', '-c', 'core.pager=cat', '-c', 'diff.external=',
+        '-c', 'core.longpaths=true',
+        '-c', 'core.attributesfile='
+    ) + @($Arguments)
+    foreach ($argument in $gitArguments) { [void]$startInfo.ArgumentList.Add([string]$argument) }
+    $startInfo.Environment.Clear()
+    # Do not inherit caller process state. In particular, loader variables such
+    # as LD_PRELOAD, LD_AUDIT, and DYLD_INSERT_LIBRARIES can execute code before
+    # the identity-bound Git binary reaches main(). Build the complete child
+    # environment below from OS-known directories and fixed literals instead.
+    $gitDirectory = Split-Path -Parent $identity.Path
+    $systemDirectory = if ($script:IsWindowsHost) {
+        [Environment]::GetFolderPath([Environment+SpecialFolder]::System)
+    } else {
+        ''
+    }
+    $windowsDirectory = if ($script:IsWindowsHost) {
+        [Environment]::GetFolderPath([Environment+SpecialFolder]::Windows)
+    } else {
+        ''
+    }
+    if ($script:IsWindowsHost -and
+        ([string]::IsNullOrWhiteSpace($systemDirectory) -or [string]::IsNullOrWhiteSpace($windowsDirectory))) {
+        throw 'self_referential_bootstrap: Windows system directory authority is unavailable.'
+    }
+    $startInfo.Environment['PATH'] = if ($script:IsWindowsHost) {
+        "$gitDirectory;$systemDirectory"
+    } else {
+        "${gitDirectory}:/usr/bin:/bin:/usr/local/bin"
+    }
+    if ($script:IsWindowsHost) {
+        $startInfo.Environment['SystemRoot'] = $windowsDirectory
+        $startInfo.Environment['WINDIR'] = $windowsDirectory
+    }
+    $startInfo.Environment['GIT_CONFIG_GLOBAL'] = if ($script:IsWindowsHost) { 'NUL' } else { '/dev/null' }
+    $startInfo.Environment['GIT_CONFIG_SYSTEM'] = if ($script:IsWindowsHost) { 'NUL' } else { '/dev/null' }
+    $startInfo.Environment['GIT_CONFIG_NOSYSTEM'] = '1'
+    $startInfo.Environment['GIT_TERMINAL_PROMPT'] = '0'
+    $startInfo.Environment['GIT_OPTIONAL_LOCKS'] = '0'
+    $startInfo.Environment['GIT_NO_REPLACE_OBJECTS'] = '1'
+    # Do not set GIT_LITERAL_PATHSPECS globally: the exact-revision object
+    # syntax used by the immutable-head checks (`<sha>:<path>`) relies on
+    # Git's normal revision/path disambiguation. All ordinary pathspecs below
+    # are still terminated with `--` and are passed as individual arguments.
+    $process = [Diagnostics.Process]::new()
+    $process.StartInfo = $startInfo
+    if (-not $process.Start()) { throw 'self_referential_bootstrap: trusted Git process failed to start.' }
+    $stdout = $process.StandardOutput.ReadToEnd()
+    $stderr = $process.StandardError.ReadToEnd()
+    $process.WaitForExit()
+    $script:SelfReferentialGitExitCode = $process.ExitCode
+    $script:SelfReferentialGitError = [string]$stderr
+    return @($stdout -split "`r?`n" | Where-Object { $_ -ne '' })
+}
+
+$script:SelfReferentialLeanMigrationPaths = @(
+    '.claude/skills/spec-to-done/GROK.md'
+    '.claude/skills/spec-to-done/SKILL.md'
+    '.claude/skills/spec-to-done/append-new-run.mjs'
+    '.claude/skills/spec-to-done/trusted-git.mjs'
+    '.claude/skills/spec-to-done/validate-state.mjs'
+    '.codex/skills/spec-to-done/SKILL.md'
+    '.github/PULL_REQUEST_TEMPLATE.md'
+    '.github/workflows/agent-governance.yml'
+    'agent-contracts/spec-to-done.contract.json'
+    'agent-contracts/spec-to-done.contract.schema.json'
+    'agent-contracts/trusted-host-merge.contract.json'
+    'agent-skills-manifest.json'
+    'docs/agents/self-referential-bootstrap.md'
+    'scripts/lib/self-referential-bootstrap.ps1'
+    'scripts/tests/test-self-referential-bootstrap.ps1'
+    'tests/test_spec_to_done_state_contract.py'
+)
+
 $script:GenericReasonBlocklist = @(
     'bootstrap', 'needed', 'required', 'self-referential', 'chicken', 'egg', 'because', 'necessary'
 )
+
+function Test-SelfReferentialLeanPolicyBase {
+    param(
+        [Parameter(Mandatory = $true)][string] $RepoRoot,
+        [Parameter(Mandatory = $true)][string] $BaseSha
+    )
+
+    if ([string]::IsNullOrWhiteSpace($RepoRoot) -or [string]::IsNullOrWhiteSpace($BaseSha)) {
+        return $false
+    }
+    if ($BaseSha -ceq $script:SelfReferentialLeanPolicyCommit) {
+        return $true
+    }
+
+    $null = Invoke-SelfReferentialTrustedGit -RepoRoot $RepoRoot -Arguments @(
+        'cat-file', '-e', "$($script:SelfReferentialLeanPolicyCommit)^{commit}"
+    )
+    if ($script:SelfReferentialGitExitCode -ne 0) {
+        return $false
+    }
+    $null = Invoke-SelfReferentialTrustedGit -RepoRoot $RepoRoot -Arguments @(
+        'merge-base', '--is-ancestor', $script:SelfReferentialLeanPolicyCommit, $BaseSha
+    )
+    if ($script:SelfReferentialGitExitCode -eq 0) {
+        return $true
+    }
+    if ($script:SelfReferentialGitExitCode -eq 1) {
+        return $false
+    }
+    throw "self_referential_bootstrap: unable to determine whether base $BaseSha contains the Lean Governance policy."
+}
+
+function Assert-SelfReferentialLeanPolicyBody {
+    param(
+        [Parameter(Mandatory = $true)][string] $Declared,
+        [Parameter(Mandatory = $true)][string] $Body,
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][string[]] $ChangedPaths,
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][string[]] $MechanismPaths,
+        [Parameter(Mandatory = $true)] $Transition,
+        [Parameter(Mandatory = $true)][scriptblock] $GetTableValue,
+        [Parameter(Mandatory = $true)][string] $BaseLedgerJson,
+        [Parameter(Mandatory = $true)][string] $HeadLedgerJson,
+        [int] $PrNumber = 0,
+        [string] $BaseSha = '',
+        [string] $HeadSha = '',
+        [bool] $HasExactHeadContext = $false
+    )
+
+    if (-not $HasExactHeadContext -or [string]::IsNullOrWhiteSpace($BaseSha)) {
+        throw 'self_referential_bootstrap: Lean-policy adjudication requires exact base and head context.'
+    }
+    if ($BaseLedgerJson -cne $HeadLedgerJson -or
+        @($Transition.NewEntries).Count -ne 0 -or
+        @($Transition.ClosedEntries).Count -ne 0 -or
+        @($Transition.RepairEntries).Count -ne 0 -or
+        @($Transition.OpenDebt).Count -ne 0 -or
+        ($ChangedPaths -ccontains 'scripts/self-referential-bootstrap-ledger.json')) {
+        throw 'self_referential_bootstrap: the Lean-policy ledger is a closed historical archive; new debt, repair, closure, or any ledger edit is forbidden.'
+    }
+
+    $isExactMigrationPathTuple = $ChangedPaths.Count -eq $script:SelfReferentialLeanMigrationPaths.Count -and
+        @($ChangedPaths | Where-Object { -not ($script:SelfReferentialLeanMigrationPaths -ccontains $_) }).Count -eq 0 -and
+        @($script:SelfReferentialLeanMigrationPaths | Where-Object { -not ($ChangedPaths -ccontains $_) }).Count -eq 0
+    if (($PrNumber -eq $script:SelfReferentialLeanMigrationPr -or $isExactMigrationPathTuple) -and
+        $Declared -cne $script:SelfReferentialLeanMigrationDeclaration) {
+        throw "self_referential_bootstrap: PR #704 and its exact one-time migration path tuple must declare '$($script:SelfReferentialLeanMigrationDeclaration)'."
+    }
+
+    if ($Declared -ceq $script:SelfReferentialLeanMigrationDeclaration) {
+        if ($PrNumber -ne $script:SelfReferentialLeanMigrationPr -or
+            $BaseSha -cne $script:SelfReferentialLeanMigrationBase) {
+            throw "self_referential_bootstrap: owner-authorized-migration is restricted to PR #$($script:SelfReferentialLeanMigrationPr) at base $($script:SelfReferentialLeanMigrationBase)."
+        }
+        $ownerTuple = ([string](& $GetTableValue $Body 'Lean migration owner message')).Trim().ToLowerInvariant()
+        if ($ownerTuple -cne $script:SelfReferentialLeanMigrationOwnerTuple) {
+            throw "self_referential_bootstrap: PR #704 must bind the exact owner-message tuple '$($script:SelfReferentialLeanMigrationOwnerTuple)'."
+        }
+        $candidateHead = ([string](& $GetTableValue $Body 'Current candidate head')).Trim().ToLowerInvariant()
+        if (-not $candidateHead -or $candidateHead -notmatch '^[0-9a-f]{40}$' -or
+            $candidateHead -cne $HeadSha.ToLowerInvariant()) {
+            throw 'self_referential_bootstrap: PR #704 must bind the exact current candidate head in its owner migration tuple.'
+        }
+        if (([string](& $GetTableValue $Body 'Bootstrap ledger entry')).Trim().ToLowerInvariant() -cne 'not applicable' -or
+            ([string](& $GetTableValue $Body 'Bootstrap reason')).Trim().ToLowerInvariant() -cne 'not applicable') {
+            throw 'self_referential_bootstrap: PR #704 must not claim a bootstrap ledger entry, reason, or future fixpoint.'
+        }
+
+        $actual = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
+        foreach ($path in $ChangedPaths) {
+            if (-not $actual.Add([string]$path)) {
+                throw "self_referential_bootstrap: PR #704 changed-path tuple contains duplicate path '$path'."
+            }
+        }
+        $missing = @($script:SelfReferentialLeanMigrationPaths | Where-Object { -not $actual.Contains($_) })
+        $extra = @($ChangedPaths | Where-Object { -not ($script:SelfReferentialLeanMigrationPaths -ccontains $_) })
+        if ($missing.Count -gt 0 -or $extra.Count -gt 0 -or
+            $actual.Count -ne $script:SelfReferentialLeanMigrationPaths.Count) {
+            throw "self_referential_bootstrap: PR #704 changed paths must equal its one-time migration allowlist; missing=[$($missing -join ', ')], extra=[$($extra -join ', ')]."
+        }
+        Write-Warning 'self_referential_bootstrap: accepting tuple-bound PR #704 as the one-time Lean migration; exact-head review and normal repository gates remain mandatory.'
+        return
+    }
+
+    if ($Declared -cne 'no') {
+        throw "self_referential_bootstrap: Lean Governance retires new bootstrap debt; declare 'no' and keep the historical ledger unchanged."
+    }
+    Write-Warning "self_referential_bootstrap: Lean Governance advisory for verification-mechanism paths: $($MechanismPaths -join ', ')."
+}
 
 function Assert-SelfReferentialStringList {
     # The schema says these fields are LISTS. `@($value).Count` cannot enforce that:
@@ -762,9 +1036,10 @@ function Assert-SelfReferentialEvidenceBlob {
     $revision = if ([string]::IsNullOrWhiteSpace($HeadSha)) { 'HEAD' } else { $HeadSha }
     # -z is not used: a single path should yield at most one record. Reject
     # multi-line results so path '.' cannot accidentally match a child blob.
-    $treeLines = @(& git -C $RepoRoot ls-tree --full-tree $revision -- $Ref 2>$null |
-        ForEach-Object { "$_".Trim() } | Where-Object { $_ })
-    if ($LASTEXITCODE -ne 0 -or $treeLines.Count -ne 1) {
+    $treeLines = @(Invoke-SelfReferentialTrustedGit -RepoRoot $RepoRoot -Arguments @(
+        'ls-tree', '--full-tree', $revision, '--', $Ref
+    ) | ForEach-Object { "$_".Trim() } | Where-Object { $_ })
+    if ($script:SelfReferentialGitExitCode -ne 0 -or $treeLines.Count -ne 1) {
         throw "self_referential_bootstrap: $Context evidence ref '$Ref' is not a committed file at the PR head revision."
     }
     $treeEntry = $treeLines[0]
@@ -799,20 +1074,20 @@ function Assert-SelfReferentialEvidenceContentFreshness {
         throw "self_referential_bootstrap: $Context evidence '$Ref' requires exact BaseSha and HeadSha to verify content freshness."
     }
 
-    & git -C $RepoRoot cat-file -e "$BaseSha^{commit}" 2>$null
-    if ($LASTEXITCODE -ne 0) {
+    $null = Invoke-SelfReferentialTrustedGit -RepoRoot $RepoRoot -Arguments @('cat-file', '-e', "$BaseSha^{commit}")
+    if ($script:SelfReferentialGitExitCode -ne 0) {
         throw "self_referential_bootstrap: $Context cannot resolve BaseSha '$BaseSha' while verifying evidence '$Ref'."
     }
-    & git -C $RepoRoot cat-file -e "$HeadSha^{commit}" 2>$null
-    if ($LASTEXITCODE -ne 0) {
+    $null = Invoke-SelfReferentialTrustedGit -RepoRoot $RepoRoot -Arguments @('cat-file', '-e', "$HeadSha^{commit}")
+    if ($script:SelfReferentialGitExitCode -ne 0) {
         throw "self_referential_bootstrap: $Context cannot resolve HeadSha '$HeadSha' while verifying evidence '$Ref'."
     }
-    $headOid = (& git -C $RepoRoot rev-parse --verify "${HeadSha}:$Ref" 2>$null | Out-String).Trim()
-    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($headOid)) {
+    $headOid = (@(Invoke-SelfReferentialTrustedGit -RepoRoot $RepoRoot -Arguments @('rev-parse', '--verify', "${HeadSha}:$Ref")) -join "`n").Trim()
+    if ($script:SelfReferentialGitExitCode -ne 0 -or [string]::IsNullOrWhiteSpace($headOid)) {
         throw "self_referential_bootstrap: $Context cannot resolve evidence '$Ref' at HeadSha '$HeadSha'."
     }
-    $baseTreeEntry = (& git -C $RepoRoot ls-tree --full-tree $BaseSha -- $Ref 2>$null | Out-String).Trim()
-    if ($LASTEXITCODE -ne 0) {
+    $baseTreeEntry = (@(Invoke-SelfReferentialTrustedGit -RepoRoot $RepoRoot -Arguments @('ls-tree', '--full-tree', $BaseSha, '--', $Ref)) -join "`n").Trim()
+    if ($script:SelfReferentialGitExitCode -ne 0) {
         throw "self_referential_bootstrap: $Context cannot inspect evidence '$Ref' at BaseSha '$BaseSha'."
     }
     if ([string]::IsNullOrWhiteSpace($baseTreeEntry)) {
@@ -888,9 +1163,10 @@ function Assert-SelfReferentialBaseEvidenceImmutable {
         foreach ($ref in $recordedRefs) {
             $entries = @()
             foreach ($revision in @($BaseSha, $HeadSha)) {
-                $treeLines = @(& git -C $RepoRoot ls-tree --full-tree $revision -- $ref 2>$null |
-                    ForEach-Object { "$_".Trim() } | Where-Object { $_ })
-                if ($LASTEXITCODE -ne 0 -or $treeLines.Count -ne 1) {
+                $treeLines = @(Invoke-SelfReferentialTrustedGit -RepoRoot $RepoRoot -Arguments @(
+                    'ls-tree', '--full-tree', $revision, '--', $ref
+                ) | ForEach-Object { "$_".Trim() } | Where-Object { $_ })
+                if ($script:SelfReferentialGitExitCode -ne 0 -or $treeLines.Count -ne 1) {
                     throw "self_referential_bootstrap: immutable referenced evidence '$ref' is missing or ambiguous at revision '$revision'."
                 }
                 $treeMatch = [regex]::Match(
@@ -958,8 +1234,8 @@ function Assert-SelfReferentialFixpointAttestation {
     }
     $attestationRef = $attestationRefs[0]
     $revisionRef = $HeadSha + ':' + $attestationRef
-    $attestationJson = (& git -C $RepoRoot show $revisionRef 2>$null) -join ([string][char]10)
-    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($attestationJson)) {
+    $attestationJson = (@(Invoke-SelfReferentialTrustedGit -RepoRoot $RepoRoot -Arguments @('show', $revisionRef)) -join ([string][char]10))
+    if ($script:SelfReferentialGitExitCode -ne 0 -or [string]::IsNullOrWhiteSpace($attestationJson)) {
         throw "self_referential_bootstrap: entry '$entryId' fixpoint attestation '$attestationRef' cannot be read from the exact PR head."
     }
     try {
@@ -1168,16 +1444,16 @@ function Compare-SelfReferentialLedgerTransition {
             throw "self_referential_bootstrap: closing entry '$id' requires base context (BaseSha + RepoRoot) to verify the fixpoint commit is merged; refusing format-only closure."
         }
         $commit = [string]$fp.mechanism_commit
-        & git -C $RepoRoot cat-file -e "$commit^{commit}" 2>$null
-        if ($LASTEXITCODE -ne 0) {
+        $null = Invoke-SelfReferentialTrustedGit -RepoRoot $RepoRoot -Arguments @('cat-file', '-e', "$commit^{commit}")
+        if ($script:SelfReferentialGitExitCode -ne 0) {
             throw "self_referential_bootstrap: entry '$id' fixpoint.mechanism_commit $commit does not exist in this repository."
         }
-        & git -C $RepoRoot merge-base --is-ancestor $commit $BaseSha 2>$null
-        if ($LASTEXITCODE -ne 0) {
+        $null = Invoke-SelfReferentialTrustedGit -RepoRoot $RepoRoot -Arguments @('merge-base', '--is-ancestor', $commit, $BaseSha)
+        if ($script:SelfReferentialGitExitCode -ne 0) {
             throw "self_referential_bootstrap: entry '$id' fixpoint.mechanism_commit $commit is not an ancestor of the PR base; the fixpoint must run on the MERGED mechanism."
         }
-        $firstParentHistory = @(& git -C $RepoRoot rev-list --first-parent $BaseSha 2>$null)
-        if ($LASTEXITCODE -ne 0 -or -not ($firstParentHistory -ccontains $commit)) {
+        $firstParentHistory = @(Invoke-SelfReferentialTrustedGit -RepoRoot $RepoRoot -Arguments @('rev-list', '--first-parent', $BaseSha))
+        if ($script:SelfReferentialGitExitCode -ne 0 -or -not ($firstParentHistory -ccontains $commit)) {
             throw "self_referential_bootstrap: entry '$id' fixpoint.mechanism_commit $commit is not on the PR base first-parent history; bind closure to the mainline merge/squash commit, not a side-branch ancestor."
         }
         # Bind the closure to THIS entry's complete mechanism (not any ancient
@@ -1188,8 +1464,8 @@ function Compare-SelfReferentialLedgerTransition {
         # foreach loops in this function and would silently refer to the LAST
         # head entry, mis-binding closures whenever the ledger has >1 entry
         # (narrower bug surfaced by the Codex apex while refuting L1-correctness-1).
-        $parentLine = (& git -C $RepoRoot rev-list --parents -n 1 $commit 2>$null | Out-String).Trim()
-        if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($parentLine)) {
+        $parentLine = (@(Invoke-SelfReferentialTrustedGit -RepoRoot $RepoRoot -Arguments @('rev-list', '--parents', '-n', '1', $commit)) -join "`n").Trim()
+        if ($script:SelfReferentialGitExitCode -ne 0 -or [string]::IsNullOrWhiteSpace($parentLine)) {
             throw "self_referential_bootstrap: cannot inspect parents of mechanism_commit $commit."
         }
         $parents = @($parentLine -split '\s+')
@@ -1199,11 +1475,13 @@ function Compare-SelfReferentialLedgerTransition {
                 # Compare a merge to its first parent so branch-side mechanism
                 # changes are visible. `git show --name-only <merge>` emits no
                 # ordinary diff by default and falsely rejected legitimate merges.
-                $touched = @(& git -C $RepoRoot diff-tree --no-commit-id -r --name-only `
-                    $parents[1] $commit -- ([string]$declaredPath) 2>$null | Where-Object { $_ })
+                $touched = @(Invoke-SelfReferentialTrustedGit -RepoRoot $RepoRoot -Arguments @(
+                    'diff-tree', '--no-commit-id', '-r', '--name-only', $parents[1], $commit, '--', [string]$declaredPath
+                ) | Where-Object { $_ })
             } else {
-                $touched = @(& git -C $RepoRoot diff-tree --root --no-commit-id -r --name-only `
-                    $commit -- ([string]$declaredPath) 2>$null | Where-Object { $_ })
+                $touched = @(Invoke-SelfReferentialTrustedGit -RepoRoot $RepoRoot -Arguments @(
+                    'diff-tree', '--root', '--no-commit-id', '-r', '--name-only', $commit, '--', [string]$declaredPath
+                ) | Where-Object { $_ })
             }
             if ($touched.Count -eq 0) {
                 $untouchedDeclaredPaths += [string]$declaredPath
@@ -1212,12 +1490,12 @@ function Compare-SelfReferentialLedgerTransition {
         if ($untouchedDeclaredPaths.Count -gt 0) {
             throw "self_referential_bootstrap: entry '$id' fixpoint.mechanism_commit $commit did not modify every declared verification_mechanism_path; missing: $($untouchedDeclaredPaths -join ', ')."
         }
-        $commitMessage = (& git -C $RepoRoot log -1 --format=%B $commit 2>$null | Out-String).Trim()
+        $commitMessage = (@(Invoke-SelfReferentialTrustedGit -RepoRoot $RepoRoot -Arguments @('log', '-1', '--format=%B', $commit)) -join "`n").Trim()
         $originatingPr = [int]$head.pr
         $commitSubject = @($commitMessage -split "\r?\n")[0]
         $mergeSubject = "^Merge pull request #$originatingPr from .+"
         $squashSubject = "\(#$originatingPr\)$"
-        if ($LASTEXITCODE -ne 0 -or
+        if ($script:SelfReferentialGitExitCode -ne 0 -or
             ($commitSubject -notmatch $mergeSubject -and $commitSubject -notmatch $squashSubject)) {
             throw "self_referential_bootstrap: entry '$id' mechanism_commit $commit is not bound to originating PR #$originatingPr in its merge/squash message."
         }
@@ -1240,12 +1518,12 @@ function Compare-SelfReferentialLedgerTransition {
             # starts at ambient HEAD, which in a pull_request checkout is the
             # synthetic merge ref, so a base-side commit could supply the
             # chronology for a blob validated at head (Codex L1-correctness-4).
-            $evidenceIntroCommit = (& git -C $RepoRoot log -1 --format=%H $HeadSha -- $evidenceRef 2>$null | Out-String).Trim()
-            if ([string]::IsNullOrWhiteSpace($evidenceIntroCommit)) {
+            $evidenceIntroCommit = (@(Invoke-SelfReferentialTrustedGit -RepoRoot $RepoRoot -Arguments @('log', '-1', '--format=%H', $HeadSha, '--', $evidenceRef)) -join "`n").Trim()
+            if ($script:SelfReferentialGitExitCode -ne 0 -or [string]::IsNullOrWhiteSpace($evidenceIntroCommit)) {
                 throw "self_referential_bootstrap: entry '$id' fixpoint evidence '$evidenceRef' has no commit history reachable from the PR head; cannot bind it to post-merge re-verification."
             }
-            & git -C $RepoRoot merge-base --is-ancestor $evidenceIntroCommit $BaseSha 2>$null
-            $evidenceInBaseExit = $LASTEXITCODE
+            $null = Invoke-SelfReferentialTrustedGit -RepoRoot $RepoRoot -Arguments @('merge-base', '--is-ancestor', $evidenceIntroCommit, $BaseSha)
+            $evidenceInBaseExit = $script:SelfReferentialGitExitCode
             if ($evidenceInBaseExit -eq 0) {
                 throw "self_referential_bootstrap: entry '$id' fixpoint evidence '$evidenceRef' latest commit is already in BaseSha; closure must commit a new re-verification result."
             }
@@ -1260,8 +1538,8 @@ function Compare-SelfReferentialLedgerTransition {
             if ($evidenceIntroCommit -eq $commit) {
                 throw "self_referential_bootstrap: entry '$id' fixpoint evidence '$evidenceRef' was committed by mechanism_commit $commit itself; the post-merge re-verification must produce NEW evidence, not cite the bootstrap artefact."
             }
-            & git -C $RepoRoot merge-base --is-ancestor $commit $evidenceIntroCommit 2>$null
-            if ($LASTEXITCODE -ne 0) {
+            $null = Invoke-SelfReferentialTrustedGit -RepoRoot $RepoRoot -Arguments @('merge-base', '--is-ancestor', $commit, $evidenceIntroCommit)
+            if ($script:SelfReferentialGitExitCode -ne 0) {
                 throw "self_referential_bootstrap: entry '$id' fixpoint evidence '$evidenceRef' predates mechanism_commit $commit; it cannot be the post-merge re-verification result."
             }
         }
@@ -1501,9 +1779,14 @@ function Assert-SelfReferentialBootstrapBody {
     # revision - never from the ambient checkout, which in a pull_request job is
     # the synthetic merge tree.
     if ($hasExactHeadContext) {
-        $headLedgerJson = (& git -C $RepoRoot show "${HeadSha}:scripts/self-referential-bootstrap-ledger.json" 2>$null) -join "`n"
-        if ($LASTEXITCODE -ne 0) {
-            throw "self_referential_bootstrap: ledger missing at the PR head revision $HeadSha."
+        $headLedgerJson = (@(Invoke-SelfReferentialTrustedGit -RepoRoot $RepoRoot -Arguments @(
+            'show', "${HeadSha}:scripts/self-referential-bootstrap-ledger.json"
+        )) -join "`n")
+        if ($script:SelfReferentialGitExitCode -ne 0) {
+            $gitError = $script:SelfReferentialGitError.Trim()
+            $detail = "self_referential_bootstrap: ledger missing at the PR head revision $HeadSha."
+            if ($gitError) { $detail += " Git: $gitError" }
+            throw $detail
         }
         $headLedger = Get-SelfReferentialBootstrapLedger -Json $headLedgerJson
     } else {
@@ -1570,6 +1853,24 @@ function Assert-SelfReferentialBootstrapBody {
         -PrNumber $PrNumber -RepoRoot $RepoRoot -BaseSha $BaseSha -HeadSha $HeadSha
     $newIds = @($transition.NewEntries | ForEach-Object { [string]$_.id })
 
+    $declared = & $GetTableValue $Body 'Self-referential bootstrap'
+    if ([string]::IsNullOrWhiteSpace($declared)) {
+        throw "This PR changes the verification mechanism ($($mechanismPaths -join ', ')); the PR body must declare 'Self-referential bootstrap'."
+    }
+    $declared = $declared.Trim().ToLowerInvariant()
+
+    $leanPolicyActive = $hasExactHeadContext -and
+        (Test-SelfReferentialLeanPolicyBase -RepoRoot $RepoRoot -BaseSha $BaseSha)
+    if ($leanPolicyActive) {
+        Assert-SelfReferentialLeanPolicyBody -Declared $declared -Body $Body `
+            -ChangedPaths $ChangedPaths -MechanismPaths $mechanismPaths `
+            -Transition $transition -GetTableValue $GetTableValue `
+            -BaseLedgerJson $BaseLedgerJson -HeadLedgerJson $headLedgerJson `
+            -PrNumber $PrNumber -BaseSha $BaseSha -HeadSha $HeadSha `
+            -HasExactHeadContext $hasExactHeadContext
+        return
+    }
+
     if (@($transition.ClosedEntries).Count -gt 0) {
         if (@($transition.NewEntries).Count -gt 0) {
             throw "self_referential_bootstrap: a fixpoint closure PR cannot also open new debt; close the existing entry and introduce the next mechanism change in separate PRs."
@@ -1585,11 +1886,6 @@ function Assert-SelfReferentialBootstrapBody {
         }
     }
 
-    $declared = & $GetTableValue $Body 'Self-referential bootstrap'
-    if ([string]::IsNullOrWhiteSpace($declared)) {
-        throw "This PR changes the verification mechanism ($($mechanismPaths -join ', ')); the PR body must declare 'Self-referential bootstrap' as yes or no."
-    }
-    $declared = $declared.Trim().ToLowerInvariant()
     if ($declared -notin @('yes', 'no')) {
         throw "PR body 'Self-referential bootstrap' must be yes or no; actual='$declared'."
     }

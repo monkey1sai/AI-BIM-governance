@@ -17,6 +17,19 @@ interface IfcSource {
 type Lineage = Record<string, string>;
 
 const DASH = "—";
+const DEV_ROUTES_DISABLED_RUNTIME =
+  "runtime: dev_routes_disabled (ENABLE_DEV_ROUTES=false；#demo-control 需後端啟用 dev routes)";
+const JOB_DERIVED_LINEAGE_KEYS = [
+  "lin-job-id",
+  "lin-conversion-job",
+  "lin-conversion-status",
+  "lin-download-status",
+  "lin-artifact-id",
+  "lin-usdc-url",
+  "lin-mapping",
+  "lin-session-id",
+  "lin-viewer-url",
+] as const;
 
 export function RealIfcConsolePage() {
   const [sources, setSources] = useState<IfcSource[]>([]);
@@ -24,15 +37,48 @@ export function RealIfcConsolePage() {
   const [runtime, setRuntime] = useState<string>("runtime: idle");
   const [lin, setLin] = useState<Lineage>({});
   const [viewerUrl, setViewerUrl] = useState<string>("");
+  // Task 4B：ENABLE_DEV_ROUTES=false 時 coordinator 對 /api/dev/* 整組回 404（PR #699 D3 後端
+  // prefix gate）。#demo-control 全頁都靠 /api/dev/ifc-sources[/:id/register]；誠實顯示「dev routes
+  // 已關閉」而非誤導成 storage_empty，並 disable 選檔／註冊避免使用者對已知會 404 的端點重試。
+  const [devRoutesDisabled, setDevRoutesDisabled] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const pollGenerationRef = useRef(0);
 
   const set = (k: string, v: unknown) => setLin((prev) => ({ ...prev, [k]: v == null || v === "" ? DASH : String(v) }));
-  const stop = () => { if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; } };
+  const stop = () => {
+    pollGenerationRef.current += 1;
+    if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+  };
   useEffect(() => () => stop(), []);
 
   async function loadSources() {
     try {
+      // 原樣顯示 HTTP 狀態碼（W4 raw fetch 語意）：只有後端 D3 的 exact 404 body 才代表
+      // dev routes 關閉；一般 route/deploy 404 或 upstream 5xx 必須維持一般載入失敗，不能誤導
+      // 操作員並禁用控制項。
       const r = await fetch(coordinatorUrl("/api/dev/ifc-sources"));
+      if (!r.ok) {
+        let detail = r.statusText;
+        try {
+          const body = await r.json() as { detail?: unknown };
+          if (typeof body.detail === "string" && body.detail) detail = body.detail;
+        } catch {
+          /* 非 JSON／空 body：保留 statusText。 */
+        }
+        if (r.status === 404 && detail === "dev routes disabled") {
+          stop();
+          setDevRoutesDisabled(true);
+          setSources([]);
+          setSelected("");
+          JOB_DERIVED_LINEAGE_KEYS.forEach((k) => set(k, ""));
+          setViewerUrl("");
+          setRuntime(DEV_ROUTES_DISABLED_RUNTIME);
+          return;
+        }
+        setDevRoutesDisabled(false);
+        throw new Error(`HTTP ${r.status}${detail ? ` ${detail}` : ""}`);
+      }
+      setDevRoutesDisabled(false);
       const j = await r.json();
       const items: IfcSource[] = j.items ?? [];
       setSources(items);
@@ -47,18 +93,21 @@ export function RealIfcConsolePage() {
       setSelected(preferred ? preferred.source_id : items[0].source_id);
       setRuntime("runtime: idle");
     } catch (e) {
+      setDevRoutesDisabled(false);
       setRuntime("runtime: load_sources_failed: " + (e instanceof Error ? e.message : String(e)));
     }
   }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { void loadSources(); }, []);
 
-  async function enrich(job: Record<string, unknown>) {
+  async function enrich(job: Record<string, unknown>, pollGeneration: number) {
     try {
       const sid = job.web_view_session_id as string | undefined;
       if (!sid) return;
       const r = await fetch(coordinatorUrl("/api/review-sessions/" + encodeURIComponent(sid) + "/stream-config"));
       if (!r.ok) return;
       const sc = await r.json();
+      if (pollGeneration !== pollGenerationRef.current) return;
       set("lin-artifact-id", sc.model?.artifact_id);
       set("lin-usdc-url", sc.model?.url);
       if (sc.model?.mapping_url) set("lin-mapping", "mapping_url: " + sc.model.mapping_url);
@@ -67,24 +116,30 @@ export function RealIfcConsolePage() {
 
   function startPoll(jobId: string) {
     let n = 0;
+    const pollGeneration = ++pollGenerationRef.current;
     const tick = async () => {
+      if (pollGeneration !== pollGenerationRef.current) return;
       n++;
       try {
         const r = await fetch(coordinatorUrl("/api/external/ifc-ready/" + encodeURIComponent(jobId)));
         const j = await r.json();
+        if (pollGeneration !== pollGenerationRef.current) return;
         set("lin-download-status", j.download_status);
         set("lin-conversion-status", j.conversion_status);
         set("lin-conversion-job", j.conversion_job_id);
         set("lin-session-id", j.web_view_session_id);
         if (j.viewer_url) { set("lin-viewer-url", j.viewer_url); setViewerUrl(j.viewer_url); }
         const cs = String(j.conversion_status ?? "").toLowerCase();
-        if (j.viewer_url) { setRuntime("runtime: ready"); await enrich(j); stop(); }
+        if (j.viewer_url) { setRuntime("runtime: ready"); await enrich(j, pollGeneration); if (pollGeneration === pollGenerationRef.current) stop(); }
         else if (j.download_status === "failed") { setRuntime("runtime: download_failed"); stop(); }
         else if (cs === "failed") { setRuntime("runtime: conversion_failed"); stop(); }
         else if (cs.indexOf("block") >= 0) { setRuntime("runtime: runtime_blocked"); stop(); }
         else if (n >= 36) { setRuntime("runtime: conversion_timeout (still " + (j.conversion_status ?? "pending") + " after ~180s)"); stop(); }
         else { setRuntime("runtime: converting (" + (j.conversion_status ?? "queued") + ")"); }
-      } catch (e) { setRuntime("runtime: poll_error: " + (e instanceof Error ? e.message : String(e))); }
+      } catch (e) {
+        if (pollGeneration !== pollGenerationRef.current) return;
+        setRuntime("runtime: poll_error: " + (e instanceof Error ? e.message : String(e)));
+      }
     };
     pollRef.current = setInterval(() => void tick(), 5000);
     void tick();
@@ -92,6 +147,10 @@ export function RealIfcConsolePage() {
 
   async function register() {
     stop();
+    if (devRoutesDisabled) {
+      setRuntime(DEV_ROUTES_DISABLED_RUNTIME);
+      return;
+    }
     const meta = sources.find((s) => s.source_id === selected);
     if (!selected || !meta) { setRuntime("runtime: no_fixture_selected"); return; }
     const mv = "mv_realifc_" + Date.now() + "_" + Math.floor(Math.random() * 1e6);
@@ -100,7 +159,7 @@ export function RealIfcConsolePage() {
     set("lin-source-filename", meta.filename);
     set("lin-source-size", (meta.size_bytes || 0) + " bytes");
     set("lin-model-version", mv);
-    ["lin-conversion-job", "lin-artifact-id", "lin-usdc-url", "lin-mapping", "lin-session-id", "lin-viewer-url"].forEach((k) => set(k, ""));
+    JOB_DERIVED_LINEAGE_KEYS.forEach((k) => set(k, ""));
     setViewerUrl("");
     setRuntime("runtime: registering");
     try {
@@ -109,7 +168,16 @@ export function RealIfcConsolePage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ model_version_id: mv, project_id: "project_real_ifc_demo" }),
       });
-      const j = await r.json().catch(() => ({}));
+      const j = await r.json().catch(() => ({})) as Record<string, string | undefined>;
+      // 後端可能在清單載入後重啟並關閉 dev routes。POST 的 exact D3 404 與 GET 具有
+      // 同一個權威語意；立即切換成 disabled 狀態，避免控制項繼續邀請無效重試。
+      if (r.status === 404 && j.detail === "dev routes disabled") {
+        setDevRoutesDisabled(true);
+        setSources([]);
+        setSelected("");
+        setRuntime(DEV_ROUTES_DISABLED_RUNTIME);
+        return;
+      }
       set("lin-job-id", j.ifc_ready_job_id);
       if (j.external_model_version_id) set("lin-model-version", j.external_model_version_id);
       set("lin-download-status", j.download_status);
@@ -135,11 +203,19 @@ export function RealIfcConsolePage() {
       <p style={{ color: "var(--ab-text-muted)", fontSize: 13 }}>
         {t("從", "From")} <code>./storage</code> {t("選真實 IFC → 真 coordinator", "select a real IFC → real coordinator")} <code>register</code>{t("（內部 loopback）→ 真轉檔 → 審查 session → viewer。誠實顯示 runtime 狀態。", " (internal loopback) → real conversion → review session → viewer. Runtime state shown honestly.")}
       </p>
+      {devRoutesDisabled && (
+        <p data-testid="ifc-dev-routes-notice" style={{ color: "var(--ab-accent)", fontWeight: 600 }}>
+          {t(
+            "dev routes 已關閉（ENABLE_DEV_ROUTES=false）：coordinator /api/dev/* 整組回 404，#demo-control 需後端啟用 dev routes 才能列出／註冊 IFC fixture。",
+            "Dev routes are disabled (ENABLE_DEV_ROUTES=false): coordinator /api/dev/* returns 404 across the board. #demo-control requires the backend to enable dev routes to list/register IFC fixtures.",
+          )}
+        </p>
+      )}
       <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", margin: "10px 0" }}>
         <label htmlFor="ifcFixtureSelect">IFC fixture</label>
-        <select id="ifcFixtureSelect" data-testid="ifc-fixture-select" value={selected} onChange={(e) => setSelected(e.target.value)} style={{ minWidth: 360 }}>
+        <select id="ifcFixtureSelect" data-testid="ifc-fixture-select" value={selected} onChange={(e) => setSelected(e.target.value)} disabled={devRoutesDisabled} style={{ minWidth: 360 }}>
           {sources.length === 0 ? (
-            <option value="">（No real IFC files found under ./storage）</option>
+            <option value="">{devRoutesDisabled ? "（dev routes 已關閉）" : "（No real IFC files found under ./storage）"}</option>
           ) : (
             sources.map((it) => (
               <option key={it.source_id} value={it.source_id}>
@@ -149,7 +225,7 @@ export function RealIfcConsolePage() {
           )}
         </select>
         <button data-testid="ifc-refresh-btn" onClick={() => void loadSources()}>Refresh ./storage IFC list</button>
-        <button data-testid="ifc-register-btn" onClick={() => void register()}>{t("註冊並轉檔（真實）", "Register and convert (real)")}</button>
+        <button data-testid="ifc-register-btn" disabled={devRoutesDisabled} onClick={() => void register()}>{t("註冊並轉檔（真實）", "Register and convert (real)")}</button>
       </div>
       <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, textAlign: "left" }}>
         <tbody>

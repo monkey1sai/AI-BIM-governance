@@ -2,6 +2,12 @@
 
 > **✅ 全數完成並合入 main（2026-08-26）**：PR #710，Commit `7a51a38`。
 > **Implementation authorization:** This plan establishes concrete actionable steps to build the autonomous PR queue management system (auto-merge, auto-fix, auto-update branch, auto-resolve conflict) and registers the pr-queue-manager skill. Following the superpowers lifecycle: Plan -> Worktree -> Implement -> Verify -> PR -> Code Review -> Merge to main.
+>
+> **SUPERSEDED — historical record only:** The active contract is
+> `docs/agents/parallel-session-board.md` plus the tracked `autonomous-pr-queue`
+> skill. This completed plan no longer authorizes branch updates, conflict
+> resolution, approval, merge, hook installation, or arbitrary preflight from
+> `manage-pr-queue.mjs`; those compatibility commands are fail-closed `HELD`.
 
 **Goal:** Provide an end-to-end autonomous PR queue management engine (scripts/dev/manage-pr-queue.mjs) and skill (pr-queue-manager) allowing agents to automatically update stale branches, resolve trivial conflicts, fix metadata/CI issues, submit counted blip approvals, and squash-merge green PRs.
 
