@@ -499,20 +499,26 @@ export function acquireSingleFlight(historyRaw, requestRaw) {
 export function evaluateRetry(historyRaw, candidateRaw) {
   if (!Array.isArray(historyRaw)) fail('invalid_shape', 'retry history must be an array')
   for (const entry of historyRaw) {
-    exactKeys(entry, ['failure_class', 'evidence_sha256', 'event_id', 'classification_sha256', 'ordinal'])
+    exactKeys(entry, [
+      'failure_class', 'evidence_sha256', 'event_id', 'authorization_id', 'classification_sha256', 'ordinal',
+    ])
     text(entry.failure_class, 'retry_history.failure_class')
     if (!ALLOWED_RETRY_CLASSES.includes(entry.failure_class)) {
       fail('retry_classification_invalid', 'retry history contains an unapproved failure class')
     }
     digest(entry.evidence_sha256, 'retry_history.evidence_sha256')
     text(entry.event_id, 'retry_history.event_id')
+    text(entry.authorization_id, 'retry_history.authorization_id')
     digest(entry.classification_sha256, 'retry_history.classification_sha256')
     safeInteger(entry.ordinal, 'retry_history.ordinal', 1)
   }
-  exactKeys(candidateRaw, ['failure_class', 'evidence_sha256', 'event_id', 'classification_sha256'])
+  exactKeys(candidateRaw, [
+    'failure_class', 'evidence_sha256', 'event_id', 'authorization_id', 'classification_sha256',
+  ])
   text(candidateRaw.failure_class, 'retry.failure_class')
   digest(candidateRaw.evidence_sha256, 'retry.evidence_sha256')
   text(candidateRaw.event_id, 'retry.event_id')
+  text(candidateRaw.authorization_id, 'retry.authorization_id')
   digest(candidateRaw.classification_sha256, 'retry.classification_sha256')
   if (historyRaw.length >= 1) fail('retry_budget_exhausted', 'exact-commit retry budget is exhausted')
   if (!ALLOWED_RETRY_CLASSES.includes(candidateRaw.failure_class)) {
@@ -531,7 +537,8 @@ const parseRetryClassification = (raw, requestRaw, trusted, artifactRaw, targetR
   digest(raw.evidence_sha256, 'retry.evidence_sha256')
   text(raw.event_id, 'retry.event_id')
   exactKeys(raw.classification_authority, [
-    'kind', 'issuer', 'key_id', 'algorithm', 'issued_at', 'expires_at', 'payload_sha256', 'signature',
+    'kind', 'issuer', 'key_id', 'algorithm', 'authorization_id', 'issued_at', 'expires_at',
+    'payload_sha256', 'signature',
   ])
   const authority = raw.classification_authority
   if (authority.kind !== 'owner_policy_retry_classifier' || authority.algorithm !== 'ed25519') {
@@ -539,6 +546,7 @@ const parseRetryClassification = (raw, requestRaw, trusted, artifactRaw, targetR
   }
   text(authority.issuer, 'retry.classification_authority.issuer')
   text(authority.key_id, 'retry.classification_authority.key_id')
+  text(authority.authorization_id, 'retry.classification_authority.authorization_id')
   timestamp(authority.issued_at, 'retry.classification_authority.issued_at')
   timestamp(authority.expires_at, 'retry.classification_authority.expires_at')
   digest(authority.payload_sha256, 'retry.classification_authority.payload_sha256')
@@ -562,6 +570,7 @@ const parseRetryClassification = (raw, requestRaw, trusted, artifactRaw, targetR
     failure_class: raw.failure_class,
     evidence_sha256: raw.evidence_sha256,
     event_id: raw.event_id,
+    authorization_id: authority.authorization_id,
   }
   if (authority.payload_sha256 !== sha256(canonicalJson(payload))) {
     fail('retry_classification_invalid', 'retry classification payload digest drifted')
@@ -575,6 +584,7 @@ const parseRetryClassification = (raw, requestRaw, trusted, artifactRaw, targetR
     failure_class: raw.failure_class,
     evidence_sha256: raw.evidence_sha256,
     event_id: raw.event_id,
+    authorization_id: authority.authorization_id,
     classification_sha256: sha256(canonicalJson(authority)),
   })
 }
@@ -592,6 +602,7 @@ const validateRetryParent = (requestRaw, trusted, targetRaw) => {
   }
   if (parent.terminal_class !== 'FAILED'
     || parent.reason_code !== 'MERGED_NOT_DELIVERED'
+    || parent.delivery_id !== requestRaw.delivery_id
     || parent.supersedes_delivery_id !== null
     || parent.supersedes_attempt_id !== null
     || parent.previous_attempt_sha256 !== null
@@ -603,6 +614,32 @@ const validateRetryParent = (requestRaw, trusted, targetRaw) => {
     fail('retry_parent_invalid', 'retry parent is not a failed transient delivery of the exact merge and target')
   }
   return parent
+}
+
+const consumeRetryBudget = (requestRaw, trusted, parent, retryRecord, consumeRetryBudgetCallback) => {
+  const payload = {
+    authorization_id: retryRecord.authorization_id,
+    delivery_id: parent.delivery_id,
+    trusted_merge_sha: trusted.trusted_merge_sha,
+    root_attempt_sha256: sha256(canonicalJson(parent)),
+    failure_event_id: retryRecord.event_id,
+    classification_sha256: retryRecord.classification_sha256,
+  }
+  if (typeof consumeRetryBudgetCallback !== 'function') {
+    fail('external_authority_unavailable', 'authoritative retry budget broker is unavailable')
+  }
+  const receipt = consumeRetryBudgetCallback(cloneFrozen({ payload }))
+  exactKeys(receipt, [
+    'authorization_id', 'authoritative_prior_retry_count', 'consumed',
+  ], 'external_authority_unavailable')
+  if (receipt.authorization_id !== retryRecord.authorization_id) {
+    fail('external_authority_unavailable', 'retry budget receipt authorization drifted')
+  }
+  safeInteger(receipt.authoritative_prior_retry_count, 'retry_budget.authoritative_prior_retry_count')
+  if (receipt.authoritative_prior_retry_count !== 0 || receipt.consumed !== true) {
+    fail('retry_budget_exhausted', 'authoritative exact-commit retry budget is exhausted')
+  }
+  return cloneFrozen(receipt)
 }
 
 export function appendDeliveryLedger(historyRaw, candidateRaw) {
@@ -1089,7 +1126,8 @@ export function runLinuxContinuousDeployment(requestRaw, {
       if (requestRaw.attempt.supersedes_delivery_id === null) {
         fail('invalid_value', 'retry attempt must link its superseded terminal attempt')
       }
-      validateRetryParent(requestRaw, trusted, targetRaw)
+      const retryParent = validateRetryParent(requestRaw, trusted, targetRaw)
+      consumeRetryBudget(requestRaw, trusted, retryParent, retryRecord, trustBoundary.consumeRetryBudget)
     } else if (requestRaw.retry_event !== null) {
       fail('invalid_shape', 'retry event must be an object or null')
     } else if (requestRaw.retry_history.length > 0) {

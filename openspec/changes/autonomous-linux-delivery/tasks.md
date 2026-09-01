@@ -65,7 +65,7 @@
 
 - [x] 6A.1 定義closed request／artifact／target／terminal schemas與pure state-machine module，固定trusted merge到terminal attestation、provisioning-held及rollback states。
 - [x] 6A.2 驗證trusted merged event、fresh convergence SHA、immutable artifact provenance、canonical target fingerprint與opaque lease；wrong repo、stale SHA、partial collector、artifact／target drift全部fail closed。
-- [x] 6A.3 實作environment＋service single-flight、包含target fingerprint／deployment method的exact active idempotent replay停止、外部簽署closed transient分類、root failure parent與same-commit總重試一次的主路徑enforcement、per-state digest-chained ledger與outer attempt append validation。
+- [x] 6A.3 實作environment＋service single-flight、包含target fingerprint／deployment method的exact active idempotent replay停止、外部簽署closed transient分類、root failure parent、owner broker以delivery／merge／root digest原子compare-and-consume的same-commit總重試一次enforcement、per-state digest-chained ledger與outer attempt append validation。
 - [x] 6A.4 實作canary、health／smoke／E2E、same-digest promotion、post-deploy verification與pinned known-good artifact rollback contract，並以happy path、rollback與rollback-unverified pressure scenarios取得GREEN。
 - [x] 6A.5 新增repo-local GitHub workflow與controller boundary；在未provision外部artifact store／runner／credential／protected environment時只輸出sanitized `PROVISIONING_REQUIRED → HELD`，不執行live deployment。
 - [ ] 6A.6 由owner provision external immutable artifact store、trusted Linux executor、credential broker、protected GitHub Environment與canonical target live attestation，並證明candidate code無法取得write credential。

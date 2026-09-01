@@ -198,6 +198,30 @@ const TRUST_BOUNDARY = Object.freeze({
   ),
 })
 
+const createRetryTrustBoundary = () => {
+  const retryCounts = new Map()
+  return {
+    ...TRUST_BOUNDARY,
+    consumeRetryBudget: ({ payload }) => {
+      const key = `${payload.delivery_id}\0${payload.trusted_merge_sha}\0${payload.root_attempt_sha256}`
+      const authoritativePriorRetryCount = retryCounts.get(key) ?? 0
+      if (authoritativePriorRetryCount > 0) {
+        return {
+          authorization_id: payload.authorization_id,
+          authoritative_prior_retry_count: authoritativePriorRetryCount,
+          consumed: false,
+        }
+      }
+      retryCounts.set(key, authoritativePriorRetryCount + 1)
+      return {
+        authorization_id: payload.authorization_id,
+        authoritative_prior_retry_count: authoritativePriorRetryCount,
+        consumed: true,
+      }
+    },
+  }
+}
+
 const request = (overrides = {}) => ({
   schema_version: 'linux-continuous-deployment-request/v1',
   delivery_id: 'delivery-737',
@@ -240,6 +264,7 @@ const retryEvent = (requestValue, {
   failureClass = 'network_transient',
   evidenceSha256 = SHA('1'),
   eventId = 'retry-event-1',
+  authorizationId = `retry-authorization:${eventId}`,
   authorityOverrides = {},
 } = {}) => {
   const payload = {
@@ -258,6 +283,7 @@ const retryEvent = (requestValue, {
     failure_class: failureClass,
     evidence_sha256: evidenceSha256,
     event_id: eventId,
+    authorization_id: authorizationId,
   }
   return {
     failure_class: failureClass,
@@ -268,6 +294,7 @@ const retryEvent = (requestValue, {
       issuer: 'owner-policy-broker',
       key_id: 'retry-policy-key-1',
       algorithm: 'ed25519',
+      authorization_id: authorizationId,
       issued_at: '2026-09-01T01:45:00.000Z',
       expires_at: '2026-09-01T03:00:00.000Z',
       payload_sha256: sha256(canonicalJson(payload)),
@@ -281,6 +308,7 @@ const retryCandidate = (overrides = {}) => ({
   failure_class: 'network_transient',
   evidence_sha256: SHA('1'),
   event_id: 'retry-event-1',
+  authorization_id: 'retry-authorization:retry-event-1',
   classification_sha256: SHA('c'),
   ...overrides,
 })
@@ -446,14 +474,20 @@ test('public controller path accepts the first linked transient retry and keeps 
     terminal_history: [initial.terminal_record],
   })
   retryRequest.retry_event = retryEvent(retryRequest)
-  const retried = runRequest(retryRequest)
+  const retried = runRequest(retryRequest, { trustBoundary: createRetryTrustBoundary() })
 
   assert.equal(retried.final_state, 'ACTIVATED')
   assert.deepEqual(retried.retry_record, {
     failure_class: 'network_transient', evidence_sha256: SHA('1'), event_id: 'retry-event-1',
+    authorization_id: 'retry-authorization:retry-event-1',
     classification_sha256: sha256(canonicalJson(retryRequest.retry_event.classification_authority)), ordinal: 1,
   })
   assert.equal(retried.terminal_record.supersedes_attempt_id, initial.terminal_record.attempt_id)
+
+  const missingBudgetBroker = runRequest(retryRequest)
+  assert.equal(missingBudgetBroker.final_state, 'HELD')
+  assert.equal(missingBudgetBroker.attestation.failure_detail[0].code, 'external_authority_unavailable')
+  assert.equal(missingBudgetBroker.states.includes('PRE_DEPLOY_CHECK'), false)
 
   const deliveredParent = runRequest(request()).terminal_record
   const invalidParentRequest = request({
@@ -500,8 +534,22 @@ test('public controller path accepts the first linked transient retry and keeps 
     attempted: true, artifact_sha256: SHA('d'),
     verification: verification({ artifact_sha256: SHA('d') }),
   }
-  const failedRetry = runRequest(failedRetryRequest)
+  const retryBroker = createRetryTrustBoundary()
+  const failedRetry = runRequest(failedRetryRequest, { trustBoundary: retryBroker })
   assert.equal(failedRetry.final_state, 'ROLLED_BACK')
+
+  const reusedRootRequest = structuredClone(retryRequest)
+  reusedRootRequest.attempt.attempt_id = 'attempt:737.7'
+  reusedRootRequest.retry_history = []
+  reusedRootRequest.terminal_history = [initial.terminal_record]
+  reusedRootRequest.retry_event = retryEvent(reusedRootRequest, {
+    eventId: 'retry-event-reused-root',
+    authorizationId: 'retry-authorization:reused-root',
+  })
+  const reusedRoot = runRequest(reusedRootRequest, { trustBoundary: retryBroker })
+  assert.equal(reusedRoot.final_state, 'HELD')
+  assert.equal(reusedRoot.attestation.failure_detail[0].code, 'retry_budget_exhausted')
+  assert.equal(reusedRoot.states.includes('PRE_DEPLOY_CHECK'), false)
 
   const secondRetryRequest = request({
     attempt: {
@@ -514,7 +562,7 @@ test('public controller path accepts the first linked transient retry and keeps 
     retry_history: [],
   })
   secondRetryRequest.retry_event = retryEvent(secondRetryRequest, { eventId: 'retry-event-second' })
-  const secondRetry = runRequest(secondRetryRequest)
+  const secondRetry = runRequest(secondRetryRequest, { trustBoundary: retryBroker })
   assert.equal(secondRetry.final_state, 'HELD')
   assert.equal(secondRetry.states.includes('PRE_DEPLOY_CHECK'), false)
 })
@@ -684,6 +732,12 @@ test('closed schemas, workflow and skill pressure fixture remain machine-verifia
   assert.deepEqual(transition.retry.allowed_failure_classes, ['network_transient'])
   assert.equal(transition.retry.max_per_exact_commit, 1)
   assert.equal(transition.retry.external_classification_authority_required, true)
+  assert.equal(transition.retry.external_budget_cas_required, true)
+  assert.deepEqual(transition.retry.budget_cas_key, [
+    'delivery_id', 'trusted_merge_sha', 'root_attempt_sha256',
+  ])
+  assert.equal(transition.retry.required_authoritative_prior_retry_count, 0)
+  assert.equal(transition.retry.successful_budget_consume_required, true)
   assert.equal(transition.retry.eligible_parent_terminal_class, 'FAILED')
   assert.equal(transition.retry.eligible_parent_reason_code, 'MERGED_NOT_DELIVERED')
 

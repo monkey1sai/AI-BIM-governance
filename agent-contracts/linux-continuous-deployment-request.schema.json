@@ -354,11 +354,12 @@
     },
     "retry_record": {
       "type": "object", "additionalProperties": false,
-      "required": ["failure_class", "evidence_sha256", "event_id", "classification_sha256", "ordinal"],
+      "required": ["failure_class", "evidence_sha256", "event_id", "authorization_id", "classification_sha256", "ordinal"],
       "properties": {
         "failure_class": { "const": "network_transient" },
         "evidence_sha256": { "$ref": "#/definitions/sha256" },
         "event_id": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "authorization_id": { "type": "string", "minLength": 1, "maxLength": 200 },
         "classification_sha256": { "$ref": "#/definitions/sha256" },
         "ordinal": { "type": "integer", "minimum": 1, "maximum": 1 }
       }
@@ -366,7 +367,7 @@
     "retry_classification_authority": {
       "type": "object", "additionalProperties": false,
       "required": [
-        "kind", "issuer", "key_id", "algorithm", "issued_at", "expires_at",
+        "kind", "issuer", "key_id", "algorithm", "authorization_id", "issued_at", "expires_at",
         "payload_sha256", "signature"
       ],
       "properties": {
@@ -374,6 +375,7 @@
         "issuer": { "type": "string", "minLength": 1, "maxLength": 200 },
         "key_id": { "type": "string", "minLength": 1, "maxLength": 200 },
         "algorithm": { "const": "ed25519" },
+        "authorization_id": { "type": "string", "minLength": 1, "maxLength": 200 },
         "issued_at": { "$ref": "#/definitions/timestamp" },
         "expires_at": { "$ref": "#/definitions/timestamp" },
         "payload_sha256": { "$ref": "#/definitions/sha256" },

@@ -79,8 +79,8 @@
         "format": "agent-skill-tree/v2",
         "algorithm": "sha256",
         "trees": {
-          "claude": "dbb1da148b5276fd9505ecb0e7f785dc449a3ce0f972d719e236ce9c529a133d",
-          "codex": "dbb1da148b5276fd9505ecb0e7f785dc449a3ce0f972d719e236ce9c529a133d"
+          "claude": "5e84a056ed6ef3c4ddead949f82d341224c8a0bc5d92ddd0c5b1f439744d3391",
+          "codex": "5e84a056ed6ef3c4ddead949f82d341224c8a0bc5d92ddd0c5b1f439744d3391"
         }
       }
     },
