@@ -30,4 +30,29 @@ test.describe("viewer harness 開機（deterministic，無真實 Kit）", () => 
     // 誠實檢查：harness 開機不應噴出未捕捉的 console error（容許串流相關的良性警告，故只看 error）。
     expect(consoleErrors, `unexpected console errors: ${consoleErrors.join("\n")}`).toEqual([]);
   });
+
+  test("DataChannel command dispatch records acknowledged viewer activity", async ({ page }) => {
+    await page.route("https://fonts.googleapis.com/**", (route) => route.fulfill({
+      status: 200,
+      contentType: "text/css",
+      body: "",
+    }));
+    await page.goto(`${harnessRoute()}&debug=1`);
+    await expect(page.getByTestId("harness-viewport-label")).toContainText("stage:", { timeout: 25_000 });
+    await expect(page.locator("body")).toContainText("Socket.IO userActivity 已確認", { timeout: 10_000 });
+    const acknowledgedCount = async () => (
+      (await page.locator("body").textContent())?.match(/Socket\.IO userActivity 已確認/g) ?? []
+    ).length;
+    const acknowledgedBefore = await acknowledgedCount();
+    await page.waitForTimeout(5_100);
+
+    const command = page.locator("button").filter({ hasText: "載入可審查 3D 模型" }).first();
+    await command.evaluate((element) => (element as HTMLButtonElement).click());
+
+    await expect(page.getByTestId("demo-outgoing-log")).toContainText("loadingStateQuery");
+    await expect.poll(
+      acknowledgedCount,
+      { timeout: 10_000 },
+    ).toBeGreaterThan(acknowledgedBefore);
+  });
 });

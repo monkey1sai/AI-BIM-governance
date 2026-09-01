@@ -83,6 +83,34 @@ describe('AppStream auth updates', () => {
         expect(JSON.stringify(errorSpy.mock.calls)).not.toContain('sensitive-auth-detail');
     });
 
+    it('reports video readiness when the GFN player is injected after stream startup', async () => {
+        const originalSource = StreamConfig.source;
+        const onVideoReady = vi.fn();
+        const props = { ...makeProps(), onVideoReady };
+        const stream = new AppStream(props);
+        document.body.innerHTML = '<div id="view"></div>';
+        (StreamConfig as { source: string }).source = 'gfn';
+
+        try {
+            stream.state = { ...stream.state, streamReady: true };
+            stream.componentDidUpdate(props, { ...stream.state, streamReady: false });
+
+            const player = document.createElement('video');
+            player.id = 'gfn-stream-player-video';
+            vi.spyOn(player, 'play').mockResolvedValue();
+            document.getElementById('view')?.appendChild(player);
+
+            await vi.waitFor(() => expect(player.play).toHaveBeenCalledOnce());
+            player.dispatchEvent(new Event('loadeddata'));
+
+            expect(onVideoReady).toHaveBeenCalledOnce();
+        } finally {
+            stream.componentWillUnmount();
+            (StreamConfig as { source: string }).source = originalSource;
+            document.body.innerHTML = '';
+        }
+    });
+
     it('reports callback failures without logging the auth payload', () => {
         const onLoggedIn = vi.fn(() => {
             throw new Error('callback-sensitive-detail');

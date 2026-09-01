@@ -24,6 +24,7 @@ const originalEdgeRuntimeDataRoot = process.env.EDGE_RUNTIME_DATA_ROOT;
 const originalA4ConversionArtifactsRoot = process.env.A4_CONVERSION_ARTIFACTS_ROOT;
 const originalA4ConversionArtifactsHostRoot = process.env.A4_CONVERSION_ARTIFACTS_HOST_ROOT;
 const originalArtifactHealthLedgerStorePath = process.env.ARTIFACT_HEALTH_LEDGER_STORE_PATH;
+const originalSessionIdleTimeoutMs = process.env.SESSION_IDLE_TIMEOUT_MS;
 
 const kitEndpointEnvNames = [
   "KIT_INSTANCE_ENDPOINTS",
@@ -48,6 +49,7 @@ beforeEach(() => {
   delete process.env.A4_CONVERSION_ARTIFACTS_ROOT;
   delete process.env.A4_CONVERSION_ARTIFACTS_HOST_ROOT;
   delete process.env.ARTIFACT_HEALTH_LEDGER_STORE_PATH;
+  delete process.env.SESSION_IDLE_TIMEOUT_MS;
 });
 
 afterEach(() => {
@@ -182,6 +184,30 @@ afterEach(() => {
   } else {
     process.env.ARTIFACT_HEALTH_LEDGER_STORE_PATH = originalArtifactHealthLedgerStorePath;
   }
+  if (originalSessionIdleTimeoutMs === undefined) {
+    delete process.env.SESSION_IDLE_TIMEOUT_MS;
+  } else {
+    process.env.SESSION_IDLE_TIMEOUT_MS = originalSessionIdleTimeoutMs;
+  }
+});
+
+describe("loadConfig session inactivity reclaim", () => {
+  it("keeps inactivity reclaim disabled until a baseline timeout is explicitly configured", () => {
+    expect(loadConfig().sessionIdleTimeoutMs).toBeUndefined();
+  });
+
+  it("accepts a bounded positive integer timeout", () => {
+    process.env.SESSION_IDLE_TIMEOUT_MS = "300000";
+    expect(loadConfig().sessionIdleTimeoutMs).toBe(300_000);
+  });
+
+  it.each(["0", "-1", "1.5", "300000ms", "9007199254740991"])(
+    "rejects invalid SESSION_IDLE_TIMEOUT_MS=%s",
+    (value) => {
+      process.env.SESSION_IDLE_TIMEOUT_MS = value;
+      expect(() => loadConfig()).toThrow(/SESSION_IDLE_TIMEOUT_MS must/);
+    },
+  );
 });
 
 describe("loadConfig public browser bases", () => {

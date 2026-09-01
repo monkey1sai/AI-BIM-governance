@@ -11,6 +11,8 @@ export interface SessionEvent {
   sequence: number;
   payload: unknown;
   created_at: string;
+  /** Present only on events appended through the server-owned close path. */
+  close_checkpoint_id?: string;
 }
 
 type StoredSessionEvent = Omit<SessionEvent, "sequence"> & { sequence?: number };
@@ -23,6 +25,14 @@ const LIFECYCLE_EVENT_TYPES = new Set([
   "kitInstanceReleased",
   "kitInstancesReleased",
 ]);
+
+const SERVER_CLOSE_EVENT_TYPES = new Set([
+  "sessionClosing",
+  "finalReviewEvent",
+  "sessionClosed",
+  "kitInstanceReleased",
+]);
+const closeCheckpointIdPattern = /^close_[A-Za-z0-9_-]+$/;
 
 interface LifecycleMapping {
   subject_kind: LifecycleSubjectKind;
@@ -71,6 +81,30 @@ export class EventLog {
   }
 
   append(sessionId: string, type: string, payload: unknown): SessionEvent {
+    return this.appendEvent(sessionId, type, payload);
+  }
+
+  appendServerCloseCheckpoint(
+    sessionId: string,
+    type: string,
+    payload: unknown,
+    closeCheckpointId: string,
+  ): SessionEvent {
+    if (!SERVER_CLOSE_EVENT_TYPES.has(type)) {
+      throw new Error("Invalid server-owned close event type.");
+    }
+    if (!closeCheckpointIdPattern.test(closeCheckpointId)) {
+      throw new Error("Invalid close checkpoint id.");
+    }
+    return this.appendEvent(sessionId, type, payload, closeCheckpointId);
+  }
+
+  private appendEvent(
+    sessionId: string,
+    type: string,
+    payload: unknown,
+    closeCheckpointId?: string,
+  ): SessionEvent {
     assertSafeSessionId(sessionId);
     this.migrateLegacyIfNeeded(sessionId);
     const event: SessionEvent = {
@@ -80,6 +114,7 @@ export class EventLog {
       sequence: this.nextSequence(sessionId),
       payload,
       created_at: nowIso(),
+      ...(closeCheckpointId ? { close_checkpoint_id: closeCheckpointId } : {}),
     };
     fs.appendFileSync(this.filePath(sessionId), `${JSON.stringify(event)}\n`, "utf8");
     this.mirrorToStructuredLog(event);
