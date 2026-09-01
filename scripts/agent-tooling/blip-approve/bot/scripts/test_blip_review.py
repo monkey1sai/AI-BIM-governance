@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 import base64
-import copy
 import hashlib
 import hmac
 import importlib.util
@@ -148,6 +147,100 @@ def make_policy() -> dict:
 
 def make_repo_safety() -> dict:
     return {"sha256": "e" * 64, "allow_auto_merge": False}
+
+
+def make_protection_payload(*, contexts: list[str] | None = None) -> dict:
+    if contexts is None:
+        contexts = ["agent-governance", "service-tests"]
+    return {
+        "required_status_checks": {
+            "strict": True,
+            "contexts": list(contexts),
+            "checks": [
+                {"context": context, "app_id": blip.AGENT_GOVERNANCE_APP_ID} for context in contexts
+            ],
+        },
+        "required_pull_request_reviews": {
+            "required_approving_review_count": 1,
+            "dismiss_stale_reviews": True,
+            "require_code_owner_reviews": True,
+            "require_last_push_approval": False,
+        },
+        "required_conversation_resolution": {"enabled": True},
+        "enforce_admins": {"enabled": True},
+        "allow_force_pushes": {"enabled": False},
+        "allow_deletions": {"enabled": False},
+        "required_linear_history": {"enabled": False},
+        "required_signatures": {"enabled": False},
+        "lock_branch": {"enabled": False},
+        "allow_fork_syncing": {"enabled": False},
+        "block_creations": {"enabled": False},
+        "restrictions": None,
+    }
+
+
+def make_protection_attestation(
+    protection: dict,
+    *,
+    token: str = "token",
+    base_branch: str = "main",
+    repository: str | None = None,
+    version: str | None = None,
+    issued_at: int | None = None,
+    expires_at: int | None = None,
+    active_rules: list | None = None,
+    signature: str | None = None,
+) -> str:
+    now = int(time.time())
+    payload_text = json.dumps(
+        {
+            "version": blip.PROTECTION_ATTESTATION_VERSION if version is None else version,
+            "repository": blip.DEFAULT_REPO if repository is None else repository,
+            "base_branch": base_branch,
+            "issued_at": now - 60 if issued_at is None else issued_at,
+            "expires_at": now + 3600 if expires_at is None else expires_at,
+            "active_rules": [] if active_rules is None else active_rules,
+            "protection": protection,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    )
+    if signature is None:
+        signature = hmac.new(
+            token.encode("utf-8"), payload_text.encode("utf-8"), hashlib.sha256
+        ).hexdigest()
+    encoded = base64.urlsafe_b64encode(payload_text.encode("utf-8")).decode("ascii").rstrip("=")
+    return f"{encoded}.{signature}"
+
+
+def make_ref_update_rule_response(
+    *,
+    contexts: list[str] | None = None,
+    pattern: str = "main",
+    overrides: dict | None = None,
+    rule: object = "default",
+) -> dict:
+    if rule == "default":
+        rule_value: object = {
+            "pattern": pattern,
+            "requiredApprovingReviewCount": 1,
+            "requiresCodeOwnerReviews": True,
+            "requiresConversationResolution": True,
+            "allowsForcePushes": False,
+            "allowsDeletions": False,
+            "blocksCreations": False,
+            "requiresLinearHistory": False,
+            "requiresSignatures": False,
+            "requiredStatusCheckContexts": (
+                ["agent-governance", "service-tests"] if contexts is None else list(contexts)
+            ),
+        }
+        if overrides:
+            rule_value.update(overrides)
+    else:
+        rule_value = rule
+    return {"data": {"repository": {"ref": {"refUpdateRule": rule_value}}}}
 
 
 def make_changed_file(
@@ -791,106 +884,150 @@ class AutomatedApprovalTests(unittest.TestCase):
         self.assertEqual(submit_mock.call_args.kwargs["capability_raw"], "capability")
 
     def test_branch_protection_policy_is_strict_and_complete(self) -> None:
-        protection = {
-            "required_status_checks": {
-                "strict": True,
-                "contexts": ["agent-governance", "service-tests"],
-                "checks": [
-                    {"context": "agent-governance", "app_id": blip.AGENT_GOVERNANCE_APP_ID},
-                    {"context": "service-tests", "app_id": blip.AGENT_GOVERNANCE_APP_ID},
-                ],
-            },
-            "required_pull_request_reviews": {
-                "required_approving_review_count": 1,
-                "dismiss_stale_reviews": True,
-                "require_code_owner_reviews": True,
-                "require_last_push_approval": False,
-            },
-            "required_conversation_resolution": {"enabled": True},
-            "enforce_admins": {"enabled": True},
-            "allow_force_pushes": {"enabled": False},
-            "allow_deletions": {"enabled": False},
-            "required_linear_history": {"enabled": False},
-            "required_signatures": {"enabled": False},
-            "lock_branch": {"enabled": False},
-            "allow_fork_syncing": {"enabled": False},
-            "block_creations": {"enabled": False},
-            "restrictions": None,
-        }
-        with patch.object(blip, "http_json", side_effect=[[], protection]):
+        protection = make_protection_payload()
+        attestation = make_protection_attestation(protection)
+        with patch.dict(blip.os.environ, {blip.PROTECTION_ATTESTATION_ENV: attestation}), patch.object(
+            blip, "http_json", side_effect=[[], make_ref_update_rule_response()]
+        ):
             policy = blip.fetch_protection_policy("token", "monkey1sai", "AI-BIM-governance", "main")
         self.assertEqual([entry["context"] for entry in policy["required"]], ["agent-governance", "service-tests"])
         self.assertRegex(policy["sha256"], r"^[0-9a-f]{64}$")
+        self.assertEqual(policy["live_rule"]["required_approving_review_count"], 1)
+        self.assertEqual(policy["attestation"]["expires_at"] - policy["attestation"]["issued_at"], 3660)
 
         for invalid_count in (0, 2, "1", True):
-            invalid_protection = copy.deepcopy(protection)
+            invalid_protection = make_protection_payload()
             invalid_protection["required_pull_request_reviews"]["required_approving_review_count"] = invalid_count
-            with self.subTest(required_approving_review_count=invalid_count), patch.object(
-                blip, "http_json", side_effect=[[], invalid_protection]
+            invalid_attestation = make_protection_attestation(invalid_protection)
+            with self.subTest(required_approving_review_count=invalid_count), patch.dict(
+                blip.os.environ, {blip.PROTECTION_ATTESTATION_ENV: invalid_attestation}
+            ), patch.object(
+                blip, "http_json", side_effect=[[], make_ref_update_rule_response()]
             ), self.assertRaisesRegex(SystemExit, "exactly one approving review"):
                 blip.fetch_protection_policy("token", "monkey1sai", "AI-BIM-governance", "main")
 
-        with patch.object(blip, "http_json", return_value=[{"type": "pull_request"}]), self.assertRaisesRegex(
-            SystemExit, "Active rulesets"
-        ):
+        with patch.dict(blip.os.environ, {blip.PROTECTION_ATTESTATION_ENV: attestation}), patch.object(
+            blip, "http_json", return_value=[{"type": "pull_request"}]
+        ), self.assertRaisesRegex(SystemExit, "Active rulesets"):
             blip.fetch_protection_policy("token", "monkey1sai", "AI-BIM-governance", "main")
 
-        protection["required_status_checks"]["checks"][0]["app_id"] = None
-        with patch.object(blip, "http_json", side_effect=[[], protection]), self.assertRaisesRegex(
-            SystemExit, "context or source"
-        ):
+        broken_source = make_protection_payload()
+        broken_source["required_status_checks"]["checks"][0]["app_id"] = None
+        broken_attestation = make_protection_attestation(broken_source)
+        with patch.dict(blip.os.environ, {blip.PROTECTION_ATTESTATION_ENV: broken_attestation}), patch.object(
+            blip, "http_json", side_effect=[[], make_ref_update_rule_response()]
+        ), self.assertRaisesRegex(SystemExit, "context or source"):
             blip.fetch_protection_policy("token", "monkey1sai", "AI-BIM-governance", "main")
 
     def test_branch_protection_rejects_duplicate_check_force_push_and_bypass(self) -> None:
         def protected_payload() -> dict:
-            return {
-                "required_status_checks": {
-                    "strict": True,
-                    "contexts": ["agent-governance"],
-                    "checks": [{"context": "agent-governance", "app_id": blip.AGENT_GOVERNANCE_APP_ID}],
-                },
-                "required_pull_request_reviews": {
-                    "required_approving_review_count": 1,
-                    "dismiss_stale_reviews": True,
-                    "require_code_owner_reviews": True,
-                    "require_last_push_approval": False,
-                },
-                "required_conversation_resolution": {"enabled": True},
-                "enforce_admins": {"enabled": True},
-                "allow_force_pushes": {"enabled": False},
-                "allow_deletions": {"enabled": False},
-                "required_linear_history": {"enabled": False},
-                "required_signatures": {"enabled": False},
-                "lock_branch": {"enabled": False},
-                "allow_fork_syncing": {"enabled": False},
-                "block_creations": {"enabled": False},
-                "restrictions": None,
-            }
+            return make_protection_payload(contexts=["agent-governance"])
+
+        def fetch_with(payload: dict) -> None:
+            attestation = make_protection_attestation(payload)
+            with patch.dict(blip.os.environ, {blip.PROTECTION_ATTESTATION_ENV: attestation}), patch.object(
+                blip,
+                "http_json",
+                side_effect=[[], make_ref_update_rule_response(contexts=["agent-governance"])],
+            ):
+                blip.fetch_protection_policy("token", "monkey1sai", "AI-BIM-governance", "main")
 
         duplicate = protected_payload()
         duplicate["required_status_checks"]["checks"].append(
             {"context": "agent-governance", "app_id": 999}
         )
-        with patch.object(blip, "http_json", side_effect=[[], duplicate]), self.assertRaisesRegex(
-            SystemExit, "duplicated or source-ambiguous"
-        ):
-            blip.fetch_protection_policy("token", "monkey1sai", "AI-BIM-governance", "main")
+        with self.assertRaisesRegex(SystemExit, "duplicated or source-ambiguous"):
+            fetch_with(duplicate)
 
         force = protected_payload()
         force["allow_force_pushes"] = {"enabled": True}
-        with patch.object(blip, "http_json", side_effect=[[], force]), self.assertRaisesRegex(
-            SystemExit, "disallow force pushes"
-        ):
-            blip.fetch_protection_policy("token", "monkey1sai", "AI-BIM-governance", "main")
+        with self.assertRaisesRegex(SystemExit, "disallow force pushes"):
+            fetch_with(force)
 
         bypass = protected_payload()
         bypass["required_pull_request_reviews"]["bypass_pull_request_allowances"] = {
             "users": [{"login": "owner"}], "teams": [], "apps": []
         }
-        with patch.object(blip, "http_json", side_effect=[[], bypass]), self.assertRaisesRegex(
-            SystemExit, "bypass or dismissal"
-        ):
+        with self.assertRaisesRegex(SystemExit, "bypass or dismissal"):
+            fetch_with(bypass)
+
+    def test_protection_attestation_is_verified_and_fresh(self) -> None:
+        protection = make_protection_payload()
+        now = int(time.time())
+        cases = [
+            ("", "requires an owner-minted"),
+            ("garbage", "format is invalid"),
+            (make_protection_attestation(protection, signature="0" * 64), "signature is invalid"),
+            (make_protection_attestation(protection, token="other-token"), "signature is invalid"),
+            (
+                make_protection_attestation(protection, version="blip-protection-attestation/v0"),
+                "version is unsupported",
+            ),
+            (
+                make_protection_attestation(protection, repository="monkey1sai/other"),
+                "not bound to this exact repository",
+            ),
+            (
+                make_protection_attestation(protection, base_branch="develop"),
+                "not bound to this exact repository",
+            ),
+            (
+                make_protection_attestation(protection, issued_at=now - 7200, expires_at=now - 3600),
+                "expired",
+            ),
+            (
+                make_protection_attestation(protection, issued_at=now + 3600, expires_at=now + 7200),
+                "issue time is in the future",
+            ),
+            (
+                make_protection_attestation(
+                    protection, issued_at=now - 60, expires_at=now + 40 * 24 * 3600
+                ),
+                "validity window is overlong",
+            ),
+            (
+                make_protection_attestation(protection, active_rules=[{"type": "pull_request"}]),
+                "empty active-ruleset",
+            ),
+        ]
+        for raw, message in cases:
+            with self.subTest(message=message), self.assertRaisesRegex(SystemExit, message):
+                blip.verify_protection_attestation(token="token", raw=raw, base_branch="main")
+        verified = blip.verify_protection_attestation(
+            token="token", raw=make_protection_attestation(protection), base_branch="main"
+        )
+        self.assertEqual(verified["protection"], protection)
+
+    def test_live_ref_update_rule_cross_check_fails_closed(self) -> None:
+        protection = make_protection_payload()
+        env = {blip.PROTECTION_ATTESTATION_ENV: make_protection_attestation(protection)}
+
+        with patch.dict(blip.os.environ, env), patch.object(
+            blip, "http_json", side_effect=[[], make_ref_update_rule_response(rule=None)]
+        ), self.assertRaisesRegex(SystemExit, "not visible"):
             blip.fetch_protection_policy("token", "monkey1sai", "AI-BIM-governance", "main")
+
+        with patch.dict(blip.os.environ, env), patch.object(
+            blip, "http_json", side_effect=[[], make_ref_update_rule_response(pattern="release")]
+        ), self.assertRaisesRegex(SystemExit, "pattern is not bound"):
+            blip.fetch_protection_policy("token", "monkey1sai", "AI-BIM-governance", "main")
+
+        drift_cases = [
+            ({"requiredApprovingReviewCount": 2}, "required_approving_review_count"),
+            ({"requiresCodeOwnerReviews": False}, "requires_code_owner_reviews"),
+            ({"requiresConversationResolution": False}, "requires_conversation_resolution"),
+            ({"allowsForcePushes": True}, "allows_force_pushes"),
+            ({"allowsDeletions": True}, "allows_deletions"),
+            ({"blocksCreations": True}, "blocks_creations"),
+            ({"requiresLinearHistory": True}, "requires_linear_history"),
+            ({"requiresSignatures": True}, "requires_signatures"),
+            ({"requiredStatusCheckContexts": ["agent-governance"]}, "required_status_check_contexts"),
+        ]
+        for overrides, field in drift_cases:
+            with self.subTest(field=field), patch.dict(blip.os.environ, env), patch.object(
+                blip, "http_json", side_effect=[[], make_ref_update_rule_response(overrides=overrides)]
+            ), self.assertRaisesRegex(SystemExit, f"{field} differs from the owner attestation"):
+                blip.fetch_protection_policy("token", "monkey1sai", "AI-BIM-governance", "main")
 
     def test_required_checks_accept_platform_success_but_governance_must_really_pass(self) -> None:
         policy = make_policy()

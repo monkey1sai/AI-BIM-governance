@@ -407,7 +407,11 @@ try {
             'Counted-approval wrapper can no longer be proven approve-only.'
         Assert-True ($safeText -match "'--human-critical-override'") `
             'Counted-approval wrapper does not bind the human-critical override to the child CLI.'
-        Write-Output 'broker-safe-tests-ok (parse, v2 tuple, masked prompt, model-free, approve-only)'
+        Assert-True ($safeText.Contains('secrets\blip-protection-attestation.v1.txt')) `
+            'Counted-approval wrapper lost the owner protection attestation input.'
+        Assert-True ($safeText.Contains('$startInfo.Environment[$protectionAttestationEnvironmentName] = $protectionAttestation')) `
+            'Counted-approval wrapper no longer injects the owner protection attestation.'
+        Write-Output 'broker-safe-tests-ok (parse, v2 tuple, masked prompt, model-free, approve-only, protection attestation)'
         return
     }
 
@@ -420,6 +424,10 @@ try {
     }
     Invoke-RealPythonTrustRegression
     New-Item -ItemType Directory -Path $runtimeRoot, $stateRoot, $appScriptsRoot | Out-Null
+    $attestationDir = Join-Path $sandboxRoot 'secrets'
+    New-Item -ItemType Directory -Path $attestationDir | Out-Null
+    $attestationPath = Join-Path $attestationDir 'blip-protection-attestation.v1.txt'
+    Set-Content -LiteralPath $attestationPath -Value ('dGVzdA' + '.' + ('a' * 64)) -Encoding ascii
     $brokerText = Get-Content -Raw -LiteralPath $sourceBroker
     $pythonAssignment = "`$pythonPath = 'C:\Program Files\Python312\python.exe'"
     if ($brokerText.IndexOf($pythonAssignment, [StringComparison]::Ordinal) -lt 0) {
@@ -502,6 +510,18 @@ try {
     $manifestFailure = Invoke-BrokerCase -MarkerMode valid -ValidManifest $false -ExpectedExit 1 -ExpectedStatus broker_failed
     Assert-True ($manifestFailure.stderr -match 'broker hash') 'Manifest mismatch did not fail before child execution'
 
+    Rename-Item -LiteralPath $attestationPath -NewName 'blip-protection-attestation.v1.txt.bak'
+    $missingAttestation = Invoke-BrokerCase -MarkerMode valid -ValidManifest $true -ExpectedExit 1 -ExpectedStatus broker_failed
+    Assert-True ($missingAttestation.stderr -match 'protection attestation') `
+        'Missing owner protection attestation did not fail closed before child execution'
+    Rename-Item -LiteralPath ($attestationPath + '.bak') -NewName 'blip-protection-attestation.v1.txt'
+
+    Set-Content -LiteralPath $attestationPath -Value 'not-an-attestation' -Encoding ascii
+    $malformedAttestation = Invoke-BrokerCase -MarkerMode valid -ValidManifest $true -ExpectedExit 1 -ExpectedStatus broker_failed
+    Assert-True ($malformedAttestation.stderr -match 'protection attestation is malformed') `
+        'Malformed owner protection attestation did not fail closed before child execution'
+    Set-Content -LiteralPath $attestationPath -Value ('dGVzdA' + '.' + ('a' * 64)) -Encoding ascii
+
     Clear-StateRoot
     Write-Manifest -ValidBrokerHash $true `
         -BrokerPathOverride $badBrokerPath -AuthPathOverride $badAclPath
@@ -513,7 +533,7 @@ try {
     $aclPayload = Get-Content -Raw -LiteralPath $aclResult.FullName | ConvertFrom-Json
     Assert-True ($aclPayload.stderr -match 'complete explicit write denial') 'Missing deny failure was not attributable'
 
-    Write-Output 'broker-tests-ok (9 cases including v2 tuple and real Python trust)'
+    Write-Output 'broker-tests-ok (11 cases including v2 tuple, protection attestation, and real Python trust)'
 }
 finally {
     if (Test-Path -LiteralPath $sandboxRoot) { Remove-Item -LiteralPath $sandboxRoot -Recurse -Force }

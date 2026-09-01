@@ -298,6 +298,8 @@ $resultPath = Join-Path $stateRoot "blip-live-approve-pr$PrNumber-$stamp.json"
 $lockPath = Join-Path $stateRoot "blip-live-approve-pr$PrNumber-$($ExpectedHeadSha.Substring(0,12)).lock"
 $tokenEnvironmentName = 'BLIP_GITHUB_TOKEN'
 $capabilityEnvironmentName = 'BLIP_APPROVAL_CAPABILITY'
+$protectionAttestationEnvironmentName = 'BLIP_PROTECTION_ATTESTATION'
+$protectionAttestationPath = Join-Path (Split-Path -Parent $trustedRoot) 'secrets\blip-protection-attestation.v1.txt'
 $pythonBootstrap = @'
 import sys
 import types
@@ -893,6 +895,14 @@ try {
     Write-Information "PR #$PrNumber automatic approval broker" -InformationAction Continue
     Write-Information "Exact tuple: base=$($ExpectedBaseSha.Substring(0,7)) head=$($ExpectedHeadSha.Substring(0,7)) mode=$ReviewMode human_critical_override=$($HumanCriticalOverride.IsPresent.ToString().ToLowerInvariant())" -InformationAction Continue
     Write-Information 'This can submit one counted APPROVED review; it refuses auto-merge and never merges.' -InformationAction Continue
+    if (-not (Test-Path -LiteralPath $protectionAttestationPath)) {
+        throw "Owner protection attestation is missing: $protectionAttestationPath (mint one with mint_protection_attestation.py)"
+    }
+    $protectionAttestation = ([System.IO.File]::ReadAllText($protectionAttestationPath)).Trim()
+    if ($protectionAttestation.Length -eq 0 -or $protectionAttestation.Length -gt 262144 -or
+        $protectionAttestation -notmatch '^[A-Za-z0-9_\-=]+\.[0-9a-fA-F]{64}$') {
+        throw "Owner protection attestation is malformed: $protectionAttestationPath"
+    }
     Write-Information 'Enter the fixed User PAT only in the masked prompt. Do not paste it into chat or a command line.' -InformationAction Continue
     $secureToken = Read-Host -Prompt 'Enter BLIP_GITHUB_TOKEN' -AsSecureString
     if ($null -eq $secureToken -or $secureToken.Length -eq 0) { throw 'No token was entered.' }
@@ -929,6 +939,7 @@ try {
     foreach ($entry in $preservedEnvironment.GetEnumerator()) { $startInfo.Environment[$entry.Key] = $entry.Value }
     $startInfo.Environment[$tokenEnvironmentName] = $plainToken
     $startInfo.Environment[$capabilityEnvironmentName] = $capability
+    $startInfo.Environment[$protectionAttestationEnvironmentName] = $protectionAttestation
 
     $childProcess = [System.Diagnostics.Process]::new()
     $childProcess.StartInfo = $startInfo
