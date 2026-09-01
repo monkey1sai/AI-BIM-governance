@@ -22,6 +22,8 @@ services:
       DEV_AUTH_TOKEN: ${DEV_AUTH_TOKEN:-dev-token}
       CORS_ORIGINS: "${CORS_ORIGINS:-http://127.0.0.1:5173,http://localhost:5173,http://127.0.0.1:5174,http://localhost:5174}"
       INTERNAL_API_AUTH_TOKEN: ${INTERNAL_API_AUTH_TOKEN:-dev-internal-token}
+      # Explicit opt-in only; blank keeps inactivity reclaim disabled.
+      SESSION_IDLE_TIMEOUT_MS: ${SESSION_IDLE_TIMEOUT_MS:-}
       CALLBACK_OUTBOX_STORE_PATH: /workspace/storage/coordinator/callback-outbox.json
       # #531：conversion ledger 必須與 callback outbox 同落掛載卷（/workspace/storage
       # 由下方 volumes 綁 owner 控制的 RUNTIME_STORAGE_ROOT）。不設此值時 config.ts
