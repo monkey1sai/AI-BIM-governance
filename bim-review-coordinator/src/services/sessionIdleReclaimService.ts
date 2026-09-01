@@ -49,6 +49,7 @@ export class SessionIdleReclaimService {
 
   private readonly sessionStates = new Map<string, SessionActivityState>();
   private readonly connectedPeers = new Map<string, Set<string>>();
+  private readonly lastActivityAtBySession = new Map<string, number>();
   private readonly teardownInFlight = new Set<string>();
   private timer: NodeJS.Timeout | null = null;
   private isRunning = false;
@@ -128,6 +129,7 @@ export class SessionIdleReclaimService {
         this.onCountdownCancelled?.(sessionId);
       }
     }
+    this.lastActivityAtBySession.set(sessionId, timestamp);
     return true;
   }
 
@@ -182,7 +184,7 @@ export class SessionIdleReclaimService {
     for (const [sessionId, state] of Array.from(this.sessionStates.entries())) {
       const retryingTeardown = state.isCountingDown && state.countdownRemainingSec <= 0;
       if (!this.hasConnectedPeer(sessionId) && !retryingTeardown && !this.teardownInFlight.has(sessionId)) {
-        this.removeSession(sessionId);
+        this.untrackConnectedSession(sessionId);
         continue;
       }
       if (this.teardownInFlight.has(sessionId)) continue;
@@ -263,9 +265,21 @@ export class SessionIdleReclaimService {
     }
     if (!session || (session.status !== "active" && session.status !== "created")) return false;
     const peers = this.connectedPeers.get(sessionId) ?? new Set<string>();
+    const alreadyReady = peers.has(peerId);
     peers.add(peerId);
     this.connectedPeers.set(sessionId, peers);
-    return this.recordActivity(sessionId, timestamp);
+    if (alreadyReady && this.sessionStates.has(sessionId)) return true;
+    if (!this.sessionStates.has(sessionId)) {
+      const lastActivityAt = this.lastActivityAtBySession.get(sessionId) ?? timestamp;
+      this.sessionStates.set(sessionId, {
+        sessionId,
+        lastActivityAt,
+        isCountingDown: false,
+        countdownRemainingSec: this.countdownSeconds,
+      });
+      this.lastActivityAtBySession.set(sessionId, lastActivityAt);
+    }
+    return true;
   }
 
   recordPeerActivity(sessionId: string, peerId: string, timestamp: number = Date.now()): boolean {
@@ -284,7 +298,7 @@ export class SessionIdleReclaimService {
       if (state?.isCountingDown) {
         this.onCountdownCancelled?.(sessionId);
       }
-      this.removeSession(sessionId);
+      this.untrackConnectedSession(sessionId);
     }
   }
 
@@ -296,6 +310,11 @@ export class SessionIdleReclaimService {
    * Untracks a session when closed.
    */
   removeSession(sessionId: string): void {
+    this.untrackConnectedSession(sessionId);
+    this.lastActivityAtBySession.delete(sessionId);
+  }
+
+  private untrackConnectedSession(sessionId: string): void {
     this.sessionStates.delete(sessionId);
     this.connectedPeers.delete(sessionId);
     this.teardownInFlight.delete(sessionId);

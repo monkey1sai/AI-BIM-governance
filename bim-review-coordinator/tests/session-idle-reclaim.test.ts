@@ -130,6 +130,27 @@ describe("SessionIdleReclaimService (session-lifecycle idle countdown & reclaim)
     expect(service.getSessionState(session.session_id)).toBeNull();
   });
 
+  it("does not refresh inactivity when readiness is replayed or a transport reconnects", () => {
+    const session = createActiveSession();
+    const service = new SessionIdleReclaimService(store, {
+      idleTimeoutMs: 60_000,
+      countdownSeconds: 10,
+    });
+    const t0 = 1_000_000;
+
+    service.connectPeer(session.session_id, "peer-1", t0);
+    service.connectPeer(session.session_id, "peer-1", t0 + 5_000);
+    service.connectPeer(session.session_id, "peer-2", t0 + 10_000);
+    expect(service.getSessionState(session.session_id)?.lastActivityAt).toBe(t0);
+
+    service.disconnectPeer(session.session_id, "peer-1");
+    service.disconnectPeer(session.session_id, "peer-2");
+    expect(service.getSessionState(session.session_id)).toBeNull();
+
+    service.connectPeer(session.session_id, "peer-reconnected", t0 + 20_000);
+    expect(service.getSessionState(session.session_id)?.lastActivityAt).toBe(t0);
+  });
+
   it("triggers teardown when 10-second countdown reaches 0 without interaction", () => {
     const session = createActiveSession();
     const teardowns: string[] = [];

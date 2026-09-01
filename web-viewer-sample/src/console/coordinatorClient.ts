@@ -779,8 +779,10 @@ export const coordinatorClient = {
   getSessionIdleStatus: (sessionId: string) =>
     jsonGet<{
       session_id: string;
+      enabled: boolean;
+      has_connected_viewer: boolean;
       is_counting_down: boolean;
-      remaining_seconds: number;
-      last_activity_at: string;
+      remaining_seconds: number | null;
+      last_activity_at: string | null;
     }>(`/api/review-sessions/${encodeURIComponent(sessionId)}/idle-status`),
 };

@@ -2136,11 +2136,10 @@ export default class App extends React.Component<AppProps, AppState> {
             }, () => {
                 if (streamConfig.model.status === "ready" && !isBlockedLifecycle(streamConfig.lifecycle_status)) {
                     this._scheduleStreamStartTimeout();
-                } else if (
-                    (streamConfig.model.status === "missing" || streamConfig.model.status === "converting")
-                    && !isBlockedLifecycle(streamConfig.lifecycle_status)
-                ) {
-                    this._scheduleStreamConfigRefresh(sessionId);
+                } else if (streamConfig.model.status === "missing" || streamConfig.model.status === "converting") {
+                    if (!isBlockedLifecycle(streamConfig.lifecycle_status)) {
+                        this._scheduleStreamConfigRefresh(sessionId);
+                    }
                 }
                 if (
                     !streamEndpointChanged
@@ -4088,11 +4087,10 @@ export default class App extends React.Component<AppProps, AppState> {
                 this._connectReviewSocket(sessionId, streamConfig.trace_id);
                 if (streamConfig.model.status === "ready" && !isBlockedLifecycle(streamConfig.lifecycle_status)) {
                     this._scheduleStreamStartTimeout();
-                } else if (
-                    (streamConfig.model.status === "missing" || streamConfig.model.status === "converting")
-                    && !isBlockedLifecycle(streamConfig.lifecycle_status)
-                ) {
-                    this._scheduleStreamConfigRefresh(sessionId);
+                } else if (streamConfig.model.status === "missing" || streamConfig.model.status === "converting") {
+                    if (!isBlockedLifecycle(streamConfig.lifecycle_status)) {
+                        this._scheduleStreamConfigRefresh(sessionId);
+                    }
                 }
                 if (!streamEndpointChanged && this.state.isKitReady && this.state.selectedUSDAsset && streamConfig.model.status === "ready" && !isBlockedLifecycle(streamConfig.lifecycle_status)) {
                     this._openSelectedAsset();

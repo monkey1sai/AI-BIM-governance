@@ -18,6 +18,7 @@ afterEach(async () => {
     client.disconnect();
   }
   if (active) {
+    await active.dispose();
     active.io.close();
     await new Promise<void>((resolve) => active?.server.close(() => resolve()));
     active = null;
