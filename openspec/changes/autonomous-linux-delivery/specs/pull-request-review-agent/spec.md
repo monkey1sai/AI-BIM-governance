@@ -17,12 +17,51 @@ PR review agent SHALL build its decision from a bounded, immutable packet tied t
 - **AND** report SHALL列出缺失或漂移類型
 - **AND**舊packet SHALL NOT被重用於新head
 
+#### Scenario: Required CheckRun結論映射
+
+- **GIVEN**expected external App是branch protection所pin的required source
+- **WHEN**exact-head packet完整、所有required deterministic／machine gates通過且zero unresolved threads已由完整pagination證明
+- **THEN**publisher MAY在該head發布actual `success`
+- **AND**只有該source的actual `success` SHALL成為merge-eligible evidence
+
+#### Scenario: HELD或不完整結果不得偽裝成GitHub pass
+
+- **WHEN**gate status為 `held`／`blocked`／`failed`、publisher unavailable、collection incomplete或tuple drift
+- **THEN**required CheckRun SHALL保持absent／pending或以blocking conclusion結案
+- **AND**publisher SHALL NOT使用 `neutral` 或 `skipped`
+- **AND**同名commit status、comment、review或wrong-source CheckRun SHALL NOT解鎖merge
+
 #### Scenario: Candidate diff需要semantic redaction
 
 - **WHEN**pre-model secret scan判定任何candidate diff byte不能安全地byte-identical提供給review layers
 - **THEN**gate status SHALL為 `held`
 - **AND**L1–L3 SHALL NOT執行partial或redacted review
 - **AND**report SHALL只列non-secret path與rule ID
+
+### Requirement: Every CI and review finding SHALL receive a closed evidence-bound disposition
+
+PR review agent SHALL先驗證finding是否成立，再將每個CI、deterministic validator或machine reviewer finding對frozen exact head裁決為 `FIX`、`REJECT`、`ACCEPT_RISK` 或 `DEFER`。`FIX` SHALL要求confirmed、in-scope、已在current head修復及可重現regression evidence；`REJECT` SHALL要求refuted與可重現反證；`ACCEPT_RISK` SHALL只適用immutable policy明定的non-blocking P3／MEDIUM／LOW／ADVISORY；`DEFER` SHALL要求confirmed、out-of-scope及同repo follow-up Issue。Confirmed in-scope P0／P1／P2／BLOCKER／CRITICAL／HIGH SHALL只能 `FIX`。Unverified finding、unknown disposition、缺evidence或違反severity／scope mapping SHALL fail closed。
+
+#### Scenario: Finding經裁決後不需要code修改
+
+- **GIVEN**finding已由exact-head evidence證明為false positive、policy-eligible non-blocking risk或out-of-scope follow-up
+- **WHEN**agent分別記錄 `REJECT`、`ACCEPT_RISK` 或 `DEFER`及其required evidence
+- **THEN**conversation MAY被resolve且不要求code diff
+- **AND**resolution SHALL表示disposition lifecycle完成，不得宣稱finding已被fix
+
+#### Scenario: Confirmed in-scope blocker不能被接受或延後
+
+- **WHEN**P0／P1／P2／BLOCKER／CRITICAL／HIGH finding已confirmed且in-scope
+- **THEN**唯一可通過的disposition SHALL為 `FIX`
+- **AND**缺current-head修復或regression evidence SHALL保持thread unresolved並使gate `blocked`或 `held`
+
+#### Scenario: Machine gate只能在finding convergence後發布
+
+- **GIVEN**collector以完整pagination取得所有review threads與CI findings
+- **WHEN**每個finding都有合法disposition、所有對應thread已resolve且server unresolved count為零
+- **THEN**review convergence MAY成立
+- **AND**source-pinned App只可在convergence後對相同frozen head發布actual `success`
+- **AND**convergence前的success、stale-head success或不完整thread集合 SHALL NOT成為merge evidence
 
 ### Requirement: Critical PRs SHALL receive three-layer cross-adversarial machine adjudication
 
