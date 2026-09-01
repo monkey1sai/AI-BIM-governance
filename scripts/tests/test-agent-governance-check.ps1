@@ -594,6 +594,25 @@ try {
         Assert-True ($githubWorkflowBody -match [regex]::Escape($authRoutingMarker)) "GitHub workflow preserves gh auth routing marker: $authRoutingMarker"
     }
     $agentsBodyLf = $agentsBody.Replace("`r`n", "`n")
+    $agentsLines = @($agentsBodyLf -split "`n")
+    $expectedParallelWriterPolicy = '4. **並行 Writer 隔離原則**：repo 不以 writer 數量為 blocker；多個 writer 只可在各自獨立 sibling worktree、獨立 branch 與明確無重疊 touch-set 中並行，每個 task／branch 仍限單一 writer。同一 branch、同一 worktree 或 touch-set 重疊／未知一律停工排隊；`.agents/board` 只做感知，不具 lease／approval／merge authority；`direct_stack` 與 autonomous delivery 未有 canonical activation record 前保持 HELD。'
+    $leanGovernanceHeading = '## 0.0 Lean Governance & Subtraction Directive（元治理減法方針）'
+    $leanGovernanceHeadingIndex = [array]::IndexOf($agentsLines, $leanGovernanceHeading)
+    $agentWorkflowHeadingIndex = [array]::IndexOf($agentsLines, '## 0.1 Agent 工作方式')
+    Assert-True ($leanGovernanceHeadingIndex -ge 0 -and $agentWorkflowHeadingIndex -gt $leanGovernanceHeadingIndex) 'AGENTS.md keeps one active Lean Governance section before the agent workflow section'
+    $leanGovernanceSection = if ($leanGovernanceHeadingIndex -ge 0 -and $agentWorkflowHeadingIndex -gt $leanGovernanceHeadingIndex) {
+        ($agentsLines[$leanGovernanceHeadingIndex..($agentWorkflowHeadingIndex - 1)] -join "`n")
+    } else { '' }
+    Assert-True (-not ($leanGovernanceSection -match '```|<!--|-->')) 'Lean Governance rules cannot be made inert by a Markdown fence or HTML comment'
+    Assert-True ($agentsLines[$leanGovernanceHeadingIndex + 4] -match '^3\. \*\*前端驗收以 Functional & Semantic E2E 為主\*\*：') 'parallel-writer policy remains directly after Lean Governance rule 3'
+    Assert-True ($agentsLines[$leanGovernanceHeadingIndex + 5] -ceq $expectedParallelWriterPolicy) 'parallel-writer policy remains active as Lean Governance rule 4'
+    Assert-True ($agentsLines[$leanGovernanceHeadingIndex + 6] -match '^5\. \*\*主工作區絕對乾淨與強制 Worktree 隔離') 'parallel-writer policy remains directly before Lean Governance rule 5'
+    $parallelWriterPolicyMatches = @([regex]::Matches($agentsBodyLf, '(?m)^\d+\. \*\*並行 Writer 隔離原則\*\*：[^\r\n]+$'))
+    Assert-True ($parallelWriterPolicyMatches.Count -eq 1) 'AGENTS.md defines exactly one canonical parallel-writer isolation policy'
+    $parallelWriterPolicy = if ($parallelWriterPolicyMatches.Count -eq 1) { $parallelWriterPolicyMatches[0].Value } else { '' }
+    Assert-True ($parallelWriterPolicy -ceq $expectedParallelWriterPolicy) 'parallel-writer policy preserves the exact fail-closed isolation and authority contract'
+    Assert-True (@([regex]::Matches($agentsBodyLf, '(?m)^\d+\. \*\*[^\r\n]*Writer[^\r\n]*原則\*\*：')).Count -eq 1) 'AGENTS.md has no competing numbered Writer principle'
+    Assert-True (-not ($agentsBodyLf -match '(?m)^\d+\. \*\*Single Active Writer 原則\*\*：')) 'AGENTS.md removes the obsolete repo-wide single-writer heading'
     foreach ($entrypointVariant in @($agentsBodyLf, $agentsBodyLf.Replace("`n", "`r`n"))) {
         Assert-True ($entrypointVariant -match '(?m)^\|[^\r\n]*gh[^\r\n]*docs/agents/github-workflow\.md[^\r\n]*\r?$') 'AGENTS.md routes gh auth work to the GitHub workflow runbook under LF and CRLF'
     }
