@@ -182,19 +182,27 @@ Assert-True ($activeAgents -contains 'nested') 'idle descendant session is detec
 Assert-True ($activeAgents -notcontains 'ended') 'ended descendant session is ignored'
 Assert-True ($activeAgents -notcontains 'sibling') 'sibling path is not treated as a descendant'
 
-$ready = Get-GovernedWorktreeRemovalReadiness -IsMain:$false -BoardAvailable:$true -GitAccessible:$true -Dirty:$false -HeadAncestor:$true -Active:$false -Locked:$false -Prunable:$false
+$ready = Get-GovernedWorktreeRemovalReadiness -IsMain:$false -BoardAvailable:$true -GitAccessible:$true -Dirty:$false -HeadAncestor:$true -Active:$false -Locked:$false -Prunable:$false -OwnerObservationsAvailable:$true -OwnersMatchCurrentIdentity:$true
 Assert-True $ready.Ready 'clean merged inactive linked worktree can enter manual removal review'
 Assert-Equal 'eligible_for_manual_review' $ready.Reason 'manual review reason'
 
-$active = Get-GovernedWorktreeRemovalReadiness -IsMain:$false -BoardAvailable:$true -GitAccessible:$true -Dirty:$false -HeadAncestor:$true -Active:$true -Locked:$false -Prunable:$false
+$ownerUnknown = Get-GovernedWorktreeRemovalReadiness -IsMain:$false -BoardAvailable:$true -GitAccessible:$true -Dirty:$false -HeadAncestor:$true -Active:$false -Locked:$false -Prunable:$false -OwnerObservationsAvailable:$false -OwnersMatchCurrentIdentity:$false
+Assert-True (-not $ownerUnknown.Ready) 'unavailable owner observations must not enter removal review'
+Assert-Equal 'owner_observation_unavailable' $ownerUnknown.Reason 'unavailable owner observation rejection reason'
+
+$ownerMismatch = Get-GovernedWorktreeRemovalReadiness -IsMain:$false -BoardAvailable:$true -GitAccessible:$true -Dirty:$false -HeadAncestor:$true -Active:$false -Locked:$false -Prunable:$false -OwnerObservationsAvailable:$true -OwnersMatchCurrentIdentity:$false
+Assert-True (-not $ownerMismatch.Ready) 'mismatched owner SIDs must not enter removal review'
+Assert-Equal 'owner_identity_mismatch' $ownerMismatch.Reason 'owner mismatch rejection reason'
+
+$active = Get-GovernedWorktreeRemovalReadiness -IsMain:$false -BoardAvailable:$true -GitAccessible:$true -Dirty:$false -HeadAncestor:$true -Active:$true -Locked:$false -Prunable:$false -OwnerObservationsAvailable:$true -OwnersMatchCurrentIdentity:$true
 Assert-True (-not $active.Ready) 'active worktree must not enter removal review'
 Assert-Equal 'active_writer' $active.Reason 'active writer rejection reason'
 
-$boardUnknown = Get-GovernedWorktreeRemovalReadiness -IsMain:$false -BoardAvailable:$false -GitAccessible:$true -Dirty:$false -HeadAncestor:$true -Active:$false -Locked:$false -Prunable:$false
+$boardUnknown = Get-GovernedWorktreeRemovalReadiness -IsMain:$false -BoardAvailable:$false -GitAccessible:$true -Dirty:$false -HeadAncestor:$true -Active:$false -Locked:$false -Prunable:$false -OwnerObservationsAvailable:$true -OwnersMatchCurrentIdentity:$true
 Assert-True (-not $boardUnknown.Ready) 'unknown board state must not enter removal review'
 Assert-Equal 'board_status_unknown' $boardUnknown.Reason 'unknown board rejection reason'
 
-$squashUnknown = Get-GovernedWorktreeRemovalReadiness -IsMain:$false -BoardAvailable:$true -GitAccessible:$true -Dirty:$false -HeadAncestor:$false -Active:$false -Locked:$false -Prunable:$false
+$squashUnknown = Get-GovernedWorktreeRemovalReadiness -IsMain:$false -BoardAvailable:$true -GitAccessible:$true -Dirty:$false -HeadAncestor:$false -Active:$false -Locked:$false -Prunable:$false -OwnerObservationsAvailable:$true -OwnersMatchCurrentIdentity:$true
 Assert-True (-not $squashUnknown.Ready) 'non-ancestor worktree must stay in manual cross-check state'
 Assert-Equal 'merge_requires_pr_or_branch_diff_crosscheck' $squashUnknown.Reason `
     'ancestry failure must not be presented as definitive not-merged evidence'

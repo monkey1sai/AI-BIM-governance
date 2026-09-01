@@ -222,7 +222,9 @@ function Get-GovernedWorktreeRemovalReadiness {
         [Parameter(Mandatory = $true)][bool] $HeadAncestor,
         [Parameter(Mandatory = $true)][bool] $Active,
         [Parameter(Mandatory = $true)][bool] $Locked,
-        [Parameter(Mandatory = $true)][bool] $Prunable
+        [Parameter(Mandatory = $true)][bool] $Prunable,
+        [Parameter(Mandatory = $true)][bool] $OwnerObservationsAvailable,
+        [Parameter(Mandatory = $true)][bool] $OwnersMatchCurrentIdentity
     )
 
     if ($IsMain) { return [pscustomobject]@{ Ready = $false; Reason = 'main_worktree' } }
@@ -231,6 +233,12 @@ function Get-GovernedWorktreeRemovalReadiness {
     if ($Locked) { return [pscustomobject]@{ Ready = $false; Reason = 'worktree_locked' } }
     if ($Prunable) { return [pscustomobject]@{ Ready = $false; Reason = 'prunable_requires_exact_inspection' } }
     if (-not $GitAccessible) { return [pscustomobject]@{ Ready = $false; Reason = 'git_access_unknown' } }
+    if (-not $OwnerObservationsAvailable) {
+        return [pscustomobject]@{ Ready = $false; Reason = 'owner_observation_unavailable' }
+    }
+    if (-not $OwnersMatchCurrentIdentity) {
+        return [pscustomobject]@{ Ready = $false; Reason = 'owner_identity_mismatch' }
+    }
     if ($Dirty) { return [pscustomobject]@{ Ready = $false; Reason = 'worktree_dirty' } }
     if (-not $HeadAncestor) {
         return [pscustomobject]@{ Ready = $false; Reason = 'merge_requires_pr_or_branch_diff_crosscheck' }

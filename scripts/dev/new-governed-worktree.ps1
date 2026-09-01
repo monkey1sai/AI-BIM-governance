@@ -193,6 +193,12 @@ function Get-GovernedWorktreeInventory {
         else {
             Get-GovernedPathOwnerObservation -Path $gitMetadataPath
         }
+        $ownerObservationsAvailable = [bool]($rootOwner.Available -and $gitMetadataOwner.Available)
+        $ownersMatchCurrentIdentity = [bool](
+            $ownerObservationsAvailable -and
+            $rootOwner.Sid -ceq $Identity.IdentitySid -and
+            $gitMetadataOwner.Sid -ceq $Identity.IdentitySid
+        )
         $status = Invoke-GovernedGit -WorkingDirectory $worktreePath -ArgumentList @(
             'status', '--porcelain=v1', '-z', '--untracked-files=all') -NoOptionalLocks -AllowFailure
         $gitAccessible = [bool]$status.Success
@@ -213,7 +219,9 @@ function Get-GovernedWorktreeInventory {
                 -HeadAncestor:$false `
                 -Active:$false `
                 -Locked:([bool]$record.Locked) `
-                -Prunable:([bool]$record.Prunable)
+                -Prunable:([bool]$record.Prunable) `
+                -OwnerObservationsAvailable:$ownerObservationsAvailable `
+                -OwnersMatchCurrentIdentity:$ownersMatchCurrentIdentity
         }
         elseif ($null -eq $dirty) {
             $readiness = [pscustomobject]@{ Ready = $false; Reason = 'git_access_unknown' }
@@ -230,7 +238,9 @@ function Get-GovernedWorktreeInventory {
                 -HeadAncestor:$headAncestor `
                 -Active:($activeAgents.Count -gt 0) `
                 -Locked:([bool]$record.Locked) `
-                -Prunable:([bool]$record.Prunable)
+                -Prunable:([bool]$record.Prunable) `
+                -OwnerObservationsAvailable:$ownerObservationsAvailable `
+                -OwnersMatchCurrentIdentity:$ownersMatchCurrentIdentity
         }
         $rows.Add([pscustomobject][ordered]@{
             path = $worktreePath
@@ -241,9 +251,7 @@ function Get-GovernedWorktreeInventory {
             git_metadata_path = $gitMetadataPath
             git_metadata_owner_name = [string]$gitMetadataOwner.Name
             git_metadata_owner_sid = [string]$gitMetadataOwner.Sid
-            owners_match_current_identity = if ($rootOwner.Available -and $gitMetadataOwner.Available) {
-                $rootOwner.Sid -ceq $Identity.IdentitySid -and $gitMetadataOwner.Sid -ceq $Identity.IdentitySid
-            }
+            owners_match_current_identity = if ($ownerObservationsAvailable) { $ownersMatchCurrentIdentity }
             else { $null }
             git_accessible = $gitAccessible
             dirty = $dirty
