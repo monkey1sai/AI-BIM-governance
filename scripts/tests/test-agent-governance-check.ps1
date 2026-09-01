@@ -1178,6 +1178,9 @@ try {
     Assert-True ($LASTEXITCODE -eq 0) 'openspec/changes, openspec/lifecycle-ledger.json and the docs/plans/NOW.md projection agree'
     # Exit 0 alone is not proof the gate ran: assert it actually produced its report.
     Assert-True ((($repositoryLifecycleReport -join "`n")) -match 'openspec repository lifecycle OK') 'repository-scoped lifecycle gate emitted its parity report'
+
+    & pwsh -NoProfile -NonInteractive -File (Join-Path $PSScriptRoot 'test-governed-worktree.ps1')
+    Assert-True ($LASTEXITCODE -eq 0) 'governed Windows worktree identity, inventory, and plan contracts pass'
 } finally {
     Pop-Location
 }
