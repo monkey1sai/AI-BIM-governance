@@ -2596,11 +2596,11 @@
       "id": "spec-to-done-parallel-delivery-binding",
       "status": "active",
       "owner": "repository-maintainer",
-      "current_slice": "binding contract, shared validator, Claude/Codex adapter parity, deterministic tests and operator policy complete on an isolated branch; pending parent-Fabric integration review and post-merge archive",
+      "current_slice": "binding contract, shared validator, Claude/Codex adapter parity, deterministic tests and operator policy complete on an isolated branch; GitNexus CRITICAL 101 files/2,820 symbols/107 flows accepted; pending immutable-head P5 review, PR merge and post-merge archive",
       "blocked_by": [],
-      "last_verified": "2026-08-31T10:50:55Z",
+      "last_verified": "2026-09-01T03:26:53Z",
       "task_ledger": {
-        "completed": 13,
+        "completed": 14,
         "total": 14
       },
       "evidence_refs": [
