@@ -34,7 +34,7 @@ const nodeTree = (nodes) => {
   return Array.from({ length: childCount }, (_unused, index) => nodeTree(index === 0 ? remaining + 1 : 1))
 }
 
-const noCalls = () => ({ admit: 0, advance: 0, commit: 0, drainPlan: 0, inspectLeases: 0, inspectPlan: 0, journalRead: 0, journalReserve: 0, planSubmit: 0, preflight: 0, projection: 0, reconcile: 0, release: 0, validateActive: 0, validatePlan: 0 })
+const noCalls = () => ({ admit: 0, advance: 0, commit: 0, drainPlan: 0, inspectLeases: 0, inspectPlan: 0, journalRead: 0, journalReserve: 0, planSubmit: 0, preflight: 0, projection: 0, reconcile: 0, release: 0, validateActive: 0, validateDependencies: 0, validatePlan: 0 })
 const stableJournalKey = (commandId) => `journal:${digestCanonical({ command_id: commandId })}`
 const canonicalAttemptId = 'attempt:123e4567-e89b-42d3-a456-426614174000'
 
@@ -123,12 +123,26 @@ const createPorts = () => {
     },
     planRegistry: {
       submit: async ({ plan }) => { calls.planSubmit += 1; return { status: 'STORED', plan_id: plan.plan_id } },
-      validateGeneration: async ({ plan_id, generation }) => { calls.validatePlan += 1; return { status: 'ACTIVE', plan_id, generation, oid: 'f'.repeat(40) } },
+      validateGeneration: async ({ plan_id, generation, task_id }) => {
+        calls.validatePlan += 1
+        const active = { status: 'ACTIVE', plan_id, generation, oid: 'f'.repeat(40) }
+        return task_id === undefined ? active : {
+          ...active,
+          task: {
+            task_id: 'task:one', owner_session: 'session:owner-one', provider: 'codex',
+            baseline_sha: 'a'.repeat(40), scope_digest: ADVANCE_SCOPE_DIGEST, dependencies: [],
+          },
+        }
+      },
       inspect: async () => { calls.inspectPlan += 1; return { oid: '0'.repeat(40), record: null } },
     },
     leaseRegistry: {
       admit: async ({ lease_id }) => { calls.admit += 1; return { status: 'ADMITTED', lease_id } },
       validateActive: async ({ lease_id }) => { calls.validateActive += 1; return { status: 'ACTIVE', lease_id } },
+      validateDependencies: async ({ plan_id, generation, task_id, dependency_task_ids, expected_parent_sha }) => {
+        calls.validateDependencies += 1
+        return { status: 'READY', plan_id, generation, task_id, expected_parent_sha, dependency_count: dependency_task_ids.length }
+      },
       reconcileTimeout: async ({ lease_id }) => { calls.reconcile += 1; return { status: 'ACTIVE', lease_id } },
       drainPlan: async ({ plan_id }) => { calls.drainPlan += 1; return { status: 'DRAINING', plan_id } },
       release: async () => { calls.release += 1; return { status: 'RELEASED', oid: 'b'.repeat(40), lease: { lease_id: 'lease:one', state: 'RELEASED', retention_state: 'RETAINED_FOR_REVIEW', release_record: { owner_end_attestation_ref: 'attestation:owner-end-one', owner_end_attestation_digest: 'c'.repeat(64) } } } },
@@ -608,6 +622,63 @@ test('advance rejects an ACTIVE plan response with a zero OID before execution, 
   assert.equal(fixture.calls.advance, 0)
   assert.equal(fixture.calls.preflight, 0)
   assert.equal(fixture.calls.admit, 0)
+})
+
+test('P1 regression — advance binds the requested task to the active stored plan before every effect port', async () => {
+  const fixture = createPorts()
+  fixture.ports.planRegistry.validateGeneration = async ({ plan_id, generation }) => {
+    fixture.calls.validatePlan += 1
+    return {
+      status: 'ACTIVE', plan_id, generation, oid: 'f'.repeat(40),
+      task: {
+        task_id: 'task:other', owner_session: 'session:owner-one', provider: 'codex',
+        baseline_sha: 'a'.repeat(40), scope_digest: ADVANCE_SCOPE_DIGEST, dependencies: [],
+      },
+    }
+  }
+  const result = await createParallelDeliveryFabric(fixture.ports).dispatch(advanceCommand({ command_id: 'command:task-binding' }))
+  assert.deepEqual(result, {
+    command_id: 'command:task-binding', type: 'advance', status: 'HELD', reason: 'PLAN_TASK_BINDING_MISMATCH',
+  })
+  assert.equal(fixture.calls.advance, 0)
+  assert.equal(fixture.calls.preflight, 0)
+  assert.equal(fixture.calls.validateDependencies, 0)
+  assert.equal(fixture.calls.admit, 0)
+})
+
+test('P2 regression — advance requires every stored predecessor to be completed at the integrated parent', async () => {
+  const blockedFixture = createPorts()
+  blockedFixture.ports.planRegistry.validateGeneration = async ({ plan_id, generation }) => {
+    blockedFixture.calls.validatePlan += 1
+    return {
+      status: 'ACTIVE', plan_id, generation, oid: 'f'.repeat(40),
+      task: {
+        task_id: 'task:one', owner_session: 'session:owner-one', provider: 'codex',
+        baseline_sha: 'a'.repeat(40), scope_digest: ADVANCE_SCOPE_DIGEST, dependencies: ['task:predecessor'],
+      },
+    }
+  }
+  blockedFixture.ports.leaseRegistry.validateDependencies = async () => {
+    blockedFixture.calls.validateDependencies += 1
+    return { status: 'HELD_EXECUTION_AUTHORITY', reason: 'DEPENDENCY_NOT_COMPLETED' }
+  }
+  const blocked = await createParallelDeliveryFabric(blockedFixture.ports).dispatch(advanceCommand({ command_id: 'command:dependency-blocked' }))
+  assert.deepEqual(blocked, {
+    command_id: 'command:dependency-blocked', type: 'advance', status: 'HELD', reason: 'DEPENDENCY_NOT_COMPLETED',
+  })
+  assert.equal(blockedFixture.calls.validateDependencies, 1)
+  assert.equal(blockedFixture.calls.advance, 0)
+  assert.equal(blockedFixture.calls.preflight, 0)
+  assert.equal(blockedFixture.calls.admit, 0)
+
+  const readyFixture = createPorts()
+  readyFixture.ports.planRegistry.validateGeneration = blockedFixture.ports.planRegistry.validateGeneration
+  const ready = await createParallelDeliveryFabric(readyFixture.ports).dispatch(advanceCommand({ command_id: 'command:dependency-ready' }))
+  assert.deepEqual(ready, {
+    command_id: 'command:dependency-ready', type: 'advance', status: 'SHADOW_INTENT', reason: 'ADVANCE_READY_FOR_SHADOW',
+  })
+  assert.equal(readyFixture.calls.validateDependencies, 1)
+  assert.equal(readyFixture.calls.advance, 1)
 })
 
 test('advance keeps cap conflict and adapter context failure as typed non-live outcomes', async () => {

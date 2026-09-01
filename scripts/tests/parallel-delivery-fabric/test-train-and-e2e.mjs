@@ -23,7 +23,6 @@ const TRUSTED = SHA256('2')
 const BINDER = SHA256('3')
 const TRACE = SHA256('4')
 const SCREENSHOT = SHA256('5')
-const COMMANDS = SHA256('6')
 const ALLOCATOR = SHA256('7')
 const POLICY_SOURCE_SHA = SHA1('8')
 const POLICY_RECORD = SHA256('9')
@@ -140,6 +139,16 @@ const commandRecord = (role, overrides = {}) => ({
   ...overrides,
 })
 
+const commandRecords = () => [
+  commandRecord('git_preflight'),
+  commandRecord('stack_start'),
+  commandRecord('stack_status'),
+  commandRecord('playwright_require_real'),
+  commandRecord('computer_use'),
+  commandRecord('postflight'),
+]
+const COMMANDS = digestCanonical(commandRecords())
+
 const computerUseAuthority = (overrides = {}) => ({
   schema_version: 'computer-use-authority/v1',
   source: 'prior-trusted',
@@ -207,14 +216,7 @@ const browserPacket = (role, overrides = {}) => ({
   screenshot_sha256: SCREENSHOT,
   command_records_digest: COMMANDS,
   runtime_lineage_digest: RUNTIME,
-  command_records: [
-    commandRecord('git_preflight'),
-    commandRecord('stack_start'),
-    commandRecord('stack_status'),
-    commandRecord('playwright_require_real'),
-    commandRecord('computer_use'),
-    commandRecord('postflight'),
-  ],
+  command_records: commandRecords(),
   execution_window: { started_at: NOW, finished_at: LATER },
   ...(role === 'computer_use' ? { authority: computerUseAuthority() } : {}),
   ...overrides,
@@ -1344,6 +1346,29 @@ test('binder requires complete canonical identity and command lineage packets', 
     assert.equal(result.reason, reason, label)
     assert.equal(result.freeze_scope, 'candidate', label)
     assert.equal(result.other_candidates_continue, true, label)
+  }
+})
+
+test('P2 regressions — binder recomputes command lineage and compares every network alias', () => {
+  const alteredCommands = browserPacket('playwright')
+  alteredCommands.command_records[0].exit_code = 1
+  const commandResult = bindBrowserEvidence({
+    candidate: candidate(), manifest: manifest(), playwright: alteredCommands,
+    computerUse: browserPacket('computer_use', { verifier_identity: 'computer-use:one' }), trustedPins: trustedPins(),
+  })
+  assert.equal(commandResult.status, 'HELD_EVIDENCE_BINDING')
+  assert.equal(commandResult.reason, 'COMMAND_RECORDS_DIGEST_MISMATCH')
+
+  for (const computerUse of [
+    browserPacket('computer_use', { verifier_identity: 'computer-use:one', network_result: 'network:other' }),
+    browserPacket('computer_use', { verifier_identity: 'computer-use:one', network_sha256: SHA256('0') }),
+  ]) {
+    const networkResult = bindBrowserEvidence({
+      candidate: candidate(), manifest: manifest(), playwright: browserPacket('playwright'),
+      computerUse, trustedPins: trustedPins(),
+    })
+    assert.equal(networkResult.status, 'HELD_EVIDENCE_BINDING')
+    assert.equal(networkResult.reason, 'NETWORK_EVIDENCE_MISMATCH')
   }
 })
 

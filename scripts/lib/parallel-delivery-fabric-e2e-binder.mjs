@@ -952,14 +952,26 @@ const commandRecordFailure = (packets) => {
         (typeof redaction !== 'string' && typeof redaction !== 'boolean') || redaction === '') return 'COMMAND_RECORD_INVALID'
   }
   for (const required of REQUIRED_COMMAND_ROLES) if (!roles.has(required)) return 'COMMAND_RECORDS_INCOMPLETE'
+  for (const packet of packets) {
+    const computed = safeDigest(packet.command_records)
+    const declared = first(packet, ['command_records_digest', 'command_lineage_digest'])
+    if (!computed || !isSha256(declared) || computed !== declared) return 'COMMAND_RECORDS_DIGEST_MISMATCH'
+    for (const alias of ['command_records_digest', 'command_lineage_digest']) {
+      if (own(packet, alias) && packet[alias] !== computed) return 'COMMAND_RECORDS_DIGEST_MISMATCH'
+    }
+  }
   return null
 }
 
 const sanitizedNetworkDigest = (packet) => {
-  const supplied = first(packet, ['network_digest', 'network_sha256'])
-  if (supplied !== undefined) return isSha256(supplied) ? supplied : null
-  const value = first(packet, ['network_result', 'network'])
-  return value === undefined ? null : safeDigest(value)
+  const supplied = ['network_digest', 'network_sha256'].filter((key) => own(packet, key)).map((key) => packet[key])
+  if (supplied.some((value) => !isSha256(value)) || new Set(supplied).size > 1) return null
+  const derived = ['network_result', 'network'].filter((key) => own(packet, key)).map((key) => safeDigest(packet[key]))
+  if (derived.some((value) => !isSha256(value)) || new Set(derived).size > 1) return null
+  const suppliedDigest = supplied[0]
+  const derivedDigest = derived[0]
+  if (suppliedDigest && derivedDigest && suppliedDigest !== derivedDigest) return null
+  return suppliedDigest || derivedDigest || null
 }
 
 /**
@@ -1118,7 +1130,8 @@ export function bindBrowserEvidence({ candidate, manifest, playwright, computerU
   const commandFailure = commandRecordFailure([playwright, computerUse])
   if (commandFailure) return bindingHold(commandFailure, candidate)
   const networkDigest = sanitizedNetworkDigest(playwright)
-  if (!networkDigest || (computerUse.network_digest !== undefined && computerUse.network_digest !== networkDigest)) return bindingHold('NETWORK_EVIDENCE_MISMATCH', candidate)
+  const computerUseNetworkDigest = sanitizedNetworkDigest(computerUse)
+  if (!networkDigest || !computerUseNetworkDigest || computerUseNetworkDigest !== networkDigest) return bindingHold('NETWORK_EVIDENCE_MISMATCH', candidate)
   const traceHash = first(playwright, ['trace_sha256', 'trace_hash', 'trace_artifact_sha256'])
   const screenshotHash = first(playwright, ['screenshot_sha256', 'screenshot_hash', 'screenshot_artifact_sha256'])
   const buttons = first(playwright, ['main_buttons', 'buttons', 'main_button'])

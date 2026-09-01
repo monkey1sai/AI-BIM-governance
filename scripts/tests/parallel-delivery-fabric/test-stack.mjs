@@ -414,6 +414,12 @@ test('AC-19 — direct-stack delivery waits for group deployment and produces re
   assert.equal(delivered.phase, 'CLOSED')
   assert.equal(delivered.internal_state, 'STACK_DELIVERY_VERIFIED')
 
+  const predatesMerge = reduceStackDeployment({
+    merged,
+    deployment: deploymentObservation(merged, { observed_at: '2026-08-28T12:00:00.000Z' }),
+  })
+  assert.equal(predatesMerge.internal_state, 'MERGE_OUTCOME_UNVERIFIED')
+
   const failed = reduceStackDeployment({
     merged,
     deployment: deploymentObservation(merged, {

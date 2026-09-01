@@ -94,7 +94,7 @@ const plan = () => ({
     risk: 'bounded',
     e2e_required: false,
   }],
-  requested_capacity: { writers: 2, runtime_leases: 3 },
+  requested_capacity: { writers: 1, runtime_leases: 3 },
   branch_profile: 'trunk',
   acceptance_criteria: ['criterion:closed-schema'],
   promotion_mode: 'single_pr',
@@ -257,13 +257,20 @@ test('canonicalization sorts keys without mutation and hashes canonical JSON', (
   expectCode('non_ijson_value', () => canonicalize({ __proto__: { polluted: true } }))
 })
 
-test('scope resources normalize Windows paths, preserve rename endpoints, and retain shared keys', () => {
+test('scope resources fold Windows paths, preserve POSIX case, and retain shared keys', () => {
   assert.deepEqual(normalizeScopeResource({ kind: 'path', path: 'Src\\Contracts\\Plan.json' }), {
     kind: 'path', path: 'src/contracts/plan.json',
   })
   assert.deepEqual(normalizeScopeResource({ kind: 'rename', old_path: 'Src\\Old.ts', new_path: 'src\\New.ts' }), {
     kind: 'rename', old_path: 'src/old.ts', new_path: 'src/new.ts',
   })
+  assert.deepEqual(normalizeScopeResource({ kind: 'path', path: 'src/Foo.mjs' }), {
+    kind: 'path', path: 'src/Foo.mjs',
+  })
+  assert.notDeepEqual(
+    normalizeScopeResource({ kind: 'path', path: 'src/Foo.mjs' }),
+    normalizeScopeResource({ kind: 'path', path: 'src/foo.mjs' }),
+  )
   assert.deepEqual(normalizeScopeResource({ kind: 'shared_contract', resource_key: 'contract:Delivery-Plan' }), {
     kind: 'shared_contract', resource_key: 'contract:delivery-plan',
   })
@@ -292,6 +299,31 @@ test('delivery plans are versioned, exact-key, bounded, and privacy-safe', () =>
   const invalidOpaqueId = plan()
   invalidOpaqueId.plan_id = 'plan with spaces'
   expectCode('invalid_value', () => parseDeliveryPlan(invalidOpaqueId))
+
+  const threeWriters = plan()
+  threeWriters.tasks = [
+    { ...structuredClone(threeWriters.tasks[0]), task_id: 'task:one', dependencies: [] },
+    { ...structuredClone(threeWriters.tasks[0]), task_id: 'task:two', dependencies: ['task:one'] },
+    { ...structuredClone(threeWriters.tasks[0]), task_id: 'task:three', dependencies: ['task:two'] },
+  ]
+  threeWriters.requested_capacity.writers = 3
+  assert.equal(parseDeliveryPlan(threeWriters).requested_capacity.writers, 3)
+
+  const overTaskCount = structuredClone(threeWriters)
+  overTaskCount.requested_capacity.writers = 4
+  expectCode('invalid_value', () => parseDeliveryPlan(overTaskCount))
+
+  const missingDependency = structuredClone(threeWriters)
+  missingDependency.tasks[1].dependencies = ['task:missing']
+  expectCode('invalid_value', () => parseDeliveryPlan(missingDependency))
+
+  const selfDependency = structuredClone(threeWriters)
+  selfDependency.tasks[0].dependencies = ['task:one']
+  expectCode('invalid_value', () => parseDeliveryPlan(selfDependency))
+
+  const cyclic = structuredClone(threeWriters)
+  cyclic.tasks[0].dependencies = ['task:three']
+  expectCode('invalid_value', () => parseDeliveryPlan(cyclic))
 })
 
 test('all prohibited credential, host-identity, and transcript fields fail closed recursively', () => {
@@ -407,7 +439,7 @@ test('secret marker detection aligns with schema for bare bearer without rejecti
   assert.equal(parseExecutionEnvelope(normalNearWord).authority_reference, 'authority:bearing')
 })
 
-test('scope paths apply NFC before case-folding and collide deterministically', () => {
+test('scope paths apply NFC while preserving POSIX case and folding Windows case', () => {
   const composed = 'src/caf\u00e9.mjs'
   const decomposed = 'src/cafe\u0301.mjs'
   assert.deepEqual(
@@ -415,8 +447,12 @@ test('scope paths apply NFC before case-folding and collide deterministically', 
     normalizeScopeResource({ kind: 'path', path: composed }),
   )
   assert.deepEqual(
-    normalizeScopeResource({ kind: 'rename', old_path: decomposed, new_path: `src/${'CAFE\u0301'}.mjs` }),
+    normalizeScopeResource({ kind: 'rename', old_path: decomposed.replaceAll('/', '\\'), new_path: `src\\${'CAFE\u0301'}.mjs` }),
     { kind: 'rename', old_path: composed, new_path: composed },
+  )
+  assert.notDeepEqual(
+    normalizeScopeResource({ kind: 'path', path: 'src/Caf\u00e9.mjs' }),
+    normalizeScopeResource({ kind: 'path', path: composed }),
   )
 
   const normalizedPlan = plan()

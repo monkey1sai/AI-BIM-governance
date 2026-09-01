@@ -144,7 +144,7 @@ const task3PlanRecord = () => {
       risk: 'bounded',
       e2e_required: false,
     }],
-    requested_capacity: { writers: 2, runtime_leases: 0 },
+    requested_capacity: { writers: 1, runtime_leases: 0 },
     branch_profile: 'trunk',
     acceptance_criteria: ['criterion:task3-admission'],
     promotion_mode: 'single_pr',
@@ -690,7 +690,7 @@ const managedOperationCommand = (action, overrides = {}) => ({
   ...overrides,
 })
 
-test('normalizeScope canonicalizes Windows paths, renames, globs, and shared resources', () => {
+test('normalizeScope folds Windows paths, preserves POSIX case, and canonicalizes shared resources', () => {
   const raw = [
     { kind: 'path', path: 'Src\\Feature\\One.ts' },
     { kind: 'glob', pattern: 'SRC/**/\u0060*.TS' },
@@ -699,9 +699,9 @@ test('normalizeScope canonicalizes Windows paths, renames, globs, and shared res
     { kind: 'runtime', resource_key: 'runtime:offset-1' },
   ]
   assert.deepEqual(normalizeScope(raw), [
-    { kind: 'glob', pattern: 'src/**/\u0060*.ts' },
+    { kind: 'glob', pattern: 'SRC/**/\u0060*.TS' },
     { kind: 'path', path: 'src/feature/one.ts' },
-    { kind: 'rename', old_path: 'docs/old.md', new_path: 'docs/new.md' },
+    { kind: 'rename', old_path: 'docs/old.md', new_path: 'docs/New.md' },
     { kind: 'runtime', resource_key: 'runtime:offset-1' },
     { kind: 'shared_contract', resource_key: 'contract:delivery-plan' },
   ])
@@ -724,7 +724,8 @@ test('normalizeScope rejects traversal, absolute paths, duplicates, and unknown 
 
 test('findScopeConflicts detects exact, parent, glob, rename, shared, runtime, and disjoint scopes', () => {
   const cases = [
-    [[{ kind: 'path', path: 'src/Feature.ts' }], [{ kind: 'path', path: 'SRC/feature.ts' }], 'CONFLICT'],
+    [[{ kind: 'path', path: 'src/Feature.ts' }], [{ kind: 'path', path: 'SRC/feature.ts' }], 'DISJOINT'],
+    [[{ kind: 'path', path: 'src\\Feature.ts' }], [{ kind: 'path', path: 'SRC\\feature.ts' }], 'CONFLICT'],
     [[{ kind: 'path', path: 'src' }], [{ kind: 'path', path: 'src/new.ts' }], 'CONFLICT'],
     [[{ kind: 'glob', pattern: 'src/**/*.ts' }], [{ kind: 'path', path: 'src/new.ts' }], 'CONFLICT'],
     [[{ kind: 'glob', pattern: 'src/**/*.ts' }], [{ kind: 'glob', pattern: 'tests/**/*.ts' }], 'DISJOINT'],
@@ -1096,6 +1097,11 @@ test('AC-06 — deterministic scope normalization and conservative overlap evide
   )
   assertStatus(
     evaluateScopeDrift([{ kind: 'path', path: 'src' }], evidence),
+    'HELD_SCOPE_DRIFT',
+    'SCOPE_DRIFT',
+  )
+  assertStatus(
+    evaluateScopeDrift([{ kind: 'path', path: 'src/Foo.mjs' }], parseChangedScopeEvidence('A\0src/foo.mjs\0')),
     'HELD_SCOPE_DRIFT',
     'SCOPE_DRIFT',
   )

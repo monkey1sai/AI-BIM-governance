@@ -158,12 +158,24 @@ const coreFabric = (calls) => {
     },
     planRegistry: {
       submit: async ({ plan }) => ({ status: 'STORED', plan_id: plan.plan_id }),
-      validateGeneration: async ({ plan_id, generation }) => ({ status: 'ACTIVE', plan_id, generation, oid: 'f'.repeat(40) }),
+      validateGeneration: async ({ plan_id, generation, task_id }) => {
+        const active = { status: 'ACTIVE', plan_id, generation, oid: 'f'.repeat(40) }
+        return task_id === undefined ? active : {
+          ...active,
+          task: {
+            task_id: 'task:one', owner_session: 'session:owner-one', provider: 'codex',
+            baseline_sha: 'a'.repeat(40), scope_digest: ADVANCE_SCOPE_DIGEST, dependencies: [],
+          },
+        }
+      },
       inspect: async () => ({ oid: '0'.repeat(40), record: null }),
     },
     leaseRegistry: {
       admit: async ({ lease_id }) => ({ status: 'ADMITTED', lease_id }),
       validateActive: async ({ lease_id }) => ({ status: 'ACTIVE', lease_id }),
+      validateDependencies: async ({ plan_id, generation, task_id, dependency_task_ids, expected_parent_sha }) => ({
+        status: 'READY', plan_id, generation, task_id, expected_parent_sha, dependency_count: dependency_task_ids.length,
+      }),
       reconcileTimeout: async ({ lease_id }) => ({ status: 'ACTIVE', lease_id }),
       drainPlan: async ({ plan_id }) => ({ status: 'DRAINING', plan_id }),
       release: async () => ({ status: 'RELEASED', oid: 'b'.repeat(40), lease: { lease_id: 'lease:one', state: 'RELEASED', retention_state: 'RETAINED_FOR_REVIEW', release_record: { owner_end_attestation_ref: 'attestation:owner-end-one', owner_end_attestation_digest: 'c'.repeat(64) } } }),

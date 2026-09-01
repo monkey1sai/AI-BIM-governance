@@ -487,16 +487,41 @@ export function createPlanRegistry({ store, clock }) {
     return readValidatedPlanSnapshot(store, planId)
   }
   const validateGeneration = async (input) => {
-    const { plan_id, generation } = validateClosedRequest(input, ['plan_id', 'generation'], 'plan_generation_request')
+    const taskBound = isObject(input) && Object.hasOwn(input, 'task_id')
+    const { plan_id, generation, task_id } = validateClosedRequest(
+      input,
+      taskBound ? ['plan_id', 'generation', 'task_id'] : ['plan_id', 'generation'],
+      'plan_generation_request',
+    )
     assertTask2OpaqueId(plan_id, 'plan_generation_request.plan_id')
+    if (taskBound) assertTask2OpaqueId(task_id, 'plan_generation_request.task_id')
     if (!Number.isSafeInteger(generation) || generation < 1) fail('invalid_value', 'plan_generation_request_generation_invalid')
     const snapshot = await readValidatedPlanSnapshot(store, plan_id)
     if (snapshot.status === 'HELD_REGISTRY_INTEGRITY') return snapshot
     if (snapshot.record === null) return { status: 'HELD_EXECUTION_AUTHORITY', reason: 'PLAN_NOT_FOUND' }
     const parsed = parseDeliveryPlan(snapshot.record.plan)
-    return parsed.plan_id === plan_id && parsed.generation === generation
-      ? { status: 'ACTIVE', plan_id, generation, oid: snapshot.oid }
-      : { status: 'HELD_EXECUTION_AUTHORITY', reason: 'PLAN_GENERATION_MISMATCH' }
+    if (parsed.plan_id !== plan_id || parsed.generation !== generation) {
+      return { status: 'HELD_EXECUTION_AUTHORITY', reason: 'PLAN_GENERATION_MISMATCH' }
+    }
+    if (!taskBound) return { status: 'ACTIVE', plan_id, generation, oid: snapshot.oid }
+    const task = parsed.tasks.find((entry) => entry.task_id === task_id)
+    if (!task) return { status: 'HELD_EXECUTION_AUTHORITY', reason: 'PLAN_TASK_NOT_FOUND' }
+    const canonicalScope = task.scope.resources.map((resource) => normalizeScopeResource(resource))
+    canonicalScope.sort((left, right) => scopeResourceKey(left).localeCompare(scopeResourceKey(right)))
+    return {
+      status: 'ACTIVE',
+      plan_id,
+      generation,
+      oid: snapshot.oid,
+      task: {
+        task_id: task.task_id,
+        owner_session: task.owner_session,
+        provider: task.provider_preference,
+        baseline_sha: parsed.resolved_baseline_sha,
+        scope_digest: digestCanonical(canonicalScope),
+        dependencies: [...task.dependencies],
+      },
+    }
   }
   return Object.freeze({ submit, validateGeneration, inspect })
 }
@@ -1186,6 +1211,49 @@ export function createLeaseRegistry({ store, clock, writerCap = WRITER_CAP_V1, o
 
   const inspect = () => registrySnapshot(store, writerCap)
 
+  const validateDependencies = async (input) => {
+    const request = validateClosedRequest(input, [
+      'plan_id', 'generation', 'task_id', 'dependency_task_ids', 'expected_parent_sha',
+    ], 'dependency_validation_request')
+    for (const key of ['plan_id', 'task_id']) assertTask2OpaqueId(request[key], `dependency_validation_request.${key}`)
+    if (!Number.isSafeInteger(request.generation) || request.generation < 1 ||
+        !Array.isArray(request.dependency_task_ids) || request.dependency_task_ids.length > 64) {
+      fail('invalid_value', 'dependency_validation_request_shape')
+    }
+    for (const dependency of request.dependency_task_ids) {
+      assertTask2OpaqueId(dependency, 'dependency_validation_request.dependency_task_id')
+      if (dependency === request.task_id) fail('invalid_value', 'dependency_validation_request_self_reference')
+    }
+    if (new Set(request.dependency_task_ids).size !== request.dependency_task_ids.length) {
+      fail('invalid_value', 'dependency_validation_request_duplicate')
+    }
+    assertOid(request.expected_parent_sha, 'dependency_validation_request.expected_parent_sha', { zero: false })
+    if (request.dependency_task_ids.length === 0) {
+      return {
+        status: 'READY', plan_id: request.plan_id, generation: request.generation,
+        task_id: request.task_id, expected_parent_sha: request.expected_parent_sha, dependency_count: 0,
+      }
+    }
+    const snapshot = await registrySnapshot(store, writerCap)
+    if (snapshot.status === 'HELD_REGISTRY_INTEGRITY') return snapshot
+    for (const dependencyTaskId of request.dependency_task_ids) {
+      const candidates = Object.values(snapshot.record.leases).filter((lease) =>
+        lease.plan_id === request.plan_id && lease.generation === request.generation && lease.task_id === dependencyTaskId)
+      const completed = candidates.filter((lease) => lease.state === 'RELEASED' && lease.release_reason === 'handoff')
+      if (completed.length === 0) {
+        return { status: 'HELD_EXECUTION_AUTHORITY', reason: 'DEPENDENCY_NOT_COMPLETED' }
+      }
+      if (!completed.some((lease) => lease.head_sha === request.expected_parent_sha)) {
+        return { status: 'HELD_EXECUTION_AUTHORITY', reason: 'DEPENDENCY_PARENT_SHA_MISMATCH' }
+      }
+    }
+    return {
+      status: 'READY', plan_id: request.plan_id, generation: request.generation,
+      task_id: request.task_id, expected_parent_sha: request.expected_parent_sha,
+      dependency_count: request.dependency_task_ids.length,
+    }
+  }
+
   const resolvePlanGuard = async ({ plan_id, generation, expected_plan_oid }) => {
     const snapshot = await readValidatedPlanSnapshot(store, plan_id)
     if (snapshot.status === 'HELD_REGISTRY_INTEGRITY') return snapshot
@@ -1856,7 +1924,7 @@ export function createLeaseRegistry({ store, clock, writerCap = WRITER_CAP_V1, o
     }
   }
 
-  return Object.freeze({ inspect, admit, validateActive, heartbeat, reconcileTimeout, drainPlan, endRequest, release })
+  return Object.freeze({ inspect, validateDependencies, admit, validateActive, heartbeat, reconcileTimeout, drainPlan, endRequest, release })
 }
 
 const MANAGED_BRANCH_KEYS = Object.freeze([
@@ -2454,6 +2522,10 @@ export function createQueueMappingRegistry({ store, clock }) {
       return QUEUE_HELD('NONCE_REPLAY')
     }
     if (Object.hasOwn(current.used_queue_operations, request.operation_id)) return QUEUE_HELD('OPERATION_REPLAY')
+    const existingMapping = current.queue_mappings[mappingKey(request)]
+    if (existingMapping) {
+      return QUEUE_HELD(existingMapping.state === 'CANCELLED' ? 'MAPPING_TERMINAL' : 'MAPPING_ALREADY_EXISTS')
+    }
     if (Object.keys(current.queue_mappings).length >= QUEUE_MAPPING_LIMIT) return QUEUE_HELD('LEDGER_CAPACITY_EXCEEDED')
     if (Object.keys(current.used_queue_operations).length >= QUEUE_OPERATION_LIMIT) return QUEUE_HELD('LEDGER_CAPACITY_EXCEEDED')
     const mapping = mappingFromRequest(request, 'RESERVED')

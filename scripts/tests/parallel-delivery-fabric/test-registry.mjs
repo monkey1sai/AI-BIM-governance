@@ -153,7 +153,7 @@ const makePlan = ({ planId = 'plan:one', generation = 1 } = {}) => ({
     risk: 'bounded',
     e2e_required: false,
   }],
-  requested_capacity: { writers: 2, runtime_leases: 0 },
+  requested_capacity: { writers: 1, runtime_leases: 0 },
   branch_profile: 'trunk',
   acceptance_criteria: ['criterion:registry'],
   promotion_mode: 'single_pr',
@@ -339,6 +339,20 @@ test('plan registry rejects a semantic rewrite at the same generation and later 
   assert.equal(advanced.status, 'STORED')
   assert.deepEqual(await leaseRegistry.validateActive(request), {
     status: 'HELD_EXECUTION_AUTHORITY', reason: 'PLAN_REGISTRY_CHANGED',
+  })
+})
+
+test('P1 regression — plan generation validation returns only the requested stored task authority', async () => {
+  const { planRegistry } = createFixture()
+  assert.deepEqual(await planRegistry.validateGeneration({ plan_id: 'plan:one', generation: 1, task_id: 'task:one' }), {
+    status: 'ACTIVE', plan_id: 'plan:one', generation: 1, oid: SEEDED_PLAN_OID,
+    task: {
+      task_id: 'task:one', owner_session: 'session:owner-one', provider: 'codex', baseline_sha: SHA1,
+      scope_digest: DEFAULT_SCOPE_DIGEST, dependencies: [],
+    },
+  })
+  assert.deepEqual(await planRegistry.validateGeneration({ plan_id: 'plan:one', generation: 1, task_id: 'task:missing' }), {
+    status: 'HELD_EXECUTION_AUTHORITY', reason: 'PLAN_TASK_NOT_FOUND',
   })
 })
 
@@ -712,6 +726,25 @@ test('P2 regression — an admitted unnamespaced opaque lease ID remains usable 
   assert.equal(released.status, 'RELEASED')
   assert.equal(attestor.calls.length, 1)
   assert.equal(envelope.calls.length, 1)
+  assert.deepEqual(await leaseRegistry.validateDependencies({
+    plan_id: 'plan:one', generation: 1, task_id: 'task:successor',
+    dependency_task_ids: ['task:one'], expected_parent_sha: SHA1,
+  }), {
+    status: 'READY', plan_id: 'plan:one', generation: 1, task_id: 'task:successor',
+    expected_parent_sha: SHA1, dependency_count: 1,
+  })
+  assert.deepEqual(await leaseRegistry.validateDependencies({
+    plan_id: 'plan:one', generation: 1, task_id: 'task:successor',
+    dependency_task_ids: ['task:one'], expected_parent_sha: 'c'.repeat(40),
+  }), {
+    status: 'HELD_EXECUTION_AUTHORITY', reason: 'DEPENDENCY_PARENT_SHA_MISMATCH',
+  })
+  assert.deepEqual(await leaseRegistry.validateDependencies({
+    plan_id: 'plan:one', generation: 1, task_id: 'task:successor',
+    dependency_task_ids: ['task:missing'], expected_parent_sha: SHA1,
+  }), {
+    status: 'HELD_EXECUTION_AUTHORITY', reason: 'DEPENDENCY_NOT_COMPLETED',
+  })
 
   const second = await leaseRegistry.admit(makeRequest(store, {
     lease_id: 'lease002', owner_session: 'session:lease002', provider_session_id: 'provider:lease002',
@@ -1749,7 +1782,7 @@ test('P1 regression — local release audit acceptance exactly matches Task 2 ow
     ['opaque ID at 128', (release) => { release.attestor_issuer = opaque128 }, true],
     ['opaque ID at 129', (release) => { release.attestor_issuer = opaque129 }, false],
     ['lowercase resource key', (release) => { release.retained_resource_keys = ['path:src/lowercase.mjs'] }, true],
-    ['uppercase resource key', (release) => { release.retained_resource_keys = ['path:Src/Uppercase.mjs'] }, false],
+    ['uppercase resource kind', (release) => { release.retained_resource_keys = ['Path:src/uppercase.mjs'] }, false],
     ['256 retained resource keys', (release) => { release.retained_resource_keys = retained(256) }, true],
     ['257 retained resource keys', (release) => { release.retained_resource_keys = retained(257) }, false],
     ['extra closed key', (release) => { release.extra = 'forbidden' }, false],

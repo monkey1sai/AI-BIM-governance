@@ -490,6 +490,7 @@ const parseDeployment = (raw, merged, plan, operation) => {
     'post_deploy_status', 'group_verification_digest',
   ]) || deployment.schema_version !== 'stack-deployment-observation/v1' ||
     !isCanonicalUtcMillisecondTimestamp(deployment.observed_at) || deployment.stack_id !== merged.stack_id ||
+    Date.parse(deployment.observed_at) < Date.parse(merged.merged_at) ||
     deployment.repository !== merged.repository || deployment.request_digest !== merged.request_digest ||
     !sameCanonical(deployment.operation, operation) || deployment.frozen_vector_digest !== merged.frozen_vector_digest ||
     deployment.stack_result_merge_commit_sha !== merged.stack_result_merge_commit_sha ||

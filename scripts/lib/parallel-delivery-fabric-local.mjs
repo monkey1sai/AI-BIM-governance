@@ -114,6 +114,7 @@ const projectLeaseRegistry = (registry) => Object.freeze({
     return projectHeld(result, 'ADMISSION_UNAVAILABLE')
   },
   validateActive: (input) => registry.validateActive(input),
+  validateDependencies: (input) => registry.validateDependencies(input),
   async reconcileTimeout(input) {
     const result = await registry.reconcileTimeout(input)
     return ['ACTIVE', 'SUSPECT', 'NO_CHANGE'].includes(result?.status)

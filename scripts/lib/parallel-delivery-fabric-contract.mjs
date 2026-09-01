@@ -300,6 +300,7 @@ const supportedGlobPattern = (pattern) => {
 const normalizeRelativePath = (value, context, { glob = false } = {}) => {
   assertString(value, context, { min: 1, max: 512 })
   if (value.includes('\u0000') || /[\r\n]/u.test(value)) fail('ambiguous_path', `${context}_control_character`)
+  const windowsIdentity = value.includes('\\')
   const slashed = value.normalize('NFC').replaceAll('\\', '/')
   if (
     slashed.startsWith('/') || slashed.startsWith('//') || /^[A-Za-z]:\//u.test(slashed) ||
@@ -307,11 +308,33 @@ const normalizeRelativePath = (value, context, { glob = false } = {}) => {
   ) fail('ambiguous_path', `${context}_not_repository_relative`)
   if (!glob && /[*?\[\]{}]/u.test(slashed)) fail('ambiguous_path', `${context}_wildcard_not_path`)
   if (glob && !supportedGlobPattern(slashed)) fail('ambiguous_path', `${context}_glob_syntax_unsupported`)
-  return slashed.toLowerCase()
+  return windowsIdentity ? slashed.toLowerCase() : slashed
 }
 
 const normalizeResourceKey = (value, context) => {
   assertString(value, context, { min: 3, max: 256 })
+  const separator = value.indexOf(':')
+  const kind = separator > 0 ? value.slice(0, separator).toLowerCase() : ''
+  const payload = separator > 0 ? value.slice(separator + 1) : ''
+  if (kind === 'path' || kind === 'glob') {
+    const path = normalizeRelativePath(payload, context, { glob: kind === 'glob' })
+    const normalizedPathKey = `${kind}:${path}`
+    if (hasOpaqueIdentityDisclosure(normalizedPathKey) || hasSecretValueMarker(normalizedPathKey)) {
+      fail('invalid_value', `${context}_resource_key_raw_identity_or_credential_forbidden`)
+    }
+    return normalizedPathKey
+  }
+  if (kind === 'rename') {
+    const endpoints = payload.split(':')
+    if (endpoints.length !== 2) fail('invalid_value', `${context}_resource_key_invalid`)
+    const oldPath = normalizeRelativePath(endpoints[0], `${context}.old_path`)
+    const newPath = normalizeRelativePath(endpoints[1], `${context}.new_path`)
+    const normalizedRenameKey = `rename:${oldPath}:${newPath}`
+    if (hasOpaqueIdentityDisclosure(normalizedRenameKey) || hasSecretValueMarker(normalizedRenameKey)) {
+      fail('invalid_value', `${context}_resource_key_raw_identity_or_credential_forbidden`)
+    }
+    return normalizedRenameKey
+  }
   const normalized = value.toLowerCase()
   if (!RESOURCE_KEY.test(normalized)) fail('invalid_value', `${context}_resource_key_invalid`)
   if (hasOpaqueIdentityDisclosure(normalized) || hasSecretValueMarker(normalized)) {
@@ -422,8 +445,26 @@ export function parseDeliveryPlan(raw) {
       if (task.e2e_required !== task.scope.e2e_required) fail('invalid_value', `${context}_e2e_scope_mismatch`)
     })
     assertUnique(plan.tasks.map((task) => task.task_id), 'delivery_plan.tasks')
+    const tasksById = new Map(plan.tasks.map((task) => [task.task_id, task]))
+    for (const task of plan.tasks) {
+      for (const dependency of task.dependencies) {
+        if (dependency === task.task_id) fail('invalid_value', `delivery_plan.task_${task.task_id}_dependency_self_reference`)
+        if (!tasksById.has(dependency)) fail('invalid_value', `delivery_plan.task_${task.task_id}_dependency_missing`)
+      }
+    }
+    const visiting = new Set()
+    const visited = new Set()
+    const visitTask = (taskId) => {
+      if (visiting.has(taskId)) fail('invalid_value', 'delivery_plan_task_dependency_cycle')
+      if (visited.has(taskId)) return
+      visiting.add(taskId)
+      for (const dependency of tasksById.get(taskId).dependencies) visitTask(dependency)
+      visiting.delete(taskId)
+      visited.add(taskId)
+    }
+    for (const taskId of tasksById.keys()) visitTask(taskId)
     exactKeys(plan.requested_capacity, ['writers', 'runtime_leases'], 'delivery_plan.requested_capacity')
-    assertSafeInteger(plan.requested_capacity.writers, 'delivery_plan.requested_capacity.writers', 1, 2)
+    assertSafeInteger(plan.requested_capacity.writers, 'delivery_plan.requested_capacity.writers', 1, plan.tasks.length)
     assertSafeInteger(plan.requested_capacity.runtime_leases, 'delivery_plan.requested_capacity.runtime_leases', 0, 3)
     assertEnum(plan.branch_profile, ['trunk', 'managed_gitflow'], 'delivery_plan.branch_profile')
     assertArray(plan.acceptance_criteria, 'delivery_plan.acceptance_criteria', { min: 1, max: 128 })

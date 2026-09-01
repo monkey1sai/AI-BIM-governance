@@ -52,7 +52,7 @@ const planRecord = () => {
       risk: 'bounded',
       e2e_required: false,
     }],
-    requested_capacity: { writers: 2, runtime_leases: 0 },
+    requested_capacity: { writers: 1, runtime_leases: 0 },
     branch_profile: 'trunk',
     acceptance_criteria: ['criterion:provider-cap-matrix'],
     promotion_mode: 'single_pr',

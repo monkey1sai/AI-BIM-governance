@@ -53,7 +53,7 @@ const legacyPlanRecord = () => {
       risk: 'bounded',
       e2e_required: false,
     }],
-    requested_capacity: { writers: 2, runtime_leases: 1 },
+    requested_capacity: { writers: 1, runtime_leases: 1 },
     branch_profile: 'trunk',
     acceptance_criteria: ['criterion:queue-shadow'],
     promotion_mode: 'single_pr',
@@ -233,6 +233,25 @@ test('P2 regression — each queue write shares one clock observation with its o
   assert.equal(cancelled.status, 'SHADOW_QUEUE_CANCELLATION_RECORDED')
   snapshot = store.snapshot(QUEUE_REF)
   assert.equal(snapshot.record.used_queue_operations['operation:queue-cancel-one'].consumed_at, snapshot.record.updated_at)
+})
+
+test('P2 regression — a cancelled candidate mapping is terminal and cannot be re-reserved', async () => {
+  const store = createLegacyStore()
+  const leases = createLeaseRegistry({ store, clock: createClock(), writerCap: 2 })
+  await leases.admit(legacyLeaseRequest())
+  const queue = createQueueMappingRegistry({ store, clock: createClock() })
+  const reserved = await queue.reserve(reserveRequest())
+  assert.equal(reserved.status, 'SHADOW_QUEUE_MAPPING_STORED')
+  const cancelled = await queue.reconcileCancelled(cancellationRequest({ expected_oid: reserved.registry_oid }))
+  assert.equal(cancelled.status, 'SHADOW_QUEUE_CANCELLATION_RECORDED')
+  const queueOid = store.snapshot(QUEUE_REF).oid
+  const casCalls = store.calls.filter((call) => call.kind === 'cas').length
+  expectHeld(await queue.reserve(reserveRequest({
+    expected_oid: queueOid,
+    operation_id: 'operation:queue-rereserve-one',
+    nonce: NONCE('queue-rereserve-one'),
+  })), 'MAPPING_TERMINAL')
+  assert.equal(store.calls.filter((call) => call.kind === 'cas').length, casCalls)
 })
 
 test('AC-30 — same-OID reserve race has one winner and preserves the loser tuple', async () => {

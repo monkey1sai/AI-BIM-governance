@@ -97,7 +97,7 @@ def plan() -> dict:
                 "e2e_required": False,
             }
         ],
-        "requested_capacity": {"writers": 2, "runtime_leases": 3},
+        "requested_capacity": {"writers": 1, "runtime_leases": 3},
         "branch_profile": "trunk",
         "acceptance_criteria": ["criterion:closed-schema"],
         "promotion_mode": "single_pr",
@@ -310,7 +310,6 @@ const trusted = sha256('2')
 const binder = sha256('3')
 const trace = sha256('4')
 const screenshot = sha256('5')
-const commandsDigest = sha256('6')
 const listenerDigest = sha256('b')
 const policySourceSha = sha1('8')
 const authorityDigest = sha256('a')
@@ -368,6 +367,7 @@ const commandRecords = ['git_preflight', 'stack_start', 'stack_status', 'playwri
     started_at: now, finished_at: later, exit_code: 0, stdout_artifact_ref: 'artifact:stdout',
     stderr_artifact_ref: 'artifact:stderr', redaction_status: 'sanitized',
   }))
+const commandsDigest = digestCanonical(commandRecords)
 const packet = role => ({
   verifier_role: role, verifier_identity: role === 'computer_use' ? 'computer-use:one' : 'playwright:canonical',
   status: 'passed', e2e_require_real: '1', skipped: false, manifest_present: true, timed_out: false,

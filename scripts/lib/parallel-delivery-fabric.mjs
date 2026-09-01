@@ -128,13 +128,13 @@ const configured = (rawPorts) => {
   if (!root) return undefined
   const commandJournal = portObject(root.commandJournal, ['read', 'reserve', 'commit'])
   const planRegistry = portObject(root.planRegistry, ['submit', 'validateGeneration', 'inspect'])
-  const leaseRegistry = portObject(root.leaseRegistry, ['admit', 'validateActive', 'reconcileTimeout', 'drainPlan', 'release', 'inspect'])
+  const leaseRegistry = portObject(root.leaseRegistry, ['admit', 'validateActive', 'validateDependencies', 'reconcileTimeout', 'drainPlan', 'release', 'inspect'])
   const execution = portObject(root.execution, ['advance'])
   const adapters = portObject(root.providerAdapters, ['codex', 'claude'])
   const codex = adapters && portObject(adapters.codex, ['preflight'])
   const claude = adapters && portObject(adapters.claude, ['preflight'])
   const projection = Object.hasOwn(root, 'projection') ? portObject(root.projection, ['reconcile']) : undefined
-  const functions = [commandJournal?.read, commandJournal?.reserve, commandJournal?.commit, planRegistry?.submit, planRegistry?.validateGeneration, planRegistry?.inspect, leaseRegistry?.admit, leaseRegistry?.validateActive, leaseRegistry?.reconcileTimeout, leaseRegistry?.drainPlan, leaseRegistry?.release, leaseRegistry?.inspect, execution?.advance, codex?.preflight, claude?.preflight, ...(projection ? [projection.reconcile] : [])]
+  const functions = [commandJournal?.read, commandJournal?.reserve, commandJournal?.commit, planRegistry?.submit, planRegistry?.validateGeneration, planRegistry?.inspect, leaseRegistry?.admit, leaseRegistry?.validateActive, leaseRegistry?.validateDependencies, leaseRegistry?.reconcileTimeout, leaseRegistry?.drainPlan, leaseRegistry?.release, leaseRegistry?.inspect, execution?.advance, codex?.preflight, claude?.preflight, ...(projection ? [projection.reconcile] : [])]
   return functions.every((entry) => typeof entry === 'function') && (!Object.hasOwn(root, 'projection') || projection) ? deepFreeze({ commandJournal, planRegistry, leaseRegistry, execution, providerAdapters: { codex, claude }, ...(projection ? { projection } : {}) }) : undefined
 }
 
@@ -281,6 +281,26 @@ const advanceBindingsValid = (command) => {
     typeof attestation.attestation_ref === 'string' && admission.context_attestation_ref === attestation.attestation_ref
 }
 
+const activePlanTask = (value, command) => {
+  if (!isObject(value) || !exactKeys(value, ['status', 'plan_id', 'generation', 'oid', 'task']) || value.status !== 'ACTIVE' ||
+      value.plan_id !== command.envelope.plan_id || value.generation !== command.envelope.generation ||
+      !/^[0-9a-f]{40}$/u.test(value.oid) || value.oid === '0'.repeat(40)) return undefined
+  const task = value.task
+  if (!isObject(task) || !exactKeys(task, ['task_id', 'owner_session', 'provider', 'baseline_sha', 'scope_digest', 'dependencies']) ||
+      task.task_id !== command.envelope.task_id || task.owner_session !== command.envelope.owner_session ||
+      task.provider !== command.envelope.provider || task.baseline_sha !== command.envelope.baseline_sha ||
+      task.scope_digest !== command.envelope.scope_digest || !Array.isArray(task.dependencies) || task.dependencies.length > 64 ||
+      new Set(task.dependencies).size !== task.dependencies.length ||
+      task.dependencies.some((dependency) => typeof dependency !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._:/-]{1,127}$/u.test(dependency) || dependency === task.task_id)) return undefined
+  return task
+}
+
+const dependencyAuthorityReady = (value, command, task) => isObject(value) && exactKeys(value, [
+  'status', 'plan_id', 'generation', 'task_id', 'expected_parent_sha', 'dependency_count',
+]) && value.status === 'READY' && value.plan_id === command.envelope.plan_id &&
+  value.generation === command.envelope.generation && value.task_id === command.envelope.task_id &&
+  value.expected_parent_sha === command.envelope.baseline_sha && value.dependency_count === task.dependencies.length
+
 export function createParallelDeliveryFabric(ports) {
   const capabilities = configured(ports)
   const ready = capabilities !== undefined
@@ -334,36 +354,60 @@ export function createParallelDeliveryFabric(ports) {
           next = outcome(command.command_id, type, 'HELD', 'ADVANCE_BINDING_MISMATCH')
         } else {
           let plan
-          try { plan = safePortResult(await capabilities.planRegistry.validateGeneration({ plan_id: command.envelope.plan_id, generation: command.envelope.generation })) } catch { plan = undefined }
-          if (!bound(plan, ['status', 'plan_id', 'generation', 'oid'], 'ACTIVE', { plan_id: command.envelope.plan_id, generation: command.envelope.generation }) || !/^[0-9a-f]{40}$/u.test(plan.oid) || plan.oid === '0'.repeat(40)) {
-            next = heldFromPort(command, 'PLAN_GENERATION_UNAVAILABLE', plan)
+          try {
+            plan = safePortResult(await capabilities.planRegistry.validateGeneration({
+              plan_id: command.envelope.plan_id,
+              generation: command.envelope.generation,
+              task_id: command.envelope.task_id,
+            }))
+          } catch { plan = undefined }
+          const task = activePlanTask(plan, command)
+          if (!task) {
+            const activePlanOid = plan?.status === 'ACTIVE' && typeof plan?.oid === 'string' && /^[0-9a-f]{40}$/u.test(plan.oid) && plan.oid !== '0'.repeat(40)
+            next = heldFromPort(command, activePlanOid ? 'PLAN_TASK_BINDING_MISMATCH' : 'PLAN_GENERATION_UNAVAILABLE', plan)
           } else {
-            let execution
-            try { execution = safePortResult(await capabilities.execution.advance(command.envelope, command.advance_command)) } catch { execution = undefined }
-            if (!bound(execution, ['status', 'next_level'], 'SHADOW_INTENT', { next_level: command.advance_command.next_level })) {
-              next = heldFromPort(command, 'EXECUTION_VALIDATION_UNAVAILABLE', execution)
+            let dependencyAuthority
+            if (task.dependencies.length > 0) {
+              try {
+                dependencyAuthority = safePortResult(await capabilities.leaseRegistry.validateDependencies({
+                  plan_id: command.envelope.plan_id,
+                  generation: command.envelope.generation,
+                  task_id: command.envelope.task_id,
+                  dependency_task_ids: task.dependencies,
+                  expected_parent_sha: command.envelope.baseline_sha,
+                }))
+              } catch { dependencyAuthority = undefined }
+            }
+            if (task.dependencies.length > 0 && !dependencyAuthorityReady(dependencyAuthority, command, task)) {
+              next = heldFromPort(command, 'DEPENDENCY_AUTHORITY_UNAVAILABLE', dependencyAuthority)
             } else {
-              const provider = command.envelope?.provider
-              const adapter = provider === 'codex' || provider === 'claude' ? capabilities.providerAdapters[provider] : undefined
-              let preflight
-              try { preflight = adapter ? safePortResult(await adapter.preflight(command.provider_request)) : undefined } catch { preflight = undefined }
-              if (!bound(preflight, ['status', 'provider'], 'READY_FOR_SHADOW', { provider })) {
-                next = heldFromPort(command, 'PROVIDER_PREFLIGHT_UNAVAILABLE', preflight)
+              let execution
+              try { execution = safePortResult(await capabilities.execution.advance(command.envelope, command.advance_command)) } catch { execution = undefined }
+              if (!bound(execution, ['status', 'next_level'], 'SHADOW_INTENT', { next_level: command.advance_command.next_level })) {
+                next = heldFromPort(command, 'EXECUTION_VALIDATION_UNAVAILABLE', execution)
               } else {
-                let admission
-                try {
-                  const guardedAdmission = { ...command.admission, expected_plan_oid: plan.oid }
-                  admission = safePortResult(await (command.envelope.current_level === 'plan_only'
-                    ? capabilities.leaseRegistry.admit(guardedAdmission)
-                    : capabilities.leaseRegistry.validateActive(guardedAdmission)))
-                } catch { admission = undefined }
-                if (bound(admission, ['status', 'reason'], 'QUEUED_FOR_LEASE', {})) {
-                  next = outcome(command.command_id, type, 'QUEUED', safeReason(admission.reason, 'LEASE_CAPACITY_UNAVAILABLE'))
+                const provider = command.envelope?.provider
+                const adapter = provider === 'codex' || provider === 'claude' ? capabilities.providerAdapters[provider] : undefined
+                let preflight
+                try { preflight = adapter ? safePortResult(await adapter.preflight(command.provider_request)) : undefined } catch { preflight = undefined }
+                if (!bound(preflight, ['status', 'provider'], 'READY_FOR_SHADOW', { provider })) {
+                  next = heldFromPort(command, 'PROVIDER_PREFLIGHT_UNAVAILABLE', preflight)
                 } else {
-                  const expectedStatus = command.envelope.current_level === 'plan_only' ? 'ADMITTED' : 'ACTIVE'
-                  next = bound(admission, ['status', 'lease_id'], expectedStatus, { lease_id: command.admission.lease_id })
-                    ? outcome(command.command_id, type, 'SHADOW_INTENT', 'ADVANCE_READY_FOR_SHADOW')
-                    : heldFromPort(command, 'ADMISSION_UNAVAILABLE', admission)
+                  let admission
+                  try {
+                    const guardedAdmission = { ...command.admission, expected_plan_oid: plan.oid }
+                    admission = safePortResult(await (command.envelope.current_level === 'plan_only'
+                      ? capabilities.leaseRegistry.admit(guardedAdmission)
+                      : capabilities.leaseRegistry.validateActive(guardedAdmission)))
+                  } catch { admission = undefined }
+                  if (bound(admission, ['status', 'reason'], 'QUEUED_FOR_LEASE', {})) {
+                    next = outcome(command.command_id, type, 'QUEUED', safeReason(admission.reason, 'LEASE_CAPACITY_UNAVAILABLE'))
+                  } else {
+                    const expectedStatus = command.envelope.current_level === 'plan_only' ? 'ADMITTED' : 'ACTIVE'
+                    next = bound(admission, ['status', 'lease_id'], expectedStatus, { lease_id: command.admission.lease_id })
+                      ? outcome(command.command_id, type, 'SHADOW_INTENT', 'ADVANCE_READY_FOR_SHADOW')
+                      : heldFromPort(command, 'ADMISSION_UNAVAILABLE', admission)
+                  }
                 }
               }
             }
