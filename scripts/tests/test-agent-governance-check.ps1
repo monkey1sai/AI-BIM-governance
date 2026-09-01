@@ -23,6 +23,81 @@ function Assert-FileContains {
     Assert-True ($content -match $Pattern) $Message
 }
 
+function Test-MarkdownLineIsActive {
+    param(
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][AllowEmptyString()][string[]] $Lines,
+        [Parameter(Mandatory = $true)][int] $LineIndex
+    )
+
+    if ($LineIndex -lt 0 -or $LineIndex -ge $Lines.Count) { return $false }
+
+    $inHtmlComment = $false
+    $fenceCharacter = ''
+    $fenceLength = 0
+    for ($index = 0; $index -lt $LineIndex; $index++) {
+        $line = $Lines[$index]
+        if ($fenceLength -gt 0) {
+            $closingFencePattern = '^[ \t]{0,3}' + [regex]::Escape($fenceCharacter) + '{' + $fenceLength + ',}[ \t]*$'
+            if ([regex]::IsMatch($line, $closingFencePattern)) {
+                $fenceCharacter = ''
+                $fenceLength = 0
+            }
+            continue
+        }
+
+        if (-not $inHtmlComment) {
+            $openingFence = [regex]::Match($line, '^[ ]{0,3}(?<marker>`{3,}|~{3,})')
+            if ($openingFence.Success) {
+                $marker = $openingFence.Groups['marker'].Value
+                $fenceCharacter = [string] $marker[0]
+                $fenceLength = $marker.Length
+                continue
+            }
+        }
+
+        $cursor = 0
+        while ($cursor -lt $line.Length) {
+            if ($inHtmlComment) {
+                $commentEnd = $line.IndexOf('-->', $cursor, [System.StringComparison]::Ordinal)
+                if ($commentEnd -lt 0) {
+                    $cursor = $line.Length
+                    continue
+                }
+                $inHtmlComment = $false
+                $cursor = $commentEnd + 3
+                continue
+            }
+
+            $commentStart = $line.IndexOf('<!--', $cursor, [System.StringComparison]::Ordinal)
+            if ($commentStart -lt 0) {
+                $cursor = $line.Length
+                continue
+            }
+            $inHtmlComment = $true
+            $cursor = $commentStart + 4
+        }
+
+    }
+
+    return (-not $inHtmlComment -and $fenceLength -eq 0)
+}
+
+function Get-ActiveMarkdownHeadingIndexes {
+    param(
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][AllowEmptyString()][string[]] $Lines,
+        [Parameter(Mandatory = $true)][string] $HeadingText,
+        [ValidateRange(1, 6)][int] $Level = 2
+    )
+
+    $headingMarker = '#' * $Level
+    $headingPattern = '^[ ]{0,3}' + [regex]::Escape($headingMarker) + '[ \t]+' + [regex]::Escape($HeadingText) + '(?:[ \t]+#+)?[ \t]*$'
+    for ($index = 0; $index -lt $Lines.Count; $index++) {
+        if ($Lines[$index] -match $headingPattern -and (Test-MarkdownLineIsActive -Lines $Lines -LineIndex $index)) {
+            $index
+        }
+    }
+}
+
 function Get-WorkflowPermissionViolations {
     param(
         [Parameter(Mandatory = $true)][AllowEmptyCollection()][AllowEmptyString()][string[]] $Lines,
@@ -582,6 +657,7 @@ try {
     $agentsBody = Get-Content -LiteralPath 'AGENTS.md' -Raw
     $claudeBody = Get-Content -LiteralPath 'CLAUDE.md' -Raw
     $githubWorkflowBody = Get-Content -LiteralPath 'docs/agents/github-workflow.md' -Raw
+    $parallelSessionBoardBody = Get-Content -LiteralPath 'docs/agents/parallel-session-board.md' -Raw
     foreach ($authRoutingMarker in @(
         'gh api user --jq .login',
         'GH_TOKEN',
@@ -597,9 +673,30 @@ try {
     $agentsLines = @($agentsBodyLf -split "`n")
     $expectedParallelWriterPolicy = '4. **並行 Writer 隔離原則**：repo 不以 writer 數量為 blocker；多個 writer 只可在各自獨立 sibling worktree、獨立 branch 與明確無重疊 touch-set 中並行，每個 task／branch 仍限單一 writer。同一 branch、同一 worktree 或 touch-set 重疊／未知一律停工排隊；`.agents/board` 只做感知，不具 lease／approval／merge authority；`direct_stack` 與 autonomous delivery 未有 canonical activation record 前保持 HELD。'
     $leanGovernanceHeading = '## 0.0 Lean Governance & Subtraction Directive（元治理減法方針）'
-    $leanGovernanceHeadingIndex = [array]::IndexOf($agentsLines, $leanGovernanceHeading)
-    $agentWorkflowHeadingIndex = [array]::IndexOf($agentsLines, '## 0.1 Agent 工作方式')
+    $agentWorkflowHeading = '## 0.1 Agent 工作方式'
+    $leanGovernanceHeadingText = $leanGovernanceHeading.Substring(3)
+    $agentWorkflowHeadingText = $agentWorkflowHeading.Substring(3)
+    $leanGovernanceHeadingMatches = @($agentsLines | Where-Object { $_ -ceq $leanGovernanceHeading })
+    $agentWorkflowHeadingMatches = @($agentsLines | Where-Object { $_ -ceq $agentWorkflowHeading })
+    Assert-True ($leanGovernanceHeadingMatches.Count -eq 1) 'AGENTS.md has exactly one Lean Governance heading'
+    Assert-True ($agentWorkflowHeadingMatches.Count -eq 1) 'AGENTS.md has exactly one Agent Workflow heading'
+    $leanGovernanceHeadingIndexes = @(Get-ActiveMarkdownHeadingIndexes -Lines $agentsLines -HeadingText $leanGovernanceHeadingText)
+    $agentWorkflowHeadingIndexes = @(Get-ActiveMarkdownHeadingIndexes -Lines $agentsLines -HeadingText $agentWorkflowHeadingText)
+    Assert-True ($leanGovernanceHeadingIndexes.Count -eq 1) 'AGENTS.md has exactly one active Markdown-equivalent Lean Governance heading'
+    Assert-True ($agentWorkflowHeadingIndexes.Count -eq 1) 'AGENTS.md has exactly one active Markdown-equivalent Agent Workflow heading'
+    $leanGovernanceHeadingIndex = if ($leanGovernanceHeadingIndexes.Count -eq 1) { $leanGovernanceHeadingIndexes[0] } else { -1 }
+    $agentWorkflowHeadingIndex = if ($agentWorkflowHeadingIndexes.Count -eq 1) { $agentWorkflowHeadingIndexes[0] } else { -1 }
     Assert-True ($leanGovernanceHeadingIndex -ge 0 -and $agentWorkflowHeadingIndex -gt $leanGovernanceHeadingIndex) 'AGENTS.md keeps one active Lean Governance section before the agent workflow section'
+    Assert-True (Test-MarkdownLineIsActive -Lines $agentsLines -LineIndex $leanGovernanceHeadingIndex) 'Lean Governance heading is not enclosed by a Markdown fence or HTML comment'
+    Assert-True (Test-MarkdownLineIsActive -Lines $agentsLines -LineIndex $agentWorkflowHeadingIndex) 'Agent Workflow heading is not enclosed by a Markdown fence or HTML comment'
+    $syntheticFencedGovernance = @('```markdown', $leanGovernanceHeading, $agentWorkflowHeading, '```')
+    $syntheticInterleavedFenceGovernance = @('```markdown <!--', '-->', $leanGovernanceHeading, $agentWorkflowHeading, '```')
+    $syntheticCommentedGovernance = @('<!--', $leanGovernanceHeading, $agentWorkflowHeading, '-->')
+    $syntheticDuplicateGovernance = @($leanGovernanceHeading, " $leanGovernanceHeading", $agentWorkflowHeading)
+    Assert-True (-not (Test-MarkdownLineIsActive -Lines $syntheticFencedGovernance -LineIndex 1)) 'Markdown fence enclosing Lean Governance is rejected'
+    Assert-True (-not (Test-MarkdownLineIsActive -Lines $syntheticInterleavedFenceGovernance -LineIndex 2)) 'Markdown fence opener wins over an HTML comment token in its info string'
+    Assert-True (-not (Test-MarkdownLineIsActive -Lines $syntheticCommentedGovernance -LineIndex 1)) 'HTML comment enclosing Lean Governance is rejected'
+    Assert-True (@(Get-ActiveMarkdownHeadingIndexes -Lines $syntheticDuplicateGovernance -HeadingText $leanGovernanceHeadingText).Count -eq 2) 'Markdown-equivalent duplicate Lean Governance headings are detected'
     $leanGovernanceSection = if ($leanGovernanceHeadingIndex -ge 0 -and $agentWorkflowHeadingIndex -gt $leanGovernanceHeadingIndex) {
         ($agentsLines[$leanGovernanceHeadingIndex..($agentWorkflowHeadingIndex - 1)] -join "`n")
     } else { '' }
@@ -613,6 +710,14 @@ try {
     Assert-True ($parallelWriterPolicy -ceq $expectedParallelWriterPolicy) 'parallel-writer policy preserves the exact fail-closed isolation and authority contract'
     Assert-True (@([regex]::Matches($agentsBodyLf, '(?m)^\d+\. \*\*[^\r\n]*Writer[^\r\n]*原則\*\*：')).Count -eq 1) 'AGENTS.md has no competing numbered Writer principle'
     Assert-True (-not ($agentsBodyLf -match '(?m)^\d+\. \*\*Single Active Writer 原則\*\*：')) 'AGENTS.md removes the obsolete repo-wide single-writer heading'
+    foreach ($parallelBoardMarker in @(
+        '不因 repo 內另有 active writer 就單獨阻擋無重疊 writer',
+        '同一 branch、同一 worktree 或 touch-set 重疊／未知一律停工排隊'
+    )) {
+        Assert-True ($parallelSessionBoardBody -match [regex]::Escape($parallelBoardMarker)) "parallel session board preserves isolation marker: $parallelBoardMarker"
+    }
+    Assert-True (-not ($parallelSessionBoardBody -match '不取代 Lane 隔離與 Single Active Writer')) 'parallel session board removes the obsolete repo-wide single-writer contract'
+    Assert-True (-not ($parallelSessionBoardBody -match '確認沒有 active writer 或重疊檔案')) 'parallel session board does not block solely because another writer is active'
     foreach ($entrypointVariant in @($agentsBodyLf, $agentsBodyLf.Replace("`n", "`r`n"))) {
         Assert-True ($entrypointVariant -match '(?m)^\|[^\r\n]*gh[^\r\n]*docs/agents/github-workflow\.md[^\r\n]*\r?$') 'AGENTS.md routes gh auth work to the GitHub workflow runbook under LF and CRLF'
     }
