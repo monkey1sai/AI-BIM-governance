@@ -72,3 +72,53 @@ describe("CoordinatorClient.closeReviewSession", () => {
         expect(error).toMatchObject({ status: 503, errorCode: "runtime_unavailable" });
     });
 });
+
+describe("CoordinatorClient.recordSessionActivity", () => {
+    it("binds activity to the caller's viewer lease id and token", async () => {
+        const fetchImpl = vi.fn(async () => jsonResponse(200, {
+            ok: true,
+            session_id: "review_session_activity_x",
+            recorded_at: "2026-08-31T00:00:00.000Z",
+        }));
+        const client = new CoordinatorClient("http://127.0.0.1:8004", fetchImpl as typeof fetch);
+
+        await expect(client.recordSessionActivity(
+            "review_session_activity_x",
+            "viewer_lease_x",
+            "lease_token_x",
+        )).resolves.toMatchObject({ ok: true, session_id: "review_session_activity_x" });
+        expect(fetchImpl).toHaveBeenCalledWith(
+            "http://127.0.0.1:8004/api/review-sessions/review_session_activity_x/activity",
+            {
+                method: "POST",
+                headers: {
+                    Accept: "application/json",
+                    "Content-Type": "application/json",
+                    "X-Viewer-Lease-Token": "lease_token_x",
+                },
+                body: JSON.stringify({ lease_id: "viewer_lease_x" }),
+            },
+        );
+    });
+});
+
+describe("CoordinatorClient.getSessionIdleStatus", () => {
+    it("preserves disabled and untracked nullable status fields", async () => {
+        const payload = {
+            session_id: "review_session_idle_x",
+            enabled: false,
+            has_connected_viewer: false,
+            is_counting_down: false,
+            remaining_seconds: null,
+            last_activity_at: null,
+        };
+        const fetchImpl = vi.fn(async () => jsonResponse(200, payload));
+        const client = new CoordinatorClient("http://127.0.0.1:8004", fetchImpl as typeof fetch);
+
+        await expect(client.getSessionIdleStatus(payload.session_id)).resolves.toEqual(payload);
+        expect(fetchImpl).toHaveBeenCalledWith(
+            "http://127.0.0.1:8004/api/review-sessions/review_session_idle_x/idle-status",
+            { headers: { Accept: "application/json" } },
+        );
+    });
+});

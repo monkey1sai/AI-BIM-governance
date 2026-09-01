@@ -1,0 +1,13 @@
+=== task 6.1 verification command ===
+$ git tag -l "deploy-*" --sort=-creatordate | head -1
+deploy-20260831-639237709604722760-001
+
+=== full tag message ===
+refs/tags/deploy-20260831-639237709604722760-001 Mon Aug 31 19:02:43 2026 +0800 deploy target=canonical-linux exit=0 snapshot=20260831T110240Z-effective-env.json deployed=a0ab7065131914e548e1d79a1c683c8b14b07de4
+
+
+=== evidenceHead (product HEAD assigned to this closeout round) ===
+a0ab7065131914e548e1d79a1c683c8b14b07de4
+
+=== current repo HEAD ===
+a0ab7065131914e548e1d79a1c683c8b14b07de4

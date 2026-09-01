@@ -1,0 +1,12 @@
+{
+  "endpoint": "/api/governance/issues",
+  "captured_at_window": {
+    "start": "2026-08-31T11:49:17.302Z",
+    "end": "2026-08-31T11:49:17.370Z"
+  },
+  "status": 200,
+  "body": {
+    "issues": []
+  },
+  "ms": 5
+}

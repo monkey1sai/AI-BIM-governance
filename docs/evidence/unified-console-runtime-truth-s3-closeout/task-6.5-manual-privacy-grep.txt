@@ -1,0 +1,16 @@
+-- text grep (git grep, tracked+staged) --
+-- binary grep on PNGs for literal IP octets --
+-- (blank above = clean) --
+
+-- round-2 self-discovered gap fix (2026-08-31): the prior sweep above did not include
+   openspec/changes/unified-console-runtime-truth/tasks.md, which was being concurrently edited
+   in this same closeout round. That file's task 6.2 and task 6.5 prose notes had directly
+   written out the real canonical-linux LAN IP, the real MinIO bucket key, and four real
+   customer/project names (as literal examples of "what was grepped for"), independent of the
+   redaction already applied to the JSON/PNG/txt evidence files. Fixed in this round by
+   replacing all four with `<canonical-host>` / `<canonical-bucket>` / an indirect reference to
+   the deidentification map (no real values re-typed). Re-swept post-fix:
+   `grep -n "<real LAN IP>|<real bucket key>|<four real project name strings>"
+   openspec/changes/unified-console-runtime-truth/tasks.md
+   docs/evidence/unified-console-runtime-truth-s3-closeout/*.{md,json,txt}` -> zero matches
+   (exit 1) across tasks.md and every text/json evidence file in this bundle.

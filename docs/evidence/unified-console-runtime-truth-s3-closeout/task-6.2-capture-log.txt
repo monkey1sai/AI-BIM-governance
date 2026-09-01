@@ -1,0 +1,8 @@
+pass1 (initial reachability probe, task cl1-181-reachable-do-not-infer): 2026-08-31T11:41:17.328Z .. 2026-08-31T11:41:27.425Z
+pass2 (9-endpoint batch bracketing the browser-tool 8-screen screenshot batch, kept only as a stability cross-check): 2026-08-31T11:42:34.013Z .. 2026-08-31T11:42:44.171Z
+pass2 minio/objects retry (needed 45s timeout, live bucket listing of 1745 objects, stability cross-check only): completed 2026-08-31T11:43:24.499Z
+--- authoritative capture window shipped in this evidence bundle (paired with the Playwright-CLI PNG screenshots below) ---
+Playwright-CLI screenshot batch (task-6.2-screen-*.png; page.screenshot via 'npx playwright screenshot', no browser address bar): 2026-08-31T11:48:36Z .. 2026-08-31T11:49:03Z (8 screens, no-hash/home/pipeline/runtime/a1/a2/a3/a4, 1440x900 viewport, 1200ms settle wait each)
+pass3 (9-endpoint batch, started immediately after the screenshot batch completed): 2026-08-31T11:49:17.302Z .. 2026-08-31T11:49:17.370Z
+pass3 minio/objects (10th endpoint): started ~2026-08-31T11:49:17Z, completed 2026-08-31T11:49:26.303Z
+Total authoritative-window span: 2026-08-31T11:48:36Z .. 2026-08-31T11:49:26Z (50s). All three independent passes (pass1 ~11:41, pass2 ~11:42, pass3 ~11:49) returned numerically identical steady-state values (conversion records=12, callback outbox=36, minio-watch baseline=seen=12/triggered=0, minio objects=1745, kit_local_001 idle) -- system was idle throughout, so the sub-minute-to-few-minutes spread between screenshot pixels and JSON fields does not represent any state drift.

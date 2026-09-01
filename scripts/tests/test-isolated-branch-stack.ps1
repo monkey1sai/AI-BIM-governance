@@ -75,6 +75,29 @@ $p4 = Resolve-IsolatedStackPorts -OffsetInput '4'
 Assert-Equal 8009 $p4.coordinator 'offset 4 coordinator'
 Assert-Equal 49107 $p4.governance 'offset 4 governance'
 Assert-Equal 5184 $p4.viewer 'offset 4 viewer'
+$idleTimeoutBackup = [Environment]::GetEnvironmentVariable('SESSION_IDLE_TIMEOUT_MS', 'Process')
+try {
+    [Environment]::SetEnvironmentVariable('SESSION_IDLE_TIMEOUT_MS', $null, 'Process')
+    $isolatedEnvWithoutIdlePolicy = New-IsolatedBackendEnvironment -Role coordinator `
+        -StateLayout ([pscustomobject]@{
+            coordinator_root = 'C:\isolated\coordinator'
+            fixture_root = 'C:\isolated\fixtures'
+        }) -Ports $p4
+    Assert-True (-not $isolatedEnvWithoutIdlePolicy.ContainsKey('SESSION_IDLE_TIMEOUT_MS')) `
+        'isolated coordinator keeps idle reclaim disabled when the parent does not configure it'
+
+    [Environment]::SetEnvironmentVariable('SESSION_IDLE_TIMEOUT_MS', '750', 'Process')
+    $isolatedEnvWithIdlePolicy = New-IsolatedBackendEnvironment -Role coordinator `
+        -StateLayout ([pscustomobject]@{
+            coordinator_root = 'C:\isolated\coordinator'
+            fixture_root = 'C:\isolated\fixtures'
+        }) -Ports $p4
+    Assert-Equal '750' $isolatedEnvWithIdlePolicy.SESSION_IDLE_TIMEOUT_MS `
+        'isolated coordinator passes through the explicitly configured idle timeout'
+}
+finally {
+    [Environment]::SetEnvironmentVariable('SESSION_IDLE_TIMEOUT_MS', $idleTimeoutBackup, 'Process')
+}
 $spacedWorktreeArgumentLine = ConvertTo-IsolatedWindowsArgumentLine -Arguments @(
     'C:\Repos\isolated branch stack\bim-review-coordinator\src\index.ts',
     '--port',
