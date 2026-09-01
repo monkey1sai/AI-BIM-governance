@@ -2607,7 +2607,7 @@
         "openspec/changes/spec-to-done-parallel-delivery-binding/proposal.md",
         "openspec/changes/spec-to-done-parallel-delivery-binding/tasks.md"
       ],
-      "subject_commit": "828e5c19a992dc06ac389318141c90191e810377",
+      "subject_commit": "e53659effd351f370e5101addf6d02af29e2ff01",
       "subject_binding": "introduction",
       "archive_debt": null
     }
