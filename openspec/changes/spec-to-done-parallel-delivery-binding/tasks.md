@@ -25,6 +25,6 @@
 
 - [x] 5.1 執行 affected Node/Python tests、agent contract/governance checks 與 OpenSpec strict validation
   - Fabric + binding + autonomous policy Node tests 327/327、trust-root Python tests 43/43、state/schema Python tests 70 passed + 2 skipped、static policy Node/Python tests 317/317 + 17/17、OpenSpec strict 77/77、OpenSpec lifecycle tests 46/46 通過；self-referential bootstrap、skill manifest check（35 skills／0 writes）與 repo-wide agent-governance 皆通過。sandbox principal 曾因 Git owner identity 不同而拒絕 nested Git，同一條測試在已驗證主機擁有者環境重跑後完整通過；未變更 ACL、owner 或 `safe.directory`。
-- [ ] 5.2 執行 GitNexus detect-changes、確認 tracked scope，並在 closeout 前檢查 Fabric 母分支 drift
-  - 使用者已明確接受候選變更的 GitNexus CRITICAL（100 files／2,810 symbols／107 flows）及單一 PR 推進；目前 P5 修補仍未形成最終 committed HEAD，closeout 必須重新索引 final HEAD、重跑 detect-changes、確認 exact tuple 未超出已接受範圍，並 fresh fetch 驗證 `origin/main` 與 Fabric 母分支 `a024a13` 無未整合 drift。
+- [x] 5.2 執行 GitNexus detect-changes、確認 tracked scope，並在 closeout 前檢查 Fabric 母分支 drift
+  - 使用者已明確接受候選變更的 GitNexus CRITICAL（100 files／2,810 symbols／107 flows）及單一 PR 推進。P5 修補 commit `d300bae` 的 exact-path GitNexus 1.6.9 index 對齊該 HEAD；staged repair scope 為 LOW（16 files／35 symbols／0 flows），對 fresh `origin/main=a0ab706` 的完整 compare 為 CRITICAL（100 files／1,406 symbols／18 flows），未超出已接受範圍。fresh fetch 並驗證 `origin/main` 與 Fabric trust root `a024a13` 皆為候選 HEAD ancestor，tracked worktree 保持 clean。
 - [x] 5.3 登錄 OpenSpec lifecycle ledger 與 NOW current projection，將 task/evidence snapshot 綁定已提交的 implementation subject
