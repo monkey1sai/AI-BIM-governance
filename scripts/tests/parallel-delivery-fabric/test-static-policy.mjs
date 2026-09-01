@@ -18,6 +18,10 @@ const STATIC_WRAPPER = path.join(REPO_ROOT, 'scripts', 'tests', 'test-parallel-d
 const GOVERNANCE_WORKFLOW = path.join(REPO_ROOT, '.github', 'workflows', 'agent-governance.yml')
 const STATIC_GATE_ID = 'parallel-delivery-fabric-static-policy'
 const ASSERTION_KINDS = new Set(['positive', 'negative', 'no-side-effect'])
+const WINDOWS_RUNTIME_STEP = `      - name: Run trusted host merge runtime tests (Windows)
+        if: matrix.shard == 'core'
+        shell: pwsh
+        run: pwsh -NoProfile -NonInteractive -Command "node --test scripts/tests/test-trusted-host-merge-runtime.mjs"`
 const TRUSTED_GIT_STEP = `      - name: Require canonical read-only Linux Git
         if: matrix.platform == 'linux-positive'
         shell: bash
@@ -45,9 +49,12 @@ const assertTrustedLinuxBoundary = (workflow) => {
   const sections = normalized.split('\n  new-run-boundary:')
   assert.equal(sections.length, 2)
   const [windowsSuite, linuxBoundary] = sections
+  assert.equal(windowsSuite.includes(WINDOWS_RUNTIME_STEP), true)
+  assert.equal(windowsSuite.split('Run trusted host merge runtime tests (Windows)').length - 1, 1)
   assert.doesNotMatch(windowsSuite, /Run Parallel Delivery Fabric static policy/u)
   assert.doesNotMatch(windowsSuite, /test-manage-pr-queue\.mjs/u)
   assert.doesNotMatch(windowsSuite, /test-trusted-host-merge\.mjs/u)
+  assert.doesNotMatch(linuxBoundary, /Run trusted host merge runtime tests \(Windows\)|test-trusted-host-merge-runtime\.mjs/u)
   assert.match(linuxBoundary, /- platform: linux-positive\n\s+runner: ubuntu-latest/u)
   assert.match(linuxBoundary, /Setup pinned Python for NEW_RUN contract tests[\s\S]*python-version: '3\.12'/u)
   assert.match(linuxBoundary, /Install NEW_RUN test dependencies[\s\S]*jsonschema==4\.26\.0 --hash=sha256:/u)
@@ -118,7 +125,27 @@ test('trusted Linux boundary rejects no-op, incomplete, misrouted, and non-adjac
         if: matrix.platform == 'linux-positive'
         shell: pwsh
         run: Write-Host bypass`
+  const withoutWindowsRuntime = workflow.replace(`${WINDOWS_RUNTIME_STEP}\n\n`, '')
+  const noOpWindowsRuntime = workflow.replace(
+    WINDOWS_RUNTIME_STEP,
+    WINDOWS_RUNTIME_STEP.replace(
+      'pwsh -NoProfile -NonInteractive -Command "node --test scripts/tests/test-trusted-host-merge-runtime.mjs"',
+      'Write-Host bypass',
+    ),
+  )
+  const wrongWindowsRuntimeShard = workflow.replace(
+    WINDOWS_RUNTIME_STEP,
+    WINDOWS_RUNTIME_STEP.replace("matrix.shard == 'core'", "matrix.shard == 'evidence'"),
+  )
+  const movedWindowsRuntime = withoutWindowsRuntime.replace(
+    `${TRUSTED_GIT_STEP}\n\n`,
+    `${TRUSTED_GIT_STEP}\n\n${WINDOWS_RUNTIME_STEP}\n\n`,
+  )
   const mutants = [
+    withoutWindowsRuntime,
+    noOpWindowsRuntime,
+    wrongWindowsRuntimeShard,
+    movedWindowsRuntime,
     workflow.replace('          test ! -w /usr/bin/git', '          echo bypass'),
     workflow.replace('          test -x /usr/bin/git\n', ''),
     workflow.replace(

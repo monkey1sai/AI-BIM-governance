@@ -23,10 +23,20 @@ function Test-TrustedLinuxBoundary {
         })
         if ($linuxEntries.Count -ne 1 -or ([string]$linuxEntries[0]['runner']) -cne 'ubuntu-latest') { return $false }
 
-        $suiteRuns = @($suiteJob['steps'] | Where-Object { $_.Contains('run') } | ForEach-Object { [string]$_['run'] }) -join "`n"
+        $suiteSteps = @($suiteJob['steps'])
+        $suiteRuns = @($suiteSteps | Where-Object { $_.Contains('run') } | ForEach-Object { [string]$_['run'] }) -join "`n"
         if ($suiteRuns -match 'test-manage-pr-queue\.mjs|test-parallel-delivery-fabric-static-policy\.ps1|test-trusted-host-merge\.mjs') { return $false }
+        $runtimeSteps = @($suiteSteps | Where-Object { ([string]$_['name']) -ceq 'Run trusted host merge runtime tests (Windows)' })
+        if ($runtimeSteps.Count -ne 1) { return $false }
+        $runtimeStep = $runtimeSteps[0]
+        if (([string]$runtimeStep['if']) -cne "matrix.shard == 'core'" -or
+            ([string]$runtimeStep['shell']) -cne 'pwsh' -or
+            ([string]$runtimeStep['run']) -cne 'pwsh -NoProfile -NonInteractive -Command "node --test scripts/tests/test-trusted-host-merge-runtime.mjs"') { return $false }
 
         $boundarySteps = @($boundaryJob['steps'])
+        $boundaryRuns = @($boundarySteps | Where-Object { $_.Contains('run') } | ForEach-Object { [string]$_['run'] }) -join "`n"
+        if (@($boundarySteps | Where-Object { ([string]$_['name']) -ceq 'Run trusted host merge runtime tests (Windows)' }).Count -ne 0 -or
+            $boundaryRuns -match 'test-trusted-host-merge-runtime\.mjs') { return $false }
         $gitSteps = @($boundarySteps | Where-Object { ([string]$_['name']) -ceq 'Require canonical read-only Linux Git' })
         $trustedMergeSteps = @($boundarySteps | Where-Object { ([string]$_['name']) -ceq 'Run trusted host merge policy tests on trusted Linux' })
         $staticSteps = @($boundarySteps | Where-Object { ([string]$_['name']) -ceq 'Run Parallel Delivery Fabric static policy' })
@@ -399,6 +409,30 @@ try {
     $wrongConditionGate['if'] = "matrix.platform == 'windows-negative'"
     Assert-True (-not (Test-TrustedLinuxBoundary -WorkflowTree $wrongCondition)) 'a misrouted trusted-Git gate is rejected in memory'
 
+    $missingRuntime = Copy-WorkflowTree -WorkflowTree $governanceWorkflowTree
+    $missingRuntime['jobs']['suite']['steps'] = @($missingRuntime['jobs']['suite']['steps'] | Where-Object {
+        ([string]$_['name']) -cne 'Run trusted host merge runtime tests (Windows)'
+    })
+    Assert-True (-not (Test-TrustedLinuxBoundary -WorkflowTree $missingRuntime)) 'a missing Windows runtime contract step is rejected in memory'
+
+    $noOpRuntime = Copy-WorkflowTree -WorkflowTree $governanceWorkflowTree
+    $noOpRuntimeStep = @($noOpRuntime['jobs']['suite']['steps'] | Where-Object { ([string]$_['name']) -ceq 'Run trusted host merge runtime tests (Windows)' })[0]
+    $noOpRuntimeStep['run'] = 'Write-Host bypass'
+    Assert-True (-not (Test-TrustedLinuxBoundary -WorkflowTree $noOpRuntime)) 'a no-op Windows runtime contract step is rejected in memory'
+
+    $wrongRuntimeShard = Copy-WorkflowTree -WorkflowTree $governanceWorkflowTree
+    $wrongRuntimeShardStep = @($wrongRuntimeShard['jobs']['suite']['steps'] | Where-Object { ([string]$_['name']) -ceq 'Run trusted host merge runtime tests (Windows)' })[0]
+    $wrongRuntimeShardStep['if'] = "matrix.shard == 'evidence'"
+    Assert-True (-not (Test-TrustedLinuxBoundary -WorkflowTree $wrongRuntimeShard)) 'a Windows runtime contract step outside core is rejected in memory'
+
+    $movedRuntime = Copy-WorkflowTree -WorkflowTree $governanceWorkflowTree
+    $movedRuntimeStep = @($movedRuntime['jobs']['suite']['steps'] | Where-Object { ([string]$_['name']) -ceq 'Run trusted host merge runtime tests (Windows)' })[0]
+    $movedRuntime['jobs']['suite']['steps'] = @($movedRuntime['jobs']['suite']['steps'] | Where-Object {
+        ([string]$_['name']) -cne 'Run trusted host merge runtime tests (Windows)'
+    })
+    $movedRuntime['jobs']['new-run-boundary']['steps'] = @($movedRuntime['jobs']['new-run-boundary']['steps']) + $movedRuntimeStep
+    Assert-True (-not (Test-TrustedLinuxBoundary -WorkflowTree $movedRuntime)) 'a Windows runtime contract step moved into the Linux boundary is rejected in memory'
+
     $intermediary = Copy-WorkflowTree -WorkflowTree $governanceWorkflowTree
     $intermediarySteps = [System.Collections.Generic.List[object]]::new()
     foreach ($step in @($intermediary['jobs']['new-run-boundary']['steps'])) {
@@ -447,6 +481,7 @@ try {
     foreach ($pinnedShardStep in @(
         @{ Name = 'Run governance static check'; Shard = 'core' },
         @{ Name = 'Run orphan cleanup and named PR queue safety tests'; Shard = 'core' },
+        @{ Name = 'Run trusted host merge runtime tests (Windows)'; Shard = 'core' },
         @{ Name = 'Run OpenSpec ledger reconciliation tests'; Shard = 'openspec' },
         @{ Name = 'Run OpenSpec machine-truth tests'; Shard = 'openspec' },
         @{ Name = 'Run base-gate capability detection tests'; Shard = 'capability' },
