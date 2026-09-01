@@ -1054,7 +1054,7 @@ const queueAfterConflict = (current, request, writerCap, result) => {
 }
 
 const requireLease = (snapshot, leaseId) => {
-  assertOpaque(leaseId, 'lease_id')
+  assertTask2OpaqueId(leaseId, 'lease_id')
   const lease = snapshot.record.leases[leaseId]
   if (!lease) fail('lease_not_found', leaseId)
   return lease
@@ -2253,7 +2253,7 @@ export function createQueueMappingRegistry({ store, clock }) {
 
   const writeQueue = async (expectedOid, current, request, guardOid, transform) => {
     const timestamp = nowFrom(clock)
-    const nextMaps = transform(current)
+    const nextMaps = transform(current, timestamp)
     if (nextMaps.status === 'HELD_QUEUE_CAPABILITY') return nextMaps
     const record = stamp({
       schema_version: 'queue-registry/v1',
@@ -2327,13 +2327,13 @@ export function createQueueMappingRegistry({ store, clock }) {
     if (Object.keys(current.queue_mappings).length >= QUEUE_MAPPING_LIMIT) return QUEUE_HELD('LEDGER_CAPACITY_EXCEEDED')
     if (Object.keys(current.used_queue_operations).length >= QUEUE_OPERATION_LIMIT) return QUEUE_HELD('LEDGER_CAPACITY_EXCEEDED')
     const mapping = mappingFromRequest(request, 'RESERVED')
-    return writeQueue(request.expected_oid, current, request, leaseBinding.guard_oid, (state) => {
+    return writeQueue(request.expected_oid, current, request, leaseBinding.guard_oid, (state, timestamp) => {
       const queue_mappings = clone(state.queue_mappings)
       const used_queue_operations = clone(state.used_queue_operations)
       queue_mappings[mappingKey(request)] = mapping
       used_queue_operations[request.operation_id] = {
         nonce: request.nonce,
-        consumed_at: nowFrom(clock),
+        consumed_at: timestamp,
         kind: 'reserve',
       }
       return {
@@ -2371,13 +2371,13 @@ export function createQueueMappingRegistry({ store, clock }) {
       if (existing[key] !== expected[key]) return QUEUE_HELD('TUPLE_DRIFT')
     }
     const mapping = mappingFromRequest(request, 'CANCELLED')
-    return writeQueue(request.expected_oid, current, request, undefined, (state) => {
+    return writeQueue(request.expected_oid, current, request, undefined, (state, timestamp) => {
       const queue_mappings = clone(state.queue_mappings)
       const used_queue_operations = clone(state.used_queue_operations)
       queue_mappings[mappingKey(request)] = mapping
       used_queue_operations[request.operation_id] = {
         nonce: request.nonce,
-        consumed_at: nowFrom(clock),
+        consumed_at: timestamp,
         kind: 'cancel',
       }
       return {

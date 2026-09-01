@@ -644,6 +644,63 @@ test('AC-03 — heartbeat is monotonic and timeout marks SUSPECT without releasi
   assert.equal(stillDisjoint.status, 'ADMITTED')
 })
 
+test('P2 regression — an admitted unnamespaced opaque lease ID remains usable across its lifecycle', async () => {
+  const { attestor, clock, envelope, leaseRegistry, store } = createFixture()
+  const admitted = await leaseRegistry.admit(makeRequest(store, {
+    lease_id: 'lease001', resource_keys: ['path:src/lease001.mjs'], nonce: NONCE('lease001-admit'),
+  }))
+  assert.equal(admitted.status, 'ADMITTED')
+  const heartbeat = await leaseRegistry.heartbeat({
+    lease_id: 'lease001', expected_oid: admitted.oid, heartbeat_seq: 2, nonce: NONCE('lease001-heartbeat'),
+  })
+  assert.equal(heartbeat.status, 'HEARTBEAT_RECORDED')
+  const end = await leaseRegistry.endRequest({
+    lease_id: 'lease001', expected_oid: heartbeat.oid, nonce: NONCE('lease001-end'), reason: 'handoff',
+    handoff_or_candidate_reference: 'handoff:lease001',
+  })
+  assert.equal(end.status, 'END_REQUESTED')
+  const released = await leaseRegistry.release({
+    lease_id: 'lease001',
+    expected_oid: end.oid,
+    expected_envelope_oid: ENVELOPE_OID,
+    expected_envelope_transition_sequence: 0,
+    attestation: {
+      attestation_ref: 'attestation:lease001-owner-end',
+      attestation_digest: SHA256,
+      issuer_id: 'attestor:owner-end',
+      issuer_version: 'owner-end/v1',
+      owner_session: 'session:owner-one',
+      provider: 'codex',
+      provider_session_id: 'provider:one',
+      execution_context_id: 'context:one',
+      lease_id: 'lease001',
+      generation: 1,
+      head_sha: SHA1,
+      scope_digest: admitted.lease.scope_digest,
+      worktree_path_digest: SHA256,
+      observed_at: '2026-08-29T00:00:00.000Z',
+      expires_at: '2026-08-29T00:10:00.000Z',
+      nonce: NONCE('lease001-owner-end'),
+      revocation_epoch: 0,
+    },
+  })
+  assert.equal(released.status, 'RELEASED')
+  assert.equal(attestor.calls.length, 1)
+  assert.equal(envelope.calls.length, 1)
+
+  const second = await leaseRegistry.admit(makeRequest(store, {
+    lease_id: 'lease002', owner_session: 'session:lease002', provider_session_id: 'provider:lease002',
+    execution_context_id: 'context:lease002', worktree_id: 'worktree:lease002', branch: 'codex/lease002',
+    resource_keys: ['path:src/lease002.mjs'], nonce: NONCE('lease002-admit'),
+  }))
+  assert.equal(second.status, 'ADMITTED')
+  clock.set('2026-08-29T00:05:00.000Z')
+  const suspect = await leaseRegistry.reconcileTimeout({
+    lease_id: 'lease002', expected_oid: second.oid, timeout_ms: 30000, nonce: NONCE('lease002-timeout'),
+  })
+  assert.equal(suspect.status, 'SUSPECT')
+})
+
 test('AC-04 — a lease cannot be rebound to a new execution context without explicit release authority', async () => {
   const { leaseRegistry, store } = createFixture()
   const admitted = await leaseRegistry.admit(makeRequest(store, { resource_keys: ['path:src/rebind.mjs'] }))

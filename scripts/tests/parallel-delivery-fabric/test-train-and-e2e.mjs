@@ -984,6 +984,19 @@ test('browser evidence binds exact head/tree/manifest/runtime and sanitized evid
   assert.equal(Object.isFrozen(result.evidence), true)
 })
 
+test('P2 regression — browser evidence derives created_at from the required execution window', () => {
+  const result = bindBrowserEvidence({
+    candidate: candidate(),
+    manifest: without(manifest(), 'started_at'),
+    playwright: browserPacket('playwright'),
+    computerUse: browserPacket('computer_use', { verifier_identity: 'computer-use:one' }),
+    trustedPins: trustedPins(),
+  })
+  assert.equal(result.status, 'READY_FOR_TRAIN')
+  assert.equal(result.evidence.created_at, NOW)
+  assert.deepEqual(result.evidence.execution_window, { started_at: NOW, finished_at: LATER })
+})
+
 test('AC-26 — listener evidence is own, canonical, matched, and fail-closed without mutating input', () => {
   const heldWithoutEvidence = (result, label, reason) => {
     assert.equal(result.status, 'HELD_EVIDENCE_BINDING', label)

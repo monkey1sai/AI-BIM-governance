@@ -1161,7 +1161,7 @@ export function bindBrowserEvidence({ candidate, manifest, playwright, computerU
     computer_use_authority_digest: trustedPins.authority_digest,
     verification_mode: 'canonical',
     candidate_harness_status: 'unchanged',
-    created_at: first(manifest, ['started_at', 'created_at']) || DEFAULT_CREATED_AT,
+    created_at: first(manifest, ['started_at', 'created_at']) || manifestExecutionWindow.started_at,
   }
   if (!isTimestamp(evidence.created_at)) return bindingHold('EVIDENCE_TIMESTAMP_INVALID', candidate)
   const frozenEvidence = freezeCopy(evidence)

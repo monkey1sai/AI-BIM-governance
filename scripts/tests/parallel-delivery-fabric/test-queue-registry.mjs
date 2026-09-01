@@ -215,6 +215,26 @@ test('AC-30 — first legal reserve writes a separate queue root and preserves t
   assert.equal(store.snapshot(QUEUE_REF).oid, result.registry_oid)
 })
 
+test('P2 regression — each queue write shares one clock observation with its operation receipt', async () => {
+  const store = createLegacyStore()
+  const leases = createLeaseRegistry({ store, clock: createClock(), writerCap: 2 })
+  await leases.admit(legacyLeaseRequest())
+  let tick = 0
+  const advancingClock = {
+    now: () => `2026-08-30T00:00:00.${String(tick++).padStart(3, '0')}Z`,
+  }
+  const queue = createQueueMappingRegistry({ store, clock: advancingClock })
+  const reserved = await queue.reserve(reserveRequest())
+  assert.equal(reserved.status, 'SHADOW_QUEUE_MAPPING_STORED')
+  let snapshot = store.snapshot(QUEUE_REF)
+  assert.equal(snapshot.record.used_queue_operations['operation:queue-reserve-one'].consumed_at, snapshot.record.updated_at)
+
+  const cancelled = await queue.reconcileCancelled(cancellationRequest({ expected_oid: reserved.registry_oid }))
+  assert.equal(cancelled.status, 'SHADOW_QUEUE_CANCELLATION_RECORDED')
+  snapshot = store.snapshot(QUEUE_REF)
+  assert.equal(snapshot.record.used_queue_operations['operation:queue-cancel-one'].consumed_at, snapshot.record.updated_at)
+})
+
 test('AC-30 — same-OID reserve race has one winner and preserves the loser tuple', async () => {
   const store = createLegacyStore()
   const leases = createLeaseRegistry({ store, clock: createClock(), writerCap: 2 })
