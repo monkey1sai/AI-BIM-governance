@@ -268,7 +268,12 @@ export class SessionIdleReclaimService {
     const peers = this.connectedPeers.get(sessionId);
     if (!peers) return;
     peers.delete(peerId);
-    if (peers.size === 0) this.removeSession(sessionId);
+    if (peers.size === 0) {
+      if (this.sessionStates.get(sessionId)?.isCountingDown) {
+        this.onCountdownCancelled?.(sessionId);
+      }
+      this.removeSession(sessionId);
+    }
   }
 
   private hasConnectedPeer(sessionId: string): boolean {

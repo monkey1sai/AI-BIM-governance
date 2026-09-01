@@ -928,6 +928,45 @@ export function createCoordinatorApp(
       });
     },
   });
+  for (const session of store.list()) {
+    const checkpoint = session.close_checkpoint;
+    if (!checkpoint || (session.status !== "closing" && session.status !== "closed")) continue;
+    const checkpointEvents = eventLog
+      .list(session.session_id)
+      .filter((event) => event.close_checkpoint_id === checkpoint.checkpoint_id);
+    const persistedFinalEventCount = checkpointEvents.filter((event) => event.type === "finalReviewEvent").length;
+    const eventTypes = new Set(checkpointEvents.map((event) => event.type));
+    const hasRecoverablePayload = persistedFinalEventCount >= checkpoint.expected_final_event_count;
+    const isIncomplete = session.status === "closing"
+      || !eventTypes.has("sessionClosed")
+      || !eventTypes.has("kitInstanceReleased");
+    if (!hasRecoverablePayload || !isIncomplete) continue;
+    const closingPayload = checkpointEvents.find((event) => event.type === "sessionClosing")?.payload;
+    const closingAudit = closingPayload && typeof closingPayload === "object"
+      ? closingPayload as { reason?: unknown; actor?: unknown }
+      : {};
+    const reason = typeof closingAudit.reason === "string" ? closingAudit.reason : undefined;
+    const actor = typeof closingAudit.actor === "string" ? closingAudit.actor : undefined;
+    try {
+      const recovered = closeReviewSessionInternal(session.session_id, {
+        reason,
+        actor,
+        resumeClosing: true,
+        resumeClosed: true,
+        retainIdleTracking: true,
+      });
+      if (!recovered || recovered.status !== "closed") continue;
+      const traceAuthority = sessionTraceResolver.resolveAndCommit(session.session_id);
+      io.of("/review").to(session.session_id).emit("session:closed", {
+        session_id: session.session_id,
+        ...(traceAuthority.ok ? { trace_id: traceAuthority.canonicalTraceId } : {}),
+        reason: reason ?? "recovered_close",
+        closed_at: nowIso(),
+      });
+    } catch (error) {
+      console.error(`[SessionIdleReclaim] Failed to recover close checkpoint for ${session.session_id}:`, error);
+    }
+  }
   idleReclaimService.start();
 
   const runtimeMutationAuthority = new RuntimeMutationAuthority({

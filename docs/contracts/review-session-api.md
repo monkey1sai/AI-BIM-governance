@@ -136,7 +136,8 @@ explicit value must be a positive integer from 1 through 2147483647; this value
 is deployment-owned and is not defaulted before the GPU session baseline is
 measured.
 
-The coordinator tracks only sessions with at least one joined `/review` socket.
+The coordinator tracks only sessions with at least one `/review` socket that has
+joined with the canonical trace and then reported `streamReadiness { ready: true }`.
 `POST /api/review-sessions/{session_id}/activity` requires an active viewer
 lease. Send JSON `{ "lease_id": "viewer_lease_xxx" }` together with the
 matching `X-Viewer-Lease-Token` header. Missing, malformed, expired, released,

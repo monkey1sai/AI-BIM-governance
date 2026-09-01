@@ -112,6 +112,24 @@ describe("SessionIdleReclaimService (session-lifecycle idle countdown & reclaim)
     expect(state?.isCountingDown).toBe(false);
   });
 
+  it("broadcasts countdown cancellation before removing the last ready peer", () => {
+    const session = createActiveSession();
+    const cancellations: string[] = [];
+    const service = new SessionIdleReclaimService(store, {
+      idleTimeoutMs: 1_000,
+      countdownSeconds: 10,
+      onCountdownCancelled: (sessionId) => cancellations.push(sessionId),
+    });
+    const t0 = 1_000_000;
+    service.connectPeer(session.session_id, "ready-peer", t0);
+    service.tick(t0 + 1_000);
+
+    service.disconnectPeer(session.session_id, "ready-peer");
+
+    expect(cancellations).toEqual([session.session_id]);
+    expect(service.getSessionState(session.session_id)).toBeNull();
+  });
+
   it("triggers teardown when 10-second countdown reaches 0 without interaction", () => {
     const session = createActiveSession();
     const teardowns: string[] = [];
@@ -452,5 +470,38 @@ describe("Coordinator App HTTP & Socket integration for Idle Reclaim", () => {
       appendSpy.mockRestore();
       errorSpy.mockRestore();
     }
+  });
+
+  it("recovers an incomplete durable close checkpoint on coordinator restart", async () => {
+    const createRes = await request(appInstance.app)
+      .post("/api/review-sessions")
+      .send({
+        project_id: "prj_restart_recovery",
+        model_version_id: "mv_restart_recovery",
+        created_by: "user_restart_recovery",
+      });
+    const sessionId = createRes.body.session_id as string;
+    const checkpoint = {
+      checkpoint_id: "close_restart_recovery",
+      expected_final_event_count: 0,
+    };
+    appInstance.store.update(sessionId, { status: "closed", close_checkpoint: checkpoint });
+    appInstance.eventLog.appendServerCloseCheckpoint(sessionId, "sessionClosing", {
+      final_events: 0,
+      reason: "inactivity",
+      actor: "system:idle_reclaimer",
+    }, checkpoint.checkpoint_id);
+    await appInstance.dispose();
+
+    appInstance = createCoordinatorApp({
+      sessionStoreDir: tmpSessionsDir,
+      eventLogDir: tmpEventsDir,
+      sessionIdleTimeoutMs: 50,
+    });
+
+    const events = appInstance.eventLog.list(sessionId);
+    expect(events.filter((event) => event.type === "sessionClosing")).toHaveLength(1);
+    expect(events.filter((event) => event.type === "sessionClosed")).toHaveLength(1);
+    expect(events.filter((event) => event.type === "kitInstanceReleased")).toHaveLength(1);
   });
 });

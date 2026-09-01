@@ -1059,6 +1059,7 @@ export default class App extends React.Component<AppProps, AppState> {
         window.addEventListener("load", this._notifyParentViewerReady);
         window.addEventListener("keydown", this._onViewerUserActivity);
         window.addEventListener("pointerdown", this._onViewerUserActivity);
+        window.addEventListener("wheel", this._onViewerUserActivity, { passive: true });
         this._notifyParentViewerReady();
 
         if (reviewEnv.hasExplicitEmptySessionId) {
@@ -1078,6 +1079,7 @@ export default class App extends React.Component<AppProps, AppState> {
         window.removeEventListener("load", this._notifyParentViewerReady);
         window.removeEventListener("keydown", this._onViewerUserActivity);
         window.removeEventListener("pointerdown", this._onViewerUserActivity);
+        window.removeEventListener("wheel", this._onViewerUserActivity);
         this._releaseStandaloneViewerLease();
         this._clearStreamStartTimeout();
         this._clearStreamConfigRefresh();
@@ -1168,7 +1170,15 @@ export default class App extends React.Component<AppProps, AppState> {
         if (this.idleActivityRequestInFlight) return false;
         this.idleActivityRequestInFlight = true;
         try {
-            const leaseAuthority = await this._ensureViewerLogDeliveryAuthority();
+            let leaseDeadlineId: number | null = null;
+            const leaseAuthority = await Promise.race([
+                this._ensureViewerLogDeliveryAuthority().catch(() => null),
+                new Promise<null>((resolve) => {
+                    leaseDeadlineId = window.setTimeout(() => resolve(null), 1_000);
+                }),
+            ]).finally(() => {
+                if (leaseDeadlineId !== null) window.clearTimeout(leaseDeadlineId);
+            });
             const currentAuthority = this.verifiedDataChannelAuthority;
             if (
                 !currentAuthority

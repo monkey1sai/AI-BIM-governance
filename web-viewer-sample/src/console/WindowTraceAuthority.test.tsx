@@ -482,6 +482,21 @@ describe("Window Socket canonical trace authority", () => {
         expect(socketClient.userActivity).not.toHaveBeenCalled();
     });
 
+    it("registers and removes wheel navigation as passive viewer activity", () => {
+        const app = readyApp();
+        const target = internals(app);
+        vi.spyOn(target as never, "_loadUSDAssets" as never).mockResolvedValue(undefined as never);
+        vi.spyOn(target as never, "_bootstrapReview" as never).mockResolvedValue(undefined as never);
+        const addEventListener = vi.spyOn(window, "addEventListener");
+        const removeEventListener = vi.spyOn(window, "removeEventListener");
+
+        app.componentDidMount();
+        expect(addEventListener).toHaveBeenCalledWith("wheel", target._onViewerUserActivity, { passive: true });
+
+        app.componentWillUnmount();
+        expect(removeEventListener).toHaveBeenCalledWith("wheel", target._onViewerUserActivity);
+    });
+
     it("starts passive activity throttling only after a positive acknowledgement", async () => {
         const app = readyApp();
         const target = internals(app);
@@ -524,6 +539,29 @@ describe("Window Socket canonical trace authority", () => {
         await expect(target._recordSessionActivity()).resolves.toBe(true);
         expect(socketClient.userActivity).toHaveBeenCalledTimes(1);
         expect(target.state.idleCountdownRemainingSeconds).toBeNull();
+    });
+
+    it("falls back to the trace-authorized socket when lease acquisition exceeds its deadline", async () => {
+        vi.useFakeTimers();
+        try {
+            const app = authorizedApp({ synchronousSetState: true });
+            const target = internals(app);
+            target._connectReviewSocket(SESSION_ID, TRACE_ID);
+            const candidate = vi.mocked(socketClient.join).mock.calls[0][0];
+            handlers.onStatus?.("connected");
+            ack("joinSession", candidate, { ok: true, trace_id: TRACE_ID, session_id: SESSION_ID });
+            vi.spyOn(target, "_ensureViewerLogDeliveryAuthority").mockReturnValue(new Promise(() => {}));
+            vi.mocked(socketClient.userActivity).mockResolvedValue(true);
+
+            const keepalive = target._recordSessionActivity();
+            await vi.advanceTimersByTimeAsync(1_000);
+
+            await expect(keepalive).resolves.toBe(true);
+            expect(socketClient.userActivity).toHaveBeenCalledTimes(1);
+            expect(target.state.idleCountdownRemainingSeconds).toBeNull();
+        } finally {
+            vi.useRealTimers();
+        }
     });
 
     it("retires socket, stream, and mutation authority on authoritative session close", () => {
