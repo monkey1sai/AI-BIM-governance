@@ -229,12 +229,6 @@ const WS_CTA: Record<WsDock, { label: string; confirmToast: string }> = {
 };
 
 function workspaceCases(dock: WsDock): ScreenCases {
-  /** goto 後點當前 dock 的主 CTA（產出結果面板；重複點擊為冪等的 re-run）。 */
-  const runDockCta = async (context: SemanticCaseContext): Promise<void> => {
-    await gotoRoute(context);
-    await clickFirst(context.page, '[data-uc="dock-cta"]');
-  };
-
   const success: SemanticCaseDefinition =
     dock === "a1"
       ? {
@@ -244,12 +238,14 @@ function workspaceCases(dock: WsDock): ScreenCases {
         }
       : dock === "a2"
         ? {
-            prepare: runDockCta,
-            assertions: [{ id: "a2-diff-added-chip", locator: "text=■ 新增 12", expectation: "visible" }],
+            // A2 版本選取器就緒（v12）。
+            prepare: gotoRoute,
+            assertions: [{ id: "a2-version-selector-v12", locator: 'text="v12" >> nth=0', expectation: "visible" }],
           }
         : {
-            prepare: runDockCta,
-            assertions: [{ id: "a3-federated-stage-check", locator: "text=Federated Stage ✓", expectation: "visible" }],
+            // A3 座標與單位檢查就緒（✓ Coordinate Check OK）。
+            prepare: gotoRoute,
+            assertions: [{ id: "a3-coord-check-ok", locator: "text=Coordinate Check OK", expectation: "visible" }],
           };
 
   const failure: SemanticCaseDefinition =
@@ -264,8 +260,9 @@ function workspaceCases(dock: WsDock): ScreenCases {
         }
       : dock === "a2"
         ? {
-            prepare: runDockCta,
-            assertions: [{ id: "a2-diff-removed-chip", locator: "text=■ 移除 4", expectation: "visible" }],
+            // A2 比較對照就緒（vs）。
+            prepare: gotoRoute,
+            assertions: [{ id: "a2-version-compare-vs", locator: "text=vs", expectation: "visible" }],
           }
         : {
             // 誠實對映：A3 dock 本身無紅色失敗態；工作區的失敗浮出面 = Issues/BCF
@@ -297,11 +294,11 @@ function workspaceCases(dock: WsDock): ScreenCases {
       ],
     },
     loading: {
-      // 進行中狀態：Streaming 膠囊 + session capsule（fixture 常駐的 live 表面文案）。
+      // 進行中狀態：DataChannel 狀態字條（常駐）+ 無 review session 膠囊
       prepare: gotoRoute,
       assertions: [
-        { id: "streaming-pill-live", locator: '[data-uc="streaming-pill"]', expectation: "text_contains", expected: "Streaming" },
-        { id: "session-capsule-editor-lease", locator: "text=S-240601 · editor lease", expectation: "visible" },
+        { id: "datachannel-loading-state", locator: 'text="loadingState"', expectation: "visible" },
+        { id: "session-capsule-editor-lease", locator: 'text="無 review session" >> nth=0', expectation: "visible" },
       ],
     },
     empty: {
@@ -322,33 +319,32 @@ function workspaceCases(dock: WsDock): ScreenCases {
     },
     failure,
     disabled: {
-      // 誠實停用（互動後）：A1 檢核失敗列「開單」點過即完成（✓ + aria-disabled，
-      // onClick 原本就 no-op）。a2–a4 screen 以 dock tab 切到 A1（local state）套同一語意。
-      prepare: async (context) => {
-        await gotoRoute(context);
-        await clickFirst(context.page, '[data-uc="dock-tab-a1"]');
-        await clickFirst(context.page, '[data-uc="fail-issue-btn"]');
-      },
+      // 誠實停用（離線無 session 狀態）：頂欄「啟動即時視圖」按鈕為 aria-disabled="true"（data-action="disabled"）
+      prepare: gotoRoute,
       assertions: [
-        { id: "issue-btn-aria-disabled", locator: '[data-uc="fail-issue-btn"] >> nth=0', expectation: "attribute_equals", attribute: "aria-disabled", expected: "true" },
-        { id: "issue-btn-disabled-state", locator: '[data-uc="fail-issue-btn"] >> nth=0', expectation: "disabled" },
+        { id: "live-view-btn-aria-disabled", locator: '[data-action="disabled"]', expectation: "attribute_equals", attribute: "aria-disabled", expected: "true" },
+        { id: "live-view-btn-visible", locator: '[data-action="disabled"]', expectation: "visible" },
       ],
     },
     confirmation: {
-      // 點主 CTA → toast 假 API 字串（先切回本 dock，因 disabled case 已把 dock 切到 a1）。
+      // 點主 CTA → 確認回饋（A1 保持重新執行態；A2/A3 導向對應分析路由）。
       prepare: async (context) => {
         await gotoRoute(context);
         await clickFirst(context.page, `[data-uc="dock-tab-${dock}"]`);
         await clickFirst(context.page, '[data-uc="dock-cta"]');
       },
       assertions: [
-        { id: "fake-api-toast", locator: '[data-uc="toast"]', expectation: "text_contains", expected: WS_CTA[dock].confirmToast },
+        dock === "a1"
+          ? { id: "a1-recheck-confirmed", locator: "text=A1 · 治理與模型檢核", expectation: "visible" }
+          : dock === "a2"
+            ? { id: "a2-diff-route-confirmed", locator: "text=模型版本差異與責任追蹤", expectation: "visible" }
+            : { id: "a3-federation-route-confirmed", locator: "text=跨專業模型 Federation", expectation: "visible" },
       ],
     },
     i18n_zh_tw: {
       prepare: gotoRoute,
       assertions: [
-        { id: "zh-invite-spectator", locator: "text=+ 邀請 Spectator", expectation: "visible" },
+        { id: "zh-workspace-no-session", locator: 'text="無 review session" >> nth=0', expectation: "visible" },
         langZhActive,
       ],
     },
@@ -675,12 +671,12 @@ function conceptCases(slug: ConceptSlug): ScreenCases {
       ],
     },
     primary_actions: {
-      // 誠實對映：概念頁自身無 CTA；本頁主要可行動作 = 側欄 A1 LIVE 項（可點、enabled）。
+      // 誠實對映：概念頁自身無 CTA；本頁主要可行動作 = 側欄 A1 項（可點、enabled、帶 asbuilt 標籤）。
       prepare: gotoRoute,
       assertions: [
         { id: "sidebar-a1-live-visible", locator: '[data-uc="app-a1"]', expectation: "visible" },
         { id: "sidebar-a1-live-enabled", locator: '[data-uc="app-a1"]', expectation: "enabled" },
-        { id: "sidebar-a1-live-badge", locator: '[data-uc="app-a1"]', expectation: "text_contains", expected: "LIVE" },
+        { id: "sidebar-a1-live-badge", locator: '[data-uc="app-a1"]', expectation: "text_contains", expected: "asbuilt" },
       ],
     },
     loading: {
@@ -699,10 +695,10 @@ function conceptCases(slug: ConceptSlug): ScreenCases {
       ],
     },
     success: {
-      // 綠色上線狀態：側欄 A1–A4 的 LIVE 徽章恰為 4 顆（本頁唯一的成功/上線語意表面）。
+      // 建成狀態：側欄 A1–A4 的 asbuilt 徽章恰為 4 顆（本頁唯一的建成/已上線語意表面）。
       prepare: gotoRoute,
       assertions: [
-        { id: "live-badges-count", locator: 'text="LIVE"', expectation: "count_equals", expected: 4 },
+        { id: "live-badges-count", locator: 'text="asbuilt"', expectation: "count_equals", expected: 4 },
       ],
     },
     warning: {
@@ -715,13 +711,14 @@ function conceptCases(slug: ConceptSlug): ScreenCases {
     },
     failure: {
       // 真實失敗路徑：攔截概念大圖請求（abort）→ full reload → img onError 觸發
-      // 原型同語意的 fallback 卡。route 於同一 prepare 內 try/finally 解除，
+      // 原型同語意的 fallback 卡。route 於同一 prepare 內在 fallback 呈現後解除，
       // 不污染後續 case / 像素擷取（runtime_truth 會 fresh reload 還原）。
       prepare: async (context) => {
         const { page } = context;
         await page.route(CONCEPT_IMG_GLOB, (route) => route.abort());
         try {
           await gotoFreshRoute(context);
+          await page.locator('[data-uc="concept-fallback"]').waitFor({ state: "visible", timeout: 5000 });
         } finally {
           await page.unroute(CONCEPT_IMG_GLOB);
         }
