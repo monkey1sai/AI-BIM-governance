@@ -997,6 +997,20 @@ test('P2 regression — browser evidence derives created_at from the required ex
   assert.deepEqual(result.evidence.execution_window, { started_at: NOW, finished_at: LATER })
 })
 
+test('P2 regression — browser evidence rejects a zero-duration execution window', () => {
+  const executionWindow = { started_at: NOW, finished_at: NOW }
+  const result = bindBrowserEvidence({
+    candidate: candidate(),
+    manifest: { ...manifest(), execution_window: executionWindow },
+    playwright: browserPacket('playwright', { execution_window: executionWindow }),
+    computerUse: browserPacket('computer_use', { verifier_identity: 'computer-use:one', execution_window: executionWindow }),
+    trustedPins: trustedPins(),
+  })
+  assert.equal(result.status, 'HELD_EVIDENCE_BINDING')
+  assert.equal(result.reason, 'EXECUTION_WINDOW_REQUIRED')
+  assert.equal(result.promotion_eligible, false)
+})
+
 test('AC-26 — listener evidence is own, canonical, matched, and fail-closed without mutating input', () => {
   const heldWithoutEvidence = (result, label, reason) => {
     assert.equal(result.status, 'HELD_EVIDENCE_BINDING', label)

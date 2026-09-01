@@ -404,6 +404,31 @@ test('command journal merges distinct concurrent reservations and commits withou
   assert.equal(snapshot.record.receipts[requests[1].journal_key].outcome.reason, 'DISTINCT_2')
 })
 
+test('P2 regression — command journal capacity is bounded without breaking committed replay', async () => {
+  const { clock, store } = createFixture()
+  const journal = createCommandJournal({ store, clock, receiptLimit: 2 })
+  const requests = ['c', 'd', 'e'].map((character, index) => ({
+    journal_key: `journal:${character.repeat(64)}`,
+    command_id: `command:bounded-${index + 1}`,
+    command_digest: character.repeat(64),
+    attempt_id: `attempt:bounded-${index + 1}`,
+    reservation_id: `reservation:bounded-${index + 1}`,
+  }))
+  await journal.reserve(requests[0])
+  await journal.reserve(requests[1])
+  await assert.rejects(
+    journal.reserve(requests[2]),
+    (error) => error?.code === 'command_journal_capacity_exceeded',
+  )
+
+  const outcome = { command_id: requests[0].command_id, type: 'submit', status: 'SHADOW_STORED', reason: 'BOUNDED' }
+  const committed = await journal.commit({ ...requests[0], outcome, outcome_digest: digestCanonical(outcome) })
+  assert.equal(committed.status, 'COMMITTED')
+  assert.deepEqual(await journal.read({ journal_key: requests[0].journal_key, command_id: requests[0].command_id }), committed)
+  const snapshot = await store.read(store.refs.commandJournal)
+  assert.equal(Object.keys(snapshot.record.receipts).length, 2)
+})
+
 test('AC-01 — cross-provider disjoint writers are admitted', async () => {
   const { leaseRegistry, store } = createFixture()
 
@@ -1335,6 +1360,83 @@ test('P1 regression — only a release reservation owner can reach the envelope 
   assert.deepEqual(heartbeatDuringRelease, {
     status: 'HELD_EXECUTION_AUTHORITY', reason: 'RELEASE_IN_PROGRESS', reconcile_required: false,
   })
+})
+
+test('P2 regression — a lost revocation-proof CAS is recovered idempotently before release finalization', async () => {
+  const fixture = createFixture()
+  const { attestor, clock, store } = fixture
+  let rejectFirstProof = true
+  const contestedStore = {
+    commonDirDigest: store.commonDirDigest,
+    refs: store.refs,
+    read: store.read,
+    casGuarded: store.casGuarded,
+    async cas(request) {
+      const lease = request.record?.leases?.['lease:proof-recovery']
+      if (rejectFirstProof && request.ref === store.refs.sessionLeases && lease?.state === 'RELEASING' &&
+          Object.hasOwn(lease, 'envelope_revocation_proof')) {
+        rejectFirstProof = false
+        const current = await store.read(request.ref)
+        return {
+          status: 'CONFLICT', reason: 'CAS_CONFLICT', expected_oid: request.expected_oid,
+          actual_oid: current.oid, current,
+        }
+      }
+      return store.cas(request)
+    },
+  }
+  let acceptedRequest = null
+  let successfulMutations = 0
+  const envelopeResult = {
+    status: 'REVOKED', previous_oid: ENVELOPE_OID, oid: REVOKED_ENVELOPE_OID,
+    transition_sequence: 1, revocation_epoch: 0, in_flight_command: false,
+  }
+  const envelope = {
+    calls: [],
+    async revoke(request) {
+      this.calls.push(structuredClone(request))
+      if (acceptedRequest === null) {
+        acceptedRequest = structuredClone(request)
+        successfulMutations += 1
+      } else {
+        assert.deepEqual(request, acceptedRequest)
+      }
+      return structuredClone(envelopeResult)
+    },
+  }
+  const registry = createLeaseRegistry({
+    store: contestedStore, clock, writerCap: 2, ownerEndAttestor: attestor, executionEnvelope: envelope,
+  })
+  const admitted = await registry.admit(makeRequest(contestedStore, {
+    lease_id: 'lease:proof-recovery', resource_keys: ['path:src/proof-recovery.mjs'], nonce: NONCE('proof-recovery-admit'),
+  }))
+  const ended = await registry.endRequest({
+    lease_id: 'lease:proof-recovery', expected_oid: admitted.oid, nonce: NONCE('proof-recovery-end'), reason: 'failed',
+    handoff_or_candidate_reference: 'candidate:proof-recovery',
+  })
+  const request = {
+    lease_id: 'lease:proof-recovery', expected_oid: ended.oid, expected_envelope_oid: ENVELOPE_OID,
+    expected_envelope_transition_sequence: 0,
+    attestation: ownerEndFixture({ lease_id: 'lease:proof-recovery', nonce: NONCE('proof-recovery-attestation') }),
+  }
+  assert.deepEqual(await registry.release(request), {
+    status: 'HELD_EXECUTION_AUTHORITY',
+    reason: 'RELEASE_RECONCILIATION_REQUIRED',
+    reconcile_required: true,
+    release_id: `release:${NONCE('proof-recovery-attestation')}`,
+  })
+  const releasing = await registry.inspect()
+  assert.equal(releasing.record.leases['lease:proof-recovery'].state, 'RELEASING')
+  assert.equal(Object.hasOwn(releasing.record.leases['lease:proof-recovery'], 'envelope_revocation_proof'), false)
+  assert.equal(envelope.calls.length, 1)
+  assert.equal(successfulMutations, 1)
+
+  const finalized = await registry.release({ ...request, expected_oid: releasing.oid })
+  assert.equal(finalized.status, 'RELEASED')
+  assert.equal(finalized.lease.state, 'RELEASED')
+  assert.equal(finalized.lease.envelope_revocation_oid, REVOKED_ENVELOPE_OID)
+  assert.equal(envelope.calls.length, 2)
+  assert.equal(successfulMutations, 1)
 })
 
 test('P1 regression — a post-envelope final CAS conflict stays reconcilable and occupied', async () => {

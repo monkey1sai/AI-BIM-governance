@@ -16,6 +16,7 @@ const JOURNAL_REF = 'refs/ai-bim/command-journal'
 const MANAGED_BRANCH_REF = 'refs/ai-bim/managed-branches'
 const REFS = new Set([PLAN_REF, LEASE_REF, QUEUE_REF, JOURNAL_REF, MANAGED_BRANCH_REF])
 const WRITER_CAP_V1 = 2
+const COMMAND_JOURNAL_RECEIPT_LIMIT = 4096
 const OID = /^[0-9a-f]{40}$/u
 const DIGEST = /^[0-9a-f]{64}$/u
 const NONCE = /^[A-Za-z0-9_-]{32,128}$/u
@@ -906,10 +907,11 @@ const validateCommandJournalReceipt = (receipt, journalKey) => {
   return receipt
 }
 
-const validateCommandJournalRecord = (record) => {
+const validateCommandJournalRecord = (record, receiptLimit = COMMAND_JOURNAL_RECEIPT_LIMIT) => {
   exactKeys(record, ['schema_version', 'generation', 'nonce', 'created_at', 'updated_at', 'receipts', 'canonical_digest'], 'command_journal')
   if (record.schema_version !== 'command-journal-registry/v1' || !isObject(record.receipts)) fail('registry_record_invalid', 'command_journal_shape')
   assertStamped(record, 'command_journal')
+  if (Object.keys(record.receipts).length > receiptLimit) fail('registry_record_invalid', 'command_journal_receipt_limit')
   for (const [journalKey, receipt] of Object.entries(record.receipts)) validateCommandJournalReceipt(receipt, journalKey)
   return record
 }
@@ -923,20 +925,23 @@ function validatePersistedRecordForRef(ref, record) {
   fail('registry_ref_forbidden', String(ref))
 }
 
-const commandJournalSnapshot = async (store) => {
+const commandJournalSnapshot = async (store, receiptLimit) => {
   const snapshot = await store.read(JOURNAL_REF)
-  if (snapshot.record !== null) validateCommandJournalRecord(snapshot.record)
+  if (snapshot.record !== null) validateCommandJournalRecord(snapshot.record, receiptLimit)
   return snapshot
 }
 
-export function createCommandJournal({ store, clock }) {
+export function createCommandJournal({ store, clock, receiptLimit = COMMAND_JOURNAL_RECEIPT_LIMIT }) {
   if (!store || typeof store.read !== 'function' || typeof store.cas !== 'function') fail('invalid_port', 'command_journal_store_required')
+  if (!Number.isSafeInteger(receiptLimit) || receiptLimit < 1 || receiptLimit > COMMAND_JOURNAL_RECEIPT_LIMIT) {
+    fail('invalid_value', 'command_journal_receipt_limit_invalid')
+  }
   const retryLimit = 8
   const read = async (input) => {
     const { journal_key, command_id } = validateClosedRequest(input, ['journal_key', 'command_id'], 'command_journal_read')
     assertTask2OpaqueId(journal_key, 'command_journal_read.journal_key')
     assertTask2OpaqueId(command_id, 'command_journal_read.command_id')
-    const snapshot = await commandJournalSnapshot(store)
+    const snapshot = await commandJournalSnapshot(store, receiptLimit)
     const receipt = snapshot.record?.receipts?.[journal_key] ?? null
     if (receipt !== null && receipt.command_id !== command_id) fail('command_journal_conflict', 'command_id_mismatch')
     return receipt === null ? null : clone(receipt)
@@ -946,9 +951,12 @@ export function createCommandJournal({ store, clock }) {
     const receipt = { ...request, status: 'RESERVED', acquired: true }
     validateCommandJournalReceipt(receipt, request.journal_key)
     for (let attempt = 0; attempt < retryLimit; attempt += 1) {
-      const snapshot = await commandJournalSnapshot(store)
+      const snapshot = await commandJournalSnapshot(store, receiptLimit)
       const existing = snapshot.record?.receipts?.[request.journal_key]
       if (existing) return clone(existing)
+      if (Object.keys(snapshot.record?.receipts ?? {}).length >= receiptLimit) {
+        fail('command_journal_capacity_exceeded', 'receipt_limit')
+      }
       const timestamp = nowFrom(clock)
       const receipts = clone(snapshot.record?.receipts ?? {})
       receipts[request.journal_key] = receipt
@@ -972,7 +980,7 @@ export function createCommandJournal({ store, clock }) {
     const receipt = { ...request, status: 'COMMITTED' }
     validateCommandJournalReceipt(receipt, request.journal_key)
     for (let attempt = 0; attempt < retryLimit; attempt += 1) {
-      const snapshot = await commandJournalSnapshot(store)
+      const snapshot = await commandJournalSnapshot(store, receiptLimit)
       const reserved = snapshot.record?.receipts?.[request.journal_key]
       if (!reserved) fail('command_journal_missing', request.journal_key)
       if (reserved.status === 'COMMITTED') {
@@ -1424,7 +1432,79 @@ export function createLeaseRegistry({ store, clock, writerCap = WRITER_CAP_V1, o
       : casConflict(result)
   }
 
-  const finalizeReservedRelease = async ({ snapshot, lease, input }) => {
+  const releaseReconciliationRequired = (releaseId) => ({
+    status: 'HELD_EXECUTION_AUTHORITY',
+    reason: 'RELEASE_RECONCILIATION_REQUIRED',
+    reconcile_required: true,
+    release_id: releaseId,
+  })
+
+  const recoverReservedRevocationProof = async ({ snapshot, lease }) => {
+    const reservation = lease.release_reservation
+    if (!executionEnvelope || typeof executionEnvelope.revoke !== 'function') {
+      return releaseReconciliationRequired(reservation.release_id)
+    }
+    let envelope
+    try {
+      envelope = await executionEnvelope.revoke({
+        lease_id: reservation.lease_id,
+        release_id: reservation.release_id,
+        expected_envelope_oid: reservation.expected_envelope_oid,
+        expected_transition_sequence: reservation.expected_envelope_transition_sequence,
+        revocation_epoch: reservation.revocation_epoch,
+        owner_end_attestation_ref: reservation.attestation_ref,
+        owner_end_nonce: reservation.nonce,
+      })
+      exactKeys(envelope, ['status', 'previous_oid', 'oid', 'transition_sequence', 'revocation_epoch', 'in_flight_command'], 'envelope_revoke_result')
+      assertOid(envelope.previous_oid, 'envelope_revoke_result.previous_oid', { zero: false })
+      assertOid(envelope.oid, 'envelope_revoke_result.oid', { zero: false })
+    } catch {
+      return releaseReconciliationRequired(reservation.release_id)
+    }
+    if (envelope.status !== 'REVOKED' || envelope.previous_oid !== reservation.expected_envelope_oid ||
+        envelope.oid === reservation.expected_envelope_oid ||
+        envelope.transition_sequence !== reservation.expected_envelope_transition_sequence + 1 ||
+        envelope.revocation_epoch !== reservation.revocation_epoch || envelope.in_flight_command !== false) {
+      return releaseReconciliationRequired(reservation.release_id)
+    }
+    const proof = stamp({
+      schema_version: 'envelope-revocation-proof/v1',
+      release_id: reservation.release_id,
+      lease_id: reservation.lease_id,
+      previous_oid: envelope.previous_oid,
+      oid: envelope.oid,
+      transition_sequence: envelope.transition_sequence,
+      revocation_epoch: envelope.revocation_epoch,
+      in_flight_command: false,
+      observed_at: reservation.updated_at,
+    })
+    validateEnvelopeRevocationProof(proof, reservation)
+    const timestamp = nowFrom(clock)
+    const leases = clone(snapshot.record.leases)
+    leases[lease.lease_id] = updateLease(lease, {
+      nonce: reservation.nonce,
+      updated_at: timestamp,
+      envelope_revocation_proof: proof,
+    })
+    const record = nextRegistryRecord({
+      current: snapshot.record,
+      writerCap,
+      nonce: reservation.nonce,
+      timestamp,
+      leases,
+      usedOwnerEndAttestations: clone(snapshot.record.used_owner_end_attestations),
+    })
+    try {
+      const result = await store.cas({ ref: LEASE_REF, expected_oid: snapshot.oid, record })
+      return result.status === 'STORED' ? result : releaseReconciliationRequired(reservation.release_id)
+    } catch {
+      return releaseReconciliationRequired(reservation.release_id)
+    }
+  }
+
+  const finalizeReservedRelease = async ({ snapshot: initialSnapshot, lease: initialLease, input }) => {
+    let snapshot = initialSnapshot
+    let lease = initialLease
     const reservation = lease.release_reservation
     validateReservedOwnerEndAttestation(input.attestation, lease, reservation)
     if (input.expected_envelope_oid !== reservation.expected_envelope_oid ||
@@ -1434,7 +1514,10 @@ export function createLeaseRegistry({ store, clock, writerCap = WRITER_CAP_V1, o
       return { status: 'HELD_EXECUTION_AUTHORITY', reason: 'RELEASE_RECONCILIATION_REQUIRED', reconcile_required: true, release_id: reservation.release_id }
     }
     if (!Object.hasOwn(lease, 'envelope_revocation_proof')) {
-      return { status: 'HELD_EXECUTION_AUTHORITY', reason: 'RELEASE_RECONCILIATION_REQUIRED', reconcile_required: true, release_id: reservation.release_id }
+      const recovered = await recoverReservedRevocationProof({ snapshot, lease })
+      if (recovered.status !== 'STORED') return recovered
+      snapshot = { oid: recovered.oid, record: recovered.record }
+      lease = recovered.record.leases[lease.lease_id]
     }
     validateEnvelopeRevocationProof(lease.envelope_revocation_proof, reservation)
     if (Object.hasOwn(snapshot.record.used_owner_end_attestations, reservation.attestation_ref)) {

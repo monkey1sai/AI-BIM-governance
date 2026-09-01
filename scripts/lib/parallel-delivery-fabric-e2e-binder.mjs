@@ -776,7 +776,7 @@ const validExecutionWindow = (value) => {
   if (keys.some((key) => !['started_at', 'finished_at'].includes(key))) return null
   const startedAt = first(value, ['started_at'])
   const finishedAt = first(value, ['finished_at'])
-  if (!isTimestamp(startedAt) || !isTimestamp(finishedAt) || finishedAt < startedAt) return null
+  if (!isTimestamp(startedAt) || !isTimestamp(finishedAt) || finishedAt <= startedAt) return null
   return { started_at: startedAt, finished_at: finishedAt }
 }
 
