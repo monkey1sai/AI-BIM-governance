@@ -39,18 +39,21 @@ export interface SessionActivityState {
   countdownStartedAt?: number;
 }
 
+type SessionTeardownCallback = (sessionId: string) => Promise<void> | void;
+
 export class SessionIdleReclaimService {
   private readonly idleTimeoutMs: number | null;
   private readonly countdownSeconds: number;
   private readonly checkIntervalMs: number;
   private readonly onCountdown?: (sessionId: string, remainingSeconds: number) => void;
   private readonly onCountdownCancelled?: (sessionId: string) => void;
-  private readonly onReclaimTeardown?: (sessionId: string) => Promise<void> | void;
+  private readonly onReclaimTeardown?: SessionTeardownCallback;
 
   private readonly sessionStates = new Map<string, SessionActivityState>();
   private readonly connectedPeers = new Map<string, Set<string>>();
   private readonly lastActivityAtBySession = new Map<string, number>();
   private readonly teardownInFlight = new Set<string>();
+  private readonly teardownRetryCallbacks = new Map<string, SessionTeardownCallback>();
   private timer: NodeJS.Timeout | null = null;
   private isRunning = false;
 
@@ -70,7 +73,7 @@ export class SessionIdleReclaimService {
    * Starts the periodic idle-check background loop.
    */
   start(): void {
-    if (this.isRunning || this.idleTimeoutMs === null) return;
+    if (this.isRunning || (this.idleTimeoutMs === null && this.teardownRetryCallbacks.size === 0)) return;
     this.isRunning = true;
     this.timer = setInterval(() => {
       try {
@@ -180,7 +183,7 @@ export class SessionIdleReclaimService {
    * Can be called manually in unit tests with simulated timestamps.
    */
   tick(now: number = Date.now()): void {
-    if (this.idleTimeoutMs === null) return;
+    if (this.idleTimeoutMs === null && this.teardownRetryCallbacks.size === 0) return;
     for (const [sessionId, state] of Array.from(this.sessionStates.entries())) {
       const retryingTeardown = state.isCountingDown && state.countdownRemainingSec <= 0;
       if (!this.hasConnectedPeer(sessionId) && !retryingTeardown && !this.teardownInFlight.has(sessionId)) {
@@ -216,7 +219,7 @@ export class SessionIdleReclaimService {
 
       if (!state.isCountingDown) {
         // Trigger countdown if idle timeout reached
-        if (inactiveDurationMs >= this.idleTimeoutMs) {
+        if (this.idleTimeoutMs !== null && inactiveDurationMs >= this.idleTimeoutMs) {
           state.isCountingDown = true;
           state.countdownStartedAt = now;
           state.countdownRemainingSec = this.countdownSeconds;
@@ -233,7 +236,8 @@ export class SessionIdleReclaimService {
           // close may leave the durable session in `closing`; the next tick must
           // be able to resume that exact teardown instead of orphaning it.
           try {
-            const teardown = this.onReclaimTeardown?.(sessionId);
+            const teardownCallback = this.teardownRetryCallbacks.get(sessionId) ?? this.onReclaimTeardown;
+            const teardown = teardownCallback?.(sessionId);
             if (teardown && typeof teardown.then === "function") {
               this.teardownInFlight.add(sessionId);
               void teardown
@@ -253,6 +257,32 @@ export class SessionIdleReclaimService {
         }
       }
     }
+    if (this.idleTimeoutMs === null && this.teardownRetryCallbacks.size === 0) this.stop();
+  }
+
+  /**
+   * Queues a durable close recovery that must retry even when idle reclaim is disabled.
+   */
+  queueTeardownRetry(sessionId: string, retry: SessionTeardownCallback): boolean {
+    if (!isSafeSessionId(sessionId)) return false;
+    let session;
+    try {
+      session = this.store.get(sessionId);
+    } catch {
+      return false;
+    }
+    if (!session || (session.status !== "closing" && session.status !== "closed")) return false;
+    const now = Date.now();
+    this.teardownRetryCallbacks.set(sessionId, retry);
+    this.sessionStates.set(sessionId, {
+      sessionId,
+      lastActivityAt: now,
+      isCountingDown: true,
+      countdownRemainingSec: 0,
+      countdownStartedAt: now - (this.countdownSeconds * 1000),
+    });
+    this.start();
+    return true;
   }
 
   connectPeer(sessionId: string, peerId: string, timestamp: number = Date.now()): boolean {
@@ -313,6 +343,7 @@ export class SessionIdleReclaimService {
   removeSession(sessionId: string): void {
     this.untrackConnectedSession(sessionId);
     this.lastActivityAtBySession.delete(sessionId);
+    this.teardownRetryCallbacks.delete(sessionId);
   }
 
   private untrackConnectedSession(sessionId: string): void {

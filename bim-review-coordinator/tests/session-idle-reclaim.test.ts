@@ -6,7 +6,7 @@ import request from "supertest";
 import { SessionStore } from "../src/services/sessionStore.js";
 import { SessionIdleReclaimService } from "../src/services/sessionIdleReclaimService.js";
 import { createCoordinatorApp } from "../src/app.js";
-import type { SessionEvent } from "../src/services/eventLog.js";
+import { EventLog, type SessionEvent } from "../src/services/eventLog.js";
 
 describe("SessionIdleReclaimService (session-lifecycle idle countdown & reclaim)", () => {
   let tmpDir: string;
@@ -553,5 +553,63 @@ describe("Coordinator App HTTP & Socket integration for Idle Reclaim", () => {
     expect(events.filter((event) => event.type === "sessionClosing")).toHaveLength(1);
     expect(events.filter((event) => event.type === "sessionClosed")).toHaveLength(1);
     expect(events.filter((event) => event.type === "kitInstanceReleased")).toHaveLength(1);
+  });
+
+  it("retries a transient startup close recovery failure without requiring another restart", async () => {
+    const createRes = await request(appInstance.app)
+      .post("/api/review-sessions")
+      .send({
+        project_id: "prj_restart_retry",
+        model_version_id: "mv_restart_retry",
+        created_by: "user_restart_retry",
+      });
+    const sessionId = createRes.body.session_id as string;
+    const checkpoint = {
+      checkpoint_id: "close_restart_retry",
+      expected_final_event_count: 0,
+    };
+    appInstance.store.update(sessionId, { status: "closed", close_checkpoint: checkpoint });
+    appInstance.eventLog.appendServerCloseCheckpoint(sessionId, "sessionClosing", {
+      final_events: 0,
+      reason: "operator_close",
+      actor: "operator:test",
+    }, checkpoint.checkpoint_id);
+    await appInstance.dispose();
+
+    const originalAppend = EventLog.prototype.appendServerCloseCheckpoint;
+    let failSessionClosedOnce = true;
+    const appendSpy = vi.spyOn(EventLog.prototype, "appendServerCloseCheckpoint").mockImplementation(function (this: EventLog,
+      id,
+      type,
+      payload,
+      checkpointId,
+    ) {
+      if (type === "sessionClosed" && failSessionClosedOnce) {
+        failSessionClosedOnce = false;
+        throw new Error("transient startup recovery failure");
+      }
+      return originalAppend.call(this, id, type, payload, checkpointId);
+    });
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    try {
+      appInstance = createCoordinatorApp({
+        sessionStoreDir: tmpSessionsDir,
+        eventLogDir: tmpEventsDir,
+      });
+      expect(appInstance.eventLog.list(sessionId).some((event) => event.type === "sessionClosed")).toBe(false);
+
+      appInstance.idleReclaimService.tick();
+
+      const events = appInstance.eventLog.list(sessionId);
+      expect(events.filter((event) => event.type === "sessionClosing")).toHaveLength(1);
+      expect(events.filter((event) => event.type === "sessionClosed")).toHaveLength(1);
+      expect(events.filter((event) => event.type === "kitInstanceReleased")).toHaveLength(1);
+      expect((events.find((event) => event.type === "sessionClosed")?.payload as { reason?: string }).reason)
+        .toBe("operator_close");
+    } finally {
+      appendSpy.mockRestore();
+      errorSpy.mockRestore();
+    }
   });
 });

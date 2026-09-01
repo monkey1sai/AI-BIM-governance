@@ -3,6 +3,7 @@ import { randomBytes } from "node:crypto";
 import http from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { isDeepStrictEqual } from "node:util";
 import cors from "cors";
 import express from "express";
 import { Server } from "socket.io";
@@ -787,15 +788,19 @@ export function createCoordinatorApp(
     const auditFields = reason ? { reason, ...(actor ? { actor } : {}) } : {};
     let closeCheckpoint = session.close_checkpoint;
     if (closeCheckpoint && session.status !== "closing" && session.status !== "closed") {
-      const persistedFinalEventCount = eventLog
+      const persistedFinalEvents = eventLog
         .list(session.session_id)
         .filter((event) => (
           event.type === "finalReviewEvent"
           && event.close_checkpoint_id === closeCheckpoint?.checkpoint_id
-        )).length;
+        ));
+      const payloadMatchesCheckpoint = (
+        finalEvents.length === closeCheckpoint.expected_final_event_count
+        && persistedFinalEvents.every((event, index) => isDeepStrictEqual(event.payload, finalEvents[index]))
+      );
       if (
-        persistedFinalEventCount < closeCheckpoint.expected_final_event_count
-        && finalEvents.length < closeCheckpoint.expected_final_event_count
+        persistedFinalEvents.length < closeCheckpoint.expected_final_event_count
+        && !payloadMatchesCheckpoint
       ) {
         closeCheckpoint = undefined;
       }
@@ -973,6 +978,21 @@ export function createCoordinatorApp(
       if (!recovered || recovered.status !== "closed") continue;
     } catch (error) {
       console.error(`[SessionIdleReclaim] Failed to recover close checkpoint for ${session.session_id}:`, error);
+      const queued = idleReclaimService.queueTeardownRetry(session.session_id, () => {
+        const recovered = closeReviewSessionInternal(session.session_id, {
+          reason,
+          actor,
+          resumeClosing: true,
+          resumeClosed: true,
+          retainIdleTracking: true,
+        });
+        if (!recovered || recovered.status !== "closed") {
+          throw new Error(`Close checkpoint recovery did not close session ${session.session_id}.`);
+        }
+      });
+      if (!queued) {
+        console.error(`[SessionIdleReclaim] Failed to queue close checkpoint recovery for ${session.session_id}.`);
+      }
     }
   }
   idleReclaimService.start();

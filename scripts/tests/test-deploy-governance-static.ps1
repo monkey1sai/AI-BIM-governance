@@ -101,6 +101,7 @@ Assert-Contains $hostKitCompose 'A4_INTERNAL_CONTEXT_TOKEN: ${A4_INTERNAL_CONTEX
 Assert-Contains $hostKitCompose ':/workspace/a4-conversion-artifacts:ro' 'host-kit must mount conversion artifacts read-only for mapping provenance'
 Assert-Contains $hostKitCompose 'A4_CONVERSION_ARTIFACTS_HOST_ROOT: ${A4_CONVERSION_ARTIFACTS_HOST_ROOT:-}' 'host-kit must pass the separately resolved host namespace'
 Assert-Contains $hostKitExample 'A4_INTERNAL_CONTEXT_TOKEN=' 'host-kit example must document an empty secret placeholder'
+Assert-Contains $hostKitExample 'SESSION_IDLE_TIMEOUT_MS=' 'host-kit example must expose the optional coordinator idle timeout used by canonical deploy'
 
 $clearUserSite = $launcher.IndexOf('Remove-Item Env:PYTHONNOUSERSITE')
 $importCheck = $launcher.IndexOf('import ifcopenshell, fastapi, uvicorn')

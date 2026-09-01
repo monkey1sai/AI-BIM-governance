@@ -1486,6 +1486,61 @@ describe("bim-review-coordinator", () => {
     }
   });
 
+  it("does not combine an abandoned close checkpoint with a different final event payload", async () => {
+    const app = makeApp();
+    const created = await request(app.app)
+      .post("/api/review-sessions")
+      .send({
+        project_id: "project_changed_close_payload",
+        model_version_id: "version_changed_close_payload",
+        created_by: "dev_user_changed_close_payload",
+      });
+    const sessionId = created.body.session_id as string;
+    const originalAppend = app.eventLog.appendServerCloseCheckpoint.bind(app.eventLog);
+    let failSecondFinalEventOnce = true;
+    const appendSpy = vi.spyOn(app.eventLog, "appendServerCloseCheckpoint").mockImplementation((id, type, payload, checkpointId) => {
+      if (type === "finalReviewEvent" && failSecondFinalEventOnce) {
+        const persisted = app.eventLog
+          .list(sessionId)
+          .filter((event) => event.type === "finalReviewEvent" && event.close_checkpoint_id === checkpointId);
+        if (persisted.length === 1) {
+          failSecondFinalEventOnce = false;
+          throw new Error("transient second final event append failure");
+        }
+      }
+      return originalAppend(id, type, payload, checkpointId);
+    });
+
+    try {
+      const firstPayload = [{ type: "oldAnnotation" }, { type: "oldMeasurement" }];
+      const firstClose = await request(app.app)
+        .post(`/api/review-sessions/${sessionId}/close`)
+        .send({ final_events: firstPayload });
+      expect(firstClose.status).toBe(500);
+      const abandonedCheckpoint = app.store.get(sessionId)?.close_checkpoint?.checkpoint_id;
+
+      const replacementPayload = [{ type: "newAnnotation" }, { type: "newMeasurement" }];
+      const replacementClose = await request(app.app)
+        .post(`/api/review-sessions/${sessionId}/close`)
+        .send({ final_events: replacementPayload });
+      expect(replacementClose.status).toBe(200);
+      expect(replacementClose.body.status).toBe("closed");
+      expect(replacementClose.body.close_checkpoint.checkpoint_id).not.toBe(abandonedCheckpoint);
+
+      const events = app.eventLog.list(sessionId);
+      const replacementEvents = events.filter((event) => (
+        event.type === "finalReviewEvent"
+        && event.close_checkpoint_id === replacementClose.body.close_checkpoint.checkpoint_id
+      ));
+      expect(replacementEvents.map((event) => event.payload)).toEqual(replacementPayload);
+      expect(events.filter((event) => (
+        event.type === "finalReviewEvent" && event.close_checkpoint_id === abandonedCheckpoint
+      )).map((event) => event.payload)).toEqual([firstPayload[0]]);
+    } finally {
+      appendSpy.mockRestore();
+    }
+  });
+
   it("resumes missing terminal audit when a closed session close request is retried", async () => {
     const app = makeApp();
     const created = await request(app.app)
