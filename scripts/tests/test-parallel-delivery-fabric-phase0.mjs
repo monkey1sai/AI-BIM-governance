@@ -412,7 +412,7 @@ test('Phase 0 has one canonical, inactive-until-attested delivery authority', ()
   assert.deepEqual(Object.keys(fabricRow.task_ledger).sort(), ['completed', 'total']);
   assert.deepEqual(fabricRow.task_ledger, taskCounts(read(`${FABRIC_CHANGE}/tasks.md`)),
     'lifecycle task counts must be derived from the canonical Fabric task list');
-  assert.equal(fabricRow.subject_commit, 'df227cc1e07cb0bb6a683ef4c6df6c9f22284529');
+  assert.equal(fabricRow.subject_commit, '24aa54d5aedba8a5f0774a095215b9f26d21e198');
   assert.equal(fabricRow.subject_binding, 'introduction');
   assert.equal(fabricRow.archive_debt, null);
   for (const reference of [

@@ -1,6 +1,6 @@
 # Parallel Session Board（多終端機／多 CLI 並行感知）
 
-多個 CLI 在同一 repo 開啟 session 時彼此原生不可見。本看板只是一層 best-effort 感知：記錄各 session 的 branch、worktree、任務與最近檔案；它不授權寫入、PR approval、merge 或 process termination。允許多個 writer 並行，但同一 branch 出現第二個 active writer 必須停工；機器隔離靠獨立 worktree、獨立 branch 與明確 touch-set，不以 writer 數量為 blocker。
+多個 CLI 在同一 repo 開啟 session 時彼此原生不可見。本看板只是一層 best-effort 感知：記錄各 session 的 branch、worktree、任務與最近檔案；它不授權寫入、PR approval、merge 或 process termination，也不取代 Lane 隔離、每個 task／branch 的單一 writer 與 touch-set fail-closed。repo 不因 writer 數量或另有 active session 就單獨阻擋無重疊 writer；同一 branch、同一 worktree 或 touch-set 重疊／未知一律停工排隊。
 
 ## 共用位置
 
@@ -18,7 +18,7 @@ node scripts/dev/agents-board.mjs done --agent <cli> --session <id>
 ```
 
 1. 開工先 `register`，保存回傳的 `session=<id>`。
-2. 編輯前 `status`，確認沒有同一 branch 的 active writer 或重疊 touch-set。只讀診斷 snapshot 使用 `status --no-prune`。
+2. 編輯前 `status`，檢視 active sessions 的 branch、worktree 與最近檔案候選。`recentFiles` 只保留最近最多 5 筆候選，可能截斷，不能證明完整 touch-set 或 admission；缺少 owner 宣告的完整 touch-set 或 Fabric scope 證據時，狀態為 UNKNOWN 並停工排隊。只讀診斷 snapshot 使用 `status --no-prune`。
 3. 任務或主要檔案改變時 `update`。
 4. 收工 `done`。看板失敗只降低感知，不得當成繞過安全 gate 的理由。
 
