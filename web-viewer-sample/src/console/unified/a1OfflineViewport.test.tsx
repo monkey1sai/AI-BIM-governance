@@ -75,11 +75,10 @@ describe("a1OfflineViewport (Task 3.1)", () => {
     await mount("a1");
 
     const handoffLink = container.querySelector<HTMLAnchorElement>("a[data-uc='live-handoff-link']");
-    if (handoffLink) {
-      expect(handoffLink.href).toContain("/ui/open?session=S-12345");
-      expect(handoffLink.target).toBe("_blank");
-      expect(handoffLink.rel).toContain("noopener");
-    }
+    expect(handoffLink).toBeTruthy();
+    expect(handoffLink!.href).toContain("/ui/open?session=S-12345");
+    expect(handoffLink!.target).toBe("_blank");
+    expect(handoffLink!.rel).toContain("noopener");
   });
 
   it("does not render any conversion trigger button on A1 workspace", async () => {
