@@ -777,7 +777,7 @@ export function createCoordinatorApp(
     let session = store.get(sessionId);
     if (!session) return null;
     if (
-      (session.status === "closed" && !options.resumeClosed)
+      (session.status === "closed" && (!options.resumeClosed || !session.close_checkpoint))
       || (session.status === "closing" && !options.resumeClosing)
     ) {
       return session;
@@ -794,8 +794,14 @@ export function createCoordinatorApp(
           event.type === "finalReviewEvent"
           && event.close_checkpoint_id === closeCheckpoint?.checkpoint_id
         ));
+      const hasVerifiablePrefix = (
+        persistedFinalEvents.length > 0
+        || closeCheckpoint.expected_final_event_count === 0
+      );
       const payloadMatchesCheckpoint = (
-        finalEvents.length === closeCheckpoint.expected_final_event_count
+        hasVerifiablePrefix
+        && persistedFinalEvents.length <= closeCheckpoint.expected_final_event_count
+        && finalEvents.length === closeCheckpoint.expected_final_event_count
         && persistedFinalEvents.every((event, index) => isDeepStrictEqual(event.payload, finalEvents[index]))
       );
       if (

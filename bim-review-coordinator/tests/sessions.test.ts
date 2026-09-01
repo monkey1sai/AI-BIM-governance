@@ -1139,6 +1139,29 @@ describe("bim-review-coordinator", () => {
     expect(secondClose.body.status).toBe("closed");
   });
 
+  it("does not synthesize a checkpoint or duplicate events for a legacy closed session", async () => {
+    const app = makeApp();
+    const created = await request(app.app)
+      .post("/api/review-sessions")
+      .send({
+        project_id: "project_legacy_closed",
+        model_version_id: "version_legacy_closed",
+        created_by: "dev_user_legacy_closed",
+      });
+    const sessionId = created.body.session_id as string;
+    app.store.update(sessionId, { status: "closed" });
+    const eventsBeforeRetry = app.eventLog.list(sessionId);
+
+    const retriedClose = await request(app.app)
+      .post(`/api/review-sessions/${sessionId}/close`)
+      .send({ reason: "late retry", final_events: [{ type: "lateFinal" }] });
+
+    expect(retriedClose.status).toBe(200);
+    expect(retriedClose.body.status).toBe("closed");
+    expect(retriedClose.body.close_checkpoint).toBeUndefined();
+    expect(app.eventLog.list(sessionId)).toEqual(eventsBeforeRetry);
+  });
+
   it("close resumes a closing session without duplicating its closing audit", async () => {
     const app = makeApp();
     const created = await request(app.app)
@@ -1486,7 +1509,7 @@ describe("bim-review-coordinator", () => {
     }
   });
 
-  it("does not combine an abandoned close checkpoint with a different final event payload", async () => {
+  it("does not reuse a zero-prefix close checkpoint for a different same-length payload", async () => {
     const app = makeApp();
     const created = await request(app.app)
       .post("/api/review-sessions")
@@ -1497,16 +1520,11 @@ describe("bim-review-coordinator", () => {
       });
     const sessionId = created.body.session_id as string;
     const originalAppend = app.eventLog.appendServerCloseCheckpoint.bind(app.eventLog);
-    let failSecondFinalEventOnce = true;
+    let failFirstFinalEventOnce = true;
     const appendSpy = vi.spyOn(app.eventLog, "appendServerCloseCheckpoint").mockImplementation((id, type, payload, checkpointId) => {
-      if (type === "finalReviewEvent" && failSecondFinalEventOnce) {
-        const persisted = app.eventLog
-          .list(sessionId)
-          .filter((event) => event.type === "finalReviewEvent" && event.close_checkpoint_id === checkpointId);
-        if (persisted.length === 1) {
-          failSecondFinalEventOnce = false;
-          throw new Error("transient second final event append failure");
-        }
+      if (type === "finalReviewEvent" && failFirstFinalEventOnce) {
+        failFirstFinalEventOnce = false;
+        throw new Error("transient first final event append failure");
       }
       return originalAppend(id, type, payload, checkpointId);
     });
@@ -1535,7 +1553,7 @@ describe("bim-review-coordinator", () => {
       expect(replacementEvents.map((event) => event.payload)).toEqual(replacementPayload);
       expect(events.filter((event) => (
         event.type === "finalReviewEvent" && event.close_checkpoint_id === abandonedCheckpoint
-      )).map((event) => event.payload)).toEqual([firstPayload[0]]);
+      )).map((event) => event.payload)).toEqual([]);
     } finally {
       appendSpy.mockRestore();
     }

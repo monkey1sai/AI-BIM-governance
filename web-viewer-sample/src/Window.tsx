@@ -1139,21 +1139,8 @@ export default class App extends React.Component<AppProps, AppState> {
         ) return;
         const now = Date.now();
         if (this.passiveIdleActivityRequestInFlight || now - this.lastIdleActivityReportAt < 5_000) return;
-        const socket = this.reviewSocket;
-        if (!socket) return;
         this.passiveIdleActivityRequestInFlight = true;
-        void socket.userActivity()
-            .then((acknowledged) => {
-                const currentAuthority = this.verifiedDataChannelAuthority;
-                if (
-                    !acknowledged
-                    || this.reviewSocket !== socket
-                    || !currentAuthority
-                    || currentAuthority !== authority
-                    || currentAuthority.connectionGeneration !== this.reviewSocketEpoch
-                ) return;
-                this.lastIdleActivityReportAt = Date.now();
-            })
+        void this._recordSessionActivity()
             .finally(() => {
                 this.passiveIdleActivityRequestInFlight = false;
             });
@@ -1207,8 +1194,32 @@ export default class App extends React.Component<AppProps, AppState> {
                 });
                 acknowledged = response?.ok === true && response.session_id === sessionId;
             }
-            if (!acknowledged) acknowledged = await (this.reviewSocket?.userActivity() ?? Promise.resolve(false));
-            if (!acknowledged) return false;
+            let fallbackSocket: ReviewSocketClient | null = null;
+            if (!acknowledged) {
+                fallbackSocket = this.reviewSocket;
+                if (fallbackSocket) {
+                    let socketDeadlineId: number | null = null;
+                    acknowledged = await Promise.race([
+                        fallbackSocket.userActivity().catch(() => false),
+                        new Promise<false>((resolve) => {
+                            socketDeadlineId = window.setTimeout(
+                                () => resolve(false),
+                                IDLE_ACTIVITY_TRANSPORT_TIMEOUT_MS,
+                            );
+                        }),
+                    ]).finally(() => {
+                        if (socketDeadlineId !== null) window.clearTimeout(socketDeadlineId);
+                    });
+                }
+            }
+            const finalAuthority = this.verifiedDataChannelAuthority;
+            if (
+                !acknowledged
+                || !finalAuthority
+                || finalAuthority !== authority
+                || finalAuthority.connectionGeneration !== this.reviewSocketEpoch
+                || (fallbackSocket !== null && fallbackSocket !== this.reviewSocket)
+            ) return false;
             this.lastIdleActivityReportAt = Date.now();
             if (this.componentMounted) this.setState({ idleCountdownRemainingSeconds: null });
             return true;
@@ -3682,10 +3693,7 @@ export default class App extends React.Component<AppProps, AppState> {
         };
         window.__structLog?.logger.setTraceId(ack.trace_id);
         this._appendReviewEvent(`Socket.IO trace 已驗證：${ack.trace_id}`);
-        if (this.state.webrtcLifecycleStatus === "started") {
-            this.reviewSocket?.setStreamReady(true);
-            this._queryLoadingState();
-        }
+        this._reportStreamReadinessIfFrame();
     }
 
     private _getReadyLoadingText(): string {
@@ -4244,9 +4252,18 @@ export default class App extends React.Component<AppProps, AppState> {
      * is not sent. Instead, we wait for the streamed application to send a
      * openedStageResult message.
      */
+    private _reportStreamReadinessIfFrame(streamGeneration = this.streamGeneration): void {
+        if (
+            !this._isCurrentStreamCallback(streamGeneration, "video-ready")
+            || this.state.webrtcLifecycleStatus !== "started"
+            || !this._hasRemoteVideoFrame()
+        ) return;
+        this.reviewSocket?.setStreamReady(true);
+        this._queryLoadingState();
+    }
+
         private _onStreamStarted(streamGeneration = this.streamGeneration): void {
             if (!this._isCurrentStreamCallback(streamGeneration, "started")) return;
-            this.reviewSocket?.setStreamReady(true);
         if (this.nativeOpenStagePoisonedGeneration === streamGeneration) {
             if (this.nativeOpenStageReplacementStartGeneration !== streamGeneration) {
                 this._appendReviewEvent("ignored same-lifecycle AppStreamer start; reconnect is required before native stage retry");
@@ -4255,7 +4272,10 @@ export default class App extends React.Component<AppProps, AppState> {
             this.nativeOpenStagePoisonedGeneration = null;
             this.nativeOpenStageReplacementStartGeneration = null;
         }
-        this.setState({ streamDiagnostic: null, webrtcLifecycleStatus: "started" });
+        this.setState(
+            { streamDiagnostic: null, webrtcLifecycleStatus: "started" },
+            () => this._reportStreamReadinessIfFrame(streamGeneration),
+        );
             this._clearStreamStartTimeout();
             if (isSpectatorStreamMode()) {
                 // viewer-edge-bim-server-console:spectator 沿用 primary 已載入的 Kit stage,
@@ -5926,6 +5946,7 @@ export default class App extends React.Component<AppProps, AppState> {
                     mediaport={this.state.activeStreamEndpoint.mediaport}
                     accessToken={this.props.accessToken}
                     onStarted={() => this._onStreamStarted(renderedStreamGeneration)}
+                    onVideoReady={() => this._reportStreamReadinessIfFrame(renderedStreamGeneration)}
                     onFocus={() => this._handleAppStreamFocus()}
                     onBlur={() => this._handleAppStreamBlur()}
                     style={{

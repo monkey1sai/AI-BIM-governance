@@ -328,12 +328,15 @@ describe("review session viewer leases", () => {
     const app = makeApp();
     const sessionId = await createSession(app);
     const lease = await claimPrimary(app, sessionId);
-    const finalEvents = [{ type: "annotationFinal", count: 1 }];
+    const finalEvents = [
+      { type: "annotationFinal", count: 1 },
+      { type: "measurementFinal", count: 1 },
+    ];
     const originalAppend = app.eventLog.appendServerCloseCheckpoint.bind(app.eventLog);
-    let failFinalEventOnce = true;
+    let finalEventAppendCount = 0;
     const appendSpy = vi.spyOn(app.eventLog, "appendServerCloseCheckpoint").mockImplementation((id, type, payload, checkpointId) => {
-      if (type === "finalReviewEvent" && failFinalEventOnce) {
-        failFinalEventOnce = false;
+      if (type === "finalReviewEvent") finalEventAppendCount += 1;
+      if (type === "finalReviewEvent" && finalEventAppendCount === 2) {
         throw new Error("transient final event append failure");
       }
       return originalAppend(id, type, payload, checkpointId);

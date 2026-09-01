@@ -195,6 +195,7 @@ interface AppStreamProps {
     accessToken: string
     style?: React.CSSProperties;
     onStarted: () => void;
+    onVideoReady?: () => void;
     onStreamFailed: () => void;
     onLoggedIn: (userId: string) => void;
     handleCustomEvent: (event: AppStreamCustomEvent) => void;
@@ -222,6 +223,7 @@ export default class AppStream extends Component<AppStreamProps, AppStreamState>
 
     static propTypes = {
         onStarted: PropTypes.func.isRequired,
+        onVideoReady: PropTypes.func,
         handleCustomEvent: PropTypes.func.isRequired,
         style: PropTypes.object
     };
@@ -543,6 +545,7 @@ export default class AppStream extends Component<AppStreamProps, AppStreamState>
                         tabIndex={-1}
                         playsInline muted
                         autoPlay
+                        onLoadedData={this.props.onVideoReady}
                     />
                     <audio id="remote-audio" muted></audio>
                     <h3 style={{ visibility: 'hidden' }} id="message-display">...</h3>

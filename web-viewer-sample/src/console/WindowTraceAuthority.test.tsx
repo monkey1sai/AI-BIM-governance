@@ -78,6 +78,9 @@ type AppInternals = {
     runtimeCommandTerminalClaims: Map<string, unknown>;
     _connectReviewSocket: (sessionId: string, traceId: string) => void;
     _onStreamStarted: (streamGeneration?: number) => void;
+    _reportStreamReadinessIfFrame: (streamGeneration?: number) => void;
+    _hasRemoteVideoFrame: () => boolean;
+    _queryLoadingState: () => void;
     _replaceStreamLifecycle: () => number;
     _pollForKitReady: () => void;
     _bootstrapHarnessSession: () => void;
@@ -96,6 +99,7 @@ type AppInternals = {
     _reportViewerActivity: () => void;
     _recordSessionActivity: () => Promise<boolean>;
     passiveIdleActivityRequestInFlight: boolean;
+    idleActivityRequestInFlight: boolean;
     lastIdleActivityReportAt: number;
     _currentViewerLogDeliveryAuthority: () => {
         reviewSessionId: string;
@@ -287,6 +291,7 @@ describe("Window Socket canonical trace authority", () => {
     it("reasserts stream readiness when a started stream replaces its review socket", () => {
         const app = readyApp();
         const target = internals(app);
+        vi.spyOn(target, "_hasRemoteVideoFrame").mockReturnValue(true);
         target._connectReviewSocket(SESSION_ID, TRACE_ID);
         const firstSocket = socketClient;
 
@@ -456,9 +461,11 @@ describe("Window Socket canonical trace authority", () => {
         });
     });
 
-    it("reports WebRTC readiness and clears it before replacing the stream lifecycle", () => {
+    it("reports WebRTC readiness only after a remote video frame and clears it before replacing the stream lifecycle", () => {
         const app = readyApp();
         const target = internals(app);
+        const hasRemoteVideoFrame = vi.spyOn(target, "_hasRemoteVideoFrame").mockReturnValue(false);
+        vi.spyOn(target, "_queryLoadingState").mockImplementation(() => undefined);
         vi.spyOn(app, "setState").mockImplementation((update: unknown, callback?: () => void) => {
             const patch = typeof update === "function"
                 ? (update as (state: Record<string, unknown>) => Record<string, unknown>)(target.state)
@@ -477,6 +484,10 @@ describe("Window Socket canonical trace authority", () => {
         ack("joinSession", candidate, { ok: true, trace_id: TRACE_ID });
 
         target._onStreamStarted();
+        expect(socketClient.setStreamReady).not.toHaveBeenCalledWith(true);
+
+        hasRemoteVideoFrame.mockReturnValue(true);
+        target._reportStreamReadinessIfFrame();
         expect(socketClient.setStreamReady).toHaveBeenCalledWith(true);
 
         target.state = { ...target.state, idleCountdownRemainingSeconds: 5 };
@@ -532,33 +543,32 @@ describe("Window Socket canonical trace authority", () => {
         expect(removeEventListener).toHaveBeenCalledWith("wheel", target._onViewerUserActivity);
     });
 
-    it("starts passive activity throttling only after a positive acknowledgement", async () => {
-        const app = readyApp();
+    it("uses lease-backed REST for passive activity and throttles only after a positive acknowledgement", async () => {
+        const app = authorizedApp({ synchronousSetState: true });
         const target = internals(app);
         target._connectReviewSocket(SESSION_ID, TRACE_ID);
         const candidate = vi.mocked(socketClient.join).mock.calls[0][0];
         handlers.onStatus?.("connected");
         ack("joinSession", candidate, { ok: true, trace_id: TRACE_ID });
-        let resolveActivity: (acknowledged: boolean) => void = () => undefined;
-        vi.mocked(socketClient.userActivity).mockImplementation(
-            () => new Promise<boolean>((resolve) => { resolveActivity = resolve; }),
-        );
+        vi.spyOn(target, "_ensureViewerLogDeliveryAuthority").mockResolvedValue({
+            reviewSessionId: SESSION_ID,
+            leaseId: "lease_passive_activity",
+            leaseToken: "lease_token_passive_activity",
+        });
+        vi.spyOn(target.coordinatorClient, "recordSessionActivity").mockResolvedValue({
+            ok: true,
+            session_id: SESSION_ID,
+        });
+        vi.mocked(socketClient.userActivity).mockReturnValue(new Promise(() => {}));
 
         target._reportViewerActivity();
         target._reportViewerActivity();
-        expect(socketClient.userActivity).toHaveBeenCalledTimes(1);
-        expect(target.lastIdleActivityReportAt).toBe(0);
-
-        resolveActivity(false);
-        await vi.waitFor(() => expect(target.passiveIdleActivityRequestInFlight).toBe(false));
-        expect(target.lastIdleActivityReportAt).toBe(0);
-        target._reportViewerActivity();
-        expect(socketClient.userActivity).toHaveBeenCalledTimes(2);
-
-        resolveActivity(true);
         await vi.waitFor(() => expect(target.lastIdleActivityReportAt).toBeGreaterThan(0));
+        expect(target.coordinatorClient.recordSessionActivity).toHaveBeenCalledTimes(1);
+        expect(socketClient.userActivity).not.toHaveBeenCalled();
+
         target._reportViewerActivity();
-        expect(socketClient.userActivity).toHaveBeenCalledTimes(2);
+        expect(target.coordinatorClient.recordSessionActivity).toHaveBeenCalledTimes(1);
     });
 
     it("accepts explicit keepalive through the trace-authorized socket when no REST lease is available", async () => {
@@ -622,6 +632,28 @@ describe("Window Socket canonical trace authority", () => {
             await expect(keepalive).resolves.toBe(true);
             expect(socketClient.userActivity).toHaveBeenCalledTimes(1);
             expect(target.state.idleCountdownRemainingSeconds).toBeNull();
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it("bounds a dropped socket acknowledgement instead of suppressing later keepalive attempts", async () => {
+        vi.useFakeTimers();
+        try {
+            const app = authorizedApp({ synchronousSetState: true });
+            const target = internals(app);
+            target._connectReviewSocket(SESSION_ID, TRACE_ID);
+            const candidate = vi.mocked(socketClient.join).mock.calls[0][0];
+            handlers.onStatus?.("connected");
+            ack("joinSession", candidate, { ok: true, trace_id: TRACE_ID, session_id: SESSION_ID });
+            vi.spyOn(target, "_ensureViewerLogDeliveryAuthority").mockResolvedValue(null);
+            vi.mocked(socketClient.userActivity).mockReturnValue(new Promise(() => {}));
+
+            const keepalive = target._recordSessionActivity();
+            await vi.advanceTimersByTimeAsync(1_000);
+
+            await expect(keepalive).resolves.toBe(false);
+            expect(target.idleActivityRequestInFlight).toBe(false);
         } finally {
             vi.useRealTimers();
         }
