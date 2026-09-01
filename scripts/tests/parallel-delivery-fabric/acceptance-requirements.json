@@ -1,6 +1,6 @@
 {
   "schema_version": "parallel-delivery-fabric-acceptance-requirements/v1",
-  "operator_doc_sha256": "7b1f19677094794bbdbc65130f8a87b0ccac6f4550340b597454919f5c143952",
+  "operator_doc_sha256": "d13f573366c54c72651dce7396727b85b04c05695a53418a48832224074eb8b3",
   "policy_mode": "NORMATIVE_ONLY",
   "activation_migration_prerequisites": [
     "settings_lease",

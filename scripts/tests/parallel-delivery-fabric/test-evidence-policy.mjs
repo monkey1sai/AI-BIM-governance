@@ -57,7 +57,7 @@ const DISTINCT_AUTHORITY_ROLES = [
 ];
 // This is intentionally a pinned canonical digest. A map edit is a normative
 // contract edit and must update this test and the operator document together.
-const EXPECTED_REQUIREMENTS_SHA256 = 'd3c1c7f9747f2de7abed7e4fe60cda3b7c13358085ad33fb8023729efe14e82f';
+const EXPECTED_REQUIREMENTS_SHA256 = '640b60482d332f6a2b6bff258f1b15a223fcfd34d385b8cce8ee18238c0a6d31';
 const ACCEPTANCE_IDS = Array.from({ length: 45 }, (_, index) => `AC-${String(index + 1).padStart(2, '0')}`);
 const REQUIREMENT_KEYS = [
   'activation_requirement',

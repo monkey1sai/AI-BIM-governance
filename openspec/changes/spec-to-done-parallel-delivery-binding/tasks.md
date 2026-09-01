@@ -24,7 +24,7 @@
 ## 5. 驗證與收斂
 
 - [x] 5.1 執行 affected Node/Python tests、agent contract/governance checks 與 OpenSpec strict validation
-  - Binding 10/10、state/schema 69 passed + 2 skipped、Fabric regression 90/90、ship contract 5/5、OpenSpec 77/77 與 self-referential bootstrap 通過。repo-wide agent-governance 仍在未被本 change 修改的 body/title-only CI concurrency assertion 失敗；固定 base 對應 workflow 與 assertion byte scope 未變，列為 inherited base failure，不宣稱該總 gate 通過。
+  - Fabric + binding + runtime readiness Node tests 326/326、autonomous review policy focused tests 18/18、Python schema/state tests 86 passed + 2 skipped、OpenSpec strict 77/77 通過。OpenSpec lifecycle 對帳為 current=10、archived=119；self-referential bootstrap 與 repo-wide agent-governance 皆通過。sandbox principal 曾因無法建立使用者 Temp 目錄產生 fixture setup errors，同一條 pytest 在已驗證主機擁有者環境重跑後完整通過；未變更 ACL 或測試。
 - [x] 5.2 執行 GitNexus detect-changes、確認 tracked scope，並在 closeout 前檢查 Fabric 母分支 drift
-  - Clean-HEAD 對固定 base 的 mapping 回報 MEDIUM（21 files／148 symbols／2 processes）；branch rename 後 incremental reindex 因 GitNexus 1.6.9 `Failed calling LOWER: Invalid UTF-8` 失敗，改用仍對齊 exact path/base commit 的既有 index 執行 compare，故不宣稱完整 GitNexus pass。最終 fresh fetch 後 local/remote Fabric 母分支仍為 `9e2bd84`；母 worktree 有未提交且與 operator doc 重疊的隔離變更，後續整合須顯式解衝突。
+  - GitNexus 1.6.9 曾在 exact worktree 對 fresh `origin/main` 的 compare 回報 CRITICAL（100 files／1,679 symbols／82 flows），使用者已明確接受該單一 PR 治理 blast radius。fresh fetch 後 `origin/main=a0ab706`，目前 branch 已吸收最新 Fabric 母分支 `a024a13`；closeout 尚須在最終 committed HEAD 重新索引並確認 exact tuple。
 - [x] 5.3 登錄 OpenSpec lifecycle ledger 與 NOW current projection，將 task/evidence snapshot 綁定已提交的 implementation subject

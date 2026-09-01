@@ -31,7 +31,7 @@
         "source_kind": { "type": "string", "const": "base_pinned_openspec" },
         "source_path": { "type": "string", "const": "openspec/changes/parallel-delivery-fabric/specs/parallel-delivery-fabric/spec.md" },
         "base_sha": { "type": "string", "const": "9e2bd849465b7b7b2d6b8866f1227dfb3edb60db" },
-        "source_sha256": { "type": "string", "const": "152515cf902663e88014ca4b4915b352312e2a2b50f900cc94d12224e75bcbba" }
+        "source_sha256": { "type": "string", "const": "fb3d378d17688721238516061ac8fe9d8e45d2d6d8566adb083269518367a0ae" }
       }
     },
     "external_check": {
