@@ -10,7 +10,7 @@ The binding still holds in substance: `git diff a0ab7065131914e548e1d79a1c683c8b
 d04de191ec48d4e34c6744f9201d5e37a4f11b6c -- . ":(exclude)docs/**" ":(exclude)openspec/**"` is
 empty, i.e. this evidence was captured against the deployment at `a0ab7065`, whose product tree
 is byte-identical to evidenceHead `d04de191`. See `task-6.1-deploy-tag-match.txt` for the tag
-message.
+message. **Reachability correction (PR #734 review T4, 2026-09-01):** `d04de191` was a branch-local working SHA later removed by the privacy re-root (leaky history was never pushed), so it is NOT resolvable from a fresh clone. The reachable anchors are: deployed commit `a0ab7065` (deploy tag `deploy-20260831-639237709604722760-001`, on `main`) and the published PR branch history (`ba9084f`…). The product-tree-identity claim is reproducible today as `git diff a0ab7065...<PR-head> -- . ":(exclude)docs/**" ":(exclude)openspec/**"` = empty on the PR branch. References to `d04de191` below are historical capture-time labels, not resolvable objects.
 
 Screenshots: `task-6.2-screen-*.png`, captured via Playwright CLI `page.screenshot`
 (`npx playwright screenshot`, no browser chrome/address bar), 1440x900 viewport,
