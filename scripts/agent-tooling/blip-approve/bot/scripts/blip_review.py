@@ -172,7 +172,27 @@ query($owner:String!, $name:String!, $number:Int!) {
         }
       }
       reviews(first:100) {
-        pageInfo { hasNextPage }
+        totalCount
+        pageInfo { hasNextPage endCursor }
+        nodes {
+          id databaseId state body submittedAt url
+          commit { oid }
+          author { __typename login ... on Bot { databaseId } }
+        }
+      }
+    }
+  }
+}
+"""
+
+REVIEWS_PAGE_QUERY = """
+query($owner:String!, $name:String!, $number:Int!, $reviewsCursor:String!) {
+  repository(owner:$owner, name:$name) {
+    pullRequest(number:$number) {
+      number headRefOid baseRefOid
+      reviews(first:100, after:$reviewsCursor) {
+        totalCount
+        pageInfo { hasNextPage endCursor }
         nodes {
           id databaseId state body submittedAt url
           commit { oid }
@@ -185,11 +205,72 @@ query($owner:String!, $name:String!, $number:Int!) {
 """
 
 
+def review_page(block: object, label: str) -> tuple[int, list[dict], bool, str | None]:
+    if not isinstance(block, dict):
+        raise SystemExit(f"{label} collection is missing or malformed; refusing incomplete state")
+    total_count = block.get("totalCount")
+    page_info = block.get("pageInfo")
+    nodes = block.get("nodes")
+    if not isinstance(total_count, int) or isinstance(total_count, bool) or total_count < 0:
+        raise SystemExit(f"{label} totalCount is missing or malformed; refusing incomplete state")
+    if not isinstance(page_info, dict) or not isinstance(page_info.get("hasNextPage"), bool):
+        raise SystemExit(f"{label} pageInfo is missing or malformed; refusing incomplete state")
+    if not isinstance(nodes, list) or any(not isinstance(node, dict) for node in nodes):
+        raise SystemExit(f"{label} nodes are missing or malformed; refusing incomplete state")
+    has_next_page = page_info["hasNextPage"]
+    end_cursor = page_info.get("endCursor")
+    if has_next_page and (not isinstance(end_cursor, str) or not end_cursor):
+        raise SystemExit(f"{label} has another page without a valid endCursor; refusing incomplete state")
+    if end_cursor is not None and not isinstance(end_cursor, str):
+        raise SystemExit(f"{label} endCursor is malformed; refusing incomplete state")
+    return total_count, nodes, has_next_page, end_cursor
+
+
 def fetch_pr(token: str, owner: str, name: str, number: int) -> dict:
     data = graphql(token, PR_QUERY, {"owner": owner, "name": name, "number": number})
     pr = ((data.get("data") or {}).get("repository") or {}).get("pullRequest")
     if not pr:
         raise SystemExit(f"PR {owner}/{name}#{number} not found (or the token cannot see it)")
+    expected_identity = (pr.get("number"), pr.get("baseRefOid"), pr.get("headRefOid"))
+    if expected_identity[0] != number or any(not isinstance(value, str) or not value for value in expected_identity[1:]):
+        raise SystemExit("PR identity is missing or malformed during review pagination")
+    total_count, all_reviews, has_next_page, cursor = review_page(pr.get("reviews"), "PR reviews")
+    seen_cursors: set[str] = set()
+    while has_next_page:
+        if cursor in seen_cursors:
+            raise SystemExit("PR reviews pagination repeated a cursor; refusing incomplete state")
+        seen_cursors.add(cursor)
+        page_data = graphql(
+            token,
+            REVIEWS_PAGE_QUERY,
+            {"owner": owner, "name": name, "number": number, "reviewsCursor": cursor},
+        )
+        page_pr = ((page_data.get("data") or {}).get("repository") or {}).get("pullRequest")
+        if not isinstance(page_pr, dict):
+            raise SystemExit(f"PR {owner}/{name}#{number} disappeared during review pagination")
+        page_identity = (page_pr.get("number"), page_pr.get("baseRefOid"), page_pr.get("headRefOid"))
+        if page_identity != expected_identity:
+            raise SystemExit("PR identity changed during review pagination; refusing mixed review state")
+        page_total, page_reviews, has_next_page, cursor = review_page(
+            page_pr.get("reviews"), "PR reviews"
+        )
+        if page_total != total_count:
+            raise SystemExit("PR reviews totalCount changed during pagination; refusing incomplete state")
+        all_reviews.extend(page_reviews)
+    review_ids = [review.get("id") for review in all_reviews]
+    if any(not isinstance(review_id, str) or not review_id for review_id in review_ids):
+        raise SystemExit("PR reviews contain a missing or malformed review id")
+    if len(set(review_ids)) != len(review_ids):
+        raise SystemExit("PR reviews pagination returned duplicate review ids; refusing incomplete state")
+    if len(all_reviews) != total_count:
+        raise SystemExit(
+            f"PR reviews pagination returned {len(all_reviews)} of {total_count} reviews; refusing incomplete state"
+        )
+    pr["reviews"] = {
+        "totalCount": total_count,
+        "pageInfo": {"hasNextPage": False, "endCursor": cursor},
+        "nodes": all_reviews,
+    }
     return pr
 
 
@@ -705,8 +786,6 @@ def validate_required_checks(pr: dict, policy: dict) -> dict:
 
 def validate_ship_attester_state(pr: dict, head: str) -> list[dict]:
     reviews = review_nodes(pr)
-    if len(reviews) >= 100:
-        raise SystemExit("Review collection is at capacity; post-submit readback would be incomplete")
     exact = [
         review
         for review in reviews

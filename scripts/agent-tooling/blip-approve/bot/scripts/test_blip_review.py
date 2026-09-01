@@ -381,6 +381,104 @@ def make_capability(
     return f"{encoded}.{signature}"
 
 
+def make_review_page(
+    review_ids: list[str],
+    *,
+    total_count: int,
+    has_next_page: bool,
+    end_cursor: str | None,
+    base: str = BASE,
+    head: str = HEAD,
+) -> dict:
+    return {
+        "data": {
+            "repository": {
+                "pullRequest": {
+                    "number": PR_NUMBER,
+                    "baseRefOid": base,
+                    "headRefOid": head,
+                    "reviews": {
+                        "totalCount": total_count,
+                        "pageInfo": {
+                            "hasNextPage": has_next_page,
+                            "endCursor": end_cursor,
+                        },
+                        "nodes": [{"id": review_id} for review_id in review_ids],
+                    },
+                }
+            }
+        }
+    }
+
+
+class ReviewPaginationTests(unittest.TestCase):
+    def test_fetch_pr_collects_more_than_one_hundred_reviews(self) -> None:
+        first_ids = [f"PRR_{index:03d}" for index in range(100)]
+        second_ids = ["PRR_100"]
+        with patch.object(
+            blip,
+            "graphql",
+            side_effect=[
+                make_review_page(
+                    first_ids,
+                    total_count=101,
+                    has_next_page=True,
+                    end_cursor="cursor-100",
+                ),
+                make_review_page(
+                    second_ids,
+                    total_count=101,
+                    has_next_page=False,
+                    end_cursor="cursor-101",
+                ),
+            ],
+        ) as graphql_mock:
+            pr = blip.fetch_pr("test-token", "monkey1sai", "AI-BIM-governance", PR_NUMBER)
+
+        self.assertEqual(len(blip.review_nodes(pr)), 101)
+        self.assertEqual(pr["reviews"]["totalCount"], 101)
+        self.assertEqual(
+            graphql_mock.call_args_list[1].args[2]["reviewsCursor"],
+            "cursor-100",
+        )
+
+    def test_fetch_pr_rejects_review_count_drift_between_pages(self) -> None:
+        with patch.object(
+            blip,
+            "graphql",
+            side_effect=[
+                make_review_page(
+                    [f"PRR_{index:03d}" for index in range(100)],
+                    total_count=101,
+                    has_next_page=True,
+                    end_cursor="cursor-100",
+                ),
+                make_review_page(
+                    ["PRR_100", "PRR_101"],
+                    total_count=102,
+                    has_next_page=False,
+                    end_cursor="cursor-102",
+                ),
+            ],
+        ):
+            with self.assertRaisesRegex(SystemExit, "totalCount changed"):
+                blip.fetch_pr("test-token", "monkey1sai", "AI-BIM-governance", PR_NUMBER)
+
+    def test_fetch_pr_rejects_missing_cursor_for_another_page(self) -> None:
+        with patch.object(
+            blip,
+            "graphql",
+            return_value=make_review_page(
+                [f"PRR_{index:03d}" for index in range(100)],
+                total_count=101,
+                has_next_page=True,
+                end_cursor=None,
+            ),
+        ):
+            with self.assertRaisesRegex(SystemExit, "valid endCursor"):
+                blip.fetch_pr("test-token", "monkey1sai", "AI-BIM-governance", PR_NUMBER)
+
+
 class CodexThreadFixTests(unittest.TestCase):
     def test_body_is_bounded_and_does_not_copy_thread_text(self) -> None:
         body = blip.codex_fix_body(511, BASE, HEAD, THREAD_ID)
@@ -1498,35 +1596,6 @@ class AutomatedApprovalTests(unittest.TestCase):
                     review_mode="human_critical",
                     human_critical_override=True,
                 )
-
-        capacity_pr = make_approval_pr(
-            reviews=[
-                make_review(
-                    "unrelated-reviewer",
-                    "COMMENTED",
-                    "non-blocking",
-                    review_id=10_000 + index,
-                )
-                for index in range(100)
-            ],
-            files=elevated_files,
-        )
-        with patch.object(
-            blip, "fetch_immutable_pr_snapshot", return_value=make_immutable_snapshot(capacity_pr)
-        ), patch.object(blip, "verify_identity", return_value=identity), self.assertRaisesRegex(
-            SystemExit, "at capacity"
-        ):
-            blip.approval_preflight(
-                token="token",
-                owner="monkey1sai",
-                name="AI-BIM-governance",
-                pr_number=PR_NUMBER,
-                pr=capacity_pr,
-                base=BASE,
-                head=HEAD,
-                review_mode="human_critical",
-                human_critical_override=True,
-            )
 
     def test_live_approval_posts_exact_commit_and_requires_validated_readback(self) -> None:
         token = "test-token-not-secret"
