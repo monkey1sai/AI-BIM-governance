@@ -128,9 +128,11 @@ function barEnum(text, label) {
 }
 
 function terminalEnum(section) {
-  const clause = findClause(section.body, (value) => value.includes('terminal class') && value.includes('only allow'), 'closed terminal class');
-  const encoded = clause.match(/terminal class\s+SHALL only allow\s+(.+)$/u);
-  assert.ok(encoded, 'closed terminal class must expose its enum after only allow');
+  const clause = findClause(section.body,
+    (value) => value.includes('terminal class') && /(?:only allow|SHALL只允許)/u.test(value),
+    'closed terminal class');
+  const encoded = clause.match(/terminal class\s+SHALL(?: only allow|只允許)\s+(.+)$/u);
+  assert.ok(encoded, 'closed terminal class must expose its enum after its closed allow clause');
   return codeTokens(encoded[1]);
 }
 
@@ -255,6 +257,29 @@ function machineOnlyPathErrors(markdown) {
   return premature.length === 0 ? [] : ['machine_only_before_autonomous'];
 }
 
+function activationAuthorityErrors(markdown, source) {
+  const errors = [];
+  const require = (pattern, code) => {
+    if (!pattern.test(markdown)) errors.push(code);
+  };
+  require(/external (?:machine )?trust root|external trust-root/iu, 'external_trust_root_missing');
+  require(/exact-head (?:machine gate|machine gates|path|merge)|exact tuple/iu, 'exact_head_authority_missing');
+  require(/REST (?:endpoint|merge|CAS|compare-and-swap)/iu, 'rest_cas_missing');
+  require(/(?:--admin|admin bypass|no-admin).*(?:bypass|forbid|禁)|不得.*(?:--admin|bypass)/iu, 'admin_bypass_guard_missing');
+  require(/activation_canary/iu, 'activation_canary_missing');
+  require(/activation_closure/iu, 'activation_closure_missing');
+  require(/(?:exact(?:-commit)? delivery|exact delivery)/iu, 'exact_delivery_missing');
+  require(/settings (?:reread|維持相等)|authoritative reread/iu, 'settings_reread_missing');
+  require(/rollback|回滾/iu, 'rollback_missing');
+  if (source === 'tasks') {
+    require(/7\.7[^\n]*activation_canary[^\n]*machine-only REST merge[^\n]*exact delivery[^\n]*activation_closure/iu,
+      'canary_task_incomplete');
+    require(/7\.8[^\n]*REST CAS[^\n]*exact delivery[^\n]*DELIVERED[^\n]*settings reread[^\n]*AUTONOMOUS_ACTIVE[^\n]*rollback[^\n]*HELD/iu,
+      'closure_task_incomplete');
+  }
+  return errors;
+}
+
 function deltaRequirementHeadings(markdown) {
   const headings = [];
   let kind = null;
@@ -366,36 +391,36 @@ test('Phase 0 has one canonical, inactive-until-attested delivery authority', ()
   const reviewSpec = read('openspec/changes/autonomous-linux-delivery/specs/pull-request-review-agent/spec.md');
   const governanceSpec = read('openspec/changes/autonomous-linux-delivery/specs/ai-coding-governance/spec.md');
 
-  const classificationRequirement = requirement(autonomousSpec, 'Every protected-branch PR SHALL belong to one closed, record-gated class');
-  assertExactEnum(barEnum(classificationRequirement.body, 'promotion mode'), PROMOTION_MODES, 'promotion modes');
-  assert.ok(classificationRequirement.body.includes('mutually exclusive') && classificationRequirement.body.includes('不得中途切換'),
-    'promotion mode must not switch after exact tuple binding');
+  const classificationRequirement = requirement(autonomousSpec, 'Every protected-branch PR SHALL belong to one closed machine-governed class');
+  for (const expected of ['activation_canary', 'activation_closure', 'release_hotfix', 'exact tuple', 'fail closed']) {
+    assert.ok(classificationRequirement.body.includes(expected), `closed classifier must retain ${expected}`);
+  }
   const terminalRequirement = requirement(autonomousSpec, 'Delivery transaction SHALL use a closed phase, terminal-class and reason-code schema');
   assertExactEnum(terminalEnum(terminalRequirement), TERMINAL_CLASSES, 'external terminal classes');
   const terminalScenario = scenario(terminalRequirement, 'Internal reason被發布成未知terminal state');
   const terminalWhen = findClause(terminalScenario.body, (value) => value.startsWith('- **WHEN**'), 'terminal invalid WHEN');
-  assert.ok(codeTokens(terminalWhen).includes('STACK_*'), 'STACK_* must be rejected as an external terminal value');
-  assert.ok(!terminalEnum(terminalRequirement).some((value) => value.startsWith('STACK_')),
-    'closed external terminal set must exclude STACK_*');
+  for (const internalReason of ['MERGE_OUTCOME_UNVERIFIED', 'MERGED_NOT_DELIVERED', 'DELIVERY_PENDING_FIXPOINT']) {
+    assert.ok(codeTokens(terminalWhen).includes(internalReason), `${internalReason} must be rejected as an external terminal value`);
+  }
+  assert.ok(!terminalEnum(terminalRequirement).some((value) => value.includes('_')),
+    'closed external terminal set must exclude internal reason codes');
 
   const autonomousActivation = requirement(autonomousSpec, 'Activation SHALL add and attest machine authority before removing human requirements');
-  assertExactEnum(arrowEnum(autonomousActivation.body, 'phase enum'), CANONICAL_PHASES, 'active autonomous review phases');
+  const activationPhases = codeTokens(requirementProse(autonomousActivation))
+    .filter((token) => CANONICAL_PHASES.includes(token));
+  assertExactEnum([...new Set(activationPhases)], CANONICAL_PHASES, 'active autonomous review phases');
   const autonomousActivationProse = requirementProse(autonomousActivation);
-  for (const expected of ['external CheckRun', 'external-settings lease', 'rollback snapshot', 'add-before-remove', 'authoritative reread']) {
+  for (const expected of ['settings lease', 'rollback snapshot', 'activation_canary', 'activation_closure', 'authoritative reread']) {
     assert.ok(autonomousActivationProse.includes(expected), `CUTOVER_ARMED must require ${expected}`);
   }
-
-  const reviewMigration = requirement(reviewSpec, 'Counted review retirement SHALL be add-before-remove and record-gated');
-  const externalCheckScenario = scenario(reviewMigration, 'The external check is not active');
-  const externalCheckThen = findClause(externalCheckScenario.body, (value) => value.startsWith('- **THEN**'), 'external check inactive THEN');
-  assert.ok(externalCheckThen.includes('counted review SHALL remain live'),
-    'old counted review remains live until source-pinned external check is active');
-  const governanceMigration = requirement(governanceSpec, 'Autonomous review activation SHALL preserve the live counted review until attested');
-  assert.ok(governanceMigration.body.includes('add-before-remove') && governanceMigration.body.includes('source-pinned external CheckRun'),
-    'governance projection must preserve the source-pinned add-before-remove contract');
-
-  assert.ok(autonomousProposal.includes('single_pr|direct_stack') && autonomousDesign.includes('byte-frozen') && autonomousTasks.includes('Superseded by `parallel-delivery-fabric`'),
-    'autonomous-delivery delta must carry the reconciled promotion and lifecycle contract');
+  assert.ok(reviewSpec.includes('Review Disposition Agent') && /exact[- ]head/iu.test(reviewSpec),
+    'review projection must retain the exact-head Review Disposition Agent contract');
+  assert.ok(governanceSpec.includes('machine') && governanceSpec.includes('exact-head'),
+    'governance projection must retain exact-head machine authority');
+  assert.ok(autonomousProposal.includes('external machine trust root')
+      && autonomousDesign.includes('exact-head machine gate')
+      && autonomousTasks.includes('activation_closure'),
+    'autonomous-delivery delta must carry the landed machine-authority and activation-closure contract');
 
   const lifecycleLedger = JSON.parse(read('openspec/lifecycle-ledger.json'));
   const fabricRows = lifecycleLedger.changes.filter(({ id }) => id === 'parallel-delivery-fabric');
@@ -457,19 +482,19 @@ test('structured Phase 0 parser rejects legacy activation fixtures without runti
   });
 });
 
-test('activation sources keep every CUTOVER and CANARY clause from retiring counted review early', () => {
+test('activation sources independently bind external exact-head authority and rollback', () => {
   const activationTasks = headingSection(
     read('openspec/changes/autonomous-linux-delivery/tasks.md'),
     '## 7. Self-referential bootstrap 與一次性 activation',
   );
   const sourceErrors = {
-    design: activationRetirementErrors(read('openspec/changes/autonomous-linux-delivery/design.md')),
-    specification: activationRetirementErrors(read('openspec/changes/autonomous-linux-delivery/specs/autonomous-linux-delivery/spec.md')),
-    tasks: activationRetirementErrors(activationTasks),
+    design: activationAuthorityErrors(read('openspec/changes/autonomous-linux-delivery/design.md'), 'design'),
+    specification: activationAuthorityErrors(read('openspec/changes/autonomous-linux-delivery/specs/autonomous-linux-delivery/spec.md'), 'specification'),
+    tasks: activationAuthorityErrors(read('openspec/changes/autonomous-linux-delivery/tasks.md'), 'tasks'),
   };
 
   assert.deepEqual(sourceErrors, { design: [], specification: [], tasks: [] },
-    'every phase/guard clause must preserve counted review until a complete AUTONOMOUS_ACTIVE retirement guard');
+    'each activation source must independently preserve trust-root, exact-head CAS, closure, delivery, reread, and rollback semantics');
 });
 
 test('activation guard rejects hostile CUTOVER, CANARY, and incomplete AUTONOMOUS retirement fixtures', () => {
@@ -488,21 +513,6 @@ test('activation guard rejects hostile CUTOVER, CANARY, and incomplete AUTONOMOU
   assert.deepEqual(activationRetirementErrors(incompleteAutonomousFixture), [
     'retirement_guard_incomplete',
   ]);
-});
-
-test('activation sources keep CUTOVER and CANARY dual-gated until AUTONOMOUS_ACTIVE', () => {
-  const activationTasks = headingSection(
-    read('openspec/changes/autonomous-linux-delivery/tasks.md'),
-    '## 7. Self-referential bootstrap 與一次性 activation',
-  );
-  const sourceErrors = {
-    design: canaryDualGateErrors(read('openspec/changes/autonomous-linux-delivery/design.md')),
-    specification: canaryDualGateErrors(read('openspec/changes/autonomous-linux-delivery/specs/autonomous-linux-delivery/spec.md')),
-    tasks: canaryDualGateErrors(activationTasks),
-  };
-
-  assert.deepEqual(sourceErrors, { design: [], specification: [], tasks: [] },
-    'CUTOVER/CANARY wording must keep both the counted review and source-pinned check, without a machine-only or review-bypass path');
 });
 
 test('canary dual-gate collector rejects hostile machine-only and review-bypass fixtures', () => {
@@ -527,18 +537,7 @@ test('canary dual-gate collector rejects a sink-enabled hostile fixture before A
   ]);
 });
 
-test('machine-only wording is permitted only after AUTONOMOUS_ACTIVE', () => {
-  const activationTasks = headingSection(
-    read('openspec/changes/autonomous-linux-delivery/tasks.md'),
-    '## 7. Self-referential bootstrap 與一次性 activation',
-  );
-  const sourceErrors = {
-    design: machineOnlyPathErrors(read('openspec/changes/autonomous-linux-delivery/design.md')),
-    specification: machineOnlyPathErrors(read('openspec/changes/autonomous-linux-delivery/specs/autonomous-linux-delivery/spec.md')),
-    tasks: machineOnlyPathErrors(activationTasks),
-  };
-
-  assert.deepEqual(sourceErrors, { design: [], specification: [], tasks: [] });
+test('machine-only hostile fixture remains rejected before an authenticated activation path', () => {
   assert.deepEqual(machineOnlyPathErrors('`CANARY_ACTIVE` may use a machine-only exact-head path.'), [
     'machine_only_before_autonomous',
   ]);
