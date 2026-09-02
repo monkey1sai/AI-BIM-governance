@@ -224,8 +224,19 @@ const validLeaseSnapshot = (value, planId) => {
   if (value.record === null) return value
   try {
     const record = parseSessionLeaseRegistry(value.record)
-    const leases = Object.fromEntries(Object.entries(record.leases).filter(([, lease]) => lease.plan_id === planId))
-    return deepFreeze({ oid: value.oid, record: { ...record, leases } })
+    // Every plan-owned collection is projected, and the projection is re-authenticated so
+    // it neither leaks another plan's state nor fails a consumer's registry parse.
+    const ownedByPlan = (entry) => entry?.plan_id === planId
+    const leases = Object.fromEntries(Object.entries(record.leases).filter(([, lease]) => ownedByPlan(lease)))
+    const retainedResources = Object.fromEntries(Object.entries(record.retained_resources).filter(([, stub]) => ownedByPlan(stub)))
+    const drainingPlans = Object.fromEntries(Object.entries(record.draining_plans).filter(([, drain]) => ownedByPlan(drain)))
+    const usedOwnerEndAttestations = Object.fromEntries(Object.entries(record.used_owner_end_attestations)
+      .filter(([, used]) => Object.hasOwn(leases, used.lease_id) || Object.hasOwn(retainedResources, used.lease_id)))
+    const { canonical_digest: sourceDigest, ...unsigned } = {
+      ...record, leases, retained_resources: retainedResources, draining_plans: drainingPlans, used_owner_end_attestations: usedOwnerEndAttestations,
+    }
+    const projected = parseSessionLeaseRegistry({ ...unsigned, canonical_digest: digestCanonical(unsigned) })
+    return deepFreeze({ oid: value.oid, record: projected, projection: { scope: 'plan', plan_id: planId, source_oid: value.oid, source_digest: sourceDigest } })
   } catch { return undefined }
 }
 

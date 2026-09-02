@@ -17,6 +17,7 @@ import {
 import { evaluateAdmission } from '../../lib/parallel-delivery-fabric-admission.mjs'
 
 import { FABRIC_SCHEMA_VERSION, canonicalize, digestCanonical, normalizeScopeResource } from '../../lib/parallel-delivery-fabric-contract.mjs'
+import { createParallelDeliveryFabric } from '../../lib/parallel-delivery-fabric.mjs'
 
 const SHA1 = 'a'.repeat(40)
 const SHA256 = 'b'.repeat(64)
@@ -515,6 +516,97 @@ test('P2 regression — command journal capacity is bounded without breaking com
   const snapshot = await store.read(store.refs.commandJournal)
   assert.equal(Object.keys(snapshot.record.receipts).length, 2)
   assert.equal(Object.hasOwn(snapshot.record.receipts, requests[0].journal_key), false)
+  // An archived command key can never re-enter execution through a fresh reservation.
+  assert.deepEqual(await journal.reserve(requests[0]), committed)
+  await assert.rejects(journal.reserve({ ...requests[0], command_id: 'command:bounded-other' }), (error) => error?.detail === 'command_id_mismatch')
+  assert.equal(Object.keys((await store.read(store.refs.commandJournal)).record.receipts).length, 2)
+})
+
+test('P2 regression — crossing the live-record threshold compacts released leases instead of blocking a disjoint writer', async () => {
+  const git = createInMemoryGit()
+  git.blobs.set(SEEDED_PLAN_OID, SEEDED_PLAN_BLOB)
+  git.refs.set('refs/ai-bim/delivery-plans', SEEDED_PLAN_OID)
+  const clock = createClock()
+  const store = createGitCasStore({ git, commonDir: 'C:/fake/common-dir' })
+  const envelope = createSequencedEnvelopePort()
+  const attestor = createTrustedAttestor()
+  const leaseRegistry = createLeaseRegistry({
+    store, clock, writerCap: 2, ownerEndAttestor: attestor, executionEnvelope: envelope, retainedReleasedLeases: 64, liveLeaseCompactionThreshold: 1,
+  })
+  await handOff({ leaseRegistry, store, envelope, clock }, 'lease:threshold-a', { resource_keys: ['path:src/threshold-a.mjs'] }, 'threshold-a')
+  let inspected = await leaseRegistry.inspect()
+  assert.equal(inspected.record.leases['lease:threshold-a'].state, 'RELEASED')
+  clock.set('2026-08-29T00:01:00.000Z')
+  const admitted = await leaseRegistry.admit(makeRequest(store, {
+    lease_id: 'lease:threshold-b', owner_session: 'session:threshold-b', provider_session_id: 'provider:threshold-b',
+    execution_context_id: 'context:threshold-b', worktree_id: 'worktree:threshold-b', branch: 'codex/threshold-b',
+    resource_keys: ['path:src/threshold-b.mjs'], nonce: NONCE('threshold-b-admit'),
+  }))
+  assert.equal(admitted.status, 'ADMITTED', JSON.stringify(admitted))
+  inspected = await leaseRegistry.inspect()
+  assert.equal(Object.hasOwn(inspected.record.leases, 'lease:threshold-a'), false)
+  assert.deepEqual(Object.keys(inspected.record.retained_resources), ['lease:threshold-a'])
+  assert.equal(inspected.record.leases['lease:threshold-b'].state, 'ACTIVE')
+  assert.throws(() => createLeaseRegistry({ store, clock, writerCap: 2, liveLeaseCompactionThreshold: 0 }),
+    (error) => error?.detail === 'live_lease_compaction_threshold_out_of_range')
+})
+
+test('P2 regression — Fabric inspect returns a re-authenticated plan-scoped lease projection', async () => {
+  const git = createInMemoryGit()
+  git.blobs.set(SEEDED_PLAN_OID, SEEDED_PLAN_BLOB)
+  git.refs.set('refs/ai-bim/delivery-plans', SEEDED_PLAN_OID)
+  const clock = createClock()
+  const store = createGitCasStore({ git, commonDir: 'C:/fake/common-dir' })
+  const envelope = createSequencedEnvelopePort()
+  const attestor = createTrustedAttestor()
+  const leaseRegistry = createLeaseRegistry({
+    store, clock, writerCap: 2, ownerEndAttestor: attestor, executionEnvelope: envelope, retainedReleasedLeases: 1,
+  })
+  const fixture = { leaseRegistry, store, envelope, clock }
+  await handOff(fixture, 'lease:projection-a', { resource_keys: ['path:src/projection-a.mjs'] }, 'projection-a')
+  clock.set('2026-08-29T00:01:00.000Z')
+  await handOff(fixture, 'lease:projection-b', {
+    owner_session: 'session:projection-b', provider_session_id: 'provider:projection-b', execution_context_id: 'context:projection-b',
+    worktree_id: 'worktree:projection-b', branch: 'codex/projection-b', resource_keys: ['path:src/projection-b.mjs'],
+  }, 'projection-b')
+  const inspected = await leaseRegistry.inspect()
+  const ownStub = inspected.record.retained_resources['lease:projection-a']
+  const [ownAttestationRef, ownAttestation] = Object.entries(inspected.record.used_owner_end_attestations)[0]
+  // Another plan's retained truth and consumed attestations live in the same registry record.
+  const { canonical_digest: _digest, ...unsigned } = {
+    ...inspected.record,
+    retained_resources: {
+      ...inspected.record.retained_resources,
+      'lease:other': { ...ownStub, lease_id: 'lease:other', plan_id: 'plan:other', branch: 'codex/other', worktree_id: 'worktree:other', resource_keys: ['path:src/other.mjs'], scope_digest: scopeDigestFromResourceKeys(['path:src/other.mjs']) },
+    },
+    used_owner_end_attestations: {
+      ...inspected.record.used_owner_end_attestations,
+      'attestation:other-end': { ...ownAttestation, lease_id: 'lease:other', nonce: NONCE('other-end'), release_id: 'release:other' },
+    },
+  }
+  const crafted = { ...unsigned, canonical_digest: digestCanonical(unsigned) }
+  parseSessionLeaseRegistry(crafted)
+  const ports = {
+    commandJournal: { read: async () => null, reserve: async () => ({}), commit: async () => ({}) },
+    planRegistry: { submit: async () => ({}), validateGeneration: async () => ({}), inspect: async () => ({ oid: '0'.repeat(40), record: null }) },
+    leaseRegistry: {
+      admit: async () => ({}), validateActive: async () => ({}), validateDependencies: async () => ({}), reconcileTimeout: async () => ({}),
+      drainPlan: async () => ({}), release: async () => ({}), releaseRetainedResources: async () => ({}),
+      inspect: async () => ({ oid: inspected.oid, record: crafted }),
+    },
+    execution: { advance: () => ({}) },
+    providerAdapters: { codex: { preflight: () => ({}) }, claude: { preflight: () => ({}) } },
+  }
+  const result = await createParallelDeliveryFabric(ports).inspect('plan:one')
+  assert.equal(result.status, undefined, JSON.stringify(result))
+  assert.deepEqual(result.leases.projection, { scope: 'plan', plan_id: 'plan:one', source_oid: inspected.oid, source_digest: crafted.canonical_digest })
+  assert.deepEqual(Object.keys(result.leases.record.retained_resources), ['lease:projection-a'])
+  assert.deepEqual(Object.keys(result.leases.record.leases), ['lease:projection-b'])
+  assert.equal(Object.hasOwn(result.leases.record.used_owner_end_attestations, 'attestation:other-end'), false)
+  assert.equal(Object.hasOwn(result.leases.record.used_owner_end_attestations, ownAttestationRef), true)
+  assert.notEqual(result.leases.record.canonical_digest, crafted.canonical_digest)
+  // The projection authenticates on its own: a consumer can pass it straight back through the registry parser.
+  assert.doesNotThrow(() => parseSessionLeaseRegistry(structuredClone(result.leases.record)))
 })
 
 test('AC-01 — cross-provider disjoint writers are admitted', async () => {

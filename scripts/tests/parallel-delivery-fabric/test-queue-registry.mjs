@@ -254,6 +254,44 @@ test('P2 regression — a cancelled candidate mapping is terminal and cannot be 
   assert.equal(store.calls.filter((call) => call.kind === 'cas').length, casCalls)
 })
 
+test('P2 regression — terminal queue-operation receipts rotate into a per-mapping archive and keep replay truth', async () => {
+  const store = createLegacyStore()
+  const leases = createLeaseRegistry({ store, clock: createClock(), writerCap: 2 })
+  await leases.admit(legacyLeaseRequest())
+  const second = await leases.admit(legacyLeaseRequest({
+    lease_id: 'lease:two', owner_session: 'session:queue-two', provider_session_id: 'provider:queue-two',
+    execution_context_id: 'context:queue-two', context_attestation_ref: 'attestation:queue-two',
+    worktree_id: 'worktree:queue-two', branch: 'codex/queue-two', nonce: NONCE('queue-two'),
+    scope_digest: canonicalDigest([{ kind: 'runtime', resource_key: 'resource:kit-runtime-two' }]),
+    resource_keys: ['runtime:resource:kit-runtime-two'],
+  }))
+  assert.equal(second.status, 'ADMITTED', JSON.stringify(second))
+  const queue = createQueueMappingRegistry({ store, clock: createClock(), operationLimit: 2 })
+  const reserved = await queue.reserve(reserveRequest())
+  assert.equal(reserved.status, 'SHADOW_QUEUE_MAPPING_STORED')
+  const cancelled = await queue.reconcileCancelled(cancellationRequest({ expected_oid: reserved.registry_oid }))
+  assert.equal(cancelled.status, 'SHADOW_QUEUE_CANCELLATION_RECORDED')
+  assert.equal(Object.keys(store.snapshot(QUEUE_REF).record.used_queue_operations).length, 2)
+  const secondSource = { ...source(), resource_key: 'runtime:resource:kit-runtime-two' }
+  const rotated = await queue.reserve(reserveRequest({
+    expected_oid: cancelled.registry_oid, operation_id: 'operation:queue-reserve-two', nonce: NONCE('queue-reserve-two'),
+    candidate_id: 'candidate:two', run_id: 'run:two', lease_id: 'lease:two', resource_key: 'runtime:resource:kit-runtime-two',
+    source: secondSource, source_digest: canonicalDigest(secondSource),
+  }))
+  assert.equal(rotated.status, 'SHADOW_QUEUE_MAPPING_STORED', JSON.stringify(rotated))
+  const live = store.snapshot(QUEUE_REF).record
+  assert.deepEqual(Object.keys(live.used_queue_operations), ['operation:queue-reserve-two'])
+  assert.deepEqual(Object.keys(live.queue_mappings), ['candidate:two'])
+  // The archived cycle still answers terminal and replay checks for its mapping.
+  expectHeld(await queue.reserve(reserveRequest({
+    expected_oid: rotated.registry_oid, operation_id: 'operation:queue-rereserve-one', nonce: NONCE('queue-rereserve-one'),
+  })), 'MAPPING_TERMINAL')
+  expectHeld(await queue.reserve(reserveRequest({ expected_oid: rotated.registry_oid })), 'NONCE_REPLAY')
+  expectHeld(await queue.reserve(reserveRequest({ expected_oid: rotated.registry_oid, nonce: NONCE('queue-fresh-nonce') })), 'OPERATION_REPLAY')
+  assert.throws(() => createQueueMappingRegistry({ store, clock: createClock(), operationLimit: 1 }),
+    (error) => error?.detail === 'queue_operation_limit_invalid')
+})
+
 test('AC-30 — same-OID reserve race has one winner and preserves the loser tuple', async () => {
   const store = createLegacyStore()
   const leases = createLeaseRegistry({ store, clock: createClock(), writerCap: 2 })

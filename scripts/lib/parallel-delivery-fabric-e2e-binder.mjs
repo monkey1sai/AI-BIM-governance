@@ -998,6 +998,9 @@ const COMMAND_ROLE_ORDER = Object.freeze([
   ['computer_use', 'postflight'],
 ])
 
+// The verifier roles whose proven elapsed time the timeout pin bounds.
+const VERIFIER_COMMAND_ROLES = Object.freeze(['playwright_require_real', 'computer_use'])
+
 const commandRoleIntervals = (records) => {
   const intervals = new Map()
   for (const record of records) {
@@ -1065,6 +1068,21 @@ const commandRecordFailure = (packets, executionWindow, trustedPins) => {
   const intervals = commandRoleIntervals(records)
   for (const [before, after] of COMMAND_ROLE_ORDER) {
     if (intervals.get(before).finishedAt > intervals.get(after).startedAt) return 'COMMAND_RECORD_ORDER_INVALID'
+  }
+  // The timeout pin binds elapsed time the bound timestamps prove, not the caller's
+  // self-reported duration alone: a verifier role that ran longer than the pin, a packet
+  // claiming more time than its bound window, or a shared window wider than every
+  // verifier budget together is a timeout regardless of the reported duration.
+  const timeoutMs = trustedPins.timeout_ms
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1) return 'E2E_TIMEOUT'
+  const windowMs = windowFinishedAt - windowStartedAt
+  if (windowMs > timeoutMs * VERIFIER_COMMAND_ROLES.length) return 'E2E_TIMEOUT'
+  for (const role of VERIFIER_COMMAND_ROLES) {
+    const interval = intervals.get(role)
+    if (!interval || interval.finishedAt - interval.startedAt > timeoutMs) return 'E2E_TIMEOUT'
+  }
+  for (const packet of packets) {
+    if (!Number.isSafeInteger(packet.duration_ms) || packet.duration_ms > windowMs) return 'E2E_TIMEOUT'
   }
   return null
 }

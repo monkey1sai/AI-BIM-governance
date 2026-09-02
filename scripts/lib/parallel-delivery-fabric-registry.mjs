@@ -543,6 +543,11 @@ export function createPlanRegistry({ store, clock }) {
 // replay-protected by the registry until well past their own expiry, after which
 // the attestation validator already rejects them as expired.
 const RETAINED_RELEASED_LEASE_RECORDS = 64
+// Disjoint writers are governed by isolation, never by count: the live-record ceiling is a
+// storage bound far above any admission scenario, and crossing the compaction threshold
+// compacts every released record into a retained stub before the new lease is evaluated.
+const MAX_LIVE_LEASE_RECORDS = 65536
+const LIVE_LEASE_COMPACTION_THRESHOLD = 4096
 const MAX_RETAINED_RELEASED_LEASE_RECORDS = 1024
 const MAX_RETAINED_RESOURCE_STUBS = 65536
 const USED_ATTESTATION_GRACE_MS = 7 * 24 * 60 * 60 * 1000
@@ -913,10 +918,10 @@ const validateLeaseRegistryRecord = (record, writerCap) => {
     fail('registry_record_invalid', 'lease_registry_shape')
   }
   assertStamped(record, 'lease_registry')
-  // The live admission capacity is bounded by lease records only; compacted
-  // retained-resource stubs are historical truth with their own, far larger ceiling
-  // so a long history never turns into an admission blocker.
-  if (Object.keys(record.leases).length > 4096) fail('registry_record_invalid', 'lease_registry_retention_limit')
+  // Lease records and compacted retained-resource stubs are both bounded by storage
+  // ceilings far above any admission scenario, so a long history never turns into an
+  // admission blocker; released records compact into stubs before a lease is evaluated.
+  if (Object.keys(record.leases).length > MAX_LIVE_LEASE_RECORDS) fail('registry_record_invalid', 'lease_registry_retention_limit')
   if (Object.keys(record.retained_resources).length > MAX_RETAINED_RESOURCE_STUBS) fail('registry_record_invalid', 'lease_registry_retained_resource_limit')
   const heldBranches = new Set()
   const heldWorktrees = new Set()
@@ -1074,6 +1079,14 @@ export function createCommandJournal({ store, clock, receiptLimit = COMMAND_JOUR
       const snapshot = await commandJournalSnapshot(store, receiptLimit)
       const existing = snapshot.record?.receipts?.[request.journal_key]
       if (existing) return clone(existing)
+      // A rotated receipt is still the durable truth for its command key: an archived
+      // command identity must never re-enter execution through a fresh reservation.
+      const archivedExisting = (await store.read(commandJournalArchiveRef(request.journal_key))).record?.receipts?.[request.journal_key] ?? null
+      if (archivedExisting !== null) {
+        validateCommandJournalReceipt(archivedExisting, request.journal_key)
+        if (archivedExisting.command_id !== request.command_id) fail('command_journal_conflict', 'command_id_mismatch')
+        return clone(archivedExisting)
+      }
       if (Object.keys(snapshot.record?.receipts ?? {}).length >= receiptLimit) {
         const archivedKey = Object.keys(snapshot.record.receipts).sort()
           .find((journalKey) => snapshot.record.receipts[journalKey].status === 'COMMITTED')
@@ -1180,8 +1193,10 @@ const nextRegistryRecord = ({
   store = undefined, current, writerCap, nonce, timestamp, leases, drainingPlans = clone(current?.draining_plans ?? {}), usedOwnerEndAttestations,
   retainedResources = clone(current?.retained_resources ?? {}),
   retainedReleasedLeases = store?.retainedReleasedLeases ?? RETAINED_RELEASED_LEASE_RECORDS,
+  liveLeaseCompactionThreshold = store?.liveLeaseCompactionThreshold ?? LIVE_LEASE_COMPACTION_THRESHOLD,
 }) => {
-  compactRegistry({ leases, usedOwnerEndAttestations, retainedResources, retainedReleasedLeases, timestamp })
+  const overThreshold = Object.keys(leases).length > liveLeaseCompactionThreshold
+  compactRegistry({ leases, usedOwnerEndAttestations, retainedResources, retainedReleasedLeases: overThreshold ? 0 : retainedReleasedLeases, timestamp })
   const record = stamp({
     schema_version: 'session-lease-registry/v1',
     generation: (current?.generation ?? 0) + 1,
@@ -1357,6 +1372,7 @@ const validateReservedOwnerEndAttestation = (attestation, lease, reservation) =>
 export function createLeaseRegistry({
   store: rawStore, clock, writerCap = WRITER_CAP_V1, ownerEndAttestor = undefined, executionEnvelope = undefined,
   retainedReleasedLeases = RETAINED_RELEASED_LEASE_RECORDS, integratedParentAuthority = undefined,
+  liveLeaseCompactionThreshold = LIVE_LEASE_COMPACTION_THRESHOLD,
 }) {
   if (!rawStore || typeof rawStore.read !== 'function' || typeof rawStore.cas !== 'function' || typeof rawStore.casGuarded !== 'function') fail('invalid_port', 'lease_store_required')
   if (writerCap !== WRITER_CAP_V1) fail('invalid_value', 'writer_cap_must_equal_two')
@@ -1365,7 +1381,13 @@ export function createLeaseRegistry({
   }
   // The retention bound travels with the store so every record builder, including
   // the module-level lease helpers, compacts with the same policy.
-  const store = Object.create(rawStore, { retainedReleasedLeases: { value: retainedReleasedLeases } })
+  if (!Number.isSafeInteger(liveLeaseCompactionThreshold) || liveLeaseCompactionThreshold < 1 || liveLeaseCompactionThreshold > MAX_LIVE_LEASE_RECORDS) {
+    fail('invalid_value', 'live_lease_compaction_threshold_out_of_range')
+  }
+  const store = Object.create(rawStore, {
+    retainedReleasedLeases: { value: retainedReleasedLeases },
+    liveLeaseCompactionThreshold: { value: liveLeaseCompactionThreshold },
+  })
 
   const inspect = () => registrySnapshot(store, writerCap)
 
@@ -2555,6 +2577,43 @@ export function createManagedBranchRegistry({ store, clock, managedBranchAuthori
 
 const QUEUE_MAPPING_LIMIT = 1024
 const QUEUE_OPERATION_LIMIT = 4096
+const QUEUE_OPERATION_ARCHIVE_SCHEMA = 'queue-operation-archive/v1'
+// Terminal operation receipts (a cancelled mapping's reserve + cancel cycle) rotate into a
+// per-mapping archive ref, so historical operation count never blocks admission while the
+// replay tombstone for that mapping stays durable.
+const queueOperationArchiveRef = (mappingKey) => `refs/ai-bim/queue-operation-archive/${digestCanonical({ mapping_key: mappingKey })}`
+const validQueueOperationArchive = (record, mappingKey) => {
+  try {
+    exactKeys(record, ['schema_version', 'generation', 'nonce', 'created_at', 'updated_at', 'mapping_key', 'operations', 'canonical_digest'], 'queue_operation_archive')
+    if (record.schema_version !== QUEUE_OPERATION_ARCHIVE_SCHEMA || record.mapping_key !== mappingKey || !isObject(record.operations)) return false
+    assertStamped(record, 'queue_operation_archive')
+    for (const [operationId, operation] of Object.entries(record.operations)) {
+      assertTask2OpaqueId(operationId, 'queue_operation_archive.key')
+      exactKeys(operation, QUEUE_OPERATION_KEYS, 'queue_operation_archive.operation')
+      if (operation.mapping_key !== mappingKey || !['reserve', 'cancel'].includes(operation.kind)) return false
+    }
+    return true
+  } catch {
+    return false
+  }
+}
+const readQueueOperationArchive = async (store, mappingKey) => {
+  try {
+    const snapshot = await store.read(queueOperationArchiveRef(mappingKey))
+    if (!isObject(snapshot) || !OID.test(snapshot.oid)) return null
+    if (snapshot.record === null) return { oid: snapshot.oid, operations: {} }
+    if (!validQueueOperationArchive(snapshot.record, mappingKey)) return null
+    return { oid: snapshot.oid, operations: clone(snapshot.record.operations) }
+  } catch {
+    return null
+  }
+}
+const queueArchiveReplayHeld = (archive, request) => {
+  if (Object.values(archive.operations).some((operation) => operation.nonce === request.nonce)) return QUEUE_HELD('NONCE_REPLAY')
+  if (Object.hasOwn(archive.operations, request.operation_id)) return QUEUE_HELD('OPERATION_REPLAY')
+  if (Object.values(archive.operations).some((operation) => operation.kind === 'cancel')) return QUEUE_HELD('MAPPING_TERMINAL')
+  return null
+}
 const QUEUE_HELD = (reason) => Object.freeze({ status: 'HELD_QUEUE_CAPABILITY', shadow: 'SHADOW_ONLY', reason })
 const QUEUE_SOURCE_KEYS = Object.freeze(['repository', 'workflow', 'resource_key'])
 const QUEUE_OBSERVATION_KEYS = Object.freeze([
@@ -2766,7 +2825,10 @@ const queueLeaseBindingHeld = async (store, request) => {
   }
 }
 
-export function createQueueMappingRegistry({ store, clock }) {
+export function createQueueMappingRegistry({ store, clock, operationLimit = QUEUE_OPERATION_LIMIT }) {
+  if (!Number.isSafeInteger(operationLimit) || operationLimit < 2 || operationLimit > QUEUE_OPERATION_LIMIT) {
+    fail('invalid_value', 'queue_operation_limit_invalid')
+  }
   if (!store || typeof store.read !== 'function' || typeof store.cas !== 'function') {
     return Object.freeze({
       restore: async () => QUEUE_HELD('REGISTRY_UNKNOWN'),
@@ -2824,6 +2886,47 @@ export function createQueueMappingRegistry({ store, clock }) {
     return QUEUE_HELD(result?.reason === 'GUARD_CONFLICT' ? 'LEASE_REGISTRY_CHANGED' : 'REGISTRY_CAS_CONFLICT')
   }
 
+  // Rotate the oldest terminal cycles (cancelled mapping: reserve + cancel receipts) into
+  // their per-mapping archive until the live receipt map is below the operation limit.
+  // Returns null when capacity was recovered, otherwise the hold to surface.
+  const rotateTerminalOperations = async (current) => {
+    while (Object.keys(current.used_queue_operations).length >= operationLimit) {
+      const cycles = new Map()
+      for (const [operationId, operation] of Object.entries(current.used_queue_operations)) {
+        const cycle = cycles.get(operation.mapping_key) ?? { operations: {}, cancelledAt: null }
+        cycle.operations[operationId] = operation
+        if (operation.kind === 'cancel') cycle.cancelledAt = operation.consumed_at
+        cycles.set(operation.mapping_key, cycle)
+      }
+      const terminal = [...cycles.entries()]
+        .filter(([key, cycle]) => cycle.cancelledAt !== null && !Object.hasOwn(current.queue_mappings, key))
+        .sort(([leftKey, left], [rightKey, right]) => left.cancelledAt.localeCompare(right.cancelledAt) || leftKey.localeCompare(rightKey))
+      if (terminal.length === 0) return QUEUE_HELD('LEDGER_CAPACITY_EXCEEDED')
+      const [key, cycle] = terminal[0]
+      const existing = await readQueueOperationArchive(store, key)
+      if (existing === null) return QUEUE_HELD('REGISTRY_UNKNOWN')
+      const cancel = Object.values(cycle.operations).find((operation) => operation.kind === 'cancel')
+      const record = stamp({
+        schema_version: QUEUE_OPERATION_ARCHIVE_SCHEMA,
+        generation: existing.oid === ZERO_OID ? 1 : 2,
+        nonce: cancel.nonce,
+        created_at: current.created_at,
+        updated_at: nowFrom(clock),
+        mapping_key: key,
+        operations: { ...existing.operations, ...cycle.operations },
+      })
+      let archived
+      try {
+        archived = await store.cas({ ref: queueOperationArchiveRef(key), expected_oid: existing.oid, record })
+      } catch {
+        return QUEUE_HELD('REGISTRY_UNKNOWN')
+      }
+      if (!isObject(archived) || archived.status !== 'STORED') return QUEUE_HELD('REGISTRY_UNKNOWN')
+      for (const operationId of Object.keys(cycle.operations)) delete current.used_queue_operations[operationId]
+    }
+    return null
+  }
+
   const currentQueueState = (snapshot) => {
     if (snapshot.kind === 'queue') return clone(snapshot.record)
     return {
@@ -2852,6 +2955,10 @@ export function createQueueMappingRegistry({ store, clock }) {
     if (snapshot.status === 'HELD_QUEUE_CAPABILITY') return snapshot
     if (snapshot.oid !== request.expected_oid) return QUEUE_HELD('REGISTRY_CAS_CONFLICT')
     const current = currentQueueState(snapshot)
+    const archive = await readQueueOperationArchive(store, mappingKey(request))
+    if (archive === null) return QUEUE_HELD('REGISTRY_UNKNOWN')
+    const archiveReplay = queueArchiveReplayHeld(archive, request)
+    if (archiveReplay) return archiveReplay
     if (Object.keys(current.used_queue_operations).some((key) => current.used_queue_operations[key]?.nonce === request.nonce)) {
       return QUEUE_HELD('NONCE_REPLAY')
     }
@@ -2865,7 +2972,8 @@ export function createQueueMappingRegistry({ store, clock }) {
       return QUEUE_HELD(existingMapping.state === 'CANCELLED' ? 'MAPPING_TERMINAL' : 'MAPPING_ALREADY_EXISTS')
     }
     if (Object.keys(current.queue_mappings).length >= QUEUE_MAPPING_LIMIT) return QUEUE_HELD('LEDGER_CAPACITY_EXCEEDED')
-    if (Object.keys(current.used_queue_operations).length >= QUEUE_OPERATION_LIMIT) return QUEUE_HELD('LEDGER_CAPACITY_EXCEEDED')
+    const rotation = await rotateTerminalOperations(current)
+    if (rotation) return rotation
     const mapping = mappingFromRequest(request, 'RESERVED')
     return writeQueue(request.expected_oid, current, request, leaseBinding.guard_oid, (state, timestamp) => {
       const queue_mappings = clone(state.queue_mappings)
@@ -2900,12 +3008,18 @@ export function createQueueMappingRegistry({ store, clock }) {
     if (snapshot.kind !== 'queue') return QUEUE_HELD('REGISTRY_UNKNOWN')
     if (snapshot.oid !== request.expected_oid) return QUEUE_HELD('REGISTRY_CAS_CONFLICT')
     const current = currentQueueState(snapshot)
+    const archive = await readQueueOperationArchive(store, mappingKey(request))
+    if (archive === null) return QUEUE_HELD('REGISTRY_UNKNOWN')
+    const archiveReplay = queueArchiveReplayHeld(archive, request)
+    if (archiveReplay) return archiveReplay
     if (Object.keys(current.used_queue_operations).some((key) => current.used_queue_operations[key]?.nonce === request.nonce)) {
       return QUEUE_HELD('NONCE_REPLAY')
     }
     if (Object.hasOwn(current.used_queue_operations, request.operation_id)) return QUEUE_HELD('OPERATION_REPLAY')
     const existing = current.queue_mappings[mappingKey(request)]
     if (!existing || existing.state !== 'RESERVED') return QUEUE_HELD('MAPPING_NOT_RESERVED')
+    const rotation = await rotateTerminalOperations(current)
+    if (rotation) return rotation
     const expected = mappingFromRequest(request, 'RESERVED')
     for (const key of QUEUE_MAPPING_KEYS) {
       if (key === 'state') continue

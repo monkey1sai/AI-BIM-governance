@@ -1249,6 +1249,38 @@ test('AC-26 — durable browser evidence rejects noncanonical schema-bound field
   }
 })
 
+test('P2 regression — the timeout pin binds the proven execution window, not the self-reported duration', () => {
+  const bind = ({ windowMinutes, playwrightFinish = 30, playwrightOverrides = {} }) => {
+    const executionWindow = { started_at: NOW, finished_at: minutesAfterNow(windowMinutes) }
+    const postflightStart = Math.max(playwrightFinish, 35)
+    const records = commandRecords().map((record) => {
+      if (record.role === 'playwright_require_real') return { ...record, finished_at: minutesAfterNow(playwrightFinish) }
+      if (record.role === 'postflight') return { ...record, started_at: minutesAfterNow(postflightStart), finished_at: minutesAfterNow(postflightStart + 5) }
+      return record
+    })
+    const packet = (role, overrides = {}) => browserPacket(role, {
+      execution_window: executionWindow, command_records: records, command_records_digest: digestCanonical(records), ...overrides,
+    })
+    return bindBrowserEvidence({
+      candidate: candidate(), manifest: manifest({ execution_window: executionWindow }),
+      playwright: packet('playwright', playwrightOverrides), computerUse: packet('computer_use', { verifier_identity: 'computer-use:one' }),
+      trustedPins: trustedPins(),
+    })
+  }
+  const accepted = bind({ windowMinutes: 80 })
+  assert.equal(accepted.status, 'READY_FOR_TRAIN', JSON.stringify(accepted))
+  const cases = [
+    ['shared window wider than both verifier budgets together', { windowMinutes: 100 }],
+    ['verifier role ran longer than the pin despite a short reported duration', { windowMinutes: 80, playwrightFinish: 70 }],
+    ['reported duration exceeds the bound window', { windowMinutes: 42, playwrightOverrides: { duration_ms: 44 * 60_000 } }],
+  ]
+  for (const [label, input] of cases) {
+    const result = bind(input)
+    assert.equal(result.status, 'HELD_EVIDENCE_BINDING', label)
+    assert.equal(result.reason, 'E2E_TIMEOUT', `${label}: ${JSON.stringify(result)}`)
+  }
+})
+
 test('browser binding requires complete immutable source, trusted pins, and manifest lifecycle proof', () => {
   const candidateWithMissingApplicability = (key) => {
     const value = candidate()
