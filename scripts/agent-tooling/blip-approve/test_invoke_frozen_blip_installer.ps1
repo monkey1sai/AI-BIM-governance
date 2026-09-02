@@ -424,7 +424,8 @@ function Invoke-FreezeV3SchemaRegression {
         'Assert-ExactVerifierJsonProperties',
         'Assert-ExactVerifierStringMap',
         'Assert-ReviewedManifestAuthority',
-        'Assert-MergedSourceCommit'
+        'Assert-MergedSourceCommit',
+        'Assert-CountedApprovalForSource'
     )) {
         $definition = $verifierAst.Find(
             {
@@ -447,10 +448,48 @@ function Invoke-FreezeV3SchemaRegression {
     $script:testProtectedMain = 'd' * 40
     $script:testMergeStatus = 'ahead'
     $script:testMergeBase = $script:testMergedSource
+    $script:testMergedPullNumber = 736
+    $script:testMergedPullHead = 'f' * 40
+    function New-TestMergedPullJson {
+        param(
+            [string]$MergedAt = '"2026-09-02T00:00:00Z"',
+            [string]$State = 'closed',
+            [string]$BaseRef = 'main',
+            [string]$MergeSha = $script:testMergedSource
+        )
+        return '{"number":' + $script:testMergedPullNumber + ',"state":"' + $State +
+            '","merged_at":' + $MergedAt + ',"merge_commit_sha":"' + $MergeSha +
+            '","base":{"ref":"' + $BaseRef + '"},"head":{"sha":"' +
+            $script:testMergedPullHead + '"}}'
+    }
+    function New-TestBlipReviewJson {
+        param(
+            [string]$State = 'APPROVED',
+            [string]$SubmittedAt = '2026-09-02T01:00:00Z',
+            [long]$Id = 9001,
+            [string]$CommitId = $script:testMergedPullHead,
+            [string]$Login = 'monkey1sai-blip',
+            [long]$UserId = 311287868,
+            [string]$UserType = 'User'
+        )
+        return '{"id":' + $Id + ',"state":"' + $State + '","submitted_at":"' + $SubmittedAt +
+            '","commit_id":"' + $CommitId + '","user":{"login":"' + $Login + '","id":' +
+            $UserId + ',"type":"' + $UserType + '"}}'
+    }
+    $script:testPullsJson = '[' + (New-TestMergedPullJson) + ']'
+    $script:testReviewsJson = '[' + (New-TestBlipReviewJson) + ']'
     function Invoke-ProtectedPublicGitHubGet {
         param([Parameter(Mandatory)][string]$RelativePath)
         if ($RelativePath -ceq '/repos/monkey1sai/AI-BIM-governance/commits/heads/main') {
             return '{"sha":"' + $script:testProtectedMain + '"}'
+        }
+        if ($RelativePath -ceq ('/repos/monkey1sai/AI-BIM-governance/commits/' +
+            $script:testMergedSource + '/pulls?per_page=100')) {
+            return $script:testPullsJson
+        }
+        if ($RelativePath -ceq ('/repos/monkey1sai/AI-BIM-governance/pulls/' +
+            $script:testMergedPullNumber + '/reviews?per_page=100')) {
+            return $script:testReviewsJson
         }
         $expected = '/repos/monkey1sai/AI-BIM-governance/compare/' +
             $script:testMergedSource + '...' + $script:testProtectedMain
@@ -565,6 +604,48 @@ function Invoke-FreezeV3SchemaRegression {
         Assert-True $mergeBaseRejected `
             'External verifier accepted a compare response with a different merge base.'
         $script:testMergeBase = $reviewedSourceCommit
+        $countedPullNumber = Assert-CountedApprovalForSource -SourceCommit $reviewedSourceCommit
+        Assert-True ($countedPullNumber -eq $script:testMergedPullNumber) `
+            'External verifier rejected a merged source with a counted exact-head approval.'
+        $script:testPullsJson = '[]'
+        $noPullRejected = $false
+        try { [void](Assert-CountedApprovalForSource -SourceCommit $reviewedSourceCommit) }
+        catch { $noPullRejected = $_.Exception.Message -match 'no merged pull request' }
+        Assert-True $noPullRejected `
+            'External verifier accepted an admin-pushed source with no merged pull request.'
+        $script:testPullsJson = '[' + (New-TestMergedPullJson) + ',' + (New-TestMergedPullJson) + ']'
+        $ambiguousRejected = $false
+        try { [void](Assert-CountedApprovalForSource -SourceCommit $reviewedSourceCommit) }
+        catch { $ambiguousRejected = $_.Exception.Message -match 'ambiguous approval evidence' }
+        Assert-True $ambiguousRejected `
+            'External verifier accepted ambiguous merged pull-request evidence.'
+        $script:testPullsJson = '[' + (New-TestMergedPullJson -MergedAt 'null') + ']'
+        $unmergedRejected = $false
+        try { [void](Assert-CountedApprovalForSource -SourceCommit $reviewedSourceCommit) }
+        catch { $unmergedRejected = $_.Exception.Message -match 'not a completed protected-main merge' }
+        Assert-True $unmergedRejected `
+            'External verifier accepted an unmerged pull request as merge provenance.'
+        $script:testPullsJson = '[' + (New-TestMergedPullJson) + ']'
+        $script:testReviewsJson = '[' + (New-TestBlipReviewJson) + ',' +
+            (New-TestBlipReviewJson -State 'CHANGES_REQUESTED' -SubmittedAt '2026-09-02T02:00:00Z' -Id 9002) + ']'
+        $supersededRejected = $false
+        try { [void](Assert-CountedApprovalForSource -SourceCommit $reviewedSourceCommit) }
+        catch { $supersededRejected = $_.Exception.Message -match 'not a counted APPROVED' }
+        Assert-True $supersededRejected `
+            'External verifier accepted a superseded approval as the latest decisive review.'
+        $script:testReviewsJson = '[' + (New-TestBlipReviewJson -CommitId ('a' * 40)) + ']'
+        $unboundRejected = $false
+        try { [void](Assert-CountedApprovalForSource -SourceCommit $reviewedSourceCommit) }
+        catch { $unboundRejected = $_.Exception.Message -match 'not bound to the merged pull request head' }
+        Assert-True $unboundRejected `
+            'External verifier accepted an approval not bound to the merged head.'
+        $script:testReviewsJson = '[' + (New-TestBlipReviewJson -Login 'claude-tri-adversarial-bot[bot]' -UserId 1 -UserType 'Bot') + ']'
+        $wrongIdentityRejected = $false
+        try { [void](Assert-CountedApprovalForSource -SourceCommit $reviewedSourceCommit) }
+        catch { $wrongIdentityRejected = $_.Exception.Message -match 'not a counted APPROVED' }
+        Assert-True $wrongIdentityRejected `
+            'External verifier accepted a non-fixed-reviewer approval as counted.'
+        $script:testReviewsJson = '[' + (New-TestBlipReviewJson) + ']'
         $ExpectedBootstrapSha256 = '0' * 64
         $bootstrapAuthorityRejected = $false
         try { Assert-ReviewedManifestAuthority -Bytes $reviewedManifestBytes }
