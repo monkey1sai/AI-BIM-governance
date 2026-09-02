@@ -17,12 +17,81 @@ PR review agent SHALL build its decision from a bounded, immutable packet tied t
 - **AND** report SHALL列出缺失或漂移類型
 - **AND**舊packet SHALL NOT被重用於新head
 
+#### Scenario: Required CheckRun結論映射
+
+- **GIVEN**expected external App是branch protection所pin的required source
+- **WHEN**exact-head packet完整、所有required deterministic／machine gates通過且zero unresolved threads已由完整pagination證明
+- **THEN**publisher MAY在該head發布actual `success`
+- **AND**只有該source的actual `success` SHALL成為merge-eligible evidence
+
+#### Scenario: HELD或不完整結果不得偽裝成GitHub pass
+
+- **WHEN**gate status為 `held`／`blocked`／`failed`、publisher unavailable、collection incomplete或tuple drift
+- **THEN**required CheckRun SHALL保持absent／pending或以blocking conclusion結案
+- **AND**publisher SHALL NOT使用 `neutral` 或 `skipped`
+- **AND**同名commit status、comment、review或wrong-source CheckRun SHALL NOT解鎖merge
+
 #### Scenario: Candidate diff需要semantic redaction
 
 - **WHEN**pre-model secret scan判定任何candidate diff byte不能安全地byte-identical提供給review layers
 - **THEN**gate status SHALL為 `held`
 - **AND**L1–L3 SHALL NOT執行partial或redacted review
 - **AND**report SHALL只列non-secret path與rule ID
+
+### Requirement: Every CI and review finding SHALL receive a closed evidence-bound disposition
+
+PR review agent SHALL先驗證finding是否成立，再將每個CI、deterministic validator、machine reviewer或human reviewer finding對frozen exact head裁決為 `ACCEPTED`、`FIX_REQUIRED`、`FALSE_POSITIVE`、`DEFERRED` 或 `ESCALATE`。`ACCEPTED` SHALL要求confirmed，且finding已由current head上的既有commit處理，或屬immutable policy明定的non-blocking P3／MEDIUM／LOW／ADVISORY風險；`FIX_REQUIRED` SHALL要求confirmed、in-scope，且只有repair head、可重現regression evidence與independent re-review reference同時存在時才算已修復；`FALSE_POSITIVE` SHALL要求refuted與可重現反證；`DEFERRED` SHALL要求confirmed、out-of-scope、同repo follow-up Issue與policy依據；`ESCALATE` SHALL用於超出autonomous authority或屬security／ACL／architecture／schema migration／deployment／production／credentials risk class的finding，且該PR SHALL NOT autonomous-merge。Confirmed in-scope P0／P1／P2／BLOCKER／CRITICAL／HIGH SHALL只能 `FIX_REQUIRED` 或 `ESCALATE`。舊值 `FIX`／`REJECT`／`ACCEPT_RISK`／`DEFER` SHALL正規化為對應closed value。Unverified finding（`ESCALATE` 除外）、unknown disposition、缺evidence、自述已修復卻無fix evidence，或違反severity／scope／risk-class mapping SHALL fail closed。
+
+#### Scenario: Finding經裁決後不需要code修改
+
+- **GIVEN**finding已由exact-head evidence證明為false positive、已由current head既有commit處理、policy-eligible non-blocking risk或out-of-scope follow-up
+- **WHEN**agent分別記錄 `FALSE_POSITIVE`、`ACCEPTED` 或 `DEFERRED`及其required evidence
+- **THEN**conversation MAY被resolve且不要求新的code diff
+- **AND**resolution SHALL表示disposition lifecycle完成，不得宣稱finding已被fix
+
+#### Scenario: Confirmed in-scope blocker不能被接受或延後
+
+- **WHEN**P0／P1／P2／BLOCKER／CRITICAL／HIGH finding已confirmed且in-scope
+- **THEN**可通過的disposition SHALL只有 `FIX_REQUIRED`（附repair head、regression evidence與independent re-review）或 `ESCALATE`
+- **AND**缺current-head修復或regression evidence SHALL保持thread unresolved並使gate `blocked`或 `held`
+
+#### Scenario: 高風險finding必須escalate
+
+- **WHEN**finding的risk class為security、ACL、architecture、schema migration、deployment、production或credentials
+- **THEN**除非以可重現反證裁決為 `FALSE_POSITIVE`，disposition SHALL為 `ESCALATE`
+- **AND**該transaction SHALL以 `HELD` 離開autonomous authority，thread SHALL保持unresolved
+
+#### Scenario: Machine gate只能在finding convergence後發布
+
+- **GIVEN**collector以完整pagination取得所有review threads與CI findings
+- **WHEN**每個finding都有合法disposition、所有對應thread已resolve且server unresolved count為零
+- **THEN**review convergence MAY成立
+- **AND**source-pinned App只可在convergence後對相同frozen head發布actual `success`，且該CheckRun SHALL是expected source在該head的最新一筆並在convergence之後開始；同head完整CheckRun清單、convergence epoch與collected conversation state（completeness、unresolved count、每個finding的thread／source／severity／resolution）SHALL由candidate bundle之外的trusted collector供給，bundle自述值沒有authority
+- **AND**convergence前的success、stale-head success、被較新rerun取代的舊success、不完整thread集合或未涵蓋完整collected finding set的bundle SHALL NOT成為merge evidence
+
+### Requirement: Merge queue agent SHALL act as the Review Disposition Agent with structured, loop-safe GitHub replies
+
+Merge queue agent SHALL為每個finding在對應review thread留下structured GitHub reply，內含人類可讀理由、evidence位置與next action，以及隱藏machine-readable metadata（`<!-- ai-bim-review-disposition/v1 {...} -->`），至少綁定 `finding_id`、`thread_id`、`head_sha`、`base_sha`、`agent_run_id`、`sender`、`webhook_event_id`、`disposition`、severity、risk class、verification與evidence fingerprint。Agent SHALL以完整tuple（`finding_id`、`head_sha`、`agent_run_id`、`sender`、`webhook_event_id`）做idempotency，並在同一head已有相同disposition時skip。帶有metadata marker的comment SHALL視為agent output而非finding intake；rendered body SHALL NOT包含reviewer-bot mention。每次reply或resolution mutation前後 SHALL重讀exact PR tuple，漂移即 `HELD`／`resolution_race`。`FIX_REQUIRED` SHALL進入既有fix pipeline（disposition → repair worktree → targeted tests → affected integration tests → current-head CI → independent re-review → thread resolved → exact-head merge-policy check → counted adjudication → exact-head merge）；任何agent assertion SHALL NOT單獨滿足merge gate；`ESCALATE` 與未修復的 `FIX_REQUIRED` thread SHALL保持unresolved。
+
+#### Scenario: 重複webhook或重跑不得重複處理
+
+- **GIVEN**thread內已存在agent metadata且 `finding_id`、`head_sha` 與 `disposition` 相同，或完整tuple相同
+- **WHEN**同一finding再次進入agent
+- **THEN**agent SHALL skip且不得留下第二則reply
+- **AND**新head或新disposition MAY產生新reply
+
+#### Scenario: Agent自己的留言不得再次觸發agent
+
+- **WHEN**collector讀取thread comments
+- **THEN**帶marker的comment SHALL被排除於finding intake之外
+- **AND**rendered reply SHALL NOT包含 `@codex`／`@claude` 等reviewer-bot mention
+
+#### Scenario: FIX_REQUIRED進入既有fix pipeline
+
+- **GIVEN**finding裁決為 `FIX_REQUIRED` 且reply已留下
+- **WHEN**coordinator在repair worktree修復、targeted tests與current-head CI通過並取得independent re-review reference
+- **THEN**finding MAY標記 `fixedOnHead` 並附fix evidence，thread MAY resolve
+- **AND**僅有「fixed」留言而無repair head、regression evidence與re-review reference時，bundle SHALL保持incomplete且gate SHALL NOT通過
 
 ### Requirement: Critical PRs SHALL receive three-layer cross-adversarial machine adjudication
 

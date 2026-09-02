@@ -41,6 +41,65 @@ Immutable base-owned policy SHALL依exact tuple與完整changed paths把每個ta
 - **THEN**collector SHALL對current exact tuple重新執行closed classification與全部required gates
 - **AND**draft期間的verdict SHALL NOT被沿用
 
+### Requirement: PR finalization SHALL be draft-first, head-frozen and bounded to two review rounds
+
+每個named PR在draft期間 SHALL只累積advisory findings與affected verification，不得取得passing merge verdict。PR ready後，coordinator SHALL先完成base update與scope確認，再將current exact head凍結為round 1；每個round SHALL對一個immutable exact head完成完整pagination、deterministic gates、適用machine review與finding disposition。Round 1如有confirmed in-scope blocker，coordinator MAY只推送一個包含全部修復的batch repair head；舊head evidence SHALL全部失效。Round 2 SHALL只review該batch repair exact head。Round 2仍有confirmed blocker、需要第三個candidate head、head freeze遭破壞或evidence不完整時，transaction SHALL以 `HELD/PREMERGE_EVIDENCE_INVALID`結案，不得自動啟動第三輪。只有新的使用者啟動與新的scope、evidence或hypothesis MAY建立新transaction。
+
+#### Scenario: Draft期間先收集finding
+
+- **GIVEN**PR仍為draft
+- **WHEN**reviewer、CI或coordinator發現一個或多個問題
+- **THEN**系統 SHALL保存sanitized advisory findings並允許author整理candidate
+- **AND**不得發布passing required gate或消耗ready後的兩輪budget
+
+#### Scenario: Round 1 findings以單一batch修復
+
+- **GIVEN**ready PR的round 1已完成完整collection與finding disposition
+- **WHEN**存在confirmed、in-scope且可修復的blockers
+- **THEN**coordinator SHALL一次修復該round全部blockers並至多push一個batch repair head
+- **AND**round 1的checks、review、threads與verdict SHALL對新head失效
+- **AND**逐finding push或無關scope change SHALL視為head freeze破壞
+
+#### Scenario: Final exact head通過後立即merge
+
+- **GIVEN**round 1沒有blocker，或round 2已驗證唯一batch repair head
+- **AND**final exact head的source-pinned required App CheckRun為actual `success`
+- **AND**其他required checks符合policy允許的actual success、完整pagination證明unresolved threads為零，且protection、base、head與evidence未漂移
+- **WHEN**privileged finalizer取得綁定同一tuple的single-use lease
+- **THEN**finalizer SHALL在該lease內立即進入exact-head compare-and-swap merge
+- **AND**不得再等待human／CODEOWNER approval、last-push approval、額外quiet period或另一個push
+
+#### Scenario: Round 2仍有blocker或需要第三個head
+
+- **WHEN**round 2仍有confirmed blocker、collection不完整、需要再push修復、發生第二個writer mutation或head再次漂移
+- **THEN**transaction SHALL以 `HELD/PREMERGE_EVIDENCE_INVALID`結案
+- **AND**report SHALL在namespaced `failure_detail`記錄 `review_round_budget_exhausted`、`head_freeze_broken` 或具體缺口
+- **AND**系統 SHALL NOT busy-loop、自動開第三輪或以舊head verdict解鎖merge
+
+### Requirement: Multi-PR merge order SHALL be produced by a machine-verifiable subagent plan
+
+當同一repository存在兩個以上待交付PR，merge precedence SHALL由獨立唯讀subagent依server-authoritative exact heads、ancestry、changed-file overlap、declared dependency與machine-gate surface產生closed merge plan；不得由human-authored順序欄位或queue日期決定。Plan SHALL綁定repository、base OID、policy digest、subagent task／model identity、每個PR exact head、predecessors與dependency proof。每個predecessor SHALL在successor之前；被另一PR完整涵蓋的redundant PR SHALL記為 `SKIP_SUBSUMED`並綁定保留的successor與proof。Plan只決定候選順序，不授予merge authority；每次predecessor merge後，next PR SHALL重新收集base/head/checks/threads、重跑applicable gates並取得new exact-head lease。
+
+#### Scenario: Subagent輸出dependency order與subsumed PR
+
+- **GIVEN**多個open PR具有可重現的ancestry、overlap或explicit dependency evidence
+- **WHEN**唯讀subagent輸出closed merge plan
+- **THEN**所有predecessors SHALL在線性merge order中先於successors
+- **AND**redundant PR SHALL以 `SKIP_SUBSUMED`保留proof而不得merge
+- **AND**human MAY批次執行或停止該plan，但 SHALL NOT覆寫order或把skip改成merge
+
+#### Scenario: Plan不是subagent產生或dependency順序錯誤
+
+- **WHEN**plan宣稱human author、缺subagent identity／proof、predecessor出現在successor後、skip target不存在或任一head漂移
+- **THEN**merge eligibility SHALL為 `HELD/PREMERGE_EVIDENCE_INVALID`
+- **AND**系統 SHALL NOT以PR號、日期、人工偏好或舊plan替代
+
+#### Scenario: 前一PR merge後重驗下一PR
+
+- **WHEN**plan中的predecessor已merge並改變integration branch
+- **THEN**下一PR SHALL對new server-authoritative base重新取得complete evidence、finding convergence與source-pinned actual success
+- **AND**舊plan中的ordering MAY保留為candidate，舊exact-head gate／lease SHALL失效
+
 ### Requirement: Every adjudication SHALL bind an immutable exact-head evidence packet
 
 Machine adjudication packet SHALL 綁定 repository、PR number、base branch／SHA、head branch／SHA、merge-base、完整 changed paths與digest、immutable diff digest、policy digest、verification manifest digest、required-check source map、OpenSpec alignment、conversation state與完整 evidence surface digest。Packet SHALL以external attestation envelope綁定issuer／key ID、algorithm、nonce、issued／expires timestamps與payload／artifact digests。Deterministic isolated scanner SHALL在任何model invocation前檢查raw candidate diff；提供給L1–L3的candidate diff bytes SHALL與packet中的完整review-semantic diff byte-identical。若任何secret-like value需要改寫、遮罩或刪除semantic bytes，gate SHALL直接block且不得把redacted partial diff交給model裁決。Collector SHALL 以 bounded pagination 取得 server-authoritative data；缺頁、未知欄位、binary／submodule未處理、evidence超限、base/head drift、unknown／expired／revoked signer、artifact authentication失敗或digest不一致時 SHALL fail closed。
