@@ -90,12 +90,18 @@ describe("HomePage 真值綁定", () => {
     expect(window.location.hash).toBe("#sessions");
   });
 
-  // design §4：#home 四 KPI 快捷一律導向 `#conv`／`#sessions`／`#issues`／`#minio`（`#minio` 為 outbox 卡的指定真頁）。
-  it("KPI 卡為 data-action=nav：點「Outbox 待送」導向 design §4 指定的 #minio", async () => {
+  // 更正：舊註解宣稱「design §4：#home 四 KPI 快捷一律導向 #conv／#sessions／#issues／#minio
+  // （#minio 為 outbox 卡的指定真頁）」。逐字查證設計正本
+  // `docs/plans/AI-BIM 前後端設計文件.dc.html` 後確認**不存在**任何 KPI 卡導向規則：§03 僅有
+  // 元件樹一行 `KpiRow · PipelineSnapshot · AlertFeed · AppLauncher`，§04 是 API 契約段。
+  // 正本真正逐字寫到 `#minio` 的地方是 §03 舊路由收斂表，指定其收斂去向為 `#/pipeline`。
+  // 且 outbox 明細（GET /api/callback-outbox/summary）只在 unified `#pipeline` 的
+  // ⑤ Callback Outbox 段，legacy `#minio`（ModelDataPage）沒有該面 → 舊落點屬接錯。
+  it("KPI 卡為 data-action=nav：點「Outbox 待送」導向 unified #pipeline 的 ⑤ Callback Outbox 段", async () => {
     spyCoordinatorEndpoints();
     await mountHome();
     expect(uc("kpi-outbox").getAttribute("data-action")).toBe("nav");
     await act(async () => { uc("kpi-outbox").dispatchEvent(new MouseEvent("click", { bubbles: true })); });
-    expect(window.location.hash).toBe("#minio");
+    expect(window.location.hash).toBe("#pipeline");
   });
 });
