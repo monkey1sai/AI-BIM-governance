@@ -8,6 +8,7 @@
 // or merges.
 
 import { execFileSync } from 'node:child_process';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -48,22 +49,45 @@ export function sinkResultFailed(entry, { resolve = false } = {}) {
 // serializes itself per PR with a coordinator-local lock. A held lock is a
 // fail-closed hold, never a retry; a lock older than the stale window belonged to
 // a dead run and is reclaimed exactly once.
-export function createPlanLock({ root = path.join(os.tmpdir(), 'ai-bim-review-disposition-locks'), now = () => Date.now() } = {}) {
+// A lock names its holder (pid + random token). It is reclaimed only when the
+// holder process is provably gone AND the file is older than the stale window;
+// a long-running live sink keeps its lock. Release deletes the file only while
+// it still carries the releaser's own token, so a reclaimed lock is never
+// deleted from under its new holder.
+const processAlive = (pid) => {
+  if (!Number.isSafeInteger(pid) || pid < 1) return false;
+  try { process.kill(pid, 0); return true; } catch (error) { return error?.code === 'EPERM'; }
+};
+const readLockOwner = (file) => {
+  try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return null; }
+};
+export function createPlanLock({
+  root = path.join(os.tmpdir(), 'ai-bim-review-disposition-locks'), now = () => Date.now(), isAlive = processAlive,
+} = {}) {
   return {
     acquire({ repository, prNumber }) {
       fs.mkdirSync(root, { recursive: true });
       const file = path.join(root, `${String(repository).replace(/[^A-Za-z0-9_.-]/gu, '__')}-${prNumber}.lock`);
+      const token = crypto.randomBytes(16).toString('hex');
       for (let attempt = 0; attempt < 2; attempt += 1) {
         try {
           const fd = fs.openSync(file, 'wx');
-          fs.writeSync(fd, JSON.stringify({ pid: process.pid, acquiredAt: new Date(now()).toISOString() }));
+          fs.writeSync(fd, JSON.stringify({ pid: process.pid, token, acquiredAt: new Date(now()).toISOString() }));
           fs.closeSync(fd);
-          return { release: () => { try { fs.unlinkSync(file); } catch { /* already released */ } } };
+          return {
+            release: () => {
+              const owner = readLockOwner(file);
+              if (owner?.token !== token) return;
+              try { fs.unlinkSync(file); } catch { /* already released */ }
+            },
+          };
         } catch (error) {
           if (error?.code !== 'EEXIST') throw error;
+          const owner = readLockOwner(file);
           let stale = false;
           try { stale = now() - fs.statSync(file).mtimeMs > LOCK_STALE_MS; } catch { stale = false; }
-          if (!stale || attempt > 0) throw new Error(`sink_lock_held:${file}`);
+          const holderDead = owner === null || !isAlive(owner.pid);
+          if (!stale || !holderDead || attempt > 0) throw new Error(`sink_lock_held:${file}`);
           try { fs.unlinkSync(file); } catch { /* raced with the owner */ }
         }
       }
@@ -218,7 +242,10 @@ export function planSinkActions({
         Object.assign(record, { action: decision.action, reason: decision.reason });
         // An exact duplicate whose resolution never landed (a crash between the
         // POST and the GraphQL mutation) is finished here instead of skipped forever.
-        if (live && resolve && decision.action === 'skip' && decision.reason === 'duplicate_exact_tuple' && reply.resolvable) {
+        // Both safe skip reasons mean "this decision already stands on this head": an
+        // exact duplicate, or the same decision from a different run. Either may
+        // have crashed before its resolution landed.
+        if (live && resolve && decision.action === 'skip' && ['duplicate_exact_tuple', 'already_dispositioned_on_head'].includes(decision.reason) && reply.resolvable) {
           resolveThread();
         }
         continue;

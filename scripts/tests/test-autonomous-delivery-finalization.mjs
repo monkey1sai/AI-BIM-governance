@@ -75,6 +75,9 @@ const collectedFrom = (bundle, overrides = {}) => ({
   findings: bundle.findings.map((finding) => ({
     id: finding.id, threadId: finding.threadId, source: finding.source, severity: finding.severity, resolved: finding.threadResolved,
     inScope: finding.inScope, riskClass: finding.riskClass,
+    // Collector-verified counter-evidence and follow-up issue, derived from the bundle only in tests.
+    refutedEvidence: finding.disposition === 'FALSE_POSITIVE' ? [...finding.evidence] : null,
+    followUpIssue: finding.followUpRef ? { url: finding.followUpRef, state: 'open' } : null,
   })),
   // Server-observed independent re-reviews, derived from the bundle only in tests.
   reReviews: [...new Map(bundle.findings.filter((finding) => finding.fixEvidence).map((finding) => [finding.fixEvidence.reReviewRef, {
@@ -85,14 +88,14 @@ const collectedFrom = (bundle, overrides = {}) => ({
 })
 const validateBundle = (validate, bundle, source = EXPECTED_CHECK_SOURCE, collectedConversation = collectedFrom(bundle), epoch = {}) => (
   validate(bundle, source, {
-    collectedConversation, convergenceObservedAt: CONVERGENCE_AT, sameHeadCheckRuns: makeRuns(bundle.headOid),
+    collectedConversation, convergenceObservedAt: CONVERGENCE_AT, sameHeadCheckRuns: makeRuns(bundle.headOid), sameHeadCheckRunsComplete: true,
     expectedPolicySha256: DIGEST('b'), ...epoch,
   })
 )
 const convergedOptions = (findings = [], conversation = {}) => ({
   expectedRequiredCheckSource: EXPECTED_CHECK_SOURCE,
   collectedConversation: { complete: true, unresolvedThreads: 0, findings, reReviews: [], ...conversation },
-  convergenceObservedAt: CONVERGENCE_AT, sameHeadCheckRuns: makeRuns(SHA('a')), expectedPolicySha256: DIGEST('b'),
+  convergenceObservedAt: CONVERGENCE_AT, sameHeadCheckRuns: makeRuns(SHA('a')), sameHeadCheckRunsComplete: true, expectedPolicySha256: DIGEST('b'),
 })
 // Ledger acquisition always carries an external exact-head classification result,
 // and a delivered terminal is only recorded past the merge boundary with a verifier.
@@ -209,6 +212,17 @@ test('review surface classification is lossless, bounded, and fail closed for bi
     diff: 'diff --git a/scripts/lib/x.mjs b/scripts/lib/x.mjs\n+const token = await fetchToken(session)\n+  password = readPassword() // prompt',
     limits: { maxFiles: 50, maxDiffBytes: 4096 },
   }).lossless, true)
+  // Removed lines carry the credential bytes just as added lines do.
+  throwsCode('secret_review_surface_blocked', () => classifyReviewSurface({
+    changedFiles: [{ path: '.env.example', status: 'modified', binary: false, submodule: false }],
+    diff: 'diff --git a/.env.example b/.env.example\n-api_key=supersecretvalue\n+api_key=',
+    limits: { maxFiles: 50, maxDiffBytes: 4096 },
+  }), 'semantic_redaction_would_change_review_bytes')
+  throwsCode('secret_review_surface_blocked', () => classifyReviewSurface({
+    changedFiles: [{ path: 'config/app.yml', status: 'modified', binary: false, submodule: false }],
+    diff: 'diff --git a/config/app.yml b/config/app.yml\n-db_password: hunter2secret',
+    limits: { maxFiles: 50, maxDiffBytes: 4096 },
+  }), 'semantic_redaction_would_change_review_bytes')
   // Colon-delimited secret fields (YAML/JSON) are caught whether quoted or not; ordinary code is not.
   throwsCode('secret_review_surface_blocked', () => classifyReviewSurface({
     changedFiles: [{ path: 'config/app.yml', status: 'modified', binary: false, submodule: false }],
@@ -388,7 +402,7 @@ test('an escalated finding closes the transaction HELD outside autonomous author
       }),
       unresolvedThreads: 1,
     },
-  }, convergedOptions([{ id: 'ci-1', threadId: 'thread-1', source: 'ci', severity: 'P2', resolved: false, inScope: true, riskClass: 'credentials' }], { unresolvedThreads: 1 }))
+  }, convergedOptions([{ id: 'ci-1', threadId: 'thread-1', source: 'ci', severity: 'P2', resolved: false, inScope: true, riskClass: 'credentials', refutedEvidence: null, followUpIssue: null }], { unresolvedThreads: 1 }))
   assert.equal(state.phase, 'CLOSED')
   assert.equal(state.terminalClass, 'HELD')
   assert.equal(state.failureDetail, 'finding_escalated_to_external_authority')
@@ -426,6 +440,7 @@ test('adversarial decision requires distinct models, per-layer packet binding, a
     `G${index + 1}`, { status: 'pass', evidence: `scripts/tests/evidence-${index + 1}.json:1` },
   ]))
   const packetSha256 = DIGEST('a')
+  const adjudicate = (candidate, options = {}) => validateAdversarialDecision(candidate, { expectedPacketSha256: packetSha256, ...options })
   const l1 = { model: 'finder-model', output: 'closed', packetSha256, findings: [] }
   const l2 = {
     model: 'refuter-model', output: 'closed', packetSha256, l1OutputSha256: canonicalSha256(l1),
@@ -437,12 +452,27 @@ test('adversarial decision requires distinct models, per-layer packet binding, a
     verdict: 'passed', unresolvedHighCritical: [], rubric,
   }
   const decision = { packetSha256, layers: { l1, l2, l3 } }
-  assert.equal(validateAdversarialDecision(decision).verdict, 'passed')
-  assert.throws(() => validateAdversarialDecision({
+  assert.equal(adjudicate(decision).verdict, 'passed')
+  // The packet digest is the trusted side's: a self-consistent decision bound to a
+  // fabricated packet is not adjudicating the packet under review.
+  throwsCode('adversarial_raw_binding_invalid', () => validateAdversarialDecision(decision), 'trusted_packet_digest_required')
+  throwsCode('adversarial_raw_binding_invalid', () => adjudicate(decision, { expectedPacketSha256: DIGEST('e') }), 'decision_not_bound_to_trusted_packet')
+  // Layers are closed schemas, not free-form objects with a "closed" label.
+  throwsCode('adversarial_output_invalid', () => adjudicate({ ...decision, layers: { ...decision.layers, l1: { ...l1, notes: 'extra' } } }), 'l1_schema_not_closed')
+  throwsCode('adversarial_output_invalid', () => adjudicate({ ...decision, layers: { ...decision.layers, l1: { model: l1.model, output: 'closed', packetSha256 } } }), 'l1_schema_not_closed')
+  throwsCode('adversarial_output_invalid', () => adjudicate({ ...decision, layers: { ...decision.layers, l2: { ...l2, killed: 'none' } } }), 'l2_killed_invalid')
+  // Every L2 verdict names an L1 finding and every L1 finding gets exactly one verdict.
+  const finding9 = { id: 'finding-9', severity: 'HIGH', evidence: ['scripts/lib/module.mjs:9'] }
+  const l1WithFinding = { ...l1, findings: [finding9] }
+  const l2Unbound = { ...l2, l1OutputSha256: canonicalSha256(l1WithFinding) }
+  throwsCode('adversarial_output_invalid', () => adjudicate({ ...decision, layers: { l1: l1WithFinding, l2: l2Unbound, l3: { ...l3, l1OutputSha256: canonicalSha256(l1WithFinding), l2OutputSha256: canonicalSha256(l2Unbound) } } }), 'l2_verdicts_not_bound_to_l1_findings')
+  const l2Killed = { ...l2Unbound, killed: [finding9] }
+  assert.equal(adjudicate({ ...decision, layers: { l1: l1WithFinding, l2: l2Killed, l3: { ...l3, l1OutputSha256: canonicalSha256(l1WithFinding), l2OutputSha256: canonicalSha256(l2Killed) } } }).verdict, 'passed')
+  assert.throws(() => adjudicate({
     ...decision,
     layers: { ...decision.layers, l2: { ...l2, model: 'finder-model' } },
   }), (error) => error?.code === 'adversarial_independence_invalid')
-  assert.throws(() => validateAdversarialDecision({
+  assert.throws(() => adjudicate({
     ...decision,
     layers: {
       ...decision.layers,
@@ -450,33 +480,36 @@ test('adversarial decision requires distinct models, per-layer packet binding, a
     },
   }), (error) => error?.code === 'activation_unattested')
   // L1 produced against an older head while L3 binds the current packet.
-  throwsCode('adversarial_raw_binding_invalid', () => validateAdversarialDecision({
+  throwsCode('adversarial_raw_binding_invalid', () => adjudicate({
     ...decision, layers: { ...decision.layers, l1: { ...l1, packetSha256: DIGEST('0') } },
   }), 'l1_did_not_reread_bound_packet')
   // L2 refuted a different L1 output than the one presented.
-  throwsCode('adversarial_raw_binding_invalid', () => validateAdversarialDecision({
+  throwsCode('adversarial_raw_binding_invalid', () => adjudicate({
     ...decision, layers: { ...decision.layers, l2: { ...l2, l1OutputSha256: DIGEST('1') } },
   }), 'l2_not_bound_to_exact_l1_output')
-  throwsCode('adversarial_raw_binding_invalid', () => validateAdversarialDecision({
+  throwsCode('adversarial_raw_binding_invalid', () => adjudicate({
     ...decision, layers: { ...decision.layers, l3: { ...l3, l2OutputSha256: DIGEST('2') } },
   }), 'l3_not_bound_to_exact_layer_outputs')
   // L3 cannot clear a HIGH/CRITICAL blocker that L2 reports as surviving: the L3
   // set must be reconciled with the bound L2 output, and any survivor fails the verdict.
-  const survivingL2 = { ...l2, surviving: [{ id: 'finding-9', severity: 'HIGH' }, { id: 'finding-10', severity: 'LOW' }] }
-  const boundL3 = { ...l3, l2OutputSha256: canonicalSha256(survivingL2) }
-  throwsCode('adversarial_raw_binding_invalid', () => validateAdversarialDecision({
-    ...decision, layers: { l1, l2: survivingL2, l3: boundL3 },
+  const survivors = [{ id: 'finding-9', severity: 'HIGH', evidence: ['scripts/lib/module.mjs:9'] }, { id: 'finding-10', severity: 'LOW', evidence: ['scripts/lib/module.mjs:10'] }]
+  const l1Survivors = { ...l1, findings: survivors }
+  const survivingL2 = { ...l2, l1OutputSha256: canonicalSha256(l1Survivors), surviving: survivors }
+  const boundL3 = { ...l3, l1OutputSha256: canonicalSha256(l1Survivors), l2OutputSha256: canonicalSha256(survivingL2) }
+  throwsCode('adversarial_raw_binding_invalid', () => adjudicate({
+    ...decision, layers: { l1: l1Survivors, l2: survivingL2, l3: boundL3 },
   }), 'l3_blocker_set_not_reconciled_with_l2')
-  throwsCode('adversarial_blocker_unresolved', () => validateAdversarialDecision({
-    ...decision, layers: { l1, l2: survivingL2, l3: { ...boundL3, unresolvedHighCritical: ['finding-9'] } },
+  throwsCode('adversarial_blocker_unresolved', () => adjudicate({
+    ...decision, layers: { l1: l1Survivors, l2: survivingL2, l3: { ...boundL3, unresolvedHighCritical: ['finding-9'] } },
   }), 'high_or_critical_blocker_survived')
-  const lowOnlyL2 = { ...l2, surviving: [{ id: 'finding-10', severity: 'LOW' }] }
-  assert.equal(validateAdversarialDecision({
-    ...decision, layers: { l1, l2: lowOnlyL2, l3: { ...l3, l2OutputSha256: canonicalSha256(lowOnlyL2) } },
+  const l1Low = { ...l1, findings: [survivors[1]] }
+  const lowOnlyL2 = { ...l2, l1OutputSha256: canonicalSha256(l1Low), surviving: [survivors[1]] }
+  assert.equal(adjudicate({
+    ...decision, layers: { l1: l1Low, l2: lowOnlyL2, l3: { ...l3, l1OutputSha256: canonicalSha256(l1Low), l2OutputSha256: canonicalSha256(lowOnlyL2) } },
   }).verdict, 'passed')
-  throwsCode('adversarial_output_invalid', () => validateAdversarialDecision({
+  throwsCode('adversarial_output_invalid', () => adjudicate({
     ...decision, layers: { l1, l2: { ...l2, surviving: 'none' }, l3: { ...l3, l2OutputSha256: canonicalSha256({ ...l2, surviving: 'none' }) } },
-  }), 'l2_survivor_set_invalid')
+  }), 'l2_surviving_invalid')
 })
 
 test('merge preparation is exact-head CAS and refuses partial threads, stale state, or a broken clock', async () => {
@@ -684,6 +717,19 @@ test('trust-root descriptor and activation plan are non-secret, closed, and sink
     egress: 'deny_by_default', quotas: { cpuSeconds: 60, wallSeconds: 120, memoryMb: 1024, outputBytes: 1048576 },
     privateKey: 'forbidden',
   }), (error) => error?.code === 'trust_root_descriptor_invalid')
+  // Quotas are bounded above by policy ceilings: MAX_SAFE_INTEGER is not isolation.
+  throwsCode('trust_root_descriptor_invalid', () => validateTrustRootDescriptor({
+    schemaVersion: 'autonomous-delivery-trust-root/v1', appId: 4242,
+    issuerId: 'issuer-1', keyIds: ['key-2026-09'], rotation: 'add_before_remove',
+    credentialTtlSeconds: 600, artifactAcl: 'issuer_and_executor', retention: 'audit_1y',
+    egress: 'deny_by_default', quotas: { cpuSeconds: Number.MAX_SAFE_INTEGER, wallSeconds: 120, memoryMb: 1024, outputBytes: 1048576 },
+  }), 'quota_cpuSeconds_invalid')
+  throwsCode('trust_root_descriptor_invalid', () => validateTrustRootDescriptor({
+    schemaVersion: 'autonomous-delivery-trust-root/v1', appId: 4242,
+    issuerId: 'issuer-1', keyIds: ['key-2026-09'], rotation: 'add_before_remove',
+    credentialTtlSeconds: 600, artifactAcl: 'issuer_and_executor', retention: 'audit_1y',
+    egress: 'deny_by_default', quotas: { cpuSeconds: 60, wallSeconds: 120, memoryMb: 1024 },
+  }), 'quota_shape_invalid')
   assert.equal(validateActivationPlan({
     schemaVersion: 'autonomous-delivery-activation-plan/v1', phase: 'SHADOW_DUAL',
     sinkEnabled: false, commandId: 'shadow-negative-matrix', authorityId: 'external-broker',
@@ -691,6 +737,26 @@ test('trust-root descriptor and activation plan are non-secret, closed, and sink
     artifactSchemaId: 'autonomous-delivery-shadow-evidence/v1',
     rollbackCommandId: 'disable-sink-and-restore-legacy',
   }).phase, 'SHADOW_DUAL')
+  // A sink-enabled plan is armed only for one disposable exact tuple with a verified single-use canary lease.
+  const armed = {
+    schemaVersion: 'autonomous-delivery-activation-plan/v1', phase: 'CANARY_ACTIVE',
+    sinkEnabled: true, commandId: 'canary-single-pr', authorityId: 'external-broker',
+    preStateSha256: DIGEST('a'), expectedObservationSha256: DIGEST('b'),
+    artifactSchemaId: 'autonomous-delivery-canary-evidence/v1',
+    rollbackCommandId: 'disable-sink-and-restore-legacy',
+  }
+  const canary = {
+    repository: REPOSITORY, prNumber: 737, baseOid: SHA('b'), headOid: SHA('a'),
+    activationManifestSha256: DIGEST('c'), canaryLeaseId: 'canary-lease:737-1',
+  }
+  const verifyCanaryLease = (binding) => binding.canaryLeaseId === 'canary-lease:737-1' && binding.headOid === SHA('a')
+  throwsCode('activation_plan_invalid', () => validateActivationPlan(armed, { verifyCanaryLease }), 'activation_plan_shape_invalid')
+  throwsCode('activation_plan_invalid', () => validateActivationPlan({ ...armed, canary: { ...canary, extra: 1 } }, { verifyCanaryLease }), 'canary_binding_shape_invalid')
+  throwsCode('activation_plan_invalid', () => validateActivationPlan({ ...armed, canary }), 'canary_lease_unverified')
+  throwsCode('activation_plan_invalid', () => validateActivationPlan({ ...armed, canary: { ...canary, headOid: SHA('9') } }, { verifyCanaryLease }), 'canary_lease_unverified')
+  assert.equal(validateActivationPlan({ ...armed, canary }, { verifyCanaryLease }).canary.prNumber, 737)
+  // A sink-disabled plan must not carry a canary binding it does not use.
+  throwsCode('activation_plan_invalid', () => validateActivationPlan({ ...armed, sinkEnabled: false, phase: 'SHADOW_DUAL', canary }), 'activation_plan_shape_invalid')
 })
 
 test('CI and review findings converge through the five closed dispositions without equating resolution to a code fix', async () => {
@@ -735,7 +801,7 @@ test('CI and review findings converge through the five closed dispositions witho
   const collected = collectedFrom(bundle)
   throwsCode('finding_disposition_incomplete', () => validateBundle(
     validateFindingDispositionBundle, bundle, EXPECTED_CHECK_SOURCE,
-    { ...collected, findings: [...collected.findings, { id: 'ci-omitted', threadId: 'thread-omitted', source: 'ci', severity: 'P1', resolved: true, inScope: true, riskClass: 'correctness' }] },
+    { ...collected, findings: [...collected.findings, { id: 'ci-omitted', threadId: 'thread-omitted', source: 'ci', severity: 'P1', resolved: true, inScope: true, riskClass: 'correctness', refutedEvidence: null, followUpIssue: null }] },
   ), 'dispositions_do_not_cover_complete_collected_finding_set')
   throwsCode('finding_disposition_incomplete', () => validateBundle(
     validateFindingDispositionBundle, bundle, EXPECTED_CHECK_SOURCE, { ...collected, findings: collected.findings.slice(1) },
@@ -801,6 +867,28 @@ test('CI and review findings converge through the five closed dispositions witho
     validateFindingDispositionBundle, bundle, EXPECTED_CHECK_SOURCE,
     { ...collected, reReviews: [...collected.reReviews, collected.reReviews[0]] },
   ), 'collected_rereview_2_duplicated')
+  // A refutation cites only collector-verified counter-evidence on this head, and a
+  // deferral cites a follow-up issue the collector observed open in this repository.
+  throwsCode('finding_disposition_invalid', () => validateBundle(
+    validateFindingDispositionBundle, bundle, EXPECTED_CHECK_SOURCE,
+    { ...collected, findings: collected.findings.map((entry) => (entry.id === 'review-3' ? { ...entry, refutedEvidence: null } : entry)) },
+  ), 'finding_2_refutation_not_server_observed')
+  throwsCode('finding_disposition_invalid', () => validateBundle(
+    validateFindingDispositionBundle, bundle, EXPECTED_CHECK_SOURCE,
+    { ...collected, findings: collected.findings.map((entry) => (entry.id === 'review-3' ? { ...entry, refutedEvidence: ['scripts/tests/other.mjs:1'] } : entry)) },
+  ), 'finding_2_refutation_not_server_observed')
+  throwsCode('finding_disposition_invalid', () => validateBundle(
+    validateFindingDispositionBundle, bundle, EXPECTED_CHECK_SOURCE,
+    { ...collected, findings: collected.findings.map((entry) => (entry.id === 'ci-4' ? { ...entry, followUpIssue: null } : entry)) },
+  ), 'finding_3_follow_up_issue_not_server_observed')
+  throwsCode('finding_disposition_invalid', () => validateBundle(
+    validateFindingDispositionBundle, bundle, EXPECTED_CHECK_SOURCE,
+    { ...collected, findings: collected.findings.map((entry) => (entry.id === 'ci-4' ? { ...entry, followUpIssue: { url: entry.followUpIssue.url, state: 'closed' } } : entry)) },
+  ), 'finding_3_follow_up_issue_not_server_observed')
+  throwsCode('finding_disposition_invalid', () => validateBundle(
+    validateFindingDispositionBundle, bundle, EXPECTED_CHECK_SOURCE,
+    { ...collected, findings: collected.findings.map((entry) => (entry.id === 'ci-4' ? { ...entry, followUpIssue: { url: 'https://github.com/monkey1sai/AI-BIM-governance/issues/999', state: 'open' } } : entry)) },
+  ), 'finding_3_follow_up_issue_not_server_observed')
 })
 
 test('confirmed blocking findings cannot be accepted or deferred, unverified findings cannot resolve, and fixed claims need evidence', async () => {
@@ -915,6 +1003,13 @@ test('machine gate is valid only after complete finding convergence on the same 
   throwsCode('finding_gate_order_invalid', () => validateBundle(validateFindingDispositionBundle, makeConvergedBundle({
     findings: [finding],
   }), EXPECTED_CHECK_SOURCE, undefined, { sameHeadCheckRuns: undefined }), 'collector_same_head_check_runs_required')
+  // Membership proves nothing about omitted runs: the collector must witness complete pagination.
+  throwsCode('finding_gate_order_invalid', () => validateBundle(validateFindingDispositionBundle, makeConvergedBundle({
+    findings: [finding],
+  }), EXPECTED_CHECK_SOURCE, undefined, { sameHeadCheckRunsComplete: false }), 'collector_same_head_check_runs_incomplete')
+  throwsCode('finding_gate_order_invalid', () => validateBundle(validateFindingDispositionBundle, makeConvergedBundle({
+    findings: [finding],
+  }), EXPECTED_CHECK_SOURCE, undefined, { sameHeadCheckRunsComplete: undefined }), 'collector_same_head_check_runs_incomplete')
   throwsCode('finding_gate_order_invalid', () => validateBundle(validateFindingDispositionBundle, makeConvergedBundle({
     findings: [finding], machineGate: { observedAfterConvergence: true },
   })), 'machine_gate_shape_invalid')

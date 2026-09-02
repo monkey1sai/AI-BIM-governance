@@ -26,11 +26,11 @@ const SECRET_VALUES = [
   // Environment-style assignments are case-insensitive: `api_key=...` on a diff
   // line is as much a secret as `API_KEY=...`. The line anchor keeps ordinary
   // code (`const token = await ...`) out of the pattern.
-  /^[+ ]?(?:export\s+)?[A-Za-z0-9_]*(?:TOKEN|SECRET|PASSWORD|PRIVATE_KEY|DATABASE_URL|API_KEY)[A-Za-z0-9_]*\s*=\s*[^\s\r\n]{4,}$/imu,
+  /^[-+ ]?(?:export\s+)?[A-Za-z0-9_]*(?:TOKEN|SECRET|PASSWORD|PRIVATE_KEY|DATABASE_URL|API_KEY)[A-Za-z0-9_]*\s*=\s*[^\s\r\n]{4,}$/imu,
   // Colon-delimited fields (YAML `api_key: value`, JSON `"db_password": "value",`),
   // quoted or unquoted, are secrets just like `=` assignments.
   // A value with call syntax (`readPassword(prompt)`) is code, not a literal.
-  /^[+ ]?\s*["']?[A-Za-z0-9_-]*(?:TOKEN|SECRET|PASSWORD|PRIVATE_KEY|DATABASE_URL|API_KEY)[A-Za-z0-9_-]*["']?\s*:\s*["']?[^\s"'()\r\n]{4,}["']?,?\s*$/imu,
+  /^[-+ ]?\s*["']?[A-Za-z0-9_-]*(?:TOKEN|SECRET|PASSWORD|PRIVATE_KEY|DATABASE_URL|API_KEY)[A-Za-z0-9_-]*["']?\s*:\s*["']?[^\s"'()\r\n]{4,}["']?,?\s*$/imu,
   /\b(?:postgres(?:ql)?|mysql|mongodb(?:\+srv)?|redis):\/\/[^/\s:@]+:[^@\s/]+@/iu,
 ]
 const SECRET_BEARING_ENV_PATH = /(?:^|\/)\.env(?:$|\.)/u
@@ -476,7 +476,7 @@ const closeHeld = (state, failureDetail) => deepFreeze({
 // Trusted-side inputs (collector output, never the candidate bundle) are passed
 // through to the disposition validator so the gate epoch cannot be self-reported.
 export function applyFinalizationEvent(stateRaw, event, {
-  expectedRequiredCheckSource, collectedConversation, convergenceObservedAt, sameHeadCheckRuns, expectedPolicySha256,
+  expectedRequiredCheckSource, collectedConversation, convergenceObservedAt, sameHeadCheckRuns, sameHeadCheckRunsComplete, expectedPolicySha256,
 } = {}) {
   if (!isPlainObject(stateRaw)) fail('finalization_state_invalid', 'state_shape_invalid')
   const state = validateFinalizationState(stateRaw)
@@ -529,7 +529,7 @@ export function applyFinalizationEvent(stateRaw, event, {
   const roundIndex = state.rounds.length - 1
   if (event.type === 'round_converged') {
     const convergence = validateFindingDispositionBundle(event.findingBundle, expectedRequiredCheckSource, {
-      collectedConversation, convergenceObservedAt, sameHeadCheckRuns, expectedPolicySha256,
+      collectedConversation, convergenceObservedAt, sameHeadCheckRuns, sameHeadCheckRunsComplete, expectedPolicySha256,
     })
     if (
       convergence.repository !== state.repository || convergence.prNumber !== state.prNumber ||
@@ -582,22 +582,60 @@ export function validateSourcePinnedRequiredCheck(check, expected) {
   return true
 }
 
-export function validateAdversarialDecision(decision) {
+// Closed per-layer output schemas: a layer is not "closed" because it says so,
+// it is closed because it carries exactly the fields the adjudication contract
+// names and nothing else.
+const ADVERSARIAL_LAYER_KEYS = Object.freeze({
+  l1: ['model', 'output', 'packetSha256', 'findings'],
+  l2: ['model', 'output', 'packetSha256', 'l1OutputSha256', 'killed', 'surviving', 'unverified'],
+  l3: ['model', 'output', 'packetSha256', 'l1OutputSha256', 'l2OutputSha256', 'verdict', 'unresolvedHighCritical', 'rubric'],
+})
+const ADVERSARIAL_FINDING_SEVERITIES = new Set(['CRITICAL', 'HIGH', 'MEDIUM', 'LOW', 'ADVISORY'])
+const validateAdversarialFindingList = (list, label) => {
+  if (!Array.isArray(list) || list.length > 256) fail('adversarial_output_invalid', `${label}_invalid`)
+  const ids = new Set()
+  for (const [index, entry] of list.entries()) {
+    exactKeys(entry, ['id', 'severity', 'evidence'], 'adversarial_output_invalid', `${label}_${index}_shape_invalid`)
+    assertIdentifier(entry.id, 'adversarial_output_invalid', `${label}_${index}_id_invalid`)
+    if (!ADVERSARIAL_FINDING_SEVERITIES.has(entry.severity)) fail('adversarial_output_invalid', `${label}_${index}_severity_invalid`)
+    validateEvidenceLocations(entry.evidence, `${label}_${index}`)
+    if (ids.has(entry.id)) fail('adversarial_output_invalid', `${label}_${index}_duplicated`)
+    ids.add(entry.id)
+  }
+}
+
+export function validateAdversarialDecision(decision, { expectedPacketSha256 } = {}) {
   if (!isPlainObject(decision) || !isPlainObject(decision.layers)) {
     fail('adversarial_output_invalid', 'decision_shape_invalid')
   }
+  exactKeys(decision, ['packetSha256', 'layers'], 'adversarial_output_invalid', 'decision_shape_invalid')
+  exactKeys(decision.layers, ['l1', 'l2', 'l3'], 'adversarial_output_invalid', 'decision_layers_invalid')
   assertSha256(decision.packetSha256, 'adversarial_output_invalid', 'packet_digest_invalid')
+  // The packet digest is supplied by the trusted side: a decision that binds all
+  // three layers consistently to a fabricated packet is still not adjudicating
+  // the packet under review.
+  assertSha256(expectedPacketSha256, 'adversarial_raw_binding_invalid', 'trusted_packet_digest_required')
+  if (decision.packetSha256 !== expectedPacketSha256) fail('adversarial_raw_binding_invalid', 'decision_not_bound_to_trusted_packet')
   const { l1, l2, l3 } = decision.layers
   for (const [name, layer] of Object.entries({ l1, l2, l3 })) {
     if (!isPlainObject(layer) || layer.output !== 'closed') {
       fail('adversarial_output_invalid', `${name}_closed_output_required`)
     }
+    exactKeys(layer, ADVERSARIAL_LAYER_KEYS[name], 'adversarial_output_invalid', `${name}_schema_not_closed`)
     assertIdentifier(layer.model, 'adversarial_output_invalid', `${name}_model_invalid`)
     // Every layer must prove it examined the same immutable packet; an L3 that
     // binds the current packet cannot launder L1/L2 output from an older head.
     if (layer.packetSha256 !== decision.packetSha256) {
       fail('adversarial_raw_binding_invalid', `${name}_did_not_reread_bound_packet`)
     }
+  }
+  validateAdversarialFindingList(l1.findings, 'l1_findings')
+  for (const key of ['killed', 'surviving', 'unverified']) validateAdversarialFindingList(l2[key], `l2_${key}`)
+  // Every L2 verdict names an L1 finding, and every L1 finding gets exactly one verdict.
+  const l1Ids = new Set(l1.findings.map((finding) => finding.id))
+  const l2Ids = [...l2.killed, ...l2.surviving, ...l2.unverified].map((finding) => finding.id)
+  if (l2Ids.length !== l1Ids.size || new Set(l2Ids).size !== l2Ids.length || l2Ids.some((id) => !l1Ids.has(id))) {
+    fail('adversarial_output_invalid', 'l2_verdicts_not_bound_to_l1_findings')
   }
   if (l1.model === l2.model) fail('adversarial_independence_invalid', 'l2_model_must_differ_from_l1')
   const l1OutputSha256 = canonicalSha256(l1)
@@ -611,13 +649,9 @@ export function validateAdversarialDecision(decision) {
   // L3 does not get to declare blocker closure on its own: the HIGH/CRITICAL
   // survivors are derived from the bound L2 output and the L3 set must match them
   // exactly, and any survivor at all keeps the verdict from passing.
-  if (!Array.isArray(l2.surviving) || l2.surviving.length > 256) fail('adversarial_output_invalid', 'l2_survivor_set_invalid')
   const survivingHighCritical = l2.surviving
-    .filter((finding) => isPlainObject(finding) && ['HIGH', 'CRITICAL'].includes(finding.severity))
+    .filter((finding) => ['HIGH', 'CRITICAL'].includes(finding.severity))
     .map((finding) => finding.id)
-  if (survivingHighCritical.some((id) => typeof id !== 'string' || id.length === 0)) {
-    fail('adversarial_output_invalid', 'l2_survivor_id_invalid')
-  }
   const declared = Array.isArray(l3.unresolvedHighCritical) ? l3.unresolvedHighCritical : null
   if (
     declared === null || declared.length !== survivingHighCritical.length ||
@@ -881,6 +915,9 @@ export function createSingleFlightLedger(repository) {
   return new SingleFlightLedger(repository)
 }
 
+// Policy ceilings for a verifier's isolation quotas.
+const TRUST_ROOT_QUOTA_CEILINGS = Object.freeze({ cpuSeconds: 3600, wallSeconds: 7200, memoryMb: 16384, outputBytes: 64 * 1024 * 1024 })
+
 export function validateTrustRootDescriptor(descriptor) {
   const keys = [
     'schemaVersion', 'appId', 'issuerId', 'keyIds', 'rotation', 'credentialTtlSeconds',
@@ -908,8 +945,10 @@ export function validateTrustRootDescriptor(descriptor) {
     'trust_root_descriptor_invalid',
     'quota_shape_invalid',
   )
+  // Bounded means bounded above as well: a quota at MAX_SAFE_INTEGER is no isolation.
+  exactKeys(descriptor.quotas, Object.keys(TRUST_ROOT_QUOTA_CEILINGS), 'trust_root_descriptor_invalid', 'quota_shape_invalid')
   for (const [key, value] of Object.entries(descriptor.quotas)) {
-    if (!Number.isSafeInteger(value) || value < 1) fail('trust_root_descriptor_invalid', `quota_${key}_invalid`)
+    if (!Number.isSafeInteger(value) || value < 1 || value > TRUST_ROOT_QUOTA_CEILINGS[key]) fail('trust_root_descriptor_invalid', `quota_${key}_invalid`)
   }
   try {
     assertNoSecretShape(descriptor)
@@ -919,10 +958,17 @@ export function validateTrustRootDescriptor(descriptor) {
   return deepFreeze(clone(descriptor))
 }
 
-export function validateActivationPlan(plan) {
+// A sink-enabled plan is only ever armed for one disposable exact tuple: the
+// canary binding names the repository, PR, base/head, activation manifest and a
+// single-use canary lease that an external authority must confirm.
+const CANARY_BINDING_KEYS = Object.freeze(['repository', 'prNumber', 'baseOid', 'headOid', 'activationManifestSha256', 'canaryLeaseId'])
+
+export function validateActivationPlan(plan, { verifyCanaryLease } = {}) {
+  const sinkArmed = isPlainObject(plan) && plan.sinkEnabled === true
   exactKeys(plan, [
     'schemaVersion', 'phase', 'sinkEnabled', 'commandId', 'authorityId',
     'preStateSha256', 'expectedObservationSha256', 'artifactSchemaId', 'rollbackCommandId',
+    ...(sinkArmed ? ['canary'] : []),
   ], 'activation_plan_invalid', 'activation_plan_shape_invalid')
   if (
     plan.schemaVersion !== 'autonomous-delivery-activation-plan/v1' ||
@@ -931,6 +977,24 @@ export function validateActivationPlan(plan) {
   ) fail('activation_plan_invalid', 'activation_plan_policy_invalid')
   if (['LEGACY_GUARDED', 'SHADOW_DUAL', 'CUTOVER_ARMED'].includes(plan.phase) && plan.sinkEnabled) {
     fail('activation_plan_invalid', 'sink_must_remain_disabled_before_canary')
+  }
+  if (sinkArmed) {
+    const canary = plan.canary
+    exactKeys(canary, CANARY_BINDING_KEYS, 'activation_plan_invalid', 'canary_binding_shape_invalid')
+    if (!SAFE_REPOSITORY.test(canary.repository) || !Number.isSafeInteger(canary.prNumber) || canary.prNumber < 1) {
+      fail('activation_plan_invalid', 'canary_binding_identity_invalid')
+    }
+    assertSha1(canary.baseOid, 'activation_plan_invalid', 'canary_binding_base_invalid')
+    assertSha1(canary.headOid, 'activation_plan_invalid', 'canary_binding_head_invalid')
+    assertSha256(canary.activationManifestSha256, 'activation_plan_invalid', 'canary_binding_manifest_invalid')
+    assertIdentifier(canary.canaryLeaseId, 'activation_plan_invalid', 'canary_binding_lease_invalid')
+    let leaseVerified = false
+    try {
+      leaseVerified = typeof verifyCanaryLease === 'function' && verifyCanaryLease(deepFreeze(clone(canary))) === true
+    } catch {
+      leaseVerified = false
+    }
+    if (!leaseVerified) fail('activation_plan_invalid', 'canary_lease_unverified')
   }
   for (const key of ['commandId', 'authorityId', 'artifactSchemaId', 'rollbackCommandId']) {
     assertIdentifier(plan[key], 'activation_plan_invalid', `${key}_invalid`)
@@ -1108,7 +1172,7 @@ const MACHINE_GATE_KEYS = Object.freeze([
 // observed. Both the complete same-head run list and the convergence epoch come
 // from the trusted collector (outside the candidate bundle), never from the bundle
 // itself, so neither can be self-reported to satisfy the ordering check.
-const validateMachineGateEpoch = (gate, expectedSource, { convergenceObservedAt, sameHeadCheckRuns } = {}) => {
+const validateMachineGateEpoch = (gate, expectedSource, { convergenceObservedAt, sameHeadCheckRuns, sameHeadCheckRunsComplete } = {}) => {
   exactKeys(gate, MACHINE_GATE_KEYS, 'finding_gate_order_invalid', 'machine_gate_shape_invalid')
   if (!Number.isSafeInteger(gate.checkRunId) || gate.checkRunId < 1) {
     fail('finding_gate_order_invalid', 'machine_gate_check_run_id_invalid')
@@ -1123,6 +1187,9 @@ const validateMachineGateEpoch = (gate, expectedSource, { convergenceObservedAt,
   if (!Array.isArray(sameHeadCheckRuns) || sameHeadCheckRuns.length < 1 || sameHeadCheckRuns.length > 64) {
     fail('finding_gate_order_invalid', 'collector_same_head_check_runs_required')
   }
+  // Membership in the list proves nothing about what the list omits: the collector
+  // must witness that its pagination of this head's runs completed.
+  if (sameHeadCheckRunsComplete !== true) fail('finding_gate_order_invalid', 'collector_same_head_check_runs_incomplete')
   const seen = new Set()
   let latest = null
   for (const [index, run] of sameHeadCheckRuns.entries()) {
@@ -1165,7 +1232,7 @@ const parseCollectedConversation = (collectedConversation) => {
   const byId = new Map()
   const threads = new Set()
   for (const [index, entry] of findings.entries()) {
-    exactKeys(entry, ['id', 'threadId', 'source', 'severity', 'resolved', 'inScope', 'riskClass'], 'finding_disposition_invalid', `collected_finding_${index}_shape_invalid`)
+    exactKeys(entry, ['id', 'threadId', 'source', 'severity', 'resolved', 'inScope', 'riskClass', 'refutedEvidence', 'followUpIssue'], 'finding_disposition_invalid', `collected_finding_${index}_shape_invalid`)
     assertIdentifier(entry.id, 'finding_disposition_invalid', `collected_finding_${index}_id_invalid`)
     assertIdentifier(entry.threadId, 'finding_disposition_invalid', `collected_finding_${index}_thread_id_invalid`)
     if (!FINDING_SOURCES.has(entry.source)) fail('finding_disposition_invalid', `collected_finding_${index}_source_invalid`)
@@ -1176,6 +1243,15 @@ const parseCollectedConversation = (collectedConversation) => {
     // Scope and risk class are authoritative classifications, not bundle opinions.
     if (typeof entry.inScope !== 'boolean') fail('finding_disposition_invalid', `collected_finding_${index}_scope_invalid`)
     if (!FINDING_RISK_CLASSES.includes(entry.riskClass)) fail('finding_disposition_invalid', `collected_finding_${index}_risk_class_invalid`)
+    // Counter-evidence for a refutation and the follow-up issue behind a deferral
+    // are collector observations on the current head, never bundle assertions.
+    if (entry.refutedEvidence !== null) validateEvidenceLocations(entry.refutedEvidence, `collected_finding_${index}_refutation`)
+    if (entry.followUpIssue !== null) {
+      exactKeys(entry.followUpIssue, ['url', 'state'], 'finding_disposition_invalid', `collected_finding_${index}_follow_up_shape_invalid`)
+      if (typeof entry.followUpIssue.url !== 'string' || !['open', 'closed'].includes(entry.followUpIssue.state)) {
+        fail('finding_disposition_invalid', `collected_finding_${index}_follow_up_invalid`)
+      }
+    }
     if (byId.has(entry.id) || threads.has(entry.threadId)) {
       fail('finding_disposition_invalid', `collected_finding_${index}_duplicated`)
     }
@@ -1208,7 +1284,7 @@ const parseCollectedConversation = (collectedConversation) => {
 }
 
 export function validateFindingDispositionBundle(bundle, expectedRequiredCheckSource, {
-  collectedConversation, convergenceObservedAt, sameHeadCheckRuns, expectedPolicySha256,
+  collectedConversation, convergenceObservedAt, sameHeadCheckRuns, sameHeadCheckRunsComplete, expectedPolicySha256,
 } = {}) {
   exactKeys(bundle, [
     'schemaVersion', 'repository', 'prNumber', 'baseOid', 'headOid', 'policySha256',
@@ -1263,6 +1339,15 @@ export function validateFindingDispositionBundle(bundle, expectedRequiredCheckSo
         !finding.fixEvidence.regressionEvidence.every((location) => reReview.regressionLocations.includes(location))
       ) fail('finding_disposition_invalid', `finding_${index}_fix_evidence_not_server_observed`)
     }
+    // A refutation cites only counter-evidence the collector verified on this head.
+    if (finding.disposition === 'FALSE_POSITIVE' && (
+      !Array.isArray(record.refutedEvidence) ||
+      !finding.evidence.every((location) => record.refutedEvidence.includes(location))
+    )) fail('finding_disposition_invalid', `finding_${index}_refutation_not_server_observed`)
+    // A deferral cites a follow-up issue the collector observed open in this repository.
+    if (finding.disposition === 'DEFERRED' && (
+      record.followUpIssue === null || record.followUpIssue.url !== finding.followUpRef || record.followUpIssue.state !== 'open'
+    )) fail('finding_disposition_invalid', `finding_${index}_follow_up_issue_not_server_observed`)
     if (record.resolved !== finding.threadResolved) {
       fail('finding_disposition_incomplete', `finding_${index}_thread_resolution_not_server_observed`)
     }
@@ -1283,7 +1368,7 @@ export function validateFindingDispositionBundle(bundle, expectedRequiredCheckSo
   }
   validateMachineGateEpoch(bundle.machineGate, {
     name: expectedRequiredCheckSource.name, appId: expectedRequiredCheckSource.appId, headOid: bundle.headOid,
-  }, { convergenceObservedAt, sameHeadCheckRuns })
+  }, { convergenceObservedAt, sameHeadCheckRuns, sameHeadCheckRunsComplete })
   validateSourcePinnedRequiredCheck({
     name: bundle.machineGate.name,
     appId: bundle.machineGate.appId,

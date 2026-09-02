@@ -202,6 +202,17 @@ test('dry run posts nothing, live posts once per finding, and reruns dedupe on t
   ]);
   assert.equal(finish.calls.some((call) => call.args.includes('POST')), false);
   assert.equal(finish.calls.filter((call) => call.args.join(' ').includes('resolveReviewThread')).length, 1);
+  // The same decision from a new run (new agent-run / webhook id) is the other safe
+  // skip; a crashed predecessor's pending resolution is finished from it as well.
+  const newRun = renderPlan({ agentRunId: 'claude-d23c2a-run-9' });
+  const fromNewRun = makeGh({ threads: threadsFor(newRun, Object.fromEntries(plan.replies.map((reply) => [reply.threadId, [
+    { databaseId: 500, author: 'monkey1sai', body: reply.body },
+  ]]))) });
+  const newRunResult = planSinkActions({ lock: NO_LOCK, plan: newRun, gh: fromNewRun.gh, live: true, resolve: true, env: {} });
+  assert.deepEqual(newRunResult.results.map((entry) => [entry.action, entry.reason, entry.resolved]), [
+    ['skip', 'already_dispositioned_on_head', false], ['skip', 'already_dispositioned_on_head', true], ['skip', 'already_dispositioned_on_head', false],
+  ]);
+  assert.equal(fromNewRun.calls.some((call) => call.args.includes('POST')), false);
 });
 
 test('a head that moves right after a reply is posted is recorded as drift and never resolved', () => {
@@ -313,13 +324,20 @@ test('the sink serializes itself per PR and holds fail-closed when the lock is a
     assert.ok(fileLock.acquire({ repository: REPOSITORY, prNumber: 738 }));
     first.release();
     const second = fileLock.acquire({ repository: REPOSITORY, prNumber: 737 });
-    // A lock left behind by a dead run is reclaimed once it is older than the stale window.
     const lockFile = path.join(root, 'monkey1sai__AI-BIM-governance-737.lock');
     const old = new Date(Date.now() - 45 * 60 * 1000);
     fs.utimesSync(lockFile, old, old);
     clock = Date.now();
-    assert.ok(fileLock.acquire({ repository: REPOSITORY, prNumber: 737 }));
+    // Age alone never reclaims a lock whose holder is still alive (this process).
+    assert.throws(() => fileLock.acquire({ repository: REPOSITORY, prNumber: 737 }), /sink_lock_held/);
+    // A dead holder's stale lock is reclaimed, and the old holder's release no longer deletes the new lock.
+    const deadHolderLock = createPlanLock({ root, now: () => clock, isAlive: () => false });
+    const third = deadHolderLock.acquire({ repository: REPOSITORY, prNumber: 737 });
     second.release();
+    assert.equal(fs.existsSync(lockFile), true);
+    assert.throws(() => fileLock.acquire({ repository: REPOSITORY, prNumber: 737 }), /sink_lock_held/);
+    third.release();
+    assert.equal(fs.existsSync(lockFile), false);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
