@@ -426,6 +426,23 @@ test('RED release: short, partial, and self-issued requests never call the lease
   assert.equal(fixture.calls.release, 0)
 })
 
+test('P2 regression — retained-resource release dispatches through the leaseRegistry.releaseRetainedResources seam', async () => {
+  const request = { lease_ids: ['lease:one', 'lease:two'], expected_oid: 'a'.repeat(40), nonce: 'n'.repeat(32), owner_attestation: { attestation_ref: 'attestation:owner-end-one', attestation_digest: 'c'.repeat(64) } }
+  const fixture = createPorts()
+  const seen = []
+  fixture.ports.leaseRegistry.releaseRetainedResources = async (received) => { seen.push(structuredClone(received)); return { status: 'RETENTION_RELEASED' } }
+  const released = await createParallelDeliveryFabric(fixture.ports).dispatch({ type: 'release', command_id: 'command:release-retained', release_request: request })
+  assert.deepEqual(released, { command_id: 'command:release-retained', type: 'release', status: 'SHADOW_STORED', reason: 'RETENTION_RELEASED' })
+  assert.deepEqual(seen, [request])
+  assert.equal(fixture.calls.release, 0)
+
+  const withoutSeam = createPorts()
+  const held = await createParallelDeliveryFabric(withoutSeam.ports).dispatch({ type: 'release', command_id: 'command:release-retained-no-seam', release_request: request })
+  assert.equal(held.status, 'HELD')
+  assert.equal(held.reason, 'RETENTION_RELEASE_AUTHORITY_UNAVAILABLE')
+  assert.equal(withoutSeam.calls.release, 0)
+})
+
 test('AC-13 — legal plan_only writes only control metadata while every other effect remains zero', async () => {
   const { ports, calls } = createPorts()
   const fabric = createParallelDeliveryFabric(ports)
