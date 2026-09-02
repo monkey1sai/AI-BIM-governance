@@ -522,6 +522,36 @@ test('P2 regression — command journal capacity is bounded without breaking com
   assert.equal(Object.keys((await store.read(store.refs.commandJournal)).record.receipts).length, 2)
 })
 
+test('P2 regression — every contract-valid scope path serializes into an admissible lease resource key', async () => {
+  const { leaseRegistry, store } = createFixture()
+  // Realistic nested segments (no secret-shaped runs) padded to the exact contract bound.
+  const longPath = (root, length) => {
+    let path = root
+    for (let index = 0; path.length < length; index += 1) path += `/dir${index}`
+    return path.slice(0, length - 2) + 'ab'
+  }
+  const longest = longPath('src', 512)
+  assert.equal(longest.length, 512)
+  const admitted = await leaseRegistry.admit(makeRequest(store, {
+    lease_id: 'lease:wide-scope',
+    resource_keys: [`path:${longest}`, `glob:${longPath('lib', 500)}/**/*.mjs`, `rename:${longPath('old', 512)}:${longPath('new', 512)}`],
+    nonce: NONCE('wide-scope'),
+  }))
+  assert.equal(admitted.status, 'ADMITTED', JSON.stringify(admitted))
+  await assert.rejects(async () => leaseRegistry.admit(makeRequest(store, {
+    lease_id: 'lease:wide-scope-over', resource_keys: [`path:${longest}x`], nonce: NONCE('wide-scope-over'),
+  })), (error) => error?.code === 'invalid_value')
+})
+
+test('P2 regression — the Git CAS store admits queue-operation archive refs and still refuses unknown refs', async () => {
+  const store = createGitCasStore({ git: createInMemoryGit(), commonDir: 'C:/fake/common-dir' })
+  const archiveRef = `refs/ai-bim/queue-operation-archive/${'c'.repeat(64)}`
+  assert.deepEqual(await store.read(archiveRef), { ref: archiveRef, oid: '0'.repeat(40), record: null })
+  for (const forbidden of ['refs/ai-bim/queue-operation-archive/not-a-digest', 'refs/ai-bim/queue-operation-archive/', 'refs/ai-bim/queue-operation-archive']) {
+    await assert.rejects(store.read(forbidden), (error) => error?.code === 'registry_ref_forbidden', forbidden)
+  }
+})
+
 test('P2 regression — crossing the live-record threshold compacts released leases instead of blocking a disjoint writer', async () => {
   const git = createInMemoryGit()
   git.blobs.set(SEEDED_PLAN_OID, SEEDED_PLAN_BLOB)

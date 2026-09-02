@@ -316,11 +316,20 @@ const commandPayload = (command, payload) => {
   return payload
 }
 
+// A non-null lease snapshot carries the Fabric's authenticated plan-scoped projection
+// metadata; the CLI accepts exactly that closed shape and still emits only the oid.
+const leaseProjectionValid = (value, planId) => value === undefined || (
+  exactKeys(value, ['scope', 'plan_id', 'source_oid', 'source_digest']) && value.scope === 'plan' && value.plan_id === planId &&
+  typeof value.source_oid === 'string' && /^[0-9a-f]{40}$/u.test(value.source_oid) &&
+  typeof value.source_digest === 'string' && /^[0-9a-f]{64}$/u.test(value.source_digest))
+
 const inspectSuccess = (value, planId) => {
   const result = snapshot(value, MAX_OUTPUT)
   if (!exactKeys(result, ['plan_id', 'plan', 'leases']) || result.plan_id !== planId) return undefined
   for (const key of ['plan', 'leases']) {
-    if (!exactKeys(result[key], ['oid', 'record']) || typeof result[key].oid !== 'string' || !/^[0-9a-f]{40}$/u.test(result[key].oid)) return undefined
+    const projected = key === 'leases' && own(result[key], 'projection')
+    if (!exactKeys(result[key], projected ? ['oid', 'record', 'projection'] : ['oid', 'record']) || typeof result[key].oid !== 'string' || !/^[0-9a-f]{40}$/u.test(result[key].oid)) return undefined
+    if (projected && (result[key].record === null || !leaseProjectionValid(result[key].projection, planId))) return undefined
   }
   return Object.freeze({
     plan_id: result.plan_id,

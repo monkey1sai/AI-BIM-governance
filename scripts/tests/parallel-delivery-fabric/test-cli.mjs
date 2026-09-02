@@ -437,6 +437,23 @@ test('CLI suppresses private host-shaped input and oversized or unserializable o
   assert.equal(JSON.parse(unserializable.output[0]).status, 'HELD')
 })
 
+test('P2 regression — CLI inspect accepts the authenticated plan-scoped lease projection and rejects a malformed one', async () => {
+  const projection = { scope: 'plan', plan_id: 'plan:one', source_oid: '1'.repeat(40), source_digest: 'a'.repeat(64) }
+  const inspectWith = (leaseProjection) => (planId) => ({
+    plan_id: planId, plan: { oid: '0'.repeat(40), record: null }, leases: { oid: '0'.repeat(40), record: { leases: {} }, projection: leaseProjection },
+  })
+  const projected = fixture({ stdin: input(payloadFor('inspect')), inspect: inspectWith(projection) })
+  assert.equal((await run(['inspect', '--input', '-'], projected)).exitCode, 0)
+  assert.deepEqual(JSON.parse(projected.output[0]), { plan_id: 'plan:one', plan: { oid: '0'.repeat(40) }, leases: { oid: '0'.repeat(40) } })
+  for (const bad of [{ ...projection, plan_id: 'plan:two' }, { ...projection, scope: 'global' }, { ...projection, extra: true }, { ...projection, source_digest: 'zz' }, { scope: 'plan' }]) {
+    const subject = fixture({ stdin: input(payloadFor('inspect')), inspect: inspectWith(bad) })
+    assert.equal((await run(['inspect', '--input', '-'], subject)).exitCode, 1, JSON.stringify(bad))
+    assert.deepEqual(JSON.parse(subject.output[0]), { status: 'HELD', error: 'CLI_FABRIC_RESULT_UNSUCCESSFUL' })
+  }
+  const nullWithProjection = fixture({ stdin: input(payloadFor('inspect')), inspect: (planId) => ({ plan_id: planId, plan: { oid: '0'.repeat(40), record: null }, leases: { oid: '0'.repeat(40), record: null, projection } }) })
+  assert.equal((await run(['inspect', '--input', '-'], nullWithProjection)).exitCode, 1)
+})
+
 test('CLI projects inspect output through a closed redacted allow-list and budgets it before serialization', async () => {
   const safe = fixture({ stdin: input(payloadFor('inspect')), inspect: (planId) => ({
     plan_id: planId,

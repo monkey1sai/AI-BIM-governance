@@ -27,7 +27,12 @@ const NONCE = /^[A-Za-z0-9_-]{32,128}$/u
 const OPAQUE_REFERENCE = /^[a-z][a-z0-9_-]*:[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}$/u
 const OPAQUE_IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._:/-]{1,255}$/u
 const TASK2_OPAQUE_ID = /^[A-Za-z0-9][A-Za-z0-9._:/-]{1,127}$/u
-const TASK2_RESOURCE_KEY = /^[a-z][a-z0-9_-]*:[a-z0-9][a-z0-9._:/\-*?\[\]{},!^]{0,255}$/u
+// The contract admits repository-relative paths up to 512 characters and serializes scope
+// resources as `path:<value>`, `glob:<value>` or `rename:<old>:<new>`, so the lease-side
+// resource-key bound must admit the longest contract-valid serialization (7 + 512 + 1 + 512).
+const MAX_SCOPE_PATH_LENGTH = 512
+const MAX_TASK2_RESOURCE_KEY_LENGTH = 'rename:'.length + MAX_SCOPE_PATH_LENGTH + ':'.length + MAX_SCOPE_PATH_LENGTH
+const TASK2_RESOURCE_KEY = /^[a-z][a-z0-9_-]*:[a-z0-9][a-z0-9._:/\-*?\[\]{},!^]{0,1031}$/u
 const TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u
 const RAW_WINDOWS_SID_SEGMENT = /(?:^|[/:])S-\d+(?:-\d+){2,}(?=$|[/:])/iu
 const TERMINAL_PROCESS_ID_SEGMENT = /(?:^|[/:])\d+$/u
@@ -172,7 +177,7 @@ const scopeResourceKey = (resource) => resource.kind === 'path'
 
 const assertTask2ResourceKey = (value, context) => {
   const resourceKey = assertString(value, context)
-  if (resourceKey.length < 3 || resourceKey.length > 256) fail('invalid_value', `${context}_invalid`)
+  if (resourceKey.length < 3 || resourceKey.length > MAX_TASK2_RESOURCE_KEY_LENGTH) fail('invalid_value', `${context}_invalid`)
   const candidate = resourceCandidateFromKey(resourceKey)
   const normalized = candidate ? normalizedScopeResourceFromKey(resourceKey) : undefined
   if (candidate && (!normalized || scopeResourceKey(normalized) !== resourceKey)) {
@@ -261,10 +266,16 @@ const isCommandJournalArchiveRef = (ref) => typeof ref === 'string' &&
 const commandJournalArchiveRef = (journalKey) =>
   `${JOURNAL_ARCHIVE_REF_PREFIX}${digestCanonical({ journal_key: journalKey })}`
 
+// Queue-operation archives are keyed by mapping digest, exactly like journal archives, so the
+// canonical Git CAS store admits them by prefix + digest shape and nothing else.
+const QUEUE_OPERATION_ARCHIVE_REF_PREFIX = 'refs/ai-bim/queue-operation-archive/'
+const isQueueOperationArchiveRef = (ref) => typeof ref === 'string' &&
+  ref.startsWith(QUEUE_OPERATION_ARCHIVE_REF_PREFIX) && DIGEST.test(ref.slice(QUEUE_OPERATION_ARCHIVE_REF_PREFIX.length))
+
 const planRefForId = (planId) => `${PLAN_REF_PREFIX}${digestCanonical({ plan_id: planId })}`
 
 const refOf = (ref) => {
-  if (!REFS.has(ref) && !isPlanRef(ref) && !isCommandJournalArchiveRef(ref)) fail('registry_ref_forbidden', String(ref))
+  if (!REFS.has(ref) && !isPlanRef(ref) && !isCommandJournalArchiveRef(ref) && !isQueueOperationArchiveRef(ref)) fail('registry_ref_forbidden', String(ref))
   return ref
 }
 
@@ -2581,7 +2592,7 @@ const QUEUE_OPERATION_ARCHIVE_SCHEMA = 'queue-operation-archive/v1'
 // Terminal operation receipts (a cancelled mapping's reserve + cancel cycle) rotate into a
 // per-mapping archive ref, so historical operation count never blocks admission while the
 // replay tombstone for that mapping stays durable.
-const queueOperationArchiveRef = (mappingKey) => `refs/ai-bim/queue-operation-archive/${digestCanonical({ mapping_key: mappingKey })}`
+const queueOperationArchiveRef = (mappingKey) => `${QUEUE_OPERATION_ARCHIVE_REF_PREFIX}${digestCanonical({ mapping_key: mappingKey })}`
 const validQueueOperationArchive = (record, mappingKey) => {
   try {
     exactKeys(record, ['schema_version', 'generation', 'nonce', 'created_at', 'updated_at', 'mapping_key', 'operations', 'canonical_digest'], 'queue_operation_archive')
