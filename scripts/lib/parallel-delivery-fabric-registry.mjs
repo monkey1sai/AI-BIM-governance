@@ -543,6 +543,10 @@ const RETAINED_RESOURCE_KEYS = Object.freeze([
   'head_sha', 'release_reason', 'released_at', 'release_record_digest',
 ])
 
+const RETENTION_RELEASE_ATTESTATION_KEYS = Object.freeze([
+  'attestation_ref', 'attestation_digest', 'issuer_id', 'issuer_version', 'action', 'lease_set_digest',
+  'expected_oid', 'nonce', 'observed_at', 'expires_at', 'revocation_epoch',
+])
 const DRAIN_ATTESTATION_KEYS = Object.freeze([
   'attestation_ref', 'attestation_digest', 'issuer_id', 'issuer_version', 'action', 'plan_id', 'generation',
   'expected_oid', 'nonce', 'reason', 'observed_at', 'expires_at', 'revocation_epoch',
@@ -1644,9 +1648,14 @@ export function createLeaseRegistry({
     if (stale) return stale
     const existing = snapshot.record.draining_plans[plan_id]
     if (existing) {
-      return existing.generation === generation && existing.nonce === nonce && existing.reason === reason
-        ? { status: 'DRAINING', plan_id, oid: snapshot.oid }
-        : { status: 'HELD_EXECUTION_AUTHORITY', reason: 'PLAN_DRAIN_IMMUTABLE' }
+      // The drain of one generation is immutable; a newer active generation (proved
+      // by the plan guard above) may be drained on its own, replacing the record.
+      if (existing.generation === generation) {
+        return existing.nonce === nonce && existing.reason === reason
+          ? { status: 'DRAINING', plan_id, oid: snapshot.oid }
+          : { status: 'HELD_EXECUTION_AUTHORITY', reason: 'PLAN_DRAIN_IMMUTABLE' }
+      }
+      if (existing.generation > generation) return { status: 'HELD_EXECUTION_AUTHORITY', reason: 'PLAN_DRAIN_IMMUTABLE' }
     }
     const timestamp = nowFrom(clock)
     const drainingPlans = clone(snapshot.record.draining_plans)
@@ -2107,7 +2116,72 @@ export function createLeaseRegistry({
     }
   }
 
-  return Object.freeze({ inspect, validateDependencies, admit, validateActive, heartbeat, reconcileTimeout, drainPlan, endRequest, release })
+  // The only path that removes retained-resource truth: an owner attestation bound
+  // to the exact stub set releases their retention, so history never turns into a
+  // permanent admission blocker without an authority saying so.
+  const releaseRetainedResources = async (input) => {
+    const { lease_ids, expected_oid, nonce, owner_attestation } = validateClosedRequest(input, [
+      'lease_ids', 'expected_oid', 'nonce', 'owner_attestation',
+    ], 'retained_resource_release_request')
+    if (!Array.isArray(lease_ids) || lease_ids.length === 0 || lease_ids.length > 256 || new Set(lease_ids).size !== lease_ids.length) {
+      fail('invalid_value', 'retained_resource_release_request_lease_ids_invalid')
+    }
+    for (const leaseId of lease_ids) assertTask2OpaqueId(leaseId, 'retained_resource_release_request.lease_id')
+    assertOid(expected_oid, 'retained_resource_release_request.expected_oid')
+    assertNonce(nonce, 'retained_resource_release_request.nonce')
+    validateClosedRequest(owner_attestation, RETENTION_RELEASE_ATTESTATION_KEYS, 'retained_resource_release_request.owner_attestation')
+    for (const field of ['attestation_ref', 'issuer_id', 'issuer_version']) assertTask2OpaqueId(owner_attestation[field], `retained_resource_release_request.owner_attestation.${field}`)
+    assertDigest(owner_attestation.attestation_digest, 'retained_resource_release_request.owner_attestation.attestation_digest')
+    const leaseSetDigest = digestCanonical([...lease_ids].sort())
+    if (owner_attestation.action !== 'release_retained_resources' || owner_attestation.lease_set_digest !== leaseSetDigest ||
+        owner_attestation.expected_oid !== expected_oid || owner_attestation.nonce !== nonce) {
+      fail('invalid_value', 'retained_resource_release_request_attestation_tuple_mismatch')
+    }
+    const releaseNow = parseTimestamp(nowFrom(clock), 'retained_resource_release_request.now')
+    if (parseTimestamp(owner_attestation.expires_at, 'retained_resource_release_request.owner_attestation.expires_at') <= releaseNow ||
+        parseTimestamp(owner_attestation.observed_at, 'retained_resource_release_request.owner_attestation.observed_at') > releaseNow) {
+      fail('invalid_value', 'retained_resource_release_request_attestation_expired')
+    }
+    if (!Number.isSafeInteger(owner_attestation.revocation_epoch) || owner_attestation.revocation_epoch < 0) fail('invalid_value', 'retained_resource_release_request_attestation_epoch_invalid')
+    if (!ownerEndAttestor || typeof ownerEndAttestor.verify !== 'function') {
+      return { status: 'HELD_EXECUTION_AUTHORITY', reason: 'RETENTION_RELEASE_AUTHORITY_UNAVAILABLE' }
+    }
+    let verified
+    try {
+      verified = await ownerEndAttestor.verify({ attestation: owner_attestation, lease: null, retention_release: { lease_ids: [...lease_ids].sort(), expected_oid, nonce }, now: nowFrom(clock) })
+    } catch {
+      return { status: 'HELD_EXECUTION_AUTHORITY', reason: 'RETENTION_RELEASE_AUTHORITY_UNAVAILABLE' }
+    }
+    if (!isObject(verified) || verified.verdict !== 'TRUSTED' || !isObject(verified.attestation) ||
+        digestCanonical(verified.attestation) !== digestCanonical(owner_attestation)) {
+      return { status: 'HELD_EXECUTION_AUTHORITY', reason: 'RETENTION_RELEASE_ATTESTATION_UNVERIFIED' }
+    }
+    const snapshot = await registrySnapshot(store, writerCap)
+    if (snapshot.status === 'HELD_REGISTRY_INTEGRITY') return snapshot
+    const stale = validateExpectedSnapshot(snapshot, expected_oid)
+    if (stale) return stale
+    const retainedResources = clone(snapshot.record.retained_resources ?? {})
+    const missing = lease_ids.filter((leaseId) => !Object.hasOwn(retainedResources, leaseId))
+    if (missing.length > 0) return { status: 'HELD_EXECUTION_AUTHORITY', reason: 'RETAINED_RESOURCE_UNKNOWN', lease_ids: missing }
+    for (const leaseId of lease_ids) delete retainedResources[leaseId]
+    const timestamp = nowFrom(clock)
+    const record = nextRegistryRecord({
+      store,
+      current: snapshot.record,
+      writerCap,
+      nonce,
+      timestamp,
+      leases: clone(snapshot.record.leases),
+      usedOwnerEndAttestations: clone(snapshot.record.used_owner_end_attestations),
+      retainedResources,
+    })
+    const result = await store.cas({ ref: LEASE_REF, expected_oid, record })
+    return result.status === 'STORED'
+      ? { status: 'RETENTION_RELEASED', lease_ids: [...lease_ids].sort(), oid: result.oid }
+      : { status: 'CONFLICT', reason: 'CAS_CONFLICT', expected_oid, actual_oid: result.actual_oid ?? null }
+  }
+
+  return Object.freeze({ inspect, validateDependencies, admit, validateActive, heartbeat, reconcileTimeout, drainPlan, endRequest, release, releaseRetainedResources })
 }
 
 const MANAGED_BRANCH_KEYS = Object.freeze([

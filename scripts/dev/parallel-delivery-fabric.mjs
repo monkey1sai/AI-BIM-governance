@@ -3,6 +3,7 @@ import path from 'node:path'
 import { types } from 'node:util'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
+import { isCanonicalOpaqueReference } from '../lib/parallel-delivery-fabric-contract.mjs'
 import { createLocalParallelDeliveryFabric } from '../lib/parallel-delivery-fabric-local.mjs'
 
 const COMMANDS = new Set(['submit', 'advance', 'reconcile', 'drain', 'release', 'inspect'])
@@ -16,7 +17,9 @@ const MAX_KEYS = 128
 // writer-count cap. The byte budget still bounds the input.
 const MAX_NODES = 4096
 const COMMAND_ID = /^[A-Za-z][A-Za-z0-9._:-]{2,127}$/u
-const PLAN_ID = /^[A-Za-z][A-Za-z0-9._:-]{2,127}$/u
+// Plan ids follow the contract's canonical opaque-reference grammar (namespaced,
+// `/` allowed), so an id the parser and registry accept is also inspectable.
+const PLAN_ID = { test: (value) => typeof value === 'string' && value.length <= 128 && isCanonicalOpaqueReference(value) }
 const SAFE_REASON = /^[A-Za-z0-9_:-]{1,128}$/u
 const FORBIDDEN_KEY = /^(?:__proto__|prototype|constructor)$/iu
 const UNSAFE_KEY = /(?:api[_-]?key|secret|token|password|credential|private|cookie|authorization|bearer|transcript|process[_-]?id|worker[_-]?pid|owner[_-]?sid|host[_-]?name|file[_-]?path|(?:^|[_-])pid$|(?:^|[_-])sid$|absolute[_-]?path|(?:^|[_-])env(?:$|[_-])|^env_)/iu

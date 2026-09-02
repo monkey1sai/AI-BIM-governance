@@ -344,6 +344,14 @@ test('P1 regression — a contract-maximum 64-task delivery plan fits the CLI no
   assert.equal(subject.calls.length, 1)
 })
 
+test('P2 regression — a contract-valid namespaced plan id is inspectable through the CLI', async () => {
+  const subject = fixture({ stdin: input({ plan_id: 'plan:foo/bar' }) })
+  assert.equal((await run(['inspect', '--input', '-'], subject)).exitCode, 0)
+  assert.deepEqual(subject.calls[0], { inspect: 'plan:foo/bar' })
+  const unnamespaced = fixture({ stdin: input({ plan_id: 'not-namespaced' }) })
+  assertHeld(unnamespaced, await run(['inspect', '--input', '-'], unnamespaced))
+})
+
 test('CLI accepts input with a dense array of exactly 128 elements', async () => {
   const array = payloadFor('submit')
   array.plan = { plan_id: 'plan:one', payload: Array.from({ length: MAX_ARRAY_LENGTH }, () => 'x') }

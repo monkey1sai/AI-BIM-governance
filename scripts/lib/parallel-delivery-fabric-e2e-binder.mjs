@@ -901,8 +901,10 @@ export const trustedPinsAuthorityDigest = (pins) => digestCanonical({
   source_ref: pins?.source_ref ?? null,
   source_sha: pins?.source_sha ?? null,
   base_sha: pins?.base_sha ?? null,
-  verifier_sha: pins?.verifier_sha ?? null,
-  binder_sha: pins?.binder_sha ?? null,
+  // The validator accepts the `trusted_*` aliases, so the digest binds whichever
+  // spelling the pins actually use; a pin cannot escape the digest by alias.
+  verifier_sha: (isPlainObject(pins) ? trustedVerifierSha(pins) : undefined) ?? null,
+  binder_sha: (isPlainObject(pins) ? trustedBinderSha(pins) : undefined) ?? null,
   verifier_tree_digest: pins?.verifier_tree_digest ?? null,
   harness_digest: pins?.harness_digest ?? null,
   command_pins: pins?.command_pins ?? null,

@@ -675,6 +675,27 @@ test('plan drain is durable and blocks every later admission for the same plan',
     resource_keys: ['path:docs/gen2.mjs'], nonce: NONCE('gen2-admit'), expected_plan_oid: nextGeneration.oid,
   }))
   assert.notEqual(nextGenerationLease.reason, 'PLAN_DRAINING', JSON.stringify(nextGenerationLease))
+  // The newer active generation can be drained on its own; the older drain stays immutable.
+  const beforeGen2Drain = await leaseRegistry.inspect()
+  const gen2Drain = await leaseRegistry.drainPlan({
+    plan_id: 'plan:one', generation: 2, expected_oid: beforeGen2Drain.oid,
+    expected_plan_oid: nextGeneration.oid, nonce: NONCE('plan-drain-gen2'), reason: 'failed',
+    owner_attestation: drainAttestation({ generation: 2, expected_oid: beforeGen2Drain.oid, nonce: NONCE('plan-drain-gen2'), reason: 'failed', suffix: 'drain-gen2' }),
+  })
+  assert.equal(gen2Drain.status, 'DRAINING', JSON.stringify(gen2Drain))
+  const gen2Blocked = await leaseRegistry.admit(makeRequest(store, {
+    lease_id: 'lease:gen2-after-drain', generation: 2, owner_session: 'session:gen2-after', provider_session_id: 'provider:gen2-after',
+    execution_context_id: 'context:gen2-after', worktree_id: 'worktree:gen2-after', branch: 'codex/gen2-after',
+    resource_keys: ['path:docs/gen2-after.mjs'], nonce: NONCE('gen2-after-admit'), expected_plan_oid: nextGeneration.oid,
+  }))
+  assert.deepEqual({ status: gen2Blocked.status, reason: gen2Blocked.reason }, { status: 'QUEUED_FOR_LEASE', reason: 'PLAN_DRAINING' })
+  const afterGen2Drain = await leaseRegistry.inspect()
+  const olderDrain = await leaseRegistry.drainPlan({
+    plan_id: 'plan:one', generation: 1, expected_oid: afterGen2Drain.oid,
+    expected_plan_oid: nextGeneration.oid, nonce: NONCE('plan-drain-old'), reason: 'handoff',
+    owner_attestation: drainAttestation({ expected_oid: afterGen2Drain.oid, nonce: NONCE('plan-drain-old'), suffix: 'drain-old' }),
+  })
+  assert.notEqual(olderDrain.status, 'DRAINING')
   const otherPlanSnapshot = await planRegistry.submit({
     plan: makePlan({ planId: 'plan:other' }),
     expected_oid: ZERO_OID,
@@ -2548,4 +2569,67 @@ test('P1 regression — a fan-in of predecessors needs an attested integrated pa
   const throwing = build({ verify: async () => { throw new Error('authority offline') } })
   await seed(throwing)
   assert.equal((await throwing.leaseRegistry.validateDependencies(fanIn)).reason, 'DEPENDENCY_INTEGRATION_PARENT_UNATTESTED')
+})
+
+test('P2 regression — retained-resource stubs leave the registry only through an owner-attested release', async () => {
+  const git = createInMemoryGit()
+  git.blobs.set(SEEDED_PLAN_OID, SEEDED_PLAN_BLOB)
+  git.refs.set('refs/ai-bim/delivery-plans', SEEDED_PLAN_OID)
+  const clock = createClock()
+  const store = createGitCasStore({ git, commonDir: 'C:/fake/common-dir' })
+  const envelope = createSequencedEnvelopePort()
+  const attestor = createTrustedAttestor()
+  const leaseRegistry = createLeaseRegistry({
+    store, clock, writerCap: 2, ownerEndAttestor: attestor, executionEnvelope: envelope, retainedReleasedLeases: 1,
+  })
+  const fixture = { leaseRegistry, store, envelope, clock }
+  await handOff(fixture, 'lease:archive-a', { resource_keys: ['path:src/archive-a.mjs'] }, 'archive-a')
+  clock.set('2026-08-29T00:01:00.000Z')
+  await handOff(fixture, 'lease:archive-b', {
+    owner_session: 'session:archive-b', provider_session_id: 'provider:archive-b', execution_context_id: 'context:archive-b',
+    worktree_id: 'worktree:archive-b', branch: 'codex/archive-b', resource_keys: ['path:src/archive-b.mjs'],
+  }, 'archive-b')
+  let inspected = await leaseRegistry.inspect()
+  assert.deepEqual(Object.keys(inspected.record.retained_resources), ['lease:archive-a'])
+  const blocked = await leaseRegistry.admit(makeRequest(store, {
+    lease_id: 'lease:archive-c', owner_session: 'session:archive-c', provider_session_id: 'provider:archive-c',
+    execution_context_id: 'context:archive-c', worktree_id: 'worktree:archive-c', branch: 'codex/archive-c',
+    resource_keys: ['path:src/archive-a.mjs'], nonce: NONCE('archive-c-admit'),
+  }))
+  assert.equal(blocked.reason, 'RESOURCE_CONFLICT')
+  const attestation = (overrides = {}) => ({
+    attestation_ref: 'attestation:retention-release', attestation_digest: SHA256, issuer_id: 'attestor:plan-owner', issuer_version: 'plan-owner/v1',
+    action: 'release_retained_resources', lease_set_digest: digestCanonical(['lease:archive-a']), expected_oid: inspected.oid,
+    nonce: NONCE('retention-release'), observed_at: '2026-08-29T00:00:00.000Z', expires_at: '2026-08-29T00:10:00.000Z', revocation_epoch: 0,
+    ...overrides,
+  })
+  // No attestation, a mismatched lease set, or an untrusted attestation never removes retained truth.
+  await assert.rejects(leaseRegistry.releaseRetainedResources({ lease_ids: ['lease:archive-a'], expected_oid: inspected.oid, nonce: NONCE('retention-release') }),
+    (error) => error?.code === 'invalid_shape')
+  await assert.rejects(leaseRegistry.releaseRetainedResources({
+    lease_ids: ['lease:archive-a'], expected_oid: inspected.oid, nonce: NONCE('retention-release'),
+    owner_attestation: attestation({ lease_set_digest: digestCanonical(['lease:archive-b']) }),
+  }), (error) => error?.detail === 'retained_resource_release_request_attestation_tuple_mismatch')
+  const untrusted = await leaseRegistry.releaseRetainedResources({
+    lease_ids: ['lease:archive-a'], expected_oid: inspected.oid, nonce: NONCE('retention-release'),
+    owner_attestation: { ...attestation(), force: 'unknown' },
+  }).catch((error) => ({ status: 'REJECTED', reason: error?.code }))
+  assert.notEqual(untrusted.status, 'RETENTION_RELEASED')
+  const unknown = await leaseRegistry.releaseRetainedResources({
+    lease_ids: ['lease:archive-zzz'], expected_oid: inspected.oid, nonce: NONCE('retention-release'),
+    owner_attestation: attestation({ lease_set_digest: digestCanonical(['lease:archive-zzz']) }),
+  })
+  assert.equal(unknown.reason, 'RETAINED_RESOURCE_UNKNOWN')
+  const released = await leaseRegistry.releaseRetainedResources({
+    lease_ids: ['lease:archive-a'], expected_oid: inspected.oid, nonce: NONCE('retention-release'), owner_attestation: attestation(),
+  })
+  assert.equal(released.status, 'RETENTION_RELEASED', JSON.stringify(released))
+  inspected = await leaseRegistry.inspect()
+  assert.deepEqual(Object.keys(inspected.record.retained_resources), [])
+  const admitted = await leaseRegistry.admit(makeRequest(store, {
+    lease_id: 'lease:archive-c', owner_session: 'session:archive-c', provider_session_id: 'provider:archive-c',
+    execution_context_id: 'context:archive-c', worktree_id: 'worktree:archive-c', branch: 'codex/archive-c',
+    resource_keys: ['path:src/archive-a.mjs'], nonce: NONCE('archive-c-admit-2'),
+  }))
+  assert.equal(admitted.status, 'ADMITTED', JSON.stringify(admitted))
 })

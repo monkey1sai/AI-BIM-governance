@@ -1063,6 +1063,21 @@ test('browser evidence binds exact head/tree/manifest/runtime and sanitized evid
     trustedPins: swappedVerifier,
   })
   assert.equal(verifierSwap.reason, 'TRUSTED_PINS_AUTHORITY_DIGEST_MISMATCH')
+  // Pins spelled with the supported `trusted_*` aliases are covered by the same digest.
+  const { verifier_sha: canonicalVerifier, binder_sha: canonicalBinder, ...aliasedBase } = trustedPins()
+  const aliasedPins = { ...aliasedBase, trusted_verifier_sha: canonicalVerifier, trusted_binder_sha: canonicalBinder }
+  assert.equal(aliasedPins.authority_digest, trustedPinsAuthorityDigest(aliasedPins))
+  assert.equal(bindBrowserEvidence({
+    candidate: candidate(), manifest: manifest(), playwright: browserPacket('playwright'),
+    computerUse: browserPacket('computer_use', { verifier_identity: 'computer-use:one' }), trustedPins: aliasedPins,
+  }).status, 'READY_FOR_TRAIN')
+  const aliasSwap = bindBrowserEvidence({
+    candidate: candidate(), manifest: manifest(),
+    playwright: browserPacket('playwright', { trusted_verifier_sha: SHA256('e') }),
+    computerUse: browserPacket('computer_use', { verifier_identity: 'computer-use:one', trusted_verifier_sha: SHA256('e') }),
+    trustedPins: { ...aliasedPins, trusted_verifier_sha: SHA256('e') },
+  })
+  assert.equal(aliasSwap.reason, 'TRUSTED_PINS_AUTHORITY_DIGEST_MISMATCH')
   assert.equal(result.evidence.manifest_id, `manifest:sha256:${MANIFEST.slice(0, 40)}:bound`)
   assert.equal(result.evidence.trace_reference, `trace:sha256:${TRACE.slice(0, 40)}:bound`)
   assert.equal(result.evidence.screenshot_reference, `screenshot:sha256:${SCREENSHOT.slice(0, 40)}:bound`)
