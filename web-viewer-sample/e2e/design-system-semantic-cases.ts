@@ -37,12 +37,12 @@ export type SemanticCaseDefinition = {
 // 只宣告 prepare（自行導航 + fixture 互動）與 assertions（locator + 期望）。
 //
 // 誠實原則：
-// - 全程 **/api/** 已被 spec 以 503 stub，所有互動都是 UnifiedConsole 的
-//   local fixture 行為（state patch + toast 假 API 字串），不宣稱任何後端事實。
+// - 全程 **/api/** 已被 spec 以 503 stub；A1–A3 直接驗真實產品模組的
+//   fail-closed 行為，其他 fixture 畫面只驗本地狀態，不宣稱任何後端事實。
 // - 找不到天然對映的 case（例：home/ops 的 disabled、ops 的 failure）以
 //   count_equals 0 誠實斷言「該狀態表面目前為空」，逐案附註解，不造假 DOM。
-// - runtime_truth：fixture 殼（workspace.a1–a3／concept）斷言 data-prov="fixture"；真值頁（home／pipeline／ops，
-//   unified-console-runtime-truth）斷言 page-root 內 data-prov="asbuilt" 且主值 cell 為 offline（gate 503 環境）。
+// - runtime_truth：fixture 殼（concept）斷言 data-prov="fixture"；真實產品頁（A1–A3、home、pipeline、ops）
+//   斷言 asbuilt provenance 與 gate 503 下的誠實表面。
 //
 // state 隔離設計（重要）：
 // - hash-only 的 page.goto 是 same-document navigation，React state（含
