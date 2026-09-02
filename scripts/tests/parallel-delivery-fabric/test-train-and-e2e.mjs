@@ -1249,6 +1249,39 @@ test('AC-26 — durable browser evidence rejects noncanonical schema-bound field
   }
 })
 
+test('P2 regression — sparse runtime lease arrays are held instead of collapsing into free capacity', () => {
+  const sparse = [{ kind: 'integration_train', state: 'ACTIVE', offset: 1 }, , { kind: 'integration_train', state: 'ACTIVE', offset: 3 }] // eslint-disable-line no-sparse-arrays
+  const result = evaluateRuntimeAdmission(runtimeSnapshot({ leases: sparse }), runtimeRequest({ kind: 'computer_use' }))
+  assert.equal(result.status, 'HELD_RUNTIME')
+  assert.equal(result.reason, 'RUNTIME_ADMISSION_INPUT_INVALID')
+  assert.equal(evaluateRuntimeAdmission(runtimeSnapshot({ leases: Array(3) }), runtimeRequest({ kind: 'computer_use' })).reason, 'RUNTIME_ADMISSION_INPUT_INVALID')
+})
+
+test('P2 regression — deeply nested browser evidence is held locally instead of throwing a RangeError', () => {
+  let deep = { leaf: true }
+  for (let index = 0; index < 20000; index += 1) deep = { nested: deep }
+  const result = bindBrowserEvidence({
+    candidate: candidate(), manifest: manifest(), playwright: browserPacket('playwright', { extra: deep }),
+    computerUse: browserPacket('computer_use', { verifier_identity: 'computer-use:one' }), trustedPins: trustedPins(),
+  })
+  assert.equal(result.status, 'HELD_EVIDENCE_BINDING', JSON.stringify(result).slice(0, 200))
+  assert.equal(result.freeze_scope, 'candidate')
+})
+
+test('P1 regression — conflicting applicability path aliases cannot suppress the browser gate', () => {
+  const conflicting = classifyE2EApplicability({
+    change: { paths: ['docs/agents/example.md'], changed_paths: ['web-viewer-sample/src/a.ts'] },
+    trustedPolicy: trustedPolicy(), baseSha: BASE,
+  })
+  assert.notEqual(conflicting.status, 'E2E_NOT_APPLICABLE')
+  assert.equal(conflicting.reason, 'APPLICABILITY_PATHS_INVALID')
+  const agreeing = classifyE2EApplicability({
+    change: { paths: ['docs/agents/example.md'], changed_paths: ['docs/agents/example.md'] },
+    trustedPolicy: trustedPolicy(), baseSha: BASE,
+  })
+  assert.equal(agreeing.status, 'E2E_NOT_APPLICABLE')
+})
+
 test('P2 regression — the timeout pin binds the proven execution window, not the self-reported duration', () => {
   const bind = ({ windowMinutes, playwrightFinish = 30, playwrightOverrides = {} }) => {
     const executionWindow = { started_at: NOW, finished_at: minutesAfterNow(windowMinutes) }

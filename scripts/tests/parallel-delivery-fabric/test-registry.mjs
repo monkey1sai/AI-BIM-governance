@@ -522,6 +522,29 @@ test('P2 regression — command journal capacity is bounded without breaking com
   assert.equal(Object.keys((await store.read(store.refs.commandJournal)).record.receipts).length, 2)
 })
 
+test('P2 regression — lease IDs that collide with Object.prototype names are admitted and looked up by own property', async () => {
+  const { leaseRegistry, store } = createFixture()
+  // Names the canonical record normalizer can never store are refused at the grammar.
+  for (const reserved of ['constructor', '__proto__', 'prototype']) {
+    await assert.rejects(async () => leaseRegistry.admit(makeRequest(store, { lease_id: reserved, nonce: NONCE('reserved') })),
+      (error) => error?.code === 'invalid_value', reserved)
+  }
+  // Other Object.prototype names are legal ids: lookups must use own properties, not truthiness.
+  for (const [leaseId, index] of [['toString', 0], ['valueOf', 1]]) {
+    const admitted = await leaseRegistry.admit(makeRequest(store, {
+      lease_id: leaseId, owner_session: `session:proto-${index}`, provider_session_id: `provider:proto-${index}`,
+      execution_context_id: `context:proto-${index}`, worktree_id: `worktree:proto-${index}`, branch: `codex/proto-${index}`,
+      resource_keys: [`path:src/proto-${index}.mjs`], nonce: NONCE(`proto-${index}`),
+    }))
+    assert.equal(admitted.status, 'ADMITTED', `${leaseId}: ${JSON.stringify(admitted)}`)
+  }
+  const snapshot = await leaseRegistry.inspect()
+  assert.deepEqual(Object.keys(snapshot.record.leases).sort(), ['toString', 'valueOf'])
+  assert.equal((await leaseRegistry.heartbeat({ lease_id: 'toString', expected_oid: snapshot.oid, heartbeat_seq: 10, nonce: NONCE('proto-heartbeat') })).status, 'HEARTBEAT_RECORDED')
+  const fresh = await leaseRegistry.inspect()
+  await assert.rejects(leaseRegistry.heartbeat({ lease_id: 'hasOwnProperty', expected_oid: fresh.oid, heartbeat_seq: 1, nonce: NONCE('proto-missing') }), (error) => error?.code === 'lease_not_found')
+})
+
 test('P2 regression — every contract-valid scope path serializes into an admissible lease resource key', async () => {
   const { leaseRegistry, store } = createFixture()
   // Realistic nested segments (no secret-shaped runs) padded to the exact contract bound.

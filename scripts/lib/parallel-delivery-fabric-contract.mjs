@@ -196,9 +196,15 @@ const assertSha256 = (value, context, nullable = false) => {
   return assertString(value, context, { min: 64, max: 64, pattern: SHA256 })
 }
 
+// Identifiers become object keys in canonical (IJSON) records, whose normalizer rejects
+// these prototype-colliding names; refusing them at the grammar keeps the contract honest
+// instead of letting a "valid" id fail deep inside every durable store.
+const RESERVED_IDENTIFIERS = new Set(['__proto__', 'constructor', 'prototype'])
+
 const assertOpaqueId = (value, context, nullable = false) => {
   if (nullable && value === null) return value
   const identifier = assertString(value, context, { min: 3, max: 128, pattern: OPAQUE_ID })
+  if (RESERVED_IDENTIFIERS.has(identifier)) fail('invalid_value', `${context}_reserved_identifier`)
   if (hasOpaqueIdentityDisclosure(identifier) || hasSecretValueMarker(identifier)) {
     fail('invalid_value', `${context}_raw_identity_or_credential_forbidden`)
   }
@@ -317,8 +323,12 @@ const normalizeRelativePath = (value, context, { glob = false } = {}) => {
   return windowsIdentity ? slashed.toLowerCase() : slashed
 }
 
+// Serialized scope keys (`path:` / `glob:` / `rename:<old>:<new>`) follow the lease-side
+// bound: 7 + 512 + 1 + 512, so every contract-valid plan path fits a session envelope.
+const MAX_RESOURCE_KEY_LENGTH = 1032
+
 const normalizeResourceKey = (value, context) => {
-  assertString(value, context, { min: 3, max: 256 })
+  assertString(value, context, { min: 3, max: MAX_RESOURCE_KEY_LENGTH })
   const separator = value.indexOf(':')
   const kind = separator > 0 ? value.slice(0, separator).toLowerCase() : ''
   const payload = separator > 0 ? value.slice(separator + 1) : ''

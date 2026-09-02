@@ -147,6 +147,16 @@ const dataOnlySnapshot = (value, seen = new WeakSet(), nodes = { count: 0 }, pat
   if (!array && !isPlainObject(value)) return DATA_SNAPSHOT_INVALID
   const result = array ? [] : Object.create(null)
   seen.add(value)
+  // A sparse array (`Array(3)`, deleted indexes) would silently collapse into fewer
+  // entries and under-count occupied runtimes: every index must be an own data property.
+  if (array) {
+    for (let index = 0; index < value.length; index += 1) {
+      if (!Object.hasOwn(value, String(index))) {
+        seen.delete(value)
+        return DATA_SNAPSHOT_INVALID
+      }
+    }
+  }
   for (const key of Reflect.ownKeys(value)) {
     if (typeof key === 'symbol') {
       seen.delete(value)
@@ -174,7 +184,12 @@ const dataOnlySnapshot = (value, seen = new WeakSet(), nodes = { count: 0 }, pat
   return result
 }
 
-const safeInput = (value, key = '', seen = new WeakSet(), nodes = { count: 0 }) => {
+// Bound the recursive walk explicitly: a deeply nested plain object must produce a
+// candidate-local held result, never a RangeError escaping from the binder.
+const SAFE_INPUT_MAX_DEPTH = 64
+
+const safeInput = (value, key = '', seen = new WeakSet(), nodes = { count: 0 }, depth = 0) => {
+  if (depth > SAFE_INPUT_MAX_DEPTH) return false
   if (typeof value === 'string') return !unsafeString(value, key)
   if (value === null) return true
   if (value === undefined) return true
@@ -200,7 +215,7 @@ const safeInput = (value, key = '', seen = new WeakSet(), nodes = { count: 0 }) 
       result = false
       break
     }
-    if (!safeInput(descriptor.value, Array.isArray(value) ? key : nestedKey, seen, nodes)) {
+    if (!safeInput(descriptor.value, Array.isArray(value) ? key : nestedKey, seen, nodes, depth + 1)) {
       result = false
       break
     }
@@ -544,14 +559,24 @@ export function evaluateRuntimeAdmission(snapshot, request) {
 // list carrying non-string entries is invalid (null), and a change that names no
 // paths at all is unclassifiable unless the trusted base policy says static-only.
 const validPathList = (values) => (Array.isArray(values) && values.every((entry) => typeof entry === 'string' && entry.length > 0) ? values : null)
+const APPLICABILITY_PATH_ALIASES = Object.freeze(['paths', 'changed_paths', 'files', 'changed_files', 'path'])
+const applicabilityPathList = (values) => {
+  if (typeof values === 'string') return values.length > 0 ? [values] : null
+  return validPathList(values)
+}
 const applicabilityPaths = (change) => {
   if (typeof change === 'string') return change.length > 0 ? [change] : null
   if (Array.isArray(change)) return validPathList(change)
   if (!isPlainObject(change)) return null
-  const values = first(change, ['paths', 'changed_paths', 'files', 'changed_files', 'path'])
-  if (values === undefined) return []
-  if (typeof values === 'string') return values.length > 0 ? [values] : null
-  return validPathList(values)
+  const present = APPLICABILITY_PATH_ALIASES.filter((alias) => own(change, alias))
+  if (present.length === 0) return []
+  // Several aliases at once are only acceptable when they name the same path set; a
+  // first-match lookup would let a later alias hide the change that requires the gate.
+  const lists = present.map((alias) => applicabilityPathList(change[alias]))
+  if (lists.some((list) => list === null)) return null
+  const canonical = lists.map((list) => JSON.stringify([...new Set(list)].sort()))
+  if (new Set(canonical).size !== 1) return null
+  return lists[0]
 }
 
 const pathIsTrigger = (rawPath) => {

@@ -135,9 +135,13 @@ const assertDigest = (value, context) => assertString(value, context, DIGEST)
 const assertNonce = (value, context) => assertString(value, context, NONCE)
 const assertOpaque = (value, context) => assertString(value, context, OPAQUE_REFERENCE)
 const assertIdentifier = (value, context) => assertString(value, context, OPAQUE_IDENTIFIER)
+// Prototype-colliding names can never be stored as canonical record keys (the IJSON
+// normalizer rejects them), so they are refused at the identifier grammar as well.
+const RESERVED_TASK2_IDENTIFIERS = new Set(['__proto__', 'constructor', 'prototype'])
+
 const assertTask2OpaqueId = (value, context) => {
   const opaqueId = assertString(value, context, TASK2_OPAQUE_ID)
-  if (opaqueId.length < 3 || opaqueId.length > 128) fail('invalid_value', `${context}_invalid`)
+  if (opaqueId.length < 3 || opaqueId.length > 128 || RESERVED_TASK2_IDENTIFIERS.has(opaqueId)) fail('invalid_value', `${context}_invalid`)
   return opaqueId
 }
 const resourceCandidateFromKey = (key) => {
@@ -703,7 +707,7 @@ const findAdmissionBlocker = (record, request) => {
   if (drain && drain.generation === request.generation) {
     return { status: 'QUEUED_FOR_LEASE', reason: 'PLAN_DRAINING' }
   }
-  if (record.leases[request.lease_id] || Object.hasOwn(record.retained_resources ?? {}, request.lease_id)) {
+  if (Object.hasOwn(record.leases, request.lease_id) || Object.hasOwn(record.retained_resources ?? {}, request.lease_id)) {
     return { status: 'HELD_EXECUTION_AUTHORITY', reason: 'LEASE_ID_ALREADY_BOUND' }
   }
   for (const lease of [...Object.values(record.leases), ...retainedResourceHolders(record)]) {
@@ -1262,7 +1266,7 @@ const queueAfterConflict = (current, request, writerCap, result) => {
 
 const requireLease = (snapshot, leaseId) => {
   assertTask2OpaqueId(leaseId, 'lease_id')
-  const lease = snapshot.record.leases[leaseId]
+  const lease = Object.hasOwn(snapshot.record.leases, leaseId) ? snapshot.record.leases[leaseId] : undefined
   if (!lease) fail('lease_not_found', leaseId)
   return lease
 }
@@ -1484,7 +1488,7 @@ export function createLeaseRegistry({
     if (planGuard.status !== 'READY') return planGuard
     const snapshot = await registrySnapshot(store, writerCap)
     if (snapshot.status === 'HELD_REGISTRY_INTEGRITY') return snapshot
-    const lease = snapshot.record.leases[request.lease_id]
+    const lease = Object.hasOwn(snapshot.record.leases, request.lease_id) ? snapshot.record.leases[request.lease_id] : undefined
     if (!lease || lease.state !== 'ACTIVE') return { status: 'HELD_EXECUTION_AUTHORITY', reason: 'ACTIVE_LEASE_REQUIRED' }
     const fields = [
       'plan_id', 'generation', 'task_id', 'provider', 'owner_session', 'provider_session_id',
@@ -2824,7 +2828,7 @@ const queueLeaseBindingHeld = async (store, request) => {
     const snapshot = await store.read(LEASE_REF)
     if (!isObject(snapshot) || !OID.test(snapshot.oid) || snapshot.oid === ZERO_OID || snapshot.record === null) return QUEUE_HELD('LEASE_REGISTRY_UNKNOWN')
     validateLeaseRegistryRecord(snapshot.record, WRITER_CAP_V1)
-    const lease = snapshot.record.leases[request.lease_id]
+    const lease = Object.hasOwn(snapshot.record.leases, request.lease_id) ? snapshot.record.leases[request.lease_id] : undefined
     if (!lease || lease.state !== 'ACTIVE') return QUEUE_HELD('LEASE_NOT_ACTIVE')
     if (lease.generation !== request.lease_generation || lease.head_sha !== request.candidate_head_sha ||
         !lease.resource_keys.includes(request.resource_key)) {

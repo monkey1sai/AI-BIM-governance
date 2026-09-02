@@ -211,6 +211,25 @@ function expectCode(code, callback) {
   assert.throws(callback, (error) => error?.code === code)
 }
 
+test('P2 regression — provider-session resource keys admit every contract-valid plan path and negated glob classes', async () => {
+  const longPath = (root, length) => {
+    let path = root
+    for (let index = 0; path.length < length; index += 1) path += `/dir${index}`
+    return path.slice(0, length - 2) + 'ab'
+  }
+  const keys = [`path:${longPath('src', 512)}`, `glob:${longPath('lib', 500)}/**/*.mjs`, `rename:${longPath('old', 512)}:${longPath('new', 512)}`, 'glob:src/[!a].mjs', 'glob:src/[^a].mjs']
+  const session = parseProviderSessionEnvelope({ ...providerSession(), resource_keys: keys })
+  assert.deepEqual(session.resource_keys, keys)
+  expectCode('invalid_value', () => parseProviderSessionEnvelope({ ...providerSession(), resource_keys: [`path:${longPath('src', 513)}`] }))
+  const schema = JSON.parse(await readFile(new URL('../../../agent-contracts/parallel-delivery-fabric.schema.json', import.meta.url), 'utf8'))
+  const definition = schema.$defs.resource_key.allOf.find((entry) => typeof entry.pattern === 'string')
+  const pattern = new RegExp(definition.pattern, 'u')
+  assert.equal(definition.maxLength, 1032)
+  for (const key of keys) assert.equal(pattern.test(key) && key.length <= definition.maxLength, true, key)
+  assert.equal(pattern.test('glob:src/[!a]/../x.mjs'), true)
+  assert.equal(pattern.test('Path:src/a.mjs'), false)
+})
+
 test('schema exposes every closed Fabric durable definition', async () => {
   const schema = JSON.parse(await readFile(new URL('../../../agent-contracts/parallel-delivery-fabric.schema.json', import.meta.url), 'utf8'))
   assert.equal(schema.$id, 'parallel-delivery-fabric.schema.json')
