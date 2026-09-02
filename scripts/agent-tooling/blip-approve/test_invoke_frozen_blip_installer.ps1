@@ -424,6 +424,8 @@ function Invoke-FreezeV3SchemaRegression {
         'Assert-ExactVerifierJsonProperties',
         'Assert-ExactVerifierStringMap',
         'Assert-ReviewedManifestAuthority',
+        'Read-BoundedUtf8Response',
+        'Get-ProtectedPublicGitHubArrayPages',
         'Assert-MergedSourceCommit',
         'Assert-CountedApprovalForSource'
     )) {
@@ -442,25 +444,133 @@ function Invoke-FreezeV3SchemaRegression {
     $verifierText = Get-Content -Raw -LiteralPath $productionVerifier
     Assert-True ($verifierText.Contains('AllowAutoRedirect = $false')) `
         'External verifier permits merged-source GitHub requests to redirect.'
+    Assert-True ($verifierText.Contains('ResponseHeadersRead')) `
+        'External verifier buffers untrusted GitHub responses before applying the size limit.'
+    Assert-True ($verifierText.Contains(
+        '[StringComparer]::OrdinalIgnoreCase.Equals($packageRoot, $candidateRoot)'
+    )) 'External verifier compares equivalent Windows roots case-sensitively.'
     Assert-True ($verifierText -notmatch 'Headers\.Authorization') `
         'External merged-source verification unexpectedly uses a credential.'
+    $oversizedResponse = [System.IO.MemoryStream]::new([byte[]]::new(1048577), $false)
+    try {
+        $oversizedRejected = $false
+        try {
+            [void](Read-BoundedUtf8Response -Stream $oversizedResponse -MaximumBytes 1048576 `
+                -Label 'Test response' -CancellationToken ([Threading.CancellationToken]::None))
+        }
+        catch { $oversizedRejected = $_.Exception.Message -match 'exceeds the protected size limit' }
+        Assert-True $oversizedRejected `
+            'External verifier accepted a chunked response beyond the protected byte limit.'
+    }
+    finally { $oversizedResponse.Dispose() }
+    $invalidUtf8Response = [System.IO.MemoryStream]::new([byte[]](0xC3, 0x28), $false)
+    try {
+        $invalidUtf8Rejected = $false
+        try {
+            [void](Read-BoundedUtf8Response -Stream $invalidUtf8Response -MaximumBytes 1048576 `
+                -Label 'Test response' -CancellationToken ([Threading.CancellationToken]::None))
+        }
+        catch [System.Text.DecoderFallbackException] { $invalidUtf8Rejected = $true }
+        Assert-True $invalidUtf8Rejected `
+            'External verifier accepted malformed UTF-8 response bytes.'
+    }
+    finally { $invalidUtf8Response.Dispose() }
+    if ($null -eq ('BlipNeverCompletingReadStream' -as [type])) {
+        Add-Type -TypeDefinition @'
+using System;
+using System.IO;
+using System.Threading;
+using System.Threading.Tasks;
+
+public sealed class BlipNeverCompletingReadStream : Stream
+{
+    public override bool CanRead => true;
+    public override bool CanSeek => false;
+    public override bool CanWrite => false;
+    public override long Length => throw new NotSupportedException();
+    public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+    public override void Flush() { }
+    public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+    public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+    public override void SetLength(long value) => throw new NotSupportedException();
+    public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+    public override Task<int> ReadAsync(
+        byte[] buffer, int offset, int count, CancellationToken cancellationToken)
+    {
+        var completion = new TaskCompletionSource<int>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        cancellationToken.Register(() => completion.TrySetCanceled(cancellationToken));
+        return completion.Task;
+    }
+}
+'@
+    }
+    $stalledResponse = [BlipNeverCompletingReadStream]::new()
+    $deadline = [Threading.CancellationTokenSource]::new([TimeSpan]::FromMilliseconds(50))
+    $deadlineWatch = [Diagnostics.Stopwatch]::StartNew()
+    try {
+        $deadlineRejected = $false
+        try {
+            [void](Read-BoundedUtf8Response -Stream $stalledResponse -MaximumBytes 1048576 `
+                -Label 'Test response' -CancellationToken $deadline.Token)
+        }
+        catch [OperationCanceledException] { $deadlineRejected = $true }
+        Assert-True ($deadlineRejected -and $deadlineWatch.Elapsed -lt [TimeSpan]::FromSeconds(2)) `
+            'External verifier did not cancel a stalled response body within the deadline.'
+    }
+    finally {
+        $deadlineWatch.Stop()
+        $deadline.Dispose()
+        $stalledResponse.Dispose()
+    }
+    $fixedOwnerLogin = 'monkey1sai'
+    $fixedOwnerId = [long]26239865
+    $fixedReviewerLogin = 'monkey1sai-blip'
+    $fixedReviewerId = [long]311287868
     $script:testMergedSource = 'c' * 40
     $script:testProtectedMain = 'd' * 40
+    $script:testProtectedMainAfterEvidence = $script:testProtectedMain
+    $script:testMainReadCount = 0
     $script:testMergeStatus = 'ahead'
-    $script:testMergeBase = $script:testMergedSource
+    $script:testMergeCommit = 'e' * 40
+    $script:testMergeBase = $script:testMergeCommit
     $script:testMergedPullNumber = 736
-    $script:testMergedPullHead = 'f' * 40
-    function New-TestMergedPullJson {
+    $script:testMergedPullHead = $script:testMergedSource
+    function New-TestAssociatedPullJson {
         param(
-            [string]$MergedAt = '"2026-09-02T00:00:00Z"',
-            [string]$State = 'closed',
-            [string]$BaseRef = 'main',
-            [string]$MergeSha = $script:testMergedSource
+            [int]$Number = $script:testMergedPullNumber,
+            [string]$HeadSha = $script:testMergedPullHead
         )
-        return '{"number":' + $script:testMergedPullNumber + ',"state":"' + $State +
-            '","merged_at":' + $MergedAt + ',"merge_commit_sha":"' + $MergeSha +
-            '","base":{"ref":"' + $BaseRef + '"},"head":{"sha":"' +
-            $script:testMergedPullHead + '"}}'
+        return ([ordered]@{
+            number = $Number
+            head = [ordered]@{ sha = $HeadSha }
+            merged_by = $null
+        } | ConvertTo-Json -Compress -Depth 3)
+    }
+    function New-TestPullDetailJson {
+        param(
+            [int]$Number = $script:testMergedPullNumber,
+            [string]$State = 'closed',
+            [switch]$Unmerged,
+            [string]$BaseRef = 'main',
+            [string]$HeadSha = $script:testMergedPullHead,
+            [string]$MergeSha = $script:testMergeCommit,
+            [string]$MergerLogin = 'monkey1sai',
+            [long]$MergerId = 26239865,
+            [string]$MergerType = 'User'
+        )
+        return ([ordered]@{
+            number = $Number
+            state = $State
+            merged = -not $Unmerged
+            merged_at = if ($Unmerged) { $null } else { '2026-09-02T02:00:00Z' }
+            merge_commit_sha = $MergeSha
+            base = [ordered]@{ ref = $BaseRef }
+            head = [ordered]@{ sha = $HeadSha }
+            merged_by = if ($Unmerged) { $null } else {
+                [ordered]@{ login = $MergerLogin; id = $MergerId; type = $MergerType }
+            }
+        } | ConvertTo-Json -Compress -Depth 4)
     }
     function New-TestBlipReviewJson {
         param(
@@ -470,32 +580,67 @@ function Invoke-FreezeV3SchemaRegression {
             [string]$CommitId = $script:testMergedPullHead,
             [string]$Login = 'monkey1sai-blip',
             [long]$UserId = 311287868,
-            [string]$UserType = 'User'
+            [string]$UserType = 'User',
+            [AllowEmptyString()][string]$Body = '__canonical__'
         )
-        return '{"id":' + $Id + ',"state":"' + $State + '","submitted_at":"' + $SubmittedAt +
-            '","commit_id":"' + $CommitId + '","user":{"login":"' + $Login + '","id":' +
-            $UserId + ',"type":"' + $UserType + '"}}'
+        if ($Body -ceq '__canonical__') {
+            $Body = [ordered]@{
+                kind = 'ai-bim-automated-approve-only'
+                version = 1
+                automated = $true
+                repo = 'monkey1sai/AI-BIM-governance'
+                prNumber = $script:testMergedPullNumber
+                headOid = $script:testMergedSource
+                baseOid = 'b' * 40
+                action = 'approve-only'
+            } | ConvertTo-Json -Compress
+        }
+        return ([ordered]@{
+            id = $Id
+            state = $State
+            submitted_at = $SubmittedAt
+            commit_id = $CommitId
+            body = $Body
+            user = [ordered]@{ login = $Login; id = $UserId; type = $UserType }
+        } | ConvertTo-Json -Compress -Depth 4)
     }
-    $script:testPullsJson = '[' + (New-TestMergedPullJson) + ']'
+    $script:testPullsJson = '[' + (New-TestAssociatedPullJson) + ']'
+    $script:testPullsPage2Json = '[]'
+    $script:testPullDetails = @{}
+    $script:testPullDetails[$script:testMergedPullNumber] = New-TestPullDetailJson
     $script:testReviewsJson = '[' + (New-TestBlipReviewJson) + ']'
+    $script:testReviewsPage2Json = '[]'
     function Invoke-ProtectedPublicGitHubGet {
         param([Parameter(Mandatory)][string]$RelativePath)
         if ($RelativePath -ceq '/repos/monkey1sai/AI-BIM-governance/commits/heads/main') {
-            return '{"sha":"' + $script:testProtectedMain + '"}'
+            $mainSha = if (($script:testMainReadCount % 2) -eq 0) {
+                $script:testProtectedMain
+            } else { $script:testProtectedMainAfterEvidence }
+            $script:testMainReadCount += 1
+            return '{"sha":"' + $mainSha + '"}'
         }
-        if ($RelativePath -ceq ('/repos/monkey1sai/AI-BIM-governance/commits/' +
-            $script:testMergedSource + '/pulls?per_page=100')) {
-            return $script:testPullsJson
+        if ($RelativePath -match ('^/repos/monkey1sai/AI-BIM-governance/commits/' +
+            $script:testMergedSource + '/pulls\?per_page=100&page=(?<Page>[12])$')) {
+            if ($Matches.Page -ceq '1') { return $script:testPullsJson }
+            return $script:testPullsPage2Json
         }
-        if ($RelativePath -ceq ('/repos/monkey1sai/AI-BIM-governance/pulls/' +
-            $script:testMergedPullNumber + '/reviews?per_page=100')) {
-            return $script:testReviewsJson
+        if ($RelativePath -match '^/repos/monkey1sai/AI-BIM-governance/pulls/(?<Number>[1-9][0-9]{0,5})$') {
+            $number = [int]$Matches.Number
+            if (-not $script:testPullDetails.ContainsKey($number)) {
+                throw "Unexpected pull detail: $RelativePath"
+            }
+            return $script:testPullDetails[$number]
+        }
+        if ($RelativePath -match ('^/repos/monkey1sai/AI-BIM-governance/pulls/' +
+            $script:testMergedPullNumber + '/reviews\?per_page=100&page=(?<Page>[12])$')) {
+            if ($Matches.Page -ceq '1') { return $script:testReviewsJson }
+            return $script:testReviewsPage2Json
         }
         $expected = '/repos/monkey1sai/AI-BIM-governance/compare/' +
-            $script:testMergedSource + '...' + $script:testProtectedMain
+            $script:testMergeCommit + '...' + $script:testProtectedMain
         if ($RelativePath -cne $expected) { throw "Unexpected merged-source path: $RelativePath" }
         return '{"status":"' + $script:testMergeStatus + '","base_commit":{"sha":"' +
-            $script:testMergedSource + '"},"merge_base_commit":{"sha":"' +
+            $script:testMergeCommit + '"},"merge_base_commit":{"sha":"' +
             $script:testMergeBase + '"}}'
     }
     $reviewedDocument = [System.Text.Json.JsonDocument]::Parse(
@@ -590,6 +735,13 @@ function Invoke-FreezeV3SchemaRegression {
         $mergedSourceCommit = Assert-MergedSourceCommit -SourceCommit $reviewedSourceCommit
         Assert-True ($mergedSourceCommit -ceq $reviewedSourceCommit) `
             'External verifier rejected a source commit reachable from protected main.'
+        $script:testProtectedMainAfterEvidence = 'a' * 40
+        $mainDriftRejected = $false
+        try { [void](Assert-MergedSourceCommit -SourceCommit $reviewedSourceCommit) }
+        catch { $mainDriftRejected = $_.Exception.Message -match 'changed during' }
+        Assert-True $mainDriftRejected `
+            'External verifier accepted protection evidence across protected-main drift.'
+        $script:testProtectedMainAfterEvidence = $script:testProtectedMain
         $script:testMergeStatus = 'diverged'
         $mergeStatusRejected = $false
         try { [void](Assert-MergedSourceCommit -SourceCommit $reviewedSourceCommit) }
@@ -597,35 +749,46 @@ function Invoke-FreezeV3SchemaRegression {
         Assert-True $mergeStatusRejected `
             'External verifier accepted a reviewed source outside protected main ancestry.'
         $script:testMergeStatus = 'ahead'
-        $script:testMergeBase = 'e' * 40
+        $script:testMergeBase = 'f' * 40
         $mergeBaseRejected = $false
         try { [void](Assert-MergedSourceCommit -SourceCommit $reviewedSourceCommit) }
         catch { $mergeBaseRejected = $_.Exception.Message -match 'not reachable' }
         Assert-True $mergeBaseRejected `
             'External verifier accepted a compare response with a different merge base.'
-        $script:testMergeBase = $reviewedSourceCommit
+        $script:testMergeBase = $script:testMergeCommit
         $countedPullNumber = Assert-CountedApprovalForSource -SourceCommit $reviewedSourceCommit
         Assert-True ($countedPullNumber -eq $script:testMergedPullNumber) `
             'External verifier rejected a merged source with a counted exact-head approval.'
         $script:testPullsJson = '[]'
         $noPullRejected = $false
         try { [void](Assert-CountedApprovalForSource -SourceCommit $reviewedSourceCommit) }
-        catch { $noPullRejected = $_.Exception.Message -match 'no merged pull request' }
+        catch { $noPullRejected = $_.Exception.Message -match 'no exact-head pull request' }
         Assert-True $noPullRejected `
             'External verifier accepted an admin-pushed source with no merged pull request.'
-        $script:testPullsJson = '[' + (New-TestMergedPullJson) + ',' + (New-TestMergedPullJson) + ']'
+        $script:testPullsJson = '[' + (New-TestAssociatedPullJson) + ',' +
+            (New-TestAssociatedPullJson -Number 737) + ']'
+        $script:testPullDetails[737] = New-TestPullDetailJson -Number 737
         $ambiguousRejected = $false
         try { [void](Assert-CountedApprovalForSource -SourceCommit $reviewedSourceCommit) }
         catch { $ambiguousRejected = $_.Exception.Message -match 'ambiguous approval evidence' }
         Assert-True $ambiguousRejected `
             'External verifier accepted ambiguous merged pull-request evidence.'
-        $script:testPullsJson = '[' + (New-TestMergedPullJson -MergedAt 'null') + ']'
+        [void]$script:testPullDetails.Remove(737)
+        $script:testPullsJson = '[' + (New-TestAssociatedPullJson) + ']'
+        $script:testPullDetails[$script:testMergedPullNumber] = New-TestPullDetailJson -Unmerged
         $unmergedRejected = $false
         try { [void](Assert-CountedApprovalForSource -SourceCommit $reviewedSourceCommit) }
-        catch { $unmergedRejected = $_.Exception.Message -match 'not a completed protected-main merge' }
+        catch { $unmergedRejected = $_.Exception.Message -match 'no completed owner merge' }
         Assert-True $unmergedRejected `
             'External verifier accepted an unmerged pull request as merge provenance.'
-        $script:testPullsJson = '[' + (New-TestMergedPullJson) + ']'
+        $script:testPullDetails[$script:testMergedPullNumber] = New-TestPullDetailJson `
+            -MergerLogin 'other-owner' -MergerId 1
+        $wrongMergerRejected = $false
+        try { [void](Assert-CountedApprovalForSource -SourceCommit $reviewedSourceCommit) }
+        catch { $wrongMergerRejected = $_.Exception.Message -match 'no completed owner merge' }
+        Assert-True $wrongMergerRejected `
+            'External verifier accepted a merge performed by a non-fixed owner identity.'
+        $script:testPullDetails[$script:testMergedPullNumber] = New-TestPullDetailJson
         $script:testReviewsJson = '[' + (New-TestBlipReviewJson) + ',' +
             (New-TestBlipReviewJson -State 'CHANGES_REQUESTED' -SubmittedAt '2026-09-02T02:00:00Z' -Id 9002) + ']'
         $supersededRejected = $false
@@ -636,7 +799,7 @@ function Invoke-FreezeV3SchemaRegression {
         $script:testReviewsJson = '[' + (New-TestBlipReviewJson -CommitId ('a' * 40)) + ']'
         $unboundRejected = $false
         try { [void](Assert-CountedApprovalForSource -SourceCommit $reviewedSourceCommit) }
-        catch { $unboundRejected = $_.Exception.Message -match 'not bound to the merged pull request head' }
+        catch { $unboundRejected = $_.Exception.Message -match 'not bound to the exact reviewed source head' }
         Assert-True $unboundRejected `
             'External verifier accepted an approval not bound to the merged head.'
         $script:testReviewsJson = '[' + (New-TestBlipReviewJson -Login 'claude-tri-adversarial-bot[bot]' -UserId 1 -UserType 'Bot') + ']'
@@ -645,7 +808,42 @@ function Invoke-FreezeV3SchemaRegression {
         catch { $wrongIdentityRejected = $_.Exception.Message -match 'not a counted APPROVED' }
         Assert-True $wrongIdentityRejected `
             'External verifier accepted a non-fixed-reviewer approval as counted.'
+        $script:testReviewsJson = '[' + (New-TestBlipReviewJson -Body '') + ']'
+        $bodyIndependentPullNumber = Assert-CountedApprovalForSource `
+            -SourceCommit $reviewedSourceCommit
+        Assert-True ($bodyIndependentPullNumber -eq $script:testMergedPullNumber) `
+            'External verifier incorrectly treated mutable review body text as approval authority.'
+        $script:testReviewsJson = '[' +
+            (New-TestBlipReviewJson -SubmittedAt '2026-09-02T03:00:00Z') + ']'
+        $postMergeRejected = $false
+        try { [void](Assert-CountedApprovalForSource -SourceCommit $reviewedSourceCommit) }
+        catch { $postMergeRejected = $_.Exception.Message -match 'submitted after' }
+        Assert-True $postMergeRejected `
+            'External verifier accepted an approval submitted after the pull request merge.'
+
+        $unrelatedPulls = foreach ($number in 1..100) {
+            New-TestAssociatedPullJson -Number $number -HeadSha ('a' * 40)
+        }
+        $script:testPullsJson = '[' + ($unrelatedPulls -join ',') + ']'
+        $script:testPullsPage2Json = '[' + (New-TestAssociatedPullJson) + ']'
         $script:testReviewsJson = '[' + (New-TestBlipReviewJson) + ']'
+        $script:testReviewsPage2Json = '[]'
+        $pagedPullNumber = Assert-CountedApprovalForSource -SourceCommit $reviewedSourceCommit
+        Assert-True ($pagedPullNumber -eq $script:testMergedPullNumber) `
+            'External verifier ignored an exact-head pull request on a bounded second page.'
+
+        $script:testPullsJson = '[' + (New-TestAssociatedPullJson) + ']'
+        $script:testPullsPage2Json = '[]'
+        $commentReviews = foreach ($id in 1..100) {
+            New-TestBlipReviewJson -State 'COMMENTED' -Id $id -Login 'other-reviewer' -UserId 1
+        }
+        $script:testReviewsJson = '[' + ($commentReviews -join ',') + ']'
+        $script:testReviewsPage2Json = '[' + (New-TestBlipReviewJson) + ']'
+        $pagedReviewNumber = Assert-CountedApprovalForSource -SourceCommit $reviewedSourceCommit
+        Assert-True ($pagedReviewNumber -eq $script:testMergedPullNumber) `
+            'External verifier ignored a counted exact-head approval on a bounded second page.'
+        $script:testReviewsJson = '[' + (New-TestBlipReviewJson) + ']'
+        $script:testReviewsPage2Json = '[]'
         $ExpectedBootstrapSha256 = '0' * 64
         $bootstrapAuthorityRejected = $false
         try { Assert-ReviewedManifestAuthority -Bytes $reviewedManifestBytes }
