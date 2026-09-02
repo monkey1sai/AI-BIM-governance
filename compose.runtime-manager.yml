@@ -71,17 +71,17 @@ services:
       MINIO_WATCH_KEY_SUFFIX: ${MINIO_WATCH_KEY_SUFFIX:-}
       MINIO_WATCH_TENANT_ID: ${MINIO_WATCH_TENANT_ID:-}
       MINIO_WATCH_SELF_BASE_URL: ${MINIO_WATCH_SELF_BASE_URL:-}
-      # EXTERNAL_INTAKE_IP_ALLOWLIST 透傳（同 MINIO_WATCH_* 的理由：容器內 env 只來自 compose
-      # `environment:`，.env 不掛入容器、image 不烤 .env）。缺此透傳時 dockerized coordinator 恆用
-      # config.ts:484 的程式碼預設 ["127.0.0.1","::1","172.16.0.0/12"]＝只有 loopback 與 docker
-      # bridge 能過，LAN 瀏覽器對四條 conversion 控制路由（trigger／prioritize／retry／watch）一律
-      # 403 `caller ip not in allowlist`，且 owner 在私有 env 設值也無管道生效。
-      # 未設時 `${VAR:-}` 解析為空字串 → config.ts csvFromEnv 的 `if (!value) return fallback`
-      # 回退上述預設（不是「空清單＝全放行」），故本行不改變任何既有部署的行為。
-      # 設值時 MUST 保留 loopback：MINIO_WATCH_ENABLED=true 且 allowlist 不含 127.0.0.1/::1 時，
-      # app.ts 的 assertIntakeReachable 會啟動 fail-fast（watcher 的 loopback self-POST 會被 403）。
-      # 此 allowlist 同時守 /api/external/ifc-ready webhook 進件面，放寬即同時放寬兩者。
-      EXTERNAL_INTAKE_IP_ALLOWLIST: ${EXTERNAL_INTAKE_IP_ALLOWLIST:-}
+      # CONVERSION_TRIGGER_IP_ALLOWLIST 透傳（D2＝T2，owner 裁決 2026-09-02；同 MINIO_WATCH_*
+      # 的理由：容器內 env 只來自 compose `environment:`，.env 不掛入容器、image 不烤 .env）。
+      # 這是四條 conversion 控制路由（trigger／prioritize／retry／watch）專用的獨立 allowlist；
+      # 未設時 `${VAR:-}` 解析為空字串 → config.ts nullableCsvFromEnv 回 null → 沿用
+      # EXTERNAL_INTAKE_IP_ALLOWLIST 的既有判定（預設等於既有行為，不是「空清單＝全放行」）。
+      # 設值時 MUST 保留 loopback：MINIO_WATCH_ENABLED=true 且清單不含 127.0.0.1/::1 時，
+      # app.ts 的 assertIntakeReachable 會啟動 fail-fast。
+      # 刻意**不**透傳 EXTERNAL_INTAKE_IP_ALLOWLIST：spec unified-console-runtime-truth 明定
+      # SHALL NOT 放寬該共用 allowlist 與 /api/external/* webhook 授權面；LAN 放寬只能走本變數，
+      # webhook 進件面維持程式碼預設。
+      CONVERSION_TRIGGER_IP_ALLOWLIST: ${CONVERSION_TRIGGER_IP_ALLOWLIST:-}
     ports:
       - "127.0.0.1:8004:8004"
     volumes:

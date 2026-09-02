@@ -9,6 +9,25 @@
 
 ---
 
+## 0. 2026-09-02 T2 pivot（Codex review P1 → owner 裁決；本節取代 §1／§3.1／§8.3 的共用 allowlist 敘述）
+
+Codex review 指出（P1，已 owner 確認）：spec `unified-console-runtime-truth` 明定
+「SHALL NOT 放寬 `EXTERNAL_INTAKE_IP_ALLOWLIST` 或任何 `/api/external/*` webhook 授權面」，
+而本檔原方案（透傳共用變數＋owner 加 LAN CIDR）正是被拒絕的 T3 設計。owner 裁決改走 spec 的 **T2**：
+
+- 新增獨立 `CONVERSION_TRIGGER_IP_ALLOWLIST`（`config.ts` `nullableCsvFromEnv`；null＝未設→沿用
+  external 判定＝既有行為；空字串／全空白 CSV 也是 null，絕不 fail-open）。
+- 四條 conversion 控制路由的 guard `isCallerIpAllowed` 改讀此變數；`rejectIfIpNotAllowed` 本體
+  與 lineage／webhook 面逐字不變（釘樁：`tests/conversion-control-auth.test.ts` T2 區塊）。
+- compose 改透傳新變數，並**不再**透傳 `EXTERNAL_INTAKE_IP_ALLOWLIST`（parity 測試釘住不得復發）。
+- `MINIO_WATCH_ENABLED=true` 且新清單設值缺 loopback → `assertIntakeReachable` 啟動 fail-fast（spec 對稱守衛）。
+- owner 部署時改設：`CONVERSION_TRIGGER_IP_ALLOWLIST=127.0.0.1,::1,<operator-lan-cidr>`
+  （取代 §8.3 的舊指引；`EXTERNAL_INTAKE_IP_ALLOWLIST` 維持不設＝程式碼預設，webhook 面不放寬）。
+- 補充：T4 operator token 路徑早於 2026-08-25 落地（`createConversionControlGuard`）；canonical 403
+  是 `DEV_AUTH_TOKEN` 仍為預設值致 token 路徑未啟用（§7 探針一致）。T2 與 T4 疊加並存。
+
+---
+
 ## 1. 一句話
 
 LAN 瀏覽器按不了「觸發轉檔」的根因不是私有 env 設錯，而是 **compose 從來沒有透傳

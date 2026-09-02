@@ -163,3 +163,43 @@ describe("空 allowlist（未啟用 IP 守門）語意不變", () => {
     }
   });
 });
+
+// D2＝T2（owner 裁決 2026-09-02）：conversion 控制路由改讀獨立 CONVERSION_TRIGGER_IP_ALLOWLIST；
+// null（未設）沿用 externalIntakeIpAllowlist（上方所有既有測試即此路徑的釘樁）。
+// 這裡釘住 T2 的分離語意：trigger 面放寬**不**波及 /api/external/* webhook 面，反之亦然。
+describe("CONVERSION_TRIGGER_IP_ALLOWLIST 獨立判定（D2＝T2）", () => {
+  it("trigger allowlist 含 loopback、external 為 LAN-only → conversion 路由放行（獨立於 external）", async () => {
+    const app = makeApp({
+      externalIntakeIpAllowlist: LAN_ONLY_ALLOWLIST,
+      conversionTriggerIpAllowlist: ["127.0.0.1", "::1"],
+    });
+    const res = await request(app.app).post("/api/conversion/jobs/ifcready_nope/prioritize").send({});
+    expect(res.status).toBe(404);
+  });
+
+  it("trigger allowlist 為 LAN-only、external 含 loopback → conversion 路由 403（external 不回頭放行 trigger 面）", async () => {
+    const app = makeApp({ conversionTriggerIpAllowlist: LAN_ONLY_ALLOWLIST });
+    const res = await request(app.app).post("/api/conversion/jobs/ifcready_nope/prioritize").send({});
+    expect(res.status).toBe(403);
+    expect(res.body).toEqual(IP_REJECTED_BODY);
+  });
+
+  it("trigger allowlist 放寬時 lineage 面（rejectIfIpNotAllowed）不變（仍由 external allowlist 守）", async () => {
+    const app = makeApp({
+      externalIntakeIpAllowlist: LAN_ONLY_ALLOWLIST,
+      conversionTriggerIpAllowlist: ["127.0.0.1", "::1"],
+    });
+    const res = await request(app.app)
+      .get("/api/lineage/legacy-unmanaged/preview")
+      .query({ grouping_key: "proj/main" });
+    expect(res.status, "lineage／webhook 面必須維持 external allowlist 判定，不因 trigger 放寬而放寬").toBe(403);
+    expect(res.body).toEqual(IP_REJECTED_BODY);
+  });
+
+  it("conversionTriggerIpAllowlist 未設（null）→ 逐字沿用 external 判定（既有行為）", async () => {
+    const app = makeApp({ externalIntakeIpAllowlist: LAN_ONLY_ALLOWLIST, conversionTriggerIpAllowlist: null });
+    const res = await request(app.app).post("/api/conversion/jobs/ifcready_nope/prioritize").send({});
+    expect(res.status).toBe(403);
+    expect(res.body).toEqual(IP_REJECTED_BODY);
+  });
+});
