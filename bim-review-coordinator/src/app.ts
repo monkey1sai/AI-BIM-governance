@@ -1266,6 +1266,21 @@ export function createCoordinatorApp(
             "watcher 的 loopback intake 會被 403 拒絕。請將 loopback 加入 allowlist，或關閉 MINIO_WATCH_ENABLED。",
         );
       }
+      // D2＝T2 對稱守衛（spec：啟動時若 MINIO_WATCH_ENABLED=true 且缺 loopback SHALL fail-fast）：
+      // CONVERSION_TRIGGER_IP_ALLOWLIST 設值卻漏 loopback 時，loopback 來源（手動 trigger 的
+      // self-POST 鏈與本機 operator）對 /api/conversion/* 控制路由會被 403，啟動即失敗而非靜默。
+      const conversionAllowlist = config.conversionTriggerIpAllowlist;
+      if (
+        conversionAllowlist != null &&
+        conversionAllowlist.length > 0 &&
+        !isIpAllowed("127.0.0.1", conversionAllowlist) &&
+        !isIpAllowed("::1", conversionAllowlist)
+      ) {
+        throw new Error(
+          "MINIO_WATCH_ENABLED=true 但 CONVERSION_TRIGGER_IP_ALLOWLIST 不含 loopback（127.0.0.1/::1）：" +
+            "loopback 來源對 conversion 控制路由會被 403 拒絕。請將 loopback 加入 allowlist，或關閉 MINIO_WATCH_ENABLED。",
+        );
+      }
     },
     objectStoreFactory: options.minioWatchObjectStoreFactory,
     structLog,
@@ -1905,9 +1920,16 @@ export function createCoordinatorApp(
   // allowlist 路徑（含 loopback 的 minio-watcher self-POST）行為逐字不變且不計速率；token 路徑沿用
   // isKitMutationAuthorized 同型比對，config.devAuthToken 仍為預設 "dev-token" 時 token 路徑視為未啟用
   //（fail-closed，只剩 allowlist）；token 路徑每來源 IP 每分鐘 10 次（in-memory 滑動視窗），超額 429＋Retry-After。
+  // D2＝T2 疊加（owner 裁決 2026-09-02）：IP 判定改讀獨立的 conversionTriggerIpAllowlist；
+  // null（未設）→ 沿用 externalIntakeIpAllowlist，行為與 T4 落地時逐字相同。
+  // externalIntakeIpAllowlist 與 /api/external/* webhook 面不因此放寬（spec：SHALL NOT 放寬）。
+  const effectiveConversionTriggerAllowlist = (): string[] =>
+    config.conversionTriggerIpAllowlist ?? config.externalIntakeIpAllowlist;
   const rejectIfConversionControlUnauthorized = createConversionControlGuard({
-    isCallerIpAllowed: (clientIp) =>
-      !(config.externalIntakeIpAllowlist.length > 0 && !isIpAllowed(clientIp, config.externalIntakeIpAllowlist)),
+    isCallerIpAllowed: (clientIp) => {
+      const allowlist = effectiveConversionTriggerAllowlist();
+      return !(allowlist.length > 0 && !isIpAllowed(clientIp, allowlist));
+    },
     operatorTokenPathEnabled: () => isOperatorTokenPathEnabled(config.devAuthToken),
     isOperatorTokenValid: (request) => isKitMutationAuthorized(request, config.devAuthToken),
     rateLimiter: new SlidingWindowRateLimiter(OPERATOR_TOKEN_RATE_LIMIT, OPERATOR_TOKEN_RATE_WINDOW_MS),
