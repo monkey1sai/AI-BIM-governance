@@ -22,13 +22,14 @@ import { loadConfig } from "../src/config.js";
  * 且 scripts/start-runtime-manager-docker.ps1 只載這一支；scripts/deploy.ps1 與
  * scripts/start-web-plane-docker.ps1 則是 runtime-manager 疊 host-kit，兩條路徑都被本落點涵蓋。
  *
- * 本 guard 釘住六件事：
+ * 本 guard 釘住七件事：
  *   (1) config.ts 恰有一個 CONVERSION_TRIGGER_IP_ALLOWLIST 讀取點；
  *   (2) compose.runtime-manager.yml 的 services.coordinator 區塊內有未被註解的透傳行；
  *   (3) compose **不得**透傳 EXTERNAL_INTAKE_IP_ALLOWLIST（webhook 授權面不放寬——spec SHALL NOT）；
  *   (4) 未設／空字串／全空白 CSV 時為 null（沿用既有 external 判定），絕不解析成空清單造成 fail-open；
  *   (5) external 預設清單含 loopback（MINIO_WATCH_ENABLED=true 的 assertIntakeReachable 前提）；
- *   (6) 設值時 CSV 解析並去空白。
+ *   (6) 設值時 CSV 解析並去空白；
+ *   (7) 四份 .env*.example 恰宣告一次空值（deploy missing-key bootstrap 可發現性；follow-up #746）。
  * 真值（canonical-linux 的實際 LAN CIDR）只存在 owner 私有 env；本測試不讀任何私有 env。
  */
 describe("CONVERSION_TRIGGER_IP_ALLOWLIST deploy-time parity（IMPORTANT — compose passthrough safety net）", () => {
@@ -107,5 +108,42 @@ describe("CONVERSION_TRIGGER_IP_ALLOWLIST deploy-time parity（IMPORTANT — com
     process.env[ENV_KEY] = "127.0.0.1, ::1 ,192.0.2.0/24";
     const config = loadConfig();
     expect(config.conversionTriggerIpAllowlist).toEqual(["127.0.0.1", "::1", "192.0.2.0/24"]);
+  });
+  const declarationsIn = (text: string, key: string): { lineNumber: number; text: string }[] =>
+    text
+      .split(/\r?\n/)
+      .map((line, index) => ({ lineNumber: index + 1, text: line.trim() }))
+      .filter((entry) => entry.text.startsWith(`${key}=`));
+  const valueIn = (text: string, key: string): string | null => {
+    const first = declarationsIn(text, key)[0];
+    return first === undefined ? null : first.text.slice(key.length + 1);
+  };
+  const expectDeclaredOnceEmpty = (label: string, text: string) => {
+    const declarations = declarationsIn(text, ENV_KEY);
+    const inventory = declarations.map((entry) => `L${entry.lineNumber}:${entry.text}`).join(" / ");
+    expect(
+      declarations.length,
+      `${ENV_KEY} 在 ${label} 出現 ${declarations.length} 次（${inventory}）；deploy missing-key merge 與本測試皆 first-match-wins，必須恰宣告一次。`,
+    ).toBe(1);
+    expect(valueIn(text, ENV_KEY), `${ENV_KEY} 在 ${label} 必須為空值（真值只放私有 env）`).toBe("");
+  };
+
+  it("bim-review-coordinator/.env.example 恰宣告一次 CONVERSION_TRIGGER_IP_ALLOWLIST=（空）", () => {
+    expectDeclaredOnceEmpty("bim-review-coordinator/.env.example", read(here, "..", ".env.example"));
+  });
+
+  it(".env.web-plane.host-kit.example（canonical missing-key source）恰宣告一次 CONVERSION_TRIGGER_IP_ALLOWLIST=（空）", () => {
+    expectDeclaredOnceEmpty(".env.web-plane.host-kit.example", read(repoRoot, ".env.web-plane.host-kit.example"));
+  });
+
+  it(".env.web-plane.host-kit.canonical-linux.example 恰宣告一次 CONVERSION_TRIGGER_IP_ALLOWLIST=（空）", () => {
+    expectDeclaredOnceEmpty(
+      ".env.web-plane.host-kit.canonical-linux.example",
+      read(repoRoot, ".env.web-plane.host-kit.canonical-linux.example"),
+    );
+  });
+
+  it(".env.runtime-manager.docker.example 恰宣告一次 CONVERSION_TRIGGER_IP_ALLOWLIST=（空）", () => {
+    expectDeclaredOnceEmpty(".env.runtime-manager.docker.example", read(repoRoot, ".env.runtime-manager.docker.example"));
   });
 });
