@@ -113,10 +113,15 @@ function makeGh({ tuple = makeSnapshot(), threads = {}, identity = { login: 'mon
     }
     if (joined.startsWith('api graphql')) {
       const threadId = args[args.indexOf('-F') + 1].replace(/^id=/, '');
+      const afterArg = args.find((arg) => arg.startsWith('after='));
       const thread = threads[threadId] ?? { isResolved: false, comments: [] };
+      // Pages of 100, cursors are the page index.
+      const pageIndex = afterArg ? Number(afterArg.replace(/^after=/, '')) : 0;
+      const pageComments = thread.comments.slice(pageIndex * 100, pageIndex * 100 + 100);
+      const hasNextPage = thread.comments.length > (pageIndex + 1) * 100;
       return JSON.stringify({ data: { node: {
         isResolved: thread.isResolved,
-        comments: { pageInfo: { hasNextPage: false }, nodes: thread.comments.map((comment) => ({
+        comments: { pageInfo: { hasNextPage, endCursor: hasNextPage ? String(pageIndex + 1) : null }, nodes: pageComments.map((comment) => ({
           databaseId: comment.databaseId, author: { login: comment.author }, body: comment.body,
         })) },
       } } });
@@ -341,4 +346,16 @@ test('the sink serializes itself per PR and holds fail-closed when the lock is a
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
+});
+
+test('a long review thread is read through bounded cursor pagination instead of holding forever', () => {
+  const plan = renderPlan({ findings: [makePacket().findings[1]] });
+  const [reply] = plan.replies;
+  // 149 unrelated comments precede the finding comment, which sits on the second page.
+  const filler = Array.from({ length: 149 }, (_unused, index) => ({ databaseId: 10_000 + index, author: 'someone', body: `comment ${index}` }));
+  const threads = { [reply.threadId]: { isResolved: false, comments: [...filler, { databaseId: reply.commentDatabaseId, author: 'chatgpt-codex-connector', body: 'finding text' }] } };
+  const { gh, calls } = makeGh({ threads });
+  const result = planSinkActions({ lock: NO_LOCK, plan, gh, live: true, env: {} });
+  assert.equal(result.results[0].action, 'posted', JSON.stringify(result.results[0]));
+  assert.equal(calls.filter((call) => call.args.join(' ').includes('api graphql') && !call.args.join(' ').includes('resolveReviewThread')).length, 2);
 });

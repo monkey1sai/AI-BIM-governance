@@ -70,6 +70,10 @@ const makeConvergedBundle = ({
 
 // Trusted collector view of the conversation, derived from the bundle only in tests.
 const collectedFrom = (bundle, overrides = {}) => ({
+  repository: bundle.repository,
+  prNumber: bundle.prNumber,
+  baseOid: bundle.baseOid,
+  headOid: bundle.headOid,
   complete: bundle.threadsComplete,
   unresolvedThreads: bundle.unresolvedThreads,
   findings: bundle.findings.map((finding) => ({
@@ -80,10 +84,10 @@ const collectedFrom = (bundle, overrides = {}) => ({
     followUpIssue: finding.followUpRef ? { url: finding.followUpRef, state: 'open' } : null,
   })),
   // Server-observed independent re-reviews, derived from the bundle only in tests.
-  reReviews: [...new Map(bundle.findings.filter((finding) => finding.fixEvidence).map((finding) => [finding.fixEvidence.reReviewRef, {
-    ref: finding.fixEvidence.reReviewRef, headOid: finding.fixEvidence.repairHeadOid, independent: true,
+  reReviews: bundle.findings.filter((finding) => finding.fixEvidence).map((finding) => ({
+    ref: finding.fixEvidence.reReviewRef, findingId: finding.id, headOid: finding.fixEvidence.repairHeadOid, independent: true,
     regressionLocations: finding.fixEvidence.regressionEvidence,
-  }])).values()],
+  })),
   ...overrides,
 })
 const validateBundle = (validate, bundle, source = EXPECTED_CHECK_SOURCE, collectedConversation = collectedFrom(bundle), epoch = {}) => (
@@ -94,7 +98,7 @@ const validateBundle = (validate, bundle, source = EXPECTED_CHECK_SOURCE, collec
 )
 const convergedOptions = (findings = [], conversation = {}) => ({
   expectedRequiredCheckSource: EXPECTED_CHECK_SOURCE,
-  collectedConversation: { complete: true, unresolvedThreads: 0, findings, reReviews: [], ...conversation },
+  collectedConversation: { repository: REPOSITORY, prNumber: 737, baseOid: SHA('b'), headOid: SHA('a'), complete: true, unresolvedThreads: 0, findings, reReviews: [], ...conversation },
   convergenceObservedAt: CONVERGENCE_AT, sameHeadCheckRuns: makeRuns(SHA('a')), sameHeadCheckRunsComplete: true, expectedPolicySha256: DIGEST('b'),
 })
 // Ledger acquisition always carries an external exact-head classification result,
@@ -375,11 +379,11 @@ test('READY_TO_MERGE requires composed finding convergence and the source-pinned
   assert.throws(() => applyFinalizationEvent(state, {
     type: 'round_converged', headOid: SHA('a'),
     findingBundle: makeConvergedBundle({ repository: 'attacker/other-repo' }),
-  }, convergedOptions()), (error) => error?.code === 'finalization_event_invalid')
+  }, convergedOptions([], { repository: 'attacker/other-repo' })), (error) => error?.code === 'finalization_event_invalid')
   assert.throws(() => applyFinalizationEvent(state, {
     type: 'round_converged', headOid: SHA('a'),
     findingBundle: makeConvergedBundle({ baseOid: SHA('d') }),
-  }, convergedOptions()), (error) => error?.code === 'finalization_event_invalid')
+  }, convergedOptions([], { baseOid: SHA('d') })), (error) => error?.code === 'finalization_event_invalid')
   state = applyFinalizationEvent(state, {
     type: 'round_converged', headOid: SHA('a'), findingBundle: makeConvergedBundle(),
   }, convergedOptions())
@@ -468,6 +472,9 @@ test('adversarial decision requires distinct models, per-layer packet binding, a
   throwsCode('adversarial_output_invalid', () => adjudicate({ ...decision, layers: { l1: l1WithFinding, l2: l2Unbound, l3: { ...l3, l1OutputSha256: canonicalSha256(l1WithFinding), l2OutputSha256: canonicalSha256(l2Unbound) } } }), 'l2_verdicts_not_bound_to_l1_findings')
   const l2Killed = { ...l2Unbound, killed: [finding9] }
   assert.equal(adjudicate({ ...decision, layers: { l1: l1WithFinding, l2: l2Killed, l3: { ...l3, l1OutputSha256: canonicalSha256(l1WithFinding), l2OutputSha256: canonicalSha256(l2Killed) } } }).verdict, 'passed')
+  // L2 judges the finding L1 reported: a surviving copy re-severitised to LOW cannot clear the blocker set.
+  const downgraded = { ...l2Unbound, surviving: [{ ...finding9, severity: 'LOW' }] }
+  throwsCode('adversarial_output_invalid', () => adjudicate({ ...decision, layers: { l1: l1WithFinding, l2: downgraded, l3: { ...l3, l1OutputSha256: canonicalSha256(l1WithFinding), l2OutputSha256: canonicalSha256(downgraded) } } }), 'l2_verdict_severity_or_evidence_drift')
   assert.throws(() => adjudicate({
     ...decision,
     layers: { ...decision.layers, l2: { ...l2, model: 'finder-model' } },
@@ -866,7 +873,19 @@ test('CI and review findings converge through the five closed dispositions witho
   throwsCode('finding_disposition_invalid', () => validateBundle(
     validateFindingDispositionBundle, bundle, EXPECTED_CHECK_SOURCE,
     { ...collected, reReviews: [...collected.reReviews, collected.reReviews[0]] },
-  ), 'collected_rereview_2_duplicated')
+  ), 'collected_rereview_3_duplicated')
+  // A re-review record covers one finding: finding B cannot borrow A's re-review.
+  throwsCode('finding_disposition_invalid', () => validateBundle(
+    validateFindingDispositionBundle, bundle, EXPECTED_CHECK_SOURCE,
+    { ...collected, reReviews: collected.reReviews.map((record) => (record.findingId === 'ci-1' ? { ...record, findingId: 'review-2' } : record)) },
+  ), 'finding_0_fix_evidence_not_server_observed')
+  // The collection names the exact PR tuple it observed; another head's collection never binds.
+  throwsCode('finding_disposition_invalid', () => validateBundle(
+    validateFindingDispositionBundle, bundle, EXPECTED_CHECK_SOURCE, { ...collected, headOid: SHA('9') },
+  ), 'collected_conversation_not_bound_to_pr')
+  throwsCode('finding_disposition_invalid', () => validateBundle(
+    validateFindingDispositionBundle, bundle, EXPECTED_CHECK_SOURCE, { ...collected, prNumber: 738 },
+  ), 'collected_conversation_not_bound_to_pr')
   // A refutation cites only collector-verified counter-evidence on this head, and a
   // deferral cites a follow-up issue the collector observed open in this repository.
   throwsCode('finding_disposition_invalid', () => validateBundle(

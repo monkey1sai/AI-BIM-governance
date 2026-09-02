@@ -632,10 +632,19 @@ export function validateAdversarialDecision(decision, { expectedPacketSha256 } =
   validateAdversarialFindingList(l1.findings, 'l1_findings')
   for (const key of ['killed', 'surviving', 'unverified']) validateAdversarialFindingList(l2[key], `l2_${key}`)
   // Every L2 verdict names an L1 finding, and every L1 finding gets exactly one verdict.
-  const l1Ids = new Set(l1.findings.map((finding) => finding.id))
-  const l2Ids = [...l2.killed, ...l2.surviving, ...l2.unverified].map((finding) => finding.id)
-  if (l2Ids.length !== l1Ids.size || new Set(l2Ids).size !== l2Ids.length || l2Ids.some((id) => !l1Ids.has(id))) {
+  const l1ById = new Map(l1.findings.map((finding) => [finding.id, finding]))
+  const l2Verdicts = [...l2.killed, ...l2.surviving, ...l2.unverified]
+  const l2Ids = l2Verdicts.map((finding) => finding.id)
+  if (l2Ids.length !== l1ById.size || new Set(l2Ids).size !== l2Ids.length || l2Ids.some((id) => !l1ById.has(id))) {
     fail('adversarial_output_invalid', 'l2_verdicts_not_bound_to_l1_findings')
+  }
+  // A verdict judges the finding L1 reported, not a re-severitised copy of it: the
+  // blocker set below is derived from L2, so L2 cannot be allowed to downgrade.
+  for (const verdict of l2Verdicts) {
+    const reported = l1ById.get(verdict.id)
+    if (verdict.severity !== reported.severity || canonicalSha256(verdict.evidence) !== canonicalSha256(reported.evidence)) {
+      fail('adversarial_output_invalid', 'l2_verdict_severity_or_evidence_drift')
+    }
   }
   if (l1.model === l2.model) fail('adversarial_independence_invalid', 'l2_model_must_differ_from_l1')
   const l1OutputSha256 = canonicalSha256(l1)
@@ -1220,7 +1229,14 @@ const validateMachineGateEpoch = (gate, expectedSource, { convergenceObservedAt,
 // declare a thread resolved that GitHub still reports open.
 const parseCollectedConversation = (collectedConversation) => {
   if (!isPlainObject(collectedConversation)) fail('finding_disposition_incomplete', 'collector_conversation_state_required')
-  exactKeys(collectedConversation, ['complete', 'unresolvedThreads', 'findings', 'reReviews'], 'finding_disposition_invalid', 'collected_conversation_shape_invalid')
+  exactKeys(collectedConversation, ['repository', 'prNumber', 'baseOid', 'headOid', 'complete', 'unresolvedThreads', 'findings', 'reReviews'], 'finding_disposition_invalid', 'collected_conversation_shape_invalid')
+  // Thread ids survive head updates, so the collection names the exact tuple it
+  // observed; a cached or misrouted collection for another head never binds.
+  if (!SAFE_REPOSITORY.test(collectedConversation.repository) || !Number.isSafeInteger(collectedConversation.prNumber) || collectedConversation.prNumber < 1) {
+    fail('finding_disposition_invalid', 'collected_conversation_identity_invalid')
+  }
+  assertSha1(collectedConversation.baseOid, 'finding_disposition_invalid', 'collected_conversation_base_invalid')
+  assertSha1(collectedConversation.headOid, 'finding_disposition_invalid', 'collected_conversation_head_invalid')
   if (typeof collectedConversation.complete !== 'boolean' ||
       !Number.isSafeInteger(collectedConversation.unresolvedThreads) || collectedConversation.unresolvedThreads < 0) {
     fail('finding_disposition_invalid', 'collected_conversation_state_invalid')
@@ -1272,15 +1288,23 @@ const parseCollectedConversation = (collectedConversation) => {
   }
   const reReviews = new Map()
   for (const [index, record] of reReviewsRaw.entries()) {
-    exactKeys(record, ['ref', 'headOid', 'independent', 'regressionLocations'], 'finding_disposition_invalid', `collected_rereview_${index}_shape_invalid`)
+    exactKeys(record, ['ref', 'findingId', 'headOid', 'independent', 'regressionLocations'], 'finding_disposition_invalid', `collected_rereview_${index}_shape_invalid`)
     assertIdentifier(record.ref, 'finding_disposition_invalid', `collected_rereview_${index}_ref_invalid`)
+    assertIdentifier(record.findingId, 'finding_disposition_invalid', `collected_rereview_${index}_finding_invalid`)
     assertSha1(record.headOid, 'finding_disposition_invalid', `collected_rereview_${index}_head_invalid`)
     if (typeof record.independent !== 'boolean') fail('finding_disposition_invalid', `collected_rereview_${index}_independence_invalid`)
     validateEvidenceLocations(record.regressionLocations, `collected_rereview_${index}`)
-    if (reReviews.has(record.ref)) fail('finding_disposition_invalid', `collected_rereview_${index}_duplicated`)
-    reReviews.set(record.ref, record)
+    // One record per (re-review, finding): a re-review's coverage of finding A never
+    // vouches for finding B, even inside the same review.
+    const reReviewKey = `${record.ref}|${record.findingId}`
+    if (reReviews.has(reReviewKey)) fail('finding_disposition_invalid', `collected_rereview_${index}_duplicated`)
+    reReviews.set(reReviewKey, record)
   }
-  return { complete: collectedConversation.complete, unresolvedThreads: collectedConversation.unresolvedThreads, byId, reReviews }
+  return {
+    repository: collectedConversation.repository, prNumber: collectedConversation.prNumber,
+    baseOid: collectedConversation.baseOid, headOid: collectedConversation.headOid,
+    complete: collectedConversation.complete, unresolvedThreads: collectedConversation.unresolvedThreads, byId, reReviews,
+  }
 }
 
 export function validateFindingDispositionBundle(bundle, expectedRequiredCheckSource, {
@@ -1317,6 +1341,10 @@ export function validateFindingDispositionBundle(bundle, expectedRequiredCheckSo
     fail('finding_disposition_invalid', 'finding_or_thread_identity_duplicated')
   }
   const collected = parseCollectedConversation(collectedConversation)
+  if (
+    collected.repository !== bundle.repository || collected.prNumber !== bundle.prNumber ||
+    collected.baseOid !== bundle.baseOid || collected.headOid !== bundle.headOid
+  ) fail('finding_disposition_invalid', 'collected_conversation_not_bound_to_pr')
   // The bundle cannot vouch for the policy it was evaluated under: the trusted
   // side supplies the current immutable policy digest and it must match exactly.
   assertSha256(expectedPolicySha256, 'finding_disposition_invalid', 'trusted_policy_digest_required')
@@ -1333,7 +1361,7 @@ export function validateFindingDispositionBundle(bundle, expectedRequiredCheckSo
     // A fix claim cites a server-observed independent re-review of the repair head
     // and only regression locations the collector verified at that head.
     if (finding.fixEvidence !== null) {
-      const reReview = collected.reReviews.get(finding.fixEvidence.reReviewRef)
+      const reReview = collected.reReviews.get(`${finding.fixEvidence.reReviewRef}|${finding.id}`)
       if (
         !reReview || reReview.headOid !== finding.fixEvidence.repairHeadOid || reReview.independent !== true ||
         !finding.fixEvidence.regressionEvidence.every((location) => reReview.regressionLocations.includes(location))

@@ -30,9 +30,10 @@ export const OWNER_IDENTITY = Object.freeze({ login: 'monkey1sai', id: 26239865,
 const CREDENTIAL_OVERRIDE_ENV = /^(?:GH_TOKEN|GITHUB_TOKEN|GH_ENTERPRISE_TOKEN|GITHUB_ENTERPRISE_TOKEN|GH_HOST|GH_CONFIG_DIR|XDG_CONFIG_HOME)$/i;
 const PLAN_SCHEMA = 'ai-bim-review-disposition-plan/v1';
 const THREAD_QUERY = [
-  'query($id:ID!){node(id:$id){... on PullRequestReviewThread {isResolved ',
-  'comments(first:100){pageInfo{hasNextPage} nodes{databaseId author{login} body}}}}}',
+  'query($id:ID!,$after:String){node(id:$id){... on PullRequestReviewThread {isResolved ',
+  'comments(first:100,after:$after){pageInfo{hasNextPage endCursor} nodes{databaseId author{login} body}}}}}',
 ].join('');
+const THREAD_PAGE_LIMIT = 20;
 const RESOLVE_MUTATION = 'mutation($id:ID!){resolveReviewThread(input:{threadId:$id}){thread{isResolved}}}';
 // A mutation that landed on a moved head, or a resolution that never landed, is a
 // failed run even though the reply itself was posted.
@@ -88,7 +89,12 @@ export function createPlanLock({
           try { stale = now() - fs.statSync(file).mtimeMs > LOCK_STALE_MS; } catch { stale = false; }
           const holderDead = owner === null || !isAlive(owner.pid);
           if (!stale || !holderDead || attempt > 0) throw new Error(`sink_lock_held:${file}`);
-          try { fs.unlinkSync(file); } catch { /* raced with the owner */ }
+          // Reclaim by atomic rename, never by unlink: of two processes that both
+          // observed the dead holder, exactly one wins the rename; the other finds
+          // the path gone and holds instead of deleting the winner's fresh lock.
+          const tombstone = `${file}.reclaimed-${token}`;
+          try { fs.renameSync(file, tombstone); } catch { throw new Error(`sink_lock_held:${file}`); }
+          try { fs.unlinkSync(tombstone); } catch { /* the tombstone is inert */ }
         }
       }
       throw new Error(`sink_lock_held:${file}`);
@@ -127,20 +133,31 @@ export function readPrTuple(gh, prNumber) {
   ]));
 }
 
+// Reads every comment of a thread through bounded cursor pagination: a long thread
+// is retrievable, only an unbounded or looping one is refused.
 export function readThreadComments(gh, threadId) {
-  const node = JSON.parse(gh(['api', 'graphql', '-f', `query=${THREAD_QUERY}`, '-F', `id=${threadId}`]))?.data?.node;
-  if (!node || typeof node.isResolved !== 'boolean' || !Array.isArray(node.comments?.nodes)) {
-    throw new Error(`thread_unreadable:${threadId}`);
+  const comments = [];
+  let isResolved = null;
+  let after = null;
+  const seenCursors = new Set();
+  for (let page = 0; page < THREAD_PAGE_LIMIT; page += 1) {
+    const args = ['api', 'graphql', '-f', `query=${THREAD_QUERY}`, '-F', `id=${threadId}`];
+    if (after !== null) args.push('-F', `after=${after}`);
+    const node = JSON.parse(gh(args))?.data?.node;
+    if (!node || typeof node.isResolved !== 'boolean' || !Array.isArray(node.comments?.nodes)) {
+      throw new Error(`thread_unreadable:${threadId}`);
+    }
+    if (isResolved === null) isResolved = node.isResolved;
+    for (const comment of node.comments.nodes) {
+      comments.push({ databaseId: comment.databaseId, author: comment.author?.login ?? null, body: String(comment.body ?? '') });
+    }
+    if (!node.comments.pageInfo?.hasNextPage) return { isResolved, comments };
+    const cursor = node.comments.pageInfo?.endCursor;
+    if (typeof cursor !== 'string' || cursor.length === 0 || seenCursors.has(cursor)) throw new Error(`thread_pagination_incomplete:${threadId}`);
+    seenCursors.add(cursor);
+    after = cursor;
   }
-  if (node.comments.pageInfo?.hasNextPage) throw new Error(`thread_pagination_incomplete:${threadId}`);
-  return {
-    isResolved: node.isResolved,
-    comments: node.comments.nodes.map((comment) => ({
-      databaseId: comment.databaseId,
-      author: comment.author?.login ?? null,
-      body: String(comment.body ?? ''),
-    })),
-  };
+  throw new Error(`thread_pagination_incomplete:${threadId}`);
 }
 
 const tupleMatches = (tuple, plan) => (
