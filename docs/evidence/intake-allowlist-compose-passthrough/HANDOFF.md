@@ -67,15 +67,17 @@ EXTERNAL_INTAKE_IP_ALLOWLIST: ${EXTERNAL_INTAKE_IP_ALLOWLIST:-}
 放 base（runtime-manager）三條路徑全涵蓋；放 host-kit 會漏掉第一條。
 （對照：`ENABLE_DEV_ROUTES` 放在 host-kit，`DEV_AUTH_TOKEN`／`MINIO_WATCH_*` 放在 runtime-manager。）
 
-### 3.2 `bim-review-coordinator/tests/env-compose-intake-allowlist-parity.test.ts` — 新增（5 cases）
+### 3.2 `bim-review-coordinator/tests/env-compose-intake-allowlist-parity.test.ts`（T2 現況，10 cases）
 
-沿用 `tests/env-example-dev-routes-parity.test.ts`（task 4.4）模式。釘住：
+> 原始 5-case 版本針對共用變數，屬 pre-pivot 歷史（見 §0）；現行測試釘的是：
 
-1. `config.ts` 恰一個 `EXTERNAL_INTAKE_IP_ALLOWLIST` 讀取點
-2. `compose.runtime-manager.yml` 的 `services.coordinator` 區塊內有**未被註解**的透傳行 ← 防止本缺口復發的主牆
-3. 空字串回退程式碼預設，**不是**空清單全放行（此透傳可安全加入的前提）
-4. 預設清單含 loopback
-5. 設值時 CSV 解析並去空白
+1. `config.ts` 恰一個 `CONVERSION_TRIGGER_IP_ALLOWLIST` 讀取點
+2. `compose.runtime-manager.yml` 的 `services.coordinator` 區塊內有**未被註解**的新變數透傳行 ← 防復發主牆
+3. compose **不得**透傳 `EXTERNAL_INTAKE_IP_ALLOWLIST`（spec SHALL NOT 放寬 webhook 面）
+4. 未設／空字串／全空白 CSV → null（沿用 external 判定），絕不解析成空清單（fail-open）
+5. external 程式碼預設含 loopback（斷言前清 ambient env，hermetic）
+6. 設值時 CSV 解析並去空白
+7. 四份 `.env*.example` 各恰宣告一次 `CONVERSION_TRIGGER_IP_ALLOWLIST=`（空值；owner commit `dea28c2`）
 
 ---
 
