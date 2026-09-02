@@ -175,7 +175,8 @@ const executionEnvelope = () => ({
   side_effect_class: 'CONTROL_METADATA',
 })
 
-const stack = () => ({
+const withVector = (value) => ({ ...value, ordered_member_vector_digest: digestCanonical(value.members) })
+const stack = () => withVector({
   schema_version: 'stack-delivery-envelope/v1',
   stack_id: 'stack:one',
   trunk_ref: 'origin/main',

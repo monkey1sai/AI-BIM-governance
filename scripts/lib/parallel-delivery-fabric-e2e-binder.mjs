@@ -506,11 +506,18 @@ export function evaluateRuntimeAdmission(snapshot, request) {
   if (baseUrls !== undefined && ports !== undefined && !validBaseUrls(baseUrls, ports)) {
     return held('HELD_RUNTIME', 'BASE_URL_MISMATCH')
   }
-  const reserved = new Set([
-    ...CANONICAL_RESERVED_PORTS,
-    ...(Array.isArray(snapshot.reserved_ports) ? snapshot.reserved_ports : []),
-    ...(Array.isArray(request.reserved_ports) ? request.reserved_ports : []),
-  ])
+  // A reservation field that is present must be a bounded list of unique integer
+  // ports; a malformed shape is never "no reservations".
+  const reservedPortList = (value) => {
+    if (value === undefined) return []
+    if (!Array.isArray(value) || value.length > 256 || new Set(value).size !== value.length ||
+        value.some((port) => !Number.isSafeInteger(port) || port < 1 || port > 65535)) return null
+    return value
+  }
+  const snapshotReserved = reservedPortList(snapshot.reserved_ports)
+  const requestReserved = reservedPortList(request.reserved_ports)
+  if (snapshotReserved === null || requestReserved === null) return held('HELD_RUNTIME', 'RESERVED_PORTS_INVALID')
+  const reserved = new Set([...CANONICAL_RESERVED_PORTS, ...snapshotReserved, ...requestReserved])
   if (ports !== undefined && Object.values(ports).some((port) => reserved.has(port))) {
     return held('HELD_RUNTIME', 'RESERVED_PORT_CONFLICT')
   }
@@ -533,13 +540,18 @@ export function evaluateRuntimeAdmission(snapshot, request) {
   })
 }
 
+// The path set is classifier input, not something to sanitize quietly: a path
+// list carrying non-string entries is invalid (null), and a change that names no
+// paths at all is unclassifiable unless the trusted base policy says static-only.
+const validPathList = (values) => (Array.isArray(values) && values.every((entry) => typeof entry === 'string' && entry.length > 0) ? values : null)
 const applicabilityPaths = (change) => {
-  if (typeof change === 'string') return [change]
-  if (Array.isArray(change)) return change.filter((entry) => typeof entry === 'string')
-  if (!isPlainObject(change)) return []
+  if (typeof change === 'string') return change.length > 0 ? [change] : null
+  if (Array.isArray(change)) return validPathList(change)
+  if (!isPlainObject(change)) return null
   const values = first(change, ['paths', 'changed_paths', 'files', 'changed_files', 'path'])
-  if (typeof values === 'string') return [values]
-  return Array.isArray(values) ? values.filter((entry) => typeof entry === 'string') : []
+  if (values === undefined) return []
+  if (typeof values === 'string') return values.length > 0 ? [values] : null
+  return validPathList(values)
 }
 
 const pathIsTrigger = (rawPath) => {
@@ -556,8 +568,9 @@ const pathIsTrigger = (rawPath) => {
 const STATIC_PATH = /^(?:docs\/|openspec\/|LICENSE(?:\.[a-z]+)?$|CODEOWNERS$|\.gitignore$|\.gitattributes$|\.editorconfig$)|\.(?:md|markdown|txt|rst|adoc|png|jpe?g|gif|svg|webp|ico|pdf)$/iu
 const pathIsStatic = (rawPath) => STATIC_PATH.test(rawPath.replaceAll('\\', '/'))
 
-const changeTrigger = (change) => {
+const changeTrigger = (change, trustedPolicy) => {
   const paths = applicabilityPaths(change)
+  if (paths === null) return { held: 'APPLICABILITY_PATHS_INVALID' }
   if (paths.some(pathIsTrigger)) return { required: true, reason: 'USER_FACING_OR_SHARED_RUNTIME_CHANGE' }
   if (paths.some((path) => !pathIsStatic(path))) return { required: true, reason: 'UNCLASSIFIED_EXECUTABLE_OR_DEPLOYMENT_PATH' }
   if (isPlainObject(change)) {
@@ -568,6 +581,10 @@ const changeTrigger = (change) => {
     ]
     for (const [key, reason] of flags) if (change[key] === true || (Array.isArray(change[key]) && change[key].length > 0)) return { required: true, reason }
     if (change.scope?.e2e_required === true || change.trusted_e2e_required === true) return { required: true, reason: 'BASE_POLICY_REQUIRED_E2E' }
+  }
+  if (paths.length === 0) {
+    if (trustedPolicy?.static_only === true) return { required: false, reason: 'TRUSTED_STATIC_ONLY_CLASSIFICATION' }
+    return { held: 'APPLICABILITY_PATHS_MISSING' }
   }
   return { required: false, reason: 'STATIC_OR_NON_USER_FACING_CHANGE' }
 }
@@ -602,7 +619,8 @@ export function classifyE2EApplicability({ change, trustedPolicy, baseSha } = {}
   if (policyFailure) return held('HELD_EVIDENCE_BINDING', policyFailure)
   const policyDigest = trustedPolicy.policy_digest
   if (!policyDigest) return held('HELD_EVIDENCE_BINDING', 'APPLICABILITY_POLICY_DIGEST_INVALID')
-  const trigger = changeTrigger(change)
+  const trigger = changeTrigger(change, trustedPolicy)
+  if (trigger.held) return held('HELD_EVIDENCE_BINDING', trigger.held)
   const record = {
     schema_version: 'e2e-applicability/v1',
     source: 'base',
@@ -676,6 +694,8 @@ export function createIntegrationTrain(plan = {}, trustedClock = undefined) {
   }
   const heads = candidateHeads(plan)
   if (!Array.isArray(heads) || heads.length === 0 || new Set(heads).size !== heads.length) return trainFailure('ORDERED_INPUTS_INVALID')
+  // The committed integration-train schema caps candidate_heads at 64.
+  if (heads.length > 64) return trainFailure('CANDIDATE_LIMIT_EXCEEDED')
   for (const key of ['observed_candidate_heads', 'current_candidate_heads', 'ordered_input_observed_shas']) {
     if (plan[key] !== undefined && (!Array.isArray(plan[key]) || !equalCanonical(plan[key], heads))) return trainFailure('ORDERED_INPUT_SHA_DRIFT')
   }
@@ -868,6 +888,24 @@ const packetFailure = (packet, expectedRole, trustedPins) => {
   if (packet.candidate_harness_status === 'modified' || packet.verification_mode === 'shadow') return 'CANDIDATE_HARNESS_MODIFIED'
   return null
 }
+
+// The prior-base authority digest covers the complete pin map: verifier and
+// harness identity, the per-role command pins and the expected user flow. A pin
+// swapped after the digest was issued no longer authenticates.
+export const trustedPinsAuthorityDigest = (pins) => digestCanonical({
+  source_ref: pins?.source_ref ?? null,
+  source_sha: pins?.source_sha ?? null,
+  base_sha: pins?.base_sha ?? null,
+  verifier_tree_digest: pins?.verifier_tree_digest ?? null,
+  harness_digest: pins?.harness_digest ?? null,
+  command_pins: pins?.command_pins ?? null,
+  expected_flow: pins?.expected_flow ?? null,
+})
+
+const EXPECTED_FLOW_FIELDS = Object.freeze([
+  ['route', ['route']], ['main_buttons', ['main_buttons', 'buttons', 'main_button']], ['fixture', ['fixture', 'fixture_reference']],
+  ['api', ['api', 'backend_api', 'api_reference']], ['runtime_id', ['runtime_id', 'runtime_reference']], ['visible_state', ['visible_state', 'visible_states']],
+])
 
 const packetIdentityFailure = (packet, expected, trustedPins) => {
   const fields = [
@@ -1168,6 +1206,9 @@ export function bindBrowserEvidence({ candidate, manifest, playwright, computerU
     if (!equalCanonical(packetWindow, manifestExecutionWindow)) return bindingHold('EXECUTION_WINDOW_MISMATCH', candidate)
     packetExecutionWindows.push(packetWindow)
   }
+  if (!isPlainObject(trustedPins) || trustedPins.authority_digest !== trustedPinsAuthorityDigest(trustedPins)) {
+    return bindingHold('TRUSTED_PINS_AUTHORITY_DIGEST_MISMATCH', candidate)
+  }
   const playwrightListenerDigest = listenerDigest(playwright)
   const computerUseListenerDigest = listenerDigest(computerUse)
   if (playwrightListenerDigest !== computerUseListenerDigest) return bindingHold('LISTENER_DIGEST_MISMATCH', candidate)
@@ -1179,6 +1220,13 @@ export function bindBrowserEvidence({ candidate, manifest, playwright, computerU
     ['api', 'backend_api', 'api_reference'], ['runtime_id', 'runtime_reference'], ['visible_state', 'visible_states'],
   ]) {
     if (!equalCanonical(first(playwright, keys), first(computerUse, keys))) return bindingHold('BROWSER_FLOW_MISMATCH', candidate)
+  }
+  // Cross-packet agreement is not enough: the exercised flow must be the flow the
+  // base-owned acceptance pins name, so two verifiers cannot agree on an unrelated one.
+  const expectedFlow = isPlainObject(trustedPins) ? trustedPins.expected_flow : undefined
+  if (!isPlainObject(expectedFlow)) return bindingHold('EXPECTED_FLOW_PIN_MISSING', candidate)
+  for (const [pinKey, keys] of EXPECTED_FLOW_FIELDS) {
+    if (!own(expectedFlow, pinKey) || !equalCanonical(first(playwright, keys), expectedFlow[pinKey])) return bindingHold('EXPECTED_FLOW_MISMATCH', candidate)
   }
   const computerUseIdentity = first(computerUse, ['verifier_identity', 'verifier_id', 'owner_session'])
   const writerIdentity = first(candidate, ['owner_session', 'writer_session', 'provider_session_id'])

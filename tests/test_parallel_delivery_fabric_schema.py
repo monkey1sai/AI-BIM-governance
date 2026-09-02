@@ -355,11 +355,17 @@ const trustedPins = {
   source: 'prior-trusted', source_ref: applicability.source_ref, source_sha: policySourceSha, base_sha: base,
   policy_digest: applicability.policy_digest, applicability_record_digest: applicability.record_digest,
   immutable: true, base_pinned: true, fresh: true, verifier_sha: trusted, binder_sha: binder,
-  verifier_tree_digest: trusted, harness_digest: trusted, authority_digest: authorityDigest, command_pins: commandPins,
+  verifier_tree_digest: trusted, harness_digest: trusted, authority_digest: null, command_pins: commandPins,
+  expected_flow: { route: '#conv', main_buttons: ['Upload IFC'], fixture: 'fixture:ifc-ready', api: 'api:ifc-ready', runtime_id: 'runtime:conversion-1', visible_state: 'state:success' },
 }
+trustedPins.authority_digest = digestCanonical({
+  source_ref: trustedPins.source_ref, source_sha: trustedPins.source_sha, base_sha: trustedPins.base_sha,
+  verifier_tree_digest: trustedPins.verifier_tree_digest, harness_digest: trustedPins.harness_digest,
+  command_pins: trustedPins.command_pins, expected_flow: trustedPins.expected_flow,
+})
 const authority = {
   schema_version: 'computer-use-authority/v1', source: 'prior-trusted', source_ref: applicability.source_ref,
-  source_sha: policySourceSha, base_sha: base, authority_digest: authorityDigest,
+  source_sha: policySourceSha, base_sha: base, authority_digest: trustedPins.authority_digest,
   verifier_identity: 'computer-use:one', immutable: true, base_pinned: true, fresh: true, read_only: true,
   can_edit: false, can_push: false, can_resolve: false, can_publish_required_check: false,
   can_approve: false, can_merge: false, can_deploy: false,

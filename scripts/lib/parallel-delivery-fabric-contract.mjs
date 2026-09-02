@@ -617,6 +617,8 @@ export function parseStackDeliveryEnvelope(raw) {
       assertEnum(member.unresolved_finding_state, ['none'], `${context}.unresolved_finding_state`)
     })
     if (stack.members.at(-1).pr_number !== stack.selected_top_pr) fail('invalid_value', 'stack_delivery_selected_top_not_final_member')
+    // The frozen vector identity is derived from the members, never declared.
+    if (stack.ordered_member_vector_digest !== digestCanonical(stack.members)) fail('invalid_value', 'stack_delivery_vector_digest_mismatch')
     assertUnique(stack.members.map((member) => member.pr_number), 'stack_delivery.members')
     assertSha256(stack.expected_protection_digest, 'stack_delivery.expected_protection_digest')
     assertOpaqueReference(stack.capability_reference, 'stack_delivery.capability_reference')

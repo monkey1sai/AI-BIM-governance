@@ -687,6 +687,47 @@ test('P2 regression — advance requires every stored predecessor to be complete
   assert.equal(readyFixture.calls.advance, 1)
 })
 
+test('P1 regression — a dependent task advances from its predecessor handoff head, not the plan baseline', async () => {
+  const PARENT = 'd'.repeat(40)
+  const dependentPlan = async ({ plan_id, generation }) => ({
+    status: 'ACTIVE', plan_id, generation, oid: 'f'.repeat(40),
+    task: {
+      task_id: 'task:one', owner_session: 'session:owner-one', provider: 'codex',
+      baseline_sha: 'a'.repeat(40), scope_digest: ADVANCE_SCOPE_DIGEST, dependencies: ['task:predecessor'],
+    },
+  })
+  const withParent = (overrides = {}) => advanceCommand({
+    command_id: 'command:dependent-parent',
+    envelope: { baseline_sha: PARENT },
+    advance_command: { next_envelope: { baseline_sha: PARENT } },
+    admission: { baseline_sha: PARENT },
+    provider_request: { execution_context: { expected: { ...advanceTuple, baseline_sha: PARENT }, attestation: { attestation_ref: 'attestation:one' } } },
+    ...overrides,
+  })
+  const fixture = createPorts()
+  fixture.ports.planRegistry.validateGeneration = dependentPlan
+  const seen = []
+  fixture.ports.leaseRegistry.validateDependencies = async (request) => {
+    seen.push(request)
+    return { status: 'READY', plan_id: request.plan_id, generation: request.generation, task_id: request.task_id, expected_parent_sha: request.expected_parent_sha, dependency_count: 1 }
+  }
+  const result = await createParallelDeliveryFabric(fixture.ports).dispatch(withParent())
+  assert.equal(result.status, 'SHADOW_INTENT', JSON.stringify(result))
+  assert.equal(seen[0].expected_parent_sha, PARENT)
+  // The registry answers for the parent it verified; a different parent cannot be substituted.
+  const substituted = createPorts()
+  substituted.ports.planRegistry.validateGeneration = dependentPlan
+  substituted.ports.leaseRegistry.validateDependencies = async (request) => ({
+    status: 'READY', plan_id: request.plan_id, generation: request.generation, task_id: request.task_id, expected_parent_sha: 'a'.repeat(40), dependency_count: 1,
+  })
+  assert.equal((await createParallelDeliveryFabric(substituted.ports).dispatch(withParent({ command_id: 'command:dependent-substituted' }))).reason, 'DEPENDENCY_AUTHORITY_UNAVAILABLE')
+  // An independent task still has to sit on the plan baseline.
+  const independent = createPorts()
+  const off = await createParallelDeliveryFabric(independent.ports).dispatch(withParent({ command_id: 'command:independent-off-baseline' }))
+  assert.equal(off.reason, 'PLAN_TASK_BINDING_MISMATCH')
+  assert.equal(independent.calls.validateDependencies, 0)
+})
+
 test('advance keeps cap conflict and adapter context failure as typed non-live outcomes', async () => {
   const queuedFixture = createPorts()
   queuedFixture.ports.leaseRegistry.admit = async () => { queuedFixture.calls.admit += 1; return { status: 'QUEUED_FOR_LEASE', reason: 'WRITER_CAPACITY' } }

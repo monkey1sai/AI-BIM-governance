@@ -287,9 +287,12 @@ const activePlanTask = (value, command) => {
       value.plan_id !== command.envelope.plan_id || value.generation !== command.envelope.generation ||
       !/^[0-9a-f]{40}$/u.test(value.oid) || value.oid === '0'.repeat(40)) return undefined
   const task = value.task
+  // A task with predecessors sits on its integrated parent (the predecessor handoff
+  // head, verified by the dependency authority), not on the plan-wide baseline.
+  const dependent = isObject(task) && Array.isArray(task.dependencies) && task.dependencies.length > 0
   if (!isObject(task) || !exactKeys(task, ['task_id', 'owner_session', 'provider', 'baseline_sha', 'scope_digest', 'dependencies']) ||
       task.task_id !== command.envelope.task_id || task.owner_session !== command.envelope.owner_session ||
-      task.provider !== command.envelope.provider || task.baseline_sha !== command.envelope.baseline_sha ||
+      task.provider !== command.envelope.provider || (!dependent && task.baseline_sha !== command.envelope.baseline_sha) ||
       task.scope_digest !== command.envelope.scope_digest || !Array.isArray(task.dependencies) || task.dependencies.length > 64 ||
       new Set(task.dependencies).size !== task.dependencies.length ||
       task.dependencies.some((dependency) => typeof dependency !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._:/-]{1,127}$/u.test(dependency) || dependency === task.task_id)) return undefined

@@ -16,7 +16,9 @@ const sha = (character) => character.repeat(40)
 const digest = (character) => character.repeat(64)
 const OPERATION_UUID = '123e4567-e89b-42d3-a456-426614174000'
 
-const stackEnvelope = () => ({
+// The frozen vector digest is derived from the members, exactly as the contract recomputes it.
+const withVector = (stack) => ({ ...stack, ordered_member_vector_digest: digestCanonical(stack.members) })
+const stackEnvelope = () => withVector({
   schema_version: 'stack-delivery-envelope/v1',
   stack_id: 'stack:linear-prefix',
   trunk_ref: 'main',
@@ -126,7 +128,7 @@ test('AC-16 — direct-stack dispatch freezes a same-repository fully-linear low
     trunk_sha: sha('a'),
     selected_top_pr: 12,
     expected_head_sha: sha('c'),
-    ordered_member_vector_digest: digest('a'),
+    ordered_member_vector_digest: stack.ordered_member_vector_digest,
     expected_protection_digest: digest('2'),
     capability_reference: 'capability:direct-stack',
   })

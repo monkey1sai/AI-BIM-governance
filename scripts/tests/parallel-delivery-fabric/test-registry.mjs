@@ -258,6 +258,52 @@ const createEnvelopePort = () => {
   }
 }
 
+// Every release revokes an execution envelope; this port issues a distinct OID per
+// revocation so one fixture can release several leases.
+const createSequencedEnvelopePort = () => {
+  let oid = ENVELOPE_OID
+  let transitionSequence = 0
+  let revocations = 0
+  return {
+    current: () => ({ oid, transitionSequence }),
+    async revoke(request) {
+      if (request.expected_envelope_oid !== oid || request.expected_transition_sequence !== transitionSequence) {
+        return { status: 'CONFLICT', actual_oid: oid }
+      }
+      const previousOid = oid
+      revocations += 1
+      oid = `${'c'.repeat(39)}${revocations.toString(16)}`
+      transitionSequence += 1
+      return { status: 'REVOKED', previous_oid: previousOid, oid, transition_sequence: transitionSequence, revocation_epoch: 0, in_flight_command: false }
+    },
+  }
+}
+
+// Admit, end (handoff) and release one lease through a sequenced envelope port.
+const handOff = async ({ leaseRegistry, store, envelope, clock }, leaseId, overrides, suffix) => {
+  const admitted = await leaseRegistry.admit(makeRequest(store, { lease_id: leaseId, ...overrides }))
+  assert.equal(admitted.status, 'ADMITTED', JSON.stringify(admitted))
+  const end = await leaseRegistry.endRequest({
+    lease_id: leaseId, expected_oid: admitted.oid, nonce: NONCE(`${suffix}-end`), reason: 'handoff',
+    handoff_or_candidate_reference: `handoff:${suffix}`, owner_end_attestation: endAttestation(admitted.lease),
+  })
+  const attestation = {
+    attestation_ref: `attestation:${suffix}`, attestation_digest: SHA256,
+    issuer_id: 'attestor:owner-end', issuer_version: 'owner-end/v1', owner_session: admitted.lease.owner_session,
+    provider: 'codex', provider_session_id: admitted.lease.provider_session_id, execution_context_id: admitted.lease.execution_context_id,
+    lease_id: leaseId, generation: 1, head_sha: admitted.lease.head_sha, scope_digest: admitted.lease.scope_digest,
+    worktree_path_digest: SHA256, observed_at: clock.now(),
+    expires_at: new Date(Date.parse(clock.now()) + 10 * 60 * 1000).toISOString(), nonce: NONCE(`${suffix}-owner-end`), revocation_epoch: 0,
+  }
+  const { oid: envelopeOid, transitionSequence } = envelope.current()
+  const released = await leaseRegistry.release({
+    lease_id: leaseId, expected_oid: end.oid, expected_envelope_oid: envelopeOid,
+    expected_envelope_transition_sequence: transitionSequence, attestation,
+  })
+  assert.equal(released.status, 'RELEASED', JSON.stringify(released))
+  return { admitted, attestation }
+}
+
 const createFixture = ({ raceBarrier = undefined, writerCap = 2, failUpdateAt = undefined, seedPlan = true } = {}) => {
   const git = createInMemoryGit({ raceBarrier, failUpdateAt })
   if (seedPlan) {
@@ -2304,25 +2350,6 @@ test('P2 regression — managed branches are keyed by branch identity and renewe
 })
 
 test('P2 regression — released leases compact into retained-resource stubs that still gate admission, and consumed attestations expire out of the ledger', async () => {
-  // Every release revokes an execution envelope; this port issues a distinct OID per revocation.
-  const createSequencedEnvelopePort = () => {
-    let oid = ENVELOPE_OID
-    let transitionSequence = 0
-    let revocations = 0
-    return {
-      current: () => ({ oid, transitionSequence }),
-      async revoke(request) {
-        if (request.expected_envelope_oid !== oid || request.expected_transition_sequence !== transitionSequence) {
-          return { status: 'CONFLICT', actual_oid: oid }
-        }
-        const previousOid = oid
-        revocations += 1
-        oid = `${'c'.repeat(39)}${revocations.toString(16)}`
-        transitionSequence += 1
-        return { status: 'REVOKED', previous_oid: previousOid, oid, transition_sequence: transitionSequence, revocation_epoch: 0, in_flight_command: false }
-      },
-    }
-  }
   const git = createInMemoryGit()
   git.blobs.set(SEEDED_PLAN_OID, SEEDED_PLAN_BLOB)
   git.refs.set('refs/ai-bim/delivery-plans', SEEDED_PLAN_OID)
@@ -2422,4 +2449,52 @@ test('P2 regression — released leases compact into retained-resource stubs tha
     }),
     (error) => error?.code === 'owner_end_attestation_expired',
   )
+})
+
+test('P1 regression — a fan-in of predecessors needs an attested integrated parent, a single predecessor its exact handoff head', async () => {
+  const build = (integratedParentAuthority = undefined) => {
+    const git = createInMemoryGit()
+    git.blobs.set(SEEDED_PLAN_OID, SEEDED_PLAN_BLOB)
+    git.refs.set('refs/ai-bim/delivery-plans', SEEDED_PLAN_OID)
+    const clock = createClock()
+    const store = createGitCasStore({ git, commonDir: 'C:/fake/common-dir' })
+    const envelope = createSequencedEnvelopePort()
+    const leaseRegistry = createLeaseRegistry({
+      store, clock, writerCap: 2, ownerEndAttestor: createTrustedAttestor(), executionEnvelope: envelope, integratedParentAuthority,
+    })
+    return { git, clock, store, envelope, leaseRegistry }
+  }
+  const seed = async (fixture) => {
+    await handOff(fixture, 'lease:dep-a', { task_id: 'task:dep-a', resource_keys: ['path:src/dep-a.mjs'], head_sha: 'a'.repeat(40) }, 'dep-a')
+    await handOff(fixture, 'lease:dep-b', {
+      task_id: 'task:dep-b', owner_session: 'session:dep-b', provider_session_id: 'provider:dep-b', execution_context_id: 'context:dep-b',
+      worktree_id: 'worktree:dep-b', branch: 'codex/dep-b', resource_keys: ['path:src/dep-b.mjs'], head_sha: 'b'.repeat(40),
+    }, 'dep-b')
+  }
+  const unattested = build()
+  await seed(unattested)
+  // A single predecessor: the parent must be that predecessor's handoff head, not the plan baseline.
+  assert.equal((await unattested.leaseRegistry.validateDependencies({
+    plan_id: 'plan:one', generation: 1, task_id: 'task:child', dependency_task_ids: ['task:dep-b'], expected_parent_sha: 'b'.repeat(40),
+  })).status, 'READY')
+  assert.equal((await unattested.leaseRegistry.validateDependencies({
+    plan_id: 'plan:one', generation: 1, task_id: 'task:child', dependency_task_ids: ['task:dep-b'], expected_parent_sha: 'a'.repeat(40),
+  })).reason, 'DEPENDENCY_PARENT_SHA_MISMATCH')
+  // Fan-in without an integrated-parent authority is held, never guessed.
+  const fanIn = { plan_id: 'plan:one', generation: 1, task_id: 'task:child', dependency_task_ids: ['task:dep-a', 'task:dep-b'], expected_parent_sha: 'c'.repeat(40) }
+  assert.deepEqual(await unattested.leaseRegistry.validateDependencies(fanIn), { status: 'HELD_EXECUTION_AUTHORITY', reason: 'DEPENDENCY_INTEGRATION_PARENT_UNATTESTED' })
+  const requests = []
+  const attested = build({
+    verify: async (request) => {
+      requests.push(request)
+      return request.integrated_parent_sha === 'c'.repeat(40) && Object.keys(request.dependency_heads).length === 2
+    },
+  })
+  await seed(attested)
+  assert.equal((await attested.leaseRegistry.validateDependencies(fanIn)).status, 'READY')
+  assert.deepEqual(requests[0].dependency_heads, { 'task:dep-a': ['a'.repeat(40)], 'task:dep-b': ['b'.repeat(40)] })
+  assert.equal((await attested.leaseRegistry.validateDependencies({ ...fanIn, expected_parent_sha: 'd'.repeat(40) })).reason, 'DEPENDENCY_INTEGRATION_PARENT_UNATTESTED')
+  const throwing = build({ verify: async () => { throw new Error('authority offline') } })
+  await seed(throwing)
+  assert.equal((await throwing.leaseRegistry.validateDependencies(fanIn)).reason, 'DEPENDENCY_INTEGRATION_PARENT_UNATTESTED')
 })

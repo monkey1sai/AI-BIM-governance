@@ -1301,7 +1301,7 @@ const validateReservedOwnerEndAttestation = (attestation, lease, reservation) =>
 
 export function createLeaseRegistry({
   store: rawStore, clock, writerCap = WRITER_CAP_V1, ownerEndAttestor = undefined, executionEnvelope = undefined,
-  retainedReleasedLeases = RETAINED_RELEASED_LEASE_RECORDS,
+  retainedReleasedLeases = RETAINED_RELEASED_LEASE_RECORDS, integratedParentAuthority = undefined,
 }) {
   if (!rawStore || typeof rawStore.read !== 'function' || typeof rawStore.cas !== 'function' || typeof rawStore.casGuarded !== 'function') fail('invalid_port', 'lease_store_required')
   if (writerCap !== WRITER_CAP_V1) fail('invalid_value', 'writer_cap_must_equal_two')
@@ -1339,6 +1339,11 @@ export function createLeaseRegistry({
     }
     const snapshot = await registrySnapshot(store, writerCap)
     if (snapshot.status === 'HELD_REGISTRY_INTEGRITY') return snapshot
+    // The expected parent is compared with the predecessors' actual handoff heads,
+    // never with the plan baseline: a single predecessor must have handed off at
+    // exactly that head, and a fan-in of several predecessors needs an external
+    // attestation that the named parent integrates all of their heads.
+    const dependencyHeads = {}
     for (const dependencyTaskId of request.dependency_task_ids) {
       const candidates = [...Object.values(snapshot.record.leases), ...retainedResourceHolders(snapshot.record)].filter((lease) =>
         lease.plan_id === request.plan_id && lease.generation === request.generation && lease.task_id === dependencyTaskId)
@@ -1346,9 +1351,23 @@ export function createLeaseRegistry({
       if (completed.length === 0) {
         return { status: 'HELD_EXECUTION_AUTHORITY', reason: 'DEPENDENCY_NOT_COMPLETED' }
       }
-      if (!completed.some((lease) => lease.head_sha === request.expected_parent_sha)) {
+      dependencyHeads[dependencyTaskId] = [...new Set(completed.map((lease) => lease.head_sha))].sort()
+    }
+    if (request.dependency_task_ids.length === 1) {
+      if (!dependencyHeads[request.dependency_task_ids[0]].includes(request.expected_parent_sha)) {
         return { status: 'HELD_EXECUTION_AUTHORITY', reason: 'DEPENDENCY_PARENT_SHA_MISMATCH' }
       }
+    } else {
+      let attested = false
+      try {
+        attested = typeof integratedParentAuthority?.verify === 'function' && await integratedParentAuthority.verify(Object.freeze({
+          plan_id: request.plan_id, generation: request.generation, task_id: request.task_id,
+          integrated_parent_sha: request.expected_parent_sha, dependency_heads: freezeIJson(clone(dependencyHeads)),
+        })) === true
+      } catch {
+        attested = false
+      }
+      if (!attested) return { status: 'HELD_EXECUTION_AUTHORITY', reason: 'DEPENDENCY_INTEGRATION_PARENT_UNATTESTED' }
     }
     return {
       status: 'READY', plan_id: request.plan_id, generation: request.generation,
