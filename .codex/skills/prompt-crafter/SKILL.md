@@ -1,95 +1,151 @@
-﻿---
+---
 name: prompt-crafter
-description: 專門根據使用者需求，產出符合 AI-BIM-governance 治理規範、各子服務邊界與「防差不多先生（Anti-Shortcut）」守則的標準化任務 Prompt。
+description: Use when the user asks to craft or standardize a task prompt, mentions 差不多先生 or anti-shortcut, or wants a kickoff prompt before a coding agent starts implementation.
 ---
 
-# Prompt Crafter — 任務標準化 Prompt 生成器
+# Prompt Crafter
 
-本技能專門將使用者的自然語言需求，轉換為針對 **Gemini Flash**（或任何 Code Agent）經過結構化加固的標準 Prompt，徹底杜絕「差不多先生」現象（略過細節、未驗證即宣稱完成、臆造 API、忽略邊界條件）。
+Turn a vague request into a copy-paste kickoff prompt. This skill **emits a prompt**; it does not implement the feature unless the user also asked to implement.
 
----
+**Core principle:** A prompt with a missing required slot is invalid. Do not emit "should be enough" prose.
 
-## 核心分析維度
+## When
 
-當收到使用者的任務描述時，依據以下維度進行萃取與組裝：
+- User wants a task prompt for Claude / Codex / Grok / Gemini
+- User says agents skip details, invent APIs, or claim done without evidence
+- User starts with `/prompt-crafter`
 
-### 1. 目標服務與邊界 (Service Target & Frozen Surfaces)
-| 服務名稱 | 角色與邊界 | 專屬鐵律與命令 |
-| :--- | :--- | :--- |
-| **`bim-review-coordinator`** (`:8004`) | Session / Control Plane、對外 intake、Proxy | 負責 Session state 與轉發；維持對外部 API 與驗證。測試：`npm test` |
-| **`governance-service`** (`:49102`) | A1 規則檢核 / A2 比對 / A3 衝突檢測 / BCF | 必須使用虛擬環境：`.venv\Scripts\python.exe -m pytest tests/`；保持 loopback 權威。 |
-| **`web-viewer-sample`** (`:5173`) | 前端 Browser Client (React/Vite/Three) | **一律只呼叫 coordinator `:8004`**；嚴守 R2 API 三態（supported/unsupported/planned）；**禁改後端 proxy 與 `app.py`**。驗證：Playwright E2E。 |
-| **`bim-streaming-server`** (`49100/49101`) | IFC->USDC 轉檔 authority + Kit WebRTC | **嚴禁修改 `conversion_authority.py`**；USD/Kit 變更需具備 first-frame/stage 實證。測試：`.venv\Scripts\python.exe -m pytest` |
-| **`apps/kit-manager-web` & `services/kit-manager-api`** (`:8010`) | Kit 管理員操作介面與 API | 前後端分立，驗證 Kit fleet telemetry 與狀態管理。 |
+Do **not** use this skill to add more AGENTS.md rules or open a meta-governance PR.
 
-### 2. 治理分級判定 (Lane Policy)
-- **Lane F (Fast Fix)**：單一服務、1~3 檔案微調、小 Bug。不強制 GitNexus impact，跑 targeted tests 即可。
-- **Lane B (Bounded Change)**：單一服務內明確功能、不改架構/公開 API。需執行一次 batch `gitnexus impact`，3~5 項 inline checklist。
-- **Lane G (Governed Change)**：跨 >= 2 服務、改動公開 API/Schema、WebRTC/GPU、使用者流程。需獨立 branch/worktree，強制完整 GitNexus impact + detect-changes，包含 Playwright E2E。
+## How to assemble
 
----
+1. Extract lane, service, goal, success/failure states from the user text.
+2. Fill **every** required slot in the output recipe. Unknown file paths stay `先空著；Read 之後才能填` — never invent `src/components/...`.
+3. Copy the verify command from the table below. Do not guess an interpreter.
+4. Output one Markdown `text` code block the user can paste into the next session.
+5. If the request is only "make me a prompt", stop after the block. Do not start coding.
 
-## 輸出格式
+Lane: F = 1–3 files, one service, no contract. B = one service, bounded feature, no public API/schema. G = ≥2 services, public API/schema, user-facing route, Kit/WebRTC, deploy/auth. Never self-upgrade to Lane S / spec-to-done.
 
-生成標準 Prompt 時，請直接以 **Markdown 代碼區塊** 輸出，方便使用者一鍵複製：
+## Service verify commands
+
+Copy from this table (aligned with `docs/agents/sub-repo-verify-commands.md`). Do **not** default every Python service to repo-root `.venv`.
+
+| Service | Frozen / boundary | Verify |
+|---|---|---|
+| `bim-review-coordinator` `:8004` | Session / intake / proxy. Do not invent backend fields. | `cd bim-review-coordinator; npm test` |
+| `governance-service` `:49102` | Loopback A1/A2/A3/BCF. **Ban:** `app.py` | `cd governance-service; & "C:\Program Files\Python312\python.exe" -m pytest tests/ -v` |
+| `web-viewer-sample` `:5173` | Browser client. **Only** call coordinator `:8004`. R2 tri-state. **Ban:** `governanceProxy.ts`, direct `:49101`/`:49102`/`:8010` | `cd web-viewer-sample; npm run test:session-first` (+ Playwright if user-facing) |
+| `bim-streaming-server` `49100/49101` | IFC→USDC + Kit. **Ban:** `conversion_authority.py`. Kit needs first-frame/stage evidence. | `cd bim-streaming-server; python -m pytest tests/test_conversion_authority_api.py -q` |
+| `services/kit-manager-api` `:8010` | Kit fleet API | `cd services/kit-manager-api; python -m pytest tests -q` |
+| `apps/kit-manager-web` | Kit operator UI | `cd apps/kit-manager-web; npm run build` |
+
+GitNexus (Lane B/G): `gitnexus impact <Symbol> -d upstream -r AI-BIM-governance`. After symbol/flow edits: `gitnexus detect-changes --scope compare --base-ref main`.
+
+Worktree (any versioned write): `pwsh -NoProfile -NonInteractive -File scripts/dev/new-governed-worktree.ps1 -BranchName <type>/<slug> -Json`. Ban bare `git worktree add`, `.claude/worktrees/`, repo-inner `.worktrees/`. Superpowers `using-git-worktrees` default location is **wrong** for this repo.
+
+Task packet: emit JSON `task-packet/v2` and require `node scripts/dev/validate-task-packet.mjs --input <file>` (`valid: true` only). Packet does **not** authorize writing on `main`; user iron law still requires the governed worktree.
+
+## Output recipe
+
+Emit exactly this shape. Replace `<…>` with values from the request. Leave a slot blank only when the crafter cannot know it, and say so.
 
 ```text
-[任務分級]: Lane <F / B / G>
-[目標服務]: <填入服務名稱，如 governance-service (:49102)>
-[涉及檔案/模組]: <填入推估涉及的檔案或目錄路徑>
+[任務分級]: Lane <F / B / G>（禁止自行升為 Lane S / spec-to-done）
+[目標服務]: <service + port from the table>
+[涉及檔案/模組]: <真實路徑，或「先空著；Read 之後才能填」>
+[需求來源]: <docs/plans 段落 | contract | issue | 本訊息>
+[驗證指令]: <exact command from the table>
 
-### 一、 需求目標
-<條列式列出 1~3 點具體功能或修復目標>
+你是 AI-BIM-governance 的單一 coordinator。做不到就 HELD，不准差不多。
 
-### 二、 防偷懶硬約束 (Anti-Shortcut Rules)
-1. **零佔位符 (No Placeholders)**：嚴禁輸出 `// TODO`、`// FIXME`、`... 其餘代碼` 或空 catch 區塊，所有邊界狀況（null/undefined/空集合/網路異常/超時）必須完整實作。
-2. **定義優先 (Inspect Before Edit)**：修改或呼叫任何 API/函式前，必須先使用 `view_file` 或定義查閱真實檔案，嚴禁盲猜或臆造未定義欄位。
-3. **<依據服務填入專屬邊界>**:
-   - (若前端): 前端一律呼叫 coordinator `:8004`，遵守 R2 API 三態處理，嚴禁修改 coordinator 的 proxy 與後端服務代碼。
-   - (若 Python): 所有指令一律精確使用虛擬環境路徑 `.venv\Scripts\python.exe`。
-   - (若 Streaming): 嚴禁修改 `conversion_authority.py`。
+### 一、需求目標
+1. <一句可驗證行為，含 route/button 或 API/status>
+2. <成功時必須看見什麼>
+3. <失敗/空集合/未支援時必須看見什麼；前端 R2：supported/unsupported/planned>
 
-### 三、 執行步驟 (Checklist)
-1. [ ] 執行影響分析：`gitnexus impact <核心Symbol> -d upstream -r AI-BIM-governance`（Lane B/G 必跑）
-2. [ ] 實作最小有效改動，保持現有程式碼架構與註解完整。
-3. [ ] 執行專屬驗證：`<填入精確的驗證指令，如 .venv\Scripts\python.exe -m pytest <path> 或 npm test>`
-4. [ ] 執行範圍檢查：`gitnexus detect-changes --scope compare --base-ref main`
+非目標：重構鄰近檔、補無關文件、修無關 lint、開治理工具 PR、改凍結面。
 
-### 四、 完成標準與驗收證據 (Evidence Required)
-- **必須提供真實終端機 PASS 輸出截圖或 log 片段**，無實證輸出前絕不宣稱完成。
-- 列出本次改動已覆蓋的 Edge Cases 清單。
+### 二、防偷懶硬約束（違反任一口 → 停工，狀態=HELD）
+1. 零佔位符：禁止 TODO/FIXME/`...其餘代碼`/空 catch/用 mock 當完成。
+2. 定義優先：改或呼叫任何函式/API/欄位前必須先 Read 真實檔案。回報「已讀路徑 + 符號名」。
+3. 主工作區只讀。受版控寫入前必須先跑
+   `pwsh -NoProfile -NonInteractive -File scripts/dev/new-governed-worktree.ps1 -BranchName <type>/<slug> -Json`
+   並證明 `git rev-parse HEAD` == `git rev-parse origin/main` 且 `git status --porcelain` 為空。
+4. 凍結面：禁改 governance `app.py`、coordinator `governanceProxy.ts`、streaming `conversion_authority.py`。前端只打 `:8004`。後端沒有的能力標 planned/NOT BUILT。
+5. 驗證指令必須用上方 [驗證指令] 槽，不准改 interpreter。
+6. 禁止完成用語：should / probably / 應該過了 / 看起來對 / 理論上。沒有本輪終端機輸出，不准說 pass/done/完成。
+7. Superpowers / spec-to-done / 開 PR / merge：未在使用者訊息被點名，一律不做。
+8. 開工：`node scripts/dev/agents-board.mjs register --agent <cli> --task "<一句話>"` 然後 `status`。已有 active writer 重疊檔案就停。
+
+### 三、執行步驟（未勾完不得進入下一步）
+1. [ ] board register + status
+2. [ ] 寫 task-packet JSON（schema `task-packet/v2`），跑 `node scripts/dev/validate-task-packet.mjs --input <file>`，`valid: true` 才能改檔
+3. [ ] 建立 governed worktree；貼 helper JSON
+4. [ ] Read 目標檔與呼叫端。Lane B/G 改 symbol 前跑 gitnexus impact；HIGH/CRITICAL 先回報
+5. [ ] 最小 diff
+6. [ ] 跑 [驗證指令]（完整、新鮮、讀 exit code）。失敗就修或 HELD
+7. [ ] Lane B 改了 symbol 或 Lane G：`gitnexus detect-changes --scope compare --base-ref main`
+8. [ ] 未要求 ship 就停在 worktree
+
+### 四、完成標準（缺一列 = HELD）
+最終回覆分四塊：Verified facts / Inferences / Unverified risks / Next actions。
+
+必填：Changed files；已 Read 的定義（路徑 + 符號）；驗證命令 + 本輪 exit code + 失敗數（貼 log 片段）；GitNexus 結果或「Lane F 未跑，原因」；Edge cases；Known gaps。
+
+user-facing 再加（沒證據填 not observed，Full completion claimed=no）：
+Frontend route / Main button(s) tested / Fixture used / Backend API called / Runtime action / ID / Visible success or failure state / E2E command / Screenshot / trace / Design gate status / Known gaps
 ```
 
----
+## Example
 
-## 互動範例
+User: 「我想在 web-viewer-sample 增加一個檢查 BCF 匯出狀態的按鈕，如果後端還沒實作就顯示 planned」
 
-**使用者輸入**：
-> "我想在 web-viewer-sample 增加一個檢查 BCF 匯出狀態的按鈕，如果後端還沒實作就顯示 planned"
-
-**Skill 產出**：
 ```text
 [任務分級]: Lane B (Bounded Change)
 [目標服務]: web-viewer-sample (:5173)
-[涉及檔案/模組]: web-viewer-sample/src/components/...
+[涉及檔案/模組]: 先空著；Read 之後才能填。候選起點：web-viewer-sample/src/console/a1Machine.ts、Window.tsx 內 governanceClient.bcfExportUrl、既有 a1Machine.test.ts
+[需求來源]: 本訊息
+[驗證指令]: cd web-viewer-sample; npm run test:session-first
 
-### 一、 需求目標
-1. 在 web-viewer-sample 介面增加「檢查 BCF 匯出狀態」按鈕與狀態指示器。
-2. 串接 coordinator (:8004) 的 BCF 狀態端點。
-3. 嚴格遵守 API 三態：當後端回傳 501 / 未支援時，UI 必須優雅呈現「Planned (規劃中)」狀態，不得報錯或崩潰。
+你是 AI-BIM-governance 的單一 coordinator。做不到就 HELD，不准差不多。
 
-### 二、 防偷懶硬約束 (Anti-Shortcut Rules)
-1. **零佔位符**：按鈕 Loading 狀態、Success 狀態、Failure 狀態與 Planned 狀態必須完整實作，禁止使用 mock 假資料或 `// TODO`。
-2. **邊界防禦**：一律只向 `bim-review-coordinator` (`:8004`) 發送請求，嚴禁直接呼叫 `:49102`，嚴禁修改 coordinator 中的 proxy 檔案。
-3. **視覺與型別**：先查閱既有 UI component 與型別定義，維持一致的 Design Token。
+### 一、需求目標
+1. 在既有治理/A1 面增加「檢查 BCF 匯出狀態」控制與狀態指示，不新開入口 route。
+2. 只打 coordinator `:8004` 既有 BCF/governance proxy；成功時 UI 顯示匯出狀態與相關 id。
+3. 後端 501 / 未支援 / 契約為 planned 時，UI 顯示 Planned，不得崩潰或臆造 payload。
 
-### 三、 執行步驟
-1. [ ] 查閱現有 BCF 相關型別定義與 API client。
-2. [ ] 實作按鈕與三態（supported/unsupported/planned）渲染邏輯。
-3. [ ] 執行前端語意/單元測試驗證按鈕行為。
-4. [ ] 執行 `gitnexus detect-changes --scope compare --base-ref main` 確認改動範圍。
+非目標：改 governance `app.py`、改 coordinator `governanceProxy.ts`、直連 `:49102`。
 
-### 四、 完成標準與驗收證據 (Evidence Required)
-- 提供前端測試或 Playwright 驗證通過的完整 log。
-- 附上三態（包含 Planned 狀態）的渲染實證。
+### 二、防偷懶硬約束
+1. 零佔位符：Loading / Success / Failure / Planned 四態都要實作。
+2. 定義優先：先 Read `bcfExportUrl` 與 A1 machine 既有 `bcfExported` gating，禁止發明新 endpoint。
+3. 主工作區只讀；用 `scripts/dev/new-governed-worktree.ps1` 從 origin/main 開工。
+4. 驗證指令不得改成 root `.venv` pytest。
+
+### 三、執行步驟
+1. [ ] board register + status
+2. [ ] 寫 Lane B task-packet 並 `node scripts/dev/validate-task-packet.mjs --input <file>`
+3. [ ] governed worktree
+4. [ ] Read 真實 BCF client/型別；`gitnexus impact` 打到的 symbol
+5. [ ] 最小 diff
+6. [ ] `cd web-viewer-sample; npm run test:session-first`
+7. [ ] `gitnexus detect-changes --scope compare --base-ref main`
+8. [ ] 未要求 ship 則停
+
+### 四、完成標準
+Verified facts / Inferences / Unverified risks / Next actions。
+必填：Changed files、已 Read 路徑+符號、本輪 PASS log、四態（含 Planned）證據、Known gaps。
+user-facing 欄位齊；缺的填 not observed。
 ```
+
+## Rationalizations
+
+| Excuse | Reality |
+|---|---|
+| 「路徑先填 src/components 沒關係」 | 那是臆造。填「先空著；Read 之後才能填」。 |
+| 「Python 一律 .venv」 | governance-service 必須用 `C:\Program Files\Python312\python.exe`。 |
+| 「Lane F 所以可以在 main 改」 | 任何受版控寫入都走 governed worktree。 |
+| 「packet 通過就可以開工」 | packet 只驗結構，不授權在 main 寫入。 |
+| 「skill 很長，我縮成四行」 | 缺槽位的輸出是無效產出。重填 recipe。 |
+| 「這次只是 prompt，先實作再說」 | 使用者沒說實作就停在 code block。 |
