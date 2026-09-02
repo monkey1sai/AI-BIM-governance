@@ -64,7 +64,11 @@ export function HomePage() {
         {kpi("#conv", L.kpi_conv, "kpi-conv", conv.state, cellText(conv, L, (c) => String(c.running)), cellSub(conv, L, (c) => `ready ${c.ready} · failed ${c.failed}`))}
         {kpi("#sessions", L.kpi_sess, "kpi-sess", sess.state, cellText(sess, L, (s) => String(s.active)), cellSub(sess, L, (s) => `participants ${s.participants}`))}
         {kpi("#issues", L.kpi_issue, "kpi-issue", issue.state, cellText(issue, L), cellSub(issue, L, () => (zh ? "非 resolved／rejected" : "not resolved/rejected")))}
-        {kpi("#minio", L.kpi_outbox, "kpi-outbox", outbox.state, cellText(outbox, L, (o) => String(o.pending)), cellSub(outbox, L, (o) => `attempts ${o.attempts}/${o.maxAttempts}`))}
+        {/* outbox 卡導向 unified `#pipeline` 的 ⑤ Callback Outbox 段：該段與本卡同源
+            （GET /api/callback-outbox/summary），且設計正本 §03 舊路由收斂表逐字指定
+            `#minio` 的收斂去向為 `#/pipeline`。舊落點 `#minio`（legacy ModelDataPage）
+            沒有任何 outbox 明細面，屬接錯。 */}
+        {kpi("#pipeline", L.kpi_outbox, "kpi-outbox", outbox.state, cellText(outbox, L, (o) => String(o.pending)), cellSub(outbox, L, (o) => `attempts ${o.attempts}/${o.maxAttempts}`))}
       </div>
       {/* ---- 資料生產線快照 + 服務健康 ---- */}
       <div style={{ display: "grid", gridTemplateColumns: "1.7fr 1fr", gap: 12 }}>
