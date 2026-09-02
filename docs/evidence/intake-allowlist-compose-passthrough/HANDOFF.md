@@ -183,14 +183,15 @@ cd <worktree>/bim-review-coordinator && npm ci && npx vitest run tests/env-compo
    （重佈署若清掉憑證，watcher 會自述 `enabled:false`）。
    ⚠️ 憑證**不要改**（owner 已裁決此測試伺服器免輪替）。
    ⚠️ 改 env 後必須 `docker compose --env-file ... up -d`（recreate）；**單純 restart 不重讀 env**。
-3. **部署本分支後**，在私有 env 設值，**MUST 保留 loopback**：
+3. **部署本分支後**（T2 pivot，見 §0），在私有 env 設值，**MUST 保留 loopback**：
    ```
-   EXTERNAL_INTAKE_IP_ALLOWLIST=127.0.0.1,::1,172.16.0.0/12,<operator-lan-cidr>
+   CONVERSION_TRIGGER_IP_ALLOWLIST=127.0.0.1,::1,<operator-lan-cidr>
    ```
    ⚠️ 漏 loopback 且 `MINIO_WATCH_ENABLED=true` → coordinator **啟動即 fail-fast**
-   （`src/app.ts` `assertIntakeReachable`，watcher 的 loopback self-POST 會被 403）。
-   ⚠️ 此 allowlist **同時**守 `POST /api/external/ifc-ready` webhook 進件面，放寬即同時放寬兩者
-   —— 這是「LAN 瀏覽器要能按」的必然代價，非疏漏。
+   （`src/app.ts` `assertIntakeReachable` 的 T2 對稱守衛）。
+   ⚠️ **不要**設 `EXTERNAL_INTAKE_IP_ALLOWLIST`：compose 刻意不透傳它（Docker 部署設了也無效），
+   而在會消費該 key 的其他啟動路徑設值＝放寬 webhook／lineage 授權面，spec 明定 SHALL NOT。
+   此變數只作用於四條 conversion 控制路由，webhook 進件面維持程式碼預設。
 
 ---
 
