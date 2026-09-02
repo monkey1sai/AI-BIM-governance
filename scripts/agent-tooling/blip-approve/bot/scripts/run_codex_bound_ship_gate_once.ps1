@@ -414,7 +414,8 @@ function ConvertFrom-StrictRuntimeMetadata {
         $manifestRoot = $manifestDocument.RootElement
         $completionRoot = $completionDocument.RootElement
         Assert-ExactRuntimeJsonProperties -Object $manifestRoot -ExpectedNames @(
-            'schema', 'files', 'runtime', 'candidate_freeze_sha256', 'activation', 'installed_at'
+            'schema', 'source_commit', 'files', 'runtime', 'candidate_freeze_sha256',
+            'activation', 'installed_at'
         ) -Label 'Trusted runtime manifest'
         Assert-ExactRuntimeJsonProperties -Object $completionRoot -ExpectedNames @(
             'schema', 'owner_sid', 'candidate_freeze_sha256', 'manifest_sha256', 'completed_at'
@@ -437,6 +438,7 @@ function ConvertFrom-StrictRuntimeMetadata {
             }
         }
         $manifestSchema = Get-UniqueRuntimeJsonProperty -Object $manifestRoot -Name 'schema' -Label 'Trusted runtime manifest'
+        $sourceCommit = Get-UniqueRuntimeJsonProperty -Object $manifestRoot -Name 'source_commit' -Label 'Trusted runtime manifest'
         $activation = Get-UniqueRuntimeJsonProperty -Object $manifestRoot -Name 'activation' -Label 'Trusted runtime manifest'
         $completionSchema = Get-UniqueRuntimeJsonProperty -Object $completionRoot -Name 'schema' -Label 'Trusted runtime completion marker'
         foreach ($textBinding in @(
@@ -450,6 +452,11 @@ function ConvertFrom-StrictRuntimeMetadata {
             ) {
                 throw "Trusted runtime $($textBinding.Label) is invalid."
             }
+        }
+        if ($sourceCommit.ValueKind -ne [System.Text.Json.JsonValueKind]::String -or
+            $sourceCommit.GetString() -cnotmatch '^[0-9a-f]{40}$' -or
+            $sourceCommit.GetString() -ceq ('0' * 40)) {
+            throw 'Trusted runtime source commit is invalid.'
         }
         foreach ($name in @('installed_at', 'completed_at', 'owner_sid')) {
             $root = if ($name -ceq 'installed_at') { $manifestRoot } else { $completionRoot }
