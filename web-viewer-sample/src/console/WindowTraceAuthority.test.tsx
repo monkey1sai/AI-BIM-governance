@@ -77,6 +77,12 @@ type AppInternals = {
     runtimeCommandContexts: Map<string, unknown>;
     runtimeCommandTerminalClaims: Map<string, unknown>;
     _connectReviewSocket: (sessionId: string, traceId: string) => void;
+    _onStreamStarted: (streamGeneration?: number) => void;
+    _reportStreamReadinessIfFrame: (streamGeneration?: number) => void;
+    _hasRemoteVideoFrame: () => boolean;
+    _queryLoadingState: () => void;
+    _replaceStreamLifecycle: () => number;
+    _pollForKitReady: () => void;
     _bootstrapHarnessSession: () => void;
     _beginStageAttempt: (url: string) => number;
     _sendStreamMessage: (message: { event_type: string; payload: unknown }) => boolean;
@@ -89,16 +95,29 @@ type AppInternals = {
     _appendDemoIncoming: (label: string, payload: unknown) => void;
     _appendDemoOutgoing: (label: string, payload: unknown) => void;
     _appendReviewEvent: (message: string) => void;
+    _onViewerUserActivity: (event: Event) => void;
+    _reportViewerActivity: () => void;
+    _recordSessionActivity: () => Promise<boolean>;
+    passiveIdleActivityRequestInFlight: boolean;
+    idleActivityRequestInFlight: boolean;
+    lastIdleActivityReportAt: number;
     _currentViewerLogDeliveryAuthority: () => {
         reviewSessionId: string;
         leaseId: string;
         leaseToken: string;
     } | null;
     _ensureViewerLogDeliveryAuthority: () => Promise<{
-        reviewSessionId: string;
-        leaseId: string;
-        leaseToken: string;
+      reviewSessionId: string;
+      leaseId: string;
+      leaseToken: string;
     } | null>;
+    coordinatorClient: {
+        recordSessionActivity: (
+            sessionId: string,
+            leaseId: string,
+            leaseToken: string,
+        ) => Promise<{ ok: boolean; session_id: string }>;
+    };
 };
 
 const internals = (app: App): AppInternals => app as unknown as AppInternals;
@@ -163,6 +182,8 @@ describe("Window Socket canonical trace authority", () => {
         socketClient = {
             join: vi.fn(),
             heartbeat: vi.fn(),
+            setStreamReady: vi.fn(),
+            userActivity: vi.fn(async () => true),
             leave: vi.fn(),
             disconnect: vi.fn(),
         };
@@ -265,6 +286,35 @@ describe("Window Socket canonical trace authority", () => {
             leaseId: "viewer_lease_a",
             leaseToken: "lease_token_a",
         });
+    });
+
+    it("reasserts stream readiness when a started stream replaces its review socket", () => {
+        const app = readyApp();
+        const target = internals(app);
+        vi.spyOn(target, "_hasRemoteVideoFrame").mockReturnValue(true);
+        target._connectReviewSocket(SESSION_ID, TRACE_ID);
+        const firstSocket = socketClient;
+
+        target.state = { ...target.state, webrtcLifecycleStatus: "started" };
+        const replacementSocket: ReviewSocketClient = {
+            join: vi.fn(),
+            heartbeat: vi.fn(),
+            setStreamReady: vi.fn(),
+            userActivity: vi.fn(async () => true),
+            leave: vi.fn(),
+            disconnect: vi.fn(),
+        };
+        socketClient = replacementSocket;
+        const sendSpy = vi.spyOn(AppStream, "sendMessage").mockImplementation(() => new Promise(() => {}));
+
+        target._connectReviewSocket(SESSION_ID, TRACE_ID);
+        const replacementCandidate = vi.mocked(replacementSocket.join).mock.calls[0][0];
+        handlers.onStatus?.("connected");
+        ack("joinSession", replacementCandidate, { ok: true, trace_id: TRACE_ID });
+
+        expect(firstSocket.disconnect).toHaveBeenCalledTimes(1);
+        expect(replacementSocket.setStreamReady).toHaveBeenCalledWith(true);
+        expect(sendSpy).toHaveBeenCalled();
     });
 
     it("spectator Flush cannot claim a primary viewer lease", async () => {
@@ -385,27 +435,276 @@ describe("Window Socket canonical trace authority", () => {
         expect(internals(app).verifiedDataChannelAuthority).toBeNull();
     });
 
-    it("clears authority on disconnect and requires a fresh exact reconnect ack", () => {
+    it("clears authority and stale countdown on disconnect, then requires a fresh exact reconnect ack", () => {
+        const app = authorizedApp({ synchronousSetState: true });
+        const target = internals(app);
+        target._connectReviewSocket(SESSION_ID, TRACE_ID);
+        const candidate = vi.mocked(socketClient.join).mock.calls[0][0];
+        handlers.onStatus?.("connected");
+        ack("joinSession", candidate, { ok: true, trace_id: TRACE_ID });
+        expect(target.verifiedDataChannelAuthority).toMatchObject({
+            sessionId: SESSION_ID,
+            traceId: TRACE_ID,
+        });
+        target.state = { ...target.state, idleCountdownRemainingSeconds: 6 };
+
+        handlers.onStatus?.("disconnected");
+        expect(target.verifiedDataChannelAuthority).toBeNull();
+        expect(target.state.idleCountdownRemainingSeconds).toBeNull();
+
+        handlers.onStatus?.("connected");
+        expect(target.verifiedDataChannelAuthority).toBeNull();
+        ack("joinSession", candidate, { ok: true, trace_id: TRACE_ID });
+        expect(target.verifiedDataChannelAuthority).toMatchObject({
+            sessionId: SESSION_ID,
+            traceId: TRACE_ID,
+        });
+    });
+
+    it("reports WebRTC readiness only after a remote video frame and clears it before replacing the stream lifecycle", () => {
+        const app = readyApp();
+        const target = internals(app);
+        const hasRemoteVideoFrame = vi.spyOn(target, "_hasRemoteVideoFrame").mockReturnValue(false);
+        vi.spyOn(target, "_queryLoadingState").mockImplementation(() => undefined);
+        vi.spyOn(app, "setState").mockImplementation((update: unknown, callback?: () => void) => {
+            const patch = typeof update === "function"
+                ? (update as (state: Record<string, unknown>) => Record<string, unknown>)(target.state)
+                : update;
+            if (patch && typeof patch === "object") target.state = { ...target.state, ...(patch as Record<string, unknown>) };
+            callback?.();
+        });
+        vi.spyOn(target, "_pollForKitReady").mockImplementation(() => undefined);
+        target._connectReviewSocket(SESSION_ID, TRACE_ID);
+        const candidate: ReviewSocketCandidate = {
+            sessionId: SESSION_ID,
+            userId: reviewEnv.defaultUserId,
+            displayName: reviewEnv.defaultDisplayName,
+            traceId: TRACE_ID,
+        };
+        ack("joinSession", candidate, { ok: true, trace_id: TRACE_ID });
+
+        target._onStreamStarted();
+        expect(socketClient.setStreamReady).not.toHaveBeenCalledWith(true);
+
+        hasRemoteVideoFrame.mockReturnValue(true);
+        target._reportStreamReadinessIfFrame();
+        expect(socketClient.setStreamReady).toHaveBeenCalledWith(true);
+
+        target.state = { ...target.state, idleCountdownRemainingSeconds: 5 };
+        target._replaceStreamLifecycle();
+        expect(socketClient.setStreamReady).toHaveBeenLastCalledWith(false);
+        expect(target.state.idleCountdownRemainingSeconds).toBeNull();
+    });
+
+    it("preserves joined authority when optional user activity is rejected", () => {
         const app = readyApp();
         internals(app)._connectReviewSocket(SESSION_ID, TRACE_ID);
         const candidate = vi.mocked(socketClient.join).mock.calls[0][0];
         handlers.onStatus?.("connected");
         ack("joinSession", candidate, { ok: true, trace_id: TRACE_ID });
+
+        ack("userActivity", candidate, { ok: false, error: "idle reclaim disabled" });
+
         expect(internals(app).verifiedDataChannelAuthority).toMatchObject({
             sessionId: SESSION_ID,
             traceId: TRACE_ID,
         });
+    });
 
-        handlers.onStatus?.("disconnected");
-        expect(internals(app).verifiedDataChannelAuthority).toBeNull();
+    it("lets the explicit keepalive control own its request instead of pre-cancelling via global activity", () => {
+        const app = readyApp();
+        const target = internals(app);
+        target._connectReviewSocket(SESSION_ID, TRACE_ID);
+        const candidate = vi.mocked(socketClient.join).mock.calls[0][0];
+        handlers.onStatus?.("connected");
+        ack("joinSession", candidate, { ok: true, trace_id: TRACE_ID });
+        vi.mocked(socketClient.userActivity).mockClear();
+        const button = document.createElement("button");
+        button.dataset.testid = "session-idle-keepalive-btn";
+        button.addEventListener("pointerdown", target._onViewerUserActivity);
+
+        button.dispatchEvent(new Event("pointerdown", { bubbles: true }));
+
+        expect(socketClient.userActivity).not.toHaveBeenCalled();
+    });
+
+    it("registers and removes wheel navigation as passive viewer activity", () => {
+        const app = readyApp();
+        const target = internals(app);
+        vi.spyOn(target as never, "_loadUSDAssets" as never).mockResolvedValue(undefined as never);
+        vi.spyOn(target as never, "_bootstrapReview" as never).mockResolvedValue(undefined as never);
+        const addEventListener = vi.spyOn(window, "addEventListener");
+        const removeEventListener = vi.spyOn(window, "removeEventListener");
+
+        app.componentDidMount();
+        expect(addEventListener).toHaveBeenCalledWith("wheel", target._onViewerUserActivity, { passive: true });
+
+        app.componentWillUnmount();
+        expect(removeEventListener).toHaveBeenCalledWith("wheel", target._onViewerUserActivity);
+    });
+
+    it("uses lease-backed REST for passive activity and throttles only after a positive acknowledgement", async () => {
+        const app = authorizedApp({ synchronousSetState: true });
+        const target = internals(app);
+        target._connectReviewSocket(SESSION_ID, TRACE_ID);
+        const candidate = vi.mocked(socketClient.join).mock.calls[0][0];
+        handlers.onStatus?.("connected");
+        ack("joinSession", candidate, { ok: true, trace_id: TRACE_ID });
+        vi.spyOn(target, "_ensureViewerLogDeliveryAuthority").mockResolvedValue({
+            reviewSessionId: SESSION_ID,
+            leaseId: "lease_passive_activity",
+            leaseToken: "lease_token_passive_activity",
+        });
+        vi.spyOn(target.coordinatorClient, "recordSessionActivity").mockResolvedValue({
+            ok: true,
+            session_id: SESSION_ID,
+        });
+        vi.mocked(socketClient.userActivity).mockReturnValue(new Promise(() => {}));
+
+        target._reportViewerActivity();
+        target._reportViewerActivity();
+        await vi.waitFor(() => expect(target.lastIdleActivityReportAt).toBeGreaterThan(0));
+        expect(target.coordinatorClient.recordSessionActivity).toHaveBeenCalledTimes(1);
+        expect(socketClient.userActivity).not.toHaveBeenCalled();
+
+        target._reportViewerActivity();
+        expect(target.coordinatorClient.recordSessionActivity).toHaveBeenCalledTimes(1);
+    });
+
+    it("accepts explicit keepalive through the trace-authorized socket when no REST lease is available", async () => {
+        const app = authorizedApp({ synchronousSetState: true });
+        const target = internals(app);
+        target._connectReviewSocket(SESSION_ID, TRACE_ID);
+        const candidate = vi.mocked(socketClient.join).mock.calls[0][0];
+        handlers.onStatus?.("connected");
+        ack("joinSession", candidate, { ok: true, trace_id: TRACE_ID, session_id: SESSION_ID });
+        vi.spyOn(target, "_ensureViewerLogDeliveryAuthority").mockResolvedValue(null);
+        vi.mocked(socketClient.userActivity).mockResolvedValue(true);
+
+        await expect(target._recordSessionActivity()).resolves.toBe(true);
+        expect(socketClient.userActivity).toHaveBeenCalledTimes(1);
+        expect(target.state.idleCountdownRemainingSeconds).toBeNull();
+    });
+
+    it("falls back to the trace-authorized socket when lease acquisition exceeds its deadline", async () => {
+        vi.useFakeTimers();
+        try {
+            const app = authorizedApp({ synchronousSetState: true });
+            const target = internals(app);
+            target._connectReviewSocket(SESSION_ID, TRACE_ID);
+            const candidate = vi.mocked(socketClient.join).mock.calls[0][0];
+            handlers.onStatus?.("connected");
+            ack("joinSession", candidate, { ok: true, trace_id: TRACE_ID, session_id: SESSION_ID });
+            vi.spyOn(target, "_ensureViewerLogDeliveryAuthority").mockReturnValue(new Promise(() => {}));
+            vi.mocked(socketClient.userActivity).mockResolvedValue(true);
+
+            const keepalive = target._recordSessionActivity();
+            await vi.advanceTimersByTimeAsync(1_000);
+
+            await expect(keepalive).resolves.toBe(true);
+            expect(socketClient.userActivity).toHaveBeenCalledTimes(1);
+            expect(target.state.idleCountdownRemainingSeconds).toBeNull();
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it("falls back to the trace-authorized socket when the REST activity request exceeds its deadline", async () => {
+        vi.useFakeTimers();
+        try {
+            const app = authorizedApp({ synchronousSetState: true });
+            const target = internals(app);
+            target._connectReviewSocket(SESSION_ID, TRACE_ID);
+            const candidate = vi.mocked(socketClient.join).mock.calls[0][0];
+            handlers.onStatus?.("connected");
+            ack("joinSession", candidate, { ok: true, trace_id: TRACE_ID, session_id: SESSION_ID });
+            vi.spyOn(target, "_ensureViewerLogDeliveryAuthority").mockResolvedValue({
+                reviewSessionId: SESSION_ID,
+                leaseId: "lease_hanging_activity",
+                leaseToken: "lease_token_hanging_activity",
+            });
+            vi.spyOn(target.coordinatorClient, "recordSessionActivity").mockReturnValue(new Promise(() => {}));
+            vi.mocked(socketClient.userActivity).mockResolvedValue(true);
+
+            const keepalive = target._recordSessionActivity();
+            await vi.advanceTimersByTimeAsync(1_000);
+
+            await expect(keepalive).resolves.toBe(true);
+            expect(socketClient.userActivity).toHaveBeenCalledTimes(1);
+            expect(target.state.idleCountdownRemainingSeconds).toBeNull();
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it("bounds a dropped socket acknowledgement instead of suppressing later keepalive attempts", async () => {
+        vi.useFakeTimers();
+        try {
+            const app = authorizedApp({ synchronousSetState: true });
+            const target = internals(app);
+            target._connectReviewSocket(SESSION_ID, TRACE_ID);
+            const candidate = vi.mocked(socketClient.join).mock.calls[0][0];
+            handlers.onStatus?.("connected");
+            ack("joinSession", candidate, { ok: true, trace_id: TRACE_ID, session_id: SESSION_ID });
+            vi.spyOn(target, "_ensureViewerLogDeliveryAuthority").mockResolvedValue(null);
+            vi.mocked(socketClient.userActivity).mockReturnValue(new Promise(() => {}));
+
+            const keepalive = target._recordSessionActivity();
+            await vi.advanceTimersByTimeAsync(1_000);
+
+            await expect(keepalive).resolves.toBe(false);
+            expect(target.idleActivityRequestInFlight).toBe(false);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it("retires socket, stream, and mutation authority on authoritative session close", () => {
+        const app = authorizedApp({ synchronousSetState: true });
+        const target = internals(app);
+        target._connectReviewSocket(SESSION_ID, TRACE_ID);
+        const candidate = vi.mocked(socketClient.join).mock.calls[0][0];
+        handlers.onStatus?.("connected");
+        ack("joinSession", candidate, { ok: true, trace_id: TRACE_ID });
+        const stopSpy = vi.spyOn(AppStream, "stop").mockImplementation(() => {});
+
+        handlers.onEvent?.("session:closed", {
+            session_id: SESSION_ID,
+            trace_id: TRACE_ID,
+            reason: "inactivity",
+        });
+
+        expect(target.state.reviewLifecycleStatus).toBe("closed");
+        expect(target.state.webrtcLifecycleStatus).toBe("stopped");
+        expect(target.state.showStream).toBe(false);
+        expect(target.verifiedDataChannelAuthority).toBeNull();
+        expect(socketClient.disconnect).toHaveBeenCalledTimes(1);
+        expect(stopSpy).toHaveBeenCalledTimes(1);
+        expect(target._sendStreamMessage({ event_type: "loadingStateQuery", payload: {} })).toBe(false);
+    });
+
+    it("replays authoritative closed state when reconnect join is rejected as terminal", () => {
+        const app = authorizedApp({ synchronousSetState: true });
+        const target = internals(app);
+        target._connectReviewSocket(SESSION_ID, TRACE_ID);
+        const candidate = vi.mocked(socketClient.join).mock.calls[0][0];
+        const stopSpy = vi.spyOn(AppStream, "stop").mockImplementation(() => {});
 
         handlers.onStatus?.("connected");
-        expect(internals(app).verifiedDataChannelAuthority).toBeNull();
-        ack("joinSession", candidate, { ok: true, trace_id: TRACE_ID });
-        expect(internals(app).verifiedDataChannelAuthority).toMatchObject({
-            sessionId: SESSION_ID,
-            traceId: TRACE_ID,
+        ack("joinSession", candidate, {
+            ok: false,
+            error: "Review session is not active.",
+            session_id: SESSION_ID,
+            trace_id: TRACE_ID,
+            lifecycle_status: "closed",
+            reason: "recovered_close",
         });
+
+        expect(target.state.reviewLifecycleStatus).toBe("closed");
+        expect(target.state.idleClosedReason).toBe("recovered_close");
+        expect(target.state.webrtcLifecycleStatus).toBe("stopped");
+        expect(socketClient.disconnect).toHaveBeenCalledTimes(1);
+        expect(stopSpy).toHaveBeenCalledTimes(1);
     });
 
     it("ignores a late ack from an older socket instance after a session reconnect", () => {
@@ -789,5 +1088,23 @@ describe("Window Socket canonical trace authority", () => {
         await Promise.resolve();
 
         expect(inboundSpy).not.toHaveBeenCalled();
+    });
+
+    it("accepts a decoded frame from the injected GFN video player", () => {
+        const app = readyApp();
+        const player = document.createElement("video");
+        player.id = "gfn-stream-player-video";
+        Object.defineProperties(player, {
+            readyState: { configurable: true, value: HTMLMediaElement.HAVE_CURRENT_DATA },
+            videoWidth: { configurable: true, value: 1280 },
+            videoHeight: { configurable: true, value: 720 },
+        });
+        document.body.appendChild(player);
+
+        try {
+            expect(internals(app)._hasRemoteVideoFrame()).toBe(true);
+        } finally {
+            player.remove();
+        }
     });
 });

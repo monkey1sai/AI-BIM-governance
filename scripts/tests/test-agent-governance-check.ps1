@@ -277,6 +277,7 @@ try {
     Assert-True ($governanceWorkflow -match 'publishing explicit no-op success') 'unaffected paths produce an explicit successful terminal result'
     Assert-True ($governanceWorkflow -match '(?m)^\s+timeout-minutes:\s*30\s*$') 'agent-governance workflow has a bounded runtime'
     Assert-True ($governanceWorkflow -match 'scripts/tests/test-agent-governance-check\.ps1') 'agent-governance workflow runs static check'
+    Assert-True ($governanceWorkflow -match 'node --test scripts/tests/test-cleanup-orphan-dev-processes\.mjs scripts/tests/test-manage-pr-queue\.mjs scripts/tests/test-pr-queue-adversarial-and-stress\.mjs') 'agent-governance workflow runs isolated orphan cleanup and named PR queue tests'
     Assert-True ($governanceWorkflow -match 'node --test scripts/tests/test-trusted-host-merge\.mjs scripts/tests/test-trusted-host-merge-runtime\.mjs') 'agent-governance runs trusted host executor and broker contract tests'
     Assert-True ($governanceWorkflow -match 'pwsh -NoProfile -NonInteractive -File scripts/tests/test-isolated-branch-stack\.ps1') 'agent-governance workflow runs isolated branch stack machine tests'
     Assert-True ($governanceWorkflow -match 'scripts/tests/test-openspec-ledger-reconciliation\.ps1') 'agent-governance workflow runs OpenSpec ledger reconciliation tests'
@@ -336,6 +337,7 @@ try {
     }
     foreach ($pinnedShardStep in @(
         @{ Name = 'Run governance static check'; Shard = 'core' },
+        @{ Name = 'Run orphan cleanup and named PR queue safety tests'; Shard = 'core' },
         @{ Name = 'Run OpenSpec ledger reconciliation tests'; Shard = 'openspec' },
         @{ Name = 'Run OpenSpec machine-truth tests'; Shard = 'openspec' },
         @{ Name = 'Run base-gate capability detection tests'; Shard = 'capability' },
@@ -1157,6 +1159,9 @@ try {
     Assert-True ($LASTEXITCODE -eq 0) 'openspec/changes, openspec/lifecycle-ledger.json and the docs/plans/NOW.md projection agree'
     # Exit 0 alone is not proof the gate ran: assert it actually produced its report.
     Assert-True ((($repositoryLifecycleReport -join "`n")) -match 'openspec repository lifecycle OK') 'repository-scoped lifecycle gate emitted its parity report'
+
+    & pwsh -NoProfile -NonInteractive -File (Join-Path $PSScriptRoot 'test-governed-worktree.ps1')
+    Assert-True ($LASTEXITCODE -eq 0) 'governed Windows worktree identity, inventory, and plan contracts pass'
 } finally {
     Pop-Location
 }

@@ -1,165 +1,101 @@
-> 文件性質：**contract**。本檔是機器強制的閘門契約，實作為
-> `scripts/lib/self-referential-bootstrap.ps1` ＋ `scripts/self-referential-bootstrap-ledger.json`，
-> 於 PR 時由 `scripts/tests/check-pr-body-evidence.ps1` 裁決。不是 working note，也不是完成證據。
+> 文件性質：**contract**。機器實作為
+> `scripts/lib/self-referential-bootstrap.ps1` 與
+> `scripts/self-referential-bootstrap-ledger.json`，由
+> `scripts/tests/check-pr-body-evidence.ps1` 在 PR 時裁決。
 >
-> Loaded lazily by AGENTS.md / CLAUDE.md。Source-of-truth: AGENTS.md。
->
-> 何時讀本檔：PR 的變更對象包含驗證機制本身（deploy path / evidence harness / gate script），或需要關閉 bootstrap ledger 欠帳時。
+> Loaded lazily by AGENTS.md / CLAUDE.md。Source of truth：AGENTS.md
+> §0.0 Lean Governance & Subtraction Directive。
 
-# Self-Referential Change Bootstrap
+# Self-Referential Change Governance
 
-> 本規則刻意以**可攜形式**撰寫：不綁定任何產品專有名詞。規則文字與 ledger **格式**屬治理腳手架（可搬遷）；ledger **內容**屬本 repo（留下）。機器實作：`scripts/lib/self-referential-bootstrap.ps1` ＋ `scripts/self-referential-bootstrap-ledger.json`。
+## 1. 現行政策
 
-## 1. 問題
+自 Lean Governance commit
+`2a759f4ac488750c4f3e1e1945b4d5de9f936b50` 起，驗證機制變更採
+**single-PR closure**：
 
-當一個 PR 的變更對象**包含驗證機制本身** — deploy path、evidence harness、gate script、或決定 evidence 是否成立的契約 — 該 PR 無法用「變更前的機制」取得代表「變更後行為」的證據：
+- 不再新增 fixpoint、classifier repair、ledger reconciliation 或
+  ledger-only closure PR。
+- `Get-SelfReferentialMechanismPaths` 仍分類 deploy path、evidence
+  harness、gate script 與直接裁決依賴，但命中結果是 review advisory，
+  不是建立新治理債務的指令。
+- 一般 PR body 填 `Self-referential bootstrap = no`，且不得修改
+  `scripts/self-referential-bootstrap-ledger.json`。
+- typecheck、tests、GitNexus、CODEOWNER、exact-head review、branch
+  protection 與其他 P0–P7 gate 不因本政策降低。
 
-```txt
-新機制要驗證 → 只能用驗證機制驗 → 驗證機制只認已 merge 的內容 → 得先 merge
-                                                                    ↑
-                                                  但沒驗過就不該 merge ──┘
-```
+機器閘門仍先讀取 PR base/head 的精確 ledger，解析完整 schema、驗證
+歷史 evidence blob，並拒絕任何歷史 row 改寫、刪除或格式漂移；通過後才
+對 mechanism paths 發出 non-blocking warning。
 
-這不是特定遷移的一次性例外，是驗證機制自我指涉時的**通用形狀**（編譯器 bootstrap 問題）。標準解是 fixpoint：用舊機制建新機制 → merge 後用新機制重建自己 → 兩者一致才算通過。
+## 2. 歷史 ledger
 
-## 2. 規則
+`scripts/self-referential-bootstrap-ledger.json` 是 closed historical
+archive，schema 為 `self-referential-bootstrap-ledger/v1`。現行規則：
 
-**觸發（通則）**：PR 的 changed paths 命中 `Get-SelfReferentialMechanismPaths` 的機制清單（canonical deploy path、evidence harness、adjudicating gate scripts、本機制自身）。
+1. base 與 head 的 ledger bytes 必須相同。
+2. 不得新增 entry、追加 `repair_prs`、執行 `open → closed`、建立
+   `successor_of`，或修改 ledger 引用的 bootstrap/fixpoint evidence。
+3. 所有既有 closed rows、contract digest、mechanism commit 與 evidence
+   refs 保持可重播；legacy transition code/tests 僅供歷史驗證，不授權
+   新 PR 重新啟動舊 fixpoint lifecycle。
+4. malformed ledger 或任何 open debt 都 fail closed；不得把 warning
+   policy 當成 ledger integrity bypass。
 
-觸發時允許以 `stack_kind=self_referential_bootstrap` 在該 branch 上取證，並承擔三條義務（**缺一則 evidence 視為未閉合**）：
+## 3. PR #704 一次性 migration
 
-1. **標示** — evidence 必須標 `stack_kind=self_referential_bootstrap`，不得被引用為 deploy-target evidence 或 `isolated_branch_stack` evidence；三者互不推論。
-2. **理由** — 必須具體說明「為何既有機制取不到此證據」；泛稱（"bootstrap"、"needed"）不通過。
-3. **fixpoint 重驗** — merge 後必須以**變更後的正規機制**重跑同一驗證，並把結果 commit 回 ledger（`fixpoint` 欄位）。
+PR #704 是從舊 executable debt gate 移到 Lean single-PR policy 的唯一
+bootstrap bridge。它不是可編輯 registry，也不提供 future bypass。head
+gate 必須同時驗證：
 
-## 2.1 範圍界定（何謂 mechanism surface）
+- PR number：`704`
+- base：
+  `c9c9ebff649e2bf7dadebca2eaaeb646e5307ac3`
+- declaration：`owner-authorized-migration`
+- owner user-message：UTF-8、無 BOM、無尾端 newline、3265 bytes、37 lines、
+  SHA-256
+  `ccb6cca014b86b2f653b859dd8f447b5af002112723096e55352c0a3ea0a13fb`
+- changed paths：精確等於
+  `$script:SelfReferentialLeanMigrationPaths`
+- ledger：與 base 完全一致，且 PR body 不得宣稱 entry、reason 或 future
+  fixpoint。
 
-機制清單的收錄判準是單一謂詞：**該路徑的行為改變會改變其他 PR 的裁決結果，或改變 canonical deployment 的驗證結果**。§2 觸發通則的三個類別逐類收斂如下：
+任一 tuple 欄位、path、base 或 ledger 漂移即 fail closed。#704 合併後，
+其 literal base 不可能成為未來 PR 的 live base，因此此 mode 不可重用。
 
-1. **裁決者及其直接決策依賴** — required CI / merge 治理的 gate scripts、workflows、verification manifest、CODEOWNERS、本機制自身。
-2. **canonical deploy path** — 部署契約只重建／驗證已 merge 的內容，branch 上取不到 post-change canonical evidence。
-3. **evidence harness** — 僅限其輸出被第 1 或第 2 類**以機器方式消費**的 harness（煙霧證據、視覺 gate、runtime evidence 驗證器等）。
-
-**明確排除**：產品量測／遙測腳本 — 輸出餵人工撰寫的文件或產品決策、沒有任何 gate 以機器方式消費其報告者，不屬 mechanism surface。「新腳本自行定義自己的報告格式」是所有新程式碼的常態，由一般 code review 與單元測試把關；§1 循環的定義性特徵是**契約禁止在 merge 前用正規機制對變更後行為取證**，而非「報告格式沒有前版可比」。
-
-**升級規則**：後續 PR 把此類腳本的輸出接進第 1／2 類的任何機器消費者時，該接線 PR 必然觸及 mechanism surface（manifest／workflow／gate script），**必須在同一 PR 把該腳本加入 `Get-SelfReferentialMechanismPaths`**；該腳本自此成為 mechanism surface。反向亦同：要從清單移除一個路徑，必須先移除它的所有機器消費者。
-
-## 2.2 Regression-repair lane（修復既有 open debt 的唯一通道）
-
-fixpoint 首跑本身就是機制的第一次正規執行，因此**可能就地驗出該機制的 regression**。在此之前契約沒有任何合法修復通道：宣告既有 entry 被 impersonation guard 擋（entry 必須是本 PR 新增）、自增新 entry 被「其他 open debt」擋、宣告 `bootstrap=no` 也被同一道 open debt 擋 — 三面互鎖（issue #494）。
-
-Repair lane 只開一扇門：**修復 PR 把自己的 PR number 追加到該 open entry 的 `repair_prs`**，藉此以機器方式把修復綁定到既有債務，而不是新增或竄改債務。`repair_prs` 是選填的正整數陣列，必須嚴格遞增且不得重複；未列出者等同空陣列（repair lane 之前寫入的 entry 因此保持可解析且不可變）。
-
-**新開 entry 不得帶 `repair_prs`**（含空陣列 `[]`）；該欄位只能由 repair transition 追加產生。schema 層的「選填」僅為了讓 repair lane 之前寫入的 entry 維持可解析，不是允許自我登記時憑空宣告修復歷史 —— 那種記錄從未經過 repair transition，也從未綁定任何修復 PR 的號碼。
-
-放行的**五個條件（缺一即 fail closed）**：
-
-1. PR body 宣告的 entry 在 **PR base 已存在且 `status=open`**，在 head 仍為 `open`。
-2. 本 transition 對該 entry 的**唯一**差異是 `repair_prs` 的**尾端追加**，且追加內容**恰好等於本 PR number**（單一值）。無法取得 live PR number 時直接拒絕，不得略過驗證。
-3. 本 PR 必須**真的修了東西**：除 ledger 以外，至少改動一條機制清單路徑。ledger 自身即機制路徑，而 repair PR 必然要改 ledger 才能追加 `repair_prs`，所以「有改到機制路徑」恆真、不構成任何約束；只有 **non-ledger** 機制路徑能區分真修復與「只補一筆什麼都沒修的稽核記錄」。此條與 closure 的單一目的規則互為鏡像（closure 在機制面**只能**動 ledger）。
-4. 本 PR 命中機制清單的 changed paths 原則上**全部落在 body 具名 entry 所屬 active open successor chain 的 `verification_mechanism_paths` 聯集內**（case-sensitive；單一 open entry 時就是該 entry 自己的 surface）。**此範圍包含本 gate 自身的 adjudicator**：adjudicator path 只要已由 active chain 宣告就允許修復。推理鏈為 (a) **base-pinned 裁決** —— `.github/workflows/pr-review-agent.yml` checkout `pull_request.base.sha` 並以 `git archive` 由 base 具現 gate，base 不完整時輸出 `base_gate_incomplete_external_approval_required` 並 fail closed，從不回退到 head checker，故 PR 永遠不會被自己改過的 adjudicator 裁決（可執行形式：`scripts/tests/test-base-gate-capability.ps1`）；(b) **immutable path ownership** —— 修復不得原地擴張或在 successor 重複登記既有 chain surface；(c) **fixpoint 義務不變** —— 修完仍須以實際失敗 entry 凍結的 `verification_contract` 自證才能關帳。若實際修復不可避免地要修改 active-chain union 外的 classified dependency，必須走下述 linked-successor transition，不能刪掉 subset 檢查或把新路徑塞回既有 entry。
-5. 同一 transition **不得關閉任何 entry**，且**只能修復 body 具名的那一個 entry** — 整個 transition 至多一筆 `repair_prs` 追加。通常不得新增 entry；唯一例外是本 PR 確實修改 active-chain union 外的 classified path 時，必須同時新增**恰好一筆** linked successor 並接到 unique open leaf。`repair_prs` 記錄真正 fixpoint 失敗的 target；`successor_of` 記錄新 surface 接續的 attachment leaf，兩者不必是同一 entry。否則未具名的 entry 稽核歷史會被改動，或 path ownership 會分叉，卻沒經過自己的 PR number 與範圍檢查。
-
-Repair lane **不放寬**任何既有不變式：ledger 仍為 append-only（`repair_prs` 只能追加，既有元素不可改寫或刪除）；predecessor 除 `repair_prs` 外所有欄位仍不可變，唯一合法狀態轉移仍是一次 `open → closed`；closure 仍須提交完整且全綠的 fixpoint attestation（修復後的機制必須自己通過該 entry 凍結的 `verification_contract`）；repair transition 仍不得關債；closed entry 仍完全不可變 — `repair_prs` 不是進入 closed entry 的後門。
-
-### 2.2.1 Linked successor chain（修復必須跨出 active-chain surface 時）
-
-若 repair PR 修改了 active open successor chain surface 聯集外的 classified mechanism path，缺少 successor 會 fail closed。successor 使用單一 scalar `successor_of`（case-sensitive entry id）連回 chain 的 unique open leaf；PR body **仍具名真正 fixpoint 失敗、要追加 `repair_prs` 的 target**，不新增第二套 body label。合法 transition 同時滿足：
-
-1. repair target 在 base/head 都是 `open`，除追加本 PR number 到 `repair_prs` 外完全不可變；successor 必須 born `open`、`pr` 等於本 PR、不得帶 `repair_prs` 或 `fixpoint`。
-2. 要延伸時，PR base 的全部 open entries 必須形成唯一、無 fork／cycle、連續的 successor chain `R(open) → ... → L(open)`；transition 恰好新增一筆 successor並接到 unique leaf `L`。整條歷史 lineage 的 status 必須是 closed prefix 加 contiguous open suffix（successor 不得在 predecessor 尚 open 時先 closed）。禁止 orphan、自循環、第二 successor、unrelated open/new debt、discontinuous open suffix 或同 transition closure。chain 不設固定深度上限，避免到達上限時重建同型 deadlock。
-3. successor 的 `verification_mechanism_paths` 必須**精確等於** ledger path 加上本 PR 所有 active-chain surface union 外的 classified changed paths；不得漏列、重複、夾帶 chain 內路徑（ledger 除外）、未分類路徑或未實際修改路徑。如此每條 non-ledger path 在同時 open 的 chain 中只有一個 owner。
-4. successor 有自己的 immutable `verification_contract` 與 fresh `bootstrap_evidence_refs`。其有序 `command_ids` 必須保留 attachment leaf `L` 的 command list 為完整 prefix；可在尾端增加命令，不得刪除或重排既有命令。由於每代都保留 parent prefix，此規則傳遞性保留所有祖先 command；path coverage 仍須由 bootstrap evidence 與 code review 實證。
-5. 沒有 active-chain union 外的 path 時禁止建立 successor。repair target 可是 chain 任一 open entry，但新 successor 一律接 leaf；因此 later fixpoint 可合法形成 `A → B → C`，同時不允許在 A 或 B 下分叉。
-
-successor merge 後 chain 會暫時有多筆 open entries。為避免把 repair deadlock 平移到 closure，允許一個極窄例外：**完整 attestation、changed paths 僅 ledger 加該 closure 的 fixpoint evidence、一次只關 oldest open root `R`、沒有 new/repair transition，且剩餘 open debt 精確構成原 chain 的 contiguous successor suffix** 時，closure 可通過；因此 `A→B→C` 只能依 `close A → close B → close C` 關帳。child-first、skip、close-both、unrelated／discontinuous debt 仍 fail closed。每筆 debt 各自以自己的 originating PR、immutable paths、contract 與 evidence 關帳。
-
-**刻意不設的一道檢查**：純 active-chain surface 內的 repair lane **不**因「存在其他 open debt」而拒絕。這是設計，不是遺漏 —— 若修復 PR 也要被其他未清債務擋住，就會重現本節要解的死鎖（修復需要債先關、債關需要修復先 merge）。只有「新增 successor」與「linked closure」要求全部 open debt 是同一條 contiguous chain；普通新債仍受 §3 的 open-debt 封鎖，unrelated open debt 不得搭 linked 例外。清 linked debt 只走上述 oldest-root-first 窄 closure。
-
-## 3. Ledger 機制
-
-- Ledger：`scripts/self-referential-bootstrap-ledger.json`（schema `self-referential-bootstrap-ledger/v1`）。
-- **Gate 以 base-vs-head 轉移判定**（非只看 head）：ledger 為 append-only，entry 除唯一合法轉移 `open → closed` 外不可變。刪除 entry、修改既有 entry、或宣告一個「base 已存在」的 entry 一律 fail closed；宣告的 entry 必須是**本 PR 新增**（自我登記的機器證明）。
-- **Fixpoint 實質驗證**：`mechanism_commit` 必須真實存在、位於 PR base 的 first-parent mainline（即該機制的 merge/squash commit）、以 first-parent diff 真正修改 entry 宣告的機制 path，且 merge/squash subject 必須綁定該 entry 的原始 PR number；`evidence_refs` 必須存在於 PR head tree，且 base/head blob OID 必須不同（mode-only／metadata-only change 不算新證據）。每次閉合另須提交嚴格 JSON attestation，逐項綁定 entry、mechanism commit、不可變 verification contract 與每條 command 的零 exit code。格式正確但查無實體者拒絕。缺 base context 時拒絕任何閉合（refusing format-only closure）。
-- 新 entry 綁定：`pr` 必須等於當前 PR number（live check 傳入）；`verification_mechanism_paths` 必須是本 PR changed paths 的子集；`bootstrap_evidence_refs` 必須存在於 head tree，並且是 base 不存在的新 blob 或 base/head blob OID 不同的內容更新。
-- 觸發清單含 **enforcement 面本身與直接依賴**：`agent-governance.yml`、`pr-review-agent.yml`、`ci.yml`、`scripts/verification-manifest.json`、驗證 helper／policy／config、bootstrap regression suites、CODEOWNERS — 改掉執法者或其直接決策依賴也是改機制。classifier regression 必須逐一路徑證明它們都能進入 debt gate。
-- 使用 bootstrap 取證的 PR **必須在同一個 PR 內新增自己的 open entry**（自我登記），並在 PR body 填：
+PR body：
 
 | Item | Result |
 |---|---|
-| Self-referential bootstrap | yes / no |
-| Bootstrap ledger entry | entry id（`yes` 時必填） |
-| Bootstrap reason | 具體機制缺口（`yes` 時必填，>=30 字元） |
+| Self-referential bootstrap | `owner-authorized-migration` |
+| Lean migration owner message | `sha256=ccb6cca014b86b2f653b859dd8f447b5af002112723096e55352c0a3ea0a13fb;bytes=3265` |
+| Current candidate head | exact 40-character PR head SHA |
+| Bootstrap ledger entry | `not applicable` |
+| Bootstrap reason | `not applicable` |
 
-- **債務閘門**：open debt 以 **base ∪ head** 計算 — head 刪掉也照樣算帳。存在任何 open entry 時，下一個觸發本規則的 PR 被機器擋下（不影響無關 PR）。清除欠帳的唯一方式＝commit 通過實質驗證的 fixpoint 記錄，該 commit 本身可被 review；除 §2.2.1 的 active-chain-union 外 repair transition 可且只能新增恰好一筆 linked successor 外，不得在同一 transition 新增 debt；每個 closure transition 必須恰關一筆且不得新增 debt。
-- **Closure 單一目的**：關閉 entry 的 PR 在 mechanism surface 內只能修改 ledger；不得同時修改其他驗證機制。修改本 gate 自己的 adjudicator 或本 contract 一律要宣告 `bootstrap=yes` 並新增 debt，不能用 `no` 讓新規則自證。
-- open entry 不得帶 fixpoint；closed entry 必須帶完整 fixpoint。entry 的 `verification_contract` 在 opening 時固定，`id` 與有序 `command_ids` 以 LF 串接後的 SHA-256 必須等於 `contract_sha256`，後續 transition 不得改寫。base ledger 已引用的 bootstrap／fixpoint evidence 亦不可由後續 PR 改寫或刪除；gate 以 base/head blob OID 判定。ledger 完整性每次 CI 驗證（`scripts/tests/test-self-referential-bootstrap.ps1`），malformed 一律 fail closed。
+## 4. Trust boundary
 
-本 contract 檔本身也由 `Get-SelfReferentialMechanismPaths` 分類為 mechanism surface；修改契約文字不能繞過同一份 ledger 義務。
+`.github/workflows/pr-review-agent.yml` 的 PR Metadata Contract 由 immutable
+PR base materialize。#704 的 base 尚未包含本 migration mode，所以該
+diagnostic 不能用 #704 head code 自證，也不得改成執行 head gate。
 
-## 4. Entry schema
+#704 必須以：
 
-```json
-{
-  "id": "kebab-case-slug",
-  "status": "open | closed",
-  "pr": 123,
-  "opened_at": "2026-07-31T00:00:00Z",
-  "reason": "why the pre-change mechanism cannot produce this evidence",
-  "verification_mechanism_paths": ["scripts/deploy.ps1"],
-  "verification_contract": {
-    "id": "gate-name/v1",
-    "command_ids": ["stable-command-id"],
-    "contract_sha256": "<sha256 of id plus ordered command_ids, LF-separated>"
-  },
-  "bootstrap_evidence_refs": ["docs/evidence/<slug>/self-referential-bootstrap/..."],
-  "successor_of": "optional-predecessor-entry-id",
-  "fixpoint": null
-}
-```
+1. exact-head deterministic tests；
+2. read-only correctness/security reviewers；
+3. live CODEOWNER/current-head owner decision；以及
+4. 未降低的 native branch protection
 
-`bootstrap_evidence_refs` 的每個 ref 必須含 `self-referential-bootstrap`（或底線變體）字樣，作為 stack kind 標示。普通新 entry 不帶 `successor_of`；linked successor 必須帶一個 scalar predecessor id，且只能由 §2.2.1 transition 建立。新 entry 不帶 `repair_prs`；該欄位是選填的嚴格遞增正整數陣列，只由 §2.2 repair lane 追加。closed 時 `fixpoint`：
+承擔這一次 bootstrap trust boundary。此限制不授權 auto-merge、
+`--admin`、force-push、跳過 required checks，或另開 ledger/fixpoint
+後繼 PR。
 
-```json
-{
-  "reverified_at": "2026-08-01T00:00:00Z",
-  "mechanism_commit": "<merge 後 origin/main 上的 40-hex commit>",
-  "evidence_refs": [
-    "docs/evidence/<slug>/fixpoint/summary.md",
-    "docs/evidence/<slug>/fixpoint/attestation.json"
-  ]
-}
-```
+## 5. Mechanism surface
 
-所有 fixpoint refs 必須位於 `docs/evidence/<slug>/fixpoint/`，且必須恰有一個 `attestation.json`。attestation 的 exact-head blob schema：
+分類判準維持不變：若一條 path 的行為會改變其他 PR 的裁決結果，或改變
+canonical deployment 的驗證結果，就屬 mechanism surface。產品量測或
+只供人工閱讀、未被 gate 機器消費的報告不屬此 surface；日後接入 gate
+時，接線 PR 必須同步更新 classifier 與負向測試。
 
-```json
-{
-  "schema_version": "self-referential-fixpoint-attestation/v1",
-  "entry_id": "kebab-case-slug",
-  "mechanism_commit": "<same 40-hex commit as ledger fixpoint>",
-  "verification_contract_sha256": "<same immutable contract digest as ledger entry>",
-  "result": "pass",
-  "commands": [
-    { "id": "stable-command-id", "exit_code": 0 }
-  ]
-}
-```
-
-`commands` 的順序與集合必須精確等於 opening contract 的 `command_ids`，不得漏項、重複或改名。此 attestation 是 PR-authored evidence：它提供嚴格的語意與 commit／contract 綁定，但不單獨證明可信 runner provenance；exact-head CODEOWNER approval、base-owned gate 與 live branch protection 仍是 merge trust root。
-
-## 4.1 已知邊界（trusting-trust）
-
-歷史上的 `pull_request` required context 執行 PR 自己樹上的 workflow YAML，因此 PR 可保留同名 job 卻刪除真正 gate。該 context 不具獨立信任根，不能再作 merge authority。
-
-本次修復把 `PR Metadata Contract` 改為 `pull_request_target` base-owned diagnostic：checkout 固定為 `pull_request.base.sha`，`permissions` 只有 `contents: read`；PR head 的 body、changed paths 與 git objects 只作資料解析，不 checkout、不 dot-source、不執行 head code，也不使用 head-controlled action。base capability incomplete 時固定輸出 `base_gate_incomplete_external_approval_required` 並 fail closed，禁止 grep 後改跑 head checker。
-
-這個 base-owned definition 只有合併後才保護後續 PR，不能替導入它的 bootstrap PR 自證。PR #459 在 merge 前維持 HELD，直到 live branch protection 將舊 `pr-metadata-contract-diagnostic` 移出 required contexts，並由 base `.github/CODEOWNERS` 指定的 `monkey1sai-blip` 對 final head 做一次性 approval；任何新 push 都必須重新 approval。若 live protection 尚未完成該遷移，文件不得宣稱 SEC-001 已關閉。
-
-未來若有 dedicated external GitHub App 具 `checks:write`，可另建 exact-head required check 並以 expected App source 綁定。repository owner 為 User，不能使用 organization-level required workflow ruleset。
-
-## 5. 已知實例
-
-- 測試部署區遷移（`docs/plans/remote-linux-test-deploy-target.plan.md` §5）：PR 改 deploy path 本身，部署區依契約只驗 `origin/main`。
-- PR #458 single-owner merge consent：修改 merge 治理的 PR 無法用新治理 merge 自己，需一次性手動 bootstrap — 同模式第二實例。
-- **Scope 反例**（PR #511 review thread → issue #520 裁決紀錄）：GPU session baseline 量測 harness（`scripts/measure-session-baseline.ps1`，由 PR #511 引入）被主張應入機制清單；依 §2.1 判準裁決為**不屬 mechanism surface** — 其報告無任何 gate 機器消費者，僅餵人工撰寫的 SLO 文件。若日後被接進 gate，依升級規則於接線 PR 補登。升級規則本身維持 review 強制（非機器強制）：把它機器化等於再改一次 adjudicator，須依本規則另開 debt，收益不成比例。
+分類結果只決定 review/verification scope，不取代原始碼、可執行 tests、
+GitNexus risk 或 owner/CODEOWNER 決定。

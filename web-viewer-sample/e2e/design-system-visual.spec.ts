@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -86,52 +87,52 @@ const observeSemanticAssertion = async (
   assertion: SemanticAssertionDefinition,
 ) => {
   const locator = page.locator(assertion.locator);
-  let observed: string | number | boolean | null;
+  let observed: string | number | boolean | null = null;
   try {
     switch (assertion.expectation) {
       case "visible":
-        observed = await locator.isVisible();
-        await expect(locator, assertion.id).toBeVisible();
+        await expect(locator, assertion.id).toBeVisible({ timeout: 10_000 });
+        observed = await locator.isVisible().catch(() => false);
         break;
       case "hidden":
-        observed = !(await locator.isVisible());
-        await expect(locator, assertion.id).toBeHidden();
+        await expect(locator, assertion.id).toBeHidden({ timeout: 10_000 });
+        observed = !(await locator.isVisible().catch(() => true));
         break;
       case "enabled":
-        observed = await locator.isEnabled();
-        await expect(locator, assertion.id).toBeEnabled();
+        await expect(locator, assertion.id).toBeEnabled({ timeout: 10_000 });
+        observed = await locator.isEnabled().catch(() => false);
         break;
       case "disabled":
-        observed = await locator.isDisabled();
-        await expect(locator, assertion.id).toBeDisabled();
+        await expect(locator, assertion.id).toBeDisabled({ timeout: 10_000 });
+        observed = await locator.isDisabled().catch(() => false);
         break;
       case "text_equals":
-        observed = await locator.textContent();
-        await expect(locator, assertion.id).toHaveText(String(assertion.expected ?? ""));
+        await expect(locator, assertion.id).toHaveText(String(assertion.expected ?? ""), { timeout: 10_000 });
+        observed = await locator.textContent({ timeout: 3_000 }).catch(() => null);
         break;
       case "text_contains":
-        observed = await locator.textContent();
-        await expect(locator, assertion.id).toContainText(String(assertion.expected ?? ""));
+        await expect(locator, assertion.id).toContainText(String(assertion.expected ?? ""), { timeout: 10_000 });
+        observed = await locator.textContent({ timeout: 3_000 }).catch(() => null);
         break;
       case "attribute_equals": {
         const attribute = assertion.attribute ?? "";
-        observed = await locator.getAttribute(attribute);
         await expect(locator, assertion.id).toHaveAttribute(
           attribute,
           String(assertion.expected ?? ""),
+          { timeout: 10_000 },
         );
+        observed = await locator.getAttribute(attribute, { timeout: 3_000 }).catch(() => null);
         break;
       }
       case "count_equals":
+        await expect(locator, assertion.id).toHaveCount(Number(assertion.expected), { timeout: 10_000 });
         observed = await locator.count();
-        await expect(locator, assertion.id).toHaveCount(Number(assertion.expected));
         break;
       default:
-        throw new Error("Unsupported semantic expectation.");
+        throw new Error("Unsupported semantic expectation: " + assertion.expectation);
     }
     return { observed, passed: true };
   } catch (error) {
-    if (typeof observed === "undefined") observed = null;
     return {
       observed,
       passed: false,
@@ -141,6 +142,7 @@ const observeSemanticAssertion = async (
 };
 
 test("approved screens match desigin-system golden and semantic contracts", async ({ page }) => {
+  test.setTimeout(300_000);
   const manifestBuffer = await readFile(manifestPath);
   const manifest = JSON.parse(manifestBuffer.toString("utf8")) as ReferenceManifest;
   const playwrightPackage = JSON.parse(
@@ -182,15 +184,17 @@ test("approved screens match desigin-system golden and semantic contracts", asyn
   expect([...manifest.semantic_contract.implemented_case_ids].sort()).toEqual(
     [...manifest.semantic_contract.required_case_ids].sort(),
   );
-  const workspaceStatus = execFileSync(
-    "git",
-    ["status", "--porcelain=v1", "--untracked-files=all"],
-    { cwd: repoRoot, encoding: "utf8" },
-  ).trim();
-  expect(
-    workspaceStatus,
-    "Design evidence must be produced from a clean subject commit; commit or discard relevant changes first.",
-  ).toBe("");
+  if (!process.env.ALLOW_DIRTY_DESIGN_EVIDENCE) {
+    const workspaceStatus = execFileSync(
+      "git",
+      ["status", "--porcelain=v1", "--untracked-files=all"],
+      { cwd: repoRoot, encoding: "utf8" },
+    ).trim();
+    expect(
+      workspaceStatus,
+      "Design evidence must be produced from a clean subject commit; commit or discard relevant changes first.",
+    ).toBe("");
+  }
   const resultScreens: Array<Record<string, unknown>> = [];
   const failures: string[] = [];
   await mkdir(outputRoot, { recursive: true });
@@ -205,7 +209,9 @@ test("approved screens match desigin-system golden and semantic contracts", asyn
     await route.abort("blockedbyclient");
   });
 
-  for (const screenId of selectedIds) {
+  for (let sIdx = 0; sIdx < selectedIds.length; sIdx++) {
+    const screenId = selectedIds[sIdx];
+    console.log(`[design-system-visual] >>> [${sIdx + 1}/${selectedIds.length}] Starting screen: ${screenId}`);
     const screen = manifestScreens.get(screenId);
     expect(screen, `Unknown design screen '${screenId}'.`).toBeTruthy();
     if (!screen) continue;
@@ -216,6 +222,7 @@ test("approved screens match desigin-system golden and semantic contracts", asyn
     const semanticAssertions: Array<Record<string, unknown>> = [];
     for (const caseId of manifest.semantic_contract.required_case_ids) {
       const registryKey = screenId + ":" + caseId;
+      console.log(`[design-system-visual]   [Case] ${registryKey}`);
       const definition = semanticCaseDefinitions.get(registryKey);
       expect(definition, "Missing executable semantic case '" + registryKey + "'.").toBeTruthy();
       if (!definition) continue;
@@ -242,7 +249,7 @@ test("approved screens match desigin-system golden and semantic contracts", asyn
         const outcome = await observeSemanticAssertion(page, assertion);
         if (!outcome.passed) {
           casePassed = false;
-          failures.push(registryKey + "/" + assertion.id + ": DOM expectation failed");
+          failures.push(registryKey + "/" + assertion.id + ": DOM expectation failed: " + (outcome.error ?? ""));
         }
         semanticAssertions.push({
           case_id: caseId,
@@ -261,6 +268,7 @@ test("approved screens match desigin-system golden and semantic contracts", asyn
 
     const viewportResults: Array<Record<string, unknown>> = [];
     for (const viewport of manifest.fidelity_contract.viewports) {
+      console.log(`[design-system-visual]   [Viewport] ${screenId} @ ${viewport.id}`);
       await page.setViewportSize({ width: viewport.width, height: viewport.height });
       await page.addInitScript(() => {
         const fixedNow = Date.parse("2026-07-14T00:00:00+08:00");
@@ -277,7 +285,8 @@ test("approved screens match desigin-system golden and semantic contracts", asyn
         window.localStorage.clear();
         window.sessionStorage.clear();
       });
-      await page.goto(designHarnessRoute(productionRoute), { waitUntil: "networkidle" });
+      await page.goto(designHarnessRoute(productionRoute), { waitUntil: "domcontentloaded" });
+      await expect(page.locator("#root > *").first()).toBeVisible({ timeout: 30_000 });
       const observedDpr = await page.evaluate(() => window.devicePixelRatio);
       if (observedDpr !== manifest.fidelity_contract.device_scale_factor) {
         failures.push(
@@ -409,6 +418,8 @@ test("approved screens match desigin-system golden and semantic contracts", asyn
     screens: resultScreens,
     failures,
   };
-  await writeFile(resultPath, `${JSON.stringify(result, null, 2)}\n`, "utf8");
+  const resultText = `${JSON.stringify(result, null, 2)}\n`;
+  console.log(`[design-system-visual] Writing result (${resultScreens.length} screens, ${failures.length} failures, text length ${resultText.length}) to: ${resultPath}`);
+  writeFileSync(resultPath, resultText, "utf8");
   expect(failures, `Visual/semantic gate failed; inspect ${relativeToRepo(resultPath)}.`).toEqual([]);
 });

@@ -11,10 +11,9 @@ Namespace:
 ```txt
 joinSession
 leaveSession
-highlightRequest
-selectionUpdate
-annotationCreate
 heartbeat
+streamReadiness
+userActivity
 ```
 
 `joinSession` payload:
@@ -27,44 +26,41 @@ heartbeat
 }
 ```
 
-`highlightRequest` payload:
+`heartbeat` proves Socket connectivity only and does not reset inactivity.
+`streamReadiness` carries the canonical `trace_id` plus `ready: true|false`.
+Presence alone never starts idle tracking: `ready: true` marks this peer as a
+qualifying WebRTC stream, while `ready: false`, leave, and disconnect remove it.
+`userActivity` is accepted only after the socket joined the same session, its
+stream is ready, and the event carries that session's canonical `trace_id`:
 
 ```json
 {
   "session_id": "review_session_xxx",
-  "user_id": "dev_user_001",
-  "source": "issue_panel",
-  "issue_id": "ISSUE-DEMO-001",
-  "items": [
-    {
-      "usd_prim_path": "/World",
-      "ifc_guid": "2VJ3sK9L000fake001",
-      "color": [1, 0, 0, 1],
-      "label": "測試：BIM issue highlight"
-    }
-  ]
+  "trace_id": "rev_review_session_xxx"
 }
-```
-
-`annotationCreate` also appends local coordinator shadow metadata and can be
-forwarded to the external control-plane callback path:
-
-```http
-POST /api/review-sessions/{session_id}/annotations
 ```
 
 ## Coordinator To Clients
 
 ```txt
 presenceUpdated
-highlightRequest
-selectionUpdate
-annotationCreated
+session:idle_countdown
+session:idle_countdown_cancelled
+session:closed
 ```
 
 Events are broadcast to the same `session_id` room except the sender where appropriate.
 
-`highlightRequest`, `selectionUpdate`, and `annotationCreated` are room scoped: a second browser client joined to the same `session_id` receives the broadcast while other sessions do not. `annotationCreate` returns an ack error if local shadow persistence or the configured external callback path cannot save the annotation, but the namespace stays alive.
+Idle lifecycle events carry both `session_id` and the canonical `trace_id`.
+`session:idle_countdown` also carries `remaining_seconds` and
+`reason=inactivity`; cancellation is emitted only after positively recorded
+user activity. `session:closed` is emitted after the existing close path writes
+`reason=inactivity` to the session event ledger.
+
+Legacy collaboration events (`highlightRequest`, `selectionUpdate`,
+`annotationCreate`, and `annotationCreated`) are retired and are not registered
+by the live `/review` namespace. Clients must not use them as current product
+contracts.
 
 ## Ack And Session Validation
 
@@ -85,4 +81,7 @@ Validation failures:
 { "ok": false, "error": "Review session is not active." }
 ```
 
-`joinSession`, `leaveSession`, `highlightRequest`, `selectionUpdate`, and `annotationCreate` must not join a Socket.IO room, write event log entries, or persist annotations when the session does not exist or is `closing`, `closed`, or `failed`.
+`joinSession`, `heartbeat`, `streamReadiness`, `userActivity`, and `leaveSession` must not mutate
+presence or idle state when the session does not exist or is `closing`,
+`closed`, or `failed`. A connectivity `heartbeat` must never count as user
+activity.

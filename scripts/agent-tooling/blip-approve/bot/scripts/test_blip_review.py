@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 import base64
-import copy
 import hashlib
 import hmac
 import importlib.util
@@ -150,6 +149,78 @@ def make_repo_safety() -> dict:
     return {"sha256": "e" * 64, "allow_auto_merge": False}
 
 
+def make_protection_payload(*, contexts: list[str] | None = None) -> dict:
+    if contexts is None:
+        contexts = ["agent-governance", "service-tests"]
+    return {
+        "required_status_checks": {
+            "strict": True,
+            "contexts": list(contexts),
+            "checks": [
+                {"context": context, "app_id": blip.AGENT_GOVERNANCE_APP_ID} for context in contexts
+            ],
+        },
+        "required_pull_request_reviews": {
+            "required_approving_review_count": 1,
+            "dismiss_stale_reviews": True,
+            "require_code_owner_reviews": True,
+            "require_last_push_approval": False,
+        },
+        "required_conversation_resolution": {"enabled": True},
+        "enforce_admins": {"enabled": True},
+        "allow_force_pushes": {"enabled": False},
+        "allow_deletions": {"enabled": False},
+        "required_linear_history": {"enabled": False},
+        "required_signatures": {"enabled": False},
+        "lock_branch": {"enabled": False},
+        "allow_fork_syncing": {"enabled": False},
+        "block_creations": {"enabled": False},
+        "restrictions": None,
+    }
+
+
+def protection_policy_env(protection: object, *, active_rules: object | None = None) -> dict[str, str]:
+    return {
+        blip.PROTECTION_POLICY_ENV: json.dumps(
+            {
+                "active_rules": [] if active_rules is None else active_rules,
+                "protection": protection,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+    }
+
+
+def make_ref_update_rule_response(
+    *,
+    contexts: list[str] | None = None,
+    pattern: str = "main",
+    overrides: dict | None = None,
+    rule: object = "default",
+) -> dict:
+    if rule == "default":
+        rule_value: object = {
+            "pattern": pattern,
+            "requiredApprovingReviewCount": 1,
+            "requiresCodeOwnerReviews": True,
+            "requiresConversationResolution": True,
+            "allowsForcePushes": False,
+            "allowsDeletions": False,
+            "blocksCreations": False,
+            "requiresLinearHistory": False,
+            "requiresSignatures": False,
+            "requiredStatusCheckContexts": (
+                ["agent-governance", "service-tests"] if contexts is None else list(contexts)
+            ),
+        }
+        if overrides:
+            rule_value.update(overrides)
+    else:
+        rule_value = rule
+    return {"data": {"repository": {"ref": {"refUpdateRule": rule_value}}}}
+
+
 def make_changed_file(
     path: str = "src/example.py",
     *,
@@ -287,6 +358,7 @@ def make_capability(
     *,
     head: str = HEAD,
     review_mode: str = "focused_semantic",
+    human_critical_override: bool = False,
     issued: int | None = None,
     expires: int | None = None,
 ) -> str:
@@ -302,6 +374,7 @@ def make_capability(
         issued_at=issued,
         expires_at=expires,
         nonce=nonce,
+        human_critical_override=human_critical_override,
     )
     encoded = base64.urlsafe_b64encode(payload.encode()).decode().rstrip("=")
     signature = hmac.new(token.encode(), payload.encode(), hashlib.sha256).hexdigest()
@@ -559,6 +632,57 @@ class CodexThreadFixTests(unittest.TestCase):
         with self.assertRaisesRegex(SystemExit, "Live thread resolution"):
             blip.validate_cli(argparse.Namespace(**(base | {"resolve": [THREAD_ID], "live": True})))
 
+    def test_cli_binds_human_critical_override_to_live_human_mode(self) -> None:
+        base = dict(
+            request_codex_fix=[],
+            expected_base=BASE,
+            expected_head=HEAD,
+            confirm_fix_now=False,
+            ack_unverified_codex_fix=False,
+            resolve=[],
+            resolve_all=False,
+            reply="",
+            approve=True,
+            body="",
+            body_file=None,
+            allow_unresolved=False,
+            allow_duplicate=False,
+            review_mode="human_critical",
+            human_critical_override=False,
+            live=True,
+        )
+        with self.assertRaisesRegex(SystemExit, "requires --human-critical-override"):
+            blip.validate_cli(argparse.Namespace(**base))
+        with self.assertRaisesRegex(SystemExit, "forbidden for machine"):
+            blip.validate_cli(
+                argparse.Namespace(
+                    **(base | {"review_mode": "focused_semantic", "human_critical_override": True})
+                )
+            )
+        with self.assertRaisesRegex(SystemExit, "live owner-broker"):
+            blip.validate_cli(
+                argparse.Namespace(**(base | {"human_critical_override": True, "live": False}))
+            )
+        with patch.dict(blip.os.environ, {blip.APPROVAL_CAPABILITY_ENV: "capability"}, clear=False):
+            blip.validate_cli(argparse.Namespace(**(base | {"human_critical_override": True})))
+        with self.assertRaisesRegex(SystemExit, "reply-only"):
+            blip.validate_cli(
+                argparse.Namespace(
+                    **(
+                        base
+                        | {
+                            "request_codex_fix": [THREAD_ID],
+                            "approve": False,
+                            "review_mode": "",
+                            "human_critical_override": True,
+                            "confirm_fix_now": True,
+                            "ack_unverified_codex_fix": True,
+                            "live": False,
+                        }
+                    )
+                )
+            )
+
     def test_live_codex_fix_rejects_codex_thread_author(self) -> None:
         codex_thread = make_thread(
             comments=[
@@ -738,106 +862,121 @@ class AutomatedApprovalTests(unittest.TestCase):
         self.assertEqual(submit_mock.call_args.kwargs["capability_raw"], "capability")
 
     def test_branch_protection_policy_is_strict_and_complete(self) -> None:
-        protection = {
-            "required_status_checks": {
-                "strict": True,
-                "contexts": ["agent-governance", "service-tests"],
-                "checks": [
-                    {"context": "agent-governance", "app_id": blip.AGENT_GOVERNANCE_APP_ID},
-                    {"context": "service-tests", "app_id": blip.AGENT_GOVERNANCE_APP_ID},
-                ],
-            },
-            "required_pull_request_reviews": {
-                "required_approving_review_count": 1,
-                "dismiss_stale_reviews": True,
-                "require_code_owner_reviews": True,
-                "require_last_push_approval": False,
-            },
-            "required_conversation_resolution": {"enabled": True},
-            "enforce_admins": {"enabled": True},
-            "allow_force_pushes": {"enabled": False},
-            "allow_deletions": {"enabled": False},
-            "required_linear_history": {"enabled": False},
-            "required_signatures": {"enabled": False},
-            "lock_branch": {"enabled": False},
-            "allow_fork_syncing": {"enabled": False},
-            "block_creations": {"enabled": False},
-            "restrictions": None,
-        }
-        with patch.object(blip, "http_json", side_effect=[[], protection]):
+        protection = make_protection_payload()
+        with patch.dict(blip.os.environ, protection_policy_env(protection)), patch.object(
+            blip, "http_json", return_value=make_ref_update_rule_response()
+        ):
             policy = blip.fetch_protection_policy("token", "monkey1sai", "AI-BIM-governance", "main")
         self.assertEqual([entry["context"] for entry in policy["required"]], ["agent-governance", "service-tests"])
         self.assertRegex(policy["sha256"], r"^[0-9a-f]{64}$")
+        self.assertEqual(policy["live_rule"]["required_approving_review_count"], 1)
+        self.assertEqual(policy["verification"], "protected_live_snapshot_plus_write_visible_cross_check")
 
         for invalid_count in (0, 2, "1", True):
-            invalid_protection = copy.deepcopy(protection)
+            invalid_protection = make_protection_payload()
             invalid_protection["required_pull_request_reviews"]["required_approving_review_count"] = invalid_count
-            with self.subTest(required_approving_review_count=invalid_count), patch.object(
-                blip, "http_json", side_effect=[[], invalid_protection]
+            with self.subTest(required_approving_review_count=invalid_count), patch.dict(
+                blip.os.environ, protection_policy_env(invalid_protection)
+            ), patch.object(
+                blip, "http_json", return_value=make_ref_update_rule_response()
             ), self.assertRaisesRegex(SystemExit, "exactly one approving review"):
                 blip.fetch_protection_policy("token", "monkey1sai", "AI-BIM-governance", "main")
 
-        with patch.object(blip, "http_json", return_value=[{"type": "pull_request"}]), self.assertRaisesRegex(
-            SystemExit, "Active rulesets"
-        ):
+        with patch.dict(
+            blip.os.environ,
+            protection_policy_env(protection, active_rules=[{"type": "pull_request"}]),
+        ), self.assertRaisesRegex(SystemExit, "Active rulesets"):
             blip.fetch_protection_policy("token", "monkey1sai", "AI-BIM-governance", "main")
 
-        protection["required_status_checks"]["checks"][0]["app_id"] = None
-        with patch.object(blip, "http_json", side_effect=[[], protection]), self.assertRaisesRegex(
-            SystemExit, "context or source"
-        ):
+        broken_source = make_protection_payload()
+        broken_source["required_status_checks"]["checks"][0]["app_id"] = None
+        with patch.dict(blip.os.environ, protection_policy_env(broken_source)), patch.object(
+            blip, "http_json", return_value=make_ref_update_rule_response()
+        ), self.assertRaisesRegex(SystemExit, "context or source"):
             blip.fetch_protection_policy("token", "monkey1sai", "AI-BIM-governance", "main")
 
     def test_branch_protection_rejects_duplicate_check_force_push_and_bypass(self) -> None:
         def protected_payload() -> dict:
-            return {
-                "required_status_checks": {
-                    "strict": True,
-                    "contexts": ["agent-governance"],
-                    "checks": [{"context": "agent-governance", "app_id": blip.AGENT_GOVERNANCE_APP_ID}],
-                },
-                "required_pull_request_reviews": {
-                    "required_approving_review_count": 1,
-                    "dismiss_stale_reviews": True,
-                    "require_code_owner_reviews": True,
-                    "require_last_push_approval": False,
-                },
-                "required_conversation_resolution": {"enabled": True},
-                "enforce_admins": {"enabled": True},
-                "allow_force_pushes": {"enabled": False},
-                "allow_deletions": {"enabled": False},
-                "required_linear_history": {"enabled": False},
-                "required_signatures": {"enabled": False},
-                "lock_branch": {"enabled": False},
-                "allow_fork_syncing": {"enabled": False},
-                "block_creations": {"enabled": False},
-                "restrictions": None,
-            }
+            return make_protection_payload(contexts=["agent-governance"])
+
+        def fetch_with(payload: dict) -> None:
+            with patch.dict(blip.os.environ, protection_policy_env(payload)), patch.object(
+                blip,
+                "http_json",
+                return_value=make_ref_update_rule_response(contexts=["agent-governance"]),
+            ):
+                blip.fetch_protection_policy("token", "monkey1sai", "AI-BIM-governance", "main")
 
         duplicate = protected_payload()
         duplicate["required_status_checks"]["checks"].append(
             {"context": "agent-governance", "app_id": 999}
         )
-        with patch.object(blip, "http_json", side_effect=[[], duplicate]), self.assertRaisesRegex(
-            SystemExit, "duplicated or source-ambiguous"
-        ):
-            blip.fetch_protection_policy("token", "monkey1sai", "AI-BIM-governance", "main")
+        with self.assertRaisesRegex(SystemExit, "duplicated or source-ambiguous"):
+            fetch_with(duplicate)
 
         force = protected_payload()
         force["allow_force_pushes"] = {"enabled": True}
-        with patch.object(blip, "http_json", side_effect=[[], force]), self.assertRaisesRegex(
-            SystemExit, "disallow force pushes"
-        ):
-            blip.fetch_protection_policy("token", "monkey1sai", "AI-BIM-governance", "main")
+        with self.assertRaisesRegex(SystemExit, "disallow force pushes"):
+            fetch_with(force)
 
         bypass = protected_payload()
         bypass["required_pull_request_reviews"]["bypass_pull_request_allowances"] = {
             "users": [{"login": "owner"}], "teams": [], "apps": []
         }
-        with patch.object(blip, "http_json", side_effect=[[], bypass]), self.assertRaisesRegex(
-            SystemExit, "bypass or dismissal"
-        ):
+        with self.assertRaisesRegex(SystemExit, "bypass or dismissal"):
+            fetch_with(bypass)
+
+    def test_protected_policy_snapshot_is_strict_bounded_and_secret_free(self) -> None:
+        protection = make_protection_payload()
+        cases = [
+            ("", "requires protected"),
+            ("garbage", "malformed"),
+            ('{"active_rules":[],"protection":{},"extra":true}', "invalid schema"),
+            ('{"active_rules":[{}],"protection":{}}', "Active rulesets"),
+            ('{"active_rules":[],"protection":null}', "no protection object"),
+            ('{"active_rules":[],"active_rules":[],"protection":{}}', "malformed"),
+            ('{"active_rules":[],"protection":{"enforce_admins":{},"enforce_admins":{}}}', "malformed"),
+        ]
+        for raw, message in cases:
+            with self.subTest(message=message), self.assertRaisesRegex(SystemExit, message):
+                blip.parse_protection_policy_snapshot(raw)
+        verified = blip.parse_protection_policy_snapshot(
+            protection_policy_env(protection)[blip.PROTECTION_POLICY_ENV]
+        )
+        self.assertEqual(verified["protection"], protection)
+        with self.assertRaisesRegex(SystemExit, "size limit"):
+            blip.parse_protection_policy_snapshot("x" * (blip.PROTECTION_POLICY_MAX_CHARS + 1))
+
+    def test_live_ref_update_rule_cross_check_fails_closed(self) -> None:
+        protection = make_protection_payload()
+        env = protection_policy_env(protection)
+
+        with patch.dict(blip.os.environ, env), patch.object(
+            blip, "http_json", return_value=make_ref_update_rule_response(rule=None)
+        ), self.assertRaisesRegex(SystemExit, "not visible"):
             blip.fetch_protection_policy("token", "monkey1sai", "AI-BIM-governance", "main")
+
+        with patch.dict(blip.os.environ, env), patch.object(
+            blip, "http_json", return_value=make_ref_update_rule_response(pattern="release")
+        ), self.assertRaisesRegex(SystemExit, "pattern is not bound"):
+            blip.fetch_protection_policy("token", "monkey1sai", "AI-BIM-governance", "main")
+
+        drift_cases = [
+            ({"requiredApprovingReviewCount": 2}, "required_approving_review_count"),
+            ({"requiresCodeOwnerReviews": False}, "requires_code_owner_reviews"),
+            ({"requiresConversationResolution": False}, "requires_conversation_resolution"),
+            ({"allowsForcePushes": True}, "allows_force_pushes"),
+            ({"allowsDeletions": True}, "allows_deletions"),
+            ({"blocksCreations": True}, "blocks_creations"),
+            ({"requiresLinearHistory": True}, "requires_linear_history"),
+            ({"requiresSignatures": True}, "requires_signatures"),
+            ({"requiredStatusCheckContexts": ["agent-governance"]}, "required_status_check_contexts"),
+        ]
+        for overrides, field in drift_cases:
+            with self.subTest(field=field), patch.dict(blip.os.environ, env), patch.object(
+                blip, "http_json", return_value=make_ref_update_rule_response(overrides=overrides)
+            ), self.assertRaisesRegex(SystemExit, f"{field} differs from the protected live snapshot"):
+                blip.fetch_protection_policy("token", "monkey1sai", "AI-BIM-governance", "main")
 
     def test_required_checks_accept_platform_success_but_governance_must_really_pass(self) -> None:
         policy = make_policy()
@@ -1015,6 +1154,7 @@ class AutomatedApprovalTests(unittest.TestCase):
     def test_real_elevated_paths_never_consume_capability_or_post(self) -> None:
         token = "test-token-not-secret"
         elevated_paths = (
+            ".claude/launch.json",
             "governance-service/app.py",
             "bim-review-coordinator/src/services/authProvider.ts",
             "bim-review-coordinator/src/services/internalAuth.test.ts",
@@ -1160,6 +1300,7 @@ class AutomatedApprovalTests(unittest.TestCase):
             review_mode="focused_semantic",
         )
         self.assertEqual(parsed["nonce"], "1" * 32)
+        self.assertIs(parsed["human_critical_override"], False)
         with self.assertRaisesRegex(SystemExit, "signature"):
             blip.verify_approval_capability(
                 token="wrong",
@@ -1169,6 +1310,34 @@ class AutomatedApprovalTests(unittest.TestCase):
                 base=BASE,
                 head=HEAD,
                 review_mode="focused_semantic",
+            )
+
+        human_raw = make_capability(
+            token,
+            review_mode="human_critical",
+            human_critical_override=True,
+        )
+        human_parsed = blip.verify_approval_capability(
+            token=token,
+            raw=human_raw,
+            repo=blip.DEFAULT_REPO,
+            pr_number=PR_NUMBER,
+            base=BASE,
+            head=HEAD,
+            review_mode="human_critical",
+            human_critical_override=True,
+        )
+        self.assertIs(human_parsed["human_critical_override"], True)
+        with self.assertRaisesRegex(SystemExit, "exact operation"):
+            blip.verify_approval_capability(
+                token=token,
+                raw=human_raw,
+                repo=blip.DEFAULT_REPO,
+                pr_number=PR_NUMBER,
+                base=BASE,
+                head=HEAD,
+                review_mode="human_critical",
+                human_critical_override=False,
             )
         with self.assertRaisesRegex(SystemExit, "exact operation"):
             blip.verify_approval_capability(
@@ -1255,6 +1424,110 @@ class AutomatedApprovalTests(unittest.TestCase):
                     review_mode="focused_semantic",
                 )
 
+    def test_human_critical_override_needs_no_app_attestation(self) -> None:
+        identity = {
+            "login": blip.DEFAULT_REVIEWER,
+            "id": blip.DEFAULT_REVIEWER_ID,
+            "type": "User",
+            "permission": "write",
+        }
+        human_pr = make_approval_pr(
+            reviews=[],
+            files=[make_changed_file(".claude/launch.json")],
+        )
+        with patch.object(
+            blip, "fetch_immutable_pr_snapshot", return_value=make_immutable_snapshot(human_pr)
+        ), patch.object(blip, "fetch_protection_policy", return_value=make_policy()), patch.object(
+            blip, "fetch_repository_safety", return_value=make_repo_safety()
+        ), patch.object(blip, "verify_identity", return_value=identity), patch.object(
+            blip, "find_ship_attestation"
+        ) as attestation_mock:
+            result = blip.approval_preflight(
+                token="token",
+                owner="monkey1sai",
+                name="AI-BIM-governance",
+                pr_number=PR_NUMBER,
+                pr=human_pr,
+                base=BASE,
+                head=HEAD,
+                review_mode="human_critical",
+                human_critical_override=True,
+            )
+        attestation_mock.assert_not_called()
+        self.assertEqual(result["attestation"], {"kind": "human_critical_override"})
+
+    def test_human_critical_override_preserves_exact_head_app_blockers(self) -> None:
+        elevated_files = [make_changed_file(".claude/launch.json")]
+        identity = {
+            "login": blip.DEFAULT_REVIEWER,
+            "id": blip.DEFAULT_REVIEWER_ID,
+            "type": "User",
+            "permission": "write",
+        }
+        cases = (
+            ("COMMENTED", "VERDICT: HELD\n", "NO-SHIP/HELD"),
+            ("COMMENTED", "VERDICT: NO-SHIP\n", "NO-SHIP/HELD"),
+            ("CHANGES_REQUESTED", "schema-drifted blocker", "requested changes"),
+            ("APPROVED", "unexpected app approval", "must never submit APPROVED"),
+        )
+        for state, body, message in cases:
+            blocked_pr = make_approval_pr(
+                reviews=[
+                    make_review(
+                        "codex-tri-adversarial-bot",
+                        state,
+                        body,
+                        review_id=ATTESTATION_ID,
+                    )
+                ],
+                files=elevated_files,
+            )
+            with self.subTest(state=state, body=body), patch.object(
+                blip, "fetch_immutable_pr_snapshot", return_value=make_immutable_snapshot(blocked_pr)
+            ), patch.object(blip, "verify_identity", return_value=identity), self.assertRaisesRegex(
+                SystemExit, message
+            ):
+                blip.approval_preflight(
+                    token="token",
+                    owner="monkey1sai",
+                    name="AI-BIM-governance",
+                    pr_number=PR_NUMBER,
+                    pr=blocked_pr,
+                    base=BASE,
+                    head=HEAD,
+                    review_mode="human_critical",
+                    human_critical_override=True,
+                )
+
+        capacity_pr = make_approval_pr(
+            reviews=[
+                make_review(
+                    "unrelated-reviewer",
+                    "COMMENTED",
+                    "non-blocking",
+                    review_id=10_000 + index,
+                )
+                for index in range(100)
+            ],
+            files=elevated_files,
+        )
+        with patch.object(
+            blip, "fetch_immutable_pr_snapshot", return_value=make_immutable_snapshot(capacity_pr)
+        ), patch.object(blip, "verify_identity", return_value=identity), self.assertRaisesRegex(
+            SystemExit, "at capacity"
+        ):
+            blip.approval_preflight(
+                token="token",
+                owner="monkey1sai",
+                name="AI-BIM-governance",
+                pr_number=PR_NUMBER,
+                pr=capacity_pr,
+                base=BASE,
+                head=HEAD,
+                review_mode="human_critical",
+                human_critical_override=True,
+            )
+
     def test_live_approval_posts_exact_commit_and_requires_validated_readback(self) -> None:
         token = "test-token-not-secret"
         review_mode = "focused_semantic"
@@ -1324,6 +1597,126 @@ class AutomatedApprovalTests(unittest.TestCase):
         self.assertEqual(request.kwargs["body"]["commit_id"], HEAD)
         self.assertEqual(request.kwargs["body"]["event"], "APPROVE")
         self.assertEqual(request.kwargs["body"]["body"], body)
+
+    def test_human_critical_live_approval_skips_only_app_attestation(self) -> None:
+        token = "test-token-not-secret"
+        body = blip.automated_approval_body(
+            pr_number=PR_NUMBER,
+            base=BASE,
+            head=HEAD,
+        )
+        posted = {
+            "id": 4242,
+            "state": "APPROVED",
+            "body": body,
+            "commit_id": HEAD,
+            "submitted_at": "2026-08-12T10:01:00Z",
+            "html_url": f"https://github.com/monkey1sai/AI-BIM-governance/pull/{PR_NUMBER}#pullrequestreview-4242",
+            "user": {"login": blip.DEFAULT_REVIEWER, "id": blip.DEFAULT_REVIEWER_ID, "type": "User"},
+        }
+        after_review = make_review(blip.DEFAULT_REVIEWER, "APPROVED", body, review_id=4242)
+        elevated_files = [make_changed_file(".claude/launch.json")]
+        before = make_approval_pr(reviews=[], files=elevated_files)
+        after = make_approval_pr(
+            review_decision="APPROVED",
+            merge_state="CLEAN",
+            reviews=[after_review],
+            files=elevated_files,
+        )
+        identity = {
+            "login": blip.DEFAULT_REVIEWER,
+            "id": blip.DEFAULT_REVIEWER_ID,
+            "type": "User",
+            "permission": "write",
+        }
+        with patch.object(
+            blip, "fetch_immutable_pr_snapshot", return_value=make_immutable_snapshot(before)
+        ), patch.object(blip, "fetch_pr", side_effect=[before, before, after]), patch.object(
+            blip, "fetch_protection_policy", return_value=make_policy()
+        ), patch.object(
+            blip, "fetch_repository_safety", return_value=make_repo_safety()
+        ), patch.object(
+            blip, "verify_identity", return_value=identity
+        ), patch.object(
+            blip, "http_json", return_value=posted
+        ), patch.object(
+            blip, "consume_capability_nonce"
+        ) as consume_mock, patch.object(
+            blip, "find_ship_attestation"
+        ) as attestation_mock:
+            result = blip.submit_automated_approval(
+                token=token,
+                owner="monkey1sai",
+                name="AI-BIM-governance",
+                repo=blip.DEFAULT_REPO,
+                pr_number=PR_NUMBER,
+                base=BASE,
+                head=HEAD,
+                review_mode="human_critical",
+                capability_raw=make_capability(
+                    token,
+                    review_mode="human_critical",
+                    human_critical_override=True,
+                ),
+                human_critical_override=True,
+            )
+        self.assertEqual(result["review_id"], 4242)
+        consume_mock.assert_called_once_with("1" * 32)
+        attestation_mock.assert_not_called()
+
+    def test_human_critical_live_blocker_never_consumes_or_posts(self) -> None:
+        token = "test-token-not-secret"
+        identity = {
+            "login": blip.DEFAULT_REVIEWER,
+            "id": blip.DEFAULT_REVIEWER_ID,
+            "type": "User",
+            "permission": "write",
+        }
+        cases = (
+            ("COMMENTED", "VERDICT: HELD\n", "NO-SHIP/HELD"),
+            ("CHANGES_REQUESTED", "schema-drifted blocker", "requested changes"),
+        )
+        for state, body, message in cases:
+            blocked_pr = make_approval_pr(
+                reviews=[
+                    make_review(
+                        "codex-tri-adversarial-bot",
+                        state,
+                        body,
+                        review_id=ATTESTATION_ID,
+                    )
+                ],
+                files=[make_changed_file(".claude/launch.json")],
+            )
+            with self.subTest(state=state), patch.object(
+                blip, "fetch_pr", return_value=blocked_pr
+            ), patch.object(
+                blip, "fetch_immutable_pr_snapshot", return_value=make_immutable_snapshot(blocked_pr)
+            ), patch.object(blip, "verify_identity", return_value=identity), patch.object(
+                blip, "consume_capability_nonce"
+            ) as consume_mock, patch.object(
+                blip, "http_json"
+            ) as post_mock, self.assertRaisesRegex(
+                SystemExit, message
+            ):
+                blip.submit_automated_approval(
+                    token=token,
+                    owner="monkey1sai",
+                    name="AI-BIM-governance",
+                    repo=blip.DEFAULT_REPO,
+                    pr_number=PR_NUMBER,
+                    base=BASE,
+                    head=HEAD,
+                    review_mode="human_critical",
+                    capability_raw=make_capability(
+                        token,
+                        review_mode="human_critical",
+                        human_critical_override=True,
+                    ),
+                    human_critical_override=True,
+                )
+            consume_mock.assert_not_called()
+            post_mock.assert_not_called()
 
     def test_live_approval_never_posts_after_head_or_policy_drift(self) -> None:
         token = "test-token-not-secret"

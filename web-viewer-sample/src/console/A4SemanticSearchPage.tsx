@@ -149,6 +149,17 @@ export function A4SemanticSearchPage() {
   const [retrying, setRetrying] = useState(false);
   const [retryFailed, setRetryFailed] = useState(false);
   const [runNotice, setRunNotice] = useState<{ kind: "empty" | "uninterpreted"; text: string } | null>(null);
+  const [selectedGuid, setSelectedGuid] = useState<string | null>(null);
+  const [draftTitle, setDraftTitle] = useState("");
+  const [draftDescription, setDraftDescription] = useState("");
+  const [draftSeverity, setDraftSeverity] = useState<"low" | "medium" | "high" | "critical">("medium");
+  const [draftAssignee, setDraftAssignee] = useState("");
+  const [issueBusy, setIssueBusy] = useState(false);
+  const [issueError, setIssueError] = useState<string | null>(null);
+  const [createdIssue, setCreatedIssue] = useState<{ id: string; status?: string; replayed?: boolean } | null>(null);
+  const [handoffBusy, setHandoffBusy] = useState(false);
+  const [handoffError, setHandoffError] = useState<string | null>(null);
+  const [handoffResult, setHandoffResult] = useState<{ handoff_id: string; url: string } | null>(null);
   const llmStatusRequestIdRef = useRef(0);
   const sourceSelectionInitializedRef = useRef(false);
 
@@ -314,6 +325,11 @@ export function A4SemanticSearchPage() {
     setRunNotice(null);
     setResult(null);
     setResultContext(null);
+    setSelectedGuid(null);
+    setCreatedIssue(null);
+    setIssueError(null);
+    setHandoffResult(null);
+    setHandoffError(null);
     try {
       const userToken = getLocalDevUserCarrier();
       // retry 沿用同一組 explicit query/mode，並以 retry_of_query_id 關聯 prior 查詢。
@@ -348,6 +364,75 @@ export function A4SemanticSearchPage() {
       if (interpretMode !== "deterministic") void refreshLlmStatusAfterRun();
       setBusy(false);
       setRetrying(false);
+    }
+  }
+
+  const onSelectRow = (row: ModelSearchResultRow) => {
+    const guid = row.ifc_guid ?? "";
+    setSelectedGuid(guid);
+    setDraftTitle(`${row.name || row.ifc_class || "Element"} · ${query.trim()}`);
+    setCreatedIssue(null);
+    setIssueError(null);
+    setHandoffResult(null);
+    setHandoffError(null);
+  };
+
+  async function onCreateIssue() {
+    const selected = rows.find((r) => (r.ifc_guid ?? "") === selectedGuid);
+    if (!selected || !selected.ifc_guid || sourceMode !== "session" || !sessionId) return;
+    setIssueBusy(true);
+    setIssueError(null);
+    try {
+      const userToken = getLocalDevUserCarrier();
+      const proof = selected.evidence_proof ?? (selected as { proof_token?: string }).proof_token ?? "";
+      const snapshot = (selected.a4_evidence_snapshot as Record<string, unknown> | undefined) ?? {
+        ifc_guid: selected.ifc_guid,
+        ifc_class: selected.ifc_class,
+        name: selected.name,
+        storey: selected.storey,
+        properties: selected.properties,
+        query_id: result?.query_id,
+        evidence_refs: selected.evidence_refs,
+      };
+      const res = await governanceClient.createIssueFromA4Session(
+        sessionId,
+        {
+          title: draftTitle.trim() || `${selected.name || selected.ifc_class} · ${query.trim()}`,
+          description: draftDescription.trim() || null,
+          severity: draftSeverity,
+          assignee: draftAssignee.trim() || null,
+          ifc_guid: selected.ifc_guid,
+          usd_prim_path: selected.usd_prim_path ?? null,
+          evidence_proof: proof,
+          a4_evidence_snapshot: snapshot,
+        },
+        userToken,
+      );
+      setCreatedIssue({ id: res.issue.id, status: res.issue.status, replayed: res.replayed });
+    } catch (e) {
+      setIssueError(a4RequestErrorCopy(e));
+    } finally {
+      setIssueBusy(false);
+    }
+  }
+
+  async function onTriggerHandoff(row: ModelSearchResultRow) {
+    const proof = row.evidence_proof ?? (row as { proof_token?: string }).proof_token ?? "";
+    if (!row.usd_prim_path || !proof || sourceMode !== "session" || !sessionId) return;
+    setHandoffBusy(true);
+    setHandoffError(null);
+    try {
+      const userToken = getLocalDevUserCarrier();
+      const res = await coordinatorClient.createA4Handoff(
+        sessionId,
+        { action: "focus", evidence_proofs: [proof] },
+        userToken,
+      );
+      setHandoffResult({ handoff_id: res.handoff_id, url: res.url });
+    } catch (e) {
+      setHandoffError(t("3D handoff 建立失敗。", "Failed to create 3D handoff."));
+    } finally {
+      setHandoffBusy(false);
     }
   }
 
@@ -613,25 +698,31 @@ export function A4SemanticSearchPage() {
         }
         prov="asbuilt"
       >
-        <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
-          <Btn data-testid="a4-create-issues" disabled caption={actionsUnavailableReason}>
-            {t("Issue 尚不可用", "Issue unavailable")}
-          </Btn>
-        </div>
-        <p className="ec-warn" data-testid="a4-table-only">
-          {sourceMode === "session"
-            ? t(
-              "目前結果僅供表格檢視：A4 Issue 需要完整 session-bound proof 與認證 lease，3D 動作維持停用。",
-              "Results are table-only: A4 Issue requires a complete session-bound proof and an authenticated lease; 3D actions remain disabled.",
-            )
-            : t(
-              "目前結果僅供表格檢視：ifc_ready 相容入口不具 Issue 或 3D authority。",
-              "Results are table-only: the ifc_ready compatibility entry carries no Issue or 3D authority.",
+        {sourceMode === "ifc_ready" ? (
+          <>
+            <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+              <Btn data-testid="a4-create-issues" disabled caption={actionsUnavailableReason}>
+                {t("Issue 尚不可用", "Issue unavailable")}
+              </Btn>
+            </div>
+            <p className="ec-warn" data-testid="a4-table-only">
+              {t(
+                "目前結果僅供表格檢視：ifc_ready 相容入口不具 Issue 或 3D authority。",
+                "Results are table-only: the ifc_ready compatibility entry carries no Issue or 3D authority.",
+              )}
+            </p>
+            <p className="ec-note" data-testid="a4-actions-unavailable">
+              {actionsUnavailableReason}
+            </p>
+          </>
+        ) : (
+          <p className="ec-note" data-testid="a4-session-scope-tip" style={{ marginBottom: 8 }}>
+            {t(
+              "點選任一列即可檢視構件細節、填寫並建立 A4 Issue（具 signed proof），或於已對齊構件觸發 3D Focus handoff。",
+              "Click any row to inspect element details, compose & create an A4 Issue (with signed proof), or trigger 3D Focus handoff for mapped elements.",
             )}
-        </p>
-        <p className="ec-note" data-testid="a4-actions-unavailable">
-          {actionsUnavailableReason}
-        </p>
+          </p>
+        )}
         <div className="ec-table-wrap">
           <table className="ec-table" data-testid="a4-results-table">
             <thead>
@@ -652,8 +743,15 @@ export function A4SemanticSearchPage() {
               )}
               {rows.map((row: ModelSearchResultRow) => {
                 const guid = row.ifc_guid ?? "";
+                const isSelected = selectedGuid !== null && selectedGuid === guid;
                 return (
-                  <tr key={guid || `${row.name}-${row.storey}`}>
+                  <tr
+                    key={guid || `${row.name}-${row.storey}`}
+                    data-testid={`a4-row-${guid || "anon"}`}
+                    className={isSelected ? "ec-row-selected" : undefined}
+                    onClick={() => { if (sourceMode === "session") onSelectRow(row); }}
+                    style={{ cursor: sourceMode === "session" ? "pointer" : "default" }}
+                  >
                     <td className="mono">{row.ifc_guid ?? "—"}</td>
                     <td>{row.ifc_class}</td>
                     <td>{row.name ?? "—"}</td>
@@ -672,6 +770,109 @@ export function A4SemanticSearchPage() {
             </tbody>
           </table>
         </div>
+        {sourceMode === "session" && selectedGuid && (() => {
+          const selected = rows.find((r) => (r.ifc_guid ?? "") === selectedGuid);
+          if (!selected) return null;
+          return (
+            <div data-testid="a4-issue-draft" style={{ marginTop: 16, padding: 12, background: "var(--ab-inset)", border: "1px solid rgba(120,160,210,.2)", borderRadius: 8 }}>
+              <h3 style={{ margin: "0 0 8px 0", fontSize: 13, color: "var(--ab-text)" }}>
+                {t("A4 Issue 草稿編排與 3D 動作", "A4 Issue Draft & 3D Action")} — {selected.ifc_guid}
+              </h3>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 8 }}>
+                <label className="ec-field">
+                  <span>{t("標題", "Title")}</span>
+                  <input
+                    data-testid="a4-issue-draft-title"
+                    type="text"
+                    value={draftTitle}
+                    onChange={(e) => setDraftTitle(e.target.value)}
+                    style={{ width: "100%" }}
+                  />
+                </label>
+                <label className="ec-field">
+                  <span>{t("嚴重度", "Severity")}</span>
+                  <select
+                    data-testid="a4-issue-draft-severity"
+                    value={draftSeverity}
+                    onChange={(e) => setDraftSeverity(e.target.value as "low" | "medium" | "high" | "critical")}
+                  >
+                    <option value="low">low</option>
+                    <option value="medium">medium</option>
+                    <option value="high">high</option>
+                    <option value="critical">critical</option>
+                  </select>
+                </label>
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 8, marginBottom: 8 }}>
+                <label className="ec-field">
+                  <span>{t("指派對象", "Assignee")}</span>
+                  <input
+                    data-testid="a4-issue-draft-assignee"
+                    type="text"
+                    value={draftAssignee}
+                    onChange={(e) => setDraftAssignee(e.target.value)}
+                    placeholder="e.g. BIM Manager"
+                    style={{ width: "100%" }}
+                  />
+                </label>
+                <label className="ec-field">
+                  <span>{t("說明", "Description")}</span>
+                  <textarea
+                    data-testid="a4-issue-draft-description"
+                    rows={2}
+                    value={draftDescription}
+                    onChange={(e) => setDraftDescription(e.target.value)}
+                    style={{ width: "100%" }}
+                  />
+                </label>
+              </div>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                <Btn
+                  data-testid="a4-confirm-create-issue"
+                  primary
+                  disabled={issueBusy || !selected.ifc_guid}
+                  onClick={() => void onCreateIssue()}
+                >
+                  {issueBusy ? t("建立 Issue 中…", "Creating Issue…") : t("建立 Issue", "Create Issue")}
+                </Btn>
+                {selected.usd_prim_path && (
+                  <Btn
+                    data-testid="a4-focus-handoff"
+                    disabled={handoffBusy}
+                    onClick={() => void onTriggerHandoff(selected)}
+                  >
+                    {handoffBusy ? t("請求 3D Handoff 中…", "Requesting 3D Handoff…") : t("3D Focus (Handoff)", "3D Focus (Handoff)")}
+                  </Btn>
+                )}
+              </div>
+              {createdIssue && (
+                <p className="ec-note" data-testid="a4-issue-created" style={{ marginTop: 8 }}>
+                  {t(
+                    `已成功建立 Issue：${createdIssue.id}（狀態：${createdIssue.status ?? "open"}）${createdIssue.replayed ? " · replayed" : ""}`,
+                    `Issue created successfully: ${createdIssue.id} (status: ${createdIssue.status ?? "open"})${createdIssue.replayed ? " · replayed" : ""}`,
+                  )}
+                </p>
+              )}
+              {issueError && (
+                <p className="ec-warn" data-testid={issueError.includes("proof") ? "a4-proof-expired" : "a4-issue-error"} style={{ marginTop: 8 }}>
+                  {issueError}
+                </p>
+              )}
+              {handoffResult && (
+                <p className="ec-note" data-testid="a4-handoff-result" style={{ marginTop: 8 }}>
+                  <a href={handoffResult.url} target="_blank" rel="noopener noreferrer" style={{ color: "var(--ab-accent)", fontWeight: 600 }}>
+                    {t("開啟 3D 即時視圖（Handoff）→", "Open 3D Live View (Handoff) →")}
+                  </a>
+                </p>
+              )}
+              {handoffError && (
+                <p className="ec-warn" data-testid="a4-handoff-error" style={{ marginTop: 8 }}>
+                  {handoffError}
+                </p>
+              )}
+            </div>
+          );
+        })()}
         <p className="ec-muted" style={{ marginTop: 8 }}>
           {t(
             "3D：此 legacy table 不建立 handoff、不送 DataChannel，也不把 mapping 欄位視為 runtime authority。",

@@ -9,9 +9,18 @@ reviewer AI-BIM-governance PR #458 pins (`REVIEWER_LOGIN`/`REVIEWER_ID`).
 
 The approval path is deliberately narrower than the credential: fixed repository and
 reviewer, exact base/head, active branch protection, required checks, complete review
-state, independent exact-head SHIP attestation, no auto-merge, and a short-lived signed
-broker capability are all mandatory. It never merges, resolves a thread, dismisses a
+state, machine-mode exact-head SHIP attestation or an explicit human-critical owner
+override, no auto-merge, and a short-lived signed broker capability are all mandatory.
+It never merges, resolves a thread, dismisses a
 review, pushes, changes repository settings, or touches an owner-consent comment.
+
+Branch protection is verified from two sources because the least-privilege write
+reviewer cannot read GitHub's admin-only legacy protection endpoint (observed as
+HTTP 404 on 2026-09-01 across ten failed vote attempts): the manifest-verified
+protected parent supplies a non-secret snapshot from a separate read-only admin
+credential, and the write-visible GraphQL `refUpdateRule` is cross-checked live
+on every preflight and post-approval pass. The parent independently re-fetches
+the complete policy after the child exits and rejects any drift.
 
 Honest framing for anyone reading a report produced with this: an approval submitted
 here is a *scripted* approval carrying the operator's authority. It satisfies the
@@ -59,8 +68,12 @@ DEFAULT_REVIEWER_ID = 311287868
 DEFAULT_REPO = "monkey1sai/AI-BIM-governance"
 DEFAULT_BASE_BRANCH = "main"
 APPROVAL_CAPABILITY_ENV = "BLIP_APPROVAL_CAPABILITY"
-APPROVAL_CAPABILITY_VERSION = "blip-approval-capability/v1"
+APPROVAL_CAPABILITY_VERSION = "blip-approval-capability/v2"
+PROTECTION_POLICY_ENV = "BLIP_PROTECTION_POLICY_JSON"
+PROTECTION_POLICY_MAX_CHARS = 262144
 MACHINE_REVIEW_MODES = frozenset({"mechanical_only", "focused_semantic", "risk_scoped_specialists"})
+HUMAN_CRITICAL_REVIEW_MODE = "human_critical"
+SUPPORTED_REVIEW_MODES = MACHINE_REVIEW_MODES | {HUMAN_CRITICAL_REVIEW_MODE}
 SHIP_ATTESTERS = frozenset({"codex-tri-adversarial-bot", "codex-tri-adversarial-bot[bot]"})
 SHIP_ATTESTER_ID = 311390181
 BLOCKING_MARKER = re.compile(r"(?m)^VERDICT: (?:NO-SHIP|HELD)\s*$")
@@ -286,14 +299,22 @@ def normalized_changed_files(pr: dict) -> list[dict]:
     return normalized
 
 
-def changed_files_evidence(pr: dict) -> dict:
+def changed_files_evidence(
+    pr: dict,
+    *,
+    review_mode: str = "",
+    human_critical_override: bool = False,
+) -> dict:
     files = normalized_changed_files(pr)
+    elevated_scope_allowed = (
+        review_mode == HUMAN_CRITICAL_REVIEW_MODE and human_critical_override
+    )
     for entry in files:
         if entry["change_type"] in ("RENAMED", "COPIED"):
             raise SystemExit(
                 f"Changed path {entry['path']!r} is {entry['change_type']}; previous-path authority is unavailable, so approval is HELD"
             )
-        if path_requires_elevated_scope(entry["path"]):
+        if path_requires_elevated_scope(entry["path"]) and not elevated_scope_allowed:
             raise SystemExit(
                 f"Changed path {entry['path']!r} is self-referential governance; human_critical approval is required"
             )
@@ -362,25 +383,108 @@ def fetch_repository_safety(token: str, owner: str, name: str) -> dict:
     return normalized
 
 
-def fetch_protection_policy(token: str, owner: str, name: str, base_branch: str) -> dict:
-    encoded_branch = quote(base_branch, safe="")
-    active_rules = http_json(
-        "GET",
-        f"{API}/repos/{owner}/{name}/rules/branches/{encoded_branch}?per_page=100",
-        token=token,
-    )
-    if not isinstance(active_rules, list):
-        raise SystemExit("Active branch rules payload is malformed")
-    if len(active_rules) >= 100:
-        raise SystemExit("Active branch rules may be paginated; refusing incomplete protection state")
-    if active_rules:
-        raise SystemExit("Active rulesets are present but this approval broker only supports verified legacy protection")
+def parse_protection_policy_snapshot(raw: str) -> dict:
+    """Parse the non-secret snapshot injected by the protected parent broker."""
+    if not raw:
+        raise SystemExit(
+            f"Branch protection verification requires protected {PROTECTION_POLICY_ENV} input"
+        )
+    if len(raw) > PROTECTION_POLICY_MAX_CHARS:
+        raise SystemExit("Protected branch-policy snapshot exceeds the size limit")
 
-    protection = http_json(
-        "GET",
-        f"{API}/repos/{owner}/{name}/branches/{encoded_branch}/protection",
-        token=token,
+    def reject_duplicate_keys(pairs: list[tuple[str, object]]) -> dict:
+        result: dict[str, object] = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError(f"duplicate key: {key}")
+            result[key] = value
+        return result
+
+    try:
+        payload = json.loads(raw, object_pairs_hook=reject_duplicate_keys)
+    except ValueError:
+        raise SystemExit("Protected branch-policy snapshot is malformed") from None
+    if not isinstance(payload, dict) or set(payload) != {"active_rules", "protection"}:
+        raise SystemExit("Protected branch-policy snapshot has an invalid schema")
+    if payload["active_rules"] != []:
+        raise SystemExit("Active rulesets are present but this broker only supports verified legacy protection")
+    if not isinstance(payload["protection"], dict):
+        raise SystemExit("Protected branch-policy snapshot has no protection object")
+    return payload
+
+
+REF_UPDATE_RULE_QUERY = """
+query($owner:String!, $name:String!, $qualifiedName:String!) {
+  repository(owner:$owner, name:$name) {
+    ref(qualifiedName:$qualifiedName) {
+      refUpdateRule {
+        pattern
+        requiredApprovingReviewCount
+        requiresCodeOwnerReviews
+        requiresConversationResolution
+        allowsForcePushes
+        allowsDeletions
+        blocksCreations
+        requiresLinearHistory
+        requiresSignatures
+        requiredStatusCheckContexts
+      }
+    }
+  }
+}
+"""
+
+
+def fetch_live_ref_update_rule(token: str, owner: str, name: str, base_branch: str) -> dict:
+    """Read the write-visible live protection subset (GraphQL `refUpdateRule`)."""
+    data = graphql(
+        token,
+        REF_UPDATE_RULE_QUERY,
+        {"owner": owner, "name": name, "qualifiedName": f"refs/heads/{base_branch}"},
     )
+    ref = ((data.get("data") or {}).get("repository") or {}).get("ref")
+    rule = (ref or {}).get("refUpdateRule")
+    if not isinstance(rule, dict):
+        raise SystemExit("Live branch protection is not visible on the base branch; approval is HELD")
+    contexts = rule.get("requiredStatusCheckContexts")
+    if not isinstance(contexts, list) or not all(
+        isinstance(context, str) and context.strip() for context in contexts
+    ):
+        raise SystemExit("Live required status contexts are malformed")
+    flags: dict[str, bool] = {}
+    for field in (
+        "requiresCodeOwnerReviews",
+        "requiresConversationResolution",
+        "allowsForcePushes",
+        "allowsDeletions",
+        "blocksCreations",
+        "requiresLinearHistory",
+        "requiresSignatures",
+    ):
+        value = rule.get(field)
+        if not isinstance(value, bool):
+            raise SystemExit(f"Live branch protection field {field!r} is malformed")
+        flags[field] = value
+    approvals = rule.get("requiredApprovingReviewCount")
+    if not isinstance(approvals, int) or isinstance(approvals, bool):
+        raise SystemExit("Live required approving review count is malformed")
+    if rule.get("pattern") != base_branch:
+        raise SystemExit("Live branch protection pattern is not bound to the base branch")
+    return {
+        "pattern": base_branch,
+        "required_approving_review_count": approvals,
+        "required_status_check_contexts": sorted({context.strip() for context in contexts}),
+        "requires_code_owner_reviews": flags["requiresCodeOwnerReviews"],
+        "requires_conversation_resolution": flags["requiresConversationResolution"],
+        "allows_force_pushes": flags["allowsForcePushes"],
+        "allows_deletions": flags["allowsDeletions"],
+        "blocks_creations": flags["blocksCreations"],
+        "requires_linear_history": flags["requiresLinearHistory"],
+        "requires_signatures": flags["requiresSignatures"],
+    }
+
+
+def validate_protection_payload(protection: object, base_branch: str) -> dict:
     if not isinstance(protection, dict):
         raise SystemExit("Branch protection payload is missing or malformed")
 
@@ -504,6 +608,32 @@ def fetch_protection_policy(token: str, owner: str, name: str, base_branch: str)
         "restrictions": None,
         "active_rulesets": [],
     }
+    return normalized
+
+
+def fetch_protection_policy(token: str, owner: str, name: str, base_branch: str) -> dict:
+    snapshot = parse_protection_policy_snapshot(os.environ.get(PROTECTION_POLICY_ENV, "").strip())
+    normalized = validate_protection_payload(snapshot["protection"], base_branch)
+
+    live_rule = fetch_live_ref_update_rule(token, owner, name, base_branch)
+    snapshot_expectations = [
+        ("required_approving_review_count", normalized["approvals"]),
+        ("requires_code_owner_reviews", normalized["require_code_owner_reviews"]),
+        ("requires_conversation_resolution", normalized["required_conversation_resolution"]),
+        ("allows_force_pushes", normalized["allow_force_pushes"]),
+        ("allows_deletions", normalized["allow_deletions"]),
+        ("blocks_creations", normalized["block_creations"]),
+        ("requires_linear_history", normalized["required_linear_history"]),
+        ("requires_signatures", normalized["required_signatures"]),
+        ("required_status_check_contexts", sorted(entry["context"] for entry in normalized["required"])),
+    ]
+    for field, snapshot_value in snapshot_expectations:
+        if live_rule[field] != snapshot_value:
+            raise SystemExit(
+                f"Write-visible branch protection {field} differs from the protected live snapshot; approval is HELD"
+            )
+    normalized["live_rule"] = live_rule
+    normalized["verification"] = "protected_live_snapshot_plus_write_visible_cross_check"
     normalized["sha256"] = hashlib.sha256(
         json.dumps(normalized, sort_keys=True, separators=(",", ":")).encode("utf-8")
     ).hexdigest()
@@ -573,14 +703,7 @@ def validate_required_checks(pr: dict, policy: dict) -> dict:
     return {"count": len(policy["required"]), "sha256": digest}
 
 
-def find_ship_attestation(
-    pr: dict,
-    base: str,
-    head: str,
-    review_mode: str,
-    changed_files_sha256: str,
-    diff_sha256: str,
-) -> dict:
+def validate_ship_attester_state(pr: dict, head: str) -> list[dict]:
     reviews = review_nodes(pr)
     if len(reviews) >= 100:
         raise SystemExit("Review collection is at capacity; post-submit readback would be incomplete")
@@ -595,10 +718,26 @@ def find_ship_attestation(
     for review in exact:
         if review.get("state") == "APPROVED":
             raise SystemExit("The independent Codex App attester must never submit APPROVED")
+        if review.get("state") == "CHANGES_REQUESTED":
+            raise SystemExit(
+                "Independent Codex attester requested changes on this exact head"
+            )
         if BLOCKING_MARKER.search(str(review.get("body") or "")):
             raise SystemExit(
                 "Independent Codex attester recorded NO-SHIP/HELD on this exact head"
             )
+    return exact
+
+
+def find_ship_attestation(
+    pr: dict,
+    base: str,
+    head: str,
+    review_mode: str,
+    changed_files_sha256: str,
+    diff_sha256: str,
+) -> dict:
+    exact = validate_ship_attester_state(pr, head)
     footer = (
         f"{SHIP_ATTESTATION_PREFIX}\n"
         f"repo={DEFAULT_REPO}\n"
@@ -638,7 +777,16 @@ def find_ship_attestation(
 
 
 def approval_capability_payload(
-    *, repo: str, pr_number: int, base: str, head: str, review_mode: str, issued_at: int, expires_at: int, nonce: str
+    *,
+    repo: str,
+    pr_number: int,
+    base: str,
+    head: str,
+    review_mode: str,
+    issued_at: int,
+    expires_at: int,
+    nonce: str,
+    human_critical_override: bool = False,
 ) -> str:
     return "\n".join(
         [
@@ -650,6 +798,7 @@ def approval_capability_payload(
             head.lower(),
             DEFAULT_REVIEWER,
             review_mode,
+            f"human_critical_override={str(human_critical_override).lower()}",
             str(issued_at),
             str(expires_at),
             nonce.lower(),
@@ -658,7 +807,15 @@ def approval_capability_payload(
 
 
 def verify_approval_capability(
-    *, token: str, raw: str, repo: str, pr_number: int, base: str, head: str, review_mode: str
+    *,
+    token: str,
+    raw: str,
+    repo: str,
+    pr_number: int,
+    base: str,
+    head: str,
+    review_mode: str,
+    human_critical_override: bool = False,
 ) -> dict:
     encoded, separator, signature = raw.partition(".")
     if not separator or not re.fullmatch(r"[0-9a-fA-F]{64}", signature):
@@ -669,14 +826,14 @@ def verify_approval_capability(
     except (ValueError, UnicodeError):
         raise SystemExit("Approval capability encoding is invalid") from None
     fields = payload.split("\n")
-    if len(fields) != 11:
+    if len(fields) != 12:
         raise SystemExit("Approval capability payload is malformed")
     try:
-        issued_at = int(fields[8])
-        expires_at = int(fields[9])
+        issued_at = int(fields[9])
+        expires_at = int(fields[10])
     except ValueError:
         raise SystemExit("Approval capability timestamps are malformed") from None
-    nonce = fields[10]
+    nonce = fields[11]
     if not re.fullmatch(r"[0-9a-f]{32}", nonce):
         raise SystemExit("Approval capability nonce is malformed")
     expected = approval_capability_payload(
@@ -688,6 +845,7 @@ def verify_approval_capability(
         issued_at=issued_at,
         expires_at=expires_at,
         nonce=nonce,
+        human_critical_override=human_critical_override,
     )
     if payload != expected:
         raise SystemExit("Approval capability is not bound to this exact operation")
@@ -699,7 +857,12 @@ def verify_approval_capability(
         raise SystemExit("Approval capability issue time is in the future")
     if expires_at <= issued_at or expires_at <= now or expires_at > issued_at + 600:
         raise SystemExit("Approval capability is expired or overlong")
-    return {"nonce": nonce, "issued_at": issued_at, "expires_at": expires_at}
+    return {
+        "nonce": nonce,
+        "issued_at": issued_at,
+        "expires_at": expires_at,
+        "human_critical_override": human_critical_override,
+    }
 
 
 def consume_capability_nonce(nonce: str) -> None:
@@ -945,7 +1108,16 @@ def exclusive_approval_lock(pr_number: int, base: str, head: str):
 
 
 def approval_preflight(
-    *, token: str, owner: str, name: str, pr_number: int, pr: dict, base: str, head: str, review_mode: str
+    *,
+    token: str,
+    owner: str,
+    name: str,
+    pr_number: int,
+    pr: dict,
+    base: str,
+    head: str,
+    review_mode: str,
+    human_critical_override: bool = False,
 ) -> dict:
     validate_cycle(pr, pr_number, base, head, "during approval preflight")
     if pr.get("baseRefName") != DEFAULT_BASE_BRANCH:
@@ -956,8 +1128,14 @@ def approval_preflight(
         raise SystemExit("Draft or malformed PR state cannot be approved")
     if pr.get("autoMergeRequest") is not None:
         raise SystemExit("Auto-merge is enabled; approval could trigger a merge, so this approve-only broker is HELD")
-    if review_mode not in MACHINE_REVIEW_MODES:
-        raise SystemExit("human_critical or unknown review mode requires a real human decision")
+    if review_mode in MACHINE_REVIEW_MODES:
+        if human_critical_override:
+            raise SystemExit("human_critical_override is forbidden for machine review modes")
+    elif review_mode == HUMAN_CRITICAL_REVIEW_MODE:
+        if not human_critical_override:
+            raise SystemExit("human_critical review mode requires an explicit owner-broker override")
+    else:
+        raise SystemExit("Unknown review mode is not eligible for approval")
     author = ((pr.get("author") or {}).get("login") or "")
     if author == DEFAULT_REVIEWER:
         raise SystemExit("The reviewer account authored this PR; GitHub rejects self-approval")
@@ -985,7 +1163,11 @@ def approval_preflight(
             f"{DEFAULT_REVIEWER} already approved this exact head ({duplicates[0].get('databaseId') or duplicates[0].get('id')})"
         )
 
-    changed_files = changed_files_evidence(pr)
+    changed_files = changed_files_evidence(
+        pr,
+        review_mode=review_mode,
+        human_critical_override=human_critical_override,
+    )
     immutable_diff = validate_immutable_pr_snapshot(
         pr=pr,
         snapshot=fetch_immutable_pr_snapshot(token, pr_number),
@@ -995,21 +1177,30 @@ def approval_preflight(
         changed_files=changed_files,
     )
     identity = verify_identity(token, DEFAULT_REPO)
-    attestation = find_ship_attestation(
-        pr,
-        base,
-        head,
-        review_mode,
-        changed_files["sha256"],
-        immutable_diff["sha256"],
-    )
+    if review_mode in MACHINE_REVIEW_MODES:
+        attestation = find_ship_attestation(
+            pr,
+            base,
+            head,
+            review_mode,
+            changed_files["sha256"],
+            immutable_diff["sha256"],
+        )
+    else:
+        validate_ship_attester_state(pr, head)
+        attestation = {"kind": "human_critical_override"}
     repository_safety = fetch_repository_safety(token, owner, name)
     policy = fetch_protection_policy(token, owner, name, str(pr.get("baseRefName")))
     checks = validate_required_checks(pr, policy)
+    authority_label = (
+        f"attestation_review_id={attestation['review_id']}"
+        if "review_id" in attestation
+        else attestation["kind"]
+    )
     log(
         f"approval preflight ok: base={base[:7]} head={head[:7]} review_mode={review_mode} "
         f"changed_files={changed_files['count']} required_checks={checks['count']} "
-        f"attestation_review_id={attestation['review_id']}"
+        f"authority={authority_label}"
     )
     return {
         "identity": identity,
@@ -1059,6 +1250,7 @@ def submit_automated_approval(
     head: str,
     review_mode: str,
     capability_raw: str,
+    human_critical_override: bool = False,
 ) -> dict:
     capability = verify_approval_capability(
         token=token,
@@ -1068,6 +1260,7 @@ def submit_automated_approval(
         base=base,
         head=head,
         review_mode=review_mode,
+        human_critical_override=human_critical_override,
     )
     with exclusive_approval_lock(pr_number, base, head):
         before = fetch_pr(token, owner, name, pr_number)
@@ -1080,6 +1273,7 @@ def submit_automated_approval(
             base=base,
             head=head,
             review_mode=review_mode,
+            human_critical_override=human_critical_override,
         )
 
         final = fetch_pr(token, owner, name, pr_number)
@@ -1092,6 +1286,7 @@ def submit_automated_approval(
             base=base,
             head=head,
             review_mode=review_mode,
+            human_critical_override=human_critical_override,
         )
         if ready["policy"]["sha256"] != first["policy"]["sha256"]:
             raise SystemExit("Branch protection changed during approval preflight")
@@ -1103,8 +1298,8 @@ def submit_automated_approval(
             raise SystemExit("Changed-file evidence changed during approval preflight")
         if ready["immutable_diff"] != first["immutable_diff"]:
             raise SystemExit("Immutable patch evidence changed during approval preflight")
-        if ready["attestation"]["review_id"] != first["attestation"]["review_id"]:
-            raise SystemExit("Independent SHIP attestation changed during approval preflight")
+        if ready["attestation"] != first["attestation"]:
+            raise SystemExit("Approval authority evidence changed during approval preflight")
         if ready["checks"]["sha256"] != first["checks"]["sha256"]:
             raise SystemExit("Required-check evidence changed during approval preflight")
 
@@ -1116,6 +1311,7 @@ def submit_automated_approval(
             base=base,
             head=head,
             review_mode=review_mode,
+            human_critical_override=human_critical_override,
         )
         consume_capability_nonce(capability["nonce"])
         body = automated_approval_body(
@@ -1160,7 +1356,11 @@ def submit_automated_approval(
         after_repository_safety = fetch_repository_safety(token, owner, name)
         if after_repository_safety["sha256"] != ready["repository_safety"]["sha256"]:
             raise SystemExit("Repository safety settings changed after approval; review was submitted but no retry is allowed")
-        after_changed_files = changed_files_evidence(after)
+        after_changed_files = changed_files_evidence(
+            after,
+            review_mode=review_mode,
+            human_critical_override=human_critical_override,
+        )
         if after_changed_files["sha256"] != ready["changed_files"]["sha256"]:
             raise SystemExit("Changed-file evidence changed after approval; review was submitted but no retry is allowed")
         after_immutable_diff = validate_immutable_pr_snapshot(
@@ -1176,16 +1376,20 @@ def submit_automated_approval(
         after_checks = validate_required_checks(after, after_policy)
         if after_checks["sha256"] != ready["checks"]["sha256"]:
             raise SystemExit("Required-check evidence changed after approval; review was submitted but no retry is allowed")
-        after_attestation = find_ship_attestation(
-            after,
-            base,
-            head,
-            review_mode,
-            ready["changed_files"]["sha256"],
-            ready["immutable_diff"]["sha256"],
-        )
-        if after_attestation["review_id"] != ready["attestation"]["review_id"]:
-            raise SystemExit("Independent SHIP attestation changed after approval; review was submitted but no retry is allowed")
+        if review_mode in MACHINE_REVIEW_MODES:
+            after_attestation = find_ship_attestation(
+                after,
+                base,
+                head,
+                review_mode,
+                ready["changed_files"]["sha256"],
+                ready["immutable_diff"]["sha256"],
+            )
+        else:
+            validate_ship_attester_state(after, head)
+            after_attestation = {"kind": "human_critical_override"}
+        if after_attestation != ready["attestation"]:
+            raise SystemExit("Approval authority evidence changed after approval; review was submitted but no retry is allowed")
         if unresolved(after):
             raise SystemExit("A review thread became unresolved after approval; review was submitted but no retry is allowed")
         log(
@@ -1197,6 +1401,7 @@ def submit_automated_approval(
 
 def validate_cli(cli: argparse.Namespace) -> None:
     requested = list(cli.request_codex_fix or [])
+    human_critical_override = bool(getattr(cli, "human_critical_override", False))
     if cli.resolve_all:
         raise SystemExit("Bulk --resolve-all is disabled; resolve one explicitly reviewed thread per invocation")
     if len(cli.resolve) > 1:
@@ -1224,6 +1429,7 @@ def validate_cli(cli: argparse.Namespace) -> None:
             or cli.reply
             or cli.approve
             or cli.review_mode
+            or human_critical_override
         )
         if incompatible:
             raise SystemExit("--request-codex-fix is reply-only and cannot be combined with resolve or approval options")
@@ -1233,7 +1439,16 @@ def validate_cli(cli: argparse.Namespace) -> None:
         if not cli.expected_base or not cli.expected_head:
             raise SystemExit("Approval requires --expected-base and --expected-head from the validated review cycle")
         if not cli.review_mode:
-            raise SystemExit("Approval requires --review-mode; human_critical is not accepted")
+            raise SystemExit("Approval requires --review-mode")
+        if cli.review_mode == HUMAN_CRITICAL_REVIEW_MODE:
+            if not human_critical_override:
+                raise SystemExit("human_critical approval requires --human-critical-override")
+            if not cli.live:
+                raise SystemExit("--human-critical-override is valid only for a live owner-broker operation")
+        elif human_critical_override:
+            raise SystemExit("--human-critical-override is forbidden for machine review modes")
+    elif human_critical_override:
+        raise SystemExit("--human-critical-override is only valid with --approve")
     elif cli.review_mode:
         raise SystemExit("--review-mode is only valid with --approve")
     elif cli.expected_base:
@@ -1307,10 +1522,11 @@ def main() -> int:
     parser.add_argument("--approve", action="store_true", help="Run the guarded approval preflight")
     parser.add_argument(
         "--review-mode",
-        choices=sorted(MACHINE_REVIEW_MODES),
+        choices=sorted(SUPPORTED_REVIEW_MODES),
         default="",
-        help="Validated machine-eligible review mode; human_critical is intentionally unavailable",
+        help="Validated review mode",
     )
+    parser.add_argument("--human-critical-override", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--body", default="", help=argparse.SUPPRESS)
     parser.add_argument("--body-file", type=Path, help=argparse.SUPPRESS)
     parser.add_argument(
@@ -1339,6 +1555,7 @@ def main() -> int:
             base=cli.expected_base,
             head=cli.expected_head,
             review_mode=cli.review_mode,
+            human_critical_override=cli.human_critical_override,
         )
     try:
         verify_identity(token, cli.repo)
@@ -1410,6 +1627,7 @@ def main() -> int:
             base=cli.expected_base,
             head=cli.expected_head,
             review_mode=cli.review_mode,
+            human_critical_override=cli.human_critical_override,
         )
         body = automated_approval_body(
             pr_number=cli.pr,
@@ -1430,6 +1648,7 @@ def main() -> int:
         head=cli.expected_head,
         review_mode=cli.review_mode,
         capability_raw=capability_raw,
+        human_critical_override=cli.human_critical_override,
     )
     return 0
 

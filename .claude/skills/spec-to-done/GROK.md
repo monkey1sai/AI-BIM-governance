@@ -19,6 +19,7 @@ This adapter only answers: how a Grok session produces the **same StructuredOutp
 | Commander SOP / gate text | `.claude/skills/spec-to-done/SKILL.md` |
 | StructuredOutput field names | `.claude/workflows/std-plan.js`, `std-implement.js`, `std-evidence.js`, `std-evidence-closeout.js`, `fu-adversarial-verify-generic.js` / `spec-to-done-adversarial-verify.js`, `ship-item.js` |
 | State validator (single copy) | `.claude/skills/spec-to-done/validate-state.mjs` |
+| Owner-only new-run status/writer | `.claude/skills/spec-to-done/append-new-run.mjs` |
 | Isolation location when AGENTS.md isolation contract applies | repo sibling `AI-BIM-governance.worktrees\<slug>` from freshly fetched `origin/main` |
 
 Do not copy the canonical SOP into this file. Drift is a blocker.
@@ -53,10 +54,14 @@ Keep the canonical args object. Do not stringify args. Count every spawn / workf
 Same binary as Claude/Codex. Grok current line uses `--platform grok`. P0 may still use `runIds=none`.
 
 ```powershell
-node .claude/skills/spec-to-done/validate-state.mjs --state <temp> --platform grok --git-exe <absolute git.exe> --expected-head <SHA> --expected-worktree <worktreeRoot> --expected-agent-limit 40 --expected-p5-limit 2 --expected-evidence-limit 2 --trusted-main-ref refs/heads/main
+node .claude/skills/spec-to-done/validate-state.mjs --state <temp> --platform grok --git-exe <approved system Git absolute path> --expected-head <SHA> --expected-worktree <worktreeRoot> --expected-agent-limit 40 --expected-p5-limit 2 --expected-evidence-limit 2 --trusted-main-ref refs/heads/main
 ```
 
-Prefer `C:\Program Files\Git\mingw64\bin\git.exe` so `--git-exe` is a real `git.exe` outside the worktree.
+Use only owner-installed system Git: Windows
+`C:\Program Files\Git\{cmd,bin,mingw64\bin}\git.exe`, or POSIX `/usr/bin/git`/`/usr/local/bin/git`.
+Do not use PATH discovery, a repository-local tool, or a caller-writable proxy. The validator strips ambient
+`GIT_*`/config injection and binds executable path/hash/size/trust class plus git-dir/common-dir. If no approved
+read-only system Git exists, return `host_env_blocked`; do not substitute another executable.
 
 ## Isolation (P0)
 
@@ -78,3 +83,9 @@ Forbidden: changing phase order; skipping P4 when `userFacing=true`; letting cod
 ## Current-run resume
 
 Durable state path is unchanged: `artifacts/spec-to-done/{slug}-state.md` inside the governed worktree. After this adapter exists, later checkpoints on a Grok session validate with `--platform grok` and must not drop earlier IDs.
+
+Before any resume, run the canonical appender's read-only `status --json`. A terminal
+`run_budget_exhausted` never permits Grok to reset counters or hand-write `NEW_RUN@P0`; only an exact owner
+message followed by the canonical `append` action may create the new-run boundary in a fresh descendant
+worktree. Its SHA-256 owner tuple is provenance binding, not a digital signature or identity proof. After the
+boundary, start at P0 and rerun every applicable gate; no prior P0-P7 pass carries forward automatically.

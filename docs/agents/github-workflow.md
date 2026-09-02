@@ -137,7 +137,7 @@ Lane G/S、修 PR、checkout 不乾淨或並行工作時必須使用 dedicated w
 
 當使用者要求「以 origin main 為 baseline 建立隔離區執行」或同義口令時，agent MUST：
 
-1. **先 `git fetch origin --prune`**，再以 `origin/main` 開 worktree：`git worktree add -b <type>/<slug> <sibling-path> origin/main`。
+1. **Windows host 一律走 governed helper**：`pwsh -NoProfile -NonInteractive -File scripts/dev/new-governed-worktree.ps1 -BranchName <type>/<slug> -Json`。helper 會用明確 main refspec refresh 並驗證 `origin/main`、建立 canonical sibling worktree，再檢查 branch / HEAD / clean state / 實際 Git metadata directory owner；不得以裸 `git fetch` + `git worktree add` 取代。非 Windows host 尚無等價 helper，必須逐步執行同一 baseline 與 postcondition 契約並保留證據。
 2. **禁止**以 local `main`、目前 checkout、其他 feature branch 或 **stale `origin/main`** 當 baseline（與 §「測試部署區重建」對 stale `origin/main` 的禁令同一理由：本機 ref 可能落後數個 merge，據此開工會把別人已合併的修正當成未完成而重做，或在過期樹上取得無效證據）。
 3. **開工前實證 baseline**：`git rev-parse HEAD` 必須等於 `git rev-parse origin/main`，且 `git status --porcelain` 為空。兩者任一不成立即停工回報，不得「先做再說」。
 4. **收工後依 Closeout 順序移除 worktree**，不得留下失聯目錄。
@@ -189,7 +189,7 @@ Lane F/B 不自動啟動 ship-cycle。只有使用者明確要求 ship，或 Lan
 
 本 repo 採 single-owner、dual-identity merge governance：同一位人類持有 owner 與固定 reviewer 兩個 GitHub 帳號，但 branch protection 保留 approving reviews=1 並強制 code-owner review。Base branch `.github/CODEOWNERS` 將全路徑唯一指定給 `monkey1sai-blip`；PR 作者不得自批，GitHub App 也不得成為 approver。該帳號的 immutable user ID 為 `311287868`、type=`User`、association=`COLLABORATOR`；trusted executor 在 preparation 與 merge 前複驗 live permission/role 都精確為 `write`，並額外要求 review body 與 `commit_id` 精確綁定 repo、PR、base SHA、head SHA。
 
-repo 內已持久化 `scripts/agent-tooling/blip-approve/` broker source package：App producer 只具 `COMMENT`／`REQUEST_CHANGES`，固定 User broker 才能產生 counted `APPROVE`；repo source 存在不等於已安裝、已啟用或已授權。live vote 只可走 owner-approved `C:\ProgramData\AI-BIM-governance\blip-approve\v1` protected producer/broker，其 immutable manifest、runtime、ACL、credential identity與 exact mode/tuple capability 必須在每次 mutation 前通過；editable user-profile helper、`.env*`、ambient `gh` token或 direct API fallback 都不得提交 counted review。machine-eligible mode 先取得 authenticated exact-tuple Codex App `SHIP` attestation，再由互動式 masked-prompt User broker投票；目前 broker不接受 `human_critical`，因此該 mode 即使已有 full-authority override仍回報 `HELD_CAPABILITY_UNAVAILABLE`，不得降級或再索取相同授權。`ai-bim-automated-approve-only` body仍不是 trusted-host `merge`／`merge-elevated` authority。
+repo 內已持久化 `scripts/agent-tooling/blip-approve/` broker source package：App producer 只具 `COMMENT`／`REQUEST_CHANGES`，固定 User broker 才能產生 counted `APPROVE`；repo source 存在不等於已安裝、已啟用或已授權。live vote 只可走 owner-approved `C:\ProgramData\AI-BIM-governance\blip-approve\v1` protected producer/broker，其 immutable manifest、runtime、ACL、credential identity與 exact mode/tuple capability 必須在每次 mutation 前通過；editable user-profile helper、`.env*`、ambient `gh` token或 direct API fallback 都不得提交 counted review。machine-eligible mode 先取得 authenticated exact-tuple Codex App `SHIP` attestation，再由互動式 masked-prompt User broker投票；owner-reviewed v2 broker另接受保持原分類的 `human_critical`，但必須同時使用 exact `ReviewMode=human_critical`、current-turn owner override 與 `HumanCriticalOverride`，並將 override boolean 綁入 signed exact tuple。此路徑不偽造 machine-mode App `SHIP` attestation；任一 v2 capability、tuple、override 或 trust-chain 證據缺失仍回報 `HELD_CAPABILITY_UNAVAILABLE`，不得降級或再索取相同授權。`ai-bim-automated-approve-only` body仍不是 trusted-host `merge`／`merge-elevated` authority。
 
 ### Owner full-authority continuity（2026-08-26）
 

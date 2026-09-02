@@ -715,6 +715,265 @@ describe("A4SemanticSearchPage", () => {
       expect(input.value.length).toBeGreaterThan(0);
     });
 
+    it("allows row selection, issue draft composition and issue creation in session mode", async () => {
+      vi.mocked(coordinatorClient.runtimeStatus).mockResolvedValue({
+        sessions: {
+          items: [{ session_id: "review_session_alpha", status: "active", model_version_id: "mv_alpha" }],
+        },
+      } as never);
+      const sessionSearch = vi.spyOn(governanceClient, "searchModelForSession").mockResolvedValue({
+        status: "ok",
+        query_id: "a4_q_session_1",
+        interpreted_filters: {},
+        results: [{
+          ifc_guid: "guid-door-401",
+          usd_prim_path: "/World/Door_401",
+          ifc_class: "IfcDoor",
+          name: "FireDoor-401",
+          storey: "4F",
+          properties: { FireRating: 30 },
+          match_status: "matched_query",
+          confidence: 1,
+          evidence_refs: ["pset:Pset_DoorCommon.FireRating=30"],
+          evidence_proof: "a4p.a4_test_kid.proof_1.0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+          highlight_eligible: true,
+        }],
+        stats: { total: 1, matched: 1, unmapped: 0, scanned: 1 },
+        evidence_refs: [],
+      } as never);
+      const createIssueA4 = vi.spyOn(governanceClient, "createIssueFromA4Session").mockResolvedValue({
+        issue: {
+          id: "iss_a4_door_401",
+          kind: "issue",
+          title: "FireDoor-401 · 4F 防火門",
+          status: "open",
+          severity: "high",
+          ifc_guid: "guid-door-401",
+          usd_prim_path: "/World/Door_401",
+          source_type: "a4_search",
+        },
+        replayed: false,
+      });
+      const carrier = getLocalDevUserCarrier();
+
+      root = createRoot(container);
+      await act(async () => { root!.render(<A4SemanticSearchPage />); });
+      await flush();
+
+      // Switch to session mode
+      await act(async () => {
+        container.querySelector<HTMLButtonElement>('[data-testid="a4-source-session"]')!.click();
+      });
+      await flush();
+
+      // Run query
+      await act(async () => {
+        container.querySelector<HTMLButtonElement>('[data-testid="a4-run"]')!.click();
+      });
+      await flush();
+
+      expect(sessionSearch).toHaveBeenCalled();
+      expect(container.querySelector('[data-testid="a4-issue-draft"]')).toBeNull();
+
+      const changeInput = (el: HTMLElement, val: string) => {
+        const nativeSetter = Object.getOwnPropertyDescriptor(
+          Object.getPrototypeOf(el),
+          "value",
+        )?.set;
+        if (nativeSetter) {
+          nativeSetter.call(el, val);
+        } else {
+          (el as HTMLInputElement).value = val;
+        }
+        el.dispatchEvent(new Event("input", { bubbles: true }));
+        el.dispatchEvent(new Event("change", { bubbles: true }));
+      };
+
+      // Click on row
+      const row = container.querySelector<HTMLTableRowElement>('[data-testid="a4-row-guid-door-401"]')!;
+      expect(row).not.toBeNull();
+      await act(async () => { row.click(); });
+      await flush();
+
+      const draft = container.querySelector('[data-testid="a4-issue-draft"]');
+      expect(draft).not.toBeNull();
+      expect(container.querySelector<HTMLInputElement>('[data-testid="a4-issue-draft-title"]')?.value).toContain("FireDoor-401");
+
+      // Edit title and severity
+      const titleInput = container.querySelector<HTMLInputElement>('[data-testid="a4-issue-draft-title"]')!;
+      const severitySelect = container.querySelector<HTMLSelectElement>('[data-testid="a4-issue-draft-severity"]')!;
+      await act(async () => {
+        changeInput(titleInput, "FireDoor-401 防火時效不足");
+        changeInput(severitySelect, "high");
+      });
+      await flush();
+
+      // Confirm create issue
+      const confirmBtn = container.querySelector<HTMLButtonElement>('[data-testid="a4-confirm-create-issue"]')!;
+      await act(async () => { confirmBtn.click(); });
+      await flush();
+
+      expect(createIssueA4).toHaveBeenCalledWith(
+        "review_session_alpha",
+        expect.objectContaining({
+          title: "FireDoor-401 防火時效不足",
+          severity: "high",
+          ifc_guid: "guid-door-401",
+          usd_prim_path: "/World/Door_401",
+          evidence_proof: "a4p.a4_test_kid.proof_1.0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        }),
+        carrier,
+      );
+      expect(container.querySelector('[data-testid="a4-issue-created"]')?.textContent).toContain("iss_a4_door_401");
+    });
+
+    it("handles a4_proof_expired gracefully while preserving user draft in memory", async () => {
+      const changeInput = (el: HTMLElement, val: string) => {
+        const nativeSetter = Object.getOwnPropertyDescriptor(
+          Object.getPrototypeOf(el),
+          "value",
+        )?.set;
+        if (nativeSetter) {
+          nativeSetter.call(el, val);
+        } else {
+          (el as HTMLInputElement).value = val;
+        }
+        el.dispatchEvent(new Event("input", { bubbles: true }));
+        el.dispatchEvent(new Event("change", { bubbles: true }));
+      };
+
+      vi.mocked(coordinatorClient.runtimeStatus).mockResolvedValue({
+        sessions: {
+          items: [{ session_id: "review_session_alpha", status: "active", model_version_id: "mv_alpha" }],
+        },
+      } as never);
+      vi.spyOn(governanceClient, "searchModelForSession").mockResolvedValue({
+        status: "ok",
+        query_id: "a4_q_session_2",
+        interpreted_filters: {},
+        results: [{
+          ifc_guid: "guid-door-expired",
+          usd_prim_path: "/World/Door_Exp",
+          ifc_class: "IfcDoor",
+          name: "Door-Exp",
+          storey: "2F",
+          properties: {},
+          match_status: "matched_query",
+          confidence: 1,
+          evidence_refs: [],
+          evidence_proof: "a4p.a4_test_kid.proof_exp.0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+          highlight_eligible: true,
+        }],
+        stats: { total: 1, matched: 1, unmapped: 0, scanned: 1 },
+        evidence_refs: [],
+      } as never);
+      vi.spyOn(governanceClient, "createIssueFromA4Session")
+        .mockRejectedValue(new A4GovernanceError(409, "a4_proof_expired"));
+
+      root = createRoot(container);
+      await act(async () => { root!.render(<A4SemanticSearchPage />); });
+      await flush();
+
+      await act(async () => {
+        container.querySelector<HTMLButtonElement>('[data-testid="a4-source-session"]')!.click();
+      });
+      await flush();
+      await act(async () => {
+        container.querySelector<HTMLButtonElement>('[data-testid="a4-run"]')!.click();
+      });
+      await flush();
+
+      const row = container.querySelector<HTMLTableRowElement>('[data-testid="a4-row-guid-door-expired"]')!;
+      await act(async () => { row.click(); });
+      await flush();
+
+      const titleInput = container.querySelector<HTMLInputElement>('[data-testid="a4-issue-draft-title"]')!;
+      await act(async () => {
+        changeInput(titleInput, "Custom Draft Title to Preserve");
+      });
+      await flush();
+
+      const confirmBtn = container.querySelector<HTMLButtonElement>('[data-testid="a4-confirm-create-issue"]')!;
+      await act(async () => { confirmBtn.click(); });
+      await flush();
+
+      // Error notice is shown
+      expect(container.querySelector('[data-testid="a4-proof-expired"]')).not.toBeNull();
+      expect(container.textContent).toContain("proof 已失效");
+      // Draft title is preserved in input
+      expect(container.querySelector<HTMLInputElement>('[data-testid="a4-issue-draft-title"]')?.value).toBe("Custom Draft Title to Preserve");
+    });
+
+    it("triggers 3D Focus handoff for mapped elements with signed proofs", async () => {
+      vi.mocked(coordinatorClient.runtimeStatus).mockResolvedValue({
+        sessions: {
+          items: [{ session_id: "review_session_alpha", status: "active", model_version_id: "mv_alpha" }],
+        },
+      } as never);
+      vi.spyOn(governanceClient, "searchModelForSession").mockResolvedValue({
+        status: "ok",
+        query_id: "a4_q_session_3",
+        interpreted_filters: {},
+        results: [{
+          ifc_guid: "guid-door-3d",
+          usd_prim_path: "/World/Door_3D",
+          ifc_class: "IfcDoor",
+          name: "Door-3D",
+          storey: "3F",
+          properties: {},
+          match_status: "matched_query",
+          confidence: 1,
+          evidence_refs: [],
+          evidence_proof: "a4p.a4_test_kid.proof_3d.0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+          highlight_eligible: true,
+        }],
+        stats: { total: 1, matched: 1, unmapped: 0, scanned: 1 },
+        evidence_refs: [],
+      } as never);
+      const createHandoff = vi.spyOn(coordinatorClient, "createA4Handoff").mockResolvedValue({
+        handoff_id: "a4h_1234567890abcdef",
+        url: "/ui/open?session=review_session_alpha&a4_handoff=a4h_1234567890abcdef",
+        expires_at: "2026-08-31T15:00:00Z",
+        action: "focus",
+        prim_paths: ["/World/Door_3D"],
+        binding: {},
+      });
+      const carrier = getLocalDevUserCarrier();
+
+      root = createRoot(container);
+      await act(async () => { root!.render(<A4SemanticSearchPage />); });
+      await flush();
+
+      await act(async () => {
+        container.querySelector<HTMLButtonElement>('[data-testid="a4-source-session"]')!.click();
+      });
+      await flush();
+      await act(async () => {
+        container.querySelector<HTMLButtonElement>('[data-testid="a4-run"]')!.click();
+      });
+      await flush();
+
+      const row = container.querySelector<HTMLTableRowElement>('[data-testid="a4-row-guid-door-3d"]')!;
+      await act(async () => { row.click(); });
+      await flush();
+
+      const focusBtn = container.querySelector<HTMLButtonElement>('[data-testid="a4-focus-handoff"]')!;
+      expect(focusBtn).not.toBeNull();
+      await act(async () => { focusBtn.click(); });
+      await flush();
+
+      expect(createHandoff).toHaveBeenCalledWith(
+        "review_session_alpha",
+        {
+          action: "focus",
+          evidence_proofs: ["a4p.a4_test_kid.proof_3d.0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"],
+        },
+        carrier,
+      );
+      expect(container.querySelector('[data-testid="a4-handoff-result"]')).not.toBeNull();
+      expect(container.querySelector<HTMLAnchorElement>('[data-testid="a4-handoff-result"] a')?.href).toContain("a4_handoff=a4h_1234567890abcdef");
+    });
+
     it("the page source stays console-only: zero DataChannel/AppStream senders and no fixture counts", async () => {
       const { readFileSync } = await import("node:fs");
       const source = readFileSync("src/console/A4SemanticSearchPage.tsx", "utf8");

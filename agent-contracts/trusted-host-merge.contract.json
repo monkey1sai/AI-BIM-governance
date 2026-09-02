@@ -153,7 +153,7 @@
         "^scripts/tests/fixtures/trusted-host-merge-machine-fixtures\\.json$",
         "^agent-contracts/trusted-host-merge(?:[.-][a-z-]+)?(?:\\.schema)?\\.json$",
         "^agent-contracts/spec-to-done\\.contract(?:\\.schema)?\\.json$",
-        "^\\.claude/skills/spec-to-done/(?:validate-state|append-new-run)\\.mjs$",
+        "^\\.claude/skills/spec-to-done/(?:validate-state|append-new-run|trusted-git)\\.mjs$",
         "^\\.claude/skills/spec-to-done/(?:SKILL|GROK)\\.md$",
         "^\\.codex/skills/spec-to-done/SKILL\\.md$",
         "^agent-contracts/autonomous-delivery-(?:adjudication-packet|attestation-envelope|classifier-input|terminal-record)\\.schema\\.json$",

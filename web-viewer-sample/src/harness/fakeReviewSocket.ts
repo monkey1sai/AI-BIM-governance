@@ -42,6 +42,7 @@ export function connectHarnessReviewSocket(
 ): ReviewSocketClient {
   let activeCandidate: ReviewSocketCandidate | null = null;
   let joinAcknowledged = false;
+  let streamReady = false;
   let generation = 0;
   let manuallyDisconnected = false;
   const pendingCallbacks = new Set<PendingCallback>();
@@ -76,6 +77,7 @@ export function connectHarnessReviewSocket(
       invalidatePending();
       activeCandidate = { ...candidate };
       joinAcknowledged = false;
+      streamReady = false;
       const expectedCandidate = { ...activeCandidate };
       const expectedKey = candidateKey(expectedCandidate);
       schedule(() => {
@@ -108,12 +110,44 @@ export function connectHarnessReviewSocket(
       });
     },
 
+    setStreamReady(ready: boolean): void {
+      if (manuallyDisconnected || !joinAcknowledged || !activeCandidate) return;
+      streamReady = ready;
+      const expectedCandidate = { ...activeCandidate };
+      const expectedKey = candidateKey(expectedCandidate);
+      schedule(() => {
+        if (!joinAcknowledged || !activeCandidate || candidateKey(activeCandidate) !== expectedKey) return;
+        successAck("streamReadiness", expectedCandidate);
+      });
+    },
+
+    userActivity(): Promise<boolean> {
+      if (manuallyDisconnected || !joinAcknowledged || !activeCandidate) return Promise.resolve(false);
+      const expectedCandidate = { ...activeCandidate };
+      const expectedKey = candidateKey(expectedCandidate);
+      const expectedGeneration = generation;
+      return new Promise((resolve) => {
+        queueMicrotask(() => {
+          const acknowledged = !manuallyDisconnected
+            && generation === expectedGeneration
+            && joinAcknowledged
+            && streamReady
+            && Boolean(activeCandidate)
+            && candidateKey(activeCandidate ?? expectedCandidate) === expectedKey
+            && isExactHarnessAuthority(expectedCandidate, authority);
+          if (acknowledged) successAck("userActivity", expectedCandidate);
+          resolve(acknowledged);
+        });
+      });
+    },
+
     leave(): void {
       if (manuallyDisconnected || !joinAcknowledged || !activeCandidate) return;
       const expectedCandidate = { ...activeCandidate };
       invalidatePending();
       activeCandidate = null;
       joinAcknowledged = false;
+      streamReady = false;
       schedule(() => successAck("leaveSession", expectedCandidate));
     },
 
@@ -123,6 +157,7 @@ export function connectHarnessReviewSocket(
       manuallyDisconnected = true;
       activeCandidate = null;
       joinAcknowledged = false;
+      streamReady = false;
       schedule(() => handlers.onStatus?.("disconnected"), true);
     },
   };

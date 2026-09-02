@@ -902,6 +902,7 @@ try {
     }
     [ordered]@{
         schema = 'blip-trusted-runtime-manifest/v1'
+        source_commit = $sourceCommitElement.GetString().ToLowerInvariant()
         files = $manifestFiles
         runtime = $manifestRuntime
         candidate_freeze_sha256 = $freezeHash

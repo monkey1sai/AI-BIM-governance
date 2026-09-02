@@ -1,82 +1,73 @@
-# Parallel Session Board(多終端機/多 CLI 並行 session 看板)
+# Parallel Session Board（多終端機／多 CLI 並行感知）
 
-多個 AI CLI(Claude Code、Codex、Grok)在同一 repo 各自開終端機並行開發時,彼此原生互不可見。本看板是跨 CLI 的「感知層」:每個 session 登錄自己在做什麼,動工前查看他人狀態。
+多個 CLI 在同一 repo 開啟 session 時彼此原生不可見。本看板只是一層 best-effort 感知：記錄各 session 的 branch、worktree、任務與最近檔案；它不授權寫入、PR approval、merge 或 process termination，也不取代 Lane 隔離與 Single Active Writer。
 
-看板**只提供感知,不提供隔離**。實體防撞仍依 `AGENTS.md` §0.1 Lane 規則:Lane G 用 dedicated branch/worktree、Lane B 禁止 parallel writers。看板把每個 session 的 branch/worktree/最近檔案攤開,讓踩線變得可見。
+## 共用位置
 
-命名注意:本看板與產品領域的 viewer lease/heartbeat(`web-viewer-sample` / coordinator 的 WebRTC 租約)完全無關,勿混用概念。
+- 實體位置：主 checkout 的 `.agents/board/`（gitignored）。
+- 所有 linked worktree 都以 `git rev-parse --path-format=absolute --git-common-dir` 的父目錄解析回同一塊看板。
+- production queue、cleanup、register/update/done 一律使用同一 resolver，避免每個 worktree 各持一把假鎖；`AGENTS_BOARD_DIR` 僅供測試的唯讀 `status --json --no-prune` snapshot，任何其他 flag 或 `register`／`update`／`done`／`hook`／`codex-notify` 入口都會在 dispatch 前以 exit 2 拒絕，不影響任何 lock、board 或 lifecycle side effect。
 
-## 看板位置
+## 明確操作契約
 
-- 實體位置:主 checkout 的 `.agents/board/`(`.gitignore` 已忽略 `.agents/`,永不入版控)。
-- 解析方式:`git rev-parse --path-format=absolute --git-common-dir` 的上層目錄 + `/.agents/board`。在任何 linked worktree 內執行都會解析回主 checkout,**所有 worktree 共用同一塊看板**。
-- 測試/特殊情境可用環境變數 `AGENTS_BOARD_DIR` 覆寫。
-
-## 通用契約(所有 CLI 一體適用)
-
-1. **開工註冊**:session 開始時執行 `node scripts/dev/agents-board.mjs register --agent <claude|codex|grok> [--task "一句話任務"]`。指令會回印 `session=<id>`,同一 session 後續指令沿用該 id(或設 `AGENTS_BOARD_SESSION` 環境變數)。
-2. **動工前查看板**:開始編輯檔案前執行 `node scripts/dev/agents-board.mjs status`,確認不與其他 active session 的 branch/檔案相撞;會撞就先協調(換 worktree/branch 或等待),遵循 Lane 規則。診斷器只需 snapshot 時必須加 `--no-prune`，避免讀取動作清除 retention 到期的 session。
-3. **任務切換即更新**:`node scripts/dev/agents-board.mjs update --agent <cli> --session <id> --task "新任務"`。
-4. **收工標記**:`node scripts/dev/agents-board.mjs done --agent <cli> --session <id>`。
-5. 看板寫入失敗不得阻斷開發工作;它是 best-effort 感知層,不是 gate。
-
-## 檔案格式
-
-- `sessions/<agent>--<session>.json`:單一 session 狀態 — `agent`、`session`、`status`(`active`/`idle`/`ended`)、`task`、`cwd`、`branch`、`startedAt`、`updatedAt`、`recentFiles`(最近 5 個編輯檔,repo-relative)。
-- `events.jsonl`:append-only 事件流(`register`/`task`/`edit`/`turn-complete`/`session-start`/`session-end`/`done`),超過 512KB 輪替成 `events.1.jsonl`。
-- Stale/清理:`updatedAt` 超過 120 分鐘顯示 `(stale)`;`ended` 超過 24 小時或任何 session 超過 72 小時未更新,於 register/status 時自動刪除。
-
-`status --json` 提供機器可讀輸出(sessions + recentEvents)。
-
-## Claude Code 整合
-
-repo `.claude/settings.json` 設定 `disableAllHooks: true` 且不分發 lifecycle command hooks，避免 branch-controlled checkout/session code execution。Claude Code 與其他 CLI 使用同一份明確契約：開工 `register --agent claude`、編輯前 `status`、任務切換 `update`、收工 `done`。看板是 best-effort，因此漏記只降低並行感知，不得被解讀成授權或安全 gate。
-
-## Codex 整合
-
-- 基本盤:Codex 自動讀本 repo `AGENTS.md`,依 §0.1「並行 session 看板」一節執行通用契約(register/status/update/done)。
-- 加值自動化(選用,**global 檔由使用者自行套用**,agent 不代改):在 `~/.codex/config.toml` 加 `notify`,每個 turn 結束自動回寫看板(標記 `idle` + 記錄任務;非本 repo 的 turn 會被 script 靜默跳過):
-
-```toml
-notify = ["node", "C:\\Repos\\active\\iot\\AI-BIM-governance\\scripts\\dev\\agents-board.mjs", "codex-notify"]
+```powershell
+node scripts/dev/agents-board.mjs register --agent <claude|codex|agy|grok> --task "一句話任務"
+node scripts/dev/agents-board.mjs status
+node scripts/dev/agents-board.mjs update --agent <cli> --session <id> --task "新任務"
+node scripts/dev/agents-board.mjs done --agent <cli> --session <id>
 ```
 
-- notify payload 欄位(cwd/session id)依 Codex 版本而異,handler 全部 best-effort;缺 cwd 時以 process cwd 判定是否本 repo。
+1. 開工先 `register`，保存回傳的 `session=<id>`。
+2. 編輯前 `status`，確認沒有 active writer 或重疊檔案。只讀診斷 snapshot 使用 `status --no-prune`。
+3. 任務或主要檔案改變時 `update`。
+4. 收工 `done`。看板失敗只降低感知，不得當成繞過安全 gate 的理由。
 
-## Grok 整合
+session 記錄位於 `sessions/<agent>--<session>.json`；事件追加到 `events.jsonl`。超過 120 分鐘顯示 stale，ended 24 小時或任意狀態 72 小時後才由明確 board 命令依 retention 清除。
 
-- 基本盤:xAI Grok Build 與社群 grok-cli 都自動讀 `AGENTS.md`,同樣執行通用契約,`--agent grok`。
-- 不依賴 Claude-compatible hooks；Grok 也明確使用 `register/status/update/done`，避免 checkout 內容自動執行。
+## 四 CLI 的可驗證邊界
 
-## 自主 PR 佇列 Hook 與自動合併引擎 (Autonomous PR Queue Engine)
+- `AGENTS.md` 是 repo 治理正本；`CLAUDE.md` 是 thin mirror。Codex 直接讀正本，Claude 由 mirror 載入。
+- Claude repo hooks 固定停用（`.claude/settings.json` 的 `disableAllHooks: true`）；Claude、AGY、Grok 使用上述明確 board 命令。AGY／Grok 是否自動載入 repo 指令取決於各自外部 launcher，repo 不宣稱或啟用 branch-controlled hook。
+- tracked persona 與 skill byte-parity 只涵蓋 manifest 宣告的 Claude／Codex adapter：`.claude/{agents,skills}` 與 `.codex/{agents,skills}`。`.agents/skills`、AGY 與 Grok 的 provider-local persona／skill 設定不是本 repo 的 tracked parity root，不得宣稱四端 byte-equal。
+- Codex global `notify` 是 owner 可選的 repo 外設定；repo 不代改。缺少 notify 不影響手動 board 契約。
 
-為實現多 session 同步開發、避免 PR 積壓與手動衝突摩擦，專案內建自主 PR 佇列引擎（`scripts/dev/manage-pr-queue.mjs`）與多通道 Hook 機制：
+## 背景 cleanup 的安全界線
 
-1. **觸發途徑 (Trigger Pathways)**：
-   - **看板生命週期 Hook**：任何 CLI（AGY、Codex、Claude、Grok）於 `register`、`done`、`Stop`、`codex-notify` 時自動背景非同步觸發 `manage-pr-queue.mjs hook`。
-   - **Git 本地 Hook**：執行 `node scripts/dev/manage-pr-queue.mjs install-hooks`（或 `install-git-hooks.ps1`），將 `post-commit`、`post-merge`、`post-checkout` 掛入背景佇列觸發。
-   - **主動巡航 / Daemon**：可執行 `node scripts/dev/manage-pr-queue.mjs watch --interval 30` 或單次 `run-queue`。
+`register`、`done`、Claude lifecycle adapter（若由 owner 在 repo 外啟用）與 Codex notify 只會更新看板並背景啟動 `cleanup-orphan-dev-processes.mjs --silent`；它們不再同步 main，也不觸發 PR queue 或 GitHub mutation。
 
-2. **自動化處理流水線**：
-   - **智慧解衝突與分支更新**：自動偵測 `[BEHIND MAIN]`，於隔離工作區合併最新 `origin/main`；針對 `.gitignore`（規則聯集）、`docs/current_task.md`、`docs/superpowers/plans/`、`artifacts/`、`.agents/` 實施智慧非破壞性自動解衝突。
-   - **預檢與元數據自動修復 (`auto-fix`)**：自動執行 `check-pr-local-preflight.ps1`，校正 Design gate status、Manifest 畫面與 missing 路由等標記。
-   - **自動審批 (Code Review & Blip Approval)**：CI 檢查 100% 綠燈後自動調用 Blip 人工等效審批協議。
-   - **自動合併與快進同步**：審批與 CI 均通過後自動執行 Squash Merge，清理鎖定工作區，並以 `syncMainSafely()` 快進更新本地 `main`。
-   - **並發安全鎖**：以 `.agents/board/pr-queue.lock` 確保多終端機並行時不會重複爭搶資源。
+cleanup 僅在下列證據同時成立時終止程序：
+
+- exact role／entrypoint 是 coordinator `tsx src/index.ts` 或 repo 內 Kit executable；generic `git.exe` 沒有 durable launch lease，固定 fail closed、不自動終止；
+- command／executable 可由 Git worktree metadata 或共用看板定位候選路徑，但只有 NUL-framed `git worktree list --porcelain -z` 對 exact-case 同一路徑明確標記 `prunable` 才提供 destructive authority；大小寫不明或 case-collision 一律 fail closed，board `cwd` 永遠不能單獨授權終止；
+- `lstat` 對該路徑回傳精確 `ENOENT`；access denied、I/O error、dangling link 或其他不明狀態一律 fail closed；
+- 父程序已死亡、程序超過 minimum age；
+- 兩次 Win32 process snapshot 的 PID、PPID、command、executable 與 creation identity 完全一致；
+- stop 前重新取得 Git `prunable` metadata 並再次要求精確 `ENOENT`，再查詢同一 creation identity；之後以 Win32 `OpenProcess` 取得 `SafeProcessHandle`，在同一 handle 上用 `GetProcessTimes` 驗證 creation time，並以 `GetFileAttributesW` 只接受 `ERROR_FILE_NOT_FOUND`／`ERROR_PATH_NOT_FOUND` 後才呼叫 `TerminateProcess`，最後 `Dispose`。
+
+任一 ownership、identity 或 snapshot 不明即 fail closed，只記錄 `skipped`。cleanup 最後才執行 `git worktree prune`。Queue lock 使用 Git ref CAS；Windows generation identity 使用 creation timestamp，Linux 使用 boot ID 加 `/proc/<pid>/stat` starttime，避免 executable replace/unlink 改寫 identity。只在 owner PID 已死亡或 creation identity 證明 PID reuse 時回收，活著的 owner 不因時間過久被刪除，無法解析的 lock blob 也不自動刪。
+
+所有 queue／cleanup／board 的 Git child process 都會移除 inherited `GIT_*` environment；repo 選擇只能來自固定 `cwd` 與 exact argument tuple，ambient `GIT_DIR`、`GIT_WORK_TREE` 或 config injection 不得改寫 trust boundary。Queue 的 `gh` read child 另將 repo/GraphQL host 固定為 `github.com`，並移除 inherited `GH_HOST`、`GH_REPO`、`GH_CONFIG_DIR` 與 `XDG_CONFIG_HOME` routing override；credential token 與必要 proxy仍由既有受控環境提供。
+
+## Named PR queue（明確目標、無隱式 approval）
+
+`manage-pr-queue.mjs` 只處理呼叫者指定的一個 PR。生命週期與 Git hooks 不會巡迴所有 open PR，也不會偽造或自動改寫 evidence。
+
+```powershell
+node scripts/dev/manage-pr-queue.mjs status --pr <number>
+node scripts/dev/manage-pr-queue.mjs run-queue --pr <number>      # 單次只讀觀測，停在 external authority boundary
+```
+
+- `auto-fix`、`update-branch`、`approve`、`merge` 與 `install-hooks` 相容命令固定回 `HELD`；exact-head local preflight 由 coordinator 在 helper 外明確執行，repo helper 內沒有 arbitrary-script、GitHub mutation 或 hook 安裝 sink。
+- counted approval 必須由 repo 規範指定的獨立 `blip-approve` 路徑完成；native merge 由 coordinator 在 helper 外依 `github-workflow.md` 的固定 reviewer identity/body、source-bound checks、review mode 與 human-critical authority 完整重驗。
+- Readiness observation 讀完 checks／threads／approval 後必須重讀同一 PR tuple；head/base/state/review/merge 欄位任一漂移即 `HELD pr_observation_changed`，不得混合兩個 generation 的證據。
+- `refs/ai-bim/pr-queue-lock` 指向 immutable lock blob（PID、creation identity、owner token、created-at）；建立、釋放與 stale reclaim 都用 `git update-ref` expected object ID compare-and-swap。任何 `core.hooksPath` 設定或 default `reference-transaction` hook 存在時，ref mutation 在執行前 fail closed，不以 config 或 hook bypass 繞過。exact delete 遇到暫時 ref-file contention 時，只有 fresh ref 仍等於同一 object ID 才作 bounded retry；ref 缺失、讀取失敗或 successor generation 已出現都立即 fail closed。crash 不會留下 hard-link claim，舊 owner 也不能刪 successor generation。
+- Repo 不分發或安裝 Git hooks。既有 legacy `post-commit`／`post-merge`／`post-checkout` 若仍指向 clean-main `manage-pr-queue.mjs hook`，其實際行為取決於 clean main 版本；candidate branch 內容在 merge 前不等於 installed behavior。
 
 ## 驗證
 
 ```powershell
-# 看板總覽(任一終端機/任一 CLI)
-node scripts/dev/agents-board.mjs status
-
-# 檢查 PR 佇列狀態
-node scripts/dev/manage-pr-queue.mjs status
-
-# 單次觸發 PR 佇列自主處理
-node scripts/dev/manage-pr-queue.mjs run-queue
-
-# 安裝本機 Git Hooks
-node scripts/dev/manage-pr-queue.mjs install-hooks
+node --test scripts/tests/test-cleanup-orphan-dev-processes.mjs scripts/tests/test-manage-pr-queue.mjs scripts/tests/test-pr-queue-adversarial-and-stress.mjs
+pwsh -NoProfile -NonInteractive -File scripts/tests/test-agent-governance-check.ps1
 ```
 
+測試使用 temp repo／board 與 injected process inventory；Windows exact-handle 行為測試只終止測試本身建立的 disposable child，不掃描後終止其他真實程序，也不 prune 或覆寫真實 repo／hooks。

@@ -6,7 +6,7 @@ import { uiSteps } from "./a1Machine";
 import { useRuleRun } from "./hooks/useRuleRun";
 import type { RuleRunSource } from "./hooks/useRuleRun";
 import { FileProjectRow, FileVersionRow, governanceClient, IssueRow, LIBRARY_IFC_PREFIX, parseLibraryIfcPath, RuleResultRow, RuleRunHistoryFilters, RuleRunHistoryItem } from "./governanceClient";
-import { coordinatorClient, IfcReadyListItem, IfcReadyReviewSessionResponse, RuntimeSessionSummary, RuntimeStatus } from "./coordinatorClient";
+import { coordinatorClient, CoordinatorHttpError, IfcReadyListItem, IfcReadyReviewSessionResponse, RuntimeSessionSummary, RuntimeStatus } from "./coordinatorClient";
 import { LifecycleStrip } from "./modelData/conversionShared";
 import { ReviewSessionViewerPane, type ReviewRoomHandoff } from "./ReviewSessionViewerPane";
 import { ElementMappingDocument, isFakeMappingDocument, isFakeMappingItem } from "../types/mapping";
@@ -19,6 +19,15 @@ type NativeFilePickerWindow = Window & {
     types?: Array<{ description?: string; accept: Record<string, string[]> }>;
   }) => Promise<Array<{ name: string }>>;
 };
+
+const TEST_DATA_PROJECTS_PATH = "/api/dev/test-data-projects";
+
+function isTestDataDevRoutesDisabled(error: unknown): boolean {
+  return error instanceof CoordinatorHttpError
+    && error.status === 404
+    && error.path === TEST_DATA_PROJECTS_PATH
+    && error.message === `coordinator ${TEST_DATA_PROJECTS_PATH} -> 404 dev routes disabled`;
+}
 
 function defaultA1IdsPath(): string {
   return import.meta.env.VITE_A1_DEFAULT_IDS_PATH || "rules/sample-fire-rating.ids";
@@ -153,11 +162,20 @@ export function A1GovernanceWorkbenchPage() {
   // R8：local_fs 測試 fixtures 專案清單（coordinator config 驅動）。取不到＝空清單＝不標，
   // 誠實降級不阻塞選檔（MinIO 為真實資料監控來源，不標測試資料）。
   const [testDataProjects, setTestDataProjects] = useState<string[]>([]);
+  // Task 4C：ENABLE_DEV_ROUTES=false 時 GET /api/dev/test-data-projects 也在 /api/dev/* 404 gate 內
+  // （PR #699 D3）。誠實鐵律：404 是「dev routes 已關閉」這個可解釋的已知狀態，不是普通取不到——
+  // 顯示 note 讓操作員知道〔測試資料〕徽章暫時不會出現的原因；非 404 的其他失敗維持既有靜默降級
+  // （取不到就不標；不擋 A1 流程），不誤報成 dev routes 問題。
+  const [testDataDevRoutesDisabled, setTestDataDevRoutesDisabled] = useState(false);
   useEffect(() => {
     let alive = true;
     coordinatorClient.getTestDataProjects()
-      .then((r) => { if (alive) setTestDataProjects(r.projects); })
-      .catch(() => { /* 取不到就不標；不擋 A1 流程 */ });
+      .then((r) => { if (alive) { setTestDataProjects(r.projects); setTestDataDevRoutesDisabled(false); } })
+      .catch((e) => {
+        if (!alive) return;
+        if (isTestDataDevRoutesDisabled(e)) setTestDataDevRoutesDisabled(true);
+        /* 非 404：取不到就不標；不擋 A1 流程 */
+      });
     return () => { alive = false; };
   }, []);
   const ui = uiSteps(state);
@@ -834,6 +852,7 @@ export function A1GovernanceWorkbenchPage() {
           )}
         </div>
         {fsErr && sourceKind === "local_fs" && <p className="ec-warn-note" data-testid="a1-fs-error" style={{ marginTop: 4 }}>{t("local_fs 檔案庫不可用：", "local_fs file library unavailable: ")}{fsErr}{" "}<Btn data-testid="a1-fs-retry" caption="GET /api/governance/files/tree" onClick={() => { void loadA1FsTree(); }}>{t("重試載入檔案庫", "Retry loading file library")}</Btn></p>}
+        {sourceKind === "local_fs" && testDataDevRoutesDisabled && <p className="ec-note" data-testid="a1-testdata-devroutes-note" style={{ marginTop: 4 }}>{t("測試資料清單暫時不可用（dev routes 已關閉，ENABLE_DEV_ROUTES=false）：local_fs 選項不會加註〔測試資料〕徽章，但不影響選檔與檢核。", "The test-data project list is temporarily unavailable (dev routes are disabled, ENABLE_DEV_ROUTES=false): local_fs options will not show the [test data] badge, but selecting and validating files is unaffected.")}</p>}
         {sourceKind === "minio" && <p className="ec-note" data-testid="a1-minio-source-note" style={{ marginTop: 4 }}>{t("A1 CPU 檢核需要 coordinator-resolved server-local IFC path；MinIO key 不會送 POST /api/governance/rule-runs。未被 watcher 偵測到的 MinIO 物件請先由轉檔排程頁觸發 POST /api/conversion/trigger。", "A1 CPU validation needs a coordinator-resolved server-local IFC path; the MinIO key is not sent to POST /api/governance/rule-runs. If the watcher missed a MinIO object, trigger POST /api/conversion/trigger from the conversion schedule page first.")}</p>}
         {sourceKind === "minio" && selectedKey && <p className={canPickMinioDownloaded ? "ec-note" : "ec-warn-note"} data-testid="a1-minio-resolution-note" style={{ marginTop: 4 }}>{selectedMinioResolutionNote}</p>}
         {minioErr && sourceKind === "minio" && <p className="ec-warn-note" data-testid="a1-minio-error" style={{ marginTop: 4 }}>{t("MinIO 物件清單不可用：", "MinIO object list unavailable: ")}{minioErr}</p>}
