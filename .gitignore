@@ -59,6 +59,7 @@ Thumbs.db
 # Tracked bim-workflows-pack skills（2026-07-31：token 策略錦標賽 / mapping 覆蓋率閉環）
 !.claude/skills/token-strategy-tournament/
 !.claude/skills/mapping-coverage-loop/
+!.claude/skills/prompt-crafter/
 # Tracked official Superpowers v6.1.1 skill-only bundle
 !.claude/skills/brainstorming/
 !.claude/skills/dispatching-parallel-agents/
@@ -113,6 +114,7 @@ Thumbs.db
 # Tracked bim-workflows-pack skills（2026-07-31：Codex model-adapter copies）
 !/.codex/skills/token-strategy-tournament/
 !/.codex/skills/mapping-coverage-loop/
+!/.codex/skills/prompt-crafter/
 # Tracked official Superpowers v6.1.1 skill-only bundle
 !/.codex/skills/brainstorming/
 !/.codex/skills/dispatching-parallel-agents/
