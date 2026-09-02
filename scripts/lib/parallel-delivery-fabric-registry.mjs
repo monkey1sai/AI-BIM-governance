@@ -536,6 +536,7 @@ export function createPlanRegistry({ store, clock }) {
 // the attestation validator already rejects them as expired.
 const RETAINED_RELEASED_LEASE_RECORDS = 64
 const MAX_RETAINED_RELEASED_LEASE_RECORDS = 1024
+const MAX_RETAINED_RESOURCE_STUBS = 65536
 const USED_ATTESTATION_GRACE_MS = 7 * 24 * 60 * 60 * 1000
 const RETAINED_RESOURCE_KEYS = Object.freeze([
   'lease_id', 'plan_id', 'task_id', 'generation', 'branch', 'worktree_id', 'resource_keys', 'scope_digest',
@@ -668,7 +669,10 @@ const resourceKeysConflict = (left, right) => {
 }
 
 const findAdmissionBlocker = (record, request) => {
-  if (Object.hasOwn(record.draining_plans, request.plan_id)) {
+  // A drain is generation-bound, exactly like the attestation that authorized it:
+  // a plan drained at generation N does not block its own later generation.
+  const drain = record.draining_plans[request.plan_id]
+  if (drain && drain.generation === request.generation) {
     return { status: 'QUEUED_FOR_LEASE', reason: 'PLAN_DRAINING' }
   }
   if (record.leases[request.lease_id] || Object.hasOwn(record.retained_resources ?? {}, request.lease_id)) {
@@ -897,9 +901,11 @@ const validateLeaseRegistryRecord = (record, writerCap) => {
     fail('registry_record_invalid', 'lease_registry_shape')
   }
   assertStamped(record, 'lease_registry')
-  if (Object.keys(record.leases).length + Object.keys(record.retained_resources).length > 4096) {
-    fail('registry_record_invalid', 'lease_registry_retention_limit')
-  }
+  // The live admission capacity is bounded by lease records only; compacted
+  // retained-resource stubs are historical truth with their own, far larger ceiling
+  // so a long history never turns into an admission blocker.
+  if (Object.keys(record.leases).length > 4096) fail('registry_record_invalid', 'lease_registry_retention_limit')
+  if (Object.keys(record.retained_resources).length > MAX_RETAINED_RESOURCE_STUBS) fail('registry_record_invalid', 'lease_registry_retained_resource_limit')
   const heldBranches = new Set()
   const heldWorktrees = new Set()
   for (const [leaseId, lease] of Object.entries(record.leases)) {

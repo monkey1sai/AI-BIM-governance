@@ -901,6 +901,8 @@ export const trustedPinsAuthorityDigest = (pins) => digestCanonical({
   source_ref: pins?.source_ref ?? null,
   source_sha: pins?.source_sha ?? null,
   base_sha: pins?.base_sha ?? null,
+  verifier_sha: pins?.verifier_sha ?? null,
+  binder_sha: pins?.binder_sha ?? null,
   verifier_tree_digest: pins?.verifier_tree_digest ?? null,
   harness_digest: pins?.harness_digest ?? null,
   command_pins: pins?.command_pins ?? null,

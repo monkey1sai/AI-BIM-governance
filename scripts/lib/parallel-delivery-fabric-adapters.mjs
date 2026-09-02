@@ -1,3 +1,4 @@
+import { types } from 'node:util'
 import { digestCanonical } from './parallel-delivery-fabric-contract.mjs'
 
 const SHA1 = /^[0-9a-f]{40}$/u
@@ -45,12 +46,36 @@ const hasSensitiveKey = (rawKey) => {
     (key.endsWith('_path') && !['old_path', 'new_path', 'public_entrypoint'].includes(key))
 }
 
-const unsafeValue = (value) => {
+// Caller objects are inspected through a bounded, descriptor-only walk: cycles,
+// excessive depth, accessor properties and proxies are all "unsafe" rather than
+// something to traverse, so a public authority boundary never runs caller code or
+// overflows the stack before it can return a typed hold.
+const UNSAFE_MAX_DEPTH = 64
+const unsafeValue = (value, path = new Set(), depth = 0) => {
   if (typeof value === 'string') return RAW_WINDOWS_SID.test(value) || TERMINAL_PROCESS_ID.test(value) ||
     SECRET_VALUE.test(value) || ABSOLUTE_PATH.test(value) || RAW_ENVIRONMENT.test(value)
-  if (Array.isArray(value)) return value.some(unsafeValue)
-  if (!isPlainObject(value)) return false
-  return Object.entries(value).some(([key, nested]) => hasSensitiveKey(key) || unsafeValue(nested))
+  if (value === null || typeof value !== 'object') return false
+  if (depth > UNSAFE_MAX_DEPTH || types.isProxy(value) || path.has(value)) return true
+  path.add(value)
+  try {
+    if (Array.isArray(value)) {
+      for (let index = 0; index < value.length; index += 1) {
+        const descriptor = Object.getOwnPropertyDescriptor(value, index)
+        if (!descriptor || !Object.hasOwn(descriptor, 'value')) return true
+        if (unsafeValue(descriptor.value, path, depth + 1)) return true
+      }
+      return false
+    }
+    if (!isPlainObject(value)) return false
+    for (const key of Object.getOwnPropertyNames(value)) {
+      const descriptor = Object.getOwnPropertyDescriptor(value, key)
+      if (!descriptor || !Object.hasOwn(descriptor, 'value')) return true
+      if (hasSensitiveKey(key) || unsafeValue(descriptor.value, path, depth + 1)) return true
+    }
+    return false
+  } finally {
+    path.delete(value)
+  }
 }
 
 const safeDigest = (value) => {

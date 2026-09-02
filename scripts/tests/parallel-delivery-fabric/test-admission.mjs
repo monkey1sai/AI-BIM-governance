@@ -795,9 +795,9 @@ test('5H — evaluateAdmission uses canonical Task3 records for disjoint writers
     {},
     { provider: 'claude' },
   ])
+  // The request carries its plan generation; the registry CAS revision is not plan authority.
   assertStatus(evaluateAdmission(full, request({
     provider: 'claude',
-    generation: full.generation,
     lease_id: 'lease:third',
     owner_session: 'session:third',
     provider_session_id: 'provider:third',
@@ -1798,4 +1798,21 @@ test('AC-11 — admission kernel has no remote, delete, or process mutation capa
   const source = readFileSync(new URL('../../lib/parallel-delivery-fabric-admission.mjs', import.meta.url), 'utf8')
   assert.doesNotMatch(source, /node:(?:child_process|fs|http|https|net|tls|worker_threads)/u)
   assert.doesNotMatch(source, /\b(?:fetch|exec|execFile|fork|spawn|kill|unlink|rmSync|rmdirSync)\s*\(/u)
+})
+
+test('P2 regression — admission compares the plan generation with live leases, not the registry CAS revision', async () => {
+  const { store, registry } = createInMemoryTask3LeaseRegistry()
+  assert.equal((await registry.admit(task3LeaseRequest(store))).status, 'ADMITTED')
+  assert.equal((await registry.admit(task3LeaseRequest(store, {
+    lease_id: 'lease:task3-two', task_id: 'task:task3-two', owner_session: 'session:task3-two', provider_session_id: 'provider:task3-two',
+    execution_context_id: 'context:task3-two', worktree_id: 'worktree:task3-two', branch: 'codex/task3-two',
+    resource_keys: ['path:src/task3-two.mjs'], nonce: NONCE('task3-two'),
+  }))).status, 'ADMITTED')
+  const inspected = await registry.inspect()
+  assert.ok(inspected.record.generation >= 2)
+  // The registry revision moved past 1; a generation-1 plan request is still bound to its plan.
+  const sameGeneration = evaluateAdmission(inspected.record, request({ lease_id: 'lease:three', scope: [{ kind: 'path', path: 'src/three.mjs' }], worktree_id: 'worktree:three', worktree_path_digest: SHA256_D, branch: 'codex/task-three', provider_session_id: 'provider:three', execution_context_id: 'context:three', owner_session: 'session:three' }))
+  assert.notEqual(sameGeneration.reason, 'GENERATION_MISMATCH', JSON.stringify(sameGeneration))
+  // A live lease of another generation for the same plan is a real mismatch.
+  assertStatus(evaluateAdmission(inspected.record, request({ generation: 2, lease_id: 'lease:four', scope: [{ kind: 'path', path: 'src/four.mjs' }], worktree_id: 'worktree:four', worktree_path_digest: SHA256_D, branch: 'codex/task-four', provider_session_id: 'provider:four', execution_context_id: 'context:four', owner_session: 'session:four' })), 'HELD_EVIDENCE_BINDING', 'GENERATION_MISMATCH')
 })

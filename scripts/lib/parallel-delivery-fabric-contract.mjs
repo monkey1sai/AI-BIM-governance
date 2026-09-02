@@ -89,7 +89,13 @@ export function canonicalize(value) {
       if (!Number.isSafeInteger(item)) fail('non_ijson_value', `${context}_safe_integer_required`)
       return item
     }
-    if (Array.isArray(item)) return item.map((entry, index) => normalize(entry, `${context}[${index}]`, depth + 1))
+    if (Array.isArray(item)) {
+      // A hole would serialize as null and alias a different input's digest.
+      for (let index = 0; index < item.length; index += 1) {
+        if (!Object.hasOwn(item, index)) fail('non_ijson_value', `${context}[${index}]_sparse_array`)
+      }
+      return item.map((entry, index) => normalize(entry, `${context}[${index}]`, depth + 1))
+    }
     if (!isPlainObject(item)) fail('non_ijson_value', `${context}_plain_object_required`)
 
     const normalized = {}

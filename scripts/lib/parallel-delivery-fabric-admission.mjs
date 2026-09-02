@@ -582,15 +582,20 @@ const deriveTask3AdmissionView = (record) => {
   } catch {
     return null
   }
-  const leases = Object.values(parsed.leases)
-  const commonDirs = new Set(leases.map((leaseRecord) => leaseRecord.common_dir_digest))
+  const liveLeases = Object.values(parsed.leases)
+  const commonDirs = new Set(liveLeases.map((leaseRecord) => leaseRecord.common_dir_digest))
   if (commonDirs.size > 1) return null
+  // Compacted retained-resource stubs are holders too: the registry treats them as
+  // blocking, so the local projection must see the same conflict set.
+  const retainedHolders = Object.values(parsed.retained_resources ?? {}).map((stub) => ({
+    ...stub, state: 'RELEASED', retention_state: 'RETAINED_FOR_REVIEW',
+  }))
   return deepFreeze({
     __task3_registry: true,
     generation: parsed.generation,
-    common_dir_digest: commonDirs.size === 1 ? leases[0].common_dir_digest : undefined,
+    common_dir_digest: commonDirs.size === 1 ? liveLeases[0].common_dir_digest : undefined,
     writer_cap: 2,
-    leases,
+    leases: [...liveLeases, ...retainedHolders],
     registry_record: parsed,
   })
 }
@@ -860,7 +865,11 @@ export const evaluateAdmission = (rawSnapshot, rawRequest) => {
     const shapeReason = validateAdmissionRequestShape(request)
     if (shapeReason === 'RUNTIME_KIND_UNKNOWN') return held('HELD_RUNTIME', shapeReason)
     if (shapeReason) return held('HELD_EXECUTION_CONTEXT', shapeReason)
-    if (request.generation && snapshot.generation && request.generation !== snapshot.generation) return held('HELD_EVIDENCE_BINDING', 'GENERATION_MISMATCH')
+    // `snapshot.generation` is the registry's CAS revision, not plan authority. The
+    // request's plan generation is compared with the live leases of the same plan:
+    // an older generation still holding a seat must drain before the next admits.
+    if (request.generation && snapshot.leases.some((leaseRecord) => leaseRecord.plan_id === request.plan_id &&
+        leaseRecord.state !== 'RELEASED' && leaseRecord.generation !== request.generation)) return held('HELD_EVIDENCE_BINDING', 'GENERATION_MISMATCH')
     if (request.common_dir_digest && snapshot.common_dir_digest && request.common_dir_digest !== snapshot.common_dir_digest) return held('HELD_TOPOLOGY_UNSUPPORTED', 'COMMON_DIR_MISMATCH')
     if (!request.branch || request.branch === 'main' || request.branch === 'master') return held('HELD_EXECUTION_CONTEXT', 'IDENTITY_BINDING_INVALID')
     if (!safeCandidateBranch(request.branch) && !managedBranch(request.branch)) return held('HELD_EXECUTION_CONTEXT', 'IDENTITY_BINDING_INVALID')

@@ -276,7 +276,8 @@ for (const [leftProvider, rightProvider] of PROVIDER_PAIRS) {
     assert.equal(pendingLease.state, 'END_REQUESTED')
     assert.equal(pendingLease.release_evidence_ref, null)
 
-    const admissionInput = admissionRequest(store, 9, 'claude', pendingRelease.record.generation)
+    // The admission request carries the plan generation; the registry CAS revision is not plan authority.
+    const admissionInput = admissionRequest(store, 9, 'claude', 1)
     const admissionBefore = structuredClone(admissionInput)
     const beforePureAdmission = { ...calls }
     const pureAdmission = evaluateAdmission(pendingRelease.record, admissionInput)

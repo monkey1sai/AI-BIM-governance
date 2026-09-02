@@ -14,6 +14,7 @@ import {
   parseSessionLease,
   parseSessionLeaseRegistry,
 } from '../../lib/parallel-delivery-fabric-registry.mjs'
+import { evaluateAdmission } from '../../lib/parallel-delivery-fabric-admission.mjs'
 
 import { FABRIC_SCHEMA_VERSION, canonicalize, digestCanonical, normalizeScopeResource } from '../../lib/parallel-delivery-fabric-contract.mjs'
 
@@ -662,6 +663,18 @@ test('plan drain is durable and blocks every later admission for the same plan',
     resource_keys: ['path:docs/after-drain.mjs'], nonce: NONCE('same-plan-after-drain'),
   }))
   assert.deepEqual({ status: blocked.status, reason: blocked.reason }, { status: 'QUEUED_FOR_LEASE', reason: 'PLAN_DRAINING' })
+  // The drain is bound to generation 1: the plan's next generation admits again.
+  const nextGeneration = await planRegistry.submit({
+    plan: makePlan({ generation: 2 }), expected_oid: SEEDED_PLAN_OID, nonce: NONCE('plan-gen2-submit'),
+    execution: { level: 'plan_only', side_effect_class: 'CONTROL_METADATA' },
+  })
+  assert.equal(nextGeneration.status, 'STORED')
+  const nextGenerationLease = await leaseRegistry.admit(makeRequest(store, {
+    lease_id: 'lease:gen2', generation: 2, owner_session: 'session:gen2', provider_session_id: 'provider:gen2',
+    execution_context_id: 'context:gen2', worktree_id: 'worktree:gen2', branch: 'codex/gen2',
+    resource_keys: ['path:docs/gen2.mjs'], nonce: NONCE('gen2-admit'), expected_plan_oid: nextGeneration.oid,
+  }))
+  assert.notEqual(nextGenerationLease.reason, 'PLAN_DRAINING', JSON.stringify(nextGenerationLease))
   const otherPlanSnapshot = await planRegistry.submit({
     plan: makePlan({ planId: 'plan:other' }),
     expected_oid: ZERO_OID,
@@ -2455,6 +2468,19 @@ test('P2 regression — released leases compact into retained-resource stubs tha
   record = (await leaseRegistry.inspect()).record
   assert.deepEqual(Object.keys(record.used_owner_end_attestations), [])
   assert.deepEqual(Object.keys(record.retained_resources).sort(), ['lease:compact-a'])
+  // The local admission projection sees the compacted holder exactly as the registry does.
+  const admissionRequest = (overrides) => ({
+    schema_version: 'admission-request/v1', lease_kind: 'writer_seat', plan_id: 'plan:one', generation: 1, task_id: 'task:projection',
+    provider: 'codex', owner_session: 'session:projection', provider_session_id: 'provider:projection', execution_context_id: 'context:projection',
+    repo_identity_digest: SHA256, common_dir_digest: store.commonDirDigest, worktree_id: 'worktree:projection', worktree_path_digest: 'd'.repeat(64),
+    branch: 'codex/projection', baseline_sha: SHA1, head_sha: 'b'.repeat(40), base_ref: 'origin/main', base_sha: SHA1, expected_remote_sha: SHA1,
+    action: 'admit', runtime_kind: null, ...overrides,
+  })
+  const overlapScope = [{ kind: 'path', path: 'src/compact-a.mjs' }]
+  const projected = evaluateAdmission(record, admissionRequest({
+    lease_id: 'lease:projection', scope: overlapScope, scope_digest: digestCanonical(overlapScope.map((resource) => ({ kind: resource.kind, path: resource.path }))),
+  }))
+  assert.deepEqual({ status: projected.status, reason: projected.reason }, { status: 'QUEUED_FOR_LEASE', reason: 'RESOURCE_CONFLICT' }, JSON.stringify(projected))
   // The pruned attestation cannot be replayed: it is expired for the validator regardless of the ledger.
   const late = await leaseRegistry.admit(makeRequest(store, {
     lease_id: 'lease:compact-g', owner_session: 'session:compact-b', provider_session_id: 'provider:compact-b',

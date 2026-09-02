@@ -360,6 +360,7 @@ const trustedPins = {
 }
 trustedPins.authority_digest = digestCanonical({
   source_ref: trustedPins.source_ref, source_sha: trustedPins.source_sha, base_sha: trustedPins.base_sha,
+  verifier_sha: trustedPins.verifier_sha, binder_sha: trustedPins.binder_sha,
   verifier_tree_digest: trustedPins.verifier_tree_digest, harness_digest: trustedPins.harness_digest,
   command_pins: trustedPins.command_pins, expected_flow: trustedPins.expected_flow,
 })
@@ -797,3 +798,11 @@ def test_p1_3_external_terminal_pairs_are_closed() -> None:
 def test_secret_safe_string_rejects_bare_bearer_without_rejecting_near_words() -> None:
     assert_rejected("secret_safe_string", "authority:bearer")
     assert_accepted("secret_safe_string", "authority:bearing")
+
+
+def test_resource_key_schema_accepts_canonical_glob_keys_only_for_the_glob_kind() -> None:
+    validator = validator_for("resource_key")
+    for accepted in ["path:src/app.mjs", "glob:scripts/tests/**/*.mjs", "glob:web-viewer-sample/src/{a,b}/*.ts", "rename:src/a.mjs:src/b.mjs", "runtime:resource:kit-runtime"]:
+        assert not list(validator.iter_errors(accepted)), accepted
+    for rejected in ["path:src/*.mjs", "runtime:resource:*", "glob:", "glob:/abs/**"]:
+        assert list(validator.iter_errors(rejected)), rejected

@@ -521,7 +521,7 @@
     "resource_key": {
       "allOf": [
         { "$ref": "#/$defs/opaque_identity_safe_string" },
-        { "type": "string", "minLength": 3, "maxLength": 256, "pattern": "^[a-z][a-z0-9_-]*:[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}$" }
+        { "type": "string", "minLength": 3, "maxLength": 256, "pattern": "^(?:glob:[A-Za-z0-9*?\\[\\]{}][A-Za-z0-9._:/*?\\[\\]{},-]{0,255}|[a-z][a-z0-9_-]*:[A-Za-z0-9][A-Za-z0-9._:/-]{0,255})$" }
       ]
     }
   }

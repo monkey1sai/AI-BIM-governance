@@ -879,3 +879,23 @@ test('Claude authority requires exact metadata and catches configuration verifie
   }), { status: 'HELD_PROVIDER_CONFIGURATION', reason: 'provider_configuration_evidence_gap' })
   assert.deepEqual(calls, Object.fromEntries(Object.keys(calls).map((effect) => [effect, 0])))
 })
+
+test('P2 regression — cyclic, accessor-bearing, proxied and over-deep caller inputs hold instead of escaping', () => {
+  const cyclic = executionInput()
+  cyclic.self = cyclic
+  assert.equal(verifyExecutionContextAttestation(cyclic, executionPins()).status.startsWith('HELD'), true)
+  const withGetter = executionInput()
+  let touched = 0
+  Object.defineProperty(withGetter, 'lazy', { enumerable: true, get() { touched += 1; return 'value' } })
+  assert.equal(verifyExecutionContextAttestation(withGetter, executionPins()).status.startsWith('HELD'), true)
+  assert.equal(touched, 0)
+  const proxied = new Proxy(executionInput(), { ownKeys() { throw new Error('trap must not run') } })
+  assert.equal(verifyExecutionContextAttestation(proxied, executionPins()).status.startsWith('HELD'), true)
+  let deep = { leaf: 'x' }
+  for (let level = 0; level < 80; level += 1) deep = { nested: deep }
+  assert.equal(verifyExecutionContextAttestation({ ...executionInput(), deep }, executionPins()).status.startsWith('HELD'), true)
+  // A shared (non-cyclic) sub-object is not a cycle.
+  const shared = { note: 'shared' }
+  const dag = { ...executionInput(), left: shared, right: shared }
+  assert.equal(verifyExecutionContextAttestation(dag, executionPins()).status.startsWith('HELD'), true)
+})

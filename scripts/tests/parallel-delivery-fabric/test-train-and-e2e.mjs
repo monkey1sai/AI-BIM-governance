@@ -1053,6 +1053,16 @@ test('browser evidence binds exact head/tree/manifest/runtime and sanitized evid
     trustedPins: swappedPins,
   })
   assert.equal(swapped.reason, 'TRUSTED_PINS_AUTHORITY_DIGEST_MISMATCH')
+  // The verifier and binder source pins are part of the authority digest too.
+  const swappedVerifier = trustedPins()
+  swappedVerifier.verifier_sha = SHA256('e')
+  const verifierSwap = bindBrowserEvidence({
+    candidate: candidate(), manifest: manifest(),
+    playwright: browserPacket('playwright', { trusted_verifier_sha: SHA256('e') }),
+    computerUse: browserPacket('computer_use', { verifier_identity: 'computer-use:one', trusted_verifier_sha: SHA256('e') }),
+    trustedPins: swappedVerifier,
+  })
+  assert.equal(verifierSwap.reason, 'TRUSTED_PINS_AUTHORITY_DIGEST_MISMATCH')
   assert.equal(result.evidence.manifest_id, `manifest:sha256:${MANIFEST.slice(0, 40)}:bound`)
   assert.equal(result.evidence.trace_reference, `trace:sha256:${TRACE.slice(0, 40)}:bound`)
   assert.equal(result.evidence.screenshot_reference, `screenshot:sha256:${SCREENSHOT.slice(0, 40)}:bound`)

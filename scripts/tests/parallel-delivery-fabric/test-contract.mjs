@@ -256,6 +256,10 @@ test('canonicalization sorts keys without mutation and hashes canonical JSON', (
   expectCode('non_ijson_value', () => canonicalize({ bad: Number.NaN }))
   expectCode('non_ijson_value', () => canonicalize({ bad: '\ud800' }))
   expectCode('non_ijson_value', () => canonicalize({ __proto__: { polluted: true } }))
+  // A sparse array would serialize its holes as null and share a digest with [null].
+  expectCode('non_ijson_value', () => canonicalize(Array(1)))
+  expectCode('non_ijson_value', () => digestCanonical({ list: [1, , 3] }))
+  assert.equal(typeof digestCanonical([null]), 'string')
 })
 
 test('scope resources fold Windows paths, preserve POSIX case, and retain shared keys', () => {
