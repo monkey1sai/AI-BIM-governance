@@ -210,6 +210,7 @@ function Invoke-StrictMetadataSchemaRegression {
     $manifestHash = 'D' * 64
     $validManifest = [ordered]@{
         schema = 'blip-trusted-runtime-manifest/v1'
+        source_commit = 'c' * 40
         files = [ordered]@{ file = $fileHash }
         runtime = [ordered]@{ runtime = $runtimeHash }
         candidate_freeze_sha256 = $freezeHash
@@ -259,6 +260,10 @@ function Invoke-StrictMetadataSchemaRegression {
         -CompletionText $validCompletion -Label 'duplicate manifest files property'
     Assert-MetadataRejected -ManifestText ($validManifest.Replace(',"installed_at":"2026-08-14T00:00:00.0000000+08:00"', '')) `
         -CompletionText $validCompletion -Label 'missing manifest property'
+    Assert-MetadataRejected -ManifestText ($validManifest.Replace(',"source_commit":"' + ('c' * 40) + '"', '')) `
+        -CompletionText $validCompletion -Label 'missing source commit'
+    Assert-MetadataRejected -ManifestText ($validManifest.Replace(('c' * 40), ('C' * 40))) `
+        -CompletionText $validCompletion -Label 'non-canonical source commit'
     $completionUnknown = $validCompletion.Substring(0, $validCompletion.Length - 1) + ',"unknown":true}'
     $completionDuplicate = $validCompletion.Substring(0, $validCompletion.Length - 1) +
         ',"schema":"blip-trusted-runtime-complete/v1"}'
@@ -651,6 +656,7 @@ function Write-Manifest {
     }
     $manifest = [ordered]@{
         schema = 'blip-trusted-runtime-manifest/v1'
+        source_commit = 'c' * 40
         files = $files
         runtime = [ordered]@{
             'runtime/pwsh.exe' = (Get-FileHash -LiteralPath 'C:\Program Files\PowerShell\7\pwsh.exe' -Algorithm SHA256).Hash

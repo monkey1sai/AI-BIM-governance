@@ -14,6 +14,14 @@ override, no auto-merge, and a short-lived signed broker capability are all mand
 It never merges, resolves a thread, dismisses a
 review, pushes, changes repository settings, or touches an owner-consent comment.
 
+Branch protection is verified from two sources because the least-privilege write
+reviewer cannot read GitHub's admin-only legacy protection endpoint (observed as
+HTTP 404 on 2026-09-01 across ten failed vote attempts): the manifest-verified
+protected parent supplies a non-secret snapshot from a separate read-only admin
+credential, and the write-visible GraphQL `refUpdateRule` is cross-checked live
+on every preflight and post-approval pass. The parent independently re-fetches
+the complete policy after the child exits and rejects any drift.
+
 Honest framing for anyone reading a report produced with this: an approval submitted
 here is a *scripted* approval carrying the operator's authority. It satisfies the
 mechanism; it does not by itself constitute independent human review.
@@ -61,6 +69,8 @@ DEFAULT_REPO = "monkey1sai/AI-BIM-governance"
 DEFAULT_BASE_BRANCH = "main"
 APPROVAL_CAPABILITY_ENV = "BLIP_APPROVAL_CAPABILITY"
 APPROVAL_CAPABILITY_VERSION = "blip-approval-capability/v2"
+PROTECTION_POLICY_ENV = "BLIP_PROTECTION_POLICY_JSON"
+PROTECTION_POLICY_MAX_CHARS = 262144
 MACHINE_REVIEW_MODES = frozenset({"mechanical_only", "focused_semantic", "risk_scoped_specialists"})
 HUMAN_CRITICAL_REVIEW_MODE = "human_critical"
 SUPPORTED_REVIEW_MODES = MACHINE_REVIEW_MODES | {HUMAN_CRITICAL_REVIEW_MODE}
@@ -373,25 +383,108 @@ def fetch_repository_safety(token: str, owner: str, name: str) -> dict:
     return normalized
 
 
-def fetch_protection_policy(token: str, owner: str, name: str, base_branch: str) -> dict:
-    encoded_branch = quote(base_branch, safe="")
-    active_rules = http_json(
-        "GET",
-        f"{API}/repos/{owner}/{name}/rules/branches/{encoded_branch}?per_page=100",
-        token=token,
-    )
-    if not isinstance(active_rules, list):
-        raise SystemExit("Active branch rules payload is malformed")
-    if len(active_rules) >= 100:
-        raise SystemExit("Active branch rules may be paginated; refusing incomplete protection state")
-    if active_rules:
-        raise SystemExit("Active rulesets are present but this approval broker only supports verified legacy protection")
+def parse_protection_policy_snapshot(raw: str) -> dict:
+    """Parse the non-secret snapshot injected by the protected parent broker."""
+    if not raw:
+        raise SystemExit(
+            f"Branch protection verification requires protected {PROTECTION_POLICY_ENV} input"
+        )
+    if len(raw) > PROTECTION_POLICY_MAX_CHARS:
+        raise SystemExit("Protected branch-policy snapshot exceeds the size limit")
 
-    protection = http_json(
-        "GET",
-        f"{API}/repos/{owner}/{name}/branches/{encoded_branch}/protection",
-        token=token,
+    def reject_duplicate_keys(pairs: list[tuple[str, object]]) -> dict:
+        result: dict[str, object] = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError(f"duplicate key: {key}")
+            result[key] = value
+        return result
+
+    try:
+        payload = json.loads(raw, object_pairs_hook=reject_duplicate_keys)
+    except ValueError:
+        raise SystemExit("Protected branch-policy snapshot is malformed") from None
+    if not isinstance(payload, dict) or set(payload) != {"active_rules", "protection"}:
+        raise SystemExit("Protected branch-policy snapshot has an invalid schema")
+    if payload["active_rules"] != []:
+        raise SystemExit("Active rulesets are present but this broker only supports verified legacy protection")
+    if not isinstance(payload["protection"], dict):
+        raise SystemExit("Protected branch-policy snapshot has no protection object")
+    return payload
+
+
+REF_UPDATE_RULE_QUERY = """
+query($owner:String!, $name:String!, $qualifiedName:String!) {
+  repository(owner:$owner, name:$name) {
+    ref(qualifiedName:$qualifiedName) {
+      refUpdateRule {
+        pattern
+        requiredApprovingReviewCount
+        requiresCodeOwnerReviews
+        requiresConversationResolution
+        allowsForcePushes
+        allowsDeletions
+        blocksCreations
+        requiresLinearHistory
+        requiresSignatures
+        requiredStatusCheckContexts
+      }
+    }
+  }
+}
+"""
+
+
+def fetch_live_ref_update_rule(token: str, owner: str, name: str, base_branch: str) -> dict:
+    """Read the write-visible live protection subset (GraphQL `refUpdateRule`)."""
+    data = graphql(
+        token,
+        REF_UPDATE_RULE_QUERY,
+        {"owner": owner, "name": name, "qualifiedName": f"refs/heads/{base_branch}"},
     )
+    ref = ((data.get("data") or {}).get("repository") or {}).get("ref")
+    rule = (ref or {}).get("refUpdateRule")
+    if not isinstance(rule, dict):
+        raise SystemExit("Live branch protection is not visible on the base branch; approval is HELD")
+    contexts = rule.get("requiredStatusCheckContexts")
+    if not isinstance(contexts, list) or not all(
+        isinstance(context, str) and context.strip() for context in contexts
+    ):
+        raise SystemExit("Live required status contexts are malformed")
+    flags: dict[str, bool] = {}
+    for field in (
+        "requiresCodeOwnerReviews",
+        "requiresConversationResolution",
+        "allowsForcePushes",
+        "allowsDeletions",
+        "blocksCreations",
+        "requiresLinearHistory",
+        "requiresSignatures",
+    ):
+        value = rule.get(field)
+        if not isinstance(value, bool):
+            raise SystemExit(f"Live branch protection field {field!r} is malformed")
+        flags[field] = value
+    approvals = rule.get("requiredApprovingReviewCount")
+    if not isinstance(approvals, int) or isinstance(approvals, bool):
+        raise SystemExit("Live required approving review count is malformed")
+    if rule.get("pattern") != base_branch:
+        raise SystemExit("Live branch protection pattern is not bound to the base branch")
+    return {
+        "pattern": base_branch,
+        "required_approving_review_count": approvals,
+        "required_status_check_contexts": sorted({context.strip() for context in contexts}),
+        "requires_code_owner_reviews": flags["requiresCodeOwnerReviews"],
+        "requires_conversation_resolution": flags["requiresConversationResolution"],
+        "allows_force_pushes": flags["allowsForcePushes"],
+        "allows_deletions": flags["allowsDeletions"],
+        "blocks_creations": flags["blocksCreations"],
+        "requires_linear_history": flags["requiresLinearHistory"],
+        "requires_signatures": flags["requiresSignatures"],
+    }
+
+
+def validate_protection_payload(protection: object, base_branch: str) -> dict:
     if not isinstance(protection, dict):
         raise SystemExit("Branch protection payload is missing or malformed")
 
@@ -515,6 +608,32 @@ def fetch_protection_policy(token: str, owner: str, name: str, base_branch: str)
         "restrictions": None,
         "active_rulesets": [],
     }
+    return normalized
+
+
+def fetch_protection_policy(token: str, owner: str, name: str, base_branch: str) -> dict:
+    snapshot = parse_protection_policy_snapshot(os.environ.get(PROTECTION_POLICY_ENV, "").strip())
+    normalized = validate_protection_payload(snapshot["protection"], base_branch)
+
+    live_rule = fetch_live_ref_update_rule(token, owner, name, base_branch)
+    snapshot_expectations = [
+        ("required_approving_review_count", normalized["approvals"]),
+        ("requires_code_owner_reviews", normalized["require_code_owner_reviews"]),
+        ("requires_conversation_resolution", normalized["required_conversation_resolution"]),
+        ("allows_force_pushes", normalized["allow_force_pushes"]),
+        ("allows_deletions", normalized["allow_deletions"]),
+        ("blocks_creations", normalized["block_creations"]),
+        ("requires_linear_history", normalized["required_linear_history"]),
+        ("requires_signatures", normalized["required_signatures"]),
+        ("required_status_check_contexts", sorted(entry["context"] for entry in normalized["required"])),
+    ]
+    for field, snapshot_value in snapshot_expectations:
+        if live_rule[field] != snapshot_value:
+            raise SystemExit(
+                f"Write-visible branch protection {field} differs from the protected live snapshot; approval is HELD"
+            )
+    normalized["live_rule"] = live_rule
+    normalized["verification"] = "protected_live_snapshot_plus_write_visible_cross_check"
     normalized["sha256"] = hashlib.sha256(
         json.dumps(normalized, sort_keys=True, separators=(",", ":")).encode("utf-8")
     ).hexdigest()
