@@ -114,6 +114,9 @@ describe("A3 federation→session 一鍵鏈", () => {
     const spectator = q<HTMLButtonElement>("a3-invite-spectator")!;
     expect(spectator.textContent).toContain("streamRole=spectator"); // Btn caption 顯示完整 URL
     expect(q("a3-session-result")?.textContent).toContain("streamRole=spectator"); // clipboard 失敗仍有 inline URL
+    expect(q("a3-inline-manual-start")).not.toBeNull();
+    expect(q("a3-element-selection-unsupported")?.textContent).toContain("Unsupported");
+    expect(q("a3-inline-highlight")).toBeNull();
 
     const ssChip = Array.from(container.querySelectorAll("button")).find((b) => b.textContent?.includes("SS →"))!;
     await act(async () => { ssChip.click(); });

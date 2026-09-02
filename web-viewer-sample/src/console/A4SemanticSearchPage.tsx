@@ -17,6 +17,7 @@ import {
   type RuntimeSessionSummary,
 } from "./coordinatorClient";
 import { getLocalDevUserCarrier } from "./localDevPrincipal";
+import { ReviewSessionViewerPane, type ReviewRoomHandoff } from "./ReviewSessionViewerPane";
 
 const EXAMPLE_QUERIES = [
   "找 4F 防火門且 FireRating < 60",
@@ -281,6 +282,24 @@ export function A4SemanticSearchPage() {
 
   const interpreted = result?.interpreted_filters;
   const rows = result?.results ?? [];
+  const selectedRow = rows.find((row) => (row.ifc_guid ?? "") === selectedGuid) ?? null;
+  const selectedRuntimeSession = sessions.find((session) => session.session_id === sessionId) ?? null;
+  const a4ViewerHandoff: ReviewRoomHandoff = {
+    source: "a4",
+    sessionId,
+    ruleRunId: null,
+    ifcGuid: selectedRow?.ifc_guid ?? null,
+    usdPrimPath: selectedRow?.usd_prim_path ?? null,
+    ruleCode: null,
+    severity: null,
+    label: selectedRow?.name ?? selectedRow?.ifc_class ?? selectedRow?.ifc_guid ?? null,
+    expectedStageUrl: selectedRuntimeSession?.expected_stage_url ?? null,
+    mappingInformationStatus: selectedRow
+      ? selectedRow.usd_prim_path ? "mapped" : "unmapped"
+      : null,
+    mappingIssueCode: selectedRow && !selectedRow.usd_prim_path ? "a4_result_unmapped" : null,
+    mappingIssueCount: null,
+  };
   const matchedCount = result?.stats?.matched ?? 0;
   const displayedLlmState = llmReadinessExpired
     ? "unknown"
@@ -437,8 +456,8 @@ export function A4SemanticSearchPage() {
   }
 
   const actionsUnavailableReason = t(
-    "此 legacy 相容頁只提供查詢結果表；Issue 需 S4-C signed-proof route，3D 需 canonical handoff。未接通前兩者皆停用。",
-    "This legacy compatibility page is table-only. Issues require the S4-C signed-proof route, and 3D requires the canonical handoff; both stay disabled until then.",
+    "ifc_ready 相容來源只提供查詢結果，沒有 session-bound signed-proof；Issue 與 Kit 3D 動作必須使用 coordinator 驗證過的 Review Session。",
+    "The ifc_ready compatibility source only provides query results and has no session-bound signed-proof. Issue and Kit 3D actions require a coordinator-validated Review Session.",
   );
 
   return (
@@ -453,6 +472,13 @@ export function A4SemanticSearchPage() {
           "Explainable search: deterministic grammar or Ornith vLLM (OpenAI-compatible) → JSON filters → IFC scan. API key only in governance env (ORNITH_API_KEY), never in git. Results are real API payloads.",
         )}
       </p>
+      {sourceMode === "session" && sessionId && (
+        <ReviewSessionViewerPane
+          mode="a4-inline"
+          handoff={a4ViewerHandoff}
+          showHandoffActions={Boolean(selectedRow)}
+        />
+      )}
       <Panel title={t("語意模型（Ornith）", "Semantic model (Ornith)")} sub="GET /api/governance/search/llm-status" prov="asbuilt">
         <Field
           k="state"
@@ -771,7 +797,7 @@ export function A4SemanticSearchPage() {
           </table>
         </div>
         {sourceMode === "session" && selectedGuid && (() => {
-          const selected = rows.find((r) => (r.ifc_guid ?? "") === selectedGuid);
+          const selected = selectedRow;
           if (!selected) return null;
           return (
             <div data-testid="a4-issue-draft" style={{ marginTop: 16, padding: 12, background: "var(--ab-inset)", border: "1px solid rgba(120,160,210,.2)", borderRadius: 8 }}>
@@ -875,8 +901,8 @@ export function A4SemanticSearchPage() {
         })()}
         <p className="ec-muted" style={{ marginTop: 8 }}>
           {t(
-            "3D：此 legacy table 不建立 handoff、不送 DataChannel，也不把 mapping 欄位視為 runtime authority。",
-            "3D: this legacy table creates no handoff, sends no DataChannel message, and does not treat a mapping field as runtime authority.",
+            "3D：Review Session 模式使用上方共用 Kit primary viewer；first frame、stage match、DataChannel 與 viewer ACK 分別驗證。mapping 欄位只決定是否可嘗試高亮，不取代 runtime authority。",
+            "3D: Review Session mode uses the shared Kit primary viewer above. First frame, stage match, DataChannel, and viewer ACK are verified separately. Mapping only determines whether highlight may be attempted; it does not replace runtime authority.",
           )}
         </p>
       </Panel>

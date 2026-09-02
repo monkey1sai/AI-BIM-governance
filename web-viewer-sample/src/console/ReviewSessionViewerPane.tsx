@@ -81,7 +81,7 @@ function sessionIdIsValid(sessionId: string): boolean {
 // "a2-overlay"（A2 F2⑥）：VersionDiffPage 內嵌的 diff 三組批次疊加宿主。複用本 pane 全部
 // session/lease/viewer 證據鏈（最小泛化，不複製元件）；差異只在 testid 前綴、文案與
 // 「批次疊加由外部（A2 頁）經 ref handle 觸發」。
-type ReviewSessionViewerPaneMode = "review-room" | "a1-inline" | "a2-overlay";
+type ReviewSessionViewerPaneMode = "review-room" | "a1-inline" | "a2-overlay" | "a3-inline" | "a4-inline";
 
 interface ReviewViewerIdentity {
   viewer_id: string;
@@ -93,7 +93,7 @@ function createReviewViewerIdentity(mode: ReviewSessionViewerPaneMode): ReviewVi
   const random = typeof crypto !== "undefined" && "randomUUID" in crypto
     ? crypto.randomUUID()
     : `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
-  const prefix = mode === "a1-inline" ? "a1_inline" : mode === "a2-overlay" ? "a2_overlay" : "review_room";
+  const prefix = mode.replace(/-/g, "_");
   const userToken = getLocalDevUserCarrier();
   return {
     viewer_id: `${prefix}_viewer_${random}`,
@@ -102,7 +102,11 @@ function createReviewViewerIdentity(mode: ReviewSessionViewerPaneMode): ReviewVi
       ? "A1 inline primary viewer"
       : mode === "a2-overlay"
         ? "A2 diff overlay primary viewer"
-        : "Review Room primary viewer",
+        : mode === "a3-inline"
+          ? "A3 federation primary viewer"
+          : mode === "a4-inline"
+            ? "A4 semantic primary viewer"
+            : "Review Room primary viewer",
   };
 }
 
@@ -168,12 +172,17 @@ export interface ReviewSessionViewerPaneProps {
   onBatchGateChange?: (gate: ReviewSessionViewerPaneBatchGate) => void;
   // viewer highlight_result ack 透傳（含批次 ack 的 sent_count/unmapped_count 加性欄位）。
   onBatchAck?: (message: HighlightResultMessage) => void;
+  // A3 currently has no element-level mapping/clash contract. It may attach the
+  // real federated stage while keeping single-element highlight actions hidden.
+  showHandoffActions?: boolean;
 }
 
 export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle, ReviewSessionViewerPaneProps>(
-  function ReviewSessionViewerPane({ handoff = parseReviewRoomHandoff(), mode = "review-room", onBatchGateChange, onBatchAck, firstFrameTimeoutMs = 90_000, heartbeatDelayFn = viewerLeaseHeartbeatDelayMs }, ref) {
+  function ReviewSessionViewerPane({ handoff = parseReviewRoomHandoff(), mode = "review-room", onBatchGateChange, onBatchAck, showHandoffActions = true, firstFrameTimeoutMs = 90_000, heartbeatDelayFn = viewerLeaseHeartbeatDelayMs }, ref) {
   const isA1Inline = mode === "a1-inline";
   const isA2Overlay = mode === "a2-overlay";
+  const isA3Inline = mode === "a3-inline";
+  const isA4Inline = mode === "a4-inline";
   // testid 前綴 = mode（review-room / a1-inline / a2-overlay），既有兩模式的 testid 逐字不變。
   const tidPrefix = mode;
   const [sessionId, setSessionId] = useState(handoff.sessionId);
@@ -483,11 +492,19 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
           ? t("A1 3D 高亮 session", "A1 3D highlight session")
           : isA2Overlay
             ? t("A2 3D 疊加 session", "A2 3D overlay session")
+            : isA3Inline
+              ? t("A3 Federation 3D session", "A3 federation 3D session")
+              : isA4Inline
+                ? t("A4 語意查詢 3D session", "A4 semantic-search 3D session")
             : t("Review Room 3D session attach", "Review Room 3D session attach")}
         sub={isA1Inline
           ? t("在 A1 本頁啟動 Kit viewer lease、等待 first frame / DataChannel / stage match，然後直接送出高亮。", "Start the Kit viewer lease on A1, wait for first frame / DataChannel / stage match, then send highlight directly.")
           : isA2Overlay
             ? t("在 A2 本頁啟動 Kit viewer lease、等待 first frame / DataChannel / stage match，再由上方「套用疊加」送出 diff 構件批次。", "Start the Kit viewer lease on A2, wait for first frame / DataChannel / stage match, then send the diff element batch via the Apply overlay control above.")
+            : isA3Inline
+              ? t("在 A3 本頁掛載 federated stage；first frame / DataChannel / stage match 各自 fail-closed。後端未提供 element mapping / clash contract，因此不顯示假高亮。", "Mount the federated stage on A3; first frame / DataChannel / stage match each fail closed. The backend exposes no element mapping or clash contract, so no fake highlight is shown.")
+              : isA4Inline
+                ? t("在 A4 本頁掛載所選 Review Session；只有 first frame、DataChannel、stage match 與 viewer ACK 全部成立才宣告高亮成功。", "Mount the selected Review Session on A4; highlight succeeds only after first frame, DataChannel, stage match, and viewer ACK are all established.")
             : t("Kit / WebRTC / viewer lease 必須由本畫面手動啟動；A1 不自動啟動", "Kit / WebRTC / viewer lease must be started manually here; A1 does not auto-start it")}
         prov="asbuilt"
       >
@@ -533,6 +550,10 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
                 ? t("啟動 A1 3D Session", "Start A1 3D Session")
                 : isA2Overlay
                   ? t("啟動 A2 3D Session", "Start A2 3D Session")
+                  : isA3Inline
+                    ? t("啟動 A3 3D Session", "Start A3 3D Session")
+                    : isA4Inline
+                      ? t("啟動 A4 3D Session", "Start A4 3D Session")
                   : t("手動啟動 / attach Kit session", "Start / attach Kit session")}
           </Btn>
           {!isA1Inline && (
@@ -688,6 +709,10 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
               ? t("尚未啟動 A1 3D session。按上方按鈕後會在本頁掛載 viewer。", "A1 3D session is not started. Use the button above to mount the viewer on this page.")
               : isA2Overlay
                 ? t("尚未啟動 A2 3D session。按上方按鈕掛載 viewer 後，「套用疊加」才會 enable。", "A2 3D session is not started. Mount the viewer with the button above; Apply overlay enables afterwards.")
+                : isA3Inline
+                  ? t("尚未啟動 A3 3D session；federated stage 與串流證據尚未觀測。", "A3 3D session is not started; the federated stage and streaming evidence are not observed.")
+                  : isA4Inline
+                    ? t("尚未啟動 A4 3D session；高亮維持封鎖。", "A4 3D session is not started; highlight remains blocked.")
                 : t("尚未啟動 3D session。這裡不做自動 claim；請按手動啟動後才會掛載 viewer。", "3D session is not started. This page does not auto-claim; the viewer mounts only after manual start.")}
           </p>
         ) : viewerOrigin ? (
@@ -749,11 +774,17 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
 
       {/* a2-overlay 模式抑制單筆 handoff 高亮面板：A2 疊加控制（apply/ack/unmapped）由 VersionDiffPage
           自帶（a2-overlay-* testids）；此面板的單筆 ifc_guid 語意對 diff 批次不適用，顯示會誤導。 */}
-      {!isA2Overlay && reviewRoomHandoffHasPayload(handoff) && (
+      {showHandoffActions && !isA2Overlay && reviewRoomHandoffHasPayload(handoff) && (
         <Panel
-          title={isA1Inline ? t("A1 高亮目標", "A1 highlight target") : t("A1 handoff", "A1 handoff")}
+          title={isA1Inline
+            ? t("A1 高亮目標", "A1 highlight target")
+            : isA4Inline
+              ? t("A4 高亮目標", "A4 highlight target")
+              : t("A1 handoff", "A1 handoff")}
           sub={isA1Inline
             ? t("從治理檢核結果帶入的失敗構件；高亮由 A1 本頁 viewer 送出。", "Failed element from the governance result; highlight is sent by the A1 inline viewer.")
+            : isA4Inline
+              ? t("從 A4 真實查詢結果帶入的構件；mapping 缺失時維持 unmapped，viewer ACK 前不宣告成功。", "Element from the real A4 query result; missing mapping remains unmapped, and success is not declared before viewer ACK.")
             : t("從治理檢核結果帶入的第一筆失敗構件；只有 Review Room 可送 3D highlight", "First failed element handed off from governance results; only Review Room can send 3D highlight")}
           prov="asbuilt"
         >
@@ -770,7 +801,11 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
             <Field k="mapping_status" v={handoff.usdPrimPath ? t("mapped", "mapped") : mappingDiagnosticText(handoff)} prov={handoff.usdPrimPath ? "asbuilt" : "p1"} />
           </div>
           <Btn data-testid={highlightButtonTestId} disabled={!canHighlight} caption={canHighlight ? t("postMessage highlight -> viewer DataChannel", "postMessage highlight -> viewer DataChannel") : highlightDisabledReason} onClick={sendHighlight}>
-            {isA1Inline ? t("在 A1 3D 中標示", "Highlight in A1 3D") : t("在 3D 高亮 handoff 構件", "Highlight handoff element in 3D")}
+            {isA1Inline
+              ? t("在 A1 3D 中標示", "Highlight in A1 3D")
+              : isA4Inline
+                ? t("在 A4 3D 中標示", "Highlight in A4 3D")
+                : t("在 3D 高亮 handoff 構件", "Highlight handoff element in 3D")}
           </Btn>
           <span className="ec-note" data-testid={highlightReasonTestId} style={{ marginLeft: 8 }}>
             {highlightResult ? highlightResultText(highlightResult) : (canHighlight ? t("可送出", "ready to send") : highlightDisabledReason)}

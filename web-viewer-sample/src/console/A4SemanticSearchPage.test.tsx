@@ -590,6 +590,8 @@ describe("A4SemanticSearchPage", () => {
       expect(sessionSelect!.value).toBe("review_session_alpha");
       expect(container.textContent).not.toContain("review_session_closed");
       expect(container.querySelector('[data-testid="a4-job-select"]')).toBeNull();
+      expect(container.querySelector('[data-testid="a4-inline-manual-start"]')).not.toBeNull();
+      expect(container.querySelector('[data-testid="a4-inline-highlight"]')).toBeNull();
 
       await act(async () => {
         container.querySelector<HTMLButtonElement>('[data-testid="a4-run"]')!.click();
@@ -798,6 +800,10 @@ describe("A4SemanticSearchPage", () => {
       const draft = container.querySelector('[data-testid="a4-issue-draft"]');
       expect(draft).not.toBeNull();
       expect(container.querySelector<HTMLInputElement>('[data-testid="a4-issue-draft-title"]')?.value).toContain("FireDoor-401");
+      const inlineHighlight = container.querySelector<HTMLButtonElement>('[data-testid="a4-inline-highlight"]');
+      expect(inlineHighlight).not.toBeNull();
+      expect(inlineHighlight!.disabled).toBe(true);
+      expect(container.querySelector('[data-testid="a4-inline-handoff-summary"]')?.textContent).toContain("/World/Door_401");
 
       // Edit title and severity
       const titleInput = container.querySelector<HTMLInputElement>('[data-testid="a4-issue-draft-title"]')!;

@@ -1222,6 +1222,38 @@ export function FederationPage() {
           </div>
         )}
       </Panel>
+      {sessRes && (
+        <>
+          <ReviewSessionViewerPane
+            mode="a3-inline"
+            showHandoffActions={false}
+            handoff={{
+              source: "a3",
+              sessionId: sessRes.session_id,
+              ruleRunId: null,
+              ifcGuid: null,
+              usdPrimPath: null,
+              ruleCode: null,
+              severity: null,
+              label: setId ? `Federation ${setId}` : "Federation",
+              // runtime/status is the stage authority after coordinator resolves
+              // the federated_set_id; do not trust the browser-masked descriptor URL.
+              expectedStageUrl: null,
+              mappingInformationStatus: "unsupported",
+              mappingIssueCode: "a3_element_mapping_contract_unavailable",
+              mappingIssueCount: null,
+            }}
+          />
+          <Panel title={t("A3 構件選取與 clash", "A3 element selection and clash")} prov="asbuilt">
+            <p className="ec-warn-note" data-testid="a3-element-selection-unsupported">
+              {t(
+                "Unsupported：目前 federation API 未回傳 discipline/clash element mapping；可驗證 federated stage 與 Kit 串流，但不建立假選取、高亮或 ACK。",
+                "Unsupported: the federation API currently returns no discipline/clash element mapping. The federated stage and Kit stream can be verified, but no fake selection, highlight, or ACK is created.",
+              )}
+            </p>
+          </Panel>
+        </>
+      )}
       <Panel title={t("範圍與誠實標示", "Scope and honest labeling")} prov="asbuilt">
         <Field k={t("疊合機制", "Compositing mechanism")} v={t("sublayer 非破壞疊合；opinion 於 LIVERPS Local（最強）步驟解析，subLayerPaths[0] 最強；sessionLayer 僅暫態不作持久層", "non-destructive sublayer compositing; opinions resolve at the LIVERPS Local (strongest) step, subLayerPaths[0] is strongest; sessionLayer is transient only and not a persistent layer")} prov="asbuilt" />
         <Field k="member model.usdc" v={t("immutable（federation 只寫具名 root layer）", "immutable (federation only writes a named root layer)")} prov="asbuilt" />
