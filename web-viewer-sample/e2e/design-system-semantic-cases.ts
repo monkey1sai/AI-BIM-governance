@@ -115,6 +115,17 @@ const truthRuntimeTruthCase = (primaryValueUc: string): SemanticCaseDefinition =
   ],
 });
 
+/** runtime_truth（A1–A3 真實工作台）：產品路由直接掛載 as-built 模組，
+    設計 harness 的 /api 503 只允許顯示可重試的 fail-closed 表面，不能回退成 fixture 成功資料。 */
+const liveWorkspaceRuntimeTruthCase = (): SemanticCaseDefinition => ({
+  prepare: gotoFreshRoute,
+  assertions: [
+    { id: "live-workspace-provenance-marker", locator: '[data-uc="unified-live-workspace"]', expectation: "attribute_equals", attribute: "data-prov", expected: "asbuilt" },
+    { id: "live-workspace-contract-note", locator: '[data-uc="live-contract"]', expectation: "text_contains", expected: "Coordinator" },
+    { id: "console-runtime-note", locator: '[data-uc="runtime-note"]', expectation: "text_contains", expected: RUNTIME_NOTE },
+  ],
+});
+
 type ScreenCases = Record<
   | "navigation"
   | "primary_actions"
@@ -218,65 +229,25 @@ function homeCases(): ScreenCases {
   };
 }
 
-/* ═══ fixture workspace.a1..a3.default（#a1..#a3）═══ */
+/* ═══ canonical live workspace.a1..a3.default（#a1..#a3）═══ */
 
 type WsDock = "a1" | "a2" | "a3";
 
-const WS_CTA: Record<WsDock, { label: string; confirmToast: string }> = {
-  // a1Ran 初值 true → CTA 顯示「重新執行」；其餘 dock 初值未執行。
-  a1: { label: "重新執行", confirmToast: "POST /api/rule-runs → 202" },
-  a2: { label: "計算差異", confirmToast: "POST /api/diffs → 202" },
-  a3: { label: "Build Federated USD", confirmToast: "POST /api/federated-sets/FS-01/build" },
-};
-
 function workspaceCases(dock: WsDock): ScreenCases {
-  const success: SemanticCaseDefinition =
-    dock === "a1"
-      ? {
-          // A1 選定檔案列的 mapping 98% ✓（初始即為成功態）。
-          prepare: gotoRoute,
-          assertions: [{ id: "a1-mapping-98-check", locator: "text=✓ mapping 98%", expectation: "visible" }],
-        }
-      : dock === "a2"
-        ? {
-            // A2 版本選取器就緒（v12）。
-            prepare: gotoRoute,
-            assertions: [{ id: "a2-version-selector-v12", locator: 'text="v12" >> nth=0', expectation: "visible" }],
-          }
-        : {
-            // A3 座標與單位檢查就緒（✓ Coordinate Check OK）。
-            prepare: gotoRoute,
-            assertions: [{ id: "a3-coord-check-ok", locator: "text=Coordinate Check OK", expectation: "visible" }],
-          };
-
-  const failure: SemanticCaseDefinition =
-    dock === "a1"
-      ? {
-          // a1Ran 初值 true → 檢核失敗清單可見；「嚴重」sev chip（紅）。
-          prepare: gotoRoute,
-          assertions: [
-            { id: "a1-critical-sev-chip", locator: 'text="嚴重"', expectation: "visible" },
-            { id: "a1-fail-row-issue-action", locator: '[data-uc="fail-issue-btn"] >> nth=0', expectation: "visible" },
-          ],
-        }
-      : dock === "a2"
-        ? {
-            // A2 比較對照就緒（vs）。
-            prepare: gotoRoute,
-            assertions: [{ id: "a2-version-compare-vs", locator: "text=vs", expectation: "visible" }],
-          }
-        : {
-            // 誠實對映：A3 dock 本身無紅色失敗態；工作區的失敗浮出面 = Issues/BCF
-            // dock（open 紅 chip 的既有 fixture issue），以 dock tab 切換（local state）。
-            prepare: async (context) => {
-              await gotoRoute(context);
-              await clickFirst(context.page, '[data-uc="dock-tab-issues"]');
-            },
-            assertions: [
-              { id: "issues-open-red-chip", locator: 'text="open"', expectation: "visible" },
-              { id: "issues-firerating-issue-title", locator: "text=防火時效不足", expectation: "visible" },
-            ],
-          };
+  const isA1 = dock === "a1";
+  const isA2 = dock === "a2";
+  const fileLibraryError = isA1 ? '[data-testid="a1-fs-error"]' : '[data-testid="a2-fs-error"]';
+  const retryButton = isA1 ? '[data-testid="a1-fs-retry"]' : '[data-testid="a2-fs-retry"]';
+  const disabledControl = isA1 ? '[data-testid="a1-localfs-select"]' : '[data-testid="a2-base-project"]';
+  const title = isA1
+    ? "A1 · 治理與模型檢核"
+    : isA2
+      ? "模型版本差異與責任追蹤 · A2"
+      : "跨專業模型 Federation · A3";
+  const a3Prepare = async (context: SemanticCaseContext) => {
+    await gotoRoute(context);
+    await clickFirst(context.page, 'button:has-text("準備 + 驗證坐標系")');
+  };
 
   return {
     navigation: {
@@ -288,68 +259,80 @@ function workspaceCases(dock: WsDock): ScreenCases {
     },
     primary_actions: {
       prepare: gotoRoute,
-      assertions: [
-        { id: "dock-cta-visible", locator: '[data-uc="dock-cta"]', expectation: "visible" },
-        { id: "dock-cta-enabled", locator: '[data-uc="dock-cta"]', expectation: "enabled" },
-        { id: "dock-cta-label", locator: '[data-uc="dock-cta"]', expectation: "text_equals", expected: WS_CTA[dock].label },
-      ],
+      assertions: isA1 || isA2
+        ? [
+            { id: "file-library-retry-visible", locator: retryButton, expectation: "visible" },
+            { id: "file-library-retry-enabled", locator: retryButton, expectation: "enabled" },
+          ]
+        : [
+            { id: "a3-prepare-visible", locator: 'button:has-text("準備 + 驗證坐標系")', expectation: "visible" },
+            { id: "a3-prepare-enabled", locator: 'button:has-text("準備 + 驗證坐標系")', expectation: "enabled" },
+          ],
     },
     loading: {
-      // 進行中狀態：DataChannel 狀態字條（常駐）+ 無 review session 膠囊
       prepare: gotoRoute,
-      assertions: [
-        { id: "datachannel-loading-state", locator: 'text="loadingState"', expectation: "visible" },
-        { id: "session-capsule-editor-lease", locator: 'text="無 review session" >> nth=0', expectation: "visible" },
-      ],
+      assertions: isA1 || isA2
+        ? [{ id: "file-library-load-failed-closed", locator: fileLibraryError, expectation: "visible" }]
+        : [{ id: "a3-build-blocked-before-prepare", locator: 'button:has-text("Build Federated USD")', expectation: "disabled" }],
     },
     empty: {
-      // 可達空狀態：初始 sel 為空 → viewport selection callout 不渲染。
       prepare: gotoRoute,
-      assertions: [
-        { id: "selection-callout-absent", locator: '[data-uc="sel-callout"]', expectation: "count_equals", expected: 0 },
-      ],
+      assertions: isA1
+        ? [{ id: "a1-no-rule-run-before-input", locator: '[data-testid="a1-rulerun-scoreboard"]', expectation: "count_equals", expected: 0 }]
+        : isA2
+          ? [{ id: "a2-no-overlay-session-before-diff", locator: '[data-testid="a2-overlay-session-select"]', expectation: "count_equals", expected: 0 }]
+          : [{ id: "a3-no-review-session-before-build", locator: '[data-testid="a3-session-result"]', expectation: "count_equals", expected: 0 }],
     },
-    success,
+    success: {
+      prepare: gotoRoute,
+      assertions: isA1
+        ? [{ id: "a1-no-export-artifact-offline", locator: '[data-testid="a1-exported-artifact"]', expectation: "count_equals", expected: 0 }]
+        : isA2
+          ? [{ id: "a2-no-overlay-ack-before-diff", locator: '[data-testid="a2-overlay-ack"]', expectation: "count_equals", expected: 0 }]
+          : [{ id: "a3-no-viewer-before-session", locator: '[data-testid="a3-open-viewer"]', expectation: "count_equals", expected: 0 }],
+    },
     warning: {
-      // 琥珀狀態：側欄「模型資料與轉檔」badge 為真值（running+failed）；gate 503 → 誠實顯示 —（offline），不捏造數字。
-      prepare: gotoRoute,
-      assertions: [
-        { id: "nav-pipe-warn-badge-visible", locator: '[data-uc="nav-pipe-badge"]', expectation: "visible" },
-        { id: "nav-pipe-warn-badge-count", locator: '[data-uc="nav-pipe-badge"]', expectation: "text_equals", expected: "—" },
-      ],
+      prepare: isA1 || isA2 ? gotoRoute : a3Prepare,
+      assertions: isA1 || isA2
+        ? [{ id: "file-library-warning-visible", locator: fileLibraryError, expectation: "visible" }]
+        : [{ id: "a3-prepare-error-visible", locator: 'text=未連線後端 / member USD 不存在', expectation: "visible" }],
     },
-    failure,
+    failure: {
+      prepare: isA1 || isA2 ? gotoRoute : a3Prepare,
+      assertions: isA1 || isA2
+        ? [
+            { id: "file-library-retry-remains-visible", locator: retryButton, expectation: "visible" },
+            { id: "file-library-retry-remains-enabled", locator: retryButton, expectation: "enabled" },
+          ]
+        : [{ id: "a3-build-remains-blocked-after-failure", locator: 'button:has-text("Build Federated USD")', expectation: "disabled" }],
+    },
     disabled: {
-      // 誠實停用（離線無 session 狀態）：頂欄「啟動即時視圖」按鈕為 aria-disabled="true"（data-action="disabled"）
       prepare: gotoRoute,
-      assertions: [
-        { id: "live-view-btn-aria-disabled", locator: '[data-action="disabled"]', expectation: "attribute_equals", attribute: "aria-disabled", expected: "true" },
-        { id: "live-view-btn-visible", locator: '[data-action="disabled"]', expectation: "visible" },
-      ],
+      assertions: isA1 || isA2
+        ? [{ id: "file-library-dependent-control-disabled", locator: disabledControl, expectation: "disabled" }]
+        : [{ id: "a3-build-disabled-without-set", locator: 'button:has-text("Build Federated USD")', expectation: "disabled" }],
     },
     confirmation: {
-      // 點主 CTA → 確認回饋（A1 保持重新執行態；A2/A3 導向對應分析路由）。
       prepare: async (context) => {
-        await gotoRoute(context);
-        await clickFirst(context.page, `[data-uc="dock-tab-${dock}"]`);
-        await clickFirst(context.page, '[data-uc="dock-cta"]');
+        if (isA1 || isA2) {
+          await gotoRoute(context);
+          await clickFirst(context.page, retryButton);
+          return;
+        }
+        await a3Prepare(context);
       },
-      assertions: [
-        dock === "a1"
-          ? { id: "a1-recheck-confirmed", locator: "text=A1 · 治理與模型檢核", expectation: "visible" }
-          : dock === "a2"
-            ? { id: "a2-diff-route-confirmed", locator: "text=模型版本差異與責任追蹤", expectation: "visible" }
-            : { id: "a3-federation-route-confirmed", locator: "text=跨專業模型 Federation", expectation: "visible" },
-      ],
+      assertions: isA1 || isA2
+        ? [{ id: "retry-keeps-honest-error-surface", locator: fileLibraryError, expectation: "visible" }]
+        : [{ id: "a3-prepare-keeps-honest-error-surface", locator: 'text=未連線後端 / member USD 不存在', expectation: "visible" }],
     },
     i18n_zh_tw: {
       prepare: gotoRoute,
       assertions: [
-        { id: "zh-workspace-no-session", locator: 'text="無 review session" >> nth=0', expectation: "visible" },
+        { id: "zh-live-workspace-title", locator: `text=${title}`, expectation: "visible" },
         langZhActive,
       ],
     },
-    runtime_truth: runtimeTruthCase(),
+    runtime_truth: liveWorkspaceRuntimeTruthCase(),
   };
 }
 
