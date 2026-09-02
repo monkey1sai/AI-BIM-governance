@@ -448,18 +448,18 @@
       },
       "baseline_provenance": {
         "authority": "canonical_product_surface",
-        "canonical_route": "#workspace?dock=a4",
+        "canonical_route": "#a4",
         "capture_runner": "web-viewer-sample/e2e/design-system-visual.spec.ts",
-        "approval": "explicit A4 rebaseline 2026-07-29"
+        "approval": "explicit owner rebaseline 2026-09-03: A4 canonical live table-only workbench under the /api 503 stub; product-surface authority per PR #429 and #701 precedent; goldens captured from clean subject commit a4f12f9 by design-system-visual.spec.ts"
       },
       "baselines": {
         "1440x900": {
           "path": "docs/plans/design-system-baseline/workspace.a4.default/1440x900.png",
-          "sha256": "c8323fcc1860ae28f3ace96aa6f10e013b4ecd728279166471c2349d2224f61d"
+          "sha256": "9b355090b564e26c777a6f26fbcd07f5b7587b2bc3ea010c6a9dd338f04ead54"
         },
         "1920x1080": {
           "path": "docs/plans/design-system-baseline/workspace.a4.default/1920x1080.png",
-          "sha256": "2dc85cc567e9c707d5720798ba0b80cefe4e2265da8dff3f788928ebf7e3e42c"
+          "sha256": "e4e0c8cb39fcda335bb3b81f5a3ee7204b2edd61b4f67127a545c24f92982daf"
         }
       }
     },
@@ -766,5 +766,5 @@
     "docs/plans/ai-bim-geo-viewer-A1.png..A10.png",
     "docs/plans/ai-bim-geo-Ai-codeing-A1.png..A10.png"
   ],
-  "baseline_snapshot_sha256": "16c8418b5b5b0dc4839d193dba11d2372bbe297797908b723e39bd3bf7f32f79"
+  "baseline_snapshot_sha256": "bda21f651131f6998e939b9ae21899e54d2074fd38740606b8435599d6b96437"
 }
