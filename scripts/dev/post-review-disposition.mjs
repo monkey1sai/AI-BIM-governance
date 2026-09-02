@@ -92,6 +92,12 @@ export function validatePlanShape(plan) {
   if (plan.status !== 'RENDERED') throw new Error(`plan_not_rendered:${plan.status ?? 'unknown'}`);
   if (plan.repository !== GITHUB_REPOSITORY) throw new Error('plan_repository_not_supported');
   if (!Array.isArray(plan.replies) || plan.replies.length === 0) throw new Error('plan_replies_missing');
+  if (plan.replies.length > 256) throw new Error('plan_replies_unbounded');
+  // Re-impose the observer's uniqueness rule at this untrusted file boundary so an
+  // edited plan cannot publish two contradictory decisions for one finding.
+  const findingIds = new Set(plan.replies.map((reply) => reply?.findingId));
+  const threadIds = new Set(plan.replies.map((reply) => reply?.threadId));
+  if (findingIds.size !== plan.replies.length || threadIds.size !== plan.replies.length) throw new Error('plan_replies_duplicated');
   const bound = plan.replies.map((reply) => {
     const metadata = parseReviewDispositionMetadata(reply.body);
     if (!metadata || reviewDispositionTupleKey(metadata) !== reply.tupleKey) throw new Error(`reply_metadata_unbound:${reply.findingId}`);

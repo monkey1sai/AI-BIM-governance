@@ -68,14 +68,23 @@ const makeConvergedBundle = ({
   findings,
 })
 
-const collectedFrom = (bundle) => bundle.findings.map((finding) => ({ id: finding.id, threadId: finding.threadId }))
-const validateBundle = (validate, bundle, source = EXPECTED_CHECK_SOURCE, collectedFindings = collectedFrom(bundle), epoch = {}) => (
+// Trusted collector view of the conversation, derived from the bundle only in tests.
+const collectedFrom = (bundle, overrides = {}) => ({
+  complete: bundle.threadsComplete,
+  unresolvedThreads: bundle.unresolvedThreads,
+  findings: bundle.findings.map((finding) => ({
+    id: finding.id, threadId: finding.threadId, source: finding.source, severity: finding.severity, resolved: finding.threadResolved,
+  })),
+  ...overrides,
+})
+const validateBundle = (validate, bundle, source = EXPECTED_CHECK_SOURCE, collectedConversation = collectedFrom(bundle), epoch = {}) => (
   validate(bundle, source, {
-    collectedFindings, convergenceObservedAt: CONVERGENCE_AT, sameHeadCheckRuns: makeRuns(bundle.headOid), ...epoch,
+    collectedConversation, convergenceObservedAt: CONVERGENCE_AT, sameHeadCheckRuns: makeRuns(bundle.headOid), ...epoch,
   })
 )
-const convergedOptions = (collectedFindings = []) => ({
-  expectedRequiredCheckSource: EXPECTED_CHECK_SOURCE, collectedFindings,
+const convergedOptions = (findings = [], conversation = {}) => ({
+  expectedRequiredCheckSource: EXPECTED_CHECK_SOURCE,
+  collectedConversation: { complete: true, unresolvedThreads: 0, findings, ...conversation },
   convergenceObservedAt: CONVERGENCE_AT, sameHeadCheckRuns: makeRuns(SHA('a')),
 })
 
@@ -190,6 +199,17 @@ test('review surface binds the diff bytes to the declared changed files', async 
     diff: '+no headers at all',
     limits,
   }), 'diff_surface_paths_missing')
+  // The collector flag is not the only witness: the bytes themselves reveal a binary change.
+  throwsCode('unsupported_review_surface', () => classifyReviewSurface({
+    changedFiles: [{ path: 'assets/logo.png', status: 'modified', binary: false, submodule: false }],
+    diff: 'diff --git a/assets/logo.png b/assets/logo.png\nBinary files a/assets/logo.png and b/assets/logo.png differ',
+    limits,
+  }), 'binary_diff_marker_present')
+  throwsCode('unsupported_review_surface', () => classifyReviewSurface({
+    changedFiles: [{ path: 'vendor/lib', status: 'modified', binary: false, submodule: false }],
+    diff: 'diff --git a/vendor/lib b/vendor/lib\n-Subproject commit ' + SHA('1') + '\n+Subproject commit ' + SHA('2'),
+    limits,
+  }), 'submodule_diff_marker_present')
   // Quoted non-ASCII header path round-trips through git's octal UTF-8 escaping.
   const quoted = classifyReviewSurface({
     changedFiles: [{ path: 'docs/新檔.md', status: 'added', binary: false, submodule: false }],
@@ -284,13 +304,16 @@ test('an escalated finding closes the transaction HELD outside autonomous author
   state = applyFinalizationEvent(state, {
     type: 'round_converged',
     headOid: SHA('a'),
-    findingBundle: makeConvergedBundle({
-      findings: [makeFinding({
-        riskClass: 'credentials', disposition: 'ESCALATE', fixedOnHead: false, fixEvidence: null,
-        threadResolved: false, policyRule: 'high-risk-escalation',
-      })],
-    }),
-  }, convergedOptions([{ id: 'ci-1', threadId: 'thread-1' }]))
+    findingBundle: {
+      ...makeConvergedBundle({
+        findings: [makeFinding({
+          riskClass: 'credentials', disposition: 'ESCALATE', fixedOnHead: false, fixEvidence: null,
+          threadResolved: false, policyRule: 'high-risk-escalation',
+        })],
+      }),
+      unresolvedThreads: 1,
+    },
+  }, convergedOptions([{ id: 'ci-1', threadId: 'thread-1', source: 'ci', severity: 'P2', resolved: false }], { unresolvedThreads: 1 }))
   assert.equal(state.phase, 'CLOSED')
   assert.equal(state.terminalClass, 'HELD')
   assert.equal(state.failureDetail, 'finding_escalated_to_external_authority')
@@ -479,10 +502,16 @@ test('non-delivered closure releases the lock but freezes the queue to the bound
   assert.equal(lineage.openRecovery.deliveryId, 'delivery-20')
   throwsCode('delivery_lock_frozen', () => lineage.acquire({ deliveryId: 'delivery-21', prClass: 'ordinary' }))
   assert.equal(lineage.acquire({ deliveryId: 'repair-21', prClass: 'repair', supersedesDeliveryId: 'delivery-20' }).lease.prClass, 'repair')
-  // The only exit from a lane-less freeze is an audited, authority-bearing unfreeze naming the exact terminal.
-  throwsCode('delivery_lock_invalid', () => blocked.unfreeze({ deliveryId: 'delivery-99', authorityRef: 'owner-transaction-1' }), 'unfreeze_must_name_open_terminal_delivery')
-  throwsCode('delivery_lock_invalid', () => blocked.unfreeze({ deliveryId: 'delivery-12', authorityRef: '' }), 'unfreeze_authority_ref_invalid')
-  const thawed = blocked.unfreeze({ deliveryId: 'delivery-12', authorityRef: 'owner-transaction-1' })
+  // The only exit from a lane-less freeze is an audited, externally verified unfreeze naming the exact terminal.
+  const verifyAuthority = ({ authorityRef, reasonCode }) => authorityRef === 'owner-transaction-1' && reasonCode === 'DEPLOYMENT_BLOCKED'
+  throwsCode('delivery_lock_invalid', () => blocked.unfreeze({ deliveryId: 'delivery-99', authorityRef: 'owner-transaction-1', verifyAuthority }), 'unfreeze_must_name_open_terminal_delivery')
+  throwsCode('delivery_lock_invalid', () => blocked.unfreeze({ deliveryId: 'delivery-12', authorityRef: '', verifyAuthority }), 'unfreeze_authority_ref_invalid')
+  throwsCode('delivery_lock_invalid', () => blocked.unfreeze({ deliveryId: 'delivery-12', authorityRef: 'owner-transaction-1' }), 'unfreeze_authority_unverified')
+  throwsCode('delivery_lock_invalid', () => blocked.unfreeze({ deliveryId: 'delivery-12', authorityRef: 'someone-else', verifyAuthority }), 'unfreeze_authority_unverified')
+  // A merged-not-delivered or reconciliation-required terminal must go through its lane, never the hatch.
+  throwsCode('delivery_lock_invalid', () => lineage.unfreeze({ deliveryId: 'delivery-20', authorityRef: 'owner-transaction-1', verifyAuthority: () => true }), 'unfreeze_not_allowed_for_recoverable_terminal')
+  throwsCode('delivery_lock_invalid', () => ambiguous.unfreeze({ deliveryId: 'delivery-11', authorityRef: 'owner-transaction-1', verifyAuthority: () => true }), 'unfreeze_not_allowed_for_recoverable_terminal')
+  const thawed = blocked.unfreeze({ deliveryId: 'delivery-12', authorityRef: 'owner-transaction-1', verifyAuthority })
   assert.equal(thawed.openRecovery, null)
   assert.equal(thawed.history.at(-1).unfrozenBy, 'owner-transaction-1')
   assert.equal(thawed.acquire({ deliveryId: 'delivery-13', prClass: 'ordinary' }).lease.deliveryId, 'delivery-13')
@@ -551,14 +580,32 @@ test('CI and review findings converge through the five closed dispositions witho
   assert.equal(result.findings.at(-1).disposition, 'FIX_REQUIRED')
   // The bundle must cover the complete collector finding set: omitting a collected
   // blocking finding, or presenting one the collector never saw, cannot converge.
+  const collected = collectedFrom(bundle)
   throwsCode('finding_disposition_incomplete', () => validateBundle(
     validateFindingDispositionBundle, bundle, EXPECTED_CHECK_SOURCE,
-    [...collectedFrom(bundle), { id: 'ci-omitted', threadId: 'thread-omitted' }],
+    { ...collected, findings: [...collected.findings, { id: 'ci-omitted', threadId: 'thread-omitted', source: 'ci', severity: 'P1', resolved: true }] },
   ), 'dispositions_do_not_cover_complete_collected_finding_set')
   throwsCode('finding_disposition_incomplete', () => validateBundle(
-    validateFindingDispositionBundle, bundle, EXPECTED_CHECK_SOURCE, collectedFrom(bundle).slice(1),
+    validateFindingDispositionBundle, bundle, EXPECTED_CHECK_SOURCE, { ...collected, findings: collected.findings.slice(1) },
   ), 'dispositions_do_not_cover_complete_collected_finding_set')
-  throwsCode('finding_disposition_incomplete', () => validateFindingDispositionBundle(bundle, EXPECTED_CHECK_SOURCE), 'collector_finding_set_required')
+  throwsCode('finding_disposition_incomplete', () => validateFindingDispositionBundle(bundle, EXPECTED_CHECK_SOURCE), 'collector_conversation_state_required')
+  // Weakening a collected record (severity, source or thread) is not a disposition.
+  throwsCode('finding_disposition_invalid', () => validateBundle(
+    validateFindingDispositionBundle, bundle, EXPECTED_CHECK_SOURCE,
+    { ...collected, findings: collected.findings.map((entry) => (entry.id === 'review-2' ? { ...entry, severity: 'P1' } : entry)) },
+  ), 'finding_1_not_bound_to_collected_record')
+  throwsCode('finding_disposition_invalid', () => validateBundle(
+    validateFindingDispositionBundle, bundle, EXPECTED_CHECK_SOURCE,
+    { ...collected, findings: collected.findings.map((entry) => (entry.id === 'ci-1' ? { ...entry, threadId: 'thread-9' } : entry)) },
+  ), 'finding_0_not_bound_to_collected_record')
+  // GitHub still reports the thread open: the bundle's threadResolved claim has no authority.
+  throwsCode('finding_disposition_incomplete', () => validateBundle(
+    validateFindingDispositionBundle, bundle, EXPECTED_CHECK_SOURCE,
+    { ...collected, unresolvedThreads: 1, findings: collected.findings.map((entry) => (entry.id === 'ci-1' ? { ...entry, resolved: false } : entry)) },
+  ), 'finding_0_thread_resolution_not_server_observed')
+  throwsCode('finding_disposition_incomplete', () => validateBundle(
+    validateFindingDispositionBundle, bundle, EXPECTED_CHECK_SOURCE, { ...collected, complete: false },
+  ), 'conversation_state_not_server_observed')
 })
 
 test('confirmed blocking findings cannot be accepted or deferred, unverified findings cannot resolve, and fixed claims need evidence', async () => {
@@ -608,12 +655,16 @@ test('confirmed blocking findings cannot be accepted or deferred, unverified fin
   throwsCode('finding_disposition_invalid', () => validateBundle(validateFindingDispositionBundle, withFinding({
     disposition: 'RESOLVED', fixedOnHead: false, fixEvidence: null,
   })), 'disposition_not_closed')
-  const escalated = validateBundle(validateFindingDispositionBundle, makeConvergedBundle({
-    findings: [makeFinding({
-      riskClass: 'acl', disposition: 'ESCALATE', fixedOnHead: false, fixEvidence: null,
-      threadResolved: false, verification: 'unverified',
-    })],
-  }))
+  const escalatedBundle = {
+    ...makeConvergedBundle({
+      findings: [makeFinding({
+        riskClass: 'acl', disposition: 'ESCALATE', fixedOnHead: false, fixEvidence: null,
+        threadResolved: false, verification: 'unverified',
+      })],
+    }),
+    unresolvedThreads: 1,
+  }
+  const escalated = validateBundle(validateFindingDispositionBundle, escalatedBundle)
   assert.equal(escalated.status, 'escalated')
   assert.equal(escalated.reviewConverged, false)
 })
@@ -714,13 +765,13 @@ const buildMergePlanFixture = async () => {
     /^[0-9a-f]{64}$/.test(contentSha256) && generatedBy.resultArtifactSha256 === DIGEST('8')
   )
   const verifySubsumption = ({ prNumber, subsumedByPrNumber }) => prNumber === 730 && subsumedByPrNumber === 733
-  return { plan, observedPrs, verifyProvenance, verifySubsumption, authoritativeDependencies, proof }
+  return { plan, observedPrs, observedBaseOid: SHA('a'), verifyProvenance, verifySubsumption, authoritativeDependencies, proof }
 }
 
 test('merge plan is subagent-authored, bound to the authoritative dependency graph, and records verified subsumed PRs', async () => {
   const { validateSubagentMergePlan } = await loadSubject()
-  const { plan, observedPrs, verifyProvenance, verifySubsumption, authoritativeDependencies } = await buildMergePlanFixture()
-  const result = validateSubagentMergePlan(plan, { observedPrs, verifyProvenance, verifySubsumption, authoritativeDependencies })
+  const { plan, observedPrs, observedBaseOid, verifyProvenance, verifySubsumption, authoritativeDependencies } = await buildMergePlanFixture()
+  const result = validateSubagentMergePlan(plan, { observedPrs, observedBaseOid, verifyProvenance, verifySubsumption, authoritativeDependencies })
   assert.deepEqual(result.mergeOrder.map((entry) => entry.prNumber), [731, 733, 737])
   assert.equal(result.skips[0].subsumedByPrNumber, 733)
   assert.equal(result.authorityVerified, true)
@@ -728,8 +779,11 @@ test('merge plan is subagent-authored, bound to the authoritative dependency gra
 
 test('human-authored, dependency-inverted, incomplete-edge, or unproved skip merge plans fail closed', async () => {
   const { validateSubagentMergePlan } = await loadSubject()
-  const { plan, observedPrs, verifyProvenance, verifySubsumption, authoritativeDependencies, proof } = await buildMergePlanFixture()
-  const options = { observedPrs, verifyProvenance, verifySubsumption, authoritativeDependencies }
+  const { plan, observedPrs, observedBaseOid, verifyProvenance, verifySubsumption, authoritativeDependencies, proof } = await buildMergePlanFixture()
+  const options = { observedPrs, observedBaseOid, verifyProvenance, verifySubsumption, authoritativeDependencies }
+  // A predecessor merge moved the base: pre-merge ordering evidence must be recollected.
+  throwsCode('merge_plan_head_drift', () => validateSubagentMergePlan(plan, { ...options, observedBaseOid: SHA('9') }), 'base_changed_after_plan')
+  throwsCode('merge_plan_observation_invalid', () => validateSubagentMergePlan(plan, { ...options, observedBaseOid: undefined }), 'observed_base_oid_required')
   throwsCode('merge_plan_authority_invalid', () => validateSubagentMergePlan(
     { ...plan, generatedBy: { ...plan.generatedBy, kind: 'human' } }, options,
   ))
@@ -756,7 +810,7 @@ test('human-authored, dependency-inverted, incomplete-edge, or unproved skip mer
   throwsCode('merge_plan_skip_invalid', () => validateSubagentMergePlan({
     ...plan, skips: [{ ...plan.skips[0], proofSha256: DIGEST('4') }],
   }, options), 'skip_0_proof_not_recomputable')
-  throwsCode('merge_plan_authority_invalid', () => validateSubagentMergePlan(plan, { observedPrs, verifyProvenance, authoritativeDependencies }))
+  throwsCode('merge_plan_authority_invalid', () => validateSubagentMergePlan(plan, { observedPrs, observedBaseOid, verifyProvenance, authoritativeDependencies }))
   throwsCode('merge_plan_authority_invalid', () => validateSubagentMergePlan(plan, { ...options, verifyProvenance: () => false }))
   throwsCode('merge_plan_head_drift', () => validateSubagentMergePlan(plan, {
     ...options,
@@ -791,6 +845,11 @@ test('review disposition replies carry hidden metadata, never re-trigger the age
   assert.equal(parsed.fixed_on_head, false)
   assert.equal(reviewDispositionTupleKey(parsed), reply.tupleKey)
   assert.equal(parseReviewDispositionMetadata('plain human comment'), null)
+  // A marker written before fixed_on_head joined the key set is still agent output and never a fix claim.
+  const legacyMetadata = Object.fromEntries(Object.entries(parsed).filter(([key]) => key !== 'fixed_on_head'))
+  const legacy = parseReviewDispositionMetadata(`<!-- ai-bim-review-disposition/v1 ${JSON.stringify(legacyMetadata)} -->`)
+  assert.equal(legacy.fixed_on_head, false)
+  assert.equal(reviewDispositionTupleKey(legacy), reply.tupleKey)
   throwsCode('review_disposition_metadata_invalid', () => parseReviewDispositionMetadata('<!-- ai-bim-review-disposition/v1 {not json} -->'))
   // A rationale that mentions a reviewer bot would recursively trigger it.
   throwsCode('review_disposition_invalid', () => buildReviewDispositionReply({
@@ -808,29 +867,38 @@ test('review disposition replies carry hidden metadata, never re-trigger the age
     ...input, finding: { ...finding, riskClass: 'credentials' },
   }), 'finding_high_risk_finding_requires_escalation')
 
+  // Only the server-reported author decides what is agent output: a marker pasted by
+  // another author cannot hide that author's finding, and the sender's own comments
+  // are never intake regardless of their text.
   const intake = selectFindingIntake([
     { id: 1, author: 'chatgpt-codex-connector', body: 'P2 finding text' },
     { id: 2, author: 'monkey1sai', body: reply.body },
     { id: 3, author: 'monkey1sai', body: 'coordinator note without marker' },
     { id: 4, author: 'someone', body: '<!-- ai-bim-review-disposition/v1 pasted marker -->' },
-    // A human quoting the agent reply (blockquoted marker) is still human intake.
     { id: 5, author: 'human-reviewer', body: ['> ' + reply.body.split('\n').at(-1), '', 'Still broken on my machine, see line 40.'].join('\n') },
   ], { agentSender: 'monkey1sai' })
-  assert.deepEqual(intake.map((comment) => comment.id), [1, 5])
+  assert.deepEqual(intake.map((comment) => comment.id), [1, 4, 5])
+  throwsCode('review_disposition_invalid', () => selectFindingIntake([], {}), 'agent_sender_required')
 
-  assert.deepEqual(planReviewDispositionMutation({ existingComments: [{ body: 'P2 finding text' }], candidateMetadata: reply.metadata }), {
+  const own = (body) => ({ author: 'monkey1sai', body })
+  assert.deepEqual(planReviewDispositionMutation({ existingComments: [{ author: 'chatgpt-codex-connector', body: 'P2 finding text' }], candidateMetadata: reply.metadata }), {
     action: 'post', reason: 'new_disposition_for_finding_on_head',
   })
-  assert.deepEqual(planReviewDispositionMutation({ existingComments: [{ body: reply.body }], candidateMetadata: reply.metadata }), {
+  assert.deepEqual(planReviewDispositionMutation({ existingComments: [own(reply.body)], candidateMetadata: reply.metadata }), {
     action: 'skip', reason: 'duplicate_exact_tuple',
   })
   const rerun = buildReviewDispositionReply({ ...input, agentRunId: 'claude-d23c2a-run-2', webhookEventId: 'manual:rerun' })
-  assert.deepEqual(planReviewDispositionMutation({ existingComments: [{ body: reply.body }], candidateMetadata: rerun.metadata }), {
+  assert.deepEqual(planReviewDispositionMutation({ existingComments: [own(reply.body)], candidateMetadata: rerun.metadata }), {
     action: 'skip', reason: 'already_dispositioned_on_head',
   })
   const newHead = buildReviewDispositionReply({ ...input, headOid: SHA('d') })
-  assert.equal(planReviewDispositionMutation({ existingComments: [{ body: reply.body }], candidateMetadata: newHead.metadata }).action, 'post')
+  assert.equal(planReviewDispositionMutation({ existingComments: [own(reply.body)], candidateMetadata: newHead.metadata }).action, 'post')
   assert.deepEqual(planReviewDispositionMutation({
-    existingComments: [{ body: '<!-- ai-bim-review-disposition/v1 {"broken":true} -->' }], candidateMetadata: reply.metadata,
+    existingComments: [own('<!-- ai-bim-review-disposition/v1 {"broken":true} -->')], candidateMetadata: reply.metadata,
   }), { action: 'hold', reason: 'existing_agent_metadata_unparseable' })
+  // Another author's copy of the marker, malformed or not, never skips or holds the agent.
+  assert.equal(planReviewDispositionMutation({
+    existingComments: [{ author: 'someone', body: reply.body }, { author: 'someone', body: '<!-- ai-bim-review-disposition/v1 {"broken":true} -->' }],
+    candidateMetadata: reply.metadata,
+  }).action, 'post')
 })

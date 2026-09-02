@@ -154,6 +154,10 @@ test('the plan file cannot assert resolvability, identity, or disposition beyond
     ...plan, replies: plan.replies.map((reply, index) => (index === 0 ? { ...reply, threadId: 'PRRT_other' } : reply)),
   }), /reply_identity_unbound/);
   assert.throws(() => validatePlanShape({ ...plan, headOid: SHA('9') }), /reply_head_unbound/);
+  // An edited plan cannot publish two decisions for one finding or thread.
+  assert.throws(() => validatePlanShape({ ...plan, replies: [...plan.replies, plan.replies[0]] }), /plan_replies_duplicated/);
+  const secondPlan = renderPlan({ agentRunId: 'claude-d23c2a-run-2' });
+  assert.throws(() => validatePlanShape({ ...plan, replies: [...plan.replies, secondPlan.replies[0]] }), /plan_replies_duplicated/);
 });
 
 test('dry run posts nothing, live posts once per finding, and reruns dedupe on the hidden metadata', () => {

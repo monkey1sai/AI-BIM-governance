@@ -300,6 +300,16 @@ export function classifyReviewSurface({ changedFiles, diff, limits } = {}) {
   if (SECRET_VALUES.some((pattern) => pattern.test(bytes.toString('utf8')))) {
     fail('secret_review_surface_blocked', 'semantic_redaction_would_change_review_bytes')
   }
+  // The collector's binary/submodule flags are not the only witness: the diff
+  // bytes themselves reveal a binary or submodule change that has no reviewable
+  // content, and such a surface must never claim to be lossless.
+  const diffText = bytes.toString('utf8')
+  if (/^(?:Binary files .* differ|GIT binary patch)$/mu.test(diffText)) {
+    fail('unsupported_review_surface', 'binary_diff_marker_present')
+  }
+  if (/^[+-]Subproject commit [0-9a-f]{40}$/mu.test(diffText)) {
+    fail('unsupported_review_surface', 'submodule_diff_marker_present')
+  }
   const sorted = [...normalized].sort((left, right) => left.path.localeCompare(right.path, 'en'))
   if (sorted.some((file, index) => index > 0 && file.path.toLowerCase() === sorted[index - 1].path.toLowerCase())) {
     fail('unsupported_review_surface', 'changed_path_case_collision')
@@ -442,7 +452,7 @@ const closeHeld = (state, failureDetail) => deepFreeze({
 // Trusted-side inputs (collector output, never the candidate bundle) are passed
 // through to the disposition validator so the gate epoch cannot be self-reported.
 export function applyFinalizationEvent(stateRaw, event, {
-  expectedRequiredCheckSource, collectedFindings, convergenceObservedAt, sameHeadCheckRuns,
+  expectedRequiredCheckSource, collectedConversation, convergenceObservedAt, sameHeadCheckRuns,
 } = {}) {
   if (!isPlainObject(stateRaw)) fail('finalization_state_invalid', 'state_shape_invalid')
   const state = validateFinalizationState(stateRaw)
@@ -495,7 +505,7 @@ export function applyFinalizationEvent(stateRaw, event, {
   const roundIndex = state.rounds.length - 1
   if (event.type === 'round_converged') {
     const convergence = validateFindingDispositionBundle(event.findingBundle, expectedRequiredCheckSource, {
-      collectedFindings, convergenceObservedAt, sameHeadCheckRuns,
+      collectedConversation, convergenceObservedAt, sameHeadCheckRuns,
     })
     if (
       convergence.repository !== state.repository || convergence.prNumber !== state.prNumber ||
@@ -733,12 +743,29 @@ class SingleFlightLedger {
 
   // The only exit from a frozen queue with no autonomous lane: an audited,
   // authority-bearing user-initiated transaction that names the exact terminal.
-  unfreeze({ deliveryId, authorityRef } = {}) {
+  unfreeze({ deliveryId, authorityRef, verifyAuthority } = {}) {
     if (this.active !== null) fail('delivery_lock_held', 'repository_delivery_is_single_flight')
     if (this.openRecovery === null || this.openRecovery.deliveryId !== deliveryId) {
       fail('delivery_lock_invalid', 'unfreeze_must_name_open_terminal_delivery')
     }
     assertIdentifier(authorityRef, 'delivery_lock_invalid', 'unfreeze_authority_ref_invalid')
+    // A terminal that still maps to a recovery lane must be recovered through that
+    // lane; the escape hatch exists only for lane-less holds, and only an external
+    // authority (not a syntactically valid reference) can exercise it.
+    const lanes = RECOVERY_LANES[this.openRecovery.terminalClass][this.openRecovery.reasonCode]
+    if (!Array.isArray(lanes) || lanes.length !== 0) {
+      fail('delivery_lock_invalid', 'unfreeze_not_allowed_for_recoverable_terminal')
+    }
+    let authorityVerified = false
+    try {
+      authorityVerified = typeof verifyAuthority === 'function' && verifyAuthority(deepFreeze({
+        repository: this.repository, deliveryId, authorityRef,
+        terminalClass: this.openRecovery.terminalClass, reasonCode: this.openRecovery.reasonCode,
+      })) === true
+    } catch {
+      authorityVerified = false
+    }
+    if (!authorityVerified) fail('delivery_lock_invalid', 'unfreeze_authority_unverified')
     const event = deepFreeze({
       repository: this.repository,
       deliveryId,
@@ -1017,30 +1044,49 @@ const validateMachineGateEpoch = (gate, expectedSource, { convergenceObservedAt,
   if (started < epoch) fail('finding_gate_order_invalid', 'machine_gate_started_before_finding_convergence')
 }
 
-// The complete finding identity set observed by the collector, supplied from
-// outside the candidate bundle. The dispositioned set must equal it exactly, so a
-// bundle cannot omit a blocking finding and still converge.
-const parseCollectedFindings = (collectedFindings) => {
-  if (!Array.isArray(collectedFindings) || collectedFindings.length > 256) {
+// The server-derived conversation state observed by the trusted collector,
+// supplied from outside the candidate bundle: completeness, unresolved count and,
+// per finding, the authoritative thread, source, severity and resolution. The
+// bundle's own claims must match these records exactly, so a candidate can neither
+// omit a blocking finding, weaken its severity, re-home it to another thread, nor
+// declare a thread resolved that GitHub still reports open.
+const parseCollectedConversation = (collectedConversation) => {
+  if (!isPlainObject(collectedConversation)) fail('finding_disposition_incomplete', 'collector_conversation_state_required')
+  exactKeys(collectedConversation, ['complete', 'unresolvedThreads', 'findings'], 'finding_disposition_invalid', 'collected_conversation_shape_invalid')
+  if (typeof collectedConversation.complete !== 'boolean' ||
+      !Number.isSafeInteger(collectedConversation.unresolvedThreads) || collectedConversation.unresolvedThreads < 0) {
+    fail('finding_disposition_invalid', 'collected_conversation_state_invalid')
+  }
+  const findings = collectedConversation.findings
+  if (!Array.isArray(findings) || findings.length > 256) {
     fail('finding_disposition_incomplete', 'collector_finding_set_required')
   }
-  const ids = new Set()
+  const byId = new Map()
   const threads = new Set()
-  for (const [index, entry] of collectedFindings.entries()) {
-    exactKeys(entry, ['id', 'threadId'], 'finding_disposition_invalid', `collected_finding_${index}_shape_invalid`)
+  for (const [index, entry] of findings.entries()) {
+    exactKeys(entry, ['id', 'threadId', 'source', 'severity', 'resolved'], 'finding_disposition_invalid', `collected_finding_${index}_shape_invalid`)
     assertIdentifier(entry.id, 'finding_disposition_invalid', `collected_finding_${index}_id_invalid`)
     assertIdentifier(entry.threadId, 'finding_disposition_invalid', `collected_finding_${index}_thread_id_invalid`)
-    if (ids.has(entry.id) || threads.has(entry.threadId)) {
+    if (!FINDING_SOURCES.has(entry.source)) fail('finding_disposition_invalid', `collected_finding_${index}_source_invalid`)
+    if (!BLOCKING_FINDING_SEVERITIES.has(entry.severity) && !NON_BLOCKING_FINDING_SEVERITIES.has(entry.severity)) {
+      fail('finding_disposition_invalid', `collected_finding_${index}_severity_invalid`)
+    }
+    if (typeof entry.resolved !== 'boolean') fail('finding_disposition_invalid', `collected_finding_${index}_resolved_invalid`)
+    if (byId.has(entry.id) || threads.has(entry.threadId)) {
       fail('finding_disposition_invalid', `collected_finding_${index}_duplicated`)
     }
-    ids.add(entry.id)
+    byId.set(entry.id, entry)
     threads.add(entry.threadId)
   }
-  return { ids, threads }
+  const unresolvedInRecords = findings.filter((entry) => !entry.resolved).length
+  if (unresolvedInRecords > collectedConversation.unresolvedThreads) {
+    fail('finding_disposition_invalid', 'collected_conversation_count_inconsistent')
+  }
+  return { complete: collectedConversation.complete, unresolvedThreads: collectedConversation.unresolvedThreads, byId }
 }
 
 export function validateFindingDispositionBundle(bundle, expectedRequiredCheckSource, {
-  collectedFindings, convergenceObservedAt, sameHeadCheckRuns,
+  collectedConversation, convergenceObservedAt, sameHeadCheckRuns,
 } = {}) {
   exactKeys(bundle, [
     'schemaVersion', 'repository', 'prNumber', 'baseOid', 'headOid', 'policySha256',
@@ -1072,11 +1118,22 @@ export function validateFindingDispositionBundle(bundle, expectedRequiredCheckSo
       new Set(findings.map((finding) => finding.threadId)).size !== findings.length) {
     fail('finding_disposition_invalid', 'finding_or_thread_identity_duplicated')
   }
-  const collected = parseCollectedFindings(collectedFindings)
-  if (
-    collected.ids.size !== findings.length ||
-    findings.some((finding) => !collected.ids.has(finding.id) || !collected.threads.has(finding.threadId))
-  ) fail('finding_disposition_incomplete', 'dispositions_do_not_cover_complete_collected_finding_set')
+  const collected = parseCollectedConversation(collectedConversation)
+  if (collected.byId.size !== findings.length || findings.some((finding) => !collected.byId.has(finding.id))) {
+    fail('finding_disposition_incomplete', 'dispositions_do_not_cover_complete_collected_finding_set')
+  }
+  for (const [index, finding] of findings.entries()) {
+    const record = collected.byId.get(finding.id)
+    if (record.threadId !== finding.threadId || record.source !== finding.source || record.severity !== finding.severity) {
+      fail('finding_disposition_invalid', `finding_${index}_not_bound_to_collected_record`)
+    }
+    if (record.resolved !== finding.threadResolved) {
+      fail('finding_disposition_incomplete', `finding_${index}_thread_resolution_not_server_observed`)
+    }
+  }
+  if (bundle.threadsComplete !== collected.complete || bundle.unresolvedThreads !== collected.unresolvedThreads) {
+    fail('finding_disposition_incomplete', 'conversation_state_not_server_observed')
+  }
   if (findings.some((finding) => finding.disposition === 'ESCALATE')) {
     // Escalation removes the PR from autonomous authority regardless of any gate.
     return deepFreeze({ ...clone(bundle), findings, reviewConverged: false, status: 'escalated' })
@@ -1147,7 +1204,7 @@ export function subsumptionProof({ prNumber, headOid, subsumedByPrNumber, subsum
 }
 
 export function validateSubagentMergePlan(plan, {
-  observedPrs, verifyProvenance, authoritativeDependencies, verifySubsumption,
+  observedPrs, observedBaseOid, verifyProvenance, authoritativeDependencies, verifySubsumption,
 } = {}) {
   exactKeys(plan, [
     'schemaVersion', 'repository', 'baseOid', 'policySha256', 'dependencyGraphSha256',
@@ -1174,6 +1231,10 @@ export function validateSubagentMergePlan(plan, {
   if (!Array.isArray(observedPrs) || typeof verifyProvenance !== 'function' || typeof verifySubsumption !== 'function') {
     fail('merge_plan_authority_invalid', 'authenticated_subagent_provenance_server_observations_and_subsumption_verifier_required')
   }
+  // A predecessor merge advances the integration branch; the plan's ordering
+  // evidence is only valid for the exact base it was computed against.
+  assertSha1(observedBaseOid, 'merge_plan_observation_invalid', 'observed_base_oid_required')
+  if (plan.baseOid !== observedBaseOid) fail('merge_plan_head_drift', 'base_changed_after_plan')
   const { graph, digest: authoritativeDigest } = parseAuthoritativeDependencies(authoritativeDependencies)
   if (plan.dependencyGraphSha256 !== authoritativeDigest) {
     fail('merge_plan_dependency_invalid', 'dependency_graph_digest_not_authoritative')
@@ -1341,8 +1402,14 @@ const assertReplyText = (value, { min, max, detail }) => {
 }
 
 export function validateReviewDispositionMetadata(metadataRaw) {
-  exactKeys(metadataRaw, REVIEW_DISPOSITION_METADATA_KEYS, 'review_disposition_metadata_invalid', 'metadata_shape_invalid')
-  const metadata = clone(metadataRaw)
+  // Markers posted before `fixed_on_head` joined the v1 key set carry no fix claim:
+  // read them as `fixed_on_head: false` so an older reply can still be recognised
+  // as agent output and deduplicated, never as a fixed claim.
+  const withFixFlag = isPlainObject(metadataRaw) && !Object.hasOwn(metadataRaw, 'fixed_on_head')
+    ? { ...metadataRaw, fixed_on_head: false }
+    : metadataRaw
+  exactKeys(withFixFlag, REVIEW_DISPOSITION_METADATA_KEYS, 'review_disposition_metadata_invalid', 'metadata_shape_invalid')
+  const metadata = clone(withFixFlag)
   if (
     metadata.schema !== REVIEW_DISPOSITION_SCHEMA || !SAFE_REPOSITORY.test(metadata.repository) ||
     !Number.isSafeInteger(metadata.pr_number) || metadata.pr_number < 1
@@ -1458,20 +1525,15 @@ export function parseReviewDispositionMetadata(body) {
   return validateReviewDispositionMetadata(parsed)
 }
 
-// A human replying to the agent may quote its reply (blockquoted marker); that is
-// still human intake. An unquoted marker, or anything the agent sender wrote, is not.
-const markerOutsideBlockquote = (body) => REVIEW_DISPOSITION_MARKER_ANY.test(
-  body.split('\n').filter((line) => !/^\s*>/u.test(line)).join('\n'),
-)
-
-export function selectFindingIntake(comments, { agentSender = null } = {}) {
+// Loop guard keyed on the server-reported author, never on body text: only what
+// the trusted agent sender wrote is agent output. A marker pasted or quoted by any
+// other author is ordinary text, so it can neither hide that author's finding from
+// intake nor influence deduplication.
+export function selectFindingIntake(comments, { agentSender } = {}) {
   if (!Array.isArray(comments)) fail('review_disposition_invalid', 'comments_required')
+  if (typeof agentSender !== 'string' || !GITHUB_LOGIN.test(agentSender)) fail('review_disposition_invalid', 'agent_sender_required')
   return deepFreeze(comments
-    .filter((comment) => (
-      isPlainObject(comment) && typeof comment.body === 'string' &&
-      !(agentSender !== null && comment.author === agentSender) &&
-      !markerOutsideBlockquote(comment.body)
-    ))
+    .filter((comment) => isPlainObject(comment) && typeof comment.body === 'string' && comment.author !== agentSender)
     .map(clone))
 }
 
@@ -1481,6 +1543,8 @@ export function planReviewDispositionMutation({ existingComments, candidateMetad
   const candidateKey = reviewDispositionTupleKey(candidate)
   for (const comment of existingComments) {
     if (!isPlainObject(comment) || typeof comment.body !== 'string') continue
+    // Only the trusted sender's own comments carry authoritative metadata.
+    if (comment.author !== candidate.sender) continue
     let existing = null
     try {
       existing = parseReviewDispositionMetadata(comment.body)

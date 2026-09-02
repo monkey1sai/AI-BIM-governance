@@ -66,7 +66,7 @@ PR review agent SHALL先驗證finding是否成立，再將每個CI、determinist
 - **GIVEN**collector以完整pagination取得所有review threads與CI findings
 - **WHEN**每個finding都有合法disposition、所有對應thread已resolve且server unresolved count為零
 - **THEN**review convergence MAY成立
-- **AND**source-pinned App只可在convergence後對相同frozen head發布actual `success`，且該CheckRun SHALL是expected source在該head的最新一筆並在convergence之後開始；同head完整CheckRun清單、convergence epoch與collected finding identity set SHALL由candidate bundle之外的trusted collector供給，bundle自述值沒有authority
+- **AND**source-pinned App只可在convergence後對相同frozen head發布actual `success`，且該CheckRun SHALL是expected source在該head的最新一筆並在convergence之後開始；同head完整CheckRun清單、convergence epoch與collected conversation state（completeness、unresolved count、每個finding的thread／source／severity／resolution）SHALL由candidate bundle之外的trusted collector供給，bundle自述值沒有authority
 - **AND**convergence前的success、stale-head success、被較新rerun取代的舊success、不完整thread集合或未涵蓋完整collected finding set的bundle SHALL NOT成為merge evidence
 
 ### Requirement: Merge queue agent SHALL act as the Review Disposition Agent with structured, loop-safe GitHub replies
