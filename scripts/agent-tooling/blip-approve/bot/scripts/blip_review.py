@@ -16,11 +16,11 @@ review, pushes, changes repository settings, or touches an owner-consent comment
 
 Branch protection is verified from two sources because the least-privilege write
 reviewer cannot read GitHub's admin-only legacy protection endpoint (observed as
-HTTP 404 on 2026-09-01 across ten failed vote attempts): an owner-minted signed
-protection attestation (`mint_protection_attestation.py`) supplies the complete
-legacy-protection snapshot, and the write-visible GraphQL `refUpdateRule` is
-cross-checked live on every preflight and post-approval pass so drift in the
-write-visible fields still fails closed between attestation refreshes.
+HTTP 404 on 2026-09-01 across ten failed vote attempts): the manifest-verified
+protected parent supplies a non-secret snapshot from a separate read-only admin
+credential, and the write-visible GraphQL `refUpdateRule` is cross-checked live
+on every preflight and post-approval pass. The parent independently re-fetches
+the complete policy after the child exits and rejects any drift.
 
 Honest framing for anyone reading a report produced with this: an approval submitted
 here is a *scripted* approval carrying the operator's authority. It satisfies the
@@ -69,12 +69,8 @@ DEFAULT_REPO = "monkey1sai/AI-BIM-governance"
 DEFAULT_BASE_BRANCH = "main"
 APPROVAL_CAPABILITY_ENV = "BLIP_APPROVAL_CAPABILITY"
 APPROVAL_CAPABILITY_VERSION = "blip-approval-capability/v2"
-PROTECTION_ATTESTATION_ENV = "BLIP_PROTECTION_ATTESTATION"
-PROTECTION_ATTESTATION_KEY_ENV = "BLIP_PROTECTION_ATTESTATION_KEY"
-PROTECTION_ATTESTATION_VERSION = "blip-protection-attestation/v1"
-PROTECTION_ATTESTATION_MAX_AGE_SECONDS = 600
-PROTECTION_ATTESTATION_MAX_VALIDITY_SECONDS = 600
-PROTECTION_ATTESTATION_MAX_CHARS = 262144
+PROTECTION_POLICY_ENV = "BLIP_PROTECTION_POLICY_JSON"
+PROTECTION_POLICY_MAX_CHARS = 262144
 MACHINE_REVIEW_MODES = frozenset({"mechanical_only", "focused_semantic", "risk_scoped_specialists"})
 HUMAN_CRITICAL_REVIEW_MODE = "human_critical"
 SUPPORTED_REVIEW_MODES = MACHINE_REVIEW_MODES | {HUMAN_CRITICAL_REVIEW_MODE}
@@ -387,72 +383,34 @@ def fetch_repository_safety(token: str, owner: str, name: str) -> dict:
     return normalized
 
 
-def verify_protection_attestation(*, signing_key: str, raw: str, base_branch: str) -> dict:
-    """Verify the owner-minted signed protection snapshot.
-
-    The write-scope reviewer receives HTTP 404 from the admin-only legacy
-    protection endpoint, so the full policy arrives as a freshly owner-signed
-    packet using a dedicated attestation key. The counted-reviewer PAT is never
-    reused for this purpose. The broker still re-validates every policy field
-    itself on the embedded snapshot.
-    """
+def parse_protection_policy_snapshot(raw: str) -> dict:
+    """Parse the non-secret snapshot injected by the protected parent broker."""
     if not raw:
         raise SystemExit(
-            f"Branch protection verification requires an owner-minted {PROTECTION_ATTESTATION_ENV}; "
-            "the least-privilege write reviewer cannot read the admin-only protection endpoint "
-            "(mint one with mint_protection_attestation.py)"
+            f"Branch protection verification requires protected {PROTECTION_POLICY_ENV} input"
         )
-    if len(raw) > PROTECTION_ATTESTATION_MAX_CHARS:
-        raise SystemExit("Protection attestation exceeds the protected size limit")
-    encoded, separator, signature = raw.partition(".")
-    if not separator or not re.fullmatch(r"[0-9a-fA-F]{64}", signature):
-        raise SystemExit("Protection attestation format is invalid")
+    if len(raw) > PROTECTION_POLICY_MAX_CHARS:
+        raise SystemExit("Protected branch-policy snapshot exceeds the size limit")
+
+    def reject_duplicate_keys(pairs: list[tuple[str, object]]) -> dict:
+        result: dict[str, object] = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError(f"duplicate key: {key}")
+            result[key] = value
+        return result
+
     try:
-        padding = "=" * (-len(encoded) % 4)
-        payload_text = base64.urlsafe_b64decode((encoded + padding).encode("ascii")).decode("utf-8")
-    except (ValueError, UnicodeError):
-        raise SystemExit("Protection attestation encoding is invalid") from None
-    if not 32 <= len(signing_key) <= 4096:
-        raise SystemExit("Protection attestation signing key is missing or malformed")
-    expected_signature = hmac.new(
-        signing_key.encode("utf-8"), payload_text.encode("utf-8"), hashlib.sha256
-    ).hexdigest()
-    if not hmac.compare_digest(signature.lower(), expected_signature):
-        raise SystemExit("Protection attestation signature is invalid")
-    try:
-        payload = json.loads(payload_text)
+        payload = json.loads(raw, object_pairs_hook=reject_duplicate_keys)
     except ValueError:
-        raise SystemExit("Protection attestation payload is malformed") from None
-    if not isinstance(payload, dict):
-        raise SystemExit("Protection attestation payload is malformed")
-    if payload.get("version") != PROTECTION_ATTESTATION_VERSION:
-        raise SystemExit("Protection attestation version is unsupported")
-    if payload.get("repository") != DEFAULT_REPO or payload.get("base_branch") != base_branch:
-        raise SystemExit("Protection attestation is not bound to this exact repository and base branch")
-    issued_at = payload.get("issued_at")
-    expires_at = payload.get("expires_at")
-    if (
-        not isinstance(issued_at, int)
-        or isinstance(issued_at, bool)
-        or not isinstance(expires_at, int)
-        or isinstance(expires_at, bool)
-    ):
-        raise SystemExit("Protection attestation timestamps are malformed")
-    now = int(time.time())
-    if issued_at > now + 300:
-        raise SystemExit("Protection attestation issue time is in the future")
-    if expires_at <= issued_at or expires_at <= now:
-        raise SystemExit("Protection attestation is expired; ask the owner to re-mint it")
-    if issued_at < now - PROTECTION_ATTESTATION_MAX_AGE_SECONDS:
-        raise SystemExit("Protection attestation is stale; the owner must re-mint it immediately before approval")
-    if expires_at - issued_at > PROTECTION_ATTESTATION_MAX_VALIDITY_SECONDS:
-        raise SystemExit("Protection attestation validity window is overlong")
-    if payload.get("active_rules") != []:
-        raise SystemExit("Protection attestation must record an empty active-ruleset state")
-    protection = payload.get("protection")
-    if not isinstance(protection, dict):
-        raise SystemExit("Protection attestation payload is missing the protection snapshot")
-    return {"issued_at": issued_at, "expires_at": expires_at, "protection": protection}
+        raise SystemExit("Protected branch-policy snapshot is malformed") from None
+    if not isinstance(payload, dict) or set(payload) != {"active_rules", "protection"}:
+        raise SystemExit("Protected branch-policy snapshot has an invalid schema")
+    if payload["active_rules"] != []:
+        raise SystemExit("Active rulesets are present but this broker only supports verified legacy protection")
+    if not isinstance(payload["protection"], dict):
+        raise SystemExit("Protected branch-policy snapshot has no protection object")
+    return payload
 
 
 REF_UPDATE_RULE_QUERY = """
@@ -654,28 +612,11 @@ def validate_protection_payload(protection: object, base_branch: str) -> dict:
 
 
 def fetch_protection_policy(token: str, owner: str, name: str, base_branch: str) -> dict:
-    encoded_branch = quote(base_branch, safe="")
-    active_rules = http_json(
-        "GET",
-        f"{API}/repos/{owner}/{name}/rules/branches/{encoded_branch}?per_page=100",
-        token=token,
-    )
-    if not isinstance(active_rules, list):
-        raise SystemExit("Active branch rules payload is malformed")
-    if len(active_rules) >= 100:
-        raise SystemExit("Active branch rules may be paginated; refusing incomplete protection state")
-    if active_rules:
-        raise SystemExit("Active rulesets are present but this approval broker only supports verified legacy protection")
-
-    attested = verify_protection_attestation(
-        signing_key=os.environ.get(PROTECTION_ATTESTATION_KEY_ENV, "").strip(),
-        raw=os.environ.get(PROTECTION_ATTESTATION_ENV, "").strip(),
-        base_branch=base_branch,
-    )
-    normalized = validate_protection_payload(attested["protection"], base_branch)
+    snapshot = parse_protection_policy_snapshot(os.environ.get(PROTECTION_POLICY_ENV, "").strip())
+    normalized = validate_protection_payload(snapshot["protection"], base_branch)
 
     live_rule = fetch_live_ref_update_rule(token, owner, name, base_branch)
-    attested_expectations = [
+    snapshot_expectations = [
         ("required_approving_review_count", normalized["approvals"]),
         ("requires_code_owner_reviews", normalized["require_code_owner_reviews"]),
         ("requires_conversation_resolution", normalized["required_conversation_resolution"]),
@@ -686,16 +627,13 @@ def fetch_protection_policy(token: str, owner: str, name: str, base_branch: str)
         ("requires_signatures", normalized["required_signatures"]),
         ("required_status_check_contexts", sorted(entry["context"] for entry in normalized["required"])),
     ]
-    for field, attested_value in attested_expectations:
-        if live_rule[field] != attested_value:
+    for field, snapshot_value in snapshot_expectations:
+        if live_rule[field] != snapshot_value:
             raise SystemExit(
-                f"Live branch protection {field} differs from the owner attestation; approval is HELD"
+                f"Write-visible branch protection {field} differs from the protected live snapshot; approval is HELD"
             )
     normalized["live_rule"] = live_rule
-    normalized["attestation"] = {
-        "issued_at": attested["issued_at"],
-        "expires_at": attested["expires_at"],
-    }
+    normalized["verification"] = "protected_live_snapshot_plus_write_visible_cross_check"
     normalized["sha256"] = hashlib.sha256(
         json.dumps(normalized, sort_keys=True, separators=(",", ":")).encode("utf-8")
     ).hexdigest()

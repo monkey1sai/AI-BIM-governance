@@ -9,7 +9,8 @@ $sourceHelper = Join-Path $PSScriptRoot 'blip_review.py'
 $sourceAuth = Join-Path $PSScriptRoot 'app_auth.py'
 $sourcePacket = Join-Path $PSScriptRoot 'ship_gate_packet.py'
 $sandboxRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("blip-broker-test-" + [Guid]::NewGuid().ToString('N'))
-$runtimeRoot = Join-Path $sandboxRoot 'runtime'
+$productRoot = Join-Path $sandboxRoot 'blip-approve'
+$runtimeRoot = Join-Path $productRoot 'v1'
 $stateRoot = Join-Path $runtimeRoot 'state'
 $appScriptsRoot = Join-Path $runtimeRoot 'app-scripts'
 $pythonPath = Join-Path $runtimeRoot 'test-python.cmd'
@@ -57,6 +58,7 @@ function Invoke-StrictMetadataSchemaRegression {
     $manifestHash = 'D' * 64
     $validManifest = [ordered]@{
         schema = 'blip-trusted-runtime-manifest/v1'
+        source_commit = 'c' * 40
         files = [ordered]@{ file = $fileHash }
         runtime = [ordered]@{ runtime = $runtimeHash }
         candidate_freeze_sha256 = $freezeHash
@@ -104,12 +106,50 @@ function Invoke-StrictMetadataSchemaRegression {
         -CompletionText $validCompletion -Label 'duplicate manifest files property'
     Assert-MetadataRejected -ManifestText ($validManifest.Replace(',"installed_at":"2026-08-14T00:00:00.0000000+08:00"', '')) `
         -CompletionText $validCompletion -Label 'missing manifest property'
+    Assert-MetadataRejected -ManifestText ($validManifest.Replace(',"source_commit":"' + ('c' * 40) + '"', '')) `
+        -CompletionText $validCompletion -Label 'missing source commit'
+    Assert-MetadataRejected -ManifestText ($validManifest.Replace(('c' * 40), ('C' * 40))) `
+        -CompletionText $validCompletion -Label 'non-canonical source commit'
     $completionUnknown = $validCompletion.Substring(0, $validCompletion.Length - 1) + ',"unknown":true}'
     $completionDuplicate = $validCompletion.Substring(0, $validCompletion.Length - 1) +
         ',"schema":"blip-trusted-runtime-complete/v1"}'
     Assert-MetadataRejected -ManifestText $validManifest -CompletionText $completionUnknown -Label 'unknown completion property'
     Assert-MetadataRejected -ManifestText $validManifest -CompletionText $completionDuplicate -Label 'duplicate completion property'
     Write-Output 'strict-runtime-metadata-regression-ok'
+}
+
+function Invoke-CanonicalProtectionSnapshotRegression {
+    $definitions = Get-ProductionFunctions -Names @(
+        'Write-CanonicalJsonElement',
+        'ConvertTo-CanonicalProtectionSnapshot'
+    )
+    . ([ScriptBlock]::Create(($definitions -join "`n")))
+
+    $first = ConvertTo-CanonicalProtectionSnapshot -ActiveRulesText '[]' `
+        -ProtectionText '{"z":1,"nested":{"b":false,"a":true}}'
+    $same = ConvertTo-CanonicalProtectionSnapshot -ActiveRulesText '[]' `
+        -ProtectionText '{"nested":{"a":true,"b":false},"z":1}'
+    Assert-True ($first -ceq $same) `
+        'Canonical protection snapshots differ only because JSON property order changed'
+
+    $drift = ConvertTo-CanonicalProtectionSnapshot -ActiveRulesText '[]' `
+        -ProtectionText '{"nested":{"a":true,"b":true},"z":1}'
+    Assert-True ($first -cne $drift) `
+        'Canonical protection snapshots did not preserve a nested policy drift'
+
+    foreach ($case in @(
+        @{ Active = '[{"id":1}]'; Protection = '{}'; Label = 'active ruleset' },
+        @{ Active = '[]'; Protection = '{"a":1,"a":2}'; Label = 'duplicate property' },
+        @{ Active = '[]'; Protection = '[]'; Label = 'non-object protection' }
+    )) {
+        $failed = $false
+        try {
+            [void](ConvertTo-CanonicalProtectionSnapshot `
+                -ActiveRulesText $case.Active -ProtectionText $case.Protection)
+        }
+        catch { $failed = $true }
+        Assert-True $failed "Canonical protection parser accepted $($case.Label)"
+    }
 }
 
 function Invoke-ApprovalCapabilityTupleRegression {
@@ -201,7 +241,8 @@ function Invoke-RealPythonTrustRegression {
 function Set-TestProtectedAcl {
     param(
         [Parameter(Mandatory)][string]$LiteralPath,
-        [switch]$OmitSandboxDeny
+        [switch]$OmitSandboxDeny,
+        [switch]$OwnerOnly
     )
     $current = [System.Security.Principal.WindowsIdentity]::GetCurrent()
     $sid = $current.User
@@ -228,14 +269,19 @@ function Set-TestProtectedAcl {
     $sandboxSid = ([System.Security.Principal.NTAccount]::new(
         [Environment]::MachineName + '\CodexSandboxUsers'
     )).Translate([System.Security.Principal.SecurityIdentifier])
-    $writeMask = [System.Security.AccessControl.FileSystemRights]::WriteData -bor
-        [System.Security.AccessControl.FileSystemRights]::AppendData -bor
-        [System.Security.AccessControl.FileSystemRights]::WriteAttributes -bor
-        [System.Security.AccessControl.FileSystemRights]::WriteExtendedAttributes -bor
-        [System.Security.AccessControl.FileSystemRights]::Delete -bor
-        [System.Security.AccessControl.FileSystemRights]::DeleteSubdirectoriesAndFiles -bor
-        [System.Security.AccessControl.FileSystemRights]::ChangePermissions -bor
-        [System.Security.AccessControl.FileSystemRights]::TakeOwnership
+    $writeMask = if ($OwnerOnly) {
+        [System.Security.AccessControl.FileSystemRights]::FullControl
+    }
+    else {
+        [System.Security.AccessControl.FileSystemRights]::WriteData -bor
+            [System.Security.AccessControl.FileSystemRights]::AppendData -bor
+            [System.Security.AccessControl.FileSystemRights]::WriteAttributes -bor
+            [System.Security.AccessControl.FileSystemRights]::WriteExtendedAttributes -bor
+            [System.Security.AccessControl.FileSystemRights]::Delete -bor
+            [System.Security.AccessControl.FileSystemRights]::DeleteSubdirectoriesAndFiles -bor
+            [System.Security.AccessControl.FileSystemRights]::ChangePermissions -bor
+            [System.Security.AccessControl.FileSystemRights]::TakeOwnership
+    }
     $denyRule = [System.Security.AccessControl.FileSystemAccessRule]::new(
         $sandboxSid,
         $writeMask,
@@ -244,13 +290,15 @@ function Set-TestProtectedAcl {
         [System.Security.AccessControl.AccessControlType]::Deny
     )
     if (-not $OmitSandboxDeny) { $acl.AddAccessRule($denyRule) }
-    $acl.AddAccessRule([System.Security.AccessControl.FileSystemAccessRule]::new(
-        $sandboxSid,
-        [System.Security.AccessControl.FileSystemRights]::ReadAndExecute,
-        $inheritance,
-        [System.Security.AccessControl.PropagationFlags]::None,
-        [System.Security.AccessControl.AccessControlType]::Allow
-    ))
+    if (-not $OwnerOnly) {
+        $acl.AddAccessRule([System.Security.AccessControl.FileSystemAccessRule]::new(
+            $sandboxSid,
+            [System.Security.AccessControl.FileSystemRights]::ReadAndExecute,
+            $inheritance,
+            [System.Security.AccessControl.PropagationFlags]::None,
+            [System.Security.AccessControl.AccessControlType]::Allow
+        ))
+    }
     Set-Acl -LiteralPath $LiteralPath -AclObject $acl
 }
 
@@ -267,7 +315,8 @@ function Write-Manifest {
     param(
         [Parameter(Mandatory)][bool]$ValidBrokerHash,
         [string]$BrokerPathOverride,
-        [string]$AuthPathOverride
+        [string]$AuthPathOverride,
+        [string]$SourceCommit = ('c' * 40)
     )
     $manifestBrokerPath = if ([string]::IsNullOrWhiteSpace($BrokerPathOverride)) {
         Join-Path $runtimeRoot 'run_blip_live_approve_once.ps1'
@@ -283,6 +332,7 @@ function Write-Manifest {
     else { '0' * 64 }
     $manifest = [ordered]@{
         schema = 'blip-trusted-runtime-manifest/v1'
+        source_commit = $SourceCommit
         files = [ordered]@{
             'run_blip_live_approve_once.ps1' = $brokerHash
             'blip_review.py' = (Get-FileHash -LiteralPath (Join-Path $runtimeRoot 'blip_review.py') -Algorithm SHA256).Hash
@@ -345,9 +395,13 @@ function Invoke-BrokerCase {
         [Parameter(Mandatory)][int]$ExpectedExit,
         [Parameter(Mandatory)][string]$ExpectedStatus,
         [string]$ReviewMode = 'focused_semantic',
-        [switch]$HumanCriticalOverride
+        [switch]$HumanCriticalOverride,
+        [switch]$PolicyDrift,
+        [string]$SourceCommit = ('c' * 40)
     )
     Clear-StateRoot
+    $global:testPolicyDrift = $PolicyDrift.IsPresent
+    $global:policyReadCount = 0
     $fakePython = (@(
         '@echo off',
         "if `"$MarkerMode`"==`"valid`" (",
@@ -362,7 +416,7 @@ function Invoke-BrokerCase {
         'exit /b 7'
     ) -join "`r`n")
     Set-Content -LiteralPath $pythonPath -Value $fakePython -Encoding utf8NoBOM
-    Write-Manifest -ValidBrokerHash $ValidManifest
+    Write-Manifest -ValidBrokerHash $ValidManifest -SourceCommit $SourceCommit
     $global:LASTEXITCODE = $null
     $invokeParameters = @{
         PrNumber = 511
@@ -390,6 +444,7 @@ function Invoke-BrokerCase {
 try {
     Invoke-WrapperBootstrapRootRegression
     Invoke-StrictMetadataSchemaRegression
+    Invoke-CanonicalProtectionSnapshotRegression
     Invoke-ApprovalCapabilityTupleRegression
     if ($SafeOnly) {
         $tokens = $null
@@ -407,15 +462,39 @@ try {
             'Counted-approval wrapper can no longer be proven approve-only.'
         Assert-True ($safeText -match "'--human-critical-override'") `
             'Counted-approval wrapper does not bind the human-critical override to the child CLI.'
-        Assert-True ($safeText.Contains('secrets\blip-protection-attestation.v1.txt')) `
-            'Counted-approval wrapper lost the owner protection attestation input.'
-        Assert-True ($safeText.Contains('secrets\blip-protection-attestation-key.v1.txt')) `
-            'Counted-approval wrapper lost the dedicated protection attestation key input.'
-        Assert-True ($safeText.Contains('$startInfo.Environment[$protectionAttestationEnvironmentName] = $protectionAttestation')) `
-            'Counted-approval wrapper no longer injects the owner protection attestation.'
-        Assert-True ($safeText.Contains('$startInfo.Environment[$protectionAttestationKeyEnvironmentName] = $protectionAttestationKey')) `
-            'Counted-approval wrapper no longer injects the dedicated attestation key.'
-        Write-Output 'broker-safe-tests-ok (parse, v2 tuple, masked prompt, model-free, approve-only, short-lived protection attestation)'
+        Assert-True ($safeText.Contains('blip-protection-admin-token.v1.txt')) `
+            'Counted-approval wrapper lost the fixed read-only protection credential path.'
+        Assert-True ($safeText.Contains("`$expectedTrustedRoot = 'C:\ProgramData\AI-BIM-governance\blip-approve\v1'")) `
+            'Counted-approval wrapper no longer requires the fixed installed runtime path.'
+        Assert-True ($safeText.Contains("`$secretRoot = Join-Path `$productRoot 'secrets'")) `
+            'Counted-approval wrapper no longer resolves secrets from the protected product root.'
+        $productionTrustedRoot = 'C:\ProgramData\AI-BIM-governance\blip-approve\v1'
+        $productionProductRoot = Split-Path -Parent $productionTrustedRoot
+        Assert-True ((Join-Path $productionProductRoot 'secrets') -ceq
+            'C:\ProgramData\AI-BIM-governance\blip-approve\secrets') `
+            'Production runtime and secret paths are not siblings under one protected product root.'
+        Assert-True ($safeText.Contains('AllowAutoRedirect = $false')) `
+            'Counted-approval wrapper allows the protected admin credential request to redirect.'
+        Assert-True ($safeText.Contains('function Assert-ProtectedSecretAcl')) `
+            'Counted-approval wrapper lost owner-only secret ACL validation.'
+        Assert-True ($safeText.Contains('$protectedRoot, $productRoot, $trustedRoot, $stateRoot')) `
+            'Counted-approval wrapper no longer validates the protected product ancestor chain.'
+        Assert-True ($safeText.Contains('[System.IO.FileShare]::None')) `
+            'Counted-approval wrapper lost fixed-handle exclusion for the protection credential.'
+        Assert-True ($safeText.Contains('$startInfo.Environment[$protectionPolicyEnvironmentName] = $protectionPolicyJson')) `
+            'Counted-approval wrapper no longer injects the non-secret live protection snapshot.'
+        Assert-True ($safeText -notmatch 'Environment\[.*protectionAdminToken') `
+            'Counted-approval wrapper exposes the admin credential to the Python child.'
+        Assert-True (([regex]::Matches($safeText, 'Get-LiveProtectionSnapshot')).Count -ge 3) `
+            'Counted-approval wrapper no longer performs both pre- and post-operation full policy reads.'
+        $promptIndex = $safeText.IndexOf("Read-Host -Prompt 'Enter BLIP_GITHUB_TOKEN' -AsSecureString", [StringComparison]::Ordinal)
+        $prePolicyIndex = $safeText.IndexOf('$protectionPolicyJson = Get-LiveProtectionSnapshot', [StringComparison]::Ordinal)
+        Assert-True ($promptIndex -ge 0 -and $prePolicyIndex -gt $promptIndex) `
+            'Full pre-vote policy snapshot can become stale while the broker waits at the reviewer prompt.'
+        Assert-True ($safeText.Contains('$childTimedOut = $true') -and
+            $safeText -notmatch "throw 'The approval run exceeded the 10-minute capability lifetime") `
+            'Child timeout can bypass the mandatory full post-operation policy verification.'
+        Write-Output 'broker-safe-tests-ok (parse, v2 tuple, masked prompt, owner-only fixed-handle admin read, secret-free child, live pre/post policy)'
         return
     }
 
@@ -427,14 +506,29 @@ try {
         throw 'This ACL integration test must run from the owner-controlled non-sandbox process.'
     }
     Invoke-RealPythonTrustRegression
-    New-Item -ItemType Directory -Path $runtimeRoot, $stateRoot, $appScriptsRoot | Out-Null
-    $attestationDir = Join-Path $sandboxRoot 'secrets'
-    New-Item -ItemType Directory -Path $attestationDir | Out-Null
-    $attestationPath = Join-Path $attestationDir 'blip-protection-attestation.v1.txt'
-    Set-Content -LiteralPath $attestationPath -Value ('dGVzdA' + '.' + ('a' * 64)) -Encoding ascii
-    $attestationKeyPath = Join-Path $attestationDir 'blip-protection-attestation-key.v1.txt'
-    Set-Content -LiteralPath $attestationKeyPath -Value ('k' * 64) -Encoding ascii
+    New-Item -ItemType Directory -Path $runtimeRoot, $stateRoot, $appScriptsRoot -Force | Out-Null
+    $secretRoot = Join-Path $runtimeRoot 'secrets'
+    New-Item -ItemType Directory -Path $secretRoot | Out-Null
+    $protectionAdminTokenPath = Join-Path $secretRoot 'blip-protection-admin-token.v1.txt'
+    $protectionAdminToken = 'opaque-protection-admin-' + ('a' * 40)
+    $reviewerTestToken = 'opaque-test-token-' + ('r' * 40)
+    Set-Content -LiteralPath $protectionAdminTokenPath -Value $protectionAdminToken -Encoding ascii
     $brokerText = Get-Content -Raw -LiteralPath $sourceBroker
+    $expectedRuntimeAssignment = "`$expectedTrustedRoot = 'C:\ProgramData\AI-BIM-governance\blip-approve\v1'"
+    if ($brokerText.IndexOf($expectedRuntimeAssignment, [StringComparison]::Ordinal) -lt 0) {
+        throw 'Production broker fixed installed-runtime assignment changed; isolated harness cannot patch it safely.'
+    }
+    $brokerText = $brokerText.Replace($expectedRuntimeAssignment, '$expectedTrustedRoot = $trustedRoot')
+    $productRootAssignment = '$productRoot = Split-Path -Parent $trustedRoot'
+    if ($brokerText.IndexOf($productRootAssignment, [StringComparison]::Ordinal) -lt 0) {
+        throw 'Production broker product-root derivation changed; isolated harness cannot patch it safely.'
+    }
+    $brokerText = $brokerText.Replace($productRootAssignment, '$productRoot = $trustedRoot')
+    $protectedRootAssignment = '$protectedRoot = Split-Path -Parent $productRoot'
+    if ($brokerText.IndexOf($protectedRootAssignment, [StringComparison]::Ordinal) -lt 0) {
+        throw 'Production broker protected-root derivation changed; isolated harness cannot patch it safely.'
+    }
+    $brokerText = $brokerText.Replace($protectedRootAssignment, '$protectedRoot = $productRoot')
     $pythonAssignment = "`$pythonPath = 'C:\Program Files\Python312\python.exe'"
     if ($brokerText.IndexOf($pythonAssignment, [StringComparison]::Ordinal) -lt 0) {
         throw 'Production broker fixed Python assignment changed; isolated harness cannot patch it safely.'
@@ -448,6 +542,15 @@ try {
         throw 'Production broker Python trust call changed; isolated harness cannot patch it safely.'
     }
     $brokerText = $brokerText.Replace($pythonTrustCall, '    # Isolated harness uses a generated fake child; production signer/ACL checks remain unchanged.')
+    $policyFunction = Get-ProductionFunctions -Names @('Get-LiveProtectionSnapshot')
+    $policyStub = @'
+function Get-LiveProtectionSnapshot {
+    $global:policyReadCount += 1
+    $strict = if ($global:testPolicyDrift -and $global:policyReadCount -gt 1) { 'false' } else { 'true' }
+    return '{"active_rules":[],"protection":{"allow_deletions":{"enabled":false},"allow_force_pushes":{"enabled":false},"allow_fork_syncing":{"enabled":false},"block_creations":{"enabled":false},"enforce_admins":{"enabled":true},"lock_branch":{"enabled":false},"required_conversation_resolution":{"enabled":true},"required_linear_history":{"enabled":false},"required_pull_request_reviews":{"dismiss_stale_reviews":true,"require_code_owner_reviews":true,"require_last_push_approval":false,"required_approving_review_count":1},"required_signatures":{"enabled":false},"required_status_checks":{"checks":[{"app_id":15368,"context":"agent-governance"}],"contexts":["agent-governance"],"strict":' + $strict + '},"restrictions":null}}'
+}
+'@
+    $brokerText = $brokerText.Replace([string]$policyFunction, $policyStub)
     $promptBlock = @'
     $secureToken = Read-Host -Prompt 'Enter BLIP_GITHUB_TOKEN' -AsSecureString
     if ($null -eq $secureToken -or $secureToken.Length -eq 0) { throw 'No token was entered.' }
@@ -455,10 +558,12 @@ try {
     $plainToken = [System.Runtime.InteropServices.Marshal]::PtrToStringBSTR($tokenBstr)
     if ([string]::IsNullOrWhiteSpace($plainToken)) { throw 'No token was entered.' }
 '@
+    $brokerText = $brokerText.Replace("`r`n", "`n")
+    $promptBlock = $promptBlock.Replace("`r`n", "`n")
     if ($brokerText.IndexOf($promptBlock, [StringComparison]::Ordinal) -lt 0) {
         throw 'Production broker token prompt changed; isolated harness cannot patch it safely.'
     }
-    $brokerText = $brokerText.Replace($promptBlock, "    `$plainToken = 'opaque-test-token'`r`n")
+    $brokerText = $brokerText.Replace($promptBlock, "    `$plainToken = '$reviewerTestToken'`r`n")
     Set-Content -LiteralPath (Join-Path $runtimeRoot 'run_blip_live_approve_once.ps1') -Value $brokerText -Encoding utf8NoBOM
     Copy-Item -LiteralPath $sourceHelper -Destination (Join-Path $runtimeRoot 'blip_review.py')
     Copy-Item -LiteralPath $sourceAuth -Destination (Join-Path $runtimeRoot 'app_auth.py')
@@ -484,9 +589,25 @@ try {
         (Join-Path $runtimeRoot 'app_auth.py'),
         (Join-Path $appScriptsRoot 'ship_gate_packet.py')
     )) { Set-TestProtectedAcl -LiteralPath $path }
+    Set-TestProtectedAcl -LiteralPath $secretRoot -OwnerOnly
+    Set-TestProtectedAcl -LiteralPath $protectionAdminTokenPath
+
+    $weakSecretAcl = Invoke-BrokerCase -MarkerMode valid -ValidManifest $true -ExpectedExit 1 -ExpectedStatus broker_failed
+    Assert-True ($weakSecretAcl.stderr -match 'protected secret path') `
+        'Broker accepted a protection credential readable by an untrusted SID'
+    Remove-Item -LiteralPath $protectionAdminTokenPath -Force
+    Set-Content -LiteralPath $protectionAdminTokenPath -Value $protectionAdminToken -Encoding ascii
+    Set-TestProtectedAcl -LiteralPath $protectionAdminTokenPath -OwnerOnly
+
+    $selfSource = Invoke-BrokerCase -MarkerMode valid -ValidManifest $true `
+        -ExpectedExit 1 -ExpectedStatus broker_failed -SourceCommit ('a' * 40)
+    Assert-True ($selfSource.stderr -match 'cannot approve the PR head that introduced its own source') `
+        'Protected runtime accepted approval of its own activation source head'
 
     $valid = Invoke-BrokerCase -MarkerMode valid -ValidManifest $true -ExpectedExit 0 -ExpectedStatus approve_succeeded
     Assert-True ($valid.review_id -eq 4242) 'Validated marker review id was not persisted'
+    Assert-True ($valid.mutation_outcome -ceq 'approval_observed') `
+        'Successful approval did not persist its observed mutation outcome'
     Assert-True ($valid.expected_head_sha -ceq ('a' * 40)) 'Expected head was not persisted'
 
     $human = Invoke-BrokerCase -MarkerMode valid -ValidManifest $true `
@@ -513,32 +634,32 @@ try {
     $malformed = Invoke-BrokerCase -MarkerMode malformed -ValidManifest $true -ExpectedExit 1 -ExpectedStatus approve_failed
     Assert-True ($malformed.stderr -match 'required validated APPROVAL_RESULT marker') 'Malformed marker did not fail closed'
 
+    $policyDrift = Invoke-BrokerCase -MarkerMode valid -ValidManifest $true `
+        -ExpectedExit 1 -ExpectedStatus approval_posted_post_verification_failed -PolicyDrift
+    Assert-True ($policyDrift.stderr -match 'Full branch-protection policy drifted') `
+        'Broker accepted a full branch-protection drift between its pre/post reads'
+    Assert-True ($policyDrift.review_id -eq 4242 -and
+        $policyDrift.mutation_outcome -ceq 'approval_observed') `
+        'Post-policy failure concealed an already observed counted approval'
+
     $manifestFailure = Invoke-BrokerCase -MarkerMode valid -ValidManifest $false -ExpectedExit 1 -ExpectedStatus broker_failed
     Assert-True ($manifestFailure.stderr -match 'broker hash') 'Manifest mismatch did not fail before child execution'
 
-    Rename-Item -LiteralPath $attestationPath -NewName 'blip-protection-attestation.v1.txt.bak'
-    $missingAttestation = Invoke-BrokerCase -MarkerMode valid -ValidManifest $true -ExpectedExit 1 -ExpectedStatus broker_failed
-    Assert-True ($missingAttestation.stderr -match 'protection attestation') `
-        'Missing owner protection attestation did not fail closed before child execution'
-    Rename-Item -LiteralPath ($attestationPath + '.bak') -NewName 'blip-protection-attestation.v1.txt'
+    Rename-Item -LiteralPath $protectionAdminTokenPath -NewName 'blip-protection-admin-token.v1.txt.bak'
+    $missingAdminToken = Invoke-BrokerCase -MarkerMode valid -ValidManifest $true -ExpectedExit 1 -ExpectedStatus broker_failed
+    Assert-True ($missingAdminToken.stderr -match 'branch-protection credential is unavailable') `
+        'Missing read-only branch-protection credential did not fail closed before child execution'
+    Rename-Item -LiteralPath ($protectionAdminTokenPath + '.bak') -NewName 'blip-protection-admin-token.v1.txt'
 
-    Set-Content -LiteralPath $attestationPath -Value 'not-an-attestation' -Encoding ascii
-    $malformedAttestation = Invoke-BrokerCase -MarkerMode valid -ValidManifest $true -ExpectedExit 1 -ExpectedStatus broker_failed
-    Assert-True ($malformedAttestation.stderr -match 'protection attestation is malformed') `
-        'Malformed owner protection attestation did not fail closed before child execution'
-    Set-Content -LiteralPath $attestationPath -Value ('dGVzdA' + '.' + ('a' * 64)) -Encoding ascii
-
-    Rename-Item -LiteralPath $attestationKeyPath -NewName 'blip-protection-attestation-key.v1.txt.bak'
-    $missingAttestationKey = Invoke-BrokerCase -MarkerMode valid -ValidManifest $true -ExpectedExit 1 -ExpectedStatus broker_failed
-    Assert-True ($missingAttestationKey.stderr -match 'attestation key is missing') `
-        'Missing dedicated attestation key did not fail closed before child execution'
-    Rename-Item -LiteralPath ($attestationKeyPath + '.bak') -NewName 'blip-protection-attestation-key.v1.txt'
-
-    Set-Content -LiteralPath $attestationKeyPath -Value 'too-short' -Encoding ascii
-    $malformedAttestationKey = Invoke-BrokerCase -MarkerMode valid -ValidManifest $true -ExpectedExit 1 -ExpectedStatus broker_failed
-    Assert-True ($malformedAttestationKey.stderr -match 'attestation key is malformed') `
-        'Malformed dedicated attestation key did not fail closed before child execution'
-    Set-Content -LiteralPath $attestationKeyPath -Value ('k' * 64) -Encoding ascii
+    Set-Content -LiteralPath $protectionAdminTokenPath -Value 'too-short' -Encoding ascii
+    $malformedAdminToken = Invoke-BrokerCase -MarkerMode valid -ValidManifest $true -ExpectedExit 1 -ExpectedStatus broker_failed
+    Assert-True ($malformedAdminToken.stderr -match 'credential is empty, malformed, or oversized') `
+        'Malformed read-only branch-protection credential did not fail closed'
+    Set-Content -LiteralPath $protectionAdminTokenPath -Value $reviewerTestToken -Encoding ascii
+    $sharedCredential = Invoke-BrokerCase -MarkerMode valid -ValidManifest $true -ExpectedExit 1 -ExpectedStatus broker_failed
+    Assert-True ($sharedCredential.stderr -match 'must differ from the counted-reviewer PAT') `
+        'Broker accepted one credential for both admin reads and the counted review'
+    Set-Content -LiteralPath $protectionAdminTokenPath -Value $protectionAdminToken -Encoding ascii
 
     Clear-StateRoot
     Write-Manifest -ValidBrokerHash $true `
@@ -551,7 +672,7 @@ try {
     $aclPayload = Get-Content -Raw -LiteralPath $aclResult.FullName | ConvertFrom-Json
     Assert-True ($aclPayload.stderr -match 'complete explicit write denial') 'Missing deny failure was not attributable'
 
-    Write-Output 'broker-tests-ok (13 cases including v2 tuple, short-lived protection attestation, and real Python trust)'
+    Write-Output 'broker-tests-ok (15 cases including merged-source refusal, fixed-handle admin credential, secret-free child, and live pre/post policy)'
 }
 finally {
     if (Test-Path -LiteralPath $sandboxRoot) { Remove-Item -LiteralPath $sandboxRoot -Recurse -Force }

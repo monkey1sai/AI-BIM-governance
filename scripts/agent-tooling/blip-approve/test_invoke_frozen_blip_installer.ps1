@@ -423,7 +423,8 @@ function Invoke-FreezeV3SchemaRegression {
         'Get-UniqueVerifierJsonProperty',
         'Assert-ExactVerifierJsonProperties',
         'Assert-ExactVerifierStringMap',
-        'Assert-ReviewedManifestAuthority'
+        'Assert-ReviewedManifestAuthority',
+        'Assert-MergedSourceCommit'
     )) {
         $definition = $verifierAst.Find(
             {
@@ -437,6 +438,27 @@ function Invoke-FreezeV3SchemaRegression {
         $definition.Extent.Text
     }
     . ([ScriptBlock]::Create(($verifierDefinitions -join "`n")))
+    $verifierText = Get-Content -Raw -LiteralPath $productionVerifier
+    Assert-True ($verifierText.Contains('AllowAutoRedirect = $false')) `
+        'External verifier permits merged-source GitHub requests to redirect.'
+    Assert-True ($verifierText -notmatch 'Headers\.Authorization') `
+        'External merged-source verification unexpectedly uses a credential.'
+    $script:testMergedSource = 'c' * 40
+    $script:testProtectedMain = 'd' * 40
+    $script:testMergeStatus = 'ahead'
+    $script:testMergeBase = $script:testMergedSource
+    function Invoke-ProtectedPublicGitHubGet {
+        param([Parameter(Mandatory)][string]$RelativePath)
+        if ($RelativePath -ceq '/repos/monkey1sai/AI-BIM-governance/commits/heads/main') {
+            return '{"sha":"' + $script:testProtectedMain + '"}'
+        }
+        $expected = '/repos/monkey1sai/AI-BIM-governance/compare/' +
+            $script:testMergedSource + '...' + $script:testProtectedMain
+        if ($RelativePath -cne $expected) { throw "Unexpected merged-source path: $RelativePath" }
+        return '{"status":"' + $script:testMergeStatus + '","base_commit":{"sha":"' +
+            $script:testMergedSource + '"},"merge_base_commit":{"sha":"' +
+            $script:testMergeBase + '"}}'
+    }
     $reviewedDocument = [System.Text.Json.JsonDocument]::Parse(
         [System.IO.File]::ReadAllText($authorityCandidate.ReviewedManifestPath)
     )
@@ -523,7 +545,26 @@ function Invoke-FreezeV3SchemaRegression {
         $reviewedManifestBytes = [System.IO.File]::ReadAllBytes(
             $authorityCandidate.ReviewedManifestPath
         )
-        Assert-ReviewedManifestAuthority -Bytes $reviewedManifestBytes
+        $reviewedSourceCommit = Assert-ReviewedManifestAuthority -Bytes $reviewedManifestBytes
+        Assert-True ($reviewedSourceCommit -ceq ('c' * 40)) `
+            'External verifier did not preserve the exact reviewed source commit.'
+        $mergedSourceCommit = Assert-MergedSourceCommit -SourceCommit $reviewedSourceCommit
+        Assert-True ($mergedSourceCommit -ceq $reviewedSourceCommit) `
+            'External verifier rejected a source commit reachable from protected main.'
+        $script:testMergeStatus = 'diverged'
+        $mergeStatusRejected = $false
+        try { [void](Assert-MergedSourceCommit -SourceCommit $reviewedSourceCommit) }
+        catch { $mergeStatusRejected = $_.Exception.Message -match 'not reachable' }
+        Assert-True $mergeStatusRejected `
+            'External verifier accepted a reviewed source outside protected main ancestry.'
+        $script:testMergeStatus = 'ahead'
+        $script:testMergeBase = 'e' * 40
+        $mergeBaseRejected = $false
+        try { [void](Assert-MergedSourceCommit -SourceCommit $reviewedSourceCommit) }
+        catch { $mergeBaseRejected = $_.Exception.Message -match 'not reachable' }
+        Assert-True $mergeBaseRejected `
+            'External verifier accepted a compare response with a different merge base.'
+        $script:testMergeBase = $reviewedSourceCommit
         $ExpectedBootstrapSha256 = '0' * 64
         $bootstrapAuthorityRejected = $false
         try { Assert-ReviewedManifestAuthority -Bytes $reviewedManifestBytes }

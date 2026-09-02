@@ -390,8 +390,93 @@ function Assert-ReviewedManifestAuthority {
             -Object (Get-UniqueVerifierJsonProperty -Object $root -Name 'runtime_signers') `
             -ExpectedNames $reviewedSignerKeys -Pattern '^[0-9a-fA-F]{40}$' `
             -Label 'Reviewed runtime_signers'
+        return $sourceCommit.GetString().ToLowerInvariant()
     }
     finally { $document.Dispose() }
+}
+
+function Invoke-ProtectedPublicGitHubGet {
+    param([Parameter(Mandatory)][string]$RelativePath)
+    if ($RelativePath -notmatch '^/repos/monkey1sai/AI-BIM-governance/(commits/heads/main|compare/[0-9a-f]{40}\.\.\.[0-9a-f]{40})$') {
+        throw 'Merged-source verification requested an unauthorized GitHub path.'
+    }
+    $handler = [System.Net.Http.HttpClientHandler]::new()
+    $handler.AllowAutoRedirect = $false
+    $client = [System.Net.Http.HttpClient]::new($handler, $true)
+    $client.Timeout = [TimeSpan]::FromSeconds(60)
+    $request = [System.Net.Http.HttpRequestMessage]::new(
+        [System.Net.Http.HttpMethod]::Get,
+        "https://api.github.com$RelativePath"
+    )
+    try {
+        [void]$request.Headers.TryAddWithoutValidation('Accept', 'application/vnd.github+json')
+        [void]$request.Headers.TryAddWithoutValidation('X-GitHub-Api-Version', '2022-11-28')
+        [void]$request.Headers.TryAddWithoutValidation('User-Agent', 'blip-protected-installer/1.0')
+        $response = $client.Send($request)
+        try {
+            if (-not $response.IsSuccessStatusCode) {
+                throw "Merged-source GitHub verification failed with HTTP $([int]$response.StatusCode)."
+            }
+            $length = $response.Content.Headers.ContentLength
+            if ($null -ne $length -and $length -gt 1048576) {
+                throw 'Merged-source GitHub response exceeds the protected size limit.'
+            }
+            $text = $response.Content.ReadAsStringAsync().GetAwaiter().GetResult()
+            if ([string]::IsNullOrWhiteSpace($text) -or $text.Length -gt 1048576) {
+                throw 'Merged-source GitHub response is empty or oversized.'
+            }
+            return $text
+        }
+        finally { $response.Dispose() }
+    }
+    finally {
+        $request.Dispose()
+        $client.Dispose()
+    }
+}
+
+function Assert-MergedSourceCommit {
+    param([Parameter(Mandatory)][string]$SourceCommit)
+    $source = $SourceCommit.ToLowerInvariant()
+    if ($source -notmatch '^[0-9a-f]{40}$' -or $source -ceq ('0' * 40)) {
+        throw 'Merged-source verification received an invalid source commit.'
+    }
+    $mainDocument = $null
+    $compareDocument = $null
+    try {
+        $mainDocument = [System.Text.Json.JsonDocument]::Parse(
+            (Invoke-ProtectedPublicGitHubGet `
+                -RelativePath '/repos/monkey1sai/AI-BIM-governance/commits/heads/main')
+        )
+        $mainSha = Get-UniqueVerifierJsonProperty -Object $mainDocument.RootElement -Name 'sha'
+        if ($mainSha.ValueKind -ne [System.Text.Json.JsonValueKind]::String -or
+            $mainSha.GetString() -notmatch '^[0-9a-fA-F]{40}$') {
+            throw 'Protected main response has no valid exact commit.'
+        }
+        $main = $mainSha.GetString().ToLowerInvariant()
+        $compareDocument = [System.Text.Json.JsonDocument]::Parse(
+            (Invoke-ProtectedPublicGitHubGet `
+                -RelativePath "/repos/monkey1sai/AI-BIM-governance/compare/$source...$main")
+        )
+        $status = Get-UniqueVerifierJsonProperty -Object $compareDocument.RootElement -Name 'status'
+        $base = Get-UniqueVerifierJsonProperty -Object $compareDocument.RootElement -Name 'base_commit'
+        $mergeBase = Get-UniqueVerifierJsonProperty -Object $compareDocument.RootElement -Name 'merge_base_commit'
+        $baseSha = Get-UniqueVerifierJsonProperty -Object $base -Name 'sha'
+        $mergeBaseSha = Get-UniqueVerifierJsonProperty -Object $mergeBase -Name 'sha'
+        if ($status.ValueKind -ne [System.Text.Json.JsonValueKind]::String -or
+            $status.GetString() -cnotin @('ahead', 'identical') -or
+            $baseSha.ValueKind -ne [System.Text.Json.JsonValueKind]::String -or
+            $baseSha.GetString().ToLowerInvariant() -cne $source -or
+            $mergeBaseSha.ValueKind -ne [System.Text.Json.JsonValueKind]::String -or
+            $mergeBaseSha.GetString().ToLowerInvariant() -cne $source) {
+            throw 'Reviewed source commit is not reachable from the current protected main branch.'
+        }
+        return $source
+    }
+    finally {
+        if ($null -ne $compareDocument) { $compareDocument.Dispose() }
+        if ($null -ne $mainDocument) { $mainDocument.Dispose() }
+    }
 }
 
 try {
@@ -471,7 +556,8 @@ try {
         throw 'The candidate reviewed build manifest differs from the explicitly authorized hash.'
     }
     $reviewedManifestBytes = Read-OpenStreamBytes -Stream $reviewedManifestStream
-    Assert-ReviewedManifestAuthority -Bytes $reviewedManifestBytes
+    $reviewedSourceCommit = Assert-ReviewedManifestAuthority -Bytes $reviewedManifestBytes
+    [void](Assert-MergedSourceCommit -SourceCommit $reviewedSourceCommit)
     $bootstrapBytes = Read-OpenStreamBytes -Stream $bootstrapStream
     $bootstrapText = [System.Text.UTF8Encoding]::new($false, $true).GetString($bootstrapBytes)
     $tokens = $null

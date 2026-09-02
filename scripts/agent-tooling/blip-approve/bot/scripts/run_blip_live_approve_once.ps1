@@ -249,6 +249,9 @@ $repository = 'monkey1sai/AI-BIM-governance'
 $reviewer = 'monkey1sai-blip'
 $capabilityVersion = 'blip-approval-capability/v2'
 $trustedRoot = $PSScriptRoot
+$expectedTrustedRoot = 'C:\ProgramData\AI-BIM-governance\blip-approve\v1'
+$productRoot = Split-Path -Parent $trustedRoot
+$protectedRoot = Split-Path -Parent $productRoot
 $stateRoot = Join-Path $trustedRoot 'state'
 $powerShellPath = 'C:\Program Files\PowerShell\7\pwsh.exe'
 $pythonPath = 'C:\Program Files\Python312\python.exe'
@@ -298,10 +301,9 @@ $resultPath = Join-Path $stateRoot "blip-live-approve-pr$PrNumber-$stamp.json"
 $lockPath = Join-Path $stateRoot "blip-live-approve-pr$PrNumber-$($ExpectedHeadSha.Substring(0,12)).lock"
 $tokenEnvironmentName = 'BLIP_GITHUB_TOKEN'
 $capabilityEnvironmentName = 'BLIP_APPROVAL_CAPABILITY'
-$protectionAttestationEnvironmentName = 'BLIP_PROTECTION_ATTESTATION'
-$protectionAttestationKeyEnvironmentName = 'BLIP_PROTECTION_ATTESTATION_KEY'
-$protectionAttestationPath = Join-Path (Split-Path -Parent $trustedRoot) 'secrets\blip-protection-attestation.v1.txt'
-$protectionAttestationKeyPath = Join-Path (Split-Path -Parent $trustedRoot) 'secrets\blip-protection-attestation-key.v1.txt'
+$protectionPolicyEnvironmentName = 'BLIP_PROTECTION_POLICY_JSON'
+$secretRoot = Join-Path $productRoot 'secrets'
+$protectionAdminTokenPath = Join-Path $secretRoot 'blip-protection-admin-token.v1.txt'
 $pythonBootstrap = @'
 import sys
 import types
@@ -344,10 +346,14 @@ $tokenBstr = [IntPtr]::Zero
 $tokenBytes = $null
 $capability = $null
 $capabilityBytes = $null
-$protectionAttestation = $null
-$protectionAttestationKey = $null
+$protectionPolicyJson = $null
+$protectionAdminToken = $null
+$protectionAdminTokenBytes = $null
+$protectionAdminTokenStream = $null
+$protectionAdminTokenReader = $null
 $childProcess = $null
 $childStarted = $false
+$childTimedOut = $false
 $lockStream = $null
 $helperStream = $null
 $authHelperStream = $null
@@ -461,7 +467,8 @@ function ConvertFrom-StrictRuntimeMetadata {
         $manifestRoot = $manifestDocument.RootElement
         $completionRoot = $completionDocument.RootElement
         Assert-ExactRuntimeJsonProperties -Object $manifestRoot -ExpectedNames @(
-            'schema', 'files', 'runtime', 'candidate_freeze_sha256', 'activation', 'installed_at'
+            'schema', 'source_commit', 'files', 'runtime', 'candidate_freeze_sha256',
+            'activation', 'installed_at'
         ) -Label 'Trusted runtime manifest'
         Assert-ExactRuntimeJsonProperties -Object $completionRoot -ExpectedNames @(
             'schema', 'owner_sid', 'candidate_freeze_sha256', 'manifest_sha256', 'completed_at'
@@ -484,6 +491,7 @@ function ConvertFrom-StrictRuntimeMetadata {
             }
         }
         $manifestSchema = Get-UniqueRuntimeJsonProperty -Object $manifestRoot -Name 'schema' -Label 'Trusted runtime manifest'
+        $sourceCommit = Get-UniqueRuntimeJsonProperty -Object $manifestRoot -Name 'source_commit' -Label 'Trusted runtime manifest'
         $activation = Get-UniqueRuntimeJsonProperty -Object $manifestRoot -Name 'activation' -Label 'Trusted runtime manifest'
         $completionSchema = Get-UniqueRuntimeJsonProperty -Object $completionRoot -Name 'schema' -Label 'Trusted runtime completion marker'
         foreach ($textBinding in @(
@@ -497,6 +505,11 @@ function ConvertFrom-StrictRuntimeMetadata {
             ) {
                 throw "Trusted runtime $($textBinding.Label) is invalid."
             }
+        }
+        if ($sourceCommit.ValueKind -ne [System.Text.Json.JsonValueKind]::String -or
+            $sourceCommit.GetString() -cnotmatch '^[0-9a-f]{40}$' -or
+            $sourceCommit.GetString() -ceq ('0' * 40)) {
+            throw 'Trusted runtime source commit is invalid.'
         }
         foreach ($name in @('installed_at', 'completed_at', 'owner_sid')) {
             $root = if ($name -ceq 'installed_at') { $manifestRoot } else { $completionRoot }
@@ -699,6 +712,229 @@ function Assert-TrustedRuntimeAcl {
     }
 }
 
+function Assert-ProtectedSecretAcl {
+    param([Parameter(Mandatory)][string[]]$LiteralPaths)
+    $identity = [System.Security.Principal.WindowsIdentity]::GetCurrent()
+    if ($identity.User.Value -cne $fixedOwnerSidValue) {
+        throw 'The approval broker identity is not the immutable owner SID.'
+    }
+    $trustedReaderSids = @($fixedOwnerSidValue, 'S-1-5-18', 'S-1-5-32-544')
+    $currentGroups = @($identity.Groups | ForEach-Object { $_.Value })
+    $sandboxSid = ([System.Security.Principal.NTAccount]::new(
+        [Environment]::MachineName + '\CodexSandboxUsers'
+    )).Translate([System.Security.Principal.SecurityIdentifier]).Value
+    $sensitiveMask = [System.Security.AccessControl.FileSystemRights]::FullControl
+    foreach ($literalPath in $LiteralPaths) {
+        $item = Get-Item -Force -LiteralPath $literalPath
+        if (($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw "Protected secret path is a reparse point: $literalPath"
+        }
+        $acl = Get-Acl -LiteralPath $literalPath
+        if (-not $acl.AreAccessRulesProtected) {
+            throw "Protected secret ACL inherits from its parent: $literalPath"
+        }
+        $ownerSid = ([System.Security.Principal.NTAccount]$acl.Owner).Translate(
+            [System.Security.Principal.SecurityIdentifier]
+        ).Value
+        if ($ownerSid -cne $fixedOwnerSidValue) {
+            throw "Protected secret owner is not the immutable owner SID: $literalPath"
+        }
+        $sandboxDenied = [System.Security.AccessControl.FileSystemRights]0
+        foreach ($rule in $acl.Access) {
+            $overlap = $rule.FileSystemRights -band $sensitiveMask
+            try {
+                $ruleSid = $rule.IdentityReference.Translate(
+                    [System.Security.Principal.SecurityIdentifier]
+                ).Value
+            }
+            catch {
+                if ($overlap -ne 0) {
+                    throw "Unresolvable identity can access protected secret path: $literalPath"
+                }
+                continue
+            }
+            if ($rule.AccessControlType -eq [System.Security.AccessControl.AccessControlType]::Allow -and
+                $overlap -ne 0 -and $trustedReaderSids -notcontains $ruleSid) {
+                throw "Untrusted SID $ruleSid can access protected secret path: $literalPath"
+            }
+            if ($rule.AccessControlType -eq [System.Security.AccessControl.AccessControlType]::Deny -and
+                $overlap -ne 0 -and
+                ($ruleSid -ceq $fixedOwnerSidValue -or $currentGroups -contains $ruleSid)) {
+                throw "The owner process is subject to a denial on protected secret path: $literalPath"
+            }
+            if ($ruleSid -ceq $sandboxSid -and
+                $rule.AccessControlType -eq [System.Security.AccessControl.AccessControlType]::Deny -and
+                -not $rule.IsInherited) {
+                $sandboxDenied = $sandboxDenied -bor $overlap
+            }
+        }
+        if (($sandboxDenied -band $sensitiveMask) -ne $sensitiveMask) {
+            throw "CodexSandboxUsers lacks an explicit complete denial on protected secret path: $literalPath"
+        }
+    }
+}
+
+function Open-ProtectedAdminTokenStream {
+    Assert-ProtectedSecretAcl -LiteralPaths @($secretRoot, $protectionAdminTokenPath)
+    $parentPath = [System.IO.Path]::GetFullPath((Split-Path -Parent $protectionAdminTokenPath)).TrimEnd('\')
+    if ($parentPath -cne [System.IO.Path]::GetFullPath($secretRoot).TrimEnd('\')) {
+        throw 'Branch-protection credential is outside its fixed owner-only parent.'
+    }
+    $item = Get-Item -Force -LiteralPath $protectionAdminTokenPath
+    if ($item.PSIsContainer -or ($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+        throw 'Branch-protection credential is not a regular non-reparse file.'
+    }
+    return [System.IO.FileStream]::new(
+        $protectionAdminTokenPath,
+        [System.IO.FileMode]::Open,
+        [System.IO.FileAccess]::Read,
+        [System.IO.FileShare]::None
+    )
+}
+
+function Write-CanonicalJsonElement {
+    param(
+        [Parameter(Mandatory)][System.Text.Json.JsonElement]$Element,
+        [Parameter(Mandatory)][System.Text.Json.Utf8JsonWriter]$Writer
+    )
+    switch ($Element.ValueKind) {
+        ([System.Text.Json.JsonValueKind]::Object) {
+            $Writer.WriteStartObject()
+            $properties = [System.Collections.Generic.List[System.Text.Json.JsonProperty]]::new()
+            $seen = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+            foreach ($property in $Element.EnumerateObject()) {
+                if (-not $seen.Add($property.Name)) {
+                    throw "GitHub policy JSON contains duplicate property: $($property.Name)"
+                }
+                $properties.Add($property)
+            }
+            $properties.Sort([System.Comparison[System.Text.Json.JsonProperty]]{
+                param($left, $right)
+                return [StringComparer]::Ordinal.Compare($left.Name, $right.Name)
+            })
+            foreach ($property in $properties) {
+                $Writer.WritePropertyName($property.Name)
+                Write-CanonicalJsonElement -Element $property.Value -Writer $Writer
+            }
+            $Writer.WriteEndObject()
+        }
+        ([System.Text.Json.JsonValueKind]::Array) {
+            $Writer.WriteStartArray()
+            foreach ($entry in $Element.EnumerateArray()) {
+                Write-CanonicalJsonElement -Element $entry -Writer $Writer
+            }
+            $Writer.WriteEndArray()
+        }
+        ([System.Text.Json.JsonValueKind]::String) { $Writer.WriteStringValue($Element.GetString()) }
+        ([System.Text.Json.JsonValueKind]::Number) { $Writer.WriteRawValue($Element.GetRawText(), $true) }
+        ([System.Text.Json.JsonValueKind]::True) { $Writer.WriteBooleanValue($true) }
+        ([System.Text.Json.JsonValueKind]::False) { $Writer.WriteBooleanValue($false) }
+        ([System.Text.Json.JsonValueKind]::Null) { $Writer.WriteNullValue() }
+        default { throw 'GitHub policy JSON contains an unsupported value kind.' }
+    }
+}
+
+function ConvertTo-CanonicalProtectionSnapshot {
+    param(
+        [Parameter(Mandatory)][string]$ActiveRulesText,
+        [Parameter(Mandatory)][string]$ProtectionText
+    )
+    if ($ActiveRulesText.Length -gt 262144 -or $ProtectionText.Length -gt 262144) {
+        throw 'GitHub branch-protection response exceeds the protected size limit.'
+    }
+    $options = [System.Text.Json.JsonDocumentOptions]::new()
+    $options.AllowTrailingCommas = $false
+    $options.CommentHandling = [System.Text.Json.JsonCommentHandling]::Disallow
+    $options.MaxDepth = 128
+    $rulesDocument = [System.Text.Json.JsonDocument]::Parse($ActiveRulesText, $options)
+    $protectionDocument = [System.Text.Json.JsonDocument]::Parse($ProtectionText, $options)
+    $stream = [System.IO.MemoryStream]::new()
+    $writerOptions = [System.Text.Json.JsonWriterOptions]::new()
+    $writerOptions.Indented = $false
+    $writerOptions.SkipValidation = $false
+    $writer = [System.Text.Json.Utf8JsonWriter]::new($stream, $writerOptions)
+    try {
+        if ($rulesDocument.RootElement.ValueKind -ne [System.Text.Json.JsonValueKind]::Array -or
+            $rulesDocument.RootElement.GetArrayLength() -ne 0) {
+            throw 'Active rulesets are present or malformed; only verified legacy protection is supported.'
+        }
+        if ($protectionDocument.RootElement.ValueKind -ne [System.Text.Json.JsonValueKind]::Object) {
+            throw 'GitHub branch-protection payload is malformed.'
+        }
+        $writer.WriteStartObject()
+        $writer.WritePropertyName('active_rules')
+        Write-CanonicalJsonElement -Element $rulesDocument.RootElement -Writer $writer
+        $writer.WritePropertyName('protection')
+        Write-CanonicalJsonElement -Element $protectionDocument.RootElement -Writer $writer
+        $writer.WriteEndObject()
+        $writer.Flush()
+        $result = [System.Text.Encoding]::UTF8.GetString($stream.ToArray())
+        if ($result.Length -gt 262144) {
+            throw 'Canonical branch-protection snapshot exceeds the protected size limit.'
+        }
+        return $result
+    }
+    finally {
+        $writer.Dispose()
+        $stream.Dispose()
+        $rulesDocument.Dispose()
+        $protectionDocument.Dispose()
+    }
+}
+
+function Invoke-ProtectedGitHubGet {
+    param(
+        [Parameter(Mandatory)][System.Net.Http.HttpClient]$Client,
+        [Parameter(Mandatory)][string]$RelativePath
+    )
+    $request = [System.Net.Http.HttpRequestMessage]::new(
+        [System.Net.Http.HttpMethod]::Get,
+        "https://api.github.com$RelativePath"
+    )
+    try {
+        $request.Headers.Authorization = [System.Net.Http.Headers.AuthenticationHeaderValue]::new(
+            'Bearer', $protectionAdminToken
+        )
+        [void]$request.Headers.TryAddWithoutValidation('Accept', 'application/vnd.github+json')
+        [void]$request.Headers.TryAddWithoutValidation('X-GitHub-Api-Version', '2022-11-28')
+        [void]$request.Headers.TryAddWithoutValidation('User-Agent', 'blip-protected-approval-broker/1.0')
+        $response = $Client.Send($request)
+        try {
+            if (-not $response.IsSuccessStatusCode) {
+                throw "Protected GitHub policy read failed with HTTP $([int]$response.StatusCode)."
+            }
+            $length = $response.Content.Headers.ContentLength
+            if ($null -ne $length -and $length -gt 262144) {
+                throw 'Protected GitHub policy response exceeds the size limit.'
+            }
+            $text = $response.Content.ReadAsStringAsync().GetAwaiter().GetResult()
+            if ([string]::IsNullOrWhiteSpace($text) -or $text.Length -gt 262144) {
+                throw 'Protected GitHub policy response is empty or oversized.'
+            }
+            return $text
+        }
+        finally { $response.Dispose() }
+    }
+    finally { $request.Dispose() }
+}
+
+function Get-LiveProtectionSnapshot {
+    $handler = [System.Net.Http.HttpClientHandler]::new()
+    $handler.AllowAutoRedirect = $false
+    $client = [System.Net.Http.HttpClient]::new($handler, $true)
+    $client.Timeout = [TimeSpan]::FromSeconds(60)
+    try {
+        $encodedBranch = [Uri]::EscapeDataString('main')
+        $activeRules = Invoke-ProtectedGitHubGet -Client $client `
+            -RelativePath "/repos/monkey1sai/AI-BIM-governance/rules/branches/$encodedBranch`?per_page=100"
+        $protection = Invoke-ProtectedGitHubGet -Client $client `
+            -RelativePath "/repos/monkey1sai/AI-BIM-governance/branches/$encodedBranch/protection"
+        return ConvertTo-CanonicalProtectionSnapshot `
+            -ActiveRulesText $activeRules -ProtectionText $protection
+    }
+    finally { $client.Dispose() }
+}
+
 function New-ApprovalCapability {
     param([Parameter(Mandatory)][string]$Token)
     $issuedAt = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
@@ -748,6 +984,10 @@ function Save-BrokerResult {
         $StdOut = $StdOut.Replace($script:capability, '[REDACTED-CAPABILITY]')
         $StdErr = $StdErr.Replace($script:capability, '[REDACTED-CAPABILITY]')
     }
+    if (-not [string]::IsNullOrEmpty($script:protectionAdminToken)) {
+        $StdOut = $StdOut.Replace($script:protectionAdminToken, '[REDACTED-PROTECTION-CREDENTIAL]')
+        $StdErr = $StdErr.Replace($script:protectionAdminToken, '[REDACTED-PROTECTION-CREDENTIAL]')
+    }
     $payload = [ordered]@{
         schema = 'blip-live-approve-broker-result/v2'
         repository = $repository
@@ -758,6 +998,15 @@ function Save-BrokerResult {
         human_critical_override = $HumanCriticalOverride.IsPresent
         mode = 'automated_service_account_approval'
         mutation_requested = $true
+        mutation_outcome = if ($null -ne $script:reviewId) {
+            'approval_observed'
+        }
+        elseif ($script:childStarted) {
+            'unknown'
+        }
+        else {
+            'not_started'
+        }
         auto_merge_allowed = $false
         capability_id = $script:capabilityId
         review_id = $script:reviewId
@@ -799,6 +1048,9 @@ try {
     if ($hostPath -cne $powerShellPath) {
         throw "Protected approval broker must run with the fixed PowerShell host: $powerShellPath"
     }
+    if ([System.IO.Path]::GetFullPath($trustedRoot).TrimEnd('\') -cne $expectedTrustedRoot) {
+        throw "Protected approval broker must run from the fixed installed runtime: $expectedTrustedRoot"
+    }
     if ((Get-Item -LiteralPath $powerShellPath).VersionInfo.FileVersion -cne '7.5.4.500') {
         throw 'Protected PowerShell host version differs from the reviewed runtime.'
     }
@@ -810,8 +1062,15 @@ try {
             throw "Trusted runtime file is unavailable: $requiredPath"
         }
     }
+    if (-not (Test-Path -LiteralPath $secretRoot -PathType Container)) {
+        throw "Owner-only secret root is unavailable: $secretRoot"
+    }
+    if (-not (Test-Path -LiteralPath $protectionAdminTokenPath -PathType Leaf)) {
+        throw "Read-only branch-protection credential is unavailable: $protectionAdminTokenPath"
+    }
     Assert-TrustedRuntimeAcl -LiteralPaths @(
-        $trustedRoot, $stateRoot, $appScriptsRoot, $brokerPath, $helperPath, $authHelperPath,
+        $protectedRoot, $productRoot, $trustedRoot, $stateRoot, $appScriptsRoot,
+        $brokerPath, $helperPath, $authHelperPath,
         $packetModulePath,
         $manifestPath, $completionPath
     )
@@ -826,6 +1085,9 @@ try {
         -ExpectedRuntimeNames $expectedManifestRuntimeNames
     $manifest = $metadata.Manifest
     $completion = $metadata.Completion
+    if ([string]$manifest.source_commit -ceq $ExpectedHeadSha) {
+        throw 'A protected runtime cannot approve the PR head that introduced its own source.'
+    }
     $manifestHash = Get-FileSha256 -LiteralPath $manifestPath
     if ($completion.schema -cne 'blip-trusted-runtime-complete/v1' -or
         [string]$completion.owner_sid -cne $fixedOwnerSidValue -or
@@ -899,21 +1161,7 @@ try {
     Write-Information "PR #$PrNumber automatic approval broker" -InformationAction Continue
     Write-Information "Exact tuple: base=$($ExpectedBaseSha.Substring(0,7)) head=$($ExpectedHeadSha.Substring(0,7)) mode=$ReviewMode human_critical_override=$($HumanCriticalOverride.IsPresent.ToString().ToLowerInvariant())" -InformationAction Continue
     Write-Information 'This can submit one counted APPROVED review; it refuses auto-merge and never merges.' -InformationAction Continue
-    if (-not (Test-Path -LiteralPath $protectionAttestationPath)) {
-        throw "Owner protection attestation is missing: $protectionAttestationPath (mint one with mint_protection_attestation.py)"
-    }
-    if (-not (Test-Path -LiteralPath $protectionAttestationKeyPath)) {
-        throw "Dedicated protection attestation key is missing: $protectionAttestationKeyPath"
-    }
-    $protectionAttestation = ([System.IO.File]::ReadAllText($protectionAttestationPath)).Trim()
-    if ($protectionAttestation.Length -eq 0 -or $protectionAttestation.Length -gt 262144 -or
-        $protectionAttestation -notmatch '^[A-Za-z0-9_\-=]+\.[0-9a-fA-F]{64}$') {
-        throw "Owner protection attestation is malformed: $protectionAttestationPath"
-    }
-    $protectionAttestationKey = ([System.IO.File]::ReadAllText($protectionAttestationKeyPath)).Trim()
-    if ($protectionAttestationKey.Length -lt 32 -or $protectionAttestationKey.Length -gt 4096) {
-        throw "Dedicated protection attestation key is malformed: $protectionAttestationKeyPath"
-    }
+    $protectionAdminTokenStream = Open-ProtectedAdminTokenStream
     Write-Information 'Enter the fixed User PAT only in the masked prompt. Do not paste it into chat or a command line.' -InformationAction Continue
     $secureToken = Read-Host -Prompt 'Enter BLIP_GITHUB_TOKEN' -AsSecureString
     if ($null -eq $secureToken -or $secureToken.Length -eq 0) { throw 'No token was entered.' }
@@ -921,6 +1169,23 @@ try {
     $plainToken = [System.Runtime.InteropServices.Marshal]::PtrToStringBSTR($tokenBstr)
     if ([string]::IsNullOrWhiteSpace($plainToken)) { throw 'No token was entered.' }
     $capability = New-ApprovalCapability -Token $plainToken
+    $strictUtf8 = [System.Text.UTF8Encoding]::new($false, $true)
+    $protectionAdminTokenReader = [System.IO.StreamReader]::new(
+        $protectionAdminTokenStream, $strictUtf8, $false, 1024, $true
+    )
+    $protectionAdminToken = $protectionAdminTokenReader.ReadToEnd().Trim()
+    if ($protectionAdminToken.Length -lt 32 -or $protectionAdminToken.Length -gt 4096 -or
+        $protectionAdminToken -notmatch '^[!-~]+$') {
+        throw 'Read-only branch-protection credential is empty, malformed, or oversized.'
+    }
+    $protectionAdminTokenBytes = [System.Text.Encoding]::UTF8.GetBytes($protectionAdminToken)
+    if ($tokenBytes.Length -eq $protectionAdminTokenBytes.Length -and
+        [System.Security.Cryptography.CryptographicOperations]::FixedTimeEquals(
+            $tokenBytes, $protectionAdminTokenBytes
+    )) {
+        throw 'The read-only branch-protection credential must differ from the counted-reviewer PAT.'
+    }
+    $protectionPolicyJson = Get-LiveProtectionSnapshot
 
     $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
     $startInfo.FileName = $pythonPath
@@ -950,8 +1215,7 @@ try {
     foreach ($entry in $preservedEnvironment.GetEnumerator()) { $startInfo.Environment[$entry.Key] = $entry.Value }
     $startInfo.Environment[$tokenEnvironmentName] = $plainToken
     $startInfo.Environment[$capabilityEnvironmentName] = $capability
-    $startInfo.Environment[$protectionAttestationEnvironmentName] = $protectionAttestation
-    $startInfo.Environment[$protectionAttestationKeyEnvironmentName] = $protectionAttestationKey
+    $startInfo.Environment[$protectionPolicyEnvironmentName] = $protectionPolicyJson
 
     $childProcess = [System.Diagnostics.Process]::new()
     $childProcess.StartInfo = $startInfo
@@ -962,11 +1226,28 @@ try {
     if (-not $childProcess.WaitForExit(600000)) {
         $childProcess.Kill($true)
         $childProcess.WaitForExit()
-        throw 'The approval run exceeded the 10-minute capability lifetime and broker timeout.'
+        $childTimedOut = $true
     }
     $stdout = $stdoutTask.GetAwaiter().GetResult()
     $stderr = $stderrTask.GetAwaiter().GetResult()
-    $brokerExitCode = $childProcess.ExitCode
+    if ($childTimedOut) {
+        $brokerExitCode = 1
+        $stderr = $stderr + "`nThe approval run exceeded the 10-minute capability lifetime and broker timeout."
+    }
+    else {
+        $brokerExitCode = $childProcess.ExitCode
+    }
+    try {
+        $postProtectionPolicyJson = Get-LiveProtectionSnapshot
+        if ($postProtectionPolicyJson -cne $protectionPolicyJson) {
+            $brokerExitCode = 1
+            $stderr = $stderr + "`nFull branch-protection policy drifted during the approval operation."
+        }
+    }
+    catch {
+        $brokerExitCode = 1
+        $stderr = $stderr + "`nPost-approval full branch-protection verification failed closed: " + $_.Exception.Message
+    }
     $marker = [regex]::Match(
         $stdout,
         '(?m)^\[blip\] APPROVAL_RESULT review_id=(\d+) state=APPROVED head=([0-9a-f]{40}) url=(https://github\.com/monkey1sai/AI-BIM-governance/pull/' +
@@ -980,11 +1261,20 @@ try {
         $brokerExitCode = 1
         $stderr = $stderr + "`nApproval result head does not match the authorized exact head."
     }
-    if ($brokerExitCode -eq 0) {
+    $approvalObserved = $marker.Success -and $marker.Groups[2].Value -ceq $ExpectedHeadSha
+    if ($approvalObserved) {
         $reviewId = [Int64]$marker.Groups[1].Value
         $reviewUrl = $marker.Groups[3].Value
     }
-    $status = if ($brokerExitCode -eq 0) { 'approve_succeeded' } else { 'approve_failed' }
+    $status = if ($brokerExitCode -eq 0) {
+        'approve_succeeded'
+    }
+    elseif ($approvalObserved) {
+        'approval_posted_post_verification_failed'
+    }
+    else {
+        'approve_failed'
+    }
     Save-BrokerResult -ExitCode $brokerExitCode -StdOut $stdout -StdErr $stderr -Status $status
     if ($brokerExitCode -eq 0) {
         Write-Information "Live approval submitted and read back: review_id=$reviewId" -InformationAction Continue
@@ -998,8 +1288,8 @@ catch {
     $message = $_.Exception.Message
     if (-not [string]::IsNullOrEmpty($plainToken)) { $message = $message.Replace($plainToken, '[REDACTED]') }
     if (-not [string]::IsNullOrEmpty($capability)) { $message = $message.Replace($capability, '[REDACTED-CAPABILITY]') }
-    if (-not [string]::IsNullOrEmpty($protectionAttestationKey)) {
-        $message = $message.Replace($protectionAttestationKey, '[REDACTED-ATTESTATION-KEY]')
+    if (-not [string]::IsNullOrEmpty($protectionAdminToken)) {
+        $message = $message.Replace($protectionAdminToken, '[REDACTED-PROTECTION-CREDENTIAL]')
     }
     if (-not $resultWritten -and (Test-Path -LiteralPath $stateRoot)) {
         try { Save-BrokerResult -ExitCode 1 -StdOut '' -StdErr $message -Status 'broker_failed' } catch { }
@@ -1021,13 +1311,18 @@ finally {
     if ($null -ne $pythonStream) { $pythonStream.Dispose() }
     if ($null -ne $helperStream) { $helperStream.Dispose() }
     if ($null -ne $lockStream) { $lockStream.Dispose() }
+    if ($null -ne $protectionAdminTokenReader) { $protectionAdminTokenReader.Dispose() }
+    if ($null -ne $protectionAdminTokenStream) { $protectionAdminTokenStream.Dispose() }
     if ($null -ne $tokenBytes) { [Array]::Clear($tokenBytes, 0, $tokenBytes.Length) }
     if ($null -ne $capabilityBytes) { [Array]::Clear($capabilityBytes, 0, $capabilityBytes.Length) }
+    if ($null -ne $protectionAdminTokenBytes) {
+        [System.Security.Cryptography.CryptographicOperations]::ZeroMemory($protectionAdminTokenBytes)
+    }
     if ($tokenBstr -ne [IntPtr]::Zero) { [System.Runtime.InteropServices.Marshal]::ZeroFreeBSTR($tokenBstr) }
     $plainToken = $null
     $capability = $null
-    $protectionAttestation = $null
-    $protectionAttestationKey = $null
+    $protectionPolicyJson = $null
+    $protectionAdminToken = $null
     if ($null -ne $secureToken) { $secureToken.Dispose() }
     foreach ($stream in $trustedPowerShellInputStreams) { try { $stream.Dispose() } catch { } }
 }
