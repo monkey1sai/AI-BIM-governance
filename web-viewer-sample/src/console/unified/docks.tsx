@@ -11,8 +11,8 @@ import type { CSSProperties, MouseEvent } from "react";
 import { useUnifiedState } from "./UnifiedShell";
 import { A1DockLive } from "./A1DockLive";
 import {
-  ACCENT, MONO, BTN, label9, sevTone, memColors,
-  ruleDefs, failDefs, fedMembers,
+  ACCENT, MONO, BTN, label9, sevTone, kindTone, memColors,
+  ruleDefs, failDefs, diffDefs, fedMembers,
 } from "./fixtures";
 import type {
   Dict, DockKey, IssueItem, RuleOn, SelItem,
@@ -157,6 +157,33 @@ export function A2Dock({ zh, L, ws, live }: DockProps) {
         <div style={verBox}><span style={{ fontFamily: MONO, fontSize: 11 }}>v15</span><span style={{ fontSize: 10, color: "var(--ab-text-dim)" }}>2026-07-01</span><span style={{ marginLeft: "auto", color: "var(--ab-text-dim)", fontSize: 10 }}>▾</span></div>
       </div>
       <div className="hv-bright" data-uc="dock-cta" data-action="nav" role="button" style={BTN} onClick={() => { window.location.hash = "#version-diff"; }}>{ws.a2Ran ? L.rerun : (zh ? "計算差異" : "Compute diff")}</div>
+      {ws.a2Ran ? (
+        <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
+          <div style={{ display: "flex", gap: 6 }}>
+            <span style={{ flex: 1, textAlign: "center", fontSize: 11, color: "var(--ab-accent-text)", background: "rgba(65,199,232,.08)", border: "1px solid rgba(65,199,232,.25)", borderRadius: 7, padding: 5 }}>■ {L.added} 12</span>
+            <span style={{ flex: 1, textAlign: "center", fontSize: 11, color: "var(--ab-danger)", background: "rgba(232,97,92,.08)", border: "1px solid rgba(232,97,92,.25)", borderRadius: 7, padding: 5 }}>■ {L.removed} 4</span>
+            <span style={{ flex: 1, textAlign: "center", fontSize: 11, color: "var(--ab-warn)", background: "rgba(230,178,62,.08)", border: "1px solid rgba(230,178,62,.25)", borderRadius: 7, padding: 5 }}>■ {L.modified} 28</span>
+          </div>
+          {diffDefs.map((d, i) => {
+            const el = zh ? d.elZh : d.elEn;
+            const kind = zh ? d.kindZh : d.kindEn;
+            const t = kindTone[d.tone];
+            return (
+              <div key={d.detail} className="hv-accent-border-strong" onClick={() => { window.location.hash = "#version-diff"; }} style={rowBox(ws.sel !== null && ws.sel.path === "/World/diff/" + i)}>
+                <span style={toneChip(t)}>{kind}</span>
+                <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 1 }}>
+                  <span style={{ fontSize: "11.5px", color: "var(--ab-text)" }}>{el}</span>
+                  <span style={{ fontFamily: MONO, fontSize: 9, color: "var(--ab-text-dim)" }}>{d.detail}</span>
+                </div>
+              </div>
+            );
+          })}
+          <div style={{ display: "flex", gap: 8, marginTop: 2 }}>
+            <span className="hv-accent-bg" data-action="nav" role="button" onClick={() => { window.location.hash = "#version-diff"; }} style={accentGhostBtn}>{L.overlay}</span>
+            <span className="hv-text" data-action="nav" role="button" onClick={() => { window.location.hash = "#issues"; }} style={plainGhostBtn}>{L.fromdiff}</span>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -184,6 +211,14 @@ export function A3Dock({ zh, L, ws, live }: DockProps) {
         <span style={checkChip}>✓ {L.unit} m · CRS 一致</span>
       </div>
       <div className="hv-bright" data-uc="dock-cta" data-action="nav" role="button" style={BTN} onClick={() => { window.location.hash = "#federation"; }}>{ws.a3Built ? (zh ? "重新建置" : "Rebuild") : "Build Federated USD"}</div>
+      {ws.a3Built ? (
+        <div style={{ display: "flex", flexDirection: "column", gap: 8, background: "var(--ab-inset)", border: "1px solid rgba(49,197,109,.25)", borderRadius: 10, padding: 12 }}>
+          <span style={{ fontFamily: MONO, fontSize: 9, letterSpacing: ".1em", color: "var(--ab-ok-text)", textTransform: "uppercase" }}>Federated Stage ✓</span>
+          <span style={{ fontFamily: MONO, fontSize: "10.5px", color: "var(--ab-text-2)" }}>/Review/A1_Tower_fed.usd</span>
+          <span style={{ fontSize: "10.5px", color: "var(--ab-text-dim)" }}>5 members · 12.48M tris · flatten off</span>
+          <span className="hv-bright" data-action="nav" role="button" onClick={() => { window.location.hash = "#sessions"; }} style={{ textAlign: "center", fontSize: "11.5px", color: "var(--ab-on-accent)", background: `linear-gradient(135deg,${ACCENT},var(--ab-accent-2))`, borderRadius: 8, padding: 7, cursor: "pointer", fontWeight: 700 }}>Open in Review Room →</span>
+        </div>
+      ) : null}
     </div>
   );
 }
