@@ -74,19 +74,29 @@ const collectedFrom = (bundle, overrides = {}) => ({
   unresolvedThreads: bundle.unresolvedThreads,
   findings: bundle.findings.map((finding) => ({
     id: finding.id, threadId: finding.threadId, source: finding.source, severity: finding.severity, resolved: finding.threadResolved,
+    inScope: finding.inScope, riskClass: finding.riskClass,
   })),
+  // Server-observed independent re-reviews, derived from the bundle only in tests.
+  reReviews: [...new Map(bundle.findings.filter((finding) => finding.fixEvidence).map((finding) => [finding.fixEvidence.reReviewRef, {
+    ref: finding.fixEvidence.reReviewRef, headOid: finding.fixEvidence.repairHeadOid, independent: true,
+    regressionLocations: finding.fixEvidence.regressionEvidence,
+  }])).values()],
   ...overrides,
 })
 const validateBundle = (validate, bundle, source = EXPECTED_CHECK_SOURCE, collectedConversation = collectedFrom(bundle), epoch = {}) => (
   validate(bundle, source, {
-    collectedConversation, convergenceObservedAt: CONVERGENCE_AT, sameHeadCheckRuns: makeRuns(bundle.headOid), ...epoch,
+    collectedConversation, convergenceObservedAt: CONVERGENCE_AT, sameHeadCheckRuns: makeRuns(bundle.headOid),
+    expectedPolicySha256: DIGEST('b'), ...epoch,
   })
 )
 const convergedOptions = (findings = [], conversation = {}) => ({
   expectedRequiredCheckSource: EXPECTED_CHECK_SOURCE,
-  collectedConversation: { complete: true, unresolvedThreads: 0, findings, ...conversation },
-  convergenceObservedAt: CONVERGENCE_AT, sameHeadCheckRuns: makeRuns(SHA('a')),
+  collectedConversation: { complete: true, unresolvedThreads: 0, findings, reReviews: [], ...conversation },
+  convergenceObservedAt: CONVERGENCE_AT, sameHeadCheckRuns: makeRuns(SHA('a')), expectedPolicySha256: DIGEST('b'),
 })
+// Ledger acquisition always carries an external exact-head classification result.
+const CLASSIFIED = { verifyClassification: () => true }
+const acquire = (ledger, input) => ledger.acquire(input, CLASSIFIED)
 
 const expectCode = async (code, callback) => {
   await assert.rejects(callback, (error) => error?.code === code)
@@ -174,6 +184,29 @@ test('review surface classification is lossless, bounded, and fail closed for bi
     limits: { maxFiles: 50, maxDiffBytes: 4096 },
   })
   assert.equal(renamedMechanism.reviewMode, 'critical_machine_adjudication')
+  // A lowercase environment-style assignment is a secret; ordinary code assigning a
+  // variable that happens to be called `token` is not.
+  throwsCode('secret_review_surface_blocked', () => classifyReviewSurface({
+    changedFiles: [{ path: '.env.example', status: 'modified', binary: false, submodule: false }],
+    diff: 'diff --git a/.env.example b/.env.example\n+api_key=supersecretvalue',
+    limits: { maxFiles: 50, maxDiffBytes: 4096 },
+  }), 'semantic_redaction_would_change_review_bytes')
+  throwsCode('secret_review_surface_blocked', () => classifyReviewSurface({
+    changedFiles: [{ path: 'docs/setup.md', status: 'modified', binary: false, submodule: false }],
+    diff: 'diff --git a/docs/setup.md b/docs/setup.md\n export db_password=hunter2secret',
+    limits: { maxFiles: 50, maxDiffBytes: 4096 },
+  }), 'semantic_redaction_would_change_review_bytes')
+  assert.equal(classifyReviewSurface({
+    changedFiles: [{ path: 'scripts/lib/x.mjs', status: 'modified', binary: false, submodule: false }],
+    diff: 'diff --git a/scripts/lib/x.mjs b/scripts/lib/x.mjs\n+const token = await fetchToken(session)\n+  password = readPassword() // prompt',
+    limits: { maxFiles: 50, maxDiffBytes: 4096 },
+  }).lossless, true)
+  // Authoritative external contracts live under tests/contracts/ and are mechanism surface.
+  assert.equal(classifyReviewSurface({
+    changedFiles: [{ path: 'tests/contracts/ifc_ready_payload.json', status: 'modified', binary: false, submodule: false }],
+    diff: 'diff --git a/tests/contracts/ifc_ready_payload.json b/tests/contracts/ifc_ready_payload.json\n+{}',
+    limits: { maxFiles: 50, maxDiffBytes: 4096 },
+  }).reviewMode, 'critical_machine_adjudication')
 })
 
 test('review surface binds the diff bytes to the declared changed files', async () => {
@@ -279,7 +312,7 @@ test('READY_TO_MERGE requires composed finding convergence and the source-pinned
   }, convergedOptions()), (error) => error?.code === 'required_check_not_authoritative')
   assert.throws(() => applyFinalizationEvent(state, {
     type: 'round_converged', headOid: SHA('a'), findingBundle: makeConvergedBundle(),
-  }), (error) => error?.code === 'finding_gate_order_invalid')
+  }, { expectedPolicySha256: DIGEST('b') }), (error) => error?.code === 'finding_gate_order_invalid')
   assert.throws(() => applyFinalizationEvent({ ...state, rounds: [] }, {
     type: 'round_converged', headOid: SHA('a'), findingBundle: makeConvergedBundle(),
   }, convergedOptions()), (error) => error?.code === 'finalization_state_invalid')
@@ -313,7 +346,7 @@ test('an escalated finding closes the transaction HELD outside autonomous author
       }),
       unresolvedThreads: 1,
     },
-  }, convergedOptions([{ id: 'ci-1', threadId: 'thread-1', source: 'ci', severity: 'P2', resolved: false }], { unresolvedThreads: 1 }))
+  }, convergedOptions([{ id: 'ci-1', threadId: 'thread-1', source: 'ci', severity: 'P2', resolved: false, inScope: true, riskClass: 'credentials' }], { unresolvedThreads: 1 }))
   assert.equal(state.phase, 'CLOSED')
   assert.equal(state.terminalClass, 'HELD')
   assert.equal(state.failureDetail, 'finding_escalated_to_external_authority')
@@ -400,14 +433,22 @@ test('merge preparation is exact-head CAS and refuses partial threads, stale sta
     baseOid: snapshot.baseOid, headOid: snapshot.headOid,
     settingsEpochSha256: snapshot.settingsEpochSha256,
     evidenceSha256: snapshot.evidenceSha256, nonce: 'n'.repeat(32),
-    expiresAt: '2026-09-01T08:10:00.000Z', consumed: false,
+    expiresAt: '2026-09-01T08:10:00.000Z', consumed: false, method: 'squash',
   }
   const consumed = []
   const consumeLease = (bound) => {
     if (consumed.includes(bound.nonce)) return false
     consumed.push(bound.nonce)
-    return bound.headOid === SHA('a') && /^[0-9a-f]{64}$/.test(bound.leaseSha256)
+    // The authority authenticates the method it authorized as part of the consumption payload.
+    return bound.headOid === SHA('a') && bound.method === 'squash' && /^[0-9a-f]{64}$/.test(bound.leaseSha256)
   }
+  // A lease issued for a squash cannot be spent on a rebase or a merge commit.
+  throwsCode('policy_or_settings_drift', () => buildExactHeadMergeRequest(snapshot, lease, {
+    now: new Date('2026-09-01T08:00:00.000Z'), method: 'rebase', consumeLease: () => true,
+  }), 'lease_method_mismatch')
+  throwsCode('policy_or_settings_drift', () => buildExactHeadMergeRequest(snapshot, { ...lease, method: 'merge' }, {
+    now: new Date('2026-09-01T08:00:00.000Z'), method: 'squash', consumeLease: () => true,
+  }), 'lease_method_mismatch')
   assert.deepEqual(buildExactHeadMergeRequest(snapshot, lease, {
     now: new Date('2026-09-01T08:00:00.000Z'), method: 'squash', consumeLease,
   }), { method: 'squash', sha: SHA('a') })
@@ -440,21 +481,60 @@ test('merge preparation is exact-head CAS and refuses partial threads, stale sta
 test('single-flight lock keeps ordinary PRs queued until terminal delivery and admits release hotfixes', async () => {
   const { createSingleFlightLedger } = await loadSubject()
   let ledger = createSingleFlightLedger('monkey1sai/AI-BIM-governance')
-  ;({ ledger } = ledger.acquire({ deliveryId: 'delivery-737', prClass: 'ordinary' }))
+  ;({ ledger } = acquire(ledger, { deliveryId: 'delivery-737', prClass: 'ordinary' }))
   assert.throws(
-    () => ledger.acquire({ deliveryId: 'delivery-738', prClass: 'ordinary' }),
+    () => acquire(ledger, { deliveryId: 'delivery-738', prClass: 'ordinary' }),
     (error) => error?.code === 'delivery_lock_held',
   )
   ledger = ledger.close({ deliveryId: 'delivery-737', terminalClass: 'DELIVERED', reasonCode: 'DELIVERY_VERIFIED' })
-  assert.equal(ledger.acquire({ deliveryId: 'delivery-738', prClass: 'ordinary' }).lease.deliveryId, 'delivery-738')
-  assert.equal(ledger.acquire({ deliveryId: 'hotfix-1', prClass: 'release_hotfix' }).lease.prClass, 'release_hotfix')
-  throwsCode('delivery_lock_invalid', () => ledger.acquire({ deliveryId: 'draft-1', prClass: 'draft_report_only' }), 'pr_class_invalid')
+  assert.equal(acquire(ledger, { deliveryId: 'delivery-738', prClass: 'ordinary' }).lease.deliveryId, 'delivery-738')
+  assert.equal(acquire(ledger, { deliveryId: 'hotfix-1', prClass: 'release_hotfix' }).lease.prClass, 'release_hotfix')
+  throwsCode('delivery_lock_invalid', () => acquire(ledger, { deliveryId: 'draft-1', prClass: 'draft_report_only' }), 'pr_class_invalid')
+  // The class is never the caller's word: an external exact-head classification must confirm it.
+  throwsCode('delivery_lock_invalid', () => ledger.acquire({ deliveryId: 'delivery-740', prClass: 'ordinary' }), 'pr_classification_unverified')
+  throwsCode('delivery_lock_invalid', () => ledger.acquire({ deliveryId: 'delivery-740', prClass: 'ordinary' }, {
+    verifyClassification: ({ prClass }) => prClass === 'repair',
+  }), 'pr_classification_unverified')
+  throwsCode('delivery_lock_invalid', () => ledger.acquire({ deliveryId: 'delivery-740', prClass: 'ordinary' }, {
+    verifyClassification: () => { throw new Error('classifier offline') },
+  }), 'pr_classification_unverified')
+  const bound = []
+  assert.equal(ledger.acquire({ deliveryId: 'delivery-740', prClass: 'ordinary' }, {
+    verifyClassification: (request) => { bound.push(request); return request.prClass === 'ordinary' && request.deliveryId === 'delivery-740' },
+  }).lease.mergeBoundaryCrossed, false)
+  assert.deepEqual(bound, [{ repository: 'monkey1sai/AI-BIM-governance', deliveryId: 'delivery-740', prClass: 'ordinary', supersedesDeliveryId: null }])
+})
+
+test('policy drift detected after the merge boundary keeps the lineage bound instead of releasing the queue', async () => {
+  const { createSingleFlightLedger } = await loadSubject()
+  // Before the merge boundary the same reason code merged nothing and frees the queue.
+  let pre = createSingleFlightLedger('monkey1sai/AI-BIM-governance')
+  ;({ ledger: pre } = acquire(pre, { deliveryId: 'delivery-30', prClass: 'ordinary' }))
+  pre = pre.close({ deliveryId: 'delivery-30', terminalClass: 'HELD', reasonCode: 'POLICY_OR_SETTINGS_DRIFT' })
+  assert.equal(pre.openRecovery, null)
+  assert.equal(acquire(pre, { deliveryId: 'delivery-31', prClass: 'ordinary' }).lease.deliveryId, 'delivery-31')
+  // After the merge request was issued, drift is a post-merge hold bound to reconciliation.
+  let post = createSingleFlightLedger('monkey1sai/AI-BIM-governance')
+  ;({ ledger: post } = acquire(post, { deliveryId: 'delivery-40', prClass: 'ordinary' }))
+  throwsCode('delivery_lock_invalid', () => post.markMergeBoundary({ deliveryId: 'delivery-41' }), 'delivery_does_not_hold_lock')
+  post = post.markMergeBoundary({ deliveryId: 'delivery-40' })
+  assert.equal(post.active.mergeBoundaryCrossed, true)
+  post = post.close({ deliveryId: 'delivery-40', terminalClass: 'HELD', reasonCode: 'POLICY_OR_SETTINGS_DRIFT' })
+  assert.equal(post.active, null)
+  assert.equal(post.openRecovery.deliveryId, 'delivery-40')
+  assert.equal(post.history.at(-1).mergeBoundaryCrossed, true)
+  throwsCode('delivery_lock_frozen', () => acquire(post, { deliveryId: 'delivery-42', prClass: 'ordinary' }))
+  throwsCode('delivery_lock_frozen', () => acquire(post, { deliveryId: 'repair-40', prClass: 'repair', supersedesDeliveryId: 'delivery-40' }))
+  throwsCode('delivery_lock_invalid', () => post.unfreeze({ deliveryId: 'delivery-40', authorityRef: 'owner-transaction-2', verifyAuthority: () => true }), 'unfreeze_not_allowed_for_recoverable_terminal')
+  const reconciled = acquire(post, { deliveryId: 'reconcile-40', prClass: 'reconciliation', supersedesDeliveryId: 'delivery-40' })
+  assert.equal(reconciled.lease.prClass, 'reconciliation')
+  assert.equal(reconciled.lease.supersedesDeliveryId, 'delivery-40')
 })
 
 test('non-delivered closure releases the lock but freezes the queue to the bound recovery lane', async () => {
   const { createSingleFlightLedger } = await loadSubject()
   let ledger = createSingleFlightLedger('monkey1sai/AI-BIM-governance')
-  ;({ ledger } = ledger.acquire({ deliveryId: 'delivery-1', prClass: 'ordinary' }))
+  ;({ ledger } = acquire(ledger, { deliveryId: 'delivery-1', prClass: 'ordinary' }))
   ledger = ledger.close({ deliveryId: 'delivery-1', terminalClass: 'FAILED', reasonCode: 'MERGED_NOT_DELIVERED' })
   assert.equal(ledger.active, null)
   assert.equal(ledger.openRecovery.deliveryId, 'delivery-1')
@@ -462,46 +542,46 @@ test('non-delivered closure releases the lock but freezes the queue to the bound
   throwsCode('delivery_lock_invalid', () => ledger.close({
     deliveryId: 'delivery-1', terminalClass: 'DELIVERED', reasonCode: 'DELIVERY_VERIFIED',
   }), 'delivery_does_not_hold_lock')
-  throwsCode('delivery_lock_frozen', () => ledger.acquire({ deliveryId: 'delivery-2', prClass: 'ordinary' }))
-  throwsCode('delivery_lock_frozen', () => ledger.acquire({
+  throwsCode('delivery_lock_frozen', () => acquire(ledger, { deliveryId: 'delivery-2', prClass: 'ordinary' }))
+  throwsCode('delivery_lock_frozen', () => acquire(ledger, {
     deliveryId: 'reconcile-1', prClass: 'reconciliation', supersedesDeliveryId: 'delivery-1',
   }))
-  throwsCode('delivery_lock_invalid', () => ledger.acquire({ deliveryId: 'repair-1', prClass: 'repair' }), 'recovery_must_bind_exact_terminal_delivery_id')
-  ;({ ledger } = ledger.acquire({ deliveryId: 'repair-1', prClass: 'repair', supersedesDeliveryId: 'delivery-1' }))
+  throwsCode('delivery_lock_invalid', () => acquire(ledger, { deliveryId: 'repair-1', prClass: 'repair' }), 'recovery_must_bind_exact_terminal_delivery_id')
+  ;({ ledger } = acquire(ledger, { deliveryId: 'repair-1', prClass: 'repair', supersedesDeliveryId: 'delivery-1' }))
   assert.equal(ledger.active.supersedesDeliveryId, 'delivery-1')
   ledger = ledger.close({ deliveryId: 'repair-1', terminalClass: 'DELIVERED', reasonCode: 'DELIVERY_VERIFIED' })
   assert.equal(ledger.openRecovery, null)
-  assert.equal(ledger.acquire({ deliveryId: 'delivery-3', prClass: 'ordinary' }).lease.prClass, 'ordinary')
+  assert.equal(acquire(ledger, { deliveryId: 'delivery-3', prClass: 'ordinary' }).lease.prClass, 'ordinary')
   // A repair lane without a terminal lineage to bind is not admissible.
-  throwsCode('delivery_lock_invalid', () => ledger.acquire({ deliveryId: 'repair-2', prClass: 'repair' }), 'recovery_lane_requires_bound_terminal_lineage')
+  throwsCode('delivery_lock_invalid', () => acquire(ledger, { deliveryId: 'repair-2', prClass: 'repair' }), 'recovery_lane_requires_bound_terminal_lineage')
   // Pre-merge HELD merged nothing, so the queue is not frozen.
   let held = createSingleFlightLedger('monkey1sai/AI-BIM-governance')
-  ;({ ledger: held } = held.acquire({ deliveryId: 'delivery-9', prClass: 'ordinary' }))
+  ;({ ledger: held } = acquire(held, { deliveryId: 'delivery-9', prClass: 'ordinary' }))
   held = held.close({ deliveryId: 'delivery-9', terminalClass: 'HELD', reasonCode: 'PREMERGE_EVIDENCE_INVALID' })
   assert.equal(held.openRecovery, null)
-  assert.equal(held.acquire({ deliveryId: 'delivery-10', prClass: 'ordinary' }).lease.deliveryId, 'delivery-10')
+  assert.equal(acquire(held, { deliveryId: 'delivery-10', prClass: 'ordinary' }).lease.deliveryId, 'delivery-10')
   // Post-merge unprovable HELD opens only the bound reconciliation lane.
   let ambiguous = createSingleFlightLedger('monkey1sai/AI-BIM-governance')
-  ;({ ledger: ambiguous } = ambiguous.acquire({ deliveryId: 'delivery-11', prClass: 'ordinary' }))
+  ;({ ledger: ambiguous } = acquire(ambiguous, { deliveryId: 'delivery-11', prClass: 'ordinary' }))
   ambiguous = ambiguous.close({ deliveryId: 'delivery-11', terminalClass: 'HELD', reasonCode: 'MERGE_OUTCOME_UNVERIFIED' })
-  throwsCode('delivery_lock_frozen', () => ambiguous.acquire({ deliveryId: 'repair-3', prClass: 'repair', supersedesDeliveryId: 'delivery-11' }))
-  assert.equal(ambiguous.acquire({
+  throwsCode('delivery_lock_frozen', () => acquire(ambiguous, { deliveryId: 'repair-3', prClass: 'repair', supersedesDeliveryId: 'delivery-11' }))
+  assert.equal(acquire(ambiguous, {
     deliveryId: 'reconcile-2', prClass: 'reconciliation', supersedesDeliveryId: 'delivery-11',
   }).lease.prClass, 'reconciliation')
   // Other post-merge HELD opens no autonomous lane at all.
   let blocked = createSingleFlightLedger('monkey1sai/AI-BIM-governance')
-  ;({ ledger: blocked } = blocked.acquire({ deliveryId: 'delivery-12', prClass: 'ordinary' }))
+  ;({ ledger: blocked } = acquire(blocked, { deliveryId: 'delivery-12', prClass: 'ordinary' }))
   blocked = blocked.close({ deliveryId: 'delivery-12', terminalClass: 'HELD', reasonCode: 'DEPLOYMENT_BLOCKED' })
-  throwsCode('delivery_lock_frozen', () => blocked.acquire({ deliveryId: 'reconcile-3', prClass: 'reconciliation', supersedesDeliveryId: 'delivery-12' }))
+  throwsCode('delivery_lock_frozen', () => acquire(blocked, { deliveryId: 'reconcile-3', prClass: 'reconciliation', supersedesDeliveryId: 'delivery-12' }))
   // A pre-merge HELD on the bound repair must not release the merged-not-delivered lineage.
   let lineage = createSingleFlightLedger('monkey1sai/AI-BIM-governance')
-  ;({ ledger: lineage } = lineage.acquire({ deliveryId: 'delivery-20', prClass: 'ordinary' }))
+  ;({ ledger: lineage } = acquire(lineage, { deliveryId: 'delivery-20', prClass: 'ordinary' }))
   lineage = lineage.close({ deliveryId: 'delivery-20', terminalClass: 'FAILED', reasonCode: 'MERGED_NOT_DELIVERED' })
-  ;({ ledger: lineage } = lineage.acquire({ deliveryId: 'repair-20', prClass: 'repair', supersedesDeliveryId: 'delivery-20' }))
+  ;({ ledger: lineage } = acquire(lineage, { deliveryId: 'repair-20', prClass: 'repair', supersedesDeliveryId: 'delivery-20' }))
   lineage = lineage.close({ deliveryId: 'repair-20', terminalClass: 'HELD', reasonCode: 'PREMERGE_EVIDENCE_INVALID' })
   assert.equal(lineage.openRecovery.deliveryId, 'delivery-20')
-  throwsCode('delivery_lock_frozen', () => lineage.acquire({ deliveryId: 'delivery-21', prClass: 'ordinary' }))
-  assert.equal(lineage.acquire({ deliveryId: 'repair-21', prClass: 'repair', supersedesDeliveryId: 'delivery-20' }).lease.prClass, 'repair')
+  throwsCode('delivery_lock_frozen', () => acquire(lineage, { deliveryId: 'delivery-21', prClass: 'ordinary' }))
+  assert.equal(acquire(lineage, { deliveryId: 'repair-21', prClass: 'repair', supersedesDeliveryId: 'delivery-20' }).lease.prClass, 'repair')
   // The only exit from a lane-less freeze is an audited, externally verified unfreeze naming the exact terminal.
   const verifyAuthority = ({ authorityRef, reasonCode }) => authorityRef === 'owner-transaction-1' && reasonCode === 'DEPLOYMENT_BLOCKED'
   throwsCode('delivery_lock_invalid', () => blocked.unfreeze({ deliveryId: 'delivery-99', authorityRef: 'owner-transaction-1', verifyAuthority }), 'unfreeze_must_name_open_terminal_delivery')
@@ -514,7 +594,7 @@ test('non-delivered closure releases the lock but freezes the queue to the bound
   const thawed = blocked.unfreeze({ deliveryId: 'delivery-12', authorityRef: 'owner-transaction-1', verifyAuthority })
   assert.equal(thawed.openRecovery, null)
   assert.equal(thawed.history.at(-1).unfrozenBy, 'owner-transaction-1')
-  assert.equal(thawed.acquire({ deliveryId: 'delivery-13', prClass: 'ordinary' }).lease.deliveryId, 'delivery-13')
+  assert.equal(acquire(thawed, { deliveryId: 'delivery-13', prClass: 'ordinary' }).lease.deliveryId, 'delivery-13')
 })
 
 test('trust-root descriptor and activation plan are non-secret, closed, and sink-disabled before canary', async () => {
@@ -583,7 +663,7 @@ test('CI and review findings converge through the five closed dispositions witho
   const collected = collectedFrom(bundle)
   throwsCode('finding_disposition_incomplete', () => validateBundle(
     validateFindingDispositionBundle, bundle, EXPECTED_CHECK_SOURCE,
-    { ...collected, findings: [...collected.findings, { id: 'ci-omitted', threadId: 'thread-omitted', source: 'ci', severity: 'P1', resolved: true }] },
+    { ...collected, findings: [...collected.findings, { id: 'ci-omitted', threadId: 'thread-omitted', source: 'ci', severity: 'P1', resolved: true, inScope: true, riskClass: 'correctness' }] },
   ), 'dispositions_do_not_cover_complete_collected_finding_set')
   throwsCode('finding_disposition_incomplete', () => validateBundle(
     validateFindingDispositionBundle, bundle, EXPECTED_CHECK_SOURCE, { ...collected, findings: collected.findings.slice(1) },
@@ -606,6 +686,49 @@ test('CI and review findings converge through the five closed dispositions witho
   throwsCode('finding_disposition_incomplete', () => validateBundle(
     validateFindingDispositionBundle, bundle, EXPECTED_CHECK_SOURCE, { ...collected, complete: false },
   ), 'conversation_state_not_server_observed')
+  // Scope and risk class are collector classifications: the bundle cannot move a
+  // finding out of scope or downgrade a high-risk class to a weaker autonomous rule.
+  throwsCode('finding_disposition_invalid', () => validateBundle(
+    validateFindingDispositionBundle, bundle, EXPECTED_CHECK_SOURCE,
+    { ...collected, findings: collected.findings.map((entry) => (entry.id === 'ci-1' ? { ...entry, inScope: false } : entry)) },
+  ), 'finding_0_not_bound_to_collected_record')
+  throwsCode('finding_disposition_invalid', () => validateBundle(
+    validateFindingDispositionBundle, bundle, EXPECTED_CHECK_SOURCE,
+    { ...collected, findings: collected.findings.map((entry) => (entry.id === 'ci-1' ? { ...entry, riskClass: 'security' } : entry)) },
+  ), 'finding_0_not_bound_to_collected_record')
+  throwsCode('finding_disposition_invalid', () => validateBundle(
+    validateFindingDispositionBundle, bundle, EXPECTED_CHECK_SOURCE,
+    { ...collected, findings: collected.findings.map((entry) => (entry.id === 'ci-1' ? { ...entry, riskClass: 'made-up' } : entry)) },
+  ), 'collected_finding_0_risk_class_invalid')
+  // The policy digest is compared with the trusted current policy, never only shape-checked.
+  throwsCode('finding_disposition_invalid', () => validateBundle(
+    validateFindingDispositionBundle, bundle, EXPECTED_CHECK_SOURCE, collected, { expectedPolicySha256: DIGEST('9') },
+  ), 'bundle_policy_digest_not_trusted')
+  throwsCode('finding_disposition_invalid', () => validateBundle(
+    validateFindingDispositionBundle, bundle, EXPECTED_CHECK_SOURCE, collected, { expectedPolicySha256: undefined },
+  ), 'trusted_policy_digest_required')
+  // A fix claim must cite a server-observed independent re-review of the repair head
+  // and only collector-verified regression locations; invented values do not pass.
+  const withoutReReviews = { ...collected, reReviews: [] }
+  throwsCode('finding_disposition_invalid', () => validateBundle(
+    validateFindingDispositionBundle, bundle, EXPECTED_CHECK_SOURCE, withoutReReviews,
+  ), 'finding_0_fix_evidence_not_server_observed')
+  throwsCode('finding_disposition_invalid', () => validateBundle(
+    validateFindingDispositionBundle, bundle, EXPECTED_CHECK_SOURCE,
+    { ...collected, reReviews: collected.reReviews.map((record) => ({ ...record, headOid: SHA('c') })) },
+  ), 'finding_0_fix_evidence_not_server_observed')
+  throwsCode('finding_disposition_invalid', () => validateBundle(
+    validateFindingDispositionBundle, bundle, EXPECTED_CHECK_SOURCE,
+    { ...collected, reReviews: collected.reReviews.map((record) => ({ ...record, independent: false })) },
+  ), 'finding_0_fix_evidence_not_server_observed')
+  throwsCode('finding_disposition_invalid', () => validateBundle(
+    validateFindingDispositionBundle, bundle, EXPECTED_CHECK_SOURCE,
+    { ...collected, reReviews: collected.reReviews.map((record) => ({ ...record, regressionLocations: ['scripts/tests/other.mjs:1'] })) },
+  ), 'finding_0_fix_evidence_not_server_observed')
+  throwsCode('finding_disposition_invalid', () => validateBundle(
+    validateFindingDispositionBundle, bundle, EXPECTED_CHECK_SOURCE,
+    { ...collected, reReviews: [...collected.reReviews, collected.reReviews[0]] },
+  ), 'collected_rereview_2_duplicated')
 })
 
 test('confirmed blocking findings cannot be accepted or deferred, unverified findings cannot resolve, and fixed claims need evidence', async () => {
@@ -681,6 +804,13 @@ test('machine gate is valid only after complete finding convergence on the same 
     machineGate: { checkRunId: 200, startedAt: '2026-09-01T07:58:00.000Z', completedAt: '2026-09-01T08:09:00.000Z' },
   }), EXPECTED_CHECK_SOURCE, undefined, {
     sameHeadCheckRuns: makeRuns(SHA('a'), [{ id: 200, conclusion: 'success', startedAt: '2026-09-01T07:58:00.000Z', completedAt: '2026-09-01T08:09:00.000Z' }]),
+  }), 'machine_gate_started_before_finding_convergence')
+  // Sharing the collector's observation instant is not "after" it.
+  throwsCode('finding_gate_order_invalid', () => validateBundle(validateFindingDispositionBundle, makeConvergedBundle({
+    findings: [finding],
+    machineGate: { checkRunId: 200, startedAt: CONVERGENCE_AT, completedAt: '2026-09-01T08:09:00.000Z' },
+  }), EXPECTED_CHECK_SOURCE, undefined, {
+    sameHeadCheckRuns: makeRuns(SHA('a'), [{ id: 200, conclusion: 'success', startedAt: CONVERGENCE_AT, completedAt: '2026-09-01T08:09:00.000Z' }]),
   }), 'machine_gate_started_before_finding_convergence')
   // An older success cannot be selected when a newer rerun on the same head failed.
   throwsCode('finding_gate_order_invalid', () => validateBundle(validateFindingDispositionBundle, makeConvergedBundle({
@@ -877,7 +1007,8 @@ test('review disposition replies carry hidden metadata, never re-trigger the age
     { id: 4, author: 'someone', body: '<!-- ai-bim-review-disposition/v1 pasted marker -->' },
     { id: 5, author: 'human-reviewer', body: ['> ' + reply.body.split('\n').at(-1), '', 'Still broken on my machine, see line 40.'].join('\n') },
   ], { agentSender: 'monkey1sai' })
-  assert.deepEqual(intake.map((comment) => comment.id), [1, 4, 5])
+  // The sender's own unmarked review finding is intake: author alone never silences a finding.
+  assert.deepEqual(intake.map((comment) => comment.id), [1, 3, 4, 5])
   throwsCode('review_disposition_invalid', () => selectFindingIntake([], {}), 'agent_sender_required')
 
   const own = (body) => ({ author: 'monkey1sai', body })
@@ -893,6 +1024,11 @@ test('review disposition replies carry hidden metadata, never re-trigger the age
   })
   const newHead = buildReviewDispositionReply({ ...input, headOid: SHA('d') })
   assert.equal(planReviewDispositionMutation({ existingComments: [own(reply.body)], candidateMetadata: newHead.metadata }).action, 'post')
+  // Same head, but main moved underneath it or the finding text changed: a new integration state.
+  const newBase = buildReviewDispositionReply({ ...input, agentRunId: 'claude-d23c2a-run-3', baseOid: SHA('e') })
+  assert.equal(planReviewDispositionMutation({ existingComments: [own(reply.body)], candidateMetadata: newBase.metadata }).action, 'post')
+  const newEvidence = buildReviewDispositionReply({ ...input, agentRunId: 'claude-d23c2a-run-4', evidenceSha256: DIGEST('f') })
+  assert.equal(planReviewDispositionMutation({ existingComments: [own(reply.body)], candidateMetadata: newEvidence.metadata }).action, 'post')
   assert.deepEqual(planReviewDispositionMutation({
     existingComments: [own('<!-- ai-bim-review-disposition/v1 {"broken":true} -->')], candidateMetadata: reply.metadata,
   }), { action: 'hold', reason: 'existing_agent_metadata_unparseable' })

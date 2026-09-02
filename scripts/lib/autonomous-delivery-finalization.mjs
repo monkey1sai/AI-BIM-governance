@@ -23,11 +23,17 @@ const SECRET_VALUES = [
   /\b(?:gh[pousr]_|github_pat_)[A-Za-z0-9_]{8,}\b/u,
   /\bBearer\s+[A-Za-z0-9._~+\/-]{8,}/iu,
   /\b[A-Z][A-Z0-9_]*(?:TOKEN|SECRET|PASSWORD|PRIVATE_KEY|DATABASE_URL|API_KEY)[A-Z0-9_]*\s*=\s*[^\s\r\n]{4,}/u,
+  // Environment-style assignments are case-insensitive: `api_key=...` on a diff
+  // line is as much a secret as `API_KEY=...`. The line anchor keeps ordinary
+  // code (`const token = await ...`) out of the pattern.
+  /^[+ ]?(?:export\s+)?[A-Za-z0-9_]*(?:TOKEN|SECRET|PASSWORD|PRIVATE_KEY|DATABASE_URL|API_KEY)[A-Za-z0-9_]*\s*=\s*[^\s\r\n]{4,}$/imu,
   /\b(?:postgres(?:ql)?|mysql|mongodb(?:\+srv)?|redis):\/\/[^/\s:@]+:[^@\s/]+@/iu,
 ]
 const SECRET_BEARING_ENV_PATH = /(?:^|\/)\.env(?:$|\.)/u
 const SAFE_ENV_TEMPLATE_PATH = /\.env(?:\.[A-Za-z0-9_-]+)*\.(?:example|sample|template)$/u
-const MECHANISM_PATH = /^(?:\.github\/|agent-contracts\/|scripts\/|docs\/agents\/|\.claude\/skills\/|\.codex\/skills\/|agent-skills-manifest\.json$|AGENTS\.md$|CLAUDE\.md$|openspec\/)/u
+// `tests/contracts/` holds this repository's authoritative external contracts;
+// a contract-only change is a mechanism change, never a focused semantic one.
+const MECHANISM_PATH = /^(?:\.github\/|agent-contracts\/|tests\/contracts\/|scripts\/|docs\/agents\/|\.claude\/skills\/|\.codex\/skills\/|agent-skills-manifest\.json$|AGENTS\.md$|CLAUDE\.md$|openspec\/)/u
 const REVIEW_MODES = Object.freeze([
   'mechanical_only', 'focused_semantic', 'risk_scoped_specialists',
   'critical_machine_adjudication',
@@ -452,7 +458,7 @@ const closeHeld = (state, failureDetail) => deepFreeze({
 // Trusted-side inputs (collector output, never the candidate bundle) are passed
 // through to the disposition validator so the gate epoch cannot be self-reported.
 export function applyFinalizationEvent(stateRaw, event, {
-  expectedRequiredCheckSource, collectedConversation, convergenceObservedAt, sameHeadCheckRuns,
+  expectedRequiredCheckSource, collectedConversation, convergenceObservedAt, sameHeadCheckRuns, expectedPolicySha256,
 } = {}) {
   if (!isPlainObject(stateRaw)) fail('finalization_state_invalid', 'state_shape_invalid')
   const state = validateFinalizationState(stateRaw)
@@ -505,7 +511,7 @@ export function applyFinalizationEvent(stateRaw, event, {
   const roundIndex = state.rounds.length - 1
   if (event.type === 'round_converged') {
     const convergence = validateFindingDispositionBundle(event.findingBundle, expectedRequiredCheckSource, {
-      collectedConversation, convergenceObservedAt, sameHeadCheckRuns,
+      collectedConversation, convergenceObservedAt, sameHeadCheckRuns, expectedPolicySha256,
     })
     if (
       convergence.repository !== state.repository || convergence.prNumber !== state.prNumber ||
@@ -638,6 +644,9 @@ export function buildExactHeadMergeRequest(snapshot, lease, { now = new Date(), 
     fail('merge_authority_unavailable', 'lease_expired')
   }
   if (!['merge', 'squash', 'rebase'].includes(method)) fail('premerge_evidence_invalid', 'merge_method_not_allowed')
+  // The method is part of what the authority authorized: a lease issued for a
+  // squash cannot be spent on a rebase or a merge commit.
+  if (lease.method !== method) fail('policy_or_settings_drift', 'lease_method_mismatch')
   let consumed = false
   try {
     consumed = consumeLease(deepFreeze({
@@ -647,6 +656,7 @@ export function buildExactHeadMergeRequest(snapshot, lease, { now = new Date(), 
       headOid: lease.headOid,
       settingsEpochSha256: lease.settingsEpochSha256,
       evidenceSha256: lease.evidenceSha256,
+      method: lease.method,
       nonce: lease.nonce,
       expiresAt: lease.expiresAt,
       leaseSha256: canonicalSha256(lease),
@@ -690,6 +700,15 @@ const RECOVERY_LANES = Object.freeze({
   }),
 })
 
+// The lane a non-delivered terminal maps to. A drift or evidence hold that is
+// detected only after the merge boundary was crossed can no longer be treated as
+// "nothing merged": it binds the reconciliation lane like an unverified merge.
+const lanesFor = (event) => {
+  const lanes = RECOVERY_LANES[event.terminalClass]?.[event.reasonCode]
+  if (lanes === null && event.mergeBoundaryCrossed === true) return ['reconciliation']
+  return lanes
+}
+
 class SingleFlightLedger {
   constructor(repository, active = null, history = [], openRecovery = null) {
     this.repository = repository
@@ -702,9 +721,21 @@ class SingleFlightLedger {
     Object.freeze(this)
   }
 
-  acquire({ deliveryId, prClass, supersedesDeliveryId = null } = {}) {
+  acquire({ deliveryId, prClass, supersedesDeliveryId = null } = {}, { verifyClassification } = {}) {
     assertIdentifier(deliveryId, 'delivery_lock_invalid', 'delivery_id_invalid')
     if (!DELIVERY_LOCK_CLASSES.includes(prClass)) fail('delivery_lock_invalid', 'pr_class_invalid')
+    // The class is never taken on the caller's word: an external classifier bound
+    // to the exact PR head must confirm this delivery is that class, otherwise a
+    // caller who knows an open terminal ID could enter any recovery or activation lane.
+    let classified = false
+    try {
+      classified = typeof verifyClassification === 'function' && verifyClassification(deepFreeze({
+        repository: this.repository, deliveryId, prClass, supersedesDeliveryId,
+      })) === true
+    } catch {
+      classified = false
+    }
+    if (!classified) fail('delivery_lock_invalid', 'pr_classification_unverified')
     if (this.active !== null) fail('delivery_lock_held', 'repository_delivery_is_single_flight')
     if (this.history.some((event) => event.deliveryId === deliveryId)) {
       fail('delivery_lock_invalid', 'delivery_id_already_terminal')
@@ -714,7 +745,7 @@ class SingleFlightLedger {
         fail('delivery_lock_invalid', 'recovery_lane_requires_bound_terminal_lineage')
       }
     } else {
-      const lanes = RECOVERY_LANES[this.openRecovery.terminalClass][this.openRecovery.reasonCode]
+      const lanes = lanesFor(this.openRecovery)
       if (!lanes.includes(prClass)) {
         fail('delivery_lock_frozen', `queue_frozen_until_${this.openRecovery.deliveryId}_is_recovered`)
       }
@@ -722,8 +753,20 @@ class SingleFlightLedger {
         fail('delivery_lock_invalid', 'recovery_must_bind_exact_terminal_delivery_id')
       }
     }
-    const lease = deepFreeze({ repository: this.repository, deliveryId, prClass, supersedesDeliveryId })
+    const lease = deepFreeze({
+      repository: this.repository, deliveryId, prClass, supersedesDeliveryId, mergeBoundaryCrossed: false,
+    })
     return { ledger: new SingleFlightLedger(this.repository, lease, this.history, this.openRecovery), lease }
+  }
+
+  // Records that the merge request for the active delivery was issued. From here
+  // on every hold is a post-merge hold and must keep the lineage bound.
+  markMergeBoundary({ deliveryId } = {}) {
+    if (this.active === null || this.active.deliveryId !== deliveryId) {
+      fail('delivery_lock_invalid', 'delivery_does_not_hold_lock')
+    }
+    const active = deepFreeze({ ...this.active, mergeBoundaryCrossed: true })
+    return new SingleFlightLedger(this.repository, active, this.history, this.openRecovery)
   }
 
   close({ deliveryId, terminalClass, reasonCode } = {}) {
@@ -734,9 +777,11 @@ class SingleFlightLedger {
     const event = deepFreeze({ ...this.active, terminalClass, reasonCode })
     const history = [...this.history, event]
     if (terminalClass === 'DELIVERED') return new SingleFlightLedger(this.repository, null, history, null)
-    const lanes = RECOVERY_LANES[terminalClass][reasonCode]
+    const lanes = lanesFor(event)
     // A pre-merge HELD merged nothing: it never opens a lineage of its own, and it
     // must not release a lineage that an earlier non-delivered terminal left open.
+    // Once the merge boundary was crossed the same reason code is post-merge and
+    // `lanesFor` binds it to reconciliation instead.
     if (lanes === null) return new SingleFlightLedger(this.repository, null, history, this.openRecovery)
     return new SingleFlightLedger(this.repository, null, history, event)
   }
@@ -752,7 +797,7 @@ class SingleFlightLedger {
     // A terminal that still maps to a recovery lane must be recovered through that
     // lane; the escape hatch exists only for lane-less holds, and only an external
     // authority (not a syntactically valid reference) can exercise it.
-    const lanes = RECOVERY_LANES[this.openRecovery.terminalClass][this.openRecovery.reasonCode]
+    const lanes = lanesFor(this.openRecovery)
     if (!Array.isArray(lanes) || lanes.length !== 0) {
       fail('delivery_lock_invalid', 'unfreeze_not_allowed_for_recoverable_terminal')
     }
@@ -1041,7 +1086,9 @@ const validateMachineGateEpoch = (gate, expectedSource, { convergenceObservedAt,
   if (latest.conclusion !== gate.conclusion || latest.startedAt !== gate.startedAt || latest.completedAt !== gate.completedAt) {
     fail('finding_gate_order_invalid', 'machine_gate_does_not_match_latest_check_run')
   }
-  if (started < epoch) fail('finding_gate_order_invalid', 'machine_gate_started_before_finding_convergence')
+  // Strictly after: GitHub timestamps have finite resolution, so a run sharing the
+  // collector's observation instant may have started before or concurrently with it.
+  if (started <= epoch) fail('finding_gate_order_invalid', 'machine_gate_started_before_finding_convergence')
 }
 
 // The server-derived conversation state observed by the trusted collector,
@@ -1052,7 +1099,7 @@ const validateMachineGateEpoch = (gate, expectedSource, { convergenceObservedAt,
 // declare a thread resolved that GitHub still reports open.
 const parseCollectedConversation = (collectedConversation) => {
   if (!isPlainObject(collectedConversation)) fail('finding_disposition_incomplete', 'collector_conversation_state_required')
-  exactKeys(collectedConversation, ['complete', 'unresolvedThreads', 'findings'], 'finding_disposition_invalid', 'collected_conversation_shape_invalid')
+  exactKeys(collectedConversation, ['complete', 'unresolvedThreads', 'findings', 'reReviews'], 'finding_disposition_invalid', 'collected_conversation_shape_invalid')
   if (typeof collectedConversation.complete !== 'boolean' ||
       !Number.isSafeInteger(collectedConversation.unresolvedThreads) || collectedConversation.unresolvedThreads < 0) {
     fail('finding_disposition_invalid', 'collected_conversation_state_invalid')
@@ -1064,7 +1111,7 @@ const parseCollectedConversation = (collectedConversation) => {
   const byId = new Map()
   const threads = new Set()
   for (const [index, entry] of findings.entries()) {
-    exactKeys(entry, ['id', 'threadId', 'source', 'severity', 'resolved'], 'finding_disposition_invalid', `collected_finding_${index}_shape_invalid`)
+    exactKeys(entry, ['id', 'threadId', 'source', 'severity', 'resolved', 'inScope', 'riskClass'], 'finding_disposition_invalid', `collected_finding_${index}_shape_invalid`)
     assertIdentifier(entry.id, 'finding_disposition_invalid', `collected_finding_${index}_id_invalid`)
     assertIdentifier(entry.threadId, 'finding_disposition_invalid', `collected_finding_${index}_thread_id_invalid`)
     if (!FINDING_SOURCES.has(entry.source)) fail('finding_disposition_invalid', `collected_finding_${index}_source_invalid`)
@@ -1072,6 +1119,9 @@ const parseCollectedConversation = (collectedConversation) => {
       fail('finding_disposition_invalid', `collected_finding_${index}_severity_invalid`)
     }
     if (typeof entry.resolved !== 'boolean') fail('finding_disposition_invalid', `collected_finding_${index}_resolved_invalid`)
+    // Scope and risk class are authoritative classifications, not bundle opinions.
+    if (typeof entry.inScope !== 'boolean') fail('finding_disposition_invalid', `collected_finding_${index}_scope_invalid`)
+    if (!FINDING_RISK_CLASSES.includes(entry.riskClass)) fail('finding_disposition_invalid', `collected_finding_${index}_risk_class_invalid`)
     if (byId.has(entry.id) || threads.has(entry.threadId)) {
       fail('finding_disposition_invalid', `collected_finding_${index}_duplicated`)
     }
@@ -1082,11 +1132,29 @@ const parseCollectedConversation = (collectedConversation) => {
   if (unresolvedInRecords > collectedConversation.unresolvedThreads) {
     fail('finding_disposition_invalid', 'collected_conversation_count_inconsistent')
   }
-  return { complete: collectedConversation.complete, unresolvedThreads: collectedConversation.unresolvedThreads, byId }
+  // Independent re-reviews the collector observed on the server: which review
+  // examined which head, whether its author differs from the agent sender, and
+  // which regression locations the collector verified exist at that head. A fix
+  // claim may only cite these; it can never invent its own re-review reference.
+  const reReviewsRaw = collectedConversation.reReviews
+  if (!Array.isArray(reReviewsRaw) || reReviewsRaw.length > 64) {
+    fail('finding_disposition_invalid', 'collected_rereview_set_invalid')
+  }
+  const reReviews = new Map()
+  for (const [index, record] of reReviewsRaw.entries()) {
+    exactKeys(record, ['ref', 'headOid', 'independent', 'regressionLocations'], 'finding_disposition_invalid', `collected_rereview_${index}_shape_invalid`)
+    assertIdentifier(record.ref, 'finding_disposition_invalid', `collected_rereview_${index}_ref_invalid`)
+    assertSha1(record.headOid, 'finding_disposition_invalid', `collected_rereview_${index}_head_invalid`)
+    if (typeof record.independent !== 'boolean') fail('finding_disposition_invalid', `collected_rereview_${index}_independence_invalid`)
+    validateEvidenceLocations(record.regressionLocations, `collected_rereview_${index}`)
+    if (reReviews.has(record.ref)) fail('finding_disposition_invalid', `collected_rereview_${index}_duplicated`)
+    reReviews.set(record.ref, record)
+  }
+  return { complete: collectedConversation.complete, unresolvedThreads: collectedConversation.unresolvedThreads, byId, reReviews }
 }
 
 export function validateFindingDispositionBundle(bundle, expectedRequiredCheckSource, {
-  collectedConversation, convergenceObservedAt, sameHeadCheckRuns,
+  collectedConversation, convergenceObservedAt, sameHeadCheckRuns, expectedPolicySha256,
 } = {}) {
   exactKeys(bundle, [
     'schemaVersion', 'repository', 'prNumber', 'baseOid', 'headOid', 'policySha256',
@@ -1119,13 +1187,27 @@ export function validateFindingDispositionBundle(bundle, expectedRequiredCheckSo
     fail('finding_disposition_invalid', 'finding_or_thread_identity_duplicated')
   }
   const collected = parseCollectedConversation(collectedConversation)
+  // The bundle cannot vouch for the policy it was evaluated under: the trusted
+  // side supplies the current immutable policy digest and it must match exactly.
+  assertSha256(expectedPolicySha256, 'finding_disposition_invalid', 'trusted_policy_digest_required')
+  if (bundle.policySha256 !== expectedPolicySha256) fail('finding_disposition_invalid', 'bundle_policy_digest_not_trusted')
   if (collected.byId.size !== findings.length || findings.some((finding) => !collected.byId.has(finding.id))) {
     fail('finding_disposition_incomplete', 'dispositions_do_not_cover_complete_collected_finding_set')
   }
   for (const [index, finding] of findings.entries()) {
     const record = collected.byId.get(finding.id)
-    if (record.threadId !== finding.threadId || record.source !== finding.source || record.severity !== finding.severity) {
-      fail('finding_disposition_invalid', `finding_${index}_not_bound_to_collected_record`)
+    if (
+      record.threadId !== finding.threadId || record.source !== finding.source || record.severity !== finding.severity ||
+      record.inScope !== finding.inScope || record.riskClass !== finding.riskClass
+    ) fail('finding_disposition_invalid', `finding_${index}_not_bound_to_collected_record`)
+    // A fix claim cites a server-observed independent re-review of the repair head
+    // and only regression locations the collector verified at that head.
+    if (finding.fixEvidence !== null) {
+      const reReview = collected.reReviews.get(finding.fixEvidence.reReviewRef)
+      if (
+        !reReview || reReview.headOid !== finding.fixEvidence.repairHeadOid || reReview.independent !== true ||
+        !finding.fixEvidence.regressionEvidence.every((location) => reReview.regressionLocations.includes(location))
+      ) fail('finding_disposition_invalid', `finding_${index}_fix_evidence_not_server_observed`)
     }
     if (record.resolved !== finding.threadResolved) {
       fail('finding_disposition_incomplete', `finding_${index}_thread_resolution_not_server_observed`)
@@ -1525,15 +1607,17 @@ export function parseReviewDispositionMetadata(body) {
   return validateReviewDispositionMetadata(parsed)
 }
 
-// Loop guard keyed on the server-reported author, never on body text: only what
-// the trusted agent sender wrote is agent output. A marker pasted or quoted by any
-// other author is ordinary text, so it can neither hide that author's finding from
-// intake nor influence deduplication.
+// Loop guard keyed on the server-reported author AND the marker: only a marked
+// comment written by the trusted agent sender is agent output. A marker pasted or
+// quoted by any other author is ordinary text, so it can neither hide that author's
+// finding from intake nor influence deduplication; and the sender's own unmarked
+// review findings stay intake instead of being silenced by their author alone.
 export function selectFindingIntake(comments, { agentSender } = {}) {
   if (!Array.isArray(comments)) fail('review_disposition_invalid', 'comments_required')
   if (typeof agentSender !== 'string' || !GITHUB_LOGIN.test(agentSender)) fail('review_disposition_invalid', 'agent_sender_required')
   return deepFreeze(comments
-    .filter((comment) => isPlainObject(comment) && typeof comment.body === 'string' && comment.author !== agentSender)
+    .filter((comment) => isPlainObject(comment) && typeof comment.body === 'string' &&
+      !(comment.author === agentSender && isAgentGeneratedComment(comment.body)))
     .map(clone))
 }
 
@@ -1555,9 +1639,13 @@ export function planReviewDispositionMutation({ existingComments, candidateMetad
     if (reviewDispositionTupleKey(existing) === candidateKey) {
       return deepFreeze({ action: 'skip', reason: 'duplicate_exact_tuple' })
     }
+    // Same decision for the same finding on the same exact base/head tuple with the
+    // same evidence fingerprint: a base that moved underneath the head is a new
+    // integration state and gets its own disposition.
     if (
       existing.finding_id === candidate.finding_id && existing.head_sha === candidate.head_sha &&
-      existing.disposition === candidate.disposition
+      existing.base_sha === candidate.base_sha && existing.disposition === candidate.disposition &&
+      existing.evidence_sha256 === candidate.evidence_sha256
     ) return deepFreeze({ action: 'skip', reason: 'already_dispositioned_on_head' })
   }
   return deepFreeze({ action: 'post', reason: 'new_disposition_for_finding_on_head' })

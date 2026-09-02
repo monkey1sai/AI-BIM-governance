@@ -159,8 +159,24 @@ export function planSinkActions({ plan: planRaw, gh, live = false, resolve = fal
         continue;
       }
       const decision = planReviewDispositionMutation({ existingComments: thread.comments, candidateMetadata: reply.bodyMetadata });
+      // Bounded single-thread resolution: re-read the head before and after, and
+      // record a race instead of assuming the resolution still binds the same head.
+      const resolveThread = () => {
+        if (!tupleMatches(readPrTuple(gh, plan.prNumber), plan)) {
+          record.reason = 'resolution_skipped_head_drift';
+          return;
+        }
+        const mutation = JSON.parse(gh(['api', 'graphql', '-f', `query=${RESOLVE_MUTATION}`, '-F', `id=${reply.threadId}`]));
+        record.resolved = mutation?.data?.resolveReviewThread?.thread?.isResolved === true;
+        if (!tupleMatches(readPrTuple(gh, plan.prNumber), plan)) record.reason = 'resolution_race';
+      };
       if (decision.action !== 'post') {
         Object.assign(record, { action: decision.action, reason: decision.reason });
+        // An exact duplicate whose resolution never landed (a crash between the
+        // POST and the GraphQL mutation) is finished here instead of skipped forever.
+        if (live && resolve && decision.action === 'skip' && decision.reason === 'duplicate_exact_tuple' && reply.resolvable) {
+          resolveThread();
+        }
         continue;
       }
       if (!live) {
@@ -178,16 +194,15 @@ export function planSinkActions({ plan: planRaw, gh, live = false, resolve = fal
         continue;
       }
       Object.assign(record, { action: 'posted', reason: decision.reason, commentId: posted.id, commentUrl: posted.html_url });
-      if (!resolve || !reply.resolvable) continue;
-      // Bounded single-thread resolution: re-read the head before and after, and
-      // record a race instead of assuming the resolution still binds the same head.
+      // The tuple is re-read right after every mutation, not only before a
+      // resolution: a reply that landed on a moved head is recorded as raced and
+      // is never followed by a resolution.
       if (!tupleMatches(readPrTuple(gh, plan.prNumber), plan)) {
-        record.reason = 'resolution_skipped_head_drift';
+        record.reason = 'posted_head_drift';
         continue;
       }
-      const mutation = JSON.parse(gh(['api', 'graphql', '-f', `query=${RESOLVE_MUTATION}`, '-F', `id=${reply.threadId}`]));
-      record.resolved = mutation?.data?.resolveReviewThread?.thread?.isResolved === true;
-      if (!tupleMatches(readPrTuple(gh, plan.prNumber), plan)) record.reason = 'resolution_race';
+      if (!resolve || !reply.resolvable) continue;
+      resolveThread();
     } catch (error) {
       Object.assign(record, { action: record.action === 'posted' ? 'posted' : 'error', reason: errorReason(error) });
     }

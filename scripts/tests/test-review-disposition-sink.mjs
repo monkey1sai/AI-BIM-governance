@@ -183,6 +183,36 @@ test('dry run posts nothing, live posts once per finding, and reruns dedupe on t
   const rerunResult = planSinkActions({ plan, gh: rerun.gh, live: true, env: {} });
   assert.deepEqual(rerunResult.results.map((entry) => entry.reason), ['duplicate_exact_tuple', 'duplicate_exact_tuple', 'duplicate_exact_tuple']);
   assert.equal(rerun.calls.some((call) => call.args.includes('POST')), false);
+  assert.deepEqual(rerunResult.results.map((entry) => entry.resolved), [false, false, false]);
+  // A rerun with --resolve finishes the resolution a crashed run left pending, and only for the resolvable duplicate.
+  const finish = makeGh({ threads: threadsFor(plan, Object.fromEntries(plan.replies.map((reply) => [reply.threadId, [
+    { databaseId: 500, author: 'monkey1sai', body: reply.body },
+  ]]))) });
+  const finishResult = planSinkActions({ plan, gh: finish.gh, live: true, resolve: true, env: {} });
+  assert.deepEqual(finishResult.results.map((entry) => [entry.action, entry.reason, entry.resolved]), [
+    ['skip', 'duplicate_exact_tuple', false], ['skip', 'duplicate_exact_tuple', true], ['skip', 'duplicate_exact_tuple', false],
+  ]);
+  assert.equal(finish.calls.some((call) => call.args.includes('POST')), false);
+  assert.equal(finish.calls.filter((call) => call.args.join(' ').includes('resolveReviewThread')).length, 1);
+});
+
+test('a head that moves right after a reply is posted is recorded as drift and never resolved', () => {
+  const plan = renderPlan({ findings: [makePacket().findings[1]] });
+  let reads = 0;
+  const { gh, calls } = makeGh({
+    threads: threadsFor(plan),
+    // 1st read: before post, 2nd: immediately after post -> drift.
+    tuple: () => { reads += 1; return makeSnapshot(reads >= 2 ? { headRefOid: SHA('9') } : {}); },
+  });
+  const result = planSinkActions({ plan, gh, live: true, resolve: true, env: {} });
+  assert.equal(result.results[0].action, 'posted');
+  assert.equal(result.results[0].reason, 'posted_head_drift');
+  assert.equal(result.results[0].resolved, false);
+  assert.equal(calls.some((call) => call.args.join(' ').includes('resolveReviewThread')), false);
+  // Without --resolve the post-mutation re-read still happens.
+  reads = 0;
+  const plain = planSinkActions({ plan, gh, live: true, env: {} });
+  assert.equal(plain.results[0].reason, 'posted_head_drift');
 });
 
 test('the sink holds on head drift, resolved threads, missing finding comments, sender mismatch, and readback mismatch', () => {
@@ -222,8 +252,8 @@ test('a head that moves between posting and resolving is recorded as a resolutio
     threads: threadsFor(plan),
     tuple: () => {
       reads += 1;
-      // 1st read: before post, 2nd: before resolve, 3rd: after resolve -> drift.
-      return makeSnapshot(reads >= 3 ? { headRefOid: SHA('9') } : {});
+      // 1st read: before post, 2nd: after post, 3rd: before resolve, 4th: after resolve -> drift.
+      return makeSnapshot(reads >= 4 ? { headRefOid: SHA('9') } : {});
     },
   });
   const result = planSinkActions({ plan, gh, live: true, resolve: true, env: {} });
