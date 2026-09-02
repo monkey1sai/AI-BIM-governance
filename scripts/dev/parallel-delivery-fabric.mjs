@@ -11,7 +11,10 @@ const MAX_INPUT = 256 * 1024
 const MAX_OUTPUT = 64 * 1024
 const MAX_DEPTH = 16
 const MAX_KEYS = 128
-const MAX_NODES = 512
+// Sized for the delivery-plan contract's supported maximum (64 single-resource
+// tasks is roughly 1,200 aggregate nodes), so plan size never becomes a de facto
+// writer-count cap. The byte budget still bounds the input.
+const MAX_NODES = 4096
 const COMMAND_ID = /^[A-Za-z][A-Za-z0-9._:-]{2,127}$/u
 const PLAN_ID = /^[A-Za-z][A-Za-z0-9._:-]{2,127}$/u
 const SAFE_REASON = /^[A-Za-z0-9_:-]{1,128}$/u

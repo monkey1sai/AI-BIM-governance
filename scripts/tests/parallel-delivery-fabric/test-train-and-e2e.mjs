@@ -927,6 +927,18 @@ test('base-pinned applicability is immutable and a candidate cannot downgrade re
   })
   assert.equal(docsOnly.status, 'E2E_NOT_APPLICABLE')
   assert.equal(docsOnly.e2e_required, false)
+  // Paths outside the static allowlist are executable or verification-bearing and
+  // fail closed to E2E-required even when no trigger regex names them.
+  for (const path of ['scripts/deploy.ps1', 'docker-compose.yml', '.github/workflows/ci.yml', 'tests/contracts/ifc_ready_payload.json', 'agent-contracts/schema.json', 'Dockerfile']) {
+    const result = classifyE2EApplicability({ change: { paths: [path] }, trustedPolicy: trustedPolicy(), baseSha: BASE })
+    assert.equal(result.status, 'E2E_REQUIRED', path)
+    assert.equal(result.record.reason, 'UNCLASSIFIED_EXECUTABLE_OR_DEPLOYMENT_PATH', path)
+  }
+  for (const path of ['docs/agents/example.md', 'openspec/changes/x/tasks.md', 'README.md', 'assets/logo.png', 'LICENSE']) {
+    assert.equal(classifyE2EApplicability({ change: { paths: [path] }, trustedPolicy: trustedPolicy(), baseSha: BASE }).status, 'E2E_NOT_APPLICABLE', path)
+  }
+  const mixed = classifyE2EApplicability({ change: { paths: ['docs/agents/example.md', 'scripts/deploy.ps1'] }, trustedPolicy: trustedPolicy(), baseSha: BASE })
+  assert.equal(mixed.status, 'E2E_REQUIRED')
 })
 
 test('missing, stale, and candidate-sourced applicability records are held', () => {

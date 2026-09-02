@@ -380,6 +380,10 @@ const parseStackPoll = (raw, plan, accepted) => {
     poll.request_digest !== plan.request_digest || !sameCanonical(poll.operation, accepted.operation)) return null
   const operation = parseOperation(poll.operation, plan)
   if (operation === null) return null
+  // A poll observed before the frozen stack existed cannot describe its merge: a
+  // replayed stale observation would otherwise become `merged_at` and let a
+  // deployment dated before the stack satisfy the merge-to-deploy ordering.
+  if (Date.parse(poll.observed_at) < Date.parse(plan.frozen_stack.created_at)) return null
   if (poll.status === 'pending') return exactKeys(poll, baseKeys) ? { kind: 'pending' } : null
   if (['timeout', 'expired', 'not_found', 'ambiguous'].includes(poll.status)) {
     return exactKeys(poll, baseKeys) ? { kind: 'unproven' } : null

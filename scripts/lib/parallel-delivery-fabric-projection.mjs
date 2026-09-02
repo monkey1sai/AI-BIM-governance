@@ -17,7 +17,8 @@ const TERMINAL_PROCESS_ID = /(?:^|[/:])\d+$/u
 const SECRET_VALUE = /(?:bearer|token|cookie|authorization|private[-_]?key|gh[pousr]_|github_pat_|eyJ[A-Za-z0-9_-]{10,})/iu
 const ABSOLUTE_PATH = /(?:^|:)[A-Za-z]:[\\/]|(?:^|:)\/(?:home|users|tmp)(?:\/|$)/iu
 const RAW_ENVIRONMENT = /(?:^|[/:])(?:(?:env|environment):[A-Za-z_][A-Za-z0-9_]*|\$env:[A-Za-z_][A-Za-z0-9_]*|%[A-Za-z_][A-Za-z0-9_]*%)(?=$|[/:])/iu
-const MAX_RECURSIVE_INPUT_NODES = 512
+// Matches the CLI/snapshot node budget so a contract-maximum plan is projectable.
+const MAX_RECURSIVE_INPUT_NODES = 4096
 const INVENTORY_SHADOW_PIN = Object.freeze({
   issuer_id: 'issuer:host-inventory',
   issuer_version: 'host-inventory-authority/v1',

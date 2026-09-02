@@ -528,6 +528,20 @@ export function createPlanRegistry({ store, clock }) {
   return Object.freeze({ submit, validateGeneration, inspect })
 }
 
+// Retention bounds. Released leases keep their resources retained for review, so
+// their truth can never be dropped; beyond the newest full records they are
+// compacted into `retained_resources` stubs that carry exactly what admission,
+// contention and dependency checks consult. Consumed owner-end attestations are
+// replay-protected by the registry until well past their own expiry, after which
+// the attestation validator already rejects them as expired.
+const RETAINED_RELEASED_LEASE_RECORDS = 64
+const MAX_RETAINED_RELEASED_LEASE_RECORDS = 1024
+const USED_ATTESTATION_GRACE_MS = 7 * 24 * 60 * 60 * 1000
+const RETAINED_RESOURCE_KEYS = Object.freeze([
+  'lease_id', 'plan_id', 'task_id', 'generation', 'branch', 'worktree_id', 'resource_keys', 'scope_digest',
+  'head_sha', 'release_reason', 'released_at', 'release_record_digest',
+])
+
 const emptyLeaseRegistry = (writerCap) => ({
   schema_version: 'session-lease-registry/v1',
   generation: 0,
@@ -535,7 +549,29 @@ const emptyLeaseRegistry = (writerCap) => ({
   leases: {},
   draining_plans: {},
   used_owner_end_attestations: {},
+  retained_resources: {},
 })
+
+const retainedResourceStub = (lease) => ({
+  lease_id: lease.lease_id,
+  plan_id: lease.plan_id,
+  task_id: lease.task_id,
+  generation: lease.generation,
+  branch: lease.branch,
+  worktree_id: lease.worktree_id,
+  resource_keys: clone(lease.resource_keys),
+  scope_digest: lease.scope_digest,
+  head_sha: lease.head_sha,
+  release_reason: lease.release_reason,
+  released_at: lease.updated_at,
+  release_record_digest: digestCanonical(lease.release_record),
+})
+
+// Every resource holder the registry knows about: full lease records plus the
+// compacted stubs, which remain held for review exactly like the records they replaced.
+const retainedResourceHolders = (record) => Object.values(record.retained_resources ?? {}).map((stub) => ({
+  ...stub, state: 'RELEASED', retention_state: 'RETAINED_FOR_REVIEW',
+}))
 
 const validateLeaseRequest = (request, store) => {
   exactKeys(request, [
@@ -630,10 +666,10 @@ const findAdmissionBlocker = (record, request) => {
   if (Object.hasOwn(record.draining_plans, request.plan_id)) {
     return { status: 'QUEUED_FOR_LEASE', reason: 'PLAN_DRAINING' }
   }
-  if (record.leases[request.lease_id]) {
+  if (record.leases[request.lease_id] || Object.hasOwn(record.retained_resources ?? {}, request.lease_id)) {
     return { status: 'HELD_EXECUTION_AUTHORITY', reason: 'LEASE_ID_ALREADY_BOUND' }
   }
-  for (const lease of Object.values(record.leases)) {
+  for (const lease of [...Object.values(record.leases), ...retainedResourceHolders(record)]) {
     if (!resourceHeld(lease)) continue
     if (request.resource_keys.some((key) => lease.resource_keys.some((heldKey) => resourceKeysConflict(key, heldKey)))) {
       return { status: 'QUEUED_FOR_LEASE', reason: 'RESOURCE_CONFLICT' }
@@ -848,11 +884,17 @@ const validateLeaseRecord = (lease, leaseId) => {
 
 const validateLeaseRegistryRecord = (record, writerCap) => {
   exactKeys(record, [
-    'schema_version', 'generation', 'nonce', 'created_at', 'updated_at', 'writer_cap', 'leases', 'draining_plans', 'used_owner_end_attestations', 'canonical_digest',
+    'schema_version', 'generation', 'nonce', 'created_at', 'updated_at', 'writer_cap', 'leases', 'draining_plans', 'used_owner_end_attestations',
+    'retained_resources', 'canonical_digest',
   ], 'lease_registry')
   if (record.schema_version !== 'session-lease-registry/v1' || record.writer_cap !== writerCap || !isObject(record.leases) ||
-      !isObject(record.draining_plans) || !isObject(record.used_owner_end_attestations)) fail('registry_record_invalid', 'lease_registry_shape')
+      !isObject(record.draining_plans) || !isObject(record.used_owner_end_attestations) || !isObject(record.retained_resources)) {
+    fail('registry_record_invalid', 'lease_registry_shape')
+  }
   assertStamped(record, 'lease_registry')
+  if (Object.keys(record.leases).length + Object.keys(record.retained_resources).length > 4096) {
+    fail('registry_record_invalid', 'lease_registry_retention_limit')
+  }
   const heldBranches = new Set()
   const heldWorktrees = new Set()
   for (const [leaseId, lease] of Object.entries(record.leases)) {
@@ -864,6 +906,26 @@ const validateLeaseRegistryRecord = (record, writerCap) => {
     heldBranches.add(lease.branch)
     heldWorktrees.add(lease.worktree_id)
   }
+  for (const [leaseId, stub] of Object.entries(record.retained_resources)) {
+    assertTask2OpaqueId(leaseId, 'lease_registry.retained_resource_key')
+    exactKeys(stub, RETAINED_RESOURCE_KEYS, `lease_registry.retained_resource.${leaseId}`)
+    if (stub.lease_id !== leaseId || Object.hasOwn(record.leases, leaseId)) fail('registry_record_invalid', `retained_resource.${leaseId}_identity`)
+    for (const key of ['plan_id', 'task_id']) assertTask2OpaqueId(stub[key], `retained_resource.${leaseId}.${key}`)
+    assertOpaque(stub.worktree_id, `retained_resource.${leaseId}.worktree_id`)
+    assertIdentifier(stub.branch, `retained_resource.${leaseId}.branch`)
+    if (!Number.isSafeInteger(stub.generation) || stub.generation < 1 || !Array.isArray(stub.resource_keys) ||
+        stub.resource_keys.length === 0 || stub.resource_keys.length > 256 || new Set(stub.resource_keys).size !== stub.resource_keys.length ||
+        !['handoff', 'failed', 'aborted'].includes(stub.release_reason)) fail('registry_record_invalid', `retained_resource.${leaseId}_shape`)
+    const stubScope = canonicalScopeFromResourceKeys(stub.resource_keys, `retained_resource.${leaseId}.resource_keys`)
+    if (digestCanonical(stubScope) !== stub.scope_digest) fail('registry_record_invalid', `retained_resource.${leaseId}_scope_binding`)
+    assertOid(stub.head_sha, `retained_resource.${leaseId}.head_sha`, { zero: false })
+    assertDigest(stub.release_record_digest, `retained_resource.${leaseId}.release_record_digest`)
+    parseTimestamp(stub.released_at, `retained_resource.${leaseId}.released_at`)
+    if (heldBranches.has(stub.branch)) fail('registry_record_invalid', 'lease_registry_branch_contention')
+    if (heldWorktrees.has(stub.worktree_id)) fail('registry_record_invalid', 'lease_registry_worktree_contention')
+    heldBranches.add(stub.branch)
+    heldWorktrees.add(stub.worktree_id)
+  }
   for (const [planId, drain] of Object.entries(record.draining_plans)) {
     assertTask2OpaqueId(planId, 'lease_registry.draining_plan_key')
     exactKeys(drain, ['plan_id', 'generation', 'requested_at', 'reason', 'nonce'], 'lease_registry.draining_plan')
@@ -874,12 +936,13 @@ const validateLeaseRegistryRecord = (record, writerCap) => {
   }
   for (const [attestationRef, used] of Object.entries(record.used_owner_end_attestations)) {
     assertTask2OpaqueId(attestationRef, 'lease_registry.used_attestation_ref')
-    exactKeys(used, ['nonce', 'lease_id', 'consumed_at', 'release_id', 'release_record_digest'], 'lease_registry.used_attestation')
+    exactKeys(used, ['nonce', 'lease_id', 'consumed_at', 'expires_at', 'release_id', 'release_record_digest'], 'lease_registry.used_attestation')
     assertNonce(used.nonce, 'lease_registry.used_attestation.nonce')
     assertTask2OpaqueId(used.lease_id, 'lease_registry.used_attestation.lease_id')
     assertTask2OpaqueId(used.release_id, 'lease_registry.used_attestation.release_id')
     assertDigest(used.release_record_digest, 'lease_registry.used_attestation.release_record_digest')
     parseTimestamp(used.consumed_at, 'lease_registry.used_attestation.consumed_at')
+    parseTimestamp(used.expires_at, 'lease_registry.used_attestation.expires_at')
   }
   return record
 }
@@ -1038,7 +1101,32 @@ export function createCommandJournal({ store, clock, receiptLimit = COMMAND_JOUR
   return Object.freeze({ read, reserve, commit })
 }
 
-const nextRegistryRecord = ({ current, writerCap, nonce, timestamp, leases, drainingPlans = clone(current?.draining_plans ?? {}), usedOwnerEndAttestations }) => {
+// Compacts released lease records beyond the newest `retainedReleasedLeases`
+// into resource stubs and drops consumed attestations that expired more than the
+// grace window ago. Both preserve the truth that gates admission: every retained
+// resource still blocks, every attestation still inside its replay window still replays.
+const compactRegistry = ({ leases, usedOwnerEndAttestations, retainedResources, retainedReleasedLeases, timestamp }) => {
+  const released = Object.values(leases)
+    .filter((lease) => lease.state === 'RELEASED')
+    .sort((left, right) => (right.updated_at.localeCompare(left.updated_at) || right.lease_id.localeCompare(left.lease_id)))
+  for (const lease of released.slice(retainedReleasedLeases)) {
+    retainedResources[lease.lease_id] = retainedResourceStub(lease)
+    delete leases[lease.lease_id]
+  }
+  const now = parseTimestamp(timestamp, 'lease_registry.updated_at')
+  for (const [attestationRef, used] of Object.entries(usedOwnerEndAttestations)) {
+    if (typeof used?.expires_at !== 'string') continue
+    const expiresAt = Date.parse(used.expires_at)
+    if (Number.isFinite(expiresAt) && expiresAt + USED_ATTESTATION_GRACE_MS < now) delete usedOwnerEndAttestations[attestationRef]
+  }
+}
+
+const nextRegistryRecord = ({
+  store = undefined, current, writerCap, nonce, timestamp, leases, drainingPlans = clone(current?.draining_plans ?? {}), usedOwnerEndAttestations,
+  retainedResources = clone(current?.retained_resources ?? {}),
+  retainedReleasedLeases = store?.retainedReleasedLeases ?? RETAINED_RELEASED_LEASE_RECORDS,
+}) => {
+  compactRegistry({ leases, usedOwnerEndAttestations, retainedResources, retainedReleasedLeases, timestamp })
   const record = stamp({
     schema_version: 'session-lease-registry/v1',
     generation: (current?.generation ?? 0) + 1,
@@ -1049,6 +1137,7 @@ const nextRegistryRecord = ({ current, writerCap, nonce, timestamp, leases, drai
     leases,
     draining_plans: drainingPlans,
     used_owner_end_attestations: usedOwnerEndAttestations,
+    retained_resources: retainedResources,
   })
   validateLeaseRegistryRecord(record, writerCap)
   return record
@@ -1129,6 +1218,7 @@ const updateSingleLease = async ({ store, writerCap, clock, leaseId, expectedOid
   const leases = clone(snapshot.record.leases)
   leases[leaseId] = nextLease
   const next = nextRegistryRecord({
+      store,
     current: snapshot.record,
     writerCap,
     nonce,
@@ -1209,9 +1299,18 @@ const validateReservedOwnerEndAttestation = (attestation, lease, reservation) =>
   }
 }
 
-export function createLeaseRegistry({ store, clock, writerCap = WRITER_CAP_V1, ownerEndAttestor = undefined, executionEnvelope = undefined }) {
-  if (!store || typeof store.read !== 'function' || typeof store.cas !== 'function' || typeof store.casGuarded !== 'function') fail('invalid_port', 'lease_store_required')
+export function createLeaseRegistry({
+  store: rawStore, clock, writerCap = WRITER_CAP_V1, ownerEndAttestor = undefined, executionEnvelope = undefined,
+  retainedReleasedLeases = RETAINED_RELEASED_LEASE_RECORDS,
+}) {
+  if (!rawStore || typeof rawStore.read !== 'function' || typeof rawStore.cas !== 'function' || typeof rawStore.casGuarded !== 'function') fail('invalid_port', 'lease_store_required')
   if (writerCap !== WRITER_CAP_V1) fail('invalid_value', 'writer_cap_must_equal_two')
+  if (!Number.isSafeInteger(retainedReleasedLeases) || retainedReleasedLeases < 1 || retainedReleasedLeases > MAX_RETAINED_RELEASED_LEASE_RECORDS) {
+    fail('invalid_value', 'retained_released_leases_out_of_range')
+  }
+  // The retention bound travels with the store so every record builder, including
+  // the module-level lease helpers, compacts with the same policy.
+  const store = Object.create(rawStore, { retainedReleasedLeases: { value: retainedReleasedLeases } })
 
   const inspect = () => registrySnapshot(store, writerCap)
 
@@ -1241,7 +1340,7 @@ export function createLeaseRegistry({ store, clock, writerCap = WRITER_CAP_V1, o
     const snapshot = await registrySnapshot(store, writerCap)
     if (snapshot.status === 'HELD_REGISTRY_INTEGRITY') return snapshot
     for (const dependencyTaskId of request.dependency_task_ids) {
-      const candidates = Object.values(snapshot.record.leases).filter((lease) =>
+      const candidates = [...Object.values(snapshot.record.leases), ...retainedResourceHolders(snapshot.record)].filter((lease) =>
         lease.plan_id === request.plan_id && lease.generation === request.generation && lease.task_id === dependencyTaskId)
       const completed = candidates.filter((lease) => lease.state === 'RELEASED' && lease.release_reason === 'handoff')
       if (completed.length === 0) {
@@ -1307,6 +1406,7 @@ export function createLeaseRegistry({ store, clock, writerCap = WRITER_CAP_V1, o
     const leases = clone(snapshot.record.leases)
     leases[request.lease_id] = lease
     const record = nextRegistryRecord({
+      store,
       current: snapshot.record,
       writerCap,
       nonce: request.nonce,
@@ -1404,6 +1504,7 @@ export function createLeaseRegistry({ store, clock, writerCap = WRITER_CAP_V1, o
       const leases = clone(snapshot.record.leases)
       leases[lease_id] = nextLease
       const record = nextRegistryRecord({
+      store,
         current: snapshot.record,
         writerCap,
         nonce,
@@ -1492,6 +1593,7 @@ export function createLeaseRegistry({ store, clock, writerCap = WRITER_CAP_V1, o
     const drainingPlans = clone(snapshot.record.draining_plans)
     drainingPlans[plan_id] = { plan_id, generation, requested_at: timestamp, reason, nonce }
     const record = nextRegistryRecord({
+      store,
       current: snapshot.record,
       writerCap,
       nonce,
@@ -1570,6 +1672,7 @@ export function createLeaseRegistry({ store, clock, writerCap = WRITER_CAP_V1, o
       envelope_revocation_proof: proof,
     })
     const record = nextRegistryRecord({
+      store,
       current: snapshot.record,
       writerCap,
       nonce: reservation.nonce,
@@ -1662,11 +1765,13 @@ export function createLeaseRegistry({ store, clock, writerCap = WRITER_CAP_V1, o
       nonce: reservation.nonce,
       lease_id: lease.lease_id,
       consumed_at: nowFrom(clock),
+      expires_at: reservation.expires_at,
       release_id: reservation.release_id,
       release_record_digest: digestCanonical(releaseRecord),
     }
     const timestamp = nowFrom(clock)
     const record = nextRegistryRecord({
+      store,
       current: snapshot.record,
       writerCap,
       nonce: reservation.nonce,
@@ -1768,6 +1873,7 @@ export function createLeaseRegistry({ store, clock, writerCap = WRITER_CAP_V1, o
     const reservingLeases = clone(snapshot.record.leases)
     reservingLeases[lease_id] = reservingLease
     const reservationRecord = nextRegistryRecord({
+      store,
       current: snapshot.record,
       writerCap,
       nonce: trustedAttestation.nonce,
@@ -1831,6 +1937,7 @@ export function createLeaseRegistry({ store, clock, writerCap = WRITER_CAP_V1, o
     const proofLeases = clone(reservationResult.record.leases)
     proofLeases[lease_id] = proofLease
     const proofRecord = nextRegistryRecord({
+      store,
       current: reservationResult.record,
       writerCap,
       nonce: trustedAttestation.nonce,
@@ -1914,10 +2021,12 @@ export function createLeaseRegistry({ store, clock, writerCap = WRITER_CAP_V1, o
       nonce: trustedAttestation.nonce,
       lease_id,
       consumed_at: timestamp,
+      expires_at: trustedAttestation.expires_at,
       release_id: releaseRecord.release_id,
       release_record_digest: digestCanonical(releaseRecord),
     }
     const record = nextRegistryRecord({
+      store,
       current: proofResult.record,
       writerCap,
       nonce: trustedAttestation.nonce,

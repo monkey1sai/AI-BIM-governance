@@ -12,7 +12,8 @@ const SAFE_REASON = /^[A-Za-z0-9_:-]{1,128}$/u
 const FORBIDDEN_KEY = /^(?:__proto__|prototype|constructor)$/iu
 const MAX_SNAPSHOT_DEPTH = 16
 const MAX_SNAPSHOT_KEYS = 128
-const MAX_SNAPSHOT_NODES = 512
+// Matches the CLI node budget: a contract-maximum 64-task plan must snapshot.
+const MAX_SNAPSHOT_NODES = 4096
 const MAX_SNAPSHOT_BYTES = 256 * 1024
 const EFFECT_KEYS = Object.freeze(['filesystem', 'git', 'network', 'process', 'provider', 'github', 'deploy', 'cleanup', 'promotion'])
 const NEXT_LEVEL = Object.freeze({ plan_only: 'implement_local', implement_local: 'push_owned_branch', push_owned_branch: 'open_draft_pr', open_draft_pr: 'submit_delivery' })

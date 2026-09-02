@@ -12,7 +12,7 @@ import { createLocalParallelDeliveryFabric } from '../../lib/parallel-delivery-f
 import { createParallelDeliveryFabric } from '../../lib/parallel-delivery-fabric.mjs'
 
 const MAX_INPUT = 256 * 1024
-const MAX_NODES = 512
+const MAX_NODES = 4096
 const MAX_ARRAY_LENGTH = 128
 const ROOT = path.resolve('C:\\fabric-cli-root')
 const COMMANDS = Object.freeze(['submit', 'advance', 'reconcile', 'drain', 'release', 'inspect'])
@@ -49,11 +49,17 @@ const snapshotNodes = (value) => {
   if (value === null || typeof value !== 'object') return 1
   return 1 + Reflect.ownKeys(value).filter((key) => key !== 'length').reduce((total, key) => total + snapshotNodes(value[key]), 0)
 }
+// Builds a tree of exactly `nodes` aggregate nodes that stays within the dense
+// array width and the depth budget by spreading the remainder across children.
 const nodeTree = (nodes) => {
   if (nodes === 1) return 'x'
   const childCount = Math.min(MAX_ARRAY_LENGTH - 1, nodes - 1)
-  const remaining = nodes - 1 - childCount
-  return Array.from({ length: childCount }, (_unused, index) => nodeTree(index === 0 ? remaining + 1 : 1))
+  let remaining = nodes - 1 - childCount
+  return Array.from({ length: childCount }, () => {
+    const extra = Math.min(remaining, MAX_ARRAY_LENGTH - 1)
+    remaining -= extra
+    return nodeTree(1 + extra)
+  })
 }
 const regular = (size = 1) => ({ size, isDirectory: () => false, isFile: () => true, isSymbolicLink: () => false })
 const directory = () => ({ size: 0, isDirectory: () => true, isFile: () => false, isSymbolicLink: () => false })
@@ -311,7 +317,7 @@ test('CLI accepts stdin transport bytes exactly at 256 KiB', async () => {
   assert.equal(transportSubject.calls.length, 1)
 })
 
-test('CLI accepts input with exactly 512 aggregate nodes', async () => {
+test('CLI accepts input with exactly the aggregate node budget', async () => {
   const nodes = payloadFor('submit')
   nodes.plan = { plan_id: 'plan:one' }
   nodes.plan.payload = nodeTree(MAX_NODES - snapshotNodes(nodes))
@@ -319,6 +325,23 @@ test('CLI accepts input with exactly 512 aggregate nodes', async () => {
   const nodeSubject = fixture({ stdin: input(nodes) })
   assert.equal((await run(['submit', '--input', '-'], nodeSubject)).exitCode, 0)
   assert.equal(nodeSubject.calls.length, 1)
+})
+
+test('P1 regression — a contract-maximum 64-task delivery plan fits the CLI node budget', async () => {
+  const plan = localDeliveryPlan()
+  const [template] = plan.tasks
+  plan.tasks = Array.from({ length: 64 }, (_unused, index) => ({
+    ...template,
+    task_id: `task:max-${index}`,
+    scope: { ...template.scope, public_entrypoint: `scripts/dev/max-${index}.mjs`, resources: [{ kind: 'path', path: `scripts/dev/max-${index}.mjs` }], expected_tests: [`test:max-${index}`] },
+  }))
+  const payload = { ...payloadFor('submit'), plan }
+  // The old 512-node cap rejected every valid plan of this size before Fabric saw it.
+  assert.ok(snapshotNodes(payload) > 512)
+  assert.ok(snapshotNodes(payload) <= MAX_NODES)
+  const subject = fixture({ stdin: input(payload) })
+  assert.equal((await run(['submit', '--input', '-'], subject)).exitCode, 0)
+  assert.equal(subject.calls.length, 1)
 })
 
 test('CLI accepts input with a dense array of exactly 128 elements', async () => {
@@ -338,7 +361,7 @@ test('CLI contains stdin transport bytes at 256 KiB plus one before Fabric', asy
   assertHeld(transportSubject, await run(['submit', '--input', '-'], transportSubject))
 })
 
-test('CLI contains input with 512 aggregate nodes plus one before Fabric', async () => {
+test('CLI contains input with the aggregate node budget plus one before Fabric', async () => {
   const nodes = payloadFor('submit')
   nodes.plan = { plan_id: 'plan:one' }
   nodes.plan.payload = nodeTree(MAX_NODES - snapshotNodes(nodes) + 1)

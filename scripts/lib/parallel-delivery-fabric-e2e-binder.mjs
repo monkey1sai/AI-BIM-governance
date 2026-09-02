@@ -549,9 +549,17 @@ const pathIsTrigger = (rawPath) => {
     /(?:^|\/)(?:package\.json|playwright[^/]*\.ts|vite[^/]*\.ts)$/u.test(path)
 }
 
+// The only paths that may skip real browser evidence are an explicit static
+// allowlist: prose, images and specs. Every other path — scripts, deployment
+// manifests, workflows, contracts, source — is executable or verification-bearing
+// and is classified E2E-required unless a trigger already named it.
+const STATIC_PATH = /^(?:docs\/|openspec\/|LICENSE(?:\.[a-z]+)?$|CODEOWNERS$|\.gitignore$|\.gitattributes$|\.editorconfig$)|\.(?:md|markdown|txt|rst|adoc|png|jpe?g|gif|svg|webp|ico|pdf)$/iu
+const pathIsStatic = (rawPath) => STATIC_PATH.test(rawPath.replaceAll('\\', '/'))
+
 const changeTrigger = (change) => {
   const paths = applicabilityPaths(change)
   if (paths.some(pathIsTrigger)) return { required: true, reason: 'USER_FACING_OR_SHARED_RUNTIME_CHANGE' }
+  if (paths.some((path) => !pathIsStatic(path))) return { required: true, reason: 'UNCLASSIFIED_EXECUTABLE_OR_DEPLOYMENT_PATH' }
   if (isPlainObject(change)) {
     const flags = [
       ['route', 'USER_FACING_ROUTE_CHANGE'], ['routes', 'USER_FACING_ROUTE_CHANGE'], ['workflow', 'USER_FACING_WORKFLOW_CHANGE'],

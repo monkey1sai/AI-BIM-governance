@@ -1077,6 +1077,7 @@ test('P1 regression — corrupt or wrong-ref persisted records hold before occup
     leases: { 'lease:corrupt': malformedLease },
     draining_plans: {},
     used_owner_end_attestations: {},
+    retained_resources: {},
   })
   const malformedBlob = JSON.stringify(malformedRegistry)
   const malformedOid = createHash('sha1').update(malformedBlob).digest('hex')
@@ -1229,6 +1230,7 @@ test('P1 regression — lease writer cap is ref-pinned before writes and wrong-c
     leases: {},
     draining_plans: {},
     used_owner_end_attestations: {},
+    retained_resources: {},
   })
   for (const writerCap of [0, 1, 3, 99, '2', null]) {
     await assert.rejects(
@@ -2299,4 +2301,125 @@ test('P2 regression — managed branches are keyed by branch identity and renewe
   }))
   assert.equal(invalidBranch.reason, 'COMMAND_SCHEMA_INVALID')
   assert.equal(store.calls.filter((call) => call.kind === 'cas').length, 2)
+})
+
+test('P2 regression — released leases compact into retained-resource stubs that still gate admission, and consumed attestations expire out of the ledger', async () => {
+  // Every release revokes an execution envelope; this port issues a distinct OID per revocation.
+  const createSequencedEnvelopePort = () => {
+    let oid = ENVELOPE_OID
+    let transitionSequence = 0
+    let revocations = 0
+    return {
+      current: () => ({ oid, transitionSequence }),
+      async revoke(request) {
+        if (request.expected_envelope_oid !== oid || request.expected_transition_sequence !== transitionSequence) {
+          return { status: 'CONFLICT', actual_oid: oid }
+        }
+        const previousOid = oid
+        revocations += 1
+        oid = `${'c'.repeat(39)}${revocations.toString(16)}`
+        transitionSequence += 1
+        return { status: 'REVOKED', previous_oid: previousOid, oid, transition_sequence: transitionSequence, revocation_epoch: 0, in_flight_command: false }
+      },
+    }
+  }
+  const git = createInMemoryGit()
+  git.blobs.set(SEEDED_PLAN_OID, SEEDED_PLAN_BLOB)
+  git.refs.set('refs/ai-bim/delivery-plans', SEEDED_PLAN_OID)
+  const clock = createClock()
+  const store = createGitCasStore({ git, commonDir: 'C:/fake/common-dir' })
+  const envelope = createSequencedEnvelopePort()
+  const leaseRegistry = createLeaseRegistry({
+    store, clock, writerCap: 2, ownerEndAttestor: createTrustedAttestor(), executionEnvelope: envelope, retainedReleasedLeases: 1,
+  })
+  const releaseLease = async (leaseId, overrides, attestationSuffix) => {
+    const admitted = await leaseRegistry.admit(makeRequest(store, { lease_id: leaseId, ...overrides }))
+    assert.equal(admitted.status, 'ADMITTED')
+    const end = await leaseRegistry.endRequest({
+      lease_id: leaseId, expected_oid: admitted.oid, nonce: NONCE(`${attestationSuffix}-end`), reason: 'handoff',
+      handoff_or_candidate_reference: `handoff:${attestationSuffix}`, owner_end_attestation: endAttestation(admitted.lease),
+    })
+    const attestation = {
+      attestation_ref: `attestation:${attestationSuffix}`, attestation_digest: SHA256,
+      issuer_id: 'attestor:owner-end', issuer_version: 'owner-end/v1', owner_session: admitted.lease.owner_session,
+      provider: 'codex', provider_session_id: admitted.lease.provider_session_id, execution_context_id: admitted.lease.execution_context_id,
+      lease_id: leaseId, generation: 1, head_sha: SHA1, scope_digest: admitted.lease.scope_digest,
+      worktree_path_digest: SHA256, observed_at: '2026-08-29T00:00:00.000Z',
+      expires_at: '2026-08-29T00:10:00.000Z', nonce: NONCE(`${attestationSuffix}-owner-end`), revocation_epoch: 0,
+    }
+    const { oid: envelopeOid, transitionSequence } = envelope.current()
+    const released = await leaseRegistry.release({
+      lease_id: leaseId, expected_oid: end.oid, expected_envelope_oid: envelopeOid,
+      expected_envelope_transition_sequence: transitionSequence, attestation,
+    })
+    assert.equal(released.status, 'RELEASED', JSON.stringify(released))
+    return attestation
+  }
+  await releaseLease('lease:compact-a', { resource_keys: ['path:src/compact-a.mjs'] }, 'compact-a')
+  clock.set('2026-08-29T00:01:00.000Z')
+  const attestationB = await releaseLease('lease:compact-b', {
+    owner_session: 'session:compact-b', provider_session_id: 'provider:compact-b', execution_context_id: 'context:compact-b',
+    worktree_id: 'worktree:compact-b', branch: 'codex/compact-b', resource_keys: ['path:src/compact-b.mjs'],
+  }, 'compact-b')
+  // Only the newest released record stays in full; the older one is a stub that keeps its resources.
+  let record = (await leaseRegistry.inspect()).record
+  assert.deepEqual(Object.keys(record.leases), ['lease:compact-b'])
+  assert.deepEqual(Object.keys(record.retained_resources), ['lease:compact-a'])
+  assert.deepEqual(record.retained_resources['lease:compact-a'].resource_keys, ['path:src/compact-a.mjs'])
+  assert.equal(record.retained_resources['lease:compact-a'].release_reason, 'handoff')
+  assert.equal(typeof record.used_owner_end_attestations['attestation:compact-a'].expires_at, 'string')
+  const blocked = await leaseRegistry.admit(makeRequest(store, {
+    lease_id: 'lease:compact-c', owner_session: 'session:compact-c', provider_session_id: 'provider:compact-c',
+    execution_context_id: 'context:compact-c', worktree_id: 'worktree:compact-c', branch: 'codex/compact-c',
+    resource_keys: ['path:src/compact-a.mjs'], nonce: NONCE('compact-c-admit'),
+  }))
+  assert.deepEqual({ status: blocked.status, reason: blocked.reason }, { status: 'QUEUED_FOR_LEASE', reason: 'RESOURCE_CONFLICT' })
+  const rebound = await leaseRegistry.admit(makeRequest(store, {
+    lease_id: 'lease:compact-a', owner_session: 'session:compact-d', provider_session_id: 'provider:compact-d',
+    execution_context_id: 'context:compact-d', worktree_id: 'worktree:compact-d', branch: 'codex/compact-d',
+    resource_keys: ['path:src/compact-d.mjs'], nonce: NONCE('compact-d-admit'),
+  }))
+  assert.deepEqual({ status: rebound.status, reason: rebound.reason }, { status: 'HELD_EXECUTION_AUTHORITY', reason: 'LEASE_ID_ALREADY_BOUND' })
+  // A compacted handoff still satisfies a dependency lookup for its task.
+  const dependent = await leaseRegistry.validateDependencies({
+    plan_id: 'plan:one', generation: 1, task_id: 'task:compact-dependent', dependency_task_ids: ['task:one'], expected_parent_sha: SHA1,
+  })
+  assert.notEqual(dependent.reason, 'DEPENDENCY_NOT_COMPLETED')
+  // Consumed attestations leave the ledger only after expiry plus the grace window.
+  clock.set('2026-08-29T00:05:00.000Z')
+  await leaseRegistry.admit(makeRequest(store, {
+    lease_id: 'lease:compact-e', owner_session: 'session:compact-e', provider_session_id: 'provider:compact-e',
+    execution_context_id: 'context:compact-e', worktree_id: 'worktree:compact-e', branch: 'codex/compact-e',
+    resource_keys: ['path:src/compact-e.mjs'], nonce: NONCE('compact-e-admit'),
+  }))
+  record = (await leaseRegistry.inspect()).record
+  assert.deepEqual(Object.keys(record.used_owner_end_attestations).sort(), ['attestation:compact-a', 'attestation:compact-b'])
+  clock.set('2026-09-06T00:00:00.000Z')
+  await leaseRegistry.admit(makeRequest(store, {
+    lease_id: 'lease:compact-f', owner_session: 'session:compact-f', provider_session_id: 'provider:compact-f',
+    execution_context_id: 'context:compact-f', worktree_id: 'worktree:compact-f', branch: 'codex/compact-f',
+    resource_keys: ['path:src/compact-f.mjs'], nonce: NONCE('compact-f-admit'),
+  }))
+  record = (await leaseRegistry.inspect()).record
+  assert.deepEqual(Object.keys(record.used_owner_end_attestations), [])
+  assert.deepEqual(Object.keys(record.retained_resources).sort(), ['lease:compact-a'])
+  // The pruned attestation cannot be replayed: it is expired for the validator regardless of the ledger.
+  const late = await leaseRegistry.admit(makeRequest(store, {
+    lease_id: 'lease:compact-g', owner_session: 'session:compact-b', provider_session_id: 'provider:compact-b',
+    execution_context_id: 'context:compact-b', worktree_id: 'worktree:compact-g', branch: 'codex/compact-g',
+    resource_keys: ['path:src/compact-g.mjs'], nonce: NONCE('compact-g-admit'),
+  }))
+  const lateEnd = await leaseRegistry.endRequest({
+    lease_id: 'lease:compact-g', expected_oid: late.oid, nonce: NONCE('compact-g-end'), reason: 'failed',
+    handoff_or_candidate_reference: 'handoff:compact-g', owner_end_attestation: endAttestation(late.lease, {
+      observed_at: '2026-09-06T00:00:00.000Z', expires_at: '2026-09-06T00:10:00.000Z',
+    }),
+  })
+  await assert.rejects(
+    leaseRegistry.release({
+      lease_id: 'lease:compact-g', expected_oid: lateEnd.oid, expected_envelope_oid: ENVELOPE_OID, expected_envelope_transition_sequence: 0,
+      attestation: { ...attestationB, lease_id: 'lease:compact-g', scope_digest: late.lease.scope_digest },
+    }),
+    (error) => error?.code === 'owner_end_attestation_expired',
+  )
 })

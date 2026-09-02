@@ -5,7 +5,7 @@ import { createParallelDeliveryFabric } from '../../lib/parallel-delivery-fabric
 import { digestCanonical } from '../../lib/parallel-delivery-fabric-contract.mjs'
 
 const MAX_SNAPSHOT_BYTES = 256 * 1024
-const MAX_SNAPSHOT_NODES = 512
+const MAX_SNAPSHOT_NODES = 4096
 const MAX_ARRAY_LENGTH = 128
 
 const freezeDeep = (value) => {
@@ -27,11 +27,17 @@ const snapshotNodes = (value) => {
   return 1 + Reflect.ownKeys(value).filter((key) => key !== 'length').reduce((total, key) => total + snapshotNodes(value[key]), 0)
 }
 
+// Builds a tree of exactly `nodes` aggregate nodes within the dense array width
+// and the depth budget by spreading the remainder across children.
 const nodeTree = (nodes) => {
   if (nodes === 1) return 'x'
   const childCount = Math.min(MAX_ARRAY_LENGTH - 1, nodes - 1)
-  const remaining = nodes - 1 - childCount
-  return Array.from({ length: childCount }, (_unused, index) => nodeTree(index === 0 ? remaining + 1 : 1))
+  let remaining = nodes - 1 - childCount
+  return Array.from({ length: childCount }, () => {
+    const extra = Math.min(remaining, MAX_ARRAY_LENGTH - 1)
+    remaining -= extra
+    return nodeTree(1 + extra)
+  })
 }
 
 const noCalls = () => ({ admit: 0, advance: 0, commit: 0, drainPlan: 0, inspectLeases: 0, inspectPlan: 0, journalRead: 0, journalReserve: 0, planSubmit: 0, preflight: 0, projection: 0, reconcile: 0, release: 0, validateActive: 0, validateDependencies: 0, validatePlan: 0 })
@@ -287,20 +293,20 @@ test('core snapshot rejects 256 KiB plus one before journal and semantic ports',
   await assertSnapshotInputRejected(command, 'aggregate UTF-8 over 256 KiB')
 })
 
-test('core snapshot accepts exactly 512 aggregate nodes', async () => {
+test('core snapshot accepts exactly the aggregate node budget', async () => {
   const commandId = 'command:budget-nodes-ok'
   const base = snapshotNodes(submitCommand({ command_id: commandId }))
   const command = freezeDeep(submitCommand({ command_id: commandId, plan: { plan_id: 'plan:one', payload: nodeTree(MAX_SNAPSHOT_NODES - base) } }))
   assert.equal(snapshotNodes(command), MAX_SNAPSHOT_NODES)
-  await assertSnapshotInputAccepted(command, 'total nodes at 512')
+  await assertSnapshotInputAccepted(command, 'total nodes at budget')
 })
 
-test('core snapshot rejects 512 aggregate nodes plus one before journal and semantic ports', async () => {
+test('core snapshot rejects the aggregate node budget plus one before journal and semantic ports', async () => {
   const commandId = 'command:budget-nodes-over'
   const base = snapshotNodes(submitCommand({ command_id: commandId }))
   const command = freezeDeep(submitCommand({ command_id: commandId, plan: { plan_id: 'plan:one', payload: nodeTree(MAX_SNAPSHOT_NODES - base + 1) } }))
   assert.equal(snapshotNodes(command), MAX_SNAPSHOT_NODES + 1)
-  await assertSnapshotInputRejected(command, 'total nodes over 512')
+  await assertSnapshotInputRejected(command, 'total nodes over budget')
 })
 
 test('core snapshot accepts a dense array with exactly 128 elements', async () => {

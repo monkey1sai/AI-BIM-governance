@@ -383,6 +383,15 @@ test('AC-18 — direct-stack poll requires a full frozen vector, final ancestry,
   const wrongVector = successfulPoll(plan)
   wrongVector.member_vector_digest = digest('8')
   assert.equal(reduceDirectStackPoll({ plan, accepted, poll: wrongVector }).internal_state, 'MERGE_OUTCOME_UNVERIFIED')
+  // A replayed poll observed before the frozen stack was created is not evidence of its merge.
+  const stale = successfulPoll(plan)
+  stale.observed_at = '2026-08-28T11:59:59.999Z'
+  stale.fresh_origin_main.observed_at = stale.observed_at
+  const staleResult = reduceDirectStackPoll({ plan, accepted, poll: stale })
+  assert.equal(staleResult.internal_state, 'MERGE_OUTCOME_UNVERIFIED')
+  assert.doesNotMatch(JSON.stringify(staleResult), /PENDING_DEPLOY/u)
+  const stalePending = reduceDirectStackPoll({ plan, accepted, poll: { ...pollBase(plan, 'pending'), observed_at: '2026-08-28T11:00:00.000Z' } })
+  assert.equal(stalePending.internal_state, 'MERGE_OUTCOME_UNVERIFIED')
   const noAncestry = successfulPoll(plan)
   noAncestry.ancestry[0].reachable = false
   assert.equal(reduceDirectStackPoll({ plan, accepted, poll: noAncestry }).internal_state, 'MERGE_OUTCOME_UNVERIFIED')
