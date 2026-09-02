@@ -94,9 +94,17 @@ const convergedOptions = (findings = [], conversation = {}) => ({
   collectedConversation: { complete: true, unresolvedThreads: 0, findings, reReviews: [], ...conversation },
   convergenceObservedAt: CONVERGENCE_AT, sameHeadCheckRuns: makeRuns(SHA('a')), expectedPolicySha256: DIGEST('b'),
 })
-// Ledger acquisition always carries an external exact-head classification result.
+// Ledger acquisition always carries an external exact-head classification result,
+// and a delivered terminal is only recorded past the merge boundary with a verifier.
 const CLASSIFIED = { verifyClassification: () => true }
 const acquire = (ledger, input) => ledger.acquire(input, CLASSIFIED)
+const TERMINAL_VERIFIED = { verifyTerminal: ({ evidenceRef, reasonCode }) => reasonCode === 'DELIVERY_VERIFIED' && evidenceRef.startsWith('delivery-evidence:') }
+const deliver = (ledger, deliveryId) => ledger.markMergeBoundary({ deliveryId }).close({
+  deliveryId, terminalClass: 'DELIVERED', reasonCode: 'DELIVERY_VERIFIED', evidenceRef: `delivery-evidence:${deliveryId}`,
+}, TERMINAL_VERIFIED)
+const failMerged = (ledger, deliveryId) => ledger.markMergeBoundary({ deliveryId }).close({
+  deliveryId, terminalClass: 'FAILED', reasonCode: 'MERGED_NOT_DELIVERED',
+})
 
 const expectCode = async (code, callback) => {
   await assert.rejects(callback, (error) => error?.code === code)
@@ -201,6 +209,22 @@ test('review surface classification is lossless, bounded, and fail closed for bi
     diff: 'diff --git a/scripts/lib/x.mjs b/scripts/lib/x.mjs\n+const token = await fetchToken(session)\n+  password = readPassword() // prompt',
     limits: { maxFiles: 50, maxDiffBytes: 4096 },
   }).lossless, true)
+  // Colon-delimited secret fields (YAML/JSON) are caught whether quoted or not; ordinary code is not.
+  throwsCode('secret_review_surface_blocked', () => classifyReviewSurface({
+    changedFiles: [{ path: 'config/app.yml', status: 'modified', binary: false, submodule: false }],
+    diff: 'diff --git a/config/app.yml b/config/app.yml\n+api_key: supersecretvalue',
+    limits: { maxFiles: 50, maxDiffBytes: 4096 },
+  }), 'semantic_redaction_would_change_review_bytes')
+  throwsCode('secret_review_surface_blocked', () => classifyReviewSurface({
+    changedFiles: [{ path: 'config/app.json', status: 'modified', binary: false, submodule: false }],
+    diff: 'diff --git a/config/app.json b/config/app.json\n+  "db_password": "hunter2secret",',
+    limits: { maxFiles: 50, maxDiffBytes: 4096 },
+  }), 'semantic_redaction_would_change_review_bytes')
+  assert.equal(classifyReviewSurface({
+    changedFiles: [{ path: 'scripts/lib/y.mjs', status: 'modified', binary: false, submodule: false }],
+    diff: 'diff --git a/scripts/lib/y.mjs b/scripts/lib/y.mjs\n+  token: await fetchToken(session),\n+  password: readPassword(prompt),',
+    limits: { maxFiles: 50, maxDiffBytes: 4096 },
+  }).lossless, true)
   // Authoritative external contracts live under tests/contracts/ and are mechanism surface.
   assert.equal(classifyReviewSurface({
     changedFiles: [{ path: 'tests/contracts/ifc_ready_payload.json', status: 'modified', binary: false, submodule: false }],
@@ -232,6 +256,24 @@ test('review surface binds the diff bytes to the declared changed files', async 
     diff: '+no headers at all',
     limits,
   }), 'diff_surface_paths_missing')
+  // Unified file markers are part of the surface: a header that says docs while the
+  // markers name a mechanism path is not lossless and not mechanical-only.
+  throwsCode('unsupported_review_surface', () => classifyReviewSurface({
+    changedFiles: [{ path: 'docs/notes.md', status: 'modified', binary: false, submodule: false }],
+    diff: 'diff --git a/docs/notes.md b/docs/notes.md\n--- a/docs/notes.md\n+++ b/scripts/lib/x.mjs\n+text',
+    limits,
+  }), 'diff_path_not_declared_in_changed_files')
+  assert.equal(classifyReviewSurface({
+    changedFiles: [{ path: 'docs/notes.md', status: 'modified', binary: false, submodule: false }],
+    diff: 'diff --git a/docs/notes.md b/docs/notes.md\n--- a/docs/notes.md\n+++ b/docs/notes.md\n@@ -1 +1 @@\n-old\n+new\n--- not a marker, a removed line',
+    limits,
+  }).reviewMode, 'mechanical_only')
+  assert.equal(classifyReviewSurface({
+    changedFiles: [{ path: 'docs/added.md', status: 'added', binary: false, submodule: false }],
+    diff: 'diff --git a/docs/added.md b/docs/added.md\n--- /dev/null\n+++ b/docs/added.md\n+new file',
+    limits,
+  }).reviewMode, 'mechanical_only')
+  assert.deepEqual([...extractDiffSurfacePaths('diff --git a/docs/a.md b/docs/a.md\n--- "a/docs/a.md"\n+++ "b/docs/a.md"')], ['docs/a.md'])
   // The collector flag is not the only witness: the bytes themselves reveal a binary change.
   throwsCode('unsupported_review_surface', () => classifyReviewSurface({
     changedFiles: [{ path: 'assets/logo.png', status: 'modified', binary: false, submodule: false }],
@@ -418,6 +460,23 @@ test('adversarial decision requires distinct models, per-layer packet binding, a
   throwsCode('adversarial_raw_binding_invalid', () => validateAdversarialDecision({
     ...decision, layers: { ...decision.layers, l3: { ...l3, l2OutputSha256: DIGEST('2') } },
   }), 'l3_not_bound_to_exact_layer_outputs')
+  // L3 cannot clear a HIGH/CRITICAL blocker that L2 reports as surviving: the L3
+  // set must be reconciled with the bound L2 output, and any survivor fails the verdict.
+  const survivingL2 = { ...l2, surviving: [{ id: 'finding-9', severity: 'HIGH' }, { id: 'finding-10', severity: 'LOW' }] }
+  const boundL3 = { ...l3, l2OutputSha256: canonicalSha256(survivingL2) }
+  throwsCode('adversarial_raw_binding_invalid', () => validateAdversarialDecision({
+    ...decision, layers: { l1, l2: survivingL2, l3: boundL3 },
+  }), 'l3_blocker_set_not_reconciled_with_l2')
+  throwsCode('adversarial_blocker_unresolved', () => validateAdversarialDecision({
+    ...decision, layers: { l1, l2: survivingL2, l3: { ...boundL3, unresolvedHighCritical: ['finding-9'] } },
+  }), 'high_or_critical_blocker_survived')
+  const lowOnlyL2 = { ...l2, surviving: [{ id: 'finding-10', severity: 'LOW' }] }
+  assert.equal(validateAdversarialDecision({
+    ...decision, layers: { l1, l2: lowOnlyL2, l3: { ...l3, l2OutputSha256: canonicalSha256(lowOnlyL2) } },
+  }).verdict, 'passed')
+  throwsCode('adversarial_output_invalid', () => validateAdversarialDecision({
+    ...decision, layers: { l1, l2: { ...l2, surviving: 'none' }, l3: { ...l3, l2OutputSha256: canonicalSha256({ ...l2, surviving: 'none' }) } },
+  }), 'l2_survivor_set_invalid')
 })
 
 test('merge preparation is exact-head CAS and refuses partial threads, stale state, or a broken clock', async () => {
@@ -486,10 +545,23 @@ test('single-flight lock keeps ordinary PRs queued until terminal delivery and a
     () => acquire(ledger, { deliveryId: 'delivery-738', prClass: 'ordinary' }),
     (error) => error?.code === 'delivery_lock_held',
   )
-  ledger = ledger.close({ deliveryId: 'delivery-737', terminalClass: 'DELIVERED', reasonCode: 'DELIVERY_VERIFIED' })
+  ledger = deliver(ledger, 'delivery-737')
   assert.equal(acquire(ledger, { deliveryId: 'delivery-738', prClass: 'ordinary' }).lease.deliveryId, 'delivery-738')
   assert.equal(acquire(ledger, { deliveryId: 'hotfix-1', prClass: 'release_hotfix' }).lease.prClass, 'release_hotfix')
   throwsCode('delivery_lock_invalid', () => acquire(ledger, { deliveryId: 'draft-1', prClass: 'draft_report_only' }), 'pr_class_invalid')
+  // A merged terminal is only recordable past the merge boundary, and DELIVERED needs verified terminal evidence.
+  let unmerged = createSingleFlightLedger('monkey1sai/AI-BIM-governance')
+  ;({ ledger: unmerged } = acquire(unmerged, { deliveryId: 'delivery-50', prClass: 'ordinary' }))
+  throwsCode('delivery_lock_invalid', () => unmerged.close({ deliveryId: 'delivery-50', terminalClass: 'DELIVERED', reasonCode: 'DELIVERY_VERIFIED', evidenceRef: 'delivery-evidence:delivery-50' }, TERMINAL_VERIFIED), 'terminal_requires_merge_boundary')
+  throwsCode('delivery_lock_invalid', () => unmerged.close({ deliveryId: 'delivery-50', terminalClass: 'FAILED', reasonCode: 'MERGED_NOT_DELIVERED' }), 'terminal_requires_merge_boundary')
+  const merged = unmerged.markMergeBoundary({ deliveryId: 'delivery-50' })
+  throwsCode('delivery_lock_invalid', () => merged.close({ deliveryId: 'delivery-50', terminalClass: 'DELIVERED', reasonCode: 'DELIVERY_VERIFIED' }, TERMINAL_VERIFIED), 'terminal_delivery_unverified')
+  throwsCode('delivery_lock_invalid', () => merged.close({ deliveryId: 'delivery-50', terminalClass: 'DELIVERED', reasonCode: 'DELIVERY_VERIFIED', evidenceRef: 'delivery-evidence:delivery-50' }), 'terminal_delivery_unverified')
+  throwsCode('delivery_lock_invalid', () => merged.close({ deliveryId: 'delivery-50', terminalClass: 'DELIVERED', reasonCode: 'DELIVERY_VERIFIED', evidenceRef: 'forged:delivery-50' }, TERMINAL_VERIFIED), 'terminal_delivery_unverified')
+  throwsCode('delivery_lock_invalid', () => merged.close({ deliveryId: 'delivery-50', terminalClass: 'DELIVERED', reasonCode: 'DELIVERY_VERIFIED', evidenceRef: 'delivery-evidence:delivery-50' }, { verifyTerminal: () => { throw new Error('verifier offline') } }), 'terminal_delivery_unverified')
+  assert.equal(deliver(merged, 'delivery-50').history.at(-1).evidenceRef, 'delivery-evidence:delivery-50')
+  // A pre-merge hold still closes without a boundary.
+  assert.equal(unmerged.close({ deliveryId: 'delivery-50', terminalClass: 'HELD', reasonCode: 'PREMERGE_EVIDENCE_INVALID' }).active, null)
   // The class is never the caller's word: an external exact-head classification must confirm it.
   throwsCode('delivery_lock_invalid', () => ledger.acquire({ deliveryId: 'delivery-740', prClass: 'ordinary' }), 'pr_classification_unverified')
   throwsCode('delivery_lock_invalid', () => ledger.acquire({ deliveryId: 'delivery-740', prClass: 'ordinary' }, {
@@ -535,7 +607,7 @@ test('non-delivered closure releases the lock but freezes the queue to the bound
   const { createSingleFlightLedger } = await loadSubject()
   let ledger = createSingleFlightLedger('monkey1sai/AI-BIM-governance')
   ;({ ledger } = acquire(ledger, { deliveryId: 'delivery-1', prClass: 'ordinary' }))
-  ledger = ledger.close({ deliveryId: 'delivery-1', terminalClass: 'FAILED', reasonCode: 'MERGED_NOT_DELIVERED' })
+  ledger = failMerged(ledger, 'delivery-1')
   assert.equal(ledger.active, null)
   assert.equal(ledger.openRecovery.deliveryId, 'delivery-1')
   // Closing again cannot append a second contradictory terminal for the same delivery.
@@ -549,7 +621,7 @@ test('non-delivered closure releases the lock but freezes the queue to the bound
   throwsCode('delivery_lock_invalid', () => acquire(ledger, { deliveryId: 'repair-1', prClass: 'repair' }), 'recovery_must_bind_exact_terminal_delivery_id')
   ;({ ledger } = acquire(ledger, { deliveryId: 'repair-1', prClass: 'repair', supersedesDeliveryId: 'delivery-1' }))
   assert.equal(ledger.active.supersedesDeliveryId, 'delivery-1')
-  ledger = ledger.close({ deliveryId: 'repair-1', terminalClass: 'DELIVERED', reasonCode: 'DELIVERY_VERIFIED' })
+  ledger = deliver(ledger, 'repair-1')
   assert.equal(ledger.openRecovery, null)
   assert.equal(acquire(ledger, { deliveryId: 'delivery-3', prClass: 'ordinary' }).lease.prClass, 'ordinary')
   // A repair lane without a terminal lineage to bind is not admissible.
@@ -576,7 +648,7 @@ test('non-delivered closure releases the lock but freezes the queue to the bound
   // A pre-merge HELD on the bound repair must not release the merged-not-delivered lineage.
   let lineage = createSingleFlightLedger('monkey1sai/AI-BIM-governance')
   ;({ ledger: lineage } = acquire(lineage, { deliveryId: 'delivery-20', prClass: 'ordinary' }))
-  lineage = lineage.close({ deliveryId: 'delivery-20', terminalClass: 'FAILED', reasonCode: 'MERGED_NOT_DELIVERED' })
+  lineage = failMerged(lineage, 'delivery-20')
   ;({ ledger: lineage } = acquire(lineage, { deliveryId: 'repair-20', prClass: 'repair', supersedesDeliveryId: 'delivery-20' }))
   lineage = lineage.close({ deliveryId: 'repair-20', terminalClass: 'HELD', reasonCode: 'PREMERGE_EVIDENCE_INVALID' })
   assert.equal(lineage.openRecovery.deliveryId, 'delivery-20')
@@ -738,7 +810,7 @@ test('confirmed blocking findings cannot be accepted or deferred, unverified fin
   })
   throwsCode('finding_disposition_invalid', () => validateBundle(validateFindingDispositionBundle, withFinding({
     severity: 'CRITICAL', disposition: 'ACCEPTED', fixedOnHead: false, fixEvidence: null, policyRule: 'not-allowed',
-  })), 'finding_0_blocking_finding_requires_fix')
+  })), 'finding_0_accepted_unfixed_blocking_finding')
   throwsCode('finding_disposition_incomplete', () => validateBundle(validateFindingDispositionBundle, withFinding({
     severity: 'P3', verification: 'unverified', disposition: 'FALSE_POSITIVE', fixedOnHead: false, fixEvidence: null,
   })), 'finding_0_verification_incomplete')
@@ -757,6 +829,15 @@ test('confirmed blocking findings cannot be accepted or deferred, unverified fin
     severity: 'P3', inScope: false, disposition: 'DEFERRED', fixedOnHead: false, fixEvidence: null,
     followUpRef: 'https://github.com/another/repo/issues/1',
   })), 'finding_0_defer_contract_invalid')
+  // An out-of-scope blocker cannot be waved through as ACCEPTED without a fix: it
+  // defers to a same-repository issue or escalates.
+  throwsCode('finding_disposition_invalid', () => validateBundle(validateFindingDispositionBundle, withFinding({
+    severity: 'P2', inScope: false, disposition: 'ACCEPTED', fixedOnHead: false, fixEvidence: null, policyRule: 'outside-pr-scope',
+  })), 'finding_0_accepted_unfixed_blocking_finding')
+  assert.equal(validateBundle(validateFindingDispositionBundle, makeConvergedBundle({ findings: [makeFinding({
+    severity: 'P2', inScope: false, disposition: 'DEFERRED', fixedOnHead: false, fixEvidence: null, policyRule: 'outside-pr-scope',
+    followUpRef: 'https://github.com/monkey1sai/AI-BIM-governance/issues/901',
+  })] })).status, 'passed')
   // "fixed" is not self-certifying: the claim needs the repair head, regression and independent re-review.
   throwsCode('finding_disposition_invalid', () => validateBundle(validateFindingDispositionBundle, withFinding({
     fixEvidence: null,

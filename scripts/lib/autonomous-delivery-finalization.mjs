@@ -27,6 +27,10 @@ const SECRET_VALUES = [
   // line is as much a secret as `API_KEY=...`. The line anchor keeps ordinary
   // code (`const token = await ...`) out of the pattern.
   /^[+ ]?(?:export\s+)?[A-Za-z0-9_]*(?:TOKEN|SECRET|PASSWORD|PRIVATE_KEY|DATABASE_URL|API_KEY)[A-Za-z0-9_]*\s*=\s*[^\s\r\n]{4,}$/imu,
+  // Colon-delimited fields (YAML `api_key: value`, JSON `"db_password": "value",`),
+  // quoted or unquoted, are secrets just like `=` assignments.
+  // A value with call syntax (`readPassword(prompt)`) is code, not a literal.
+  /^[+ ]?\s*["']?[A-Za-z0-9_-]*(?:TOKEN|SECRET|PASSWORD|PRIVATE_KEY|DATABASE_URL|API_KEY)[A-Za-z0-9_-]*["']?\s*:\s*["']?[^\s"'()\r\n]{4,}["']?,?\s*$/imu,
   /\b(?:postgres(?:ql)?|mysql|mongodb(?:\+srv)?|redis):\/\/[^/\s:@]+:[^@\s/]+@/iu,
 ]
 const SECRET_BEARING_ENV_PATH = /(?:^|\/)\.env(?:$|\.)/u
@@ -152,6 +156,11 @@ const assertRepoPath = (value) => {
 
 const DIFF_GIT_HEADER = /^diff --git (.+)$/u
 const DIFF_RENAME_OR_COPY_HEADER = /^(?:rename|copy) (?:from|to) (.+)$/u
+// Unified file markers carry their own path; a marker that names a different
+// file than the `diff --git` header is a tampered or malformed packet. Only git's
+// prefixed forms (`a/`, `b/`, quoted variants) and `/dev/null` are markers here,
+// so a removed content line that merely starts with `-- ` is never misread.
+const DIFF_UNIFIED_FILE_MARKER = /^(?:---|\+\+\+) ((?:"[ab]\/.*"|[ab]\/.*|\/dev\/null))$/u
 const diffSurfaceUnparseable = () => fail('unsupported_review_surface', 'diff_header_path_unparseable')
 
 // Git quotes a header path (core.quotePath) when it contains quotes, backslashes,
@@ -252,7 +261,16 @@ export function extractDiffSurfacePaths(diffText) {
       continue
     }
     const renamed = DIFF_RENAME_OR_COPY_HEADER.exec(line)
-    if (renamed) paths.add(assertDiffSurfacePath(unquoteDiffPath(renamed[1])))
+    if (renamed) {
+      paths.add(assertDiffSurfacePath(unquoteDiffPath(renamed[1])))
+      continue
+    }
+    const marker = DIFF_UNIFIED_FILE_MARKER.exec(line)
+    if (marker && marker[1] !== '/dev/null') {
+      const prefixed = unquoteDiffPath(marker[1])
+      if (!/^[ab]\//u.test(prefixed)) diffSurfaceUnparseable()
+      paths.add(assertDiffSurfacePath(prefixed.slice(2)))
+    }
   }
   return paths
 }
@@ -590,9 +608,22 @@ export function validateAdversarialDecision(decision) {
   if (l3.l1OutputSha256 !== l1OutputSha256 || l3.l2OutputSha256 !== l2OutputSha256) {
     fail('adversarial_raw_binding_invalid', 'l3_not_bound_to_exact_layer_outputs')
   }
-  if (!Array.isArray(l3.unresolvedHighCritical) || l3.unresolvedHighCritical.length > 0) {
-    fail('adversarial_blocker_unresolved', 'high_or_critical_blocker_survived')
+  // L3 does not get to declare blocker closure on its own: the HIGH/CRITICAL
+  // survivors are derived from the bound L2 output and the L3 set must match them
+  // exactly, and any survivor at all keeps the verdict from passing.
+  if (!Array.isArray(l2.surviving) || l2.surviving.length > 256) fail('adversarial_output_invalid', 'l2_survivor_set_invalid')
+  const survivingHighCritical = l2.surviving
+    .filter((finding) => isPlainObject(finding) && ['HIGH', 'CRITICAL'].includes(finding.severity))
+    .map((finding) => finding.id)
+  if (survivingHighCritical.some((id) => typeof id !== 'string' || id.length === 0)) {
+    fail('adversarial_output_invalid', 'l2_survivor_id_invalid')
   }
+  const declared = Array.isArray(l3.unresolvedHighCritical) ? l3.unresolvedHighCritical : null
+  if (
+    declared === null || declared.length !== survivingHighCritical.length ||
+    [...declared].sort().join('\n') !== [...survivingHighCritical].sort().join('\n')
+  ) fail('adversarial_raw_binding_invalid', 'l3_blocker_set_not_reconciled_with_l2')
+  if (survivingHighCritical.length > 0) fail('adversarial_blocker_unresolved', 'high_or_critical_blocker_survived')
   const requiredRubric = Array.from({ length: 12 }, (_, index) => `G${index + 1}`)
   if (!isPlainObject(l3.rubric) || Object.keys(l3.rubric).sort().join(',') !== [...requiredRubric].sort().join(',')) {
     fail('activation_unattested', 'g1_g12_rubric_incomplete')
@@ -769,12 +800,31 @@ class SingleFlightLedger {
     return new SingleFlightLedger(this.repository, active, this.history, this.openRecovery)
   }
 
-  close({ deliveryId, terminalClass, reasonCode } = {}) {
+  // A terminal that claims a merge happened (delivered, or merged but not
+  // delivered) is only recordable after the merge boundary was crossed, and
+  // `DELIVERED` additionally needs an external verifier to accept the named
+  // terminal evidence: a coordinator's bare assertion never releases the lock.
+  close({ deliveryId, terminalClass, reasonCode, evidenceRef = null } = {}, { verifyTerminal } = {}) {
     if (this.active === null || this.active.deliveryId !== deliveryId) {
       fail('delivery_lock_invalid', 'delivery_does_not_hold_lock')
     }
     if (!TERMINAL_REASONS[terminalClass]?.includes(reasonCode)) fail('delivery_lock_invalid', 'terminal_mapping_invalid')
-    const event = deepFreeze({ ...this.active, terminalClass, reasonCode })
+    if (evidenceRef !== null) assertIdentifier(evidenceRef, 'delivery_lock_invalid', 'terminal_evidence_ref_invalid')
+    if ((terminalClass === 'DELIVERED' || terminalClass === 'FAILED') && this.active.mergeBoundaryCrossed !== true) {
+      fail('delivery_lock_invalid', 'terminal_requires_merge_boundary')
+    }
+    if (terminalClass === 'DELIVERED') {
+      let verified = false
+      try {
+        verified = evidenceRef !== null && typeof verifyTerminal === 'function' && verifyTerminal(deepFreeze({
+          repository: this.repository, deliveryId, terminalClass, reasonCode, evidenceRef,
+        })) === true
+      } catch {
+        verified = false
+      }
+      if (!verified) fail('delivery_lock_invalid', 'terminal_delivery_unverified')
+    }
+    const event = deepFreeze({ ...this.active, terminalClass, reasonCode, evidenceRef })
     const history = [...this.history, event]
     if (terminalClass === 'DELIVERED') return new SingleFlightLedger(this.repository, null, history, null)
     const lanes = lanesFor(event)
@@ -1019,6 +1069,9 @@ export function validateFindingDisposition(findingRaw, label, repository, { head
     if (!finding.fixedOnHead && finding.fixEvidence !== null) {
       fail('finding_disposition_invalid', `${label}_fix_evidence_without_fixed_head`)
     }
+    // An unfixed blocking finding is never simply accepted, in or out of scope:
+    // out of scope it defers to a same-repository issue, otherwise it escalates.
+    if (blocking && !finding.fixedOnHead) fail('finding_disposition_invalid', `${label}_accepted_unfixed_blocking_finding`)
   } else if (disposition === 'DEFERRED') {
     if (
       verification !== 'confirmed' || finding.inScope || finding.fixedOnHead || finding.fixEvidence !== null ||
@@ -1035,9 +1088,10 @@ export function validateFindingDisposition(findingRaw, label, repository, { head
   // current head (FIX_REQUIRED, or ACCEPTED with the same fix evidence because a
   // prior commit on this head already addressed it) or by escalating outside
   // autonomous authority. A bare `fixedOnHead` boolean is never enough.
-  if (verification === 'confirmed' && finding.inScope && blocking && !(
+  if (verification === 'confirmed' && blocking && !(
     disposition === 'ESCALATE' || disposition === 'FIX_REQUIRED' ||
-    (disposition === 'ACCEPTED' && finding.fixedOnHead && finding.fixEvidence !== null)
+    (disposition === 'ACCEPTED' && finding.fixedOnHead && finding.fixEvidence !== null) ||
+    (disposition === 'DEFERRED' && !finding.inScope)
   )) fail('finding_disposition_invalid', `${label}_blocking_finding_requires_fix`)
   if (converged && disposition !== 'ESCALATE' && !finding.threadResolved) {
     fail('finding_disposition_incomplete', `${label}_thread_not_resolved_after_disposition`)

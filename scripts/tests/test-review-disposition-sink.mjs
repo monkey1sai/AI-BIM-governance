@@ -1,11 +1,19 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { buildReviewDispositionPlan } from '../dev/manage-pr-queue.mjs';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import {
   assertNoCredentialOverride,
+  createPlanLock,
   planSinkActions,
+  sinkResultFailed,
   validatePlanShape,
 } from '../dev/post-review-disposition.mjs';
+
+// Unit runs never touch the real per-PR lock directory.
+const NO_LOCK = { acquire: () => ({ release: () => {} }) };
 
 const SHA = (value) => value.repeat(40);
 const DIGEST = (value) => value.repeat(64);
@@ -131,7 +139,7 @@ test('the sink refuses credential overrides and a foreign owner identity before 
   const plan = renderPlan();
   assert.throws(() => assertNoCredentialOverride({ PATH: 'x', GH_TOKEN: 'set' }), /credential_override_present:GH_TOKEN/);
   const { gh, calls } = makeGh({ identity: { login: 'someone-else', id: 1, type: 'User' } });
-  assert.throws(() => planSinkActions({ plan, gh, env: {} }), /owner_identity_mismatch/);
+  assert.throws(() => planSinkActions({ lock: NO_LOCK, plan, gh, env: {} }), /owner_identity_mismatch/);
   assert.equal(calls.length, 1);
   assert.throws(() => validatePlanShape({ ...plan, status: 'HELD' }), /plan_not_rendered/);
   assert.throws(() => validatePlanShape({ ...plan, replies: [{ ...plan.replies[0], body: 'stripped' }] }), /reply_metadata_unbound/);
@@ -163,12 +171,12 @@ test('the plan file cannot assert resolvability, identity, or disposition beyond
 test('dry run posts nothing, live posts once per finding, and reruns dedupe on the hidden metadata', () => {
   const plan = renderPlan();
   const dry = makeGh({ threads: threadsFor(plan) });
-  const dryResult = planSinkActions({ plan, gh: dry.gh, env: {} });
+  const dryResult = planSinkActions({ lock: NO_LOCK, plan, gh: dry.gh, env: {} });
   assert.deepEqual(dryResult.results.map((entry) => entry.action), ['dry_run_post', 'dry_run_post', 'dry_run_post']);
   assert.equal(dry.calls.some((call) => call.args.includes('POST')), false);
 
   const live = makeGh({ threads: threadsFor(plan) });
-  const liveResult = planSinkActions({ plan, gh: live.gh, live: true, resolve: true, env: {} });
+  const liveResult = planSinkActions({ lock: NO_LOCK, plan, gh: live.gh, live: true, resolve: true, env: {} });
   assert.deepEqual(liveResult.results.map((entry) => entry.action), ['posted', 'posted', 'posted']);
   // Only the FALSE_POSITIVE thread is resolvable: FIX_REQUIRED waits for the repair, ESCALATE stays open.
   assert.deepEqual(liveResult.results.map((entry) => entry.resolved), [false, true, false]);
@@ -180,7 +188,7 @@ test('dry run posts nothing, live posts once per finding, and reruns dedupe on t
   const rerun = makeGh({ threads: threadsFor(plan, Object.fromEntries(plan.replies.map((reply) => [reply.threadId, [
     { databaseId: 500, author: 'monkey1sai', body: reply.body },
   ]]))) });
-  const rerunResult = planSinkActions({ plan, gh: rerun.gh, live: true, env: {} });
+  const rerunResult = planSinkActions({ lock: NO_LOCK, plan, gh: rerun.gh, live: true, env: {} });
   assert.deepEqual(rerunResult.results.map((entry) => entry.reason), ['duplicate_exact_tuple', 'duplicate_exact_tuple', 'duplicate_exact_tuple']);
   assert.equal(rerun.calls.some((call) => call.args.includes('POST')), false);
   assert.deepEqual(rerunResult.results.map((entry) => entry.resolved), [false, false, false]);
@@ -188,7 +196,7 @@ test('dry run posts nothing, live posts once per finding, and reruns dedupe on t
   const finish = makeGh({ threads: threadsFor(plan, Object.fromEntries(plan.replies.map((reply) => [reply.threadId, [
     { databaseId: 500, author: 'monkey1sai', body: reply.body },
   ]]))) });
-  const finishResult = planSinkActions({ plan, gh: finish.gh, live: true, resolve: true, env: {} });
+  const finishResult = planSinkActions({ lock: NO_LOCK, plan, gh: finish.gh, live: true, resolve: true, env: {} });
   assert.deepEqual(finishResult.results.map((entry) => [entry.action, entry.reason, entry.resolved]), [
     ['skip', 'duplicate_exact_tuple', false], ['skip', 'duplicate_exact_tuple', true], ['skip', 'duplicate_exact_tuple', false],
   ]);
@@ -204,35 +212,35 @@ test('a head that moves right after a reply is posted is recorded as drift and n
     // 1st read: before post, 2nd: immediately after post -> drift.
     tuple: () => { reads += 1; return makeSnapshot(reads >= 2 ? { headRefOid: SHA('9') } : {}); },
   });
-  const result = planSinkActions({ plan, gh, live: true, resolve: true, env: {} });
+  const result = planSinkActions({ lock: NO_LOCK, plan, gh, live: true, resolve: true, env: {} });
   assert.equal(result.results[0].action, 'posted');
   assert.equal(result.results[0].reason, 'posted_head_drift');
   assert.equal(result.results[0].resolved, false);
   assert.equal(calls.some((call) => call.args.join(' ').includes('resolveReviewThread')), false);
   // Without --resolve the post-mutation re-read still happens.
   reads = 0;
-  const plain = planSinkActions({ plan, gh, live: true, env: {} });
+  const plain = planSinkActions({ lock: NO_LOCK, plan, gh, live: true, env: {} });
   assert.equal(plain.results[0].reason, 'posted_head_drift');
 });
 
 test('the sink holds on head drift, resolved threads, missing finding comments, sender mismatch, and readback mismatch', () => {
   const plan = renderPlan();
   const drift = makeGh({ tuple: makeSnapshot({ headRefOid: SHA('9') }), threads: threadsFor(plan) });
-  assert.deepEqual(planSinkActions({ plan, gh: drift.gh, live: true, env: {} }).results.map((entry) => entry.reason), [
+  assert.deepEqual(planSinkActions({ lock: NO_LOCK, plan, gh: drift.gh, live: true, env: {} }).results.map((entry) => entry.reason), [
     'exact_head_drift', 'exact_head_drift', 'exact_head_drift',
   ]);
   const resolved = makeGh({ threads: Object.fromEntries(Object.entries(threadsFor(plan)).map(([id, thread]) => [id, { ...thread, isResolved: true }])) });
-  assert.equal(planSinkActions({ plan, gh: resolved.gh, live: true, env: {} }).results[0].reason, 'thread_already_resolved');
+  assert.equal(planSinkActions({ lock: NO_LOCK, plan, gh: resolved.gh, live: true, env: {} }).results[0].reason, 'thread_already_resolved');
   const missing = makeGh({ threads: Object.fromEntries(plan.replies.map((reply) => [reply.threadId, { isResolved: false, comments: [] }])) });
-  assert.equal(planSinkActions({ plan, gh: missing.gh, live: true, env: {} }).results[0].reason, 'finding_comment_not_in_thread');
+  assert.equal(planSinkActions({ lock: NO_LOCK, plan, gh: missing.gh, live: true, env: {} }).results[0].reason, 'finding_comment_not_in_thread');
   const tampered = makeGh({ threads: threadsFor(plan), postedBody: 'server returned a different body' });
-  const tamperedResult = planSinkActions({ plan, gh: tampered.gh, live: true, env: {} });
+  const tamperedResult = planSinkActions({ lock: NO_LOCK, plan, gh: tampered.gh, live: true, env: {} });
   assert.equal(tamperedResult.results[0].action, 'hold');
   assert.equal(tamperedResult.results[0].reason, 'readback_mismatch');
   // A reply whose metadata names a different sender than the authenticated identity never posts.
   const foreign = renderPlan({ sender: 'monkey1sai-blip' });
   const foreignGh = makeGh({ threads: threadsFor(foreign) });
-  const foreignResult = planSinkActions({ plan: foreign, gh: foreignGh.gh, live: true, env: {} });
+  const foreignResult = planSinkActions({ lock: NO_LOCK, plan: foreign, gh: foreignGh.gh, live: true, env: {} });
   assert.deepEqual(foreignResult.results.map((entry) => entry.reason), ['sender_identity_mismatch', 'sender_identity_mismatch', 'sender_identity_mismatch']);
   assert.equal(foreignGh.calls.some((call) => call.args.includes('POST')), false);
 });
@@ -240,7 +248,7 @@ test('the sink holds on head drift, resolved threads, missing finding comments, 
 test('a failure on one reply is recorded without discarding earlier results', () => {
   const plan = renderPlan();
   const flaky = makeGh({ threads: threadsFor(plan), failPostFor: plan.replies[1].commentDatabaseId });
-  const result = planSinkActions({ plan, gh: flaky.gh, live: true, env: {} });
+  const result = planSinkActions({ lock: NO_LOCK, plan, gh: flaky.gh, live: true, env: {} });
   assert.deepEqual(result.results.map((entry) => entry.action), ['posted', 'error', 'posted']);
   assert.match(result.results[1].reason, /^error:gh: HTTP 502/);
 });
@@ -256,8 +264,63 @@ test('a head that moves between posting and resolving is recorded as a resolutio
       return makeSnapshot(reads >= 4 ? { headRefOid: SHA('9') } : {});
     },
   });
-  const result = planSinkActions({ plan, gh, live: true, resolve: true, env: {} });
+  const result = planSinkActions({ lock: NO_LOCK, plan, gh, live: true, resolve: true, env: {} });
   assert.equal(result.results[0].action, 'posted');
   assert.equal(result.results[0].resolved, true);
   assert.equal(result.results[0].reason, 'resolution_race');
+  // A raced or drifted mutation is a failed run for the caller, not a benign posted reply.
+  assert.equal(result.ok, false);
+});
+
+test('the run result is ok only when every mutation landed on the exact head and every expected resolution landed', () => {
+  const plan = renderPlan();
+  const live = makeGh({ threads: threadsFor(plan) });
+  assert.equal(planSinkActions({ lock: NO_LOCK, plan, gh: live.gh, live: true, resolve: true, env: {} }).ok, true);
+  assert.equal(sinkResultFailed({ action: 'posted', reason: 'posted_head_drift', resolvable: false, resolved: false }), true);
+  assert.equal(sinkResultFailed({ action: 'skip', reason: 'resolution_skipped_head_drift', resolvable: true, resolved: false }), true);
+  assert.equal(sinkResultFailed({ action: 'posted', reason: 'error:gh: HTTP 502', resolvable: true, resolved: false }), true);
+  assert.equal(sinkResultFailed({ action: 'posted', reason: 'new_disposition_for_finding_on_head', resolvable: true, resolved: false }, { resolve: true }), true);
+  assert.equal(sinkResultFailed({ action: 'posted', reason: 'new_disposition_for_finding_on_head', resolvable: true, resolved: false }, { resolve: false }), false);
+  assert.equal(sinkResultFailed({ action: 'skip', reason: 'duplicate_exact_tuple', resolvable: false, resolved: false }, { resolve: true }), false);
+  const drift = makeGh({ threads: threadsFor(plan), tuple: (() => { let reads = 0; return () => { reads += 1; return makeSnapshot(reads % 2 === 0 ? { headRefOid: SHA('9') } : {}); }; })() });
+  assert.equal(planSinkActions({ lock: NO_LOCK, plan, gh: drift.gh, live: true, env: {} }).ok, false);
+});
+
+test('the sink serializes itself per PR and holds fail-closed when the lock is already taken', () => {
+  const plan = renderPlan();
+  const calls = [];
+  const lock = { acquire: (key) => { calls.push(['acquire', key]); return { release: () => calls.push(['release']) }; } };
+  const live = makeGh({ threads: threadsFor(plan) });
+  planSinkActions({ lock, plan, gh: live.gh, live: true, env: {} });
+  assert.deepEqual(calls, [['acquire', { repository: REPOSITORY, prNumber: 737 }], ['release']]);
+  const taken = { acquire: () => { throw new Error('sink_lock_held:/tmp/x.lock'); } };
+  const blocked = makeGh({ threads: threadsFor(plan) });
+  assert.throws(() => planSinkActions({ lock: taken, plan, gh: blocked.gh, live: true, env: {} }), /sink_lock_held/);
+  assert.equal(blocked.calls.some((call) => call.args.includes('POST')), false);
+  // The lock is released even when a reply throws.
+  const flakyCalls = [];
+  const flakyLock = { acquire: () => ({ release: () => flakyCalls.push('release') }) };
+  const flaky = makeGh({ threads: threadsFor(plan), failPostFor: plan.replies[0].commentDatabaseId });
+  planSinkActions({ lock: flakyLock, plan, gh: flaky.gh, live: true, env: {} });
+  assert.deepEqual(flakyCalls, ['release']);
+  // The default file lock: one holder at a time, released on demand, reclaimed only when stale.
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-bim-sink-lock-test-'));
+  try {
+    let clock = 1_000_000_000_000;
+    const fileLock = createPlanLock({ root, now: () => clock });
+    const first = fileLock.acquire({ repository: REPOSITORY, prNumber: 737 });
+    assert.throws(() => fileLock.acquire({ repository: REPOSITORY, prNumber: 737 }), /sink_lock_held/);
+    assert.ok(fileLock.acquire({ repository: REPOSITORY, prNumber: 738 }));
+    first.release();
+    const second = fileLock.acquire({ repository: REPOSITORY, prNumber: 737 });
+    // A lock left behind by a dead run is reclaimed once it is older than the stale window.
+    const lockFile = path.join(root, 'monkey1sai__AI-BIM-governance-737.lock');
+    const old = new Date(Date.now() - 45 * 60 * 1000);
+    fs.utimesSync(lockFile, old, old);
+    clock = Date.now();
+    assert.ok(fileLock.acquire({ repository: REPOSITORY, prNumber: 737 }));
+    second.release();
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });

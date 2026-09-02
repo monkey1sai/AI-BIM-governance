@@ -9,6 +9,7 @@
 
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
@@ -32,6 +33,44 @@ const THREAD_QUERY = [
   'comments(first:100){pageInfo{hasNextPage} nodes{databaseId author{login} body}}}}}',
 ].join('');
 const RESOLVE_MUTATION = 'mutation($id:ID!){resolveReviewThread(input:{threadId:$id}){thread{isResolved}}}';
+// A mutation that landed on a moved head, or a resolution that never landed, is a
+// failed run even though the reply itself was posted.
+const FAILED_REASONS = new Set(['posted_head_drift', 'resolution_skipped_head_drift', 'resolution_race']);
+const LOCK_STALE_MS = 30 * 60 * 1000;
+
+export function sinkResultFailed(entry, { resolve = false } = {}) {
+  if (entry.action === 'hold' || entry.action === 'error') return true;
+  if (typeof entry.reason === 'string' && (FAILED_REASONS.has(entry.reason) || entry.reason.startsWith('error:'))) return true;
+  return resolve === true && entry.resolvable === true && entry.action === 'posted' && entry.resolved !== true;
+}
+
+// The dedupe read and the POST are not atomic on GitHub's side, so the sink
+// serializes itself per PR with a coordinator-local lock. A held lock is a
+// fail-closed hold, never a retry; a lock older than the stale window belonged to
+// a dead run and is reclaimed exactly once.
+export function createPlanLock({ root = path.join(os.tmpdir(), 'ai-bim-review-disposition-locks'), now = () => Date.now() } = {}) {
+  return {
+    acquire({ repository, prNumber }) {
+      fs.mkdirSync(root, { recursive: true });
+      const file = path.join(root, `${String(repository).replace(/[^A-Za-z0-9_.-]/gu, '__')}-${prNumber}.lock`);
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        try {
+          const fd = fs.openSync(file, 'wx');
+          fs.writeSync(fd, JSON.stringify({ pid: process.pid, acquiredAt: new Date(now()).toISOString() }));
+          fs.closeSync(fd);
+          return { release: () => { try { fs.unlinkSync(file); } catch { /* already released */ } } };
+        } catch (error) {
+          if (error?.code !== 'EEXIST') throw error;
+          let stale = false;
+          try { stale = now() - fs.statSync(file).mtimeMs > LOCK_STALE_MS; } catch { stale = false; }
+          if (!stale || attempt > 0) throw new Error(`sink_lock_held:${file}`);
+          try { fs.unlinkSync(file); } catch { /* raced with the owner */ }
+        }
+      }
+      throw new Error(`sink_lock_held:${file}`);
+    },
+  };
+}
 
 export function assertNoCredentialOverride(env = process.env) {
   for (const key of Object.keys(env || {})) {
@@ -120,16 +159,21 @@ const errorReason = (error) => `error:${String(error?.message || error).replace(
 // Executes one plan. `gh` is injected so the decision logic is testable without a
 // network; `live` posts replies, `resolve` additionally resolves resolvable threads.
 // A failure on one reply is recorded and never discards the results of earlier ones.
-export function planSinkActions({ plan: planRaw, gh, live = false, resolve = false, env = process.env, now = () => new Date() } = {}) {
+export function planSinkActions({
+  plan: planRaw, gh, live = false, resolve = false, env = process.env, now = () => new Date(), lock = createPlanLock(),
+} = {}) {
   assertNoCredentialOverride(env);
   const plan = validatePlanShape(planRaw);
   const identity = readOwnerIdentity(gh);
   const results = [];
+  const held = lock.acquire({ repository: plan.repository, prNumber: plan.prNumber });
+  try {
   for (const reply of plan.replies) {
     const record = {
       findingId: reply.findingId,
       threadId: reply.threadId,
       disposition: reply.disposition,
+      resolvable: reply.resolvable,
       tupleKey: reply.tupleKey,
       action: null,
       reason: null,
@@ -207,6 +251,9 @@ export function planSinkActions({ plan: planRaw, gh, live = false, resolve = fal
       Object.assign(record, { action: record.action === 'posted' ? 'posted' : 'error', reason: errorReason(error) });
     }
   }
+  } finally {
+    held.release();
+  }
   return {
     schemaVersion: 'ai-bim-review-disposition-sink-result/v1',
     repository: plan.repository,
@@ -214,7 +261,9 @@ export function planSinkActions({ plan: planRaw, gh, live = false, resolve = fal
     headOid: plan.headOid,
     baseOid: plan.baseOid,
     live,
+    resolve,
     sender: identity.login,
+    ok: !results.some((entry) => sinkResultFailed(entry, { resolve })),
     results,
   };
 }
@@ -242,7 +291,7 @@ async function main() {
   const outPath = readArg(args, '--out');
   if (outPath) fs.writeFileSync(outPath, `${JSON.stringify(result, null, 2)}\n`);
   process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
-  if (result.results.some((entry) => entry.action === 'hold' || entry.action === 'error')) process.exitCode = 2;
+  if (result.ok !== true) process.exitCode = 2;
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(SCRIPT_PATH)) {
