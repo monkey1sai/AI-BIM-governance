@@ -394,6 +394,10 @@ test('AC-18 — direct-stack poll requires a full frozen vector, final ancestry,
   assert.doesNotMatch(JSON.stringify(staleResult), /PENDING_DEPLOY/u)
   const stalePending = reduceDirectStackPoll({ plan, accepted, poll: { ...pollBase(plan, 'pending'), observed_at: '2026-08-28T11:00:00.000Z' } })
   assert.equal(stalePending.internal_state, 'MERGE_OUTCOME_UNVERIFIED')
+  const expiredSuccess = successfulPoll(plan)
+  expiredSuccess.observed_at = stack.expires_at
+  expiredSuccess.fresh_origin_main.observed_at = stack.expires_at
+  assert.equal(reduceDirectStackPoll({ plan, accepted, poll: expiredSuccess }).internal_state, 'MERGE_OUTCOME_UNVERIFIED')
   const noAncestry = successfulPoll(plan)
   noAncestry.ancestry[0].reachable = false
   assert.equal(reduceDirectStackPoll({ plan, accepted, poll: noAncestry }).internal_state, 'MERGE_OUTCOME_UNVERIFIED')
@@ -430,6 +434,12 @@ test('AC-19 — direct-stack delivery waits for group deployment and produces re
     deployment: deploymentObservation(merged, { observed_at: '2026-08-28T12:00:00.000Z' }),
   })
   assert.equal(predatesMerge.internal_state, 'MERGE_OUTCOME_UNVERIFIED')
+
+  const afterEnvelopeExpiry = reduceStackDeployment({
+    merged,
+    deployment: deploymentObservation(merged, { observed_at: stack.expires_at }),
+  })
+  assert.equal(afterEnvelopeExpiry.internal_state, 'MERGE_OUTCOME_UNVERIFIED')
 
   const failed = reduceStackDeployment({
     merged,

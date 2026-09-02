@@ -408,6 +408,7 @@ test('AC-30 — only exact 101st cancellation cross-binds source, snapshot, tupl
   const cancelled = await queue.reconcileCancelled(cancellationRequest({ expected_oid: reserved.registry_oid }))
   assert.equal(cancelled.status, 'SHADOW_QUEUE_CANCELLATION_RECORDED')
   assert.equal(cancelled.shadow, 'SHADOW_ONLY')
+  assert.deepEqual((await queue.restore({ registry_ref: QUEUE_REF })).record.queue_mappings, {})
   for (const patch of [
     { pending_before: 99 }, { pending_limit: 99 }, { incoming_position: 100 },
     { candidate_id: 'candidate:other' }, { source_digest: DIGEST_NEXT },

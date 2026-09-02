@@ -357,12 +357,13 @@ const trustedPins = {
   immutable: true, base_pinned: true, fresh: true, verifier_sha: trusted, binder_sha: binder,
   verifier_tree_digest: trusted, harness_digest: trusted, authority_digest: null, command_pins: commandPins,
   expected_flow: { route: '#conv', main_buttons: ['Upload IFC'], fixture: 'fixture:ifc-ready', api: 'api:ifc-ready', runtime_id: 'runtime:conversion-1', visible_state: 'state:success' },
+  timeout_ms: 45 * 60_000,
 }
 trustedPins.authority_digest = digestCanonical({
   source_ref: trustedPins.source_ref, source_sha: trustedPins.source_sha, base_sha: trustedPins.base_sha,
   verifier_sha: trustedPins.verifier_sha, binder_sha: trustedPins.binder_sha,
   verifier_tree_digest: trustedPins.verifier_tree_digest, harness_digest: trustedPins.harness_digest,
-  command_pins: trustedPins.command_pins, expected_flow: trustedPins.expected_flow,
+    command_pins: trustedPins.command_pins, expected_flow: trustedPins.expected_flow, timeout_ms: trustedPins.timeout_ms,
 })
 const authority = {
   schema_version: 'computer-use-authority/v1', source: 'prior-trusted', source_ref: applicability.source_ref,
@@ -390,7 +391,7 @@ const packet = role => ({
   route: '#conv', main_buttons: ['Upload IFC'], fixture: 'fixture:ifc-ready', api: 'api:ifc-ready',
   runtime_id: 'runtime:conversion-1', visible_state: 'state:success', network_result: 'network:ok',
   trace_sha256: trace, screenshot_sha256: screenshot, command_records_digest: commandsDigest,
-  runtime_lineage_digest: runtime, command_records: commandRecords, execution_window: { started_at: now, finished_at: later },
+  runtime_lineage_digest: runtime, command_records: commandRecords, execution_window: { started_at: now, finished_at: later }, duration_ms: 40 * 60_000,
   ...(role === 'computer_use' ? { authority } : {}),
 })
 const result = bindBrowserEvidence({

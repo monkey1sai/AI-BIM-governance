@@ -13,12 +13,14 @@ const PLAN_REF_PREFIX = `${PLAN_REF}/`
 const LEASE_REF = 'refs/ai-bim/session-leases'
 const QUEUE_REF = 'refs/ai-bim/queue-mappings'
 const JOURNAL_REF = 'refs/ai-bim/command-journal'
+const JOURNAL_ARCHIVE_REF_PREFIX = `${JOURNAL_REF}-archive/`
 const MANAGED_BRANCH_REF = 'refs/ai-bim/managed-branches'
 const REFS = new Set([PLAN_REF, LEASE_REF, QUEUE_REF, JOURNAL_REF, MANAGED_BRANCH_REF])
 const WRITER_CAP_V1 = 2
 const COMMAND_JOURNAL_RECEIPT_LIMIT = 4096
 const LEASE_HEARTBEAT_TIMEOUT_MS = 30_000
 const MANAGED_BRANCH_NONCE_RECEIPT_LIMIT = 4096
+const MANAGED_BRANCH_NONCE_RETENTION = 256
 const OID = /^[0-9a-f]{40}$/u
 const DIGEST = /^[0-9a-f]{64}$/u
 const NONCE = /^[A-Za-z0-9_-]{32,128}$/u
@@ -253,10 +255,16 @@ const command = async (git, commonDir, args, input = undefined) => {
 const isPlanRef = (ref) => typeof ref === 'string' && (ref === PLAN_REF ||
   (ref.startsWith(PLAN_REF_PREFIX) && DIGEST.test(ref.slice(PLAN_REF_PREFIX.length))))
 
+const isCommandJournalArchiveRef = (ref) => typeof ref === 'string' &&
+  ref.startsWith(JOURNAL_ARCHIVE_REF_PREFIX) && DIGEST.test(ref.slice(JOURNAL_ARCHIVE_REF_PREFIX.length))
+
+const commandJournalArchiveRef = (journalKey) =>
+  `${JOURNAL_ARCHIVE_REF_PREFIX}${digestCanonical({ journal_key: journalKey })}`
+
 const planRefForId = (planId) => `${PLAN_REF_PREFIX}${digestCanonical({ plan_id: planId })}`
 
 const refOf = (ref) => {
-  if (!REFS.has(ref) && !isPlanRef(ref)) fail('registry_ref_forbidden', String(ref))
+  if (!REFS.has(ref) && !isPlanRef(ref) && !isCommandJournalArchiveRef(ref)) fail('registry_ref_forbidden', String(ref))
   return ref
 }
 
@@ -1028,6 +1036,7 @@ function validatePersistedRecordForRef(ref, record) {
   if (ref === LEASE_REF) return validateLeaseRegistryRecord(record, WRITER_CAP_V1)
   if (ref === QUEUE_REF) return validateQueueRegistryRecord(record)
   if (ref === JOURNAL_REF) return validateCommandJournalRecord(record)
+  if (isCommandJournalArchiveRef(ref)) return validateCommandJournalRecord(record, 1)
   if (ref === MANAGED_BRANCH_REF) return validateManagedRegistryState(record)
   fail('registry_ref_forbidden', String(ref))
 }
@@ -1049,7 +1058,11 @@ export function createCommandJournal({ store, clock, receiptLimit = COMMAND_JOUR
     assertTask2OpaqueId(journal_key, 'command_journal_read.journal_key')
     assertTask2OpaqueId(command_id, 'command_journal_read.command_id')
     const snapshot = await commandJournalSnapshot(store, receiptLimit)
-    const receipt = snapshot.record?.receipts?.[journal_key] ?? null
+    let receipt = snapshot.record?.receipts?.[journal_key] ?? null
+    if (receipt === null) {
+      const archived = await store.read(commandJournalArchiveRef(journal_key))
+      receipt = archived.record?.receipts?.[journal_key] ?? null
+    }
     if (receipt !== null && receipt.command_id !== command_id) fail('command_journal_conflict', 'command_id_mismatch')
     return receipt === null ? null : clone(receipt)
   }
@@ -1062,7 +1075,34 @@ export function createCommandJournal({ store, clock, receiptLimit = COMMAND_JOUR
       const existing = snapshot.record?.receipts?.[request.journal_key]
       if (existing) return clone(existing)
       if (Object.keys(snapshot.record?.receipts ?? {}).length >= receiptLimit) {
-        fail('command_journal_capacity_exceeded', 'receipt_limit')
+        const archivedKey = Object.keys(snapshot.record.receipts).sort()
+          .find((journalKey) => snapshot.record.receipts[journalKey].status === 'COMMITTED')
+        if (!archivedKey) fail('command_journal_capacity_exceeded', 'all_receipts_reserved')
+        const archivedReceipt = snapshot.record.receipts[archivedKey]
+        const archiveRef = commandJournalArchiveRef(archivedKey)
+        const existingArchive = await store.read(archiveRef)
+        if (existingArchive.record === null) {
+          const archiveRecord = stamp({
+            schema_version: 'command-journal-registry/v1', generation: 1,
+            nonce: archivedReceipt.command_digest,
+            created_at: snapshot.record.created_at, updated_at: snapshot.record.updated_at,
+            receipts: { [archivedKey]: archivedReceipt },
+          })
+          const archived = await store.cas({ ref: archiveRef, expected_oid: ZERO_OID, record: archiveRecord })
+          if (archived.status !== 'STORED') continue
+        } else if (digestCanonical(existingArchive.record.receipts?.[archivedKey]) !== digestCanonical(archivedReceipt)) {
+          fail('command_journal_conflict', 'archive_receipt_mismatch')
+        }
+        const receipts = clone(snapshot.record.receipts)
+        delete receipts[archivedKey]
+        const compacted = stamp({
+          schema_version: 'command-journal-registry/v1', generation: snapshot.record.generation + 1,
+          nonce: archivedReceipt.command_digest,
+          created_at: snapshot.record.created_at, updated_at: nowFrom(clock), receipts,
+        })
+        const rotated = await store.cas({ ref: JOURNAL_REF, expected_oid: snapshot.oid, record: compacted })
+        if (rotated.status === 'STORED') continue
+        continue
       }
       const timestamp = nowFrom(clock)
       const receipts = clone(snapshot.record?.receipts ?? {})
@@ -2161,9 +2201,14 @@ export function createLeaseRegistry({
     const stale = validateExpectedSnapshot(snapshot, expected_oid)
     if (stale) return stale
     const retainedResources = clone(snapshot.record.retained_resources ?? {})
-    const missing = lease_ids.filter((leaseId) => !Object.hasOwn(retainedResources, leaseId))
+    const leases = clone(snapshot.record.leases)
+    const missing = lease_ids.filter((leaseId) => !Object.hasOwn(retainedResources, leaseId) &&
+      !(leases[leaseId]?.state === 'RELEASED' && leases[leaseId]?.retention_state === 'RETAINED_FOR_REVIEW'))
     if (missing.length > 0) return { status: 'HELD_EXECUTION_AUTHORITY', reason: 'RETAINED_RESOURCE_UNKNOWN', lease_ids: missing }
-    for (const leaseId of lease_ids) delete retainedResources[leaseId]
+    for (const leaseId of lease_ids) {
+      delete retainedResources[leaseId]
+      delete leases[leaseId]
+    }
     const timestamp = nowFrom(clock)
     const record = nextRegistryRecord({
       store,
@@ -2171,7 +2216,7 @@ export function createLeaseRegistry({
       writerCap,
       nonce,
       timestamp,
-      leases: clone(snapshot.record.leases),
+      leases,
       usedOwnerEndAttestations: clone(snapshot.record.used_owner_end_attestations),
       retainedResources,
     })
@@ -2369,9 +2414,6 @@ const renewFailure = (record, snapshot, command, now) => {
       Object.values(snapshot.state.used_nonces).some((receipt) => receipt.operation_id === command.operation_id)) {
     return managedHeld('NONCE_REPLAY')
   }
-  if (Object.keys(snapshot.state.used_nonces).length >= MANAGED_BRANCH_NONCE_RECEIPT_LIMIT) {
-    return managedHeld('NONCE_LEDGER_CAPACITY_EXCEEDED')
-  }
   const requestedExpiresAt = parseTimestamp(command.requested_expires_at, 'managed_branch_renew.requested_expires_at')
   if (requestedExpiresAt <= parseTimestamp(record.expires_at, 'managed_branch_renew.current_expires_at')) return managedHeld('EXPIRY_NOT_EXTENDED')
   if (requestedExpiresAt <= nowMilliseconds) return managedHeld('EXPIRY_POLICY_BOUND')
@@ -2471,7 +2513,14 @@ export function createManagedBranchRegistry({ store, clock, managedBranchAuthori
       renewed_at: timestamp,
       transition_sequence: currentBranch.transition_sequence + 1,
     }, snapshot.registry_oid)
-    const usedNonces = clone(snapshot.state.used_nonces)
+    // The exact transition_sequence is checked before nonce lookup, so receipts
+    // from older successful transitions cannot authorize a replay. Keep a bounded
+    // recent window for duplicate protection on the current operational horizon.
+    const retainedNonceEntries = Object.entries(snapshot.state.used_nonces)
+      .sort(([leftNonce, left], [rightNonce, right]) =>
+        right.consumed_at.localeCompare(left.consumed_at) || rightNonce.localeCompare(leftNonce))
+      .slice(0, MANAGED_BRANCH_NONCE_RETENTION - 1)
+    const usedNonces = Object.fromEntries(retainedNonceEntries)
     usedNonces[commandResult.command.nonce] = {
       operation_id: commandResult.command.operation_id,
       consumed_at: timestamp,
@@ -2522,7 +2571,7 @@ const QUEUE_MAPPING_KEYS = Object.freeze([
   'candidate_id', 'run_id', 'lease_id', 'resource_key', 'workflow', 'candidate_head_sha', 'lease_generation',
   'source_digest', 'observation_digest', 'state',
 ])
-const QUEUE_OPERATION_KEYS = Object.freeze(['nonce', 'consumed_at', 'kind'])
+const QUEUE_OPERATION_KEYS = Object.freeze(['nonce', 'consumed_at', 'kind', 'mapping_key'])
 
 const validateQueueRegistryRecord = (record) => {
   exactKeys(record, [
@@ -2556,6 +2605,7 @@ const validateQueueRegistryRecord = (record) => {
     assertTask2OpaqueId(operationId, 'queue_operation_key')
     exactKeys(operation, QUEUE_OPERATION_KEYS, 'queue_operation')
     assertNonce(operation.nonce, 'queue_operation.nonce')
+    assertTask2OpaqueId(operation.mapping_key, 'queue_operation.mapping_key')
     const consumedAt = parseTimestamp(operation.consumed_at, 'queue_operation.consumed_at')
     if (consumedAt < createdAt || consumedAt > updatedAt || !['reserve', 'cancel'].includes(operation.kind) || operationNonces.has(operation.nonce)) {
       fail('registry_record_invalid', 'queue_operation_binding')
@@ -2806,6 +2856,10 @@ export function createQueueMappingRegistry({ store, clock }) {
       return QUEUE_HELD('NONCE_REPLAY')
     }
     if (Object.hasOwn(current.used_queue_operations, request.operation_id)) return QUEUE_HELD('OPERATION_REPLAY')
+    if (Object.values(current.used_queue_operations).some((operation) =>
+      operation.kind === 'cancel' && operation.mapping_key === mappingKey(request))) {
+      return QUEUE_HELD('MAPPING_TERMINAL')
+    }
     const existingMapping = current.queue_mappings[mappingKey(request)]
     if (existingMapping) {
       return QUEUE_HELD(existingMapping.state === 'CANCELLED' ? 'MAPPING_TERMINAL' : 'MAPPING_ALREADY_EXISTS')
@@ -2821,6 +2875,7 @@ export function createQueueMappingRegistry({ store, clock }) {
         nonce: request.nonce,
         consumed_at: timestamp,
         kind: 'reserve',
+        mapping_key: mappingKey(request),
       }
       return {
         queue_mappings,
@@ -2860,11 +2915,12 @@ export function createQueueMappingRegistry({ store, clock }) {
     return writeQueue(request.expected_oid, current, request, undefined, (state, timestamp) => {
       const queue_mappings = clone(state.queue_mappings)
       const used_queue_operations = clone(state.used_queue_operations)
-      queue_mappings[mappingKey(request)] = mapping
+      delete queue_mappings[mappingKey(request)]
       used_queue_operations[request.operation_id] = {
         nonce: request.nonce,
         consumed_at: timestamp,
         kind: 'cancel',
+        mapping_key: mappingKey(request),
       }
       return {
         queue_mappings,

@@ -879,8 +879,10 @@ const packetFailure = (packet, expectedRole, trustedPins) => {
   const role = String(first(packet, ['verifier_role', 'role', 'verifier']) || '').toLowerCase().replaceAll('-', '_')
   if (expectedRole === 'playwright' && !['playwright', 'canonical_playwright', 'playwright_require_real'].includes(role)) return 'PLAYWRIGHT_ROLE_INVALID'
   if (expectedRole === 'computer_use' && !['computer_use', 'computeruse'].includes(role)) return 'COMPUTER_USE_ROLE_INVALID'
-  if (packet.timed_out === true || packet.timeout === true || packet.status === 'timeout' ||
-      (Number.isSafeInteger(packet.duration_ms) && Number.isSafeInteger(trustedPins.timeout_ms) && packet.duration_ms > trustedPins.timeout_ms)) {
+  if (!Number.isSafeInteger(trustedPins.timeout_ms) || trustedPins.timeout_ms < 1 || trustedPins.timeout_ms > 3_600_000 ||
+      !Number.isSafeInteger(packet.duration_ms) || packet.duration_ms < 0 ||
+      packet.timed_out === true || packet.timeout === true || packet.status === 'timeout' ||
+      packet.duration_ms > trustedPins.timeout_ms) {
     return 'E2E_TIMEOUT'
   }
   if (packet.skipped === true || packet.status === 'skipped' || packet.skipped_count > 0) return 'E2E_SKIPPED'
@@ -909,6 +911,7 @@ export const trustedPinsAuthorityDigest = (pins) => digestCanonical({
   harness_digest: pins?.harness_digest ?? null,
   command_pins: pins?.command_pins ?? null,
   expected_flow: pins?.expected_flow ?? null,
+  timeout_ms: pins?.timeout_ms ?? null,
 })
 
 const EXPECTED_FLOW_FIELDS = Object.freeze([
@@ -1160,7 +1163,7 @@ export function bindBrowserEvidence({ candidate, manifest, playwright, computerU
   if (!manifestExecutionWindow) return bindingHold('EXECUTION_WINDOW_REQUIRED', candidate)
 
   const pinSource = String(first(trustedPins, ['source', 'source_kind', 'authority']) || '').toLowerCase()
-  const trustedPinRequired = ['source_ref', 'source_sha', 'base_sha', 'policy_digest', 'applicability_record_digest', 'immutable', 'base_pinned', 'fresh', 'authority_digest']
+  const trustedPinRequired = ['source_ref', 'source_sha', 'base_sha', 'policy_digest', 'applicability_record_digest', 'immutable', 'base_pinned', 'fresh', 'authority_digest', 'timeout_ms']
   if (!TRUSTED_SOURCES.has(pinSource) || trustedPins.candidate === true || trustedPins.candidate_controlled === true ||
       trustedPinRequired.some((key) => !own(trustedPins, key)) ||
       !isOpaqueId(trustedPins.source_ref) ||
@@ -1168,7 +1171,8 @@ export function bindBrowserEvidence({ candidate, manifest, playwright, computerU
       !isSha1(trustedPins.base_sha) || !isSha256(trustedPins.policy_digest) ||
       !isSha256(trustedPins.applicability_record_digest) || !isSha256(trustedPins.authority_digest) ||
       !isSha256(trustedVerifierSha(trustedPins)) || !isSha256(trustedBinderSha(trustedPins)) ||
-      !isSha256(trustedPins.verifier_tree_digest) || !isSha256(trustedPins.harness_digest)) return bindingHold('TRUSTED_SOURCE_REQUIRED', candidate)
+      !isSha256(trustedPins.verifier_tree_digest) || !isSha256(trustedPins.harness_digest) ||
+      !Number.isSafeInteger(trustedPins.timeout_ms) || trustedPins.timeout_ms < 1 || trustedPins.timeout_ms > 3_600_000) return bindingHold('TRUSTED_SOURCE_REQUIRED', candidate)
   if (trustedPins.stale === true || String(trustedPins.status || '').toLowerCase() === 'stale' ||
       trustedPins.immutable !== true || trustedPins.base_pinned !== true || trustedPins.fresh !== true) return bindingHold('TRUSTED_SOURCE_STALE', candidate)
   if (trustedPins.base_sha !== first(candidate, ['base_sha', 'resolved_base_sha'])) return bindingHold('TRUSTED_SOURCE_BASE_MISMATCH', candidate)

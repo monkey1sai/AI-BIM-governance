@@ -187,6 +187,7 @@ const browserPacket = (role, overrides = {}) => ({
   skipped: false,
   manifest_present: true,
   timed_out: false,
+  duration_ms: 40 * 60_000,
   manifest_path_digest: SHA256('a'),
   manifest_sha256: MANIFEST,
   manifest_sha256_at_start: MANIFEST,
@@ -255,6 +256,7 @@ const trustedPins = (overrides = {}) => {
     harness_digest: TRUSTED,
     command_pins: commandPins(),
     expected_flow: expectedFlow(),
+    timeout_ms: 45 * 60_000,
     ...overrides,
   }
   return { ...pins, authority_digest: overrides.authority_digest ?? trustedPinsAuthorityDigest(pins) }

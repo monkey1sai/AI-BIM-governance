@@ -507,17 +507,14 @@ test('P2 regression — command journal capacity is bounded without breaking com
   }))
   await journal.reserve(requests[0])
   await journal.reserve(requests[1])
-  await assert.rejects(
-    journal.reserve(requests[2]),
-    (error) => error?.code === 'command_journal_capacity_exceeded',
-  )
-
   const outcome = { command_id: requests[0].command_id, type: 'submit', status: 'SHADOW_STORED', reason: 'BOUNDED' }
   const committed = await journal.commit({ ...requests[0], outcome, outcome_digest: digestCanonical(outcome) })
   assert.equal(committed.status, 'COMMITTED')
+  assert.equal((await journal.reserve(requests[2])).status, 'RESERVED')
   assert.deepEqual(await journal.read({ journal_key: requests[0].journal_key, command_id: requests[0].command_id }), committed)
   const snapshot = await store.read(store.refs.commandJournal)
   assert.equal(Object.keys(snapshot.record.receipts).length, 2)
+  assert.equal(Object.hasOwn(snapshot.record.receipts, requests[0].journal_key), false)
 })
 
 test('AC-01 — cross-provider disjoint writers are admitted', async () => {
@@ -2249,7 +2246,7 @@ test('AC-39 — managed renewal requires a trusted authority decision bound to t
   }
 })
 
-test('P2 regression — managed renewal stops at the bounded nonce ledger without weakening replay protection', async () => {
+test('P2 regression — managed renewal rotates old nonce receipts without exhausting renewal authority', async () => {
   const usedNonces = Object.fromEntries(Array.from({ length: 4096 }, (_, index) => [
     NONCE(`managed-capacity-${index}`),
     { operation_id: `operation:managed-capacity-${index}`, consumed_at: '2026-08-29T00:00:00.000Z' },
@@ -2259,10 +2256,11 @@ test('P2 regression — managed renewal stops at the bounded nonce ledger withou
   const outcome = await registry.renew(managedRenewCommand(current, {
     operation_id: 'operation:managed-capacity-new', nonce: NONCE('managed-capacity-new'),
   }))
-  assert.equal(outcome.status, 'HELD_MANAGED_BRANCH')
-  assert.equal(outcome.reason, 'NONCE_LEDGER_CAPACITY_EXCEEDED')
-  assert.equal(managedBranchAuthority.calls.length, 0)
-  assert.equal(store.calls.filter((call) => call.kind === 'cas').length, 0)
+  assert.equal(outcome.status, 'RENEWED')
+  assert.equal(managedBranchAuthority.calls.length, 1)
+  assert.equal(store.calls.filter((call) => call.kind === 'cas').length, 1)
+  const persisted = (await registry.inspect(current.branch)).record
+  assert.equal(persisted.transition_sequence, current.transition_sequence + 1)
 })
 
 test('AC-39 RED — two same-OID renew operations have exactly one local CAS winner', async () => {
@@ -2626,6 +2624,18 @@ test('P2 regression — retained-resource stubs leave the registry only through 
   assert.equal(released.status, 'RETENTION_RELEASED', JSON.stringify(released))
   inspected = await leaseRegistry.inspect()
   assert.deepEqual(Object.keys(inspected.record.retained_resources), [])
+  assert.equal(inspected.record.leases['lease:archive-b'].state, 'RELEASED')
+  const recentNonce = NONCE('retention-release-recent')
+  const recent = await leaseRegistry.releaseRetainedResources({
+    lease_ids: ['lease:archive-b'], expected_oid: inspected.oid, nonce: recentNonce,
+    owner_attestation: attestation({
+      attestation_ref: 'attestation:retention-release-recent',
+      lease_set_digest: digestCanonical(['lease:archive-b']), expected_oid: inspected.oid, nonce: recentNonce,
+    }),
+  })
+  assert.equal(recent.status, 'RETENTION_RELEASED', JSON.stringify(recent))
+  inspected = await leaseRegistry.inspect()
+  assert.equal(Object.hasOwn(inspected.record.leases, 'lease:archive-b'), false)
   const admitted = await leaseRegistry.admit(makeRequest(store, {
     lease_id: 'lease:archive-c', owner_session: 'session:archive-c', provider_session_id: 'provider:archive-c',
     execution_context_id: 'context:archive-c', worktree_id: 'worktree:archive-c', branch: 'codex/archive-c',

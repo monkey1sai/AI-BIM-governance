@@ -383,7 +383,9 @@ const parseStackPoll = (raw, plan, accepted) => {
   // A poll observed before the frozen stack existed cannot describe its merge: a
   // replayed stale observation would otherwise become `merged_at` and let a
   // deployment dated before the stack satisfy the merge-to-deploy ordering.
-  if (Date.parse(poll.observed_at) < Date.parse(plan.frozen_stack.created_at)) return null
+  const observedAt = Date.parse(poll.observed_at)
+  if (observedAt < Date.parse(plan.frozen_stack.created_at) ||
+      observedAt >= Date.parse(plan.frozen_stack.expires_at)) return null
   if (poll.status === 'pending') return exactKeys(poll, baseKeys) ? { kind: 'pending' } : null
   if (['timeout', 'expired', 'not_found', 'ambiguous'].includes(poll.status)) {
     return exactKeys(poll, baseKeys) ? { kind: 'unproven' } : null
@@ -495,10 +497,11 @@ const parseDeployment = (raw, merged, plan, operation) => {
   ]) || deployment.schema_version !== 'stack-deployment-observation/v1' ||
     !isCanonicalUtcMillisecondTimestamp(deployment.observed_at) || deployment.stack_id !== merged.stack_id ||
     Date.parse(deployment.observed_at) < Date.parse(merged.merged_at) ||
+    Date.parse(deployment.observed_at) >= Date.parse(plan.frozen_stack.expires_at) ||
     deployment.repository !== merged.repository || deployment.request_digest !== merged.request_digest ||
     !sameCanonical(deployment.operation, operation) || deployment.frozen_vector_digest !== merged.frozen_vector_digest ||
     deployment.stack_result_merge_commit_sha !== merged.stack_result_merge_commit_sha ||
-    deployment.deployment_target_reference !== plan.request.deployment_target_reference ||
+    deployment.deployment_target_reference !== plan.frozen_stack.deployment_target_reference ||
     !['queued', 'running', 'completed', 'failed', 'cancelled'].includes(deployment.command_state) ||
     !(deployment.deployed_commit_sha === null || isSha(deployment.deployed_commit_sha)) ||
     !['not_started', 'running', 'passed', 'failed', 'unknown'].includes(deployment.post_deploy_status) ||

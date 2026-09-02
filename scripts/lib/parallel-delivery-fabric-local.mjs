@@ -128,6 +128,12 @@ const projectLeaseRegistry = (registry) => Object.freeze({
       : projectHeld(result, 'PLAN_DRAIN_UNAVAILABLE')
   },
   release: async () => held('RELEASE_AUTHORITY_UNAVAILABLE'),
+  async releaseRetainedResources(input) {
+    const result = await registry.releaseRetainedResources(input)
+    return result?.status === 'RETENTION_RELEASED'
+      ? Object.freeze({ status: 'RETENTION_RELEASED' })
+      : projectHeld(result, 'RETENTION_RELEASE_AUTHORITY_UNAVAILABLE')
+  },
   async inspect() { return snapshot(await registry.inspect(), 'refs/ai-bim/session-leases') },
 })
 
@@ -144,12 +150,12 @@ const disabledProvider = Object.freeze({
   preflight: async () => held('PROVIDER_AUTHORITY_UNAVAILABLE'),
 })
 
-export async function createLocalParallelDeliveryFabric({ repositoryRoot } = {}) {
+export async function createLocalParallelDeliveryFabric({ repositoryRoot, ownerEndAttestor = undefined } = {}) {
   const repository = await resolveRepository(repositoryRoot)
   const store = createGitCasStore({ git: createLocalGitPort(repository.root), commonDir: repository.commonDir })
   const clock = Object.freeze({ now: () => new Date().toISOString() })
   const planRegistry = projectPlanRegistry(createPlanRegistry({ store, clock }))
-  const leaseRegistry = projectLeaseRegistry(createLeaseRegistry({ store, clock }))
+  const leaseRegistry = projectLeaseRegistry(createLeaseRegistry({ store, clock, ownerEndAttestor }))
   return createParallelDeliveryFabric({
     commandJournal: createCommandJournal({ store, clock }),
     planRegistry,

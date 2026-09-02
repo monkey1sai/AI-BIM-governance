@@ -129,13 +129,20 @@ const configured = (rawPorts) => {
   if (!root) return undefined
   const commandJournal = portObject(root.commandJournal, ['read', 'reserve', 'commit'])
   const planRegistry = portObject(root.planRegistry, ['submit', 'validateGeneration', 'inspect'])
-  const leaseRegistry = portObject(root.leaseRegistry, ['admit', 'validateActive', 'validateDependencies', 'reconcileTimeout', 'drainPlan', 'release', 'inspect'])
+  const leaseKeys = Object.hasOwn(root.leaseRegistry ?? {}, 'releaseRetainedResources')
+    ? ['admit', 'validateActive', 'validateDependencies', 'reconcileTimeout', 'drainPlan', 'release', 'releaseRetainedResources', 'inspect']
+    : ['admit', 'validateActive', 'validateDependencies', 'reconcileTimeout', 'drainPlan', 'release', 'inspect']
+  const leaseRegistryRaw = portObject(root.leaseRegistry, leaseKeys)
+  const leaseRegistry = leaseRegistryRaw && Object.freeze({
+    ...leaseRegistryRaw,
+    releaseRetainedResources: leaseRegistryRaw.releaseRetainedResources ?? (async () => ({ status: 'HELD', reason: 'RETENTION_RELEASE_AUTHORITY_UNAVAILABLE' })),
+  })
   const execution = portObject(root.execution, ['advance'])
   const adapters = portObject(root.providerAdapters, ['codex', 'claude'])
   const codex = adapters && portObject(adapters.codex, ['preflight'])
   const claude = adapters && portObject(adapters.claude, ['preflight'])
   const projection = Object.hasOwn(root, 'projection') ? portObject(root.projection, ['reconcile']) : undefined
-  const functions = [commandJournal?.read, commandJournal?.reserve, commandJournal?.commit, planRegistry?.submit, planRegistry?.validateGeneration, planRegistry?.inspect, leaseRegistry?.admit, leaseRegistry?.validateActive, leaseRegistry?.validateDependencies, leaseRegistry?.reconcileTimeout, leaseRegistry?.drainPlan, leaseRegistry?.release, leaseRegistry?.inspect, execution?.advance, codex?.preflight, claude?.preflight, ...(projection ? [projection.reconcile] : [])]
+  const functions = [commandJournal?.read, commandJournal?.reserve, commandJournal?.commit, planRegistry?.submit, planRegistry?.validateGeneration, planRegistry?.inspect, leaseRegistry?.admit, leaseRegistry?.validateActive, leaseRegistry?.validateDependencies, leaseRegistry?.reconcileTimeout, leaseRegistry?.drainPlan, leaseRegistry?.release, leaseRegistry?.releaseRetainedResources, leaseRegistry?.inspect, execution?.advance, codex?.preflight, claude?.preflight, ...(projection ? [projection.reconcile] : [])]
   return functions.every((entry) => typeof entry === 'function') && (!Object.hasOwn(root, 'projection') || projection) ? deepFreeze({ commandJournal, planRegistry, leaseRegistry, execution, providerAdapters: { codex, claude }, ...(projection ? { projection } : {}) }) : undefined
 }
 
@@ -195,6 +202,13 @@ const validReleaseRequest = (request) => {
   const proof = request.attestation
   return proof.lease_id === request.lease_id && proof.issuer_id !== proof.owner_session && ['codex', 'claude'].includes(proof.provider) && ['attestation_ref', 'issuer_id', 'issuer_version', 'owner_session', 'provider_session_id', 'execution_context_id', 'lease_id'].every((key) => typeof proof[key] === 'string' && /^[A-Za-z0-9][A-Za-z0-9._:/-]{1,127}$/u.test(proof[key])) && ['attestation_digest', 'scope_digest', 'worktree_path_digest'].every((key) => /^[0-9a-f]{64}$/u.test(proof[key])) && /^[0-9a-f]{40}$/u.test(proof.head_sha) && typeof proof.nonce === 'string' && /^[A-Za-z0-9_-]{32,128}$/u.test(proof.nonce) && Number.isSafeInteger(proof.generation) && proof.generation > 0 && Number.isSafeInteger(proof.revocation_epoch) && proof.revocation_epoch >= 0 && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u.test(proof.observed_at) && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u.test(proof.expires_at) && Date.parse(proof.observed_at) < Date.parse(proof.expires_at)
 }
+const validRetainedReleaseRequest = (request) => isObject(request) &&
+  exactKeys(request, ['lease_ids', 'expected_oid', 'nonce', 'owner_attestation']) &&
+  Array.isArray(request.lease_ids) && request.lease_ids.length > 0 && request.lease_ids.length <= 256 &&
+  new Set(request.lease_ids).size === request.lease_ids.length &&
+  request.lease_ids.every((leaseId) => typeof leaseId === 'string' && /^[A-Za-z0-9][A-Za-z0-9._:/-]{1,127}$/u.test(leaseId)) &&
+  typeof request.expected_oid === 'string' && /^[0-9a-f]{40}$/u.test(request.expected_oid) &&
+  typeof request.nonce === 'string' && /^[A-Za-z0-9_-]{32,128}$/u.test(request.nonce) && isObject(request.owner_attestation)
 
 const validReleased = (result, request) => isObject(result) && exactKeys(result, ['status', 'oid', 'lease']) && result.status === 'RELEASED' && /^[0-9a-f]{40}$/u.test(result.oid) && isObject(result.lease) && exactKeys(result.lease, ['lease_id', 'state', 'retention_state', 'release_record']) && result.lease.lease_id === request.lease_id && result.lease.state === 'RELEASED' && result.lease.retention_state === 'RETAINED_FOR_REVIEW' && isObject(result.lease.release_record) && exactKeys(result.lease.release_record, ['owner_end_attestation_ref', 'owner_end_attestation_digest']) && result.lease.release_record.owner_end_attestation_ref === request.attestation.attestation_ref && result.lease.release_record.owner_end_attestation_digest === request.attestation.attestation_digest
 const bound = (value, keys, status, bindings) => isObject(value) && exactKeys(value, keys) && value.status === status && Object.entries(bindings).every(([key, expected]) => value[key] === expected)
@@ -320,7 +334,10 @@ export function createParallelDeliveryFabric(ports) {
       if (!commandShapeIsValid(command)) return outcome(commandId, type, 'HELD', 'COMMAND_SCHEMA_INVALID')
       if (!ready) return outcome(commandId, type, 'HELD', 'ORCHESTRATOR_PORTS_INVALID')
       if (type === 'submit' && !submittedPlanIsMetadataOnly(command)) return outcome(commandId, type, 'HELD', 'PLAN_ONLY_REQUIRED')
-      if (type === 'release' && !validReleaseRequest(command.release_request)) return outcome(commandId, type, 'HELD', 'RELEASE_REQUEST_INVALID')
+      const retainedRelease = type === 'release' && Array.isArray(command.release_request?.lease_ids)
+      if (type === 'release' && !(retainedRelease ? validRetainedReleaseRequest(command.release_request) : validReleaseRequest(command.release_request))) {
+        return outcome(commandId, type, 'HELD', 'RELEASE_REQUEST_INVALID')
+      }
 
       const commandDigest = digestCanonical(command)
       const attemptId = `attempt:${randomUUID()}`
@@ -444,9 +461,16 @@ export function createParallelDeliveryFabric(ports) {
             : heldFromPort(command, 'PLAN_DRAIN_UNAVAILABLE', drained)
         }
       } else if (type === 'release') {
-        // A base-owned, prior-pinned OwnerEndAttestor descriptor is not exposed
-        // by this public seam.  Never treat caller-shaped evidence as authority.
-        next = outcome(command.command_id, type, 'HELD', 'RELEASE_AUTHORITY_UNAVAILABLE')
+        if (!retainedRelease) {
+          // Ordinary lease release still requires the sequenced envelope path.
+          next = outcome(command.command_id, type, 'HELD', 'RELEASE_AUTHORITY_UNAVAILABLE')
+        } else {
+          let released
+          try { released = safePortResult(await capabilities.leaseRegistry.releaseRetainedResources(command.release_request)) } catch { released = undefined }
+          next = bound(released, ['status'], 'RETENTION_RELEASED', {})
+            ? outcome(command.command_id, type, 'SHADOW_STORED', 'RETENTION_RELEASED')
+            : heldFromPort(command, 'RETENTION_RELEASE_AUTHORITY_UNAVAILABLE', released)
+        }
       } else {
         next = outcome(command.command_id, type, 'HELD', 'COMMAND_NOT_IMPLEMENTED')
       }
