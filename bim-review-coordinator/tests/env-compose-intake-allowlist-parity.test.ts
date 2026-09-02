@@ -42,10 +42,15 @@ describe("CONVERSION_TRIGGER_IP_ALLOWLIST deploy-time parity（IMPORTANT — com
   const ENV_KEY = "CONVERSION_TRIGGER_IP_ALLOWLIST";
   const EXTERNAL_KEY = "EXTERNAL_INTAKE_IP_ALLOWLIST";
   const original = process.env[ENV_KEY];
+  // hermetic：開發機 shell 或 dotenv 載入私有 .env 帶著 EXTERNAL_INTAKE_IP_ALLOWLIST 時，
+  // 「程式碼預設」斷言會讀到 ambient 值而非 config.ts 預設；一併存還原。
+  const originalExternal = process.env[EXTERNAL_KEY];
 
   afterEach(() => {
     if (original === undefined) delete process.env[ENV_KEY];
     else process.env[ENV_KEY] = original;
+    if (originalExternal === undefined) delete process.env[EXTERNAL_KEY];
+    else process.env[EXTERNAL_KEY] = originalExternal;
   });
 
   function coordinatorBlock(): string[] {
@@ -99,6 +104,7 @@ describe("CONVERSION_TRIGGER_IP_ALLOWLIST deploy-time parity（IMPORTANT — com
 
   it("external 預設清單含 loopback（否則 MINIO_WATCH_ENABLED=true 會 assertIntakeReachable fail-fast）", () => {
     delete process.env[ENV_KEY];
+    delete process.env[EXTERNAL_KEY];
     const config = loadConfig();
     expect(config.externalIntakeIpAllowlist).toContain("127.0.0.1");
     expect(config.externalIntakeIpAllowlist).toContain("::1");

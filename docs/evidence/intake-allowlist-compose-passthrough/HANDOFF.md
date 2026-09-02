@@ -120,14 +120,16 @@ cd <worktree>/bim-review-coordinator && npm ci && npx vitest run tests/env-compo
 
 ---
 
-## 6. 未做到的部分（hook 阻擋）
+## 6. `.env*.example` 宣告（T2 pivot 後已由 owner 補齊）
 
-`.env.web-plane.host-kit.example` 與 `.env.web-plane.host-kit.canonical-linux.example`
-**未新增** `EXTERNAL_INTAKE_IP_ALLOWLIST=`（空值）宣告 —— protect-secrets hook 擋住 `.env*`
-全系列（含 `.example`）的讀寫。
+原缺口（agent 受 protect-secrets hook 限制無法讀寫 `.env*` 全系列）已由 owner 親自以
+commit `dea28c2` 補齊：四份 example（host-kit／canonical-linux／runtime-manager.docker／
+coordinator）各宣告一次 **`CONVERSION_TRIGGER_IP_ALLOWLIST=`（空值）**，parity 測試釘住宣告存在
+（issue #746 於 merge 後關閉）。
 
-**影響**：不影響功能（compose 透傳本身即足夠，owner 直接在私有 env 設值即生效）；
-缺的只是 missing-key merge 的可發現性。既有 `ENABLE_DEV_ROUTES` 有做這層，建議補齊對稱。
+⚠️ 依 §0 T2 pivot：example 與私有 env **不宣告、不設** `EXTERNAL_INTAKE_IP_ALLOWLIST`
+——compose 刻意不透傳它（Docker 部署設了無效），在其他啟動路徑設值＝放寬 webhook／lineage
+授權面（spec SHALL NOT）。
 
 ---
 
