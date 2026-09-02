@@ -928,7 +928,37 @@ const packetCompletenessFailure = (packet) => {
   return null
 }
 
-const commandRecordFailure = (packets, executionWindow) => {
+// Lifecycle implied by the required roles: git preflight before the stack starts,
+// the stack running before either browser verifier, and the postflight finishing
+// after both verifiers so it can attest the post-test candidate/harness state.
+const COMMAND_ROLE_ORDER = Object.freeze([
+  ['git_preflight', 'stack_start'],
+  ['stack_start', 'stack_status'],
+  ['stack_status', 'playwright_require_real'],
+  ['stack_status', 'computer_use'],
+  ['playwright_require_real', 'postflight'],
+  ['computer_use', 'postflight'],
+])
+
+const commandRoleIntervals = (records) => {
+  const intervals = new Map()
+  for (const record of records) {
+    const startedAt = Date.parse(first(record, ['started_at', 'start_time']))
+    const finishedAt = Date.parse(first(record, ['finished_at', 'end_time']))
+    const current = intervals.get(record.role) ?? { startedAt, finishedAt }
+    intervals.set(record.role, {
+      startedAt: Math.min(current.startedAt, startedAt),
+      finishedAt: Math.max(current.finishedAt, finishedAt),
+    })
+  }
+  return intervals
+}
+
+const commandRecordFailure = (packets, executionWindow, trustedPins) => {
+  // Every role must bind to the trusted canonical runner: any nonempty cwd/argv/
+  // environment is not evidence that the real Playwright / Computer Use commands ran.
+  const commandPins = isPlainObject(trustedPins) ? trustedPins.command_pins : undefined
+  if (!isPlainObject(commandPins)) return 'COMMAND_PINS_MISSING'
   if (packets.some((packet) => !Array.isArray(packet?.command_records) || packet.command_records.length === 0)) return 'COMMAND_RECORDS_MISSING'
   const boundedWindow = validExecutionWindow(executionWindow)
   if (!boundedWindow) return 'EXECUTION_WINDOW_REQUIRED'
@@ -952,6 +982,10 @@ const commandRecordFailure = (packets, executionWindow) => {
         !Number.isSafeInteger(record.exit_code) || typeof stdout !== 'string' || stdout.length === 0 ||
         typeof stderr !== 'string' || stderr.length === 0 ||
         (typeof redaction !== 'string' && typeof redaction !== 'boolean') || redaction === '') return 'COMMAND_RECORD_INVALID'
+    const pin = commandPins[record.role]
+    if (!isPlainObject(pin) || !isSha256(pin.cwd_digest) || !isSha256(pin.argv_digest) ||
+        typeof pin.environment_contract !== 'string' || pin.environment_contract.length === 0) return 'COMMAND_PINS_MISSING'
+    if (cwd !== pin.cwd_digest || argv !== pin.argv_digest || environment !== pin.environment_contract) return 'COMMAND_RECORD_NOT_CANONICAL'
   }
   for (const required of REQUIRED_COMMAND_ROLES) if (!roles.has(required)) return 'COMMAND_RECORDS_INCOMPLETE'
   for (const packet of packets) {
@@ -969,6 +1003,10 @@ const commandRecordFailure = (packets, executionWindow) => {
     const startedAt = Date.parse(first(record, ['started_at', 'start_time']))
     const finishedAt = Date.parse(first(record, ['finished_at', 'end_time']))
     if (startedAt < windowStartedAt || finishedAt > windowFinishedAt) return 'COMMAND_RECORD_WINDOW_MISMATCH'
+  }
+  const intervals = commandRoleIntervals(records)
+  for (const [before, after] of COMMAND_ROLE_ORDER) {
+    if (intervals.get(before).finishedAt > intervals.get(after).startedAt) return 'COMMAND_RECORD_ORDER_INVALID'
   }
   return null
 }
@@ -1125,6 +1163,15 @@ export function bindBrowserEvidence({ candidate, manifest, playwright, computerU
   const playwrightListenerDigest = listenerDigest(playwright)
   const computerUseListenerDigest = listenerDigest(computerUse)
   if (playwrightListenerDigest !== computerUseListenerDigest) return bindingHold('LISTENER_DIGEST_MISMATCH', candidate)
+  // The evidence copies route/fixture/API/runtime/visible-state from Playwright, so
+  // Computer Use must have exercised exactly the same user flow, not merely a packet
+  // whose manifest, command and network digests happen to match.
+  for (const keys of [
+    ['route'], ['main_buttons', 'buttons', 'main_button'], ['fixture', 'fixture_reference'],
+    ['api', 'backend_api', 'api_reference'], ['runtime_id', 'runtime_reference'], ['visible_state', 'visible_states'],
+  ]) {
+    if (!equalCanonical(first(playwright, keys), first(computerUse, keys))) return bindingHold('BROWSER_FLOW_MISMATCH', candidate)
+  }
   const computerUseIdentity = first(computerUse, ['verifier_identity', 'verifier_id', 'owner_session'])
   const writerIdentity = first(candidate, ['owner_session', 'writer_session', 'provider_session_id'])
   const playwrightIdentity = first(playwright, ['verifier_identity', 'verifier_id'])
@@ -1137,7 +1184,7 @@ export function bindBrowserEvidence({ candidate, manifest, playwright, computerU
   const computerUseRuntimeLineage = first(computerUse, ['runtime_lineage_digest', 'runtime_identity_digest'])
   if (playwrightCommandDigest !== computerUseCommandDigest || playwrightRuntimeLineage !== computerUseRuntimeLineage) return bindingHold('COMMAND_OR_RUNTIME_LINEAGE_MISMATCH', candidate)
   if (!equalCanonical(packetExecutionWindows[0], packetExecutionWindows[1])) return bindingHold('EXECUTION_WINDOW_MISMATCH', candidate)
-  const commandFailure = commandRecordFailure([playwright, computerUse], packetExecutionWindows[0])
+  const commandFailure = commandRecordFailure([playwright, computerUse], packetExecutionWindows[0], trustedPins)
   if (commandFailure) return bindingHold(commandFailure, candidate)
   const networkDigest = sanitizedNetworkDigest(playwright)
   const computerUseNetworkDigest = sanitizedNetworkDigest(computerUse)

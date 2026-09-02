@@ -215,11 +215,15 @@
     "trusted_acceptance": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["id", "required_gate_kinds", "required_source_kinds", "applicability"],
+      "required": ["id", "required_gate_kinds", "required_source_kinds", "expected_source_refs", "applicability"],
       "properties": {
         "id": { "$ref": "#/$defs/ac_id" },
         "required_gate_kinds": { "type": "array", "minItems": 1, "maxItems": 5, "uniqueItems": true, "items": { "$ref": "#/$defs/gate_kind" } },
         "required_source_kinds": { "type": "array", "minItems": 4, "maxItems": 5, "uniqueItems": true, "items": { "$ref": "#/$defs/source_kind" } },
+        "expected_source_refs": {
+          "$comment": "Exact trusted source identity (ref + digest) for every required source kind; the candidate cannot select the authority that validates it.",
+          "type": "array", "minItems": 4, "maxItems": 5, "items": { "$ref": "#/$defs/source_ref" }
+        },
         "applicability": { "$ref": "#/$defs/applicability" }
       }
     },

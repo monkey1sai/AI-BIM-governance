@@ -620,7 +620,9 @@ const resourceKeysConflict = (left, right) => {
   if (left === right) return true
   const leftResource = normalizedScopeResourceFromKey(left)
   const rightResource = normalizedScopeResourceFromKey(right)
-  if (!leftResource || !rightResource) return false
+  // A resource kind the registry cannot normalize is an unknown overlap: it must
+  // hold against every held lease, never be treated as disjoint.
+  if (!leftResource || !rightResource) return true
   return conservativeScopeOverlap(leftResource, rightResource)
 }
 
@@ -1119,7 +1121,7 @@ const updateSingleLease = async ({ store, writerCap, clock, leaseId, expectedOid
   if (stale) return stale
   const lease = requireLease(snapshot, leaseId)
   const timestamp = nowFrom(clock)
-  const nextLease = transform(lease, timestamp)
+  const nextLease = transform(lease, timestamp, snapshot.record.used_owner_end_attestations)
   if (isObject(nextLease) && nextLease.status === 'END_REQUESTED' && nextLease.idempotent === true) {
     return { status: 'END_REQUESTED', oid: snapshot.oid, lease }
   }
@@ -1415,11 +1417,12 @@ export function createLeaseRegistry({ store, clock, writerCap = WRITER_CAP_V1, o
   }
 
   const endRequest = (input) => {
-    const { lease_id, expected_oid, nonce, reason, handoff_or_candidate_reference } = validateClosedRequest(input, [
-      'lease_id', 'expected_oid', 'nonce', 'reason', 'handoff_or_candidate_reference',
+    const { lease_id, expected_oid, nonce, reason, handoff_or_candidate_reference, owner_end_attestation } = validateClosedRequest(input, [
+      'lease_id', 'expected_oid', 'nonce', 'reason', 'handoff_or_candidate_reference', 'owner_end_attestation',
     ], 'end_request')
     if (!['handoff', 'failed', 'aborted'].includes(reason)) fail('invalid_value', 'end_request_reason_invalid')
     assertTask2OpaqueId(handoff_or_candidate_reference, 'end_request_handoff_or_candidate_reference')
+    validateOwnerEndAttestationShape(owner_end_attestation)
     return updateSingleLease({
       store,
       writerCap,
@@ -1427,7 +1430,7 @@ export function createLeaseRegistry({ store, clock, writerCap = WRITER_CAP_V1, o
       leaseId: lease_id,
       expectedOid: expected_oid,
       nonce,
-      transform: (lease, timestamp) => {
+      transform: (lease, timestamp, usedOwnerEndAttestations) => {
         if (lease.state === 'END_REQUESTED') {
           const same = lease.end_request.reason === reason &&
             lease.end_request.handoff_or_candidate_reference === handoff_or_candidate_reference &&
@@ -1442,6 +1445,16 @@ export function createLeaseRegistry({ store, clock, writerCap = WRITER_CAP_V1, o
         if (lease.state === 'RELEASED') fail('lease_released', lease.lease_id)
         if (lease.state !== 'ACTIVE') {
           return { status: 'HELD_EXECUTION_AUTHORITY', reason: 'END_REQUEST_REQUIRES_ACTIVE', reconcile_required: false }
+        }
+        // Owner/session-bound authority proof: tuple, expiry, issuer independence and
+        // replay ledger are all checked against the lease being ended.
+        try {
+          validateOwnerEndAttestation(owner_end_attestation, lease, timestamp, usedOwnerEndAttestations)
+        } catch (error) {
+          if (error instanceof FabricRegistryError && error.code !== 'invalid_value' && error.code !== 'invalid_shape') {
+            return { status: 'HELD_EXECUTION_AUTHORITY', reason: 'END_REQUEST_UNAUTHORIZED', detail: error.code, reconcile_required: false }
+          }
+          throw error
         }
         return updateLease(lease, {
           nonce,
@@ -1935,9 +1948,12 @@ const MANAGED_BRANCH_KEYS = Object.freeze([
   'registry_oid', 'managed_base_lease_id', 'transition_sequence', 'state', 'canonical_digest',
 ])
 
-const MANAGED_REGISTRY_KEYS = Object.freeze(['schema_version', 'branch', 'used_nonces'])
+// Managed branches are keyed by branch identity so develop, release/* and hotfix/*
+// bases coexist and are inspected, renewed and frozen independently.
+const MANAGED_REGISTRY_KEYS = Object.freeze(['schema_version', 'branches', 'used_nonces'])
+const MANAGED_BRANCH_LIMIT = 16
 const MANAGED_RENEW_COMMAND_KEYS = Object.freeze([
-  'schema_version', 'action', 'operation_id', 'owner_authority', 'managed_base_lease_id', 'current_generation',
+  'schema_version', 'action', 'branch', 'operation_id', 'owner_authority', 'managed_base_lease_id', 'current_generation',
   'expected_registry_oid', 'expected_base_sha', 'expected_head_sha', 'expected_protection_profile_digest',
   'transition_sequence', 'nonce', 'requested_expires_at', 'authorized_expires_at',
 ])
@@ -2000,10 +2016,16 @@ const validateManagedBranchRecord = (record, context = 'managed_branch') => {
 const validateManagedRegistryState = (record) => {
   assertNoSensitiveMaterial(record, 'managed_branch_registry')
   exactKeys(record, MANAGED_REGISTRY_KEYS, 'managed_branch_registry')
-  if (record.schema_version !== 'managed-branch-registry/v1' || !isObject(record.used_nonces)) {
+  if (record.schema_version !== 'managed-branch-registry/v2' || !isObject(record.used_nonces) || !isObject(record.branches)) {
     fail('registry_record_invalid', 'managed_branch_registry_shape')
   }
-  validateManagedBranchRecord(record.branch, 'managed_branch_registry.branch')
+  const branchNames = Object.keys(record.branches)
+  if (branchNames.length < 1 || branchNames.length > MANAGED_BRANCH_LIMIT) fail('registry_record_invalid', 'managed_branch_registry_branch_count')
+  for (const name of branchNames) {
+    assertIdentifier(name, 'managed_branch_registry.branches.key')
+    validateManagedBranchRecord(record.branches[name], `managed_branch_registry.branches.${name}`)
+    if (record.branches[name].branch !== name) fail('registry_record_invalid', `managed_branch_registry_branch_key_${name}`)
+  }
   if (Object.keys(record.used_nonces).length > MANAGED_BRANCH_NONCE_RECEIPT_LIMIT) {
     fail('registry_record_invalid', 'managed_branch_registry_nonce_receipt_limit')
   }
@@ -2040,6 +2062,8 @@ const validateManagedRenewCommand = (input) => {
     return { reason: ['push', 'direct_push', 'deploy', 'direct_deploy'].includes(input.action) ? 'DIRECT_PUSH_FORBIDDEN' : 'MANAGED_OPERATION_INVALID' }
   }
   try {
+    assertIdentifier(input.branch, 'managed_branch_renew.branch')
+    if (managedBranchClass(input.branch) === null) fail('invalid_value', 'managed_branch_renew.branch_class')
     assertOpaque(input.operation_id, 'managed_branch_renew.operation_id')
     assertOpaque(input.owner_authority, 'managed_branch_renew.owner_authority')
     assertOpaque(input.managed_base_lease_id, 'managed_branch_renew.managed_base_lease_id')
@@ -2075,7 +2099,9 @@ const readManagedSnapshot = async (store) => {
     return {
       status: 'READY',
       registry_oid: snapshot.oid,
-      record: hydrateManagedBranch(snapshot.record.branch, snapshot.oid),
+      branches: Object.fromEntries(Object.entries(snapshot.record.branches).map(([name, branch]) => [
+        name, hydrateManagedBranch(branch, snapshot.oid),
+      ])),
       state: snapshot.record,
     }
   } catch {
@@ -2083,8 +2109,7 @@ const readManagedSnapshot = async (store) => {
   }
 }
 
-const renewFailure = (snapshot, command, now) => {
-  const record = snapshot.record
+const renewFailure = (record, snapshot, command, now) => {
   const nowMilliseconds = parseTimestamp(now, 'managed_branch_renew.now')
   if (record.state !== 'ACTIVE') return managedHeld('MANAGED_BRANCH_NOT_ACTIVE', { state: record.state })
   if (parseTimestamp(record.expires_at, 'managed_branch_renew.expires_at') <= nowMilliseconds) {
@@ -2111,23 +2136,24 @@ const renewFailure = (snapshot, command, now) => {
   return null
 }
 
-const verifyManagedRenewalAuthority = async (authority, snapshot, command, now) => {
+const verifyManagedRenewalAuthority = async (authority, record, snapshot, command, now) => {
   if (!authority || typeof authority.verifyRenewal !== 'function') return managedHeld('RENEWAL_AUTHORITY_UNAVAILABLE')
   const requestPayload = {
     schema_version: 'managed-branch-renewal-authority-request/v1',
     action: 'renew',
+    branch: record.branch,
     operation_id: command.operation_id,
     nonce: command.nonce,
-    owner_authority: snapshot.record.owner_authority,
-    managed_base_lease_id: snapshot.record.managed_base_lease_id,
+    owner_authority: record.owner_authority,
+    managed_base_lease_id: record.managed_base_lease_id,
     registry_oid: snapshot.registry_oid,
-    branch_digest: snapshot.record.canonical_digest,
-    generation: snapshot.record.generation,
-    transition_sequence: snapshot.record.transition_sequence,
-    base_sha: snapshot.record.base_sha,
-    head_sha: snapshot.record.current_head_sha,
-    protection_profile_digest: snapshot.record.protection_profile_digest,
-    current_expires_at: snapshot.record.expires_at,
+    branch_digest: record.canonical_digest,
+    generation: record.generation,
+    transition_sequence: record.transition_sequence,
+    base_sha: record.base_sha,
+    head_sha: record.current_head_sha,
+    protection_profile_digest: record.protection_profile_digest,
+    current_expires_at: record.expires_at,
     requested_expires_at: command.requested_expires_at,
     claimed_authorized_expires_at: command.authorized_expires_at,
     observed_at: now,
@@ -2171,10 +2197,16 @@ export function parseManagedBranchRegistry(raw) {
 export function createManagedBranchRegistry({ store, clock, managedBranchAuthority }) {
   if (!store || typeof store.read !== 'function' || typeof store.cas !== 'function') fail('invalid_port', 'managed_branch_store_required')
 
-  const inspect = async () => {
+  // Without a branch selector the whole keyed collection is returned; with one, the
+  // exact managed branch or a typed hold when it is not registered.
+  const inspect = async (branch = undefined) => {
     const snapshot = await readManagedSnapshot(store)
     if (snapshot.status !== 'READY') return snapshot
-    return Object.freeze({ status: 'READY', registry_oid: snapshot.registry_oid, record: snapshot.record })
+    if (branch === undefined) {
+      return Object.freeze({ status: 'READY', registry_oid: snapshot.registry_oid, branches: freezeIJson(snapshot.branches) })
+    }
+    if (typeof branch !== 'string' || !Object.hasOwn(snapshot.branches, branch)) return managedHeld('MANAGED_BRANCH_UNKNOWN', { branch })
+    return Object.freeze({ status: 'READY', registry_oid: snapshot.registry_oid, record: snapshot.branches[branch] })
   }
 
   const renew = async (input) => {
@@ -2182,18 +2214,20 @@ export function createManagedBranchRegistry({ store, clock, managedBranchAuthori
     if (commandResult.reason) return managedHeld(commandResult.reason)
     const snapshot = await readManagedSnapshot(store)
     if (snapshot.status !== 'READY') return snapshot
+    const currentBranch = snapshot.branches[commandResult.command.branch]
+    if (!currentBranch) return managedHeld('MANAGED_BRANCH_UNKNOWN', { branch: commandResult.command.branch })
     const timestamp = nowFrom(clock)
-    const failure = renewFailure(snapshot, commandResult.command, timestamp)
+    const failure = renewFailure(currentBranch, snapshot, commandResult.command, timestamp)
     if (failure) return failure
     const authorityFailure = await verifyManagedRenewalAuthority(
-      managedBranchAuthority, snapshot, commandResult.command, timestamp,
+      managedBranchAuthority, currentBranch, snapshot, commandResult.command, timestamp,
     )
     if (authorityFailure) return authorityFailure
     const branch = hydrateManagedBranch({
-      ...snapshot.record,
+      ...currentBranch,
       expires_at: commandResult.command.requested_expires_at,
       renewed_at: timestamp,
-      transition_sequence: snapshot.record.transition_sequence + 1,
+      transition_sequence: currentBranch.transition_sequence + 1,
     }, snapshot.registry_oid)
     const usedNonces = clone(snapshot.state.used_nonces)
     usedNonces[commandResult.command.nonce] = {
@@ -2201,8 +2235,8 @@ export function createManagedBranchRegistry({ store, clock, managedBranchAuthori
       consumed_at: timestamp,
     }
     const next = {
-      schema_version: 'managed-branch-registry/v1',
-      branch,
+      schema_version: 'managed-branch-registry/v2',
+      branches: { ...clone(snapshot.state.branches), [commandResult.command.branch]: branch },
       used_nonces: usedNonces,
     }
     try {

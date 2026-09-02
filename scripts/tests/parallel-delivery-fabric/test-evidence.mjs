@@ -90,6 +90,7 @@ const expectedAcceptance = number => ({
   id: acceptanceId(number),
   required_gate_kinds: requiredKinds(number),
   required_source_kinds: [...BASE_SOURCE_KINDS],
+  expected_source_refs: sourceRefs(acceptanceId(number)),
   applicability: { kind: 'REQUIRED' },
 })
 
@@ -132,6 +133,7 @@ const trustedNotApplicableAcceptance = value => ({
   ...value,
   required_gate_kinds: ['POLICY'],
   required_source_kinds: [...BASE_SOURCE_KINDS, 'APPLICABILITY'],
+  expected_source_refs: [...value.expected_source_refs, { kind: 'APPLICABILITY', ref: 'applicability:base_policy', digest: APPLICABILITY }],
   applicability: {
     kind: 'NOT_APPLICABLE',
     authority_ref: 'applicability:base_policy',
@@ -404,7 +406,21 @@ test('P1 — privacy is field and scheme aware: raw material and unknown held la
       source_refs: [{ ...value.source_refs[0], ref: 'design:authorization_policy' }, ...value.source_refs.slice(1)],
     })),
   })
-  assert.equal(reduceEvidenceContract(ordinaryReference, trustedContext()).status, 'HELD')
+  // A durable opaque reference stays opaque, but the candidate cannot choose it: only the
+  // trusted context's pinned source identity is accepted for that kind.
+  const pinnedContext = contextWithAcceptance(0, value => ({
+    ...value,
+    expected_source_refs: value.expected_source_refs.map(source => (source.kind === 'DESIGN' ? { ...source, ref: 'design:authorization_policy' } : source)),
+  }))
+  assert.equal(reduceEvidenceContract(ordinaryReference, pinnedContext).status, 'HELD')
+  assert.equal(reduceEvidenceContract(ordinaryReference, trustedContext()).status, 'REJECTED')
+  const digestDrift = bundle({
+    records: replaceRecord(bundle().records, 0, value => ({
+      ...value,
+      source_refs: [{ ...value.source_refs[0], digest: 'f'.repeat(64) }, ...value.source_refs.slice(1)],
+    })),
+  })
+  assert.equal(reduceEvidenceContract(digestDrift, trustedContext()).status, 'REJECTED')
 })
 
 test('evidence reducer produces a stable immutable summary and does not mutate candidate or trusted context', () => {

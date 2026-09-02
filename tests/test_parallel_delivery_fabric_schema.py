@@ -348,11 +348,14 @@ const manifest = {
   worktree_path_digest: path, tree_digest: tree, runtime_identity_digest: runtime,
   execution_window: { started_at: now, finished_at: later }, started_at: now,
 }
+const lifecycle = { git_preflight: [0, 5], stack_start: [5, 10], stack_status: [10, 12], playwright_require_real: [12, 30], computer_use: [12, 35], postflight: [35, 40] }
+const minutesAfter = minutes => new Date(Date.parse(now) + minutes * 60000).toISOString()
+const commandPins = Object.fromEntries(Object.keys(lifecycle).map(role => [role, { cwd_digest: sha256('c'), argv_digest: sha256('d'), environment_contract: 'e2e-require-real/v1' }]))
 const trustedPins = {
   source: 'prior-trusted', source_ref: applicability.source_ref, source_sha: policySourceSha, base_sha: base,
   policy_digest: applicability.policy_digest, applicability_record_digest: applicability.record_digest,
   immutable: true, base_pinned: true, fresh: true, verifier_sha: trusted, binder_sha: binder,
-  verifier_tree_digest: trusted, harness_digest: trusted, authority_digest: authorityDigest,
+  verifier_tree_digest: trusted, harness_digest: trusted, authority_digest: authorityDigest, command_pins: commandPins,
 }
 const authority = {
   schema_version: 'computer-use-authority/v1', source: 'prior-trusted', source_ref: applicability.source_ref,
@@ -361,10 +364,10 @@ const authority = {
   can_edit: false, can_push: false, can_resolve: false, can_publish_required_check: false,
   can_approve: false, can_merge: false, can_deploy: false,
 }
-const commandRecords = ['git_preflight', 'stack_start', 'stack_status', 'playwright_require_real', 'computer_use', 'postflight']
-  .map(role => ({
+const commandRecords = Object.entries(lifecycle)
+  .map(([role, [start, finish]]) => ({
     role, cwd_digest: sha256('c'), argv_digest: sha256('d'), safe_environment_contract: 'e2e-require-real/v1',
-    started_at: now, finished_at: later, exit_code: 0, stdout_artifact_ref: 'artifact:stdout',
+    started_at: minutesAfter(start), finished_at: minutesAfter(finish), exit_code: 0, stdout_artifact_ref: 'artifact:stdout',
     stderr_artifact_ref: 'artifact:stderr', redaction_status: 'sanitized',
   }))
 const commandsDigest = digestCanonical(commandRecords)

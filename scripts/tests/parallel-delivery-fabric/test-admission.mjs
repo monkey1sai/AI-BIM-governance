@@ -33,6 +33,28 @@ const LATER = '2026-08-29T05:05:00.000Z'
 const LATER_2 = '2026-08-29T05:10:00.000Z'
 const EXPIRED = '2026-08-29T04:55:00.000Z'
 const NONCE = (suffix) => `${suffix}`.padEnd(32, 'n').slice(0, 32)
+// Owner/session-bound proof required to end a lease (same closed shape the release path consumes).
+const endAttestation = (lease, overrides = {}) => ({
+  attestation_ref: `attestation:end-${lease.lease_id}`,
+  attestation_digest: SHA256_A,
+  issuer_id: 'attestor:owner-end',
+  issuer_version: 'owner-end/v1',
+  owner_session: lease.owner_session,
+  provider: lease.provider,
+  provider_session_id: lease.provider_session_id,
+  execution_context_id: lease.execution_context_id,
+  lease_id: lease.lease_id,
+  generation: lease.generation,
+  head_sha: lease.head_sha,
+  scope_digest: lease.scope_digest,
+  worktree_path_digest: lease.worktree_path_digest,
+  observed_at: NOW,
+  expires_at: new Date(Date.parse(NOW) + 600_000).toISOString(),
+  nonce: NONCE(`end-${lease.lease_id.replace(/[^A-Za-z0-9]/gu, '')}`),
+  revocation_epoch: lease.revocation_epoch,
+  ...overrides,
+})
+
 const REQUEST_SCOPE = [{ kind: 'path', path: 'src/task-one.mjs' }]
 const REQUEST_SCOPE_DIGEST = digestCanonical(REQUEST_SCOPE.map((resource) => ({ kind: resource.kind, path: resource.path.toLowerCase() })))
 const EXECUTION_SCOPE = [{ kind: 'path', path: 'src' }]
@@ -310,6 +332,7 @@ const releaseTask3Lease = async ({ rejectFirstFinalization = false, leaseId = 'l
     nonce: NONCE(`${suffix}-end`),
     reason: 'handoff',
     handoff_or_candidate_reference: `handoff:${suffix}`,
+    owner_end_attestation: endAttestation(admitted.lease),
   })
   assert.equal(ending.status, 'END_REQUESTED')
   const releasingRegistry = createLeaseRegistry({
@@ -1410,6 +1433,7 @@ test('5D — released seats are free but retained resources still block only ove
   const ending = await registry.endRequest({
     lease_id: admitted.lease.lease_id, expected_oid: admitted.oid, nonce: NONCE('task3-end-request'),
     reason: 'handoff', handoff_or_candidate_reference: 'handoff:task3-release',
+    owner_end_attestation: endAttestation(admitted.lease),
   })
   assert.equal(ending.status, 'END_REQUESTED')
   const attestor = {

@@ -198,6 +198,29 @@ const makeRequest = (store, overrides = {}) => {
   }
 }
 
+// Owner/session-bound proof that ends a lease: the same closed attestation shape the
+// release path consumes, bound to the exact lease tuple.
+const endAttestation = (lease, overrides = {}) => ({
+  attestation_ref: `attestation:end-${lease.lease_id}`,
+  attestation_digest: SHA256,
+  issuer_id: 'attestor:owner-end',
+  issuer_version: 'owner-end/v1',
+  owner_session: lease.owner_session,
+  provider: lease.provider,
+  provider_session_id: lease.provider_session_id,
+  execution_context_id: lease.execution_context_id,
+  lease_id: lease.lease_id,
+  generation: lease.generation,
+  head_sha: lease.head_sha,
+  scope_digest: lease.scope_digest,
+  worktree_path_digest: lease.worktree_path_digest,
+  observed_at: '2026-08-29T00:00:00.000Z',
+  expires_at: '2026-08-29T00:10:00.000Z',
+  nonce: NONCE(`end-${lease.lease_id.replace(/[^A-Za-z0-9]/gu, '')}`),
+  revocation_epoch: lease.revocation_epoch,
+  ...overrides,
+})
+
 const createTrustedAttestor = () => ({
   calls: [],
   async verify({ attestation, lease }) {
@@ -710,7 +733,7 @@ test('P2 regression — an admitted unnamespaced opaque lease ID remains usable 
   assert.equal(heartbeat.status, 'HEARTBEAT_RECORDED')
   const end = await leaseRegistry.endRequest({
     lease_id: 'lease001', expected_oid: heartbeat.oid, nonce: NONCE('lease001-end'), reason: 'handoff',
-    handoff_or_candidate_reference: 'handoff:lease001',
+    handoff_or_candidate_reference: 'handoff:lease001', owner_end_attestation: endAttestation(admitted.lease),
   })
   assert.equal(end.status, 'END_REQUESTED')
   const released = await leaseRegistry.release({
@@ -795,7 +818,7 @@ test('AC-43 — trusted owner-end release revokes once, frees only the seat, and
   }))
   const end = await leaseRegistry.endRequest({
     lease_id: 'lease:release', expected_oid: first.oid, nonce: NONCE('end-request'), reason: 'handoff',
-    handoff_or_candidate_reference: 'handoff:release',
+    handoff_or_candidate_reference: 'handoff:release', owner_end_attestation: endAttestation(first.lease),
   })
   const attestation = {
     attestation_ref: 'attestation:owner-end',
@@ -856,7 +879,7 @@ test('AC-43 — release rejects replay, self-issued, expired, tuple drift, in-fl
   const admitted = await leaseRegistry.admit(makeRequest(store, { lease_id: 'lease:negative', resource_keys: ['path:src/negative.mjs'] }))
   const end = await leaseRegistry.endRequest({
     lease_id: 'lease:negative', expected_oid: admitted.oid, nonce: NONCE('negative-end'), reason: 'aborted',
-    handoff_or_candidate_reference: 'handoff:negative',
+    handoff_or_candidate_reference: 'handoff:negative', owner_end_attestation: endAttestation(admitted.lease),
   })
   const base = {
     attestation_ref: 'attestation:negative', attestation_digest: SHA256,
@@ -906,7 +929,7 @@ test('AC-43 — release CAS allows one winner and consumes an owner-end attestat
   }))
   const end = await leaseRegistry.endRequest({
     lease_id: 'lease:release-race', expected_oid: admitted.oid, nonce: NONCE('release-race-end'), reason: 'handoff',
-    handoff_or_candidate_reference: 'handoff:release-race',
+    handoff_or_candidate_reference: 'handoff:release-race', owner_end_attestation: endAttestation(admitted.lease),
   })
   const attestation = {
     attestation_ref: 'attestation:release-race', attestation_digest: SHA256,
@@ -931,7 +954,7 @@ test('AC-43 — release CAS allows one winner and consumes an owner-end attestat
   }))
   const secondEnd = await leaseRegistry.endRequest({
     lease_id: 'lease:replay-target', expected_oid: second.oid, nonce: NONCE('replay-end'), reason: 'failed',
-    handoff_or_candidate_reference: 'handoff:replay',
+    handoff_or_candidate_reference: 'handoff:replay', owner_end_attestation: endAttestation(second.lease),
   })
   await assert.rejects(
     leaseRegistry.release({
@@ -1165,9 +1188,9 @@ test('P1 regression — every public lease request is closed and privacy-safe be
     ['reconcile token value', 'reconcileTimeout', { lease_id: 'lease:one', expected_oid: ZERO_OID, timeout_ms: 1, nonce: NONCE('reconcile-token'), metadata: { value: 'token:abc' } }, 'secret_material_detected'],
     ['reconcile nested raw env', 'reconcileTimeout', { lease_id: 'lease:one', expected_oid: ZERO_OID, timeout_ms: 1, nonce: NONCE('reconcile-env'), metadata: { value: 'path:$env:PAY_TO_ADDRESS' } }, 'secret_material_detected'],
     ['end non-object', 'endRequest', 'not-an-object', 'invalid_shape'],
-    ['end unknown key', 'endRequest', { lease_id: 'lease:one', expected_oid: ZERO_OID, nonce: NONCE('end-unknown'), reason: 'handoff', handoff_or_candidate_reference: 'handoff:one', extra: 'value' }, 'invalid_shape'],
-    ['end token key', 'endRequest', { lease_id: 'lease:one', expected_oid: ZERO_OID, nonce: NONCE('end-token'), reason: 'handoff', handoff_or_candidate_reference: 'handoff:one', authorization: 'opaque' }, 'secret_material_detected'],
-    ['end nested raw env', 'endRequest', { lease_id: 'lease:one', expected_oid: ZERO_OID, nonce: NONCE('end-env'), reason: 'handoff', handoff_or_candidate_reference: 'handoff:one', metadata: { value: 'path:%PAY_TO_ADDRESS%' } }, 'secret_material_detected'],
+    ['end unknown key', 'endRequest', { lease_id: 'lease:one', expected_oid: ZERO_OID, nonce: NONCE('end-unknown'), reason: 'handoff', handoff_or_candidate_reference: 'handoff:one', owner_end_attestation: endAttestation({ lease_id: 'lease:one', owner_session: 'session:owner-one', provider: 'codex', provider_session_id: 'provider:one', execution_context_id: 'context:one', generation: 1, head_sha: SHA1, scope_digest: SHA256, worktree_path_digest: SHA256, revocation_epoch: 0 }), extra: 'value' }, 'invalid_shape'],
+    ['end token key', 'endRequest', { lease_id: 'lease:one', expected_oid: ZERO_OID, nonce: NONCE('end-token'), reason: 'handoff', handoff_or_candidate_reference: 'handoff:one', owner_end_attestation: endAttestation({ lease_id: 'lease:one', owner_session: 'session:owner-one', provider: 'codex', provider_session_id: 'provider:one', execution_context_id: 'context:one', generation: 1, head_sha: SHA1, scope_digest: SHA256, worktree_path_digest: SHA256, revocation_epoch: 0 }), authorization: 'opaque' }, 'secret_material_detected'],
+    ['end nested raw env', 'endRequest', { lease_id: 'lease:one', expected_oid: ZERO_OID, nonce: NONCE('end-env'), reason: 'handoff', handoff_or_candidate_reference: 'handoff:one', owner_end_attestation: endAttestation({ lease_id: 'lease:one', owner_session: 'session:owner-one', provider: 'codex', provider_session_id: 'provider:one', execution_context_id: 'context:one', generation: 1, head_sha: SHA1, scope_digest: SHA256, worktree_path_digest: SHA256, revocation_epoch: 0 }), metadata: { value: 'path:%PAY_TO_ADDRESS%' } }, 'secret_material_detected'],
   ]
   for (const [label, method, input, code] of publicRequests) {
     const { git, leaseRegistry } = createFixture()
@@ -1301,7 +1324,7 @@ test('P1 regression — END_REQUESTED is immutable and timeout retains its autho
   }))
   const endInput = {
     lease_id: 'lease:end-immutable', expected_oid: admitted.oid, nonce: NONCE('end-immutable-request'), reason: 'handoff',
-    handoff_or_candidate_reference: 'handoff:end-immutable',
+    handoff_or_candidate_reference: 'handoff:end-immutable', owner_end_attestation: endAttestation(admitted.lease),
   }
   const ended = await leaseRegistry.endRequest(endInput)
   assert.equal(ended.status, 'END_REQUESTED')
@@ -1394,6 +1417,7 @@ test('P1 regression — only a release reservation owner can reach the envelope 
   }))
   const ended = await registry.endRequest({
     lease_id: 'lease:reservation-race', expected_oid: admitted.oid, nonce: NONCE('reservation-end'), reason: 'handoff',
+    owner_end_attestation: endAttestation(admitted.lease),
     handoff_or_candidate_reference: 'handoff:reservation-race',
   })
   const request = {
@@ -1460,6 +1484,7 @@ test('P2 regression — a lost revocation-proof CAS is recovered idempotently be
   }))
   const ended = await registry.endRequest({
     lease_id: 'lease:proof-recovery', expected_oid: admitted.oid, nonce: NONCE('proof-recovery-end'), reason: 'failed',
+    owner_end_attestation: endAttestation(admitted.lease),
     handoff_or_candidate_reference: 'candidate:proof-recovery',
   })
   const request = {
@@ -1516,6 +1541,7 @@ test('P1 regression — a post-envelope final CAS conflict stays reconcilable an
   }))
   const ended = await registry.endRequest({
     lease_id: 'lease:finalize-hold', expected_oid: admitted.oid, nonce: NONCE('finalize-end'), reason: 'failed',
+    owner_end_attestation: endAttestation(admitted.lease),
     handoff_or_candidate_reference: 'candidate:finalize-hold',
   })
   assert.deepEqual(await registry.release({
@@ -1627,7 +1653,7 @@ const createReleasedAuditFixture = async () => {
   }))
   const ended = await leaseRegistry.endRequest({
     lease_id: 'lease:canonical-boundary', expected_oid: admitted.oid, nonce: NONCE('canonical-boundary-end'), reason: 'handoff',
-    handoff_or_candidate_reference: 'handoff:canonical-boundary',
+    owner_end_attestation: endAttestation(admitted.lease), handoff_or_candidate_reference: 'handoff:canonical-boundary',
   })
   assert.equal((await leaseRegistry.release({
     lease_id: 'lease:canonical-boundary', expected_oid: ended.oid, expected_envelope_oid: ENVELOPE_OID,
@@ -1656,7 +1682,7 @@ test('RED round6: canonical Task3 parser clones, freezes, and rejects forged lea
   }))
   await endFixture.leaseRegistry.endRequest({
     lease_id: 'lease:parser-end', expected_oid: endAdmitted.oid, nonce: NONCE('parser-end-request'), reason: 'handoff',
-    handoff_or_candidate_reference: 'handoff:parser-end',
+    owner_end_attestation: endAttestation(endAdmitted.lease), handoff_or_candidate_reference: 'handoff:parser-end',
   })
   const releasingFixture = createFixture({ failUpdateAt: 5 })
   const releasingAdmitted = await releasingFixture.leaseRegistry.admit(makeRequest(releasingFixture.store, {
@@ -1664,7 +1690,7 @@ test('RED round6: canonical Task3 parser clones, freezes, and rejects forged lea
   }))
   const releasingEnd = await releasingFixture.leaseRegistry.endRequest({
     lease_id: 'lease:parser-releasing', expected_oid: releasingAdmitted.oid, nonce: NONCE('parser-releasing-end'), reason: 'handoff',
-    handoff_or_candidate_reference: 'handoff:parser-releasing',
+    owner_end_attestation: endAttestation(releasingAdmitted.lease), handoff_or_candidate_reference: 'handoff:parser-releasing',
   })
   assert.equal((await releasingFixture.leaseRegistry.release({
     lease_id: 'lease:parser-releasing', expected_oid: releasingEnd.oid, expected_envelope_oid: ENVELOPE_OID,
@@ -1767,7 +1793,7 @@ test('RED round7: parser rejects zero predecessor OIDs and cross-lease release p
   }))
   const ending = await releasingFixture.leaseRegistry.endRequest({
     lease_id: 'lease:parser-proof-source', expected_oid: admitted.oid, nonce: NONCE('parser-proof-source-end'), reason: 'handoff',
-    handoff_or_candidate_reference: 'handoff:parser-proof-source',
+    owner_end_attestation: endAttestation(admitted.lease), handoff_or_candidate_reference: 'handoff:parser-proof-source',
   })
   assert.equal((await releasingFixture.leaseRegistry.release({
     lease_id: 'lease:parser-proof-source', expected_oid: ending.oid, expected_envelope_oid: ENVELOPE_OID,
@@ -1845,6 +1871,7 @@ test('P1 regression — release requires a proven one-winner envelope CAS and pe
   }))
   const ending = await guardedRegistry.endRequest({
     lease_id: 'lease:release-proof',
+    owner_end_attestation: endAttestation(admitted.lease),
     expected_oid: admitted.oid,
     nonce: NONCE('release-proof-end'),
     reason: 'handoff',
@@ -1895,7 +1922,7 @@ test('P2 regression — attestor and envelope failures return typed evidence hol
     expected_oid: admitted.oid,
     nonce: NONCE('port-failure-end'),
     reason: 'failed',
-    handoff_or_candidate_reference: 'candidate:port-failure',
+    owner_end_attestation: endAttestation(admitted.lease), handoff_or_candidate_reference: 'candidate:port-failure',
   })
   const throwingAttestor = { async verify() { throw new Error('attestor unavailable') } }
   const heldByAttestor = createLeaseRegistry({ store, clock: fixture.clock, writerCap: 2, ownerEndAttestor: throwingAttestor, executionEnvelope: fixture.envelope })
@@ -1942,14 +1969,14 @@ const managedBranchRecord = (overrides = {}) => {
   return { ...record, canonical_digest: digestCanonical(digestInput) }
 }
 
-const managedRegistryState = (branch, usedNonces = {}) => ({
-  schema_version: 'managed-branch-registry/v1',
-  branch,
+const managedRegistryState = (branch, usedNonces = {}, extraBranches = []) => ({
+  schema_version: 'managed-branch-registry/v2',
+  branches: Object.fromEntries([branch, ...extraBranches].map((record) => [record.branch, record])),
   used_nonces: usedNonces,
 })
 
-const createInMemoryManagedCas = ({ branch = managedBranchRecord(), raceBarrier = undefined, usedNonces = {} } = {}) => {
-  let current = { oid: branch.registry_oid, record: managedRegistryState(branch, usedNonces) }
+const createInMemoryManagedCas = ({ branch = managedBranchRecord(), raceBarrier = undefined, usedNonces = {}, extraBranches = [] } = {}) => {
+  let current = { oid: branch.registry_oid, record: managedRegistryState(branch, usedNonces, extraBranches) }
   let casCalls = 0
   const calls = []
   const sideEffects = { network: 0, process: 0, delete: 0, worktree: 0, acl: 0 }
@@ -1983,6 +2010,7 @@ const createInMemoryManagedCas = ({ branch = managedBranchRecord(), raceBarrier 
 
 const managedRenewCommand = (record, overrides = {}) => ({
   schema_version: 'managed-branch-command/v1',
+  branch: record.branch,
   action: 'renew',
   operation_id: 'operation:managed-renew',
   owner_authority: record.owner_authority,
@@ -2019,8 +2047,8 @@ const createManagedRenewalAuthority = ({
   }
 }
 
-const createManagedFixture = ({ branch = managedBranchRecord(), raceBarrier = undefined, usedNonces = {} } = {}) => {
-  const store = createInMemoryManagedCas({ branch, raceBarrier, usedNonces })
+const createManagedFixture = ({ branch = managedBranchRecord(), raceBarrier = undefined, usedNonces = {}, extraBranches = [] } = {}) => {
+  const store = createInMemoryManagedCas({ branch, raceBarrier, usedNonces, extraBranches })
   const clock = createClock()
   const managedBranchAuthority = createManagedRenewalAuthority()
   return {
@@ -2043,7 +2071,7 @@ test('AC-39 — managed registry composes with the namespaced Git CAS store', as
   const registry = createManagedBranchRegistry({
     store, clock: createClock(), managedBranchAuthority: createManagedRenewalAuthority(),
   })
-  const before = await registry.inspect()
+  const before = await registry.inspect(managedBranchRecord().branch)
   assert.equal(before.status, 'READY')
   const renewed = await registry.renew(managedRenewCommand(before.record))
   assert.equal(renewed.status, 'RENEWED')
@@ -2059,7 +2087,7 @@ test('AC-39 — managed record is closed, digest-stable, and renew changes only 
   assert.equal(parsed.canonical_digest, digestCanonical((({ canonical_digest, registry_oid, ...value }) => value)(branch)))
 
   const { registry, store } = createManagedFixture({ branch })
-  const before = await registry.inspect()
+  const before = await registry.inspect(branch.branch)
   assert.equal(before.registry_oid, MANAGED_REGISTRY_OID)
   const renewed = await registry.renew(managedRenewCommand(before.record))
   assert.equal(renewed.status, 'RENEWED')
@@ -2120,7 +2148,7 @@ test('P2 regression — managed renewal stops at the bounded nonce ledger withou
     { operation_id: `operation:managed-capacity-${index}`, consumed_at: '2026-08-29T00:00:00.000Z' },
   ]))
   const { registry, store, managedBranchAuthority } = createManagedFixture({ usedNonces })
-  const current = (await registry.inspect()).record
+  const current = (await registry.inspect(managedBranchRecord().branch)).record
   const outcome = await registry.renew(managedRenewCommand(current, {
     operation_id: 'operation:managed-capacity-new', nonce: NONCE('managed-capacity-new'),
   }))
@@ -2141,7 +2169,7 @@ test('AC-39 RED — two same-OID renew operations have exactly one local CAS win
       await barrier
     },
   })
-  const current = (await registry.inspect()).record
+  const current = (await registry.inspect(managedBranchRecord().branch)).record
   const [left, right] = await Promise.all([
     registry.renew(managedRenewCommand(current, { operation_id: 'operation:managed-left', nonce: NONCE('managed-left') })),
     registry.renew(managedRenewCommand(current, { operation_id: 'operation:managed-right', nonce: NONCE('managed-right') })),
@@ -2203,4 +2231,72 @@ test('AC-39 RED — renewal rejects drift, replay, direct push, and unsafe field
   assert.deepEqual({ status: expired.status, reason: expired.reason, state: expired.state, retention_state: expired.retention_state }, {
     status: 'HELD_MANAGED_BRANCH', reason: 'MANAGED_BRANCH_EXPIRED', state: 'FROZEN', retention_state: 'RETAINED_FOR_REVIEW',
   })
+})
+
+test('P2 regression — ending a lease requires an owner-session-bound attestation that matches the exact lease', async () => {
+  const { leaseRegistry, store } = createFixture()
+  const admitted = await leaseRegistry.admit(makeRequest(store, {
+    lease_id: 'lease:end-authority', resource_keys: ['path:src/end-authority.mjs'], nonce: NONCE('end-authority-admit'),
+  }))
+  assert.equal(admitted.status, 'ADMITTED')
+  const request = (overrides, attestationPatch = {}) => ({
+    lease_id: 'lease:end-authority', expected_oid: admitted.oid, reason: 'aborted',
+    handoff_or_candidate_reference: 'handoff:end-authority',
+    owner_end_attestation: endAttestation(admitted.lease, attestationPatch),
+    ...overrides,
+  })
+  for (const [label, patch] of [
+    ['another local writer', { owner_session: 'session:intruder' }],
+    ['self-issued', { issuer_id: 'session:owner-one' }],
+    ['expired', { observed_at: '2026-08-27T00:00:00.000Z', expires_at: '2026-08-28T00:00:00.000Z' }],
+    ['other lease', { lease_id: 'lease:other' }],
+  ]) {
+    const held = await leaseRegistry.endRequest(request({ nonce: NONCE(`end-authority-${label.replace(/[^A-Za-z0-9]/gu, '')}`) }, patch))
+    assert.deepEqual({ status: held.status, reason: held.reason }, { status: 'HELD_EXECUTION_AUTHORITY', reason: 'END_REQUEST_UNAUTHORIZED' }, label)
+    assert.equal((await leaseRegistry.inspect()).record.leases['lease:end-authority'].state, 'ACTIVE', label)
+  }
+  assert.throws(() => leaseRegistry.endRequest({ ...request({ nonce: NONCE('end-authority-missing') }), owner_end_attestation: undefined }), (error) => error?.code === 'invalid_shape')
+  const ended = await leaseRegistry.endRequest(request({ nonce: NONCE('end-authority-ok') }))
+  assert.equal(ended.status, 'END_REQUESTED')
+  const persisted = (await leaseRegistry.inspect()).record.leases['lease:end-authority']
+  assert.equal(persisted.state, 'END_REQUESTED')
+})
+
+test('P2 regression — managed branches are keyed by branch identity and renewed independently', async () => {
+  const develop = managedBranchRecord()
+  const release = managedBranchRecord({
+    branch: 'release/2026.09', branch_class: 'release', managed_base_lease_id: 'lease:managed-release',
+    current_head_sha: SHA1, base_sha: SHA1,
+  })
+  const { registry, store } = createManagedFixture({ branch: develop, extraBranches: [release] })
+  const all = await registry.inspect()
+  assert.equal(all.status, 'READY')
+  assert.deepEqual(Object.keys(all.branches).sort(), [develop.branch, 'release/2026.09'].sort())
+  const unknown = await registry.inspect('hotfix/none')
+  assert.deepEqual({ status: unknown.status, reason: unknown.reason }, { status: 'HELD_MANAGED_BRANCH', reason: 'MANAGED_BRANCH_UNKNOWN' })
+  const releaseBefore = await registry.inspect('release/2026.09')
+  assert.equal(releaseBefore.record.branch_class, 'release')
+  const renewed = await registry.renew(managedRenewCommand(releaseBefore.record, {
+    nonce: NONCE('managed-release-renew'), operation_id: 'operation:managed-release-renew',
+  }))
+  assert.equal(renewed.status, 'RENEWED')
+  assert.equal(renewed.record.branch, 'release/2026.09')
+  assert.equal(renewed.record.transition_sequence, release.transition_sequence + 1)
+  // The other managed branch is untouched by the release renewal and still renews on its own.
+  const developAfter = await registry.inspect(develop.branch)
+  assert.equal(developAfter.record.transition_sequence, develop.transition_sequence)
+  assert.equal(developAfter.record.expires_at, develop.expires_at)
+  const developRenewed = await registry.renew(managedRenewCommand(developAfter.record, {
+    nonce: NONCE('managed-develop-renew'), operation_id: 'operation:managed-develop-renew',
+  }))
+  assert.equal(developRenewed.status, 'RENEWED')
+  const missingBranch = await registry.renew(managedRenewCommand(developRenewed.record, {
+    branch: 'hotfix/none', nonce: NONCE('managed-missing'), operation_id: 'operation:managed-missing',
+  }))
+  assert.deepEqual({ status: missingBranch.status, reason: missingBranch.reason }, { status: 'HELD_MANAGED_BRANCH', reason: 'MANAGED_BRANCH_UNKNOWN' })
+  const invalidBranch = await registry.renew(managedRenewCommand(developRenewed.record, {
+    branch: 'feature/not-managed', nonce: NONCE('managed-invalid'), operation_id: 'operation:managed-invalid',
+  }))
+  assert.equal(invalidBranch.reason, 'COMMAND_SCHEMA_INVALID')
+  assert.equal(store.calls.filter((call) => call.kind === 'cas').length, 2)
 })

@@ -11,6 +11,28 @@ const NOW = '2026-08-29T00:00:00.000Z'
 const SHA1 = (hex) => hex.repeat(40)
 const SHA256 = (hex) => hex.repeat(64)
 const NONCE = (suffix) => `${suffix}`.padEnd(32, 'n').slice(0, 32)
+// Owner/session-bound proof required to end a lease (same closed shape the release path consumes).
+const endAttestation = (lease, overrides = {}) => ({
+  attestation_ref: `attestation:end-${lease.lease_id}`,
+  attestation_digest: SHA256('a'),
+  issuer_id: 'attestor:owner-end',
+  issuer_version: 'owner-end/v1',
+  owner_session: lease.owner_session,
+  provider: lease.provider,
+  provider_session_id: lease.provider_session_id,
+  execution_context_id: lease.execution_context_id,
+  lease_id: lease.lease_id,
+  generation: lease.generation,
+  head_sha: lease.head_sha,
+  scope_digest: lease.scope_digest,
+  worktree_path_digest: lease.worktree_path_digest,
+  observed_at: '2026-08-29T00:00:00.000Z',
+  expires_at: '2026-08-29T00:10:00.000Z',
+  nonce: NONCE(`end-${lease.lease_id.replace(/[^A-Za-z0-9]/gu, '')}`),
+  revocation_epoch: lease.revocation_epoch,
+  ...overrides,
+})
+
 const COMMON_DIR_DIGEST = digestCanonical({ common_dir: 'synthetic-common-dir' })
 const PROVIDER_PAIRS = [
   ['codex', 'codex'],
@@ -240,6 +262,7 @@ for (const [leftProvider, rightProvider] of PROVIDER_PAIRS) {
     const beforeEnd = { ...calls }
     const endRequest = await registry.endRequest({
       lease_id: firstInput.lease_id,
+      owner_end_attestation: endAttestation(first.lease),
       expected_oid: afterThird.oid,
       nonce: NONCE(`ac02-end-${leftProvider}-${rightProvider}`),
       reason: 'handoff',

@@ -391,6 +391,7 @@ function forgedTrustedContext() {
         id: forgedAcceptanceId(number),
         required_gate_kinds: forgedRequiredGateKinds(number),
         required_source_kinds: ['DESIGN', 'ACTIVATION', 'ROLLBACK', 'GATE'],
+        expected_source_refs: forgedSourceRefs(forgedAcceptanceId(number)),
         applicability: { kind: 'REQUIRED' },
       };
     }),

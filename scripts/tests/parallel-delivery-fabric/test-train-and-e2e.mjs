@@ -139,15 +139,19 @@ const commandRecord = (role, overrides = {}) => ({
   ...overrides,
 })
 
-const commandRecords = () => [
-  commandRecord('git_preflight'),
-  commandRecord('stack_start'),
-  commandRecord('stack_status'),
-  commandRecord('playwright_require_real'),
-  commandRecord('computer_use'),
-  commandRecord('postflight'),
-]
+const minutesAfterNow = (minutes) => new Date(Date.parse(NOW) + minutes * 60_000).toISOString()
+const COMMAND_LIFECYCLE = Object.freeze({
+  git_preflight: [0, 5], stack_start: [5, 10], stack_status: [10, 12],
+  playwright_require_real: [12, 30], computer_use: [12, 35], postflight: [35, 40],
+})
+const commandRecords = () => Object.entries(COMMAND_LIFECYCLE).map(([role, [start, finish]]) => commandRecord(role, {
+  started_at: minutesAfterNow(start), finished_at: minutesAfterNow(finish),
+}))
 const COMMANDS = digestCanonical(commandRecords())
+// Trusted canonical runner pins: every role's cwd/argv/environment contract.
+const commandPins = (overrides = {}) => Object.fromEntries(Object.keys(COMMAND_LIFECYCLE).map((role) => [role, {
+  cwd_digest: SHA256('c'), argv_digest: SHA256('d'), environment_contract: 'e2e-require-real/v1', ...(overrides[role] ?? {}),
+}]))
 
 const computerUseAuthority = (overrides = {}) => ({
   schema_version: 'computer-use-authority/v1',
@@ -237,6 +241,7 @@ const trustedPins = (overrides = {}) => ({
   verifier_tree_digest: TRUSTED,
   harness_digest: TRUSTED,
   authority_digest: AUTHORITY,
+  command_pins: commandPins(),
   ...overrides,
 })
 
@@ -1392,6 +1397,57 @@ test('P2 regressions — binder recomputes command lineage and compares every ne
   })
   assert.equal(staleResult.status, 'HELD_EVIDENCE_BINDING')
   assert.equal(staleResult.reason, 'COMMAND_RECORD_WINDOW_MISMATCH')
+
+  // P2: six correctly labelled roles that ran an unrelated no-op command are not evidence
+  // of the real Playwright / Computer Use runs; every record must match the trusted pin.
+  const nonCanonical = commandRecords().map((record) => (record.role === 'computer_use' ? { ...record, argv_digest: SHA256('9') } : record))
+  const nonCanonicalDigest = digestCanonical(nonCanonical)
+  const nonCanonicalResult = bindBrowserEvidence({
+    candidate: candidate(), manifest: manifest(),
+    playwright: browserPacket('playwright', { command_records: nonCanonical, command_records_digest: nonCanonicalDigest }),
+    computerUse: browserPacket('computer_use', {
+      verifier_identity: 'computer-use:one', command_records: nonCanonical, command_records_digest: nonCanonicalDigest,
+    }),
+    trustedPins: trustedPins(),
+  })
+  assert.equal(nonCanonicalResult.status, 'HELD_EVIDENCE_BINDING')
+  assert.equal(nonCanonicalResult.reason, 'COMMAND_RECORD_NOT_CANONICAL')
+  const pinsMissing = bindBrowserEvidence({
+    candidate: candidate(), manifest: manifest(), playwright: browserPacket('playwright'),
+    computerUse: browserPacket('computer_use', { verifier_identity: 'computer-use:one' }),
+    trustedPins: trustedPins({ command_pins: undefined }),
+  })
+  assert.equal(pinsMissing.reason, 'COMMAND_PINS_MISSING')
+
+  // P2: a postflight captured before the browser verifiers finished cannot attest the
+  // post-test state, even though every interval lies inside the shared window.
+  const reordered = commandRecords().map((record) => (record.role === 'postflight'
+    ? { ...record, started_at: minutesAfterNow(1), finished_at: minutesAfterNow(3) }
+    : record))
+  const reorderedDigest = digestCanonical(reordered)
+  const reorderedResult = bindBrowserEvidence({
+    candidate: candidate(), manifest: manifest(),
+    playwright: browserPacket('playwright', { command_records: reordered, command_records_digest: reorderedDigest }),
+    computerUse: browserPacket('computer_use', {
+      verifier_identity: 'computer-use:one', command_records: reordered, command_records_digest: reorderedDigest,
+    }),
+    trustedPins: trustedPins(),
+  })
+  assert.equal(reorderedResult.reason, 'COMMAND_RECORD_ORDER_INVALID')
+
+  // P2: Computer Use must exercise the same user flow the evidence copies from Playwright.
+  for (const [label, drift] of [
+    ['route', { route: '#other' }], ['buttons', { main_buttons: ['Other'] }], ['fixture', { fixture: 'fixture:other' }],
+    ['api', { api: 'api:other' }], ['runtime', { runtime_id: 'runtime:other' }], ['visible state', { visible_state: 'state:other' }],
+  ]) {
+    const flowResult = bindBrowserEvidence({
+      candidate: candidate(), manifest: manifest(), playwright: browserPacket('playwright'),
+      computerUse: browserPacket('computer_use', { verifier_identity: 'computer-use:one', ...drift }),
+      trustedPins: trustedPins(),
+    })
+    assert.equal(flowResult.status, 'HELD_EVIDENCE_BINDING', label)
+    assert.equal(flowResult.reason, 'BROWSER_FLOW_MISMATCH', label)
+  }
 
   for (const computerUse of [
     browserPacket('computer_use', { verifier_identity: 'computer-use:one', network_result: 'network:other' }),
