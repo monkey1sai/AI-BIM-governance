@@ -237,7 +237,11 @@ export function IssuesDock({ L, live }: DockProps) {
       })}
       <div style={{ display: "flex", gap: 8 }}>
         <span className="hv-bright" data-action="nav" role="button" onClick={() => { window.location.hash = "#reports"; }} style={{ flex: 1, textAlign: "center", fontSize: "11.5px", color: "var(--ab-on-accent)", background: `linear-gradient(135deg,${ACCENT},var(--ab-accent-2))`, borderRadius: 8, padding: 8, cursor: "pointer", fontWeight: 700 }}>{L.bcf}</span>
-        <span className="hv-text" data-action="nav" role="button" onClick={() => { window.location.hash = "#minio"; }} style={{ flex: 1, textAlign: "center", fontSize: "11.5px", color: "var(--ab-text-muted)", border: "1px solid rgba(120,160,210,.16)", borderRadius: 8, padding: 8, cursor: "pointer" }}>{L.outbox}</span>
+        {/* 「回拋 Outbox」導向 unified `#pipeline` 的 ⑤ Callback Outbox 段（GET
+            /api/callback-outbox/summary）。原落點 legacy `#minio`（ModelDataPage）沒有任何
+            callback outbox 面，與 #home outbox KPI 卡屬同一類接錯；設計正本 §03 舊路由收斂表
+            亦逐字指定 `#minio` 的收斂去向為 `#/pipeline`。只改 onClick 目標，標籤不變。 */}
+        <span className="hv-text" data-action="nav" role="button" onClick={() => { window.location.hash = "#pipeline"; }} style={{ flex: 1, textAlign: "center", fontSize: "11.5px", color: "var(--ab-text-muted)", border: "1px solid rgba(120,160,210,.16)", borderRadius: 8, padding: 8, cursor: "pointer" }}>{L.outbox}</span>
       </div>
     </div>
   );
