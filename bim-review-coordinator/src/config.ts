@@ -46,6 +46,11 @@ export interface CoordinatorConfig {
   externalIntakeAuthProvider: string;
   externalIntakeWebhookSecret: string;
   externalIntakeIpAllowlist: string[];
+  // unified-console-runtime-truth D2＝T2（owner 裁決 2026-09-02）：conversion 控制路由
+  // （trigger／prioritize／retry／watch）專用的獨立 allowlist。null＝未設→沿用
+  // externalIntakeIpAllowlist（預設等於既有行為）；spec 明定 SHALL NOT 放寬
+  // EXTERNAL_INTAKE_IP_ALLOWLIST 或 /api/external/* webhook 授權面，LAN 放寬只能走本變數。
+  conversionTriggerIpAllowlist?: string[] | null;
   // T5 雲端 callback（metadata-only outbox）。真實公司雲端 endpoint/auth 待
   // OQ1；未確認前 default 空＝無 real endpoint（outbox 視為不可達，保留重試
   // 至 dead-letter，不靜默丟棄）。每事件的 callback_url 只允許落在
@@ -196,6 +201,21 @@ function csvFromEnv(name: string, fallback: string[]): string[] {
     .split(",")
     .map((item) => item.trim())
     .filter(Boolean);
+}
+
+/**
+ * 與 csvFromEnv 的差異：未設、空字串、或去空白後為空清單時回 null（呼叫端據此沿用既有
+ * allowlist），而非回退固定 fallback。空清單絕不回傳——guard 的「空清單＝未啟用 IP 守門
+ * ＝全放行」語意會讓誤設（如 CSV 全空白）變成 fail-open。
+ */
+function nullableCsvFromEnv(name: string): string[] | null {
+  const value = process.env[name];
+  if (!value) return null;
+  const parsed = value
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+  return parsed.length > 0 ? parsed : null;
 }
 
 function uniqueStrings(values: string[]): string[] {
@@ -486,6 +506,7 @@ export function loadConfig(overrides: Partial<CoordinatorConfig> = {}): Coordina
       "::1",
       "172.16.0.0/12",
     ]),
+    conversionTriggerIpAllowlist: nullableCsvFromEnv("CONVERSION_TRIGGER_IP_ALLOWLIST"),
     cloudCallbackBaseUrl: process.env.CLOUD_CALLBACK_BASE_URL || "",
     callbackOutboxMaxAttempts: numberFromEnv("CALLBACK_OUTBOX_MAX_ATTEMPTS", 5),
     callbackOutboxStorePath:
