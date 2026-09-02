@@ -339,12 +339,10 @@ function workspaceCases(dock: WsDock): ScreenCases {
 /* ═══ workspace.a4.default（canonical live/table-only surface）═══ */
 
 function a4Cases(): ScreenCases {
-  // The manifest still reaches this screen through the legacy #a4 alias until
-  // the design-reference owner re-approves its canonical query-bearing route.
-  // Wait for the explicit scrubbed canonical destination before observing DOM.
+  // #a4 是目前正規的 query-bearing route；不可再等待已退役的
+  // #workspace?dock=a4 轉址，否則每個語意案例都會無故耗盡 30 秒。
   const gotoA4 = async (context: SemanticCaseContext): Promise<void> => {
     await gotoRoute(context);
-    await context.page.waitForURL(/#workspace\?dock=a4$/);
     await context.page.getByTestId("a4-semantic-search-page").waitFor({ state: "visible" });
   };
   const gotoFreshA4 = async (context: SemanticCaseContext): Promise<void> => {
