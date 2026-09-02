@@ -2,6 +2,7 @@
 // Explicit, named-PR queue helper. Lifecycle hooks never mutate GitHub state.
 
 import { execFileSync } from 'node:child_process';
+import fs from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
@@ -11,6 +12,7 @@ import {
 } from './agents-board-path.mjs';
 import { triggerOrphanCleanup } from './cleanup-orphan-dev-processes.mjs';
 import { acquirePrQueueLock } from './pr-queue-lock.mjs';
+import { buildReviewDispositionReply } from '../lib/autonomous-delivery-finalization.mjs';
 import { loadAutonomousCodexReviewPolicy } from '../lib/autonomous-codex-review-check.mjs';
 
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
@@ -460,6 +462,126 @@ export async function runQueue({ prNumber, auto = false } = {}) {
   }
 }
 
+const DISPOSITION_PACKET_SCHEMA = 'ai-bim-review-disposition-packet/v1';
+const DISPOSITION_PLAN_SCHEMA = 'ai-bim-review-disposition-plan/v1';
+
+// Review Disposition Agent, observer half. The merge-queue agent renders one
+// structured reply per finding, bound to the exact PR tuple just read from
+// GitHub. Pure and mutation-free: posting is a separate coordinator sink
+// (scripts/dev/post-review-disposition.mjs) that re-reads the head again.
+export function buildReviewDispositionPlan(packet, snapshot, { now = new Date() } = {}) {
+  const held = (reason) => ({ schemaVersion: DISPOSITION_PLAN_SCHEMA, status: 'HELD', reason, replies: [] });
+  if (!packet || typeof packet !== 'object' || packet.schemaVersion !== DISPOSITION_PACKET_SCHEMA) {
+    return held('disposition_packet_schema_invalid');
+  }
+  if (!Array.isArray(packet.findings) || packet.findings.length === 0 || packet.findings.length > 256) {
+    return held('disposition_packet_findings_missing_or_unbounded');
+  }
+  if (packet.repository !== `${GITHUB_OWNER}/${GITHUB_NAME}`) return held('packet_repository_not_supported');
+  if (!snapshot || snapshot.state !== 'OPEN') return held('pr_not_open');
+  if (snapshot.isDraft === true) return held('pr_is_draft');
+  if (snapshot.baseRefName !== 'main') return held('base_not_main');
+  if (snapshot.number !== packet.prNumber) return held('packet_pr_mismatch');
+  if (snapshot.headRefOid !== packet.headOid || snapshot.baseRefOid !== packet.baseOid) return held('exact_head_drift');
+  const replies = [];
+  const seenFindings = new Set();
+  for (const entry of packet.findings) {
+    if (!entry || typeof entry !== 'object') throw new Error('disposition_packet_entry_invalid');
+    const reply = buildReviewDispositionReply({
+      repository: packet.repository,
+      prNumber: packet.prNumber,
+      finding: entry.finding,
+      headOid: packet.headOid,
+      baseOid: packet.baseOid,
+      agentRunId: packet.agentRunId,
+      sender: packet.sender,
+      webhookEventId: entry.webhookEventId,
+      rationale: entry.rationale,
+      nextAction: entry.nextAction ?? null,
+      evidenceSha256: entry.evidenceSha256,
+    });
+    if (!Number.isSafeInteger(entry.commentDatabaseId) || entry.commentDatabaseId < 1) {
+      throw new Error(`finding ${reply.decision.id}: comment_database_id_invalid`);
+    }
+    if (seenFindings.has(reply.decision.id)) throw new Error(`finding ${reply.decision.id}: duplicated_in_packet`);
+    seenFindings.add(reply.decision.id);
+    const pendingFix = reply.decision.disposition === 'FIX_REQUIRED' && !reply.decision.fixedOnHead;
+    replies.push({
+      findingId: reply.decision.id,
+      threadId: reply.decision.threadId,
+      commentDatabaseId: entry.commentDatabaseId,
+      disposition: reply.decision.disposition,
+      severity: reply.decision.severity,
+      riskClass: reply.decision.riskClass,
+      // ESCALATE keeps the thread open for external authority; a pending FIX_REQUIRED
+      // stays open until the repair head, tests, CI and re-review exist.
+      resolvable: reply.decision.disposition !== 'ESCALATE' && !pendingFix,
+      tupleKey: reply.tupleKey,
+      metadata: reply.metadata,
+      body: reply.body,
+    });
+  }
+  const byDisposition = {};
+  for (const reply of replies) byDisposition[reply.disposition] = (byDisposition[reply.disposition] || 0) + 1;
+  return {
+    schemaVersion: DISPOSITION_PLAN_SCHEMA,
+    status: 'RENDERED',
+    repository: packet.repository,
+    prNumber: packet.prNumber,
+    baseOid: packet.baseOid,
+    headOid: packet.headOid,
+    agentRunId: packet.agentRunId,
+    sender: packet.sender,
+    renderedAt: now.toISOString(),
+    summary: {
+      total: replies.length,
+      byDisposition,
+      escalated: byDisposition.ESCALATE || 0,
+      fixPending: replies.filter((reply) => reply.disposition === 'FIX_REQUIRED' && !reply.resolvable).length,
+      // A disposition reply never satisfies the merge gate by itself.
+      mergeGateSatisfiedByAssertion: false,
+    },
+    replies,
+  };
+}
+
+function runDispose(prNumber, args) {
+  const packetIndex = args.indexOf('--packet');
+  const packetPath = packetIndex >= 0 ? args[packetIndex + 1] : '';
+  if (!packetPath) {
+    process.stderr.write('dispose requires --packet <path>.\n');
+    return false;
+  }
+  let packet;
+  try {
+    packet = JSON.parse(fs.readFileSync(packetPath, 'utf8'));
+  } catch (error) {
+    process.stderr.write(`[manage-pr-queue] HELD PR #${prNumber}: disposition_packet_unreadable (${error?.message || error})\n`);
+    return false;
+  }
+  if (packet?.prNumber !== prNumber) {
+    process.stderr.write(`[manage-pr-queue] HELD PR #${prNumber}: packet_pr_mismatch\n`);
+    return false;
+  }
+  let plan;
+  try {
+    plan = buildReviewDispositionPlan(packet, getPrSnapshot(prNumber));
+  } catch (error) {
+    process.stderr.write(`[manage-pr-queue] HELD PR #${prNumber}: ${error?.message || error}\n`);
+    return false;
+  }
+  const outIndex = args.indexOf('--out');
+  if (outIndex >= 0 && args[outIndex + 1]) {
+    fs.writeFileSync(args[outIndex + 1], `${JSON.stringify(plan, null, 2)}\n`);
+  }
+  process.stdout.write(`${JSON.stringify(plan, null, 2)}\n`);
+  if (plan.status !== 'RENDERED') {
+    process.stderr.write(`[manage-pr-queue] HELD PR #${prNumber}: ${plan.reason}\n`);
+    return false;
+  }
+  return true;
+}
+
 export function installGitHooks() {
   process.stderr.write(
     '[manage-pr-queue] HELD: repository-controlled Git hook installation is disabled; use explicit lifecycle commands.\n',
@@ -499,7 +621,9 @@ async function main() {
     process.exitCode = 2;
     return;
   }
-  if (command === 'update-branch') {
+  if (command === 'dispose') {
+    if (!runDispose(prNumber, args)) process.exitCode = 2;
+  } else if (command === 'update-branch') {
     const pr = getPrSnapshot(prNumber);
     if (!pr || !updateBranch(prNumber, pr.headRefName)) process.exitCode = 2;
   } else if (command === 'approve') {

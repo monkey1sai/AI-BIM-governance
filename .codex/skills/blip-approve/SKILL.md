@@ -5,6 +5,8 @@ description: Coordinate a bounded exact-head review, fix, and thread-resolution 
 
 # Blip Approve (human-equivalent counted vote)
 
+> **LEGACY_GUARDED compatibility only.** During `CANARY_ACTIVE` or `AUTONOMOUS_ACTIVE`, this skill must not be triggered by routine ship／merge／finalization language and must not become a routine merge prerequisite. Use it only for an explicitly named legacy rollback or manual-compatibility path while the authoritative activation state still requires that path; otherwise route to `autonomous-pr-queue` and return typed `HELD` when its external trust root is unavailable.
+
 Use this skill to coordinate the bounded continuity loop explicitly authorized below and, only after that loop is clean, submit the final counted approval. The vote helper does exactly what the human reviewer does in the GitHub UI: press Approve on the exact head and paste the information body. Review, coordinator repair, exact thread resolution, the counted vote, and merge remain separate operations.
 
 ## Authority and scope

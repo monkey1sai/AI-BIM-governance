@@ -79,8 +79,8 @@
         "format": "agent-skill-tree/v2",
         "algorithm": "sha256",
         "trees": {
-          "claude": "c7d990da9f47f61838d1328424966d5a8087913c3a6c6035ce0a8dfacb8b90b9",
-          "codex": "c7d990da9f47f61838d1328424966d5a8087913c3a6c6035ce0a8dfacb8b90b9"
+          "claude": "06808520f8f2c98403a76e4431ac6237bfcd88e669d784b6046df3e8f21d4beb",
+          "codex": "06808520f8f2c98403a76e4431ac6237bfcd88e669d784b6046df3e8f21d4beb"
         }
       }
     },
@@ -106,8 +106,8 @@
         "format": "agent-skill-tree/v2",
         "algorithm": "sha256",
         "trees": {
-          "claude": "1bc5791e8b15bc082d3ec0dd13cda917f8e1339e5493142cad3b475732d392cc",
-          "codex": "1bc5791e8b15bc082d3ec0dd13cda917f8e1339e5493142cad3b475732d392cc"
+          "claude": "0b19dabd6c7adf8eebbc5c0740238d17232f504af2cc73d7ced7ec3413334a90",
+          "codex": "0b19dabd6c7adf8eebbc5c0740238d17232f504af2cc73d7ced7ec3413334a90"
         }
       }
     },
@@ -560,8 +560,34 @@
         "format": "agent-skill-tree/v2",
         "algorithm": "sha256",
         "trees": {
-          "claude": "0e376e7d41637bd192c15ead900bc49e3d872396e3b69242a6f665953b69043d",
-          "codex": "0e376e7d41637bd192c15ead900bc49e3d872396e3b69242a6f665953b69043d"
+          "claude": "bb62b44e916ff9345a7592b14ab35e421f1b4e4ac50bb58ba94e86f57b15637d",
+          "codex": "bb62b44e916ff9345a7592b14ab35e421f1b4e4ac50bb58ba94e86f57b15637d"
+        }
+      }
+    },
+    {
+      "name": "prompt-crafter",
+      "locations": {
+        "claude": ".claude/skills/prompt-crafter",
+        "codex": ".codex/skills/prompt-crafter"
+      },
+      "sync": {
+        "mode": "mirror",
+        "source": "claude",
+        "targets": [
+          "codex"
+        ]
+      },
+      "provenance": {
+        "kind": "repo-authored",
+        "source": "AI-BIM-governance"
+      },
+      "integrity": {
+        "format": "agent-skill-tree/v2",
+        "algorithm": "sha256",
+        "trees": {
+          "claude": "a5afba02549dc86ae706e4a3baf5bf05638ad052470e2f09401e8d3cb667270e",
+          "codex": "a5afba02549dc86ae706e4a3baf5bf05638ad052470e2f09401e8d3cb667270e"
         }
       }
     },
@@ -664,7 +690,7 @@
         "format": "agent-skill-tree/v2",
         "algorithm": "sha256",
         "trees": {
-        "claude": "8ceb0d8b763c80e0eda30249291d519bcdea35f708e383dab133648ead17a592",
+          "claude": "8ceb0d8b763c80e0eda30249291d519bcdea35f708e383dab133648ead17a592",
           "codex": "da24807bff575867fb1053b1aa44b89cd123248c6bc6a14544a86c4d4011ce98"
         }
       }
