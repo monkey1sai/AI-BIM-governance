@@ -297,6 +297,14 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
     setCommandTrace(null);
   }, [handoff.sessionId]);
 
+  // ACK and command trace belong to the exact highlighted target, not merely
+  // to the surrounding Review Session. Preserve the active lease/runtime
+  // evidence when the operator changes rows, but require a fresh send + ACK.
+  useEffect(() => {
+    setHighlightResult(null);
+    setCommandTrace(null);
+  }, [handoff.ifcGuid, handoff.usdPrimPath, handoff.ruleRunId]);
+
   useEffect(() => {
     if (!activePrimaryLease) return;
     return () => {

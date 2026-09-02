@@ -720,7 +720,10 @@ describe("A4SemanticSearchPage", () => {
     it("allows row selection, issue draft composition and issue creation in session mode", async () => {
       vi.mocked(coordinatorClient.runtimeStatus).mockResolvedValue({
         sessions: {
-          items: [{ session_id: "review_session_alpha", status: "active", model_version_id: "mv_alpha" }],
+          items: [
+            { session_id: "review_session_alpha", status: "active", model_version_id: "mv_alpha" },
+            { session_id: "review_session_beta", status: "active", model_version_id: "mv_beta" },
+          ],
         },
       } as never);
       const sessionSearch = vi.spyOn(governanceClient, "searchModelForSession").mockResolvedValue({
@@ -831,6 +834,18 @@ describe("A4SemanticSearchPage", () => {
         carrier,
       );
       expect(container.querySelector('[data-testid="a4-issue-created"]')?.textContent).toContain("iss_a4_door_401");
+
+      const sessionSelect = container.querySelector<HTMLSelectElement>('[data-testid="a4-session-select"]')!;
+      await act(async () => {
+        changeInput(sessionSelect, "review_session_beta");
+      });
+      await flush();
+
+      expect(container.querySelector('[data-testid="a4-result-stale-context"]')).not.toBeNull();
+      expect(container.querySelector('[data-testid="a4-issue-draft"]')).toBeNull();
+      expect(container.querySelector('[data-testid="a4-inline-highlight"]')).toBeNull();
+      expect(container.querySelector('[data-testid="a4-inline-handoff-summary"]')?.textContent ?? "")
+        .not.toContain("/World/Door_401");
     });
 
     it("handles a4_proof_expired gracefully while preserving user draft in memory", async () => {

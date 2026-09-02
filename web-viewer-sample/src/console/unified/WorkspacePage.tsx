@@ -14,7 +14,7 @@ const ROUTE_BY_DOCK: Record<DockKey, string> = {
   a2: "#a2",
   a3: "#a3",
   a4: "#a4",
-  issues: "#workspace?dock=issues",
+  issues: "#issues",
 };
 
 function dockFromHashQuery(): DockKey | null {

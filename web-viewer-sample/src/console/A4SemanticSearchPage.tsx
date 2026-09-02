@@ -282,24 +282,7 @@ export function A4SemanticSearchPage() {
 
   const interpreted = result?.interpreted_filters;
   const rows = result?.results ?? [];
-  const selectedRow = rows.find((row) => (row.ifc_guid ?? "") === selectedGuid) ?? null;
   const selectedRuntimeSession = sessions.find((session) => session.session_id === sessionId) ?? null;
-  const a4ViewerHandoff: ReviewRoomHandoff = {
-    source: "a4",
-    sessionId,
-    ruleRunId: null,
-    ifcGuid: selectedRow?.ifc_guid ?? null,
-    usdPrimPath: selectedRow?.usd_prim_path ?? null,
-    ruleCode: null,
-    severity: null,
-    label: selectedRow?.name ?? selectedRow?.ifc_class ?? selectedRow?.ifc_guid ?? null,
-    expectedStageUrl: selectedRuntimeSession?.expected_stage_url ?? null,
-    mappingInformationStatus: selectedRow
-      ? selectedRow.usd_prim_path ? "mapped" : "unmapped"
-      : null,
-    mappingIssueCode: selectedRow && !selectedRow.usd_prim_path ? "a4_result_unmapped" : null,
-    mappingIssueCount: null,
-  };
   const matchedCount = result?.stats?.matched ?? 0;
   const displayedLlmState = llmReadinessExpired
     ? "unknown"
@@ -334,6 +317,37 @@ export function A4SemanticSearchPage() {
     && resultContext.query === query.trim()
     && resultContext.interpretMode === interpretMode,
   );
+  // A result row is actionable only while its explicit query/source/session
+  // context still matches the current controls. A stale row must never be
+  // rebound to a newly selected Review Session.
+  const selectedRow = resultContextMatchesCurrent
+    ? rows.find((row) => (row.ifc_guid ?? "") === selectedGuid) ?? null
+    : null;
+  const a4ViewerHandoff: ReviewRoomHandoff = {
+    source: "a4",
+    sessionId,
+    ruleRunId: null,
+    ifcGuid: selectedRow?.ifc_guid ?? null,
+    usdPrimPath: selectedRow?.usd_prim_path ?? null,
+    ruleCode: null,
+    severity: null,
+    label: selectedRow?.name ?? selectedRow?.ifc_class ?? selectedRow?.ifc_guid ?? null,
+    expectedStageUrl: selectedRuntimeSession?.expected_stage_url ?? null,
+    mappingInformationStatus: selectedRow
+      ? selectedRow.usd_prim_path ? "mapped" : "unmapped"
+      : null,
+    mappingIssueCode: selectedRow && !selectedRow.usd_prim_path ? "a4_result_unmapped" : null,
+    mappingIssueCount: null,
+  };
+
+  useEffect(() => {
+    if (!result || resultContextMatchesCurrent) return;
+    setSelectedGuid(null);
+    setCreatedIssue(null);
+    setIssueError(null);
+    setHandoffResult(null);
+    setHandoffError(null);
+  }, [result, resultContextMatchesCurrent]);
 
   async function onRun(isRetry = false) {
     const trimmedQuery = query.trim();

@@ -38,4 +38,17 @@ describe("Unified A1-A4 live workspace routing", () => {
 
     expect(window.location.hash).toBe("#a2");
   });
+
+  it("Issues / BCF tab stays inside the unified workspace", async () => {
+    window.location.hash = "#a1";
+    await act(async () => root?.render(<EdgeConsole />));
+
+    const issuesTab = container.querySelector<HTMLElement>('[data-uc="dock-tab-issues"]');
+    expect(issuesTab).not.toBeNull();
+    await act(async () => issuesTab?.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+
+    expect(window.location.hash).toBe("#issues");
+    expect(container.querySelector('[data-uc="live-module-issues"]')).not.toBeNull();
+    expect(container.textContent).toContain("Issue");
+  });
 });

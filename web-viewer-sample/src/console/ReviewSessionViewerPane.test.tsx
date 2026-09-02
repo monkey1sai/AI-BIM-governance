@@ -385,6 +385,19 @@ describe("ReviewSessionViewerPane", () => {
     expect(q("review-room-runtime-evidence")?.textContent).toContain("已送出並收到 viewer 回報");
 
     await act(async () => {
+      root!.render(<ReviewSessionViewerPane handoff={{
+        ...handoff,
+        ifcGuid: "guid-door-002",
+        usdPrimPath: "/World/Door_002",
+      }} />);
+    });
+    await flush();
+
+    expect(q("review-room-handoff-summary")?.textContent).toContain("/World/Door_002");
+    expect(q("review-room-runtime-evidence")?.textContent).toContain("not_sent");
+    expect(q("review-room-command-trace")).toBeNull();
+
+    await act(async () => {
       (viewerBox.current!.onStageLoaded as (m: unknown) => void)({
         protocol: "vg01",
         type: "stage_loaded",

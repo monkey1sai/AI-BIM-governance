@@ -174,7 +174,7 @@ function AliasRedirect({
 // legacy workspace?dock=a4 aliases scrub URL-carried context then converge to #a4.
 // a5..a10 → ConceptPage；pipeline → PipelinePage；runtime → OpsPage；home → UnifiedHomePage。
 // #conv 不進 unified（legacy ConversionPage=IFC→USD 轉檔歷史，雙路由分治）。
-const UNIFIED_WS_KEYS: readonly string[] = ["a1", "a2", "a3", "a4"];
+const UNIFIED_WS_KEYS: readonly string[] = ["a1", "a2", "a3", "a4", "issues"];
 const UNIFIED_CONCEPT_KEYS: readonly string[] = ["a5", "a6", "a7", "a8", "a9", "a10"];
 
 function renderUnified(page: string): ReactElement | null {
