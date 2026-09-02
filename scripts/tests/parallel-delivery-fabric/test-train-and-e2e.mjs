@@ -51,19 +51,22 @@ const trainPlan = (overrides = {}) => ({
   ...overrides,
 })
 
-const trustedPolicy = (overrides = {}) => ({
-  source: 'base',
-  source_ref: 'origin/main',
-  source_sha: POLICY_SOURCE_SHA,
-  base_sha: BASE,
-  policy_digest: SHA256('9'),
-  record_digest: POLICY_RECORD,
-  immutable: true,
-  base_pinned: true,
-  fresh: true,
-  version: 'e2e-policy/v1',
-  ...overrides,
-})
+// The record digest is derived from the policy record, exactly as the binder recomputes it.
+const trustedPolicy = (overrides = {}) => {
+  const { record_digest: pinnedDigest, ...record } = {
+    source: 'base',
+    source_ref: 'origin/main',
+    source_sha: POLICY_SOURCE_SHA,
+    base_sha: BASE,
+    policy_digest: SHA256('9'),
+    immutable: true,
+    base_pinned: true,
+    fresh: true,
+    version: 'e2e-policy/v1',
+    ...overrides,
+  }
+  return { ...record, record_digest: pinnedDigest ?? digestCanonical(record) }
+}
 
 const applicabilityRecord = (overrides = {}) => {
   const record = {
@@ -971,6 +974,12 @@ test('base-pinned applicability is immutable and a candidate cannot downgrade re
   const staticOnly = classifyE2EApplicability({ change: {}, trustedPolicy: trustedPolicy({ static_only: true }), baseSha: BASE })
   assert.equal(staticOnly.status, 'E2E_NOT_APPLICABLE')
   assert.equal(staticOnly.record.reason, 'TRUSTED_STATIC_ONLY_CLASSIFICATION')
+  // The static-only escape is honoured only inside a record whose digest covers it: a
+  // flag added after the digest was issued, or an arbitrary digest, holds.
+  const tampered = { ...trustedPolicy(), static_only: true }
+  assert.deepEqual({ status: classifyE2EApplicability({ change: {}, trustedPolicy: tampered, baseSha: BASE }).status, reason: classifyE2EApplicability({ change: {}, trustedPolicy: tampered, baseSha: BASE }).reason },
+    { status: 'HELD_EVIDENCE_BINDING', reason: 'APPLICABILITY_RECORD_DIGEST_MISMATCH' })
+  assert.equal(classifyE2EApplicability({ change: {}, trustedPolicy: trustedPolicy({ static_only: true, record_digest: SHA256('e') }), baseSha: BASE }).reason, 'APPLICABILITY_RECORD_DIGEST_MISMATCH')
   // Trigger flags still force E2E even without paths.
   assert.equal(classifyE2EApplicability({ change: { paths: [], user_facing: true }, trustedPolicy: trustedPolicy(), baseSha: BASE }).status, 'E2E_REQUIRED')
 })

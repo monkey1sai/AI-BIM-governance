@@ -304,6 +304,13 @@ const handOff = async ({ leaseRegistry, store, envelope, clock }, leaseId, overr
   return { admitted, attestation }
 }
 
+// A plan-owner drain attestation bound to the exact drain tuple.
+const drainAttestation = ({ plan_id = 'plan:one', generation = 1, expected_oid, nonce, reason = 'handoff', suffix = 'drain' } = {}) => ({
+  attestation_ref: `attestation:${suffix}`, attestation_digest: SHA256, issuer_id: 'attestor:plan-owner', issuer_version: 'plan-owner/v1',
+  action: 'drain', plan_id, generation, expected_oid, nonce, reason,
+  observed_at: '2026-08-29T00:00:00.000Z', expires_at: '2026-08-29T00:10:00.000Z', revocation_epoch: 0,
+})
+
 const createFixture = ({ raceBarrier = undefined, writerCap = 2, failUpdateAt = undefined, seedPlan = true } = {}) => {
   const git = createInMemoryGit({ raceBarrier, failUpdateAt })
   if (seedPlan) {
@@ -620,9 +627,27 @@ test('plan drain is durable and blocks every later admission for the same plan',
   const { leaseRegistry, planRegistry, store } = createFixture()
   assert.equal((await leaseRegistry.admit(makeRequest(store))).status, 'ADMITTED')
   const beforeDrain = await leaseRegistry.inspect()
+  // Knowing the inspectable OIDs is not authority: a drain without the owner attestation,
+  // with a mismatched tuple, or one the attestor does not trust never lands.
+  await assert.rejects(leaseRegistry.drainPlan({
+    plan_id: 'plan:one', generation: 1, expected_oid: beforeDrain.oid,
+    expected_plan_oid: SEEDED_PLAN_OID, nonce: NONCE('plan-drain'), reason: 'handoff',
+  }), (error) => error?.code === 'invalid_shape' && error?.detail === 'plan_drain_request_keys_invalid')
+  await assert.rejects(leaseRegistry.drainPlan({
+    plan_id: 'plan:one', generation: 1, expected_oid: beforeDrain.oid,
+    expected_plan_oid: SEEDED_PLAN_OID, nonce: NONCE('plan-drain'), reason: 'handoff',
+    owner_attestation: drainAttestation({ expected_oid: beforeDrain.oid, nonce: NONCE('plan-drain'), reason: 'failed' }),
+  }), (error) => error?.code === 'invalid_value' && error?.detail === 'plan_drain_request_attestation_tuple_mismatch')
+  const untrusted = await leaseRegistry.drainPlan({
+    plan_id: 'plan:one', generation: 1, expected_oid: beforeDrain.oid,
+    expected_plan_oid: SEEDED_PLAN_OID, nonce: NONCE('plan-drain'), reason: 'handoff',
+    owner_attestation: { ...drainAttestation({ expected_oid: beforeDrain.oid, nonce: NONCE('plan-drain') }), force: 'unknown' },
+  }).catch((error) => ({ status: 'REJECTED', reason: error?.code }))
+  assert.notEqual(untrusted.status, 'DRAINING')
   const drained = await leaseRegistry.drainPlan({
     plan_id: 'plan:one', generation: 1, expected_oid: beforeDrain.oid,
     expected_plan_oid: SEEDED_PLAN_OID, nonce: NONCE('plan-drain'), reason: 'handoff',
+    owner_attestation: drainAttestation({ expected_oid: beforeDrain.oid, nonce: NONCE('plan-drain') }),
   })
   assert.equal(drained.status, 'DRAINING')
   assert.equal(drained.plan_id, 'plan:one')

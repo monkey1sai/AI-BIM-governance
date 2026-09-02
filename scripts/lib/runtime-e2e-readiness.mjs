@@ -138,9 +138,15 @@ export async function inspectRealE2EManifest(input = {}, ports = {}) {
     const statusManifestPath = status && typeof status.manifest_path === "string"
       ? await ports.realpath(status.manifest_path)
       : "";
+    // Exactly one live entry per backend role, each matched one-to-one with the
+    // manifest process of that role: two copies of one role never stand in for the other.
+    const backendRoles = Array.isArray(status?.backend) ? status.backend.map((entry) => entry?.role) : [];
+    const backendPids = Array.isArray(status?.backend) ? status.backend.map((entry) => entry?.pid) : [];
     if (!status || status.status !== "active" || status.stack_kind !== STACK_MANIFEST_KIND
       || !samePath(statusManifestPath, resolvedManifestPath, separator) || !Array.isArray(status.backend)
       || status.backend.length !== STACK_PROCESS_ROLES.length
+      || [...backendRoles].sort().join(":") !== [...STACK_PROCESS_ROLES].sort().join(":")
+      || new Set(backendPids).size !== backendPids.length
       || status.viewer?.expected_port !== manifest.viewer.expected_port
       || status.viewer?.owner !== "playwright_webserver"
       || status.viewer?.managed_by_launcher !== false

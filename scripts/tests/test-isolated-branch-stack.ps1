@@ -1394,3 +1394,25 @@ Assert-True ($launcherText -notmatch "A4_INTERNAL_CONTEXT_TOKEN\s*=\s*'") `
     'launcher never hardcodes an A4_INTERNAL_CONTEXT_TOKEN literal value'
 
 $testLogger | Write-StructInfo -Component 'test-isolated-branch-stack' -Msg 'contract assertions passed' -Data @{ assertions = 'isolated-stack' }
+
+# P1 regression — the CLI start path wires the repository-owned start authorities:
+# it never fails on the missing-authority guard, and the defaults return the closed shapes.
+$wiringSandbox = New-TestSandbox -Prefix 'isolated-stack-cli-wiring'
+& git -C $wiringSandbox init --quiet
+try {
+    $wiringPorts = Resolve-IsolatedStackPorts -OffsetInput '0'
+    Assert-True (Test-IsolatedSafeEnvironmentContract -RepoRoot $wiringSandbox -ChangeId 'change-w' -RunId 'run-w' -Offset 0 -Ports $wiringPorts) 'repository-owned safe environment contract accepts the isolated port set'
+    $wiringSpec = New-IsolatedBrowserSpec -RepoRoot $wiringSandbox -ChangeId 'change-w' -RunId 'run-w' -Offset 0 -Ports $wiringPorts
+    Assert-Equal 'isolated-browser-spec/v1' $wiringSpec['schema_version'] 'repository-owned browser spec schema'
+    Assert-Equal ([int]$wiringPorts.viewer) $wiringSpec['expected_port'] 'repository-owned browser spec binds the isolated viewer port'
+    $wiringFailure = $null
+    try {
+        Invoke-IsolatedBranchStackCli -Action start -ChangeId 'change-w' -RunId 'run-w' -RepoRoot $wiringSandbox | Out-Null
+    } catch {
+        $wiringFailure = [string]$_
+    }
+    Assert-True (-not [string]::IsNullOrEmpty($wiringFailure)) 'CLI start in an empty sandbox still stops later in the pipeline'
+    Assert-True (-not $wiringFailure.Contains('authority is required for start')) 'CLI start wires the safe-environment and browser-spec authorities'
+} finally {
+    Remove-Item -LiteralPath $wiringSandbox -Recurse -Force -ErrorAction SilentlyContinue
+}

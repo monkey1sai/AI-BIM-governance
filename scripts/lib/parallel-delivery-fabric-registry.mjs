@@ -542,6 +542,11 @@ const RETAINED_RESOURCE_KEYS = Object.freeze([
   'head_sha', 'release_reason', 'released_at', 'release_record_digest',
 ])
 
+const DRAIN_ATTESTATION_KEYS = Object.freeze([
+  'attestation_ref', 'attestation_digest', 'issuer_id', 'issuer_version', 'action', 'plan_id', 'generation',
+  'expected_oid', 'nonce', 'reason', 'observed_at', 'expires_at', 'revocation_epoch',
+])
+
 const emptyLeaseRegistry = (writerCap) => ({
   schema_version: 'session-lease-registry/v1',
   generation: 0,
@@ -1586,9 +1591,12 @@ export function createLeaseRegistry({
     }).then((result) => result.status === 'STORED' ? { ...result, status: 'END_REQUESTED' } : result)
   }
 
+  // Draining stops every later writer of a plan, so it is a plan-owner / coordinator
+  // decision: the request carries an attestation bound to the exact drain tuple and
+  // the trusted attestor must confirm it. Knowing the inspectable OIDs is not authority.
   const drainPlan = async (input) => {
-    const { plan_id, generation, expected_oid, expected_plan_oid, nonce, reason } = validateClosedRequest(input, [
-      'plan_id', 'generation', 'expected_oid', 'expected_plan_oid', 'nonce', 'reason',
+    const { plan_id, generation, expected_oid, expected_plan_oid, nonce, reason, owner_attestation } = validateClosedRequest(input, [
+      'plan_id', 'generation', 'expected_oid', 'expected_plan_oid', 'nonce', 'reason', 'owner_attestation',
     ], 'plan_drain_request')
     assertTask2OpaqueId(plan_id, 'plan_drain_request.plan_id')
     if (!Number.isSafeInteger(generation) || generation < 1) fail('invalid_value', 'plan_drain_request_generation_invalid')
@@ -1596,6 +1604,32 @@ export function createLeaseRegistry({
     assertOid(expected_plan_oid, 'plan_drain_request.expected_plan_oid', { zero: false })
     assertNonce(nonce, 'plan_drain_request.nonce')
     if (!['handoff', 'failed', 'aborted'].includes(reason)) fail('invalid_value', 'plan_drain_request_reason_invalid')
+    validateClosedRequest(owner_attestation, DRAIN_ATTESTATION_KEYS, 'plan_drain_request.owner_attestation')
+    for (const field of ['attestation_ref', 'issuer_id', 'issuer_version']) assertTask2OpaqueId(owner_attestation[field], `plan_drain_request.owner_attestation.${field}`)
+    assertDigest(owner_attestation.attestation_digest, 'plan_drain_request.owner_attestation.attestation_digest')
+    if (owner_attestation.action !== 'drain' || owner_attestation.plan_id !== plan_id || owner_attestation.generation !== generation ||
+        owner_attestation.expected_oid !== expected_oid || owner_attestation.nonce !== nonce || owner_attestation.reason !== reason) {
+      fail('invalid_value', 'plan_drain_request_attestation_tuple_mismatch')
+    }
+    const drainNow = parseTimestamp(nowFrom(clock), 'plan_drain_request.now')
+    if (parseTimestamp(owner_attestation.expires_at, 'plan_drain_request.owner_attestation.expires_at') <= drainNow ||
+        parseTimestamp(owner_attestation.observed_at, 'plan_drain_request.owner_attestation.observed_at') > drainNow) {
+      fail('invalid_value', 'plan_drain_request_attestation_expired')
+    }
+    if (!Number.isSafeInteger(owner_attestation.revocation_epoch) || owner_attestation.revocation_epoch < 0) fail('invalid_value', 'plan_drain_request_attestation_epoch_invalid')
+    if (!ownerEndAttestor || typeof ownerEndAttestor.verify !== 'function') {
+      return { status: 'HELD_EXECUTION_AUTHORITY', reason: 'DRAIN_AUTHORITY_UNAVAILABLE' }
+    }
+    let drainVerified
+    try {
+      drainVerified = await ownerEndAttestor.verify({ attestation: owner_attestation, lease: null, drain: { plan_id, generation, expected_oid, nonce, reason }, now: nowFrom(clock) })
+    } catch {
+      return { status: 'HELD_EXECUTION_AUTHORITY', reason: 'DRAIN_AUTHORITY_UNAVAILABLE' }
+    }
+    if (!isObject(drainVerified) || drainVerified.verdict !== 'TRUSTED' || !isObject(drainVerified.attestation) ||
+        digestCanonical(drainVerified.attestation) !== digestCanonical(owner_attestation)) {
+      return { status: 'HELD_EXECUTION_AUTHORITY', reason: 'DRAIN_ATTESTATION_UNVERIFIED' }
+    }
     const planGuard = await resolvePlanGuard({ plan_id, generation, expected_plan_oid })
     if (planGuard.status !== 'READY') return planGuard
     const snapshot = await registrySnapshot(store, writerCap)

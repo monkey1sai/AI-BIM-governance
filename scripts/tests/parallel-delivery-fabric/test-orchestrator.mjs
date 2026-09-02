@@ -228,7 +228,14 @@ const reconcileCommand = (overrides = {}) => ({
 
 const drainCommand = (overrides = {}) => ({
   type: 'drain', command_id: 'command:drain-one',
-  drain_request: { plan_id: 'plan:one', generation: 1, expected_oid: 'a'.repeat(40), nonce: 'n'.repeat(32), reason: 'handoff' }, ...overrides,
+  drain_request: {
+    plan_id: 'plan:one', generation: 1, expected_oid: 'a'.repeat(40), nonce: 'n'.repeat(32), reason: 'handoff',
+    owner_attestation: {
+      attestation_ref: 'attestation:drain-one', attestation_digest: 'c'.repeat(64), issuer_id: 'attestor:plan-owner', issuer_version: 'plan-owner/v1',
+      action: 'drain', plan_id: 'plan:one', generation: 1, expected_oid: 'a'.repeat(40), nonce: 'n'.repeat(32), reason: 'handoff',
+      observed_at: '2026-08-29T00:00:00.000Z', expires_at: '2026-08-29T00:10:00.000Z', revocation_epoch: 0,
+    },
+  }, ...overrides,
 })
 
 const releaseCommand = (overrides = {}) => ({

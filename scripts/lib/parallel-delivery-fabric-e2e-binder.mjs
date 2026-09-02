@@ -602,6 +602,11 @@ const trustedPolicyFailure = (trustedPolicy, baseSha) => {
     if (trustedPolicy[key] !== undefined && trustedPolicy[key] !== baseSha) return 'APPLICABILITY_BASE_DRIFT'
   }
   if (!isSha256(trustedPolicy.policy_digest) || !isSha256(trustedPolicy.record_digest)) return 'APPLICABILITY_RECORD_INVALID'
+  // The record digest is recomputed over the policy record itself, so every flag the
+  // classifier honours (including the static-only escape) is covered by the
+  // base-owned digest rather than by a caller-supplied 64-hex string.
+  const { record_digest: declaredRecordDigest, ...policyPayload } = trustedPolicy
+  if (digestCanonical(policyPayload) !== declaredRecordDigest) return 'APPLICABILITY_RECORD_DIGEST_MISMATCH'
   if (trustedPolicy.immutable !== true || trustedPolicy.base_pinned !== true || trustedPolicy.fresh !== true) return 'APPLICABILITY_RECORD_NOT_IMMUTABLE'
   return null
 }

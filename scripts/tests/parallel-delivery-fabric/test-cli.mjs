@@ -87,7 +87,7 @@ const payloadFor = (command) => {
     provider_request: { command: 'shadow-status', execution_context: { expected: { ...ADVANCE_TUPLE }, attestation: { attestation_ref: 'attestation:one' } } },
   }
   if (command === 'reconcile') return { ...base, reconcile_request: { lease_id: 'lease:one' } }
-  if (command === 'drain') return { ...base, drain_request: { plan_id: 'plan:one', generation: 1, expected_oid: 'a'.repeat(40), nonce: 'n'.repeat(32), reason: 'handoff' } }
+  if (command === 'drain') return { ...base, drain_request: { plan_id: 'plan:one', generation: 1, expected_oid: 'a'.repeat(40), nonce: 'n'.repeat(32), reason: 'handoff', owner_attestation: { attestation_ref: 'attestation:drain-one', attestation_digest: 'c'.repeat(64), issuer_id: 'attestor:plan-owner', issuer_version: 'plan-owner/v1', action: 'drain', plan_id: 'plan:one', generation: 1, expected_oid: 'a'.repeat(40), nonce: 'n'.repeat(32), reason: 'handoff', observed_at: '2026-08-29T00:00:00.000Z', expires_at: '2026-08-29T00:10:00.000Z', revocation_epoch: 0 } } }
   return { ...base, release_request: { lease_id: 'lease:one', expected_oid: 'a'.repeat(40), expected_envelope_oid: 'b'.repeat(40), expected_envelope_transition_sequence: 0, attestation: { attestation_ref: 'attestation:owner-end-one', attestation_digest: 'c'.repeat(64), issuer_id: 'attestor:owner-end', issuer_version: 'owner-end/v1', owner_session: 'session:owner-one', provider: 'codex', provider_session_id: 'provider:one', execution_context_id: 'context:one', lease_id: 'lease:one', generation: 1, head_sha: 'd'.repeat(40), scope_digest: 'e'.repeat(64), worktree_path_digest: 'f'.repeat(64), observed_at: '2026-08-29T00:00:00.000Z', expires_at: '2026-08-29T00:10:00.000Z', nonce: 'a'.repeat(32), revocation_epoch: 0 } } }
 }
 

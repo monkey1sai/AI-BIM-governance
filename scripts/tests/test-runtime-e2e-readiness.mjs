@@ -209,6 +209,21 @@ test('physical real-E2E manifest binds path, worktree, head, and live process li
   assert.equal(verified.reason, 'REAL_E2E_MANIFEST_VERIFIED');
   assert.equal(verified.binding.viewer_base_url, 'http://127.0.0.1:5180');
   assert.equal(verified.binding.manifest_digest, manifestDigest);
+  // Two live entries for one role (and none for the other) never verify the lineage.
+  for (const backend of [
+    [{ role: 'coordinator', pid: 102, owned: true, ready: true }, { role: 'coordinator', pid: 102, owned: true, ready: true }],
+    [{ role: 'governance', pid: 101, owned: true, ready: true }, { role: 'governance', pid: 101, owned: true, ready: true }],
+    [{ role: 'governance', pid: 101, owned: true, ready: true }, { role: 'coordinator', pid: 101, owned: true, ready: true }],
+  ]) {
+    const duplicated = await inspectRealE2EManifest({ manifestPath, worktreeRoot: root, separator: '\\' }, {
+      ...ports,
+      inspectStack: async () => ({
+        status: 'active', stack_kind: 'isolated_branch_stack', manifest_path: manifestPath,
+        viewer: { expected_port: 5180, owner: 'playwright_webserver', managed_by_launcher: false }, backend,
+      }),
+    });
+    assert.deepEqual({ ready: duplicated.ready, reason: duplicated.reason }, { ready: false, reason: 'REAL_E2E_MANIFEST_LINEAGE_MISMATCH' }, JSON.stringify(backend));
+  }
 
   for (const mutate of [
     (copy) => { copy.head_sha = 'b'.repeat(40); },

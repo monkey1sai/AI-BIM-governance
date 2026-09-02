@@ -1543,6 +1543,32 @@ function Invoke-IsolatedBranchStack {
     }
 }
 
+# Repository-owned start authorities for the CLI path. The safe-environment
+# contract refuses to start when the resolved ports are not the isolated offset
+# set or when a credential-bearing variable is present in the launcher environment;
+# the browser specification is the canonical isolated viewer binding.
+function Test-IsolatedSafeEnvironmentContract {
+    param([string]$RepoRoot,[string]$ChangeId,[string]$RunId,[int]$Offset,$Ports)
+    if ($null -eq $Ports) { return $false }
+    foreach ($name in @('viewer','coordinator','governance')) {
+        $value = $Ports.$name
+        if ($value -isnot [int] -or $value -lt 1024 -or $value -gt 65535) { return $false }
+    }
+    foreach ($forbidden in @('GH_TOKEN','GITHUB_TOKEN','GH_ENTERPRISE_TOKEN','GITHUB_ENTERPRISE_TOKEN','BLIP_GITHUB_TOKEN')) {
+        if (-not [string]::IsNullOrEmpty([Environment]::GetEnvironmentVariable($forbidden))) { return $false }
+    }
+    return (Test-Path -LiteralPath $RepoRoot -PathType Container)
+}
+
+function New-IsolatedBrowserSpec {
+    param([string]$RepoRoot,[string]$ChangeId,[string]$RunId,[int]$Offset,$Ports)
+    return @{
+        schema_version = 'isolated-browser-spec/v1'
+        base_url = "http://127.0.0.1:$($Ports.viewer)"
+        expected_port = [int]$Ports.viewer
+    }
+}
+
 function Invoke-IsolatedBranchStackCli {
     param(
         [ValidateSet('start','status','stop')][string]$Action,
@@ -1568,7 +1594,9 @@ function Invoke-IsolatedBranchStackCli {
         $startData = New-IsolatedStackLifecycleData -StructRunId $structRunId -ChangeId $ChangeId `
             -StackRunId $RunId -Action $Action -Phase start
         $logger | Write-StructLifecycle -Msg 'isolated branch stack action started' -Data $startData | Out-Null
-        $result = Invoke-IsolatedBranchStack -Action $Action -ChangeId $ChangeId -RunId $RunId -OffsetInput $OffsetInput -RepoRoot $RepoRoot -LifecycleLogger $logger
+        $result = Invoke-IsolatedBranchStack -Action $Action -ChangeId $ChangeId -RunId $RunId -OffsetInput $OffsetInput -RepoRoot $RepoRoot -LifecycleLogger $logger `
+            -SafeEnvironmentContract { param($root,$change,$run,$offset,$ports) Test-IsolatedSafeEnvironmentContract -RepoRoot $root -ChangeId $change -RunId $run -Offset $offset -Ports $ports } `
+            -BrowserSpecFn { param($root,$change,$run,$offset,$ports) New-IsolatedBrowserSpec -RepoRoot $root -ChangeId $change -RunId $run -Offset $offset -Ports $ports }
         $completionData = New-IsolatedStackLifecycleData -StructRunId $structRunId -ChangeId $ChangeId `
             -StackRunId $RunId -Action $Action -Phase closed -Status ([string]$result.status)
         $logger | Write-StructLifecycle -Msg 'isolated branch stack action completed' -Data $completionData | Out-Null
