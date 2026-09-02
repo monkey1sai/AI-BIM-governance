@@ -176,7 +176,13 @@ test('autonomous queue skill teaches source-pinned bounded finalization without 
   assert.match(skill, /must not start a third head/i);
   assert.match(skill, /complete.*pagination/i);
   assert.match(skill, /critical_machine_adjudication/);
-  assert.match(skill, /FIX.*REJECT.*ACCEPT_RISK.*DEFER/s);
+  assert.match(skill, /ACCEPTED.*FIX_REQUIRED.*FALSE_POSITIVE.*DEFERRED.*ESCALATE/s);
+  assert.match(skill, /Review Disposition Agent/);
+  assert.match(skill, /manage-pr-queue\.mjs dispose --pr/);
+  assert.match(skill, /post-review-disposition\.mjs/);
+  assert.match(skill, /hidden.*metadata/i);
+  assert.match(skill, /finding_id.*head_sha.*agent_run_id.*sender.*webhook_event_id/s);
+  assert.match(skill, /never satisfies the merge gate by itself/i);
   assert.match(skill, /actual `success`/);
   assert.match(skill, /`neutral`.*`skipped`.*not.*pass/s);
   assert.match(skill, /single-use lease/i);

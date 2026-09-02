@@ -172,9 +172,11 @@ Skill變更依writing-skills TDD進行：先以baseline skill跑pressure scenari
 
 ### D15 — Finding resolution代表完成 disposition，不代表一律修 code
 
-CI、deterministic validator與machine reviewer產生的每個finding都進入closed disposition registry，依exact-head packet與immutable policy裁決為 `FIX`、`REJECT`、`ACCEPT_RISK` 或 `DEFER`。`FIX`要求confirmed、in-scope、已在frozen head修復且有regression evidence；`REJECT`要求finding已被可重現evidence refute；`ACCEPT_RISK`只允許policy明定的non-blocking severity；`DEFER`要求confirmed但out-of-scope，並綁定同repo follow-up Issue。P0／P1／P2／BLOCKER／CRITICAL／HIGH若confirmed且in-scope，一律只能 `FIX`。
+CI、deterministic validator、machine reviewer與human reviewer產生的每個finding都進入closed disposition registry，由merge queue agent（同時扮演Review Disposition Agent）依exact-head packet與immutable policy裁決為 `ACCEPTED`、`FIX_REQUIRED`、`FALSE_POSITIVE`、`DEFERRED` 或 `ESCALATE`（舊值 `FIX`／`REJECT`／`ACCEPT_RISK`／`DEFER` 正規化為對應值）。`ACCEPTED`要求confirmed且已由current head既有commit處理或屬policy明定的non-blocking severity；`FIX_REQUIRED`要求confirmed、in-scope，且只有repair head、regression evidence與independent re-review reference同時存在才算已修復；`FALSE_POSITIVE`要求finding已被可重現evidence refute；`DEFERRED`要求confirmed但out-of-scope，並綁定同repo follow-up Issue；`ESCALATE`用於超出autonomous authority或security／ACL／architecture／schema migration／deployment／production／credentials risk class，該PR不再autonomous-merge。P0／P1／P2／BLOCKER／CRITICAL／HIGH若confirmed且in-scope，一律只能 `FIX_REQUIRED` 或 `ESCALATE`。
 
-只有完整server pagination、每個finding均有合法disposition、所有對應thread已resolve且unresolved count為零，才算review convergence。Thread resolution的machine語意是「finding裁決生命週期已完成」，不是「一定有code diff」。Source-pinned App的machine success必須在convergence之後、對相同frozen head發布；先前head、先發布的gate或不完整thread集合都不得進merge preparation。
+每個disposition都以structured GitHub reply留在對應thread：人類可讀理由、evidence位置、next action，加上隱藏machine-readable metadata（`<!-- ai-bim-review-disposition/v1 {...} -->`）綁定finding_id、thread_id、head_sha、base_sha、agent_run_id、sender、webhook_event_id、disposition、severity、risk class、verification與evidence fingerprint。完整tuple是idempotency key；帶marker的comment永遠不是finding intake，rendered body不得含reviewer-bot mention，因此agent不會遞迴觸發自己或其他reviewer。`manage-pr-queue.mjs dispose` 只渲染（read-only observer），`post-review-disposition.mjs` sink以owner identity發布並在每次mutation前後重讀exact PR tuple。
+
+只有完整server pagination、每個finding均有合法disposition、所有對應thread已resolve且unresolved count為零，才算review convergence。Thread resolution的machine語意是「finding裁決生命週期已完成」，不是「一定有code diff」；任何「fixed」留言本身都不是merge evidence。Source-pinned App的machine success必須在convergence之後、對相同frozen head發布，且必須是expected source在該head的最新CheckRun；先前head、先發布的gate、被較新rerun取代的舊success或不完整thread集合都不得進merge preparation。
 
 **理由**：GitHub只知道conversation是否resolved，無法分辨false positive、accepted non-blocking risk與真正blocking bug。把disposition做成closed executable contract，才能保留zero-unresolved保護，又不把所有finding錯誤耦合成code修改。
 
@@ -196,16 +198,20 @@ flowchart TB
 
     INPUTS --> NEW[Create finding<br/>ID / source / severity / location / rule]
     NEW --> VERIFY{Finding verified?}
-    VERIFY -->|confirmed + in scope| FIX[FIX<br/>repair frozen head + regression evidence]
-    VERIFY -->|refuted| REJECT[REJECT<br/>reproducible counter-evidence]
-    VERIFY -->|confirmed + policy non-blocking| ACCEPT[ACCEPT_RISK<br/>policy rule + bounded rationale]
-    VERIFY -->|confirmed + out of scope| DEFER[DEFER<br/>same-repo follow-up Issue]
+    VERIFY -->|confirmed + in scope| FIX[FIX_REQUIRED<br/>repair head + regression evidence + independent re-review]
+    VERIFY -->|refuted| REJECT[FALSE_POSITIVE<br/>reproducible counter-evidence]
+    VERIFY -->|confirmed + already on head / policy non-blocking| ACCEPT[ACCEPTED<br/>policy rule + bounded rationale]
+    VERIFY -->|confirmed + out of scope| DEFER[DEFERRED<br/>same-repo follow-up Issue]
+    VERIFY -->|high-risk class / outside authority| ESCALATE[ESCALATE<br/>structured reply, thread stays open]
     VERIFY -->|unverified / unknown| HELD
+    ESCALATE --> HELD
 
-    FIX --> EVIDENCE[Exact-head evidence validation]
-    REJECT --> EVIDENCE
-    ACCEPT --> EVIDENCE
-    DEFER --> EVIDENCE
+    FIX --> REPLY[Structured GitHub reply<br/>hidden metadata: finding_id / head_sha / agent_run_id / sender / webhook_event_id]
+    REJECT --> REPLY
+    ACCEPT --> REPLY
+    DEFER --> REPLY
+    REPLY -->|duplicate tuple / same disposition on head / own marker| SKIP_DUP[Skip: idempotent, no recursion]
+    REPLY --> EVIDENCE[Exact-head evidence validation]
     EVIDENCE -->|missing / stale / secret / invalid mapping| HELD
     EVIDENCE --> CONVERGE{Complete pagination?<br/>All findings dispositioned?<br/>Threads resolved and count = 0?}
 
@@ -249,8 +255,10 @@ flowchart TB
 
 Machine acceptance mapping：
 
-- `scripts/lib/autonomous-delivery-finalization.mjs` 必須拒絕非法disposition、blocking `ACCEPT_RISK`、in-scope或跨repo `DEFER`、unverified／unresolved finding、convergence前或非expected App的machine success、第三個head與無authority merge preparation。Expected CheckRun name／App ID必須由candidate bundle外的trusted verifier注入，不得self-pin。`READY_TO_MERGE` 只能由closed phase／round lineage中的 `round_converged` transition產生，且state與raw finding bundle必須同時綁定相同repository／PR／base／head；事件中的自述布林值沒有authority。
-- `validateSubagentMergePlan` 必須只接受 `generatedBy.kind=subagent`、外部驗證的result artifact、完整authoritative server exact-head observations、dependency graph digest與proof、predecessor先於successor的拓撲順序，以及綁定已保留successor的 `SKIP_SUBSUMED`；缺provenance verifier、human-authored order、head drift與dependency inversion一律fail closed。
+- `scripts/lib/autonomous-delivery-finalization.mjs` 必須拒絕非法disposition、blocking `ACCEPTED`（未在head處理）／`DEFERRED`、in-scope或跨repo `DEFERRED`、high-risk class的非 `ESCALATE` 裁決、unverified／unresolved finding、自述fixed而無repair head／regression／re-review evidence、convergence前或非expected App的machine success、非該head最新CheckRun的舊success、第三個head與無authority merge preparation。Expected CheckRun name／App ID必須由candidate bundle外的trusted verifier注入，不得self-pin。`READY_TO_MERGE` 只能由closed phase／round lineage中的 `round_converged` transition產生，且state與raw finding bundle必須同時綁定相同repository／PR／base／head；事件中的自述布林值沒有authority；escalated bundle使transaction以 `HELD` 結案。
+- `classifyReviewSurface` 必須把diff bytes中的每個source／destination path與changedFiles surface逐一綁定，任一方多出或缺少即 `unsupported_review_surface`；`validateAdversarialDecision` 必須要求L1／L2／L3各自綁定同一packet digest，L2綁定exact L1 output digest，L3綁定L1與L2 output digest；`buildExactHeadMergeRequest` 必須在invalid clock時fail closed；single-flight ledger必須admit `release_hotfix`，並在FAILED／HELD後只開放綁定terminal delivery ID的repair／revert／reconciliation lane。
+- Review Disposition Agent：`manage-pr-queue.mjs dispose` 只在exact-head snapshot與packet tuple相同時渲染reply與隱藏metadata（否則 `HELD`）；`post-review-disposition.mjs` 必須拒絕credential override env、非owner identity、head drift、已resolved thread、缺finding comment、readback mismatch與unparseable既有metadata，並以完整tuple與同head同disposition去重；`selectFindingIntake` 必須排除帶marker的comment；rendered body不得含reviewer-bot mention。`scripts/tests/test-review-disposition-sink.mjs` 是此sink的repo-local executable regression baseline。
+- `validateSubagentMergePlan` 必須只接受 `generatedBy.kind=subagent`、外部驗證的result artifact、完整authoritative server exact-head observations、由coordinator另行供給的authoritative dependency graph（digest必須等於plan的 `dependencyGraphSha256`，每個entry的predecessor set必須等於完整authoritative edge set並將skipped PR重指向其subsumer，proof digest必須可由tuple重算）、predecessor先於successor的拓撲順序，以及綁定已保留successor、proof可重算且由trusted subsumption verifier確認的 `SKIP_SUBSUMED`；缺provenance／subsumption verifier、human-authored order、head drift、omitted edge與dependency inversion一律fail closed。
 - 每次predecessor merge後，後續PR的base/head/checks/threads與plan evidence都必須重新收集；舊merge plan只能作排序候選，不是merge authority。
 - `scripts/tests/test-autonomous-delivery-finalization.mjs` 是此圖的repo-local executable regression baseline；external App、GitHub settings、privileged merge與canonical Linux live evidence仍須依activation matrix另行attest。
 

@@ -19,8 +19,10 @@
 - [ ] 2.5 新增routine docs、mechanical code、user-facing、deploy與self-referential fixtures，證明risk classification與required gate selection deterministic且可重現。
 - [ ] 2.6 實作named-PR finalization state machine與persistent round budget，讓draft observation不消耗budget，ready head的任一push使舊evidence失效，round 2需要第三個head時唯一映射 `HELD/PREMERGE_EVIDENCE_INVALID`＋namespaced failure detail。
 - [ ] 2.7 新增逐finding push、第二writer mutation、base/head drift、round 2 residual blocker、stale SHIP reuse、incomplete pagination與passing head未立即merge的negative／race tests。
-- [x] 2.8 定義closed CI／review finding disposition contract：`FIX`、`REJECT`、`ACCEPT_RISK`、`DEFER`，綁定severity、verification、scope、exact-head evidence、follow-up Issue與thread resolution；confirmed in-scope P0／P1／P2／BLOCKER／CRITICAL／HIGH只能 `FIX`。
-- [x] 2.9 新增executable tests證明Resolve代表disposition完成而非一律fix，並拒絕unverified finding、blocking accept-risk／defer、incomplete threads與convergence前或stale-head machine success。
+- [x] 2.8 定義closed CI／review finding disposition contract：`ACCEPTED`、`FIX_REQUIRED`、`FALSE_POSITIVE`、`DEFERRED`、`ESCALATE`（舊值 `FIX`／`REJECT`／`ACCEPT_RISK`／`DEFER` 正規化），綁定severity、verification、scope、risk class、exact-head evidence、fix evidence（repair head／regression／independent re-review）、follow-up Issue與thread resolution；confirmed in-scope P0／P1／P2／BLOCKER／CRITICAL／HIGH只能 `FIX_REQUIRED` 或 `ESCALATE`，high-risk class只能 `ESCALATE` 或有反證的 `FALSE_POSITIVE`。
+- [x] 2.9 新增executable tests證明Resolve代表disposition完成而非一律fix，並拒絕unverified finding、blocking accept／defer、自述fixed而無fix evidence、incomplete threads、convergence前或stale-head machine success，以及非expected source最新CheckRun的舊success。
+- [x] 2.10 將merge queue agent延伸為Review Disposition Agent：`manage-pr-queue.mjs dispose` 以exact-head snapshot渲染structured reply與隱藏metadata（finding_id／thread_id／head_sha／base_sha／agent_run_id／sender／webhook_event_id／disposition／evidence fingerprint），`post-review-disposition.mjs` sink以完整tuple去重、marker loop guard、mutation前後exact-head reread與bounded resolution發布；agent assertion不得滿足merge gate，並以executable tests覆蓋。
+- [x] 2.11 依exact-head review findings修補finalization contract：diff bytes與changed-file surface綁定、L1／L2／L3 packet與output digest綁定、machine gate綁定expected source最新CheckRun與convergence epoch、invalid clock fail closed、`release_hotfix` 准入、FAILED／HELD後只開放bound recovery lane、authoritative dependency graph與可重算proof、subsumption verifier。
 
 ## 3. 三層交叉對抗 machine adjudication
 
