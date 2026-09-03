@@ -36,7 +36,27 @@ export interface HighlightResultMessage {
 }
 export interface SelectedGuidMessage { protocol: "vg01"; type: "selected_guid"; ifcGuid: string | null }
 
-export interface HighlightItem { ifc_guid: string; severity?: string; label?: string; rule_code?: string | null }
+export interface USDPrimNode {
+  name?: string;
+  path: string;
+  type?: string;
+  children?: USDPrimNode[];
+}
+
+export interface StageTreeMessage {
+  protocol: "vg01";
+  type: "stage_tree";
+  prim_path: string;
+  children: USDPrimNode[];
+}
+
+export interface HighlightItem {
+  ifc_guid: string;
+  severity?: string;
+  label?: string;
+  rule_code?: string | null;
+  color?: [number, number, number, number] | number[];
+}
 
 export interface EmbeddedViewerHandle {
   sendHighlight(items: HighlightItem[], clientRequestId: string): void;
@@ -46,6 +66,12 @@ export interface EmbeddedViewerHandle {
   sendHighlightBatch(items: HighlightItem[], clientRequestId: string): void;
   sendFocus(ifcGuid: string): void;
   sendClear(): void;
+  requestStageTree(primPath?: string): void;
+  selectPrim(primPath: string, multiSelect?: boolean): void;
+  sendToolbarAction(
+    action: "reset_camera" | "camera_view" | "toggle_fullscreen" | "toggle_projection",
+    cameraView?: string,
+  ): void;
 }
 
 export interface EmbeddedViewerProps {
@@ -78,6 +104,7 @@ export interface EmbeddedViewerProps {
   onStageLoaded?: (message: StageLoadedMessage) => void;
   onHighlightResult?: (m: HighlightResultMessage) => void;
   onSelectedGuid?: (ifcGuid: string | null) => void;
+  onStageTree?: (message: StageTreeMessage) => void;
 }
 
 export const EmbeddedViewer = forwardRef<EmbeddedViewerHandle, EmbeddedViewerProps>(function EmbeddedViewer(props, ref) {
@@ -143,6 +170,7 @@ export const EmbeddedViewer = forwardRef<EmbeddedViewerHandle, EmbeddedViewerPro
         }
         case "highlight_result": p.onHighlightResult?.(m as unknown as HighlightResultMessage); break;
         case "selected_guid":    p.onSelectedGuid?.((m as unknown as SelectedGuidMessage).ifcGuid ?? null); break;
+        case "stage_tree":       p.onStageTree?.(m as unknown as StageTreeMessage); break;
         default: break; // 未知 type 忽略
       }
     };
@@ -161,6 +189,11 @@ export const EmbeddedViewer = forwardRef<EmbeddedViewerHandle, EmbeddedViewerPro
     sendHighlightBatch: (items, clientRequestId) => post({ type: "highlight_batch", items, clientRequestId }),
     sendFocus: (ifcGuid) => post({ type: "focus", ifc_guid: ifcGuid }),
     sendClear: () => post({ type: "clear" }),
+    requestStageTree: (primPath = "/World") => post({ type: "request_stage_tree", prim_path: primPath }),
+    selectPrim: (primPath: string, multiSelect = false) =>
+      post({ type: "select_prim", prim_path: primPath, multi_select: multiSelect }),
+    sendToolbarAction: (action, cameraView) =>
+      post({ type: "toolbar_action", action, ...(cameraView ? { camera_view: cameraView } : {}) }),
   }), []);
 
   // iframe src 用完整 viewerOrigin base（保留路徑前綴），附 session 與 coordinator handoff（對齊 /ui/open 的 query 鍵）。
