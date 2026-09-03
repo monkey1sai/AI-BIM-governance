@@ -39,3 +39,34 @@
 3. **安全與相容性約束**：
    - 擴充 `vg01` postMessage 時必須保證與既有事件（`highlight`, `focus`, `viewer_ready`, `first_frame` 等）向後相容。
    - 嚴格遵守 `AGENTS.md` 後端凍結面與 R1–R4 鐵律。
+
+## Handoff Note (給 Codex App 的具體交接指令)
+
+- **PR**：[#777 (fix/workspace-viewport-webrtc-stage-tree)](https://github.com/monkey1sai/AI-BIM-governance/pull/777)
+- **分支**：`fix/workspace-viewport-webrtc-stage-tree`（已與最新 `origin/main` 完全合併，Commit: `adf8d1c8b8494a7666f1120d53f63e6c41a23782`）
+- **CI 狀態**：GitHub Actions 所有 25 項 Checks 100% 全綠。
+
+### 請 Codex App 依序執行以下任務：
+1. **PR 審批與合併**：
+   - 透過 `monkey1sai-blip` 投票或由 owner 執行 squash merge：
+     ```powershell
+     gh pr merge 777 --squash --delete-branch --match-head-commit adf8d1c8b8494a7666f1120d53f63e6c41a23782
+     ```
+   - 同步本地 `main`：
+     ```powershell
+     git fetch origin --prune && git checkout main && git merge origin/main --ff-only
+     ```
+2. **部署至 181 測試區**：
+   - 依照 `deploy-linux-test-environment` 規範執行：
+     ```powershell
+     .\scripts\dev\rebuild-test-deploy.ps1 -Build -InventoryPath "C:\Users\IOT\.codex\inventory\target.local.json"
+     ```
+3. **181 實機功能與語意驗收**：
+   - 瀏覽器開啟：`http://192.168.20.181:8004/ui/#workspace?session=review_session_da5099e5dcf8`
+   - 驗收清單：
+     - [ ] 頂部工具列 4 顆按鈕（⬒ 視角、✥ 全螢幕、◫ 投影模式、⟲ 重置）清晰浮現於 Viewport 上方，未被中央佔位層覆蓋，處於 enabled 狀態。
+     - [ ] 中央視窗掛載 `<ReviewSessionViewerPane>`，點擊「手動啟動」取得 Lease，WebRTC 連線成功並渲染真實 USDC 模型（第一幀畫面出幀）。
+     - [ ] 左側 Stage 樹切換為 Live 狀態，點擊頂部「重整」按鈕接收真實 USD Prim 樹，支援關鍵字過濾搜尋與樹狀展開。
+     - [ ] 點選 Prim 節點時，3D 視窗以指定色彩高亮呈現該構件。
+     - [ ] 截圖留存於 `artifacts/e2e/`。
+
