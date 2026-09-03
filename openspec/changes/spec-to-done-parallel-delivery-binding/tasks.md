@@ -24,7 +24,7 @@
 ## 5. 驗證與收斂
 
 - [ ] 5.1 執行 affected Node/Python tests、agent contract/governance checks 與 OpenSpec strict validation
-  - current-main residual 基線已通過 Binding 10/10 與 state/schema 72 passed + 2 skipped；完整治理 preflight 與 OpenSpec strict validation 尚待執行。
-- [ ] 5.2 執行 GitNexus detect-changes、確認 tracked scope，並在 closeout 前檢查 Fabric contract drift
-  - GitNexus index 已對齊整合前 `origin/main`；hidden skill 與新增 binding symbol無索引結果，impact 標記 `UNKNOWN`，須以 direct source review、deterministic tests、detect-changes 與 exact-head reviewer 補證。
-- [ ] 5.3 登錄 OpenSpec lifecycle ledger 與 NOW current projection，將 task/evidence snapshot 綁定已提交的 implementation subject
+  - current-main residual 已通過 Binding 10/10、state/schema 72 passed + 2 skipped、Fabric behavioral 379/379、CI 鎖定 Python 3.12/jsonschema 4.26.0 schema 18/18 與完整 agent governance suite；OpenSpec strict validation 因本機 CLI 嘗試連線外部服務而遭安全政策拒絕，保留給 exact-head GitHub CI 驗證。
+- [x] 5.2 執行 GitNexus detect-changes、確認 tracked scope，並在 closeout 前檢查 Fabric contract drift
+  - exact worktree index 的 `buildSpecToDoneFabricBinding` 與 `validateSpecToDoneFabricBinding` impact 皆為 LOW；detect-changes 顯示 23 files、152 symbols、2 processes、MEDIUM。hidden `.claude` skill symbol仍無索引結果，標記 `UNKNOWN`，已以 direct source review、deterministic tests 與 exact-head reviewer 補證。
+- [x] 5.3 登錄 OpenSpec lifecycle ledger 與 NOW current projection，將 task/evidence snapshot 綁定已提交的 implementation subject
