@@ -93,6 +93,66 @@ function Test-DesignSystemBootstrapJsonRule {
     return $baseComparable -ceq $headComparable
 }
 
+function ConvertTo-DesignSystemPairedRebaselineComparableManifest {
+    param([Parameter(Mandatory = $true)] $Manifest)
+
+    $copy = ($Manifest | ConvertTo-Json -Depth 100 | ConvertFrom-Json)
+    foreach ($screen in @($copy.screens)) {
+        $screen.PSObject.Properties.Remove('baselines')
+        $screen.PSObject.Properties.Remove('baseline_provenance')
+    }
+    $copy.PSObject.Properties.Remove('baseline_snapshot_sha256')
+    return $copy | ConvertTo-Json -Depth 100 -Compress
+}
+
+function Get-DesignSystemBaselinePaths {
+    param([Parameter(Mandatory = $true)] $Manifest)
+
+    return @($Manifest.screens | ForEach-Object {
+        @($_.baselines.PSObject.Properties | ForEach-Object { ConvertTo-DesignSystemRepoPath -Path ([string]$_.Value.path) })
+    } | Sort-Object -Unique)
+}
+
+function Test-DesignSystemPairedRebaseline {
+    param(
+        [Parameter(Mandatory = $true)] $BaseManifest,
+        [Parameter(Mandatory = $true)] $HeadManifest,
+        [Parameter(Mandatory = $true)][string[]] $ChangedPaths,
+        [Parameter(Mandatory = $true)][string[]] $ReferenceAuthorityPaths,
+        [Parameter(Mandatory = $true)][bool] $HasApprovedSurface
+    )
+
+    if (-not $HasApprovedSurface) { return $false }
+    if ('docs/plans/design-system-reference.manifest.json' -notin $ReferenceAuthorityPaths) { return $false }
+    if ((ConvertTo-DesignSystemPairedRebaselineComparableManifest -Manifest $BaseManifest) -cne
+        (ConvertTo-DesignSystemPairedRebaselineComparableManifest -Manifest $HeadManifest)) { return $false }
+
+    $baseBaselinePaths = Get-DesignSystemBaselinePaths -Manifest $BaseManifest
+    $headBaselinePaths = Get-DesignSystemBaselinePaths -Manifest $HeadManifest
+    if (($baseBaselinePaths -join '|') -cne ($headBaselinePaths -join '|')) { return $false }
+
+    $changedBaselinePaths = @($ChangedPaths | Where-Object { $_ -match '^docs/plans/design-system-baseline/' })
+    if ($changedBaselinePaths.Count -eq 0 -or @($changedBaselinePaths | Where-Object { $_ -notin $headBaselinePaths }).Count -gt 0) {
+        return $false
+    }
+
+    foreach ($screen in @($HeadManifest.screens)) {
+        $screenBaselinePaths = @($screen.baselines.PSObject.Properties | ForEach-Object {
+            ConvertTo-DesignSystemRepoPath -Path ([string]$_.Value.path)
+        })
+        if (@($screenBaselinePaths | Where-Object { $_ -in $changedBaselinePaths }).Count -eq 0) { continue }
+        $provenance = $screen.PSObject.Properties['baseline_provenance']
+        if ($null -eq $provenance -or
+            [string]$provenance.Value.authority -ne 'canonical_product_surface' -or
+            [string]::IsNullOrWhiteSpace([string]$provenance.Value.canonical_route) -or
+            [string]::IsNullOrWhiteSpace([string]$provenance.Value.capture_runner) -or
+            [string]::IsNullOrWhiteSpace([string]$provenance.Value.approval)) {
+            return $false
+        }
+    }
+    return $true
+}
+
 function Get-DesignSystemManifestScope {
     param(
         [Parameter(Mandatory = $true)] $Manifest,
@@ -230,11 +290,22 @@ function Get-DesignSystemChangeScope {
     $hasApproved = $approvedSurfaceIds.Count -gt 0
     $hasMissing = $missingSurfaceIds.Count -gt 0 -or $alsoAffectsMissing
     $frontendProduct = $hasApproved -or $hasMissing -or $unknownPaths.Count -gt 0
-    $referenceAuthorityMixed = $referenceAuthorityPaths.Count -gt 0 -and $frontendProduct
+    $pairedRebaseline = $false
+    if ($null -ne $baseManifest -and $referenceAuthorityPaths.Count -gt 0 -and $frontendProduct) {
+        $pairedRebaseline = Test-DesignSystemPairedRebaseline `
+            -BaseManifest $baseManifest `
+            -HeadManifest $headManifest `
+            -ChangedPaths $normalizedPaths `
+            -ReferenceAuthorityPaths $referenceAuthorityPaths `
+            -HasApprovedSurface $hasApproved
+    }
+    $referenceAuthorityMixed = $referenceAuthorityPaths.Count -gt 0 -and $frontendProduct -and -not $pairedRebaseline
     $status = if ($unknownPaths.Count -gt 0) {
         'unknown_fail_closed'
     } elseif ($referenceAuthorityMixed) {
         'reference_authority_mixed_fail_closed'
+    } elseif ($pairedRebaseline) {
+        'passed_with_rebaseline'
     } elseif ($hasApproved -and $hasMissing) {
         'mixed'
     } elseif ($hasApproved) {
@@ -262,7 +333,7 @@ function Get-DesignSystemChangeScope {
         status = $status
         frontend_product = $frontendProduct
         visual_required = $hasApproved -or $unknownPaths.Count -gt 0
-        full_completion_allowed = $status -eq 'passed' -and $semanticExecutable -and $runtimeExecutable -and $fidelityDeterministic
+        full_completion_allowed = $status -in @('passed', 'passed_with_rebaseline') -and $semanticExecutable -and $runtimeExecutable -and $fidelityDeterministic
         semantic_executable = $semanticExecutable
         functional_runtime_executable = $runtimeExecutable
         fidelity_deterministic = $fidelityDeterministic
@@ -273,6 +344,7 @@ function Get-DesignSystemChangeScope {
         unknown_paths = $unknownPaths
         gate_infrastructure_paths = $gatePaths
         reference_authority_paths = $referenceAuthorityPaths
+        paired_rebaseline = $pairedRebaseline
         non_product_paths = $nonProductPaths
         base_manifest_present = $null -ne $baseManifest
         bootstrap_gate_infrastructure_paths = @($bootstrapGatePaths | Sort-Object -Unique)
