@@ -155,6 +155,9 @@ function Invoke-ReviewerTokenParserRegression {
         'A strict UTF-8 BOM assignment did not parse exactly.'
     foreach ($invalid in @(
         "OTHER_TOKEN=$expected`n",
+        "blip_github_token=$expected`n",
+        "Export BLIP_GITHUB_TOKEN=$expected`n",
+        "export blip_github_token=$expected`n",
         "BLIP_GITHUB_TOKEN=$expected`nBLIP_GITHUB_TOKEN=$expected`n",
         "BLIP_GITHUB_TOKEN=`"$expected`n",
         "BLIP_GITHUB_TOKEN=too_short`n",

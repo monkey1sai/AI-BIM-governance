@@ -867,7 +867,7 @@ function Read-ReviewerTokenFromEnvStream {
         if ($trimmed.Length -eq 0 -or $trimmed.StartsWith('#', [StringComparison]::Ordinal)) {
             continue
         }
-        if ($line -notmatch '^\s*(?:export\s+)?BLIP_GITHUB_TOKEN\s*=\s*(.*?)\s*$') {
+        if ($line -cnotmatch '^\s*(?:export\s+)?BLIP_GITHUB_TOKEN\s*=\s*(.*?)\s*$') {
             throw 'The counted-reviewer credential file contains an unsupported assignment.'
         }
         $assignmentCount += 1

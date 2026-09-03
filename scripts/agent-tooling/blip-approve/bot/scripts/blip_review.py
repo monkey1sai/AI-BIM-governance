@@ -157,6 +157,20 @@ query($owner:String!, $name:String!, $number:Int!) {
           }
         }
       }
+      candidateCommits: commits(first:100) {
+        pageInfo { hasNextPage }
+        nodes {
+          commit {
+            oid
+            author { user { login } }
+            authors(first:100) {
+              pageInfo { hasNextPage }
+              nodes { user { login } }
+            }
+            committer { user { login } }
+          }
+        }
+      }
       reviewThreads(first:100) {
         pageInfo { hasNextPage }
         nodes {
@@ -239,6 +253,56 @@ def unresolved(pr: dict) -> list[dict]:
 
 def review_nodes(pr: dict) -> list[dict]:
     return complete_nodes(pr.get("reviews"), "PR reviews")
+
+
+def validate_reviewer_commit_separation(pr: dict) -> dict:
+    nodes = complete_nodes(pr.get("candidateCommits"), "PR candidate commits")
+    if not nodes:
+        raise SystemExit("PR candidate commit collection is empty; approval is HELD")
+
+    expected_head = pr.get("headRefOid")
+    if not isinstance(expected_head, str) or not re.fullmatch(r"[0-9a-fA-F]{40}", expected_head):
+        raise SystemExit("PR head commit identity is missing or malformed")
+
+    seen: set[str] = set()
+    head_count = 0
+    for node in nodes:
+        commit = node.get("commit")
+        if not isinstance(commit, dict):
+            raise SystemExit("A PR candidate commit is missing or malformed")
+        oid = commit.get("oid")
+        if not isinstance(oid, str) or not re.fullmatch(r"[0-9a-fA-F]{40}", oid):
+            raise SystemExit("A PR candidate commit oid is missing or malformed")
+        normalized_oid = oid.lower()
+        if normalized_oid in seen:
+            raise SystemExit("PR candidate commit collection contains a duplicate oid")
+        seen.add(normalized_oid)
+        if normalized_oid == expected_head.lower():
+            head_count += 1
+
+        def reject_reviewer_actor(actor: object, role: str) -> None:
+            if not isinstance(actor, dict):
+                raise SystemExit(f"A PR candidate commit {role} identity is missing or malformed")
+            user = actor.get("user")
+            if not isinstance(user, dict):
+                raise SystemExit(f"A PR candidate commit {role} GitHub user identity is missing or malformed")
+            login = user.get("login")
+            if not isinstance(login, str) or not login or login != login.strip():
+                raise SystemExit(f"A PR candidate commit {role} GitHub login is missing or malformed")
+            if login.casefold() == DEFAULT_REVIEWER.casefold():
+                raise SystemExit(
+                    f"The reviewer account is associated with candidate commit {oid[:7]}; "
+                    "independent approval is forbidden"
+                )
+
+        for role in ("author", "committer"):
+            reject_reviewer_actor(commit.get(role), role)
+        for actor in complete_nodes(commit.get("authors"), f"PR candidate commit {oid[:7]} authors"):
+            reject_reviewer_actor(actor, "author")
+
+    if head_count != 1:
+        raise SystemExit("PR candidate commits are not bound exactly once to the PR head")
+    return {"count": len(nodes), "head": expected_head.lower()}
 
 
 def thread_comments(thread: dict) -> list[dict]:
@@ -1137,8 +1201,9 @@ def approval_preflight(
     else:
         raise SystemExit("Unknown review mode is not eligible for approval")
     author = ((pr.get("author") or {}).get("login") or "")
-    if author == DEFAULT_REVIEWER:
+    if author.casefold() == DEFAULT_REVIEWER.casefold():
         raise SystemExit("The reviewer account authored this PR; GitHub rejects self-approval")
+    validate_reviewer_commit_separation(pr)
     merge_state = pr.get("mergeStateStatus")
     if merge_state not in ("CLEAN", "BLOCKED"):
         raise SystemExit(f"PR merge state is {merge_state!r}; automatic approval requires CLEAN or review-only BLOCKED")
