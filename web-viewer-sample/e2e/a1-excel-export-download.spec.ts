@@ -1,11 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 import { inflateRawSync } from "node:zlib";
 import fs from "node:fs";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
 
-const TEST_DIR = path.dirname(fileURLToPath(import.meta.url));
-const FIXTURE_XLSX = path.join(TEST_DIR, "fixtures", "rule-run-rr_a1.xlsx");
 const MINIO_KEY = "松風庵/root/main/u1/model.ifc";
 const MINIO_IDEMPOTENCY_KEY = "mw_0000000000000001";
 const REVIEW_SESSION_ID = "review_session_x";
@@ -19,6 +15,70 @@ const EXPECTED_HEADERS = [
   "usd_prim_path",
   "message",
 ] as const;
+
+function crc32(buf: Buffer): number {
+  let crc = 0xffffffff;
+  for (const byte of buf) {
+    crc ^= byte;
+    for (let bit = 0; bit < 8; bit += 1) {
+      crc = (crc >>> 1) ^ (0xedb88320 & -(crc & 1));
+    }
+  }
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+function zipStore(entries: Array<{ name: string; data: Buffer }>): Buffer {
+  const locals: Buffer[] = [];
+  const centrals: Buffer[] = [];
+  let offset = 0;
+  for (const entry of entries) {
+    const name = Buffer.from(entry.name, "utf8");
+    const crc = crc32(entry.data);
+    const local = Buffer.alloc(30 + name.length + entry.data.length);
+    local.writeUInt32LE(0x04034b50, 0);
+    local.writeUInt16LE(20, 4);
+    local.writeUInt32LE(crc, 14);
+    local.writeUInt32LE(entry.data.length, 18);
+    local.writeUInt32LE(entry.data.length, 22);
+    local.writeUInt16LE(name.length, 26);
+    name.copy(local, 30);
+    entry.data.copy(local, 30 + name.length);
+    locals.push(local);
+
+    const central = Buffer.alloc(46 + name.length);
+    central.writeUInt32LE(0x02014b50, 0);
+    central.writeUInt16LE(20, 4);
+    central.writeUInt16LE(20, 6);
+    central.writeUInt32LE(crc, 16);
+    central.writeUInt32LE(entry.data.length, 20);
+    central.writeUInt32LE(entry.data.length, 24);
+    central.writeUInt16LE(name.length, 28);
+    central.writeUInt32LE(offset, 42);
+    name.copy(central, 46);
+    centrals.push(central);
+    offset += local.length;
+  }
+  const centralBlob = Buffer.concat(centrals);
+  const eocd = Buffer.alloc(22);
+  eocd.writeUInt32LE(0x06054b50, 0);
+  eocd.writeUInt16LE(entries.length, 8);
+  eocd.writeUInt16LE(entries.length, 10);
+  eocd.writeUInt32LE(centralBlob.length, 12);
+  eocd.writeUInt32LE(offset, 16);
+  return Buffer.concat([...locals, centralBlob, eocd]);
+}
+
+function buildMinimalXlsx(): Buffer {
+  const sheetCells = EXPECTED_HEADERS
+    .map((header) => `<c t="inlineStr"><is><t>${header}</t></is></c>`)
+    .join("");
+  const sheet = `<?xml version="1.0" encoding="UTF-8"?><worksheet><sheetData><row>${sheetCells}</row></sheetData></worksheet>`;
+  const workbook = `<?xml version="1.0" encoding="UTF-8"?><workbook><sheets><sheet name="Failed Elements"/><sheet name="Summary"/></sheets></workbook>`;
+  return zipStore([
+    { name: "xl/worksheets/sheet1.xml", data: Buffer.from(sheet, "utf8") },
+    { name: "xl/workbook.xml", data: Buffer.from(workbook, "utf8") },
+  ]);
+}
 
 function runtimeStatus() {
   return {
@@ -82,7 +142,7 @@ function readZipUtf8(buf: Buffer, entryName: string): string {
 }
 
 async function installA1Mocks(page: Page, exportStatus: number): Promise<void> {
-  const xlsx = fs.readFileSync(FIXTURE_XLSX);
+  const xlsx = buildMinimalXlsx();
   await page.route("**/*", async (route) => {
     const url = route.request().url();
     if (url.includes("/api/")) {
