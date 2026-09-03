@@ -140,7 +140,7 @@ jobs:
       - name: Run orphan cleanup and named PR queue safety tests
         if: matrix.shard == 'core'
         shell: pwsh
-        run: pwsh -NoProfile -NonInteractive -Command "node --test scripts/tests/test-cleanup-orphan-dev-processes.mjs scripts/tests/test-manage-pr-queue.mjs scripts/tests/test-pr-queue-adversarial-and-stress.mjs scripts/tests/test-autonomous-delivery-finalization.mjs scripts/tests/test-review-disposition-sink.mjs"
+        run: pwsh -NoProfile -NonInteractive -Command "node --test scripts/tests/test-cleanup-orphan-dev-processes.mjs scripts/tests/test-manage-pr-queue.mjs scripts/tests/test-pr-queue-adversarial-and-stress.mjs scripts/tests/test-autonomous-delivery-finalization.mjs scripts/tests/test-review-disposition-sink.mjs scripts/tests/test-linux-continuous-deployment.mjs"
 
       - name: Verify governance policy rules
         if: matrix.shard == 'core'
