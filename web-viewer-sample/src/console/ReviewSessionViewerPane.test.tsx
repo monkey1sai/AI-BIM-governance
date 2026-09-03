@@ -138,6 +138,12 @@ describe("ReviewSessionViewerPane", () => {
     vi.spyOn(coordinatorClient, "releaseViewerLease").mockResolvedValue(fakePrimaryLease() as never);
     vi.spyOn(coordinatorClient, "reportFirstFrame").mockResolvedValue({ session_id: "review_session_x", first_frame_at: "2026-07-01T00:00:00.000Z" });
     vi.spyOn(coordinatorClient, "kitInstanceCurrent").mockResolvedValue({ instance_id: "kit_local_001", status: "ready" } as never);
+    // viewer iframe 掛載前必須先拿到 canonical trace carrier（stream-config 為權威來源）。
+    vi.spyOn(coordinatorClient, "streamConfig").mockResolvedValue({
+      session_id: "review_session_x",
+      status: "active",
+      trace_id: "rev_review_session_x",
+    } as never);
   });
 
   afterEach(async () => {
