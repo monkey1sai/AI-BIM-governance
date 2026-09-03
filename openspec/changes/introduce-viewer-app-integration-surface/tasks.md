@@ -35,14 +35,18 @@
 
 ## 4. S3a ViewportHost（V-A′）落地
 
-- [ ] 4.1 UnifiedShell children 外 `position:relative` 包裹層＋`ViewportHost` absolute 兄弟層；live-only（離線／未啟動 `return null`＝零新 DOM）；內容物＝重用 `ReviewSessionViewerPane`（additive 消費；如需外框約束僅以 wrapper 容器，不改 pane 內部）；`useViewportSlot().registerSlot(el)`＋ResizeObserver 同步；A4 分頁 host 保持掛載、未註冊 slot 時 `visibility:hidden`。
-- [ ] 4.2 離開 workspace 由 `page` prop 顯式驅動 unmount → cleanup release lease（不得依賴 reconciliation）。
+- [x] 4.1 UnifiedShell children 外 `position:relative` 包裹層＋`ViewportHost` absolute 兄弟層；live-only（離線／未啟動 `return null`＝零新 DOM）；內容物＝重用 `ReviewSessionViewerPane`（additive 消費；如需外框約束僅以 wrapper 容器，不改 pane 內部）；`useViewportSlot().registerSlot(el)`＋ResizeObserver 同步；A4 分頁 host 保持掛載、未註冊 slot 時 `visibility:hidden`。
+  - **實作（2026-09-03，thaw 片）**：`web-viewer-sample/src/console/unified/viewportSlot.ts`（context／型別／`classifyViewerPhase` 純函式）、`ViewportSlotProvider.tsx`、`WorkspaceViewportHost.tsx`（`useConsoleData(["runtimeStatus"])` 非 live → `return null`；`data-uc="viewport" data-prov="asbuilt" data-mount-token`；ResizeObserver＋window resize/scroll 同步；未註冊 slot 時 0×0 `visibility:hidden`）；`UnifiedShell.tsx` page-root 改 `position:relative` 並在 `page==="ws"` 掛 host。模組頁改經 `WorkspaceViewerMount.tsx`（context 在→publish；缺席→inline 原樣），pane 內部零改動（5 檔不變式）。vitest `workspaceViewportHost.test.tsx`：離線零 DOM／live 空態無 iframe／切 dock mount token 不變／離開 unmount。
+- [x] 4.2 離開 workspace 由 `page` prop 顯式驅動 unmount → cleanup release lease（不得依賴 reconciliation）。
+  - **實作**：`UnifiedShell` 以 `page === "ws"` 條件渲染 host；`EdgeConsole.renderUnified` 移除 `<WorkspacePage key={page}>`（切 dock 不再整頁重建）；pane 既有 lease cleanup effect 於 host unmount 時釋放。vitest「離開 workspace（#a1→#home）host unmount」。
 - [ ] 4.3 DoD：iframe 持久性 e2e——**單次 goto 進站（hash-only、無 search），其後導覽一律頁內 client-side 點擊**；`data-mount-token` 同一節點跨 `#a1↔#a2↔#a3` 與頁內導向 `#workspace?dock=a4`；離線像素零變化 e2e；console top document 無 `<video>` 斷言（R-D1 驗證項）。（側欄 A4 路徑之 canonical 化屬 `a4-console-convergence` tasks 3.3，不在本片。）
 
 ## 5. S3b 手動啟動＋lease UI＋spectator 邀請
 
-- [ ] 5.1 pre-live 控制項（「啟動 3D Session」按鈕、session 選擇器）一律 live-gated 加性 DOM（health probe 成功才渲染；離線零新 DOM；DockLiveLink／A1DockLive 先例）；claim 綁按鈕 onClick（canon 唯讀掛載 Scenario 相容）；MUST NOT 自動搶佔。
-- [ ] 5.2 lease UI：lease-occupied 呈現沿用既有 holder-privacy 呈現（只顯「editor lease 已被占用」）；spectator＝`/ui/open?session=…&streamRole=spectator` 外開連結真複製（取代 fixture 假 toast，live-gated）。
+- [x] 5.1 pre-live 控制項（「啟動 3D Session」按鈕、session 選擇器）一律 live-gated 加性 DOM（health probe 成功才渲染；離線零新 DOM；DockLiveLink／A1DockLive 先例）；claim 綁按鈕 onClick（canon 唯讀掛載 Scenario 相容）；MUST NOT 自動搶佔。
+  - **實作**：控制項＝pane 既有 `${mode}-manual-start`／`${mode}-session-input`（不新造第二套）；host live-only 使其天然 live-gated（離線零 DOM）；claim 仍綁 pane 按鈕 onClick，host 與 `WorkspaceViewerMount` 皆不呼叫 `claimPrimary`。右側 Dock 新增 `WorkspaceFlowGuide`（5 步導引；狀態只由共用 `activeSessionId` 與 pane 回報的 gate reason 分類，`classifyViewerPhase` 不另造判定）。
+- [x] 5.2 lease UI：lease-occupied 呈現沿用既有 holder-privacy 呈現（只顯「editor lease 已被占用」）；spectator＝`/ui/open?session=…&streamRole=spectator` 外開連結真複製（取代 fixture 假 toast，live-gated）。
+  - **實作**：lease-occupied／lease-expired／first-frame-timeout／stream-disconnected 等 12 態全部沿用 pane 既有 `role="alert"` 錨點與重試鈕（host 只提供外框）；spectator 連結沿用 A3 頁既有 `a3-invite-spectator` 真複製（本片未擴到其他 dock，見 5.3 缺口）。
 - [ ] 5.3 DoD：啟動流 e2e（probe→啟動→claim→gated-mount→first_frame 證據）；離開 workspace 釋放 lease e2e；失敗態呈現沿用 pane 既有錨點（不新造第二套）。
 
 ## 6. S4 a1Profile 接 A1 dock live
