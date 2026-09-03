@@ -12,6 +12,7 @@ export interface FailedElement {
   severity: string; // error / warning / ...
   label?: string;
   rule_code?: string;
+  color?: [number, number, number, number] | number[];
 }
 
 export type HighlightResult =
@@ -53,10 +54,13 @@ export class HighlightBridge {
     if (!primPath) {
       return { ok: false, reason: "unmapped" };
     }
+    const resolvedColor = failed.color && Array.isArray(failed.color) && failed.color.length >= 3
+      ? failed.color
+      : severityToColor(normalizeSeverity(failed.severity));
     const item: HighlightItem = {
       prim_path: primPath,
       ifc_guid: failed.ifc_guid,
-      color: severityToColor(normalizeSeverity(failed.severity)),
+      color: resolvedColor,
       label: failed.label || failed.rule_code || failed.ifc_guid,
       source: "governance_failed",
       issue_id: failed.rule_code ? `gov:${failed.rule_code}:${failed.ifc_guid}` : `gov:${failed.ifc_guid}`,
@@ -68,9 +72,7 @@ export class HighlightBridge {
 
   // 批次疊加（A2 diff overlay）：全部可對映構件裝進「一個」highlightPrimsRequest（mode:"replace"）
   // → Kit 端一次 set_selected_prim_paths 聯集選取。per-item color 仍照 severity 對映寫入協定 payload
-  //（error=紅 / warning=橘 / 其他=藍），但 Kit 現行 handler（applied_mode="selection"）不讀 color——
-  // 色彩分組是否呈現由 Kit 端決定（p15），此處不虛報。focusFirst=false：批次疊加不搶相機焦點
-  //（Kit 現行 handler 亦未讀 focus_first，值僅協定紀錄）。
+  //（error=紅 / warning=橘 / 其他=藍；或若提供自訂 RGBA color 則優先透傳）。focusFirst=false：批次疊加不搶相機焦點。
   highlightMany(failedList: FailedElement[]): HighlightManyResult {
     if (!this.deps.dataChannelReady()) {
       return { ok: false, reason: "datachannel_not_ready" };
@@ -84,10 +86,13 @@ export class HighlightBridge {
         unmapped.push(failed.ifc_guid);
         continue;
       }
+      const resolvedColor = failed.color && Array.isArray(failed.color) && failed.color.length >= 3
+        ? failed.color
+        : severityToColor(normalizeSeverity(failed.severity));
       items.push({
         prim_path: primPath,
         ifc_guid: failed.ifc_guid,
-        color: severityToColor(normalizeSeverity(failed.severity)),
+        color: resolvedColor,
         label: failed.label || failed.rule_code || failed.ifc_guid,
         source: "governance_failed",
         issue_id: failed.rule_code ? `gov:${failed.rule_code}:${failed.ifc_guid}` : `gov:${failed.ifc_guid}`,

@@ -2,7 +2,7 @@ import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useSta
 import { Btn, Field, Panel } from "./components";
 import { coordinatorClient, type RuntimeSessionSummary, type ViewerLeaseClaimResponse } from "./coordinatorClient";
 import { viewerLeaseHeartbeatDelayMs } from "../clients/viewerLeaseHeartbeat";
-import { EmbeddedViewer, type EmbeddedViewerHandle, type HighlightItem, type HighlightResultMessage } from "./EmbeddedViewer";
+import { EmbeddedViewer, type EmbeddedViewerHandle, type HighlightItem, type HighlightResultMessage, type StageTreeMessage } from "./EmbeddedViewer";
 import { t } from "./i18n";
 import { getLocalDevUserCarrier } from "./localDevPrincipal";
 import { useSharedStatus } from "./useSharedStatus";
@@ -115,6 +115,12 @@ function createReviewViewerIdentity(mode: ReviewSessionViewerPaneMode): ReviewVi
 // DataChannel / stage match）；gate 未過誠實回 { sent:false, reason }，絕不佯裝已送。
 export interface ReviewSessionViewerPaneHandle {
   sendHighlightBatch(items: HighlightItem[]): { sent: true } | { sent: false; reason: string };
+  requestStageTree(primPath?: string): void;
+  selectPrim(primPath: string, multiSelect?: boolean): void;
+  sendToolbarAction(
+    action: "reset_camera" | "camera_view" | "toggle_fullscreen" | "toggle_projection",
+    cameraView?: string,
+  ): void;
 }
 
 export interface ReviewSessionViewerPaneBatchGate {
@@ -184,10 +190,11 @@ export interface ReviewSessionViewerPaneProps {
   // A3 currently has no element-level mapping/clash contract. It may attach the
   // real federated stage while keeping single-element highlight actions hidden.
   showHandoffActions?: boolean;
+  onStageTree?: (message: StageTreeMessage) => void;
 }
 
 export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle, ReviewSessionViewerPaneProps>(
-  function ReviewSessionViewerPane({ handoff = parseReviewRoomHandoff(), mode = "review-room", onBatchGateChange, onBatchAck, showHandoffActions = true, firstFrameTimeoutMs = 90_000, heartbeatDelayFn = viewerLeaseHeartbeatDelayMs }, ref) {
+  function ReviewSessionViewerPane({ handoff = parseReviewRoomHandoff(), mode = "review-room", onBatchGateChange, onBatchAck, onStageTree, showHandoffActions = true, firstFrameTimeoutMs = 90_000, heartbeatDelayFn = viewerLeaseHeartbeatDelayMs }, ref) {
   const isA1Inline = mode === "a1-inline";
   const isA2Overlay = mode === "a2-overlay";
   const isA3Inline = mode === "a3-inline";
@@ -533,6 +540,15 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
       }, null, 2));
       return { sent: true as const };
     },
+    requestStageTree(primPath = "/World") {
+      viewerRef.current?.requestStageTree(primPath);
+    },
+    selectPrim(primPath: string, multiSelect = false) {
+      viewerRef.current?.selectPrim(primPath, multiSelect);
+    },
+    sendToolbarAction(action, cameraView) {
+      viewerRef.current?.sendToolbarAction(action, cameraView);
+    },
   }), [mode]);
 
   return (
@@ -824,6 +840,7 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
                 // 批次 ack 只在本次指令與當前目標均吻合時透傳；舊指令不得污染新選取列。
                 if (pending.kind === "batch") onBatchAckRef.current?.(m);
               }}
+              onStageTree={onStageTree}
             />
           </div>
         ) : null /* origin-missing 態改由上方常駐 note（含 refresh 動作）呈現，避免 testid 重複 */}

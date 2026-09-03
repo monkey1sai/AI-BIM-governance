@@ -1,32 +1,41 @@
-# 任務：跨 Session 待辦任務佇列與治理交接樞紐 (Active Handoff Hub)
+# 任務：Stage 1.3 — 3D 工作區 ViewportHost 後續收尾（協定演進與真值打通）
 
 ## Objective (目標)
-- 統籌當前主分支後續待辦任務佇列；實際 SHA 必須由 `git rev-parse origin/main` 即時取得，不在交接文件固定舊值。
-- 讓 Codex、Claude、AGY 與 Grok 透過同一個明確看板契約接續；不假設 provider-local hooks、personas 或 skills 已由 repo 自動安裝。
-- 維護單一真相源：技能、看板、同步腳本與 AGENTS.md 治理全體一致。
+- 接續 PR #763 (S3a+S3b) ViewportHost 落地成果，推進 3D 工作區的三大協定缺口：
+  1. **Stage 樹真實資料讀取 (Issue #609)**：演進 `vg01` postMessage 協定，打通 Kit DataChannel `getChildrenRequest` / `getChildrenResponse` 到 Console 端的通道，解鎖左欄 Stage 樹。
+  2. **Kit 多色 Prim 高亮 (Issue #603)**：推動多色 Prim 高亮協定，打通 `highlightPrimsRequest` 中的 RGBA color 欄位至 Kit messaging 著色邏輯。
+  3. **工具列指令 Bridge (Issue #605)**：解除視角（⬒）、全螢幕（✥）、重置（⟲）的結構性封鎖，建立 Console ➔ Viewer ➔ Kit 的控制命令通道。
 
-## Pending Task Queue (依序執行之待辦任務清單)
-- [x] **任務 1：推進與處置 PR #705 (服務啟動設定納管)**
-  - 範疇：納管 `.claude/launch.json`（現役 3 大服務 `coordinator:8004`, `viewer:5173`, `streaming:49100`），嚴格排除已退役之 `_worker`, `_bim-control`。
-  - 處置成果：全數 23 項 CI 檢查通過（包含 `rebuild-test-deploy contracts`、`design-semantic-visual` 等），已自動核准並於 Commit `ed09921` 成功合入 main。
-- [ ] **任務 2：推進與處置 PR #704 (spec-to-done NEW_RUN 邊界強化)**
-  - 範疇：更新 trusted-git 解析器與 durable-state lock，修復 Windows runner 權限相容性。
-- [ ] **任務 3：Unified Console S2 產品主線推進**
-  - 範疇：接續 `unified-console-runtime-truth` Slice 2，將真資料串接與轉檔佇列深化綁定至 `/ui` 介面。
-- [ ] **任務 4：A4 語意搜尋與檢核切片 (S4-C / S4-D)**
-  - 範疇：依據 `docs/plans/NOW.md` 與設計文件 §07/§08，推進 A4 議題持久化與高保真 UI 整合。
+## Plan (執行計畫)
+- [x] **Step 1：協定契約盤點與設計 (vg01 + kit-datachannel)**
+  - 檢視 `tests/contracts/vg01-postmessage-v1.schema.json` 與 `tests/contracts/kit-datachannel-v1.schema.json`
+  - 設計 `stage_tree_query` / `stage_tree` 在 `vg01` 的事件模型，擴充 `request_stage_tree`, `stage_tree`, `select_prim`, `toolbar_action`
+  - 擴充 `bridgeHighlightItem` 支援 `color: [number, number, number, number]` 多色高亮 RGBA
+  - 在 `tests/test_runtime_command_contracts.py` 新增契約驗證並通過 (25/25 passed)
+- [x] **Step 2：Viewer 與 Console 端橋接實作**
+  - 在 `web-viewer-sample/src/Window.tsx` 實作 vg01 `request_stage_tree`, `select_prim`, `toolbar_action` 接收，並在 `getChildrenResponse` 時向 parent post `stage_tree`
+  - 在 `web-viewer-sample/src/console/EmbeddedViewer.tsx` 擴充 handle 與 callback
+  - 在 `web-viewer-sample/src/console/ReviewSessionViewerPane.tsx` 與 `WorkspaceViewportHost.tsx` 穿透轉發
+  - 在 `web-viewer-sample/src/console/unified/viewportSlot.ts` 與 `ViewportSlotProvider.tsx` 暴露 `stageTree` 狀態與 host actions
+  - 在 `web-viewer-sample/src/console/unified/WorkspacePage.tsx` 連接 `useUsdStageTree`，有真樹資料時轉為 active 展示真實 Prim 樹（支援搜尋、展開、選取 focus），並新增工具列控制按鈕（⬒ 視角、✥ 全螢幕、◫ 投影、⟲ 重置）
+  - 在 `web-viewer-sample/src/console/governance/highlightBridge.ts` 支援自訂 RGBA color 高亮
+- [x] **Step 3：單元測試與契約測試驗證**
+  - Python 契約測試：`.venv\Scripts\python.exe -m pytest tests/test_runtime_command_contracts.py` 25/25 通過
+  - 前端型別檢查：`npm run typecheck` 通過
+  - 前端建置驗證：`npm run build` 通過
+  - 前端單元測試：`npm test -- src/console/unified/` 15/15 測試套件全數通過 (76 passed)
+  - 前端契約測試：`npm test -- src/console/windowParentMessage.dom.test.tsx` 182/182 通過
+  - 新增整合測試：`src/console/unified/workspaceStageTree.test.tsx` 2/2 通過
+- [x] **Step 4：收尾總結與交接準備**
+  - 驗證改動隔離、無破壞性變更、向後相容性 100% 保持
+  - 更新並行看板與交接文檔
 
 ## Context & Thoughts (跨 CLI 治理與架構上下文)
-1. **主工作區絕對乾淨與強制 Worktree 隔離（永久記憶鐵律）**：
-   - 主工作區 (`AI-BIM-governance/`) 永遠保持 `main == origin/main` 且無 dirty files。
-   - 任何變更/新增受版控檔案或 code 一律在獨立 Worktree（`AI-BIM-governance.worktrees/<name>`）實作。
-   - 所有 Task 必須經由真實測試與 **Chrome E2E 語意驗證（Playwright / Agent in Chrome）** 驗收；無實證數據絕不宣稱完成。全體 Agent（Codex、Claude、AGY、Grok）一體嚴格遵守。
-2. **治理與規則共用**：根目錄 `AGENTS.md` 是 repo 正本，`CLAUDE.md` 是 thin mirror；AGY／Grok 的自動載入能力屬外部 launcher，repo 只提供相同的明確命令契約，不宣稱 provider 設定 byte-equal。
-3. **技能樹同步**：tracked parity 只涵蓋 `agent-skills-manifest.json` 宣告的 `.claude/skills` 與 `.codex/skills`。本機 gitignored `.agents/skills`、AGY／Grok provider-local skills 不屬於 repo parity root。
-4. **安全同步與看板**：開工／收工由 `scripts/dev/agents-board.mjs` 感知；生命週期只背景觸發 fail-closed orphan cleanup，不暗中修改 GitHub PR。
-5. **Named PR 佇列**：`scripts/dev/manage-pr-queue.mjs` 只讀取一個 `--pr <number>`；不執行 arbitrary local preflight script，也不含 GitHub mutation、approval、merge 或 hook 安裝 sink。Local preflight、counted approval 與 native merge 由外部獨立治理流程在 exact-head authority gate 後完成。
-
-## Handoff Note for Next Session (下個 Session 啟動指引)
-1. **開工登記**：執行 `node scripts/dev/agents-board.mjs register --agent agy`（或 `codex`）。
-2. **狀態確認**：執行 `node scripts/dev/manage-pr-queue.mjs status --pr <number>` 檢查指定 PR。
-3. **任務接續**：依上述 **Pending Task Queue** 由「任務 2 (PR #704)」接續推進！
+1. **獨立 Worktree 隔離**：本任務在 `AI-BIM-governance.worktrees/stage-tree-protocol-evolution` 獨立進行，主工作區維持乾淨。
+2. **三方並行分工**：
+   - Codex：階段 1.1 (PR #733 綁定 spec-to-done 與 Fabric)
+   - Claude：階段 1.2 (Unified Console Runtime Truth 數據真值)
+   - AGY：階段 1.3 (3D 工作區 Stage 樹、多色高亮與工具列協定演進)
+3. **安全與相容性約束**：
+   - 擴充 `vg01` postMessage 時必須保證與既有事件（`highlight`, `focus`, `viewer_ready`, `first_frame` 等）向後相容。
+   - 嚴格遵守 `AGENTS.md` 後端凍結面與 R1–R4 鐵律。
