@@ -620,6 +620,73 @@ test('promotion digest mismatch rolls back, while rollback failure becomes HELD'
   assert.equal(held.terminal_record.reason_code, 'ACTIVATION_UNATTESTED')
 })
 
+test('P2 regression — rollback records the actual promotion state for canary, promotion and post-deploy failures', () => {
+  const failedGates = [
+    { id: 'health', status: 'failed', evidence_sha256: SHA('8') },
+    { id: 'smoke', status: 'held', evidence_sha256: SHA('9') },
+    { id: 'e2e', status: 'held', evidence_sha256: SHA('a') },
+  ]
+  const rollback = { attempted: true, artifact_sha256: SHA('d'), verification: verification({ artifact_sha256: SHA('d') }) }
+  const canaryFailure = runRequest(request({ canary: verification({ gates: failedGates }), rollback }))
+  assert.equal(canaryFailure.final_state, 'ROLLED_BACK')
+  assert.equal(canaryFailure.attestation.outcome.promotion, 'not_started')
+  const promotionMismatch = runRequest(request({
+    promotion: { artifact_sha256: SHA('f'), approved_at: '2026-09-01T01:31:00.000Z' }, rollback,
+  }))
+  assert.equal(promotionMismatch.final_state, 'ROLLED_BACK')
+  assert.equal(promotionMismatch.attestation.outcome.promotion, 'failed')
+  const postDeployFailure = runRequest(request({
+    post_deploy: verification({
+      observation_started_at: '2026-09-01T01:32:00.000Z', observation_ended_at: '2026-09-01T01:42:00.000Z', gates: failedGates,
+    }),
+    rollback,
+  }))
+  assert.equal(postDeployFailure.final_state, 'ROLLED_BACK')
+  assert.equal(postDeployFailure.attestation.outcome.promotion, 'verified')
+  assert.deepEqual(postDeployFailure.states.slice(-4), [
+    'ROLLBACK_TO_PINNED_KNOWN_GOOD_ARTIFACT', 'VERIFY_ROLLBACK', 'ROLLED_BACK', 'TERMINAL_DELIVERY_ATTESTATION',
+  ])
+})
+
+test('P2 regression — a blocked authority after the canary command is activation uncertainty in both attestation and outer record', () => {
+  const failedGates = [
+    { id: 'health', status: 'failed', evidence_sha256: SHA('8') },
+    { id: 'smoke', status: 'held', evidence_sha256: SHA('9') },
+    { id: 'e2e', status: 'held', evidence_sha256: SHA('a') },
+  ]
+  // The pre-deploy known-good check passes; the same authority then fails when rollback re-validates it.
+  let provenanceChecks = 0
+  const held = runRequest(request({
+    canary: verification({ gates: failedGates }),
+    rollback: { attempted: true, artifact_sha256: SHA('d'), verification: verification({ artifact_sha256: SHA('d') }) },
+  }), { trustBoundary: { ...TRUST_BOUNDARY, verifyKnownGoodProvenance: () => provenanceChecks++ === 0 } })
+  assert.equal(held.final_state, 'HELD')
+  assert.equal(held.states.includes('DEPLOY_CANARY'), true)
+  assert.equal(held.attestation.reason_code, 'ACTIVATION_UNATTESTED')
+  assert.equal(held.terminal_record.reason_code, 'ACTIVATION_UNATTESTED')
+  assert.equal(held.attestation.outcome.rollback, 'unverified')
+  // Before any target command the same authority failure stays a pre-command block.
+  const blocked = runRequest(request(), { trustBoundary: { ...TRUST_BOUNDARY, verifyKnownGoodProvenance: () => false } })
+  assert.equal(blocked.final_state, 'HELD')
+  assert.equal(blocked.states.includes('DEPLOY_CANARY'), false)
+  assert.equal(blocked.attestation.reason_code, 'DEPLOYMENT_BLOCKED')
+})
+
+test('P1 regression — terminal attestations enforce the closed reason set per final state and the trusted repository', () => {
+  const activated = runRequest(request()).attestation
+  assert.equal(activated.final_state, 'ACTIVATED')
+  const withReason = (finalState, reasonCode, outcome, extra = {}) => ({
+    ...activated, ...extra, final_state: finalState, terminal_class: { ACTIVATED: 'DELIVERED', ROLLED_BACK: 'FAILED', HELD: 'HELD' }[finalState],
+    reason_code: reasonCode, outcome, failure_detail: reasonCode === 'DELIVERY_VERIFIED' ? [] : [{ namespace: 'linux-cd', code: reasonCode.toLowerCase(), evidence_sha256: SHA('c') }],
+  })
+  assert.equal(parseTerminalDeliveryAttestation(withReason('HELD', 'ACTIVATION_UNATTESTED', { promotion: 'not_started', rollback: 'unverified' })).reason_code, 'ACTIVATION_UNATTESTED')
+  expectCode('terminal_attestation_incomplete', () => parseTerminalDeliveryAttestation(withReason('HELD', 'DELIVERY_VERIFIED', { promotion: 'not_started', rollback: 'not_started' })))
+  expectCode('terminal_attestation_incomplete', () => parseTerminalDeliveryAttestation(withReason('HELD', 'MERGED_NOT_DELIVERED', { promotion: 'not_started', rollback: 'unverified' })))
+  expectCode('terminal_attestation_incomplete', () => parseTerminalDeliveryAttestation(withReason('ROLLED_BACK', 'ACTIVATION_UNATTESTED', { promotion: 'not_started', rollback: 'verified' })))
+  expectCode('terminal_attestation_incomplete', () => parseTerminalDeliveryAttestation(withReason('ACTIVATED', 'MERGED_NOT_DELIVERED', { promotion: 'verified', rollback: 'not_started' })))
+  expectCode('invalid_value', () => parseTerminalDeliveryAttestation({ ...activated, repository: 'someone-else/AI-BIM-governance' }))
+})
+
 test('retry uses a closed failure class and a total exact-commit budget', () => {
   const first = evaluateRetry([], retryCandidate({ event_id: 'event-1' }))
   assert.equal(first.allowed, true)

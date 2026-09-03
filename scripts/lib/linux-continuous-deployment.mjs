@@ -46,6 +46,19 @@ const REASON_CODES = Object.freeze([
   'DELIVERY_PENDING_FIXPOINT',
   'ACTIVATION_UNATTESTED',
 ])
+// Every final state owns a closed reason set: a HELD record can never carry the
+// delivered or rolled-back reason, so consumers cannot read contradictory machine truth.
+const REASON_CODES_BY_FINAL_STATE = Object.freeze({
+  ACTIVATED: Object.freeze(['DELIVERY_VERIFIED']),
+  ROLLED_BACK: Object.freeze(['MERGED_NOT_DELIVERED']),
+  HELD: Object.freeze(REASON_CODES.filter((code) => !['DELIVERY_VERIFIED', 'MERGED_NOT_DELIVERED'].includes(code))),
+})
+// States at or after the first target command: once one has been entered, a blocked
+// authority can no longer be reported as a pre-command block.
+const POST_COMMAND_STATES = Object.freeze([
+  'DEPLOY_CANARY', 'VERIFY_HEALTH_SMOKE_E2E', 'PROMOTE', 'POST_DEPLOY_VERIFY',
+  'ROLLBACK_TO_PINNED_KNOWN_GOOD_ARTIFACT', 'VERIFY_ROLLBACK', 'ROLLED_BACK', 'ACTIVATED',
+])
 const SHA1 = /^[0-9a-f]{40}$/u
 const SHA256 = /^[0-9a-f]{64}$/u
 const IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$/u
@@ -156,6 +169,14 @@ const terminalReasonForError = (error, states = []) => {
   return states.includes('TRUSTED_MERGED') ? 'POLICY_OR_SETTINGS_DRIFT' : 'PREMERGE_EVIDENCE_INVALID'
 }
 
+// The inner attestation and the outer record must name the same reason: after the
+// first target command a blocked authority is activation uncertainty, not a pre-command block.
+const terminalReasonForErrorAt = (error, states = []) => {
+  const reasonCode = terminalReasonForError(error, states)
+  const afterCommand = states.some((state) => POST_COMMAND_STATES.includes(state))
+  return afterCommand && reasonCode === 'DEPLOYMENT_BLOCKED' ? 'ACTIVATION_UNATTESTED' : reasonCode
+}
+
 const failureDetailFor = (code) => Object.freeze({
   namespace: 'linux-cd',
   code,
@@ -164,7 +185,9 @@ const failureDetailFor = (code) => Object.freeze({
 
 const terminalFallback = (request, states, reasonCode, outcome = {}, failureCode = 'provisioning-required') => ({
   schema_version: 'linux-continuous-deployment-attestation/v1',
-  repository: typeof request?.repository === 'string' ? request.repository : EXPECTED_REPOSITORY,
+  // The attestation always names the contract's repository: a request naming another
+  // repository is a rejected input recorded in failure_detail, never attested truth.
+  repository: EXPECTED_REPOSITORY,
   pull_request: Number.isSafeInteger(request?.trusted_merge?.pull_request)
     ? request.trusted_merge.pull_request
     : null,
@@ -727,7 +750,7 @@ const validateKnownGood = (raw, targetRaw, {
   return cloneFrozen(raw)
 }
 
-const rollbackResult = (requestRaw, states, verificationSummary, transition, trustBoundary) => {
+const rollbackResult = (requestRaw, states, verificationSummary, transition, trustBoundary, { promotion = 'failed' } = {}) => {
   try {
     const knownGood = validateKnownGood(requestRaw.previous_known_good, requestRaw.target, {
       expectedPolicySha256: requestRaw.trusted_merge.policy_sha256,
@@ -747,15 +770,15 @@ const rollbackResult = (requestRaw, states, verificationSummary, transition, tru
     return {
       finalState: 'ROLLED_BACK',
       reasonCode: 'MERGED_NOT_DELIVERED',
-      promotion: 'failed',
+      promotion,
       rollback: 'verified',
     }
   } catch (error) {
     transition('HELD')
     return {
       finalState: 'HELD',
-      reasonCode: terminalReasonForError(error, states),
-      promotion: 'failed',
+      reasonCode: terminalReasonForErrorAt(error, states),
+      promotion,
       rollback: 'unverified',
     }
   }
@@ -806,6 +829,7 @@ export function parseTerminalDeliveryAttestation(raw) {
   ])
   if (raw.schema_version !== 'linux-continuous-deployment-attestation/v1') fail('invalid_value', 'unsupported attestation schema')
   text(raw.repository, 'attestation.repository', REPOSITORY)
+  if (raw.repository !== EXPECTED_REPOSITORY) fail('invalid_value', 'attestation repository is not the trusted repository')
   if (raw.pull_request !== null) safeInteger(raw.pull_request, 'attestation.pull_request', 1)
   for (const [name, value] of [
     ['source_head_sha', raw.source_head_sha],
@@ -870,6 +894,9 @@ export function parseTerminalDeliveryAttestation(raw) {
     fail('terminal_attestation_incomplete', 'terminal class does not match final state')
   }
   if (!REASON_CODES.includes(raw.reason_code)) fail('invalid_value', 'attestation reason code is invalid')
+  if (!REASON_CODES_BY_FINAL_STATE[raw.final_state].includes(raw.reason_code)) {
+    fail('terminal_attestation_incomplete', `${raw.final_state.toLowerCase()} reason code is inconsistent`)
+  }
   if (raw.final_state === 'ACTIVATED') {
     if ([raw.pull_request, raw.source_head_sha, raw.trusted_merge_sha, raw.artifact_sha256,
       raw.environment, raw.service, raw.target_fingerprint, raw.timestamps.terminal_at].some((item) => item === null)) {
@@ -881,9 +908,6 @@ export function parseTerminalDeliveryAttestation(raw) {
     if (raw.reason_code !== 'DELIVERY_VERIFIED') {
       fail('terminal_attestation_incomplete', 'activated reason code is inconsistent')
     }
-  }
-  if (raw.final_state === 'ROLLED_BACK' && raw.reason_code !== 'MERGED_NOT_DELIVERED') {
-    fail('terminal_attestation_incomplete', 'rolled-back reason code is inconsistent')
   }
   assertNoSecretValues(raw)
   return cloneFrozen(raw)
@@ -1143,7 +1167,7 @@ export function runLinuxContinuousDeployment(requestRaw, {
     transition('VERIFY_HEALTH_SMOKE_E2E')
     verificationSummary.push(...buildVerificationSummary('canary', canary.parsed))
     if (!canary.passed) {
-      const rollback = rollbackResult(requestRaw, states, verificationSummary, transition, trustBoundary)
+      const rollback = rollbackResult(requestRaw, states, verificationSummary, transition, trustBoundary, { promotion: 'not_started' })
       transition('TERMINAL_DELIVERY_ATTESTATION')
       const attestation = buildAttestation(requestRaw, states, rollback.finalState, rollback.reasonCode,
         verificationSummary, { promotion: rollback.promotion, rollback: rollback.rollback, terminalAt: now.toISOString() })
@@ -1154,7 +1178,7 @@ export function runLinuxContinuousDeployment(requestRaw, {
     timestamp(requestRaw.promotion.approved_at, 'promotion.approved_at')
     transition('PROMOTE')
     if (requestRaw.promotion.artifact_sha256 !== artifactRaw.artifact_sha256) {
-      const rollback = rollbackResult(requestRaw, states, verificationSummary, transition, trustBoundary)
+      const rollback = rollbackResult(requestRaw, states, verificationSummary, transition, trustBoundary, { promotion: 'failed' })
       transition('TERMINAL_DELIVERY_ATTESTATION')
       const attestation = buildAttestation(requestRaw, states, rollback.finalState, rollback.reasonCode,
         verificationSummary, { promotion: rollback.promotion, rollback: rollback.rollback, terminalAt: now.toISOString() })
@@ -1164,7 +1188,7 @@ export function runLinuxContinuousDeployment(requestRaw, {
     const postDeploy = parseVerification(requestRaw.post_deploy, artifactRaw.artifact_sha256)
     verificationSummary.push(...buildVerificationSummary('post_deploy', postDeploy.parsed))
     if (!postDeploy.passed) {
-      const rollback = rollbackResult(requestRaw, states, verificationSummary, transition, trustBoundary)
+      const rollback = rollbackResult(requestRaw, states, verificationSummary, transition, trustBoundary, { promotion: 'verified' })
       transition('TERMINAL_DELIVERY_ATTESTATION')
       const attestation = buildAttestation(requestRaw, states, rollback.finalState, rollback.reasonCode,
         verificationSummary, { promotion: rollback.promotion, rollback: rollback.rollback, terminalAt: now.toISOString() })
@@ -1183,7 +1207,7 @@ export function runLinuxContinuousDeployment(requestRaw, {
       if (!states.includes('HELD')) states.push('HELD')
       if (!states.includes('TERMINAL_DELIVERY_ATTESTATION')) states.push('TERMINAL_DELIVERY_ATTESTATION')
     }
-    const reasonCode = terminalReasonForError(error, states)
+    const reasonCode = terminalReasonForErrorAt(error, states)
     const failureCode = error instanceof LinuxContinuousDeploymentError ? error.code : 'unexpected-contract-failure'
     const attestation = terminalFallback(requestRaw, states, reasonCode, {}, failureCode)
     attestation.timestamps.terminal_at = now.toISOString()
