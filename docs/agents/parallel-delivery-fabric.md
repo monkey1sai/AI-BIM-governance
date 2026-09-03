@@ -1,15 +1,16 @@
 # Parallel Delivery Fabric operator policy
 
-Document version: `parallel-delivery-fabric-operator-policy/v2`
+Document version: `parallel-delivery-fabric-operator-policy/v1`
 
 Requirement map version: `parallel-delivery-fabric-acceptance-requirements/v1`
 
-Requirement map SHA-256: `eb88f419f9a2bc72379c688db3d13ca93e608e448324f8efad0e3a4f1a37faf1`
+Requirement map SHA-256: `74688a538fe0a72299e3ac3dfcc9f58a879dec65c7bcb77b14254fbafe4570bc`
 
 This is a descriptive, shadow-only operator policy. It records the approved
-acceptance obligations and their authority boundaries; it does not create a
-verification target, a CI registration, a manifest registry entry, or any
-runtime, remote, review, merge, deployment, host, or recovery action.
+acceptance obligations and their authority boundaries. The local
+`parallel-delivery-fabric-static-policy` gate verifies this source contract,
+but neither the document nor that gate creates any runtime, remote, review,
+merge, deployment, host, recovery, or activation action.
 
 ## Operating boundary
 
