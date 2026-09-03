@@ -33,7 +33,6 @@ export interface ViewportHostActions {
     action: "reset_camera" | "camera_view" | "toggle_fullscreen" | "toggle_projection",
     cameraView?: string,
   ) => void;
-  sendHighlightBatch?: (items: HighlightItem[]) => { sent: true } | { sent: false; reason: string };
 }
 
 export interface ViewportSlotApi {
@@ -61,8 +60,6 @@ export interface ViewportSlotApi {
     action: "reset_camera" | "camera_view" | "toggle_fullscreen" | "toggle_projection",
     cameraView?: string,
   ) => void;
-  /** 多色彩批次高亮命令通道（Issue #603）。 */
-  sendHighlightBatch?: (items: HighlightItem[]) => { sent: true } | { sent: false; reason: string };
   /** host 註冊底層執行 handle 的 callback。 */
   registerHostActions?: (actions: ViewportHostActions | null) => void;
 }

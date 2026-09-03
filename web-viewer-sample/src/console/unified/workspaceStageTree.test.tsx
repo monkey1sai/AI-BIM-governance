@@ -71,6 +71,7 @@ describe("WorkspacePage Stage 樹與工具列整合 (Issue #609, #605)", () => {
   it("當 slot 提供 stageTree 時，左欄轉為 active 狀態並顯示搜尋框與節點", async () => {
     const selectPrimMock = vi.fn();
     const sendToolbarActionMock = vi.fn();
+    const requestStageTreeMock = vi.fn();
 
     const mockSlotApi: ViewportSlotApi = {
       registerSlot: vi.fn(),
@@ -79,7 +80,7 @@ describe("WorkspacePage Stage 樹與工具列整合 (Issue #609, #605)", () => {
       publication: null,
       activeSessionId: "session_test_123",
       setActiveSessionId: vi.fn(),
-      gate: null,
+      gate: { canSend: true, reason: "" },
       setGate: vi.fn(),
       stageTree: [
         {
@@ -91,7 +92,7 @@ describe("WorkspacePage Stage 樹與工具列整合 (Issue #609, #605)", () => {
         },
       ],
       setStageTree: vi.fn(),
-      requestStageTree: vi.fn(),
+      requestStageTree: requestStageTreeMock,
       selectPrim: selectPrimMock,
       sendToolbarAction: sendToolbarActionMock,
       registerHostActions: vi.fn(),
@@ -122,6 +123,10 @@ describe("WorkspacePage Stage 樹與工具列整合 (Issue #609, #605)", () => {
     });
     expect(selectPrimMock).toHaveBeenCalledWith("/World/Structure");
 
+    const expandToggle = container.querySelector('[data-testid="expand-toggle-/World/Structure"]') as HTMLElement | null;
+    await act(async () => { expandToggle?.click(); });
+    expect(requestStageTreeMock).toHaveBeenCalledWith("/World/Structure");
+
     // 點擊工具列按鈕
     const resetBtn = container.querySelector('[data-testid="ws-toolbar-reset"]') as HTMLButtonElement | null;
     expect(resetBtn?.disabled).toBe(false);
@@ -131,9 +136,25 @@ describe("WorkspacePage Stage 樹與工具列整合 (Issue #609, #605)", () => {
     expect(sendToolbarActionMock).toHaveBeenCalledWith("reset_camera");
 
     const camBtn = container.querySelector('[data-testid="ws-toolbar-camera-view"]') as HTMLButtonElement | null;
+    expect(camBtn?.disabled).toBe(true);
     await act(async () => {
       camBtn?.click();
     });
-    expect(sendToolbarActionMock).toHaveBeenCalledWith("camera_view", "perspective");
+    expect(sendToolbarActionMock).not.toHaveBeenCalledWith("camera_view", "perspective");
+
+    selectPrimMock.mockClear();
+    requestStageTreeMock.mockClear();
+    await act(async () => {
+      root!.render(
+        <ViewportSlotContext.Provider value={{ ...mockSlotApi, gate: { canSend: false, reason: "viewer disconnected" } }}>
+          <WorkspacePage initialDock="a1" />
+        </ViewportSlotContext.Provider>,
+      );
+    });
+    const blockedTree = container.querySelector('[data-uc="ws-stage-tree"]');
+    expect(blockedTree?.getAttribute("data-state")).toBe("blocked");
+    await act(async () => { item?.click(); expandToggle?.click(); });
+    expect(selectPrimMock).not.toHaveBeenCalled();
+    expect(requestStageTreeMock).not.toHaveBeenCalled();
   });
 });

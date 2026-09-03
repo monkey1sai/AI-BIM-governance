@@ -13,13 +13,21 @@ export function ViewportSlotProvider({ children }: { children: ReactNode }) {
   const [gate, setGateState] = useState<ReviewSessionViewerPaneBatchGate | null>(null);
   const [stageTree, setStageTreeState] = useState<USDPrimNode[]>([]);
   const hostActionsRef = useRef<ViewportHostActions | null>(null);
+  const activeSessionIdRef = useRef("");
 
   const registerSlot = useCallback((el: HTMLElement | null) => { setSlotEl(el); }, []);
   const setActiveSessionId = useCallback((sessionId: string) => {
-    setActiveSessionIdState(sessionId.trim());
+    const nextSessionId = sessionId.trim();
+    if (activeSessionIdRef.current !== nextSessionId) {
+      activeSessionIdRef.current = nextSessionId;
+      setGateState(null);
+      setStageTreeState([]);
+    }
+    setActiveSessionIdState(nextSessionId);
   }, []);
   const setGate = useCallback((next: ReviewSessionViewerPaneBatchGate | null) => {
     setGateState((prev) => (prev && next && prev.canSend === next.canSend && prev.reason === next.reason ? prev : next));
+    if (next?.canSend !== true) setStageTreeState([]);
   }, []);
   const setStageTree = useCallback((nodes: USDPrimNode[]) => {
     setStageTreeState(nodes);
@@ -39,19 +47,15 @@ export function ViewportSlotProvider({ children }: { children: ReactNode }) {
   ) => {
     hostActionsRef.current?.sendToolbarAction?.(action, cameraView);
   }, []);
-  const sendHighlightBatch = useCallback((items: import("../EmbeddedViewer").HighlightItem[]) => {
-    return hostActionsRef.current?.sendHighlightBatch?.(items) ?? { sent: false, reason: "host_not_registered" };
-  }, []);
-
   const publish = useCallback((next: ViewportPublication | null) => {
     setPublication(next);
     // 播種共用 session：頁面帶來非空 session 即採用；頁面離場不清空（保住跨 dock 的 lease）。
-    if (next && next.handoff.sessionId.trim()) setActiveSessionIdState(next.handoff.sessionId.trim());
+    if (next && next.handoff.sessionId.trim()) setActiveSessionId(next.handoff.sessionId);
     if (!next) {
       setGateState(null);
       setStageTreeState([]);
     }
-  }, []);
+  }, [setActiveSessionId]);
 
   const value = useMemo<ViewportSlotApi>(() => ({
     registerSlot,
@@ -67,7 +71,6 @@ export function ViewportSlotProvider({ children }: { children: ReactNode }) {
     requestStageTree,
     selectPrim,
     sendToolbarAction,
-    sendHighlightBatch,
     registerHostActions,
   }), [
     registerSlot,
@@ -83,7 +86,6 @@ export function ViewportSlotProvider({ children }: { children: ReactNode }) {
     requestStageTree,
     selectPrim,
     sendToolbarAction,
-    sendHighlightBatch,
     registerHostActions,
   ]);
 

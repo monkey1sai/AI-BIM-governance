@@ -9,9 +9,7 @@ import { ACCENT, MONO } from "./fixtures";
 import type { DockKey } from "./fixtures";
 import { WorkspaceFlowGuide } from "./WorkspaceFlowGuide";
 import { useViewportSlot } from "./viewportSlot";
-import type { WorkspaceViewerMode } from "./viewportSlot";
 import { useUsdStageTree, type USDPrimNode } from "../../hooks/useUsdStageTree";
-import { coordinatorClient, type RuntimeSessionSummary } from "../coordinatorClient";
 
 const DOCK_KEYS: readonly DockKey[] = ["a1", "a2", "a3", "a4", "issues"];
 const ROUTE_BY_DOCK: Record<DockKey, string> = {
@@ -28,14 +26,6 @@ function dockFromHashQuery(): DockKey | null {
   if (queryStart < 0) return null;
   const value = new URLSearchParams(window.location.hash.slice(queryStart + 1)).get("dock");
   return value !== null && (DOCK_KEYS as readonly string[]).includes(value) ? value as DockKey : null;
-}
-
-function sessionFromHashQuery(): string | null {
-  if (typeof window === "undefined") return null;
-  const queryStart = window.location.hash.indexOf("?");
-  if (queryStart < 0) return null;
-  const params = new URLSearchParams(window.location.hash.slice(queryStart + 1));
-  return params.get("session") || params.get("review_session_id") || null;
 }
 
 export interface WorkspacePageProps {
@@ -77,16 +67,18 @@ function StageTreeNodeView({
   selectedPrims,
   onToggle,
   onSelect,
+  disabled,
 }: {
   node: USDPrimNode;
   expandedPaths: Set<string>;
   selectedPrims: Set<string>;
   onToggle: (path: string) => void;
   onSelect: (path: string) => void;
+  disabled: boolean;
 }) {
   const isExpanded = expandedPaths.has(node.path);
   const isSelected = selectedPrims.has(node.path);
-  const hasChildren = Boolean(node.children && node.children.length > 0);
+  const hasChildren = node.children === undefined || node.children.length > 0;
 
   return (
     <div style={{ marginLeft: 8, fontSize: 11 }}>
@@ -94,14 +86,16 @@ function StageTreeNodeView({
         data-uc="stage-tree-item"
         data-path={node.path}
         data-selected={isSelected ? "true" : "false"}
-        onClick={() => onSelect(node.path)}
+        aria-disabled={disabled}
+        onClick={() => { if (!disabled) onSelect(node.path); }}
         style={{
           display: "flex",
           alignItems: "center",
           gap: 4,
           padding: "2px 4px",
           borderRadius: 4,
-          cursor: "pointer",
+          cursor: disabled ? "not-allowed" : "pointer",
+          opacity: disabled ? 0.6 : 1,
           background: isSelected ? "rgba(120,160,210,.25)" : "transparent",
         }}
       >
@@ -110,7 +104,7 @@ function StageTreeNodeView({
             data-testid={`expand-toggle-${node.path}`}
             onClick={(e) => {
               e.stopPropagation();
-              onToggle(node.path);
+              if (!disabled) onToggle(node.path);
             }}
             style={{ cursor: "pointer", userSelect: "none", width: 12 }}
           >
@@ -134,6 +128,7 @@ function StageTreeNodeView({
               selectedPrims={selectedPrims}
               onToggle={onToggle}
               onSelect={onSelect}
+              disabled={disabled}
             />
           ))}
         </div>
@@ -155,14 +150,18 @@ export function WorkspacePage({ initialDock = "a1" }: WorkspacePageProps) {
   const zh = useLang() === "zh";
   const slot = useViewportSlot();
   const [dock, setDock] = useState<DockKey>(() => dockFromHashQuery() ?? initialDock);
-  const [activeSessions, setActiveSessions] = useState<RuntimeSessionSummary[]>([]);
 
   const stageTreeApi = useUsdStageTree();
   const rawTree = slot?.stageTree;
   useEffect(() => {
-    if (rawTree && rawTree.length > 0) {
-      stageTreeApi.setUsdPrims(rawTree);
-      for (const node of rawTree) {
+    if (!rawTree) return;
+    stageTreeApi.setUsdPrims(rawTree);
+    if (rawTree.length === 0) {
+      stageTreeApi.resetTree();
+      return;
+    }
+    for (const node of rawTree) {
+      if (node.children?.length && !stageTreeApi.expandedPaths.has(node.path)) {
         stageTreeApi.toggleExpand(node.path);
       }
     }
@@ -175,54 +174,7 @@ export function WorkspacePage({ initialDock = "a1" }: WorkspacePageProps) {
     setDock(dockFromHashQuery() ?? initialDock);
   }, [initialDock]);
 
-  // 1. 同步 URL ?session=...
-  const urlSession = sessionFromHashQuery();
-  useEffect(() => {
-    if (urlSession && slot?.activeSessionId !== urlSession) {
-      slot?.setActiveSessionId(urlSession);
-    }
-  }, [urlSession, slot]);
-
-  // 2. 向 coordinator 查詢現有 session 清單供切換
-  useEffect(() => {
-    let alive = true;
-    coordinatorClient.runtimeStatus()
-      .then((rt) => {
-        if (!alive) return;
-        const items = rt.sessions?.items ?? [];
-        setActiveSessions(items);
-      })
-      .catch(() => { if (alive) setActiveSessions([]); });
-    return () => { alive = false; };
-  }, []);
-
   const activeSessionId = slot?.activeSessionId;
-  const publication = slot?.publication;
-  const publish = slot?.publish;
-
-  // 3. 帶 session 進入時若子模組尚未 publish，發布預設 handoff 掛載中央 pane
-  useEffect(() => {
-    if (!urlSession || !activeSessionId || publication) return;
-    const summary = activeSessions.find((s) => s.session_id === activeSessionId);
-    publish?.({
-      mode: `${dock}-inline` as WorkspaceViewerMode,
-      handoff: {
-        source: dock,
-        sessionId: activeSessionId,
-        ruleRunId: null,
-        ifcGuid: null,
-        usdPrimPath: null,
-        ruleCode: null,
-        severity: null,
-        label: null,
-        expectedStageUrl: summary?.expected_stage_url ?? null,
-        mappingInformationStatus: null,
-        mappingIssueCode: null,
-        mappingIssueCount: null,
-      },
-      showHandoffActions: true,
-    });
-  }, [urlSession, activeSessionId, publication, publish, dock, activeSessions]);
 
   // 中欄 slot ref：identity 穩定（避免每 render 觸發 ref(null)/ref(el)），本頁卸載時解除註冊（host 轉 hidden，不 unmount）。
   const registerSlot = slot?.registerSlot;
@@ -247,31 +199,7 @@ export function WorkspacePage({ initialDock = "a1" }: WorkspacePageProps) {
     issues: "Issues / BCF",
   };
 
-  const toolbarDisabled = !slot?.activeSessionId;
-
-  const onManualMountSession = (sid: string) => {
-    if (!sid) return;
-    slot?.setActiveSessionId(sid);
-    const summary = activeSessions.find((s) => s.session_id === sid);
-    publish?.({
-      mode: `${dock}-inline` as WorkspaceViewerMode,
-      handoff: {
-        source: dock,
-        sessionId: sid,
-        ruleRunId: null,
-        ifcGuid: null,
-        usdPrimPath: null,
-        ruleCode: null,
-        severity: null,
-        label: null,
-        expectedStageUrl: summary?.expected_stage_url ?? null,
-        mappingInformationStatus: null,
-        mappingIssueCode: null,
-        mappingIssueCount: null,
-      },
-      showHandoffActions: true,
-    });
-  };
+  const toolbarDisabled = slot?.gate?.canSend !== true;
 
   return (
     <div
@@ -316,33 +244,6 @@ export function WorkspacePage({ initialDock = "a1" }: WorkspacePageProps) {
             {labels[key]}
           </div>
         ))}
-        {activeSessions.length > 0 ? (
-          <div style={{ display: "flex", alignItems: "center", gap: 6, marginLeft: 12 }}>
-            <span style={{ fontSize: 11, color: "var(--ab-text-dim)" }}>3D Session:</span>
-            <select
-              data-uc="ws-session-select"
-              data-testid="ws-session-select"
-              value={activeSessionId ?? ""}
-              onChange={(e) => onManualMountSession(e.target.value)}
-              style={{
-                fontSize: 11,
-                fontFamily: MONO,
-                padding: "2px 6px",
-                background: "var(--ab-bg)",
-                color: "var(--ab-text)",
-                border: "1px solid rgba(120,160,210,.25)",
-                borderRadius: 4,
-              }}
-            >
-              <option value="">{t("— 選擇 3D Session —", "— Select 3D Session —")}</option>
-              {activeSessions.map((s) => (
-                <option key={s.session_id} value={s.session_id}>
-                  {s.session_id} ({s.model_version_id || s.project_id || s.status})
-                </option>
-              ))}
-            </select>
-          </div>
-        ) : null}
         <div style={{ flex: 1 }} />
         <span data-uc="live-contract" style={{ fontFamily: MONO, fontSize: 10, color: "var(--ab-text-dim)" }}>
           Coordinator :8004 · Kit primary WebRTC · first frame / stage / ACK fail-closed
@@ -353,8 +254,8 @@ export function WorkspacePage({ initialDock = "a1" }: WorkspacePageProps) {
         {/* 左：Stage 樹 */}
         <aside
           data-uc="ws-stage-tree"
-          data-state={hasStageTree ? "active" : "unsupported"}
-          aria-disabled={!hasStageTree}
+          data-state={hasStageTree ? (toolbarDisabled ? "blocked" : "active") : activeSessionId ? "waiting" : "unsupported"}
+          aria-disabled={!hasStageTree || toolbarDisabled}
           style={{ borderRight: "1px solid rgba(120,160,210,.10)", padding: 12, display: "flex", flexDirection: "column", gap: 8, minHeight: 0, overflow: "auto" }}
         >
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
@@ -363,7 +264,10 @@ export function WorkspacePage({ initialDock = "a1" }: WorkspacePageProps) {
               {slot?.activeSessionId ? (
                 <button
                   data-testid="ws-request-stage-tree-btn"
-                  title={t("向 Kit 重新請求 Stage 樹", "Request Stage tree from Kit")}
+                  title={toolbarDisabled
+                    ? t("viewer 尚未就緒，無法請求 Stage 樹", "The viewer is not ready; Stage tree request is disabled")
+                    : t("向 Kit 重新請求 Stage 樹", "Request Stage tree from Kit")}
+                  disabled={toolbarDisabled}
                   onClick={() => slot?.requestStageTree("/World")}
                   style={{
                     fontSize: 10,
@@ -372,14 +276,17 @@ export function WorkspacePage({ initialDock = "a1" }: WorkspacePageProps) {
                     background: "rgba(120,160,210,.15)",
                     border: "1px solid rgba(120,160,210,.3)",
                     color: "var(--ab-text)",
-                    cursor: "pointer",
+                    cursor: toolbarDisabled ? "not-allowed" : "pointer",
+                    opacity: toolbarDisabled ? 0.55 : 1,
                   }}
                 >
                   {t("重整", "Refresh")}
                 </button>
               ) : null}
-              {hasStageTree ? (
+              {hasStageTree && !toolbarDisabled ? (
                 <span style={{ fontFamily: MONO, fontSize: 10, color: "var(--ab-accent)" }}>Live</span>
+              ) : hasStageTree || activeSessionId ? (
+                <span style={{ fontFamily: MONO, fontSize: 10, color: "var(--ab-text-dim)" }}>{t("等待 viewer", "Waiting for viewer")}</span>
               ) : (
                 <span style={{ fontFamily: MONO, fontSize: 10, color: "var(--ab-text-dim)" }}>Roadmap · #609</span>
               )}
@@ -390,6 +297,7 @@ export function WorkspacePage({ initialDock = "a1" }: WorkspacePageProps) {
               <input
                 data-uc="ws-stage-search"
                 type="text"
+                disabled={toolbarDisabled}
                 placeholder={t("搜尋 prim...", "Search prim...")}
                 value={stageTreeApi.searchQuery}
                 onChange={(e) => stageTreeApi.setSearchQuery(e.target.value)}
@@ -409,18 +317,16 @@ export function WorkspacePage({ initialDock = "a1" }: WorkspacePageProps) {
                     node={rootNode}
                     expandedPaths={stageTreeApi.expandedPaths}
                     selectedPrims={stageTreeApi.selectedPrims}
-                    onToggle={stageTreeApi.toggleExpand}
+                    disabled={toolbarDisabled}
+                    onToggle={(path) => {
+                      const expanding = !stageTreeApi.expandedPaths.has(path);
+                      const node = stageTreeApi.findNodeByPath(path);
+                      stageTreeApi.toggleExpand(path);
+                      if (expanding && node?.children === undefined) slot?.requestStageTree(path);
+                    }}
                     onSelect={(p) => {
                       stageTreeApi.selectPrim(p);
                       slot?.selectPrim(p);
-                      // 多色彩高亮（Issue #603）：選取時以藍色高亮標示
-                      slot?.sendHighlightBatch?.([
-                        {
-                          ifc_guid: p,
-                          label: p,
-                          color: [0.2, 0.6, 1.0, 0.8],
-                        },
-                      ]);
                     }}
                   />
                 ))}
@@ -453,28 +359,25 @@ export function WorkspacePage({ initialDock = "a1" }: WorkspacePageProps) {
           >
             <button
               data-testid="ws-toolbar-camera-view"
-              title={t("切換相機視角 (⬒)", "Switch camera view (⬒)")}
-              disabled={toolbarDisabled}
-              onClick={() => slot?.sendToolbarAction("camera_view", "perspective")}
-              style={toolbarBtnStyle(toolbarDisabled)}
+              title={t("相機視角尚未接通（Roadmap）", "Camera views are not connected yet (Roadmap)")}
+              disabled
+              style={toolbarBtnStyle(true)}
             >
               ⬒
             </button>
             <button
               data-testid="ws-toolbar-fullscreen"
-              title={t("全螢幕 (✥)", "Toggle fullscreen (✥)")}
-              disabled={toolbarDisabled}
-              onClick={() => slot?.sendToolbarAction("toggle_fullscreen")}
-              style={toolbarBtnStyle(toolbarDisabled)}
+              title={t("全螢幕尚未通過跨來源驗證（Roadmap）", "Fullscreen is not cross-origin verified yet (Roadmap)")}
+              disabled
+              style={toolbarBtnStyle(true)}
             >
               ✥
             </button>
             <button
               data-testid="ws-toolbar-projection"
-              title={t("投影模式切換 (◫)", "Toggle projection (◫)")}
-              disabled={toolbarDisabled}
-              onClick={() => slot?.sendToolbarAction("toggle_projection")}
-              style={toolbarBtnStyle(toolbarDisabled)}
+              title={t("投影模式尚未接通（Roadmap）", "Projection mode is not connected yet (Roadmap)")}
+              disabled
+              style={toolbarBtnStyle(true)}
             >
               ◫
             </button>

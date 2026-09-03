@@ -180,7 +180,6 @@ describe("ViewportSlotProvider", () => {
     api!.requestStageTree("/World/Root");
     api!.selectPrim("/World/Root/Child", true);
     api!.sendToolbarAction("camera_view", "top");
-    api!.sendHighlightBatch?.([{ ifc_guid: "/World/Root/Child", color: [1, 0, 0, 1] }]);
 
     expect(calls).toEqual([
       "req:/World/Root",
@@ -191,37 +190,36 @@ describe("ViewportSlotProvider", () => {
     await act(async () => { root.unmount(); });
   });
 
-  it("sendHighlightBatch 正確轉發批次高亮至底層 host handle", async () => {
+  it("切換 active session 時清除上一個 session 的 gate 與 Stage 樹", async () => {
     let api: ReturnType<typeof useViewportSlot> = null;
     function Grab() { api = useViewportSlot(); return null; }
     const container = document.createElement("div");
     const root = createRoot(container);
     await act(async () => { root.render(<ViewportSlotProvider><Grab /></ViewportSlotProvider>); });
+    await act(async () => {
+      api!.setActiveSessionId("review_session_a");
+      api!.setStageTree([{ path: "/World/A", name: "A" }]);
+      api!.setGate({ canSend: true, reason: "" });
+    });
+    expect(api!.stageTree).toHaveLength(1);
+    expect(api!.gate?.canSend).toBe(true);
 
-    let sentItems: import("../EmbeddedViewer").HighlightItem[] = [];
-    api!.registerHostActions?.({
-      sendToolbarAction: () => {},
-      sendHighlightBatch: (items) => {
-        sentItems = items;
-        return { sent: true };
-      },
+    await act(async () => { api!.setGate({ canSend: false, reason: "DataChannel disconnected" }); });
+    expect(api!.stageTree).toEqual([]);
+
+    await act(async () => {
+      api!.setStageTree([{ path: "/World/A", name: "A" }]);
+      api!.setGate({ canSend: true, reason: "" });
     });
 
-    const result = api!.sendHighlightBatch?.([
-      { ifc_guid: "prim_1", color: [1, 0, 0, 1] },
-      { ifc_guid: "prim_2", color: [0, 1, 0, 1] },
-    ]);
-
-    expect(result).toEqual({ sent: true });
-    expect(sentItems).toHaveLength(2);
-    expect(sentItems[0].ifc_guid).toBe("prim_1");
-    expect(sentItems[0].color).toEqual([1, 0, 0, 1]);
-
+    await act(async () => { api!.setActiveSessionId("review_session_b"); });
+    expect(api!.stageTree).toEqual([]);
+    expect(api!.gate).toBeNull();
     await act(async () => { root.unmount(); });
   });
 });
 
-describe("WorkspacePage 實機整合（Toolbar 遮蔽修復、URL Session 綁定與 Stage 樹）", () => {
+describe("WorkspacePage 實機整合（Toolbar 遮蔽修復）", () => {
   let container: HTMLDivElement;
   let root: Root | null;
   let previousHash: string;
@@ -267,30 +265,6 @@ describe("WorkspacePage 實機整合（Toolbar 遮蔽修復、URL Session 綁定
 
     // 工具列 style 具備 position: relative 與 zIndex: 10
     expect(toolbar.style.zIndex).toBe("10");
-  });
-
-  it("URL 帶 ?session=... 時，自動播種 activeSessionId 並啟用工具列按鈕", async () => {
-    spyCoordinatorEndpoints({
-      runtimeStatus: {
-        ...RT_IDLE,
-        sessions: {
-          count: 1,
-          active_count: 1,
-          participant_count: 0,
-          items: [sessionItem("review_session_demo_999")],
-        },
-      },
-    });
-    await mountAt("#a1?session=review_session_demo_999");
-
-    const camBtn = container.querySelector('[data-testid="ws-toolbar-camera-view"]') as HTMLButtonElement;
-    expect(camBtn).not.toBeNull();
-    expect(camBtn.disabled).toBe(false);
-
-    // host 狀態轉為已發布且掛載 ReviewSessionViewerPane
-    const host = container.querySelector('[data-uc="viewport"]');
-    expect(host).not.toBeNull();
-    expect(host?.getAttribute("data-state")).toBe("published");
   });
 });
 
