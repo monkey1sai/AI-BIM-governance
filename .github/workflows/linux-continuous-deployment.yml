@@ -1,0 +1,81 @@
+name: Linux Continuous Deployment
+
+on:
+  pull_request:
+    types: [closed]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: linux-cd-${{ github.repository }}-canonical-linux-ai-bim-governance
+  cancel-in-progress: false
+
+jobs:
+  trusted-merge-contract:
+    name: trusted merge and provisioning gate
+    if: github.event.pull_request.merged == true && github.event.pull_request.base.ref == 'main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      AI_BIM_LINUX_CD_ACTIVATION_STATE: PROVISIONING_REQUIRED
+    steps:
+      - name: Checkout trusted merge commit
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ github.event.pull_request.merge_commit_sha }}
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Setup pinned Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '20.20.2'
+
+      - name: Verify Linux CD closed contracts
+        run: node --test scripts/tests/test-linux-continuous-deployment.mjs
+
+      - name: Materialize provisioning-held terminal attestation
+        id: controller
+        continue-on-error: true
+        run: >-
+          node scripts/dev/linux-continuous-deployment-controller.mjs
+          --github-event "$GITHUB_EVENT_PATH"
+          --output artifacts/linux-cd/terminal-attestation.json
+
+      - name: Require fail-closed provisioning boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          test '${{ steps.controller.outcome }}' = 'failure'
+          node --input-type=module -e "import fs from 'node:fs';import{canonicalJson,parseTerminalRecord}from './scripts/lib/autonomous-delivery-contract.mjs';const r=JSON.parse(fs.readFileSync('artifacts/linux-cd/terminal-attestation.json','utf8'));if(r.final_state!=='HELD'||r.attestation.reason_code!=='ACTIVATION_UNATTESTED'||parseTerminalRecord(canonicalJson(r.terminal_record)).reason_code!=='ACTIVATION_UNATTESTED')process.exit(1)"
+
+      - name: Upload sanitized terminal attestation
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: linux-cd-provisioning-held-${{ github.event.pull_request.merge_commit_sha }}
+          path: artifacts/linux-cd/terminal-attestation.json
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Publish provisioning-required boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$AI_BIM_LINUX_CD_ACTIVATION_STATE" = 'PROVISIONING_REQUIRED'
+          printf '%s\n' \
+            'Linux CD contracts verified for the trusted merge event.' \
+            'Live artifact-store, target-lease, environment-policy, and runner provisioning remain HELD.' \
+            'No deployment, promotion, rollback, secret read, or production activation was attempted.'
+
+      - name: Write terminal summary
+        shell: bash
+        run: |
+          {
+            echo '## Linux Continuous Deployment'
+            echo ''
+            echo '- Contract state: `PROVISIONING_REQUIRED -> HELD`'
+            echo '- Activation: not provisioned by repository source'
+            echo '- Deployment method when externally authorized: `scripts/dev/rebuild-test-deploy.ps1 -Build`'
+            echo '- Production mutation: not attempted'
+          } >> "$GITHUB_STEP_SUMMARY"

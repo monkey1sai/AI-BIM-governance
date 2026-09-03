@@ -67,6 +67,16 @@
 - [ ] 6.7 實作sanitized terminal CheckRun／delivery event publisher；只有exact commit與全部required Linux／Windows gates成功才輸出 `DELIVERED/DELIVERY_VERIFIED`，retry／fixpoint建立linked attempt。
 - [ ] 6.8 新增inventory missing／ambiguous、non-Linux target、fresh-fetch／exact-equality failure、partial health、Windows runner／network unavailable、signer revoked、artifact auth、egress／quota與secret leakage tests。
 
+## 6A. Linux Continuous Deployment follow-up
+
+- [x] 6A.1 定義closed request／artifact／target／terminal schemas與pure state-machine module，固定trusted merge到terminal attestation、provisioning-held及rollback states。
+- [x] 6A.2 驗證trusted merged event、fresh convergence SHA、immutable artifact provenance、canonical target fingerprint與opaque lease；wrong repo、stale SHA、partial collector、artifact／target drift全部fail closed。
+- [x] 6A.3 實作environment＋service single-flight、包含target fingerprint／deployment method的exact active idempotent replay停止、外部簽署closed transient分類、root failure parent、owner broker以delivery／merge／root digest原子compare-and-consume的same-commit總重試一次enforcement、per-state digest-chained ledger與outer attempt append validation。
+- [x] 6A.4 實作canary、health／smoke／E2E、same-digest promotion、post-deploy verification與pinned known-good artifact rollback contract，並以happy path、rollback與rollback-unverified pressure scenarios取得GREEN。
+- [x] 6A.5 新增repo-local GitHub workflow與controller boundary；在未provision外部artifact store／runner／credential／protected environment時只輸出sanitized `PROVISIONING_REQUIRED → HELD`，不執行live deployment。
+- [ ] 6A.6 由owner provision external immutable artifact store、trusted Linux executor、credential broker、protected GitHub Environment與canonical target live attestation，並證明candidate code無法取得write credential。
+- [ ] 6A.7 在canonical Linux測試目標執行真實canary、same-digest promotion、post-deploy與pinned artifact rollback E2E；本follow-up PR不得以contract tests取代此live evidence。
+
 ## 7. Self-referential bootstrap 與一次性 activation
 
 - [ ] 7.1 為所有merge／verification／deploy mechanism paths建立bootstrap ledger opening contract，並證明candidate版本只作data、由先前attested external policy裁決。

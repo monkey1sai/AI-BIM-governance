@@ -34,7 +34,7 @@
 - 不讓模型、PR branch、GitHub Actions candidate job或一般 agent session取得 merge／deployment write credential。
 - 不使用 GitHub Web UI automation或把 automated action描述成人工審查。
 - 不變更 coordinator、streaming、governance、viewer的產品 API或持久資料 ownership。
-- 不保證失敗部署自動回到舊 commit；v1以 fail-closed repair cycle處理，除非後續獨立規格建立可證明的 transactional rollback。
+- 不建立 production rollback；canonical Linux測試目標的rollback只允許使用已驗證provenance與content digest的pinned known-good immutable artifact，任何缺件或無法驗證的rollback一律 `HELD`。
 - 不因本 change自動啟動 Lane S；`spec-to-done`仍須使用者明確呼叫。
 - 不把仍在 `LEGACY_GUARDED` 下收斂的既有 PR 追溯切換到 candidate 定義的新 gate；它們依舊 protection 完成，新路徑只在 implementation 已從 `main` 提供且 activation attestation 完成後生效。
 
@@ -82,15 +82,15 @@ Privileged executor在 verdict後取得single-use merge-authorization lease；le
 
 同一 repo同時只允許一個 `merge → deploy → verify` delivery transaction。上一個 merge commit尚未以D8的closed terminal schema結案時，`ordinary` PR不得進入 merge sink；`HELD/MERGE_OUTCOME_UNVERIFIED` 或 `HELD/DELIVERY_PENDING_FIXPOINT` 只允許明確綁定相同lineage的 `reconciliation` PR，`FAILED/MERGED_NOT_DELIVERED` 只允許綁定相同failure delivery ID的 `repair`／`revert` PR。其他post-merge `HELD`不開放任何PR進入sink；只有 `DELIVERED`釋放 `ordinary` queue。這避免多個未驗證 merge在 canonical target疊加後失去歸因。
 
-### D7 — Canonical Linux deployment只消費 freshly fetched origin/main
+### D7 — Canonical Linux deployment只消費 exact merge identity建立的 immutable artifact
 
-Merge observation成功後，trusted deployment host以 repo-external inventory解析唯一 `role=canonical_test_deploy` Linux target，執行既有 operator entry：
+Merge observation成功後，trusted artifact authority只可對該exact merge commit建立一次immutable artifact，並保存source commit、builder、policy、artifact digest與provenance digest。Trusted deployment host以 repo-external inventory解析唯一 `role=canonical_test_deploy` Linux target，執行既有 operator entry：
 
 ```powershell
 .\scripts\dev\rebuild-test-deploy.ps1 -Build -InventoryPath '<repo-external target.local.json>'
 ```
 
-Helper必須重新fetch `+refs/heads/main:refs/remotes/origin/main`，並證明fresh `origin/main`與deployed commit都**完全等於**該delivery的merge commit。只要main多出其他commit、first-parent不相等、out-of-band ref movement或target readback不相等，就以settings／attribution drift `HELD`，不得用ancestor包含關係放寬。未merge branch、stale ref、`local-windows`、`-DryRun`、`-Force`與替代啟動命令皆不能產生 `DELIVERED`。
+Helper必須重新fetch `+refs/heads/main:refs/remotes/origin/main`，並證明fresh `origin/main`與artifact source commit都**完全等於**該delivery的merge commit；canary、promotion、post-deploy verification與rollback readback必須證明實際runtime digest等於被授權artifact digest。只要main多出其他commit、first-parent不相等、out-of-band ref movement、provenance不完整、digest漂移或target readback不相等，就以settings／attribution drift `HELD`，不得用ancestor包含關係放寬。未merge branch、stale ref、`local-windows`、`-DryRun`、`-Force`、重新build舊source作rollback與替代啟動命令皆不能產生 `DELIVERED` 或 `ROLLED_BACK`。
 
 Runner分工是閉合contract：Linux trusted runner負責transport、build、service health、Linux API／integration、Kit／WebRTC與artifact readback；Windows protected runner負責pre-merge Chromium DPR1 design gate，並在post-deploy透過owner-approved跨網段通道對相同non-secret target ID執行browser operability。兩者的runner identity、target identity、fixture、runtime ID與artifact digest都必須進terminal packet；任一required runner或network path unavailable即 `HELD`，不得以另一runner或partial evidence代替。
 
@@ -121,9 +121,9 @@ Queue語意亦固定：pre-merge `HELD`不造成main mutation並使該exact tupl
 
 Failure mapping互斥且依merge boundary分段：pre-merge Windows design／semantic authority、runner或required network path不可取得或不可驗證，一律 `HELD/PREMERGE_AUTHORITY_UNAVAILABLE`；merge後尚未以authenticated input啟動canonical target command（inventory／target／runner／network／artifact不可取得或不可驗證）一律 `HELD/DEPLOYMENT_BLOCKED`；GitHub merge outcome歧義一律 `HELD/MERGE_OUTCOME_UNVERIFIED`；已在exact commit與attested target上啟動的 `deploy.ps1 -Build` 回傳nonzero，或required post-deploy gate產生可重現negative conclusion，一律 `FAILED/MERGED_NOT_DELIVERED`；只有所有required gates positive才是 `DELIVERED/DELIVERY_VERIFIED`。同一事件不得二選一，producer不得把pre-merge authority failure映射成post-merge deployment blocker。
 
-### D9 — 失敗觸發 bounded repair，不改寫歷史
+### D9 — 失敗先嘗試 pinned artifact rollback，再進 bounded repair，且不改寫歷史
 
-部署或post-deploy失敗後，系統以 `FAILED/MERGED_NOT_DELIVERED`保留原始merge與deploy evidence，建立綁定delivery ID的repair或revert task／PR；同一exact commit只允許一次deterministically classified transient redeploy。需要code change或retry失敗時直接進repair／revert lineage；後續evidence loop遵守兩輪上限，只有新證據、新假設或新方法才允許第三輪，否則以typed `HELD`結案且不開放任意PR。v1不得把舊commit ad hoc reset成「成功」。Canonical Linux port／process blocker只有在啟動 `deploy.ps1` 前的唯讀preflight被發現時才是 `HELD/DEPLOYMENT_BLOCKED`；transport不得自動停止、signal或restart owner runtime。Command一旦在authenticated target啟動後回傳nonzero，仍唯一映射 `FAILED/MERGED_NOT_DELIVERED`。
+部署或post-deploy失敗後，系統保留原始merge與deploy evidence，先以相同target lease消費預先pinned、provenance已驗證的known-good immutable artifact；rollback readback、health與必要smoke全部成功才可輸出 `ROLLED_BACK`，並在outer contract以 `FAILED/MERGED_NOT_DELIVERED`結案。啟動operator command前若pinned artifact、digest／provenance／target／credential任一不可驗證，以 `HELD/DEPLOYMENT_BLOCKED`結案；command已啟動後若rollback command或驗證無法形成可信terminal evidence，則以 `HELD/ACTIVATION_UNATTESTED`結案。兩者都不可重建舊source、reset／force-push main或把舊runtime冒充本次成功。Rollback後仍建立綁定delivery ID的repair或revert task／PR；只有owner policy broker以短效簽章將closed `network_transient` 分類綁定原始root `FAILED/MERGED_NOT_DELIVERED` parent、exact merge、artifact、target fingerprint、command、policy與failure evidence，並以 `delivery_id + trusted_merge_sha + root_attempt_sha256` 原子compare-and-consume總重試預算、authoritative prior count為0且consume成功時，同一exact commit才允許總計一次retry。Caller-supplied history不具authoritative completeness；清空history、換新簽章或authorization ID均不得重置預算。Retry-of-retry、renamed class、已消費預算或任一authority／binding缺失皆fail closed。需要code change或retry失敗時直接進repair／revert lineage；後續evidence loop遵守兩輪上限，只有新證據、新假設或新方法才允許第三輪，否則以typed `HELD`結案且不開放任意PR。Canonical Linux port／process blocker只有在啟動 operator command 前的唯讀preflight被發現時才是 `HELD/DEPLOYMENT_BLOCKED`；transport不得自行停止、signal或restart owner runtime。
 
 ### D10 — Self-referential change由 repo外 trust root裁決
 
@@ -181,6 +181,38 @@ CI、deterministic validator、machine reviewer與human reviewer產生的每個f
 **理由**：GitHub只知道conversation是否resolved，無法分辨false positive、accepted non-blocking risk與真正blocking bug。把disposition做成closed executable contract，才能保留zero-unresolved保護，又不把所有finding錯誤耦合成code修改。
 
 **替代方案**：任何unresolved thread都要求修改code，或只靠comment文字說明後resolve。拒絕；前者造成無界修補，後者無法機器驗證severity、evidence、scope與gate順序。
+
+### D16 — Linux Continuous Deployment以 immutable artifact、canary promotion與pinned rollback閉合
+
+Repo-local pure contract固定closed state vocabulary：
+
+```text
+TRUSTED_MERGED
+  -> BUILD_IMMUTABLE_ARTIFACT
+  -> VERIFY_ARTIFACT_PROVENANCE
+  -> RESOLVE_DEPLOYMENT_TARGET
+  -> PRE_DEPLOY_CHECK
+  -> DEPLOY_CANARY
+  -> VERIFY_HEALTH_SMOKE_E2E
+  -> PROMOTE
+  -> POST_DEPLOY_VERIFY
+  -> ACTIVATED
+  -> TERMINAL_DELIVERY_ATTESTATION
+
+failure after canary:
+  -> ROLLBACK_TO_PINNED_KNOWN_GOOD_ARTIFACT
+  -> VERIFY_ROLLBACK
+  -> ROLLED_BACK
+
+missing authority / provisioning / proof:
+  -> PROVISIONING_REQUIRED -> HELD
+```
+
+Trusted merge event必須來自硬編碼允許的repository、`main` base、closed且merged PR、observed merge commit與fresh convergence SHA相等；request不得覆寫expected repository或canonical target ID。任何自述布林、wrong repo、stale SHA或partial collector均fail closed。Artifact、target與attestation schemas皆closed，未知欄位拒絕；artifact provenance綁source commit／tree、immutable content digest、builder、policy digest、issuer／key、nonce、expiry、payload digest與signature，target lease亦綁target descriptor與signature。Pure module只接受owner executor注入的外部provenance／target／known-good verifier callback；repo-local CLI不具該authority，因此不能產生 `ACTIVATED`。
+
+Single-flight key使用 `environment + service`；只有delivery、replay key、artifact digest、environment、service、target fingerprint與deployment method全部相同的active tuple可回傳typed non-terminal `idempotent_active` ownership並停止，不得append新transition／terminal failure或重跑deployment；任一欄位不同不得共用active lock。主controller path實際消費single-flight結果、retry history、外部分類authority與candidate event；retry budget則只信任owner broker以delivery、trusted merge與原始root attempt digest為key的原子compare-and-consume receipt，不把caller-supplied history視為完整authoritative ledger。已接受attempt的每次state transition都以previous digest append ledger record。Terminal output另由既有 `autonomous-delivery-terminal-record/v1` parser與attempt append validator驗證，internal failure code只進namespaced detail，不得成為outer reason enum。Canary、promotion與post-deploy驗證只能消費同一artifact digest；promotion mismatch不可進 `ACTIVATED`。Rollback只准使用attempt開始前已pinned的known-good immutable artifact，成功readback與health證明後才是 `ROLLED_BACK`；任何rollback evidence不完整即 `HELD`。
+
+Candidate workflow與repo-local controller沒有live deployment credential，也不得讀取private inventory。它們只驗證event／contract、執行negative tests並產生sanitized internal `PROVISIONING_REQUIRED → HELD` state sequence，再以既有closed outer reason結案；只有owner完成external artifact store、trusted runner、credential broker、protected GitHub Environment與canonical target live attestation後，外部executor才可注入verifier並執行上述state machine。這個repo evidence不得冒充installed或live activation。
 
 ## Implementation acceptance baseline — Finding disposition、convergence、熔斷與 Subagent merge
 
@@ -299,7 +331,7 @@ L1、L2與L3 SHALL逐項輸出 `pass|fail|uncertain`及path:line evidence；任�
 - **[移除human review擴大自動化錯誤blast radius]** → delivery lock、exact-head merge、source-pinned App CheckRun、短效credential、no-admin/no-bypass與closed recovery lanes。
 - **[External trust root成為高價值單點]** → immutable版本、雙快照、App/source pin、negative/positive attestation、credential隔離與fail-closed unavailable state。
 - **[Self-referential trusting-trust]** → candidate inert、external policy bundle、bootstrap ledger與post-merge fixpoint；無external proof即HELD。
-- **[Linux deploy可能在merge後失敗]** → `MERGED != DELIVERED`、序列鎖、完整failure record與bounded repair；v1不假造rollback。
+- **[Linux deploy可能在merge後失敗]** → `MERGED != DELIVERED`、environment＋service序列鎖、immutable artifact provenance、canary、pinned known-good rollback、完整failure record與bounded repair；無可驗證rollback證據即 `HELD`。
 - **[交付鎖降低throughput]** → 優先可歸因與可恢復性；未來若需要coalescing，另以spec定義`SUPERSEDED`語意，v1不跳過commit。
 - **[私有topology限制可攜CI]** → public registry只保存behavior descriptor，private inventory由owner預置；transport不讀出或覆寫。
 - **[bootstrap本身仍需一次owner操作]** → 明示為one-time provisioning，不宣稱「零人類初始化」；active後不再有per-PR human approval。
