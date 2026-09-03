@@ -23,6 +23,8 @@ import { coordinatorStatusStore } from "./coordinatorStatusStore";
 import type { EndpointKey } from "./coordinatorStatusStore";
 import { HEALTH_DOT, cell, cellText, conversionCounts, healthOf } from "./runtimeTruth";
 import type { HealthState } from "./runtimeTruth";
+import { ViewportSlotProvider } from "./ViewportSlotProvider";
+import { WorkspaceViewportHost } from "./WorkspaceViewportHost";
 import "./unified.css";
 
 /* ═══ UnifiedState context（docks／WorkspacePage 的 issues/outbox local state + toast；intake/conv/sessions 已由共用 poller 取代）═══ */
@@ -238,8 +240,14 @@ function ShellFrame({ page, dock, concept, children }: UnifiedShellProps) {
       {topbar}
       <div style={{ display: "flex", flex: 1, minHeight: 0 }}>
         {sidebar}
-        <div data-uc="page-root" style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", minHeight: 0 }}>
-          {children}
+        {/* V-A′（introduce-viewer-app-integration-surface design §4）：page-root 為 position:relative 包裹層，
+            WorkspaceViewportHost 是 children 的 absolute 兄弟層；只在 page="ws" 掛載，離開 workspace 由 page prop
+            顯式 unmount → pane cleanup 釋放 lease（不依賴 reconciliation）。離線時 host 自身 return null＝零新 DOM。 */}
+        <div data-uc="page-root" style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", minHeight: 0, position: "relative" }}>
+          <ViewportSlotProvider>
+            {children}
+            {page === "ws" ? <WorkspaceViewportHost /> : null}
+          </ViewportSlotProvider>
         </div>
       </div>
       {toastHost}

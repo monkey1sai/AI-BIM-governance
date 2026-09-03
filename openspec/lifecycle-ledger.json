@@ -1433,13 +1433,13 @@
     },
     {
       "id": "introduce-viewer-app-integration-surface",
-      "status": "deferred",
+      "status": "active",
       "owner": "web-viewer-sample",
-      "current_slice": "deferred 開立 2026-08-18（active WIP 6/6 滿額）：四份 artifact 已落、strict validate 通過、F* issues #603-#610 與治理複核 #611 已開。thaw 條件=任一 active change archive 釋出名額或使用者明確口令升 active（最快路徑見 #611：converge-console 3.1 重測後 archive）。thaw 後第一片=S0 pre-flight（重取基線＋凍結 12 態錨點清單＋ack transcript golden）。",
+      "current_slice": "thaw 2026-09-03：使用者明確口令（3D 工作區改為中央內嵌 WebRTC viewport＋右側 A1–A4 工具 Dock；NOW.md 2026-08-20 R2 條件「使用者明確口令升 active」）；active 4/6 有名額。本片＝S3a ViewportHost（V-A′：viewportSlot.ts／ViewportSlotProvider／WorkspaceViewportHost 掛 UnifiedShell page-root 兄弟層，live-only 零 DOM，重用 ReviewSessionViewerPane、不改 pane 內部）＋S3b 手動啟動（沿用 pane 既有 manual-start／lease／holder-privacy 錨點，不自動 claim）＋WorkspacePage 三欄（左 Stage 樹依 #609 誠實停用；右 Dock＝FlowGuide＋live 模組頁）；A1/A2/A3/A4 改經 WorkspaceViewerMount publish（context 缺席時 inline 不變）。S0 golden／S1 抽取／S2 state 層未做；design baseline workspace.a1..a4 同 PR 重錄（Lean §0.0）。",
       "blocked_by": [],
-      "last_verified": "2026-08-18T11:02:41Z",
+      "last_verified": "2026-09-03T03:40:00Z",
       "task_ledger": {
-        "completed": 4,
+        "completed": 8,
         "total": 33
       },
       "evidence_refs": [

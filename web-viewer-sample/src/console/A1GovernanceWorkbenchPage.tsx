@@ -8,7 +8,8 @@ import type { RuleRunSource } from "./hooks/useRuleRun";
 import { FileProjectRow, FileVersionRow, governanceClient, IssueRow, LIBRARY_IFC_PREFIX, parseLibraryIfcPath, RuleResultRow, RuleRunHistoryFilters, RuleRunHistoryItem } from "./governanceClient";
 import { coordinatorClient, CoordinatorHttpError, IfcReadyListItem, IfcReadyReviewSessionResponse, RuntimeSessionSummary, RuntimeStatus } from "./coordinatorClient";
 import { LifecycleStrip } from "./modelData/conversionShared";
-import { ReviewSessionViewerPane, type ReviewRoomHandoff } from "./ReviewSessionViewerPane";
+import type { ReviewRoomHandoff } from "./ReviewSessionViewerPane";
+import { WorkspaceViewerMount } from "./unified/WorkspaceViewerMount";
 import { ElementMappingDocument, isFakeMappingDocument, isFakeMappingItem } from "../types/mapping";
 import { buildHandoff } from "./handoff";
 import { useIncomingHandoff, IncomingHandoffBanner } from "./incomingHandoff";
@@ -1043,7 +1044,7 @@ export function A1GovernanceWorkbenchPage() {
           {reviewOpenErr && <span className="ec-warn-note" data-testid="a1-review-open-error">{reviewOpenErr}</span>}
           {conversionRetryErr && <span className="ec-warn-note" data-testid="a1-conversion-retry-error">{conversionRetryErr}</span>}
         </div>
-        {a1InlineHandoff && <ReviewSessionViewerPane mode="a1-inline" handoff={a1InlineHandoff} />}
+        {a1InlineHandoff && <WorkspaceViewerMount mode="a1-inline" handoff={a1InlineHandoff} />}
       </Panel>
 
       <Panel title={t("交付", "Deliverables")} sub={t("開 Issue / 匯出 Excel / 匯出 BCF 2.1 走真實後端；BCF 需先建 Issue（step=issued/delivered）才 enable；3D 高亮在 A1 本頁 session 面板執行", "Open Issue / Export Excel / Export BCF 2.1 go through the real backend; BCF is enabled only after Issues are created (step=issued/delivered); 3D highlight runs in the A1 session panel above")} prov="asbuilt">
