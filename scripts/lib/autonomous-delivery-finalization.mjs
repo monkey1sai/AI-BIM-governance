@@ -23,11 +23,21 @@ const SECRET_VALUES = [
   /\b(?:gh[pousr]_|github_pat_)[A-Za-z0-9_]{8,}\b/u,
   /\bBearer\s+[A-Za-z0-9._~+\/-]{8,}/iu,
   /\b[A-Z][A-Z0-9_]*(?:TOKEN|SECRET|PASSWORD|PRIVATE_KEY|DATABASE_URL|API_KEY)[A-Z0-9_]*\s*=\s*[^\s\r\n]{4,}/u,
+  // Environment-style assignments are case-insensitive: `api_key=...` on a diff
+  // line is as much a secret as `API_KEY=...`. The line anchor keeps ordinary
+  // code (`const token = await ...`) out of the pattern.
+  /^[-+ ]?(?:export\s+)?[A-Za-z0-9_]*(?:TOKEN|SECRET|PASSWORD|PRIVATE_KEY|DATABASE_URL|API_KEY)[A-Za-z0-9_]*\s*=\s*[^\s\r\n]{4,}$/imu,
+  // Colon-delimited fields (YAML `api_key: value`, JSON `"db_password": "value",`),
+  // quoted or unquoted, are secrets just like `=` assignments.
+  // A value with call syntax (`readPassword(prompt)`) is code, not a literal.
+  /^[-+ ]?\s*["']?[A-Za-z0-9_-]*(?:TOKEN|SECRET|PASSWORD|PRIVATE_KEY|DATABASE_URL|API_KEY)[A-Za-z0-9_-]*["']?\s*:\s*["']?[^\s"'()\r\n]{4,}["']?,?\s*$/imu,
   /\b(?:postgres(?:ql)?|mysql|mongodb(?:\+srv)?|redis):\/\/[^/\s:@]+:[^@\s/]+@/iu,
 ]
 const SECRET_BEARING_ENV_PATH = /(?:^|\/)\.env(?:$|\.)/u
 const SAFE_ENV_TEMPLATE_PATH = /\.env(?:\.[A-Za-z0-9_-]+)*\.(?:example|sample|template)$/u
-const MECHANISM_PATH = /^(?:\.github\/|agent-contracts\/|scripts\/|docs\/agents\/|\.claude\/skills\/|\.codex\/skills\/|agent-skills-manifest\.json$|AGENTS\.md$|CLAUDE\.md$|openspec\/)/u
+// `tests/contracts/` holds this repository's authoritative external contracts;
+// a contract-only change is a mechanism change, never a focused semantic one.
+const MECHANISM_PATH = /^(?:\.github\/|agent-contracts\/|tests\/contracts\/|scripts\/|docs\/agents\/|\.claude\/skills\/|\.codex\/skills\/|agent-skills-manifest\.json$|AGENTS\.md$|CLAUDE\.md$|openspec\/)/u
 const REVIEW_MODES = Object.freeze([
   'mechanical_only', 'focused_semantic', 'risk_scoped_specialists',
   'critical_machine_adjudication',
@@ -48,7 +58,7 @@ const canonicalize = (value) => {
   if (!isPlainObject(value)) return value
   return Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonicalize(value[key])]))
 }
-const canonicalSha256 = (value) => sha256(Buffer.from(JSON.stringify(canonicalize(value)), 'utf8'))
+export const canonicalSha256 = (value) => sha256(Buffer.from(JSON.stringify(canonicalize(value)), 'utf8'))
 
 const exactKeys = (value, expected, code, detail) => {
   if (!isPlainObject(value)) fail(code, detail)
@@ -144,6 +154,127 @@ const assertRepoPath = (value) => {
   ) fail('unsupported_review_surface', 'changed_path_not_canonical')
 }
 
+const DIFF_GIT_HEADER = /^diff --git (.+)$/u
+const DIFF_RENAME_OR_COPY_HEADER = /^(?:rename|copy) (?:from|to) (.+)$/u
+// Unified file markers carry their own path; a marker that names a different
+// file than the `diff --git` header is a tampered or malformed packet. Only git's
+// prefixed forms (`a/`, `b/`, quoted variants) and `/dev/null` are markers here,
+// so a removed content line that merely starts with `-- ` is never misread.
+const DIFF_UNIFIED_FILE_MARKER = /^(?:---|\+\+\+) ((?:"[ab]\/.*"|[ab]\/.*|\/dev\/null))$/u
+const diffSurfaceUnparseable = () => fail('unsupported_review_surface', 'diff_header_path_unparseable')
+
+// Git quotes a header path (core.quotePath) when it contains quotes, backslashes,
+// control bytes or non-ASCII bytes; escapes are C-style with octal UTF-8 bytes.
+const unquoteDiffPath = (raw) => {
+  if (!raw.startsWith('"')) return raw
+  if (raw.length < 2 || !raw.endsWith('"')) diffSurfaceUnparseable()
+  const bytes = []
+  for (let index = 1; index < raw.length - 1; index += 1) {
+    const char = raw[index]
+    if (char !== '\\') {
+      bytes.push(...Buffer.from(char, 'utf8'))
+      continue
+    }
+    const next = raw[index + 1]
+    if (next === '\\' || next === '"') {
+      bytes.push(next.charCodeAt(0))
+      index += 1
+    } else if (next === 'n' || next === 't' || next === 'r') {
+      bytes.push({ n: 10, t: 9, r: 13 }[next])
+      index += 1
+    } else if (/^[0-7]{3}$/u.test(raw.slice(index + 1, index + 4))) {
+      bytes.push(parseInt(raw.slice(index + 1, index + 4), 8))
+      index += 3
+    } else {
+      diffSurfaceUnparseable()
+    }
+  }
+  return Buffer.from(bytes).toString('utf8')
+}
+
+const stripDiffPrefix = (value, prefix) => {
+  if (!value.startsWith(prefix)) diffSurfaceUnparseable()
+  return value.slice(prefix.length)
+}
+
+const closingQuoteIndex = (value, start) => {
+  for (let index = start + 1; index < value.length; index += 1) {
+    if (value[index] === '\\') {
+      index += 1
+      continue
+    }
+    if (value[index] === '"') return index
+  }
+  return -1
+}
+
+const splitDiffGitHeader = (rest) => {
+  if (rest.startsWith('"')) {
+    const closing = closingQuoteIndex(rest, 0)
+    if (closing < 0 || rest[closing + 1] !== ' ') diffSurfaceUnparseable()
+    return [
+      stripDiffPrefix(unquoteDiffPath(rest.slice(0, closing + 1)), 'a/'),
+      stripDiffPrefix(unquoteDiffPath(rest.slice(closing + 2)), 'b/'),
+    ]
+  }
+  const quotedRight = rest.lastIndexOf(' "b/')
+  if (quotedRight >= 0) {
+    return [
+      stripDiffPrefix(rest.slice(0, quotedRight), 'a/'),
+      stripDiffPrefix(unquoteDiffPath(rest.slice(quotedRight + 1)), 'b/'),
+    ]
+  }
+  const candidates = []
+  let search = rest.indexOf(' b/')
+  while (search >= 0) {
+    candidates.push(search)
+    search = rest.indexOf(' b/', search + 1)
+  }
+  if (candidates.length === 0) diffSurfaceUnparseable()
+  const identical = candidates.find((index) => rest.slice(2, index) === rest.slice(index + 3))
+  const split = identical ?? (candidates.length === 1 ? candidates[0] : null)
+  if (split === null) diffSurfaceUnparseable()
+  return [stripDiffPrefix(rest.slice(0, split), 'a/'), stripDiffPrefix(rest.slice(split + 1), 'b/')]
+}
+
+const assertDiffSurfacePath = (value) => {
+  try {
+    assertRepoPath(value)
+  } catch {
+    fail('unsupported_review_surface', 'diff_surface_path_not_canonical')
+  }
+  return value
+}
+
+// Every source/destination path named by the diff headers themselves. Review mode is
+// derived from changedFiles, so the two surfaces must agree exactly or the packet
+// could route a mechanism change through the lowest lane while claiming lossless.
+// Producer contract: plain `git diff` output with the default `a/`/`b/` prefixes;
+// combined (`--cc`) and `--no-prefix` diffs are unparseable and fail closed.
+export function extractDiffSurfacePaths(diffText) {
+  const paths = new Set()
+  for (const rawLine of String(diffText ?? '').split('\n')) {
+    const line = rawLine.endsWith('\r') ? rawLine.slice(0, -1) : rawLine
+    const header = DIFF_GIT_HEADER.exec(line)
+    if (header) {
+      for (const path of splitDiffGitHeader(header[1])) paths.add(assertDiffSurfacePath(path))
+      continue
+    }
+    const renamed = DIFF_RENAME_OR_COPY_HEADER.exec(line)
+    if (renamed) {
+      paths.add(assertDiffSurfacePath(unquoteDiffPath(renamed[1])))
+      continue
+    }
+    const marker = DIFF_UNIFIED_FILE_MARKER.exec(line)
+    if (marker && marker[1] !== '/dev/null') {
+      const prefixed = unquoteDiffPath(marker[1])
+      if (!/^[ab]\//u.test(prefixed)) diffSurfaceUnparseable()
+      paths.add(assertDiffSurfacePath(prefixed.slice(2)))
+    }
+  }
+  return paths
+}
+
 export function classifyReviewSurface({ changedFiles, diff, limits } = {}) {
   if (!Array.isArray(changedFiles) || changedFiles.length === 0) {
     fail('unsupported_review_surface', 'changed_files_required')
@@ -161,16 +292,18 @@ export function classifyReviewSurface({ changedFiles, diff, limits } = {}) {
     if (!isPlainObject(file)) {
       fail('unsupported_review_surface', `changed_file_${index}_shape_invalid`)
     }
+    // Renames and copies both name a source path in the diff headers.
+    const carriesPreviousPath = file.status === 'renamed' || file.status === 'copied'
     exactKeys(
       file,
-      file.status === 'renamed'
+      carriesPreviousPath
         ? ['path', 'previousPath', 'status', 'binary', 'submodule']
         : ['path', 'status', 'binary', 'submodule'],
       'unsupported_review_surface',
       `changed_file_${index}_shape_invalid`,
     )
     assertRepoPath(file.path)
-    if (file.status === 'renamed') assertRepoPath(file.previousPath)
+    if (carriesPreviousPath) assertRepoPath(file.previousPath)
     if (!['added', 'modified', 'deleted', 'renamed', 'copied', 'type_changed'].includes(file.status)) {
       fail('unsupported_review_surface', `changed_file_${index}_status_unknown`)
     }
@@ -183,7 +316,7 @@ export function classifyReviewSurface({ changedFiles, diff, limits } = {}) {
     return clone(file)
   })
   const surfacePaths = normalized.flatMap((file) => (
-    file.status === 'renamed' ? [file.path, file.previousPath] : [file.path]
+    file.status === 'renamed' || file.status === 'copied' ? [file.path, file.previousPath] : [file.path]
   ))
   if (surfacePaths.some((path) => SECRET_BEARING_ENV_PATH.test(path) && !SAFE_ENV_TEMPLATE_PATH.test(path))) {
     fail('secret_review_surface_blocked', 'secret_bearing_environment_file_not_reviewable')
@@ -191,9 +324,28 @@ export function classifyReviewSurface({ changedFiles, diff, limits } = {}) {
   if (SECRET_VALUES.some((pattern) => pattern.test(bytes.toString('utf8')))) {
     fail('secret_review_surface_blocked', 'semantic_redaction_would_change_review_bytes')
   }
+  // The collector's binary/submodule flags are not the only witness: the diff
+  // bytes themselves reveal a binary or submodule change that has no reviewable
+  // content, and such a surface must never claim to be lossless.
+  const diffText = bytes.toString('utf8')
+  if (/^(?:Binary files .* differ|GIT binary patch)$/mu.test(diffText)) {
+    fail('unsupported_review_surface', 'binary_diff_marker_present')
+  }
+  if (/^[+-]Subproject commit [0-9a-f]{40}$/mu.test(diffText)) {
+    fail('unsupported_review_surface', 'submodule_diff_marker_present')
+  }
   const sorted = [...normalized].sort((left, right) => left.path.localeCompare(right.path, 'en'))
   if (sorted.some((file, index) => index > 0 && file.path.toLowerCase() === sorted[index - 1].path.toLowerCase())) {
     fail('unsupported_review_surface', 'changed_path_case_collision')
+  }
+  const diffPaths = extractDiffSurfacePaths(bytes.toString('utf8'))
+  const declaredPaths = new Set(surfacePaths)
+  if (diffPaths.size === 0) fail('unsupported_review_surface', 'diff_surface_paths_missing')
+  for (const path of diffPaths) {
+    if (!declaredPaths.has(path)) fail('unsupported_review_surface', 'diff_path_not_declared_in_changed_files')
+  }
+  for (const path of declaredPaths) {
+    if (!diffPaths.has(path)) fail('unsupported_review_surface', 'changed_file_missing_from_diff_bytes')
   }
   const reviewMode = surfacePaths.some((path) => MECHANISM_PATH.test(path))
     ? 'critical_machine_adjudication'
@@ -321,7 +473,11 @@ const closeHeld = (state, failureDetail) => deepFreeze({
   failureDetail,
 })
 
-export function applyFinalizationEvent(stateRaw, event, { expectedRequiredCheckSource } = {}) {
+// Trusted-side inputs (collector output, never the candidate bundle) are passed
+// through to the disposition validator so the gate epoch cannot be self-reported.
+export function applyFinalizationEvent(stateRaw, event, {
+  expectedRequiredCheckSource, collectedConversation, convergenceObservedAt, sameHeadCheckRuns, sameHeadCheckRunsComplete, expectedPolicySha256,
+} = {}) {
   if (!isPlainObject(stateRaw)) fail('finalization_state_invalid', 'state_shape_invalid')
   const state = validateFinalizationState(stateRaw)
   if (state.phase === 'CLOSED') fail('finalization_closed', 'closed_transaction_is_immutable')
@@ -372,12 +528,18 @@ export function applyFinalizationEvent(stateRaw, event, { expectedRequiredCheckS
   if (event.headOid !== state.frozenHeadOid) return closeHeld(state, 'head_freeze_broken')
   const roundIndex = state.rounds.length - 1
   if (event.type === 'round_converged') {
-    const convergence = validateFindingDispositionBundle(event.findingBundle, expectedRequiredCheckSource)
+    const convergence = validateFindingDispositionBundle(event.findingBundle, expectedRequiredCheckSource, {
+      collectedConversation, convergenceObservedAt, sameHeadCheckRuns, sameHeadCheckRunsComplete, expectedPolicySha256,
+    })
     if (
       convergence.repository !== state.repository || convergence.prNumber !== state.prNumber ||
-      convergence.baseOid !== state.baseOid || convergence.headOid !== state.frozenHeadOid ||
-      convergence.status !== 'passed' || convergence.reviewConverged !== true
+      convergence.baseOid !== state.baseOid || convergence.headOid !== state.frozenHeadOid
     ) fail('finalization_event_invalid', 'round_convergence_not_bound_to_frozen_pr')
+    // An escalated finding removes the transaction from autonomous authority.
+    if (convergence.status === 'escalated') return closeHeld(state, 'finding_escalated_to_external_authority')
+    if (convergence.status !== 'passed' || convergence.reviewConverged !== true) {
+      fail('finalization_event_invalid', 'round_convergence_not_bound_to_frozen_pr')
+    }
     const rounds = state.rounds.map((round, index) => index === roundIndex
       ? { ...round, status: 'completed', blockers: [] }
       : round)
@@ -420,25 +582,91 @@ export function validateSourcePinnedRequiredCheck(check, expected) {
   return true
 }
 
-export function validateAdversarialDecision(decision) {
+// Closed per-layer output schemas: a layer is not "closed" because it says so,
+// it is closed because it carries exactly the fields the adjudication contract
+// names and nothing else.
+const ADVERSARIAL_LAYER_KEYS = Object.freeze({
+  l1: ['model', 'output', 'packetSha256', 'findings'],
+  l2: ['model', 'output', 'packetSha256', 'l1OutputSha256', 'killed', 'surviving', 'unverified'],
+  l3: ['model', 'output', 'packetSha256', 'l1OutputSha256', 'l2OutputSha256', 'verdict', 'unresolvedHighCritical', 'rubric'],
+})
+const ADVERSARIAL_FINDING_SEVERITIES = new Set(['CRITICAL', 'HIGH', 'MEDIUM', 'LOW', 'ADVISORY'])
+const validateAdversarialFindingList = (list, label) => {
+  if (!Array.isArray(list) || list.length > 256) fail('adversarial_output_invalid', `${label}_invalid`)
+  const ids = new Set()
+  for (const [index, entry] of list.entries()) {
+    exactKeys(entry, ['id', 'severity', 'evidence'], 'adversarial_output_invalid', `${label}_${index}_shape_invalid`)
+    assertIdentifier(entry.id, 'adversarial_output_invalid', `${label}_${index}_id_invalid`)
+    if (!ADVERSARIAL_FINDING_SEVERITIES.has(entry.severity)) fail('adversarial_output_invalid', `${label}_${index}_severity_invalid`)
+    validateEvidenceLocations(entry.evidence, `${label}_${index}`)
+    if (ids.has(entry.id)) fail('adversarial_output_invalid', `${label}_${index}_duplicated`)
+    ids.add(entry.id)
+  }
+}
+
+export function validateAdversarialDecision(decision, { expectedPacketSha256 } = {}) {
   if (!isPlainObject(decision) || !isPlainObject(decision.layers)) {
     fail('adversarial_output_invalid', 'decision_shape_invalid')
   }
+  exactKeys(decision, ['packetSha256', 'layers'], 'adversarial_output_invalid', 'decision_shape_invalid')
+  exactKeys(decision.layers, ['l1', 'l2', 'l3'], 'adversarial_output_invalid', 'decision_layers_invalid')
   assertSha256(decision.packetSha256, 'adversarial_output_invalid', 'packet_digest_invalid')
+  // The packet digest is supplied by the trusted side: a decision that binds all
+  // three layers consistently to a fabricated packet is still not adjudicating
+  // the packet under review.
+  assertSha256(expectedPacketSha256, 'adversarial_raw_binding_invalid', 'trusted_packet_digest_required')
+  if (decision.packetSha256 !== expectedPacketSha256) fail('adversarial_raw_binding_invalid', 'decision_not_bound_to_trusted_packet')
   const { l1, l2, l3 } = decision.layers
   for (const [name, layer] of Object.entries({ l1, l2, l3 })) {
     if (!isPlainObject(layer) || layer.output !== 'closed') {
       fail('adversarial_output_invalid', `${name}_closed_output_required`)
     }
+    exactKeys(layer, ADVERSARIAL_LAYER_KEYS[name], 'adversarial_output_invalid', `${name}_schema_not_closed`)
     assertIdentifier(layer.model, 'adversarial_output_invalid', `${name}_model_invalid`)
+    // Every layer must prove it examined the same immutable packet; an L3 that
+    // binds the current packet cannot launder L1/L2 output from an older head.
+    if (layer.packetSha256 !== decision.packetSha256) {
+      fail('adversarial_raw_binding_invalid', `${name}_did_not_reread_bound_packet`)
+    }
+  }
+  validateAdversarialFindingList(l1.findings, 'l1_findings')
+  for (const key of ['killed', 'surviving', 'unverified']) validateAdversarialFindingList(l2[key], `l2_${key}`)
+  // Every L2 verdict names an L1 finding, and every L1 finding gets exactly one verdict.
+  const l1ById = new Map(l1.findings.map((finding) => [finding.id, finding]))
+  const l2Verdicts = [...l2.killed, ...l2.surviving, ...l2.unverified]
+  const l2Ids = l2Verdicts.map((finding) => finding.id)
+  if (l2Ids.length !== l1ById.size || new Set(l2Ids).size !== l2Ids.length || l2Ids.some((id) => !l1ById.has(id))) {
+    fail('adversarial_output_invalid', 'l2_verdicts_not_bound_to_l1_findings')
+  }
+  // A verdict judges the finding L1 reported, not a re-severitised copy of it: the
+  // blocker set below is derived from L2, so L2 cannot be allowed to downgrade.
+  for (const verdict of l2Verdicts) {
+    const reported = l1ById.get(verdict.id)
+    if (verdict.severity !== reported.severity || canonicalSha256(verdict.evidence) !== canonicalSha256(reported.evidence)) {
+      fail('adversarial_output_invalid', 'l2_verdict_severity_or_evidence_drift')
+    }
   }
   if (l1.model === l2.model) fail('adversarial_independence_invalid', 'l2_model_must_differ_from_l1')
-  if (l3.packetSha256 !== decision.packetSha256) {
-    fail('adversarial_raw_binding_invalid', 'l3_did_not_reread_bound_packet')
+  const l1OutputSha256 = canonicalSha256(l1)
+  if (l2.l1OutputSha256 !== l1OutputSha256) {
+    fail('adversarial_raw_binding_invalid', 'l2_not_bound_to_exact_l1_output')
   }
-  if (!Array.isArray(l3.unresolvedHighCritical) || l3.unresolvedHighCritical.length > 0) {
-    fail('adversarial_blocker_unresolved', 'high_or_critical_blocker_survived')
+  const l2OutputSha256 = canonicalSha256(l2)
+  if (l3.l1OutputSha256 !== l1OutputSha256 || l3.l2OutputSha256 !== l2OutputSha256) {
+    fail('adversarial_raw_binding_invalid', 'l3_not_bound_to_exact_layer_outputs')
   }
+  // L3 does not get to declare blocker closure on its own: the HIGH/CRITICAL
+  // survivors are derived from the bound L2 output and the L3 set must match them
+  // exactly, and any survivor at all keeps the verdict from passing.
+  const survivingHighCritical = l2.surviving
+    .filter((finding) => ['HIGH', 'CRITICAL'].includes(finding.severity))
+    .map((finding) => finding.id)
+  const declared = Array.isArray(l3.unresolvedHighCritical) ? l3.unresolvedHighCritical : null
+  if (
+    declared === null || declared.length !== survivingHighCritical.length ||
+    [...declared].sort().join('\n') !== [...survivingHighCritical].sort().join('\n')
+  ) fail('adversarial_raw_binding_invalid', 'l3_blocker_set_not_reconciled_with_l2')
+  if (survivingHighCritical.length > 0) fail('adversarial_blocker_unresolved', 'high_or_critical_blocker_survived')
   const requiredRubric = Array.from({ length: 12 }, (_, index) => `G${index + 1}`)
   if (!isPlainObject(l3.rubric) || Object.keys(l3.rubric).sort().join(',') !== [...requiredRubric].sort().join(',')) {
     fail('activation_unattested', 'g1_g12_rubric_incomplete')
@@ -453,8 +681,12 @@ export function validateAdversarialDecision(decision) {
   return deepFreeze({ ...clone(decision), verdict: l3.verdict })
 }
 
-export function buildExactHeadMergeRequest(snapshot, lease, { now = new Date(), method = 'squash' } = {}) {
+export function buildExactHeadMergeRequest(snapshot, lease, { now = new Date(), method = 'squash', consumeLease } = {}) {
   if (!isPlainObject(snapshot) || !isPlainObject(lease)) fail('premerge_evidence_invalid', 'snapshot_or_lease_missing')
+  // The library never authenticates or consumes a lease itself: a caller could
+  // copy snapshot fields into a fabricated lease. The external merge authority
+  // must verify the broker signature and atomically consume the nonce first.
+  if (typeof consumeLease !== 'function') fail('merge_authority_unavailable', 'external_lease_authority_required')
   if (
     snapshot.state !== 'OPEN' || snapshot.draft !== false || snapshot.mergeable !== true ||
     snapshot.threadsComplete !== true || snapshot.unresolvedThreads !== 0
@@ -476,52 +708,212 @@ export function buildExactHeadMergeRequest(snapshot, lease, { now = new Date(), 
   if (lease.consumed !== false || typeof lease.nonce !== 'string' || lease.nonce.length < 32) {
     fail('merge_authority_unavailable', 'lease_not_single_use')
   }
+  // An invalid Date compares false against every timestamp, which would silently
+  // accept an expired lease; a broken clock must fail closed before expiry math.
+  if (!(now instanceof Date) || !Number.isFinite(now.getTime())) {
+    fail('merge_authority_unavailable', 'clock_invalid')
+  }
   const expiresAt = Date.parse(lease.expiresAt)
-  if (!Number.isFinite(expiresAt) || !(now instanceof Date) || expiresAt <= now.getTime()) {
+  if (!Number.isFinite(expiresAt) || expiresAt <= now.getTime()) {
     fail('merge_authority_unavailable', 'lease_expired')
   }
   if (!['merge', 'squash', 'rebase'].includes(method)) fail('premerge_evidence_invalid', 'merge_method_not_allowed')
+  // The method is part of what the authority authorized: a lease issued for a
+  // squash cannot be spent on a rebase or a merge commit.
+  if (lease.method !== method) fail('policy_or_settings_drift', 'lease_method_mismatch')
+  let consumed = false
+  try {
+    consumed = consumeLease(deepFreeze({
+      repository: lease.repository,
+      prNumber: lease.prNumber,
+      baseOid: lease.baseOid,
+      headOid: lease.headOid,
+      settingsEpochSha256: lease.settingsEpochSha256,
+      evidenceSha256: lease.evidenceSha256,
+      method: lease.method,
+      nonce: lease.nonce,
+      expiresAt: lease.expiresAt,
+      leaseSha256: canonicalSha256(lease),
+    })) === true
+  } catch {
+    consumed = false
+  }
+  if (!consumed) fail('merge_authority_unavailable', 'lease_not_authenticated_or_already_consumed')
   return deepFreeze({ method, sha: snapshot.headOid })
 }
 
+// Mergeable PR classes admitted to the delivery lock. `draft_report_only` never
+// enters delivery; `release_hotfix` is mergeable and must not be locked out.
+const DELIVERY_LOCK_CLASSES = Object.freeze([
+  'ordinary', 'repair', 'revert', 'reconciliation', 'activation_canary', 'activation_closure', 'release_hotfix',
+])
+const RECOVERY_CLASSES = new Set(['repair', 'revert', 'reconciliation'])
+const TERMINAL_REASONS = Object.freeze({
+  DELIVERED: ['DELIVERY_VERIFIED'],
+  FAILED: ['MERGED_NOT_DELIVERED'],
+  HELD: [
+    'PREMERGE_EVIDENCE_INVALID', 'PREMERGE_AUTHORITY_UNAVAILABLE',
+    'POLICY_OR_SETTINGS_DRIFT', 'MERGE_OUTCOME_UNVERIFIED', 'DEPLOYMENT_BLOCKED',
+    'DELIVERY_PENDING_FIXPOINT', 'ACTIVATION_UNATTESTED',
+  ],
+})
+// Closed lane mapping for a non-delivered terminal: which recovery class may bind
+// to it. `null` means nothing merged, so the queue is not frozen; `[]` means the
+// queue is frozen with no autonomous lane (a new user-initiated transaction is
+// required); otherwise only the listed classes may acquire, bound to that ID.
+const RECOVERY_LANES = Object.freeze({
+  FAILED: Object.freeze({ MERGED_NOT_DELIVERED: ['repair', 'revert'] }),
+  HELD: Object.freeze({
+    PREMERGE_EVIDENCE_INVALID: null,
+    PREMERGE_AUTHORITY_UNAVAILABLE: null,
+    POLICY_OR_SETTINGS_DRIFT: null,
+    MERGE_OUTCOME_UNVERIFIED: ['reconciliation'],
+    DELIVERY_PENDING_FIXPOINT: ['reconciliation'],
+    DEPLOYMENT_BLOCKED: [],
+    ACTIVATION_UNATTESTED: [],
+  }),
+})
+
+// The lane a non-delivered terminal maps to. A drift or evidence hold that is
+// detected only after the merge boundary was crossed can no longer be treated as
+// "nothing merged": it binds the reconciliation lane like an unverified merge.
+const lanesFor = (event) => {
+  const lanes = RECOVERY_LANES[event.terminalClass]?.[event.reasonCode]
+  if (lanes === null && event.mergeBoundaryCrossed === true) return ['reconciliation']
+  return lanes
+}
+
 class SingleFlightLedger {
-  constructor(repository, active = null, history = []) {
+  constructor(repository, active = null, history = [], openRecovery = null) {
     this.repository = repository
     this.active = active
     this.history = history
+    // Terminal history is separate from the active lease: a FAILED/HELD closure
+    // releases the lock but leaves a bound recovery lineage open.
+    this.openRecovery = openRecovery
     Object.freeze(this.history)
     Object.freeze(this)
   }
 
-  acquire({ deliveryId, prClass } = {}) {
+  acquire({ deliveryId, prClass, supersedesDeliveryId = null } = {}, { verifyClassification } = {}) {
     assertIdentifier(deliveryId, 'delivery_lock_invalid', 'delivery_id_invalid')
-    if (!['ordinary', 'repair', 'revert', 'reconciliation', 'activation_canary', 'activation_closure'].includes(prClass)) {
-      fail('delivery_lock_invalid', 'pr_class_invalid')
+    if (!DELIVERY_LOCK_CLASSES.includes(prClass)) fail('delivery_lock_invalid', 'pr_class_invalid')
+    // The class is never taken on the caller's word: an external classifier bound
+    // to the exact PR head must confirm this delivery is that class, otherwise a
+    // caller who knows an open terminal ID could enter any recovery or activation lane.
+    let classified = false
+    try {
+      classified = typeof verifyClassification === 'function' && verifyClassification(deepFreeze({
+        repository: this.repository, deliveryId, prClass, supersedesDeliveryId,
+      })) === true
+    } catch {
+      classified = false
     }
+    if (!classified) fail('delivery_lock_invalid', 'pr_classification_unverified')
     if (this.active !== null) fail('delivery_lock_held', 'repository_delivery_is_single_flight')
-    const lease = deepFreeze({ repository: this.repository, deliveryId, prClass })
-    return { ledger: new SingleFlightLedger(this.repository, lease, this.history), lease }
+    if (this.history.some((event) => event.deliveryId === deliveryId)) {
+      fail('delivery_lock_invalid', 'delivery_id_already_terminal')
+    }
+    if (this.openRecovery === null) {
+      if (RECOVERY_CLASSES.has(prClass) || supersedesDeliveryId !== null) {
+        fail('delivery_lock_invalid', 'recovery_lane_requires_bound_terminal_lineage')
+      }
+    } else {
+      const lanes = lanesFor(this.openRecovery)
+      if (!lanes.includes(prClass)) {
+        fail('delivery_lock_frozen', `queue_frozen_until_${this.openRecovery.deliveryId}_is_recovered`)
+      }
+      if (supersedesDeliveryId !== this.openRecovery.deliveryId) {
+        fail('delivery_lock_invalid', 'recovery_must_bind_exact_terminal_delivery_id')
+      }
+    }
+    const lease = deepFreeze({
+      repository: this.repository, deliveryId, prClass, supersedesDeliveryId, mergeBoundaryCrossed: false,
+    })
+    return { ledger: new SingleFlightLedger(this.repository, lease, this.history, this.openRecovery), lease }
   }
 
-  close({ deliveryId, terminalClass, reasonCode } = {}) {
+  // Records that the merge request for the active delivery was issued. From here
+  // on every hold is a post-merge hold and must keep the lineage bound.
+  markMergeBoundary({ deliveryId } = {}) {
     if (this.active === null || this.active.deliveryId !== deliveryId) {
       fail('delivery_lock_invalid', 'delivery_does_not_hold_lock')
     }
-    const allowed = {
-      DELIVERED: ['DELIVERY_VERIFIED'],
-      FAILED: ['MERGED_NOT_DELIVERED'],
-      HELD: [
-        'PREMERGE_EVIDENCE_INVALID', 'PREMERGE_AUTHORITY_UNAVAILABLE',
-        'POLICY_OR_SETTINGS_DRIFT', 'MERGE_OUTCOME_UNVERIFIED', 'DEPLOYMENT_BLOCKED',
-        'DELIVERY_PENDING_FIXPOINT', 'ACTIVATION_UNATTESTED',
-      ],
+    const active = deepFreeze({ ...this.active, mergeBoundaryCrossed: true })
+    return new SingleFlightLedger(this.repository, active, this.history, this.openRecovery)
+  }
+
+  // A terminal that claims a merge happened (delivered, or merged but not
+  // delivered) is only recordable after the merge boundary was crossed, and
+  // `DELIVERED` additionally needs an external verifier to accept the named
+  // terminal evidence: a coordinator's bare assertion never releases the lock.
+  close({ deliveryId, terminalClass, reasonCode, evidenceRef = null } = {}, { verifyTerminal } = {}) {
+    if (this.active === null || this.active.deliveryId !== deliveryId) {
+      fail('delivery_lock_invalid', 'delivery_does_not_hold_lock')
     }
-    if (!allowed[terminalClass]?.includes(reasonCode)) fail('delivery_lock_invalid', 'terminal_mapping_invalid')
-    const event = deepFreeze({ ...this.active, terminalClass, reasonCode })
-    if (terminalClass !== 'DELIVERED') {
-      return new SingleFlightLedger(this.repository, event, [...this.history, event])
+    if (!TERMINAL_REASONS[terminalClass]?.includes(reasonCode)) fail('delivery_lock_invalid', 'terminal_mapping_invalid')
+    if (evidenceRef !== null) assertIdentifier(evidenceRef, 'delivery_lock_invalid', 'terminal_evidence_ref_invalid')
+    if ((terminalClass === 'DELIVERED' || terminalClass === 'FAILED') && this.active.mergeBoundaryCrossed !== true) {
+      fail('delivery_lock_invalid', 'terminal_requires_merge_boundary')
     }
-    return new SingleFlightLedger(this.repository, null, [...this.history, event])
+    if (terminalClass === 'DELIVERED') {
+      let verified = false
+      try {
+        verified = evidenceRef !== null && typeof verifyTerminal === 'function' && verifyTerminal(deepFreeze({
+          repository: this.repository, deliveryId, terminalClass, reasonCode, evidenceRef,
+        })) === true
+      } catch {
+        verified = false
+      }
+      if (!verified) fail('delivery_lock_invalid', 'terminal_delivery_unverified')
+    }
+    const event = deepFreeze({ ...this.active, terminalClass, reasonCode, evidenceRef })
+    const history = [...this.history, event]
+    if (terminalClass === 'DELIVERED') return new SingleFlightLedger(this.repository, null, history, null)
+    const lanes = lanesFor(event)
+    // A pre-merge HELD merged nothing: it never opens a lineage of its own, and it
+    // must not release a lineage that an earlier non-delivered terminal left open.
+    // Once the merge boundary was crossed the same reason code is post-merge and
+    // `lanesFor` binds it to reconciliation instead.
+    if (lanes === null) return new SingleFlightLedger(this.repository, null, history, this.openRecovery)
+    return new SingleFlightLedger(this.repository, null, history, event)
+  }
+
+  // The only exit from a frozen queue with no autonomous lane: an audited,
+  // authority-bearing user-initiated transaction that names the exact terminal.
+  unfreeze({ deliveryId, authorityRef, verifyAuthority } = {}) {
+    if (this.active !== null) fail('delivery_lock_held', 'repository_delivery_is_single_flight')
+    if (this.openRecovery === null || this.openRecovery.deliveryId !== deliveryId) {
+      fail('delivery_lock_invalid', 'unfreeze_must_name_open_terminal_delivery')
+    }
+    assertIdentifier(authorityRef, 'delivery_lock_invalid', 'unfreeze_authority_ref_invalid')
+    // A terminal that still maps to a recovery lane must be recovered through that
+    // lane; the escape hatch exists only for lane-less holds, and only an external
+    // authority (not a syntactically valid reference) can exercise it.
+    const lanes = lanesFor(this.openRecovery)
+    if (!Array.isArray(lanes) || lanes.length !== 0) {
+      fail('delivery_lock_invalid', 'unfreeze_not_allowed_for_recoverable_terminal')
+    }
+    let authorityVerified = false
+    try {
+      authorityVerified = typeof verifyAuthority === 'function' && verifyAuthority(deepFreeze({
+        repository: this.repository, deliveryId, authorityRef,
+        terminalClass: this.openRecovery.terminalClass, reasonCode: this.openRecovery.reasonCode,
+      })) === true
+    } catch {
+      authorityVerified = false
+    }
+    if (!authorityVerified) fail('delivery_lock_invalid', 'unfreeze_authority_unverified')
+    const event = deepFreeze({
+      repository: this.repository,
+      deliveryId,
+      prClass: this.openRecovery.prClass,
+      supersedesDeliveryId: this.openRecovery.supersedesDeliveryId,
+      terminalClass: this.openRecovery.terminalClass,
+      reasonCode: this.openRecovery.reasonCode,
+      unfrozenBy: authorityRef,
+    })
+    return new SingleFlightLedger(this.repository, null, [...this.history, event], null)
   }
 }
 
@@ -531,6 +923,9 @@ export function createSingleFlightLedger(repository) {
   }
   return new SingleFlightLedger(repository)
 }
+
+// Policy ceilings for a verifier's isolation quotas.
+const TRUST_ROOT_QUOTA_CEILINGS = Object.freeze({ cpuSeconds: 3600, wallSeconds: 7200, memoryMb: 16384, outputBytes: 64 * 1024 * 1024 })
 
 export function validateTrustRootDescriptor(descriptor) {
   const keys = [
@@ -559,8 +954,10 @@ export function validateTrustRootDescriptor(descriptor) {
     'trust_root_descriptor_invalid',
     'quota_shape_invalid',
   )
+  // Bounded means bounded above as well: a quota at MAX_SAFE_INTEGER is no isolation.
+  exactKeys(descriptor.quotas, Object.keys(TRUST_ROOT_QUOTA_CEILINGS), 'trust_root_descriptor_invalid', 'quota_shape_invalid')
   for (const [key, value] of Object.entries(descriptor.quotas)) {
-    if (!Number.isSafeInteger(value) || value < 1) fail('trust_root_descriptor_invalid', `quota_${key}_invalid`)
+    if (!Number.isSafeInteger(value) || value < 1 || value > TRUST_ROOT_QUOTA_CEILINGS[key]) fail('trust_root_descriptor_invalid', `quota_${key}_invalid`)
   }
   try {
     assertNoSecretShape(descriptor)
@@ -570,10 +967,17 @@ export function validateTrustRootDescriptor(descriptor) {
   return deepFreeze(clone(descriptor))
 }
 
-export function validateActivationPlan(plan) {
+// A sink-enabled plan is only ever armed for one disposable exact tuple: the
+// canary binding names the repository, PR, base/head, activation manifest and a
+// single-use canary lease that an external authority must confirm.
+const CANARY_BINDING_KEYS = Object.freeze(['repository', 'prNumber', 'baseOid', 'headOid', 'activationManifestSha256', 'canaryLeaseId'])
+
+export function validateActivationPlan(plan, { verifyCanaryLease } = {}) {
+  const sinkArmed = isPlainObject(plan) && plan.sinkEnabled === true
   exactKeys(plan, [
     'schemaVersion', 'phase', 'sinkEnabled', 'commandId', 'authorityId',
     'preStateSha256', 'expectedObservationSha256', 'artifactSchemaId', 'rollbackCommandId',
+    ...(sinkArmed ? ['canary'] : []),
   ], 'activation_plan_invalid', 'activation_plan_shape_invalid')
   if (
     plan.schemaVersion !== 'autonomous-delivery-activation-plan/v1' ||
@@ -582,6 +986,24 @@ export function validateActivationPlan(plan) {
   ) fail('activation_plan_invalid', 'activation_plan_policy_invalid')
   if (['LEGACY_GUARDED', 'SHADOW_DUAL', 'CUTOVER_ARMED'].includes(plan.phase) && plan.sinkEnabled) {
     fail('activation_plan_invalid', 'sink_must_remain_disabled_before_canary')
+  }
+  if (sinkArmed) {
+    const canary = plan.canary
+    exactKeys(canary, CANARY_BINDING_KEYS, 'activation_plan_invalid', 'canary_binding_shape_invalid')
+    if (!SAFE_REPOSITORY.test(canary.repository) || !Number.isSafeInteger(canary.prNumber) || canary.prNumber < 1) {
+      fail('activation_plan_invalid', 'canary_binding_identity_invalid')
+    }
+    assertSha1(canary.baseOid, 'activation_plan_invalid', 'canary_binding_base_invalid')
+    assertSha1(canary.headOid, 'activation_plan_invalid', 'canary_binding_head_invalid')
+    assertSha256(canary.activationManifestSha256, 'activation_plan_invalid', 'canary_binding_manifest_invalid')
+    assertIdentifier(canary.canaryLeaseId, 'activation_plan_invalid', 'canary_binding_lease_invalid')
+    let leaseVerified = false
+    try {
+      leaseVerified = typeof verifyCanaryLease === 'function' && verifyCanaryLease(deepFreeze(clone(canary))) === true
+    } catch {
+      leaseVerified = false
+    }
+    if (!leaseVerified) fail('activation_plan_invalid', 'canary_lease_unverified')
   }
   for (const key of ['commandId', 'authorityId', 'artifactSchemaId', 'rollbackCommandId']) {
     assertIdentifier(plan[key], 'activation_plan_invalid', `${key}_invalid`)
@@ -598,31 +1020,74 @@ export function validateActivationPlan(plan) {
 
 const BLOCKING_FINDING_SEVERITIES = new Set(['P0', 'P1', 'P2', 'BLOCKER', 'CRITICAL', 'HIGH'])
 const NON_BLOCKING_FINDING_SEVERITIES = new Set(['P3', 'MEDIUM', 'LOW', 'ADVISORY'])
-const FINDING_SOURCES = new Set(['ci', 'reviewer', 'deterministic'])
+const FINDING_SOURCES = new Set(['ci', 'reviewer', 'human', 'deterministic'])
 const FINDING_VERIFICATIONS = new Set(['confirmed', 'refuted', 'unverified'])
-const FINDING_DISPOSITIONS = new Set(['FIX', 'REJECT', 'ACCEPT_RISK', 'DEFER'])
+// Closed Review Disposition vocabulary. Legacy values are accepted on input and
+// normalized so an older packet cannot smuggle an unknown state past the gate.
+export const REVIEW_DISPOSITIONS = Object.freeze(['ACCEPTED', 'FIX_REQUIRED', 'FALSE_POSITIVE', 'DEFERRED', 'ESCALATE'])
+const LEGACY_FINDING_DISPOSITIONS = Object.freeze({
+  FIX: 'FIX_REQUIRED', REJECT: 'FALSE_POSITIVE', ACCEPT_RISK: 'ACCEPTED', DEFER: 'DEFERRED',
+})
+export const FINDING_RISK_CLASSES = Object.freeze([
+  'contract_integrity', 'correctness', 'test_coverage', 'documentation', 'operability',
+  'security', 'acl', 'architecture', 'schema_migration', 'deployment', 'production', 'credentials',
+])
+// High-risk classes never autonomous-merge: only ESCALATE, or FALSE_POSITIVE with
+// reproducible counter-evidence, may close them.
+export const HIGH_RISK_FINDING_CLASSES = Object.freeze([
+  'security', 'acl', 'architecture', 'schema_migration', 'deployment', 'production', 'credentials',
+])
 const FOLLOW_UP_ISSUE = /^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/issues\/[1-9][0-9]*$/u
 const EVIDENCE_LOCATION = /^[^\r\n:][^\r\n]*:[1-9][0-9]*$/u
+const parseTimestamp = (value) => (typeof value === 'string' ? Date.parse(value) : NaN)
 
-const validateFindingEvidence = (finding, label) => {
-  if (!Array.isArray(finding.evidence) || finding.evidence.length < 1 || finding.evidence.length > 8) {
+export function normalizeFindingDisposition(value) {
+  if (REVIEW_DISPOSITIONS.includes(value)) return value
+  if (typeof value === 'string' && Object.hasOwn(LEGACY_FINDING_DISPOSITIONS, value)) {
+    return LEGACY_FINDING_DISPOSITIONS[value]
+  }
+  fail('finding_disposition_invalid', 'disposition_not_closed')
+}
+
+const validateEvidenceLocations = (evidence, label) => {
+  if (!Array.isArray(evidence) || evidence.length < 1 || evidence.length > 8) {
     fail('finding_disposition_incomplete', `${label}_evidence_missing_or_unbounded`)
   }
-  if (finding.evidence.some((reference) => (
+  if (evidence.some((reference) => (
     typeof reference !== 'string' || reference.length > 240 || !EVIDENCE_LOCATION.test(reference)
   ))) fail('finding_disposition_invalid', `${label}_evidence_not_reproducible`)
   try {
-    assertNoSecretShape(finding.evidence)
+    assertNoSecretShape(evidence)
   } catch {
     fail('finding_disposition_invalid', `${label}_evidence_contains_secret`)
   }
 }
 
-const validateFindingDisposition = (finding, label, repository) => {
-  exactKeys(finding, [
-    'id', 'threadId', 'source', 'severity', 'verification', 'inScope', 'disposition',
-    'fixedOnHead', 'evidence', 'policyRule', 'followUpRef', 'threadResolved',
-  ], 'finding_disposition_invalid', `${label}_shape_invalid`)
+const sameRepositoryIssue = (value, repository) => (
+  typeof value === 'string' && FOLLOW_UP_ISSUE.test(value) &&
+  value.startsWith(`https://github.com/${repository}/issues/`)
+)
+
+const FINDING_KEYS = Object.freeze([
+  'id', 'threadId', 'source', 'severity', 'verification', 'inScope', 'riskClass', 'disposition',
+  'fixedOnHead', 'fixEvidence', 'evidence', 'policyRule', 'followUpRef', 'threadResolved',
+])
+
+// A "fixed" claim is never self-certifying: it must name the repair head, a
+// reproducible regression location, and the independent re-review that examined it.
+const validateFixEvidence = (fixEvidence, label, headOid) => {
+  exactKeys(fixEvidence, ['repairHeadOid', 'regressionEvidence', 'reReviewRef'], 'finding_disposition_invalid', `${label}_fix_evidence_shape_invalid`)
+  assertSha1(fixEvidence.repairHeadOid, 'finding_disposition_invalid', `${label}_repair_head_invalid`)
+  if (headOid !== null && fixEvidence.repairHeadOid !== headOid) {
+    fail('finding_disposition_invalid', `${label}_fix_not_on_current_head`)
+  }
+  validateEvidenceLocations(fixEvidence.regressionEvidence, `${label}_regression`)
+  assertIdentifier(fixEvidence.reReviewRef, 'finding_disposition_invalid', `${label}_independent_rereview_ref_invalid`)
+}
+
+export function validateFindingDisposition(findingRaw, label, repository, { headOid = null, converged = true } = {}) {
+  exactKeys(findingRaw, FINDING_KEYS, 'finding_disposition_invalid', `${label}_shape_invalid`)
+  const finding = { ...clone(findingRaw), disposition: normalizeFindingDisposition(findingRaw.disposition) }
   assertIdentifier(finding.id, 'finding_disposition_invalid', `${label}_id_invalid`)
   assertIdentifier(finding.threadId, 'finding_disposition_invalid', `${label}_thread_id_invalid`)
   if (!FINDING_SOURCES.has(finding.source)) fail('finding_disposition_invalid', `${label}_source_invalid`)
@@ -632,41 +1097,219 @@ const validateFindingDisposition = (finding, label, repository) => {
   if (!FINDING_VERIFICATIONS.has(finding.verification)) {
     fail('finding_disposition_invalid', `${label}_verification_invalid`)
   }
-  if (!FINDING_DISPOSITIONS.has(finding.disposition)) {
-    fail('finding_disposition_invalid', `${label}_disposition_invalid`)
-  }
+  if (!FINDING_RISK_CLASSES.includes(finding.riskClass)) fail('finding_disposition_invalid', `${label}_risk_class_invalid`)
   if (typeof finding.inScope !== 'boolean' || typeof finding.fixedOnHead !== 'boolean' || typeof finding.threadResolved !== 'boolean') {
     fail('finding_disposition_invalid', `${label}_boolean_invalid`)
   }
   assertIdentifier(finding.policyRule, 'finding_disposition_invalid', `${label}_policy_rule_invalid`)
-  validateFindingEvidence(finding, label)
+  validateEvidenceLocations(finding.evidence, label)
+  if (finding.fixEvidence !== null) validateFixEvidence(finding.fixEvidence, label, headOid)
 
-  if (finding.verification === 'unverified') {
+  const { disposition, verification, severity } = finding
+  const blocking = BLOCKING_FINDING_SEVERITIES.has(severity)
+  if (disposition !== 'ESCALATE' && verification === 'unverified') {
     fail('finding_disposition_incomplete', `${label}_verification_incomplete`)
   }
-  if (finding.disposition === 'FIX' && (
-    finding.verification !== 'confirmed' || !finding.inScope || !finding.fixedOnHead || finding.followUpRef !== null
-  )) fail('finding_disposition_invalid', `${label}_fix_contract_invalid`)
-  if (finding.disposition === 'REJECT' && (
-    finding.verification !== 'refuted' || finding.fixedOnHead || finding.followUpRef !== null
-  )) fail('finding_disposition_invalid', `${label}_reject_contract_invalid`)
-  if (finding.disposition === 'ACCEPT_RISK' && (
-    finding.verification !== 'confirmed' || finding.fixedOnHead || finding.followUpRef !== null ||
-    BLOCKING_FINDING_SEVERITIES.has(finding.severity)
-  )) fail('finding_disposition_invalid', `${label}_accepted_risk_not_policy_eligible`)
-  if (finding.disposition === 'DEFER' && (
-    finding.verification !== 'confirmed' || finding.inScope || finding.fixedOnHead ||
-    typeof finding.followUpRef !== 'string' || !FOLLOW_UP_ISSUE.test(finding.followUpRef) ||
-    !finding.followUpRef.startsWith(`https://github.com/${repository}/issues/`)
-  )) fail('finding_disposition_invalid', `${label}_defer_contract_invalid`)
-  if (finding.verification === 'confirmed' && finding.inScope && BLOCKING_FINDING_SEVERITIES.has(finding.severity) && finding.disposition !== 'FIX') {
-    fail('finding_disposition_invalid', `${label}_blocking_finding_requires_fix`)
+  if (
+    HIGH_RISK_FINDING_CLASSES.includes(finding.riskClass) && disposition !== 'ESCALATE' &&
+    !(disposition === 'FALSE_POSITIVE' && verification === 'refuted')
+  ) fail('finding_disposition_invalid', `${label}_high_risk_finding_requires_escalation`)
+
+  if (disposition === 'FIX_REQUIRED') {
+    if (verification !== 'confirmed' || !finding.inScope || finding.followUpRef !== null) {
+      fail('finding_disposition_invalid', `${label}_fix_contract_invalid`)
+    }
+    if (finding.fixedOnHead && finding.fixEvidence === null) {
+      fail('finding_disposition_invalid', `${label}_fix_claim_without_regression_and_rereview_evidence`)
+    }
+    if (!finding.fixedOnHead && finding.fixEvidence !== null) {
+      fail('finding_disposition_invalid', `${label}_fix_evidence_without_fixed_head`)
+    }
+    if (!finding.fixedOnHead && converged) fail('finding_disposition_incomplete', `${label}_fix_required_pending_repair`)
+  } else if (disposition === 'FALSE_POSITIVE') {
+    if (verification !== 'refuted' || finding.fixedOnHead || finding.fixEvidence !== null || finding.followUpRef !== null) {
+      fail('finding_disposition_invalid', `${label}_false_positive_contract_invalid`)
+    }
+  } else if (disposition === 'ACCEPTED') {
+    if (verification !== 'confirmed' || finding.followUpRef !== null) {
+      fail('finding_disposition_invalid', `${label}_accepted_contract_invalid`)
+    }
+    // "Already addressed on this head" is a fix claim and carries the same
+    // evidentiary bar as FIX_REQUIRED; a bare boolean never proves it.
+    if (finding.fixedOnHead && finding.fixEvidence === null) {
+      fail('finding_disposition_invalid', `${label}_accepted_fix_claim_without_regression_and_rereview_evidence`)
+    }
+    if (!finding.fixedOnHead && finding.fixEvidence !== null) {
+      fail('finding_disposition_invalid', `${label}_fix_evidence_without_fixed_head`)
+    }
+    // An unfixed blocking finding is never simply accepted, in or out of scope:
+    // out of scope it defers to a same-repository issue, otherwise it escalates.
+    if (blocking && !finding.fixedOnHead) fail('finding_disposition_invalid', `${label}_accepted_unfixed_blocking_finding`)
+  } else if (disposition === 'DEFERRED') {
+    if (
+      verification !== 'confirmed' || finding.inScope || finding.fixedOnHead || finding.fixEvidence !== null ||
+      !sameRepositoryIssue(finding.followUpRef, repository)
+    ) fail('finding_disposition_invalid', `${label}_defer_contract_invalid`)
+  } else {
+    if (finding.fixedOnHead || finding.fixEvidence !== null) fail('finding_disposition_invalid', `${label}_escalate_cannot_claim_fix`)
+    if (finding.followUpRef !== null && !sameRepositoryIssue(finding.followUpRef, repository)) {
+      fail('finding_disposition_invalid', `${label}_escalate_follow_up_invalid`)
+    }
+    if (finding.threadResolved) fail('finding_disposition_invalid', `${label}_escalated_thread_must_stay_open`)
   }
-  if (!finding.threadResolved) fail('finding_disposition_incomplete', `${label}_thread_not_resolved_after_disposition`)
-  return clone(finding)
+  // A confirmed in-scope blocker only leaves the gate through a verified fix on the
+  // current head (FIX_REQUIRED, or ACCEPTED with the same fix evidence because a
+  // prior commit on this head already addressed it) or by escalating outside
+  // autonomous authority. A bare `fixedOnHead` boolean is never enough.
+  if (verification === 'confirmed' && blocking && !(
+    disposition === 'ESCALATE' || disposition === 'FIX_REQUIRED' ||
+    (disposition === 'ACCEPTED' && finding.fixedOnHead && finding.fixEvidence !== null) ||
+    (disposition === 'DEFERRED' && !finding.inScope)
+  )) fail('finding_disposition_invalid', `${label}_blocking_finding_requires_fix`)
+  if (converged && disposition !== 'ESCALATE' && !finding.threadResolved) {
+    fail('finding_disposition_incomplete', `${label}_thread_not_resolved_after_disposition`)
+  }
+  return finding
 }
 
-export function validateFindingDispositionBundle(bundle, expectedRequiredCheckSource) {
+const MACHINE_GATE_KEYS = Object.freeze([
+  'name', 'appId', 'conclusion', 'headOid', 'checkRunId', 'startedAt', 'completedAt',
+])
+
+// The gate binds to the authoritative latest CheckRun of the expected source on the
+// frozen head, and that run must have started after finding convergence was
+// observed. Both the complete same-head run list and the convergence epoch come
+// from the trusted collector (outside the candidate bundle), never from the bundle
+// itself, so neither can be self-reported to satisfy the ordering check.
+const validateMachineGateEpoch = (gate, expectedSource, { convergenceObservedAt, sameHeadCheckRuns, sameHeadCheckRunsComplete } = {}) => {
+  exactKeys(gate, MACHINE_GATE_KEYS, 'finding_gate_order_invalid', 'machine_gate_shape_invalid')
+  if (!Number.isSafeInteger(gate.checkRunId) || gate.checkRunId < 1) {
+    fail('finding_gate_order_invalid', 'machine_gate_check_run_id_invalid')
+  }
+  const started = parseTimestamp(gate.startedAt)
+  const completed = parseTimestamp(gate.completedAt)
+  if (!Number.isFinite(started) || !Number.isFinite(completed) || completed < started) {
+    fail('finding_gate_order_invalid', 'machine_gate_timestamps_invalid')
+  }
+  const epoch = parseTimestamp(convergenceObservedAt)
+  if (!Number.isFinite(epoch)) fail('finding_gate_order_invalid', 'collector_convergence_epoch_required')
+  if (!Array.isArray(sameHeadCheckRuns) || sameHeadCheckRuns.length < 1 || sameHeadCheckRuns.length > 64) {
+    fail('finding_gate_order_invalid', 'collector_same_head_check_runs_required')
+  }
+  // Membership in the list proves nothing about what the list omits: the collector
+  // must witness that its pagination of this head's runs completed.
+  if (sameHeadCheckRunsComplete !== true) fail('finding_gate_order_invalid', 'collector_same_head_check_runs_incomplete')
+  const seen = new Set()
+  let latest = null
+  for (const [index, run] of sameHeadCheckRuns.entries()) {
+    exactKeys(run, ['id', 'name', 'appId', 'headOid', 'conclusion', 'startedAt', 'completedAt'], 'finding_gate_order_invalid', `same_head_check_run_${index}_shape_invalid`)
+    if (!Number.isSafeInteger(run.id) || run.id < 1 || seen.has(run.id)) {
+      fail('finding_gate_order_invalid', `same_head_check_run_${index}_id_invalid`)
+    }
+    if (run.name !== expectedSource.name || run.appId !== expectedSource.appId || run.headOid !== expectedSource.headOid) {
+      fail('finding_gate_order_invalid', `same_head_check_run_${index}_not_expected_source_on_head`)
+    }
+    seen.add(run.id)
+    if (latest === null || run.id > latest.id) latest = run
+  }
+  if (latest.id !== gate.checkRunId) fail('finding_gate_order_invalid', 'machine_gate_not_latest_same_head_check_run')
+  if (latest.conclusion !== gate.conclusion || latest.startedAt !== gate.startedAt || latest.completedAt !== gate.completedAt) {
+    fail('finding_gate_order_invalid', 'machine_gate_does_not_match_latest_check_run')
+  }
+  // Strictly after: GitHub timestamps have finite resolution, so a run sharing the
+  // collector's observation instant may have started before or concurrently with it.
+  if (started <= epoch) fail('finding_gate_order_invalid', 'machine_gate_started_before_finding_convergence')
+}
+
+// The server-derived conversation state observed by the trusted collector,
+// supplied from outside the candidate bundle: completeness, unresolved count and,
+// per finding, the authoritative thread, source, severity and resolution. The
+// bundle's own claims must match these records exactly, so a candidate can neither
+// omit a blocking finding, weaken its severity, re-home it to another thread, nor
+// declare a thread resolved that GitHub still reports open.
+const parseCollectedConversation = (collectedConversation) => {
+  if (!isPlainObject(collectedConversation)) fail('finding_disposition_incomplete', 'collector_conversation_state_required')
+  exactKeys(collectedConversation, ['repository', 'prNumber', 'baseOid', 'headOid', 'complete', 'unresolvedThreads', 'findings', 'reReviews'], 'finding_disposition_invalid', 'collected_conversation_shape_invalid')
+  // Thread ids survive head updates, so the collection names the exact tuple it
+  // observed; a cached or misrouted collection for another head never binds.
+  if (!SAFE_REPOSITORY.test(collectedConversation.repository) || !Number.isSafeInteger(collectedConversation.prNumber) || collectedConversation.prNumber < 1) {
+    fail('finding_disposition_invalid', 'collected_conversation_identity_invalid')
+  }
+  assertSha1(collectedConversation.baseOid, 'finding_disposition_invalid', 'collected_conversation_base_invalid')
+  assertSha1(collectedConversation.headOid, 'finding_disposition_invalid', 'collected_conversation_head_invalid')
+  if (typeof collectedConversation.complete !== 'boolean' ||
+      !Number.isSafeInteger(collectedConversation.unresolvedThreads) || collectedConversation.unresolvedThreads < 0) {
+    fail('finding_disposition_invalid', 'collected_conversation_state_invalid')
+  }
+  const findings = collectedConversation.findings
+  if (!Array.isArray(findings) || findings.length > 256) {
+    fail('finding_disposition_incomplete', 'collector_finding_set_required')
+  }
+  const byId = new Map()
+  const threads = new Set()
+  for (const [index, entry] of findings.entries()) {
+    exactKeys(entry, ['id', 'threadId', 'source', 'severity', 'resolved', 'inScope', 'riskClass', 'refutedEvidence', 'followUpIssue'], 'finding_disposition_invalid', `collected_finding_${index}_shape_invalid`)
+    assertIdentifier(entry.id, 'finding_disposition_invalid', `collected_finding_${index}_id_invalid`)
+    assertIdentifier(entry.threadId, 'finding_disposition_invalid', `collected_finding_${index}_thread_id_invalid`)
+    if (!FINDING_SOURCES.has(entry.source)) fail('finding_disposition_invalid', `collected_finding_${index}_source_invalid`)
+    if (!BLOCKING_FINDING_SEVERITIES.has(entry.severity) && !NON_BLOCKING_FINDING_SEVERITIES.has(entry.severity)) {
+      fail('finding_disposition_invalid', `collected_finding_${index}_severity_invalid`)
+    }
+    if (typeof entry.resolved !== 'boolean') fail('finding_disposition_invalid', `collected_finding_${index}_resolved_invalid`)
+    // Scope and risk class are authoritative classifications, not bundle opinions.
+    if (typeof entry.inScope !== 'boolean') fail('finding_disposition_invalid', `collected_finding_${index}_scope_invalid`)
+    if (!FINDING_RISK_CLASSES.includes(entry.riskClass)) fail('finding_disposition_invalid', `collected_finding_${index}_risk_class_invalid`)
+    // Counter-evidence for a refutation and the follow-up issue behind a deferral
+    // are collector observations on the current head, never bundle assertions.
+    if (entry.refutedEvidence !== null) validateEvidenceLocations(entry.refutedEvidence, `collected_finding_${index}_refutation`)
+    if (entry.followUpIssue !== null) {
+      exactKeys(entry.followUpIssue, ['url', 'state'], 'finding_disposition_invalid', `collected_finding_${index}_follow_up_shape_invalid`)
+      if (typeof entry.followUpIssue.url !== 'string' || !['open', 'closed'].includes(entry.followUpIssue.state)) {
+        fail('finding_disposition_invalid', `collected_finding_${index}_follow_up_invalid`)
+      }
+    }
+    if (byId.has(entry.id) || threads.has(entry.threadId)) {
+      fail('finding_disposition_invalid', `collected_finding_${index}_duplicated`)
+    }
+    byId.set(entry.id, entry)
+    threads.add(entry.threadId)
+  }
+  const unresolvedInRecords = findings.filter((entry) => !entry.resolved).length
+  if (unresolvedInRecords > collectedConversation.unresolvedThreads) {
+    fail('finding_disposition_invalid', 'collected_conversation_count_inconsistent')
+  }
+  // Independent re-reviews the collector observed on the server: which review
+  // examined which head, whether its author differs from the agent sender, and
+  // which regression locations the collector verified exist at that head. A fix
+  // claim may only cite these; it can never invent its own re-review reference.
+  const reReviewsRaw = collectedConversation.reReviews
+  if (!Array.isArray(reReviewsRaw) || reReviewsRaw.length > 64) {
+    fail('finding_disposition_invalid', 'collected_rereview_set_invalid')
+  }
+  const reReviews = new Map()
+  for (const [index, record] of reReviewsRaw.entries()) {
+    exactKeys(record, ['ref', 'findingId', 'headOid', 'independent', 'regressionLocations'], 'finding_disposition_invalid', `collected_rereview_${index}_shape_invalid`)
+    assertIdentifier(record.ref, 'finding_disposition_invalid', `collected_rereview_${index}_ref_invalid`)
+    assertIdentifier(record.findingId, 'finding_disposition_invalid', `collected_rereview_${index}_finding_invalid`)
+    assertSha1(record.headOid, 'finding_disposition_invalid', `collected_rereview_${index}_head_invalid`)
+    if (typeof record.independent !== 'boolean') fail('finding_disposition_invalid', `collected_rereview_${index}_independence_invalid`)
+    validateEvidenceLocations(record.regressionLocations, `collected_rereview_${index}`)
+    // One record per (re-review, finding): a re-review's coverage of finding A never
+    // vouches for finding B, even inside the same review.
+    const reReviewKey = `${record.ref}|${record.findingId}`
+    if (reReviews.has(reReviewKey)) fail('finding_disposition_invalid', `collected_rereview_${index}_duplicated`)
+    reReviews.set(reReviewKey, record)
+  }
+  return {
+    repository: collectedConversation.repository, prNumber: collectedConversation.prNumber,
+    baseOid: collectedConversation.baseOid, headOid: collectedConversation.headOid,
+    complete: collectedConversation.complete, unresolvedThreads: collectedConversation.unresolvedThreads, byId, reReviews,
+  }
+}
+
+export function validateFindingDispositionBundle(bundle, expectedRequiredCheckSource, {
+  collectedConversation, convergenceObservedAt, sameHeadCheckRuns, sameHeadCheckRunsComplete, expectedPolicySha256,
+} = {}) {
   exactKeys(bundle, [
     'schemaVersion', 'repository', 'prNumber', 'baseOid', 'headOid', 'policySha256',
     'threadsComplete', 'unresolvedThreads', 'machineGate', 'findings',
@@ -690,10 +1333,59 @@ export function validateFindingDispositionBundle(bundle, expectedRequiredCheckSo
   if (!Number.isSafeInteger(expectedRequiredCheckSource.appId) || expectedRequiredCheckSource.appId < 1) {
     fail('finding_gate_order_invalid', 'required_check_source_app_invalid')
   }
-  const findings = bundle.findings.map((finding, index) => validateFindingDisposition(finding, `finding_${index}`, bundle.repository))
+  const findings = bundle.findings.map((finding, index) => validateFindingDisposition(
+    finding, `finding_${index}`, bundle.repository, { headOid: bundle.headOid, converged: true },
+  ))
   if (new Set(findings.map((finding) => finding.id)).size !== findings.length ||
       new Set(findings.map((finding) => finding.threadId)).size !== findings.length) {
     fail('finding_disposition_invalid', 'finding_or_thread_identity_duplicated')
+  }
+  const collected = parseCollectedConversation(collectedConversation)
+  if (
+    collected.repository !== bundle.repository || collected.prNumber !== bundle.prNumber ||
+    collected.baseOid !== bundle.baseOid || collected.headOid !== bundle.headOid
+  ) fail('finding_disposition_invalid', 'collected_conversation_not_bound_to_pr')
+  // The bundle cannot vouch for the policy it was evaluated under: the trusted
+  // side supplies the current immutable policy digest and it must match exactly.
+  assertSha256(expectedPolicySha256, 'finding_disposition_invalid', 'trusted_policy_digest_required')
+  if (bundle.policySha256 !== expectedPolicySha256) fail('finding_disposition_invalid', 'bundle_policy_digest_not_trusted')
+  if (collected.byId.size !== findings.length || findings.some((finding) => !collected.byId.has(finding.id))) {
+    fail('finding_disposition_incomplete', 'dispositions_do_not_cover_complete_collected_finding_set')
+  }
+  for (const [index, finding] of findings.entries()) {
+    const record = collected.byId.get(finding.id)
+    if (
+      record.threadId !== finding.threadId || record.source !== finding.source || record.severity !== finding.severity ||
+      record.inScope !== finding.inScope || record.riskClass !== finding.riskClass
+    ) fail('finding_disposition_invalid', `finding_${index}_not_bound_to_collected_record`)
+    // A fix claim cites a server-observed independent re-review of the repair head
+    // and only regression locations the collector verified at that head.
+    if (finding.fixEvidence !== null) {
+      const reReview = collected.reReviews.get(`${finding.fixEvidence.reReviewRef}|${finding.id}`)
+      if (
+        !reReview || reReview.headOid !== finding.fixEvidence.repairHeadOid || reReview.independent !== true ||
+        !finding.fixEvidence.regressionEvidence.every((location) => reReview.regressionLocations.includes(location))
+      ) fail('finding_disposition_invalid', `finding_${index}_fix_evidence_not_server_observed`)
+    }
+    // A refutation cites only counter-evidence the collector verified on this head.
+    if (finding.disposition === 'FALSE_POSITIVE' && (
+      !Array.isArray(record.refutedEvidence) ||
+      !finding.evidence.every((location) => record.refutedEvidence.includes(location))
+    )) fail('finding_disposition_invalid', `finding_${index}_refutation_not_server_observed`)
+    // A deferral cites a follow-up issue the collector observed open in this repository.
+    if (finding.disposition === 'DEFERRED' && (
+      record.followUpIssue === null || record.followUpIssue.url !== finding.followUpRef || record.followUpIssue.state !== 'open'
+    )) fail('finding_disposition_invalid', `finding_${index}_follow_up_issue_not_server_observed`)
+    if (record.resolved !== finding.threadResolved) {
+      fail('finding_disposition_incomplete', `finding_${index}_thread_resolution_not_server_observed`)
+    }
+  }
+  if (bundle.threadsComplete !== collected.complete || bundle.unresolvedThreads !== collected.unresolvedThreads) {
+    fail('finding_disposition_incomplete', 'conversation_state_not_server_observed')
+  }
+  if (findings.some((finding) => finding.disposition === 'ESCALATE')) {
+    // Escalation removes the PR from autonomous authority regardless of any gate.
+    return deepFreeze({ ...clone(bundle), findings, reviewConverged: false, status: 'escalated' })
   }
   if (!bundle.threadsComplete || bundle.unresolvedThreads !== 0) {
     fail('finding_disposition_incomplete', 'server_conversation_collection_not_converged')
@@ -702,12 +1394,9 @@ export function validateFindingDispositionBundle(bundle, expectedRequiredCheckSo
   if (bundle.machineGate === null) {
     return deepFreeze({ ...clone(bundle), findings, reviewConverged: true, status: 'held' })
   }
-  exactKeys(bundle.machineGate, [
-    'name', 'appId', 'conclusion', 'headOid', 'observedAfterConvergence',
-  ], 'finding_gate_order_invalid', 'machine_gate_shape_invalid')
-  if (bundle.machineGate.observedAfterConvergence !== true) {
-    fail('finding_gate_order_invalid', 'machine_gate_must_follow_exact_head_convergence')
-  }
+  validateMachineGateEpoch(bundle.machineGate, {
+    name: expectedRequiredCheckSource.name, appId: expectedRequiredCheckSource.appId, headOid: bundle.headOid,
+  }, { convergenceObservedAt, sameHeadCheckRuns, sameHeadCheckRunsComplete })
   validateSourcePinnedRequiredCheck({
     name: bundle.machineGate.name,
     appId: bundle.machineGate.appId,
@@ -721,7 +1410,51 @@ export function validateFindingDispositionBundle(bundle, expectedRequiredCheckSo
   return deepFreeze({ ...clone(bundle), findings, reviewConverged: true, status: 'passed' })
 }
 
-export function validateSubagentMergePlan(plan, { observedPrs, verifyProvenance } = {}) {
+const sortedUniqueNumbers = (values) => [...new Set(values)].sort((left, right) => left - right)
+
+// Server-derived dependency graph supplied separately from the subagent plan. The
+// plan's digest must equal this graph's canonical digest, every predecessor set is
+// compared as a complete edge set (skipped PRs re-pointed to their subsumer), and
+// every proof digest must be recomputable from the bound tuple.
+const parseAuthoritativeDependencies = (authoritativeDependencies) => {
+  if (!Array.isArray(authoritativeDependencies) || authoritativeDependencies.length < 1 || authoritativeDependencies.length > 200) {
+    fail('merge_plan_dependency_invalid', 'authoritative_dependency_graph_missing_or_unbounded')
+  }
+  const graph = new Map()
+  for (const [index, entry] of authoritativeDependencies.entries()) {
+    exactKeys(entry, ['prNumber', 'headOid', 'predecessorPrNumbers'], 'merge_plan_dependency_invalid', `authoritative_dependency_${index}_shape_invalid`)
+    if (!Number.isSafeInteger(entry.prNumber) || entry.prNumber < 1 || graph.has(entry.prNumber)) {
+      fail('merge_plan_dependency_invalid', `authoritative_dependency_${index}_identity_invalid`)
+    }
+    assertSha1(entry.headOid, 'merge_plan_dependency_invalid', `authoritative_dependency_${index}_head_invalid`)
+    if (!Array.isArray(entry.predecessorPrNumbers) || entry.predecessorPrNumbers.length > 32 ||
+        entry.predecessorPrNumbers.some((prNumber) => !Number.isSafeInteger(prNumber) || prNumber < 1 || prNumber === entry.prNumber)) {
+      fail('merge_plan_dependency_invalid', `authoritative_dependency_${index}_edges_invalid`)
+    }
+    graph.set(entry.prNumber, { headOid: entry.headOid, predecessorPrNumbers: sortedUniqueNumbers(entry.predecessorPrNumbers) })
+  }
+  for (const [prNumber, entry] of graph) {
+    if (entry.predecessorPrNumbers.some((predecessor) => !graph.has(predecessor))) {
+      fail('merge_plan_dependency_invalid', `authoritative_dependency_${prNumber}_references_unknown_pr`)
+    }
+  }
+  const canonicalGraph = [...graph.entries()]
+    .sort((left, right) => left[0] - right[0])
+    .map(([prNumber, entry]) => ({ prNumber, headOid: entry.headOid, predecessorPrNumbers: entry.predecessorPrNumbers }))
+  return { graph, digest: canonicalSha256(canonicalGraph) }
+}
+
+export function mergeOrderDependencyProof({ prNumber, headOid, predecessorPrNumbers, dependencyGraphSha256 }) {
+  return canonicalSha256({ prNumber, headOid, predecessorPrNumbers: sortedUniqueNumbers(predecessorPrNumbers), dependencyGraphSha256 })
+}
+
+export function subsumptionProof({ prNumber, headOid, subsumedByPrNumber, subsumedByHeadOid }) {
+  return canonicalSha256({ kind: 'SKIP_SUBSUMED', prNumber, headOid, subsumedByPrNumber, subsumedByHeadOid })
+}
+
+export function validateSubagentMergePlan(plan, {
+  observedPrs, observedBaseOid, verifyProvenance, authoritativeDependencies, verifySubsumption,
+} = {}) {
   exactKeys(plan, [
     'schemaVersion', 'repository', 'baseOid', 'policySha256', 'dependencyGraphSha256',
     'generatedBy', 'mergeOrder', 'skips',
@@ -744,13 +1477,40 @@ export function validateSubagentMergePlan(plan, { observedPrs, verifyProvenance 
   if (!Array.isArray(plan.mergeOrder) || plan.mergeOrder.length < 1 || plan.mergeOrder.length > 100) {
     fail('merge_plan_invalid', 'merge_order_missing_or_unbounded')
   }
+  if (!Array.isArray(observedPrs) || typeof verifyProvenance !== 'function' || typeof verifySubsumption !== 'function') {
+    fail('merge_plan_authority_invalid', 'authenticated_subagent_provenance_server_observations_and_subsumption_verifier_required')
+  }
+  // A predecessor merge advances the integration branch; the plan's ordering
+  // evidence is only valid for the exact base it was computed against.
+  assertSha1(observedBaseOid, 'merge_plan_observation_invalid', 'observed_base_oid_required')
+  if (plan.baseOid !== observedBaseOid) fail('merge_plan_head_drift', 'base_changed_after_plan')
+  const { graph, digest: authoritativeDigest } = parseAuthoritativeDependencies(authoritativeDependencies)
+  if (plan.dependencyGraphSha256 !== authoritativeDigest) {
+    fail('merge_plan_dependency_invalid', 'dependency_graph_digest_not_authoritative')
+  }
+  if (!Array.isArray(plan.skips) || plan.skips.length > 100) {
+    fail('merge_plan_skip_invalid', 'skip_registry_unbounded')
+  }
+  const plannedMergeNumbers = new Set(plan.mergeOrder.map((entry) => (isPlainObject(entry) ? entry.prNumber : null)))
+  const skipTargets = new Map()
+  for (const [index, entry] of plan.skips.entries()) {
+    exactKeys(entry, [
+      'prNumber', 'headOid', 'disposition', 'subsumedByPrNumber', 'proofSha256',
+    ], 'merge_plan_skip_invalid', `skip_${index}_shape_invalid`)
+    if (!Number.isSafeInteger(entry.prNumber) || entry.prNumber < 1 || skipTargets.has(entry.prNumber) ||
+        !Number.isSafeInteger(entry.subsumedByPrNumber) || entry.subsumedByPrNumber === entry.prNumber ||
+        !plannedMergeNumbers.has(entry.subsumedByPrNumber)) {
+      fail('merge_plan_skip_invalid', `skip_${index}_lineage_invalid`)
+    }
+    skipTargets.set(entry.prNumber, entry.subsumedByPrNumber)
+  }
 
-  const seen = new Set()
+  const seen = new Map()
   const mergeOrder = plan.mergeOrder.map((entry, index) => {
     exactKeys(entry, [
       'prNumber', 'headOid', 'predecessorPrNumbers', 'dependencyProofSha256',
     ], 'merge_plan_invalid', `merge_order_${index}_shape_invalid`)
-    if (!Number.isSafeInteger(entry.prNumber) || entry.prNumber < 1 || seen.has(entry.prNumber)) {
+    if (!Number.isSafeInteger(entry.prNumber) || entry.prNumber < 1 || seen.has(entry.prNumber) || skipTargets.has(entry.prNumber)) {
       fail('merge_plan_invalid', `merge_order_${index}_pr_invalid`)
     }
     assertSha1(entry.headOid, 'merge_plan_invalid', `merge_order_${index}_head_invalid`)
@@ -760,31 +1520,57 @@ export function validateSubagentMergePlan(plan, { observedPrs, verifyProvenance 
         entry.predecessorPrNumbers.some((prNumber) => !Number.isSafeInteger(prNumber) || !seen.has(prNumber))) {
       fail('merge_plan_dependency_invalid', `merge_order_${index}_predecessor_not_earlier`)
     }
-    seen.add(entry.prNumber)
+    const authority = graph.get(entry.prNumber)
+    if (!authority || authority.headOid !== entry.headOid) {
+      fail('merge_plan_dependency_invalid', `merge_order_${index}_not_in_authoritative_graph`)
+    }
+    const declared = sortedUniqueNumbers(entry.predecessorPrNumbers)
+    const expected = sortedUniqueNumbers(
+      authority.predecessorPrNumbers.map((predecessor) => skipTargets.get(predecessor) ?? predecessor)
+        .filter((predecessor) => predecessor !== entry.prNumber),
+    )
+    if (declared.join(',') !== expected.join(',')) {
+      fail('merge_plan_dependency_invalid', `merge_order_${index}_predecessors_not_authoritative`)
+    }
+    if (entry.dependencyProofSha256 !== mergeOrderDependencyProof({
+      prNumber: entry.prNumber, headOid: entry.headOid, predecessorPrNumbers: declared,
+      dependencyGraphSha256: plan.dependencyGraphSha256,
+    })) fail('merge_plan_dependency_invalid', `merge_order_${index}_proof_not_recomputable`)
+    seen.set(entry.prNumber, entry.headOid)
     return clone(entry)
   })
 
-  if (!Array.isArray(plan.skips) || plan.skips.length > 100) {
-    fail('merge_plan_skip_invalid', 'skip_registry_unbounded')
-  }
-  const skipped = new Set()
   const skips = plan.skips.map((entry, index) => {
-    exactKeys(entry, [
-      'prNumber', 'headOid', 'disposition', 'subsumedByPrNumber', 'proofSha256',
-    ], 'merge_plan_skip_invalid', `skip_${index}_shape_invalid`)
-    if (
-      !Number.isSafeInteger(entry.prNumber) || entry.prNumber < 1 || seen.has(entry.prNumber) || skipped.has(entry.prNumber) ||
-      entry.disposition !== 'SKIP_SUBSUMED' || !seen.has(entry.subsumedByPrNumber)
-    ) fail('merge_plan_skip_invalid', `skip_${index}_lineage_invalid`)
+    if (entry.disposition !== 'SKIP_SUBSUMED' || !seen.has(entry.subsumedByPrNumber)) {
+      fail('merge_plan_skip_invalid', `skip_${index}_lineage_invalid`)
+    }
     assertSha1(entry.headOid, 'merge_plan_skip_invalid', `skip_${index}_head_invalid`)
     assertSha256(entry.proofSha256, 'merge_plan_skip_invalid', `skip_${index}_proof_invalid`)
-    skipped.add(entry.prNumber)
+    const authority = graph.get(entry.prNumber)
+    if (!authority || authority.headOid !== entry.headOid) {
+      fail('merge_plan_skip_invalid', `skip_${index}_not_in_authoritative_graph`)
+    }
+    const subsumedByHeadOid = seen.get(entry.subsumedByPrNumber)
+    if (entry.proofSha256 !== subsumptionProof({
+      prNumber: entry.prNumber, headOid: entry.headOid,
+      subsumedByPrNumber: entry.subsumedByPrNumber, subsumedByHeadOid,
+    })) fail('merge_plan_skip_invalid', `skip_${index}_proof_not_recomputable`)
+    let subsumptionVerified = false
+    try {
+      subsumptionVerified = verifySubsumption(deepFreeze({
+        prNumber: entry.prNumber, headOid: entry.headOid,
+        subsumedByPrNumber: entry.subsumedByPrNumber, subsumedByHeadOid, proofSha256: entry.proofSha256,
+      })) === true
+    } catch {
+      subsumptionVerified = false
+    }
+    if (!subsumptionVerified) fail('merge_plan_skip_invalid', `skip_${index}_subsumption_unverified`)
     return clone(entry)
   })
-  if (!Array.isArray(observedPrs) || typeof verifyProvenance !== 'function') {
-    fail('merge_plan_authority_invalid', 'authenticated_subagent_provenance_and_server_observations_required')
-  }
   const plannedEntries = [...mergeOrder, ...skips]
+  if (graph.size !== plannedEntries.length) {
+    fail('merge_plan_dependency_invalid', 'authoritative_graph_scope_mismatch')
+  }
   if (observedPrs.length !== plannedEntries.length) {
     fail('merge_plan_observation_invalid', 'server_observation_scope_mismatch')
   }
@@ -824,4 +1610,210 @@ export function validateSubagentMergePlan(plan, { observedPrs, verifyProvenance 
     fail('merge_plan_authority_invalid', 'subagent_provenance_attestation_failed')
   }
   return deepFreeze({ ...canonicalPlan, authorityVerified: true })
+}
+
+// ---------------------------------------------------------------------------
+// Review Disposition Agent — an extension of the merge-queue agent, not a second
+// pipeline. The read-only queue observer renders structured GitHub replies with
+// hidden machine metadata; a separate coordinator-owned sink posts them. Every
+// reply is bound to finding, exact head, agent run, sender and triggering event so
+// that a repeated webhook, a re-run, or the agent's own comment can never trigger
+// the same disposition twice. Nothing in this section mutates GitHub.
+// ---------------------------------------------------------------------------
+export const REVIEW_DISPOSITION_SCHEMA = 'ai-bim-review-disposition/v1'
+const REVIEW_DISPOSITION_MARKER_ANY = /<!--\s*ai-bim-review-disposition\/v1\b/u
+const REVIEW_DISPOSITION_MARKER = /<!--\s*ai-bim-review-disposition\/v1\s+(\{[^\r\n]*\})\s*-->/u
+// Any body containing a reviewer-bot mention would recursively trigger that bot.
+const AGENT_MENTION_TRIGGER = /@(?:codex|claude)\b/iu
+const GITHUB_LOGIN = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?(?:\[bot\])?$/u
+const REVIEW_DISPOSITION_METADATA_KEYS = Object.freeze([
+  'schema', 'repository', 'pr_number', 'finding_id', 'thread_id', 'head_sha', 'base_sha',
+  'agent_run_id', 'sender', 'webhook_event_id', 'disposition', 'severity', 'risk_class',
+  'verification', 'fixed_on_head', 'evidence_sha256',
+])
+
+// Whether a thread may be resolved is derived from the metadata alone, so a
+// plan file or sidecar can never assert resolvability the body does not support.
+export function reviewDispositionResolvable(metadata) {
+  return metadata.disposition !== 'ESCALATE' && !(metadata.disposition === 'FIX_REQUIRED' && metadata.fixed_on_head !== true)
+}
+
+const assertReplyText = (value, { min, max, detail }) => {
+  if (typeof value !== 'string' || value.trim().length < min || value.length > max) {
+    fail('review_disposition_invalid', detail)
+  }
+  if (AGENT_MENTION_TRIGGER.test(value)) fail('review_disposition_invalid', `${detail}_contains_agent_mention_trigger`)
+  try {
+    assertNoSecretShape(value)
+  } catch {
+    fail('review_disposition_invalid', `${detail}_contains_secret`)
+  }
+}
+
+export function validateReviewDispositionMetadata(metadataRaw) {
+  // Markers posted before `fixed_on_head` joined the v1 key set carry no fix claim:
+  // read them as `fixed_on_head: false` so an older reply can still be recognised
+  // as agent output and deduplicated, never as a fixed claim.
+  const withFixFlag = isPlainObject(metadataRaw) && !Object.hasOwn(metadataRaw, 'fixed_on_head')
+    ? { ...metadataRaw, fixed_on_head: false }
+    : metadataRaw
+  exactKeys(withFixFlag, REVIEW_DISPOSITION_METADATA_KEYS, 'review_disposition_metadata_invalid', 'metadata_shape_invalid')
+  const metadata = clone(withFixFlag)
+  if (
+    metadata.schema !== REVIEW_DISPOSITION_SCHEMA || !SAFE_REPOSITORY.test(metadata.repository) ||
+    !Number.isSafeInteger(metadata.pr_number) || metadata.pr_number < 1
+  ) fail('review_disposition_metadata_invalid', 'metadata_identity_invalid')
+  assertIdentifier(metadata.finding_id, 'review_disposition_metadata_invalid', 'finding_id_invalid')
+  assertIdentifier(metadata.thread_id, 'review_disposition_metadata_invalid', 'thread_id_invalid')
+  assertSha1(metadata.head_sha, 'review_disposition_metadata_invalid', 'head_sha_invalid')
+  assertSha1(metadata.base_sha, 'review_disposition_metadata_invalid', 'base_sha_invalid')
+  assertIdentifier(metadata.agent_run_id, 'review_disposition_metadata_invalid', 'agent_run_id_invalid')
+  if (typeof metadata.sender !== 'string' || !GITHUB_LOGIN.test(metadata.sender)) {
+    fail('review_disposition_metadata_invalid', 'sender_invalid')
+  }
+  assertIdentifier(metadata.webhook_event_id, 'review_disposition_metadata_invalid', 'webhook_event_id_invalid')
+  if (!REVIEW_DISPOSITIONS.includes(metadata.disposition)) {
+    fail('review_disposition_metadata_invalid', 'disposition_not_closed')
+  }
+  if (!BLOCKING_FINDING_SEVERITIES.has(metadata.severity) && !NON_BLOCKING_FINDING_SEVERITIES.has(metadata.severity)) {
+    fail('review_disposition_metadata_invalid', 'severity_invalid')
+  }
+  if (!FINDING_RISK_CLASSES.includes(metadata.risk_class)) fail('review_disposition_metadata_invalid', 'risk_class_invalid')
+  if (!FINDING_VERIFICATIONS.has(metadata.verification)) fail('review_disposition_metadata_invalid', 'verification_invalid')
+  if (typeof metadata.fixed_on_head !== 'boolean') fail('review_disposition_metadata_invalid', 'fixed_on_head_invalid')
+  assertSha256(metadata.evidence_sha256, 'review_disposition_metadata_invalid', 'evidence_digest_invalid')
+  return deepFreeze(metadata)
+}
+
+// Full idempotency tuple: finding × exact head × agent run × sender × triggering event.
+export function reviewDispositionTupleKey(metadataRaw) {
+  const metadata = validateReviewDispositionMetadata(metadataRaw)
+  return [
+    metadata.finding_id, metadata.head_sha, metadata.agent_run_id, metadata.sender, metadata.webhook_event_id,
+  ].join('|')
+}
+
+export function buildReviewDispositionReply({
+  repository, prNumber, finding, headOid, baseOid, agentRunId, sender, webhookEventId,
+  rationale, nextAction = null, evidenceSha256,
+} = {}) {
+  if (typeof repository !== 'string' || !SAFE_REPOSITORY.test(repository) || !Number.isSafeInteger(prNumber) || prNumber < 1) {
+    fail('review_disposition_invalid', 'repository_or_pr_invalid')
+  }
+  assertSha1(headOid, 'review_disposition_invalid', 'head_oid_invalid')
+  assertSha1(baseOid, 'review_disposition_invalid', 'base_oid_invalid')
+  // The decision is validated against the current head but not yet converged: a
+  // FIX_REQUIRED reply is posted before the repair lands and its thread stays open.
+  const decision = validateFindingDisposition(finding, 'finding', repository, { headOid, converged: false })
+  assertIdentifier(agentRunId, 'review_disposition_invalid', 'agent_run_id_invalid')
+  if (typeof sender !== 'string' || !GITHUB_LOGIN.test(sender)) fail('review_disposition_invalid', 'sender_invalid')
+  assertIdentifier(webhookEventId, 'review_disposition_invalid', 'webhook_event_id_invalid')
+  assertReplyText(rationale, { min: 20, max: 4000, detail: 'rationale_invalid' })
+  if (nextAction !== null) assertReplyText(nextAction, { min: 1, max: 600, detail: 'next_action_invalid' })
+  assertSha256(evidenceSha256, 'review_disposition_invalid', 'evidence_digest_invalid')
+  const metadata = validateReviewDispositionMetadata({
+    schema: REVIEW_DISPOSITION_SCHEMA,
+    repository,
+    pr_number: prNumber,
+    finding_id: decision.id,
+    thread_id: decision.threadId,
+    head_sha: headOid,
+    base_sha: baseOid,
+    agent_run_id: agentRunId,
+    sender,
+    webhook_event_id: webhookEventId,
+    disposition: decision.disposition,
+    severity: decision.severity,
+    risk_class: decision.riskClass,
+    verification: decision.verification,
+    fixed_on_head: decision.fixedOnHead,
+    evidence_sha256: evidenceSha256,
+  })
+  const codeList = (values) => values.map((value) => `\`${value}\``).join(', ')
+  const lines = [
+    `**Review Disposition: \`${decision.disposition}\`** — severity \`${decision.severity}\`, risk class \`${decision.riskClass}\`, verification \`${decision.verification}\`, ${decision.inScope ? 'in scope' : 'out of scope'} for this PR.`,
+    '',
+    rationale.trim(),
+    '',
+    `Evidence: ${codeList(decision.evidence)}`,
+    decision.fixEvidence
+      ? `Fix evidence: repair head \`${decision.fixEvidence.repairHeadOid}\`, regression ${codeList(decision.fixEvidence.regressionEvidence)}, independent re-review \`${decision.fixEvidence.reReviewRef}\``
+      : null,
+    decision.followUpRef ? `Follow-up: ${decision.followUpRef}` : null,
+    nextAction ? `Next action: ${nextAction.trim()}` : null,
+    `Bound to head \`${headOid}\` (base \`${baseOid}\`), agent run \`${agentRunId}\`, sender \`${sender}\`. This reply is disposition evidence only: it is not an approval and not merge authority, and a \`FIX_REQUIRED\` claim is satisfied only by a repair head that passes targeted tests, current-head CI and an independent re-review.`,
+    '',
+    `<!-- ${REVIEW_DISPOSITION_SCHEMA} ${JSON.stringify(canonicalize(metadata))} -->`,
+  ].filter((line) => line !== null)
+  const body = lines.join('\n')
+  if (Buffer.byteLength(body, 'utf8') > 60000) fail('review_disposition_invalid', 'reply_body_too_large')
+  // The assembled body is what GitHub delivers to other bots: check it as a whole,
+  // not only the free-text inputs, so an evidence location cannot smuggle a mention.
+  assertReplyText(body, { min: 20, max: 60000, detail: 'rendered_body_invalid' })
+  return deepFreeze({ body, metadata, tupleKey: reviewDispositionTupleKey(metadata), decision })
+}
+
+// Loop guard: anything carrying the marker is agent output, never intake.
+export function isAgentGeneratedComment(body) {
+  return typeof body === 'string' && REVIEW_DISPOSITION_MARKER_ANY.test(body)
+}
+
+export function parseReviewDispositionMetadata(body) {
+  if (typeof body !== 'string') return null
+  const match = REVIEW_DISPOSITION_MARKER.exec(body)
+  if (!match) {
+    if (REVIEW_DISPOSITION_MARKER_ANY.test(body)) fail('review_disposition_metadata_invalid', 'metadata_marker_malformed')
+    return null
+  }
+  let parsed
+  try {
+    parsed = JSON.parse(match[1])
+  } catch {
+    fail('review_disposition_metadata_invalid', 'metadata_json_unparseable')
+  }
+  return validateReviewDispositionMetadata(parsed)
+}
+
+// Loop guard keyed on the server-reported author AND the marker: only a marked
+// comment written by the trusted agent sender is agent output. A marker pasted or
+// quoted by any other author is ordinary text, so it can neither hide that author's
+// finding from intake nor influence deduplication; and the sender's own unmarked
+// review findings stay intake instead of being silenced by their author alone.
+export function selectFindingIntake(comments, { agentSender } = {}) {
+  if (!Array.isArray(comments)) fail('review_disposition_invalid', 'comments_required')
+  if (typeof agentSender !== 'string' || !GITHUB_LOGIN.test(agentSender)) fail('review_disposition_invalid', 'agent_sender_required')
+  return deepFreeze(comments
+    .filter((comment) => isPlainObject(comment) && typeof comment.body === 'string' &&
+      !(comment.author === agentSender && isAgentGeneratedComment(comment.body)))
+    .map(clone))
+}
+
+export function planReviewDispositionMutation({ existingComments, candidateMetadata } = {}) {
+  const candidate = validateReviewDispositionMetadata(candidateMetadata)
+  if (!Array.isArray(existingComments)) fail('review_disposition_invalid', 'existing_comments_required')
+  const candidateKey = reviewDispositionTupleKey(candidate)
+  for (const comment of existingComments) {
+    if (!isPlainObject(comment) || typeof comment.body !== 'string') continue
+    // Only the trusted sender's own comments carry authoritative metadata.
+    if (comment.author !== candidate.sender) continue
+    let existing = null
+    try {
+      existing = parseReviewDispositionMetadata(comment.body)
+    } catch {
+      return deepFreeze({ action: 'hold', reason: 'existing_agent_metadata_unparseable' })
+    }
+    if (existing === null) continue
+    if (reviewDispositionTupleKey(existing) === candidateKey) {
+      return deepFreeze({ action: 'skip', reason: 'duplicate_exact_tuple' })
+    }
+    // Same decision for the same finding on the same exact base/head tuple with the
+    // same evidence fingerprint: a base that moved underneath the head is a new
+    // integration state and gets its own disposition.
+    if (
+      existing.finding_id === candidate.finding_id && existing.head_sha === candidate.head_sha &&
+      existing.base_sha === candidate.base_sha && existing.disposition === candidate.disposition &&
+      existing.evidence_sha256 === candidate.evidence_sha256
+    ) return deepFreeze({ action: 'skip', reason: 'already_dispositioned_on_head' })
+  }
+  return deepFreeze({ action: 'post', reason: 'new_disposition_for_finding_on_head' })
 }

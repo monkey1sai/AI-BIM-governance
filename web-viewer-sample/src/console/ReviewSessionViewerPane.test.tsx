@@ -363,6 +363,7 @@ describe("ReviewSessionViewerPane", () => {
     const highlight = q<HTMLButtonElement>("review-room-highlight")!;
     expect(highlight.disabled).toBe(false);
     await act(async () => { highlight.click(); });
+    const firstClientRequestId = viewerBox.sendHighlight.mock.calls[0][1] as string;
 
     expect(coordinatorClient.viewerLeaseHeartbeat).toHaveBeenCalledWith("review_session_x", "viewer_lease_primary", "lease_token_primary", expect.objectContaining({
       loaded_stage_url: "stage://x",
@@ -372,16 +373,44 @@ describe("ReviewSessionViewerPane", () => {
     expect(viewerBox.sendHighlight).toHaveBeenCalledWith([expect.objectContaining({
       ifc_guid: "2O2Fr$t4X7Zf8NOew3FLOH",
       rule_code: "FIRE-RATING",
-    })]);
+    })], expect.any(String));
     expect(q("review-room-command-trace")?.textContent).toContain('"source": "review-room"');
     expect(q("review-room-command-trace")?.textContent).toContain("/World/Door_001");
     expect(q("review-room-runtime-evidence")?.textContent).toContain("pending viewer ack");
 
     await act(async () => {
-      (viewerBox.current!.onHighlightResult as (m: unknown) => void)({ protocol: "vg01", type: "highlight_result", requestId: "r1", ok: true });
+      root!.render(<ReviewSessionViewerPane handoff={{
+        ...handoff,
+        ifcGuid: "guid-door-002",
+        usdPrimPath: "/World/Door_002",
+      }} />);
     });
     await flush();
 
+    expect(q("review-room-handoff-summary")?.textContent).toContain("/World/Door_002");
+    expect(q("review-room-runtime-evidence")?.textContent).toContain("not_sent");
+    expect(q("review-room-command-trace")).toBeNull();
+
+    const secondHighlight = q<HTMLButtonElement>("review-room-highlight")!;
+    expect(secondHighlight.disabled).toBe(false);
+    await act(async () => { secondHighlight.click(); });
+    const secondClientRequestId = viewerBox.sendHighlight.mock.calls[1][1] as string;
+    expect(secondClientRequestId).not.toBe(firstClientRequestId);
+
+    await act(async () => {
+      (viewerBox.current!.onHighlightResult as (m: unknown) => void)({
+        protocol: "vg01", type: "highlight_result", requestId: "kit-old", clientRequestId: firstClientRequestId, ok: true,
+      });
+    });
+    await flush();
+    expect(q("review-room-runtime-evidence")?.textContent).toContain("pending viewer ack");
+
+    await act(async () => {
+      (viewerBox.current!.onHighlightResult as (m: unknown) => void)({
+        protocol: "vg01", type: "highlight_result", requestId: "kit-current", clientRequestId: secondClientRequestId, ok: true,
+      });
+    });
+    await flush();
     expect(q("review-room-runtime-evidence")?.textContent).toContain("已送出並收到 viewer 回報");
 
     await act(async () => {

@@ -17,6 +17,13 @@ Default to one coordinator and Lane F/B. Use these local mappings only:
 
 The coordinator owns scope, source-of-truth loading, write-conflict control, evidence synthesis, and final verification. Workers are read-only unless a bounded, non-conflicting scope is explicitly granted. Do not pin model names or duplicate global tiers, effort lanes, output schemas, or generic workflow modes here.
 
+For concurrent writers, load `docs/agents/parallel-delivery-fabric.md`. Session
+count is not an admission gate: each writer must own an independent sibling
+worktree, branch, and non-overlapping declared touch-set. Same branch/worktree
+contention and unknown overlap remain queued. `WRITER_CAPACITY` is reserved for
+separately attested physical Kit/WebRTC capacity, not the number of coding
+sessions. The Fabric remains shadow-only and cannot activate merge or delivery.
+
 The global apex-slot gate applies to every child dispatch in this repo. Reserve one apex planning/review/decision assignment, then route any remaining worker with the minimum sufficient model, effort, bounded prompt, and evidence responsibility; no apex means `HELD` rather than a downgraded swarm.
 
 ## Situational work shaping

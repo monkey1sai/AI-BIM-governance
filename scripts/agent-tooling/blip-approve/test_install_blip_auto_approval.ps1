@@ -259,7 +259,7 @@ $skillText = Get-Content -Raw -LiteralPath $skillPath
 $readmeText = Get-Content -Raw -LiteralPath $readmePath
 $workflowText = Get-Content -Raw -LiteralPath $workflowPath
 foreach ($document in @($skillText, $readmeText)) {
-    Assert-True ($document -notmatch '(?is)-NonInteractive\s+-File\s+[^\r\n]*run_blip_live_approve_once\.ps1') `
+    Assert-True ($document -notmatch '(?is)-NonInteractive\s+-File\s+[^\r\n]*(?<!test_)run_blip_live_approve_once\.ps1') `
         'A documented live broker command still disables its masked PAT prompt.'
 }
 Assert-True ($skillText -match 'ACTIVATION.*HELD' -and

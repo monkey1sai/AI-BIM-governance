@@ -188,6 +188,53 @@ try {
     Remove-Item -LiteralPath $narrowRoot -Recurse -Force -ErrorAction SilentlyContinue
 }
 
+$pairedRoot = Join-Path $repoRoot "artifacts/tmp/design-scope-paired-$([guid]::NewGuid().ToString('N'))"
+New-Item -ItemType Directory -Path $pairedRoot -Force | Out-Null
+try {
+    Push-Location $pairedRoot
+    try {
+        git init -q
+        git config user.email 'design-scope@example.invalid'
+        git config user.name 'Design Scope Test'
+        New-Item -ItemType Directory -Path 'docs/plans' -Force | Out-Null
+        Copy-Item -LiteralPath (Join-Path $repoRoot 'docs/plans/design-system-reference.manifest.json') -Destination 'docs/plans/design-system-reference.manifest.json'
+        $pairedBaseManifest = Get-Content -LiteralPath 'docs/plans/design-system-reference.manifest.json' -Raw | ConvertFrom-Json
+        $pairedScreen = $pairedBaseManifest.screens[0]
+        $pairedBaselinePath = [string]$pairedScreen.baselines.'1440x900'.path
+        New-Item -ItemType Directory -Path (Split-Path -Parent $pairedBaselinePath) -Force | Out-Null
+        New-Item -ItemType Directory -Path 'web-viewer-sample/src' -Force | Out-Null
+        Set-Content -LiteralPath $pairedBaselinePath -Value 'base paired golden' -Encoding utf8
+        Set-Content -LiteralPath 'web-viewer-sample/src/App.tsx' -Value 'export const App = () => 1;' -Encoding utf8
+        git add .
+        git commit -q -m 'base paired rebaseline fixture'
+        $pairedBase = (git rev-parse HEAD).Trim()
+
+        $pairedScreen | Add-Member -NotePropertyName baseline_provenance -NotePropertyValue ([pscustomobject]@{
+            authority = 'canonical_product_surface'
+            canonical_route = [string]$pairedScreen.production_routes[0]
+            capture_runner = 'web-viewer-sample/e2e/design-system-visual.spec.ts'
+            approval = 'explicit test rebaseline approval'
+        }) -Force
+        $pairedScreen.baselines.'1440x900'.sha256 = ('a' * 64)
+        $pairedBaseManifest.baseline_snapshot_sha256 = ('b' * 64)
+        $pairedBaseManifest | ConvertTo-Json -Depth 100 | Set-Content -LiteralPath 'docs/plans/design-system-reference.manifest.json' -Encoding utf8
+        Set-Content -LiteralPath $pairedBaselinePath -Value 'paired replacement golden' -Encoding utf8
+        Set-Content -LiteralPath 'web-viewer-sample/src/App.tsx' -Value 'export const App = () => 2;' -Encoding utf8
+        git add .
+        git commit -q -m 'paired product rebaseline'
+        $pairedHead = (git rev-parse HEAD).Trim()
+        $pairedPaths = @(& git diff --no-renames --name-only "$pairedBase...$pairedHead")
+        if ($LASTEXITCODE -ne 0) { throw 'Unable to compute paired rebaseline fixture diff.' }
+    } finally {
+        Pop-Location
+    }
+    $pairedScope = Get-DesignSystemChangeScope -RepoRoot $pairedRoot -ChangedPaths $pairedPaths -BaseSha $pairedBase -HeadSha $pairedHead
+    Assert-True ($pairedScope.status -eq 'passed_with_rebaseline') 'paired product rebaseline stays subject to the visual gate instead of failing closed'
+    Assert-True $pairedScope.paired_rebaseline 'paired rebaseline is explicitly observable to callers'
+} finally {
+    Remove-Item -LiteralPath $pairedRoot -Recurse -Force -ErrorAction SilentlyContinue
+}
+
 $tempRoot = Join-Path $repoRoot "artifacts/tmp/design-scope-$([guid]::NewGuid().ToString('N'))"
 New-Item -ItemType Directory -Path (Join-Path $tempRoot 'web-viewer-sample') -Force | Out-Null
 try {

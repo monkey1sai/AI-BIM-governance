@@ -5,7 +5,7 @@ import { WorkspacePage } from "./WorkspacePage";
 import { ConsoleDataProvider } from "./ConsoleDataProvider";
 import { coordinatorStatusStore } from "./coordinatorStatusStore";
 import { UnifiedStateProvider } from "./UnifiedShell";
-import { spyCoordinatorEndpoints, RT_IDLE } from "./__testdata__/coordinatorMocks";
+import { spyCoordinatorEndpointsOffline } from "./__testdata__/coordinatorMocks";
 
 describe("a1OfflineViewport (Task 3.1)", () => {
   let container: HTMLDivElement;
@@ -46,53 +46,22 @@ describe("a1OfflineViewport (Task 3.1)", () => {
     }
   }
 
-  it("renders demo offline viewport without fabricated streaming metrics (Streaming · 28 ms or 60 FPS in viewport)", async () => {
+  it("renders the live A1 workbench without any demo viewport or fabricated streaming status", async () => {
+    spyCoordinatorEndpointsOffline();
     await mount("a1");
-    // Viewport area must be marked data-prov="demo"
     const demoVp = container.querySelector("[data-uc='viewport']");
-    expect(demoVp).not.toBeNull();
-    expect(demoVp?.getAttribute("data-prov")).toBe("demo");
-    expect(demoVp?.textContent).toMatch(/no-GPU 示意／示範圖|no-GPU/);
-
-    // Must NOT contain fabricated streaming metrics inside the viewport
+    expect(demoVp).toBeNull();
+    expect(container.textContent).toContain("A1 · 治理與模型檢核");
     expect(container.querySelector("[data-uc='streaming-pill']")).toBeNull();
-    expect(demoVp?.textContent).not.toContain("Streaming · 28 ms");
-    expect(demoVp?.textContent).not.toContain("60 FPS · 28 ms");
+    expect(container.textContent).not.toContain("openedStageResult ✓");
+    expect(container.textContent).not.toContain("no-GPU 示意");
   });
 
-  it("provides manual handoff link to /ui/open?session=<id> when review session exists", async () => {
-    spyCoordinatorEndpoints({
-      runtimeStatus: {
-        ...RT_IDLE,
-        sessions: {
-          count: 1,
-          active_count: 1,
-          participant_count: 2,
-          items: [
-            {
-              session_id: "S-12345",
-              status: "active",
-              project_id: "p1",
-              model_version_id: "m1",
-              participant_count: 2,
-              expected_stage_url: null,
-              conversion_status: null,
-              kit_instance_ids: [],
-              created_at: "2026-08-25T00:00:00Z",
-              updated_at: "2026-08-25T00:00:00Z",
-            },
-          ],
-        },
-      },
-    });
+  it("does not auto-attach an unrelated runtime session before a real A1 rule result exists", async () => {
+    spyCoordinatorEndpointsOffline();
     await mount("a1");
-
-    const handoffLink = container.querySelector<HTMLAnchorElement>("a[data-uc='live-handoff-link']");
-    if (handoffLink) {
-      expect(handoffLink.href).toContain("/ui/open?session=S-12345");
-      expect(handoffLink.target).toBe("_blank");
-      expect(handoffLink.rel).toContain("noopener");
-    }
+    expect(container.querySelector("[data-testid='a1-inline-manual-start']")).toBeNull();
+    expect(container.querySelector("[data-testid='a1-inline-highlight']")).toBeNull();
   });
 
   it("does not render any conversion trigger button on A1 workspace", async () => {

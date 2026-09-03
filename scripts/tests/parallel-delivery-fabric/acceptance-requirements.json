@@ -1,0 +1,476 @@
+{
+  "schema_version": "parallel-delivery-fabric-acceptance-requirements/v1",
+  "operator_doc_sha256": "a51388b2e3a405162d4d60cfc0d14e6b4206986ed72c2a99085245f69e219955",
+  "policy_mode": "NORMATIVE_ONLY",
+  "activation_migration_prerequisites": [
+    "settings_lease",
+    "rollback_snapshot",
+    "post_change_authoritative_reread",
+    "add_before_remove",
+    "disposable_canary_delivered"
+  ],
+  "canary_cutover_policy": {
+    "from_phase": "CANARY_ACTIVE",
+    "to_phase": "AUTONOMOUS_ACTIVE",
+    "evidence_scope": "DISPOSABLE_ONLY",
+    "authority_state": "NON_TERMINAL",
+    "required_prerequisite": "disposable_canary_delivered",
+    "legacy_gate_removal": "AFTER_SUCCESSFUL_CANARY"
+  },
+  "read_only_effect_denials": {
+    "MERGE_QUEUE_OBSERVATION": ["ENQUEUE", "MERGE", "DEPLOY", "PUBLISH"]
+  },
+  "writer_cap": 1,
+  "acceptance": [
+    {
+      "id": "AC-01",
+      "semantic": "CROSS_WRITER_POSITIVE_CANARY",
+      "required_gate_kinds": ["CONTRACT"],
+      "source_authority": ["APPROVED_DESIGN", "EXTERNAL_EXECUTION_CONTEXT_AUTHORITY"],
+      "evidence_origin": "EXTERNAL",
+      "side_effect_class": "EXTERNAL_ACTIVATION_REQUIRED",
+      "activation_requirement": "EXTERNAL_ACTIVATION_REQUIRED",
+      "authority_dependencies": ["EXTERNAL_EXECUTION_CONTEXT_AUTHORITY"]
+    },
+    {
+      "id": "AC-02",
+      "semantic": "PROVIDER_NEUTRAL_TOUCHSET_ISOLATION",
+      "required_gate_kinds": ["CONTRACT", "STATIC_ANALYSIS"],
+      "source_authority": ["APPROVED_DESIGN", "LOCAL_CONTRACT_AUTHORITY"],
+      "evidence_origin": "LOCAL",
+      "side_effect_class": "NO_SIDE_EFFECT",
+      "activation_requirement": "SHADOW_ONLY",
+      "authority_dependencies": []
+    },
+    {
+      "id": "AC-03",
+      "semantic": "CRASH_ISOLATION_WITHOUT_DESTRUCTIVE_RECOVERY",
+      "required_gate_kinds": ["CONTRACT"],
+      "source_authority": ["APPROVED_DESIGN", "EXTERNAL_EXECUTION_CONTEXT_AUTHORITY"],
+      "evidence_origin": "EXTERNAL",
+      "side_effect_class": "EXTERNAL_ACTIVATION_REQUIRED",
+      "activation_requirement": "EXTERNAL_ACTIVATION_REQUIRED",
+      "authority_dependencies": ["EXTERNAL_EXECUTION_CONTEXT_AUTHORITY"]
+    },
+    {
+      "id": "AC-04",
+      "semantic": "EXPLICIT_RESUME_TUPLE_REBIND",
+      "required_gate_kinds": ["CONTRACT", "STATIC_ANALYSIS"],
+      "source_authority": ["APPROVED_DESIGN", "LOCAL_CONTRACT_AUTHORITY"],
+      "evidence_origin": "LOCAL",
+      "side_effect_class": "NO_SIDE_EFFECT",
+      "activation_requirement": "SHADOW_ONLY",
+      "authority_dependencies": []
+    },
+    {
+      "id": "AC-05",
+      "semantic": "LEASE_CAS_SINGLE_WINNER",
+      "required_gate_kinds": ["CONTRACT", "STATIC_ANALYSIS"],
+      "source_authority": ["APPROVED_DESIGN", "LOCAL_CONTRACT_AUTHORITY"],
+      "evidence_origin": "LOCAL",
+      "side_effect_class": "LOCAL_METADATA_ONLY",
+      "activation_requirement": "SHADOW_ONLY",
+      "authority_dependencies": []
+    },
+    {
+      "id": "AC-06",
+      "semantic": "SCOPE_NORMALIZATION_AND_CONSERVATIVE_OVERLAP",
+      "required_gate_kinds": ["CONTRACT", "STATIC_ANALYSIS"],
+      "source_authority": ["APPROVED_DESIGN", "LOCAL_CONTRACT_AUTHORITY"],
+      "evidence_origin": "LOCAL",
+      "side_effect_class": "NO_SIDE_EFFECT",
+      "activation_requirement": "SHADOW_ONLY",
+      "authority_dependencies": []
+    },
+    {
+      "id": "AC-07",
+      "semantic": "SCOPE_DRIFT_REVALIDATION",
+      "required_gate_kinds": ["CONTRACT", "STATIC_ANALYSIS"],
+      "source_authority": ["APPROVED_DESIGN", "LOCAL_CONTRACT_AUTHORITY"],
+      "evidence_origin": "LOCAL",
+      "side_effect_class": "NO_SIDE_EFFECT",
+      "activation_requirement": "SHADOW_ONLY",
+      "authority_dependencies": []
+    },
+    {
+      "id": "AC-08",
+      "semantic": "ACTUAL_CONTEXT_PREFLIGHT",
+      "required_gate_kinds": ["CONTRACT", "POLICY"],
+      "source_authority": ["APPROVED_DESIGN", "EXTERNAL_EXECUTION_CONTEXT_AUTHORITY"],
+      "evidence_origin": "EXTERNAL",
+      "side_effect_class": "EXTERNAL_ACTIVATION_REQUIRED",
+      "activation_requirement": "EXTERNAL_ACTIVATION_REQUIRED",
+      "authority_dependencies": ["EXTERNAL_EXECUTION_CONTEXT_AUTHORITY"]
+    },
+    {
+      "id": "AC-09",
+      "semantic": "PREWRITE_ISOLATION_NEGATIVES",
+      "required_gate_kinds": ["CONTRACT", "POLICY"],
+      "source_authority": ["APPROVED_DESIGN", "LOCAL_CONTRACT_AUTHORITY"],
+      "evidence_origin": "LOCAL",
+      "side_effect_class": "NO_SIDE_EFFECT",
+      "activation_requirement": "SHADOW_ONLY",
+      "authority_dependencies": []
+    },
+    {
+      "id": "AC-10",
+      "semantic": "RUNTIME_CAPACITY_ARBITRATION",
+      "required_gate_kinds": ["CONTRACT", "POLICY"],
+      "source_authority": ["APPROVED_DESIGN", "AC10_RUNTIME_CAPACITY_AUTHORITY"],
+      "evidence_origin": "LOCAL",
+      "side_effect_class": "EXTERNAL_ACTIVATION_REQUIRED",
+      "activation_requirement": "EXTERNAL_ACTIVATION_REQUIRED",
+      "authority_dependencies": ["AC10_RUNTIME_CAPACITY_AUTHORITY"]
+    },
+    {
+      "id": "AC-11",
+      "semantic": "MANAGED_BRANCH_BASE_RULES",
+      "required_gate_kinds": ["CONTRACT", "POLICY"],
+      "source_authority": ["APPROVED_DESIGN", "PRIOR_BASE_EVIDENCE_AUTHORITY", "MANAGED_BRANCH_AUTHORITY"],
+      "evidence_origin": "LOCAL",
+      "side_effect_class": "NO_SIDE_EFFECT",
+      "activation_requirement": "PRIOR_BASE_AUTHORITY_REQUIRED",
+      "authority_dependencies": ["MANAGED_BRANCH_AUTHORITY"]
+    },
+    {
+      "id": "AC-12",
+      "semantic": "PARENT_DRIFT_INVALIDATION",
+      "required_gate_kinds": ["CONTRACT", "STATIC_ANALYSIS"],
+      "source_authority": ["APPROVED_DESIGN", "LOCAL_CONTRACT_AUTHORITY"],
+      "evidence_origin": "LOCAL",
+      "side_effect_class": "NO_SIDE_EFFECT",
+      "activation_requirement": "SHADOW_ONLY",
+      "authority_dependencies": []
+    },
+    {
+      "id": "AC-13",
+      "semantic": "EXECUTION_LEVEL_GATES",
+      "required_gate_kinds": ["CONTRACT", "POLICY"],
+      "source_authority": ["APPROVED_DESIGN", "PRIOR_BASE_EVIDENCE_AUTHORITY", "TASK9_D2_ACTIVATION_AUTHORITY"],
+      "evidence_origin": "LOCAL",
+      "side_effect_class": "EXTERNAL_HANDOFF_ONLY",
+      "activation_requirement": "TASK9_D2_AUTHORITY_REQUIRED",
+      "authority_dependencies": ["TASK9_D2_ACTIVATION_AUTHORITY"]
+    },
+    {
+      "id": "AC-14",
+      "semantic": "DELIVERY_AUTHORITY_NEGATIVES",
+      "required_gate_kinds": ["CONTRACT", "POLICY", "STATIC_ANALYSIS"],
+      "source_authority": ["APPROVED_DESIGN", "TASK9_D2_ACTIVATION_AUTHORITY", "TASK11B_POST_MERGE_AUTHORITY"],
+      "evidence_origin": "EXTERNAL",
+      "side_effect_class": "EXTERNAL_HANDOFF_ONLY",
+      "activation_requirement": "TASK9_D2_AUTHORITY_REQUIRED",
+      "authority_dependencies": ["TASK9_D2_ACTIVATION_AUTHORITY", "TASK11B_POST_MERGE_AUTHORITY"]
+    },
+    {
+      "id": "AC-15",
+      "semantic": "STACK_CAPABILITY_GATE",
+      "required_gate_kinds": ["CONTRACT", "POLICY"],
+      "source_authority": ["APPROVED_DESIGN", "EXTERNAL_PROMOTION_AUTHORITY"],
+      "evidence_origin": "EXTERNAL",
+      "side_effect_class": "EXTERNAL_ACTIVATION_REQUIRED",
+      "activation_requirement": "EXTERNAL_ACTIVATION_REQUIRED",
+      "authority_dependencies": ["EXTERNAL_PROMOTION_AUTHORITY"]
+    },
+    {
+      "id": "AC-16",
+      "semantic": "STACK_VECTOR_FREEZE",
+      "required_gate_kinds": ["CONTRACT", "STATIC_ANALYSIS"],
+      "source_authority": ["APPROVED_DESIGN", "PRIOR_BASE_EVIDENCE_AUTHORITY"],
+      "evidence_origin": "LOCAL",
+      "side_effect_class": "NO_SIDE_EFFECT",
+      "activation_requirement": "PRIOR_BASE_AUTHORITY_REQUIRED",
+      "authority_dependencies": []
+    },
+    {
+      "id": "AC-17",
+      "semantic": "ASYNC_RESPONSE_AND_POLL_MATRIX",
+      "required_gate_kinds": ["CONTRACT", "STATIC_ANALYSIS"],
+      "source_authority": ["APPROVED_DESIGN", "LOCAL_CONTRACT_AUTHORITY"],
+      "evidence_origin": "LOCAL",
+      "side_effect_class": "NO_SIDE_EFFECT",
+      "activation_requirement": "SHADOW_ONLY",
+      "authority_dependencies": []
+    },
+    {
+      "id": "AC-18",
+      "semantic": "STACK_ATTRIBUTION",
+      "required_gate_kinds": ["CONTRACT", "STATIC_ANALYSIS"],
+      "source_authority": ["APPROVED_DESIGN", "PRIOR_BASE_EVIDENCE_AUTHORITY"],
+      "evidence_origin": "LOCAL",
+      "side_effect_class": "NO_SIDE_EFFECT",
+      "activation_requirement": "PRIOR_BASE_AUTHORITY_REQUIRED",
+      "authority_dependencies": []
+    },
+    {
+      "id": "AC-19",
+      "semantic": "GROUP_DELIVERY_BARRIER",
+      "required_gate_kinds": ["CONTRACT", "POLICY"],
+      "source_authority": ["APPROVED_DESIGN", "EXTERNAL_PROMOTION_AUTHORITY"],
+      "evidence_origin": "EXTERNAL",
+      "side_effect_class": "EXTERNAL_HANDOFF_ONLY",
+      "activation_requirement": "EXTERNAL_ACTIVATION_REQUIRED",
+      "authority_dependencies": ["EXTERNAL_PROMOTION_AUTHORITY"]
+    },
+    {
+      "id": "AC-20",
+      "semantic": "BATCH_NEGATIVES",
+      "required_gate_kinds": ["CONTRACT", "POLICY"],
+      "source_authority": ["APPROVED_DESIGN", "LOCAL_CONTRACT_AUTHORITY"],
+      "evidence_origin": "LOCAL",
+      "side_effect_class": "NO_SIDE_EFFECT",
+      "activation_requirement": "SHADOW_ONLY",
+      "authority_dependencies": []
+    },
+    {
+      "id": "AC-21",
+      "semantic": "INTEGRATION_TRAIN_BOUNDARY",
+      "required_gate_kinds": ["CONTRACT", "STATIC_ANALYSIS"],
+      "source_authority": ["APPROVED_DESIGN", "PRIOR_BASE_EVIDENCE_AUTHORITY"],
+      "evidence_origin": "LOCAL",
+      "side_effect_class": "NO_SIDE_EFFECT",
+      "activation_requirement": "PRIOR_BASE_AUTHORITY_REQUIRED",
+      "authority_dependencies": []
+    },
+    {
+      "id": "AC-22",
+      "semantic": "CONDITIONAL_PER_HEAD_REAL_E2E",
+      "required_gate_kinds": ["PLAYWRIGHT", "COMPUTER_USE"],
+      "source_authority": ["APPROVED_DESIGN", "PRIOR_BASE_EVIDENCE_AUTHORITY", "EXTERNAL_E2E_VERIFICATION_AUTHORITY"],
+      "evidence_origin": "EXTERNAL",
+      "side_effect_class": "EXTERNAL_ACTIVATION_REQUIRED",
+      "activation_requirement": "EXTERNAL_ACTIVATION_REQUIRED",
+      "authority_dependencies": ["EXTERNAL_E2E_VERIFICATION_AUTHORITY"]
+    },
+    {
+      "id": "AC-23",
+      "semantic": "MANIFEST_FREEZE",
+      "required_gate_kinds": ["CONTRACT", "STATIC_ANALYSIS"],
+      "source_authority": ["APPROVED_DESIGN", "PRIOR_BASE_EVIDENCE_AUTHORITY"],
+      "evidence_origin": "LOCAL",
+      "side_effect_class": "NO_SIDE_EFFECT",
+      "activation_requirement": "PRIOR_BASE_AUTHORITY_REQUIRED",
+      "authority_dependencies": []
+    },
+    {
+      "id": "AC-24",
+      "semantic": "RUNTIME_PREFLIGHT_NEGATIVES",
+      "required_gate_kinds": ["CONTRACT", "POLICY"],
+      "source_authority": ["APPROVED_DESIGN", "AC24_RUNTIME_PREFLIGHT_AUTHORITY"],
+      "evidence_origin": "LOCAL",
+      "side_effect_class": "NO_SIDE_EFFECT",
+      "activation_requirement": "EXTERNAL_ACTIVATION_REQUIRED",
+      "authority_dependencies": ["AC24_RUNTIME_PREFLIGHT_AUTHORITY"]
+    },
+    {
+      "id": "AC-25",
+      "semantic": "TRUSTED_VERIFIER_SOURCE",
+      "required_gate_kinds": ["CONTRACT", "POLICY", "STATIC_ANALYSIS"],
+      "source_authority": ["APPROVED_DESIGN", "PRIOR_BASE_EVIDENCE_AUTHORITY", "TASK9_D2_ACTIVATION_AUTHORITY"],
+      "evidence_origin": "LOCAL",
+      "side_effect_class": "NO_SIDE_EFFECT",
+      "activation_requirement": "PRIOR_BASE_AUTHORITY_REQUIRED",
+      "authority_dependencies": ["TASK9_D2_ACTIVATION_AUTHORITY"]
+    },
+    {
+      "id": "AC-26",
+      "semantic": "E2E_EVIDENCE_COMPLETENESS",
+      "required_gate_kinds": ["CONTRACT", "COMPUTER_USE"],
+      "source_authority": ["APPROVED_DESIGN", "PRIOR_BASE_EVIDENCE_AUTHORITY", "EXTERNAL_E2E_VERIFICATION_AUTHORITY"],
+      "evidence_origin": "LOCAL",
+      "side_effect_class": "NO_SIDE_EFFECT",
+      "activation_requirement": "PRIOR_BASE_AUTHORITY_REQUIRED",
+      "authority_dependencies": ["EXTERNAL_E2E_VERIFICATION_AUTHORITY"]
+    },
+    {
+      "id": "AC-27",
+      "semantic": "E2E_FAILURE_ISOLATION",
+      "required_gate_kinds": ["CONTRACT", "STATIC_ANALYSIS"],
+      "source_authority": ["APPROVED_DESIGN", "LOCAL_CONTRACT_AUTHORITY"],
+      "evidence_origin": "LOCAL",
+      "side_effect_class": "NO_SIDE_EFFECT",
+      "activation_requirement": "SHADOW_ONLY",
+      "authority_dependencies": []
+    },
+    {
+      "id": "AC-28",
+      "semantic": "BOARD_AND_CLEANUP_ZERO_SIDE_EFFECT",
+      "required_gate_kinds": ["CONTRACT", "STATIC_ANALYSIS"],
+      "source_authority": ["APPROVED_DESIGN", "LOCAL_CONTRACT_AUTHORITY"],
+      "evidence_origin": "LOCAL",
+      "side_effect_class": "NO_SIDE_EFFECT",
+      "activation_requirement": "SHADOW_ONLY",
+      "authority_dependencies": []
+    },
+    {
+      "id": "AC-29",
+      "semantic": "PROJECTION_NON_AUTHORITY",
+      "required_gate_kinds": ["CONTRACT", "POLICY"],
+      "source_authority": ["APPROVED_DESIGN", "LOCAL_CONTRACT_AUTHORITY"],
+      "evidence_origin": "LOCAL",
+      "side_effect_class": "NO_SIDE_EFFECT",
+      "activation_requirement": "SHADOW_ONLY",
+      "authority_dependencies": []
+    },
+    {
+      "id": "AC-30",
+      "semantic": "SHARED_RESOURCE_QUEUE",
+      "required_gate_kinds": ["CONTRACT", "POLICY", "STATIC_ANALYSIS"],
+      "source_authority": ["APPROVED_DESIGN", "LOCAL_CONTRACT_AUTHORITY"],
+      "evidence_origin": "LOCAL",
+      "side_effect_class": "NO_SIDE_EFFECT",
+      "activation_requirement": "SHADOW_ONLY",
+      "authority_dependencies": []
+    },
+    {
+      "id": "AC-31",
+      "semantic": "MERGE_QUEUE_NON_AUTHORITY",
+      "required_gate_kinds": ["CONTRACT", "POLICY"],
+      "source_authority": ["APPROVED_DESIGN", "MERGE_QUEUE_OBSERVATION"],
+      "evidence_origin": "EXTERNAL",
+      "side_effect_class": "NO_SIDE_EFFECT",
+      "activation_requirement": "EXTERNAL_ACTIVATION_REQUIRED",
+      "authority_dependencies": ["MERGE_QUEUE_OBSERVATION"]
+    },
+    {
+      "id": "AC-32",
+      "semantic": "DELIVERY_LINEAGE",
+      "required_gate_kinds": ["CONTRACT", "POLICY", "STATIC_ANALYSIS"],
+      "source_authority": ["APPROVED_DESIGN", "TASK9_D2_ACTIVATION_AUTHORITY", "EXTERNAL_PROMOTION_AUTHORITY"],
+      "evidence_origin": "EXTERNAL",
+      "side_effect_class": "EXTERNAL_HANDOFF_ONLY",
+      "activation_requirement": "TASK9_D2_AUTHORITY_REQUIRED",
+      "authority_dependencies": ["TASK9_D2_ACTIVATION_AUTHORITY", "EXTERNAL_PROMOTION_AUTHORITY"]
+    },
+    {
+      "id": "AC-33",
+      "semantic": "ROLE_SEPARATION",
+      "required_gate_kinds": ["CONTRACT", "POLICY", "COMPUTER_USE"],
+      "source_authority": ["APPROVED_DESIGN", "TASK9_D2_ACTIVATION_AUTHORITY", "TASK11B_POST_MERGE_AUTHORITY"],
+      "evidence_origin": "EXTERNAL",
+      "side_effect_class": "EXTERNAL_HANDOFF_ONLY",
+      "activation_requirement": "TASK11B_POST_MERGE_REQUIRED",
+      "authority_dependencies": ["TASK9_D2_ACTIVATION_AUTHORITY", "TASK11B_POST_MERGE_AUTHORITY"]
+    },
+    {
+      "id": "AC-34",
+      "semantic": "APPROVAL_EQUIVALENT_CHECK",
+      "required_gate_kinds": ["CONTRACT", "POLICY"],
+      "source_authority": ["APPROVED_DESIGN", "TASK9_D2_ACTIVATION_AUTHORITY", "TASK11B_POST_MERGE_AUTHORITY", "EXTERNAL_PROMOTION_AUTHORITY"],
+      "evidence_origin": "EXTERNAL",
+      "side_effect_class": "EXTERNAL_HANDOFF_ONLY",
+      "activation_requirement": "TASK11B_POST_MERGE_REQUIRED",
+      "authority_dependencies": ["TASK9_D2_ACTIVATION_AUTHORITY", "TASK11B_POST_MERGE_AUTHORITY", "EXTERNAL_PROMOTION_AUTHORITY"]
+    },
+    {
+      "id": "AC-35",
+      "semantic": "EXTERNAL_AUTHORITY_HANDOFF",
+      "required_gate_kinds": ["CONTRACT", "POLICY", "STATIC_ANALYSIS"],
+      "source_authority": ["APPROVED_DESIGN", "TASK9_D2_ACTIVATION_AUTHORITY", "EXTERNAL_PROMOTION_AUTHORITY"],
+      "evidence_origin": "EXTERNAL",
+      "side_effect_class": "EXTERNAL_HANDOFF_ONLY",
+      "activation_requirement": "TASK9_D2_AUTHORITY_REQUIRED",
+      "authority_dependencies": ["TASK9_D2_ACTIVATION_AUTHORITY", "EXTERNAL_PROMOTION_AUTHORITY"]
+    },
+    {
+      "id": "AC-36",
+      "semantic": "GLOBAL_FAIL_CLOSED",
+      "required_gate_kinds": ["CONTRACT", "POLICY", "STATIC_ANALYSIS"],
+      "source_authority": ["APPROVED_DESIGN", "TASK11B_POST_MERGE_AUTHORITY"],
+      "evidence_origin": "LOCAL",
+      "side_effect_class": "NO_SIDE_EFFECT",
+      "activation_requirement": "TASK11B_POST_MERGE_REQUIRED",
+      "authority_dependencies": ["TASK11B_POST_MERGE_AUTHORITY"]
+    },
+    {
+      "id": "AC-37",
+      "semantic": "CONTEXT_ATTESTATION_ANTI_FORGERY",
+      "required_gate_kinds": ["CONTRACT", "POLICY"],
+      "source_authority": ["APPROVED_DESIGN", "EXTERNAL_EXECUTION_CONTEXT_AUTHORITY"],
+      "evidence_origin": "EXTERNAL",
+      "side_effect_class": "NO_SIDE_EFFECT",
+      "activation_requirement": "EXTERNAL_ACTIVATION_REQUIRED",
+      "authority_dependencies": ["EXTERNAL_EXECUTION_CONTEXT_AUTHORITY"]
+    },
+    {
+      "id": "AC-38",
+      "semantic": "EXECUTION_ENVELOPE_CAS_AND_REPLAY_GUARD",
+      "required_gate_kinds": ["CONTRACT", "POLICY", "STATIC_ANALYSIS"],
+      "source_authority": ["APPROVED_DESIGN", "TASK9_D2_ACTIVATION_AUTHORITY", "TASK11B_POST_MERGE_AUTHORITY", "LOCAL_CONTRACT_AUTHORITY"],
+      "evidence_origin": "LOCAL",
+      "side_effect_class": "NO_SIDE_EFFECT",
+      "activation_requirement": "TASK11B_POST_MERGE_REQUIRED",
+      "authority_dependencies": ["TASK9_D2_ACTIVATION_AUTHORITY", "TASK11B_POST_MERGE_AUTHORITY"]
+    },
+    {
+      "id": "AC-39",
+      "semantic": "MANAGED_BRANCH_OPERATION_PROTOCOL",
+      "required_gate_kinds": ["CONTRACT", "POLICY", "STATIC_ANALYSIS"],
+      "source_authority": ["APPROVED_DESIGN", "PRIOR_BASE_EVIDENCE_AUTHORITY", "MANAGED_BRANCH_AUTHORITY"],
+      "evidence_origin": "LOCAL",
+      "side_effect_class": "NO_SIDE_EFFECT",
+      "activation_requirement": "PRIOR_BASE_AUTHORITY_REQUIRED",
+      "authority_dependencies": ["MANAGED_BRANCH_AUTHORITY"]
+    },
+    {
+      "id": "AC-40",
+      "semantic": "EXTERNAL_INVENTORY_BOUNDARY",
+      "required_gate_kinds": ["CONTRACT", "POLICY"],
+      "source_authority": ["APPROVED_DESIGN", "HOST_INVENTORY_AUTHORITY"],
+      "evidence_origin": "EXTERNAL",
+      "side_effect_class": "EXTERNAL_HANDOFF_ONLY",
+      "activation_requirement": "EXTERNAL_ACTIVATION_REQUIRED",
+      "authority_dependencies": ["HOST_INVENTORY_AUTHORITY"]
+    },
+    {
+      "id": "AC-41",
+      "semantic": "QUEUE_CAPACITY_AND_REBUILD",
+      "required_gate_kinds": ["CONTRACT", "POLICY", "STATIC_ANALYSIS"],
+      "source_authority": ["APPROVED_DESIGN", "MERGE_QUEUE_OBSERVATION"],
+      "evidence_origin": "EXTERNAL",
+      "side_effect_class": "NO_SIDE_EFFECT",
+      "activation_requirement": "EXTERNAL_ACTIVATION_REQUIRED",
+      "authority_dependencies": ["MERGE_QUEUE_OBSERVATION"]
+    },
+    {
+      "id": "AC-42",
+      "semantic": "CLOSED_SCHEMA_PROJECTION",
+      "required_gate_kinds": ["CONTRACT", "POLICY", "STATIC_ANALYSIS"],
+      "source_authority": ["APPROVED_DESIGN", "TASK9_D2_ACTIVATION_AUTHORITY"],
+      "evidence_origin": "LOCAL",
+      "side_effect_class": "NO_SIDE_EFFECT",
+      "activation_requirement": "TASK9_D2_AUTHORITY_REQUIRED",
+      "authority_dependencies": ["TASK9_D2_ACTIVATION_AUTHORITY"]
+    },
+    {
+      "id": "AC-43",
+      "semantic": "SAFE_WRITER_SEAT_RELEASE",
+      "required_gate_kinds": ["CONTRACT", "POLICY", "STATIC_ANALYSIS"],
+      "source_authority": ["APPROVED_DESIGN", "PRIOR_BASE_EVIDENCE_AUTHORITY", "OWNER_END_ATTESTOR"],
+      "evidence_origin": "EXTERNAL",
+      "side_effect_class": "LOCAL_METADATA_ONLY",
+      "activation_requirement": "PRIOR_BASE_AUTHORITY_REQUIRED",
+      "authority_dependencies": ["OWNER_END_ATTESTOR"]
+    },
+    {
+      "id": "AC-44",
+      "semantic": "PLAN_ONLY_METADATA_ALLOWLIST",
+      "required_gate_kinds": ["CONTRACT", "POLICY", "STATIC_ANALYSIS"],
+      "source_authority": ["APPROVED_DESIGN", "LOCAL_CONTRACT_AUTHORITY"],
+      "evidence_origin": "LOCAL",
+      "side_effect_class": "LOCAL_METADATA_ONLY",
+      "activation_requirement": "SHADOW_ONLY",
+      "authority_dependencies": []
+    },
+    {
+      "id": "AC-45",
+      "semantic": "CLAUDE_CONFIGURATION_ISOLATION",
+      "required_gate_kinds": ["CONTRACT", "POLICY", "STATIC_ANALYSIS"],
+      "source_authority": ["APPROVED_DESIGN", "PRIOR_BASE_EVIDENCE_AUTHORITY"],
+      "evidence_origin": "LOCAL",
+      "side_effect_class": "NO_SIDE_EFFECT",
+      "activation_requirement": "PRIOR_BASE_AUTHORITY_REQUIRED",
+      "authority_dependencies": []
+    }
+  ]
+}

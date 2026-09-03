@@ -1,0 +1,68 @@
+{
+  "schema_version": "autonomous-codex-review-policy/v1",
+  "phase": "LEGACY_GUARDED",
+  "phase_order": [
+    "LEGACY_GUARDED",
+    "SHADOW_DUAL",
+    "CUTOVER_ARMED",
+    "CANARY_ACTIVE",
+    "AUTONOMOUS_ACTIVE"
+  ],
+  "open_spec": {
+    "source_kind": "base_pinned_openspec",
+    "source_path": "openspec/specs/ai-coding-governance/spec.md",
+    "base_sha": "a0ab7065131914e548e1d79a1c683c8b14b07de4",
+    "source_sha256": "27c687fff38b1f791565708090611114970a993bd3b126addf34829cc8e11168"
+  },
+  "external_check": {
+    "source_kind": "github_app",
+    "source_ref": "base:monkey1sai-codex",
+    "app_slug": "monkey1sai-codex",
+    "app_id": 481516,
+    "check_name": "monkey1sai-codex/ready",
+    "required": true
+  },
+  "external_activation": {
+    "evidence_refs": [
+      "external:settings-lease",
+      "external:rollback-snapshot",
+      "external:authoritative-reread",
+      "external:activation-canary"
+    ],
+    "machine_sink_enabled": false,
+    "candidate_inaccessible_authenticity": "HELD_EXTERNAL_ACTIVATION"
+  },
+  "legacy_gate": {
+    "counted_review_required": true,
+    "direct_stack": "HELD"
+  },
+  "publisher_capabilities": {
+    "can_checks": true,
+    "can_contents": false,
+    "can_approve": false,
+    "can_merge": false
+  },
+  "role_separation": {
+    "writer_or_fixer": "candidate_writer_or_fixer",
+    "reviewer": "monkey1sai-codex-reviewer",
+    "self_review": "ADVISORY_ONLY"
+  },
+  "review_binding": {
+    "repository": "monkey1sai/AI-BIM-governance",
+    "reviewer_engine": "monkey1sai-codex",
+    "packet_schema_version": "autonomous-codex-review-check-packet/v1",
+    "required_fields": [
+      "pr_number",
+      "base_sha",
+      "head_sha",
+      "changed_files_sha256",
+      "reviewer_engine",
+      "evidence_sha256"
+    ],
+    "identity_fields": [
+      "writer_execution_id",
+      "fixer_execution_id",
+      "reviewer_execution_id"
+    ]
+  }
+}

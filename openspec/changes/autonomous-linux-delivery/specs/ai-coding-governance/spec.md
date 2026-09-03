@@ -1,3 +1,14 @@
+## ADDED Requirements
+
+### Requirement: Autonomous review activation SHALL preserve the live counted review until attested
+
+Before a canonical Parallel Delivery Fabric activation record validates `AUTONOMOUS_ACTIVE` for its exact base SHA, policy digest, source-pinned external CheckRun name, and external App ID, governance SHALL keep CODEOWNERS and the existing counted review as the live merge gate. The review migration is add-before-remove: shadow observes the new source-pinned external check, then cutover requires an external-settings lease, immutable rollback snapshot, and authoritative re-read before any removal. Repo-local changes cannot claim this record or activate the machine path.
+
+#### Scenario: A repository change claims autonomous review early
+
+- **WHEN**a repo file or candidate PR claims that the external check is active without the validated activation record
+- **THEN**governance SHALL keep the counted review live and the autonomous sink `HELD`
+
 ## MODIFIED Requirements
 
 ### Requirement: Repo SHALL provide agent-readable issue intake and ownership

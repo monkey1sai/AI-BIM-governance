@@ -19,6 +19,9 @@
 - `Get-SelfReferentialMechanismPaths` 仍分類 deploy path、evidence
   harness、gate script 與直接裁決依賴，但命中結果是 review advisory，
   不是建立新治理債務的指令。
+- `parallel-delivery-fabric` 的 Phase 0 調和同樣適用此 closure：future
+  fixpoint 或 reconciliation 工作以單一 ordinary protected PR 收斂，並且
+  明確不改寫 historical lifecycle ledger；該 archive 持續 byte-frozen。
 - 一般 PR body 填 `Self-referential bootstrap = no`，且不得修改
   `scripts/self-referential-bootstrap-ledger.json`。
 - typecheck、tests、GitNexus、CODEOWNER、exact-head review、branch

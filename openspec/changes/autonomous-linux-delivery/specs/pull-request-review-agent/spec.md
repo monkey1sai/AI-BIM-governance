@@ -1,5 +1,15 @@
 ## ADDED Requirements
 
+### Requirement: Counted review retirement SHALL be add-before-remove and record-gated
+
+Until the canonical Parallel Delivery Fabric activation record for the exact base SHA and policy digest reaches `AUTONOMOUS_ACTIVE`, the existing counted review SHALL remain live. A source-pinned external CheckRun must first be observed active for its exact App ID and check name in `SHADOW_DUAL`; it cannot retire the old review merely because a candidate workflow, status, or document uses the same name. `CUTOVER_ARMED` additionally requires an external-settings lease, immutable rollback snapshot, and authoritative post-change re-read.
+
+#### Scenario: The external check is not active
+
+- **WHEN**the source-pinned external check is absent, inactive, wrong-source, or not bound to the exact activation record
+- **THEN**the counted review SHALL remain live
+- **AND**the machine merge sink SHALL remain `HELD`
+
 ### Requirement: PR review agent evidence SHALL be exact-head and source-pinned
 
 PR review agent SHALL build its decision from a bounded, immutable packet tied to repository、PR number、base branch／SHA、head branch／SHA、merge-base、complete changed-path digest、diff digest、policy digest、verification-manifest digest and required-check source map. Deterministic secret scan SHALL precede model invocation；L1–L3只能接收與packet完整review-semantic diff byte-identical的candidate bytes，任何需要redaction／omission的diff SHALL block而非交給model。Packet SHALL攜帶可驗證issuer／key ID、algorithm、nonce、issued／expires timestamps及payload／artifact digests；unknown／expired／revoked signer或artifact authentication失敗 SHALL fail closed。A source-pinned external GitHub App SHALL publish the required CheckRun only after validating this packet; candidate workflows、caller-supplied SHA、PR comments、reviews或同名commit statuses SHALL NOT constitute merge authority.
@@ -40,28 +50,58 @@ PR review agent SHALL build its decision from a bounded, immutable packet tied t
 
 ### Requirement: Every CI and review finding SHALL receive a closed evidence-bound disposition
 
-PR review agent SHALL先驗證finding是否成立，再將每個CI、deterministic validator或machine reviewer finding對frozen exact head裁決為 `FIX`、`REJECT`、`ACCEPT_RISK` 或 `DEFER`。`FIX` SHALL要求confirmed、in-scope、已在current head修復及可重現regression evidence；`REJECT` SHALL要求refuted與可重現反證；`ACCEPT_RISK` SHALL只適用immutable policy明定的non-blocking P3／MEDIUM／LOW／ADVISORY；`DEFER` SHALL要求confirmed、out-of-scope及同repo follow-up Issue。Confirmed in-scope P0／P1／P2／BLOCKER／CRITICAL／HIGH SHALL只能 `FIX`。Unverified finding、unknown disposition、缺evidence或違反severity／scope mapping SHALL fail closed。
+PR review agent SHALL先驗證finding是否成立，再將每個CI、deterministic validator、machine reviewer或human reviewer finding對frozen exact head裁決為 `ACCEPTED`、`FIX_REQUIRED`、`FALSE_POSITIVE`、`DEFERRED` 或 `ESCALATE`。`ACCEPTED` SHALL要求confirmed，且finding已由current head上的既有commit處理，或屬immutable policy明定的non-blocking P3／MEDIUM／LOW／ADVISORY風險；`FIX_REQUIRED` SHALL要求confirmed、in-scope，且只有repair head、可重現regression evidence與independent re-review reference同時存在時才算已修復；`FALSE_POSITIVE` SHALL要求refuted與可重現反證；`DEFERRED` SHALL要求confirmed、out-of-scope、同repo follow-up Issue與policy依據；`ESCALATE` SHALL用於超出autonomous authority或屬security／ACL／architecture／schema migration／deployment／production／credentials risk class的finding，且該PR SHALL NOT autonomous-merge。Confirmed in-scope P0／P1／P2／BLOCKER／CRITICAL／HIGH SHALL只能 `FIX_REQUIRED` 或 `ESCALATE`。舊值 `FIX`／`REJECT`／`ACCEPT_RISK`／`DEFER` SHALL正規化為對應closed value。Unverified finding（`ESCALATE` 除外）、unknown disposition、缺evidence、自述已修復卻無fix evidence，或違反severity／scope／risk-class mapping SHALL fail closed。
 
 #### Scenario: Finding經裁決後不需要code修改
 
-- **GIVEN**finding已由exact-head evidence證明為false positive、policy-eligible non-blocking risk或out-of-scope follow-up
-- **WHEN**agent分別記錄 `REJECT`、`ACCEPT_RISK` 或 `DEFER`及其required evidence
-- **THEN**conversation MAY被resolve且不要求code diff
+- **GIVEN**finding已由exact-head evidence證明為false positive、已由current head既有commit處理、policy-eligible non-blocking risk或out-of-scope follow-up
+- **WHEN**agent分別記錄 `FALSE_POSITIVE`、`ACCEPTED` 或 `DEFERRED`及其required evidence
+- **THEN**conversation MAY被resolve且不要求新的code diff
 - **AND**resolution SHALL表示disposition lifecycle完成，不得宣稱finding已被fix
 
 #### Scenario: Confirmed in-scope blocker不能被接受或延後
 
 - **WHEN**P0／P1／P2／BLOCKER／CRITICAL／HIGH finding已confirmed且in-scope
-- **THEN**唯一可通過的disposition SHALL為 `FIX`
+- **THEN**可通過的disposition SHALL只有 `FIX_REQUIRED`（附repair head、regression evidence與independent re-review）或 `ESCALATE`
 - **AND**缺current-head修復或regression evidence SHALL保持thread unresolved並使gate `blocked`或 `held`
+
+#### Scenario: 高風險finding必須escalate
+
+- **WHEN**finding的risk class為security、ACL、architecture、schema migration、deployment、production或credentials
+- **THEN**除非以可重現反證裁決為 `FALSE_POSITIVE`，disposition SHALL為 `ESCALATE`
+- **AND**該transaction SHALL以 `HELD` 離開autonomous authority，thread SHALL保持unresolved
 
 #### Scenario: Machine gate只能在finding convergence後發布
 
 - **GIVEN**collector以完整pagination取得所有review threads與CI findings
 - **WHEN**每個finding都有合法disposition、所有對應thread已resolve且server unresolved count為零
 - **THEN**review convergence MAY成立
-- **AND**source-pinned App只可在convergence後對相同frozen head發布actual `success`
-- **AND**convergence前的success、stale-head success或不完整thread集合 SHALL NOT成為merge evidence
+- **AND**source-pinned App只可在convergence後對相同frozen head發布actual `success`，且該CheckRun SHALL是expected source在該head的最新一筆並在convergence之後開始；同head完整CheckRun清單、convergence epoch與collected conversation state（completeness、unresolved count、每個finding的thread／source／severity／resolution）SHALL由candidate bundle之外的trusted collector供給，bundle自述值沒有authority
+- **AND**convergence前的success、stale-head success、被較新rerun取代的舊success、不完整thread集合或未涵蓋完整collected finding set的bundle SHALL NOT成為merge evidence
+
+### Requirement: Merge queue agent SHALL act as the Review Disposition Agent with structured, loop-safe GitHub replies
+
+Merge queue agent SHALL為每個finding在對應review thread留下structured GitHub reply，內含人類可讀理由、evidence位置與next action，以及隱藏machine-readable metadata（`<!-- ai-bim-review-disposition/v1 {...} -->`），至少綁定 `finding_id`、`thread_id`、`head_sha`、`base_sha`、`agent_run_id`、`sender`、`webhook_event_id`、`disposition`、severity、risk class、verification與evidence fingerprint。Agent SHALL以完整tuple（`finding_id`、`head_sha`、`agent_run_id`、`sender`、`webhook_event_id`）做idempotency，並在同一head已有相同disposition時skip。帶有metadata marker的comment SHALL視為agent output而非finding intake；rendered body SHALL NOT包含reviewer-bot mention。每次reply或resolution mutation前後 SHALL重讀exact PR tuple，漂移即 `HELD`／`resolution_race`。`FIX_REQUIRED` SHALL進入既有fix pipeline（disposition → repair worktree → targeted tests → affected integration tests → current-head CI → independent re-review → thread resolved → exact-head merge-policy check → counted adjudication → exact-head merge）；任何agent assertion SHALL NOT單獨滿足merge gate；`ESCALATE` 與未修復的 `FIX_REQUIRED` thread SHALL保持unresolved。
+
+#### Scenario: 重複webhook或重跑不得重複處理
+
+- **GIVEN**thread內已存在agent metadata且 `finding_id`、`head_sha` 與 `disposition` 相同，或完整tuple相同
+- **WHEN**同一finding再次進入agent
+- **THEN**agent SHALL skip且不得留下第二則reply
+- **AND**新head或新disposition MAY產生新reply
+
+#### Scenario: Agent自己的留言不得再次觸發agent
+
+- **WHEN**collector讀取thread comments
+- **THEN**帶marker的comment SHALL被排除於finding intake之外
+- **AND**rendered reply SHALL NOT包含 `@codex`／`@claude` 等reviewer-bot mention
+
+#### Scenario: FIX_REQUIRED進入既有fix pipeline
+
+- **GIVEN**finding裁決為 `FIX_REQUIRED` 且reply已留下
+- **WHEN**coordinator在repair worktree修復、targeted tests與current-head CI通過並取得independent re-review reference
+- **THEN**finding MAY標記 `fixedOnHead` 並附fix evidence，thread MAY resolve
+- **AND**僅有「fixed」留言而無repair head、regression evidence與re-review reference時，bundle SHALL保持incomplete且gate SHALL NOT通過
 
 ### Requirement: Critical PRs SHALL receive three-layer cross-adversarial machine adjudication
 
@@ -180,4 +220,4 @@ PR review agent SHALL 將每次 run 分類為 `passed`、`warning`、`blocked`�
 
 **Reason**：此 requirement 與 autonomous Linux delivery 的明示目標直接衝突。啟用後，per-PR human／CODEOWNER approval 與「agent不得自動merge」不再是merge authority；安全邊界改由candidate-inaccessible external machine trust root、source-pinned exact-head CheckRun、credential separation與post-merge canonical Linux delivery提供。
 
-**Migration**：先在既有人類gate仍啟用時，以shadow mode建立external App、trusted verifier／executor、three-layer adjudication、single-flight merge/deploy transaction與live negative／positive attestation；先加入machine required check，最後一次性把required approving review count設為0、停用CODEOWNER review requirement與User approval broker。Activation完成前維持 `HELD`，不得由candidate或一般agent自行移除舊gate。
+**Migration**：先在既有人類gate仍啟用時，以shadow mode建立external App、trusted verifier／executor、three-layer adjudication、single-flight merge/deploy transaction與live negative／positive attestation；採add-before-remove，先加入source-pinned machine required check並確認external check active，之後才可依canonical activation record、external-settings lease、immutable rollback snapshot與authoritative reread處理舊gate。Activation完成前維持 `HELD`，不得由candidate或一般agent自行移除old counted review。

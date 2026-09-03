@@ -137,7 +137,7 @@ Lane G/S、修 PR、checkout 不乾淨或並行工作時必須使用 dedicated w
 
 當使用者要求「以 origin main 為 baseline 建立隔離區執行」或同義口令時，agent MUST：
 
-1. **先 `git fetch origin --prune`**，再以 `origin/main` 開 worktree：`git worktree add -b <type>/<slug> <sibling-path> origin/main`。
+1. **Windows host 一律走 governed helper**：`pwsh -NoProfile -NonInteractive -File scripts/dev/new-governed-worktree.ps1 -BranchName <type>/<slug> -Json`。helper 會用明確 main refspec refresh 並驗證 `origin/main`、建立 canonical sibling worktree，再檢查 branch / HEAD / clean state / 實際 Git metadata directory owner；不得以裸 `git fetch` + `git worktree add` 取代。非 Windows host 尚無等價 helper，必須逐步執行同一 baseline 與 postcondition 契約並保留證據。
 2. **禁止**以 local `main`、目前 checkout、其他 feature branch 或 **stale `origin/main`** 當 baseline（與 §「測試部署區重建」對 stale `origin/main` 的禁令同一理由：本機 ref 可能落後數個 merge，據此開工會把別人已合併的修正當成未完成而重做，或在過期樹上取得無效證據）。
 3. **開工前實證 baseline**：`git rev-parse HEAD` 必須等於 `git rev-parse origin/main`，且 `git status --porcelain` 為空。兩者任一不成立即停工回報，不得「先做再說」。
 4. **收工後依 Closeout 順序移除 worktree**，不得留下失聯目錄。
@@ -184,6 +184,10 @@ main checkout 或 sibling worktree 開發 → branch → PR → CI 綠 → merge
 ---
 
 ## Per-item ship-cycle 自動化（ship-item workflow）
+
+### Parallel Delivery Fabric Phase 0 activation boundary
+
+已核准的 Fabric design 不改變目前 GitHub machine truth。直到唯一 canonical activation record 對 exact base SHA、policy digest、`writer_cap`、source-pinned external CheckRun name/App ID 與 activation time 完整驗證前，session 開發不以 writer 數量為 blocker，但每個 writer 必須獨立 branch／worktree／touch-set；`direct_stack=HELD`，並保留既有 counted review。review migration 必須 add-before-remove：external CheckRun 在 exact tuple 上 active、外部設定 lease/rollback snapshot/re-read 齊全，且 disposable canary 已通過前，不得移除 old counted review 或宣稱 autonomous activation。此段不授權 push、approve、merge、deploy、branch-protection 或 external-settings mutation。
 
 Lane F/B 不自動啟動 ship-cycle。只有使用者明確要求 ship，或 Lane S 的已核准 spec 授權自主推進時，才使用 `.claude/workflows/ship-item.md`（commit→push→PR→local preflight→CI watch→buffered merge→closeout）。Lane G 預設停在 PR ready。完整 gate、reviewer buffer、finding fix 與 trusted-host human-approval contract 以 `ship-item.md` 為準。GitHub native merge（`gh pr merge`，非 trusted-host elevated sink）在 counted `monkey1sai-blip` APPROVE 之後，依下方 2026-08-20 owner 常設授權由 coordinating agent 決定。
 

@@ -472,10 +472,10 @@
       "owner": "repository-maintainer",
       "current_slice": "P0：完成 autonomous exact-head machine merge、canonical Linux delivery 與 activation contracts",
       "blocked_by": [],
-      "last_verified": "2026-08-24T06:05:00Z",
+      "last_verified": "2026-09-02T08:10:00Z",
       "task_ledger": {
-        "completed": 5,
-        "total": 51
+        "completed": 18,
+        "total": 66
       },
       "evidence_refs": [
         "openspec/changes/autonomous-linux-delivery/proposal.md",
@@ -2569,6 +2569,27 @@
         "openspec/changes/archive/2026-05-11-worker-real-conversion-quality/tasks.md"
       ],
       "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
+      "archive_debt": null
+    },
+    {
+      "id": "parallel-delivery-fabric",
+      "status": "active",
+      "owner": "parallel-delivery-fabric",
+      "current_slice": "phase0-governance: canonical activation boundary remains shadow-only and does not represent live delivery",
+      "blocked_by": [],
+      "last_verified": "2026-08-28T00:00:00Z",
+      "task_ledger": {
+        "completed": 3,
+        "total": 5
+      },
+      "evidence_refs": [
+        "openspec/changes/parallel-delivery-fabric/proposal.md",
+        "openspec/changes/parallel-delivery-fabric/tasks.md",
+        "docs/superpowers/specs/2026-08-28-parallel-delivery-fabric-design.md",
+        "scripts/tests/test-parallel-delivery-fabric-phase0.mjs"
+      ],
+      "subject_commit": "24aa54d5aedba8a5f0774a095215b9f26d21e198",
+      "subject_binding": "introduction",
       "archive_debt": null
     }
   ]

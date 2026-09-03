@@ -7,6 +7,54 @@ import {
   safeInteger,
   sha256,
 } from './trusted-host-merge-contract.mjs'
+import { loadAutonomousCodexReviewPolicy } from './autonomous-codex-review-check.mjs'
+
+
+const inspectCanonicalReviewPolicyGate = () => {
+  try {
+    const policy = loadAutonomousCodexReviewPolicy()
+    if (
+      policy.phase !== 'LEGACY_GUARDED' ||
+      policy.legacy_gate?.counted_review_required !== true ||
+      policy.external_activation?.candidate_inaccessible_authenticity !== 'HELD_EXTERNAL_ACTIVATION' ||
+      policy.publisher_capabilities?.can_checks !== true ||
+      policy.publisher_capabilities?.can_contents !== false ||
+      policy.publisher_capabilities?.can_approve !== false ||
+      policy.publisher_capabilities?.can_merge !== false
+    ) {
+      fail('review_policy_held', 'canonical_policy_phase_or_capability_invalid')
+    }
+    return Object.freeze({
+      phase: policy.phase,
+      countedReviewRequired: policy.legacy_gate.counted_review_required,
+      externalCheck: Object.freeze({
+        context: policy.external_check.check_name,
+        appId: policy.external_check.app_id,
+      }),
+    })
+  } catch (error) {
+    if (error?.name === 'TrustedMergeHold') throw error
+    fail('review_policy_held', 'canonical_policy_unavailable')
+  }
+}
+
+const reviewPolicyGate = (consumer, callerArguments) => {
+  if (callerArguments.length !== 0) {
+    fail('review_policy_call_override_forbidden', `${consumer}_caller_arguments_forbidden`)
+  }
+  return inspectCanonicalReviewPolicyGate()
+}
+
+const isPinnedExternalCheck = (check, gate) => (
+  check?.context === gate.externalCheck.context &&
+  (check?.app_id === gate.externalCheck.appId || check?.appId === gate.externalCheck.appId)
+)
+
+const rejectExternalCheckPromotion = (checks, gate) => {
+  if (Array.isArray(checks) && checks.some((check) => isPinnedExternalCheck(check, gate))) {
+    fail('review_policy_held', 'legacy_guarded_external_check_shadow_only')
+  }
+}
 
 
 const cleanGitPath = (path) => {
@@ -176,7 +224,8 @@ const emptyBypass = (value) => {
   return ['users', 'teams', 'apps'].every((key) => Array.isArray(value[key]) && value[key].length === 0)
 }
 
-export function verifyBranchProtection(protection, requiredCheckSources) {
+export function verifyBranchProtection(protection, requiredCheckSources, ...policyArguments) {
+  const policyGate = reviewPolicyGate('verify_branch_protection', policyArguments)
   if (!isPlainObject(protection)) fail('branch_protection_single_owner_gate_not_strict', 'protection_missing')
   const status = protection.required_status_checks
   const reviews = protection.required_pull_request_reviews
@@ -202,6 +251,8 @@ export function verifyBranchProtection(protection, requiredCheckSources) {
   if (!Array.isArray(requiredCheckSources) || requiredCheckSources.length === 0) {
     fail('branch_protection_single_owner_gate_not_strict', 'required_check_source_allowlist_unprovisioned')
   }
+  rejectExternalCheckPromotion(checks, policyGate)
+  rejectExternalCheckPromotion(requiredCheckSources, policyGate)
   const trustedChecks = requiredCheckSources.map((check) => ({ context: check?.context, appId: check?.app_id }))
     .sort((a, b) => String(a.context).localeCompare(String(b.context)) || Number(a.appId) - Number(b.appId))
   if (canonicalJson(trustedChecks) !== canonicalJson(normalizedChecks)) {
@@ -335,7 +386,9 @@ export function canonicalAutomatedApproveOnlyBody(invocation) {
   })
 }
 
-export function selectCanonicalApproval(reviews, invocation, contract) {
+export function selectCanonicalApproval(reviews, invocation, contract, ...policyArguments) {
+  const policyGate = reviewPolicyGate('select_canonical_approval', policyArguments)
+  if (!policyGate.countedReviewRequired) fail('review_policy_held', 'legacy_guarded_counted_review_required')
   const expectedBody = canonicalHumanApprovalBody(invocation)
   const approveOnlyBody = canonicalAutomatedApproveOnlyBody(invocation)
   const reviewer = contract.broker.required_reviewer
@@ -371,7 +424,9 @@ export function verifyRequiredChecks(
   invocation,
   verificationPlan,
   verificationTargetSources,
+  ...policyArguments
 ) {
+  const policyGate = reviewPolicyGate('verify_required_checks', policyArguments)
   if (!Array.isArray(checkRuns)) fail('final_gate_read_failed', 'check_runs_missing')
   if (!Array.isArray(workflowRuns)) fail('final_gate_read_failed', 'workflow_runs_missing')
   const headOid = invocation?.headOid
@@ -389,6 +444,8 @@ export function verifyRequiredChecks(
   if (!Array.isArray(verificationTargetSources)) {
     fail('final_gate_read_failed', 'verification_target_source_registry_invalid')
   }
+  rejectExternalCheckPromotion(verificationTargetSources, policyGate)
+  rejectExternalCheckPromotion(protectionSnapshot?.requiredChecks, policyGate)
   const sourceByTarget = new Map()
   for (const source of verificationTargetSources) {
     if (

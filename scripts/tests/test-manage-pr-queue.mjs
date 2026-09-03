@@ -10,6 +10,7 @@ import {
   approvePr,
   classifyQueueCommand,
   evaluateMergeReadiness,
+  inspectCanonicalReviewGate,
   isSamePrObservation,
   installGitHooks,
   mergePr,
@@ -43,6 +44,8 @@ test('merge readiness fails closed on every exact-head gate', () => {
     {
       ready: false,
       observedReady: true,
+      phase: 'LEGACY_GUARDED',
+      countedReviewRequired: true,
       reasons: ['canonical_merge_authority_external'],
     },
   );
@@ -83,6 +86,8 @@ test('merge readiness fails closed on every exact-head gate', () => {
     {
       ready: false,
       observedReady: false,
+      phase: 'LEGACY_GUARDED',
+      countedReviewRequired: true,
       reasons: ['exact_head_approval_missing', 'canonical_merge_authority_external'],
     },
   );
@@ -97,9 +102,85 @@ test('merge readiness fails closed on every exact-head gate', () => {
     {
       ready: false,
       observedReady: false,
+      phase: 'LEGACY_GUARDED',
+      countedReviewRequired: true,
       reasons: ['exact_head_approval_unknown', 'canonical_merge_authority_external'],
     },
   );
+});
+
+test('queue reads only the canonical LEGACY_GUARDED policy and ignores caller policy fields', () => {
+  assert.deepEqual(inspectCanonicalReviewGate(), {
+    phase: 'LEGACY_GUARDED',
+    disposition: 'LEGACY_GUARDED',
+    countedReviewRequired: true,
+    allowsMerge: false,
+    reasons: ['legacy_counted_review_required'],
+  });
+  const pr = {
+    state: 'OPEN',
+    baseRefName: 'main',
+    isDraft: false,
+    headRefOid: 'a'.repeat(40),
+    mergeable: 'MERGEABLE',
+    mergeStateStatus: 'CLEAN',
+    reviewDecision: 'APPROVED',
+  };
+  const result = evaluateMergeReadiness({
+    pr,
+    checks: { allGreen: true },
+    threads: { count: 0, complete: true },
+    approval: { count: 1, complete: true },
+    expectedHeadSha: pr.headRefOid,
+    policy: { phase: 'AUTONOMOUS_ACTIVE', legacy_gate: { counted_review_required: false } },
+    policyRoot: 'C:\\attacker-controlled-policy-root',
+  });
+  assert.equal(result.phase, 'LEGACY_GUARDED');
+  assert.equal(result.countedReviewRequired, true);
+  assert.equal(result.ready, false);
+  assert.equal(result.observedReady, true);
+  assert.deepEqual(result.reasons, ['canonical_merge_authority_external']);
+});
+
+test('queue policy inspection rejects every caller override before classification', () => {
+  for (const override of [
+    { phase: 'AUTONOMOUS_ACTIVE' },
+    { phase: 'CANARY' },
+    'C:\\attacker-controlled-policy-root',
+    undefined,
+  ]) {
+    assert.deepEqual(inspectCanonicalReviewGate(override), {
+      phase: 'UNKNOWN',
+      disposition: 'HELD',
+      countedReviewRequired: true,
+      allowsMerge: false,
+      reasons: ['canonical_review_policy_override_forbidden'],
+    });
+  }
+});
+
+test('counted approval remains mandatory under the canonical legacy phase', () => {
+  const pr = {
+    state: 'OPEN',
+    baseRefName: 'main',
+    isDraft: false,
+    headRefOid: 'a'.repeat(40),
+    mergeable: 'MERGEABLE',
+    mergeStateStatus: 'CLEAN',
+    reviewDecision: 'APPROVED',
+  };
+  const result = evaluateMergeReadiness({
+    pr,
+    checks: { allGreen: true },
+    threads: { count: 0, complete: true },
+    approval: { count: 0, complete: true },
+    expectedHeadSha: pr.headRefOid,
+  });
+  assert.equal(result.ready, false);
+  assert.equal(result.observedReady, false);
+  assert.equal(result.countedReviewRequired, true);
+  assert.ok(result.reasons.includes('exact_head_approval_missing'));
+  assert.ok(result.reasons.includes('canonical_merge_authority_external'));
 });
 
 test('queue observation requires one stable exact PR tuple', () => {
@@ -176,7 +257,13 @@ test('autonomous queue skill teaches source-pinned bounded finalization without 
   assert.match(skill, /must not start a third head/i);
   assert.match(skill, /complete.*pagination/i);
   assert.match(skill, /critical_machine_adjudication/);
-  assert.match(skill, /FIX.*REJECT.*ACCEPT_RISK.*DEFER/s);
+  assert.match(skill, /ACCEPTED.*FIX_REQUIRED.*FALSE_POSITIVE.*DEFERRED.*ESCALATE/s);
+  assert.match(skill, /Review Disposition Agent/);
+  assert.match(skill, /manage-pr-queue\.mjs dispose --pr/);
+  assert.match(skill, /post-review-disposition\.mjs/);
+  assert.match(skill, /hidden.*metadata/i);
+  assert.match(skill, /finding_id.*head_sha.*agent_run_id.*sender.*webhook_event_id/s);
+  assert.match(skill, /never satisfies the merge gate by itself/i);
   assert.match(skill, /actual `success`/);
   assert.match(skill, /`neutral`.*`skipped`.*not.*pass/s);
   assert.match(skill, /single-use lease/i);
