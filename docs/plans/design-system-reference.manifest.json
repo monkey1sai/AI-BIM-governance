@@ -502,16 +502,16 @@
         "authority": "canonical_product_surface",
         "canonical_route": "#runtime",
         "capture_runner": "web-viewer-sample/e2e/design-system-visual.spec.ts",
-        "approval": "explicit owner rebaseline 2026-08-25 and owner-approved 3-PR route 2026-08-26 (unified-console-runtime-truth D1=P: honest offline state under the /api 503 stub; product-surface authority per PR #429 precedent; goldens captured from the merged product surface at main d5f2d77 by design-system-visual.spec.ts)"
+        "approval": "explicit owner-directed paired rebaseline 2026-09-03 for PR #782 (runtime.ops.default only: Session idle reclaim policy controls added to the canonical product surface; goldens sourced from the exact-head Windows CI design-system-visual artifact at 580960f00abfa1dc510be2999f34d681a6a987b3)"
       },
       "baselines": {
         "1440x900": {
           "path": "docs/plans/design-system-baseline/runtime.ops.default/1440x900.png",
-          "sha256": "06fe9866384cf4d7aae6d8eaf5d646ce2d8a23e3c5aed81c8587d419c08a798c"
+          "sha256": "130522509cf3c0a320370f84aa4b30765ed43898c1ea21d91a1f658845e859cc"
         },
         "1920x1080": {
           "path": "docs/plans/design-system-baseline/runtime.ops.default/1920x1080.png",
-          "sha256": "af7af0c0ac42535a11eecc2849a7e1dafd67db219ddf2650e296ede253443d00"
+          "sha256": "c25c379b94af133de4722c11378603006263b17e7ec6b388955c29436cdbfb3c"
         }
       }
     },
@@ -766,5 +766,5 @@
     "docs/plans/ai-bim-geo-viewer-A1.png..A10.png",
     "docs/plans/ai-bim-geo-Ai-codeing-A1.png..A10.png"
   ],
-  "baseline_snapshot_sha256": "c5eb4422aba42f623fcf88f447a5e0da00f66c86812c7601628f9c7081cef507"
+  "baseline_snapshot_sha256": "645bcf4c0c21337ec1e507fe1d4b9c1c446cd36f01c1a45b50e5d8a19438f3d1"
 }
