@@ -171,6 +171,11 @@ describe("A1 3D review decoupling", () => {
     window.location.hash = "#a1";
     vi.spyOn(coordinatorClient, "runtimeStatus").mockResolvedValue(fakeRuntimeStatus() as never);
     vi.spyOn(coordinatorClient, "kitInstanceCurrent").mockResolvedValue({ instance_id: "kit_local_001", status: "ready" } as never);
+    // A1 inline viewer 掛載前需要 canonical trace carrier（stream-config 為權威來源）；
+    // sessionId 由呼叫端決定，這裡以 session 推導出對應的 rev_ 前綴 canonical 值。
+    vi.spyOn(coordinatorClient, "streamConfig").mockImplementation(
+      async (sessionId: string) => ({ session_id: sessionId, status: "active", trace_id: `rev_${sessionId}` }) as never,
+    );
     vi.spyOn(governanceClient, "filesTree").mockResolvedValue(fakeFilesTree);
     vi.spyOn(coordinatorClient, "getMinioObjects").mockResolvedValue({
       bucket: "bim-control",

@@ -96,6 +96,11 @@ export interface EmbeddedViewerProps {
   userId?: string | null;
   displayName?: string | null;
   sourceClientId?: string | null;
+  // structured-log trace carrier。viewer `main.tsx` 的 bootstrapStructLog 是 fail-closed：
+  // query 缺 trace_id（或不合 canonical 前綴）就 throw，React 根本不會 mount，iframe 只會是白畫面、
+  // 完全不發起 WebRTC。真源＝coordinator `GET /api/review-sessions/:id/stream-config` 的 `trace_id`
+  // （與 /ui/open 302 補的是同一個 sessionTraceResolver 權威），前端不得自行合成。
+  traceId?: string | null;
   viewerLeaseToken?: string | null;
   userToken?: string | null;
   onViewerReady?: () => void;
@@ -206,6 +211,7 @@ export const EmbeddedViewer = forwardRef<EmbeddedViewerHandle, EmbeddedViewerPro
     if (props.userId) params.set("userId", props.userId);
     if (props.displayName) params.set("displayName", props.displayName);
     if (props.sourceClientId) params.set("sourceClientId", props.sourceClientId);
+    if (props.traceId) params.set("trace_id", props.traceId);
     const base = props.viewerOrigin.replace(/\/+$/, "");
     return `${base}/?${params.toString()}`;
   };

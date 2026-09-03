@@ -211,6 +211,12 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
   const [leaseExpired, setLeaseExpired] = useState(false);
   const [firstFrameTimedOut, setFirstFrameTimedOut] = useState(false);
   const [streamDisconnected, setStreamDisconnected] = useState(false);
+  // viewer bootstrap 需要 canonical structured-log trace carrier；真源＝coordinator
+  // stream-config（sessionTraceResolver 權威，取不到時 coordinator 自己回 409）。
+  // 取不到就不掛 viewer——舊行為是掛一個必定 white-screen 的 iframe，operator 只會看到
+  // 誤導的 first-frame 逾時。
+  const [viewerTraceId, setViewerTraceId] = useState<string | null>(null);
+  const [viewerTraceErr, setViewerTraceErr] = useState<string | null>(null);
   const [viewerMountNonce, setViewerMountNonce] = useState(0);
   const [lease, setLease] = useState<ViewerLeaseClaimResponse | null>(null);
   const [leaseBusy, setLeaseBusy] = useState(false);
@@ -330,6 +336,8 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
     setStageProofStatus("not_observed");
     setHighlightResult(null);
     setCommandTrace(null);
+    setViewerTraceId(null);
+    setViewerTraceErr(null);
   }, [handoff.sessionId]);
 
   // ACK and command trace belong to the exact highlighted target, not merely
@@ -380,9 +388,37 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
     heartbeatDelayFn,
   ]);
 
+  // canonical trace carrier：session 可觀測即向 coordinator 取，讓 viewer iframe 掛載前
+  // 就備妥 trace_id。coordinator 409（trace authority unavailable）與網路失敗一律誠實記錄，
+  // 不合成 `rev_<sessionId>`——ifc-ready 建立的 session 用的是 `ifcready_` 前綴。
+  useEffect(() => {
+    if (!validSession || !sessionObserved) return;
+    let alive = true;
+    coordinatorClient.streamConfig(sid)
+      .then((config) => {
+        if (!alive) return;
+        const traceId = typeof config.trace_id === "string" ? config.trace_id : "";
+        if (traceId) {
+          setViewerTraceId(traceId);
+          setViewerTraceErr(null);
+          return;
+        }
+        setViewerTraceId(null);
+        setViewerTraceErr("stream-config 未提供 trace_id");
+      })
+      .catch((e) => {
+        if (!alive) return;
+        setViewerTraceId(null);
+        setViewerTraceErr(String(e));
+      });
+    return () => { alive = false; };
+  }, [sid, validSession, sessionObserved]);
+
   // first-frame-timeout（task 5.6）：claim 成功且 viewer 已掛載，但期限內未收
   // first_frame 即轉入可見逾時態；首幀到達或 lease/session 變更時清除。
-  const activeLeaseIdForFirstFrame = activePrimaryLease ? activePrimaryLease.lease_id : null;
+  // viewer 未掛載（缺 trace carrier）時不得起這個計時器：那會把「iframe 根本沒被掛上」
+  // 誤報成「串流已建立但未收到首幀」，把 operator 導去查 Kit / GPU。
+  const activeLeaseIdForFirstFrame = activePrimaryLease && viewerTraceId ? activePrimaryLease.lease_id : null;
   useEffect(() => {
     if (!activeLeaseIdForFirstFrame || firstFrame) return;
     const timer = window.setTimeout(() => { setFirstFrameTimedOut(true); }, firstFrameTimeoutMs);
@@ -781,6 +817,14 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
                     ? t("尚未啟動 A4 3D session；高亮維持封鎖。", "A4 3D session is not started; highlight remains blocked.")
                 : t("尚未啟動 3D session。這裡不做自動 claim；請按手動啟動後才會掛載 viewer。", "3D session is not started. This page does not auto-claim; the viewer mounts only after manual start.")}
           </p>
+        ) : viewerOrigin && !viewerTraceId ? (
+          <p className="ec-warn-note" data-testid={`${tidPrefix}-viewer-trace-missing`} role="alert" aria-live="assertive">
+            {t(
+              "尚未取得此 session 的 structured-log trace carrier，viewer 不會掛載（掛了也只會是白畫面）。",
+              "The structured-log trace carrier for this session is not available; the viewer is not mounted (it would only render blank).",
+            )}
+            {viewerTraceErr ? `（${viewerTraceErr}）` : null}
+          </p>
         ) : viewerOrigin ? (
           <div data-testid={viewerHostTestId} style={{ height: 480 }}>
             <EmbeddedViewer
@@ -795,6 +839,7 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
               userId={activePrimaryLease.user_id}
               displayName={activePrimaryLease.display_name}
               sourceClientId={activePrimaryLease.lease_id}
+              traceId={viewerTraceId}
               viewerLeaseToken={activePrimaryLease.lease_token}
               userToken={identityRef.current?.user_token}
               onFirstFrame={() => {
