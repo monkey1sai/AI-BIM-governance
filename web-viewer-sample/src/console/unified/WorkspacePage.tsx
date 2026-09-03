@@ -155,6 +155,7 @@ export function WorkspacePage({ initialDock = "a1" }: WorkspacePageProps) {
         stageTreeApi.toggleExpand(node.path);
       }
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rawTree]);
 
   const hasStageTree = Boolean(stageTreeApi.usdPrims && stageTreeApi.usdPrims.length > 0);
