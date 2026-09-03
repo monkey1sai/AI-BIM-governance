@@ -1,0 +1,70 @@
+{
+  "schema_version": "linux-continuous-deployment-pressure-scenarios/v1",
+  "scenarios": [
+    {
+      "id": "trusted-merge-happy-path",
+      "mutation": "none",
+      "expected_final_state": "ACTIVATED"
+    },
+    {
+      "id": "wrong-repository",
+      "mutation": "trusted_merge.repository",
+      "expected_final_state": "HELD"
+    },
+    {
+      "id": "stale-convergence-sha",
+      "mutation": "trusted_merge.ci_convergence.head_sha",
+      "expected_final_state": "HELD"
+    },
+    {
+      "id": "partial-collector",
+      "mutation": "trusted_merge.collector.complete",
+      "expected_final_state": "HELD"
+    },
+    {
+      "id": "artifact-digest-mismatch",
+      "mutation": "artifact.observed_sha256",
+      "expected_final_state": "HELD"
+    },
+    {
+      "id": "target-fingerprint-drift",
+      "mutation": "target.observed_fingerprint",
+      "expected_final_state": "HELD"
+    },
+    {
+      "id": "duplicate-controller",
+      "mutation": "ledger.active_controller",
+      "expected_final_state": "HELD"
+    },
+    {
+      "id": "replayed-event",
+      "mutation": "ledger.replay_key",
+      "expected_final_state": "HELD"
+    },
+    {
+      "id": "canary-failure-rolls-back",
+      "mutation": "canary.verification",
+      "expected_final_state": "ROLLED_BACK"
+    },
+    {
+      "id": "promotion-digest-mismatch",
+      "mutation": "promotion.artifact_sha256",
+      "expected_final_state": "ROLLED_BACK"
+    },
+    {
+      "id": "rollback-unverified",
+      "mutation": "rollback.verification",
+      "expected_final_state": "HELD"
+    },
+    {
+      "id": "retry-budget-exhausted",
+      "mutation": "retry.failure_class",
+      "expected_final_state": "HELD"
+    },
+    {
+      "id": "missing-provisioning",
+      "mutation": "target.credential_authority",
+      "expected_final_state": "HELD"
+    }
+  ]
+}

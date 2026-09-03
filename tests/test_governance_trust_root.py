@@ -9,12 +9,17 @@ import re
 import subprocess
 import sys
 
+import pytest
+
 
 ROOT = Path(__file__).resolve().parents[1]
 CHECKER = ROOT / "scripts" / "dev" / "check_governance_trust_root.py"
 REVIEWER_LOGIN = "monkey1sai-blip"
 REVIEWER_ID = 311287868
 HEAD = "a" * 40
+REVIEW_POLICY = "scripts/autonomous-codex-review-policy.json"
+REVIEW_POLICY_SCHEMA = "scripts/tests/autonomous-codex-review-policy.schema.json"
+REVIEW_OPEN_SPEC = "openspec/specs/ai-coding-governance/spec.md"
 
 
 def _read(relative: str) -> object:
@@ -30,6 +35,16 @@ def _write(root: Path, relative: str, payload: object | str) -> None:
         target.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 
 
+def _write_bytes(root: Path, relative: str, payload: bytes) -> None:
+    target = root / relative
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(payload)
+
+
+def _read_fixture_json(root: Path, relative: str) -> dict[str, object]:
+    return json.loads((root / relative).read_text(encoding="utf-8"))
+
+
 def _fixture(tmp_path: Path) -> tuple[Path, Path]:
     base = tmp_path / "base"
     candidate = tmp_path / "candidate"
@@ -43,6 +58,8 @@ def _fixture(tmp_path: Path) -> tuple[Path, Path]:
         _write(root, ".github/workflows/governance-trust-root.yml", "name: trusted\n")
         _write(root, "scripts/dev/check_governance_trust_root.py", "# trusted checker\n")
         _write(root, ".github/CODEOWNERS", "* @monkey1sai-blip\n")
+        for relative in (REVIEW_POLICY, REVIEW_POLICY_SCHEMA, REVIEW_OPEN_SPEC):
+            _write_bytes(root, relative, (ROOT / relative).read_bytes())
     return base, candidate
 
 
@@ -403,6 +420,166 @@ def test_malformed_or_missing_candidate_baseline_fails_closed(tmp_path: Path) ->
         assert payload["candidate_path_fingerprint"] is None
 
 
+@pytest.mark.parametrize(
+    ("label", "mutate"),
+    [
+        pytest.param("alias phase", lambda value: value.__setitem__("phase", "CANARY"), id="alias"),
+        pytest.param("unknown phase", lambda value: value.__setitem__("phase", "UNKNOWN"), id="unknown"),
+        pytest.param(
+            "local phase advance",
+            lambda value: value.__setitem__("phase", "AUTONOMOUS_ACTIVE"),
+            id="local-phase-advance",
+        ),
+        pytest.param(
+            "reordered phase contract",
+            lambda value: value.__setitem__("phase_order", list(reversed(value["phase_order"]))),
+            id="phase-order",
+        ),
+        pytest.param(
+            "OpenSpec digest mismatch",
+            lambda value: value["open_spec"].__setitem__("source_sha256", "0" * 64),
+            id="source-digest",
+        ),
+        pytest.param(
+            "unpinned app",
+            lambda value: value["external_check"].__setitem__("app_id", 1),
+            id="app-pin",
+        ),
+        pytest.param(
+            "machine sink enabled",
+            lambda value: value["external_activation"].__setitem__("machine_sink_enabled", True),
+            id="machine-sink",
+        ),
+        pytest.param(
+            "candidate authenticates itself",
+            lambda value: value["external_activation"].__setitem__(
+                "candidate_inaccessible_authenticity", "ACTIVE"
+            ),
+            id="candidate-authenticity",
+        ),
+        pytest.param(
+            "counted review retired",
+            lambda value: value["legacy_gate"].__setitem__("counted_review_required", False),
+            id="counted-review",
+        ),
+        pytest.param(
+            "direct stack opened",
+            lambda value: value["legacy_gate"].__setitem__("direct_stack", "READY"),
+            id="direct-stack",
+        ),
+        pytest.param(
+            "publisher contents enabled",
+            lambda value: value["publisher_capabilities"].__setitem__("can_contents", True),
+            id="publisher-contents",
+        ),
+        pytest.param(
+            "publisher approval enabled",
+            lambda value: value["publisher_capabilities"].__setitem__("can_approve", True),
+            id="publisher-approve",
+        ),
+        pytest.param(
+            "publisher merge enabled",
+            lambda value: value["publisher_capabilities"].__setitem__("can_merge", True),
+            id="publisher-merge",
+        ),
+        pytest.param(
+            "required section removed",
+            lambda value: value.pop("review_binding"),
+            id="required-key",
+        ),
+        pytest.param(
+            "unknown policy key",
+            lambda value: value.__setitem__("candidate_override", True),
+            id="unknown-key",
+        ),
+    ],
+)
+def test_candidate_review_policy_never_replaces_the_base_owned_legacy_guard(
+    tmp_path: Path,
+    label: str,
+    mutate: object,
+) -> None:
+    base, candidate = _fixture(tmp_path)
+    policy = _read_fixture_json(candidate, REVIEW_POLICY)
+    assert callable(mutate)
+    mutate(policy)
+    _write(candidate, REVIEW_POLICY, policy)
+
+    result = _run(base, candidate, tmp_path, with_approval=True)
+
+    assert result.returncode == 1, f"{label}: {result.stderr or result.stdout}"
+    assert _payload(result)["candidate_executed"] is False
+
+
+def _relax_candidate_schema(root: Path) -> None:
+    schema = _read_fixture_json(root, REVIEW_POLICY_SCHEMA)
+    schema["properties"]["phase"]["const"] = "AUTONOMOUS_ACTIVE"
+    _write(root, REVIEW_POLICY_SCHEMA, schema)
+
+
+@pytest.mark.parametrize(
+    ("label", "mutate"),
+    [
+        pytest.param("missing policy", lambda root: (root / REVIEW_POLICY).unlink(), id="missing-policy"),
+        pytest.param("malformed policy", lambda root: _write(root, REVIEW_POLICY, "not json"), id="malformed-policy"),
+        pytest.param("missing schema", lambda root: (root / REVIEW_POLICY_SCHEMA).unlink(), id="missing-schema"),
+        pytest.param("relaxed schema", _relax_candidate_schema, id="schema-relaxation"),
+        pytest.param("missing OpenSpec", lambda root: (root / REVIEW_OPEN_SPEC).unlink(), id="missing-openspec"),
+        pytest.param("changed OpenSpec", lambda root: _write(root, REVIEW_OPEN_SPEC, "candidate source\n"), id="openspec-digest"),
+        pytest.param(
+            "alternate policy copy",
+            lambda root: _write(root, "scripts/nested/autonomous-codex-review-policy.copy.json", {}),
+            id="alternate-copy",
+        ),
+    ],
+)
+def test_candidate_policy_artifacts_fail_closed_even_with_exact_human_approval(
+    tmp_path: Path,
+    label: str,
+    mutate: object,
+) -> None:
+    base, candidate = _fixture(tmp_path)
+    assert callable(mutate)
+    mutate(candidate)
+
+    result = _run(base, candidate, tmp_path, with_approval=True)
+
+    assert result.returncode == 1, f"{label}: {result.stderr or result.stdout}"
+    assert _payload(result)["candidate_executed"] is False
+
+
+@pytest.mark.parametrize(
+    ("label", "mutate"),
+    [
+        pytest.param(
+            "base policy phase",
+            lambda root: _write(root, REVIEW_POLICY, {"phase": "AUTONOMOUS_ACTIVE"}),
+            id="base-policy",
+        ),
+        pytest.param("base schema", _relax_candidate_schema, id="base-schema"),
+        pytest.param("base OpenSpec", lambda root: _write(root, REVIEW_OPEN_SPEC, "drift\n"), id="base-openspec"),
+        pytest.param(
+            "base alternate copy",
+            lambda root: _write(root, "scripts/archive/autonomous-codex-review-policy.json", {}),
+            id="base-alternate-copy",
+        ),
+    ],
+)
+def test_trust_root_validates_its_base_owned_review_policy_artifacts(
+    tmp_path: Path,
+    label: str,
+    mutate: object,
+) -> None:
+    base, candidate = _fixture(tmp_path)
+    assert callable(mutate)
+    mutate(base)
+
+    result = _run(base, candidate, tmp_path, with_approval=True)
+
+    assert result.returncode == 1, f"{label}: {result.stderr or result.stdout}"
+    assert _payload(result)["candidate_executed"] is False
+
+
 def test_trust_root_workflow_runs_only_the_base_owned_checker() -> None:
     workflow = (ROOT / ".github" / "workflows" / "governance-trust-root.yml").read_text(
         encoding="utf-8"
@@ -415,6 +592,14 @@ def test_trust_root_workflow_runs_only_the_base_owned_checker() -> None:
     assert "trusted-base/scripts/dev/check_governance_trust_root.py" in workflow
     assert "candidate/scripts/dev/check_governance_trust_root.py" not in workflow
     assert "persist-credentials: false" in workflow
+    assert "fetch-depth: 0" in workflow
+    assert "Verify pinned OpenSpec exists in trusted base history" in workflow
+    assert "git -C trusted-base merge-base --is-ancestor \"$PINNED_SOURCE_SHA\" \"$BASE_SHA\"" in workflow
+    assert "git -C trusted-base cat-file blob \"${PINNED_SOURCE_SHA}:${PINNED_SOURCE_PATH}\"" in workflow
+    open_spec = _read(REVIEW_POLICY)["open_spec"]
+    assert f"PINNED_SOURCE_SHA: {open_spec['base_sha']}" in workflow
+    assert f"PINNED_SOURCE_PATH: {open_spec['source_path']}" in workflow
+    assert f"PINNED_SOURCE_SHA256: {open_spec['source_sha256']}" in workflow
     assert "statuses: write" not in workflow
     assert "checks: write" not in workflow
     assert "repository: ${{ github.event.pull_request.head.repo.full_name }}" in workflow
@@ -445,3 +630,30 @@ def test_trust_root_workflow_runs_only_the_base_owned_checker() -> None:
         r"(?im)(?:^|[;&|]\s*)(?:\./)?candidate(?:/|\\)[^\s]*",
         candidate_execution_source,
     ) is None
+
+
+def test_review_migration_governance_surface_and_trust_root_boundary_are_explicit() -> None:
+    workflow = (ROOT / ".github" / "workflows" / "governance-trust-root.yml").read_text(
+        encoding="utf-8"
+    )
+    rules = _read("scripts/agent-governance-rules.json")
+    surface_rule = next(
+        rule for rule in rules["rules"] if rule["id"] == "governance-surface-present"
+    )
+    required_paths = {
+        REVIEW_POLICY,
+        REVIEW_POLICY_SCHEMA,
+        "scripts/lib/autonomous-codex-review-check.mjs",
+        "scripts/tests/test-autonomous-codex-review-policy.mjs",
+        "scripts/tests/parallel-delivery-fabric/test-review-migration.mjs",
+        "scripts/tests/test-manage-pr-queue.mjs",
+        "scripts/tests/test-trusted-host-merge.mjs",
+        "tests/test_governance_trust_root.py",
+    }
+
+    assert required_paths <= set(surface_rule["paths"])
+    assert REVIEW_POLICY in workflow
+    assert REVIEW_POLICY_SCHEMA in workflow
+    assert REVIEW_OPEN_SPEC in workflow
+    assert "LEGACY_GUARDED" in workflow
+    assert "counted review" in workflow.lower()

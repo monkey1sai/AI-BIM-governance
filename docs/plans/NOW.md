@@ -15,13 +15,18 @@
     { "id": "add-single-gpu-session-ai-review-mvp", "status": "deferred" },
     { "id": "align-frontend-design-system-reference", "status": "deferred" },
     { "id": "gpu-session-baseline-and-idle-reclaim", "status": "active" },
-    { "id": "introduce-viewer-app-integration-surface", "status": "deferred" },
+    { "id": "introduce-viewer-app-integration-surface", "status": "active" },
+    { "id": "parallel-delivery-fabric", "status": "active" },
     { "id": "rvt-ifc-usdc-lineage", "status": "active" },
     { "id": "unified-console-runtime-truth", "status": "active" }
   ]
 }
 ```
 <!-- lifecycle-ledger:end -->
+
+## Parallel Delivery Fabric Phase 0
+
+`parallel-delivery-fabric` 是目前的 `phase0-governance` 工作列，對應 lifecycle ledger 的同名 active row。它只定義 shadow、canary 與 activation record 的治理邊界；shadow 並不代表已啟用交付，也不授權 `direct_stack`、review removal、merge 或 deployment。多個 disjoint writer（獨立 branch／worktree／touch-set）可以並行；同一 branch 競寫仍禁止。
 
 ## 本週三軌（你已選 1/2/3）
 

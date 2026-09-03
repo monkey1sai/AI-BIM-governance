@@ -1,0 +1,361 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import { buildReviewDispositionPlan } from '../dev/manage-pr-queue.mjs';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import {
+  assertNoCredentialOverride,
+  createPlanLock,
+  planSinkActions,
+  sinkResultFailed,
+  validatePlanShape,
+} from '../dev/post-review-disposition.mjs';
+
+// Unit runs never touch the real per-PR lock directory.
+const NO_LOCK = { acquire: () => ({ release: () => {} }) };
+
+const SHA = (value) => value.repeat(40);
+const DIGEST = (value) => value.repeat(64);
+const REPOSITORY = 'monkey1sai/AI-BIM-governance';
+
+const makePacket = (overrides = {}) => ({
+  schemaVersion: 'ai-bim-review-disposition-packet/v1',
+  repository: REPOSITORY,
+  prNumber: 737,
+  baseOid: SHA('b'),
+  headOid: SHA('a'),
+  agentRunId: 'claude-d23c2a-run-1',
+  sender: 'monkey1sai',
+  findings: [
+    {
+      commentDatabaseId: 3902413013,
+      webhookEventId: 'review_comment:3902413013',
+      evidenceSha256: DIGEST('c'),
+      rationale: 'Confirmed on the current head: an invalid Date makes every expiry comparison false, so the lease check must fail closed.',
+      nextAction: 'Repair on a batch head with a regression, then request an independent re-review.',
+      finding: {
+        id: 'PRRC_3902413013', threadId: 'PRRT_thread_1', source: 'reviewer', severity: 'P2',
+        verification: 'confirmed', inScope: true, riskClass: 'correctness', disposition: 'FIX_REQUIRED',
+        fixedOnHead: false, fixEvidence: null, evidence: ['scripts/lib/autonomous-delivery-finalization.mjs:481'],
+        policyRule: 'confirmed-p2-in-scope', followUpRef: null, threadResolved: false,
+      },
+    },
+    {
+      commentDatabaseId: 3902413022,
+      webhookEventId: 'review_comment:3902413022',
+      evidenceSha256: DIGEST('d'),
+      rationale: 'Refuted: the collector already binds diff bytes to the changed-file surface, see the regression test for the exact case.',
+      nextAction: null,
+      finding: {
+        id: 'PRRC_3902413022', threadId: 'PRRT_thread_2', source: 'reviewer', severity: 'P2',
+        verification: 'refuted', inScope: true, riskClass: 'correctness', disposition: 'FALSE_POSITIVE',
+        fixedOnHead: false, fixEvidence: null, evidence: ['scripts/tests/test-autonomous-delivery-finalization.mjs:160'],
+        policyRule: 'false-positive-evidence', followUpRef: null, threadResolved: false,
+      },
+    },
+    {
+      commentDatabaseId: 3902413033,
+      webhookEventId: 'review_comment:3902413033',
+      evidenceSha256: DIGEST('e'),
+      rationale: 'This finding changes the deployment trust boundary and is outside autonomous authority; escalating to the owner.',
+      nextAction: null,
+      finding: {
+        id: 'PRRC_3902413033', threadId: 'PRRT_thread_3', source: 'reviewer', severity: 'P1',
+        verification: 'unverified', inScope: true, riskClass: 'deployment', disposition: 'ESCALATE',
+        fixedOnHead: false, fixEvidence: null, evidence: ['scripts/lib/linux-continuous-deployment.mjs:689'],
+        policyRule: 'high-risk-escalation', followUpRef: null, threadResolved: false,
+      },
+    },
+  ],
+  ...overrides,
+});
+
+const makeSnapshot = (overrides = {}) => ({
+  number: 737, state: 'OPEN', isDraft: false, baseRefName: 'main', baseRefOid: SHA('b'), headRefOid: SHA('a'), ...overrides,
+});
+
+const renderPlan = (packetOverrides = {}) => buildReviewDispositionPlan(makePacket(packetOverrides), makeSnapshot(), {
+  now: new Date('2026-09-02T04:00:00.000Z'),
+});
+
+test('the queue observer renders a bound disposition plan and holds on exact-head drift', () => {
+  const plan = renderPlan();
+  assert.equal(plan.status, 'RENDERED');
+  assert.equal(plan.summary.total, 3);
+  assert.deepEqual(plan.summary.byDisposition, { FIX_REQUIRED: 1, FALSE_POSITIVE: 1, ESCALATE: 1 });
+  assert.equal(plan.summary.escalated, 1);
+  assert.equal(plan.summary.fixPending, 1);
+  assert.equal(plan.summary.mergeGateSatisfiedByAssertion, false);
+  assert.deepEqual(plan.replies.map((reply) => reply.resolvable), [false, true, false]);
+  assert.match(plan.replies[0].body, /<!-- ai-bim-review-disposition\/v1 \{/);
+  assert.match(plan.replies[0].body, /"fixed_on_head":false/);
+  assert.equal(buildReviewDispositionPlan(makePacket(), makeSnapshot({ headRefOid: SHA('9') })).reason, 'exact_head_drift');
+  assert.equal(buildReviewDispositionPlan(makePacket(), makeSnapshot({ state: 'MERGED' })).reason, 'pr_not_open');
+  assert.equal(buildReviewDispositionPlan(makePacket(), makeSnapshot({ isDraft: true })).reason, 'pr_is_draft');
+  assert.equal(buildReviewDispositionPlan(makePacket({ repository: 'other/repo' }), makeSnapshot()).reason, 'packet_repository_not_supported');
+  assert.equal(buildReviewDispositionPlan(makePacket({ prNumber: 738 }), makeSnapshot()).reason, 'packet_pr_mismatch');
+  assert.equal(buildReviewDispositionPlan({ schemaVersion: 'other' }, makeSnapshot()).reason, 'disposition_packet_schema_invalid');
+  assert.throws(() => buildReviewDispositionPlan(makePacket({
+    findings: [makePacket().findings[0], makePacket().findings[0]],
+  }), makeSnapshot()), /duplicated_in_packet/);
+});
+
+function makeGh({ tuple = makeSnapshot(), threads = {}, identity = { login: 'monkey1sai', id: 26239865, type: 'User' }, postedBody = null, failPostFor = null } = {}) {
+  const calls = [];
+  const gh = (args, options = {}) => {
+    calls.push({ args, input: options.input });
+    const joined = args.join(' ');
+    if (joined.startsWith('api user')) return JSON.stringify(identity);
+    if (joined.startsWith('pr view')) return JSON.stringify(typeof tuple === 'function' ? tuple(calls.length) : tuple);
+    if (joined.startsWith('api graphql') && joined.includes('resolveReviewThread')) {
+      return JSON.stringify({ data: { resolveReviewThread: { thread: { isResolved: true } } } });
+    }
+    if (joined.startsWith('api graphql')) {
+      const threadId = args[args.indexOf('-F') + 1].replace(/^id=/, '');
+      const afterArg = args.find((arg) => arg.startsWith('after='));
+      const thread = threads[threadId] ?? { isResolved: false, comments: [] };
+      // Pages of 100, cursors are the page index.
+      const pageIndex = afterArg ? Number(afterArg.replace(/^after=/, '')) : 0;
+      const pageComments = thread.comments.slice(pageIndex * 100, pageIndex * 100 + 100);
+      const hasNextPage = thread.comments.length > (pageIndex + 1) * 100;
+      return JSON.stringify({ data: { node: {
+        isResolved: thread.isResolved,
+        comments: { pageInfo: { hasNextPage, endCursor: hasNextPage ? String(pageIndex + 1) : null }, nodes: pageComments.map((comment) => ({
+          databaseId: comment.databaseId, author: { login: comment.author }, body: comment.body,
+        })) },
+      } } });
+    }
+    if (joined.startsWith('api -X POST')) {
+      if (failPostFor && joined.includes(`/comments/${failPostFor}/replies`)) throw new Error('gh: HTTP 502 upstream unavailable');
+      return JSON.stringify({ id: 999, html_url: 'https://github.com/monkey1sai/AI-BIM-governance/pull/737#discussion_r999', body: postedBody ?? options.input, user: { login: 'monkey1sai' } });
+    }
+    throw new Error(`unexpected gh call: ${joined}`);
+  };
+  return { gh, calls };
+}
+
+const threadsFor = (plan, extra = {}) => Object.fromEntries(plan.replies.map((reply) => [reply.threadId, {
+  isResolved: false,
+  comments: [{ databaseId: reply.commentDatabaseId, author: 'chatgpt-codex-connector', body: 'finding text' }, ...(extra[reply.threadId] ?? [])],
+}]));
+
+test('the sink refuses credential overrides and a foreign owner identity before touching GitHub', () => {
+  const plan = renderPlan();
+  assert.throws(() => assertNoCredentialOverride({ PATH: 'x', GH_TOKEN: 'set' }), /credential_override_present:GH_TOKEN/);
+  const { gh, calls } = makeGh({ identity: { login: 'someone-else', id: 1, type: 'User' } });
+  assert.throws(() => planSinkActions({ lock: NO_LOCK, plan, gh, env: {} }), /owner_identity_mismatch/);
+  assert.equal(calls.length, 1);
+  assert.throws(() => validatePlanShape({ ...plan, status: 'HELD' }), /plan_not_rendered/);
+  assert.throws(() => validatePlanShape({ ...plan, replies: [{ ...plan.replies[0], body: 'stripped' }] }), /reply_metadata_unbound/);
+});
+
+test('the plan file cannot assert resolvability, identity, or disposition beyond what the body metadata carries', () => {
+  const plan = renderPlan();
+  // Hand-editing the ESCALATE reply to resolvable:true must be rejected before any mutation.
+  assert.throws(() => validatePlanShape({
+    ...plan, replies: plan.replies.map((reply) => (reply.disposition === 'ESCALATE' ? { ...reply, resolvable: true } : reply)),
+  }), /reply_resolvable_mismatch:PRRC_3902413033/);
+  // A pending FIX_REQUIRED cannot be promoted to resolvable either.
+  assert.throws(() => validatePlanShape({
+    ...plan, replies: plan.replies.map((reply) => (reply.disposition === 'FIX_REQUIRED' ? { ...reply, resolvable: true } : reply)),
+  }), /reply_resolvable_mismatch:PRRC_3902413013/);
+  assert.throws(() => validatePlanShape({
+    ...plan, replies: plan.replies.map((reply, index) => (index === 0 ? { ...reply, disposition: 'ACCEPTED' } : reply)),
+  }), /reply_identity_unbound/);
+  assert.throws(() => validatePlanShape({
+    ...plan, replies: plan.replies.map((reply, index) => (index === 0 ? { ...reply, threadId: 'PRRT_other' } : reply)),
+  }), /reply_identity_unbound/);
+  assert.throws(() => validatePlanShape({ ...plan, headOid: SHA('9') }), /reply_head_unbound/);
+  // An edited plan cannot publish two decisions for one finding or thread.
+  assert.throws(() => validatePlanShape({ ...plan, replies: [...plan.replies, plan.replies[0]] }), /plan_replies_duplicated/);
+  const secondPlan = renderPlan({ agentRunId: 'claude-d23c2a-run-2' });
+  assert.throws(() => validatePlanShape({ ...plan, replies: [...plan.replies, secondPlan.replies[0]] }), /plan_replies_duplicated/);
+});
+
+test('dry run posts nothing, live posts once per finding, and reruns dedupe on the hidden metadata', () => {
+  const plan = renderPlan();
+  const dry = makeGh({ threads: threadsFor(plan) });
+  const dryResult = planSinkActions({ lock: NO_LOCK, plan, gh: dry.gh, env: {} });
+  assert.deepEqual(dryResult.results.map((entry) => entry.action), ['dry_run_post', 'dry_run_post', 'dry_run_post']);
+  assert.equal(dry.calls.some((call) => call.args.includes('POST')), false);
+
+  const live = makeGh({ threads: threadsFor(plan) });
+  const liveResult = planSinkActions({ lock: NO_LOCK, plan, gh: live.gh, live: true, resolve: true, env: {} });
+  assert.deepEqual(liveResult.results.map((entry) => entry.action), ['posted', 'posted', 'posted']);
+  // Only the FALSE_POSITIVE thread is resolvable: FIX_REQUIRED waits for the repair, ESCALATE stays open.
+  assert.deepEqual(liveResult.results.map((entry) => entry.resolved), [false, true, false]);
+  const posts = live.calls.filter((call) => call.args.includes('POST'));
+  assert.equal(posts.length, 3);
+  assert.match(posts[0].input, /<!-- ai-bim-review-disposition\/v1/);
+  assert.doesNotMatch(posts[0].input, /@codex|@claude/i);
+
+  const rerun = makeGh({ threads: threadsFor(plan, Object.fromEntries(plan.replies.map((reply) => [reply.threadId, [
+    { databaseId: 500, author: 'monkey1sai', body: reply.body },
+  ]]))) });
+  const rerunResult = planSinkActions({ lock: NO_LOCK, plan, gh: rerun.gh, live: true, env: {} });
+  assert.deepEqual(rerunResult.results.map((entry) => entry.reason), ['duplicate_exact_tuple', 'duplicate_exact_tuple', 'duplicate_exact_tuple']);
+  assert.equal(rerun.calls.some((call) => call.args.includes('POST')), false);
+  assert.deepEqual(rerunResult.results.map((entry) => entry.resolved), [false, false, false]);
+  // A rerun with --resolve finishes the resolution a crashed run left pending, and only for the resolvable duplicate.
+  const finish = makeGh({ threads: threadsFor(plan, Object.fromEntries(plan.replies.map((reply) => [reply.threadId, [
+    { databaseId: 500, author: 'monkey1sai', body: reply.body },
+  ]]))) });
+  const finishResult = planSinkActions({ lock: NO_LOCK, plan, gh: finish.gh, live: true, resolve: true, env: {} });
+  assert.deepEqual(finishResult.results.map((entry) => [entry.action, entry.reason, entry.resolved]), [
+    ['skip', 'duplicate_exact_tuple', false], ['skip', 'duplicate_exact_tuple', true], ['skip', 'duplicate_exact_tuple', false],
+  ]);
+  assert.equal(finish.calls.some((call) => call.args.includes('POST')), false);
+  assert.equal(finish.calls.filter((call) => call.args.join(' ').includes('resolveReviewThread')).length, 1);
+  // The same decision from a new run (new agent-run / webhook id) is the other safe
+  // skip; a crashed predecessor's pending resolution is finished from it as well.
+  const newRun = renderPlan({ agentRunId: 'claude-d23c2a-run-9' });
+  const fromNewRun = makeGh({ threads: threadsFor(newRun, Object.fromEntries(plan.replies.map((reply) => [reply.threadId, [
+    { databaseId: 500, author: 'monkey1sai', body: reply.body },
+  ]]))) });
+  const newRunResult = planSinkActions({ lock: NO_LOCK, plan: newRun, gh: fromNewRun.gh, live: true, resolve: true, env: {} });
+  assert.deepEqual(newRunResult.results.map((entry) => [entry.action, entry.reason, entry.resolved]), [
+    ['skip', 'already_dispositioned_on_head', false], ['skip', 'already_dispositioned_on_head', true], ['skip', 'already_dispositioned_on_head', false],
+  ]);
+  assert.equal(fromNewRun.calls.some((call) => call.args.includes('POST')), false);
+});
+
+test('a head that moves right after a reply is posted is recorded as drift and never resolved', () => {
+  const plan = renderPlan({ findings: [makePacket().findings[1]] });
+  let reads = 0;
+  const { gh, calls } = makeGh({
+    threads: threadsFor(plan),
+    // 1st read: before post, 2nd: immediately after post -> drift.
+    tuple: () => { reads += 1; return makeSnapshot(reads >= 2 ? { headRefOid: SHA('9') } : {}); },
+  });
+  const result = planSinkActions({ lock: NO_LOCK, plan, gh, live: true, resolve: true, env: {} });
+  assert.equal(result.results[0].action, 'posted');
+  assert.equal(result.results[0].reason, 'posted_head_drift');
+  assert.equal(result.results[0].resolved, false);
+  assert.equal(calls.some((call) => call.args.join(' ').includes('resolveReviewThread')), false);
+  // Without --resolve the post-mutation re-read still happens.
+  reads = 0;
+  const plain = planSinkActions({ lock: NO_LOCK, plan, gh, live: true, env: {} });
+  assert.equal(plain.results[0].reason, 'posted_head_drift');
+});
+
+test('the sink holds on head drift, resolved threads, missing finding comments, sender mismatch, and readback mismatch', () => {
+  const plan = renderPlan();
+  const drift = makeGh({ tuple: makeSnapshot({ headRefOid: SHA('9') }), threads: threadsFor(plan) });
+  assert.deepEqual(planSinkActions({ lock: NO_LOCK, plan, gh: drift.gh, live: true, env: {} }).results.map((entry) => entry.reason), [
+    'exact_head_drift', 'exact_head_drift', 'exact_head_drift',
+  ]);
+  const resolved = makeGh({ threads: Object.fromEntries(Object.entries(threadsFor(plan)).map(([id, thread]) => [id, { ...thread, isResolved: true }])) });
+  assert.equal(planSinkActions({ lock: NO_LOCK, plan, gh: resolved.gh, live: true, env: {} }).results[0].reason, 'thread_already_resolved');
+  const missing = makeGh({ threads: Object.fromEntries(plan.replies.map((reply) => [reply.threadId, { isResolved: false, comments: [] }])) });
+  assert.equal(planSinkActions({ lock: NO_LOCK, plan, gh: missing.gh, live: true, env: {} }).results[0].reason, 'finding_comment_not_in_thread');
+  const tampered = makeGh({ threads: threadsFor(plan), postedBody: 'server returned a different body' });
+  const tamperedResult = planSinkActions({ lock: NO_LOCK, plan, gh: tampered.gh, live: true, env: {} });
+  assert.equal(tamperedResult.results[0].action, 'hold');
+  assert.equal(tamperedResult.results[0].reason, 'readback_mismatch');
+  // A reply whose metadata names a different sender than the authenticated identity never posts.
+  const foreign = renderPlan({ sender: 'monkey1sai-blip' });
+  const foreignGh = makeGh({ threads: threadsFor(foreign) });
+  const foreignResult = planSinkActions({ lock: NO_LOCK, plan: foreign, gh: foreignGh.gh, live: true, env: {} });
+  assert.deepEqual(foreignResult.results.map((entry) => entry.reason), ['sender_identity_mismatch', 'sender_identity_mismatch', 'sender_identity_mismatch']);
+  assert.equal(foreignGh.calls.some((call) => call.args.includes('POST')), false);
+});
+
+test('a failure on one reply is recorded without discarding earlier results', () => {
+  const plan = renderPlan();
+  const flaky = makeGh({ threads: threadsFor(plan), failPostFor: plan.replies[1].commentDatabaseId });
+  const result = planSinkActions({ lock: NO_LOCK, plan, gh: flaky.gh, live: true, env: {} });
+  assert.deepEqual(result.results.map((entry) => entry.action), ['posted', 'error', 'posted']);
+  assert.match(result.results[1].reason, /^error:gh: HTTP 502/);
+});
+
+test('a head that moves between posting and resolving is recorded as a resolution race', () => {
+  const plan = renderPlan({ findings: [makePacket().findings[1]] });
+  let reads = 0;
+  const { gh } = makeGh({
+    threads: threadsFor(plan),
+    tuple: () => {
+      reads += 1;
+      // 1st read: before post, 2nd: after post, 3rd: before resolve, 4th: after resolve -> drift.
+      return makeSnapshot(reads >= 4 ? { headRefOid: SHA('9') } : {});
+    },
+  });
+  const result = planSinkActions({ lock: NO_LOCK, plan, gh, live: true, resolve: true, env: {} });
+  assert.equal(result.results[0].action, 'posted');
+  assert.equal(result.results[0].resolved, true);
+  assert.equal(result.results[0].reason, 'resolution_race');
+  // A raced or drifted mutation is a failed run for the caller, not a benign posted reply.
+  assert.equal(result.ok, false);
+});
+
+test('the run result is ok only when every mutation landed on the exact head and every expected resolution landed', () => {
+  const plan = renderPlan();
+  const live = makeGh({ threads: threadsFor(plan) });
+  assert.equal(planSinkActions({ lock: NO_LOCK, plan, gh: live.gh, live: true, resolve: true, env: {} }).ok, true);
+  assert.equal(sinkResultFailed({ action: 'posted', reason: 'posted_head_drift', resolvable: false, resolved: false }), true);
+  assert.equal(sinkResultFailed({ action: 'skip', reason: 'resolution_skipped_head_drift', resolvable: true, resolved: false }), true);
+  assert.equal(sinkResultFailed({ action: 'posted', reason: 'error:gh: HTTP 502', resolvable: true, resolved: false }), true);
+  assert.equal(sinkResultFailed({ action: 'posted', reason: 'new_disposition_for_finding_on_head', resolvable: true, resolved: false }, { resolve: true }), true);
+  assert.equal(sinkResultFailed({ action: 'posted', reason: 'new_disposition_for_finding_on_head', resolvable: true, resolved: false }, { resolve: false }), false);
+  assert.equal(sinkResultFailed({ action: 'skip', reason: 'duplicate_exact_tuple', resolvable: false, resolved: false }, { resolve: true }), false);
+  const drift = makeGh({ threads: threadsFor(plan), tuple: (() => { let reads = 0; return () => { reads += 1; return makeSnapshot(reads % 2 === 0 ? { headRefOid: SHA('9') } : {}); }; })() });
+  assert.equal(planSinkActions({ lock: NO_LOCK, plan, gh: drift.gh, live: true, env: {} }).ok, false);
+});
+
+test('the sink serializes itself per PR and holds fail-closed when the lock is already taken', () => {
+  const plan = renderPlan();
+  const calls = [];
+  const lock = { acquire: (key) => { calls.push(['acquire', key]); return { release: () => calls.push(['release']) }; } };
+  const live = makeGh({ threads: threadsFor(plan) });
+  planSinkActions({ lock, plan, gh: live.gh, live: true, env: {} });
+  assert.deepEqual(calls, [['acquire', { repository: REPOSITORY, prNumber: 737 }], ['release']]);
+  const taken = { acquire: () => { throw new Error('sink_lock_held:/tmp/x.lock'); } };
+  const blocked = makeGh({ threads: threadsFor(plan) });
+  assert.throws(() => planSinkActions({ lock: taken, plan, gh: blocked.gh, live: true, env: {} }), /sink_lock_held/);
+  assert.equal(blocked.calls.some((call) => call.args.includes('POST')), false);
+  // The lock is released even when a reply throws.
+  const flakyCalls = [];
+  const flakyLock = { acquire: () => ({ release: () => flakyCalls.push('release') }) };
+  const flaky = makeGh({ threads: threadsFor(plan), failPostFor: plan.replies[0].commentDatabaseId });
+  planSinkActions({ lock: flakyLock, plan, gh: flaky.gh, live: true, env: {} });
+  assert.deepEqual(flakyCalls, ['release']);
+  // The default file lock: one holder at a time, released on demand, reclaimed only when stale.
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-bim-sink-lock-test-'));
+  try {
+    let clock = 1_000_000_000_000;
+    const fileLock = createPlanLock({ root, now: () => clock });
+    const first = fileLock.acquire({ repository: REPOSITORY, prNumber: 737 });
+    assert.throws(() => fileLock.acquire({ repository: REPOSITORY, prNumber: 737 }), /sink_lock_held/);
+    assert.ok(fileLock.acquire({ repository: REPOSITORY, prNumber: 738 }));
+    first.release();
+    const second = fileLock.acquire({ repository: REPOSITORY, prNumber: 737 });
+    const lockFile = path.join(root, 'monkey1sai__AI-BIM-governance-737.lock');
+    const old = new Date(Date.now() - 45 * 60 * 1000);
+    fs.utimesSync(lockFile, old, old);
+    clock = Date.now();
+    // Age alone never reclaims a lock whose holder is still alive (this process).
+    assert.throws(() => fileLock.acquire({ repository: REPOSITORY, prNumber: 737 }), /sink_lock_held/);
+    // A dead holder's stale lock is reclaimed, and the old holder's release no longer deletes the new lock.
+    const deadHolderLock = createPlanLock({ root, now: () => clock, isAlive: () => false });
+    const third = deadHolderLock.acquire({ repository: REPOSITORY, prNumber: 737 });
+    second.release();
+    assert.equal(fs.existsSync(lockFile), true);
+    assert.throws(() => fileLock.acquire({ repository: REPOSITORY, prNumber: 737 }), /sink_lock_held/);
+    third.release();
+    assert.equal(fs.existsSync(lockFile), false);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('a long review thread is read through bounded cursor pagination instead of holding forever', () => {
+  const plan = renderPlan({ findings: [makePacket().findings[1]] });
+  const [reply] = plan.replies;
+  // 149 unrelated comments precede the finding comment, which sits on the second page.
+  const filler = Array.from({ length: 149 }, (_unused, index) => ({ databaseId: 10_000 + index, author: 'someone', body: `comment ${index}` }));
+  const threads = { [reply.threadId]: { isResolved: false, comments: [...filler, { databaseId: reply.commentDatabaseId, author: 'chatgpt-codex-connector', body: 'finding text' }] } };
+  const { gh, calls } = makeGh({ threads });
+  const result = planSinkActions({ lock: NO_LOCK, plan, gh, live: true, env: {} });
+  assert.equal(result.results[0].action, 'posted', JSON.stringify(result.results[0]));
+  assert.equal(calls.filter((call) => call.args.join(' ').includes('api graphql') && !call.args.join(' ').includes('resolveReviewThread')).length, 2);
+});

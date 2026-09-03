@@ -5296,6 +5296,30 @@ describe("Q-Important #2：highlight 分支須驗 payload 形狀（items 非陣�
     const highlightResults = postedTypes(parent).filter((t) => t === "highlight_result");
     expect(highlightResults).toHaveLength(1);
   });
+
+  it("合法的 clientRequestId 只作 console ACK 關聯並原樣回傳；Kit requestId 仍由 viewer 產生", () => {
+    vi.stubEnv("VITE_ALLOWED_COORDINATOR_ORIGINS", PARENT_ORIGIN);
+    const parent = setEmbedded(`${PARENT_ORIGIN}/ui`);
+    const app = operableApp();
+    vi.spyOn(internals(app), "_overlayHighlight").mockReturnValue({ ok: true, requestId: "kit_request_001" });
+    const message = new MessageEvent("message", {
+      data: {
+        protocol: "vg01",
+        type: "highlight",
+        clientRequestId: "console_highlight_001",
+        items: [{ ifc_guid: "GUID-OK", severity: "error" }],
+      },
+      origin: PARENT_ORIGIN,
+    });
+
+    internals(app)._handleParentMessage(message);
+
+    expect(parent.postMessage).toHaveBeenCalledWith(expect.objectContaining({
+      type: "highlight_result",
+      requestId: "kit_request_001",
+      clientRequestId: "console_highlight_001",
+    }), PARENT_ORIGIN);
+  });
 });
 
 // ── A2 F2⑥：highlight_batch（單一批次 request＝Kit 聯集選取）──

@@ -79,8 +79,8 @@
         "format": "agent-skill-tree/v2",
         "algorithm": "sha256",
         "trees": {
-          "claude": "c7d990da9f47f61838d1328424966d5a8087913c3a6c6035ce0a8dfacb8b90b9",
-          "codex": "c7d990da9f47f61838d1328424966d5a8087913c3a6c6035ce0a8dfacb8b90b9"
+          "claude": "1dc7daaff29611c22bc16dc3c62800a2304c417d50188d74c0b156f984e3d78c",
+          "codex": "1dc7daaff29611c22bc16dc3c62800a2304c417d50188d74c0b156f984e3d78c"
         }
       }
     },
@@ -106,8 +106,8 @@
         "format": "agent-skill-tree/v2",
         "algorithm": "sha256",
         "trees": {
-          "claude": "1bc5791e8b15bc082d3ec0dd13cda917f8e1339e5493142cad3b475732d392cc",
-          "codex": "1bc5791e8b15bc082d3ec0dd13cda917f8e1339e5493142cad3b475732d392cc"
+          "claude": "0b19dabd6c7adf8eebbc5c0740238d17232f504af2cc73d7ced7ec3413334a90",
+          "codex": "0b19dabd6c7adf8eebbc5c0740238d17232f504af2cc73d7ced7ec3413334a90"
         }
       }
     },
@@ -560,8 +560,8 @@
         "format": "agent-skill-tree/v2",
         "algorithm": "sha256",
         "trees": {
-          "claude": "0e376e7d41637bd192c15ead900bc49e3d872396e3b69242a6f665953b69043d",
-          "codex": "0e376e7d41637bd192c15ead900bc49e3d872396e3b69242a6f665953b69043d"
+          "claude": "bb62b44e916ff9345a7592b14ab35e421f1b4e4ac50bb58ba94e86f57b15637d",
+          "codex": "bb62b44e916ff9345a7592b14ab35e421f1b4e4ac50bb58ba94e86f57b15637d"
         }
       }
     },
@@ -690,7 +690,7 @@
         "format": "agent-skill-tree/v2",
         "algorithm": "sha256",
         "trees": {
-        "claude": "8ceb0d8b763c80e0eda30249291d519bcdea35f708e383dab133648ead17a592",
+          "claude": "8ceb0d8b763c80e0eda30249291d519bcdea35f708e383dab133648ead17a592",
           "codex": "da24807bff575867fb1053b1aa44b89cd123248c6bc6a14544a86c4d4011ce98"
         }
       }

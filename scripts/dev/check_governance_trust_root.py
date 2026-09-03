@@ -12,6 +12,7 @@ import argparse
 import hashlib
 import json
 from pathlib import Path
+import re
 import sys
 from typing import Any
 
@@ -23,6 +24,86 @@ REVIEWER_PERMISSION = "write"
 
 OBSERVED_BASELINE = "architecture/observed-baseline.json"
 LAYER_BASELINE = "architecture/layer-baseline.json"
+REVIEW_POLICY = "scripts/autonomous-codex-review-policy.json"
+REVIEW_POLICY_SCHEMA = "scripts/tests/autonomous-codex-review-policy.schema.json"
+REVIEW_OPEN_SPEC = "openspec/specs/ai-coding-governance/spec.md"
+REVIEW_OPEN_SPEC_BASE_SHA = "a0ab7065131914e548e1d79a1c683c8b14b07de4"
+REVIEW_OPEN_SPEC_SHA256 = "27c687fff38b1f791565708090611114970a993bd3b126addf34829cc8e11168"
+REVIEW_POLICY_INVENTORY_MAX_DEPTH = 12
+REVIEW_POLICY_INVENTORY_MAX_ENTRIES = 512
+REVIEW_POLICY_IGNORED_DIRECTORIES = {".generated", ".git", "generated", "node_modules"}
+REVIEW_POLICY_FILENAME = re.compile(
+    r"^autonomous-codex-review-policy.*\.json(?:[.~_-].*)?$", re.IGNORECASE
+)
+
+CANONICAL_REVIEW_POLICY: dict[str, Any] = {
+    "schema_version": "autonomous-codex-review-policy/v1",
+    "phase": "LEGACY_GUARDED",
+    "phase_order": [
+        "LEGACY_GUARDED",
+        "SHADOW_DUAL",
+        "CUTOVER_ARMED",
+        "CANARY_ACTIVE",
+        "AUTONOMOUS_ACTIVE",
+    ],
+    "open_spec": {
+        "source_kind": "base_pinned_openspec",
+        "source_path": REVIEW_OPEN_SPEC,
+        "base_sha": REVIEW_OPEN_SPEC_BASE_SHA,
+        "source_sha256": REVIEW_OPEN_SPEC_SHA256,
+    },
+    "external_check": {
+        "source_kind": "github_app",
+        "source_ref": "base:monkey1sai-codex",
+        "app_slug": "monkey1sai-codex",
+        "app_id": 481516,
+        "check_name": "monkey1sai-codex/ready",
+        "required": True,
+    },
+    "external_activation": {
+        "evidence_refs": [
+            "external:settings-lease",
+            "external:rollback-snapshot",
+            "external:authoritative-reread",
+            "external:activation-canary",
+        ],
+        "machine_sink_enabled": False,
+        "candidate_inaccessible_authenticity": "HELD_EXTERNAL_ACTIVATION",
+    },
+    "legacy_gate": {
+        "counted_review_required": True,
+        "direct_stack": "HELD",
+    },
+    "publisher_capabilities": {
+        "can_checks": True,
+        "can_contents": False,
+        "can_approve": False,
+        "can_merge": False,
+    },
+    "role_separation": {
+        "writer_or_fixer": "candidate_writer_or_fixer",
+        "reviewer": "monkey1sai-codex-reviewer",
+        "self_review": "ADVISORY_ONLY",
+    },
+    "review_binding": {
+        "repository": "monkey1sai/AI-BIM-governance",
+        "reviewer_engine": "monkey1sai-codex",
+        "packet_schema_version": "autonomous-codex-review-check-packet/v1",
+        "required_fields": [
+            "pr_number",
+            "base_sha",
+            "head_sha",
+            "changed_files_sha256",
+            "reviewer_engine",
+            "evidence_sha256",
+        ],
+        "identity_fields": [
+            "writer_execution_id",
+            "fixer_execution_id",
+            "reviewer_execution_id",
+        ],
+    },
+}
 
 PROTECTED_EXACT_PATHS = {
     "AGENTS.md",
@@ -38,6 +119,9 @@ PROTECTED_EXACT_PATHS = {
     "scripts/dev/export_observed_architecture.py",
     "scripts/dev/check_layered_architecture.py",
     "scripts/dev/check_governance_trust_root.py",
+    REVIEW_POLICY,
+    REVIEW_POLICY_SCHEMA,
+    REVIEW_OPEN_SPEC,
     "scripts/tests/test-agent-governance-check.ps1",
     "scripts/tests/verification-manifest.schema.json",
     "tests/test_architecture_contract.py",
@@ -145,6 +229,106 @@ def _load_json(root: Path, relative: str) -> dict[str, Any]:
     if not isinstance(parsed, dict):
         raise TrustRootError(f"JSON document must be an object: {relative}")
     return parsed
+
+
+def _canonical_review_policy_schema_node(value: Any) -> dict[str, Any]:
+    if isinstance(value, dict):
+        return {
+            "type": "object",
+            "additionalProperties": False,
+            "required": list(value),
+            "properties": {
+                key: _canonical_review_policy_schema_node(nested)
+                for key, nested in value.items()
+            },
+        }
+    if isinstance(value, list):
+        return {"type": "array", "const": value}
+    if isinstance(value, bool):
+        return {"type": "boolean", "const": value}
+    if isinstance(value, int):
+        return {"type": "integer", "const": value}
+    if isinstance(value, str):
+        return {"type": "string", "const": value}
+    raise TrustRootError("canonical review policy contains an unsupported value")
+
+
+def _canonical_review_policy_schema() -> dict[str, Any]:
+    policy_schema = _canonical_review_policy_schema_node(CANONICAL_REVIEW_POLICY)
+    return {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "$id": "https://ai-bim-governance.local/schemas/autonomous-codex-review-policy/v1",
+        "title": "Base-owned autonomous Codex review policy",
+        **policy_schema,
+    }
+
+
+def _review_policy_inventory(root: Path) -> None:
+    scripts_root = _safe_path(root, "scripts")
+    if not scripts_root.exists() or not scripts_root.is_dir():
+        raise TrustRootError("canonical review policy inventory is missing scripts")
+    stack: list[tuple[Path, str, int]] = [(scripts_root, "scripts", 0)]
+    candidates: list[str] = []
+    entries_seen = 0
+    while stack:
+        directory, relative_directory, depth = stack.pop()
+        try:
+            entries = sorted(directory.iterdir(), key=lambda entry: entry.name)
+        except OSError as exc:
+            raise TrustRootError("canonical review policy inventory cannot be read") from exc
+        for entry in entries:
+            entries_seen += 1
+            if entries_seen > REVIEW_POLICY_INVENTORY_MAX_ENTRIES:
+                raise TrustRootError("canonical review policy inventory exceeds entry budget")
+            relative = f"{relative_directory}/{entry.name}"
+            try:
+                if entry.is_symlink():
+                    raise TrustRootError("canonical review policy inventory contains a symbolic link")
+                if entry.is_dir():
+                    if entry.name.casefold() in REVIEW_POLICY_IGNORED_DIRECTORIES:
+                        continue
+                    if depth >= REVIEW_POLICY_INVENTORY_MAX_DEPTH:
+                        raise TrustRootError("canonical review policy inventory exceeds depth budget")
+                    stack.append((entry, relative, depth + 1))
+                elif entry.is_file():
+                    if REVIEW_POLICY_FILENAME.fullmatch(entry.name):
+                        candidates.append(relative)
+                else:
+                    raise TrustRootError("canonical review policy inventory contains an unknown entry")
+            except OSError as exc:
+                raise TrustRootError("canonical review policy inventory cannot inspect an entry") from exc
+    canonical_count = candidates.count(REVIEW_POLICY)
+    schema_count = candidates.count(REVIEW_POLICY_SCHEMA)
+    unexpected = [
+        candidate
+        for candidate in candidates
+        if candidate not in {REVIEW_POLICY, REVIEW_POLICY_SCHEMA}
+    ]
+    if canonical_count != 1:
+        raise TrustRootError("canonical review policy is missing or duplicated")
+    if schema_count != 1 or unexpected:
+        raise TrustRootError("canonical review policy schema is missing, duplicated, or shadowed")
+
+
+def _validate_review_policy_root(root: Path, label: str) -> None:
+    _review_policy_inventory(root)
+    policy = _load_json(root, REVIEW_POLICY)
+    schema = _load_json(root, REVIEW_POLICY_SCHEMA)
+    if not _json_semantically_equal(policy, CANONICAL_REVIEW_POLICY):
+        raise TrustRootError(f"{label} review policy is not the canonical LEGACY_GUARDED policy")
+    if not _json_semantically_equal(schema, _canonical_review_policy_schema()):
+        raise TrustRootError(f"{label} review policy schema is not the closed canonical schema")
+    source = _read_bytes(root, REVIEW_OPEN_SPEC)
+    assert source is not None
+    try:
+        source_text = source.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise TrustRootError(f"{label} review policy OpenSpec source is not UTF-8") from exc
+    if "\r" in source_text.replace("\r\n", ""):
+        raise TrustRootError(f"{label} review policy OpenSpec source has invalid line endings")
+    canonical_source = source_text.replace("\r\n", "\n").encode("utf-8")
+    if hashlib.sha256(canonical_source).hexdigest() != REVIEW_OPEN_SPEC_SHA256:
+        raise TrustRootError(f"{label} review policy OpenSpec source digest does not match its pin")
 
 
 def _objects(document: dict[str, Any], key: str, relative: str) -> list[dict[str, Any]]:
@@ -506,6 +690,8 @@ def evaluate(args: argparse.Namespace) -> dict[str, Any]:
     if not base_root.is_dir() or not candidate_root.is_dir() or base_root == candidate_root:
         raise TrustRootError("base and candidate roots must be distinct directories")
 
+    _validate_review_policy_root(base_root, "base")
+    _validate_review_policy_root(candidate_root, "candidate")
     findings = _compare_observed(base_root, candidate_root)
     findings.extend(_compare_layered(base_root, candidate_root))
     changed_policy_paths = _protected_paths(base_root, candidate_root)

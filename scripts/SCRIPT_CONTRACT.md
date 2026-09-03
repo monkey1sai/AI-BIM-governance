@@ -35,6 +35,17 @@
   它不是 canonical operator entrypoint，不得取代 `deploy.ps1`、`verify-all.ps1` 或 `stop-all.ps1`，
   也不得啟動 Kit、streaming server、WebRTC 或 GPU runtime。
 
+### Parallel Delivery Fabric shadow control plane
+
+- `scripts/dev/parallel-delivery-fabric.mjs` 是 local shadow-only 控制面，只接受
+  `submit|advance|reconcile|drain|release|inspect` 六個 bounded command。
+- 它只產生本機治理結果，沒有 network、review、merge、deploy、runtime 或 cleanup authority；
+  不得修改 branch protection、安裝 GitHub App、讀取 merge credential，或把 phase 推進成 live activation。
+- `LEGACY_GUARDED`、counted review 與 `HELD_EXTERNAL_ACTIVATION` 是預設邊界。
+  session writer 數量不是 admission gate；只有實體 Kit/WebRTC 資源飽和可回傳 `WRITER_CAPACITY`。
+- `scripts/tests/test-parallel-delivery-fabric-static-policy.ps1` 是 verification manifest 登記的
+  static-only contract gate，不得啟動 network、merge、deploy、runtime 或 cleanup side effect。
+
 ## Test / Smoke / Dev Scripts
 
 新的 smoke、check、E2E、diagnostic script 預設應放：
@@ -57,6 +68,13 @@ tuple digest；executor 在 merge sink 前重驗相同 gate。`attesting_negativ
 一般 elevated merge 必須等 repo/external state 都是 `active` 且 tuple 已清除。它不得取代
 deploy/verify/stop operator 入口。所有 pre-sink GitHub snapshot、candidate fetch、App mint 與 apex request 都
 必須受 contract shared deadline 約束，且合成上限保留 result persistence 時間並小於 workflow job timeout。
+
+`scripts/dev/linux-continuous-deployment-controller.mjs` 是 post-merge closed-contract wrapper，不是新的
+deploy entrypoint。它只接受 merged `pull_request.closed` event 或完整
+`linux-continuous-deployment-request/v1`，寫入 no-clobber、secret-free terminal attestation；真正部署方法仍唯一是
+`scripts/dev/rebuild-test-deploy.ps1 -Build`。repo 尚未具備可證實的 artifact store、target lease、environment
+policy 或 owner-provisioned runner 時，wrapper 必須以 exit 2 輸出 internal `PROVISIONING_REQUIRED → HELD` state sequence，並以既有 closed outer reason 結案；不得讀取
+credential、呼叫部署、promotion、rollback 或 production activation。
 
 `scripts/dev/seed-isolated-stack-ifc-ready.ps1`（branch-only dev tool）：對隔離 branch stack 的
 coordinator 灌入一筆來自真實 MinIO 的 IFC-ready job，供 A4 browser E2E preflight 取得

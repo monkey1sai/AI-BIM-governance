@@ -2,8 +2,8 @@
 // UnifiedConsole — fixtures / 字典（1:1 移植自 design-origin/app.js）
 // 像素級移植正本：scratchpad/design-origin/app.js（vanilla JS 原型）
 // 所有色值 / px / 字串 byte-identical；不要「優化」任何值。
-// 本檔含 i18n 字典、導覽設定、style helper 與 A1–A3 dock 仍使用的原型資料（slice 2 承接）；home／pipeline／ops 的假資料
-// 已移至測試專用的 prototypeFixtures 模組（__testdata__ 目錄下，production 不得 import，見 fixtureNotInProduction.test.ts）。
+// 本檔只保留 i18n 字典、導覽設定與 style helper；A1–A4 production route
+// 直接掛載 live modules，不再保存或渲染 prototype dock data。
 // ═══════════════════════════════════════════════════════════════════════
 import type { CSSProperties } from "react";
 
@@ -19,7 +19,6 @@ export type PageKey = "home" | "ws" | "pipe" | "ops" | "concept";
 export type DockKey = "a1" | "a2" | "a3" | "a4" | "issues";
 export type ConceptKey = "a5" | "a6" | "a7" | "a8" | "a9" | "a10";
 export type AppCode = "A1" | "A2" | "A3" | "A4" | "A5" | "A6" | "A7" | "A8" | "A9" | "A10";
-export type Member = "ARCH" | "STR" | "MEP" | "CIVIL" | "LAND";
 
 /* ── i18n 字典（1:1 對應 app.js getL）── */
 export interface Dict {
@@ -95,11 +94,6 @@ export type OutboxStatus = "待送" | "已送";
 export interface OutboxItem { id: string; kind: string; st: OutboxStatus; }
 export type IssueStatus = "open" | "in-review";
 export interface IssueItem { id: string; title: string; st: IssueStatus; src: string; }
-export interface SelItem { name: string; path: string; }
-
-export type RuleKey = "r1" | "r2" | "r3";
-export type RuleOn = Record<RuleKey, boolean>;
-
 // slice-1 誠實欠帳（P3 final review f1）：Issues/BCF dock（docks.tsx，§2 範圍）仍以 fixture issue 種入；
 // 若移到 test-only，workspace.a3 的 failure semantic case（open chip／防火時效不足）會空掉。留在 production、
 // 由 fixtureNotInProduction.test.ts 的 SLICE2_DEBT ratchet 釘住（UnifiedShell.tsx 唯一消費者），隨 §2 dock 真值化一併移除。
@@ -108,11 +102,6 @@ export const initialIssues: IssueItem[] = [
   { id: "ISS-098", title: "B-3F-12 樑位移 +42mm 超容差", st: "in-review", src: "diff v11→v12" },
 ];
 export const INITIAL_ISSUE_SEQ = 102;
-export const initialRuleOn: RuleOn = { r1: true, r2: true, r3: false };
-export const initialFlags = {
-  a1Ran: true, a2Ran: false, a3Built: false, overlayOn: false,
-};
-export const INITIAL_DC_LOG = "highlightPrimsResult ✓ (18 prims)";
 
 /* ── nav：工作台 4 項（route hash 對映 home→#home / ws→#a1 / pipe→#pipeline / ops→#runtime）── */
 export interface NavMainItem {
@@ -169,80 +158,6 @@ export const dockTabs: DockTab[] = [
   { id: "issues", label: () => "Issues / BCF" },
 ];
 
-/* ── 色組 / tone 字典 ── */
-export const memColors: Record<Member, string> = {
-  ARCH: "var(--ab-arch)", STR: "var(--ab-accent)", MEP: "var(--ab-violet)", CIVIL: "var(--ab-warn)", LAND: "var(--ab-ok)",
-};
-
-/** [color, "rgba(r,g,b" 前綴]；使用端補 ",.1)" / ",.3)" 等透明度。 */
-export const sevTone: Record<string, readonly [string, string]> = {
-  "嚴重": ["var(--ab-danger)", "rgba(232,97,92"], "高": ["var(--ab-warn)", "rgba(230,178,62"], "中": ["var(--ab-caution)", "rgba(232,211,92"],
-  critical: ["var(--ab-danger)", "rgba(232,97,92"], high: ["var(--ab-warn)", "rgba(230,178,62"], med: ["var(--ab-caution)", "rgba(232,211,92"],
-};
-
-export type DiffKind = "added" | "removed" | "modified";
-export const kindTone: Record<DiffKind, readonly [string, string]> = {
-  added: ["var(--ab-accent-text)", "rgba(65,199,232"],
-  removed: ["var(--ab-danger)", "rgba(232,97,92"],
-  modified: ["var(--ab-warn)", "rgba(230,178,62"],
-};
-
-/* ── stage tree（ws 左欄 /World members + 版本）── */
-export interface StageTreeMember { name: Member; ver: string; }
-export const stageTree: StageTreeMember[] = [
-  { name: "ARCH", ver: "v12" },
-  { name: "STR", ver: "v08" },
-  { name: "MEP", ver: "v15" },
-  { name: "CIVIL", ver: "v04" },
-  { name: "LAND", ver: "v06" },
-];
-
-/* ── A1 規則集 3 項 ── */
-export interface RuleDef { k: RuleKey; labelZh: string; labelEn: string; code: string; }
-export const ruleDefs: RuleDef[] = [
-  { k: "r1", labelZh: "防火門 FireRating ≥ 60min", labelEn: "Fire door rating ≥ 60min", code: "CNS 11227-1" },
-  { k: "r2", labelZh: "淨高 ≥ 2100mm", labelEn: "Clear height ≥ 2100mm", code: "TBC 76" },
-  { k: "r3", labelZh: "管線間距 ≥ 50mm", labelEn: "Pipe clearance ≥ 50mm", code: "MEP-S12" },
-];
-
-/* ── A1 檢核失敗 4 項 ── */
-export interface FailDef {
-  id: string;
-  elZh: string; elEn: string;
-  ruleZh: string; ruleEn: string;
-  sevZh: string; sevEn: string;
-  path: string;
-}
-export const failDefs: FailDef[] = [
-  { id: "SC-132", elZh: "FD-4F-02 防火門", elEn: "FD-4F-02 fire door", ruleZh: "FireRating 30min < 60min", ruleEn: "FireRating 30min < 60min", sevZh: "嚴重", sevEn: "critical", path: "/World/ARCH/4F/Doors/FD-02" },
-  { id: "SC-131", elZh: "W-2F-15 牆", elEn: "W-2F-15 wall", ruleZh: "淨高 2050mm", ruleEn: "clear height 2050mm", sevZh: "高", sevEn: "high", path: "/World/ARCH/2F/Walls/W-15" },
-  { id: "SC-130", elZh: "P-2F-M32 管線", elEn: "P-2F-M32 pipe", ruleZh: "間距 32mm", ruleEn: "clearance 32mm", sevZh: "中", sevEn: "med", path: "/World/MEP/2F/Pipes/M32" },
-  { id: "SC-129", elZh: "D-2F-09 風管", elEn: "D-2F-09 duct", ruleZh: "支撐間距超限", ruleEn: "support spacing", sevZh: "中", sevEn: "med", path: "/World/MEP/2F/Ducts/D09" },
-];
-
-/* ── A2 diff 4 項 ── */
-export interface DiffDef {
-  elZh: string; elEn: string;
-  kindZh: string; kindEn: string;
-  tone: DiffKind;
-  detail: string;
-}
-export const diffDefs: DiffDef[] = [
-  { elZh: "B-3F-12 樑", elEn: "B-3F-12 beam", kindZh: "修改", kindEn: "mod", tone: "modified", detail: "position.z +42mm" },
-  { elZh: "FD-4F-02 防火門", elEn: "FD-4F-02 door", kindZh: "移除", kindEn: "del", tone: "removed", detail: "IfcDoor deleted in v15" },
-  { elZh: "W-5F-03…08 牆組", elEn: "W-5F-03…08 walls", kindZh: "新增", kindEn: "add", tone: "added", detail: "6 new IfcWall" },
-  { elZh: "P-2F-M32 管線", elEn: "P-2F-M32 pipe", kindZh: "修改", kindEn: "mod", tone: "modified", detail: "diameter 80→100" },
-];
-
-/* ── A3 federation members 5 項 ── */
-export interface FedMember { name: Member; ver: string; path: string; }
-export const fedMembers: FedMember[] = [
-  { name: "ARCH", ver: "v12", path: "/Models/ARCH/A1_Tower.usd" },
-  { name: "STR", ver: "v08", path: "/Models/STR/A1_Tower.usd" },
-  { name: "MEP", ver: "v15", path: "/Models/MEP/A1_Tower.usd" },
-  { name: "CIVIL", ver: "v04", path: "/Models/CIVIL/A1_Tower.usd" },
-  { name: "LAND", ver: "v06", path: "/Models/LAND/A1_Tower.usd" },
-];
 
 /* ── concept（A5–A10）標題 + uploads 圖檔名 ── */
 export interface ConceptMeta { titleZh: string; titleEn: string; img: string; }
@@ -281,11 +196,6 @@ export const conceptFeat: Record<ConceptKey, { zh: string[]; en: string[] }> = {
     zh: ["跨模組資料匯流的決策工作台", "AI 建議 × 證據鏈(Evidence Trace)", "情境模擬與影響評估", "決策紀錄可稽核回放"],
     en: ["Decision workbench over cross-module data", "AI suggestions × evidence trace", "Scenario simulation & impact assessment", "Auditable decision playback"],
   },
-};
-
-/* ── viewport 背景底圖對映（ws 中欄）── */
-export const VP_BASE: Record<DockKey, string> = {
-  a1: "vp-semantic", a2: "vp-scan", a3: "vp-federation", a4: "vp-semantic", issues: "vp-tower",
 };
 
 /* ═══ style helpers（1:1 翻譯 app.js 產生器 → React.CSSProperties）═══ */

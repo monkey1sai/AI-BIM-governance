@@ -1,0 +1,97 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "linux-continuous-deployment-attestation/v1",
+  "title": "Linux Continuous Deployment Terminal Attestation",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "repository", "pull_request", "source_head_sha", "trusted_merge_sha",
+    "artifact_sha256", "environment", "service", "target_fingerprint", "deployment_method",
+    "timestamps", "verification", "outcome", "release_lineage", "state_history_sha256",
+    "failure_detail", "final_state", "terminal_class", "reason_code"
+  ],
+  "properties": {
+    "schema_version": { "const": "linux-continuous-deployment-attestation/v1" },
+    "repository": { "const": "monkey1sai/AI-BIM-governance" },
+    "pull_request": { "type": ["integer", "null"], "minimum": 1 },
+    "source_head_sha": { "$ref": "#/definitions/nullable_sha1" },
+    "trusted_merge_sha": { "$ref": "#/definitions/nullable_sha1" },
+    "artifact_sha256": { "$ref": "#/definitions/nullable_sha256" },
+    "environment": { "type": ["string", "null"], "minLength": 1, "maxLength": 200 },
+    "service": { "type": ["string", "null"], "minLength": 1, "maxLength": 200 },
+    "target_fingerprint": { "$ref": "#/definitions/nullable_sha256" },
+    "deployment_method": { "const": "scripts/dev/rebuild-test-deploy.ps1 -Build" },
+    "timestamps": {
+      "type": "object", "additionalProperties": false,
+      "required": ["requested_at", "terminal_at"],
+      "properties": {
+        "requested_at": { "type": ["string", "null"], "format": "date-time" },
+        "terminal_at": { "type": ["string", "null"], "format": "date-time" }
+      }
+    },
+    "verification": {
+      "type": "array", "maxItems": 9,
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["stage", "gate_id", "status", "evidence_sha256"],
+        "properties": {
+          "stage": { "enum": ["canary", "post_deploy", "rollback"] },
+          "gate_id": { "enum": ["health", "smoke", "e2e"] },
+          "status": { "enum": ["passed", "failed", "held"] },
+          "evidence_sha256": { "$ref": "#/definitions/sha256" }
+        }
+      }
+    },
+    "outcome": {
+      "type": "object", "additionalProperties": false,
+      "required": ["promotion", "rollback"],
+      "properties": {
+        "promotion": { "enum": ["verified", "failed", "not_started"] },
+        "rollback": { "enum": ["verified", "unverified", "not_started"] }
+      }
+    },
+    "release_lineage": {
+      "type": "object", "additionalProperties": false,
+      "required": [
+        "delivery_id", "attempt_id", "supersedes_delivery_id", "supersedes_attempt_id",
+        "previous_attempt_sha256", "previous_known_good_release_id"
+      ],
+      "properties": {
+        "delivery_id": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "attempt_id": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "supersedes_delivery_id": { "type": ["string", "null"], "minLength": 1, "maxLength": 200 },
+        "supersedes_attempt_id": { "type": ["string", "null"], "minLength": 1, "maxLength": 200 },
+        "previous_attempt_sha256": { "$ref": "#/definitions/nullable_sha256" },
+        "previous_known_good_release_id": { "type": ["string", "null"], "minLength": 1, "maxLength": 200 }
+      }
+    },
+    "state_history_sha256": { "$ref": "#/definitions/sha256" },
+    "failure_detail": {
+      "type": "array", "maxItems": 64,
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["namespace", "code", "evidence_sha256"],
+        "properties": {
+          "namespace": { "type": "string", "minLength": 1, "maxLength": 200 },
+          "code": { "type": "string", "minLength": 1, "maxLength": 200 },
+          "evidence_sha256": { "$ref": "#/definitions/sha256" }
+        }
+      }
+    },
+    "final_state": { "enum": ["ACTIVATED", "ROLLED_BACK", "HELD"] },
+    "terminal_class": { "enum": ["DELIVERED", "FAILED", "HELD"] },
+    "reason_code": {
+      "enum": [
+        "DELIVERY_VERIFIED", "PREMERGE_EVIDENCE_INVALID", "PREMERGE_AUTHORITY_UNAVAILABLE",
+        "POLICY_OR_SETTINGS_DRIFT", "MERGE_OUTCOME_UNVERIFIED", "DEPLOYMENT_BLOCKED",
+        "MERGED_NOT_DELIVERED", "DELIVERY_PENDING_FIXPOINT", "ACTIVATION_UNATTESTED"
+      ]
+    }
+  },
+  "definitions": {
+    "sha1": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "nullable_sha1": { "oneOf": [{ "$ref": "#/definitions/sha1" }, { "type": "null" }] },
+    "nullable_sha256": { "oneOf": [{ "$ref": "#/definitions/sha256" }, { "type": "null" }] }
+  }
+}

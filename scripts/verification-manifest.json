@@ -278,6 +278,11 @@
       "cwd": ".", "evidence_class": "contract", "configured": true, "not_configured_reason": null
     },
     {
+      "id": "parallel-delivery-fabric-static-policy", "capabilities": ["contract"], "enforcement": "required",
+      "command": { "executable": "pwsh", "args": ["-NoProfile", "-NonInteractive", "-File", "scripts/tests/test-parallel-delivery-fabric-static-policy.ps1"] },
+      "cwd": ".", "evidence_class": "contract", "configured": true, "not_configured_reason": null
+    },
+    {
       "id": "compose-config", "capabilities": ["deployment-contract"], "enforcement": "required",
       "command": { "executable": "docker", "args": ["compose", "-f", "compose.runtime-manager.yml", "-f", "compose.host-kit.yml", "--env-file", ".env.web-plane.host-kit.example", "config", "--quiet"] },
       "cwd": ".", "evidence_class": "fast", "configured": true, "not_configured_reason": null
@@ -398,7 +403,7 @@
         "tests/**", "web-viewer-sample/**", "architecture/**",
         "compose.*.yml", ".env*.example", "agent-skills-manifest.json", "skills-lock.json"
       ],
-      "owner": "agent-governance", "fast_gates": [], "contract_gates": ["agent-governance-tests"], "slow_evidence_gates": [],
+      "owner": "agent-governance", "fast_gates": [], "contract_gates": ["agent-governance-tests", "parallel-delivery-fabric-static-policy"], "slow_evidence_gates": [],
       "required_when": { "predicate": "changed_path_class", "any_of": ["agent-governance"] }, "skip_reason": "path_not_affected",
       "default_profiles": [], "ci_output": "agent_governance",
       "ci_job": "agent-governance", "result_artifact": null

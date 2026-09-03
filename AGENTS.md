@@ -8,7 +8,7 @@
 1. **廢除 3-PR Demote/Reapprove 儀式**：禁止將 UI 變更拆成 3 個 PR，畫面改動與 Design Baseline 更新**一律在單一 PR 內同時交付**。
 2. **凍結元治理工具自我修復循環**：禁止主動開立 Fixpoint rebuild、Classifier repair、Ledger reconciliation 等純治理工具 PR。非阻塞告警改為 Warning，不阻擋業務代碼交付。
 3. **前端驗收以 Functional & Semantic E2E 為主**：著重於 Playwright 語意與功能驗收，放寬 1% 嚴苛 Pixel Diff 硬阻斷。
-4. **Single Active Writer 原則**：同一時間只由 1 個主要 Coordinator 負責寫入與開 PR，其他 Agent 僅擔任唯讀 Research 或局部 Debugger。
+4. **並行 Writer 隔離原則**：repo 不以 writer 數量為 blocker；多個 writer 只可在各自獨立 sibling worktree、獨立 branch 與明確無重疊 touch-set 中並行，每個 task／branch 仍限單一 writer。同一 branch、同一 worktree 或 touch-set 重疊／未知一律停工排隊；`.agents/board` 只做感知，不具 lease／approval／merge authority；`direct_stack` 與 autonomous delivery 未有 canonical activation record 前保持 HELD。
 5. **主工作區絕對乾淨與強制 Worktree 隔離（全體 Agent 永久鐵律）**：
    - **主工作區**永遠保持 `main == origin/main` 且無 dirty files；任何受版控檔案或 code 變更**一律在獨立 Worktree（`AI-BIM-governance.worktrees/<name>`）實作**。
    - 所有 Task 必須經由真實測試與 **Chrome E2E 語意驗證（Playwright / Agent in Chrome）** 驗收；無實證數據絕不宣稱完成。全體 Agent（Codex、Claude、AGY、Grok）一體嚴格遵守。
@@ -119,6 +119,7 @@ _worker / _bim-control = 已自 repo 刪除（2026-05-18 B 方案落地），僅
 | 查需求入口、服務邊界、route IA、API 契約、時序、資料模型、實作分期、AI Coding 交付守則 | `docs/plans/docs-plans-README.md`（入口）→ `AI-BIM 前後端設計文件.dc.html` §01–§08 |
 | 需要依任務種類／難度選擇 Codex workflow、subagents、模型 lane，或使用 `use agents` / `subagents` / `swarm` 開發 `docs/plans` 需求 | `docs/agents/codex-loop-workflows.md` |
 | 多終端機／多 CLI 並行 session 看板（明確 register/status/done、選用 Codex notify） | `docs/agents/parallel-session-board.md` |
+| 查 Parallel Delivery Fabric 的隔離、admission、evidence、promotion 與 activation 邊界 | `docs/agents/parallel-delivery-fabric.md` |
 | PR 變更對象包含驗證機制本身（deploy path / evidence harness / gate script）、bootstrap ledger 欠帳 | `docs/agents/self-referential-bootstrap.md` |
 | 新增／修改 repo 治理規則（機器可讀 artifact 的結構規則、rule ratchet、PINNED 承重規則） | `docs/agents/agent-governance-policy.md` |
 | 查 domain vocabulary、GitHub issue workflow 或 triage labels | `docs/agents/domain.md`、`docs/agents/issue-tracker.md`、`docs/agents/triage-labels.md` |
