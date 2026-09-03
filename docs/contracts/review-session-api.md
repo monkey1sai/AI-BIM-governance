@@ -133,8 +133,24 @@ failed
 
 Inactivity reclaim is disabled when `SESSION_IDLE_TIMEOUT_MS` is unset. An
 explicit value must be a positive integer from 1 through 2147483647; this value
-is deployment-owned and is not defaulted before the GPU session baseline is
-measured.
+is the deployment-owned restart baseline and is not defaulted before the GPU
+session baseline is measured.
+
+`GET /api/runtime/session-idle-policy` returns the effective process-local
+policy, its `source` (`environment` or `operator_override`), monotonic
+`revision`, process-unique `process_epoch`, countdown duration, and explicit
+live-apply/restart behavior.
+`PUT /api/runtime/session-idle-policy` requires the existing operator token,
+`expected_revision`, the matching `expected_process_epoch`, a non-empty audit
+`reason`, and nullable `timeout_ms`.
+The source-code default `dev-token` never enables this mutation path; token
+attempts are rate-limited per source IP. Browser clients send credentials only
+over HTTPS or exact loopback HTTP.
+`null` disables reclaim; a positive integer enables it immediately. A stale
+revision or coordinator process epoch returns HTTP 409. Applying a policy restarts the idle clock for already
+ready sessions at the apply boundary; restarting the coordinator restores the
+deployment environment value. The endpoint never edits `.env` or deployment
+configuration.
 
 The coordinator tracks only sessions with at least one `/review` socket that has
 joined with the canonical trace and then reported `streamReadiness { ready: true }`.

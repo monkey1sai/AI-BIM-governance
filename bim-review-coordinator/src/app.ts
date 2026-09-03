@@ -154,7 +154,10 @@ import {
   SessionStore,
 } from "./services/sessionStore.js";
 import { SessionTraceResolver, type SessionTracePlan } from "./services/sessionTraceResolver.js";
-import { SessionIdleReclaimService } from "./services/sessionIdleReclaimService.js";
+import {
+  SESSION_IDLE_TIMEOUT_MAX_MS,
+  SessionIdleReclaimService,
+} from "./services/sessionIdleReclaimService.js";
 import { registerReviewNamespace } from "./socket/reviewNamespace.js";
 import { registerConsoleRoutes } from "./routes/consoleRoutes.js";
 import { buildRuntimeStatus, expectedStageBinding, summarizeIfcReadyJob } from "./runtimeStatus.js";
@@ -405,6 +408,13 @@ const heartbeatViewerLeaseSchema = z.object({
 
 const sessionActivitySchema = z.object({
   lease_id: z.string().trim().min(1).max(200),
+}).strict();
+
+const sessionIdlePolicyUpdateSchema = z.object({
+  timeout_ms: z.number().int().min(1).max(SESSION_IDLE_TIMEOUT_MAX_MS).nullable(),
+  expected_revision: z.number().int().nonnegative(),
+  expected_process_epoch: z.string().regex(/^[0-9a-f]{32}$/),
+  reason: z.string().trim().min(1).max(500),
 }).strict();
 
 const releaseViewerLeaseSchema = z.object({
@@ -1934,6 +1944,13 @@ export function createCoordinatorApp(
     isOperatorTokenValid: (request) => isKitMutationAuthorized(request, config.devAuthToken),
     rateLimiter: new SlidingWindowRateLimiter(OPERATOR_TOKEN_RATE_LIMIT, OPERATOR_TOKEN_RATE_WINDOW_MS),
   });
+  const rejectIfSessionIdlePolicyUnauthorized = createConversionControlGuard({
+    // This global lifecycle mutation never bypasses operator auth based on IP.
+    isCallerIpAllowed: () => false,
+    operatorTokenPathEnabled: () => isOperatorTokenPathEnabled(config.devAuthToken),
+    isOperatorTokenValid: (request) => isKitMutationAuthorized(request, config.devAuthToken),
+    rateLimiter: new SlidingWindowRateLimiter(OPERATOR_TOKEN_RATE_LIMIT, OPERATOR_TOKEN_RATE_WINDOW_MS),
+  });
 
   app.post("/api/conversion/jobs/:id/prioritize", (request, response) => {
     if (rejectIfConversionControlUnauthorized(request, response)) return;
@@ -2467,12 +2484,63 @@ export function createCoordinatorApp(
     const state = idleReclaimService.getSessionState(request.params.sessionId);
     response.json({
       session_id: request.params.sessionId,
-      enabled: config.sessionIdleTimeoutMs !== undefined,
+      enabled: idleReclaimService.getPolicy().enabled,
       has_connected_viewer: idleReclaimService.hasConnectedPeer(request.params.sessionId),
       is_counting_down: state?.isCountingDown ?? false,
       remaining_seconds: state?.countdownRemainingSec ?? null,
       last_activity_at: state?.lastActivityAt ? new Date(state.lastActivityAt).toISOString() : null,
     });
+  });
+
+  const sessionIdlePolicyProcessEpoch = randomBytes(16).toString("hex");
+  const sessionIdlePolicyResponse = () => {
+    const policy = idleReclaimService.getPolicy();
+    return {
+      enabled: policy.enabled,
+      timeout_ms: policy.timeoutMs,
+      source: policy.source,
+      revision: policy.revision,
+      process_epoch: sessionIdlePolicyProcessEpoch,
+      countdown_seconds: policy.countdownSeconds,
+      apply_mode: "live_process",
+      restart_behavior: "environment_value_restored",
+      active_session_behavior: "ready_sessions_restart_idle_clock",
+    };
+  };
+
+  app.get("/api/runtime/session-idle-policy", (_request, response) => {
+    response.json(sessionIdlePolicyResponse());
+  });
+
+  app.put("/api/runtime/session-idle-policy", (request, response) => {
+    if (rejectIfSessionIdlePolicyUnauthorized(request, response)) return;
+    const parsed = sessionIdlePolicyUpdateSchema.safeParse(request.body);
+    if (!parsed.success) {
+      response.status(400).json({ detail: "Body must include timeout_ms, expected_revision, expected_process_epoch, and a non-empty reason." });
+      return;
+    }
+    const current = idleReclaimService.getPolicy();
+    if (
+      parsed.data.expected_process_epoch !== sessionIdlePolicyProcessEpoch
+      || parsed.data.expected_revision !== current.revision
+    ) {
+      response.status(409).json({ detail: "Session idle policy changed; refresh and retry." });
+      return;
+    }
+    const next = idleReclaimService.updateIdleTimeoutMs(parsed.data.timeout_ms);
+    structLog.withTraceId("external_session-idle-policy").audit(
+      "session-idle-policy",
+      "session idle policy updated",
+      {
+        action: "session.idle-policy.update",
+        actor: "authenticated-operator@runtime-console",
+        target: next.enabled ? `timeout-ms:${next.timeoutMs}` : "disabled",
+        reason: parsed.data.reason,
+        enabled: next.enabled,
+      },
+      "info",
+    );
+    response.json(sessionIdlePolicyResponse());
   });
 
   // Stage composition authority is a server-resolved, bounded transaction.

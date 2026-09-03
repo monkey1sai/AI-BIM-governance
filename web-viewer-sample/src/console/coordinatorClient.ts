@@ -34,6 +34,16 @@ export function coordinatorUrl(path: string): string {
   return `${COORD_BASE}${path}`;
 }
 
+export function isSecureOperatorTransport(base: string = COORD_BASE): boolean {
+  try {
+    const url = new URL(base, window.location.origin);
+    return url.protocol === "https:"
+      || (url.protocol === "http:" && ["127.0.0.1", "localhost", "[::1]"].includes(url.hostname));
+  } catch {
+    return false;
+  }
+}
+
 // F12（2026-07-10）：共用 fetch 原語內建逾時——wedged socket 過去會讓 await 永久 pending，
 // 呼叫端 busy 卡死只能整頁重載（SharedStatusProvider 自建 watchdog 自救，其他消費端裸奔）。
 // 保護下沉到原語層：預設 15s（輪詢 GET 為 1s cadence 短請求，15s 天花板安全）；
@@ -138,11 +148,36 @@ async function jsonPut<T>(path: string, body: Record<string, unknown>): Promise<
   return res.json() as Promise<T>;
 }
 
+async function jsonPutWithHeaders<T>(path: string, body: Record<string, unknown>, headers: Record<string, string>): Promise<T> {
+  const res = await fetch(`${COORD_BASE}${path}`, {
+    method: "PUT",
+    headers: { Accept: "application/json", "Content-Type": "application/json", ...headers },
+    body: JSON.stringify(body),
+    signal: fetchTimeoutSignal(),
+  });
+  if (!res.ok) {
+    throw new Error(`coordinator ${path} -> ${res.status} ${await errorDetail(res)}`);
+  }
+  return res.json() as Promise<T>;
+}
+
 // /health 真實回應形狀（app.ts:388）。
 export interface CoordinatorHealth {
   status: string;
   service: string;
   kit_signaling_port: number;
+}
+
+export interface SessionIdlePolicy {
+  enabled: boolean;
+  timeout_ms: number | null;
+  source: "environment" | "operator_override";
+  revision: number;
+  process_epoch: string;
+  countdown_seconds: number;
+  apply_mode: "live_process";
+  restart_behavior: "environment_value_restored";
+  active_session_behavior: "ready_sessions_restart_idle_clock";
 }
 
 export interface ArtifactHealthSnapshot {
@@ -785,4 +820,27 @@ export const coordinatorClient = {
       remaining_seconds: number | null;
       last_activity_at: string | null;
     }>(`/api/review-sessions/${encodeURIComponent(sessionId)}/idle-status`),
+  getSessionIdlePolicy: () =>
+    jsonGet<SessionIdlePolicy>("/api/runtime/session-idle-policy"),
+  updateSessionIdlePolicy: (
+    timeoutMs: number | null,
+    expectedRevision: number,
+    expectedProcessEpoch: string,
+    reason: string,
+    operatorToken: string,
+  ) => {
+    if (!isSecureOperatorTransport()) {
+      return Promise.reject(new Error("operator credential transport requires HTTPS or exact loopback HTTP"));
+    }
+    return jsonPutWithHeaders<SessionIdlePolicy>(
+      "/api/runtime/session-idle-policy",
+      {
+        timeout_ms: timeoutMs,
+        expected_revision: expectedRevision,
+        expected_process_epoch: expectedProcessEpoch,
+        reason,
+      },
+      { "X-Operator-Token": operatorToken },
+    );
+  },
 };

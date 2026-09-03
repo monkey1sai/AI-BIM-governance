@@ -32,6 +32,12 @@ test.describe("B 操作台：:8004/ui UnifiedConsole 路由 + 保留 operator-to
     await expect(page.getByText("Runtime / Kit · GPU 營運")).toBeVisible({ timeout: 15_000 });
     await expect(page.getByText("服務健康")).toBeVisible({ timeout: 15_000 });
     await expect(page.getByText("GPU Fleet")).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByText("Session 閒置回收策略")).toBeVisible({ timeout: 15_000 });
+    await expect(page.locator('[data-uc="session-idle-minutes"]')).toBeVisible();
+    await expect(page.locator('[data-uc="session-idle-token"]')).toHaveAttribute("type", "password");
+    await expect(page.locator('[data-uc="session-idle-reason"]')).toBeVisible();
+    await expect(page.locator('[data-uc="session-idle-apply"]')).toBeVisible();
+    await expect(page.getByText(/服務重啟後恢復部署環境值/)).toBeVisible();
     await expect(page.getByRole("heading", { name: /Coordinator Console/ })).toHaveCount(0);
 
     await page.screenshot({ path: "../artifacts/e2e/unified-console-routes.png", fullPage: true });

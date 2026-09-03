@@ -4,9 +4,9 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import EdgeConsole from "../EdgeConsole";
-import { CoordinatorHttpError } from "../coordinatorClient";
+import { CoordinatorHttpError, coordinatorClient } from "../coordinatorClient";
 import { coordinatorStatusStore } from "./coordinatorStatusStore";
-import { spyCoordinatorEndpoints, spyCoordinatorEndpointsOffline } from "./__testdata__/coordinatorMocks";
+import { IDLE, spyCoordinatorEndpoints, spyCoordinatorEndpointsOffline } from "./__testdata__/coordinatorMocks";
 
 describe("OpsPage 真值綁定", () => {
   let container: HTMLDivElement;
@@ -30,6 +30,13 @@ describe("OpsPage 真值綁定", () => {
   }
   const uc = (id: string) => container.querySelector<HTMLElement>(`[data-uc="${id}"]`)!;
   const pageRoot = () => container.querySelector<HTMLElement>('[data-uc="page-root"]')!;
+  const typeInput = async (input: HTMLInputElement, value: string) => {
+    const valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+    await act(async () => {
+      valueSetter?.call(input, value);
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+  };
 
   it("live：kit_local_001 idle；GPU 未取得（unavailable，非錯誤）；六 svc-dot；事件列 disabled＋原因；無固定數字", async () => {
     spyCoordinatorEndpoints();
@@ -50,11 +57,108 @@ describe("OpsPage 真值綁定", () => {
     expect(container.querySelector("#events-reason")!.textContent).toContain("#instances");
     expect(uc("to-instances").getAttribute("href")).toBe("#instances");
     expect(uc("to-gpu").getAttribute("href")).toBe("#gpu");
+    expect(uc("session-idle-policy-card").getAttribute("data-prov")).toBe("asbuilt");
+    expect(uc("session-idle-policy-state").textContent).toBe("已啟用");
+    expect(uc("session-idle-policy-value").textContent).toBe("30 分鐘");
     for (const lit of ["82%", "24%", "14.6/24 GB", "S-240601", "lease_8812", "OB-201", "cj_0117", "usd_viewer.kit"]) expect(pageRoot().innerHTML, lit).not.toContain(lit);
     expect(pageRoot().querySelector('[data-prov="fixture"]')).toBeNull();
   });
 
-  it("offline（十端點 503）：Kit／GPU 皆 —／offline；svc-dot 全 unknown；無 toast", async () => {
+  it("operator 可用分鐘 preset 套用真實 policy；token 成功後從記憶體欄位清除", async () => {
+    spyCoordinatorEndpoints();
+    const update = vi.spyOn(coordinatorClient, "updateSessionIdlePolicy").mockResolvedValue({
+      ...IDLE.sessionIdlePolicy,
+      timeout_ms: 3_600_000,
+      source: "operator_override",
+      revision: 1,
+    });
+    await mountRuntime();
+    await act(async () => { uc("session-idle-preset-60").click(); });
+    const token = uc("session-idle-token") as HTMLInputElement;
+    const reason = uc("session-idle-reason") as HTMLInputElement;
+    await typeInput(token, "operator-secret");
+    await typeInput(reason, "extend review window");
+    await act(async () => { uc("session-idle-apply").click(); await Promise.resolve(); });
+    expect(update).toHaveBeenCalledWith(
+      3_600_000,
+      0,
+      IDLE.sessionIdlePolicy.process_epoch,
+      "extend review window",
+      "operator-secret",
+    );
+    expect(uc("session-idle-policy-value").textContent).toBe("60 分鐘");
+    expect(uc("session-idle-feedback").getAttribute("role")).toBe("status");
+    expect((uc("session-idle-token") as HTMLInputElement).value).toBe("");
+  });
+
+  it("mutation 失敗也清除 token，避免 credential 留在 DOM", async () => {
+    spyCoordinatorEndpoints();
+    vi.spyOn(coordinatorClient, "updateSessionIdlePolicy").mockRejectedValue(new Error("forbidden"));
+    await mountRuntime();
+    const token = uc("session-idle-token") as HTMLInputElement;
+    await typeInput(token, "operator-secret");
+    await typeInput(uc("session-idle-reason") as HTMLInputElement, "change policy");
+    await act(async () => { uc("session-idle-apply").click(); await Promise.resolve(); });
+    expect(uc("session-idle-feedback").getAttribute("role")).toBe("alert");
+    expect(token.value).toBe("");
+  });
+
+  it("下一次 authoritative poll 覆蓋暫存成功值，包含 coordinator 重啟後 revision 歸零", async () => {
+    spyCoordinatorEndpoints();
+    vi.spyOn(coordinatorClient, "updateSessionIdlePolicy").mockResolvedValue({
+      ...IDLE.sessionIdlePolicy,
+      timeout_ms: 3_600_000,
+      source: "operator_override",
+      revision: 1,
+    });
+    await mountRuntime();
+    await act(async () => { uc("session-idle-preset-60").click(); });
+    await typeInput(uc("session-idle-token") as HTMLInputElement, "operator-secret");
+    await typeInput(uc("session-idle-reason") as HTMLInputElement, "extend review window");
+    await act(async () => { uc("session-idle-apply").click(); await Promise.resolve(); });
+    expect(uc("session-idle-policy-value").textContent).toBe("60 分鐘");
+
+    vi.mocked(coordinatorClient.getSessionIdlePolicy).mockResolvedValue({
+      ...IDLE.sessionIdlePolicy,
+      timeout_ms: 1_800_000,
+      source: "environment",
+      revision: 0,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 2));
+    await act(async () => {
+      document.dispatchEvent(new Event("visibilitychange"));
+      for (let i = 0; i < 6; i += 1) await Promise.resolve();
+    });
+    expect(uc("session-idle-policy-value").textContent).toBe("60 分鐘");
+    expect((uc("session-idle-minutes") as HTMLInputElement).value).toBe("60");
+
+    vi.mocked(coordinatorClient.getSessionIdlePolicy).mockResolvedValue({
+      ...IDLE.sessionIdlePolicy,
+      process_epoch: "22222222222222222222222222222222",
+      timeout_ms: 1_800_000,
+      source: "environment",
+      revision: 0,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 2));
+    await act(async () => {
+      document.dispatchEvent(new Event("visibilitychange"));
+      for (let i = 0; i < 6; i += 1) await Promise.resolve();
+    });
+    expect(uc("session-idle-policy-value").textContent).toBe("30 分鐘");
+    expect((uc("session-idle-minutes") as HTMLInputElement).value).toBe("30");
+  });
+
+  it("未填 token 時拒絕送出並顯示可操作錯誤", async () => {
+    spyCoordinatorEndpoints();
+    const update = vi.spyOn(coordinatorClient, "updateSessionIdlePolicy");
+    await mountRuntime();
+    await act(async () => { uc("session-idle-apply").click(); });
+    expect(update).not.toHaveBeenCalled();
+    expect(uc("session-idle-feedback").getAttribute("role")).toBe("alert");
+    expect(uc("session-idle-feedback").textContent).toContain("operator token");
+  });
+
+  it("offline（十一端點 503）：Kit／GPU 皆 —／offline；svc-dot 全 unknown；無 toast", async () => {
     spyCoordinatorEndpointsOffline();
     await mountRuntime();
     expect(uc("kit-instance-id").textContent).toBe("—");
