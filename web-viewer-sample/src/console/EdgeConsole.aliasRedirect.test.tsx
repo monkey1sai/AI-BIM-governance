@@ -213,7 +213,7 @@ describe("EdgeConsole：#conv 獨立頁與 #intake alias", () => {
     await act(async () => {
       root.render(<EdgeConsole />);
     });
-    await waitForHash("#workspace?dock=a4");
+    await waitForHash("#a4");
     expect(window.location.pathname).toBe("/console");
     expect(window.location.search).toBe("");
     expect(window.history.state).toEqual({ a4SessionId: "review_session_a4" });
@@ -238,7 +238,7 @@ describe("EdgeConsole：#conv 獨立頁與 #intake alias", () => {
       window.location.hash = "#semantic-search?evidence_proof=opaque-proof&ifc_guid=G1";
       window.dispatchEvent(new HashChangeEvent("hashchange"));
     });
-    await waitForHash("#workspace?dock=a4");
+    await waitForHash("#a4");
     expect(window.location.search).toBe("");
     expect(window.history.state).toEqual({ a4SessionId: "review_session_a4" });
     expect(container.querySelector('[data-testid="a4-semantic-search-page"]')).not.toBeNull();
@@ -251,7 +251,7 @@ describe("EdgeConsole：#conv 獨立頁與 #intake alias", () => {
       );
       window.dispatchEvent(new PopStateEvent("popstate"));
     });
-    await waitForHash("#workspace?dock=a4");
+    await waitForHash("#a4");
     expect(window.location.search).toBe("");
     expect(window.history.state).toEqual({ a4SessionId: "review_session_a4" });
     await act(async () => {
@@ -274,7 +274,7 @@ describe("EdgeConsole：#conv 獨立頁與 #intake alias", () => {
       root.render(<EdgeConsole />);
     });
 
-    await waitForHash("#workspace?dock=a4");
+    await waitForHash("#a4");
     expect(window.location.search).toBe("");
     expect(window.history.state).toBeNull();
     expect(container.querySelector('[data-testid="a4-semantic-search-page"]')).not.toBeNull();
@@ -304,7 +304,7 @@ describe("EdgeConsole：#conv 獨立頁與 #intake alias", () => {
     await act(async () => {
       root.render(<EdgeConsole />);
     });
-    await waitForHash("#workspace?dock=a4");
+    await waitForHash("#a4");
     await waitForCondition(() => {
       expect((container.querySelector('[data-testid="a4-session-select"]') as HTMLSelectElement | null)?.value)
         .toBe("review_session_b");
@@ -319,7 +319,7 @@ describe("EdgeConsole：#conv 獨立頁與 #intake alias", () => {
   });
 
   it("canonical A4 route renders directly without a fixture redirect", () => {
-    window.location.hash = "#/workspace?dock=a4";
+    window.location.hash = "#a4";
     const html = renderToString(<EdgeConsole />);
     expect(html).toContain("a4-semantic-search-page");
     expect(html).not.toContain("不符合 5");

@@ -31,7 +31,6 @@ import {
   ViewerPresentationPage,
   VersionDiffPage,
 } from "./pages";
-import { A4SemanticSearchPage } from "./A4SemanticSearchPage";
 import { ConversionPage } from "./ConversionPage";
 // MD 三頁合一（Task 6/7/9）：#minio 改由單一 ModelDataPage 承接（原 ConversionSchedulingPage / IntakePage /
 // MinioDataPage 三頁合併）。舊三頁本體已於 Task 9 自 pages.tsx 移除。
@@ -88,6 +87,9 @@ function usePageHash(): [string, (k: string) => void] {
     const page = queryIndex === -1 ? raw : raw.slice(0, queryIndex);
     const query = queryIndex === -1 ? "" : raw.slice(queryIndex + 1);
     const routeParams = new URLSearchParams(query.replace(/\?/g, "&"));
+    if (page === "a4" && (query !== "" || window.location.search !== "")) {
+      return "a4-scrub";
+    }
     if (page === "workspace" && routeParams.get("dock") === "a4") {
       // The only URL-carried A4 context is a syntactically valid opaque
       // review-session selector. Query/proof/prim/handoff material is scrubbed.
@@ -168,21 +170,14 @@ function AliasRedirect({
 
 // ── UnifiedConsole 分流表（IA v2）──
 // approved 鍵 {home,a1..a10,pipeline,runtime} 掛 UnifiedShell + 對應新頁；回 null 則走 legacy 殼。
-// a1..a3 → WorkspacePage（dock=aN；key=page 讓 #a1→#a2 換 dock 時重建 local state）；
-// A4 is the real session-scoped surface at #/workspace?dock=a4, not a fixture dock.
+// a1..a4 → WorkspacePage（dock=aN；key=page 讓 route 切換時重建 local state）；
+// legacy workspace?dock=a4 aliases scrub URL-carried context then converge to #a4.
 // a5..a10 → ConceptPage；pipeline → PipelinePage；runtime → OpsPage；home → UnifiedHomePage。
 // #conv 不進 unified（legacy ConversionPage=IFC→USD 轉檔歷史，雙路由分治）。
-const UNIFIED_WS_KEYS: readonly string[] = ["a1", "a2", "a3"];
+const UNIFIED_WS_KEYS: readonly string[] = ["a1", "a2", "a3", "a4", "issues"];
 const UNIFIED_CONCEPT_KEYS: readonly string[] = ["a5", "a6", "a7", "a8", "a9", "a10"];
 
 function renderUnified(page: string): ReactElement | null {
-  if (page === "workspace-a4") {
-    return (
-      <UnifiedShell page="ws" dock="a4">
-        <A4SemanticSearchPage />
-      </UnifiedShell>
-    );
-  }
   if (UNIFIED_WS_KEYS.includes(page)) {
     const dock = page as DockKey;
     return (
@@ -209,15 +204,14 @@ function renderUnified(page: string): ReactElement | null {
 
 function renderBody(page: string, go: (k: string) => void) {
   // app/<slug> → vision 詳頁；#app/ai-search 舊 deep link 轉到 live #a4。
-  if (page === "workspace-a4-scrub") return <AliasRedirect to="workspace?dock=a4" preserveQuery={false} scrubSearch preserveA4Session />;
-  if (page === "app/ai-search") return <AliasRedirect to="workspace?dock=a4" preserveQuery={false} scrubSearch preserveA4Session />;
+  if (page === "a4-scrub" || page === "workspace-a4" || page === "workspace-a4-scrub") return <AliasRedirect to="a4" preserveQuery={false} scrubSearch preserveA4Session />;
+  if (page === "app/ai-search") return <AliasRedirect to="a4" preserveQuery={false} scrubSearch preserveA4Session />;
   if (page.startsWith("app/")) return <AppVisionPage slug={page.slice(4)} onOpen={go} />;
   switch (page) {
     // IA v2 alias 重排：原 #a1 讓位給 UnifiedConsole workspace；A4 aliases
     // converge on one session-scoped canonical surface rather than a fixture dock.
     case "a1-workbench": return <A1GovernanceWorkbenchPage />;
-    case "a4":
-    case "semantic-search": return <AliasRedirect to="workspace?dock=a4" preserveQuery={false} scrubSearch preserveA4Session />;
+    case "semantic-search": return <AliasRedirect to="a4" preserveQuery={false} scrubSearch preserveA4Session />;
     case "viewer": return <ViewerPresentationPage />;
     case "gpu": return <GpuReviewRoomPage />;
     case "conv": return <ConversionPage />;

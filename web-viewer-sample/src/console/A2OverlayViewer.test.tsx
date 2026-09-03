@@ -20,12 +20,12 @@ vi.mock("./EmbeddedViewer", async () => {
       viewerBox.renderCount += 1;
       React.useImperativeHandle(ref, () => ({
         sendHighlight() {},
-        sendHighlightBatch(items: unknown[]) {
+        sendHighlightBatch(items: unknown[], clientRequestId: string) {
           viewerBox.batches.push(items);
           const onHighlightResult = props.onHighlightResult as undefined | ((message: unknown) => void);
           // 批次 ack（Window.tsx highlight_batch case 的形狀）：單一 highlight_result 帶誠實計數。
           onHighlightResult?.({
-            protocol: "vg01", type: "highlight_result", requestId: "batch_test",
+            protocol: "vg01", type: "highlight_result", requestId: "batch_test", clientRequestId,
             ok: true, sent_count: items.length, unmapped_count: 0,
           });
         },

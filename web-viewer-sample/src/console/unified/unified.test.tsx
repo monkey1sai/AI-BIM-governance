@@ -2,7 +2,8 @@
 // 掛 UnifiedShell + 新頁（HomePage/WorkspacePage/ConceptPage/PipelinePage/OpsPage）。
 // 比照 console.test.tsx 模式：renderToString（jsdom，不需 @testing-library / 網路）+
 // 釘 hash（prevHash try/finally 還原）+ pin zh（i18n module singleton 隔離）。
-// UnifiedConsole 為 fixture-first（不打 /api），誠實標記契約 = 面板帶 data-prov="fixture"。
+// A1-A4 workspace mounts canonical live modules; unavailable backends remain
+// visible as loading/unavailable states rather than prototype data.
 import { renderToString } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import EdgeConsole from "../EdgeConsole";
@@ -45,30 +46,27 @@ describe("UnifiedConsole smoke（approved 鍵 → UnifiedShell + 新頁）", () 
     for (const lit of ["2026-07-14", "990_model.ifc", "S-240601", "rule-run #88", "OB-201"]) expect(html, lit).not.toContain(lit);
   });
 
-  it("#a1 渲染 workspace：dockTabs 5 顆 + DATACHANNEL 字條 + A1 dock 規則集 3 條", () => {
+  it("#a1 渲染 live workspace：dockTabs 5 顆 + Kit fail-closed 契約 + A1 真模組", () => {
     const html = renderAtHash("#a1");
     // dock tabs 5 顆（fixtures.dockTabs 的 label）。
     expect(html).toContain("A1 治理檢核");
-    expect(html).toContain("A2 Diff");
+    expect(html).toContain("A2 版本差異");
     expect(html).toContain("A3 Federation");
     expect(html).toContain("A4 語意查詢");
     expect(html).toContain("Issues / BCF");
-    // DATACHANNEL 字條（底部 fixture 狀態列）。
+    // Shared Kit runtime evidence contract; no fabricated ACK/status.
     expect(html).toContain("DataChannel");
-    expect(html).toContain("openedStageResult");
-    // A1 dock 規則集 3 條（fixtures.ruleDefs zh label）。
-    expect(html).toContain("防火門 FireRating ≥ 60min");
-    expect(html).toContain("淨高 ≥ 2100mm");
-    expect(html).toContain("管線間距 ≥ 50mm");
+    expect(html).toContain("A1 · 治理與模型檢核");
+    expect(html).not.toContain("openedStageResult ✓");
+    expect(html).not.toContain("rule-run #88");
   });
 
   it("#a3 渲染 workspace 且 dock=A3 Federation（非 A1 dock）", () => {
     const html = renderAtHash("#a3");
-    // A3Dock 專屬內容：SubLayer 排序 + fedMembers 的 member usd path（只在 A3Dock 出現）。
+    // Canonical A3 builder is mounted directly; no prototype member paths.
     expect(html).toContain("A3 Federation");
-    expect(html).toContain("SubLayer");
-    expect(html).toContain("/Models/ARCH/A1_Tower.usd");
-    // dock 真的切到 A3：A1Dock 專屬的選定檔案盒（A1_Tower_v12.ifc）不得出現。
+    expect(html).toContain("Federation Builder");
+    expect(html).not.toContain("/Models/ARCH/A1_Tower.usd");
     expect(html).not.toContain("A1_Tower_v12.ifc");
   });
 
@@ -111,10 +109,12 @@ describe("UnifiedConsole smoke（approved 鍵 → UnifiedShell + 新頁）", () 
     for (const lit of ["82%", "24%", "14.6/24 GB", "S-240601", "lease_8812", "cj_0117"]) expect(html, lit).not.toContain(lit);
   });
 
-  it("誠實標記契約：fixture 殼（#a1/#a3/#a5）帶 data-prov=\"fixture\"；真值頁（#home）page-root 內帶 asbuilt", () => {
-    for (const hash of ["#a1", "#a3", "#a5"]) {
-      expect(renderAtHash(hash), hash).toContain('data-prov="fixture"');
+  it("誠實標記契約：A1-A4 workspace 是 asbuilt；concept 仍明確標 fixture", () => {
+    for (const hash of ["#a1", "#a2", "#a3", "#a4"]) {
+      const html = renderAtHash(hash);
+      expect(html, hash).toContain('data-uc="unified-live-workspace" data-prov="asbuilt"');
     }
+    expect(renderAtHash("#a5")).toContain('data-prov="fixture"');
     for (const hash of ["#home", "#pipeline", "#runtime"]) {
       const html = renderAtHash(hash);
       const pageRoot = html.slice(html.indexOf('data-uc="page-root"'));

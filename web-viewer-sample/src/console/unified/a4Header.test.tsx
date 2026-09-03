@@ -52,11 +52,11 @@ describe("a4Header (Task 3.2)", () => {
     });
     await mount();
 
-    const a4Dock = container.querySelector("[data-uc='a4-dock'], [data-prov='redirect']");
+    const a4Dock = container.querySelector("[data-testid='a4-semantic-search-page']");
     expect(a4Dock).not.toBeNull();
     const text = a4Dock?.textContent ?? "";
     // Checks for Purpose, Input Source, and Next steps
     expect(text).toMatch(/A4|語意查詢|Semantic/);
-    expect(text).toMatch(/ifc-ready|canonical/i);
+    expect(text).toMatch(/ifc_ready|Review Session/i);
   });
 });

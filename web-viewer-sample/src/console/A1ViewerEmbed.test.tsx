@@ -13,10 +13,10 @@ vi.mock("./EmbeddedViewer", async () => {
     EmbeddedViewer: React.forwardRef((props: Record<string, unknown>, ref) => {
     viewerBox.renderCount += 1;
     React.useImperativeHandle(ref, () => ({
-      sendHighlight(items: unknown[]) {
+      sendHighlight(items: unknown[], clientRequestId: string) {
         viewerBox.highlightBatches.push(items);
         const onHighlightResult = props.onHighlightResult as undefined | ((message: unknown) => void);
-        onHighlightResult?.({ protocol: "vg01", type: "highlight_result", requestId: "test", ok: true });
+        onHighlightResult?.({ protocol: "vg01", type: "highlight_result", requestId: "test", clientRequestId, ok: true });
       },
       sendFocus() {},
       sendClear() {},

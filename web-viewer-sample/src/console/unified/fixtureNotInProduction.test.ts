@@ -1,6 +1,6 @@
 // unified-console-runtime-truth slice 1（tasks 1.8；spec scenario「fixture 假值不在 production 顯示路徑（符號層驗證）」）：
-// (1) import graph：production 元件不得 import 假資料 export；docks／WorkspacePage 的 4 個 slice-2 欠帳以 ratchet 釘住。
-// (2) fixtures.ts 不再 export 已搬走的 6 個名稱（initialIssues 留在 production：a3 Issues dock 種入，見 SLICE2_DEBT）。(3) src 下非測試檔不得 import __testdata__。
+// (1) import graph：production 元件不得 import A1–A4 假資料 export。
+// (2) fixtures.ts 不再 export prototype A1–A4 data。(3) src 下非測試檔不得 import __testdata__。
 // (4) 渲染層負向 oracle：#home／#pipeline／#runtime 的 SSR 輸出不含任何原型固定值字串。
 import { readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -20,11 +20,9 @@ const FORBIDDEN = [
   "failDefs", "diffDefs", "fedMembers", "stageTree",
 ] as const;
 const RELOCATED = ["initialIntake", "initialConv", "initialSessions", "initialOutbox", "alerts", "services"] as const;
-const PRODUCTION = ["HomePage.tsx", "PipelinePage.tsx", "OpsPage.tsx", "UnifiedShell.tsx", "docks.tsx", "WorkspacePage.tsx", "A1DockLive.tsx", "ConceptPage.tsx", "ServiceHealthList.tsx"] as const;
+const PRODUCTION = ["HomePage.tsx", "PipelinePage.tsx", "OpsPage.tsx", "UnifiedShell.tsx", "WorkspacePage.tsx", "ConceptPage.tsx", "ServiceHealthList.tsx"] as const;
 /** slice 1 誠實欠帳（spec §3 out of scope：§2 dock 互動／§3 A1 視區）；只能縮、不能擴。 */
 const SLICE2_DEBT: Record<string, readonly string[]> = {
-  "docks.tsx": ["failDefs", "fedMembers"],
-  "WorkspacePage.tsx": ["stageTree"],
   "UnifiedShell.tsx": ["initialIssues"], // Issues/BCF dock 種入（§2 範圍；P3 f1）
 };
 
@@ -59,9 +57,12 @@ describe("fixture 假資料不在 production 顯示路徑", () => {
     }
   });
 
-  it("(2) fixtures.ts 不再 export 已搬走的 6 個假資料名稱（initialIssues 留在 production 供 a3 Issues dock 種入，見 SLICE2_DEBT）", () => {
+  it("(2) fixtures.ts 不再 export prototype A1–A4 data", () => {
     const src = readFileSync(path.join(here, "fixtures.ts"), "utf8");
     for (const name of RELOCATED) expect(src, name).not.toMatch(new RegExp(`export\\s+const\\s+${name}\\b`));
+    for (const name of ["stageTree", "ruleDefs", "failDefs", "diffDefs", "fedMembers", "VP_BASE"]) {
+      expect(src, name).not.toMatch(new RegExp(`export\\s+const\\s+${name}\\b`));
+    }
     expect(src).not.toContain("export interface AlertDef");
     expect(src).not.toContain("export interface ServiceDef");
   });
@@ -108,7 +109,7 @@ describe("fixture 假資料不在 production 顯示路徑", () => {
       "position.z +42mm", "IfcDoor deleted in v15", "6 new IfcWall", "diameter 80→100",
       "套用疊加", "由差異開單",
       // A3 `ws.a3Built` 區塊
-      "Federated Stage", "5 members · 12.48M tris · flatten off", "Open in Review Room",
+      "Federated Stage", "5 members · 12.48M tris · flatten off",
       // WorkspacePage a2 legend 已折疊的 overlayOn true 分支
       "差異疊加:新增12 移除4 修改28",
     ] as const;
@@ -119,6 +120,26 @@ describe("fixture 假資料不在 production 顯示路徑", () => {
           window.location.hash = hash;
           const html = renderToString(createElement(EdgeConsole));
           for (const lit of DEAD_FIXTURE_LITERALS) expect(html, lit).not.toContain(lit);
+        } finally {
+          window.location.hash = prevHash;
+        }
+      });
+    }
+
+    const LIVE_WORKSPACE_FORBIDDEN: Record<string, readonly string[]> = {
+      "#a1": ["A1_Tower_v12.ifc", "rule-run #88", "mapping 98%", "openedStageResult ✓", "no-GPU 示意"],
+      "#a2": ["v12", "v15", "openedStageResult ✓", "no-GPU 示意"],
+      "#a3": ["5 領域 SubLayer 合成", "Coordinate Check OK", "openedStageResult ✓", "no-GPU 示意"],
+      "#a4": ["openedStageResult ✓", "no-GPU 示意"],
+    };
+    for (const [hash, forbidden] of Object.entries(LIVE_WORKSPACE_FORBIDDEN)) {
+      it(`${hash} 的 Unified live workspace 不渲染 fixture 或靜態 viewport`, () => {
+        const prevHash = window.location.hash;
+        try {
+          window.location.hash = hash;
+          const html = renderToString(createElement(EdgeConsole));
+          for (const literal of forbidden) expect(html, literal).not.toContain(literal);
+          expect(html).not.toContain('data-uc="viewport" data-prov="demo"');
         } finally {
           window.location.hash = prevHash;
         }
