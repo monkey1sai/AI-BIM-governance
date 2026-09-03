@@ -10,14 +10,15 @@ import {
   resolveTrustedGit,
   sanitizedGitEnvironment,
 } from './trusted-git.mjs'
+import { validateSpecToDoneFabricBinding } from '../../../scripts/lib/spec-to-done-fabric-binding.mjs'
 
 const MACHINE_CONTRACT_URL = new URL('../../../agent-contracts/spec-to-done.contract.json', import.meta.url)
 const STATE_PREFIX = /^(HELD|DONE|RESUMED|AUTHORIZATION|NEW_RUN)@(P\d+)$/
 const MAX_AGENT_CALLS = 40
 const MAX_P5_ROUNDS = 2
 const MAX_EVIDENCE_ATTEMPTS = 2
-const CONTRACT_V1_PHASES = ['P0', 'P1', 'P3', 'P4', 'P5', 'P6', 'P7']
-const CONTRACT_V1_TERMINAL_EVIDENCE = {
+const CONTRACT_V2_PHASES = ['P0', 'P1', 'P3', 'P4', 'P5', 'P6', 'P7']
+const CONTRACT_V2_TERMINAL_EVIDENCE = {
   owner_phase: 'P7',
   trusted_remote_url: 'https://github.com/monkey1sai/AI-BIM-governance.git',
   remote_main_ref: 'refs/heads/main',
@@ -26,7 +27,7 @@ const CONTRACT_V1_TERMINAL_EVIDENCE = {
   merge_commit_equals_remote_main: 'required',
   pr_head_and_merge_commit_same_tree: 'required',
 }
-const CONTRACT_V1_NEW_RUN_BOUNDARY = {
+const CONTRACT_V2_NEW_RUN_BOUNDARY = {
   schema_version: 'spec-to-done-new-run/v1',
   token: 'NEW_RUN@P0',
   required_previous_reason: 'run_budget_exhausted',
@@ -41,6 +42,20 @@ const CONTRACT_V1_NEW_RUN_BOUNDARY = {
   },
   counter_resets: { agentCalls: '0/40', p5Rounds: '0/2', evidenceAttempts: '0/2' },
   field_resets: { planPath: '', taskIndex: '0', prNumber: '', runIds: 'none', evidenceHead: '' },
+}
+const CONTRACT_V2_PARALLEL_DELIVERY_BINDING = {
+  schema_version: 'spec-to-done-fabric-binding/v1',
+  schema_path: 'agent-contracts/spec-to-done-fabric-binding.schema.json',
+  state_mode: 'fabric-managed',
+  mode_field: 'fabricMode',
+  binding_id_field: 'fabricBindingId',
+  session_admission_limit: 'unbounded',
+  run_writer_cardinality: 1,
+  held_lease_action: 'retain_as_suspect',
+  local_new_run_allowed: false,
+  local_resume_allowed: false,
+  resume_authority: 'fabric_verified_resume_intent_required',
+  delivery_authority: 'non_authorizing',
 }
 const COMMON_FIELDS = [
   'spec', 'slug', 'userFacing', 'dateStamp', 'branch', 'worktree', 'head', 'executionMode',
@@ -75,8 +90,10 @@ let ALLOWED_PHASES = null
 let ALLOWED_HELD_REASONS = null
 let TERMINAL_EVIDENCE = null
 let NEW_RUN_BOUNDARY = null
+let PARALLEL_DELIVERY_BINDING = null
 const NON_RESUMABLE_HELD_REASONS = new Set([
   'branch_requires_separate_authorization',
+  'fabric_resume_authority_unavailable',
   'trusted_elevated_authorization_unavailable',
 ])
 
@@ -104,16 +121,21 @@ const loadMachineContract = () => {
   const reasons = durableState && durableState.held_reasons
   const newRunBoundary = durableState && durableState.new_run_boundary
   const terminalEvidence = contract && contract.terminal_evidence
+  const parallelDeliveryBinding = contract && contract.parallel_delivery_binding
   if (
     !contract || typeof contract !== 'object' ||
-    contract.schema_version !== 'spec-to-done-contract/v1' ||
+    contract.schema_version !== 'spec-to-done-contract/v2' ||
     !durableState || durableState.canonical_relative_path !== 'artifacts/spec-to-done/{slug}-state.md' ||
-    !Array.isArray(phases) || JSON.stringify(phases) !== JSON.stringify(CONTRACT_V1_PHASES) ||
+    durableState.fabric_managed_relative_path !== 'artifacts/spec-to-done/{slug}--{binding_id}-state.md' ||
+    durableState.fabric_binding_relative_path !== 'artifacts/spec-to-done/bindings/{binding_id}.json' ||
+    !Array.isArray(phases) || JSON.stringify(phases) !== JSON.stringify(CONTRACT_V2_PHASES) ||
     !Array.isArray(reasons) || reasons.length === 0 || new Set(reasons).size !== reasons.length ||
     reasons.some((reason) => !/^[a-z][a-z0-9_]*$/.test(reason)) ||
-    JSON.stringify(newRunBoundary) !== JSON.stringify(CONTRACT_V1_NEW_RUN_BOUNDARY) ||
+    !reasons.includes('fabric_resume_authority_unavailable') ||
+    JSON.stringify(newRunBoundary) !== JSON.stringify(CONTRACT_V2_NEW_RUN_BOUNDARY) ||
+    JSON.stringify(parallelDeliveryBinding) !== JSON.stringify(CONTRACT_V2_PARALLEL_DELIVERY_BINDING) ||
     !terminalEvidence ||
-    JSON.stringify(terminalEvidence) !== JSON.stringify(CONTRACT_V1_TERMINAL_EVIDENCE)
+    JSON.stringify(terminalEvidence) !== JSON.stringify(CONTRACT_V2_TERMINAL_EVIDENCE)
   ) {
     reject('resume_state_invalid', 'spec-to-done machine contract is malformed')
   }
@@ -121,6 +143,7 @@ const loadMachineContract = () => {
   ALLOWED_HELD_REASONS = new Set(reasons)
   TERMINAL_EVIDENCE = terminalEvidence
   NEW_RUN_BOUNDARY = newRunBoundary
+  PARALLEL_DELIVERY_BINDING = parallelDeliveryBinding
 }
 
 const parseCli = (argv) => {
@@ -607,9 +630,33 @@ const validateNewRunSchema = (checkpoint) => {
   }
 }
 
+const validateFabricCheckpointFields = (checkpoint) => {
+  const { fields } = checkpoint
+  const modeField = PARALLEL_DELIVERY_BINDING.mode_field
+  const bindingIdField = PARALLEL_DELIVERY_BINDING.binding_id_field
+  const hasMode = Object.hasOwn(fields, modeField)
+  const hasBindingId = Object.hasOwn(fields, bindingIdField)
+  if (!hasMode && !hasBindingId) {
+    checkpoint.fabric = { mode: 'standalone', bindingId: null }
+    return
+  }
+  if (!hasMode || !hasBindingId || fields[modeField] !== PARALLEL_DELIVERY_BINDING.state_mode ||
+      !/^[0-9a-f]{64}$/.test(fields[bindingIdField] || '')) {
+    reject('resume_state_invalid', 'Fabric-managed checkpoints require canonical fabricMode and fabricBindingId fields')
+  }
+  checkpoint.fabric = { mode: fields[modeField], bindingId: fields[bindingIdField] }
+  if (checkpoint.kind === 'NEW_RUN') {
+    reject('resume_state_invalid', 'Fabric-managed state cannot use local NEW_RUN; outer Fabric must issue a new task, lease, and binding')
+  }
+  if (checkpoint.kind === 'RESUMED') {
+    reject('fabric_resume_authority_unavailable', 'Fabric-managed RESUMED requires a verified outer Fabric resume authority')
+  }
+}
+
 const validateCheckpointSchema = (checkpoint, limits, platform = null) => {
   const { phase, fields } = checkpoint
   requireFields(fields, COMMON_FIELDS)
+  validateFabricCheckpointFields(checkpoint)
   validateCheckpointKind(checkpoint)
   validateNewRunSchema(checkpoint)
   if (!/^[a-z0-9][a-z0-9._-]{0,119}$/.test(fields.slug) || !fields.spec || !fields.branch || !/^\d{4}-\d{2}-\d{2}$/.test(fields.dateStamp)) {
@@ -737,11 +784,17 @@ const validateParsedTransition = (previous, current) => {
   if (previous.kind === 'DONE' && previous.phase === 'P7') {
     reject('resume_state_invalid', 'DONE@P7 is terminal and cannot be resumed or extended')
   }
+  if (previous.fabric.mode === PARALLEL_DELIVERY_BINDING.state_mode && previous.kind === 'HELD') {
+    reject('fabric_resume_authority_unavailable', 'Fabric-managed HELD is terminal until outer Fabric verifies resume authority')
+  }
   if (previous.kind === 'HELD' && NON_RESUMABLE_HELD_REASONS.has(previous.fields.reason)) {
     reject('resume_state_invalid', `${previous.fields.reason} is terminal in this audit chain and cannot be extended`)
   }
   if (isMaxBudgetInvalidRecovery(previous)) {
     reject('resume_state_invalid', 'max-budget resume_state_invalid recovery is terminal and cannot be extended')
+  }
+  if (previous.fabric.mode !== current.fabric.mode || previous.fabric.bindingId !== current.fabric.bindingId) {
+    reject('resume_state_invalid', 'Fabric binding identity changed across checkpoints')
   }
   if (current.kind === 'NEW_RUN') {
     validateNewRunTransition(previous, current)
@@ -827,13 +880,102 @@ const validateAuditChain = (records, current, limits, buffer) => {
   validateParsedTransition(historical.at(-1), current)
 }
 
+const FABRIC_CLI_FIELDS = Object.freeze([
+  'fabric-binding',
+  'fabric-plan',
+  'fabric-lease',
+  'fabric-provider-session',
+  'expected-state-path',
+])
+
+const readBoundedJson = (filePath, label) => {
+  if (!path.isAbsolute(filePath || '') || !fs.existsSync(filePath) || !fs.statSync(filePath).isFile() ||
+      fs.lstatSync(filePath).isSymbolicLink()) {
+    reject('resume_state_invalid', `${label} must be an existing non-symlink file`)
+  }
+  if (fs.statSync(filePath).size > 1024 * 1024) {
+    reject('resume_state_invalid', `${label} exceeds the 1 MiB contract limit`)
+  }
+  try {
+    return JSON.parse(fs.readFileSync(filePath, 'utf8'))
+  } catch {
+    reject('resume_state_invalid', `${label} is not canonical JSON`)
+  }
+}
+
+const validateManagedFabricBinding = ({ cli, current, statePath }) => {
+  const { fields, fabric } = current
+  const provided = FABRIC_CLI_FIELDS.filter((key) => cli[key])
+  if (fabric.mode === 'standalone') {
+    if (provided.length) reject('resume_state_invalid', 'standalone state must not receive Fabric binding arguments')
+    return null
+  }
+  const missing = FABRIC_CLI_FIELDS.filter((key) => !cli[key])
+  if (missing.length) reject('resume_state_invalid', `Fabric-managed state is missing binding arguments: ${missing.join(',')}`)
+
+  const bindingPath = cli['fabric-binding']
+  const expectedStatePath = cli['expected-state-path']
+  if (!path.isAbsolute(expectedStatePath)) {
+    reject('resume_state_invalid', '--expected-state-path must be absolute for Fabric-managed state')
+  }
+  const binding = readBoundedJson(bindingPath, 'Fabric binding')
+  const plan = readBoundedJson(cli['fabric-plan'], 'Fabric plan')
+  const lease = readBoundedJson(cli['fabric-lease'], 'Fabric lease')
+  const providerSession = readBoundedJson(cli['fabric-provider-session'], 'Fabric provider session')
+
+  let outcome
+  try {
+    outcome = validateSpecToDoneFabricBinding({
+      binding,
+      plan,
+      lease,
+      provider_session: providerSession,
+    })
+  } catch (error) {
+    const held = error?.code === 'scope_drift' ? 'scope_drift' : 'resume_state_invalid'
+    reject(held, `Fabric binding validation failed: ${error?.code || 'invalid_binding'}`)
+  }
+
+  if (fields.slug !== outcome.binding.slug || fabric.bindingId !== outcome.binding.binding_id) {
+    reject('resume_state_invalid', 'state slug or fabricBindingId does not match the binding packet')
+  }
+  if (cli.platform !== outcome.binding.fabric_tuple.provider) {
+    reject('resume_state_invalid', 'validator platform does not match the Fabric-bound provider')
+  }
+  if (fields.branch !== outcome.current_branch || fields.head.toLowerCase() !== outcome.current_head_sha.toLowerCase()) {
+    reject('evidence_stale', 'state branch or HEAD does not match current Fabric evidence')
+  }
+
+  const canonicalBindingPath = path.resolve(fields.worktree, ...outcome.binding.binding_relative_path.split('/'))
+  const canonicalStatePath = path.resolve(fields.worktree, ...outcome.binding.state_relative_path.split('/'))
+  if (normalizedPath(fs.realpathSync(bindingPath)) !== normalizedPath(canonicalBindingPath)) {
+    reject('resume_state_invalid', 'Fabric binding is not stored at its binding-derived canonical path')
+  }
+  if (normalizedPath(expectedStatePath) !== normalizedPath(canonicalStatePath)) {
+    reject('resume_state_invalid', 'Fabric-managed state path does not match its binding-derived identity')
+  }
+  const candidateDirectory = path.dirname(path.resolve(statePath))
+  if (normalizedPath(candidateDirectory) !== normalizedPath(path.dirname(canonicalStatePath))) {
+    reject('resume_state_invalid', 'Fabric-managed candidate state must be the canonical state or a sibling temp')
+  }
+
+  validateActualBranch(fields)
+  return {
+    mode: fabric.mode,
+    bindingId: fabric.bindingId,
+    currentLeaseState: outcome.current_lease_state,
+    heldLeaseAction: outcome.held_lease_action,
+    statePath: canonicalStatePath.replace(/\\/g, '/'),
+  }
+}
+
 const main = () => {
   loadMachineContract()
   const cli = parseCli(process.argv.slice(2))
   const statePath = cli.state
   const platform = cli.platform
   const requiredCli = ['state', 'platform', 'git-exe', 'expected-head', 'expected-worktree', 'expected-agent-limit', 'expected-p5-limit', 'expected-evidence-limit', 'trusted-main-ref']
-  const allowedCli = new Set(requiredCli)
+  const allowedCli = new Set([...requiredCli, ...FABRIC_CLI_FIELDS])
   const unknownCli = Object.keys(cli).filter((key) => !allowedCli.has(key))
   if (unknownCli.length) {
     reject('resume_state_invalid', `unknown validator arguments: ${unknownCli.join(',')}`)
@@ -870,6 +1012,7 @@ const main = () => {
       normalizedPath(fs.realpathSync(fields.worktree)) !== normalizedPath(trusted.resolvedWorktree)) {
     reject('resume_state_invalid', `state worktree ${fields.worktree} does not match expected worktree ${cli['expected-worktree']}`)
   }
+  const fabric = validateManagedFabricBinding({ cli, current, statePath })
   if (kind === 'NEW_RUN') {
     const canonicalState = path.join(fields.worktree, 'artifacts', 'spec-to-done', `${fields.slug}-state.md`)
     if (normalizedPath(fs.realpathSync(statePath)) !== normalizedPath(canonicalState)) {
@@ -906,6 +1049,7 @@ const main = () => {
     head: fields.head,
     counters,
     fields,
+    ...(fabric ? { fabric } : {}),
   }))
 }
 

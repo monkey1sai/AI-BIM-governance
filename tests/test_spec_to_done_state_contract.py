@@ -21,6 +21,8 @@ CODEX_SKILL = ROOT / ".codex/skills/spec-to-done/SKILL.md"
 GROK_SKILL = ROOT / ".claude/skills/spec-to-done/GROK.md"
 MACHINE_CONTRACT = ROOT / "agent-contracts/spec-to-done.contract.json"
 MACHINE_CONTRACT_SCHEMA = ROOT / "agent-contracts/spec-to-done.contract.schema.json"
+FABRIC_BINDING_MODULE = ROOT / "scripts/lib/spec-to-done-fabric-binding.mjs"
+FABRIC_OPERATOR_DOC = ROOT / "docs/agents/parallel-delivery-fabric.md"
 GIT = shutil.which("git")
 EXCLUSIONS = (
     "secrets,credentials,billing,production-data,destructive-delete,"
@@ -106,10 +108,12 @@ def _run(
     env_overrides=None,
     trusted_main_ref="refs/heads/main",
     extra_args=(),
+    state_path=None,
     expect_host_env_blocked=False,
 ):
     _require_git()
-    state = tmp_path / "state.md"
+    state = pathlib.Path(state_path) if state_path else tmp_path / "state.md"
+    state.parent.mkdir(parents=True, exist_ok=True)
     if isinstance(state_lines, str):
         state_lines = [state_lines]
     state.write_text("\n".join(state_lines) + "\n", encoding="utf-8")
@@ -146,6 +150,209 @@ def _run(
     result = json.loads(proc.stdout)
     _handle_host_env_blocked(result, expected=expect_host_env_blocked)
     return proc.returncode, result
+
+
+def _canonical_digest(value):
+    canonical = json.dumps(
+        value, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
+    return hashlib.sha256(canonical).hexdigest()
+
+
+def _stamp(value):
+    return {**value, "canonical_digest": _canonical_digest(value)}
+
+
+def _fabric_binding_fixture(tmp_path, repo):
+    ignore = repo / ".gitignore"
+    ignore.write_text("artifacts/\n", encoding="utf-8")
+    _git(repo, "add", ".gitignore")
+    _git(repo, "commit", "-m", "ignore local state artifacts")
+    head = _git(repo, "rev-parse", "HEAD")
+    branch = _git(repo, "branch", "--show-current")
+    now = "2026-08-31T01:00:00.000Z"
+    sha256_a = "a" * 64
+    sha256_b = "b" * 64
+    scope_resources = [{"kind": "path", "path": "src"}]
+    scope_digest = _canonical_digest(scope_resources)
+    plan = {
+        "schema_version": "parallel-delivery-fabric/v1",
+        "plan_id": "plan:managed-state",
+        "generation": 1,
+        "repo_identity": {
+            "full_name": "acme/ai-bim-governance",
+            "repository_id": 42,
+            "common_dir_digest": sha256_a,
+        },
+        "created_at": now,
+        "coordinator_session": "session:coordinator",
+        "baseline_ref": "origin/main",
+        "resolved_baseline_sha": head,
+        "tasks": [{
+            "task_id": "task:managed-state",
+            "outcome": "validate-managed-state",
+            "provider_preference": "codex",
+            "owner_session": "session:managed-writer",
+            "scope": {
+                "owning_service": "agent-governance",
+                "public_entrypoint": ".claude/skills/spec-to-done/SKILL.md",
+                "resources": scope_resources,
+                "expected_tests": ["test:managed-state"],
+                "e2e_required": False,
+            },
+            "dependencies": [],
+            "risk": "bounded",
+            "e2e_required": False,
+        }],
+        "requested_capacity": {"writers": 1, "runtime_leases": 0},
+        "branch_profile": "trunk",
+        "acceptance_criteria": ["criterion:managed-state-valid"],
+        "promotion_mode": "single_pr",
+        "requested_execution_level": "implement_local",
+        "authority_reference": "authority:managed-state",
+        "governance_source_refs": [
+            "openspec:spec-to-done-parallel-delivery-binding"
+        ],
+    }
+    lease = _stamp({
+        "schema_version": "session-lease/v1",
+        "generation": 1,
+        "nonce": "n" * 32,
+        "created_at": now,
+        "updated_at": now,
+        "lease_id": "lease:managed-state",
+        "lease_kind": "writer_seat",
+        "plan_id": "plan:managed-state",
+        "task_id": "task:managed-state",
+        "provider": "codex",
+        "owner_session": "session:managed-writer",
+        "provider_session_id": "provider-session:managed-state",
+        "execution_context_id": "execution-context:managed-state",
+        "context_attestation_ref": "attestation:managed-state",
+        "common_dir_digest": sha256_a,
+        "worktree_id": "worktree:managed-state",
+        "worktree_path_digest": sha256_b,
+        "branch": branch,
+        "scope_digest": scope_digest,
+        "head_sha": head,
+        "resource_keys": ["path:src"],
+        "state": "ACTIVE",
+        "heartbeat_seq": 1,
+        "heartbeat_at": now,
+        "release_evidence_ref": None,
+        "retention_state": "ACTIVE",
+        "revocation_epoch": 0,
+    })
+    provider = {
+        "schema_version": "provider-session-envelope/v1",
+        "plan_id": "plan:managed-state",
+        "generation": 1,
+        "task_id": "task:managed-state",
+        "provider": "codex",
+        "owner_session": "session:managed-writer",
+        "provider_session_id": "provider-session:managed-state",
+        "execution_context_id": "execution-context:managed-state",
+        "repo_identity_digest": sha256_a,
+        "common_dir_digest": sha256_a,
+        "worktree_id": "worktree:managed-state",
+        "worktree_path_digest": sha256_b,
+        "branch": branch,
+        "baseline_sha": head,
+        "scope_digest": scope_digest,
+        "resource_keys": ["path:src"],
+        "lease_id": "lease:managed-state",
+        "heartbeat_seq": 1,
+        "heartbeat_state": "ACTIVE",
+        "heartbeat_at": now,
+        "context_attestation_ref": "attestation:managed-state",
+        "context_attestation_digest": sha256_b,
+        "evidence_head_sha": head,
+        "evidence_refs": ["evidence:managed-state"],
+        "handoff_id": None,
+        "adapter_version": "fabric-adapter/v1",
+    }
+    builder_input = {
+        "slug": "demo",
+        "allowed_paths": ["src/app.txt"],
+        "plan": plan,
+        "lease": lease,
+        "provider_session": provider,
+    }
+    source = f"""
+import fs from 'node:fs'
+import {{ buildSpecToDoneFabricBinding }} from {json.dumps(FABRIC_BINDING_MODULE.as_uri())}
+const input = JSON.parse(fs.readFileSync(0, 'utf8'))
+process.stdout.write(JSON.stringify(buildSpecToDoneFabricBinding(input)))
+"""
+    built = subprocess.run(
+        ["node", "--input-type=module", "--eval", source],
+        input=json.dumps(builder_input),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=True,
+    )
+    binding = json.loads(built.stdout)
+    source_root = tmp_path / "fabric-sources"
+    source_root.mkdir()
+    plan_path = source_root / "plan.json"
+    lease_path = source_root / "lease.json"
+    provider_path = source_root / "provider-session.json"
+    for target, value in (
+        (plan_path, plan),
+        (lease_path, lease),
+        (provider_path, provider),
+    ):
+        target.write_text(json.dumps(value), encoding="utf-8")
+    binding_path = repo / binding["binding_relative_path"]
+    binding_path.parent.mkdir(parents=True)
+    binding_path.write_text(json.dumps(binding), encoding="utf-8")
+    expected_state_path = repo / binding["state_relative_path"]
+    candidate_state_path = expected_state_path.with_name(
+        expected_state_path.name + ".candidate"
+    )
+    extra_args = (
+        "--fabric-binding", str(binding_path),
+        "--fabric-plan", str(plan_path),
+        "--fabric-lease", str(lease_path),
+        "--fabric-provider-session", str(provider_path),
+        "--expected-state-path", str(expected_state_path),
+    )
+    return {
+        "binding": binding,
+        "binding_path": binding_path,
+        "plan_path": plan_path,
+        "lease_path": lease_path,
+        "provider_path": provider_path,
+        "expected_state_path": expected_state_path,
+        "candidate_state_path": candidate_state_path,
+        "extra_args": extra_args,
+        "head": head,
+        "branch": branch,
+    }
+
+
+def _set_fabric_sources_suspect(fabric):
+    later = "2026-08-31T01:05:00.000Z"
+    lease = json.loads(fabric["lease_path"].read_text(encoding="utf-8"))
+    lease.pop("canonical_digest")
+    lease.update({
+        "state": "SUSPECT",
+        "suspect_at": later,
+        "updated_at": later,
+        "heartbeat_seq": 2,
+        "heartbeat_at": later,
+    })
+    fabric["lease_path"].write_text(
+        json.dumps(_stamp(lease)), encoding="utf-8"
+    )
+    provider = json.loads(fabric["provider_path"].read_text(encoding="utf-8"))
+    provider.update({
+        "heartbeat_state": "SUSPECT",
+        "heartbeat_seq": 2,
+        "heartbeat_at": later,
+    })
+    fabric["provider_path"].write_text(json.dumps(provider), encoding="utf-8")
 
 
 def _run_new_run(*args, env_overrides=None):
@@ -351,6 +558,7 @@ def test_machine_contract_is_schema_valid_closed_and_deterministic():
     contract = json.loads(MACHINE_CONTRACT.read_text(encoding="utf-8"))
     Draft7Validator.check_schema(schema)
     Draft7Validator(schema).validate(contract)
+    assert contract["schema_version"] == "spec-to-done-contract/v2"
     assert contract["phases"] == ["P0", "P1", "P3", "P4", "P5", "P6", "P7"]
     reasons = contract["durable_state"]["held_reasons"]
     assert reasons == sorted(set(reasons))
@@ -364,6 +572,316 @@ def test_machine_contract_is_schema_valid_closed_and_deterministic():
         "merge_commit_equals_remote_main": "required",
         "pr_head_and_merge_commit_same_tree": "required",
     }
+    assert contract["durable_state"]["canonical_relative_path"] == (
+        "artifacts/spec-to-done/{slug}-state.md"
+    )
+    assert contract["durable_state"]["fabric_managed_relative_path"] == (
+        "artifacts/spec-to-done/{slug}--{binding_id}-state.md"
+    )
+    assert contract["durable_state"]["fabric_binding_relative_path"] == (
+        "artifacts/spec-to-done/bindings/{binding_id}.json"
+    )
+    assert contract["parallel_delivery_binding"] == {
+        "schema_version": "spec-to-done-fabric-binding/v1",
+        "schema_path": "agent-contracts/spec-to-done-fabric-binding.schema.json",
+        "state_mode": "fabric-managed",
+        "mode_field": "fabricMode",
+        "binding_id_field": "fabricBindingId",
+        "session_admission_limit": "unbounded",
+        "run_writer_cardinality": 1,
+        "held_lease_action": "retain_as_suspect",
+        "local_new_run_allowed": False,
+        "local_resume_allowed": False,
+        "resume_authority": "fabric_verified_resume_intent_required",
+        "delivery_authority": "non_authorizing",
+    }
+
+
+def test_fabric_managed_state_requires_exact_binding_and_unique_state_path(tmp_path):
+    repo, _ = _new_repo(tmp_path)
+    fabric = _fabric_binding_fixture(tmp_path, repo)
+    line = _line(
+        repo,
+        fabric["head"],
+        "DONE@P3",
+        branch=fabric["branch"],
+        runIds="P3:codex:managed-state-session",
+        fabricMode="fabric-managed",
+        fabricBindingId=fabric["binding"]["binding_id"],
+    )
+
+    code, result = _run(
+        tmp_path,
+        repo,
+        line,
+        platform="codex",
+        expected_head=fabric["head"],
+        extra_args=fabric["extra_args"],
+        state_path=fabric["candidate_state_path"],
+    )
+    assert code == 0 and result["ok"] is True, result
+    assert result["fabric"] == {
+        "mode": "fabric-managed",
+        "bindingId": fabric["binding"]["binding_id"],
+        "currentLeaseState": "ACTIVE",
+        "heldLeaseAction": "retain_as_suspect",
+        "statePath": fabric["expected_state_path"].as_posix(),
+    }
+
+    wrong_state_path = fabric["expected_state_path"].with_name("demo-wrong-state.md")
+    wrong_args = list(fabric["extra_args"])
+    wrong_args[-1] = str(wrong_state_path)
+    code, result = _run(
+        tmp_path,
+        repo,
+        line,
+        platform="codex",
+        expected_head=fabric["head"],
+        extra_args=wrong_args,
+        state_path=fabric["candidate_state_path"],
+    )
+    assert code == 2 and result["held"] == "resume_state_invalid"
+
+
+def test_fabric_managed_state_rejects_partial_fields_binding_drift_and_legacy_misrouting(tmp_path):
+    repo, _ = _new_repo(tmp_path)
+    fabric = _fabric_binding_fixture(tmp_path, repo)
+    binding_id = fabric["binding"]["binding_id"]
+
+    partial = _line(
+        repo,
+        fabric["head"],
+        "DONE@P3",
+        branch=fabric["branch"],
+        runIds="P3:codex:managed-state-session",
+        fabricMode="fabric-managed",
+    )
+    code, result = _run(
+        tmp_path,
+        repo,
+        partial,
+        platform="codex",
+        expected_head=fabric["head"],
+        state_path=fabric["candidate_state_path"],
+    )
+    assert code == 2 and result["held"] == "resume_state_invalid"
+
+    drifted = _line(
+        repo,
+        fabric["head"],
+        "DONE@P3",
+        branch=fabric["branch"],
+        runIds="P3:codex:managed-state-session",
+        fabricMode="fabric-managed",
+        fabricBindingId="f" * 64,
+    )
+    code, result = _run(
+        tmp_path,
+        repo,
+        drifted,
+        platform="codex",
+        expected_head=fabric["head"],
+        extra_args=fabric["extra_args"],
+        state_path=fabric["candidate_state_path"],
+    )
+    assert code == 2 and result["held"] == "resume_state_invalid"
+
+    legacy = _line(
+        repo,
+        fabric["head"],
+        "DONE@P3",
+        branch=fabric["branch"],
+        runIds="P3:codex:managed-state-session",
+    )
+    code, result = _run(
+        tmp_path,
+        repo,
+        legacy,
+        platform="codex",
+        expected_head=fabric["head"],
+        extra_args=fabric["extra_args"],
+        state_path=fabric["candidate_state_path"],
+    )
+    assert code == 2 and result["held"] == "resume_state_invalid"
+    assert binding_id != "f" * 64
+
+    wrong_provider = _line(
+        repo,
+        fabric["head"],
+        "DONE@P3",
+        branch=fabric["branch"],
+        runIds="P3:wf_managed123",
+        fabricMode="fabric-managed",
+        fabricBindingId=binding_id,
+    )
+    code, result = _run(
+        tmp_path,
+        repo,
+        wrong_provider,
+        platform="claude",
+        expected_head=fabric["head"],
+        extra_args=fabric["extra_args"],
+        state_path=fabric["candidate_state_path"],
+    )
+    assert code == 2 and result["held"] == "resume_state_invalid"
+
+
+def test_fabric_binding_identity_is_immutable_across_the_audit_chain(tmp_path):
+    repo, _ = _new_repo(tmp_path)
+    fabric = _fabric_binding_fixture(tmp_path, repo)
+    first = _line(
+        repo,
+        fabric["head"],
+        "DONE@P1",
+        branch=fabric["branch"],
+        runIds="P1:codex:managed-state-session",
+        fabricMode="fabric-managed",
+        fabricBindingId=fabric["binding"]["binding_id"],
+    )
+    second = _line(
+        repo,
+        fabric["head"],
+        "DONE@P3",
+        branch=fabric["branch"],
+        runIds="P3:codex:managed-state-session",
+        fabricMode="fabric-managed",
+        fabricBindingId="f" * 64,
+    )
+    code, result = _run(
+        tmp_path,
+        repo,
+        [first, second],
+        platform="codex",
+        expected_head=fabric["head"],
+        extra_args=fabric["extra_args"],
+        state_path=fabric["candidate_state_path"],
+    )
+    assert code == 2 and result["held"] == "resume_state_invalid"
+
+
+def test_fabric_managed_held_retains_active_or_suspect_lease(tmp_path):
+    repo, _ = _new_repo(tmp_path)
+    fabric = _fabric_binding_fixture(tmp_path, repo)
+    held = _line(
+        repo,
+        fabric["head"],
+        "HELD@P3",
+        branch=fabric["branch"],
+        runIds="P3:codex:managed-state-session",
+        reason="scope_drift",
+        fabricMode="fabric-managed",
+        fabricBindingId=fabric["binding"]["binding_id"],
+    )
+
+    code, result = _run(
+        tmp_path,
+        repo,
+        held,
+        platform="codex",
+        expected_head=fabric["head"],
+        extra_args=fabric["extra_args"],
+        state_path=fabric["candidate_state_path"],
+    )
+    assert code == 0 and result["kind"] == "HELD", result
+    assert result["fabric"]["currentLeaseState"] == "ACTIVE"
+    assert result["fabric"]["heldLeaseAction"] == "retain_as_suspect"
+
+    _set_fabric_sources_suspect(fabric)
+    code, result = _run(
+        tmp_path,
+        repo,
+        held,
+        platform="codex",
+        expected_head=fabric["head"],
+        extra_args=fabric["extra_args"],
+        state_path=fabric["candidate_state_path"],
+    )
+    assert code == 0 and result["kind"] == "HELD", result
+    assert result["fabric"]["currentLeaseState"] == "SUSPECT"
+    assert result["fabric"]["heldLeaseAction"] == "retain_as_suspect"
+
+
+def test_fabric_managed_resumed_requires_unavailable_outer_authority(tmp_path):
+    repo, _ = _new_repo(tmp_path)
+    fabric = _fabric_binding_fixture(tmp_path, repo)
+    common = {
+        "branch": fabric["branch"],
+        "runIds": "P3:codex:managed-state-session",
+        "fabricMode": "fabric-managed",
+        "fabricBindingId": fabric["binding"]["binding_id"],
+    }
+    held = _line(
+        repo,
+        fabric["head"],
+        "HELD@P3",
+        reason="scope_drift",
+        **common,
+    )
+    resumed = _line(
+        repo,
+        fabric["head"],
+        "RESUMED@P3",
+        decision="fabric-resume-intent",
+        **common,
+    )
+
+    code, result = _run(
+        tmp_path,
+        repo,
+        [held, resumed],
+        platform="codex",
+        expected_head=fabric["head"],
+        extra_args=fabric["extra_args"],
+        state_path=fabric["candidate_state_path"],
+    )
+    assert code == 2
+    assert result["held"] == "fabric_resume_authority_unavailable"
+
+
+def test_fabric_managed_new_run_status_and_append_fail_closed(tmp_path):
+    repo, _ = _new_repo(tmp_path)
+    fabric = _fabric_binding_fixture(tmp_path, repo)
+    held = _line(
+        repo,
+        fabric["head"],
+        "HELD@P3",
+        branch=fabric["branch"],
+        runIds="P3:codex:managed-state-session",
+        reason="run_budget_exhausted",
+        agentCalls="40/40",
+        fabricMode="fabric-managed",
+        fabricBindingId=fabric["binding"]["binding_id"],
+    )
+    source = fabric["expected_state_path"]
+    source.parent.mkdir(parents=True, exist_ok=True)
+    source_bytes = (held + "\n").encode("utf-8")
+    source.write_bytes(source_bytes)
+
+    code, status = _run_new_run("status", "--state", source, "--json")
+    assert code == 0 and status["ok"] is True
+    assert status["fabricManaged"] is True
+    assert status["canStartNewRun"] is False
+    assert status["ownerAuthorizationRequired"] is False
+    assert status["nextAction"] == "return-control-to-parallel-delivery-fabric"
+    assert status["blockReason"] == "fabric-managed-local-new-run-forbidden"
+
+    code, result = _run_new_run(
+        "append",
+        "--source-state", source,
+        "--target-worktree", repo,
+        "--git-exe", GIT,
+        "--expected-branch", fabric["branch"],
+        "--expected-head", fabric["head"],
+        "--expected-source-sha256", hashlib.sha256(source_bytes).hexdigest(),
+        "--expected-source-bytes", str(len(source_bytes)),
+        "--expected-source-checkpoints", "1",
+        "--owner-message-sha256", "a" * 64,
+        "--owner-message-bytes", "1",
+        "--date-stamp", "2026-08-31",
+        "--json",
+    )
+    assert code == 2 and result["held"] == "resume_state_invalid"
+    assert "Fabric-managed" in result["detail"]
 
 
 def test_machine_contract_pins_the_owner_only_new_run_boundary():
@@ -395,6 +913,57 @@ def test_machine_contract_pins_the_owner_only_new_run_boundary():
             "evidenceHead": "",
         },
     }
+
+
+def test_claude_procedure_authority_documents_the_fabric_managed_profile():
+    skill = CLAUDE_SKILL.read_text(encoding="utf-8")
+    for required in (
+        "session_admission_limit=unbounded",
+        "run_writer_cardinality=1",
+        "fabricBindingPath",
+        "fabricPlanPath",
+        "fabricLeasePath",
+        "fabricProviderSessionPath",
+        "expectedStatePath",
+        "--fabric-binding <fabricBindingPath>",
+        "fabricMode=fabric-managed",
+        "fabricBindingId=<64-hex>",
+        "fabric_resume_authority_unavailable",
+        "return-control-to-parallel-delivery-fabric",
+        "不同 Fabric binding 可在各自 branch/worktree 併行",
+    ):
+        assert required in skill
+    assert "不得讀 occupied writer count 作 admission blocker" in skill
+    assert "binding packet 是 non-authorizing metadata" in skill
+
+
+def test_codex_adapter_and_fabric_operator_doc_preserve_the_same_binding_contract():
+    codex_skill = CODEX_SKILL.read_text(encoding="utf-8")
+    operator_doc = FABRIC_OPERATOR_DOC.read_text(encoding="utf-8")
+
+    for required in (
+        "session_admission_limit=unbounded",
+        "run_writer_cardinality=1",
+        "fabricBindingPath",
+        "fabricPlanPath",
+        "fabricLeasePath",
+        "fabricProviderSessionPath",
+        "expectedStatePath",
+        "--fabric-binding <fabricBindingPath>",
+        "fabricMode=fabric-managed",
+        "fabricBindingId=<64-hex>",
+        "fabric_resume_authority_unavailable",
+        "return-control-to-parallel-delivery-fabric",
+        "不同 Fabric binding 可在各自 branch/worktree 併行",
+    ):
+        assert required in codex_skill
+
+    assert "不得讀 occupied writer count 作 admission blocker" in codex_skill
+    assert "binding packet 是 non-authorizing metadata" in codex_skill
+    assert "不建立第二套引擎" in codex_skill
+    assert "Repo session admission has no writer-count cap" in operator_doc
+    assert "one writer" in operator_doc
+    assert "does not create a second scheduler" in operator_doc
 
 
 def test_new_run_appender_preserves_prefix_and_emits_valid_p0(tmp_path):
