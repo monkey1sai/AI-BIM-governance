@@ -372,7 +372,7 @@
         "authority": "canonical_product_surface",
         "canonical_route": "#a1",
         "capture_runner": "web-viewer-sample/e2e/design-system-visual.spec.ts",
-        "approval": "explicit owner rebaseline 2026-09-03 (pending owner sign-off in PR): A1 live workspace under the /api 503 stub re-laid out per design §03 IA (left stage-tree honestly disabled #609 / centre ViewportHost slot, zero DOM offline / right tool dock with flow guide) by introduce-viewer-app-integration-surface S3a+S3b; product-surface authority per PR #429 and #701 precedent; goldens captured from clean subject commit f31528e by design-system-visual.spec.ts"
+        "approval": "explicit owner rebaseline 2026-09-03 (owner approved 2026-09-03, PR #763 merged 458c0c4; sign-off recorded in this follow-up): A1 live workspace under the /api 503 stub re-laid out per design §03 IA (left stage-tree honestly disabled #609 / centre ViewportHost slot, zero DOM offline / right tool dock with flow guide) by introduce-viewer-app-integration-surface S3a+S3b; product-surface authority per PR #429 and #701 precedent; goldens captured from clean subject commit f31528e by design-system-visual.spec.ts"
       },
       "baselines": {
         "1440x900": {
@@ -398,7 +398,7 @@
         "authority": "canonical_product_surface",
         "canonical_route": "#a2",
         "capture_runner": "web-viewer-sample/e2e/design-system-visual.spec.ts",
-        "approval": "explicit owner rebaseline 2026-09-03 (pending owner sign-off in PR): A2 live workspace under the /api 503 stub re-laid out per design §03 IA (left stage-tree honestly disabled #609 / centre ViewportHost slot, zero DOM offline / right tool dock with flow guide) by introduce-viewer-app-integration-surface S3a+S3b; product-surface authority per PR #429 and #701 precedent; goldens captured from clean subject commit f31528e by design-system-visual.spec.ts"
+        "approval": "explicit owner rebaseline 2026-09-03 (owner approved 2026-09-03, PR #763 merged 458c0c4; sign-off recorded in this follow-up): A2 live workspace under the /api 503 stub re-laid out per design §03 IA (left stage-tree honestly disabled #609 / centre ViewportHost slot, zero DOM offline / right tool dock with flow guide) by introduce-viewer-app-integration-surface S3a+S3b; product-surface authority per PR #429 and #701 precedent; goldens captured from clean subject commit f31528e by design-system-visual.spec.ts"
       },
       "baselines": {
         "1440x900": {
@@ -424,7 +424,7 @@
         "authority": "canonical_product_surface",
         "canonical_route": "#a3",
         "capture_runner": "web-viewer-sample/e2e/design-system-visual.spec.ts",
-        "approval": "explicit owner rebaseline 2026-09-03 (pending owner sign-off in PR): A3 live workspace under the /api 503 stub re-laid out per design §03 IA (left stage-tree honestly disabled #609 / centre ViewportHost slot, zero DOM offline / right tool dock with flow guide) by introduce-viewer-app-integration-surface S3a+S3b; product-surface authority per PR #429 and #701 precedent; goldens captured from clean subject commit f31528e by design-system-visual.spec.ts"
+        "approval": "explicit owner rebaseline 2026-09-03 (owner approved 2026-09-03, PR #763 merged 458c0c4; sign-off recorded in this follow-up): A3 live workspace under the /api 503 stub re-laid out per design §03 IA (left stage-tree honestly disabled #609 / centre ViewportHost slot, zero DOM offline / right tool dock with flow guide) by introduce-viewer-app-integration-surface S3a+S3b; product-surface authority per PR #429 and #701 precedent; goldens captured from clean subject commit f31528e by design-system-visual.spec.ts"
       },
       "baselines": {
         "1440x900": {
@@ -450,7 +450,7 @@
         "authority": "canonical_product_surface",
         "canonical_route": "#a4",
         "capture_runner": "web-viewer-sample/e2e/design-system-visual.spec.ts",
-        "approval": "explicit owner rebaseline 2026-09-03 (pending owner sign-off in PR): A4 live workspace under the /api 503 stub re-laid out per design §03 IA (left stage-tree honestly disabled #609 / centre ViewportHost slot, zero DOM offline / right tool dock with flow guide) by introduce-viewer-app-integration-surface S3a+S3b; product-surface authority per PR #429 and #701 precedent; goldens captured from clean subject commit f31528e by design-system-visual.spec.ts"
+        "approval": "explicit owner rebaseline 2026-09-03 (owner approved 2026-09-03, PR #763 merged 458c0c4; sign-off recorded in this follow-up): A4 live workspace under the /api 503 stub re-laid out per design §03 IA (left stage-tree honestly disabled #609 / centre ViewportHost slot, zero DOM offline / right tool dock with flow guide) by introduce-viewer-app-integration-surface S3a+S3b; product-surface authority per PR #429 and #701 precedent; goldens captured from clean subject commit f31528e by design-system-visual.spec.ts"
       },
       "baselines": {
         "1440x900": {
