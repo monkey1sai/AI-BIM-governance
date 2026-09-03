@@ -97,6 +97,7 @@ export function WorkspaceViewportHost({ firstFrameTimeoutMs }: WorkspaceViewport
       requestStageTree: (primPath) => paneHandleRef.current?.requestStageTree(primPath),
       selectPrim: (primPath, multiSelect) => paneHandleRef.current?.selectPrim(primPath, multiSelect),
       sendToolbarAction: (action, cameraView) => paneHandleRef.current?.sendToolbarAction(action, cameraView),
+      sendHighlightBatch: (items) => paneHandleRef.current?.sendHighlightBatch(items) ?? { sent: false, reason: "pane_not_ready" },
     });
     return () => registerHostActions?.(null);
   }, [registerHostActions]);

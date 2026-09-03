@@ -9,7 +9,9 @@ import { ACCENT, MONO } from "./fixtures";
 import type { DockKey } from "./fixtures";
 import { WorkspaceFlowGuide } from "./WorkspaceFlowGuide";
 import { useViewportSlot } from "./viewportSlot";
+import type { WorkspaceViewerMode } from "./viewportSlot";
 import { useUsdStageTree, type USDPrimNode } from "../../hooks/useUsdStageTree";
+import { coordinatorClient, type RuntimeSessionSummary } from "../coordinatorClient";
 
 const DOCK_KEYS: readonly DockKey[] = ["a1", "a2", "a3", "a4", "issues"];
 const ROUTE_BY_DOCK: Record<DockKey, string> = {
@@ -26,6 +28,14 @@ function dockFromHashQuery(): DockKey | null {
   if (queryStart < 0) return null;
   const value = new URLSearchParams(window.location.hash.slice(queryStart + 1)).get("dock");
   return value !== null && (DOCK_KEYS as readonly string[]).includes(value) ? value as DockKey : null;
+}
+
+function sessionFromHashQuery(): string | null {
+  if (typeof window === "undefined") return null;
+  const queryStart = window.location.hash.indexOf("?");
+  if (queryStart < 0) return null;
+  const params = new URLSearchParams(window.location.hash.slice(queryStart + 1));
+  return params.get("session") || params.get("review_session_id") || null;
 }
 
 export interface WorkspacePageProps {
@@ -145,6 +155,7 @@ export function WorkspacePage({ initialDock = "a1" }: WorkspacePageProps) {
   const zh = useLang() === "zh";
   const slot = useViewportSlot();
   const [dock, setDock] = useState<DockKey>(() => dockFromHashQuery() ?? initialDock);
+  const [activeSessions, setActiveSessions] = useState<RuntimeSessionSummary[]>([]);
 
   const stageTreeApi = useUsdStageTree();
   const rawTree = slot?.stageTree;
@@ -163,6 +174,55 @@ export function WorkspacePage({ initialDock = "a1" }: WorkspacePageProps) {
   useEffect(() => {
     setDock(dockFromHashQuery() ?? initialDock);
   }, [initialDock]);
+
+  // 1. 同步 URL ?session=...
+  const urlSession = sessionFromHashQuery();
+  useEffect(() => {
+    if (urlSession && slot?.activeSessionId !== urlSession) {
+      slot?.setActiveSessionId(urlSession);
+    }
+  }, [urlSession, slot]);
+
+  // 2. 向 coordinator 查詢現有 session 清單供切換
+  useEffect(() => {
+    let alive = true;
+    coordinatorClient.runtimeStatus()
+      .then((rt) => {
+        if (!alive) return;
+        const items = rt.sessions?.items ?? [];
+        setActiveSessions(items);
+      })
+      .catch(() => { if (alive) setActiveSessions([]); });
+    return () => { alive = false; };
+  }, []);
+
+  const activeSessionId = slot?.activeSessionId;
+  const publication = slot?.publication;
+  const publish = slot?.publish;
+
+  // 3. 帶 session 進入時若子模組尚未 publish，發布預設 handoff 掛載中央 pane
+  useEffect(() => {
+    if (!urlSession || !activeSessionId || publication) return;
+    const summary = activeSessions.find((s) => s.session_id === activeSessionId);
+    publish?.({
+      mode: `${dock}-inline` as WorkspaceViewerMode,
+      handoff: {
+        source: dock,
+        sessionId: activeSessionId,
+        ruleRunId: null,
+        ifcGuid: null,
+        usdPrimPath: null,
+        ruleCode: null,
+        severity: null,
+        label: null,
+        expectedStageUrl: summary?.expected_stage_url ?? null,
+        mappingInformationStatus: null,
+        mappingIssueCode: null,
+        mappingIssueCount: null,
+      },
+      showHandoffActions: true,
+    });
+  }, [urlSession, activeSessionId, publication, publish, dock, activeSessions]);
 
   // 中欄 slot ref：identity 穩定（避免每 render 觸發 ref(null)/ref(el)），本頁卸載時解除註冊（host 轉 hidden，不 unmount）。
   const registerSlot = slot?.registerSlot;
@@ -188,6 +248,30 @@ export function WorkspacePage({ initialDock = "a1" }: WorkspacePageProps) {
   };
 
   const toolbarDisabled = !slot?.activeSessionId;
+
+  const onManualMountSession = (sid: string) => {
+    if (!sid) return;
+    slot?.setActiveSessionId(sid);
+    const summary = activeSessions.find((s) => s.session_id === sid);
+    publish?.({
+      mode: `${dock}-inline` as WorkspaceViewerMode,
+      handoff: {
+        source: dock,
+        sessionId: sid,
+        ruleRunId: null,
+        ifcGuid: null,
+        usdPrimPath: null,
+        ruleCode: null,
+        severity: null,
+        label: null,
+        expectedStageUrl: summary?.expected_stage_url ?? null,
+        mappingInformationStatus: null,
+        mappingIssueCode: null,
+        mappingIssueCount: null,
+      },
+      showHandoffActions: true,
+    });
+  };
 
   return (
     <div
@@ -232,6 +316,33 @@ export function WorkspacePage({ initialDock = "a1" }: WorkspacePageProps) {
             {labels[key]}
           </div>
         ))}
+        {activeSessions.length > 0 ? (
+          <div style={{ display: "flex", alignItems: "center", gap: 6, marginLeft: 12 }}>
+            <span style={{ fontSize: 11, color: "var(--ab-text-dim)" }}>3D Session:</span>
+            <select
+              data-uc="ws-session-select"
+              data-testid="ws-session-select"
+              value={activeSessionId ?? ""}
+              onChange={(e) => onManualMountSession(e.target.value)}
+              style={{
+                fontSize: 11,
+                fontFamily: MONO,
+                padding: "2px 6px",
+                background: "var(--ab-bg)",
+                color: "var(--ab-text)",
+                border: "1px solid rgba(120,160,210,.25)",
+                borderRadius: 4,
+              }}
+            >
+              <option value="">{t("— 選擇 3D Session —", "— Select 3D Session —")}</option>
+              {activeSessions.map((s) => (
+                <option key={s.session_id} value={s.session_id}>
+                  {s.session_id} ({s.model_version_id || s.project_id || s.status})
+                </option>
+              ))}
+            </select>
+          </div>
+        ) : null}
         <div style={{ flex: 1 }} />
         <span data-uc="live-contract" style={{ fontFamily: MONO, fontSize: 10, color: "var(--ab-text-dim)" }}>
           Coordinator :8004 · Kit primary WebRTC · first frame / stage / ACK fail-closed
@@ -248,11 +359,31 @@ export function WorkspacePage({ initialDock = "a1" }: WorkspacePageProps) {
         >
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
             <span style={columnLabel}>{t("Stage 樹", "Stage tree")}</span>
-            {hasStageTree ? (
-              <span style={{ fontFamily: MONO, fontSize: 10, color: "var(--ab-accent)" }}>Live</span>
-            ) : (
-              <span style={{ fontFamily: MONO, fontSize: 10, color: "var(--ab-text-dim)" }}>Roadmap · #609</span>
-            )}
+            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              {slot?.activeSessionId ? (
+                <button
+                  data-testid="ws-request-stage-tree-btn"
+                  title={t("向 Kit 重新請求 Stage 樹", "Request Stage tree from Kit")}
+                  onClick={() => slot?.requestStageTree("/World")}
+                  style={{
+                    fontSize: 10,
+                    padding: "2px 6px",
+                    borderRadius: 4,
+                    background: "rgba(120,160,210,.15)",
+                    border: "1px solid rgba(120,160,210,.3)",
+                    color: "var(--ab-text)",
+                    cursor: "pointer",
+                  }}
+                >
+                  {t("重整", "Refresh")}
+                </button>
+              ) : null}
+              {hasStageTree ? (
+                <span style={{ fontFamily: MONO, fontSize: 10, color: "var(--ab-accent)" }}>Live</span>
+              ) : (
+                <span style={{ fontFamily: MONO, fontSize: 10, color: "var(--ab-text-dim)" }}>Roadmap · #609</span>
+              )}
+            </div>
           </div>
           {hasStageTree ? (
             <>
@@ -282,6 +413,14 @@ export function WorkspacePage({ initialDock = "a1" }: WorkspacePageProps) {
                     onSelect={(p) => {
                       stageTreeApi.selectPrim(p);
                       slot?.selectPrim(p);
+                      // 多色彩高亮（Issue #603）：選取時以藍色高亮標示
+                      slot?.sendHighlightBatch?.([
+                        {
+                          ifc_guid: p,
+                          label: p,
+                          color: [0.2, 0.6, 1.0, 0.8],
+                        },
+                      ]);
                     }}
                   />
                 ))}
@@ -294,15 +433,24 @@ export function WorkspacePage({ initialDock = "a1" }: WorkspacePageProps) {
           )}
         </aside>
 
-        {/* 中：viewport slot（live 時 host 覆蓋於此；離線只剩下方誠實說明） */}
+        {/* 中：viewport slot（live 時 host 覆蓋於容器；離線只剩下方誠實說明） */}
         <section
-          ref={slotRef}
           data-uc="ws-viewport-slot"
           aria-label={t("3D viewport", "3D viewport")}
           style={{ minHeight: 0, minWidth: 0, position: "relative", padding: 12, display: "flex", flexDirection: "column" }}
         >
-          {/* 工具列（Issue #605） */}
-          <div data-uc="ws-viewport-toolbar" style={{ display: "flex", gap: 6, marginBottom: 8, alignItems: "center" }}>
+          {/* 工具列（Issue #605）—— 保持置頂且 zIndex: 10，永不被下方 ViewportHost 覆蓋 */}
+          <div
+            data-uc="ws-viewport-toolbar"
+            style={{
+              display: "flex",
+              gap: 6,
+              marginBottom: 8,
+              alignItems: "center",
+              position: "relative",
+              zIndex: 10,
+            }}
+          >
             <button
               data-testid="ws-toolbar-camera-view"
               title={t("切換相機視角 (⬒)", "Switch camera view (⬒)")}
@@ -339,13 +487,31 @@ export function WorkspacePage({ initialDock = "a1" }: WorkspacePageProps) {
             >
               ⟲
             </button>
+            {activeSessionId ? (
+              <span style={{ fontSize: 11, color: "var(--ab-accent)", fontFamily: MONO, marginLeft: 8 }}>
+                Session: {activeSessionId}
+              </span>
+            ) : null}
           </div>
 
-          <div data-uc="ws-viewport-offline" style={{ flex: 1, minHeight: 0, border: "1px dashed rgba(120,160,210,.18)", borderRadius: 10, padding: 18, display: "flex", flexDirection: "column", gap: 8, justifyContent: "center" }}>
-            <span style={columnLabel}>WebRTC viewport</span>
-            <span style={{ fontSize: 12.5, color: "var(--ab-text-muted)" }}>
-              {t("coordinator :8004 未連線時此處為空；連線後 viewer 會覆蓋在這個區域，並由右側 Dock 的「啟動 3D Session」手動啟動。", "Empty while coordinator :8004 is offline; once live, the viewer overlays this area and is started manually from “Start 3D Session” in the dock.")}
-            </span>
+          {/* 容器 slot：由 WorkspaceViewportHost 覆蓋於此，不遮擋上方的工具列 */}
+          <div
+            ref={slotRef}
+            data-uc="ws-viewport-container"
+            style={{
+              flex: 1,
+              minHeight: 0,
+              position: "relative",
+              display: "flex",
+              flexDirection: "column",
+            }}
+          >
+            <div data-uc="ws-viewport-offline" style={{ flex: 1, minHeight: 0, border: "1px dashed rgba(120,160,210,.18)", borderRadius: 10, padding: 18, display: "flex", flexDirection: "column", gap: 8, justifyContent: "center" }}>
+              <span style={columnLabel}>WebRTC viewport</span>
+              <span style={{ fontSize: 12.5, color: "var(--ab-text-muted)" }}>
+                {t("coordinator :8004 未連線時此處為空；連線後 viewer 會覆蓋在這個區域，並由右側 Dock 的「啟動 3D Session」手動啟動。", "Empty while coordinator :8004 is offline; once live, the viewer overlays this area and is started manually from “Start 3D Session” in the dock.")}
+              </span>
+            </div>
           </div>
         </section>
 

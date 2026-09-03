@@ -39,6 +39,9 @@ export function ViewportSlotProvider({ children }: { children: ReactNode }) {
   ) => {
     hostActionsRef.current?.sendToolbarAction?.(action, cameraView);
   }, []);
+  const sendHighlightBatch = useCallback((items: import("../EmbeddedViewer").HighlightItem[]) => {
+    return hostActionsRef.current?.sendHighlightBatch?.(items) ?? { sent: false, reason: "host_not_registered" };
+  }, []);
 
   const publish = useCallback((next: ViewportPublication | null) => {
     setPublication(next);
@@ -64,6 +67,7 @@ export function ViewportSlotProvider({ children }: { children: ReactNode }) {
     requestStageTree,
     selectPrim,
     sendToolbarAction,
+    sendHighlightBatch,
     registerHostActions,
   }), [
     registerSlot,
@@ -79,6 +83,7 @@ export function ViewportSlotProvider({ children }: { children: ReactNode }) {
     requestStageTree,
     selectPrim,
     sendToolbarAction,
+    sendHighlightBatch,
     registerHostActions,
   ]);
 
