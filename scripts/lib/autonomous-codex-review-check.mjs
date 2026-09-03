@@ -29,7 +29,10 @@ const ENGINE = 'monkey1sai-codex'
 const SCHEMA_ID = 'https://ai-bim-governance.local/schemas/autonomous-codex-review-policy/v1'
 const DRAFT = 'https://json-schema.org/draft/2020-12/schema'
 const POLICY_INVENTORY_SUBTREES = Object.freeze(['scripts'])
-const POLICY_INVENTORY_IGNORED_DIRECTORIES = Object.freeze(['.generated', '.git', 'generated', 'node_modules'])
+const POLICY_INVENTORY_IGNORED_DIRECTORIES = Object.freeze([
+  '.generated', '.git', 'generated', 'node_modules',
+  '__pycache__', '.run', '.venv', 'venv', '.pytest_cache',
+])
 const POLICY_INVENTORY_MAX_DEPTH = 12
 const POLICY_INVENTORY_MAX_ENTRIES = 512
 const POLICY_FILE_MAX_BYTES = 8 * 1024
@@ -260,15 +263,15 @@ export function inspectPolicyFileInventory(repositoryRoot) {
         let entry
         try { entry = directory.readSync() } catch { fail('policy_inventory_io_race', 'inventory_io') }
         if (entry === null) break
-        entriesSeen += 1
-        if (entriesSeen > POLICY_INVENTORY_MAX_ENTRIES) fail('policy_inventory_budget_exceeded', 'max_entries')
         const childRelative = `${current.relative}/${entry.name}`.replaceAll('\\', '/')
         const childAbsolute = path.join(current.absolute, entry.name)
         let child
         try { child = lstatSync(childAbsolute, { bigint: true }) } catch { fail('policy_inventory_io_race', 'inventory_io') }
         if (child.isSymbolicLink()) fail('policy_inventory_symlink', 'inventory_symlink')
+        if (child.isDirectory() && POLICY_INVENTORY_IGNORED_DIRECTORIES.includes(entry.name.toLowerCase())) continue
+        entriesSeen += 1
+        if (entriesSeen > POLICY_INVENTORY_MAX_ENTRIES) fail('policy_inventory_budget_exceeded', 'max_entries')
         if (child.isDirectory()) {
-          if (POLICY_INVENTORY_IGNORED_DIRECTORIES.includes(entry.name.toLowerCase())) continue
           if (current.depth >= POLICY_INVENTORY_MAX_DEPTH) fail('policy_inventory_budget_exceeded', 'max_depth')
           stack.push({ absolute: childAbsolute, relative: childRelative, depth: current.depth + 1, expected: child })
         } else if (child.isFile()) {
