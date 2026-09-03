@@ -23,6 +23,16 @@ The livestream extensions in this deployment are version-skewed --
 ever aligned to a +110 build and the upstream helper is adopted instead,
 re-measure single delivery first: switching back to the upstream path while
 this push path is still registered reintroduces the duplicates.
+
+Delivery channel (issue #757, canonical-linux 181, 2026-09-03): with the
++110 livestream plugin the legacy `get_message_bus_event_stream().push(...)`
+never reaches the native sender -- Kit logged every `loadingStateResponse`
+dispatch while the browser received zero DataChannel events in 15 s. The
+upstream `LivestreamMessaging._on_message_to_send` hands the wire message to
+`omni.kit.app.queue_event(send_message_event, {...})`, which the plugin does
+consume, so this module queues through the same API and keeps the legacy
+push only as a fallback for Kit builds without `queue_event`. Still exactly
+one path per message: the queue call replaces the push, it is never added to it.
 """
 
 import json
@@ -54,6 +64,25 @@ def _wire_payload(payload) -> dict:
     }
 
 
+def _deliver(envelope: dict) -> str:
+    """Hand one wire envelope to the livestream plugin; returns the channel used.
+
+    `omni.kit.app.queue_event` is the channel the upstream messaging extension
+    uses for the very same event name, and the only one the +110 plugin reads
+    (#757). The legacy message-bus push stays as the fallback for older Kit
+    builds that predate `queue_event`.
+    """
+    queue_event = getattr(omni.kit.app, "queue_event", None)
+    if callable(queue_event):
+        queue_event(_SEND_MESSAGE_EVENT, envelope)
+        return "queue_event"
+    omni.kit.app.get_app().get_message_bus_event_stream().push(
+        carb.events.type_from_string(_SEND_MESSAGE_EVENT),
+        payload=envelope,
+    )
+    return "message_bus_push"
+
+
 def register_event_type_to_send(event_type: str):
     """Register `event_type` for sending and forward it; returns the subscription.
 
@@ -72,10 +101,7 @@ def register_event_type_to_send(event_type: str):
             # carry session/trace identifiers.
             carb.log_error(f"[client-send] {event_type} payload is not serialisable; dropped")
             return
-        omni.kit.app.get_app().get_message_bus_event_stream().push(
-            carb.events.type_from_string(_SEND_MESSAGE_EVENT),
-            payload={"message": wire, "sender_id": _sender_id()},
-        )
+        _deliver({"message": wire, "sender_id": _sender_id()})
 
     return get_eventdispatcher().observe_event(
         observer_name=f"BimReviewClientSend:{event_type}",
