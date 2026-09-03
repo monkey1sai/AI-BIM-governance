@@ -362,11 +362,11 @@ describe("EmbeddedViewer postMessage 橋", () => {
     const iframeWin = container.querySelector("iframe")!.contentWindow!;
     const postSpy = vi.spyOn(iframeWin, "postMessage");
     const items = [{ ifc_guid: "guid-1", severity: "high", rule_code: "R-01" }];
-    await act(async () => { ref.current!.sendHighlight(items); });
+    await act(async () => { ref.current!.sendHighlight(items, "client-highlight-1"); });
 
     expect(postSpy).toHaveBeenCalledTimes(1);
     const [payload, targetOrigin] = postSpy.mock.calls[0];
-    expect(payload).toEqual({ protocol: "vg01", type: "highlight", items });
+    expect(payload).toEqual({ protocol: "vg01", type: "highlight", items, clientRequestId: "client-highlight-1" });
     expect(targetOrigin).toBe(VIEWER_ORIGIN); // 非 "*"
   });
 
@@ -385,11 +385,11 @@ describe("EmbeddedViewer postMessage 橋", () => {
       { ifc_guid: "guid-del", severity: "error" },
       { ifc_guid: "guid-mod", severity: "warning" },
     ];
-    await act(async () => { ref.current!.sendHighlightBatch(items); });
+    await act(async () => { ref.current!.sendHighlightBatch(items, "client-highlight-batch-1"); });
 
     expect(postSpy).toHaveBeenCalledTimes(1); // 單一 postMessage，非逐筆
     const [payload, targetOrigin] = postSpy.mock.calls[0];
-    expect(payload).toEqual({ protocol: "vg01", type: "highlight_batch", items });
+    expect(payload).toEqual({ protocol: "vg01", type: "highlight_batch", items, clientRequestId: "client-highlight-batch-1" });
     expect(targetOrigin).toBe(VIEWER_ORIGIN);
   });
 

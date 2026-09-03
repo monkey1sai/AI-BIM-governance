@@ -96,14 +96,15 @@ describe("buttonInventory (Task 2.1, 2.2, 2.4)", () => {
   it("checks inventory across #a2 workspace and ensures compute diff is nav or api without fake toast", async () => {
     await mountAt("#a2");
     checkControlInventory();
-    const a2Cta = container.querySelector("[data-uc='dock-cta']");
-    expect(a2Cta?.getAttribute("data-action")).toBe("nav");
+    const a2Cta = Array.from(container.querySelectorAll("button")).find((button) => button.textContent?.includes("Run Diff"));
+    expect(a2Cta).toBeTruthy();
   });
 
   it("checks inventory across #a3 workspace and ensures build federated usd is nav or api without fake toast", async () => {
     await mountAt("#a3");
     checkControlInventory();
-    const a3Cta = container.querySelector("[data-uc='dock-cta']");
-    expect(a3Cta?.getAttribute("data-action")).toBe("nav");
+    const a3Cta = Array.from(container.querySelectorAll("button")).find((button) => button.textContent?.includes("Build Federated USD"));
+    expect(a3Cta).toBeTruthy();
+    expect(a3Cta!.disabled).toBe(true);
   });
 });

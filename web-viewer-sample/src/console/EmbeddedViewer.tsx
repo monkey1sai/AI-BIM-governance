@@ -24,6 +24,9 @@ export interface StageLoadedMessage {
 }
 export interface HighlightResultMessage {
   protocol: "vg01"; type: "highlight_result"; requestId: string;
+  // Console 發送端為每個 postMessage 指令建立的本地關聯 ID。Kit requestId 仍保留為
+  // runtime 實際請求 ID；兩者不可互換，前者只用於避免選取切換後接收舊 ACK。
+  clientRequestId?: string;
   ok: boolean; reason?: "unmapped" | "datachannel_not_ready";
   // 批次（highlight_batch）ack 專屬（加性欄位；單筆 highlight ack 不帶）：viewer 端誠實計數——
   // 實際裝進單一 highlightPrimsRequest 的筆數與 viewer mapping 解不出 prim 的 GUID 清單。
@@ -36,11 +39,11 @@ export interface SelectedGuidMessage { protocol: "vg01"; type: "selected_guid"; 
 export interface HighlightItem { ifc_guid: string; severity?: string; label?: string; rule_code?: string | null }
 
 export interface EmbeddedViewerHandle {
-  sendHighlight(items: HighlightItem[]): void;
+  sendHighlight(items: HighlightItem[], clientRequestId: string): void;
   // 批次疊加（A2 diff overlay）：viewer 端把全部 items 裝進「一個」highlightPrimsRequest（聯集選取）
   // 並回「一個」帶 sent_count/unmapped_count 的 highlight_result。sendHighlight 維持逐筆語意
   //（每 item 一個 replace request + 一個 ack），兩者不可混用。
-  sendHighlightBatch(items: HighlightItem[]): void;
+  sendHighlightBatch(items: HighlightItem[], clientRequestId: string): void;
   sendFocus(ifcGuid: string): void;
   sendClear(): void;
 }
@@ -154,8 +157,8 @@ export const EmbeddedViewer = forwardRef<EmbeddedViewerHandle, EmbeddedViewerPro
   // 送出側比照接收側：經 propsRef.current 讀最新 viewerOrigin，與 listener 同模式（避免兩側不對稱）。
   // handle 內 closure 不直接 close over render-scope props → useImperativeHandle dep 可為 []（zero re-create）。
   useImperativeHandle(ref, () => ({
-    sendHighlight: (items) => post({ type: "highlight", items }),
-    sendHighlightBatch: (items) => post({ type: "highlight_batch", items }),
+    sendHighlight: (items, clientRequestId) => post({ type: "highlight", items, clientRequestId }),
+    sendHighlightBatch: (items, clientRequestId) => post({ type: "highlight_batch", items, clientRequestId }),
     sendFocus: (ifcGuid) => post({ type: "focus", ifc_guid: ifcGuid }),
     sendClear: () => post({ type: "clear" }),
   }), []);
