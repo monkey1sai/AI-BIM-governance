@@ -127,7 +127,7 @@ jobs:
           if ($frontendProduct -notin @('true', 'false') -or $visualRequired -notin @('true', 'false')) {
             throw 'Design scope booleans are not canonical.'
           }
-          if ($status -notin @('passed', 'mixed', 'partial_reference_missing', 'gate_infrastructure_only', 'not_applicable')) {
+          if ($status -notin @('passed', 'passed_with_rebaseline', 'mixed', 'partial_reference_missing', 'gate_infrastructure_only', 'not_applicable')) {
             throw "Design scope status is not an allowed non-failing enum: $status"
           }
           $screenIds = @($requiredScreenIds.Split(',', [System.StringSplitOptions]::RemoveEmptyEntries) | ForEach-Object { $_.Trim() })
