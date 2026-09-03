@@ -1006,6 +1006,30 @@ def test_codex_adapter_and_fabric_operator_doc_preserve_the_same_binding_contrac
     assert "does not create a second scheduler" in operator_doc
 
 
+def test_claude_and_codex_skills_define_a_bounded_anti_loop_delivery_contract():
+    for skill_path in (CLAUDE_SKILL, CODEX_SKILL):
+        skill = skill_path.read_text(encoding="utf-8")
+        for required in (
+            "evidenceFingerprint=head/base/diffDigest/gate/blocker/authorityState",
+            "blockerFingerprint=gate/errorCode/affectedScope/rootCause",
+            "NO_RETRY",
+            "SKIP_ALREADY_SATISFIED",
+            "CIRCUIT_BREAKER_OPEN",
+            "REUSE_AUTHORIZATION",
+            "one_conclusive_p5_review_per_exact_head",
+            "one_approval_request_per_exact_head",
+            "絕不重用 GitHub counted approval",
+            "HEAD 改變後仍須重新取得該 exact head 的有效 approval",
+            "incremental gate evaluation",
+            "BLOCKING / CONFIRMED_CORRECTNESS / OPTIONAL / OUT_OF_SCOPE",
+            "同一 fingerprint",
+            "evidence delta",
+            "既有 PASS",
+            "收斂為 HELD",
+        ):
+            assert required in skill
+
+
 def test_new_run_appender_preserves_prefix_and_emits_valid_p0(tmp_path):
     repo, branch, old_head, new_head, source, source_bytes, expected = (
         _new_run_fixture(tmp_path)
