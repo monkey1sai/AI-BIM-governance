@@ -2570,6 +2570,27 @@
       ],
       "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": null
+    },
+    {
+      "id": "parallel-delivery-fabric",
+      "status": "active",
+      "owner": "parallel-delivery-fabric",
+      "current_slice": "phase0-governance: canonical activation boundary remains shadow-only and does not represent live delivery",
+      "blocked_by": [],
+      "last_verified": "2026-08-28T00:00:00Z",
+      "task_ledger": {
+        "completed": 3,
+        "total": 5
+      },
+      "evidence_refs": [
+        "openspec/changes/parallel-delivery-fabric/proposal.md",
+        "openspec/changes/parallel-delivery-fabric/tasks.md",
+        "docs/superpowers/specs/2026-08-28-parallel-delivery-fabric-design.md",
+        "scripts/tests/test-parallel-delivery-fabric-phase0.mjs"
+      ],
+      "subject_commit": "24aa54d5aedba8a5f0774a095215b9f26d21e198",
+      "subject_binding": "introduction",
+      "archive_debt": null
     }
   ]
 }

@@ -124,7 +124,7 @@ $PINNED_RULE_KINDS = @(
 )
 
 $PINNED_LOAD_BEARING = [ordered]@{
-    'governance-surface-present'                     = 'e9418ab490d129d0'
+    'governance-surface-present'                     = 'b2a45aa669ebd7a9'
     'verification-manifest-schema'                   = 'fb24fc481fe18915'
     'trusted-host-merge-contract-schema'             = 'cf10f54074df9194'
     'metrics-authority-self-change-full-dispatch'    = '8cf53f93182a965a'

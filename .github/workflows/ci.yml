@@ -3,16 +3,18 @@ name: CI
 on:
   pull_request:
     types: [opened, edited, synchronize, reopened, ready_for_review]
+  merge_group:
+    types: [checks_requested]
   push:
     branches: [main]
   workflow_dispatch:
 
-permissions:
-  contents: read
-
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event.action == 'edited' && github.event.changes.base == null && 'metadata-only' || 'verification' }}
   cancel-in-progress: true
+
+permissions:
+  contents: read
 
 jobs:
   changes:
@@ -58,19 +60,38 @@ jobs:
         id: paths
         if: ${{ github.event.action != 'edited' || github.event.changes.base != null }}
         shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PULL_REQUEST_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PULL_REQUEST_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PUSH_BEFORE_SHA: ${{ github.event.before }}
+          SUBJECT_SHA: ${{ github.sha }}
+          MERGE_GROUP_BASE_SHA: ${{ github.event.merge_group.base_sha }}
         run: |
           if [ "${{ github.event_name }}" = "pull_request" ]; then
-            base_sha='${{ github.event.pull_request.base.sha }}'
-            head_sha='${{ github.event.pull_request.head.sha }}'
+            base_sha="$PULL_REQUEST_BASE_SHA"
+            head_sha="$PULL_REQUEST_HEAD_SHA"
             git -c core.quotepath=false diff --no-renames --name-only -z "$base_sha...$head_sha" > changed-paths.bin
-          elif [ "${{ github.event_name }}" = "push" ] && [ -n "${{ github.event.before }}" ] && [ "${{ github.event.before }}" != "0000000000000000000000000000000000000000" ]; then
-            base_sha='${{ github.event.before }}'
-            head_sha='${{ github.sha }}'
+          elif [ "$EVENT_NAME" = "merge_group" ]; then
+            base_sha="$MERGE_GROUP_BASE_SHA"
+            head_sha="$SUBJECT_SHA"
+            if ! [[ "$base_sha" =~ ^[0-9a-f]{40}$ ]] || [[ "$base_sha" =~ ^0{40}$ ]]; then
+              echo "::error::merge_group immutable base SHA is missing or invalid" >&2
+              exit 1
+            fi
+            if ! [[ "$head_sha" =~ ^[0-9a-f]{40}$ ]] || [[ "$head_sha" =~ ^0{40}$ ]]; then
+              echo "::error::merge_group subject SHA is missing or invalid" >&2
+              exit 1
+            fi
+            git -c core.quotepath=false diff --no-renames --name-only -z "$base_sha...$head_sha" > changed-paths.bin
+          elif [ "$EVENT_NAME" = "push" ] && [ -n "$PUSH_BEFORE_SHA" ] && [ "$PUSH_BEFORE_SHA" != "0000000000000000000000000000000000000000" ]; then
+            base_sha="$PUSH_BEFORE_SHA"
+            head_sha="$SUBJECT_SHA"
             git -c core.quotepath=false diff --no-renames --name-only -z "$base_sha" "$head_sha" > changed-paths.bin
           else
             printf "__full__\0" > changed-paths.bin
             base_sha=''
-            head_sha='${{ github.sha }}'
+            head_sha="$SUBJECT_SHA"
           fi
           echo "base_sha=$base_sha" >> "$GITHUB_OUTPUT"
           echo "head_sha=$head_sha" >> "$GITHUB_OUTPUT"
@@ -196,8 +217,22 @@ jobs:
       - name: Install test dependencies
         shell: pwsh
         run: |
-          python -m pip install --upgrade pip
-          python -m pip install pytest jsonschema
+          $requirements = Join-Path '${{ runner.temp }}' 'root-contracts-requirements.txt'
+          @'
+          attrs==26.1.0 --hash=sha256:c647aa4a12dfbad9333ca4e71fe62ddc36f4e63b2d260a37a8b83d2f043ac309
+          colorama==0.4.6; sys_platform == 'win32' --hash=sha256:4f1d9991f5acc0ca119f9d443620b77f9d6b33703e51011c16baf57afb285fc6
+          iniconfig==2.3.0 --hash=sha256:f631c04d2c48c52b84d0d0549c99ff3859c98df65b3101406327ecc7d53fbf12
+          jsonschema==4.26.0 --hash=sha256:d489f15263b8d200f8387e64b4c3a75f06629559fb73deb8fdfb525f2dab50ce
+          jsonschema-specifications==2025.9.1 --hash=sha256:98802fee3a11ee76ecaca44429fda8a41bff98b00a0f2838151b113f210cc6fe
+          packaging==26.3 --hash=sha256:d7193f7c8e4e93f444fde0262bf90af30e16fa0ad0ad44cb553c87339b23cd1c
+          pluggy==1.6.0 --hash=sha256:e920276dd6813095e9377c0bc5566d94c932c33b27a3e3945d8389c374dd4746
+          pygments==2.21.0 --hash=sha256:2363c69b61c4a97c838da3b130dcd6468f4848992b21a82f2a63ec34377137d9
+          pytest==9.1.1 --hash=sha256:37a86b45efb9a47a61a36449063e8e18d0cab3161329fc099eb21783169c4f0c
+          referencing==0.37.0 --hash=sha256:381329a9f99628c9069361716891d34ad94af76e461dcb0335825aecc7692231
+          rpds-py==2026.6.3 --hash=sha256:2c958bf94822e9290a40aaf2a822d4bc5c88099093e3948ad6c571eca9272e5f --hash=sha256:ecabd69db66de867690f9797f2f8fa27ba501bbc24540cbdbdc649cd15888ba6
+          typing-extensions==4.16.0 --hash=sha256:481caa481374e813c1b176ada14e97f1f67a4539ce9cfeb3f350d78d6370c2e8
+          '@ | Set-Content -LiteralPath $requirements -Encoding utf8NoBOM
+          python -m pip install --disable-pip-version-check --only-binary=:all: --require-hashes -r $requirements
 
       - name: Run agent persona and skill-root parity
         shell: pwsh
@@ -353,7 +388,8 @@ jobs:
         id: eslint-baseline
         shell: pwsh
         env:
-          TRUSTED_BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+          EVENT_NAME: ${{ github.event_name }}
+          TRUSTED_BASE_SHA: ${{ needs.changes.outputs.base_sha }}
         run: |
           $target = Join-Path $env:RUNNER_TEMP 'viewer-eslint-baseline.json'
           if ($env:TRUSTED_BASE_SHA -match '^[0-9a-f]{40}$' -and $env:TRUSTED_BASE_SHA -notmatch '^0{40}$') {
@@ -386,6 +422,9 @@ jobs:
               }
             }
           } else {
+            if ($env:EVENT_NAME -eq 'merge_group') {
+              throw 'merge_group requires an immutable trusted base SHA; candidate HEAD fallback is forbidden.'
+            }
             Copy-Item -LiteralPath 'web-viewer-sample/scripts/eslint-baseline.json' -Destination $target
           }
           "path=$target" >> $env:GITHUB_OUTPUT

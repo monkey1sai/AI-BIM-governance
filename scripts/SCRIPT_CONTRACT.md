@@ -35,6 +35,17 @@
   它不是 canonical operator entrypoint，不得取代 `deploy.ps1`、`verify-all.ps1` 或 `stop-all.ps1`，
   也不得啟動 Kit、streaming server、WebRTC 或 GPU runtime。
 
+### Parallel Delivery Fabric shadow control plane
+
+- `scripts/dev/parallel-delivery-fabric.mjs` 是 local shadow-only 控制面，只接受
+  `submit|advance|reconcile|drain|release|inspect` 六個 bounded command。
+- 它只產生本機治理結果，沒有 network、review、merge、deploy、runtime 或 cleanup authority；
+  不得修改 branch protection、安裝 GitHub App、讀取 merge credential，或把 phase 推進成 live activation。
+- `LEGACY_GUARDED`、counted review 與 `HELD_EXTERNAL_ACTIVATION` 是預設邊界。
+  session writer 數量不是 admission gate；只有實體 Kit/WebRTC 資源飽和可回傳 `WRITER_CAPACITY`。
+- `scripts/tests/test-parallel-delivery-fabric-static-policy.ps1` 是 verification manifest 登記的
+  static-only contract gate，不得啟動 network、merge、deploy、runtime 或 cleanup side effect。
+
 ## Test / Smoke / Dev Scripts
 
 新的 smoke、check、E2E、diagnostic script 預設應放：

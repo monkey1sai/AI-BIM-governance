@@ -13,6 +13,7 @@ import {
 import { triggerOrphanCleanup } from './cleanup-orphan-dev-processes.mjs';
 import { acquirePrQueueLock } from './pr-queue-lock.mjs';
 import { buildReviewDispositionReply } from '../lib/autonomous-delivery-finalization.mjs';
+import { loadAutonomousCodexReviewPolicy } from '../lib/autonomous-codex-review-check.mjs';
 
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
 const SCRIPT_REPO_ROOT = path.resolve(path.dirname(SCRIPT_PATH), '..', '..');
@@ -22,6 +23,7 @@ const GITHUB_OWNER = 'monkey1sai';
 const GITHUB_NAME = 'AI-BIM-governance';
 const REQUIRED_REVIEWER_LOGIN = 'monkey1sai-blip';
 const REQUIRED_REVIEWER_ID = 311287868;
+const LEGACY_GUARDED_PHASE = 'LEGACY_GUARDED';
 const PR_VIEW_JSON_FIELDS = 'number,title,headRefName,headRefOid,baseRefName,baseRefOid,mergeable,mergeStateStatus,reviewDecision,isDraft,state,url';
 const PR_CHECKS_JSON_FIELDS = 'name,state,bucket,workflow,link';
 const PR_OBSERVATION_FIELDS = Object.freeze(PR_VIEW_JSON_FIELDS.split(','));
@@ -300,8 +302,44 @@ export function validatePrPreflight(prNumber) {
   return false;
 }
 
+const heldReviewGate = (reason, phase = 'UNKNOWN') => Object.freeze({
+  phase,
+  disposition: 'HELD',
+  countedReviewRequired: true,
+  allowsMerge: false,
+  reasons: Object.freeze([reason]),
+});
+
+export function inspectCanonicalReviewGate(...callerArguments) {
+  if (callerArguments.length !== 0) {
+    return heldReviewGate('canonical_review_policy_override_forbidden');
+  }
+  let policy;
+  try {
+    policy = loadAutonomousCodexReviewPolicy();
+  } catch {
+    return heldReviewGate('canonical_review_policy_unavailable');
+  }
+  if (
+    policy.phase !== LEGACY_GUARDED_PHASE
+    || policy.legacy_gate?.counted_review_required !== true
+    || policy.legacy_gate?.direct_stack !== 'HELD'
+  ) {
+    return heldReviewGate('canonical_review_policy_invalid', policy.phase);
+  }
+  return Object.freeze({
+    phase: policy.phase,
+    disposition: LEGACY_GUARDED_PHASE,
+    countedReviewRequired: true,
+    allowsMerge: false,
+    reasons: Object.freeze(['legacy_counted_review_required']),
+  });
+}
+
 export function evaluateMergeReadiness({ pr, checks, threads, approval, expectedHeadSha }) {
+  const canonicalGate = inspectCanonicalReviewGate();
   const reasons = [];
+  if (canonicalGate.disposition === 'HELD') reasons.push(...canonicalGate.reasons);
   if (!pr || pr.state !== 'OPEN') reasons.push('pr_not_open');
   if (pr?.baseRefName !== 'main') reasons.push('base_not_main');
   if (pr?.isDraft) reasons.push('draft');
@@ -317,7 +355,13 @@ export function evaluateMergeReadiness({ pr, checks, threads, approval, expected
   else if (approval.count < 1) reasons.push('exact_head_approval_missing');
   const observedReady = reasons.length === 0;
   reasons.push('canonical_merge_authority_external');
-  return { ready: false, observedReady, reasons };
+  return {
+    ready: false,
+    observedReady,
+    phase: canonicalGate.phase,
+    countedReviewRequired: canonicalGate.countedReviewRequired,
+    reasons,
+  };
 }
 
 export function isSamePrObservation(initial, final) {

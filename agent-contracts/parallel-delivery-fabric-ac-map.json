@@ -1,0 +1,455 @@
+{
+  "schema_version": "parallel-delivery-fabric-ac-map/v1",
+  "acceptance": [
+    {
+      "id": "AC-01",
+      "assertions": [
+        {
+          "kind": "positive",
+          "test_file": "scripts/tests/parallel-delivery-fabric/test-registry.mjs",
+          "test_name": "AC-01 \u2014 cross-provider disjoint writers are admitted"
+        }
+      ]
+    },
+    {
+      "id": "AC-02",
+      "assertions": [
+        {
+          "kind": "positive",
+          "test_file": "scripts/tests/parallel-delivery-fabric/test-registry.mjs",
+          "test_name": "AC-02 \u2014 same-provider disjoint sessions are admitted without a writer-count cap"
+        }
+      ]
+    },
+    {
+      "id": "AC-03",
+      "assertions": [
+        {
+          "kind": "positive",
+          "test_file": "scripts/tests/parallel-delivery-fabric/test-registry.mjs",
+          "test_name": "AC-03 \u2014 heartbeat is monotonic and timeout marks SUSPECT without releasing a seat"
+        }
+      ]
+    },
+    {
+      "id": "AC-04",
+      "assertions": [
+        {
+          "kind": "positive",
+          "test_file": "scripts/tests/parallel-delivery-fabric/test-registry.mjs",
+          "test_name": "AC-04 \u2014 a lease cannot be rebound to a new execution context without explicit release authority"
+        }
+      ]
+    },
+    {
+      "id": "AC-05",
+      "assertions": [
+        {
+          "kind": "positive",
+          "test_file": "scripts/tests/parallel-delivery-fabric/test-registry.mjs",
+          "test_name": "AC-05 \u2014 a resource race has one CAS winner and the loser is queued"
+        }
+      ]
+    },
+    {
+      "id": "AC-06",
+      "assertions": [
+        {
+          "kind": "positive",
+          "test_file": "scripts/tests/parallel-delivery-fabric/test-admission.mjs",
+          "test_name": "AC-06 \u2014 indeterminate admission overlap queues without exposing scope or mutating the registry"
+        }
+      ]
+    },
+    {
+      "id": "AC-07",
+      "assertions": [
+        {
+          "kind": "positive",
+          "test_file": "scripts/tests/parallel-delivery-fabric/test-admission.mjs",
+          "test_name": "AC-07 \u2014 scope revalidation is fresh, exact, and reusable at every execution phase"
+        }
+      ]
+    },
+    {
+      "id": "AC-08",
+      "assertions": [
+        {
+          "kind": "positive",
+          "test_file": "scripts/tests/parallel-delivery-fabric/test-review-migration.mjs",
+          "test_name": "AC-08 \u2014 direct_stack remains HELD until external activation"
+        }
+      ]
+    },
+    {
+      "id": "AC-09",
+      "assertions": [
+        {
+          "kind": "positive",
+          "test_file": "scripts/tests/parallel-delivery-fabric/test-adapters.mjs",
+          "test_name": "AC-09 \u2014 nested and shared execution contexts hold before every mutation port"
+        }
+      ]
+    },
+    {
+      "id": "AC-10",
+      "assertions": [
+        {
+          "kind": "positive",
+          "test_file": "scripts/tests/parallel-delivery-fabric/test-review-migration.mjs",
+          "test_name": "AC-10 \u2014 runtime third-seat allocation remains HELD without runtime-capacity authority"
+        }
+      ]
+    },
+    {
+      "id": "AC-11",
+      "assertions": [
+        {
+          "kind": "positive",
+          "test_file": "scripts/tests/parallel-delivery-fabric/test-admission.mjs",
+          "test_name": "AC-11 \u2014 release and hotfix managed records require the closed registry shape"
+        }
+      ]
+    },
+    {
+      "id": "AC-12",
+      "assertions": [
+        {
+          "kind": "positive",
+          "test_file": "scripts/tests/parallel-delivery-fabric/test-review-migration.mjs",
+          "test_name": "AC-12 \u2014 live Merge Queue enqueue remains HELD in shadow observation"
+        }
+      ]
+    },
+    {
+      "id": "AC-13",
+      "assertions": [
+        {
+          "kind": "positive",
+          "test_file": "scripts/tests/parallel-delivery-fabric/test-orchestrator.mjs",
+          "test_name": "AC-13 \u2014 legal plan_only writes only control metadata while every other effect remains zero"
+        }
+      ]
+    },
+    {
+      "id": "AC-14",
+      "assertions": [
+        {
+          "kind": "positive",
+          "test_file": "scripts/tests/parallel-delivery-fabric/test-orchestrator.mjs",
+          "test_name": "AC-14 \u2014 submit_delivery is a fixed Task9 hold and candidate delivery capabilities never reach a sink"
+        }
+      ]
+    },
+    {
+      "id": "AC-15",
+      "assertions": [
+        {
+          "kind": "positive",
+          "test_file": "scripts/tests/parallel-delivery-fabric/test-stack.mjs",
+          "test_name": "AC-15 \u2014 stack planner treats unavailable direct-stack authority as a typed premerge hold"
+        }
+      ]
+    },
+    {
+      "id": "AC-16",
+      "assertions": [
+        {
+          "kind": "positive",
+          "test_file": "scripts/tests/parallel-delivery-fabric/test-stack.mjs",
+          "test_name": "AC-16 \u2014 direct-stack dispatch freezes a same-repository fully-linear lowest-unmerged prefix"
+        }
+      ]
+    },
+    {
+      "id": "AC-17",
+      "assertions": [
+        {
+          "kind": "positive",
+          "test_file": "scripts/tests/parallel-delivery-fabric/test-stack.mjs",
+          "test_name": "AC-17 \u2014 direct-stack dispatch reducer classifies every accepted and rejected HTTP outcome without retrying"
+        }
+      ]
+    },
+    {
+      "id": "AC-18",
+      "assertions": [
+        {
+          "kind": "positive",
+          "test_file": "scripts/tests/parallel-delivery-fabric/test-stack.mjs",
+          "test_name": "AC-18 \u2014 direct-stack poll requires a full frozen vector, final ancestry, and fresh origin/main before deployment"
+        }
+      ]
+    },
+    {
+      "id": "AC-19",
+      "assertions": [
+        {
+          "kind": "positive",
+          "test_file": "scripts/tests/parallel-delivery-fabric/test-stack.mjs",
+          "test_name": "AC-19 \u2014 direct-stack delivery waits for group deployment and produces repair/revert intent on failure"
+        }
+      ]
+    },
+    {
+      "id": "AC-20",
+      "assertions": [
+        {
+          "kind": "positive",
+          "test_file": "scripts/tests/parallel-delivery-fabric/test-stack.mjs",
+          "test_name": "AC-20 \u2014 stack planner rejects malformed, non-linear, cross-repository, or drifted batches before a sink sees them"
+        }
+      ]
+    },
+    {
+      "id": "AC-21",
+      "assertions": [
+        {
+          "kind": "positive",
+          "test_file": "scripts/tests/parallel-delivery-fabric/test-train-and-e2e.mjs",
+          "test_name": "AC-21 \u2014 integration train freezes exact base and ordered candidate SHAs"
+        }
+      ]
+    },
+    {
+      "id": "AC-22",
+      "assertions": [
+        {
+          "kind": "positive",
+          "test_file": "scripts/tests/parallel-delivery-fabric/test-review-migration.mjs",
+          "test_name": "AC-22 \u2014 Computer Use plus Playwright exact-head binding stays external until activation"
+        }
+      ]
+    },
+    {
+      "id": "AC-23",
+      "assertions": [
+        {
+          "kind": "positive",
+          "test_file": "scripts/tests/parallel-delivery-fabric/test-review-migration.mjs",
+          "test_name": "AC-23 \u2014 per-head interaction evidence cannot be satisfied by local fixtures"
+        }
+      ]
+    },
+    {
+      "id": "AC-24",
+      "assertions": [
+        {
+          "kind": "positive",
+          "test_file": "scripts/tests/parallel-delivery-fabric/test-review-migration.mjs",
+          "test_name": "AC-24 \u2014 runtime-preflight authority remains HELD without an independent record"
+        }
+      ]
+    },
+    {
+      "id": "AC-25",
+      "assertions": [
+        {
+          "kind": "positive",
+          "test_file": "scripts/tests/parallel-delivery-fabric/test-train-and-e2e.mjs",
+          "test_name": "AC-25 \u2014 E2E_REQUIRE_REAL rejects skip or missing manifest, and candidate harness changes are shadow-only"
+        }
+      ]
+    },
+    {
+      "id": "AC-26",
+      "assertions": [
+        {
+          "kind": "positive",
+          "test_file": "scripts/tests/parallel-delivery-fabric/test-train-and-e2e.mjs",
+          "test_name": "AC-26 \u2014 listener evidence is own, canonical, matched, and fail-closed without mutating input"
+        }
+      ]
+    },
+    {
+      "id": "AC-27",
+      "assertions": [
+        {
+          "kind": "positive",
+          "test_file": "scripts/tests/parallel-delivery-fabric/test-train-and-e2e.mjs",
+          "test_name": "AC-27 \u2014 per-candidate E2E failures freeze only the affected candidate while disjoint work continues"
+        }
+      ]
+    },
+    {
+      "id": "AC-28",
+      "assertions": [
+        {
+          "kind": "positive",
+          "test_file": "scripts/tests/parallel-delivery-fabric/test-lifecycle-boundary.mjs",
+          "test_name": "AC-28 \u2014 seven lifecycle operations reject forbidden legacy and machine-effect ports with zero side effects"
+        }
+      ]
+    },
+    {
+      "id": "AC-29",
+      "assertions": [
+        {
+          "kind": "positive",
+          "test_file": "scripts/tests/parallel-delivery-fabric/test-lifecycle-boundary.mjs",
+          "test_name": "AC-29 \u2014 the legacy board is one exact rebuildable projection read and cannot issue authority"
+        }
+      ]
+    },
+    {
+      "id": "AC-30",
+      "assertions": [
+        {
+          "kind": "positive",
+          "test_file": "scripts/tests/parallel-delivery-fabric/test-queue-registry.mjs",
+          "test_name": "AC-30 \u2014 first legal reserve writes a separate queue root and preserves the lease root"
+        }
+      ]
+    },
+    {
+      "id": "AC-31",
+      "assertions": [
+        {
+          "kind": "positive",
+          "test_file": "scripts/tests/parallel-delivery-fabric/test-queue.mjs",
+          "test_name": "AC-31 \u2014 queue observer accepts only a fresh timestamped source-pinned snapshot"
+        }
+      ]
+    },
+    {
+      "id": "AC-32",
+      "assertions": [
+        {
+          "kind": "positive",
+          "test_file": "scripts/tests/parallel-delivery-fabric/test-promotion-bridge.mjs",
+          "test_name": "AC-32 \u2014 ordinary handoff binds the candidate exact tuple to an immutable external packet"
+        }
+      ]
+    },
+    {
+      "id": "AC-33",
+      "assertions": [
+        {
+          "kind": "positive",
+          "test_file": "scripts/tests/parallel-delivery-fabric/test-promotion-bridge.mjs",
+          "test_name": "AC-33 \u2014 every promotion role is identity-separated and capability-closed"
+        }
+      ]
+    },
+    {
+      "id": "AC-34",
+      "assertions": [
+        {
+          "kind": "positive",
+          "test_file": "scripts/tests/parallel-delivery-fabric/test-promotion-bridge.mjs",
+          "test_name": "AC-34 \u2014 only a complete prior-pinned monkey1sai-codex exact-head success check can enter a handoff"
+        }
+      ]
+    },
+    {
+      "id": "AC-35",
+      "assertions": [
+        {
+          "kind": "positive",
+          "test_file": "scripts/tests/parallel-delivery-fabric/test-promotion-bridge.mjs",
+          "test_name": "AC-35 \u2014 recursive secret, raw host-identity, transcript, and external-sink inputs are rejected before handoff"
+        }
+      ]
+    },
+    {
+      "id": "AC-36",
+      "assertions": [
+        {
+          "kind": "positive",
+          "test_file": "scripts/tests/parallel-delivery-fabric/test-adapters.mjs",
+          "test_name": "AC-36 \u2014 unknown or partial gates, configs, contexts, and inventory fail closed without effects"
+        }
+      ]
+    },
+    {
+      "id": "AC-37",
+      "assertions": [
+        {
+          "kind": "positive",
+          "test_file": "scripts/tests/parallel-delivery-fabric/test-adapters.mjs",
+          "test_name": "AC-37 \u2014 forged execution-context attestation leaves every mutation port at zero calls"
+        }
+      ]
+    },
+    {
+      "id": "AC-38",
+      "assertions": [
+        {
+          "kind": "positive",
+          "test_file": "scripts/tests/parallel-delivery-fabric/test-admission.mjs",
+          "test_name": "AC-38 \u2014 execution-envelope CAS rejects self/jump/replay/revoked/expired and binding drift"
+        }
+      ]
+    },
+    {
+      "id": "AC-39",
+      "assertions": [
+        {
+          "kind": "positive",
+          "test_file": "scripts/tests/parallel-delivery-fabric/test-registry.mjs",
+          "test_name": "AC-39 \u2014 managed record is closed, digest-stable, and renew changes only its expiry transition"
+        }
+      ]
+    },
+    {
+      "id": "AC-40",
+      "assertions": [
+        {
+          "kind": "positive",
+          "test_file": "scripts/tests/parallel-delivery-fabric/test-adapters.mjs",
+          "test_name": "AC-40 \u2014 HostInventoryAuthority holds unknown or invalid evidence before every host mutation port"
+        }
+      ]
+    },
+    {
+      "id": "AC-41",
+      "assertions": [
+        {
+          "kind": "positive",
+          "test_file": "scripts/tests/parallel-delivery-fabric/test-queue.mjs",
+          "test_name": "AC-41 \u2014 queue max preserves one running plus pending candidates and fails closed on the cancelled 101st tuple"
+        }
+      ]
+    },
+    {
+      "id": "AC-42",
+      "assertions": [
+        {
+          "kind": "positive",
+          "test_file": "scripts/tests/parallel-delivery-fabric/test-promotion-bridge.mjs",
+          "test_name": "AC-42 \u2014 an otherwise complete Task7 replay is held after its frozen stack envelope expires"
+        }
+      ]
+    },
+    {
+      "id": "AC-43",
+      "assertions": [
+        {
+          "kind": "positive",
+          "test_file": "scripts/tests/parallel-delivery-fabric/test-registry.mjs",
+          "test_name": "AC-43 \u2014 trusted owner-end release revokes once, frees only the seat, and retains task resources"
+        }
+      ]
+    },
+    {
+      "id": "AC-44",
+      "assertions": [
+        {
+          "kind": "positive",
+          "test_file": "scripts/tests/parallel-delivery-fabric/test-registry.mjs",
+          "test_name": "AC-44 \u2014 plan-only metadata uses the delivery-plan ref and no forbidden effects"
+        }
+      ]
+    },
+    {
+      "id": "AC-45",
+      "assertions": [
+        {
+          "kind": "positive",
+          "test_file": "scripts/tests/parallel-delivery-fabric/test-adapters.mjs",
+          "test_name": "AC-45 \u2014 Claude safe baseline satisfies the prior-pinned configuration preflight"
+        }
+      ]
+    }
+  ]
+}

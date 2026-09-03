@@ -1,0 +1,112 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-bim-governance.local/schemas/autonomous-codex-review-policy/v1",
+  "title": "Base-owned autonomous Codex review policy",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "phase",
+    "phase_order",
+    "open_spec",
+    "external_check",
+    "external_activation",
+    "legacy_gate",
+    "publisher_capabilities",
+    "role_separation",
+    "review_binding"
+  ],
+  "properties": {
+    "schema_version": { "type": "string", "const": "autonomous-codex-review-policy/v1" },
+    "phase": { "type": "string", "const": "LEGACY_GUARDED" },
+    "phase_order": {
+      "type": "array",
+      "const": ["LEGACY_GUARDED", "SHADOW_DUAL", "CUTOVER_ARMED", "CANARY_ACTIVE", "AUTONOMOUS_ACTIVE"]
+    },
+    "open_spec": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source_kind", "source_path", "base_sha", "source_sha256"],
+      "properties": {
+        "source_kind": { "type": "string", "const": "base_pinned_openspec" },
+        "source_path": { "type": "string", "const": "openspec/specs/ai-coding-governance/spec.md" },
+        "base_sha": { "type": "string", "const": "a0ab7065131914e548e1d79a1c683c8b14b07de4" },
+        "source_sha256": { "type": "string", "const": "27c687fff38b1f791565708090611114970a993bd3b126addf34829cc8e11168" }
+      }
+    },
+    "external_check": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source_kind", "source_ref", "app_slug", "app_id", "check_name", "required"],
+      "properties": {
+        "source_kind": { "type": "string", "const": "github_app" },
+        "source_ref": { "type": "string", "const": "base:monkey1sai-codex" },
+        "app_slug": { "type": "string", "const": "monkey1sai-codex" },
+        "app_id": { "type": "integer", "const": 481516 },
+        "check_name": { "type": "string", "const": "monkey1sai-codex/ready" },
+        "required": { "type": "boolean", "const": true }
+      }
+    },
+    "external_activation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["evidence_refs", "machine_sink_enabled", "candidate_inaccessible_authenticity"],
+      "properties": {
+        "evidence_refs": {
+          "type": "array",
+          "const": ["external:settings-lease", "external:rollback-snapshot", "external:authoritative-reread", "external:activation-canary"]
+        },
+        "machine_sink_enabled": { "type": "boolean", "const": false },
+        "candidate_inaccessible_authenticity": { "type": "string", "const": "HELD_EXTERNAL_ACTIVATION" }
+      }
+    },
+    "legacy_gate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["counted_review_required", "direct_stack"],
+      "properties": {
+        "counted_review_required": { "type": "boolean", "const": true },
+        "direct_stack": { "type": "string", "const": "HELD" }
+      }
+    },
+    "publisher_capabilities": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["can_checks", "can_contents", "can_approve", "can_merge"],
+      "properties": {
+        "can_checks": { "type": "boolean", "const": true },
+        "can_contents": { "type": "boolean", "const": false },
+        "can_approve": { "type": "boolean", "const": false },
+        "can_merge": { "type": "boolean", "const": false }
+      }
+    },
+    "role_separation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["writer_or_fixer", "reviewer", "self_review"],
+      "properties": {
+        "writer_or_fixer": { "type": "string", "const": "candidate_writer_or_fixer" },
+        "reviewer": { "type": "string", "const": "monkey1sai-codex-reviewer" },
+        "self_review": { "type": "string", "const": "ADVISORY_ONLY" }
+      }
+    },
+    "review_binding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repository", "reviewer_engine", "packet_schema_version", "required_fields", "identity_fields"],
+      "properties": {
+        "repository": { "type": "string", "const": "monkey1sai/AI-BIM-governance" },
+        "reviewer_engine": { "type": "string", "const": "monkey1sai-codex" },
+        "packet_schema_version": { "type": "string", "const": "autonomous-codex-review-check-packet/v1" },
+        "required_fields": {
+          "type": "array",
+          "const": ["pr_number", "base_sha", "head_sha", "changed_files_sha256", "reviewer_engine", "evidence_sha256"]
+        },
+        "identity_fields": {
+          "type": "array",
+          "const": ["writer_execution_id", "fixer_execution_id", "reviewer_execution_id"]
+        }
+      }
+    }
+  }
+}

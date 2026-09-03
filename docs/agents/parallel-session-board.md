@@ -1,12 +1,12 @@
 # Parallel Session Board（多終端機／多 CLI 並行感知）
 
-多個 CLI 在同一 repo 開啟 session 時彼此原生不可見。本看板只是一層 best-effort 感知：記錄各 session 的 branch、worktree、任務與最近檔案；它不授權寫入、PR approval、merge 或 process termination，也不取代 Lane 隔離與 Single Active Writer。
+多個 CLI 在同一 repo 開啟 session 時彼此原生不可見。本看板只是一層 best-effort 感知：記錄各 session 的 branch、worktree、任務與最近檔案；它不授權寫入、PR approval、merge 或 process termination，也不取代 Lane 隔離、每個 task／branch 的單一 writer 與 touch-set fail-closed。repo 不因 writer 數量或另有 active session 就單獨阻擋無重疊 writer；同一 branch、同一 worktree 或 touch-set 重疊／未知一律停工排隊。
 
 ## 共用位置
 
 - 實體位置：主 checkout 的 `.agents/board/`（gitignored）。
 - 所有 linked worktree 都以 `git rev-parse --path-format=absolute --git-common-dir` 的父目錄解析回同一塊看板。
-- production queue、cleanup、register/update/done 一律使用同一 resolver，避免每個 worktree 各持一把假鎖；`AGENTS_BOARD_DIR` 僅供測試的唯讀 `status --json --no-prune` snapshot，任何其他 flag 或 `register`／`update`／`done`／`hook`／`codex-notify` 入口都會在 dispatch 前以 exit 2 拒絕，不影響任何 lock、board 或 lifecycle side effect。
+- production queue、cleanup 與 legacy board command 一律使用同一 resolver，避免每個 worktree 各持一把假鎖。Fabric v1 的 `AGENTS_BOARD_DIR` seam 僅供測試的唯讀 `status --json --no-prune` snapshot；它不會 dispatch `register`、`update`、`done`、`hook` 或 `codex-notify`，也不會把 board 資料當作 lock、lease 或 lifecycle authority。
 
 ## 明確操作契約
 
@@ -18,11 +18,54 @@ node scripts/dev/agents-board.mjs done --agent <cli> --session <id>
 ```
 
 1. 開工先 `register`，保存回傳的 `session=<id>`。
-2. 編輯前 `status`，確認沒有 active writer 或重疊檔案。只讀診斷 snapshot 使用 `status --no-prune`。
+2. 編輯前 `status`，檢視 active sessions 的 branch、worktree 與最近檔案候選。`recentFiles` 只保留最近最多 5 筆候選，可能截斷，不能證明完整 touch-set 或 admission；缺少 owner 宣告的完整 touch-set 或 Fabric scope 證據時，狀態為 UNKNOWN 並停工排隊。只讀診斷 snapshot 使用 `status --no-prune`。
 3. 任務或主要檔案改變時 `update`。
 4. 收工 `done`。看板失敗只降低感知，不得當成繞過安全 gate 的理由。
 
 session 記錄位於 `sessions/<agent>--<session>.json`；事件追加到 `events.jsonl`。超過 120 分鐘顯示 stale，ended 24 小時或任意狀態 72 小時後才由明確 board 命令依 retention 清除。
+
+### Fabric v1 projection adapter（非 legacy lifecycle client）
+
+Fabric v1 不呼叫任何 legacy board write：`register`、`update`、`done`、`hook` 與
+`codex-notify` 都不是 lease、resume、release 或 recovery authority。Adapter 唯一可使用的
+legacy read 是由注入 reader 執行的精確 argv `status --json --no-prune`；任何其他 command
+或 flag 一律拒絕。注入 reader 回傳的資料必須先去識別、遞迴 secret-safe 並符合 closed
+snapshot shape；缺失、stale、malformed 或 privacy-invalid snapshot 只投影為
+`PROJECTION_DEGRADED`，不改變 durable lease、writer cap、scope 或 context evidence。
+Timeout 與既有 `HELD_*` lease truth 一律先於 projection source 或 board 健康度；HostInventory
+reclaim 與 resume rebind 另須比對 control plane 建構時固定的 prior
+issuer/version/source/revocation pin，才可消耗 nonce 或請求 CAS。
+所有 Fabric public request 先做 closed outer-shape 與 recursive privacy 檢查；unknown 或
+credential-shaped input 不得抵達 reconcile、nonce、CAS、board 或 writer。這些 authority pin
+只封存在 factory 的非序列化 internal context，exported helper 不接受 request 提供的 pin。
+遞迴檢查以 bounded cycle-safe walker 處理，並拒絕 `env:`／`environment:`、`$env:` 與 `%NAME%`
+形式的 raw environment 值。Gate 通過後，adapter 對所有 request metadata 建立自身的
+deep-frozen structured clone；每個 injected callback 只接收該 owned snapshot，且其回傳值也必須
+先 clone/freeze/validate 才可交給下一個 callback。callback 的 mutation、throw 或未知回傳只會
+產生 typed hold/degraded，不得改寫 caller input、改變 durable binding 或觸發後續 port。
+Projection 所消費的 durable lease 只可透過 Task3 registry 匯出的
+`parseSessionLease` 取得：它先建立 I-JSON owned clone，再套用 Task3 現有 closed state-record
+驗證，並 deep-freeze 結果。Task6 不得複製或放寬 lease timestamp、resource、identifier/reference、
+reservation、proof、release/audit 或 retention 規則。只有 `ACTIVE`、`SUSPECT`、
+`END_REQUESTED`、`RELEASING` 或 `RELEASED` 及其 state-specific 欄位可通過；缺欄、未知欄或
+forged terminal record 一律 typed hold，且不寫 projection。每個帶可解析 lease 的 public result
+都帶 durable truth tuple：非 RELEASED 為 `occupied:true`、`writer_seat_released:false`、
+`resources_retained:true`、`retention_state:ACTIVE`；RELEASED 則為 `occupied:false`、
+`writer_seat_released:true`、`resources_retained:true`、`retention_state:RETAINED_FOR_REVIEW`。這讓
+capacity consumer 可釋放 writer seat，同時不把 retained resources 變成可刪除或可
+resume/reclaim 的 authority；無法解析的 lease 一律 `occupied:true` 並標示 truth unknown。
+
+`createBoardProjection` 的普通 projection 最小注入面只有 `readBoardStatus` 與
+`writeProjection`；effect spy 是選用測試觀測，不是 runtime prerequisite。缺少 inventory 或
+resume authority pin/port 時，僅該 authority-sensitive operation fail closed，不能阻斷普通
+projection。
+
+如需寫 projection，Fabric 只能寫入與 legacy lifecycle 分離的自身 atomic projection
+channel；每筆 record 帶 generation，並以 prior `expected_oid` compare-and-swap 寫入，只有
+closed `STORED` acknowledgement 才能投影為 ready。record 不帶 callback 或 host/lifecycle
+authority。它不會呼叫 cleanup、detached
+launcher、process/listener inventory、PID termination、branch/worktree prune、ACL/owner/
+sandbox/install/firewall、remote 或 external API。
 
 ## 四 CLI 的可驗證邊界
 
@@ -33,7 +76,11 @@ session 記錄位於 `sessions/<agent>--<session>.json`；事件追加到 `event
 
 ## 背景 cleanup 的安全界線
 
-`register`、`done`、Claude lifecycle adapter（若由 owner 在 repo 外啟用）與 Codex notify 只會更新看板並背景啟動 `cleanup-orphan-dev-processes.mjs --silent`；它們不再同步 main，也不觸發 PR queue 或 GitHub mutation。
+`register`、`done`、Claude lifecycle hooks（若由 owner 在 repo 外啟用）與 Codex notify
+都會更新看板並背景啟動 `cleanup-orphan-dev-processes.mjs --silent`；它們不再同步 main，也
+不觸發 PR queue 或 GitHub mutation。Legacy `update` 只寫 board projection、**不**呼叫
+maintenance，但同樣不具有 lease、release、resume 或 process authority。Fabric v1 adapter
+不呼叫上述任何 legacy write，包含這個無 maintenance 的 `update`。
 
 cleanup 僅在下列證據同時成立時終止程序：
 
