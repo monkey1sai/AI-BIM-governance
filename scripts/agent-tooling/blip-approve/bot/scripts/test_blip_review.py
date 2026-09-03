@@ -492,6 +492,41 @@ class ReviewPaginationTests(unittest.TestCase):
             with self.assertRaisesRegex(SystemExit, "made no progress"):
                 blip.fetch_pr("test-token", "monkey1sai", "AI-BIM-governance", PR_NUMBER)
 
+    def test_fetch_pr_rejects_repeated_cursor(self) -> None:
+        with patch.object(
+            blip,
+            "graphql",
+            side_effect=[
+                make_review_page(
+                    ["PRR_000"], total_count=3, has_next_page=True, end_cursor="cursor-loop"
+                ),
+                make_review_page(
+                    ["PRR_001"], total_count=3, has_next_page=True, end_cursor="cursor-loop"
+                ),
+                make_review_page(
+                    ["PRR_002"], total_count=3, has_next_page=False, end_cursor="cursor-end"
+                ),
+            ],
+        ):
+            with self.assertRaisesRegex(SystemExit, "repeated a cursor"):
+                blip.fetch_pr("test-token", "monkey1sai", "AI-BIM-governance", PR_NUMBER)
+
+    def test_fetch_pr_rejects_duplicate_review_ids(self) -> None:
+        with patch.object(
+            blip,
+            "graphql",
+            side_effect=[
+                make_review_page(
+                    ["PRR_000"], total_count=2, has_next_page=True, end_cursor="cursor-1"
+                ),
+                make_review_page(
+                    ["PRR_000"], total_count=2, has_next_page=False, end_cursor="cursor-2"
+                ),
+            ],
+        ):
+            with self.assertRaisesRegex(SystemExit, "duplicate review ids"):
+                blip.fetch_pr("test-token", "monkey1sai", "AI-BIM-governance", PR_NUMBER)
+
     def test_review_snapshot_detects_same_count_state_replacement(self) -> None:
         original = make_approval_pr(reviews=[make_review("reviewer", "COMMENTED", "ok", review_id=1)])
         replaced = make_approval_pr(
