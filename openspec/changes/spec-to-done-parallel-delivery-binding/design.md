@@ -68,7 +68,7 @@ Machine contract 升級到 v2，但 legacy state 未帶 Fabric fields 時仍按�
 ## Risks / Trade-offs
 
 - [Risk] Binding packet 是 repo-local snapshot，可能被 caller 修改。→ Mitigation：canonical digest、closed schema、exact Fabric parser、actual Git identity 與 state-path revalidation；packet 明確不授權外部效果。
-- [Risk] Active Fabric branch 後續提交造成 stack drift。→ Mitigation：本 branch 綁定 `9e2bd84`，closeout 前吸收母分支最新 head並重跑完整 tests／OpenSpec validation。
+- [Risk] Fabric contract 後續 hardened main 造成 binding drift。→ Mitigation：以 freshly fetched `origin/main` 作唯一整合基線，binding fixture、schema 與 parser 接受集合必須通過 current-main regression tests。
 - [Risk] Fabric-managed budget exhaustion 原本會建立 fresh worktree 的 `NEW_RUN`，與原 lease identity 衝突。→ Mitigation：managed run 禁止 local `NEW_RUN`；必須由 outer Fabric 建立新 task／lease／binding與新 state，舊 audit chain保持 terminal。
 - [Risk] shared resource 無法直接解析成檔案。→ Mitigation：不猜測映射，要求 explicit path/glob/rename scope，否則 `scope_drift`。
 - [Trade-off] v1 不讓 Fabric-managed run自行恢復。→ 這是刻意的 fail-closed boundary；比假造 resume authority 或跨日盲重試更容易收斂。

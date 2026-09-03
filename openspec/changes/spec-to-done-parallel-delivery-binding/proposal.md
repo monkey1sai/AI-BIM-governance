@@ -25,4 +25,4 @@
 
 ## Impact
 
-變更由 repo agent-governance/tooling surface 擁有，影響 `agent-contracts/spec-to-done.contract*.json`、`.claude/.codex` 的 `spec-to-done` adapter、對應 validator/helper、Fabric binding adapter、OpenSpec artifacts 與 deterministic tests。沒有產品 API、事件、storage、browser session、GPU runtime、部署流程或 production dependency 變更；historical lifecycle ledger 保持 byte-identical。
+變更由 repo agent-governance/tooling surface 擁有，影響 `agent-contracts/spec-to-done.contract*.json`、`.claude/.codex` 的 `spec-to-done` adapter、對應 validator/helper、Fabric binding adapter、OpenSpec artifacts 與 deterministic tests。沒有產品 API、事件、storage、browser session、GPU runtime、部署流程或 production dependency 變更；current lifecycle ledger 會新增本 change 的 active projection，既有歷史列不回寫。
