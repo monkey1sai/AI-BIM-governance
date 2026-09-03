@@ -2869,7 +2869,14 @@ export default class App extends React.Component<AppProps, AppState> {
             lifecycleActive,
         });
         const canOperate = canHandleHighlight(inputs.panelState.canOperate);
-        const m = e.data as { type?: string; items?: unknown; ifc_guid?: string; token?: unknown; user_token?: unknown };
+        const m = e.data as { type?: string; items?: unknown; ifc_guid?: string; token?: unknown; user_token?: unknown; clientRequestId?: unknown };
+        // 僅做 console↔iframe 的本地 ACK 關聯；Kit runtime 的 requestId 仍由
+        // _overlayHighlight / _overlayHighlightMany 產生，絕不以瀏覽器輸入覆寫。
+        const clientRequestId = typeof m.clientRequestId === "string"
+            && m.clientRequestId.length > 0
+            && m.clientRequestId.length <= 200
+            ? m.clientRequestId
+            : null;
         if (m.type === "viewer_lease_token") {
             if (typeof m.token !== "string") return;
             const previousToken = reviewEnv.viewerLeaseToken;
@@ -2906,6 +2913,7 @@ export default class App extends React.Component<AppProps, AppState> {
                     this._postToParent({
                         type: "highlight_result",
                         requestId: res.ok ? res.requestId : "",
+                        ...(clientRequestId ? { clientRequestId } : {}),
                         ok: res.ok,
                         ...(res.ok ? {} : { reason: res.reason }),
                     }, allowedOrigins); // Important #3：複用本 call stack 已建白名單，免迴圈內重 parse
@@ -2924,6 +2932,7 @@ export default class App extends React.Component<AppProps, AppState> {
                 this._postToParent({
                     type: "highlight_result",
                     requestId: batchRes.ok ? batchRes.requestId : "",
+                    ...(clientRequestId ? { clientRequestId } : {}),
                     ok: batchRes.ok,
                     ...(batchRes.ok
                         ? {

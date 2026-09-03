@@ -323,6 +323,14 @@ export function A4SemanticSearchPage() {
   const selectedRow = resultContextMatchesCurrent
     ? rows.find((row) => (row.ifc_guid ?? "") === selectedGuid) ?? null
     : null;
+  const selectedA4HandoffProof = selectedRow?.evidence_proof
+    ?? (selectedRow as { proof_token?: string } | null)?.proof_token
+    ?? "";
+  const selectedA4HandoffEligible = Boolean(
+    selectedRow?.highlight_eligible
+    && selectedRow.usd_prim_path
+    && selectedA4HandoffProof,
+  );
   const a4ViewerHandoff: ReviewRoomHandoff = {
     source: "a4",
     sessionId,
@@ -451,7 +459,7 @@ export function A4SemanticSearchPage() {
 
   async function onTriggerHandoff(row: ModelSearchResultRow) {
     const proof = row.evidence_proof ?? (row as { proof_token?: string }).proof_token ?? "";
-    if (!row.usd_prim_path || !proof || sourceMode !== "session" || !sessionId) return;
+    if (!row.highlight_eligible || !row.usd_prim_path || !proof || sourceMode !== "session" || !sessionId) return;
     setHandoffBusy(true);
     setHandoffError(null);
     try {
@@ -490,7 +498,9 @@ export function A4SemanticSearchPage() {
         <ReviewSessionViewerPane
           mode="a4-inline"
           handoff={a4ViewerHandoff}
-          showHandoffActions={Boolean(selectedRow)}
+          // A4 search rows are evidence-bearing table data, not browser-side runtime authority.
+          // 3D focus must consume the selected row's signed proof through the canonical coordinator handoff.
+          showHandoffActions={false}
         />
       )}
       <Panel title={t("語意模型（Ornith）", "Semantic model (Ornith)")} sub="GET /api/governance/search/llm-status" prov="asbuilt">
@@ -875,7 +885,7 @@ export function A4SemanticSearchPage() {
                 >
                   {issueBusy ? t("建立 Issue 中…", "Creating Issue…") : t("建立 Issue", "Create Issue")}
                 </Btn>
-                {selected.usd_prim_path && (
+                {selectedA4HandoffEligible && (
                   <Btn
                     data-testid="a4-focus-handoff"
                     disabled={handoffBusy}
@@ -883,6 +893,11 @@ export function A4SemanticSearchPage() {
                   >
                     {handoffBusy ? t("請求 3D Handoff 中…", "Requesting 3D Handoff…") : t("3D Focus (Handoff)", "3D Focus (Handoff)")}
                   </Btn>
+                )}
+                {!selectedA4HandoffEligible && (
+                  <span className="ec-note" data-testid="a4-handoff-unavailable">
+                    {t("此列缺少已核准的 3D action proof，維持 table-only。", "This row has no approved 3D action proof and remains table-only.")}
+                  </span>
                 )}
               </div>
               {createdIssue && (

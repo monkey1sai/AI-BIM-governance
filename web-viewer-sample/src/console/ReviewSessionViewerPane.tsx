@@ -146,6 +146,15 @@ function healthValue(value: boolean | null | undefined): string {
   return "unknown";
 }
 
+let highlightCorrelationSequence = 0;
+
+function createHighlightCorrelationId(): string {
+  const uuid = globalThis.crypto?.randomUUID?.();
+  if (uuid) return `viewer_highlight_${uuid}`;
+  highlightCorrelationSequence += 1;
+  return `viewer_highlight_${Date.now().toString(36)}_${highlightCorrelationSequence.toString(36)}`;
+}
+
 type ViewerLeaseError =
   | { kind: "primary_occupied"; message: string }
   | { kind: "other"; message: string };
@@ -231,6 +240,25 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
     .filter((s) => s.status === "active" || s.status === "created")
     .map((s) => s.session_id);
   const sid = sessionId.trim();
+  const highlightTargetFingerprint = `${sid}\u0000${handoff.ifcGuid ?? ""}\u0000${handoff.usdPrimPath ?? ""}`;
+  const highlightTargetFingerprintRef = useRef<string | null>(null);
+  const highlightTargetGenerationRef = useRef(0);
+  const pendingHighlightRef = useRef<{
+    clientRequestId: string;
+    targetGeneration: number;
+    kind: "single" | "batch";
+  } | null>(null);
+  // ref 在 render 中只保留目前 props 的純導出值。目標切換時立刻讓舊 ACK 失效，
+  // 不等待 effect 才清除，避免 DataChannel 於 React effect 前到達而誤套用。
+  if (highlightTargetFingerprintRef.current !== highlightTargetFingerprint) {
+    highlightTargetFingerprintRef.current = highlightTargetFingerprint;
+    highlightTargetGenerationRef.current += 1;
+    pendingHighlightRef.current = null;
+  }
+  useEffect(() => {
+    setHighlightResult(null);
+    setCommandTrace(null);
+  }, [highlightTargetFingerprint]);
   const validSession = sessionIdIsValid(sid);
   const activePrimaryLease = lease && lease.session_id === sid && lease.role === "primary" && lease.status === "active" ? lease : null;
   const runtimeSession = runtimeSessions.find((s) => s.session_id === sid) ?? null;
@@ -424,6 +452,12 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
 
   const sendHighlight = useCallback(() => {
     if (!canHighlight || !handoff.ifcGuid) return;
+    const clientRequestId = createHighlightCorrelationId();
+    pendingHighlightRef.current = {
+      clientRequestId,
+      targetGeneration: highlightTargetGenerationRef.current,
+      kind: "single",
+    };
     setHighlightResult(null);
     const item: HighlightItem = {
       ifc_guid: handoff.ifcGuid,
@@ -431,7 +465,7 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
       label: handoff.label ?? handoff.ifcGuid,
       rule_code: handoff.ruleCode,
     };
-    viewerRef.current?.sendHighlight([item]);
+    viewerRef.current?.sendHighlight([item], clientRequestId);
     setCommandTrace(JSON.stringify({
       command: "highlight",
       source: mode,
@@ -439,6 +473,7 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
       rule_run_id: handoff.ruleRunId,
       ifc_guid: handoff.ifcGuid,
       usd_prim_path: handoff.usdPrimPath,
+      client_request_id: clientRequestId,
       item,
     }, null, 2));
   }, [canHighlight, handoff, sid, mode]);
@@ -480,12 +515,19 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
       if (items.length === 0) {
         return { sent: false as const, reason: t("無可送出的構件（0 筆）", "no items to send (0 items)") };
       }
+      const clientRequestId = createHighlightCorrelationId();
+      pendingHighlightRef.current = {
+        clientRequestId,
+        targetGeneration: highlightTargetGenerationRef.current,
+        kind: "batch",
+      };
       setHighlightResult(null); // pending viewer ack（誠實：送出 ≠ 成功，等 viewer highlight_result）
-      viewerRef.current?.sendHighlightBatch(items);
+      viewerRef.current?.sendHighlightBatch(items, clientRequestId);
       setCommandTrace(JSON.stringify({
         command: "highlight_batch",
         source: mode,
         session_id: sidRef.current,
+        client_request_id: clientRequestId,
         item_count: items.length,
         items,
       }, null, 2));
@@ -771,9 +813,16 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
                 setHighlightResult(null);
               }}
               onHighlightResult={(m) => {
+                const pending = pendingHighlightRef.current;
+                if (
+                  !pending
+                  || pending.targetGeneration !== highlightTargetGenerationRef.current
+                  || m.clientRequestId !== pending.clientRequestId
+                ) return;
+                pendingHighlightRef.current = null;
                 setHighlightResult({ ok: m.ok, reason: m.reason });
-                // 批次 ack 透傳（A2）：含 sent_count/unmapped_count 加性欄位；單筆 ack 也原樣透傳。
-                onBatchAckRef.current?.(m);
+                // 批次 ack 只在本次指令與當前目標均吻合時透傳；舊指令不得污染新選取列。
+                if (pending.kind === "batch") onBatchAckRef.current?.(m);
               }}
             />
           </div>

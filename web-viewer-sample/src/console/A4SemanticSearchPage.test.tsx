@@ -804,9 +804,9 @@ describe("A4SemanticSearchPage", () => {
       expect(draft).not.toBeNull();
       expect(container.querySelector<HTMLInputElement>('[data-testid="a4-issue-draft-title"]')?.value).toContain("FireDoor-401");
       const inlineHighlight = container.querySelector<HTMLButtonElement>('[data-testid="a4-inline-highlight"]');
-      expect(inlineHighlight).not.toBeNull();
-      expect(inlineHighlight!.disabled).toBe(true);
-      expect(container.querySelector('[data-testid="a4-inline-handoff-summary"]')?.textContent).toContain("/World/Door_401");
+      expect(inlineHighlight).toBeNull();
+      expect(container.querySelector('[data-testid="a4-inline-handoff-summary"]')).toBeNull();
+      expect(container.querySelector('[data-testid="a4-focus-handoff"]')).not.toBeNull();
 
       // Edit title and severity
       const titleInput = container.querySelector<HTMLInputElement>('[data-testid="a4-issue-draft-title"]')!;
@@ -844,8 +844,7 @@ describe("A4SemanticSearchPage", () => {
       expect(container.querySelector('[data-testid="a4-result-stale-context"]')).not.toBeNull();
       expect(container.querySelector('[data-testid="a4-issue-draft"]')).toBeNull();
       expect(container.querySelector('[data-testid="a4-inline-highlight"]')).toBeNull();
-      expect(container.querySelector('[data-testid="a4-inline-handoff-summary"]')?.textContent ?? "")
-        .not.toContain("/World/Door_401");
+      expect(container.querySelector('[data-testid="a4-inline-handoff-summary"]')).toBeNull();
     });
 
     it("handles a4_proof_expired gracefully while preserving user draft in memory", async () => {
