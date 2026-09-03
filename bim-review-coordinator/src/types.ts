@@ -149,6 +149,11 @@ export interface ReviewSession {
   // POST /api/review-sessions/:id/first-frame 回報後寫入；coordinator nowIso() 權威時戳。
   // in-memory（檔案）store 重啟後可能不存在 → 讀回 undefined，summarize 時 ?? null。
   first_frame_at?: string | null;
+  /** Server-owned resumable close checkpoint; public event payloads cannot set it. */
+  close_checkpoint?: {
+    checkpoint_id: string;
+    expected_final_event_count: number;
+  };
 }
 
 export interface Artifact {

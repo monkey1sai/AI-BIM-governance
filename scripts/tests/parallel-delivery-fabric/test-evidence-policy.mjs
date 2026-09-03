@@ -17,7 +17,7 @@ const operatorDocPath = path.join(repoRoot, 'docs', 'agents', 'parallel-delivery
 const reducerPath = path.join(repoRoot, 'scripts', 'lib', 'parallel-delivery-fabric-evidence.mjs');
 
 const REQUIREMENTS_VERSION = 'parallel-delivery-fabric-acceptance-requirements/v1';
-const OPERATOR_DOC_VERSION = 'parallel-delivery-fabric-operator-policy/v2';
+const OPERATOR_DOC_VERSION = 'parallel-delivery-fabric-operator-policy/v1';
 const ACTIVATION_RECORD_FIELDS = [
   'phase',
   'base_sha',
@@ -57,7 +57,7 @@ const DISTINCT_AUTHORITY_ROLES = [
 ];
 // This is intentionally a pinned canonical digest. A map edit is a normative
 // contract edit and must update this test and the operator document together.
-const EXPECTED_REQUIREMENTS_SHA256 = '640b60482d332f6a2b6bff258f1b15a223fcfd34d385b8cce8ee18238c0a6d31';
+const EXPECTED_REQUIREMENTS_SHA256 = 'e019c1112015b23f0b43ead124fe6e0fab427bafd0f872266371068f2c7d38df';
 const ACCEPTANCE_IDS = Array.from({ length: 45 }, (_, index) => `AC-${String(index + 1).padStart(2, '0')}`);
 const REQUIREMENT_KEYS = [
   'activation_requirement',
@@ -391,6 +391,7 @@ function forgedTrustedContext() {
         id: forgedAcceptanceId(number),
         required_gate_kinds: forgedRequiredGateKinds(number),
         required_source_kinds: ['DESIGN', 'ACTIVATION', 'ROLLBACK', 'GATE'],
+        expected_source_refs: forgedSourceRefs(forgedAcceptanceId(number)),
         applicability: { kind: 'REQUIRED' },
       };
     }),

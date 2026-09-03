@@ -508,6 +508,22 @@ test('provider adapter accepts only a top-level provider with the fixed command 
   assert.deepEqual(calls, Object.fromEntries(Object.keys(calls).map((name) => [name, 0])))
 })
 
+test('provider adapter consumes one static command-policy nonce only after a valid request shape', () => {
+  let policyConsumes = 0
+  const adapter = createProviderAdapter({
+    provider: 'codex',
+    attestor: { verify_execution_context: (input) => verifyExecutionContextAttestation(input, executionPins()) },
+    commandPolicy: commandPolicy({ consume: () => { policyConsumes += 1; return true } }),
+    effects: {},
+  })
+
+  assert.equal(adapter.preflight({}).status, 'HELD_EXECUTION_CONTEXT')
+  assert.equal(policyConsumes, 0)
+  assert.equal(adapter.preflight({ execution_context: executionInput(), command: 'control-metadata:record' }).status, 'READY_FOR_SHADOW')
+  assert.equal(adapter.preflight({ execution_context: executionInput(), command: 'control-metadata:record' }).status, 'READY_FOR_SHADOW')
+  assert.equal(policyConsumes, 1)
+})
+
 test('provider adapter rejects nested agents and forbidden commands before every effect port', () => {
   const forbidden = [
     'codex exec', 'claude -p', 'agent-cli run', 'powershell -Command Get-ChildItem', 'taskkill /pid 42',
@@ -862,4 +878,24 @@ test('Claude authority requires exact metadata and catches configuration verifie
     execution_context: context, claude_configuration: claudeInput(), command: 'control-metadata:record',
   }), { status: 'HELD_PROVIDER_CONFIGURATION', reason: 'provider_configuration_evidence_gap' })
   assert.deepEqual(calls, Object.fromEntries(Object.keys(calls).map((effect) => [effect, 0])))
+})
+
+test('P2 regression — cyclic, accessor-bearing, proxied and over-deep caller inputs hold instead of escaping', () => {
+  const cyclic = executionInput()
+  cyclic.self = cyclic
+  assert.equal(verifyExecutionContextAttestation(cyclic, executionPins()).status.startsWith('HELD'), true)
+  const withGetter = executionInput()
+  let touched = 0
+  Object.defineProperty(withGetter, 'lazy', { enumerable: true, get() { touched += 1; return 'value' } })
+  assert.equal(verifyExecutionContextAttestation(withGetter, executionPins()).status.startsWith('HELD'), true)
+  assert.equal(touched, 0)
+  const proxied = new Proxy(executionInput(), { ownKeys() { throw new Error('trap must not run') } })
+  assert.equal(verifyExecutionContextAttestation(proxied, executionPins()).status.startsWith('HELD'), true)
+  let deep = { leaf: 'x' }
+  for (let level = 0; level < 80; level += 1) deep = { nested: deep }
+  assert.equal(verifyExecutionContextAttestation({ ...executionInput(), deep }, executionPins()).status.startsWith('HELD'), true)
+  // A shared (non-cyclic) sub-object is not a cycle.
+  const shared = { note: 'shared' }
+  const dag = { ...executionInput(), left: shared, right: shared }
+  assert.equal(verifyExecutionContextAttestation(dag, executionPins()).status.startsWith('HELD'), true)
 })

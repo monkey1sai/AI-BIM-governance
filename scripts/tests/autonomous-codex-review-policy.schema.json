@@ -29,9 +29,9 @@
       "required": ["source_kind", "source_path", "base_sha", "source_sha256"],
       "properties": {
         "source_kind": { "type": "string", "const": "base_pinned_openspec" },
-        "source_path": { "type": "string", "const": "openspec/changes/parallel-delivery-fabric/specs/parallel-delivery-fabric/spec.md" },
-        "base_sha": { "type": "string", "const": "a024a13a2ea2b7037acbf6a916d5dda8d125d27f" },
-        "source_sha256": { "type": "string", "const": "fb3d378d17688721238516061ac8fe9d8e45d2d6d8566adb083269518367a0ae" }
+        "source_path": { "type": "string", "const": "openspec/specs/ai-coding-governance/spec.md" },
+        "base_sha": { "type": "string", "const": "a0ab7065131914e548e1d79a1c683c8b14b07de4" },
+        "source_sha256": { "type": "string", "const": "27c687fff38b1f791565708090611114970a993bd3b126addf34829cc8e11168" }
       }
     },
     "external_check": {

@@ -90,6 +90,7 @@ const expectedAcceptance = number => ({
   id: acceptanceId(number),
   required_gate_kinds: requiredKinds(number),
   required_source_kinds: [...BASE_SOURCE_KINDS],
+  expected_source_refs: sourceRefs(acceptanceId(number)),
   applicability: { kind: 'REQUIRED' },
 })
 
@@ -128,10 +129,11 @@ const notApplicableRecord = value => ({
   },
 })
 
-const trustedNotApplicable = () => contextWithAcceptance(0, value => ({
+const trustedNotApplicableAcceptance = value => ({
   ...value,
   required_gate_kinds: ['POLICY'],
   required_source_kinds: [...BASE_SOURCE_KINDS, 'APPLICABILITY'],
+  expected_source_refs: [...value.expected_source_refs, { kind: 'APPLICABILITY', ref: 'applicability:base_policy', digest: APPLICABILITY }],
   applicability: {
     kind: 'NOT_APPLICABLE',
     authority_ref: 'applicability:base_policy',
@@ -141,7 +143,9 @@ const trustedNotApplicable = () => contextWithAcceptance(0, value => ({
     immutable: true,
     current_exact_head: true,
   },
-}))
+})
+
+const trustedNotApplicable = (index = 0) => contextWithAcceptance(index, trustedNotApplicableAcceptance)
 
 test('P0 RED — synchronously recomputed candidate and frozen matching context remain authority-required, never COMPLETE', () => {
   const result = reduceEvidenceContract(bundle(), trustedContext())
@@ -187,6 +191,19 @@ test('P0 — trusted context is a closed AC-to-gate/source map and pins activati
   const notApplicable = bundle({ records: replaceRecord(bundle().records, 0, notApplicableRecord) })
   assert.equal(reduceEvidenceContract(notApplicable, trustedContext()).status, 'REJECTED')
   assert.equal(reduceEvidenceContract(notApplicable, trustedNotApplicable()).status, 'HELD')
+})
+
+test('trusted NOT_APPLICABLE browser acceptances require policy proof but no browser evidence', () => {
+  let records = replaceRecord(bundle().records, 21, notApplicableRecord)
+  records = replaceRecord(records, 25, notApplicableRecord)
+  const rawContext = structuredClone(trustedContext())
+  rawContext.acceptance[21] = trustedNotApplicableAcceptance(rawContext.acceptance[21])
+  rawContext.acceptance[25] = trustedNotApplicableAcceptance(rawContext.acceptance[25])
+  const context = trustedContext({ ...rawContext, acceptance: rawContext.acceptance })
+  const result = reduceEvidenceContract(bundle({ records }), context)
+  assert.equal(result.status, 'HELD')
+  assert.equal(result.advisory_eligible, true)
+  assert.deepEqual(result.blockers, ['TRUSTED_CONTEXT_AUTHORITY_REQUIRED'])
 })
 
 test('closed evidence reducer rejects missing, duplicate, out-of-range, unknown-classification, and extra acceptance rows', () => {
@@ -389,7 +406,21 @@ test('P1 — privacy is field and scheme aware: raw material and unknown held la
       source_refs: [{ ...value.source_refs[0], ref: 'design:authorization_policy' }, ...value.source_refs.slice(1)],
     })),
   })
-  assert.equal(reduceEvidenceContract(ordinaryReference, trustedContext()).status, 'HELD')
+  // A durable opaque reference stays opaque, but the candidate cannot choose it: only the
+  // trusted context's pinned source identity is accepted for that kind.
+  const pinnedContext = contextWithAcceptance(0, value => ({
+    ...value,
+    expected_source_refs: value.expected_source_refs.map(source => (source.kind === 'DESIGN' ? { ...source, ref: 'design:authorization_policy' } : source)),
+  }))
+  assert.equal(reduceEvidenceContract(ordinaryReference, pinnedContext).status, 'HELD')
+  assert.equal(reduceEvidenceContract(ordinaryReference, trustedContext()).status, 'REJECTED')
+  const digestDrift = bundle({
+    records: replaceRecord(bundle().records, 0, value => ({
+      ...value,
+      source_refs: [{ ...value.source_refs[0], digest: 'f'.repeat(64) }, ...value.source_refs.slice(1)],
+    })),
+  })
+  assert.equal(reduceEvidenceContract(digestDrift, trustedContext()).status, 'REJECTED')
 })
 
 test('evidence reducer produces a stable immutable summary and does not mutate candidate or trusted context', () => {

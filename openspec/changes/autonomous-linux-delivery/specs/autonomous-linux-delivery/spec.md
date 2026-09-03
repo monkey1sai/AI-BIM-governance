@@ -1,8 +1,8 @@
 ## ADDED Requirements
 
-### Requirement: Autonomous delivery SHALL remain legacy-guarded until record-gated external activation
+### Requirement: Autonomous delivery SHALL use an external machine trust root without per-PR human approval
 
-在 canonical Fabric activation record 完整驗證以前，每個可merge PR SHALL保留現行 human／CODEOWNER counted approving review，live `writer_cap=1`，且 `direct_stack` SHALL為 `HELD`。activation record SHALL含 `phase`、`base_sha`、`policy_digest`、`writer_cap`、`external_check_name`、`external_app_id` 與 `activated_at`。只有canonical activation record完整驗證為 `AUTONOMOUS_ACTIVE`、source-pinned external CheckRun已對exact tuple active、pinned disposable `activation_canary` 已 `DELIVERED`，且fresh authoritative reread相等後，才可由candidate branch與一般agent session無法修改、讀取credential或模擬的external machine trust root取代counted review。External trust root、required checks、merge App或runner尚未完成live attestation時，系統 SHALL回傳 `HELD`，不得由candidate self-approval、較弱auto-merge、admin bypass或文件文字覆寫現行gate。
+啟用後，closed classification中每個可merge PR SHALL NOT 要求人類／CODEOWNER approving review、protected-environment reviewer、固定 User service-account review 或 Web UI 操作。Merge authority SHALL 由 candidate branch 與一般 agent session 無法修改、讀取 credential 或模擬的 external machine trust root 提供。CODEOWNERS MAY 保留作 ownership routing，但 SHALL NOT 作 counted merge authority。External trust root、required checks、merge App 或 runner 尚未完成 live attestation 時，系統 SHALL 回傳 `HELD`，不得退回 candidate self-approval、較弱 auto-merge、admin bypass 或逐 PR 人工 approval。
 
 #### Scenario: 任一可merge class不需要人類review vote
 
@@ -18,9 +18,9 @@
 - **THEN** terminal merge eligibility SHALL為 `HELD`
 - **AND** candidate workflow、agent credential、PR comment或同名commit status SHALL NOT替代該trust root
 
-### Requirement: Every protected-branch PR SHALL belong to one closed, record-gated class
+### Requirement: Every protected-branch PR SHALL belong to one closed machine-governed class
 
-Immutable base-owned policy SHALL依exact tuple與完整changed paths把每個targeting protected integration branch的PR恰分類為 `draft_report_only`、`ordinary`、`repair`、`activation_canary`、`revert` 或 `release_hotfix`。promotion mode SHALL為mutually exclusive `single_pr|direct_stack`，每個exact tuple只能綁定一種mode，不得中途切換。`draft_report_only` SHALL不得merge，ready後重新分類；`ordinary`走標準gates；`repair` SHALL綁定failed delivery ID；`activation_canary`只在對應phase與manifest lease內合法；`revert`與 `release_hotfix` SHALL使用 `critical_machine_adjudication`。`reconciliation`與`activation_closure`的future lifecycle為 **Superseded by `parallel-delivery-fabric`**，不得建立新ledger或closure lane。零分類、多重分類、unknown class、mode switching或缺少required lineage SHALL fail closed。
+Immutable base-owned policy SHALL依exact tuple與完整changed paths把每個targeting protected integration branch的PR恰分類為 `draft_report_only`、`ordinary`、`repair`、`reconciliation`、`activation_canary`、`activation_closure`、`revert` 或 `release_hotfix`。`draft_report_only` SHALL不得merge，ready後重新分類；`ordinary`走標準machine gates；`repair` SHALL綁定failed delivery ID；`reconciliation` SHALL綁定ambiguous merge／delivery ID，或在 `AUTONOMOUS_ACTIVE` 綁定 `DELIVERY_PENDING_FIXPOINT` debt與delivery ID的closure-only diff；`activation_canary`與 `activation_closure` 只在對應activation phase與manifest lease內合法；`revert`與 `release_hotfix` SHALL使用 `critical_machine_adjudication`。沒有任何class MAY導回human／CODEOWNER approval。零分類、多重分類、unknown class或缺少required lineage SHALL fail closed。
 
 #### Scenario: PR無法唯一分類
 
@@ -40,6 +40,65 @@ Immutable base-owned policy SHALL依exact tuple與完整changed paths把每個ta
 - **WHEN**GitHub authoritative state顯示它ready for review
 - **THEN**collector SHALL對current exact tuple重新執行closed classification與全部required gates
 - **AND**draft期間的verdict SHALL NOT被沿用
+
+### Requirement: PR finalization SHALL be draft-first, head-frozen and bounded to two review rounds
+
+每個named PR在draft期間 SHALL只累積advisory findings與affected verification，不得取得passing merge verdict。PR ready後，coordinator SHALL先完成base update與scope確認，再將current exact head凍結為round 1；每個round SHALL對一個immutable exact head完成完整pagination、deterministic gates、適用machine review與finding disposition。Round 1如有confirmed in-scope blocker，coordinator MAY只推送一個包含全部修復的batch repair head；舊head evidence SHALL全部失效。Round 2 SHALL只review該batch repair exact head。Round 2仍有confirmed blocker、需要第三個candidate head、head freeze遭破壞或evidence不完整時，transaction SHALL以 `HELD/PREMERGE_EVIDENCE_INVALID`結案，不得自動啟動第三輪。只有新的使用者啟動與新的scope、evidence或hypothesis MAY建立新transaction。
+
+#### Scenario: Draft期間先收集finding
+
+- **GIVEN**PR仍為draft
+- **WHEN**reviewer、CI或coordinator發現一個或多個問題
+- **THEN**系統 SHALL保存sanitized advisory findings並允許author整理candidate
+- **AND**不得發布passing required gate或消耗ready後的兩輪budget
+
+#### Scenario: Round 1 findings以單一batch修復
+
+- **GIVEN**ready PR的round 1已完成完整collection與finding disposition
+- **WHEN**存在confirmed、in-scope且可修復的blockers
+- **THEN**coordinator SHALL一次修復該round全部blockers並至多push一個batch repair head
+- **AND**round 1的checks、review、threads與verdict SHALL對新head失效
+- **AND**逐finding push或無關scope change SHALL視為head freeze破壞
+
+#### Scenario: Final exact head通過後立即merge
+
+- **GIVEN**round 1沒有blocker，或round 2已驗證唯一batch repair head
+- **AND**final exact head的source-pinned required App CheckRun為actual `success`
+- **AND**其他required checks符合policy允許的actual success、完整pagination證明unresolved threads為零，且protection、base、head與evidence未漂移
+- **WHEN**privileged finalizer取得綁定同一tuple的single-use lease
+- **THEN**finalizer SHALL在該lease內立即進入exact-head compare-and-swap merge
+- **AND**不得再等待human／CODEOWNER approval、last-push approval、額外quiet period或另一個push
+
+#### Scenario: Round 2仍有blocker或需要第三個head
+
+- **WHEN**round 2仍有confirmed blocker、collection不完整、需要再push修復、發生第二個writer mutation或head再次漂移
+- **THEN**transaction SHALL以 `HELD/PREMERGE_EVIDENCE_INVALID`結案
+- **AND**report SHALL在namespaced `failure_detail`記錄 `review_round_budget_exhausted`、`head_freeze_broken` 或具體缺口
+- **AND**系統 SHALL NOT busy-loop、自動開第三輪或以舊head verdict解鎖merge
+
+### Requirement: Multi-PR merge order SHALL be produced by a machine-verifiable subagent plan
+
+當同一repository存在兩個以上待交付PR，merge precedence SHALL由獨立唯讀subagent依server-authoritative exact heads、ancestry、changed-file overlap、declared dependency與machine-gate surface產生closed merge plan；不得由human-authored順序欄位或queue日期決定。Plan SHALL綁定repository、base OID、policy digest、subagent task／model identity、每個PR exact head、predecessors與dependency proof。每個predecessor SHALL在successor之前；被另一PR完整涵蓋的redundant PR SHALL記為 `SKIP_SUBSUMED`並綁定保留的successor與proof。Plan只決定候選順序，不授予merge authority；每次predecessor merge後，next PR SHALL重新收集base/head/checks/threads、重跑applicable gates並取得new exact-head lease。
+
+#### Scenario: Subagent輸出dependency order與subsumed PR
+
+- **GIVEN**多個open PR具有可重現的ancestry、overlap或explicit dependency evidence
+- **WHEN**唯讀subagent輸出closed merge plan
+- **THEN**所有predecessors SHALL在線性merge order中先於successors
+- **AND**redundant PR SHALL以 `SKIP_SUBSUMED`保留proof而不得merge
+- **AND**human MAY批次執行或停止該plan，但 SHALL NOT覆寫order或把skip改成merge
+
+#### Scenario: Plan不是subagent產生或dependency順序錯誤
+
+- **WHEN**plan宣稱human author、缺subagent identity／proof、predecessor出現在successor後、skip target不存在或任一head漂移
+- **THEN**merge eligibility SHALL為 `HELD/PREMERGE_EVIDENCE_INVALID`
+- **AND**系統 SHALL NOT以PR號、日期、人工偏好或舊plan替代
+
+#### Scenario: 前一PR merge後重驗下一PR
+
+- **WHEN**plan中的predecessor已merge並改變integration branch
+- **THEN**下一PR SHALL對new server-authoritative base重新取得complete evidence、finding convergence與source-pinned actual success
+- **AND**舊plan中的ordering MAY保留為candidate，舊exact-head gate／lease SHALL失效
 
 ### Requirement: Every adjudication SHALL bind an immutable exact-head evidence packet
 
@@ -159,7 +218,7 @@ Privileged merge executor SHALL 在取得passing exact-head verdict後向externa
 
 ### Requirement: Delivery transaction SHALL use a closed phase, terminal-class and reason-code schema
 
-Transaction phase SHALL只允許 `COLLECTING`、`VERIFYING`、`READY_TO_MERGE`、`MERGING`、`MERGED`、`DEPLOYING`、`VERIFYING_DEPLOYMENT`、`RETRYING_DEPLOYMENT`與 `CLOSED`。只有 `CLOSED` SHALL帶有對使用者公開的terminal class，且terminal class SHALL only allow `DELIVERED`, `FAILED` or `HELD`. Reason code SHALL只允許 `DELIVERY_VERIFIED`、`PREMERGE_EVIDENCE_INVALID`、`PREMERGE_AUTHORITY_UNAVAILABLE`、`POLICY_OR_SETTINGS_DRIFT`、`MERGE_OUTCOME_UNVERIFIED`、`DEPLOYMENT_BLOCKED`、`MERGED_NOT_DELIVERED` 或 `ACTIVATION_UNATTESTED`。Failure details MAY使用namespaced detail欄位，但 SHALL NOT擴充或取代closed state fields；`STACK_*`永不得進入external terminal class。每個 `delivery_id/attempt_id` SHALL只close一次；resume、retry或repair SHALL建立帶 `supersedes_attempt_id` 的新append-only attempt，不能改寫舊terminal event。使用者看到的delivery summary SHALL由同一lineage最新、已驗證event推導。
+Transaction phase SHALL只允許 `COLLECTING`、`VERIFYING`、`READY_TO_MERGE`、`MERGING`、`MERGED`、`DEPLOYING`、`VERIFYING_DEPLOYMENT`、`RETRYING_DEPLOYMENT`與 `CLOSED`。只有 `CLOSED` SHALL帶有對使用者公開的terminal class，且terminal class SHALL只允許 `DELIVERED`、`FAILED` 或 `HELD`。Reason code SHALL只允許 `DELIVERY_VERIFIED`、`PREMERGE_EVIDENCE_INVALID`、`PREMERGE_AUTHORITY_UNAVAILABLE`、`POLICY_OR_SETTINGS_DRIFT`、`MERGE_OUTCOME_UNVERIFIED`、`DEPLOYMENT_BLOCKED`、`MERGED_NOT_DELIVERED`、`DELIVERY_PENDING_FIXPOINT` 或 `ACTIVATION_UNATTESTED`。Failure details MAY使用namespaced detail欄位，但 SHALL NOT擴充或取代closed state fields；任何新值需要新的OpenSpec delta。每個 `delivery_id/attempt_id` SHALL只close一次；resume、retry、fixpoint closure或repair SHALL建立帶 `supersedes_attempt_id` 的新append-only attempt，不能改寫舊terminal event。使用者看到的delivery summary SHALL由同一lineage最新、已驗證event推導。
 
 #### Scenario: Transaction成功完成
 
@@ -170,7 +229,7 @@ Transaction phase SHALL只允許 `COLLECTING`、`VERIFYING`、`READY_TO_MERGE`�
 
 #### Scenario: Internal reason被發布成未知terminal state
 
-- **WHEN**producer嘗試把 `MERGE_OUTCOME_UNVERIFIED`、`MERGED_NOT_DELIVERED`、`STACK_*`或任意unknown value寫入terminal-class欄位
+- **WHEN**producer嘗試把 `MERGE_OUTCOME_UNVERIFIED`、`MERGED_NOT_DELIVERED`、`DELIVERY_PENDING_FIXPOINT`或任意unknown value寫入terminal-class欄位
 - **THEN**schema validation SHALL失敗
 - **AND**publisher SHALL NOT發布passing terminal record
 
@@ -178,13 +237,13 @@ Transaction phase SHALL只允許 `COLLECTING`、`VERIFYING`、`READY_TO_MERGE`�
 
 - **WHEN**transaction在pre-merge以 `HELD`結案
 - **THEN**該exact tuple SHALL保持不可merge且不得造成main mutation
-- **AND**任何 `HELD` 不得讓任意PR進入sink；future `reconciliation` lane **Superseded by `parallel-delivery-fabric`**
+- **AND**`HELD/MERGE_OUTCOME_UNVERIFIED` 或 `HELD/DELIVERY_PENDING_FIXPOINT` 只允許綁定相同lineage的 `reconciliation` PR；其他post-merge `HELD`不得讓任意PR進入sink
 - **AND**`FAILED/MERGED_NOT_DELIVERED` 只允許綁定相同failure delivery ID的 `repair` 或 `revert` PR
 - **AND**只有 `DELIVERED` SHALL釋放 `ordinary` delivery queue
 
 ### Requirement: Each repository SHALL serialize merge through terminal delivery state
 
-同一repository SHALL只有一個single-flight delivery lock，涵蓋 `READY_TO_MERGE → MERGING → MERGED → DEPLOYING → VERIFYING_DEPLOYMENT → CLOSED`。上一筆post-merge transaction尚未依closed schema成為 `DELIVERED`，或已以 `FAILED`／post-merge `HELD`結案但對應 `repair`／`revert` lineage尚未完成前，下一個 `ordinary` PR SHALL NOT進入merge sink。Delivery record SHALL精確綁定 `PR head → observed merge commit = freshly fetched origin/main = deployed commit`；v1 SHALL NOT以coalescing、ancestor包含或任何未列舉的terminal state取代逐筆歸因。
+同一repository SHALL只有一個single-flight delivery lock，涵蓋 `READY_TO_MERGE → MERGING → MERGED → DEPLOYING → VERIFYING_DEPLOYMENT → CLOSED`。上一筆post-merge transaction尚未依closed schema成為 `DELIVERED`，或已以 `FAILED`／post-merge `HELD`結案但對應 `repair`／`revert`／`reconciliation` lineage尚未完成前，下一個 `ordinary` PR SHALL NOT進入merge sink。Delivery record SHALL精確綁定 `PR head → observed merge commit = freshly fetched origin/main = deployed commit`；v1 SHALL NOT以coalescing、ancestor包含或任何未列舉的terminal state取代逐筆歸因。
 
 #### Scenario: 前一筆delivery尚在部署
 
@@ -243,11 +302,11 @@ Transaction phase SHALL只允許 `COLLECTING`、`VERIFYING`、`READY_TO_MERGE`�
 
 ### Requirement: Failed delivery SHALL freeze the queue and enter a bounded repair lineage
 
-已mergecommit若部署或post-deploy驗證可重現地失敗，attempt SHALL以 `FAILED/MERGED_NOT_DELIVERED`結案，保留原始merge與deployment evidence並凍結 `ordinary` merge queue。只有failure明確分類為transient、輸入與commit未漂移且不需code change時，系統 MAY對同一commit建立一次 `RETRYING_DEPLOYMENT` attempt並執行相同command；否則 SHALL建立綁定原delivery ID與failure evidence的新exact-head repair／revert PR。系統 SHALL NOT reset／force-push main、把last-known-good runtime冒充本次成功、改寫原attempt為 `DELIVERED`或無限重試。
+已mergecommit若部署或post-deploy驗證可重現地失敗，attempt SHALL保留原始merge與deployment evidence並凍結 `ordinary` merge queue。若attempt開始前已有provenance與digest驗證完成的pinned known-good immutable artifact，系統 SHALL先以相同target identity執行rollback；只有rollback artifact readback、health與required smoke全部成功才可輸出 `ROLLED_BACK`，並以outer `FAILED/MERGED_NOT_DELIVERED`結案。Operator command啟動前缺少pinned artifact、provenance／digest／target／credential漂移 SHALL以 `HELD/DEPLOYMENT_BLOCKED`結案；command啟動後rollback command或驗證無法形成可信terminal evidence SHALL以 `HELD/ACTIVATION_UNATTESTED`結案。只有原始root attempt為同一delivery、merge與target的 `FAILED/MERGED_NOT_DELIVERED`、owner policy broker以短效簽章將closed `network_transient` class綁定parent digest、failure evidence、artifact、target fingerprint、deployment command與policy digest，並以 `delivery_id + trusted_merge_sha + root_attempt_sha256` 原子compare-and-consume retry budget、回傳authoritative prior retry count 0與successful consume，且輸入與commit未漂移、不需code change時，系統 MAY對該exact commit建立總計一次 `RETRYING_DEPLOYMENT` attempt並執行相同command。Caller-provided `retry_history` SHALL NOT作為authoritative completeness證明；清空history、換新簽章或authorization ID SHALL NOT恢復已消費預算。Retry-of-retry、改名failure class、`DELIVERED`／`HELD` parent、已消費預算、缺少外部分類或budget authority，或任一binding漂移 SHALL拒絕；否則 SHALL建立綁定原delivery ID與failure evidence的新exact-head repair／revert PR。系統 SHALL NOT reset／force-push main、重新build舊source作rollback、把last-known-good runtime冒充本次成功、改寫原attempt為 `DELIVERED`或無限重試。
 
 #### Scenario: 同一commit的transient redeploy成功
 
-- **GIVEN**第一輪失敗被deterministic evidence分類為transient，且source、inventory descriptor與command均未漂移
+- **GIVEN**第一輪失敗被deterministic evidence分類為transient，owner broker已對原始root原子保留唯一retry budget，且source、inventory descriptor與command均未漂移
 - **WHEN**唯一允許的same-commit redeploy通過全部required gates
 - **THEN**新attempt MAY以 `DELIVERED/DELIVERY_VERIFIED`結案
 - **AND**append-only lineage SHALL保存原failure attempt、retry attempt與classification理由
@@ -259,19 +318,34 @@ Transaction phase SHALL只允許 `COLLECTING`、`VERIFYING`、`READY_TO_MERGE`�
 - **AND**系統 SHALL只允許綁定failure delivery ID的repair／revert PR進入machine gates
 - **AND**修復成功 SHALL以新delivery lineage記錄，不得改寫原始failure evidence
 
-### Requirement: Self-referential mechanism changes SHALL preserve the historical lifecycle ledger
+### Requirement: Self-referential delivery mechanism changes SHALL close a post-merge fixpoint debt
 
-The historical lifecycle ledger is byte-frozen. Future fixpoint and reconciliation work is **Superseded by `parallel-delivery-fabric`**: a mechanism change SHALL use one ordinary protected PR with normal exact-head, CODEOWNER, branch-protection, required-check, and local-preflight gates. It SHALL NOT create bootstrap debt, a closure-only PR, a new lifecycle ledger entry, or a `DELIVERY_PENDING_FIXPOINT` terminal reason. A reproducible deployment failure MAY still use the existing repair/revert lineage without rewriting historical evidence.
+修改gate、merge executor、deployment path、evidence harness或其policy／contract的PR SHALL在merge前登記immutable self-referential bootstrap debt，並由先前已attest的external mechanism裁決。Merge與canonical Linux runtime通過後，新mechanism SHALL以其自身canonical path重跑verification contract並產生closure evidence。Debt未關閉時，當次attempt SHALL以 `HELD/DELIVERY_PENDING_FIXPOINT`結案，delivery lineage不得宣稱 `DELIVERED`；closure以新linked attempt／PR記錄。在 `AUTONOMOUS_ACTIVE`，closure PR SHALL分類為 `reconciliation`、綁定該debt與delivery ID，changed paths只允許 `scripts/self-referential-bootstrap-ledger.json` 與該entry新／更新的fixpoint evidence refs；它可在ordinary queue凍結時取得machine lease。Closure authority／evidence／command尚未能啟動時只可續走相同debt的reconciliation lineage；authenticated fixpoint command已啟動後產生可重現negative conclusion時才轉入綁定failure delivery ID的repair／revert lineage。兩者皆 SHALL凍結後續mechanism changes與ordinary queue。
 
-#### Scenario: A mechanism closure is proposed
+#### Scenario: Mechanism PR完成post-merge fixpoint
 
-- **WHEN**a future change modifies a gate, merge executor, deployment path, evidence harness, policy, or contract
-- **THEN**it SHALL be an ordinary protected PR and the historical lifecycle ledger SHALL remain byte-identical
-- **AND**the policy SHALL reject `reconciliation`, `activation_closure`, and any fixpoint-derived terminal result
+- **GIVEN**mechanism PR已由先前trusted版本merge並在canonical Linux通過runtime gates
+- **WHEN**新canonical mechanism重跑exact verification contract且closure ledger確認相同subject
+- **THEN**新closure attempt MAY以 `DELIVERED/DELIVERY_VERIFIED`結案
+- **AND**opening、held attempt與closure evidence SHALL保持append-only可追溯
+
+#### Scenario: Fixpoint authority或evidence不可取得
+
+- **WHEN**required runner／authority／artifact不可取得，或fixpoint command尚未能在authenticated exact subject上啟動
+- **THEN**新attempt SHALL以 `HELD/DELIVERY_PENDING_FIXPOINT`結案
+- **AND**後續mechanism PR SHALL被阻擋
+- **AND**只有綁定相同debt與delivery ID的 `reconciliation` closure MAY取得machine lease
+
+#### Scenario: Fixpoint gate產生可重現negative conclusion
+
+- **WHEN**fixpoint command已在authenticated exact subject上執行，並因subject mismatch、invalid closure或verification command nonzero產生可重現negative conclusion
+- **THEN**新attempt SHALL以 `FAILED/MERGED_NOT_DELIVERED`結案
+- **AND**後續mechanism PR SHALL被阻擋
+- **AND**只有綁定failure delivery ID的repair／revert PR MAY進入machine gates
 
 ### Requirement: Activation SHALL add and attest machine authority before removing human requirements
 
-Autonomous mode SHALL只在一次性owner-controlled provisioning與canonical activation record完成驗證後啟用。唯一accepted phase enum是 `LEGACY_GUARDED -> SHADOW_DUAL -> CUTOVER_ARMED -> CANARY_ACTIVE -> AUTONOMOUS_ACTIVE`；aliases、大小寫變體、未知值、跳躍與回退 SHALL be rejected by queue、trust-root與policy fixtures。Mechanism implementation PR在 `LEGACY_GUARDED` 依現行canonical counted-review gate merge，live `writer_cap=1`與`direct_stack=HELD`；`SHADOW_DUAL`建立agent-inaccessible App／runner／artifact store／credential boundary、完成negative matrix並以source-pinned machine check觀察shadow，但machine sink保持disabled。只有external CheckRun對exact tuple active、external-settings lease取得、immutable exact rollback snapshot保存後，才可進入 `CUTOVER_ARMED` 加入source-pinned machine check並完成authoritative reread，舊counted review保持live。`CANARY_ACTIVE`只允許在existing counted review保持live且source-pinned external CheckRun對exact tuple active的dual gate下執行一個disposable `activation_canary` exact tuple，machine merge sink保持disabled，且不得導出closure-only PR、ledger mutation、fixpoint或reconciliation。只有canonical activation record完整驗證為 `AUTONOMOUS_ACTIVE`、pinned disposable `activation_canary` 已 `DELIVERED`、fresh authoritative reread相等且rollback snapshot仍可驗證後，owner-controlled broker才可採add-before-remove退役counted review並將required approval改為 0。這是一次性bootstrap，不是未來逐PR approval。
+Autonomous mode SHALL只在一次性owner-controlled provisioning與activation完成後啟用。Activation SHALL使用closed phases：`LEGACY_GUARDED`、`SHADOW_DUAL`、`CUTOVER_ARMED`、`CANARY_ACTIVE`與 `AUTONOMOUS_ACTIVE`。Mechanism implementation PR在 `LEGACY_GUARDED` 依現行canonical gate merge；`SHADOW_DUAL` 建立agent-inaccessible App／runner／artifact store／credential boundary、完成negative matrix並先加入source-pinned machine check，但machine sink保持disabled。`CUTOVER_ARMED` SHALL由owner broker取得settings lease與exact rollback snapshot，在sink disabled時一次性將required approving review count設為0、停用CODEOWNER review requirement與User approval broker，並立即authoritative reread。`CANARY_ACTIVE` 只允許ordered `activation_canary` 與 `activation_closure`：plan先綁定disposable canary exact tuple；canary `DELIVERED` 後broker才可從authoritative canary merge commit與open debt導出single-use closure exact tuple。Closure changed paths SHALL只包含 `scripts/self-referential-bootstrap-ledger.json` 與該closed entry新／更新的 `docs/evidence/**/self-referential-bootstrap/**` refs，一次只關oldest open root，不得修改其他mechanism。Canary與closure各自machine-only merge並完成exact-commit delivery、settings維持相等且fixpoint closed後，才可進入 `AUTONOMOUS_ACTIVE`。這是一次性bootstrap，不是未來逐PR approval。
 
 #### Scenario: Negative與shadow attestation尚未完成
 
@@ -282,28 +356,30 @@ Autonomous mode SHALL只在一次性owner-controlled provisioning與canonical ac
 #### Scenario: Cutover或canary失敗
 
 - **GIVEN**owner broker已取得settings lease與exact rollback snapshot
-- **WHEN**cutover reread不一致，或pinned canary未完成existing counted review與source-pinned external CheckRun dual-gated exact-head delivery及全部delivery gates
+- **WHEN**cutover reread不一致，或pinned canary未完成machine-only exact-head merge與全部delivery gates
 - **THEN**broker SHALL先disable sink、撤銷未消費lease與短效credential，再依snapshot恢復 `LEGACY_GUARDED`
 - **AND**activation attempt SHALL以 `HELD/ACTIVATION_UNATTESTED`結案
 - **AND**系統 SHALL NOT宣稱machine-only active或把rollback描述為逐PR fallback
 
-#### Scenario: Canary cannot mutate the lifecycle archive
+#### Scenario: Canary完成後產生closure-only PR
 
-- **GIVEN**manifest-pinned `activation_canary` 已以 `DELIVERED/DELIVERY_VERIFIED`結案
-- **WHEN**任何broker嘗試由canary導出closure lease、ledger mutation、fixpoint或reconciliation PR
-- **THEN**policy SHALL拒絕該request並保持 `HELD/ACTIVATION_UNATTESTED`
-- **AND**historical lifecycle ledger SHALL保持byte-identical
+- **GIVEN**manifest-pinned `activation_canary` 已以 `DELIVERED/DELIVERY_VERIFIED`結案，且opening debt仍為唯一oldest open root
+- **WHEN**external broker從authoritative canary merge commit與ledger導出closure lease
+- **THEN**closure PR SHALL分類為 `activation_closure` 並綁定single-use exact tuple
+- **AND**changed paths SHALL只包含ledger與該entry新增／更新的fixpoint evidence refs
+- **AND**closure PR SHALL各自完成machine gates、REST CAS與exact-commit delivery
+- **AND**任何其他path、額外closed entry或ordinary PR SHALL無lease並以 `HELD/ACTIVATION_UNATTESTED`結案
 
 #### Scenario: Activation完成
 
 - **GIVEN**machine required check已先加入、shadow evidence穩定，且cutover settings authoritative reread相等
-- **WHEN**pinned disposable canary在existing counted review與source-pinned external CheckRun的dual gate下以exact-head delivery成為 `DELIVERED`，並且canonical activation record完整驗證為 `AUTONOMOUS_ACTIVE`
-- **THEN**只有在 `AUTONOMOUS_ACTIVE` 後的未來PR MAY走machine-only path
-- **AND**系統 SHALL NOT在record以外宣稱已移除counted review
+- **WHEN**pinned canary與derived closure-only PR皆以machine-only exact-head path成為 `DELIVERED` 且fixpoint closure完成
+- **THEN**未來PR SHALL走machine-only path
+- **AND**系統 SHALL NOT再要求owner逐PR review或Web UI操作
 
 ### Requirement: Activation readiness SHALL pass the G1 through G12 adversarial rubric
 
-Activation L3 apex SHALL對G1至G12逐項輸出 `pass|fail|uncertain`及path:line evidence：canonical delta reconciliation、pre-merge／post-merge分層、closed PR population＋one-time bootstrap、external trust root、deterministic＋independent machine gate、exact-head lease／CAS、per-PR commit attribution、canonical Linux fresh main＋no automatic owner-runtime stop、complete delivery attestation、failure／repair lineage、historical lifecycle-ledger byte freeze，以及lossless review surface／secret／runner／deployment sandbox boundary。任一項為 `fail` 或 `uncertain` 時，activation readiness SHALL為 `HELD/ACTIVATION_UNATTESTED`。
+Activation L3 apex SHALL對G1至G12逐項輸出 `pass|fail|uncertain`及path:line evidence：canonical delta reconciliation、pre-merge／post-merge分層、closed PR population＋one-time bootstrap、external trust root、deterministic＋independent machine gate、exact-head lease／CAS、per-PR commit attribution、canonical Linux fresh main＋no automatic owner-runtime stop、complete delivery attestation、failure／repair lineage、ordered self-referential closure lane，以及lossless review surface／secret／runner／deployment sandbox boundary。任一項為 `fail` 或 `uncertain` 時，activation readiness SHALL為 `HELD/ACTIVATION_UNATTESTED`。
 
 #### Scenario: G1至G12全部有可重現pass evidence
 
@@ -319,7 +395,7 @@ Activation L3 apex SHALL對G1至G12逐項輸出 `pass|fail|uncertain`及path:lin
 
 ### Requirement: Delivery evidence SHALL be secret-safe and append-only
 
-GitHub CheckRun、PR summary與對話回報 SHALL只包含sanitized terminal evidence：delivery／attempt／run IDs、PR、base/head、merge/deployed commits、non-secret target ID、Linux／Windows runner IDs、command results、runtime IDs、attestation issuer／key ID、payload／artifact content digests、redacted artifact references、known gaps、phase、terminal class與reason code。Raw token、private key、credential、repo-external inventory、env value、proxy／CA內容、host、user、internal path或private topology SHALL NOT出現在model context、GitHub output、terminal record或一般log。Detailed evidence SHALL留在authenticated owner-controlled artifact store；reference SHALL驗證content digest、size、media type、ACL scope與retention class。既有terminal event SHALL append-only；retry或repair SHALL建立linked attempt而非覆寫failure，historical lifecycle ledger保持byte-frozen。
+GitHub CheckRun、PR summary與對話回報 SHALL只包含sanitized terminal evidence：delivery／attempt／run IDs、PR、base/head、merge/deployed commits、non-secret target ID、Linux／Windows runner IDs、command results、runtime IDs、attestation issuer／key ID、payload／artifact content digests、redacted artifact references、known gaps、phase、terminal class與reason code。Raw token、private key、credential、repo-external inventory、env value、proxy／CA內容、host、user、internal path或private topology SHALL NOT出現在model context、GitHub output、terminal record或一般log。Detailed evidence SHALL留在authenticated owner-controlled artifact store；reference SHALL驗證content digest、size、media type、ACL scope與retention class。既有terminal event SHALL append-only；retry、repair或fixpoint SHALL建立linked attempt而非覆寫failure。
 
 #### Scenario: Terminal result發布到GitHub
 
@@ -332,3 +408,75 @@ GitHub CheckRun、PR summary與對話回報 SHALL只包含sanitized terminal evi
 - **WHEN**collector或runtime output偵測到token、private inventory、raw env、host/user/path或其他private topology
 - **THEN**publisher SHALL拒絕發布原文
 - **AND**result SHALL標示evidence redaction failure且不得宣稱 `DELIVERED`
+
+### Requirement: Linux Continuous Deployment SHALL start only from a trusted merged event
+
+Dispatcher SHALL只接受server-observed、closed且merged、base為 `main`、repository在allowlist內，且merge前 `source_head_sha = fresh_ci_convergence_head_sha` 的事件；merge後另由trusted observation固定唯一 `merge_commit_sha`，兩個identity不得混用。Event contract SHALL closed；wrong repository、stale convergence SHA、partial pagination、未知欄位或candidate自述的trusted flag SHALL fail closed。
+
+#### Scenario: Stale merge event嘗試啟動deployment
+
+- **GIVEN**PR已merged但collector保存的fresh convergence SHA與observed merge commit不同
+- **WHEN**dispatcher驗證事件
+- **THEN**不得build artifact或取得target lease
+- **AND**attempt SHALL以 `HELD` 結案並保存sanitized drift evidence
+
+### Requirement: One immutable artifact SHALL cross build, canary, promotion, and verification
+
+Artifact authority SHALL為exact merge commit建立一次immutable artifact，closed provenance SHALL綁定source commit與tree、content digest、builder identity、policy digest、issuer／key、nonce、expiry、payload digest、signature與attestation reference。Repo-local request或schema自述不得取代owner executor注入的external verifier結果。Canary、promotion、post-deploy verification與terminal attestation SHALL引用同一content digest；任何artifact mismatch、unknown provenance field或readback drift SHALL不得進 `ACTIVATED`。
+
+#### Scenario: Promotion digest與canary digest不同
+
+- **GIVEN**canary以artifact digest A完成health、smoke與E2E
+- **WHEN**promotion readback回報digest B
+- **THEN**promotion SHALL失敗
+- **AND**attempt SHALL進入pinned known-good rollback路徑，不得輸出 `ACTIVATED`
+
+### Requirement: Deployment target and single-flight ownership SHALL be exact and secret-safe
+
+Target resolver SHALL只接受owner-controlled inventory唯一解析的 `target_id=canonical-linux`，對contract只揭露target ID、kind、role、fingerprint與opaque lease ID；request不得覆寫repository或target allowlist，opaque lease亦必須由external verifier驗證payload binding與有效期。Single-flight key SHALL為 `environment + service`；active lock SHALL綁定delivery ID、replay key、artifact digest、environment、service、target fingerprint與deployment method。只有全部欄位相同的tuple MAY辨識為idempotent active ownership，但 SHALL以typed non-terminal `idempotent_active` response停止、不得append新transition或terminal failure，且不得重跑deployment；任一欄位不同 SHALL被拒絕且不得平行部署同一service。
+
+#### Scenario: Duplicate controller races for the same service
+
+- **WHEN**兩個controller以不同delivery ID要求相同environment與service
+- **THEN**只有既有lock owner可繼續
+- **AND**第二個controller SHALL fail closed，不得取得deployment credential或覆寫ledger
+
+### Requirement: Canary promotion SHALL use a closed success path
+
+Linux CD success state sequence SHALL精確為 `TRUSTED_MERGED → BUILD_IMMUTABLE_ARTIFACT → VERIFY_ARTIFACT_PROVENANCE → RESOLVE_DEPLOYMENT_TARGET → PRE_DEPLOY_CHECK → DEPLOY_CANARY → VERIFY_HEALTH_SMOKE_E2E → PROMOTE → POST_DEPLOY_VERIFY → ACTIVATED → TERMINAL_DELIVERY_ATTESTATION`。任一required state、health、smoke、E2E或readback缺漏 SHALL不得跳到後續state。
+
+#### Scenario: Canary驗證全部成功
+
+- **WHEN**trusted event、artifact provenance、target、preflight、canary health／smoke／E2E、promotion與post-deploy readback全部對同一digest成功
+- **THEN**attempt SHALL進入 `ACTIVATED`
+- **AND**sanitized terminal attestation SHALL映射outer `DELIVERED/DELIVERY_VERIFIED`
+
+### Requirement: Failed canary or promotion SHALL rollback only to a pinned known-good artifact
+
+Canary、promotion或post-deploy failure SHALL進入 `ROLLBACK_TO_PINNED_KNOWN_GOOD_ARTIFACT → VERIFY_ROLLBACK`。Rollback artifact SHALL在attempt開始前已pinned、provenance可驗證且content digest immutable；不得以branch checkout、重新build舊source、reset或force-push main代替。Readback、health與required smoke全部成功時 SHALL輸出 `ROLLED_BACK` 並映射outer `FAILED/MERGED_NOT_DELIVERED`；operator command前的known-good／target evidence不完整 SHALL輸出 `HELD/DEPLOYMENT_BLOCKED`，command後rollback evidence無法可信結案 SHALL輸出 `HELD/ACTIVATION_UNATTESTED`。
+
+#### Scenario: Pinned rollback artifact不可驗證
+
+- **WHEN**failure發生後known-good artifact缺失、digest不符、signer revoked或target readback不完整
+- **THEN**系統 SHALL NOT猜測runtime已恢復
+- **AND**attempt SHALL以 `HELD/DEPLOYMENT_BLOCKED` 結案並凍結ordinary queue
+
+### Requirement: Retry and terminal delivery history SHALL be bounded and append-only
+
+同一exact event、artifact、target與command只允許policy明定的bounded transient retry；主controller path SHALL消費single-flight結果、retry history與candidate event，並為每個state transition append previous-digest-linked record。Retry SHALL建立linked attempt，outer record SHALL通過既有attempt append validator並保留前一筆terminal evidence，不得改寫。Terminal attestation SHALL closed且sanitized，至少包含delivery／attempt IDs、repository／PR、merge commit、artifact／provenance digests、non-secret target descriptor、state sequence、retry lineage、rollback result、terminal mapping與known gaps。
+
+#### Scenario: Retry budget耗盡
+
+- **WHEN**同一exact input已用完允許的transient retry
+- **THEN**dispatcher SHALL拒絕新的automatic attempt
+- **AND**既有attempt與ledger SHALL保持append-only
+
+### Requirement: Missing external CD provisioning SHALL be explicit HELD evidence
+
+Repo-local workflow與controller SHALL NOT持有live deployment credential或讀取private inventory。External artifact store、trusted runner、credential broker、protected GitHub Environment或canonical target live attestation任一尚未由owner provision時，workflow SHALL產生sanitized internal `PROVISIONING_REQUIRED → HELD` state sequence，且不得執行production或把contract test描述為deployment。已有independently verified `fetched origin/main == merge commit` 的trusted request SHALL以outer `HELD/DEPLOYMENT_BLOCKED`一致結案；direct GitHub event boundary尚無該proof時 SHALL以outer `HELD/ACTIVATION_UNATTESTED`一致結案，不得讓attestation與outer terminal reason互相矛盾。
+
+#### Scenario: Repository workflow在未provision狀態執行
+
+- **WHEN**trusted merged event觸發repo-local workflow但external capability descriptor不完整
+- **THEN**workflow SHALL驗證contracts與negative tests後輸出 `PROVISIONING_REQUIRED → HELD`
+- **AND**不得呼叫production target、揭露secret或宣稱 `ACTIVATED`

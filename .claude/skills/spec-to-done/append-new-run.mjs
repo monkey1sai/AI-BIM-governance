@@ -236,15 +236,6 @@ const inspectSource = (buffer) => {
   const records = stateRecords(buffer)
   if (!records.length || records.length >= 500) reject('resume_state_invalid', 'source checkpoint count is invalid')
   const terminal = parseLine(records.at(-1).line)
-  const hasFabricMode = Object.hasOwn(terminal.fields, 'fabricMode')
-  const hasFabricBindingId = Object.hasOwn(terminal.fields, 'fabricBindingId')
-  if (hasFabricMode || hasFabricBindingId) {
-    if (!hasFabricMode || !hasFabricBindingId || terminal.fields.fabricMode !== 'fabric-managed' ||
-        !/^[0-9a-f]{64}$/.test(terminal.fields.fabricBindingId || '')) {
-      reject('resume_state_invalid', 'Fabric-managed source fields are incomplete or noncanonical')
-    }
-    reject('resume_state_invalid', 'Fabric-managed state cannot use local NEW_RUN; return control to Parallel Delivery Fabric')
-  }
   if (!/^HELD@P\d+$/.test(terminal.prefix) || terminal.fields.reason !== 'run_budget_exhausted') {
     reject('resume_state_invalid', 'source must end at HELD reason=run_budget_exhausted')
   }
@@ -419,14 +410,6 @@ const statusCommand = (cli) => {
   const records = stateRecords(buffer)
   if (!records.length) reject('resume_state_invalid', 'state has no checkpoints')
   const terminal = parseLine(records.at(-1).line)
-  const hasFabricMode = Object.hasOwn(terminal.fields, 'fabricMode')
-  const hasFabricBindingId = Object.hasOwn(terminal.fields, 'fabricBindingId')
-  if (hasFabricMode !== hasFabricBindingId ||
-      (hasFabricMode && (terminal.fields.fabricMode !== 'fabric-managed' ||
-        !/^[0-9a-f]{64}$/.test(terminal.fields.fabricBindingId || '')))) {
-    reject('resume_state_invalid', 'Fabric-managed source fields are incomplete or noncanonical')
-  }
-  const fabricManaged = hasFabricMode && hasFabricBindingId
   let exhausted = false
   if (terminal.prefix.startsWith('HELD@') && terminal.fields.reason === 'run_budget_exhausted') {
     const counters = [
@@ -441,22 +424,15 @@ const statusCommand = (cli) => {
     checkpoints: records.length,
     runSequence: records.filter(({ line }) => line.startsWith('NEW_RUN@P0 |')).length + 1,
     terminal: terminal.prefix, reason: terminal.fields.reason || '',
-    canStartNewRun: exhausted && !fabricManaged,
-    ownerAuthorizationRequired: exhausted && !fabricManaged,
-    nextAction: fabricManaged
-      ? 'return-control-to-parallel-delivery-fabric'
-      : exhausted
+    canStartNewRun: exhausted, ownerAuthorizationRequired: exhausted,
+    nextAction: exhausted
       ? 'obtain-exact-owner-authorization-then-run-append'
       : 'continue-or-hold-current-run-without-counter-reset',
-    appendRequiredArguments: exhausted && !fabricManaged ? [
+    appendRequiredArguments: exhausted ? [
       'source-state', 'target-worktree', 'git-exe', 'expected-branch', 'expected-head',
       'expected-source-sha256', 'expected-source-bytes', 'expected-source-checkpoints',
       'owner-message-sha256', 'owner-message-bytes', 'date-stamp', 'json',
     ] : [],
-    ...(fabricManaged ? {
-      fabricManaged: true,
-      blockReason: 'fabric-managed-local-new-run-forbidden',
-    } : {}),
   }
 }
 

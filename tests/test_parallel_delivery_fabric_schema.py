@@ -97,7 +97,7 @@ def plan() -> dict:
                 "e2e_required": False,
             }
         ],
-        "requested_capacity": {"writers": 2, "runtime_leases": 3},
+        "requested_capacity": {"writers": 1, "runtime_leases": 3},
         "branch_profile": "trunk",
         "acceptance_criteria": ["criterion:closed-schema"],
         "promotion_mode": "single_pr",
@@ -310,7 +310,6 @@ const trusted = sha256('2')
 const binder = sha256('3')
 const trace = sha256('4')
 const screenshot = sha256('5')
-const commandsDigest = sha256('6')
 const listenerDigest = sha256('b')
 const policySourceSha = sha1('8')
 const authorityDigest = sha256('a')
@@ -349,25 +348,37 @@ const manifest = {
   worktree_path_digest: path, tree_digest: tree, runtime_identity_digest: runtime,
   execution_window: { started_at: now, finished_at: later }, started_at: now,
 }
+const lifecycle = { git_preflight: [0, 5], stack_start: [5, 10], stack_status: [10, 12], playwright_require_real: [12, 30], computer_use: [12, 35], postflight: [35, 40] }
+const minutesAfter = minutes => new Date(Date.parse(now) + minutes * 60000).toISOString()
+const commandPins = Object.fromEntries(Object.keys(lifecycle).map(role => [role, { cwd_digest: sha256('c'), argv_digest: sha256('d'), environment_contract: 'e2e-require-real/v1' }]))
 const trustedPins = {
   source: 'prior-trusted', source_ref: applicability.source_ref, source_sha: policySourceSha, base_sha: base,
   policy_digest: applicability.policy_digest, applicability_record_digest: applicability.record_digest,
   immutable: true, base_pinned: true, fresh: true, verifier_sha: trusted, binder_sha: binder,
-  verifier_tree_digest: trusted, harness_digest: trusted, authority_digest: authorityDigest,
+  verifier_tree_digest: trusted, harness_digest: trusted, authority_digest: null, command_pins: commandPins,
+  expected_flow: { route: '#conv', main_buttons: ['Upload IFC'], fixture: 'fixture:ifc-ready', api: 'api:ifc-ready', runtime_id: 'runtime:conversion-1', visible_state: 'state:success' },
+  timeout_ms: 45 * 60_000,
 }
+trustedPins.authority_digest = digestCanonical({
+  source_ref: trustedPins.source_ref, source_sha: trustedPins.source_sha, base_sha: trustedPins.base_sha,
+  verifier_sha: trustedPins.verifier_sha, binder_sha: trustedPins.binder_sha,
+  verifier_tree_digest: trustedPins.verifier_tree_digest, harness_digest: trustedPins.harness_digest,
+    command_pins: trustedPins.command_pins, expected_flow: trustedPins.expected_flow, timeout_ms: trustedPins.timeout_ms,
+})
 const authority = {
   schema_version: 'computer-use-authority/v1', source: 'prior-trusted', source_ref: applicability.source_ref,
-  source_sha: policySourceSha, base_sha: base, authority_digest: authorityDigest,
+  source_sha: policySourceSha, base_sha: base, authority_digest: trustedPins.authority_digest,
   verifier_identity: 'computer-use:one', immutable: true, base_pinned: true, fresh: true, read_only: true,
   can_edit: false, can_push: false, can_resolve: false, can_publish_required_check: false,
   can_approve: false, can_merge: false, can_deploy: false,
 }
-const commandRecords = ['git_preflight', 'stack_start', 'stack_status', 'playwright_require_real', 'computer_use', 'postflight']
-  .map(role => ({
+const commandRecords = Object.entries(lifecycle)
+  .map(([role, [start, finish]]) => ({
     role, cwd_digest: sha256('c'), argv_digest: sha256('d'), safe_environment_contract: 'e2e-require-real/v1',
-    started_at: now, finished_at: later, exit_code: 0, stdout_artifact_ref: 'artifact:stdout',
+    started_at: minutesAfter(start), finished_at: minutesAfter(finish), exit_code: 0, stdout_artifact_ref: 'artifact:stdout',
     stderr_artifact_ref: 'artifact:stderr', redaction_status: 'sanitized',
   }))
+const commandsDigest = digestCanonical(commandRecords)
 const packet = role => ({
   verifier_role: role, verifier_identity: role === 'computer_use' ? 'computer-use:one' : 'playwright:canonical',
   status: 'passed', e2e_require_real: '1', skipped: false, manifest_present: true, timed_out: false,
@@ -380,7 +391,7 @@ const packet = role => ({
   route: '#conv', main_buttons: ['Upload IFC'], fixture: 'fixture:ifc-ready', api: 'api:ifc-ready',
   runtime_id: 'runtime:conversion-1', visible_state: 'state:success', network_result: 'network:ok',
   trace_sha256: trace, screenshot_sha256: screenshot, command_records_digest: commandsDigest,
-  runtime_lineage_digest: runtime, command_records: commandRecords, execution_window: { started_at: now, finished_at: later },
+  runtime_lineage_digest: runtime, command_records: commandRecords, execution_window: { started_at: now, finished_at: later }, duration_ms: 40 * 60_000,
   ...(role === 'computer_use' ? { authority } : {}),
 })
 const result = bindBrowserEvidence({
@@ -788,3 +799,11 @@ def test_p1_3_external_terminal_pairs_are_closed() -> None:
 def test_secret_safe_string_rejects_bare_bearer_without_rejecting_near_words() -> None:
     assert_rejected("secret_safe_string", "authority:bearer")
     assert_accepted("secret_safe_string", "authority:bearing")
+
+
+def test_resource_key_schema_accepts_canonical_glob_keys_only_for_the_glob_kind() -> None:
+    validator = validator_for("resource_key")
+    for accepted in ["path:src/app.mjs", "glob:scripts/tests/**/*.mjs", "glob:web-viewer-sample/src/{a,b}/*.ts", "rename:src/a.mjs:src/b.mjs", "runtime:resource:kit-runtime"]:
+        assert not list(validator.iter_errors(accepted)), accepted
+    for rejected in ["path:src/*.mjs", "runtime:resource:*", "glob:", "glob:/abs/**"]:
+        assert list(validator.iter_errors(rejected)), rejected

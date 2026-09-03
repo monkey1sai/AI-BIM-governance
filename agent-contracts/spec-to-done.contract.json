@@ -1,11 +1,9 @@
 {
   "$schema": "./spec-to-done.contract.schema.json",
-  "schema_version": "spec-to-done-contract/v2",
+  "schema_version": "spec-to-done-contract/v1",
   "phases": ["P0", "P1", "P3", "P4", "P5", "P6", "P7"],
   "durable_state": {
     "canonical_relative_path": "artifacts/spec-to-done/{slug}-state.md",
-    "fabric_managed_relative_path": "artifacts/spec-to-done/{slug}--{binding_id}-state.md",
-    "fabric_binding_relative_path": "artifacts/spec-to-done/bindings/{binding_id}.json",
     "new_run_boundary": {
       "schema_version": "spec-to-done-new-run/v1",
       "token": "NEW_RUN@P0",
@@ -49,7 +47,6 @@
       "evidence_stale",
       "evidence_too_large_for_arbiter",
       "external_blocked",
-      "fabric_resume_authority_unavailable",
       "final_gate_not_clean",
       "final_gate_read_failed",
       "host_env_blocked",
@@ -96,20 +93,6 @@
       "worktree_not_clean",
       "wrong_checkout"
     ]
-  },
-  "parallel_delivery_binding": {
-    "schema_version": "spec-to-done-fabric-binding/v1",
-    "schema_path": "agent-contracts/spec-to-done-fabric-binding.schema.json",
-    "state_mode": "fabric-managed",
-    "mode_field": "fabricMode",
-    "binding_id_field": "fabricBindingId",
-    "session_admission_limit": "unbounded",
-    "run_writer_cardinality": 1,
-    "held_lease_action": "retain_as_suspect",
-    "local_new_run_allowed": false,
-    "local_resume_allowed": false,
-    "resume_authority": "fabric_verified_resume_intent_required",
-    "delivery_authority": "non_authorizing"
   },
   "terminal_evidence": {
     "owner_phase": "P7",

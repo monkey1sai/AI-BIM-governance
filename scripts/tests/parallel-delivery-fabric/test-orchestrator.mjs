@@ -5,7 +5,7 @@ import { createParallelDeliveryFabric } from '../../lib/parallel-delivery-fabric
 import { digestCanonical } from '../../lib/parallel-delivery-fabric-contract.mjs'
 
 const MAX_SNAPSHOT_BYTES = 256 * 1024
-const MAX_SNAPSHOT_NODES = 512
+const MAX_SNAPSHOT_NODES = 4096
 const MAX_ARRAY_LENGTH = 128
 
 const freezeDeep = (value) => {
@@ -27,14 +27,20 @@ const snapshotNodes = (value) => {
   return 1 + Reflect.ownKeys(value).filter((key) => key !== 'length').reduce((total, key) => total + snapshotNodes(value[key]), 0)
 }
 
+// Builds a tree of exactly `nodes` aggregate nodes within the dense array width
+// and the depth budget by spreading the remainder across children.
 const nodeTree = (nodes) => {
   if (nodes === 1) return 'x'
   const childCount = Math.min(MAX_ARRAY_LENGTH - 1, nodes - 1)
-  const remaining = nodes - 1 - childCount
-  return Array.from({ length: childCount }, (_unused, index) => nodeTree(index === 0 ? remaining + 1 : 1))
+  let remaining = nodes - 1 - childCount
+  return Array.from({ length: childCount }, () => {
+    const extra = Math.min(remaining, MAX_ARRAY_LENGTH - 1)
+    remaining -= extra
+    return nodeTree(1 + extra)
+  })
 }
 
-const noCalls = () => ({ admit: 0, advance: 0, commit: 0, endRequest: 0, inspectLeases: 0, inspectPlan: 0, journalRead: 0, journalReserve: 0, planSubmit: 0, preflight: 0, projection: 0, reconcile: 0, release: 0 })
+const noCalls = () => ({ admit: 0, advance: 0, commit: 0, drainPlan: 0, inspectLeases: 0, inspectPlan: 0, journalRead: 0, journalReserve: 0, planSubmit: 0, preflight: 0, projection: 0, reconcile: 0, release: 0, validateActive: 0, validateDependencies: 0, validatePlan: 0 })
 const stableJournalKey = (commandId) => `journal:${digestCanonical({ command_id: commandId })}`
 const canonicalAttemptId = 'attempt:123e4567-e89b-42d3-a456-426614174000'
 
@@ -123,12 +129,28 @@ const createPorts = () => {
     },
     planRegistry: {
       submit: async ({ plan }) => { calls.planSubmit += 1; return { status: 'STORED', plan_id: plan.plan_id } },
+      validateGeneration: async ({ plan_id, generation, task_id }) => {
+        calls.validatePlan += 1
+        const active = { status: 'ACTIVE', plan_id, generation, oid: 'f'.repeat(40) }
+        return task_id === undefined ? active : {
+          ...active,
+          task: {
+            task_id: 'task:one', owner_session: 'session:owner-one', provider: 'codex',
+            baseline_sha: 'a'.repeat(40), scope_digest: ADVANCE_SCOPE_DIGEST, dependencies: [],
+          },
+        }
+      },
       inspect: async () => { calls.inspectPlan += 1; return { oid: '0'.repeat(40), record: null } },
     },
     leaseRegistry: {
       admit: async ({ lease_id }) => { calls.admit += 1; return { status: 'ADMITTED', lease_id } },
+      validateActive: async ({ lease_id }) => { calls.validateActive += 1; return { status: 'ACTIVE', lease_id } },
+      validateDependencies: async ({ plan_id, generation, task_id, dependency_task_ids, expected_parent_sha }) => {
+        calls.validateDependencies += 1
+        return { status: 'READY', plan_id, generation, task_id, expected_parent_sha, dependency_count: dependency_task_ids.length }
+      },
       reconcileTimeout: async ({ lease_id }) => { calls.reconcile += 1; return { status: 'ACTIVE', lease_id } },
-      endRequest: async ({ lease_id }) => { calls.endRequest += 1; return { status: 'END_REQUESTED', lease_id } },
+      drainPlan: async ({ plan_id }) => { calls.drainPlan += 1; return { status: 'DRAINING', plan_id } },
       release: async () => { calls.release += 1; return { status: 'RELEASED', oid: 'b'.repeat(40), lease: { lease_id: 'lease:one', state: 'RELEASED', retention_state: 'RETAINED_FOR_REVIEW', release_record: { owner_end_attestation_ref: 'attestation:owner-end-one', owner_end_attestation_digest: 'c'.repeat(64) } } } },
       inspect: async () => { calls.inspectLeases += 1; return { oid: '0'.repeat(40), record: null } },
     },
@@ -151,19 +173,69 @@ const submitCommand = (overrides = {}) => ({
   execution: { level: 'plan_only', side_effect_class: 'CONTROL_METADATA' }, effects: { filesystem: 0, git: 0, network: 0, process: 0, provider: 0, github: 0, deploy: 0, cleanup: 0, promotion: 0 }, ...overrides,
 })
 
-const advanceCommand = (overrides = {}) => ({
-  type: 'advance', command_id: 'command:advance-one', envelope: { provider: 'codex', current_level: 'plan_only' }, advance_command: { next_level: 'implement_local' },
-  admission: { lease_id: 'lease:one' }, provider_request: { command: 'shadow-status', execution_context: { expected: { provider: 'codex' } } }, ...overrides,
+const ADVANCE_RESOURCE_KEYS = Object.freeze(['path:scripts/fabric.mjs'])
+const ADVANCE_SCOPE_DIGEST = digestCanonical([{ kind: 'path', path: 'scripts/fabric.mjs' }])
+const advanceTuple = Object.freeze({
+  plan_id: 'plan:one', generation: 1, task_id: 'task:one', owner_session: 'session:owner-one', provider: 'codex',
+  provider_session_id: 'provider:one', execution_context_id: 'context:one', repo_identity_digest: 'a'.repeat(64),
+  common_dir_digest: 'b'.repeat(64), worktree_id: 'worktree:one', worktree_path_digest: 'c'.repeat(64),
+  branch: 'codex/fabric-one', baseline_sha: 'a'.repeat(40), head_sha: 'b'.repeat(40), scope_digest: ADVANCE_SCOPE_DIGEST,
+  lease_id: 'lease:one',
 })
+
+const advanceCommand = (overrides = {}) => {
+  const base = {
+    type: 'advance', command_id: 'command:advance-one',
+    envelope: { ...advanceTuple, current_level: 'plan_only' },
+    advance_command: { next_level: 'implement_local', next_envelope: { ...advanceTuple, current_level: 'implement_local' } },
+    admission: {
+      ...advanceTuple, context_attestation_ref: 'attestation:one', resource_keys: [...ADVANCE_RESOURCE_KEYS], nonce: 'n'.repeat(32),
+    },
+    provider_request: {
+      command: 'shadow-status',
+      execution_context: { expected: { ...advanceTuple }, attestation: { attestation_ref: 'attestation:one' } },
+    },
+  }
+  return {
+    ...base,
+    ...overrides,
+    envelope: { ...base.envelope, ...(overrides.envelope ?? {}) },
+    advance_command: {
+      ...base.advance_command,
+      ...(overrides.advance_command ?? {}),
+      next_envelope: {
+        ...base.advance_command.next_envelope,
+        current_level: overrides.advance_command?.next_level ?? base.advance_command.next_level,
+        ...(overrides.advance_command?.next_envelope ?? {}),
+      },
+    },
+    admission: { ...base.admission, ...(overrides.admission ?? {}) },
+    provider_request: {
+      ...base.provider_request,
+      ...(overrides.provider_request ?? {}),
+      execution_context: {
+        ...base.provider_request.execution_context,
+        ...(overrides.provider_request?.execution_context ?? {}),
+      },
+    },
+  }
+}
 
 const reconcileCommand = (overrides = {}) => ({
   type: 'reconcile', command_id: 'command:reconcile-one',
-  reconcile_request: { lease_id: 'lease:one', expected_oid: 'a'.repeat(40), timeout_ms: 1, nonce: 'nonce-reconcile-one' }, ...overrides,
+  reconcile_request: { lease_id: 'lease:one', expected_oid: 'a'.repeat(40), timeout_ms: 30000, nonce: 'nonce-reconcile-one' }, ...overrides,
 })
 
 const drainCommand = (overrides = {}) => ({
   type: 'drain', command_id: 'command:drain-one',
-  end_request: { lease_id: 'lease:one', expected_oid: 'a'.repeat(40), nonce: 'nonce-drain-one', reason: 'handoff', handoff_or_candidate_reference: 'candidate:one' }, ...overrides,
+  drain_request: {
+    plan_id: 'plan:one', generation: 1, expected_oid: 'a'.repeat(40), nonce: 'n'.repeat(32), reason: 'handoff',
+    owner_attestation: {
+      attestation_ref: 'attestation:drain-one', attestation_digest: 'c'.repeat(64), issuer_id: 'attestor:plan-owner', issuer_version: 'plan-owner/v1',
+      action: 'drain', plan_id: 'plan:one', generation: 1, expected_oid: 'a'.repeat(40), nonce: 'n'.repeat(32), reason: 'handoff',
+      observed_at: '2026-08-29T00:00:00.000Z', expires_at: '2026-08-29T00:10:00.000Z', revocation_epoch: 0,
+    },
+  }, ...overrides,
 })
 
 const releaseCommand = (overrides = {}) => ({
@@ -189,7 +261,7 @@ test('unknown and secret-shaped commands fail closed before every downstream por
 
   assert.deepEqual(unknown, { command_id: 'command:unknown', type: 'merge', status: 'HELD', reason: 'COMMAND_TYPE_INVALID' })
   assert.deepEqual(secret, { command_id: undefined, type: undefined, status: 'HELD', reason: 'COMMAND_INPUT_UNSAFE' })
-  assert.deepEqual(calls, { admit: 0, advance: 0, commit: 0, endRequest: 0, inspectLeases: 0, inspectPlan: 0, journalRead: 0, journalReserve: 0, planSubmit: 0, preflight: 0, projection: 0, reconcile: 0, release: 0 })
+  assert.deepEqual(calls, noCalls())
 })
 
 const assertSnapshotInputAccepted = async (command, label) => {
@@ -228,20 +300,20 @@ test('core snapshot rejects 256 KiB plus one before journal and semantic ports',
   await assertSnapshotInputRejected(command, 'aggregate UTF-8 over 256 KiB')
 })
 
-test('core snapshot accepts exactly 512 aggregate nodes', async () => {
+test('core snapshot accepts exactly the aggregate node budget', async () => {
   const commandId = 'command:budget-nodes-ok'
   const base = snapshotNodes(submitCommand({ command_id: commandId }))
   const command = freezeDeep(submitCommand({ command_id: commandId, plan: { plan_id: 'plan:one', payload: nodeTree(MAX_SNAPSHOT_NODES - base) } }))
   assert.equal(snapshotNodes(command), MAX_SNAPSHOT_NODES)
-  await assertSnapshotInputAccepted(command, 'total nodes at 512')
+  await assertSnapshotInputAccepted(command, 'total nodes at budget')
 })
 
-test('core snapshot rejects 512 aggregate nodes plus one before journal and semantic ports', async () => {
+test('core snapshot rejects the aggregate node budget plus one before journal and semantic ports', async () => {
   const commandId = 'command:budget-nodes-over'
   const base = snapshotNodes(submitCommand({ command_id: commandId }))
   const command = freezeDeep(submitCommand({ command_id: commandId, plan: { plan_id: 'plan:one', payload: nodeTree(MAX_SNAPSHOT_NODES - base + 1) } }))
   assert.equal(snapshotNodes(command), MAX_SNAPSHOT_NODES + 1)
-  await assertSnapshotInputRejected(command, 'total nodes over 512')
+  await assertSnapshotInputRejected(command, 'total nodes over budget')
 })
 
 test('core snapshot accepts a dense array with exactly 128 elements', async () => {
@@ -354,6 +426,23 @@ test('RED release: short, partial, and self-issued requests never call the lease
   assert.equal(fixture.calls.release, 0)
 })
 
+test('P2 regression — retained-resource release dispatches through the leaseRegistry.releaseRetainedResources seam', async () => {
+  const request = { lease_ids: ['lease:one', 'lease:two'], expected_oid: 'a'.repeat(40), nonce: 'n'.repeat(32), owner_attestation: { attestation_ref: 'attestation:owner-end-one', attestation_digest: 'c'.repeat(64) } }
+  const fixture = createPorts()
+  const seen = []
+  fixture.ports.leaseRegistry.releaseRetainedResources = async (received) => { seen.push(structuredClone(received)); return { status: 'RETENTION_RELEASED' } }
+  const released = await createParallelDeliveryFabric(fixture.ports).dispatch({ type: 'release', command_id: 'command:release-retained', release_request: request })
+  assert.deepEqual(released, { command_id: 'command:release-retained', type: 'release', status: 'SHADOW_STORED', reason: 'RETENTION_RELEASED' })
+  assert.deepEqual(seen, [request])
+  assert.equal(fixture.calls.release, 0)
+
+  const withoutSeam = createPorts()
+  const held = await createParallelDeliveryFabric(withoutSeam.ports).dispatch({ type: 'release', command_id: 'command:release-retained-no-seam', release_request: request })
+  assert.equal(held.status, 'HELD')
+  assert.equal(held.reason, 'RETENTION_RELEASE_AUTHORITY_UNAVAILABLE')
+  assert.equal(withoutSeam.calls.release, 0)
+})
+
 test('AC-13 — legal plan_only writes only control metadata while every other effect remains zero', async () => {
   const { ports, calls } = createPorts()
   const fabric = createParallelDeliveryFabric(ports)
@@ -378,9 +467,9 @@ test('AC-13 — legal plan_only writes only control metadata while every other e
   assert.deepEqual(extraEffect, { command_id: 'command:submit-extra-effect', type: 'submit', status: 'HELD', reason: 'PLAN_ONLY_REQUIRED' })
   assert.equal(calls.planSubmit, 1)
   assert.equal(calls.commit, 1)
-  assert.deepEqual(calls, { admit: 0, advance: 0, commit: 1, endRequest: 0, inspectLeases: 0, inspectPlan: 0, journalRead: 3, journalReserve: 1, planSubmit: 1, preflight: 0, projection: 0, reconcile: 0, release: 0 })
+  assert.deepEqual(calls, { ...noCalls(), commit: 1, journalRead: 3, journalReserve: 1, planSubmit: 1 })
   for (const fixture of [nonMetadataFixture, extraEffectFixture]) {
-    assert.deepEqual(fixture.calls, { admit: 0, advance: 0, commit: 0, endRequest: 0, inspectLeases: 0, inspectPlan: 0, journalRead: 0, journalReserve: 0, planSubmit: 0, preflight: 0, projection: 0, reconcile: 0, release: 0 })
+    assert.deepEqual(fixture.calls, noCalls())
   }
 })
 
@@ -525,6 +614,144 @@ test('advance stops scope, head, and evidence drift before admission or prefligh
   assert.equal(fixture.calls.preflight, 0)
 })
 
+test('advance rejects mixed plan, lease, provider, and context bindings before every semantic port', async () => {
+  const cases = [
+    ['transition plan', { advance_command: { next_level: 'implement_local', next_envelope: { plan_id: 'plan:other' } } }],
+    ['admission lease', { admission: { lease_id: 'lease:other' } }],
+    ['underdeclared resources', { admission: { resource_keys: ['path:docs/unrelated.mjs'] } }],
+    ['provider head', { provider_request: { execution_context: { expected: { ...advanceTuple, head_sha: 'c'.repeat(40) } } } }],
+    ['context attestation', { admission: { context_attestation_ref: 'attestation:other' } }],
+  ]
+  for (const [label, patch] of cases) {
+    const fixture = createPorts()
+    const result = await createParallelDeliveryFabric(fixture.ports).dispatch(advanceCommand({
+      command_id: `command:mixed-${label.replace(' ', '-')}`,
+      ...patch,
+    }))
+    assert.deepEqual(result, {
+      command_id: `command:mixed-${label.replace(' ', '-')}`,
+      type: 'advance', status: 'HELD', reason: 'ADVANCE_BINDING_MISMATCH',
+    }, label)
+    assert.equal(fixture.calls.advance, 0, label)
+    assert.equal(fixture.calls.preflight, 0, label)
+    assert.equal(fixture.calls.admit, 0, label)
+    assert.equal(fixture.calls.validateActive, 0, label)
+  }
+})
+
+test('advance rejects an ACTIVE plan response with a zero OID before execution, provider, or lease ports', async () => {
+  const fixture = createPorts()
+  fixture.ports.planRegistry.validateGeneration = async ({ plan_id, generation }) => {
+    fixture.calls.validatePlan += 1
+    return { status: 'ACTIVE', plan_id, generation, oid: '0'.repeat(40) }
+  }
+  const result = await createParallelDeliveryFabric(fixture.ports).dispatch(advanceCommand({ command_id: 'command:zero-plan-oid' }))
+  assert.deepEqual(result, {
+    command_id: 'command:zero-plan-oid', type: 'advance', status: 'HELD', reason: 'PLAN_GENERATION_UNAVAILABLE',
+  })
+  assert.equal(fixture.calls.advance, 0)
+  assert.equal(fixture.calls.preflight, 0)
+  assert.equal(fixture.calls.admit, 0)
+})
+
+test('P1 regression — advance binds the requested task to the active stored plan before every effect port', async () => {
+  const fixture = createPorts()
+  fixture.ports.planRegistry.validateGeneration = async ({ plan_id, generation }) => {
+    fixture.calls.validatePlan += 1
+    return {
+      status: 'ACTIVE', plan_id, generation, oid: 'f'.repeat(40),
+      task: {
+        task_id: 'task:other', owner_session: 'session:owner-one', provider: 'codex',
+        baseline_sha: 'a'.repeat(40), scope_digest: ADVANCE_SCOPE_DIGEST, dependencies: [],
+      },
+    }
+  }
+  const result = await createParallelDeliveryFabric(fixture.ports).dispatch(advanceCommand({ command_id: 'command:task-binding' }))
+  assert.deepEqual(result, {
+    command_id: 'command:task-binding', type: 'advance', status: 'HELD', reason: 'PLAN_TASK_BINDING_MISMATCH',
+  })
+  assert.equal(fixture.calls.advance, 0)
+  assert.equal(fixture.calls.preflight, 0)
+  assert.equal(fixture.calls.validateDependencies, 0)
+  assert.equal(fixture.calls.admit, 0)
+})
+
+test('P2 regression — advance requires every stored predecessor to be completed at the integrated parent', async () => {
+  const blockedFixture = createPorts()
+  blockedFixture.ports.planRegistry.validateGeneration = async ({ plan_id, generation }) => {
+    blockedFixture.calls.validatePlan += 1
+    return {
+      status: 'ACTIVE', plan_id, generation, oid: 'f'.repeat(40),
+      task: {
+        task_id: 'task:one', owner_session: 'session:owner-one', provider: 'codex',
+        baseline_sha: 'a'.repeat(40), scope_digest: ADVANCE_SCOPE_DIGEST, dependencies: ['task:predecessor'],
+      },
+    }
+  }
+  blockedFixture.ports.leaseRegistry.validateDependencies = async () => {
+    blockedFixture.calls.validateDependencies += 1
+    return { status: 'HELD_EXECUTION_AUTHORITY', reason: 'DEPENDENCY_NOT_COMPLETED' }
+  }
+  const blocked = await createParallelDeliveryFabric(blockedFixture.ports).dispatch(advanceCommand({ command_id: 'command:dependency-blocked' }))
+  assert.deepEqual(blocked, {
+    command_id: 'command:dependency-blocked', type: 'advance', status: 'HELD', reason: 'DEPENDENCY_NOT_COMPLETED',
+  })
+  assert.equal(blockedFixture.calls.validateDependencies, 1)
+  assert.equal(blockedFixture.calls.advance, 0)
+  assert.equal(blockedFixture.calls.preflight, 0)
+  assert.equal(blockedFixture.calls.admit, 0)
+
+  const readyFixture = createPorts()
+  readyFixture.ports.planRegistry.validateGeneration = blockedFixture.ports.planRegistry.validateGeneration
+  const ready = await createParallelDeliveryFabric(readyFixture.ports).dispatch(advanceCommand({ command_id: 'command:dependency-ready' }))
+  assert.deepEqual(ready, {
+    command_id: 'command:dependency-ready', type: 'advance', status: 'SHADOW_INTENT', reason: 'ADVANCE_READY_FOR_SHADOW',
+  })
+  assert.equal(readyFixture.calls.validateDependencies, 1)
+  assert.equal(readyFixture.calls.advance, 1)
+})
+
+test('P1 regression — a dependent task advances from its predecessor handoff head, not the plan baseline', async () => {
+  const PARENT = 'd'.repeat(40)
+  const dependentPlan = async ({ plan_id, generation }) => ({
+    status: 'ACTIVE', plan_id, generation, oid: 'f'.repeat(40),
+    task: {
+      task_id: 'task:one', owner_session: 'session:owner-one', provider: 'codex',
+      baseline_sha: 'a'.repeat(40), scope_digest: ADVANCE_SCOPE_DIGEST, dependencies: ['task:predecessor'],
+    },
+  })
+  const withParent = (overrides = {}) => advanceCommand({
+    command_id: 'command:dependent-parent',
+    envelope: { baseline_sha: PARENT },
+    advance_command: { next_envelope: { baseline_sha: PARENT } },
+    admission: { baseline_sha: PARENT },
+    provider_request: { execution_context: { expected: { ...advanceTuple, baseline_sha: PARENT }, attestation: { attestation_ref: 'attestation:one' } } },
+    ...overrides,
+  })
+  const fixture = createPorts()
+  fixture.ports.planRegistry.validateGeneration = dependentPlan
+  const seen = []
+  fixture.ports.leaseRegistry.validateDependencies = async (request) => {
+    seen.push(request)
+    return { status: 'READY', plan_id: request.plan_id, generation: request.generation, task_id: request.task_id, expected_parent_sha: request.expected_parent_sha, dependency_count: 1 }
+  }
+  const result = await createParallelDeliveryFabric(fixture.ports).dispatch(withParent())
+  assert.equal(result.status, 'SHADOW_INTENT', JSON.stringify(result))
+  assert.equal(seen[0].expected_parent_sha, PARENT)
+  // The registry answers for the parent it verified; a different parent cannot be substituted.
+  const substituted = createPorts()
+  substituted.ports.planRegistry.validateGeneration = dependentPlan
+  substituted.ports.leaseRegistry.validateDependencies = async (request) => ({
+    status: 'READY', plan_id: request.plan_id, generation: request.generation, task_id: request.task_id, expected_parent_sha: 'a'.repeat(40), dependency_count: 1,
+  })
+  assert.equal((await createParallelDeliveryFabric(substituted.ports).dispatch(withParent({ command_id: 'command:dependent-substituted' }))).reason, 'DEPENDENCY_AUTHORITY_UNAVAILABLE')
+  // An independent task still has to sit on the plan baseline.
+  const independent = createPorts()
+  const off = await createParallelDeliveryFabric(independent.ports).dispatch(withParent({ command_id: 'command:independent-off-baseline' }))
+  assert.equal(off.reason, 'PLAN_TASK_BINDING_MISMATCH')
+  assert.equal(independent.calls.validateDependencies, 0)
+})
+
 test('advance keeps cap conflict and adapter context failure as typed non-live outcomes', async () => {
   const queuedFixture = createPorts()
   queuedFixture.ports.leaseRegistry.admit = async () => { queuedFixture.calls.admit += 1; return { status: 'QUEUED_FOR_LEASE', reason: 'WRITER_CAPACITY' } }
@@ -536,7 +763,8 @@ test('advance keeps cap conflict and adapter context failure as typed non-live o
 
   assert.deepEqual(queued, { command_id: 'command:advance-one', type: 'advance', status: 'QUEUED', reason: 'WRITER_CAPACITY' })
   assert.deepEqual(context, { command_id: 'command:advance-context', type: 'advance', status: 'HELD', reason: 'context_unverified' })
-  assert.equal(queuedFixture.calls.preflight, 0)
+  assert.equal(queuedFixture.calls.preflight, 1)
+  assert.equal(contextFixture.calls.admit, 0)
 })
 
 test('AC-14 — submit_delivery is a fixed Task9 hold and candidate delivery capabilities never reach a sink', async () => {
@@ -564,7 +792,7 @@ test('AC-14 — submit_delivery is a fixed Task9 hold and candidate delivery cap
     advance_command: { next_level: 'submit_delivery', merge_credential: 'candidate-supplied' },
   }))
   assert.equal(credential.status, 'HELD')
-  assert.deepEqual(credentialFixture.calls, { admit: 0, advance: 0, commit: 0, endRequest: 0, inspectLeases: 0, inspectPlan: 0, journalRead: 0, journalReserve: 0, planSubmit: 0, preflight: 0, projection: 0, reconcile: 0, release: 0 })
+  assert.deepEqual(credentialFixture.calls, noCalls())
 
   const sinkFixture = createPorts()
   const sinks = { approve: 0, credential: 0, deploy: 0, merge: 0, push: 0 }
@@ -583,7 +811,7 @@ test('AC-14 — submit_delivery is a fixed Task9 hold and candidate delivery cap
   }))
   assert.equal(injectedPorts.status, 'HELD')
   assert.deepEqual(sinks, { approve: 0, credential: 0, deploy: 0, merge: 0, push: 0 })
-  assert.deepEqual(sinkFixture.calls, { admit: 0, advance: 0, commit: 0, endRequest: 0, inspectLeases: 0, inspectPlan: 0, journalRead: 0, journalReserve: 0, planSubmit: 0, preflight: 0, projection: 0, reconcile: 0, release: 0 })
+  assert.deepEqual(sinkFixture.calls, noCalls())
 })
 
 test('advance rejects an unknown next level before admission or preflight', async () => {
@@ -625,18 +853,18 @@ test('reconcile cannot release and a degraded projection fails closed', async ()
   assert.equal(releasedFixture.calls.release, 0)
 })
 
-test('drain only requests end; release stays held until a base-owned OwnerEndAttestor descriptor exists; inspect is read-only', async () => {
+test('drain persists a plan-level freeze; release stays held until a base-owned OwnerEndAttestor descriptor exists; inspect is read-only', async () => {
   const fixture = createPorts()
   const fabric = createParallelDeliveryFabric(fixture.ports)
   const drain = await fabric.dispatch(drainCommand())
   const release = await fabric.dispatch(releaseCommand())
   const snapshot = await fabric.inspect('plan:one')
 
-  assert.deepEqual(drain, { command_id: 'command:drain-one', type: 'drain', status: 'SHADOW_STORED', reason: 'END_REQUESTED' })
+  assert.deepEqual(drain, { command_id: 'command:drain-one', type: 'drain', status: 'SHADOW_STORED', reason: 'PLAN_DRAINING' })
   assert.deepEqual(release, { command_id: 'command:release-one', type: 'release', status: 'HELD', reason: 'RELEASE_AUTHORITY_UNAVAILABLE' })
   assert.deepEqual(snapshot, { plan_id: 'plan:one', plan: { oid: '0'.repeat(40), record: null }, leases: { oid: '0'.repeat(40), record: null } })
   assert.equal(Object.isFrozen(snapshot), true)
-  assert.equal(fixture.calls.endRequest, 1)
+  assert.equal(fixture.calls.drainPlan, 1)
   assert.equal(fixture.calls.release, 0)
   assert.equal(fixture.calls.projection, 0)
 })

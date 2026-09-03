@@ -3,24 +3,32 @@ import path from 'node:path'
 import { types } from 'node:util'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
+import { isCanonicalOpaqueReference } from '../lib/parallel-delivery-fabric-contract.mjs'
+import { createLocalParallelDeliveryFabric } from '../lib/parallel-delivery-fabric-local.mjs'
+
 const COMMANDS = new Set(['submit', 'advance', 'reconcile', 'drain', 'release', 'inspect'])
 const REPOSITORY_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 const MAX_INPUT = 256 * 1024
 const MAX_OUTPUT = 64 * 1024
 const MAX_DEPTH = 16
 const MAX_KEYS = 128
-const MAX_NODES = 512
+// Sized for the delivery-plan contract's supported maximum (64 single-resource
+// tasks is roughly 1,200 aggregate nodes), so plan size never becomes a de facto
+// writer-count cap. The byte budget still bounds the input.
+const MAX_NODES = 4096
 const COMMAND_ID = /^[A-Za-z][A-Za-z0-9._:-]{2,127}$/u
-const PLAN_ID = /^[A-Za-z][A-Za-z0-9._:-]{2,127}$/u
+// Plan ids follow the contract's canonical opaque-reference grammar (namespaced,
+// `/` allowed), so an id the parser and registry accept is also inspectable.
+const PLAN_ID = { test: (value) => typeof value === 'string' && value.length <= 128 && isCanonicalOpaqueReference(value) }
 const SAFE_REASON = /^[A-Za-z0-9_:-]{1,128}$/u
 const FORBIDDEN_KEY = /^(?:__proto__|prototype|constructor)$/iu
-const UNSAFE_KEY = /(?:api[_-]?key|secret|token|password|credential|private|cookie|authorization|bearer|transcript|process[_-]?id|worker[_-]?pid|owner[_-]?sid|host[_-]?name|file[_-]?path|(?:^|[_-])pid$|(?:^|[_-])sid$|absolute[_-]?path|(?:^|[_-])path$|(?:^|[_-])env(?:$|[_-])|^env_)/iu
+const UNSAFE_KEY = /(?:api[_-]?key|secret|token|password|credential|private|cookie|authorization|bearer|transcript|process[_-]?id|worker[_-]?pid|owner[_-]?sid|host[_-]?name|file[_-]?path|(?:^|[_-])pid$|(?:^|[_-])sid$|absolute[_-]?path|(?:^|[_-])env(?:$|[_-])|^env_)/iu
 const UNSAFE_VALUE = /(?:bearer|gh[pousr]_|github_pat_|-----BEGIN|eyJ[A-Za-z0-9_-]{10,}|(?:^|[/:])S-\d+(?:-\d+){2,}|(?:^|:)\d{1,10}$|(?:^|:)[A-Za-z]:[\\/]|^(?:\\\\|\/)|\$env:|%[A-Za-z_][A-Za-z0-9_]*%|(?:^|\b)(?:pid|process(?:[_-]?id)?|worker[_-]?pid|owner[_-]?sid)\s*[:=]\s*\d+|(?:^|\b)(?:host(?:name)?|machine)\s*[:=]\s*[^\s]+|\b(?:DESKTOP|LAPTOP|WIN|HOST)-[A-Za-z0-9-]+\b|^\/)/iu
 const DISPATCH_KEYS = Object.freeze({
   submit: ['command_id', 'plan', 'expected_oid', 'nonce', 'execution', 'effects'],
   advance: ['command_id', 'envelope', 'advance_command', 'admission', 'provider_request'],
   reconcile: ['command_id', 'reconcile_request'],
-  drain: ['command_id', 'end_request'],
+  drain: ['command_id', 'drain_request'],
   release: ['command_id', 'release_request'],
 })
 const SUCCESS_STATUSES = Object.freeze({
@@ -308,11 +316,20 @@ const commandPayload = (command, payload) => {
   return payload
 }
 
+// A non-null lease snapshot carries the Fabric's authenticated plan-scoped projection
+// metadata; the CLI accepts exactly that closed shape and still emits only the oid.
+const leaseProjectionValid = (value, planId) => value === undefined || (
+  exactKeys(value, ['scope', 'plan_id', 'source_oid', 'source_digest']) && value.scope === 'plan' && value.plan_id === planId &&
+  typeof value.source_oid === 'string' && /^[0-9a-f]{40}$/u.test(value.source_oid) &&
+  typeof value.source_digest === 'string' && /^[0-9a-f]{64}$/u.test(value.source_digest))
+
 const inspectSuccess = (value, planId) => {
   const result = snapshot(value, MAX_OUTPUT)
   if (!exactKeys(result, ['plan_id', 'plan', 'leases']) || result.plan_id !== planId) return undefined
   for (const key of ['plan', 'leases']) {
-    if (!exactKeys(result[key], ['oid', 'record']) || typeof result[key].oid !== 'string' || !/^[0-9a-f]{40}$/u.test(result[key].oid)) return undefined
+    const projected = key === 'leases' && own(result[key], 'projection')
+    if (!exactKeys(result[key], projected ? ['oid', 'record', 'projection'] : ['oid', 'record']) || typeof result[key].oid !== 'string' || !/^[0-9a-f]{40}$/u.test(result[key].oid)) return undefined
+    if (projected && (result[key].record === null || !leaseProjectionValid(result[key].projection, planId))) return undefined
   }
   return Object.freeze({
     plan_id: result.plan_id,
@@ -358,10 +375,12 @@ if (typeof process.argv[1] === 'string' && import.meta.url === pathToFileURL(pat
     readStdin: async () => process.stdin,
     write: (line) => process.stdout.write(`${line}\n`),
   }
-  const inert = Object.freeze({
-    dispatch: async () => ({ status: 'HELD', reason: 'SHADOW_ONLY_INERT' }),
-    inspect: async (plan_id) => ({ plan_id, status: 'HELD', reason: 'SHADOW_ONLY_INERT' }),
+  let fabric
+  try { fabric = await createLocalParallelDeliveryFabric({ repositoryRoot: REPOSITORY_ROOT }) } catch {}
+  const unavailable = Object.freeze({
+    dispatch: async () => { throw new Error('fabric_unavailable') },
+    inspect: async () => { throw new Error('fabric_unavailable') },
   })
-  const result = await runParallelDeliveryFabricCli(process.argv.slice(2), { fabric: inert, io, repositoryRoot: REPOSITORY_ROOT })
+  const result = await runParallelDeliveryFabricCli(process.argv.slice(2), { fabric: fabric ?? unavailable, io, repositoryRoot: REPOSITORY_ROOT })
   process.exitCode = result.exitCode
 }

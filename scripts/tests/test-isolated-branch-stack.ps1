@@ -75,6 +75,29 @@ $p4 = Resolve-IsolatedStackPorts -OffsetInput '4'
 Assert-Equal 8009 $p4.coordinator 'offset 4 coordinator'
 Assert-Equal 49107 $p4.governance 'offset 4 governance'
 Assert-Equal 5184 $p4.viewer 'offset 4 viewer'
+$idleTimeoutBackup = [Environment]::GetEnvironmentVariable('SESSION_IDLE_TIMEOUT_MS', 'Process')
+try {
+    [Environment]::SetEnvironmentVariable('SESSION_IDLE_TIMEOUT_MS', $null, 'Process')
+    $isolatedEnvWithoutIdlePolicy = New-IsolatedBackendEnvironment -Role coordinator `
+        -StateLayout ([pscustomobject]@{
+            coordinator_root = 'C:\isolated\coordinator'
+            fixture_root = 'C:\isolated\fixtures'
+        }) -Ports $p4
+    Assert-True (-not $isolatedEnvWithoutIdlePolicy.ContainsKey('SESSION_IDLE_TIMEOUT_MS')) `
+        'isolated coordinator keeps idle reclaim disabled when the parent does not configure it'
+
+    [Environment]::SetEnvironmentVariable('SESSION_IDLE_TIMEOUT_MS', '750', 'Process')
+    $isolatedEnvWithIdlePolicy = New-IsolatedBackendEnvironment -Role coordinator `
+        -StateLayout ([pscustomobject]@{
+            coordinator_root = 'C:\isolated\coordinator'
+            fixture_root = 'C:\isolated\fixtures'
+        }) -Ports $p4
+    Assert-Equal '750' $isolatedEnvWithIdlePolicy.SESSION_IDLE_TIMEOUT_MS `
+        'isolated coordinator passes through the explicitly configured idle timeout'
+}
+finally {
+    [Environment]::SetEnvironmentVariable('SESSION_IDLE_TIMEOUT_MS', $idleTimeoutBackup, 'Process')
+}
 $spacedWorktreeArgumentLine = ConvertTo-IsolatedWindowsArgumentLine -Arguments @(
     'C:\Repos\isolated branch stack\bim-review-coordinator\src\index.ts',
     '--port',
@@ -421,7 +444,7 @@ try {
     $capturedFailure = $null
     try {
         $realIdentity = Start-IsolatedBackend -Role 'governance' -WorkingDirectory $repoRoot `
-            -Executable (Get-Command pwsh -CommandType Application -ErrorAction Stop).Source `
+            -Executable ((Get-Command pwsh -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source) `
             -Arguments @('-NoProfile', '-NonInteractive', '-Command', "`$pathState = if ([string]::IsNullOrWhiteSpace([string]`$env:PATH)) { 'missing' } else { 'present' }; [IO.File]::WriteAllText('$childEnvironmentPath', ((@([string]`$env:$childEnvironmentKey, [string]`$env:NoDe_EnV, [string]`$env:USER_AUTH_PROVIDER, [string]`$env:KIT_MANAGER_API_BASE, [string]`$env:CLOUD_CALLBACK_BASE_URL, [string]`$env:A4_INTERNAL_CONTEXT_TOKEN, [string]`$env:$deploymentSentinelKey) -join '|') + '|path=' + `$pathState)); Start-Sleep -Seconds 30", $realGovernanceEntrypoint, '--port', '49103') `
             -Environment @{ $childEnvironmentKey=$childEnvironmentValue; GOV_PORT='49103' } -RunDirectory $realProcessSandbox -Entrypoint $realGovernanceEntrypoint `
             -StopSpawnedProcessFn {
@@ -776,6 +799,15 @@ finally {
 $dispatcherSandbox = New-TestSandbox -Prefix 'isolated-stack-dispatcher'
 & git -C $dispatcherSandbox init --quiet
 Assert-Equal 0 $LASTEXITCODE 'dispatcher sandbox has a Git common directory for shared reservations'
+$acceptedSafeEnvironmentContract = { param($root,$change,$run,$offset,$ports) $true }
+$acceptedBrowserSpecFn = {
+    param($root,$change,$run,$offset,$ports)
+    @{
+        schema_version = 'isolated-browser-spec/v1'
+        base_url = "http://127.0.0.1:$($ports.viewer)"
+        expected_port = [int]$ports.viewer
+    }
+}
 try {
     $rejectedRawSegment = '..\sensitive-path'
     Assert-Throws {
@@ -796,6 +828,7 @@ try {
     $startManifestPath = Resolve-IsolatedStackManifestPath -RepoRoot $dispatcherSandbox -ChangeId 'change-a' -RunId 'run-start'
     Assert-Throws {
         Invoke-IsolatedBranchStack -Action start -ChangeId 'change-a' -RunId 'run-start' -OffsetInput '0' `
+          -SafeEnvironmentContract $acceptedSafeEnvironmentContract -BrowserSpecFn $acceptedBrowserSpecFn `
           -RepoRoot $dispatcherSandbox -WorktreeStatusFn { param($root) @() } `
           -PreflightFn { param($root,$change,$run,$offset) [pscustomobject]@{offset=0;ports=[pscustomobject]@{coordinator=8005;governance=49103;viewer=5180};manifest_path=$startManifestPath} } `
           -RuntimeResolver { param($root) [pscustomobject]@{python='python';node='node';tsx='tsx.mjs'} } `
@@ -813,6 +846,7 @@ try {
     $reservationStarts = [System.Collections.Generic.List[string]]::new()
     Assert-Throws {
         Invoke-IsolatedBranchStack -Action start -ChangeId 'change-a' -RunId 'run-reserved' -RepoRoot $dispatcherSandbox `
+          -SafeEnvironmentContract $acceptedSafeEnvironmentContract -BrowserSpecFn $acceptedBrowserSpecFn `
           -WorktreeStatusFn { param($root) @() } `
           -PreflightFn { param($root,$change,$run,$offset) [pscustomobject]@{offset=0;ports=[pscustomobject]@{coordinator=8005;governance=49103;viewer=5180};manifest_path=(Resolve-IsolatedStackManifestPath -RepoRoot $root -ChangeId $change -RunId $run)} } `
           -ReservationAcquireFn { param($root,$change,$run,$offset) throw 'reservation held' } `
@@ -824,6 +858,7 @@ try {
     $reservationOrder = [System.Collections.Generic.List[string]]::new()
     Assert-Throws {
         Invoke-IsolatedBranchStack -Action start -ChangeId 'change-a' -RunId 'run-preflight-order' -RepoRoot $dispatcherSandbox `
+          -SafeEnvironmentContract $acceptedSafeEnvironmentContract -BrowserSpecFn $acceptedBrowserSpecFn `
           -WorktreeStatusFn { param($root) @() } `
           -ReservationAcquireFn { param($root,$change,$run,$offset) $script:reservationOrder.Add('acquire'); [pscustomobject]@{paths=@()} } `
           -PreflightFn { param($root,$change,$run,$offset) $script:reservationOrder.Add('preflight'); throw 'injected preflight failure' } `
@@ -835,6 +870,7 @@ try {
     $dirtyStarts = [System.Collections.Generic.List[string]]::new()
     Assert-Throws {
         Invoke-IsolatedBranchStack -Action start -ChangeId 'change-a' -RunId 'run-dirty' -RepoRoot $dispatcherSandbox `
+          -SafeEnvironmentContract $acceptedSafeEnvironmentContract -BrowserSpecFn $acceptedBrowserSpecFn `
           -WorktreeStatusFn { param($root) ' M tracked-file.txt' } `
           -StartBackendFn { param($spec) $script:dirtyStarts.Add($spec.role) }
     } 'dirty worktree rejects before backend start or identity recording'
@@ -843,6 +879,7 @@ try {
     $successManifestPath = Resolve-IsolatedStackManifestPath -RepoRoot $dispatcherSandbox -ChangeId 'change-a' -RunId 'run-success'
     $successSpecs = [System.Collections.Generic.List[object]]::new()
     $success = Invoke-IsolatedBranchStack -Action start -ChangeId 'change-a' -RunId 'run-success' -OffsetInput '0' `
+        -SafeEnvironmentContract $acceptedSafeEnvironmentContract -BrowserSpecFn $acceptedBrowserSpecFn `
         -RepoRoot $dispatcherSandbox -WorktreeStatusFn { param($root) @() } `
         -PreflightFn { param($root,$change,$run,$offset) [pscustomobject]@{offset=0;ports=[pscustomobject]@{coordinator=8005;governance=49103;viewer=5180};manifest_path=$successManifestPath} } `
         -RuntimeResolver { param($root) [pscustomobject]@{python='python';node='node';tsx='tsx.mjs'} } `
@@ -1103,6 +1140,7 @@ try {
         $failedStopIds = [System.Collections.Generic.List[int]]::new()
         Assert-Throws {
             Invoke-IsolatedBranchStack -Action start -ChangeId 'change-a' -RunId $failure.runId -OffsetInput '0' `
+                -SafeEnvironmentContract $acceptedSafeEnvironmentContract -BrowserSpecFn $acceptedBrowserSpecFn `
                 -RepoRoot $dispatcherSandbox -WorktreeStatusFn { param($root) @() } `
                 -PreflightFn { param($root,$change,$run,$offset) [pscustomobject]@{offset=0;ports=[pscustomobject]@{coordinator=8005;governance=49103;viewer=5180};manifest_path=$failureManifestPath} } `
                 -RuntimeResolver { param($root) [pscustomobject]@{python='python';node='node';tsx='tsx.mjs'} } `
@@ -1138,6 +1176,7 @@ try {
     $recoveryManifestPath = Resolve-IsolatedStackManifestPath -RepoRoot $dispatcherSandbox -ChangeId 'change-a' -RunId $recoveryRunId
     Assert-Throws {
         Invoke-IsolatedBranchStack -Action start -ChangeId 'change-a' -RunId $recoveryRunId -OffsetInput '0' -RepoRoot $dispatcherSandbox `
+            -SafeEnvironmentContract $acceptedSafeEnvironmentContract -BrowserSpecFn $acceptedBrowserSpecFn `
             -WorktreeStatusFn { param($root) @() } `
             -PreflightFn { param($root,$change,$run,$offset) [pscustomobject]@{offset=0;ports=[pscustomobject]@{coordinator=8005;governance=49103;viewer=5180};manifest_path=$recoveryManifestPath} } `
             -RuntimeResolver { param($root) [pscustomobject]@{python='python';node='node';tsx='tsx.mjs'} } `
@@ -1189,6 +1228,7 @@ try {
     $manifestVisibleBeforeRecordTransition = $false
     Assert-Throws {
         Invoke-IsolatedBranchStack -Action start -ChangeId 'change-a' -RunId $manifestFirstRunId -OffsetInput '0' -RepoRoot $dispatcherSandbox `
+            -SafeEnvironmentContract $acceptedSafeEnvironmentContract -BrowserSpecFn $acceptedBrowserSpecFn `
             -WorktreeStatusFn { param($root) @() } `
             -PreflightFn { param($root,$change,$run,$offset) [pscustomobject]@{offset=0;ports=[pscustomobject]@{coordinator=8005;governance=49103;viewer=5180};manifest_path=$manifestFirstPath} } `
             -RuntimeResolver { param($root) [pscustomobject]@{python='python';node='node';tsx='tsx.mjs'} } `
@@ -1354,3 +1394,25 @@ Assert-True ($launcherText -notmatch "A4_INTERNAL_CONTEXT_TOKEN\s*=\s*'") `
     'launcher never hardcodes an A4_INTERNAL_CONTEXT_TOKEN literal value'
 
 $testLogger | Write-StructInfo -Component 'test-isolated-branch-stack' -Msg 'contract assertions passed' -Data @{ assertions = 'isolated-stack' }
+
+# P1 regression — the CLI start path wires the repository-owned start authorities:
+# it never fails on the missing-authority guard, and the defaults return the closed shapes.
+$wiringSandbox = New-TestSandbox -Prefix 'isolated-stack-cli-wiring'
+& git -C $wiringSandbox init --quiet
+try {
+    $wiringPorts = Resolve-IsolatedStackPorts -OffsetInput '0'
+    Assert-True (Test-IsolatedSafeEnvironmentContract -RepoRoot $wiringSandbox -ChangeId 'change-w' -RunId 'run-w' -Offset 0 -Ports $wiringPorts) 'repository-owned safe environment contract accepts the isolated port set'
+    $wiringSpec = New-IsolatedBrowserSpec -RepoRoot $wiringSandbox -ChangeId 'change-w' -RunId 'run-w' -Offset 0 -Ports $wiringPorts
+    Assert-Equal 'isolated-browser-spec/v1' $wiringSpec['schema_version'] 'repository-owned browser spec schema'
+    Assert-Equal ([int]$wiringPorts.viewer) $wiringSpec['expected_port'] 'repository-owned browser spec binds the isolated viewer port'
+    $wiringFailure = $null
+    try {
+        Invoke-IsolatedBranchStackCli -Action start -ChangeId 'change-w' -RunId 'run-w' -RepoRoot $wiringSandbox | Out-Null
+    } catch {
+        $wiringFailure = [string]$_
+    }
+    Assert-True (-not [string]::IsNullOrEmpty($wiringFailure)) 'CLI start in an empty sandbox still stops later in the pipeline'
+    Assert-True (-not $wiringFailure.Contains('authority is required for start')) 'CLI start wires the safe-environment and browser-spec authorities'
+} finally {
+    Remove-Item -LiteralPath $wiringSandbox -Recurse -Force -ErrorAction SilentlyContinue
+}

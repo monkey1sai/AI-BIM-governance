@@ -34,6 +34,8 @@ type AppInternals = {
   _overlayHighlightMany: (f: unknown[]) => unknown;
   _postToParent: (m: Record<string, unknown>, allowedOriginsCache?: ReadonlySet<string>) => void;
   _sendStreamMessage: (m: { event_type: string; payload?: unknown }) => void;
+  _queryLoadingState: (activitySource?: "background" | "user") => void;
+  _reportViewerActivity: () => void;
   _runtimeMutatorBlockReason: (eventType: string) => string | null;
   _appendReviewEvent: (event: string) => void;
   _appendDemoOutgoing: (label: string, payload: unknown) => void;
@@ -438,6 +440,20 @@ describe("C M4 runtime command bridge：central send path classifies UI-local/re
       },
     });
     stubGet.mockRestore();
+  });
+
+  it("does not treat background loading-state probes as viewer activity", () => {
+    const app = operableApp();
+    const privateApp = internals(app);
+    vi.spyOn(AppStream, "sendMessage").mockResolvedValue({});
+    vi.spyOn(privateApp, "_appendDemoOutgoing").mockImplementation(() => {});
+    const activitySpy = vi.spyOn(privateApp, "_reportViewerActivity").mockImplementation(() => {});
+
+    privateApp._queryLoadingState();
+    expect(activitySpy).not.toHaveBeenCalled();
+
+    privateApp._queryLoadingState("user");
+    expect(activitySpy).toHaveBeenCalledTimes(1);
   });
 
   it("primary mutator without viewer lease token is rejected before AppStream.sendMessage", () => {
@@ -1526,6 +1542,11 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
     internals(app).state = {
       ...internals(app).state,
       reviewSessionId: "review_session_stream_failed",
+      reviewLifecycleStatus: "active",
+      latestStreamConfig: {
+        ...(internals(app).state.latestStreamConfig as Record<string, unknown>),
+        model: { status: "ready", url: "stage://stream-failed.usdc" },
+      },
     };
     vi.spyOn(AppStream, "stop").mockImplementation(() => undefined);
     const staleOnStreamFailed = renderedAppStreamProps(app).onStreamFailed;
@@ -1703,6 +1724,89 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
       });
       expect(openSelectedAsset).toHaveBeenCalledTimes(1);
     } finally {
+      Object.assign(reviewEnv, previousReviewEnv);
+    }
+  });
+
+  it.each(["missing", "converting"] as const)("waits for a %s model to become ready before starting the WebRTC timeout", async (initialStatus) => {
+    vi.useFakeTimers();
+    const app = operableApp();
+    useSynchronousSetState(app);
+    const privateApp = internals(app) as unknown as {
+      _bootstrapReview: (sessionIdOverride?: string) => Promise<void>;
+      _connectReviewSocket: (sessionId: string, traceId: string) => void;
+      _scheduleStreamStartTimeout: () => void;
+      _beginA4Handoff: (sessionId: string) => Promise<void>;
+      coordinatorClient: {
+        getReviewSession: (sessionId: string) => Promise<unknown>;
+        getStreamConfig: (sessionId: string) => Promise<unknown>;
+      };
+      componentMounted: boolean;
+    };
+    const previousReviewEnv = {
+      defaultSessionId: reviewEnv.defaultSessionId,
+      defaultReviewRequestId: reviewEnv.defaultReviewRequestId,
+      autoCreateSession: reviewEnv.autoCreateSession,
+      hasExplicitEmptySessionId: reviewEnv.hasExplicitEmptySessionId,
+    };
+    const streamConfig = (status: "missing" | "converting" | "ready") => ({
+      session_id: "review_session_x",
+      trace_id: DATA_CHANNEL_TRACE_ID,
+      lifecycle_status: "active",
+      source: "local_fixed",
+      webrtc: {
+        signalingServer: "127.0.0.1",
+        signalingPort: 49100,
+        mediaServer: "127.0.0.1",
+        mediaPort: null,
+      },
+      model: {
+        status,
+        artifact_id: status === "ready" ? "artifact_ready" : null,
+        url: status === "ready" ? "stage://ready.usdc" : null,
+        mapping_url: null,
+        conversion_job_id: "conversion_pending",
+      },
+      artifacts: [],
+      artifact_bindings: [],
+      kit_instance_bindings: [],
+    });
+
+    try {
+      privateApp.componentMounted = true;
+      reviewEnv.defaultSessionId = "review_session_x";
+      reviewEnv.defaultReviewRequestId = "";
+      reviewEnv.autoCreateSession = true;
+      reviewEnv.hasExplicitEmptySessionId = false;
+      vi.spyOn(privateApp.coordinatorClient, "getReviewSession").mockResolvedValue({
+        session_id: "review_session_x",
+        project_id: "project_x",
+        model_version_id: "version_x",
+      } as never);
+      const getStreamConfig = vi.spyOn(privateApp.coordinatorClient, "getStreamConfig")
+        .mockResolvedValueOnce(streamConfig(initialStatus) as never)
+        .mockResolvedValueOnce(streamConfig("ready") as never);
+      vi.spyOn(privateApp, "_connectReviewSocket").mockImplementation(() => undefined);
+      const scheduleStreamStart = vi.spyOn(privateApp, "_scheduleStreamStartTimeout").mockImplementation(() => undefined);
+      vi.spyOn(privateApp, "_beginA4Handoff").mockResolvedValue(undefined);
+
+      await privateApp._bootstrapReview();
+
+      expect(getStreamConfig).toHaveBeenCalledTimes(1);
+      expect(privateApp._connectReviewSocket).toHaveBeenCalledTimes(1);
+      expect(scheduleStreamStart).not.toHaveBeenCalled();
+      expect(internals(app).state.latestStreamConfig).toMatchObject({ model: { status: initialStatus } });
+
+      await vi.advanceTimersByTimeAsync(3_000);
+
+      expect(getStreamConfig).toHaveBeenCalledTimes(2);
+      expect(privateApp._connectReviewSocket).toHaveBeenCalledTimes(1);
+      expect(internals(app).state.latestStreamConfig).toMatchObject({ model: { status: "ready" } });
+      expect(scheduleStreamStart).toHaveBeenCalledTimes(1);
+    } finally {
+      privateApp.componentMounted = false;
+      vi.clearAllTimers();
+      vi.useRealTimers();
       Object.assign(reviewEnv, previousReviewEnv);
     }
   });
@@ -4969,7 +5073,11 @@ describe("Important #4（修訂）：visible-stream 完成路徑不得把 pendin
       });
       expect(internals(app).pendingStageUrl).toBeNull();
       expect(internals(app).state.loadingText).toBe("模型載入逾時");
-      expect(sendSpy).toHaveBeenCalledWith(expect.objectContaining({ event_type: "loadingStateQuery" }));
+      expect(sendSpy).toHaveBeenCalledWith(
+        expect.objectContaining({ event_type: "loadingStateQuery" }),
+        undefined,
+        "background",
+      );
     } finally {
       reviewEnv.streamStartTimeoutMs = originalStreamStartTimeoutMs;
     }
@@ -5187,6 +5295,30 @@ describe("Q-Important #2：highlight 分支須驗 payload 形狀（items 非陣�
     expect(overlaySpy.mock.calls[0][0]).toMatchObject({ ifc_guid: "GUID-OK" });
     const highlightResults = postedTypes(parent).filter((t) => t === "highlight_result");
     expect(highlightResults).toHaveLength(1);
+  });
+
+  it("合法的 clientRequestId 只作 console ACK 關聯並原樣回傳；Kit requestId 仍由 viewer 產生", () => {
+    vi.stubEnv("VITE_ALLOWED_COORDINATOR_ORIGINS", PARENT_ORIGIN);
+    const parent = setEmbedded(`${PARENT_ORIGIN}/ui`);
+    const app = operableApp();
+    vi.spyOn(internals(app), "_overlayHighlight").mockReturnValue({ ok: true, requestId: "kit_request_001" });
+    const message = new MessageEvent("message", {
+      data: {
+        protocol: "vg01",
+        type: "highlight",
+        clientRequestId: "console_highlight_001",
+        items: [{ ifc_guid: "GUID-OK", severity: "error" }],
+      },
+      origin: PARENT_ORIGIN,
+    });
+
+    internals(app)._handleParentMessage(message);
+
+    expect(parent.postMessage).toHaveBeenCalledWith(expect.objectContaining({
+      type: "highlight_result",
+      requestId: "kit_request_001",
+      clientRequestId: "console_highlight_001",
+    }), PARENT_ORIGIN);
   });
 });
 

@@ -776,4 +776,13 @@ export const coordinatorClient = {
   kitHealth: () => jsonGet<KitHealth>("/api/kit/health"),
   governanceIssues: () => jsonGet<{ issues: IssueRow[] }>("/api/governance/issues"),
   governanceRuleRuns: (limit = 5) => jsonGet<RuleRunHistoryResponse>(`/api/governance/rule-runs?limit=${limit}`),
+  getSessionIdleStatus: (sessionId: string) =>
+    jsonGet<{
+      session_id: string;
+      enabled: boolean;
+      has_connected_viewer: boolean;
+      is_counting_down: boolean;
+      remaining_seconds: number | null;
+      last_activity_at: string | null;
+    }>(`/api/review-sessions/${encodeURIComponent(sessionId)}/idle-status`),
 };

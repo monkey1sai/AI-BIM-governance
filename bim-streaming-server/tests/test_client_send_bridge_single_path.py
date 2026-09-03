@@ -24,6 +24,7 @@ def install_bridge_stubs():
         upstream_register=[],
         observe_kwargs=[],
         pushes=[],
+        queued=[],
         log_errors=[],
     )
 
@@ -59,6 +60,9 @@ def install_bridge_stubs():
 
     omni_kit_app.get_app = lambda: types.SimpleNamespace(
         get_message_bus_event_stream=lambda: types.SimpleNamespace(push=push)
+    )
+    omni_kit_app.queue_event = lambda event_name, payload=None: calls.queued.append(
+        {"event_name": event_name, "payload": payload}
     )
     omni_kit.app = omni_kit_app
 
@@ -111,6 +115,7 @@ def reset_calls():
     CALLS.upstream_register.clear()
     CALLS.observe_kwargs.clear()
     CALLS.pushes.clear()
+    CALLS.queued.clear()
     CALLS.log_errors.clear()
 
 
@@ -137,14 +142,35 @@ def test_push_half_still_registers_and_forwards_wire_shape():
     )
     observed["on_event"](event)
 
-    assert len(CALLS.pushes) == 1
-    pushed = CALLS.pushes[0]
-    assert pushed["event_type"] == "type:omni.kit.livestream.send_message"
-    assert pushed["payload"]["sender_id"] == 7
-    wire = json.loads(pushed["payload"]["message"])
+    # Issue #757: the +110 livestream plugin only reads omni.kit.app.queue_event,
+    # so the envelope goes through exactly that channel and never the legacy push.
+    assert CALLS.pushes == []
+    assert len(CALLS.queued) == 1
+    queued = CALLS.queued[0]
+    assert queued["event_name"] == "omni.kit.livestream.send_message"
+    assert queued["payload"]["sender_id"] == 7
+    wire = json.loads(queued["payload"]["message"])
     assert wire == {
         "event_type": "commandRejected",
         "payload": {"request_id": "c2-01"},
+    }
+
+
+def test_legacy_message_bus_push_is_only_a_fallback_without_queue_event(monkeypatch):
+    omni_kit_app = client_send_bridge.omni.kit.app  # the module object the bridge itself bound
+    monkeypatch.delattr(omni_kit_app, "queue_event")
+    client_send_bridge.register_event_type_to_send("loadingStateResponse")
+    on_event = CALLS.observe_kwargs[0]["on_event"]
+
+    on_event(types.SimpleNamespace(payload={"loading_state": "idle"}))
+
+    assert CALLS.queued == []
+    assert len(CALLS.pushes) == 1
+    pushed = CALLS.pushes[0]
+    assert pushed["event_type"] == "type:omni.kit.livestream.send_message"
+    assert json.loads(pushed["payload"]["message"]) == {
+        "event_type": "loadingStateResponse",
+        "payload": {"loading_state": "idle"},
     }
 
 
@@ -155,4 +181,5 @@ def test_unserialisable_payload_is_dropped_not_pushed():
     on_event(types.SimpleNamespace(payload={"bad": object()}))
 
     assert CALLS.pushes == []
+    assert CALLS.queued == []
     assert len(CALLS.log_errors) == 1

@@ -1,18 +1,19 @@
 import { randomUUID } from 'node:crypto'
 import { types } from 'node:util'
-import { digestCanonical, parseDeliveryPlan } from './parallel-delivery-fabric-contract.mjs'
+import { digestCanonical, normalizeScopeResource, parseDeliveryPlan } from './parallel-delivery-fabric-contract.mjs'
 import { parseSessionLeaseRegistry } from './parallel-delivery-fabric-registry.mjs'
 
 const COMMAND_TYPES = new Set(['submit', 'advance', 'reconcile', 'drain', 'release'])
 const ADVANCE_LEVELS = new Set(['implement_local', 'push_owned_branch', 'open_draft_pr', 'submit_delivery'])
 const COMMAND_ID = /^[A-Za-z][A-Za-z0-9._:-]{2,127}$/u
-const SECRET_KEY = /(?:secret|token|password|credential|private|cookie|authorization|bearer|\benv\b|_env$|^env_|\bsid\b|\bpid\b|transcript|process_id|absolute_path|(?:^|_)path$)/iu
+const SECRET_KEY = /(?:secret|token|password|credential|private|cookie|authorization|bearer|\benv\b|_env$|^env_|\bsid\b|\bpid\b|transcript|process_id|absolute_path)/iu
 const SECRET_VALUE = /(?:gh[pousr]_[A-Za-z0-9_]+|github_pat_[A-Za-z0-9_]+|bearer\s+|-----BEGIN|eyJ[A-Za-z0-9_-]{10,}|(?:^|[/:])S-\d+(?:-\d+){2,}(?=$|[/:])|(?:^|[/:])\d+$|(?:^|:)[A-Za-z]:[\\/]|(?:^|:)(?:\\\\|\/)|\$env:|%[A-Za-z_][A-Za-z0-9_]*%)/iu
 const SAFE_REASON = /^[A-Za-z0-9_:-]{1,128}$/u
 const FORBIDDEN_KEY = /^(?:__proto__|prototype|constructor)$/iu
 const MAX_SNAPSHOT_DEPTH = 16
 const MAX_SNAPSHOT_KEYS = 128
-const MAX_SNAPSHOT_NODES = 512
+// Matches the CLI node budget: a contract-maximum 64-task plan must snapshot.
+const MAX_SNAPSHOT_NODES = 4096
 const MAX_SNAPSHOT_BYTES = 256 * 1024
 const EFFECT_KEYS = Object.freeze(['filesystem', 'git', 'network', 'process', 'provider', 'github', 'deploy', 'cleanup', 'promotion'])
 const NEXT_LEVEL = Object.freeze({ plan_only: 'implement_local', implement_local: 'push_owned_branch', push_owned_branch: 'open_draft_pr', open_draft_pr: 'submit_delivery' })
@@ -127,14 +128,21 @@ const configured = (rawPorts) => {
   try { root = portObject(rawPorts, Object.hasOwn(rawPorts ?? {}, 'projection') ? ['commandJournal', 'planRegistry', 'leaseRegistry', 'execution', 'providerAdapters', 'projection'] : ['commandJournal', 'planRegistry', 'leaseRegistry', 'execution', 'providerAdapters']) } catch { return undefined }
   if (!root) return undefined
   const commandJournal = portObject(root.commandJournal, ['read', 'reserve', 'commit'])
-  const planRegistry = portObject(root.planRegistry, ['submit', 'inspect'])
-  const leaseRegistry = portObject(root.leaseRegistry, ['admit', 'reconcileTimeout', 'endRequest', 'release', 'inspect'])
+  const planRegistry = portObject(root.planRegistry, ['submit', 'validateGeneration', 'inspect'])
+  const leaseKeys = Object.hasOwn(root.leaseRegistry ?? {}, 'releaseRetainedResources')
+    ? ['admit', 'validateActive', 'validateDependencies', 'reconcileTimeout', 'drainPlan', 'release', 'releaseRetainedResources', 'inspect']
+    : ['admit', 'validateActive', 'validateDependencies', 'reconcileTimeout', 'drainPlan', 'release', 'inspect']
+  const leaseRegistryRaw = portObject(root.leaseRegistry, leaseKeys)
+  const leaseRegistry = leaseRegistryRaw && Object.freeze({
+    ...leaseRegistryRaw,
+    releaseRetainedResources: leaseRegistryRaw.releaseRetainedResources ?? (async () => ({ status: 'HELD', reason: 'RETENTION_RELEASE_AUTHORITY_UNAVAILABLE' })),
+  })
   const execution = portObject(root.execution, ['advance'])
   const adapters = portObject(root.providerAdapters, ['codex', 'claude'])
   const codex = adapters && portObject(adapters.codex, ['preflight'])
   const claude = adapters && portObject(adapters.claude, ['preflight'])
   const projection = Object.hasOwn(root, 'projection') ? portObject(root.projection, ['reconcile']) : undefined
-  const functions = [commandJournal?.read, commandJournal?.reserve, commandJournal?.commit, planRegistry?.submit, planRegistry?.inspect, leaseRegistry?.admit, leaseRegistry?.reconcileTimeout, leaseRegistry?.endRequest, leaseRegistry?.release, leaseRegistry?.inspect, execution?.advance, codex?.preflight, claude?.preflight, ...(projection ? [projection.reconcile] : [])]
+  const functions = [commandJournal?.read, commandJournal?.reserve, commandJournal?.commit, planRegistry?.submit, planRegistry?.validateGeneration, planRegistry?.inspect, leaseRegistry?.admit, leaseRegistry?.validateActive, leaseRegistry?.validateDependencies, leaseRegistry?.reconcileTimeout, leaseRegistry?.drainPlan, leaseRegistry?.release, leaseRegistry?.releaseRetainedResources, leaseRegistry?.inspect, execution?.advance, codex?.preflight, claude?.preflight, ...(projection ? [projection.reconcile] : [])]
   return functions.every((entry) => typeof entry === 'function') && (!Object.hasOwn(root, 'projection') || projection) ? deepFreeze({ commandJournal, planRegistry, leaseRegistry, execution, providerAdapters: { codex, claude }, ...(projection ? { projection } : {}) }) : undefined
 }
 
@@ -148,7 +156,7 @@ const commandShapeIsValid = (command) => {
     submit: ['type', 'command_id', 'plan', 'expected_oid', 'nonce', 'execution', 'effects'],
     advance: ['type', 'command_id', 'envelope', 'advance_command', 'admission', 'provider_request'],
     reconcile: ['type', 'command_id', 'reconcile_request'],
-    drain: ['type', 'command_id', 'end_request'],
+    drain: ['type', 'command_id', 'drain_request'],
     release: ['type', 'command_id', 'release_request'],
   }
   return exactKeys(command, shapes[command.type])
@@ -194,6 +202,13 @@ const validReleaseRequest = (request) => {
   const proof = request.attestation
   return proof.lease_id === request.lease_id && proof.issuer_id !== proof.owner_session && ['codex', 'claude'].includes(proof.provider) && ['attestation_ref', 'issuer_id', 'issuer_version', 'owner_session', 'provider_session_id', 'execution_context_id', 'lease_id'].every((key) => typeof proof[key] === 'string' && /^[A-Za-z0-9][A-Za-z0-9._:/-]{1,127}$/u.test(proof[key])) && ['attestation_digest', 'scope_digest', 'worktree_path_digest'].every((key) => /^[0-9a-f]{64}$/u.test(proof[key])) && /^[0-9a-f]{40}$/u.test(proof.head_sha) && typeof proof.nonce === 'string' && /^[A-Za-z0-9_-]{32,128}$/u.test(proof.nonce) && Number.isSafeInteger(proof.generation) && proof.generation > 0 && Number.isSafeInteger(proof.revocation_epoch) && proof.revocation_epoch >= 0 && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u.test(proof.observed_at) && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u.test(proof.expires_at) && Date.parse(proof.observed_at) < Date.parse(proof.expires_at)
 }
+const validRetainedReleaseRequest = (request) => isObject(request) &&
+  exactKeys(request, ['lease_ids', 'expected_oid', 'nonce', 'owner_attestation']) &&
+  Array.isArray(request.lease_ids) && request.lease_ids.length > 0 && request.lease_ids.length <= 256 &&
+  new Set(request.lease_ids).size === request.lease_ids.length &&
+  request.lease_ids.every((leaseId) => typeof leaseId === 'string' && /^[A-Za-z0-9][A-Za-z0-9._:/-]{1,127}$/u.test(leaseId)) &&
+  typeof request.expected_oid === 'string' && /^[0-9a-f]{40}$/u.test(request.expected_oid) &&
+  typeof request.nonce === 'string' && /^[A-Za-z0-9_-]{32,128}$/u.test(request.nonce) && isObject(request.owner_attestation)
 
 const validReleased = (result, request) => isObject(result) && exactKeys(result, ['status', 'oid', 'lease']) && result.status === 'RELEASED' && /^[0-9a-f]{40}$/u.test(result.oid) && isObject(result.lease) && exactKeys(result.lease, ['lease_id', 'state', 'retention_state', 'release_record']) && result.lease.lease_id === request.lease_id && result.lease.state === 'RELEASED' && result.lease.retention_state === 'RETAINED_FOR_REVIEW' && isObject(result.lease.release_record) && exactKeys(result.lease.release_record, ['owner_end_attestation_ref', 'owner_end_attestation_digest']) && result.lease.release_record.owner_end_attestation_ref === request.attestation.attestation_ref && result.lease.release_record.owner_end_attestation_digest === request.attestation.attestation_digest
 const bound = (value, keys, status, bindings) => isObject(value) && exactKeys(value, keys) && value.status === status && Object.entries(bindings).every(([key, expected]) => value[key] === expected)
@@ -209,10 +224,111 @@ const validLeaseSnapshot = (value, planId) => {
   if (value.record === null) return value
   try {
     const record = parseSessionLeaseRegistry(value.record)
-    const leases = Object.fromEntries(Object.entries(record.leases).filter(([, lease]) => lease.plan_id === planId))
-    return deepFreeze({ oid: value.oid, record: { ...record, leases } })
+    // Every plan-owned collection is projected, and the projection is re-authenticated so
+    // it neither leaks another plan's state nor fails a consumer's registry parse.
+    const ownedByPlan = (entry) => entry?.plan_id === planId
+    const leases = Object.fromEntries(Object.entries(record.leases).filter(([, lease]) => ownedByPlan(lease)))
+    const retainedResources = Object.fromEntries(Object.entries(record.retained_resources).filter(([, stub]) => ownedByPlan(stub)))
+    const drainingPlans = Object.fromEntries(Object.entries(record.draining_plans).filter(([, drain]) => ownedByPlan(drain)))
+    const usedOwnerEndAttestations = Object.fromEntries(Object.entries(record.used_owner_end_attestations)
+      .filter(([, used]) => Object.hasOwn(leases, used.lease_id) || Object.hasOwn(retainedResources, used.lease_id)))
+    const { canonical_digest: sourceDigest, ...unsigned } = {
+      ...record, leases, retained_resources: retainedResources, draining_plans: drainingPlans, used_owner_end_attestations: usedOwnerEndAttestations,
+    }
+    const projected = parseSessionLeaseRegistry({ ...unsigned, canonical_digest: digestCanonical(unsigned) })
+    return deepFreeze({ oid: value.oid, record: projected, projection: { scope: 'plan', plan_id: planId, source_oid: value.oid, source_digest: sourceDigest } })
   } catch { return undefined }
 }
+
+const STABLE_ADVANCE_BINDINGS = Object.freeze([
+  'plan_id', 'generation', 'task_id', 'owner_session', 'provider', 'provider_session_id',
+  'execution_context_id', 'repo_identity_digest', 'common_dir_digest', 'baseline_sha', 'scope_digest',
+])
+const ADMISSION_ADVANCE_BINDINGS = Object.freeze([
+  'plan_id', 'generation', 'task_id', 'provider', 'owner_session', 'provider_session_id',
+  'execution_context_id', 'common_dir_digest', 'worktree_id', 'worktree_path_digest',
+  'branch', 'scope_digest', 'head_sha', 'lease_id',
+])
+const PROVIDER_ADVANCE_BINDINGS = Object.freeze([
+  'owner_session', 'provider', 'provider_session_id', 'execution_context_id', 'lease_id',
+  'repo_identity_digest', 'common_dir_digest', 'worktree_id', 'worktree_path_digest',
+  'branch', 'baseline_sha', 'head_sha', 'scope_digest',
+])
+const exactBinding = (left, right, keys) => keys.every((key) => own(left, key) && own(right, key) && left[key] === right[key])
+const resourceFromKey = (key) => {
+  if (typeof key !== 'string') return undefined
+  const separator = key.indexOf(':')
+  if (separator < 1) return undefined
+  const kind = key.slice(0, separator)
+  const value = key.slice(separator + 1)
+  if (kind === 'path') return { kind, path: value }
+  if (kind === 'glob') return { kind, pattern: value }
+  if (kind === 'rename') {
+    const endpoints = value.split(':')
+    return endpoints.length === 2 ? { kind, old_path: endpoints[0], new_path: endpoints[1] } : undefined
+  }
+  if (['shared_contract', 'exported_symbol', 'schema', 'event', 'migration', 'runtime'].includes(kind)) return { kind, resource_key: value }
+  return undefined
+}
+const canonicalResourceKey = (resource) => resource.kind === 'path'
+  ? `path:${resource.path}`
+  : resource.kind === 'glob'
+    ? `glob:${resource.pattern}`
+    : resource.kind === 'rename'
+      ? `rename:${resource.old_path}:${resource.new_path}`
+      : `${resource.kind}:${resource.resource_key}`
+const admissionScopeIsBound = (admission) => {
+  try {
+    if (!Array.isArray(admission.resource_keys) || admission.resource_keys.length < 1 || admission.resource_keys.length > 256) return false
+    const scope = admission.resource_keys.map((key) => {
+      const candidate = resourceFromKey(key)
+      if (!candidate) throw new Error('resource_key_invalid')
+      const resource = normalizeScopeResource(candidate)
+      if (canonicalResourceKey(resource) !== key) throw new Error('resource_key_not_canonical')
+      return resource
+    })
+    scope.sort((left, right) => canonicalResourceKey(left).localeCompare(canonicalResourceKey(right)))
+    return new Set(admission.resource_keys).size === admission.resource_keys.length && digestCanonical(scope) === admission.scope_digest
+  } catch { return false }
+}
+const advanceBindingsValid = (command) => {
+  const current = command.envelope
+  const transition = command.advance_command?.next_envelope
+  const admission = command.admission
+  const executionContext = command.provider_request?.execution_context
+  const expected = executionContext?.expected
+  const attestation = executionContext?.attestation
+  return isObject(current) && isObject(transition) && isObject(admission) && isObject(expected) && isObject(attestation) &&
+    transition.current_level === command.advance_command.next_level &&
+    exactBinding(current, transition, STABLE_ADVANCE_BINDINGS) &&
+    exactBinding(transition, admission, ADMISSION_ADVANCE_BINDINGS) &&
+    exactBinding(transition, expected, PROVIDER_ADVANCE_BINDINGS) &&
+    admissionScopeIsBound(admission) &&
+    typeof attestation.attestation_ref === 'string' && admission.context_attestation_ref === attestation.attestation_ref
+}
+
+const activePlanTask = (value, command) => {
+  if (!isObject(value) || !exactKeys(value, ['status', 'plan_id', 'generation', 'oid', 'task']) || value.status !== 'ACTIVE' ||
+      value.plan_id !== command.envelope.plan_id || value.generation !== command.envelope.generation ||
+      !/^[0-9a-f]{40}$/u.test(value.oid) || value.oid === '0'.repeat(40)) return undefined
+  const task = value.task
+  // A task with predecessors sits on its integrated parent (the predecessor handoff
+  // head, verified by the dependency authority), not on the plan-wide baseline.
+  const dependent = isObject(task) && Array.isArray(task.dependencies) && task.dependencies.length > 0
+  if (!isObject(task) || !exactKeys(task, ['task_id', 'owner_session', 'provider', 'baseline_sha', 'scope_digest', 'dependencies']) ||
+      task.task_id !== command.envelope.task_id || task.owner_session !== command.envelope.owner_session ||
+      task.provider !== command.envelope.provider || (!dependent && task.baseline_sha !== command.envelope.baseline_sha) ||
+      task.scope_digest !== command.envelope.scope_digest || !Array.isArray(task.dependencies) || task.dependencies.length > 64 ||
+      new Set(task.dependencies).size !== task.dependencies.length ||
+      task.dependencies.some((dependency) => typeof dependency !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._:/-]{1,127}$/u.test(dependency) || dependency === task.task_id)) return undefined
+  return task
+}
+
+const dependencyAuthorityReady = (value, command, task) => isObject(value) && exactKeys(value, [
+  'status', 'plan_id', 'generation', 'task_id', 'expected_parent_sha', 'dependency_count',
+]) && value.status === 'READY' && value.plan_id === command.envelope.plan_id &&
+  value.generation === command.envelope.generation && value.task_id === command.envelope.task_id &&
+  value.expected_parent_sha === command.envelope.baseline_sha && value.dependency_count === task.dependencies.length
 
 export function createParallelDeliveryFabric(ports) {
   const capabilities = configured(ports)
@@ -229,7 +345,10 @@ export function createParallelDeliveryFabric(ports) {
       if (!commandShapeIsValid(command)) return outcome(commandId, type, 'HELD', 'COMMAND_SCHEMA_INVALID')
       if (!ready) return outcome(commandId, type, 'HELD', 'ORCHESTRATOR_PORTS_INVALID')
       if (type === 'submit' && !submittedPlanIsMetadataOnly(command)) return outcome(commandId, type, 'HELD', 'PLAN_ONLY_REQUIRED')
-      if (type === 'release' && !validReleaseRequest(command.release_request)) return outcome(commandId, type, 'HELD', 'RELEASE_REQUEST_INVALID')
+      const retainedRelease = type === 'release' && Array.isArray(command.release_request?.lease_ids)
+      if (type === 'release' && !(retainedRelease ? validRetainedReleaseRequest(command.release_request) : validReleaseRequest(command.release_request))) {
+        return outcome(commandId, type, 'HELD', 'RELEASE_REQUEST_INVALID')
+      }
 
       const commandDigest = digestCanonical(command)
       const attemptId = `attempt:${randomUUID()}`
@@ -263,27 +382,67 @@ export function createParallelDeliveryFabric(ports) {
           next = outcome(command.command_id, type, 'HELD', 'ADVANCE_TRANSITION_INVALID')
         } else if (command.advance_command.next_level === 'submit_delivery') {
           next = task9Unavailable(command)
+        } else if (!advanceBindingsValid(command)) {
+          next = outcome(command.command_id, type, 'HELD', 'ADVANCE_BINDING_MISMATCH')
         } else {
-          let execution
-          try { execution = safePortResult(await capabilities.execution.advance(command.envelope, command.advance_command)) } catch { execution = undefined }
-          if (!bound(execution, ['status', 'next_level'], 'SHADOW_INTENT', { next_level: command.advance_command.next_level })) {
-            next = heldFromPort(command, 'EXECUTION_VALIDATION_UNAVAILABLE', execution)
+          let plan
+          try {
+            plan = safePortResult(await capabilities.planRegistry.validateGeneration({
+              plan_id: command.envelope.plan_id,
+              generation: command.envelope.generation,
+              task_id: command.envelope.task_id,
+            }))
+          } catch { plan = undefined }
+          const task = activePlanTask(plan, command)
+          if (!task) {
+            const activePlanOid = plan?.status === 'ACTIVE' && typeof plan?.oid === 'string' && /^[0-9a-f]{40}$/u.test(plan.oid) && plan.oid !== '0'.repeat(40)
+            next = heldFromPort(command, activePlanOid ? 'PLAN_TASK_BINDING_MISMATCH' : 'PLAN_GENERATION_UNAVAILABLE', plan)
           } else {
-          let admission
-          try { admission = safePortResult(await capabilities.leaseRegistry.admit(command.admission)) } catch { admission = undefined }
-          if (bound(admission, ['status', 'reason'], 'QUEUED_FOR_LEASE', {})) {
-            next = outcome(command.command_id, type, 'QUEUED', safeReason(admission.reason, 'LEASE_CAPACITY_UNAVAILABLE'))
-          } else if (!bound(admission, ['status', 'lease_id'], 'ADMITTED', { lease_id: command.admission.lease_id })) {
-            next = heldFromPort(command, 'ADMISSION_UNAVAILABLE', admission)
-          } else {
-            const provider = command.envelope?.provider
-            const adapter = capabilities.providerAdapters[provider]
-            let preflight
-            try { preflight = safePortResult(await adapter.preflight(command.provider_request)) } catch { preflight = undefined }
-            next = bound(preflight, ['status', 'provider'], 'READY_FOR_SHADOW', { provider })
-              ? outcome(command.command_id, type, 'SHADOW_INTENT', 'ADVANCE_READY_FOR_SHADOW')
-              : heldFromPort(command, 'PROVIDER_PREFLIGHT_UNAVAILABLE', preflight)
-          }
+            let dependencyAuthority
+            if (task.dependencies.length > 0) {
+              try {
+                dependencyAuthority = safePortResult(await capabilities.leaseRegistry.validateDependencies({
+                  plan_id: command.envelope.plan_id,
+                  generation: command.envelope.generation,
+                  task_id: command.envelope.task_id,
+                  dependency_task_ids: task.dependencies,
+                  expected_parent_sha: command.envelope.baseline_sha,
+                }))
+              } catch { dependencyAuthority = undefined }
+            }
+            if (task.dependencies.length > 0 && !dependencyAuthorityReady(dependencyAuthority, command, task)) {
+              next = heldFromPort(command, 'DEPENDENCY_AUTHORITY_UNAVAILABLE', dependencyAuthority)
+            } else {
+              let execution
+              try { execution = safePortResult(await capabilities.execution.advance(command.envelope, command.advance_command)) } catch { execution = undefined }
+              if (!bound(execution, ['status', 'next_level'], 'SHADOW_INTENT', { next_level: command.advance_command.next_level })) {
+                next = heldFromPort(command, 'EXECUTION_VALIDATION_UNAVAILABLE', execution)
+              } else {
+                const provider = command.envelope?.provider
+                const adapter = provider === 'codex' || provider === 'claude' ? capabilities.providerAdapters[provider] : undefined
+                let preflight
+                try { preflight = adapter ? safePortResult(await adapter.preflight(command.provider_request)) : undefined } catch { preflight = undefined }
+                if (!bound(preflight, ['status', 'provider'], 'READY_FOR_SHADOW', { provider })) {
+                  next = heldFromPort(command, 'PROVIDER_PREFLIGHT_UNAVAILABLE', preflight)
+                } else {
+                  let admission
+                  try {
+                    const guardedAdmission = { ...command.admission, expected_plan_oid: plan.oid }
+                    admission = safePortResult(await (command.envelope.current_level === 'plan_only'
+                      ? capabilities.leaseRegistry.admit(guardedAdmission)
+                      : capabilities.leaseRegistry.validateActive(guardedAdmission)))
+                  } catch { admission = undefined }
+                  if (bound(admission, ['status', 'reason'], 'QUEUED_FOR_LEASE', {})) {
+                    next = outcome(command.command_id, type, 'QUEUED', safeReason(admission.reason, 'LEASE_CAPACITY_UNAVAILABLE'))
+                  } else {
+                    const expectedStatus = command.envelope.current_level === 'plan_only' ? 'ADMITTED' : 'ACTIVE'
+                    next = bound(admission, ['status', 'lease_id'], expectedStatus, { lease_id: command.admission.lease_id })
+                      ? outcome(command.command_id, type, 'SHADOW_INTENT', 'ADVANCE_READY_FOR_SHADOW')
+                      : heldFromPort(command, 'ADMISSION_UNAVAILABLE', admission)
+                  }
+                }
+              }
+            }
           }
         }
       } else if (type === 'reconcile') {
@@ -301,15 +460,28 @@ export function createParallelDeliveryFabric(ports) {
             : heldFromPort(command, 'PROJECTION_UNAVAILABLE', projection)
         } else next = outcome(command.command_id, type, 'HELD', 'PROJECTION_DEGRADED')
       } else if (type === 'drain') {
-        let drained
-        try { drained = safePortResult(await capabilities.leaseRegistry.endRequest(command.end_request)) } catch { drained = undefined }
-        next = bound(drained, ['status', 'lease_id'], 'END_REQUESTED', { lease_id: command.end_request.lease_id })
-          ? outcome(command.command_id, type, 'SHADOW_STORED', 'END_REQUESTED')
-          : heldFromPort(command, 'END_REQUEST_UNAVAILABLE', drained)
+        let plan
+        try { plan = safePortResult(await capabilities.planRegistry.validateGeneration({ plan_id: command.drain_request.plan_id, generation: command.drain_request.generation })) } catch { plan = undefined }
+        if (!bound(plan, ['status', 'plan_id', 'generation', 'oid'], 'ACTIVE', { plan_id: command.drain_request.plan_id, generation: command.drain_request.generation }) || !/^[0-9a-f]{40}$/u.test(plan.oid) || plan.oid === '0'.repeat(40)) {
+          next = heldFromPort(command, 'PLAN_GENERATION_UNAVAILABLE', plan)
+        } else {
+          let drained
+          try { drained = safePortResult(await capabilities.leaseRegistry.drainPlan({ ...command.drain_request, expected_plan_oid: plan.oid })) } catch { drained = undefined }
+          next = bound(drained, ['status', 'plan_id'], 'DRAINING', { plan_id: command.drain_request.plan_id })
+            ? outcome(command.command_id, type, 'SHADOW_STORED', 'PLAN_DRAINING')
+            : heldFromPort(command, 'PLAN_DRAIN_UNAVAILABLE', drained)
+        }
       } else if (type === 'release') {
-        // A base-owned, prior-pinned OwnerEndAttestor descriptor is not exposed
-        // by this public seam.  Never treat caller-shaped evidence as authority.
-        next = outcome(command.command_id, type, 'HELD', 'RELEASE_AUTHORITY_UNAVAILABLE')
+        if (!retainedRelease) {
+          // Ordinary lease release still requires the sequenced envelope path.
+          next = outcome(command.command_id, type, 'HELD', 'RELEASE_AUTHORITY_UNAVAILABLE')
+        } else {
+          let released
+          try { released = safePortResult(await capabilities.leaseRegistry.releaseRetainedResources(command.release_request)) } catch { released = undefined }
+          next = bound(released, ['status'], 'RETENTION_RELEASED', {})
+            ? outcome(command.command_id, type, 'SHADOW_STORED', 'RETENTION_RELEASED')
+            : heldFromPort(command, 'RETENTION_RELEASE_AUTHORITY_UNAVAILABLE', released)
+        }
       } else {
         next = outcome(command.command_id, type, 'HELD', 'COMMAND_NOT_IMPLEMENTED')
       }

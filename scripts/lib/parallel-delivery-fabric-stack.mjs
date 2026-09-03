@@ -253,6 +253,10 @@ export function planDirectStackDispatch(input = {}) {
     }
     const observation = parseObservation(value.observation)
     if (observation === null) return closed('PREMERGE_EVIDENCE_INVALID', 'stack_observation_invalid')
+    const observedAt = Date.parse(observation.observed_at)
+    if (observedAt < Date.parse(frozenStack.created_at) || observedAt >= Date.parse(frozenStack.expires_at)) {
+      return closed('PREMERGE_EVIDENCE_INVALID', 'stack_envelope_outside_validity_window')
+    }
     if (observation.capability_state !== 'enabled') return closed('PREMERGE_AUTHORITY_UNAVAILABLE', 'direct_stack_capability_unavailable')
     const vectorMatches = selectedPrefixIsValid(frozenStack, observation.chain, value.repository) && stackIsLinear(frozenStack) &&
       observation.repository === value.repository && observation.trunk_ref === frozenStack.trunk_ref &&
@@ -289,14 +293,10 @@ export function dispatchDirectStackMerge(input = {}) {
     })
     if (reread.phase !== 'READY_TO_MERGE' || !sameCanonical(reread, plan)) return reread
     if (typeof input.send !== 'function') return closed('PREMERGE_AUTHORITY_UNAVAILABLE', 'stack_dispatch_port_unavailable')
-    const response = canonicalCopy(input.send(structuredClone(reread.request)))
-    if (response === null) return closed('MERGE_OUTCOME_UNVERIFIED', 'stack_dispatch_response_privacy_or_shape_invalid')
-    return deepFreeze({
-      phase: 'MERGING',
-      internal_state: 'STACK_DISPATCH_RESPONSE_PENDING_REDUCTION',
-      plan: reread,
-      response,
-    })
+    // Phase 0 deliberately has no activation authority. Keep the sink inert even
+    // when a caller injects a function; reducers can still validate recorded
+    // responses without turning this candidate-owned module into a merge sink.
+    return closed('PREMERGE_AUTHORITY_UNAVAILABLE', 'direct_stack_activation_held')
   } catch {
     return closed('PREMERGE_AUTHORITY_UNAVAILABLE', 'stack_dispatch_port_failed')
   }
@@ -380,6 +380,12 @@ const parseStackPoll = (raw, plan, accepted) => {
     poll.request_digest !== plan.request_digest || !sameCanonical(poll.operation, accepted.operation)) return null
   const operation = parseOperation(poll.operation, plan)
   if (operation === null) return null
+  // A poll observed before the frozen stack existed cannot describe its merge: a
+  // replayed stale observation would otherwise become `merged_at` and let a
+  // deployment dated before the stack satisfy the merge-to-deploy ordering.
+  const observedAt = Date.parse(poll.observed_at)
+  if (observedAt < Date.parse(plan.frozen_stack.created_at) ||
+      observedAt >= Date.parse(plan.frozen_stack.expires_at)) return null
   if (poll.status === 'pending') return exactKeys(poll, baseKeys) ? { kind: 'pending' } : null
   if (['timeout', 'expired', 'not_found', 'ambiguous'].includes(poll.status)) {
     return exactKeys(poll, baseKeys) ? { kind: 'unproven' } : null
@@ -490,10 +496,12 @@ const parseDeployment = (raw, merged, plan, operation) => {
     'post_deploy_status', 'group_verification_digest',
   ]) || deployment.schema_version !== 'stack-deployment-observation/v1' ||
     !isCanonicalUtcMillisecondTimestamp(deployment.observed_at) || deployment.stack_id !== merged.stack_id ||
+    Date.parse(deployment.observed_at) < Date.parse(merged.merged_at) ||
+    Date.parse(deployment.observed_at) >= Date.parse(plan.frozen_stack.expires_at) ||
     deployment.repository !== merged.repository || deployment.request_digest !== merged.request_digest ||
     !sameCanonical(deployment.operation, operation) || deployment.frozen_vector_digest !== merged.frozen_vector_digest ||
     deployment.stack_result_merge_commit_sha !== merged.stack_result_merge_commit_sha ||
-    deployment.deployment_target_reference !== plan.request.deployment_target_reference ||
+    deployment.deployment_target_reference !== plan.frozen_stack.deployment_target_reference ||
     !['queued', 'running', 'completed', 'failed', 'cancelled'].includes(deployment.command_state) ||
     !(deployment.deployed_commit_sha === null || isSha(deployment.deployed_commit_sha)) ||
     !['not_started', 'running', 'passed', 'failed', 'unknown'].includes(deployment.post_deploy_status) ||

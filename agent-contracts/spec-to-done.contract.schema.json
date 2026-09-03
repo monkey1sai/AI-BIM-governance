@@ -3,7 +3,7 @@
   "$id": "spec-to-done.contract.schema.json",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema_version", "phases", "durable_state", "parallel_delivery_binding", "terminal_evidence", "ship"],
+  "required": ["schema_version", "phases", "durable_state", "terminal_evidence", "ship"],
   "definitions": {
     "newRunCounterResets": {
       "type": "object",
@@ -46,29 +46,17 @@
   },
   "properties": {
     "$schema": { "type": "string" },
-    "schema_version": { "const": "spec-to-done-contract/v2" },
+    "schema_version": { "const": "spec-to-done-contract/v1" },
     "phases": {
       "const": ["P0", "P1", "P3", "P4", "P5", "P6", "P7"]
     },
     "durable_state": {
       "type": "object",
       "additionalProperties": false,
-      "required": [
-        "canonical_relative_path",
-        "fabric_managed_relative_path",
-        "fabric_binding_relative_path",
-        "new_run_boundary",
-        "held_reasons"
-      ],
+      "required": ["canonical_relative_path", "new_run_boundary", "held_reasons"],
       "properties": {
         "canonical_relative_path": {
           "const": "artifacts/spec-to-done/{slug}-state.md"
-        },
-        "fabric_managed_relative_path": {
-          "const": "artifacts/spec-to-done/{slug}--{binding_id}-state.md"
-        },
-        "fabric_binding_relative_path": {
-          "const": "artifacts/spec-to-done/bindings/{binding_id}.json"
         },
         "new_run_boundary": {
           "type": "object",
@@ -93,38 +81,6 @@
           "uniqueItems": true,
           "items": { "type": "string", "pattern": "^[a-z][a-z0-9_]*$" }
         }
-      }
-    },
-    "parallel_delivery_binding": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "schema_version",
-        "schema_path",
-        "state_mode",
-        "mode_field",
-        "binding_id_field",
-        "session_admission_limit",
-        "run_writer_cardinality",
-        "held_lease_action",
-        "local_new_run_allowed",
-        "local_resume_allowed",
-        "resume_authority",
-        "delivery_authority"
-      ],
-      "properties": {
-        "schema_version": { "const": "spec-to-done-fabric-binding/v1" },
-        "schema_path": { "const": "agent-contracts/spec-to-done-fabric-binding.schema.json" },
-        "state_mode": { "const": "fabric-managed" },
-        "mode_field": { "const": "fabricMode" },
-        "binding_id_field": { "const": "fabricBindingId" },
-        "session_admission_limit": { "const": "unbounded" },
-        "run_writer_cardinality": { "const": 1 },
-        "held_lease_action": { "const": "retain_as_suspect" },
-        "local_new_run_allowed": { "const": false },
-        "local_resume_allowed": { "const": false },
-        "resume_authority": { "const": "fabric_verified_resume_intent_required" },
-        "delivery_authority": { "const": "non_authorizing" }
       }
     },
     "terminal_evidence": {

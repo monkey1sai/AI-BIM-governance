@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
 
-import { digestCanonical } from '../../lib/parallel-delivery-fabric-contract.mjs'
+import { FABRIC_SCHEMA_VERSION, digestCanonical } from '../../lib/parallel-delivery-fabric-contract.mjs'
 import { createLeaseRegistry, parseSessionLeaseRegistry } from '../../lib/parallel-delivery-fabric-registry.mjs'
 import * as admissionModule from '../../lib/parallel-delivery-fabric-admission.mjs'
 import {
@@ -33,11 +33,30 @@ const LATER = '2026-08-29T05:05:00.000Z'
 const LATER_2 = '2026-08-29T05:10:00.000Z'
 const EXPIRED = '2026-08-29T04:55:00.000Z'
 const NONCE = (suffix) => `${suffix}`.padEnd(32, 'n').slice(0, 32)
-const requestScopeDigest = (scope) => {
-  try { return digestCanonical(normalizeScope(scope)) } catch { return SHA256_D }
-}
+// Owner/session-bound proof required to end a lease (same closed shape the release path consumes).
+const endAttestation = (lease, overrides = {}) => ({
+  attestation_ref: `attestation:end-${lease.lease_id}`,
+  attestation_digest: SHA256_A,
+  issuer_id: 'attestor:owner-end',
+  issuer_version: 'owner-end/v1',
+  owner_session: lease.owner_session,
+  provider: lease.provider,
+  provider_session_id: lease.provider_session_id,
+  execution_context_id: lease.execution_context_id,
+  lease_id: lease.lease_id,
+  generation: lease.generation,
+  head_sha: lease.head_sha,
+  scope_digest: lease.scope_digest,
+  worktree_path_digest: lease.worktree_path_digest,
+  observed_at: NOW,
+  expires_at: new Date(Date.parse(NOW) + 600_000).toISOString(),
+  nonce: NONCE(`end-${lease.lease_id.replace(/[^A-Za-z0-9]/gu, '')}`),
+  revocation_epoch: lease.revocation_epoch,
+  ...overrides,
+})
+
 const REQUEST_SCOPE = [{ kind: 'path', path: 'src/task-one.mjs' }]
-const REQUEST_SCOPE_DIGEST = requestScopeDigest(REQUEST_SCOPE)
+const REQUEST_SCOPE_DIGEST = digestCanonical(REQUEST_SCOPE.map((resource) => ({ kind: resource.kind, path: resource.path.toLowerCase() })))
 const EXECUTION_SCOPE = [{ kind: 'path', path: 'src' }]
 const EXECUTION_SCOPE_DIGEST = digestCanonical(EXECUTION_SCOPE)
 const EXECUTION_CHANGED_EVIDENCE = 'M\0src/task-one.mjs\0'
@@ -96,7 +115,13 @@ const request = (overrides = {}) => {
     ...overrides,
   }
   if (Object.hasOwn(overrides, 'scope') && !Object.hasOwn(overrides, 'scope_digest')) {
-    value.scope_digest = requestScopeDigest(value.scope)
+    value.scope_digest = digestCanonical(value.scope.map((resource) => ({
+      kind: resource.kind,
+      ...(resource.path ? { path: resource.path.toLowerCase() } : {}),
+      ...(resource.pattern ? { pattern: resource.pattern.toLowerCase() } : {}),
+      ...(resource.old_path ? { old_path: resource.old_path.toLowerCase(), new_path: resource.new_path.toLowerCase() } : {}),
+      ...(resource.resource_key ? { resource_key: resource.resource_key.toLowerCase() } : {}),
+    })))
   }
   return value
 }
@@ -115,6 +140,53 @@ const snapshot = (overrides = {}) => ({
   ...overrides,
 })
 
+const task3PlanRecord = () => {
+  const plan = {
+    schema_version: FABRIC_SCHEMA_VERSION,
+    plan_id: 'plan:one',
+    generation: 1,
+    repo_identity: { full_name: 'acme/bim', repository_id: 1, common_dir_digest: SHA256_A },
+    created_at: NOW,
+    coordinator_session: 'session:coordinator',
+    baseline_ref: 'origin/main',
+    resolved_baseline_sha: SHA1_A,
+    tasks: [{
+      task_id: 'task:task3-one',
+      outcome: 'task3-admission-contract',
+      provider_preference: 'codex',
+      owner_session: 'session:task3-one',
+      scope: {
+        owning_service: 'delivery-fabric',
+        public_entrypoint: 'scripts/lib/parallel-delivery-fabric-registry.mjs',
+        resources: [{ kind: 'path', path: 'src/task3-one.mjs' }],
+        expected_tests: ['test:admission'],
+        e2e_required: false,
+      },
+      dependencies: [],
+      risk: 'bounded',
+      e2e_required: false,
+    }],
+    requested_capacity: { writers: 1, runtime_leases: 0 },
+    branch_profile: 'trunk',
+    acceptance_criteria: ['criterion:task3-admission'],
+    promotion_mode: 'single_pr',
+    requested_execution_level: 'plan_only',
+    authority_reference: 'authority:task3-plan',
+    governance_source_refs: ['openspec:parallel-delivery-fabric'],
+  }
+  const base = {
+    schema_version: 'delivery-plan-registry/v1',
+    generation: 1,
+    nonce: NONCE('task3-plan'),
+    created_at: NOW,
+    updated_at: NOW,
+    plan,
+    plan_digest: digestCanonical(plan),
+    execution: { level: 'plan_only', side_effect_class: 'CONTROL_METADATA' },
+  }
+  return { ...base, canonical_digest: digestCanonical(base) }
+}
+
 const createInMemoryTask3LeaseRegistry = ({ rejectFirstFinalization = false } = {}) => {
   let current = {
     ref: 'refs/ai-bim/session-leases',
@@ -123,9 +195,12 @@ const createInMemoryTask3LeaseRegistry = ({ rejectFirstFinalization = false } = 
   }
   let nextOid = SHA1_A
   let rejectFinalization = rejectFirstFinalization
+  const plan = { ref: 'refs/ai-bim/delivery-plans', oid: SHA1_D, record: task3PlanRecord() }
   const store = {
     commonDirDigest: SHA256_A,
-    async read() {
+    async read(ref) {
+      if (ref === plan.ref) return clone(plan)
+      if (typeof ref === 'string' && ref.startsWith(`${plan.ref}/`)) return { ref, oid: ZERO_OID, record: null }
       return clone(current)
     },
     async cas({ expected_oid: expectedOid, record }) {
@@ -153,31 +228,58 @@ const createInMemoryTask3LeaseRegistry = ({ rejectFirstFinalization = false } = 
       current = { ref: current.ref, oid, record: clone(record) }
       return { status: 'STORED', ref: current.ref, oid, previous_oid: expectedOid, record: clone(record) }
     },
+    async casGuarded({ ref, expected_oid: expectedOid, record, guard_ref: guardRef, guard_oid: guardOid }) {
+      if (guardRef !== plan.ref || guardOid !== plan.oid) {
+        return { status: 'CONFLICT', reason: 'GUARD_CONFLICT', ref, expected_oid: expectedOid, actual_oid: current.oid, actual_guard_oid: ZERO_OID }
+      }
+      return this.cas({ ref, expected_oid: expectedOid, record })
+    },
   }
   const clock = { now: () => NOW }
   const registry = createLeaseRegistry({ store, clock })
   return { store, registry }
 }
 
-const task3LeaseRequest = (store, overrides = {}) => ({
-  lease_id: overrides.lease_id ?? 'lease:task3-one',
-  plan_id: overrides.plan_id ?? 'plan:one',
-  generation: overrides.generation ?? 1,
-  task_id: overrides.task_id ?? 'task:task3-one',
-  provider: overrides.provider ?? 'codex',
-  owner_session: overrides.owner_session ?? 'session:task3-one',
-  provider_session_id: overrides.provider_session_id ?? 'provider:task3-one',
-  execution_context_id: overrides.execution_context_id ?? 'context:task3-one',
-  context_attestation_ref: overrides.context_attestation_ref ?? 'attestation:task3-one',
-  common_dir_digest: overrides.common_dir_digest ?? store.commonDirDigest,
-  worktree_id: overrides.worktree_id ?? 'worktree:task3-one',
-  worktree_path_digest: overrides.worktree_path_digest ?? SHA256_B,
-  branch: overrides.branch ?? 'codex/task3-one',
-  scope_digest: overrides.scope_digest ?? SHA256_C,
-  head_sha: overrides.head_sha ?? SHA1_A,
-  resource_keys: overrides.resource_keys ?? ['path:src/task3-one.mjs'],
-  nonce: overrides.nonce ?? NONCE('task3-one'),
-})
+const scopeDigestFromResourceKeys = (resourceKeys) => {
+  try {
+    return digestCanonical(normalizeScope(resourceKeys.map((key) => {
+      const separator = key.indexOf(':')
+      const kind = key.slice(0, separator)
+      const value = key.slice(separator + 1)
+      if (kind === 'path') return { kind, path: value }
+      if (kind === 'glob') return { kind, pattern: value }
+      if (kind === 'rename') {
+        const [old_path, new_path] = value.split(':')
+        return { kind, old_path, new_path }
+      }
+      return { kind, resource_key: value }
+    })))
+  } catch { return SHA256_C }
+}
+
+const task3LeaseRequest = (store, overrides = {}) => {
+  const resourceKeys = overrides.resource_keys ?? ['path:src/task3-one.mjs']
+  return {
+    lease_id: overrides.lease_id ?? 'lease:task3-one',
+    plan_id: overrides.plan_id ?? 'plan:one',
+    generation: overrides.generation ?? 1,
+    task_id: overrides.task_id ?? 'task:task3-one',
+    provider: overrides.provider ?? 'codex',
+    owner_session: overrides.owner_session ?? 'session:task3-one',
+    provider_session_id: overrides.provider_session_id ?? 'provider:task3-one',
+    execution_context_id: overrides.execution_context_id ?? 'context:task3-one',
+    context_attestation_ref: overrides.context_attestation_ref ?? 'attestation:task3-one',
+    common_dir_digest: overrides.common_dir_digest ?? store.commonDirDigest,
+    worktree_id: overrides.worktree_id ?? 'worktree:task3-one',
+    worktree_path_digest: overrides.worktree_path_digest ?? SHA256_B,
+    branch: overrides.branch ?? 'codex/task3-one',
+    scope_digest: overrides.scope_digest ?? scopeDigestFromResourceKeys(resourceKeys),
+    head_sha: overrides.head_sha ?? SHA1_A,
+    resource_keys: resourceKeys,
+    nonce: overrides.nonce ?? NONCE('task3-one'),
+    expected_plan_oid: overrides.expected_plan_oid ?? SHA1_D,
+  }
+}
 
 const canonicalTask3AdmissionRecord = async (leaseOverrides = [{}]) => {
   const { store, registry } = createInMemoryTask3LeaseRegistry()
@@ -230,6 +332,7 @@ const releaseTask3Lease = async ({ rejectFirstFinalization = false, leaseId = 'l
     nonce: NONCE(`${suffix}-end`),
     reason: 'handoff',
     handoff_or_candidate_reference: `handoff:${suffix}`,
+    owner_end_attestation: endAttestation(admitted.lease),
   })
   assert.equal(ending.status, 'END_REQUESTED')
   const releasingRegistry = createLeaseRegistry({
@@ -257,7 +360,7 @@ const releaseTask3Lease = async ({ rejectFirstFinalization = false, leaseId = 'l
       issuer_id: `attestor:${suffix}-end`, issuer_version: 'owner-end/v1',
       owner_session: `session:${suffix}`, provider: 'codex', provider_session_id: `provider:${suffix}`,
       execution_context_id: `context:${suffix}`, lease_id: leaseId, generation: 1,
-      head_sha: SHA1_A, scope_digest: SHA256_C, worktree_path_digest: SHA256_B,
+      head_sha: SHA1_A, scope_digest: admitted.lease.scope_digest, worktree_path_digest: SHA256_B,
       observed_at: NOW, expires_at: LATER, nonce: NONCE(`${suffix}-attestation`), revocation_epoch: 0,
     },
   })
@@ -610,7 +713,7 @@ const managedOperationCommand = (action, overrides = {}) => ({
   ...overrides,
 })
 
-test('normalizeScope canonicalizes Windows paths, renames, globs, and shared resources', () => {
+test('normalizeScope folds Windows paths, preserves POSIX case, and canonicalizes shared resources', () => {
   const raw = [
     { kind: 'path', path: 'Src\\Feature\\One.ts' },
     { kind: 'glob', pattern: 'SRC/**/\u0060*.TS' },
@@ -620,8 +723,8 @@ test('normalizeScope canonicalizes Windows paths, renames, globs, and shared res
   ]
   assert.deepEqual(normalizeScope(raw), [
     { kind: 'glob', pattern: 'SRC/**/\u0060*.TS' },
-    { kind: 'path', path: 'Src/Feature/One.ts' },
-    { kind: 'rename', old_path: 'Docs/Old.md', new_path: 'docs/New.md' },
+    { kind: 'path', path: 'src/feature/one.ts' },
+    { kind: 'rename', old_path: 'docs/old.md', new_path: 'docs/New.md' },
     { kind: 'runtime', resource_key: 'runtime:offset-1' },
     { kind: 'shared_contract', resource_key: 'contract:delivery-plan' },
   ])
@@ -631,7 +734,11 @@ test('normalizeScope rejects traversal, absolute paths, duplicates, and unknown 
   for (const resources of [
     [{ kind: 'path', path: '..\\secret.txt' }],
     [{ kind: 'path', path: 'C:\\secret.txt' }],
-    [{ kind: 'path', path: 'src/a.mjs' }, { kind: 'path', path: 'src\\a.mjs' }],
+    [{ kind: 'path', path: 'src/a.mjs' }, { kind: 'path', path: 'SRC\\a.mjs' }],
+    [{ kind: 'glob', pattern: 'src/[abc' }],
+    [{ kind: 'glob', pattern: 'src/{a,b' }],
+    [{ kind: 'glob', pattern: 'src/[]/*.mjs' }],
+    [{ kind: 'glob', pattern: 'src/orphan]/*.mjs' }],
     [{ kind: 'unknown', resource_key: 'contract:x' }],
   ]) {
     assert.throws(() => normalizeScope(resources), /scope|resource|path|duplicate|invalid/i)
@@ -641,9 +748,17 @@ test('normalizeScope rejects traversal, absolute paths, duplicates, and unknown 
 test('findScopeConflicts detects exact, parent, glob, rename, shared, runtime, and disjoint scopes', () => {
   const cases = [
     [[{ kind: 'path', path: 'src/Feature.ts' }], [{ kind: 'path', path: 'SRC/feature.ts' }], 'DISJOINT'],
+    [[{ kind: 'path', path: 'src\\Feature.ts' }], [{ kind: 'path', path: 'SRC\\feature.ts' }], 'CONFLICT'],
     [[{ kind: 'path', path: 'src' }], [{ kind: 'path', path: 'src/new.ts' }], 'CONFLICT'],
     [[{ kind: 'glob', pattern: 'src/**/*.ts' }], [{ kind: 'path', path: 'src/new.ts' }], 'CONFLICT'],
     [[{ kind: 'glob', pattern: 'src/**/*.ts' }], [{ kind: 'glob', pattern: 'tests/**/*.ts' }], 'DISJOINT'],
+    [[{ kind: 'glob', pattern: 'src*/*.mjs' }], [{ kind: 'path', path: 'src-other/a.mjs' }], 'CONFLICT'],
+    [[{ kind: 'glob', pattern: 'src*/*.mjs' }], [{ kind: 'path', path: 'src-other' }], 'CONFLICT'],
+    [[{ kind: 'path', path: 'src-other' }], [{ kind: 'glob', pattern: 'src*/*.mjs' }], 'CONFLICT'],
+    [[{ kind: 'glob', pattern: 'foo?bar/*.mjs' }], [{ kind: 'glob', pattern: 'fooxbar/*.mjs' }], 'CONFLICT'],
+    [[{ kind: 'glob', pattern: 'foo?bar/*.mjs' }], [{ kind: 'path', path: 'fooxbar' }], 'CONFLICT'],
+    [[{ kind: 'glob', pattern: 'src[0-9]/*.mjs' }], [{ kind: 'path', path: 'src1/a.mjs' }], 'CONFLICT'],
+    [[{ kind: 'glob', pattern: 'src[0-9]/*.mjs' }], [{ kind: 'path', path: 'src1' }], 'CONFLICT'],
     [[{ kind: 'rename', old_path: 'src/old.ts', new_path: 'src/new.ts' }], [{ kind: 'path', path: 'src/new.ts' }], 'CONFLICT'],
     [[{ kind: 'shared_contract', resource_key: 'contract:api' }], [{ kind: 'exported_symbol', resource_key: 'contract:api' }], 'CONFLICT'],
     [[{ kind: 'runtime', resource_key: 'runtime:offset-1' }], [{ kind: 'runtime', resource_key: 'runtime:offset-1' }], 'CONFLICT'],
@@ -680,9 +795,9 @@ test('5H — evaluateAdmission uses canonical Task3 records for disjoint writers
     {},
     { provider: 'claude' },
   ])
+  // The request carries its plan generation; the registry CAS revision is not plan authority.
   assertStatus(evaluateAdmission(full, request({
     provider: 'claude',
-    generation: full.generation,
     lease_id: 'lease:third',
     owner_session: 'session:third',
     provider_session_id: 'provider:third',
@@ -965,7 +1080,7 @@ test('AC-06 — deterministic scope normalization and conservative overlap evide
   assert.equal(findScopeConflicts(
     [{ kind: 'path', path: 'Src\\Feature.ts' }],
     [{ kind: 'path', path: 'src/feature.ts' }],
-  ).status, 'DISJOINT')
+  ).status, 'CONFLICT')
   assert.equal(findScopeConflicts(
     [{ kind: 'shared_contract', resource_key: 'contract:api' }],
     [{ kind: 'exported_symbol', resource_key: 'CONTRACT:API' }],
@@ -1008,6 +1123,11 @@ test('AC-06 — deterministic scope normalization and conservative overlap evide
     'HELD_SCOPE_DRIFT',
     'SCOPE_DRIFT',
   )
+  assertStatus(
+    evaluateScopeDrift([{ kind: 'path', path: 'src/Foo.mjs' }], parseChangedScopeEvidence('A\0src/foo.mjs\0')),
+    'HELD_SCOPE_DRIFT',
+    'SCOPE_DRIFT',
+  )
   const record = await canonicalTask3AdmissionRecord()
   assertStatus(
     evaluateAdmission(record, request({ scope: [{ kind: 'path', path: 'src/allowed.ts' }], changed_evidence: 'A\0src/outside.ts\0' })),
@@ -1020,7 +1140,7 @@ test('AC-06 — deterministic scope normalization and conservative overlap evide
     ['missing terminator', 'A\0src/file.ts'],
     ['traversal', 'A\0../escape.ts\0'],
     ['absolute', 'A\0C:/escape.ts\0'],
-    ['duplicate', 'A\0src/file.ts\0A\0src\\file.ts\0'],
+    ['duplicate', 'A\0src/file.ts\0A\0SRC\\file.ts\0'],
     ['unknown status', 'Q\0src/file.ts\0'],
   ]) {
     assert.throws(() => parseChangedScopeEvidence(frame), /evidence|path|nul|duplicate|status|invalid/i, label)
@@ -1313,6 +1433,7 @@ test('5D — released seats are free but retained resources still block only ove
   const ending = await registry.endRequest({
     lease_id: admitted.lease.lease_id, expected_oid: admitted.oid, nonce: NONCE('task3-end-request'),
     reason: 'handoff', handoff_or_candidate_reference: 'handoff:task3-release',
+    owner_end_attestation: endAttestation(admitted.lease),
   })
   assert.equal(ending.status, 'END_REQUESTED')
   const attestor = {
@@ -1334,7 +1455,7 @@ test('5D — released seats are free but retained resources still block only ove
       attestation_ref: 'attestation:task3-end', attestation_digest: SHA256_A, issuer_id: 'attestor:task3-end',
       issuer_version: 'owner-end/v1', owner_session: 'session:task3-release', provider: 'codex',
       provider_session_id: 'provider:task3-release', execution_context_id: 'context:task3-release',
-      lease_id: 'lease:task3-release', generation: 1, head_sha: SHA1_A, scope_digest: SHA256_C,
+      lease_id: 'lease:task3-release', generation: 1, head_sha: SHA1_A, scope_digest: admitted.lease.scope_digest,
       worktree_path_digest: SHA256_B, observed_at: NOW, expires_at: LATER, nonce: NONCE('task3-end-attestation'),
       revocation_epoch: 0,
     },
@@ -1677,4 +1798,21 @@ test('AC-11 — admission kernel has no remote, delete, or process mutation capa
   const source = readFileSync(new URL('../../lib/parallel-delivery-fabric-admission.mjs', import.meta.url), 'utf8')
   assert.doesNotMatch(source, /node:(?:child_process|fs|http|https|net|tls|worker_threads)/u)
   assert.doesNotMatch(source, /\b(?:fetch|exec|execFile|fork|spawn|kill|unlink|rmSync|rmdirSync)\s*\(/u)
+})
+
+test('P2 regression — admission compares the plan generation with live leases, not the registry CAS revision', async () => {
+  const { store, registry } = createInMemoryTask3LeaseRegistry()
+  assert.equal((await registry.admit(task3LeaseRequest(store))).status, 'ADMITTED')
+  assert.equal((await registry.admit(task3LeaseRequest(store, {
+    lease_id: 'lease:task3-two', task_id: 'task:task3-two', owner_session: 'session:task3-two', provider_session_id: 'provider:task3-two',
+    execution_context_id: 'context:task3-two', worktree_id: 'worktree:task3-two', branch: 'codex/task3-two',
+    resource_keys: ['path:src/task3-two.mjs'], nonce: NONCE('task3-two'),
+  }))).status, 'ADMITTED')
+  const inspected = await registry.inspect()
+  assert.ok(inspected.record.generation >= 2)
+  // The registry revision moved past 1; a generation-1 plan request is still bound to its plan.
+  const sameGeneration = evaluateAdmission(inspected.record, request({ lease_id: 'lease:three', scope: [{ kind: 'path', path: 'src/three.mjs' }], worktree_id: 'worktree:three', worktree_path_digest: SHA256_D, branch: 'codex/task-three', provider_session_id: 'provider:three', execution_context_id: 'context:three', owner_session: 'session:three' }))
+  assert.notEqual(sameGeneration.reason, 'GENERATION_MISMATCH', JSON.stringify(sameGeneration))
+  // A live lease of another generation for the same plan is a real mismatch.
+  assertStatus(evaluateAdmission(inspected.record, request({ generation: 2, lease_id: 'lease:four', scope: [{ kind: 'path', path: 'src/four.mjs' }], worktree_id: 'worktree:four', worktree_path_digest: SHA256_D, branch: 'codex/task-four', provider_session_id: 'provider:four', execution_context_id: 'context:four', owner_session: 'session:four' })), 'HELD_EVIDENCE_BINDING', 'GENERATION_MISMATCH')
 })

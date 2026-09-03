@@ -448,11 +448,25 @@ const parseTrustedApplicability = (value, baseSha) => {
   }
 }
 
+const parseExpectedSourceRefs = (value, requiredSourceKinds) => {
+  if (!Array.isArray(value) || value.length !== requiredSourceKinds.size) reject('TRUSTED_CONTEXT_SOURCE_PINS_INVALID')
+  const byKind = new Map()
+  for (const source of value) {
+    exactKeys(source, ['kind', 'ref', 'digest'], 'TRUSTED_CONTEXT_SOURCE_PINS_INVALID')
+    if (!requiredSourceKinds.has(source.kind) || byKind.has(source.kind)) reject('TRUSTED_CONTEXT_SOURCE_PINS_INVALID')
+    const ref = assertReference(source.ref, SOURCE_SCHEMES[source.kind], 'TRUSTED_CONTEXT_SOURCE_PINS_INVALID')
+    const digest = assertSha256(source.digest, 'TRUSTED_CONTEXT_SOURCE_PINS_INVALID')
+    byKind.set(source.kind, { kind: source.kind, ref, digest })
+  }
+  return byKind
+}
+
 const parseTrustedAcceptance = (value, baseSha) => {
-  exactKeys(value, ['id', 'required_gate_kinds', 'required_source_kinds', 'applicability'], 'TRUSTED_CONTEXT_ACCEPTANCE_INVALID')
+  exactKeys(value, ['id', 'required_gate_kinds', 'required_source_kinds', 'expected_source_refs', 'applicability'], 'TRUSTED_CONTEXT_ACCEPTANCE_INVALID')
   if (!ACCEPTANCE_IDS.includes(value.id)) reject('TRUSTED_CONTEXT_ACCEPTANCE_INVALID')
   const requiredGateKinds = parseRequiredKinds(value.required_gate_kinds, GATE_KINDS, 'TRUSTED_CONTEXT_ACCEPTANCE_INVALID')
   const requiredSourceKinds = parseRequiredKinds(value.required_source_kinds, SOURCE_KINDS, 'TRUSTED_CONTEXT_ACCEPTANCE_INVALID')
+  const expectedSourceRefs = parseExpectedSourceRefs(value.expected_source_refs, requiredSourceKinds)
   for (const sourceKind of BASE_SOURCE_KINDS) {
     if (!requiredSourceKinds.has(sourceKind)) reject('TRUSTED_CONTEXT_ACCEPTANCE_INVALID')
   }
@@ -465,8 +479,14 @@ const parseTrustedAcceptance = (value, baseSha) => {
     reject('TRUSTED_CONTEXT_ACCEPTANCE_INVALID')
   }
   const mandatoryGate = REQUIRED_GATES_BY_ACCEPTANCE.get(value.id)
-  if (mandatoryGate && !requiredGateKinds.has(mandatoryGate)) reject('TRUSTED_CONTEXT_ACCEPTANCE_INVALID')
-  return { id: value.id, required_gate_kinds: requiredGateKinds, required_source_kinds: requiredSourceKinds, applicability }
+  if (applicability.kind === 'REQUIRED' && mandatoryGate && !requiredGateKinds.has(mandatoryGate)) reject('TRUSTED_CONTEXT_ACCEPTANCE_INVALID')
+  return {
+    id: value.id,
+    required_gate_kinds: requiredGateKinds,
+    required_source_kinds: requiredSourceKinds,
+    expected_source_refs: expectedSourceRefs,
+    applicability,
+  }
 }
 
 const parseTrustedContext = input => {
@@ -525,6 +545,10 @@ const assertRecordMatchesTrustedContext = (record, expected, context) => {
   if (record.source_refs.byKind.size !== expected.required_source_kinds.size) reject('EVIDENCE_TRUSTED_SOURCE_KINDS_MISMATCH')
   for (const sourceKind of expected.required_source_kinds) {
     if (!record.source_refs.byKind.has(sourceKind)) reject('EVIDENCE_TRUSTED_SOURCE_KINDS_MISMATCH')
+  }
+  for (const [sourceKind, pinned] of expected.expected_source_refs) {
+    const actual = record.source_refs.byKind.get(sourceKind)
+    if (!actual || actual.ref !== pinned.ref || actual.digest !== pinned.digest) reject('EVIDENCE_TRUSTED_SOURCE_PIN_MISMATCH')
   }
   if (expected.applicability.kind === 'NOT_APPLICABLE') {
     if (record.classification !== 'NOT_APPLICABLE' || !sameApplicability(record.applicability, expected.applicability)) {
@@ -591,6 +615,9 @@ export function reduceEvidenceContract(candidate = {}, trustedExpectedContext) {
     const blockers = new Set()
     let hasPlaywright = false
     let hasComputerUse = false
+    const trustedAcceptances = [...parsed.trustedContext.acceptance.values()]
+    const requiresPlaywright = trustedAcceptances.some(value => value.applicability.kind === 'REQUIRED' && value.required_gate_kinds.has('PLAYWRIGHT'))
+    const requiresComputerUse = trustedAcceptances.some(value => value.applicability.kind === 'REQUIRED' && value.required_gate_kinds.has('COMPUTER_USE'))
     for (const record of parsed.records) {
       if (record.classification !== 'PASSED' && record.classification !== 'NOT_APPLICABLE') {
         blockers.add(`ACCEPTANCE_${record.classification}`)
@@ -606,8 +633,8 @@ export function reduceEvidenceContract(candidate = {}, trustedExpectedContext) {
     }
     if (parsed.activation.status === 'TASK9_EXTERNAL_ACTIVATION_GAP') blockers.add('TASK9_EXTERNAL_ACTIVATION_GAP')
     else if (parsed.activation.status !== 'CURRENT') blockers.add(`ACTIVATION_${parsed.activation.status}`)
-    if (!hasPlaywright) blockers.add('PLAYWRIGHT_EVIDENCE_MISSING')
-    if (!hasComputerUse) blockers.add('COMPUTER_USE_EVIDENCE_MISSING')
+    if (requiresPlaywright && !hasPlaywright) blockers.add('PLAYWRIGHT_EVIDENCE_MISSING')
+    if (requiresComputerUse && !hasComputerUse) blockers.add('COMPUTER_USE_EVIDENCE_MISSING')
 
     const orderedBlockers = [...blockers].sort()
     const advisoryEligible = orderedBlockers.length === 0

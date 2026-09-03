@@ -297,7 +297,7 @@
         {
           "kind": "positive",
           "test_file": "scripts/tests/parallel-delivery-fabric/test-queue-registry.mjs",
-          "test_name": "AC-30 \u2014 legacy session-lease root normalizes queue fields without CAS or byte/OID mutation"
+          "test_name": "AC-30 \u2014 first legal reserve writes a separate queue root and preserves the lease root"
         }
       ]
     },
@@ -417,7 +417,7 @@
         {
           "kind": "positive",
           "test_file": "scripts/tests/parallel-delivery-fabric/test-promotion-bridge.mjs",
-          "test_name": "AC-42 \u2014 only a complete frozen Task7 direct-stack replay can project delivery"
+          "test_name": "AC-42 \u2014 an otherwise complete Task7 replay is held after its frozen stack envelope expires"
         }
       ]
     },

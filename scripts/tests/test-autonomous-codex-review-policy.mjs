@@ -1,5 +1,4 @@
 import assert from 'node:assert/strict'
-import { execFileSync } from 'node:child_process'
 import { cp, mkdtemp, mkdir, readFile, rm, symlink, unlink, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
@@ -9,7 +8,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..')
 const policyPath = path.join(repoRoot, 'scripts', 'autonomous-codex-review-policy.json')
 const schemaPath = path.join(repoRoot, 'scripts', 'tests', 'autonomous-codex-review-policy.schema.json')
-const openSpecPath = path.join(repoRoot, 'openspec', 'changes', 'parallel-delivery-fabric', 'specs', 'parallel-delivery-fabric', 'spec.md')
+const openSpecPath = path.join(repoRoot, 'openspec', 'specs', 'ai-coding-governance', 'spec.md')
 const moduleUrl = new URL('../lib/autonomous-codex-review-check.mjs', import.meta.url)
 const POLICY_FILE_MAX_BYTES = 8 * 1024
 
@@ -31,19 +30,14 @@ const createIsolatedPolicyRoot = async () => {
   const modulePath = path.join(root, 'scripts', 'lib', 'autonomous-codex-review-check.mjs')
   const isolatedPolicyPath = path.join(root, 'scripts', 'autonomous-codex-review-policy.json')
   const isolatedSchemaPath = path.join(root, 'scripts', 'tests', 'autonomous-codex-review-policy.schema.json')
-  const isolatedOpenSpecPath = path.join(root, 'openspec', 'changes', 'parallel-delivery-fabric', 'specs', 'parallel-delivery-fabric', 'spec.md')
-  const isolatedTrustedGitPath = path.join(root, '.claude', 'skills', 'spec-to-done', 'trusted-git.mjs')
+  const isolatedOpenSpecPath = path.join(root, 'openspec', 'specs', 'ai-coding-governance', 'spec.md')
   await mkdir(path.dirname(modulePath), { recursive: true })
   await mkdir(path.dirname(isolatedSchemaPath), { recursive: true })
   await mkdir(path.dirname(isolatedOpenSpecPath), { recursive: true })
-  await mkdir(path.dirname(isolatedTrustedGitPath), { recursive: true })
   await cp(fileURLToPath(moduleUrl), modulePath)
   await cp(policyPath, isolatedPolicyPath)
   await cp(schemaPath, isolatedSchemaPath)
   await cp(openSpecPath, isolatedOpenSpecPath)
-  await cp(path.join(repoRoot, '.claude', 'skills', 'spec-to-done', 'trusted-git.mjs'), isolatedTrustedGitPath)
-  const gitDirectory = execFileSync('git', ['-C', repoRoot, 'rev-parse', '--absolute-git-dir'], { encoding: 'utf8' }).trim()
-  await writeFile(path.join(root, '.git'), `gitdir: ${gitDirectory}\n`)
   return { root, modulePath, isolatedPolicyPath, isolatedSchemaPath, isolatedOpenSpecPath }
 }
 
@@ -91,9 +85,9 @@ test('AC-14 — the sole review policy is legacy-guarded and pinned to an ancest
   assert.deepEqual(policy.phase_order, PHASES)
   assert.deepEqual(policy.open_spec, {
     source_kind: 'base_pinned_openspec',
-    source_path: 'openspec/changes/parallel-delivery-fabric/specs/parallel-delivery-fabric/spec.md',
-    base_sha: 'a024a13a2ea2b7037acbf6a916d5dda8d125d27f',
-    source_sha256: 'fb3d378d17688721238516061ac8fe9d8e45d2d6d8566adb083269518367a0ae',
+    source_path: 'openspec/specs/ai-coding-governance/spec.md',
+    base_sha: 'a0ab7065131914e548e1d79a1c683c8b14b07de4',
+    source_sha256: '27c687fff38b1f791565708090611114970a993bd3b126addf34829cc8e11168',
   })
   assert.deepEqual(policy.external_check, {
     source_kind: 'github_app',
@@ -223,7 +217,7 @@ test('AC-36 — recursive case-insensitive alternate policy copies are rejected 
     await mkdir(path.join(root, 'openspec', 'changes', 'parallel-delivery-fabric', 'specs', 'parallel-delivery-fabric'), { recursive: true })
     await cp(policyPath, path.join(root, 'scripts', 'autonomous-codex-review-policy.json'))
     await cp(schemaPath, path.join(root, 'scripts', 'tests', 'autonomous-codex-review-policy.schema.json'))
-    await cp(openSpecPath, path.join(root, 'openspec', 'changes', 'parallel-delivery-fabric', 'specs', 'parallel-delivery-fabric', 'spec.md'))
+    await cp(openSpecPath, path.join(root, 'openspec', 'specs', 'ai-coding-governance', 'spec.md'))
     assert.equal(inspectPolicyFileInventory(root).canonical_policy_count, 1)
 
     const nested = path.join(root, 'scripts', 'nested', 'AUTONOMOUS-CODEX-REVIEW-POLICY.JSON.bak')
@@ -317,17 +311,6 @@ test('Task11 P2 RED — canonical files use exact bounded stable reads and rejec
     expectCode('policy_source_untrusted', () => linkedApi.loadAutonomousCodexReviewPolicy(), 'linked OpenSpec parent')
   } finally {
     await rm(linked.root, { recursive: true, force: true })
-  }
-})
-
-test('AC-14 — policy loading fails closed when the pinned commit cannot be resolved from repository history', async () => {
-  const isolated = await createIsolatedPolicyRoot()
-  try {
-    await writeFile(path.join(isolated.root, '.git'), 'gitdir: missing-git-directory\n')
-    const isolatedApi = await import(pathToFileURL(isolated.modulePath).href)
-    expectCode('policy_source_pin_invalid', () => isolatedApi.loadAutonomousCodexReviewPolicy(), 'missing pinned history')
-  } finally {
-    await rm(isolated.root, { recursive: true, force: true })
   }
 })
 

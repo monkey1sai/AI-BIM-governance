@@ -15,8 +15,8 @@ import {
 import { coordinatorClient, RuntimeSessionSummary } from "./coordinatorClient";
 import { MappingCache } from "./governance/mappingCache";
 import type { HighlightItem as ViewerHighlightItem, HighlightResultMessage } from "./EmbeddedViewer";
-import { ReviewSessionViewerPane } from "./ReviewSessionViewerPane";
 import type { ReviewSessionViewerPaneBatchGate, ReviewSessionViewerPaneHandle } from "./ReviewSessionViewerPane";
+import { WorkspaceViewerMount } from "./unified/WorkspaceViewerMount";
 import type { ElementMappingDocument } from "../types/mapping";
 // A2 F2⑥ 疊加送出摘要（console 端誠實計數；viewer 端計數另由批次 ack 帶回）。
 interface A2OverlaySendSummary {
@@ -469,9 +469,9 @@ export function VersionDiffPage() {
             {" "}<ProvTag prov="p15" />
           </p>
           {ovSession && (
-            <ReviewSessionViewerPane
+            <WorkspaceViewerMount
               key={ovSession}
-              ref={ovPaneRef}
+              paneRef={ovPaneRef}
               mode="a2-overlay"
               handoff={{
                 source: "a2", sessionId: ovSession, ruleRunId: null, ifcGuid: null, usdPrimPath: null,

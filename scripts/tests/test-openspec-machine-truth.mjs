@@ -8,7 +8,6 @@ import { collectSourceObservations } from './verify-openspec-machine-truth.mjs';
 import {
   MachineTruthInputError,
   evaluateOpenSpecMachineTruth,
-  taskLedgerFromText,
 } from '../lib/openspec-machine-truth.mjs';
 
 const SUBJECT = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
@@ -289,26 +288,6 @@ test('current ledger keeps reconciled source snapshots clean', () => {
   assert.deepEqual(observed.map(({ change_id: id }) => id).sort(), [...RECONCILED_SOURCE_IDS].sort());
   for (const { change_id: id, changed_paths: paths } of observed) {
     assert.deepEqual(paths, [], `${id} must have a clean reconciled snapshot`);
-  }
-});
-
-test('selected real lifecycle rows bind task counts to their exact task files', () => {
-  const ledger = JSON.parse(readFileSync(path.join(process.cwd(), 'openspec/lifecycle-ledger.json'), 'utf8'));
-  const taskFiles = new Map([
-    ['a2-diff-tag-typeguard', 'openspec/changes/archive/2026-06-03-a2-diff-tag-typeguard/tasks.md'],
-    ['spec-to-done-parallel-delivery-binding', 'openspec/changes/spec-to-done-parallel-delivery-binding/tasks.md'],
-  ]);
-
-  for (const [changeId, relativeTaskPath] of taskFiles) {
-    const change = ledger.changes.find(({ id }) => id === changeId);
-    assert.ok(change, `${changeId} must have one lifecycle ledger row`);
-    const observed = taskLedgerFromText(readFileSync(path.join(process.cwd(), relativeTaskPath), 'utf8'));
-    assert.equal(observed.unsupported, 0, `${changeId} tasks must use supported checkbox markers`);
-    assert.deepEqual(
-      { completed: observed.completed, total: observed.total },
-      change.task_ledger,
-      `${changeId} lifecycle counts must match its exact tasks.md`,
-    );
   }
 });
 

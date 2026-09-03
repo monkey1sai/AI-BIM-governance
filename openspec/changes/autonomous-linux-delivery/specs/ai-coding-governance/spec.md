@@ -35,17 +35,30 @@ Pull requests that change governance, frontend/user-facing, or deploy/runtime pa
 
 ### Requirement: Level 5 remote enforcement SHALL be enabled outside the repo files
 
-Repo files SHALL prepare the checks, templates, ownership mappings, exact-head machine adjudication contracts and deployment evidence schema. After one-time autonomous delivery activation, GitHub branch protection or rulesets SHALL require strict source-pinned machine checks, stale-result invalidation, latest-head evaluation, conversation resolution, enforce-admins, and disallow force-push／delete on `main`; required approving review count SHALL be `0` and CODEOWNER review SHALL NOT be required. Merge authority SHALL belong to an agent-inaccessible external GitHub App that performs exact-head compare-and-swap only after all required checks pass. Before external provisioning, negative／positive live attestation and authoritative settings reread are complete, the repository SHALL remain below autonomous Level 5 and the merge path SHALL be `HELD` rather than self-authorized.
+Repo files SHALL prepare the checks, templates, ownership mappings, exact-head machine adjudication contracts and deployment evidence schema. After one-time autonomous delivery activation, GitHub branch protection or rulesets SHALL require strict source-pinned machine checks, stale-result invalidation, latest-head evaluation, conversation resolution, enforce-admins, and disallow force-push／delete on `main`; required approving review count SHALL be `0`、CODEOWNER review SHALL NOT be required、`require_last_push_approval` SHALL為 `false`。Expected external App的required CheckRun只有actual `success` SHALL滿足machine gate；`HELD`、incomplete、publisher unavailable或drift SHALL保持absent／pending或使用blocking conclusion，且 SHALL NOT以 `neutral`／`skipped` 表示。Merge authority SHALL belong to an agent-inaccessible external trust root and separately credentialed executor that perform exact-head compare-and-swap only after all required checks pass；native auto-merge SHALL維持disabled直到另有規格與attestation。Before external provisioning, negative／positive live attestation and authoritative settings reread are complete, the repository SHALL remain below autonomous Level 5 and the merge path SHALL be `HELD` rather than self-authorized.
 
 #### Scenario: Maintainer evaluates AI coding maturity
 
 - **GIVEN** the repo-local governance artifacts are present
-- **AND** GitHub branch protection requires the documented source-pinned machine checks without required human／CODEOWNER approval
+- **AND** GitHub branch protection requires the documented source-pinned machine checks without required human／CODEOWNER／last-push approval
 - **AND** the external App, trusted executor, credential boundary and canonical Linux delivery path have passed live negative and positive attestation
 - **AND** the exact-head PR checks are green
 - **WHEN** the maintainer scores the repo against the AI coding maturity rubric
 - **THEN** the repo MAY be scored at Level 5 for autonomous AI coding governance.
 - **AND** product/runtime delivery gaps SHALL still be reported separately from the AI coding governance score.
+
+#### Scenario: Required App check不是actual success
+
+- **WHEN**expected App CheckRun為 `neutral`、`skipped`、`failure`、`cancelled`、`timed_out`、`action_required`、absent、pending，或source App不符
+- **THEN**exact-head machine gate SHALL NOT被視為通過
+- **AND**merge executor SHALL NOT取得lease或呼叫merge endpoint
+- **AND**同名status、comment、review或其他App CheckRun SHALL NOT替代expected source
+
+#### Scenario: Cutover settings仍保留last-push approval
+
+- **WHEN**authoritative reread顯示approval count、CODEOWNER requirement、`require_last_push_approval`、required source或native auto-merge posture任一不符合activation plan
+- **THEN**cutover SHALL rollback到exact `LEGACY_GUARDED` snapshot
+- **AND**autonomous merge status SHALL為 `HELD`
 
 #### Scenario: External authority或live attestation缺失
 

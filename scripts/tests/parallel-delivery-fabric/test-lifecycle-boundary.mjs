@@ -16,6 +16,7 @@ const EARLIER = '2026-08-28T23:55:00.000Z'
 const INVALID_CALENDAR_TIMESTAMP = '2026-02-31T00:00:00.000Z'
 const LEAP_DAY_TIMESTAMP = '2028-02-29T12:34:56.789Z'
 const NONCE = 'n'.repeat(32)
+const LEASE_SCOPE_DIGEST = digestCanonical([{ kind: 'path', path: 'scripts/lib/parallel-delivery-fabric-projection.mjs' }])
 
 const lease = (overrides = {}) => {
   const value = {
@@ -23,7 +24,7 @@ const lease = (overrides = {}) => {
     lease_id: 'lease:writer-one', lease_kind: 'writer_seat', plan_id: 'plan:one', task_id: 'task:one', provider: 'codex',
     owner_session: 'session:owner-one', provider_session_id: 'provider-session:one', execution_context_id: 'context:old',
     context_attestation_ref: 'attestation:context-old', common_dir_digest: SHA256_A, worktree_id: 'worktree:one',
-    worktree_path_digest: SHA256_B, branch: 'codex/projection', scope_digest: SHA256_A, head_sha: SHA1_A,
+    worktree_path_digest: SHA256_B, branch: 'codex/projection', scope_digest: LEASE_SCOPE_DIGEST, head_sha: SHA1_A,
     resource_keys: ['path:scripts/lib/parallel-delivery-fabric-projection.mjs'], state: 'SUSPECT', heartbeat_seq: 2,
     heartbeat_at: NOW, release_evidence_ref: null, retention_state: 'ACTIVE', revocation_epoch: 7, suspect_at: NOW,
     ...overrides,
@@ -68,7 +69,7 @@ const resumeIntent = (overrides = {}) => ({
   schema_version: 'resume-intent/v1', type: 'RESUME_INTENT', owner_session: 'session:owner-one', provider: 'codex',
   provider_session_id: 'provider-session:one', prior_execution_context_id: 'context:old', execution_context_id: 'context:new',
   lease_id: 'lease:writer-one', generation: 1, common_dir_digest: SHA256_A, worktree_id: 'worktree:one',
-  worktree_path_digest: SHA256_B, branch: 'codex/projection', head_sha: SHA1_A, scope_digest: SHA256_A,
+  worktree_path_digest: SHA256_B, branch: 'codex/projection', head_sha: SHA1_A, scope_digest: LEASE_SCOPE_DIGEST,
   expected_registry_oid: SHA1_B, nonce: NONCE, ...overrides,
 })
 const canonicalContext = (overrides = {}) => ({
@@ -83,7 +84,7 @@ const resumeReceipt = (overrides = {}) => ({
   tuple: {
     owner_session: 'session:owner-one', provider: 'codex', provider_session_id: 'provider-session:one', execution_context_id: 'context:new',
     lease_id: 'lease:writer-one', generation: 1, common_dir_digest: SHA256_A, worktree_id: 'worktree:one',
-    worktree_path_digest: SHA256_B, branch: 'codex/projection', head_sha: SHA1_A, scope_digest: SHA256_A,
+    worktree_path_digest: SHA256_B, branch: 'codex/projection', head_sha: SHA1_A, scope_digest: LEASE_SCOPE_DIGEST,
   },
   ...overrides,
 })
@@ -113,7 +114,7 @@ const releasedLease = () => lease({
   release_record: {
     schema_version: 'lease-release/v1', release_id: 'release:one', plan_id: 'plan:one', generation: 1, task_id: 'task:one', lease_id: 'lease:writer-one',
     lease_kind: 'writer_seat', owner_session: 'session:owner-one', provider: 'codex', provider_session_id: 'provider-session:one', execution_context_id: 'context:old',
-    final_heartbeat_seq: 2, final_head_sha: SHA1_A, scope_digest: SHA256_A, worktree_path_digest: SHA256_B, handoff_or_candidate_reference: 'handoff:one',
+    final_heartbeat_seq: 2, final_head_sha: SHA1_A, scope_digest: LEASE_SCOPE_DIGEST, worktree_path_digest: SHA256_B, handoff_or_candidate_reference: 'handoff:one',
     release_reason: 'handoff', owner_end_attestation_ref: 'attestation:owner-end', owner_end_attestation_digest: SHA256_A, attestor_issuer: 'attestor:owner-end',
     attestor_version: 'owner-end/v1', observed_at: NOW, expires_at: LATER, nonce: NONCE, revocation_epoch: 7, expected_registry_oid: SHA1_B,
     expected_envelope_oid: 'e'.repeat(40), transition_sequence: 1, retained_resource_keys: ['path:scripts/lib/parallel-delivery-fabric-projection.mjs'],
@@ -460,6 +461,14 @@ test('projection callbacks receive owned frozen input and malformed acknowledgem
   } })
   const result = fixture.projection.start({ lease: lease(), projectionSource: projectionSource() })
   assert.equal(frozen, true)
+  assert.equal(result.status, 'PROJECTION_DEGRADED')
+  assert.equal(fixture.calls.read, 1)
+  assert.equal(fixture.calls.write, 1)
+})
+
+test('projection rejects the zero OID missing-ref sentinel as a durable acknowledgement', () => {
+  const fixture = makeProjection({ acknowledgement: () => ({ status: 'STORED', oid: '0'.repeat(40) }) })
+  const result = fixture.projection.start({ lease: lease(), projectionSource: projectionSource() })
   assert.equal(result.status, 'PROJECTION_DEGRADED')
   assert.equal(fixture.calls.read, 1)
   assert.equal(fixture.calls.write, 1)

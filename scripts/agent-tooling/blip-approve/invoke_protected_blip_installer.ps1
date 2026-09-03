@@ -41,6 +41,10 @@ $fixedPowerShellDllPath = 'C:\Program Files\PowerShell\7\pwsh.dll'
 $fixedPowerShellHash = 'A7AD362B22E0E289772CCCF78C7AF3B99E32F3084E675392E4A9FFDDF380BF05'
 $fixedPowerShellVersion = '7.5.4.500'
 $fixedOwnerSidValue = 'S-1-5-21-2135046472-1977311562-3864793309-1001'
+$fixedOwnerLogin = 'monkey1sai'
+$fixedOwnerId = [long]26239865
+$fixedReviewerLogin = 'monkey1sai-blip'
+$fixedReviewerId = [long]311287868
 $candidateRoot = [System.IO.Path]::GetFullPath($CandidateRoot).TrimEnd('\')
 $verifierPath = $null
 $packageRoot = $null
@@ -390,8 +394,362 @@ function Assert-ReviewedManifestAuthority {
             -Object (Get-UniqueVerifierJsonProperty -Object $root -Name 'runtime_signers') `
             -ExpectedNames $reviewedSignerKeys -Pattern '^[0-9a-fA-F]{40}$' `
             -Label 'Reviewed runtime_signers'
+        return $sourceCommit.GetString().ToLowerInvariant()
     }
     finally { $document.Dispose() }
+}
+
+function Read-BoundedUtf8Response {
+    param(
+        [Parameter(Mandatory)][System.IO.Stream]$Stream,
+        [Parameter(Mandatory)][int]$MaximumBytes,
+        [Parameter(Mandatory)][string]$Label,
+        [Parameter(Mandatory)][System.Threading.CancellationToken]$CancellationToken
+    )
+    $buffer = [byte[]]::new(65536)
+    $output = [System.IO.MemoryStream]::new()
+    try {
+        while ($true) {
+            $read = $Stream.ReadAsync(
+                $buffer, 0, $buffer.Length, $CancellationToken
+            ).GetAwaiter().GetResult()
+            if ($read -eq 0) { break }
+            if ($output.Length + $read -gt $MaximumBytes) {
+                throw "$Label exceeds the protected size limit."
+            }
+            $output.Write($buffer, 0, $read)
+        }
+        if ($output.Length -eq 0) { throw "$Label is empty." }
+        return [System.Text.UTF8Encoding]::new($false, $true).GetString($output.ToArray())
+    }
+    finally { $output.Dispose() }
+}
+
+function Invoke-ProtectedPublicGitHubGet {
+    param([Parameter(Mandatory)][string]$RelativePath)
+    if ($RelativePath -notmatch ('^/repos/monkey1sai/AI-BIM-governance/(commits/heads/main' +
+        '|compare/[0-9a-f]{40}\.\.\.[0-9a-f]{40}' +
+        '|commits/[0-9a-f]{40}/pulls\?per_page=100&page=(?:[1-9]|10)' +
+        '|pulls/[1-9][0-9]{0,5}' +
+        '|pulls/[1-9][0-9]{0,5}/reviews\?per_page=100&page=(?:[1-9]|10))$')) {
+        throw 'Merged-source verification requested an unauthorized GitHub path.'
+    }
+    $handler = [System.Net.Http.HttpClientHandler]::new()
+    $handler.AllowAutoRedirect = $false
+    $client = [System.Net.Http.HttpClient]::new($handler, $true)
+    $client.Timeout = [TimeSpan]::FromSeconds(60)
+    $request = [System.Net.Http.HttpRequestMessage]::new(
+        [System.Net.Http.HttpMethod]::Get,
+        "https://api.github.com$RelativePath"
+    )
+    try {
+        [void]$request.Headers.TryAddWithoutValidation('Accept', 'application/vnd.github+json')
+        [void]$request.Headers.TryAddWithoutValidation('X-GitHub-Api-Version', '2022-11-28')
+        [void]$request.Headers.TryAddWithoutValidation('User-Agent', 'blip-protected-installer/1.0')
+        $response = $client.Send(
+            $request,
+            [System.Net.Http.HttpCompletionOption]::ResponseHeadersRead
+        )
+        try {
+            if (-not $response.IsSuccessStatusCode) {
+                throw "Merged-source GitHub verification failed with HTTP $([int]$response.StatusCode)."
+            }
+            $length = $response.Content.Headers.ContentLength
+            if ($null -ne $length -and $length -gt 1048576) {
+                throw 'Merged-source GitHub response exceeds the protected size limit.'
+            }
+            $contentStream = $response.Content.ReadAsStream()
+            $bodyDeadline = [System.Threading.CancellationTokenSource]::new(
+                [TimeSpan]::FromSeconds(60)
+            )
+            try {
+                return Read-BoundedUtf8Response -Stream $contentStream -MaximumBytes 1048576 `
+                    -Label 'Merged-source GitHub response' `
+                    -CancellationToken $bodyDeadline.Token
+            }
+            finally {
+                $bodyDeadline.Dispose()
+                $contentStream.Dispose()
+            }
+        }
+        finally { $response.Dispose() }
+    }
+    finally {
+        $request.Dispose()
+        $client.Dispose()
+    }
+}
+
+function Get-ProtectedPublicGitHubArrayPages {
+    param(
+        [Parameter(Mandatory)][string]$RelativePath,
+        [Parameter(Mandatory)][string]$Label
+    )
+    $items = [System.Collections.Generic.List[System.Text.Json.JsonElement]]::new()
+    foreach ($page in 1..10) {
+        $document = [System.Text.Json.JsonDocument]::Parse(
+            (Invoke-ProtectedPublicGitHubGet `
+                -RelativePath "${RelativePath}?per_page=100&page=$page")
+        )
+        try {
+            if ($document.RootElement.ValueKind -ne [System.Text.Json.JsonValueKind]::Array) {
+                throw "$Label response is not a JSON array."
+            }
+            $pageCount = $document.RootElement.GetArrayLength()
+            foreach ($item in $document.RootElement.EnumerateArray()) {
+                [void]$items.Add($item.Clone())
+            }
+            if ($pageCount -lt 100) { return $items.ToArray() }
+        }
+        finally { $document.Dispose() }
+    }
+    throw "$Label pagination exceeded the protected page limit."
+}
+
+function Assert-MergedSourceCommit {
+    param([Parameter(Mandatory)][string]$SourceCommit)
+    $source = $SourceCommit.ToLowerInvariant()
+    if ($source -notmatch '^[0-9a-f]{40}$' -or $source -ceq ('0' * 40)) {
+        throw 'Merged-source verification received an invalid source commit.'
+    }
+    $mainDocument = $null
+    $finalMainDocument = $null
+    $compareDocument = $null
+    try {
+        $mainDocument = [System.Text.Json.JsonDocument]::Parse(
+            (Invoke-ProtectedPublicGitHubGet `
+                -RelativePath '/repos/monkey1sai/AI-BIM-governance/commits/heads/main')
+        )
+        $mainSha = Get-UniqueVerifierJsonProperty -Object $mainDocument.RootElement -Name 'sha'
+        if ($mainSha.ValueKind -ne [System.Text.Json.JsonValueKind]::String -or
+            $mainSha.GetString() -notmatch '^[0-9a-fA-F]{40}$') {
+            throw 'Protected main response has no valid exact commit.'
+        }
+        $main = $mainSha.GetString().ToLowerInvariant()
+        $approvalEvidence = Assert-CountedApprovalForSource `
+            -SourceCommit $source -PassThruEvidence
+        $mergeCommit = $approvalEvidence.MergeCommit
+        $finalMainDocument = [System.Text.Json.JsonDocument]::Parse(
+            (Invoke-ProtectedPublicGitHubGet `
+                -RelativePath '/repos/monkey1sai/AI-BIM-governance/commits/heads/main')
+        )
+        $finalMainSha = Get-UniqueVerifierJsonProperty `
+            -Object $finalMainDocument.RootElement -Name 'sha'
+        if ($finalMainSha.ValueKind -ne [System.Text.Json.JsonValueKind]::String -or
+            $finalMainSha.GetString() -notmatch '^[0-9a-fA-F]{40}$' -or
+            $finalMainSha.GetString().ToLowerInvariant() -cne $main) {
+            throw 'Protected main changed during merged-source verification.'
+        }
+        $compareDocument = [System.Text.Json.JsonDocument]::Parse(
+            (Invoke-ProtectedPublicGitHubGet `
+                -RelativePath "/repos/monkey1sai/AI-BIM-governance/compare/$mergeCommit...$main")
+        )
+        $status = Get-UniqueVerifierJsonProperty -Object $compareDocument.RootElement -Name 'status'
+        $base = Get-UniqueVerifierJsonProperty -Object $compareDocument.RootElement -Name 'base_commit'
+        $mergeBase = Get-UniqueVerifierJsonProperty -Object $compareDocument.RootElement -Name 'merge_base_commit'
+        $baseSha = Get-UniqueVerifierJsonProperty -Object $base -Name 'sha'
+        $mergeBaseSha = Get-UniqueVerifierJsonProperty -Object $mergeBase -Name 'sha'
+        if ($status.ValueKind -ne [System.Text.Json.JsonValueKind]::String -or
+            $status.GetString() -cnotin @('ahead', 'identical') -or
+            $baseSha.ValueKind -ne [System.Text.Json.JsonValueKind]::String -or
+            $baseSha.GetString().ToLowerInvariant() -cne $mergeCommit -or
+            $mergeBaseSha.ValueKind -ne [System.Text.Json.JsonValueKind]::String -or
+            $mergeBaseSha.GetString().ToLowerInvariant() -cne $mergeCommit) {
+            throw 'Reviewed pull request merge commit is not reachable from the current protected main branch.'
+        }
+        return $source
+    }
+    finally {
+        if ($null -ne $compareDocument) { $compareDocument.Dispose() }
+        if ($null -ne $finalMainDocument) { $finalMainDocument.Dispose() }
+        if ($null -ne $mainDocument) { $mainDocument.Dispose() }
+    }
+}
+
+function Assert-CountedApprovalForSource {
+    # Git ancestry alone also accepts an admin push or a temporary protection
+    # bypass, so the reviewed source must additionally be the merge product of
+    # exactly one pull request whose latest decisive fixed-reviewer review is a
+    # counted APPROVED bound to that pull request's exact merged head.
+    param(
+        [Parameter(Mandatory)][string]$SourceCommit,
+        [switch]$PassThruEvidence
+    )
+    $source = $SourceCommit.ToLowerInvariant()
+    if ($source -notmatch '^[0-9a-f]{40}$' -or $source -ceq ('0' * 40)) {
+        throw 'Counted-approval verification received an invalid source commit.'
+    }
+    $associatedPulls = Get-ProtectedPublicGitHubArrayPages `
+        -RelativePath "/repos/monkey1sai/AI-BIM-governance/commits/$source/pulls" `
+        -Label 'Merged-source pull-request listing'
+    $candidateNumbers = [System.Collections.Generic.HashSet[int]]::new()
+    foreach ($pull in $associatedPulls) {
+        if ($pull.ValueKind -ne [System.Text.Json.JsonValueKind]::Object) {
+            throw 'Merged-source pull-request entry is malformed.'
+        }
+        $head = Get-UniqueVerifierJsonProperty -Object $pull -Name 'head'
+        if ($head.ValueKind -ne [System.Text.Json.JsonValueKind]::Object) {
+            throw 'Merged-source pull-request head is malformed.'
+        }
+        $headSha = Get-UniqueVerifierJsonProperty -Object $head -Name 'sha'
+        if ($headSha.ValueKind -ne [System.Text.Json.JsonValueKind]::String -or
+            $headSha.GetString() -notmatch '^[0-9a-fA-F]{40}$') {
+            throw 'Merged-source pull-request head is malformed.'
+        }
+        if ($headSha.GetString().ToLowerInvariant() -cne $source) { continue }
+        $number = Get-UniqueVerifierJsonProperty -Object $pull -Name 'number'
+        [int]$pullNumber = 0
+        if ($number.ValueKind -ne [System.Text.Json.JsonValueKind]::Number -or
+            -not $number.TryGetInt32([ref]$pullNumber) -or
+            $pullNumber -lt 1 -or $pullNumber -gt 999999) {
+            throw 'Merged-source pull request number is invalid.'
+        }
+        [void]$candidateNumbers.Add($pullNumber)
+    }
+    if ($candidateNumbers.Count -eq 0) {
+        throw 'Reviewed source commit has no exact-head pull request; counted-approval provenance is absent.'
+    }
+
+    $qualifiedPulls = [System.Collections.Generic.List[object]]::new()
+    foreach ($pullNumber in $candidateNumbers) {
+        $detailDocument = [System.Text.Json.JsonDocument]::Parse(
+            (Invoke-ProtectedPublicGitHubGet `
+                -RelativePath "/repos/monkey1sai/AI-BIM-governance/pulls/$pullNumber")
+        )
+        try {
+            $detail = $detailDocument.RootElement
+            if ($detail.ValueKind -ne [System.Text.Json.JsonValueKind]::Object) {
+                throw 'Merged-source pull-request detail is malformed.'
+            }
+            $number = Get-UniqueVerifierJsonProperty -Object $detail -Name 'number'
+            $state = Get-UniqueVerifierJsonProperty -Object $detail -Name 'state'
+            $merged = Get-UniqueVerifierJsonProperty -Object $detail -Name 'merged'
+            $mergedAt = Get-UniqueVerifierJsonProperty -Object $detail -Name 'merged_at'
+            $mergeCommit = Get-UniqueVerifierJsonProperty -Object $detail -Name 'merge_commit_sha'
+            $base = Get-UniqueVerifierJsonProperty -Object $detail -Name 'base'
+            $baseRef = Get-UniqueVerifierJsonProperty -Object $base -Name 'ref'
+            $head = Get-UniqueVerifierJsonProperty -Object $detail -Name 'head'
+            $headSha = Get-UniqueVerifierJsonProperty -Object $head -Name 'sha'
+            $mergedBy = Get-UniqueVerifierJsonProperty -Object $detail -Name 'merged_by'
+            if ($mergedBy.ValueKind -ne [System.Text.Json.JsonValueKind]::Object) { continue }
+            $mergedByLogin = Get-UniqueVerifierJsonProperty -Object $mergedBy -Name 'login'
+            $mergedById = Get-UniqueVerifierJsonProperty -Object $mergedBy -Name 'id'
+            $mergedByType = Get-UniqueVerifierJsonProperty -Object $mergedBy -Name 'type'
+            [int]$detailNumber = 0
+            [long]$mergerId = 0
+            [DateTimeOffset]$mergedAtValue = [DateTimeOffset]::MinValue
+            if ($number.ValueKind -ne [System.Text.Json.JsonValueKind]::Number -or
+                -not $number.TryGetInt32([ref]$detailNumber) -or $detailNumber -ne $pullNumber -or
+                $state.ValueKind -ne [System.Text.Json.JsonValueKind]::String -or
+                $state.GetString() -cne 'closed' -or
+                $merged.ValueKind -ne [System.Text.Json.JsonValueKind]::True -or
+                $mergedAt.ValueKind -ne [System.Text.Json.JsonValueKind]::String -or
+                -not [DateTimeOffset]::TryParse(
+                    $mergedAt.GetString(), [Globalization.CultureInfo]::InvariantCulture,
+                    [Globalization.DateTimeStyles]::RoundtripKind, [ref]$mergedAtValue
+                ) -or
+                $mergeCommit.ValueKind -ne [System.Text.Json.JsonValueKind]::String -or
+                $mergeCommit.GetString() -notmatch '^[0-9a-fA-F]{40}$' -or
+                $baseRef.ValueKind -ne [System.Text.Json.JsonValueKind]::String -or
+                $baseRef.GetString() -cne 'main' -or
+                $headSha.ValueKind -ne [System.Text.Json.JsonValueKind]::String -or
+                $headSha.GetString().ToLowerInvariant() -cne $source -or
+                $mergedByLogin.ValueKind -ne [System.Text.Json.JsonValueKind]::String -or
+                $mergedByLogin.GetString() -cne $fixedOwnerLogin -or
+                $mergedById.ValueKind -ne [System.Text.Json.JsonValueKind]::Number -or
+                -not $mergedById.TryGetInt64([ref]$mergerId) -or $mergerId -ne $fixedOwnerId -or
+                $mergedByType.ValueKind -ne [System.Text.Json.JsonValueKind]::String -or
+                $mergedByType.GetString() -cne 'User') { continue }
+            [void]$qualifiedPulls.Add([pscustomobject]@{
+                Number = $detailNumber
+                MergeCommit = $mergeCommit.GetString().ToLowerInvariant()
+                MergedAt = $mergedAtValue
+            })
+        }
+        finally { $detailDocument.Dispose() }
+    }
+    if ($qualifiedPulls.Count -eq 0) {
+        throw 'Reviewed source has no completed owner merge into protected main.'
+    }
+    if ($qualifiedPulls.Count -ne 1) {
+        throw 'Multiple pull requests claim the exact reviewed source; refusing ambiguous approval evidence.'
+    }
+    $mergedPull = $qualifiedPulls[0]
+    $reviews = Get-ProtectedPublicGitHubArrayPages `
+        -RelativePath "/repos/monkey1sai/AI-BIM-governance/pulls/$($mergedPull.Number)/reviews" `
+        -Label 'Merged-source review listing'
+    [DateTimeOffset]$latestSubmitted = [DateTimeOffset]::MinValue
+    [long]$latestReviewId = -1
+    $latestState = ''
+    $latestCommit = ''
+    foreach ($review in $reviews) {
+        if ($review.ValueKind -ne [System.Text.Json.JsonValueKind]::Object) {
+            throw 'Merged-source review entry is malformed.'
+        }
+        $state = Get-UniqueVerifierJsonProperty -Object $review -Name 'state'
+        if ($state.ValueKind -ne [System.Text.Json.JsonValueKind]::String) {
+            throw 'Merged-source review state is malformed.'
+        }
+        $stateValue = $state.GetString()
+        if ($stateValue -cnotin @('APPROVED', 'CHANGES_REQUESTED', 'DISMISSED')) { continue }
+        $user = Get-UniqueVerifierJsonProperty -Object $review -Name 'user'
+        if ($user.ValueKind -ne [System.Text.Json.JsonValueKind]::Object) { continue }
+        $login = Get-UniqueVerifierJsonProperty -Object $user -Name 'login'
+        if ($login.ValueKind -ne [System.Text.Json.JsonValueKind]::String -or
+            $login.GetString() -cne $fixedReviewerLogin) { continue }
+        $userId = Get-UniqueVerifierJsonProperty -Object $user -Name 'id'
+        $userType = Get-UniqueVerifierJsonProperty -Object $user -Name 'type'
+        [long]$userIdValue = 0
+        if ($userId.ValueKind -ne [System.Text.Json.JsonValueKind]::Number -or
+            -not $userId.TryGetInt64([ref]$userIdValue) -or
+            $userIdValue -ne $fixedReviewerId -or
+            $userType.ValueKind -ne [System.Text.Json.JsonValueKind]::String -or
+            $userType.GetString() -cne 'User') {
+            throw 'Merged-source fixed-reviewer identity is malformed.'
+        }
+        $submitted = Get-UniqueVerifierJsonProperty -Object $review -Name 'submitted_at'
+        $reviewIdElement = Get-UniqueVerifierJsonProperty -Object $review -Name 'id'
+        $commitId = Get-UniqueVerifierJsonProperty -Object $review -Name 'commit_id'
+        [DateTimeOffset]$submittedValue = [DateTimeOffset]::MinValue
+        [long]$reviewIdValue = 0
+        if ($submitted.ValueKind -ne [System.Text.Json.JsonValueKind]::String -or
+            -not [DateTimeOffset]::TryParse(
+                $submitted.GetString(), [Globalization.CultureInfo]::InvariantCulture,
+                [Globalization.DateTimeStyles]::RoundtripKind, [ref]$submittedValue
+            ) -or
+            $reviewIdElement.ValueKind -ne [System.Text.Json.JsonValueKind]::Number -or
+            -not $reviewIdElement.TryGetInt64([ref]$reviewIdValue) -or
+            $commitId.ValueKind -ne [System.Text.Json.JsonValueKind]::String -or
+            $commitId.GetString() -notmatch '^[0-9a-fA-F]{40}$') {
+            throw 'Merged-source fixed-reviewer review evidence is malformed.'
+        }
+        if ($submittedValue -gt $latestSubmitted -or
+            ($submittedValue -eq $latestSubmitted -and $reviewIdValue -gt $latestReviewId)) {
+            $latestSubmitted = $submittedValue
+            $latestReviewId = $reviewIdValue
+            $latestState = $stateValue
+            $latestCommit = $commitId.GetString().ToLowerInvariant()
+        }
+    }
+    if ($latestState -cne 'APPROVED') {
+        throw 'The latest decisive fixed-reviewer review on the merged pull request is not a counted APPROVED.'
+    }
+    if ($latestCommit -cne $source) {
+        throw 'The counted APPROVED review is not bound to the exact reviewed source head.'
+    }
+    if ($latestSubmitted -gt $mergedPull.MergedAt) {
+        throw 'The counted exact-head approval was submitted after the pull request merge.'
+    }
+    # GitHub permits an existing review summary body to be edited without changing
+    # submitted_at. The body therefore remains broker output/audit metadata, not
+    # installation authority; exact reviewer/state/commit/time are the immutable proof.
+    $evidence = [pscustomobject]@{
+        Number = $mergedPull.Number
+        MergeCommit = $mergedPull.MergeCommit
+        MergedAt = $mergedPull.MergedAt
+    }
+    if ($PassThruEvidence) { return $evidence }
+    return $evidence.Number
 }
 
 try {
@@ -429,7 +787,7 @@ try {
         }
     }
     if ($packageRoot.StartsWith($candidateRoot + '\', [StringComparison]::OrdinalIgnoreCase) -or
-        $packageRoot -ceq $candidateRoot) {
+        [StringComparer]::OrdinalIgnoreCase.Equals($packageRoot, $candidateRoot)) {
         throw 'The protected verifier and launcher must be outside the candidate directory.'
     }
     [void](Assert-NoReparseChain -LiteralPath $candidateRoot -LeafMustBeDirectory)
@@ -471,7 +829,8 @@ try {
         throw 'The candidate reviewed build manifest differs from the explicitly authorized hash.'
     }
     $reviewedManifestBytes = Read-OpenStreamBytes -Stream $reviewedManifestStream
-    Assert-ReviewedManifestAuthority -Bytes $reviewedManifestBytes
+    $reviewedSourceCommit = Assert-ReviewedManifestAuthority -Bytes $reviewedManifestBytes
+    [void](Assert-MergedSourceCommit -SourceCommit $reviewedSourceCommit)
     $bootstrapBytes = Read-OpenStreamBytes -Stream $bootstrapStream
     $bootstrapText = [System.Text.UTF8Encoding]::new($false, $true).GetString($bootstrapBytes)
     $tokens = $null

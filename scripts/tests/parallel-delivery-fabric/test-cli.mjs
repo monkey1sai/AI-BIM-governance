@@ -1,41 +1,93 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
 import { fileURLToPath } from 'node:url'
 
 import { runParallelDeliveryFabricCli } from '../../dev/parallel-delivery-fabric.mjs'
+import { FABRIC_SCHEMA_VERSION, digestCanonical } from '../../lib/parallel-delivery-fabric-contract.mjs'
+import { createLocalParallelDeliveryFabric } from '../../lib/parallel-delivery-fabric-local.mjs'
 import { createParallelDeliveryFabric } from '../../lib/parallel-delivery-fabric.mjs'
 
 const MAX_INPUT = 256 * 1024
-const MAX_NODES = 512
+const MAX_NODES = 4096
 const MAX_ARRAY_LENGTH = 128
 const ROOT = path.resolve('C:\\fabric-cli-root')
 const COMMANDS = Object.freeze(['submit', 'advance', 'reconcile', 'drain', 'release', 'inspect'])
 const input = (value) => Buffer.from(JSON.stringify(value), 'utf8')
+const tempRepository = async (context) => {
+  const root = await mkdtemp(path.join(tmpdir(), 'fabric-local-'))
+  context.after(() => rm(root, { recursive: true, force: true }))
+  const initialized = spawnSync('git', ['init', '--quiet'], { cwd: root, encoding: 'utf8', windowsHide: true })
+  assert.equal(initialized.status, 0, initialized.stderr)
+  return root
+}
+const writeMalformedRef = (root, ref) => {
+  const blob = spawnSync('git', ['hash-object', '-w', '--stdin'], { cwd: root, input: '{}', encoding: 'utf8', windowsHide: true })
+  assert.equal(blob.status, 0, blob.stderr)
+  const updated = spawnSync('git', ['update-ref', '--no-deref', ref, blob.stdout.trim()], { cwd: root, encoding: 'utf8', windowsHide: true })
+  assert.equal(updated.status, 0, updated.stderr)
+}
+const localDeliveryPlan = () => ({
+  schema_version: FABRIC_SCHEMA_VERSION,
+  plan_id: 'plan:local-submit', generation: 1,
+  repo_identity: { full_name: 'acme/bim', repository_id: 1, common_dir_digest: 'b'.repeat(64) },
+  created_at: '2026-08-29T00:00:00.000Z', coordinator_session: 'session:coordinator',
+  baseline_ref: 'origin/main', resolved_baseline_sha: 'a'.repeat(40),
+  tasks: [{
+    task_id: 'task:local-submit', outcome: 'local-shadow-plan', provider_preference: 'codex', owner_session: 'session:local-owner',
+    scope: { owning_service: 'delivery-fabric', public_entrypoint: 'scripts/dev/parallel-delivery-fabric.mjs', resources: [{ kind: 'path', path: 'scripts/dev/parallel-delivery-fabric.mjs' }], expected_tests: ['test:local-cli'], e2e_required: false },
+    dependencies: [], risk: 'bounded', e2e_required: false,
+  }],
+  requested_capacity: { writers: 1, runtime_leases: 0 }, branch_profile: 'trunk',
+  acceptance_criteria: ['criterion:local-shadow'], promotion_mode: 'single_pr', requested_execution_level: 'plan_only',
+  authority_reference: 'authority:local-shadow', governance_source_refs: ['openspec:parallel-delivery-fabric'],
+})
 const snapshotNodes = (value) => {
   if (value === null || typeof value !== 'object') return 1
   return 1 + Reflect.ownKeys(value).filter((key) => key !== 'length').reduce((total, key) => total + snapshotNodes(value[key]), 0)
 }
+// Builds a tree of exactly `nodes` aggregate nodes that stays within the dense
+// array width and the depth budget by spreading the remainder across children.
 const nodeTree = (nodes) => {
   if (nodes === 1) return 'x'
   const childCount = Math.min(MAX_ARRAY_LENGTH - 1, nodes - 1)
-  const remaining = nodes - 1 - childCount
-  return Array.from({ length: childCount }, (_unused, index) => nodeTree(index === 0 ? remaining + 1 : 1))
+  let remaining = nodes - 1 - childCount
+  return Array.from({ length: childCount }, () => {
+    const extra = Math.min(remaining, MAX_ARRAY_LENGTH - 1)
+    remaining -= extra
+    return nodeTree(1 + extra)
+  })
 }
 const regular = (size = 1) => ({ size, isDirectory: () => false, isFile: () => true, isSymbolicLink: () => false })
 const directory = () => ({ size: 0, isDirectory: () => true, isFile: () => false, isSymbolicLink: () => false })
 const symlink = () => ({ size: 0, isDirectory: () => false, isFile: () => false, isSymbolicLink: () => true })
 const identifiedFile = (size, dev = 1, ino = 2) => ({ size, dev, ino, isDirectory: () => false, isFile: () => true, isSymbolicLink: () => false })
 const CLI_PATH = fileURLToPath(new URL('../../dev/parallel-delivery-fabric.mjs', import.meta.url))
+const ADVANCE_SCOPE_DIGEST = digestCanonical([{ kind: 'path', path: 'scripts/fabric.mjs' }])
+const ADVANCE_TUPLE = Object.freeze({
+  plan_id: 'plan:one', generation: 1, task_id: 'task:one', owner_session: 'session:owner-one', provider: 'codex',
+  provider_session_id: 'provider:one', execution_context_id: 'context:one', repo_identity_digest: 'a'.repeat(64),
+  common_dir_digest: 'b'.repeat(64), worktree_id: 'worktree:one', worktree_path_digest: 'c'.repeat(64),
+  branch: 'codex/fabric-one', baseline_sha: 'a'.repeat(40), head_sha: 'b'.repeat(40), scope_digest: ADVANCE_SCOPE_DIGEST,
+  lease_id: 'lease:one',
+})
 
 const payloadFor = (command) => {
   if (command === 'inspect') return { plan_id: 'plan:one' }
   const base = { command_id: `command:${command}-one` }
   if (command === 'submit') return { ...base, plan: { plan_id: 'plan:one' }, expected_oid: 'a'.repeat(40), nonce: 'nonce-submit-one', execution: { level: 'plan_only', side_effect_class: 'CONTROL_METADATA' }, effects: { filesystem: 0, git: 0, network: 0, process: 0, provider: 0, github: 0, deploy: 0, cleanup: 0, promotion: 0 } }
-  if (command === 'advance') return { ...base, envelope: { provider: 'codex', current_level: 'plan_only' }, advance_command: { next_level: 'implement_local' }, admission: { lease_id: 'lease:one' }, provider_request: { command: 'shadow-status' } }
+  if (command === 'advance') return {
+    ...base,
+    envelope: { ...ADVANCE_TUPLE, current_level: 'plan_only' },
+    advance_command: { next_level: 'implement_local', next_envelope: { ...ADVANCE_TUPLE, current_level: 'implement_local' } },
+    admission: { ...ADVANCE_TUPLE, context_attestation_ref: 'attestation:one', resource_keys: ['path:scripts/fabric.mjs'], nonce: 'n'.repeat(32) },
+    provider_request: { command: 'shadow-status', execution_context: { expected: { ...ADVANCE_TUPLE }, attestation: { attestation_ref: 'attestation:one' } } },
+  }
   if (command === 'reconcile') return { ...base, reconcile_request: { lease_id: 'lease:one' } }
-  if (command === 'drain') return { ...base, end_request: { lease_id: 'lease:one' } }
+  if (command === 'drain') return { ...base, drain_request: { plan_id: 'plan:one', generation: 1, expected_oid: 'a'.repeat(40), nonce: 'n'.repeat(32), reason: 'handoff', owner_attestation: { attestation_ref: 'attestation:drain-one', attestation_digest: 'c'.repeat(64), issuer_id: 'attestor:plan-owner', issuer_version: 'plan-owner/v1', action: 'drain', plan_id: 'plan:one', generation: 1, expected_oid: 'a'.repeat(40), nonce: 'n'.repeat(32), reason: 'handoff', observed_at: '2026-08-29T00:00:00.000Z', expires_at: '2026-08-29T00:10:00.000Z', revocation_epoch: 0 } } }
   return { ...base, release_request: { lease_id: 'lease:one', expected_oid: 'a'.repeat(40), expected_envelope_oid: 'b'.repeat(40), expected_envelope_transition_sequence: 0, attestation: { attestation_ref: 'attestation:owner-end-one', attestation_digest: 'c'.repeat(64), issuer_id: 'attestor:owner-end', issuer_version: 'owner-end/v1', owner_session: 'session:owner-one', provider: 'codex', provider_session_id: 'provider:one', execution_context_id: 'context:one', lease_id: 'lease:one', generation: 1, head_sha: 'd'.repeat(40), scope_digest: 'e'.repeat(64), worktree_path_digest: 'f'.repeat(64), observed_at: '2026-08-29T00:00:00.000Z', expires_at: '2026-08-29T00:10:00.000Z', nonce: 'a'.repeat(32), revocation_epoch: 0 } } }
 }
 
@@ -110,11 +162,28 @@ const coreFabric = (calls) => {
         return receipt
       },
     },
-    planRegistry: { submit: async ({ plan }) => ({ status: 'STORED', plan_id: plan.plan_id }), inspect: async () => ({ oid: '0'.repeat(40), record: null }) },
+    planRegistry: {
+      submit: async ({ plan }) => ({ status: 'STORED', plan_id: plan.plan_id }),
+      validateGeneration: async ({ plan_id, generation, task_id }) => {
+        const active = { status: 'ACTIVE', plan_id, generation, oid: 'f'.repeat(40) }
+        return task_id === undefined ? active : {
+          ...active,
+          task: {
+            task_id: 'task:one', owner_session: 'session:owner-one', provider: 'codex',
+            baseline_sha: 'a'.repeat(40), scope_digest: ADVANCE_SCOPE_DIGEST, dependencies: [],
+          },
+        }
+      },
+      inspect: async () => ({ oid: '0'.repeat(40), record: null }),
+    },
     leaseRegistry: {
       admit: async ({ lease_id }) => ({ status: 'ADMITTED', lease_id }),
+      validateActive: async ({ lease_id }) => ({ status: 'ACTIVE', lease_id }),
+      validateDependencies: async ({ plan_id, generation, task_id, dependency_task_ids, expected_parent_sha }) => ({
+        status: 'READY', plan_id, generation, task_id, expected_parent_sha, dependency_count: dependency_task_ids.length,
+      }),
       reconcileTimeout: async ({ lease_id }) => ({ status: 'ACTIVE', lease_id }),
-      endRequest: async ({ lease_id }) => ({ status: 'END_REQUESTED', lease_id }),
+      drainPlan: async ({ plan_id }) => ({ status: 'DRAINING', plan_id }),
       release: async () => ({ status: 'RELEASED', oid: 'b'.repeat(40), lease: { lease_id: 'lease:one', state: 'RELEASED', retention_state: 'RETAINED_FOR_REVIEW', release_record: { owner_end_attestation_ref: 'attestation:owner-end-one', owner_end_attestation_digest: 'c'.repeat(64) } } }),
       inspect: async () => ({ oid: '0'.repeat(40), record: null }),
     },
@@ -248,7 +317,7 @@ test('CLI accepts stdin transport bytes exactly at 256 KiB', async () => {
   assert.equal(transportSubject.calls.length, 1)
 })
 
-test('CLI accepts input with exactly 512 aggregate nodes', async () => {
+test('CLI accepts input with exactly the aggregate node budget', async () => {
   const nodes = payloadFor('submit')
   nodes.plan = { plan_id: 'plan:one' }
   nodes.plan.payload = nodeTree(MAX_NODES - snapshotNodes(nodes))
@@ -256,6 +325,31 @@ test('CLI accepts input with exactly 512 aggregate nodes', async () => {
   const nodeSubject = fixture({ stdin: input(nodes) })
   assert.equal((await run(['submit', '--input', '-'], nodeSubject)).exitCode, 0)
   assert.equal(nodeSubject.calls.length, 1)
+})
+
+test('P1 regression — a contract-maximum 64-task delivery plan fits the CLI node budget', async () => {
+  const plan = localDeliveryPlan()
+  const [template] = plan.tasks
+  plan.tasks = Array.from({ length: 64 }, (_unused, index) => ({
+    ...template,
+    task_id: `task:max-${index}`,
+    scope: { ...template.scope, public_entrypoint: `scripts/dev/max-${index}.mjs`, resources: [{ kind: 'path', path: `scripts/dev/max-${index}.mjs` }], expected_tests: [`test:max-${index}`] },
+  }))
+  const payload = { ...payloadFor('submit'), plan }
+  // The old 512-node cap rejected every valid plan of this size before Fabric saw it.
+  assert.ok(snapshotNodes(payload) > 512)
+  assert.ok(snapshotNodes(payload) <= MAX_NODES)
+  const subject = fixture({ stdin: input(payload) })
+  assert.equal((await run(['submit', '--input', '-'], subject)).exitCode, 0)
+  assert.equal(subject.calls.length, 1)
+})
+
+test('P2 regression — a contract-valid namespaced plan id is inspectable through the CLI', async () => {
+  const subject = fixture({ stdin: input({ plan_id: 'plan:foo/bar' }) })
+  assert.equal((await run(['inspect', '--input', '-'], subject)).exitCode, 0)
+  assert.deepEqual(subject.calls[0], { inspect: 'plan:foo/bar' })
+  const unnamespaced = fixture({ stdin: input({ plan_id: 'not-namespaced' }) })
+  assertHeld(unnamespaced, await run(['inspect', '--input', '-'], unnamespaced))
 })
 
 test('CLI accepts input with a dense array of exactly 128 elements', async () => {
@@ -275,7 +369,7 @@ test('CLI contains stdin transport bytes at 256 KiB plus one before Fabric', asy
   assertHeld(transportSubject, await run(['submit', '--input', '-'], transportSubject))
 })
 
-test('CLI contains input with 512 aggregate nodes plus one before Fabric', async () => {
+test('CLI contains input with the aggregate node budget plus one before Fabric', async () => {
   const nodes = payloadFor('submit')
   nodes.plan = { plan_id: 'plan:one' }
   nodes.plan.payload = nodeTree(MAX_NODES - snapshotNodes(nodes) + 1)
@@ -343,6 +437,23 @@ test('CLI suppresses private host-shaped input and oversized or unserializable o
   assert.equal(JSON.parse(unserializable.output[0]).status, 'HELD')
 })
 
+test('P2 regression — CLI inspect accepts the authenticated plan-scoped lease projection and rejects a malformed one', async () => {
+  const projection = { scope: 'plan', plan_id: 'plan:one', source_oid: '1'.repeat(40), source_digest: 'a'.repeat(64) }
+  const inspectWith = (leaseProjection) => (planId) => ({
+    plan_id: planId, plan: { oid: '0'.repeat(40), record: null }, leases: { oid: '0'.repeat(40), record: { leases: {} }, projection: leaseProjection },
+  })
+  const projected = fixture({ stdin: input(payloadFor('inspect')), inspect: inspectWith(projection) })
+  assert.equal((await run(['inspect', '--input', '-'], projected)).exitCode, 0)
+  assert.deepEqual(JSON.parse(projected.output[0]), { plan_id: 'plan:one', plan: { oid: '0'.repeat(40) }, leases: { oid: '0'.repeat(40) } })
+  for (const bad of [{ ...projection, plan_id: 'plan:two' }, { ...projection, scope: 'global' }, { ...projection, extra: true }, { ...projection, source_digest: 'zz' }, { scope: 'plan' }]) {
+    const subject = fixture({ stdin: input(payloadFor('inspect')), inspect: inspectWith(bad) })
+    assert.equal((await run(['inspect', '--input', '-'], subject)).exitCode, 1, JSON.stringify(bad))
+    assert.deepEqual(JSON.parse(subject.output[0]), { status: 'HELD', error: 'CLI_FABRIC_RESULT_UNSUCCESSFUL' })
+  }
+  const nullWithProjection = fixture({ stdin: input(payloadFor('inspect')), inspect: (planId) => ({ plan_id: planId, plan: { oid: '0'.repeat(40), record: null }, leases: { oid: '0'.repeat(40), record: null, projection } }) })
+  assert.equal((await run(['inspect', '--input', '-'], nullWithProjection)).exitCode, 1)
+})
+
 test('CLI projects inspect output through a closed redacted allow-list and budgets it before serialization', async () => {
   const safe = fixture({ stdin: input(payloadFor('inspect')), inspect: (planId) => ({
     plan_id: planId,
@@ -389,9 +500,62 @@ test('CLI rejects oversized benign inspect property keys before oid-only project
   }
 })
 
-test('CLI main remains inert and source contains no live or destructive sinks', async () => {
+test('CLI main composes the local durable shadow seam without live or destructive sinks', async () => {
   const source = await import('node:fs/promises').then(({ readFile }) => readFile(new URL('../../dev/parallel-delivery-fabric.mjs', import.meta.url), 'utf8'))
-  assert.match(source, /SHADOW_ONLY_INERT/u)
+  const localSource = await import('node:fs/promises').then(({ readFile }) => readFile(new URL('../../lib/parallel-delivery-fabric-local.mjs', import.meta.url), 'utf8'))
+  assert.match(source, /createLocalParallelDeliveryFabric/u)
+  assert.doesNotMatch(source, /SHADOW_ONLY_INERT/u)
   assert.doesNotMatch(source, /node:(?:child_process|http|https|net|tls)|\b(?:spawn|exec|fork|fetch|writeFile|unlink|rmSync|git|deploy)\s*\(/u)
-  assert.doesNotMatch(source, /createParallelDeliveryFabric|provider.*launch|process\.kill/iu)
+  assert.match(localSource, /createCommandJournal/u)
+  assert.match(localSource, /createGitCasStore/u)
+  assert.match(localSource, /createParallelDeliveryFabric/u)
+  assert.doesNotMatch(localSource, /node:(?:http|https|net|tls)|\b(?:fetch|writeFile|unlink|rmSync|deploy)\s*\(|\bgit\s+(?:push|fetch|remote|worktree|reset|clean|branch|rebase)\b|\bgh\s+pr\s+(?:merge|review)\b|provider.*launch/iu)
 })
+
+test('local durable composition completes an inspect CLI smoke against an isolated Git repository', async (context) => {
+  const repositoryRoot = await tempRepository(context)
+  const fabric = await createLocalParallelDeliveryFabric({ repositoryRoot })
+  const output = []
+  const result = await runParallelDeliveryFabricCli(['inspect', '--input', '-'], {
+    fabric,
+    repositoryRoot,
+    io: { readStdin: async () => input({ plan_id: 'plan:local-smoke' }), write: (line) => output.push(line) },
+  })
+  assert.deepEqual(result, { exitCode: 0 })
+  assert.deepEqual(JSON.parse(output[0]), {
+    plan_id: 'plan:local-smoke', plan: { oid: '0'.repeat(40) }, leases: { oid: '0'.repeat(40) },
+  })
+})
+
+test('local durable composition persists and replays a plan-only submit through the CLI seam', async (context) => {
+  const repositoryRoot = await tempRepository(context)
+  const payload = {
+    command_id: 'command:local-submit', plan: localDeliveryPlan(), expected_oid: '0'.repeat(40), nonce: 'local-submit-nonce'.padEnd(32, 'n'),
+    execution: { level: 'plan_only', side_effect_class: 'CONTROL_METADATA' },
+    effects: { filesystem: 0, git: 0, network: 0, process: 0, provider: 0, github: 0, deploy: 0, cleanup: 0, promotion: 0 },
+  }
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const fabric = await createLocalParallelDeliveryFabric({ repositoryRoot })
+    const output = []
+    const result = await runParallelDeliveryFabricCli(['submit', '--input', '-'], {
+      fabric, repositoryRoot,
+      io: { readStdin: async () => input(payload), write: (line) => output.push(line) },
+    })
+    assert.deepEqual(result, { exitCode: 0 }, JSON.stringify(output))
+    assert.deepEqual(JSON.parse(output[0]), { command_id: payload.command_id, type: 'submit', status: 'SHADOW_STORED', reason: 'PLAN_STORED' })
+  }
+  const inspected = await (await createLocalParallelDeliveryFabric({ repositoryRoot })).inspect(payload.plan.plan_id)
+  assert.equal(inspected.plan.record.plan.plan_id, payload.plan.plan_id)
+  assert.notEqual(inspected.plan.oid, '0'.repeat(40))
+})
+
+for (const ref of ['refs/ai-bim/delivery-plans', 'refs/ai-bim/session-leases']) {
+  test(`local durable inspect fails closed for a malformed ${ref} record`, async (context) => {
+    const repositoryRoot = await tempRepository(context)
+    writeMalformedRef(repositoryRoot, ref)
+    const fabric = await createLocalParallelDeliveryFabric({ repositoryRoot })
+    const result = await fabric.inspect('plan:corrupt-probe')
+    assert.equal(result.status, 'HELD')
+    assert.equal(result.reason, 'INSPECT_UNAVAILABLE')
+  })
+}

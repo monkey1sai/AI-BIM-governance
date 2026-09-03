@@ -37,12 +37,12 @@ export type SemanticCaseDefinition = {
 // 只宣告 prepare（自行導航 + fixture 互動）與 assertions（locator + 期望）。
 //
 // 誠實原則：
-// - 全程 **/api/** 已被 spec 以 503 stub，所有互動都是 UnifiedConsole 的
-//   local fixture 行為（state patch + toast 假 API 字串），不宣稱任何後端事實。
+// - 全程 **/api/** 已被 spec 以 503 stub；A1–A3 直接驗真實產品模組的
+//   fail-closed 行為，其他 fixture 畫面只驗本地狀態，不宣稱任何後端事實。
 // - 找不到天然對映的 case（例：home/ops 的 disabled、ops 的 failure）以
 //   count_equals 0 誠實斷言「該狀態表面目前為空」，逐案附註解，不造假 DOM。
-// - runtime_truth：fixture 殼（workspace.a1–a3／concept）斷言 data-prov="fixture"；真值頁（home／pipeline／ops，
-//   unified-console-runtime-truth）斷言 page-root 內 data-prov="asbuilt" 且主值 cell 為 offline（gate 503 環境）。
+// - runtime_truth：fixture 殼（concept）斷言 data-prov="fixture"；真實產品頁（A1–A3、home、pipeline、ops）
+//   斷言 asbuilt provenance 與 gate 503 下的誠實表面。
 //
 // state 隔離設計（重要）：
 // - hash-only 的 page.goto 是 same-document navigation，React state（含
@@ -69,7 +69,8 @@ export function designHarnessRoute(productionRoute: string): string {
 
 /** 任務規約：prepare 一律以 design-owned canonical harness carriers 自行導頁。 */
 const gotoRoute = async ({ page, productionRoute }: SemanticCaseContext): Promise<void> => {
-  await page.goto(designHarnessRoute(productionRoute), { waitUntil: "networkidle" });
+  await page.goto(designHarnessRoute(productionRoute), { waitUntil: "domcontentloaded" });
+  await page.locator("#root > *").first().waitFor({ state: "visible", timeout: 30_000 });
 };
 
 /** 先經 about:blank 造成 full document load → React/fixture state 全部重置。 */
@@ -110,6 +111,17 @@ const truthRuntimeTruthCase = (primaryValueUc: string): SemanticCaseDefinition =
     { id: "asbuilt-provenance-marker", locator: '[data-uc="page-root"] [data-prov="asbuilt"] >> nth=0', expectation: "visible" },
     { id: "primary-value-offline-state", locator: `[data-uc="${primaryValueUc}"]`, expectation: "attribute_equals", attribute: "data-state", expected: "offline" },
     { id: "last-updated-deterministic-dash", locator: '[data-uc="last-updated"]', expectation: "text_contains", expected: "—" },
+    { id: "console-runtime-note", locator: '[data-uc="runtime-note"]', expectation: "text_contains", expected: RUNTIME_NOTE },
+  ],
+});
+
+/** runtime_truth（A1–A3 真實工作台）：產品路由直接掛載 as-built 模組，
+    設計 harness 的 /api 503 只允許顯示可重試的 fail-closed 表面，不能回退成 fixture 成功資料。 */
+const liveWorkspaceRuntimeTruthCase = (): SemanticCaseDefinition => ({
+  prepare: gotoFreshRoute,
+  assertions: [
+    { id: "live-workspace-provenance-marker", locator: '[data-uc="unified-live-workspace"]', expectation: "attribute_equals", attribute: "data-prov", expected: "asbuilt" },
+    { id: "live-workspace-contract-note", locator: '[data-uc="live-contract"]', expectation: "text_contains", expected: "Coordinator" },
     { id: "console-runtime-note", locator: '[data-uc="runtime-note"]', expectation: "text_contains", expected: RUNTIME_NOTE },
   ],
 });
@@ -217,68 +229,25 @@ function homeCases(): ScreenCases {
   };
 }
 
-/* ═══ fixture workspace.a1..a3.default（#a1..#a3）═══ */
+/* ═══ canonical live workspace.a1..a3.default（#a1..#a3）═══ */
 
 type WsDock = "a1" | "a2" | "a3";
 
-const WS_CTA: Record<WsDock, { label: string; confirmToast: string }> = {
-  // a1Ran 初值 true → CTA 顯示「重新執行」；其餘 dock 初值未執行。
-  a1: { label: "重新執行", confirmToast: "POST /api/rule-runs → 202" },
-  a2: { label: "計算差異", confirmToast: "POST /api/diffs → 202" },
-  a3: { label: "Build Federated USD", confirmToast: "POST /api/federated-sets/FS-01/build" },
-};
-
 function workspaceCases(dock: WsDock): ScreenCases {
-  /** goto 後點當前 dock 的主 CTA（產出結果面板；重複點擊為冪等的 re-run）。 */
-  const runDockCta = async (context: SemanticCaseContext): Promise<void> => {
+  const isA1 = dock === "a1";
+  const isA2 = dock === "a2";
+  const fileLibraryError = isA1 ? '[data-testid="a1-fs-error"]' : '[data-testid="a2-fs-error"]';
+  const retryButton = isA1 ? '[data-testid="a1-fs-retry"]' : '[data-testid="a2-fs-retry"]';
+  const disabledControl = isA1 ? '[data-testid="a1-localfs-select"]' : '[data-testid="a2-base-project"]';
+  const title = isA1
+    ? "A1 · 治理與模型檢核"
+    : isA2
+      ? "模型版本差異與責任追蹤 · A2"
+      : "跨專業模型 Federation · A3";
+  const a3Prepare = async (context: SemanticCaseContext) => {
     await gotoRoute(context);
-    await clickFirst(context.page, '[data-uc="dock-cta"]');
+    await clickFirst(context.page, 'button:has-text("準備 + 驗證坐標系")');
   };
-
-  const success: SemanticCaseDefinition =
-    dock === "a1"
-      ? {
-          // A1 選定檔案列的 mapping 98% ✓（初始即為成功態）。
-          prepare: gotoRoute,
-          assertions: [{ id: "a1-mapping-98-check", locator: "text=✓ mapping 98%", expectation: "visible" }],
-        }
-      : dock === "a2"
-        ? {
-            prepare: runDockCta,
-            assertions: [{ id: "a2-diff-added-chip", locator: "text=■ 新增 12", expectation: "visible" }],
-          }
-        : {
-            prepare: runDockCta,
-            assertions: [{ id: "a3-federated-stage-check", locator: "text=Federated Stage ✓", expectation: "visible" }],
-          };
-
-  const failure: SemanticCaseDefinition =
-    dock === "a1"
-      ? {
-          // a1Ran 初值 true → 檢核失敗清單可見；「嚴重」sev chip（紅）。
-          prepare: gotoRoute,
-          assertions: [
-            { id: "a1-critical-sev-chip", locator: 'text="嚴重"', expectation: "visible" },
-            { id: "a1-fail-row-issue-action", locator: '[data-uc="fail-issue-btn"] >> nth=0', expectation: "visible" },
-          ],
-        }
-      : dock === "a2"
-        ? {
-            prepare: runDockCta,
-            assertions: [{ id: "a2-diff-removed-chip", locator: "text=■ 移除 4", expectation: "visible" }],
-          }
-        : {
-            // 誠實對映：A3 dock 本身無紅色失敗態；工作區的失敗浮出面 = Issues/BCF
-            // dock（open 紅 chip 的既有 fixture issue），以 dock tab 切換（local state）。
-            prepare: async (context) => {
-              await gotoRoute(context);
-              await clickFirst(context.page, '[data-uc="dock-tab-issues"]');
-            },
-            assertions: [
-              { id: "issues-open-red-chip", locator: 'text="open"', expectation: "visible" },
-              { id: "issues-firerating-issue-title", locator: "text=防火時效不足", expectation: "visible" },
-            ],
-          };
 
   return {
     navigation: {
@@ -290,81 +259,90 @@ function workspaceCases(dock: WsDock): ScreenCases {
     },
     primary_actions: {
       prepare: gotoRoute,
-      assertions: [
-        { id: "dock-cta-visible", locator: '[data-uc="dock-cta"]', expectation: "visible" },
-        { id: "dock-cta-enabled", locator: '[data-uc="dock-cta"]', expectation: "enabled" },
-        { id: "dock-cta-label", locator: '[data-uc="dock-cta"]', expectation: "text_equals", expected: WS_CTA[dock].label },
-      ],
+      assertions: isA1 || isA2
+        ? [
+            { id: "file-library-retry-visible", locator: retryButton, expectation: "visible" },
+            { id: "file-library-retry-enabled", locator: retryButton, expectation: "enabled" },
+          ]
+        : [
+            { id: "a3-prepare-visible", locator: 'button:has-text("準備 + 驗證坐標系")', expectation: "visible" },
+            { id: "a3-prepare-enabled", locator: 'button:has-text("準備 + 驗證坐標系")', expectation: "enabled" },
+          ],
     },
     loading: {
-      // 進行中狀態：Streaming 膠囊 + session capsule（fixture 常駐的 live 表面文案）。
       prepare: gotoRoute,
-      assertions: [
-        { id: "streaming-pill-live", locator: '[data-uc="streaming-pill"]', expectation: "text_contains", expected: "Streaming" },
-        { id: "session-capsule-editor-lease", locator: "text=S-240601 · editor lease", expectation: "visible" },
-      ],
+      assertions: isA1 || isA2
+        ? [{ id: "file-library-load-failed-closed", locator: fileLibraryError, expectation: "visible" }]
+        : [{ id: "a3-build-blocked-before-prepare", locator: 'button:has-text("Build Federated USD")', expectation: "disabled" }],
     },
     empty: {
-      // 可達空狀態：初始 sel 為空 → viewport selection callout 不渲染。
       prepare: gotoRoute,
-      assertions: [
-        { id: "selection-callout-absent", locator: '[data-uc="sel-callout"]', expectation: "count_equals", expected: 0 },
-      ],
+      assertions: isA1
+        ? [{ id: "a1-no-rule-run-before-input", locator: '[data-testid="a1-rulerun-scoreboard"]', expectation: "count_equals", expected: 0 }]
+        : isA2
+          ? [{ id: "a2-no-overlay-session-before-diff", locator: '[data-testid="a2-overlay-session-select"]', expectation: "count_equals", expected: 0 }]
+          : [{ id: "a3-no-review-session-before-build", locator: '[data-testid="a3-session-result"]', expectation: "count_equals", expected: 0 }],
     },
-    success,
+    success: {
+      prepare: gotoRoute,
+      assertions: isA1
+        ? [{ id: "a1-no-export-artifact-offline", locator: '[data-testid="a1-exported-artifact"]', expectation: "count_equals", expected: 0 }]
+        : isA2
+          ? [{ id: "a2-no-overlay-ack-before-diff", locator: '[data-testid="a2-overlay-ack"]', expectation: "count_equals", expected: 0 }]
+          : [{ id: "a3-no-viewer-before-session", locator: '[data-testid="a3-open-viewer"]', expectation: "count_equals", expected: 0 }],
+    },
     warning: {
-      // 琥珀狀態：側欄「模型資料與轉檔」badge 為真值（running+failed）；gate 503 → 誠實顯示 —（offline），不捏造數字。
-      prepare: gotoRoute,
-      assertions: [
-        { id: "nav-pipe-warn-badge-visible", locator: '[data-uc="nav-pipe-badge"]', expectation: "visible" },
-        { id: "nav-pipe-warn-badge-count", locator: '[data-uc="nav-pipe-badge"]', expectation: "text_equals", expected: "—" },
-      ],
+      prepare: isA1 || isA2 ? gotoRoute : a3Prepare,
+      assertions: isA1 || isA2
+        ? [{ id: "file-library-warning-visible", locator: fileLibraryError, expectation: "visible" }]
+        : [{ id: "a3-prepare-error-visible", locator: 'text=未連線後端 / member USD 不存在', expectation: "visible" }],
     },
-    failure,
+    failure: {
+      prepare: isA1 || isA2 ? gotoRoute : a3Prepare,
+      assertions: isA1 || isA2
+        ? [
+            { id: "file-library-retry-remains-visible", locator: retryButton, expectation: "visible" },
+            { id: "file-library-retry-remains-enabled", locator: retryButton, expectation: "enabled" },
+          ]
+        : [{ id: "a3-build-remains-blocked-after-failure", locator: 'button:has-text("Build Federated USD")', expectation: "disabled" }],
+    },
     disabled: {
-      // 誠實停用（互動後）：A1 檢核失敗列「開單」點過即完成（✓ + aria-disabled，
-      // onClick 原本就 no-op）。a2–a4 screen 以 dock tab 切到 A1（local state）套同一語意。
-      prepare: async (context) => {
-        await gotoRoute(context);
-        await clickFirst(context.page, '[data-uc="dock-tab-a1"]');
-        await clickFirst(context.page, '[data-uc="fail-issue-btn"]');
-      },
-      assertions: [
-        { id: "issue-btn-aria-disabled", locator: '[data-uc="fail-issue-btn"] >> nth=0', expectation: "attribute_equals", attribute: "aria-disabled", expected: "true" },
-        { id: "issue-btn-disabled-state", locator: '[data-uc="fail-issue-btn"] >> nth=0', expectation: "disabled" },
-      ],
+      prepare: gotoRoute,
+      assertions: isA1 || isA2
+        ? [{ id: "file-library-dependent-control-disabled", locator: disabledControl, expectation: "disabled" }]
+        : [{ id: "a3-build-disabled-without-set", locator: 'button:has-text("Build Federated USD")', expectation: "disabled" }],
     },
     confirmation: {
-      // 點主 CTA → toast 假 API 字串（先切回本 dock，因 disabled case 已把 dock 切到 a1）。
       prepare: async (context) => {
-        await gotoRoute(context);
-        await clickFirst(context.page, `[data-uc="dock-tab-${dock}"]`);
-        await clickFirst(context.page, '[data-uc="dock-cta"]');
+        if (isA1 || isA2) {
+          await gotoRoute(context);
+          await clickFirst(context.page, retryButton);
+          return;
+        }
+        await a3Prepare(context);
       },
-      assertions: [
-        { id: "fake-api-toast", locator: '[data-uc="toast"]', expectation: "text_contains", expected: WS_CTA[dock].confirmToast },
-      ],
+      assertions: isA1 || isA2
+        ? [{ id: "retry-keeps-honest-error-surface", locator: fileLibraryError, expectation: "visible" }]
+        : [{ id: "a3-prepare-keeps-honest-error-surface", locator: 'text=未連線後端 / member USD 不存在', expectation: "visible" }],
     },
     i18n_zh_tw: {
       prepare: gotoRoute,
       assertions: [
-        { id: "zh-invite-spectator", locator: "text=+ 邀請 Spectator", expectation: "visible" },
+        { id: "zh-live-workspace-title", locator: `text=${title}`, expectation: "visible" },
         langZhActive,
       ],
     },
-    runtime_truth: runtimeTruthCase(),
+    runtime_truth: liveWorkspaceRuntimeTruthCase(),
   };
 }
 
 /* ═══ workspace.a4.default（canonical live/table-only surface）═══ */
 
 function a4Cases(): ScreenCases {
-  // The manifest still reaches this screen through the legacy #a4 alias until
-  // the design-reference owner re-approves its canonical query-bearing route.
-  // Wait for the explicit scrubbed canonical destination before observing DOM.
+  // #a4 是目前正規的 query-bearing route；不可再等待已退役的
+  // #workspace?dock=a4 轉址，否則每個語意案例都會無故耗盡 30 秒。
   const gotoA4 = async (context: SemanticCaseContext): Promise<void> => {
     await gotoRoute(context);
-    await context.page.waitForURL(/#workspace\?dock=a4$/);
     await context.page.getByTestId("a4-semantic-search-page").waitFor({ state: "visible" });
   };
   const gotoFreshA4 = async (context: SemanticCaseContext): Promise<void> => {
@@ -675,12 +653,12 @@ function conceptCases(slug: ConceptSlug): ScreenCases {
       ],
     },
     primary_actions: {
-      // 誠實對映：概念頁自身無 CTA；本頁主要可行動作 = 側欄 A1 LIVE 項（可點、enabled）。
+      // 誠實對映：概念頁自身無 CTA；本頁主要可行動作 = 側欄 A1 項（可點、enabled、帶 asbuilt 標籤）。
       prepare: gotoRoute,
       assertions: [
         { id: "sidebar-a1-live-visible", locator: '[data-uc="app-a1"]', expectation: "visible" },
         { id: "sidebar-a1-live-enabled", locator: '[data-uc="app-a1"]', expectation: "enabled" },
-        { id: "sidebar-a1-live-badge", locator: '[data-uc="app-a1"]', expectation: "text_contains", expected: "LIVE" },
+        { id: "sidebar-a1-live-badge", locator: '[data-uc="app-a1"]', expectation: "text_contains", expected: "asbuilt" },
       ],
     },
     loading: {
@@ -699,10 +677,10 @@ function conceptCases(slug: ConceptSlug): ScreenCases {
       ],
     },
     success: {
-      // 綠色上線狀態：側欄 A1–A4 的 LIVE 徽章恰為 4 顆（本頁唯一的成功/上線語意表面）。
+      // 建成狀態：側欄 A1–A4 的 asbuilt 徽章恰為 4 顆（本頁唯一的建成/已上線語意表面）。
       prepare: gotoRoute,
       assertions: [
-        { id: "live-badges-count", locator: 'text="LIVE"', expectation: "count_equals", expected: 4 },
+        { id: "live-badges-count", locator: 'text="asbuilt"', expectation: "count_equals", expected: 4 },
       ],
     },
     warning: {
@@ -715,13 +693,14 @@ function conceptCases(slug: ConceptSlug): ScreenCases {
     },
     failure: {
       // 真實失敗路徑：攔截概念大圖請求（abort）→ full reload → img onError 觸發
-      // 原型同語意的 fallback 卡。route 於同一 prepare 內 try/finally 解除，
+      // 原型同語意的 fallback 卡。route 於同一 prepare 內在 fallback 呈現後解除，
       // 不污染後續 case / 像素擷取（runtime_truth 會 fresh reload 還原）。
       prepare: async (context) => {
         const { page } = context;
         await page.route(CONCEPT_IMG_GLOB, (route) => route.abort());
         try {
           await gotoFreshRoute(context);
+          await page.locator('[data-uc="concept-fallback"]').waitFor({ state: "visible", timeout: 5000 });
         } finally {
           await page.unroute(CONCEPT_IMG_GLOB);
         }

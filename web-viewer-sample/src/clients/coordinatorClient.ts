@@ -150,6 +150,38 @@ export class CoordinatorClient {
         return parsed;
     }
 
+    async recordSessionActivity(
+        sessionId: string,
+        leaseId: string,
+        leaseToken: string,
+    ): Promise<{ ok: boolean; session_id: string; recorded_at: string }> {
+        return this.request<{ ok: boolean; session_id: string; recorded_at: string }>(
+            `/api/review-sessions/${encodeURIComponent(sessionId)}/activity`,
+            {
+                method: "POST",
+                headers: {
+                    Accept: "application/json",
+                    "Content-Type": "application/json",
+                    "X-Viewer-Lease-Token": leaseToken,
+                },
+                body: JSON.stringify({ lease_id: leaseId }),
+            },
+        );
+    }
+
+    async getSessionIdleStatus(sessionId: string): Promise<{
+        session_id: string;
+        enabled: boolean;
+        has_connected_viewer: boolean;
+        is_counting_down: boolean;
+        remaining_seconds: number | null;
+        last_activity_at: string | null;
+    }> {
+        return this.request(
+            `/api/review-sessions/${encodeURIComponent(sessionId)}/idle-status`,
+        );
+    }
+
     private async request<T>(path: string, init?: RequestInit): Promise<T> {
         const response = await this.fetchImpl(`${this.baseUrl}${path}`, {
             headers: { Accept: "application/json", ...(init?.headers || {}) },

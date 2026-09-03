@@ -17,8 +17,6 @@ import {
 
 const SHA1 = /^[0-9a-f]{40}$/u
 const SHA256 = /^[0-9a-f]{64}$/u
-const DEFAULT_CREATED_AT = '1970-01-01T00:00:00.000Z'
-const DEFAULT_EXPIRES_AT = '9999-12-31T23:59:59.999Z'
 const CANONICAL_OFFSETS = Object.freeze([0, 1, 2, 3, 4])
 const CANONICAL_RESERVED_PORTS = new Set([
   8004, 49102, 49101, 8010, 5173, 5174, 49100,
@@ -84,6 +82,16 @@ const exactKeys = (value, keys) => !utilTypes.isProxy(value) && isPlainObject(va
   Reflect.ownKeys(value).every((key) => typeof key === 'string') &&
   Reflect.ownKeys(value).length === keys.length && keys.every((key) => own(value, key))
 
+const trustedClockNow = (value) => {
+  try {
+    if (!exactKeys(value, ['now'])) return undefined
+    const descriptor = Object.getOwnPropertyDescriptor(value, 'now')
+    return descriptor && Object.hasOwn(descriptor, 'value') && isTimestamp(descriptor.value) ? descriptor.value : undefined
+  } catch {
+    return undefined
+  }
+}
+
 const normalizedKey = (key) => String(key)
   .replace(/([a-z0-9])([A-Z])/gu, '$1_$2')
   .toLowerCase()
@@ -139,6 +147,16 @@ const dataOnlySnapshot = (value, seen = new WeakSet(), nodes = { count: 0 }, pat
   if (!array && !isPlainObject(value)) return DATA_SNAPSHOT_INVALID
   const result = array ? [] : Object.create(null)
   seen.add(value)
+  // A sparse array (`Array(3)`, deleted indexes) would silently collapse into fewer
+  // entries and under-count occupied runtimes: every index must be an own data property.
+  if (array) {
+    for (let index = 0; index < value.length; index += 1) {
+      if (!Object.hasOwn(value, String(index))) {
+        seen.delete(value)
+        return DATA_SNAPSHOT_INVALID
+      }
+    }
+  }
   for (const key of Reflect.ownKeys(value)) {
     if (typeof key === 'symbol') {
       seen.delete(value)
@@ -166,7 +184,12 @@ const dataOnlySnapshot = (value, seen = new WeakSet(), nodes = { count: 0 }, pat
   return result
 }
 
-const safeInput = (value, key = '', seen = new WeakSet(), nodes = { count: 0 }) => {
+// Bound the recursive walk explicitly: a deeply nested plain object must produce a
+// candidate-local held result, never a RangeError escaping from the binder.
+const SAFE_INPUT_MAX_DEPTH = 64
+
+const safeInput = (value, key = '', seen = new WeakSet(), nodes = { count: 0 }, depth = 0) => {
+  if (depth > SAFE_INPUT_MAX_DEPTH) return false
   if (typeof value === 'string') return !unsafeString(value, key)
   if (value === null) return true
   if (value === undefined) return true
@@ -192,7 +215,7 @@ const safeInput = (value, key = '', seen = new WeakSet(), nodes = { count: 0 }) 
       result = false
       break
     }
-    if (!safeInput(descriptor.value, Array.isArray(value) ? key : nestedKey, seen, nodes)) {
+    if (!safeInput(descriptor.value, Array.isArray(value) ? key : nestedKey, seen, nodes, depth + 1)) {
       result = false
       break
     }
@@ -240,7 +263,11 @@ const held = (status, reason, extras = {}) => freezeCopy({ status, reason, ...ex
 
 const normalizedPhysicalPath = (value) => {
   if (typeof value !== 'string' || value.trim() === '') return null
-  const parts = value.replaceAll('\\', '/').split('/')
+  const drive = /^([A-Za-z]):[\\/]/u.exec(value)
+  const unc = /^\\\\/u.test(value)
+  const windowsPath = drive !== null || unc
+  const pathValue = drive === null ? value : value.slice(2)
+  const parts = pathValue.replaceAll('\\', '/').split('/')
   const normalized = []
   for (const part of parts) {
     if (part === '' || part === '.') continue
@@ -249,8 +276,9 @@ const normalizedPhysicalPath = (value) => {
       else normalized.push(part)
     } else normalized.push(part)
   }
-  const prefix = /^[A-Za-z]:/u.test(value) ? `${value[0].toLowerCase()}:` : value.startsWith('/') ? '/' : ''
-  return `${prefix}${normalized.join('/')}`.replace(/^\/+/, prefix === '/' ? '/' : '').toLowerCase()
+  const prefix = drive !== null ? `${drive[1].toLowerCase()}:/` : unc ? '//' : value.startsWith('/') ? '/' : ''
+  const physicalPath = `${prefix}${normalized.join('/')}`
+  return windowsPath ? physicalPath.toLowerCase() : physicalPath
 }
 
 const pathDigest = (value) => {
@@ -493,11 +521,18 @@ export function evaluateRuntimeAdmission(snapshot, request) {
   if (baseUrls !== undefined && ports !== undefined && !validBaseUrls(baseUrls, ports)) {
     return held('HELD_RUNTIME', 'BASE_URL_MISMATCH')
   }
-  const reserved = new Set([
-    ...CANONICAL_RESERVED_PORTS,
-    ...(Array.isArray(snapshot.reserved_ports) ? snapshot.reserved_ports : []),
-    ...(Array.isArray(request.reserved_ports) ? request.reserved_ports : []),
-  ])
+  // A reservation field that is present must be a bounded list of unique integer
+  // ports; a malformed shape is never "no reservations".
+  const reservedPortList = (value) => {
+    if (value === undefined) return []
+    if (!Array.isArray(value) || value.length > 256 || new Set(value).size !== value.length ||
+        value.some((port) => !Number.isSafeInteger(port) || port < 1 || port > 65535)) return null
+    return value
+  }
+  const snapshotReserved = reservedPortList(snapshot.reserved_ports)
+  const requestReserved = reservedPortList(request.reserved_ports)
+  if (snapshotReserved === null || requestReserved === null) return held('HELD_RUNTIME', 'RESERVED_PORTS_INVALID')
+  const reserved = new Set([...CANONICAL_RESERVED_PORTS, ...snapshotReserved, ...requestReserved])
   if (ports !== undefined && Object.values(ports).some((port) => reserved.has(port))) {
     return held('HELD_RUNTIME', 'RESERVED_PORT_CONFLICT')
   }
@@ -520,13 +555,28 @@ export function evaluateRuntimeAdmission(snapshot, request) {
   })
 }
 
+// The path set is classifier input, not something to sanitize quietly: a path
+// list carrying non-string entries is invalid (null), and a change that names no
+// paths at all is unclassifiable unless the trusted base policy says static-only.
+const validPathList = (values) => (Array.isArray(values) && values.every((entry) => typeof entry === 'string' && entry.length > 0) ? values : null)
+const APPLICABILITY_PATH_ALIASES = Object.freeze(['paths', 'changed_paths', 'files', 'changed_files', 'path'])
+const applicabilityPathList = (values) => {
+  if (typeof values === 'string') return values.length > 0 ? [values] : null
+  return validPathList(values)
+}
 const applicabilityPaths = (change) => {
-  if (typeof change === 'string') return [change]
-  if (Array.isArray(change)) return change.filter((entry) => typeof entry === 'string')
-  if (!isPlainObject(change)) return []
-  const values = first(change, ['paths', 'changed_paths', 'files', 'changed_files', 'path'])
-  if (typeof values === 'string') return [values]
-  return Array.isArray(values) ? values.filter((entry) => typeof entry === 'string') : []
+  if (typeof change === 'string') return change.length > 0 ? [change] : null
+  if (Array.isArray(change)) return validPathList(change)
+  if (!isPlainObject(change)) return null
+  const present = APPLICABILITY_PATH_ALIASES.filter((alias) => own(change, alias))
+  if (present.length === 0) return []
+  // Several aliases at once are only acceptable when they name the same path set; a
+  // first-match lookup would let a later alias hide the change that requires the gate.
+  const lists = present.map((alias) => applicabilityPathList(change[alias]))
+  if (lists.some((list) => list === null)) return null
+  const canonical = lists.map((list) => JSON.stringify([...new Set(list)].sort()))
+  if (new Set(canonical).size !== 1) return null
+  return lists[0]
 }
 
 const pathIsTrigger = (rawPath) => {
@@ -536,9 +586,18 @@ const pathIsTrigger = (rawPath) => {
     /(?:^|\/)(?:package\.json|playwright[^/]*\.ts|vite[^/]*\.ts)$/u.test(path)
 }
 
-const changeTrigger = (change) => {
+// The only paths that may skip real browser evidence are an explicit static
+// allowlist: prose, images and specs. Every other path — scripts, deployment
+// manifests, workflows, contracts, source — is executable or verification-bearing
+// and is classified E2E-required unless a trigger already named it.
+const STATIC_PATH = /^(?:docs\/|openspec\/|LICENSE(?:\.[a-z]+)?$|CODEOWNERS$|\.gitignore$|\.gitattributes$|\.editorconfig$)|\.(?:md|markdown|txt|rst|adoc|png|jpe?g|gif|svg|webp|ico|pdf)$/iu
+const pathIsStatic = (rawPath) => STATIC_PATH.test(rawPath.replaceAll('\\', '/'))
+
+const changeTrigger = (change, trustedPolicy) => {
   const paths = applicabilityPaths(change)
+  if (paths === null) return { held: 'APPLICABILITY_PATHS_INVALID' }
   if (paths.some(pathIsTrigger)) return { required: true, reason: 'USER_FACING_OR_SHARED_RUNTIME_CHANGE' }
+  if (paths.some((path) => !pathIsStatic(path))) return { required: true, reason: 'UNCLASSIFIED_EXECUTABLE_OR_DEPLOYMENT_PATH' }
   if (isPlainObject(change)) {
     const flags = [
       ['route', 'USER_FACING_ROUTE_CHANGE'], ['routes', 'USER_FACING_ROUTE_CHANGE'], ['workflow', 'USER_FACING_WORKFLOW_CHANGE'],
@@ -547,6 +606,10 @@ const changeTrigger = (change) => {
     ]
     for (const [key, reason] of flags) if (change[key] === true || (Array.isArray(change[key]) && change[key].length > 0)) return { required: true, reason }
     if (change.scope?.e2e_required === true || change.trusted_e2e_required === true) return { required: true, reason: 'BASE_POLICY_REQUIRED_E2E' }
+  }
+  if (paths.length === 0) {
+    if (trustedPolicy?.static_only === true) return { required: false, reason: 'TRUSTED_STATIC_ONLY_CLASSIFICATION' }
+    return { held: 'APPLICABILITY_PATHS_MISSING' }
   }
   return { required: false, reason: 'STATIC_OR_NON_USER_FACING_CHANGE' }
 }
@@ -564,6 +627,11 @@ const trustedPolicyFailure = (trustedPolicy, baseSha) => {
     if (trustedPolicy[key] !== undefined && trustedPolicy[key] !== baseSha) return 'APPLICABILITY_BASE_DRIFT'
   }
   if (!isSha256(trustedPolicy.policy_digest) || !isSha256(trustedPolicy.record_digest)) return 'APPLICABILITY_RECORD_INVALID'
+  // The record digest is recomputed over the policy record itself, so every flag the
+  // classifier honours (including the static-only escape) is covered by the
+  // base-owned digest rather than by a caller-supplied 64-hex string.
+  const { record_digest: declaredRecordDigest, ...policyPayload } = trustedPolicy
+  if (digestCanonical(policyPayload) !== declaredRecordDigest) return 'APPLICABILITY_RECORD_DIGEST_MISMATCH'
   if (trustedPolicy.immutable !== true || trustedPolicy.base_pinned !== true || trustedPolicy.fresh !== true) return 'APPLICABILITY_RECORD_NOT_IMMUTABLE'
   return null
 }
@@ -581,7 +649,8 @@ export function classifyE2EApplicability({ change, trustedPolicy, baseSha } = {}
   if (policyFailure) return held('HELD_EVIDENCE_BINDING', policyFailure)
   const policyDigest = trustedPolicy.policy_digest
   if (!policyDigest) return held('HELD_EVIDENCE_BINDING', 'APPLICABILITY_POLICY_DIGEST_INVALID')
-  const trigger = changeTrigger(change)
+  const trigger = changeTrigger(change, trustedPolicy)
+  if (trigger.held) return held('HELD_EVIDENCE_BINDING', trigger.held)
   const record = {
     schema_version: 'e2e-applicability/v1',
     source: 'base',
@@ -643,8 +712,10 @@ const trainFailure = (reason, extras = {}) => held('HELD_EVIDENCE_BINDING', reas
  * The returned wrapper follows the stack/queue adapters' phase vocabulary;
  * `train` itself is the closed `integration-train/v1` durable record.
  */
-export function createIntegrationTrain(plan = {}) {
+export function createIntegrationTrain(plan = {}, trustedClock = undefined) {
   if (!isPlainObject(plan) || !safeInput(plan)) return trainFailure('TRAIN_INPUT_INVALID')
+  const observedAt = trustedClockNow(trustedClock)
+  if (observedAt === undefined) return trainFailure('TRAIN_WINDOW_INVALID')
   const baseRef = first(plan, ['integration_base_ref', 'baseline_ref', 'base_ref'])
   const baseSha = first(plan, ['integration_base_sha', 'resolved_baseline_sha', 'base_sha'])
   if (!isOpaqueId(baseRef) || !isSha1(baseSha)) return trainFailure('TRAIN_BASE_INVALID')
@@ -653,6 +724,8 @@ export function createIntegrationTrain(plan = {}) {
   }
   const heads = candidateHeads(plan)
   if (!Array.isArray(heads) || heads.length === 0 || new Set(heads).size !== heads.length) return trainFailure('ORDERED_INPUTS_INVALID')
+  // The committed integration-train schema caps candidate_heads at 64.
+  if (heads.length > 64) return trainFailure('CANDIDATE_LIMIT_EXCEEDED')
   for (const key of ['observed_candidate_heads', 'current_candidate_heads', 'ordered_input_observed_shas']) {
     if (plan[key] !== undefined && (!Array.isArray(plan[key]) || !equalCanonical(plan[key], heads))) return trainFailure('ORDERED_INPUT_SHA_DRIFT')
   }
@@ -696,9 +769,11 @@ export function createIntegrationTrain(plan = {}) {
   }
   if (plan.synthetic_sha_drift === true) return trainFailure('SYNTHETIC_SHA_DRIFT')
   if (plan.runtime_manifest_drift === true) return trainFailure('RUNTIME_MANIFEST_DRIFT')
-  const createdAt = first(plan, ['created_at', 'started_at']) || DEFAULT_CREATED_AT
-  const expiresAt = first(plan, ['expires_at', 'ends_at']) || DEFAULT_EXPIRES_AT
-  if (!isTimestamp(createdAt) || !isTimestamp(expiresAt) || expiresAt <= createdAt) return trainFailure('TRAIN_WINDOW_INVALID')
+  const createdAt = first(plan, ['created_at', 'started_at'])
+  const expiresAt = first(plan, ['expires_at', 'ends_at'])
+  if (!isTimestamp(createdAt) || !isTimestamp(expiresAt) || expiresAt <= createdAt || observedAt < createdAt || observedAt >= expiresAt) {
+    return trainFailure('TRAIN_WINDOW_INVALID')
+  }
   const failures = first(plan, ['interaction_failure_refs', 'failure_refs']) ?? []
   if (!Array.isArray(failures) || failures.some((value) => !isOpaqueId(value)) || new Set(failures).size !== failures.length) return trainFailure('TRAIN_FAILURE_REFS_INVALID')
   const train = {
@@ -764,7 +839,7 @@ const validExecutionWindow = (value) => {
   if (keys.some((key) => !['started_at', 'finished_at'].includes(key))) return null
   const startedAt = first(value, ['started_at'])
   const finishedAt = first(value, ['finished_at'])
-  if (!isTimestamp(startedAt) || !isTimestamp(finishedAt) || finishedAt < startedAt) return null
+  if (!isTimestamp(startedAt) || !isTimestamp(finishedAt) || finishedAt <= startedAt) return null
   return { started_at: startedAt, finished_at: finishedAt }
 }
 
@@ -829,8 +904,10 @@ const packetFailure = (packet, expectedRole, trustedPins) => {
   const role = String(first(packet, ['verifier_role', 'role', 'verifier']) || '').toLowerCase().replaceAll('-', '_')
   if (expectedRole === 'playwright' && !['playwright', 'canonical_playwright', 'playwright_require_real'].includes(role)) return 'PLAYWRIGHT_ROLE_INVALID'
   if (expectedRole === 'computer_use' && !['computer_use', 'computeruse'].includes(role)) return 'COMPUTER_USE_ROLE_INVALID'
-  if (packet.timed_out === true || packet.timeout === true || packet.status === 'timeout' ||
-      (Number.isSafeInteger(packet.duration_ms) && Number.isSafeInteger(trustedPins.timeout_ms) && packet.duration_ms > trustedPins.timeout_ms)) {
+  if (!Number.isSafeInteger(trustedPins.timeout_ms) || trustedPins.timeout_ms < 1 || trustedPins.timeout_ms > 3_600_000 ||
+      !Number.isSafeInteger(packet.duration_ms) || packet.duration_ms < 0 ||
+      packet.timed_out === true || packet.timeout === true || packet.status === 'timeout' ||
+      packet.duration_ms > trustedPins.timeout_ms) {
     return 'E2E_TIMEOUT'
   }
   if (packet.skipped === true || packet.status === 'skipped' || packet.skipped_count > 0) return 'E2E_SKIPPED'
@@ -843,6 +920,29 @@ const packetFailure = (packet, expectedRole, trustedPins) => {
   if (packet.candidate_harness_status === 'modified' || packet.verification_mode === 'shadow') return 'CANDIDATE_HARNESS_MODIFIED'
   return null
 }
+
+// The prior-base authority digest covers the complete pin map: verifier and
+// harness identity, the per-role command pins and the expected user flow. A pin
+// swapped after the digest was issued no longer authenticates.
+export const trustedPinsAuthorityDigest = (pins) => digestCanonical({
+  source_ref: pins?.source_ref ?? null,
+  source_sha: pins?.source_sha ?? null,
+  base_sha: pins?.base_sha ?? null,
+  // The validator accepts the `trusted_*` aliases, so the digest binds whichever
+  // spelling the pins actually use; a pin cannot escape the digest by alias.
+  verifier_sha: (isPlainObject(pins) ? trustedVerifierSha(pins) : undefined) ?? null,
+  binder_sha: (isPlainObject(pins) ? trustedBinderSha(pins) : undefined) ?? null,
+  verifier_tree_digest: pins?.verifier_tree_digest ?? null,
+  harness_digest: pins?.harness_digest ?? null,
+  command_pins: pins?.command_pins ?? null,
+  expected_flow: pins?.expected_flow ?? null,
+  timeout_ms: pins?.timeout_ms ?? null,
+})
+
+const EXPECTED_FLOW_FIELDS = Object.freeze([
+  ['route', ['route']], ['main_buttons', ['main_buttons', 'buttons', 'main_button']], ['fixture', ['fixture', 'fixture_reference']],
+  ['api', ['api', 'backend_api', 'api_reference']], ['runtime_id', ['runtime_id', 'runtime_reference']], ['visible_state', ['visible_state', 'visible_states']],
+])
 
 const packetIdentityFailure = (packet, expected, trustedPins) => {
   const fields = [
@@ -911,8 +1011,43 @@ const packetCompletenessFailure = (packet) => {
   return null
 }
 
-const commandRecordFailure = (packets) => {
+// Lifecycle implied by the required roles: git preflight before the stack starts,
+// the stack running before either browser verifier, and the postflight finishing
+// after both verifiers so it can attest the post-test candidate/harness state.
+const COMMAND_ROLE_ORDER = Object.freeze([
+  ['git_preflight', 'stack_start'],
+  ['stack_start', 'stack_status'],
+  ['stack_status', 'playwright_require_real'],
+  ['stack_status', 'computer_use'],
+  ['playwright_require_real', 'postflight'],
+  ['computer_use', 'postflight'],
+])
+
+// The verifier roles whose proven elapsed time the timeout pin bounds.
+const VERIFIER_COMMAND_ROLES = Object.freeze(['playwright_require_real', 'computer_use'])
+
+const commandRoleIntervals = (records) => {
+  const intervals = new Map()
+  for (const record of records) {
+    const startedAt = Date.parse(first(record, ['started_at', 'start_time']))
+    const finishedAt = Date.parse(first(record, ['finished_at', 'end_time']))
+    const current = intervals.get(record.role) ?? { startedAt, finishedAt }
+    intervals.set(record.role, {
+      startedAt: Math.min(current.startedAt, startedAt),
+      finishedAt: Math.max(current.finishedAt, finishedAt),
+    })
+  }
+  return intervals
+}
+
+const commandRecordFailure = (packets, executionWindow, trustedPins) => {
+  // Every role must bind to the trusted canonical runner: any nonempty cwd/argv/
+  // environment is not evidence that the real Playwright / Computer Use commands ran.
+  const commandPins = isPlainObject(trustedPins) ? trustedPins.command_pins : undefined
+  if (!isPlainObject(commandPins)) return 'COMMAND_PINS_MISSING'
   if (packets.some((packet) => !Array.isArray(packet?.command_records) || packet.command_records.length === 0)) return 'COMMAND_RECORDS_MISSING'
+  const boundedWindow = validExecutionWindow(executionWindow)
+  if (!boundedWindow) return 'EXECUTION_WINDOW_REQUIRED'
   const records = packets.flatMap((packet) => packet.command_records)
   const roles = new Set()
   for (const record of records) {
@@ -933,16 +1068,59 @@ const commandRecordFailure = (packets) => {
         !Number.isSafeInteger(record.exit_code) || typeof stdout !== 'string' || stdout.length === 0 ||
         typeof stderr !== 'string' || stderr.length === 0 ||
         (typeof redaction !== 'string' && typeof redaction !== 'boolean') || redaction === '') return 'COMMAND_RECORD_INVALID'
+    const pin = commandPins[record.role]
+    if (!isPlainObject(pin) || !isSha256(pin.cwd_digest) || !isSha256(pin.argv_digest) ||
+        typeof pin.environment_contract !== 'string' || pin.environment_contract.length === 0) return 'COMMAND_PINS_MISSING'
+    if (cwd !== pin.cwd_digest || argv !== pin.argv_digest || environment !== pin.environment_contract) return 'COMMAND_RECORD_NOT_CANONICAL'
   }
   for (const required of REQUIRED_COMMAND_ROLES) if (!roles.has(required)) return 'COMMAND_RECORDS_INCOMPLETE'
+  for (const packet of packets) {
+    const computed = safeDigest(packet.command_records)
+    const declared = first(packet, ['command_records_digest', 'command_lineage_digest'])
+    if (!computed || !isSha256(declared) || computed !== declared) return 'COMMAND_RECORDS_DIGEST_MISMATCH'
+    for (const alias of ['command_records_digest', 'command_lineage_digest']) {
+      if (own(packet, alias) && packet[alias] !== computed) return 'COMMAND_RECORDS_DIGEST_MISMATCH'
+    }
+  }
+  const windowStartedAt = Date.parse(boundedWindow.started_at)
+  const windowFinishedAt = Date.parse(boundedWindow.finished_at)
+  for (const record of records) {
+    if (record.exit_code !== 0) return 'COMMAND_RECORD_FAILED'
+    const startedAt = Date.parse(first(record, ['started_at', 'start_time']))
+    const finishedAt = Date.parse(first(record, ['finished_at', 'end_time']))
+    if (startedAt < windowStartedAt || finishedAt > windowFinishedAt) return 'COMMAND_RECORD_WINDOW_MISMATCH'
+  }
+  const intervals = commandRoleIntervals(records)
+  for (const [before, after] of COMMAND_ROLE_ORDER) {
+    if (intervals.get(before).finishedAt > intervals.get(after).startedAt) return 'COMMAND_RECORD_ORDER_INVALID'
+  }
+  // The timeout pin binds elapsed time the bound timestamps prove, not the caller's
+  // self-reported duration alone: a verifier role that ran longer than the pin, a packet
+  // claiming more time than its bound window, or a shared window wider than every
+  // verifier budget together is a timeout regardless of the reported duration.
+  const timeoutMs = trustedPins.timeout_ms
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1) return 'E2E_TIMEOUT'
+  const windowMs = windowFinishedAt - windowStartedAt
+  if (windowMs > timeoutMs * VERIFIER_COMMAND_ROLES.length) return 'E2E_TIMEOUT'
+  for (const role of VERIFIER_COMMAND_ROLES) {
+    const interval = intervals.get(role)
+    if (!interval || interval.finishedAt - interval.startedAt > timeoutMs) return 'E2E_TIMEOUT'
+  }
+  for (const packet of packets) {
+    if (!Number.isSafeInteger(packet.duration_ms) || packet.duration_ms > windowMs) return 'E2E_TIMEOUT'
+  }
   return null
 }
 
 const sanitizedNetworkDigest = (packet) => {
-  const supplied = first(packet, ['network_digest', 'network_sha256'])
-  if (supplied !== undefined) return isSha256(supplied) ? supplied : null
-  const value = first(packet, ['network_result', 'network'])
-  return value === undefined ? null : safeDigest(value)
+  const supplied = ['network_digest', 'network_sha256'].filter((key) => own(packet, key)).map((key) => packet[key])
+  if (supplied.some((value) => !isSha256(value)) || new Set(supplied).size > 1) return null
+  const derived = ['network_result', 'network'].filter((key) => own(packet, key)).map((key) => safeDigest(packet[key]))
+  if (derived.some((value) => !isSha256(value)) || new Set(derived).size > 1) return null
+  const suppliedDigest = supplied[0]
+  const derivedDigest = derived[0]
+  if (suppliedDigest && derivedDigest && suppliedDigest !== derivedDigest) return null
+  return suppliedDigest || derivedDigest || null
 }
 
 /**
@@ -1028,7 +1206,7 @@ export function bindBrowserEvidence({ candidate, manifest, playwright, computerU
   if (!manifestExecutionWindow) return bindingHold('EXECUTION_WINDOW_REQUIRED', candidate)
 
   const pinSource = String(first(trustedPins, ['source', 'source_kind', 'authority']) || '').toLowerCase()
-  const trustedPinRequired = ['source_ref', 'source_sha', 'base_sha', 'policy_digest', 'applicability_record_digest', 'immutable', 'base_pinned', 'fresh', 'authority_digest']
+  const trustedPinRequired = ['source_ref', 'source_sha', 'base_sha', 'policy_digest', 'applicability_record_digest', 'immutable', 'base_pinned', 'fresh', 'authority_digest', 'timeout_ms']
   if (!TRUSTED_SOURCES.has(pinSource) || trustedPins.candidate === true || trustedPins.candidate_controlled === true ||
       trustedPinRequired.some((key) => !own(trustedPins, key)) ||
       !isOpaqueId(trustedPins.source_ref) ||
@@ -1036,7 +1214,8 @@ export function bindBrowserEvidence({ candidate, manifest, playwright, computerU
       !isSha1(trustedPins.base_sha) || !isSha256(trustedPins.policy_digest) ||
       !isSha256(trustedPins.applicability_record_digest) || !isSha256(trustedPins.authority_digest) ||
       !isSha256(trustedVerifierSha(trustedPins)) || !isSha256(trustedBinderSha(trustedPins)) ||
-      !isSha256(trustedPins.verifier_tree_digest) || !isSha256(trustedPins.harness_digest)) return bindingHold('TRUSTED_SOURCE_REQUIRED', candidate)
+      !isSha256(trustedPins.verifier_tree_digest) || !isSha256(trustedPins.harness_digest) ||
+      !Number.isSafeInteger(trustedPins.timeout_ms) || trustedPins.timeout_ms < 1 || trustedPins.timeout_ms > 3_600_000) return bindingHold('TRUSTED_SOURCE_REQUIRED', candidate)
   if (trustedPins.stale === true || String(trustedPins.status || '').toLowerCase() === 'stale' ||
       trustedPins.immutable !== true || trustedPins.base_pinned !== true || trustedPins.fresh !== true) return bindingHold('TRUSTED_SOURCE_STALE', candidate)
   if (trustedPins.base_sha !== first(candidate, ['base_sha', 'resolved_base_sha'])) return bindingHold('TRUSTED_SOURCE_BASE_MISMATCH', candidate)
@@ -1083,9 +1262,28 @@ export function bindBrowserEvidence({ candidate, manifest, playwright, computerU
     if (!equalCanonical(packetWindow, manifestExecutionWindow)) return bindingHold('EXECUTION_WINDOW_MISMATCH', candidate)
     packetExecutionWindows.push(packetWindow)
   }
+  if (!isPlainObject(trustedPins) || trustedPins.authority_digest !== trustedPinsAuthorityDigest(trustedPins)) {
+    return bindingHold('TRUSTED_PINS_AUTHORITY_DIGEST_MISMATCH', candidate)
+  }
   const playwrightListenerDigest = listenerDigest(playwright)
   const computerUseListenerDigest = listenerDigest(computerUse)
   if (playwrightListenerDigest !== computerUseListenerDigest) return bindingHold('LISTENER_DIGEST_MISMATCH', candidate)
+  // The evidence copies route/fixture/API/runtime/visible-state from Playwright, so
+  // Computer Use must have exercised exactly the same user flow, not merely a packet
+  // whose manifest, command and network digests happen to match.
+  for (const keys of [
+    ['route'], ['main_buttons', 'buttons', 'main_button'], ['fixture', 'fixture_reference'],
+    ['api', 'backend_api', 'api_reference'], ['runtime_id', 'runtime_reference'], ['visible_state', 'visible_states'],
+  ]) {
+    if (!equalCanonical(first(playwright, keys), first(computerUse, keys))) return bindingHold('BROWSER_FLOW_MISMATCH', candidate)
+  }
+  // Cross-packet agreement is not enough: the exercised flow must be the flow the
+  // base-owned acceptance pins name, so two verifiers cannot agree on an unrelated one.
+  const expectedFlow = isPlainObject(trustedPins) ? trustedPins.expected_flow : undefined
+  if (!isPlainObject(expectedFlow)) return bindingHold('EXPECTED_FLOW_PIN_MISSING', candidate)
+  for (const [pinKey, keys] of EXPECTED_FLOW_FIELDS) {
+    if (!own(expectedFlow, pinKey) || !equalCanonical(first(playwright, keys), expectedFlow[pinKey])) return bindingHold('EXPECTED_FLOW_MISMATCH', candidate)
+  }
   const computerUseIdentity = first(computerUse, ['verifier_identity', 'verifier_id', 'owner_session'])
   const writerIdentity = first(candidate, ['owner_session', 'writer_session', 'provider_session_id'])
   const playwrightIdentity = first(playwright, ['verifier_identity', 'verifier_id'])
@@ -1098,10 +1296,11 @@ export function bindBrowserEvidence({ candidate, manifest, playwright, computerU
   const computerUseRuntimeLineage = first(computerUse, ['runtime_lineage_digest', 'runtime_identity_digest'])
   if (playwrightCommandDigest !== computerUseCommandDigest || playwrightRuntimeLineage !== computerUseRuntimeLineage) return bindingHold('COMMAND_OR_RUNTIME_LINEAGE_MISMATCH', candidate)
   if (!equalCanonical(packetExecutionWindows[0], packetExecutionWindows[1])) return bindingHold('EXECUTION_WINDOW_MISMATCH', candidate)
-  const commandFailure = commandRecordFailure([playwright, computerUse])
+  const commandFailure = commandRecordFailure([playwright, computerUse], packetExecutionWindows[0], trustedPins)
   if (commandFailure) return bindingHold(commandFailure, candidate)
   const networkDigest = sanitizedNetworkDigest(playwright)
-  if (!networkDigest || (computerUse.network_digest !== undefined && computerUse.network_digest !== networkDigest)) return bindingHold('NETWORK_EVIDENCE_MISMATCH', candidate)
+  const computerUseNetworkDigest = sanitizedNetworkDigest(computerUse)
+  if (!networkDigest || !computerUseNetworkDigest || computerUseNetworkDigest !== networkDigest) return bindingHold('NETWORK_EVIDENCE_MISMATCH', candidate)
   const traceHash = first(playwright, ['trace_sha256', 'trace_hash', 'trace_artifact_sha256'])
   const screenshotHash = first(playwright, ['screenshot_sha256', 'screenshot_hash', 'screenshot_artifact_sha256'])
   const buttons = first(playwright, ['main_buttons', 'buttons', 'main_button'])
@@ -1149,7 +1348,7 @@ export function bindBrowserEvidence({ candidate, manifest, playwright, computerU
     computer_use_authority_digest: trustedPins.authority_digest,
     verification_mode: 'canonical',
     candidate_harness_status: 'unchanged',
-    created_at: first(manifest, ['started_at', 'created_at']) || DEFAULT_CREATED_AT,
+    created_at: first(manifest, ['started_at', 'created_at']) || manifestExecutionWindow.started_at,
   }
   if (!isTimestamp(evidence.created_at)) return bindingHold('EVIDENCE_TIMESTAMP_INVALID', candidate)
   const frozenEvidence = freezeCopy(evidence)

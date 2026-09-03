@@ -2,35 +2,51 @@ import {
   FABRIC_SCHEMA_VERSION,
   canonicalize,
   digestCanonical,
+  normalizeScopeResource,
   parseDeliveryPlan,
 } from './parallel-delivery-fabric-contract.mjs'
 
 export const ZERO_OID = '0'.repeat(40)
 
 const PLAN_REF = 'refs/ai-bim/delivery-plans'
+const PLAN_REF_PREFIX = `${PLAN_REF}/`
 const LEASE_REF = 'refs/ai-bim/session-leases'
-const REFS = new Set([PLAN_REF, LEASE_REF])
+const QUEUE_REF = 'refs/ai-bim/queue-mappings'
+const JOURNAL_REF = 'refs/ai-bim/command-journal'
+const JOURNAL_ARCHIVE_REF_PREFIX = `${JOURNAL_REF}-archive/`
+const MANAGED_BRANCH_REF = 'refs/ai-bim/managed-branches'
+const REFS = new Set([PLAN_REF, LEASE_REF, QUEUE_REF, JOURNAL_REF, MANAGED_BRANCH_REF])
 const WRITER_CAP_V1 = 2
+const COMMAND_JOURNAL_RECEIPT_LIMIT = 4096
+const LEASE_HEARTBEAT_TIMEOUT_MS = 30_000
+const MANAGED_BRANCH_NONCE_RECEIPT_LIMIT = 4096
+const MANAGED_BRANCH_NONCE_RETENTION = 256
 const OID = /^[0-9a-f]{40}$/u
 const DIGEST = /^[0-9a-f]{64}$/u
 const NONCE = /^[A-Za-z0-9_-]{32,128}$/u
 const OPAQUE_REFERENCE = /^[a-z][a-z0-9_-]*:[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}$/u
 const OPAQUE_IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._:/-]{1,255}$/u
 const TASK2_OPAQUE_ID = /^[A-Za-z0-9][A-Za-z0-9._:/-]{1,127}$/u
-const TASK2_RESOURCE_KEY = /^[a-z][a-z0-9_-]*:[a-z0-9][a-z0-9._:/-]{0,255}$/u
+// The contract admits repository-relative paths up to 512 characters and serializes scope
+// resources as `path:<value>`, `glob:<value>` or `rename:<old>:<new>`, so the lease-side
+// resource-key bound must admit the longest contract-valid serialization (7 + 512 + 1 + 512).
+const MAX_SCOPE_PATH_LENGTH = 512
+const MAX_TASK2_RESOURCE_KEY_LENGTH = 'rename:'.length + MAX_SCOPE_PATH_LENGTH + ':'.length + MAX_SCOPE_PATH_LENGTH
+const TASK2_RESOURCE_KEY = /^[a-z][a-z0-9_-]*:[a-z0-9][a-z0-9._:/\-*?\[\]{},!^]{0,1031}$/u
 const TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u
 const RAW_WINDOWS_SID_SEGMENT = /(?:^|[/:])S-\d+(?:-\d+){2,}(?=$|[/:])/iu
 const TERMINAL_PROCESS_ID_SEGMENT = /(?:^|[/:])\d+$/u
 const SECRET_VALUE_MARKER = /(?:bearer|token|cookie|authorization|private[-_]?key|gh[pousr]_|github_pat_|eyJ[A-Za-z0-9_-]{10,})/iu
 const RAW_ENV_SEGMENT = /(?:^|[/:])(?:(?:env|environment):[A-Za-z_][A-Za-z0-9_]*|\$env:[A-Za-z_][A-Za-z0-9_]*|%[A-Za-z_][A-Za-z0-9_]*%)(?=$|[/:])/iu
 
+const NULL_DEVICE = process.platform === 'win32' ? 'NUL' : '/dev/null'
 const SANITIZED_GIT_ENV = Object.freeze({
   GIT_CONFIG_NOSYSTEM: '1',
   GIT_TERMINAL_PROMPT: '0',
   GIT_CONFIG_COUNT: '1',
   GIT_CONFIG_KEY_0: 'core.hooksPath',
-  GIT_CONFIG_VALUE_0: 'NUL',
-  GIT_CONFIG_GLOBAL: 'NUL',
+  GIT_CONFIG_VALUE_0: NULL_DEVICE,
+  GIT_CONFIG_GLOBAL: NULL_DEVICE,
 })
 
 class FabricRegistryError extends Error {
@@ -119,15 +135,71 @@ const assertDigest = (value, context) => assertString(value, context, DIGEST)
 const assertNonce = (value, context) => assertString(value, context, NONCE)
 const assertOpaque = (value, context) => assertString(value, context, OPAQUE_REFERENCE)
 const assertIdentifier = (value, context) => assertString(value, context, OPAQUE_IDENTIFIER)
+// Prototype-colliding names can never be stored as canonical record keys (the IJSON
+// normalizer rejects them), so they are refused at the identifier grammar as well.
+const RESERVED_TASK2_IDENTIFIERS = new Set(['__proto__', 'constructor', 'prototype'])
+
 const assertTask2OpaqueId = (value, context) => {
   const opaqueId = assertString(value, context, TASK2_OPAQUE_ID)
-  if (opaqueId.length < 3 || opaqueId.length > 128) fail('invalid_value', `${context}_invalid`)
+  if (opaqueId.length < 3 || opaqueId.length > 128 || RESERVED_TASK2_IDENTIFIERS.has(opaqueId)) fail('invalid_value', `${context}_invalid`)
   return opaqueId
 }
+const resourceCandidateFromKey = (key) => {
+  const separator = key.indexOf(':')
+  if (separator < 1) return undefined
+  const kind = key.slice(0, separator)
+  const value = key.slice(separator + 1)
+  if (kind === 'path') return { kind, path: value }
+  if (kind === 'glob') return { kind, pattern: value }
+  if (kind === 'rename') {
+    const endpoints = value.split(':')
+    return endpoints.length === 2 ? { kind, old_path: endpoints[0], new_path: endpoints[1] } : undefined
+  }
+  if (['shared_contract', 'exported_symbol', 'schema', 'event', 'migration', 'runtime'].includes(kind)) {
+    return { kind, resource_key: value }
+  }
+  return undefined
+}
+
+const normalizedScopeResourceFromKey = (key) => {
+  const candidate = resourceCandidateFromKey(key)
+  if (!candidate) return undefined
+  try {
+    return normalizeScopeResource(candidate)
+  } catch {
+    return undefined
+  }
+}
+
+const scopeResourceKey = (resource) => resource.kind === 'path'
+  ? `path:${resource.path}`
+  : resource.kind === 'glob'
+    ? `glob:${resource.pattern}`
+    : resource.kind === 'rename'
+      ? `rename:${resource.old_path}:${resource.new_path}`
+      : `${resource.kind}:${resource.resource_key}`
+
 const assertTask2ResourceKey = (value, context) => {
-  const resourceKey = assertString(value, context, TASK2_RESOURCE_KEY)
-  if (resourceKey.length < 3 || resourceKey.length > 256) fail('invalid_value', `${context}_invalid`)
+  const resourceKey = assertString(value, context)
+  if (resourceKey.length < 3 || resourceKey.length > MAX_TASK2_RESOURCE_KEY_LENGTH) fail('invalid_value', `${context}_invalid`)
+  const candidate = resourceCandidateFromKey(resourceKey)
+  const normalized = candidate ? normalizedScopeResourceFromKey(resourceKey) : undefined
+  if (candidate && (!normalized || scopeResourceKey(normalized) !== resourceKey)) {
+    fail('invalid_value', `${context}_invalid`)
+  }
+  if (!candidate && !TASK2_RESOURCE_KEY.test(resourceKey)) fail('invalid_value', `${context}_invalid`)
   return resourceKey
+}
+
+const canonicalScopeFromResourceKeys = (resourceKeys, context) => {
+  const resources = resourceKeys.map((key, index) => {
+    assertTask2ResourceKey(key, `${context}[${index}]`)
+    const resource = normalizedScopeResourceFromKey(key)
+    if (!resource) fail('invalid_value', `${context}[${index}]_unsupported`)
+    return resource
+  })
+  resources.sort((left, right) => scopeResourceKey(left).localeCompare(scopeResourceKey(right)))
+  return resources
 }
 
 const parseTimestamp = (value, context) => {
@@ -189,8 +261,25 @@ const command = async (git, commonDir, args, input = undefined) => {
   return response
 }
 
+const isPlanRef = (ref) => typeof ref === 'string' && (ref === PLAN_REF ||
+  (ref.startsWith(PLAN_REF_PREFIX) && DIGEST.test(ref.slice(PLAN_REF_PREFIX.length))))
+
+const isCommandJournalArchiveRef = (ref) => typeof ref === 'string' &&
+  ref.startsWith(JOURNAL_ARCHIVE_REF_PREFIX) && DIGEST.test(ref.slice(JOURNAL_ARCHIVE_REF_PREFIX.length))
+
+const commandJournalArchiveRef = (journalKey) =>
+  `${JOURNAL_ARCHIVE_REF_PREFIX}${digestCanonical({ journal_key: journalKey })}`
+
+// Queue-operation archives are keyed by mapping digest, exactly like journal archives, so the
+// canonical Git CAS store admits them by prefix + digest shape and nothing else.
+const QUEUE_OPERATION_ARCHIVE_REF_PREFIX = 'refs/ai-bim/queue-operation-archive/'
+const isQueueOperationArchiveRef = (ref) => typeof ref === 'string' &&
+  ref.startsWith(QUEUE_OPERATION_ARCHIVE_REF_PREFIX) && DIGEST.test(ref.slice(QUEUE_OPERATION_ARCHIVE_REF_PREFIX.length))
+
+const planRefForId = (planId) => `${PLAN_REF_PREFIX}${digestCanonical({ plan_id: planId })}`
+
 const refOf = (ref) => {
-  if (!REFS.has(ref)) fail('registry_ref_forbidden', String(ref))
+  if (!REFS.has(ref) && !isPlanRef(ref) && !isCommandJournalArchiveRef(ref) && !isQueueOperationArchiveRef(ref)) fail('registry_ref_forbidden', String(ref))
   return ref
 }
 
@@ -200,8 +289,10 @@ export function createGitCasStore({ git, commonDir }) {
 
   const read = async (ref) => {
     const safeRef = refOf(ref)
+    const existsResult = await command(git, commonDir, ['show-ref', '--verify', '--quiet', '--', safeRef])
+    if (existsResult.exitCode === 1) return { ref: safeRef, oid: ZERO_OID, record: null }
+    if (existsResult.exitCode !== 0) fail('git_read_ref_failed', safeRef)
     const refResult = await command(git, commonDir, ['show-ref', '--verify', '--hash', '--', safeRef])
-    if (refResult.exitCode === 1) return { ref: safeRef, oid: ZERO_OID, record: null }
     if (refResult.exitCode !== 0) fail('git_read_ref_failed', safeRef)
     const oid = refResult.stdout.trim()
     assertOid(oid, `${safeRef}_oid`, { zero: false })
@@ -228,8 +319,8 @@ export function createGitCasStore({ git, commonDir }) {
     assertOid(oid, 'written_blob_oid', { zero: false })
     const updateResult = await command(git, commonDir, ['update-ref', '--no-deref', safeRef, oid, expected_oid])
     if (updateResult.exitCode === 0) return { status: 'STORED', ref: safeRef, oid, previous_oid: expected_oid, record }
-    if (updateResult.exitCode !== 1) fail('git_update_ref_failed', safeRef)
     const current = await read(safeRef)
+    if (current.oid === expected_oid) fail('git_update_ref_failed', safeRef)
     return {
       status: 'CONFLICT',
       reason: 'CAS_CONFLICT',
@@ -240,11 +331,53 @@ export function createGitCasStore({ git, commonDir }) {
     }
   }
 
+  const casGuarded = async ({ ref, expected_oid, record, guard_ref, guard_oid }) => {
+    const safeRef = refOf(ref)
+    const safeGuardRef = refOf(guard_ref)
+    if (safeRef === safeGuardRef) fail('invalid_value', 'guard_ref_must_be_distinct')
+    assertOid(expected_oid, 'expected_oid')
+    assertOid(guard_oid, 'guard_oid', { zero: false })
+    validatePersistedRecordForRef(safeRef, record)
+    const serialized = JSON.stringify(canonicalize(record))
+    const blobResult = await command(git, commonDir, ['hash-object', '-w', '--stdin'], serialized)
+    if (blobResult.exitCode !== 0) fail('git_write_blob_failed', safeRef)
+    const oid = blobResult.stdout.trim()
+    assertOid(oid, 'written_blob_oid', { zero: false })
+    const transaction = [
+      'start',
+      `verify ${safeGuardRef} ${guard_oid}`,
+      `update ${safeRef} ${oid} ${expected_oid}`,
+      'prepare',
+      'commit',
+      '',
+    ].join('\n')
+    const updateResult = await command(git, commonDir, ['update-ref', '--no-deref', '--stdin'], transaction)
+    if (updateResult.exitCode === 0) {
+      return { status: 'STORED', ref: safeRef, oid, previous_oid: expected_oid, guard_ref: safeGuardRef, guard_oid, record }
+    }
+    const [current, guard] = await Promise.all([read(safeRef), read(safeGuardRef)])
+    if (guard.oid !== guard_oid) {
+      return { status: 'CONFLICT', reason: 'GUARD_CONFLICT', ref: safeRef, expected_oid, actual_oid: current.oid, guard_ref: safeGuardRef, guard_oid, actual_guard_oid: guard.oid }
+    }
+    if (current.oid !== expected_oid) {
+      return { status: 'CONFLICT', reason: 'CAS_CONFLICT', ref: safeRef, expected_oid, actual_oid: current.oid, current }
+    }
+    fail('git_update_ref_failed', safeRef)
+  }
+
   return Object.freeze({
-    refs: Object.freeze({ deliveryPlans: PLAN_REF, sessionLeases: LEASE_REF }),
+    refs: Object.freeze({
+      deliveryPlans: PLAN_REF,
+      deliveryPlanPrefix: PLAN_REF_PREFIX,
+      sessionLeases: LEASE_REF,
+      queueMappings: QUEUE_REF,
+      commandJournal: JOURNAL_REF,
+      managedBranches: MANAGED_BRANCH_REF,
+    }),
     commonDirDigest,
     read,
     cas,
+    casGuarded,
   })
 }
 
@@ -284,14 +417,30 @@ const heldRegistryIntegrity = (ref) => Object.freeze({
   ref,
 })
 
-const readValidatedPlanSnapshot = async (store) => {
+const readPlanRef = async (store, ref, planId = undefined) => {
   try {
-    const snapshot = await store.read(PLAN_REF)
-    if (snapshot.record !== null) validatePlanRegistryRecord(snapshot.record)
-    return snapshot
+    const snapshot = await store.read(ref)
+    if (!isObject(snapshot) || !OID.test(snapshot.oid) || !Object.hasOwn(snapshot, 'record') ||
+        (Object.hasOwn(snapshot, 'ref') && snapshot.ref !== ref)) return heldRegistryIntegrity(ref)
+    if (snapshot.record !== null) {
+      validatePlanRegistryRecord(snapshot.record)
+      if (planId !== undefined && snapshot.record.plan.plan_id !== planId) return heldRegistryIntegrity(ref)
+    }
+    return { ref, oid: snapshot.oid, record: snapshot.record }
   } catch {
-    return heldRegistryIntegrity(PLAN_REF)
+    return heldRegistryIntegrity(ref)
   }
+}
+
+const readValidatedPlanSnapshot = async (store, planId = undefined) => {
+  if (planId === undefined) return readPlanRef(store, PLAN_REF)
+  const scopedRef = planRefForId(planId)
+  const scoped = await readPlanRef(store, scopedRef, planId)
+  if (scoped.status === 'HELD_REGISTRY_INTEGRITY' || scoped.record !== null) return scoped
+  const legacy = await readPlanRef(store, PLAN_REF)
+  if (legacy.status === 'HELD_REGISTRY_INTEGRITY') return legacy
+  if (legacy.record !== null && legacy.record.plan.plan_id === planId) return legacy
+  return scoped
 }
 
 export function createPlanRegistry({ store, clock }) {
@@ -304,9 +453,9 @@ export function createPlanRegistry({ store, clock }) {
       fail('invalid_shape', 'plan_submit_keys_invalid')
     }
     const { plan, expected_oid, nonce, execution, effects = undefined } = input
-    const snapshot = await readValidatedPlanSnapshot(store)
-    if (snapshot.status === 'HELD_REGISTRY_INTEGRITY') return snapshot
     const parsedPlan = parseDeliveryPlan(plan)
+    const snapshot = await readValidatedPlanSnapshot(store, parsedPlan.plan_id)
+    if (snapshot.status === 'HELD_REGISTRY_INTEGRITY') return snapshot
     assertOid(expected_oid, 'plan_expected_oid')
     assertNonce(nonce, 'plan_nonce')
     const validatedExecution = validatePlanOnlyExecution(execution)
@@ -315,10 +464,24 @@ export function createPlanRegistry({ store, clock }) {
       return {
         status: 'CONFLICT',
         reason: 'CAS_CONFLICT',
-        ref: PLAN_REF,
+        ref: snapshot.ref,
         expected_oid,
         actual_oid: snapshot.oid,
         current: snapshot,
+      }
+    }
+    if (snapshot.record !== null) {
+      const currentPlan = parseDeliveryPlan(snapshot.record.plan)
+      if (currentPlan.plan_id === parsedPlan.plan_id) {
+        if (parsedPlan.generation < currentPlan.generation) {
+          return { status: 'CONFLICT', reason: 'PLAN_GENERATION_REGRESSION', ref: snapshot.ref, expected_oid, actual_oid: snapshot.oid }
+        }
+        if (parsedPlan.generation === currentPlan.generation) {
+          if (digestCanonical(parsedPlan) !== digestCanonical(currentPlan)) {
+            return { status: 'CONFLICT', reason: 'PLAN_SAME_GENERATION_REWRITE', ref: snapshot.ref, expected_oid, actual_oid: snapshot.oid }
+          }
+          return { status: 'STORED', ref: snapshot.ref, oid: snapshot.oid, previous_oid: snapshot.oid, record: clone(snapshot.record) }
+        }
       }
     }
     const timestamp = nowFrom(clock)
@@ -333,34 +496,127 @@ export function createPlanRegistry({ store, clock }) {
       execution: validatedExecution,
     })
     validatePlanRegistryRecord(record)
-    const result = await store.cas({ ref: PLAN_REF, expected_oid, record })
+    const result = await store.cas({ ref: snapshot.ref, expected_oid, record })
     return result.status === 'STORED' ? result : {
       status: 'CONFLICT',
       reason: 'CAS_CONFLICT',
-      ref: PLAN_REF,
+      ref: snapshot.ref,
       expected_oid,
       actual_oid: result.actual_oid,
       current: result.current,
     }
   }
 
-  const inspect = () => readValidatedPlanSnapshot(store)
-  return Object.freeze({ submit, inspect })
+  const inspect = (planId = undefined) => {
+    if (planId !== undefined) assertTask2OpaqueId(planId, 'plan_inspect.plan_id')
+    return readValidatedPlanSnapshot(store, planId)
+  }
+  const validateGeneration = async (input) => {
+    const taskBound = isObject(input) && Object.hasOwn(input, 'task_id')
+    const { plan_id, generation, task_id } = validateClosedRequest(
+      input,
+      taskBound ? ['plan_id', 'generation', 'task_id'] : ['plan_id', 'generation'],
+      'plan_generation_request',
+    )
+    assertTask2OpaqueId(plan_id, 'plan_generation_request.plan_id')
+    if (taskBound) assertTask2OpaqueId(task_id, 'plan_generation_request.task_id')
+    if (!Number.isSafeInteger(generation) || generation < 1) fail('invalid_value', 'plan_generation_request_generation_invalid')
+    const snapshot = await readValidatedPlanSnapshot(store, plan_id)
+    if (snapshot.status === 'HELD_REGISTRY_INTEGRITY') return snapshot
+    if (snapshot.record === null) return { status: 'HELD_EXECUTION_AUTHORITY', reason: 'PLAN_NOT_FOUND' }
+    const parsed = parseDeliveryPlan(snapshot.record.plan)
+    if (parsed.plan_id !== plan_id || parsed.generation !== generation) {
+      return { status: 'HELD_EXECUTION_AUTHORITY', reason: 'PLAN_GENERATION_MISMATCH' }
+    }
+    if (!taskBound) return { status: 'ACTIVE', plan_id, generation, oid: snapshot.oid }
+    const task = parsed.tasks.find((entry) => entry.task_id === task_id)
+    if (!task) return { status: 'HELD_EXECUTION_AUTHORITY', reason: 'PLAN_TASK_NOT_FOUND' }
+    const canonicalScope = task.scope.resources.map((resource) => normalizeScopeResource(resource))
+    canonicalScope.sort((left, right) => scopeResourceKey(left).localeCompare(scopeResourceKey(right)))
+    return {
+      status: 'ACTIVE',
+      plan_id,
+      generation,
+      oid: snapshot.oid,
+      task: {
+        task_id: task.task_id,
+        owner_session: task.owner_session,
+        provider: task.provider_preference,
+        baseline_sha: parsed.resolved_baseline_sha,
+        scope_digest: digestCanonical(canonicalScope),
+        dependencies: [...task.dependencies],
+      },
+    }
+  }
+  return Object.freeze({ submit, validateGeneration, inspect })
 }
+
+// Retention bounds. Released leases keep their resources retained for review, so
+// their truth can never be dropped; beyond the newest full records they are
+// compacted into `retained_resources` stubs that carry exactly what admission,
+// contention and dependency checks consult. Consumed owner-end attestations are
+// replay-protected by the registry until well past their own expiry, after which
+// the attestation validator already rejects them as expired.
+const RETAINED_RELEASED_LEASE_RECORDS = 64
+// Disjoint writers are governed by isolation, never by count: the live-record ceiling is a
+// storage bound far above any admission scenario, and crossing the compaction threshold
+// compacts every released record into a retained stub before the new lease is evaluated.
+const MAX_LIVE_LEASE_RECORDS = 65536
+const LIVE_LEASE_COMPACTION_THRESHOLD = 4096
+const MAX_RETAINED_RELEASED_LEASE_RECORDS = 1024
+const MAX_RETAINED_RESOURCE_STUBS = 65536
+const USED_ATTESTATION_GRACE_MS = 7 * 24 * 60 * 60 * 1000
+const RETAINED_RESOURCE_KEYS = Object.freeze([
+  'lease_id', 'plan_id', 'task_id', 'generation', 'branch', 'worktree_id', 'resource_keys', 'scope_digest',
+  'head_sha', 'release_reason', 'released_at', 'release_record_digest',
+])
+
+const RETENTION_RELEASE_ATTESTATION_KEYS = Object.freeze([
+  'attestation_ref', 'attestation_digest', 'issuer_id', 'issuer_version', 'action', 'lease_set_digest',
+  'expected_oid', 'nonce', 'observed_at', 'expires_at', 'revocation_epoch',
+])
+const DRAIN_ATTESTATION_KEYS = Object.freeze([
+  'attestation_ref', 'attestation_digest', 'issuer_id', 'issuer_version', 'action', 'plan_id', 'generation',
+  'expected_oid', 'nonce', 'reason', 'observed_at', 'expires_at', 'revocation_epoch',
+])
 
 const emptyLeaseRegistry = (writerCap) => ({
   schema_version: 'session-lease-registry/v1',
   generation: 0,
   writer_cap: writerCap,
   leases: {},
+  draining_plans: {},
   used_owner_end_attestations: {},
+  retained_resources: {},
 })
+
+const retainedResourceStub = (lease) => ({
+  lease_id: lease.lease_id,
+  plan_id: lease.plan_id,
+  task_id: lease.task_id,
+  generation: lease.generation,
+  branch: lease.branch,
+  worktree_id: lease.worktree_id,
+  resource_keys: clone(lease.resource_keys),
+  scope_digest: lease.scope_digest,
+  head_sha: lease.head_sha,
+  release_reason: lease.release_reason,
+  released_at: lease.updated_at,
+  release_record_digest: digestCanonical(lease.release_record),
+})
+
+// Every resource holder the registry knows about: full lease records plus the
+// compacted stubs, which remain held for review exactly like the records they replaced.
+const retainedResourceHolders = (record) => Object.values(record.retained_resources ?? {}).map((stub) => ({
+  ...stub, state: 'RELEASED', retention_state: 'RETAINED_FOR_REVIEW',
+}))
 
 const validateLeaseRequest = (request, store) => {
   exactKeys(request, [
     'lease_id', 'plan_id', 'generation', 'task_id', 'provider', 'owner_session',
     'provider_session_id', 'execution_context_id', 'context_attestation_ref', 'common_dir_digest',
     'worktree_id', 'worktree_path_digest', 'branch', 'scope_digest', 'head_sha', 'resource_keys', 'nonce',
+    'expected_plan_oid',
   ], 'lease_request')
   for (const field of [
     'lease_id', 'plan_id', 'task_id', 'owner_session', 'provider_session_id',
@@ -376,12 +632,14 @@ const validateLeaseRequest = (request, store) => {
   assertDigest(request.worktree_path_digest, 'lease_request.worktree_path_digest')
   assertDigest(request.scope_digest, 'lease_request.scope_digest')
   assertOid(request.head_sha, 'lease_request.head_sha', { zero: false })
+  assertOid(request.expected_plan_oid, 'lease_request.expected_plan_oid', { zero: false })
   assertNonce(request.nonce, 'lease_request.nonce')
   if (!Array.isArray(request.resource_keys) || request.resource_keys.length === 0 || request.resource_keys.length > 256) {
     fail('invalid_shape', 'lease_request.resource_keys_invalid')
   }
-  request.resource_keys.forEach((key, index) => assertTask2ResourceKey(key, `lease_request.resource_keys[${index}]`))
+  const requestScope = canonicalScopeFromResourceKeys(request.resource_keys, 'lease_request.resource_keys')
   if (new Set(request.resource_keys).size !== request.resource_keys.length) fail('invalid_value', 'lease_request.resource_keys_duplicate')
+  if (digestCanonical(requestScope) !== request.scope_digest) fail('invalid_value', 'lease_request.scope_binding_invalid')
   if (request.common_dir_digest !== store.commonDirDigest) {
     return { status: 'HELD_TOPOLOGY_UNSUPPORTED', reason: 'COMMON_DIR_MISMATCH' }
   }
@@ -390,13 +648,71 @@ const validateLeaseRequest = (request, store) => {
 
 const resourceHeld = (lease) => lease.state !== 'RELEASED' || lease.retention_state === 'RETAINED_FOR_REVIEW'
 
+const pathOfScopeResource = (resource) => resource.kind === 'path'
+  ? resource.path
+  : resource.kind === 'glob'
+    ? resource.pattern
+    : undefined
+
+const pathHierarchyOverlaps = (left, right) => left === right || left.startsWith(`${right}/`) || right.startsWith(`${left}/`)
+
+const globStaticPrefix = (pattern) => {
+  const wildcard = pattern.search(/[\*?\[\{]/u)
+  if (wildcard < 0) return pattern
+  const slash = pattern.slice(0, wildcard).lastIndexOf('/')
+  return slash < 0 ? '' : pattern.slice(0, slash)
+}
+
+const pathLikeScopeOverlap = (left, right) => {
+  const leftPath = pathOfScopeResource(left)
+  const rightPath = pathOfScopeResource(right)
+  if (left.kind === 'path' && right.kind === 'path') return pathHierarchyOverlaps(leftPath, rightPath)
+  const leftPrefix = left.kind === 'glob' ? globStaticPrefix(leftPath) : leftPath
+  const rightPrefix = right.kind === 'glob' ? globStaticPrefix(rightPath) : rightPath
+  if (!leftPrefix || !rightPrefix) return true
+  return pathHierarchyOverlaps(leftPrefix, rightPrefix)
+}
+
+const conservativeScopeOverlap = (left, right) => {
+  const sharedKinds = new Set(['shared_contract', 'exported_symbol', 'schema', 'event', 'migration', 'runtime'])
+  if (sharedKinds.has(left.kind) || sharedKinds.has(right.kind)) {
+    return left.resource_key === right.resource_key
+  }
+  if (left.kind === 'rename' || right.kind === 'rename') {
+    const leftResources = left.kind === 'rename'
+      ? [left.old_path, left.new_path].map((path) => ({ kind: 'path', path }))
+      : [left]
+    const rightResources = right.kind === 'rename'
+      ? [right.old_path, right.new_path].map((path) => ({ kind: 'path', path }))
+      : [right]
+    return leftResources.some((leftResource) => rightResources.some((rightResource) => pathLikeScopeOverlap(leftResource, rightResource)))
+  }
+  return pathLikeScopeOverlap(left, right)
+}
+
+const resourceKeysConflict = (left, right) => {
+  if (left === right) return true
+  const leftResource = normalizedScopeResourceFromKey(left)
+  const rightResource = normalizedScopeResourceFromKey(right)
+  // A resource kind the registry cannot normalize is an unknown overlap: it must
+  // hold against every held lease, never be treated as disjoint.
+  if (!leftResource || !rightResource) return true
+  return conservativeScopeOverlap(leftResource, rightResource)
+}
+
 const findAdmissionBlocker = (record, request) => {
-  if (record.leases[request.lease_id]) {
+  // A drain is generation-bound, exactly like the attestation that authorized it:
+  // a plan drained at generation N does not block its own later generation.
+  const drain = record.draining_plans[request.plan_id]
+  if (drain && drain.generation === request.generation) {
+    return { status: 'QUEUED_FOR_LEASE', reason: 'PLAN_DRAINING' }
+  }
+  if (Object.hasOwn(record.leases, request.lease_id) || Object.hasOwn(record.retained_resources ?? {}, request.lease_id)) {
     return { status: 'HELD_EXECUTION_AUTHORITY', reason: 'LEASE_ID_ALREADY_BOUND' }
   }
-  for (const lease of Object.values(record.leases)) {
+  for (const lease of [...Object.values(record.leases), ...retainedResourceHolders(record)]) {
     if (!resourceHeld(lease)) continue
-    if (request.resource_keys.some((key) => lease.resource_keys.includes(key))) {
+    if (request.resource_keys.some((key) => lease.resource_keys.some((heldKey) => resourceKeysConflict(key, heldKey)))) {
       return { status: 'QUEUED_FOR_LEASE', reason: 'RESOURCE_CONFLICT' }
     }
     if (lease.branch === request.branch) {
@@ -566,8 +882,9 @@ const validateLeaseRecord = (lease, leaseId) => {
       !Array.isArray(lease.resource_keys) || lease.resource_keys.length === 0 || lease.resource_keys.length > 256) {
     fail('registry_record_invalid', `lease.${leaseId}_shape`)
   }
-  lease.resource_keys.forEach((key, index) => assertTask2ResourceKey(key, `lease.${leaseId}.resource_keys[${index}]`))
+  const leaseScope = canonicalScopeFromResourceKeys(lease.resource_keys, `lease.${leaseId}.resource_keys`)
   if (new Set(lease.resource_keys).size !== lease.resource_keys.length) fail('registry_record_invalid', `lease.${leaseId}_resources`)
+  if (digestCanonical(leaseScope) !== lease.scope_digest) fail('registry_record_invalid', `lease.${leaseId}_scope_binding`)
   parseTimestamp(lease.heartbeat_at, `lease.${leaseId}.heartbeat_at`)
   if (lease.state === 'RELEASED') {
     if (lease.retention_state !== 'RETAINED_FOR_REVIEW' || typeof lease.release_evidence_ref !== 'string' ||
@@ -608,11 +925,19 @@ const validateLeaseRecord = (lease, leaseId) => {
 
 const validateLeaseRegistryRecord = (record, writerCap) => {
   exactKeys(record, [
-    'schema_version', 'generation', 'nonce', 'created_at', 'updated_at', 'writer_cap', 'leases', 'used_owner_end_attestations', 'canonical_digest',
+    'schema_version', 'generation', 'nonce', 'created_at', 'updated_at', 'writer_cap', 'leases', 'draining_plans', 'used_owner_end_attestations',
+    'retained_resources', 'canonical_digest',
   ], 'lease_registry')
   if (record.schema_version !== 'session-lease-registry/v1' || record.writer_cap !== writerCap || !isObject(record.leases) ||
-      !isObject(record.used_owner_end_attestations)) fail('registry_record_invalid', 'lease_registry_shape')
+      !isObject(record.draining_plans) || !isObject(record.used_owner_end_attestations) || !isObject(record.retained_resources)) {
+    fail('registry_record_invalid', 'lease_registry_shape')
+  }
   assertStamped(record, 'lease_registry')
+  // Lease records and compacted retained-resource stubs are both bounded by storage
+  // ceilings far above any admission scenario, so a long history never turns into an
+  // admission blocker; released records compact into stubs before a lease is evaluated.
+  if (Object.keys(record.leases).length > MAX_LIVE_LEASE_RECORDS) fail('registry_record_invalid', 'lease_registry_retention_limit')
+  if (Object.keys(record.retained_resources).length > MAX_RETAINED_RESOURCE_STUBS) fail('registry_record_invalid', 'lease_registry_retained_resource_limit')
   const heldBranches = new Set()
   const heldWorktrees = new Set()
   for (const [leaseId, lease] of Object.entries(record.leases)) {
@@ -624,14 +949,43 @@ const validateLeaseRegistryRecord = (record, writerCap) => {
     heldBranches.add(lease.branch)
     heldWorktrees.add(lease.worktree_id)
   }
+  for (const [leaseId, stub] of Object.entries(record.retained_resources)) {
+    assertTask2OpaqueId(leaseId, 'lease_registry.retained_resource_key')
+    exactKeys(stub, RETAINED_RESOURCE_KEYS, `lease_registry.retained_resource.${leaseId}`)
+    if (stub.lease_id !== leaseId || Object.hasOwn(record.leases, leaseId)) fail('registry_record_invalid', `retained_resource.${leaseId}_identity`)
+    for (const key of ['plan_id', 'task_id']) assertTask2OpaqueId(stub[key], `retained_resource.${leaseId}.${key}`)
+    assertOpaque(stub.worktree_id, `retained_resource.${leaseId}.worktree_id`)
+    assertIdentifier(stub.branch, `retained_resource.${leaseId}.branch`)
+    if (!Number.isSafeInteger(stub.generation) || stub.generation < 1 || !Array.isArray(stub.resource_keys) ||
+        stub.resource_keys.length === 0 || stub.resource_keys.length > 256 || new Set(stub.resource_keys).size !== stub.resource_keys.length ||
+        !['handoff', 'failed', 'aborted'].includes(stub.release_reason)) fail('registry_record_invalid', `retained_resource.${leaseId}_shape`)
+    const stubScope = canonicalScopeFromResourceKeys(stub.resource_keys, `retained_resource.${leaseId}.resource_keys`)
+    if (digestCanonical(stubScope) !== stub.scope_digest) fail('registry_record_invalid', `retained_resource.${leaseId}_scope_binding`)
+    assertOid(stub.head_sha, `retained_resource.${leaseId}.head_sha`, { zero: false })
+    assertDigest(stub.release_record_digest, `retained_resource.${leaseId}.release_record_digest`)
+    parseTimestamp(stub.released_at, `retained_resource.${leaseId}.released_at`)
+    if (heldBranches.has(stub.branch)) fail('registry_record_invalid', 'lease_registry_branch_contention')
+    if (heldWorktrees.has(stub.worktree_id)) fail('registry_record_invalid', 'lease_registry_worktree_contention')
+    heldBranches.add(stub.branch)
+    heldWorktrees.add(stub.worktree_id)
+  }
+  for (const [planId, drain] of Object.entries(record.draining_plans)) {
+    assertTask2OpaqueId(planId, 'lease_registry.draining_plan_key')
+    exactKeys(drain, ['plan_id', 'generation', 'requested_at', 'reason', 'nonce'], 'lease_registry.draining_plan')
+    if (drain.plan_id !== planId || !Number.isSafeInteger(drain.generation) || drain.generation < 1 ||
+        !['handoff', 'failed', 'aborted'].includes(drain.reason)) fail('registry_record_invalid', 'lease_registry_draining_plan')
+    parseTimestamp(drain.requested_at, 'lease_registry.draining_plan.requested_at')
+    assertNonce(drain.nonce, 'lease_registry.draining_plan.nonce')
+  }
   for (const [attestationRef, used] of Object.entries(record.used_owner_end_attestations)) {
     assertTask2OpaqueId(attestationRef, 'lease_registry.used_attestation_ref')
-    exactKeys(used, ['nonce', 'lease_id', 'consumed_at', 'release_id', 'release_record_digest'], 'lease_registry.used_attestation')
+    exactKeys(used, ['nonce', 'lease_id', 'consumed_at', 'expires_at', 'release_id', 'release_record_digest'], 'lease_registry.used_attestation')
     assertNonce(used.nonce, 'lease_registry.used_attestation.nonce')
     assertTask2OpaqueId(used.lease_id, 'lease_registry.used_attestation.lease_id')
     assertTask2OpaqueId(used.release_id, 'lease_registry.used_attestation.release_id')
     assertDigest(used.release_record_digest, 'lease_registry.used_attestation.release_record_digest')
     parseTimestamp(used.consumed_at, 'lease_registry.used_attestation.consumed_at')
+    parseTimestamp(used.expires_at, 'lease_registry.used_attestation.expires_at')
   }
   return record
 }
@@ -665,16 +1019,199 @@ export function parseSessionLeaseRegistry(raw, writerCap = WRITER_CAP_V1) {
   return freezeIJson(parsed)
 }
 
-function validatePersistedRecordForRef(ref, record) {
-  if (ref === PLAN_REF) return validatePlanRegistryRecord(record)
-  if (ref === LEASE_REF) {
-    if (isObject(record) && record.schema_version === 'queue-registry/v1') return validateQueueRegistryRecord(record)
-    return validateLeaseRegistryRecord(record, WRITER_CAP_V1)
+const validateCommandJournalReceipt = (receipt, journalKey) => {
+  assertNoSensitiveMaterial(receipt, 'command_journal.receipt')
+  assertTask2OpaqueId(journalKey, 'command_journal.receipt_key')
+  const reserved = receipt?.status === 'RESERVED'
+  exactKeys(receipt, reserved
+    ? ['journal_key', 'command_id', 'command_digest', 'attempt_id', 'reservation_id', 'status', 'acquired']
+    : ['journal_key', 'command_id', 'command_digest', 'attempt_id', 'reservation_id', 'status', 'outcome_digest', 'outcome'], 'command_journal.receipt')
+  if (receipt.journal_key !== journalKey || !['RESERVED', 'COMMITTED'].includes(receipt.status)) fail('registry_record_invalid', 'command_journal_receipt_binding')
+  for (const field of ['journal_key', 'command_id', 'attempt_id', 'reservation_id']) assertTask2OpaqueId(receipt[field], `command_journal.receipt.${field}`)
+  assertDigest(receipt.command_digest, 'command_journal.receipt.command_digest')
+  if (reserved) {
+    if (receipt.acquired !== true) fail('registry_record_invalid', 'command_journal_receipt_not_acquired')
+    return receipt
   }
+  assertDigest(receipt.outcome_digest, 'command_journal.receipt.outcome_digest')
+  if (!isObject(receipt.outcome) || receipt.outcome.command_id !== receipt.command_id ||
+      !['submit', 'advance', 'reconcile', 'drain', 'release'].includes(receipt.outcome.type) ||
+      !['HELD', 'SHADOW_STORED', 'SHADOW_INTENT', 'QUEUED'].includes(receipt.outcome.status) ||
+      typeof receipt.outcome.reason !== 'string' || receipt.outcome.reason.length < 1 || receipt.outcome.reason.length > 128 ||
+      digestCanonical(receipt.outcome) !== receipt.outcome_digest) fail('registry_record_invalid', 'command_journal_outcome_invalid')
+  return receipt
+}
+
+const validateCommandJournalRecord = (record, receiptLimit = COMMAND_JOURNAL_RECEIPT_LIMIT) => {
+  exactKeys(record, ['schema_version', 'generation', 'nonce', 'created_at', 'updated_at', 'receipts', 'canonical_digest'], 'command_journal')
+  if (record.schema_version !== 'command-journal-registry/v1' || !isObject(record.receipts)) fail('registry_record_invalid', 'command_journal_shape')
+  assertStamped(record, 'command_journal')
+  if (Object.keys(record.receipts).length > receiptLimit) fail('registry_record_invalid', 'command_journal_receipt_limit')
+  for (const [journalKey, receipt] of Object.entries(record.receipts)) validateCommandJournalReceipt(receipt, journalKey)
+  return record
+}
+
+function validatePersistedRecordForRef(ref, record) {
+  if (isPlanRef(ref)) return validatePlanRegistryRecord(record)
+  if (ref === LEASE_REF) return validateLeaseRegistryRecord(record, WRITER_CAP_V1)
+  if (ref === QUEUE_REF) return validateQueueRegistryRecord(record)
+  if (ref === JOURNAL_REF) return validateCommandJournalRecord(record)
+  if (isCommandJournalArchiveRef(ref)) return validateCommandJournalRecord(record, 1)
+  if (ref === MANAGED_BRANCH_REF) return validateManagedRegistryState(record)
   fail('registry_ref_forbidden', String(ref))
 }
 
-const nextRegistryRecord = ({ current, writerCap, nonce, timestamp, leases, usedOwnerEndAttestations }) => {
+const commandJournalSnapshot = async (store, receiptLimit) => {
+  const snapshot = await store.read(JOURNAL_REF)
+  if (snapshot.record !== null) validateCommandJournalRecord(snapshot.record, receiptLimit)
+  return snapshot
+}
+
+export function createCommandJournal({ store, clock, receiptLimit = COMMAND_JOURNAL_RECEIPT_LIMIT }) {
+  if (!store || typeof store.read !== 'function' || typeof store.cas !== 'function') fail('invalid_port', 'command_journal_store_required')
+  if (!Number.isSafeInteger(receiptLimit) || receiptLimit < 1 || receiptLimit > COMMAND_JOURNAL_RECEIPT_LIMIT) {
+    fail('invalid_value', 'command_journal_receipt_limit_invalid')
+  }
+  const retryLimit = 8
+  const read = async (input) => {
+    const { journal_key, command_id } = validateClosedRequest(input, ['journal_key', 'command_id'], 'command_journal_read')
+    assertTask2OpaqueId(journal_key, 'command_journal_read.journal_key')
+    assertTask2OpaqueId(command_id, 'command_journal_read.command_id')
+    const snapshot = await commandJournalSnapshot(store, receiptLimit)
+    let receipt = snapshot.record?.receipts?.[journal_key] ?? null
+    if (receipt === null) {
+      const archived = await store.read(commandJournalArchiveRef(journal_key))
+      receipt = archived.record?.receipts?.[journal_key] ?? null
+    }
+    if (receipt !== null && receipt.command_id !== command_id) fail('command_journal_conflict', 'command_id_mismatch')
+    return receipt === null ? null : clone(receipt)
+  }
+  const reserve = async (input) => {
+    const request = validateClosedRequest(input, ['journal_key', 'command_id', 'command_digest', 'attempt_id', 'reservation_id'], 'command_journal_reserve')
+    const receipt = { ...request, status: 'RESERVED', acquired: true }
+    validateCommandJournalReceipt(receipt, request.journal_key)
+    for (let attempt = 0; attempt < retryLimit; attempt += 1) {
+      const snapshot = await commandJournalSnapshot(store, receiptLimit)
+      const existing = snapshot.record?.receipts?.[request.journal_key]
+      if (existing) return clone(existing)
+      // A rotated receipt is still the durable truth for its command key: an archived
+      // command identity must never re-enter execution through a fresh reservation.
+      const archivedExisting = (await store.read(commandJournalArchiveRef(request.journal_key))).record?.receipts?.[request.journal_key] ?? null
+      if (archivedExisting !== null) {
+        validateCommandJournalReceipt(archivedExisting, request.journal_key)
+        if (archivedExisting.command_id !== request.command_id) fail('command_journal_conflict', 'command_id_mismatch')
+        return clone(archivedExisting)
+      }
+      if (Object.keys(snapshot.record?.receipts ?? {}).length >= receiptLimit) {
+        const archivedKey = Object.keys(snapshot.record.receipts).sort()
+          .find((journalKey) => snapshot.record.receipts[journalKey].status === 'COMMITTED')
+        if (!archivedKey) fail('command_journal_capacity_exceeded', 'all_receipts_reserved')
+        const archivedReceipt = snapshot.record.receipts[archivedKey]
+        const archiveRef = commandJournalArchiveRef(archivedKey)
+        const existingArchive = await store.read(archiveRef)
+        if (existingArchive.record === null) {
+          const archiveRecord = stamp({
+            schema_version: 'command-journal-registry/v1', generation: 1,
+            nonce: archivedReceipt.command_digest,
+            created_at: snapshot.record.created_at, updated_at: snapshot.record.updated_at,
+            receipts: { [archivedKey]: archivedReceipt },
+          })
+          const archived = await store.cas({ ref: archiveRef, expected_oid: ZERO_OID, record: archiveRecord })
+          if (archived.status !== 'STORED') continue
+        } else if (digestCanonical(existingArchive.record.receipts?.[archivedKey]) !== digestCanonical(archivedReceipt)) {
+          fail('command_journal_conflict', 'archive_receipt_mismatch')
+        }
+        const receipts = clone(snapshot.record.receipts)
+        delete receipts[archivedKey]
+        const compacted = stamp({
+          schema_version: 'command-journal-registry/v1', generation: snapshot.record.generation + 1,
+          nonce: archivedReceipt.command_digest,
+          created_at: snapshot.record.created_at, updated_at: nowFrom(clock), receipts,
+        })
+        const rotated = await store.cas({ ref: JOURNAL_REF, expected_oid: snapshot.oid, record: compacted })
+        if (rotated.status === 'STORED') continue
+        continue
+      }
+      const timestamp = nowFrom(clock)
+      const receipts = clone(snapshot.record?.receipts ?? {})
+      receipts[request.journal_key] = receipt
+      const record = stamp({
+        schema_version: 'command-journal-registry/v1',
+        generation: (snapshot.record?.generation ?? 0) + 1,
+        nonce: request.command_digest,
+        created_at: snapshot.record?.created_at ?? timestamp,
+        updated_at: timestamp,
+        receipts,
+      })
+      const result = await store.cas({ ref: JOURNAL_REF, expected_oid: snapshot.oid, record })
+      if (result.status === 'STORED') return clone(receipt)
+    }
+    fail('command_journal_conflict', request.journal_key)
+  }
+  const commit = async (input) => {
+    const request = validateClosedRequest(input, [
+      'journal_key', 'command_id', 'command_digest', 'attempt_id', 'reservation_id', 'outcome_digest', 'outcome',
+    ], 'command_journal_commit')
+    const receipt = { ...request, status: 'COMMITTED' }
+    validateCommandJournalReceipt(receipt, request.journal_key)
+    for (let attempt = 0; attempt < retryLimit; attempt += 1) {
+      const snapshot = await commandJournalSnapshot(store, receiptLimit)
+      const reserved = snapshot.record?.receipts?.[request.journal_key]
+      if (!reserved) fail('command_journal_missing', request.journal_key)
+      if (reserved.status === 'COMMITTED') {
+        if (digestCanonical(reserved) === digestCanonical(receipt)) return clone(reserved)
+        fail('command_journal_conflict', request.journal_key)
+      }
+      for (const field of ['journal_key', 'command_id', 'command_digest', 'attempt_id', 'reservation_id']) {
+        if (reserved[field] !== request[field]) fail('command_journal_conflict', field)
+      }
+      const timestamp = nowFrom(clock)
+      const receipts = clone(snapshot.record.receipts)
+      receipts[request.journal_key] = receipt
+      const record = stamp({
+        schema_version: 'command-journal-registry/v1',
+        generation: snapshot.record.generation + 1,
+        nonce: request.command_digest,
+        created_at: snapshot.record.created_at,
+        updated_at: timestamp,
+        receipts,
+      })
+      const result = await store.cas({ ref: JOURNAL_REF, expected_oid: snapshot.oid, record })
+      if (result.status === 'STORED') return clone(receipt)
+    }
+    fail('command_journal_conflict', request.journal_key)
+  }
+  return Object.freeze({ read, reserve, commit })
+}
+
+// Compacts released lease records beyond the newest `retainedReleasedLeases`
+// into resource stubs and drops consumed attestations that expired more than the
+// grace window ago. Both preserve the truth that gates admission: every retained
+// resource still blocks, every attestation still inside its replay window still replays.
+const compactRegistry = ({ leases, usedOwnerEndAttestations, retainedResources, retainedReleasedLeases, timestamp }) => {
+  const released = Object.values(leases)
+    .filter((lease) => lease.state === 'RELEASED')
+    .sort((left, right) => (right.updated_at.localeCompare(left.updated_at) || right.lease_id.localeCompare(left.lease_id)))
+  for (const lease of released.slice(retainedReleasedLeases)) {
+    retainedResources[lease.lease_id] = retainedResourceStub(lease)
+    delete leases[lease.lease_id]
+  }
+  const now = parseTimestamp(timestamp, 'lease_registry.updated_at')
+  for (const [attestationRef, used] of Object.entries(usedOwnerEndAttestations)) {
+    if (typeof used?.expires_at !== 'string') continue
+    const expiresAt = Date.parse(used.expires_at)
+    if (Number.isFinite(expiresAt) && expiresAt + USED_ATTESTATION_GRACE_MS < now) delete usedOwnerEndAttestations[attestationRef]
+  }
+}
+
+const nextRegistryRecord = ({
+  store = undefined, current, writerCap, nonce, timestamp, leases, drainingPlans = clone(current?.draining_plans ?? {}), usedOwnerEndAttestations,
+  retainedResources = clone(current?.retained_resources ?? {}),
+  retainedReleasedLeases = store?.retainedReleasedLeases ?? RETAINED_RELEASED_LEASE_RECORDS,
+  liveLeaseCompactionThreshold = store?.liveLeaseCompactionThreshold ?? LIVE_LEASE_COMPACTION_THRESHOLD,
+}) => {
+  const overThreshold = Object.keys(leases).length > liveLeaseCompactionThreshold
+  compactRegistry({ leases, usedOwnerEndAttestations, retainedResources, retainedReleasedLeases: overThreshold ? 0 : retainedReleasedLeases, timestamp })
   const record = stamp({
     schema_version: 'session-lease-registry/v1',
     generation: (current?.generation ?? 0) + 1,
@@ -683,7 +1220,9 @@ const nextRegistryRecord = ({ current, writerCap, nonce, timestamp, leases, used
     updated_at: timestamp,
     writer_cap: writerCap,
     leases,
+    draining_plans: drainingPlans,
     used_owner_end_attestations: usedOwnerEndAttestations,
+    retained_resources: retainedResources,
   })
   validateLeaseRegistryRecord(record, writerCap)
   return record
@@ -726,8 +1265,8 @@ const queueAfterConflict = (current, request, writerCap, result) => {
 }
 
 const requireLease = (snapshot, leaseId) => {
-  assertOpaque(leaseId, 'lease_id')
-  const lease = snapshot.record.leases[leaseId]
+  assertTask2OpaqueId(leaseId, 'lease_id')
+  const lease = Object.hasOwn(snapshot.record.leases, leaseId) ? snapshot.record.leases[leaseId] : undefined
   if (!lease) fail('lease_not_found', leaseId)
   return lease
 }
@@ -756,7 +1295,7 @@ const updateSingleLease = async ({ store, writerCap, clock, leaseId, expectedOid
   if (stale) return stale
   const lease = requireLease(snapshot, leaseId)
   const timestamp = nowFrom(clock)
-  const nextLease = transform(lease, timestamp)
+  const nextLease = transform(lease, timestamp, snapshot.record.used_owner_end_attestations)
   if (isObject(nextLease) && nextLease.status === 'END_REQUESTED' && nextLease.idempotent === true) {
     return { status: 'END_REQUESTED', oid: snapshot.oid, lease }
   }
@@ -764,6 +1303,7 @@ const updateSingleLease = async ({ store, writerCap, clock, leaseId, expectedOid
   const leases = clone(snapshot.record.leases)
   leases[leaseId] = nextLease
   const next = nextRegistryRecord({
+      store,
     current: snapshot.record,
     writerCap,
     nonce,
@@ -844,16 +1384,130 @@ const validateReservedOwnerEndAttestation = (attestation, lease, reservation) =>
   }
 }
 
-export function createLeaseRegistry({ store, clock, writerCap = WRITER_CAP_V1, ownerEndAttestor = undefined, executionEnvelope = undefined }) {
-  if (!store || typeof store.read !== 'function' || typeof store.cas !== 'function') fail('invalid_port', 'lease_store_required')
+export function createLeaseRegistry({
+  store: rawStore, clock, writerCap = WRITER_CAP_V1, ownerEndAttestor = undefined, executionEnvelope = undefined,
+  retainedReleasedLeases = RETAINED_RELEASED_LEASE_RECORDS, integratedParentAuthority = undefined,
+  liveLeaseCompactionThreshold = LIVE_LEASE_COMPACTION_THRESHOLD,
+}) {
+  if (!rawStore || typeof rawStore.read !== 'function' || typeof rawStore.cas !== 'function' || typeof rawStore.casGuarded !== 'function') fail('invalid_port', 'lease_store_required')
   if (writerCap !== WRITER_CAP_V1) fail('invalid_value', 'writer_cap_must_equal_two')
+  if (!Number.isSafeInteger(retainedReleasedLeases) || retainedReleasedLeases < 1 || retainedReleasedLeases > MAX_RETAINED_RELEASED_LEASE_RECORDS) {
+    fail('invalid_value', 'retained_released_leases_out_of_range')
+  }
+  // The retention bound travels with the store so every record builder, including
+  // the module-level lease helpers, compacts with the same policy.
+  if (!Number.isSafeInteger(liveLeaseCompactionThreshold) || liveLeaseCompactionThreshold < 1 || liveLeaseCompactionThreshold > MAX_LIVE_LEASE_RECORDS) {
+    fail('invalid_value', 'live_lease_compaction_threshold_out_of_range')
+  }
+  const store = Object.create(rawStore, {
+    retainedReleasedLeases: { value: retainedReleasedLeases },
+    liveLeaseCompactionThreshold: { value: liveLeaseCompactionThreshold },
+  })
 
   const inspect = () => registrySnapshot(store, writerCap)
+
+  const validateDependencies = async (input) => {
+    const request = validateClosedRequest(input, [
+      'plan_id', 'generation', 'task_id', 'dependency_task_ids', 'expected_parent_sha',
+    ], 'dependency_validation_request')
+    for (const key of ['plan_id', 'task_id']) assertTask2OpaqueId(request[key], `dependency_validation_request.${key}`)
+    if (!Number.isSafeInteger(request.generation) || request.generation < 1 ||
+        !Array.isArray(request.dependency_task_ids) || request.dependency_task_ids.length > 64) {
+      fail('invalid_value', 'dependency_validation_request_shape')
+    }
+    for (const dependency of request.dependency_task_ids) {
+      assertTask2OpaqueId(dependency, 'dependency_validation_request.dependency_task_id')
+      if (dependency === request.task_id) fail('invalid_value', 'dependency_validation_request_self_reference')
+    }
+    if (new Set(request.dependency_task_ids).size !== request.dependency_task_ids.length) {
+      fail('invalid_value', 'dependency_validation_request_duplicate')
+    }
+    assertOid(request.expected_parent_sha, 'dependency_validation_request.expected_parent_sha', { zero: false })
+    if (request.dependency_task_ids.length === 0) {
+      return {
+        status: 'READY', plan_id: request.plan_id, generation: request.generation,
+        task_id: request.task_id, expected_parent_sha: request.expected_parent_sha, dependency_count: 0,
+      }
+    }
+    const snapshot = await registrySnapshot(store, writerCap)
+    if (snapshot.status === 'HELD_REGISTRY_INTEGRITY') return snapshot
+    // The expected parent is compared with the predecessors' actual handoff heads,
+    // never with the plan baseline: a single predecessor must have handed off at
+    // exactly that head, and a fan-in of several predecessors needs an external
+    // attestation that the named parent integrates all of their heads.
+    const dependencyHeads = {}
+    for (const dependencyTaskId of request.dependency_task_ids) {
+      const candidates = [...Object.values(snapshot.record.leases), ...retainedResourceHolders(snapshot.record)].filter((lease) =>
+        lease.plan_id === request.plan_id && lease.generation === request.generation && lease.task_id === dependencyTaskId)
+      const completed = candidates.filter((lease) => lease.state === 'RELEASED' && lease.release_reason === 'handoff')
+      if (completed.length === 0) {
+        return { status: 'HELD_EXECUTION_AUTHORITY', reason: 'DEPENDENCY_NOT_COMPLETED' }
+      }
+      dependencyHeads[dependencyTaskId] = [...new Set(completed.map((lease) => lease.head_sha))].sort()
+    }
+    if (request.dependency_task_ids.length === 1) {
+      if (!dependencyHeads[request.dependency_task_ids[0]].includes(request.expected_parent_sha)) {
+        return { status: 'HELD_EXECUTION_AUTHORITY', reason: 'DEPENDENCY_PARENT_SHA_MISMATCH' }
+      }
+    } else {
+      let attested = false
+      try {
+        attested = typeof integratedParentAuthority?.verify === 'function' && await integratedParentAuthority.verify(Object.freeze({
+          plan_id: request.plan_id, generation: request.generation, task_id: request.task_id,
+          integrated_parent_sha: request.expected_parent_sha, dependency_heads: freezeIJson(clone(dependencyHeads)),
+        })) === true
+      } catch {
+        attested = false
+      }
+      if (!attested) return { status: 'HELD_EXECUTION_AUTHORITY', reason: 'DEPENDENCY_INTEGRATION_PARENT_UNATTESTED' }
+    }
+    return {
+      status: 'READY', plan_id: request.plan_id, generation: request.generation,
+      task_id: request.task_id, expected_parent_sha: request.expected_parent_sha,
+      dependency_count: request.dependency_task_ids.length,
+    }
+  }
+
+  const resolvePlanGuard = async ({ plan_id, generation, expected_plan_oid }) => {
+    const snapshot = await readValidatedPlanSnapshot(store, plan_id)
+    if (snapshot.status === 'HELD_REGISTRY_INTEGRITY') return snapshot
+    if (snapshot.record === null || snapshot.oid !== expected_plan_oid) {
+      return { status: 'HELD_EXECUTION_AUTHORITY', reason: 'PLAN_REGISTRY_CHANGED' }
+    }
+    const activePlan = parseDeliveryPlan(snapshot.record.plan)
+    if (activePlan.plan_id !== plan_id || activePlan.generation !== generation) {
+      return { status: 'HELD_EXECUTION_AUTHORITY', reason: 'PLAN_GENERATION_MISMATCH' }
+    }
+    return { status: 'READY', snapshot }
+  }
+
+  const validateActive = async (request) => {
+    const topology = validateLeaseRequest(request, store)
+    if (topology) return topology
+    const planGuard = await resolvePlanGuard(request)
+    if (planGuard.status !== 'READY') return planGuard
+    const snapshot = await registrySnapshot(store, writerCap)
+    if (snapshot.status === 'HELD_REGISTRY_INTEGRITY') return snapshot
+    const lease = Object.hasOwn(snapshot.record.leases, request.lease_id) ? snapshot.record.leases[request.lease_id] : undefined
+    if (!lease || lease.state !== 'ACTIVE') return { status: 'HELD_EXECUTION_AUTHORITY', reason: 'ACTIVE_LEASE_REQUIRED' }
+    const fields = [
+      'plan_id', 'generation', 'task_id', 'provider', 'owner_session', 'provider_session_id',
+      'execution_context_id', 'context_attestation_ref', 'common_dir_digest', 'worktree_id',
+      'worktree_path_digest', 'branch', 'scope_digest', 'head_sha',
+    ]
+    if (fields.some((field) => lease[field] !== request[field]) ||
+        digestCanonical(lease.resource_keys) !== digestCanonical(request.resource_keys)) {
+      return { status: 'HELD_EXECUTION_AUTHORITY', reason: 'ACTIVE_LEASE_BINDING_MISMATCH' }
+    }
+    return { status: 'ACTIVE', lease_id: lease.lease_id }
+  }
 
   const admit = async (request) => {
     assertNoSensitiveMaterial(request, 'lease_request')
     const topology = validateLeaseRequest(request, store)
     if (topology) return topology
+    const planGuard = await resolvePlanGuard(request)
+    if (planGuard.status !== 'READY') return planGuard
     const snapshot = await registrySnapshot(store, writerCap)
     if (snapshot.status === 'HELD_REGISTRY_INTEGRITY') return snapshot
     const blocker = findAdmissionBlocker(snapshot.record, request)
@@ -863,6 +1517,7 @@ export function createLeaseRegistry({ store, clock, writerCap = WRITER_CAP_V1, o
     const leases = clone(snapshot.record.leases)
     leases[request.lease_id] = lease
     const record = nextRegistryRecord({
+      store,
       current: snapshot.record,
       writerCap,
       nonce: request.nonce,
@@ -870,8 +1525,17 @@ export function createLeaseRegistry({ store, clock, writerCap = WRITER_CAP_V1, o
       leases,
       usedOwnerEndAttestations: clone(snapshot.record.used_owner_end_attestations),
     })
-    const result = await store.cas({ ref: LEASE_REF, expected_oid: snapshot.oid, record })
+    const result = await store.casGuarded({
+      ref: LEASE_REF,
+      expected_oid: snapshot.oid,
+      record,
+      guard_ref: planGuard.snapshot.ref,
+      guard_oid: request.expected_plan_oid,
+    })
     if (result.status === 'STORED') return { ...result, status: 'ADMITTED', lease }
+    if (result.reason === 'GUARD_CONFLICT') {
+      return { status: 'HELD_EXECUTION_AUTHORITY', reason: 'PLAN_REGISTRY_CHANGED' }
+    }
     return queueAfterConflict(result.current, request, writerCap, result)
   }
 
@@ -911,7 +1575,7 @@ export function createLeaseRegistry({ store, clock, writerCap = WRITER_CAP_V1, o
     assertTask2OpaqueId(lease_id, 'reconcile_timeout_lease_id')
     assertOid(expected_oid, 'reconcile_timeout_expected_oid')
     assertNonce(nonce, 'reconcile_timeout_nonce')
-    if (!Number.isSafeInteger(timeout_ms) || timeout_ms < 1) fail('invalid_value', 'timeout_ms_invalid')
+    if (timeout_ms !== LEASE_HEARTBEAT_TIMEOUT_MS) fail('invalid_value', 'timeout_ms_policy_mismatch')
     return (async () => {
       const snapshot = await registrySnapshot(store, writerCap)
       if (snapshot.status === 'HELD_REGISTRY_INTEGRITY') return snapshot
@@ -939,7 +1603,7 @@ export function createLeaseRegistry({ store, clock, writerCap = WRITER_CAP_V1, o
         }
       }
       const timestamp = nowFrom(clock)
-      if (Date.parse(timestamp) - Date.parse(lease.heartbeat_at) < timeout_ms) {
+      if (Date.parse(timestamp) - Date.parse(lease.heartbeat_at) < LEASE_HEARTBEAT_TIMEOUT_MS) {
         return { status: lease.state, oid: snapshot.oid, lease }
       }
       const nextLease = updateLease(lease, {
@@ -951,6 +1615,7 @@ export function createLeaseRegistry({ store, clock, writerCap = WRITER_CAP_V1, o
       const leases = clone(snapshot.record.leases)
       leases[lease_id] = nextLease
       const record = nextRegistryRecord({
+      store,
         current: snapshot.record,
         writerCap,
         nonce,
@@ -964,11 +1629,12 @@ export function createLeaseRegistry({ store, clock, writerCap = WRITER_CAP_V1, o
   }
 
   const endRequest = (input) => {
-    const { lease_id, expected_oid, nonce, reason, handoff_or_candidate_reference } = validateClosedRequest(input, [
-      'lease_id', 'expected_oid', 'nonce', 'reason', 'handoff_or_candidate_reference',
+    const { lease_id, expected_oid, nonce, reason, handoff_or_candidate_reference, owner_end_attestation } = validateClosedRequest(input, [
+      'lease_id', 'expected_oid', 'nonce', 'reason', 'handoff_or_candidate_reference', 'owner_end_attestation',
     ], 'end_request')
     if (!['handoff', 'failed', 'aborted'].includes(reason)) fail('invalid_value', 'end_request_reason_invalid')
     assertTask2OpaqueId(handoff_or_candidate_reference, 'end_request_handoff_or_candidate_reference')
+    validateOwnerEndAttestationShape(owner_end_attestation)
     return updateSingleLease({
       store,
       writerCap,
@@ -976,7 +1642,7 @@ export function createLeaseRegistry({ store, clock, writerCap = WRITER_CAP_V1, o
       leaseId: lease_id,
       expectedOid: expected_oid,
       nonce,
-      transform: (lease, timestamp) => {
+      transform: (lease, timestamp, usedOwnerEndAttestations) => {
         if (lease.state === 'END_REQUESTED') {
           const same = lease.end_request.reason === reason &&
             lease.end_request.handoff_or_candidate_reference === handoff_or_candidate_reference &&
@@ -992,6 +1658,16 @@ export function createLeaseRegistry({ store, clock, writerCap = WRITER_CAP_V1, o
         if (lease.state !== 'ACTIVE') {
           return { status: 'HELD_EXECUTION_AUTHORITY', reason: 'END_REQUEST_REQUIRES_ACTIVE', reconcile_required: false }
         }
+        // Owner/session-bound authority proof: tuple, expiry, issuer independence and
+        // replay ledger are all checked against the lease being ended.
+        try {
+          validateOwnerEndAttestation(owner_end_attestation, lease, timestamp, usedOwnerEndAttestations)
+        } catch (error) {
+          if (error instanceof FabricRegistryError && error.code !== 'invalid_value' && error.code !== 'invalid_shape') {
+            return { status: 'HELD_EXECUTION_AUTHORITY', reason: 'END_REQUEST_UNAUTHORIZED', detail: error.code, reconcile_required: false }
+          }
+          throw error
+        }
         return updateLease(lease, {
           nonce,
           updated_at: timestamp,
@@ -1002,7 +1678,164 @@ export function createLeaseRegistry({ store, clock, writerCap = WRITER_CAP_V1, o
     }).then((result) => result.status === 'STORED' ? { ...result, status: 'END_REQUESTED' } : result)
   }
 
-  const finalizeReservedRelease = async ({ snapshot, lease, input }) => {
+  // Draining stops every later writer of a plan, so it is a plan-owner / coordinator
+  // decision: the request carries an attestation bound to the exact drain tuple and
+  // the trusted attestor must confirm it. Knowing the inspectable OIDs is not authority.
+  const drainPlan = async (input) => {
+    const { plan_id, generation, expected_oid, expected_plan_oid, nonce, reason, owner_attestation } = validateClosedRequest(input, [
+      'plan_id', 'generation', 'expected_oid', 'expected_plan_oid', 'nonce', 'reason', 'owner_attestation',
+    ], 'plan_drain_request')
+    assertTask2OpaqueId(plan_id, 'plan_drain_request.plan_id')
+    if (!Number.isSafeInteger(generation) || generation < 1) fail('invalid_value', 'plan_drain_request_generation_invalid')
+    assertOid(expected_oid, 'plan_drain_request.expected_oid')
+    assertOid(expected_plan_oid, 'plan_drain_request.expected_plan_oid', { zero: false })
+    assertNonce(nonce, 'plan_drain_request.nonce')
+    if (!['handoff', 'failed', 'aborted'].includes(reason)) fail('invalid_value', 'plan_drain_request_reason_invalid')
+    validateClosedRequest(owner_attestation, DRAIN_ATTESTATION_KEYS, 'plan_drain_request.owner_attestation')
+    for (const field of ['attestation_ref', 'issuer_id', 'issuer_version']) assertTask2OpaqueId(owner_attestation[field], `plan_drain_request.owner_attestation.${field}`)
+    assertDigest(owner_attestation.attestation_digest, 'plan_drain_request.owner_attestation.attestation_digest')
+    if (owner_attestation.action !== 'drain' || owner_attestation.plan_id !== plan_id || owner_attestation.generation !== generation ||
+        owner_attestation.expected_oid !== expected_oid || owner_attestation.nonce !== nonce || owner_attestation.reason !== reason) {
+      fail('invalid_value', 'plan_drain_request_attestation_tuple_mismatch')
+    }
+    const drainNow = parseTimestamp(nowFrom(clock), 'plan_drain_request.now')
+    if (parseTimestamp(owner_attestation.expires_at, 'plan_drain_request.owner_attestation.expires_at') <= drainNow ||
+        parseTimestamp(owner_attestation.observed_at, 'plan_drain_request.owner_attestation.observed_at') > drainNow) {
+      fail('invalid_value', 'plan_drain_request_attestation_expired')
+    }
+    if (!Number.isSafeInteger(owner_attestation.revocation_epoch) || owner_attestation.revocation_epoch < 0) fail('invalid_value', 'plan_drain_request_attestation_epoch_invalid')
+    if (!ownerEndAttestor || typeof ownerEndAttestor.verify !== 'function') {
+      return { status: 'HELD_EXECUTION_AUTHORITY', reason: 'DRAIN_AUTHORITY_UNAVAILABLE' }
+    }
+    let drainVerified
+    try {
+      drainVerified = await ownerEndAttestor.verify({ attestation: owner_attestation, lease: null, drain: { plan_id, generation, expected_oid, nonce, reason }, now: nowFrom(clock) })
+    } catch {
+      return { status: 'HELD_EXECUTION_AUTHORITY', reason: 'DRAIN_AUTHORITY_UNAVAILABLE' }
+    }
+    if (!isObject(drainVerified) || drainVerified.verdict !== 'TRUSTED' || !isObject(drainVerified.attestation) ||
+        digestCanonical(drainVerified.attestation) !== digestCanonical(owner_attestation)) {
+      return { status: 'HELD_EXECUTION_AUTHORITY', reason: 'DRAIN_ATTESTATION_UNVERIFIED' }
+    }
+    const planGuard = await resolvePlanGuard({ plan_id, generation, expected_plan_oid })
+    if (planGuard.status !== 'READY') return planGuard
+    const snapshot = await registrySnapshot(store, writerCap)
+    if (snapshot.status === 'HELD_REGISTRY_INTEGRITY') return snapshot
+    const stale = validateExpectedSnapshot(snapshot, expected_oid)
+    if (stale) return stale
+    const existing = snapshot.record.draining_plans[plan_id]
+    if (existing) {
+      // The drain of one generation is immutable; a newer active generation (proved
+      // by the plan guard above) may be drained on its own, replacing the record.
+      if (existing.generation === generation) {
+        return existing.nonce === nonce && existing.reason === reason
+          ? { status: 'DRAINING', plan_id, oid: snapshot.oid }
+          : { status: 'HELD_EXECUTION_AUTHORITY', reason: 'PLAN_DRAIN_IMMUTABLE' }
+      }
+      if (existing.generation > generation) return { status: 'HELD_EXECUTION_AUTHORITY', reason: 'PLAN_DRAIN_IMMUTABLE' }
+    }
+    const timestamp = nowFrom(clock)
+    const drainingPlans = clone(snapshot.record.draining_plans)
+    drainingPlans[plan_id] = { plan_id, generation, requested_at: timestamp, reason, nonce }
+    const record = nextRegistryRecord({
+      store,
+      current: snapshot.record,
+      writerCap,
+      nonce,
+      timestamp,
+      leases: clone(snapshot.record.leases),
+      drainingPlans,
+      usedOwnerEndAttestations: clone(snapshot.record.used_owner_end_attestations),
+    })
+    const result = await store.casGuarded({
+      ref: LEASE_REF,
+      expected_oid,
+      record,
+      guard_ref: planGuard.snapshot.ref,
+      guard_oid: expected_plan_oid,
+    })
+    if (result.reason === 'GUARD_CONFLICT') {
+      return { status: 'HELD_EXECUTION_AUTHORITY', reason: 'PLAN_REGISTRY_CHANGED' }
+    }
+    return result.status === 'STORED'
+      ? { status: 'DRAINING', plan_id, oid: result.oid }
+      : casConflict(result)
+  }
+
+  const releaseReconciliationRequired = (releaseId) => ({
+    status: 'HELD_EXECUTION_AUTHORITY',
+    reason: 'RELEASE_RECONCILIATION_REQUIRED',
+    reconcile_required: true,
+    release_id: releaseId,
+  })
+
+  const recoverReservedRevocationProof = async ({ snapshot, lease }) => {
+    const reservation = lease.release_reservation
+    if (!executionEnvelope || typeof executionEnvelope.revoke !== 'function') {
+      return releaseReconciliationRequired(reservation.release_id)
+    }
+    let envelope
+    try {
+      envelope = await executionEnvelope.revoke({
+        lease_id: reservation.lease_id,
+        release_id: reservation.release_id,
+        expected_envelope_oid: reservation.expected_envelope_oid,
+        expected_transition_sequence: reservation.expected_envelope_transition_sequence,
+        revocation_epoch: reservation.revocation_epoch,
+        owner_end_attestation_ref: reservation.attestation_ref,
+        owner_end_nonce: reservation.nonce,
+      })
+      exactKeys(envelope, ['status', 'previous_oid', 'oid', 'transition_sequence', 'revocation_epoch', 'in_flight_command'], 'envelope_revoke_result')
+      assertOid(envelope.previous_oid, 'envelope_revoke_result.previous_oid', { zero: false })
+      assertOid(envelope.oid, 'envelope_revoke_result.oid', { zero: false })
+    } catch {
+      return releaseReconciliationRequired(reservation.release_id)
+    }
+    if (envelope.status !== 'REVOKED' || envelope.previous_oid !== reservation.expected_envelope_oid ||
+        envelope.oid === reservation.expected_envelope_oid ||
+        envelope.transition_sequence !== reservation.expected_envelope_transition_sequence + 1 ||
+        envelope.revocation_epoch !== reservation.revocation_epoch || envelope.in_flight_command !== false) {
+      return releaseReconciliationRequired(reservation.release_id)
+    }
+    const proof = stamp({
+      schema_version: 'envelope-revocation-proof/v1',
+      release_id: reservation.release_id,
+      lease_id: reservation.lease_id,
+      previous_oid: envelope.previous_oid,
+      oid: envelope.oid,
+      transition_sequence: envelope.transition_sequence,
+      revocation_epoch: envelope.revocation_epoch,
+      in_flight_command: false,
+      observed_at: reservation.updated_at,
+    })
+    validateEnvelopeRevocationProof(proof, reservation)
+    const timestamp = nowFrom(clock)
+    const leases = clone(snapshot.record.leases)
+    leases[lease.lease_id] = updateLease(lease, {
+      nonce: reservation.nonce,
+      updated_at: timestamp,
+      envelope_revocation_proof: proof,
+    })
+    const record = nextRegistryRecord({
+      store,
+      current: snapshot.record,
+      writerCap,
+      nonce: reservation.nonce,
+      timestamp,
+      leases,
+      usedOwnerEndAttestations: clone(snapshot.record.used_owner_end_attestations),
+    })
+    try {
+      const result = await store.cas({ ref: LEASE_REF, expected_oid: snapshot.oid, record })
+      return result.status === 'STORED' ? result : releaseReconciliationRequired(reservation.release_id)
+    } catch {
+      return releaseReconciliationRequired(reservation.release_id)
+    }
+  }
+
+  const finalizeReservedRelease = async ({ snapshot: initialSnapshot, lease: initialLease, input }) => {
+    let snapshot = initialSnapshot
+    let lease = initialLease
     const reservation = lease.release_reservation
     validateReservedOwnerEndAttestation(input.attestation, lease, reservation)
     if (input.expected_envelope_oid !== reservation.expected_envelope_oid ||
@@ -1012,7 +1845,10 @@ export function createLeaseRegistry({ store, clock, writerCap = WRITER_CAP_V1, o
       return { status: 'HELD_EXECUTION_AUTHORITY', reason: 'RELEASE_RECONCILIATION_REQUIRED', reconcile_required: true, release_id: reservation.release_id }
     }
     if (!Object.hasOwn(lease, 'envelope_revocation_proof')) {
-      return { status: 'HELD_EXECUTION_AUTHORITY', reason: 'RELEASE_RECONCILIATION_REQUIRED', reconcile_required: true, release_id: reservation.release_id }
+      const recovered = await recoverReservedRevocationProof({ snapshot, lease })
+      if (recovered.status !== 'STORED') return recovered
+      snapshot = { oid: recovered.oid, record: recovered.record }
+      lease = recovered.record.leases[lease.lease_id]
     }
     validateEnvelopeRevocationProof(lease.envelope_revocation_proof, reservation)
     if (Object.hasOwn(snapshot.record.used_owner_end_attestations, reservation.attestation_ref)) {
@@ -1074,11 +1910,13 @@ export function createLeaseRegistry({ store, clock, writerCap = WRITER_CAP_V1, o
       nonce: reservation.nonce,
       lease_id: lease.lease_id,
       consumed_at: nowFrom(clock),
+      expires_at: reservation.expires_at,
       release_id: reservation.release_id,
       release_record_digest: digestCanonical(releaseRecord),
     }
     const timestamp = nowFrom(clock)
     const record = nextRegistryRecord({
+      store,
       current: snapshot.record,
       writerCap,
       nonce: reservation.nonce,
@@ -1180,6 +2018,7 @@ export function createLeaseRegistry({ store, clock, writerCap = WRITER_CAP_V1, o
     const reservingLeases = clone(snapshot.record.leases)
     reservingLeases[lease_id] = reservingLease
     const reservationRecord = nextRegistryRecord({
+      store,
       current: snapshot.record,
       writerCap,
       nonce: trustedAttestation.nonce,
@@ -1243,6 +2082,7 @@ export function createLeaseRegistry({ store, clock, writerCap = WRITER_CAP_V1, o
     const proofLeases = clone(reservationResult.record.leases)
     proofLeases[lease_id] = proofLease
     const proofRecord = nextRegistryRecord({
+      store,
       current: reservationResult.record,
       writerCap,
       nonce: trustedAttestation.nonce,
@@ -1326,10 +2166,12 @@ export function createLeaseRegistry({ store, clock, writerCap = WRITER_CAP_V1, o
       nonce: trustedAttestation.nonce,
       lease_id,
       consumed_at: timestamp,
+      expires_at: trustedAttestation.expires_at,
       release_id: releaseRecord.release_id,
       release_record_digest: digestCanonical(releaseRecord),
     }
     const record = nextRegistryRecord({
+      store,
       current: proofResult.record,
       writerCap,
       nonce: trustedAttestation.nonce,
@@ -1351,7 +2193,77 @@ export function createLeaseRegistry({ store, clock, writerCap = WRITER_CAP_V1, o
     }
   }
 
-  return Object.freeze({ inspect, admit, heartbeat, reconcileTimeout, endRequest, release })
+  // The only path that removes retained-resource truth: an owner attestation bound
+  // to the exact stub set releases their retention, so history never turns into a
+  // permanent admission blocker without an authority saying so.
+  const releaseRetainedResources = async (input) => {
+    const { lease_ids, expected_oid, nonce, owner_attestation } = validateClosedRequest(input, [
+      'lease_ids', 'expected_oid', 'nonce', 'owner_attestation',
+    ], 'retained_resource_release_request')
+    if (!Array.isArray(lease_ids) || lease_ids.length === 0 || lease_ids.length > 256 || new Set(lease_ids).size !== lease_ids.length) {
+      fail('invalid_value', 'retained_resource_release_request_lease_ids_invalid')
+    }
+    for (const leaseId of lease_ids) assertTask2OpaqueId(leaseId, 'retained_resource_release_request.lease_id')
+    assertOid(expected_oid, 'retained_resource_release_request.expected_oid')
+    assertNonce(nonce, 'retained_resource_release_request.nonce')
+    validateClosedRequest(owner_attestation, RETENTION_RELEASE_ATTESTATION_KEYS, 'retained_resource_release_request.owner_attestation')
+    for (const field of ['attestation_ref', 'issuer_id', 'issuer_version']) assertTask2OpaqueId(owner_attestation[field], `retained_resource_release_request.owner_attestation.${field}`)
+    assertDigest(owner_attestation.attestation_digest, 'retained_resource_release_request.owner_attestation.attestation_digest')
+    const leaseSetDigest = digestCanonical([...lease_ids].sort())
+    if (owner_attestation.action !== 'release_retained_resources' || owner_attestation.lease_set_digest !== leaseSetDigest ||
+        owner_attestation.expected_oid !== expected_oid || owner_attestation.nonce !== nonce) {
+      fail('invalid_value', 'retained_resource_release_request_attestation_tuple_mismatch')
+    }
+    const releaseNow = parseTimestamp(nowFrom(clock), 'retained_resource_release_request.now')
+    if (parseTimestamp(owner_attestation.expires_at, 'retained_resource_release_request.owner_attestation.expires_at') <= releaseNow ||
+        parseTimestamp(owner_attestation.observed_at, 'retained_resource_release_request.owner_attestation.observed_at') > releaseNow) {
+      fail('invalid_value', 'retained_resource_release_request_attestation_expired')
+    }
+    if (!Number.isSafeInteger(owner_attestation.revocation_epoch) || owner_attestation.revocation_epoch < 0) fail('invalid_value', 'retained_resource_release_request_attestation_epoch_invalid')
+    if (!ownerEndAttestor || typeof ownerEndAttestor.verify !== 'function') {
+      return { status: 'HELD_EXECUTION_AUTHORITY', reason: 'RETENTION_RELEASE_AUTHORITY_UNAVAILABLE' }
+    }
+    let verified
+    try {
+      verified = await ownerEndAttestor.verify({ attestation: owner_attestation, lease: null, retention_release: { lease_ids: [...lease_ids].sort(), expected_oid, nonce }, now: nowFrom(clock) })
+    } catch {
+      return { status: 'HELD_EXECUTION_AUTHORITY', reason: 'RETENTION_RELEASE_AUTHORITY_UNAVAILABLE' }
+    }
+    if (!isObject(verified) || verified.verdict !== 'TRUSTED' || !isObject(verified.attestation) ||
+        digestCanonical(verified.attestation) !== digestCanonical(owner_attestation)) {
+      return { status: 'HELD_EXECUTION_AUTHORITY', reason: 'RETENTION_RELEASE_ATTESTATION_UNVERIFIED' }
+    }
+    const snapshot = await registrySnapshot(store, writerCap)
+    if (snapshot.status === 'HELD_REGISTRY_INTEGRITY') return snapshot
+    const stale = validateExpectedSnapshot(snapshot, expected_oid)
+    if (stale) return stale
+    const retainedResources = clone(snapshot.record.retained_resources ?? {})
+    const leases = clone(snapshot.record.leases)
+    const missing = lease_ids.filter((leaseId) => !Object.hasOwn(retainedResources, leaseId) &&
+      !(leases[leaseId]?.state === 'RELEASED' && leases[leaseId]?.retention_state === 'RETAINED_FOR_REVIEW'))
+    if (missing.length > 0) return { status: 'HELD_EXECUTION_AUTHORITY', reason: 'RETAINED_RESOURCE_UNKNOWN', lease_ids: missing }
+    for (const leaseId of lease_ids) {
+      delete retainedResources[leaseId]
+      delete leases[leaseId]
+    }
+    const timestamp = nowFrom(clock)
+    const record = nextRegistryRecord({
+      store,
+      current: snapshot.record,
+      writerCap,
+      nonce,
+      timestamp,
+      leases,
+      usedOwnerEndAttestations: clone(snapshot.record.used_owner_end_attestations),
+      retainedResources,
+    })
+    const result = await store.cas({ ref: LEASE_REF, expected_oid, record })
+    return result.status === 'STORED'
+      ? { status: 'RETENTION_RELEASED', lease_ids: [...lease_ids].sort(), oid: result.oid }
+      : { status: 'CONFLICT', reason: 'CAS_CONFLICT', expected_oid, actual_oid: result.actual_oid ?? null }
+  }
+
+  return Object.freeze({ inspect, validateDependencies, admit, validateActive, heartbeat, reconcileTimeout, drainPlan, endRequest, release, releaseRetainedResources })
 }
 
 const MANAGED_BRANCH_KEYS = Object.freeze([
@@ -1360,9 +2272,12 @@ const MANAGED_BRANCH_KEYS = Object.freeze([
   'registry_oid', 'managed_base_lease_id', 'transition_sequence', 'state', 'canonical_digest',
 ])
 
-const MANAGED_REGISTRY_KEYS = Object.freeze(['schema_version', 'branch', 'used_nonces'])
+// Managed branches are keyed by branch identity so develop, release/* and hotfix/*
+// bases coexist and are inspected, renewed and frozen independently.
+const MANAGED_REGISTRY_KEYS = Object.freeze(['schema_version', 'branches', 'used_nonces'])
+const MANAGED_BRANCH_LIMIT = 16
 const MANAGED_RENEW_COMMAND_KEYS = Object.freeze([
-  'schema_version', 'action', 'operation_id', 'owner_authority', 'managed_base_lease_id', 'current_generation',
+  'schema_version', 'action', 'branch', 'operation_id', 'owner_authority', 'managed_base_lease_id', 'current_generation',
   'expected_registry_oid', 'expected_base_sha', 'expected_head_sha', 'expected_protection_profile_digest',
   'transition_sequence', 'nonce', 'requested_expires_at', 'authorized_expires_at',
 ])
@@ -1425,10 +2340,19 @@ const validateManagedBranchRecord = (record, context = 'managed_branch') => {
 const validateManagedRegistryState = (record) => {
   assertNoSensitiveMaterial(record, 'managed_branch_registry')
   exactKeys(record, MANAGED_REGISTRY_KEYS, 'managed_branch_registry')
-  if (record.schema_version !== 'managed-branch-registry/v1' || !isObject(record.used_nonces)) {
+  if (record.schema_version !== 'managed-branch-registry/v2' || !isObject(record.used_nonces) || !isObject(record.branches)) {
     fail('registry_record_invalid', 'managed_branch_registry_shape')
   }
-  validateManagedBranchRecord(record.branch, 'managed_branch_registry.branch')
+  const branchNames = Object.keys(record.branches)
+  if (branchNames.length < 1 || branchNames.length > MANAGED_BRANCH_LIMIT) fail('registry_record_invalid', 'managed_branch_registry_branch_count')
+  for (const name of branchNames) {
+    assertIdentifier(name, 'managed_branch_registry.branches.key')
+    validateManagedBranchRecord(record.branches[name], `managed_branch_registry.branches.${name}`)
+    if (record.branches[name].branch !== name) fail('registry_record_invalid', `managed_branch_registry_branch_key_${name}`)
+  }
+  if (Object.keys(record.used_nonces).length > MANAGED_BRANCH_NONCE_RECEIPT_LIMIT) {
+    fail('registry_record_invalid', 'managed_branch_registry_nonce_receipt_limit')
+  }
   for (const [nonce, receipt] of Object.entries(record.used_nonces)) {
     assertNonce(nonce, 'managed_branch_registry.used_nonce')
     exactKeys(receipt, ['operation_id', 'consumed_at'], 'managed_branch_registry.used_nonce_receipt')
@@ -1462,6 +2386,8 @@ const validateManagedRenewCommand = (input) => {
     return { reason: ['push', 'direct_push', 'deploy', 'direct_deploy'].includes(input.action) ? 'DIRECT_PUSH_FORBIDDEN' : 'MANAGED_OPERATION_INVALID' }
   }
   try {
+    assertIdentifier(input.branch, 'managed_branch_renew.branch')
+    if (managedBranchClass(input.branch) === null) fail('invalid_value', 'managed_branch_renew.branch_class')
     assertOpaque(input.operation_id, 'managed_branch_renew.operation_id')
     assertOpaque(input.owner_authority, 'managed_branch_renew.owner_authority')
     assertOpaque(input.managed_base_lease_id, 'managed_branch_renew.managed_base_lease_id')
@@ -1488,15 +2414,18 @@ const hydrateManagedBranch = (branch, registryOid) => stampManagedBranch({ ...br
 
 const readManagedSnapshot = async (store) => {
   try {
-    const snapshot = await store.read()
-    exactKeys(snapshot, ['oid', 'record'], 'managed_branch_store_snapshot')
+    const snapshot = await store.read(MANAGED_BRANCH_REF)
+    exactKeys(snapshot, Object.hasOwn(snapshot, 'ref') ? ['ref', 'oid', 'record'] : ['oid', 'record'], 'managed_branch_store_snapshot')
+    if (Object.hasOwn(snapshot, 'ref') && snapshot.ref !== MANAGED_BRANCH_REF) fail('registry_record_invalid', 'managed_branch_ref_binding')
     assertOid(snapshot.oid, 'managed_branch_store_snapshot.oid', { zero: false })
     if (snapshot.record === null) return managedHeld('REGISTRY_UNKNOWN')
     validateManagedRegistryState(snapshot.record)
     return {
       status: 'READY',
       registry_oid: snapshot.oid,
-      record: hydrateManagedBranch(snapshot.record.branch, snapshot.oid),
+      branches: Object.fromEntries(Object.entries(snapshot.record.branches).map(([name, branch]) => [
+        name, hydrateManagedBranch(branch, snapshot.oid),
+      ])),
       state: snapshot.record,
     }
   } catch {
@@ -1504,9 +2433,7 @@ const readManagedSnapshot = async (store) => {
   }
 }
 
-const renewFailure = (snapshot, command, clock) => {
-  const record = snapshot.record
-  const now = nowFrom(clock)
+const renewFailure = (record, snapshot, command, now) => {
   const nowMilliseconds = parseTimestamp(now, 'managed_branch_renew.now')
   if (record.state !== 'ACTIVE') return managedHeld('MANAGED_BRANCH_NOT_ACTIVE', { state: record.state })
   if (parseTimestamp(record.expires_at, 'managed_branch_renew.expires_at') <= nowMilliseconds) {
@@ -1525,10 +2452,55 @@ const renewFailure = (snapshot, command, clock) => {
     return managedHeld('NONCE_REPLAY')
   }
   const requestedExpiresAt = parseTimestamp(command.requested_expires_at, 'managed_branch_renew.requested_expires_at')
-  const authorizedExpiresAt = parseTimestamp(command.authorized_expires_at, 'managed_branch_renew.authorized_expires_at')
   if (requestedExpiresAt <= parseTimestamp(record.expires_at, 'managed_branch_renew.current_expires_at')) return managedHeld('EXPIRY_NOT_EXTENDED')
-  if (requestedExpiresAt > authorizedExpiresAt || requestedExpiresAt <= nowMilliseconds) return managedHeld('EXPIRY_POLICY_BOUND')
+  if (requestedExpiresAt <= nowMilliseconds) return managedHeld('EXPIRY_POLICY_BOUND')
   return null
+}
+
+const verifyManagedRenewalAuthority = async (authority, record, snapshot, command, now) => {
+  if (!authority || typeof authority.verifyRenewal !== 'function') return managedHeld('RENEWAL_AUTHORITY_UNAVAILABLE')
+  const requestPayload = {
+    schema_version: 'managed-branch-renewal-authority-request/v1',
+    action: 'renew',
+    branch: record.branch,
+    operation_id: command.operation_id,
+    nonce: command.nonce,
+    owner_authority: record.owner_authority,
+    managed_base_lease_id: record.managed_base_lease_id,
+    registry_oid: snapshot.registry_oid,
+    branch_digest: record.canonical_digest,
+    generation: record.generation,
+    transition_sequence: record.transition_sequence,
+    base_sha: record.base_sha,
+    head_sha: record.current_head_sha,
+    protection_profile_digest: record.protection_profile_digest,
+    current_expires_at: record.expires_at,
+    requested_expires_at: command.requested_expires_at,
+    claimed_authorized_expires_at: command.authorized_expires_at,
+    observed_at: now,
+  }
+  const request = freezeIJson({ ...requestPayload, request_digest: digestCanonical(requestPayload) })
+  try {
+    const decision = await authority.verifyRenewal(request)
+    exactKeys(decision, [
+      'schema_version', 'verdict', 'request_digest', 'authorized_expires_at',
+    ], 'managed_branch_renewal_authority_decision')
+    if (decision.schema_version !== 'managed-branch-renewal-authority-decision/v1' || decision.verdict !== 'AUTHORIZED') {
+      return managedHeld('RENEWAL_AUTHORITY_REJECTED')
+    }
+    assertDigest(decision.request_digest, 'managed_branch_renewal_authority_decision.request_digest')
+    parseTimestamp(decision.authorized_expires_at, 'managed_branch_renewal_authority_decision.authorized_expires_at')
+    if (decision.request_digest !== request.request_digest || decision.authorized_expires_at !== command.authorized_expires_at) {
+      return managedHeld('RENEWAL_AUTHORITY_MISMATCH')
+    }
+    if (parseTimestamp(command.requested_expires_at, 'managed_branch_renew.requested_expires_at') >
+        parseTimestamp(decision.authorized_expires_at, 'managed_branch_renew.authorized_expires_at')) {
+      return managedHeld('EXPIRY_POLICY_BOUND')
+    }
+    return null
+  } catch {
+    return managedHeld('RENEWAL_AUTHORITY_REJECTED')
+  }
 }
 
 export function parseManagedBranchRecord(raw) {
@@ -1543,13 +2515,19 @@ export function parseManagedBranchRegistry(raw) {
   return freezeIJson(parsed)
 }
 
-export function createManagedBranchRegistry({ store, clock }) {
+export function createManagedBranchRegistry({ store, clock, managedBranchAuthority }) {
   if (!store || typeof store.read !== 'function' || typeof store.cas !== 'function') fail('invalid_port', 'managed_branch_store_required')
 
-  const inspect = async () => {
+  // Without a branch selector the whole keyed collection is returned; with one, the
+  // exact managed branch or a typed hold when it is not registered.
+  const inspect = async (branch = undefined) => {
     const snapshot = await readManagedSnapshot(store)
     if (snapshot.status !== 'READY') return snapshot
-    return Object.freeze({ status: 'READY', registry_oid: snapshot.registry_oid, record: snapshot.record })
+    if (branch === undefined) {
+      return Object.freeze({ status: 'READY', registry_oid: snapshot.registry_oid, branches: freezeIJson(snapshot.branches) })
+    }
+    if (typeof branch !== 'string' || !Object.hasOwn(snapshot.branches, branch)) return managedHeld('MANAGED_BRANCH_UNKNOWN', { branch })
+    return Object.freeze({ status: 'READY', registry_oid: snapshot.registry_oid, record: snapshot.branches[branch] })
   }
 
   const renew = async (input) => {
@@ -1557,28 +2535,41 @@ export function createManagedBranchRegistry({ store, clock }) {
     if (commandResult.reason) return managedHeld(commandResult.reason)
     const snapshot = await readManagedSnapshot(store)
     if (snapshot.status !== 'READY') return snapshot
-    const failure = renewFailure(snapshot, commandResult.command, clock)
-    if (failure) return failure
+    const currentBranch = snapshot.branches[commandResult.command.branch]
+    if (!currentBranch) return managedHeld('MANAGED_BRANCH_UNKNOWN', { branch: commandResult.command.branch })
     const timestamp = nowFrom(clock)
+    const failure = renewFailure(currentBranch, snapshot, commandResult.command, timestamp)
+    if (failure) return failure
+    const authorityFailure = await verifyManagedRenewalAuthority(
+      managedBranchAuthority, currentBranch, snapshot, commandResult.command, timestamp,
+    )
+    if (authorityFailure) return authorityFailure
     const branch = hydrateManagedBranch({
-      ...snapshot.record,
+      ...currentBranch,
       expires_at: commandResult.command.requested_expires_at,
       renewed_at: timestamp,
-      transition_sequence: snapshot.record.transition_sequence + 1,
+      transition_sequence: currentBranch.transition_sequence + 1,
     }, snapshot.registry_oid)
-    const usedNonces = clone(snapshot.state.used_nonces)
+    // The exact transition_sequence is checked before nonce lookup, so receipts
+    // from older successful transitions cannot authorize a replay. Keep a bounded
+    // recent window for duplicate protection on the current operational horizon.
+    const retainedNonceEntries = Object.entries(snapshot.state.used_nonces)
+      .sort(([leftNonce, left], [rightNonce, right]) =>
+        right.consumed_at.localeCompare(left.consumed_at) || rightNonce.localeCompare(leftNonce))
+      .slice(0, MANAGED_BRANCH_NONCE_RETENTION - 1)
+    const usedNonces = Object.fromEntries(retainedNonceEntries)
     usedNonces[commandResult.command.nonce] = {
       operation_id: commandResult.command.operation_id,
       consumed_at: timestamp,
     }
     const next = {
-      schema_version: 'managed-branch-registry/v1',
-      branch,
+      schema_version: 'managed-branch-registry/v2',
+      branches: { ...clone(snapshot.state.branches), [commandResult.command.branch]: branch },
       used_nonces: usedNonces,
     }
     try {
       validateManagedRegistryState(next)
-      const result = await store.cas({ expected_oid: snapshot.registry_oid, record: next })
+      const result = await store.cas({ ref: MANAGED_BRANCH_REF, expected_oid: snapshot.registry_oid, record: next })
       if (isObject(result) && result.status === 'STORED') {
         assertOid(result.oid, 'managed_branch_renew.result_oid', { zero: false })
         const record = hydrateManagedBranch(branch, result.oid)
@@ -1599,9 +2590,45 @@ export function createManagedBranchRegistry({ store, clock }) {
   return Object.freeze({ inspect, renew })
 }
 
-const QUEUE_REF = LEASE_REF
 const QUEUE_MAPPING_LIMIT = 1024
 const QUEUE_OPERATION_LIMIT = 4096
+const QUEUE_OPERATION_ARCHIVE_SCHEMA = 'queue-operation-archive/v1'
+// Terminal operation receipts (a cancelled mapping's reserve + cancel cycle) rotate into a
+// per-mapping archive ref, so historical operation count never blocks admission while the
+// replay tombstone for that mapping stays durable.
+const queueOperationArchiveRef = (mappingKey) => `${QUEUE_OPERATION_ARCHIVE_REF_PREFIX}${digestCanonical({ mapping_key: mappingKey })}`
+const validQueueOperationArchive = (record, mappingKey) => {
+  try {
+    exactKeys(record, ['schema_version', 'generation', 'nonce', 'created_at', 'updated_at', 'mapping_key', 'operations', 'canonical_digest'], 'queue_operation_archive')
+    if (record.schema_version !== QUEUE_OPERATION_ARCHIVE_SCHEMA || record.mapping_key !== mappingKey || !isObject(record.operations)) return false
+    assertStamped(record, 'queue_operation_archive')
+    for (const [operationId, operation] of Object.entries(record.operations)) {
+      assertTask2OpaqueId(operationId, 'queue_operation_archive.key')
+      exactKeys(operation, QUEUE_OPERATION_KEYS, 'queue_operation_archive.operation')
+      if (operation.mapping_key !== mappingKey || !['reserve', 'cancel'].includes(operation.kind)) return false
+    }
+    return true
+  } catch {
+    return false
+  }
+}
+const readQueueOperationArchive = async (store, mappingKey) => {
+  try {
+    const snapshot = await store.read(queueOperationArchiveRef(mappingKey))
+    if (!isObject(snapshot) || !OID.test(snapshot.oid)) return null
+    if (snapshot.record === null) return { oid: snapshot.oid, operations: {} }
+    if (!validQueueOperationArchive(snapshot.record, mappingKey)) return null
+    return { oid: snapshot.oid, operations: clone(snapshot.record.operations) }
+  } catch {
+    return null
+  }
+}
+const queueArchiveReplayHeld = (archive, request) => {
+  if (Object.values(archive.operations).some((operation) => operation.nonce === request.nonce)) return QUEUE_HELD('NONCE_REPLAY')
+  if (Object.hasOwn(archive.operations, request.operation_id)) return QUEUE_HELD('OPERATION_REPLAY')
+  if (Object.values(archive.operations).some((operation) => operation.kind === 'cancel')) return QUEUE_HELD('MAPPING_TERMINAL')
+  return null
+}
 const QUEUE_HELD = (reason) => Object.freeze({ status: 'HELD_QUEUE_CAPABILITY', shadow: 'SHADOW_ONLY', reason })
 const QUEUE_SOURCE_KEYS = Object.freeze(['repository', 'workflow', 'resource_key'])
 const QUEUE_OBSERVATION_KEYS = Object.freeze([
@@ -1618,6 +2645,7 @@ const QUEUE_MAPPING_KEYS = Object.freeze([
   'candidate_id', 'run_id', 'lease_id', 'resource_key', 'workflow', 'candidate_head_sha', 'lease_generation',
   'source_digest', 'observation_digest', 'state',
 ])
+const QUEUE_OPERATION_KEYS = Object.freeze(['nonce', 'consumed_at', 'kind', 'mapping_key'])
 
 const validateQueueRegistryRecord = (record) => {
   exactKeys(record, [
@@ -1631,7 +2659,32 @@ const validateQueueRegistryRecord = (record) => {
   for (const [key, mapping] of Object.entries(record.queue_mappings)) {
     assertTask2OpaqueId(key, 'queue_mapping_key')
     exactKeys(mapping, QUEUE_MAPPING_KEYS, 'queue_mapping')
+    for (const field of ['candidate_id', 'run_id', 'lease_id', 'resource_key', 'workflow']) {
+      assertTask2OpaqueId(mapping[field], `queue_mapping.${field}`)
+    }
+    assertOid(mapping.candidate_head_sha, 'queue_mapping.candidate_head_sha', { zero: false })
+    if (!Number.isSafeInteger(mapping.lease_generation) || mapping.lease_generation < 1) fail('registry_record_invalid', 'queue_mapping_generation')
+    assertDigest(mapping.source_digest, 'queue_mapping.source_digest')
+    assertDigest(mapping.observation_digest, 'queue_mapping.observation_digest')
+    const suffix = (value) => value.slice(value.indexOf(':') + 1)
+    if (key !== mapping.candidate_id || new Set([suffix(mapping.candidate_id), suffix(mapping.run_id), suffix(mapping.lease_id)]).size !== 1) {
+      fail('registry_record_invalid', 'queue_mapping_tuple_binding')
+    }
     if (!['RESERVED', 'CANCELLED'].includes(mapping.state)) fail('registry_record_invalid', 'queue_mapping_state')
+  }
+  const operationNonces = new Set()
+  const createdAt = Date.parse(record.created_at)
+  const updatedAt = Date.parse(record.updated_at)
+  for (const [operationId, operation] of Object.entries(record.used_queue_operations)) {
+    assertTask2OpaqueId(operationId, 'queue_operation_key')
+    exactKeys(operation, QUEUE_OPERATION_KEYS, 'queue_operation')
+    assertNonce(operation.nonce, 'queue_operation.nonce')
+    assertTask2OpaqueId(operation.mapping_key, 'queue_operation.mapping_key')
+    const consumedAt = parseTimestamp(operation.consumed_at, 'queue_operation.consumed_at')
+    if (consumedAt < createdAt || consumedAt > updatedAt || !['reserve', 'cancel'].includes(operation.kind) || operationNonces.has(operation.nonce)) {
+      fail('registry_record_invalid', 'queue_operation_binding')
+    }
+    operationNonces.add(operation.nonce)
   }
   return record
 }
@@ -1655,14 +2708,6 @@ const readQueueSnapshot = async (store) => {
       try {
         validateQueueRegistryRecord(snapshot.record)
         return { oid: snapshot.oid, record: snapshot.record, kind: 'queue' }
-      } catch {
-        return QUEUE_HELD('REGISTRY_UNKNOWN')
-      }
-    }
-    if (isObject(snapshot.record) && snapshot.record.schema_version === 'session-lease-registry/v1') {
-      try {
-        validateLeaseRegistryRecord(snapshot.record, WRITER_CAP_V1)
-        return { oid: snapshot.oid, record: snapshot.record, kind: 'lease' }
       } catch {
         return QUEUE_HELD('REGISTRY_UNKNOWN')
       }
@@ -1767,14 +2812,38 @@ const mappingKey = (request) => request.candidate_id
 const queueFreshnessHeld = (request, clock) => {
   try {
     const now = nowFrom(clock)
-    if (Date.parse(now) >= Date.parse(request.observation.expires_at)) return QUEUE_HELD('SNAPSHOT_STALE')
+    const nowMilliseconds = Date.parse(now)
+    const observedMilliseconds = Date.parse(request.observation.observed_at)
+    const expiresMilliseconds = Date.parse(request.observation.expires_at)
+    if (![nowMilliseconds, observedMilliseconds, expiresMilliseconds].every(Number.isFinite)) return QUEUE_HELD('REQUEST_INVALID')
+    if (observedMilliseconds > nowMilliseconds || nowMilliseconds >= expiresMilliseconds) return QUEUE_HELD('SNAPSHOT_STALE')
     return null
   } catch {
     return QUEUE_HELD('REQUEST_INVALID')
   }
 }
 
-export function createQueueMappingRegistry({ store, clock }) {
+const queueLeaseBindingHeld = async (store, request) => {
+  try {
+    const snapshot = await store.read(LEASE_REF)
+    if (!isObject(snapshot) || !OID.test(snapshot.oid) || snapshot.oid === ZERO_OID || snapshot.record === null) return QUEUE_HELD('LEASE_REGISTRY_UNKNOWN')
+    validateLeaseRegistryRecord(snapshot.record, WRITER_CAP_V1)
+    const lease = Object.hasOwn(snapshot.record.leases, request.lease_id) ? snapshot.record.leases[request.lease_id] : undefined
+    if (!lease || lease.state !== 'ACTIVE') return QUEUE_HELD('LEASE_NOT_ACTIVE')
+    if (lease.generation !== request.lease_generation || lease.head_sha !== request.candidate_head_sha ||
+        !lease.resource_keys.includes(request.resource_key)) {
+      return QUEUE_HELD('TUPLE_DRIFT')
+    }
+    return { guard_oid: snapshot.oid }
+  } catch {
+    return QUEUE_HELD('LEASE_REGISTRY_UNKNOWN')
+  }
+}
+
+export function createQueueMappingRegistry({ store, clock, operationLimit = QUEUE_OPERATION_LIMIT }) {
+  if (!Number.isSafeInteger(operationLimit) || operationLimit < 2 || operationLimit > QUEUE_OPERATION_LIMIT) {
+    fail('invalid_value', 'queue_operation_limit_invalid')
+  }
   if (!store || typeof store.read !== 'function' || typeof store.cas !== 'function') {
     return Object.freeze({
       restore: async () => QUEUE_HELD('REGISTRY_UNKNOWN'),
@@ -1788,13 +2857,12 @@ export function createQueueMappingRegistry({ store, clock }) {
     const snapshot = await readQueueSnapshot(store)
     if (snapshot.status === 'HELD_QUEUE_CAPABILITY') return snapshot
     if (snapshot.kind === 'empty' || snapshot.record === null) return QUEUE_HELD('REGISTRY_UNKNOWN')
-    if (snapshot.kind === 'lease') return queueView(snapshot.oid, null)
     return queueView(snapshot.oid, snapshot.record)
   }
 
-  const writeQueue = async (expectedOid, current, request, transform) => {
+  const writeQueue = async (expectedOid, current, request, guardOid, transform) => {
     const timestamp = nowFrom(clock)
-    const nextMaps = transform(current)
+    const nextMaps = transform(current, timestamp)
     if (nextMaps.status === 'HELD_QUEUE_CAPABILITY') return nextMaps
     const record = stamp({
       schema_version: 'queue-registry/v1',
@@ -1805,7 +2873,23 @@ export function createQueueMappingRegistry({ store, clock }) {
       queue_mappings: nextMaps.queue_mappings,
       used_queue_operations: nextMaps.used_queue_operations,
     })
-    const result = await store.cas({ ref: QUEUE_REF, expected_oid: expectedOid, record })
+    let result
+    try {
+      result = guardOid === undefined
+        ? await store.cas({ ref: QUEUE_REF, expected_oid: expectedOid, record })
+        : typeof store.casGuarded === 'function'
+          ? await store.casGuarded({
+            ref: QUEUE_REF,
+            expected_oid: expectedOid,
+            record,
+            guard_ref: LEASE_REF,
+            guard_oid: guardOid,
+          })
+          : QUEUE_HELD('REGISTRY_UNKNOWN')
+    } catch {
+      return QUEUE_HELD('REGISTRY_UNKNOWN')
+    }
+    if (result?.status === 'HELD_QUEUE_CAPABILITY') return result
     if (isObject(result) && result.status === 'STORED') {
       return Object.freeze({
         status: nextMaps.resultStatus,
@@ -1814,7 +2898,48 @@ export function createQueueMappingRegistry({ store, clock }) {
         mapping: nextMaps.mapping,
       })
     }
-    return QUEUE_HELD('REGISTRY_CAS_CONFLICT')
+    return QUEUE_HELD(result?.reason === 'GUARD_CONFLICT' ? 'LEASE_REGISTRY_CHANGED' : 'REGISTRY_CAS_CONFLICT')
+  }
+
+  // Rotate the oldest terminal cycles (cancelled mapping: reserve + cancel receipts) into
+  // their per-mapping archive until the live receipt map is below the operation limit.
+  // Returns null when capacity was recovered, otherwise the hold to surface.
+  const rotateTerminalOperations = async (current) => {
+    while (Object.keys(current.used_queue_operations).length >= operationLimit) {
+      const cycles = new Map()
+      for (const [operationId, operation] of Object.entries(current.used_queue_operations)) {
+        const cycle = cycles.get(operation.mapping_key) ?? { operations: {}, cancelledAt: null }
+        cycle.operations[operationId] = operation
+        if (operation.kind === 'cancel') cycle.cancelledAt = operation.consumed_at
+        cycles.set(operation.mapping_key, cycle)
+      }
+      const terminal = [...cycles.entries()]
+        .filter(([key, cycle]) => cycle.cancelledAt !== null && !Object.hasOwn(current.queue_mappings, key))
+        .sort(([leftKey, left], [rightKey, right]) => left.cancelledAt.localeCompare(right.cancelledAt) || leftKey.localeCompare(rightKey))
+      if (terminal.length === 0) return QUEUE_HELD('LEDGER_CAPACITY_EXCEEDED')
+      const [key, cycle] = terminal[0]
+      const existing = await readQueueOperationArchive(store, key)
+      if (existing === null) return QUEUE_HELD('REGISTRY_UNKNOWN')
+      const cancel = Object.values(cycle.operations).find((operation) => operation.kind === 'cancel')
+      const record = stamp({
+        schema_version: QUEUE_OPERATION_ARCHIVE_SCHEMA,
+        generation: existing.oid === ZERO_OID ? 1 : 2,
+        nonce: cancel.nonce,
+        created_at: current.created_at,
+        updated_at: nowFrom(clock),
+        mapping_key: key,
+        operations: { ...existing.operations, ...cycle.operations },
+      })
+      let archived
+      try {
+        archived = await store.cas({ ref: queueOperationArchiveRef(key), expected_oid: existing.oid, record })
+      } catch {
+        return QUEUE_HELD('REGISTRY_UNKNOWN')
+      }
+      if (!isObject(archived) || archived.status !== 'STORED') return QUEUE_HELD('REGISTRY_UNKNOWN')
+      for (const operationId of Object.keys(cycle.operations)) delete current.used_queue_operations[operationId]
+    }
+    return null
   }
 
   const currentQueueState = (snapshot) => {
@@ -1833,6 +2958,8 @@ export function createQueueMappingRegistry({ store, clock }) {
     const request = parsed.request
     const freshness = queueFreshnessHeld(request, clock)
     if (freshness) return freshness
+    const leaseBinding = await queueLeaseBindingHeld(store, request)
+    if (leaseBinding.status === 'HELD_QUEUE_CAPABILITY') return leaseBinding
     if (Number.isSafeInteger(request.queue_mapping_count) && request.queue_mapping_count > QUEUE_MAPPING_LIMIT) {
       return QUEUE_HELD('LEDGER_CAPACITY_EXCEEDED')
     }
@@ -1841,30 +2968,37 @@ export function createQueueMappingRegistry({ store, clock }) {
     }
     const snapshot = await readQueueSnapshot(store)
     if (snapshot.status === 'HELD_QUEUE_CAPABILITY') return snapshot
-    if (snapshot.kind === 'empty' || snapshot.record === null) return QUEUE_HELD('REGISTRY_UNKNOWN')
     if (snapshot.oid !== request.expected_oid) return QUEUE_HELD('REGISTRY_CAS_CONFLICT')
-    if (snapshot.kind === 'lease') {
-      const leases = Object.values(snapshot.record.leases || {})
-      if (leases.length > 0 && !leases.some((lease) => lease.head_sha === request.candidate_head_sha && lease.generation === request.lease_generation)) {
-        return QUEUE_HELD('TUPLE_DRIFT')
-      }
-    }
     const current = currentQueueState(snapshot)
+    const archive = await readQueueOperationArchive(store, mappingKey(request))
+    if (archive === null) return QUEUE_HELD('REGISTRY_UNKNOWN')
+    const archiveReplay = queueArchiveReplayHeld(archive, request)
+    if (archiveReplay) return archiveReplay
     if (Object.keys(current.used_queue_operations).some((key) => current.used_queue_operations[key]?.nonce === request.nonce)) {
       return QUEUE_HELD('NONCE_REPLAY')
     }
     if (Object.hasOwn(current.used_queue_operations, request.operation_id)) return QUEUE_HELD('OPERATION_REPLAY')
+    if (Object.values(current.used_queue_operations).some((operation) =>
+      operation.kind === 'cancel' && operation.mapping_key === mappingKey(request))) {
+      return QUEUE_HELD('MAPPING_TERMINAL')
+    }
+    const existingMapping = current.queue_mappings[mappingKey(request)]
+    if (existingMapping) {
+      return QUEUE_HELD(existingMapping.state === 'CANCELLED' ? 'MAPPING_TERMINAL' : 'MAPPING_ALREADY_EXISTS')
+    }
     if (Object.keys(current.queue_mappings).length >= QUEUE_MAPPING_LIMIT) return QUEUE_HELD('LEDGER_CAPACITY_EXCEEDED')
-    if (Object.keys(current.used_queue_operations).length >= QUEUE_OPERATION_LIMIT) return QUEUE_HELD('LEDGER_CAPACITY_EXCEEDED')
+    const rotation = await rotateTerminalOperations(current)
+    if (rotation) return rotation
     const mapping = mappingFromRequest(request, 'RESERVED')
-    return writeQueue(request.expected_oid, current, request, (state) => {
+    return writeQueue(request.expected_oid, current, request, leaseBinding.guard_oid, (state, timestamp) => {
       const queue_mappings = clone(state.queue_mappings)
       const used_queue_operations = clone(state.used_queue_operations)
       queue_mappings[mappingKey(request)] = mapping
       used_queue_operations[request.operation_id] = {
         nonce: request.nonce,
-        consumed_at: nowFrom(clock),
+        consumed_at: timestamp,
         kind: 'reserve',
+        mapping_key: mappingKey(request),
       }
       return {
         queue_mappings,
@@ -1889,26 +3023,33 @@ export function createQueueMappingRegistry({ store, clock }) {
     if (snapshot.kind !== 'queue') return QUEUE_HELD('REGISTRY_UNKNOWN')
     if (snapshot.oid !== request.expected_oid) return QUEUE_HELD('REGISTRY_CAS_CONFLICT')
     const current = currentQueueState(snapshot)
+    const archive = await readQueueOperationArchive(store, mappingKey(request))
+    if (archive === null) return QUEUE_HELD('REGISTRY_UNKNOWN')
+    const archiveReplay = queueArchiveReplayHeld(archive, request)
+    if (archiveReplay) return archiveReplay
     if (Object.keys(current.used_queue_operations).some((key) => current.used_queue_operations[key]?.nonce === request.nonce)) {
       return QUEUE_HELD('NONCE_REPLAY')
     }
     if (Object.hasOwn(current.used_queue_operations, request.operation_id)) return QUEUE_HELD('OPERATION_REPLAY')
     const existing = current.queue_mappings[mappingKey(request)]
     if (!existing || existing.state !== 'RESERVED') return QUEUE_HELD('MAPPING_NOT_RESERVED')
+    const rotation = await rotateTerminalOperations(current)
+    if (rotation) return rotation
     const expected = mappingFromRequest(request, 'RESERVED')
     for (const key of QUEUE_MAPPING_KEYS) {
       if (key === 'state') continue
       if (existing[key] !== expected[key]) return QUEUE_HELD('TUPLE_DRIFT')
     }
     const mapping = mappingFromRequest(request, 'CANCELLED')
-    return writeQueue(request.expected_oid, current, request, (state) => {
+    return writeQueue(request.expected_oid, current, request, undefined, (state, timestamp) => {
       const queue_mappings = clone(state.queue_mappings)
       const used_queue_operations = clone(state.used_queue_operations)
-      queue_mappings[mappingKey(request)] = mapping
+      delete queue_mappings[mappingKey(request)]
       used_queue_operations[request.operation_id] = {
         nonce: request.nonce,
-        consumed_at: nowFrom(clock),
+        consumed_at: timestamp,
         kind: 'cancel',
+        mapping_key: mappingKey(request),
       }
       return {
         queue_mappings,

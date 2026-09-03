@@ -1,3 +1,4 @@
+import { types } from 'node:util'
 import { digestCanonical } from './parallel-delivery-fabric-contract.mjs'
 
 const SHA1 = /^[0-9a-f]{40}$/u
@@ -45,12 +46,36 @@ const hasSensitiveKey = (rawKey) => {
     (key.endsWith('_path') && !['old_path', 'new_path', 'public_entrypoint'].includes(key))
 }
 
-const unsafeValue = (value) => {
+// Caller objects are inspected through a bounded, descriptor-only walk: cycles,
+// excessive depth, accessor properties and proxies are all "unsafe" rather than
+// something to traverse, so a public authority boundary never runs caller code or
+// overflows the stack before it can return a typed hold.
+const UNSAFE_MAX_DEPTH = 64
+const unsafeValue = (value, path = new Set(), depth = 0) => {
   if (typeof value === 'string') return RAW_WINDOWS_SID.test(value) || TERMINAL_PROCESS_ID.test(value) ||
     SECRET_VALUE.test(value) || ABSOLUTE_PATH.test(value) || RAW_ENVIRONMENT.test(value)
-  if (Array.isArray(value)) return value.some(unsafeValue)
-  if (!isPlainObject(value)) return false
-  return Object.entries(value).some(([key, nested]) => hasSensitiveKey(key) || unsafeValue(nested))
+  if (value === null || typeof value !== 'object') return false
+  if (depth > UNSAFE_MAX_DEPTH || types.isProxy(value) || path.has(value)) return true
+  path.add(value)
+  try {
+    if (Array.isArray(value)) {
+      for (let index = 0; index < value.length; index += 1) {
+        const descriptor = Object.getOwnPropertyDescriptor(value, index)
+        if (!descriptor || !Object.hasOwn(descriptor, 'value')) return true
+        if (unsafeValue(descriptor.value, path, depth + 1)) return true
+      }
+      return false
+    }
+    if (!isPlainObject(value)) return false
+    for (const key of Object.getOwnPropertyNames(value)) {
+      const descriptor = Object.getOwnPropertyDescriptor(value, key)
+      if (!descriptor || !Object.hasOwn(descriptor, 'value')) return true
+      if (hasSensitiveKey(key) || unsafeValue(descriptor.value, path, depth + 1)) return true
+    }
+    return false
+  } finally {
+    path.delete(value)
+  }
 }
 
 const safeDigest = (value) => {
@@ -247,13 +272,24 @@ const forbiddenCommand = (command) => /(?:^|\s)(?:codex|claude|agent(?:-cli)?|po
 
 export function createProviderAdapter({ provider, attestor, commandPolicy, effects = {} } = {}) {
   const configured = ['codex', 'claude'].includes(provider) && isPlainObject(attestor) && isPlainObject(effects)
+  let cachedPolicy
+  const commandPolicyForAdapter = () => {
+    if (cachedPolicy !== undefined) return cachedPolicy
+    const validated = validateCommandPolicy(commandPolicy)
+    cachedPolicy = validated.issue
+      ? Object.freeze({ issue: validated.issue })
+      : Object.freeze({ policyDigest: validated.policyDigest, commands: Object.freeze([...validated.commands]) })
+    return cachedPolicy
+  }
   const preflight = (request) => {
     if (!configured) return held('HELD_COMMAND_POLICY', 'adapter_configuration_invalid')
-    if (unsafeValue(request) || unsafeValue(commandPolicy)) return held('HELD_COMMAND_POLICY', 'adapter_input_unsafe')
-    const policy = validateCommandPolicy(commandPolicy)
-    if (policy.issue) return held('HELD_COMMAND_POLICY', policy.issue)
+    if (unsafeValue(request)) return held('HELD_COMMAND_POLICY', 'adapter_input_unsafe')
     const keys = provider === 'claude' ? ['claude_configuration', 'command', 'execution_context'] : ['command', 'execution_context']
     if (!isPlainObject(request) || !hasExactKeys(request, keys) || !isPlainObject(request.execution_context) || !isPlainObject(request.execution_context.expected)) return held('HELD_EXECUTION_CONTEXT', 'adapter_request_invalid')
+    if (typeof request.command !== 'string' || forbiddenCommand(request.command)) return held('HELD_COMMAND_POLICY', 'command_not_allowlisted')
+    if (unsafeValue(commandPolicy)) return held('HELD_COMMAND_POLICY', 'adapter_input_unsafe')
+    const policy = commandPolicyForAdapter()
+    if (policy.issue) return held('HELD_COMMAND_POLICY', policy.issue)
     if (typeof attestor.verify_execution_context !== 'function') return held('HELD_EXECUTION_CONTEXT', 'attestation_authority_unavailable')
     let context
     try {
@@ -274,7 +310,7 @@ export function createProviderAdapter({ provider, attestor, commandPolicy, effec
       if (!isPlainObject(configuration) || configuration.status !== 'VERIFIED_PROVIDER_CONFIGURATION' || unsafeValue(configuration)) return held('HELD_PROVIDER_CONFIGURATION', 'configuration_unverified')
       if (configuration.command_policy_digest !== policy.policyDigest) return held('HELD_PROVIDER_CONFIGURATION', 'command_policy_digest_mismatch')
     }
-    if (typeof request.command !== 'string' || forbiddenCommand(request.command) || !policy.commands.includes(request.command)) return held('HELD_COMMAND_POLICY', 'command_not_allowlisted')
+    if (!policy.commands.includes(request.command)) return held('HELD_COMMAND_POLICY', 'command_not_allowlisted')
     return safeResult({ status: 'READY_FOR_SHADOW', provider, command: request.command }, 'HELD_COMMAND_POLICY', 'adapter_output_unsafe')
   }
   return Object.freeze({ provider, preflight })

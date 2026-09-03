@@ -12,82 +12,6 @@ function Assert-True {
     if (-not $Condition) { throw "ASSERT FAILED: $Message" }
 }
 
-function Test-TrustedLinuxBoundary {
-    param([Parameter(Mandatory = $true)] $WorkflowTree)
-
-    try {
-        $suiteJob = $WorkflowTree['jobs']['suite']
-        $boundaryJob = $WorkflowTree['jobs']['new-run-boundary']
-        if (([string]$suiteJob['runs-on']) -cne 'windows-latest') { return $false }
-        $linuxEntries = @($boundaryJob['strategy']['matrix']['include'] | Where-Object {
-            ([string]$_['platform']) -ceq 'linux-positive'
-        })
-        if ($linuxEntries.Count -ne 1 -or ([string]$linuxEntries[0]['runner']) -cne 'ubuntu-latest') { return $false }
-
-        $suiteSteps = @($suiteJob['steps'])
-        $suiteRuns = @($suiteSteps | Where-Object { $_.Contains('run') } | ForEach-Object { [string]$_['run'] }) -join "`n"
-        if ($suiteRuns -match 'test-manage-pr-queue\.mjs|test-parallel-delivery-fabric-static-policy\.ps1|test-trusted-host-merge\.mjs') { return $false }
-        $runtimeSteps = @($suiteSteps | Where-Object { ([string]$_['name']) -ceq 'Run trusted host merge runtime tests (Windows)' })
-        if ($runtimeSteps.Count -ne 1) { return $false }
-        $runtimeStep = $runtimeSteps[0]
-        if (([string]$runtimeStep['if']) -cne "matrix.shard == 'core'" -or
-            ([string]$runtimeStep['shell']) -cne 'pwsh' -or
-            ([string]$runtimeStep['run']) -cne 'pwsh -NoProfile -NonInteractive -Command "node --test scripts/tests/test-trusted-host-merge-runtime.mjs"') { return $false }
-
-        $boundarySteps = @($boundaryJob['steps'])
-        $boundaryRuns = @($boundarySteps | Where-Object { $_.Contains('run') } | ForEach-Object { [string]$_['run'] }) -join "`n"
-        if (@($boundarySteps | Where-Object { ([string]$_['name']) -ceq 'Run trusted host merge runtime tests (Windows)' }).Count -ne 0 -or
-            $boundaryRuns -match 'test-trusted-host-merge-runtime\.mjs') { return $false }
-        $gitSteps = @($boundarySteps | Where-Object { ([string]$_['name']) -ceq 'Require canonical read-only Linux Git' })
-        $trustedMergeSteps = @($boundarySteps | Where-Object { ([string]$_['name']) -ceq 'Run trusted host merge policy tests on trusted Linux' })
-        $staticSteps = @($boundarySteps | Where-Object { ([string]$_['name']) -ceq 'Run Parallel Delivery Fabric static policy' })
-        $queueSteps = @($boundarySteps | Where-Object { ([string]$_['name']) -ceq 'Run canonical review-policy queue tests' })
-        if ($gitSteps.Count -ne 1 -or $trustedMergeSteps.Count -ne 1 -or $staticSteps.Count -ne 1 -or $queueSteps.Count -ne 1) { return $false }
-
-        $expectedGitRun = @(
-            'set -euo pipefail'
-            'test -x /usr/bin/git'
-            'test "$(realpath /usr/bin/git)" = /usr/bin/git'
-            'test "$(realpath "$(command -v git)")" = /usr/bin/git'
-            'test ! -w /usr/bin/git'
-        ) -join "`n"
-        $gitStep = $gitSteps[0]
-        if (([string]$gitStep['if']) -cne "matrix.platform == 'linux-positive'" -or
-            ([string]$gitStep['shell']) -cne 'bash' -or
-            ([string]$gitStep['run']).Replace("`r`n", "`n").Trim() -cne $expectedGitRun) { return $false }
-
-        $trustedMergeStep = $trustedMergeSteps[0]
-        if (([string]$trustedMergeStep['if']) -cne "matrix.platform == 'linux-positive'" -or
-            ([string]$trustedMergeStep['shell']) -cne 'pwsh' -or
-            ([string]$trustedMergeStep['run']) -cne 'node --test scripts/tests/test-trusted-host-merge.mjs') { return $false }
-
-        $staticStep = $staticSteps[0]
-        if (([string]$staticStep['if']) -cne "matrix.platform == 'linux-positive'" -or
-            ([string]$staticStep['shell']) -cne 'pwsh' -or
-            ([string]$staticStep['run']) -cne 'pwsh -NoProfile -NonInteractive -File scripts/tests/test-parallel-delivery-fabric-static-policy.ps1') { return $false }
-
-        $queueStep = $queueSteps[0]
-        if (([string]$queueStep['if']) -cne "matrix.platform == 'linux-positive'" -or
-            ([string]$queueStep['shell']) -cne 'pwsh' -or
-            ([string]$queueStep['run']) -cne 'node --test scripts/tests/test-manage-pr-queue.mjs') { return $false }
-
-        $stepNames = @($boundarySteps | ForEach-Object { [string]$_['name'] })
-        $gitIndex = [array]::IndexOf($stepNames, 'Require canonical read-only Linux Git')
-        $trustedMergeIndex = [array]::IndexOf($stepNames, 'Run trusted host merge policy tests on trusted Linux')
-        $staticIndex = [array]::IndexOf($stepNames, 'Run Parallel Delivery Fabric static policy')
-        $queueIndex = [array]::IndexOf($stepNames, 'Run canonical review-policy queue tests')
-        return $gitIndex -ge 0 -and $trustedMergeIndex -eq ($gitIndex + 1) -and
-            $staticIndex -eq ($trustedMergeIndex + 1) -and $queueIndex -eq ($staticIndex + 1)
-    } catch {
-        return $false
-    }
-}
-
-function Copy-WorkflowTree {
-    param([Parameter(Mandatory = $true)] $WorkflowTree)
-    return ($WorkflowTree | ConvertTo-Json -Depth 100 | ConvertFrom-Json -AsHashtable)
-}
-
 function Assert-FileContains {
     param(
         [Parameter(Mandatory = $true)][string] $Path,
@@ -97,6 +21,142 @@ function Assert-FileContains {
     Assert-True (Test-Path -LiteralPath $Path -PathType Leaf) "$Path exists"
     $content = Get-Content -LiteralPath $Path -Raw
     Assert-True ($content -match $Pattern) $Message
+}
+
+function Test-MarkdownLineIsActive {
+    param(
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][AllowEmptyString()][string[]] $Lines,
+        [Parameter(Mandatory = $true)][int] $LineIndex
+    )
+
+    if ($LineIndex -lt 0 -or $LineIndex -ge $Lines.Count) { return $false }
+
+    $inHtmlComment = $false
+    $rawHtmlEndPattern = ''
+    $rawHtmlEndsAtBlank = $false
+    $fenceCharacter = ''
+    $fenceLength = 0
+    $paragraphOpen = $false
+    $blockTagNames = 'address|article|aside|base|basefont|blockquote|body|caption|center|col|colgroup|dd|details|dialog|dir|div|dl|dt|fieldset|figcaption|figure|footer|form|frame|frameset|h1|h2|h3|h4|h5|h6|head|header|hr|html|iframe|legend|li|link|main|menu|menuitem|nav|noframes|ol|optgroup|option|p|param|search|section|summary|table|tbody|td|tfoot|th|thead|title|tr|track|ul'
+    $genericOpenTagPattern = '^[ ]{0,3}<[A-Za-z][A-Za-z0-9-]*(?:[ \t]+[A-Za-z_:][A-Za-z0-9_.:-]*(?:[ \t]*=[ \t]*(?:"[^"]*"|''[^'']*''|[^ "''=<>`]+))?)*[ \t]*/?>[ \t]*$'
+    $genericClosingTagPattern = '^[ ]{0,3}</[A-Za-z][A-Za-z0-9-]*>[ \t]*$'
+
+    for ($index = 0; $index -lt $LineIndex; $index++) {
+        $line = $Lines[$index]
+        if ($fenceLength -gt 0) {
+            $closingFencePattern = '^[ \t]{0,3}' + [regex]::Escape($fenceCharacter) + '{' + $fenceLength + ',}[ \t]*$'
+            if ([regex]::IsMatch($line, $closingFencePattern)) {
+                $fenceCharacter = ''
+                $fenceLength = 0
+            }
+            continue
+        }
+
+        if (-not $line.Trim()) {
+            $paragraphOpen = $false
+        }
+
+        if ($rawHtmlEndsAtBlank) {
+            if (-not $line.Trim()) { $rawHtmlEndsAtBlank = $false }
+            continue
+        }
+
+        if ($rawHtmlEndPattern) {
+            if ($line -match $rawHtmlEndPattern) { $rawHtmlEndPattern = '' }
+            continue
+        }
+
+        if (-not $inHtmlComment) {
+            # A raw fence opener takes precedence over HTML-like tokens in its info string.
+            $openingFence = [regex]::Match($line, '^[ ]{0,3}(?<marker>`{3,}|~{3,})(?<info>.*)$')
+            $backtickInfoIsValid = -not ($openingFence.Success -and $openingFence.Groups['marker'].Value[0] -eq [char] 96 -and $openingFence.Groups['info'].Value.Contains('`'))
+            if ($openingFence.Success -and $backtickInfoIsValid) {
+                $marker = $openingFence.Groups['marker'].Value
+                $fenceCharacter = [string] $marker[0]
+                $fenceLength = $marker.Length
+                $paragraphOpen = $false
+                continue
+            }
+
+            $rawHtmlStart = [regex]::Match($line, '^[ ]{0,3}<(?<tag>script|pre|style|textarea)(?:[ \t]|>|$)', [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
+            if ($rawHtmlStart.Success) {
+                $closingTagPattern = '(?i)</(?:script|pre|style|textarea)[ \t]*>'
+                if ($line.Substring($rawHtmlStart.Index + $rawHtmlStart.Length) -notmatch $closingTagPattern) {
+                    $rawHtmlEndPattern = $closingTagPattern
+                }
+                $paragraphOpen = $false
+                continue
+            }
+
+            foreach ($rawBlock in @(
+                @{ Start = '^[ ]{0,3}<\?'; End = '\?>' },
+                @{ Start = '^[ ]{0,3}<!\[CDATA\['; End = '\]\]>' },
+                @{ Start = '^[ ]{0,3}<![A-Z]'; End = '>' }
+            )) {
+                if ($line -match $rawBlock.Start) {
+                    if ($line -notmatch $rawBlock.End) { $rawHtmlEndPattern = $rawBlock.End }
+                    $paragraphOpen = $false
+                    break
+                }
+            }
+            if ($rawHtmlEndPattern -or $line -match '^[ ]{0,3}(?:<\?|<!\[CDATA\[|<![A-Z])') { continue }
+
+            $blockTagPattern = '^[ ]{0,3}</?(?:' + $blockTagNames + ')(?:[ \t]+|/?>|$)'
+            if ($line -match $blockTagPattern -or (-not $paragraphOpen -and ($line -match $genericOpenTagPattern -or $line -match $genericClosingTagPattern))) {
+                $rawHtmlEndsAtBlank = $true
+                $paragraphOpen = $false
+                continue
+            }
+        }
+
+        $cursor = 0
+        while ($cursor -lt $line.Length) {
+            if ($inHtmlComment) {
+                $commentEnd = $line.IndexOf('-->', $cursor, [System.StringComparison]::Ordinal)
+                if ($commentEnd -lt 0) {
+                    $cursor = $line.Length
+                    continue
+                }
+                $inHtmlComment = $false
+                $cursor = $commentEnd + 3
+                continue
+            }
+
+            $commentStart = $line.IndexOf('<!--', $cursor, [System.StringComparison]::Ordinal)
+            if ($commentStart -lt 0) {
+                $cursor = $line.Length
+                continue
+            }
+            $inHtmlComment = $true
+            $cursor = $commentStart + 4
+        }
+
+        $isThematicBreak = $line -match '^[ ]{0,3}(?:(?:\*[ \t]*){3,}|(?:_[ \t]*){3,}|(?:-[ \t]*){3,})$'
+        $isSetextUnderline = $paragraphOpen -and $line -match '^[ ]{0,3}(?:=+|-+)[ \t]*$'
+        if ($line -match '^[ ]{0,3}#{1,6}(?:[ \t]+|$)' -or $line -match '^[ ]{0,3}<!--' -or $isThematicBreak -or $isSetextUnderline) {
+            $paragraphOpen = $false
+        } elseif ($line.Trim()) {
+            $paragraphOpen = $true
+        }
+    }
+
+    return (-not $inHtmlComment -and -not $rawHtmlEndPattern -and -not $rawHtmlEndsAtBlank -and $fenceLength -eq 0)
+}
+
+function Get-ActiveMarkdownHeadingIndexes {
+    param(
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][AllowEmptyString()][string[]] $Lines,
+        [Parameter(Mandatory = $true)][string] $HeadingText,
+        [ValidateRange(1, 6)][int] $Level = 2
+    )
+
+    $headingMarker = '#' * $Level
+    $headingPattern = '^[ ]{0,3}' + [regex]::Escape($headingMarker) + '[ \t]+' + [regex]::Escape($HeadingText) + '(?:[ \t]+#+)?[ \t]*$'
+    for ($index = 0; $index -lt $Lines.Count; $index++) {
+        if ($Lines[$index] -match $headingPattern -and (Test-MarkdownLineIsActive -Lines $Lines -LineIndex $index)) {
+            $index
+        }
+    }
 }
 
 function Get-WorkflowPermissionViolations {
@@ -244,11 +304,9 @@ try {
     Assert-True (
         [regex]::Matches($ci, [regex]::Escape($ciEditedGate)).Count -eq 5
     ) 'all changed-path classifier steps skip body/title-only edits but run for base edits'
-    $hasWorkflowConcurrency = $ci -match '(?m)^concurrency:\s*$'
-    $hasIsolatedMetadataConcurrency = $ci -match [regex]::Escape("`${{ github.workflow }}-`${{ github.ref }}-`${{ github.event.action == 'edited' && github.event.changes.base == null && 'metadata-only' || 'verification' }}")
     Assert-True (
-        -not $hasWorkflowConcurrency -or $hasIsolatedMetadataConcurrency
-    ) 'body/title-only CI either has no workflow cancellation authority or uses an isolated concurrency group'
+        $ci -match [regex]::Escape("`${{ github.workflow }}-`${{ github.ref }}-`${{ github.event.action == 'edited' && github.event.changes.base == null && 'metadata-only' || 'verification' }}")
+    ) 'body/title-only CI uses an isolated concurrency group and cannot cancel exact-head verification'
     foreach ($output in @('root_contracts', 'coordinator', 'streaming', 'governance_service', 'viewer', 'agent_governance', 'conv_functional', 'kit_manager_api', 'kit_manager_web', 'compose_config', 'powershell_static', 'rebuild_test_deploy', 'secret_pattern_scan', 'plan_result', 'plan_sha256')) {
         $expectedOutput = $output + ': ${{ steps.paths.outputs.' + $output + ' }}'
         Assert-True ($ci -match [regex]::Escape($expectedOutput)) "changes job exposes $output output"
@@ -294,14 +352,7 @@ try {
     $invalidZeroMetric.value = 0
     $invalidZeroMetric.sample_size = 1
     Assert-True (-not (($invalidZeroReport | ConvertTo-Json -Depth 100) | Test-Json -SchemaFile 'scripts/tests/ai-coding-metrics-report.schema.json' -ErrorAction SilentlyContinue)) 'zero-observation report schema rejects a fabricated zero-percent yield'
-    $usesDirectPullRequestSelector = $ci -match 'if \[ "\$\{\{ github\.event_name \}\}" = "pull_request" \]'
-    $usesEnvPullRequestSelector = (
-        $ci -match [regex]::Escape('EVENT_NAME: ${{ github.event_name }}') -and
-        $ci -match [regex]::Escape('PULL_REQUEST_BASE_SHA: ${{ github.event.pull_request.base.sha }}') -and
-        $ci -match [regex]::Escape('PULL_REQUEST_HEAD_SHA: ${{ github.event.pull_request.head.sha }}') -and
-        $ci -match [regex]::Escape('if [ "$EVENT_NAME" = "pull_request" ]; then')
-    )
-    Assert-True ($usesDirectPullRequestSelector -or $usesEnvPullRequestSelector) 'changed path classifier diffs PR base/head on pull_request'
+    Assert-True ($ci -match 'if \[ "\$\{\{ github\.event_name \}\}" = "pull_request" \]') 'changed path classifier diffs PR base/head on pull_request'
     Assert-True ($ci -match 'git -c core\.quotepath=false diff --no-renames --name-only -z "\$base_sha\.\.\.\$head_sha"') 'pull-request path classification uses NUL-safe rename-preserving merge-base semantics'
     Assert-True ($ci -match 'printf "__full__\\0" > changed-paths\.bin') 'changed path classifier runs full service CI on push/workflow_dispatch'
     Assert-True ($ci -match 'scripts/lib/verification-plan\.mjs') 'CI classifier consumes the shared verification planner'
@@ -348,9 +399,17 @@ try {
     $governanceWorkflow = Get-Content -LiteralPath '.github/workflows/agent-governance.yml' -Raw
     Assert-True (-not ($governanceWorkflow -match '(?m)^\s+paths:\s*$')) 'agent-governance workflow does not use path filters because it is a required-check candidate'
     Assert-True ($governanceWorkflow -match 'types:\s*\[opened, edited, synchronize, reopened, ready_for_review\]') 'agent-governance reclassifies the exact path set after base retarget edits'
+    Assert-True ($governanceWorkflow -match '(?ms)^\s{2}merge_group:\s*\r?\n\s{4}types:\s*\[checks_requested\]') 'agent-governance publishes its required context for merge queue candidates'
     Assert-True ($governanceWorkflow -match '(?m)^\s{2}scope:\s*$') 'agent-governance workflow has an internal scope classifier job'
     Assert-True ($governanceWorkflow -match 'scripts/lib/verification-plan\.mjs') 'agent-governance scope consumes the shared verification planner'
     Assert-True ($governanceWorkflow -match 'git -c core\.quotepath=false diff --no-renames --name-only -z .* > agent-governance-changed-paths\.bin') 'agent-governance scope makes git diff failure terminal before planning'
+    Assert-True ($governanceWorkflow -match 'MERGE_GROUP_BASE_SHA.*github\.event\.merge_group\.base_sha') 'agent-governance reads the immutable merge-group base SHA'
+    Assert-True ($governanceWorkflow -match 'merge_group immutable base SHA is missing or invalid') 'agent-governance fails closed when merge-group base identity is unavailable'
+    Assert-True ($governanceWorkflow -match 'merge_group subject SHA is missing or invalid') 'agent-governance fails closed when merge-group subject identity is unavailable'
+    Assert-True ($governanceWorkflow -match '(?m)^\s+base_sha:\s*\$\{\{ steps\.plan\.outputs\.base_sha \}\}\s*$') 'agent-governance exports the classifier-bound base SHA to suite jobs'
+    Assert-True ($governanceWorkflow -match 'printf ''base_sha=%s\\n'' "\$base_sha" >> "\$GITHUB_OUTPUT"') 'agent-governance publishes the validated base SHA as a closed step output'
+    $suiteBaseRefMatches = [regex]::Matches($governanceWorkflow, "-BaseRef '\$\{\{ needs\.scope\.outputs\.base_sha \}\}'")
+    Assert-True ($suiteBaseRefMatches.Count -eq 2) 'agent-governance base-sensitive suite gates consume the classifier-bound base SHA'
     Assert-True ($governanceWorkflow -match '--changed-paths0-file agent-governance-changed-paths\.bin') 'agent-governance scope preserves NUL-delimited changed paths through the shared planner file contract'
     Assert-True (-not ($governanceWorkflow -match '< <\(')) 'agent-governance scope does not hide git diff failures inside process substitution'
     Assert-True ($governanceWorkflow -match '(?m)^\s{2}suite:\s*$') 'agent-governance workflow isolates the expensive suite'
@@ -362,17 +421,15 @@ try {
     Assert-True ($governanceWorkflow -match 'publishing explicit no-op success') 'unaffected paths produce an explicit successful terminal result'
     Assert-True ($governanceWorkflow -match '(?m)^\s+timeout-minutes:\s*30\s*$') 'agent-governance workflow has a bounded runtime'
     Assert-True ($governanceWorkflow -match 'scripts/tests/test-agent-governance-check\.ps1') 'agent-governance workflow runs static check'
-    Assert-True ($governanceWorkflow -match 'node --test scripts/tests/test-cleanup-orphan-dev-processes\.mjs scripts/tests/test-pr-queue-adversarial-and-stress\.mjs') 'Windows governance suite runs OS-specific orphan cleanup and queue safety tests'
-    Assert-True ($governanceWorkflow -match 'node --test scripts/tests/test-manage-pr-queue\.mjs') 'trusted Linux boundary runs canonical review-policy queue tests'
-    Assert-True ($governanceWorkflow -match 'node --test scripts/tests/test-trusted-host-merge\.mjs') 'trusted Linux boundary runs canonical trusted-host policy tests'
-    Assert-True ($governanceWorkflow -match 'node --test scripts/tests/test-trusted-host-merge-runtime\.mjs') 'Windows governance suite retains trusted-host runtime contract tests'
+    Assert-True ($governanceWorkflow -match 'node --test scripts/tests/test-cleanup-orphan-dev-processes\.mjs scripts/tests/test-manage-pr-queue\.mjs scripts/tests/test-pr-queue-adversarial-and-stress\.mjs scripts/tests/test-autonomous-delivery-finalization\.mjs scripts/tests/test-review-disposition-sink\.mjs scripts/tests/test-linux-continuous-deployment\.mjs') 'agent-governance workflow runs orphan cleanup, named PR queue, autonomous finalization, review disposition sink, and Linux continuous deployment tests'
+    Assert-True ($governanceWorkflow -match 'node --test scripts/tests/test-trusted-host-merge\.mjs scripts/tests/test-trusted-host-merge-runtime\.mjs') 'agent-governance runs trusted host executor and broker contract tests'
     Assert-True ($governanceWorkflow -match 'pwsh -NoProfile -NonInteractive -File scripts/tests/test-isolated-branch-stack\.ps1') 'agent-governance workflow runs isolated branch stack machine tests'
     Assert-True ($governanceWorkflow -match 'scripts/tests/test-openspec-ledger-reconciliation\.ps1') 'agent-governance workflow runs OpenSpec ledger reconciliation tests'
     Assert-True ($governanceWorkflow -match 'node --test scripts/tests/test-openspec-machine-truth\.mjs scripts/tests/test-openspec-machine-truth-cli\.mjs scripts/tests/test-collect-openspec-github-state\.mjs') 'agent-governance workflow runs machine-truth core, CLI, and GitHub collector tests'
     Assert-True ($governanceWorkflow -match 'scripts/tests/test-task-ledger-parser-parity\.mjs') 'agent-governance workflow runs the task-ledger parser parity contract'
     Assert-True ($governanceWorkflow -match 'scripts/tests/test-verification-runner\.mjs') 'agent-governance workflow runs verification outcome fixtures'
     Assert-True ($governanceWorkflow -match 'scripts/tests/test-security-exceptions\.mjs') 'agent-governance workflow runs security exception lifecycle fixtures'
-    Assert-True ($governanceWorkflow -match "github\.event_name == 'pull_request'.*agent-governance.*agent-governance-diagnostic") 'manual dispatch uses a diagnostic check name that cannot satisfy merge authority'
+    Assert-True ($governanceWorkflow -match "github\.event_name == 'pull_request'.*github\.event_name == 'merge_group'.*agent-governance.*agent-governance-diagnostic") 'only pull-request and merge-group events publish the required agent-governance context'
     Assert-True ($governanceWorkflow -match 'scripts/tests/test-pr-body-evidence\.ps1') 'agent-governance workflow runs PR body evidence tests'
     Assert-True ($governanceWorkflow -match 'scripts/tests/test-require-gstack-evidence\.ps1') 'agent-governance workflow runs browser-evidence hook tests'
     Assert-True ($governanceWorkflow -match 'scripts/tests/test-design-system-reference\.ps1') 'agent-governance workflow runs design-system reference tests'
@@ -392,67 +449,6 @@ try {
     Import-Module (Join-Path $repoRoot 'scripts/lib/agent-governance-policy.psm1') -Force
     $governanceWorkflowTree = ConvertFrom-AgentGovernanceYaml -Text $governanceWorkflow -Origin '.github/workflows/agent-governance.yml'
     $suiteJob = $governanceWorkflowTree['jobs']['suite']
-    $newRunBoundaryJob = $governanceWorkflowTree['jobs']['new-run-boundary']
-    Assert-True (Test-TrustedLinuxBoundary -WorkflowTree $governanceWorkflowTree) 'trusted Linux boundary locks runner, exact Git authority, adjacent Fabric policy, and canonical queue tests'
-
-    $noOpGate = Copy-WorkflowTree -WorkflowTree $governanceWorkflowTree
-    $noOpGateStep = @($noOpGate['jobs']['new-run-boundary']['steps'] | Where-Object { ([string]$_['name']) -ceq 'Require canonical read-only Linux Git' })[0]
-    $noOpGateStep['run'] = 'echo bypass'
-    Assert-True (-not (Test-TrustedLinuxBoundary -WorkflowTree $noOpGate)) 'a no-op trusted-Git gate is rejected in memory'
-
-    $missingCommand = Copy-WorkflowTree -WorkflowTree $governanceWorkflowTree
-    $missingCommandGate = @($missingCommand['jobs']['new-run-boundary']['steps'] | Where-Object { ([string]$_['name']) -ceq 'Require canonical read-only Linux Git' })[0]
-    $missingCommandGate['run'] = ([string]$missingCommandGate['run']).Replace("test -x /usr/bin/git`n", '')
-    Assert-True (-not (Test-TrustedLinuxBoundary -WorkflowTree $missingCommand)) 'an incomplete trusted-Git gate is rejected in memory'
-
-    $wrongCondition = Copy-WorkflowTree -WorkflowTree $governanceWorkflowTree
-    $wrongConditionGate = @($wrongCondition['jobs']['new-run-boundary']['steps'] | Where-Object { ([string]$_['name']) -ceq 'Require canonical read-only Linux Git' })[0]
-    $wrongConditionGate['if'] = "matrix.platform == 'windows-negative'"
-    Assert-True (-not (Test-TrustedLinuxBoundary -WorkflowTree $wrongCondition)) 'a misrouted trusted-Git gate is rejected in memory'
-
-    $linuxSuite = Copy-WorkflowTree -WorkflowTree $governanceWorkflowTree
-    $linuxSuite['jobs']['suite']['runs-on'] = 'ubuntu-latest'
-    Assert-True (-not (Test-TrustedLinuxBoundary -WorkflowTree $linuxSuite)) 'a Linux suite runner cannot replace required Windows runtime coverage'
-
-    $missingRuntime = Copy-WorkflowTree -WorkflowTree $governanceWorkflowTree
-    $missingRuntime['jobs']['suite']['steps'] = @($missingRuntime['jobs']['suite']['steps'] | Where-Object {
-        ([string]$_['name']) -cne 'Run trusted host merge runtime tests (Windows)'
-    })
-    Assert-True (-not (Test-TrustedLinuxBoundary -WorkflowTree $missingRuntime)) 'a missing Windows runtime contract step is rejected in memory'
-
-    $noOpRuntime = Copy-WorkflowTree -WorkflowTree $governanceWorkflowTree
-    $noOpRuntimeStep = @($noOpRuntime['jobs']['suite']['steps'] | Where-Object { ([string]$_['name']) -ceq 'Run trusted host merge runtime tests (Windows)' })[0]
-    $noOpRuntimeStep['run'] = 'Write-Host bypass'
-    Assert-True (-not (Test-TrustedLinuxBoundary -WorkflowTree $noOpRuntime)) 'a no-op Windows runtime contract step is rejected in memory'
-
-    $wrongRuntimeShard = Copy-WorkflowTree -WorkflowTree $governanceWorkflowTree
-    $wrongRuntimeShardStep = @($wrongRuntimeShard['jobs']['suite']['steps'] | Where-Object { ([string]$_['name']) -ceq 'Run trusted host merge runtime tests (Windows)' })[0]
-    $wrongRuntimeShardStep['if'] = "matrix.shard == 'evidence'"
-    Assert-True (-not (Test-TrustedLinuxBoundary -WorkflowTree $wrongRuntimeShard)) 'a Windows runtime contract step outside core is rejected in memory'
-
-    $movedRuntime = Copy-WorkflowTree -WorkflowTree $governanceWorkflowTree
-    $movedRuntimeStep = @($movedRuntime['jobs']['suite']['steps'] | Where-Object { ([string]$_['name']) -ceq 'Run trusted host merge runtime tests (Windows)' })[0]
-    $movedRuntime['jobs']['suite']['steps'] = @($movedRuntime['jobs']['suite']['steps'] | Where-Object {
-        ([string]$_['name']) -cne 'Run trusted host merge runtime tests (Windows)'
-    })
-    $movedRuntime['jobs']['new-run-boundary']['steps'] = @($movedRuntime['jobs']['new-run-boundary']['steps']) + $movedRuntimeStep
-    Assert-True (-not (Test-TrustedLinuxBoundary -WorkflowTree $movedRuntime)) 'a Windows runtime contract step moved into the Linux boundary is rejected in memory'
-
-    $intermediary = Copy-WorkflowTree -WorkflowTree $governanceWorkflowTree
-    $intermediarySteps = [System.Collections.Generic.List[object]]::new()
-    foreach ($step in @($intermediary['jobs']['new-run-boundary']['steps'])) {
-        $intermediarySteps.Add($step)
-        if (([string]$step['name']) -ceq 'Require canonical read-only Linux Git') {
-            $intermediarySteps.Add([ordered]@{
-                name = 'Injected intermediary'
-                if = "matrix.platform == 'linux-positive'"
-                shell = 'pwsh'
-                run = 'Write-Host bypass'
-            })
-        }
-    }
-    $intermediary['jobs']['new-run-boundary']['steps'] = @($intermediarySteps)
-    Assert-True (-not (Test-TrustedLinuxBoundary -WorkflowTree $intermediary)) 'a non-adjacent Fabric policy step is rejected in memory'
     Assert-True ($suiteJob.Contains('strategy') -and $suiteJob['strategy'].Contains('matrix') -and $suiteJob['strategy']['matrix'].Contains('shard')) 'agent-governance suite declares its shard matrix'
     Assert-True (([string]$suiteJob['strategy']['fail-fast']) -ceq 'false') 'one failing shard never cancels the others, so a single red leg cannot hide a second failure'
     $declaredShards = @(@($suiteJob['strategy']['matrix']['shard']) | ForEach-Object { [string]$_ })
@@ -486,7 +482,6 @@ try {
     foreach ($pinnedShardStep in @(
         @{ Name = 'Run governance static check'; Shard = 'core' },
         @{ Name = 'Run orphan cleanup and named PR queue safety tests'; Shard = 'core' },
-        @{ Name = 'Run trusted host merge runtime tests (Windows)'; Shard = 'core' },
         @{ Name = 'Run OpenSpec ledger reconciliation tests'; Shard = 'openspec' },
         @{ Name = 'Run OpenSpec machine-truth tests'; Shard = 'openspec' },
         @{ Name = 'Run base-gate capability detection tests'; Shard = 'capability' },
@@ -731,6 +726,7 @@ try {
     $agentsBody = Get-Content -LiteralPath 'AGENTS.md' -Raw
     $claudeBody = Get-Content -LiteralPath 'CLAUDE.md' -Raw
     $githubWorkflowBody = Get-Content -LiteralPath 'docs/agents/github-workflow.md' -Raw
+    $parallelSessionBoardBody = Get-Content -LiteralPath 'docs/agents/parallel-session-board.md' -Raw
     foreach ($authRoutingMarker in @(
         'gh api user --jq .login',
         'GH_TOKEN',
@@ -743,6 +739,71 @@ try {
         Assert-True ($githubWorkflowBody -match [regex]::Escape($authRoutingMarker)) "GitHub workflow preserves gh auth routing marker: $authRoutingMarker"
     }
     $agentsBodyLf = $agentsBody.Replace("`r`n", "`n")
+    $agentsLines = @($agentsBodyLf -split "`n")
+    $expectedParallelWriterPolicy = '4. **並行 Writer 隔離原則**：repo 不以 writer 數量為 blocker；多個 writer 只可在各自獨立 sibling worktree、獨立 branch 與明確無重疊 touch-set 中並行，每個 task／branch 仍限單一 writer。同一 branch、同一 worktree 或 touch-set 重疊／未知一律停工排隊；`.agents/board` 只做感知，不具 lease／approval／merge authority；`direct_stack` 與 autonomous delivery 未有 canonical activation record 前保持 HELD。'
+    $leanGovernanceHeading = '## 0.0 Lean Governance & Subtraction Directive（元治理減法方針）'
+    $agentWorkflowHeading = '## 0.1 Agent 工作方式'
+    $leanGovernanceHeadingText = $leanGovernanceHeading.Substring(3)
+    $agentWorkflowHeadingText = $agentWorkflowHeading.Substring(3)
+    Assert-True (@($agentsLines | Where-Object { $_ -ceq $leanGovernanceHeading }).Count -eq 1) 'AGENTS.md has exactly one Lean Governance heading'
+    Assert-True (@($agentsLines | Where-Object { $_ -ceq $agentWorkflowHeading }).Count -eq 1) 'AGENTS.md has exactly one Agent Workflow heading'
+    $leanGovernanceHeadingIndexes = @(Get-ActiveMarkdownHeadingIndexes -Lines $agentsLines -HeadingText $leanGovernanceHeadingText)
+    $agentWorkflowHeadingIndexes = @(Get-ActiveMarkdownHeadingIndexes -Lines $agentsLines -HeadingText $agentWorkflowHeadingText)
+    Assert-True ($leanGovernanceHeadingIndexes.Count -eq 1) 'AGENTS.md has exactly one active Markdown-equivalent Lean Governance heading'
+    Assert-True ($agentWorkflowHeadingIndexes.Count -eq 1) 'AGENTS.md has exactly one active Markdown-equivalent Agent Workflow heading'
+    $leanGovernanceHeadingIndex = if ($leanGovernanceHeadingIndexes.Count -eq 1) { $leanGovernanceHeadingIndexes[0] } else { -1 }
+    $agentWorkflowHeadingIndex = if ($agentWorkflowHeadingIndexes.Count -eq 1) { $agentWorkflowHeadingIndexes[0] } else { -1 }
+    Assert-True ($leanGovernanceHeadingIndex -ge 0 -and $agentWorkflowHeadingIndex -gt $leanGovernanceHeadingIndex) 'AGENTS.md keeps one active Lean Governance section before the agent workflow section'
+    Assert-True (Test-MarkdownLineIsActive -Lines $agentsLines -LineIndex $leanGovernanceHeadingIndex) 'Lean Governance heading is not enclosed by a Markdown fence, raw HTML block, or HTML comment'
+    Assert-True (Test-MarkdownLineIsActive -Lines $agentsLines -LineIndex $agentWorkflowHeadingIndex) 'Agent Workflow heading is not enclosed by a Markdown fence, raw HTML block, or HTML comment'
+    $syntheticFencedGovernance = @('```markdown', $leanGovernanceHeading, $agentWorkflowHeading, '```')
+    $syntheticInterleavedFenceGovernance = @('```markdown <!--', '-->', $leanGovernanceHeading, $agentWorkflowHeading, '```')
+    $syntheticCommentedGovernance = @('<!--', $leanGovernanceHeading, $agentWorkflowHeading, '-->')
+    $syntheticHtmlBlockGovernance = @('<div>', $leanGovernanceHeading, $agentWorkflowHeading, '</div>')
+    $syntheticScriptBlockGovernance = @('<script>', '', $leanGovernanceHeading, '</script>', $agentWorkflowHeading)
+    $syntheticMismatchedScriptEndGovernance = @($leanGovernanceHeading, '<script>', '</pre>', $leanGovernanceHeading, $agentWorkflowHeading)
+    $syntheticParagraphGenericTagGovernance = @($leanGovernanceHeading, 'ordinary paragraph', '<custom-element>', $leanGovernanceHeading, $agentWorkflowHeading)
+    $syntheticThematicBreakGenericTagGovernance = @($leanGovernanceHeading, '---', '<custom-element>', $leanGovernanceHeading, $agentWorkflowHeading)
+    $syntheticInvalidClosingTagAttributeGovernance = @($leanGovernanceHeading, '</custom-element bad="x">', $leanGovernanceHeading, $agentWorkflowHeading)
+    $syntheticInvalidSelfClosingEndTagGovernance = @($leanGovernanceHeading, '</custom-element/>', $leanGovernanceHeading, $agentWorkflowHeading)
+    $syntheticInvalidBacktickFenceGovernance = @($leanGovernanceHeading, '```markdown`invalid', $leanGovernanceHeading, $agentWorkflowHeading)
+    $syntheticDuplicateGovernance = @($leanGovernanceHeading, " $leanGovernanceHeading", $agentWorkflowHeading)
+    Assert-True (-not (Test-MarkdownLineIsActive -Lines $syntheticFencedGovernance -LineIndex 1)) 'Markdown fence enclosing Lean Governance is rejected'
+    Assert-True (-not (Test-MarkdownLineIsActive -Lines $syntheticInterleavedFenceGovernance -LineIndex 2)) 'Markdown fence opener wins over an HTML comment token in its info string'
+    Assert-True (-not (Test-MarkdownLineIsActive -Lines $syntheticCommentedGovernance -LineIndex 1)) 'HTML comment enclosing Lean Governance is rejected'
+    Assert-True (-not (Test-MarkdownLineIsActive -Lines $syntheticHtmlBlockGovernance -LineIndex 1)) 'CommonMark raw HTML block enclosing Lean Governance is rejected'
+    Assert-True (-not (Test-MarkdownLineIsActive -Lines $syntheticScriptBlockGovernance -LineIndex 2)) 'CommonMark script block remains inert across blank lines'
+    Assert-True (@(Get-ActiveMarkdownHeadingIndexes -Lines $syntheticMismatchedScriptEndGovernance -HeadingText $leanGovernanceHeadingText).Count -eq 2) 'CommonMark type-1 HTML block ends at any type-1 closing tag'
+    Assert-True (@(Get-ActiveMarkdownHeadingIndexes -Lines $syntheticParagraphGenericTagGovernance -HeadingText $leanGovernanceHeadingText).Count -eq 2) 'CommonMark type-7 HTML block cannot interrupt an open paragraph'
+    Assert-True (@(Get-ActiveMarkdownHeadingIndexes -Lines $syntheticThematicBreakGenericTagGovernance -HeadingText $leanGovernanceHeadingText).Count -eq 1) 'CommonMark thematic break closes the paragraph before a type-7 HTML block'
+    Assert-True (@(Get-ActiveMarkdownHeadingIndexes -Lines $syntheticInvalidClosingTagAttributeGovernance -HeadingText $leanGovernanceHeadingText).Count -eq 2) 'CommonMark closing tag attributes cannot hide an active duplicate heading'
+    Assert-True (@(Get-ActiveMarkdownHeadingIndexes -Lines $syntheticInvalidSelfClosingEndTagGovernance -HeadingText $leanGovernanceHeadingText).Count -eq 2) 'CommonMark self-closing end tags cannot hide an active duplicate heading'
+    Assert-True (@(Get-ActiveMarkdownHeadingIndexes -Lines $syntheticInvalidBacktickFenceGovernance -HeadingText $leanGovernanceHeadingText).Count -eq 2) 'backtick fence info containing a backtick cannot hide an active duplicate heading'
+    Assert-True (@(Get-ActiveMarkdownHeadingIndexes -Lines $syntheticDuplicateGovernance -HeadingText $leanGovernanceHeadingText).Count -eq 2) 'Markdown-equivalent duplicate Lean Governance headings are detected'
+    $leanGovernanceSection = if ($leanGovernanceHeadingIndex -ge 0 -and $agentWorkflowHeadingIndex -gt $leanGovernanceHeadingIndex) {
+        ($agentsLines[$leanGovernanceHeadingIndex..($agentWorkflowHeadingIndex - 1)] -join "`n")
+    } else { '' }
+    Assert-True (-not ($leanGovernanceSection -match '(?m)```|<!--|-->|^[ ]{0,3}<')) 'Lean Governance rules cannot be made inert by a Markdown fence, raw HTML block, or HTML comment'
+    Assert-True ($agentsLines[$leanGovernanceHeadingIndex + 4] -match '^3\. \*\*前端驗收以 Functional & Semantic E2E 為主\*\*：') 'parallel-writer policy remains directly after Lean Governance rule 3'
+    Assert-True ($agentsLines[$leanGovernanceHeadingIndex + 5] -ceq $expectedParallelWriterPolicy) 'parallel-writer policy remains active as Lean Governance rule 4'
+    Assert-True ($agentsLines[$leanGovernanceHeadingIndex + 6] -match '^5\. \*\*主工作區絕對乾淨與強制 Worktree 隔離') 'parallel-writer policy remains directly before Lean Governance rule 5'
+    $parallelWriterPolicyMatches = @([regex]::Matches($agentsBodyLf, '(?m)^\d+\. \*\*並行 Writer 隔離原則\*\*：[^\r\n]+$'))
+    Assert-True ($parallelWriterPolicyMatches.Count -eq 1) 'AGENTS.md defines exactly one canonical parallel-writer isolation policy'
+    $parallelWriterPolicy = if ($parallelWriterPolicyMatches.Count -eq 1) { $parallelWriterPolicyMatches[0].Value } else { '' }
+    Assert-True ($parallelWriterPolicy -ceq $expectedParallelWriterPolicy) 'parallel-writer policy preserves the exact fail-closed isolation and authority contract'
+    Assert-True (@([regex]::Matches($agentsBodyLf, '(?m)^\d+\. \*\*[^\r\n]*Writer[^\r\n]*原則\*\*：')).Count -eq 1) 'AGENTS.md has no competing numbered Writer principle'
+    Assert-True (-not ($agentsBodyLf -match '(?m)^\d+\. \*\*Single Active Writer 原則\*\*：')) 'AGENTS.md removes the obsolete repo-wide single-writer heading'
+    foreach ($parallelBoardMarker in @(
+        'repo 不因 writer 數量或另有 active session 就單獨阻擋無重疊 writer',
+        '同一 branch、同一 worktree 或 touch-set 重疊／未知一律停工排隊',
+        'recentFiles` 只保留最近最多 5 筆候選',
+        '不能證明完整 touch-set 或 admission',
+        '缺少 owner 宣告的完整 touch-set 或 Fabric scope 證據時，狀態為 UNKNOWN 並停工排隊'
+    )) {
+        Assert-True ($parallelSessionBoardBody -match [regex]::Escape($parallelBoardMarker)) "parallel session board preserves isolation marker: $parallelBoardMarker"
+    }
+    Assert-True (-not ($parallelSessionBoardBody -match '不取代 Lane 隔離與 Single Active Writer')) 'parallel session board removes the obsolete repo-wide single-writer contract'
+    Assert-True (-not ($parallelSessionBoardBody -match '確認沒有 active writer 或重疊檔案')) 'parallel session board does not block solely because another writer is active'
     foreach ($entrypointVariant in @($agentsBodyLf, $agentsBodyLf.Replace("`n", "`r`n"))) {
         Assert-True ($entrypointVariant -match '(?m)^\|[^\r\n]*gh[^\r\n]*docs/agents/github-workflow\.md[^\r\n]*\r?$') 'AGENTS.md routes gh auth work to the GitHub workflow runbook under LF and CRLF'
     }
@@ -853,20 +914,14 @@ try {
     $expectedSpecToDonePhases = @('P0', 'P1', 'P3', 'P4', 'P5', 'P6', 'P7')
     $contractPhases = @($specToDoneContract.phases)
     $contractHeldReasons = @($specToDoneContract.durable_state.held_reasons)
-    Assert-True ($specToDoneContract.schema_version -ceq 'spec-to-done-contract/v2') 'spec-to-done machine contract has the pinned schema version'
+    Assert-True ($specToDoneContract.schema_version -ceq 'spec-to-done-contract/v1') 'spec-to-done machine contract has the pinned schema version'
     Assert-True (($contractPhases -join ',') -ceq ($expectedSpecToDonePhases -join ',')) 'spec-to-done machine contract preserves the P0/P1/P3-P7 phase sequence'
     Assert-True ($specToDoneContract.durable_state.canonical_relative_path -ceq 'artifacts/spec-to-done/{slug}-state.md') 'spec-to-done machine contract owns the canonical durable state path'
-    Assert-True ($specToDoneContract.durable_state.fabric_managed_relative_path -ceq 'artifacts/spec-to-done/{slug}--{binding_id}-state.md') 'spec-to-done machine contract owns a binding-derived managed state path'
-    Assert-True ($specToDoneContract.durable_state.fabric_binding_relative_path -ceq 'artifacts/spec-to-done/bindings/{binding_id}.json') 'spec-to-done machine contract owns the canonical Fabric binding path'
     Assert-True ($contractHeldReasons.Count -gt 0 -and @($contractHeldReasons | Sort-Object -Unique).Count -eq $contractHeldReasons.Count) 'spec-to-done machine contract held reasons form a nonempty closed set'
     Assert-True (@($contractHeldReasons | Where-Object { $_ -cnotmatch '^[a-z][a-z0-9_]*$' }).Count -eq 0) 'spec-to-done machine contract held reasons use canonical tokens'
-    foreach ($requiredHeldReason in @('host_env_blocked', 'evidence_stale', 'fabric_resume_authority_unavailable', 'resume_state_invalid', 'review_unverified', 'ship_blocked')) {
+    foreach ($requiredHeldReason in @('host_env_blocked', 'evidence_stale', 'resume_state_invalid', 'review_unverified', 'ship_blocked')) {
         Assert-True ($contractHeldReasons -contains $requiredHeldReason) "spec-to-done machine contract includes durable reason $requiredHeldReason"
     }
-    Assert-True ($specToDoneContract.parallel_delivery_binding.session_admission_limit -ceq 'unbounded') 'spec-to-done Fabric binding does not impose a repo writer cap'
-    Assert-True ($specToDoneContract.parallel_delivery_binding.run_writer_cardinality -eq 1) 'spec-to-done Fabric binding keeps one writer per delivery slice'
-    Assert-True (-not $specToDoneContract.parallel_delivery_binding.local_new_run_allowed -and -not $specToDoneContract.parallel_delivery_binding.local_resume_allowed) 'spec-to-done Fabric recovery remains fail closed without outer authority'
-    Assert-True ($specToDoneContract.parallel_delivery_binding.delivery_authority -ceq 'non_authorizing') 'spec-to-done Fabric binding cannot grant delivery authority'
     Assert-True ($specToDoneContract.ship.workflow_shell_capability -ceq 'not_available_in_measured_runtime') 'spec-to-done machine contract records measured Workflow shell absence'
     Assert-True ($specToDoneContract.ship.trusted_host_executor -ceq 'implemented_external_workflow') 'spec-to-done machine contract points to the external trusted host executor'
     Assert-True ($specToDoneContract.ship.trusted_host_contract -ceq './trusted-host-merge.contract.json') 'spec-to-done machine contract links the trusted merge protocol'
@@ -1314,6 +1369,9 @@ try {
     Assert-True ($LASTEXITCODE -eq 0) 'openspec/changes, openspec/lifecycle-ledger.json and the docs/plans/NOW.md projection agree'
     # Exit 0 alone is not proof the gate ran: assert it actually produced its report.
     Assert-True ((($repositoryLifecycleReport -join "`n")) -match 'openspec repository lifecycle OK') 'repository-scoped lifecycle gate emitted its parity report'
+
+    & pwsh -NoProfile -NonInteractive -File (Join-Path $PSScriptRoot 'test-governed-worktree.ps1')
+    Assert-True ($LASTEXITCODE -eq 0) 'governed Windows worktree identity, inventory, and plan contracts pass'
 } finally {
     Pop-Location
 }

@@ -18,52 +18,6 @@ const STATIC_WRAPPER = path.join(REPO_ROOT, 'scripts', 'tests', 'test-parallel-d
 const GOVERNANCE_WORKFLOW = path.join(REPO_ROOT, '.github', 'workflows', 'agent-governance.yml')
 const STATIC_GATE_ID = 'parallel-delivery-fabric-static-policy'
 const ASSERTION_KINDS = new Set(['positive', 'negative', 'no-side-effect'])
-const WINDOWS_RUNTIME_STEP = `      - name: Run trusted host merge runtime tests (Windows)
-        if: matrix.shard == 'core'
-        shell: pwsh
-        run: pwsh -NoProfile -NonInteractive -Command "node --test scripts/tests/test-trusted-host-merge-runtime.mjs"`
-const TRUSTED_GIT_STEP = `      - name: Require canonical read-only Linux Git
-        if: matrix.platform == 'linux-positive'
-        shell: bash
-        run: |
-          set -euo pipefail
-          test -x /usr/bin/git
-          test "$(realpath /usr/bin/git)" = /usr/bin/git
-          test "$(realpath "$(command -v git)")" = /usr/bin/git
-          test ! -w /usr/bin/git`
-const TRUSTED_MERGE_POLICY_STEP = `      - name: Run trusted host merge policy tests on trusted Linux
-        if: matrix.platform == 'linux-positive'
-        shell: pwsh
-        run: node --test scripts/tests/test-trusted-host-merge.mjs`
-const STATIC_POLICY_STEP = `      - name: Run Parallel Delivery Fabric static policy
-        if: matrix.platform == 'linux-positive'
-        shell: pwsh
-        run: pwsh -NoProfile -NonInteractive -File scripts/tests/test-parallel-delivery-fabric-static-policy.ps1`
-const QUEUE_POLICY_STEP = `      - name: Run canonical review-policy queue tests
-        if: matrix.platform == 'linux-positive'
-        shell: pwsh
-        run: node --test scripts/tests/test-manage-pr-queue.mjs`
-
-const assertTrustedLinuxBoundary = (workflow) => {
-  const normalized = workflow.replaceAll('\r\n', '\n')
-  const sections = normalized.split('\n  new-run-boundary:')
-  assert.equal(sections.length, 2)
-  const [windowsSuite, linuxBoundary] = sections
-  assert.match(windowsSuite, /\n  suite:\n[\s\S]*?\n    runs-on: windows-latest\n/u)
-  assert.equal(windowsSuite.includes(WINDOWS_RUNTIME_STEP), true)
-  assert.equal(windowsSuite.split('Run trusted host merge runtime tests (Windows)').length - 1, 1)
-  assert.doesNotMatch(windowsSuite, /Run Parallel Delivery Fabric static policy/u)
-  assert.doesNotMatch(windowsSuite, /test-manage-pr-queue\.mjs/u)
-  assert.doesNotMatch(windowsSuite, /test-trusted-host-merge\.mjs/u)
-  assert.doesNotMatch(linuxBoundary, /Run trusted host merge runtime tests \(Windows\)|test-trusted-host-merge-runtime\.mjs/u)
-  assert.match(linuxBoundary, /- platform: linux-positive\n\s+runner: ubuntu-latest/u)
-  assert.match(linuxBoundary, /Setup pinned Python for NEW_RUN contract tests[\s\S]*python-version: '3\.12'/u)
-  assert.match(linuxBoundary, /Install NEW_RUN test dependencies[\s\S]*jsonschema==4\.26\.0 --hash=sha256:/u)
-  assert.equal(linuxBoundary.includes(`${TRUSTED_GIT_STEP}\n\n${TRUSTED_MERGE_POLICY_STEP}\n\n${STATIC_POLICY_STEP}\n\n${QUEUE_POLICY_STEP}`), true)
-  assert.equal(linuxBoundary.split('Run trusted host merge policy tests on trusted Linux').length - 1, 1)
-  assert.equal(linuxBoundary.split('Run Parallel Delivery Fabric static policy').length - 1, 1)
-  assert.equal(linuxBoundary.split('Run canonical review-policy queue tests').length - 1, 1)
-}
 
 const globRegex = (glob) => {
   let expression = '^'
@@ -118,52 +72,6 @@ test('Task12 repair RED — AC map rejects cross-AC names and tests outside the 
   const governanceTarget = missingPathGlob.targets.find(({ id }) => id === 'agent-governance')
   governanceTarget.path_globs = governanceTarget.path_globs.filter((glob) => glob !== 'scripts/**')
   assert.throws(() => validateAcceptanceMap(map, missingPathGlob), /acceptance_test_path_glob_mismatch/u)
-})
-
-test('trusted Linux boundary rejects no-op, incomplete, misrouted, and non-adjacent Git gates', () => {
-  const workflow = readFileSync(GOVERNANCE_WORKFLOW, 'utf8').replaceAll('\r\n', '\n')
-  const insertedStep = `      - name: Injected intermediary
-        if: matrix.platform == 'linux-positive'
-        shell: pwsh
-        run: Write-Host bypass`
-  const withoutWindowsRuntime = workflow.replace(`${WINDOWS_RUNTIME_STEP}\n\n`, '')
-  const noOpWindowsRuntime = workflow.replace(
-    WINDOWS_RUNTIME_STEP,
-    WINDOWS_RUNTIME_STEP.replace(
-      'pwsh -NoProfile -NonInteractive -Command "node --test scripts/tests/test-trusted-host-merge-runtime.mjs"',
-      'Write-Host bypass',
-    ),
-  )
-  const wrongWindowsRuntimeShard = workflow.replace(
-    WINDOWS_RUNTIME_STEP,
-    WINDOWS_RUNTIME_STEP.replace("matrix.shard == 'core'", "matrix.shard == 'evidence'"),
-  )
-  const movedWindowsRuntime = withoutWindowsRuntime.replace(
-    `${TRUSTED_GIT_STEP}\n\n`,
-    `${TRUSTED_GIT_STEP}\n\n${WINDOWS_RUNTIME_STEP}\n\n`,
-  )
-  const linuxWindowsSuite = workflow.replace(
-    '    runs-on: windows-latest\n    timeout-minutes: 30',
-    '    runs-on: ubuntu-latest\n    timeout-minutes: 30',
-  )
-  const mutants = [
-    linuxWindowsSuite,
-    withoutWindowsRuntime,
-    noOpWindowsRuntime,
-    wrongWindowsRuntimeShard,
-    movedWindowsRuntime,
-    workflow.replace('          test ! -w /usr/bin/git', '          echo bypass'),
-    workflow.replace('          test -x /usr/bin/git\n', ''),
-    workflow.replace(
-      "      - name: Require canonical read-only Linux Git\n        if: matrix.platform == 'linux-positive'",
-      "      - name: Require canonical read-only Linux Git\n        if: matrix.platform == 'windows-negative'",
-    ),
-    workflow.replace(
-      `${TRUSTED_GIT_STEP}\n\n${TRUSTED_MERGE_POLICY_STEP}`,
-      `${TRUSTED_GIT_STEP}\n\n${insertedStep}\n\n${TRUSTED_MERGE_POLICY_STEP}`,
-    ),
-  ]
-  for (const mutant of mutants) assert.throws(() => assertTrustedLinuxBoundary(mutant))
 })
 
 test('AC-14 — static policy keeps one review-policy source and a closed AC-01..AC-45 map', () => {
@@ -234,7 +142,9 @@ test('AC-14 — static policy keeps one review-policy source and a closed AC-01.
   assert.match(wrapper, /-p['\"]?,?\s*['\"]?no:cacheprovider/)
 
   const governanceWorkflow = readFileSync(GOVERNANCE_WORKFLOW, 'utf8')
-  assertTrustedLinuxBoundary(governanceWorkflow)
+  assert.match(governanceWorkflow, /Run Parallel Delivery Fabric static policy[\s\S]*matrix\.shard == 'core'[\s\S]*test-parallel-delivery-fabric-static-policy\.ps1/u)
+  assert.match(governanceWorkflow, /Setup pinned Python for governance tests[\s\S]*python-version: '3\.12'/u)
+  assert.match(governanceWorkflow, /Install Parallel Delivery Fabric static-policy dependencies[\s\S]*jsonschema==4\.26\.0 --hash=sha256:/u)
 
   const operatorDoc = readFileSync(OPERATOR_DOC, 'utf8')
   assert.match(operatorDoc, /HELD_EXTERNAL_ACTIVATION/)

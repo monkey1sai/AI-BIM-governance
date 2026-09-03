@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
 import test from 'node:test'
 import { digestCanonical } from '../../lib/parallel-delivery-fabric-contract.mjs'
+import { trustedPinsAuthorityDigest } from '../../lib/parallel-delivery-fabric-e2e-binder.mjs'
 
 import {
   bindBrowserEvidence,
@@ -22,7 +24,6 @@ const TRUSTED = SHA256('2')
 const BINDER = SHA256('3')
 const TRACE = SHA256('4')
 const SCREENSHOT = SHA256('5')
-const COMMANDS = SHA256('6')
 const ALLOCATOR = SHA256('7')
 const POLICY_SOURCE_SHA = SHA1('8')
 const POLICY_RECORD = SHA256('9')
@@ -30,6 +31,8 @@ const AUTHORITY = SHA256('a')
 const LISTENER = SHA256('b')
 const NOW = '2026-08-29T01:00:00.000Z'
 const LATER = '2026-08-29T02:00:00.000Z'
+const TRAIN_CLOCK = Object.freeze({ now: NOW })
+const sha256Text = value => createHash('sha256').update(value, 'utf8').digest('hex')
 
 const trainPlan = (overrides = {}) => ({
   plan_id: 'plan:train',
@@ -48,19 +51,22 @@ const trainPlan = (overrides = {}) => ({
   ...overrides,
 })
 
-const trustedPolicy = (overrides = {}) => ({
-  source: 'base',
-  source_ref: 'origin/main',
-  source_sha: POLICY_SOURCE_SHA,
-  base_sha: BASE,
-  policy_digest: SHA256('9'),
-  record_digest: POLICY_RECORD,
-  immutable: true,
-  base_pinned: true,
-  fresh: true,
-  version: 'e2e-policy/v1',
-  ...overrides,
-})
+// The record digest is derived from the policy record, exactly as the binder recomputes it.
+const trustedPolicy = (overrides = {}) => {
+  const { record_digest: pinnedDigest, ...record } = {
+    source: 'base',
+    source_ref: 'origin/main',
+    source_sha: POLICY_SOURCE_SHA,
+    base_sha: BASE,
+    policy_digest: SHA256('9'),
+    immutable: true,
+    base_pinned: true,
+    fresh: true,
+    version: 'e2e-policy/v1',
+    ...overrides,
+  }
+  return { ...record, record_digest: pinnedDigest ?? digestCanonical(record) }
+}
 
 const applicabilityRecord = (overrides = {}) => {
   const record = {
@@ -137,13 +143,27 @@ const commandRecord = (role, overrides = {}) => ({
   ...overrides,
 })
 
+const minutesAfterNow = (minutes) => new Date(Date.parse(NOW) + minutes * 60_000).toISOString()
+const COMMAND_LIFECYCLE = Object.freeze({
+  git_preflight: [0, 5], stack_start: [5, 10], stack_status: [10, 12],
+  playwright_require_real: [12, 30], computer_use: [12, 35], postflight: [35, 40],
+})
+const commandRecords = () => Object.entries(COMMAND_LIFECYCLE).map(([role, [start, finish]]) => commandRecord(role, {
+  started_at: minutesAfterNow(start), finished_at: minutesAfterNow(finish),
+}))
+const COMMANDS = digestCanonical(commandRecords())
+// Trusted canonical runner pins: every role's cwd/argv/environment contract.
+const commandPins = (overrides = {}) => Object.fromEntries(Object.keys(COMMAND_LIFECYCLE).map((role) => [role, {
+  cwd_digest: SHA256('c'), argv_digest: SHA256('d'), environment_contract: 'e2e-require-real/v1', ...(overrides[role] ?? {}),
+}]))
+
 const computerUseAuthority = (overrides = {}) => ({
   schema_version: 'computer-use-authority/v1',
   source: 'prior-trusted',
   source_ref: 'ref:e2e-policy',
   source_sha: POLICY_SOURCE_SHA,
   base_sha: BASE,
-  authority_digest: AUTHORITY,
+  authority_digest: trustedPins().authority_digest,
   verifier_identity: 'computer-use:one',
   immutable: true,
   base_pinned: true,
@@ -167,6 +187,7 @@ const browserPacket = (role, overrides = {}) => ({
   skipped: false,
   manifest_present: true,
   timed_out: false,
+  duration_ms: 40 * 60_000,
   manifest_path_digest: SHA256('a'),
   manifest_sha256: MANIFEST,
   manifest_sha256_at_start: MANIFEST,
@@ -204,36 +225,42 @@ const browserPacket = (role, overrides = {}) => ({
   screenshot_sha256: SCREENSHOT,
   command_records_digest: COMMANDS,
   runtime_lineage_digest: RUNTIME,
-  command_records: [
-    commandRecord('git_preflight'),
-    commandRecord('stack_start'),
-    commandRecord('stack_status'),
-    commandRecord('playwright_require_real'),
-    commandRecord('computer_use'),
-    commandRecord('postflight'),
-  ],
+  command_records: commandRecords(),
   execution_window: { started_at: NOW, finished_at: LATER },
   ...(role === 'computer_use' ? { authority: computerUseAuthority() } : {}),
   ...overrides,
 })
 
-const trustedPins = (overrides = {}) => ({
-  source: 'prior-trusted',
-  source_ref: 'ref:e2e-policy',
-  source_sha: POLICY_SOURCE_SHA,
-  base_sha: BASE,
-  policy_digest: SHA256('9'),
-  applicability_record_digest: applicabilityRecord().record_digest,
-  immutable: true,
-  base_pinned: true,
-  fresh: true,
-  verifier_sha: TRUSTED,
-  binder_sha: BINDER,
-  verifier_tree_digest: TRUSTED,
-  harness_digest: TRUSTED,
-  authority_digest: AUTHORITY,
-  ...overrides,
+// The base-owned expected user flow: the binder pins the exercised flow to this.
+const expectedFlow = (overrides = {}) => ({
+  route: '#conv', main_buttons: ['Upload IFC'], fixture: 'fixture:ifc-ready', api: 'api:ifc-ready',
+  runtime_id: 'runtime:conversion-1', visible_state: 'state:success', ...overrides,
 })
+
+// The authority digest is derived from the complete pin map, so a fixture that
+// overrides any pin re-derives it unless the test pins the digest on purpose.
+const trustedPins = (overrides = {}) => {
+  const pins = {
+    source: 'prior-trusted',
+    source_ref: 'ref:e2e-policy',
+    source_sha: POLICY_SOURCE_SHA,
+    base_sha: BASE,
+    policy_digest: SHA256('9'),
+    applicability_record_digest: applicabilityRecord().record_digest,
+    immutable: true,
+    base_pinned: true,
+    fresh: true,
+    verifier_sha: TRUSTED,
+    binder_sha: BINDER,
+    verifier_tree_digest: TRUSTED,
+    harness_digest: TRUSTED,
+    command_pins: commandPins(),
+    expected_flow: expectedFlow(),
+    timeout_ms: 45 * 60_000,
+    ...overrides,
+  }
+  return { ...pins, authority_digest: overrides.authority_digest ?? trustedPinsAuthorityDigest(pins) }
+}
 
 const runtimeIdentity = (overrides = {}) => ({
   offset: 0,
@@ -356,8 +383,11 @@ const trappedProxy = (value, counts) => new Proxy(value, {
 })
 
 test('AC-21 — integration train freezes exact base and ordered candidate SHAs', () => {
-  const planned = createIntegrationTrain(trainPlan())
+  const planned = createIntegrationTrain(trainPlan(), TRAIN_CLOCK)
   assert.equal(planned.phase, 'READY_FOR_TRAIN')
+  // The committed integration-train schema caps candidate heads at 64.
+  const tooMany = createIntegrationTrain(trainPlan({ candidate_heads: Array.from({ length: 65 }, (_unused, index) => index.toString(16).padStart(40, '0')) }), TRAIN_CLOCK)
+  assert.equal(tooMany.reason, 'CANDIDATE_LIMIT_EXCEEDED')
   assert.equal(planned.internal_state, 'TRAIN_REQUEST_READY')
   assert.equal(planned.train.integration_base_ref, 'origin/main')
   assert.equal(planned.train.integration_base_sha, BASE)
@@ -369,19 +399,36 @@ test('AC-21 — integration train freezes exact base and ordered candidate SHAs'
 })
 
 test('train base, ordered inputs, and synthetic result drift fail closed and never become merge/deploy candidates', () => {
-  const baseDrift = createIntegrationTrain(trainPlan({ observed_base_sha: SHA1('0') }))
+  const baseDrift = createIntegrationTrain(trainPlan({ observed_base_sha: SHA1('0') }), TRAIN_CLOCK)
   assert.equal(baseDrift.phase, 'CLOSED')
   assert.equal(baseDrift.internal_state, 'TRAIN_EVIDENCE_INVALID')
   assert.equal(baseDrift.reason, 'BASE_SHA_DRIFT')
-  const inputDrift = createIntegrationTrain(trainPlan({ observed_candidate_heads: [HEAD_B, HEAD_A] }))
+  const inputDrift = createIntegrationTrain(trainPlan({ observed_candidate_heads: [HEAD_B, HEAD_A] }), TRAIN_CLOCK)
   assert.equal(inputDrift.reason, 'ORDERED_INPUT_SHA_DRIFT')
-  const syntheticDrift = createIntegrationTrain(trainPlan({ observed_synthetic_integration_sha: SHA1('0') }))
+  const syntheticDrift = createIntegrationTrain(trainPlan({ observed_synthetic_integration_sha: SHA1('0') }), TRAIN_CLOCK)
   assert.equal(syntheticDrift.reason, 'SYNTHETIC_SHA_DRIFT')
-  const manifestDrift = createIntegrationTrain(trainPlan({ observed_runtime_manifest_digest: SHA256('0') }))
+  const manifestDrift = createIntegrationTrain(trainPlan({ observed_runtime_manifest_digest: SHA256('0') }), TRAIN_CLOCK)
   assert.equal(manifestDrift.reason, 'RUNTIME_MANIFEST_DRIFT')
-  const candidateTrain = createIntegrationTrain(trainPlan({ is_merge_candidate: true }))
+  const candidateTrain = createIntegrationTrain(trainPlan({ is_merge_candidate: true }), TRAIN_CLOCK)
   assert.equal(candidateTrain.phase, 'CLOSED')
   assert.equal(candidateTrain.reason, 'TRAIN_NOT_PROMOTION_SOURCE')
+})
+
+test('integration train requires an explicit active authority window and trusted current time', () => {
+  for (const missing of ['created_at', 'expires_at']) {
+    const plan = trainPlan()
+    delete plan[missing]
+    assert.equal(createIntegrationTrain(plan, TRAIN_CLOCK).reason, 'TRAIN_WINDOW_INVALID', missing)
+  }
+  assert.equal(createIntegrationTrain(trainPlan(), undefined).reason, 'TRAIN_WINDOW_INVALID')
+  assert.equal(createIntegrationTrain(trainPlan({ expires_at: NOW }), TRAIN_CLOCK).reason, 'TRAIN_WINDOW_INVALID')
+  assert.equal(createIntegrationTrain(trainPlan({ created_at: LATER, expires_at: '2026-08-29T03:00:00.000Z' }), TRAIN_CLOCK).reason, 'TRAIN_WINDOW_INVALID')
+  let reads = 0
+  const hostileClock = {}
+  Object.defineProperty(hostileClock, 'now', { enumerable: true, get: () => { reads += 1; return reads === 1 ? NOW : undefined } })
+  assert.equal(createIntegrationTrain(trainPlan(), hostileClock).reason, 'TRAIN_WINDOW_INVALID')
+  assert.equal(reads, 0)
+  assert.equal(createIntegrationTrain(trainPlan(), new Proxy({ now: NOW }, {})).reason, 'TRAIN_WINDOW_INVALID')
 })
 
 test('runtime admission allows two writers plus one train or Computer Use, but never both shared slots', () => {
@@ -874,6 +921,13 @@ test('runtime admission freezes offset, ports, base URL, branch/worktree, manife
   assert.equal(evaluateRuntimeAdmission(frozen, { ...request, manifest_sha256: SHA256('0') }).status, 'HELD_RUNTIME')
   assert.equal(evaluateRuntimeAdmission(frozen, { ...request, branch: 'codex/task-b' }).status, 'HELD_RUNTIME')
   assert.equal(evaluateRuntimeAdmission(frozen, { ...request, ports: { ...request.ports, viewer: 8004 } }).status, 'HELD_RUNTIME')
+  // A malformed reservation field never reads as "nothing reserved".
+  for (const reserved of ['8005', { viewer: 8005 }, ['8005'], [8005, 8005], [0], [70000], [8005.5]]) {
+    const held = evaluateRuntimeAdmission({ ...frozen, reserved_ports: reserved }, request)
+    assert.deepEqual({ status: held.status, reason: held.reason }, { status: 'HELD_RUNTIME', reason: 'RESERVED_PORTS_INVALID' }, JSON.stringify(reserved))
+    assert.equal(evaluateRuntimeAdmission(frozen, { ...request, reserved_ports: reserved }).reason, 'RESERVED_PORTS_INVALID', JSON.stringify(reserved))
+  }
+  assert.equal(evaluateRuntimeAdmission({ ...frozen, reserved_ports: [request.ports.viewer] }, request).reason, 'RESERVED_PORT_CONFLICT')
 })
 
 test('base-pinned applicability is immutable and a candidate cannot downgrade required E2E', () => {
@@ -900,6 +954,36 @@ test('base-pinned applicability is immutable and a candidate cannot downgrade re
   })
   assert.equal(docsOnly.status, 'E2E_NOT_APPLICABLE')
   assert.equal(docsOnly.e2e_required, false)
+  // Paths outside the static allowlist are executable or verification-bearing and
+  // fail closed to E2E-required even when no trigger regex names them.
+  for (const path of ['scripts/deploy.ps1', 'docker-compose.yml', '.github/workflows/ci.yml', 'tests/contracts/ifc_ready_payload.json', 'agent-contracts/schema.json', 'Dockerfile']) {
+    const result = classifyE2EApplicability({ change: { paths: [path] }, trustedPolicy: trustedPolicy(), baseSha: BASE })
+    assert.equal(result.status, 'E2E_REQUIRED', path)
+    assert.equal(result.record.reason, 'UNCLASSIFIED_EXECUTABLE_OR_DEPLOYMENT_PATH', path)
+  }
+  for (const path of ['docs/agents/example.md', 'openspec/changes/x/tasks.md', 'README.md', 'assets/logo.png', 'LICENSE']) {
+    assert.equal(classifyE2EApplicability({ change: { paths: [path] }, trustedPolicy: trustedPolicy(), baseSha: BASE }).status, 'E2E_NOT_APPLICABLE', path)
+  }
+  const mixed = classifyE2EApplicability({ change: { paths: ['docs/agents/example.md', 'scripts/deploy.ps1'] }, trustedPolicy: trustedPolicy(), baseSha: BASE })
+  assert.equal(mixed.status, 'E2E_REQUIRED')
+  // No classifier data is not "static": an empty or malformed path set holds unless
+  // the trusted base policy explicitly classifies the change as static-only.
+  const noPaths = classifyE2EApplicability({ change: {}, trustedPolicy: trustedPolicy(), baseSha: BASE })
+  assert.deepEqual({ status: noPaths.status, reason: noPaths.reason }, { status: 'HELD_EVIDENCE_BINDING', reason: 'APPLICABILITY_PATHS_MISSING' })
+  assert.equal(classifyE2EApplicability({ change: { paths: [] }, trustedPolicy: trustedPolicy(), baseSha: BASE }).reason, 'APPLICABILITY_PATHS_MISSING')
+  assert.equal(classifyE2EApplicability({ change: { paths: [1, 'docs/a.md'] }, trustedPolicy: trustedPolicy(), baseSha: BASE }).reason, 'APPLICABILITY_PATHS_INVALID')
+  assert.equal(classifyE2EApplicability({ change: { paths: 'not/a/list' }, trustedPolicy: trustedPolicy(), baseSha: BASE }).status, 'E2E_REQUIRED')
+  const staticOnly = classifyE2EApplicability({ change: {}, trustedPolicy: trustedPolicy({ static_only: true }), baseSha: BASE })
+  assert.equal(staticOnly.status, 'E2E_NOT_APPLICABLE')
+  assert.equal(staticOnly.record.reason, 'TRUSTED_STATIC_ONLY_CLASSIFICATION')
+  // The static-only escape is honoured only inside a record whose digest covers it: a
+  // flag added after the digest was issued, or an arbitrary digest, holds.
+  const tampered = { ...trustedPolicy(), static_only: true }
+  assert.deepEqual({ status: classifyE2EApplicability({ change: {}, trustedPolicy: tampered, baseSha: BASE }).status, reason: classifyE2EApplicability({ change: {}, trustedPolicy: tampered, baseSha: BASE }).reason },
+    { status: 'HELD_EVIDENCE_BINDING', reason: 'APPLICABILITY_RECORD_DIGEST_MISMATCH' })
+  assert.equal(classifyE2EApplicability({ change: {}, trustedPolicy: trustedPolicy({ static_only: true, record_digest: SHA256('e') }), baseSha: BASE }).reason, 'APPLICABILITY_RECORD_DIGEST_MISMATCH')
+  // Trigger flags still force E2E even without paths.
+  assert.equal(classifyE2EApplicability({ change: { paths: [], user_facing: true }, trustedPolicy: trustedPolicy(), baseSha: BASE }).status, 'E2E_REQUIRED')
 })
 
 test('missing, stale, and candidate-sourced applicability records are held', () => {
@@ -944,6 +1028,58 @@ test('browser evidence binds exact head/tree/manifest/runtime and sanitized evid
   assert.equal(result.evidence.network_digest, digestCanonical('network:ok'))
   assert.equal(result.evidence.trace_sha256, TRACE)
   assert.equal(result.evidence.screenshot_sha256, SCREENSHOT)
+  // The exercised flow is pinned to the base-owned expected flow, not only to cross-packet agreement.
+  const unrelatedFlow = { route: '#other', main_buttons: ['Delete IFC'] }
+  const agreedButUnrelated = bindBrowserEvidence({
+    candidate: candidate(), manifest: manifest(),
+    playwright: browserPacket('playwright', unrelatedFlow),
+    computerUse: browserPacket('computer_use', { verifier_identity: 'computer-use:one', ...unrelatedFlow }),
+    trustedPins: trustedPins(),
+  })
+  assert.deepEqual({ status: agreedButUnrelated.status, reason: agreedButUnrelated.reason }, { status: 'HELD_EVIDENCE_BINDING', reason: 'EXPECTED_FLOW_MISMATCH' })
+  const flowlessPins = trustedPins({ expected_flow: undefined })
+  const noFlowPin = bindBrowserEvidence({
+    candidate: candidate(), manifest: manifest(), playwright: browserPacket('playwright'),
+    computerUse: browserPacket('computer_use', { verifier_identity: 'computer-use:one', authority: computerUseAuthority({ authority_digest: flowlessPins.authority_digest }) }),
+    trustedPins: flowlessPins,
+  })
+  assert.equal(noFlowPin.reason, 'EXPECTED_FLOW_PIN_MISSING')
+  // Command pins and the expected flow are covered by the prior-base authority digest:
+  // a pin map swapped after issuance no longer authenticates.
+  const swappedPins = trustedPins()
+  swappedPins.command_pins = { ...swappedPins.command_pins, playwright_require_real: { ...swappedPins.command_pins.playwright_require_real, argv_digest: SHA256('f') } }
+  const swapped = bindBrowserEvidence({
+    candidate: candidate(), manifest: manifest(),
+    playwright: browserPacket('playwright', { command_records: commandRecords().map((record) => (record.role === 'playwright_require_real' ? { ...record, argv_digest: SHA256('f') } : record)) }),
+    computerUse: browserPacket('computer_use', { verifier_identity: 'computer-use:one' }),
+    trustedPins: swappedPins,
+  })
+  assert.equal(swapped.reason, 'TRUSTED_PINS_AUTHORITY_DIGEST_MISMATCH')
+  // The verifier and binder source pins are part of the authority digest too.
+  const swappedVerifier = trustedPins()
+  swappedVerifier.verifier_sha = SHA256('e')
+  const verifierSwap = bindBrowserEvidence({
+    candidate: candidate(), manifest: manifest(),
+    playwright: browserPacket('playwright', { trusted_verifier_sha: SHA256('e') }),
+    computerUse: browserPacket('computer_use', { verifier_identity: 'computer-use:one', trusted_verifier_sha: SHA256('e') }),
+    trustedPins: swappedVerifier,
+  })
+  assert.equal(verifierSwap.reason, 'TRUSTED_PINS_AUTHORITY_DIGEST_MISMATCH')
+  // Pins spelled with the supported `trusted_*` aliases are covered by the same digest.
+  const { verifier_sha: canonicalVerifier, binder_sha: canonicalBinder, ...aliasedBase } = trustedPins()
+  const aliasedPins = { ...aliasedBase, trusted_verifier_sha: canonicalVerifier, trusted_binder_sha: canonicalBinder }
+  assert.equal(aliasedPins.authority_digest, trustedPinsAuthorityDigest(aliasedPins))
+  assert.equal(bindBrowserEvidence({
+    candidate: candidate(), manifest: manifest(), playwright: browserPacket('playwright'),
+    computerUse: browserPacket('computer_use', { verifier_identity: 'computer-use:one' }), trustedPins: aliasedPins,
+  }).status, 'READY_FOR_TRAIN')
+  const aliasSwap = bindBrowserEvidence({
+    candidate: candidate(), manifest: manifest(),
+    playwright: browserPacket('playwright', { trusted_verifier_sha: SHA256('e') }),
+    computerUse: browserPacket('computer_use', { verifier_identity: 'computer-use:one', trusted_verifier_sha: SHA256('e') }),
+    trustedPins: { ...aliasedPins, trusted_verifier_sha: SHA256('e') },
+  })
+  assert.equal(aliasSwap.reason, 'TRUSTED_PINS_AUTHORITY_DIGEST_MISMATCH')
   assert.equal(result.evidence.manifest_id, `manifest:sha256:${MANIFEST.slice(0, 40)}:bound`)
   assert.equal(result.evidence.trace_reference, `trace:sha256:${TRACE.slice(0, 40)}:bound`)
   assert.equal(result.evidence.screenshot_reference, `screenshot:sha256:${SCREENSHOT.slice(0, 40)}:bound`)
@@ -964,6 +1100,33 @@ test('browser evidence binds exact head/tree/manifest/runtime and sanitized evid
   assert.equal(JSON.stringify(result).includes('C:\\'), false)
   assert.equal(Object.isFrozen(result), true)
   assert.equal(Object.isFrozen(result.evidence), true)
+})
+
+test('P2 regression — browser evidence derives created_at from the required execution window', () => {
+  const result = bindBrowserEvidence({
+    candidate: candidate(),
+    manifest: without(manifest(), 'started_at'),
+    playwright: browserPacket('playwright'),
+    computerUse: browserPacket('computer_use', { verifier_identity: 'computer-use:one' }),
+    trustedPins: trustedPins(),
+  })
+  assert.equal(result.status, 'READY_FOR_TRAIN')
+  assert.equal(result.evidence.created_at, NOW)
+  assert.deepEqual(result.evidence.execution_window, { started_at: NOW, finished_at: LATER })
+})
+
+test('P2 regression — browser evidence rejects a zero-duration execution window', () => {
+  const executionWindow = { started_at: NOW, finished_at: NOW }
+  const result = bindBrowserEvidence({
+    candidate: candidate(),
+    manifest: { ...manifest(), execution_window: executionWindow },
+    playwright: browserPacket('playwright', { execution_window: executionWindow }),
+    computerUse: browserPacket('computer_use', { verifier_identity: 'computer-use:one', execution_window: executionWindow }),
+    trustedPins: trustedPins(),
+  })
+  assert.equal(result.status, 'HELD_EVIDENCE_BINDING')
+  assert.equal(result.reason, 'EXECUTION_WINDOW_REQUIRED')
+  assert.equal(result.promotion_eligible, false)
 })
 
 test('AC-26 — listener evidence is own, canonical, matched, and fail-closed without mutating input', () => {
@@ -1086,6 +1249,71 @@ test('AC-26 — durable browser evidence rejects noncanonical schema-bound field
   }
 })
 
+test('P2 regression — sparse runtime lease arrays are held instead of collapsing into free capacity', () => {
+  const sparse = [{ kind: 'integration_train', state: 'ACTIVE', offset: 1 }, , { kind: 'integration_train', state: 'ACTIVE', offset: 3 }] // eslint-disable-line no-sparse-arrays
+  const result = evaluateRuntimeAdmission(runtimeSnapshot({ leases: sparse }), runtimeRequest({ kind: 'computer_use' }))
+  assert.equal(result.status, 'HELD_RUNTIME')
+  assert.equal(result.reason, 'RUNTIME_ADMISSION_INPUT_INVALID')
+  assert.equal(evaluateRuntimeAdmission(runtimeSnapshot({ leases: Array(3) }), runtimeRequest({ kind: 'computer_use' })).reason, 'RUNTIME_ADMISSION_INPUT_INVALID')
+})
+
+test('P2 regression — deeply nested browser evidence is held locally instead of throwing a RangeError', () => {
+  let deep = { leaf: true }
+  for (let index = 0; index < 20000; index += 1) deep = { nested: deep }
+  const result = bindBrowserEvidence({
+    candidate: candidate(), manifest: manifest(), playwright: browserPacket('playwright', { extra: deep }),
+    computerUse: browserPacket('computer_use', { verifier_identity: 'computer-use:one' }), trustedPins: trustedPins(),
+  })
+  assert.equal(result.status, 'HELD_EVIDENCE_BINDING', JSON.stringify(result).slice(0, 200))
+  assert.equal(result.freeze_scope, 'candidate')
+})
+
+test('P1 regression — conflicting applicability path aliases cannot suppress the browser gate', () => {
+  const conflicting = classifyE2EApplicability({
+    change: { paths: ['docs/agents/example.md'], changed_paths: ['web-viewer-sample/src/a.ts'] },
+    trustedPolicy: trustedPolicy(), baseSha: BASE,
+  })
+  assert.notEqual(conflicting.status, 'E2E_NOT_APPLICABLE')
+  assert.equal(conflicting.reason, 'APPLICABILITY_PATHS_INVALID')
+  const agreeing = classifyE2EApplicability({
+    change: { paths: ['docs/agents/example.md'], changed_paths: ['docs/agents/example.md'] },
+    trustedPolicy: trustedPolicy(), baseSha: BASE,
+  })
+  assert.equal(agreeing.status, 'E2E_NOT_APPLICABLE')
+})
+
+test('P2 regression — the timeout pin binds the proven execution window, not the self-reported duration', () => {
+  const bind = ({ windowMinutes, playwrightFinish = 30, playwrightOverrides = {} }) => {
+    const executionWindow = { started_at: NOW, finished_at: minutesAfterNow(windowMinutes) }
+    const postflightStart = Math.max(playwrightFinish, 35)
+    const records = commandRecords().map((record) => {
+      if (record.role === 'playwright_require_real') return { ...record, finished_at: minutesAfterNow(playwrightFinish) }
+      if (record.role === 'postflight') return { ...record, started_at: minutesAfterNow(postflightStart), finished_at: minutesAfterNow(postflightStart + 5) }
+      return record
+    })
+    const packet = (role, overrides = {}) => browserPacket(role, {
+      execution_window: executionWindow, command_records: records, command_records_digest: digestCanonical(records), ...overrides,
+    })
+    return bindBrowserEvidence({
+      candidate: candidate(), manifest: manifest({ execution_window: executionWindow }),
+      playwright: packet('playwright', playwrightOverrides), computerUse: packet('computer_use', { verifier_identity: 'computer-use:one' }),
+      trustedPins: trustedPins(),
+    })
+  }
+  const accepted = bind({ windowMinutes: 80 })
+  assert.equal(accepted.status, 'READY_FOR_TRAIN', JSON.stringify(accepted))
+  const cases = [
+    ['shared window wider than both verifier budgets together', { windowMinutes: 100 }],
+    ['verifier role ran longer than the pin despite a short reported duration', { windowMinutes: 80, playwrightFinish: 70 }],
+    ['reported duration exceeds the bound window', { windowMinutes: 42, playwrightOverrides: { duration_ms: 44 * 60_000 } }],
+  ]
+  for (const [label, input] of cases) {
+    const result = bind(input)
+    assert.equal(result.status, 'HELD_EVIDENCE_BINDING', label)
+    assert.equal(result.reason, 'E2E_TIMEOUT', `${label}: ${JSON.stringify(result)}`)
+  }
+})
+
 test('browser binding requires complete immutable source, trusted pins, and manifest lifecycle proof', () => {
   const candidateWithMissingApplicability = (key) => {
     const value = candidate()
@@ -1101,6 +1329,9 @@ test('browser binding requires complete immutable source, trusted pins, and mani
     ['candidate applicability digest', { candidate: candidateWithMissingApplicability('record_digest') }, 'APPLICABILITY_RECORD_INVALID'],
     ['trusted verifier tree pin', { trustedPins: without(trustedPins(), 'verifier_tree_digest') }, 'TRUSTED_SOURCE_REQUIRED'],
     ['trusted harness pin', { trustedPins: without(trustedPins(), 'harness_digest') }, 'TRUSTED_SOURCE_REQUIRED'],
+    ['trusted timeout pin', { trustedPins: without(trustedPins(), 'timeout_ms') }, 'TRUSTED_SOURCE_REQUIRED'],
+    ['playwright over timeout budget', { playwright: browserPacket('playwright', { duration_ms: 45 * 60_000 + 1 }) }, 'E2E_TIMEOUT'],
+    ['playwright timed out', { playwright: browserPacket('playwright', { timed_out: true }) }, 'E2E_TIMEOUT'],
     ['manifest start bytes', { manifest: without(manifest(), 'manifest_sha256_at_start') }, 'MANIFEST_LIFECYCLE_INVALID'],
     ['manifest publication bytes', { manifest: without(manifest(), 'manifest_sha256_at_publication') }, 'MANIFEST_LIFECYCLE_INVALID'],
     ['manifest execution window', { manifest: without(manifest(), 'execution_window') }, 'EXECUTION_WINDOW_REQUIRED'],
@@ -1298,4 +1529,155 @@ test('binder requires complete canonical identity and command lineage packets', 
     assert.equal(result.freeze_scope, 'candidate', label)
     assert.equal(result.other_candidates_continue, true, label)
   }
+})
+
+test('P2 regressions — binder recomputes command lineage and compares every network alias', () => {
+  const alteredCommands = browserPacket('playwright')
+  alteredCommands.command_records[0].exit_code = 1
+  const commandResult = bindBrowserEvidence({
+    candidate: candidate(), manifest: manifest(), playwright: alteredCommands,
+    computerUse: browserPacket('computer_use', { verifier_identity: 'computer-use:one' }), trustedPins: trustedPins(),
+  })
+  assert.equal(commandResult.status, 'HELD_EVIDENCE_BINDING')
+  assert.equal(commandResult.reason, 'COMMAND_RECORDS_DIGEST_MISMATCH')
+
+  const failedCommands = commandRecords()
+  failedCommands[0].exit_code = 1
+  const failedPacket = browserPacket('playwright', {
+    command_records: failedCommands,
+    command_records_digest: digestCanonical(failedCommands),
+  })
+  const failedResult = bindBrowserEvidence({
+    candidate: candidate(), manifest: manifest(), playwright: failedPacket,
+    computerUse: browserPacket('computer_use', {
+      verifier_identity: 'computer-use:one', command_records: failedCommands,
+      command_records_digest: digestCanonical(failedCommands),
+    }),
+    trustedPins: trustedPins(),
+  })
+  assert.equal(failedResult.status, 'HELD_EVIDENCE_BINDING')
+  assert.equal(failedResult.reason, 'COMMAND_RECORD_FAILED')
+
+  const staleCommands = commandRecords().map((record) => ({
+    ...record,
+    started_at: '2026-08-28T01:00:00.000Z',
+    finished_at: '2026-08-28T02:00:00.000Z',
+  }))
+  const staleCommandDigest = digestCanonical(staleCommands)
+  const staleResult = bindBrowserEvidence({
+    candidate: candidate(), manifest: manifest(),
+    playwright: browserPacket('playwright', { command_records: staleCommands, command_records_digest: staleCommandDigest }),
+    computerUse: browserPacket('computer_use', {
+      verifier_identity: 'computer-use:one', command_records: staleCommands, command_records_digest: staleCommandDigest,
+    }),
+    trustedPins: trustedPins(),
+  })
+  assert.equal(staleResult.status, 'HELD_EVIDENCE_BINDING')
+  assert.equal(staleResult.reason, 'COMMAND_RECORD_WINDOW_MISMATCH')
+
+  // P2: six correctly labelled roles that ran an unrelated no-op command are not evidence
+  // of the real Playwright / Computer Use runs; every record must match the trusted pin.
+  const nonCanonical = commandRecords().map((record) => (record.role === 'computer_use' ? { ...record, argv_digest: SHA256('9') } : record))
+  const nonCanonicalDigest = digestCanonical(nonCanonical)
+  const nonCanonicalResult = bindBrowserEvidence({
+    candidate: candidate(), manifest: manifest(),
+    playwright: browserPacket('playwright', { command_records: nonCanonical, command_records_digest: nonCanonicalDigest }),
+    computerUse: browserPacket('computer_use', {
+      verifier_identity: 'computer-use:one', command_records: nonCanonical, command_records_digest: nonCanonicalDigest,
+    }),
+    trustedPins: trustedPins(),
+  })
+  assert.equal(nonCanonicalResult.status, 'HELD_EVIDENCE_BINDING')
+  assert.equal(nonCanonicalResult.reason, 'COMMAND_RECORD_NOT_CANONICAL')
+  const pinlessPins = trustedPins({ command_pins: undefined })
+  const pinsMissing = bindBrowserEvidence({
+    candidate: candidate(), manifest: manifest(), playwright: browserPacket('playwright'),
+    computerUse: browserPacket('computer_use', { verifier_identity: 'computer-use:one', authority: computerUseAuthority({ authority_digest: pinlessPins.authority_digest }) }),
+    trustedPins: pinlessPins,
+  })
+  assert.equal(pinsMissing.reason, 'COMMAND_PINS_MISSING')
+
+  // P2: a postflight captured before the browser verifiers finished cannot attest the
+  // post-test state, even though every interval lies inside the shared window.
+  const reordered = commandRecords().map((record) => (record.role === 'postflight'
+    ? { ...record, started_at: minutesAfterNow(1), finished_at: minutesAfterNow(3) }
+    : record))
+  const reorderedDigest = digestCanonical(reordered)
+  const reorderedResult = bindBrowserEvidence({
+    candidate: candidate(), manifest: manifest(),
+    playwright: browserPacket('playwright', { command_records: reordered, command_records_digest: reorderedDigest }),
+    computerUse: browserPacket('computer_use', {
+      verifier_identity: 'computer-use:one', command_records: reordered, command_records_digest: reorderedDigest,
+    }),
+    trustedPins: trustedPins(),
+  })
+  assert.equal(reorderedResult.reason, 'COMMAND_RECORD_ORDER_INVALID')
+
+  // P2: Computer Use must exercise the same user flow the evidence copies from Playwright.
+  for (const [label, drift] of [
+    ['route', { route: '#other' }], ['buttons', { main_buttons: ['Other'] }], ['fixture', { fixture: 'fixture:other' }],
+    ['api', { api: 'api:other' }], ['runtime', { runtime_id: 'runtime:other' }], ['visible state', { visible_state: 'state:other' }],
+  ]) {
+    const flowResult = bindBrowserEvidence({
+      candidate: candidate(), manifest: manifest(), playwright: browserPacket('playwright'),
+      computerUse: browserPacket('computer_use', { verifier_identity: 'computer-use:one', ...drift }),
+      trustedPins: trustedPins(),
+    })
+    assert.equal(flowResult.status, 'HELD_EVIDENCE_BINDING', label)
+    assert.equal(flowResult.reason, 'BROWSER_FLOW_MISMATCH', label)
+  }
+
+  for (const computerUse of [
+    browserPacket('computer_use', { verifier_identity: 'computer-use:one', network_result: 'network:other' }),
+    browserPacket('computer_use', { verifier_identity: 'computer-use:one', network_sha256: SHA256('0') }),
+  ]) {
+    const networkResult = bindBrowserEvidence({
+      candidate: candidate(), manifest: manifest(), playwright: browserPacket('playwright'),
+      computerUse, trustedPins: trustedPins(),
+    })
+    assert.equal(networkResult.status, 'HELD_EVIDENCE_BINDING')
+    assert.equal(networkResult.reason, 'NETWORK_EVIDENCE_MISMATCH')
+  }
+})
+
+test('binder preserves POSIX path case while folding Windows physical path identity', () => {
+  const upperPath = '/repo/Artifacts/e2e/change-a/run-a/stack-manifest.json'
+  const lowerPath = '/repo/artifacts/e2e/change-a/run-a/stack-manifest.json'
+  const upperDigest = sha256Text(upperPath)
+  const lowerDigest = sha256Text(lowerPath)
+  const upperIdentity = { manifest_path: upperPath, manifest_path_digest: upperDigest }
+  const accepted = bindBrowserEvidence({
+    candidate: candidate(upperIdentity),
+    manifest: manifest(upperIdentity),
+    playwright: browserPacket('playwright', upperIdentity),
+    computerUse: browserPacket('computer_use', { verifier_identity: 'computer-use:one', ...upperIdentity }),
+    trustedPins: trustedPins(),
+  })
+  assert.equal(accepted.status, 'READY_FOR_TRAIN')
+
+  const mismatched = bindBrowserEvidence({
+    candidate: candidate(upperIdentity),
+    manifest: manifest(upperIdentity),
+    playwright: browserPacket('playwright', upperIdentity),
+    computerUse: browserPacket('computer_use', {
+      verifier_identity: 'computer-use:one', manifest_path: lowerPath, manifest_path_digest: lowerDigest,
+    }),
+    trustedPins: trustedPins(),
+  })
+  assert.equal(mismatched.status, 'HELD_EVIDENCE_BINDING')
+  assert.equal(mismatched.reason, 'MANIFEST_PATH_MISMATCH')
+
+  const windowsPath = 'C:\\Repo\\Artifacts\\e2e\\change-a\\run-a\\stack-manifest.json'
+  const windowsVariant = 'c:/repo/artifacts/e2e/change-a/run-a/stack-manifest.json'
+  const windowsDigest = sha256Text(windowsVariant)
+  const windowsAccepted = bindBrowserEvidence({
+    candidate: candidate({ manifest_path: windowsPath, manifest_path_digest: windowsDigest }),
+    manifest: manifest({ manifest_path: windowsVariant, manifest_path_digest: windowsDigest }),
+    playwright: browserPacket('playwright', { manifest_path: windowsPath, manifest_path_digest: windowsDigest }),
+    computerUse: browserPacket('computer_use', {
+      verifier_identity: 'computer-use:one', manifest_path: windowsVariant, manifest_path_digest: windowsDigest,
+    }),
+    trustedPins: trustedPins(),
+  })
+  assert.equal(windowsAccepted.status, 'READY_FOR_TRAIN')
 })

@@ -94,7 +94,7 @@ const plan = () => ({
     risk: 'bounded',
     e2e_required: false,
   }],
-  requested_capacity: { writers: 2, runtime_leases: 3 },
+  requested_capacity: { writers: 1, runtime_leases: 3 },
   branch_profile: 'trunk',
   acceptance_criteria: ['criterion:closed-schema'],
   promotion_mode: 'single_pr',
@@ -175,7 +175,8 @@ const executionEnvelope = () => ({
   side_effect_class: 'CONTROL_METADATA',
 })
 
-const stack = () => ({
+const withVector = (value) => ({ ...value, ordered_member_vector_digest: digestCanonical(value.members) })
+const stack = () => withVector({
   schema_version: 'stack-delivery-envelope/v1',
   stack_id: 'stack:one',
   trunk_ref: 'origin/main',
@@ -209,6 +210,25 @@ const stack = () => ({
 function expectCode(code, callback) {
   assert.throws(callback, (error) => error?.code === code)
 }
+
+test('P2 regression — provider-session resource keys admit every contract-valid plan path and negated glob classes', async () => {
+  const longPath = (root, length) => {
+    let path = root
+    for (let index = 0; path.length < length; index += 1) path += `/dir${index}`
+    return path.slice(0, length - 2) + 'ab'
+  }
+  const keys = [`path:${longPath('src', 512)}`, `glob:${longPath('lib', 500)}/**/*.mjs`, `rename:${longPath('old', 512)}:${longPath('new', 512)}`, 'glob:src/[!a].mjs', 'glob:src/[^a].mjs']
+  const session = parseProviderSessionEnvelope({ ...providerSession(), resource_keys: keys })
+  assert.deepEqual(session.resource_keys, keys)
+  expectCode('invalid_value', () => parseProviderSessionEnvelope({ ...providerSession(), resource_keys: [`path:${longPath('src', 513)}`] }))
+  const schema = JSON.parse(await readFile(new URL('../../../agent-contracts/parallel-delivery-fabric.schema.json', import.meta.url), 'utf8'))
+  const definition = schema.$defs.resource_key.allOf.find((entry) => typeof entry.pattern === 'string')
+  const pattern = new RegExp(definition.pattern, 'u')
+  assert.equal(definition.maxLength, 1032)
+  for (const key of keys) assert.equal(pattern.test(key) && key.length <= definition.maxLength, true, key)
+  assert.equal(pattern.test('glob:src/[!a]/../x.mjs'), true)
+  assert.equal(pattern.test('Path:src/a.mjs'), false)
+})
 
 test('schema exposes every closed Fabric durable definition', async () => {
   const schema = JSON.parse(await readFile(new URL('../../../agent-contracts/parallel-delivery-fabric.schema.json', import.meta.url), 'utf8'))
@@ -255,15 +275,26 @@ test('canonicalization sorts keys without mutation and hashes canonical JSON', (
   expectCode('non_ijson_value', () => canonicalize({ bad: Number.NaN }))
   expectCode('non_ijson_value', () => canonicalize({ bad: '\ud800' }))
   expectCode('non_ijson_value', () => canonicalize({ __proto__: { polluted: true } }))
+  // A sparse array would serialize its holes as null and share a digest with [null].
+  expectCode('non_ijson_value', () => canonicalize(Array(1)))
+  expectCode('non_ijson_value', () => digestCanonical({ list: [1, , 3] }))
+  assert.equal(typeof digestCanonical([null]), 'string')
 })
 
-test('scope resources normalize Windows paths, preserve rename endpoints, and retain shared keys', () => {
+test('scope resources fold Windows paths, preserve POSIX case, and retain shared keys', () => {
   assert.deepEqual(normalizeScopeResource({ kind: 'path', path: 'Src\\Contracts\\Plan.json' }), {
-    kind: 'path', path: 'Src/Contracts/Plan.json',
+    kind: 'path', path: 'src/contracts/plan.json',
   })
   assert.deepEqual(normalizeScopeResource({ kind: 'rename', old_path: 'Src\\Old.ts', new_path: 'src\\New.ts' }), {
-    kind: 'rename', old_path: 'Src/Old.ts', new_path: 'src/New.ts',
+    kind: 'rename', old_path: 'src/old.ts', new_path: 'src/new.ts',
   })
+  assert.deepEqual(normalizeScopeResource({ kind: 'path', path: 'src/Foo.mjs' }), {
+    kind: 'path', path: 'src/Foo.mjs',
+  })
+  assert.notDeepEqual(
+    normalizeScopeResource({ kind: 'path', path: 'src/Foo.mjs' }),
+    normalizeScopeResource({ kind: 'path', path: 'src/foo.mjs' }),
+  )
   assert.deepEqual(normalizeScopeResource({ kind: 'shared_contract', resource_key: 'contract:Delivery-Plan' }), {
     kind: 'shared_contract', resource_key: 'contract:delivery-plan',
   })
@@ -292,6 +323,31 @@ test('delivery plans are versioned, exact-key, bounded, and privacy-safe', () =>
   const invalidOpaqueId = plan()
   invalidOpaqueId.plan_id = 'plan with spaces'
   expectCode('invalid_value', () => parseDeliveryPlan(invalidOpaqueId))
+
+  const threeWriters = plan()
+  threeWriters.tasks = [
+    { ...structuredClone(threeWriters.tasks[0]), task_id: 'task:one', dependencies: [] },
+    { ...structuredClone(threeWriters.tasks[0]), task_id: 'task:two', dependencies: ['task:one'] },
+    { ...structuredClone(threeWriters.tasks[0]), task_id: 'task:three', dependencies: ['task:two'] },
+  ]
+  threeWriters.requested_capacity.writers = 3
+  assert.equal(parseDeliveryPlan(threeWriters).requested_capacity.writers, 3)
+
+  const overTaskCount = structuredClone(threeWriters)
+  overTaskCount.requested_capacity.writers = 4
+  expectCode('invalid_value', () => parseDeliveryPlan(overTaskCount))
+
+  const missingDependency = structuredClone(threeWriters)
+  missingDependency.tasks[1].dependencies = ['task:missing']
+  expectCode('invalid_value', () => parseDeliveryPlan(missingDependency))
+
+  const selfDependency = structuredClone(threeWriters)
+  selfDependency.tasks[0].dependencies = ['task:one']
+  expectCode('invalid_value', () => parseDeliveryPlan(selfDependency))
+
+  const cyclic = structuredClone(threeWriters)
+  cyclic.tasks[0].dependencies = ['task:three']
+  expectCode('invalid_value', () => parseDeliveryPlan(cyclic))
 })
 
 test('all prohibited credential, host-identity, and transcript fields fail closed recursively', () => {
@@ -407,7 +463,7 @@ test('secret marker detection aligns with schema for bare bearer without rejecti
   assert.equal(parseExecutionEnvelope(normalNearWord).authority_reference, 'authority:bearing')
 })
 
-test('scope paths apply NFC while preserving case-sensitive Git identity', () => {
+test('scope paths apply NFC while preserving POSIX case and folding Windows case', () => {
   const composed = 'src/caf\u00e9.mjs'
   const decomposed = 'src/cafe\u0301.mjs'
   assert.deepEqual(
@@ -415,8 +471,12 @@ test('scope paths apply NFC while preserving case-sensitive Git identity', () =>
     normalizeScopeResource({ kind: 'path', path: composed }),
   )
   assert.deepEqual(
-    normalizeScopeResource({ kind: 'rename', old_path: decomposed, new_path: `src/${'CAFE\u0301'}.mjs` }),
-    { kind: 'rename', old_path: composed, new_path: 'src/CAF\u00c9.mjs' },
+    normalizeScopeResource({ kind: 'rename', old_path: decomposed.replaceAll('/', '\\'), new_path: `src\\${'CAFE\u0301'}.mjs` }),
+    { kind: 'rename', old_path: composed, new_path: composed },
+  )
+  assert.notDeepEqual(
+    normalizeScopeResource({ kind: 'path', path: 'src/Caf\u00e9.mjs' }),
+    normalizeScopeResource({ kind: 'path', path: composed }),
   )
 
   const normalizedPlan = plan()
@@ -432,13 +492,6 @@ test('scope paths apply NFC while preserving case-sensitive Git identity', () =>
     { kind: 'path', path: decomposed },
   ]
   expectCode('invalid_value', () => parseDeliveryPlan(colliding))
-
-  const caseDistinct = plan()
-  caseDistinct.tasks[0].scope.resources = [
-    { kind: 'path', path: composed },
-    { kind: 'path', path: 'src/CAF\u00c9.mjs' },
-  ]
-  assert.equal(parseDeliveryPlan(caseDistinct).tasks[0].scope.resources.length, 2)
 })
 
 test('provider-session envelope keeps identity opaque and keys closed', () => {

@@ -368,14 +368,20 @@
         "type": "click_exact_text",
         "value": "A1"
       },
+      "baseline_provenance": {
+        "authority": "canonical_product_surface",
+        "canonical_route": "#a1",
+        "capture_runner": "web-viewer-sample/e2e/design-system-visual.spec.ts",
+        "approval": "explicit owner rebaseline 2026-09-03 (owner approved 2026-09-03, PR #763 merged 458c0c4; sign-off recorded in this follow-up): A1 live workspace under the /api 503 stub re-laid out per design §03 IA (left stage-tree honestly disabled #609 / centre ViewportHost slot, zero DOM offline / right tool dock with flow guide) by introduce-viewer-app-integration-surface S3a+S3b; product-surface authority per PR #429 and #701 precedent; goldens captured from clean subject commit f31528e by design-system-visual.spec.ts"
+      },
       "baselines": {
         "1440x900": {
           "path": "docs/plans/design-system-baseline/workspace.a1.default/1440x900.png",
-          "sha256": "66a68e493ba47868051c7f3d713ea566ea6c21fdc62869fa2bbc7d2278d8acc4"
+          "sha256": "bc07ec21205c0fc1a84234836e72795ff0e4cf30006212f846216ec3bea19c6d"
         },
         "1920x1080": {
           "path": "docs/plans/design-system-baseline/workspace.a1.default/1920x1080.png",
-          "sha256": "dfe5830f9ca06ffc430b5445e87cd87393a3dd9dc0c6d146457fbc96f5c6ecc6"
+          "sha256": "63fb6b602341d80721d9ef7821772c44f34692da7d946bba05b7271b8f7a5306"
         }
       }
     },
@@ -388,14 +394,20 @@
         "type": "click_exact_text",
         "value": "A2"
       },
+      "baseline_provenance": {
+        "authority": "canonical_product_surface",
+        "canonical_route": "#a2",
+        "capture_runner": "web-viewer-sample/e2e/design-system-visual.spec.ts",
+        "approval": "explicit owner rebaseline 2026-09-03 (owner approved 2026-09-03, PR #763 merged 458c0c4; sign-off recorded in this follow-up): A2 live workspace under the /api 503 stub re-laid out per design §03 IA (left stage-tree honestly disabled #609 / centre ViewportHost slot, zero DOM offline / right tool dock with flow guide) by introduce-viewer-app-integration-surface S3a+S3b; product-surface authority per PR #429 and #701 precedent; goldens captured from clean subject commit f31528e by design-system-visual.spec.ts"
+      },
       "baselines": {
         "1440x900": {
           "path": "docs/plans/design-system-baseline/workspace.a2.default/1440x900.png",
-          "sha256": "ed3862395f73e59b8a282d1dc634ad9b7656dd4edb8ea00838be130962cf6999"
+          "sha256": "7ec50d23b15f8710f463de6a60f959e5de610502d2e47483055858e03161458f"
         },
         "1920x1080": {
           "path": "docs/plans/design-system-baseline/workspace.a2.default/1920x1080.png",
-          "sha256": "e8af88ba845c218739027a0f6fc4fce4a1dce3f8bfc0a6be315fa589c0b40813"
+          "sha256": "d91ab4f67859c7376271ee5986c0b2158e4c9709ed8f180a26d16dd912a089b0"
         }
       }
     },
@@ -408,14 +420,20 @@
         "type": "click_exact_text",
         "value": "A3"
       },
+      "baseline_provenance": {
+        "authority": "canonical_product_surface",
+        "canonical_route": "#a3",
+        "capture_runner": "web-viewer-sample/e2e/design-system-visual.spec.ts",
+        "approval": "explicit owner rebaseline 2026-09-03 (owner approved 2026-09-03, PR #763 merged 458c0c4; sign-off recorded in this follow-up): A3 live workspace under the /api 503 stub re-laid out per design §03 IA (left stage-tree honestly disabled #609 / centre ViewportHost slot, zero DOM offline / right tool dock with flow guide) by introduce-viewer-app-integration-surface S3a+S3b; product-surface authority per PR #429 and #701 precedent; goldens captured from clean subject commit f31528e by design-system-visual.spec.ts"
+      },
       "baselines": {
         "1440x900": {
           "path": "docs/plans/design-system-baseline/workspace.a3.default/1440x900.png",
-          "sha256": "fc054c8b2f7c343abf4adab7ff5ca2b2319884761536517034b3cf0fd27e711a"
+          "sha256": "ec52f1b3ca441a92d146d039c8217aecc51c96c2460da2bd56f81225cf551270"
         },
         "1920x1080": {
           "path": "docs/plans/design-system-baseline/workspace.a3.default/1920x1080.png",
-          "sha256": "fc1a640fb5d7b1a1e201a6d3170b80658e11c492b5e0887c20741b0c3ffcbba3"
+          "sha256": "b54b635146dc6f02721f9223c0e72dd60279889da8cf6f66a7b0880275102aef"
         }
       }
     },
@@ -430,18 +448,18 @@
       },
       "baseline_provenance": {
         "authority": "canonical_product_surface",
-        "canonical_route": "#workspace?dock=a4",
+        "canonical_route": "#a4",
         "capture_runner": "web-viewer-sample/e2e/design-system-visual.spec.ts",
-        "approval": "explicit A4 rebaseline 2026-07-29"
+        "approval": "explicit owner rebaseline 2026-09-03 (owner approved 2026-09-03, PR #763 merged 458c0c4; sign-off recorded in this follow-up): A4 live workspace under the /api 503 stub re-laid out per design §03 IA (left stage-tree honestly disabled #609 / centre ViewportHost slot, zero DOM offline / right tool dock with flow guide) by introduce-viewer-app-integration-surface S3a+S3b; product-surface authority per PR #429 and #701 precedent; goldens captured from clean subject commit f31528e by design-system-visual.spec.ts"
       },
       "baselines": {
         "1440x900": {
           "path": "docs/plans/design-system-baseline/workspace.a4.default/1440x900.png",
-          "sha256": "c8323fcc1860ae28f3ace96aa6f10e013b4ecd728279166471c2349d2224f61d"
+          "sha256": "33e8765a1914c3438224aadd4b5e4e277fe502be3c8c13a5b316132a85ce41cc"
         },
         "1920x1080": {
           "path": "docs/plans/design-system-baseline/workspace.a4.default/1920x1080.png",
-          "sha256": "2dc85cc567e9c707d5720798ba0b80cefe4e2265da8dff3f788928ebf7e3e42c"
+          "sha256": "d7304fa5f043c09be5e69c95840852c7bce8ac48d3d069a27f633f4774a31695"
         }
       }
     },
@@ -748,5 +766,5 @@
     "docs/plans/ai-bim-geo-viewer-A1.png..A10.png",
     "docs/plans/ai-bim-geo-Ai-codeing-A1.png..A10.png"
   ],
-  "baseline_snapshot_sha256": "eada82abba82b0355db827e4159dc8464866e382da78d66408084f0918fb2eaa"
+  "baseline_snapshot_sha256": "c5eb4422aba42f623fcf88f447a5e0da00f66c86812c7601628f9c7081cef507"
 }

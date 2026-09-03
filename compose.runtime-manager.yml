@@ -22,6 +22,8 @@ services:
       DEV_AUTH_TOKEN: ${DEV_AUTH_TOKEN:-dev-token}
       CORS_ORIGINS: "${CORS_ORIGINS:-http://127.0.0.1:5173,http://localhost:5173,http://127.0.0.1:5174,http://localhost:5174}"
       INTERNAL_API_AUTH_TOKEN: ${INTERNAL_API_AUTH_TOKEN:-dev-internal-token}
+      # Explicit opt-in only; blank keeps inactivity reclaim disabled.
+      SESSION_IDLE_TIMEOUT_MS: ${SESSION_IDLE_TIMEOUT_MS:-}
       CALLBACK_OUTBOX_STORE_PATH: /workspace/storage/coordinator/callback-outbox.json
       # #531：conversion ledger 必須與 callback outbox 同落掛載卷（/workspace/storage
       # 由下方 volumes 綁 owner 控制的 RUNTIME_STORAGE_ROOT）。不設此值時 config.ts
@@ -69,6 +71,17 @@ services:
       MINIO_WATCH_KEY_SUFFIX: ${MINIO_WATCH_KEY_SUFFIX:-}
       MINIO_WATCH_TENANT_ID: ${MINIO_WATCH_TENANT_ID:-}
       MINIO_WATCH_SELF_BASE_URL: ${MINIO_WATCH_SELF_BASE_URL:-}
+      # CONVERSION_TRIGGER_IP_ALLOWLIST 透傳（D2＝T2，owner 裁決 2026-09-02；同 MINIO_WATCH_*
+      # 的理由：容器內 env 只來自 compose `environment:`，.env 不掛入容器、image 不烤 .env）。
+      # 這是四條 conversion 控制路由（trigger／prioritize／retry／watch）專用的獨立 allowlist；
+      # 未設時 `${VAR:-}` 解析為空字串 → config.ts nullableCsvFromEnv 回 null → 沿用
+      # EXTERNAL_INTAKE_IP_ALLOWLIST 的既有判定（預設等於既有行為，不是「空清單＝全放行」）。
+      # 設值時 MUST 保留 loopback：MINIO_WATCH_ENABLED=true 且清單不含 127.0.0.1/::1 時，
+      # app.ts 的 assertIntakeReachable 會啟動 fail-fast。
+      # 刻意**不**透傳 EXTERNAL_INTAKE_IP_ALLOWLIST：spec unified-console-runtime-truth 明定
+      # SHALL NOT 放寬該共用 allowlist 與 /api/external/* webhook 授權面；LAN 放寬只能走本變數，
+      # webhook 進件面維持程式碼預設。
+      CONVERSION_TRIGGER_IP_ALLOWLIST: ${CONVERSION_TRIGGER_IP_ALLOWLIST:-}
     ports:
       - "127.0.0.1:8004:8004"
     volumes:

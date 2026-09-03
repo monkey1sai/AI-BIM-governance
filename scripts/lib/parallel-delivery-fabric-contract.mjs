@@ -89,7 +89,13 @@ export function canonicalize(value) {
       if (!Number.isSafeInteger(item)) fail('non_ijson_value', `${context}_safe_integer_required`)
       return item
     }
-    if (Array.isArray(item)) return item.map((entry, index) => normalize(entry, `${context}[${index}]`, depth + 1))
+    if (Array.isArray(item)) {
+      // A hole would serialize as null and alias a different input's digest.
+      for (let index = 0; index < item.length; index += 1) {
+        if (!Object.hasOwn(item, index)) fail('non_ijson_value', `${context}[${index}]_sparse_array`)
+      }
+      return item.map((entry, index) => normalize(entry, `${context}[${index}]`, depth + 1))
+    }
     if (!isPlainObject(item)) fail('non_ijson_value', `${context}_plain_object_required`)
 
     const normalized = {}
@@ -190,9 +196,15 @@ const assertSha256 = (value, context, nullable = false) => {
   return assertString(value, context, { min: 64, max: 64, pattern: SHA256 })
 }
 
+// Identifiers become object keys in canonical (IJSON) records, whose normalizer rejects
+// these prototype-colliding names; refusing them at the grammar keeps the contract honest
+// instead of letting a "valid" id fail deep inside every durable store.
+const RESERVED_IDENTIFIERS = new Set(['__proto__', 'constructor', 'prototype'])
+
 const assertOpaqueId = (value, context, nullable = false) => {
   if (nullable && value === null) return value
   const identifier = assertString(value, context, { min: 3, max: 128, pattern: OPAQUE_ID })
+  if (RESERVED_IDENTIFIERS.has(identifier)) fail('invalid_value', `${context}_reserved_identifier`)
   if (hasOpaqueIdentityDisclosure(identifier) || hasSecretValueMarker(identifier)) {
     fail('invalid_value', `${context}_raw_identity_or_credential_forbidden`)
   }
@@ -259,20 +271,86 @@ const assertUnique = (values, context) => {
   if (new Set(values).size !== values.length) fail('invalid_value', `${context}_duplicates_forbidden`)
 }
 
+const supportedGlobAlternatives = (pattern, depth = 0) => {
+  if (depth > 8) return null
+  const start = pattern.indexOf('{')
+  if (start < 0) return [pattern]
+  const end = pattern.indexOf('}', start + 1)
+  if (end < 0) return null
+  const choices = pattern.slice(start + 1, end).split(',')
+  if (choices.length < 2 || choices.some((choice) => choice.length === 0 || choice.includes('/'))) return null
+  const expanded = []
+  for (const choice of choices) {
+    const nested = supportedGlobAlternatives(`${pattern.slice(0, start)}${choice}${pattern.slice(end + 1)}`, depth + 1)
+    if (nested === null) return null
+    expanded.push(...nested)
+    if (expanded.length > 32) return null
+  }
+  return expanded
+}
+
+const supportedGlobTokens = (pattern) => {
+  for (let index = 0; index < pattern.length; index += 1) {
+    const character = pattern[index]
+    if (character === '[') {
+      const end = pattern.indexOf(']', index + 1)
+      if (end < 0) return false
+      const content = pattern.slice(index + 1, end)
+      const unprefixed = content[0] === '!' || content[0] === '^' ? content.slice(1) : content
+      if (!unprefixed || content.includes('/') || content.includes('[')) return false
+      index = end
+    } else if (character === ']' || character === '{' || character === '}') return false
+  }
+  return true
+}
+
+const supportedGlobPattern = (pattern) => {
+  const alternatives = supportedGlobAlternatives(pattern)
+  return alternatives !== null && alternatives.every(supportedGlobTokens)
+}
+
 const normalizeRelativePath = (value, context, { glob = false } = {}) => {
   assertString(value, context, { min: 1, max: 512 })
   if (value.includes('\u0000') || /[\r\n]/u.test(value)) fail('ambiguous_path', `${context}_control_character`)
+  const windowsIdentity = value.includes('\\')
   const slashed = value.normalize('NFC').replaceAll('\\', '/')
   if (
     slashed.startsWith('/') || slashed.startsWith('//') || /^[A-Za-z]:\//u.test(slashed) ||
     slashed.split('/').some((segment) => segment === '' || segment === '.' || segment === '..')
   ) fail('ambiguous_path', `${context}_not_repository_relative`)
   if (!glob && /[*?\[\]{}]/u.test(slashed)) fail('ambiguous_path', `${context}_wildcard_not_path`)
-  return slashed
+  if (glob && !supportedGlobPattern(slashed)) fail('ambiguous_path', `${context}_glob_syntax_unsupported`)
+  return windowsIdentity ? slashed.toLowerCase() : slashed
 }
 
+// Serialized scope keys (`path:` / `glob:` / `rename:<old>:<new>`) follow the lease-side
+// bound: 7 + 512 + 1 + 512, so every contract-valid plan path fits a session envelope.
+const MAX_RESOURCE_KEY_LENGTH = 1032
+
 const normalizeResourceKey = (value, context) => {
-  assertString(value, context, { min: 3, max: 256 })
+  assertString(value, context, { min: 3, max: MAX_RESOURCE_KEY_LENGTH })
+  const separator = value.indexOf(':')
+  const kind = separator > 0 ? value.slice(0, separator).toLowerCase() : ''
+  const payload = separator > 0 ? value.slice(separator + 1) : ''
+  if (kind === 'path' || kind === 'glob') {
+    const path = normalizeRelativePath(payload, context, { glob: kind === 'glob' })
+    const normalizedPathKey = `${kind}:${path}`
+    if (hasOpaqueIdentityDisclosure(normalizedPathKey) || hasSecretValueMarker(normalizedPathKey)) {
+      fail('invalid_value', `${context}_resource_key_raw_identity_or_credential_forbidden`)
+    }
+    return normalizedPathKey
+  }
+  if (kind === 'rename') {
+    const endpoints = payload.split(':')
+    if (endpoints.length !== 2) fail('invalid_value', `${context}_resource_key_invalid`)
+    const oldPath = normalizeRelativePath(endpoints[0], `${context}.old_path`)
+    const newPath = normalizeRelativePath(endpoints[1], `${context}.new_path`)
+    const normalizedRenameKey = `rename:${oldPath}:${newPath}`
+    if (hasOpaqueIdentityDisclosure(normalizedRenameKey) || hasSecretValueMarker(normalizedRenameKey)) {
+      fail('invalid_value', `${context}_resource_key_raw_identity_or_credential_forbidden`)
+    }
+    return normalizedRenameKey
+  }
   const normalized = value.toLowerCase()
   if (!RESOURCE_KEY.test(normalized)) fail('invalid_value', `${context}_resource_key_invalid`)
   if (hasOpaqueIdentityDisclosure(normalized) || hasSecretValueMarker(normalized)) {
@@ -383,8 +461,26 @@ export function parseDeliveryPlan(raw) {
       if (task.e2e_required !== task.scope.e2e_required) fail('invalid_value', `${context}_e2e_scope_mismatch`)
     })
     assertUnique(plan.tasks.map((task) => task.task_id), 'delivery_plan.tasks')
+    const tasksById = new Map(plan.tasks.map((task) => [task.task_id, task]))
+    for (const task of plan.tasks) {
+      for (const dependency of task.dependencies) {
+        if (dependency === task.task_id) fail('invalid_value', `delivery_plan.task_${task.task_id}_dependency_self_reference`)
+        if (!tasksById.has(dependency)) fail('invalid_value', `delivery_plan.task_${task.task_id}_dependency_missing`)
+      }
+    }
+    const visiting = new Set()
+    const visited = new Set()
+    const visitTask = (taskId) => {
+      if (visiting.has(taskId)) fail('invalid_value', 'delivery_plan_task_dependency_cycle')
+      if (visited.has(taskId)) return
+      visiting.add(taskId)
+      for (const dependency of tasksById.get(taskId).dependencies) visitTask(dependency)
+      visiting.delete(taskId)
+      visited.add(taskId)
+    }
+    for (const taskId of tasksById.keys()) visitTask(taskId)
     exactKeys(plan.requested_capacity, ['writers', 'runtime_leases'], 'delivery_plan.requested_capacity')
-    assertSafeInteger(plan.requested_capacity.writers, 'delivery_plan.requested_capacity.writers', 1, 2)
+    assertSafeInteger(plan.requested_capacity.writers, 'delivery_plan.requested_capacity.writers', 1, plan.tasks.length)
     assertSafeInteger(plan.requested_capacity.runtime_leases, 'delivery_plan.requested_capacity.runtime_leases', 0, 3)
     assertEnum(plan.branch_profile, ['trunk', 'managed_gitflow'], 'delivery_plan.branch_profile')
     assertArray(plan.acceptance_criteria, 'delivery_plan.acceptance_criteria', { min: 1, max: 128 })
@@ -537,6 +633,8 @@ export function parseStackDeliveryEnvelope(raw) {
       assertEnum(member.unresolved_finding_state, ['none'], `${context}.unresolved_finding_state`)
     })
     if (stack.members.at(-1).pr_number !== stack.selected_top_pr) fail('invalid_value', 'stack_delivery_selected_top_not_final_member')
+    // The frozen vector identity is derived from the members, never declared.
+    if (stack.ordered_member_vector_digest !== digestCanonical(stack.members)) fail('invalid_value', 'stack_delivery_vector_digest_mismatch')
     assertUnique(stack.members.map((member) => member.pr_number), 'stack_delivery.members')
     assertSha256(stack.expected_protection_digest, 'stack_delivery.expected_protection_digest')
     assertOpaqueReference(stack.capability_reference, 'stack_delivery.capability_reference')

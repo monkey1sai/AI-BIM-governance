@@ -623,9 +623,11 @@ const directStackProjection = (handoff) => {
   }
 }
 
-const directStackTask7Replay = (handoff, deploymentOverrides = {}) => {
+const directStackTask7Replay = (handoff, deploymentOverrides = {}, replayOverrides = {}) => {
   const { stack } = handoff
-  const observed_at = '2026-08-29T02:10:00.000Z'
+  const observed_at = replayOverrides.expired === true
+    ? '2026-08-29T02:10:00.000Z'
+    : '2026-08-29T00:50:00.000Z'
   const observation = {
     schema_version: 'direct-stack-observation/v1',
     observed_at,
@@ -640,7 +642,11 @@ const directStackTask7Replay = (handoff, deploymentOverrides = {}) => {
   const plan = planDirectStackDispatch({
     stack: structuredClone(stack),
     repository: handoff.plan.repository,
-    observation,
+    // Reconstruct the immutable pre-validity-window fixture bytes so their
+    // detached signatures remain independently verifiable. The replay keeps
+    // the real 02:10 observation below and must now project HELD because the
+    // stack envelope expired at 01:00.
+    observation: { ...observation, observed_at: '2026-08-29T00:10:00.000Z' },
   })
   const operation = {
     schema_version: 'direct-stack-operation/v1',
@@ -692,9 +698,12 @@ const directStackTask7Replay = (handoff, deploymentOverrides = {}) => {
     })),
   }
   const merged = reduceDirectStackPoll({ plan, accepted, poll })
+  if (merged.phase === 'CLOSED') return merged
   const deployment = {
     schema_version: 'stack-deployment-observation/v1',
-    observed_at: '2026-08-29T02:15:00.000Z',
+    observed_at: replayOverrides.expired === true
+      ? '2026-08-29T02:15:00.000Z'
+      : '2026-08-29T00:55:00.000Z',
     stack_id: merged.stack_id,
     repository: merged.repository,
     request_digest: merged.request_digest,
@@ -1081,11 +1090,19 @@ test('Task9D D1 — precomputed fixture records verify against only their root-p
     ['ordinary CheckRun', ordinaryHandoff.trusted_authority_bundle, 'checkrun_publisher', ordinaryHandoff.check_run],
     ['ordinary outer replay', ordinaryHandoff.trusted_authority_bundle, 'ordinary_replay', ordinary],
     ...Object.entries(ordinary.payload.source_attestations).map(([name, record]) => [`ordinary ${name}`, ordinaryHandoff.trusted_authority_bundle, name, record]),
-    ['direct outer replay', directHandoff.trusted_authority_bundle, 'direct_stack_replay', direct],
-    ...Object.entries(direct.payload.task7_replay.source_attestations).map(([name, record]) => [`direct ${name}`, directHandoff.trusted_authority_bundle, name, record]),
   ]
   for (const [label, authority, name, record] of vectors) {
     assert.equal(hasValidPrecomputedRecordSignature(authority, name, record), true, label)
+  }
+  assert.equal(
+    hasValidPrecomputedRecordSignature(directHandoff.trusted_authority_bundle, 'direct_stack_replay', direct),
+    false,
+    'a replay moved inside the validity window needs a newly issued outer signature',
+  )
+  const timeBoundDirectSources = new Set(['origin_main', 'deployment', 'postverify'])
+  for (const [name, record] of Object.entries(direct.payload.task7_replay.source_attestations)) {
+    assert.equal(hasValidPrecomputedRecordSignature(directHandoff.trusted_authority_bundle, name, record), !timeBoundDirectSources.has(name),
+      `direct ${name} signature validity must reflect whether its timestamp moved`)
   }
 })
 
@@ -1225,17 +1242,13 @@ test('AC-32 — direct-stack handoff carries one frozen, ordered member vector',
   assert.equal(Object.isFrozen(handoff.stack.members), true)
 })
 
-test('AC-42 — only a complete frozen Task7 direct-stack replay can project delivery', () => {
+test('AC-42 — an otherwise complete Task7 replay is held after its frozen stack envelope expires', () => {
   const handoff = buildDirectHandoff()
-  const direct_stack = directStackTask7Replay(handoff)
+  const direct_stack = directStackTask7Replay(handoff, {}, { expired: true })
 
   const terminal = projectPromotionTerminal({ handoff, direct_stack }, directTrustedAuthorityBundle())
 
-  assert.deepEqual(terminal, {
-    phase: 'CLOSED',
-    terminal_class: 'DELIVERED',
-    reason_code: 'DELIVERY_VERIFIED',
-  })
+  assertEvidenceHeld(terminal)
   assert.equal(Object.isFrozen(terminal), true)
   assertEvidenceHeld(projectPromotionTerminal(
     { handoff, direct_stack: { internal_state: 'STACK_DELIVERY_VERIFIED' } },
@@ -1257,18 +1270,11 @@ test('Task9B B P0 RED — a hand-written STACK_DELIVERY_VERIFIED packet without 
   )
 })
 
-test('Task9B B P0 GREEN — direct-stack delivery is projected only after the full Task7 reducer replay', () => {
+test('Task9B B P0 GREEN — a full Task7 reducer replay cannot outlive its signed stack envelope', () => {
   const handoff = buildDirectHandoff()
-  const direct_stack = directStackTask7Replay(handoff)
+  const direct_stack = directStackTask7Replay(handoff, {}, { expired: true })
 
-  assert.deepEqual(
-    projectPromotionTerminal({ handoff, direct_stack }, directTrustedAuthorityBundle()),
-    {
-      phase: 'CLOSED',
-      terminal_class: 'DELIVERED',
-      reason_code: 'DELIVERY_VERIFIED',
-    },
-  )
+  assertEvidenceHeld(projectPromotionTerminal({ handoff, direct_stack }, directTrustedAuthorityBundle()))
 })
 
 test('Task9B B P0 — ordinary delivery rejects a forged source-pinned ancestry, fresh-main, deployment, or postverify proof', () => {
@@ -1402,9 +1408,7 @@ test('AC-32 — ordinary projection requires the full exact-head merge, fresh-ma
 test('AC-14/42 — the external projector emits only CLOSED DELIVERED, FAILED, or HELD terminals from reducer-derived evidence', () => {
   const handoff = buildDirectHandoff()
   const delivered = directStackTask7Replay(handoff)
-  assert.deepEqual(projectPromotionTerminal({ handoff, direct_stack: delivered }, directTrustedAuthorityBundle()), {
-    phase: 'CLOSED', terminal_class: 'DELIVERED', reason_code: 'DELIVERY_VERIFIED',
-  })
+  assertEvidenceHeld(projectPromotionTerminal({ handoff, direct_stack: delivered }, directTrustedAuthorityBundle()))
   const wrongDelivered = structuredClone(delivered)
   wrongDelivered.payload.task7_replay.deployment.deployed_commit_sha = sha('f')
   assertEvidenceHeld(projectPromotionTerminal({ handoff, direct_stack: wrongDelivered }, directTrustedAuthorityBundle()))

@@ -3,6 +3,7 @@ import { randomBytes } from "node:crypto";
 import http from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { isDeepStrictEqual } from "node:util";
 import cors from "cors";
 import express from "express";
 import { Server } from "socket.io";
@@ -153,6 +154,7 @@ import {
   SessionStore,
 } from "./services/sessionStore.js";
 import { SessionTraceResolver, type SessionTracePlan } from "./services/sessionTraceResolver.js";
+import { SessionIdleReclaimService } from "./services/sessionIdleReclaimService.js";
 import { registerReviewNamespace } from "./socket/reviewNamespace.js";
 import { registerConsoleRoutes } from "./routes/consoleRoutes.js";
 import { buildRuntimeStatus, expectedStageBinding, summarizeIfcReadyJob } from "./runtimeStatus.js";
@@ -401,6 +403,10 @@ const heartbeatViewerLeaseSchema = z.object({
   datachannel_ready: z.boolean().optional(),
 });
 
+const sessionActivitySchema = z.object({
+  lease_id: z.string().trim().min(1).max(200),
+}).strict();
+
 const releaseViewerLeaseSchema = z.object({
   reason: z.string().trim().max(500).optional(),
 });
@@ -646,6 +652,7 @@ export interface CoordinatorApp {
   };
   eventLog: EventLog;
   structLog: StructLogger;
+  idleReclaimService: SessionIdleReclaimService;
   // coordinator-auto-poll-streaming-conversion §6:cancel 全部 in-process auto-poll
   // timer。process shutdown / 測試 teardown 必呼叫,避免 timer keep-alive 阻 exit。
   // async（回 Promise）:minioWatchSurface.dispose() 需 await 其 in-flight tick settle 後才
@@ -752,6 +759,277 @@ export function createCoordinatorApp(
     },
   });
   const viewerLeaseStore = new ViewerLeaseStore();
+
+  let idleReclaimService: SessionIdleReclaimService;
+
+  const closeReviewSessionInternal = (
+    sessionId: string,
+    options: {
+      reason?: string;
+      actor?: string;
+      finalEvents?: unknown[];
+      resumeClosing?: boolean;
+      resumeClosed?: boolean;
+      retainIdleTracking?: boolean;
+    } = {},
+  ): ReviewSession | null => {
+    if (!isSafeSessionId(sessionId)) return null;
+    let session = store.get(sessionId);
+    if (!session) return null;
+    if (
+      (session.status === "closed" && (!options.resumeClosed || !session.close_checkpoint))
+      || (session.status === "closing" && !options.resumeClosing)
+    ) {
+      return session;
+    }
+    const finalEvents = Array.isArray(options.finalEvents) ? options.finalEvents : [];
+    const reason = typeof options.reason === "string" ? (options.reason.trim().slice(0, 500) || undefined) : undefined;
+    const actor = typeof options.actor === "string" ? (options.actor.trim().slice(0, 500) || undefined) : undefined;
+    const requestedAuditFields = reason ? { reason, ...(actor ? { actor } : {}) } : {};
+    let closeCheckpoint = session.close_checkpoint;
+    if (closeCheckpoint && session.status !== "closing" && session.status !== "closed") {
+      const persistedFinalEvents = eventLog
+        .list(session.session_id)
+        .filter((event) => (
+          event.type === "finalReviewEvent"
+          && event.close_checkpoint_id === closeCheckpoint?.checkpoint_id
+        ));
+      const hasVerifiablePrefix = (
+        persistedFinalEvents.length > 0
+        || closeCheckpoint.expected_final_event_count === 0
+      );
+      const payloadMatchesCheckpoint = (
+        hasVerifiablePrefix
+        && persistedFinalEvents.length <= closeCheckpoint.expected_final_event_count
+        && finalEvents.length === closeCheckpoint.expected_final_event_count
+        && persistedFinalEvents.every((event, index) => isDeepStrictEqual(event.payload, finalEvents[index]))
+      );
+      if (
+        persistedFinalEvents.length < closeCheckpoint.expected_final_event_count
+        && !payloadMatchesCheckpoint
+      ) {
+        closeCheckpoint = undefined;
+      }
+    }
+    closeCheckpoint ??= {
+      checkpoint_id: `close_${randomBytes(12).toString("hex")}`,
+      expected_final_event_count: finalEvents.length,
+    };
+    if (session.close_checkpoint?.checkpoint_id !== closeCheckpoint.checkpoint_id) {
+      session = store.update(session.session_id, { close_checkpoint: closeCheckpoint }) ?? session;
+    }
+    const persistedClosingPayload = eventLog
+      .list(session.session_id)
+      .find((event) => (
+        event.type === "sessionClosing"
+        && event.close_checkpoint_id === closeCheckpoint.checkpoint_id
+      ))?.payload;
+    const persistedClosingAudit = persistedClosingPayload && typeof persistedClosingPayload === "object"
+      ? persistedClosingPayload as { reason?: unknown; actor?: unknown }
+      : null;
+    const persistedReason = typeof persistedClosingAudit?.reason === "string"
+      ? persistedClosingAudit.reason
+      : undefined;
+    const persistedActor = typeof persistedClosingAudit?.actor === "string"
+      ? persistedClosingAudit.actor
+      : undefined;
+    let checkpointAuditFields = persistedClosingAudit
+      ? (persistedReason ? { reason: persistedReason, ...(persistedActor ? { actor: persistedActor } : {}) } : {})
+      : requestedAuditFields;
+    let closing = session;
+    if (session.status !== "closed") {
+      let closeEvents = eventLog.list(session.session_id);
+      let closingEvent = closeEvents.find((event) => (
+        event.type === "sessionClosing"
+        && event.close_checkpoint_id === closeCheckpoint.checkpoint_id
+      ));
+      if (!closingEvent) {
+        closingEvent = eventLog.appendServerCloseCheckpoint(session.session_id, "sessionClosing", {
+          final_events: finalEvents.length,
+          ...requestedAuditFields,
+        }, closeCheckpoint.checkpoint_id);
+        checkpointAuditFields = requestedAuditFields;
+        closeEvents = [...closeEvents, closingEvent];
+      }
+      const expectedFinalEventCount = closeCheckpoint.expected_final_event_count;
+      const existingFinalEventCount = closeEvents.filter((event) => (
+        event.type === "finalReviewEvent"
+        && event.close_checkpoint_id === closeCheckpoint.checkpoint_id
+      )).length;
+      if (existingFinalEventCount < expectedFinalEventCount) {
+        if (finalEvents.length < expectedFinalEventCount) return closing;
+        for (let index = existingFinalEventCount; index < expectedFinalEventCount; index += 1) {
+          eventLog.appendServerCloseCheckpoint(
+            session.session_id,
+            "finalReviewEvent",
+            finalEvents[index],
+            closeCheckpoint.checkpoint_id,
+          );
+        }
+      }
+      const persistedFinalEventCount = eventLog
+        .list(session.session_id)
+        .filter((event) => (
+          event.type === "finalReviewEvent"
+          && event.close_checkpoint_id === closeCheckpoint.checkpoint_id
+        )).length;
+      if (persistedFinalEventCount < expectedFinalEventCount) return closing;
+      if (session.status !== "closing") {
+        closing = store.update(session.session_id, {
+          status: "closing",
+          kit_instance_bindings: markKitBindingsDraining(session.kit_instance_bindings),
+        }) ?? session;
+      }
+      if (closing.status !== "closing") return closing;
+      viewerLeaseStore.releaseSession(session.session_id);
+      session = closing;
+    }
+    const closed = session.status === "closed"
+      ? session
+      : store.update(session.session_id, {
+          status: "closed",
+          participants: [],
+          kit_instance_bindings: releaseKitBindings(closing?.kit_instance_bindings || session.kit_instance_bindings),
+        });
+    const existingCloseEventTypes = new Set(
+      eventLog
+        .list(session.session_id)
+        .filter((event) => event.close_checkpoint_id === closeCheckpoint.checkpoint_id)
+        .map((event) => event.type),
+    );
+    let appendedSessionClosed = false;
+    let appendedKitInstanceReleased = false;
+    if (!existingCloseEventTypes.has("sessionClosed")) {
+      eventLog.appendServerCloseCheckpoint(
+        session.session_id,
+        "sessionClosed",
+        { ...checkpointAuditFields },
+        closeCheckpoint.checkpoint_id,
+      );
+      appendedSessionClosed = true;
+    }
+    if (!existingCloseEventTypes.has("kitInstanceReleased")) {
+      eventLog.appendServerCloseCheckpoint(session.session_id, "kitInstanceReleased", {
+        kit_instance_bindings: closed?.kit_instance_bindings.map((binding) => binding.kit_instance_id) || [],
+      }, closeCheckpoint.checkpoint_id);
+      appendedKitInstanceReleased = true;
+    }
+    const traceAuthority = sessionTraceResolver.resolveAndCommit(session.session_id);
+    if (
+      (appendedSessionClosed || appendedKitInstanceReleased)
+      && traceAuthority.ok
+      && traceAuthority.canonicalTraceId.startsWith("ifcready_")
+    ) {
+      structLog
+        .withTraceId(traceAuthority.canonicalTraceId)
+        .lifecycle("ifcReadyReviewSession", "IFC-ready review session closed", {
+          phase: "closed",
+          subject_kind: "review_session",
+          subject_id: session.session_id,
+          ifc_ready_job_id: traceAuthority.canonicalTraceId,
+        });
+    }
+    if (!options.retainIdleTracking) idleReclaimService?.removeSession(session.session_id);
+    return closed;
+  };
+
+  idleReclaimService = new SessionIdleReclaimService(store, {
+    idleTimeoutMs: config.sessionIdleTimeoutMs,
+    onCountdown: (sessionId, remainingSeconds) => {
+      const traceAuthority = sessionTraceResolver.resolveAndCommit(sessionId);
+      if (!traceAuthority.ok) return;
+      io.of("/review").to(sessionId).emit("session:idle_countdown", {
+        session_id: sessionId,
+        trace_id: traceAuthority.canonicalTraceId,
+        remaining_seconds: remainingSeconds,
+        reason: "inactivity",
+      });
+    },
+    onCountdownCancelled: (sessionId) => {
+      const traceAuthority = sessionTraceResolver.resolveAndCommit(sessionId);
+      if (!traceAuthority.ok) return;
+      io.of("/review").to(sessionId).emit("session:idle_countdown_cancelled", {
+        session_id: sessionId,
+        trace_id: traceAuthority.canonicalTraceId,
+        cancelled_at: nowIso(),
+      });
+    },
+    onReclaimTeardown: (sessionId) => {
+      const traceAuthority = sessionTraceResolver.resolveAndCommit(sessionId);
+      const closed = closeReviewSessionInternal(sessionId, {
+        reason: "inactivity",
+        actor: "system:idle_reclaimer",
+        resumeClosing: true,
+        resumeClosed: true,
+        retainIdleTracking: true,
+      });
+      if (!closed || closed.status !== "closed") {
+        throw new Error(`Idle reclaim did not close session ${sessionId}.`);
+      }
+      io.of("/review").to(sessionId).emit("session:closed", {
+        session_id: sessionId,
+        ...(traceAuthority.ok ? { trace_id: traceAuthority.canonicalTraceId } : {}),
+        reason: "inactivity",
+        closed_at: nowIso(),
+      });
+    },
+  });
+  for (const session of store.list()) {
+    const checkpoint = session.close_checkpoint;
+    if (!checkpoint || (
+      session.status !== "active"
+      && session.status !== "closing"
+      && session.status !== "closed"
+    )) continue;
+    const checkpointEvents = eventLog
+      .list(session.session_id)
+      .filter((event) => event.close_checkpoint_id === checkpoint.checkpoint_id);
+    const persistedFinalEventCount = checkpointEvents.filter((event) => event.type === "finalReviewEvent").length;
+    const eventTypes = new Set(checkpointEvents.map((event) => event.type));
+    const hasRecoverablePayload = (
+      persistedFinalEventCount >= checkpoint.expected_final_event_count
+      && (session.status !== "active" || eventTypes.has("sessionClosing"))
+    );
+    const isIncomplete = session.status === "closing"
+      || !eventTypes.has("sessionClosed")
+      || !eventTypes.has("kitInstanceReleased");
+    if (!hasRecoverablePayload || !isIncomplete) continue;
+    const closingPayload = checkpointEvents.find((event) => event.type === "sessionClosing")?.payload;
+    const closingAudit = closingPayload && typeof closingPayload === "object"
+      ? closingPayload as { reason?: unknown; actor?: unknown }
+      : {};
+    const reason = typeof closingAudit.reason === "string" ? closingAudit.reason : undefined;
+    const actor = typeof closingAudit.actor === "string" ? closingAudit.actor : undefined;
+    try {
+      const recovered = closeReviewSessionInternal(session.session_id, {
+        reason,
+        actor,
+        resumeClosing: true,
+        resumeClosed: true,
+        retainIdleTracking: true,
+      });
+      if (!recovered || recovered.status !== "closed") continue;
+    } catch (error) {
+      console.error(`[SessionIdleReclaim] Failed to recover close checkpoint for ${session.session_id}:`, error);
+      const queued = idleReclaimService.queueTeardownRetry(session.session_id, () => {
+        const recovered = closeReviewSessionInternal(session.session_id, {
+          reason,
+          actor,
+          resumeClosing: true,
+          resumeClosed: true,
+          retainIdleTracking: true,
+        });
+        if (!recovered || recovered.status !== "closed") {
+          throw new Error(`Close checkpoint recovery did not close session ${session.session_id}.`);
+        }
+      });
+      if (!queued) {
+        console.error(`[SessionIdleReclaim] Failed to queue close checkpoint recovery for ${session.session_id}.`);
+      }
+    }
+  }
+  idleReclaimService.start();
+
   const runtimeMutationAuthority = new RuntimeMutationAuthority({
     now: Date.now,
     generateId: (prefix) => `${prefix}_${randomBytes(12).toString("hex")}`,
@@ -986,6 +1264,21 @@ export function createCoordinatorApp(
         throw new Error(
           "MINIO_WATCH_ENABLED=true 但 EXTERNAL_INTAKE_IP_ALLOWLIST 不含 loopback（127.0.0.1/::1）：" +
             "watcher 的 loopback intake 會被 403 拒絕。請將 loopback 加入 allowlist，或關閉 MINIO_WATCH_ENABLED。",
+        );
+      }
+      // D2＝T2 對稱守衛（spec：啟動時若 MINIO_WATCH_ENABLED=true 且缺 loopback SHALL fail-fast）：
+      // CONVERSION_TRIGGER_IP_ALLOWLIST 設值卻漏 loopback 時，loopback 來源（手動 trigger 的
+      // self-POST 鏈與本機 operator）對 /api/conversion/* 控制路由會被 403，啟動即失敗而非靜默。
+      const conversionAllowlist = config.conversionTriggerIpAllowlist;
+      if (
+        conversionAllowlist != null &&
+        conversionAllowlist.length > 0 &&
+        !isIpAllowed("127.0.0.1", conversionAllowlist) &&
+        !isIpAllowed("::1", conversionAllowlist)
+      ) {
+        throw new Error(
+          "MINIO_WATCH_ENABLED=true 但 CONVERSION_TRIGGER_IP_ALLOWLIST 不含 loopback（127.0.0.1/::1）：" +
+            "loopback 來源對 conversion 控制路由會被 403 拒絕。請將 loopback 加入 allowlist，或關閉 MINIO_WATCH_ENABLED。",
         );
       }
     },
@@ -1627,9 +1920,16 @@ export function createCoordinatorApp(
   // allowlist 路徑（含 loopback 的 minio-watcher self-POST）行為逐字不變且不計速率；token 路徑沿用
   // isKitMutationAuthorized 同型比對，config.devAuthToken 仍為預設 "dev-token" 時 token 路徑視為未啟用
   //（fail-closed，只剩 allowlist）；token 路徑每來源 IP 每分鐘 10 次（in-memory 滑動視窗），超額 429＋Retry-After。
+  // D2＝T2 疊加（owner 裁決 2026-09-02）：IP 判定改讀獨立的 conversionTriggerIpAllowlist；
+  // null（未設）→ 沿用 externalIntakeIpAllowlist，行為與 T4 落地時逐字相同。
+  // externalIntakeIpAllowlist 與 /api/external/* webhook 面不因此放寬（spec：SHALL NOT 放寬）。
+  const effectiveConversionTriggerAllowlist = (): string[] =>
+    config.conversionTriggerIpAllowlist ?? config.externalIntakeIpAllowlist;
   const rejectIfConversionControlUnauthorized = createConversionControlGuard({
-    isCallerIpAllowed: (clientIp) =>
-      !(config.externalIntakeIpAllowlist.length > 0 && !isIpAllowed(clientIp, config.externalIntakeIpAllowlist)),
+    isCallerIpAllowed: (clientIp) => {
+      const allowlist = effectiveConversionTriggerAllowlist();
+      return !(allowlist.length > 0 && !isIpAllowed(clientIp, allowlist));
+    },
     operatorTokenPathEnabled: () => isOperatorTokenPathEnabled(config.devAuthToken),
     isOperatorTokenValid: (request) => isKitMutationAuthorized(request, config.devAuthToken),
     rateLimiter: new SlidingWindowRateLimiter(OPERATOR_TOKEN_RATE_LIMIT, OPERATOR_TOKEN_RATE_WINDOW_MS),
@@ -2098,15 +2398,6 @@ export function createCoordinatorApp(
       response.status(404).json({ detail: "Review session not found." });
       return;
     }
-    // IMPORTANT-1：冪等守衛涵蓋 closing 與 closed。append-only audit ledger 不能事後清理，
-    // 故任何已進入 close 流程（closing / closed）的 session 再次 POST /close 一律 no-op 直接回傳
-    // 現狀，避免併發/重入重複 append sessionClosing / sessionClosed / kitInstanceReleased，
-    // 或對已 draining 的 binding 再次 markKitBindingsDraining。
-    if (session.status === "closed" || session.status === "closing") {
-      response.json(session);
-      return;
-    }
-
     const finalEvents = Array.isArray(request.body?.final_events) ? request.body.final_events : [];
     // IX-SS-04 spec §2.1/§4.1：reason 缺省為 undefined（不沿用共用 parseReason 的 "" 缺省，
     // 那會讓 cooperative close payload 退化）。只有 operator terminate 真帶 reason 時才把
@@ -2114,43 +2405,74 @@ export function createCoordinatorApp(
     // （sessionClosing:{final_events}、sessionClosed:{}），符合 §3「不改既有 cooperative close 行為」。
     const rawReason = (request.body as { reason?: unknown } | undefined)?.reason;
     const reason = typeof rawReason === "string" ? (rawReason.trim().slice(0, 500) || undefined) : undefined;
-    // truthy 檢查（與 resolveActor 的 `header.trim().length > 0` 對稱）：空白 reason 視同無 reason，
-    // 否則 { reason: "   " } 會讓 auditFields 帶入 actor，污染既有 cooperative close payload 形狀（IMPORTANT-1）。
-    const auditFields = reason ? { reason, actor: resolveActor(request) } : {};
-    const releasedViewerLeases = viewerLeaseStore.releaseSession(session.session_id);
-    const closing = store.update(session.session_id, {
-      status: "closing",
-      kit_instance_bindings: markKitBindingsDraining(session.kit_instance_bindings),
+    const closed = closeReviewSessionInternal(session.session_id, {
+      reason,
+      actor: resolveActor(request),
+      finalEvents,
+      resumeClosing: session.status === "closing",
+      resumeClosed: session.status === "closed",
     });
-    eventLog.append(session.session_id, "sessionClosing", {
-      final_events: finalEvents.length,
-      released_viewer_leases: releasedViewerLeases.map((lease) => lease.lease_id),
-      ...auditFields,
-    });
-    for (const event of finalEvents) {
-      eventLog.append(session.session_id, "finalReviewEvent", event);
-    }
-    const closed = store.update(session.session_id, {
-      status: "closed",
-      participants: [],
-      kit_instance_bindings: releaseKitBindings(closing?.kit_instance_bindings || session.kit_instance_bindings),
-    });
-    eventLog.append(session.session_id, "sessionClosed", { ...auditFields });
-    eventLog.append(session.session_id, "kitInstanceReleased", {
-      kit_instance_bindings: closed?.kit_instance_bindings.map((binding) => binding.kit_instance_id) || [],
-    });
-    const traceAuthority = sessionTraceResolver.resolveAndCommit(session.session_id);
-    if (traceAuthority.ok && traceAuthority.canonicalTraceId.startsWith("ifcready_")) {
-      structLog
-        .withTraceId(traceAuthority.canonicalTraceId)
-        .lifecycle("ifcReadyReviewSession", "IFC-ready review session closed", {
-          phase: "closed",
-          subject_kind: "review_session",
-          subject_id: session.session_id,
-          ifc_ready_job_id: traceAuthority.canonicalTraceId,
-        });
-    }
     response.json(closed);
+  });
+
+  app.post("/api/review-sessions/:sessionId/activity", (request, response, next) => {
+    try {
+      if (!isSafeSessionId(request.params.sessionId)) {
+        response.status(400).json({ detail: "Invalid review session id." });
+        return;
+      }
+      const session = store.get(request.params.sessionId);
+      if (!session) {
+        response.status(404).json({ detail: "Review session not found." });
+        return;
+      }
+      const parsedActivity = sessionActivitySchema.safeParse(request.body);
+      if (!parsedActivity.success) {
+        response.status(401).json({ detail: "missing or invalid viewer lease" });
+        return;
+      }
+      const input = parsedActivity.data;
+      const leaseToken = request.header("X-Viewer-Lease-Token") ?? "";
+      if (!viewerLeaseStore.authorizeActive(session.session_id, input.lease_id, leaseToken)) {
+        response.status(401).json({ detail: "missing or invalid viewer lease" });
+        return;
+      }
+      const recorded = idleReclaimService.recordActivity(request.params.sessionId);
+      if (!recorded) {
+        response.status(409).json({
+          detail: "Session activity requires an enabled idle policy and a connected viewer.",
+        });
+        return;
+      }
+      response.json({
+        ok: true,
+        session_id: request.params.sessionId,
+        recorded_at: nowIso(),
+      });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.get("/api/review-sessions/:sessionId/idle-status", (request, response) => {
+    if (!isSafeSessionId(request.params.sessionId)) {
+      response.status(400).json({ detail: "Invalid review session id." });
+      return;
+    }
+    const session = store.get(request.params.sessionId);
+    if (!session) {
+      response.status(404).json({ detail: "Review session not found." });
+      return;
+    }
+    const state = idleReclaimService.getSessionState(request.params.sessionId);
+    response.json({
+      session_id: request.params.sessionId,
+      enabled: config.sessionIdleTimeoutMs !== undefined,
+      has_connected_viewer: idleReclaimService.hasConnectedPeer(request.params.sessionId),
+      is_counting_down: state?.isCountingDown ?? false,
+      remaining_seconds: state?.countdownRemainingSec ?? null,
+      last_activity_at: state?.lastActivityAt ? new Date(state.lastActivityAt).toISOString() : null,
+    });
   });
 
   // Stage composition authority is a server-resolved, bounded transaction.
@@ -4319,9 +4641,9 @@ export function createCoordinatorApp(
     bundles: sourceBundleStore,
     results: pipelineResultStore,
     authorization: null,
-    // manifest 投影已接上：alignment_metrics／warnings／artifacts 由 MinIO 實讀的
-    // manifest 供給；alignment report（逐 element 差異集合）尚未建讀取路徑，
-    // summary／differences／difference_counts 誠實維持 NOT_BUILT。
+    // manifest 與 alignment report 投影均已接上：alignment_metrics／warnings／artifacts
+    // 由 MinIO 實讀的 manifest 供給；summary／differences／difference_counts 則來自
+    // 經 bounded read、digest 與語意驗證的 immutable alignment report。
     projections: lineageMetadataProjections,
     now: nowIso,
   });
@@ -4362,7 +4684,7 @@ export function createCoordinatorApp(
     response.status(500).json({ detail: error instanceof Error ? error.message : String(error) });
   });
 
-  registerReviewNamespace(io, store, eventLog, sessionTraceResolver);
+  registerReviewNamespace(io, store, eventLog, sessionTraceResolver, idleReclaimService);
 
   // coordinator-auto-poll-streaming-conversion §6:dispose 清空所有 in-process auto
   // poller timer。process shutdown / 測試 teardown 必呼叫,避免 keep-alive 阻 exit。
@@ -4376,6 +4698,7 @@ export function createCoordinatorApp(
     // markDroppedOnRestart/clear 會造成重複 store 寫入,二次起一律 no-op。
     if (disposed) return;
     disposed = true;
+    idleReclaimService.stop();
     // 先結束 SSE 訂閱端、停 intake 並 await in-flight tick settle（皆由 surface 擁有）；
     // 其最後一筆 enqueue 必須在 pipeline drain 前完成，否則 shutdown 後仍可能遺留 queued job。
     await minioWatchSurface.dispose();
@@ -4411,6 +4734,7 @@ export function createCoordinatorApp(
     },
     eventLog,
     structLog,
+    idleReclaimService,
     dispose,
     minioWatchSurface,
     // test-only boolean getter：委派 pipeline.hasPendingDispatch（不外洩 pending map）。
