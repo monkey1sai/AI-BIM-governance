@@ -12,7 +12,7 @@ import type {
   ReviewSessionViewerPaneBatchGate,
   ReviewSessionViewerPaneHandle,
 } from "../ReviewSessionViewerPane";
-import type { HighlightResultMessage } from "../EmbeddedViewer";
+import type { HighlightResultMessage, StageTreeMessage, USDPrimNode } from "../EmbeddedViewer";
 
 export type WorkspaceViewerMode = "a1-inline" | "a2-overlay" | "a3-inline" | "a4-inline";
 
@@ -22,7 +22,17 @@ export interface ViewportPublication {
   showHandoffActions?: boolean;
   onBatchGateChange?: (gate: ReviewSessionViewerPaneBatchGate) => void;
   onBatchAck?: (message: HighlightResultMessage) => void;
+  onStageTree?: (message: StageTreeMessage) => void;
   paneRef?: Ref<ReviewSessionViewerPaneHandle>;
+}
+
+export interface ViewportHostActions {
+  requestStageTree?: (primPath?: string) => void;
+  selectPrim?: (primPath: string, multiSelect?: boolean) => void;
+  sendToolbarAction?: (
+    action: "reset_camera" | "camera_view" | "toggle_fullscreen" | "toggle_projection",
+    cameraView?: string,
+  ) => void;
 }
 
 export interface ViewportSlotApi {
@@ -38,6 +48,20 @@ export interface ViewportSlotApi {
   /** pane 回報的 viewer 證據 gate（單一來源；FlowGuide 只做分類顯示，不另造判定）。 */
   gate: ReviewSessionViewerPaneBatchGate | null;
   setGate: (gate: ReviewSessionViewerPaneBatchGate | null) => void;
+  /** live 下傳的 USD Stage 樹結構（Issue #609）。 */
+  stageTree: USDPrimNode[];
+  setStageTree: (nodes: USDPrimNode[]) => void;
+  /** 向 viewer 發送 stage 樹查詢請求。 */
+  requestStageTree: (primPath?: string) => void;
+  /** 向 viewer 點選 USD Prim（Issue #609）。 */
+  selectPrim: (primPath: string, multiSelect?: boolean) => void;
+  /** 工具列視角／全螢幕／重置命令通道（Issue #605）。 */
+  sendToolbarAction: (
+    action: "reset_camera" | "camera_view" | "toggle_fullscreen" | "toggle_projection",
+    cameraView?: string,
+  ) => void;
+  /** host 註冊底層執行 handle 的 callback。 */
+  registerHostActions?: (actions: ViewportHostActions | null) => void;
 }
 
 export const ViewportSlotContext = createContext<ViewportSlotApi | null>(null);

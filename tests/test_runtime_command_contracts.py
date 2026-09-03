@@ -532,3 +532,107 @@ def test_vg01_bridge_stream_state_disconnect_is_typed_and_fail_closed() -> None:
         "token": "must-not-serialize",
     }
     assert list(validator.iter_errors(token_in_stream_event))
+
+
+def test_vg01_bridge_stage_tree_selection_toolbar_and_multicolor() -> None:
+    validator = load_validator("vg01-postmessage-v1.schema.json")
+    
+    # 1. request_stage_tree
+    validator.validate(
+        {
+            "protocol": "vg01",
+            "type": "request_stage_tree",
+            "prim_path": "/World",
+        }
+    )
+    validator.validate(
+        {
+            "protocol": "vg01",
+            "type": "request_stage_tree",
+        }
+    )
+
+    # 2. stage_tree
+    validator.validate(
+        {
+            "protocol": "vg01",
+            "type": "stage_tree",
+            "prim_path": "/World",
+            "children": [
+                {
+                    "name": "Building",
+                    "path": "/World/Building",
+                    "type": "Xform",
+                    "children": [
+                        {
+                            "name": "Wall_01",
+                            "path": "/World/Building/Wall_01",
+                            "type": "Mesh",
+                        }
+                    ],
+                }
+            ],
+        }
+    )
+
+    # 3. select_prim
+    validator.validate(
+        {
+            "protocol": "vg01",
+            "type": "select_prim",
+            "prim_path": "/World/Building/Wall_01",
+            "multi_select": True,
+        }
+    )
+
+    # 4. toolbar_action
+    validator.validate(
+        {
+            "protocol": "vg01",
+            "type": "toolbar_action",
+            "action": "reset_camera",
+        }
+    )
+    validator.validate(
+        {
+            "protocol": "vg01",
+            "type": "toolbar_action",
+            "action": "camera_view",
+            "camera_view": "top",
+        }
+    )
+    validator.validate(
+        {
+            "protocol": "vg01",
+            "type": "toolbar_action",
+            "action": "toggle_fullscreen",
+        }
+    )
+
+    # 5. highlight with color
+    validator.validate(
+        {
+            "protocol": "vg01",
+            "type": "highlight",
+            "items": [
+                {
+                    "ifc_guid": "12345678-1234-1234-1234-1234567890ab",
+                    "severity": "error",
+                    "label": "Clash",
+                    "color": [1.0, 0.2, 0.2, 1.0],
+                }
+            ],
+        }
+    )
+    validator.validate(
+        {
+            "protocol": "vg01",
+            "type": "highlight_batch",
+            "items": [
+                {
+                    "ifc_guid": "12345678-1234-1234-1234-1234567890ab",
+                    "color": [0.2, 0.8, 0.2, 1.0],
+                }
+            ],
+        }
+    )

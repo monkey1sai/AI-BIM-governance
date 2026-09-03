@@ -7250,7 +7250,7 @@ describe("task 5.6 standalone 失敗態可見面（slice-4）", () => {
     expect(html).toContain("data-testid=\"viewer-reconnect-stream\"");
   });
 
-  it("i18n 接線：en 模式下斷線診斷與 reconnect 動作以英文呈現", () => {
+    it("i18n 接線：en 模式下斷線診斷與 reconnect 動作以英文呈現", () => {
     setLang("en");
     try {
       vi.stubEnv("VITE_ALLOWED_COORDINATOR_ORIGINS", PARENT_ORIGIN);
@@ -7268,5 +7268,106 @@ describe("task 5.6 standalone 失敗態可見面（slice-4）", () => {
     finally {
       setLang(initialLang);
     }
+  });
+
+  describe("VG-01 Stage Tree, Selection & Toolbar Protocol (Stage 1.3)", () => {
+    it("request_stage_tree：現有 usdPrims 時立即 post stage_tree 給 parent", () => {
+      vi.stubEnv("VITE_ALLOWED_COORDINATOR_ORIGINS", PARENT_ORIGIN);
+      const parent = setEmbedded(PARENT_ORIGIN);
+      const app = operableApp();
+      const target = internals(app);
+      target.state = {
+        ...target.state,
+        usdPrims: [{ path: "/World/Building", name: "Building" }],
+      };
+      target._handleParentMessage(new MessageEvent("message", {
+        data: {
+          protocol: "vg01",
+          type: "request_stage_tree",
+          prim_path: "/World",
+        },
+        origin: PARENT_ORIGIN,
+      }));
+      expect(parent.postMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          protocol: "vg01",
+          type: "stage_tree",
+          prim_path: "/World",
+          children: [{ path: "/World/Building", name: "Building" }],
+        }),
+        PARENT_ORIGIN,
+      );
+    });
+
+    it("select_prim：選取指定 primPath 並送出 focusPrimRequest", () => {
+      vi.stubEnv("VITE_ALLOWED_COORDINATOR_ORIGINS", PARENT_ORIGIN);
+      setEmbedded(PARENT_ORIGIN);
+      const app = operableApp();
+      const target = internals(app);
+      const sent: unknown[] = [];
+      target._sendStreamMessage = (m) => sent.push(m);
+      target._handleParentMessage(new MessageEvent("message", {
+        data: {
+          protocol: "vg01",
+          type: "select_prim",
+          prim_path: "/World/Building/Wall_01",
+        },
+        origin: PARENT_ORIGIN,
+      }));
+      expect(sent).toEqual([
+        expect.objectContaining({
+          event_type: "selectPrimsRequest",
+          payload: expect.objectContaining({ paths: ["/World/Building/Wall_01"] }),
+        }),
+        expect.objectContaining({
+          event_type: "focusPrimRequest",
+          payload: expect.objectContaining({ prim_path: "/World/Building/Wall_01" }),
+        }),
+      ]);
+    });
+
+    it("toolbar_action：reset_camera 觸發 _onStageReset", () => {
+      vi.stubEnv("VITE_ALLOWED_COORDINATOR_ORIGINS", PARENT_ORIGIN);
+      setEmbedded(PARENT_ORIGIN);
+      const app = operableApp();
+      const target = internals(app);
+      let resetCalled = false;
+      target._onStageReset = () => { resetCalled = true; };
+      target._handleParentMessage(new MessageEvent("message", {
+        data: {
+          protocol: "vg01",
+          type: "toolbar_action",
+          action: "reset_camera",
+        },
+        origin: PARENT_ORIGIN,
+      }));
+      expect(resetCalled).toBe(true);
+    });
+
+    it("getChildrenResponse：Kit 傳回 prim 樹時同步 post stage_tree 給 parent", () => {
+      vi.stubEnv("VITE_ALLOWED_COORDINATOR_ORIGINS", PARENT_ORIGIN);
+      const parent = setEmbedded(PARENT_ORIGIN);
+      const app = operableApp();
+      const target = internals(app);
+      target._handleCustomEvent({
+        event_type: "getChildrenResponse",
+        payload: {
+          trace_id: DATA_CHANNEL_TRACE_ID,
+          prim_path: "/World",
+          children: [
+            { path: "/World/Structure", name: "Structure" },
+          ],
+        },
+      });
+      expect(parent.postMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          protocol: "vg01",
+          type: "stage_tree",
+          prim_path: "/World",
+          children: [{ path: "/World/Structure", name: "Structure" }],
+        }),
+        PARENT_ORIGIN,
+      );
+    });
   });
 });

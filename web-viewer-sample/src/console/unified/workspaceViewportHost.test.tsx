@@ -96,6 +96,25 @@ describe("WorkspaceViewportHost（V-A′）", () => {
     await flush(10);
     expect(container.querySelector('[data-uc="viewport"]')).toBeNull();
   });
+
+  it("工具列按鈕存在，且無 session 時為 disabled 狀態", async () => {
+    spyCoordinatorEndpointsOffline();
+    await mountAt("#a1");
+    const toolbar = container.querySelector('[data-uc="ws-viewport-toolbar"]');
+    expect(toolbar).not.toBeNull();
+    const camBtn = container.querySelector('[data-testid="ws-toolbar-camera-view"]') as HTMLButtonElement | null;
+    const fsBtn = container.querySelector('[data-testid="ws-toolbar-fullscreen"]') as HTMLButtonElement | null;
+    const projBtn = container.querySelector('[data-testid="ws-toolbar-projection"]') as HTMLButtonElement | null;
+    const resetBtn = container.querySelector('[data-testid="ws-toolbar-reset"]') as HTMLButtonElement | null;
+    expect(camBtn).not.toBeNull();
+    expect(fsBtn).not.toBeNull();
+    expect(projBtn).not.toBeNull();
+    expect(resetBtn).not.toBeNull();
+    expect(camBtn?.disabled).toBe(true);
+    expect(fsBtn?.disabled).toBe(true);
+    expect(projBtn?.disabled).toBe(true);
+    expect(resetBtn?.disabled).toBe(true);
+  });
 });
 
 describe("classifyViewerPhase（只分類 pane 回報的 reason，不另造判定）", () => {
@@ -134,6 +153,40 @@ describe("ViewportSlotProvider", () => {
     expect(seen[seen.length - 1]).toBe("review_session_p");
     await act(async () => { api!.publish(null); });
     expect(seen[seen.length - 1]).toBe("review_session_p");
+    await act(async () => { root.unmount(); });
+  });
+
+  it("支援 stageTree 與 host actions 轉發（requestStageTree / selectPrim / sendToolbarAction）", async () => {
+    let api: ReturnType<typeof useViewportSlot> = null;
+    function Grab() { api = useViewportSlot(); return null; }
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    await act(async () => { root.render(<ViewportSlotProvider><Grab /></ViewportSlotProvider>); });
+
+    expect(api!.stageTree).toEqual([]);
+
+    await act(async () => {
+      api!.setStageTree([{ path: "/World/Root", name: "Root" }]);
+    });
+    expect(api!.stageTree).toEqual([{ path: "/World/Root", name: "Root" }]);
+
+    const calls: string[] = [];
+    api!.registerHostActions?.({
+      requestStageTree: (p) => calls.push(`req:${p}`),
+      selectPrim: (p, m) => calls.push(`sel:${p}:${m}`),
+      sendToolbarAction: (a, c) => calls.push(`act:${a}:${c}`),
+    });
+
+    api!.requestStageTree("/World/Root");
+    api!.selectPrim("/World/Root/Child", true);
+    api!.sendToolbarAction("camera_view", "top");
+
+    expect(calls).toEqual([
+      "req:/World/Root",
+      "sel:/World/Root/Child:true",
+      "act:camera_view:top",
+    ]);
+
     await act(async () => { root.unmount(); });
   });
 });

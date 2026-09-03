@@ -2869,7 +2869,18 @@ export default class App extends React.Component<AppProps, AppState> {
             lifecycleActive,
         });
         const canOperate = canHandleHighlight(inputs.panelState.canOperate);
-        const m = e.data as { type?: string; items?: unknown; ifc_guid?: string; token?: unknown; user_token?: unknown; clientRequestId?: unknown };
+        const m = e.data as {
+            type?: string;
+            items?: unknown;
+            ifc_guid?: string;
+            token?: unknown;
+            user_token?: unknown;
+            clientRequestId?: unknown;
+            prim_path?: string;
+            action?: string;
+            camera_view?: string;
+            multi_select?: boolean;
+        };
         // 僅做 console↔iframe 的本地 ACK 關聯；Kit runtime 的 requestId 仍由
         // _overlayHighlight / _overlayHighlightMany 產生，絕不以瀏覽器輸入覆寫。
         const clientRequestId = typeof m.clientRequestId === "string"
@@ -2958,6 +2969,42 @@ export default class App extends React.Component<AppProps, AppState> {
                 if (!canOperate) return; // spectator / 未就緒靜默丟棄（不送 clearHighlightRequest）
                 this._sendStreamMessage(buildClearHighlightRequest());
                 break;
+            case "request_stage_tree": {
+                const primPath = typeof m.prim_path === "string" && m.prim_path ? m.prim_path : "/World";
+                if (this.state.usdPrims && this.state.usdPrims.length > 0) {
+                    this._postToParent({
+                        type: "stage_tree",
+                        prim_path: primPath,
+                        children: this.state.usdPrims,
+                    }, allowedOrigins);
+                }
+                if (canOperate || harnessEnabled()) {
+                    this._getChildren(primPath === "/World" ? null : { path: primPath, name: primPath });
+                }
+                break;
+            }
+            case "select_prim": {
+                if (!canOperate && !harnessEnabled()) return;
+                if (typeof m.prim_path === "string" && m.prim_path) {
+                    const prim = { path: m.prim_path, name: m.prim_path };
+                    this._onSelectUSDPrims(new Set([prim]));
+                }
+                break;
+            }
+            case "toolbar_action": {
+                if (typeof m.action === "string") {
+                    if (m.action === "reset_camera") {
+                        this._onStageReset();
+                    } else if (m.action === "toggle_fullscreen") {
+                        if (!document.fullscreenElement) {
+                            void document.documentElement.requestFullscreen?.().catch(() => {});
+                        } else {
+                            void document.exitFullscreen?.().catch(() => {});
+                        }
+                    }
+                }
+                break;
+            }
             default:
                 break; // 未知 type 忽略（協定前向相容）
         }
@@ -5678,16 +5725,25 @@ export default class App extends React.Component<AppProps, AppState> {
             const prim_path = getPayloadString(payload, "prim_path");
             const children = Array.isArray(payload.children) ? payload.children as USDPrimType[] : [];
             const usdPrim = this._findUSDPrimByPath(prim_path);
+            let nextTree = this.state.usdPrims;
             if (usdPrim === null) {
+                nextTree = children;
                 this.setState({ usdPrims: children });
             }
             else {
                 usdPrim.children = children;
+                nextTree = this.state.usdPrims;
                 this.setState({ usdPrims: this.state.usdPrims });
             }
             if (Array.isArray(children)){
                 this._makePickable(children);
             }
+            // VG-01: 下傳 USD stage 樹給 parent console
+            this._postToParent({
+                type: "stage_tree",
+                prim_path: prim_path || "/World",
+                children: nextTree,
+            });
         }
         // CH-F：Kit 確認 binding 已套用 → 更新 active + last-good revision（交易完成；誠實：只有確認才宣告 applied）。
         else if (event.event_type === "bindingApplied") {

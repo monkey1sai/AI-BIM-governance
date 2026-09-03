@@ -5,10 +5,15 @@
 // /api 503 stub 下不會出現 iframe／video，manifest live_surface_policy 安全）。內容物＝重用 ReviewSessionViewerPane
 // （12 態渲染、lease/heartbeat、gate 全沿用，不新造第二套）。離開 workspace 由 UnifiedShell 的 page prop 顯式 unmount。
 // ═══════════════════════════════════════════════════════════════════════
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import { ReviewSessionViewerPane } from "../ReviewSessionViewerPane";
-import type { ReviewRoomHandoff, ReviewSessionViewerPaneBatchGate } from "../ReviewSessionViewerPane";
+import type {
+  ReviewRoomHandoff,
+  ReviewSessionViewerPaneBatchGate,
+  ReviewSessionViewerPaneHandle,
+} from "../ReviewSessionViewerPane";
+import type { StageTreeMessage } from "../EmbeddedViewer";
 import { t } from "../i18n";
 import { useConsoleData } from "./consoleData";
 import { useViewportSlot } from "./viewportSlot";
@@ -75,6 +80,35 @@ export function WorkspaceViewportHost({ firstFrameTimeoutMs }: WorkspaceViewport
   }, [setGate]);
   useEffect(() => () => { setGate?.(null); }, [setGate]);
 
+  const paneHandleRef = useRef<ReviewSessionViewerPaneHandle | null>(null);
+  const extPaneRef = publication?.paneRef;
+  const setCombinedPaneRef = useCallback((node: ReviewSessionViewerPaneHandle | null) => {
+    paneHandleRef.current = node;
+    if (typeof extPaneRef === "function") {
+      extPaneRef(node);
+    } else if (extPaneRef && typeof extPaneRef === "object") {
+      (extPaneRef as { current: ReviewSessionViewerPaneHandle | null }).current = node;
+    }
+  }, [extPaneRef]);
+
+  const registerHostActions = slot?.registerHostActions;
+  useEffect(() => {
+    registerHostActions?.({
+      requestStageTree: (primPath) => paneHandleRef.current?.requestStageTree(primPath),
+      selectPrim: (primPath, multiSelect) => paneHandleRef.current?.selectPrim(primPath, multiSelect),
+      sendToolbarAction: (action, cameraView) => paneHandleRef.current?.sendToolbarAction(action, cameraView),
+    });
+    return () => registerHostActions?.(null);
+  }, [registerHostActions]);
+
+  const setStageTree = slot?.setStageTree;
+  const pageStageTreeRef = useRef(publication?.onStageTree);
+  pageStageTreeRef.current = publication?.onStageTree;
+  const onStageTree = useCallback((msg: StageTreeMessage) => {
+    setStageTree?.(msg.children);
+    pageStageTreeRef.current?.(msg);
+  }, [setStageTree]);
+
   if (!live) return null; // 零新 DOM（離線／design gate）
 
   const style: CSSProperties = rect
@@ -100,12 +134,13 @@ export function WorkspaceViewportHost({ firstFrameTimeoutMs }: WorkspaceViewport
     >
       {handoff && publication ? (
         <ReviewSessionViewerPane
-          ref={publication.paneRef}
+          ref={setCombinedPaneRef}
           mode={publication.mode}
           handoff={handoff}
           showHandoffActions={publication.showHandoffActions ?? true}
           onBatchGateChange={onGate}
           onBatchAck={publication.onBatchAck}
+          onStageTree={onStageTree}
           {...(firstFrameTimeoutMs !== undefined ? { firstFrameTimeoutMs } : {})}
         />
       ) : (
