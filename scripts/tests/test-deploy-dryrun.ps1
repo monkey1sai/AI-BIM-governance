@@ -328,32 +328,29 @@ Write-TestPass 'runtime authority token rotation changes secret-safe Kit signatu
 
 $webPlaneSignatureRootA = 'C:\edge-data\artifacts-a'
 $webPlaneSignatureRootB = 'C:\edge-data\artifacts-b'
-$webPlaneSignatureA = New-WebPlaneRuntimeSignature `
-    -A4ConversionArtifactsHostRoot $webPlaneSignatureRootA `
-    -A4InternalContextTokenFingerprint (Get-DeploySecretFingerprint -Value $signatureTokenA) `
-    -SessionIdleTimeoutMs '600000'
-$webPlaneSignatureSame = New-WebPlaneRuntimeSignature `
-    -A4ConversionArtifactsHostRoot $webPlaneSignatureRootA `
-    -A4InternalContextTokenFingerprint (Get-DeploySecretFingerprint -Value $signatureTokenA) `
-    -SessionIdleTimeoutMs '600000'
-$webPlaneSignatureRootChanged = New-WebPlaneRuntimeSignature `
-    -A4ConversionArtifactsHostRoot $webPlaneSignatureRootB `
-    -A4InternalContextTokenFingerprint (Get-DeploySecretFingerprint -Value $signatureTokenA) `
-    -SessionIdleTimeoutMs '600000'
-$webPlaneSignatureTokenChanged = New-WebPlaneRuntimeSignature `
-    -A4ConversionArtifactsHostRoot $webPlaneSignatureRootA `
-    -A4InternalContextTokenFingerprint (Get-DeploySecretFingerprint -Value $signatureTokenB) `
-    -SessionIdleTimeoutMs '600000'
-$webPlaneSignatureIdlePolicyChanged = New-WebPlaneRuntimeSignature `
-    -A4ConversionArtifactsHostRoot $webPlaneSignatureRootA `
-    -A4InternalContextTokenFingerprint (Get-DeploySecretFingerprint -Value $signatureTokenA) `
-    -SessionIdleTimeoutMs '900000'
+$webPlaneAllowlistA = '10.0.0.0/8,127.0.0.1'
+$webPlaneAllowlistB = '192.168.0.0/16'
+$webPlaneSignatureCommon = @{
+    A4ConversionArtifactsHostRoot = $webPlaneSignatureRootA
+    A4InternalContextTokenFingerprint = (Get-DeploySecretFingerprint -Value $signatureTokenA)
+    SessionIdleTimeoutMs = '600000'
+    ConversionTriggerIpAllowlistFingerprint = (Get-DeploySecretFingerprint -Value $webPlaneAllowlistA)
+}
+$webPlaneSignatureA = New-WebPlaneRuntimeSignature @webPlaneSignatureCommon
+$webPlaneSignatureSame = New-WebPlaneRuntimeSignature @webPlaneSignatureCommon
+$webPlaneSignatureRootChanged = New-WebPlaneRuntimeSignature @webPlaneSignatureCommon -A4ConversionArtifactsHostRoot $webPlaneSignatureRootB
+$webPlaneSignatureTokenChanged = New-WebPlaneRuntimeSignature @webPlaneSignatureCommon -A4InternalContextTokenFingerprint (Get-DeploySecretFingerprint -Value $signatureTokenB)
+$webPlaneSignatureIdlePolicyChanged = New-WebPlaneRuntimeSignature @webPlaneSignatureCommon -SessionIdleTimeoutMs '900000'
+$webPlaneSignatureAllowlistChanged = New-WebPlaneRuntimeSignature @webPlaneSignatureCommon -ConversionTriggerIpAllowlistFingerprint (Get-DeploySecretFingerprint -Value $webPlaneAllowlistB)
 Assert-Equal $webPlaneSignatureA $webPlaneSignatureSame 'unchanged effective A4 web-plane inputs keep the same signature'
 Assert-True ($webPlaneSignatureA -ne $webPlaneSignatureRootChanged) 'effective A4 artifacts root change updates web-plane signature'
 Assert-True ($webPlaneSignatureA -ne $webPlaneSignatureTokenChanged) 'A4 token rotation updates web-plane signature'
 Assert-True ($webPlaneSignatureA -ne $webPlaneSignatureIdlePolicyChanged) 'session idle policy change updates web-plane signature'
+Assert-True ($webPlaneSignatureA -ne $webPlaneSignatureAllowlistChanged) 'CONVERSION_TRIGGER_IP_ALLOWLIST change updates web-plane signature'
 Assert-True (-not $webPlaneSignatureA.Contains($signatureTokenA)) 'web-plane signature excludes raw A4 token'
 Assert-True (-not $webPlaneSignatureTokenChanged.Contains($signatureTokenB)) 'rotated raw A4 token is excluded from web-plane signature'
+Assert-True (-not $webPlaneSignatureA.Contains($webPlaneAllowlistA)) 'web-plane signature excludes raw conversion trigger allowlist'
+Assert-True (-not $webPlaneSignatureAllowlistChanged.Contains($webPlaneAllowlistB)) 'rotated conversion trigger allowlist is excluded from web-plane signature'
 $webPlaneSignaturePath = Join-Path $repoRoot 'scripts\.run\deploy-web-plane-signature-test.params.json'
 Remove-Item -LiteralPath $webPlaneSignaturePath -ErrorAction SilentlyContinue
 Assert-True (-not (Test-KitRuntimeSignatureMatches -Path $webPlaneSignaturePath -Expected $webPlaneSignatureA)) 'missing web-plane signature requires first reconcile'
@@ -362,6 +359,7 @@ Assert-True (Test-KitRuntimeSignatureMatches -Path $webPlaneSignaturePath -Expec
 Assert-True (-not (Test-KitRuntimeSignatureMatches -Path $webPlaneSignaturePath -Expected $webPlaneSignatureRootChanged)) 'changed A4 artifacts root requires reconcile'
 Assert-True (-not (Test-KitRuntimeSignatureMatches -Path $webPlaneSignaturePath -Expected $webPlaneSignatureTokenChanged)) 'rotated A4 token requires reconcile'
 Assert-True (-not (Test-KitRuntimeSignatureMatches -Path $webPlaneSignaturePath -Expected $webPlaneSignatureIdlePolicyChanged)) 'changed session idle policy requires reconcile'
+Assert-True (-not (Test-KitRuntimeSignatureMatches -Path $webPlaneSignaturePath -Expected $webPlaneSignatureAllowlistChanged)) 'changed CONVERSION_TRIGGER_IP_ALLOWLIST requires reconcile'
 Remove-Item -LiteralPath $webPlaneSignaturePath -ErrorAction SilentlyContinue
 Write-TestPass 'effective A4 web-plane signature is stable and secret-safe'
 
