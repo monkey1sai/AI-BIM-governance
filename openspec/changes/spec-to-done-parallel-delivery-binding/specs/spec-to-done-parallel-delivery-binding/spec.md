@@ -41,12 +41,17 @@ Standalone runs without a Fabric binding SHALL remain valid at the legacy `artif
 
 ### Requirement: Allowed paths shall remain inside the Fabric touch-set
 
-Every Fabric-managed run SHALL declare canonical, unique repo-relative `allowed_paths`. The binding validator SHALL prove every allowed path is covered by the selected Fabric task's path, glob, or rename resources. Missing, ambiguous, shared-only, or uncovered path authority SHALL return `scope_drift`; the workflow SHALL NOT expand the touch-set automatically.
+Every Fabric-managed run SHALL declare canonical, unique repo-relative `allowed_paths` that preserve case-sensitive Git path identity. The binding validator SHALL prove every allowed path is covered by the selected Fabric task's path, glob, or rename resources. The state validator SHALL prove every committed path from the bound `baseline_sha` through the bound current HEAD is exactly present in `allowed_paths`, including both endpoints of a rename. Missing, ambiguous, shared-only, uncovered, or out-of-scope committed path authority SHALL return `scope_drift`; the workflow SHALL NOT expand the touch-set automatically.
 
 #### Scenario: An implementation path is outside the task scope
 
 - **WHEN** `allowed_paths` contains a path not covered by the bound task scope
 - **THEN** binding validation returns `scope_drift` before P3 and no file is modified
+
+#### Scenario: A committed path exceeds the binding touch-set
+
+- **WHEN** the NUL-delimited committed diff from the bound baseline through the bound current HEAD contains a path not exactly present in `allowed_paths`
+- **THEN** state validation returns `scope_drift` and the run cannot progress
 
 #### Scenario: Scope authority is not path-resolvable
 

@@ -163,11 +163,19 @@ def _stamp(value):
     return {**value, "canonical_digest": _canonical_digest(value)}
 
 
-def _fabric_binding_fixture(tmp_path, repo):
+def _fabric_binding_fixture(tmp_path, repo, *, committed_changes=None):
     ignore = repo / ".gitignore"
     ignore.write_text("artifacts/\n", encoding="utf-8")
     _git(repo, "add", ".gitignore")
     _git(repo, "commit", "-m", "ignore local state artifacts")
+    baseline = _git(repo, "rev-parse", "HEAD")
+    for relative, contents in (committed_changes or {}).items():
+        target = repo / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(contents, encoding="utf-8")
+        _git(repo, "add", "--", relative)
+    if committed_changes:
+        _git(repo, "commit", "-m", "committed scope fixture")
     head = _git(repo, "rev-parse", "HEAD")
     branch = _git(repo, "branch", "--show-current")
     now = "2026-08-31T01:00:00.000Z"
@@ -187,7 +195,7 @@ def _fabric_binding_fixture(tmp_path, repo):
         "created_at": now,
         "coordinator_session": "session:coordinator",
         "baseline_ref": "origin/main",
-        "resolved_baseline_sha": head,
+        "resolved_baseline_sha": baseline,
         "tasks": [{
             "task_id": "task:managed-state",
             "outcome": "validate-managed-state",
@@ -257,7 +265,7 @@ def _fabric_binding_fixture(tmp_path, repo):
         "worktree_id": "worktree:managed-state",
         "worktree_path_digest": sha256_b,
         "branch": branch,
-        "baseline_sha": head,
+        "baseline_sha": baseline,
         "scope_digest": scope_digest,
         "resource_keys": ["path:src"],
         "lease_id": "lease:managed-state",
@@ -328,6 +336,7 @@ process.stdout.write(JSON.stringify(buildSpecToDoneFabricBinding(input)))
         "candidate_state_path": candidate_state_path,
         "extra_args": extra_args,
         "head": head,
+        "baseline": baseline,
         "branch": branch,
     }
 
@@ -641,6 +650,37 @@ def test_fabric_managed_state_requires_exact_binding_and_unique_state_path(tmp_p
         state_path=fabric["candidate_state_path"],
     )
     assert code == 2 and result["held"] == "resume_state_invalid"
+
+
+def test_fabric_managed_state_rejects_committed_paths_outside_allowed_paths(tmp_path):
+    repo, _ = _new_repo(tmp_path)
+    fabric = _fabric_binding_fixture(
+        tmp_path,
+        repo,
+        committed_changes={"docs/outside.md": "outside declared scope\n"},
+    )
+    line = _line(
+        repo,
+        fabric["head"],
+        "DONE@P3",
+        branch=fabric["branch"],
+        runIds="P3:codex:managed-state-session",
+        fabricMode="fabric-managed",
+        fabricBindingId=fabric["binding"]["binding_id"],
+    )
+
+    code, result = _run(
+        tmp_path,
+        repo,
+        line,
+        platform="codex",
+        expected_head=fabric["head"],
+        extra_args=fabric["extra_args"],
+        state_path=fabric["candidate_state_path"],
+    )
+
+    assert code == 2 and result["held"] == "scope_drift", result
+    assert "committed changes exceed Fabric allowed_paths (1 path(s))" in result["detail"]
 
 
 def test_fabric_managed_state_rejects_partial_fields_binding_drift_and_legacy_misrouting(tmp_path):
