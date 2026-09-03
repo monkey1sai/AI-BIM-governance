@@ -2572,6 +2572,25 @@
       "archive_debt": null
     },
     {
+      "id": "spec-to-done-parallel-delivery-binding",
+      "status": "active",
+      "owner": "repository-maintainer",
+      "current_slice": "current-main residual binding, repository identity validation and anti-loop semantics implemented; pending full governance preflight, exact-head review, merge and archive",
+      "blocked_by": [],
+      "last_verified": "2026-09-03T07:10:09Z",
+      "task_ledger": {
+        "completed": 11,
+        "total": 14
+      },
+      "evidence_refs": [
+        "openspec/changes/spec-to-done-parallel-delivery-binding/proposal.md",
+        "openspec/changes/spec-to-done-parallel-delivery-binding/tasks.md"
+      ],
+      "subject_commit": "5e790f8e406ab6aa96fd33c58e215eb4ba3eca9b",
+      "subject_binding": "introduction",
+      "archive_debt": null
+    },
+    {
       "id": "parallel-delivery-fabric",
       "status": "active",
       "owner": "parallel-delivery-fabric",
