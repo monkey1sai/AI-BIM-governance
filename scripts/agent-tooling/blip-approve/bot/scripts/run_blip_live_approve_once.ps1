@@ -2,8 +2,8 @@
 #
 # Owner-controlled one-shot broker for a counted monkey1sai-blip User approval.
 # This file is editable source only. It refuses to run unless installed beside an
-# owner-controlled manifest in the trusted runtime directory. The token is entered
-# through a masked prompt, never read from .env, and injected into one pinned child.
+# owner-controlled manifest in the trusted runtime directory. The token is read only
+# from the fixed owner-protected .env.blip file and injected into one pinned child.
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)]
@@ -222,7 +222,6 @@ try {
         'ConvertFrom-Json' = 'Microsoft.PowerShell.Utility'
         'ConvertTo-Json' = 'Microsoft.PowerShell.Utility'
         'Write-Information' = 'Microsoft.PowerShell.Utility'
-        'Read-Host' = 'Microsoft.PowerShell.Utility'
         'ForEach-Object' = 'Microsoft.PowerShell.Core'
         'Where-Object' = 'Microsoft.PowerShell.Core'
         'Out-Null' = 'Microsoft.PowerShell.Core'
@@ -300,6 +299,7 @@ $ReviewMode = $ReviewMode.ToLowerInvariant()
 $resultPath = Join-Path $stateRoot "blip-live-approve-pr$PrNumber-$stamp.json"
 $lockPath = Join-Path $stateRoot "blip-live-approve-pr$PrNumber-$($ExpectedHeadSha.Substring(0,12)).lock"
 $tokenEnvironmentName = 'BLIP_GITHUB_TOKEN'
+$reviewerTokenEnvPath = 'C:\Users\IOT\.grok\github-bot\.env.blip'
 $capabilityEnvironmentName = 'BLIP_APPROVAL_CAPABILITY'
 $protectionPolicyEnvironmentName = 'BLIP_PROTECTION_POLICY_JSON'
 $secretRoot = Join-Path $productRoot 'secrets'
@@ -340,9 +340,7 @@ with open(helper_path, "rb") as helper_stream:
 exec(compile(helper_source, helper_path, "exec"), helper_globals)
 '@
 
-$secureToken = $null
 $plainToken = $null
-$tokenBstr = [IntPtr]::Zero
 $tokenBytes = $null
 $capability = $null
 $capabilityBytes = $null
@@ -351,6 +349,7 @@ $protectionAdminToken = $null
 $protectionAdminTokenBytes = $null
 $protectionAdminTokenStream = $null
 $protectionAdminTokenReader = $null
+$reviewerTokenStream = $null
 $childProcess = $null
 $childStarted = $false
 $childTimedOut = $false
@@ -713,7 +712,13 @@ function Assert-TrustedRuntimeAcl {
 }
 
 function Assert-ProtectedSecretAcl {
-    param([Parameter(Mandatory)][string[]]$LiteralPaths)
+    param(
+        [Parameter(Mandatory)][string[]]$LiteralPaths,
+        [System.IO.FileStream]$PinnedFileStream
+    )
+    if ($null -ne $PinnedFileStream -and $LiteralPaths.Count -ne 1) {
+        throw 'A pinned secret stream must bind exactly one protected path.'
+    }
     $identity = [System.Security.Principal.WindowsIdentity]::GetCurrent()
     if ($identity.User.Value -cne $fixedOwnerSidValue) {
         throw 'The approval broker identity is not the immutable owner SID.'
@@ -729,7 +734,17 @@ function Assert-ProtectedSecretAcl {
         if (($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
             throw "Protected secret path is a reparse point: $literalPath"
         }
-        $acl = Get-Acl -LiteralPath $literalPath
+        $acl = if ($null -ne $PinnedFileStream) {
+            if ($PinnedFileStream.SafeFileHandle.IsInvalid -or $PinnedFileStream.SafeFileHandle.IsClosed -or
+                [System.IO.Path]::GetFullPath($PinnedFileStream.Name) -cne
+                    [System.IO.Path]::GetFullPath($literalPath)) {
+                throw "Pinned protected secret stream does not bind the expected path: $literalPath"
+            }
+            [System.IO.FileSystemAclExtensions]::GetAccessControl($PinnedFileStream)
+        }
+        else {
+            Get-Acl -LiteralPath $literalPath
+        }
         if (-not $acl.AreAccessRulesProtected) {
             throw "Protected secret ACL inherits from its parent: $literalPath"
         }
@@ -790,6 +805,98 @@ function Open-ProtectedAdminTokenStream {
         [System.IO.FileAccess]::Read,
         [System.IO.FileShare]::None
     )
+}
+
+function Open-ProtectedReviewerTokenStream {
+    $fullPath = Assert-WrapperBootstrapPath -LiteralPath $reviewerTokenEnvPath -LeafMustBeFile
+    if ($fullPath -cne $reviewerTokenEnvPath) {
+        throw 'The counted-reviewer credential path differs from the fixed owner-authorized path.'
+    }
+    $stream = [System.IO.FileStream]::new(
+        $fullPath,
+        [System.IO.FileMode]::Open,
+        [System.IO.FileAccess]::Read,
+        [System.IO.FileShare]::None
+    )
+    try {
+        Assert-ProtectedSecretAcl -LiteralPaths @($fullPath) -PinnedFileStream $stream
+        $postOpenPath = Assert-WrapperBootstrapPath -LiteralPath $reviewerTokenEnvPath -LeafMustBeFile
+        if ($postOpenPath -cne $fullPath) {
+            throw 'The counted-reviewer credential path moved after its handle was opened.'
+        }
+        $item = Get-Item -Force -LiteralPath $fullPath
+        if ($item.PSIsContainer -or ($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw 'The counted-reviewer credential is not a regular non-reparse file.'
+        }
+        if ($stream.Length -lt 1 -or $stream.Length -gt 16384) {
+            throw 'The counted-reviewer credential file is empty or oversized.'
+        }
+        return $stream
+    }
+    catch {
+        $stream.Dispose()
+        throw
+    }
+}
+
+function Read-ReviewerTokenFromEnvStream {
+    param([Parameter(Mandatory)][System.IO.Stream]$Stream)
+    if (-not $Stream.CanRead -or -not $Stream.CanSeek) {
+        throw 'The counted-reviewer credential stream is not readable and seekable.'
+    }
+    if ($Stream.Length -lt 1 -or $Stream.Length -gt 16384) {
+        throw 'The counted-reviewer credential file is empty or oversized.'
+    }
+    $Stream.Position = 0
+    $strictUtf8 = [System.Text.UTF8Encoding]::new($false, $true)
+    $reader = [System.IO.StreamReader]::new($Stream, $strictUtf8, $false, 1024, $true)
+    try {
+        $text = $reader.ReadToEnd()
+    }
+    finally {
+        $reader.Dispose()
+    }
+
+    if ($text.Length -gt 0 -and $text[0] -eq [char]0xFEFF) {
+        $text = $text.Substring(1)
+    }
+    $token = $null
+    $assignmentCount = 0
+    foreach ($line in [regex]::Split($text, '\r\n|\n|\r')) {
+        $trimmed = $line.Trim()
+        if ($trimmed.Length -eq 0 -or $trimmed.StartsWith('#', [StringComparison]::Ordinal)) {
+            continue
+        }
+        if ($line -notmatch '^\s*(?:export\s+)?BLIP_GITHUB_TOKEN\s*=\s*(.*?)\s*$') {
+            throw 'The counted-reviewer credential file contains an unsupported assignment.'
+        }
+        $assignmentCount += 1
+        if ($assignmentCount -ne 1) {
+            throw 'The counted-reviewer credential file contains duplicate BLIP_GITHUB_TOKEN assignments.'
+        }
+        $rawValue = $Matches[1].Trim()
+        if ($rawValue.Length -ge 2 -and
+            (($rawValue[0] -ceq '"' -and $rawValue[$rawValue.Length - 1] -ceq '"') -or
+             ($rawValue[0] -ceq "'" -and $rawValue[$rawValue.Length - 1] -ceq "'"))) {
+            $rawValue = $rawValue.Substring(1, $rawValue.Length - 2)
+        }
+        elseif (($rawValue.StartsWith('"', [StringComparison]::Ordinal) -or
+                 $rawValue.StartsWith("'", [StringComparison]::Ordinal) -or
+                 $rawValue.EndsWith('"', [StringComparison]::Ordinal) -or
+                 $rawValue.EndsWith("'", [StringComparison]::Ordinal))) {
+            throw 'The counted-reviewer credential value has mismatched quotes.'
+        }
+        $token = $rawValue
+    }
+    $text = $null
+    $rawValue = $null
+    if ($assignmentCount -ne 1 -or [string]::IsNullOrWhiteSpace($token)) {
+        throw 'The counted-reviewer credential file must contain exactly one BLIP_GITHUB_TOKEN assignment.'
+    }
+    if ($token.Length -lt 32 -or $token.Length -gt 4096 -or $token -notmatch '^[A-Za-z0-9_]+$') {
+        throw 'The counted-reviewer credential is malformed or outside the permitted size.'
+    }
+    return $token
 }
 
 function Write-CanonicalJsonElement {
@@ -1068,6 +1175,9 @@ try {
     if (-not (Test-Path -LiteralPath $protectionAdminTokenPath -PathType Leaf)) {
         throw "Read-only branch-protection credential is unavailable: $protectionAdminTokenPath"
     }
+    if (-not (Test-Path -LiteralPath $reviewerTokenEnvPath -PathType Leaf)) {
+        throw "Fixed counted-reviewer credential file is unavailable: $reviewerTokenEnvPath"
+    }
     Assert-TrustedRuntimeAcl -LiteralPaths @(
         $protectedRoot, $productRoot, $trustedRoot, $stateRoot, $appScriptsRoot,
         $brokerPath, $helperPath, $authHelperPath,
@@ -1162,12 +1272,9 @@ try {
     Write-Information "Exact tuple: base=$($ExpectedBaseSha.Substring(0,7)) head=$($ExpectedHeadSha.Substring(0,7)) mode=$ReviewMode human_critical_override=$($HumanCriticalOverride.IsPresent.ToString().ToLowerInvariant())" -InformationAction Continue
     Write-Information 'This can submit one counted APPROVED review; it refuses auto-merge and never merges.' -InformationAction Continue
     $protectionAdminTokenStream = Open-ProtectedAdminTokenStream
-    Write-Information 'Enter the fixed User PAT only in the masked prompt. Do not paste it into chat or a command line.' -InformationAction Continue
-    $secureToken = Read-Host -Prompt 'Enter BLIP_GITHUB_TOKEN' -AsSecureString
-    if ($null -eq $secureToken -or $secureToken.Length -eq 0) { throw 'No token was entered.' }
-    $tokenBstr = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($secureToken)
-    $plainToken = [System.Runtime.InteropServices.Marshal]::PtrToStringBSTR($tokenBstr)
-    if ([string]::IsNullOrWhiteSpace($plainToken)) { throw 'No token was entered.' }
+    $reviewerTokenStream = Open-ProtectedReviewerTokenStream
+    $plainToken = Read-ReviewerTokenFromEnvStream -Stream $reviewerTokenStream
+    Write-Information 'Loaded the fixed User PAT from the owner-only protected .env.blip credential file.' -InformationAction Continue
     $capability = New-ApprovalCapability -Token $plainToken
     $strictUtf8 = [System.Text.UTF8Encoding]::new($false, $true)
     $protectionAdminTokenReader = [System.IO.StreamReader]::new(
@@ -1313,17 +1420,16 @@ finally {
     if ($null -ne $lockStream) { $lockStream.Dispose() }
     if ($null -ne $protectionAdminTokenReader) { $protectionAdminTokenReader.Dispose() }
     if ($null -ne $protectionAdminTokenStream) { $protectionAdminTokenStream.Dispose() }
+    if ($null -ne $reviewerTokenStream) { $reviewerTokenStream.Dispose() }
     if ($null -ne $tokenBytes) { [Array]::Clear($tokenBytes, 0, $tokenBytes.Length) }
     if ($null -ne $capabilityBytes) { [Array]::Clear($capabilityBytes, 0, $capabilityBytes.Length) }
     if ($null -ne $protectionAdminTokenBytes) {
         [System.Security.Cryptography.CryptographicOperations]::ZeroMemory($protectionAdminTokenBytes)
     }
-    if ($tokenBstr -ne [IntPtr]::Zero) { [System.Runtime.InteropServices.Marshal]::ZeroFreeBSTR($tokenBstr) }
     $plainToken = $null
     $capability = $null
     $protectionPolicyJson = $null
     $protectionAdminToken = $null
-    if ($null -ne $secureToken) { $secureToken.Dispose() }
     foreach ($stream in $trustedPowerShellInputStreams) { try { $stream.Dispose() } catch { } }
 }
 

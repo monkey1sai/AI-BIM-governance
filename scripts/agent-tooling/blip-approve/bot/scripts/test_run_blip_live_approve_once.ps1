@@ -118,6 +118,70 @@ function Invoke-StrictMetadataSchemaRegression {
     Write-Output 'strict-runtime-metadata-regression-ok'
 }
 
+function Invoke-ReviewerTokenParserRegression {
+    $definitions = Get-ProductionFunctions -Names @('Read-ReviewerTokenFromEnvStream')
+    . ([ScriptBlock]::Create(($definitions -join "`n")))
+    $expected = 'github_pat_' + ('a' * 48)
+
+    function Invoke-ParseTokenBytes {
+        param([Parameter(Mandatory)][byte[]]$Bytes)
+        $bytes = $Bytes.Clone()
+        $stream = [System.IO.MemoryStream]::new($bytes, $false)
+        try { return Read-ReviewerTokenFromEnvStream -Stream $stream }
+        finally {
+            $stream.Dispose()
+            [Array]::Clear($bytes, 0, $bytes.Length)
+        }
+    }
+
+    function Invoke-ParseTokenText {
+        param([Parameter(Mandatory)][string]$Text)
+        return Invoke-ParseTokenBytes -Bytes (
+            [System.Text.UTF8Encoding]::new($false).GetBytes($Text)
+        )
+    }
+
+    foreach ($text in @(
+        "BLIP_GITHUB_TOKEN=$expected`n",
+        "BLIP_GITHUB_TOKEN=`"$expected`"`n",
+        "export BLIP_GITHUB_TOKEN='$expected'`n"
+    )) {
+        Assert-True ((Invoke-ParseTokenText -Text $text) -ceq $expected) `
+            'A supported fixed BLIP_GITHUB_TOKEN assignment did not parse exactly.'
+    }
+    $utf8Bom = [byte[]](0xEF, 0xBB, 0xBF) +
+        [System.Text.UTF8Encoding]::new($false).GetBytes("BLIP_GITHUB_TOKEN=$expected`n")
+    Assert-True ((Invoke-ParseTokenBytes -Bytes $utf8Bom) -ceq $expected) `
+        'A strict UTF-8 BOM assignment did not parse exactly.'
+    foreach ($invalid in @(
+        "OTHER_TOKEN=$expected`n",
+        "BLIP_GITHUB_TOKEN=$expected`nBLIP_GITHUB_TOKEN=$expected`n",
+        "BLIP_GITHUB_TOKEN=`"$expected`n",
+        "BLIP_GITHUB_TOKEN=too_short`n",
+        "# no assignment`n"
+    )) {
+        $rejected = $false
+        try { [void](Invoke-ParseTokenText -Text $invalid) }
+        catch { $rejected = $true }
+        Assert-True $rejected 'An invalid counted-reviewer credential file was accepted.'
+    }
+    $invalidEncodings = [System.Collections.Generic.List[byte[]]]::new()
+    $invalidEncodings.Add([byte[]](0xC3, 0x28))
+    $invalidEncodings.Add([byte[]]([byte[]](0xFF, 0xFE) +
+        [System.Text.Encoding]::Unicode.GetBytes("BLIP_GITHUB_TOKEN=$expected`n")))
+    $invalidEncodings.Add([byte[]]([byte[]](0xFE, 0xFF) +
+        [System.Text.Encoding]::BigEndianUnicode.GetBytes("BLIP_GITHUB_TOKEN=$expected`n")))
+    $invalidEncodings.Add([byte[]]([byte[]](0xFF, 0xFE, 0x00, 0x00) +
+        [System.Text.Encoding]::UTF32.GetBytes("BLIP_GITHUB_TOKEN=$expected`n")))
+    foreach ($invalidBytes in $invalidEncodings) {
+        $rejected = $false
+        try { [void](Invoke-ParseTokenBytes -Bytes $invalidBytes) }
+        catch { $rejected = $true }
+        Assert-True $rejected 'A non-UTF-8 counted-reviewer credential file was accepted.'
+    }
+    Write-Output 'reviewer-token-parser-regression-ok'
+}
+
 function Invoke-CanonicalProtectionSnapshotRegression {
     $definitions = Get-ProductionFunctions -Names @(
         'Write-CanonicalJsonElement',
@@ -412,6 +476,11 @@ function Invoke-BrokerCase {
         '  echo [blip] helper exited without a validated marker',
         '  exit /b 0',
         ')',
+        "if `"$MarkerMode`"==`"leak`" (",
+        '  echo %BLIP_GITHUB_TOKEN%',
+        '  echo %BLIP_APPROVAL_CAPABILITY% 1>&2',
+        '  exit /b 7',
+        ')',
         'echo fake child failure 1>&2',
         'exit /b 7'
     ) -join "`r`n")
@@ -431,8 +500,8 @@ function Invoke-BrokerCase {
     Assert-True ($results.Count -eq 1) "Expected one result JSON, got $($results.Count)"
     $result = Get-Content -Raw -LiteralPath $results[0].FullName | ConvertFrom-Json
     Assert-True ($result.status -ceq $ExpectedStatus) "Expected status $ExpectedStatus, got $($result.status)"
-    Assert-True ($result.stdout -notmatch 'opaque-test-token') 'Token leaked into stdout result'
-    Assert-True ($result.stderr -notmatch 'opaque-test-token') 'Token leaked into stderr result'
+    Assert-True ($result.stdout -notmatch [regex]::Escape($script:reviewerTestToken)) 'Token leaked into stdout result'
+    Assert-True ($result.stderr -notmatch [regex]::Escape($script:reviewerTestToken)) 'Token leaked into stderr result'
     Assert-True ($result.review_mode -ceq $ReviewMode.ToLowerInvariant()) `
         'Review mode was not persisted canonically.'
     Assert-True (
@@ -446,6 +515,7 @@ try {
     Invoke-StrictMetadataSchemaRegression
     Invoke-CanonicalProtectionSnapshotRegression
     Invoke-ApprovalCapabilityTupleRegression
+    Invoke-ReviewerTokenParserRegression
     if ($SafeOnly) {
         $tokens = $null
         $errors = $null
@@ -454,8 +524,16 @@ try {
         )
         Assert-True ($errors.Count -eq 0) 'Counted-approval wrapper does not parse.'
         $safeText = Get-Content -Raw -LiteralPath $sourceBroker
-        Assert-True ($safeText -match "Read-Host -Prompt 'Enter BLIP_GITHUB_TOKEN' -AsSecureString") `
-            'Counted-approval wrapper lost its masked replacement-token prompt.'
+        Assert-True ($safeText.Contains("`$reviewerTokenEnvPath = 'C:\Users\IOT\.grok\github-bot\.env.blip'")) `
+            'Counted-approval wrapper lost its fixed owner-authorized .env.blip path.'
+        Assert-True ($safeText.Contains('function Open-ProtectedReviewerTokenStream') -and
+            $safeText.Contains('function Read-ReviewerTokenFromEnvStream')) `
+            'Counted-approval wrapper lost protected fixed-file token loading.'
+        Assert-True ($safeText.Contains('-PinnedFileStream $stream') -and
+            $safeText.Contains('[System.IO.FileSystemAclExtensions]::GetAccessControl($PinnedFileStream)')) `
+            'Counted-approval wrapper no longer checks the ACL on the opened reviewer-token handle.'
+        Assert-True ($safeText -notmatch "Read-Host\s+-Prompt\s+'Enter BLIP_GITHUB_TOKEN'") `
+            'Counted-approval wrapper still depends on an interactive reviewer-token prompt.'
         Assert-True ($safeText -notmatch '(?i)gpt-|--model|CODEX_HOME') `
             'Counted-approval wrapper is no longer model-free.'
         Assert-True ($safeText -match "'--approve', '--live'") `
@@ -487,14 +565,14 @@ try {
             'Counted-approval wrapper exposes the admin credential to the Python child.'
         Assert-True (([regex]::Matches($safeText, 'Get-LiveProtectionSnapshot')).Count -ge 3) `
             'Counted-approval wrapper no longer performs both pre- and post-operation full policy reads.'
-        $promptIndex = $safeText.IndexOf("Read-Host -Prompt 'Enter BLIP_GITHUB_TOKEN' -AsSecureString", [StringComparison]::Ordinal)
+        $tokenLoadIndex = $safeText.IndexOf('$reviewerTokenStream = Open-ProtectedReviewerTokenStream', [StringComparison]::Ordinal)
         $prePolicyIndex = $safeText.IndexOf('$protectionPolicyJson = Get-LiveProtectionSnapshot', [StringComparison]::Ordinal)
-        Assert-True ($promptIndex -ge 0 -and $prePolicyIndex -gt $promptIndex) `
-            'Full pre-vote policy snapshot can become stale while the broker waits at the reviewer prompt.'
+        Assert-True ($tokenLoadIndex -ge 0 -and $prePolicyIndex -gt $tokenLoadIndex) `
+            'Full pre-vote policy snapshot is not collected after fixed reviewer-token loading.'
         Assert-True ($safeText.Contains('$childTimedOut = $true') -and
             $safeText -notmatch "throw 'The approval run exceeded the 10-minute capability lifetime") `
             'Child timeout can bypass the mandatory full post-operation policy verification.'
-        Write-Output 'broker-safe-tests-ok (parse, v2 tuple, masked prompt, owner-only fixed-handle admin read, secret-free child, live pre/post policy)'
+        Write-Output 'broker-safe-tests-ok (parse, v2 tuple, fixed owner-only env token, fixed-handle admin read, secret-free child, live pre/post policy)'
         return
     }
 
@@ -511,8 +589,10 @@ try {
     New-Item -ItemType Directory -Path $secretRoot | Out-Null
     $protectionAdminTokenPath = Join-Path $secretRoot 'blip-protection-admin-token.v1.txt'
     $protectionAdminToken = 'opaque-protection-admin-' + ('a' * 40)
-    $reviewerTestToken = 'opaque-test-token-' + ('r' * 40)
+    $reviewerTestToken = 'github_pat_' + ('r' * 48)
+    $reviewerTokenEnvPath = Join-Path $runtimeRoot '.env.blip'
     Set-Content -LiteralPath $protectionAdminTokenPath -Value $protectionAdminToken -Encoding ascii
+    Set-Content -LiteralPath $reviewerTokenEnvPath -Value "BLIP_GITHUB_TOKEN=$reviewerTestToken" -Encoding utf8NoBOM
     $brokerText = Get-Content -Raw -LiteralPath $sourceBroker
     $expectedRuntimeAssignment = "`$expectedTrustedRoot = 'C:\ProgramData\AI-BIM-governance\blip-approve\v1'"
     if ($brokerText.IndexOf($expectedRuntimeAssignment, [StringComparison]::Ordinal) -lt 0) {
@@ -529,6 +609,11 @@ try {
         throw 'Production broker protected-root derivation changed; isolated harness cannot patch it safely.'
     }
     $brokerText = $brokerText.Replace($protectedRootAssignment, '$protectedRoot = $productRoot')
+    $reviewerPathAssignment = "`$reviewerTokenEnvPath = 'C:\Users\IOT\.grok\github-bot\.env.blip'"
+    if ($brokerText.IndexOf($reviewerPathAssignment, [StringComparison]::Ordinal) -lt 0) {
+        throw 'Production broker fixed reviewer credential path changed; isolated harness cannot patch it safely.'
+    }
+    $brokerText = $brokerText.Replace($reviewerPathAssignment, '$reviewerTokenEnvPath = Join-Path $trustedRoot ''.env.blip''')
     $pythonAssignment = "`$pythonPath = 'C:\Program Files\Python312\python.exe'"
     if ($brokerText.IndexOf($pythonAssignment, [StringComparison]::Ordinal) -lt 0) {
         throw 'Production broker fixed Python assignment changed; isolated harness cannot patch it safely.'
@@ -551,19 +636,7 @@ function Get-LiveProtectionSnapshot {
 }
 '@
     $brokerText = $brokerText.Replace([string]$policyFunction, $policyStub)
-    $promptBlock = @'
-    $secureToken = Read-Host -Prompt 'Enter BLIP_GITHUB_TOKEN' -AsSecureString
-    if ($null -eq $secureToken -or $secureToken.Length -eq 0) { throw 'No token was entered.' }
-    $tokenBstr = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($secureToken)
-    $plainToken = [System.Runtime.InteropServices.Marshal]::PtrToStringBSTR($tokenBstr)
-    if ([string]::IsNullOrWhiteSpace($plainToken)) { throw 'No token was entered.' }
-'@
     $brokerText = $brokerText.Replace("`r`n", "`n")
-    $promptBlock = $promptBlock.Replace("`r`n", "`n")
-    if ($brokerText.IndexOf($promptBlock, [StringComparison]::Ordinal) -lt 0) {
-        throw 'Production broker token prompt changed; isolated harness cannot patch it safely.'
-    }
-    $brokerText = $brokerText.Replace($promptBlock, "    `$plainToken = '$reviewerTestToken'`r`n")
     Set-Content -LiteralPath (Join-Path $runtimeRoot 'run_blip_live_approve_once.ps1') -Value $brokerText -Encoding utf8NoBOM
     Copy-Item -LiteralPath $sourceHelper -Destination (Join-Path $runtimeRoot 'blip_review.py')
     Copy-Item -LiteralPath $sourceAuth -Destination (Join-Path $runtimeRoot 'app_auth.py')
@@ -591,6 +664,7 @@ function Get-LiveProtectionSnapshot {
     )) { Set-TestProtectedAcl -LiteralPath $path }
     Set-TestProtectedAcl -LiteralPath $secretRoot -OwnerOnly
     Set-TestProtectedAcl -LiteralPath $protectionAdminTokenPath
+    Set-TestProtectedAcl -LiteralPath $reviewerTokenEnvPath
 
     $weakSecretAcl = Invoke-BrokerCase -MarkerMode valid -ValidManifest $true -ExpectedExit 1 -ExpectedStatus broker_failed
     Assert-True ($weakSecretAcl.stderr -match 'protected secret path') `
@@ -598,6 +672,27 @@ function Get-LiveProtectionSnapshot {
     Remove-Item -LiteralPath $protectionAdminTokenPath -Force
     Set-Content -LiteralPath $protectionAdminTokenPath -Value $protectionAdminToken -Encoding ascii
     Set-TestProtectedAcl -LiteralPath $protectionAdminTokenPath -OwnerOnly
+    $weakReviewerTokenAcl = Invoke-BrokerCase -MarkerMode valid -ValidManifest $true -ExpectedExit 1 -ExpectedStatus broker_failed
+    Assert-True ($weakReviewerTokenAcl.stderr -match 'protected secret path') `
+        'Broker accepted a counted-reviewer credential readable by an untrusted SID'
+    Remove-Item -LiteralPath $reviewerTokenEnvPath -Force
+    Set-Content -LiteralPath $reviewerTokenEnvPath -Value "BLIP_GITHUB_TOKEN=$reviewerTestToken" -Encoding utf8NoBOM
+    Set-TestProtectedAcl -LiteralPath $reviewerTokenEnvPath -OwnerOnly
+
+    Rename-Item -LiteralPath $reviewerTokenEnvPath -NewName '.env.blip.bak'
+    $missingReviewerToken = Invoke-BrokerCase -MarkerMode valid -ValidManifest $true -ExpectedExit 1 -ExpectedStatus broker_failed
+    Assert-True ($missingReviewerToken.stderr -match 'counted-reviewer credential file is unavailable') `
+        'Missing fixed counted-reviewer credential did not fail closed'
+    Rename-Item -LiteralPath ($reviewerTokenEnvPath + '.bak') -NewName '.env.blip'
+
+    Set-Content -LiteralPath $reviewerTokenEnvPath -Value @(
+        "BLIP_GITHUB_TOKEN=$reviewerTestToken",
+        "BLIP_GITHUB_TOKEN=$reviewerTestToken"
+    ) -Encoding utf8NoBOM
+    $duplicateReviewerToken = Invoke-BrokerCase -MarkerMode valid -ValidManifest $true -ExpectedExit 1 -ExpectedStatus broker_failed
+    Assert-True ($duplicateReviewerToken.stderr -match 'duplicate BLIP_GITHUB_TOKEN') `
+        'Duplicate counted-reviewer credential assignment did not fail closed'
+    Set-Content -LiteralPath $reviewerTokenEnvPath -Value "BLIP_GITHUB_TOKEN=$reviewerTestToken" -Encoding utf8NoBOM
 
     $selfSource = Invoke-BrokerCase -MarkerMode valid -ValidManifest $true `
         -ExpectedExit 1 -ExpectedStatus broker_failed -SourceCommit ('a' * 40)
@@ -672,7 +767,13 @@ function Get-LiveProtectionSnapshot {
     $aclPayload = Get-Content -Raw -LiteralPath $aclResult.FullName | ConvertFrom-Json
     Assert-True ($aclPayload.stderr -match 'complete explicit write denial') 'Missing deny failure was not attributable'
 
-    Write-Output 'broker-tests-ok (15 cases including merged-source refusal, fixed-handle admin credential, secret-free child, and live pre/post policy)'
+    $redaction = Invoke-BrokerCase -MarkerMode leak -ValidManifest $true -ExpectedExit 7 -ExpectedStatus approve_failed
+    Assert-True ($redaction.stdout -match '\[REDACTED\]') `
+        'Synthetic reviewer token output was not redacted before persistence.'
+    Assert-True ($redaction.stderr -match '\[REDACTED-CAPABILITY\]') `
+        'Synthetic approval capability output was not redacted before persistence.'
+
+    Write-Output 'broker-tests-ok (fixed owner-only env token, merged-source refusal, fixed-handle admin credential, secret-free child, and live pre/post policy)'
 }
 finally {
     if (Test-Path -LiteralPath $sandboxRoot) { Remove-Item -LiteralPath $sandboxRoot -Recurse -Force }
