@@ -1,6 +1,6 @@
 # introduce-viewer-app-integration-surface
 
-> **Status: deferred 2026-08-18**（active WIP 6/6 滿額——owner 2026-07-24 檔位；六筆＝a4-console-convergence、converge-console-specs-to-shipped-behavior、gpu-session-baseline-and-idle-reclaim、implement-runtime-command-authority-and-rejection、isolated-branch-stack-browser-e2e、migrate-console-to-hifi-design，ledger＋NOW 一致實測）。本 change 以 deferred 開立、不計入 active WIP；artifacts 寫全，thaw 後即可由 spec-to-done 逐片執行。
+> **Status: active 2026-09-03**（thaw：使用者明確口令「3D 工作區改為中央內嵌 WebRTC viewport＋右側 A1–A4 工具 Dock」，符合 NOW.md 2026-08-20 R2「僅使用者明確口令升 active」；thaw 後 non-deferred active 6/6，未 defer 任何 change；本片＝S3a＋S3b，詳 ledger current_slice）。**開立時 2026-08-18 為 deferred**（active WIP 6/6 滿額——owner 2026-07-24 檔位；六筆＝a4-console-convergence、converge-console-specs-to-shipped-behavior、gpu-session-baseline-and-idle-reclaim、implement-runtime-command-authority-and-rejection、isolated-branch-stack-browser-e2e、migrate-console-to-hifi-design，ledger＋NOW 一致實測）。本 change 以 deferred 開立、不計入 active WIP；artifacts 寫全，thaw 後即可由 spec-to-done 逐片執行。
 >
 > **重啟條件（thaw）**：僅使用者明確口令升 active。deferred/frozen 不因額度增加或任一 change archive 而自動 thaw（`docs/plans/NOW.md` 2026-07-24 owner 裁決）。thaw 前本 change 只是規格正本，不得據以修改任何 runtime surface。
 

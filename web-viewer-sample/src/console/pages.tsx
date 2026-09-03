@@ -11,6 +11,7 @@ import { coordinatorClient, CreateReviewSessionResponse, IfcReadyListItem, KitIn
 import { CoordinatorGovernanceTabs } from "./coordinator/RuntimeGovernanceTabs";
 import { IntentDialog } from "./IntentDialog";
 import { ReviewSessionViewerPane } from "./ReviewSessionViewerPane";
+import { WorkspaceViewerMount } from "./unified/WorkspaceViewerMount";
 // 重用既有 viewer 的 mapping fake-vs-real 隔離工具（已有測試）：mock / allow_fake_mapping /
 // fake_mapping_count>0 / mapping_method=fake_for_smoke_test 一律當 fake，不重造輪子。
 import { ElementMappingDocument, isFakeMappingDocument, isFakeMappingItem, mappingVerificationBlockReason } from "../types/mapping";
@@ -1224,7 +1225,7 @@ export function FederationPage() {
       </Panel>
       {sessRes && (
         <>
-          <ReviewSessionViewerPane
+          <WorkspaceViewerMount
             mode="a3-inline"
             showHandoffActions={false}
             handoff={{

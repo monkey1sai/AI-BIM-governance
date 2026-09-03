@@ -17,7 +17,8 @@ import {
   type RuntimeSessionSummary,
 } from "./coordinatorClient";
 import { getLocalDevUserCarrier } from "./localDevPrincipal";
-import { ReviewSessionViewerPane, type ReviewRoomHandoff } from "./ReviewSessionViewerPane";
+import type { ReviewRoomHandoff } from "./ReviewSessionViewerPane";
+import { WorkspaceViewerMount } from "./unified/WorkspaceViewerMount";
 
 const EXAMPLE_QUERIES = [
   "找 4F 防火門且 FireRating < 60",
@@ -495,7 +496,7 @@ export function A4SemanticSearchPage() {
         )}
       </p>
       {sourceMode === "session" && sessionId && (
-        <ReviewSessionViewerPane
+        <WorkspaceViewerMount
           mode="a4-inline"
           handoff={a4ViewerHandoff}
           // A4 search rows are evidence-bearing table data, not browser-side runtime authority.
