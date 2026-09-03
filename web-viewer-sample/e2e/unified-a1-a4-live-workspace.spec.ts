@@ -160,8 +160,43 @@ test.describe("Unified A1-A4 browser semantics (controlled APIs, not live runtim
     await page.getByTestId("a4-run").click();
     await page.getByTestId("a4-row-guid-door-e2e").click();
 
-    await expect(page.getByTestId("a4-inline-handoff-summary")).toContainText("/World/Door_E2E");
-    await expect(page.getByTestId("a4-inline-highlight")).toBeDisabled();
-    await expect(page.getByTestId("a4-inline-highlight-reason")).toContainText(/手動啟動|attach Kit session/);
+    // 7ca6466（fix(viewer): 封鎖未授權 A4 高亮回應）：A4 對 pane 傳 showHandoffActions=false，pane 端的 handoff summary／
+    // 單筆 highlight 面板不渲染；A4 的 3D 動作改走 coordinator 驗證的 handoff（a4-focus-handoff／a4-handoff-unavailable）。
+    // 原斷言（期待 a4-inline-handoff-summary）與該 commit 矛盾、於 main 亦紅；此處對齊現行契約。
+    await expect(page.getByTestId("a4-inline-handoff-summary")).toHaveCount(0);
+    await expect(page.getByTestId("a4-inline-highlight")).toHaveCount(0);
+    await expect(page.getByTestId("a4-focus-handoff").or(page.getByTestId("a4-handoff-unavailable"))).toHaveCount(1);
+  });
+
+  // introduce-viewer-app-integration-surface S3a DoD（tasks 4.3）：單次 goto 進站（hash-only、無 search），其後導覽一律
+  // 頁內 client-side 點擊；ViewportHost 為同一節點（data-mount-token 不變）跨 #a1↔#a2↔#a3↔#a4；console top document 無 <video>
+  //（R-D1 驗證項）。API 為受控 stub（runtime/status 200）→ host live 但未發布 handoff 時為誠實空態、無 iframe。
+  test("viewport host persists across client-side dock switches and the top document has no video", async ({ page }) => {
+    await installControlledApis(page);
+    await page.goto("/#a1");
+    const host = page.locator("[data-uc='viewport'][data-prov='asbuilt']");
+    await expect(host).toHaveCount(1);
+    await expect(host.locator("..")).toHaveAttribute("data-uc", "page-root");
+    const token = await host.getAttribute("data-mount-token");
+    expect(token).toBeTruthy();
+    for (const dock of ["a2", "a3", "a4", "issues"] as const) {
+      await page.locator(`[data-uc='dock-tab-${dock}']`).click();
+      await expect(page.locator(`[data-uc='live-module-${dock}']`)).toBeVisible();
+      await expect(host).toHaveAttribute("data-mount-token", token!);
+    }
+    await expect(page.locator("video")).toHaveCount(0);
+    await expect(page.locator("iframe[src*='/ui/open']")).toHaveCount(0);
+    await expect(page.locator("[data-uc='ws-stage-tree']")).toHaveAttribute("data-state", "unsupported");
+    await expect(page.locator("[data-uc='ws-flow-guide']")).toBeVisible();
+    await expect(page.locator("[data-uc='viewport'][data-prov='demo']")).toHaveCount(0);
+  });
+
+  // 設計正本 §03 統一主鍵語法 #workspace?dock=… 為 alias，渲染同一 WorkspacePage（dock=a4 維持既有 scrub alias → #a4）。
+  test("#workspace?dock alias renders the same unified workspace", async ({ page }) => {
+    await installControlledApis(page);
+    await page.goto("/#workspace?dock=a2");
+    await expect(page.locator("[data-uc='unified-live-workspace']")).toBeVisible();
+    await expect(page.locator("[data-uc='live-module-a2']")).toContainText("模型版本差異與責任追蹤 · A2");
+    await expect(page.locator("[data-uc='dock-tab-a2']")).toHaveAttribute("data-active", "true");
   });
 });

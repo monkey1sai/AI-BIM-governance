@@ -170,19 +170,38 @@ function AliasRedirect({
 
 // ── UnifiedConsole 分流表（IA v2）──
 // approved 鍵 {home,a1..a10,pipeline,runtime} 掛 UnifiedShell + 對應新頁；回 null 則走 legacy 殼。
-// a1..a4 → WorkspacePage（dock=aN；key=page 讓 route 切換時重建 local state）；
-// legacy workspace?dock=a4 aliases scrub URL-carried context then converge to #a4.
+// a1..a4 → WorkspacePage（dock=aN）。不再 key=page：3D 工作區的 viewport host 掛在 UnifiedShell（V-A′），
+// 切 dock 不得 unmount 整頁（introduce-viewer-app-integration-surface design §4：#a1↔#a4 不 unmount、lease 不重 claim）；
+// dock 切換由 WorkspacePage 依 initialDock/hash 自行同步。
+// #workspace?dock=a1..a3|issues 為設計正本 §03 的統一主鍵語法（alias，渲染同一 WorkspacePage）；dock=a4 維持既有
+// scrub alias（usePageHash 轉 workspace-a4[-scrub] → AliasRedirect #a4）。
 // a5..a10 → ConceptPage；pipeline → PipelinePage；runtime → OpsPage；home → UnifiedHomePage。
 // #conv 不進 unified（legacy ConversionPage=IFC→USD 轉檔歷史，雙路由分治）。
 const UNIFIED_WS_KEYS: readonly string[] = ["a1", "a2", "a3", "a4", "issues"];
 const UNIFIED_CONCEPT_KEYS: readonly string[] = ["a5", "a6", "a7", "a8", "a9", "a10"];
+
+function workspaceDockFromHash(): DockKey {
+  const raw = window.location.hash.replace(/^#\/?console\/?/, "").replace(/^#\/?/, "");
+  const queryIndex = raw.indexOf("?");
+  const query = queryIndex === -1 ? "" : raw.slice(queryIndex + 1);
+  const dock = new URLSearchParams(query.replace(/\?/g, "&")).get("dock");
+  return dock !== null && UNIFIED_WS_KEYS.includes(dock) ? dock as DockKey : "a1";
+}
 
 function renderUnified(page: string): ReactElement | null {
   if (UNIFIED_WS_KEYS.includes(page)) {
     const dock = page as DockKey;
     return (
       <UnifiedShell page="ws" dock={dock}>
-        <WorkspacePage key={page} initialDock={dock} />
+        <WorkspacePage initialDock={dock} />
+      </UnifiedShell>
+    );
+  }
+  if (page === "workspace") {
+    const dock = workspaceDockFromHash();
+    return (
+      <UnifiedShell page="ws" dock={dock}>
+        <WorkspacePage initialDock={dock} />
       </UnifiedShell>
     );
   }

@@ -372,16 +372,16 @@
         "authority": "canonical_product_surface",
         "canonical_route": "#a1",
         "capture_runner": "web-viewer-sample/e2e/design-system-visual.spec.ts",
-        "approval": "explicit owner rebaseline 2026-09-03: A1 live fail-closed governance workbench under the /api 503 stub; product-surface authority per PR #429 and #701 precedent; goldens captured from clean subject commit 056ba78 by design-system-visual.spec.ts"
+        "approval": "explicit owner rebaseline 2026-09-03 (pending owner sign-off in PR): A1 live workspace under the /api 503 stub re-laid out per design §03 IA (left stage-tree honestly disabled #609 / centre ViewportHost slot, zero DOM offline / right tool dock with flow guide) by introduce-viewer-app-integration-surface S3a+S3b; product-surface authority per PR #429 and #701 precedent; goldens captured from clean subject commit f31528e by design-system-visual.spec.ts"
       },
       "baselines": {
         "1440x900": {
           "path": "docs/plans/design-system-baseline/workspace.a1.default/1440x900.png",
-          "sha256": "969889ef0366337395a747a8bdc179060b5f749d304e598306ed8d55c00b81f0"
+          "sha256": "bc07ec21205c0fc1a84234836e72795ff0e4cf30006212f846216ec3bea19c6d"
         },
         "1920x1080": {
           "path": "docs/plans/design-system-baseline/workspace.a1.default/1920x1080.png",
-          "sha256": "0afd1a6ce4279aeeb78d05aa0b415cee44b79fdd46a43a1e94500f592ea9f2fe"
+          "sha256": "63fb6b602341d80721d9ef7821772c44f34692da7d946bba05b7271b8f7a5306"
         }
       }
     },
@@ -398,16 +398,16 @@
         "authority": "canonical_product_surface",
         "canonical_route": "#a2",
         "capture_runner": "web-viewer-sample/e2e/design-system-visual.spec.ts",
-        "approval": "explicit owner rebaseline 2026-09-03: A2 live fail-closed version-diff workbench under the /api 503 stub; product-surface authority per PR #429 and #701 precedent; goldens captured from clean subject commit 056ba78 by design-system-visual.spec.ts"
+        "approval": "explicit owner rebaseline 2026-09-03 (pending owner sign-off in PR): A2 live workspace under the /api 503 stub re-laid out per design §03 IA (left stage-tree honestly disabled #609 / centre ViewportHost slot, zero DOM offline / right tool dock with flow guide) by introduce-viewer-app-integration-surface S3a+S3b; product-surface authority per PR #429 and #701 precedent; goldens captured from clean subject commit f31528e by design-system-visual.spec.ts"
       },
       "baselines": {
         "1440x900": {
           "path": "docs/plans/design-system-baseline/workspace.a2.default/1440x900.png",
-          "sha256": "18acef1ad2339aba9346e6733c2d458f72429fb06e2b8992115ec2f687a697b1"
+          "sha256": "7ec50d23b15f8710f463de6a60f959e5de610502d2e47483055858e03161458f"
         },
         "1920x1080": {
           "path": "docs/plans/design-system-baseline/workspace.a2.default/1920x1080.png",
-          "sha256": "1c85c58f587be14fe7da45c2736a9063ea0aa23b49e6724ab2f022e98e15bd24"
+          "sha256": "d91ab4f67859c7376271ee5986c0b2158e4c9709ed8f180a26d16dd912a089b0"
         }
       }
     },
@@ -424,16 +424,16 @@
         "authority": "canonical_product_surface",
         "canonical_route": "#a3",
         "capture_runner": "web-viewer-sample/e2e/design-system-visual.spec.ts",
-        "approval": "explicit owner rebaseline 2026-09-03: A3 live fail-closed federation workbench under the /api 503 stub; product-surface authority per PR #429 and #701 precedent; goldens captured from clean subject commit 056ba78 by design-system-visual.spec.ts"
+        "approval": "explicit owner rebaseline 2026-09-03 (pending owner sign-off in PR): A3 live workspace under the /api 503 stub re-laid out per design §03 IA (left stage-tree honestly disabled #609 / centre ViewportHost slot, zero DOM offline / right tool dock with flow guide) by introduce-viewer-app-integration-surface S3a+S3b; product-surface authority per PR #429 and #701 precedent; goldens captured from clean subject commit f31528e by design-system-visual.spec.ts"
       },
       "baselines": {
         "1440x900": {
           "path": "docs/plans/design-system-baseline/workspace.a3.default/1440x900.png",
-          "sha256": "c2e9ffbc9ac6c3fdbb81d397438fc23eed304140603d890312a0b8fc04da9c78"
+          "sha256": "ec52f1b3ca441a92d146d039c8217aecc51c96c2460da2bd56f81225cf551270"
         },
         "1920x1080": {
           "path": "docs/plans/design-system-baseline/workspace.a3.default/1920x1080.png",
-          "sha256": "5e5b231542058fb6784ff5ae023351dd5fce002089e7c8d0bf47ed59b695cc4f"
+          "sha256": "b54b635146dc6f02721f9223c0e72dd60279889da8cf6f66a7b0880275102aef"
         }
       }
     },
@@ -450,16 +450,16 @@
         "authority": "canonical_product_surface",
         "canonical_route": "#a4",
         "capture_runner": "web-viewer-sample/e2e/design-system-visual.spec.ts",
-        "approval": "explicit owner rebaseline 2026-09-03: A4 canonical live table-only workbench under the /api 503 stub; product-surface authority per PR #429 and #701 precedent; goldens captured from clean subject commit a4f12f9 by design-system-visual.spec.ts"
+        "approval": "explicit owner rebaseline 2026-09-03 (pending owner sign-off in PR): A4 live workspace under the /api 503 stub re-laid out per design §03 IA (left stage-tree honestly disabled #609 / centre ViewportHost slot, zero DOM offline / right tool dock with flow guide) by introduce-viewer-app-integration-surface S3a+S3b; product-surface authority per PR #429 and #701 precedent; goldens captured from clean subject commit f31528e by design-system-visual.spec.ts"
       },
       "baselines": {
         "1440x900": {
           "path": "docs/plans/design-system-baseline/workspace.a4.default/1440x900.png",
-          "sha256": "9b355090b564e26c777a6f26fbcd07f5b7587b2bc3ea010c6a9dd338f04ead54"
+          "sha256": "33e8765a1914c3438224aadd4b5e4e277fe502be3c8c13a5b316132a85ce41cc"
         },
         "1920x1080": {
           "path": "docs/plans/design-system-baseline/workspace.a4.default/1920x1080.png",
-          "sha256": "e4e0c8cb39fcda335bb3b81f5a3ee7204b2edd61b4f67127a545c24f92982daf"
+          "sha256": "d7304fa5f043c09be5e69c95840852c7bce8ac48d3d069a27f633f4774a31695"
         }
       }
     },
@@ -766,5 +766,5 @@
     "docs/plans/ai-bim-geo-viewer-A1.png..A10.png",
     "docs/plans/ai-bim-geo-Ai-codeing-A1.png..A10.png"
   ],
-  "baseline_snapshot_sha256": "bda21f651131f6998e939b9ae21899e54d2074fd38740606b8435599d6b96437"
+  "baseline_snapshot_sha256": "c5eb4422aba42f623fcf88f447a5e0da00f66c86812c7601628f9c7081cef507"
 }
