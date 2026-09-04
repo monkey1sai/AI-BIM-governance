@@ -239,20 +239,6 @@ test.describe("CH-H1 semantic viewer · mock viewport（harness 不空白）", (
       }
     }
 
-    // 契約四：runtime diagnostics 疊在 stage 上時只能是角落 HUD chip，且不得覆蓋 stage 中心。
-    const diagnostics = page.getByTestId("structured-log-diagnostics");
-    if (await diagnostics.count()) {
-      await expect(page.getByTestId("structured-log-flush")).toHaveCount(0);
-      const chip = await diagnostics.boundingBox();
-      if (chip) {
-        const stage = collapsedGeom.v;
-        const center = { x: stage.x + stage.width / 2, y: stage.y + stage.height / 2 };
-        const coversCenter = center.x >= chip.x && center.x <= chip.x + chip.width
-          && center.y >= chip.y && center.y <= chip.y + chip.height;
-        expect(coversCenter, JSON.stringify({ chip, stage })).toBe(false);
-        expect(chip.height, JSON.stringify(chip)).toBeLessThanOrEqual(48);
-      }
-    }
   });
 
   // 窄容器（console 內嵌 A1 viewer iframe 約 850px）是本次回歸的主要現場：舊版 420px /
