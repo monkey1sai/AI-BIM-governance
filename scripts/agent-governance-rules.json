@@ -574,6 +574,159 @@
         "@monkey1sai-blip"
       ],
       "exactly": true
+    },
+    {
+      "id": "base-sync-policy-surface-present",
+      "kind": "file_exists",
+      "severity": "error",
+      "title": "the base-sync policy, its schema, evaluator and tests are present",
+      "paths": [
+        "scripts/base-sync-policy.json",
+        "scripts/tests/base-sync-policy.schema.json",
+        "scripts/lib/base-sync-policy.mjs",
+        "scripts/tests/test-base-sync-policy.mjs"
+      ]
+    },
+    {
+      "id": "base-sync-policy-schema",
+      "kind": "json_schema",
+      "severity": "error",
+      "title": "base-sync-policy.json satisfies its Draft-07 schema",
+      "path": "scripts/base-sync-policy.json",
+      "schema": "scripts/tests/base-sync-policy.schema.json"
+    },
+    {
+      "id": "base-sync-default-forbidden",
+      "kind": "json_node",
+      "severity": "error",
+      "title": "base sync is forbidden by default during convergence",
+      "path": "scripts/base-sync-policy.json",
+      "pointer": "decision.default",
+      "equals": "forbidden"
+    },
+    {
+      "id": "base-sync-main-advanced-not-a-reason",
+      "kind": "json_node",
+      "severity": "error",
+      "title": "main merely advancing is never a valid sync reason",
+      "path": "scripts/base-sync-policy.json",
+      "pointer": "decision.rejected_reasons",
+      "contains": [
+        "base_advanced",
+        "routine_freshness",
+        "keep_branch_current"
+      ]
+    },
+    {
+      "id": "base-sync-reasons-closed",
+      "kind": "json_node",
+      "severity": "error",
+      "title": "the base-sync reason enum is exactly the four allowed exceptions",
+      "path": "scripts/base-sync-policy.json",
+      "pointer": "decision.allowed_reasons",
+      "contains": [
+        "real_conflict",
+        "semantic_overlap",
+        "protection_forced",
+        "base_affects_correctness"
+      ]
+    },
+    {
+      "id": "base-sync-overlap-uses-verification-manifest",
+      "kind": "json_node",
+      "severity": "error",
+      "title": "semantic overlap is decided by the verification manifest classifier, not agent judgement",
+      "path": "scripts/base-sync-policy.json",
+      "pointer": "decision.semantic_overlap.classifier_path",
+      "equals": "scripts/verification-manifest.json"
+    },
+    {
+      "id": "base-sync-protection-forced-not-a-violation",
+      "kind": "json_node",
+      "severity": "error",
+      "title": "protection-forced syncs are reported but never counted as violations",
+      "path": "scripts/base-sync-policy.json",
+      "pointer": "budgets.ordinary_pr.protection_forced_sync_count_max",
+      "is_null": true
+    },
+    {
+      "id": "base-sync-ledger-derived-not-committed",
+      "kind": "json_node",
+      "severity": "error",
+      "title": "the sync ledger is derived from GitHub server truth, never self-attested in-branch",
+      "path": "scripts/base-sync-policy.json",
+      "pointer": "ledger.source",
+      "equals": "github_server_truth"
+    },
+    {
+      "id": "verification-tier-policy-surface-present",
+      "kind": "file_exists",
+      "severity": "error",
+      "title": "the local verification tier sidecar, its schema, selector and tests are present",
+      "paths": [
+        "scripts/verification-tier-policy.json",
+        "scripts/tests/verification-tier-policy.schema.json",
+        "scripts/lib/verification-tiers.mjs",
+        "scripts/tests/test-verification-tiers.mjs"
+      ]
+    },
+    {
+      "id": "verification-tier-policy-schema",
+      "kind": "json_schema",
+      "severity": "error",
+      "title": "verification-tier-policy.json satisfies its Draft-07 schema",
+      "path": "scripts/verification-tier-policy.json",
+      "schema": "scripts/tests/verification-tier-policy.schema.json"
+    },
+    {
+      "id": "verification-tier-policy-is-local-selection-only",
+      "kind": "json_node",
+      "severity": "error",
+      "title": "the tier sidecar selects local runs only and is never CI or merge authority",
+      "path": "scripts/verification-tier-policy.json",
+      "pointer": "authority",
+      "equals": "local_selection_only"
+    },
+    {
+      "id": "verification-tier-policy-sits-over-canonical-manifest",
+      "kind": "json_node",
+      "severity": "error",
+      "title": "the tier sidecar never replaces the canonical verification manifest",
+      "path": "scripts/verification-tier-policy.json",
+      "pointer": "manifest_path",
+      "equals": "scripts/verification-manifest.json"
+    },
+    {
+      "id": "review-convergence-join-surface-present",
+      "kind": "file_exists",
+      "severity": "error",
+      "title": "the disposition mapping, finding join registry and convergence state layer are present with tests",
+      "paths": [
+        "scripts/lib/review-disposition-mapping.mjs",
+        "scripts/tests/test-review-disposition-mapping.mjs",
+        "scripts/lib/review-finding-registry.mjs",
+        "scripts/tests/review-finding-record.schema.json",
+        "scripts/tests/test-review-finding-registry.mjs",
+        "scripts/lib/pr-convergence-state.mjs",
+        "scripts/tests/test-pr-convergence-state.mjs"
+      ]
+    },
+    {
+      "id": "ci-local-parity-surface-present",
+      "kind": "file_exists",
+      "severity": "error",
+      "title": "the Actions baseline and local/CI parity collectors are present with tests",
+      "paths": [
+        "scripts/lib/actions-baseline.mjs",
+        "scripts/dev/collect-actions-baseline.mjs",
+        "scripts/tests/test-actions-baseline.mjs",
+        "scripts/lib/ci-local-parity.mjs",
+        "scripts/dev/collect-ci-local-parity.mjs",
+        "scripts/tests/ci-local-parity.schema.json",
+        "scripts/tests/test-ci-local-parity.mjs",
+        "docs/agents/required-check-change-runbook.md",
+        "docs/agents/pr-convergence-agent.md"
+      ]
     }
   ],
   "retired": []

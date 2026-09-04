@@ -8,6 +8,8 @@ param(
     [switch] $PlanOnly,
     [switch] $Json,
     [string[]] $ChangedPath = @(),
+    [string] $BaseRef = '',
+    [ValidateSet('', 'quick', 'pr', 'full')][string] $Tier = '',
     [switch] $Full,
     [ValidatePattern('^[0-9a-f]{40}$')][string] $Subject,
     [string] $OutcomeOut,
@@ -329,15 +331,50 @@ function Invoke-VerificationPlannerProcess {
 if ($Json -and -not $PlanOnly) {
     throw 'Json output is supported only with PlanOnly.'
 }
+# A tiered run executes a subset of the plan and is therefore never commit-bound evidence.
+if (-not [string]::IsNullOrWhiteSpace($Tier) -and -not [string]::IsNullOrWhiteSpace($OutcomeOut)) {
+    throw 'Tier cannot be combined with OutcomeOut: a tiered run is not verification evidence.'
+}
 if (-not [string]::IsNullOrWhiteSpace($OutcomeOut) -and ($PlanOnly -or $Json -or [string]::IsNullOrWhiteSpace($Subject))) {
     throw 'OutcomeOut requires an executing Developer run and a full lowercase Subject commit.'
 }
 if ($VerifyProfile -eq 'Deployment' -and ($Json -or $ChangedPath.Count -gt 0 -or $Full -or
+    -not [string]::IsNullOrWhiteSpace($BaseRef) -or -not [string]::IsNullOrWhiteSpace($Tier) -or
     -not [string]::IsNullOrWhiteSpace($Subject) -or -not [string]::IsNullOrWhiteSpace($OutcomeOut))) {
-    throw 'Deployment is a legacy_profile_not_migrated adapter and does not accept Json, ChangedPath, Full, Subject, or OutcomeOut.'
+    throw 'Deployment is a legacy_profile_not_migrated adapter and does not accept Json, ChangedPath, BaseRef, Tier, Full, Subject, or OutcomeOut.'
 }
-if (($ChangedPath.Count -gt 0 -or $Full) -and ($StreamingOnly -or $TsOnly -or $PyOnly)) {
-    throw 'ChangedPath/Full dispatch cannot be combined with legacy Developer filters.'
+if (($ChangedPath.Count -gt 0 -or $Full -or -not [string]::IsNullOrWhiteSpace($BaseRef)) -and ($StreamingOnly -or $TsOnly -or $PyOnly)) {
+    throw 'ChangedPath/BaseRef/Full dispatch cannot be combined with legacy Developer filters.'
+}
+
+# -BaseRef <ref>: derive changed paths with the exact command CI runs (ci.yml changes job),
+# so the local plan and the CI plan are computed from identical input.
+$derivedBaseSha = ''
+if (-not [string]::IsNullOrWhiteSpace($BaseRef)) {
+    if ($ChangedPath.Count -gt 0 -or $Full) {
+        throw 'BaseRef cannot be combined with ChangedPath or Full.'
+    }
+    $git = Get-Command git -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($null -eq $git) { throw 'Git is required to derive changed paths from BaseRef.' }
+    $resolved = @(& $git.Source -C $RepoRoot --no-optional-locks rev-parse --verify --quiet "$BaseRef^{commit}" 2>$null)
+    $derivedBaseSha = [string]($resolved -join '')
+    if ($LASTEXITCODE -ne 0 -or $derivedBaseSha -notmatch '^[0-9a-f]{40}$') {
+        throw "BaseRef does not resolve to a commit: $BaseRef"
+    }
+    $previousEncoding = [Console]::OutputEncoding
+    try {
+        [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+        $rawDiff = @(& $git.Source -C $RepoRoot -c core.quotepath=false --no-optional-locks diff --no-renames --name-only -z "$derivedBaseSha...HEAD")
+        $diffExitCode = $LASTEXITCODE
+    }
+    finally {
+        [Console]::OutputEncoding = $previousEncoding
+    }
+    if ($diffExitCode -ne 0) { throw "BaseRef diff failed for $BaseRef...HEAD" }
+    $ChangedPath = @(([string]($rawDiff -join '')).Split([char]0, [System.StringSplitOptions]::RemoveEmptyEntries))
+    if ($ChangedPath.Count -eq 0) {
+        throw "BaseRef $BaseRef produced no changed paths relative to HEAD; nothing to verify."
+    }
 }
 
 $Targets = @()
@@ -449,6 +486,7 @@ else {
     if ($ChangedPath.Count -gt 0 -or $Full) {
         foreach ($path in $ChangedPath) { $plannerArgs += @('--path', $path) }
         if ($Full) { $plannerArgs += '--full' }
+        if (-not [string]::IsNullOrWhiteSpace($derivedBaseSha)) { $plannerArgs += @('--base', $derivedBaseSha) }
     }
     else {
         $developerProfile = if ($StreamingOnly) {
@@ -498,6 +536,21 @@ else {
         exit $plannerExitCode
     }
 
+    # Optional local tier selection over the canonical plan (sidecar scripts/verification-tier-policy.json;
+    # CI never reads it). A dispatch=full plan (self-change of the verification mechanism) forces full.
+    $tierAllowedClasses = $null
+    $TierEffective = ''
+    if (-not [string]::IsNullOrWhiteSpace($Tier)) {
+        $tierPolicyPath = Join-Path $RepoRoot 'scripts\verification-tier-policy.json'
+        if (-not (Test-Path -LiteralPath $tierPolicyPath -PathType Leaf)) { throw 'Verification tier policy is missing.' }
+        $tierPolicy = Get-Content -LiteralPath $tierPolicyPath -Raw | ConvertFrom-Json -Depth 20 -ErrorAction Stop
+        if ($tierPolicy.schema_version -ne 'verification-tier-policy/v1' -or $tierPolicy.authority -ne 'local_selection_only' -or $tierPolicy.tiered_run_is_evidence -ne $false) {
+            throw 'Verification tier policy is not the expected local-selection-only v1 document.'
+        }
+        $TierEffective = if ($tierPolicy.full_when_dispatch_full -and $PlanDocument.dispatch -eq 'full') { 'full' } else { $Tier }
+        $tierAllowedClasses = @($tierPolicy.tiers.$TierEffective.evidence_classes | ForEach-Object { [string]$_ })
+    }
+
     foreach ($plannedTarget in @($PlanDocument.targets | Where-Object { $_.required })) {
         $plannedGates = @($plannedTarget.gates)
         foreach ($gate in $plannedGates) {
@@ -506,6 +559,16 @@ else {
                 if ($plannedGates.Count -gt 1) { $omittedName = "$omittedName [$($gate.id)]" }
                 $OmittedTargets += @{ Name = $omittedName; Reason = "not_configured:$($gate.not_configured_reason)" }
                 continue
+            }
+            if ($null -ne $tierAllowedClasses) {
+                $gateClass = [string]$gate.evidence_class
+                # Unknown class fails closed by RUNNING the gate, never by silently skipping it.
+                if ($gateClass -in @('fast', 'contract', 'slow', 'security') -and $gateClass -notin $tierAllowedClasses) {
+                    $omittedName = [string]$plannedTarget.display_name
+                    if ($plannedGates.Count -gt 1) { $omittedName = "$omittedName [$($gate.id)]" }
+                    $OmittedTargets += @{ Name = $omittedName; Reason = "tier_deselected:$gateClass" }
+                    continue
+                }
             }
             $command = switch ([string]$gate.command.executable) {
                 'python' { $Python }
@@ -529,6 +592,10 @@ else {
 if ($publishInventory) {
     if ($VerifyProfile -eq 'Developer' -and $null -ne $PlanDocument -and $PlanDocument.dispatch -ne 'profile') {
         Write-Host "[PLAN] dispatch=$($PlanDocument.dispatch) result=$($PlanDocument.result)" -ForegroundColor Cyan
+    }
+    if (-not [string]::IsNullOrWhiteSpace($Tier)) {
+        if ($TierEffective -ne $Tier) { Write-Host "[TIER] requested=$Tier effective=$TierEffective — plan_dispatch_full_self_change" -ForegroundColor Cyan }
+        else { Write-Host "[TIER] $TierEffective (not evidence)" -ForegroundColor Cyan }
     }
     else {
         Write-Host "[PLAN] profile=$($VerifyProfile.ToLowerInvariant())" -ForegroundColor Cyan

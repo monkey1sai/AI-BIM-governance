@@ -25,10 +25,14 @@ repo 已提供 **base-pinned trusted host executor**：`.github/workflows/truste
 
 P0–P5／呼叫端負責實作、測試、commit、base freshness、push、建立或更新 PR，以及本機 PR preflight。進入本 workflow 時，當前 feature worktree 必須乾淨，且本機 `HEAD` 必須等於該 OPEN、非 draft PR 的 `headRefOid`。
 
-呼叫端在 push 前必須執行 `git fetch origin +refs/heads/main:refs/remotes/origin/main` 並確認 `git merge-base HEAD origin/main` 等於 `git rev-parse origin/main`。若不相等：
+**Base freshness 只在 final push 前要求，不在每次 push 前要求**（owner ruling D-5，2026-09-04；治理正本 `scripts/base-sync-policy.json`）。PR 尚未 CONVERGED 時，預設 base sync = 0：`origin/main` 單純前進**不是**同步理由，`mergeStateStatus == BEHIND` 也不是 conflict。只有 `scripts/lib/base-sync-policy.mjs` 的四個封閉例外（`real_conflict`、`semantic_overlap`、`protection_forced`、`base_affects_correctness`）成立時才可同步；中途同步會改變 head，觸發 `risk-proportional-review.mjs` 的 `exact_identity_changed_restart_cycle` 並消耗兩輪預算。
+
+CONVERGED 之後、進入本 workflow 之前，呼叫端執行**至多一次** final base sync：`git fetch origin +refs/heads/main:refs/remotes/origin/main`，確認 `git merge-base HEAD origin/main` 等於 `git rev-parse origin/main`；若不相等：
 
 - 尚未發布且沒有 PR/upstream 的 branch 可用 `git rebase origin/main`。
 - 已有 PR 或 upstream 的 published PR branch **MUST NOT** rebase/force-push；只能用 `git merge --no-edit origin/main`，衝突則 HELD。
+
+final sync 之後的 head 是唯一的 authoritative head：CI、counted review、approval 都綁在它上面。若 merge 當下 GitHub 因 `strict: true` 再次回報 BEHIND，那是 `protection_forced` 同步——記錄、不設上限、不視為違規；連續三次即發 starvation warning，改為序列化 merge，而不是更多同步。所有 sync 計數一律由 GitHub server truth 推導，不得由 agent 自行寫入 branch。
 
 呼叫端若遇 exploit-like fixture 的 `cyber_safeguard_payload`，只有在不削弱 security regression 時才可改成安全等價的 `seg/seg/id`，並對 payload paths 執行 `rg -n 'passwd'`；否則維持 HELD。
 

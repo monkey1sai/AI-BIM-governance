@@ -1,0 +1,102 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "base-sync-policy.schema.json",
+  "title": "Base sync policy v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["$schema", "schema_version", "authority", "purpose", "decision", "budgets", "ledger", "starvation", "amended_doctrine", "adjacent_not_equivalent"],
+  "properties": {
+    "$schema": { "type": "string" },
+    "schema_version": { "const": "base-sync-policy/v1" },
+    "authority": { "const": "advisory_detective" },
+    "purpose": { "type": "string", "minLength": 1 },
+    "decision": {
+      "type": "object", "additionalProperties": false,
+      "required": ["default", "allowed_reasons", "rejected_reasons", "real_conflict", "semantic_overlap", "protection_forced", "base_affects_correctness"],
+      "properties": {
+        "default": { "const": "forbidden" },
+        "allowed_reasons": {
+          "type": "array", "minItems": 4, "maxItems": 4, "uniqueItems": true,
+          "items": { "enum": ["real_conflict", "semantic_overlap", "protection_forced", "base_affects_correctness"] }
+        },
+        "rejected_reasons": {
+          "type": "array", "minItems": 1, "uniqueItems": true,
+          "items": { "type": "string", "pattern": "^[a-z][a-z0-9_]*$" }
+        },
+        "real_conflict": {
+          "type": "object", "additionalProperties": false,
+          "required": ["mergeable_values", "merge_state_status_values"],
+          "properties": {
+            "mergeable_values": { "type": "array", "minItems": 1, "items": { "type": "string" } },
+            "merge_state_status_values": { "type": "array", "minItems": 1, "items": { "type": "string" } }
+          }
+        },
+        "semantic_overlap": {
+          "type": "object", "additionalProperties": false,
+          "required": ["classifier_path", "direct_file_overlap_qualifies", "shared_target_requires_boundary_crossing", "boundary_globs", "ubiquitous_path_classes", "unknown_base_path_qualifies"],
+          "properties": {
+            "classifier_path": { "const": "scripts/verification-manifest.json" },
+            "direct_file_overlap_qualifies": { "const": true },
+            "shared_target_requires_boundary_crossing": { "const": true },
+            "boundary_globs": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string", "minLength": 1 } },
+            "ubiquitous_path_classes": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string", "pattern": "^[a-z][a-z0-9-]*$" } },
+            "unknown_base_path_qualifies": { "const": true }
+          }
+        },
+        "protection_forced": {
+          "type": "object", "additionalProperties": false,
+          "required": ["requires_converged", "requires_merge_sink", "merge_state_status"],
+          "properties": {
+            "requires_converged": { "const": true },
+            "requires_merge_sink": { "const": true },
+            "merge_state_status": { "const": "BEHIND" }
+          }
+        },
+        "base_affects_correctness": {
+          "type": "object", "additionalProperties": false,
+          "required": ["full_dispatch_globs_from", "security_exception_registry_from", "additional_paths"],
+          "properties": {
+            "full_dispatch_globs_from": { "const": "scripts/verification-manifest.json" },
+            "security_exception_registry_from": { "const": "scripts/verification-manifest.json" },
+            "additional_paths": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string", "minLength": 1 } }
+          }
+        }
+      }
+    },
+    "budgets": {
+      "type": "object", "additionalProperties": false, "required": ["ordinary_pr"],
+      "properties": {
+        "ordinary_pr": {
+          "type": "object", "additionalProperties": false,
+          "required": ["pre_convergence_discretionary_sync_count_max", "discretionary_sync_count_max", "final_sync_count_max", "protection_forced_sync_count_max"],
+          "properties": {
+            "pre_convergence_discretionary_sync_count_max": { "const": 0 },
+            "discretionary_sync_count_max": { "const": 0 },
+            "final_sync_count_max": { "const": 1 },
+            "protection_forced_sync_count_max": { "type": "null" }
+          }
+        }
+      }
+    },
+    "ledger": {
+      "type": "object", "additionalProperties": false,
+      "required": ["source", "self_attested_forbidden", "output_dir", "timestamp_source"],
+      "properties": {
+        "source": { "const": "github_server_truth" },
+        "self_attested_forbidden": { "const": true },
+        "output_dir": { "const": "artifacts/metrics/base-sync/" },
+        "timestamp_source": { "const": "github_commit_committer_date" }
+      }
+    },
+    "starvation": {
+      "type": "object", "additionalProperties": false,
+      "required": ["consecutive_protection_forced_warning", "response"],
+      "properties": {
+        "consecutive_protection_forced_warning": { "type": "integer", "minimum": 2 },
+        "response": { "const": "serialize_merges_not_more_syncs" }
+      }
+    },
+    "amended_doctrine": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } },
+    "adjacent_not_equivalent": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+  }
+}

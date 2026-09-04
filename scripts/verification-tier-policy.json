@@ -1,0 +1,15 @@
+{
+  "$schema": "./tests/verification-tier-policy.schema.json",
+  "schema_version": "verification-tier-policy/v1",
+  "authority": "local_selection_only",
+  "purpose": "Sidecar over scripts/verification-manifest.json: selects which planned gates a LOCAL run executes by their existing evidence_class. It never adds a key to the manifest, never changes what CI runs, and a tiered run never produces a commit-bound verification outcome.",
+  "manifest_path": "scripts/verification-manifest.json",
+  "tiers": {
+    "quick": { "evidence_classes": ["fast"], "target_seconds": 30 },
+    "pr": { "evidence_classes": ["fast", "contract"], "target_seconds": 180 },
+    "full": { "evidence_classes": ["fast", "contract", "slow", "security"], "target_seconds": null }
+  },
+  "full_when_dispatch_full": true,
+  "tiered_run_is_evidence": false,
+  "ci_ignores_tier": true
+}
