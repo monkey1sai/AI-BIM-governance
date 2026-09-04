@@ -87,7 +87,9 @@ describe("WorkspacePage Stage 樹與工具列整合 (Issue #609, #605)", () => {
           path: "/World",
           name: "World",
           children: [
-            { path: "/World/Structure", name: "Structure", type: "Xform" },
+            // Production Kit uses children: [] as the lazy-branch marker.
+            { path: "/World/Structure", name: "Structure", type: "Xform", children: [] },
+            { path: "/World/Leaf", name: "Leaf", type: "Mesh" },
           ],
         },
       ],
@@ -124,6 +126,8 @@ describe("WorkspacePage Stage 樹與工具列整合 (Issue #609, #605)", () => {
     expect(selectPrimMock).toHaveBeenCalledWith("/World/Structure");
 
     const expandToggle = container.querySelector('[data-testid="expand-toggle-/World/Structure"]') as HTMLElement | null;
+    expect(expandToggle).not.toBeNull();
+    expect(container.querySelector('[data-testid="expand-toggle-/World/Leaf"]')).toBeNull();
     await act(async () => { expandToggle?.click(); });
     expect(requestStageTreeMock).toHaveBeenCalledWith("/World/Structure");
 
@@ -134,6 +138,7 @@ describe("WorkspacePage Stage 樹與工具列整合 (Issue #609, #605)", () => {
       resetBtn?.click();
     });
     expect(sendToolbarActionMock).toHaveBeenCalledWith("reset_camera");
+    expect(item?.getAttribute("data-selected")).toBe("false");
 
     const camBtn = container.querySelector('[data-testid="ws-toolbar-camera-view"]') as HTMLButtonElement | null;
     expect(camBtn?.disabled).toBe(true);

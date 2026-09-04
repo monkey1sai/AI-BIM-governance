@@ -79,8 +79,8 @@ export type ViewerPhase = "no-session" | "session-selected" | "lease-pending" | 
 export function classifyViewerPhase(activeSessionId: string, gate: ReviewSessionViewerPaneBatchGate | null): ViewerPhase {
   if (!activeSessionId) return "no-session";
   if (!gate) return "session-selected";
-  if (gate.canSend) return "ready";
-  const r = gate.reason;
+  if ((gate.canSendViewerCommand ?? gate.canSend) === true) return "ready";
+  const r = gate.viewerCommandReason ?? gate.reason;
   if (/手動啟動|attach Kit session|manually start/i.test(r)) return "lease-pending";
   if (/第一幀|first frame/i.test(r)) return "waiting-first-frame";
   if (/DataChannel/i.test(r)) return "waiting-datachannel";

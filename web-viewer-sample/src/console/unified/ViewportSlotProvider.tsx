@@ -39,6 +39,7 @@ export function ViewportSlotProvider({ children }: { children: ReactNode }) {
     if (canSendViewerCommand !== true) setStageTreeState([]);
   }, []);
   const setStageTree = useCallback((nodes: USDPrimNode[]) => {
+    // Window.tsx 已把 nested getChildrenResponse 合併進完整 root tree，再以 stage_tree 下傳。
     setStageTreeState(nodes);
   }, []);
   const registerHostActions = useCallback((actions: ViewportHostActions | null) => {

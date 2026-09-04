@@ -78,6 +78,80 @@ describe("WorkspaceViewportHost（V-A′）", () => {
     expect(container.querySelector('[data-uc="viewport"][data-prov="demo"]')).toBeNull();
   });
 
+  it("可見 session input 由 A 切到 B 時同步 workspace authority 且不回退舊 handoff", async () => {
+    const runtimeStatus = {
+      ...RT_IDLE,
+      sessions: {
+        count: 2,
+        active_count: 2,
+        participant_count: 0,
+        items: [sessionItem("review_session_a"), sessionItem("review_session_b")],
+      },
+    };
+    spyCoordinatorEndpoints({ runtimeStatus });
+    const store = new CoordinatorStatusStore(idleFetchers({ runtimeStatus }), { isHidden: () => true });
+    const testStore = store as unknown as {
+      publish: (key: "runtimeStatus", slice: EndpointSlice<typeof RT_IDLE>) => void;
+    };
+    testStore.publish("runtimeStatus", {
+      data: runtimeStatus,
+      state: "live",
+      httpStatus: 200,
+      message: null,
+      lastUpdatedAt: Date.now(),
+    });
+
+    let api: ReturnType<typeof useViewportSlot> = null;
+    function Probe() {
+      api = useViewportSlot();
+      return <span data-testid="active-session-probe">{api?.activeSessionId}</span>;
+    }
+
+    root = createRoot(container);
+    await act(async () => {
+      root!.render(
+        <ConsoleDataContext.Provider value={store}>
+          <ViewportSlotProvider><Probe /><WorkspaceViewportHost /></ViewportSlotProvider>
+        </ConsoleDataContext.Provider>,
+      );
+    });
+    await act(async () => {
+      api!.publish({
+        mode: "a1-inline",
+        handoff: {
+          source: "a1",
+          sessionId: "review_session_a",
+          ruleRunId: null,
+          ifcGuid: null,
+          usdPrimPath: null,
+          ruleCode: null,
+          severity: null,
+          label: null,
+          expectedStageUrl: null,
+          mappingInformationStatus: null,
+          mappingIssueCode: null,
+          mappingIssueCount: null,
+        },
+      });
+    });
+    await flush();
+
+    const input = container.querySelector('[data-testid="a1-inline-session-input"]') as HTMLInputElement;
+    expect(input.value).toBe("review_session_a");
+    await act(async () => {
+      const valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+      valueSetter?.call(input, "review_session_b");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await flush();
+
+    expect(api!.activeSessionId).toBe("review_session_b");
+    expect(container.querySelector('[data-testid="active-session-probe"]')?.textContent).toBe("review_session_b");
+    expect(input.value).toBe("review_session_b");
+    expect(api!.publication?.handoff.sessionId).toBe("review_session_a");
+    store.dispose();
+  });
+
   it("live：切 dock（#a2→#a3）host 同一節點不重建（mount token 不變）", async () => {
     spyCoordinatorEndpoints();
     await mountAt("#a2");
@@ -181,7 +255,12 @@ describe("classifyViewerPhase（只分類 pane 回報的 reason，不另造判�
     expect(classifyViewerPhase("s", { canSend: false, reason: "等待 3D 第一幀" })).toBe("waiting-first-frame");
     expect(classifyViewerPhase("s", { canSend: false, reason: "waiting for viewer DataChannel" })).toBe("waiting-datachannel");
     expect(classifyViewerPhase("s", { canSend: false, reason: "stage 未對齊，禁止誤標" })).toBe("stage-mismatch");
-    expect(classifyViewerPhase("s", { canSend: false, reason: "mapping_reachable=false: derived_artifact_unreachable" })).toBe("blocked");
+    expect(classifyViewerPhase("s", {
+      canSend: false,
+      reason: "mapping_reachable=false: derived_artifact_unreachable",
+      canSendViewerCommand: true,
+      viewerCommandReason: "",
+    })).toBe("ready");
   });
 });
 describe("ViewportSlotProvider", () => {
@@ -217,9 +296,23 @@ describe("ViewportSlotProvider", () => {
     expect(api!.stageTree).toEqual([]);
 
     await act(async () => {
-      api!.setStageTree([{ path: "/World/Root", name: "Root" }]);
+      api!.setStageTree([{ path: "/World/Root", name: "Root", children: [] }]);
     });
-    expect(api!.stageTree).toEqual([{ path: "/World/Root", name: "Root" }]);
+    expect(api!.stageTree).toEqual([{ path: "/World/Root", name: "Root", children: [] }]);
+
+    await act(async () => {
+      // Window.tsx 對 nested response 下傳的是已合併完成的完整 root tree。
+      api!.setStageTree([{
+        path: "/World/Root",
+        name: "Root",
+        children: [{ path: "/World/Root/Child", name: "Child" }],
+      }]);
+    });
+    expect(api!.stageTree).toEqual([{
+      path: "/World/Root",
+      name: "Root",
+      children: [{ path: "/World/Root/Child", name: "Child" }],
+    }]);
 
     const calls: string[] = [];
     api!.registerHostActions?.({
@@ -368,5 +461,18 @@ describe("WorkspacePage 實機整合（Toolbar 遮蔽修復）", () => {
     expect(container.querySelector('[data-uc="ws-stage-tree"]')?.getAttribute("data-state")).toBe("active");
     expect((container.querySelector('[data-testid="ws-request-stage-tree-btn"]') as HTMLButtonElement).disabled).toBe(false);
     expect((container.querySelector('[data-testid="ws-toolbar-reset"]') as HTMLButtonElement).disabled).toBe(false);
+
+    await act(async () => {
+      api!.setGate({
+        canSend: false,
+        reason: "mapping_reachable=false: derived_artifact_unreachable",
+        canSendViewerCommand: false,
+        viewerCommandReason: "等待 3D 第一幀",
+      });
+    });
+    expect(container.querySelector('[data-uc="ws-flow-guide"]')?.getAttribute("data-phase")).toBe("waiting-first-frame");
+    const threeDStep = container.querySelector('[data-uc="ws-flow-step-3d"]')?.textContent ?? "";
+    expect(threeDStep).toContain("等待 3D 第一幀");
+    expect(threeDStep).not.toContain("mapping_reachable=false");
   });
 });

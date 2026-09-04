@@ -78,7 +78,8 @@ function StageTreeNodeView({
 }) {
   const isExpanded = expandedPaths.has(node.path);
   const isSelected = selectedPrims.has(node.path);
-  const hasChildren = node.children === undefined || node.children.length > 0;
+  // Production Kit omits children for leaves and uses [] for a lazy branch.
+  const hasChildren = node.children !== undefined;
 
   return (
     <div style={{ marginLeft: 8, fontSize: 11 }}>
@@ -322,7 +323,7 @@ export function WorkspacePage({ initialDock = "a1" }: WorkspacePageProps) {
                       const expanding = !stageTreeApi.expandedPaths.has(path);
                       const node = stageTreeApi.findNodeByPath(path);
                       stageTreeApi.toggleExpand(path);
-                      if (expanding && node?.children === undefined) slot?.requestStageTree(path);
+                      if (expanding && node?.children?.length === 0) slot?.requestStageTree(path);
                     }}
                     onSelect={(p) => {
                       stageTreeApi.selectPrim(p);
@@ -385,7 +386,10 @@ export function WorkspacePage({ initialDock = "a1" }: WorkspacePageProps) {
               data-testid="ws-toolbar-reset"
               title={t("重置視角 (⟲)", "Reset camera (⟲)")}
               disabled={toolbarDisabled}
-              onClick={() => slot?.sendToolbarAction("reset_camera")}
+              onClick={() => {
+                stageTreeApi.clearSelection();
+                slot?.sendToolbarAction("reset_camera");
+              }}
               style={toolbarBtnStyle(toolbarDisabled)}
             >
               ⟲

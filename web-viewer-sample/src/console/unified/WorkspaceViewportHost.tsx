@@ -63,10 +63,10 @@ export function WorkspaceViewportHost({ firstFrameTimeoutMs }: WorkspaceViewport
 
   const publication = slot?.publication ?? null;
   const activeSessionId = slot?.activeSessionId ?? "";
-  // 共用 session 覆寫：頁面 handoff 未帶 session 時沿用跨 dock 的 activeSessionId，讓 lease 不因切 dock 重 claim。
+  // 共用 session 是單一 authority：可見 input 更新後優先於頁面初始 handoff，跨 dock 不回退舊 session。
   const handoff = useMemo<ReviewRoomHandoff | null>(() => {
     if (!publication) return null;
-    const sid = publication.handoff.sessionId.trim() || activeSessionId;
+    const sid = activeSessionId || publication.handoff.sessionId.trim();
     return sid === publication.handoff.sessionId ? publication.handoff : { ...publication.handoff, sessionId: sid };
   }, [publication, activeSessionId]);
 
@@ -153,6 +153,7 @@ export function WorkspaceViewportHost({ firstFrameTimeoutMs }: WorkspaceViewport
           showHandoffActions={publication.showHandoffActions ?? true}
           onBatchGateChange={onGate}
           onBatchAck={publication.onBatchAck}
+          onSessionIdChange={slot?.setActiveSessionId}
           onStageTree={onStageTree}
           {...(firstFrameTimeoutMs !== undefined ? { firstFrameTimeoutMs } : {})}
         />

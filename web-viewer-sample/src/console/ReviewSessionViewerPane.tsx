@@ -190,6 +190,8 @@ export interface ReviewSessionViewerPaneProps {
   onBatchGateChange?: (gate: ReviewSessionViewerPaneBatchGate) => void;
   // viewer highlight_result ack 透傳（含批次 ack 的 sent_count/unmapped_count 加性欄位）。
   onBatchAck?: (message: HighlightResultMessage) => void;
+  /** 可見 session input 的單一 authority 回報；workspace host 用它同步跨 dock session。 */
+  onSessionIdChange?: (sessionId: string) => void;
   // A3 currently has no element-level mapping/clash contract. It may attach the
   // real federated stage while keeping single-element highlight actions hidden.
   showHandoffActions?: boolean;
@@ -197,7 +199,7 @@ export interface ReviewSessionViewerPaneProps {
 }
 
 export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle, ReviewSessionViewerPaneProps>(
-  function ReviewSessionViewerPane({ handoff = parseReviewRoomHandoff(), mode = "review-room", onBatchGateChange, onBatchAck, onStageTree, showHandoffActions = true, firstFrameTimeoutMs = 90_000, heartbeatDelayFn = viewerLeaseHeartbeatDelayMs }, ref) {
+  function ReviewSessionViewerPane({ handoff = parseReviewRoomHandoff(), mode = "review-room", onBatchGateChange, onBatchAck, onSessionIdChange, onStageTree, showHandoffActions = true, firstFrameTimeoutMs = 90_000, heartbeatDelayFn = viewerLeaseHeartbeatDelayMs }, ref) {
   const isA1Inline = mode === "a1-inline";
   const isA2Overlay = mode === "a2-overlay";
   const isA3Inline = mode === "a3-inline";
@@ -628,7 +630,9 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
             placeholder={t("review_session_xxx 或 lwv_xxx", "review_session_xxx or lwv_xxx")}
             value={sessionId}
             onChange={(e) => {
-              setSessionId(e.target.value);
+              const nextSessionId = e.target.value;
+              setSessionId(nextSessionId);
+              onSessionIdChange?.(nextSessionId);
               setLease(null);
               setLeaseErr(null);
               setFirstFrame(false);

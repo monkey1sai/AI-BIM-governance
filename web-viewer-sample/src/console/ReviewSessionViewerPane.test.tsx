@@ -442,7 +442,12 @@ describe("ReviewSessionViewerPane", () => {
   });
 
   it("manual session change clears active stage proof before a new claim", async () => {
-    await renderPane();
+    const onSessionIdChange = vi.fn();
+    root = createRoot(container);
+    await act(async () => {
+      root!.render(<ReviewSessionViewerPane handoff={handoff} onSessionIdChange={onSessionIdChange} />);
+    });
+    await flush();
     await act(async () => { q<HTMLButtonElement>("review-room-manual-start")!.click(); });
     await flush();
     await act(async () => {
@@ -470,6 +475,7 @@ describe("ReviewSessionViewerPane", () => {
     expect(q("review-room-runtime-evidence")?.textContent).not.toContain("matched");
     expect(q<HTMLButtonElement>("review-room-highlight")!.disabled).toBe(true);
     expect(q("review-room-viewer-host")).toBeNull();
+    expect(onSessionIdChange).toHaveBeenLastCalledWith("review_session_other");
   });
 
   it("missing usd_prim_path opens Review Room diagnostic mode but blocks highlight", async () => {
