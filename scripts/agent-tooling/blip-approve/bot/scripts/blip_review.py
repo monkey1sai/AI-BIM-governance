@@ -602,8 +602,8 @@ def validate_protection_payload(protection: object, base_branch: str) -> dict:
 
     require_empty_allowance("bypass_pull_request_allowances", reviews.get("bypass_pull_request_allowances"))
     require_empty_allowance("dismissal_restrictions", reviews.get("dismissal_restrictions"))
-    if not isinstance(reviews.get("require_last_push_approval"), bool):
-        raise SystemExit("Branch protection require_last_push_approval is missing or malformed")
+    if reviews.get("require_last_push_approval") is not True:
+        raise SystemExit("Branch protection must require approval of the most recent reviewable push")
     restrictions = protection.get("restrictions")
     if restrictions is not None:
         raise SystemExit("Branch push restrictions are outside the supported approval policy")
@@ -661,7 +661,7 @@ def validate_protection_payload(protection: object, base_branch: str) -> dict:
         "enforce_admins": True,
         "allow_force_pushes": False,
         "allow_deletions": False,
-        "require_last_push_approval": reviews["require_last_push_approval"],
+        "require_last_push_approval": True,
         "bypass_pull_request_allowances": {"users": [], "teams": [], "apps": []},
         "dismissal_restrictions": {"users": [], "teams": [], "apps": []},
         "required_linear_history": enabled_setting("required_linear_history"),

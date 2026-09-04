@@ -635,7 +635,7 @@ try {
 function Get-LiveProtectionSnapshot {
     $global:policyReadCount += 1
     $strict = if ($global:testPolicyDrift -and $global:policyReadCount -gt 1) { 'false' } else { 'true' }
-    return '{"active_rules":[],"protection":{"allow_deletions":{"enabled":false},"allow_force_pushes":{"enabled":false},"allow_fork_syncing":{"enabled":false},"block_creations":{"enabled":false},"enforce_admins":{"enabled":true},"lock_branch":{"enabled":false},"required_conversation_resolution":{"enabled":true},"required_linear_history":{"enabled":false},"required_pull_request_reviews":{"dismiss_stale_reviews":true,"require_code_owner_reviews":true,"require_last_push_approval":false,"required_approving_review_count":1},"required_signatures":{"enabled":false},"required_status_checks":{"checks":[{"app_id":15368,"context":"agent-governance"}],"contexts":["agent-governance"],"strict":' + $strict + '},"restrictions":null}}'
+    return '{"active_rules":[],"protection":{"allow_deletions":{"enabled":false},"allow_force_pushes":{"enabled":false},"allow_fork_syncing":{"enabled":false},"block_creations":{"enabled":false},"enforce_admins":{"enabled":true},"lock_branch":{"enabled":false},"required_conversation_resolution":{"enabled":true},"required_linear_history":{"enabled":false},"required_pull_request_reviews":{"dismiss_stale_reviews":true,"require_code_owner_reviews":true,"require_last_push_approval":true,"required_approving_review_count":1},"required_signatures":{"enabled":false},"required_status_checks":{"checks":[{"app_id":15368,"context":"agent-governance"}],"contexts":["agent-governance"],"strict":' + $strict + '},"restrictions":null}}'
 }
 '@
     $brokerText = $brokerText.Replace([string]$policyFunction, $policyStub)

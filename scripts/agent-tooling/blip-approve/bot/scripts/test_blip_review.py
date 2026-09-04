@@ -188,7 +188,7 @@ def make_protection_payload(*, contexts: list[str] | None = None) -> dict:
             "required_approving_review_count": 1,
             "dismiss_stale_reviews": True,
             "require_code_owner_reviews": True,
-            "require_last_push_approval": False,
+            "require_last_push_approval": True,
         },
         "required_conversation_resolution": {"enabled": True},
         "enforce_admins": {"enabled": True},
@@ -912,6 +912,20 @@ class AutomatedApprovalTests(unittest.TestCase):
             ), patch.object(
                 blip, "http_json", return_value=make_ref_update_rule_response()
             ), self.assertRaisesRegex(SystemExit, "exactly one approving review"):
+                blip.fetch_protection_policy("token", "monkey1sai", "AI-BIM-governance", "main")
+
+        for invalid_last_push_approval in (False, None, 1, "true", "missing"):
+            invalid_protection = make_protection_payload()
+            reviews = invalid_protection["required_pull_request_reviews"]
+            if invalid_last_push_approval == "missing":
+                del reviews["require_last_push_approval"]
+            else:
+                reviews["require_last_push_approval"] = invalid_last_push_approval
+            with self.subTest(require_last_push_approval=invalid_last_push_approval), patch.dict(
+                blip.os.environ, protection_policy_env(invalid_protection)
+            ), patch.object(
+                blip, "http_json", return_value=make_ref_update_rule_response()
+            ), self.assertRaisesRegex(SystemExit, "most recent reviewable push"):
                 blip.fetch_protection_policy("token", "monkey1sai", "AI-BIM-governance", "main")
 
         with patch.dict(
