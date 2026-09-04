@@ -140,9 +140,10 @@ query($owner:String!, $name:String!, $number:Int!) {
             oid
             statusCheckRollup {
               contexts(first:100) {
-                pageInfo { hasNextPage }
+                totalCount
+                pageInfo { hasNextPage endCursor }
                 nodes {
-                  __typename
+                  __typename id
                   ... on CheckRun {
                     name status conclusion completedAt
                     checkSuite { app { databaseId slug } }
@@ -154,6 +155,20 @@ query($owner:String!, $name:String!, $number:Int!) {
                 }
               }
             }
+          }
+        }
+      }
+      candidateCommits: commits(first:100) {
+        pageInfo { hasNextPage }
+        nodes {
+          commit {
+            oid
+            author { user { login } }
+            authors(first:100) {
+              pageInfo { hasNextPage }
+              nodes { user { login } }
+            }
+            committer { user { login } }
           }
         }
       }
@@ -172,7 +187,8 @@ query($owner:String!, $name:String!, $number:Int!) {
         }
       }
       reviews(first:100) {
-        pageInfo { hasNextPage }
+        totalCount
+        pageInfo { hasNextPage endCursor }
         nodes {
           id databaseId state body submittedAt url
           commit { oid }
@@ -184,13 +200,256 @@ query($owner:String!, $name:String!, $number:Int!) {
 }
 """
 
+REVIEWS_PAGE_QUERY = """
+query($owner:String!, $name:String!, $number:Int!, $reviewsCursor:String!) {
+  repository(owner:$owner, name:$name) {
+    pullRequest(number:$number) {
+      number headRefOid baseRefOid
+      reviews(first:100, after:$reviewsCursor) {
+        totalCount
+        pageInfo { hasNextPage endCursor }
+        nodes {
+          id databaseId state body submittedAt url
+          commit { oid }
+          author { __typename login ... on Bot { databaseId } }
+        }
+      }
+    }
+  }
+}
+"""
+
+STATUS_CONTEXTS_PAGE_QUERY = """
+query($owner:String!, $name:String!, $number:Int!, $statusCursor:String!) {
+  repository(owner:$owner, name:$name) {
+    pullRequest(number:$number) {
+      number headRefOid baseRefOid
+      commits(last:1) {
+        nodes {
+          commit {
+            oid
+            statusCheckRollup {
+              contexts(first:100, after:$statusCursor) {
+                totalCount
+                pageInfo { hasNextPage endCursor }
+                nodes {
+                  __typename id
+                  ... on CheckRun {
+                    name status conclusion completedAt
+                    checkSuite { app { databaseId slug } }
+                  }
+                  ... on StatusContext {
+                    context state createdAt
+                    creator { login }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+"""
+
+
+def review_page(block: object, label: str) -> tuple[int, list[dict], bool, str | None]:
+    if not isinstance(block, dict):
+        raise SystemExit(f"{label} collection is missing or malformed; refusing incomplete state")
+    total_count = block.get("totalCount")
+    page_info = block.get("pageInfo")
+    nodes = block.get("nodes")
+    if not isinstance(total_count, int) or isinstance(total_count, bool) or total_count < 0:
+        raise SystemExit(f"{label} totalCount is missing or malformed; refusing incomplete state")
+    if not isinstance(page_info, dict) or not isinstance(page_info.get("hasNextPage"), bool):
+        raise SystemExit(f"{label} pageInfo is missing or malformed; refusing incomplete state")
+    if not isinstance(nodes, list) or any(not isinstance(node, dict) for node in nodes):
+        raise SystemExit(f"{label} nodes are missing or malformed; refusing incomplete state")
+    has_next_page = page_info["hasNextPage"]
+    end_cursor = page_info.get("endCursor")
+    if has_next_page and (not isinstance(end_cursor, str) or not end_cursor):
+        raise SystemExit(f"{label} has another page without a valid endCursor; refusing incomplete state")
+    if end_cursor is not None and not isinstance(end_cursor, str):
+        raise SystemExit(f"{label} endCursor is malformed; refusing incomplete state")
+    return total_count, nodes, has_next_page, end_cursor
+
 
 def fetch_pr(token: str, owner: str, name: str, number: int) -> dict:
     data = graphql(token, PR_QUERY, {"owner": owner, "name": name, "number": number})
     pr = ((data.get("data") or {}).get("repository") or {}).get("pullRequest")
     if not pr:
         raise SystemExit(f"PR {owner}/{name}#{number} not found (or the token cannot see it)")
+    expected_identity = (pr.get("number"), pr.get("baseRefOid"), pr.get("headRefOid"))
+    if expected_identity[0] != number or any(not isinstance(value, str) or not value for value in expected_identity[1:]):
+        raise SystemExit("PR identity is missing or malformed during review pagination")
+    total_count, all_reviews, has_next_page, cursor = review_page(pr.get("reviews"), "PR reviews")
+    review_ids = [review.get("id") for review in all_reviews]
+    if any(not isinstance(review_id, str) or not review_id for review_id in review_ids):
+        raise SystemExit("PR reviews contain a missing or malformed review id")
+    seen_review_ids = set(review_ids)
+    if len(seen_review_ids) != len(review_ids):
+        raise SystemExit("PR reviews pagination returned duplicate review ids; refusing incomplete state")
+    if has_next_page and not all_reviews:
+        raise SystemExit("PR reviews pagination made no progress; refusing incomplete state")
+    seen_cursors: set[str] = set()
+    page_count = 1
+    max_page_count = max(1, total_count + 1)
+    while has_next_page:
+        if page_count >= max_page_count:
+            raise SystemExit("PR reviews pagination exceeded its safe page bound; refusing incomplete state")
+        if cursor in seen_cursors:
+            raise SystemExit("PR reviews pagination repeated a cursor; refusing incomplete state")
+        seen_cursors.add(cursor)
+        page_data = graphql(
+            token,
+            REVIEWS_PAGE_QUERY,
+            {"owner": owner, "name": name, "number": number, "reviewsCursor": cursor},
+        )
+        page_pr = ((page_data.get("data") or {}).get("repository") or {}).get("pullRequest")
+        if not isinstance(page_pr, dict):
+            raise SystemExit(f"PR {owner}/{name}#{number} disappeared during review pagination")
+        page_identity = (page_pr.get("number"), page_pr.get("baseRefOid"), page_pr.get("headRefOid"))
+        if page_identity != expected_identity:
+            raise SystemExit("PR identity changed during review pagination; refusing mixed review state")
+        page_total, page_reviews, has_next_page, cursor = review_page(
+            page_pr.get("reviews"), "PR reviews"
+        )
+        if page_total != total_count:
+            raise SystemExit("PR reviews totalCount changed during pagination; refusing incomplete state")
+        if not page_reviews:
+            raise SystemExit("PR reviews pagination made no progress; refusing incomplete state")
+        page_review_ids = [review.get("id") for review in page_reviews]
+        if any(not isinstance(review_id, str) or not review_id for review_id in page_review_ids):
+            raise SystemExit("PR reviews contain a missing or malformed review id")
+        if len(set(page_review_ids)) != len(page_review_ids) or seen_review_ids.intersection(page_review_ids):
+            raise SystemExit("PR reviews pagination returned duplicate review ids; refusing incomplete state")
+        seen_review_ids.update(page_review_ids)
+        all_reviews.extend(page_reviews)
+        page_count += 1
+        if len(all_reviews) > total_count or (has_next_page and len(all_reviews) >= total_count):
+            raise SystemExit("PR reviews pagination exceeded totalCount; refusing mixed review state")
+    if len(all_reviews) != total_count:
+        raise SystemExit(
+            f"PR reviews pagination returned {len(all_reviews)} of {total_count} reviews; refusing incomplete state"
+        )
+    pr["reviews"] = {
+        "totalCount": total_count,
+        "pageInfo": {"hasNextPage": False, "endCursor": cursor},
+        "nodes": all_reviews,
+    }
+
+    commits = (pr.get("commits") or {}).get("nodes")
+    if not isinstance(commits, list) or len(commits) != 1 or not isinstance(commits[0], dict):
+        raise SystemExit("Latest PR commit status collection is missing or malformed")
+    commit = commits[0].get("commit")
+    if not isinstance(commit, dict) or commit.get("oid") != expected_identity[2]:
+        raise SystemExit("Required-check rollup is not bound to the exact PR head")
+    rollup = commit.get("statusCheckRollup")
+    if not isinstance(rollup, dict):
+        raise SystemExit("Required-check rollup is missing for the exact PR head")
+    status_total, all_statuses, has_next_status_page, status_cursor = review_page(
+        rollup.get("contexts"), "Exact-head status checks"
+    )
+    status_ids = [status.get("id") for status in all_statuses]
+    if any(not isinstance(status_id, str) or not status_id for status_id in status_ids):
+        raise SystemExit("Exact-head status checks contain a missing or malformed node id")
+    seen_status_ids = set(status_ids)
+    if len(seen_status_ids) != len(status_ids):
+        raise SystemExit("Exact-head status checks pagination returned duplicate node ids")
+    if has_next_status_page and not all_statuses:
+        raise SystemExit("Exact-head status checks pagination made no progress")
+    seen_status_cursors: set[str] = set()
+    status_page_count = 1
+    max_status_page_count = max(1, status_total + 1)
+    while has_next_status_page:
+        if status_page_count >= max_status_page_count:
+            raise SystemExit("Exact-head status checks pagination exceeded its safe page bound")
+        if status_cursor in seen_status_cursors:
+            raise SystemExit("Exact-head status checks pagination repeated a cursor")
+        seen_status_cursors.add(status_cursor)
+        status_page_data = graphql(
+            token,
+            STATUS_CONTEXTS_PAGE_QUERY,
+            {"owner": owner, "name": name, "number": number, "statusCursor": status_cursor},
+        )
+        status_page_pr = ((status_page_data.get("data") or {}).get("repository") or {}).get(
+            "pullRequest"
+        )
+        if not isinstance(status_page_pr, dict):
+            raise SystemExit(f"PR {owner}/{name}#{number} disappeared during status-check pagination")
+        status_page_identity = (
+            status_page_pr.get("number"),
+            status_page_pr.get("baseRefOid"),
+            status_page_pr.get("headRefOid"),
+        )
+        if status_page_identity != expected_identity:
+            raise SystemExit("PR identity changed during status-check pagination")
+        page_commits = (status_page_pr.get("commits") or {}).get("nodes")
+        if not isinstance(page_commits, list) or len(page_commits) != 1 or not isinstance(page_commits[0], dict):
+            raise SystemExit("Latest PR commit status collection is missing during pagination")
+        page_commit = page_commits[0].get("commit")
+        if not isinstance(page_commit, dict) or page_commit.get("oid") != expected_identity[2]:
+            raise SystemExit("Required-check page is not bound to the exact PR head")
+        page_rollup = page_commit.get("statusCheckRollup")
+        if not isinstance(page_rollup, dict):
+            raise SystemExit("Required-check rollup disappeared during pagination")
+        page_total, page_statuses, has_next_status_page, status_cursor = review_page(
+            page_rollup.get("contexts"), "Exact-head status checks"
+        )
+        if page_total != status_total:
+            raise SystemExit("Exact-head status checks totalCount changed during pagination")
+        if not page_statuses:
+            raise SystemExit("Exact-head status checks pagination made no progress")
+        page_status_ids = [status.get("id") for status in page_statuses]
+        if any(not isinstance(status_id, str) or not status_id for status_id in page_status_ids):
+            raise SystemExit("Exact-head status checks contain a missing or malformed node id")
+        if len(set(page_status_ids)) != len(page_status_ids) or seen_status_ids.intersection(page_status_ids):
+            raise SystemExit("Exact-head status checks pagination returned duplicate node ids")
+        seen_status_ids.update(page_status_ids)
+        all_statuses.extend(page_statuses)
+        status_page_count += 1
+        if len(all_statuses) > status_total or (
+            has_next_status_page and len(all_statuses) >= status_total
+        ):
+            raise SystemExit("Exact-head status checks pagination exceeded totalCount")
+    if len(all_statuses) != status_total:
+        raise SystemExit(
+            f"Exact-head status checks pagination returned {len(all_statuses)} of "
+            f"{status_total} checks"
+        )
+    rollup["contexts"] = {
+        "totalCount": status_total,
+        "pageInfo": {"hasNextPage": False, "endCursor": status_cursor},
+        "nodes": all_statuses,
+    }
     return pr
+
+
+def review_snapshot(pr: dict) -> dict:
+    normalized = []
+    for review in review_nodes(pr):
+        author = review.get("author") if isinstance(review.get("author"), dict) else {}
+        commit = review.get("commit") if isinstance(review.get("commit"), dict) else {}
+        normalized.append(
+            {
+                "id": review.get("id"),
+                "databaseId": review.get("databaseId"),
+                "state": review.get("state"),
+                "body": review.get("body"),
+                "submittedAt": review.get("submittedAt"),
+                "url": review.get("url"),
+                "commitOid": commit.get("oid"),
+                "authorType": author.get("__typename"),
+                "authorLogin": author.get("login"),
+                "authorDatabaseId": author.get("databaseId"),
+            }
+        )
+    normalized.sort(key=lambda review: str(review["id"]))
+    digest = hashlib.sha256(
+        json.dumps(normalized, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    return {"count": len(normalized), "sha256": digest}
 
 
 def verify_identity(token: str, repo: str) -> dict:
@@ -239,6 +498,56 @@ def unresolved(pr: dict) -> list[dict]:
 
 def review_nodes(pr: dict) -> list[dict]:
     return complete_nodes(pr.get("reviews"), "PR reviews")
+
+
+def validate_reviewer_commit_separation(pr: dict) -> dict:
+    nodes = complete_nodes(pr.get("candidateCommits"), "PR candidate commits")
+    if not nodes:
+        raise SystemExit("PR candidate commit collection is empty; approval is HELD")
+
+    expected_head = pr.get("headRefOid")
+    if not isinstance(expected_head, str) or not re.fullmatch(r"[0-9a-fA-F]{40}", expected_head):
+        raise SystemExit("PR head commit identity is missing or malformed")
+
+    seen: set[str] = set()
+    head_count = 0
+    for node in nodes:
+        commit = node.get("commit")
+        if not isinstance(commit, dict):
+            raise SystemExit("A PR candidate commit is missing or malformed")
+        oid = commit.get("oid")
+        if not isinstance(oid, str) or not re.fullmatch(r"[0-9a-fA-F]{40}", oid):
+            raise SystemExit("A PR candidate commit oid is missing or malformed")
+        normalized_oid = oid.lower()
+        if normalized_oid in seen:
+            raise SystemExit("PR candidate commit collection contains a duplicate oid")
+        seen.add(normalized_oid)
+        if normalized_oid == expected_head.lower():
+            head_count += 1
+
+        def reject_reviewer_actor(actor: object, role: str) -> None:
+            if not isinstance(actor, dict):
+                raise SystemExit(f"A PR candidate commit {role} identity is missing or malformed")
+            user = actor.get("user")
+            if not isinstance(user, dict):
+                raise SystemExit(f"A PR candidate commit {role} GitHub user identity is missing or malformed")
+            login = user.get("login")
+            if not isinstance(login, str) or not login or login != login.strip():
+                raise SystemExit(f"A PR candidate commit {role} GitHub login is missing or malformed")
+            if login.casefold() == DEFAULT_REVIEWER.casefold():
+                raise SystemExit(
+                    f"The reviewer account is associated with candidate commit {oid[:7]}; "
+                    "independent approval is forbidden"
+                )
+
+        for role in ("author", "committer"):
+            reject_reviewer_actor(commit.get(role), role)
+        for actor in complete_nodes(commit.get("authors"), f"PR candidate commit {oid[:7]} authors"):
+            reject_reviewer_actor(actor, "author")
+
+    if head_count != 1:
+        raise SystemExit("PR candidate commits are not bound exactly once to the PR head")
+    return {"count": len(nodes), "head": expected_head.lower()}
 
 
 def thread_comments(thread: dict) -> list[dict]:
@@ -538,8 +847,8 @@ def validate_protection_payload(protection: object, base_branch: str) -> dict:
 
     require_empty_allowance("bypass_pull_request_allowances", reviews.get("bypass_pull_request_allowances"))
     require_empty_allowance("dismissal_restrictions", reviews.get("dismissal_restrictions"))
-    if not isinstance(reviews.get("require_last_push_approval"), bool):
-        raise SystemExit("Branch protection require_last_push_approval is missing or malformed")
+    if reviews.get("require_last_push_approval") is not True:
+        raise SystemExit("Branch protection must require approval of the most recent reviewable push")
     restrictions = protection.get("restrictions")
     if restrictions is not None:
         raise SystemExit("Branch push restrictions are outside the supported approval policy")
@@ -597,7 +906,7 @@ def validate_protection_payload(protection: object, base_branch: str) -> dict:
         "enforce_admins": True,
         "allow_force_pushes": False,
         "allow_deletions": False,
-        "require_last_push_approval": reviews["require_last_push_approval"],
+        "require_last_push_approval": True,
         "bypass_pull_request_allowances": {"users": [], "teams": [], "apps": []},
         "dismissal_restrictions": {"users": [], "teams": [], "apps": []},
         "required_linear_history": enabled_setting("required_linear_history"),
@@ -705,8 +1014,6 @@ def validate_required_checks(pr: dict, policy: dict) -> dict:
 
 def validate_ship_attester_state(pr: dict, head: str) -> list[dict]:
     reviews = review_nodes(pr)
-    if len(reviews) >= 100:
-        raise SystemExit("Review collection is at capacity; post-submit readback would be incomplete")
     exact = [
         review
         for review in reviews
@@ -1137,8 +1444,9 @@ def approval_preflight(
     else:
         raise SystemExit("Unknown review mode is not eligible for approval")
     author = ((pr.get("author") or {}).get("login") or "")
-    if author == DEFAULT_REVIEWER:
+    if author.casefold() == DEFAULT_REVIEWER.casefold():
         raise SystemExit("The reviewer account authored this PR; GitHub rejects self-approval")
+    validate_reviewer_commit_separation(pr)
     merge_state = pr.get("mergeStateStatus")
     if merge_state not in ("CLEAN", "BLOCKED"):
         raise SystemExit(f"PR merge state is {merge_state!r}; automatic approval requires CLEAN or review-only BLOCKED")
@@ -1151,6 +1459,7 @@ def approval_preflight(
         show_threads(remaining)
         raise SystemExit(f"Refusing to approve: {len(remaining)} unresolved review thread(s) remain")
     reviews = review_nodes(pr)
+    reviews_snapshot = review_snapshot(pr)
     duplicates = [
         review
         for review in reviews
@@ -1210,6 +1519,7 @@ def approval_preflight(
         "repository_safety": repository_safety,
         "policy": policy,
         "checks": checks,
+        "reviews_snapshot": reviews_snapshot,
     }
 
 
@@ -1302,6 +1612,8 @@ def submit_automated_approval(
             raise SystemExit("Approval authority evidence changed during approval preflight")
         if ready["checks"]["sha256"] != first["checks"]["sha256"]:
             raise SystemExit("Required-check evidence changed during approval preflight")
+        if ready["reviews_snapshot"] != first["reviews_snapshot"]:
+            raise SystemExit("Review evidence changed during approval preflight")
 
         capability = verify_approval_capability(
             token=token,

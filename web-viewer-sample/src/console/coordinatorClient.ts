@@ -272,6 +272,34 @@ export interface RuntimeStatus {
   };
 }
 
+export interface ClosedReviewSessionItem {
+  session_id: string;
+  status: "closed";
+  project_id: string;
+  model_version_id: string;
+  created_at: string;
+  updated_at: string;
+  recreated_from_session_id: string | null;
+  rebuildability: {
+    state: "ready" | "stale" | "unavailable";
+    reason: string | null;
+    checked_at: string | null;
+  };
+}
+
+export interface ClosedReviewSessionPage {
+  items: ClosedReviewSessionItem[];
+  next_cursor: string | null;
+}
+
+export interface RecreateReviewSessionResponse {
+  session_id: string;
+  status: string;
+  recreated_from_session_id: string;
+  idempotent_replay: boolean;
+  kit_availability: "configured" | "unavailable";
+}
+
 // C 頁 intake 佇列列表（app.ts:712 summarizeIfcReadyJob）。
 export interface IfcReadyListItem {
   ifc_ready_job_id: string;
@@ -381,6 +409,9 @@ export interface MinioWatchStatus {
 export interface StreamConfigResponse {
   session_id: string;
   status: string;
+  // canonical structured-log trace carrier（sessionTraceResolver 權威）。viewer iframe bootstrap
+  // 需要它，缺了就 fail-closed white-screen；coordinator 取不到時整支 route 回 409。
+  trace_id?: string;
   kit_instances?: unknown[];
   artifact_health?: ArtifactHealthSnapshot | null;
   [k: string]: unknown;
@@ -627,6 +658,17 @@ export const coordinatorClient = {
   base: COORD_BASE,
   health: () => jsonGet<CoordinatorHealth>("/health"),
   runtimeStatus: () => jsonGet<RuntimeStatus>("/api/runtime/status"),
+  listClosedReviewSessions: (limit = 20, cursor?: string) => {
+    const params = new URLSearchParams({ status: "closed", limit: String(limit) });
+    if (cursor) params.set("cursor", cursor);
+    return jsonGet<ClosedReviewSessionPage>(`/api/review-sessions?${params.toString()}`);
+  },
+  recreateReviewSession: (closedSessionId: string, idempotencyKey: string) =>
+    jsonPostWithHeaders<RecreateReviewSessionResponse>(
+      `/api/review-sessions/${encodeURIComponent(closedSessionId)}/recreate`,
+      {},
+      { "Idempotency-Key": idempotencyKey },
+    ),
   kitInstanceCurrent: () => jsonGet<KitInstanceState>("/api/kit/instances/current"),
   listIfcReady: (limit = 20) => jsonGet<{ count: number; items: IfcReadyListItem[] }>(`/api/external/ifc-ready?limit=${limit}`),
   createReviewSessionForIfcReady: (jobId: string) =>

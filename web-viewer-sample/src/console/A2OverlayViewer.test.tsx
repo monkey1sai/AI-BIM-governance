@@ -132,6 +132,12 @@ describe("A2 inline viewer 三組批次疊加", () => {
     vi.spyOn(governanceClient, "diffIssueImpact").mockRejectedValue(new Error("選配"));
     vi.spyOn(coordinatorClient, "runtimeStatus").mockResolvedValue(fakeRuntimeStatus() as never);
     vi.spyOn(coordinatorClient, "kitInstanceCurrent").mockResolvedValue({ instance_id: "kit_local_001", status: "ready" } as never);
+    // inline viewer 掛載前需要 canonical trace carrier（stream-config 為權威來源）。
+    vi.spyOn(coordinatorClient, "streamConfig").mockResolvedValue({
+      session_id: SESSION_ID,
+      status: "active",
+      trace_id: `rev_${SESSION_ID}`,
+    } as never);
     vi.spyOn(coordinatorClient, "claimViewerLease").mockResolvedValue({
       lease_id: "lease_a2", lease_token: "lease_token_a2", session_id: SESSION_ID,
       viewer_id: "a2_viewer", user_id: "a2_operator", display_name: "A2 diff overlay primary viewer",

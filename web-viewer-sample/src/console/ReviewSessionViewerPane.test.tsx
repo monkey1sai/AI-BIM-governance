@@ -138,6 +138,12 @@ describe("ReviewSessionViewerPane", () => {
     vi.spyOn(coordinatorClient, "releaseViewerLease").mockResolvedValue(fakePrimaryLease() as never);
     vi.spyOn(coordinatorClient, "reportFirstFrame").mockResolvedValue({ session_id: "review_session_x", first_frame_at: "2026-07-01T00:00:00.000Z" });
     vi.spyOn(coordinatorClient, "kitInstanceCurrent").mockResolvedValue({ instance_id: "kit_local_001", status: "ready" } as never);
+    // viewer iframe 掛載前必須先拿到 canonical trace carrier（stream-config 為權威來源）。
+    vi.spyOn(coordinatorClient, "streamConfig").mockResolvedValue({
+      session_id: "review_session_x",
+      status: "active",
+      trace_id: "rev_review_session_x",
+    } as never);
   });
 
   afterEach(async () => {
@@ -558,6 +564,140 @@ describe("ReviewSessionViewerPane", () => {
     expect(q("review-room-viewer-host")).not.toBeNull();
   });
 
+  // #778 迴歸鎖（核心接線）：coordinator stream-config 給的 canonical trace 必須「原樣」抵達
+  // iframe。用非 rev_ 前綴的 ifcready_ 值，讓「拿掉 traceId 透傳」或「改成前端合成
+  // rev_${sessionId}」兩種退化都會紅——只在 EmbeddedViewer 層直接餵 traceId 的測試抓不到。
+  it("stream-config 的 canonical trace 原樣傳到 viewer（ifcready_ 前綴不得被合成成 rev_）", async () => {
+    vi.mocked(coordinatorClient.streamConfig).mockResolvedValue({
+      session_id: "review_session_x",
+      status: "active",
+      trace_id: "ifcready_1788403854334_c383a04a",
+    } as never);
+    await renderPane();
+
+    await act(async () => { q<HTMLButtonElement>("review-room-manual-start")!.click(); });
+    await flush();
+
+    expect(coordinatorClient.streamConfig).toHaveBeenCalledWith("review_session_x");
+    expect(q("review-room-viewer-host")).not.toBeNull();
+    expect(viewerBox.current?.traceId).toBe("ifcready_1788403854334_c383a04a");
+    expect(viewerBox.current?.traceId).not.toBe("rev_review_session_x");
+  });
+
+  // #778 fail-closed：trace carrier 取不到就不掛 viewer。舊行為是掛一個必定 white-screen 的
+  // iframe，operator 只會看到誤導的 first-frame 逾時。
+  it("stream-config 失敗時顯示 trace-missing 警示且不掛 viewer", async () => {
+    vi.mocked(coordinatorClient.streamConfig).mockRejectedValue(new Error("409 session trace authority unavailable"));
+    await renderPane();
+
+    await act(async () => { q<HTMLButtonElement>("review-room-manual-start")!.click(); });
+    await flush();
+
+    const note = q("review-room-viewer-trace-missing");
+    expect(note).not.toBeNull();
+    expect(note?.textContent).toContain("trace");
+    expect(note?.textContent).toContain("409");
+    expect(q("review-room-viewer-host")).toBeNull();
+    expect(viewerBox.renderCount).toBe(0);
+  });
+
+  it("leaves the 3D view by releasing only the viewer lease and keeps the session selectable", async () => {
+    await renderPane();
+    await act(async () => { q<HTMLButtonElement>("review-room-manual-start")!.click(); });
+    await flush();
+
+    expect(q("review-room-leave-3d")?.textContent).toContain("離開 3D 檢視");
+    await act(async () => { q<HTMLButtonElement>("review-room-leave-3d")!.click(); });
+    await flush();
+
+    expect(coordinatorClient.releaseViewerLease).toHaveBeenCalledWith(
+      "review_session_x",
+      "viewer_lease_primary",
+      "lease_token_primary",
+    );
+    expect(q<HTMLInputElement>("review-room-session-input")?.value).toBe("review_session_x");
+    expect(q("review-room-leave-3d")).toBeNull();
+    expect(q<HTMLButtonElement>("review-room-manual-start")?.disabled).toBe(false);
+  });
+
+  it("stream-config 回應缺 trace_id 時同樣 fail closed，不掛 viewer", async () => {
+    vi.mocked(coordinatorClient.streamConfig).mockResolvedValue({
+      session_id: "review_session_x",
+      status: "active",
+    } as never);
+    await renderPane();
+
+    await act(async () => { q<HTMLButtonElement>("review-room-manual-start")!.click(); });
+    await flush();
+
+    expect(q("review-room-viewer-trace-missing")).not.toBeNull();
+    expect(q("review-room-viewer-host")).toBeNull();
+    expect(viewerBox.renderCount).toBe(0);
+  });
+
+  // 逾時計時器必須綁「viewer 真的掛載」：有 lease 但沒 trace 時不得起算，否則又會把
+  // 「iframe 根本沒掛上」誤報成「串流已建立但期限內未收到首幀」。
+  it("有 lease 但缺 trace carrier 時不起 first-frame 逾時計時", async () => {
+    vi.mocked(coordinatorClient.streamConfig).mockRejectedValue(new Error("409 session trace authority unavailable"));
+    root = createRoot(container);
+    await act(async () => {
+      root!.render(<ReviewSessionViewerPane handoff={handoff} firstFrameTimeoutMs={40} />);
+    });
+    await flush();
+    await act(async () => { q<HTMLButtonElement>("review-room-manual-start")!.click(); });
+    await flush();
+
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 120)); });
+
+    expect(q("review-room-first-frame-timeout")).toBeNull();
+    expect(q("review-room-viewer-trace-missing")).not.toBeNull();
+  });
+
+  // 換 session 時前一個 session 的 trace 不得洩到新 iframe（effect cleanup 的 alive 守衛）。
+  it("切換 session 時延遲抵達的舊 trace 不得覆蓋新 session 的 trace", async () => {
+    // 兩個 session 都要在 runtime status 內，否則 sessionObserved=false 就不會取 trace / claim。
+    const twoSessions = fakeRuntimeStatus();
+    twoSessions.sessions.items = [
+      twoSessions.sessions.items[0],
+      { ...twoSessions.sessions.items[0], session_id: "review_session_y" },
+    ];
+    twoSessions.sessions.count = 2;
+    twoSessions.sessions.active_count = 2;
+    vi.mocked(coordinatorClient.runtimeStatus).mockResolvedValue(twoSessions as never);
+    vi.mocked(coordinatorClient.claimViewerLease).mockResolvedValue({
+      ...fakePrimaryLease(),
+      session_id: "review_session_y",
+    } as never);
+
+    let resolveFirst: ((value: unknown) => void) | null = null;
+    vi.mocked(coordinatorClient.streamConfig).mockImplementation(((sessionId: string) => {
+      if (sessionId === "review_session_x") {
+        return new Promise((resolve) => { resolveFirst = resolve; });
+      }
+      return Promise.resolve({ session_id: sessionId, status: "active", trace_id: `rev_${sessionId}` });
+    }) as never);
+
+    root = createRoot(container);
+    await act(async () => { root!.render(<ReviewSessionViewerPane handoff={handoff} />); });
+    await flush();
+
+    await act(async () => { root!.render(<ReviewSessionViewerPane handoff={{ ...handoff, sessionId: "review_session_y" }} />); });
+    await flush();
+
+    // 舊 session 的請求現在才回來——必須被 cleanup 的 alive 守衛丟棄。
+    await act(async () => {
+      resolveFirst?.({ session_id: "review_session_x", status: "active", trace_id: "rev_review_session_x" });
+      await Promise.resolve();
+    });
+    await flush();
+
+    await act(async () => { q<HTMLButtonElement>("review-room-manual-start")!.click(); });
+    await flush();
+
+    expect(viewerBox.current?.sessionId).toBe("review_session_y");
+    expect(viewerBox.current?.traceId).toBe("rev_review_session_y");
+  });
+
   it("a claimed lease without a first frame inside the deadline shows first-frame-timeout with a retry", async () => {
     root = createRoot(container);
     await act(async () => {
@@ -574,10 +714,20 @@ describe("ReviewSessionViewerPane", () => {
     expect(note).not.toBeNull();
     expect(note?.textContent).toContain("首幀");
     expect(q<HTMLButtonElement>("review-room-first-frame-retry")).not.toBeNull();
+    expect(q("review-room-first-frame-retry")?.textContent).toContain("重新啟動 3D Session");
+    expect(note?.textContent).toContain("查看 Runtime 診斷");
 
     await act(async () => { q<HTMLButtonElement>("review-room-first-frame-retry")!.click(); });
     await flush();
     expect(coordinatorClient.claimViewerLease).toHaveBeenCalledTimes(2);
+    expect(coordinatorClient.releaseViewerLease).toHaveBeenCalledWith(
+      "review_session_x",
+      "viewer_lease_primary",
+      "lease_token_primary",
+    );
+    const firstNonce = vi.mocked(coordinatorClient.claimViewerLease).mock.calls[0][1].client_nonce;
+    const retryNonce = vi.mocked(coordinatorClient.claimViewerLease).mock.calls[1][1].client_nonce;
+    expect(retryNonce).not.toBe(firstNonce);
     expect(q("review-room-first-frame-timeout")).toBeNull();
   });
 

@@ -68,6 +68,20 @@ test('runner writes a complete subject-bound outcome for a passing gate', () => 
   } finally { rmSync(fixture.sandbox, { recursive: true, force: true }); }
 });
 
+test('--base is accepted as plan provenance and must be a full lowercase commit id', () => {
+  const { sandbox, manifestPath, subject } = createFixtureRepository();
+  try {
+    const accepted = spawnSync(process.execPath, [runner, '--repo-root', sandbox, '--manifest', manifestPath,
+      '--default-profile', 'developer', '--base', subject, '--plan-only', '--json'], { encoding: 'utf8', timeout: 30_000, windowsHide: true });
+    assert.equal(accepted.status, 0, accepted.stderr);
+    assert.equal(JSON.parse(accepted.stdout).base_sha, subject);
+    const rejected = spawnSync(process.execPath, [runner, '--repo-root', sandbox, '--manifest', manifestPath,
+      '--default-profile', 'developer', '--base', 'not-a-commit', '--plan-only'], { encoding: 'utf8', timeout: 30_000, windowsHide: true });
+    assert.equal(rejected.status, 3);
+    assert.match(rejected.stderr, /--base requires a lowercase full commit id/u);
+  } finally { rmSync(sandbox, { recursive: true, force: true }); }
+});
+
 test('required failure exits nonzero and records later configured gates as not_run', () => {
   const fixture = runFixture((manifest, target) => {
     manifest.gates.find(({ id }) => id === 'root-contracts').command = command('verification-gate-fail.ps1');

@@ -468,6 +468,84 @@ describe("POST /api/governance/rule-runs/for-session/:sessionId", () => {
     });
   });
 
+  it("沿 recreated_from lineage 解析原 IFC-ready job，且拒絕跨專案 lineage", async () => {
+    const gov = await startGovernanceStub();
+    process.env.GOVERNANCE_API_BASE = gov.baseUrl;
+    const streamingBase = await startStreamingStub();
+    const ifcSourceUrl = await startIfcSourceStub();
+    const app = makeApp({ streamingConversionApiBase: streamingBase, ifcDownloadStrict: true });
+    const { sessionId, hostLocalPath, ifcReadyJobId } = await seedSessionWithDownloadedIfc(
+      app,
+      streamingBase,
+      ifcSourceUrl,
+    );
+    const source = app.store.get(sessionId)!;
+    const firstRecreated = app.store.create({
+      recreated_from_session_id: source.session_id,
+      tenant_id: source.tenant_id,
+      project_id: source.project_id,
+      model_version_id: source.model_version_id,
+      created_by: source.created_by,
+      mode: source.mode,
+      kit_instance: source.kit_instance,
+      artifact_bindings: source.artifact_bindings,
+      kit_instance_bindings: source.kit_instance_bindings,
+    });
+    const chainedRecreated = app.store.create({
+      recreated_from_session_id: firstRecreated.session_id,
+      tenant_id: firstRecreated.tenant_id,
+      project_id: firstRecreated.project_id,
+      model_version_id: firstRecreated.model_version_id,
+      created_by: firstRecreated.created_by,
+      mode: firstRecreated.mode,
+      kit_instance: firstRecreated.kit_instance,
+      artifact_bindings: firstRecreated.artifact_bindings,
+      kit_instance_bindings: firstRecreated.kit_instance_bindings,
+    });
+
+    const resolved = await request(app.app)
+      .post(`/api/governance/rule-runs/for-session/${chainedRecreated.session_id}`)
+      .send({});
+    expect(resolved.status).toBe(202);
+    expect(gov.bodies.at(-1)).toMatchObject({
+      ifc_source_path: hostLocalPath,
+      source_metadata: {
+        ifc_ready_job_id: ifcReadyJobId,
+        review_session_id: chainedRecreated.session_id,
+      },
+    });
+
+    const ancestorJobBefore = structuredClone(
+      app.externalIfcReadyStore.list().find((job) => job.ifc_ready_job_id === ifcReadyJobId),
+    );
+    const sourceSessionBefore = structuredClone(app.store.get(source.session_id));
+    fs.rmSync(hostLocalPath);
+    const staleLineage = await request(app.app)
+      .post(`/api/governance/rule-runs/for-session/${chainedRecreated.session_id}`)
+      .send({});
+    expectStaleSourceIfcResponse(staleLineage);
+    expect(app.externalIfcReadyStore.list().find((job) => job.ifc_ready_job_id === ifcReadyJobId))
+      .toEqual(ancestorJobBefore);
+    expect(app.store.get(source.session_id)).toEqual(sourceSessionBefore);
+
+    const crossProject = app.store.create({
+      recreated_from_session_id: source.session_id,
+      tenant_id: source.tenant_id,
+      project_id: "project_other",
+      model_version_id: source.model_version_id,
+      created_by: source.created_by,
+      mode: source.mode,
+      kit_instance: source.kit_instance,
+      artifact_bindings: source.artifact_bindings,
+      kit_instance_bindings: source.kit_instance_bindings,
+    });
+    const rejected = await request(app.app)
+      .post(`/api/governance/rule-runs/for-session/${crossProject.session_id}`)
+      .send({});
+    expect(rejected.status).toBe(404);
+    expect(gov.bodies).toHaveLength(1);
+  });
+
   it("已下載 session 的 source IFC 被刪除 → 409 stale_session_artifact，且不打 governance", async () => {
     const gov = await startGovernanceStub();
     process.env.GOVERNANCE_API_BASE = gov.baseUrl;

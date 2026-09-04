@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { CloseReviewSessionResponse } from "../clients/coordinatorClient";
 import { traceIdFromSearch } from "../lib/structLogBootstrap";
 import type { BrowserStructLogger, ViewerLogDeliveryAuthority } from "../lib/structLog";
 import "./StructuredLogDiagnostics.css";
@@ -8,7 +7,6 @@ const REVIEW_SESSION_PATTERN = /^(?:lwv_|review_session_)[A-Za-z0-9_]+$/;
 const NOT_OBSERVED = "未觀測";
 
 type FlushState = "idle" | "loading" | "success" | "failure";
-type CloseState = "idle" | "closing" | "closed" | "failure";
 
 interface PendingFlushAction {
     actionId: string;
@@ -23,7 +21,7 @@ export interface StructuredLogDiagnosticsProps {
     conversionJobId?: string | null;
     kitInstanceId?: string | null;
     ensureViewerLogAuthority?: () => Promise<ViewerLogDeliveryAuthority | null>;
-    closeReviewSession: (sessionId: string) => Promise<CloseReviewSessionResponse>;
+    requestSessionClose: (sessionId: string) => void;
 }
 
 // eslint-disable-next-line react-refresh/only-export-components -- exported for case-exact route-gate tests.
@@ -54,12 +52,14 @@ export function StructuredLogDiagnostics({
     conversionJobId,
     kitInstanceId,
     ensureViewerLogAuthority = async () => null,
-    closeReviewSession,
+    requestSessionClose,
 }: StructuredLogDiagnosticsProps) {
     const [flushState, setFlushState] = useState<FlushState>("idle");
-    const [closeState, setCloseState] = useState<CloseState>("idle");
+    // Omniverse viewport 慣例：疊在 live 3D stage 上的東西只能是角落極輕量 HUD。
+    // 本面板是 runtime 佐證工具而非主要工作面，故預設收成 chip，點開才展開，
+    // 絕不常駐遮住模型。展開狀態只活在本次 session（不做偏好持久化）。
+    const [expanded, setExpanded] = useState(false);
     const pendingFlush = useRef<PendingFlushAction | null>(null);
-    const closeInFlight = useRef(false);
     const mounted = useRef(false);
     const routeSessionId = useMemo(() => routeReviewSessionIdFromSearch(search), [search]);
     const routeTraceId = useMemo(() => traceIdFromSearch(search), [search]);
@@ -98,13 +98,11 @@ export function StructuredLogDiagnostics({
         if (prior.logger === identity.logger) prior.logger?.setAutoFlushPaused(false);
         previousIdentity.current = identity;
         pendingFlush.current = null;
-        closeInFlight.current = false;
         setFlushState("idle");
-        setCloseState("idle");
     }, [identity]);
 
     const runFlush = async () => {
-        if (!available || !logger || flushState === "loading" || closeInFlight.current) return;
+        if (!available || !logger || flushState === "loading") return;
         const operationIdentity = identity;
 
         let pending = pendingFlush.current;
@@ -152,37 +150,63 @@ export function StructuredLogDiagnostics({
         }
     };
 
-    const runClose = async () => {
-        if (
-            !available
-            || !reviewSessionId
-            || closeState === "closing"
-            || closeState === "closed"
-            || pendingFlush.current
-        ) return;
-        const operationIdentity = identity;
-        closeInFlight.current = true;
-        setCloseState("closing");
-        try {
-            const response = await closeReviewSession(reviewSessionId);
-            if (!mounted.current || activeIdentity.current !== operationIdentity) return;
-            if (response.session_id !== reviewSessionId || response.status !== "closed") {
-                throw new Error("review session close response mismatch");
-            }
-            setCloseState("closed");
-        } catch {
-            if (!mounted.current || activeIdentity.current !== operationIdentity) return;
-            closeInFlight.current = false;
-            setCloseState("failure");
-        }
-    };
-
-    const actionBusy = flushState === "loading" || closeState === "closing";
-    const actionsEnabled = available && closeState !== "closed";
+    const actionBusy = flushState === "loading";
+    const actionsEnabled = available;
     const closeEnabled = actionsEnabled && flushState !== "failure" && !pendingFlush.current;
 
+    // chip 的狀態必須反映「這個面板現在真正的狀況」，而不是只反映 route/session/trace
+    // 是否對齊：投遞進行中或失敗時，收合態不得繼續顯示 Ready。
+    const chipState = flushState === "failure"
+        ? "failure"
+        : flushState === "loading"
+            ? "loading"
+            : available ? "ready" : "unavailable";
+    const chipLabel = {
+        failure: "Delivery failed",
+        loading: "Delivering\u2026",
+        ready: "Ready",
+        unavailable: "Unavailable",
+    }[chipState];
+    const chipTone = `is-${chipState}`;
+
     return (
-        <aside className="structured-log-diagnostics" data-testid="structured-log-diagnostics" aria-label="Structured log delivery">
+        <aside
+            className={`structured-log-diagnostics${expanded ? " is-expanded" : ""}`}
+            data-testid="structured-log-diagnostics"
+            data-expanded={expanded ? "true" : "false"}
+            aria-label="Structured log delivery"
+        >
+            <button
+                type="button"
+                className="structured-log-diagnostics__chip"
+                data-testid="structured-log-toggle"
+                aria-expanded={expanded}
+                title={expanded ? "收合 runtime 診斷" : "展開 runtime 診斷（structured log 投遞）"}
+                onClick={() => setExpanded((value) => !value)}
+            >
+                {/* 色點只是輔助；狀態一律同時以文字表述，否則螢幕閱讀器與色覺障礙
+                    使用者在收合態無從判讀。 */}
+                <span className={`structured-log-diagnostics__dot ${chipTone}`} aria-hidden="true" />
+                <span className="structured-log-diagnostics__chip-label">Runtime diagnostics</span>
+                {/* 投遞結果必須在收合態也看得到、聽得到：面板一收起，展開態的
+                    role="alert" 就隨之卸載，chip 若只反映 available，一次失敗的投遞會被
+                    當成 Ready 呈現。故 chip 狀態同時涵蓋 loading / failure，並自己帶
+                    live region（失敗用 alert，其餘 polite）。 */}
+                <span
+                    className={`structured-log-diagnostics__chip-state ${chipTone}`}
+                    data-testid="structured-log-chip-readiness"
+                    data-state={chipState}
+                    role={flushState === "failure" ? "alert" : "status"}
+                    aria-live={flushState === "failure" ? "assertive" : "polite"}
+                >
+                    {chipLabel}
+                </span>
+                <span className="structured-log-diagnostics__chip-id">{kitInstanceId || reviewSessionId || NOT_OBSERVED}</span>
+                <span className="structured-log-diagnostics__chev" aria-hidden="true">{expanded ? "\u2304" : "\u02c4"}</span>
+            </button>
+
+            {expanded && (
+            <div className="structured-log-diagnostics__panel" data-testid="structured-log-panel">
             <div className="structured-log-diagnostics__heading">
                 <div>
                     <p className="structured-log-diagnostics__eyebrow">Runtime diagnostics</p>
@@ -249,37 +273,23 @@ export function StructuredLogDiagnostics({
                         className="structured-log-diagnostics__secondary"
                         data-testid="review-session-close"
                         disabled={!closeEnabled || actionBusy}
-                        onClick={() => { void runClose(); }}
+                        onClick={() => { if (reviewSessionId) requestSessionClose(reviewSessionId); }}
                     >
-                        {closeState === "closing" && "Closing…"}
-                        {closeState === "closed" && "Review session closed"}
-                        {(closeState === "idle" || closeState === "failure") && "Close review session"}
+                        Manage Review Session close
                     </button>
                     <p
-                        className={`structured-log-diagnostics__status is-${closeState}`}
+                        className="structured-log-diagnostics__status is-idle"
                         data-testid="review-session-close-status"
-                        data-state={closeState}
-                        role={closeState === "failure" ? "alert" : "status"}
+                        data-state="delegated"
+                        role="status"
                         aria-live="polite"
                     >
-                        {closeState === "idle" && "Cooperative close sends no operator termination reason."}
-                        {closeState === "closing" && `Closing ${reviewSessionId ?? NOT_OBSERVED}…`}
-                        {closeState === "closed" && `Closed ${reviewSessionId ?? NOT_OBSERVED}.`}
-                        {closeState === "failure" && "Close failed. The session was not reported as closed."}
+                        Terminal close is available only in Session Management with the irreversible-action confirmation.
                     </p>
-                    {closeState === "failure" && (
-                        <button
-                            type="button"
-                            className="structured-log-diagnostics__retry"
-                            data-testid="review-session-close-retry"
-                            disabled={!closeEnabled || actionBusy}
-                            onClick={() => { void runClose(); }}
-                        >
-                            Retry close
-                        </button>
-                    )}
                 </div>
             </div>
+            </div>
+            )}
         </aside>
     );
 }

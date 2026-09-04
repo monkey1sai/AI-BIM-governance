@@ -1,0 +1,101 @@
+// Verification tiers: a filter predicate over the manifest's EXISTING gates[].evidence_class.
+//
+// scripts/verification-manifest.json cannot take a new key (verification-plan.mjs exactKeys and
+// verification-manifest.schema.json additionalProperties:false both fail closed), so the tier
+// table lives in a sidecar and is applied to a plan after the canonical classifier produced it.
+//
+// Authority: local_selection_only. CI never reads this file; a tiered run is never evidence.
+
+export const TIER_POLICY_VERSION = 'verification-tier-policy/v1';
+export const TIERS = Object.freeze(['quick', 'pr', 'full']);
+export const EVIDENCE_CLASSES = Object.freeze(['fast', 'contract', 'slow', 'security']);
+
+export class VerificationTierError extends Error {
+  constructor(code, message) {
+    super(message);
+    this.name = 'VerificationTierError';
+    this.code = code;
+  }
+}
+
+function fail(code, message) {
+  throw new VerificationTierError(code, message);
+}
+
+function exactKeys(value, keys, label) {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) fail('tier_policy_invalid', `${label} must be an object.`);
+  const actual = Object.keys(value).sort();
+  const expected = [...keys].sort();
+  if (actual.length !== expected.length || actual.some((key, index) => key !== expected[index])) {
+    fail('tier_policy_invalid', `${label} must have exactly the keys ${expected.join(', ')}.`);
+  }
+}
+
+export function validateTierPolicy(candidate) {
+  const policy = JSON.parse(JSON.stringify(candidate));
+  exactKeys(policy, ['$schema', 'schema_version', 'authority', 'purpose', 'manifest_path', 'tiers', 'full_when_dispatch_full', 'tiered_run_is_evidence', 'ci_ignores_tier'], 'tier policy');
+  if (policy.schema_version !== TIER_POLICY_VERSION) fail('tier_policy_invalid', 'Unsupported tier policy schema version.');
+  if (policy.authority !== 'local_selection_only') fail('tier_policy_invalid', 'Tier policy authority must remain local_selection_only.');
+  if (policy.manifest_path !== 'scripts/verification-manifest.json') fail('tier_policy_invalid', 'Tier policy must sit over the canonical manifest.');
+  if (policy.full_when_dispatch_full !== true || policy.tiered_run_is_evidence !== false || policy.ci_ignores_tier !== true) {
+    fail('tier_policy_invalid', 'Tier policy invariants (full on self-change, never evidence, CI ignores) must hold.');
+  }
+  exactKeys(policy.tiers, TIERS, 'tier policy.tiers');
+  let previous = new Set();
+  for (const tier of TIERS) {
+    const entry = policy.tiers[tier];
+    exactKeys(entry, ['evidence_classes', 'target_seconds'], `tier policy.tiers.${tier}`);
+    if (!Array.isArray(entry.evidence_classes) || entry.evidence_classes.length === 0 || entry.evidence_classes.some((item) => !EVIDENCE_CLASSES.includes(item))) {
+      fail('tier_policy_invalid', `tiers.${tier}.evidence_classes must be a non-empty subset of ${EVIDENCE_CLASSES.join(', ')}.`);
+    }
+    const current = new Set(entry.evidence_classes);
+    // Tiers are monotonic: quick ⊆ pr ⊆ full, and full is the whole class set.
+    for (const item of previous) if (!current.has(item)) fail('tier_policy_invalid', `tiers.${tier} must be a superset of the previous tier.`);
+    previous = current;
+  }
+  if (previous.size !== EVIDENCE_CLASSES.length) fail('tier_policy_invalid', 'tiers.full must cover every evidence class.');
+  return policy;
+}
+
+// Select the gates a local run executes for `tier`. A plan with dispatch=full (self-change of the
+// verification mechanism) forces the full tier: governance / CI / bootstrap changes never get a
+// reduced run. Returns the effective tier and the (target_id, gate_id) selections; the caller
+// prints deselections and skips them — nothing is removed from the plan document itself.
+export function selectTierGates(plan, requestedTier, candidatePolicy) {
+  const policy = validateTierPolicy(candidatePolicy);
+  if (!TIERS.includes(requestedTier)) fail('tier_invalid', `tier must be one of ${TIERS.join(', ')}.`);
+  if (plan === null || typeof plan !== 'object' || !Array.isArray(plan.targets)) fail('plan_invalid', 'a verification plan document is required.');
+  const forcedFull = policy.full_when_dispatch_full && plan.dispatch === 'full' && requestedTier !== 'full';
+  const effective = forcedFull ? 'full' : requestedTier;
+  const allowed = new Set(policy.tiers[effective].evidence_classes);
+  const selected = [];
+  const deselected = [];
+  for (const target of plan.targets) {
+    if (!target.required) continue;
+    for (const gate of target.gates ?? []) {
+      const entry = { target_id: target.id, gate_id: gate.id, evidence_class: gate.evidence_class ?? null };
+      if (typeof gate.evidence_class !== 'string' || !EVIDENCE_CLASSES.includes(gate.evidence_class)) {
+        // Unknown class: fail closed by RUNNING it, never by silently skipping.
+        selected.push({ ...entry, reason: 'evidence_class_unknown_run_anyway' });
+      } else if (allowed.has(gate.evidence_class)) {
+        selected.push({ ...entry, reason: 'in_tier' });
+      } else {
+        deselected.push({ ...entry, reason: 'tier_deselected' });
+      }
+    }
+  }
+  return Object.freeze({
+    schema_version: TIER_POLICY_VERSION,
+    requested_tier: requestedTier,
+    effective_tier: effective,
+    forced_full: forcedFull,
+    forced_full_reason: forcedFull ? 'plan_dispatch_full_self_change' : null,
+    is_evidence: false,
+    selected: Object.freeze(selected),
+    deselected: Object.freeze(deselected),
+  });
+}
+
+export function tierSelectionKey(entry) {
+  return `${entry.target_id}\u0000${entry.gate_id}`;
+}

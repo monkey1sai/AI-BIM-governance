@@ -10,6 +10,8 @@ $skillPath = Join-Path $PSScriptRoot 'README.md'
 $readmePath = Join-Path $PSScriptRoot 'bot\README.md'
 $repoRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..\..'))
 $workflowPath = Join-Path $repoRoot 'docs\agents\github-workflow.md'
+$claudeSkillPath = Join-Path $repoRoot '.claude\skills\blip-approve\SKILL.md'
+$codexSkillPath = Join-Path $repoRoot '.codex\skills\blip-approve\SKILL.md'
 $userWrapperPath = Join-Path $PSScriptRoot 'bot\scripts\run_blip_live_approve_once.ps1'
 $appWrapperPath = Join-Path $PSScriptRoot 'bot\scripts\run_codex_bound_ship_gate_once.ps1'
 $sandboxRoot = Join-Path ([System.IO.Path]::GetTempPath()) (
@@ -258,9 +260,15 @@ Assert-True ($text -match "StartsWith\('runtime/psmodule/'") `
 $skillText = Get-Content -Raw -LiteralPath $skillPath
 $readmeText = Get-Content -Raw -LiteralPath $readmePath
 $workflowText = Get-Content -Raw -LiteralPath $workflowPath
-foreach ($document in @($skillText, $readmeText)) {
-    Assert-True ($document -notmatch '(?is)-NonInteractive\s+-File\s+[^\r\n]*(?<!test_)run_blip_live_approve_once\.ps1') `
-        'A documented live broker command still disables its masked PAT prompt.'
+$claudeSkillText = Get-Content -Raw -LiteralPath $claudeSkillPath
+$codexSkillText = Get-Content -Raw -LiteralPath $codexSkillPath
+foreach ($document in @($skillText, $readmeText, $workflowText, $claudeSkillText, $codexSkillText)) {
+    Assert-True ($document.Contains('C:\Users\IOT\.grok\github-bot\.env.blip')) `
+        'A broker policy document lost the fixed counted-reviewer credential path.'
+}
+foreach ($document in @($claudeSkillText, $codexSkillText)) {
+    Assert-True ($document -match '(?is)-NonInteractive\s+-File\s+[^\r\n]*(?<!test_)run_blip_live_approve_once\.ps1') `
+        'A runbook skill no longer requires the non-interactive protected User broker.'
 }
 Assert-True ($skillText -match 'ACTIVATION.*HELD' -and
     $skillText -match 'live GitHub mutation' -and
@@ -408,7 +416,7 @@ try {
             $existingOwnerTree, (Join-Path $existingOwnerTree 'credential.json')
         )
     }
-    Write-Output 'installer-tests-ok (self-bound bootstrap contract, interactive PAT docs, pinned source, runtime RX/no-write, owner-only credential ACL)'
+    Write-Output 'installer-tests-ok (self-bound bootstrap contract, fixed owner-only env token docs, pinned source, runtime RX/no-write, owner-only credential ACL)'
 }
 finally {
     if ($null -ne $script:pinnedStreams) {
