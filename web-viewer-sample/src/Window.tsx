@@ -676,6 +676,54 @@ function requestUsesNativeOpenedStageResult(requestEventType: string): boolean {
         || requestEventType === "loadArtifactGroupRequest";
 }
 
+// #783：outbound trace 只能補給「形狀正確」的 native 成功回應。欄位名對齊 SDK
+// LogFormatter.fromLoadingStateEvent / fromGetChildrenEvent 的產出；值域對齊
+// tests/contracts/kit-datachannel-v1.schema.json（loadingStateResponse.loading_state 只准
+// idle|busy；getChildrenResponse.children 每個元素都必須是物件）。任何不在契約內的值
+// 都不得被補上 trace 後放進 _handleCustomEvent——那條路會直接改 isKitReady / usdPrims。
+const NATIVE_LOADING_STATES: ReadonlySet<string> = new Set(["idle", "busy"]);
+
+function isExpectedNativeResult(
+    requestEventType: string,
+    result: Record<string, unknown>,
+    requestPayload: Record<string, unknown>,
+): boolean {
+    if (getPayloadString(result, "status") !== "success") return false;
+    if (requestEventType === "loadingStateQuery") {
+        return typeof result.loadingState === "string" && NATIVE_LOADING_STATES.has(result.loadingState);
+    }
+    if (requestEventType === "getChildrenRequest") {
+        // 回應必須答的是**這一次**請求的節點：primPath 逐字等於 outbound prim_path。
+        // 這同時擋掉切換模型後遲到的舊 stage 回應被當成新樹的 root 回應（review P2）。
+        const requestedPrimPath = getPayloadString(requestPayload, "prim_path");
+        return typeof result.primPath === "string"
+            && requestedPrimPath !== ""
+            && result.primPath === requestedPrimPath
+            && Array.isArray(result.children)
+            // 明確只傳 child：Array.every 的第二個引數是 index，直接傳函式會把
+            // 兄弟節點的序號當成遞迴深度，第 33 個兄弟就會被誤拒（gate correctness:1）。
+            && result.children.every((child) => isNativeChildPrimRecord(child));
+    }
+    return false;
+}
+
+// 契約 `children.items: object` 排除陣列；handler 之後會把元素當 USDPrimType 用、
+// _makePickable 直接取 `prim.path`、USDStage 展開節點時再遞迴讀 `children`，所以這裡要求
+// 「非陣列物件、path 為字串，且巢狀 children 若存在也必須是同樣合法的陣列」；
+// 不讓 `[[]]`、缺 path、或 `{ children: [null] }` 這類元素被補上 trace 後進 handler。
+function isNativeChildPrimRecord(value: unknown, depth = 0): boolean {
+    if (!isRecord(value) || Array.isArray(value) || typeof value.path !== "string") return false;
+    if (!Object.prototype.hasOwnProperty.call(value, "children")) return true;
+    // 深度上限只防惡意／損壞的超深巢狀把驗證拖垮；正常 lazy-load 回應只帶一層。
+    if (depth >= 32) return false;
+    return Array.isArray(value.children)
+        && value.children.every((child) => isNativeChildPrimRecord(child, depth + 1));
+}
+
+// USD 的 pseudo-root `/` 與本 viewer 的預設 root `/World` 都視為 root 請求：
+// stage_management 明確支援對 `/` 回傳頂層子節點，handler 對 root 也是整棵樹重建。
+const NATIVE_ROOT_PRIM_PATHS: ReadonlySet<string> = new Set(["/", "/World"]);
+
 function appStreamResultToAppEvent(
     requestEventType: string,
     result: unknown,
@@ -745,7 +793,27 @@ function appStreamResultToAppEvent(
         };
     }
 
-    const traceId = getPayloadString(result, "trace_id");
+    // #783：SDK 對 native 指令（loadingStateQuery / getChildrenRequest）會自己攔下 Kit 的
+    // 同名回應，並以 fromLoadingStateEvent / fromGetChildrenEvent 重組成
+    // `{ action, status, info, loadingState|primPath, url|children }` 後 resolve 這個 promise
+    // ——**trace_id 在這一步被 SDK 剝掉**（Kit 端確實有送，同 payload 換名探針逐則到達）。
+    // 之前只認 result.trace_id，等於把每一則正常回應都靜默丟掉：isKitReady 永遠 false、
+    // 永不送 openStageRequest、3D 全黑（181 與本機皆重現）。
+    // 這裡改用送出時由 _withVerifiedDataChannelTrace 寫入、且已對照 authority 驗證過的
+    // outbound trace_id；SDK 的 native callback map 保證此 result 就是該次請求的回應。
+    // 兩道守門（review P2）：
+    //   (1) result 若「帶有」trace_id 屬性但值為空／null／非字串，是明確損壞的 correlation
+    //       carrier，必須 fail closed，不得用 outbound 補位（帶錯值的 trace 本來就會被拒）。
+    //   (2) 只有 result 長得像該指令預期的 native 回應（status=success 且帶請求專屬欄位）
+    //       才允許補位；SDK 對 warning／error／generic ACK 也會 resolve 同一個 promise，
+    //       那些不得被補上 trace 後當成合法回應放進 _handleCustomEvent。
+    const hasInboundTrace = Object.prototype.hasOwnProperty.call(result, "trace_id");
+    const inboundTraceId = getPayloadString(result, "trace_id");
+    if (hasInboundTrace && !inboundTraceId) return null;
+    const traceId = inboundTraceId
+        || (isExpectedNativeResult(requestEventType, result, requestPayloadRecord)
+            ? getPayloadString(requestPayloadRecord, "trace_id")
+            : "");
     if (!traceId) return null;
 
     if (requestEventType === "loadingStateQuery") {
@@ -1992,6 +2060,12 @@ export default class App extends React.Component<AppProps, AppState> {
             this.setState({ runtimeCommandRejection: null });
         }
         const streamGenerationAtSend = this.streamGeneration;
+        // #783（review P2）：native getChildren 回應沒有 stage 相關性。切換模型時 WebRTC
+        // stream generation 與 session trace 都不變，_openSelectedAsset 又會先清空 usdPrims，
+        // 於是舊 stage 遲到的回應會被 handler 當成新樹的 root 回應整棵換掉。送出時記下
+        // stage intent / attempt generation，回來時任一變了就丟棄。
+        const stageIntentGenerationAtSend = this.stageIntentGeneration;
+        const stageAttemptGenerationAtSend = this.activeStageAttempt?.generation ?? null;
         let nativeTransportFailed = false;
         void AppStream.sendMessage(outgoing)
             .then((result) => {
@@ -2001,9 +2075,40 @@ export default class App extends React.Component<AppProps, AppState> {
                     outgoing.payload,
                     Boolean(nativeOpenStageDispatch),
                 );
-                if (responseEvent) {
-                    this._handleCustomEvent(responseEvent, streamGenerationAtSend);
+                if (!responseEvent) return;
+                if (outgoing.event_type === "getChildrenRequest") {
+                    if (
+                        this.stageIntentGeneration !== stageIntentGenerationAtSend
+                        || (this.activeStageAttempt?.generation ?? null) !== stageAttemptGenerationAtSend
+                    ) {
+                        this._appendReviewEvent("略過遲到的 getChildrenResponse：stage 已切換");
+                        return;
+                    }
+                    const borrowedTrace = !(isRecord(result) && Object.prototype.hasOwnProperty.call(result, "trace_id"));
+                    // attempt 失敗／逾時只把 status 轉 terminal、不推進任何 generation。對借用
+                    // outbound trace 的回應：只要目前 attempt 是 terminal（不論請求是在終止前
+                    // 還是終止後發出），都不得在 viewer 已進入失敗／unproven 態時重填樹並送
+                    // makePrimsPickable（review P2 ×2）。
+                    if (borrowedTrace && this.activeStageAttempt?.status === "terminal") {
+                        this._appendReviewEvent("略過 getChildrenResponse：stage attempt 已終止");
+                        return;
+                    }
+                    // 同一 stage 內：handler 對「樹裡找不到的 prim_path」一律當 root 回應整棵換掉
+                    // （_findUSDPrimByPath === null → usdPrims = children）。這條只圍**借用 outbound
+                    // trace** 的 trace-less native 回應——那是本 PR 新開的路，不得因此讓過期節點
+                    // 的回應整棵換樹；帶真實 inbound trace 的回應維持既有行為。非 root 節點若已不在
+                    // 目前的樹上（同 stage refresh 期間消失、或 request_stage_tree 指到過期節點）就丟。
+                    const requestedPrimPath = isRecord(outgoing.payload) ? getPayloadString(outgoing.payload, "prim_path") : "";
+                    if (
+                        borrowedTrace
+                        && !NATIVE_ROOT_PRIM_PATHS.has(requestedPrimPath)
+                        && this._findUSDPrimByPath(requestedPrimPath) === null
+                    ) {
+                        this._appendReviewEvent("略過 getChildrenResponse：請求的節點已不在目前的 stage 樹上");
+                        return;
+                    }
                 }
+                this._handleCustomEvent(responseEvent, streamGenerationAtSend);
             })
             .catch(() => {
                 nativeTransportFailed = true;
