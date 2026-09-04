@@ -26,6 +26,7 @@ def install_bridge_stubs():
         pushes=[],
         queued=[],
         log_errors=[],
+        log_infos=[],
     )
 
     carb = types.ModuleType("carb")
@@ -33,7 +34,7 @@ def install_bridge_stubs():
     carb_dictionary.Item = DummyItem
     carb.dictionary = carb_dictionary
     carb.log_error = lambda *args, **kwargs: calls.log_errors.append(args)
-    carb.log_info = lambda *args, **kwargs: None
+    carb.log_info = lambda *args, **kwargs: calls.log_infos.append(args[0] if args else "")
     carb.log_warn = lambda *args, **kwargs: None
 
     carb_events = types.ModuleType("carb.events")
@@ -117,6 +118,7 @@ def reset_calls():
     CALLS.pushes.clear()
     CALLS.queued.clear()
     CALLS.log_errors.clear()
+    CALLS.log_infos.clear()
 
 
 def test_upstream_registration_is_never_called():
@@ -182,4 +184,73 @@ def test_unserialisable_payload_is_dropped_not_pushed():
 
     assert CALLS.pushes == []
     assert CALLS.queued == []
+    assert len(CALLS.log_errors) == 1
+
+
+# ---------------------------------------------------------------------------
+# Issue #783 observability. A silent module made two hypotheses -- "the observer
+# never fired" and "the envelope was queued but the plugin ignored it" --
+# indistinguishable from the Kit log. These pin the two lines that separate them,
+# and pin that neither line can carry payload content.
+# ---------------------------------------------------------------------------
+
+
+def test_registration_logs_the_outgoing_event_type():
+    client_send_bridge.register_event_type_to_send("loadingStateResponse")
+
+    assert "[client-send] registered outgoing loadingStateResponse" in CALLS.log_infos
+
+
+def test_forward_logs_the_channel_actually_used():
+    client_send_bridge.register_event_type_to_send("loadingStateResponse")
+    on_event = CALLS.observe_kwargs[0]["on_event"]
+    CALLS.log_infos.clear()
+
+    on_event(types.SimpleNamespace(payload={"loading_state": "idle", "trace_id": "rev_x"}))
+
+    assert CALLS.log_infos == ["[client-send] forwarded loadingStateResponse via queue_event"]
+
+
+def test_forward_log_names_the_fallback_channel_when_queue_event_is_absent(monkeypatch):
+    omni_kit_app = client_send_bridge.omni.kit.app
+    monkeypatch.delattr(omni_kit_app, "queue_event")
+    client_send_bridge.register_event_type_to_send("loadingStateResponse")
+    on_event = CALLS.observe_kwargs[0]["on_event"]
+    CALLS.log_infos.clear()
+
+    on_event(types.SimpleNamespace(payload={"loading_state": "idle"}))
+
+    assert CALLS.log_infos == ["[client-send] forwarded loadingStateResponse via message_bus_push"]
+
+
+def test_observability_logs_never_carry_payload_content():
+    client_send_bridge.register_event_type_to_send("loadingStateResponse")
+    on_event = CALLS.observe_kwargs[0]["on_event"]
+
+    on_event(
+        types.SimpleNamespace(
+            payload={
+                "loading_state": "idle",
+                "trace_id": "rev_review_session_secret",
+                "url": "/home/bimdeploy/private/model.usdc",
+            }
+        )
+    )
+
+    joined = " ".join(CALLS.log_infos)
+    assert "rev_review_session_secret" not in joined
+    assert "/home/bimdeploy" not in joined
+    assert "idle" not in joined
+
+
+def test_unserialisable_payload_still_logs_no_forward_line():
+    client_send_bridge.register_event_type_to_send("loadingStateResponse")
+    on_event = CALLS.observe_kwargs[0]["on_event"]
+    CALLS.log_infos.clear()
+
+    on_event(types.SimpleNamespace(payload={"bad": object()}))
+
+    assert CALLS.queued == []
+    assert CALLS.pushes == []
+    assert CALLS.log_infos == []
     assert len(CALLS.log_errors) == 1
