@@ -3,7 +3,7 @@ import { useCallback, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import type { ReviewSessionViewerPaneBatchGate } from "../ReviewSessionViewerPane";
 import type { USDPrimNode } from "../EmbeddedViewer";
-import { ViewportSlotContext } from "./viewportSlot";
+import { resolveViewerCommandGate, ViewportSlotContext } from "./viewportSlot";
 import type { ViewportHostActions, ViewportPublication, ViewportSlotApi } from "./viewportSlot";
 
 export function ViewportSlotProvider({ children }: { children: ReactNode }) {
@@ -14,9 +14,11 @@ export function ViewportSlotProvider({ children }: { children: ReactNode }) {
   const [stageTree, setStageTreeState] = useState<USDPrimNode[]>([]);
   const hostActionsRef = useRef<ViewportHostActions | null>(null);
   const activeSessionIdRef = useRef("");
+  const sessionAuthorityInitializedRef = useRef(false);
 
   const registerSlot = useCallback((el: HTMLElement | null) => { setSlotEl(el); }, []);
   const setActiveSessionId = useCallback((sessionId: string) => {
+    sessionAuthorityInitializedRef.current = true;
     const nextSessionId = sessionId.trim();
     if (activeSessionIdRef.current !== nextSessionId) {
       activeSessionIdRef.current = nextSessionId;
@@ -35,8 +37,7 @@ export function ViewportSlotProvider({ children }: { children: ReactNode }) {
         ? prev
         : next
     ));
-    const canSendViewerCommand = next?.canSendViewerCommand ?? next?.canSend;
-    if (canSendViewerCommand !== true) setStageTreeState([]);
+    if (!resolveViewerCommandGate(next).canSend) setStageTreeState([]);
   }, []);
   const setStageTree = useCallback((nodes: USDPrimNode[]) => {
     // Window.tsx 已把 nested getChildrenResponse 合併進完整 root tree，再以 stage_tree 下傳。
@@ -59,8 +60,10 @@ export function ViewportSlotProvider({ children }: { children: ReactNode }) {
   }, []);
   const publish = useCallback((next: ViewportPublication | null) => {
     setPublication(next);
-    // 播種共用 session：頁面帶來非空 session 即採用；頁面離場不清空（保住跨 dock 的 lease）。
-    if (next && next.handoff.sessionId.trim()) setActiveSessionId(next.handoff.sessionId);
+    // 僅首次播種共用 session；可見 input 一旦成為 authority，後續 publication 不得覆寫或復活舊 handoff。
+    if (next && next.handoff.sessionId.trim() && !sessionAuthorityInitializedRef.current) {
+      setActiveSessionId(next.handoff.sessionId);
+    }
     if (!next) {
       setGateState(null);
       setStageTreeState([]);

@@ -8,7 +8,7 @@ import { t, useLang } from "../i18n";
 import { ACCENT, MONO } from "./fixtures";
 import type { DockKey } from "./fixtures";
 import { WorkspaceFlowGuide } from "./WorkspaceFlowGuide";
-import { useViewportSlot } from "./viewportSlot";
+import { resolveViewerCommandGate, useViewportSlot } from "./viewportSlot";
 import { useUsdStageTree, type USDPrimNode } from "../../hooks/useUsdStageTree";
 
 const DOCK_KEYS: readonly DockKey[] = ["a1", "a2", "a3", "a4", "issues"];
@@ -200,7 +200,7 @@ export function WorkspacePage({ initialDock = "a1" }: WorkspacePageProps) {
     issues: "Issues / BCF",
   };
 
-  const toolbarDisabled = (slot?.gate?.canSendViewerCommand ?? slot?.gate?.canSend) !== true;
+  const toolbarDisabled = !resolveViewerCommandGate(slot?.gate ?? null).canSend;
 
   return (
     <div
@@ -301,7 +301,7 @@ export function WorkspacePage({ initialDock = "a1" }: WorkspacePageProps) {
                 disabled={toolbarDisabled}
                 placeholder={t("搜尋 prim...", "Search prim...")}
                 value={stageTreeApi.searchQuery}
-                onChange={(e) => stageTreeApi.setSearchQuery(e.target.value)}
+                onChange={(e) => { if (!toolbarDisabled) stageTreeApi.setSearchQuery(e.target.value); }}
                 style={{
                   padding: "4px 8px",
                   fontSize: 11,

@@ -173,6 +173,12 @@ describe("WorkspaceViewportHost（V-A′）", () => {
     });
     expect(api!.stageTree).toEqual([]);
     expect(api!.publication?.handoff.sessionId).toBe("review_session_a");
+
+    await act(async () => {
+      api!.publish({ ...api!.publication!, handoff: { ...api!.publication!.handoff, sessionId: "review_session_a" } });
+    });
+    expect(api!.activeSessionId).toBe("");
+    expect(input.value).toBe("");
     store.dispose();
   });
 
@@ -305,6 +311,8 @@ describe("WorkspaceViewportHost（V-A′）", () => {
     expect(offlineGate.reason).toBe(offlineGate.viewerCommandReason);
     expect(offlineGate.reason).toMatch(/runtime\/status.*(?:離線|offline)/i);
     expect(api!.gate).toEqual(offlineGate);
+    await act(async () => { api!.setActiveSessionId("review_session_offline"); });
+    expect(api!.gate).toEqual(offlineGate);
     store.dispose();
   });
 });
@@ -396,6 +404,24 @@ describe("ViewportSlotProvider", () => {
       "act:camera_view:top",
     ]);
 
+    await act(async () => { root.unmount(); });
+  });
+
+  it("同一 session 的空白正規化不清除既有 gate 與 Stage 樹", async () => {
+    let api: ReturnType<typeof useViewportSlot> = null;
+    function Grab() { api = useViewportSlot(); return null; }
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    await act(async () => { root.render(<ViewportSlotProvider><Grab /></ViewportSlotProvider>); });
+    await act(async () => {
+      api!.setActiveSessionId("review_session_a");
+      api!.setGate({ canSend: true, reason: "" });
+      api!.setStageTree([{ path: "/World/A", name: "A" }]);
+    });
+    await act(async () => { api!.setActiveSessionId("  review_session_a  "); });
+    expect(api!.activeSessionId).toBe("review_session_a");
+    expect(api!.gate).toEqual({ canSend: true, reason: "" });
+    expect(api!.stageTree).toEqual([{ path: "/World/A", name: "A" }]);
     await act(async () => { root.unmount(); });
   });
 

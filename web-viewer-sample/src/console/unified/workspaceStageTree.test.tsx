@@ -137,6 +137,8 @@ describe("WorkspacePage Stage 樹與工具列整合 (Issue #609, #605)", () => {
 
     await act(async () => { expandToggle?.click(); });
     expect(requestStageTreeMock).toHaveBeenCalledWith("/World/Structure");
+    await act(async () => { expandToggle?.click(); });
+    expect(requestStageTreeMock).toHaveBeenCalledTimes(1);
 
     // 點擊工具列按鈕
     const resetBtn = container.querySelector('[data-testid="ws-toolbar-reset"]') as HTMLButtonElement | null;
@@ -166,8 +168,18 @@ describe("WorkspacePage Stage 樹與工具列整合 (Issue #609, #605)", () => {
     const blockedTree = container.querySelector('[data-uc="ws-stage-tree"]');
     expect(blockedTree?.getAttribute("data-state")).toBe("blocked");
     const blockedRefreshButton = container.querySelector('[data-testid="ws-request-stage-tree-btn"]') as HTMLButtonElement | null;
+    const blockedSearchInput = container.querySelector('[data-uc="ws-stage-search"]') as HTMLInputElement | null;
     expect(blockedRefreshButton?.disabled).toBe(true);
-    await act(async () => { item?.click(); expandToggle?.click(); blockedRefreshButton?.click(); });
+    expect(blockedSearchInput?.disabled).toBe(true);
+    await act(async () => {
+      const valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+      valueSetter?.call(blockedSearchInput, "Leaf");
+      blockedSearchInput?.dispatchEvent(new Event("input", { bubbles: true }));
+      item?.click();
+      expandToggle?.click();
+      blockedRefreshButton?.click();
+    });
+    expect(container.querySelector('[data-path="/World/Structure"]')).not.toBeNull();
     expect(selectPrimMock).not.toHaveBeenCalled();
     expect(requestStageTreeMock).not.toHaveBeenCalled();
   });

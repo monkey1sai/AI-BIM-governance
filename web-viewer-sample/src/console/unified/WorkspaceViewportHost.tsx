@@ -121,7 +121,7 @@ export function WorkspaceViewportHost({ firstFrameTimeoutMs }: WorkspaceViewport
     };
     setGate?.(offlineGate);
     pageGateRef.current?.(offlineGate);
-  }, [live, setGate, setStageTree]);
+  }, [activeSessionId, live, setGate, setStageTree]);
 
   if (!live) return null; // 零新 DOM（離線／design gate）
 
