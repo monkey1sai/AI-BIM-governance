@@ -451,9 +451,28 @@ try {
     $suiteJob = $governanceWorkflowTree['jobs']['suite']
     Assert-True ($suiteJob.Contains('strategy') -and $suiteJob['strategy'].Contains('matrix') -and $suiteJob['strategy']['matrix'].Contains('shard')) 'agent-governance suite declares its shard matrix'
     Assert-True (([string]$suiteJob['strategy']['fail-fast']) -ceq 'false') 'one failing shard never cancels the others, so a single red leg cannot hide a second failure'
-    $declaredShards = @(@($suiteJob['strategy']['matrix']['shard']) | ForEach-Object { [string]$_ })
-    Assert-True ($declaredShards.Count -ge 2) 'the shard matrix declares more than one leg'
+
+    # The legs are selected per commit, so the shard names live in data rather than in the
+    # workflow. Pin the expression exactly: reverting to a hand-written literal list would
+    # silently stop honouring the declaration the rest of this block validates against.
+    Assert-True ((([string]$suiteJob['strategy']['matrix']['shard']).Trim()) -ceq '${{ fromJSON(needs.scope.outputs.shards) }}') 'the suite matrix is built from the scope job shard selection'
+    $scopeJob = $governanceWorkflowTree['jobs']['scope']
+    Assert-True (([string]$scopeJob['outputs']['shards']).Trim() -ceq '${{ steps.shards.outputs.shards }}') 'the scope job publishes the selected shards'
+    $shardSelectorStep = @($scopeJob['steps'] | Where-Object { ([string]$_['id']) -ceq 'shards' })
+    Assert-True ($shardSelectorStep.Count -eq 1) 'the scope job runs exactly one shard selector step'
+    Assert-True (([string]$shardSelectorStep[0]['run']) -match 'scripts/dev/select-agent-governance-shards\.mjs') 'the shard selector step invokes the canonical selector'
+
+    $shardPolicyPath = Join-Path $repoRoot 'scripts/agent-governance-shards.json'
+    Assert-True (Test-Path -LiteralPath $shardPolicyPath -PathType Leaf) 'the canonical shard declaration exists'
+    $shardPolicy = (Get-Content -LiteralPath $shardPolicyPath -Raw -Encoding utf8) | ConvertFrom-Json
+    Assert-True (([string]$shardPolicy.schema_version) -ceq 'agent-governance-shards/v1') 'shard declaration uses the pinned schema version'
+    Assert-True (([string]$shardPolicy.authority) -ceq 'shard_selection_only') 'shard declaration never claims gate authority'
+    $declaredShards = @($shardPolicy.shards | ForEach-Object { [string]$_.id })
+    Assert-True ($declaredShards.Count -ge 2) 'the shard declaration declares more than one leg'
     Assert-True (@($declaredShards | Sort-Object -Unique).Count -eq $declaredShards.Count) 'shard names are unique'
+    # Without an always-selected leg the matrix could resolve to [] and the suite would report
+    # skipped, which the aggregator would then have to interpret. Keep that case impossible.
+    Assert-True (@($shardPolicy.shards | Where-Object { $_.always }).Count -ge 1) 'at least one shard is always selected, so the matrix can never be empty'
 
     $shardMembershipPattern = [regex]"^matrix\.shard == '(?<shard>[a-z][a-z0-9-]*)'$"
     $suiteRunSteps = [ordered]@{}

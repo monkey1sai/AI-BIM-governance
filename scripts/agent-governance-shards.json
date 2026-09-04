@@ -1,0 +1,70 @@
+{
+  "$schema": "./tests/agent-governance-shards.schema.json",
+  "schema_version": "agent-governance-shards/v1",
+  "authority": "shard_selection_only",
+  "purpose": "Canonical declaration of the Agent Governance suite shards. The workflow builds its matrix from this file via the scope job, and scripts/tests/test-agent-governance-check.ps1 validates step-to-shard coverage against it. Selecting fewer shards never weakens a gate: a shard that is not selected has no changed path that could exercise it, and the required agent-governance aggregator still fails closed on any selected shard that does not succeed.",
+  "not_a_gate": "Shard selection decides WHERE a step runs, never WHETHER the repository is verified. Scope (agent_governance true/false) remains the only thing that decides whether the suite runs at all.",
+  "shards": [
+    {
+      "id": "core",
+      "always": true,
+      "title": "governance mechanism invariants",
+      "reason": "Carries the governance static check, the policy-rule ratchet, PR queue safety, trusted-host merge contract, and production provenance. These bind the mechanism itself, so any change large enough to put agent-governance in scope can reach them. Always selected, which also guarantees the matrix is never empty.",
+      "path_globs": []
+    },
+    {
+      "id": "openspec",
+      "always": false,
+      "title": "OpenSpec lifecycle and machine truth",
+      "reason": "Only reachable through OpenSpec artifacts and the modules that adjudicate them.",
+      "path_globs": [
+        "openspec/**",
+        "scripts/lib/openspec-*.mjs",
+        "scripts/lib/openspec-*.ps1",
+        "scripts/lib/collect-openspec-github-state.mjs",
+        "scripts/tests/test-openspec-*.mjs",
+        "scripts/tests/verify-openspec-*.mjs",
+        "scripts/dev/verify-openspec-*.mjs"
+      ]
+    },
+    {
+      "id": "capability",
+      "always": false,
+      "title": "base-gate capability detection",
+      "reason": "Proves the merged HEAD stays a valid future base for pr-review-agent.yml, which archives the gate from BASE_SHA. Only the adjudicator surface and its detector can change that verdict.",
+      "path_globs": [
+        "scripts/lib/detect-base-gate-capability.sh",
+        "scripts/tests/check-pr-body-evidence.ps1",
+        "scripts/tests/test-base-gate-capability.ps1",
+        "scripts/lib/pr-review-agent.ps1",
+        "scripts/pr-review-agent.ps1",
+        ".github/workflows/pr-review-agent.yml"
+      ]
+    },
+    {
+      "id": "evidence",
+      "always": false,
+      "title": "PR evidence, bootstrap ledger, deploy and design-system gates",
+      "reason": "Bound to the evidence contract surfaces: PR body labels, the self-referential bootstrap ledger, deploy target registry, platform adapters, and the design-system/runtime result gates.",
+      "path_globs": [
+        "scripts/tests/test-pr-body-evidence.ps1",
+        "scripts/tests/check-pr-body-evidence.ps1",
+        "scripts/lib/self-referential-bootstrap.ps1",
+        "scripts/self-referential-bootstrap-ledger.json",
+        "scripts/deploy-target-registry.json",
+        "scripts/lib/deploy-target-registry.ps1",
+        "scripts/lib/platform/**",
+        "scripts/lib/host-native-*.ps1",
+        "scripts/lib/preflight-*.ps1",
+        "scripts/lib/remote-deploy-transport.ps1",
+        "scripts/lib/windows-verification-scope.ps1",
+        "scripts/lib/design-*.ps1",
+        "scripts/lib/design-system-gate.ps1",
+        "scripts/hooks/**",
+        "docs/plans/design-system-reference.manifest.json",
+        "scripts/lib/runtime-e2e-readiness.mjs",
+        "scripts/tests/verify-functional-runtime-result.ps1"
+      ]
+    }
+  ]
+}
