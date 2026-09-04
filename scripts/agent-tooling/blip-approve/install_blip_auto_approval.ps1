@@ -64,6 +64,7 @@ $codexVendorRoot = 'C:\Users\IOT\AppData\Roaming\npm\node_modules\@openai\codex\
 $pinnedStreams = [System.Collections.Generic.List[System.IO.FileStream]]::new()
 $predecessorFenceStreams = [System.Collections.Generic.List[System.IO.FileStream]]::new()
 $upgradeLockStream = $null
+$installerStructLogger = $null
 $sourceStreams = @{}
 $runtimeStreams = @{}
 
@@ -1023,6 +1024,7 @@ function Move-UpgradeJournal {
 }
 
 function Open-UpgradeLock {
+    $ownerOnlySecurity = New-OwnerOnlyFileSecurity
     try {
         $script:upgradeLockStream = [System.IO.FileSystemAclExtensions]::Create(
             [System.IO.FileInfo]::new($upgradeLockPath),
@@ -1031,13 +1033,70 @@ function Open-UpgradeLock {
             [System.IO.FileShare]::None,
             4096,
             [System.IO.FileOptions]::WriteThrough,
-            (New-ProtectedFileSecurity)
+            $ownerOnlySecurity
         )
     }
     catch [System.IO.IOException] {
         throw 'Another protected runtime install or recovery transaction is active.'
     }
-    Assert-ProtectedAcl -LiteralPaths @($upgradeLockPath)
+    Set-ExactFileSystemSecurity `
+        -LiteralPath $upgradeLockPath `
+        -Security $ownerOnlySecurity
+    Assert-OwnerOnlyAcl -LiteralPaths @($upgradeLockPath)
+}
+
+function Write-InstallerStructRecord {
+    param(
+        [Parameter(Mandatory)][ValidateSet('Info', 'Warn')][string]$Level,
+        [Parameter(Mandatory)][Alias('Event')][string]$EventName,
+        [Parameter(Mandatory)][string]$Message,
+        [hashtable]$Data = @{}
+    )
+    try {
+        if ($null -eq $script:installerStructLogger) {
+            $script:installerStructLogger = New-StructLogger `
+                -Service scripts `
+                -Component 'blip-runtime-installer' `
+                -LogRoot (Join-Path $productRoot 'logs') `
+                -AllowListPath (Join-Path $candidateRoot 'struct-log-env-allowlist.unavailable.json') `
+                -SkipEnvSnapshot
+        }
+        $structuredData = [ordered]@{
+            event = $EventName
+            transaction_id = $upgradeTransactionId
+        }
+        foreach ($entry in $Data.GetEnumerator()) {
+            $structuredData[$entry.Key] = $entry.Value
+        }
+        if ($Level -ceq 'Info') {
+            $script:installerStructLogger | Write-StructInfo -Msg $Message -Data $structuredData
+        }
+        else {
+            $script:installerStructLogger | Write-StructWarn -Msg $Message -Data $structuredData
+        }
+    }
+    catch {
+        $script:installerStructLogger = $null
+    }
+}
+
+function Write-InstallerStructWarning {
+    param(
+        [Parameter(Mandatory)][Alias('Event')][string]$EventName,
+        [Parameter(Mandatory)][string]$Message,
+        [hashtable]$Data = @{}
+    )
+    Write-InstallerStructRecord -Level Warn -Event $EventName -Message $Message -Data $Data
+    Write-Warning $Message
+}
+
+function Write-InstallerStructInformation {
+    param(
+        [Parameter(Mandatory)][Alias('Event')][string]$EventName,
+        [Parameter(Mandatory)][string]$Message,
+        [hashtable]$Data = @{}
+    )
+    Write-InstallerStructRecord -Level Info -Event $EventName -Message $Message -Data $Data
 }
 
 function Assert-ActivationCommitMarker {
@@ -1147,6 +1206,15 @@ function Restore-PreviousRuntime {
 }
 
 function Recover-InterruptedUpgrade {
+    param(
+        [Parameter(Mandatory)]
+        [ValidatePattern('^[0-9a-f]{40}$')]
+        [string]$ExpectedTargetSourceCommit,
+
+        [Parameter(Mandatory)]
+        [ValidatePattern('^[0-9A-F]{64}$')]
+        [string]$ExpectedTargetCandidateFreezeSha256
+    )
     if (-not [System.IO.File]::Exists($upgradeTransactionPath)) { return }
     Assert-ProtectedAcl -LiteralPaths @($upgradeTransactionPath)
     $transactionText = Get-Content -Raw -LiteralPath $upgradeTransactionPath
@@ -1189,6 +1257,10 @@ function Recover-InterruptedUpgrade {
     }
     $journalPrevious = [string]$transaction.previous_root
     $journalFailed = [string]$transaction.failed_root
+    $journalMatchesRequestedCandidate =
+        [string]$transaction.target_source_commit -ceq $ExpectedTargetSourceCommit -and
+        [string]$transaction.target_candidate_freeze_sha256 -ceq
+            $ExpectedTargetCandidateFreezeSha256
     $archive = Join-Path $productRoot (
         'upgrade-recovered-' + [string]$transaction.transaction_id + '.json'
     )
@@ -1201,7 +1273,14 @@ function Recover-InterruptedUpgrade {
                     -ExpectedCandidateFreezeSha256 `
                         ([string]$transaction.target_candidate_freeze_sha256)
                 Move-UpgradeJournal -Destination $archive
-                throw 'A committed initial runtime journal was recovered; retry the requested installation.'
+                if (-not $journalMatchesRequestedCandidate) {
+                    throw 'A committed initial runtime journal was recovered for a different candidate; retry the requested installation.'
+                }
+                return [pscustomobject]@{
+                    Status = 'committed'
+                    Operation = 'initial'
+                    PreviousRoot = ''
+                }
             }
             if ([System.IO.Directory]::Exists($journalFailed)) {
                 throw 'Initial runtime recovery quarantine target already exists.'
@@ -1230,7 +1309,14 @@ function Recover-InterruptedUpgrade {
                 -ExpectedCandidateFreezeSha256 `
                     ([string]$transaction.target_candidate_freeze_sha256)
             Move-UpgradeJournal -Destination $archive
-            throw 'A committed runtime upgrade journal was recovered; retry the requested installation.'
+            if (-not $journalMatchesRequestedCandidate) {
+                throw 'A committed runtime upgrade journal was recovered for a different candidate; retry the requested installation.'
+            }
+            return [pscustomobject]@{
+                Status = 'committed'
+                Operation = 'upgrade'
+                PreviousRoot = $journalPrevious
+            }
         }
         Restore-PreviousRuntime -Trusted $trustedRoot -Previous $journalPrevious `
             -Failed $journalFailed -Stage ([string]$transaction.stage_root)
@@ -1255,6 +1341,7 @@ $stagePublished = $false
 $activationCommitted = $false
 $upgradeAttempted = $false
 $transactionWritten = $false
+$trustedBootstrapReady = $false
 try {
     if ($Apply) {
         if (-not [string]::IsNullOrWhiteSpace($PSCommandPath) -or
@@ -1267,7 +1354,7 @@ try {
             'CandidateRoot', 'FreezeSha256', 'InstallerSha256',
             'ReviewedBuildManifestSha256', 'ReviewedBuildManifestStream',
             'BootstrapSha256', 'FreezeStream', 'InstallerStream',
-            'BootstrapStream',
+            'BootstrapStream', 'StructLogStream', 'StructLogSha256', 'StructLogModule',
             'InstallerLauncherPath', 'InstallerLauncherSha256', 'InstallerLauncherStream',
             'VerifierPath', 'VerifierSha256', 'VerifierStream'
         )
@@ -1323,7 +1410,7 @@ try {
         }
         foreach ($property in @(
             'FreezeStream', 'ReviewedBuildManifestStream', 'InstallerStream',
-            'BootstrapStream', 'InstallerLauncherStream', 'VerifierStream'
+            'BootstrapStream', 'StructLogStream', 'InstallerLauncherStream', 'VerifierStream'
         )) {
             if ($BootstrapContext.$property -isnot [System.IO.FileStream] -or
                 -not $BootstrapContext.$property.CanRead -or
@@ -1336,6 +1423,8 @@ try {
                 $reviewedManifestPath -or
             [System.IO.Path]::GetFullPath($BootstrapContext.InstallerStream.Name) -cne $installerPath -or
             [System.IO.Path]::GetFullPath($BootstrapContext.BootstrapStream.Name) -cne $bootstrapPath -or
+            [System.IO.Path]::GetFullPath($BootstrapContext.StructLogStream.Name) -cne
+                (Resolve-CandidatePath -RelativePath 'scripts/lib/StructLog.psm1') -or
             [System.IO.Path]::GetFullPath($BootstrapContext.InstallerLauncherStream.Name) -cne
                 [System.IO.Path]::GetFullPath($BootstrapContext.InstallerLauncherPath) -or
             [System.IO.Path]::GetFullPath($BootstrapContext.InstallerLauncherPath).StartsWith(
@@ -1354,6 +1443,11 @@ try {
                 $ExpectedReviewedBuildManifestSha256.ToUpperInvariant() -or
             (Get-OpenStreamSha256 -Stream $BootstrapContext.BootstrapStream) -cne
             $ExpectedBootstrapSha256.ToUpperInvariant() -or
+            $BootstrapContext.StructLogSha256 -notmatch '^[0-9A-F]{64}$' -or
+            (Get-OpenStreamSha256 -Stream $BootstrapContext.StructLogStream) -cne
+                $BootstrapContext.StructLogSha256 -or
+            $BootstrapContext.StructLogModule -isnot [System.Management.Automation.PSModuleInfo] -or
+            $BootstrapContext.StructLogModule.Name -cne 'BlipInstallerStructLog' -or
             $BootstrapContext.InstallerLauncherSha256 -notmatch '^[0-9A-F]{64}$' -or
             (Get-OpenStreamSha256 -Stream $BootstrapContext.InstallerLauncherStream) -cne
                 $BootstrapContext.InstallerLauncherSha256 -or
@@ -1364,6 +1458,7 @@ try {
         }
         $freezeStream = $BootstrapContext.FreezeStream
         $reviewedManifestStream = $BootstrapContext.ReviewedBuildManifestStream
+        $trustedBootstrapReady = $true
     }
     else {
         $freezeStream = Open-PinnedReadStream -LiteralPath $freezePath
@@ -1391,7 +1486,8 @@ try {
     $sourceElement = Get-UniqueJsonProperty -Object $freezeRoot -Name 'source_files'
     $runtimeElement = Get-UniqueJsonProperty -Object $freezeRoot -Name 'runtime_source'
     $expectedSourceNames = @(
-        'install_blip_auto_approval.ps1', 'invoke_frozen_blip_installer.ps1'
+        'install_blip_auto_approval.ps1', 'invoke_frozen_blip_installer.ps1',
+        'scripts/lib/StructLog.psm1'
     ) + @($trustedFiles.Values | Sort-Object -Unique)
     Assert-ExactHashObject -Object $sourceElement -ExpectedNames $expectedSourceNames -Label 'Candidate source_files'
     Assert-ExactHashObject -Object $runtimeElement -ExpectedNames @($runtimeFiles.Keys) -Label 'Candidate runtime_source'
@@ -1481,7 +1577,32 @@ try {
     New-ProtectedDirectory -LiteralPath $productRoot
     New-ProtectedDirectory -LiteralPath $secretRoot -OwnerOnly
     Open-UpgradeLock
-    Recover-InterruptedUpgrade
+    $recoveryResult = Recover-InterruptedUpgrade `
+        -ExpectedTargetSourceCommit $sourceCommitElement.GetString() `
+        -ExpectedTargetCandidateFreezeSha256 $freezeHash
+    if ($null -ne $recoveryResult) {
+        if ($recoveryResult.Status -cne 'committed' -or
+            $recoveryResult.Operation -notin @('initial', 'upgrade')) {
+            throw 'Interrupted runtime recovery returned an invalid result.'
+        }
+        $recoveredPrevious = if ($recoveryResult.Operation -ceq 'upgrade') {
+            " previous_runtime=$($recoveryResult.PreviousRoot)"
+        }
+        else { '' }
+        Write-InstallerStructInformation -Event 'committed_recovery_completed' `
+            -Message 'A committed runtime transaction journal was recovered.' `
+            -Data @{
+                operation = $recoveryResult.Operation
+                trusted_root = $trustedRoot
+                previous_root = $recoveryResult.PreviousRoot
+            }
+        Write-Output (
+            "INSTALL_RESULT trusted_runtime=$trustedRoot$recoveredPrevious " +
+            'recovery=committed secret_path=' + $secretRoot +
+            ' activation=OWNER_PEM_AND_CODEX_LOGIN_REQUIRED'
+        )
+        return
+    }
     $upgradeAttempted = Test-Path -LiteralPath $trustedRoot
     $existingManifest = $null
     if ($upgradeAttempted) {
@@ -1671,10 +1792,13 @@ try {
             $transactionWritten = $false
         }
         catch {
-            Write-Warning (
-                'Runtime upgrade committed, but its journal remains for next-invocation recovery: ' +
+            $message = 'Runtime upgrade committed, but its journal remains for next-invocation recovery: ' +
                 $upgradeTransactionPath
-            )
+            Write-InstallerStructWarning -Event 'journal_archive_failed_after_commit' `
+                -Message $message -Data @{
+                    journal_path = $upgradeTransactionPath
+                    trusted_root = $trustedRoot
+                }
         }
     }
     $previousOutput = if ($upgradeAttempted) { " previous_runtime=$previousRoot" } else { '' }
@@ -1682,6 +1806,9 @@ try {
 }
 catch {
     $installationError = $_
+    if (-not $Apply -or -not $trustedBootstrapReady) {
+        throw $installationError
+    }
     $targetMarkerPublished = Test-TargetActivationMarkerPublished `
         -IsUpgrade $upgradeAttempted
     if ($targetMarkerPublished) {
@@ -1691,10 +1818,14 @@ catch {
                 -ExpectedManifestSha256 $targetManifestHash `
                 -ExpectedCandidateFreezeSha256 $freezeHash
             $activationCommitted = $true
-            Write-Warning 'Runtime activation committed; the journal is retained after a post-commit failure.'
+            Write-InstallerStructWarning -Event 'activation_committed_journal_retained' `
+                -Message 'Runtime activation committed; the journal is retained after a post-commit failure.' `
+                -Data @{ journal_path = $upgradeTransactionPath; trusted_root = $trustedRoot }
         }
         catch {
-            Write-Warning 'A final activation marker exists but is ambiguous; no automatic rollback is allowed.'
+            Write-InstallerStructWarning -Event 'activation_marker_ambiguous' `
+                -Message 'A final activation marker exists but is ambiguous; no automatic rollback is allowed.' `
+                -Data @{ journal_path = $upgradeTransactionPath; trusted_root = $trustedRoot }
         }
     }
     elseif ($upgradeAttempted -and $transactionWritten -and -not $activationCommitted) {
@@ -1712,12 +1843,14 @@ catch {
                 Move-UpgradeJournal -Destination $upgradeRollbackPath
                 $transactionWritten = $false
             }
-            Write-Warning "Runtime upgrade failed and the exact predecessor was restored: $trustedRoot"
+            Write-InstallerStructWarning -Event 'upgrade_rolled_back' `
+                -Message "Runtime upgrade failed and the exact predecessor was restored: $trustedRoot" `
+                -Data @{ trusted_root = $trustedRoot; rollback_journal = $upgradeRollbackPath }
         }
         catch {
-            Write-Warning (
-                "Runtime upgrade rollback could not restore the exact predecessor: $($_.Exception.Message)"
-            )
+            $message = "Runtime upgrade rollback could not restore the exact predecessor: $($_.Exception.Message)"
+            Write-InstallerStructWarning -Event 'upgrade_rollback_failed' -Message $message `
+                -Data @{ trusted_root = $trustedRoot; journal_path = $upgradeTransactionPath }
         }
     }
     elseif (-not $upgradeAttempted -and $transactionWritten -and -not $activationCommitted) {
@@ -1736,22 +1869,28 @@ catch {
             [System.IO.Directory]::Move($incompleteRoot, $failedRoot)
             Move-UpgradeJournal -Destination $upgradeRollbackPath
             $transactionWritten = $false
-            Write-Warning "Incomplete initial runtime was quarantined: $failedRoot"
+            Write-InstallerStructWarning -Event 'initial_runtime_quarantined' `
+                -Message "Incomplete initial runtime was quarantined: $failedRoot" `
+                -Data @{ failed_root = $failedRoot; rollback_journal = $upgradeRollbackPath }
         }
         catch {
-            Write-Warning "Initial install recovery journal remains: $upgradeTransactionPath"
+            Write-InstallerStructWarning -Event 'initial_recovery_failed' `
+                -Message "Initial install recovery journal remains: $upgradeTransactionPath" `
+                -Data @{ journal_path = $upgradeTransactionPath }
         }
     }
     elseif ($stagePublished -and -not $activationCommitted -and
         [System.IO.Directory]::Exists($trustedRoot)) {
         try {
             [System.IO.Directory]::Move($trustedRoot, $failedRoot)
-            Write-Warning "Incomplete published runtime was quarantined: $failedRoot"
+            Write-InstallerStructWarning -Event 'published_runtime_quarantined' `
+                -Message "Incomplete published runtime was quarantined: $failedRoot" `
+                -Data @{ failed_root = $failedRoot }
         }
         catch {
-            Write-Warning (
-                "Incomplete runtime remains non-runnable without install-complete.json: $trustedRoot"
-            )
+            Write-InstallerStructWarning -Event 'published_runtime_quarantine_failed' `
+                -Message "Incomplete runtime remains non-runnable without install-complete.json: $trustedRoot" `
+                -Data @{ trusted_root = $trustedRoot }
         }
     }
     throw $installationError
@@ -1761,7 +1900,10 @@ finally {
     Close-PredecessorRuntimeFence
     if ($null -ne $upgradeLockStream) { $upgradeLockStream.Dispose() }
     foreach ($stream in $pinnedStreams) { $stream.Dispose() }
-    if (-not $stagePublished -and (Test-Path -LiteralPath $stageRoot)) {
-        Write-Warning "A protected failed stage remains for owner inspection: $stageRoot"
+    if ($trustedBootstrapReady -and -not $stagePublished -and
+        (Test-Path -LiteralPath $stageRoot)) {
+        Write-InstallerStructWarning -Event 'failed_stage_retained' `
+            -Message "A protected failed stage remains for owner inspection: $stageRoot" `
+            -Data @{ stage_root = $stageRoot }
     }
 }

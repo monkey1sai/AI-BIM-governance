@@ -270,6 +270,19 @@ Assert-True ($text -match "schema = 'blip-trusted-runtime-complete/v2'") `
     'Production installer no longer writes a post-verification completion marker.'
 Assert-True ($text -match 'Incomplete published runtime was quarantined') `
     'Production installer no longer quarantines a failed post-publish runtime.'
+Assert-True ($text -match 'New-OwnerOnlyFileSecurity[\s\S]+Assert-OwnerOnlyAcl -LiteralPaths @\(\$upgradeLockPath\)') `
+    'Persistent upgrade lock is not created and verified with owner-only ACL.'
+Assert-True ($text -match "return \[pscustomobject\]@\{[\s\S]+Status = 'committed'[\s\S]+Operation = 'upgrade'" -and
+    $text -match '\$recoveryResult = Recover-InterruptedUpgrade[\s\S]+recovery=committed[\s\S]+return') `
+    'Committed runtime recovery does not return an observable successful installer result.'
+Assert-True ($text -match "'scripts/lib/StructLog\.psm1'" -and
+    $bootstrapText -match "'scripts/lib/StructLog\.psm1'" -and
+    $bootstrapText -match 'Open-ExclusiveFrozenFile[\s\S]+StructLog module bytes differ from the immutable freeze' -and
+    $text -match 'Write-InstallerStructWarning' -and
+    $text -match 'Write-StructWarn' -and
+    $text -match "Write-InstallerStructInformation -Event 'committed_recovery_completed'" -and
+    $text -match 'Write-StructInfo') `
+    'Upgrade/recovery warnings are not routed through the frozen canonical StructLog module.'
 Assert-True ($text -match '\(\$Apply -and \$freezeVerifierSha256 -cne \$BootstrapContext\.VerifierSha256\)') `
     'Audit still dereferences a missing bootstrap verifier context.'
 foreach ($moduleRuntimeKey in @(
@@ -324,8 +337,9 @@ $functions = @(
     'Assert-SuccessorGenerationPivots',
     'Assert-QuiescedPredecessorFiles', 'Protect-QuiescedPredecessorRuntime',
     'Move-PreservedRuntimeDirectories',
-    'Restore-PreviousRuntime', 'Open-UpgradeLock',
-    'Test-TargetActivationMarkerPublished'
+    'Restore-PreviousRuntime', 'Open-UpgradeLock', 'Recover-InterruptedUpgrade',
+    'Test-TargetActivationMarkerPublished',
+    'Write-InstallerStructRecord', 'Write-InstallerStructWarning'
 ) | ForEach-Object { Get-ProductionFunction -Ast $ast -Name $_ }
 $probe = [ScriptBlock]::Create(($functions -join "`n"))
 
@@ -470,7 +484,19 @@ try {
 
     $script:upgradeLockPath = Join-Path $sandboxRoot 'upgrade.lock'
     $script:upgradeLockStream = $null
+    $legacyLockStream = [System.IO.FileSystemAclExtensions]::Create(
+        [System.IO.FileInfo]::new($script:upgradeLockPath),
+        [System.IO.FileMode]::CreateNew,
+        [System.Security.AccessControl.FileSystemRights]::FullControl,
+        [System.IO.FileShare]::None,
+        4096,
+        [System.IO.FileOptions]::WriteThrough,
+        (New-ProtectedFileSecurity)
+    )
+    $legacyLockStream.Dispose()
+    Assert-ProtectedAcl -LiteralPaths @($script:upgradeLockPath)
     Open-UpgradeLock
+    Assert-OwnerOnlyAcl -LiteralPaths @($script:upgradeLockPath)
     $parallelInstallerRejected = $false
     try {
         $unexpectedLock = [System.IO.FileStream]::new(
@@ -484,6 +510,140 @@ try {
         'Protected upgrade lock allowed a concurrent installer transaction.'
     $script:upgradeLockStream.Dispose()
     $script:upgradeLockStream = $null
+
+    $script:installerStructLogger = $null
+    $script:productRoot = $sandboxRoot
+    $script:candidateRoot = $sandboxRoot
+    $script:upgradeTransactionId = 'logger-failure-regression'
+    function New-StructLogger { throw 'injected_struct_logger_failure' }
+    $loggingFailureMaskedPrimaryFlow = $false
+    try {
+        Write-InstallerStructWarning -Event 'test_event' -Message 'primary recovery warning' `
+            -WarningAction SilentlyContinue
+        $loggingFailureMaskedPrimaryFlow = $false
+    }
+    catch { $loggingFailureMaskedPrimaryFlow = $true }
+    finally { Remove-Item -LiteralPath Function:\New-StructLogger -Force }
+    Assert-True (-not $loggingFailureMaskedPrimaryFlow) `
+        'Structured logger initialization failure escaped and could mask the primary install error.'
+
+    $recoveryProductRoot = Join-Path $sandboxRoot 'committed-recovery'
+    $recoveryId = [Guid]::NewGuid().ToString('N')
+    $script:productRoot = [System.IO.Path]::GetFullPath($recoveryProductRoot)
+    $script:trustedRoot = Join-Path $script:productRoot 'v1'
+    $script:upgradeTransactionPath = Join-Path $script:productRoot 'upgrade-transaction.json'
+    $committedTransactionPath = $script:upgradeTransactionPath
+    $recoveryArchive = Join-Path $script:productRoot ("upgrade-recovered-$recoveryId.json")
+    $script:allowedPredecessor = [ordered]@{ manifest_sha256 = ('A' * 64) }
+    $recoveryPrevious = Join-Path $script:productRoot ("v1.previous-$recoveryId")
+    $recoveryStage = Join-Path $script:productRoot ("v1.stage-$recoveryId")
+    $recoveryFailed = Join-Path $script:productRoot ("v1.failed-$recoveryId")
+    New-Item -ItemType Directory -Path $script:trustedRoot, $recoveryPrevious | Out-Null
+    Set-Content -LiteralPath (Join-Path $script:trustedRoot 'install-complete.json') `
+        -Value '{}' -NoNewline
+    [ordered]@{
+        schema = 'blip-runtime-upgrade-transaction/v1'
+        transaction_id = $recoveryId
+        operation = 'upgrade'
+        trusted_root = $script:trustedRoot
+        stage_root = $recoveryStage
+        previous_root = $recoveryPrevious
+        failed_root = $recoveryFailed
+        predecessor_manifest_sha256 = $script:allowedPredecessor.manifest_sha256
+        target_source_commit = ('b' * 40)
+        target_manifest_sha256 = ('C' * 64)
+        target_candidate_freeze_sha256 = ('D' * 64)
+        created_at = '2026-09-04T00:00:00.000Z'
+    } | ConvertTo-Json | Set-Content -LiteralPath $script:upgradeTransactionPath -NoNewline
+    $originalAssertProtectedAcl = (Get-Command Assert-ProtectedAcl).ScriptBlock
+    function Assert-ProtectedAcl { param([string[]]$LiteralPaths) [void]$LiteralPaths }
+    function Assert-ExactJsonProperties {
+        param([object]$Object, [string[]]$ExpectedNames, [string]$Label)
+        [void]$Object
+        [void]$ExpectedNames
+        [void]$Label
+    }
+    function Assert-ActivationCommitMarker {
+        param(
+            [string]$ExpectedSourceCommit,
+            [string]$ExpectedManifestSha256,
+            [string]$ExpectedCandidateFreezeSha256
+        )
+        [void]$ExpectedSourceCommit
+        [void]$ExpectedManifestSha256
+        [void]$ExpectedCandidateFreezeSha256
+    }
+    function Move-UpgradeJournal {
+        param([Parameter(Mandatory)][string]$Destination)
+        [System.IO.File]::Move($script:upgradeTransactionPath, $Destination)
+    }
+    try {
+        $committedRecovery = Recover-InterruptedUpgrade `
+            -ExpectedTargetSourceCommit ('b' * 40) `
+            -ExpectedTargetCandidateFreezeSha256 ('D' * 64)
+        foreach ($mismatchOperation in @('initial', 'upgrade')) {
+            $mismatchId = [Guid]::NewGuid().ToString('N')
+            $script:productRoot = [System.IO.Path]::GetFullPath(
+                (Join-Path $sandboxRoot "mismatch-$mismatchOperation")
+            )
+            $script:trustedRoot = Join-Path $script:productRoot 'v1'
+            $script:upgradeTransactionPath = Join-Path $script:productRoot 'upgrade-transaction.json'
+            $mismatchPrevious = Join-Path $script:productRoot ("v1.previous-$mismatchId")
+            $mismatchStage = Join-Path $script:productRoot ("v1.stage-$mismatchId")
+            $mismatchFailed = Join-Path $script:productRoot ("v1.failed-$mismatchId")
+            New-Item -ItemType Directory -Path $script:trustedRoot | Out-Null
+            if ($mismatchOperation -ceq 'upgrade') {
+                New-Item -ItemType Directory -Path $mismatchPrevious | Out-Null
+            }
+            Set-Content -LiteralPath (Join-Path $script:trustedRoot 'install-complete.json') `
+                -Value '{}' -NoNewline
+            [ordered]@{
+                schema = 'blip-runtime-upgrade-transaction/v1'
+                transaction_id = $mismatchId
+                operation = $mismatchOperation
+                trusted_root = $script:trustedRoot
+                stage_root = $mismatchStage
+                previous_root = $mismatchPrevious
+                failed_root = $mismatchFailed
+                predecessor_manifest_sha256 = if ($mismatchOperation -ceq 'upgrade') {
+                    $script:allowedPredecessor.manifest_sha256
+                }
+                else { 'NONE' }
+                target_source_commit = ('b' * 40)
+                target_manifest_sha256 = ('C' * 64)
+                target_candidate_freeze_sha256 = ('D' * 64)
+                created_at = '2026-09-04T00:00:00.000Z'
+            } | ConvertTo-Json | Set-Content `
+                -LiteralPath $script:upgradeTransactionPath -NoNewline
+            $mismatchRejected = $false
+            try {
+                [void](Recover-InterruptedUpgrade `
+                    -ExpectedTargetSourceCommit ('e' * 40) `
+                    -ExpectedTargetCandidateFreezeSha256 ('F' * 64))
+            }
+            catch {
+                $mismatchRejected = $_.Exception.Message -match 'different candidate'
+            }
+            Assert-True $mismatchRejected `
+                "Committed $mismatchOperation recovery accepted a different requested candidate."
+            Assert-True (-not [System.IO.File]::Exists($script:upgradeTransactionPath) -and
+                [System.IO.File]::Exists((Join-Path $script:productRoot ("upgrade-recovered-$mismatchId.json")))) `
+                "Committed $mismatchOperation mismatch did not archive its journal."
+        }
+    }
+    finally {
+        Set-Item -LiteralPath Function:\Assert-ProtectedAcl -Value $originalAssertProtectedAcl
+        Remove-Item -LiteralPath Function:\Assert-ExactJsonProperties -Force
+        Remove-Item -LiteralPath Function:\Assert-ActivationCommitMarker -Force
+        Remove-Item -LiteralPath Function:\Move-UpgradeJournal -Force
+    }
+    Assert-True ($committedRecovery.Status -ceq 'committed' -and
+        $committedRecovery.Operation -ceq 'upgrade' -and
+        $committedRecovery.PreviousRoot -ceq $recoveryPrevious) `
+        'Committed upgrade recovery did not return observable success.'
+    Assert-True (-not [System.IO.File]::Exists($committedTransactionPath) -and
+        [System.IO.File]::Exists($recoveryArchive)) `
+        'Committed upgrade recovery did not archive its journal.'
 
     $predecessorPivotHash = 'A' * 64
     $predecessorPivots = [pscustomobject]@{ files = [pscustomobject]@{
