@@ -1107,4 +1107,91 @@ describe("Window Socket canonical trace authority", () => {
             player.remove();
         }
     });
+
+    // #783：SDK 對 native 指令會自己攔下 Kit 的同名回應，經 fromLoadingStateEvent /
+    // fromGetChildrenEvent 重組後 resolve sendMessage 的 promise——trace_id 在這一步被剝掉。
+    // 之前 appStreamResultToAppEvent 只認 result.trace_id，等於把每一則正常回應靜默丟掉：
+    // isKitReady 永遠 false、永不送 openStageRequest、3D 全黑（181 與本機皆重現）。
+    describe("native SDK results without trace_id (#783)", () => {
+        function flush(): Promise<void> {
+            return new Promise((resolve) => setTimeout(resolve, 0));
+        }
+
+        it("loadingStateQuery: trace-less SDK result is re-correlated from the verified outbound trace and marks Kit ready", async () => {
+            const app = authorizedApp({ synchronousSetState: true });
+            const target = internals(app);
+            // 逐字對齊 SDK LogFormatter.fromLoadingStateEvent 的回傳形狀：沒有 trace_id。
+            vi.spyOn(AppStream, "sendMessage").mockResolvedValue({
+                action: "message",
+                status: "success",
+                info: "Loading state result received",
+                loadingState: "idle",
+                url: "",
+            });
+            const handled = vi.spyOn(target, "_handleCustomEvent");
+            // 無 active attempt 時，_canApplyLoadingStateResponse 只認已開串流的探測。
+            target.state = { ...target.state, isKitReady: false, webrtcLifecycleStatus: "started" };
+
+            expect(target._sendStreamMessage({ event_type: "loadingStateQuery", payload: {} })).toBe(true);
+            await flush();
+
+            expect(handled).toHaveBeenCalledWith(
+                {
+                    event_type: "loadingStateResponse",
+                    payload: { trace_id: TRACE_ID, loading_state: "idle", url: "" },
+                },
+                expect.any(Number),
+            );
+            expect(target.state.isKitReady).toBe(true);
+        });
+
+        it("getChildrenRequest: the same SDK strip is re-correlated the same way", async () => {
+            const app = authorizedApp({ synchronousSetState: true });
+            const target = internals(app);
+            vi.spyOn(AppStream, "sendMessage").mockResolvedValue({
+                action: "message",
+                status: "success",
+                info: "Get children result received",
+                primPath: "/World",
+                children: [{ path: "/World/A" }],
+            });
+            const handled = vi.spyOn(target, "_handleCustomEvent");
+
+            expect(target._sendStreamMessage({ event_type: "getChildrenRequest", payload: { prim_path: "/World" } })).toBe(true);
+            await flush();
+
+            expect(handled).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    event_type: "getChildrenResponse",
+                    payload: expect.objectContaining({ trace_id: TRACE_ID, prim_path: "/World" }),
+                }),
+                expect.any(Number),
+            );
+        });
+
+        it("a trace_id carried by the result still takes precedence over the outbound trace", async () => {
+            const app = authorizedApp({ synchronousSetState: true });
+            const target = internals(app);
+            vi.spyOn(AppStream, "sendMessage").mockResolvedValue({
+                action: "message",
+                status: "success",
+                info: "Loading state result received",
+                trace_id: TRACE_ID,
+                loadingState: "busy",
+                url: "stage://model.usdc",
+            });
+            const handled = vi.spyOn(target, "_handleCustomEvent");
+
+            expect(target._sendStreamMessage({ event_type: "loadingStateQuery", payload: {} })).toBe(true);
+            await flush();
+
+            expect(handled).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    event_type: "loadingStateResponse",
+                    payload: expect.objectContaining({ trace_id: TRACE_ID, loading_state: "busy" }),
+                }),
+                expect.any(Number),
+            );
+        });
+    });
 });

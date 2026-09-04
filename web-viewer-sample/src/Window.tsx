@@ -745,7 +745,17 @@ function appStreamResultToAppEvent(
         };
     }
 
-    const traceId = getPayloadString(result, "trace_id");
+    // #783：SDK 對 native 指令（loadingStateQuery / getChildrenRequest）會自己攔下 Kit 的
+    // 同名回應，並以 fromLoadingStateEvent / fromGetChildrenEvent 重組成
+    // `{ action, status, info, loadingState|primPath, url|children }` 後 resolve 這個 promise
+    // ——**trace_id 在這一步被 SDK 剝掉**（Kit 端確實有送，同 payload 換名探針逐則到達）。
+    // 之前只認 result.trace_id，等於把每一則正常回應都靜默丟掉：isKitReady 永遠 false、
+    // 永不送 openStageRequest、3D 全黑（181 與本機皆重現）。
+    // 這裡改用送出時由 _withVerifiedDataChannelTrace 寫入、且已對照 authority 驗證過的
+    // outbound trace_id；SDK 的 native callback map 保證此 result 就是該次請求的回應。
+    // 兩邊都沒有 trace 才 fail closed。
+    const traceId = getPayloadString(result, "trace_id")
+        || getPayloadString(requestPayloadRecord, "trace_id");
     if (!traceId) return null;
 
     if (requestEventType === "loadingStateQuery") {
