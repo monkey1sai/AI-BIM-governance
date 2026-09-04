@@ -195,6 +195,7 @@ describe("WorkspaceViewportHost（V-A′）", () => {
   });
 
   it("runtime/status 由 live 轉 offline 時清除 gate 與 Stage 樹", async () => {
+    spyCoordinatorEndpoints();
     const fetchers = idleFetchers();
     const store = new CoordinatorStatusStore(fetchers, { isHidden: () => true });
     const testStore = store as unknown as {
@@ -202,6 +203,7 @@ describe("WorkspaceViewportHost（V-A′）", () => {
     };
     let api: ReturnType<typeof useViewportSlot> = null;
     function Grab() { api = useViewportSlot(); return null; }
+    const pageGateChange = vi.fn();
 
     root = createRoot(container);
     testStore.publish("runtimeStatus", {
@@ -219,6 +221,29 @@ describe("WorkspaceViewportHost（V-A′）", () => {
       );
     });
     expect(container.querySelector('[data-uc="viewport"]')).not.toBeNull();
+
+    await act(async () => {
+      api!.publish({
+        mode: "a1-inline",
+        handoff: {
+          source: "a1",
+          sessionId: "",
+          ruleRunId: null,
+          ifcGuid: null,
+          usdPrimPath: null,
+          ruleCode: null,
+          severity: null,
+          label: null,
+          expectedStageUrl: null,
+          mappingInformationStatus: null,
+          mappingIssueCode: null,
+          mappingIssueCount: null,
+        },
+        onBatchGateChange: pageGateChange,
+      });
+    });
+    await flush();
+    pageGateChange.mockClear();
 
     act(() => {
       api!.setStageTree([{ path: "/World/Root", name: "Root" }]);
@@ -240,6 +265,16 @@ describe("WorkspaceViewportHost（V-A′）", () => {
     expect(container.querySelector('[data-uc="viewport"]')).toBeNull();
     expect(api!.gate).toBeNull();
     expect(api!.stageTree).toEqual([]);
+    expect(pageGateChange).toHaveBeenCalledTimes(1);
+    const offlineGate = pageGateChange.mock.calls[0][0];
+    expect(offlineGate).toEqual({
+      canSend: false,
+      reason: expect.any(String),
+      canSendViewerCommand: false,
+      viewerCommandReason: expect.any(String),
+    });
+    expect(offlineGate.reason).toBe(offlineGate.viewerCommandReason);
+    expect(offlineGate.reason).toMatch(/runtime\/status.*(?:離線|offline)/i);
     store.dispose();
   });
 });

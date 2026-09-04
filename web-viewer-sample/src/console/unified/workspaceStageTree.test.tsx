@@ -162,4 +162,69 @@ describe("WorkspacePage Stage 樹與工具列整合 (Issue #609, #605)", () => {
     expect(selectPrimMock).not.toHaveBeenCalled();
     expect(requestStageTreeMock).not.toHaveBeenCalled();
   });
+
+  it("stageTree 轉空後清除舊節點與本地搜尋、展開、選取狀態", async () => {
+    const tree = [{
+      path: "/World",
+      name: "World",
+      children: [
+        { path: "/World/Structure", name: "Structure", type: "Xform", children: [] },
+        { path: "/World/Leaf", name: "Leaf", type: "Mesh" },
+      ],
+    }];
+    const baseSlot: ViewportSlotApi = {
+      registerSlot: vi.fn(),
+      slotEl: null,
+      publish: vi.fn(),
+      publication: null,
+      activeSessionId: "session_test_123",
+      setActiveSessionId: vi.fn(),
+      gate: { canSend: true, reason: "" },
+      setGate: vi.fn(),
+      stageTree: tree,
+      setStageTree: vi.fn(),
+      requestStageTree: vi.fn(),
+      selectPrim: vi.fn(),
+      sendToolbarAction: vi.fn(),
+      registerHostActions: vi.fn(),
+    };
+
+    const renderWithTree = async (stageTree: ViewportSlotApi["stageTree"]) => {
+      await act(async () => {
+        root ??= createRoot(container);
+        root.render(
+          <ViewportSlotContext.Provider value={{ ...baseSlot, stageTree }}>
+            <WorkspacePage initialDock="a1" />
+          </ViewportSlotContext.Provider>,
+        );
+      });
+      await flush();
+    };
+
+    await renderWithTree(tree);
+    const search = container.querySelector('[data-uc="ws-stage-search"]') as HTMLInputElement;
+    const structure = container.querySelector('[data-path="/World/Structure"]') as HTMLElement;
+    const structureToggle = container.querySelector('[data-testid="expand-toggle-/World/Structure"]') as HTMLElement;
+    await act(async () => {
+      const valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+      valueSetter?.call(search, "Structure");
+      search.dispatchEvent(new Event("input", { bubbles: true }));
+      structure.click();
+      structureToggle.click();
+    });
+    expect(structure.getAttribute("data-selected")).toBe("true");
+    expect(structureToggle.textContent).toBe("▾");
+
+    await renderWithTree([]);
+    expect(container.querySelector('[data-path="/World/Structure"]')).toBeNull();
+    expect(container.querySelector('[data-uc="ws-stage-search"]')).toBeNull();
+
+    await renderWithTree(tree);
+    const restoredSearch = container.querySelector('[data-uc="ws-stage-search"]') as HTMLInputElement;
+    const restoredStructure = container.querySelector('[data-path="/World/Structure"]') as HTMLElement;
+    const restoredToggle = container.querySelector('[data-testid="expand-toggle-/World/Structure"]') as HTMLElement;
+    expect(restoredSearch.value).toBe("");
+    expect(restoredStructure.getAttribute("data-selected")).toBe("false");
+    expect(restoredToggle.textContent).toBe("▸");
+  });
 });
