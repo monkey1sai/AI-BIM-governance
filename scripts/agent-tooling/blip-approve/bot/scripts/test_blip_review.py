@@ -134,6 +134,30 @@ def make_check(
     }
 
 
+def make_candidate_commit(
+    oid: str = HEAD,
+    *,
+    author: str | None = "monkey1sai",
+    committer: str | None = "monkey1sai",
+    coauthors: tuple[str | None, ...] = (),
+    more_authors: bool = False,
+) -> dict:
+    def actor(login: str | None) -> dict:
+        return {"user": {"login": login}} if login is not None else {"user": None}
+
+    return {
+        "commit": {
+            "oid": oid,
+            "author": actor(author),
+            "authors": {
+                "pageInfo": {"hasNextPage": more_authors},
+                "nodes": [actor(login) for login in (author, *coauthors)],
+            },
+            "committer": actor(committer),
+        }
+    }
+
+
 def make_policy() -> dict:
     return {
         "base_branch": "main",
@@ -164,7 +188,7 @@ def make_protection_payload(*, contexts: list[str] | None = None) -> dict:
             "required_approving_review_count": 1,
             "dismiss_stale_reviews": True,
             "require_code_owner_reviews": True,
-            "require_last_push_approval": False,
+            "require_last_push_approval": True,
         },
         "required_conversation_resolution": {"enabled": True},
         "enforce_admins": {"enabled": True},
@@ -276,6 +300,8 @@ def make_approval_pr(
     reviews: list[dict] | None = None,
     checks: list[dict] | None = None,
     files: list[dict] | None = None,
+    candidate_commits: list[dict] | None = None,
+    more_candidate_commits: bool = False,
     unresolved_thread: bool = False,
 ) -> dict:
     if files is None:
@@ -292,6 +318,8 @@ def make_approval_pr(
         ]
     if checks is None:
         checks = [make_check("agent-governance"), make_check("service-tests")]
+    if candidate_commits is None:
+        candidate_commits = [make_candidate_commit(head)]
     threads = [make_thread(resolved=not unresolved_thread)] if unresolved_thread else []
     return {
         "number": PR_NUMBER,
@@ -308,6 +336,10 @@ def make_approval_pr(
         "files": {"pageInfo": {"hasNextPage": False}, "nodes": files},
         "reviewThreads": {"pageInfo": {"hasNextPage": False}, "nodes": threads},
         "reviews": {"pageInfo": {"hasNextPage": False}, "nodes": reviews},
+        "candidateCommits": {
+            "pageInfo": {"hasNextPage": more_candidate_commits},
+            "nodes": candidate_commits,
+        },
         "commits": {
             "nodes": [
                 {
@@ -1037,6 +1069,20 @@ class AutomatedApprovalTests(unittest.TestCase):
             ), self.assertRaisesRegex(SystemExit, "exactly one approving review"):
                 blip.fetch_protection_policy("token", "monkey1sai", "AI-BIM-governance", "main")
 
+        for invalid_last_push_approval in (False, None, 1, "true", "missing"):
+            invalid_protection = make_protection_payload()
+            reviews = invalid_protection["required_pull_request_reviews"]
+            if invalid_last_push_approval == "missing":
+                del reviews["require_last_push_approval"]
+            else:
+                reviews["require_last_push_approval"] = invalid_last_push_approval
+            with self.subTest(require_last_push_approval=invalid_last_push_approval), patch.dict(
+                blip.os.environ, protection_policy_env(invalid_protection)
+            ), patch.object(
+                blip, "http_json", return_value=make_ref_update_rule_response()
+            ), self.assertRaisesRegex(SystemExit, "most recent reviewable push"):
+                blip.fetch_protection_policy("token", "monkey1sai", "AI-BIM-governance", "main")
+
         with patch.dict(
             blip.os.environ,
             protection_policy_env(protection, active_rules=[{"type": "pull_request"}]),
@@ -1574,6 +1620,80 @@ class AutomatedApprovalTests(unittest.TestCase):
                     name="AI-BIM-governance",
                     pr_number=PR_NUMBER,
                     pr=make_approval_pr(reviews=[make_approval_pr()["reviews"]["nodes"][0], duplicate]),
+                    base=BASE,
+                    head=HEAD,
+                    review_mode="focused_semantic",
+                )
+
+    def test_preflight_rejects_reviewer_candidate_commit_identity(self) -> None:
+        cases = (
+            ("author", [make_candidate_commit(author=blip.DEFAULT_REVIEWER)]),
+            ("committer", [make_candidate_commit(committer=blip.DEFAULT_REVIEWER.upper())]),
+            ("coauthor", [make_candidate_commit(coauthors=(blip.DEFAULT_REVIEWER,))]),
+            (
+                "intermediate author",
+                [
+                    make_candidate_commit(OTHER_HEAD, author=blip.DEFAULT_REVIEWER),
+                    make_candidate_commit(HEAD),
+                ],
+            ),
+        )
+        for label, candidate_commits in cases:
+            with self.subTest(label=label), self.assertRaisesRegex(
+                SystemExit, "independent approval is forbidden"
+            ):
+                blip.approval_preflight(
+                    token="token",
+                    owner="monkey1sai",
+                    name="AI-BIM-governance",
+                    pr_number=PR_NUMBER,
+                    pr=make_approval_pr(candidate_commits=candidate_commits),
+                    base=BASE,
+                    head=HEAD,
+                    review_mode="focused_semantic",
+                )
+
+    def test_preflight_rejects_incomplete_or_unbound_candidate_commit_history(self) -> None:
+        cases = (
+            (
+                "pagination",
+                make_approval_pr(more_candidate_commits=True),
+                "pagination is incomplete",
+            ),
+            (
+                "missing head",
+                make_approval_pr(candidate_commits=[make_candidate_commit(OTHER_HEAD)]),
+                "not bound exactly once",
+            ),
+            (
+                "author pagination",
+                make_approval_pr(candidate_commits=[make_candidate_commit(more_authors=True)]),
+                "authors pagination is incomplete",
+            ),
+            (
+                "unmapped primary author",
+                make_approval_pr(candidate_commits=[make_candidate_commit(author=None)]),
+                "author GitHub user identity is missing",
+            ),
+            (
+                "unmapped committer",
+                make_approval_pr(candidate_commits=[make_candidate_commit(committer=None)]),
+                "committer GitHub user identity is missing",
+            ),
+            (
+                "unmapped coauthor",
+                make_approval_pr(candidate_commits=[make_candidate_commit(coauthors=(None,))]),
+                "author GitHub user identity is missing",
+            ),
+        )
+        for label, pr, message in cases:
+            with self.subTest(label=label), self.assertRaisesRegex(SystemExit, message):
+                blip.approval_preflight(
+                    token="token",
+                    owner="monkey1sai",
+                    name="AI-BIM-governance",
+                    pr_number=PR_NUMBER,
+                    pr=pr,
                     base=BASE,
                     head=HEAD,
                     review_mode="focused_semantic",

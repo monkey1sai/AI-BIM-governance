@@ -33,6 +33,16 @@ upstream `LivestreamMessaging._on_message_to_send` hands the wire message to
 consume, so this module queues through the same API and keeps the legacy
 push only as a fallback for Kit builds without `queue_event`. Still exactly
 one path per message: the queue call replaces the push, it is never added to it.
+
+Observability (issue #783, canonical-linux 181, 2026-09-03): a freshly loaded
+viewer on a freshly started Kit process sends `loadingStateQuery` every 3 s and
+Kit dispatches `loadingStateResponse` every time, yet the browser receives zero
+extension messages -- only the plugin's own `config`. Kit-side logs alone could
+not separate "the observer never fired" from "the envelope was queued but the
+plugin never took it", because this module was entirely silent. Each forward now
+records the event type and the channel actually used, so one deployed run of that
+experiment answers it. Event types and channel names only -- never the payload,
+which carries session and trace identifiers.
 """
 
 import json
@@ -101,10 +111,17 @@ def register_event_type_to_send(event_type: str):
             # carry session/trace identifiers.
             carb.log_error(f"[client-send] {event_type} payload is not serialisable; dropped")
             return
-        _deliver({"message": wire, "sender_id": _sender_id()})
+        channel = _deliver({"message": wire, "sender_id": _sender_id()})
+        # #783: proves the observer fired AND which channel carried it. Without
+        # this line a silent module is indistinguishable from a dead observer.
+        carb.log_info(f"[client-send] forwarded {event_type} via {channel}")
 
-    return get_eventdispatcher().observe_event(
+    subscription = get_eventdispatcher().observe_event(
         observer_name=f"BimReviewClientSend:{event_type}",
         event_name=event_type,
         on_event=_forward,
     )
+    # #783: one line per registered outgoing type at startup, so a missing
+    # forward can be attributed to a missing registration rather than guessed at.
+    carb.log_info(f"[client-send] registered outgoing {event_type}")
+    return subscription

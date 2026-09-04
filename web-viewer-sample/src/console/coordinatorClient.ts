@@ -381,6 +381,9 @@ export interface MinioWatchStatus {
 export interface StreamConfigResponse {
   session_id: string;
   status: string;
+  // canonical structured-log trace carrier（sessionTraceResolver 權威）。viewer iframe bootstrap
+  // 需要它，缺了就 fail-closed white-screen；coordinator 取不到時整支 route 回 409。
+  trace_id?: string;
   kit_instances?: unknown[];
   artifact_health?: ArtifactHealthSnapshot | null;
   [k: string]: unknown;
