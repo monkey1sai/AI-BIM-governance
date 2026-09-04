@@ -676,6 +676,19 @@ function requestUsesNativeOpenedStageResult(requestEventType: string): boolean {
         || requestEventType === "loadArtifactGroupRequest";
 }
 
+// #783：outbound trace 只能補給「形狀正確」的 native 成功回應。逐字對齊 SDK
+// LogFormatter.fromLoadingStateEvent / fromGetChildrenEvent 的產出欄位。
+function isExpectedNativeResult(requestEventType: string, result: Record<string, unknown>): boolean {
+    if (getPayloadString(result, "status") !== "success") return false;
+    if (requestEventType === "loadingStateQuery") {
+        return typeof result.loadingState === "string";
+    }
+    if (requestEventType === "getChildrenRequest") {
+        return typeof result.primPath === "string" && Array.isArray(result.children);
+    }
+    return false;
+}
+
 function appStreamResultToAppEvent(
     requestEventType: string,
     result: unknown,
@@ -753,9 +766,19 @@ function appStreamResultToAppEvent(
     // 永不送 openStageRequest、3D 全黑（181 與本機皆重現）。
     // 這裡改用送出時由 _withVerifiedDataChannelTrace 寫入、且已對照 authority 驗證過的
     // outbound trace_id；SDK 的 native callback map 保證此 result 就是該次請求的回應。
-    // 兩邊都沒有 trace 才 fail closed。
-    const traceId = getPayloadString(result, "trace_id")
-        || getPayloadString(requestPayloadRecord, "trace_id");
+    // 兩道守門（review P2）：
+    //   (1) result 若「帶有」trace_id 屬性但值為空／null／非字串，是明確損壞的 correlation
+    //       carrier，必須 fail closed，不得用 outbound 補位（帶錯值的 trace 本來就會被拒）。
+    //   (2) 只有 result 長得像該指令預期的 native 回應（status=success 且帶請求專屬欄位）
+    //       才允許補位；SDK 對 warning／error／generic ACK 也會 resolve 同一個 promise，
+    //       那些不得被補上 trace 後當成合法回應放進 _handleCustomEvent。
+    const hasInboundTrace = Object.prototype.hasOwnProperty.call(result, "trace_id");
+    const inboundTraceId = getPayloadString(result, "trace_id");
+    if (hasInboundTrace && !inboundTraceId) return null;
+    const traceId = inboundTraceId
+        || (isExpectedNativeResult(requestEventType, result)
+            ? getPayloadString(requestPayloadRecord, "trace_id")
+            : "");
     if (!traceId) return null;
 
     if (requestEventType === "loadingStateQuery") {

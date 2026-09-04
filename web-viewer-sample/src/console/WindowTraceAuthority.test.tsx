@@ -1173,11 +1173,14 @@ describe("Window Socket canonical trace authority", () => {
         it("a trace_id carried by the result still takes precedence over the outbound trace", async () => {
             const app = authorizedApp({ synchronousSetState: true });
             const target = internals(app);
+            // result 與 outbound 用**不同**的 trace，才真的鎖住「result 優先」；
+            // 若把 fallback 兩個運算元對調，這裡會拿到 TRACE_ID 而非 result 的值。
+            const RESULT_TRACE = "ifcready_result_trace_wins";
             vi.spyOn(AppStream, "sendMessage").mockResolvedValue({
                 action: "message",
                 status: "success",
                 info: "Loading state result received",
-                trace_id: TRACE_ID,
+                trace_id: RESULT_TRACE,
                 loadingState: "busy",
                 url: "stage://model.usdc",
             });
@@ -1189,8 +1192,72 @@ describe("Window Socket canonical trace authority", () => {
             expect(handled).toHaveBeenCalledWith(
                 expect.objectContaining({
                     event_type: "loadingStateResponse",
-                    payload: expect.objectContaining({ trace_id: TRACE_ID, loading_state: "busy" }),
+                    payload: expect.objectContaining({ trace_id: RESULT_TRACE, loading_state: "busy" }),
                 }),
+                expect.any(Number),
+            );
+        });
+
+        it.each([
+            ["empty string", ""],
+            ["null", null],
+            ["non-string", 42],
+        ])("an explicitly malformed inbound trace_id (%s) fails closed instead of borrowing the outbound trace", async (_label, badTrace) => {
+            const app = authorizedApp({ synchronousSetState: true });
+            const target = internals(app);
+            vi.spyOn(AppStream, "sendMessage").mockResolvedValue({
+                action: "message",
+                status: "success",
+                info: "Loading state result received",
+                trace_id: badTrace,
+                loadingState: "idle",
+                url: "",
+            });
+            const handled = vi.spyOn(target, "_handleCustomEvent");
+            target.state = { ...target.state, isKitReady: false, webrtcLifecycleStatus: "started" };
+
+            expect(target._sendStreamMessage({ event_type: "loadingStateQuery", payload: {} })).toBe(true);
+            await flush();
+
+            expect(handled).not.toHaveBeenCalledWith(
+                expect.objectContaining({ event_type: "loadingStateResponse" }),
+                expect.any(Number),
+            );
+            expect(target.state.isKitReady).toBe(false);
+        });
+
+        it.each([
+            ["a warning ACK", { action: "message", status: "warning", info: "stream busy" }],
+            ["an error ACK", { action: "message", status: "error", info: "boom" }],
+            ["a success ACK without the loadingState field", { action: "message", status: "success", info: "generic ack" }],
+        ])("loadingStateQuery: %s is not authenticated with the outbound trace", async (_label, result) => {
+            const app = authorizedApp({ synchronousSetState: true });
+            const target = internals(app);
+            vi.spyOn(AppStream, "sendMessage").mockResolvedValue(result);
+            const handled = vi.spyOn(target, "_handleCustomEvent");
+            target.state = { ...target.state, isKitReady: false, webrtcLifecycleStatus: "started" };
+
+            expect(target._sendStreamMessage({ event_type: "loadingStateQuery", payload: {} })).toBe(true);
+            await flush();
+
+            expect(handled).not.toHaveBeenCalledWith(
+                expect.objectContaining({ event_type: "loadingStateResponse" }),
+                expect.any(Number),
+            );
+            expect(target.state.isKitReady).toBe(false);
+        });
+
+        it("getChildrenRequest: a trace-less ACK without primPath/children never replaces the stage tree", async () => {
+            const app = authorizedApp({ synchronousSetState: true });
+            const target = internals(app);
+            vi.spyOn(AppStream, "sendMessage").mockResolvedValue({ action: "message", status: "success", info: "generic ack" });
+            const handled = vi.spyOn(target, "_handleCustomEvent");
+
+            expect(target._sendStreamMessage({ event_type: "getChildrenRequest", payload: { prim_path: "/World" } })).toBe(true);
+            await flush();
+
+            expect(handled).not.toHaveBeenCalledWith(
+                expect.objectContaining({ event_type: "getChildrenResponse" }),
                 expect.any(Number),
             );
         });
