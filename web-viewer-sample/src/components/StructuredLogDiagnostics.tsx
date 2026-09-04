@@ -55,6 +55,10 @@ export function StructuredLogDiagnostics({
     requestSessionClose,
 }: StructuredLogDiagnosticsProps) {
     const [flushState, setFlushState] = useState<FlushState>("idle");
+    // Omniverse viewport 慣例：疊在 live 3D stage 上的東西只能是角落極輕量 HUD。
+    // 本面板是 runtime 佐證工具而非主要工作面，故預設收成 chip，點開才展開，
+    // 絕不常駐遮住模型。展開狀態只活在本次 session（不做偏好持久化）。
+    const [expanded, setExpanded] = useState(false);
     const pendingFlush = useRef<PendingFlushAction | null>(null);
     const mounted = useRef(false);
     const routeSessionId = useMemo(() => routeReviewSessionIdFromSearch(search), [search]);
@@ -150,8 +154,59 @@ export function StructuredLogDiagnostics({
     const actionsEnabled = available;
     const closeEnabled = actionsEnabled && flushState !== "failure" && !pendingFlush.current;
 
+    // chip 的狀態必須反映「這個面板現在真正的狀況」，而不是只反映 route/session/trace
+    // 是否對齊：投遞進行中或失敗時，收合態不得繼續顯示 Ready。
+    const chipState = flushState === "failure"
+        ? "failure"
+        : flushState === "loading"
+            ? "loading"
+            : available ? "ready" : "unavailable";
+    const chipLabel = {
+        failure: "Delivery failed",
+        loading: "Delivering\u2026",
+        ready: "Ready",
+        unavailable: "Unavailable",
+    }[chipState];
+    const chipTone = `is-${chipState}`;
+
     return (
-        <aside className="structured-log-diagnostics" data-testid="structured-log-diagnostics" aria-label="Structured log delivery">
+        <aside
+            className={`structured-log-diagnostics${expanded ? " is-expanded" : ""}`}
+            data-testid="structured-log-diagnostics"
+            data-expanded={expanded ? "true" : "false"}
+            aria-label="Structured log delivery"
+        >
+            <button
+                type="button"
+                className="structured-log-diagnostics__chip"
+                data-testid="structured-log-toggle"
+                aria-expanded={expanded}
+                title={expanded ? "收合 runtime 診斷" : "展開 runtime 診斷（structured log 投遞）"}
+                onClick={() => setExpanded((value) => !value)}
+            >
+                {/* 色點只是輔助；狀態一律同時以文字表述，否則螢幕閱讀器與色覺障礙
+                    使用者在收合態無從判讀。 */}
+                <span className={`structured-log-diagnostics__dot ${chipTone}`} aria-hidden="true" />
+                <span className="structured-log-diagnostics__chip-label">Runtime diagnostics</span>
+                {/* 投遞結果必須在收合態也看得到、聽得到：面板一收起，展開態的
+                    role="alert" 就隨之卸載，chip 若只反映 available，一次失敗的投遞會被
+                    當成 Ready 呈現。故 chip 狀態同時涵蓋 loading / failure，並自己帶
+                    live region（失敗用 alert，其餘 polite）。 */}
+                <span
+                    className={`structured-log-diagnostics__chip-state ${chipTone}`}
+                    data-testid="structured-log-chip-readiness"
+                    data-state={chipState}
+                    role={flushState === "failure" ? "alert" : "status"}
+                    aria-live={flushState === "failure" ? "assertive" : "polite"}
+                >
+                    {chipLabel}
+                </span>
+                <span className="structured-log-diagnostics__chip-id">{kitInstanceId || reviewSessionId || NOT_OBSERVED}</span>
+                <span className="structured-log-diagnostics__chev" aria-hidden="true">{expanded ? "\u2304" : "\u02c4"}</span>
+            </button>
+
+            {expanded && (
+            <div className="structured-log-diagnostics__panel" data-testid="structured-log-panel">
             <div className="structured-log-diagnostics__heading">
                 <div>
                     <p className="structured-log-diagnostics__eyebrow">Runtime diagnostics</p>
@@ -233,6 +288,8 @@ export function StructuredLogDiagnostics({
                     </p>
                 </div>
             </div>
+            </div>
+            )}
         </aside>
     );
 }

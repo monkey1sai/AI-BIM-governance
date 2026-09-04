@@ -1,0 +1,44 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "ci-local-parity.schema.json",
+  "title": "Local/CI parity record v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "authority", "head_sha", "base_sha", "manifest_sha256", "records", "summary", "disqualifying", "disqualifying_reason"],
+  "properties": {
+    "schema_version": { "const": "ci-local-parity/v1" },
+    "authority": { "const": "advisory_only" },
+    "head_sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "base_sha": { "oneOf": [{ "type": "null" }, { "type": "string", "pattern": "^[0-9a-f]{40}$" }] },
+    "manifest_sha256": { "oneOf": [{ "type": "null" }, { "type": "string", "pattern": "^[0-9a-f]{64}$" }] },
+    "records": {
+      "type": "array",
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["target_id", "ci_job", "local_result", "ci_result", "divergence"],
+        "properties": {
+          "target_id": { "type": "string", "minLength": 1 },
+          "ci_job": { "type": "string", "minLength": 1 },
+          "local_result": { "enum": ["passed", "failed", "incomplete", "missing"] },
+          "ci_result": { "type": "string", "minLength": 1 },
+          "divergence": { "enum": ["agree", "false_negative", "false_positive", "ci_missing", "ci_skipped", "local_missing", "local_incomplete"] }
+        }
+      }
+    },
+    "summary": {
+      "type": "object", "additionalProperties": false,
+      "required": ["agree", "false_negative", "false_positive", "ci_missing", "ci_skipped", "local_missing", "local_incomplete"],
+      "properties": {
+        "agree": { "type": "integer", "minimum": 0 },
+        "false_negative": { "type": "integer", "minimum": 0 },
+        "false_positive": { "type": "integer", "minimum": 0 },
+        "ci_missing": { "type": "integer", "minimum": 0 },
+        "ci_skipped": { "type": "integer", "minimum": 0 },
+        "local_missing": { "type": "integer", "minimum": 0 },
+        "local_incomplete": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "disqualifying": { "type": "boolean" },
+    "disqualifying_reason": { "oneOf": [{ "type": "null" }, { "const": "local_passed_where_ci_failed" }] }
+  }
+}

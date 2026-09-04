@@ -1,0 +1,83 @@
+{
+  "$schema": "./tests/base-sync-policy.schema.json",
+  "schema_version": "base-sync-policy/v1",
+  "authority": "advisory_detective",
+  "purpose": "Forbid discretionary base syncs (merge/rebase of origin/main into a PR branch) while a PR is converging. Main merely advancing is never a reason to sync. Counts are derived from GitHub server truth, never self-attested in-branch.",
+  "decision": {
+    "default": "forbidden",
+    "allowed_reasons": [
+      "real_conflict",
+      "semantic_overlap",
+      "protection_forced",
+      "base_affects_correctness"
+    ],
+    "rejected_reasons": [
+      "base_advanced",
+      "routine_freshness",
+      "keep_branch_current"
+    ],
+    "real_conflict": {
+      "mergeable_values": ["CONFLICTING"],
+      "merge_state_status_values": ["DIRTY"]
+    },
+    "semantic_overlap": {
+      "classifier_path": "scripts/verification-manifest.json",
+      "direct_file_overlap_qualifies": true,
+      "shared_target_requires_boundary_crossing": true,
+      "boundary_globs": [
+        "tests/contracts/**",
+        "tests/fakes/**",
+        "docs/contracts/**",
+        "agent-contracts/**",
+        "architecture/**"
+      ],
+      "ubiquitous_path_classes": [
+        "tracked-repository",
+        "agent-governance"
+      ],
+      "unknown_base_path_qualifies": true
+    },
+    "protection_forced": {
+      "requires_converged": true,
+      "requires_merge_sink": true,
+      "merge_state_status": "BEHIND"
+    },
+    "base_affects_correctness": {
+      "full_dispatch_globs_from": "scripts/verification-manifest.json",
+      "security_exception_registry_from": "scripts/verification-manifest.json",
+      "additional_paths": [
+        ".github/CODEOWNERS",
+        ".github/workflows/**",
+        "agent-contracts/**",
+        "scripts/agent-governance-rules.json",
+        "scripts/autonomous-codex-review-policy.json",
+        "scripts/verification-manifest.json",
+        "scripts/base-sync-policy.json"
+      ]
+    }
+  },
+  "budgets": {
+    "ordinary_pr": {
+      "pre_convergence_discretionary_sync_count_max": 0,
+      "discretionary_sync_count_max": 0,
+      "final_sync_count_max": 1,
+      "protection_forced_sync_count_max": null
+    }
+  },
+  "ledger": {
+    "source": "github_server_truth",
+    "self_attested_forbidden": true,
+    "output_dir": "artifacts/metrics/base-sync/",
+    "timestamp_source": "github_commit_committer_date"
+  },
+  "starvation": {
+    "consecutive_protection_forced_warning": 3,
+    "response": "serialize_merges_not_more_syncs"
+  },
+  "amended_doctrine": [
+    ".claude/workflows/ship-item.md"
+  ],
+  "adjacent_not_equivalent": [
+    "scripts/dev/sync-main-safely.mjs"
+  ]
+}

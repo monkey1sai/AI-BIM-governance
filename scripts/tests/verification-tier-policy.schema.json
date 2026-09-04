@@ -1,0 +1,44 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "verification-tier-policy.schema.json",
+  "title": "Verification tier policy v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["$schema", "schema_version", "authority", "purpose", "manifest_path", "tiers", "full_when_dispatch_full", "tiered_run_is_evidence", "ci_ignores_tier"],
+  "properties": {
+    "$schema": { "type": "string" },
+    "schema_version": { "const": "verification-tier-policy/v1" },
+    "authority": { "const": "local_selection_only" },
+    "purpose": { "type": "string", "minLength": 1 },
+    "manifest_path": { "const": "scripts/verification-manifest.json" },
+    "tiers": {
+      "type": "object", "additionalProperties": false,
+      "required": ["quick", "pr", "full"],
+      "properties": {
+        "quick": { "$ref": "#/definitions/tier" },
+        "pr": { "$ref": "#/definitions/tier" },
+        "full": {
+          "type": "object", "additionalProperties": false,
+          "required": ["evidence_classes", "target_seconds"],
+          "properties": {
+            "evidence_classes": { "type": "array", "minItems": 4, "maxItems": 4, "uniqueItems": true, "items": { "enum": ["fast", "contract", "slow", "security"] } },
+            "target_seconds": { "type": "null" }
+          }
+        }
+      }
+    },
+    "full_when_dispatch_full": { "const": true },
+    "tiered_run_is_evidence": { "const": false },
+    "ci_ignores_tier": { "const": true }
+  },
+  "definitions": {
+    "tier": {
+      "type": "object", "additionalProperties": false,
+      "required": ["evidence_classes", "target_seconds"],
+      "properties": {
+        "evidence_classes": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "enum": ["fast", "contract", "slow", "security"] } },
+        "target_seconds": { "type": "integer", "minimum": 1 }
+      }
+    }
+  }
+}
