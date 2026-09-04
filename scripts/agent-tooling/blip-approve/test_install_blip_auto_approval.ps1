@@ -232,9 +232,14 @@ Assert-True ($text -match 'Protect-RuntimeTree' -and
     'Production upgrade can temporarily expose owner-only Codex login state.'
 Assert-True ($text -match 'New-ProtectedDirectory -LiteralPath \$stageRoot -OwnerOnly' -and
     $text -match 'New-ProtectedDirectory -LiteralPath \(Join-Path \$stageRoot \$relative\) -OwnerOnly' -and
-    $text -notmatch 'Protect-RuntimeTree -LiteralPath \$stageRoot' -and
-    $text -match '\[System\.IO\.Directory\]::Move\(\$stageRoot, \$trustedRoot\)\s+\$stagePublished = \$true\s+Protect-RuntimeTree -LiteralPath \$trustedRoot') `
+    $text -notmatch 'Protect-RuntimeTree -LiteralPath \$stageRoot') `
     'Staged runtime is not owner-only until atomic publication and ACL normalization.'
+$stagePublishIndex = $text.LastIndexOf('[System.IO.Directory]::Move($stageRoot, $trustedRoot)', [StringComparison]::Ordinal)
+$completionPublishIndex = $text.IndexOf('[System.IO.File]::Move($completionStagePath, $completionPath)', $stagePublishIndex, [StringComparison]::Ordinal)
+$runtimeAclPublishIndex = $text.IndexOf('Protect-RuntimeTree -LiteralPath $trustedRoot', $stagePublishIndex, [StringComparison]::Ordinal)
+Assert-True ($stagePublishIndex -ge 0 -and $completionPublishIndex -gt $stagePublishIndex -and
+    $runtimeAclPublishIndex -gt $completionPublishIndex) `
+    'Published successor becomes runtime-readable before its activation marker commits.'
 Assert-True ($text -match '\[System\.IO\.File\]::Move\(\$completionStagePath, \$completionPath\)\s+\$activationCommitted = \$true' -and
     $text -notmatch '\$previousPublished -and -not \$installCompleted' -and
     $text -match '\[System\.IO\.Directory\]::Exists\(\$previousRoot\)') `
@@ -309,6 +314,12 @@ Assert-True ($text -match '-OperationOut \(\[ref\]\$recoveryOperation\)[\s\S]+Se
 Assert-True ($text -match '-TransactionIdOut \(\[ref\]\$recoveryTransactionId\)[\s\S]+\$installerStructTransactionId = \$recoveryTransactionId' -and
     $text -match 'Write-InstallerStructInformation -Event ''committed_recovery_completed''[\s\S]+-TransactionId \(\[string\]\$recoveryResult\.TransactionId\)') `
     'Recovery structured logs are not correlated to the recovered transaction authority.'
+Assert-True ($text -match '(?m)^\$script:installerStructLogger = \$null$' -and
+    $text -notmatch '(?m)^\$installerStructLogger = \$null$') `
+    'Nested installer does not initialize the structured logger in the scope read by its helper.'
+Assert-True ($text -match '\$recoveryContextStarted = \$true[\s\S]+if \(\$null -eq \$recoveryResult\)[\s\S]+\$recoveryContextStarted = \$false' -and
+    $text -match 'Test-ShouldInspectTargetActivationMarker[\s\S]+Test-TargetActivationMarkerPublished') `
+    'Outer catch can inspect a predecessor marker before a recovery or transaction context starts.'
 Assert-True ($text -match 'Directory\]::Exists\(\$journalFailed\)[\s\S]+Move-UpgradeJournal[\s\S]+already quarantined') `
     'Initial quarantine recovery is not idempotent after the directory move.'
 Assert-True ($text -match "return \[pscustomobject\]@\{[\s\S]+Status = 'committed'[\s\S]+Operation = 'upgrade'" -and
@@ -386,8 +397,9 @@ $functions = @(
     'Protect-CompletionMarkerRuntimeReadable', 'Recover-CommittedUpgradeArchive',
     'Protect-UpgradeArchiveOwnerOnly',
     'Open-UpgradeLock', 'Recover-InterruptedUpgrade',
-    'Test-TargetActivationMarkerPublished',
-    'Write-InstallerStructRecord', 'Write-InstallerStructWarning'
+    'Test-TargetActivationMarkerPublished', 'Test-ShouldInspectTargetActivationMarker',
+    'Write-InstallerStructRecord', 'Write-InstallerStructWarning',
+    'Write-InstallerStructInformation'
 ) | ForEach-Object { Get-ProductionFunction -Ast $ast -Name $_ }
 $probe = [ScriptBlock]::Create(($functions -join "`n"))
 
@@ -663,6 +675,15 @@ try {
     $unknownMode = $true
     Set-RecoveryAttemptMode -Operation '' -UpgradeAttempted ([ref]$unknownMode)
     Assert-True $unknownMode 'Unknown recovery operation discarded the preliminary runtime classification.'
+    Assert-True (-not (Test-ShouldInspectTargetActivationMarker `
+            -RecoveryContextStarted $false -TransactionWritten $false)) `
+        'Candidate validation failure can still enter post-commit marker recovery.'
+    Assert-True (Test-ShouldInspectTargetActivationMarker `
+            -RecoveryContextStarted $true -TransactionWritten $false) `
+        'Recovery failure no longer enters marker recovery.'
+    Assert-True (Test-ShouldInspectTargetActivationMarker `
+            -RecoveryContextStarted $false -TransactionWritten $true) `
+        'Started transaction no longer enters marker recovery.'
 
     $completionAclRoot = Join-Path $sandboxRoot 'completion-acl'
     [void][System.IO.Directory]::CreateDirectory($completionAclRoot)
@@ -756,6 +777,50 @@ try {
     finally { Remove-Item -LiteralPath Function:\New-StructLogger -Force }
     Assert-True (-not $loggingFailureMaskedPrimaryFlow) `
         'Structured logger initialization failure escaped and could mask the primary install error.'
+    $script:installerStructLogger = $null
+    $script:structLoggerCreations = 0
+    $script:structInfoRecords = [System.Collections.Generic.List[object]]::new()
+    function New-StructLogger {
+        param(
+            [string]$Service, [string]$Component, [string]$LogRoot,
+            [string]$AllowListPath, [switch]$SkipEnvSnapshot
+        )
+        [void]$Service
+        [void]$Component
+        [void]$LogRoot
+        [void]$AllowListPath
+        [void]$SkipEnvSnapshot
+        $script:structLoggerCreations++
+        return [pscustomobject]@{ kind = 'test-logger' }
+    }
+    function Write-StructInfo {
+        param(
+            [Parameter(ValueFromPipeline)][object]$Logger,
+            [string]$Msg,
+            [System.Collections.IDictionary]$Data
+        )
+        process {
+            [void]$Logger
+            [void]$Msg
+            $script:structInfoRecords.Add($Data)
+        }
+    }
+    try {
+        $loggerTransactionId = [Guid]::NewGuid().ToString('N')
+        Write-InstallerStructInformation -Event 'scope_probe_one' -Message 'scope probe one' `
+            -TransactionId $loggerTransactionId
+        Write-InstallerStructInformation -Event 'scope_probe_two' -Message 'scope probe two' `
+            -TransactionId $loggerTransactionId
+    }
+    finally {
+        Remove-Item -LiteralPath Function:\New-StructLogger -Force
+        Remove-Item -LiteralPath Function:\Write-StructInfo -Force
+    }
+    Assert-True ($script:structLoggerCreations -eq 1 -and
+        $script:structInfoRecords.Count -eq 2 -and
+        $script:structInfoRecords[0].transaction_id -ceq $loggerTransactionId -and
+        $script:structInfoRecords[1].transaction_id -ceq $loggerTransactionId) `
+        'Nested installer did not initialize, emit, and reuse one structured logger instance.'
 
     $recoveryProductRoot = Join-Path $sandboxRoot 'committed-recovery'
     $recoveryId = [Guid]::NewGuid().ToString('N')
@@ -812,7 +877,30 @@ try {
         param([Parameter(Mandatory)][string]$Destination)
         [System.IO.File]::Move($script:upgradeTransactionPath, $Destination)
     }
+    $script:failRuntimeNormalization = $false
+    function Protect-RuntimeTree {
+        param([Parameter(Mandatory)][string]$LiteralPath)
+        if ($script:failRuntimeNormalization) {
+            throw 'injected_runtime_normalization_failure'
+        }
+        & $originalProtectRuntimeTree -LiteralPath $LiteralPath
+    }
     try {
+        $script:failRuntimeNormalization = $true
+        $normalizationFailureObserved = $false
+        try {
+            [void](Recover-InterruptedUpgrade `
+                -ExpectedTargetSourceCommit ('b' * 40) `
+                -ExpectedTargetCandidateFreezeSha256 ('D' * 64))
+        }
+        catch {
+            $normalizationFailureObserved = $_.Exception.Message -match
+                'injected_runtime_normalization_failure'
+        }
+        Assert-True ($normalizationFailureObserved -and
+            [System.IO.File]::Exists($script:upgradeTransactionPath)) `
+            'Committed recovery lost its journal when runtime ACL normalization was interrupted.'
+        $script:failRuntimeNormalization = $false
         $committedRecovery = Recover-InterruptedUpgrade `
             -ExpectedTargetSourceCommit ('b' * 40) `
             -ExpectedTargetCandidateFreezeSha256 ('D' * 64)

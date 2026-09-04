@@ -65,7 +65,7 @@ $codexVendorRoot = 'C:\Users\IOT\AppData\Roaming\npm\node_modules\@openai\codex\
 $pinnedStreams = [System.Collections.Generic.List[System.IO.FileStream]]::new()
 $predecessorFenceStreams = [System.Collections.Generic.List[System.IO.FileStream]]::new()
 $upgradeLockStream = $null
-$installerStructLogger = $null
+$script:installerStructLogger = $null
 $sourceStreams = @{}
 $runtimeStreams = @{}
 
@@ -1229,6 +1229,14 @@ function Test-TargetActivationMarkerPublished {
     return [System.IO.Directory]::Exists($previousRoot)
 }
 
+function Test-ShouldInspectTargetActivationMarker {
+    param(
+        [Parameter(Mandatory)][bool]$RecoveryContextStarted,
+        [Parameter(Mandatory)][bool]$TransactionWritten
+    )
+    return $RecoveryContextStarted -or $TransactionWritten
+}
+
 function Protect-CompletionMarkerRuntimeReadable {
     try {
         Assert-ProtectedAcl -LiteralPaths @($completionPath)
@@ -1332,11 +1340,12 @@ function Recover-CommittedUpgradeArchive {
     if ($null -ne $TransactionIdOut) {
         $TransactionIdOut.Value = [string]$match.transaction_id
     }
-    Protect-CompletionMarkerRuntimeReadable
     Assert-ActivationCommitMarker `
         -ExpectedSourceCommit ([string]$match.target_source_commit) `
         -ExpectedManifestSha256 ([string]$match.target_manifest_sha256) `
         -ExpectedCandidateFreezeSha256 ([string]$match.target_candidate_freeze_sha256)
+    Protect-RuntimeTree -LiteralPath $trustedRoot
+    Protect-CompletionMarkerRuntimeReadable
     return [pscustomobject]@{
         Status = 'committed'
         Operation = [string]$match.operation
@@ -1482,6 +1491,7 @@ function Recover-InterruptedUpgrade {
                     -ExpectedManifestSha256 ([string]$transaction.target_manifest_sha256) `
                     -ExpectedCandidateFreezeSha256 `
                         ([string]$transaction.target_candidate_freeze_sha256)
+                Protect-RuntimeTree -LiteralPath $trustedRoot
                 Protect-CompletionMarkerRuntimeReadable
                 Move-UpgradeJournal -Destination $committedArchive
                 if (-not $journalMatchesRequestedCandidate) {
@@ -1524,6 +1534,7 @@ function Recover-InterruptedUpgrade {
                 -ExpectedManifestSha256 ([string]$transaction.target_manifest_sha256) `
                 -ExpectedCandidateFreezeSha256 `
                     ([string]$transaction.target_candidate_freeze_sha256)
+            Protect-RuntimeTree -LiteralPath $trustedRoot
             Protect-CompletionMarkerRuntimeReadable
             Move-UpgradeJournal -Destination $committedArchive
             if (-not $journalMatchesRequestedCandidate) {
@@ -1560,6 +1571,7 @@ $activationCommitted = $false
 $upgradeAttempted = $false
 $recoveryOperation = ''
 $recoveryTransactionId = ''
+$recoveryContextStarted = $false
 $transactionWritten = $false
 $trustedBootstrapReady = $false
 try {
@@ -1753,6 +1765,7 @@ try {
         New-ProtectedDirectory -LiteralPath $secretRoot -OwnerOnly
         Open-UpgradeLock
         $upgradeAttempted = [System.IO.Directory]::Exists($trustedRoot)
+        $recoveryContextStarted = $true
         try {
             $recoveryResult = Recover-InterruptedUpgrade `
                 -ExpectedTargetSourceCommit $sourceCommitElement.GetString() `
@@ -1768,6 +1781,9 @@ try {
                 -Operation $recoveryOperation `
                 -UpgradeAttempted ([ref]$upgradeAttempted)
             throw
+        }
+        if ($null -eq $recoveryResult) {
+            $recoveryContextStarted = $false
         }
         if ($null -ne $recoveryResult) {
             if ($recoveryResult.Status -cne 'committed' -or
@@ -1961,23 +1977,6 @@ try {
 
     [System.IO.Directory]::Move($stageRoot, $trustedRoot)
     $stagePublished = $true
-    Protect-RuntimeTree -LiteralPath $trustedRoot
-    $ownerOnlyRuntimeRoot = Join-Path $trustedRoot 'codex-home'
-    $runtimeReadable = @(
-        $protectedRoot, $productRoot, $trustedRoot
-        Get-ChildItem -Force -Recurse -LiteralPath $trustedRoot |
-            Where-Object { -not $_.FullName.StartsWith(
-                $ownerOnlyRuntimeRoot + '\', [StringComparison]::OrdinalIgnoreCase
-            ) -and $_.FullName -cne $ownerOnlyRuntimeRoot } |
-            ForEach-Object { $_.FullName }
-    )
-    Assert-ProtectedAcl -LiteralPaths $runtimeReadable
-    $ownerOnlyRuntimePaths = @(
-        $ownerOnlyRuntimeRoot
-        Get-ChildItem -Force -Recurse -LiteralPath $ownerOnlyRuntimeRoot |
-            ForEach-Object { $_.FullName }
-    )
-    Assert-OwnerOnlyAcl -LiteralPaths (@($secretRoot) + $ownerOnlyRuntimePaths)
 
     $installedManifestPath = Join-Path $trustedRoot 'manifest.json'
     $installedManifestHash = (Get-FileHash `
@@ -2013,6 +2012,23 @@ try {
     Assert-OwnerOnlyAcl -LiteralPaths @($completionStagePath)
     [System.IO.File]::Move($completionStagePath, $completionPath)
     $activationCommitted = $true
+    Protect-RuntimeTree -LiteralPath $trustedRoot
+    $ownerOnlyRuntimeRoot = Join-Path $trustedRoot 'codex-home'
+    $runtimeReadable = @(
+        $protectedRoot, $productRoot, $trustedRoot
+        Get-ChildItem -Force -Recurse -LiteralPath $trustedRoot |
+            Where-Object { -not $_.FullName.StartsWith(
+                $ownerOnlyRuntimeRoot + '\', [StringComparison]::OrdinalIgnoreCase
+            ) -and $_.FullName -cne $ownerOnlyRuntimeRoot } |
+            ForEach-Object { $_.FullName }
+    )
+    Assert-ProtectedAcl -LiteralPaths $runtimeReadable
+    $ownerOnlyRuntimePaths = @(
+        $ownerOnlyRuntimeRoot
+        Get-ChildItem -Force -Recurse -LiteralPath $ownerOnlyRuntimeRoot |
+            ForEach-Object { $_.FullName }
+    )
+    Assert-OwnerOnlyAcl -LiteralPaths (@($secretRoot) + $ownerOnlyRuntimePaths)
     Protect-CompletionMarkerRuntimeReadable
     $completionReadback = Get-Content -Raw -LiteralPath $completionPath | ConvertFrom-Json
     if ($completionReadback.schema -cne 'blip-trusted-runtime-complete/v2' -or
@@ -2044,8 +2060,13 @@ catch {
     if (-not $Apply -or -not $trustedBootstrapReady) {
         throw $installationError
     }
-    $targetMarkerPublished = Test-TargetActivationMarkerPublished `
-        -IsUpgrade $upgradeAttempted
+    $targetMarkerPublished = $false
+    if (Test-ShouldInspectTargetActivationMarker `
+            -RecoveryContextStarted $recoveryContextStarted `
+            -TransactionWritten $transactionWritten) {
+        $targetMarkerPublished = Test-TargetActivationMarkerPublished `
+            -IsUpgrade $upgradeAttempted
+    }
     if ($targetMarkerPublished) {
         try {
             Assert-ActivationCommitMarker `
