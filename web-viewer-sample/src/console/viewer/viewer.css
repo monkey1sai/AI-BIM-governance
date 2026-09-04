@@ -19,17 +19,197 @@
      內距) 決定收欄，而非僅看視窗寬——否則 USD Stage Dock 開啟(reservedLeft 生效)時中等視窗右欄會被裁掉。 */
   container: gvmock / inline-size;
 }
-/* CH-H3：live 3D 已出幀時，MockViewport 不再整片覆蓋中央，改為左緣語意側欄（半透明），與中央 <video> live 3D
-   並存（對齊 AI-BIM-Geo Viewer 範本：左欄①③ + 隨點構件②④⑥；模型置中不受遮蔽）。
-   z-index 26：高於左側 USD 樹 dock(25) 與治理 overlay(20)，確保語意內容恆在最上層可見（reviewer P1：避免被左側
-   USD dock 蓋住而隱藏語意）；右側治理 overlay 在 right:0，與本左緣側欄水平不重疊。 */
-.gv-mock.gv-mock--live {
-  right: auto; width: 420px; max-width: 46vw;
-  background: rgba(11, 13, 16, 0.92);
-  border-right: 1px solid var(--ab-border-strong);
-  z-index: 26;
+/* ══ live 3D 工作區版面（對齊 NVIDIA Omniverse USD Composer / Kit viewport 慣例）══
+   規則一：viewport 是唯一主舞台。側欄一律「dock」在邊緣並保留空間（<video> 由
+           Window 以 --gv-stage-inset-left 同步內縮），不得浮在 render 之上。
+   規則二：dock 可收合成細軌（USD Composer 的 Stage / Property panel 收合軌），
+           收合後 stage 取回全部寬度。
+   規則三：疊在 stage 上的只能是角落極輕量 HUD，永不置中、永不遮住模型。
+   --gv-stage-inset-left 由 Window 依「展開 / 收合 / 非 live」三態指派，dock 寬度與
+   <video> 內縮共用同一個變數，兩者不可能失同步。 */
+.gv-stage {
+  --gv-dock-w: clamp(240px, 26vw, 340px);
+  --gv-dock-rail: 34px;
+  --gv-usd-dock-open-w: clamp(200px, 22vw, 300px);
+  /* stage 右下角保留給 runtime diagnostics HUD chip 的寬度。 */
+  --gv-hud-reserve: 380px;
+  /* 由 Window 依實際掛載的左緣面板指派；stage 內縮 = 兩個 dock 寬度相加。 */
+  --gv-usd-dock-w: 0px;
+  --gv-semantic-dock-w: 0px;
+  --gv-stage-inset-left: 0px;
 }
-/* live 側欄（420px）：不論視窗多寬，C grid 都收成單欄堆疊（3 欄最小寬 ~900px 塞不進側欄）。 */
+
+.gv-mock.gv-mock--live {
+  /* USD Stage 樹 dock（NVIDIA sample，left:0 / 300px）若掛載，語意 dock 接在它右側，
+     兩者並排而非互相疊蓋——舊版兩者都在 left:0，語意側欄直接把 USD 樹整片蓋掉。 */
+  left: var(--gv-usd-dock-w, 0px);
+  right: auto;
+  width: var(--gv-semantic-dock-w, 320px);
+  max-width: none;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 0;
+  /* 已 dock、不再覆蓋 stage，故改為實心面板（半透明只會降低表格可讀性）。 */
+  background: var(--ab-panel);
+  border-right: 1px solid var(--ab-border-strong);
+  /* z-index 26：高於左側 USD 樹 dock(25) 與治理 overlay(20)。 */
+  z-index: 26;
+  transition: width var(--ab-dur, 180ms) var(--ab-ease, cubic-bezier(.2, .7, .3, 1));
+}
+.gv-mock.gv-mock--collapsed { width: var(--gv-dock-rail, 34px); }
+/* stage 底色：<video> 為 letterbox（object-fit: contain）時露出的區域、以及 dock 之間的
+   縫隙，都要是深色治理視區的黑，不能露出瀏覽器預設白底。 */
+.gv-stage { background: var(--ab-black); }
+
+/* USD Stage 樹 dock 的深色化（NVIDIA sample 原樣式是白底 #FEFEFE + 25px 標題，放在
+   深色 3D 視區旁會變成整片刺眼白塊）。只在本 viewer 的 dock 情境覆寫，不改 sample 檔本身，
+   與 App.css 既有的 .usdStageContainer 定位覆寫同一手法。 */
+[data-testid="usd-stage-left-dock"] .usdStageContainer {
+  background-color: transparent;
+  color: var(--ab-text-2);
+}
+/* sample 自帶的 25px 大標題文字與 dock bar 標題重複。這裡不改 sample 元件，改以
+   font-size:0 隱藏該純文字節點，只讓「重設」按鈕保留尺寸。 */
+[data-testid="usd-stage-left-dock"] .usdStageHeader {
+  margin: 0;
+  padding: 8px 12px 0;
+  font-size: 0;
+}
+[data-testid="usd-stage-left-dock"] .list-container {
+  padding-inline-start: 10px;
+  padding-right: 10px;
+  scrollbar-color: var(--ab-scroll-thumb, #2a3a4c) transparent;
+}
+[data-testid="usd-stage-left-dock"] .list-container::-webkit-scrollbar-track { background: transparent; }
+[data-testid="usd-stage-left-dock"] .list-container::-webkit-scrollbar-thumb {
+  background-color: var(--ab-scroll-thumb, #2a3a4c);
+  border: 2px solid transparent;
+}
+/* sample 的「重設」是滿版 NVIDIA 綠主按鈕；在治理視區它只是次要動作，改為 outline，
+   讓畫面上唯一的高飽和色留給真正的狀態訊號。 */
+[data-testid="usd-stage-left-dock"] .usdStageHeader button {
+  margin: 8px 12px;
+  padding: 5px 10px;
+  border: 1px solid var(--ab-border-strong);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ab-text-2);
+  font-size: 12px;
+  font-weight: 600;
+}
+[data-testid="usd-stage-left-dock"] .usdStageHeader button:hover {
+  border-color: var(--ab-border-accent);
+  background: var(--ab-accent-soft);
+  color: var(--ab-text);
+}
+[data-testid="usd-stage-left-dock"] .list-item { color: var(--ab-text-2); font-size: 12px; }
+[data-testid="usd-stage-left-dock"] .item-content.selected {
+  background-color: var(--ab-accent-soft);
+  color: var(--ab-text);
+  box-shadow: inset 2px 0 0 var(--ab-accent);
+}
+[data-testid="usd-stage-left-dock"] .expand-toggle.deselected { color: var(--ab-accent); }
+[data-testid="usd-stage-left-dock"] .expand-toggle.selected { color: var(--ab-text); }
+
+/* live 3D <video> 容器：內縮寬度與 dock 同步過渡（AppStream 的 #main-div 由
+   NVIDIA sample 提供，只有 id 沒有 class，故以 id 掛規則）。 */
+.gv-stage #main-div {
+  transition: margin-left var(--ab-dur, 180ms) var(--ab-ease, cubic-bezier(.2, .7, .3, 1)),
+              width var(--ab-dur, 180ms) var(--ab-ease, cubic-bezier(.2, .7, .3, 1));
+}
+@media (prefers-reduced-motion: reduce) {
+  .gv-mock.gv-mock--live,
+  .gv-stage #main-div { transition: none; }
+}
+
+/* 通用 dock 外殼：左緣面板（USD Stage 樹 / 語意側欄）共用同一套 chrome 與收合軌，
+   使兩者在版面上是同一種東西，而不是各自為政的浮層。 */
+.gv-dock {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  width: var(--gv-usd-dock-w, 0px);
+  background: var(--ab-panel);
+  border-right: 1px solid var(--ab-border-strong);
+  transition: width var(--ab-dur, 180ms) var(--ab-ease, cubic-bezier(.2, .7, .3, 1));
+}
+@media (prefers-reduced-motion: reduce) {
+  .gv-dock { transition: none; }
+}
+
+/* dock 標題列：固定不捲動，收合鈕恆可見（避免要捲到頂才找得到）。 */
+.gv-dock__bar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 5px 5px 12px;
+  border-bottom: 1px solid var(--ab-border);
+  background: var(--ab-raised);
+}
+.gv-dock__title {
+  color: var(--ab-text);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: .04em;
+}
+.gv-dock__state { color: var(--ab-accent-text); font-size: 11px; }
+.gv-dock__btn {
+  margin-left: auto;
+  flex: none;
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--ab-border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ab-text-2);
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+}
+.gv-dock__btn:hover { border-color: var(--ab-border-accent); background: var(--ab-accent-soft); color: var(--ab-text); }
+.gv-dock__btn:focus-visible { outline: 2px solid var(--ab-accent); outline-offset: 2px; }
+
+/* dock 內容：唯一捲動區（標題列不捲），維持單一捲動語意。 */
+.gv-dock__body {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 12px;
+}
+/* 內容自帶 inset:0 版面（如 NVIDIA sample 的 .usdStageContainer）時不再加內距。 */
+.gv-dock__body--flush { padding: 0; }
+/* 收合時 body 保持掛載（保留 fetch 結果與捲動位置）但不得佔位。 */
+.gv-dock__body[hidden] { display: none; }
+
+/* 收合軌：整條 34px 直立按鈕 —— 點擊面積 = 34 x dock 全高，遠大於最小點擊標準。 */
+.gv-dock__rail {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  width: 100%;
+  height: 100%;
+  padding: 12px 0;
+  border: 0;
+  background: transparent;
+  color: var(--ab-text-2);
+  writing-mode: vertical-rl;
+  text-orientation: mixed;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .16em;
+  cursor: pointer;
+}
+.gv-dock__rail:hover { color: var(--ab-accent); background: var(--ab-accent-soft); }
+.gv-dock__rail:focus-visible { outline: 2px solid var(--ab-accent); outline-offset: -3px; }
+.gv-dock__rail .gv-dot { writing-mode: horizontal-tb; }
+
+/* live 側欄（最寬 340px）：不論視窗多寬，C grid 都收成單欄堆疊（3 欄最小寬 ~900px 塞不進側欄）。 */
 .gv-mock.gv-mock--live .gv-C {
   grid-template-columns: 1fr;
   grid-template-rows: none;
@@ -120,9 +300,16 @@
   overflow-wrap: anywhere;
 }
 
+/* dock 內的七軸 rail 收成緊湊雙欄：原本 7 張全高卡片會把 ①模型資訊 / ③結構 等真資料
+   推到 800px 之外，操作員得先捲過一整屏狀態卡才看得到內容。 */
 .gv-mock.gv-mock--live .gv-axis-rail {
-  grid-template-columns: 1fr;
+  grid-template-columns: repeat(auto-fit, minmax(104px, 1fr));
+  gap: 5px;
 }
+.gv-mock.gv-mock--live .gv-axis { padding: 6px 8px; }
+.gv-mock.gv-mock--live .gv-axis strong { font-size: 12px; }
+.gv-mock.gv-mock--live .gv-axis span:not(.gv-axis__code) { min-height: 0; font-size: 10px; }
+.gv-mock.gv-mock--live .gv-axis em { margin-top: 4px; font-size: 10px; }
 
 /* Task2 §Step3：C 區塊 IA 版面 — .gv-C 本身即 3 欄x3 列 grid 容器，五具名區為其直接子節點（grid item）：
    evidence 滿版列 / left·center·right 中列 / bottom 滿版列。banner 與七軸 rail 不在 grid 內（留在外層
@@ -187,10 +374,33 @@
       "bottom";
   }
 }
-@media (max-width: 620px) {
-  .gv-mock.gv-mock--live { width: min(420px, calc(100vw - 16px)); max-width: none; }
-}
 
+/* Kit 式底部狀態列（見 Window.tsx .gv-statusbar 註解）。無內容時整條不佔位。 */
+.gv-statusbar {
+  position: absolute;
+  left: var(--gv-stage-inset-left, 0px);
+  /* 右下角留給 runtime diagnostics chip（--gv-hud-reserve），兩者不互相壓字。 */
+  right: auto;
+  max-width: max(180px, calc(100% - var(--gv-stage-inset-left, 0px) - var(--gv-hud-reserve, 380px)));
+  bottom: 0;
+  border-right: 1px solid var(--ab-border);
+  border-radius: 0 8px 0 0;
+  z-index: 22;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 64px;
+  overflow: auto;
+  padding: 4px 10px;
+  border-top: 1px solid var(--ab-border);
+  background: rgba(6, 10, 16, .88);
+  color: var(--ab-text-muted);
+  font-family: var(--ab-mono);
+  font-size: 11px;
+  line-height: 1.45;
+}
+.gv-statusbar:empty { display: none; }
+.gv-statusbar > * { margin: 0; padding: 0; list-style-position: inside; }
 .gv-card {
   background: var(--ab-surface);
   border: 1px solid var(--ab-border);
