@@ -140,9 +140,10 @@ query($owner:String!, $name:String!, $number:Int!) {
             oid
             statusCheckRollup {
               contexts(first:100) {
-                pageInfo { hasNextPage }
+                totalCount
+                pageInfo { hasNextPage endCursor }
                 nodes {
-                  __typename
+                  __typename id
                   ... on CheckRun {
                     name status conclusion completedAt
                     checkSuite { app { databaseId slug } }
@@ -211,6 +212,40 @@ query($owner:String!, $name:String!, $number:Int!, $reviewsCursor:String!) {
           id databaseId state body submittedAt url
           commit { oid }
           author { __typename login ... on Bot { databaseId } }
+        }
+      }
+    }
+  }
+}
+"""
+
+STATUS_CONTEXTS_PAGE_QUERY = """
+query($owner:String!, $name:String!, $number:Int!, $statusCursor:String!) {
+  repository(owner:$owner, name:$name) {
+    pullRequest(number:$number) {
+      number headRefOid baseRefOid
+      commits(last:1) {
+        nodes {
+          commit {
+            oid
+            statusCheckRollup {
+              contexts(first:100, after:$statusCursor) {
+                totalCount
+                pageInfo { hasNextPage endCursor }
+                nodes {
+                  __typename id
+                  ... on CheckRun {
+                    name status conclusion completedAt
+                    checkSuite { app { databaseId slug } }
+                  }
+                  ... on StatusContext {
+                    context state createdAt
+                    creator { login }
+                  }
+                }
+              }
+            }
+          }
         }
       }
     }
@@ -302,6 +337,91 @@ def fetch_pr(token: str, owner: str, name: str, number: int) -> dict:
         "totalCount": total_count,
         "pageInfo": {"hasNextPage": False, "endCursor": cursor},
         "nodes": all_reviews,
+    }
+
+    commits = (pr.get("commits") or {}).get("nodes")
+    if not isinstance(commits, list) or len(commits) != 1 or not isinstance(commits[0], dict):
+        raise SystemExit("Latest PR commit status collection is missing or malformed")
+    commit = commits[0].get("commit")
+    if not isinstance(commit, dict) or commit.get("oid") != expected_identity[2]:
+        raise SystemExit("Required-check rollup is not bound to the exact PR head")
+    rollup = commit.get("statusCheckRollup")
+    if not isinstance(rollup, dict):
+        raise SystemExit("Required-check rollup is missing for the exact PR head")
+    status_total, all_statuses, has_next_status_page, status_cursor = review_page(
+        rollup.get("contexts"), "Exact-head status checks"
+    )
+    status_ids = [status.get("id") for status in all_statuses]
+    if any(not isinstance(status_id, str) or not status_id for status_id in status_ids):
+        raise SystemExit("Exact-head status checks contain a missing or malformed node id")
+    seen_status_ids = set(status_ids)
+    if len(seen_status_ids) != len(status_ids):
+        raise SystemExit("Exact-head status checks pagination returned duplicate node ids")
+    if has_next_status_page and not all_statuses:
+        raise SystemExit("Exact-head status checks pagination made no progress")
+    seen_status_cursors: set[str] = set()
+    status_page_count = 1
+    max_status_page_count = max(1, status_total + 1)
+    while has_next_status_page:
+        if status_page_count >= max_status_page_count:
+            raise SystemExit("Exact-head status checks pagination exceeded its safe page bound")
+        if status_cursor in seen_status_cursors:
+            raise SystemExit("Exact-head status checks pagination repeated a cursor")
+        seen_status_cursors.add(status_cursor)
+        status_page_data = graphql(
+            token,
+            STATUS_CONTEXTS_PAGE_QUERY,
+            {"owner": owner, "name": name, "number": number, "statusCursor": status_cursor},
+        )
+        status_page_pr = ((status_page_data.get("data") or {}).get("repository") or {}).get(
+            "pullRequest"
+        )
+        if not isinstance(status_page_pr, dict):
+            raise SystemExit(f"PR {owner}/{name}#{number} disappeared during status-check pagination")
+        status_page_identity = (
+            status_page_pr.get("number"),
+            status_page_pr.get("baseRefOid"),
+            status_page_pr.get("headRefOid"),
+        )
+        if status_page_identity != expected_identity:
+            raise SystemExit("PR identity changed during status-check pagination")
+        page_commits = (status_page_pr.get("commits") or {}).get("nodes")
+        if not isinstance(page_commits, list) or len(page_commits) != 1 or not isinstance(page_commits[0], dict):
+            raise SystemExit("Latest PR commit status collection is missing during pagination")
+        page_commit = page_commits[0].get("commit")
+        if not isinstance(page_commit, dict) or page_commit.get("oid") != expected_identity[2]:
+            raise SystemExit("Required-check page is not bound to the exact PR head")
+        page_rollup = page_commit.get("statusCheckRollup")
+        if not isinstance(page_rollup, dict):
+            raise SystemExit("Required-check rollup disappeared during pagination")
+        page_total, page_statuses, has_next_status_page, status_cursor = review_page(
+            page_rollup.get("contexts"), "Exact-head status checks"
+        )
+        if page_total != status_total:
+            raise SystemExit("Exact-head status checks totalCount changed during pagination")
+        if not page_statuses:
+            raise SystemExit("Exact-head status checks pagination made no progress")
+        page_status_ids = [status.get("id") for status in page_statuses]
+        if any(not isinstance(status_id, str) or not status_id for status_id in page_status_ids):
+            raise SystemExit("Exact-head status checks contain a missing or malformed node id")
+        if len(set(page_status_ids)) != len(page_status_ids) or seen_status_ids.intersection(page_status_ids):
+            raise SystemExit("Exact-head status checks pagination returned duplicate node ids")
+        seen_status_ids.update(page_status_ids)
+        all_statuses.extend(page_statuses)
+        status_page_count += 1
+        if len(all_statuses) > status_total or (
+            has_next_status_page and len(all_statuses) >= status_total
+        ):
+            raise SystemExit("Exact-head status checks pagination exceeded totalCount")
+    if len(all_statuses) != status_total:
+        raise SystemExit(
+            f"Exact-head status checks pagination returned {len(all_statuses)} of "
+            f"{status_total} checks"
+        )
+    rollup["contexts"] = {
+        "totalCount": status_total,
+        "pageInfo": {"hasNextPage": False, "endCursor": status_cursor},
+        "nodes": all_statuses,
     }
     return pr
 

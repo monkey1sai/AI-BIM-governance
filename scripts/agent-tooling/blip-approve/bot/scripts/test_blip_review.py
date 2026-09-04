@@ -126,6 +126,7 @@ def make_check(
 ) -> dict:
     return {
         "__typename": "CheckRun",
+        "id": f"CR_{name}_{completed_at}",
         "name": name,
         "status": status,
         "conclusion": conclusion,
@@ -346,7 +347,11 @@ def make_approval_pr(
                     "commit": {
                         "oid": head,
                         "statusCheckRollup": {
-                            "contexts": {"pageInfo": {"hasNextPage": False}, "nodes": checks}
+                            "contexts": {
+                                "totalCount": len(checks),
+                                "pageInfo": {"hasNextPage": False, "endCursor": None},
+                                "nodes": checks,
+                            }
                         },
                     }
                 }
@@ -421,7 +426,13 @@ def make_review_page(
     end_cursor: str | None,
     base: str = BASE,
     head: str = HEAD,
+    status_ids: list[str] | None = None,
+    status_total_count: int | None = None,
+    status_has_next_page: bool = False,
+    status_end_cursor: str | None = None,
 ) -> dict:
+    status_ids = [] if status_ids is None else status_ids
+    status_total_count = len(status_ids) if status_total_count is None else status_total_count
     return {
         "data": {
             "repository": {
@@ -437,10 +448,55 @@ def make_review_page(
                         },
                         "nodes": [{"id": review_id} for review_id in review_ids],
                     },
+                    "commits": {
+                        "nodes": [
+                            {
+                                "commit": {
+                                    "oid": head,
+                                    "statusCheckRollup": {
+                                        "contexts": {
+                                            "totalCount": status_total_count,
+                                            "pageInfo": {
+                                                "hasNextPage": status_has_next_page,
+                                                "endCursor": status_end_cursor,
+                                            },
+                                            "nodes": [
+                                                {"id": status_id, "__typename": "CheckRun"}
+                                                for status_id in status_ids
+                                            ],
+                                        }
+                                    },
+                                }
+                            }
+                        ]
+                    },
                 }
             }
         }
     }
+
+
+def make_status_page(
+    status_ids: list[str],
+    *,
+    total_count: int,
+    has_next_page: bool,
+    end_cursor: str | None,
+    base: str = BASE,
+    head: str = HEAD,
+) -> dict:
+    return make_review_page(
+        [],
+        total_count=0,
+        has_next_page=False,
+        end_cursor=None,
+        base=base,
+        head=head,
+        status_ids=status_ids,
+        status_total_count=total_count,
+        status_has_next_page=has_next_page,
+        status_end_cursor=end_cursor,
+    )
 
 
 class ReviewPaginationTests(unittest.TestCase):
@@ -566,6 +622,90 @@ class ReviewPaginationTests(unittest.TestCase):
         )
 
         self.assertNotEqual(blip.review_snapshot(original), blip.review_snapshot(replaced))
+
+    def test_fetch_pr_collects_more_than_one_hundred_status_contexts(self) -> None:
+        first_ids = [f"CR_{index:03d}" for index in range(100)]
+        with patch.object(
+            blip,
+            "graphql",
+            side_effect=[
+                make_review_page(
+                    [],
+                    total_count=0,
+                    has_next_page=False,
+                    end_cursor=None,
+                    status_ids=first_ids,
+                    status_total_count=101,
+                    status_has_next_page=True,
+                    status_end_cursor="status-cursor-100",
+                ),
+                make_status_page(
+                    ["CR_100"],
+                    total_count=101,
+                    has_next_page=False,
+                    end_cursor="status-cursor-101",
+                ),
+            ],
+        ) as graphql_mock:
+            pr = blip.fetch_pr("test-token", "monkey1sai", "AI-BIM-governance", PR_NUMBER)
+
+        self.assertEqual(len(blip.status_context_nodes(pr)), 101)
+        self.assertEqual(
+            graphql_mock.call_args_list[1].args[2]["statusCursor"],
+            "status-cursor-100",
+        )
+
+    def test_fetch_pr_rejects_status_context_count_drift(self) -> None:
+        with patch.object(
+            blip,
+            "graphql",
+            side_effect=[
+                make_review_page(
+                    [],
+                    total_count=0,
+                    has_next_page=False,
+                    end_cursor=None,
+                    status_ids=["CR_000"],
+                    status_total_count=2,
+                    status_has_next_page=True,
+                    status_end_cursor="status-cursor-1",
+                ),
+                make_status_page(
+                    ["CR_001"],
+                    total_count=3,
+                    has_next_page=False,
+                    end_cursor="status-cursor-2",
+                ),
+            ],
+        ):
+            with self.assertRaisesRegex(SystemExit, "totalCount changed"):
+                blip.fetch_pr("test-token", "monkey1sai", "AI-BIM-governance", PR_NUMBER)
+
+    def test_fetch_pr_rejects_duplicate_status_context_ids(self) -> None:
+        with patch.object(
+            blip,
+            "graphql",
+            side_effect=[
+                make_review_page(
+                    [],
+                    total_count=0,
+                    has_next_page=False,
+                    end_cursor=None,
+                    status_ids=["CR_000"],
+                    status_total_count=2,
+                    status_has_next_page=True,
+                    status_end_cursor="status-cursor-1",
+                ),
+                make_status_page(
+                    ["CR_000"],
+                    total_count=2,
+                    has_next_page=False,
+                    end_cursor="status-cursor-2",
+                ),
+            ],
+        ):
+            with self.assertRaisesRegex(SystemExit, "duplicate node ids"):
+                blip.fetch_pr("test-token", "monkey1sai", "AI-BIM-governance", PR_NUMBER)
 
 
 class CodexThreadFixTests(unittest.TestCase):
