@@ -292,6 +292,11 @@ jobs:
         shell: pwsh
         run: pwsh -NoProfile -NonInteractive -Command "node --test scripts/tests/test-png-preflight.mjs"
 
+      - name: Test base-sync policy, verification tiers, review convergence join and CI parity contracts
+        if: matrix.shard == 'core'
+        shell: pwsh
+        run: pwsh -NoProfile -NonInteractive -Command "node --test scripts/tests/test-base-sync-policy.mjs scripts/tests/test-verification-tiers.mjs scripts/tests/test-review-disposition-mapping.mjs scripts/tests/test-review-finding-registry.mjs scripts/tests/test-pr-convergence-state.mjs scripts/tests/test-actions-baseline.mjs scripts/tests/test-ci-local-parity.mjs"
+
   new-run-boundary:
     name: agent-governance NEW_RUN (${{ matrix.platform }})
     needs: scope
