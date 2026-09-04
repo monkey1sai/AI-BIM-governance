@@ -700,9 +700,16 @@ function isExpectedNativeResult(
             && requestedPrimPath !== ""
             && result.primPath === requestedPrimPath
             && Array.isArray(result.children)
-            && result.children.every(isRecord);
+            && result.children.every(isNativeChildPrimRecord);
     }
     return false;
+}
+
+// 契約 `children.items: object` 排除陣列；handler 之後會把元素當 USDPrimType 用、
+// _makePickable 直接取 `prim.path`，所以這裡就要求「非陣列物件且 path 為字串」，
+// 不讓 `[[]]` 或缺 path 的元素被補上 trace 後進 handler。
+function isNativeChildPrimRecord(value: unknown): boolean {
+    return isRecord(value) && !Array.isArray(value) && typeof value.path === "string";
 }
 
 function appStreamResultToAppEvent(

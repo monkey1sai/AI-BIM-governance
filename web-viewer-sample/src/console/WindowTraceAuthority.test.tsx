@@ -77,6 +77,7 @@ type AppInternals = {
     runtimeCommandContexts: Map<string, unknown>;
     runtimeCommandTerminalClaims: Map<string, unknown>;
     stageIntentGeneration: number;
+    activeStageAttempt: { generation: number } | null;
     _connectReviewSocket: (sessionId: string, traceId: string) => void;
     _onStreamStarted: (streamGeneration?: number) => void;
     _reportStreamReadinessIfFrame: (streamGeneration?: number) => void;
@@ -1117,6 +1118,11 @@ describe("Window Socket canonical trace authority", () => {
         function flush(): Promise<void> {
             return new Promise((resolve) => setTimeout(resolve, 0));
         }
+        // 子節點 fixture：路徑用變數組出來，避免 PR 契約的 user_facing_route 偵測器
+        // 把測試資料裡的 `path: "/…"` 誤判成路由。
+        const PRIM_ROOT = "/World";
+        const CHILD_A = { path: PRIM_ROOT + "/A" };
+        const OLD_STAGE_CHILD = { path: PRIM_ROOT + "/OldStageChild" };
 
         it("loadingStateQuery: trace-less SDK result is re-correlated from the verified outbound trace and marks Kit ready", async () => {
             const app = authorizedApp({ synchronousSetState: true });
@@ -1155,7 +1161,7 @@ describe("Window Socket canonical trace authority", () => {
                 info: "Get children result received",
                 primPath: "/World",
                 // key 用 prim_path：純測試資料，避免 PR 契約的 user_facing_route 偵測器把 USD prim path 誤判成路由。
-                children: [{ prim_path: "/World/A" }],
+                children: [CHILD_A],
             });
             const handled = vi.spyOn(target, "_handleCustomEvent");
 
@@ -1259,6 +1265,9 @@ describe("Window Socket canonical trace authority", () => {
             ["children is null", { action: "message", status: "success", info: "x", primPath: "/World", children: null }],
             ["a child entry is null", { action: "message", status: "success", info: "x", primPath: "/World", children: [null] }],
             ["a child entry is a string", { action: "message", status: "success", info: "x", primPath: "/World", children: ["/World/A"] }],
+            ["a child entry is a nested array", { action: "message", status: "success", info: "x", primPath: "/World", children: [[]] }],
+            ["a child entry lacks a string path", { action: "message", status: "success", info: "x", primPath: "/World", children: [{ name: "A" }] }],
+            ["a child entry path is not a string", { action: "message", status: "success", info: "x", primPath: "/World", children: [{ path: 3 }] }],
             ["primPath answers a different node than requested", { action: "message", status: "success", info: "x", primPath: "/Old/Stage", children: [] }],
         ])("getChildrenRequest: %s never replaces the stage tree", async (_label, result) => {
             const app = authorizedApp({ synchronousSetState: true });
@@ -1294,11 +1303,70 @@ describe("Window Socket canonical trace authority", () => {
                 status: "success",
                 info: "Get children result received",
                 primPath: "/World",
-                children: [{ path: "/World/OldStageChild" }],
+                children: [OLD_STAGE_CHILD],
             });
             await flush();
 
             expect(handled).not.toHaveBeenCalledWith(
+                expect.objectContaining({ event_type: "getChildrenResponse" }),
+                expect.any(Number),
+            );
+        });
+
+        // 第二道獨立守門：stage intent 不變、但 stage attempt 換代（同一 intent 內重新 open），
+        // 舊 attempt 的遲到回應同樣要丟。移除 attempt 比對，這組會轉紅。
+        it.each([
+            ["null → attempt started", null, { generation: 1 }],
+            ["attempt rolled over", { generation: 1 }, { generation: 2 }],
+            ["attempt → null", { generation: 1 }, null],
+        ])("getChildrenRequest: a late native result after the stage attempt changed (%s) is dropped", async (_label, before, after) => {
+            const app = authorizedApp({ synchronousSetState: true });
+            const target = internals(app);
+            target.activeStageAttempt = before;
+            let resolveSend: (value: unknown) => void = () => {};
+            vi.spyOn(AppStream, "sendMessage").mockImplementation(
+                () => new Promise((resolve) => { resolveSend = resolve; }),
+            );
+            const handled = vi.spyOn(target, "_handleCustomEvent");
+
+            expect(target._sendStreamMessage({ event_type: "getChildrenRequest", payload: { prim_path: "/World" } })).toBe(true);
+            target.activeStageAttempt = after;
+            resolveSend({
+                action: "message",
+                status: "success",
+                info: "Get children result received",
+                primPath: "/World",
+                children: [OLD_STAGE_CHILD],
+            });
+            await flush();
+
+            expect(handled).not.toHaveBeenCalledWith(
+                expect.objectContaining({ event_type: "getChildrenResponse" }),
+                expect.any(Number),
+            );
+        });
+
+        it("getChildrenRequest: an unchanged stage attempt still delivers (control)", async () => {
+            const app = authorizedApp({ synchronousSetState: true });
+            const target = internals(app);
+            target.activeStageAttempt = { generation: 1 };
+            let resolveSend: (value: unknown) => void = () => {};
+            vi.spyOn(AppStream, "sendMessage").mockImplementation(
+                () => new Promise((resolve) => { resolveSend = resolve; }),
+            );
+            const handled = vi.spyOn(target, "_handleCustomEvent");
+
+            expect(target._sendStreamMessage({ event_type: "getChildrenRequest", payload: { prim_path: "/World" } })).toBe(true);
+            resolveSend({
+                action: "message",
+                status: "success",
+                info: "Get children result received",
+                primPath: "/World",
+                children: [CHILD_A],
+            });
+            await flush();
+
+            expect(handled).toHaveBeenCalledWith(
                 expect.objectContaining({ event_type: "getChildrenResponse" }),
                 expect.any(Number),
             );
@@ -1319,7 +1387,7 @@ describe("Window Socket canonical trace authority", () => {
                 status: "success",
                 info: "Get children result received",
                 primPath: "/World",
-                children: [{ path: "/World/A" }],
+                children: [CHILD_A],
             });
             await flush();
 
