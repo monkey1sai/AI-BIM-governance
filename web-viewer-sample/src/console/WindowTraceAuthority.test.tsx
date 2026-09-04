@@ -76,6 +76,8 @@ type AppInternals = {
     reviewSocketEpoch: number;
     runtimeCommandContexts: Map<string, unknown>;
     runtimeCommandTerminalClaims: Map<string, unknown>;
+    stageIntentGeneration: number;
+    activeStageAttempt: { generation: number; status?: string } | null;
     _connectReviewSocket: (sessionId: string, traceId: string) => void;
     _onStreamStarted: (streamGeneration?: number) => void;
     _reportStreamReadinessIfFrame: (streamGeneration?: number) => void;
@@ -1106,5 +1108,584 @@ describe("Window Socket canonical trace authority", () => {
         } finally {
             player.remove();
         }
+    });
+
+    // #783：SDK 對 native 指令會自己攔下 Kit 的同名回應，經 fromLoadingStateEvent /
+    // fromGetChildrenEvent 重組後 resolve sendMessage 的 promise——trace_id 在這一步被剝掉。
+    // 之前 appStreamResultToAppEvent 只認 result.trace_id，等於把每一則正常回應靜默丟掉：
+    // isKitReady 永遠 false、永不送 openStageRequest、3D 全黑（181 與本機皆重現）。
+    describe("native SDK results without trace_id (#783)", () => {
+        function flush(): Promise<void> {
+            return new Promise((resolve) => setTimeout(resolve, 0));
+        }
+        // 子節點 fixture：prim 路徑用變數組出來——PR 契約的 user_facing_route 偵測器會把
+        // 「路徑鍵直接跟著以斜線開頭的字串常值」誤判成路由宣告（連註解裡的字面也算）。
+        const PRIM_ROOT = "/World";
+        const CHILD_A = { path: PRIM_ROOT + "/A" };
+        const OLD_STAGE_CHILD = { path: PRIM_ROOT + "/OldStageChild" };
+
+        it("loadingStateQuery: trace-less SDK result is re-correlated from the verified outbound trace and marks Kit ready", async () => {
+            const app = authorizedApp({ synchronousSetState: true });
+            const target = internals(app);
+            // 逐字對齊 SDK LogFormatter.fromLoadingStateEvent 的回傳形狀：沒有 trace_id。
+            vi.spyOn(AppStream, "sendMessage").mockResolvedValue({
+                action: "message",
+                status: "success",
+                info: "Loading state result received",
+                loadingState: "idle",
+                url: "",
+            });
+            const handled = vi.spyOn(target, "_handleCustomEvent");
+            // 無 active attempt 時，_canApplyLoadingStateResponse 只認已開串流的探測。
+            target.state = { ...target.state, isKitReady: false, webrtcLifecycleStatus: "started" };
+
+            expect(target._sendStreamMessage({ event_type: "loadingStateQuery", payload: {} })).toBe(true);
+            await flush();
+
+            expect(handled).toHaveBeenCalledWith(
+                {
+                    event_type: "loadingStateResponse",
+                    payload: { trace_id: TRACE_ID, loading_state: "idle", url: "" },
+                },
+                expect.any(Number),
+            );
+            expect(target.state.isKitReady).toBe(true);
+        });
+
+        it("getChildrenRequest: the same SDK strip is re-correlated the same way", async () => {
+            const app = authorizedApp({ synchronousSetState: true });
+            const target = internals(app);
+            vi.spyOn(AppStream, "sendMessage").mockResolvedValue({
+                action: "message",
+                status: "success",
+                info: "Get children result received",
+                primPath: "/World",
+                // key 用 prim_path：純測試資料，避免 PR 契約的 user_facing_route 偵測器把 USD prim path 誤判成路由。
+                children: [CHILD_A],
+            });
+            const handled = vi.spyOn(target, "_handleCustomEvent");
+
+            expect(target._sendStreamMessage({ event_type: "getChildrenRequest", payload: { prim_path: "/World" } })).toBe(true);
+            await flush();
+
+            expect(handled).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    event_type: "getChildrenResponse",
+                    payload: expect.objectContaining({ trace_id: TRACE_ID, prim_path: "/World" }),
+                }),
+                expect.any(Number),
+            );
+        });
+
+        it("a trace_id carried by the result still takes precedence over the outbound trace", async () => {
+            const app = authorizedApp({ synchronousSetState: true });
+            const target = internals(app);
+            // result 與 outbound 用**不同**的 trace，才真的鎖住「result 優先」；
+            // 若把 fallback 兩個運算元對調，這裡會拿到 TRACE_ID 而非 result 的值。
+            const RESULT_TRACE = "ifcready_result_trace_wins";
+            vi.spyOn(AppStream, "sendMessage").mockResolvedValue({
+                action: "message",
+                status: "success",
+                info: "Loading state result received",
+                trace_id: RESULT_TRACE,
+                loadingState: "busy",
+                url: "stage://model.usdc",
+            });
+            const handled = vi.spyOn(target, "_handleCustomEvent");
+
+            expect(target._sendStreamMessage({ event_type: "loadingStateQuery", payload: {} })).toBe(true);
+            await flush();
+
+            expect(handled).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    event_type: "loadingStateResponse",
+                    payload: expect.objectContaining({ trace_id: RESULT_TRACE, loading_state: "busy" }),
+                }),
+                expect.any(Number),
+            );
+        });
+
+        it.each([
+            ["empty string", ""],
+            ["null", null],
+            ["non-string", 42],
+        ])("an explicitly malformed inbound trace_id (%s) fails closed instead of borrowing the outbound trace", async (_label, badTrace) => {
+            const app = authorizedApp({ synchronousSetState: true });
+            const target = internals(app);
+            vi.spyOn(AppStream, "sendMessage").mockResolvedValue({
+                action: "message",
+                status: "success",
+                info: "Loading state result received",
+                trace_id: badTrace,
+                loadingState: "idle",
+                url: "",
+            });
+            const handled = vi.spyOn(target, "_handleCustomEvent");
+            target.state = { ...target.state, isKitReady: false, webrtcLifecycleStatus: "started" };
+
+            expect(target._sendStreamMessage({ event_type: "loadingStateQuery", payload: {} })).toBe(true);
+            await flush();
+
+            expect(handled).not.toHaveBeenCalledWith(
+                expect.objectContaining({ event_type: "loadingStateResponse" }),
+                expect.any(Number),
+            );
+            expect(target.state.isKitReady).toBe(false);
+        });
+
+        it.each([
+            ["a warning ACK", { action: "message", status: "warning", info: "stream busy" }],
+            ["an error ACK", { action: "message", status: "error", info: "boom" }],
+            ["a success ACK without the loadingState field", { action: "message", status: "success", info: "generic ack" }],
+        ])("loadingStateQuery: %s is not authenticated with the outbound trace", async (_label, result) => {
+            const app = authorizedApp({ synchronousSetState: true });
+            const target = internals(app);
+            vi.spyOn(AppStream, "sendMessage").mockResolvedValue(result);
+            const handled = vi.spyOn(target, "_handleCustomEvent");
+            target.state = { ...target.state, isKitReady: false, webrtcLifecycleStatus: "started" };
+
+            expect(target._sendStreamMessage({ event_type: "loadingStateQuery", payload: {} })).toBe(true);
+            await flush();
+
+            expect(handled).not.toHaveBeenCalledWith(
+                expect.objectContaining({ event_type: "loadingStateResponse" }),
+                expect.any(Number),
+            );
+            expect(target.state.isKitReady).toBe(false);
+        });
+
+        // 兩個欄位是各自獨立的守門（&&）：只給其中一個、或型別錯，都必須擋下。
+        // 把 && 改成 ||、或放寬任一 typeof 檢查，這組會轉紅。
+        it.each([
+            ["generic ack without primPath/children", { action: "message", status: "success", info: "generic ack" }],
+            ["only primPath (no children)", { action: "message", status: "success", info: "x", primPath: "/World" }],
+            ["only children (no primPath)", { action: "message", status: "success", info: "x", children: [] }],
+            ["primPath is not a string", { action: "message", status: "success", info: "x", primPath: 7, children: [] }],
+            ["children is not an array", { action: "message", status: "success", info: "x", primPath: "/World", children: "nope" }],
+            ["children is null", { action: "message", status: "success", info: "x", primPath: "/World", children: null }],
+            ["a child entry is null", { action: "message", status: "success", info: "x", primPath: "/World", children: [null] }],
+            ["a child entry is a string", { action: "message", status: "success", info: "x", primPath: "/World", children: ["/World/A"] }],
+            ["a child entry is a nested array", { action: "message", status: "success", info: "x", primPath: "/World", children: [[]] }],
+            ["a child entry lacks a string path", { action: "message", status: "success", info: "x", primPath: "/World", children: [{ name: "A" }] }],
+            ["a child entry path is not a string", { action: "message", status: "success", info: "x", primPath: "/World", children: [{ path: 3 }] }],
+            ["a nested children entry is null", { action: "message", status: "success", info: "x", primPath: "/World", children: [{ ...CHILD_A, children: [null] }] }],
+            ["a nested children field is not an array", { action: "message", status: "success", info: "x", primPath: "/World", children: [{ ...CHILD_A, children: "x" }] }],
+            ["primPath answers a different node than requested", { action: "message", status: "success", info: "x", primPath: "/Old/Stage", children: [] }],
+        ])("getChildrenRequest: %s never replaces the stage tree", async (_label, result) => {
+            const app = authorizedApp({ synchronousSetState: true });
+            const target = internals(app);
+            vi.spyOn(AppStream, "sendMessage").mockResolvedValue(result);
+            const handled = vi.spyOn(target, "_handleCustomEvent");
+
+            expect(target._sendStreamMessage({ event_type: "getChildrenRequest", payload: { prim_path: "/World" } })).toBe(true);
+            await flush();
+
+            expect(handled).not.toHaveBeenCalledWith(
+                expect.objectContaining({ event_type: "getChildrenResponse" }),
+                expect.any(Number),
+            );
+        });
+
+        // 跨 stage 切換的遲到回應：送出後 stage intent 變了，回來的 getChildrenResponse 必須丟棄，
+        // 否則舊 stage 的 children 會被當成新樹的 root 回應整棵換掉。
+        it("getChildrenRequest: a late native result after the stage intent changed is dropped", async () => {
+            const app = authorizedApp({ synchronousSetState: true });
+            const target = internals(app);
+            let resolveSend: (value: unknown) => void = () => {};
+            vi.spyOn(AppStream, "sendMessage").mockImplementation(
+                () => new Promise((resolve) => { resolveSend = resolve; }),
+            );
+            const handled = vi.spyOn(target, "_handleCustomEvent");
+
+            expect(target._sendStreamMessage({ event_type: "getChildrenRequest", payload: { prim_path: "/World" } })).toBe(true);
+            // 使用者切換模型：stage intent 前進。
+            target.stageIntentGeneration += 1;
+            resolveSend({
+                action: "message",
+                status: "success",
+                info: "Get children result received",
+                primPath: "/World",
+                children: [OLD_STAGE_CHILD],
+            });
+            await flush();
+
+            expect(handled).not.toHaveBeenCalledWith(
+                expect.objectContaining({ event_type: "getChildrenResponse" }),
+                expect.any(Number),
+            );
+        });
+
+        // 第二道獨立守門：stage intent 不變、但 stage attempt 換代（同一 intent 內重新 open），
+        // 舊 attempt 的遲到回應同樣要丟。移除 attempt 比對，這組會轉紅。
+        it.each([
+            ["null → attempt started", null, { generation: 1 }],
+            ["attempt rolled over", { generation: 1 }, { generation: 2 }],
+            ["attempt → null", { generation: 1 }, null],
+        ])("getChildrenRequest: a late native result after the stage attempt changed (%s) is dropped", async (_label, before, after) => {
+            const app = authorizedApp({ synchronousSetState: true });
+            const target = internals(app);
+            target.activeStageAttempt = before;
+            let resolveSend: (value: unknown) => void = () => {};
+            vi.spyOn(AppStream, "sendMessage").mockImplementation(
+                () => new Promise((resolve) => { resolveSend = resolve; }),
+            );
+            const handled = vi.spyOn(target, "_handleCustomEvent");
+
+            expect(target._sendStreamMessage({ event_type: "getChildrenRequest", payload: { prim_path: "/World" } })).toBe(true);
+            target.activeStageAttempt = after;
+            resolveSend({
+                action: "message",
+                status: "success",
+                info: "Get children result received",
+                primPath: "/World",
+                children: [OLD_STAGE_CHILD],
+            });
+            await flush();
+
+            expect(handled).not.toHaveBeenCalledWith(
+                expect.objectContaining({ event_type: "getChildrenResponse" }),
+                expect.any(Number),
+            );
+        });
+
+        it("getChildrenRequest: an unchanged stage attempt still delivers (control)", async () => {
+            const app = authorizedApp({ synchronousSetState: true });
+            const target = internals(app);
+            target.activeStageAttempt = { generation: 1 };
+            let resolveSend: (value: unknown) => void = () => {};
+            vi.spyOn(AppStream, "sendMessage").mockImplementation(
+                () => new Promise((resolve) => { resolveSend = resolve; }),
+            );
+            const handled = vi.spyOn(target, "_handleCustomEvent");
+
+            expect(target._sendStreamMessage({ event_type: "getChildrenRequest", payload: { prim_path: "/World" } })).toBe(true);
+            resolveSend({
+                action: "message",
+                status: "success",
+                info: "Get children result received",
+                primPath: "/World",
+                children: [CHILD_A],
+            });
+            await flush();
+
+            expect(handled).toHaveBeenCalledWith(
+                expect.objectContaining({ event_type: "getChildrenResponse" }),
+                expect.any(Number),
+            );
+        });
+
+        // 同一 stage 內、非 root 節點已不在樹上：handler 會把它當 root 回應整棵換掉，必須擋在前面。
+        it("getChildrenRequest: a non-root node absent from the current tree is dropped (same stage)", async () => {
+            const app = authorizedApp({ synchronousSetState: true });
+            const target = internals(app);
+            target.state = { ...target.state, usdPrims: [{ path: PRIM_ROOT + "/Existing" }] };
+            vi.spyOn(AppStream, "sendMessage").mockResolvedValue({
+                action: "message",
+                status: "success",
+                info: "Get children result received",
+                primPath: PRIM_ROOT + "/Gone",
+                children: [OLD_STAGE_CHILD],
+            });
+            const handled = vi.spyOn(target, "_handleCustomEvent");
+
+            expect(target._sendStreamMessage({ event_type: "getChildrenRequest", payload: { prim_path: PRIM_ROOT + "/Gone" } })).toBe(true);
+            await flush();
+
+            expect(handled).not.toHaveBeenCalledWith(
+                expect.objectContaining({ event_type: "getChildrenResponse" }),
+                expect.any(Number),
+            );
+        });
+
+        // 守門只圍「借用 outbound trace」的路：帶真實 inbound trace 的回應即使指到樹上不存在的
+        // 非 root 節點，也維持既有行為照常送進 handler。把 `borrowedTrace &&` 拿掉，這條會轉紅。
+        it("getChildrenRequest: a real inbound trace bypasses the absent-node drop (preserved behaviour)", async () => {
+            const app = authorizedApp({ synchronousSetState: true });
+            const target = internals(app);
+            target.state = { ...target.state, usdPrims: [{ path: PRIM_ROOT + "/Existing" }] };
+            vi.spyOn(AppStream, "sendMessage").mockResolvedValue({
+                action: "message",
+                status: "success",
+                info: "Get children result received",
+                trace_id: TRACE_ID,
+                primPath: PRIM_ROOT + "/Gone",
+                children: [CHILD_A],
+            });
+            const handled = vi.spyOn(target, "_handleCustomEvent");
+
+            expect(target._sendStreamMessage({ event_type: "getChildrenRequest", payload: { prim_path: PRIM_ROOT + "/Gone" } })).toBe(true);
+            await flush();
+
+            expect(handled).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    event_type: "getChildrenResponse",
+                    payload: expect.objectContaining({ trace_id: TRACE_ID, prim_path: PRIM_ROOT + "/Gone" }),
+                }),
+                expect.any(Number),
+            );
+        });
+
+        it("getChildrenRequest: a non-root node still present in the tree is delivered", async () => {
+            const app = authorizedApp({ synchronousSetState: true });
+            const target = internals(app);
+            target.state = { ...target.state, usdPrims: [{ path: PRIM_ROOT + "/Existing" }] };
+            vi.spyOn(AppStream, "sendMessage").mockResolvedValue({
+                action: "message",
+                status: "success",
+                info: "Get children result received",
+                primPath: PRIM_ROOT + "/Existing",
+                children: [CHILD_A],
+            });
+            const handled = vi.spyOn(target, "_handleCustomEvent");
+
+            expect(target._sendStreamMessage({ event_type: "getChildrenRequest", payload: { prim_path: PRIM_ROOT + "/Existing" } })).toBe(true);
+            await flush();
+
+            expect(handled).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    event_type: "getChildrenResponse",
+                    payload: expect.objectContaining({ prim_path: PRIM_ROOT + "/Existing" }),
+                }),
+                expect.any(Number),
+            );
+        });
+
+        it("getChildrenRequest: nested valid children are accepted", async () => {
+            const app = authorizedApp({ synchronousSetState: true });
+            const target = internals(app);
+            target.state = { ...target.state, usdPrims: [] };
+            vi.spyOn(AppStream, "sendMessage").mockResolvedValue({
+                action: "message",
+                status: "success",
+                info: "Get children result received",
+                primPath: PRIM_ROOT,
+                children: [{ path: PRIM_ROOT + "/A", children: [{ path: PRIM_ROOT + "/A/B", children: [] }] }],
+            });
+            const handled = vi.spyOn(target, "_handleCustomEvent");
+
+            expect(target._sendStreamMessage({ event_type: "getChildrenRequest", payload: { prim_path: PRIM_ROOT } })).toBe(true);
+            await flush();
+
+            expect(handled).toHaveBeenCalledWith(
+                expect.objectContaining({ event_type: "getChildrenResponse" }),
+                expect.any(Number),
+            );
+        });
+
+        it("getChildrenRequest: the USD pseudo-root '/' is treated as a root request", async () => {
+            const app = authorizedApp({ synchronousSetState: true });
+            const target = internals(app);
+            target.state = { ...target.state, usdPrims: [] };
+            vi.spyOn(AppStream, "sendMessage").mockResolvedValue({
+                action: "message",
+                status: "success",
+                info: "Get children result received",
+                primPath: "/",
+                children: [CHILD_A],
+            });
+            const handled = vi.spyOn(target, "_handleCustomEvent");
+
+            expect(target._sendStreamMessage({ event_type: "getChildrenRequest", payload: { prim_path: "/" } })).toBe(true);
+            await flush();
+
+            expect(handled).toHaveBeenCalledWith(
+                expect.objectContaining({ event_type: "getChildrenResponse" }),
+                expect.any(Number),
+            );
+        });
+
+        // 兄弟節點數量不得影響驗證：Array.every 的 index 若滲入 depth，第 33 個兄弟會被誤拒。
+        it("getChildrenRequest: a root result with 40 top-level siblings (the 33rd carrying children: []) is accepted", async () => {
+            const app = authorizedApp({ synchronousSetState: true });
+            const target = internals(app);
+            target.state = { ...target.state, usdPrims: [] };
+            const siblings = Array.from({ length: 40 }, (_, i) => (
+                i === 32 ? { path: PRIM_ROOT + "/S" + i, children: [] } : { path: PRIM_ROOT + "/S" + i }
+            ));
+            vi.spyOn(AppStream, "sendMessage").mockResolvedValue({
+                action: "message",
+                status: "success",
+                info: "Get children result received",
+                primPath: PRIM_ROOT,
+                children: siblings,
+            });
+            const handled = vi.spyOn(target, "_handleCustomEvent");
+
+            expect(target._sendStreamMessage({ event_type: "getChildrenRequest", payload: { prim_path: PRIM_ROOT } })).toBe(true);
+            await flush();
+
+            expect(handled).toHaveBeenCalledWith(
+                expect.objectContaining({ event_type: "getChildrenResponse" }),
+                expect.any(Number),
+            );
+        });
+
+        // 深度邊界：單鏈 32 層（含 root 子節點為第 1 層）放行，第 33 層拒絕；
+        // 葉節點「沒有 children 欄位」與「children: []」都算合法。
+        function chain(depth: number): Record<string, unknown> {
+            let node: Record<string, unknown> = { path: PRIM_ROOT + "/L" + depth, children: [] };
+            for (let d = depth - 1; d >= 1; d -= 1) {
+                node = { path: PRIM_ROOT + "/L" + d, children: [node] };
+            }
+            return node;
+        }
+        it.each([
+            ["a 32-level single-child chain is accepted", 32, true],
+            ["a 33-level single-child chain is rejected", 33, false],
+        ])("getChildrenRequest: %s", async (_label, depth, delivered) => {
+            const app = authorizedApp({ synchronousSetState: true });
+            const target = internals(app);
+            target.state = { ...target.state, usdPrims: [] };
+            vi.spyOn(AppStream, "sendMessage").mockResolvedValue({
+                action: "message",
+                status: "success",
+                info: "Get children result received",
+                primPath: PRIM_ROOT,
+                children: [chain(depth)],
+            });
+            const handled = vi.spyOn(target, "_handleCustomEvent");
+
+            expect(target._sendStreamMessage({ event_type: "getChildrenRequest", payload: { prim_path: PRIM_ROOT } })).toBe(true);
+            await flush();
+
+            const matcher = expect.objectContaining({ event_type: "getChildrenResponse" });
+            if (delivered) {
+                expect(handled).toHaveBeenCalledWith(matcher, expect.any(Number));
+            } else {
+                expect(handled).not.toHaveBeenCalledWith(matcher, expect.any(Number));
+            }
+        });
+
+        it("getChildrenRequest: a request issued while the attempt is already terminal is dropped", async () => {
+            const app = authorizedApp({ synchronousSetState: true });
+            const target = internals(app);
+            target.activeStageAttempt = { generation: 1, status: "terminal" };
+            vi.spyOn(AppStream, "sendMessage").mockResolvedValue({
+                action: "message",
+                status: "success",
+                info: "Get children result received",
+                primPath: "/World",
+                children: [CHILD_A],
+            });
+            const handled = vi.spyOn(target, "_handleCustomEvent");
+
+            expect(target._sendStreamMessage({ event_type: "getChildrenRequest", payload: { prim_path: "/World" } })).toBe(true);
+            await flush();
+
+            expect(handled).not.toHaveBeenCalledWith(
+                expect.objectContaining({ event_type: "getChildrenResponse" }),
+                expect.any(Number),
+            );
+        });
+
+        it("getChildrenRequest: a late native result after the stage attempt turned terminal is dropped", async () => {
+            const app = authorizedApp({ synchronousSetState: true });
+            const target = internals(app);
+            target.activeStageAttempt = { generation: 1, status: "pending" };
+            let resolveSend: (value: unknown) => void = () => {};
+            vi.spyOn(AppStream, "sendMessage").mockImplementation(
+                () => new Promise((resolve) => { resolveSend = resolve; }),
+            );
+            const handled = vi.spyOn(target, "_handleCustomEvent");
+
+            expect(target._sendStreamMessage({ event_type: "getChildrenRequest", payload: { prim_path: "/World" } })).toBe(true);
+            // 同一個 attempt 失敗／逾時：只有 status 變 terminal，generation 不動。
+            target.activeStageAttempt = { generation: 1, status: "terminal" };
+            resolveSend({
+                action: "message",
+                status: "success",
+                info: "Get children result received",
+                primPath: "/World",
+                children: [CHILD_A],
+            });
+            await flush();
+
+            expect(handled).not.toHaveBeenCalledWith(
+                expect.objectContaining({ event_type: "getChildrenResponse" }),
+                expect.any(Number),
+            );
+        });
+
+        it("getChildrenRequest: the root request is delivered even when the tree is empty", async () => {
+            const app = authorizedApp({ synchronousSetState: true });
+            const target = internals(app);
+            target.state = { ...target.state, usdPrims: [] };
+            vi.spyOn(AppStream, "sendMessage").mockResolvedValue({
+                action: "message",
+                status: "success",
+                info: "Get children result received",
+                primPath: PRIM_ROOT,
+                children: [CHILD_A],
+            });
+            const handled = vi.spyOn(target, "_handleCustomEvent");
+
+            expect(target._sendStreamMessage({ event_type: "getChildrenRequest", payload: { prim_path: PRIM_ROOT } })).toBe(true);
+            await flush();
+
+            expect(handled).toHaveBeenCalledWith(
+                expect.objectContaining({ event_type: "getChildrenResponse" }),
+                expect.any(Number),
+            );
+        });
+
+        it("getChildrenRequest: a native result within the same stage intent is still delivered (control)", async () => {
+            const app = authorizedApp({ synchronousSetState: true });
+            const target = internals(app);
+            let resolveSend: (value: unknown) => void = () => {};
+            vi.spyOn(AppStream, "sendMessage").mockImplementation(
+                () => new Promise((resolve) => { resolveSend = resolve; }),
+            );
+            const handled = vi.spyOn(target, "_handleCustomEvent");
+
+            expect(target._sendStreamMessage({ event_type: "getChildrenRequest", payload: { prim_path: "/World" } })).toBe(true);
+            resolveSend({
+                action: "message",
+                status: "success",
+                info: "Get children result received",
+                primPath: "/World",
+                children: [CHILD_A],
+            });
+            await flush();
+
+            expect(handled).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    event_type: "getChildrenResponse",
+                    payload: expect.objectContaining({ trace_id: TRACE_ID, prim_path: "/World" }),
+                }),
+                expect.any(Number),
+            );
+        });
+
+        // loadingState 必須是契約允許的字串（idle|busy）：非字串、空字串、契約外的值都要擋。
+        it.each([
+            ["a number", 1],
+            ["null", null],
+            ["an object", { state: "idle" }],
+            ["a boolean", true],
+            ["an empty string", ""],
+            ["a value outside the contract (failed)", "failed"],
+            ["a value outside the contract (Idle, wrong case)", "Idle"],
+        ])("loadingStateQuery: success result with an invalid loadingState (%s) is not authenticated", async (_label, loadingState) => {
+            const app = authorizedApp({ synchronousSetState: true });
+            const target = internals(app);
+            vi.spyOn(AppStream, "sendMessage").mockResolvedValue({
+                action: "message",
+                status: "success",
+                info: "Loading state result received",
+                loadingState,
+                url: "",
+            });
+            const handled = vi.spyOn(target, "_handleCustomEvent");
+            target.state = { ...target.state, isKitReady: false, webrtcLifecycleStatus: "started" };
+
+            expect(target._sendStreamMessage({ event_type: "loadingStateQuery", payload: {} })).toBe(true);
+            await flush();
+
+            expect(handled).not.toHaveBeenCalledWith(
+                expect.objectContaining({ event_type: "loadingStateResponse" }),
+                expect.any(Number),
+            );
+            expect(target.state.isKitReady).toBe(false);
+        });
     });
 });
