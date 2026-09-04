@@ -200,6 +200,11 @@ jobs:
         shell: pwsh
         run: pwsh -NoProfile -NonInteractive -Command "node --test scripts/tests/test-task-packet.mjs"
 
+      - name: Test Agent Governance shard selection
+        if: matrix.shard == 'core'
+        shell: pwsh
+        run: pwsh -NoProfile -NonInteractive -Command "node --test scripts/tests/test-agent-governance-shards.mjs"
+
       - name: Test verification outcomes and security exception policy
         if: matrix.shard == 'core'
         shell: pwsh

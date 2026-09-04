@@ -1232,4 +1232,5 @@ Export-ModuleMember -Function @(
     'Test-AgentGovernancePolicyRatchet'
     'Get-AgentGovernanceRuleKinds'
     'ConvertFrom-AgentGovernanceYaml'
+    'ConvertTo-AgentGovernanceGlobRegex'
 )

@@ -510,6 +510,39 @@ try {
         Assert-True (($suiteRunSteps[$pinnedShardStep.Name]) -ceq $pinnedShardStep.Shard) "'$($pinnedShardStep.Name)' stays on the '$($pinnedShardStep.Shard)' shard the wall-clock split assumes"
     }
 
+    # Sharding may only decide WHERE a step runs, never WHETHER the repository is verified. A
+    # conditional leg that executes a repository script must therefore be reachable from that
+    # script's own change: otherwise a PR that edits only that test selects `core`, the leg that
+    # runs it is never created, and the required aggregator still reports success while the
+    # changed assertion was never executed. Prove every executed path either selects its own shard
+    # or is a full-dispatch surface, so the shard surfaces cannot drift away from the steps.
+    $verificationManifest = (Get-Content -LiteralPath (Join-Path $repoRoot 'scripts/verification-manifest.json') -Raw -Encoding utf8) | ConvertFrom-Json
+    $fullDispatchGlobs = @($verificationManifest.full_dispatch_globs | ForEach-Object { [string]$_ })
+    Assert-True ($fullDispatchGlobs.Count -gt 0) 'the verification manifest declares full-dispatch globs the shard audit can read'
+    $alwaysShards = @($shardPolicy.shards | Where-Object { $_.always } | ForEach-Object { [string]$_.id })
+    $shardGlobs = @{}
+    foreach ($shardEntry in @($shardPolicy.shards)) {
+        $shardGlobs[[string]$shardEntry.id] = @($shardEntry.path_globs | ForEach-Object { [string]$_ })
+    }
+    $executedScriptPattern = [regex]'(?<path>(?:scripts|tests)/[^\s"'']+\.(?:ps1|mjs|py))'
+    foreach ($suiteStep in @($suiteJob['steps'])) {
+        if (-not $suiteStep.Contains('run')) { continue }
+        $suiteStepName = [string]$suiteStep['name']
+        $suiteStepShard = [string]$suiteRunSteps[$suiteStepName]
+        # An always-selected leg is reachable from any in-scope change by construction.
+        if ($alwaysShards -ccontains $suiteStepShard) { continue }
+        $selectingGlobs = @($shardGlobs[$suiteStepShard]) + $fullDispatchGlobs
+        foreach ($executedMatch in $executedScriptPattern.Matches([string]$suiteStep['run'])) {
+            $executedPath = $executedMatch.Groups['path'].Value
+            Assert-True (Test-Path -LiteralPath (Join-Path $repoRoot $executedPath) -PathType Leaf) "suite step '$suiteStepName' runs an existing repository script '$executedPath'"
+            $selectsOwnShard = $false
+            foreach ($selectingGlob in $selectingGlobs) {
+                if ($executedPath -match (ConvertTo-AgentGovernanceGlobRegex -Glob $selectingGlob)) { $selectsOwnShard = $true; break }
+            }
+            Assert-True $selectsOwnShard "changing '$executedPath' selects the '$suiteStepShard' shard that runs it, so the edited assertion cannot be skipped (step '$suiteStepName')"
+        }
+    }
+
     $shipWorkflowScript = Get-Content -LiteralPath '.claude/workflows/ship-item.js' -Raw
     $trustedMergeWorkflow = Get-Content -LiteralPath '.github/workflows/trusted-elevated-merge.yml' -Raw
     $trustedMergeExecutor = Get-Content -LiteralPath 'scripts/lib/trusted-host-merge-executor.mjs' -Raw

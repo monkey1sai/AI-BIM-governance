@@ -23,6 +23,11 @@
         "scripts/lib/openspec-*.ps1",
         "scripts/lib/collect-openspec-github-state.mjs",
         "scripts/tests/test-openspec-*.mjs",
+    "scripts/tests/test-openspec-*.ps1",
+    "scripts/tests/test-collect-openspec-github-state.mjs",
+    "scripts/tests/test-task-ledger-parser-parity.mjs",
+    "scripts/tests/verify-openspec-*.ps1",
+    "scripts/tests/reconcile-openspec-ledger.ps1",
         "scripts/tests/verify-openspec-*.mjs",
         "scripts/dev/verify-openspec-*.mjs"
       ]
@@ -34,6 +39,7 @@
       "reason": "Proves the merged HEAD stays a valid future base for pr-review-agent.yml, which archives the gate from BASE_SHA. Only the adjudicator surface and its detector can change that verdict.",
       "path_globs": [
         "scripts/lib/detect-base-gate-capability.sh",
+    "scripts/lib/self-referential-bootstrap.ps1",
         "scripts/tests/check-pr-body-evidence.ps1",
         "scripts/tests/test-base-gate-capability.ps1",
         "scripts/lib/pr-review-agent.ps1",
@@ -48,6 +54,17 @@
       "reason": "Bound to the evidence contract surfaces: PR body labels, the self-referential bootstrap ledger, deploy target registry, platform adapters, and the design-system/runtime result gates.",
       "path_globs": [
         "scripts/tests/test-pr-body-evidence.ps1",
+    "scripts/tests/test-self-referential-bootstrap.ps1",
+    "scripts/tests/test-deploy-target-registry.ps1",
+    "scripts/tests/test-platform-adapter.ps1",
+    "scripts/tests/test-host-native-child-launch.ps1",
+    "scripts/tests/test-remote-deploy-transport.ps1",
+    "scripts/tests/test-preflight-host-native.ps1",
+    "scripts/tests/test-windows-verification-scope.ps1",
+    "scripts/tests/test-require-gstack-evidence.ps1",
+    "scripts/tests/test-design-system-reference.ps1",
+    "scripts/tests/test-design-system-change-scope.ps1",
+    "scripts/tests/test-functional-runtime-result.ps1",
         "scripts/tests/check-pr-body-evidence.ps1",
         "scripts/lib/self-referential-bootstrap.ps1",
         "scripts/self-referential-bootstrap-ledger.json",
