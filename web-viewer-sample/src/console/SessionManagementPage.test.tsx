@@ -53,6 +53,7 @@ describe("SessionManagementPage 結束 session 控制動作（IX-SS-04）", () =
   });
   afterEach(() => {
     document.body.removeChild(container);
+    window.location.hash = "";
     vi.restoreAllMocks();
     vi.useRealTimers();
     (globalThis as Record<string, unknown>)[actEnvKey] = prevActEnv;
@@ -185,10 +186,10 @@ describe("SessionManagementPage 結束 session 控制動作（IX-SS-04）", () =
     expect(line.textContent).toContain("stage matched");
   });
 
-  // spec §6.2 延伸：結束鈕僅 status==="active" 顯示；closing / closed 不顯且灰列（多列對照覆蓋）。
-  it("結束鈕僅在 active session 顯示，closing / closed session 不顯", async () => {
+  it("active / created 可結束，closing 保留灰列並可續跑 close checkpoint，closed 只進 archive", async () => {
     vi.spyOn(coordinatorClient, "runtimeStatus").mockResolvedValue(makeStatus([
       makeSession({ session_id: "sess_active", status: "active" }),
+      makeSession({ session_id: "sess_created", status: "created" }),
       makeSession({ session_id: "sess_closing", status: "closing" }),
       makeSession({ session_id: "sess_closed", status: "closed" }),
     ]));
@@ -197,12 +198,45 @@ describe("SessionManagementPage 結束 session 控制動作（IX-SS-04）", () =
     await act(async () => { await Promise.resolve(); });
 
     expect(container.querySelector('[data-testid="session-terminate-sess_active"]')).not.toBeNull();
-    expect(container.querySelector('[data-testid="session-terminate-sess_closing"]')).toBeNull();
+    expect(container.querySelector('[data-testid="session-terminate-sess_created"]')).not.toBeNull();
+    expect(container.querySelector('[data-testid="session-terminate-sess_closing"]')?.textContent).toContain("繼續完成關閉");
     expect(container.querySelector('[data-testid="session-terminate-sess_closed"]')).toBeNull();
-    // Terminal rows are separated from the Active sessions table.
-    expect(container.querySelector('[data-testid="session-row-sess_closing"]')).toBeNull();
+    expect(container.querySelector('[data-testid="session-row-sess_closing"]')?.className ?? "").toContain("ec-row-muted");
     expect(container.querySelector('[data-testid="session-row-sess_closed"]')).toBeNull();
     expect(container.querySelector('[data-testid="session-row-sess_active"]')?.className ?? "").not.toContain("ec-row-muted");
+  });
+
+  it("delegated close intent 接受 created session，但仍只開不可逆確認 dialog", async () => {
+    window.location.hash = "#sessions?intent=close&session=review_session_t1";
+    vi.spyOn(coordinatorClient, "runtimeStatus").mockResolvedValue(rtWith("created"));
+    const closeSpy = vi.spyOn(coordinatorClient, "sessionClose");
+    const root = createRoot(container);
+    await act(async () => { root.render(<SessionManagementPage />); });
+    await act(async () => { await Promise.resolve(); });
+
+    expect(container.querySelector('[data-testid="intent-dialog"]')).not.toBeNull();
+    expect(container.textContent).toContain("此動作不可逆");
+    expect(closeSpy).not.toHaveBeenCalled();
+  });
+
+  it("closing session 的續跑動作經確認後重送 close checkpoint request", async () => {
+    vi.spyOn(coordinatorClient, "runtimeStatus").mockResolvedValue(rtWith("closing"));
+    const closeSpy = vi.spyOn(coordinatorClient, "sessionClose").mockResolvedValue({
+      session_id: "review_session_t1",
+      status: "closed",
+    } as never);
+    const root = createRoot(container);
+    await act(async () => { root.render(<SessionManagementPage />); });
+    await act(async () => { await Promise.resolve(); });
+
+    const resume = container.querySelector('[data-testid="session-terminate-review_session_t1"]') as HTMLButtonElement;
+    expect(resume.textContent).toContain("繼續完成關閉");
+    await act(async () => { resume.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+    const confirm = container.querySelector('[data-testid="intent-confirm"]') as HTMLButtonElement;
+    await act(async () => { confirm.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+    await act(async () => { await Promise.resolve(); });
+
+    expect(closeSpy).toHaveBeenCalledWith("review_session_t1", "");
   });
 
   // spec test 2（rtWith("closed")）：單一 closed session → 灰列、無假按鈕。

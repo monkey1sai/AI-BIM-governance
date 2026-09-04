@@ -830,6 +830,67 @@ describe("createCoordinatorApp A4 search integration", () => {
     expect(closed.body.error_code).toBe("a4_session_inactive");
   });
 
+  it("resolves A4 source and mapping through recreated session lineage without reusing the source trace", async () => {
+    const governance = await startGovernanceStub();
+    const fixture = seedCoordinatorFixture(governance.baseUrl);
+    const source = fixture.sessions.get(fixture.sessionId)!;
+    const recreated = fixture.sessions.create({
+      recreated_from_session_id: source.session_id,
+      tenant_id: source.tenant_id,
+      project_id: source.project_id,
+      model_version_id: source.model_version_id,
+      created_by: source.created_by,
+      mode: source.mode,
+      kit_instance: source.kit_instance,
+      artifact_bindings: source.artifact_bindings,
+      kit_instance_bindings: source.kit_instance_bindings,
+    });
+    expect(recreated.trace_id).not.toBe(source.trace_id);
+
+    const owner = "a4-recreated-owner";
+    const lease = await claimPrimary(fixture.app, recreated.session_id, owner);
+    const bindingRevision = await activateStage(
+      fixture.app,
+      recreated.session_id,
+      recreated.trace_id!,
+      owner,
+      lease,
+      fixture.artifactId,
+    );
+    const response = await request(fixture.app.app)
+      .post(`/api/governance/search/model/for-session/${recreated.session_id}`)
+      .set("X-User-Token", owner)
+      .send({ query: "IfcDoor" });
+
+    expect(response.status).toBe(200);
+    expect(governance.calls).toHaveLength(1);
+    expect(governance.calls[0].body).toMatchObject({
+      ifc_source_path: fixture.sourcePath,
+      element_mapping_path: fixture.mappingPath,
+      a4_trusted_context: {
+        review_session_id: recreated.session_id,
+        primary_artifact_id: fixture.artifactId,
+        active_binding_revision: bindingRevision,
+      },
+    });
+
+    const ancestorJobBefore = structuredClone(
+      fixture.app.externalIfcReadyStore.list().find((job) => job.ifc_ready_job_id === fixture.ifcReadyJobId),
+    );
+    const sourceSessionBefore = structuredClone(fixture.sessions.get(source.session_id));
+    fs.rmSync(fixture.sourcePath);
+    const staleLineage = await request(fixture.app.app)
+      .post(`/api/governance/search/model/for-session/${recreated.session_id}`)
+      .set("X-User-Token", owner)
+      .send({ query: "IfcDoor" });
+    expect(staleLineage.status).toBe(409);
+    expect(staleLineage.body.error_code).toBe("a4_session_source_unavailable");
+    expect(fixture.app.externalIfcReadyStore.list().find((job) => job.ifc_ready_job_id === fixture.ifcReadyJobId))
+      .toEqual(ancestorJobBefore);
+    expect(fixture.sessions.get(source.session_id)).toEqual(sourceSessionBefore);
+    expect(governance.calls).toHaveLength(1);
+  });
+
   it("binds search to the exact active stage primary instead of the default session artifact", async () => {
     const governance = await startGovernanceStub();
     const fixture = seedCoordinatorFixture(governance.baseUrl);

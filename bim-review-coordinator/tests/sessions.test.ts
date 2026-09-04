@@ -221,6 +221,249 @@ describe("bim-review-coordinator", () => {
     expect(runtime.body.ifc_ready_jobs).toMatchObject({ count: 0, recent: [] });
   });
 
+  it("does not mutate the ancestor IFC-ready job or closed source session during recreated stream-config health refresh", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 200 }));
+    const app = makeApp();
+    const created = await request(app.app)
+      .post("/api/review-sessions")
+      .send({
+        project_id: "project_stream_config_lineage",
+        model_version_id: "model_stream_config_lineage",
+        artifact_bindings: [{
+          artifact_group_id: "group_stream_config_lineage",
+          artifact_id: "artifact_stream_config_lineage",
+          artifact_role: "derived",
+          url: "http://127.0.0.1:49101/artifacts/stream_config_lineage/model.usdc",
+          mapping_url: "http://127.0.0.1:49101/artifacts/stream_config_lineage/element_mapping.json",
+          load_order: 0,
+          ready_status: "ready",
+          conversion_authority: "bim-streaming-server",
+        }],
+      });
+    const sourceSessionId = created.body.session_id as string;
+    const sourceSession = app.store.get(sourceSessionId)!;
+    const ifcReadyEvent: ExternalIfcReadyEvent = {
+      event: "ifc_ready",
+      tenant_id: sourceSession.tenant_id,
+      project_id: sourceSession.project_id,
+      external_model_version_id: sourceSession.model_version_id,
+      external_conversion_task_id: null,
+      source_ifc: {
+        ref: "http://127.0.0.1:1/stream-config-lineage.ifc",
+        etag: "etag_stream_config_lineage",
+      },
+      callback_url: null,
+    };
+    const ancestorJob = app.externalIfcReadyStore.create(ifcReadyEvent, {
+      correlationId: "corr_stream_config_lineage",
+      idempotencyKey: "idem_stream_config_lineage",
+      tenantId: sourceSession.tenant_id,
+      projectId: sourceSession.project_id,
+      externalModelVersionId: sourceSession.model_version_id,
+    });
+    app.externalIfcReadyStore.recordReviewSession(ancestorJob.ifc_ready_job_id, sourceSessionId);
+    await request(app.app).post(`/api/review-sessions/${sourceSessionId}/close`).send({});
+    const recreated = await request(app.app)
+      .post(`/api/review-sessions/${sourceSessionId}/recreate`)
+      .set("Idempotency-Key", "recreate-stream-config-lineage-0001")
+      .send({});
+    expect(recreated.status).toBe(201);
+    const sourceBefore = structuredClone(app.store.get(sourceSessionId));
+    const jobBefore = structuredClone(
+      app.externalIfcReadyStore.list().find((job) => job.ifc_ready_job_id === ancestorJob.ifc_ready_job_id),
+    );
+
+    const streamConfig = await request(app.app)
+      .get(`/api/review-sessions/${recreated.body.session_id}/stream-config`);
+
+    expect(streamConfig.status).toBe(200);
+    expect(app.store.get(sourceSessionId)).toEqual(sourceBefore);
+    expect(app.externalIfcReadyStore.list().find((job) => job.ifc_ready_job_id === ancestorJob.ifc_ready_job_id))
+      .toEqual(jobBefore);
+    expect(app.store.get(recreated.body.session_id)?.artifact_health).toMatchObject({
+      model_usdc_reachable: true,
+      mapping_reachable: true,
+    });
+  });
+
+  it("probes canonical public artifact URLs through the configured internal conversion origin", async () => {
+    const probe = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 200 }));
+    const app = makeApp({ streamingConversionApiBase: "http://127.0.0.1:49101" });
+    const created = await request(app.app)
+      .post("/api/review-sessions")
+      .send({
+        project_id: "project_public_artifact",
+        model_version_id: "model_public_artifact",
+        artifact_bindings: [{
+          artifact_group_id: "group_public_artifact",
+          artifact_id: "artifact_public_artifact",
+          artifact_role: "derived",
+          url: "http://bim-edge.example:49101/artifacts/public_recreate/model.usdc",
+          mapping_url: "http://bim-edge.example:49101/artifacts/public_recreate/element_mapping.json",
+          load_order: 0,
+          ready_status: "ready",
+          conversion_authority: "bim-streaming-server",
+        }],
+      });
+    await request(app.app).post(`/api/review-sessions/${created.body.session_id}/close`).send({});
+
+    const archive = await request(app.app).get("/api/review-sessions?status=closed");
+    expect(archive.body.items[0].rebuildability.state).toBe("ready");
+    expect(probe.mock.calls.map(([url]) => String(url)).sort()).toEqual([
+      "http://127.0.0.1:49101/artifacts/public_recreate/element_mapping.json",
+      "http://127.0.0.1:49101/artifacts/public_recreate/model.usdc",
+    ]);
+
+    const recreated = await request(app.app)
+      .post(`/api/review-sessions/${created.body.session_id}/recreate`)
+      .set("Idempotency-Key", "recreate-public-artifact-0001")
+      .send({});
+    expect(recreated.status).toBe(201);
+    expect(recreated.body.session.artifact_bindings[0].url).toBe(
+      "http://bim-edge.example:49101/artifacts/public_recreate/model.usdc",
+    );
+  });
+
+  it("rejects public artifact URLs with a mismatched conversion port without probing them", async () => {
+    const probe = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 200 }));
+    const app = makeApp({ streamingConversionApiBase: "http://127.0.0.1:49101" });
+    const created = await request(app.app)
+      .post("/api/review-sessions")
+      .send({
+        project_id: "project_untrusted_artifact",
+        model_version_id: "model_untrusted_artifact",
+        artifact_bindings: [{
+          artifact_group_id: "group_untrusted_artifact",
+          artifact_id: "artifact_untrusted_artifact",
+          artifact_role: "derived",
+          url: "http://bim-edge.example:49102/artifacts/public_recreate/model.usdc",
+          mapping_url: "http://bim-edge.example:49102/artifacts/public_recreate/element_mapping.json",
+          load_order: 0,
+          ready_status: "ready",
+          conversion_authority: "bim-streaming-server",
+        }],
+      });
+    await request(app.app).post(`/api/review-sessions/${created.body.session_id}/close`).send({});
+    const archive = await request(app.app).get("/api/review-sessions?status=closed");
+
+    expect(archive.body.items[0].rebuildability).toMatchObject({
+      state: "unavailable",
+      reason: "artifact binding is not owned by the configured conversion authority",
+    });
+    expect(probe).not.toHaveBeenCalled();
+  });
+
+  it("rejects an alternate loopback hostname on the configured conversion port without probing it", async () => {
+    const probe = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 200 }));
+    const app = makeApp({ streamingConversionApiBase: "http://127.0.0.1:49101" });
+    const created = await request(app.app)
+      .post("/api/review-sessions")
+      .send({
+        project_id: "project_alternate_loopback",
+        model_version_id: "model_alternate_loopback",
+        artifact_bindings: [{
+          artifact_group_id: "group_alternate_loopback",
+          artifact_id: "artifact_alternate_loopback",
+          artifact_role: "derived",
+          url: "http://localhost:49101/artifacts/alternate_loopback/model.usdc",
+          mapping_url: "http://localhost:49101/artifacts/alternate_loopback/element_mapping.json",
+          load_order: 0,
+          ready_status: "ready",
+          conversion_authority: "bim-streaming-server",
+        }],
+      });
+    await request(app.app).post(`/api/review-sessions/${created.body.session_id}/close`).send({});
+    const archive = await request(app.app).get("/api/review-sessions?status=closed");
+
+    expect(archive.body.items[0].rebuildability).toMatchObject({
+      state: "unavailable",
+      reason: "artifact binding is not owned by the configured conversion authority",
+    });
+    expect(probe).not.toHaveBeenCalled();
+  });
+
+  it("activates a recreated created session on concurrent lease claim and emits sessionActive once", async () => {
+    const app = makeApp();
+    const source = await request(app.app)
+      .post("/api/review-sessions")
+      .send({
+        project_id: "project_reallocate",
+        model_version_id: "model_reallocate",
+        artifact_bindings: [{
+          artifact_group_id: "group_reallocate",
+          artifact_id: "artifact_reallocate",
+          artifact_role: "derived",
+          url: "http://127.0.0.1:49101/artifacts/reallocate/model.usdc",
+          mapping_url: "http://127.0.0.1:49101/artifacts/reallocate/element_mapping.json",
+          load_order: 0,
+          ready_status: "ready",
+          conversion_authority: "bim-streaming-server",
+        }],
+      });
+    const recreated = app.store.create({
+      recreated_from_session_id: source.body.session_id,
+      tenant_id: source.body.tenant_id,
+      project_id: source.body.project_id,
+      model_version_id: source.body.model_version_id,
+      created_by: source.body.created_by,
+      mode: source.body.mode,
+      kit_instance: source.body.kit_instance,
+      artifact_bindings: source.body.artifact_bindings,
+      kit_instance_bindings: [],
+    });
+    app.eventLog.append(recreated.session_id, "sessionCreated", {
+      project_id: recreated.project_id,
+      model_version_id: recreated.model_version_id,
+      recreated_from_session_id: source.body.session_id,
+    });
+    expect(recreated.status).toBe("created");
+
+    const forgedOverHttp = await request(app.app)
+      .post(`/api/review-sessions/${recreated.session_id}/events`)
+      .send({ type: "sessionActive", kit_instance_bindings: ["kit_local_001"] });
+    expect(forgedOverHttp.status).toBe(400);
+    app.eventLog.append(recreated.session_id, "sessionActive", {
+      kit_instance_bindings: ["kit_local_001"],
+    });
+
+    const invalidClaim = await request(app.app)
+      .post(`/api/review-sessions/${recreated.session_id}/viewer-leases/claim`)
+      .set("X-User-Token", "user_reallocated")
+      .send({ requested_role: "primary" });
+    expect(invalidClaim.status).toBe(400);
+    expect(app.store.get(recreated.session_id)?.status).toBe("created");
+    expect(app.eventLog.list(recreated.session_id).filter((event) => (
+      event.type === "sessionActive" && event.server_owned === true
+    ))).toHaveLength(0);
+
+    const claim = () => request(app.app)
+      .post(`/api/review-sessions/${recreated.session_id}/viewer-leases/claim`)
+      .set("X-User-Token", "user_reallocated")
+      .send({
+        viewer_id: "viewer_reallocated",
+        user_id: "user_reallocated",
+        requested_role: "primary",
+        client_nonce: `viewer_reallocated:${recreated.session_id}:primary`,
+      });
+    const [first, replay] = await Promise.all([claim(), claim()]);
+
+    expect(first.status).toBe(200);
+    expect(replay.status).toBe(200);
+    expect(first.body.lease_id).toBe(replay.body.lease_id);
+    expect(app.store.get(recreated.session_id)).toMatchObject({
+      status: "active",
+      kit_instance_bindings: [expect.objectContaining({ kit_instance_id: "kit_local_001" })],
+    });
+    const activeEvents = app.eventLog.list(recreated.session_id).filter((event) => event.type === "sessionActive");
+    expect(activeEvents).toHaveLength(2);
+    expect(activeEvents.filter((event) => event.server_owned === true)).toEqual([
+      expect.objectContaining({
+        payload: { kit_instance_bindings: ["kit_local_001"] },
+      }),
+    ]);
+    expect(app.externalIfcReadyStore.list()).toHaveLength(0);
+  });
+
   it("recovers the same recreated session when receipt persistence fails after session creation", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 200 }));
     const receiptWrite = vi.spyOn(SessionStore.prototype, "recordRecreationReceipt");

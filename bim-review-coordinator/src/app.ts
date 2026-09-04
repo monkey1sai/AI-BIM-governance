@@ -25,7 +25,7 @@ import {
   SlidingWindowRateLimiter,
 } from "./services/conversionControlAuthorization.js";
 import { CallbackOutbox, MetadataOnlyViolation } from "./services/callbackOutbox.js";
-import { EventLog } from "./services/eventLog.js";
+import { EventLog, isClientForbiddenSessionEventType } from "./services/eventLog.js";
 import { GovernanceLibraryHttpAdapter } from "./services/governanceLibraryHttpAdapter.js";
 import { GovernanceLibraryWorkflow } from "./services/governanceLibraryWorkflow.js";
 import {
@@ -54,7 +54,11 @@ import {
   type EdgeArtifactRecord,
   type EdgeArtifactStatus,
 } from "./services/artifactHealthLedger.js";
-import { checkSourceIfcPath, probeArtifactHealth } from "./services/artifactHealthProbe.js";
+import {
+  canonicalArtifactProbeUrl,
+  checkSourceIfcPath,
+  probeArtifactHealth,
+} from "./services/artifactHealthProbe.js";
 import { deriveLifecycleStatus } from "./services/lifecycleStatus.js";
 import { deriveFailure } from "./services/failureReason.js";
 import { deriveConversionRecoveryAction } from "./services/conversionRecoveryAction.js";
@@ -1518,7 +1522,7 @@ export function createCoordinatorApp(
     return snapshotFromArtifactLedger(job) ?? job.artifact_health ?? session?.artifact_health ?? null;
   }
 
-  function markSourceIfcUnavailable(
+  function sourceIfcUnavailableSnapshot(
     job: IfcReadyIntakeJob,
     session: ReviewSession | null,
     failureCode = "source_ifc_missing",
@@ -1540,6 +1544,15 @@ export function createCoordinatorApp(
       },
       source: "edge_health_probe",
     };
+    return snapshot;
+  }
+
+  function markSourceIfcUnavailable(
+    job: IfcReadyIntakeJob,
+    session: ReviewSession | null,
+    failureCode = "source_ifc_missing",
+  ): ArtifactHealthSnapshot {
+    const snapshot = sourceIfcUnavailableSnapshot(job, session, failureCode);
     job.artifact_health = snapshot;
     if (session) {
       session.artifact_health = snapshot;
@@ -1595,15 +1608,101 @@ export function createCoordinatorApp(
     }
   }
 
-  function latestIfcReadyJobForSession(sessionId: string): IfcReadyIntakeJob | null {
+  function latestExactIfcReadyJobForSession(sessionId: string): IfcReadyIntakeJob | null {
     return externalIfcReadyStore
       .list()
       .filter((candidate) => candidate.review_session_id === sessionId)
       .sort((left, right) => Date.parse(right.updated_at) - Date.parse(left.updated_at))[0] ?? null;
   }
 
+  function latestIfcReadyJobForSessionLineage(sessionId: string): IfcReadyIntakeJob | null {
+    const jobs = externalIfcReadyStore.list();
+    const requestedSession = store.get(sessionId);
+    if (!requestedSession) return null;
+    const visited = new Set<string>();
+    let currentSessionId: string | undefined = sessionId;
+    for (let depth = 0; currentSessionId && depth < 32 && !visited.has(currentSessionId); depth += 1) {
+      visited.add(currentSessionId);
+      const currentSession = store.get(currentSessionId);
+      if (
+        !currentSession
+        || currentSession.tenant_id !== requestedSession.tenant_id
+        || currentSession.project_id !== requestedSession.project_id
+        || currentSession.model_version_id !== requestedSession.model_version_id
+      ) {
+        return null;
+      }
+      const linkedJob = jobs
+        .filter((candidate) => candidate.review_session_id === currentSessionId)
+        .sort((left, right) => Date.parse(right.updated_at) - Date.parse(left.updated_at))[0] ?? null;
+      if (linkedJob) {
+        return linkedJob.tenant_id === requestedSession.tenant_id
+          && linkedJob.project_id === requestedSession.project_id
+          && linkedJob.external_model_version_id === requestedSession.model_version_id
+          ? linkedJob
+          : null;
+      }
+      currentSessionId = currentSession.recreated_from_session_id;
+    }
+    return null;
+  }
+
+  function activateRecreatedSessionForViewerLease(session: ReviewSession): ReviewSession {
+    const ensureActiveEvent = (activeSession: ReviewSession): void => {
+      const kitInstanceBindings = activeSession.kit_instance_bindings.map((binding) => binding.kit_instance_id);
+      const hasCanonicalEvent = eventLog.list(activeSession.session_id).some((event) => (
+        event.type === "sessionActive"
+        && event.server_owned === true
+        && isDeepStrictEqual(
+          (event.payload as { kit_instance_bindings?: unknown })?.kit_instance_bindings,
+          kitInstanceBindings,
+        )
+      ));
+      if (!hasCanonicalEvent) {
+        eventLog.appendServerOwned(activeSession.session_id, "sessionActive", {
+          kit_instance_bindings: kitInstanceBindings,
+        });
+      }
+    };
+    if (
+      session.status === "active"
+      && session.kit_instance_bindings.length > 0
+      && session.recreated_from_session_id
+    ) {
+      ensureActiveEvent(session);
+      return session;
+    }
+    if (
+      session.status !== "created"
+      || session.kit_instance_bindings.length > 0
+      || !session.recreated_from_session_id
+    ) {
+      return session;
+    }
+    const readyBindings = session.artifact_bindings
+      .filter((binding) => binding.artifact_role === "derived" && binding.ready_status === "ready" && Boolean(binding.url))
+      .slice()
+      .sort((left, right) => left.load_order - right.load_order);
+    const routingPolicy = readyBindings[0]?.routing_policy;
+    if (!routingPolicy) return session;
+    const kitInstanceBindings = allocateKitInstanceBindings(
+      config,
+      readyBindings,
+      routingPolicy,
+      session.tenant_id,
+    );
+    if (kitInstanceBindings.length === 0) return session;
+    const activated = store.update(session.session_id, {
+      status: "active",
+      kit_instance: legacyKitInstanceFromBinding(kitInstanceBindings[0], config),
+      kit_instance_bindings: kitInstanceBindings,
+    }) ?? session;
+    if (activated.status === "active") ensureActiveEvent(activated);
+    return activated;
+  }
+
   async function refreshArtifactHealthForSessionBestEffort(session: ReviewSession): Promise<ArtifactHealthSnapshot | null> {
-    const linkedJob = latestIfcReadyJobForSession(session.session_id);
+    const linkedJob = latestExactIfcReadyJobForSession(session.session_id);
     if (linkedJob) {
       return refreshArtifactHealthBestEffort(linkedJob);
     }
@@ -1688,25 +1787,48 @@ export function createCoordinatorApp(
 
   function ensureRecreationEvents(source: ReviewSession, recreated: ReviewSession): void {
     const targetEvents = eventLog.list(recreated.session_id);
-    if (!targetEvents.some((event) => event.type === "sessionCreated")) {
-      eventLog.append(recreated.session_id, "sessionCreated", {
+    const hasCanonicalCreatedEvent = targetEvents.some((event) => (
+      event.type === "sessionCreated"
+      && event.server_owned === true
+      && isDeepStrictEqual(event.payload, {
+        project_id: recreated.project_id,
+        model_version_id: recreated.model_version_id,
+        recreated_from_session_id: source.session_id,
+      })
+    ));
+    if (!hasCanonicalCreatedEvent) {
+      eventLog.appendServerOwned(recreated.session_id, "sessionCreated", {
         project_id: recreated.project_id,
         model_version_id: recreated.model_version_id,
         recreated_from_session_id: source.session_id,
       });
     }
     const sourceHasRecreatedEvent = eventLog.list(source.session_id).some((event) => {
-      if (event.type !== "sessionRecreated" || !event.payload || typeof event.payload !== "object") return false;
+      if (
+        event.type !== "sessionRecreated"
+        || event.server_owned !== true
+        || !event.payload
+        || typeof event.payload !== "object"
+      ) return false;
       return (event.payload as { recreated_session_id?: unknown }).recreated_session_id === recreated.session_id;
     });
     if (!sourceHasRecreatedEvent) {
-      eventLog.append(source.session_id, "sessionRecreated", {
+      eventLog.appendServerOwned(source.session_id, "sessionRecreated", {
         recreated_session_id: recreated.session_id,
       });
     }
-    if (recreated.status === "active" && !targetEvents.some((event) => event.type === "sessionActive")) {
-      eventLog.append(recreated.session_id, "sessionActive", {
-        kit_instance_bindings: recreated.kit_instance_bindings.map((binding) => binding.kit_instance_id),
+    const kitInstanceBindings = recreated.kit_instance_bindings.map((binding) => binding.kit_instance_id);
+    const hasCanonicalActiveEvent = targetEvents.some((event) => (
+      event.type === "sessionActive"
+      && event.server_owned === true
+      && isDeepStrictEqual(
+        (event.payload as { kit_instance_bindings?: unknown })?.kit_instance_bindings,
+        kitInstanceBindings,
+      )
+    ));
+    if (recreated.status === "active" && !hasCanonicalActiveEvent) {
+      eventLog.appendServerOwned(recreated.session_id, "sessionActive", {
+        kit_instance_bindings: kitInstanceBindings,
       });
     }
   }
@@ -1850,13 +1972,13 @@ export function createCoordinatorApp(
         kit_instance_bindings: kitInstanceBindings,
         quality_metrics_summary: (input.quality_metrics_summary ?? null) as ConversionQualityMetricsSummary | null,
       });
-      eventLog.append(session.session_id, "sessionCreated", {
+      eventLog.appendServerOwned(session.session_id, "sessionCreated", {
         project_id: session.project_id,
         model_version_id: session.model_version_id,
         review_request_id: session.review_request_id,
       });
       if (session.status === "active") {
-        eventLog.append(session.session_id, "sessionActive", {
+        eventLog.appendServerOwned(session.session_id, "sessionActive", {
           kit_instance_bindings: session.kit_instance_bindings.map((binding) => binding.kit_instance_id),
         });
       }
@@ -2410,6 +2532,10 @@ export function createCoordinatorApp(
         return;
       }
       const input = appendEventSchema.parse(request.body);
+      if (isClientForbiddenSessionEventType(input.type)) {
+        response.status(400).json({ detail: "Server-owned event type cannot be appended by a client." });
+        return;
+      }
       const event = eventLog.append(request.params.sessionId, input.type, input);
       response.json(event);
     } catch (error) {
@@ -2473,7 +2599,7 @@ export function createCoordinatorApp(
         response.status(400).json({ detail: "Invalid review session id." });
         return;
       }
-      const session = store.get(request.params.sessionId);
+      let session = store.get(request.params.sessionId);
       if (!session) {
         response.status(404).json({ detail: "Review session not found." });
         return;
@@ -2482,7 +2608,6 @@ export function createCoordinatorApp(
         response.status(409).json({ detail: "Review session is not active." });
         return;
       }
-
       const input = claimViewerLeaseSchema.parse(request.body);
       if (input.user_id) {
         const legacyPrincipal = user.provider === "local-dev"
@@ -2492,6 +2617,7 @@ export function createCoordinatorApp(
           throw new AuthError(403, "viewer lease identity mismatch");
         }
       }
+      session = activateRecreatedSessionForViewerLease(session);
       const result = viewerLeaseStore.claim({
         session_id: session.session_id,
         viewer_id: input.viewer_id,
@@ -3676,13 +3802,13 @@ export function createCoordinatorApp(
     });
     // lifecycle audit event parity（與 explicit /api/review-sessions caller
     // 路徑等價；Risk mitigation）。
-    eventLog.append(session.session_id, "sessionCreated", {
+    eventLog.appendServerOwned(session.session_id, "sessionCreated", {
       project_id: session.project_id,
       model_version_id: session.model_version_id,
       review_request_id: session.review_request_id,
     });
     if (session.status === "active") {
-      eventLog.append(session.session_id, "sessionActive", {
+      eventLog.appendServerOwned(session.session_id, "sessionActive", {
         kit_instance_bindings: session.kit_instance_bindings.map((binding) => binding.kit_instance_id),
       });
     }
@@ -4509,6 +4635,7 @@ export function createCoordinatorApp(
     job: IfcReadyIntakeJob | null | undefined,
     modelVersionId: string | null | undefined,
     session: ReviewSession | null = null,
+    options: { recordHealth?: boolean } = {},
   ): RuleRunSessionResolution {
     if (!job) {
       return { ok: false, reason: "IFC-ready job not found." };
@@ -4532,7 +4659,9 @@ export function createCoordinatorApp(
         ok: false,
         error_code: "stale_session_artifact",
         detail: "source_ifc_missing",
-        artifact_health: markSourceIfcUnavailable(job, session, sourceCheck.failure ?? "source_ifc_missing"),
+        artifact_health: options.recordHealth === false
+          ? sourceIfcUnavailableSnapshot(job, session, sourceCheck.failure ?? "source_ifc_missing")
+          : markSourceIfcUnavailable(job, session, sourceCheck.failure ?? "source_ifc_missing"),
       };
     }
     return {
@@ -4740,7 +4869,7 @@ export function createCoordinatorApp(
       };
     }
 
-    const linkedJob = latestIfcReadyJobForSession(sessionId);
+    const linkedJob = latestIfcReadyJobForSessionLineage(sessionId);
     if (!linkedJob || linkedJob.external_model_version_id !== modelVersionId) {
       return {
         ok: false,
@@ -4749,7 +4878,9 @@ export function createCoordinatorApp(
         detail: "A4 session model binding is incomplete.",
       };
     }
-    const source = resolveDownloadedJobForRuleRun(linkedJob, modelVersionId, session);
+    const source = resolveDownloadedJobForRuleRun(linkedJob, modelVersionId, session, {
+      recordHealth: linkedJob.review_session_id === sessionId,
+    });
     if (!source.ok) {
       return {
         ok: false,
@@ -4848,7 +4979,7 @@ export function createCoordinatorApp(
       }
       // session → ifc-ready job：conversion-ready auto-session 時由
       // recordReviewSession 寫入 job.review_session_id 反向參照（app.ts ~905）。
-      const job = latestIfcReadyJobForSession(sessionId);
+      const job = latestIfcReadyJobForSessionLineage(sessionId);
       if (!job) {
         return {
           ok: false,
@@ -4856,7 +4987,9 @@ export function createCoordinatorApp(
             "No IFC-ready job linked to this session; rule-run requires an IFC ingested via /api/external/ifc-ready.",
         };
       }
-      return resolveDownloadedJobForRuleRun(job, session.model_version_id, session);
+      return resolveDownloadedJobForRuleRun(job, session.model_version_id, session, {
+        recordHealth: job.review_session_id === sessionId,
+      });
     },
   });
   registerA4HandoffRoutes(app, {
@@ -5022,19 +5155,17 @@ function sanitizeJobForExternal(job: IfcReadyIntakeJob): IfcReadyIntakeJob {
   return rest;
 }
 
-function hasConfiguredConversionOrigin(urlValue: string | null, configuredConversionApiBase: string): boolean {
+function isAllowedConversionProbeUrl(urlValue: string | null, configuredConversionApiBase: string): boolean {
   if (!urlValue) return true;
-  try {
-    return new URL(urlValue).origin === new URL(configuredConversionApiBase).origin;
-  } catch {
-    return false;
-  }
+  return canonicalArtifactProbeUrl(urlValue, configuredConversionApiBase, {
+    allowAlternateLoopback: false,
+  }) !== null;
 }
 
 function isTrustedDirectSessionProbeBinding(binding: ArtifactBinding, configuredConversionApiBase: string): boolean {
   return binding.conversion_authority === "bim-streaming-server"
-    && hasConfiguredConversionOrigin(binding.url, configuredConversionApiBase)
-    && hasConfiguredConversionOrigin(binding.mapping_url, configuredConversionApiBase);
+    && isAllowedConversionProbeUrl(binding.url, configuredConversionApiBase)
+    && isAllowedConversionProbeUrl(binding.mapping_url, configuredConversionApiBase);
 }
 
 function parseListLimit(value: unknown): number {

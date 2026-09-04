@@ -4,7 +4,10 @@ import os from "node:os";
 import path from "node:path";
 import { type AddressInfo } from "node:net";
 import { afterEach, describe, expect, it } from "vitest";
-import { probeArtifactHealth } from "../src/services/artifactHealthProbe.js";
+import {
+  canonicalArtifactProbeUrl,
+  probeArtifactHealth,
+} from "../src/services/artifactHealthProbe.js";
 
 const roots: string[] = [];
 const servers: http.Server[] = [];
@@ -45,6 +48,59 @@ function alternateDrivePath(storageRoot: string): string {
   const alternate = currentDrive === "C:" ? "D:" : "C:";
   return `${alternate}\\artifact-health-probe\\storage\\source.ifc`;
 }
+
+describe("canonicalArtifactProbeUrl", () => {
+  it.each([
+    "http://localhost:49101/artifacts/alternate/model.usdc",
+    "http://localhost.:49101/artifacts/alternate/model.usdc",
+    "http://worker.localhost:49101/artifacts/alternate/model.usdc",
+    "http://127.0.0.2:49101/artifacts/alternate/model.usdc",
+    "http://[::1]:49101/artifacts/alternate/model.usdc",
+    "http://[::ffff:127.0.0.1]:49101/artifacts/alternate/model.usdc",
+  ])("rejects alternate loopback origin %s when direct-session probing requires the configured origin", (url) => {
+    expect(canonicalArtifactProbeUrl(url, "http://127.0.0.1:49101", {
+      allowAlternateLoopback: false,
+    })).toBeNull();
+  });
+
+  it("keeps the exact configured loopback origin", () => {
+    expect(canonicalArtifactProbeUrl(
+      "http://127.0.0.1:49101/artifacts/exact/model.usdc",
+      "http://127.0.0.1:49101",
+      { allowAlternateLoopback: false },
+    )?.href).toBe("http://127.0.0.1:49101/artifacts/exact/model.usdc");
+  });
+
+  it.each([
+    "https://localhost/artifacts/alternate/model.usdc",
+    "https://[::1]/artifacts/alternate/model.usdc",
+  ])("rejects HTTPS alternate loopback origin %s when direct-session probing requires the configured origin", (url) => {
+    expect(canonicalArtifactProbeUrl(url, "https://127.0.0.1", {
+      allowAlternateLoopback: false,
+    })).toBeNull();
+  });
+
+  it("remaps a DNS hostname beginning with 127 instead of treating it as loopback", () => {
+    expect(canonicalArtifactProbeUrl(
+      "http://127.evil.example:49101/artifacts/dns/model.usdc",
+      "http://127.0.0.1:49101",
+    )?.href).toBe("http://127.0.0.1:49101/artifacts/dns/model.usdc");
+  });
+
+  it.each([
+    "http://127.0.0.2:1/admin",
+    "http://[::1]:22/admin",
+  ])("does not directly probe non-legacy loopback URL %s", (url) => {
+    expect(canonicalArtifactProbeUrl(url, "http://127.0.0.1:49101")).toBeNull();
+  });
+
+  it("remaps a non-legacy loopback artifact URL through the configured origin", () => {
+    expect(canonicalArtifactProbeUrl(
+      "http://127.0.0.2:49101/artifacts/remapped/model.usdc",
+      "http://127.0.0.1:49101",
+    )?.href).toBe("http://127.0.0.1:49101/artifacts/remapped/model.usdc");
+  });
+});
 
 describe("probeArtifactHealth", () => {
   it("source_ifc_exists is true when host_local_path is a file", async () => {

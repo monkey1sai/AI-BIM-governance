@@ -341,7 +341,9 @@ export function SessionManagementPage() {
     return () => window.clearInterval(id);
   }, [load]);
   const sessions = useMemo(() => rt?.sessions.items ?? [], [rt]);
-  const liveSessions = sessions.filter((session) => session.status === "active" || session.status === "created");
+  const liveSessions = sessions.filter((session) => (
+    session.status === "active" || session.status === "created" || session.status === "closing"
+  ));
   const delegatedCloseHandledRef = useRef(false);
   useEffect(() => {
     if (delegatedCloseHandledRef.current || rt === null) return;
@@ -351,7 +353,10 @@ export function SessionManagementPage() {
     if (
       params.get("intent") === "close"
       && delegatedSessionId
-      && sessions.some((session) => session.session_id === delegatedSessionId && session.status === "active")
+      && sessions.some((session) => (
+        session.session_id === delegatedSessionId
+        && (session.status === "active" || session.status === "created")
+      ))
     ) {
       delegatedCloseHandledRef.current = true;
       setPendingTerminate({ sessionId: delegatedSessionId });
@@ -415,8 +420,10 @@ export function SessionManagementPage() {
                     </>);
                   })()}
                   <td>
-                    {s.status === "active" && !terminating ? (
-                      <Btn data-testid={`session-terminate-${s.session_id}`} onClick={() => { setActionErr(null); setPendingTerminate({ sessionId: s.session_id }); }}>{t("結束 Review Session", "Close Review Session")}</Btn>
+                    {(s.status === "active" || s.status === "created" || s.status === "closing") && !terminating ? (
+                      <Btn data-testid={`session-terminate-${s.session_id}`} onClick={() => { setActionErr(null); setPendingTerminate({ sessionId: s.session_id }); }}>
+                        {s.status === "closing" ? t("繼續完成關閉", "Resume close") : t("結束 Review Session", "Close Review Session")}
+                      </Btn>
                     ) : <span className="ec-note">{terminating ? t("結束中…", "Terminating…") : "—"}</span>}
                     {" "}
                     <Btn data-testid={`session-link-instances-${s.session_id}`} disabled={!live}
