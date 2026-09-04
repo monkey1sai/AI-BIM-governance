@@ -1,0 +1,28 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "review-finding-record.schema.json",
+  "title": "Review finding join record v1",
+  "description": "Separate join record keyed (head_sha, finding_id). Never extends FINDING_KEYS or REVIEW_DISPOSITION_METADATA_KEYS.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "repository", "pr_number", "base_sha", "head_sha", "finding_id", "fingerprint", "origin", "round", "evidence_fingerprint", "disposition", "severity", "risk_class", "follow_up", "resolution", "touched_paths", "superseded_by"],
+  "properties": {
+    "schema_version": { "const": "review-finding-join/v1" },
+    "repository": { "type": "string", "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$" },
+    "pr_number": { "type": "integer", "minimum": 1 },
+    "base_sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "head_sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "finding_id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$" },
+    "fingerprint": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "origin": { "enum": ["ci", "reviewer", "human", "deterministic"] },
+    "round": { "type": "integer", "minimum": 1, "maximum": 2 },
+    "evidence_fingerprint": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "disposition": { "oneOf": [{ "type": "null" }, { "enum": ["ACCEPTED", "FIX_REQUIRED", "FALSE_POSITIVE", "DEFERRED", "ESCALATE"] }] },
+    "severity": { "oneOf": [{ "type": "null" }, { "type": "string", "minLength": 1 }] },
+    "risk_class": { "oneOf": [{ "type": "null" }, { "type": "string", "minLength": 1 }] },
+    "follow_up": { "oneOf": [{ "type": "null" }, { "type": "string", "pattern": "^https://github\\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/(issues|pull)/[1-9][0-9]*$" }] },
+    "resolution": { "enum": ["open", "fixed", "refuted", "deferred", "escalated", "superseded"] },
+    "touched_paths": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+    "superseded_by": { "oneOf": [{ "type": "null" }, { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$" }] }
+  }
+}

@@ -22,10 +22,15 @@ SUBJECT_ARG_PENDING=0
 OUTCOME_ARG_PENDING=0
 TARGET_ID_ARG_PENDING=0
 INVENTORY_PATH_ARG_PENDING=0
+BASE_REF_ARG_PENDING=0
+TIER_ARG_PENDING=0
 SUBJECT=""
 OUTCOME_OUT=""
 TARGET_ID=""
 INVENTORY_PATH=""
+BASE_REF=""
+BASE_SHA=""
+TIER=""
 declare -a CHANGED_PATHS=()
 
 for arg in "$@"; do
@@ -49,6 +54,13 @@ for arg in "$@"; do
         if [ -z "$arg" ]; then echo "--inventory-path requires a non-empty value" >&2; exit 2; fi
         INVENTORY_PATH="$arg"; INVENTORY_PATH_ARG_PENDING=0; continue
     fi
+    if [ "$BASE_REF_ARG_PENDING" -eq 1 ]; then
+        if [ -z "$arg" ]; then echo "--base requires a non-empty value" >&2; exit 2; fi
+        BASE_REF="$arg"; BASE_REF_ARG_PENDING=0; continue
+    fi
+    if [ "$TIER_ARG_PENDING" -eq 1 ]; then
+        TIER="$arg"; TIER_ARG_PENDING=0; continue
+    fi
     case "$arg" in
         --continue-on-error) CONTINUE=1 ;;
         --ts-only) TS_ONLY=1 ;;
@@ -61,6 +73,13 @@ for arg in "$@"; do
         --full) FULL=1 ;;
         --changed-path) CHANGED_PATH_PENDING=1 ;;
         --changed-path=*) CHANGED_PATHS+=("${arg#*=}") ;;
+        --base) BASE_REF_ARG_PENDING=1 ;;
+        --base=*)
+            BASE_REF="${arg#*=}"
+            if [ -z "$BASE_REF" ]; then echo "--base requires a non-empty value" >&2; exit 2; fi
+            ;;
+        --tier) TIER_ARG_PENDING=1 ;;
+        --tier=*) TIER="${arg#*=}" ;;
         --subject) SUBJECT_ARG_PENDING=1 ;;
         --subject=*) SUBJECT="${arg#*=}" ;;
         --outcome-out) OUTCOME_ARG_PENDING=1 ;;
@@ -94,6 +113,22 @@ if [ "$TARGET_ID_ARG_PENDING" -eq 1 ] || [ "$INVENTORY_PATH_ARG_PENDING" -eq 1 ]
     echo "--target-id and --inventory-path require values" >&2
     exit 2
 fi
+if [ "$BASE_REF_ARG_PENDING" -eq 1 ]; then
+    echo "--base requires a non-empty value" >&2
+    exit 2
+fi
+if [ "$TIER_ARG_PENDING" -eq 1 ]; then
+    echo "--tier requires a value (quick, pr, full)" >&2
+    exit 2
+fi
+case "$TIER" in
+    ""|quick|pr|full) ;;
+    *) echo "--tier must be one of quick, pr, full" >&2; exit 2 ;;
+esac
+if [ -n "$TIER" ] && [ -n "$OUTCOME_OUT" ]; then
+    echo "--tier cannot be combined with --outcome-out: a tiered run is not verification evidence" >&2
+    exit 2
+fi
 if [ -n "$OUTCOME_OUT" ] && { [ "$PLAN_ONLY" -eq 1 ] || [ "$JSON" -eq 1 ] || ! printf '%s' "$SUBJECT" | grep -Eq '^[0-9a-f]{40}$'; }; then
     echo "--outcome-out requires execution and a full lowercase --subject commit" >&2
     exit 2
@@ -121,9 +156,9 @@ case "$PROFILE" in
         ;;
     Deployment)
         if [ "$TS_ONLY" -eq 1 ] || [ "$PY_ONLY" -eq 1 ] || [ "$STREAMING_ONLY" -eq 1 ] ||
-           [ "$JSON" -eq 1 ] || [ "$FULL" -eq 1 ] || [ "${#CHANGED_PATHS[@]}" -gt 0 ] ||
+           [ "$JSON" -eq 1 ] || [ "$FULL" -eq 1 ] || [ "${#CHANGED_PATHS[@]}" -gt 0 ] || [ -n "$BASE_REF" ] || [ -n "$TIER" ] ||
            [ -n "$SUBJECT" ] || [ -n "$OUTCOME_OUT" ]; then
-            echo "Deployment is a legacy_profile_not_migrated adapter and does not accept Json, ChangedPath, Full, Subject, or OutcomeOut." >&2
+            echo "Deployment is a legacy_profile_not_migrated adapter and does not accept Json, ChangedPath, Base, Tier, Full, Subject, or OutcomeOut." >&2
             exit 2
         fi
         if [ -z "$PS" ]; then
@@ -148,6 +183,31 @@ if [ ! -f "$MANIFEST" ] || [ ! -f "$RUNNER" ]; then
     echo "Developer verification manifest or runner is missing." >&2
     exit 2
 fi
+# --base <ref>: derive changed paths with the exact command CI runs (ci.yml changes job),
+# so the local plan and the CI plan are computed from identical input.
+if [ -n "$BASE_REF" ]; then
+    if [ "$FULL" -eq 1 ] || [ "${#CHANGED_PATHS[@]}" -gt 0 ]; then
+        echo "--base cannot be combined with --changed-path or --full" >&2
+        exit 2
+    fi
+    BASE_SHA="$(git -C "$REPO_ROOT" --no-optional-locks rev-parse --verify --quiet "${BASE_REF}^{commit}" 2>/dev/null)" || BASE_SHA=""
+    if ! printf '%s' "$BASE_SHA" | grep -Eq '^[0-9a-f]{40}$'; then
+        echo "--base does not resolve to a commit: $BASE_REF" >&2
+        exit 2
+    fi
+    CHANGED_PATHS_FILE="$(mktemp)"
+    if ! git -C "$REPO_ROOT" -c core.quotepath=false --no-optional-locks diff --no-renames --name-only -z "$BASE_SHA...HEAD" > "$CHANGED_PATHS_FILE"; then
+        rm -f "$CHANGED_PATHS_FILE"
+        echo "--base diff failed for $BASE_REF...HEAD" >&2
+        exit 2
+    fi
+    mapfile -d '' -t CHANGED_PATHS < "$CHANGED_PATHS_FILE"
+    rm -f "$CHANGED_PATHS_FILE"
+    if [ "${#CHANGED_PATHS[@]}" -eq 0 ]; then
+        echo "--base $BASE_REF produced no changed paths relative to HEAD; nothing to verify." >&2
+        exit 2
+    fi
+fi
 if { [ "$FULL" -eq 1 ] || [ "${#CHANGED_PATHS[@]}" -gt 0 ]; } &&
    { [ "$TS_ONLY" -eq 1 ] || [ "$PY_ONLY" -eq 1 ] || [ "$STREAMING_ONLY" -eq 1 ]; }; then
     echo "changed-path/full dispatch cannot be combined with legacy Developer filters" >&2
@@ -164,6 +224,7 @@ if [ "$FULL" -eq 1 ] || [ "${#CHANGED_PATHS[@]}" -gt 0 ]; then
         RUNNER_ARGS+=(--path "$changed_path")
     done
     if [ "$FULL" -eq 1 ]; then RUNNER_ARGS+=(--full); fi
+    if [ -n "$BASE_SHA" ]; then RUNNER_ARGS+=(--base "$BASE_SHA"); fi
 else
     if [ "$STREAMING_ONLY" -eq 1 ]; then
         RUNNER_ARGS+=(--default-profile developer-streaming)
@@ -182,5 +243,6 @@ if [ "$JSON" -eq 1 ]; then RUNNER_ARGS+=(--json); fi
 if [ "$CONTINUE" -eq 1 ]; then RUNNER_ARGS+=(--continue-on-error); fi
 if [ -n "$SUBJECT" ]; then RUNNER_ARGS+=(--subject "$SUBJECT"); fi
 if [ -n "$OUTCOME_OUT" ]; then RUNNER_ARGS+=(--outcome-out "$OUTCOME_OUT"); fi
+if [ -n "$TIER" ]; then RUNNER_ARGS+=(--tier "$TIER"); fi
 
 exec node "${RUNNER_ARGS[@]}"

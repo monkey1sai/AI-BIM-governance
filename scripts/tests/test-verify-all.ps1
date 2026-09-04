@@ -102,6 +102,59 @@ try {
     Assert-Equal 2 $unknownPlan.ExitCode 'unknown path fails closed with planner exit two'
     Assert-True ($unknownPlan.Output -match 'unknown_path_fail_closed|fail_closed') 'unknown path reports a typed fail-closed reason'
 
+    # -BaseRef derives changed paths with the exact CI command and must produce the identical plan
+    # to hand-typed -ChangedPath input (the local/CI parity seam).
+    $baseRefSha = [string]((& git -C $repoRoot --no-optional-locks rev-parse --verify 'HEAD~1^{commit}') -join '')
+    Assert-True ($baseRefSha -match '^[0-9a-f]{40}$') 'test fixture resolves HEAD~1 to a commit'
+    $baseRefManualPaths = @((& git -C $repoRoot -c core.quotepath=false --no-optional-locks diff --no-renames --name-only "$baseRefSha...HEAD") | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+    if ($baseRefManualPaths.Count -gt 0) {
+        $baseRefPlan = Invoke-VerificationPlan -Profile 'Developer' -RepoRoot $repoRoot `
+            -AdditionalArguments @('-BaseRef', 'HEAD~1', '-Json')
+        $directBaseRefArgs = @((Join-Path $repoRoot 'scripts\lib\verification-plan.mjs'), '--manifest', (Join-Path $repoRoot 'scripts\verification-manifest.json'), '--base', $baseRefSha)
+        foreach ($manualPath in $baseRefManualPaths) { $directBaseRefArgs += @('--path', $manualPath) }
+        $directBaseRefJson = & node @directBaseRefArgs
+        Assert-Equal $LASTEXITCODE $baseRefPlan.ExitCode 'BaseRef adapter and direct planner share an exit code'
+        $directBaseRefDocument = $directBaseRefJson | ConvertFrom-Json -Depth 100 -ErrorAction Stop
+        $baseRefDocument = $baseRefPlan.Output | ConvertFrom-Json -Depth 100 -ErrorAction Stop
+        Assert-Equal $baseRefSha ([string]$baseRefDocument.base_sha) 'BaseRef records the resolved base commit as plan provenance'
+        Assert-Equal ($directBaseRefDocument | ConvertTo-Json -Depth 100 -Compress) `
+            ($baseRefDocument | ConvertTo-Json -Depth 100 -Compress) `
+            'BaseRef derives the identical plan to hand-typed changed paths'
+    }
+    $badBaseRefPlan = Invoke-VerificationPlan -Profile 'Developer' -RepoRoot $repoRoot `
+        -AdditionalArguments @('-BaseRef', 'verify-all-test-no-such-ref')
+    Assert-True ($badBaseRefPlan.ExitCode -ne 0) 'unresolvable BaseRef fails'
+    Assert-True ($badBaseRefPlan.Output -match 'BaseRef does not resolve to a commit') 'unresolvable BaseRef reports a typed reason'
+    $mixedBaseRefPlan = Invoke-VerificationPlan -Profile 'Developer' -RepoRoot $repoRoot `
+        -AdditionalArguments @('-BaseRef', 'HEAD~1', '-ChangedPath', 'governance-service/app.py')
+    Assert-True ($mixedBaseRefPlan.ExitCode -ne 0) 'BaseRef combined with ChangedPath fails'
+    Assert-True ($mixedBaseRefPlan.Output -match 'BaseRef cannot be combined with ChangedPath or Full') 'BaseRef/ChangedPath conflict reports a typed reason'
+    $legacyBaseRefPlan = Invoke-VerificationPlan -Profile 'Developer' -RepoRoot $repoRoot `
+        -AdditionalArguments @('-BaseRef', 'HEAD~1', '-TsOnly')
+    Assert-True ($legacyBaseRefPlan.ExitCode -ne 0) 'BaseRef combined with a legacy Developer filter fails'
+
+    # -Tier is a local selection over the canonical plan: it must deselect by the manifest's own
+    # evidence_class, force full on a self-change, never be evidence, and agree with the shared runner.
+    $quickPlan = Invoke-VerificationPlan -Profile 'Developer' -RepoRoot $repoRoot `
+        -AdditionalArguments @('-ChangedPath', 'governance-service/app.py', '-Tier', 'quick')
+    Assert-Equal 0 $quickPlan.ExitCode 'quick tier plan exits zero'
+    Assert-True ($quickPlan.Output -match '\[TIER\] quick \(not evidence\)') 'quick tier is announced as not evidence'
+    Assert-True ($quickPlan.Output -match 'tier_deselected:contract') 'quick tier deselects contract gates by evidence_class'
+    Assert-True ($quickPlan.Output -notmatch '\[EXECUTE\] governance-service') 'quick tier does not execute the contract-class governance-service gate'
+    $forcedFullPlan = Invoke-VerificationPlan -Profile 'Developer' -RepoRoot $repoRoot `
+        -AdditionalArguments @('-ChangedPath', '.github/workflows/ci.yml', '-Tier', 'quick')
+    Assert-True ($forcedFullPlan.Output -match '\[TIER\] requested=quick effective=full') 'a verification-mechanism self-change forces the full tier'
+    Assert-True ($forcedFullPlan.Output -notmatch 'tier_deselected') 'forced full tier deselects nothing'
+    $tierOutcomePlan = Invoke-VerificationPlan -Profile 'Developer' -RepoRoot $repoRoot `
+        -AdditionalArguments @('-ChangedPath', 'governance-service/app.py', '-Tier', 'quick', '-Subject', ('0' * 40), '-OutcomeOut', 'x.json')
+    Assert-True ($tierOutcomePlan.ExitCode -ne 0) 'tier combined with OutcomeOut fails'
+    Assert-True ($tierOutcomePlan.Output -match 'tiered run is not verification evidence') 'tier/OutcomeOut conflict reports that a tiered run is not evidence'
+    $runnerQuick = @(& node (Join-Path $repoRoot 'scripts\lib\verification-runner.mjs') '--repo-root' $repoRoot `
+        '--manifest' (Join-Path $repoRoot 'scripts\verification-manifest.json') '--path' 'governance-service/app.py' '--tier' 'quick' '--plan-only' 2>&1)
+    $runnerQuickSkipped = @($runnerQuick | Where-Object { $_ -match '^\[TIER-SKIP\]' } | ForEach-Object { ($_ -replace '^\[TIER-SKIP\] ', '') -replace ' — .*$', '' })
+    $adapterQuickSkipped = @(($quickPlan.Output -split "`n") | Where-Object { $_ -match '^\[OMIT\].*tier_deselected' } | ForEach-Object { ($_ -replace '^\[OMIT\] ', '') -replace ' — .*$', '' })
+    Assert-Equal (($runnerQuickSkipped | Sort-Object) -join '|') (($adapterQuickSkipped | Sort-Object) -join '|') 'PowerShell adapter and shared runner deselect the identical gates at the quick tier'
+
     $deploymentRoot = Join-Path $sandbox 'pruned-deployment'
     foreach ($directory in @(
         'scripts',
@@ -570,6 +623,12 @@ try {
     Assert-True ($verifyShell -match 'DEPLOYMENT_ARGS\+=\(-InventoryPath "\$INVENTORY_PATH"\)') 'POSIX verifier mirror forwards the private inventory path without eval'
     Assert-True ($verifyShell -match '--target-id requires a non-empty value') 'POSIX verifier rejects an explicitly empty target selector'
     Assert-True ($verifyShell -match '--inventory-path requires a non-empty value') 'POSIX verifier rejects an explicitly empty inventory selector'
+    Assert-True ($verifyShell -match '--base\) BASE_REF_ARG_PENDING=1') 'POSIX verifier mirror accepts the base-ref changed-path deriver'
+    Assert-True ($verifyShell -match 'diff --no-renames --name-only -z "\$BASE_SHA\.\.\.HEAD"') 'POSIX verifier derives changed paths with the exact CI diff command'
+    Assert-True ($verifyShell -match 'RUNNER_ARGS\+=\(--base "\$BASE_SHA"\)') 'POSIX verifier forwards the resolved base commit as plan provenance'
+    Assert-True ($verifyShell -match '--base requires a non-empty value') 'POSIX verifier rejects an explicitly empty base ref'
+    Assert-True ($verifyShell -match 'RUNNER_ARGS\+=\(--tier "\$TIER"\)') 'POSIX verifier forwards the local tier selector to the shared runner'
+    Assert-True ($verifyShell -match 'tiered run is not verification evidence') 'POSIX verifier refuses to bind a tiered run to an outcome artifact'
     $bashPath = if ($IsWindows) {
         @(
             'C:\Program Files\Git\bin\bash.exe',
@@ -587,7 +646,15 @@ try {
         @{ Name = 'target spaced'; Arguments = @('--profile', 'Deployment', '--plan-only', '--target-id', ''); Expected = '--target-id requires a non-empty value' },
         @{ Name = 'target equals'; Arguments = @('--profile', 'Deployment', '--plan-only', '--target-id='); Expected = '--target-id requires a non-empty value' },
         @{ Name = 'inventory spaced'; Arguments = @('--profile', 'Deployment', '--plan-only', '--inventory-path', ''); Expected = '--inventory-path requires a non-empty value' },
-        @{ Name = 'inventory equals'; Arguments = @('--profile', 'Deployment', '--plan-only', '--inventory-path='); Expected = '--inventory-path requires a non-empty value' }
+        @{ Name = 'inventory equals'; Arguments = @('--profile', 'Deployment', '--plan-only', '--inventory-path='); Expected = '--inventory-path requires a non-empty value' },
+        @{ Name = 'base spaced'; Arguments = @('--plan-only', '--base', ''); Expected = '--base requires a non-empty value' },
+        @{ Name = 'base equals'; Arguments = @('--plan-only', '--base='); Expected = '--base requires a non-empty value' },
+        @{ Name = 'base unresolvable'; Arguments = @('--plan-only', '--base', 'verify-all-test-no-such-ref'); Expected = '--base does not resolve to a commit' },
+        @{ Name = 'base with full'; Arguments = @('--plan-only', '--base', 'HEAD', '--full'); Expected = '--base cannot be combined with --changed-path or --full' },
+        @{ Name = 'base with deployment'; Arguments = @('--profile', 'Deployment', '--plan-only', '--base', 'HEAD'); Expected = 'does not accept Json, ChangedPath, Base, Tier, Full, Subject, or OutcomeOut' },
+        @{ Name = 'tier unknown'; Arguments = @('--plan-only', '--tier', 'turbo'); Expected = '--tier must be one of quick, pr, full' },
+        @{ Name = 'tier dangling'; Arguments = @('--plan-only', '--tier'); Expected = '--tier requires a value' },
+        @{ Name = 'tier with deployment'; Arguments = @('--profile', 'Deployment', '--plan-only', '--tier', 'quick'); Expected = 'does not accept Json, ChangedPath, Base, Tier, Full, Subject, or OutcomeOut' }
     )
     foreach ($emptySelectorCase in $emptySelectorCases) {
         $caseArguments = [string[]]$emptySelectorCase.Arguments

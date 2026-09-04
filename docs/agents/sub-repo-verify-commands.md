@@ -41,6 +41,15 @@ PR 本機 preflight 入口：
 
 GitHub PR checks 不再無差別重跑這些本機可重現的 sub-repo verify。PR 上先用 changed-path classifier 判斷受影響範圍；未受影響的 service-level required checks 由 job-level condition skip，受影響的 job 才跑遠端確認。若本機 preflight 未跑綠，不得用 GitHub CI 補跑或等待。
 
+PR 尚未存在（無 `-PrNumber` 可用）時，用同一支 classifier 從 base 推導受影響 gate：
+
+```powershell
+.\scripts\verify-all.ps1 -BaseRef origin/main -Tier pr        # commit 前小步迭代可用 -Tier quick
+.\scripts\verify-all.ps1 -BaseRef origin/main                  # 完整 plan；只有這種跑法可搭配 -Subject/-OutcomeOut 產生 evidence
+```
+
+`-BaseRef` 與 CI `changes` job 執行相同的 `git diff --no-renames --name-only -z base...HEAD`；`-Tier` 只依 manifest 既有 `evidence_class` 篩選本機執行，CI 不讀 tier，且 tiered run 不得綁 `-OutcomeOut`。
+
 優先驗證入口：
 
 ```powershell
