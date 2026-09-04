@@ -116,7 +116,6 @@ describe("WorkspaceViewportHost（V-A′）", () => {
     expect(resetBtn?.disabled).toBe(true);
   });
 });
-
 describe("classifyViewerPhase（只分類 pane 回報的 reason，不另造判定）", () => {
   it("無 session → no-session；有 session 無 gate → session-selected", () => {
     expect(classifyViewerPhase("", null)).toBe("no-session");
@@ -132,7 +131,6 @@ describe("classifyViewerPhase（只分類 pane 回報的 reason，不另造判�
     expect(classifyViewerPhase("s", { canSend: false, reason: "mapping_reachable=false: derived_artifact_unreachable" })).toBe("blocked");
   });
 });
-
 describe("ViewportSlotProvider", () => {
   it("publish 帶非空 session 即播種 activeSessionId；離場不清空", async () => {
     const seen: string[] = [];
@@ -218,7 +216,6 @@ describe("ViewportSlotProvider", () => {
     await act(async () => { root.unmount(); });
   });
 });
-
 describe("WorkspacePage 實機整合（Toolbar 遮蔽修復）", () => {
   let container: HTMLDivElement;
   let root: Root | null;
@@ -267,4 +264,3 @@ describe("WorkspacePage 實機整合（Toolbar 遮蔽修復）", () => {
     expect(toolbar.style.zIndex).toBe("10");
   });
 });
-

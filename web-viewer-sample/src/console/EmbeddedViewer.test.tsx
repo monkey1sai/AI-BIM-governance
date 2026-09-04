@@ -133,6 +133,51 @@ describe("EmbeddedViewer postMessage 橋", () => {
     expect(src).not.toContain("local_user_token_primary");
   });
 
+  // 迴歸鎖：viewer main.tsx 的 bootstrapStructLog 是 fail-closed——iframe URL 少了 trace_id
+  // 就 throw、React 不 mount、畫面全白且不發起 WebRTC。coordinator /ui/open 會補 canonical
+  // trace_id，內嵌路徑必須同樣帶上，否則 A1 / A2 / A3 / A4 的 inline viewer 一律白畫面。
+  it("iframe src 帶 canonical trace_id（缺 trace carrier viewer 會 fail-closed 白畫面）", async () => {
+    root = createRoot(container);
+    await act(async () => {
+      root!.render(
+        <EmbeddedViewer
+          sessionId="review_session_abc"
+          viewerOrigin={VIEWER_ORIGIN}
+          traceId="rev_review_session_abc"
+        />,
+      );
+    });
+    const src = container.querySelector("iframe")!.getAttribute("src")!;
+    expect(src).toContain("trace_id=rev_review_session_abc");
+  });
+
+  // ifc-ready 建立的 session 的 canonical trace 前綴是 ifcready_，不是 rev_：
+  // 前端只能透傳 coordinator 給的值，不得自行合成 `rev_${sessionId}`。
+  it("iframe src 原樣透傳 ifcready_ 前綴的 trace carrier", async () => {
+    root = createRoot(container);
+    await act(async () => {
+      root!.render(
+        <EmbeddedViewer
+          sessionId="review_session_abc"
+          viewerOrigin={VIEWER_ORIGIN}
+          traceId="ifcready_1788403854334_c383a04a"
+        />,
+      );
+    });
+    const src = container.querySelector("iframe")!.getAttribute("src")!;
+    expect(src).toContain("trace_id=ifcready_1788403854334_c383a04a");
+    expect(src).not.toContain("rev_review_session_abc");
+  });
+
+  it("未提供 trace carrier 時不塞空的 trace_id query", async () => {
+    root = createRoot(container);
+    await act(async () => {
+      root!.render(<EmbeddedViewer sessionId="review_session_abc" viewerOrigin={VIEWER_ORIGIN} />);
+    });
+    const src = container.querySelector("iframe")!.getAttribute("src")!;
+    expect(src).not.toContain("trace_id");
+  });
+
   it("viewer_ready 後用 postMessage 傳 viewer lease token（targetOrigin 非 \"*\"）", async () => {
     root = createRoot(container);
     await act(async () => {
