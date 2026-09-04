@@ -1268,8 +1268,8 @@ describe("Window Socket canonical trace authority", () => {
             ["a child entry is a nested array", { action: "message", status: "success", info: "x", primPath: "/World", children: [[]] }],
             ["a child entry lacks a string path", { action: "message", status: "success", info: "x", primPath: "/World", children: [{ name: "A" }] }],
             ["a child entry path is not a string", { action: "message", status: "success", info: "x", primPath: "/World", children: [{ path: 3 }] }],
-            ["a nested children entry is null", { action: "message", status: "success", info: "x", primPath: "/World", children: [{ path: "/World/A", children: [null] }] }],
-            ["a nested children field is not an array", { action: "message", status: "success", info: "x", primPath: "/World", children: [{ path: "/World/A", children: "x" }] }],
+            ["a nested children entry is null", { action: "message", status: "success", info: "x", primPath: "/World", children: [{ ...CHILD_A, children: [null] }] }],
+            ["a nested children field is not an array", { action: "message", status: "success", info: "x", primPath: "/World", children: [{ ...CHILD_A, children: "x" }] }],
             ["primPath answers a different node than requested", { action: "message", status: "success", info: "x", primPath: "/Old/Stage", children: [] }],
         ])("getChildrenRequest: %s never replaces the stage tree", async (_label, result) => {
             const app = authorizedApp({ synchronousSetState: true });
