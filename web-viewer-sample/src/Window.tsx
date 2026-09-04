@@ -676,15 +676,31 @@ function requestUsesNativeOpenedStageResult(requestEventType: string): boolean {
         || requestEventType === "loadArtifactGroupRequest";
 }
 
-// #783：outbound trace 只能補給「形狀正確」的 native 成功回應。逐字對齊 SDK
-// LogFormatter.fromLoadingStateEvent / fromGetChildrenEvent 的產出欄位。
-function isExpectedNativeResult(requestEventType: string, result: Record<string, unknown>): boolean {
+// #783：outbound trace 只能補給「形狀正確」的 native 成功回應。欄位名對齊 SDK
+// LogFormatter.fromLoadingStateEvent / fromGetChildrenEvent 的產出；值域對齊
+// tests/contracts/kit-datachannel-v1.schema.json（loadingStateResponse.loading_state 只准
+// idle|busy；getChildrenResponse.children 每個元素都必須是物件）。任何不在契約內的值
+// 都不得被補上 trace 後放進 _handleCustomEvent——那條路會直接改 isKitReady / usdPrims。
+const NATIVE_LOADING_STATES: ReadonlySet<string> = new Set(["idle", "busy"]);
+
+function isExpectedNativeResult(
+    requestEventType: string,
+    result: Record<string, unknown>,
+    requestPayload: Record<string, unknown>,
+): boolean {
     if (getPayloadString(result, "status") !== "success") return false;
     if (requestEventType === "loadingStateQuery") {
-        return typeof result.loadingState === "string";
+        return typeof result.loadingState === "string" && NATIVE_LOADING_STATES.has(result.loadingState);
     }
     if (requestEventType === "getChildrenRequest") {
-        return typeof result.primPath === "string" && Array.isArray(result.children);
+        // 回應必須答的是**這一次**請求的節點：primPath 逐字等於 outbound prim_path。
+        // 這同時擋掉切換模型後遲到的舊 stage 回應被當成新樹的 root 回應（review P2）。
+        const requestedPrimPath = getPayloadString(requestPayload, "prim_path");
+        return typeof result.primPath === "string"
+            && requestedPrimPath !== ""
+            && result.primPath === requestedPrimPath
+            && Array.isArray(result.children)
+            && result.children.every(isRecord);
     }
     return false;
 }
@@ -776,7 +792,7 @@ function appStreamResultToAppEvent(
     const inboundTraceId = getPayloadString(result, "trace_id");
     if (hasInboundTrace && !inboundTraceId) return null;
     const traceId = inboundTraceId
-        || (isExpectedNativeResult(requestEventType, result)
+        || (isExpectedNativeResult(requestEventType, result, requestPayloadRecord)
             ? getPayloadString(requestPayloadRecord, "trace_id")
             : "");
     if (!traceId) return null;
@@ -2025,6 +2041,12 @@ export default class App extends React.Component<AppProps, AppState> {
             this.setState({ runtimeCommandRejection: null });
         }
         const streamGenerationAtSend = this.streamGeneration;
+        // #783（review P2）：native getChildren 回應沒有 stage 相關性。切換模型時 WebRTC
+        // stream generation 與 session trace 都不變，_openSelectedAsset 又會先清空 usdPrims，
+        // 於是舊 stage 遲到的回應會被 handler 當成新樹的 root 回應整棵換掉。送出時記下
+        // stage intent / attempt generation，回來時任一變了就丟棄。
+        const stageIntentGenerationAtSend = this.stageIntentGeneration;
+        const stageAttemptGenerationAtSend = this.activeStageAttempt?.generation ?? null;
         let nativeTransportFailed = false;
         void AppStream.sendMessage(outgoing)
             .then((result) => {
@@ -2034,9 +2056,18 @@ export default class App extends React.Component<AppProps, AppState> {
                     outgoing.payload,
                     Boolean(nativeOpenStageDispatch),
                 );
-                if (responseEvent) {
-                    this._handleCustomEvent(responseEvent, streamGenerationAtSend);
+                if (!responseEvent) return;
+                if (
+                    outgoing.event_type === "getChildrenRequest"
+                    && (
+                        this.stageIntentGeneration !== stageIntentGenerationAtSend
+                        || (this.activeStageAttempt?.generation ?? null) !== stageAttemptGenerationAtSend
+                    )
+                ) {
+                    this._appendReviewEvent("略過遲到的 getChildrenResponse：stage 已切換");
+                    return;
                 }
+                this._handleCustomEvent(responseEvent, streamGenerationAtSend);
             })
             .catch(() => {
                 nativeTransportFailed = true;
