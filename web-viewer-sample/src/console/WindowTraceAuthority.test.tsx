@@ -1395,6 +1395,34 @@ describe("Window Socket canonical trace authority", () => {
             );
         });
 
+        // 守門只圍「借用 outbound trace」的路：帶真實 inbound trace 的回應即使指到樹上不存在的
+        // 非 root 節點，也維持既有行為照常送進 handler。把 `borrowedTrace &&` 拿掉，這條會轉紅。
+        it("getChildrenRequest: a real inbound trace bypasses the absent-node drop (preserved behaviour)", async () => {
+            const app = authorizedApp({ synchronousSetState: true });
+            const target = internals(app);
+            target.state = { ...target.state, usdPrims: [{ path: PRIM_ROOT + "/Existing" }] };
+            vi.spyOn(AppStream, "sendMessage").mockResolvedValue({
+                action: "message",
+                status: "success",
+                info: "Get children result received",
+                trace_id: TRACE_ID,
+                primPath: PRIM_ROOT + "/Gone",
+                children: [CHILD_A],
+            });
+            const handled = vi.spyOn(target, "_handleCustomEvent");
+
+            expect(target._sendStreamMessage({ event_type: "getChildrenRequest", payload: { prim_path: PRIM_ROOT + "/Gone" } })).toBe(true);
+            await flush();
+
+            expect(handled).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    event_type: "getChildrenResponse",
+                    payload: expect.objectContaining({ trace_id: TRACE_ID, prim_path: PRIM_ROOT + "/Gone" }),
+                }),
+                expect.any(Number),
+            );
+        });
+
         it("getChildrenRequest: a non-root node still present in the tree is delivered", async () => {
             const app = authorizedApp({ synchronousSetState: true });
             const target = internals(app);
