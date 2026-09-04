@@ -84,8 +84,60 @@ describe("StructuredLogDiagnostics", () => {
             ...overrides,
         };
         await act(async () => { root!.render(<StructuredLogDiagnostics {...props} />); });
+        // 診斷面板預設收成 stage 角落 HUD chip（不遮 live 3D）；既有行為契約都針對展開後的
+        // 投遞控制，故 helper 一律先展開。收合預設本身另有專屬測試把關。
+        await act(async () => { q<HTMLButtonElement>("structured-log-toggle")!.click(); });
         return { logger, props };
     };
+
+    it("預設收成角落 HUD chip（不遮 live 3D stage），且收合態以文字而非只有顏色表述可用性", async () => {
+        await act(async () => {
+            root!.render(<StructuredLogDiagnostics
+                search="?session=review_session_diagnostics_x&trace_id=ifcready_diagnostics_x"
+                logger={makeLogger(async () => ({ ok: true, status: 200 }))}
+                reviewSessionId="review_session_diagnostics_x"
+                conversionJobId="stream_conv_diagnostics_x"
+                kitInstanceId="kit_local_001"
+                ensureViewerLogAuthority={async () => deliveryAuthority}
+                requestSessionClose={() => {}}
+            />);
+        });
+
+        const toggle = q<HTMLButtonElement>("structured-log-toggle");
+        expect(toggle).not.toBeNull();
+        expect(q("structured-log-diagnostics")?.getAttribute("data-expanded")).toBe("false");
+        expect(toggle?.getAttribute("aria-expanded")).toBe("false");
+        // 收合態：投遞控制與 ID 表完全不掛載 → 不可能遮住模型。
+        expect(q("structured-log-flush")).toBeNull();
+        expect(q("review-session-close")).toBeNull();
+        expect(q("structured-log-trace-id")).toBeNull();
+        // 可用性必須有文字（色點是 aria-hidden 裝飾），且 chip 仍誠實顯示 Kit 識別碼。
+        expect(q("structured-log-chip-readiness")?.textContent).toBe("Ready");
+        expect(toggle?.textContent).toContain("kit_local_001");
+
+        await act(async () => { toggle!.click(); });
+        expect(q("structured-log-diagnostics")?.getAttribute("data-expanded")).toBe("true");
+        expect(q<HTMLButtonElement>("structured-log-flush")?.disabled).toBe(false);
+        expect(q("structured-log-trace-id")?.textContent).toContain("ifcready_diagnostics_x");
+
+        await act(async () => { q<HTMLButtonElement>("structured-log-toggle")!.click(); });
+        expect(q("structured-log-flush")).toBeNull();
+    });
+
+    it("route/session/trace 不一致時，收合態的 chip 就要顯示 Unavailable 文字", async () => {
+        await act(async () => {
+            root!.render(<StructuredLogDiagnostics
+                search="?session=review_session_diagnostics_x&trace_id=ifcready_OTHER"
+                logger={makeLogger(async () => ({ ok: true, status: 200 }))}
+                reviewSessionId="review_session_diagnostics_x"
+                conversionJobId={null}
+                kitInstanceId={null}
+                ensureViewerLogAuthority={async () => deliveryAuthority}
+                requestSessionClose={() => {}}
+            />);
+        });
+        expect(q("structured-log-chip-readiness")?.textContent).toBe("Unavailable");
+    });
 
     it("accepts exactly one valid session carrier and rejects duplicates", () => {
         expect(routeReviewSessionIdFromSearch("?session=review_session_x")).toBe("review_session_x");

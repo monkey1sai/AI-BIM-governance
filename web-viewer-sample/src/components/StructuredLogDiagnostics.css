@@ -1,27 +1,107 @@
+/* Runtime diagnostics HUD —— 疊在 live 3D stage 上的唯一浮層。
+   對齊 NVIDIA Omniverse Kit viewport 慣例：疊在 render 之上的東西只能是「角落、
+   小、半透明、可關」的 HUD（Kit 的 stats / camera 讀數即此形），主要工作面一律
+   dock 在邊緣。故本面板預設收成 chip，展開時也鎖在右下角且限寬限高，
+   永不置中、永不覆蓋模型主體。
+   配色改用 viewer stage 的 --ab-* 深色 token（原本的淺色卡片在深色 3D 視區上
+   既刺眼又像外來元件）。 */
 .structured-log-diagnostics {
     position: absolute;
-    right: 20px;
-    bottom: 20px;
-    z-index: 48;
-    width: min(390px, calc(100vw - 40px));
-    max-height: calc(100% - 40px);
+    right: 12px;
+    bottom: 12px;
+    z-index: 40;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 8px;
+    max-width: calc(100% - 24px);
+    color: var(--ab-text, #dbe6f3);
+    font-family: var(--ab-sans, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif);
+}
+
+/* ── 收合態：角落 HUD chip ─────────────────────────────────────────────── */
+.structured-log-diagnostics__chip {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 30px;
+    max-width: 100%;
+    padding: 0 10px;
+    border: 1px solid var(--ab-border-strong, rgba(120, 160, 210, .24));
+    border-radius: 999px;
+    background: rgba(8, 12, 18, .82);
+    backdrop-filter: blur(10px);
+    color: var(--ab-text-2, #b6c6d9);
+    font: inherit;
+    font-size: 11px;
+    cursor: pointer;
+}
+.structured-log-diagnostics__chip:hover {
+    border-color: var(--ab-border-accent, rgba(65, 199, 232, .45));
+    color: var(--ab-text, #dbe6f3);
+}
+.structured-log-diagnostics__chip:focus-visible {
+    outline: 2px solid var(--ab-accent, #41c7e8);
+    outline-offset: 2px;
+}
+.structured-log-diagnostics__dot {
+    flex: none;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+}
+/* 狀態不只靠顏色：chip 文字與展開面板的 Ready/Unavailable 徽章同時表述。 */
+.structured-log-diagnostics__dot.is-ready { background: var(--ab-ok, #46c17f); box-shadow: 0 0 7px var(--ab-ok, #46c17f); }
+.structured-log-diagnostics__dot.is-unavailable { background: var(--ab-warn, #e0a53c); }
+.structured-log-diagnostics__chip-label { flex: none; font-weight: 700; letter-spacing: .03em; }
+/* 可用性文字：色點是 aria-hidden 的裝飾，狀態必須同時以文字表述，否則收合態只靠
+   顏色傳達可用性，螢幕閱讀器與色覺障礙使用者無從判讀。 */
+.structured-log-diagnostics__chip-state {
+    flex: none;
+    padding: 1px 7px;
+    border: 1px solid transparent;
+    border-radius: 999px;
+    font-weight: 700;
+}
+.structured-log-diagnostics__chip-state.is-ready {
+    border-color: rgba(70, 193, 127, .38);
+    color: var(--ab-ok, #46c17f);
+    background: var(--ab-ok-soft, rgba(70, 193, 127, .12));
+}
+.structured-log-diagnostics__chip-state.is-unavailable {
+    border-color: rgba(224, 165, 60, .38);
+    color: var(--ab-warn, #e0a53c);
+    background: var(--ab-warn-soft, rgba(224, 165, 60, .12));
+}
+.structured-log-diagnostics__chip-id {
+    min-width: 0;
+    overflow: hidden;
+    color: var(--ab-text-muted, #8aa0b8);
+    font-family: var(--ab-mono, "JetBrains Mono", Consolas, monospace);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.structured-log-diagnostics__chev { flex: none; color: var(--ab-text-muted, #8aa0b8); }
+
+/* ── 展開態：右下角受限面板 ───────────────────────────────────────────── */
+.structured-log-diagnostics__panel {
+    width: min(340px, calc(100vw - 24px));
+    max-height: min(420px, calc(100vh - 140px));
     overflow: auto;
-    padding: 16px;
-    border: 1px solid var(--demo-border, #c9d6e6);
-    border-radius: var(--demo-radius-lg, 12px);
-    color: var(--demo-text-primary, #102a43);
-    background: color-mix(in srgb, var(--demo-bg-elevated, #ffffff) 96%, transparent);
-    box-shadow: var(--demo-shadow-lg, 0 6px 18px rgba(16, 42, 67, 0.12));
+    padding: 12px;
+    border: 1px solid var(--ab-border-strong, rgba(120, 160, 210, .24));
+    border-radius: 10px;
+    background: rgba(10, 15, 22, .95);
+    box-shadow: 0 10px 30px rgba(0, 0, 0, .45);
     backdrop-filter: blur(12px);
-    font-family: var(--demo-font-sans, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif);
 }
 
 .structured-log-diagnostics__heading {
     display: flex;
     align-items: flex-start;
     justify-content: space-between;
-    gap: 16px;
-    margin-bottom: 12px;
+    gap: 12px;
+    margin-bottom: 10px;
 }
 
 .structured-log-diagnostics__heading h2,
@@ -33,61 +113,66 @@
 
 .structured-log-diagnostics__heading h2 {
     margin-top: 2px;
-    font-size: 17px;
+    color: var(--ab-text, #dbe6f3);
+    font-size: 14px;
     line-height: 1.3;
 }
 
 .structured-log-diagnostics__eyebrow {
-    color: var(--demo-text-secondary, #486581);
-    font-size: 11px;
+    color: var(--ab-text-muted, #8aa0b8);
+    font-size: 10px;
     font-weight: 700;
-    letter-spacing: 0.08em;
+    letter-spacing: .08em;
     text-transform: uppercase;
 }
 
 .structured-log-diagnostics__availability {
     flex: none;
-    padding: 4px 8px;
+    padding: 3px 8px;
+    border: 1px solid transparent;
     border-radius: 999px;
-    font-size: 11px;
+    font-size: 10px;
     font-weight: 700;
 }
 
 .structured-log-diagnostics__availability.is-ready {
-    color: var(--demo-status-ok, #2ea44f);
-    background: var(--demo-status-ok-soft, #dcffe4);
+    border-color: rgba(70, 193, 127, .38);
+    color: var(--ab-ok, #46c17f);
+    background: var(--ab-ok-soft, rgba(70, 193, 127, .12));
 }
 
 .structured-log-diagnostics__availability.is-unavailable {
-    color: var(--demo-status-warn, #b08800);
-    background: var(--demo-status-warn-soft, #fff4cc);
+    border-color: rgba(224, 165, 60, .38);
+    color: var(--ab-warn, #e0a53c);
+    background: var(--ab-warn-soft, rgba(224, 165, 60, .12));
 }
 
 .structured-log-diagnostics__notice {
-    margin-bottom: 12px;
-    padding: 9px 10px;
-    border-left: 3px solid var(--demo-status-warn, #b08800);
-    color: var(--demo-text-primary, #102a43);
-    background: var(--demo-status-warn-soft, #fff4cc);
+    margin-bottom: 10px;
+    padding: 8px 10px;
+    border-left: 3px solid var(--ab-warn, #e0a53c);
+    border-radius: 0 6px 6px 0;
+    color: var(--ab-text-2, #b6c6d9);
+    background: var(--ab-warn-soft, rgba(224, 165, 60, .12));
     font-size: 12px;
     line-height: 1.45;
 }
 
 .structured-log-diagnostics__ids {
     display: grid;
-    gap: 7px;
-    margin: 0 0 14px;
+    gap: 6px;
+    margin: 0 0 12px;
 }
 
 .structured-log-diagnostics__ids > div {
     display: grid;
-    grid-template-columns: 104px minmax(0, 1fr);
+    grid-template-columns: 92px minmax(0, 1fr);
     gap: 10px;
     align-items: baseline;
 }
 
 .structured-log-diagnostics__ids dt {
-    color: var(--demo-text-secondary, #486581);
+    color: var(--ab-text-muted, #8aa0b8);
     font-size: 11px;
 }
 
@@ -95,90 +180,91 @@
     min-width: 0;
     margin: 0;
     overflow-wrap: anywhere;
-    color: var(--demo-text-primary, #102a43);
-    font-family: var(--demo-font-mono, "JetBrains Mono", Consolas, monospace);
+    color: var(--ab-text, #dbe6f3);
+    font-family: var(--ab-mono, "JetBrains Mono", Consolas, monospace);
     font-size: 11px;
 }
 
+/* 340px 寬放不下兩欄動作卡（按鈕字會被擠斷），改單欄堆疊。 */
 .structured-log-diagnostics__actions {
     display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 10px;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 8px;
 }
 
 .structured-log-diagnostics__action {
     display: flex;
     min-width: 0;
     flex-direction: column;
-    gap: 7px;
+    gap: 6px;
     padding: 10px;
-    border: 1px solid var(--demo-border, #c9d6e6);
-    border-radius: var(--demo-radius, 8px);
-    background: var(--demo-bg-card, #eaf2fb);
+    border: 1px solid var(--ab-border, rgba(120, 160, 210, .12));
+    border-radius: 8px;
+    background: var(--ab-surface, #0e1621);
 }
 
-.structured-log-diagnostics button {
-    min-height: 36px;
-    padding: 8px 10px;
-    border-radius: 7px;
+.structured-log-diagnostics__panel button {
+    min-height: 32px;
+    padding: 7px 10px;
+    border-radius: 6px;
     font: inherit;
     font-size: 12px;
     font-weight: 700;
     cursor: pointer;
 }
 
-.structured-log-diagnostics button:disabled {
+.structured-log-diagnostics__panel button:disabled {
     cursor: not-allowed;
-    opacity: 0.5;
+    opacity: 0.45;
 }
 
 .structured-log-diagnostics__primary {
-    border: 1px solid var(--demo-brand, #1d6fb8);
-    color: #ffffff;
-    background: var(--demo-brand, #1d6fb8);
+    border: 1px solid var(--ab-accent-strong, rgba(65, 199, 232, .5));
+    color: var(--ab-black, #05080d);
+    background: var(--ab-accent, #41c7e8);
 }
 
 .structured-log-diagnostics__secondary,
 .structured-log-diagnostics__retry {
-    border: 1px solid var(--demo-border-strong, #9fb3c8);
-    color: var(--demo-text-primary, #102a43);
-    background: var(--demo-bg-elevated, #ffffff);
+    border: 1px solid var(--ab-border-strong, rgba(120, 160, 210, .24));
+    color: var(--ab-text, #dbe6f3);
+    background: transparent;
+}
+
+.structured-log-diagnostics__secondary:hover:not(:disabled),
+.structured-log-diagnostics__retry:hover:not(:disabled) {
+    border-color: var(--ab-border-accent, rgba(65, 199, 232, .45));
+    background: var(--ab-accent-soft, rgba(65, 199, 232, .1));
 }
 
 .structured-log-diagnostics__retry {
-    min-height: 30px !important;
+    min-height: 28px !important;
     margin-top: auto;
 }
 
 .structured-log-diagnostics__status {
-    min-height: 34px;
-    color: var(--demo-text-secondary, #486581);
+    color: var(--ab-text-muted, #8aa0b8);
     font-size: 11px;
     line-height: 1.45;
 }
 
-.structured-log-diagnostics__status.is-success,
-.structured-log-diagnostics__status.is-closed {
-    color: var(--demo-status-ok, #2ea44f);
+.structured-log-diagnostics__status.is-success {
+    color: var(--ab-ok, #46c17f);
 }
 
 .structured-log-diagnostics__status.is-failure {
-    color: var(--demo-status-bad, #d73a49);
+    color: var(--ab-danger, #e8615c);
 }
 
-.structured-log-diagnostics__status.is-loading,
-.structured-log-diagnostics__status.is-closing {
-    color: var(--demo-brand, #1d6fb8);
+.structured-log-diagnostics__status.is-loading {
+    color: var(--ab-accent, #41c7e8);
 }
 
 @media (max-width: 720px) {
     .structured-log-diagnostics {
-        right: 12px;
-        bottom: 12px;
-        width: calc(100vw - 24px);
+        right: 8px;
+        bottom: 8px;
     }
-
-    .structured-log-diagnostics__actions {
-        grid-template-columns: 1fr;
-    }
+    /* 窄容器優先犧牲識別碼，可用性文字必須留著。 */
+    .structured-log-diagnostics__chip-id { display: none; }
 }

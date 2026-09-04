@@ -611,6 +611,15 @@ async function main() {
     }
 
     await page.locator('[data-testid="structured-log-diagnostics"]').waitFor({ state: "visible", timeout: 60_000 });
+    // Runtime diagnostics now ships as a collapsed corner HUD chip so it never occludes the
+    // live 3D stage; the delivery controls live behind that toggle. Expand it before asserting
+    // on identities or clicking any delivery action. Idempotent: only clicks when collapsed.
+    const diagnosticsToggle = page.locator('[data-testid="structured-log-toggle"]');
+    await diagnosticsToggle.waitFor({ state: "visible", timeout: 60_000 });
+    if ((await diagnosticsToggle.getAttribute("aria-expanded")) !== "true") {
+      await diagnosticsToggle.click();
+    }
+    await page.locator('[data-testid="structured-log-flush"]').waitFor({ state: "visible", timeout: 30_000 });
     await page.waitForFunction(
       ({ expectedTrace, expectedSession }) => {
         const value = (testId) => document.querySelector(`[data-testid="${testId}"] dd`)?.textContent?.trim();
