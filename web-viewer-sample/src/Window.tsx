@@ -6498,7 +6498,10 @@ export default class App extends React.Component<AppProps, AppState> {
                     conversionJobId={this.state.latestStreamConfig?.model.conversion_job_id ?? null}
                     kitInstanceId={this.state.activeStreamEndpoint.kitInstanceId || null}
                     ensureViewerLogAuthority={() => this._ensureViewerLogDeliveryAuthority()}
-                    closeReviewSession={(sessionId) => this.coordinatorClient.closeReviewSession(sessionId)}
+                    requestSessionClose={(sessionId) => {
+                        const url = `${reviewEnv.coordinatorApiBase}/ui/#sessions?source=review&session=${encodeURIComponent(sessionId)}&intent=close`;
+                        window.open(url, "_blank", "noopener,noreferrer");
+                    }}
                 />
             </div>
             );

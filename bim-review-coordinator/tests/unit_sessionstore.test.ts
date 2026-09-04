@@ -10,6 +10,7 @@
 import path from "node:path";
 import os from "node:os";
 import fs from "node:fs";
+import { createHash } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { SessionStore, isSafeSessionId, isSessionMutable } from "../src/services/sessionStore.js";
 import type { KitInstance, KitInstanceBinding, ReviewSession } from "../src/types.js";
@@ -245,6 +246,24 @@ describe("SessionStore", () => {
       const session = createBaseSession(store, { tenant_id: "tenant_special" });
 
       expect(session.tenant_id).toBe("tenant_special");
+    });
+  });
+
+  describe("recreation receipts", () => {
+    it("survives a store restart and persists only the idempotency-key digest", () => {
+      const source = createBaseSession(store);
+      const recreated = createBaseSession(store, { recreated_from_session_id: source.session_id });
+      const rawKey = "closed-recreate-operator-retry";
+      const digest = createHash("sha256").update(rawKey).digest("hex");
+
+      store.recordRecreationReceipt(source.session_id, digest, recreated.session_id);
+
+      const restartedStore = new SessionStore(tmpDir);
+      expect(restartedStore.getRecreationReceipt(source.session_id, digest)).toBe(recreated.session_id);
+      const receiptDir = path.join(tmpDir, ".recreation-receipts");
+      const receiptFiles = fs.readdirSync(receiptDir);
+      expect(receiptFiles).toEqual([`${source.session_id}.${digest}.receipt`]);
+      expect(`${receiptFiles[0]}:${fs.readFileSync(path.join(receiptDir, receiptFiles[0]), "utf8")}`).not.toContain(rawKey);
     });
   });
 

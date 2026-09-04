@@ -14,6 +14,7 @@ import { ElementMappingDocument, isFakeMappingDocument, isFakeMappingItem } from
 import { buildHandoff } from "./handoff";
 import { useIncomingHandoff, IncomingHandoffBanner } from "./incomingHandoff";
 import { FailureScoreboard } from "./FailureScoreboard";
+import { ClosedSessionRecovery } from "./ClosedSessionRecovery";
 type NativeFilePickerWindow = Window & {
   showOpenFilePicker?: (options?: {
     multiple?: boolean;
@@ -998,6 +999,26 @@ export function A1GovernanceWorkbenchPage() {
                 {t("A1 不排入轉檔", "A1 does not queue conversion")}
               </Btn>
               <a className="ec-s" data-testid="a1-conv-link" href={buildHandoff("minio", { source: "a1", minio_key: sourceKind === "minio" ? selectedKey || undefined : undefined })}>{t("查看 MinIO 來源 →", "View MinIO source →")}</a>
+            </div>
+            <div style={{ marginTop: 12 }}>
+              <ClosedSessionRecovery compact onRecreated={(result, source) => {
+                const summary: RuntimeSessionSummary = {
+                  session_id: result.session_id,
+                  status: result.status,
+                  project_id: source.project_id,
+                  model_version_id: source.model_version_id,
+                  participant_count: 0,
+                  expected_stage_url: null,
+                  expected_mapping_url: null,
+                  conversion_status: null,
+                  kit_instance_ids: [],
+                  created_at: "",
+                  updated_at: "",
+                  first_frame_at: null,
+                };
+                setSessions([summary]);
+                setSelectedSession(result.session_id);
+              }} />
             </div>
           </div>
         ) : (

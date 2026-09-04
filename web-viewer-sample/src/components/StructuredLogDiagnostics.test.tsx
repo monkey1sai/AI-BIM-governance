@@ -80,7 +80,7 @@ describe("StructuredLogDiagnostics", () => {
             conversionJobId: "stream_conv_diagnostics_x",
             kitInstanceId: "kit_local_001",
             ensureViewerLogAuthority: async () => deliveryAuthority,
-            closeReviewSession: async (sessionId) => ({ session_id: sessionId, status: "closed" }),
+            requestSessionClose: vi.fn(),
             ...overrides,
         };
         await act(async () => { root!.render(<StructuredLogDiagnostics {...props} />); });
@@ -114,7 +114,7 @@ describe("StructuredLogDiagnostics", () => {
                 reviewSessionId="review_session_diagnostics_x"
                 conversionJobId={null}
                 kitInstanceId={null}
-                closeReviewSession={async (sessionId) => ({ session_id: sessionId, status: "closed" })}
+                requestSessionClose={vi.fn()}
             />);
         });
         expect(q("structured-log-unavailable")).not.toBeNull();
@@ -265,7 +265,7 @@ describe("StructuredLogDiagnostics", () => {
                 reviewSessionId="review_session_diagnostics_y"
                 conversionJobId="stream_conv_diagnostics_y"
                 kitInstanceId="kit_local_002"
-                closeReviewSession={async (sessionId) => ({ session_id: sessionId, status: "closed" })}
+                requestSessionClose={vi.fn()}
             />);
         });
         firstTransport.resolve({ ok: true, status: 200 });
@@ -278,62 +278,16 @@ describe("StructuredLogDiagnostics", () => {
         expect(pauseCalls).toEqual([true, false]);
     });
 
-    it("ignores a stale close completion after the route identity changes", async () => {
-        const firstClose = deferred<{ session_id: string; status: "closed" }>();
-        await renderDiagnostics({ closeReviewSession: async () => firstClose.promise });
-        await act(async () => {
-            q<HTMLButtonElement>("review-session-close")!.click();
-            await Promise.resolve();
-        });
-        expect(q("review-session-close-status")?.dataset.state).toBe("closing");
+    it("delegates terminal close to Session Management without calling a close API", async () => {
+        const requestSessionClose = vi.fn();
+        await renderDiagnostics({ requestSessionClose });
 
-        const newLogger = makeLogger(
-            async () => ({ ok: true, status: 200 }),
-            { runId: "run_20260728_120100_b4f901", traceId: "ifcready_diagnostics_y" },
-        );
-        await act(async () => {
-            root!.render(<StructuredLogDiagnostics
-                search="?session=review_session_diagnostics_y&trace_id=ifcready_diagnostics_y"
-                logger={newLogger}
-                reviewSessionId="review_session_diagnostics_y"
-                conversionJobId="stream_conv_diagnostics_y"
-                kitInstanceId="kit_local_002"
-                closeReviewSession={async (sessionId) => ({ session_id: sessionId, status: "closed" })}
-            />);
-        });
-        firstClose.resolve({ session_id: "review_session_diagnostics_x", status: "closed" });
-        await flushReact();
+        await act(async () => { q<HTMLButtonElement>("review-session-close")!.click(); });
 
-        expect(q("review-session-close-status")?.dataset.state).toBe("idle");
-        expect(q<HTMLButtonElement>("review-session-close")?.disabled).toBe(false);
-        expect(q("structured-log-session-id")?.textContent).toContain("review_session_diagnostics_y");
-    });
-
-    it("shows closing and exposes a close retry before confirming the same closed session", async () => {
-        const firstClose = deferred<{ session_id: string; status: "closed" }>();
-        const closeReviewSession = vi.fn()
-            .mockImplementationOnce(() => firstClose.promise)
-            .mockResolvedValueOnce({ session_id: "review_session_diagnostics_x", status: "closed" });
-        await renderDiagnostics({ closeReviewSession });
-
-        await act(async () => {
-            q<HTMLButtonElement>("review-session-close")!.click();
-            await Promise.resolve();
-        });
-        expect(q("review-session-close-status")?.dataset.state).toBe("closing");
-        firstClose.reject(new Error("coordinator unavailable"));
-        await flushReact();
-        expect(q("review-session-close-status")?.dataset.state).toBe("failure");
-        expect(q("review-session-close-retry")).not.toBeNull();
-
-        await act(async () => {
-            q<HTMLButtonElement>("review-session-close-retry")!.click();
-            await Promise.resolve();
-        });
-        await flushReact();
-        expect(q("review-session-close-status")?.dataset.state).toBe("closed");
-        expect(closeReviewSession).toHaveBeenCalledTimes(2);
-        expect(closeReviewSession).toHaveBeenNthCalledWith(1, "review_session_diagnostics_x");
-        expect(closeReviewSession).toHaveBeenNthCalledWith(2, "review_session_diagnostics_x");
+        expect(requestSessionClose).toHaveBeenCalledTimes(1);
+        expect(requestSessionClose).toHaveBeenCalledWith("review_session_diagnostics_x");
+        expect(q("review-session-close-status")?.dataset.state).toBe("delegated");
+        expect(q("review-session-close-status")?.textContent).toContain("Session Management");
+        expect(q("review-session-close-retry")).toBeNull();
     });
 });
