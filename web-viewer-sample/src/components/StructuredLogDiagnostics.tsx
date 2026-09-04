@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { CloseReviewSessionResponse } from "../clients/coordinatorClient";
 import { traceIdFromSearch } from "../lib/structLogBootstrap";
 import type { BrowserStructLogger, ViewerLogDeliveryAuthority } from "../lib/structLog";
 import "./StructuredLogDiagnostics.css";
@@ -8,7 +7,6 @@ const REVIEW_SESSION_PATTERN = /^(?:lwv_|review_session_)[A-Za-z0-9_]+$/;
 const NOT_OBSERVED = "未觀測";
 
 type FlushState = "idle" | "loading" | "success" | "failure";
-type CloseState = "idle" | "closing" | "closed" | "failure";
 
 interface PendingFlushAction {
     actionId: string;
@@ -23,7 +21,7 @@ export interface StructuredLogDiagnosticsProps {
     conversionJobId?: string | null;
     kitInstanceId?: string | null;
     ensureViewerLogAuthority?: () => Promise<ViewerLogDeliveryAuthority | null>;
-    closeReviewSession: (sessionId: string) => Promise<CloseReviewSessionResponse>;
+    requestSessionClose: (sessionId: string) => void;
 }
 
 // eslint-disable-next-line react-refresh/only-export-components -- exported for case-exact route-gate tests.
@@ -54,12 +52,10 @@ export function StructuredLogDiagnostics({
     conversionJobId,
     kitInstanceId,
     ensureViewerLogAuthority = async () => null,
-    closeReviewSession,
+    requestSessionClose,
 }: StructuredLogDiagnosticsProps) {
     const [flushState, setFlushState] = useState<FlushState>("idle");
-    const [closeState, setCloseState] = useState<CloseState>("idle");
     const pendingFlush = useRef<PendingFlushAction | null>(null);
-    const closeInFlight = useRef(false);
     const mounted = useRef(false);
     const routeSessionId = useMemo(() => routeReviewSessionIdFromSearch(search), [search]);
     const routeTraceId = useMemo(() => traceIdFromSearch(search), [search]);
@@ -98,13 +94,11 @@ export function StructuredLogDiagnostics({
         if (prior.logger === identity.logger) prior.logger?.setAutoFlushPaused(false);
         previousIdentity.current = identity;
         pendingFlush.current = null;
-        closeInFlight.current = false;
         setFlushState("idle");
-        setCloseState("idle");
     }, [identity]);
 
     const runFlush = async () => {
-        if (!available || !logger || flushState === "loading" || closeInFlight.current) return;
+        if (!available || !logger || flushState === "loading") return;
         const operationIdentity = identity;
 
         let pending = pendingFlush.current;
@@ -152,33 +146,8 @@ export function StructuredLogDiagnostics({
         }
     };
 
-    const runClose = async () => {
-        if (
-            !available
-            || !reviewSessionId
-            || closeState === "closing"
-            || closeState === "closed"
-            || pendingFlush.current
-        ) return;
-        const operationIdentity = identity;
-        closeInFlight.current = true;
-        setCloseState("closing");
-        try {
-            const response = await closeReviewSession(reviewSessionId);
-            if (!mounted.current || activeIdentity.current !== operationIdentity) return;
-            if (response.session_id !== reviewSessionId || response.status !== "closed") {
-                throw new Error("review session close response mismatch");
-            }
-            setCloseState("closed");
-        } catch {
-            if (!mounted.current || activeIdentity.current !== operationIdentity) return;
-            closeInFlight.current = false;
-            setCloseState("failure");
-        }
-    };
-
-    const actionBusy = flushState === "loading" || closeState === "closing";
-    const actionsEnabled = available && closeState !== "closed";
+    const actionBusy = flushState === "loading";
+    const actionsEnabled = available;
     const closeEnabled = actionsEnabled && flushState !== "failure" && !pendingFlush.current;
 
     return (
@@ -249,35 +218,19 @@ export function StructuredLogDiagnostics({
                         className="structured-log-diagnostics__secondary"
                         data-testid="review-session-close"
                         disabled={!closeEnabled || actionBusy}
-                        onClick={() => { void runClose(); }}
+                        onClick={() => { if (reviewSessionId) requestSessionClose(reviewSessionId); }}
                     >
-                        {closeState === "closing" && "Closing…"}
-                        {closeState === "closed" && "Review session closed"}
-                        {(closeState === "idle" || closeState === "failure") && "Close review session"}
+                        Manage Review Session close
                     </button>
                     <p
-                        className={`structured-log-diagnostics__status is-${closeState}`}
+                        className="structured-log-diagnostics__status is-idle"
                         data-testid="review-session-close-status"
-                        data-state={closeState}
-                        role={closeState === "failure" ? "alert" : "status"}
+                        data-state="delegated"
+                        role="status"
                         aria-live="polite"
                     >
-                        {closeState === "idle" && "Cooperative close sends no operator termination reason."}
-                        {closeState === "closing" && `Closing ${reviewSessionId ?? NOT_OBSERVED}…`}
-                        {closeState === "closed" && `Closed ${reviewSessionId ?? NOT_OBSERVED}.`}
-                        {closeState === "failure" && "Close failed. The session was not reported as closed."}
+                        Terminal close is available only in Session Management with the irreversible-action confirmation.
                     </p>
-                    {closeState === "failure" && (
-                        <button
-                            type="button"
-                            className="structured-log-diagnostics__retry"
-                            data-testid="review-session-close-retry"
-                            disabled={!closeEnabled || actionBusy}
-                            onClick={() => { void runClose(); }}
-                        >
-                            Retry close
-                        </button>
-                    )}
                 </div>
             </div>
         </aside>

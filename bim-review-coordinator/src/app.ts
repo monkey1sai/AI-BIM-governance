@@ -1,5 +1,5 @@
 import fs from "node:fs";
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import http from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -25,7 +25,7 @@ import {
   SlidingWindowRateLimiter,
 } from "./services/conversionControlAuthorization.js";
 import { CallbackOutbox, MetadataOnlyViolation } from "./services/callbackOutbox.js";
-import { EventLog } from "./services/eventLog.js";
+import { EventLog, isClientForbiddenSessionEventType } from "./services/eventLog.js";
 import { GovernanceLibraryHttpAdapter } from "./services/governanceLibraryHttpAdapter.js";
 import { GovernanceLibraryWorkflow } from "./services/governanceLibraryWorkflow.js";
 import {
@@ -54,7 +54,11 @@ import {
   type EdgeArtifactRecord,
   type EdgeArtifactStatus,
 } from "./services/artifactHealthLedger.js";
-import { checkSourceIfcPath, probeArtifactHealth } from "./services/artifactHealthProbe.js";
+import {
+  canonicalArtifactProbeUrl,
+  checkSourceIfcPath,
+  probeArtifactHealth,
+} from "./services/artifactHealthProbe.js";
 import { deriveLifecycleStatus } from "./services/lifecycleStatus.js";
 import { deriveFailure } from "./services/failureReason.js";
 import { deriveConversionRecoveryAction } from "./services/conversionRecoveryAction.js";
@@ -255,6 +259,20 @@ const createSessionSchema = z.object({
     .passthrough()
     .nullish(),
 });
+
+const recreateSessionSchema = z.object({}).strict();
+const recreationIdempotencyKeyPattern = /^[A-Za-z0-9][A-Za-z0-9._:-]{7,199}$/;
+
+type SessionRebuildability = {
+  state: "ready" | "stale" | "unavailable";
+  reason: string | null;
+  checked_at: string | null;
+};
+
+type RecreationResult = {
+  status: number;
+  body: Record<string, unknown>;
+};
 
 const participantSchema = z.object({
   user_id: z.string().min(1),
@@ -744,6 +762,7 @@ export function createCoordinatorApp(
       skipEnvSnapshot: process.env.NODE_ENV === "test",
     });
   const store = new SessionStore(config.sessionStoreDir);
+  const recreationInFlight = new Map<string, Promise<RecreationResult>>();
   const externalIfcReadyStore = new ExternalIfcReadyStore();
   const sessionTraceResolver = new SessionTraceResolver(store, (sessionId) =>
     externalIfcReadyStore
@@ -1503,7 +1522,7 @@ export function createCoordinatorApp(
     return snapshotFromArtifactLedger(job) ?? job.artifact_health ?? session?.artifact_health ?? null;
   }
 
-  function markSourceIfcUnavailable(
+  function sourceIfcUnavailableSnapshot(
     job: IfcReadyIntakeJob,
     session: ReviewSession | null,
     failureCode = "source_ifc_missing",
@@ -1525,6 +1544,15 @@ export function createCoordinatorApp(
       },
       source: "edge_health_probe",
     };
+    return snapshot;
+  }
+
+  function markSourceIfcUnavailable(
+    job: IfcReadyIntakeJob,
+    session: ReviewSession | null,
+    failureCode = "source_ifc_missing",
+  ): ArtifactHealthSnapshot {
+    const snapshot = sourceIfcUnavailableSnapshot(job, session, failureCode);
     job.artifact_health = snapshot;
     if (session) {
       session.artifact_health = snapshot;
@@ -1580,15 +1608,101 @@ export function createCoordinatorApp(
     }
   }
 
-  function latestIfcReadyJobForSession(sessionId: string): IfcReadyIntakeJob | null {
+  function latestExactIfcReadyJobForSession(sessionId: string): IfcReadyIntakeJob | null {
     return externalIfcReadyStore
       .list()
       .filter((candidate) => candidate.review_session_id === sessionId)
       .sort((left, right) => Date.parse(right.updated_at) - Date.parse(left.updated_at))[0] ?? null;
   }
 
+  function latestIfcReadyJobForSessionLineage(sessionId: string): IfcReadyIntakeJob | null {
+    const jobs = externalIfcReadyStore.list();
+    const requestedSession = store.get(sessionId);
+    if (!requestedSession) return null;
+    const visited = new Set<string>();
+    let currentSessionId: string | undefined = sessionId;
+    for (let depth = 0; currentSessionId && depth < 32 && !visited.has(currentSessionId); depth += 1) {
+      visited.add(currentSessionId);
+      const currentSession = store.get(currentSessionId);
+      if (
+        !currentSession
+        || currentSession.tenant_id !== requestedSession.tenant_id
+        || currentSession.project_id !== requestedSession.project_id
+        || currentSession.model_version_id !== requestedSession.model_version_id
+      ) {
+        return null;
+      }
+      const linkedJob = jobs
+        .filter((candidate) => candidate.review_session_id === currentSessionId)
+        .sort((left, right) => Date.parse(right.updated_at) - Date.parse(left.updated_at))[0] ?? null;
+      if (linkedJob) {
+        return linkedJob.tenant_id === requestedSession.tenant_id
+          && linkedJob.project_id === requestedSession.project_id
+          && linkedJob.external_model_version_id === requestedSession.model_version_id
+          ? linkedJob
+          : null;
+      }
+      currentSessionId = currentSession.recreated_from_session_id;
+    }
+    return null;
+  }
+
+  function activateRecreatedSessionForViewerLease(session: ReviewSession): ReviewSession {
+    const ensureActiveEvent = (activeSession: ReviewSession): void => {
+      const kitInstanceBindings = activeSession.kit_instance_bindings.map((binding) => binding.kit_instance_id);
+      const hasCanonicalEvent = eventLog.list(activeSession.session_id).some((event) => (
+        event.type === "sessionActive"
+        && event.server_owned === true
+        && isDeepStrictEqual(
+          (event.payload as { kit_instance_bindings?: unknown })?.kit_instance_bindings,
+          kitInstanceBindings,
+        )
+      ));
+      if (!hasCanonicalEvent) {
+        eventLog.appendServerOwned(activeSession.session_id, "sessionActive", {
+          kit_instance_bindings: kitInstanceBindings,
+        });
+      }
+    };
+    if (
+      session.status === "active"
+      && session.kit_instance_bindings.length > 0
+      && session.recreated_from_session_id
+    ) {
+      ensureActiveEvent(session);
+      return session;
+    }
+    if (
+      session.status !== "created"
+      || session.kit_instance_bindings.length > 0
+      || !session.recreated_from_session_id
+    ) {
+      return session;
+    }
+    const readyBindings = session.artifact_bindings
+      .filter((binding) => binding.artifact_role === "derived" && binding.ready_status === "ready" && Boolean(binding.url))
+      .slice()
+      .sort((left, right) => left.load_order - right.load_order);
+    const routingPolicy = readyBindings[0]?.routing_policy;
+    if (!routingPolicy) return session;
+    const kitInstanceBindings = allocateKitInstanceBindings(
+      config,
+      readyBindings,
+      routingPolicy,
+      session.tenant_id,
+    );
+    if (kitInstanceBindings.length === 0) return session;
+    const activated = store.update(session.session_id, {
+      status: "active",
+      kit_instance: legacyKitInstanceFromBinding(kitInstanceBindings[0], config),
+      kit_instance_bindings: kitInstanceBindings,
+    }) ?? session;
+    if (activated.status === "active") ensureActiveEvent(activated);
+    return activated;
+  }
+
   async function refreshArtifactHealthForSessionBestEffort(session: ReviewSession): Promise<ArtifactHealthSnapshot | null> {
-    const linkedJob = latestIfcReadyJobForSession(session.session_id);
+    const linkedJob = latestExactIfcReadyJobForSession(session.session_id);
     if (linkedJob) {
       return refreshArtifactHealthBestEffort(linkedJob);
     }
@@ -1614,6 +1728,108 @@ export function createCoordinatorApp(
       return snapshot;
     } catch {
       return session.artifact_health ?? null;
+    }
+  }
+
+  async function rebuildabilityForSession(session: ReviewSession): Promise<SessionRebuildability> {
+    const derivedBindings = session.artifact_bindings
+      .filter((candidate) => candidate.artifact_role === "derived")
+      .slice()
+      .sort((left, right) => left.load_order - right.load_order);
+    const bindings = derivedBindings.filter((candidate) => candidate.ready_status === "ready");
+    if (bindings.length === 0) {
+      if (derivedBindings.length > 0) {
+        const first = derivedBindings[0];
+        return {
+          state: "stale",
+          reason: first.diagnostic || first.failure_code || `artifact binding status is ${first.ready_status}`,
+          checked_at: session.artifact_health?.checked_at ?? null,
+        };
+      }
+      return { state: "unavailable", reason: "ready USDC / mapping binding is unavailable", checked_at: null };
+    }
+    let checkedAt: string | null = null;
+    for (const binding of bindings) {
+      if (!binding.url) {
+        return { state: "unavailable", reason: `USDC binding is unavailable for ${binding.artifact_id}`, checked_at: checkedAt };
+      }
+      if (!binding.mapping_url) {
+        return { state: "unavailable", reason: `mapping binding is unavailable for ${binding.artifact_id}`, checked_at: checkedAt };
+      }
+      if (!isTrustedDirectSessionProbeBinding(binding, config.streamingConversionApiBase)) {
+        return { state: "unavailable", reason: "artifact binding is not owned by the configured conversion authority", checked_at: checkedAt };
+      }
+      try {
+        const health = await probeArtifactHealth({
+          host_local_path: null,
+          model_artifact_url: binding.url,
+          mapping_url: binding.mapping_url,
+          edge_runtime_data_root: config.edgeRuntimeDataRoot,
+          configured_conversion_api_origin: config.streamingConversionApiBase,
+        });
+        checkedAt = health.checked_at;
+        if (health.model_usdc_reachable === false || health.mapping_reachable === false) {
+          return {
+            state: "stale",
+            reason: health.stale_reason || health.failure_details?.model_usdc || health.failure_details?.mapping || "derived artifact is unreachable",
+            checked_at: health.checked_at,
+          };
+        }
+        if (health.model_usdc_reachable !== true || health.mapping_reachable !== true) {
+          return { state: "unavailable", reason: "artifact health could not be verified", checked_at: health.checked_at };
+        }
+      } catch {
+        return { state: "unavailable", reason: "artifact health could not be verified", checked_at: checkedAt };
+      }
+    }
+    return { state: "ready", reason: null, checked_at: checkedAt };
+  }
+
+  function ensureRecreationEvents(source: ReviewSession, recreated: ReviewSession): void {
+    const targetEvents = eventLog.list(recreated.session_id);
+    const hasCanonicalCreatedEvent = targetEvents.some((event) => (
+      event.type === "sessionCreated"
+      && event.server_owned === true
+      && isDeepStrictEqual(event.payload, {
+        project_id: recreated.project_id,
+        model_version_id: recreated.model_version_id,
+        recreated_from_session_id: source.session_id,
+      })
+    ));
+    if (!hasCanonicalCreatedEvent) {
+      eventLog.appendServerOwned(recreated.session_id, "sessionCreated", {
+        project_id: recreated.project_id,
+        model_version_id: recreated.model_version_id,
+        recreated_from_session_id: source.session_id,
+      });
+    }
+    const sourceHasRecreatedEvent = eventLog.list(source.session_id).some((event) => {
+      if (
+        event.type !== "sessionRecreated"
+        || event.server_owned !== true
+        || !event.payload
+        || typeof event.payload !== "object"
+      ) return false;
+      return (event.payload as { recreated_session_id?: unknown }).recreated_session_id === recreated.session_id;
+    });
+    if (!sourceHasRecreatedEvent) {
+      eventLog.appendServerOwned(source.session_id, "sessionRecreated", {
+        recreated_session_id: recreated.session_id,
+      });
+    }
+    const kitInstanceBindings = recreated.kit_instance_bindings.map((binding) => binding.kit_instance_id);
+    const hasCanonicalActiveEvent = targetEvents.some((event) => (
+      event.type === "sessionActive"
+      && event.server_owned === true
+      && isDeepStrictEqual(
+        (event.payload as { kit_instance_bindings?: unknown })?.kit_instance_bindings,
+        kitInstanceBindings,
+      )
+    ));
+    if (recreated.status === "active" && !hasCanonicalActiveEvent) {
+      eventLog.appendServerOwned(recreated.session_id, "sessionActive", {
+        kit_instance_bindings: kitInstanceBindings,
+      });
     }
   }
 
@@ -1756,17 +1972,192 @@ export function createCoordinatorApp(
         kit_instance_bindings: kitInstanceBindings,
         quality_metrics_summary: (input.quality_metrics_summary ?? null) as ConversionQualityMetricsSummary | null,
       });
-      eventLog.append(session.session_id, "sessionCreated", {
+      eventLog.appendServerOwned(session.session_id, "sessionCreated", {
         project_id: session.project_id,
         model_version_id: session.model_version_id,
         review_request_id: session.review_request_id,
       });
       if (session.status === "active") {
-        eventLog.append(session.session_id, "sessionActive", {
+        eventLog.appendServerOwned(session.session_id, "sessionActive", {
           kit_instance_bindings: session.kit_instance_bindings.map((binding) => binding.kit_instance_id),
         });
       }
       response.json(session);
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.get("/api/review-sessions", async (request, response, next) => {
+    try {
+      if (request.query.status !== "closed") {
+        response.status(400).json({ detail: "Only status=closed is supported by this collection endpoint." });
+        return;
+      }
+      const limit = z.coerce.number().int().min(1).max(50).default(50).parse(request.query.limit);
+      const cursor = decodeClosedSessionCursor(request.query.cursor);
+      if (request.query.cursor !== undefined && !cursor) {
+        response.status(400).json({ detail: "Invalid closed-session cursor." });
+        return;
+      }
+      const closed = store.list()
+        .filter((session) => session.status === "closed")
+        .sort((left, right) => (
+          Date.parse(right.created_at) - Date.parse(left.created_at)
+          || right.session_id.localeCompare(left.session_id)
+        ))
+        .filter((session) => !cursor
+          || session.created_at < cursor.created_at
+          || (session.created_at === cursor.created_at && session.session_id < cursor.session_id));
+      const page = closed.slice(0, limit);
+      const items = await Promise.all(page.map(async (session) => ({
+        session_id: session.session_id,
+        status: session.status,
+        project_id: session.project_id,
+        model_version_id: session.model_version_id,
+        created_at: session.created_at,
+        updated_at: session.updated_at,
+        recreated_from_session_id: session.recreated_from_session_id ?? null,
+        rebuildability: await rebuildabilityForSession(session),
+      })));
+      const nextCursor = closed.length > limit && page.length > 0
+        ? encodeClosedSessionCursor(page[page.length - 1])
+        : null;
+      response.json({ items, next_cursor: nextCursor });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post("/api/review-sessions/:closedSessionId/recreate", async (request, response, next) => {
+    try {
+      const sourceSessionId = request.params.closedSessionId;
+      if (!isSafeSessionId(sourceSessionId)) {
+        response.status(400).json({ detail: "Invalid review session id." });
+        return;
+      }
+      recreateSessionSchema.parse(request.body ?? {});
+      const idempotencyKey = request.header("Idempotency-Key")?.trim() ?? "";
+      if (!recreationIdempotencyKeyPattern.test(idempotencyKey)) {
+        response.status(400).json({ detail: "A valid Idempotency-Key header is required." });
+        return;
+      }
+      const keyDigest = createHash("sha256").update(idempotencyKey).digest("hex");
+      const operationKey = `${sourceSessionId}:${keyDigest}`;
+      const existingOperation = recreationInFlight.get(operationKey);
+      const operation = existingOperation ?? (async (): Promise<RecreationResult> => {
+        const source = store.get(sourceSessionId);
+        if (!source) return { status: 404, body: { detail: "Review session not found." } };
+        if (source.status !== "closed") {
+          return { status: 409, body: { detail: "Only a closed review session can be recreated." } };
+        }
+        const receiptSessionId = store.getRecreationReceipt(sourceSessionId, keyDigest);
+        const receiptSession = receiptSessionId ? store.get(receiptSessionId) : null;
+        if (receiptSession) {
+          if (receiptSession.recreated_from_session_id !== sourceSessionId) {
+            throw new Error("Recreation idempotency receipt lineage mismatch.");
+          }
+          ensureRecreationEvents(source, receiptSession);
+          return {
+            status: 200,
+            body: {
+              session_id: receiptSession.session_id,
+              status: receiptSession.status,
+              recreated_from_session_id: sourceSessionId,
+              idempotent_replay: true,
+              kit_availability: receiptSession.kit_instance_bindings.length > 0 ? "configured" : "unavailable",
+              session: receiptSession,
+            },
+          };
+        }
+        const deterministicSessionId = `review_session_${createHash("sha256")
+          .update(`${sourceSessionId}:${keyDigest}`)
+          .digest("hex")
+          .slice(0, 24)}`;
+        const unreceiptedSession = store.get(deterministicSessionId);
+        if (unreceiptedSession) {
+          if (unreceiptedSession.recreated_from_session_id !== sourceSessionId) {
+            throw new Error("Deterministic recreation session id collision.");
+          }
+          ensureRecreationEvents(source, unreceiptedSession);
+          store.recordRecreationReceipt(sourceSessionId, keyDigest, unreceiptedSession.session_id);
+          return {
+            status: 200,
+            body: {
+              session_id: unreceiptedSession.session_id,
+              status: unreceiptedSession.status,
+              recreated_from_session_id: sourceSessionId,
+              idempotent_replay: true,
+              kit_availability: unreceiptedSession.kit_instance_bindings.length > 0 ? "configured" : "unavailable",
+              session: unreceiptedSession,
+            },
+          };
+        }
+        const rebuildability = await rebuildabilityForSession(source);
+        if (rebuildability.state !== "ready") {
+          return {
+            status: 409,
+            body: { detail: "Closed review session is not rebuildable.", rebuildability },
+          };
+        }
+        const sourceBindings = source.artifact_bindings
+          .filter((binding) => binding.artifact_role === "derived" && binding.ready_status === "ready" && Boolean(binding.url))
+          .slice()
+          .sort((left, right) => left.load_order - right.load_order);
+        const sourceBinding = sourceBindings[0];
+        if (!sourceBinding || sourceBindings.some((binding) => !binding.mapping_url || !isTrustedDirectSessionProbeBinding(binding, config.streamingConversionApiBase))) {
+          return { status: 409, body: { detail: "Closed review session has no ready derived artifact binding." } };
+        }
+        const artifactBindings: ArtifactBinding[] = sourceBindings.map((binding) => ({
+          ...binding,
+          binding_id: `binding_${randomBytes(6).toString("hex")}`,
+        }));
+        const kitInstanceBindings = allocateKitInstanceBindings(
+          config,
+          artifactBindings,
+          sourceBinding.routing_policy,
+          source.tenant_id,
+        );
+        const recreated = store.create({
+          session_id: deterministicSessionId,
+          recreated_from_session_id: source.session_id,
+          review_request_id: source.review_request_id,
+          tenant_id: source.tenant_id,
+          project_id: source.project_id,
+          model_version_id: source.model_version_id,
+          source_artifact_id: source.source_artifact_id,
+          usdc_artifact_id: sourceBinding.artifact_id,
+          created_by: source.created_by,
+          mode: source.mode,
+          kit_instance: legacyKitInstanceFromBinding(kitInstanceBindings[0], config),
+          artifact_bindings: artifactBindings,
+          kit_instance_bindings: kitInstanceBindings,
+          quality_metrics_summary: source.quality_metrics_summary ?? null,
+        });
+        ensureRecreationEvents(source, recreated);
+        store.recordRecreationReceipt(sourceSessionId, keyDigest, recreated.session_id);
+        return {
+          status: 201,
+          body: {
+            session_id: recreated.session_id,
+            status: recreated.status,
+            recreated_from_session_id: source.session_id,
+            idempotent_replay: false,
+            kit_availability: kitInstanceBindings.length > 0 ? "configured" : "unavailable",
+            session: recreated,
+          },
+        };
+      })();
+      if (!existingOperation) recreationInFlight.set(operationKey, operation);
+      try {
+        const result = await operation;
+        response.status(existingOperation && result.status === 201 ? 200 : result.status).json({
+          ...result.body,
+          ...(existingOperation && result.status === 201 ? { idempotent_replay: true } : {}),
+        });
+      } finally {
+        if (!existingOperation) recreationInFlight.delete(operationKey);
+      }
     } catch (error) {
       next(error);
     }
@@ -2141,6 +2532,10 @@ export function createCoordinatorApp(
         return;
       }
       const input = appendEventSchema.parse(request.body);
+      if (isClientForbiddenSessionEventType(input.type)) {
+        response.status(400).json({ detail: "Server-owned event type cannot be appended by a client." });
+        return;
+      }
       const event = eventLog.append(request.params.sessionId, input.type, input);
       response.json(event);
     } catch (error) {
@@ -2204,7 +2599,7 @@ export function createCoordinatorApp(
         response.status(400).json({ detail: "Invalid review session id." });
         return;
       }
-      const session = store.get(request.params.sessionId);
+      let session = store.get(request.params.sessionId);
       if (!session) {
         response.status(404).json({ detail: "Review session not found." });
         return;
@@ -2213,7 +2608,6 @@ export function createCoordinatorApp(
         response.status(409).json({ detail: "Review session is not active." });
         return;
       }
-
       const input = claimViewerLeaseSchema.parse(request.body);
       if (input.user_id) {
         const legacyPrincipal = user.provider === "local-dev"
@@ -2223,6 +2617,7 @@ export function createCoordinatorApp(
           throw new AuthError(403, "viewer lease identity mismatch");
         }
       }
+      session = activateRecreatedSessionForViewerLease(session);
       const result = viewerLeaseStore.claim({
         session_id: session.session_id,
         viewer_id: input.viewer_id,
@@ -3407,13 +3802,13 @@ export function createCoordinatorApp(
     });
     // lifecycle audit event parity（與 explicit /api/review-sessions caller
     // 路徑等價；Risk mitigation）。
-    eventLog.append(session.session_id, "sessionCreated", {
+    eventLog.appendServerOwned(session.session_id, "sessionCreated", {
       project_id: session.project_id,
       model_version_id: session.model_version_id,
       review_request_id: session.review_request_id,
     });
     if (session.status === "active") {
-      eventLog.append(session.session_id, "sessionActive", {
+      eventLog.appendServerOwned(session.session_id, "sessionActive", {
         kit_instance_bindings: session.kit_instance_bindings.map((binding) => binding.kit_instance_id),
       });
     }
@@ -4240,6 +4635,7 @@ export function createCoordinatorApp(
     job: IfcReadyIntakeJob | null | undefined,
     modelVersionId: string | null | undefined,
     session: ReviewSession | null = null,
+    options: { recordHealth?: boolean } = {},
   ): RuleRunSessionResolution {
     if (!job) {
       return { ok: false, reason: "IFC-ready job not found." };
@@ -4263,7 +4659,9 @@ export function createCoordinatorApp(
         ok: false,
         error_code: "stale_session_artifact",
         detail: "source_ifc_missing",
-        artifact_health: markSourceIfcUnavailable(job, session, sourceCheck.failure ?? "source_ifc_missing"),
+        artifact_health: options.recordHealth === false
+          ? sourceIfcUnavailableSnapshot(job, session, sourceCheck.failure ?? "source_ifc_missing")
+          : markSourceIfcUnavailable(job, session, sourceCheck.failure ?? "source_ifc_missing"),
       };
     }
     return {
@@ -4471,7 +4869,7 @@ export function createCoordinatorApp(
       };
     }
 
-    const linkedJob = latestIfcReadyJobForSession(sessionId);
+    const linkedJob = latestIfcReadyJobForSessionLineage(sessionId);
     if (!linkedJob || linkedJob.external_model_version_id !== modelVersionId) {
       return {
         ok: false,
@@ -4480,7 +4878,9 @@ export function createCoordinatorApp(
         detail: "A4 session model binding is incomplete.",
       };
     }
-    const source = resolveDownloadedJobForRuleRun(linkedJob, modelVersionId, session);
+    const source = resolveDownloadedJobForRuleRun(linkedJob, modelVersionId, session, {
+      recordHealth: linkedJob.review_session_id === sessionId,
+    });
     if (!source.ok) {
       return {
         ok: false,
@@ -4579,7 +4979,7 @@ export function createCoordinatorApp(
       }
       // session → ifc-ready job：conversion-ready auto-session 時由
       // recordReviewSession 寫入 job.review_session_id 反向參照（app.ts ~905）。
-      const job = latestIfcReadyJobForSession(sessionId);
+      const job = latestIfcReadyJobForSessionLineage(sessionId);
       if (!job) {
         return {
           ok: false,
@@ -4587,7 +4987,9 @@ export function createCoordinatorApp(
             "No IFC-ready job linked to this session; rule-run requires an IFC ingested via /api/external/ifc-ready.",
         };
       }
-      return resolveDownloadedJobForRuleRun(job, session.model_version_id, session);
+      return resolveDownloadedJobForRuleRun(job, session.model_version_id, session, {
+        recordHealth: job.review_session_id === sessionId,
+      });
     },
   });
   registerA4HandoffRoutes(app, {
@@ -4753,19 +5155,17 @@ function sanitizeJobForExternal(job: IfcReadyIntakeJob): IfcReadyIntakeJob {
   return rest;
 }
 
-function hasConfiguredConversionOrigin(urlValue: string | null, configuredConversionApiBase: string): boolean {
+function isAllowedConversionProbeUrl(urlValue: string | null, configuredConversionApiBase: string): boolean {
   if (!urlValue) return true;
-  try {
-    return new URL(urlValue).origin === new URL(configuredConversionApiBase).origin;
-  } catch {
-    return false;
-  }
+  return canonicalArtifactProbeUrl(urlValue, configuredConversionApiBase, {
+    allowAlternateLoopback: false,
+  }) !== null;
 }
 
 function isTrustedDirectSessionProbeBinding(binding: ArtifactBinding, configuredConversionApiBase: string): boolean {
   return binding.conversion_authority === "bim-streaming-server"
-    && hasConfiguredConversionOrigin(binding.url, configuredConversionApiBase)
-    && hasConfiguredConversionOrigin(binding.mapping_url, configuredConversionApiBase);
+    && isAllowedConversionProbeUrl(binding.url, configuredConversionApiBase)
+    && isAllowedConversionProbeUrl(binding.mapping_url, configuredConversionApiBase);
 }
 
 function parseListLimit(value: unknown): number {
@@ -4773,6 +5173,28 @@ function parseListLimit(value: unknown): number {
   const parsed = typeof raw === "string" ? Number.parseInt(raw, 10) : NaN;
   if (!Number.isFinite(parsed)) return 20;
   return Math.min(100, Math.max(1, parsed));
+}
+
+function encodeClosedSessionCursor(session: Pick<ReviewSession, "created_at" | "session_id">): string {
+  return Buffer.from(JSON.stringify({ created_at: session.created_at, session_id: session.session_id }), "utf8").toString("base64url");
+}
+
+function decodeClosedSessionCursor(value: unknown): { created_at: string; session_id: string } | null {
+  const raw = Array.isArray(value) ? value[0] : value;
+  if (raw === undefined) return null;
+  if (typeof raw !== "string" || raw.length > 500) return null;
+  try {
+    const parsed = JSON.parse(Buffer.from(raw, "base64url").toString("utf8")) as Record<string, unknown>;
+    if (
+      typeof parsed.created_at !== "string"
+      || !Number.isFinite(Date.parse(parsed.created_at))
+      || typeof parsed.session_id !== "string"
+      || !isSafeSessionId(parsed.session_id)
+    ) return null;
+    return { created_at: parsed.created_at, session_id: parsed.session_id };
+  } catch {
+    return null;
+  }
 }
 
 function headersToMap(headers: express.Request["headers"]): Record<string, string | undefined> {

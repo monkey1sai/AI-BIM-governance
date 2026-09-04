@@ -1,6 +1,6 @@
 // Edge Console 頁面。誠實原則：AS-BUILT 才標已實作；待建一律標 p1/p15 並說明；
 // 任何數字非真即標 artifact / demo，絕不捏造。
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { t } from "./i18n";
 import { Btn, Field, Metric, Panel, ProvTag, ProvLegend } from "./components";
 import { A1A10, A1A10_DETAIL, AppCardDef, AppVisionDetail, DEPENDENCIES, ENDPOINTS, PAGES, Prov, SERVICES } from "./data";
@@ -9,7 +9,7 @@ import { coordinatorClient, CreateReviewSessionResponse, IfcReadyListItem, KitIn
 // [Task 9 MD 三頁合一] CV/M/IN 三頁移除後，conversionShared 其餘符號（CoverageDrawer/chip/role…）改由
 // modelData/ 內的 pane 消費；本檔僅剩 LifecycleStrip（A1GovernanceWorkbenchPage stepper 仍用）。
 import { CoordinatorGovernanceTabs } from "./coordinator/RuntimeGovernanceTabs";
-import { IntentDialog } from "./IntentDialog";
+import { ClosedSessionRecovery } from "./ClosedSessionRecovery";
 import { ReviewSessionViewerPane } from "./ReviewSessionViewerPane";
 import { WorkspaceViewerMount } from "./unified/WorkspaceViewerMount";
 // 重用既有 viewer 的 mapping fake-vs-real 隔離工具（已有測試）：mock / allow_fake_mapping /
@@ -340,7 +340,29 @@ export function SessionManagementPage() {
     const id = window.setInterval(() => { void load(); }, 5000);
     return () => window.clearInterval(id);
   }, [load]);
-  const sessions = rt?.sessions.items ?? [];
+  const sessions = useMemo(() => rt?.sessions.items ?? [], [rt]);
+  const liveSessions = sessions.filter((session) => (
+    session.status === "active" || session.status === "created" || session.status === "closing"
+  ));
+  const delegatedCloseHandledRef = useRef(false);
+  useEffect(() => {
+    if (delegatedCloseHandledRef.current || rt === null) return;
+    const query = window.location.hash.split("?", 2)[1] ?? "";
+    const params = new URLSearchParams(query);
+    const delegatedSessionId = params.get("session");
+    if (
+      params.get("intent") === "close"
+      && delegatedSessionId
+      && sessions.some((session) => (
+        session.session_id === delegatedSessionId
+        && (session.status === "active" || session.status === "created")
+      ))
+    ) {
+      delegatedCloseHandledRef.current = true;
+      setPendingTerminate({ sessionId: delegatedSessionId });
+      setActionErr(null);
+    }
+  }, [rt, sessions]);
   // Task 14（A1/CV/RT→SS 接收端重驗）：向已抓取的 rt.sessions.items 重驗 incoming session；
   // 查無 → 誠實 not_found，不靜默改選其他 active session。
   // Task14 Important #1：rt===null=runtime status 尚未載入。載入中回中性 indeterminate，不誤閃 not_found；
@@ -367,13 +389,13 @@ export function SessionManagementPage() {
         </div>
       </Panel>
       <Panel title="Active sessions" sub="coordinator-owned session summary" prov="asbuilt">
-        {sessions.length ? (
+        {liveSessions.length ? (
           <table className="ec-table"><thead><tr><th>session</th><th>status</th><th>participants</th><th>conversion</th><th>stage</th><th>首幀</th><th>心跳</th><th>stage 符合</th><th>動作</th></tr></thead>
             {/* terminating 中的列「不過濾」：spec §4.3 的 60s 移除靠 markTerminating 的 timer
                 從 terminatingIds 移除 id（解灰列），最終離開可見列則靠 load() 重抓 runtime/status。
                 故此處直接 .map() 全列渲染；terminating 列只轉灰並顯「結束中…」，不可在這裡 filter 掉，
                 否則灰列會立刻消失、60s UX 失效。 */}
-            <tbody>{sessions.map((s) => {
+            <tbody>{liveSessions.map((s) => {
               const terminating = terminatingIds.has(s.session_id);
               const ended = s.status === "closing" || s.status === "closed";
               const greyed = terminating || ended;
@@ -398,8 +420,10 @@ export function SessionManagementPage() {
                     </>);
                   })()}
                   <td>
-                    {s.status === "active" && !terminating ? (
-                      <Btn data-testid={`session-terminate-${s.session_id}`} onClick={() => { setActionErr(null); setPendingTerminate({ sessionId: s.session_id }); }}>{t("結束 session", "Terminate session")}</Btn>
+                    {(s.status === "active" || s.status === "created" || s.status === "closing") && !terminating ? (
+                      <Btn data-testid={`session-terminate-${s.session_id}`} onClick={() => { setActionErr(null); setPendingTerminate({ sessionId: s.session_id }); }}>
+                        {s.status === "closing" ? t("繼續完成關閉", "Resume close") : t("結束 Review Session", "Close Review Session")}
+                      </Btn>
                     ) : <span className="ec-note">{terminating ? t("結束中…", "Terminating…") : "—"}</span>}
                     {" "}
                     <Btn data-testid={`session-link-instances-${s.session_id}`} disabled={!live}
@@ -421,6 +445,9 @@ export function SessionManagementPage() {
               );
             })}</tbody></table>
         ) : <p className="ec-note">{t("目前 runtime status 無 active session；下面 endpoint pool 為治理規則示意。", "Runtime status currently has no active session; the endpoint pool below illustrates governance rules.")}</p>}
+      </Panel>
+      <Panel title={t("已封存 Session", "Archived Sessions")} sub={t("分頁讀取 closed Session；只有 USDC 與 mapping 仍可由 coordinator 驗證時才可重建。", "Paginated closed Sessions; recreation is enabled only when coordinator can still verify the USDC and mapping.")} prov="asbuilt">
+        <ClosedSessionRecovery compact />
       </Panel>
       <Panel title={t("A1 連動橋供應端", "A1 bridge supply")} prov="asbuilt"
         sub={t("單一證據來源＝本頁 /api/runtime/status（IX-SS-05）；highlight ack 權威＝Review Room command trace，本面板不推定", "Single evidence source = this page /api/runtime/status (IX-SS-05); highlight ack authority = Review Room command trace, this panel does not infer it")}>
@@ -450,15 +477,24 @@ export function SessionManagementPage() {
         <Btn disabled caption={t("Phase 1 read-only：stale spectator reclaim 待接", "Phase 1 read-only: stale spectator reclaim not built")} prov="p1">Reclaim stale spectator</Btn>{" "}
         <Btn disabled caption="requires explicit reason + audited intent to Kit Manager" prov="p1">Force release / restart primary</Btn>
       </Panel>
-      <IntentDialog
-        open={pendingTerminate != null}
-        title={t("結束 session", "Terminate session")}
-        cost={t("將結束此 session 並釋放其 Kit 座位，座位可被新 viewer 取用。這不會強制關閉 GPU 上的 Kit 行程（Kit 行程 lifecycle 屬 kit-manager-api）。結束＝協作式 close 的 operator 觸發。", "This will terminate the session and release its Kit seat, which can then be taken by a new viewer. It does not force-kill the Kit process on the GPU (Kit process lifecycle belongs to kit-manager-api). Terminate = operator-triggered cooperative close.")}
-        busy={actionBusy}
-        actionErr={actionErr}
-        onConfirm={runTerminate}
-        onCancel={() => { if (!actionBusy) { setActionErr(null); setPendingTerminate(null); } }}
-      />
+      {pendingTerminate && (
+        <div className="ec-modal-backdrop" data-testid="intent-dialog">
+          <div className="ec-modal" role="dialog" aria-modal="true" aria-labelledby="close-session-title">
+            <h3 id="close-session-title">{t("永久結束 Session", "Permanently close Session")}</h3>
+            <p className="ec-warn-note">{t("此動作不可逆。原 Session 將永久維持 closed；若成果仍可用，只能另建新的 Session ID。", "This action is irreversible. The original Session remains permanently closed; if artifacts remain usable, only a different new Session ID can be created.")}</p>
+            <label className="ec-field-k" htmlFor="intent-reason">{t("原因（可空）", "Reason (optional)")}</label>
+            <textarea id="intent-reason" className="ec-input" disabled={actionBusy} rows={2} />
+            <div className="ec-modal-actions">
+              <Btn data-testid="intent-cancel" disabled={actionBusy} onClick={() => { setActionErr(null); setPendingTerminate(null); }}>{t("取消", "Cancel")}</Btn>
+              <Btn data-testid="intent-confirm" disabled={actionBusy} onClick={() => {
+                const reason = (document.getElementById("intent-reason") as HTMLTextAreaElement | null)?.value ?? "";
+                void runTerminate(reason);
+              }}>{actionBusy ? t("結束中…", "Closing...") : t("永久結束 Session", "Permanently close Session")}</Btn>
+            </div>
+            {actionErr && <p className="ec-warn-note" data-testid="intent-action-error">{actionErr}</p>}
+          </div>
+        </div>
+      )}
     </>
   );
 }
