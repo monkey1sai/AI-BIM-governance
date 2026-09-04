@@ -26,8 +26,17 @@ export function ViewportSlotProvider({ children }: { children: ReactNode }) {
     setActiveSessionIdState(nextSessionId);
   }, []);
   const setGate = useCallback((next: ReviewSessionViewerPaneBatchGate | null) => {
-    setGateState((prev) => (prev && next && prev.canSend === next.canSend && prev.reason === next.reason ? prev : next));
-    if (next?.canSend !== true) setStageTreeState([]);
+    setGateState((prev) => (
+      prev && next
+      && prev.canSend === next.canSend
+      && prev.reason === next.reason
+      && prev.canSendViewerCommand === next.canSendViewerCommand
+      && prev.viewerCommandReason === next.viewerCommandReason
+        ? prev
+        : next
+    ));
+    const canSendViewerCommand = next?.canSendViewerCommand ?? next?.canSend;
+    if (canSendViewerCommand !== true) setStageTreeState([]);
   }, []);
   const setStageTree = useCallback((nodes: USDPrimNode[]) => {
     setStageTreeState(nodes);

@@ -191,6 +191,27 @@ test.describe("Unified A1-A4 browser semantics (controlled APIs, not live runtim
     await expect(page.locator("[data-uc='viewport'][data-prov='demo']")).toHaveCount(0);
   });
 
+  test("viewport host starts below the toolbar and cannot intercept disabled controls", async ({ page }) => {
+    await installControlledApis(page);
+    await page.goto("/#a1");
+
+    const toolbar = page.locator("[data-uc='ws-viewport-toolbar']");
+    const viewport = page.locator("[data-uc='viewport'][data-prov='asbuilt']");
+    await expect(toolbar).toBeVisible();
+    await expect(viewport).toBeVisible();
+
+    const toolbarBox = await toolbar.boundingBox();
+    const viewportBox = await viewport.boundingBox();
+    expect(toolbarBox).not.toBeNull();
+    expect(viewportBox).not.toBeNull();
+    expect(viewportBox!.y).toBeGreaterThanOrEqual(toolbarBox!.y + toolbarBox!.height);
+
+    await expect(page.getByTestId("ws-toolbar-camera-view")).toBeDisabled();
+    await expect(page.getByTestId("ws-toolbar-fullscreen")).toBeDisabled();
+    await expect(page.getByTestId("ws-toolbar-projection")).toBeDisabled();
+    await expect(page.getByTestId("ws-toolbar-reset")).toBeDisabled();
+  });
+
   // 設計正本 §03 統一主鍵語法 #workspace?dock=… 為 alias，渲染同一 WorkspacePage（dock=a4 維持既有 scrub alias → #a4）。
   test("#workspace?dock alias renders the same unified workspace", async ({ page }) => {
     await installControlledApis(page);

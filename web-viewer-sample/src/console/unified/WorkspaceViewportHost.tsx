@@ -109,6 +109,19 @@ export function WorkspaceViewportHost({ firstFrameTimeoutMs }: WorkspaceViewport
     pageStageTreeRef.current?.(msg);
   }, [setStageTree]);
 
+  useEffect(() => {
+    if (live) return;
+    setGate?.(null);
+    setStageTree?.([]);
+    const reason = t("coordinator runtime/status 已離線", "coordinator runtime/status is offline");
+    pageGateRef.current?.({
+      canSend: false,
+      reason,
+      canSendViewerCommand: false,
+      viewerCommandReason: reason,
+    });
+  }, [live, setGate, setStageTree]);
+
   if (!live) return null; // 零新 DOM（離線／design gate）
 
   const style: CSSProperties = rect

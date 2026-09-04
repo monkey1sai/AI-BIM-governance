@@ -126,6 +126,9 @@ export interface ReviewSessionViewerPaneHandle {
 export interface ReviewSessionViewerPaneBatchGate {
   canSend: boolean;
   reason: string; // canSend=false 時的誠實理由（"" 代表可送）
+  /** 不依賴 IFC mapping 的 prim-path／camera 命令 readiness；舊呼叫端可省略並沿用 canSend。 */
+  canSendViewerCommand?: boolean;
+  viewerCommandReason?: string;
 }
 
 function highlightResultText(result: { ok: boolean; reason?: string }): string {
@@ -523,9 +526,7 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
 
   // A2 批次疊加 gate：與單筆高亮共用同一組 viewer 證據條件，但不含 handoff 專屬欄位
   //（ifc_guid / usd_prim_path 由外部批次項目自帶；mapping 解析在送端與 viewer 端各自誠實計數）。
-  const batchGateReason = mappingArtifactStale
-    ? `mapping_reachable=false: ${artifactHealth?.stale_reason ?? "derived_artifact_unreachable"}`
-    : !validSession
+  const viewerCommandReason = !validSession
       ? t("尚未輸入有效 review session", "enter a valid review session first")
       : !sessionObserved
         ? t("runtime/status 未列出此 session（可能 stale / 已關閉）", "runtime/status does not list this session (possibly stale / closed)")
@@ -538,12 +539,20 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
               : !stageMatched
                 ? t("stage 未對齊，禁止誤標", "stage mismatch; highlight is blocked")
                 : "";
+  const batchGateReason = mappingArtifactStale
+    ? `mapping_reachable=false: ${artifactHealth?.stale_reason ?? "derived_artifact_unreachable"}`
+    : viewerCommandReason;
   // callback 經 ref 讀最新值：gate 通知只隨 gate 內容變動觸發，不因外部 callback identity 變動重跑。
   const onBatchGateChangeRef = useRef(onBatchGateChange);
   onBatchGateChangeRef.current = onBatchGateChange;
   useEffect(() => {
-    onBatchGateChangeRef.current?.({ canSend: batchGateReason === "", reason: batchGateReason });
-  }, [batchGateReason]);
+    onBatchGateChangeRef.current?.({
+      canSend: batchGateReason === "",
+      reason: batchGateReason,
+      canSendViewerCommand: viewerCommandReason === "",
+      viewerCommandReason,
+    });
+  }, [batchGateReason, viewerCommandReason]);
   const onBatchAckRef = useRef(onBatchAck);
   onBatchAckRef.current = onBatchAck;
   const batchGateReasonRef = useRef(batchGateReason);

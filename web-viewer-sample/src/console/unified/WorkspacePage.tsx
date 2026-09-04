@@ -199,7 +199,7 @@ export function WorkspacePage({ initialDock = "a1" }: WorkspacePageProps) {
     issues: "Issues / BCF",
   };
 
-  const toolbarDisabled = slot?.gate?.canSend !== true;
+  const toolbarDisabled = (slot?.gate?.canSendViewerCommand ?? slot?.gate?.canSend) !== true;
 
   return (
     <div

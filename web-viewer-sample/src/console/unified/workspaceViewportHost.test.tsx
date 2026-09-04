@@ -7,10 +7,14 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import EdgeConsole from "../EdgeConsole";
-import { coordinatorStatusStore } from "./coordinatorStatusStore";
-import { RT_IDLE, sessionItem, spyCoordinatorEndpoints, spyCoordinatorEndpointsOffline } from "./__testdata__/coordinatorMocks";
+import { CoordinatorStatusStore, coordinatorStatusStore } from "./coordinatorStatusStore";
+import type { EndpointSlice } from "./coordinatorStatusStore";
+import { ConsoleDataContext } from "./consoleData";
+import { RT_IDLE, idleFetchers, sessionItem, spyCoordinatorEndpoints, spyCoordinatorEndpointsOffline } from "./__testdata__/coordinatorMocks";
 import { classifyViewerPhase, useViewportSlot } from "./viewportSlot";
 import { ViewportSlotProvider } from "./ViewportSlotProvider";
+import { WorkspacePage } from "./WorkspacePage";
+import { WorkspaceViewportHost } from "./WorkspaceViewportHost";
 
 async function flush(n = 6) {
   for (let i = 0; i < n; i += 1) await act(async () => { await Promise.resolve(); });
@@ -115,6 +119,55 @@ describe("WorkspaceViewportHost（V-A′）", () => {
     expect(projBtn?.disabled).toBe(true);
     expect(resetBtn?.disabled).toBe(true);
   });
+
+  it("runtime/status 由 live 轉 offline 時清除 gate 與 Stage 樹", async () => {
+    const fetchers = idleFetchers();
+    const store = new CoordinatorStatusStore(fetchers, { isHidden: () => true });
+    const testStore = store as unknown as {
+      publish: (key: "runtimeStatus", slice: EndpointSlice<typeof RT_IDLE>) => void;
+    };
+    let api: ReturnType<typeof useViewportSlot> = null;
+    function Grab() { api = useViewportSlot(); return null; }
+
+    root = createRoot(container);
+    testStore.publish("runtimeStatus", {
+      data: RT_IDLE,
+      state: "live",
+      httpStatus: 200,
+      message: null,
+      lastUpdatedAt: Date.now(),
+    });
+    act(() => {
+      root!.render(
+        <ConsoleDataContext.Provider value={store}>
+          <ViewportSlotProvider><Grab /><WorkspaceViewportHost /></ViewportSlotProvider>
+        </ConsoleDataContext.Provider>,
+      );
+    });
+    expect(container.querySelector('[data-uc="viewport"]')).not.toBeNull();
+
+    act(() => {
+      api!.setStageTree([{ path: "/World/Root", name: "Root" }]);
+      api!.setGate({ canSend: true, reason: "" });
+    });
+    expect(api!.stageTree).toHaveLength(1);
+    expect(api!.gate?.canSend).toBe(true);
+
+    act(() => {
+      testStore.publish("runtimeStatus", {
+        data: RT_IDLE,
+        state: "offline",
+        httpStatus: 503,
+        message: "runtime unavailable",
+        lastUpdatedAt: Date.now(),
+      });
+    });
+
+    expect(container.querySelector('[data-uc="viewport"]')).toBeNull();
+    expect(api!.gate).toBeNull();
+    expect(api!.stageTree).toEqual([]);
+    store.dispose();
+  });
 });
 describe("classifyViewerPhase（只分類 pane 回報的 reason，不另造判定）", () => {
   it("無 session → no-session；有 session 無 gate → session-selected", () => {
@@ -215,6 +268,28 @@ describe("ViewportSlotProvider", () => {
     expect(api!.gate).toBeNull();
     await act(async () => { root.unmount(); });
   });
+
+  it("mapping 不可達只封鎖 highlight，仍保留可用的 Stage 樹", async () => {
+    let api: ReturnType<typeof useViewportSlot> = null;
+    function Grab() { api = useViewportSlot(); return null; }
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    await act(async () => { root.render(<ViewportSlotProvider><Grab /></ViewportSlotProvider>); });
+    await act(async () => {
+      api!.setStageTree([{ path: "/World/Root", name: "Root" }]);
+      api!.setGate({
+        canSend: false,
+        reason: "mapping_reachable=false: derived_artifact_unreachable",
+        canSendViewerCommand: true,
+        viewerCommandReason: "",
+      });
+    });
+
+    expect(api!.gate?.canSend).toBe(false);
+    expect(api!.gate?.canSendViewerCommand).toBe(true);
+    expect(api!.stageTree).toEqual([{ path: "/World/Root", name: "Root" }]);
+    await act(async () => { root.unmount(); });
+  });
 });
 describe("WorkspacePage 實機整合（Toolbar 遮蔽修復）", () => {
   let container: HTMLDivElement;
@@ -262,5 +337,36 @@ describe("WorkspacePage 實機整合（Toolbar 遮蔽修復）", () => {
 
     // 工具列 style 具備 position: relative 與 zIndex: 10
     expect(toolbar.style.zIndex).toBe("10");
+  });
+
+  it("mapping 不可達時 Stage tree 與 reset 仍依 viewer-command gate 啟用", async () => {
+    spyCoordinatorEndpointsOffline();
+    let api: ReturnType<typeof useViewportSlot> = null;
+    function Grab() { api = useViewportSlot(); return null; }
+    root = createRoot(container);
+    await act(async () => {
+      root!.render(
+        <ViewportSlotProvider>
+          <Grab />
+          <WorkspacePage initialDock="a1" />
+        </ViewportSlotProvider>,
+      );
+    });
+    await flush();
+
+    await act(async () => {
+      api!.setActiveSessionId("review_session_mapping_stale");
+      api!.setStageTree([{ path: "/World/Root", name: "Root" }]);
+      api!.setGate({
+        canSend: false,
+        reason: "mapping_reachable=false: derived_artifact_unreachable",
+        canSendViewerCommand: true,
+        viewerCommandReason: "",
+      });
+    });
+
+    expect(container.querySelector('[data-uc="ws-stage-tree"]')?.getAttribute("data-state")).toBe("active");
+    expect((container.querySelector('[data-testid="ws-request-stage-tree-btn"]') as HTMLButtonElement).disabled).toBe(false);
+    expect((container.querySelector('[data-testid="ws-toolbar-reset"]') as HTMLButtonElement).disabled).toBe(false);
   });
 });
