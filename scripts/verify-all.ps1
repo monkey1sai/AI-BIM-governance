@@ -544,8 +544,29 @@ else {
         $tierPolicyPath = Join-Path $RepoRoot 'scripts\verification-tier-policy.json'
         if (-not (Test-Path -LiteralPath $tierPolicyPath -PathType Leaf)) { throw 'Verification tier policy is missing.' }
         $tierPolicy = Get-Content -LiteralPath $tierPolicyPath -Raw | ConvertFrom-Json -Depth 20 -ErrorAction Stop
-        if ($tierPolicy.schema_version -ne 'verification-tier-policy/v1' -or $tierPolicy.authority -ne 'local_selection_only' -or $tierPolicy.tiered_run_is_evidence -ne $false) {
+        # Mirror scripts/lib/verification-tiers.mjs validateTierPolicy exactly: the .ps1 and .sh
+        # entrypoints must fail closed identically, or a weakened sidecar would deselect gates
+        # here while the shared runner rejects it.
+        if ($tierPolicy.schema_version -ne 'verification-tier-policy/v1' -or $tierPolicy.authority -ne 'local_selection_only' -or
+            $tierPolicy.manifest_path -ne 'scripts/verification-manifest.json' -or
+            $tierPolicy.full_when_dispatch_full -ne $true -or $tierPolicy.tiered_run_is_evidence -ne $false -or $tierPolicy.ci_ignores_tier -ne $true) {
             throw 'Verification tier policy is not the expected local-selection-only v1 document.'
+        }
+        $allEvidenceClasses = @('fast', 'contract', 'slow', 'security')
+        $previousClasses = @()
+        foreach ($tierName in @('quick', 'pr', 'full')) {
+            if ($null -eq $tierPolicy.tiers.$tierName) { throw "Verification tier policy is missing the '$tierName' tier." }
+            $tierClasses = @($tierPolicy.tiers.$tierName.evidence_classes | ForEach-Object { [string]$_ })
+            if ($tierClasses.Count -eq 0 -or @($tierClasses | Where-Object { $_ -notin $allEvidenceClasses }).Count -gt 0) {
+                throw "Verification tier policy tier '$tierName' does not declare a non-empty subset of the known evidence classes."
+            }
+            foreach ($previousClass in $previousClasses) {
+                if ($previousClass -notin $tierClasses) { throw "Verification tier policy tier '$tierName' is not a superset of the previous tier." }
+            }
+            $previousClasses = $tierClasses
+        }
+        if (@($previousClasses | Sort-Object -Unique).Count -ne $allEvidenceClasses.Count) {
+            throw 'Verification tier policy tier ''full'' must cover every evidence class.'
         }
         $TierEffective = if ($tierPolicy.full_when_dispatch_full -and $PlanDocument.dispatch -eq 'full') { 'full' } else { $Tier }
         $tierAllowedClasses = @($tierPolicy.tiers.$TierEffective.evidence_classes | ForEach-Object { [string]$_ })

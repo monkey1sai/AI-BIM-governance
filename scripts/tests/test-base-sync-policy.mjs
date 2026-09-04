@@ -149,6 +149,24 @@ test('converged PR at merge sink with BEHIND permits exactly one protection_forc
   assert.equal(decision.phase, 'post_convergence');
 });
 
+test('a merge-sink race wins over every other exception so a forced sync is never billed as discretionary', () => {
+  // The base advance also satisfies semantic_overlap and base_affects_correctness; if either won,
+  // repeated GitHub-required syncs would be recorded as non-forced and blow the final-sync budget.
+  const decision = evaluateBaseSync(input({
+    converged: true, loop_state: 'complete', at_merge_sink: true,
+    pr_changed_paths: ['bim-review-coordinator/src/app.ts'],
+    base_advance_changed_paths: ['bim-review-coordinator/src/app.ts', '.github/workflows/ci.yml'],
+  }), { policy, manifest });
+  assert.equal(decision.reason, 'protection_forced');
+  assert.equal(decision.counts_toward, 'protection_forced');
+  assert.ok(decision.reasons.includes('semantic_overlap') && decision.reasons.includes('base_affects_correctness'), 'the other exceptions are still reported');
+  const counts = classifyBaseSyncCounts([
+    sync(1, { reason: decision.reason }), sync(2, { reason: decision.reason }), sync(3, { reason: decision.reason }),
+  ], { policy });
+  assert.equal(counts.compliant, true, 'three protection-forced syncs stay compliant');
+  assert.equal(counts.protection_forced_sync_count, 3);
+});
+
 test('protection forced a second sync is not a violation (the honest case)', () => {
   const counts = classifyBaseSyncCounts([sync(1), sync(2)], { policy });
   assert.equal(counts.compliant, true);

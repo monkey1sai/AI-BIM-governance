@@ -208,11 +208,14 @@ export function evaluateBaseSync(candidateInput, { policy: candidatePolicy, mani
     else e3 = true;
   }
 
+  // A merge-sink race takes priority over every other exception: at a converged merge sink the
+  // sync is demanded by branch protection, and recording any other canonical reason would make a
+  // GitHub-forced sync count against the final-sync budget.
   const reasons = [];
+  if (e3) reasons.push('protection_forced');
   if (e1) reasons.push('real_conflict');
   if (e2) reasons.push('semantic_overlap');
   if (e4) reasons.push('base_affects_correctness');
-  if (e3) reasons.push('protection_forced');
   const maySync = reasons.length > 0;
   const reason = maySync ? reasons[0] : null;
   if (!maySync && baseAdvanced && behind) violations.push('base_advanced_is_not_a_reason');

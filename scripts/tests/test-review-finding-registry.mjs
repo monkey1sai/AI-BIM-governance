@@ -57,6 +57,31 @@ test('registry index rejects duplicate (head_sha, finding_id) keys', () => {
   assert.throws(() => indexRegistry([a, record()]), (error) => error.code === 'join_duplicate');
 });
 
+test('the disposition field is bound to the closed delivery enum, matching the JSON schema', () => {
+  const valid = record();
+  assert.throws(() => validateJoinRecord({ ...valid, disposition: 'NOT_REAL' }), (error) => error.code === 'join_invalid');
+  assert.throws(() => validateJoinRecord({ ...valid, disposition: 'fix_now' }), (error) => error.code === 'join_invalid');
+  for (const disposition of ['ACCEPTED', 'FIX_REQUIRED', 'FALSE_POSITIVE', 'ESCALATE']) {
+    assert.equal(validateJoinRecord({ ...valid, disposition }).disposition, disposition);
+  }
+  assert.equal(validateJoinRecord({ ...valid, disposition: null }).disposition, null);
+});
+
+test('a round advance may not cross repository, PR, finding identity or base lineage', () => {
+  const first = record();
+  const advance = (overrides) => assertRoundAdvance(first, record({ round: 2, evidence_fingerprint: EVIDENCE2, ...overrides }));
+  assert.equal(advance({}).round, 2, 'the in-identity advance still works');
+  for (const overrides of [
+    { repository: 'someone/else' },
+    { pr_number: 999 },
+    { finding_id: 'f-002' },
+    { origin: 'ci' },
+    { base_sha: 'd'.repeat(40) },
+  ]) {
+    assert.throws(() => advance(overrides), (error) => error.code === 'round_advance_invalid', JSON.stringify(overrides));
+  }
+});
+
 test('same fingerprint with no new evidence is refused as a retry', () => {
   const first = record();
   const rerun = record({ round: 2, head_sha: HEAD2 });

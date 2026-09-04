@@ -43,6 +43,24 @@ const jobs = [
   },
 ];
 
+test('paginating a non-multiple run count keeps per_page constant and truncates locally', () => {
+  // A shrinking per_page makes `page=2` re-fetch the tail of page 1, so the collector must hold
+  // per_page at 100 and slice the final batch. This models that contract over the same arithmetic.
+  const PAGE_SIZE = 100;
+  const requested = 150;
+  const server = Array.from({ length: 400 }, (unused, index) => index + 1);
+  const collected = [];
+  for (let page = 1; collected.length < requested; page += 1) {
+    const batch = server.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+    collected.push(...batch.slice(0, requested - collected.length));
+    if (batch.length < PAGE_SIZE) break;
+  }
+  assert.equal(collected.length, requested);
+  assert.equal(new Set(collected).size, requested, 'no duplicates');
+  assert.deepEqual(collected.slice(0, 3), [1, 2, 3]);
+  assert.deepEqual(collected.slice(-3), [148, 149, 150], 'items 101-150 are fetched, not 51-100 again');
+});
+
 test('percentile is ceil-rank and null on empty input', () => {
   assert.equal(percentile([], 50), null);
   assert.equal(percentile([5, 1, 3], 50), 3);

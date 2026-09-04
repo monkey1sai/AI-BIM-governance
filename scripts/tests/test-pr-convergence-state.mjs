@@ -68,6 +68,29 @@ test('CONVERGED requires loop complete, threads resolved, no open fixes, nothing
   assert.equal(deriveConvergenceState(observe({ loop: { state: 'complete', attempts_used: 1 }, threads: { complete: false, unresolved: 0 } })).state, 'HELD');
 });
 
+test('a human-required or blocked terminal decision never converges, however clean the threads are', () => {
+  for (const reason of ['terminal_decision_human_required', 'terminal_decision_blocked']) {
+    const state = deriveConvergenceState(observe({ loop: { state: 'complete', reason, attempts_used: 2 } }));
+    assert.equal(state.state, 'HELD', reason);
+    assert.equal(state.requires_human, true, reason);
+    assert.equal(state.final_sync_permitted, false, reason);
+    assert.equal(state.reason, reason);
+  }
+  // The real loop machine actually produces this shape, so the guard is not hypothetical.
+  const live = loopWith([attempt(1), attempt(2, { action: 'human_review', evidence_fingerprint: D('7'), observed_new_evidence: ['review'], decision: 'human_required' })]);
+  assert.equal(live.state, 'complete');
+  assert.equal(live.reason, 'terminal_decision_human_required');
+  assert.equal(deriveConvergenceState(observe({ loop: live })).state, 'HELD');
+});
+
+test('only an advisory pass or a passed bundle is a successful loop outcome', () => {
+  assert.equal(deriveConvergenceState(observe({ loop: { state: 'complete', reason: 'terminal_decision_advisory_pass', attempts_used: 1 } })).state, 'CONVERGED');
+  // advisory_review completed the loop but the findings still owe a disposition.
+  const advisory = deriveConvergenceState(observe({ loop: { state: 'complete', reason: 'terminal_decision_advisory_review', attempts_used: 1 } }));
+  assert.equal(advisory.state, 'DISPOSITION');
+  assert.equal(advisory.final_sync_permitted, false);
+});
+
 test('escalation wins over everything and requires a human', () => {
   const escalated = deriveConvergenceState(observe({ loop: { state: 'complete', attempts_used: 2 }, findings: { fix_required_open: 0, escalate: 1 } }));
   assert.equal(escalated.state, 'ESCALATED');
@@ -107,6 +130,22 @@ test('transitions are checked and terminal states cannot be left automatically',
   assert.equal(assertTransition('FIXING', 'VERIFYING'), 'VERIFYING');
   assert.throws(() => assertTransition('HELD', 'FIXING'), (error) => error.code === 'transition_invalid');
   assert.throws(() => assertTransition('REVIEW_PENDING', 'CONVERGED'), (error) => error.code === 'transition_invalid');
+});
+
+test('every state the projector can emit is reachable through the transition graph', () => {
+  // The projector and the transition table are two descriptions of one machine; if a valid
+  // observation projects to a state the graph forbids, one of them is wrong.
+  const cases = [
+    { from: 'REVIEW_PENDING', observation: observe({ loop: { state: 'continue', attempts_used: 0 }, verifying: true }), expect: 'VERIFYING' },
+    { from: 'RE_REVIEW', observation: observe({ loop: { state: 'continue', attempts_used: 1 }, verifying: true }), expect: 'VERIFYING' },
+    { from: 'VERIFYING', observation: observe({ loop: { state: 'continue', attempts_used: 1 }, findings: { fix_required_open: 1, escalate: 0 } }), expect: 'FIXING' },
+    { from: 'RE_REVIEW', observation: observe({ loop: { state: 'continue', attempts_used: 1 }, findings: { fix_required_open: 1, escalate: 0 } }), expect: 'FIXING' },
+    { from: 'VERIFYING', observation: observe({ loop: { state: 'continue', attempts_used: 1 }, disposition_pending: true }), expect: 'DISPOSITION' },
+  ];
+  for (const { from, observation, expect } of cases) {
+    assert.equal(deriveConvergenceState(observation).state, expect, `${from} -> ${expect}`);
+    assert.equal(assertTransition(from, expect), expect, `${from} -> ${expect} must be a legal edge`);
+  }
 });
 
 test('merge preconditions are observed, never granted (Case 10)', () => {

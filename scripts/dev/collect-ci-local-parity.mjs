@@ -33,9 +33,11 @@ function parseArgs(argv) {
     else if (flag === '--outcome') options.outcome = value;
     else if (flag === '--plan') options.plan = value;
     else if (flag === '--out') options.out = value;
+    else if (flag === '--app-id') options.appId = Number(value);
     else throw new Error(`unknown argument ${flag}`);
     index += 1;
   }
+  if (options.appId !== undefined && !Number.isSafeInteger(options.appId)) throw new Error('--app-id must be an integer');
   if (!REPOSITORY.test(options.repo ?? '')) throw new Error('--repo must be owner/name');
   if (!options.outcome || !options.plan) throw new Error('--outcome and --plan are required');
   return options;
@@ -47,7 +49,9 @@ const plan = JSON.parse(readFileSync(assertContained(resolve(process.cwd(), opti
 if (!/^[0-9a-f]{40}$/u.test(outcome.subject_sha ?? '')) throw new Error('outcome.subject_sha must be a lowercase full commit id');
 const payload = JSON.parse(execFileSync('gh', ['api', `repos/${options.repo}/commits/${outcome.subject_sha}/check-runs?per_page=100`], { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024, windowsHide: true }));
 const checkRuns = (payload.check_runs ?? []).map((run) => ({ name: run.name, conclusion: run.conclusion, head_sha: run.head_sha, app_id: run.app?.id ?? null }));
-const record = compareParity({ outcome, plan, checkRuns });
+// GitHub Actions. Required checks are pinned to this App id in
+// agent-contracts/trusted-host-merge.contract.json, so parity compares against the same source.
+const record = compareParity({ outcome, plan, checkRuns, expectedAppId: options.appId ?? 15368 });
 const outPath = assertContained(resolve(repoRoot, options.out ?? `artifacts/metrics/ci-local-parity/${outcome.subject_sha}.json`), 'out');
 mkdirSync(dirname(outPath), { recursive: true });
 writeFileSync(outPath, `${JSON.stringify(record, null, 2)}\n`);

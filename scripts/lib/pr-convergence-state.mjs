@@ -19,11 +19,13 @@ export const MAX_ROUNDS = 2;
 // Legal transitions. HELD and ESCALATED are terminal for a convergence run: leaving them requires
 // a human decision and a NEW run, never an automatic retry.
 export const TRANSITIONS = Object.freeze({
-  REVIEW_PENDING: Object.freeze(['DISPOSITION', 'HELD', 'ESCALATED']),
+  // VERIFYING is reachable from REVIEW_PENDING and RE_REVIEW because deriveConvergenceState
+  // projects it whenever gates are running, including on the initial deterministic run.
+  REVIEW_PENDING: Object.freeze(['DISPOSITION', 'VERIFYING', 'HELD', 'ESCALATED']),
   DISPOSITION: Object.freeze(['FIXING', 'VERIFYING', 'CONVERGED', 'HELD', 'ESCALATED']),
   FIXING: Object.freeze(['VERIFYING', 'HELD', 'ESCALATED']),
-  VERIFYING: Object.freeze(['RE_REVIEW', 'CONVERGED', 'HELD', 'ESCALATED']),
-  RE_REVIEW: Object.freeze(['DISPOSITION', 'CONVERGED', 'HELD', 'ESCALATED']),
+  VERIFYING: Object.freeze(['DISPOSITION', 'FIXING', 'RE_REVIEW', 'CONVERGED', 'HELD', 'ESCALATED']),
+  RE_REVIEW: Object.freeze(['DISPOSITION', 'FIXING', 'VERIFYING', 'CONVERGED', 'HELD', 'ESCALATED']),
   CONVERGED: Object.freeze([]),
   HELD: Object.freeze([]),
   ESCALATED: Object.freeze([]),
@@ -31,6 +33,12 @@ export const TRANSITIONS = Object.freeze({
 
 const LOOP_STATES = new Set(['continue', 'held', 'complete']);
 const BUNDLE_STATUSES = new Set(['escalated', 'held', 'passed']);
+
+// advanceReviewLoop reports `complete` for EVERY terminal decision, including ones that demand a
+// human. Only an advisory pass (or an independently `passed` disposition bundle) is convergence;
+// human_required and blocked are holds, not successes.
+const CONVERGENT_LOOP_REASONS = new Set(['terminal_decision_advisory_pass']);
+const HUMAN_LOOP_REASONS = new Set(['terminal_decision_human_required', 'terminal_decision_blocked']);
 
 export class PrConvergenceStateError extends Error {
   constructor(code, message) {
@@ -94,13 +102,20 @@ export function deriveConvergenceState(candidate) {
   if (o.bundle_status === 'escalated' || o.findings.escalate > 0) return decide('ESCALATED', 'finding_escalated_out_of_autonomous_authority');
   if (o.loop.state === 'held') return decide('HELD', o.loop.reason ?? 'loop_held');
   if (o.bundle_status === 'held') return decide('HELD', 'disposition_bundle_held');
-  const converged = o.loop.state === 'complete' && o.threads.complete && o.threads.unresolved === 0 && o.findings.fix_required_open === 0 && !o.verifying;
+  // A terminal decision that demands a human never converges, however clean the threads are.
+  if (o.loop.state === 'complete' && HUMAN_LOOP_REASONS.has(o.loop.reason) && o.bundle_status !== 'passed') {
+    return decide('HELD', o.loop.reason);
+  }
+  const loopOutcomeIsSuccessful = CONVERGENT_LOOP_REASONS.has(o.loop.reason) || o.bundle_status === 'passed';
+  const converged = o.loop.state === 'complete' && loopOutcomeIsSuccessful
+    && o.threads.complete && o.threads.unresolved === 0 && o.findings.fix_required_open === 0 && !o.verifying;
   if (converged) return decide('CONVERGED', 'loop_complete_threads_resolved_no_open_fixes');
   if (o.loop.state === 'complete' && !converged) {
     // The loop finished but conversation or fixes are not: this is a hold, not a silent wait.
     if (!o.threads.complete) return decide('HELD', 'thread_state_unknown_after_loop_complete');
     if (o.findings.fix_required_open > 0) return decide('FIXING', 'loop_complete_fix_required_open');
     if (o.threads.unresolved > 0) return decide('DISPOSITION', 'loop_complete_threads_unresolved');
+    if (!loopOutcomeIsSuccessful) return decide('DISPOSITION', o.loop.reason ?? 'loop_complete_without_successful_outcome');
   }
   if (o.verifying) return decide('VERIFYING', 'affected_gates_running_at_exact_head');
   if (o.findings.fix_required_open > 0) return decide('FIXING', 'fix_required_findings_open');

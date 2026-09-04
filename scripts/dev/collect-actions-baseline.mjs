@@ -57,16 +57,18 @@ function assertContained(absolute) {
 
 const options = parseArgs(process.argv.slice(2));
 const collectedAt = new Date().toISOString();
+// per_page stays constant so `page` offsets remain contiguous; a shrinking page size would make
+// page 2 re-fetch the tail of page 1. The final batch is truncated locally instead.
+const PAGE_SIZE = 100;
 const runs = [];
 for (let page = 1; runs.length < options.runs; page += 1) {
-  const perPage = Math.min(100, options.runs - runs.length);
-  const payload = ghJson(`repos/${options.repo}/actions/runs?per_page=${perPage}&page=${page}`);
+  const payload = ghJson(`repos/${options.repo}/actions/runs?per_page=${PAGE_SIZE}&page=${page}`);
   const batch = (payload.workflow_runs ?? []).map((run) => ({
     id: run.id, name: run.name, event: run.event, status: run.status, conclusion: run.conclusion,
     run_started_at: run.run_started_at, updated_at: run.updated_at, head_sha: run.head_sha,
   }));
-  runs.push(...batch);
-  if (batch.length < perPage) break;
+  runs.push(...batch.slice(0, options.runs - runs.length));
+  if (batch.length < PAGE_SIZE) break;
 }
 const sampled = runs.filter((run) => run.status === 'completed' && run.event === 'pull_request').slice(0, options.jobsSample);
 const jobs = [];

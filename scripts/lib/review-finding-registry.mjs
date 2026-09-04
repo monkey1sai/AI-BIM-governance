@@ -11,6 +11,7 @@
 // when the finding's material content changes — so "same fingerprint + no new evidence" can be
 // refused mechanically.
 
+import { REVIEW_DISPOSITIONS } from './autonomous-delivery-finalization.mjs';
 import { sha256Value, stableStringify } from './risk-proportional-review.mjs';
 
 export const REVIEW_FINDING_JOIN_VERSION = 'review-finding-join/v1';
@@ -78,7 +79,12 @@ export function validateJoinRecord(candidate, label = 'record') {
   if (!SHA256.test(record.fingerprint) || !SHA256.test(record.evidence_fingerprint)) fail('join_invalid', `${label} fingerprints must be sha256 hex.`);
   if (!FINDING_ORIGINS.includes(record.origin)) fail('join_invalid', `${label}.origin is not closed.`);
   if (!Number.isSafeInteger(record.round) || record.round < 1 || record.round > MAX_ROUND) fail('join_invalid', `${label}.round must be 1..${MAX_ROUND} (bounded retry).`);
-  for (const field of ['disposition', 'severity', 'risk_class']) {
+  // The disposition field is bound to the delivery layer's closed vocabulary, not merely to
+  // "some non-empty string": the executable validator and the JSON schema must agree.
+  if (record.disposition !== null && !REVIEW_DISPOSITIONS.includes(record.disposition)) {
+    fail('join_invalid', `${label}.disposition must be null or one of ${REVIEW_DISPOSITIONS.join(', ')}.`);
+  }
+  for (const field of ['severity', 'risk_class']) {
     if (record[field] !== null && (typeof record[field] !== 'string' || record[field].length === 0)) fail('join_invalid', `${label}.${field} must be null or a non-empty string.`);
   }
   if (record.follow_up !== null && (typeof record.follow_up !== 'string' || !/^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/(issues|pull)\/[1-9][0-9]*$/u.test(record.follow_up))) {
@@ -130,6 +136,11 @@ export function sameFingerprintNoNewEvidence(previous, next) {
 export function assertRoundAdvance(previous, next) {
   const a = validateJoinRecord(previous, 'previous');
   const b = validateJoinRecord(next, 'next');
+  // A fingerprint is deliberately stable across heads and PRs, so identity must be checked too:
+  // otherwise a round-1 record from one PR could consume a round of another PR's retry budget.
+  for (const field of ['repository', 'pr_number', 'finding_id', 'origin', 'base_sha']) {
+    if (a[field] !== b[field]) fail('round_advance_invalid', `round advance must stay within one finding: ${field} changed.`);
+  }
   if (a.fingerprint !== b.fingerprint) fail('round_advance_invalid', 'round advance must keep the same finding fingerprint.');
   if (b.round !== a.round + 1) fail('round_advance_invalid', `round must advance by exactly one (got ${a.round} -> ${b.round}).`);
   if (b.round > MAX_ROUND) fail('attempt_budget_exhausted', `round ${b.round} exceeds the bounded retry budget of ${MAX_ROUND}.`);
