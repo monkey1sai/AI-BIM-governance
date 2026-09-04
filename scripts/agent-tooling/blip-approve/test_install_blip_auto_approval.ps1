@@ -18,6 +18,7 @@ $sandboxRoot = Join-Path ([System.IO.Path]::GetTempPath()) (
     'blip-installer-test-' + [Guid]::NewGuid().ToString('N')
 )
 $script:pinnedStreams = $null
+$script:predecessorFenceStreams = $null
 $fixedOwnerSidValue = 'S-1-5-21-2135046472-1977311562-3864793309-1001'
 $fixedOwnerSid = [System.Security.Principal.SecurityIdentifier]::new(
     $fixedOwnerSidValue
@@ -207,8 +208,37 @@ Assert-True ($text -match 'FileSystemAclExtensions\]::CreateDirectory') `
     'Production installer does not atomically create its protected directories with a DACL.'
 Assert-True ($text -match '\[System\.IO\.Directory\]::Move\(\$stageRoot, \$trustedRoot\)') `
     'Production installer lacks the single atomic live-runtime publish.'
-Assert-True ($text -match 'Trusted runtime v1 already exists; this initial installer never replaces it') `
-    'Production installer no longer refuses in-place replacement.'
+Assert-True ($text -match '\[System\.IO\.Directory\]::Move\(\$trustedRoot, \$previousRoot\)' -and
+    $text -match 'Restore-PreviousRuntime' -and
+    $text -match 'blip-runtime-upgrade-transaction/v1') `
+    'Production installer lacks journaled predecessor publication and deterministic rollback.'
+Assert-True ($text -match "source_commit = '23489c37a54719df8e024e6f822b8b2e7179d4d8'" -and
+    $text -match "manifest_sha256 = '7DE394C9E7695B996B20719B46D671D97C982659D868566A33C3C3A61252B0EE'") `
+    'Production upgrade is not ratcheted to the exact installed predecessor tuple.'
+Assert-True ($text -match 'Candidate source commit must advance beyond the exact allowed predecessor' -and
+    $text -match 'Pattern = ''\^v1\\\.stage-'' \+ \$journalId \+ ''\$''') `
+    'Production upgrade does not reject predecessor replay or cross-transaction journal paths.'
+Assert-True ($text -match 'Move-PreservedRuntimeDirectories' -and
+    $text -notmatch 'Copy-PreservedTree') `
+    'Production upgrade does not preserve mutable state by same-volume directory moves.'
+Assert-True ($text -match '\[System\.IO\.FileShare\]::Delete') `
+    'Production upgrade lacks a legacy-runtime read fence compatible with directory rename.'
+Assert-True ($text -match 'Another protected runtime install or recovery transaction is active' -and
+    $text -match '\[System\.IO\.FileShare\]::None') `
+    'Production upgrade lacks a product-wide exclusive transaction lock.'
+Assert-True ($text -match 'Protect-RuntimeTree' -and
+    $text -notmatch 'Protect-Tree -LiteralPath \$stageRoot' -and
+    $text -notmatch 'Protect-Tree -LiteralPath \$trustedRoot') `
+    'Production upgrade can temporarily expose owner-only Codex login state.'
+Assert-True ($text -match '\[System\.IO\.File\]::Move\(\$completionStagePath, \$completionPath\)\s+\$activationCommitted = \$true' -and
+    $text -notmatch '\$previousPublished -and -not \$installCompleted' -and
+    $text -match '\[System\.IO\.Directory\]::Exists\(\$previousRoot\)') `
+    'Production upgrade can roll back an activated generation or trusts a volatile publish flag.'
+Assert-True ($text -match 'target_manifest_sha256' -and
+    $text -match 'target_candidate_freeze_sha256' -and
+    $text -match "ValidateSet\('initial', 'upgrade'\)" -and
+    $text -match '\[System\.IO\.File\]::Move\(\$completionStagePath, \$completionPath\)') `
+    'Install/recovery journal is not target-bound or activation is not atomically published.'
 Assert-True ($text -match "ParameterSetName = 'Apply', Mandatory") `
     'Production Apply no longer requires an explicit immutable freeze hash.'
 Assert-True ($text -match 'blip-auto-approval-candidate-freeze/v3') `
@@ -236,7 +266,7 @@ Assert-True ($text -match "fixedOwnerSidValue = 'S-1-5-21-2135046472-1977311562-
     'Production installer no longer pins the immutable owner SID.'
 Assert-True ($text -match "source_files\.PSObject\.Properties\['install_blip_auto_approval\.ps1'\]") `
     'Production Apply no longer binds the executing installer to the freeze.'
-Assert-True ($text -match "schema = 'blip-trusted-runtime-complete/v1'") `
+Assert-True ($text -match "schema = 'blip-trusted-runtime-complete/v2'") `
     'Production installer no longer writes a post-verification completion marker.'
 Assert-True ($text -match 'Incomplete published runtime was quarantined') `
     'Production installer no longer quarantines a failed post-publish runtime.'
@@ -286,8 +316,16 @@ $functions = @(
     'Get-SandboxSid', 'Assert-FixedOwnerIdentity', 'Get-ProtectedWriteMask',
     'New-ProtectedDirectorySecurity', 'New-ProtectedFileSecurity',
     'New-OwnerOnlyDirectorySecurity', 'New-OwnerOnlyFileSecurity',
+    'Get-QuiesceDenyMask', 'New-QuiescedFileSecurity',
     'Set-ExactFileSystemSecurity', 'Assert-ProtectedAcl', 'Assert-OwnerOnlyAcl',
-    'Protect-Tree', 'Protect-OwnerOnlyTree'
+    'Protect-Tree', 'Protect-OwnerOnlyTree', 'Protect-RuntimeTree',
+    'Assert-NoReparseTree',
+    'Open-PredecessorRuntimeFence', 'Close-PredecessorRuntimeFence',
+    'Assert-SuccessorGenerationPivots',
+    'Assert-QuiescedPredecessorFiles', 'Protect-QuiescedPredecessorRuntime',
+    'Move-PreservedRuntimeDirectories',
+    'Restore-PreviousRuntime', 'Open-UpgradeLock',
+    'Test-TargetActivationMarkerPublished'
 ) | ForEach-Object { Get-ProductionFunction -Ast $ast -Name $_ }
 $probe = [ScriptBlock]::Create(($functions -join "`n"))
 
@@ -306,6 +344,7 @@ try {
     $target = Join-Path $sandboxRoot 'target.bin'
     [System.IO.File]::WriteAllBytes($source, [Text.Encoding]::UTF8.GetBytes('owner-approved-bytes'))
     $script:pinnedStreams = [System.Collections.Generic.List[System.IO.FileStream]]::new()
+    $script:predecessorFenceStreams = [System.Collections.Generic.List[System.IO.FileStream]]::new()
     . $probe
 
     $stream = Open-PinnedReadStream -LiteralPath $source
@@ -325,6 +364,168 @@ try {
     try { Copy-PinnedStream -Source $stream -Target $badTarget -ExpectedSha256 ('0' * 64) }
     catch { $badHashRejected = $true }
     Assert-True $badHashRejected 'Staging accepted bytes outside the immutable freeze.'
+
+    $upgradeOld = Join-Path $sandboxRoot 'upgrade-old'
+    $upgradeStage = Join-Path $sandboxRoot 'upgrade-stage'
+    foreach ($path in @(
+        (Join-Path $upgradeOld 'state\nested'),
+        (Join-Path $upgradeOld 'codex-home'),
+        (Join-Path $upgradeOld 'artifacts'),
+        $upgradeStage
+    )) {
+        [void][System.IO.Directory]::CreateDirectory($path)
+    }
+    [System.IO.File]::WriteAllText(
+        (Join-Path $upgradeOld 'state\nested\result.json'), 'state-bytes'
+    )
+    [System.IO.File]::WriteAllText(
+        (Join-Path $upgradeOld 'codex-home\auth.json'), 'owner-login-bytes'
+    )
+    [System.IO.File]::WriteAllText(
+        (Join-Path $upgradeOld 'artifacts\review.json'), 'artifact-bytes'
+    )
+    Move-PreservedRuntimeDirectories -SourceRoot $upgradeOld -DestinationRoot $upgradeStage
+    Assert-True (
+        [System.IO.File]::ReadAllText(
+            (Join-Path $upgradeStage 'state\nested\result.json')
+        ) -ceq 'state-bytes'
+    ) 'Upgrade did not byte-preserve state by directory move.'
+    Assert-True (
+        [System.IO.File]::ReadAllText(
+            (Join-Path $upgradeStage 'codex-home\auth.json')
+        ) -ceq 'owner-login-bytes'
+    ) 'Upgrade did not byte-preserve owner-only Codex login state.'
+    Protect-RuntimeTree -LiteralPath $upgradeStage
+    Assert-OwnerOnlyAcl -LiteralPaths @(
+        (Join-Path $upgradeStage 'codex-home'),
+        (Join-Path $upgradeStage 'codex-home\auth.json')
+    )
+    $upgradeTrusted = Join-Path $sandboxRoot 'upgrade-trusted'
+    $upgradeFailed = Join-Path $sandboxRoot 'upgrade-failed'
+    $missingStage = Join-Path $sandboxRoot 'upgrade-stage-missing'
+    [System.IO.Directory]::Move($upgradeStage, $upgradeTrusted)
+    Restore-PreviousRuntime -Trusted $upgradeTrusted -Previous $upgradeOld `
+        -Failed $upgradeFailed -Stage $missingStage
+    Assert-True (
+        [System.IO.File]::ReadAllText(
+            (Join-Path $upgradeTrusted 'state\nested\result.json')
+        ) -ceq 'state-bytes' -and
+        [System.IO.File]::ReadAllText(
+            (Join-Path $upgradeTrusted 'codex-home\auth.json')
+        ) -ceq 'owner-login-bytes' -and
+        [System.IO.Directory]::Exists($upgradeFailed)
+    ) 'Upgrade rollback did not restore the predecessor and its mutable directories.'
+
+    $fenceRoot = Join-Path $sandboxRoot 'fence-runtime'
+    [void][System.IO.Directory]::CreateDirectory($fenceRoot)
+    foreach ($name in @('manifest.json', 'install-complete.json', 'wrapper.ps1')) {
+        [System.IO.File]::WriteAllText((Join-Path $fenceRoot $name), $name)
+    }
+    $script:trustedRoot = $fenceRoot
+    $fenceManifest = [pscustomobject]@{
+        files = [pscustomobject]@{ 'wrapper.ps1' = ('A' * 64) }
+        runtime = [pscustomobject]@{}
+    }
+    $activeReader = [System.IO.FileStream]::new(
+        (Join-Path $fenceRoot 'manifest.json'), [System.IO.FileMode]::Open,
+        [System.IO.FileAccess]::Read, [System.IO.FileShare]::Read
+    )
+    $activeRejected = $false
+    try { Open-PredecessorRuntimeFence -Manifest $fenceManifest }
+    catch [System.IO.IOException] { $activeRejected = $true }
+    finally {
+        $activeReader.Dispose()
+        Close-PredecessorRuntimeFence
+    }
+    Assert-True $activeRejected 'Legacy runtime fence did not reject an active operation.'
+    Open-PredecessorRuntimeFence -Manifest $fenceManifest
+    $newReaderRejected = $false
+    try {
+        $unexpectedReader = [System.IO.FileStream]::new(
+            (Join-Path $fenceRoot 'wrapper.ps1'), [System.IO.FileMode]::Open,
+            [System.IO.FileAccess]::Read, [System.IO.FileShare]::Read
+        )
+        $unexpectedReader.Dispose()
+    }
+    catch [System.IO.IOException] { $newReaderRejected = $true }
+    Assert-True $newReaderRejected 'Legacy runtime fence allowed a new runtime reader.'
+    Protect-QuiescedPredecessorRuntime
+    Close-PredecessorRuntimeFence
+    $postFenceReaderRejected = $false
+    try {
+        $unexpectedReader = [System.IO.FileStream]::new(
+            (Join-Path $fenceRoot 'wrapper.ps1'), [System.IO.FileMode]::Open,
+            [System.IO.FileAccess]::Read, [System.IO.FileShare]::Read
+        )
+        $unexpectedReader.Dispose()
+    }
+    catch [System.UnauthorizedAccessException] { $postFenceReaderRejected = $true }
+    Assert-True $postFenceReaderRejected `
+        'Quiesced predecessor became readable after the fence handles were released.'
+    $fenceMoved = Join-Path $sandboxRoot 'fence-runtime-moved'
+    [System.IO.Directory]::Move($fenceRoot, $fenceMoved)
+    Assert-True ([System.IO.Directory]::Exists($fenceMoved)) `
+        'Quiesced legacy runtime did not permit same-volume directory rename.'
+    Protect-Tree -LiteralPath $fenceMoved
+
+    $script:upgradeLockPath = Join-Path $sandboxRoot 'upgrade.lock'
+    $script:upgradeLockStream = $null
+    Open-UpgradeLock
+    $parallelInstallerRejected = $false
+    try {
+        $unexpectedLock = [System.IO.FileStream]::new(
+            $script:upgradeLockPath, [System.IO.FileMode]::Open,
+            [System.IO.FileAccess]::ReadWrite, [System.IO.FileShare]::None
+        )
+        $unexpectedLock.Dispose()
+    }
+    catch [System.IO.IOException] { $parallelInstallerRejected = $true }
+    Assert-True $parallelInstallerRejected `
+        'Protected upgrade lock allowed a concurrent installer transaction.'
+    $script:upgradeLockStream.Dispose()
+    $script:upgradeLockStream = $null
+
+    $predecessorPivotHash = 'A' * 64
+    $predecessorPivots = [pscustomobject]@{ files = [pscustomobject]@{
+        'blip_review.py' = $predecessorPivotHash
+        'run_codex_bound_ship_gate_once.ps1' = $predecessorPivotHash
+    } }
+    $successorPivots = [ordered]@{
+        'blip_review.py' = ('B' * 64)
+        'run_codex_bound_ship_gate_once.ps1' = ('C' * 64)
+    }
+    Assert-SuccessorGenerationPivots `
+        -PredecessorManifest $predecessorPivots -SuccessorFileHashes $successorPivots
+    $cachedPivotRejected = $false
+    $successorPivots['blip_review.py'] = $predecessorPivotHash
+    try {
+        Assert-SuccessorGenerationPivots `
+            -PredecessorManifest $predecessorPivots -SuccessorFileHashes $successorPivots
+    }
+    catch { $cachedPivotRejected = $true }
+    Assert-True $cachedPivotRejected `
+        'Upgrade accepted a successor that cannot stop a cached old User wrapper.'
+    $successorPivots['blip_review.py'] = 'B' * 64
+    $successorPivots['run_codex_bound_ship_gate_once.ps1'] = $predecessorPivotHash
+    $cachedAppPivotRejected = $false
+    try {
+        Assert-SuccessorGenerationPivots `
+            -PredecessorManifest $predecessorPivots -SuccessorFileHashes $successorPivots
+    }
+    catch { $cachedAppPivotRejected = $true }
+    Assert-True $cachedAppPivotRejected `
+        'Upgrade accepted a successor that cannot stop a cached old App wrapper.'
+
+    $script:completionPath = Join-Path $sandboxRoot 'activation-commit.json'
+    $script:previousRoot = Join-Path $sandboxRoot 'activation-previous'
+    [System.IO.File]::WriteAllText($script:completionPath, 'fault-after-atomic-move')
+    Assert-True (Test-TargetActivationMarkerPublished -IsUpgrade $false) `
+        'Initial install would quarantine a target after its activation marker was published.'
+    Assert-True (-not (Test-TargetActivationMarkerPublished -IsUpgrade $true)) `
+        'Upgrade mistook the predecessor marker for a successor activation commit.'
+    [void][System.IO.Directory]::CreateDirectory($script:previousRoot)
+    Assert-True (Test-TargetActivationMarkerPublished -IsUpgrade $true) `
+        'Upgrade would restore the predecessor after the successor activation marker was published.'
 
     foreach ($open in $script:pinnedStreams) { $open.Dispose() }
     $script:pinnedStreams.Clear()

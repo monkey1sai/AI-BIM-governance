@@ -209,7 +209,7 @@ function Invoke-StrictMetadataSchemaRegression {
     $freezeHash = 'C' * 64
     $manifestHash = 'D' * 64
     $validManifest = [ordered]@{
-        schema = 'blip-trusted-runtime-manifest/v1'
+        schema = 'blip-trusted-runtime-manifest/v2'
         source_commit = 'c' * 40
         files = [ordered]@{ file = $fileHash }
         runtime = [ordered]@{ runtime = $runtimeHash }
@@ -218,7 +218,7 @@ function Invoke-StrictMetadataSchemaRegression {
         installed_at = '2026-08-14T00:00:00.0000000+08:00'
     } | ConvertTo-Json -Depth 4 -Compress
     $validCompletion = [ordered]@{
-        schema = 'blip-trusted-runtime-complete/v1'
+        schema = 'blip-trusted-runtime-complete/v2'
         owner_sid = 'S-1-5-21-test'
         candidate_freeze_sha256 = $freezeHash
         manifest_sha256 = $manifestHash
@@ -227,7 +227,7 @@ function Invoke-StrictMetadataSchemaRegression {
     $parsed = ConvertFrom-StrictRuntimeMetadata `
         -ManifestText $validManifest -CompletionText $validCompletion `
         -ExpectedFileNames @('file') -ExpectedRuntimeNames @('runtime')
-    Assert-True ($parsed.Manifest.schema -ceq 'blip-trusted-runtime-manifest/v1') `
+    Assert-True ($parsed.Manifest.schema -ceq 'blip-trusted-runtime-manifest/v2') `
         'Strict runtime metadata parser rejected a valid exact schema.'
 
     function Assert-MetadataRejected {
@@ -246,9 +246,15 @@ function Invoke-StrictMetadataSchemaRegression {
         Assert-True $rejected "$Label runtime metadata was accepted."
     }
 
+    Assert-MetadataRejected `
+        -ManifestText ($validManifest.Replace('manifest/v2', 'manifest/v1')) `
+        -CompletionText $validCompletion -Label 'predecessor manifest schema'
+    Assert-MetadataRejected -ManifestText $validManifest `
+        -CompletionText ($validCompletion.Replace('complete/v2', 'complete/v1')) `
+        -Label 'predecessor completion schema'
     $manifestUnknown = $validManifest.Substring(0, $validManifest.Length - 1) + ',"unknown":true}'
     $manifestDuplicate = $validManifest.Substring(0, $validManifest.Length - 1) +
-        ',"schema":"blip-trusted-runtime-manifest/v1"}'
+        ',"schema":"blip-trusted-runtime-manifest/v2"}'
     $filesExact = '"files":{"file":"' + $fileHash + '"}'
     $filesUnknown = '"files":{"file":"' + $fileHash + '","unknown":"' + $fileHash + '"}'
     $filesDuplicate = '"files":{"file":"' + $fileHash + '","file":"' + $fileHash + '"}'
@@ -266,7 +272,7 @@ function Invoke-StrictMetadataSchemaRegression {
         -CompletionText $validCompletion -Label 'non-canonical source commit'
     $completionUnknown = $validCompletion.Substring(0, $validCompletion.Length - 1) + ',"unknown":true}'
     $completionDuplicate = $validCompletion.Substring(0, $validCompletion.Length - 1) +
-        ',"schema":"blip-trusted-runtime-complete/v1"}'
+        ',"schema":"blip-trusted-runtime-complete/v2"}'
     Assert-MetadataRejected -ManifestText $validManifest -CompletionText $completionUnknown -Label 'unknown completion property'
     Assert-MetadataRejected -ManifestText $validManifest -CompletionText $completionDuplicate -Label 'duplicate completion property'
     Write-Output 'strict-runtime-metadata-regression-ok'
@@ -655,7 +661,7 @@ function Write-Manifest {
         'bots.json' = (Get-FileHash -LiteralPath (Join-Path $runtimeRoot 'bots.json') -Algorithm SHA256).Hash
     }
     $manifest = [ordered]@{
-        schema = 'blip-trusted-runtime-manifest/v1'
+        schema = 'blip-trusted-runtime-manifest/v2'
         source_commit = 'c' * 40
         files = $files
         runtime = [ordered]@{
@@ -682,7 +688,7 @@ function Write-Manifest {
     $manifestPath = Join-Path $runtimeRoot 'manifest.json'
     $manifest | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $manifestPath -Encoding utf8NoBOM
     [ordered]@{
-        schema = 'blip-trusted-runtime-complete/v1'
+        schema = 'blip-trusted-runtime-complete/v2'
         owner_sid = 'S-1-5-21-2135046472-1977311562-3864793309-1001'
         candidate_freeze_sha256 = 'F' * 64
         manifest_sha256 = (Get-FileHash -LiteralPath $manifestPath -Algorithm SHA256).Hash

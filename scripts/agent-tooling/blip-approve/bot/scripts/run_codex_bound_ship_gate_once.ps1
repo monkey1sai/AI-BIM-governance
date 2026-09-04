@@ -442,9 +442,9 @@ function ConvertFrom-StrictRuntimeMetadata {
         $activation = Get-UniqueRuntimeJsonProperty -Object $manifestRoot -Name 'activation' -Label 'Trusted runtime manifest'
         $completionSchema = Get-UniqueRuntimeJsonProperty -Object $completionRoot -Name 'schema' -Label 'Trusted runtime completion marker'
         foreach ($textBinding in @(
-            @{ Value = $manifestSchema; Expected = 'blip-trusted-runtime-manifest/v1'; Label = 'manifest schema' },
+            @{ Value = $manifestSchema; Expected = 'blip-trusted-runtime-manifest/v2'; Label = 'manifest schema' },
             @{ Value = $activation; Expected = 'OWNER_PEM_AND_CODEX_LOGIN_REQUIRED'; Label = 'manifest activation' },
-            @{ Value = $completionSchema; Expected = 'blip-trusted-runtime-complete/v1'; Label = 'completion schema' }
+            @{ Value = $completionSchema; Expected = 'blip-trusted-runtime-complete/v2'; Label = 'completion schema' }
         )) {
             if (
                 $textBinding.Value.ValueKind -ne [System.Text.Json.JsonValueKind]::String -or
@@ -1234,7 +1234,7 @@ try {
     $manifest = $metadata.Manifest
     $completion = $metadata.Completion
     $manifestHash = (Get-FileHash -LiteralPath $manifestPath -Algorithm SHA256).Hash.ToUpperInvariant()
-    if ($completion.schema -cne 'blip-trusted-runtime-complete/v1' -or
+    if ($completion.schema -cne 'blip-trusted-runtime-complete/v2' -or
         [string]$completion.owner_sid -cne $fixedOwnerSidValue -or
         [string]$completion.candidate_freeze_sha256 -notmatch '^[0-9A-F]{64}$' -or
         [string]$completion.candidate_freeze_sha256 -cne
