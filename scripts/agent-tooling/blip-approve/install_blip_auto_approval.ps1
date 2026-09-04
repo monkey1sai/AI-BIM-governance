@@ -1077,6 +1077,9 @@ function Set-RecoveryAttemptMode {
     if ($Operation -ceq 'upgrade') {
         $UpgradeAttempted.Value = $true
     }
+    elseif ($Operation -ceq 'initial') {
+        $UpgradeAttempted.Value = $false
+    }
 }
 
 function Open-UpgradeLock {
@@ -1749,6 +1752,7 @@ try {
         New-ProtectedDirectory -LiteralPath $productRoot
         New-ProtectedDirectory -LiteralPath $secretRoot -OwnerOnly
         Open-UpgradeLock
+        $upgradeAttempted = [System.IO.Directory]::Exists($trustedRoot)
         try {
             $recoveryResult = Recover-InterruptedUpgrade `
                 -ExpectedTargetSourceCommit $sourceCommitElement.GetString() `
@@ -1838,7 +1842,6 @@ try {
         exit 0
     }
 
-    $upgradeAttempted = Test-Path -LiteralPath $trustedRoot
     $existingManifest = $null
     if ($upgradeAttempted) {
         $existingManifest = Assert-ExistingTrustedRuntime

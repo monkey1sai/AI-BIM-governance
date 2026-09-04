@@ -297,11 +297,13 @@ Assert-True ($text -match 'function Protect-UpgradeArchiveOwnerOnly[\s\S]+Assert
     $text -match 'target_candidate_freeze_sha256 -ceq[\s\S]+Matching committed upgrade archive has an invalid predecessor tuple') `
     'Historical completion archives are not ACL-migrated and filtered before current predecessor validation.'
 $mainFlowStart = $text.IndexOf('$freeze = $freezeText | ConvertFrom-Json', [StringComparison]::Ordinal)
+$upgradeModeIndex = $text.IndexOf('$upgradeAttempted = [System.IO.Directory]::Exists($trustedRoot)', $mainFlowStart, [StringComparison]::Ordinal)
 $recoveryCallIndex = $text.IndexOf('$recoveryResult = Recover-InterruptedUpgrade', $mainFlowStart, [StringComparison]::Ordinal)
 $runtimeOpenIndex = $text.IndexOf('$stream = Open-PinnedReadStream -LiteralPath $entry.Value', $mainFlowStart, [StringComparison]::Ordinal)
-Assert-True ($mainFlowStart -ge 0 -and $recoveryCallIndex -gt $mainFlowStart -and
+Assert-True ($mainFlowStart -ge 0 -and $upgradeModeIndex -gt $mainFlowStart -and
+    $recoveryCallIndex -gt $upgradeModeIndex -and
     $runtimeOpenIndex -gt $recoveryCallIndex) `
-    'Apply flow validates mutable runtime inputs before processing an existing recovery journal.'
+    'Apply flow does not classify an existing runtime before recovery and mutable input validation.'
 Assert-True ($text -match '-OperationOut \(\[ref\]\$recoveryOperation\)[\s\S]+Set-RecoveryAttemptMode[\s\S]+-UpgradeAttempted \(\[ref\]\$upgradeAttempted\)') `
     'Recovery errors can still lose the journal operation mode before outer catch handling.'
 Assert-True ($text -match '-TransactionIdOut \(\[ref\]\$recoveryTransactionId\)[\s\S]+\$installerStructTransactionId = \$recoveryTransactionId' -and
@@ -655,9 +657,12 @@ try {
     $upgradeMode = $false
     Set-RecoveryAttemptMode -Operation upgrade -UpgradeAttempted ([ref]$upgradeMode)
     Assert-True $upgradeMode 'Recovery error handling did not retain upgrade mode.'
-    $initialMode = $false
+    $initialMode = $true
     Set-RecoveryAttemptMode -Operation initial -UpgradeAttempted ([ref]$initialMode)
-    Assert-True (-not $initialMode) 'Initial recovery was incorrectly reported as upgrade mode.'
+    Assert-True (-not $initialMode) 'Initial recovery did not override a preliminary upgrade classification.'
+    $unknownMode = $true
+    Set-RecoveryAttemptMode -Operation '' -UpgradeAttempted ([ref]$unknownMode)
+    Assert-True $unknownMode 'Unknown recovery operation discarded the preliminary runtime classification.'
 
     $completionAclRoot = Join-Path $sandboxRoot 'completion-acl'
     [void][System.IO.Directory]::CreateDirectory($completionAclRoot)
