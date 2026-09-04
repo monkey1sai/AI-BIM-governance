@@ -206,7 +206,7 @@ export function StructuredLogDiagnostics({
             </button>
 
             {expanded && (
-            <div className="structured-log-diagnostics__panel">
+            <div className="structured-log-diagnostics__panel" data-testid="structured-log-panel">
             <div className="structured-log-diagnostics__heading">
                 <div>
                     <p className="structured-log-diagnostics__eyebrow">Runtime diagnostics</p>
