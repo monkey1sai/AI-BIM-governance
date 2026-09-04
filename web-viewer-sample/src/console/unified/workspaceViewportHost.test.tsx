@@ -78,7 +78,7 @@ describe("WorkspaceViewportHost（V-A′）", () => {
     expect(container.querySelector('[data-uc="viewport"][data-prov="demo"]')).toBeNull();
   });
 
-  it("可見 session input 由 A 切到 B 時同步 workspace authority 且不回退舊 handoff", async () => {
+  it("可見 session input 由 A 切到 B 或清空時同步 workspace authority 且不回退舊 handoff", async () => {
     const runtimeStatus = {
       ...RT_IDLE,
       sessions: {
@@ -148,6 +148,30 @@ describe("WorkspaceViewportHost（V-A′）", () => {
     expect(api!.activeSessionId).toBe("review_session_b");
     expect(container.querySelector('[data-testid="active-session-probe"]')?.textContent).toBe("review_session_b");
     expect(input.value).toBe("review_session_b");
+    expect(api!.publication?.handoff.sessionId).toBe("review_session_a");
+
+    act(() => {
+      api!.setStageTree([{ path: "/World/B", name: "B" }]);
+      api!.setGate({ canSend: true, reason: "" });
+    });
+    await act(async () => {
+      const valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+      valueSetter?.call(input, "   ");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await flush();
+
+    expect(api!.activeSessionId).toBe("");
+    expect(container.querySelector('[data-testid="active-session-probe"]')?.textContent).toBe("");
+    expect(input.value).toBe("");
+    expect(container.querySelector('[data-testid="a1-inline-no-session"]')).not.toBeNull();
+    expect(api!.gate).toEqual({
+      canSend: false,
+      reason: expect.stringMatching(/review session/i),
+      canSendViewerCommand: false,
+      viewerCommandReason: expect.stringMatching(/review session/i),
+    });
+    expect(api!.stageTree).toEqual([]);
     expect(api!.publication?.handoff.sessionId).toBe("review_session_a");
     store.dispose();
   });
@@ -263,7 +287,12 @@ describe("WorkspaceViewportHost（V-A′）", () => {
     });
 
     expect(container.querySelector('[data-uc="viewport"]')).toBeNull();
-    expect(api!.gate).toBeNull();
+    expect(api!.gate).toEqual({
+      canSend: false,
+      reason: expect.any(String),
+      canSendViewerCommand: false,
+      viewerCommandReason: expect.any(String),
+    });
     expect(api!.stageTree).toEqual([]);
     expect(pageGateChange).toHaveBeenCalledTimes(1);
     const offlineGate = pageGateChange.mock.calls[0][0];
@@ -275,6 +304,7 @@ describe("WorkspaceViewportHost（V-A′）", () => {
     });
     expect(offlineGate.reason).toBe(offlineGate.viewerCommandReason);
     expect(offlineGate.reason).toMatch(/runtime\/status.*(?:離線|offline)/i);
+    expect(api!.gate).toEqual(offlineGate);
     store.dispose();
   });
 });

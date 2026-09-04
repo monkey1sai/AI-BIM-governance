@@ -128,6 +128,13 @@ describe("WorkspacePage Stage 樹與工具列整合 (Issue #609, #605)", () => {
     const expandToggle = container.querySelector('[data-testid="expand-toggle-/World/Structure"]') as HTMLElement | null;
     expect(expandToggle).not.toBeNull();
     expect(container.querySelector('[data-testid="expand-toggle-/World/Leaf"]')).toBeNull();
+
+    const refreshButton = container.querySelector('[data-testid="ws-request-stage-tree-btn"]') as HTMLButtonElement | null;
+    expect(refreshButton?.disabled).toBe(false);
+    await act(async () => { refreshButton?.click(); });
+    expect(requestStageTreeMock).toHaveBeenCalledWith("/World");
+    requestStageTreeMock.mockClear();
+
     await act(async () => { expandToggle?.click(); });
     expect(requestStageTreeMock).toHaveBeenCalledWith("/World/Structure");
 
@@ -158,7 +165,9 @@ describe("WorkspacePage Stage 樹與工具列整合 (Issue #609, #605)", () => {
     });
     const blockedTree = container.querySelector('[data-uc="ws-stage-tree"]');
     expect(blockedTree?.getAttribute("data-state")).toBe("blocked");
-    await act(async () => { item?.click(); expandToggle?.click(); });
+    const blockedRefreshButton = container.querySelector('[data-testid="ws-request-stage-tree-btn"]') as HTMLButtonElement | null;
+    expect(blockedRefreshButton?.disabled).toBe(true);
+    await act(async () => { item?.click(); expandToggle?.click(); blockedRefreshButton?.click(); });
     expect(selectPrimMock).not.toHaveBeenCalled();
     expect(requestStageTreeMock).not.toHaveBeenCalled();
   });

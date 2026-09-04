@@ -290,6 +290,51 @@ describe("ReviewSessionViewerPane", () => {
     expect(coordinatorClient.claimViewerLease).not.toHaveBeenCalled();
   });
 
+  it("mapping stale blocks highlight while an otherwise-ready pane keeps viewer commands enabled", async () => {
+    const staleRuntime = fakeRuntimeStatus();
+    staleRuntime.sessions.items[0] = {
+      ...staleRuntime.sessions.items[0],
+      artifact_health: {
+        source_ifc_exists: true,
+        model_usdc_reachable: true,
+        mapping_reachable: false,
+        metadata_reachable: null,
+        all_required_ready: false,
+        checked_at: "2026-07-07T10:00:00.000Z",
+        stale_reason: "derived_artifact_unreachable",
+        failure_details: { source_ifc: null, model_usdc: null, mapping: "http_404", metadata: null },
+        source: "edge_health_probe",
+      },
+    };
+    vi.mocked(coordinatorClient.runtimeStatus).mockResolvedValue(staleRuntime as never);
+    const onBatchGateChange = vi.fn();
+    root = createRoot(container);
+    await act(async () => {
+      root!.render(<ReviewSessionViewerPane handoff={handoff} onBatchGateChange={onBatchGateChange} />);
+    });
+    await flush();
+    await act(async () => { q<HTMLButtonElement>("review-room-manual-start")!.click(); });
+    await flush();
+    await act(async () => {
+      (viewerBox.current!.onFirstFrame as (m: unknown) => void)({ protocol: "vg01", type: "first_frame", stageUrl: "stage://x" });
+      (viewerBox.current!.onStageLoaded as (m: unknown) => void)({
+        protocol: "vg01",
+        type: "stage_loaded",
+        stageUrl: "stage://x",
+        status: "active",
+        binding_revision_id: "rev_binding_mapping_stale",
+      });
+    });
+    await flush();
+
+    expect(onBatchGateChange).toHaveBeenLastCalledWith({
+      canSend: false,
+      reason: "mapping_reachable=false: derived_artifact_unreachable",
+      canSendViewerCommand: true,
+      viewerCommandReason: "",
+    });
+  });
+
   it("primary lease conflict has a stable occupied state and an actionable retry", async () => {
     vi.mocked(coordinatorClient.claimViewerLease).mockRejectedValueOnce(
       new Error("coordinator /api/review-sessions/review_session_x/viewer-leases/claim -> 409 primary_already_claimed"),

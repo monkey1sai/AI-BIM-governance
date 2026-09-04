@@ -209,7 +209,15 @@ test.describe("Unified A1-A4 browser semantics (controlled APIs, not live runtim
     await expect(page.getByTestId("ws-toolbar-camera-view")).toBeDisabled();
     await expect(page.getByTestId("ws-toolbar-fullscreen")).toBeDisabled();
     await expect(page.getByTestId("ws-toolbar-projection")).toBeDisabled();
-    await expect(page.getByTestId("ws-toolbar-reset")).toBeDisabled();
+    const resetButton = page.getByTestId("ws-toolbar-reset");
+    await expect(resetButton).toBeDisabled();
+    const resetBox = await resetButton.boundingBox();
+    expect(resetBox).not.toBeNull();
+    const hitTestId = await page.evaluate(({ x, y }) => {
+      const hit = document.elementFromPoint(x, y);
+      return hit?.closest<HTMLElement>("[data-testid]")?.dataset.testid ?? null;
+    }, { x: resetBox!.x + resetBox!.width / 2, y: resetBox!.y + resetBox!.height / 2 });
+    expect(hitTestId).toBe("ws-toolbar-reset");
   });
 
   // 設計正本 §03 統一主鍵語法 #workspace?dock=… 為 alias，渲染同一 WorkspacePage（dock=a4 維持既有 scrub alias → #a4）。

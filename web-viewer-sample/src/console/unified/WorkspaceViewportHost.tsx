@@ -63,10 +63,10 @@ export function WorkspaceViewportHost({ firstFrameTimeoutMs }: WorkspaceViewport
 
   const publication = slot?.publication ?? null;
   const activeSessionId = slot?.activeSessionId ?? "";
-  // 共用 session 是單一 authority：可見 input 更新後優先於頁面初始 handoff，跨 dock 不回退舊 session。
+  // 共用 session 是單一 authority：publish 會先播種；可見 input 之後即使清空，也不回退舊 handoff。
   const handoff = useMemo<ReviewRoomHandoff | null>(() => {
     if (!publication) return null;
-    const sid = activeSessionId || publication.handoff.sessionId.trim();
+    const sid = activeSessionId;
     return sid === publication.handoff.sessionId ? publication.handoff : { ...publication.handoff, sessionId: sid };
   }, [publication, activeSessionId]);
 
@@ -111,15 +111,16 @@ export function WorkspaceViewportHost({ firstFrameTimeoutMs }: WorkspaceViewport
 
   useEffect(() => {
     if (live) return;
-    setGate?.(null);
     setStageTree?.([]);
     const reason = t("coordinator runtime/status 已離線", "coordinator runtime/status is offline");
-    pageGateRef.current?.({
+    const offlineGate: ReviewSessionViewerPaneBatchGate = {
       canSend: false,
       reason,
       canSendViewerCommand: false,
       viewerCommandReason: reason,
-    });
+    };
+    setGate?.(offlineGate);
+    pageGateRef.current?.(offlineGate);
   }, [live, setGate, setStageTree]);
 
   if (!live) return null; // 零新 DOM（離線／design gate）

@@ -384,7 +384,7 @@ export function WorkspacePage({ initialDock = "a1" }: WorkspacePageProps) {
             </button>
             <button
               data-testid="ws-toolbar-reset"
-              title={t("重置視角 (⟲)", "Reset camera (⟲)")}
+              title={t("重置視角並清除選取 (⟲)", "Reset camera and clear selection (⟲)")}
               disabled={toolbarDisabled}
               onClick={() => {
                 stageTreeApi.clearSelection();
