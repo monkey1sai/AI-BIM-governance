@@ -813,10 +813,19 @@ function Assert-ExistingTrustedRuntime {
             }
             if ($entry.Key -in @('runtime/pwsh.exe', 'runtime/python.exe') -or
                 $entry.Key.StartsWith('runtime/psmodule/', [StringComparison]::Ordinal)) {
-                continue
+                $installed = [string]$entry.Value
             }
-            $relative = $entry.Key.Substring('runtime/'.Length).Replace('/', '\')
-            $installed = Join-Path (Join-Path $trustedRoot 'codex-runtime') $relative
+            else {
+                $relative = $entry.Key.Substring('runtime/'.Length).Replace('/', '\')
+                $installed = Join-Path (Join-Path $trustedRoot 'codex-runtime') $relative
+            }
+            if (-not [System.IO.File]::Exists($installed)) {
+                throw "Existing trusted runtime dependency is unavailable: $($entry.Key)"
+            }
+            $installedItem = Get-Item -Force -LiteralPath $installed
+            if (($installedItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+                throw "Existing trusted runtime dependency is a reparse point: $($entry.Key)"
+            }
             if ((Get-FileHash -LiteralPath $installed -Algorithm SHA256).Hash -cne
                 [string]$expected.Value) {
                 throw "Existing trusted runtime dependency hash mismatch: $($entry.Key)"
@@ -1439,6 +1448,9 @@ function Recover-InterruptedUpgrade {
     $archive = Join-Path $productRoot (
         'upgrade-recovered-' + [string]$transaction.transaction_id + '.json'
     )
+    $committedArchive = Join-Path $productRoot (
+        'upgrade-complete-' + [string]$transaction.transaction_id + '.json'
+    )
     if ([string]$transaction.operation -ceq 'initial') {
         if ([System.IO.Directory]::Exists($trustedRoot)) {
             if ([System.IO.File]::Exists((Join-Path $trustedRoot 'install-complete.json'))) {
@@ -1448,7 +1460,7 @@ function Recover-InterruptedUpgrade {
                     -ExpectedCandidateFreezeSha256 `
                         ([string]$transaction.target_candidate_freeze_sha256)
                 Protect-CompletionMarkerRuntimeReadable
-                Move-UpgradeJournal -Destination $archive
+                Move-UpgradeJournal -Destination $committedArchive
                 if (-not $journalMatchesRequestedCandidate) {
                     throw 'A committed initial runtime journal was recovered for a different candidate; retry the requested installation.'
                 }
@@ -1489,7 +1501,7 @@ function Recover-InterruptedUpgrade {
                 -ExpectedCandidateFreezeSha256 `
                     ([string]$transaction.target_candidate_freeze_sha256)
             Protect-CompletionMarkerRuntimeReadable
-            Move-UpgradeJournal -Destination $archive
+            Move-UpgradeJournal -Destination $committedArchive
             if (-not $journalMatchesRequestedCandidate) {
                 throw 'A committed runtime upgrade journal was recovered for a different candidate; retry the requested installation.'
             }

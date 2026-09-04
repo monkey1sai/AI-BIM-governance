@@ -285,6 +285,9 @@ Assert-True ($text -match '\(New-OwnerOnlyFileSecurity\)[\s\S]+Assert-OwnerOnlyA
 Assert-True ($text -match 'function Recover-CommittedUpgradeArchive[\s\S]+upgrade-complete-\[0-9a-f\][\s\S]+Assert-ActivationCommitMarker' -and
     $text -match 'if \(-not \[System\.IO\.File\]::Exists\(\$upgradeTransactionPath\)\)[\s\S]+Recover-CommittedUpgradeArchive') `
     'Post-archive committed recovery is not recognized for the same authorized candidate.'
+Assert-True ($text -match '\$committedArchive = Join-Path[\s\S]+upgrade-complete-' -and
+    $text -match 'Assert-ActivationCommitMarker[\s\S]+Move-UpgradeJournal -Destination \$committedArchive') `
+    'Committed journal recovery does not publish outcome-specific completion evidence.'
 Assert-True ($text -match 'function Protect-UpgradeArchiveOwnerOnly[\s\S]+Assert-OwnerOnlyAcl[\s\S]+Assert-ProtectedAcl[\s\S]+Set-ExactFileSystemSecurity' -and
     $text -match 'target_candidate_freeze_sha256 -ceq[\s\S]+Matching committed upgrade archive has an invalid predecessor tuple') `
     'Historical completion archives are not ACL-migrated and filtered before current predecessor validation.'
@@ -325,6 +328,8 @@ foreach ($moduleRuntimeKey in @(
 }
 Assert-True ($text -match "StartsWith\('runtime/psmodule/'") `
     'PowerShell trust inputs would be copied into the installed Codex runtime.'
+Assert-True ($text -match '\$installed = \[string\]\$entry\.Value[\s\S]+Existing trusted runtime dependency hash mismatch') `
+    'Existing predecessor validation skips external PowerShell or Python dependencies.'
 
 $skillText = Get-Content -Raw -LiteralPath $skillPath
 $readmeText = Get-Content -Raw -LiteralPath $readmePath
@@ -411,6 +416,85 @@ try {
     try { Copy-PinnedStream -Source $stream -Target $badTarget -ExpectedSha256 ('0' * 64) }
     catch { $badHashRejected = $true }
     Assert-True $badHashRejected 'Staging accepted bytes outside the immutable freeze.'
+
+    $predecessorRoot = Join-Path $sandboxRoot 'external-dependency-predecessor'
+    $script:trustedRoot = Join-Path $predecessorRoot 'v1'
+    $externalDependency = Join-Path $predecessorRoot 'external-pwsh.exe'
+    New-Item -ItemType Directory -Path (
+        Join-Path $script:trustedRoot 'state'
+    ), (
+        Join-Path $script:trustedRoot 'codex-home'
+    ) -Force | Out-Null
+    [System.IO.File]::WriteAllText(
+        (Join-Path $script:trustedRoot 'codex-home\auth.json'), '{}'
+    )
+    [System.IO.File]::WriteAllText(
+        (Join-Path $script:trustedRoot 'payload.ps1'), 'trusted-payload'
+    )
+    [System.IO.File]::WriteAllText($externalDependency, 'reviewed-external-runtime')
+    $trustedFiles = [ordered]@{ 'payload.ps1' = 'source/payload.ps1' }
+    $runtimeFiles = [ordered]@{ 'runtime/pwsh.exe' = $externalDependency }
+    $predecessorSource = '1' * 40
+    $predecessorFreeze = '2' * 64
+    $payloadHash = (Get-FileHash `
+        -LiteralPath (Join-Path $script:trustedRoot 'payload.ps1') -Algorithm SHA256
+    ).Hash.ToUpperInvariant()
+    $externalHash = (Get-FileHash `
+        -LiteralPath $externalDependency -Algorithm SHA256
+    ).Hash.ToUpperInvariant()
+    [ordered]@{
+        schema = 'blip-trusted-runtime-manifest/v1'
+        source_commit = $predecessorSource
+        files = [ordered]@{ 'payload.ps1' = $payloadHash }
+        runtime = [ordered]@{ 'runtime/pwsh.exe' = $externalHash }
+        candidate_freeze_sha256 = $predecessorFreeze
+        activation = 'OWNER_PEM_AND_CODEX_LOGIN_REQUIRED'
+        installed_at = '2026-09-04T00:00:00.000Z'
+    } | ConvertTo-Json -Depth 5 | Set-Content `
+        -LiteralPath (Join-Path $script:trustedRoot 'manifest.json') -NoNewline
+    $predecessorManifestHash = (Get-FileHash `
+        -LiteralPath (Join-Path $script:trustedRoot 'manifest.json') -Algorithm SHA256
+    ).Hash.ToUpperInvariant()
+    [ordered]@{
+        schema = 'blip-trusted-runtime-complete/v1'
+        owner_sid = $fixedOwnerSidValue
+        candidate_freeze_sha256 = $predecessorFreeze
+        manifest_sha256 = $predecessorManifestHash
+        completed_at = '2026-09-04T00:00:01.000Z'
+    } | ConvertTo-Json | Set-Content `
+        -LiteralPath (Join-Path $script:trustedRoot 'install-complete.json') -NoNewline
+    $allowedPredecessor = [ordered]@{
+        source_commit = $predecessorSource
+        candidate_freeze_sha256 = $predecessorFreeze
+        manifest_sha256 = $predecessorManifestHash
+    }
+    $originalAssertProtectedAcl = (Get-Command Assert-ProtectedAcl).ScriptBlock
+    $originalAssertOwnerOnlyAcl = (Get-Command Assert-OwnerOnlyAcl).ScriptBlock
+    function Assert-ProtectedAcl { param([string[]]$LiteralPaths) [void]$LiteralPaths }
+    function Assert-OwnerOnlyAcl { param([string[]]$LiteralPaths) [void]$LiteralPaths }
+    function Assert-ExactJsonProperties {
+        param([object]$Object, [string[]]$ExpectedNames, [string]$Label)
+        [void]$Object
+        [void]$ExpectedNames
+        [void]$Label
+    }
+    try {
+        [void](Assert-ExistingTrustedRuntime)
+        [System.IO.File]::WriteAllText($externalDependency, 'drifted-external-runtime')
+        $externalDriftRejected = $false
+        try { [void](Assert-ExistingTrustedRuntime) }
+        catch {
+            $externalDriftRejected = $_.Exception.Message -match
+                'dependency hash mismatch: runtime/pwsh.exe'
+        }
+        Assert-True $externalDriftRejected `
+            'Existing predecessor accepted a changed external runtime dependency.'
+    }
+    finally {
+        Set-Item -LiteralPath Function:\Assert-ProtectedAcl -Value $originalAssertProtectedAcl
+        Set-Item -LiteralPath Function:\Assert-OwnerOnlyAcl -Value $originalAssertOwnerOnlyAcl
+        Remove-Item -LiteralPath Function:\Assert-ExactJsonProperties -Force
+    }
 
     $upgradeOld = Join-Path $sandboxRoot 'upgrade-old'
     $upgradeStage = Join-Path $sandboxRoot 'upgrade-stage'
@@ -665,7 +749,7 @@ try {
     $script:trustedRoot = Join-Path $script:productRoot 'v1'
     $script:upgradeTransactionPath = Join-Path $script:productRoot 'upgrade-transaction.json'
     $committedTransactionPath = $script:upgradeTransactionPath
-    $recoveryArchive = Join-Path $script:productRoot ("upgrade-recovered-$recoveryId.json")
+    $recoveryArchive = Join-Path $script:productRoot ("upgrade-complete-$recoveryId.json")
     $script:allowedPredecessor = [ordered]@{ manifest_sha256 = ('A' * 64) }
     $recoveryPrevious = Join-Path $script:productRoot ("v1.previous-$recoveryId")
     $recoveryStage = Join-Path $script:productRoot ("v1.stage-$recoveryId")
@@ -718,6 +802,13 @@ try {
         $committedRecovery = Recover-InterruptedUpgrade `
             -ExpectedTargetSourceCommit ('b' * 40) `
             -ExpectedTargetCandidateFreezeSha256 ('D' * 64)
+        $postArchiveRecovery = Recover-InterruptedUpgrade `
+            -ExpectedTargetSourceCommit ('b' * 40) `
+            -ExpectedTargetCandidateFreezeSha256 ('D' * 64)
+        Assert-True ($postArchiveRecovery.Status -ceq 'committed' -and
+            $postArchiveRecovery.Operation -ceq 'upgrade' -and
+            $postArchiveRecovery.PreviousRoot -ceq $recoveryPrevious) `
+            'Committed recovery was not idempotent after its journal was archived.'
         $archivedId = [Guid]::NewGuid().ToString('N')
         $script:productRoot = [System.IO.Path]::GetFullPath(
             (Join-Path $sandboxRoot 'post-archive-recovery')
@@ -760,6 +851,23 @@ try {
         } | ConvertTo-Json | Set-Content -LiteralPath (
             Join-Path $script:productRoot "upgrade-complete-$archivedId.json"
         ) -NoNewline
+        $rollbackId = [Guid]::NewGuid().ToString('N')
+        [ordered]@{
+            schema = 'blip-runtime-upgrade-transaction/v1'
+            transaction_id = $rollbackId
+            operation = 'upgrade'
+            trusted_root = $script:trustedRoot
+            stage_root = Join-Path $script:productRoot ("v1.stage-$rollbackId")
+            previous_root = Join-Path $script:productRoot ("v1.previous-$rollbackId")
+            failed_root = Join-Path $script:productRoot ("v1.failed-$rollbackId")
+            predecessor_manifest_sha256 = $script:allowedPredecessor.manifest_sha256
+            target_source_commit = ('b' * 40)
+            target_manifest_sha256 = ('C' * 64)
+            target_candidate_freeze_sha256 = ('D' * 64)
+            created_at = '2026-09-04T00:00:00.000Z'
+        } | ConvertTo-Json | Set-Content -LiteralPath (
+            Join-Path $script:productRoot "upgrade-recovered-$rollbackId.json"
+        ) -NoNewline
         $archivedRecovery = Recover-InterruptedUpgrade `
             -ExpectedTargetSourceCommit ('b' * 40) `
             -ExpectedTargetCandidateFreezeSha256 ('D' * 64)
@@ -767,6 +875,7 @@ try {
             $archivedRecovery.Operation -ceq 'upgrade' -and
             $archivedRecovery.PreviousRoot -ceq $archivedPrevious) `
             'Committed archive was not recognized after the active journal was removed.'
+
         foreach ($mismatchOperation in @('initial', 'upgrade')) {
             $mismatchId = [Guid]::NewGuid().ToString('N')
             $script:productRoot = [System.IO.Path]::GetFullPath(
@@ -813,7 +922,7 @@ try {
             Assert-True $mismatchRejected `
                 "Committed $mismatchOperation recovery accepted a different requested candidate."
             Assert-True (-not [System.IO.File]::Exists($script:upgradeTransactionPath) -and
-                [System.IO.File]::Exists((Join-Path $script:productRoot ("upgrade-recovered-$mismatchId.json")))) `
+                [System.IO.File]::Exists((Join-Path $script:productRoot ("upgrade-complete-$mismatchId.json")))) `
                 "Committed $mismatchOperation mismatch did not archive its journal."
         }
 
