@@ -126,6 +126,7 @@ def make_check(
 ) -> dict:
     return {
         "__typename": "CheckRun",
+        "id": f"CR_{name}_{completed_at}",
         "name": name,
         "status": status,
         "conclusion": conclusion,
@@ -346,7 +347,11 @@ def make_approval_pr(
                     "commit": {
                         "oid": head,
                         "statusCheckRollup": {
-                            "contexts": {"pageInfo": {"hasNextPage": False}, "nodes": checks}
+                            "contexts": {
+                                "totalCount": len(checks),
+                                "pageInfo": {"hasNextPage": False, "endCursor": None},
+                                "nodes": checks,
+                            }
                         },
                     }
                 }
@@ -411,6 +416,296 @@ def make_capability(
     encoded = base64.urlsafe_b64encode(payload.encode()).decode().rstrip("=")
     signature = hmac.new(token.encode(), payload.encode(), hashlib.sha256).hexdigest()
     return f"{encoded}.{signature}"
+
+
+def make_review_page(
+    review_ids: list[str],
+    *,
+    total_count: int,
+    has_next_page: bool,
+    end_cursor: str | None,
+    base: str = BASE,
+    head: str = HEAD,
+    status_ids: list[str] | None = None,
+    status_total_count: int | None = None,
+    status_has_next_page: bool = False,
+    status_end_cursor: str | None = None,
+) -> dict:
+    status_ids = [] if status_ids is None else status_ids
+    status_total_count = len(status_ids) if status_total_count is None else status_total_count
+    return {
+        "data": {
+            "repository": {
+                "pullRequest": {
+                    "number": PR_NUMBER,
+                    "baseRefOid": base,
+                    "headRefOid": head,
+                    "reviews": {
+                        "totalCount": total_count,
+                        "pageInfo": {
+                            "hasNextPage": has_next_page,
+                            "endCursor": end_cursor,
+                        },
+                        "nodes": [{"id": review_id} for review_id in review_ids],
+                    },
+                    "commits": {
+                        "nodes": [
+                            {
+                                "commit": {
+                                    "oid": head,
+                                    "statusCheckRollup": {
+                                        "contexts": {
+                                            "totalCount": status_total_count,
+                                            "pageInfo": {
+                                                "hasNextPage": status_has_next_page,
+                                                "endCursor": status_end_cursor,
+                                            },
+                                            "nodes": [
+                                                {"id": status_id, "__typename": "CheckRun"}
+                                                for status_id in status_ids
+                                            ],
+                                        }
+                                    },
+                                }
+                            }
+                        ]
+                    },
+                }
+            }
+        }
+    }
+
+
+def make_status_page(
+    status_ids: list[str],
+    *,
+    total_count: int,
+    has_next_page: bool,
+    end_cursor: str | None,
+    base: str = BASE,
+    head: str = HEAD,
+) -> dict:
+    return make_review_page(
+        [],
+        total_count=0,
+        has_next_page=False,
+        end_cursor=None,
+        base=base,
+        head=head,
+        status_ids=status_ids,
+        status_total_count=total_count,
+        status_has_next_page=has_next_page,
+        status_end_cursor=end_cursor,
+    )
+
+
+class ReviewPaginationTests(unittest.TestCase):
+    def test_fetch_pr_collects_more_than_one_hundred_reviews(self) -> None:
+        first_ids = [f"PRR_{index:03d}" for index in range(100)]
+        second_ids = ["PRR_100"]
+        with patch.object(
+            blip,
+            "graphql",
+            side_effect=[
+                make_review_page(
+                    first_ids,
+                    total_count=101,
+                    has_next_page=True,
+                    end_cursor="cursor-100",
+                ),
+                make_review_page(
+                    second_ids,
+                    total_count=101,
+                    has_next_page=False,
+                    end_cursor="cursor-101",
+                ),
+            ],
+        ) as graphql_mock:
+            pr = blip.fetch_pr("test-token", "monkey1sai", "AI-BIM-governance", PR_NUMBER)
+
+        self.assertEqual(len(blip.review_nodes(pr)), 101)
+        self.assertEqual(pr["reviews"]["totalCount"], 101)
+        self.assertEqual(
+            graphql_mock.call_args_list[1].args[2]["reviewsCursor"],
+            "cursor-100",
+        )
+
+    def test_fetch_pr_rejects_review_count_drift_between_pages(self) -> None:
+        with patch.object(
+            blip,
+            "graphql",
+            side_effect=[
+                make_review_page(
+                    [f"PRR_{index:03d}" for index in range(100)],
+                    total_count=101,
+                    has_next_page=True,
+                    end_cursor="cursor-100",
+                ),
+                make_review_page(
+                    ["PRR_100", "PRR_101"],
+                    total_count=102,
+                    has_next_page=False,
+                    end_cursor="cursor-102",
+                ),
+            ],
+        ):
+            with self.assertRaisesRegex(SystemExit, "totalCount changed"):
+                blip.fetch_pr("test-token", "monkey1sai", "AI-BIM-governance", PR_NUMBER)
+
+    def test_fetch_pr_rejects_missing_cursor_for_another_page(self) -> None:
+        with patch.object(
+            blip,
+            "graphql",
+            return_value=make_review_page(
+                [f"PRR_{index:03d}" for index in range(100)],
+                total_count=101,
+                has_next_page=True,
+                end_cursor=None,
+            ),
+        ):
+            with self.assertRaisesRegex(SystemExit, "valid endCursor"):
+                blip.fetch_pr("test-token", "monkey1sai", "AI-BIM-governance", PR_NUMBER)
+
+    def test_fetch_pr_rejects_page_without_progress(self) -> None:
+        with patch.object(
+            blip,
+            "graphql",
+            side_effect=[
+                make_review_page(
+                    ["PRR_000"], total_count=2, has_next_page=True, end_cursor="cursor-1"
+                ),
+                make_review_page([], total_count=2, has_next_page=True, end_cursor="cursor-2"),
+            ],
+        ):
+            with self.assertRaisesRegex(SystemExit, "made no progress"):
+                blip.fetch_pr("test-token", "monkey1sai", "AI-BIM-governance", PR_NUMBER)
+
+    def test_fetch_pr_rejects_repeated_cursor(self) -> None:
+        with patch.object(
+            blip,
+            "graphql",
+            side_effect=[
+                make_review_page(
+                    ["PRR_000"], total_count=3, has_next_page=True, end_cursor="cursor-loop"
+                ),
+                make_review_page(
+                    ["PRR_001"], total_count=3, has_next_page=True, end_cursor="cursor-loop"
+                ),
+                make_review_page(
+                    ["PRR_002"], total_count=3, has_next_page=False, end_cursor="cursor-end"
+                ),
+            ],
+        ):
+            with self.assertRaisesRegex(SystemExit, "repeated a cursor"):
+                blip.fetch_pr("test-token", "monkey1sai", "AI-BIM-governance", PR_NUMBER)
+
+    def test_fetch_pr_rejects_duplicate_review_ids(self) -> None:
+        with patch.object(
+            blip,
+            "graphql",
+            side_effect=[
+                make_review_page(
+                    ["PRR_000"], total_count=2, has_next_page=True, end_cursor="cursor-1"
+                ),
+                make_review_page(
+                    ["PRR_000"], total_count=2, has_next_page=False, end_cursor="cursor-2"
+                ),
+            ],
+        ):
+            with self.assertRaisesRegex(SystemExit, "duplicate review ids"):
+                blip.fetch_pr("test-token", "monkey1sai", "AI-BIM-governance", PR_NUMBER)
+
+    def test_review_snapshot_detects_same_count_state_replacement(self) -> None:
+        original = make_approval_pr(reviews=[make_review("reviewer", "COMMENTED", "ok", review_id=1)])
+        replaced = make_approval_pr(
+            reviews=[make_review("reviewer", "CHANGES_REQUESTED", "block", review_id=1)]
+        )
+
+        self.assertNotEqual(blip.review_snapshot(original), blip.review_snapshot(replaced))
+
+    def test_fetch_pr_collects_more_than_one_hundred_status_contexts(self) -> None:
+        first_ids = [f"CR_{index:03d}" for index in range(100)]
+        with patch.object(
+            blip,
+            "graphql",
+            side_effect=[
+                make_review_page(
+                    [],
+                    total_count=0,
+                    has_next_page=False,
+                    end_cursor=None,
+                    status_ids=first_ids,
+                    status_total_count=101,
+                    status_has_next_page=True,
+                    status_end_cursor="status-cursor-100",
+                ),
+                make_status_page(
+                    ["CR_100"],
+                    total_count=101,
+                    has_next_page=False,
+                    end_cursor="status-cursor-101",
+                ),
+            ],
+        ) as graphql_mock:
+            pr = blip.fetch_pr("test-token", "monkey1sai", "AI-BIM-governance", PR_NUMBER)
+
+        self.assertEqual(len(blip.status_context_nodes(pr)), 101)
+        self.assertEqual(
+            graphql_mock.call_args_list[1].args[2]["statusCursor"],
+            "status-cursor-100",
+        )
+
+    def test_fetch_pr_rejects_status_context_count_drift(self) -> None:
+        with patch.object(
+            blip,
+            "graphql",
+            side_effect=[
+                make_review_page(
+                    [],
+                    total_count=0,
+                    has_next_page=False,
+                    end_cursor=None,
+                    status_ids=["CR_000"],
+                    status_total_count=2,
+                    status_has_next_page=True,
+                    status_end_cursor="status-cursor-1",
+                ),
+                make_status_page(
+                    ["CR_001"],
+                    total_count=3,
+                    has_next_page=False,
+                    end_cursor="status-cursor-2",
+                ),
+            ],
+        ):
+            with self.assertRaisesRegex(SystemExit, "totalCount changed"):
+                blip.fetch_pr("test-token", "monkey1sai", "AI-BIM-governance", PR_NUMBER)
+
+    def test_fetch_pr_rejects_duplicate_status_context_ids(self) -> None:
+        with patch.object(
+            blip,
+            "graphql",
+            side_effect=[
+                make_review_page(
+                    [],
+                    total_count=0,
+                    has_next_page=False,
+                    end_cursor=None,
+                    status_ids=["CR_000"],
+                    status_total_count=2,
+                    status_has_next_page=True,
+                    status_end_cursor="status-cursor-1",
+                ),
+                make_status_page(
+                    ["CR_000"],
+                    total_count=2,
+                    has_next_page=False,
+                    end_cursor="status-cursor-2",
+                ),
+            ],
+        ):
+            with self.assertRaisesRegex(SystemExit, "duplicate node ids"):
+                blip.fetch_pr("test-token", "monkey1sai", "AI-BIM-governance", PR_NUMBER)
 
 
 class CodexThreadFixTests(unittest.TestCase):
@@ -1619,35 +1914,6 @@ class AutomatedApprovalTests(unittest.TestCase):
                     human_critical_override=True,
                 )
 
-        capacity_pr = make_approval_pr(
-            reviews=[
-                make_review(
-                    "unrelated-reviewer",
-                    "COMMENTED",
-                    "non-blocking",
-                    review_id=10_000 + index,
-                )
-                for index in range(100)
-            ],
-            files=elevated_files,
-        )
-        with patch.object(
-            blip, "fetch_immutable_pr_snapshot", return_value=make_immutable_snapshot(capacity_pr)
-        ), patch.object(blip, "verify_identity", return_value=identity), self.assertRaisesRegex(
-            SystemExit, "at capacity"
-        ):
-            blip.approval_preflight(
-                token="token",
-                owner="monkey1sai",
-                name="AI-BIM-governance",
-                pr_number=PR_NUMBER,
-                pr=capacity_pr,
-                base=BASE,
-                head=HEAD,
-                review_mode="human_critical",
-                human_critical_override=True,
-            )
-
     def test_live_approval_posts_exact_commit_and_requires_validated_readback(self) -> None:
         token = "test-token-not-secret"
         review_mode = "focused_semantic"
@@ -1884,6 +2150,55 @@ class AutomatedApprovalTests(unittest.TestCase):
                     capability_raw=make_capability(token),
                 )
         http_mock.assert_not_called()
+
+    def test_live_approval_never_posts_after_same_count_review_replacement(self) -> None:
+        token = "test-token-not-secret"
+        files = [make_changed_file(".claude/launch.json")]
+        first = make_approval_pr(
+            reviews=[make_review("reviewer", "COMMENTED", "first", review_id=7)], files=files
+        )
+        second = make_approval_pr(
+            reviews=[make_review("reviewer", "COMMENTED", "replaced", review_id=7)], files=files
+        )
+        identity = {
+            "login": blip.DEFAULT_REVIEWER,
+            "id": blip.DEFAULT_REVIEWER_ID,
+            "type": "User",
+            "permission": "write",
+        }
+        with patch.object(blip, "fetch_pr", side_effect=[first, second]), patch.object(
+            blip, "fetch_protection_policy", return_value=make_policy()
+        ), patch.object(
+            blip, "fetch_repository_safety", return_value=make_repo_safety()
+        ), patch.object(
+            blip, "fetch_immutable_pr_snapshot", return_value=make_immutable_snapshot(first)
+        ), patch.object(
+            blip, "verify_identity", return_value=identity
+        ), patch.object(
+            blip, "consume_capability_nonce"
+        ) as consume_mock, patch.object(
+            blip, "http_json"
+        ) as post_mock, self.assertRaisesRegex(
+            SystemExit, "Review evidence changed"
+        ):
+            blip.submit_automated_approval(
+                token=token,
+                owner="monkey1sai",
+                name="AI-BIM-governance",
+                repo=blip.DEFAULT_REPO,
+                pr_number=PR_NUMBER,
+                base=BASE,
+                head=HEAD,
+                review_mode="human_critical",
+                capability_raw=make_capability(
+                    token,
+                    review_mode="human_critical",
+                    human_critical_override=True,
+                ),
+                human_critical_override=True,
+            )
+        consume_mock.assert_not_called()
+        post_mock.assert_not_called()
 
     def test_permission_drift_prevents_post(self) -> None:
         token = "test-token-not-secret"
