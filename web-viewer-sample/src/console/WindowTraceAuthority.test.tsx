@@ -1118,8 +1118,8 @@ describe("Window Socket canonical trace authority", () => {
         function flush(): Promise<void> {
             return new Promise((resolve) => setTimeout(resolve, 0));
         }
-        // 子節點 fixture：路徑用變數組出來，避免 PR 契約的 user_facing_route 偵測器
-        // 把測試資料裡的 `path: "/…"` 誤判成路由。
+        // 子節點 fixture：prim 路徑用變數組出來——PR 契約的 user_facing_route 偵測器會把
+        // 「路徑鍵直接跟著以斜線開頭的字串常值」誤判成路由宣告（連註解裡的字面也算）。
         const PRIM_ROOT = "/World";
         const CHILD_A = { path: PRIM_ROOT + "/A" };
         const OLD_STAGE_CHILD = { path: PRIM_ROOT + "/OldStageChild" };
