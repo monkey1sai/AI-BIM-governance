@@ -280,6 +280,14 @@ Assert-True ($text.Contains("'.upgrade-transaction-' + `$upgradeTransactionId + 
     'Transaction journal is not atomically published with an owner-only ACL.'
 Assert-True ($text -match 'function Protect-UpgradeJournalOwnerOnly[\s\S]+Assert-OwnerOnlyAcl[\s\S]+Assert-ProtectedAcl[\s\S]+Set-ExactFileSystemSecurity[\s\S]+New-OwnerOnlyFileSecurity[\s\S]+Assert-OwnerOnlyAcl') `
     'Legacy transaction journals are not migrated from the exact protected ACL to owner-only.'
+Assert-True ($text -match '\(New-OwnerOnlyFileSecurity\)[\s\S]+Assert-OwnerOnlyAcl -LiteralPaths @\(\$completionStagePath\)[\s\S]+File\]::Move\(\$completionStagePath, \$completionPath\)[\s\S]+Protect-CompletionMarkerRuntimeReadable') `
+    'Completion staging is not owner-only until atomic publication and ACL normalization.'
+Assert-True ($text -match 'function Recover-CommittedUpgradeArchive[\s\S]+upgrade-complete-\[0-9a-f\][\s\S]+Assert-ActivationCommitMarker' -and
+    $text -match 'if \(-not \[System\.IO\.File\]::Exists\(\$upgradeTransactionPath\)\)[\s\S]+Recover-CommittedUpgradeArchive') `
+    'Post-archive committed recovery is not recognized for the same authorized candidate.'
+Assert-True ($text -match 'function Protect-UpgradeArchiveOwnerOnly[\s\S]+Assert-OwnerOnlyAcl[\s\S]+Assert-ProtectedAcl[\s\S]+Set-ExactFileSystemSecurity' -and
+    $text -match 'target_candidate_freeze_sha256 -ceq[\s\S]+Matching committed upgrade archive has an invalid predecessor tuple') `
+    'Historical completion archives are not ACL-migrated and filtered before current predecessor validation.'
 $mainFlowStart = $text.IndexOf('$freeze = $freezeText | ConvertFrom-Json', [StringComparison]::Ordinal)
 $recoveryCallIndex = $text.IndexOf('$recoveryResult = Recover-InterruptedUpgrade', $mainFlowStart, [StringComparison]::Ordinal)
 $runtimeOpenIndex = $text.IndexOf('$stream = Open-PinnedReadStream -LiteralPath $entry.Value', $mainFlowStart, [StringComparison]::Ordinal)
@@ -360,6 +368,8 @@ $functions = @(
     'Move-PreservedRuntimeDirectories',
     'Restore-PreviousRuntime', 'Write-ProtectedUpgradeJournal', 'Move-UpgradeJournal',
     'Protect-UpgradeJournalOwnerOnly', 'Set-RecoveryAttemptMode',
+    'Protect-CompletionMarkerRuntimeReadable', 'Recover-CommittedUpgradeArchive',
+    'Protect-UpgradeArchiveOwnerOnly',
     'Open-UpgradeLock', 'Recover-InterruptedUpgrade',
     'Test-TargetActivationMarkerPublished',
     'Write-InstallerStructRecord', 'Write-InstallerStructWarning'
@@ -557,6 +567,40 @@ try {
     Set-RecoveryAttemptMode -Operation initial -UpgradeAttempted ([ref]$initialMode)
     Assert-True (-not $initialMode) 'Initial recovery was incorrectly reported as upgrade mode.'
 
+    $completionAclRoot = Join-Path $sandboxRoot 'completion-acl'
+    [void][System.IO.Directory]::CreateDirectory($completionAclRoot)
+    $script:completionPath = Join-Path $completionAclRoot 'install-complete.json'
+    $completionAclStream = [System.IO.FileSystemAclExtensions]::Create(
+        [System.IO.FileInfo]::new($script:completionPath),
+        [System.IO.FileMode]::CreateNew,
+        [System.Security.AccessControl.FileSystemRights]::FullControl,
+        [System.IO.FileShare]::None,
+        4096,
+        [System.IO.FileOptions]::WriteThrough,
+        (New-OwnerOnlyFileSecurity)
+    )
+    $completionAclStream.Dispose()
+    Assert-OwnerOnlyAcl -LiteralPaths @($script:completionPath)
+    Protect-CompletionMarkerRuntimeReadable
+    Assert-ProtectedAcl -LiteralPaths @($script:completionPath)
+
+    $legacyArchivePath = Join-Path $completionAclRoot (
+        'upgrade-complete-' + ([Guid]::NewGuid().ToString('N')) + '.json'
+    )
+    $legacyArchiveStream = [System.IO.FileSystemAclExtensions]::Create(
+        [System.IO.FileInfo]::new($legacyArchivePath),
+        [System.IO.FileMode]::CreateNew,
+        [System.Security.AccessControl.FileSystemRights]::FullControl,
+        [System.IO.FileShare]::None,
+        4096,
+        [System.IO.FileOptions]::WriteThrough,
+        (New-ProtectedFileSecurity)
+    )
+    $legacyArchiveStream.Dispose()
+    Assert-ProtectedAcl -LiteralPaths @($legacyArchivePath)
+    Protect-UpgradeArchiveOwnerOnly -LiteralPath $legacyArchivePath
+    Assert-OwnerOnlyAcl -LiteralPaths @($legacyArchivePath)
+
     $journalRoot = Join-Path $sandboxRoot 'atomic-journal'
     [void][System.IO.Directory]::CreateDirectory($journalRoot)
     $script:productRoot = [System.IO.Path]::GetFullPath($journalRoot)
@@ -674,6 +718,55 @@ try {
         $committedRecovery = Recover-InterruptedUpgrade `
             -ExpectedTargetSourceCommit ('b' * 40) `
             -ExpectedTargetCandidateFreezeSha256 ('D' * 64)
+        $archivedId = [Guid]::NewGuid().ToString('N')
+        $script:productRoot = [System.IO.Path]::GetFullPath(
+            (Join-Path $sandboxRoot 'post-archive-recovery')
+        )
+        $script:trustedRoot = Join-Path $script:productRoot 'v1'
+        $script:completionPath = Join-Path $script:trustedRoot 'install-complete.json'
+        $script:upgradeTransactionPath = Join-Path $script:productRoot 'upgrade-transaction.json'
+        $archivedPrevious = Join-Path $script:productRoot ("v1.previous-$archivedId")
+        New-Item -ItemType Directory -Path $script:productRoot, $script:trustedRoot | Out-Null
+        $historicalId = [Guid]::NewGuid().ToString('N')
+        [ordered]@{
+            schema = 'blip-runtime-upgrade-transaction/v1'
+            transaction_id = $historicalId
+            operation = 'upgrade'
+            trusted_root = $script:trustedRoot
+            stage_root = Join-Path $script:productRoot ("v1.stage-$historicalId")
+            previous_root = Join-Path $script:productRoot ("v1.previous-$historicalId")
+            failed_root = Join-Path $script:productRoot ("v1.failed-$historicalId")
+            predecessor_manifest_sha256 = ('B' * 64)
+            target_source_commit = ('e' * 40)
+            target_manifest_sha256 = ('F' * 64)
+            target_candidate_freeze_sha256 = ('1' * 64)
+            created_at = '2026-09-03T00:00:00.000Z'
+        } | ConvertTo-Json | Set-Content -LiteralPath (
+            Join-Path $script:productRoot "upgrade-complete-$historicalId.json"
+        ) -NoNewline
+        [ordered]@{
+            schema = 'blip-runtime-upgrade-transaction/v1'
+            transaction_id = $archivedId
+            operation = 'upgrade'
+            trusted_root = $script:trustedRoot
+            stage_root = Join-Path $script:productRoot ("v1.stage-$archivedId")
+            previous_root = $archivedPrevious
+            failed_root = Join-Path $script:productRoot ("v1.failed-$archivedId")
+            predecessor_manifest_sha256 = $script:allowedPredecessor.manifest_sha256
+            target_source_commit = ('b' * 40)
+            target_manifest_sha256 = ('C' * 64)
+            target_candidate_freeze_sha256 = ('D' * 64)
+            created_at = '2026-09-04T00:00:00.000Z'
+        } | ConvertTo-Json | Set-Content -LiteralPath (
+            Join-Path $script:productRoot "upgrade-complete-$archivedId.json"
+        ) -NoNewline
+        $archivedRecovery = Recover-InterruptedUpgrade `
+            -ExpectedTargetSourceCommit ('b' * 40) `
+            -ExpectedTargetCandidateFreezeSha256 ('D' * 64)
+        Assert-True ($archivedRecovery.Status -ceq 'committed' -and
+            $archivedRecovery.Operation -ceq 'upgrade' -and
+            $archivedRecovery.PreviousRoot -ceq $archivedPrevious) `
+            'Committed archive was not recognized after the active journal was removed.'
         foreach ($mismatchOperation in @('initial', 'upgrade')) {
             $mismatchId = [Guid]::NewGuid().ToString('N')
             $script:productRoot = [System.IO.Path]::GetFullPath(

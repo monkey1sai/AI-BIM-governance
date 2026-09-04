@@ -1208,6 +1208,120 @@ function Test-TargetActivationMarkerPublished {
     return [System.IO.Directory]::Exists($previousRoot)
 }
 
+function Protect-CompletionMarkerRuntimeReadable {
+    try {
+        Assert-ProtectedAcl -LiteralPaths @($completionPath)
+        return
+    }
+    catch {
+        Assert-OwnerOnlyAcl -LiteralPaths @($completionPath)
+    }
+    Set-ExactFileSystemSecurity `
+        -LiteralPath $completionPath `
+        -Security (New-ProtectedFileSecurity)
+    Assert-ProtectedAcl -LiteralPaths @($completionPath)
+}
+
+function Protect-UpgradeArchiveOwnerOnly {
+    param([Parameter(Mandatory)][string]$LiteralPath)
+    try {
+        Assert-OwnerOnlyAcl -LiteralPaths @($LiteralPath)
+        return
+    }
+    catch {
+        Assert-ProtectedAcl -LiteralPaths @($LiteralPath)
+    }
+    Set-ExactFileSystemSecurity `
+        -LiteralPath $LiteralPath `
+        -Security (New-OwnerOnlyFileSecurity)
+    Assert-OwnerOnlyAcl -LiteralPaths @($LiteralPath)
+}
+
+function Recover-CommittedUpgradeArchive {
+    param(
+        [Parameter(Mandatory)][string]$ExpectedTargetSourceCommit,
+        [Parameter(Mandatory)][string]$ExpectedTargetCandidateFreezeSha256,
+        [ref]$OperationOut
+    )
+    $matchingTransactions = [System.Collections.Generic.List[object]]::new()
+    foreach ($archiveItem in @(Get-ChildItem -Force -File -LiteralPath $productRoot |
+            Where-Object { $_.Name -match '^upgrade-complete-[0-9a-f]{32}\.json$' })) {
+        if (($archiveItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw "Committed upgrade archive is a reparse point: $($archiveItem.FullName)"
+        }
+        Protect-UpgradeArchiveOwnerOnly -LiteralPath $archiveItem.FullName
+        $archiveText = Get-Content -Raw -LiteralPath $archiveItem.FullName
+        $archiveDocument = [System.Text.Json.JsonDocument]::Parse($archiveText)
+        try {
+            Assert-ExactJsonProperties -Object $archiveDocument.RootElement -ExpectedNames @(
+                'schema', 'transaction_id', 'operation', 'trusted_root', 'stage_root',
+                'previous_root', 'failed_root', 'predecessor_manifest_sha256',
+                'target_source_commit', 'target_manifest_sha256',
+                'target_candidate_freeze_sha256', 'created_at'
+            ) -Label 'Committed upgrade archive'
+        }
+        finally { $archiveDocument.Dispose() }
+        $transaction = $archiveText | ConvertFrom-Json
+        $archiveId = [string]$transaction.transaction_id
+        if ($transaction.schema -cne 'blip-runtime-upgrade-transaction/v1' -or
+            $archiveId -notmatch '^[0-9a-f]{32}$' -or
+            $archiveItem.Name -cne "upgrade-complete-$archiveId.json" -or
+            [string]$transaction.operation -notin @('initial', 'upgrade') -or
+            [string]$transaction.target_source_commit -notmatch '^[0-9a-f]{40}$' -or
+            [string]$transaction.target_manifest_sha256 -notmatch '^[0-9A-F]{64}$' -or
+            [string]$transaction.target_candidate_freeze_sha256 -notmatch '^[0-9A-F]{64}$' -or
+            ([string]$transaction.operation -ceq 'upgrade' -and
+                [string]$transaction.predecessor_manifest_sha256 -notmatch '^[0-9A-F]{64}$') -or
+            ([string]$transaction.operation -ceq 'initial' -and
+                [string]$transaction.predecessor_manifest_sha256 -cne 'NONE')) {
+            throw "Committed upgrade archive authority is invalid: $($archiveItem.FullName)"
+        }
+        foreach ($entry in @(
+            @{ Value = [string]$transaction.trusted_root; Pattern = '^v1$' },
+            @{ Value = [string]$transaction.stage_root; Pattern = '^v1\.stage-' + $archiveId + '$' },
+            @{ Value = [string]$transaction.previous_root; Pattern = '^v1\.previous-' + $archiveId + '$' },
+            @{ Value = [string]$transaction.failed_root; Pattern = '^v1\.failed-' + $archiveId + '$' }
+        )) {
+            $full = [System.IO.Path]::GetFullPath($entry.Value)
+            if ([System.IO.Path]::GetDirectoryName($full) -cne $productRoot -or
+                [System.IO.Path]::GetFileName($full) -notmatch $entry.Pattern) {
+                throw 'Committed upgrade archive contains a non-canonical runtime path.'
+            }
+        }
+        if ([string]$transaction.target_source_commit -ceq $ExpectedTargetSourceCommit -and
+            [string]$transaction.target_candidate_freeze_sha256 -ceq
+                $ExpectedTargetCandidateFreezeSha256) {
+            if ([string]$transaction.operation -ceq 'upgrade' -and
+                [string]$transaction.predecessor_manifest_sha256 -cne
+                    $allowedPredecessor.manifest_sha256) {
+                throw 'Matching committed upgrade archive has an invalid predecessor tuple.'
+            }
+            $matchingTransactions.Add($transaction)
+        }
+    }
+    if ($matchingTransactions.Count -eq 0) { return }
+    if ($matchingTransactions.Count -ne 1) {
+        throw 'Multiple committed upgrade archives match the requested candidate.'
+    }
+    $match = $matchingTransactions[0]
+    if ($null -ne $OperationOut) {
+        $OperationOut.Value = [string]$match.operation
+    }
+    Protect-CompletionMarkerRuntimeReadable
+    Assert-ActivationCommitMarker `
+        -ExpectedSourceCommit ([string]$match.target_source_commit) `
+        -ExpectedManifestSha256 ([string]$match.target_manifest_sha256) `
+        -ExpectedCandidateFreezeSha256 ([string]$match.target_candidate_freeze_sha256)
+    return [pscustomobject]@{
+        Status = 'committed'
+        Operation = [string]$match.operation
+        PreviousRoot = if ([string]$match.operation -ceq 'upgrade') {
+            [string]$match.previous_root
+        }
+        else { '' }
+    }
+}
+
 function Restore-PreviousRuntime {
     param(
         [Parameter(Mandatory)][string]$Trusted,
@@ -1263,7 +1377,17 @@ function Recover-InterruptedUpgrade {
 
         [ref]$OperationOut
     )
-    if (-not [System.IO.File]::Exists($upgradeTransactionPath)) { return }
+    if (-not [System.IO.File]::Exists($upgradeTransactionPath)) {
+        if ($null -eq $OperationOut) {
+            return Recover-CommittedUpgradeArchive `
+                -ExpectedTargetSourceCommit $ExpectedTargetSourceCommit `
+                -ExpectedTargetCandidateFreezeSha256 $ExpectedTargetCandidateFreezeSha256
+        }
+        return Recover-CommittedUpgradeArchive `
+            -ExpectedTargetSourceCommit $ExpectedTargetSourceCommit `
+            -ExpectedTargetCandidateFreezeSha256 $ExpectedTargetCandidateFreezeSha256 `
+            -OperationOut $OperationOut
+    }
     Protect-UpgradeJournalOwnerOnly
     $transactionText = Get-Content -Raw -LiteralPath $upgradeTransactionPath
     $document = [System.Text.Json.JsonDocument]::Parse($transactionText)
@@ -1323,6 +1447,7 @@ function Recover-InterruptedUpgrade {
                     -ExpectedManifestSha256 ([string]$transaction.target_manifest_sha256) `
                     -ExpectedCandidateFreezeSha256 `
                         ([string]$transaction.target_candidate_freeze_sha256)
+                Protect-CompletionMarkerRuntimeReadable
                 Move-UpgradeJournal -Destination $archive
                 if (-not $journalMatchesRequestedCandidate) {
                     throw 'A committed initial runtime journal was recovered for a different candidate; retry the requested installation.'
@@ -1363,6 +1488,7 @@ function Recover-InterruptedUpgrade {
                 -ExpectedManifestSha256 ([string]$transaction.target_manifest_sha256) `
                 -ExpectedCandidateFreezeSha256 `
                     ([string]$transaction.target_candidate_freeze_sha256)
+            Protect-CompletionMarkerRuntimeReadable
             Move-UpgradeJournal -Destination $archive
             if (-not $journalMatchesRequestedCandidate) {
                 throw 'A committed runtime upgrade journal was recovered for a different candidate; retry the requested installation.'
@@ -1836,17 +1962,17 @@ try {
         [System.IO.FileShare]::None,
         4096,
         [System.IO.FileOptions]::WriteThrough,
-        (New-ProtectedFileSecurity)
+        (New-OwnerOnlyFileSecurity)
     )
     try {
         $completionStream.Write($completionBytes, 0, $completionBytes.Length)
         $completionStream.Flush($true)
     }
     finally { $completionStream.Dispose() }
-    Assert-ProtectedAcl -LiteralPaths @($completionStagePath)
+    Assert-OwnerOnlyAcl -LiteralPaths @($completionStagePath)
     [System.IO.File]::Move($completionStagePath, $completionPath)
     $activationCommitted = $true
-    Assert-ProtectedAcl -LiteralPaths @($completionPath)
+    Protect-CompletionMarkerRuntimeReadable
     $completionReadback = Get-Content -Raw -LiteralPath $completionPath | ConvertFrom-Json
     if ($completionReadback.schema -cne 'blip-trusted-runtime-complete/v2' -or
         [string]$completionReadback.owner_sid -cne $fixedOwnerSidValue -or
