@@ -77,7 +77,7 @@ type AppInternals = {
     runtimeCommandContexts: Map<string, unknown>;
     runtimeCommandTerminalClaims: Map<string, unknown>;
     stageIntentGeneration: number;
-    activeStageAttempt: { generation: number } | null;
+    activeStageAttempt: { generation: number; status?: string } | null;
     _connectReviewSocket: (sessionId: string, traceId: string) => void;
     _onStreamStarted: (streamGeneration?: number) => void;
     _reportStreamReadinessIfFrame: (streamGeneration?: number) => void;
@@ -1268,6 +1268,8 @@ describe("Window Socket canonical trace authority", () => {
             ["a child entry is a nested array", { action: "message", status: "success", info: "x", primPath: "/World", children: [[]] }],
             ["a child entry lacks a string path", { action: "message", status: "success", info: "x", primPath: "/World", children: [{ name: "A" }] }],
             ["a child entry path is not a string", { action: "message", status: "success", info: "x", primPath: "/World", children: [{ path: 3 }] }],
+            ["a nested children entry is null", { action: "message", status: "success", info: "x", primPath: "/World", children: [{ path: "/World/A", children: [null] }] }],
+            ["a nested children field is not an array", { action: "message", status: "success", info: "x", primPath: "/World", children: [{ path: "/World/A", children: "x" }] }],
             ["primPath answers a different node than requested", { action: "message", status: "success", info: "x", primPath: "/Old/Stage", children: [] }],
         ])("getChildrenRequest: %s never replaces the stage tree", async (_label, result) => {
             const app = authorizedApp({ synchronousSetState: true });
@@ -1444,6 +1446,78 @@ describe("Window Socket canonical trace authority", () => {
                     event_type: "getChildrenResponse",
                     payload: expect.objectContaining({ prim_path: PRIM_ROOT + "/Existing" }),
                 }),
+                expect.any(Number),
+            );
+        });
+
+        it("getChildrenRequest: nested valid children are accepted", async () => {
+            const app = authorizedApp({ synchronousSetState: true });
+            const target = internals(app);
+            target.state = { ...target.state, usdPrims: [] };
+            vi.spyOn(AppStream, "sendMessage").mockResolvedValue({
+                action: "message",
+                status: "success",
+                info: "Get children result received",
+                primPath: PRIM_ROOT,
+                children: [{ path: PRIM_ROOT + "/A", children: [{ path: PRIM_ROOT + "/A/B", children: [] }] }],
+            });
+            const handled = vi.spyOn(target, "_handleCustomEvent");
+
+            expect(target._sendStreamMessage({ event_type: "getChildrenRequest", payload: { prim_path: PRIM_ROOT } })).toBe(true);
+            await flush();
+
+            expect(handled).toHaveBeenCalledWith(
+                expect.objectContaining({ event_type: "getChildrenResponse" }),
+                expect.any(Number),
+            );
+        });
+
+        it("getChildrenRequest: the USD pseudo-root '/' is treated as a root request", async () => {
+            const app = authorizedApp({ synchronousSetState: true });
+            const target = internals(app);
+            target.state = { ...target.state, usdPrims: [] };
+            vi.spyOn(AppStream, "sendMessage").mockResolvedValue({
+                action: "message",
+                status: "success",
+                info: "Get children result received",
+                primPath: "/",
+                children: [CHILD_A],
+            });
+            const handled = vi.spyOn(target, "_handleCustomEvent");
+
+            expect(target._sendStreamMessage({ event_type: "getChildrenRequest", payload: { prim_path: "/" } })).toBe(true);
+            await flush();
+
+            expect(handled).toHaveBeenCalledWith(
+                expect.objectContaining({ event_type: "getChildrenResponse" }),
+                expect.any(Number),
+            );
+        });
+
+        it("getChildrenRequest: a late native result after the stage attempt turned terminal is dropped", async () => {
+            const app = authorizedApp({ synchronousSetState: true });
+            const target = internals(app);
+            target.activeStageAttempt = { generation: 1, status: "pending" };
+            let resolveSend: (value: unknown) => void = () => {};
+            vi.spyOn(AppStream, "sendMessage").mockImplementation(
+                () => new Promise((resolve) => { resolveSend = resolve; }),
+            );
+            const handled = vi.spyOn(target, "_handleCustomEvent");
+
+            expect(target._sendStreamMessage({ event_type: "getChildrenRequest", payload: { prim_path: "/World" } })).toBe(true);
+            // 同一個 attempt 失敗／逾時：只有 status 變 terminal，generation 不動。
+            target.activeStageAttempt = { generation: 1, status: "terminal" };
+            resolveSend({
+                action: "message",
+                status: "success",
+                info: "Get children result received",
+                primPath: "/World",
+                children: [CHILD_A],
+            });
+            await flush();
+
+            expect(handled).not.toHaveBeenCalledWith(
+                expect.objectContaining({ event_type: "getChildrenResponse" }),
                 expect.any(Number),
             );
         });

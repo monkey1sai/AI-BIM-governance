@@ -706,11 +706,21 @@ function isExpectedNativeResult(
 }
 
 // 契約 `children.items: object` 排除陣列；handler 之後會把元素當 USDPrimType 用、
-// _makePickable 直接取 `prim.path`，所以這裡就要求「非陣列物件且 path 為字串」，
-// 不讓 `[[]]` 或缺 path 的元素被補上 trace 後進 handler。
-function isNativeChildPrimRecord(value: unknown): boolean {
-    return isRecord(value) && !Array.isArray(value) && typeof value.path === "string";
+// _makePickable 直接取 `prim.path`、USDStage 展開節點時再遞迴讀 `children`，所以這裡要求
+// 「非陣列物件、path 為字串，且巢狀 children 若存在也必須是同樣合法的陣列」；
+// 不讓 `[[]]`、缺 path、或 `{ children: [null] }` 這類元素被補上 trace 後進 handler。
+function isNativeChildPrimRecord(value: unknown, depth = 0): boolean {
+    if (!isRecord(value) || Array.isArray(value) || typeof value.path !== "string") return false;
+    if (!Object.prototype.hasOwnProperty.call(value, "children")) return true;
+    // 深度上限只防惡意／損壞的超深巢狀把驗證拖垮；正常 lazy-load 回應只帶一層。
+    if (depth >= 32) return false;
+    return Array.isArray(value.children)
+        && value.children.every((child) => isNativeChildPrimRecord(child, depth + 1));
 }
+
+// USD 的 pseudo-root `/` 與本 viewer 的預設 root `/World` 都視為 root 請求：
+// stage_management 明確支援對 `/` 回傳頂層子節點，handler 對 root 也是整棵樹重建。
+const NATIVE_ROOT_PRIM_PATHS: ReadonlySet<string> = new Set(["/", "/World"]);
 
 function appStreamResultToAppEvent(
     requestEventType: string,
@@ -2054,6 +2064,9 @@ export default class App extends React.Component<AppProps, AppState> {
         // stage intent / attempt generation，回來時任一變了就丟棄。
         const stageIntentGenerationAtSend = this.stageIntentGeneration;
         const stageAttemptGenerationAtSend = this.activeStageAttempt?.generation ?? null;
+        // attempt 失敗／逾時只把 status 轉 terminal、不推進任何 generation；遲到的子節點
+        // 回應不得在 viewer 已進入失敗態後重新填樹並送 makePrimsPickable。
+        const stageAttemptWasTerminalAtSend = this.activeStageAttempt?.status === "terminal";
         let nativeTransportFailed = false;
         void AppStream.sendMessage(outgoing)
             .then((result) => {
@@ -2072,6 +2085,10 @@ export default class App extends React.Component<AppProps, AppState> {
                         this._appendReviewEvent("略過遲到的 getChildrenResponse：stage 已切換");
                         return;
                     }
+                    if (!stageAttemptWasTerminalAtSend && this.activeStageAttempt?.status === "terminal") {
+                        this._appendReviewEvent("略過遲到的 getChildrenResponse：stage attempt 已終止");
+                        return;
+                    }
                     // 同一 stage 內：handler 對「樹裡找不到的 prim_path」一律當 root 回應整棵換掉
                     // （_findUSDPrimByPath === null → usdPrims = children）。這條只圍**借用 outbound
                     // trace** 的 trace-less native 回應——那是本 PR 新開的路，不得因此讓過期節點
@@ -2081,7 +2098,7 @@ export default class App extends React.Component<AppProps, AppState> {
                     const requestedPrimPath = isRecord(outgoing.payload) ? getPayloadString(outgoing.payload, "prim_path") : "";
                     if (
                         borrowedTrace
-                        && requestedPrimPath !== "/World"
+                        && !NATIVE_ROOT_PRIM_PATHS.has(requestedPrimPath)
                         && this._findUSDPrimByPath(requestedPrimPath) === null
                     ) {
                         this._appendReviewEvent("略過 getChildrenResponse：請求的節點已不在目前的 stage 樹上");
