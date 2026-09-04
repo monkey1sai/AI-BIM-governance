@@ -49,6 +49,7 @@ describe("SessionManagementPage 結束 session 控制動作（IX-SS-04）", () =
     (globalThis as Record<string, unknown>)[actEnvKey] = true;
     container = document.createElement("div");
     document.body.appendChild(container);
+    vi.spyOn(coordinatorClient, "listClosedReviewSessions").mockImplementation(() => new Promise(() => {}));
   });
   afterEach(() => {
     document.body.removeChild(container);
@@ -198,12 +199,9 @@ describe("SessionManagementPage 結束 session 控制動作（IX-SS-04）", () =
     expect(container.querySelector('[data-testid="session-terminate-sess_active"]')).not.toBeNull();
     expect(container.querySelector('[data-testid="session-terminate-sess_closing"]')).toBeNull();
     expect(container.querySelector('[data-testid="session-terminate-sess_closed"]')).toBeNull();
-    // closing / closed 列仍渲染（被灰列，不被過濾掉）
-    expect(container.querySelector('[data-testid="session-row-sess_closing"]')).not.toBeNull();
-    expect(container.querySelector('[data-testid="session-row-sess_closed"]')).not.toBeNull();
-    // spec §6.2：closed / closing 列為灰列（ec-row-muted），active 列不灰。
-    expect(container.querySelector('[data-testid="session-row-sess_closed"]')?.className).toContain("ec-row-muted");
-    expect(container.querySelector('[data-testid="session-row-sess_closing"]')?.className).toContain("ec-row-muted");
+    // Terminal rows are separated from the Active sessions table.
+    expect(container.querySelector('[data-testid="session-row-sess_closing"]')).toBeNull();
+    expect(container.querySelector('[data-testid="session-row-sess_closed"]')).toBeNull();
     expect(container.querySelector('[data-testid="session-row-sess_active"]')?.className ?? "").not.toContain("ec-row-muted");
   });
 
@@ -215,7 +213,7 @@ describe("SessionManagementPage 結束 session 控制動作（IX-SS-04）", () =
     await act(async () => { await Promise.resolve(); });
 
     expect(container.querySelector('[data-testid="session-terminate-review_session_t1"]')).toBeNull();
-    expect(container.querySelector('[data-testid="session-row-review_session_t1"]')?.className).toContain("ec-row-muted");
+    expect(container.querySelector('[data-testid="session-row-review_session_t1"]')).toBeNull();
   });
 
   // spec test 3（呼叫序）：點按開 IntentDialog；confirm 呼叫 sessionClose("review_session_t1", "")；
@@ -231,10 +229,10 @@ describe("SessionManagementPage 結束 session 控制動作（IX-SS-04）", () =
     expect(btn).toBeTruthy();
     await act(async () => { btn.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
 
-    // IntentDialog 開啟，title 為「結束 session」
+    // Dedicated irreversible confirmation opens.
     const dialog = container.querySelector('[data-testid="intent-dialog"]');
     expect(dialog).not.toBeNull();
-    expect(dialog!.textContent).toContain("結束 session");
+    expect(dialog!.textContent).toContain("永久結束 Session");
 
     const confirm = container.querySelector('[data-testid="intent-confirm"]') as HTMLButtonElement;
     await act(async () => { confirm.dispatchEvent(new MouseEvent("click", { bubbles: true })); });

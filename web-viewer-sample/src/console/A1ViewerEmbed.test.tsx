@@ -183,6 +183,7 @@ describe("A1 3D review decoupling", () => {
       objects: [{ key: MINIO_KEY, etag: "e", role: "source_ifc", idempotency_key: MINIO_IDEMPOTENCY_KEY, project_id: "p1", project_display_name: "松風庵", category: "建築", version: "v1" }],
     });
     vi.spyOn(coordinatorClient, "listIfcReady").mockResolvedValue({ count: 0, items: [] });
+    vi.spyOn(coordinatorClient, "listClosedReviewSessions").mockResolvedValue({ items: [], next_cursor: null });
     vi.spyOn(governanceClient, "listRuleRuns").mockResolvedValue({ filters: {}, limit: 5, offset: 0, total: 0, items: [] });
     vi.spyOn(coordinatorClient, "claimViewerLease").mockRejectedValue(new Error("A1 must not claim viewer lease"));
     vi.spyOn(coordinatorClient, "releaseViewerLease").mockRejectedValue(new Error("A1 must not release viewer lease"));
@@ -1195,6 +1196,19 @@ describe("A1 3D review decoupling", () => {
   it("A1 does not trigger conversion from the governance page; missed watcher scheduling is a #minio handoff", async () => {
     vi.spyOn(coordinatorClient, "runtimeStatus")
       .mockResolvedValue(fakeRuntimeStatus([]) as never);
+    vi.mocked(coordinatorClient.listClosedReviewSessions).mockResolvedValue({
+      items: [{
+        session_id: "review_session_archived",
+        status: "closed",
+        project_id: "p1",
+        model_version_id: "v1",
+        created_at: "2026-09-04T00:00:00Z",
+        updated_at: "2026-09-04T00:00:00Z",
+        recreated_from_session_id: null,
+        rebuildability: { state: "ready", reason: null, checked_at: "2026-09-04T00:00:01Z" },
+      }],
+      next_cursor: null,
+    });
     const triggerSpy = vi.spyOn(coordinatorClient, "triggerConversion").mockRejectedValue(new Error("A1 must not trigger conversion"));
 
     await renderA1();
@@ -1210,5 +1224,6 @@ describe("A1 3D review decoupling", () => {
     expect(href).toContain("source=a1");
     expect(href).toContain("minio_key=");
     expect(q<HTMLElement>("a1-no-session")!.textContent).toContain("查看 MinIO 來源");
+    expect(q<HTMLElement>("a1-no-session")!.textContent).toContain("重建新的 Review Session");
   });
 });

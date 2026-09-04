@@ -123,6 +123,8 @@ export interface ConversionQualityMetricsSummary {
 
 export interface ReviewSession {
   session_id: string;
+  /** Server-owned lineage for a session recreated from a terminal closed session. */
+  recreated_from_session_id?: string;
   /**
    * Server-owned immutable root trace. Optional only so persisted legacy JSON
    * can be read and deterministically backfilled by SessionTraceResolver.
