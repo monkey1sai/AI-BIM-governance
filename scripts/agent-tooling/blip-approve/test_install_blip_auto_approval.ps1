@@ -262,20 +262,24 @@ $readmeText = Get-Content -Raw -LiteralPath $readmePath
 $workflowText = Get-Content -Raw -LiteralPath $workflowPath
 $claudeSkillText = Get-Content -Raw -LiteralPath $claudeSkillPath
 $codexSkillText = Get-Content -Raw -LiteralPath $codexSkillPath
-foreach ($document in @($skillText, $readmeText, $workflowText, $claudeSkillText, $codexSkillText)) {
+foreach ($document in @($skillText, $readmeText)) {
     Assert-True ($document.Contains('C:\Users\IOT\.grok\github-bot\.env.blip')) `
-        'A broker policy document lost the fixed counted-reviewer credential path.'
+        'Historical package documentation lost the fixed credential boundary.'
 }
 foreach ($document in @($claudeSkillText, $codexSkillText)) {
-    Assert-True ($document -match '(?is)-NonInteractive\s+-File\s+[^\r\n]*(?<!test_)run_blip_live_approve_once\.ps1') `
-        'A runbook skill no longer requires the non-interactive protected User broker.'
+    Assert-True ($document -match 'HELD_AUTOMATED_APPROVAL_RETIRED' -and
+        $document -match 'App-ID-pinned required AI CheckRun') `
+        'A repo skill mirror does not preserve the refusal-only replacement gate.'
+    Assert-True ($document -notmatch '(?is)-NonInteractive\s+-File\s+[^\r\n]*(?<!test_)run_blip_live_approve_once\.ps1') `
+        'A repo skill mirror still invokes the retired protected User broker.'
 }
 Assert-True ($skillText -match 'ACTIVATION.*HELD' -and
     $skillText -match 'live GitHub mutation' -and
     $skillText -match 'ProgramData') `
     'Package README does not preserve the explicit activation/live/install hold.'
-Assert-True ($workflowText -match 'broker source package' -and $workflowText -match 'HELD') `
-    'Repo workflow does not distinguish persisted source from held activation.'
+Assert-True ($workflowText -match 'HELD_AUTOMATED_APPROVAL_RETIRED' -and
+    $workflowText -match 'HELD_REPOSITORY_APPROVAL_POLICY') `
+    'Repo workflow does not preserve the retired broker and replacement activation holds.'
 Assert-True ($readmeText -notmatch 'sandbox 完全無存取') `
     'README still overstates runtime sandbox denial instead of RX/no-write.'
 Assert-True ($workflowText -notmatch 'ProgramData root 對 sandbox 完全拒絕存取') `
