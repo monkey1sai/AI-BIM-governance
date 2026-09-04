@@ -33,6 +33,7 @@ const EXPECTED_STATES = Object.freeze([
   "closed",
 ]);
 const ARTIFACT_NAMES = Object.freeze({
+  collapsed_hud_screenshot: "structured-log-collapsed-hud.png",
   failure_screenshot: "structured-log-failure.png",
   final_screenshot: "structured-log-success-closed.png",
   playwright_trace: "structured-log-trace.zip",
@@ -616,6 +617,37 @@ async function main() {
     // on identities or clicking any delivery action. Idempotent: only clicks when collapsed.
     const diagnosticsToggle = page.locator('[data-testid="structured-log-toggle"]');
     await diagnosticsToggle.waitFor({ state: "visible", timeout: 60_000 });
+    // The collapsed state is the whole point of the HUD, so verify it in a real browser
+    // before touching the toggle. A jsdom unit test cannot prove placement or overlap;
+    // asserting only after expanding would let "renders expanded" or "left the corner"
+    // regressions pass silently.
+    const collapsedHud = await page.evaluate(() => {
+      const host = document.querySelector('[data-testid="structured-log-diagnostics"]');
+      const chip = document.querySelector('[data-testid="structured-log-toggle"]');
+      if (!host || !chip) return null;
+      const rect = chip.getBoundingClientRect();
+      return {
+        expanded: host.getAttribute("data-expanded"),
+        panelMounted: Boolean(document.querySelector('[data-testid="structured-log-flush"]')),
+        readiness: document.querySelector('[data-testid="structured-log-chip-readiness"]')?.textContent?.trim() ?? null,
+        chip: { x: rect.x, y: rect.y, width: rect.width, height: rect.height, right: rect.right, bottom: rect.bottom },
+        viewport: { width: window.innerWidth, height: window.innerHeight },
+      };
+    });
+    if (!collapsedHud) throw new Error("Runtime diagnostics HUD was not rendered");
+    if (collapsedHud.expanded !== "false") throw new Error(`HUD must start collapsed; data-expanded=${collapsedHud.expanded}`);
+    if (collapsedHud.panelMounted) throw new Error("HUD delivery panel must not be mounted while collapsed");
+    if (!collapsedHud.readiness) throw new Error("Collapsed HUD must expose readiness as text, not colour alone");
+    if (collapsedHud.chip.height > 48) throw new Error(`Collapsed HUD chip is ${collapsedHud.chip.height}px tall; it must stay a corner HUD`);
+    // Bottom-right corner: the chip must not drift into the middle of the live 3D stage.
+    if (collapsedHud.chip.x < collapsedHud.viewport.width / 2) {
+      throw new Error(`Collapsed HUD chip starts at x=${collapsedHud.chip.x}; it must stay in the right half of the stage`);
+    }
+    if (collapsedHud.chip.y < collapsedHud.viewport.height / 2) {
+      throw new Error(`Collapsed HUD chip starts at y=${collapsedHud.chip.y}; it must stay in the bottom half of the stage`);
+    }
+    await writeFile(artifactPaths.collapsed_hud_screenshot, await page.screenshot({ fullPage: false }), { flag: "wx" });
+
     if ((await diagnosticsToggle.getAttribute("aria-expanded")) !== "true") {
       await diagnosticsToggle.click();
     }

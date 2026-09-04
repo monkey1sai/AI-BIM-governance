@@ -197,6 +197,51 @@ describe("StructuredLogDiagnostics", () => {
         expect(q<HTMLButtonElement>("review-session-close")?.disabled).toBe(true);
     });
 
+    it("收合後仍誠實顯示投遞失敗，不得回頭顯示 Ready", async () => {
+        const firstTransport = deferred<{ ok: boolean; status: number; detail?: string }>();
+        let calls = 0;
+        const logger = makeLogger(async () => {
+            calls += 1;
+            if (calls === 1) return firstTransport.promise;
+            return { ok: true, status: 200 };
+        });
+        await renderDiagnostics({ logger });
+
+        // 投遞中：收合態的 chip 必須跟著顯示「進行中」，不能停在 Ready。
+        await act(async () => {
+            q<HTMLButtonElement>("structured-log-flush")!.click();
+            await Promise.resolve();
+        });
+        expect(q("structured-log-chip-readiness")?.dataset.state).toBe("loading");
+
+        firstTransport.resolve({ ok: false, status: 503, detail: "forced_failure" });
+        await flushReact();
+        expect(q("structured-log-flush-status")?.dataset.state).toBe("failure");
+
+        // 關鍵契約：使用者在失敗後收合面板，role="alert" 的展開態狀態列會被卸載；
+        // 此時 chip 仍必須表述失敗（文字＋alert），否則一次失敗的投遞會被當成 Ready 呈現。
+        await act(async () => { q<HTMLButtonElement>("structured-log-toggle")!.click(); });
+        expect(q("structured-log-diagnostics")?.getAttribute("data-expanded")).toBe("false");
+        expect(q("structured-log-flush-status")).toBeNull();
+        const chip = q("structured-log-chip-readiness");
+        expect(chip?.dataset.state).toBe("failure");
+        expect(chip?.textContent).toBe("Delivery failed");
+        expect(chip?.getAttribute("role")).toBe("alert");
+        expect(chip?.textContent).not.toBe("Ready");
+
+        // 重新展開重試成功後，chip 回到 Ready。
+        await act(async () => { q<HTMLButtonElement>("structured-log-toggle")!.click(); });
+        await act(async () => {
+            q<HTMLButtonElement>("structured-log-retry")!.click();
+            await Promise.resolve();
+        });
+        await flushReact();
+        expect(q("structured-log-flush-status")?.dataset.state).toBe("success");
+        await act(async () => { q<HTMLButtonElement>("structured-log-toggle")!.click(); });
+        expect(q("structured-log-chip-readiness")?.dataset.state).toBe("ready");
+        expect(q("structured-log-chip-readiness")?.getAttribute("role")).toBe("status");
+    });
+
     it("shows loading, retains one action on failure, and retries the same action to success", async () => {
         const firstTransport = deferred<{ ok: boolean; status: number; detail?: string }>();
         const batches: LogRecord[][] = [];

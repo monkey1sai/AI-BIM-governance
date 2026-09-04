@@ -154,6 +154,21 @@ export function StructuredLogDiagnostics({
     const actionsEnabled = available;
     const closeEnabled = actionsEnabled && flushState !== "failure" && !pendingFlush.current;
 
+    // chip 的狀態必須反映「這個面板現在真正的狀況」，而不是只反映 route/session/trace
+    // 是否對齊：投遞進行中或失敗時，收合態不得繼續顯示 Ready。
+    const chipState = flushState === "failure"
+        ? "failure"
+        : flushState === "loading"
+            ? "loading"
+            : available ? "ready" : "unavailable";
+    const chipLabel = {
+        failure: "Delivery failed",
+        loading: "Delivering\u2026",
+        ready: "Ready",
+        unavailable: "Unavailable",
+    }[chipState];
+    const chipTone = `is-${chipState}`;
+
     return (
         <aside
             className={`structured-log-diagnostics${expanded ? " is-expanded" : ""}`}
@@ -169,15 +184,22 @@ export function StructuredLogDiagnostics({
                 title={expanded ? "收合 runtime 診斷" : "展開 runtime 診斷（structured log 投遞）"}
                 onClick={() => setExpanded((value) => !value)}
             >
-                {/* 色點只是輔助；可用性一律同時以文字表述，否則螢幕閱讀器與色覺障礙
-                    使用者在收合態無從得知投遞是否可用。 */}
-                <span className={`structured-log-diagnostics__dot ${available ? "is-ready" : "is-unavailable"}`} aria-hidden="true" />
+                {/* 色點只是輔助；狀態一律同時以文字表述，否則螢幕閱讀器與色覺障礙
+                    使用者在收合態無從判讀。 */}
+                <span className={`structured-log-diagnostics__dot ${chipTone}`} aria-hidden="true" />
                 <span className="structured-log-diagnostics__chip-label">Runtime diagnostics</span>
+                {/* 投遞結果必須在收合態也看得到、聽得到：面板一收起，展開態的
+                    role="alert" 就隨之卸載，chip 若只反映 available，一次失敗的投遞會被
+                    當成 Ready 呈現。故 chip 狀態同時涵蓋 loading / failure，並自己帶
+                    live region（失敗用 alert，其餘 polite）。 */}
                 <span
-                    className={`structured-log-diagnostics__chip-state ${available ? "is-ready" : "is-unavailable"}`}
+                    className={`structured-log-diagnostics__chip-state ${chipTone}`}
                     data-testid="structured-log-chip-readiness"
+                    data-state={chipState}
+                    role={flushState === "failure" ? "alert" : "status"}
+                    aria-live={flushState === "failure" ? "assertive" : "polite"}
                 >
-                    {available ? "Ready" : "Unavailable"}
+                    {chipLabel}
                 </span>
                 <span className="structured-log-diagnostics__chip-id">{kitInstanceId || reviewSessionId || NOT_OBSERVED}</span>
                 <span className="structured-log-diagnostics__chev" aria-hidden="true">{expanded ? "\u2304" : "\u02c4"}</span>
