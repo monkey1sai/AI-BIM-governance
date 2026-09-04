@@ -26,6 +26,9 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+$retirementReason = 'HELD_AUTOMATED_APPROVAL_RETIRED: automated User/PAT approval is retired; an eligible human must approve in the GitHub UI.'
+throw $retirementReason
+
 $PSModuleAutoLoadingPreference = 'None'
 
 # Trust-critical prelude: use only PowerShell language constructs and .NET until

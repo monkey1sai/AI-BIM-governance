@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Survey a PR, request one governed repair, or submit one guarded User approval.
+"""Survey a PR or request one governed repair.
 
 Why this exists: a GitHub **App** approving review does not count toward
 `required_approving_review_count` (verified 2026-07-31 — the review posted, yet
@@ -67,6 +67,10 @@ DEFAULT_REVIEWER = "monkey1sai-blip"
 DEFAULT_REVIEWER_ID = 311287868
 DEFAULT_REPO = "monkey1sai/AI-BIM-governance"
 DEFAULT_BASE_BRANCH = "main"
+AUTOMATED_APPROVAL_RETIRED = (
+    "HELD_AUTOMATED_APPROVAL_RETIRED: automated User/PAT approval is retired; "
+    "an eligible human must approve in the GitHub UI"
+)
 APPROVAL_CAPABILITY_ENV = "BLIP_APPROVAL_CAPABILITY"
 APPROVAL_CAPABILITY_VERSION = "blip-approval-capability/v2"
 PROTECTION_POLICY_ENV = "BLIP_PROTECTION_POLICY_JSON"
@@ -1562,6 +1566,24 @@ def submit_automated_approval(
     capability_raw: str,
     human_critical_override: bool = False,
 ) -> dict:
+    raise SystemExit(AUTOMATED_APPROVAL_RETIRED)
+
+
+def _retired_submit_automated_approval(
+    *,
+    token: str,
+    owner: str,
+    name: str,
+    repo: str,
+    pr_number: int,
+    base: str,
+    head: str,
+    review_mode: str,
+    capability_raw: str,
+    human_critical_override: bool = False,
+) -> dict:
+    raise SystemExit(AUTOMATED_APPROVAL_RETIRED)
+
     capability = verify_approval_capability(
         token=token,
         raw=capability_raw,
@@ -1795,7 +1817,7 @@ def show_threads(threads: list[dict]) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Survey PR state, request one repair, or submit one broker-capability-bound approval"
+        description="Survey PR state or request one repair; automated approval is retired"
     )
     parser.add_argument("--repo", default=DEFAULT_REPO, choices=[DEFAULT_REPO])
     parser.add_argument("--pr", type=int, required=True)
@@ -1849,7 +1871,7 @@ def main() -> int:
     parser.add_argument("--allow-duplicate", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--live", action="store_true", help="Perform the capability-bound mutation")
     cli = parser.parse_args()
-    validate_cli(cli)
+    raise SystemExit(AUTOMATED_APPROVAL_RETIRED)
 
     owner, _, name = cli.repo.partition("/")
     if not owner or not name:

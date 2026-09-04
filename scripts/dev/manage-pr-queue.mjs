@@ -21,10 +21,8 @@ const GITHUB_HOST = 'github.com';
 const GITHUB_REPO = `${GITHUB_HOST}/monkey1sai/AI-BIM-governance`;
 const GITHUB_OWNER = 'monkey1sai';
 const GITHUB_NAME = 'AI-BIM-governance';
-const REQUIRED_REVIEWER_LOGIN = 'monkey1sai-blip';
-const REQUIRED_REVIEWER_ID = 311287868;
 const LEGACY_GUARDED_PHASE = 'LEGACY_GUARDED';
-const PR_VIEW_JSON_FIELDS = 'number,title,headRefName,headRefOid,baseRefName,baseRefOid,mergeable,mergeStateStatus,reviewDecision,isDraft,state,url';
+const PR_VIEW_JSON_FIELDS = 'number,title,headRefName,headRefOid,baseRefName,baseRefOid,mergeable,mergeStateStatus,reviewDecision,isDraft,state,url,autoMergeRequest';
 const PR_CHECKS_JSON_FIELDS = 'name,state,bucket,workflow,link';
 const PR_OBSERVATION_FIELDS = Object.freeze(PR_VIEW_JSON_FIELDS.split(','));
 const UNRESOLVED_THREADS_QUERY = [
@@ -239,39 +237,11 @@ export function getUnresolvedThreadCount(prNumber) {
 }
 
 export function getExactHeadApproval(prNumber, expectedHeadSha) {
-  if (!/^[0-9a-f]{40}$/i.test(String(expectedHeadSha || ''))) {
-    return { count: null, complete: false, reviewers: [] };
-  }
-  const raw = run(
-    'gh',
-    [
-      'api', 'graphql',
-      '-f', `query=${EXACT_HEAD_APPROVAL_QUERY}`,
-      '-F', `owner=${GITHUB_OWNER}`,
-      '-F', `name=${GITHUB_NAME}`,
-      '-F', `number=${prNumber}`,
-      '--hostname', GITHUB_HOST,
-    ],
-    SCRIPT_REPO_ROOT,
-    true,
-  );
-  const connection = raw
-    ? parseJson(raw, {})?.data?.repository?.pullRequest?.reviews
-    : null;
-  if (!connection || connection.pageInfo?.hasNextPage || !Array.isArray(connection.nodes)) {
-    return { count: null, complete: false, reviewers: [] };
-  }
-  const matching = connection.nodes.filter((review) => (
-    review?.state === 'APPROVED'
-    && review?.commit?.oid === expectedHeadSha
-    && review?.author?.login === REQUIRED_REVIEWER_LOGIN
-    && review?.author?.__typename === 'User'
-    && review?.author?.databaseId === REQUIRED_REVIEWER_ID
-  ));
   return {
-    count: matching.length,
-    complete: true,
-    reviewers: [...new Set(matching.map((review) => review.author.login))],
+    count: 0,
+    complete: false,
+    reviewers: [],
+    reason: 'HELD_REPOSITORY_APPROVAL_POLICY',
   };
 }
 
@@ -284,7 +254,7 @@ export function updateBranch(prNumber, expectedHeadRef = '') {
 
 export function approvePr(prNumber) {
   process.stderr.write(
-    `[manage-pr-queue] HELD PR #${prNumber}: counted approval is an external, independent action; use the governed blip-approve workflow.\n`,
+    `[manage-pr-queue] HELD PR #${prNumber}: automated counted approval is retired; activate the source-pinned, App-ID-pinned replacement AI CheckRun.\n`,
   );
   return false;
 }
@@ -348,6 +318,8 @@ export function evaluateMergeReadiness({ pr, checks, threads, approval, expected
   if (pr?.mergeStateStatus === 'BEHIND') reasons.push('behind_main');
   else if (pr?.mergeStateStatus !== 'CLEAN') reasons.push('merge_state_not_clean');
   if (pr?.reviewDecision !== 'APPROVED') reasons.push('approval_missing');
+  if (pr && !Object.hasOwn(pr, 'autoMergeRequest')) reasons.push('auto_merge_state_unknown');
+  else if (pr?.autoMergeRequest != null) reasons.push('auto_merge_active');
   if (!checks?.allGreen) reasons.push('required_checks_not_green');
   if (!threads?.complete) reasons.push('thread_state_unknown');
   else if (threads.count !== 0) reasons.push('unresolved_threads');

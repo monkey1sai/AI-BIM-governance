@@ -35,6 +35,7 @@ test('merge readiness fails closed on every exact-head gate', () => {
     mergeable: 'MERGEABLE',
     mergeStateStatus: 'CLEAN',
     reviewDecision: 'APPROVED',
+    autoMergeRequest: null,
   };
   const checks = { allGreen: true };
   const threads = { count: 0, complete: true };
@@ -58,6 +59,7 @@ test('merge readiness fails closed on every exact-head gate', () => {
     [{ ...pr, mergeStateStatus: 'BEHIND' }, checks, threads, 'behind_main'],
     [{ ...pr, mergeStateStatus: 'UNSTABLE' }, checks, threads, 'merge_state_not_clean'],
     [{ ...pr, reviewDecision: 'REVIEW_REQUIRED' }, checks, threads, 'approval_missing'],
+    [{ ...pr, autoMergeRequest: { enabledAt: '2026-09-04T00:00:00Z' } }, checks, threads, 'auto_merge_active'],
     [pr, { allGreen: false }, threads, 'required_checks_not_green'],
     [pr, checks, { count: null, complete: false }, 'thread_state_unknown'],
     [pr, checks, { count: 1, complete: true }, 'unresolved_threads'],
@@ -125,6 +127,7 @@ test('queue reads only the canonical LEGACY_GUARDED policy and ignores caller po
     mergeable: 'MERGEABLE',
     mergeStateStatus: 'CLEAN',
     reviewDecision: 'APPROVED',
+    autoMergeRequest: null,
   };
   const result = evaluateMergeReadiness({
     pr,
@@ -287,15 +290,16 @@ test('legacy pr-queue-manager skill delegates to the hardened named-PR skill', (
   assert.doesNotMatch(skill, /manage-pr-queue\.mjs approve --pr/);
 });
 
-test('blip approval skill is explicitly legacy guarded outside autonomous activation', () => {
+test('blip approval skill is refusal-only after automated approval retirement', () => {
   const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
   const skill = fs.readFileSync(
     path.join(repoRoot, '.claude', 'skills', 'blip-approve', 'SKILL.md'),
     'utf8',
   );
-  assert.match(skill, /LEGACY_GUARDED/);
-  assert.match(skill, /CANARY_ACTIVE.*AUTONOMOUS_ACTIVE/s);
-  assert.match(skill, /must not.*routine.*prerequisite/i);
+  assert.match(skill, /HELD_AUTOMATED_APPROVAL_RETIRED/);
+  assert.match(skill, /HELD_REPOSITORY_APPROVAL_POLICY/);
+  assert.match(skill, /App-ID-pinned required AI CheckRun/i);
+  assert.doesNotMatch(skill, /run_blip_live_approve_once/);
 });
 
 test('skill pressure baseline preserves the observed legacy failures without rewriting passes', () => {
@@ -372,7 +376,7 @@ test('queue executor denies mutation and trust-bypass commands before spawning',
 test('queue executor permits only exact observation tuples', () => {
   const viewArgs = [
     'pr', 'view', '721', '--json',
-    'number,title,headRefName,headRefOid,baseRefName,baseRefOid,mergeable,mergeStateStatus,reviewDecision,isDraft,state,url',
+    'number,title,headRefName,headRefOid,baseRefName,baseRefOid,mergeable,mergeStateStatus,reviewDecision,isDraft,state,url,autoMergeRequest',
     '--repo', 'github.com/monkey1sai/AI-BIM-governance',
   ];
   assert.deepEqual(classifyQueueCommand('gh', viewArgs), {

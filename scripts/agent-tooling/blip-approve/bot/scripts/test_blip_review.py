@@ -1118,6 +1118,34 @@ class CodexThreadFixTests(unittest.TestCase):
             self.assertEqual(blip.read_token(blip.DEFAULT_TOKEN_ENV), "opaque-test-value")
 
 
+class AutomatedApprovalRetirementTests(unittest.TestCase):
+    def test_cli_refuses_before_token_read(self) -> None:
+        argv = ["blip_review.py", "--pr", str(PR_NUMBER), "--approve"]
+        with patch.object(sys, "argv", argv), patch.object(blip, "read_token") as read_token, self.assertRaisesRegex(
+            SystemExit, "HELD_AUTOMATED_APPROVAL_RETIRED"
+        ):
+            blip.main()
+        read_token.assert_not_called()
+
+    def test_submit_helper_is_fail_closed(self) -> None:
+        for submit in (blip.submit_automated_approval, blip._retired_submit_automated_approval):
+            with self.subTest(submit=submit.__name__), self.assertRaisesRegex(
+                SystemExit, "HELD_AUTOMATED_APPROVAL_RETIRED"
+            ):
+                submit(
+                    token="opaque-test-value",
+                    owner="monkey1sai",
+                    name="AI-BIM-governance",
+                    repo=blip.DEFAULT_REPO,
+                    pr_number=PR_NUMBER,
+                    base=BASE,
+                    head=HEAD,
+                    review_mode="focused_semantic",
+                    capability_raw="opaque-test-capability",
+                )
+
+
+@unittest.skip("legacy automated approval tests retained as historical coverage")
 class AutomatedApprovalTests(unittest.TestCase):
     def setUp(self) -> None:
         self.immutable_snapshot_patcher = patch.object(
