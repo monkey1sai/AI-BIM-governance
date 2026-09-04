@@ -161,6 +161,7 @@ nullable `last_activity_at`.
       "type": "sessionCreated",
       "sequence": 1,
       "created_at": "2026-05-12T10:00:00.000Z",
+      "server_owned": true,
       "payload": {
         "project_id": "project_demo_001",
         "model_version_id": "version_demo_001",
@@ -195,7 +196,9 @@ If `kit_profile.capacity_slots=0`, `POST /api/review-sessions` returns:
 
 ## Session Events
 
-`POST /api/review-sessions/{session_id}/events` requires a JSON body with a non-empty `type` string. Additional event fields are preserved.
+`POST /api/review-sessions/{session_id}/events` requires a JSON body with a non-empty `type` string. Additional event fields are preserved for accepted generic event types.
+
+`sessionCreated`, `sessionActive`, and `sessionRecreated` are reserved for coordinator-owned transitions. A client attempt to append any of these types returns HTTP 400 with `detail: "Server-owned event type cannot be appended by a client."`. Events emitted by the coordinator for these transitions include the additive top-level field `server_owned: true`; legacy persisted events may omit it. Other generic event types, including the close-like archive compatibility types, retain their existing append behavior and are not authoritative lifecycle checkpoints unless the server-owned close metadata is present.
 
 ```json
 {
