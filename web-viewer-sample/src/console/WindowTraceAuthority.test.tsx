@@ -1372,6 +1372,76 @@ describe("Window Socket canonical trace authority", () => {
             );
         });
 
+        // 同一 stage 內、非 root 節點已不在樹上：handler 會把它當 root 回應整棵換掉，必須擋在前面。
+        it("getChildrenRequest: a non-root node absent from the current tree is dropped (same stage)", async () => {
+            const app = authorizedApp({ synchronousSetState: true });
+            const target = internals(app);
+            target.state = { ...target.state, usdPrims: [{ path: PRIM_ROOT + "/Existing" }] };
+            vi.spyOn(AppStream, "sendMessage").mockResolvedValue({
+                action: "message",
+                status: "success",
+                info: "Get children result received",
+                primPath: PRIM_ROOT + "/Gone",
+                children: [OLD_STAGE_CHILD],
+            });
+            const handled = vi.spyOn(target, "_handleCustomEvent");
+
+            expect(target._sendStreamMessage({ event_type: "getChildrenRequest", payload: { prim_path: PRIM_ROOT + "/Gone" } })).toBe(true);
+            await flush();
+
+            expect(handled).not.toHaveBeenCalledWith(
+                expect.objectContaining({ event_type: "getChildrenResponse" }),
+                expect.any(Number),
+            );
+        });
+
+        it("getChildrenRequest: a non-root node still present in the tree is delivered", async () => {
+            const app = authorizedApp({ synchronousSetState: true });
+            const target = internals(app);
+            target.state = { ...target.state, usdPrims: [{ path: PRIM_ROOT + "/Existing" }] };
+            vi.spyOn(AppStream, "sendMessage").mockResolvedValue({
+                action: "message",
+                status: "success",
+                info: "Get children result received",
+                primPath: PRIM_ROOT + "/Existing",
+                children: [CHILD_A],
+            });
+            const handled = vi.spyOn(target, "_handleCustomEvent");
+
+            expect(target._sendStreamMessage({ event_type: "getChildrenRequest", payload: { prim_path: PRIM_ROOT + "/Existing" } })).toBe(true);
+            await flush();
+
+            expect(handled).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    event_type: "getChildrenResponse",
+                    payload: expect.objectContaining({ prim_path: PRIM_ROOT + "/Existing" }),
+                }),
+                expect.any(Number),
+            );
+        });
+
+        it("getChildrenRequest: the root request is delivered even when the tree is empty", async () => {
+            const app = authorizedApp({ synchronousSetState: true });
+            const target = internals(app);
+            target.state = { ...target.state, usdPrims: [] };
+            vi.spyOn(AppStream, "sendMessage").mockResolvedValue({
+                action: "message",
+                status: "success",
+                info: "Get children result received",
+                primPath: PRIM_ROOT,
+                children: [CHILD_A],
+            });
+            const handled = vi.spyOn(target, "_handleCustomEvent");
+
+            expect(target._sendStreamMessage({ event_type: "getChildrenRequest", payload: { prim_path: PRIM_ROOT } })).toBe(true);
+            await flush();
+
+            expect(handled).toHaveBeenCalledWith(
+                expect.objectContaining({ event_type: "getChildrenResponse" }),
+                expect.any(Number),
+            );
+        });
+
         it("getChildrenRequest: a native result within the same stage intent is still delivered (control)", async () => {
             const app = authorizedApp({ synchronousSetState: true });
             const target = internals(app);

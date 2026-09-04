@@ -2064,15 +2064,29 @@ export default class App extends React.Component<AppProps, AppState> {
                     Boolean(nativeOpenStageDispatch),
                 );
                 if (!responseEvent) return;
-                if (
-                    outgoing.event_type === "getChildrenRequest"
-                    && (
+                if (outgoing.event_type === "getChildrenRequest") {
+                    if (
                         this.stageIntentGeneration !== stageIntentGenerationAtSend
                         || (this.activeStageAttempt?.generation ?? null) !== stageAttemptGenerationAtSend
-                    )
-                ) {
-                    this._appendReviewEvent("略過遲到的 getChildrenResponse：stage 已切換");
-                    return;
+                    ) {
+                        this._appendReviewEvent("略過遲到的 getChildrenResponse：stage 已切換");
+                        return;
+                    }
+                    // 同一 stage 內：handler 對「樹裡找不到的 prim_path」一律當 root 回應整棵換掉
+                    // （_findUSDPrimByPath === null → usdPrims = children）。這條只圍**借用 outbound
+                    // trace** 的 trace-less native 回應——那是本 PR 新開的路，不得因此讓過期節點
+                    // 的回應整棵換樹；帶真實 inbound trace 的回應維持既有行為。非 root 節點若已不在
+                    // 目前的樹上（同 stage refresh 期間消失、或 request_stage_tree 指到過期節點）就丟。
+                    const borrowedTrace = !(isRecord(result) && Object.prototype.hasOwnProperty.call(result, "trace_id"));
+                    const requestedPrimPath = isRecord(outgoing.payload) ? getPayloadString(outgoing.payload, "prim_path") : "";
+                    if (
+                        borrowedTrace
+                        && requestedPrimPath !== "/World"
+                        && this._findUSDPrimByPath(requestedPrimPath) === null
+                    ) {
+                        this._appendReviewEvent("略過 getChildrenResponse：請求的節點已不在目前的 stage 樹上");
+                        return;
+                    }
                 }
                 this._handleCustomEvent(responseEvent, streamGenerationAtSend);
             })
