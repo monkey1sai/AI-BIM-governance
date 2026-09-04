@@ -272,6 +272,24 @@ Assert-True ($text -match 'Incomplete published runtime was quarantined') `
     'Production installer no longer quarantines a failed post-publish runtime.'
 Assert-True ($text -match 'New-OwnerOnlyFileSecurity[\s\S]+Assert-OwnerOnlyAcl -LiteralPaths @\(\$upgradeLockPath\)') `
     'Persistent upgrade lock is not created and verified with owner-only ACL.'
+Assert-True ($text.Contains("'.upgrade-transaction-' + `$upgradeTransactionId + '.tmp'") -and
+    $text -match 'New-OwnerOnlyFileSecurity[\s\S]+Flush\(\$true\)[\s\S]+\[System\.IO\.File\]::Move\(\$journalStagePath, \$upgradeTransactionPath\)' -and
+    $text -match '\$journalStageCreated = \$true[\s\S]+if \(\$journalStageCreated -and -not \$journalPublished' -and
+    $text -match 'try \{ \[System\.IO\.File\]::Delete\(\$journalStagePath\) \}[\s\S]+catch \{ \}' -and
+    $text -match 'Assert-OwnerOnlyAcl -LiteralPaths @\(\$upgradeTransactionPath\)') `
+    'Transaction journal is not atomically published with an owner-only ACL.'
+Assert-True ($text -match 'function Protect-UpgradeJournalOwnerOnly[\s\S]+Assert-OwnerOnlyAcl[\s\S]+Assert-ProtectedAcl[\s\S]+Set-ExactFileSystemSecurity[\s\S]+New-OwnerOnlyFileSecurity[\s\S]+Assert-OwnerOnlyAcl') `
+    'Legacy transaction journals are not migrated from the exact protected ACL to owner-only.'
+$mainFlowStart = $text.IndexOf('$freeze = $freezeText | ConvertFrom-Json', [StringComparison]::Ordinal)
+$recoveryCallIndex = $text.IndexOf('$recoveryResult = Recover-InterruptedUpgrade', $mainFlowStart, [StringComparison]::Ordinal)
+$runtimeOpenIndex = $text.IndexOf('$stream = Open-PinnedReadStream -LiteralPath $entry.Value', $mainFlowStart, [StringComparison]::Ordinal)
+Assert-True ($mainFlowStart -ge 0 -and $recoveryCallIndex -gt $mainFlowStart -and
+    $runtimeOpenIndex -gt $recoveryCallIndex) `
+    'Apply flow validates mutable runtime inputs before processing an existing recovery journal.'
+Assert-True ($text -match '-OperationOut \(\[ref\]\$recoveryOperation\)[\s\S]+Set-RecoveryAttemptMode[\s\S]+-UpgradeAttempted \(\[ref\]\$upgradeAttempted\)') `
+    'Recovery errors can still lose the journal operation mode before outer catch handling.'
+Assert-True ($text -match 'Directory\]::Exists\(\$journalFailed\)[\s\S]+Move-UpgradeJournal[\s\S]+already quarantined') `
+    'Initial quarantine recovery is not idempotent after the directory move.'
 Assert-True ($text -match "return \[pscustomobject\]@\{[\s\S]+Status = 'committed'[\s\S]+Operation = 'upgrade'" -and
     $text -match '\$recoveryResult = Recover-InterruptedUpgrade[\s\S]+recovery=committed[\s\S]+return') `
     'Committed runtime recovery does not return an observable successful installer result.'
@@ -305,6 +323,9 @@ $readmeText = Get-Content -Raw -LiteralPath $readmePath
 $workflowText = Get-Content -Raw -LiteralPath $workflowPath
 $claudeSkillText = Get-Content -Raw -LiteralPath $claudeSkillPath
 $codexSkillText = Get-Content -Raw -LiteralPath $codexSkillPath
+Assert-True ($skillText -match '\| candidate source files \| 13 \|' -and
+    $skillText -match '\| bootstrap-context v3 fields \| 22 \|') `
+    'Protected build/install README inventory counts are stale.'
 foreach ($document in @($skillText, $readmeText, $workflowText, $claudeSkillText, $codexSkillText)) {
     Assert-True ($document.Contains('C:\Users\IOT\.grok\github-bot\.env.blip')) `
         'A broker policy document lost the fixed counted-reviewer credential path.'
@@ -332,12 +353,14 @@ $functions = @(
     'Get-QuiesceDenyMask', 'New-QuiescedFileSecurity',
     'Set-ExactFileSystemSecurity', 'Assert-ProtectedAcl', 'Assert-OwnerOnlyAcl',
     'Protect-Tree', 'Protect-OwnerOnlyTree', 'Protect-RuntimeTree',
-    'Assert-NoReparseTree',
+    'Assert-NoReparseTree', 'Assert-ExistingTrustedRuntime',
     'Open-PredecessorRuntimeFence', 'Close-PredecessorRuntimeFence',
     'Assert-SuccessorGenerationPivots',
     'Assert-QuiescedPredecessorFiles', 'Protect-QuiescedPredecessorRuntime',
     'Move-PreservedRuntimeDirectories',
-    'Restore-PreviousRuntime', 'Open-UpgradeLock', 'Recover-InterruptedUpgrade',
+    'Restore-PreviousRuntime', 'Write-ProtectedUpgradeJournal', 'Move-UpgradeJournal',
+    'Protect-UpgradeJournalOwnerOnly', 'Set-RecoveryAttemptMode',
+    'Open-UpgradeLock', 'Recover-InterruptedUpgrade',
     'Test-TargetActivationMarkerPublished',
     'Write-InstallerStructRecord', 'Write-InstallerStructWarning'
 ) | ForEach-Object { Get-ProductionFunction -Ast $ast -Name $_ }
@@ -511,6 +534,71 @@ try {
     $script:upgradeLockStream.Dispose()
     $script:upgradeLockStream = $null
 
+    $legacyJournal = Join-Path $sandboxRoot 'legacy-upgrade-transaction.json'
+    $legacyJournalStream = [System.IO.FileSystemAclExtensions]::Create(
+        [System.IO.FileInfo]::new($legacyJournal),
+        [System.IO.FileMode]::CreateNew,
+        [System.Security.AccessControl.FileSystemRights]::FullControl,
+        [System.IO.FileShare]::None,
+        4096,
+        [System.IO.FileOptions]::WriteThrough,
+        (New-ProtectedFileSecurity)
+    )
+    $legacyJournalStream.Dispose()
+    Assert-ProtectedAcl -LiteralPaths @($legacyJournal)
+    $script:upgradeTransactionPath = $legacyJournal
+    Protect-UpgradeJournalOwnerOnly
+    Assert-OwnerOnlyAcl -LiteralPaths @($legacyJournal)
+
+    $upgradeMode = $false
+    Set-RecoveryAttemptMode -Operation upgrade -UpgradeAttempted ([ref]$upgradeMode)
+    Assert-True $upgradeMode 'Recovery error handling did not retain upgrade mode.'
+    $initialMode = $false
+    Set-RecoveryAttemptMode -Operation initial -UpgradeAttempted ([ref]$initialMode)
+    Assert-True (-not $initialMode) 'Initial recovery was incorrectly reported as upgrade mode.'
+
+    $journalRoot = Join-Path $sandboxRoot 'atomic-journal'
+    [void][System.IO.Directory]::CreateDirectory($journalRoot)
+    $script:productRoot = [System.IO.Path]::GetFullPath($journalRoot)
+    $script:upgradeTransactionId = '0123456789abcdef0123456789abcdef'
+    $script:trustedRoot = Join-Path $script:productRoot 'v1'
+    $script:stageRoot = Join-Path $script:productRoot ("v1.stage-$($script:upgradeTransactionId)")
+    $script:previousRoot = Join-Path $script:productRoot ("v1.previous-$($script:upgradeTransactionId)")
+    $script:failedRoot = Join-Path $script:productRoot ("v1.failed-$($script:upgradeTransactionId)")
+    $script:upgradeTransactionPath = Join-Path $script:productRoot 'upgrade-transaction.json'
+    $script:allowedPredecessor = [ordered]@{ manifest_sha256 = ('A' * 64) }
+    Write-ProtectedUpgradeJournal -Operation initial -TargetSourceCommit ('b' * 40) `
+        -TargetManifestSha256 ('C' * 64) -TargetCandidateFreezeSha256 ('D' * 64)
+    $journalStagePath = Join-Path $script:productRoot (
+        ".upgrade-transaction-$($script:upgradeTransactionId).tmp"
+    )
+    Assert-True ([System.IO.File]::Exists($script:upgradeTransactionPath) -and
+        -not [System.IO.File]::Exists($journalStagePath)) `
+        'Journal publication left a partial active path or retained its temporary file.'
+    Assert-OwnerOnlyAcl -LiteralPaths @($script:upgradeTransactionPath)
+    $publishedJournal = [System.IO.File]::ReadAllText($script:upgradeTransactionPath)
+    $duplicatePublishRejected = $false
+    try {
+        Write-ProtectedUpgradeJournal -Operation initial -TargetSourceCommit ('e' * 40) `
+            -TargetManifestSha256 ('F' * 64) -TargetCandidateFreezeSha256 ('1' * 64)
+    }
+    catch [System.IO.IOException] { $duplicatePublishRejected = $true }
+    Assert-True ($duplicatePublishRejected -and
+        [System.IO.File]::ReadAllText($script:upgradeTransactionPath) -ceq $publishedJournal -and
+        -not [System.IO.File]::Exists($journalStagePath)) `
+        'Atomic journal publish overwrote the active journal or retained a failed temporary file.'
+    [System.IO.File]::WriteAllText($journalStagePath, 'pre-existing-stage')
+    $preExistingStageRejected = $false
+    try {
+        Write-ProtectedUpgradeJournal -Operation initial -TargetSourceCommit ('e' * 40) `
+            -TargetManifestSha256 ('F' * 64) -TargetCandidateFreezeSha256 ('1' * 64)
+    }
+    catch [System.IO.IOException] { $preExistingStageRejected = $true }
+    Assert-True ($preExistingStageRejected -and
+        [System.IO.File]::ReadAllText($journalStagePath) -ceq 'pre-existing-stage') `
+        'Failed journal creation deleted a temporary file not created by this transaction.'
+    Remove-Item -LiteralPath $journalStagePath -Force
+
     $script:installerStructLogger = $null
     $script:productRoot = $sandboxRoot
     $script:candidateRoot = $sandboxRoot
@@ -556,7 +644,12 @@ try {
         created_at = '2026-09-04T00:00:00.000Z'
     } | ConvertTo-Json | Set-Content -LiteralPath $script:upgradeTransactionPath -NoNewline
     $originalAssertProtectedAcl = (Get-Command Assert-ProtectedAcl).ScriptBlock
+    $originalAssertOwnerOnlyAcl = (Get-Command Assert-OwnerOnlyAcl).ScriptBlock
+    $originalRestorePreviousRuntime = (Get-Command Restore-PreviousRuntime).ScriptBlock
+    $originalProtectRuntimeTree = (Get-Command Protect-RuntimeTree).ScriptBlock
+    $originalAssertExistingTrustedRuntime = (Get-Command Assert-ExistingTrustedRuntime).ScriptBlock
     function Assert-ProtectedAcl { param([string[]]$LiteralPaths) [void]$LiteralPaths }
+    function Assert-OwnerOnlyAcl { param([string[]]$LiteralPaths) [void]$LiteralPaths }
     function Assert-ExactJsonProperties {
         param([object]$Object, [string[]]$ExpectedNames, [string]$Label)
         [void]$Object
@@ -630,9 +723,98 @@ try {
                 [System.IO.File]::Exists((Join-Path $script:productRoot ("upgrade-recovered-$mismatchId.json")))) `
                 "Committed $mismatchOperation mismatch did not archive its journal."
         }
+
+        $quarantineId = [Guid]::NewGuid().ToString('N')
+        $script:productRoot = [System.IO.Path]::GetFullPath(
+            (Join-Path $sandboxRoot 'initial-quarantine-idempotence')
+        )
+        $script:trustedRoot = Join-Path $script:productRoot 'v1'
+        $script:upgradeTransactionPath = Join-Path $script:productRoot 'upgrade-transaction.json'
+        $quarantineStage = Join-Path $script:productRoot ("v1.stage-$quarantineId")
+        $quarantinePrevious = Join-Path $script:productRoot ("v1.previous-$quarantineId")
+        $quarantineFailed = Join-Path $script:productRoot ("v1.failed-$quarantineId")
+        New-Item -ItemType Directory -Path $script:productRoot, $quarantineFailed | Out-Null
+        [ordered]@{
+            schema = 'blip-runtime-upgrade-transaction/v1'
+            transaction_id = $quarantineId
+            operation = 'initial'
+            trusted_root = $script:trustedRoot
+            stage_root = $quarantineStage
+            previous_root = $quarantinePrevious
+            failed_root = $quarantineFailed
+            predecessor_manifest_sha256 = 'NONE'
+            target_source_commit = ('b' * 40)
+            target_manifest_sha256 = ('C' * 64)
+            target_candidate_freeze_sha256 = ('D' * 64)
+            created_at = '2026-09-04T00:00:00.000Z'
+        } | ConvertTo-Json | Set-Content -LiteralPath $script:upgradeTransactionPath -NoNewline
+        $alreadyQuarantinedRejected = $false
+        try {
+            [void](Recover-InterruptedUpgrade `
+                -ExpectedTargetSourceCommit ('b' * 40) `
+                -ExpectedTargetCandidateFreezeSha256 ('D' * 64))
+        }
+        catch {
+            $alreadyQuarantinedRejected = $_.Exception.Message -match 'already quarantined'
+        }
+        Assert-True ($alreadyQuarantinedRejected -and
+            -not [System.IO.File]::Exists($script:upgradeTransactionPath) -and
+            [System.IO.File]::Exists((Join-Path $script:productRoot ("upgrade-recovered-$quarantineId.json")))) `
+            'Initial quarantine recovery was not idempotent after the directory move.'
+
+        function Restore-PreviousRuntime {
+            param([string]$Trusted, [string]$Previous, [string]$Failed, [string]$Stage)
+            [void]$Trusted
+            [void]$Previous
+            [void]$Failed
+            [void]$Stage
+        }
+        function Protect-RuntimeTree { param([string]$LiteralPath) [void]$LiteralPath }
+        function Assert-ExistingTrustedRuntime { return [pscustomobject]@{} }
+        $operationId = [Guid]::NewGuid().ToString('N')
+        $script:productRoot = [System.IO.Path]::GetFullPath(
+            (Join-Path $sandboxRoot 'recovery-operation-output')
+        )
+        $script:trustedRoot = Join-Path $script:productRoot 'v1'
+        $script:upgradeTransactionPath = Join-Path $script:productRoot 'upgrade-transaction.json'
+        $operationStage = Join-Path $script:productRoot ("v1.stage-$operationId")
+        $operationPrevious = Join-Path $script:productRoot ("v1.previous-$operationId")
+        $operationFailed = Join-Path $script:productRoot ("v1.failed-$operationId")
+        New-Item -ItemType Directory -Path $script:productRoot, $operationPrevious | Out-Null
+        [ordered]@{
+            schema = 'blip-runtime-upgrade-transaction/v1'
+            transaction_id = $operationId
+            operation = 'upgrade'
+            trusted_root = $script:trustedRoot
+            stage_root = $operationStage
+            previous_root = $operationPrevious
+            failed_root = $operationFailed
+            predecessor_manifest_sha256 = $script:allowedPredecessor.manifest_sha256
+            target_source_commit = ('b' * 40)
+            target_manifest_sha256 = ('C' * 64)
+            target_candidate_freeze_sha256 = ('D' * 64)
+            created_at = '2026-09-04T00:00:00.000Z'
+        } | ConvertTo-Json | Set-Content -LiteralPath $script:upgradeTransactionPath -NoNewline
+        $reportedOperation = ''
+        $rollbackRetryRequested = $false
+        try {
+            [void](Recover-InterruptedUpgrade `
+                -ExpectedTargetSourceCommit ('b' * 40) `
+                -ExpectedTargetCandidateFreezeSha256 ('D' * 64) `
+                -OperationOut ([ref]$reportedOperation))
+        }
+        catch {
+            $rollbackRetryRequested = $_.Exception.Message -match 'rolled back'
+        }
+        Assert-True ($rollbackRetryRequested -and $reportedOperation -ceq 'upgrade') `
+            'Recovery did not preserve upgrade mode for the outer error handler.'
     }
     finally {
         Set-Item -LiteralPath Function:\Assert-ProtectedAcl -Value $originalAssertProtectedAcl
+        Set-Item -LiteralPath Function:\Assert-OwnerOnlyAcl -Value $originalAssertOwnerOnlyAcl
+        Set-Item -LiteralPath Function:\Restore-PreviousRuntime -Value $originalRestorePreviousRuntime
+        Set-Item -LiteralPath Function:\Protect-RuntimeTree -Value $originalProtectRuntimeTree
+        Set-Item -LiteralPath Function:\Assert-ExistingTrustedRuntime -Value $originalAssertExistingTrustedRuntime
         Remove-Item -LiteralPath Function:\Assert-ExactJsonProperties -Force
         Remove-Item -LiteralPath Function:\Assert-ActivationCommitMarker -Force
         Remove-Item -LiteralPath Function:\Move-UpgradeJournal -Force

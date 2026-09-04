@@ -994,21 +994,43 @@ function Write-ProtectedUpgradeJournal {
     $bytes = [System.Text.UTF8Encoding]::new($false).GetBytes(
         $payload + [Environment]::NewLine
     )
-    $stream = [System.IO.FileSystemAclExtensions]::Create(
-        [System.IO.FileInfo]::new($upgradeTransactionPath),
-        [System.IO.FileMode]::CreateNew,
-        [System.Security.AccessControl.FileSystemRights]::FullControl,
-        [System.IO.FileShare]::None,
-        4096,
-        [System.IO.FileOptions]::WriteThrough,
-        (New-ProtectedFileSecurity)
+    $journalStagePath = Join-Path $productRoot (
+        '.upgrade-transaction-' + $upgradeTransactionId + '.tmp'
     )
+    $stream = $null
+    $journalStageCreated = $false
+    $journalPublished = $false
     try {
+        $stream = [System.IO.FileSystemAclExtensions]::Create(
+            [System.IO.FileInfo]::new($journalStagePath),
+            [System.IO.FileMode]::CreateNew,
+            [System.Security.AccessControl.FileSystemRights]::FullControl,
+            [System.IO.FileShare]::None,
+            4096,
+            [System.IO.FileOptions]::WriteThrough,
+            (New-OwnerOnlyFileSecurity)
+        )
+        $journalStageCreated = $true
         $stream.Write($bytes, 0, $bytes.Length)
         $stream.Flush($true)
+        $stream.Dispose()
+        $stream = $null
+        Assert-OwnerOnlyAcl -LiteralPaths @($journalStagePath)
+        [System.IO.File]::Move($journalStagePath, $upgradeTransactionPath)
+        $journalPublished = $true
+        Assert-OwnerOnlyAcl -LiteralPaths @($upgradeTransactionPath)
     }
-    finally { $stream.Dispose() }
-    Assert-ProtectedAcl -LiteralPaths @($upgradeTransactionPath)
+    finally {
+        if ($null -ne $stream) {
+            try { $stream.Dispose() }
+            catch { }
+        }
+        if ($journalStageCreated -and -not $journalPublished -and
+            [System.IO.File]::Exists($journalStagePath)) {
+            try { [System.IO.File]::Delete($journalStagePath) }
+            catch { }
+        }
+    }
 }
 
 function Move-UpgradeJournal {
@@ -1020,7 +1042,31 @@ function Move-UpgradeJournal {
         throw "Upgrade journal archive already exists: $Destination"
     }
     [System.IO.File]::Move($upgradeTransactionPath, $Destination)
-    Assert-ProtectedAcl -LiteralPaths @($Destination)
+    Assert-OwnerOnlyAcl -LiteralPaths @($Destination)
+}
+
+function Protect-UpgradeJournalOwnerOnly {
+    try {
+        Assert-OwnerOnlyAcl -LiteralPaths @($upgradeTransactionPath)
+        return
+    }
+    catch {
+        Assert-ProtectedAcl -LiteralPaths @($upgradeTransactionPath)
+    }
+    Set-ExactFileSystemSecurity `
+        -LiteralPath $upgradeTransactionPath `
+        -Security (New-OwnerOnlyFileSecurity)
+    Assert-OwnerOnlyAcl -LiteralPaths @($upgradeTransactionPath)
+}
+
+function Set-RecoveryAttemptMode {
+    param(
+        [AllowEmptyString()][string]$Operation,
+        [Parameter(Mandatory)][ref]$UpgradeAttempted
+    )
+    if ($Operation -ceq 'upgrade') {
+        $UpgradeAttempted.Value = $true
+    }
 }
 
 function Open-UpgradeLock {
@@ -1213,10 +1259,12 @@ function Recover-InterruptedUpgrade {
 
         [Parameter(Mandatory)]
         [ValidatePattern('^[0-9A-F]{64}$')]
-        [string]$ExpectedTargetCandidateFreezeSha256
+        [string]$ExpectedTargetCandidateFreezeSha256,
+
+        [ref]$OperationOut
     )
     if (-not [System.IO.File]::Exists($upgradeTransactionPath)) { return }
-    Assert-ProtectedAcl -LiteralPaths @($upgradeTransactionPath)
+    Protect-UpgradeJournalOwnerOnly
     $transactionText = Get-Content -Raw -LiteralPath $upgradeTransactionPath
     $document = [System.Text.Json.JsonDocument]::Parse($transactionText)
     try {
@@ -1257,6 +1305,9 @@ function Recover-InterruptedUpgrade {
     }
     $journalPrevious = [string]$transaction.previous_root
     $journalFailed = [string]$transaction.failed_root
+    if ($null -ne $OperationOut) {
+        $OperationOut.Value = [string]$transaction.operation
+    }
     $journalMatchesRequestedCandidate =
         [string]$transaction.target_source_commit -ceq $ExpectedTargetSourceCommit -and
         [string]$transaction.target_candidate_freeze_sha256 -ceq
@@ -1297,6 +1348,10 @@ function Recover-InterruptedUpgrade {
             [System.IO.Directory]::Move($journalStage, $journalFailed)
             Move-UpgradeJournal -Destination $archive
             throw 'An interrupted initial runtime stage was quarantined; retry installation.'
+        }
+        if ([System.IO.Directory]::Exists($journalFailed)) {
+            Move-UpgradeJournal -Destination $archive
+            throw 'An interrupted initial runtime was already quarantined; retry installation.'
         }
         throw 'Interrupted initial runtime installation is not recoverable automatically.'
     }
@@ -1340,6 +1395,7 @@ $freezeDocument = $null
 $stagePublished = $false
 $activationCommitted = $false
 $upgradeAttempted = $false
+$recoveryOperation = ''
 $transactionWritten = $false
 $trustedBootstrapReady = $false
 try {
@@ -1526,6 +1582,49 @@ try {
         }
     }
 
+    if ($Apply) {
+        Assert-ProgramDataParent
+        New-ProtectedDirectory -LiteralPath $protectedRoot
+        New-ProtectedDirectory -LiteralPath $productRoot
+        New-ProtectedDirectory -LiteralPath $secretRoot -OwnerOnly
+        Open-UpgradeLock
+        try {
+            $recoveryResult = Recover-InterruptedUpgrade `
+                -ExpectedTargetSourceCommit $sourceCommitElement.GetString() `
+                -ExpectedTargetCandidateFreezeSha256 $freezeHash `
+                -OperationOut ([ref]$recoveryOperation)
+        }
+        catch {
+            Set-RecoveryAttemptMode `
+                -Operation $recoveryOperation `
+                -UpgradeAttempted ([ref]$upgradeAttempted)
+            throw
+        }
+        if ($null -ne $recoveryResult) {
+            if ($recoveryResult.Status -cne 'committed' -or
+                $recoveryResult.Operation -notin @('initial', 'upgrade')) {
+                throw 'Interrupted runtime recovery returned an invalid result.'
+            }
+            $recoveredPrevious = if ($recoveryResult.Operation -ceq 'upgrade') {
+                " previous_runtime=$($recoveryResult.PreviousRoot)"
+            }
+            else { '' }
+            Write-InstallerStructInformation -Event 'committed_recovery_completed' `
+                -Message 'A committed runtime transaction journal was recovered.' `
+                -Data @{
+                    operation = $recoveryResult.Operation
+                    trusted_root = $trustedRoot
+                    previous_root = $recoveryResult.PreviousRoot
+                }
+            Write-Output (
+                "INSTALL_RESULT trusted_runtime=$trustedRoot$recoveredPrevious " +
+                'recovery=committed secret_path=' + $secretRoot +
+                ' activation=OWNER_PEM_AND_CODEX_LOGIN_REQUIRED'
+            )
+            return
+        }
+    }
+
     foreach ($entry in $trustedFiles.GetEnumerator()) {
         $expected = $freeze.source_files.PSObject.Properties[$entry.Value]
         if ($null -eq $expected -or [string]$expected.Value -notmatch '^[0-9A-F]{64}$') {
@@ -1572,37 +1671,6 @@ try {
         exit 0
     }
 
-    Assert-ProgramDataParent
-    New-ProtectedDirectory -LiteralPath $protectedRoot
-    New-ProtectedDirectory -LiteralPath $productRoot
-    New-ProtectedDirectory -LiteralPath $secretRoot -OwnerOnly
-    Open-UpgradeLock
-    $recoveryResult = Recover-InterruptedUpgrade `
-        -ExpectedTargetSourceCommit $sourceCommitElement.GetString() `
-        -ExpectedTargetCandidateFreezeSha256 $freezeHash
-    if ($null -ne $recoveryResult) {
-        if ($recoveryResult.Status -cne 'committed' -or
-            $recoveryResult.Operation -notin @('initial', 'upgrade')) {
-            throw 'Interrupted runtime recovery returned an invalid result.'
-        }
-        $recoveredPrevious = if ($recoveryResult.Operation -ceq 'upgrade') {
-            " previous_runtime=$($recoveryResult.PreviousRoot)"
-        }
-        else { '' }
-        Write-InstallerStructInformation -Event 'committed_recovery_completed' `
-            -Message 'A committed runtime transaction journal was recovered.' `
-            -Data @{
-                operation = $recoveryResult.Operation
-                trusted_root = $trustedRoot
-                previous_root = $recoveryResult.PreviousRoot
-            }
-        Write-Output (
-            "INSTALL_RESULT trusted_runtime=$trustedRoot$recoveredPrevious " +
-            'recovery=committed secret_path=' + $secretRoot +
-            ' activation=OWNER_PEM_AND_CODEX_LOGIN_REQUIRED'
-        )
-        return
-    }
     $upgradeAttempted = Test-Path -LiteralPath $trustedRoot
     $existingManifest = $null
     if ($upgradeAttempted) {

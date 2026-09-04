@@ -30,14 +30,14 @@ The protected build/install schemas intentionally use fixed inventories. The off
 | Contract | Exact size |
 |---|---:|
 | reviewed-build v2 top-level fields | 9 |
-| candidate source files | 12 |
+| candidate source files | 13 |
 | runtime inputs | 15 |
 | runtime executable/DLL signers | 9 |
 | candidate-freeze v3 fields | 7 |
 | launcher-context v1 fields | 15 |
 | internal verifier parameters | 8 |
 | root-loader v4 fields | 17 |
-| bootstrap-context v3 fields | 19 |
+| bootstrap-context v3 fields | 22 |
 
 ## Offline verification
 
