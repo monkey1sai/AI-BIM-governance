@@ -76,6 +76,28 @@ import { governanceClient, type RuleResultRow, type RuleRunStatus } from "./cons
 import { t } from "./console/i18n";
 
 
+// live 3D 語意 dock 收合偏好（每個操作員自己的版面習慣，存本機即可）。
+// storage 被停用 / 無痕模式時一律回 null（= 交給容器寬度決定），不讓版面因此爆掉。
+const SEMANTIC_DOCK_STORAGE_KEY = "bim.viewer.semanticDockCollapsed";
+const USD_DOCK_STORAGE_KEY = "bim.viewer.usdDockCollapsed";
+
+function readDockPreference(key: string): boolean | null {
+    try {
+        const raw = window.localStorage.getItem(key);
+        return raw === "1" ? true : raw === "0" ? false : null;
+    } catch {
+        return null;
+    }
+}
+
+function writeDockPreference(key: string, collapsed: boolean): void {
+    try {
+        window.localStorage.setItem(key, collapsed ? "1" : "0");
+    } catch {
+        // 無法持久化不影響本次 session 的版面切換。
+    }
+}
+
 interface USDPrimType {
     name?: string;
     path: string;
@@ -138,6 +160,10 @@ interface AppState {
     govBindingApplyState?: BindingApplyState;
     // 完整問題分頁：viewer 分頁（模型=語意檢視 / 問題=治理操作全幅）。
     viewerTab: "model" | "issues";
+    // 左緣兩個 dock 的收合態（Omniverse USD Composer 收合軌）。null = 尚未決定，
+    // 由容器寬度決定（窄容器如 console 內嵌 iframe 預設收合，優先給 stage）。
+    semanticDockCollapsed: boolean | null;
+    usdDockCollapsed: boolean | null;
     showUI: boolean;
     isLoading: boolean;
     loadingText: string; 
@@ -1077,6 +1103,8 @@ export default class App extends React.Component<AppProps, AppState> {
             isKitReady: false,
             showStream: false,
             viewerTab: "model",
+            semanticDockCollapsed: readDockPreference(SEMANTIC_DOCK_STORAGE_KEY),
+            usdDockCollapsed: readDockPreference(USD_DOCK_STORAGE_KEY),
             showUI: false,
             loadingText: "正在載入成果檔清單...",
             streamDiagnostic: null,
@@ -5927,6 +5955,19 @@ export default class App extends React.Component<AppProps, AppState> {
             const streamRole = isSpectatorStreamMode() ? "spectator" : "primary";
             const renderedStreamGeneration = this.state.streamMountKey;
             const liveFrameObserved = this._hasRemoteVideoFrame();
+        // ── live 3D 版面（Omniverse USD Composer 慣例）────────────────────────────
+        // 語意 dock 一旦 live 就「佔用」左緣寬度，<video> 以同一個 --gv-stage-inset-left
+        // 內縮，兩者不可能重疊；收合時 stage 取回全寬。
+        // 預設值：未存過偏好時，窄容器（console 內嵌 iframe ~850px）預設收合先給 stage，
+        // 寬容器（獨立 viewer 視窗）預設展開。
+        const semanticDockActive = liveFrameObserved
+            && this.state.viewerTab === "model"
+            && (harnessEnabled() || Boolean(this.state.reviewSessionId));
+        const narrowStage = typeof window !== "undefined" && window.innerWidth < 900;
+        const semanticDockCollapsed = this.state.semanticDockCollapsed ?? narrowStage;
+        const semanticDockWidth = semanticDockActive
+            ? (semanticDockCollapsed ? "var(--gv-dock-rail, 34px)" : "var(--gv-dock-w)")
+            : "0px";
         const runtimeCommandRejection = this.state.runtimeCommandRejection;
         const runtimeAuthorityUnavailable = runtimeCommandRejection?.detail_code === "authority_unavailable";
         const runtimeCommandRejectionReason = runtimeCommandRejection
@@ -5944,8 +5985,17 @@ export default class App extends React.Component<AppProps, AppState> {
         const showUsdStageDock = this.state.showUI
             && this.state.viewerTab === "model"
             && (isDebugQueryEnabled() || this.state.usdPrims.length > 0);
+        // USD Stage 樹 dock 同屬左緣面板（NVIDIA sample 的樹狀面板）。它一樣是 absolute 疊在
+        // stage 上，故必須計入 <video> 的內縮，也套同一組收合軌——否則語意 dock 收合後它會
+        // 露出來繼續蓋住模型，窄容器更會一口氣吃掉三分之一舞台。
+        const usdDockCollapsed = this.state.usdDockCollapsed ?? narrowStage;
+        const usdDockWidth = !showUsdStageDock
+            ? "0px"
+            : usdDockCollapsed ? "var(--gv-dock-rail, 34px)" : "var(--gv-usd-dock-open-w)";
         return (
             <div
+                className="gv-stage"
+                data-testid="viewer-stage-root"
                 style={{
                     position: 'absolute',
                     top: headerHeight,
@@ -5953,7 +6003,11 @@ export default class App extends React.Component<AppProps, AppState> {
                     right: 0,
                     bottom: 0,
                     width: '100%',
-                }}
+                    // 左緣所有 dock 與 <video> 內縮共用的唯一寬度來源（見 viewer.css .gv-stage）。
+                    "--gv-usd-dock-w": usdDockWidth,
+                    "--gv-semantic-dock-w": semanticDockWidth,
+                    "--gv-stage-inset-left": `calc(${usdDockWidth} + ${semanticDockWidth})`,
+                } as React.CSSProperties}
             >
                 {this.state.reviewSessionId && (
                     <SessionIdleCountdownBanner
@@ -6126,7 +6180,13 @@ export default class App extends React.Component<AppProps, AppState> {
                     onBlur={() => this._handleAppStreamBlur()}
                     style={{
                         position: 'relative',
-                        visibility: this.state.showStream? 'visible' : 'hidden'
+                        visibility: this.state.showStream? 'visible' : 'hidden',
+                        // live 3D 必須完整可見：dock 佔多寬，<video> 就內縮多寬（同一變數）。
+                        marginLeft: 'var(--gv-stage-inset-left, 0px)',
+                        width: 'calc(100% - var(--gv-stage-inset-left, 0px))',
+                        // NVIDIA sample 在 streamReady 後把 #main-div 底色設成純白；在深色治理
+                        // 視區上會出現刺眼白帶（stream 比例與視區不同時的 letterbox 區）。
+                        backgroundColor: 'var(--ab-black, #05080d)',
                     }}
                     onLoggedIn={(userId) => this._onLoggedIn(userId, renderedStreamGeneration)}
                     handleCustomEvent={(event) => this._handleCustomEvent(event, renderedStreamGeneration)}
@@ -6199,27 +6259,66 @@ export default class App extends React.Component<AppProps, AppState> {
                     {showUsdStageDock && (
                         <div
                             data-testid="usd-stage-left-dock"
+                            className={`gv-dock gv-dock--usd${usdDockCollapsed ? " gv-dock--collapsed" : ""}`}
+                            data-dock-state={usdDockCollapsed ? "collapsed" : "expanded"}
                             style={{
                                 position: "absolute",
                                 left: 0,
                                 top: headerHeight,
-                                width: sidebarWidth,
                                 // 明確高度（top..bottom）讓 dock 真正撐開；底部只保留一般工具列安全距離。
                                 bottom: 12,
-                                overflow: "hidden",
                                 // 左側語意樹須在治理 overlay（z-index 20）之上才可點選操作（spec：左側 USD 樹）。
                                 zIndex: 25,
                             }}
                         >
-                            <USDStage
-                                ref={this.usdStageRef}
-                                width={sidebarWidth}
-                                usdPrims={this.state.usdPrims}
-                                onSelectUSDPrims={(value) => this._onSelectUSDPrims(value)}
-                                selectedUSDPrims={this.state.selectedUSDPrims}
-                                fillUSDPrim={(value) => this._onFillUSDPrim(value)}
-                                onReset={() => this._onStageReset()}
-                            />
+                            {usdDockCollapsed ? (
+                                <button
+                                    type="button"
+                                    className="gv-dock__rail"
+                                    data-testid="usd-stage-dock-toggle"
+                                    aria-expanded={false}
+                                    aria-label="展開 USD Stage 樹狀結構"
+                                    title="展開 USD Stage 樹狀結構"
+                                    onClick={() => {
+                                        writeDockPreference(USD_DOCK_STORAGE_KEY, false);
+                                        this.setState({ usdDockCollapsed: false });
+                                    }}
+                                >
+                                    <span className="gv-dot" />
+                                    USD Stage
+                                </button>
+                            ) : (
+                                <>
+                                    <div className="gv-dock__bar">
+                                        <span className="gv-dock__title">USD Stage 樹狀結構</span>
+                                        <button
+                                            type="button"
+                                            className="gv-dock__btn"
+                                            data-testid="usd-stage-dock-toggle"
+                                            aria-expanded
+                                            aria-label="收合 USD Stage 樹狀結構，讓 3D 視區取得更多寬度"
+                                            title="收合 USD Stage 樹狀結構"
+                                            onClick={() => {
+                                                writeDockPreference(USD_DOCK_STORAGE_KEY, true);
+                                                this.setState({ usdDockCollapsed: true });
+                                            }}
+                                        >
+                                            ⟨
+                                        </button>
+                                    </div>
+                                    <div className="gv-dock__body gv-dock__body--flush">
+                                        <USDStage
+                                            ref={this.usdStageRef}
+                                            width={sidebarWidth}
+                                            usdPrims={this.state.usdPrims}
+                                            onSelectUSDPrims={(value) => this._onSelectUSDPrims(value)}
+                                            selectedUSDPrims={this.state.selectedUSDPrims}
+                                            fillUSDPrim={(value) => this._onFillUSDPrim(value)}
+                                            onReset={() => this._onStageReset()}
+                                        />
+                                    </div>
+                                </>
+                            )}
                         </div>
                     )}
                 </>
@@ -6256,6 +6355,12 @@ export default class App extends React.Component<AppProps, AppState> {
                         onReconnect={() => this._reconnectStream()}
                         reservedRight={0}
                         reservedLeft={showUsdStageDock ? sidebarWidth : 0}
+                        dockCollapsed={semanticDockCollapsed}
+                        onToggleDock={() => {
+                            const next = !semanticDockCollapsed;
+                            writeDockPreference(SEMANTIC_DOCK_STORAGE_KEY, next);
+                            this.setState({ semanticDockCollapsed: next });
+                        }}
                         sessionId={this.state.reviewSessionId}
                         triReady={triReady}
                     />
@@ -6264,6 +6369,10 @@ export default class App extends React.Component<AppProps, AppState> {
                 {/* Task3：DataChannel 送出證據（demo-outgoing-log），供 E2E 驗證「UI-local 選取（如對構表選列）
                     不觸發 runtime mutator」。不依賴 ?debug=1 的 DemoControlPanel（該區塊預設隱藏）；本列複用同一份
                     已追蹤的 demoOutgoingMessages 真實狀態（_sendStreamMessage 每次真送出才 append），非另造假資料。 */}
+                {/* Kit 式底部狀態列：DataChannel 送出紀錄與 runtime command lifecycle 是真實佐證，
+                    但以一般流排在 stage 左上時會被 tabbar 與左緣 dock 蓋掉、只露半行。改成貼底細條，
+                    讀得到、也不搶 3D 舞台；內容與條件完全不變。 */}
+                <div className="gv-statusbar">
                 {this.state.viewerTab === "model"
                     && (harnessEnabled() || Boolean(this.state.reviewSessionId))
                     && (
@@ -6295,6 +6404,7 @@ export default class App extends React.Component<AppProps, AppState> {
                         ))}
                     </ol>
                 )}
+                </div>
 
                 {/* 統一治理控制台 MVP：A1–A10 治理面板只在「問題 · 治理」分頁渲染，
                     避免模型分頁被治理/成果檔 UI 壓住；不改 AppStream / backend / DataChannel command path。

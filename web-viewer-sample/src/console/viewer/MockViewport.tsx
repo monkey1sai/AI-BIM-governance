@@ -43,9 +43,13 @@ export interface MockViewportProps {
   frameObserved?: boolean;
   triReady?: { file: TriReadyState; runtime: TriReadyState; semantic: TriReadyState };
   onReconnect?: () => void;
-  // CH-H3：取得真實 Kit 幀（_hasRemoteVideoFrame）後仍掛載——改為左側語意側欄，與中央 live 3D <video> 並存
+  // CH-H3：取得真實 Kit 幀（_hasRemoteVideoFrame）後仍掛載——改為左側語意 dock，與中央 live 3D <video> 並存
   // （對齊範本：①③ 左欄 + ②④⑥ 隨點構件），而非整片消失。誠實鐵律：liveMode 下 banner 標「live 3D 已出幀」，不再宣稱 no-GPU。
   liveMode?: boolean;
+  // live dock 收合態（Omniverse USD Composer 收合軌）。收合時 stage 取回全寬；
+  // 由 Window 持有狀態，因為 <video> 內縮寬度必須跟本 dock 用同一個來源。
+  dockCollapsed?: boolean;
+  onToggleDock?: () => void;
 }
 
 const DASH = "—";
@@ -62,7 +66,7 @@ type ViewerAxisCode = typeof viewerAxes[number]["code"];
 type ViewerAxisTone = "observed" | "index" | "pending" | "blocked";
 
 export function MockViewport(props: MockViewportProps) {
-  const { harness, stageUrl, loadedStageUrl, webrtcStatus, selectedGuid, selectedPrim, bindings = [], reservedRight = 0, reservedLeft = 0, liveMode = false, streamRole = "primary", lifecycleStatus, frameObserved = false, triReady, onReconnect } = props;
+  const { harness, stageUrl, loadedStageUrl, webrtcStatus, selectedGuid, selectedPrim, bindings = [], reservedRight = 0, reservedLeft = 0, liveMode = false, dockCollapsed = false, onToggleDock, streamRole = "primary", lifecycleStatus, frameObserved = false, triReady, onReconnect } = props;
   const layers = bindings.filter((b) => b.ready_status === "ready");
   // ④對構表資料源：經 coordinator :8004 element-mapping for-session proxy（CORS-safe + 守邊界，
   // 瀏覽器不直連 :49101 artifact server）。harness 無真實 coordinator session → null（誠實空狀態）。
@@ -114,14 +118,32 @@ export function MockViewport(props: MockViewportProps) {
       ? { label: "查詢入口", tone: "index" }
       : { label: "等待 session", tone: "pending" };
   };
-  return (
-    <div className={`gv-mock${liveMode ? " gv-mock--live" : ""}`} style={pad}>
+  // live + 收合：整條 dock 縮成 34px 直立軌，stage 取回全寬（語意內容不卸載，展開即回）。
+  if (liveMode && dockCollapsed) {
+    return (
+      <div className="gv-mock gv-mock--live gv-mock--collapsed" data-testid="viewer-semantic-dock" data-dock-state="collapsed">
+        <button
+          type="button"
+          className="gv-dock__rail"
+          data-testid="viewer-semantic-dock-toggle"
+          aria-expanded={false}
+          aria-label="展開語意側欄"
+          title="展開語意側欄（①模型資訊 / ②IFC語意 / ③結構 / ④對構 / ⑥空間）"
+          onClick={onToggleDock}
+        >
+          <span className="gv-dot" />
+          語意側欄
+        </button>
+      </div>
+    );
+  }
+
+  const body = (
+    <>
       <div className="gv-mock__banner" data-testid="mock-viewport-banner">
         {liveMode ? (
-          <>
-            <span className="gv-dot" /> 語意側欄 · <strong>live 3D 已出幀</strong>
-            <span className="gv-mock__hint">中央為 live 3D 視訊（真 Kit 幀）；此側欄同步 ①模型資訊 / ②IFC語意 / ③結構 / ④對構 / ⑥空間，點構件即查語意。</span>
-          </>
+          // dock 標題列已標「語意側欄 · live 3D 已出幀」，此處只留說明，不重複標題。
+          <span className="gv-mock__hint">中央為 live 3D 視訊（真 Kit 幀）；此 dock 同步 ①模型資訊 / ②IFC語意 / ③結構 / ④對構 / ⑥空間，點構件即查語意。</span>
         ) : (
           <>
             <span className="gv-dot" /> Mock Viewport · <strong>deterministic · no-GPU</strong>
@@ -236,6 +258,36 @@ export function MockViewport(props: MockViewportProps) {
           />
         </footer>
       </section>
-    </div>
+    </>
+  );
+
+  // live：語意 dock（標題列固定 + 內容捲動）。dock 佔用版面寬度，中央 live 3D <video>
+  // 由 Window 以同一個 --gv-stage-inset-left 內縮，兩者永不重疊。
+  if (liveMode) {
+    return (
+      <div className="gv-mock gv-mock--live" data-testid="viewer-semantic-dock" data-dock-state="expanded">
+        <div className="gv-dock__bar">
+          <span className="gv-dock__title">語意側欄</span>
+          <span className="gv-dock__state">live 3D 已出幀</span>
+          <button
+            type="button"
+            className="gv-dock__btn"
+            data-testid="viewer-semantic-dock-toggle"
+            aria-expanded
+            aria-label="收合語意側欄，讓 3D 視區取得全寬"
+            title="收合語意側欄（3D 全寬）"
+            onClick={onToggleDock}
+          >
+            ⟨
+          </button>
+        </div>
+        <div className="gv-dock__body">{body}</div>
+      </div>
+    );
+  }
+
+  // 非 live：維持既有中央佔位（harness / 尚未出幀），單一捲動容器、reserved 內距不變。
+  return (
+    <div className="gv-mock" style={pad}>{body}</div>
   );
 }

@@ -84,8 +84,44 @@ describe("StructuredLogDiagnostics", () => {
             ...overrides,
         };
         await act(async () => { root!.render(<StructuredLogDiagnostics {...props} />); });
+        // 診斷面板預設收成 stage 角落 HUD chip（不遮 live 3D）；既有行為契約都針對展開後的
+        // 投遞控制，故 helper 一律先展開。收合預設本身另有專屬測試把關。
+        await act(async () => { q<HTMLButtonElement>("structured-log-toggle")!.click(); });
         return { logger, props };
     };
+
+    it("預設收成角落 HUD chip（不遮 live 3D stage），點 toggle 才展開投遞面板", async () => {
+        await act(async () => {
+            root!.render(<StructuredLogDiagnostics
+                search="?session=review_session_diagnostics_x&trace_id=ifcready_diagnostics_x"
+                logger={makeLogger(async () => ({ ok: true, status: 200 }))}
+                reviewSessionId="review_session_diagnostics_x"
+                conversionJobId="stream_conv_diagnostics_x"
+                kitInstanceId="kit_local_001"
+                ensureViewerLogAuthority={async () => deliveryAuthority}
+                closeReviewSession={async (sessionId) => ({ session_id: sessionId, status: "closed" })}
+            />);
+        });
+
+        const toggle = q<HTMLButtonElement>("structured-log-toggle");
+        expect(toggle).not.toBeNull();
+        expect(q("structured-log-diagnostics")?.getAttribute("data-expanded")).toBe("false");
+        expect(toggle?.getAttribute("aria-expanded")).toBe("false");
+        // 收合態：投遞控制與 ID 表完全不掛載 → 不可能遮住模型。
+        expect(q("structured-log-flush")).toBeNull();
+        expect(q("review-session-close")).toBeNull();
+        expect(q("structured-log-trace-id")).toBeNull();
+        // chip 仍誠實表態（Kit 識別 + 可用性），不是把資訊藏掉。
+        expect(toggle?.textContent).toContain("kit_local_001");
+
+        await act(async () => { toggle!.click(); });
+        expect(q("structured-log-diagnostics")?.getAttribute("data-expanded")).toBe("true");
+        expect(q<HTMLButtonElement>("structured-log-flush")?.disabled).toBe(false);
+        expect(q("structured-log-trace-id")?.textContent).toContain("ifcready_diagnostics_x");
+
+        await act(async () => { q<HTMLButtonElement>("structured-log-toggle")!.click(); });
+        expect(q("structured-log-flush")).toBeNull();
+    });
 
     it("accepts exactly one valid session carrier and rejects duplicates", () => {
         expect(routeReviewSessionIdFromSearch("?session=review_session_x")).toBe("review_session_x");

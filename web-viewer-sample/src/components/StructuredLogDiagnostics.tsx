@@ -58,6 +58,10 @@ export function StructuredLogDiagnostics({
 }: StructuredLogDiagnosticsProps) {
     const [flushState, setFlushState] = useState<FlushState>("idle");
     const [closeState, setCloseState] = useState<CloseState>("idle");
+    // Omniverse viewport 慣例：疊在 3D stage 上的東西只能是角落極輕量 HUD。
+    // 本面板是 runtime 佐證工具而非主要工作面，故預設收成 chip，點開才展開，
+    // 絕不常駐遮住模型。展開狀態只活在本次 session（不做偏好持久化）。
+    const [expanded, setExpanded] = useState(false);
     const pendingFlush = useRef<PendingFlushAction | null>(null);
     const closeInFlight = useRef(false);
     const mounted = useRef(false);
@@ -182,7 +186,28 @@ export function StructuredLogDiagnostics({
     const closeEnabled = actionsEnabled && flushState !== "failure" && !pendingFlush.current;
 
     return (
-        <aside className="structured-log-diagnostics" data-testid="structured-log-diagnostics" aria-label="Structured log delivery">
+        <aside
+            className={`structured-log-diagnostics${expanded ? " is-expanded" : ""}`}
+            data-testid="structured-log-diagnostics"
+            data-expanded={expanded ? "true" : "false"}
+            aria-label="Structured log delivery"
+        >
+            <button
+                type="button"
+                className="structured-log-diagnostics__chip"
+                data-testid="structured-log-toggle"
+                aria-expanded={expanded}
+                title={expanded ? "收合 runtime 診斷" : "展開 runtime 診斷（structured log 投遞）"}
+                onClick={() => setExpanded((value) => !value)}
+            >
+                <span className={`structured-log-diagnostics__dot ${available ? "is-ready" : "is-unavailable"}`} aria-hidden="true" />
+                <span className="structured-log-diagnostics__chip-label">Runtime diagnostics</span>
+                <span className="structured-log-diagnostics__chip-id">{kitInstanceId || reviewSessionId || NOT_OBSERVED}</span>
+                <span className="structured-log-diagnostics__chev" aria-hidden="true">{expanded ? "⌄" : "˄"}</span>
+            </button>
+
+            {expanded && (
+            <div className="structured-log-diagnostics__panel">
             <div className="structured-log-diagnostics__heading">
                 <div>
                     <p className="structured-log-diagnostics__eyebrow">Runtime diagnostics</p>
@@ -280,6 +305,8 @@ export function StructuredLogDiagnostics({
                     )}
                 </div>
             </div>
+            </div>
+            )}
         </aside>
     );
 }
