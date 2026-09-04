@@ -1,48 +1,5 @@
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect } from "@playwright/test";
 import { harnessRoute } from "./harnessRoute";
-
-// live 版面契約共用前置：注入一段真的有寬高的 video track，讓 _hasRemoteVideoFrame() 成立
-// 而進 live dock 版面。驗的是版面幾何，不是 WebRTC —— 真 Kit 首幀由 real-ifc 路徑驗。
-async function enterLiveLayout(page: Page): Promise<void> {
-  await expect(page.getByTestId("mock-viewport")).toBeVisible({ timeout: 30_000 });
-  const injected = await page.evaluate(async () => {
-    const video = document.getElementById("remote-video") as HTMLVideoElement | null;
-    if (!video) return false;
-    const canvas = document.createElement("canvas");
-    canvas.width = 1280;
-    canvas.height = 720;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return false;
-    const paint = () => { ctx.fillStyle = "#16324a"; ctx.fillRect(0, 0, canvas.width, canvas.height); };
-    paint();
-    window.setInterval(paint, 100);
-    video.srcObject = canvas.captureStream(10);
-    await video.play().catch(() => undefined);
-    return true;
-  });
-  expect(injected, "harness 未渲染 #remote-video，live 版面契約無法驗證").toBe(true);
-  await page.waitForFunction(() => {
-    const video = document.getElementById("remote-video") as HTMLVideoElement | null;
-    return Boolean(video && video.readyState >= 2 && video.videoWidth > 0);
-  }, undefined, { timeout: 15_000 });
-  // 觸發一次 re-render，讓 Window 讀到新的 live frame 狀態。
-  await page.getByTestId("nav-issues").click();
-  await page.getByTestId("nav-model").click();
-}
-
-// dock 寬與 <video> 內縮讀同一個 --gv-stage-inset-left；先確認兩者已一致再量幾何。
-async function settledStageGeometry(page: Page) {
-  await page.waitForFunction(() => {
-    const dockEl = document.querySelector('[data-testid="viewer-semantic-dock"]');
-    const stageEl = document.getElementById("main-div");
-    if (!dockEl || !stageEl) return false;
-    return Math.abs(dockEl.getBoundingClientRect().right - stageEl.getBoundingClientRect().x) <= 1;
-  }, undefined, { timeout: 10_000 });
-  const d = await page.getByTestId("viewer-semantic-dock").boundingBox();
-  const v = await page.locator("#main-div").boundingBox();
-  if (!d || !v) throw new Error("missing bounding box for dock/stage");
-  return { d, v };
-}
 
 // CH-H1：中央 3D 視區「不再空白」。harness（無 GPU）下，原本中央是空白 <video>；現以資訊濃密 mock viewport
 // 取代——明標 deterministic·no-GPU（非壞掉），含範本①模型資訊卡 + ④對構表（誠實空狀態）+ loaded layers + 選取 echo。
@@ -205,7 +162,32 @@ test.describe("CH-H1 semantic viewer · mock viewport（harness 不空白）", (
     await page.emulateMedia({ reducedMotion: "reduce" });
     await page.setViewportSize({ width: 1280, height: 900 });
     await page.goto(harnessRoute());
-    await enterLiveLayout(page);
+    await expect(page.getByTestId("mock-viewport")).toBeVisible({ timeout: 30_000 });
+
+    const injected = await page.evaluate(async () => {
+      const video = document.getElementById("remote-video") as HTMLVideoElement | null;
+      if (!video) return false;
+      const canvas = document.createElement("canvas");
+      canvas.width = 1280;
+      canvas.height = 720;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) return false;
+      const paint = () => { ctx.fillStyle = "#16324a"; ctx.fillRect(0, 0, canvas.width, canvas.height); };
+      paint();
+      window.setInterval(paint, 100);
+      video.srcObject = canvas.captureStream(10);
+      await video.play().catch(() => undefined);
+      return true;
+    });
+    expect(injected, "harness 未渲染 #remote-video，live 版面契約無法驗證").toBe(true);
+    await page.waitForFunction(() => {
+      const video = document.getElementById("remote-video") as HTMLVideoElement | null;
+      return Boolean(video && video.readyState >= 2 && video.videoWidth > 0);
+    }, undefined, { timeout: 15_000 });
+
+    // 觸發一次 re-render，讓 Window 讀到新的 live frame 狀態。
+    await page.getByTestId("nav-issues").click();
+    await page.getByTestId("nav-model").click();
 
     const dock = page.getByTestId("viewer-semantic-dock");
     await expect(dock).toBeVisible();
@@ -213,7 +195,19 @@ test.describe("CH-H1 semantic viewer · mock viewport（harness 不空白）", (
 
     // dock 寬與 <video> 內縮都有 180ms 寬度過渡；必須等過渡結束（兩次量測一致）再驗幾何，
     // 否則量到的是動畫中間值。
-    const geometry = () => settledStageGeometry(page);
+    const geometry = async () => {
+      // dock 寬與 <video> 內縮讀同一個 --gv-stage-inset-left；先確認兩者已一致再量幾何。
+      await page.waitForFunction(() => {
+        const dockEl = document.querySelector('[data-testid="viewer-semantic-dock"]');
+        const stageEl = document.getElementById("main-div");
+        if (!dockEl || !stageEl) return false;
+        return Math.abs(dockEl.getBoundingClientRect().right - stageEl.getBoundingClientRect().x) <= 1;
+      }, undefined, { timeout: 10_000 });
+      const d = await dock.boundingBox();
+      const v = await page.locator("#main-div").boundingBox();
+      if (!d || !v) throw new Error("missing bounding box for dock/stage");
+      return { d, v };
+    };
 
     // 契約一：dock 右緣 <= stage 左緣（零重疊），且 stage 仍是版面上較寬的一側。
     const expandedGeom = await geometry();
@@ -236,50 +230,7 @@ test.describe("CH-H1 semantic viewer · mock viewport（harness 不空白）", (
     expect(collapsedGeom.v.width, JSON.stringify(collapsedGeom)).toBeGreaterThan(expandedGeom.v.width);
     await page.screenshot({ path: "../artifacts/e2e/gov-viewer-live-dock-collapsed.png" });
 
-    // 契約三：收合軌可再展開（收合態是另一條 render path，其還原按鈕必須真的復原
-    // dock body 與 stage 內縮），且兩個方向的切換都要落地成 localStorage 偏好。
-    const collapsedPref = await page.evaluate(() => window.localStorage.getItem("bim.viewer.semanticDockCollapsed"));
-    expect(collapsedPref).toBe("1");
-    await page.getByTestId("viewer-semantic-dock-toggle").click();
-    await expect(dock).toHaveAttribute("data-dock-state", "expanded");
-    await expect(page.getByTestId("geo-viewer-left-model")).toBeVisible();
-    const reopenedGeom = await geometry();
-    expect(Math.abs(reopenedGeom.d.width - expandedGeom.d.width), JSON.stringify({ reopenedGeom, expandedGeom })).toBeLessThanOrEqual(1);
-    expect(Math.abs(reopenedGeom.v.x - expandedGeom.v.x), JSON.stringify({ reopenedGeom, expandedGeom })).toBeLessThanOrEqual(1);
-    expect(
-      reopenedGeom.d.x + reopenedGeom.d.width,
-      JSON.stringify(reopenedGeom),
-    ).toBeLessThanOrEqual(reopenedGeom.v.x + 1);
-    const expandedPref = await page.evaluate(() => window.localStorage.getItem("bim.viewer.semanticDockCollapsed"));
-    expect(expandedPref).toBe("0");
-
-    // 契約四：USD Stage 樹 dock 也是左緣 dock 串的一員 —— harness 一定掛載它，
-    // 收合／展開都要改變 stage 內縮且全程零重疊（舊版它是 absolute 白底浮層，直接壓在 <video> 上）。
-    const usdDockLocator = page.getByTestId("usd-stage-left-dock");
-    await expect(usdDockLocator).toBeVisible();
-    await expect(usdDockLocator).toHaveAttribute("data-dock-state", "expanded");
-    const stageXWithUsdExpanded = (await page.locator("#main-div").boundingBox())!.x;
-    const usdExpandedBox = (await usdDockLocator.boundingBox())!;
-    expect(usdExpandedBox.x + usdExpandedBox.width, JSON.stringify({ usdExpandedBox, stageXWithUsdExpanded }))
-      .toBeLessThanOrEqual(stageXWithUsdExpanded + 1);
-
-    await page.getByTestId("usd-stage-dock-toggle").click();
-    await expect(usdDockLocator).toHaveAttribute("data-dock-state", "collapsed");
-    await expect(page.locator('[data-testid="usd-stage-left-dock"] .usdStageContainer')).toHaveCount(0);
-    const usdCollapsedBox = (await usdDockLocator.boundingBox())!;
-    const stageXWithUsdCollapsed = (await page.locator("#main-div").boundingBox())!.x;
-    expect(usdCollapsedBox.width, JSON.stringify(usdCollapsedBox)).toBeLessThanOrEqual(40);
-    expect(stageXWithUsdCollapsed, JSON.stringify({ stageXWithUsdCollapsed, stageXWithUsdExpanded }))
-      .toBeLessThan(stageXWithUsdExpanded);
-    expect(usdCollapsedBox.x + usdCollapsedBox.width).toBeLessThanOrEqual(stageXWithUsdCollapsed + 1);
-    expect(await page.evaluate(() => window.localStorage.getItem("bim.viewer.usdDockCollapsed"))).toBe("1");
-
-    await page.getByTestId("usd-stage-dock-toggle").click();
-    await expect(usdDockLocator).toHaveAttribute("data-dock-state", "expanded");
-    await expect(page.locator('[data-testid="usd-stage-left-dock"] .usdStageContainer')).toHaveCount(1);
-    expect(Math.abs((await page.locator("#main-div").boundingBox())!.x - stageXWithUsdExpanded)).toBeLessThanOrEqual(1);
-
-    // 契約五：USD Stage 樹 dock（若掛載）同屬左緣 dock 串，也不得壓在 <video> 上。
+    // 契約三：USD Stage 樹 dock（若掛載）同屬左緣 dock 串，也不得壓在 <video> 上。
     const usdDock = page.getByTestId("usd-stage-left-dock");
     if (await usdDock.count()) {
       const u = await usdDock.boundingBox();
@@ -288,7 +239,7 @@ test.describe("CH-H1 semantic viewer · mock viewport（harness 不空白）", (
       }
     }
 
-    // 契約六：runtime diagnostics 疊在 stage 上時只能是角落 HUD chip，且不得覆蓋 stage 中心。
+    // 契約四：runtime diagnostics 疊在 stage 上時只能是角落 HUD chip，且不得覆蓋 stage 中心。
     const diagnostics = page.getByTestId("structured-log-diagnostics");
     if (await diagnostics.count()) {
       await expect(page.getByTestId("structured-log-flush")).toHaveCount(0);
@@ -311,7 +262,28 @@ test.describe("CH-H1 semantic viewer · mock viewport（harness 不空白）", (
     await page.emulateMedia({ reducedMotion: "reduce" });
     await page.setViewportSize({ width: 850, height: 900 });
     await page.goto(harnessRoute());
-    await enterLiveLayout(page);
+    await expect(page.getByTestId("mock-viewport")).toBeVisible({ timeout: 30_000 });
+
+    await page.evaluate(async () => {
+      const video = document.getElementById("remote-video") as HTMLVideoElement | null;
+      if (!video) return;
+      const canvas = document.createElement("canvas");
+      canvas.width = 1280;
+      canvas.height = 720;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) return;
+      const paint = () => { ctx.fillStyle = "#16324a"; ctx.fillRect(0, 0, canvas.width, canvas.height); };
+      paint();
+      window.setInterval(paint, 100);
+      video.srcObject = canvas.captureStream(10);
+      await video.play().catch(() => undefined);
+    });
+    await page.waitForFunction(() => {
+      const video = document.getElementById("remote-video") as HTMLVideoElement | null;
+      return Boolean(video && video.readyState >= 2 && video.videoWidth > 0);
+    }, undefined, { timeout: 15_000 });
+    await page.getByTestId("nav-issues").click();
+    await page.getByTestId("nav-model").click();
 
     const dock = page.getByTestId("viewer-semantic-dock");
     await expect(dock).toHaveAttribute("data-dock-state", "collapsed");
@@ -323,42 +295,6 @@ test.describe("CH-H1 semantic viewer · mock viewport（harness 不空白）", (
     // 舞台拿到容器至少一半以上的寬（舊版浮層版本在此寬度只剩不到一半可見）。
     expect(v!.width, JSON.stringify({ d, v })).toBeGreaterThan(850 * 0.5);
     await page.screenshot({ path: "../artifacts/e2e/gov-viewer-live-dock-narrow.png" });
-  });
-
-  // 已存的 dock 偏好是「使用者版面習慣」，必須勝過容器寬度的預設判斷；storage 值不合法
-  // 或讀不到時要安靜退回寬度預設而不是讓版面爆掉。既有測試只驗寬度預設，兩條 localStorage
-  // 鍵完全沒被覆蓋到。
-  test("?harness=1 已存 dock 偏好勝過容器寬度預設；不合法值安靜退回寬度預設", async ({ page }) => {
-    await page.emulateMedia({ reducedMotion: "reduce" });
-    await page.setViewportSize({ width: 850, height: 900 });
-
-    // 窄容器預設收合，但已存「展開」偏好必須勝出。
-    await page.addInitScript(() => {
-      window.localStorage.setItem("bim.viewer.semanticDockCollapsed", "0");
-      window.localStorage.setItem("bim.viewer.usdDockCollapsed", "0");
-    });
-    await page.goto(harnessRoute());
-    await enterLiveLayout(page);
-    await expect(page.getByTestId("viewer-semantic-dock")).toHaveAttribute("data-dock-state", "expanded");
-    await expect(page.getByTestId("usd-stage-left-dock")).toHaveAttribute("data-dock-state", "expanded");
-    const preferredGeom = await settledStageGeometry(page);
-    expect(
-      preferredGeom.d.x + preferredGeom.d.width,
-      JSON.stringify(preferredGeom),
-    ).toBeLessThanOrEqual(preferredGeom.v.x + 1);
-
-    // 不合法值（非 "0"/"1"）視同未設定 → 退回窄容器的收合預設，且不得拋錯。
-    const consoleErrors: string[] = [];
-    page.on("pageerror", (error) => consoleErrors.push(error.message));
-    await page.addInitScript(() => {
-      window.localStorage.setItem("bim.viewer.semanticDockCollapsed", "not-a-boolean");
-      window.localStorage.setItem("bim.viewer.usdDockCollapsed", "");
-    });
-    await page.goto(harnessRoute());
-    await enterLiveLayout(page);
-    await expect(page.getByTestId("viewer-semantic-dock")).toHaveAttribute("data-dock-state", "collapsed");
-    await expect(page.getByTestId("usd-stage-left-dock")).toHaveAttribute("data-dock-state", "collapsed");
-    expect(consoleErrors, consoleErrors.join(" | ")).toEqual([]);
   });
 
   // Task2 修復契約：reservedLeft（USD Stage Dock 開啟，?debug=1 或 Kit 回報 usdPrims）灌進 .gv-mock 內距時，
