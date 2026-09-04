@@ -13,6 +13,8 @@ export interface SessionEvent {
   created_at: string;
   /** Present only on events appended through the server-owned close path. */
   close_checkpoint_id?: string;
+  /** Present only on events emitted by a server-owned transition path. */
+  server_owned?: true;
 }
 
 type StoredSessionEvent = Omit<SessionEvent, "sequence"> & { sequence?: number };
@@ -31,6 +33,16 @@ const SERVER_CLOSE_EVENT_TYPES = new Set([
   "finalReviewEvent",
   "sessionClosed",
   "kitInstanceReleased",
+]);
+const SERVER_OWNED_EVENT_TYPES = new Set([
+  "sessionCreated",
+  "sessionActive",
+  "sessionRecreated",
+]);
+const CLIENT_FORBIDDEN_EVENT_TYPES = new Set([
+  "sessionCreated",
+  "sessionActive",
+  "sessionRecreated",
 ]);
 const closeCheckpointIdPattern = /^close_[A-Za-z0-9_-]+$/;
 
@@ -84,6 +96,13 @@ export class EventLog {
     return this.appendEvent(sessionId, type, payload);
   }
 
+  appendServerOwned(sessionId: string, type: string, payload: unknown): SessionEvent {
+    if (!SERVER_OWNED_EVENT_TYPES.has(type)) {
+      throw new Error("Invalid server-owned event type.");
+    }
+    return this.appendEvent(sessionId, type, payload, undefined, true);
+  }
+
   appendServerCloseCheckpoint(
     sessionId: string,
     type: string,
@@ -104,6 +123,7 @@ export class EventLog {
     type: string,
     payload: unknown,
     closeCheckpointId?: string,
+    serverOwned = false,
   ): SessionEvent {
     assertSafeSessionId(sessionId);
     this.migrateLegacyIfNeeded(sessionId);
@@ -115,6 +135,7 @@ export class EventLog {
       payload,
       created_at: nowIso(),
       ...(closeCheckpointId ? { close_checkpoint_id: closeCheckpointId } : {}),
+      ...(serverOwned ? { server_owned: true as const } : {}),
     };
     fs.appendFileSync(this.filePath(sessionId), `${JSON.stringify(event)}\n`, "utf8");
     this.mirrorToStructuredLog(event);
@@ -228,6 +249,10 @@ export class EventLog {
     const lastSequence = existing.reduce((max, event) => Math.max(max, event.sequence), 0);
     return lastSequence + 1;
   }
+}
+
+export function isClientForbiddenSessionEventType(type: string): boolean {
+  return CLIENT_FORBIDDEN_EVENT_TYPES.has(type);
 }
 
 function assertSafeSessionId(sessionId: string): void {
