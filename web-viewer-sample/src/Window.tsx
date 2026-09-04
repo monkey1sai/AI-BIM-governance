@@ -700,7 +700,9 @@ function isExpectedNativeResult(
             && requestedPrimPath !== ""
             && result.primPath === requestedPrimPath
             && Array.isArray(result.children)
-            && result.children.every(isNativeChildPrimRecord);
+            // 明確只傳 child：Array.every 的第二個引數是 index，直接傳函式會把
+            // 兄弟節點的序號當成遞迴深度，第 33 個兄弟就會被誤拒（gate correctness:1）。
+            && result.children.every((child) => isNativeChildPrimRecord(child));
     }
     return false;
 }
@@ -2064,9 +2066,6 @@ export default class App extends React.Component<AppProps, AppState> {
         // stage intent / attempt generation，回來時任一變了就丟棄。
         const stageIntentGenerationAtSend = this.stageIntentGeneration;
         const stageAttemptGenerationAtSend = this.activeStageAttempt?.generation ?? null;
-        // attempt 失敗／逾時只把 status 轉 terminal、不推進任何 generation；遲到的子節點
-        // 回應不得在 viewer 已進入失敗態後重新填樹並送 makePrimsPickable。
-        const stageAttemptWasTerminalAtSend = this.activeStageAttempt?.status === "terminal";
         let nativeTransportFailed = false;
         void AppStream.sendMessage(outgoing)
             .then((result) => {
@@ -2085,8 +2084,13 @@ export default class App extends React.Component<AppProps, AppState> {
                         this._appendReviewEvent("略過遲到的 getChildrenResponse：stage 已切換");
                         return;
                     }
-                    if (!stageAttemptWasTerminalAtSend && this.activeStageAttempt?.status === "terminal") {
-                        this._appendReviewEvent("略過遲到的 getChildrenResponse：stage attempt 已終止");
+                    const borrowedTrace = !(isRecord(result) && Object.prototype.hasOwnProperty.call(result, "trace_id"));
+                    // attempt 失敗／逾時只把 status 轉 terminal、不推進任何 generation。對借用
+                    // outbound trace 的回應：只要目前 attempt 是 terminal（不論請求是在終止前
+                    // 還是終止後發出），都不得在 viewer 已進入失敗／unproven 態時重填樹並送
+                    // makePrimsPickable（review P2 ×2）。
+                    if (borrowedTrace && this.activeStageAttempt?.status === "terminal") {
+                        this._appendReviewEvent("略過 getChildrenResponse：stage attempt 已終止");
                         return;
                     }
                     // 同一 stage 內：handler 對「樹裡找不到的 prim_path」一律當 root 回應整棵換掉
@@ -2094,7 +2098,6 @@ export default class App extends React.Component<AppProps, AppState> {
                     // trace** 的 trace-less native 回應——那是本 PR 新開的路，不得因此讓過期節點
                     // 的回應整棵換樹；帶真實 inbound trace 的回應維持既有行為。非 root 節點若已不在
                     // 目前的樹上（同 stage refresh 期間消失、或 request_stage_tree 指到過期節點）就丟。
-                    const borrowedTrace = !(isRecord(result) && Object.prototype.hasOwnProperty.call(result, "trace_id"));
                     const requestedPrimPath = isRecord(outgoing.payload) ? getPayloadString(outgoing.payload, "prim_path") : "";
                     if (
                         borrowedTrace

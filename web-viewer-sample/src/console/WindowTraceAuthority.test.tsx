@@ -1494,6 +1494,90 @@ describe("Window Socket canonical trace authority", () => {
             );
         });
 
+        // 兄弟節點數量不得影響驗證：Array.every 的 index 若滲入 depth，第 33 個兄弟會被誤拒。
+        it("getChildrenRequest: a root result with 40 top-level siblings (the 33rd carrying children: []) is accepted", async () => {
+            const app = authorizedApp({ synchronousSetState: true });
+            const target = internals(app);
+            target.state = { ...target.state, usdPrims: [] };
+            const siblings = Array.from({ length: 40 }, (_, i) => (
+                i === 32 ? { path: PRIM_ROOT + "/S" + i, children: [] } : { path: PRIM_ROOT + "/S" + i }
+            ));
+            vi.spyOn(AppStream, "sendMessage").mockResolvedValue({
+                action: "message",
+                status: "success",
+                info: "Get children result received",
+                primPath: PRIM_ROOT,
+                children: siblings,
+            });
+            const handled = vi.spyOn(target, "_handleCustomEvent");
+
+            expect(target._sendStreamMessage({ event_type: "getChildrenRequest", payload: { prim_path: PRIM_ROOT } })).toBe(true);
+            await flush();
+
+            expect(handled).toHaveBeenCalledWith(
+                expect.objectContaining({ event_type: "getChildrenResponse" }),
+                expect.any(Number),
+            );
+        });
+
+        // 深度邊界：單鏈 32 層（含 root 子節點為第 1 層）放行，第 33 層拒絕；
+        // 葉節點「沒有 children 欄位」與「children: []」都算合法。
+        function chain(depth: number): Record<string, unknown> {
+            let node: Record<string, unknown> = { path: PRIM_ROOT + "/L" + depth, children: [] };
+            for (let d = depth - 1; d >= 1; d -= 1) {
+                node = { path: PRIM_ROOT + "/L" + d, children: [node] };
+            }
+            return node;
+        }
+        it.each([
+            ["a 32-level single-child chain is accepted", 32, true],
+            ["a 33-level single-child chain is rejected", 33, false],
+        ])("getChildrenRequest: %s", async (_label, depth, delivered) => {
+            const app = authorizedApp({ synchronousSetState: true });
+            const target = internals(app);
+            target.state = { ...target.state, usdPrims: [] };
+            vi.spyOn(AppStream, "sendMessage").mockResolvedValue({
+                action: "message",
+                status: "success",
+                info: "Get children result received",
+                primPath: PRIM_ROOT,
+                children: [chain(depth)],
+            });
+            const handled = vi.spyOn(target, "_handleCustomEvent");
+
+            expect(target._sendStreamMessage({ event_type: "getChildrenRequest", payload: { prim_path: PRIM_ROOT } })).toBe(true);
+            await flush();
+
+            const matcher = expect.objectContaining({ event_type: "getChildrenResponse" });
+            if (delivered) {
+                expect(handled).toHaveBeenCalledWith(matcher, expect.any(Number));
+            } else {
+                expect(handled).not.toHaveBeenCalledWith(matcher, expect.any(Number));
+            }
+        });
+
+        it("getChildrenRequest: a request issued while the attempt is already terminal is dropped", async () => {
+            const app = authorizedApp({ synchronousSetState: true });
+            const target = internals(app);
+            target.activeStageAttempt = { generation: 1, status: "terminal" };
+            vi.spyOn(AppStream, "sendMessage").mockResolvedValue({
+                action: "message",
+                status: "success",
+                info: "Get children result received",
+                primPath: "/World",
+                children: [CHILD_A],
+            });
+            const handled = vi.spyOn(target, "_handleCustomEvent");
+
+            expect(target._sendStreamMessage({ event_type: "getChildrenRequest", payload: { prim_path: "/World" } })).toBe(true);
+            await flush();
+
+            expect(handled).not.toHaveBeenCalledWith(
+                expect.objectContaining({ event_type: "getChildrenResponse" }),
+                expect.any(Number),
+            );
+        });
+
         it("getChildrenRequest: a late native result after the stage attempt turned terminal is dropped", async () => {
             const app = authorizedApp({ synchronousSetState: true });
             const target = internals(app);
