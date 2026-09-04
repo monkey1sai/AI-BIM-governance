@@ -183,6 +183,8 @@
 }
 /* 內容自帶 inset:0 版面（如 NVIDIA sample 的 .usdStageContainer）時不再加內距。 */
 .gv-dock__body--flush { padding: 0; }
+/* 收合時 body 保持掛載（保留 fetch 結果與捲動位置）但不得佔位。 */
+.gv-dock__body[hidden] { display: none; }
 
 /* 收合軌：整條 34px 直立按鈕 —— 點擊面積 = 34 x dock 全高，遠大於最小點擊標準。 */
 .gv-dock__rail {

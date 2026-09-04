@@ -164,6 +164,8 @@ interface AppState {
     // 由容器寬度決定（窄容器如 console 內嵌 iframe 預設收合，優先給 stage）。
     semanticDockCollapsed: boolean | null;
     usdDockCollapsed: boolean | null;
+    // 視窗寬度快照：dock 預設值依「可用舞台寬」判定，故 resize 必須觸發重算。
+    viewportWidth: number;
     showUI: boolean;
     isLoading: boolean;
     loadingText: string; 
@@ -1105,6 +1107,7 @@ export default class App extends React.Component<AppProps, AppState> {
             viewerTab: "model",
             semanticDockCollapsed: readDockPreference(SEMANTIC_DOCK_STORAGE_KEY),
             usdDockCollapsed: readDockPreference(USD_DOCK_STORAGE_KEY),
+            viewportWidth: typeof window !== "undefined" ? window.innerWidth : 0,
             showUI: false,
             loadingText: "正在載入成果檔清單...",
             streamDiagnostic: null,
@@ -1147,7 +1150,16 @@ export default class App extends React.Component<AppProps, AppState> {
         if (window.parent !== window) this._postToParent({ type: "viewer_ready" });
     };
 
+    private _onViewportResize = (): void => {
+        if (typeof window === "undefined") return;
+        const next = window.innerWidth;
+        // 只在真的變動時 setState；dock 預設值是 <900px 的階梯函式，但寬度本身也餵給
+        // usableStageWidth，故照實記錄而非只記錄跨斷點。
+        if (next !== this.state.viewportWidth) this.setState({ viewportWidth: next });
+    };
+
     componentDidMount(): void {
+        if (typeof window !== "undefined") window.addEventListener("resize", this._onViewportResize);
         this.componentMounted = true;
         window.__structLog?.logger.setDeliveryAuthorityProvider(() => this._currentViewerLogDeliveryAuthority());
         // VG-01：嵌入 console iframe 時掛上 parent postMessage 橋（unmount 對稱移除），並通知 parent listener 已就緒。
@@ -1169,6 +1181,7 @@ export default class App extends React.Component<AppProps, AppState> {
     }
 
     componentWillUnmount(): void {
+        if (typeof window !== "undefined") window.removeEventListener("resize", this._onViewportResize);
         this.componentMounted = false;
         this.reviewSocketEpoch += 1;
         this.verifiedDataChannelAuthority = null;
@@ -5963,7 +5976,12 @@ export default class App extends React.Component<AppProps, AppState> {
         const semanticDockActive = liveFrameObserved
             && this.state.viewerTab === "model"
             && (harnessEnabled() || Boolean(this.state.reviewSessionId));
-        const narrowStage = typeof window !== "undefined" && window.innerWidth < 900;
+        // dock 預設值必須看「<video> 實際拿得到的寬」，不是整個視窗寬：?debug=1 時
+        // asset panel(300) + demo panel(360) 會先吃掉 660px，1280 視窗只剩 620px 舞台，
+        // 若仍判為寬容器就會把兩個 dock 都展開、幾乎不留 3D 視區。
+        // viewportWidth 由 componentDidMount 的 resize listener 維護，故跨 900px 拖拉會重算。
+        const usableStageWidth = Math.max(0, this.state.viewportWidth - streamReservedWidth);
+        const narrowStage = this.state.viewportWidth > 0 && usableStageWidth < 900;
         const semanticDockCollapsed = this.state.semanticDockCollapsed ?? narrowStage;
         const semanticDockWidth = semanticDockActive
             ? (semanticDockCollapsed ? "var(--gv-dock-rail, 34px)" : "var(--gv-dock-w)")
@@ -6288,37 +6306,37 @@ export default class App extends React.Component<AppProps, AppState> {
                                     USD Stage
                                 </button>
                             ) : (
-                                <>
-                                    <div className="gv-dock__bar">
-                                        <span className="gv-dock__title">USD Stage 樹狀結構</span>
-                                        <button
-                                            type="button"
-                                            className="gv-dock__btn"
-                                            data-testid="usd-stage-dock-toggle"
-                                            aria-expanded
-                                            aria-label="收合 USD Stage 樹狀結構，讓 3D 視區取得更多寬度"
-                                            title="收合 USD Stage 樹狀結構"
-                                            onClick={() => {
-                                                writeDockPreference(USD_DOCK_STORAGE_KEY, true);
-                                                this.setState({ usdDockCollapsed: true });
-                                            }}
-                                        >
-                                            ⟨
-                                        </button>
-                                    </div>
-                                    <div className="gv-dock__body gv-dock__body--flush">
-                                        <USDStage
-                                            ref={this.usdStageRef}
-                                            width={sidebarWidth}
-                                            usdPrims={this.state.usdPrims}
-                                            onSelectUSDPrims={(value) => this._onSelectUSDPrims(value)}
-                                            selectedUSDPrims={this.state.selectedUSDPrims}
-                                            fillUSDPrim={(value) => this._onFillUSDPrim(value)}
-                                            onReset={() => this._onStageReset()}
-                                        />
-                                    </div>
-                                </>
+                                <div className="gv-dock__bar">
+                                    <span className="gv-dock__title">USD Stage 樹狀結構</span>
+                                    <button
+                                        type="button"
+                                        className="gv-dock__btn"
+                                        data-testid="usd-stage-dock-toggle"
+                                        aria-expanded
+                                        aria-label="收合 USD Stage 樹狀結構，讓 3D 視區取得更多寬度"
+                                        title="收合 USD Stage 樹狀結構"
+                                        onClick={() => {
+                                            writeDockPreference(USD_DOCK_STORAGE_KEY, true);
+                                            this.setState({ usdDockCollapsed: true });
+                                        }}
+                                    >
+                                        ⟨
+                                    </button>
+                                </div>
                             )}
+                            {/* 收合時只隱藏、不卸載：USDStage 的展開節點是 component-local
+                                state，卸載會在重開時重置成初始樹。 */}
+                            <div className="gv-dock__body gv-dock__body--flush" hidden={usdDockCollapsed}>
+                                <USDStage
+                                    ref={this.usdStageRef}
+                                    width={sidebarWidth}
+                                    usdPrims={this.state.usdPrims}
+                                    onSelectUSDPrims={(value) => this._onSelectUSDPrims(value)}
+                                    selectedUSDPrims={this.state.selectedUSDPrims}
+                                    fillUSDPrim={(value) => this._onFillUSDPrim(value)}
+                                    onReset={() => this._onStageReset()}
+                                />
+                            </div>
                         </div>
                     )}
                 </>
