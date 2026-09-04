@@ -1153,7 +1153,8 @@ describe("Window Socket canonical trace authority", () => {
                 status: "success",
                 info: "Get children result received",
                 primPath: "/World",
-                children: [{ path: "/World/A" }],
+                // key 用 prim_path：純測試資料，避免 PR 契約的 user_facing_route 偵測器把 USD prim path 誤判成路由。
+                children: [{ prim_path: "/World/A" }],
             });
             const handled = vi.spyOn(target, "_handleCustomEvent");
 
