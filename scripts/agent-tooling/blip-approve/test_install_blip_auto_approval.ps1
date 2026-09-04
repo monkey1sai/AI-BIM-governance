@@ -230,6 +230,11 @@ Assert-True ($text -match 'Protect-RuntimeTree' -and
     $text -notmatch 'Protect-Tree -LiteralPath \$stageRoot' -and
     $text -notmatch 'Protect-Tree -LiteralPath \$trustedRoot') `
     'Production upgrade can temporarily expose owner-only Codex login state.'
+Assert-True ($text -match 'New-ProtectedDirectory -LiteralPath \$stageRoot -OwnerOnly' -and
+    $text -match 'New-ProtectedDirectory -LiteralPath \(Join-Path \$stageRoot \$relative\) -OwnerOnly' -and
+    $text -notmatch 'Protect-RuntimeTree -LiteralPath \$stageRoot' -and
+    $text -match '\[System\.IO\.Directory\]::Move\(\$stageRoot, \$trustedRoot\)\s+\$stagePublished = \$true\s+Protect-RuntimeTree -LiteralPath \$trustedRoot') `
+    'Staged runtime is not owner-only until atomic publication and ACL normalization.'
 Assert-True ($text -match '\[System\.IO\.File\]::Move\(\$completionStagePath, \$completionPath\)\s+\$activationCommitted = \$true' -and
     $text -notmatch '\$previousPublished -and -not \$installCompleted' -and
     $text -match '\[System\.IO\.Directory\]::Exists\(\$previousRoot\)') `
@@ -299,6 +304,9 @@ Assert-True ($mainFlowStart -ge 0 -and $recoveryCallIndex -gt $mainFlowStart -an
     'Apply flow validates mutable runtime inputs before processing an existing recovery journal.'
 Assert-True ($text -match '-OperationOut \(\[ref\]\$recoveryOperation\)[\s\S]+Set-RecoveryAttemptMode[\s\S]+-UpgradeAttempted \(\[ref\]\$upgradeAttempted\)') `
     'Recovery errors can still lose the journal operation mode before outer catch handling.'
+Assert-True ($text -match '-TransactionIdOut \(\[ref\]\$recoveryTransactionId\)[\s\S]+\$installerStructTransactionId = \$recoveryTransactionId' -and
+    $text -match 'Write-InstallerStructInformation -Event ''committed_recovery_completed''[\s\S]+-TransactionId \(\[string\]\$recoveryResult\.TransactionId\)') `
+    'Recovery structured logs are not correlated to the recovered transaction authority.'
 Assert-True ($text -match 'Directory\]::Exists\(\$journalFailed\)[\s\S]+Move-UpgradeJournal[\s\S]+already quarantined') `
     'Initial quarantine recovery is not idempotent after the directory move.'
 Assert-True ($text -match "return \[pscustomobject\]@\{[\s\S]+Status = 'committed'[\s\S]+Operation = 'upgrade'" -and
@@ -731,6 +739,7 @@ try {
     $script:productRoot = $sandboxRoot
     $script:candidateRoot = $sandboxRoot
     $script:upgradeTransactionId = 'logger-failure-regression'
+    $script:installerStructTransactionId = [Guid]::NewGuid().ToString('N')
     function New-StructLogger { throw 'injected_struct_logger_failure' }
     $loggingFailureMaskedPrimaryFlow = $false
     try {
@@ -807,6 +816,7 @@ try {
             -ExpectedTargetCandidateFreezeSha256 ('D' * 64)
         Assert-True ($postArchiveRecovery.Status -ceq 'committed' -and
             $postArchiveRecovery.Operation -ceq 'upgrade' -and
+            $postArchiveRecovery.TransactionId -ceq $recoveryId -and
             $postArchiveRecovery.PreviousRoot -ceq $recoveryPrevious) `
             'Committed recovery was not idempotent after its journal was archived.'
         $archivedId = [Guid]::NewGuid().ToString('N')
@@ -873,6 +883,7 @@ try {
             -ExpectedTargetCandidateFreezeSha256 ('D' * 64)
         Assert-True ($archivedRecovery.Status -ceq 'committed' -and
             $archivedRecovery.Operation -ceq 'upgrade' -and
+            $archivedRecovery.TransactionId -ceq $archivedId -and
             $archivedRecovery.PreviousRoot -ceq $archivedPrevious) `
             'Committed archive was not recognized after the active journal was removed.'
 
@@ -998,18 +1009,21 @@ try {
             created_at = '2026-09-04T00:00:00.000Z'
         } | ConvertTo-Json | Set-Content -LiteralPath $script:upgradeTransactionPath -NoNewline
         $reportedOperation = ''
+        $reportedTransactionId = ''
         $rollbackRetryRequested = $false
         try {
             [void](Recover-InterruptedUpgrade `
                 -ExpectedTargetSourceCommit ('b' * 40) `
                 -ExpectedTargetCandidateFreezeSha256 ('D' * 64) `
-                -OperationOut ([ref]$reportedOperation))
+                -OperationOut ([ref]$reportedOperation) `
+                -TransactionIdOut ([ref]$reportedTransactionId))
         }
         catch {
             $rollbackRetryRequested = $_.Exception.Message -match 'rolled back'
         }
-        Assert-True ($rollbackRetryRequested -and $reportedOperation -ceq 'upgrade') `
-            'Recovery did not preserve upgrade mode for the outer error handler.'
+        Assert-True ($rollbackRetryRequested -and $reportedOperation -ceq 'upgrade' -and
+            $reportedTransactionId -ceq $operationId) `
+            'Recovery did not preserve transaction identity and upgrade mode for the outer error handler.'
     }
     finally {
         Set-Item -LiteralPath Function:\Assert-ProtectedAcl -Value $originalAssertProtectedAcl
@@ -1023,6 +1037,7 @@ try {
     }
     Assert-True ($committedRecovery.Status -ceq 'committed' -and
         $committedRecovery.Operation -ceq 'upgrade' -and
+        $committedRecovery.TransactionId -ceq $recoveryId -and
         $committedRecovery.PreviousRoot -ceq $recoveryPrevious) `
         'Committed upgrade recovery did not return observable success.'
     Assert-True (-not [System.IO.File]::Exists($committedTransactionPath) -and

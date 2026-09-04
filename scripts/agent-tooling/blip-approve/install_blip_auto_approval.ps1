@@ -46,6 +46,7 @@ $secretRoot = Join-Path $productRoot 'secrets'
 $trustedRoot = Join-Path $productRoot 'v1'
 $completionPath = Join-Path $trustedRoot 'install-complete.json'
 $upgradeTransactionId = [Guid]::NewGuid().ToString('N')
+$installerStructTransactionId = $upgradeTransactionId
 $completionStagePath = Join-Path $trustedRoot (
     '.install-complete-' + $upgradeTransactionId + '.tmp'
 )
@@ -1105,6 +1106,8 @@ function Write-InstallerStructRecord {
         [Parameter(Mandatory)][ValidateSet('Info', 'Warn')][string]$Level,
         [Parameter(Mandatory)][Alias('Event')][string]$EventName,
         [Parameter(Mandatory)][string]$Message,
+        [ValidatePattern('^[0-9a-f]{32}$')]
+        [string]$TransactionId = $installerStructTransactionId,
         [hashtable]$Data = @{}
     )
     try {
@@ -1118,7 +1121,7 @@ function Write-InstallerStructRecord {
         }
         $structuredData = [ordered]@{
             event = $EventName
-            transaction_id = $upgradeTransactionId
+            transaction_id = $TransactionId
         }
         foreach ($entry in $Data.GetEnumerator()) {
             $structuredData[$entry.Key] = $entry.Value
@@ -1139,9 +1142,12 @@ function Write-InstallerStructWarning {
     param(
         [Parameter(Mandatory)][Alias('Event')][string]$EventName,
         [Parameter(Mandatory)][string]$Message,
+        [ValidatePattern('^[0-9a-f]{32}$')]
+        [string]$TransactionId = $installerStructTransactionId,
         [hashtable]$Data = @{}
     )
-    Write-InstallerStructRecord -Level Warn -Event $EventName -Message $Message -Data $Data
+    Write-InstallerStructRecord -Level Warn -Event $EventName -Message $Message `
+        -TransactionId $TransactionId -Data $Data
     Write-Warning $Message
 }
 
@@ -1149,9 +1155,12 @@ function Write-InstallerStructInformation {
     param(
         [Parameter(Mandatory)][Alias('Event')][string]$EventName,
         [Parameter(Mandatory)][string]$Message,
+        [ValidatePattern('^[0-9a-f]{32}$')]
+        [string]$TransactionId = $installerStructTransactionId,
         [hashtable]$Data = @{}
     )
-    Write-InstallerStructRecord -Level Info -Event $EventName -Message $Message -Data $Data
+    Write-InstallerStructRecord -Level Info -Event $EventName -Message $Message `
+        -TransactionId $TransactionId -Data $Data
 }
 
 function Assert-ActivationCommitMarker {
@@ -1250,7 +1259,8 @@ function Recover-CommittedUpgradeArchive {
     param(
         [Parameter(Mandatory)][string]$ExpectedTargetSourceCommit,
         [Parameter(Mandatory)][string]$ExpectedTargetCandidateFreezeSha256,
-        [ref]$OperationOut
+        [ref]$OperationOut,
+        [ref]$TransactionIdOut
     )
     $matchingTransactions = [System.Collections.Generic.List[object]]::new()
     foreach ($archiveItem in @(Get-ChildItem -Force -File -LiteralPath $productRoot |
@@ -1316,6 +1326,9 @@ function Recover-CommittedUpgradeArchive {
     if ($null -ne $OperationOut) {
         $OperationOut.Value = [string]$match.operation
     }
+    if ($null -ne $TransactionIdOut) {
+        $TransactionIdOut.Value = [string]$match.transaction_id
+    }
     Protect-CompletionMarkerRuntimeReadable
     Assert-ActivationCommitMarker `
         -ExpectedSourceCommit ([string]$match.target_source_commit) `
@@ -1324,6 +1337,7 @@ function Recover-CommittedUpgradeArchive {
     return [pscustomobject]@{
         Status = 'committed'
         Operation = [string]$match.operation
+        TransactionId = [string]$match.transaction_id
         PreviousRoot = if ([string]$match.operation -ceq 'upgrade') {
             [string]$match.previous_root
         }
@@ -1384,18 +1398,21 @@ function Recover-InterruptedUpgrade {
         [ValidatePattern('^[0-9A-F]{64}$')]
         [string]$ExpectedTargetCandidateFreezeSha256,
 
-        [ref]$OperationOut
+        [ref]$OperationOut,
+        [ref]$TransactionIdOut
     )
     if (-not [System.IO.File]::Exists($upgradeTransactionPath)) {
-        if ($null -eq $OperationOut) {
-            return Recover-CommittedUpgradeArchive `
-                -ExpectedTargetSourceCommit $ExpectedTargetSourceCommit `
-                -ExpectedTargetCandidateFreezeSha256 $ExpectedTargetCandidateFreezeSha256
+        $archiveRecoveryParameters = @{
+            ExpectedTargetSourceCommit = $ExpectedTargetSourceCommit
+            ExpectedTargetCandidateFreezeSha256 = $ExpectedTargetCandidateFreezeSha256
         }
-        return Recover-CommittedUpgradeArchive `
-            -ExpectedTargetSourceCommit $ExpectedTargetSourceCommit `
-            -ExpectedTargetCandidateFreezeSha256 $ExpectedTargetCandidateFreezeSha256 `
-            -OperationOut $OperationOut
+        if ($null -ne $OperationOut) {
+            $archiveRecoveryParameters.OperationOut = $OperationOut
+        }
+        if ($null -ne $TransactionIdOut) {
+            $archiveRecoveryParameters.TransactionIdOut = $TransactionIdOut
+        }
+        return Recover-CommittedUpgradeArchive @archiveRecoveryParameters
     }
     Protect-UpgradeJournalOwnerOnly
     $transactionText = Get-Content -Raw -LiteralPath $upgradeTransactionPath
@@ -1441,6 +1458,9 @@ function Recover-InterruptedUpgrade {
     if ($null -ne $OperationOut) {
         $OperationOut.Value = [string]$transaction.operation
     }
+    if ($null -ne $TransactionIdOut) {
+        $TransactionIdOut.Value = $journalId
+    }
     $journalMatchesRequestedCandidate =
         [string]$transaction.target_source_commit -ceq $ExpectedTargetSourceCommit -and
         [string]$transaction.target_candidate_freeze_sha256 -ceq
@@ -1467,6 +1487,7 @@ function Recover-InterruptedUpgrade {
                 return [pscustomobject]@{
                     Status = 'committed'
                     Operation = 'initial'
+                    TransactionId = $journalId
                     PreviousRoot = ''
                 }
             }
@@ -1508,6 +1529,7 @@ function Recover-InterruptedUpgrade {
             return [pscustomobject]@{
                 Status = 'committed'
                 Operation = 'upgrade'
+                TransactionId = $journalId
                 PreviousRoot = $journalPrevious
             }
         }
@@ -1534,6 +1556,7 @@ $stagePublished = $false
 $activationCommitted = $false
 $upgradeAttempted = $false
 $recoveryOperation = ''
+$recoveryTransactionId = ''
 $transactionWritten = $false
 $trustedBootstrapReady = $false
 try {
@@ -1730,9 +1753,13 @@ try {
             $recoveryResult = Recover-InterruptedUpgrade `
                 -ExpectedTargetSourceCommit $sourceCommitElement.GetString() `
                 -ExpectedTargetCandidateFreezeSha256 $freezeHash `
-                -OperationOut ([ref]$recoveryOperation)
+                -OperationOut ([ref]$recoveryOperation) `
+                -TransactionIdOut ([ref]$recoveryTransactionId)
         }
         catch {
+            if ($recoveryTransactionId -match '^[0-9a-f]{32}$') {
+                $installerStructTransactionId = $recoveryTransactionId
+            }
             Set-RecoveryAttemptMode `
                 -Operation $recoveryOperation `
                 -UpgradeAttempted ([ref]$upgradeAttempted)
@@ -1740,7 +1767,8 @@ try {
         }
         if ($null -ne $recoveryResult) {
             if ($recoveryResult.Status -cne 'committed' -or
-                $recoveryResult.Operation -notin @('initial', 'upgrade')) {
+                $recoveryResult.Operation -notin @('initial', 'upgrade') -or
+                [string]$recoveryResult.TransactionId -notmatch '^[0-9a-f]{32}$') {
                 throw 'Interrupted runtime recovery returned an invalid result.'
             }
             $recoveredPrevious = if ($recoveryResult.Operation -ceq 'upgrade') {
@@ -1749,6 +1777,7 @@ try {
             else { '' }
             Write-InstallerStructInformation -Event 'committed_recovery_completed' `
                 -Message 'A committed runtime transaction journal was recovered.' `
+                -TransactionId ([string]$recoveryResult.TransactionId) `
                 -Data @{
                     operation = $recoveryResult.Operation
                     trusted_root = $trustedRoot
@@ -1815,7 +1844,7 @@ try {
         $existingManifest = Assert-ExistingTrustedRuntime
         Open-PredecessorRuntimeFence -Manifest $existingManifest
     }
-    New-ProtectedDirectory -LiteralPath $stageRoot
+    New-ProtectedDirectory -LiteralPath $stageRoot -OwnerOnly
     $stageDirectories = @(
         'app-scripts', 'codex-runtime',
         'codex-runtime\bin', 'codex-runtime\codex-path',
@@ -1825,7 +1854,7 @@ try {
         $stageDirectories = @('state') + $stageDirectories
     }
     foreach ($relative in $stageDirectories) {
-        New-ProtectedDirectory -LiteralPath (Join-Path $stageRoot $relative)
+        New-ProtectedDirectory -LiteralPath (Join-Path $stageRoot $relative) -OwnerOnly
     }
     if (-not $upgradeAttempted) {
         New-ProtectedDirectory -LiteralPath (Join-Path $stageRoot 'codex-home') -OwnerOnly
@@ -1879,9 +1908,6 @@ try {
         -LiteralPath (Join-Path $stageRoot 'manifest.json') -Algorithm SHA256
     ).Hash.ToUpperInvariant()
 
-    if (-not $upgradeAttempted) {
-        Protect-RuntimeTree -LiteralPath $stageRoot
-    }
     foreach ($entry in $trustedFiles.GetEnumerator()) {
         $installed = Join-Path $stageRoot $entry.Key
         if ((Get-FileHash -LiteralPath $installed -Algorithm SHA256).Hash -cne $manifestFiles[$entry.Key]) {
@@ -1928,11 +1954,11 @@ try {
         [System.IO.Directory]::Move($trustedRoot, $previousRoot)
         Move-PreservedRuntimeDirectories -SourceRoot $previousRoot -DestinationRoot $stageRoot `
             -SourceAlreadyValidated
-        Protect-RuntimeTree -LiteralPath $stageRoot
     }
 
     [System.IO.Directory]::Move($stageRoot, $trustedRoot)
     $stagePublished = $true
+    Protect-RuntimeTree -LiteralPath $trustedRoot
     $ownerOnlyRuntimeRoot = Join-Path $trustedRoot 'codex-home'
     $runtimeReadable = @(
         $protectedRoot, $productRoot, $trustedRoot
