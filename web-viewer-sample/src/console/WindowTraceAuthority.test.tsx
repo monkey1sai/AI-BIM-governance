@@ -1247,10 +1247,19 @@ describe("Window Socket canonical trace authority", () => {
             expect(target.state.isKitReady).toBe(false);
         });
 
-        it("getChildrenRequest: a trace-less ACK without primPath/children never replaces the stage tree", async () => {
+        // 兩個欄位是各自獨立的守門（&&）：只給其中一個、或型別錯，都必須擋下。
+        // 把 && 改成 ||、或放寬任一 typeof 檢查，這組會轉紅。
+        it.each([
+            ["generic ack without primPath/children", { action: "message", status: "success", info: "generic ack" }],
+            ["only primPath (no children)", { action: "message", status: "success", info: "x", primPath: "/World" }],
+            ["only children (no primPath)", { action: "message", status: "success", info: "x", children: [] }],
+            ["primPath is not a string", { action: "message", status: "success", info: "x", primPath: 7, children: [] }],
+            ["children is not an array", { action: "message", status: "success", info: "x", primPath: "/World", children: "nope" }],
+            ["children is null", { action: "message", status: "success", info: "x", primPath: "/World", children: null }],
+        ])("getChildrenRequest: %s never replaces the stage tree", async (_label, result) => {
             const app = authorizedApp({ synchronousSetState: true });
             const target = internals(app);
-            vi.spyOn(AppStream, "sendMessage").mockResolvedValue({ action: "message", status: "success", info: "generic ack" });
+            vi.spyOn(AppStream, "sendMessage").mockResolvedValue(result);
             const handled = vi.spyOn(target, "_handleCustomEvent");
 
             expect(target._sendStreamMessage({ event_type: "getChildrenRequest", payload: { prim_path: "/World" } })).toBe(true);
@@ -1260,6 +1269,35 @@ describe("Window Socket canonical trace authority", () => {
                 expect.objectContaining({ event_type: "getChildrenResponse" }),
                 expect.any(Number),
             );
+        });
+
+        // loadingState 必須是字串：present-but-malformed 也要擋，存在性／truthiness 檢查不夠。
+        it.each([
+            ["a number", 1],
+            ["null", null],
+            ["an object", { state: "idle" }],
+            ["a boolean", true],
+        ])("loadingStateQuery: success result with a non-string loadingState (%s) is not authenticated", async (_label, loadingState) => {
+            const app = authorizedApp({ synchronousSetState: true });
+            const target = internals(app);
+            vi.spyOn(AppStream, "sendMessage").mockResolvedValue({
+                action: "message",
+                status: "success",
+                info: "Loading state result received",
+                loadingState,
+                url: "",
+            });
+            const handled = vi.spyOn(target, "_handleCustomEvent");
+            target.state = { ...target.state, isKitReady: false, webrtcLifecycleStatus: "started" };
+
+            expect(target._sendStreamMessage({ event_type: "loadingStateQuery", payload: {} })).toBe(true);
+            await flush();
+
+            expect(handled).not.toHaveBeenCalledWith(
+                expect.objectContaining({ event_type: "loadingStateResponse" }),
+                expect.any(Number),
+            );
+            expect(target.state.isKitReady).toBe(false);
         });
     });
 });
