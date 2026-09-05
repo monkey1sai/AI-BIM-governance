@@ -15,7 +15,7 @@ This directory persists the review broker source and offline regression tests. I
 - `invoke_protected_blip_installer_launcher.ps1`: the only public owner-side installer entrypoint. It accepts only an exact fixed-host `-NoProfile -NonInteractive -File` command line, pins its own and the internal verifier bytes, clears the process environment, then executes the strict-UTF-8 verifier bytes in that same process with a fresh reference-equal capability and exact launcher context.
 - `invoke_protected_blip_installer.ps1`: internal verifier source. It refuses file-based execution, requires the process-local launcher proof plus the launcher's exact OS command line, and validates the reviewed v2 manifest plus installer-launcher/verifier/bootstrap tuple. Its unauthenticated GitHub reads use redirect-free, strict-UTF-8, byte-bounded streaming with an independent body deadline and bounded pagination. The commit-to-pulls listing is used only to locate pull requests whose `head.sha` equals the reviewed source; because that simplified response does not carry authoritative merger identity, the verifier fetches full PR detail and requires exactly one completed `main` merge by fixed owner `monkey1sai` (User `26239865`). It then requires the latest decisive fixed-reviewer `monkey1sai-blip` (User `311287868`) review to be a counted `APPROVED` submitted before merge on that exact source head, re-reads namespaced `heads/main` to reject drift, and proves the resulting merge commit is reachable from that unchanged SHA before forwarding pinned provenance streams to the in-memory bootstrap. Review summary body text is deliberately excluded from installation authority because GitHub permits it to be edited without changing the original `submitted_at`; the broker's canonical body remains audit/output metadata. Git ancestry alone would also accept an admin push or a temporary protection bypass.
 - `invoke_frozen_blip_installer.ps1`: candidate inner bootstrap, executed only as verified in-memory bytes by the external verifier.
-- `install_blip_auto_approval.ps1`: owner-context ProgramData installer. It accepts only a production v3 freeze whose reviewed-manifest hash and locked stream match the owner-authorized outer verifier tuple, and never updates an existing `v1` runtime in place.
+- `install_blip_auto_approval.ps1`: owner-context ProgramData installer. It accepts only a production v3 freeze whose reviewed-manifest hash and locked stream match the owner-authorized outer verifier tuple. A replacement is a one-step ratchet bound to the exact installed predecessor tuple. One exclusive product lock serializes initial install, upgrade, and recovery. With immutable-file fence handles still open, the installer changes the predecessor to owner-only and explicitly denies even the fixed owner read/execute on those immutable files; only after that quiesce verifies does it release the fence and rename the directory. The successor uses strict runtime manifest/completion v2, and both generation-pivot hashes must differ from v1, so an already loaded v1 wrapper cannot resume against v2 bytes. A strict write-through journal binds the target source, manifest, and freeze before either initial or replacement publication. `state`, `codex-home`, and optional `artifacts` move byte-for-byte by same-volume directory rename without ever widening the login tree ACL. The completion payload is flushed to a protected temporary file and atomically renamed to `install-complete.json`; that directory entry is the irrevocable activation commit point. Pre-commit failures restore and verify the exact predecessor or quarantine an incomplete initial root. A present but mismatched activation marker remains fail-closed for owner inspection, and a journal-bound committed target is never rolled back because of later health drift or interrupted journal archival. Previous and failed roots are retained. A future upgrade must update the allowed predecessor tuple in a separately reviewed change.
 
 ## Trust boundaries
 
@@ -30,14 +30,14 @@ The protected build/install schemas intentionally use fixed inventories. The off
 | Contract | Exact size |
 |---|---:|
 | reviewed-build v2 top-level fields | 9 |
-| candidate source files | 12 |
+| candidate source files | 13 |
 | runtime inputs | 15 |
 | runtime executable/DLL signers | 9 |
 | candidate-freeze v3 fields | 7 |
 | launcher-context v1 fields | 15 |
 | internal verifier parameters | 8 |
 | root-loader v4 fields | 17 |
-| bootstrap-context v3 fields | 19 |
+| bootstrap-context v3 fields | 22 |
 
 ## Offline verification
 

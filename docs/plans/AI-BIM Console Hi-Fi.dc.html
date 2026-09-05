@@ -610,6 +610,24 @@ input::placeholder{color:#4d6076}
   </sc-if>
 </div>
 
+<!-- Closed Review Session recovery interaction contract. This template is non-rendering so the
+     approved default visual baselines remain unchanged; executable product routes own runtime truth. -->
+<template data-canon-id="hifi-closed-review-session-recovery">
+  <section data-screen="session-management">
+    <h2>Active sessions</h2>
+    <button>結束 Review Session</button>
+    <dialog data-state="confirmation"><button>永久結束 Session</button><p>不可逆；舊 Session 永久 closed。</p></dialog>
+    <h2>已封存 Session</h2>
+    <table data-source="GET /api/review-sessions?status=closed"><tr data-rebuildability="ready|stale|unavailable"><td>重建新的 Review Session</td><td>前往重新轉檔</td></tr></table>
+  </section>
+  <section data-screen="a1-no-active-session">
+    <button data-action="POST /api/review-sessions/:closedSessionId/recreate">重建新的 Review Session</button>
+    <button data-explicit-user-action="true">啟動 3D Session</button>
+    <button>重新檢查 Kit 狀態</button><a href="#runtime">查看 Runtime 診斷</a>
+    <button>重新啟動 3D Session</button><button>離開 3D 檢視</button>
+  </section>
+</template>
+
 </x-dc>
 <script type="text/x-dc" data-dc-script data-props="{&quot;defaultLang&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;zh&quot;,&quot;en&quot;],&quot;default&quot;:&quot;zh&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Console&quot;},&quot;accent&quot;:{&quot;editor&quot;:&quot;color&quot;,&quot;options&quot;:[&quot;#41c7e8&quot;,&quot;#84c714&quot;,&quot;#2f7bf6&quot;,&quot;#9d8cff&quot;],&quot;default&quot;:&quot;#41c7e8&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Console&quot;},&quot;showConceptApps&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:true,&quot;tsType&quot;:&quot;boolean&quot;,&quot;section&quot;:&quot;Console&quot;}}">
 class Component extends DCLogic {

@@ -121,6 +121,8 @@ _worker / _bim-control = 已自 repo 刪除（2026-05-18 B 方案落地），僅
 | 多終端機／多 CLI 並行 session 看板（明確 register/status/done、選用 Codex notify）、指揮官模式（commander session）與跨 session 傳訊邊界 | `docs/agents/parallel-session-board.md` |
 | 查 Parallel Delivery Fabric 的隔離、admission、evidence、promotion 與 activation 邊界 | `docs/agents/parallel-delivery-fabric.md` |
 | PR 變更對象包含驗證機制本身（deploy path / evidence harness / gate script）、bootstrap ledger 欠帳 | `docs/agents/self-referential-bootstrap.md` |
+| PR review finding disposition、convergence 八 state、bounded retry、base-sync 四例外與計數、`verify-all -BaseRef/-Tier` 本機 preflight | `docs/agents/pr-convergence-agent.md`（正本 `docs/plans/agent-hooks-ci-convergence-redesign.md`）|
+| 要改任何 required status check 的名稱、把 job 改成 matrix / reusable workflow、或動 branch protection | `docs/agents/required-check-change-runbook.md` |
 | 新增／修改 repo 治理規則（機器可讀 artifact 的結構規則、rule ratchet、PINNED 承重規則） | `docs/agents/agent-governance-policy.md` |
 | 查 domain vocabulary、GitHub issue workflow 或 triage labels | `docs/agents/domain.md`、`docs/agents/issue-tracker.md`、`docs/agents/triage-labels.md` |
 

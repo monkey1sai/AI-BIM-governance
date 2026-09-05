@@ -225,6 +225,7 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
   const [viewerMountNonce, setViewerMountNonce] = useState(0);
   const [lease, setLease] = useState<ViewerLeaseClaimResponse | null>(null);
   const [leaseBusy, setLeaseBusy] = useState(false);
+  const [leaveBusy, setLeaveBusy] = useState(false);
   const [leaseErr, setLeaseErr] = useState<ViewerLeaseError | null>(null);
   const [firstFrame, setFirstFrame] = useState(false);
   const [dataChannelReady, setDataChannelReady] = useState(false);
@@ -233,6 +234,8 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
   const [highlightResult, setHighlightResult] = useState<{ ok: boolean; reason?: string } | null>(null);
   const [commandTrace, setCommandTrace] = useState<string | null>(null);
   const identityRef = useRef<ReviewViewerIdentity | null>(null);
+  const manuallyReleasedLeaseIdRef = useRef<string | null>(null);
+  const leaseAttemptRef = useRef(0);
   const viewerRef = useRef<EmbeddedViewerHandle>(null);
   const sessionInputTestId = `${tidPrefix}-session-input`;
   const sessionCandidatesTestId = `${tidPrefix}-session-candidates`;
@@ -356,6 +359,10 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
   useEffect(() => {
     if (!activePrimaryLease) return;
     return () => {
+      if (manuallyReleasedLeaseIdRef.current === activePrimaryLease.lease_id) {
+        manuallyReleasedLeaseIdRef.current = null;
+        return;
+      }
       void coordinatorClient.releaseViewerLease(activePrimaryLease.session_id, activePrimaryLease.lease_id, activePrimaryLease.lease_token).catch(() => {});
     };
   }, [
@@ -445,7 +452,6 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
     setLeaseExpired(false);
     setFirstFrameTimedOut(false);
     setStreamDisconnected(false);
-    setLease(null);
     setFirstFrame(false);
     setDataChannelReady(false);
     setLoadedStageUrl(null);
@@ -453,11 +459,21 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
     setHighlightResult(null);
     setCommandTrace(null);
     try {
+      if (activePrimaryLease) {
+        await coordinatorClient.releaseViewerLease(
+          activePrimaryLease.session_id,
+          activePrimaryLease.lease_id,
+          activePrimaryLease.lease_token,
+        );
+        manuallyReleasedLeaseIdRef.current = activePrimaryLease.lease_id;
+      }
+      setLease(null);
+      leaseAttemptRef.current += 1;
       const claimed = await coordinatorClient.claimViewerLease(sid, {
         viewer_id: identity.viewer_id,
         display_name: identity.display_name,
         requested_role: "primary",
-        client_nonce: `${identity.viewer_id}:${sid}:primary`,
+        client_nonce: `${identity.viewer_id}:${sid}:primary:${leaseAttemptRef.current}`,
       }, identity.user_token);
       setLease(claimed);
     } catch (e) {
@@ -465,7 +481,32 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
     } finally {
       setLeaseBusy(false);
     }
-  }, [sid, validSession, viewerOrigin, sessionObserved, modelArtifactStale, gpuUnavailable, leaseBusy, mode]);
+  }, [sid, validSession, viewerOrigin, sessionObserved, modelArtifactStale, gpuUnavailable, leaseBusy, mode, activePrimaryLease]);
+
+  const leave3dViewer = useCallback(async () => {
+    if (!activePrimaryLease || leaveBusy) return;
+    setLeaveBusy(true);
+    setLeaseErr(null);
+    try {
+      await coordinatorClient.releaseViewerLease(
+        activePrimaryLease.session_id,
+        activePrimaryLease.lease_id,
+        activePrimaryLease.lease_token,
+      );
+      manuallyReleasedLeaseIdRef.current = activePrimaryLease.lease_id;
+      setLease(null);
+      setFirstFrame(false);
+      setDataChannelReady(false);
+      setLoadedStageUrl(null);
+      setStageProofStatus("not_observed");
+      setFirstFrameTimedOut(false);
+      setStreamDisconnected(false);
+    } catch (error) {
+      setLeaseErr(classifyViewerLeaseError(error));
+    } finally {
+      setLeaveBusy(false);
+    }
+  }, [activePrimaryLease, leaveBusy]);
 
   const stageText = stageProofStatus === "unproven"
     ? t("unproven（coordinator authority 尚未證實；handoff 已阻擋）", "unproven (coordinator authority is not confirmed; handoff is blocked)")
@@ -671,6 +712,11 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
                       ? t("啟動 A4 3D Session", "Start A4 3D Session")
                   : t("手動啟動 / attach Kit session", "Start / attach Kit session")}
           </Btn>
+          {activePrimaryLease && (
+            <Btn data-testid={`${tidPrefix}-leave-3d`} disabled={leaveBusy} onClick={() => { void leave3dViewer(); }}>
+              {leaveBusy ? t("離開中…", "Leaving...") : t("離開 3D 檢視", "Leave 3D view")}
+            </Btn>
+          )}
           {!isA1Inline && (
             <a
               className={`ec-btn ${validSession ? "" : "disabled"}`}
@@ -716,7 +762,8 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
                 "Kit runtime is unavailable (the kit-manager instances query failed or no instance is available); start is honestly disabled.",
               )}
             </span>{" "}
-            <a href="#runtime">{t("檢視 Runtime", "Inspect Runtime")}</a>
+            <Btn data-testid={`${tidPrefix}-kit-refresh`} onClick={() => { void refreshRuntimeStatus(); }}>{t("重新檢查 Kit 狀態", "Recheck Kit status")}</Btn>{" "}
+            <a href="#runtime">{t("查看 Runtime 診斷", "View Runtime diagnostics")}</a>
           </div>
         )}
         {leaseExpired && (
@@ -741,9 +788,9 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
               )}
             </span>{" "}
             <Btn data-testid={`${tidPrefix}-first-frame-retry`} disabled={leaseBusy} onClick={() => { void claimPrimary(); }}>
-              {leaseBusy ? t("重試中...", "Retrying...") : t("重試", "Retry")}
+              {leaseBusy ? t("重試中...", "Retrying...") : t("重新啟動 3D Session", "Restart 3D Session")}
             </Btn>{" "}
-            <a href="#runtime">{t("檢視 Runtime", "Inspect Runtime")}</a>
+            <a href="#runtime">{t("查看 Runtime 診斷", "View Runtime diagnostics")}</a>
           </div>
         )}
         {streamDisconnected && (

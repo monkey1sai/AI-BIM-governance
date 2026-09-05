@@ -652,6 +652,25 @@ describe("ReviewSessionViewerPane", () => {
     expect(viewerBox.renderCount).toBe(0);
   });
 
+  it("leaves the 3D view by releasing only the viewer lease and keeps the session selectable", async () => {
+    await renderPane();
+    await act(async () => { q<HTMLButtonElement>("review-room-manual-start")!.click(); });
+    await flush();
+
+    expect(q("review-room-leave-3d")?.textContent).toContain("離開 3D 檢視");
+    await act(async () => { q<HTMLButtonElement>("review-room-leave-3d")!.click(); });
+    await flush();
+
+    expect(coordinatorClient.releaseViewerLease).toHaveBeenCalledWith(
+      "review_session_x",
+      "viewer_lease_primary",
+      "lease_token_primary",
+    );
+    expect(q<HTMLInputElement>("review-room-session-input")?.value).toBe("review_session_x");
+    expect(q("review-room-leave-3d")).toBeNull();
+    expect(q<HTMLButtonElement>("review-room-manual-start")?.disabled).toBe(false);
+  });
+
   it("stream-config 回應缺 trace_id 時同樣 fail closed，不掛 viewer", async () => {
     vi.mocked(coordinatorClient.streamConfig).mockResolvedValue({
       session_id: "review_session_x",
@@ -746,10 +765,20 @@ describe("ReviewSessionViewerPane", () => {
     expect(note).not.toBeNull();
     expect(note?.textContent).toContain("首幀");
     expect(q<HTMLButtonElement>("review-room-first-frame-retry")).not.toBeNull();
+    expect(q("review-room-first-frame-retry")?.textContent).toContain("重新啟動 3D Session");
+    expect(note?.textContent).toContain("查看 Runtime 診斷");
 
     await act(async () => { q<HTMLButtonElement>("review-room-first-frame-retry")!.click(); });
     await flush();
     expect(coordinatorClient.claimViewerLease).toHaveBeenCalledTimes(2);
+    expect(coordinatorClient.releaseViewerLease).toHaveBeenCalledWith(
+      "review_session_x",
+      "viewer_lease_primary",
+      "lease_token_primary",
+    );
+    const firstNonce = vi.mocked(coordinatorClient.claimViewerLease).mock.calls[0][1].client_nonce;
+    const retryNonce = vi.mocked(coordinatorClient.claimViewerLease).mock.calls[1][1].client_nonce;
+    expect(retryNonce).not.toBe(firstNonce);
     expect(q("review-room-first-frame-timeout")).toBeNull();
   });
 

@@ -267,6 +267,11 @@ artifacts/spec-to-done-design/
 # AI coding raw telemetry and generated package aggregates are local/hosted artifacts, never source.
 artifacts/telemetry/ai-coding/
 artifacts/metrics/ai-coding/
+# Base-sync ledgers, Actions baselines and local/CI parity records are derived from GitHub
+# server truth on demand; the policies that govern them are tracked, the records never are.
+artifacts/metrics/base-sync/
+artifacts/metrics/actions-baseline/
+artifacts/metrics/ci-local-parity/
 # Observed architecture reports are regenerated from source on demand. The approved
 # ratchet baseline (architecture/observed-baseline.json) is the tracked authority.
 artifacts/architecture/

@@ -1,0 +1,158 @@
+// GitHub Actions cost baseline — pure summarisation over run and job records.
+//
+// Measures what the redesign promises to reduce: wall clock, runner starts, runner seconds,
+// setup share, skipped-step ratio, cancellation rate. Authority: measurement_only. This module
+// never calls GitHub; scripts/dev/collect-actions-baseline.mjs feeds it read-only API output.
+//
+// Privacy (public repository): only workflow/job/step NAMES, ids, conclusions, timestamps and
+// durations are retained. Bodies, logs, actors and URLs are never stored.
+
+export const ACTIONS_BASELINE_VERSION = 'actions-baseline/v1';
+
+const SETUP_STEP = /checkout|set up job|setup|install|cache|complete job|post /iu;
+const ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/u;
+
+export class ActionsBaselineError extends Error {
+  constructor(code, message) {
+    super(message);
+    this.name = 'ActionsBaselineError';
+    this.code = code;
+  }
+}
+
+function fail(code, message) {
+  throw new ActionsBaselineError(code, message);
+}
+
+function seconds(start, end) {
+  if (typeof start !== 'string' || typeof end !== 'string' || !ISO.test(start) || !ISO.test(end)) return null;
+  const delta = (Date.parse(end) - Date.parse(start)) / 1000;
+  return Number.isFinite(delta) && delta >= 0 ? delta : null;
+}
+
+export function percentile(values, p) {
+  const sorted = values.filter((value) => Number.isFinite(value)).sort((a, b) => a - b);
+  if (sorted.length === 0) return null;
+  const index = Math.min(sorted.length - 1, Math.max(0, Math.ceil((p / 100) * sorted.length) - 1));
+  return sorted[index];
+}
+
+function round(value, digits = 1) {
+  return value === null ? null : Number(value.toFixed(digits));
+}
+
+export function summarizeWorkflowRuns(runs) {
+  if (!Array.isArray(runs)) fail('input_invalid', 'runs must be an array.');
+  const byName = new Map();
+  for (const [index, run] of runs.entries()) {
+    if (typeof run?.name !== 'string' || typeof run?.conclusion !== 'string' && run?.conclusion !== null) fail('input_invalid', `runs[${index}] needs name and conclusion.`);
+    const entry = byName.get(run.name) ?? { durations: [], conclusions: {}, events: {} };
+    const duration = seconds(run.run_started_at, run.updated_at);
+    if (duration !== null && run.status === 'completed') entry.durations.push(duration);
+    const conclusion = run.conclusion ?? 'null';
+    entry.conclusions[conclusion] = (entry.conclusions[conclusion] ?? 0) + 1;
+    if (typeof run.event === 'string') entry.events[run.event] = (entry.events[run.event] ?? 0) + 1;
+    byName.set(run.name, entry);
+  }
+  return [...byName.entries()].map(([name, entry]) => ({
+    workflow: name,
+    runs: Object.values(entry.conclusions).reduce((sum, count) => sum + count, 0),
+    completed: entry.durations.length,
+    p50_seconds: round(percentile(entry.durations, 50)),
+    p95_seconds: round(percentile(entry.durations, 95)),
+    max_seconds: round(entry.durations.length ? Math.max(...entry.durations) : null),
+    cancelled_ratio: round((entry.conclusions.cancelled ?? 0) / Math.max(1, Object.values(entry.conclusions).reduce((sum, count) => sum + count, 0)), 3),
+    conclusions: entry.conclusions,
+    events: entry.events,
+  })).sort((a, b) => b.runs - a.runs || a.workflow.localeCompare(b.workflow, 'en'));
+}
+
+export function summarizeJobs(jobs) {
+  if (!Array.isArray(jobs)) fail('input_invalid', 'jobs must be an array.');
+  const byJob = new Map();
+  let runnersStarted = 0;
+  let runnerSeconds = 0;
+  let setupSeconds = 0;
+  let steps = 0;
+  let skippedSteps = 0;
+  const runIds = new Set();
+  for (const [index, job] of jobs.entries()) {
+    if (typeof job?.name !== 'string' || typeof job?.workflow_name !== 'string') fail('input_invalid', `jobs[${index}] needs name and workflow_name.`);
+    runIds.add(String(job.run_id ?? index));
+    const key = `${job.workflow_name}\u0000${job.name}`;
+    const entry = byJob.get(key) ?? { workflow: job.workflow_name, job: job.name, seen: 0, ran: 0, durations: [], steps: 0, skipped: 0, setup: 0 };
+    entry.seen += 1;
+    const ran = job.conclusion !== 'skipped' && Array.isArray(job.steps) && job.steps.length > 0;
+    if (ran) {
+      entry.ran += 1;
+      runnersStarted += 1;
+      const duration = seconds(job.started_at, job.completed_at) ?? 0;
+      entry.durations.push(duration);
+      runnerSeconds += duration;
+      for (const step of job.steps) {
+        entry.steps += 1;
+        steps += 1;
+        if (step.conclusion === 'skipped') {
+          entry.skipped += 1;
+          skippedSteps += 1;
+        }
+        if (SETUP_STEP.test(String(step.name ?? ''))) {
+          const stepSeconds = seconds(step.started_at, step.completed_at) ?? 0;
+          entry.setup += stepSeconds;
+          setupSeconds += stepSeconds;
+        }
+      }
+    }
+    byJob.set(key, entry);
+  }
+  const runs = Math.max(1, runIds.size);
+  return {
+    jobs: [...byJob.values()].map((entry) => ({
+      workflow: entry.workflow,
+      job: entry.job,
+      seen: entry.seen,
+      ran: entry.ran,
+      p50_seconds: round(percentile(entry.durations, 50)),
+      p95_seconds: round(percentile(entry.durations, 95)),
+      skipped_step_ratio: entry.steps ? round(entry.skipped / entry.steps, 3) : null,
+      setup_seconds_total: round(entry.setup),
+    })).sort((a, b) => (b.p50_seconds ?? -1) * b.ran - (a.p50_seconds ?? -1) * a.ran || a.job.localeCompare(b.job, 'en')),
+    totals: {
+      runs_sampled: runIds.size,
+      runners_started: runnersStarted,
+      runners_per_run: round(runnersStarted / runs, 2),
+      runner_seconds: round(runnerSeconds),
+      runner_minutes_per_run: round(runnerSeconds / runs / 60, 2),
+      steps_total: steps,
+      steps_skipped: skippedSteps,
+      skipped_step_ratio: steps ? round(skippedSteps / steps, 3) : null,
+      setup_seconds: round(setupSeconds),
+      setup_share: runnerSeconds ? round(setupSeconds / runnerSeconds, 3) : null,
+    },
+  };
+}
+
+export function buildBaselineReport({ repository, collected_at: collectedAt, window, runs, jobs }) {
+  if (typeof repository !== 'string' || !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u.test(repository)) fail('input_invalid', 'repository must be owner/name.');
+  if (typeof collectedAt !== 'string' || !ISO.test(collectedAt)) fail('input_invalid', 'collected_at must be an ISO timestamp.');
+  const workflows = summarizeWorkflowRuns(runs);
+  const jobSummary = summarizeJobs(jobs);
+  return {
+    schema_version: ACTIONS_BASELINE_VERSION,
+    authority: 'measurement_only',
+    repository,
+    collected_at: collectedAt,
+    window: window ?? null,
+    workflows,
+    jobs: jobSummary.jobs,
+    totals: jobSummary.totals,
+    privacy: { retained: ['names', 'ids', 'conclusions', 'timestamps', 'durations'], excluded: ['bodies', 'logs', 'actors', 'urls'] },
+  };
+}
+
+export function assertMeasurementOnly(report) {
+  if (report?.authority !== 'measurement_only' || report?.schema_version !== ACTIONS_BASELINE_VERSION) {
+    fail('authority_invalid', 'An Actions baseline report is measurement_only and never a gate input.');
+  }
+  return report;
+}

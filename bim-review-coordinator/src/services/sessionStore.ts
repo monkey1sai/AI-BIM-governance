@@ -19,6 +19,9 @@ const MAX_SESSION_TRACE_ID_LENGTH = 200;
 export interface CreateSessionInput {
   /** Server-internal only; public create-session input never accepts this field. */
   trace_id?: string;
+  /** Server-internal only; used by idempotent recreation to make crash recovery deterministic. */
+  session_id?: string;
+  recreated_from_session_id?: string;
   review_request_id?: string;
   tenant_id?: string;
   project_id: string;
@@ -41,13 +44,15 @@ export class SessionStore {
   create(input: CreateSessionInput): ReviewSession {
     const timestamp = nowIso();
     const kitInstanceBindings = input.kit_instance_bindings || [];
-    const sessionId = `review_session_${randomUUID().replaceAll("-", "").slice(0, 12)}`;
+    const sessionId = input.session_id ?? `review_session_${randomUUID().replaceAll("-", "").slice(0, 12)}`;
+    assertSafeSessionId(sessionId);
     const traceId = input.trace_id ?? `rev_${sessionId}`;
     if (!isCanonicalSessionTraceId(traceId, sessionId)) {
       throw new Error("Invalid review session trace_id.");
     }
     const session: ReviewSession = {
       session_id: sessionId,
+      recreated_from_session_id: input.recreated_from_session_id,
       trace_id: traceId,
       review_request_id: input.review_request_id,
       tenant_id: input.tenant_id || "tenant_demo_001",
@@ -166,6 +171,36 @@ export class SessionStore {
 
   setStatus(sessionId: string, status: SessionStatus): ReviewSession | null {
     return this.update(sessionId, { status });
+  }
+
+  getRecreationReceipt(sourceSessionId: string, keyDigest: string): string | null {
+    if (!isSafeSessionId(sourceSessionId) || !/^[a-f0-9]{64}$/.test(keyDigest)) return null;
+    const file = this.recreationReceiptPath(sourceSessionId, keyDigest);
+    if (!fs.existsSync(file)) return null;
+    const recreatedSessionId = fs.readFileSync(file, "utf8").trim();
+    return recreatedSessionId && this.get(recreatedSessionId) ? recreatedSessionId : null;
+  }
+
+  recordRecreationReceipt(sourceSessionId: string, keyDigest: string, recreatedSessionId: string): void {
+    assertSafeSessionId(sourceSessionId);
+    assertSafeSessionId(recreatedSessionId);
+    if (!/^[a-f0-9]{64}$/.test(keyDigest)) throw new Error("Invalid recreation idempotency digest.");
+    const directory = path.join(this.rootDir, ".recreation-receipts");
+    fs.mkdirSync(directory, { recursive: true });
+    const file = this.recreationReceiptPath(sourceSessionId, keyDigest);
+    try {
+      fs.writeFileSync(file, recreatedSessionId, { encoding: "utf8", flag: "wx" });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      const existing = fs.readFileSync(file, "utf8").trim();
+      if (existing !== recreatedSessionId) {
+        throw new Error("Recreation idempotency receipt already points to another session.");
+      }
+    }
+  }
+
+  private recreationReceiptPath(sourceSessionId: string, keyDigest: string): string {
+    return path.join(this.rootDir, ".recreation-receipts", `${sourceSessionId}.${keyDigest}.receipt`);
   }
 
   private filePath(sessionId: string): string {
