@@ -1,6 +1,6 @@
 // ═══════════════════════════════════════════════════════════════════════
 // UnifiedConsole — 共用 poller store（unified-console-runtime-truth design §3.1）
-// 十個 coordinator :8004 既有端點各自一條輪詢迴圈：預設 10 秒節奏、同端點同時最多一個 in-flight、
+// 十一個 coordinator :8004 端點各自一條輪詢迴圈：預設 10 秒節奏、同端點同時最多一個 in-flight、
 // 連續失敗指數退避（10s×2^n，上限 60s）、document.hidden 時不發請求；頁面「訂閱」而非各自 fetch。
 // 沿用既有 coordinatorClient（不新增 HTTP client／依賴）；vitest 於 coordinatorClient 層 spy 注入 mock。
 // 狀態語意（design §3.2）：live＝最近一次 2xx；offline＝502／503／504／網路錯誤／逾時，或尚未收到任何回應；
@@ -12,6 +12,7 @@ import { CoordinatorHttpError, coordinatorClient } from "../coordinatorClient";
 import type {
   CallbackOutboxSummary, ConversionRecord, IfcReadyListItem, KitHealth, KitInstanceState,
   MinioFolderListing, MinioWatchStatus, RuntimeStatus,
+  SessionIdlePolicy,
 } from "../coordinatorClient";
 import type { IssueRow, RuleRunHistoryResponse } from "../governanceClient";
 
@@ -28,11 +29,12 @@ export interface EndpointData {
   minioFolder: MinioFolderListing;
   kitHealth: KitHealth;
   kitInstance: KitInstanceState;
+  sessionIdlePolicy: SessionIdlePolicy;
 }
 export type EndpointKey = keyof EndpointData;
 export const ENDPOINT_KEYS: readonly EndpointKey[] = [
   "runtimeStatus", "ifcReady", "conversionRecords", "outboxSummary", "issues",
-  "ruleRuns", "minioWatch", "minioFolder", "kitHealth", "kitInstance",
+  "ruleRuns", "minioWatch", "minioFolder", "kitHealth", "kitInstance", "sessionIdlePolicy",
 ];
 
 export interface EndpointSlice<T> {
@@ -62,6 +64,7 @@ export const liveFetchers: EndpointFetchers = {
   minioFolder: () => coordinatorClient.getMinioFolder(),
   kitHealth: () => coordinatorClient.kitHealth(),
   kitInstance: () => coordinatorClient.kitInstanceCurrent(),
+  sessionIdlePolicy: () => coordinatorClient.getSessionIdlePolicy(),
 };
 
 const OFFLINE_HTTP: ReadonlySet<number> = new Set([502, 503, 504]);
@@ -80,7 +83,7 @@ export function emptySnapshot(): CoordinatorStatusSnapshot {
   return {
     runtimeStatus: emptySlice(), ifcReady: emptySlice(), conversionRecords: emptySlice(), outboxSummary: emptySlice(),
     issues: emptySlice(), ruleRuns: emptySlice(), minioWatch: emptySlice(), minioFolder: emptySlice(),
-    kitHealth: emptySlice(), kitInstance: emptySlice(),
+    kitHealth: emptySlice(), kitInstance: emptySlice(), sessionIdlePolicy: emptySlice(),
   };
 }
 

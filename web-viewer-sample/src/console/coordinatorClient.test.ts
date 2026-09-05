@@ -1,9 +1,17 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { coordinatorClient, narrowConversionStatus, CONVERSION_LIFECYCLE_STATUS_VALUES, type TriggerConversionResponse } from "./coordinatorClient";
+import { coordinatorClient, isSecureOperatorTransport, narrowConversionStatus, CONVERSION_LIFECYCLE_STATUS_VALUES, type TriggerConversionResponse } from "./coordinatorClient";
 
 describe("coordinatorClient conversion control", () => {
   afterEach(() => {
     vi.restoreAllMocks();
+  });
+
+  it("operator credential transport only allows HTTPS or exact loopback HTTP", () => {
+    expect(isSecureOperatorTransport("https://bim.example.test:8004")).toBe(true);
+    expect(isSecureOperatorTransport("http://127.0.0.1:8004")).toBe(true);
+    expect(isSecureOperatorTransport("http://localhost:8004")).toBe(true);
+    expect(isSecureOperatorTransport("http://192.168.20.181:8004")).toBe(false);
+    expect(isSecureOperatorTransport("ftp://127.0.0.1:8004")).toBe(false);
   });
 
   it("conversionPrioritize 打 POST .../prioritize 帶 reason，回 JSON", async () => {
@@ -16,6 +24,38 @@ describe("coordinatorClient conversion control", () => {
     expect(String(call[0])).toContain("/api/conversion/jobs/ifcready_x/prioritize");
     expect((call[1] as RequestInit).method).toBe("POST");
     expect(String((call[1] as RequestInit).body)).toContain("urgent");
+  });
+
+  it("session idle policy PUT sends operator auth, reason, and optimistic revision", async () => {
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (url, init) => {
+      calls.push({ url: String(url), init: init as RequestInit });
+      return new Response(JSON.stringify({
+        enabled: true, timeout_ms: 1_800_000, source: "operator_override", revision: 3,
+        process_epoch: "11111111111111111111111111111111",
+        countdown_seconds: 10, apply_mode: "live_process", restart_behavior: "environment_value_restored",
+        active_session_behavior: "ready_sessions_restart_idle_clock",
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    });
+
+    const result = await coordinatorClient.updateSessionIdlePolicy(
+      1_800_000,
+      2,
+      "11111111111111111111111111111111",
+      "demo window",
+      "secret-value",
+    );
+    expect(result.revision).toBe(3);
+    expect(calls[0].url).toContain("/api/runtime/session-idle-policy");
+    expect(calls[0].init?.method).toBe("PUT");
+    expect(new Headers(calls[0].init?.headers).get("x-operator-token")).toBe("secret-value");
+    expect(new Headers(calls[0].init?.headers).get("x-operator")).toBeNull();
+    expect(JSON.parse(String(calls[0].init?.body))).toEqual({
+      timeout_ms: 1_800_000,
+      expected_revision: 2,
+      expected_process_epoch: "11111111111111111111111111111111",
+      reason: "demo window",
+    });
   });
 
   it("conversionRetry 非 2xx 時 throw", async () => {

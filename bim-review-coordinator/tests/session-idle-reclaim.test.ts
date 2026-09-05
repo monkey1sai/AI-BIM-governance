@@ -217,6 +217,54 @@ describe("SessionIdleReclaimService (session-lifecycle idle countdown & reclaim)
     expect(errorSpy).toHaveBeenCalledTimes(1);
   });
 
+  it("keeps a terminal teardown retry alive when an operator disables new idle reclaim", () => {
+    const session = createActiveSession();
+    const teardown = vi.fn()
+      .mockImplementationOnce(() => { throw new Error("transient teardown failure"); })
+      .mockImplementationOnce(() => undefined);
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const service = new SessionIdleReclaimService(store, {
+      idleTimeoutMs: 1_000,
+      countdownSeconds: 1,
+      onReclaimTeardown: teardown,
+    });
+    const t0 = 1_000_000;
+    service.connectPeer(session.session_id, "peer-1", t0);
+    service.tick(t0 + 1_000);
+    service.tick(t0 + 2_000);
+    expect(teardown).toHaveBeenCalledTimes(1);
+
+    service.updateIdleTimeoutMs(null, t0 + 2_000);
+    expect(service.getPolicy().enabled).toBe(false);
+    service.tick(t0 + 2_001);
+
+    expect(teardown).toHaveBeenCalledTimes(2);
+    expect(service.getSessionState(session.session_id)).toBeNull();
+  });
+
+  it("keeps a synchronous terminal retry when an operator changes to another timeout", () => {
+    const session = createActiveSession();
+    const teardown = vi.fn()
+      .mockImplementationOnce(() => { throw new Error("transient teardown failure"); })
+      .mockImplementationOnce(() => undefined);
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const service = new SessionIdleReclaimService(store, {
+      idleTimeoutMs: 1_000,
+      countdownSeconds: 1,
+      onReclaimTeardown: teardown,
+    });
+    const t0 = 1_000_000;
+    service.connectPeer(session.session_id, "peer-1", t0);
+    service.tick(t0 + 1_000);
+    service.tick(t0 + 2_000);
+
+    service.updateIdleTimeoutMs(60_000, t0 + 2_000);
+    service.tick(t0 + 2_001);
+
+    expect(teardown).toHaveBeenCalledTimes(2);
+    expect(service.getSessionState(session.session_id)).toBeNull();
+  });
+
   it("retains a zero-second teardown retry after the final ready peer disconnects", () => {
     const session = createActiveSession();
     const teardown = vi.fn()
@@ -341,6 +389,85 @@ describe("SessionIdleReclaimService (session-lifecycle idle countdown & reclaim)
     expect(service.recordActivity(session.session_id, 2_000)).toBe(false);
     expect(service.getSessionState(session.session_id)).toBeNull();
   });
+
+  it("does not replace an in-flight teardown with a fresh clock during non-null reconfiguration", async () => {
+    const session = createActiveSession();
+    let rejectFirst!: (reason?: unknown) => void;
+    const firstAttempt = new Promise<void>((_resolve, reject) => { rejectFirst = reject; });
+    const teardown = vi.fn()
+      .mockReturnValueOnce(firstAttempt)
+      .mockResolvedValueOnce(undefined);
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const service = new SessionIdleReclaimService(store, {
+      idleTimeoutMs: 1_000,
+      countdownSeconds: 1,
+      onReclaimTeardown: teardown,
+    });
+    const t0 = 1_000_000;
+    service.connectPeer(session.session_id, "peer-1", t0);
+    service.tick(t0 + 1_000);
+    service.tick(t0 + 2_000);
+
+    service.updateIdleTimeoutMs(60_000, t0 + 2_000);
+    rejectFirst(new Error("async teardown failure"));
+    await firstAttempt.catch(() => undefined);
+    await Promise.resolve();
+    service.tick(t0 + 2_001);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(teardown).toHaveBeenCalledTimes(2);
+    expect(service.getSessionState(session.session_id)).toBeNull();
+  });
+
+  it("enables a ready peer at runtime and starts its idle clock at the policy boundary", () => {
+    const session = createActiveSession();
+    const countdowns: Array<{ sessionId: string; remaining: number }> = [];
+    const service = new SessionIdleReclaimService(store, {
+      countdownSeconds: 10,
+      onCountdown: (sessionId, remaining) => countdowns.push({ sessionId, remaining }),
+    });
+    const t0 = 1_000_000;
+
+    expect(service.connectPeer(session.session_id, "ready-peer", t0)).toBe(false);
+    expect(service.hasConnectedPeer(session.session_id)).toBe(true);
+    expect(service.getPolicy()).toMatchObject({ enabled: false, source: "environment", revision: 0 });
+
+    expect(service.updateIdleTimeoutMs(60_000, t0 + 5_000)).toMatchObject({
+      enabled: true, timeoutMs: 60_000, source: "operator_override", revision: 1,
+    });
+    expect(service.getSessionState(session.session_id)?.lastActivityAt).toBe(t0 + 5_000);
+    service.tick(t0 + 64_999);
+    expect(countdowns).toHaveLength(0);
+    service.tick(t0 + 65_000);
+    expect(countdowns).toEqual([{ sessionId: session.session_id, remaining: 10 }]);
+  });
+
+  it("cancels an active countdown and restarts ready-session clocks when policy changes", () => {
+    const session = createActiveSession();
+    const cancellations: string[] = [];
+    const service = new SessionIdleReclaimService(store, {
+      idleTimeoutMs: 1_000,
+      onCountdownCancelled: (sessionId) => cancellations.push(sessionId),
+    });
+    const t0 = 2_000_000;
+    service.connectPeer(session.session_id, "ready-peer", t0);
+    service.tick(t0 + 1_000);
+    expect(service.getSessionState(session.session_id)?.isCountingDown).toBe(true);
+
+    service.updateIdleTimeoutMs(120_000, t0 + 2_000);
+    expect(cancellations).toEqual([session.session_id]);
+    expect(service.getSessionState(session.session_id)).toMatchObject({
+      lastActivityAt: t0 + 2_000,
+      isCountingDown: false,
+      countdownRemainingSec: 10,
+    });
+  });
+
+  it.each([0, -1, 1.5, Number.MAX_SAFE_INTEGER])("rejects invalid runtime timeout %s", (value) => {
+    const service = new SessionIdleReclaimService(store);
+    expect(() => service.updateIdleTimeoutMs(value)).toThrow(/idle timeout must/);
+  });
 });
 
 describe("Coordinator App HTTP & Socket integration for Idle Reclaim", () => {
@@ -355,6 +482,7 @@ describe("Coordinator App HTTP & Socket integration for Idle Reclaim", () => {
       sessionStoreDir: tmpSessionsDir,
       eventLogDir: tmpEventsDir,
       sessionIdleTimeoutMs: 50,
+      devAuthToken: "idle-policy-token",
     });
   });
 
@@ -409,6 +537,103 @@ describe("Coordinator App HTTP & Socket integration for Idle Reclaim", () => {
     expect(actRes.status).toBe(200);
     expect(actRes.body.ok).toBe(true);
     expect(actRes.body.session_id).toBe(sessionId);
+  });
+
+  it("exposes and updates the process-local idle policy with auth and revision checks", async () => {
+    const initial = await request(appInstance.app).get("/api/runtime/session-idle-policy");
+    expect(initial.status).toBe(200);
+    expect(initial.body).toMatchObject({
+      enabled: true,
+      timeout_ms: 50,
+      source: "environment",
+      revision: 0,
+      apply_mode: "live_process",
+      restart_behavior: "environment_value_restored",
+      active_session_behavior: "ready_sessions_restart_idle_clock",
+    });
+    expect(initial.body.process_epoch).toMatch(/^[0-9a-f]{32}$/);
+
+    const unauthorized = await request(appInstance.app)
+      .put("/api/runtime/session-idle-policy")
+      .send({ timeout_ms: 120_000, expected_revision: 0, expected_process_epoch: initial.body.process_epoch, reason: "extend demo" });
+    expect(unauthorized.status).toBe(403);
+
+    const updated = await request(appInstance.app)
+      .put("/api/runtime/session-idle-policy")
+      .set("X-Operator-Token", "idle-policy-token")
+      .set("X-Operator", "test-operator")
+      .send({ timeout_ms: 120_000, expected_revision: 0, expected_process_epoch: initial.body.process_epoch, reason: "extend demo" });
+    expect(updated.status).toBe(200);
+    expect(updated.body).toMatchObject({
+      enabled: true,
+      timeout_ms: 120_000,
+      source: "operator_override",
+      revision: 1,
+      process_epoch: initial.body.process_epoch,
+    });
+
+    const restarted = await request(appInstance.app)
+      .put("/api/runtime/session-idle-policy")
+      .set("X-Operator-Token", "idle-policy-token")
+      .send({ timeout_ms: null, expected_revision: 1, expected_process_epoch: "00000000000000000000000000000000", reason: "stale process" });
+    expect(restarted.status).toBe(409);
+
+    const stale = await request(appInstance.app)
+      .put("/api/runtime/session-idle-policy")
+      .set("X-Operator-Token", "idle-policy-token")
+      .send({ timeout_ms: null, expected_revision: 0, expected_process_epoch: initial.body.process_epoch, reason: "stale request" });
+    expect(stale.status).toBe(409);
+
+    const disabled = await request(appInstance.app)
+      .put("/api/runtime/session-idle-policy")
+      .set("X-Operator-Token", "idle-policy-token")
+      .send({ timeout_ms: null, expected_revision: 1, expected_process_epoch: initial.body.process_epoch, reason: "maintenance" });
+    expect(disabled.status).toBe(200);
+    expect(disabled.body).toMatchObject({ enabled: false, timeout_ms: null, revision: 2 });
+  });
+
+  it("rejects the public default dev token for idle policy mutation", async () => {
+    const defaultSessionsDir = fs.mkdtempSync(path.join(os.tmpdir(), "coord-default-token-sessions-"));
+    const defaultEventsDir = fs.mkdtempSync(path.join(os.tmpdir(), "coord-default-token-events-"));
+    const defaultTokenApp = createCoordinatorApp({
+      sessionStoreDir: defaultSessionsDir,
+      eventLogDir: defaultEventsDir,
+      sessionIdleTimeoutMs: 50,
+      devAuthToken: "dev-token",
+    });
+    try {
+      const response = await request(defaultTokenApp.app)
+        .put("/api/runtime/session-idle-policy")
+        .set("X-Operator-Token", "dev-token")
+        .send({ timeout_ms: 1, expected_revision: 0, reason: "must remain disabled" });
+      expect(response.status).toBe(403);
+      expect(defaultTokenApp.idleReclaimService.getPolicy()).toMatchObject({
+        timeoutMs: 50,
+        source: "environment",
+        revision: 0,
+      });
+    } finally {
+      await defaultTokenApp.dispose();
+      fs.rmSync(defaultSessionsDir, { recursive: true, force: true });
+      fs.rmSync(defaultEventsDir, { recursive: true, force: true });
+    }
+  });
+
+  it("rate limits repeated operator-token attempts per source IP", async () => {
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      const rejected = await request(appInstance.app)
+        .put("/api/runtime/session-idle-policy")
+        .set("X-Operator-Token", "wrong-token")
+        .send({ timeout_ms: 120_000, expected_revision: 0, reason: "invalid attempt" });
+      expect(rejected.status).toBe(403);
+    }
+    const limited = await request(appInstance.app)
+      .put("/api/runtime/session-idle-policy")
+      .set("X-Operator-Token", "idle-policy-token")
+      .send({ timeout_ms: 120_000, expected_revision: 0, reason: "rate limited" });
+    expect(limited.status).toBe(429);
+    expect(Number(limited.headers["retry-after"])).toBeGreaterThanOrEqual(1);
+    expect(appInstance.idleReclaimService.getPolicy().revision).toBe(0);
   });
 
   it("automatically closes inactive session with reason=inactivity in ledger when countdown expires", async () => {
