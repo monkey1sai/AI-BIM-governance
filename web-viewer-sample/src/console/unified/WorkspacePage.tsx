@@ -8,7 +8,7 @@ import { t, useLang } from "../i18n";
 import { ACCENT, MONO } from "./fixtures";
 import type { DockKey } from "./fixtures";
 import { WorkspaceFlowGuide } from "./WorkspaceFlowGuide";
-import { useViewportSlot } from "./viewportSlot";
+import { resolveViewerCommandGate, useViewportSlot } from "./viewportSlot";
 import { useUsdStageTree, type USDPrimNode } from "../../hooks/useUsdStageTree";
 
 const DOCK_KEYS: readonly DockKey[] = ["a1", "a2", "a3", "a4", "issues"];
@@ -67,16 +67,19 @@ function StageTreeNodeView({
   selectedPrims,
   onToggle,
   onSelect,
+  disabled,
 }: {
   node: USDPrimNode;
   expandedPaths: Set<string>;
   selectedPrims: Set<string>;
   onToggle: (path: string) => void;
   onSelect: (path: string) => void;
+  disabled: boolean;
 }) {
   const isExpanded = expandedPaths.has(node.path);
   const isSelected = selectedPrims.has(node.path);
-  const hasChildren = Boolean(node.children && node.children.length > 0);
+  // Production Kit omits children for leaves and uses [] for a lazy branch.
+  const hasChildren = node.children !== undefined;
 
   return (
     <div style={{ marginLeft: 8, fontSize: 11 }}>
@@ -84,14 +87,16 @@ function StageTreeNodeView({
         data-uc="stage-tree-item"
         data-path={node.path}
         data-selected={isSelected ? "true" : "false"}
-        onClick={() => onSelect(node.path)}
+        aria-disabled={disabled}
+        onClick={() => { if (!disabled) onSelect(node.path); }}
         style={{
           display: "flex",
           alignItems: "center",
           gap: 4,
           padding: "2px 4px",
           borderRadius: 4,
-          cursor: "pointer",
+          cursor: disabled ? "not-allowed" : "pointer",
+          opacity: disabled ? 0.6 : 1,
           background: isSelected ? "rgba(120,160,210,.25)" : "transparent",
         }}
       >
@@ -100,7 +105,7 @@ function StageTreeNodeView({
             data-testid={`expand-toggle-${node.path}`}
             onClick={(e) => {
               e.stopPropagation();
-              onToggle(node.path);
+              if (!disabled) onToggle(node.path);
             }}
             style={{ cursor: "pointer", userSelect: "none", width: 12 }}
           >
@@ -124,6 +129,7 @@ function StageTreeNodeView({
               selectedPrims={selectedPrims}
               onToggle={onToggle}
               onSelect={onSelect}
+              disabled={disabled}
             />
           ))}
         </div>
@@ -149,9 +155,14 @@ export function WorkspacePage({ initialDock = "a1" }: WorkspacePageProps) {
   const stageTreeApi = useUsdStageTree();
   const rawTree = slot?.stageTree;
   useEffect(() => {
-    if (rawTree && rawTree.length > 0) {
-      stageTreeApi.setUsdPrims(rawTree);
-      for (const node of rawTree) {
+    if (!rawTree) return;
+    stageTreeApi.setUsdPrims(rawTree);
+    if (rawTree.length === 0) {
+      stageTreeApi.resetTree();
+      return;
+    }
+    for (const node of rawTree) {
+      if (node.children?.length && !stageTreeApi.expandedPaths.has(node.path)) {
         stageTreeApi.toggleExpand(node.path);
       }
     }
@@ -163,6 +174,8 @@ export function WorkspacePage({ initialDock = "a1" }: WorkspacePageProps) {
   useEffect(() => {
     setDock(dockFromHashQuery() ?? initialDock);
   }, [initialDock]);
+
+  const activeSessionId = slot?.activeSessionId;
 
   // 中欄 slot ref：identity 穩定（避免每 render 觸發 ref(null)/ref(el)），本頁卸載時解除註冊（host 轉 hidden，不 unmount）。
   const registerSlot = slot?.registerSlot;
@@ -187,7 +200,7 @@ export function WorkspacePage({ initialDock = "a1" }: WorkspacePageProps) {
     issues: "Issues / BCF",
   };
 
-  const toolbarDisabled = !slot?.activeSessionId;
+  const toolbarDisabled = !resolveViewerCommandGate(slot?.gate ?? null).canSend;
 
   return (
     <div
@@ -242,26 +255,53 @@ export function WorkspacePage({ initialDock = "a1" }: WorkspacePageProps) {
         {/* 左：Stage 樹 */}
         <aside
           data-uc="ws-stage-tree"
-          data-state={hasStageTree ? "active" : "unsupported"}
-          aria-disabled={!hasStageTree}
+          data-state={hasStageTree ? (toolbarDisabled ? "blocked" : "active") : activeSessionId ? "waiting" : "unsupported"}
+          aria-disabled={!hasStageTree || toolbarDisabled}
           style={{ borderRight: "1px solid rgba(120,160,210,.10)", padding: 12, display: "flex", flexDirection: "column", gap: 8, minHeight: 0, overflow: "auto" }}
         >
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
             <span style={columnLabel}>{t("Stage 樹", "Stage tree")}</span>
-            {hasStageTree ? (
-              <span style={{ fontFamily: MONO, fontSize: 10, color: "var(--ab-accent)" }}>Live</span>
-            ) : (
-              <span style={{ fontFamily: MONO, fontSize: 10, color: "var(--ab-text-dim)" }}>Roadmap · #609</span>
-            )}
+            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              {slot?.activeSessionId ? (
+                <button
+                  data-testid="ws-request-stage-tree-btn"
+                  title={toolbarDisabled
+                    ? t("viewer 尚未就緒，無法請求 Stage 樹", "The viewer is not ready; Stage tree request is disabled")
+                    : t("向 Kit 重新請求 Stage 樹", "Request Stage tree from Kit")}
+                  disabled={toolbarDisabled}
+                  onClick={() => slot?.requestStageTree("/World")}
+                  style={{
+                    fontSize: 10,
+                    padding: "2px 6px",
+                    borderRadius: 4,
+                    background: "rgba(120,160,210,.15)",
+                    border: "1px solid rgba(120,160,210,.3)",
+                    color: "var(--ab-text)",
+                    cursor: toolbarDisabled ? "not-allowed" : "pointer",
+                    opacity: toolbarDisabled ? 0.55 : 1,
+                  }}
+                >
+                  {t("重整", "Refresh")}
+                </button>
+              ) : null}
+              {hasStageTree && !toolbarDisabled ? (
+                <span style={{ fontFamily: MONO, fontSize: 10, color: "var(--ab-accent)" }}>Live</span>
+              ) : hasStageTree || activeSessionId ? (
+                <span style={{ fontFamily: MONO, fontSize: 10, color: "var(--ab-text-dim)" }}>{t("等待 viewer", "Waiting for viewer")}</span>
+              ) : (
+                <span style={{ fontFamily: MONO, fontSize: 10, color: "var(--ab-text-dim)" }}>Roadmap · #609</span>
+              )}
+            </div>
           </div>
           {hasStageTree ? (
             <>
               <input
                 data-uc="ws-stage-search"
                 type="text"
+                disabled={toolbarDisabled}
                 placeholder={t("搜尋 prim...", "Search prim...")}
                 value={stageTreeApi.searchQuery}
-                onChange={(e) => stageTreeApi.setSearchQuery(e.target.value)}
+                onChange={(e) => { if (!toolbarDisabled) stageTreeApi.setSearchQuery(e.target.value); }}
                 style={{
                   padding: "4px 8px",
                   fontSize: 11,
@@ -278,7 +318,13 @@ export function WorkspacePage({ initialDock = "a1" }: WorkspacePageProps) {
                     node={rootNode}
                     expandedPaths={stageTreeApi.expandedPaths}
                     selectedPrims={stageTreeApi.selectedPrims}
-                    onToggle={stageTreeApi.toggleExpand}
+                    disabled={toolbarDisabled}
+                    onToggle={(path) => {
+                      const expanding = !stageTreeApi.expandedPaths.has(path);
+                      const node = stageTreeApi.findNodeByPath(path);
+                      stageTreeApi.toggleExpand(path);
+                      if (expanding && node?.children?.length === 0) slot?.requestStageTree(path);
+                    }}
                     onSelect={(p) => {
                       stageTreeApi.selectPrim(p);
                       slot?.selectPrim(p);
@@ -294,58 +340,85 @@ export function WorkspacePage({ initialDock = "a1" }: WorkspacePageProps) {
           )}
         </aside>
 
-        {/* 中：viewport slot（live 時 host 覆蓋於此；離線只剩下方誠實說明） */}
+        {/* 中：viewport slot（live 時 host 覆蓋於容器；離線只剩下方誠實說明） */}
         <section
-          ref={slotRef}
           data-uc="ws-viewport-slot"
           aria-label={t("3D viewport", "3D viewport")}
           style={{ minHeight: 0, minWidth: 0, position: "relative", padding: 12, display: "flex", flexDirection: "column" }}
         >
-          {/* 工具列（Issue #605） */}
-          <div data-uc="ws-viewport-toolbar" style={{ display: "flex", gap: 6, marginBottom: 8, alignItems: "center" }}>
+          {/* 工具列（Issue #605）—— 保持置頂且 zIndex: 10，永不被下方 ViewportHost 覆蓋 */}
+          <div
+            data-uc="ws-viewport-toolbar"
+            style={{
+              display: "flex",
+              gap: 6,
+              marginBottom: 8,
+              alignItems: "center",
+              position: "relative",
+              zIndex: 10,
+            }}
+          >
             <button
               data-testid="ws-toolbar-camera-view"
-              title={t("切換相機視角 (⬒)", "Switch camera view (⬒)")}
-              disabled={toolbarDisabled}
-              onClick={() => slot?.sendToolbarAction("camera_view", "perspective")}
-              style={toolbarBtnStyle(toolbarDisabled)}
+              title={t("相機視角尚未接通（Roadmap）", "Camera views are not connected yet (Roadmap)")}
+              disabled
+              style={toolbarBtnStyle(true)}
             >
               ⬒
             </button>
             <button
               data-testid="ws-toolbar-fullscreen"
-              title={t("全螢幕 (✥)", "Toggle fullscreen (✥)")}
-              disabled={toolbarDisabled}
-              onClick={() => slot?.sendToolbarAction("toggle_fullscreen")}
-              style={toolbarBtnStyle(toolbarDisabled)}
+              title={t("全螢幕尚未通過跨來源驗證（Roadmap）", "Fullscreen is not cross-origin verified yet (Roadmap)")}
+              disabled
+              style={toolbarBtnStyle(true)}
             >
               ✥
             </button>
             <button
               data-testid="ws-toolbar-projection"
-              title={t("投影模式切換 (◫)", "Toggle projection (◫)")}
-              disabled={toolbarDisabled}
-              onClick={() => slot?.sendToolbarAction("toggle_projection")}
-              style={toolbarBtnStyle(toolbarDisabled)}
+              title={t("投影模式尚未接通（Roadmap）", "Projection mode is not connected yet (Roadmap)")}
+              disabled
+              style={toolbarBtnStyle(true)}
             >
               ◫
             </button>
             <button
               data-testid="ws-toolbar-reset"
-              title={t("重置視角 (⟲)", "Reset camera (⟲)")}
+              title={t("重置視角並清除選取 (⟲)", "Reset camera and clear selection (⟲)")}
               disabled={toolbarDisabled}
-              onClick={() => slot?.sendToolbarAction("reset_camera")}
+              onClick={() => {
+                stageTreeApi.clearSelection();
+                slot?.sendToolbarAction("reset_camera");
+              }}
               style={toolbarBtnStyle(toolbarDisabled)}
             >
               ⟲
             </button>
+            {activeSessionId ? (
+              <span style={{ fontSize: 11, color: "var(--ab-accent)", fontFamily: MONO, marginLeft: 8 }}>
+                Session: {activeSessionId}
+              </span>
+            ) : null}
           </div>
 
-          <div data-uc="ws-viewport-offline" style={{ flex: 1, minHeight: 0, border: "1px dashed rgba(120,160,210,.18)", borderRadius: 10, padding: 18, display: "flex", flexDirection: "column", gap: 8, justifyContent: "center" }}>
-            <span style={columnLabel}>WebRTC viewport</span>
-            <span style={{ fontSize: 12.5, color: "var(--ab-text-muted)" }}>
-              {t("coordinator :8004 未連線時此處為空；連線後 viewer 會覆蓋在這個區域，並由右側 Dock 的「啟動 3D Session」手動啟動。", "Empty while coordinator :8004 is offline; once live, the viewer overlays this area and is started manually from “Start 3D Session” in the dock.")}
-            </span>
+          {/* 容器 slot：由 WorkspaceViewportHost 覆蓋於此，不遮擋上方的工具列 */}
+          <div
+            ref={slotRef}
+            data-uc="ws-viewport-container"
+            style={{
+              flex: 1,
+              minHeight: 0,
+              position: "relative",
+              display: "flex",
+              flexDirection: "column",
+            }}
+          >
+            <div data-uc="ws-viewport-offline" style={{ flex: 1, minHeight: 0, border: "1px dashed rgba(120,160,210,.18)", borderRadius: 10, padding: 18, display: "flex", flexDirection: "column", gap: 8, justifyContent: "center" }}>
+              <span style={columnLabel}>WebRTC viewport</span>
+              <span style={{ fontSize: 12.5, color: "var(--ab-text-muted)" }}>
+                {t("coordinator :8004 未連線時此處為空；連線後 viewer 會覆蓋在這個區域，並由右側 Dock 的「啟動 3D Session」手動啟動。", "Empty while coordinator :8004 is offline; once live, the viewer overlays this area and is started manually from “Start 3D Session” in the dock.")}
+              </span>
+            </div>
           </div>
         </section>
 

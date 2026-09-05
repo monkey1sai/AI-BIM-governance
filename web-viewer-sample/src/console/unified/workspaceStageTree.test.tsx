@@ -71,6 +71,7 @@ describe("WorkspacePage Stage 樹與工具列整合 (Issue #609, #605)", () => {
   it("當 slot 提供 stageTree 時，左欄轉為 active 狀態並顯示搜尋框與節點", async () => {
     const selectPrimMock = vi.fn();
     const sendToolbarActionMock = vi.fn();
+    const requestStageTreeMock = vi.fn();
 
     const mockSlotApi: ViewportSlotApi = {
       registerSlot: vi.fn(),
@@ -79,19 +80,21 @@ describe("WorkspacePage Stage 樹與工具列整合 (Issue #609, #605)", () => {
       publication: null,
       activeSessionId: "session_test_123",
       setActiveSessionId: vi.fn(),
-      gate: null,
+      gate: { canSend: true, reason: "" },
       setGate: vi.fn(),
       stageTree: [
         {
           path: "/World",
           name: "World",
           children: [
-            { path: "/World/Structure", name: "Structure", type: "Xform" },
+            // Production Kit uses children: [] as the lazy-branch marker.
+            { path: "/World/Structure", name: "Structure", type: "Xform", children: [] },
+            { path: "/World/Leaf", name: "Leaf", type: "Mesh" },
           ],
         },
       ],
       setStageTree: vi.fn(),
-      requestStageTree: vi.fn(),
+      requestStageTree: requestStageTreeMock,
       selectPrim: selectPrimMock,
       sendToolbarAction: sendToolbarActionMock,
       registerHostActions: vi.fn(),
@@ -122,6 +125,21 @@ describe("WorkspacePage Stage 樹與工具列整合 (Issue #609, #605)", () => {
     });
     expect(selectPrimMock).toHaveBeenCalledWith("/World/Structure");
 
+    const expandToggle = container.querySelector('[data-testid="expand-toggle-/World/Structure"]') as HTMLElement | null;
+    expect(expandToggle).not.toBeNull();
+    expect(container.querySelector('[data-testid="expand-toggle-/World/Leaf"]')).toBeNull();
+
+    const refreshButton = container.querySelector('[data-testid="ws-request-stage-tree-btn"]') as HTMLButtonElement | null;
+    expect(refreshButton?.disabled).toBe(false);
+    await act(async () => { refreshButton?.click(); });
+    expect(requestStageTreeMock).toHaveBeenCalledWith("/World");
+    requestStageTreeMock.mockClear();
+
+    await act(async () => { expandToggle?.click(); });
+    expect(requestStageTreeMock).toHaveBeenCalledWith("/World/Structure");
+    await act(async () => { expandToggle?.click(); });
+    expect(requestStageTreeMock).toHaveBeenCalledTimes(1);
+
     // 點擊工具列按鈕
     const resetBtn = container.querySelector('[data-testid="ws-toolbar-reset"]') as HTMLButtonElement | null;
     expect(resetBtn?.disabled).toBe(false);
@@ -129,11 +147,120 @@ describe("WorkspacePage Stage 樹與工具列整合 (Issue #609, #605)", () => {
       resetBtn?.click();
     });
     expect(sendToolbarActionMock).toHaveBeenCalledWith("reset_camera");
+    expect(item?.getAttribute("data-selected")).toBe("false");
 
     const camBtn = container.querySelector('[data-testid="ws-toolbar-camera-view"]') as HTMLButtonElement | null;
+    expect(camBtn?.disabled).toBe(true);
     await act(async () => {
       camBtn?.click();
     });
-    expect(sendToolbarActionMock).toHaveBeenCalledWith("camera_view", "perspective");
+    expect(sendToolbarActionMock).not.toHaveBeenCalledWith("camera_view", "perspective");
+
+    selectPrimMock.mockClear();
+    requestStageTreeMock.mockClear();
+    await act(async () => {
+      root!.render(
+        <ViewportSlotContext.Provider value={{ ...mockSlotApi, gate: { canSend: false, reason: "viewer disconnected" } }}>
+          <WorkspacePage initialDock="a1" />
+        </ViewportSlotContext.Provider>,
+      );
+    });
+    const blockedTree = container.querySelector('[data-uc="ws-stage-tree"]');
+    expect(blockedTree?.getAttribute("data-state")).toBe("blocked");
+    const blockedRefreshButton = container.querySelector('[data-testid="ws-request-stage-tree-btn"]') as HTMLButtonElement | null;
+    const blockedSearchInput = container.querySelector('[data-uc="ws-stage-search"]') as HTMLInputElement | null;
+    expect(blockedRefreshButton?.disabled).toBe(true);
+    expect(blockedSearchInput?.disabled).toBe(true);
+    await act(async () => {
+      const valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+      valueSetter?.call(blockedSearchInput, "Leaf");
+      blockedSearchInput?.dispatchEvent(new Event("input", { bubbles: true }));
+      item?.click();
+      expandToggle?.click();
+      blockedRefreshButton?.click();
+    });
+    expect(container.querySelector('[data-path="/World/Structure"]')).not.toBeNull();
+    expect(selectPrimMock).not.toHaveBeenCalled();
+    expect(requestStageTreeMock).not.toHaveBeenCalled();
+  });
+
+  it("stageTree 轉空後清除舊節點與本地搜尋、展開、選取狀態", async () => {
+    const tree = [{
+      path: "/World",
+      name: "World",
+      children: [
+        { path: "/World/Structure", name: "Structure", type: "Xform", children: [] },
+        { path: "/World/Leaf", name: "Leaf", type: "Mesh" },
+      ],
+    }];
+    const baseSlot: ViewportSlotApi = {
+      registerSlot: vi.fn(),
+      slotEl: null,
+      publish: vi.fn(),
+      publication: null,
+      activeSessionId: "session_test_123",
+      setActiveSessionId: vi.fn(),
+      gate: { canSend: true, reason: "" },
+      setGate: vi.fn(),
+      stageTree: tree,
+      setStageTree: vi.fn(),
+      requestStageTree: vi.fn(),
+      selectPrim: vi.fn(),
+      sendToolbarAction: vi.fn(),
+      registerHostActions: vi.fn(),
+    };
+
+    const renderWithTree = async (stageTree: ViewportSlotApi["stageTree"]) => {
+      await act(async () => {
+        root ??= createRoot(container);
+        root.render(
+          <ViewportSlotContext.Provider value={{ ...baseSlot, stageTree }}>
+            <WorkspacePage initialDock="a1" />
+          </ViewportSlotContext.Provider>,
+        );
+      });
+      await flush();
+    };
+
+    await renderWithTree([]);
+    expect(container.querySelector('[data-uc="ws-stage-tree"]')?.getAttribute("data-state")).toBe("waiting");
+    const initialRefresh = container.querySelector('[data-testid="ws-request-stage-tree-btn"]') as HTMLButtonElement;
+    expect(initialRefresh.disabled).toBe(false);
+    await act(async () => { initialRefresh.click(); });
+    expect(baseSlot.requestStageTree).toHaveBeenCalledTimes(1);
+    expect(baseSlot.requestStageTree).toHaveBeenCalledWith("/World");
+
+    await renderWithTree(tree);
+    const search = container.querySelector('[data-uc="ws-stage-search"]') as HTMLInputElement;
+    const structure = container.querySelector('[data-path="/World/Structure"]') as HTMLElement;
+    const structureToggle = container.querySelector('[data-testid="expand-toggle-/World/Structure"]') as HTMLElement;
+    await act(async () => {
+      const valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+      valueSetter?.call(search, "Structure");
+      search.dispatchEvent(new Event("input", { bubbles: true }));
+      structure.click();
+      structureToggle.click();
+    });
+    expect(structure.getAttribute("data-selected")).toBe("true");
+    expect(structureToggle.textContent).toBe("▾");
+
+    await renderWithTree([]);
+    expect(container.querySelector('[data-path="/World/Structure"]')).toBeNull();
+    expect(container.querySelector('[data-uc="ws-stage-search"]')).toBeNull();
+    expect(container.querySelector('[data-uc="ws-stage-tree"]')?.getAttribute("data-state")).toBe("waiting");
+    const bootstrapRefresh = container.querySelector('[data-testid="ws-request-stage-tree-btn"]') as HTMLButtonElement;
+    expect(bootstrapRefresh.disabled).toBe(false);
+    vi.mocked(baseSlot.requestStageTree).mockClear();
+    await act(async () => { bootstrapRefresh.click(); });
+    expect(baseSlot.requestStageTree).toHaveBeenCalledTimes(1);
+    expect(baseSlot.requestStageTree).toHaveBeenCalledWith("/World");
+
+    await renderWithTree(tree);
+    const restoredSearch = container.querySelector('[data-uc="ws-stage-search"]') as HTMLInputElement;
+    const restoredStructure = container.querySelector('[data-path="/World/Structure"]') as HTMLElement;
+    const restoredToggle = container.querySelector('[data-testid="expand-toggle-/World/Structure"]') as HTMLElement;
+    expect(restoredSearch.value).toBe("");
+    expect(restoredStructure.getAttribute("data-selected")).toBe("false");
+    expect(restoredToggle.textContent).toBe("▸");
   });
 });

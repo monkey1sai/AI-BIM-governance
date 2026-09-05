@@ -7,7 +7,7 @@ import type { CSSProperties } from "react";
 import { t } from "../i18n";
 import type { DockKey } from "./fixtures";
 import { MONO } from "./fixtures";
-import { classifyViewerPhase, useViewportSlot } from "./viewportSlot";
+import { classifyViewerPhase, resolveViewerCommandGate, useViewportSlot } from "./viewportSlot";
 import type { ViewerPhase } from "./viewportSlot";
 
 type StepState = "done" | "current" | "todo" | "blocked";
@@ -88,7 +88,7 @@ export function WorkspaceFlowGuide({ dock }: { dock: DockKey }) {
   const slot = useViewportSlot();
   const phase = classifyViewerPhase(slot?.activeSessionId ?? "", slot?.gate ?? null);
   const steps = stepsFor(dock);
-  const reason = slot?.gate?.reason ?? "";
+  const reason = resolveViewerCommandGate(slot?.gate ?? null).reason;
   const phaseText: Record<ViewerPhase, string> = {
     "no-session": t("尚未綁定 session", "no session bound"),
     "session-selected": t("session 已選；尚未啟動 3D", "session selected; 3D not started"),
@@ -97,7 +97,7 @@ export function WorkspaceFlowGuide({ dock }: { dock: DockKey }) {
     "waiting-datachannel": t("串流中；等待 DataChannel", "streaming; waiting for DataChannel"),
     "stage-mismatch": t("stage 未對齊；高亮封鎖", "stage mismatch; highlight blocked"),
     blocked: t("被封鎖", "blocked"),
-    ready: t("3D 就緒；可送高亮", "3D ready; highlight allowed"),
+    ready: t("3D 就緒；命令通道可用", "3D ready; viewer command channel available"),
   };
 
   return (
