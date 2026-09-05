@@ -60,6 +60,7 @@ $reviewedManifestBytes = $null
 $reviewedSourceFiles = @(
     'install_blip_auto_approval.ps1',
     'invoke_frozen_blip_installer.ps1',
+    'scripts/lib/StructLog.psm1',
     'bot/bots.json',
     'bot/scripts/app_auth.py',
     'bot/scripts/bind_ship_attestation.py',

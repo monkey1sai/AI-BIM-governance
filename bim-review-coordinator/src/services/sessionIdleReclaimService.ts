@@ -31,6 +31,16 @@ export interface SessionIdleReclaimOptions {
   onReclaimTeardown?: (sessionId: string) => Promise<void> | void;
 }
 
+export const SESSION_IDLE_TIMEOUT_MAX_MS = 2_147_483_647;
+
+export interface SessionIdlePolicySnapshot {
+  enabled: boolean;
+  timeoutMs: number | null;
+  source: "environment" | "operator_override";
+  revision: number;
+  countdownSeconds: number;
+}
+
 export interface SessionActivityState {
   sessionId: string;
   lastActivityAt: number;
@@ -42,7 +52,9 @@ export interface SessionActivityState {
 type SessionTeardownCallback = (sessionId: string) => Promise<void> | void;
 
 export class SessionIdleReclaimService {
-  private readonly idleTimeoutMs: number | null;
+  private idleTimeoutMs: number | null;
+  private policySource: SessionIdlePolicySnapshot["source"] = "environment";
+  private policyRevision = 0;
   private readonly countdownSeconds: number;
   private readonly checkIntervalMs: number;
   private readonly onCountdown?: (sessionId: string, remainingSeconds: number) => void;
@@ -94,6 +106,82 @@ export class SessionIdleReclaimService {
       clearInterval(this.timer);
       this.timer = null;
     }
+  }
+
+  getPolicy(): SessionIdlePolicySnapshot {
+    return {
+      enabled: this.idleTimeoutMs !== null,
+      timeoutMs: this.idleTimeoutMs,
+      source: this.policySource,
+      revision: this.policyRevision,
+      countdownSeconds: this.countdownSeconds,
+    };
+  }
+
+  private hasPendingTerminalTeardown(): boolean {
+    if (this.teardownRetryCallbacks.size > 0 || this.teardownInFlight.size > 0) return true;
+    return Array.from(this.sessionStates.values()).some(
+      (state) => state.isCountingDown && state.countdownRemainingSec <= 0,
+    );
+  }
+
+  /**
+   * Applies a process-local operator override. Ready sessions restart their
+   * inactivity clock at the policy change boundary so a shorter value cannot
+   * close an existing session immediately. Terminal teardown retries are kept.
+   */
+  updateIdleTimeoutMs(timeoutMs: number | null, timestamp: number = Date.now()): SessionIdlePolicySnapshot {
+    if (timeoutMs !== null && (
+      !Number.isSafeInteger(timeoutMs)
+      || timeoutMs < 1
+      || timeoutMs > SESSION_IDLE_TIMEOUT_MAX_MS
+    )) {
+      throw new RangeError(`idle timeout must be null or an integer from 1 to ${SESSION_IDLE_TIMEOUT_MAX_MS}`);
+    }
+
+    for (const [sessionId, state] of Array.from(this.sessionStates.entries())) {
+      const terminalRetry = (state.isCountingDown && state.countdownRemainingSec <= 0)
+        || this.teardownInFlight.has(sessionId)
+        || this.teardownRetryCallbacks.has(sessionId);
+      if (terminalRetry) continue;
+      if (state.isCountingDown) this.onCountdownCancelled?.(sessionId);
+      this.sessionStates.delete(sessionId);
+      this.lastActivityAtBySession.delete(sessionId);
+      this.countdownStartedAtBySession.delete(sessionId);
+    }
+
+    this.idleTimeoutMs = timeoutMs;
+    this.policySource = "operator_override";
+    this.policyRevision += 1;
+
+    if (timeoutMs !== null) {
+      for (const [sessionId, peers] of this.connectedPeers.entries()) {
+        const existingState = this.sessionStates.get(sessionId);
+        const terminalRetry = (existingState?.isCountingDown && existingState.countdownRemainingSec <= 0)
+          || this.teardownInFlight.has(sessionId)
+          || this.teardownRetryCallbacks.has(sessionId);
+        if (peers.size === 0 || terminalRetry) continue;
+        let session;
+        try {
+          session = this.store.get(sessionId);
+        } catch {
+          continue;
+        }
+        if (!session || (session.status !== "active" && session.status !== "created")) continue;
+        this.sessionStates.set(sessionId, {
+          sessionId,
+          lastActivityAt: timestamp,
+          isCountingDown: false,
+          countdownRemainingSec: this.countdownSeconds,
+        });
+        this.lastActivityAtBySession.set(sessionId, timestamp);
+      }
+      this.start();
+    } else if (!this.hasPendingTerminalTeardown()) {
+      this.stop();
+    }
+
+    return this.getPolicy();
   }
 
   /**
@@ -185,7 +273,7 @@ export class SessionIdleReclaimService {
    * Can be called manually in unit tests with simulated timestamps.
    */
   tick(now: number = Date.now()): void {
-    if (this.idleTimeoutMs === null && this.teardownRetryCallbacks.size === 0) return;
+    if (this.idleTimeoutMs === null && !this.hasPendingTerminalTeardown()) return;
     for (const [sessionId, state] of Array.from(this.sessionStates.entries())) {
       const retryingTeardown = state.isCountingDown && state.countdownRemainingSec <= 0;
       if (!this.hasConnectedPeer(sessionId) && !retryingTeardown && !this.teardownInFlight.has(sessionId)) {
@@ -260,7 +348,7 @@ export class SessionIdleReclaimService {
         }
       }
     }
-    if (this.idleTimeoutMs === null && this.teardownRetryCallbacks.size === 0) this.stop();
+    if (this.idleTimeoutMs === null && !this.hasPendingTerminalTeardown()) this.stop();
   }
 
   /**
@@ -289,7 +377,7 @@ export class SessionIdleReclaimService {
   }
 
   connectPeer(sessionId: string, peerId: string, timestamp: number = Date.now()): boolean {
-    if (this.idleTimeoutMs === null || !isSafeSessionId(sessionId) || peerId.length === 0) return false;
+    if (!isSafeSessionId(sessionId) || peerId.length === 0) return false;
     let session;
     try {
       session = this.store.get(sessionId);
@@ -301,6 +389,7 @@ export class SessionIdleReclaimService {
     const alreadyReady = peers.has(peerId);
     peers.add(peerId);
     this.connectedPeers.set(sessionId, peers);
+    if (this.idleTimeoutMs === null) return false;
     if (alreadyReady && this.sessionStates.has(sessionId)) return true;
     if (!this.sessionStates.has(sessionId)) {
       const lastActivityAt = this.lastActivityAtBySession.get(sessionId) ?? timestamp;

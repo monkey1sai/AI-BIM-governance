@@ -30,6 +30,7 @@ $protectedInstallerLauncherPath = Join-Path $packageRoot 'invoke_protected_blip_
 $sourceFiles = @(
     'install_blip_auto_approval.ps1',
     'invoke_frozen_blip_installer.ps1',
+    'scripts/lib/StructLog.psm1',
     'bot/bots.json',
     'bot/scripts/app_auth.py',
     'bot/scripts/bind_ship_attestation.py',
@@ -613,7 +614,12 @@ try {
 
 $frozenSources = [ordered]@{}
 foreach ($relative in $sourceFiles) {
-    $source = Join-Path $packageRoot $relative.Replace('/', '\')
+    $source = if ($relative -ceq 'scripts/lib/StructLog.psm1') {
+        [System.IO.Path]::GetFullPath((Join-Path $packageRoot '..\..\lib\StructLog.psm1'))
+    }
+    else {
+        Join-Path $packageRoot $relative.Replace('/', '\')
+    }
     $target = Join-Path $outputRoot $relative.Replace('/', '\')
     Copy-RegularFileExclusive -Source $source -Target $target
     $sourceHash = Get-RegularFileSha256 -LiteralPath $source
