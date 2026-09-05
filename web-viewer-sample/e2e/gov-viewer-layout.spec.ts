@@ -149,6 +149,140 @@ test.describe("CH-H1 semantic viewer · mock viewport（harness 不空白）", (
     expect(bottom.width).toBeGreaterThan(center.width + 40);
   });
 
+  // live 3D 版面契約（Omniverse USD Composer 慣例）：語意側欄一旦進 live 就必須是「dock」——
+  // 佔用版面寬度、<video> 同步內縮，絕不覆蓋 render；且可收合成細軌讓 stage 取回全寬。
+  // 舊版 .gv-mock--live 是 420px / max-width:46vw 的半透明浮層，直接壓在 <video> 上（console
+  // 內嵌 iframe 約 850px 時吃掉近半個舞台），此測對舊版為 RED。
+  //
+  // 這裡以 canvas captureStream 注入一段真的有寬高的 video track，讓 _hasRemoteVideoFrame()
+  // 成立而進 live 版面。本測驗的是「版面幾何」，不是 WebRTC —— 真 Kit 首幀由 real-ifc 路徑驗。
+  test("?harness=1 live 出幀後語意 dock 佔位不覆蓋 <video>，收合軌讓 stage 取回全寬", async ({ page }) => {
+    // 驗的是版面幾何契約，不是動畫。關掉寬度過渡才不會量到動畫中間值（產品端同樣
+    // 尊重 prefers-reduced-motion）。
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await page.goto(harnessRoute());
+    await expect(page.getByTestId("mock-viewport")).toBeVisible({ timeout: 30_000 });
+
+    const injected = await page.evaluate(async () => {
+      const video = document.getElementById("remote-video") as HTMLVideoElement | null;
+      if (!video) return false;
+      const canvas = document.createElement("canvas");
+      canvas.width = 1280;
+      canvas.height = 720;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) return false;
+      const paint = () => { ctx.fillStyle = "#16324a"; ctx.fillRect(0, 0, canvas.width, canvas.height); };
+      paint();
+      window.setInterval(paint, 100);
+      video.srcObject = canvas.captureStream(10);
+      await video.play().catch(() => undefined);
+      return true;
+    });
+    expect(injected, "harness 未渲染 #remote-video，live 版面契約無法驗證").toBe(true);
+    await page.waitForFunction(() => {
+      const video = document.getElementById("remote-video") as HTMLVideoElement | null;
+      return Boolean(video && video.readyState >= 2 && video.videoWidth > 0);
+    }, undefined, { timeout: 15_000 });
+
+    // 觸發一次 re-render，讓 Window 讀到新的 live frame 狀態。
+    await page.getByTestId("nav-issues").click();
+    await page.getByTestId("nav-model").click();
+
+    const dock = page.getByTestId("viewer-semantic-dock");
+    await expect(dock).toBeVisible();
+    await expect(dock).toHaveAttribute("data-dock-state", "expanded");
+
+    // dock 寬與 <video> 內縮都有 180ms 寬度過渡；必須等過渡結束（兩次量測一致）再驗幾何，
+    // 否則量到的是動畫中間值。
+    const geometry = async () => {
+      // dock 寬與 <video> 內縮讀同一個 --gv-stage-inset-left；先確認兩者已一致再量幾何。
+      await page.waitForFunction(() => {
+        const dockEl = document.querySelector('[data-testid="viewer-semantic-dock"]');
+        const stageEl = document.getElementById("main-div");
+        if (!dockEl || !stageEl) return false;
+        return Math.abs(dockEl.getBoundingClientRect().right - stageEl.getBoundingClientRect().x) <= 1;
+      }, undefined, { timeout: 10_000 });
+      const d = await dock.boundingBox();
+      const v = await page.locator("#main-div").boundingBox();
+      if (!d || !v) throw new Error("missing bounding box for dock/stage");
+      return { d, v };
+    };
+
+    // 契約一：dock 右緣 <= stage 左緣（零重疊），且 stage 仍是版面上較寬的一側。
+    const expandedGeom = await geometry();
+    expect(
+      expandedGeom.d.x + expandedGeom.d.width,
+      JSON.stringify(expandedGeom),
+    ).toBeLessThanOrEqual(expandedGeom.v.x + 1);
+    expect(expandedGeom.v.width, JSON.stringify(expandedGeom)).toBeGreaterThan(expandedGeom.d.width);
+    await page.screenshot({ path: "../artifacts/e2e/gov-viewer-live-dock-expanded.png" });
+
+    // 契約二：收合後 dock 縮成細軌，stage 幾乎取回全寬，且仍零重疊。
+    await page.getByTestId("viewer-semantic-dock-toggle").click();
+    await expect(dock).toHaveAttribute("data-dock-state", "collapsed");
+    const collapsedGeom = await geometry();
+    expect(collapsedGeom.d.width, JSON.stringify(collapsedGeom)).toBeLessThanOrEqual(40);
+    expect(
+      collapsedGeom.d.x + collapsedGeom.d.width,
+      JSON.stringify(collapsedGeom),
+    ).toBeLessThanOrEqual(collapsedGeom.v.x + 1);
+    expect(collapsedGeom.v.width, JSON.stringify(collapsedGeom)).toBeGreaterThan(expandedGeom.v.width);
+    await page.screenshot({ path: "../artifacts/e2e/gov-viewer-live-dock-collapsed.png" });
+
+    // 契約三：USD Stage 樹 dock（若掛載）同屬左緣 dock 串，也不得壓在 <video> 上。
+    const usdDock = page.getByTestId("usd-stage-left-dock");
+    if (await usdDock.count()) {
+      const u = await usdDock.boundingBox();
+      if (u) {
+        expect(u.x + u.width, JSON.stringify({ u, v: collapsedGeom.v })).toBeLessThanOrEqual(collapsedGeom.v.x + 1);
+      }
+    }
+
+  });
+
+  // 窄容器（console 內嵌 A1 viewer iframe 約 850px）是本次回歸的主要現場：舊版 420px /
+  // max-width:46vw 浮層在這個寬度會吃掉近半個舞台。契約：未存過偏好時窄容器預設收合，
+  // 一進 live 就先把舞台讓給模型。
+  test("?harness=1 窄容器（~850px）live 出幀時語意 dock 預設收合，stage 取得絕大多數寬度", async ({ page }) => {
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await page.setViewportSize({ width: 850, height: 900 });
+    await page.goto(harnessRoute());
+    await expect(page.getByTestId("mock-viewport")).toBeVisible({ timeout: 30_000 });
+
+    await page.evaluate(async () => {
+      const video = document.getElementById("remote-video") as HTMLVideoElement | null;
+      if (!video) return;
+      const canvas = document.createElement("canvas");
+      canvas.width = 1280;
+      canvas.height = 720;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) return;
+      const paint = () => { ctx.fillStyle = "#16324a"; ctx.fillRect(0, 0, canvas.width, canvas.height); };
+      paint();
+      window.setInterval(paint, 100);
+      video.srcObject = canvas.captureStream(10);
+      await video.play().catch(() => undefined);
+    });
+    await page.waitForFunction(() => {
+      const video = document.getElementById("remote-video") as HTMLVideoElement | null;
+      return Boolean(video && video.readyState >= 2 && video.videoWidth > 0);
+    }, undefined, { timeout: 15_000 });
+    await page.getByTestId("nav-issues").click();
+    await page.getByTestId("nav-model").click();
+
+    const dock = page.getByTestId("viewer-semantic-dock");
+    await expect(dock).toHaveAttribute("data-dock-state", "collapsed");
+    const d = await dock.boundingBox();
+    const v = await page.locator("#main-div").boundingBox();
+    expect(d).not.toBeNull();
+    expect(v).not.toBeNull();
+    expect(d!.width, JSON.stringify({ d, v })).toBeLessThanOrEqual(40);
+    // 舞台拿到容器至少一半以上的寬（舊版浮層版本在此寬度只剩不到一半可見）。
+    expect(v!.width, JSON.stringify({ d, v })).toBeGreaterThan(850 * 0.5);
+    await page.screenshot({ path: "../artifacts/e2e/gov-viewer-live-dock-narrow.png" });
+  });
+
   // Task2 修復契約：reservedLeft（USD Stage Dock 開啟，?debug=1 或 Kit 回報 usdPrims）灌進 .gv-mock 內距時，
   // 收欄斷點必須看「.gv-mock 內容框可用寬」而非僅視窗寬。中等視窗（1100px）+ reservedLeft(300) 下可用寬僅 ~786px
   // 塞不下三欄最小需求(~916px)，舊版只看 @media(max-width:980px) 不會收欄，.gv-C{overflow:hidden} 便把右側語意欄

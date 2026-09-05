@@ -330,6 +330,24 @@ test('AC-36 — inventory traversal limits and reparse entries fail closed befor
     expectCode('policy_inventory_budget_exceeded', () => inspectPolicyFileInventory(root), 'wide inventory')
     await rm(wide, { recursive: true, force: true })
 
+    const localArtifacts = [
+      ['.run', 400],
+      ['__pycache__', 400],
+      ['.venv', 400],
+      ['.pytest_cache', 400],
+    ]
+    for (const [directoryName, fileCount] of localArtifacts) {
+      const artifactRoot = path.join(root, 'scripts', directoryName, 'nested')
+      await mkdir(artifactRoot, { recursive: true })
+      await Promise.all(Array.from({ length: fileCount }, (_, index) => (
+        writeFile(path.join(artifactRoot, `noise-${index}.txt`), 'x')
+      )))
+    }
+    assert.equal(inspectPolicyFileInventory(root).canonical_policy_count, 1, 'gitignored local artifacts must not consume inventory budget')
+    for (const [directoryName] of localArtifacts) {
+      await rm(path.join(root, 'scripts', directoryName), { recursive: true, force: true })
+    }
+
     let deep = path.join(root, 'scripts')
     for (let index = 0; index <= 12; index += 1) {
       deep = path.join(deep, `deep-${index}`)

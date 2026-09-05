@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import { isIP } from "node:net";
 import path from "node:path";
 import type { ArtifactHealthSnapshot } from "../types.js";
 
@@ -167,7 +168,17 @@ function effectivePort(url: URL): string {
   return "";
 }
 
-function isLoopbackHttpUrl(url: URL): boolean {
+function hasLoopbackHostname(url: URL): boolean {
+  const hostname = url.hostname.toLowerCase().replace(/\.$/, "").replace(/^\[|\]$/g, "");
+  const mappedIpv4 = /^::ffff:([0-9a-f]{1,4}):[0-9a-f]{1,4}$/.exec(hostname);
+  return hostname === "localhost"
+    || hostname.endsWith(".localhost")
+    || hostname === "::1"
+    || (isIP(hostname) === 4 && Number(hostname.split(".")[0]) === 127)
+    || Boolean(mappedIpv4 && (Number.parseInt(mappedIpv4[1], 16) >> 8) === 127);
+}
+
+function isLegacyDirectLoopbackHttpUrl(url: URL): boolean {
   return url.protocol === "http:" && (url.hostname === "127.0.0.1" || url.hostname === "localhost");
 }
 
@@ -178,11 +189,24 @@ function isConversionArtifactPath(pathname: string): boolean {
   return parts[3] === "model.usdc" || parts[3] === "element_mapping.json" || parts[3] === "metadata.json";
 }
 
-function canonicalProbeUrl(url: URL, configuredConversionApiOrigin: string): URL | null {
+export function canonicalArtifactProbeUrl(
+  urlValue: string,
+  configuredConversionApiOrigin: string,
+  options: { allowAlternateLoopback?: boolean } = {},
+): URL | null {
+  let url: URL;
+  try {
+    url = new URL(urlValue);
+  } catch {
+    return null;
+  }
   if (url.username || url.password) return null;
   const configuredOrigin = normalizedOrigin(configuredConversionApiOrigin);
   if (configuredOrigin && url.origin === configuredOrigin) return url;
-  if (isLoopbackHttpUrl(url)) return url;
+  if (hasLoopbackHostname(url)) {
+    if (options.allowAlternateLoopback === false) return null;
+    if (isLegacyDirectLoopbackHttpUrl(url)) return url;
+  }
 
   const configuredUrl = normalizedOriginUrl(configuredConversionApiOrigin);
   if (!configuredUrl) return null;
@@ -215,14 +239,13 @@ async function checkArtifactUrl(urlValue: string | null, configuredConversionApi
     return { value: null, failure: null };
   }
 
-  let url: URL;
   try {
-    url = new URL(urlValue);
+    new URL(urlValue);
   } catch {
     return { value: null, failure: "url_invalid" };
   }
 
-  const probeUrl = canonicalProbeUrl(url, configuredConversionApiOrigin);
+  const probeUrl = canonicalArtifactProbeUrl(urlValue, configuredConversionApiOrigin);
   if (!probeUrl) {
     return { value: null, failure: "url_not_allowed" };
   }

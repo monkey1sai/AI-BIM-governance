@@ -45,16 +45,39 @@ $productRoot = Join-Path $protectedRoot 'blip-approve'
 $secretRoot = Join-Path $productRoot 'secrets'
 $trustedRoot = Join-Path $productRoot 'v1'
 $completionPath = Join-Path $trustedRoot 'install-complete.json'
-$stageRoot = Join-Path $productRoot ("v1.stage-" + [Guid]::NewGuid().ToString('N'))
-$failedRoot = Join-Path $productRoot ("v1.failed-" + [Guid]::NewGuid().ToString('N'))
+$upgradeTransactionId = [Guid]::NewGuid().ToString('N')
+$installerStructTransactionId = $upgradeTransactionId
+$completionStagePath = Join-Path $trustedRoot (
+    '.install-complete-' + $upgradeTransactionId + '.tmp'
+)
+$stageRoot = Join-Path $productRoot ("v1.stage-" + $upgradeTransactionId)
+$failedRoot = Join-Path $productRoot ("v1.failed-" + $upgradeTransactionId)
+$previousRoot = Join-Path $productRoot ("v1.previous-" + $upgradeTransactionId)
+$upgradeTransactionPath = Join-Path $productRoot 'upgrade-transaction.json'
+$upgradeLockPath = Join-Path $productRoot 'upgrade.lock'
+$upgradeCompletePath = Join-Path $productRoot ("upgrade-complete-" + $upgradeTransactionId + '.json')
+$upgradeRollbackPath = Join-Path $productRoot ("upgrade-rolled-back-" + $upgradeTransactionId + '.json')
 $pythonPath = 'C:\Program Files\Python312\python.exe'
 $powerShellPath = 'C:\Program Files\PowerShell\7\pwsh.exe'
 $fixedOwnerSidValue = 'S-1-5-21-2135046472-1977311562-3864793309-1001'
 $fixedOwnerSid = [System.Security.Principal.SecurityIdentifier]::new($fixedOwnerSidValue)
 $codexVendorRoot = 'C:\Users\IOT\AppData\Roaming\npm\node_modules\@openai\codex\node_modules\@openai\codex-win32-x64\vendor\x86_64-pc-windows-msvc'
 $pinnedStreams = [System.Collections.Generic.List[System.IO.FileStream]]::new()
+$predecessorFenceStreams = [System.Collections.Generic.List[System.IO.FileStream]]::new()
+$upgradeLockStream = $null
+$script:installerStructLogger = $null
 $sourceStreams = @{}
 $runtimeStreams = @{}
+
+# Upgrade is deliberately a one-step ratchet. A future runtime can replace this
+# one only after a separately reviewed PR updates this exact predecessor tuple.
+# This prevents an older, once-approved candidate from being replayed over a
+# newer installed runtime.
+$allowedPredecessor = [ordered]@{
+    source_commit = '23489c37a54719df8e024e6f822b8b2e7179d4d8'
+    candidate_freeze_sha256 = '7BD4BA6FD9E054C5CDBD1BD7FFEB623F37D020B76D75A6D2C269886445280309'
+    manifest_sha256 = '7DE394C9E7695B996B20719B46D671D97C982659D868566A33C3C3A61252B0EE'
+}
 
 $trustedFiles = [ordered]@{
     'run_blip_live_approve_once.ps1' = 'bot/scripts/run_blip_live_approve_once.ps1'
@@ -391,6 +414,43 @@ function New-OwnerOnlyFileSecurity {
     return $security
 }
 
+function Get-QuiesceDenyMask {
+    return [System.Security.AccessControl.FileSystemRights]::ReadData -bor
+        [System.Security.AccessControl.FileSystemRights]::ReadExtendedAttributes -bor
+        [System.Security.AccessControl.FileSystemRights]::ReadAttributes -bor
+        [System.Security.AccessControl.FileSystemRights]::ExecuteFile
+}
+
+function New-QuiescedFileSecurity {
+    [void](Assert-FixedOwnerIdentity)
+    $sandboxSid = Get-SandboxSid
+    $security = [System.Security.AccessControl.FileSecurity]::new()
+    $security.SetOwner($fixedOwnerSid)
+    $security.SetAccessRuleProtection($true, $false)
+    $security.AddAccessRule([System.Security.AccessControl.FileSystemAccessRule]::new(
+        $sandboxSid,
+        [System.Security.AccessControl.FileSystemRights]::FullControl,
+        [System.Security.AccessControl.AccessControlType]::Deny
+    ))
+    $security.AddAccessRule([System.Security.AccessControl.FileSystemAccessRule]::new(
+        $fixedOwnerSid,
+        (Get-QuiesceDenyMask),
+        [System.Security.AccessControl.AccessControlType]::Deny
+    ))
+    foreach ($sid in @(
+        $fixedOwnerSid,
+        [System.Security.Principal.SecurityIdentifier]::new('S-1-5-18'),
+        [System.Security.Principal.SecurityIdentifier]::new('S-1-5-32-544')
+    )) {
+        $security.AddAccessRule([System.Security.AccessControl.FileSystemAccessRule]::new(
+            $sid,
+            [System.Security.AccessControl.FileSystemRights]::FullControl,
+            [System.Security.AccessControl.AccessControlType]::Allow
+        ))
+    }
+    return $security
+}
+
 function Assert-ProgramDataParent {
     $path = 'C:\ProgramData'
     $item = Get-Item -Force -LiteralPath $path
@@ -633,11 +693,887 @@ function Assert-Signer {
     }
 }
 
+function Protect-RuntimeTree {
+    param([Parameter(Mandatory)][string]$LiteralPath)
+    $ownerOnlyRoot = Join-Path $LiteralPath 'codex-home'
+    Set-ExactFileSystemSecurity `
+        -LiteralPath $LiteralPath -Security (New-ProtectedDirectorySecurity)
+    foreach ($item in Get-ChildItem -Force -Recurse -LiteralPath $LiteralPath) {
+        if ($item.FullName -ceq $ownerOnlyRoot -or $item.FullName.StartsWith(
+                $ownerOnlyRoot + '\', [StringComparison]::OrdinalIgnoreCase
+            )) {
+            continue
+        }
+        $security = if ($item.PSIsContainer) {
+            New-ProtectedDirectorySecurity
+        }
+        else { New-ProtectedFileSecurity }
+        Set-ExactFileSystemSecurity -LiteralPath $item.FullName -Security $security
+    }
+    if ([System.IO.Directory]::Exists($ownerOnlyRoot)) {
+        Protect-OwnerOnlyTree -LiteralPath $ownerOnlyRoot
+    }
+    $runtimeReadable = @(
+        $LiteralPath
+        Get-ChildItem -Force -Recurse -LiteralPath $LiteralPath |
+            Where-Object { $_.FullName -cne $ownerOnlyRoot -and
+                -not $_.FullName.StartsWith(
+                    $ownerOnlyRoot + '\', [StringComparison]::OrdinalIgnoreCase
+                ) } |
+            ForEach-Object { $_.FullName }
+    )
+    Assert-ProtectedAcl -LiteralPaths $runtimeReadable
+}
+
+function Assert-NoReparseTree {
+    param([Parameter(Mandatory)][string]$LiteralPath)
+    $root = [System.IO.Path]::GetFullPath($LiteralPath).TrimEnd('\')
+    if (-not [System.IO.Directory]::Exists($root)) {
+        throw "Trusted runtime directory is unavailable: $root"
+    }
+    $items = @([System.IO.DirectoryInfo]::new($root)) + @(
+        Get-ChildItem -Force -Recurse -LiteralPath $root
+    )
+    foreach ($item in $items) {
+        if (($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw "Trusted runtime contains a reparse point: $($item.FullName)"
+        }
+        $full = [System.IO.Path]::GetFullPath($item.FullName)
+        if ($full -cne $root -and -not $full.StartsWith(
+                $root + '\', [StringComparison]::OrdinalIgnoreCase
+            )) {
+            throw "Trusted runtime item escapes its canonical root: $full"
+        }
+    }
+}
+
+function Assert-ExistingTrustedRuntime {
+    $manifestPath = Join-Path $trustedRoot 'manifest.json'
+    $existingCompletionPath = Join-Path $trustedRoot 'install-complete.json'
+    $statePath = Join-Path $trustedRoot 'state'
+    $ownerOnlyRoot = Join-Path $trustedRoot 'codex-home'
+    foreach ($required in @(
+        $manifestPath, $existingCompletionPath, $statePath, $ownerOnlyRoot,
+        (Join-Path $ownerOnlyRoot 'auth.json')
+    )) {
+        if (-not (Test-Path -LiteralPath $required)) {
+            throw "Existing trusted runtime is incomplete: $required"
+        }
+    }
+    Assert-NoReparseTree -LiteralPath $trustedRoot
+
+    $manifestHash = (Get-FileHash -LiteralPath $manifestPath -Algorithm SHA256).Hash.ToUpperInvariant()
+    if ($manifestHash -cne $allowedPredecessor.manifest_sha256) {
+        throw 'Existing trusted runtime is not the exact allowed predecessor manifest.'
+    }
+    $manifestText = Get-Content -Raw -LiteralPath $manifestPath
+    $completionText = Get-Content -Raw -LiteralPath $existingCompletionPath
+    $manifestDocument = [System.Text.Json.JsonDocument]::Parse($manifestText)
+    $completionDocument = [System.Text.Json.JsonDocument]::Parse($completionText)
+    try {
+        $manifestRoot = $manifestDocument.RootElement
+        $completionRoot = $completionDocument.RootElement
+        Assert-ExactJsonProperties -Object $manifestRoot -ExpectedNames @(
+            'schema', 'source_commit', 'files', 'runtime',
+            'candidate_freeze_sha256', 'activation', 'installed_at'
+        ) -Label 'Existing trusted runtime manifest'
+        Assert-ExactJsonProperties -Object $completionRoot -ExpectedNames @(
+            'schema', 'owner_sid', 'candidate_freeze_sha256',
+            'manifest_sha256', 'completed_at'
+        ) -Label 'Existing trusted runtime completion marker'
+        $manifest = $manifestText | ConvertFrom-Json
+        $completion = $completionText | ConvertFrom-Json
+        if ($manifest.schema -cne 'blip-trusted-runtime-manifest/v1' -or
+            [string]$manifest.source_commit -cne $allowedPredecessor.source_commit -or
+            [string]$manifest.candidate_freeze_sha256 -cne
+                $allowedPredecessor.candidate_freeze_sha256 -or
+            $completion.schema -cne 'blip-trusted-runtime-complete/v1' -or
+            [string]$completion.owner_sid -cne $fixedOwnerSidValue -or
+            [string]$completion.candidate_freeze_sha256 -cne
+                $allowedPredecessor.candidate_freeze_sha256 -or
+            [string]$completion.manifest_sha256 -cne $allowedPredecessor.manifest_sha256) {
+            throw 'Existing trusted runtime does not match the allowed predecessor tuple.'
+        }
+        if (@($manifest.files.PSObject.Properties.Name).Count -ne $trustedFiles.Count -or
+            @($manifest.runtime.PSObject.Properties.Name).Count -ne $runtimeFiles.Count) {
+            throw 'Existing trusted runtime inventory does not match the installer contract.'
+        }
+        foreach ($entry in $trustedFiles.GetEnumerator()) {
+            $expected = $manifest.files.PSObject.Properties[$entry.Key]
+            $installed = Join-Path $trustedRoot $entry.Key
+            if ($null -eq $expected -or [string]$expected.Value -notmatch '^[0-9A-F]{64}$' -or
+                (Get-FileHash -LiteralPath $installed -Algorithm SHA256).Hash -cne
+                    [string]$expected.Value) {
+                throw "Existing trusted runtime file hash mismatch: $($entry.Key)"
+            }
+        }
+        foreach ($entry in $runtimeFiles.GetEnumerator()) {
+            $expected = $manifest.runtime.PSObject.Properties[$entry.Key]
+            if ($null -eq $expected -or [string]$expected.Value -notmatch '^[0-9A-F]{64}$') {
+                throw "Existing trusted runtime dependency hash is malformed: $($entry.Key)"
+            }
+            if ($entry.Key -in @('runtime/pwsh.exe', 'runtime/python.exe') -or
+                $entry.Key.StartsWith('runtime/psmodule/', [StringComparison]::Ordinal)) {
+                $installed = [string]$entry.Value
+            }
+            else {
+                $relative = $entry.Key.Substring('runtime/'.Length).Replace('/', '\')
+                $installed = Join-Path (Join-Path $trustedRoot 'codex-runtime') $relative
+            }
+            if (-not [System.IO.File]::Exists($installed)) {
+                throw "Existing trusted runtime dependency is unavailable: $($entry.Key)"
+            }
+            $installedItem = Get-Item -Force -LiteralPath $installed
+            if (($installedItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+                throw "Existing trusted runtime dependency is a reparse point: $($entry.Key)"
+            }
+            if ((Get-FileHash -LiteralPath $installed -Algorithm SHA256).Hash -cne
+                [string]$expected.Value) {
+                throw "Existing trusted runtime dependency hash mismatch: $($entry.Key)"
+            }
+        }
+    }
+    finally {
+        $manifestDocument.Dispose()
+        $completionDocument.Dispose()
+    }
+
+    $runtimeReadable = @(
+        $trustedRoot
+        Get-ChildItem -Force -Recurse -LiteralPath $trustedRoot |
+            Where-Object { -not $_.FullName.StartsWith(
+                $ownerOnlyRoot + '\', [StringComparison]::OrdinalIgnoreCase
+            ) -and $_.FullName -cne $ownerOnlyRoot } |
+            ForEach-Object { $_.FullName }
+    )
+    $ownerOnlyPaths = @(
+        $ownerOnlyRoot
+        Get-ChildItem -Force -Recurse -LiteralPath $ownerOnlyRoot |
+            ForEach-Object { $_.FullName }
+    )
+    Assert-ProtectedAcl -LiteralPaths $runtimeReadable
+    Assert-OwnerOnlyAcl -LiteralPaths $ownerOnlyPaths
+    return $manifestText | ConvertFrom-Json
+}
+
+function Open-PredecessorRuntimeFence {
+    param([Parameter(Mandatory)][object]$Manifest)
+    $paths = [System.Collections.Generic.HashSet[string]]::new(
+        [StringComparer]::OrdinalIgnoreCase
+    )
+    foreach ($relative in @('manifest.json', 'install-complete.json')) {
+        [void]$paths.Add((Join-Path $trustedRoot $relative))
+    }
+    foreach ($property in $Manifest.files.PSObject.Properties) {
+        [void]$paths.Add((Join-Path $trustedRoot $property.Name.Replace('/', '\')))
+    }
+    foreach ($property in $Manifest.runtime.PSObject.Properties) {
+        if ($property.Name -in @('runtime/pwsh.exe', 'runtime/python.exe') -or
+            $property.Name.StartsWith('runtime/psmodule/', [StringComparison]::Ordinal)) {
+            continue
+        }
+        $relative = $property.Name.Substring('runtime/'.Length).Replace('/', '\')
+        [void]$paths.Add((Join-Path (Join-Path $trustedRoot 'codex-runtime') $relative))
+    }
+    foreach ($path in $paths) {
+        $stream = [System.IO.FileStream]::new(
+            $path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read,
+            [System.IO.FileShare]::Delete
+        )
+        [void]$predecessorFenceStreams.Add($stream)
+    }
+}
+
+function Close-PredecessorRuntimeFence {
+    foreach ($stream in $predecessorFenceStreams) { $stream.Dispose() }
+    $predecessorFenceStreams.Clear()
+}
+
+function Assert-SuccessorGenerationPivots {
+    param(
+        [Parameter(Mandatory)][object]$PredecessorManifest,
+        [Parameter(Mandatory)][System.Collections.IDictionary]$SuccessorFileHashes
+    )
+    foreach ($name in @(
+        'blip_review.py', 'run_codex_bound_ship_gate_once.ps1'
+    )) {
+        $predecessor = $PredecessorManifest.files.PSObject.Properties[$name]
+        if ($null -eq $predecessor -or
+            [string]$predecessor.Value -notmatch '^[0-9A-F]{64}$' -or
+            -not $SuccessorFileHashes.Contains($name) -or
+            [string]$SuccessorFileHashes[$name] -notmatch '^[0-9A-F]{64}$' -or
+            [string]$SuccessorFileHashes[$name] -ceq [string]$predecessor.Value) {
+            throw "Successor generation does not invalidate the cached predecessor pivot: $name"
+        }
+    }
+}
+
+function Assert-QuiescedPredecessorFiles {
+    param([Parameter(Mandatory)][string[]]$LiteralPaths)
+    $denyMask = Get-QuiesceDenyMask
+    foreach ($path in $LiteralPaths) {
+        $acl = Get-Acl -LiteralPath $path
+        if (-not $acl.AreAccessRulesProtected) {
+            throw "Quiesced predecessor file inherits ACLs: $path"
+        }
+        $ownerSid = ([System.Security.Principal.NTAccount]$acl.Owner).Translate(
+            [System.Security.Principal.SecurityIdentifier]
+        ).Value
+        if ($ownerSid -cne $fixedOwnerSidValue) {
+            throw "Quiesced predecessor file owner mismatch: $path"
+        }
+        $ownerDenied = [System.Security.AccessControl.FileSystemRights]0
+        foreach ($rule in $acl.Access) {
+            $sid = $rule.IdentityReference.Translate(
+                [System.Security.Principal.SecurityIdentifier]
+            ).Value
+            if ($sid -ceq $fixedOwnerSidValue -and
+                $rule.AccessControlType -eq [System.Security.AccessControl.AccessControlType]::Deny -and
+                -not $rule.IsInherited) {
+                $ownerDenied = $ownerDenied -bor ($rule.FileSystemRights -band $denyMask)
+            }
+        }
+        if (($ownerDenied -band $denyMask) -ne $denyMask) {
+            throw "Fixed owner can still read or execute a quiesced predecessor file: $path"
+        }
+    }
+}
+
+function Protect-QuiescedPredecessorRuntime {
+    Protect-OwnerOnlyTree -LiteralPath $trustedRoot
+    $paths = @($predecessorFenceStreams | ForEach-Object { $_.Name })
+    foreach ($path in $paths) {
+        Set-ExactFileSystemSecurity `
+            -LiteralPath $path -Security (New-QuiescedFileSecurity)
+    }
+    Assert-QuiescedPredecessorFiles -LiteralPaths $paths
+}
+
+function Move-PreservedRuntimeDirectories {
+    param(
+        [Parameter(Mandatory)][string]$SourceRoot,
+        [Parameter(Mandatory)][string]$DestinationRoot,
+        [switch]$SourceAlreadyValidated
+    )
+    $source = [System.IO.Path]::GetFullPath($SourceRoot).TrimEnd('\')
+    $destination = [System.IO.Path]::GetFullPath($DestinationRoot).TrimEnd('\')
+    if (-not $SourceAlreadyValidated) { Assert-NoReparseTree -LiteralPath $source }
+    foreach ($name in @('state', 'codex-home')) {
+        $from = Join-Path $source $name
+        $to = Join-Path $destination $name
+        if (-not [System.IO.Directory]::Exists($from) -or
+            [System.IO.Directory]::Exists($to)) {
+            throw "Mutable runtime directory cannot be transferred exactly once: $name"
+        }
+        [System.IO.Directory]::Move($from, $to)
+    }
+    $artifactSource = Join-Path $source 'artifacts'
+    if ([System.IO.Directory]::Exists($artifactSource)) {
+        $artifactTarget = Join-Path $destination 'artifacts'
+        if ([System.IO.Directory]::Exists($artifactTarget)) {
+            throw 'Mutable runtime artifacts directory would be overwritten.'
+        }
+        [System.IO.Directory]::Move($artifactSource, $artifactTarget)
+    }
+}
+
+function Write-ProtectedUpgradeJournal {
+    param(
+        [Parameter(Mandatory)][ValidateSet('initial', 'upgrade')][string]$Operation,
+        [Parameter(Mandatory)][string]$TargetSourceCommit,
+        [Parameter(Mandatory)][string]$TargetManifestSha256,
+        [Parameter(Mandatory)][string]$TargetCandidateFreezeSha256
+    )
+    $payload = [ordered]@{
+        schema = 'blip-runtime-upgrade-transaction/v1'
+        transaction_id = $upgradeTransactionId
+        operation = $Operation
+        trusted_root = $trustedRoot
+        stage_root = $stageRoot
+        previous_root = $previousRoot
+        failed_root = $failedRoot
+        predecessor_manifest_sha256 = if ($Operation -ceq 'upgrade') {
+            $allowedPredecessor.manifest_sha256
+        }
+        else { 'NONE' }
+        target_source_commit = $TargetSourceCommit
+        target_manifest_sha256 = $TargetManifestSha256
+        target_candidate_freeze_sha256 = $TargetCandidateFreezeSha256
+        created_at = [DateTimeOffset]::Now.ToString('o')
+    } | ConvertTo-Json -Depth 4
+    $bytes = [System.Text.UTF8Encoding]::new($false).GetBytes(
+        $payload + [Environment]::NewLine
+    )
+    $journalStagePath = Join-Path $productRoot (
+        '.upgrade-transaction-' + $upgradeTransactionId + '.tmp'
+    )
+    $stream = $null
+    $journalStageCreated = $false
+    $journalPublished = $false
+    try {
+        $stream = [System.IO.FileSystemAclExtensions]::Create(
+            [System.IO.FileInfo]::new($journalStagePath),
+            [System.IO.FileMode]::CreateNew,
+            [System.Security.AccessControl.FileSystemRights]::FullControl,
+            [System.IO.FileShare]::None,
+            4096,
+            [System.IO.FileOptions]::WriteThrough,
+            (New-OwnerOnlyFileSecurity)
+        )
+        $journalStageCreated = $true
+        $stream.Write($bytes, 0, $bytes.Length)
+        $stream.Flush($true)
+        $stream.Dispose()
+        $stream = $null
+        Assert-OwnerOnlyAcl -LiteralPaths @($journalStagePath)
+        [System.IO.File]::Move($journalStagePath, $upgradeTransactionPath)
+        $journalPublished = $true
+        Assert-OwnerOnlyAcl -LiteralPaths @($upgradeTransactionPath)
+    }
+    finally {
+        if ($null -ne $stream) {
+            try { $stream.Dispose() }
+            catch { }
+        }
+        if ($journalStageCreated -and -not $journalPublished -and
+            [System.IO.File]::Exists($journalStagePath)) {
+            try { [System.IO.File]::Delete($journalStagePath) }
+            catch { }
+        }
+    }
+}
+
+function Move-UpgradeJournal {
+    param([Parameter(Mandatory)][string]$Destination)
+    if (-not [System.IO.File]::Exists($upgradeTransactionPath)) {
+        throw "Active upgrade journal is unavailable: $upgradeTransactionPath"
+    }
+    if ([System.IO.File]::Exists($Destination)) {
+        throw "Upgrade journal archive already exists: $Destination"
+    }
+    [System.IO.File]::Move($upgradeTransactionPath, $Destination)
+    Assert-OwnerOnlyAcl -LiteralPaths @($Destination)
+}
+
+function Protect-UpgradeJournalOwnerOnly {
+    try {
+        Assert-OwnerOnlyAcl -LiteralPaths @($upgradeTransactionPath)
+        return
+    }
+    catch {
+        Assert-ProtectedAcl -LiteralPaths @($upgradeTransactionPath)
+    }
+    Set-ExactFileSystemSecurity `
+        -LiteralPath $upgradeTransactionPath `
+        -Security (New-OwnerOnlyFileSecurity)
+    Assert-OwnerOnlyAcl -LiteralPaths @($upgradeTransactionPath)
+}
+
+function Set-RecoveryAttemptMode {
+    param(
+        [AllowEmptyString()][string]$Operation,
+        [Parameter(Mandatory)][ref]$UpgradeAttempted
+    )
+    if ($Operation -ceq 'upgrade') {
+        $UpgradeAttempted.Value = $true
+    }
+    elseif ($Operation -ceq 'initial') {
+        $UpgradeAttempted.Value = $false
+    }
+}
+
+function Open-UpgradeLock {
+    $ownerOnlySecurity = New-OwnerOnlyFileSecurity
+    try {
+        $script:upgradeLockStream = [System.IO.FileSystemAclExtensions]::Create(
+            [System.IO.FileInfo]::new($upgradeLockPath),
+            [System.IO.FileMode]::OpenOrCreate,
+            [System.Security.AccessControl.FileSystemRights]::FullControl,
+            [System.IO.FileShare]::None,
+            4096,
+            [System.IO.FileOptions]::WriteThrough,
+            $ownerOnlySecurity
+        )
+    }
+    catch [System.IO.IOException] {
+        throw 'Another protected runtime install or recovery transaction is active.'
+    }
+    Set-ExactFileSystemSecurity `
+        -LiteralPath $upgradeLockPath `
+        -Security $ownerOnlySecurity
+    Assert-OwnerOnlyAcl -LiteralPaths @($upgradeLockPath)
+}
+
+function Write-InstallerStructRecord {
+    param(
+        [Parameter(Mandatory)][ValidateSet('Info', 'Warn')][string]$Level,
+        [Parameter(Mandatory)][Alias('Event')][string]$EventName,
+        [Parameter(Mandatory)][string]$Message,
+        [ValidatePattern('^[0-9a-f]{32}$')]
+        [string]$TransactionId = $installerStructTransactionId,
+        [hashtable]$Data = @{}
+    )
+    try {
+        if ($null -eq $script:installerStructLogger) {
+            $script:installerStructLogger = New-StructLogger `
+                -Service scripts `
+                -Component 'blip-runtime-installer' `
+                -LogRoot (Join-Path $productRoot 'logs') `
+                -AllowListPath (Join-Path $candidateRoot 'struct-log-env-allowlist.unavailable.json') `
+                -SkipEnvSnapshot
+        }
+        $structuredData = [ordered]@{
+            event = $EventName
+            transaction_id = $TransactionId
+        }
+        foreach ($entry in $Data.GetEnumerator()) {
+            $structuredData[$entry.Key] = $entry.Value
+        }
+        if ($Level -ceq 'Info') {
+            $script:installerStructLogger | Write-StructInfo -Msg $Message -Data $structuredData
+        }
+        else {
+            $script:installerStructLogger | Write-StructWarn -Msg $Message -Data $structuredData
+        }
+    }
+    catch {
+        $script:installerStructLogger = $null
+    }
+}
+
+function Write-InstallerStructWarning {
+    param(
+        [Parameter(Mandatory)][Alias('Event')][string]$EventName,
+        [Parameter(Mandatory)][string]$Message,
+        [ValidatePattern('^[0-9a-f]{32}$')]
+        [string]$TransactionId = $installerStructTransactionId,
+        [hashtable]$Data = @{}
+    )
+    Write-InstallerStructRecord -Level Warn -Event $EventName -Message $Message `
+        -TransactionId $TransactionId -Data $Data
+    Write-Warning $Message
+}
+
+function Write-InstallerStructInformation {
+    param(
+        [Parameter(Mandatory)][Alias('Event')][string]$EventName,
+        [Parameter(Mandatory)][string]$Message,
+        [ValidatePattern('^[0-9a-f]{32}$')]
+        [string]$TransactionId = $installerStructTransactionId,
+        [hashtable]$Data = @{}
+    )
+    Write-InstallerStructRecord -Level Info -Event $EventName -Message $Message `
+        -TransactionId $TransactionId -Data $Data
+}
+
+function Assert-ActivationCommitMarker {
+    param(
+        [Parameter(Mandatory)][string]$ExpectedSourceCommit,
+        [Parameter(Mandatory)][string]$ExpectedManifestSha256,
+        [Parameter(Mandatory)][string]$ExpectedCandidateFreezeSha256
+    )
+    $manifestPath = Join-Path $trustedRoot 'manifest.json'
+    $targetCompletionPath = Join-Path $trustedRoot 'install-complete.json'
+    foreach ($required in @(
+        $manifestPath, $targetCompletionPath, (Join-Path $trustedRoot 'state'),
+        (Join-Path $trustedRoot 'codex-home')
+    )) {
+        if (-not (Test-Path -LiteralPath $required)) {
+            throw "Committed target runtime is incomplete: $required"
+        }
+    }
+    foreach ($path in @($manifestPath, $targetCompletionPath)) {
+        $item = Get-Item -Force -LiteralPath $path
+        if (($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw "Activation commit marker path is a reparse point: $path"
+        }
+    }
+    $manifestText = Get-Content -Raw -LiteralPath $manifestPath
+    $completionText = Get-Content -Raw -LiteralPath $targetCompletionPath
+    $manifestDocument = [System.Text.Json.JsonDocument]::Parse($manifestText)
+    $completionDocument = [System.Text.Json.JsonDocument]::Parse($completionText)
+    try {
+        Assert-ExactJsonProperties -Object $manifestDocument.RootElement -ExpectedNames @(
+            'schema', 'source_commit', 'files', 'runtime',
+            'candidate_freeze_sha256', 'activation', 'installed_at'
+        ) -Label 'Committed target manifest'
+        Assert-ExactJsonProperties -Object $completionDocument.RootElement -ExpectedNames @(
+            'schema', 'owner_sid', 'candidate_freeze_sha256',
+            'manifest_sha256', 'completed_at'
+        ) -Label 'Committed target completion marker'
+    }
+    finally {
+        $manifestDocument.Dispose()
+        $completionDocument.Dispose()
+    }
+    $manifest = $manifestText | ConvertFrom-Json
+    $completion = $completionText | ConvertFrom-Json
+    $manifestHash = (Get-FileHash -LiteralPath $manifestPath -Algorithm SHA256).Hash
+    if ($manifest.schema -cne 'blip-trusted-runtime-manifest/v2' -or
+        [string]$manifest.source_commit -cne $ExpectedSourceCommit -or
+        $manifestHash -cne $ExpectedManifestSha256 -or
+        [string]$manifest.candidate_freeze_sha256 -cne $ExpectedCandidateFreezeSha256 -or
+        $completion.schema -cne 'blip-trusted-runtime-complete/v2' -or
+        [string]$completion.owner_sid -cne $fixedOwnerSidValue -or
+        [string]$completion.candidate_freeze_sha256 -cne
+            [string]$manifest.candidate_freeze_sha256 -or
+        [string]$completion.manifest_sha256 -cne $manifestHash) {
+        throw 'Committed target runtime tuple is invalid.'
+    }
+}
+
+function Test-TargetActivationMarkerPublished {
+    param([Parameter(Mandatory)][bool]$IsUpgrade)
+    if (-not [System.IO.File]::Exists($completionPath)) { return $false }
+    if (-not $IsUpgrade) { return $true }
+    return [System.IO.Directory]::Exists($previousRoot)
+}
+
+function Test-ShouldInspectTargetActivationMarker {
+    param(
+        [Parameter(Mandatory)][bool]$RecoveryContextStarted,
+        [Parameter(Mandatory)][bool]$TransactionWritten
+    )
+    return $RecoveryContextStarted -or $TransactionWritten
+}
+
+function Protect-CompletionMarkerRuntimeReadable {
+    try {
+        Assert-ProtectedAcl -LiteralPaths @($completionPath)
+        return
+    }
+    catch {
+        Assert-OwnerOnlyAcl -LiteralPaths @($completionPath)
+    }
+    Set-ExactFileSystemSecurity `
+        -LiteralPath $completionPath `
+        -Security (New-ProtectedFileSecurity)
+    Assert-ProtectedAcl -LiteralPaths @($completionPath)
+}
+
+function Protect-UpgradeArchiveOwnerOnly {
+    param([Parameter(Mandatory)][string]$LiteralPath)
+    try {
+        Assert-OwnerOnlyAcl -LiteralPaths @($LiteralPath)
+        return
+    }
+    catch {
+        Assert-ProtectedAcl -LiteralPaths @($LiteralPath)
+    }
+    Set-ExactFileSystemSecurity `
+        -LiteralPath $LiteralPath `
+        -Security (New-OwnerOnlyFileSecurity)
+    Assert-OwnerOnlyAcl -LiteralPaths @($LiteralPath)
+}
+
+function Recover-CommittedUpgradeArchive {
+    param(
+        [Parameter(Mandatory)][string]$ExpectedTargetSourceCommit,
+        [Parameter(Mandatory)][string]$ExpectedTargetCandidateFreezeSha256,
+        [ref]$OperationOut,
+        [ref]$TransactionIdOut
+    )
+    $matchingTransactions = [System.Collections.Generic.List[object]]::new()
+    foreach ($archiveItem in @(Get-ChildItem -Force -File -LiteralPath $productRoot |
+            Where-Object { $_.Name -match '^upgrade-complete-[0-9a-f]{32}\.json$' })) {
+        if (($archiveItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw "Committed upgrade archive is a reparse point: $($archiveItem.FullName)"
+        }
+        Protect-UpgradeArchiveOwnerOnly -LiteralPath $archiveItem.FullName
+        $archiveText = Get-Content -Raw -LiteralPath $archiveItem.FullName
+        $archiveDocument = [System.Text.Json.JsonDocument]::Parse($archiveText)
+        try {
+            Assert-ExactJsonProperties -Object $archiveDocument.RootElement -ExpectedNames @(
+                'schema', 'transaction_id', 'operation', 'trusted_root', 'stage_root',
+                'previous_root', 'failed_root', 'predecessor_manifest_sha256',
+                'target_source_commit', 'target_manifest_sha256',
+                'target_candidate_freeze_sha256', 'created_at'
+            ) -Label 'Committed upgrade archive'
+        }
+        finally { $archiveDocument.Dispose() }
+        $transaction = $archiveText | ConvertFrom-Json
+        $archiveId = [string]$transaction.transaction_id
+        if ($transaction.schema -cne 'blip-runtime-upgrade-transaction/v1' -or
+            $archiveId -notmatch '^[0-9a-f]{32}$' -or
+            $archiveItem.Name -cne "upgrade-complete-$archiveId.json" -or
+            [string]$transaction.operation -notin @('initial', 'upgrade') -or
+            [string]$transaction.target_source_commit -notmatch '^[0-9a-f]{40}$' -or
+            [string]$transaction.target_manifest_sha256 -notmatch '^[0-9A-F]{64}$' -or
+            [string]$transaction.target_candidate_freeze_sha256 -notmatch '^[0-9A-F]{64}$' -or
+            ([string]$transaction.operation -ceq 'upgrade' -and
+                [string]$transaction.predecessor_manifest_sha256 -notmatch '^[0-9A-F]{64}$') -or
+            ([string]$transaction.operation -ceq 'initial' -and
+                [string]$transaction.predecessor_manifest_sha256 -cne 'NONE')) {
+            throw "Committed upgrade archive authority is invalid: $($archiveItem.FullName)"
+        }
+        foreach ($entry in @(
+            @{ Value = [string]$transaction.trusted_root; Pattern = '^v1$' },
+            @{ Value = [string]$transaction.stage_root; Pattern = '^v1\.stage-' + $archiveId + '$' },
+            @{ Value = [string]$transaction.previous_root; Pattern = '^v1\.previous-' + $archiveId + '$' },
+            @{ Value = [string]$transaction.failed_root; Pattern = '^v1\.failed-' + $archiveId + '$' }
+        )) {
+            $full = [System.IO.Path]::GetFullPath($entry.Value)
+            if ([System.IO.Path]::GetDirectoryName($full) -cne $productRoot -or
+                [System.IO.Path]::GetFileName($full) -notmatch $entry.Pattern) {
+                throw 'Committed upgrade archive contains a non-canonical runtime path.'
+            }
+        }
+        if ([string]$transaction.target_source_commit -ceq $ExpectedTargetSourceCommit -and
+            [string]$transaction.target_candidate_freeze_sha256 -ceq
+                $ExpectedTargetCandidateFreezeSha256) {
+            if ([string]$transaction.operation -ceq 'upgrade' -and
+                [string]$transaction.predecessor_manifest_sha256 -cne
+                    $allowedPredecessor.manifest_sha256) {
+                throw 'Matching committed upgrade archive has an invalid predecessor tuple.'
+            }
+            $matchingTransactions.Add($transaction)
+        }
+    }
+    if ($matchingTransactions.Count -eq 0) { return }
+    if ($matchingTransactions.Count -ne 1) {
+        throw 'Multiple committed upgrade archives match the requested candidate.'
+    }
+    $match = $matchingTransactions[0]
+    if ($null -ne $OperationOut) {
+        $OperationOut.Value = [string]$match.operation
+    }
+    if ($null -ne $TransactionIdOut) {
+        $TransactionIdOut.Value = [string]$match.transaction_id
+    }
+    Assert-ActivationCommitMarker `
+        -ExpectedSourceCommit ([string]$match.target_source_commit) `
+        -ExpectedManifestSha256 ([string]$match.target_manifest_sha256) `
+        -ExpectedCandidateFreezeSha256 ([string]$match.target_candidate_freeze_sha256)
+    Protect-RuntimeTree -LiteralPath $trustedRoot
+    Protect-CompletionMarkerRuntimeReadable
+    return [pscustomobject]@{
+        Status = 'committed'
+        Operation = [string]$match.operation
+        TransactionId = [string]$match.transaction_id
+        PreviousRoot = if ([string]$match.operation -ceq 'upgrade') {
+            [string]$match.previous_root
+        }
+        else { '' }
+    }
+}
+
+function Restore-PreviousRuntime {
+    param(
+        [Parameter(Mandatory)][string]$Trusted,
+        [Parameter(Mandatory)][string]$Previous,
+        [Parameter(Mandatory)][string]$Failed,
+        [Parameter(Mandatory)][string]$Stage
+    )
+    if (-not [System.IO.Directory]::Exists($Previous)) {
+        throw "Previous trusted runtime is unavailable for rollback: $Previous"
+    }
+    foreach ($name in @('state', 'codex-home')) {
+        $previousMutable = Join-Path $Previous $name
+        if (-not [System.IO.Directory]::Exists($previousMutable)) {
+            $sources = @(@(
+                (Join-Path $Trusted $name), (Join-Path $Stage $name)
+            ) | Where-Object { [System.IO.Directory]::Exists($_) })
+            if ($sources.Count -ne 1) {
+                throw "Rollback cannot locate exactly one mutable runtime directory: $name"
+            }
+            [System.IO.Directory]::Move($sources[0], $previousMutable)
+        }
+    }
+    $previousArtifacts = Join-Path $Previous 'artifacts'
+    if (-not [System.IO.Directory]::Exists($previousArtifacts)) {
+        $artifactSources = @(@(
+            (Join-Path $Trusted 'artifacts'), (Join-Path $Stage 'artifacts')
+        ) | Where-Object { [System.IO.Directory]::Exists($_) })
+        if ($artifactSources.Count -gt 1) {
+            throw 'Rollback found ambiguous mutable artifacts directories.'
+        }
+        if ($artifactSources.Count -eq 1) {
+            [System.IO.Directory]::Move($artifactSources[0], $previousArtifacts)
+        }
+    }
+    if ([System.IO.Directory]::Exists($Trusted)) {
+        if ([System.IO.Directory]::Exists($Failed)) {
+            throw "Failed-runtime quarantine target already exists: $Failed"
+        }
+        [System.IO.Directory]::Move($Trusted, $Failed)
+    }
+    [System.IO.Directory]::Move($Previous, $Trusted)
+}
+
+function Recover-InterruptedUpgrade {
+    param(
+        [Parameter(Mandatory)]
+        [ValidatePattern('^[0-9a-f]{40}$')]
+        [string]$ExpectedTargetSourceCommit,
+
+        [Parameter(Mandatory)]
+        [ValidatePattern('^[0-9A-F]{64}$')]
+        [string]$ExpectedTargetCandidateFreezeSha256,
+
+        [ref]$OperationOut,
+        [ref]$TransactionIdOut
+    )
+    if (-not [System.IO.File]::Exists($upgradeTransactionPath)) {
+        $archiveRecoveryParameters = @{
+            ExpectedTargetSourceCommit = $ExpectedTargetSourceCommit
+            ExpectedTargetCandidateFreezeSha256 = $ExpectedTargetCandidateFreezeSha256
+        }
+        if ($null -ne $OperationOut) {
+            $archiveRecoveryParameters.OperationOut = $OperationOut
+        }
+        if ($null -ne $TransactionIdOut) {
+            $archiveRecoveryParameters.TransactionIdOut = $TransactionIdOut
+        }
+        return Recover-CommittedUpgradeArchive @archiveRecoveryParameters
+    }
+    Protect-UpgradeJournalOwnerOnly
+    $transactionText = Get-Content -Raw -LiteralPath $upgradeTransactionPath
+    $document = [System.Text.Json.JsonDocument]::Parse($transactionText)
+    try {
+        Assert-ExactJsonProperties -Object $document.RootElement -ExpectedNames @(
+            'schema', 'transaction_id', 'operation', 'trusted_root', 'stage_root',
+            'previous_root', 'failed_root', 'predecessor_manifest_sha256',
+            'target_source_commit', 'target_manifest_sha256',
+            'target_candidate_freeze_sha256', 'created_at'
+        ) -Label 'Upgrade transaction journal'
+    }
+    finally { $document.Dispose() }
+    $transaction = $transactionText | ConvertFrom-Json
+    $journalId = [string]$transaction.transaction_id
+    if ($transaction.schema -cne 'blip-runtime-upgrade-transaction/v1' -or
+        $journalId -notmatch '^[0-9a-f]{32}$' -or
+        [string]$transaction.operation -notin @('initial', 'upgrade') -or
+        [string]$transaction.target_source_commit -notmatch '^[0-9a-f]{40}$' -or
+        [string]$transaction.target_manifest_sha256 -notmatch '^[0-9A-F]{64}$' -or
+        [string]$transaction.target_candidate_freeze_sha256 -notmatch '^[0-9A-F]{64}$' -or
+        ([string]$transaction.operation -ceq 'upgrade' -and
+            [string]$transaction.predecessor_manifest_sha256 -cne
+                $allowedPredecessor.manifest_sha256) -or
+        ([string]$transaction.operation -ceq 'initial' -and
+            [string]$transaction.predecessor_manifest_sha256 -cne 'NONE')) {
+        throw 'Upgrade transaction journal authority is invalid.'
+    }
+    foreach ($entry in @(
+        @{ Value = [string]$transaction.trusted_root; Pattern = '^v1$' },
+        @{ Value = [string]$transaction.stage_root; Pattern = '^v1\.stage-' + $journalId + '$' },
+        @{ Value = [string]$transaction.previous_root; Pattern = '^v1\.previous-' + $journalId + '$' },
+        @{ Value = [string]$transaction.failed_root; Pattern = '^v1\.failed-' + $journalId + '$' }
+    )) {
+        $full = [System.IO.Path]::GetFullPath($entry.Value)
+        if ([System.IO.Path]::GetDirectoryName($full) -cne $productRoot -or
+            [System.IO.Path]::GetFileName($full) -notmatch $entry.Pattern) {
+            throw 'Upgrade transaction journal contains a non-canonical runtime path.'
+        }
+    }
+    $journalPrevious = [string]$transaction.previous_root
+    $journalFailed = [string]$transaction.failed_root
+    if ($null -ne $OperationOut) {
+        $OperationOut.Value = [string]$transaction.operation
+    }
+    if ($null -ne $TransactionIdOut) {
+        $TransactionIdOut.Value = $journalId
+    }
+    $journalMatchesRequestedCandidate =
+        [string]$transaction.target_source_commit -ceq $ExpectedTargetSourceCommit -and
+        [string]$transaction.target_candidate_freeze_sha256 -ceq
+            $ExpectedTargetCandidateFreezeSha256
+    $archive = Join-Path $productRoot (
+        'upgrade-recovered-' + [string]$transaction.transaction_id + '.json'
+    )
+    $committedArchive = Join-Path $productRoot (
+        'upgrade-complete-' + [string]$transaction.transaction_id + '.json'
+    )
+    if ([string]$transaction.operation -ceq 'initial') {
+        if ([System.IO.Directory]::Exists($trustedRoot)) {
+            if ([System.IO.File]::Exists((Join-Path $trustedRoot 'install-complete.json'))) {
+                Assert-ActivationCommitMarker `
+                    -ExpectedSourceCommit ([string]$transaction.target_source_commit) `
+                    -ExpectedManifestSha256 ([string]$transaction.target_manifest_sha256) `
+                    -ExpectedCandidateFreezeSha256 `
+                        ([string]$transaction.target_candidate_freeze_sha256)
+                Protect-RuntimeTree -LiteralPath $trustedRoot
+                Protect-CompletionMarkerRuntimeReadable
+                Move-UpgradeJournal -Destination $committedArchive
+                if (-not $journalMatchesRequestedCandidate) {
+                    throw 'A committed initial runtime journal was recovered for a different candidate; retry the requested installation.'
+                }
+                return [pscustomobject]@{
+                    Status = 'committed'
+                    Operation = 'initial'
+                    TransactionId = $journalId
+                    PreviousRoot = ''
+                }
+            }
+            if ([System.IO.Directory]::Exists($journalFailed)) {
+                throw 'Initial runtime recovery quarantine target already exists.'
+            }
+            [System.IO.Directory]::Move($trustedRoot, $journalFailed)
+            Move-UpgradeJournal -Destination $archive
+            throw 'An interrupted initial runtime publish was quarantined; retry installation.'
+        }
+        $journalStage = [string]$transaction.stage_root
+        if ([System.IO.Directory]::Exists($journalStage)) {
+            if ([System.IO.Directory]::Exists($journalFailed)) {
+                throw 'Initial runtime recovery quarantine target already exists.'
+            }
+            [System.IO.Directory]::Move($journalStage, $journalFailed)
+            Move-UpgradeJournal -Destination $archive
+            throw 'An interrupted initial runtime stage was quarantined; retry installation.'
+        }
+        if ([System.IO.Directory]::Exists($journalFailed)) {
+            Move-UpgradeJournal -Destination $archive
+            throw 'An interrupted initial runtime was already quarantined; retry installation.'
+        }
+        throw 'Interrupted initial runtime installation is not recoverable automatically.'
+    }
+    if ([System.IO.Directory]::Exists($journalPrevious)) {
+        if ([System.IO.Directory]::Exists($trustedRoot) -and
+            [System.IO.File]::Exists((Join-Path $trustedRoot 'install-complete.json'))) {
+            Assert-ActivationCommitMarker `
+                -ExpectedSourceCommit ([string]$transaction.target_source_commit) `
+                -ExpectedManifestSha256 ([string]$transaction.target_manifest_sha256) `
+                -ExpectedCandidateFreezeSha256 `
+                    ([string]$transaction.target_candidate_freeze_sha256)
+            Protect-RuntimeTree -LiteralPath $trustedRoot
+            Protect-CompletionMarkerRuntimeReadable
+            Move-UpgradeJournal -Destination $committedArchive
+            if (-not $journalMatchesRequestedCandidate) {
+                throw 'A committed runtime upgrade journal was recovered for a different candidate; retry the requested installation.'
+            }
+            return [pscustomobject]@{
+                Status = 'committed'
+                Operation = 'upgrade'
+                TransactionId = $journalId
+                PreviousRoot = $journalPrevious
+            }
+        }
+        Restore-PreviousRuntime -Trusted $trustedRoot -Previous $journalPrevious `
+            -Failed $journalFailed -Stage ([string]$transaction.stage_root)
+        Protect-RuntimeTree -LiteralPath $trustedRoot
+        [void](Assert-ExistingTrustedRuntime)
+        Move-UpgradeJournal -Destination $archive
+        throw 'An interrupted runtime upgrade was rolled back; retry the authorized installation.'
+    }
+    if ([System.IO.Directory]::Exists($trustedRoot)) {
+        Protect-RuntimeTree -LiteralPath $trustedRoot
+        [void](Assert-ExistingTrustedRuntime)
+        Move-UpgradeJournal -Destination $archive
+        throw 'An interrupted runtime upgrade stopped before predecessor publication; retry installation.'
+    }
+    throw 'Interrupted runtime upgrade is not recoverable automatically; trusted runtime is unavailable.'
+}
+
 $freezeStream = $null
 $reviewedManifestStream = $null
 $freezeDocument = $null
 $stagePublished = $false
-$installCompleted = $false
+$activationCommitted = $false
+$upgradeAttempted = $false
+$recoveryOperation = ''
+$recoveryTransactionId = ''
+$recoveryContextStarted = $false
+$transactionWritten = $false
+$trustedBootstrapReady = $false
 try {
     if ($Apply) {
         if (-not [string]::IsNullOrWhiteSpace($PSCommandPath) -or
@@ -650,7 +1586,7 @@ try {
             'CandidateRoot', 'FreezeSha256', 'InstallerSha256',
             'ReviewedBuildManifestSha256', 'ReviewedBuildManifestStream',
             'BootstrapSha256', 'FreezeStream', 'InstallerStream',
-            'BootstrapStream',
+            'BootstrapStream', 'StructLogStream', 'StructLogSha256', 'StructLogModule',
             'InstallerLauncherPath', 'InstallerLauncherSha256', 'InstallerLauncherStream',
             'VerifierPath', 'VerifierSha256', 'VerifierStream'
         )
@@ -706,7 +1642,7 @@ try {
         }
         foreach ($property in @(
             'FreezeStream', 'ReviewedBuildManifestStream', 'InstallerStream',
-            'BootstrapStream', 'InstallerLauncherStream', 'VerifierStream'
+            'BootstrapStream', 'StructLogStream', 'InstallerLauncherStream', 'VerifierStream'
         )) {
             if ($BootstrapContext.$property -isnot [System.IO.FileStream] -or
                 -not $BootstrapContext.$property.CanRead -or
@@ -719,6 +1655,8 @@ try {
                 $reviewedManifestPath -or
             [System.IO.Path]::GetFullPath($BootstrapContext.InstallerStream.Name) -cne $installerPath -or
             [System.IO.Path]::GetFullPath($BootstrapContext.BootstrapStream.Name) -cne $bootstrapPath -or
+            [System.IO.Path]::GetFullPath($BootstrapContext.StructLogStream.Name) -cne
+                (Resolve-CandidatePath -RelativePath 'scripts/lib/StructLog.psm1') -or
             [System.IO.Path]::GetFullPath($BootstrapContext.InstallerLauncherStream.Name) -cne
                 [System.IO.Path]::GetFullPath($BootstrapContext.InstallerLauncherPath) -or
             [System.IO.Path]::GetFullPath($BootstrapContext.InstallerLauncherPath).StartsWith(
@@ -737,6 +1675,11 @@ try {
                 $ExpectedReviewedBuildManifestSha256.ToUpperInvariant() -or
             (Get-OpenStreamSha256 -Stream $BootstrapContext.BootstrapStream) -cne
             $ExpectedBootstrapSha256.ToUpperInvariant() -or
+            $BootstrapContext.StructLogSha256 -notmatch '^[0-9A-F]{64}$' -or
+            (Get-OpenStreamSha256 -Stream $BootstrapContext.StructLogStream) -cne
+                $BootstrapContext.StructLogSha256 -or
+            $BootstrapContext.StructLogModule -isnot [System.Management.Automation.PSModuleInfo] -or
+            $BootstrapContext.StructLogModule.Name -cne 'BlipInstallerStructLog' -or
             $BootstrapContext.InstallerLauncherSha256 -notmatch '^[0-9A-F]{64}$' -or
             (Get-OpenStreamSha256 -Stream $BootstrapContext.InstallerLauncherStream) -cne
                 $BootstrapContext.InstallerLauncherSha256 -or
@@ -747,6 +1690,7 @@ try {
         }
         $freezeStream = $BootstrapContext.FreezeStream
         $reviewedManifestStream = $BootstrapContext.ReviewedBuildManifestStream
+        $trustedBootstrapReady = $true
     }
     else {
         $freezeStream = Open-PinnedReadStream -LiteralPath $freezePath
@@ -774,7 +1718,8 @@ try {
     $sourceElement = Get-UniqueJsonProperty -Object $freezeRoot -Name 'source_files'
     $runtimeElement = Get-UniqueJsonProperty -Object $freezeRoot -Name 'runtime_source'
     $expectedSourceNames = @(
-        'install_blip_auto_approval.ps1', 'invoke_frozen_blip_installer.ps1'
+        'install_blip_auto_approval.ps1', 'invoke_frozen_blip_installer.ps1',
+        'scripts/lib/StructLog.psm1'
     ) + @($trustedFiles.Values | Sort-Object -Unique)
     Assert-ExactHashObject -Object $sourceElement -ExpectedNames $expectedSourceNames -Label 'Candidate source_files'
     Assert-ExactHashObject -Object $runtimeElement -ExpectedNames @($runtimeFiles.Keys) -Label 'Candidate runtime_source'
@@ -800,6 +1745,9 @@ try {
     }
     $freeze = $freezeText | ConvertFrom-Json
     if ($Apply) {
+        if ($sourceCommitElement.GetString() -ceq $allowedPredecessor.source_commit) {
+            throw 'Candidate source commit must advance beyond the exact allowed predecessor.'
+        }
         $frozenInstaller = $freeze.source_files.PSObject.Properties['install_blip_auto_approval.ps1']
         $frozenBootstrap = $freeze.source_files.PSObject.Properties['invoke_frozen_blip_installer.ps1']
         if ($null -eq $frozenInstaller -or
@@ -807,6 +1755,60 @@ try {
             $null -eq $frozenBootstrap -or
             [string]$frozenBootstrap.Value -cne $ExpectedBootstrapSha256.ToUpperInvariant()) {
             throw 'The freeze does not bind the executing installer/bootstrap pair.'
+        }
+    }
+
+    if ($Apply) {
+        Assert-ProgramDataParent
+        New-ProtectedDirectory -LiteralPath $protectedRoot
+        New-ProtectedDirectory -LiteralPath $productRoot
+        New-ProtectedDirectory -LiteralPath $secretRoot -OwnerOnly
+        Open-UpgradeLock
+        $upgradeAttempted = [System.IO.Directory]::Exists($trustedRoot)
+        $recoveryContextStarted = $true
+        try {
+            $recoveryResult = Recover-InterruptedUpgrade `
+                -ExpectedTargetSourceCommit $sourceCommitElement.GetString() `
+                -ExpectedTargetCandidateFreezeSha256 $freezeHash `
+                -OperationOut ([ref]$recoveryOperation) `
+                -TransactionIdOut ([ref]$recoveryTransactionId)
+        }
+        catch {
+            if ($recoveryTransactionId -match '^[0-9a-f]{32}$') {
+                $installerStructTransactionId = $recoveryTransactionId
+            }
+            Set-RecoveryAttemptMode `
+                -Operation $recoveryOperation `
+                -UpgradeAttempted ([ref]$upgradeAttempted)
+            throw
+        }
+        if ($null -eq $recoveryResult) {
+            $recoveryContextStarted = $false
+        }
+        if ($null -ne $recoveryResult) {
+            if ($recoveryResult.Status -cne 'committed' -or
+                $recoveryResult.Operation -notin @('initial', 'upgrade') -or
+                [string]$recoveryResult.TransactionId -notmatch '^[0-9a-f]{32}$') {
+                throw 'Interrupted runtime recovery returned an invalid result.'
+            }
+            $recoveredPrevious = if ($recoveryResult.Operation -ceq 'upgrade') {
+                " previous_runtime=$($recoveryResult.PreviousRoot)"
+            }
+            else { '' }
+            Write-InstallerStructInformation -Event 'committed_recovery_completed' `
+                -Message 'A committed runtime transaction journal was recovered.' `
+                -TransactionId ([string]$recoveryResult.TransactionId) `
+                -Data @{
+                    operation = $recoveryResult.Operation
+                    trusted_root = $trustedRoot
+                    previous_root = $recoveryResult.PreviousRoot
+                }
+            Write-Output (
+                "INSTALL_RESULT trusted_runtime=$trustedRoot$recoveredPrevious " +
+                'recovery=committed secret_path=' + $secretRoot +
+                ' activation=OWNER_PEM_AND_CODEX_LOGIN_REQUIRED'
+            )
+            return
         }
     }
 
@@ -856,20 +1858,25 @@ try {
         exit 0
     }
 
-    Assert-ProgramDataParent
-    New-ProtectedDirectory -LiteralPath $protectedRoot
-    New-ProtectedDirectory -LiteralPath $productRoot
-    New-ProtectedDirectory -LiteralPath $secretRoot -OwnerOnly
-    if (Test-Path -LiteralPath $trustedRoot) {
-        throw "Trusted runtime v1 already exists; this initial installer never replaces it: $trustedRoot"
+    $existingManifest = $null
+    if ($upgradeAttempted) {
+        $existingManifest = Assert-ExistingTrustedRuntime
+        Open-PredecessorRuntimeFence -Manifest $existingManifest
     }
-    New-ProtectedDirectory -LiteralPath $stageRoot
-    foreach ($relative in @(
-        'state', 'app-scripts', 'codex-home', 'codex-runtime',
+    New-ProtectedDirectory -LiteralPath $stageRoot -OwnerOnly
+    $stageDirectories = @(
+        'app-scripts', 'codex-runtime',
         'codex-runtime\bin', 'codex-runtime\codex-path',
         'codex-runtime\codex-resources'
-    )) {
-        New-ProtectedDirectory -LiteralPath (Join-Path $stageRoot $relative)
+    )
+    if (-not $upgradeAttempted) {
+        $stageDirectories = @('state') + $stageDirectories
+    }
+    foreach ($relative in $stageDirectories) {
+        New-ProtectedDirectory -LiteralPath (Join-Path $stageRoot $relative) -OwnerOnly
+    }
+    if (-not $upgradeAttempted) {
+        New-ProtectedDirectory -LiteralPath (Join-Path $stageRoot 'codex-home') -OwnerOnly
     }
 
     foreach ($entry in $trustedFiles.GetEnumerator()) {
@@ -886,11 +1893,13 @@ try {
             -Target (Join-Path (Join-Path $stageRoot 'codex-runtime') $relative) `
             -ExpectedSha256 $expected
     }
-    [System.IO.File]::WriteAllText(
-        (Join-Path $stageRoot 'codex-home\auth.json'),
-        '{}',
-        [System.Text.UTF8Encoding]::new($false)
-    )
+    if (-not $upgradeAttempted) {
+        [System.IO.File]::WriteAllText(
+            (Join-Path $stageRoot 'codex-home\auth.json'),
+            '{}',
+            [System.Text.UTF8Encoding]::new($false)
+        )
+    }
 
     $manifestFiles = [ordered]@{}
     foreach ($entry in $trustedFiles.GetEnumerator()) {
@@ -900,8 +1909,12 @@ try {
     foreach ($entry in $runtimeFiles.GetEnumerator()) {
         $manifestRuntime[$entry.Key] = [string]$freeze.runtime_source.PSObject.Properties[$entry.Key].Value
     }
+    if ($upgradeAttempted) {
+        Assert-SuccessorGenerationPivots `
+            -PredecessorManifest $existingManifest -SuccessorFileHashes $manifestFiles
+    }
     [ordered]@{
-        schema = 'blip-trusted-runtime-manifest/v1'
+        schema = 'blip-trusted-runtime-manifest/v2'
         source_commit = $sourceCommitElement.GetString().ToLowerInvariant()
         files = $manifestFiles
         runtime = $manifestRuntime
@@ -910,9 +1923,10 @@ try {
         installed_at = [DateTimeOffset]::Now.ToString('o')
     } | ConvertTo-Json -Depth 6 | Set-Content `
         -LiteralPath (Join-Path $stageRoot 'manifest.json') -Encoding utf8NoBOM
+    $targetManifestHash = (Get-FileHash `
+        -LiteralPath (Join-Path $stageRoot 'manifest.json') -Algorithm SHA256
+    ).Hash.ToUpperInvariant()
 
-    Protect-Tree -LiteralPath $stageRoot
-    Protect-OwnerOnlyTree -LiteralPath (Join-Path $stageRoot 'codex-home')
     foreach ($entry in $trustedFiles.GetEnumerator()) {
         $installed = Join-Path $stageRoot $entry.Key
         if ((Get-FileHash -LiteralPath $installed -Algorithm SHA256).Hash -cne $manifestFiles[$entry.Key]) {
@@ -941,8 +1955,64 @@ try {
         }
     }
 
+    $transactionOperation = if ($upgradeAttempted) { 'upgrade' } else { 'initial' }
+    Write-ProtectedUpgradeJournal -Operation $transactionOperation `
+        -TargetSourceCommit ($sourceCommitElement.GetString().ToLowerInvariant()) `
+        -TargetManifestSha256 $targetManifestHash `
+        -TargetCandidateFreezeSha256 $freezeHash
+    $transactionWritten = $true
+
+    if ($upgradeAttempted) {
+        $predecessorManifestPath = Join-Path $trustedRoot 'manifest.json'
+        if ((Get-FileHash -LiteralPath $predecessorManifestPath -Algorithm SHA256).Hash `
+                -cne $allowedPredecessor.manifest_sha256) {
+            throw 'Existing trusted runtime changed after its predecessor tuple was fenced.'
+        }
+        Protect-QuiescedPredecessorRuntime
+        Close-PredecessorRuntimeFence
+        [System.IO.Directory]::Move($trustedRoot, $previousRoot)
+        Move-PreservedRuntimeDirectories -SourceRoot $previousRoot -DestinationRoot $stageRoot `
+            -SourceAlreadyValidated
+    }
+
     [System.IO.Directory]::Move($stageRoot, $trustedRoot)
     $stagePublished = $true
+
+    $installedManifestPath = Join-Path $trustedRoot 'manifest.json'
+    $installedManifestHash = (Get-FileHash `
+        -LiteralPath $installedManifestPath -Algorithm SHA256
+    ).Hash.ToUpperInvariant()
+    if ($installedManifestHash -cne $targetManifestHash) {
+        throw 'Published runtime manifest differs from the journal-bound target manifest.'
+    }
+    $completionPayload = [ordered]@{
+        schema = 'blip-trusted-runtime-complete/v2'
+        owner_sid = $fixedOwnerSidValue
+        candidate_freeze_sha256 = $freezeHash
+        manifest_sha256 = $installedManifestHash
+        completed_at = [DateTimeOffset]::Now.ToString('o')
+    } | ConvertTo-Json -Depth 4
+    $completionBytes = [System.Text.UTF8Encoding]::new($false).GetBytes(
+        $completionPayload + [Environment]::NewLine
+    )
+    $completionStream = [System.IO.FileSystemAclExtensions]::Create(
+        [System.IO.FileInfo]::new($completionStagePath),
+        [System.IO.FileMode]::CreateNew,
+        [System.Security.AccessControl.FileSystemRights]::FullControl,
+        [System.IO.FileShare]::None,
+        4096,
+        [System.IO.FileOptions]::WriteThrough,
+        (New-OwnerOnlyFileSecurity)
+    )
+    try {
+        $completionStream.Write($completionBytes, 0, $completionBytes.Length)
+        $completionStream.Flush($true)
+    }
+    finally { $completionStream.Dispose() }
+    Assert-OwnerOnlyAcl -LiteralPaths @($completionStagePath)
+    [System.IO.File]::Move($completionStagePath, $completionPath)
+    $activationCommitted = $true
+    Protect-RuntimeTree -LiteralPath $trustedRoot
     $ownerOnlyRuntimeRoot = Join-Path $trustedRoot 'codex-home'
     $runtimeReadable = @(
         $protectedRoot, $productRoot, $trustedRoot
@@ -953,70 +2023,143 @@ try {
             ForEach-Object { $_.FullName }
     )
     Assert-ProtectedAcl -LiteralPaths $runtimeReadable
-    Assert-OwnerOnlyAcl -LiteralPaths @(
-        $secretRoot, $ownerOnlyRuntimeRoot,
-        (Join-Path $ownerOnlyRuntimeRoot 'auth.json')
+    $ownerOnlyRuntimePaths = @(
+        $ownerOnlyRuntimeRoot
+        Get-ChildItem -Force -Recurse -LiteralPath $ownerOnlyRuntimeRoot |
+            ForEach-Object { $_.FullName }
     )
-
-    $installedManifestPath = Join-Path $trustedRoot 'manifest.json'
-    $installedManifestHash = (Get-FileHash `
-        -LiteralPath $installedManifestPath -Algorithm SHA256
-    ).Hash.ToUpperInvariant()
-    $completionPayload = [ordered]@{
-        schema = 'blip-trusted-runtime-complete/v1'
-        owner_sid = $fixedOwnerSidValue
-        candidate_freeze_sha256 = $freezeHash
-        manifest_sha256 = $installedManifestHash
-        completed_at = [DateTimeOffset]::Now.ToString('o')
-    } | ConvertTo-Json -Depth 4
-    $completionBytes = [System.Text.UTF8Encoding]::new($false).GetBytes(
-        $completionPayload + [Environment]::NewLine
-    )
-    $completionStream = [System.IO.FileSystemAclExtensions]::Create(
-        [System.IO.FileInfo]::new($completionPath),
-        [System.IO.FileMode]::CreateNew,
-        [System.Security.AccessControl.FileSystemRights]::FullControl,
-        [System.IO.FileShare]::None,
-        4096,
-        [System.IO.FileOptions]::WriteThrough,
-        (New-ProtectedFileSecurity)
-    )
-    try {
-        $completionStream.Write($completionBytes, 0, $completionBytes.Length)
-        $completionStream.Flush($true)
-    }
-    finally { $completionStream.Dispose() }
-    Assert-ProtectedAcl -LiteralPaths @($completionPath)
+    Assert-OwnerOnlyAcl -LiteralPaths (@($secretRoot) + $ownerOnlyRuntimePaths)
+    Protect-CompletionMarkerRuntimeReadable
     $completionReadback = Get-Content -Raw -LiteralPath $completionPath | ConvertFrom-Json
-    if ($completionReadback.schema -cne 'blip-trusted-runtime-complete/v1' -or
+    if ($completionReadback.schema -cne 'blip-trusted-runtime-complete/v2' -or
         [string]$completionReadback.owner_sid -cne $fixedOwnerSidValue -or
         [string]$completionReadback.candidate_freeze_sha256 -cne $freezeHash -or
         [string]$completionReadback.manifest_sha256 -cne $installedManifestHash) {
         throw 'Installed completion marker did not read back with the exact verified runtime tuple.'
     }
-    $installCompleted = $true
-    Write-Output "INSTALL_RESULT trusted_runtime=$trustedRoot secret_path=$secretRoot activation=OWNER_PEM_AND_CODEX_LOGIN_REQUIRED"
+    if ($transactionWritten) {
+        try {
+            Move-UpgradeJournal -Destination $upgradeCompletePath
+            $transactionWritten = $false
+        }
+        catch {
+            $message = 'Runtime upgrade committed, but its journal remains for next-invocation recovery: ' +
+                $upgradeTransactionPath
+            Write-InstallerStructWarning -Event 'journal_archive_failed_after_commit' `
+                -Message $message -Data @{
+                    journal_path = $upgradeTransactionPath
+                    trusted_root = $trustedRoot
+                }
+        }
+    }
+    $previousOutput = if ($upgradeAttempted) { " previous_runtime=$previousRoot" } else { '' }
+    Write-Output "INSTALL_RESULT trusted_runtime=$trustedRoot$previousOutput secret_path=$secretRoot activation=OWNER_PEM_AND_CODEX_LOGIN_REQUIRED"
 }
 catch {
     $installationError = $_
-    if ($stagePublished -and -not $installCompleted -and
+    if (-not $Apply -or -not $trustedBootstrapReady) {
+        throw $installationError
+    }
+    $targetMarkerPublished = $false
+    if (Test-ShouldInspectTargetActivationMarker `
+            -RecoveryContextStarted $recoveryContextStarted `
+            -TransactionWritten $transactionWritten) {
+        $targetMarkerPublished = Test-TargetActivationMarkerPublished `
+            -IsUpgrade $upgradeAttempted
+    }
+    if ($targetMarkerPublished) {
+        try {
+            Assert-ActivationCommitMarker `
+                -ExpectedSourceCommit ($sourceCommitElement.GetString().ToLowerInvariant()) `
+                -ExpectedManifestSha256 $targetManifestHash `
+                -ExpectedCandidateFreezeSha256 $freezeHash
+            $activationCommitted = $true
+            Write-InstallerStructWarning -Event 'activation_committed_journal_retained' `
+                -Message 'Runtime activation committed; the journal is retained after a post-commit failure.' `
+                -Data @{ journal_path = $upgradeTransactionPath; trusted_root = $trustedRoot }
+        }
+        catch {
+            Write-InstallerStructWarning -Event 'activation_marker_ambiguous' `
+                -Message 'A final activation marker exists but is ambiguous; no automatic rollback is allowed.' `
+                -Data @{ journal_path = $upgradeTransactionPath; trusted_root = $trustedRoot }
+        }
+    }
+    elseif ($upgradeAttempted -and $transactionWritten -and -not $activationCommitted) {
+        try {
+            if ([System.IO.Directory]::Exists($previousRoot)) {
+                Restore-PreviousRuntime -Trusted $trustedRoot -Previous $previousRoot `
+                    -Failed $failedRoot -Stage $stageRoot
+            }
+            elseif (-not [System.IO.Directory]::Exists($trustedRoot)) {
+                throw 'Upgrade journal exists but neither trusted nor previous runtime is available.'
+            }
+            Protect-RuntimeTree -LiteralPath $trustedRoot
+            [void](Assert-ExistingTrustedRuntime)
+            if ($transactionWritten) {
+                Move-UpgradeJournal -Destination $upgradeRollbackPath
+                $transactionWritten = $false
+            }
+            Write-InstallerStructWarning -Event 'upgrade_rolled_back' `
+                -Message "Runtime upgrade failed and the exact predecessor was restored: $trustedRoot" `
+                -Data @{ trusted_root = $trustedRoot; rollback_journal = $upgradeRollbackPath }
+        }
+        catch {
+            $message = "Runtime upgrade rollback could not restore the exact predecessor: $($_.Exception.Message)"
+            Write-InstallerStructWarning -Event 'upgrade_rollback_failed' -Message $message `
+                -Data @{ trusted_root = $trustedRoot; journal_path = $upgradeTransactionPath }
+        }
+    }
+    elseif (-not $upgradeAttempted -and $transactionWritten -and -not $activationCommitted) {
+        try {
+            $incompleteRoot = if ([System.IO.Directory]::Exists($trustedRoot)) {
+                $trustedRoot
+            }
+            elseif ([System.IO.Directory]::Exists($stageRoot)) { $stageRoot }
+            else { $null }
+            if ($null -eq $incompleteRoot) {
+                throw 'Initial install journal exists but no incomplete runtime root is available.'
+            }
+            if ([System.IO.Directory]::Exists($failedRoot)) {
+                throw "Initial install quarantine target already exists: $failedRoot"
+            }
+            [System.IO.Directory]::Move($incompleteRoot, $failedRoot)
+            Move-UpgradeJournal -Destination $upgradeRollbackPath
+            $transactionWritten = $false
+            Write-InstallerStructWarning -Event 'initial_runtime_quarantined' `
+                -Message "Incomplete initial runtime was quarantined: $failedRoot" `
+                -Data @{ failed_root = $failedRoot; rollback_journal = $upgradeRollbackPath }
+        }
+        catch {
+            Write-InstallerStructWarning -Event 'initial_recovery_failed' `
+                -Message "Initial install recovery journal remains: $upgradeTransactionPath" `
+                -Data @{ journal_path = $upgradeTransactionPath }
+        }
+    }
+    elseif ($stagePublished -and -not $activationCommitted -and
         [System.IO.Directory]::Exists($trustedRoot)) {
         try {
             [System.IO.Directory]::Move($trustedRoot, $failedRoot)
-            Write-Warning "Incomplete published runtime was quarantined: $failedRoot"
+            Write-InstallerStructWarning -Event 'published_runtime_quarantined' `
+                -Message "Incomplete published runtime was quarantined: $failedRoot" `
+                -Data @{ failed_root = $failedRoot }
         }
         catch {
-            Write-Warning (
-                "Incomplete runtime remains non-runnable without install-complete.json: $trustedRoot"
-            )
+            Write-InstallerStructWarning -Event 'published_runtime_quarantine_failed' `
+                -Message "Incomplete runtime remains non-runnable without install-complete.json: $trustedRoot" `
+                -Data @{ trusted_root = $trustedRoot }
         }
     }
     throw $installationError
 }
 finally {
     if ($null -ne $freezeDocument) { $freezeDocument.Dispose() }
+    Close-PredecessorRuntimeFence
+    if ($null -ne $upgradeLockStream) { $upgradeLockStream.Dispose() }
     foreach ($stream in $pinnedStreams) { $stream.Dispose() }
-    if (-not $stagePublished -and (Test-Path -LiteralPath $stageRoot)) {
-        Write-Warning "A protected failed stage remains for owner inspection: $stageRoot"
+    if ($trustedBootstrapReady -and -not $stagePublished -and
+        (Test-Path -LiteralPath $stageRoot)) {
+        Write-InstallerStructWarning -Event 'failed_stage_retained' `
+            -Message "A protected failed stage remains for owner inspection: $stageRoot" `
+            -Data @{ stage_root = $stageRoot }
     }
 }

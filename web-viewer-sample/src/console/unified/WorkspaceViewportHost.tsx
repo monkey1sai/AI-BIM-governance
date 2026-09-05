@@ -63,10 +63,10 @@ export function WorkspaceViewportHost({ firstFrameTimeoutMs }: WorkspaceViewport
 
   const publication = slot?.publication ?? null;
   const activeSessionId = slot?.activeSessionId ?? "";
-  // 共用 session 覆寫：頁面 handoff 未帶 session 時沿用跨 dock 的 activeSessionId，讓 lease 不因切 dock 重 claim。
+  // 共用 session 是單一 authority：publish 會先播種；可見 input 之後即使清空，也不回退舊 handoff。
   const handoff = useMemo<ReviewRoomHandoff | null>(() => {
     if (!publication) return null;
-    const sid = publication.handoff.sessionId.trim() || activeSessionId;
+    const sid = activeSessionId;
     return sid === publication.handoff.sessionId ? publication.handoff : { ...publication.handoff, sessionId: sid };
   }, [publication, activeSessionId]);
 
@@ -109,6 +109,20 @@ export function WorkspaceViewportHost({ firstFrameTimeoutMs }: WorkspaceViewport
     pageStageTreeRef.current?.(msg);
   }, [setStageTree]);
 
+  useEffect(() => {
+    if (live) return;
+    setStageTree?.([]);
+    const reason = t("coordinator runtime/status 已離線", "coordinator runtime/status is offline");
+    const offlineGate: ReviewSessionViewerPaneBatchGate = {
+      canSend: false,
+      reason,
+      canSendViewerCommand: false,
+      viewerCommandReason: reason,
+    };
+    setGate?.(offlineGate);
+    pageGateRef.current?.(offlineGate);
+  }, [activeSessionId, live, setGate, setStageTree]);
+
   if (!live) return null; // 零新 DOM（離線／design gate）
 
   const style: CSSProperties = rect
@@ -140,6 +154,7 @@ export function WorkspaceViewportHost({ firstFrameTimeoutMs }: WorkspaceViewport
           showHandoffActions={publication.showHandoffActions ?? true}
           onBatchGateChange={onGate}
           onBatchAck={publication.onBatchAck}
+          onSessionIdChange={slot?.setActiveSessionId}
           onStageTree={onStageTree}
           {...(firstFrameTimeoutMs !== undefined ? { firstFrameTimeoutMs } : {})}
         />

@@ -48,6 +48,7 @@ $moduleDependencies = [ordered]@{
 $reviewedSourceFiles = @(
     'install_blip_auto_approval.ps1',
     'invoke_frozen_blip_installer.ps1',
+    'scripts/lib/StructLog.psm1',
     'bot/bots.json',
     'bot/scripts/app_auth.py',
     'bot/scripts/bind_ship_attestation.py',
@@ -94,14 +95,18 @@ $candidateRoot = [System.IO.Path]::GetFullPath($CandidateRoot).TrimEnd('\')
 $freezePath = [System.IO.Path]::Combine($candidateRoot, 'candidate-freeze.json')
 $installerPath = [System.IO.Path]::Combine($candidateRoot, 'install_blip_auto_approval.ps1')
 $bootstrapPath = [System.IO.Path]::Combine($candidateRoot, 'invoke_frozen_blip_installer.ps1')
+$structLogPath = [System.IO.Path]::Combine($candidateRoot, 'scripts\lib\StructLog.psm1')
 $reviewedManifestPath = [System.IO.Path]::Combine($candidateRoot, 'reviewed-build-manifest.json')
 $freezeStream = $null
 $installerStream = $null
+$structLogStream = $null
+$structLogModule = $null
 $freezeDocument = $null
 $reviewedManifestDocument = $null
 $freezeBytes = $null
 $reviewedManifestBytes = $null
 $installerBytes = $null
+$structLogBytes = $null
 
 function Set-BootstrapSafeEnvironment {
     foreach ($name in @(
@@ -435,7 +440,10 @@ function Assert-ReviewedManifestMatchesFreeze {
 function Assert-InstallerCommandResolution {
     param(
         [Parameter(Mandatory)]
-        [System.Management.Automation.Language.ScriptBlockAst]$InstallerAst
+        [System.Management.Automation.Language.ScriptBlockAst]$InstallerAst,
+
+        [Parameter(Mandatory)]
+        [System.Management.Automation.PSModuleInfo]$TrustedStructLogModule
     )
     $contracts = [ordered]@{
         'Join-Path' = 'Microsoft.PowerShell.Management'
@@ -452,6 +460,9 @@ function Assert-InstallerCommandResolution {
         'ForEach-Object' = 'Microsoft.PowerShell.Core'
         'Test-Path' = 'Microsoft.PowerShell.Management'
         'Write-Warning' = 'Microsoft.PowerShell.Utility'
+        'New-StructLogger' = 'BlipInstallerStructLog'
+        'Write-StructInfo' = 'BlipInstallerStructLog'
+        'Write-StructWarn' = 'BlipInstallerStructLog'
         'Get-Content' = 'Microsoft.PowerShell.Management'
         'Microsoft.PowerShell.Core\Set-StrictMode' = 'Microsoft.PowerShell.Core'
         'Sort-Object' = 'Microsoft.PowerShell.Utility'
@@ -487,8 +498,17 @@ function Assert-InstallerCommandResolution {
     foreach ($entry in $contracts.GetEnumerator()) {
         $command = Microsoft.PowerShell.Core\Get-Command `
             -Name $entry.Key -ErrorAction Stop
-        if ($command.CommandType -ne [System.Management.Automation.CommandTypes]::Cmdlet -or
-            $command.Source -cne $entry.Value) {
+        $isStructLogCommand = $entry.Value -ceq 'BlipInstallerStructLog'
+        $hasTrustedResolution = if ($isStructLogCommand) {
+            $command.CommandType -eq [System.Management.Automation.CommandTypes]::Function -and
+            $command.Source -ceq $entry.Value -and
+            [object]::ReferenceEquals($command.Module, $TrustedStructLogModule)
+        }
+        else {
+            $command.CommandType -eq [System.Management.Automation.CommandTypes]::Cmdlet -and
+            $command.Source -ceq $entry.Value
+        }
+        if (-not $hasTrustedResolution) {
             throw "Installer command resolution is shadowed or untrusted: $($entry.Key)"
         }
     }
@@ -675,9 +695,12 @@ try {
         -Object $sourceFiles -Name 'install_blip_auto_approval.ps1'
     $bootstrapHashElement = Get-UniqueJsonProperty `
         -Object $sourceFiles -Name 'invoke_frozen_blip_installer.ps1'
+    $structLogHashElement = Get-UniqueJsonProperty `
+        -Object $sourceFiles -Name 'scripts/lib/StructLog.psm1'
     if ($installerHashElement.ValueKind -ne [System.Text.Json.JsonValueKind]::String -or
-        $bootstrapHashElement.ValueKind -ne [System.Text.Json.JsonValueKind]::String) {
-        throw 'The freeze installer/bootstrap hashes are not strings.'
+        $bootstrapHashElement.ValueKind -ne [System.Text.Json.JsonValueKind]::String -or
+        $structLogHashElement.ValueKind -ne [System.Text.Json.JsonValueKind]::String) {
+        throw 'The freeze installer/bootstrap/StructLog hashes are not strings.'
     }
     $installerHash = $installerHashElement.GetString()
     $bootstrapHash = $bootstrapHashElement.GetString()
@@ -685,6 +708,19 @@ try {
         $bootstrapHash -cne $ExpectedBootstrapSha256.ToUpperInvariant()) {
         throw 'The freeze does not bind the owner-authorized installer/bootstrap pair.'
     }
+
+    $structLogHash = $structLogHashElement.GetString()
+    if ($structLogHash -notmatch '^[0-9A-F]{64}$') {
+        throw 'The freeze does not bind the canonical StructLog module.'
+    }
+    $structLogStream = Open-ExclusiveFrozenFile `
+        -LiteralPath $structLogPath -MaximumLength 1048576
+    Assert-ExclusiveStream -Stream $structLogStream -ExpectedPath $structLogPath
+    $structLogBytes = Read-LockedStreamBytes -Stream $structLogStream -MaximumLength 1048576
+    if ((Get-BytesSha256 -Bytes $structLogBytes) -cne $structLogHash) {
+        throw 'The StructLog module bytes differ from the immutable freeze.'
+    }
+    $structLogText = ConvertFrom-StrictUtf8 -Bytes $structLogBytes
 
     $installerStream = Open-ExclusiveFrozenFile `
         -LiteralPath $installerPath -MaximumLength 1048576
@@ -732,7 +768,13 @@ try {
         Microsoft.PowerShell.Core\Import-Module `
             -Name $manifest -Force -ErrorAction Stop
     }
-    Assert-InstallerCommandResolution -InstallerAst $installerAst
+    $structLogModule = Microsoft.PowerShell.Core\New-Module `
+        -Name 'BlipInstallerStructLog' `
+        -ScriptBlock ([ScriptBlock]::Create($structLogText))
+    Microsoft.PowerShell.Core\Import-Module -ModuleInfo $structLogModule -Force
+    Assert-InstallerCommandResolution `
+        -InstallerAst $installerAst `
+        -TrustedStructLogModule $structLogModule
 
     $capability = $InternalLoaderContext.Capability
     $bootstrapContext = [pscustomobject]@{
@@ -749,6 +791,9 @@ try {
         FreezeStream = $freezeStream
         InstallerStream = $installerStream
         BootstrapStream = $InternalLoaderContext.BootstrapStream
+        StructLogStream = $structLogStream
+        StructLogSha256 = $structLogHash
+        StructLogModule = $structLogModule
         InstallerLauncherPath = $InternalLoaderContext.InstallerLauncherPath
         InstallerLauncherSha256 = $InternalLoaderContext.InstallerLauncherSha256
         InstallerLauncherStream = $InternalLoaderContext.InstallerLauncherStream
@@ -766,9 +811,13 @@ try {
         -BootstrapContext $bootstrapContext
 }
 finally {
+    if ($null -ne $structLogModule) {
+        Microsoft.PowerShell.Core\Remove-Module -ModuleInfo $structLogModule -Force
+    }
     if ($null -ne $reviewedManifestDocument) { $reviewedManifestDocument.Dispose() }
     if ($null -ne $freezeDocument) { $freezeDocument.Dispose() }
     if ($null -ne $installerStream) { $installerStream.Dispose() }
+    if ($null -ne $structLogStream) { $structLogStream.Dispose() }
     if ($null -ne $freezeStream) { $freezeStream.Dispose() }
     if ($null -ne $freezeBytes) {
         [System.Array]::Clear($freezeBytes, 0, $freezeBytes.Length)
@@ -778,5 +827,8 @@ finally {
     }
     if ($null -ne $installerBytes) {
         [System.Array]::Clear($installerBytes, 0, $installerBytes.Length)
+    }
+    if ($null -ne $structLogBytes) {
+        [System.Array]::Clear($structLogBytes, 0, $structLogBytes.Length)
     }
 }

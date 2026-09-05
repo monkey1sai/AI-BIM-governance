@@ -7,6 +7,7 @@ import { TextDecoder } from 'node:util';
 import { createVerificationPlan, VerificationPlanError } from './verification-plan.mjs';
 import { assertSafeVerificationCommand, SAFE_VERIFICATION_EXECUTABLES } from './verification-command-policy.mjs';
 import { hashJson, writeVerificationOutcome } from './verification-outcome.mjs';
+import { TIERS, selectTierGates, tierSelectionKey, validateTierPolicy } from './verification-tiers.mjs';
 
 const EXECUTABLES = SAFE_VERIFICATION_EXECUTABLES;
 
@@ -19,7 +20,7 @@ function parseArguments(argv) {
   const options = { paths: [], full: false, continueOnError: false, planOnly: false, json: false };
   const valueFlags = new Map([
     ['--repo-root', 'repoRoot'], ['--manifest', 'manifest'], ['--path', 'path'], ['--default-profile', 'defaultProfile'],
-    ['--subject', 'subjectSha'], ['--outcome-out', 'outcomeOut'],
+    ['--base', 'baseSha'], ['--subject', 'subjectSha'], ['--outcome-out', 'outcomeOut'], ['--tier', 'tier'],
   ]);
   for (let index = 0; index < argv.length; index += 1) {
     const flag = argv[index];
@@ -41,6 +42,11 @@ function parseArguments(argv) {
   if (options.json && !options.planOnly) fail('--json is supported only with --plan-only.');
   if (options.outcomeOut && (options.planOnly || options.json)) fail('--outcome-out is supported only while executing gates.');
   if (options.outcomeOut && !/^[0-9a-f]{40}$/u.test(options.subjectSha ?? '')) fail('--outcome-out requires a lowercase full --subject commit.');
+  // --base is provenance only (mirrors the planner CLI); the adapters derive changed paths from it.
+  if (options.baseSha !== undefined && !/^[0-9a-f]{40}$/u.test(options.baseSha)) fail('--base requires a lowercase full commit id.');
+  if (options.tier !== undefined && !TIERS.includes(options.tier)) fail(`--tier must be one of ${TIERS.join(', ')}.`);
+  // A tiered run executes a subset of the plan and is therefore never commit-bound evidence.
+  if (options.tier !== undefined && options.outcomeOut) fail('--tier cannot be combined with --outcome-out: a tiered run is not verification evidence.');
   return options;
 }
 
@@ -114,14 +120,17 @@ function assertOutcomeCheckout(repoRoot, subjectSha) {
   }
 }
 
-function displayPlan(plan) {
+function displayPlan(plan, tierSelected = null) {
   if (plan.dispatch === 'profile') process.stdout.write('[PLAN] profile=developer\n');
   else process.stdout.write(`[PLAN] dispatch=${plan.dispatch} result=${plan.result}\n`);
   for (const target of plan.targets) {
     if (!target.required) continue;
     for (const gate of target.gates) {
       if (gate.command === null) process.stdout.write(`[POLICY] ${target.display_name} [${gate.id}] — not_configured:${gate.not_configured_reason}\n`);
-      else {
+      else if (tierSelected !== null && !tierSelected.has(tierSelectionKey({ target_id: target.id, gate_id: gate.id }))) {
+        const name = target.gates.length > 1 ? `${target.display_name} [${gate.id}]` : target.display_name;
+        process.stdout.write(`[TIER-SKIP] ${name} — tier_deselected:${gate.evidence_class}\n`);
+      } else {
         const detail = `${gate.command.executable} ${gate.command.args.join(' ')}`.trim();
         process.stdout.write(`[EXECUTE] ${target.display_name} — ${detail}\n`);
       }
@@ -146,6 +155,7 @@ try {
   plan = createVerificationPlan(manifestInput.document, {
     changedPaths: options.paths,
     defaultProfile: options.defaultProfile ?? null,
+    baseSha: options.baseSha ?? null,
     subjectSha: options.subjectSha ?? null,
     full: options.full,
   });
@@ -154,11 +164,30 @@ try {
   fail('Verification planning failed safely.', 3);
 }
 
+// Optional local tier selection over the canonical plan (sidecar; CI never reads it).
+let tierSelected = null;
+if (options.tier !== undefined && plan.result === 'planned') {
+  const tierPolicyPath = path.join(repoRoot, 'scripts', 'verification-tier-policy.json');
+  if (!isWithin(repoRoot, tierPolicyPath)) fail('Tier policy must be repository-contained.');
+  let tierPolicy;
+  try {
+    tierPolicy = validateTierPolicy(readManifest(tierPolicyPath).document);
+  } catch (error) {
+    fail(`Tier policy is unusable: ${error.message}`);
+  }
+  const selection = selectTierGates(plan, options.tier, tierPolicy);
+  tierSelected = new Set(selection.selected.map(tierSelectionKey));
+  if (!options.json) {
+    if (selection.forced_full) process.stdout.write(`[TIER] requested=${selection.requested_tier} effective=full — ${selection.forced_full_reason}\n`);
+    else process.stdout.write(`[TIER] ${selection.effective_tier} (${selection.selected.length} selected, ${selection.deselected.length} deselected; not evidence)\n`);
+  }
+}
+
 if (options.json) {
   process.stdout.write(`${JSON.stringify(plan)}\n`);
   process.exit(plan.result === 'planned' ? 0 : 2);
 }
-displayPlan(plan);
+displayPlan(plan, tierSelected);
 if (plan.result !== 'planned') process.exit(2);
 if (options.planOnly) process.exit(0);
 if (options.outcomeOut) assertOutcomeCheckout(repoRoot, options.subjectSha);
@@ -193,6 +222,10 @@ for (const target of plan.targets) {
       outcome.reason = gate.not_configured_reason;
       gateOutcomes.push(outcome);
       process.stdout.write(`[SKIP] ${name} — not_configured:${gate.not_configured_reason}\n`);
+      continue;
+    }
+    if (tierSelected !== null && !tierSelected.has(tierSelectionKey({ target_id: target.id, gate_id: gate.id }))) {
+      process.stdout.write(`[TIER-SKIP] ${name} — tier_deselected:${gate.evidence_class}\n`);
       continue;
     }
     if (stopped) {

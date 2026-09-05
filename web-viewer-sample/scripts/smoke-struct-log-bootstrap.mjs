@@ -33,6 +33,8 @@ const EXPECTED_STATES = Object.freeze([
   "closed",
 ]);
 const ARTIFACT_NAMES = Object.freeze({
+  collapsed_hud_screenshot: "structured-log-collapsed-hud.png",
+  expanded_hud_screenshot: "structured-log-expanded-hud.png",
   failure_screenshot: "structured-log-failure.png",
   final_screenshot: "structured-log-success-closed.png",
   playwright_trace: "structured-log-trace.zip",
@@ -611,6 +613,85 @@ async function main() {
     }
 
     await page.locator('[data-testid="structured-log-diagnostics"]').waitFor({ state: "visible", timeout: 60_000 });
+    // Runtime diagnostics now ships as a collapsed corner HUD chip so it never occludes the
+    // live 3D stage; the delivery controls live behind that toggle. Expand it before asserting
+    // on identities or clicking any delivery action. Idempotent: only clicks when collapsed.
+    const diagnosticsToggle = page.locator('[data-testid="structured-log-toggle"]');
+    await diagnosticsToggle.waitFor({ state: "visible", timeout: 60_000 });
+    // The collapsed state is the whole point of the HUD, so verify it in a real browser
+    // before touching the toggle. A jsdom unit test cannot prove placement or overlap;
+    // asserting only after expanding would let "renders expanded" or "left the corner"
+    // regressions pass silently.
+    const collapsedHud = await page.evaluate(() => {
+      const host = document.querySelector('[data-testid="structured-log-diagnostics"]');
+      const chip = document.querySelector('[data-testid="structured-log-toggle"]');
+      if (!host || !chip) return null;
+      const rect = chip.getBoundingClientRect();
+      return {
+        expanded: host.getAttribute("data-expanded"),
+        panelMounted: Boolean(document.querySelector('[data-testid="structured-log-flush"]')),
+        readiness: document.querySelector('[data-testid="structured-log-chip-readiness"]')?.textContent?.trim() ?? null,
+        chip: { x: rect.x, y: rect.y, width: rect.width, height: rect.height, top: rect.top, right: rect.right, bottom: rect.bottom },
+        viewport: { width: window.innerWidth, height: window.innerHeight },
+      };
+    });
+    if (!collapsedHud) throw new Error("Runtime diagnostics HUD was not rendered");
+    if (collapsedHud.expanded !== "false") throw new Error(`HUD must start collapsed; data-expanded=${collapsedHud.expanded}`);
+    if (collapsedHud.panelMounted) throw new Error("HUD delivery panel must not be mounted while collapsed");
+    if (!collapsedHud.readiness) throw new Error("Collapsed HUD must expose readiness as text, not colour alone");
+    if (collapsedHud.chip.height > 48) throw new Error(`Collapsed HUD chip is ${collapsedHud.chip.height}px tall; it must stay a corner HUD`);
+    // Bottom-right corner: the chip must not drift into the middle of the live 3D stage.
+    if (collapsedHud.chip.x < collapsedHud.viewport.width / 2) {
+      throw new Error(`Collapsed HUD chip starts at x=${collapsedHud.chip.x}; it must stay in the right half of the stage`);
+    }
+    if (collapsedHud.chip.y < collapsedHud.viewport.height / 2) {
+      throw new Error(`Collapsed HUD chip starts at y=${collapsedHud.chip.y}; it must stay in the bottom half of the stage`);
+    }
+    await writeFile(artifactPaths.collapsed_hud_screenshot, await page.screenshot({ fullPage: false }), { flag: "wx" });
+
+    if ((await diagnosticsToggle.getAttribute("aria-expanded")) !== "true") {
+      await diagnosticsToggle.click();
+    }
+    await page.locator('[data-testid="structured-log-flush"]').waitFor({ state: "visible", timeout: 30_000 });
+    // Visibility alone does not prove the expanded panel stays a bounded corner HUD, and
+    // "does not occlude the live 3D stage" is this surface's central claim. Assert viewport
+    // containment, the size caps, and that opening the panel did not move the toggle out
+    // from under the pointer (the panel must grow upward from a fixed bottom-right chip).
+    const expandedHud = await page.evaluate(() => {
+      const panel = document.querySelector('[data-testid="structured-log-panel"]');
+      const chip = document.querySelector('[data-testid="structured-log-toggle"]');
+      if (!panel || !chip) return null;
+      const p = panel.getBoundingClientRect();
+      const c = chip.getBoundingClientRect();
+      return {
+        panel: { x: p.x, y: p.y, width: p.width, height: p.height, right: p.right, bottom: p.bottom },
+        chip: { x: c.x, y: c.y, width: c.width, height: c.height, top: c.top, right: c.right, bottom: c.bottom },
+        viewport: { width: window.innerWidth, height: window.innerHeight },
+      };
+    });
+    if (!expandedHud) throw new Error("Expanded runtime diagnostics panel was not found");
+    const vp = expandedHud.viewport;
+    if (expandedHud.panel.x < 0 || expandedHud.panel.y < 0
+      || expandedHud.panel.right > vp.width + 1 || expandedHud.panel.bottom > vp.height + 1) {
+      throw new Error(`Expanded HUD panel escapes the viewport: ${JSON.stringify(expandedHud.panel)} vs ${JSON.stringify(vp)}`);
+    }
+    // CSS caps are width min(340px, 100vw-24px) and max-height min(420px, 100vh-140px);
+    // allow a small margin for border/padding rounding.
+    if (expandedHud.panel.width > 360) throw new Error(`Expanded HUD panel is ${expandedHud.panel.width}px wide; cap is 340px`);
+    if (expandedHud.panel.height > 440) throw new Error(`Expanded HUD panel is ${expandedHud.panel.height}px tall; cap is 420px`);
+    if (expandedHud.panel.right < vp.width / 2) {
+      throw new Error(`Expanded HUD panel right edge at ${expandedHud.panel.right}; it must stay anchored to the right of the stage`);
+    }
+    // The toggle must not move when the panel mounts (column-reverse keeps it anchored).
+    if (Math.abs(expandedHud.chip.bottom - collapsedHud.chip.bottom) > 1
+      || Math.abs(expandedHud.chip.right - collapsedHud.chip.right) > 1) {
+      throw new Error(`Opening the HUD moved its toggle: collapsed=${JSON.stringify(collapsedHud.chip)} expanded=${JSON.stringify(expandedHud.chip)}`);
+    }
+    // The panel opens upward from the chip, never below it.
+    if (expandedHud.panel.bottom > expandedHud.chip.top + 1) {
+      throw new Error("Expanded HUD panel must open above its toggle, not below it");
+    }
+    await writeFile(artifactPaths.expanded_hud_screenshot, await page.screenshot({ fullPage: false }), { flag: "wx" });
     await page.waitForFunction(
       ({ expectedTrace, expectedSession }) => {
         const value = (testId) => document.querySelector(`[data-testid="${testId}"] dd`)?.textContent?.trim();

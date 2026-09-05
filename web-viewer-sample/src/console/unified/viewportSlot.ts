@@ -76,11 +76,20 @@ export function useViewportSlot(): ViewportSlotApi | null {
  */
 export type ViewerPhase = "no-session" | "session-selected" | "lease-pending" | "waiting-first-frame" | "waiting-datachannel" | "stage-mismatch" | "blocked" | "ready";
 
+export function resolveViewerCommandGate(gate: ReviewSessionViewerPaneBatchGate | null): { canSend: boolean; reason: string } {
+  if (!gate) return { canSend: false, reason: "" };
+  return {
+    canSend: gate.canSendViewerCommand ?? gate.canSend,
+    reason: gate.viewerCommandReason ?? gate.reason,
+  };
+}
+
 export function classifyViewerPhase(activeSessionId: string, gate: ReviewSessionViewerPaneBatchGate | null): ViewerPhase {
   if (!activeSessionId) return "no-session";
   if (!gate) return "session-selected";
-  if (gate.canSend) return "ready";
-  const r = gate.reason;
+  const viewerCommandGate = resolveViewerCommandGate(gate);
+  if (viewerCommandGate.canSend) return "ready";
+  const r = viewerCommandGate.reason;
   if (/手動啟動|attach Kit session|manually start/i.test(r)) return "lease-pending";
   if (/第一幀|first frame/i.test(r)) return "waiting-first-frame";
   if (/DataChannel/i.test(r)) return "waiting-datachannel";
