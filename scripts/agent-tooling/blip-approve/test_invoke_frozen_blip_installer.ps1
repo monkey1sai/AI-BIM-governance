@@ -9,6 +9,9 @@ $productionInstallerLauncher = Join-Path $PSScriptRoot 'invoke_protected_blip_in
 $productionVerifier = Join-Path $PSScriptRoot 'invoke_protected_blip_installer.ps1'
 $productionInstaller = Join-Path $PSScriptRoot 'install_blip_auto_approval.ps1'
 $productionBuilder = Join-Path $PSScriptRoot 'build_blip_candidate.ps1'
+$productionStructLog = [System.IO.Path]::GetFullPath(
+    (Join-Path $PSScriptRoot '..\..\lib\StructLog.psm1')
+)
 $productionHarness = [System.IO.Path]::GetFullPath($PSCommandPath)
 $sandboxRoot = Join-Path ([System.IO.Path]::GetTempPath()) (
     'blip-bootstrap-test-' + [Guid]::NewGuid().ToString('N')
@@ -145,6 +148,7 @@ function Invoke-FreezeV3SchemaRegression {
     $expectedSourceFiles = @(
         'install_blip_auto_approval.ps1',
         'invoke_frozen_blip_installer.ps1',
+        'scripts/lib/StructLog.psm1',
         'bot/bots.json',
         'bot/scripts/app_auth.py',
         'bot/scripts/bind_ship_attestation.py',
@@ -331,33 +335,56 @@ function Invoke-FreezeV3SchemaRegression {
         $productionInstaller, [ref]$installerTokens, [ref]$installerErrors
     )
     if ($installerErrors.Count -ne 0) { throw 'Production installer does not parse for command guard.' }
-    Assert-InstallerCommandResolution -InstallerAst $installerAst
-    function Get-Acl { throw 'shadowed_get_acl_executed' }
+    $testStructLogModule = Microsoft.PowerShell.Core\New-Module `
+        -Name 'BlipInstallerStructLog' `
+        -ScriptBlock ([ScriptBlock]::Create((Get-Content -Raw -LiteralPath $productionStructLog)))
+    Microsoft.PowerShell.Core\Import-Module -ModuleInfo $testStructLogModule -Force
     try {
-        $shadowRejected = $false
-        try { Assert-InstallerCommandResolution -InstallerAst $installerAst }
-        catch { $shadowRejected = $_.Exception.Message -match 'shadowed or untrusted: Get-Acl' }
-        Assert-True $shadowRejected 'Installer command-resolution guard accepted a shadowed Get-Acl function.'
+        Assert-InstallerCommandResolution `
+            -InstallerAst $installerAst `
+            -TrustedStructLogModule $testStructLogModule
+        function Get-Acl { throw 'shadowed_get_acl_executed' }
+        try {
+            $shadowRejected = $false
+            try {
+                Assert-InstallerCommandResolution `
+                    -InstallerAst $installerAst `
+                    -TrustedStructLogModule $testStructLogModule
+            }
+            catch { $shadowRejected = $_.Exception.Message -match 'shadowed or untrusted: Get-Acl' }
+            Assert-True $shadowRejected 'Installer command-resolution guard accepted a shadowed Get-Acl function.'
+        }
+        finally { Remove-Item -LiteralPath Function:\Get-Acl -Force }
+        function Sort-Object { throw 'shadowed_sort_object_executed' }
+        try {
+            $sortRejected = $false
+            try {
+                Assert-InstallerCommandResolution `
+                    -InstallerAst $installerAst `
+                    -TrustedStructLogModule $testStructLogModule
+            }
+            catch { $sortRejected = $_.Exception.Message -match 'shadowed or untrusted: Sort-Object' }
+            Assert-True $sortRejected 'Installer command-resolution guard accepted a shadowed Sort-Object function.'
+        }
+        finally { Remove-Item -LiteralPath Function:\Sort-Object -Force }
+        $badTokens = $null
+        $badErrors = $null
+        $badAst = [System.Management.Automation.Language.Parser]::ParseInput(
+            'Invoke-Expression ''untrusted''', [ref]$badTokens, [ref]$badErrors
+        )
+        $outsideContractRejected = $false
+        try {
+            Assert-InstallerCommandResolution `
+                -InstallerAst $badAst `
+                -TrustedStructLogModule $testStructLogModule
+        }
+        catch { $outsideContractRejected = $_.Exception.Message -match 'outside the exact command contract' }
+        Assert-True $outsideContractRejected `
+            'Installer command-resolution guard accepted an unreviewed command AST.'
     }
-    finally { Remove-Item -LiteralPath Function:\Get-Acl -Force }
-    function Sort-Object { throw 'shadowed_sort_object_executed' }
-    try {
-        $sortRejected = $false
-        try { Assert-InstallerCommandResolution -InstallerAst $installerAst }
-        catch { $sortRejected = $_.Exception.Message -match 'shadowed or untrusted: Sort-Object' }
-        Assert-True $sortRejected 'Installer command-resolution guard accepted a shadowed Sort-Object function.'
+    finally {
+        Microsoft.PowerShell.Core\Remove-Module -ModuleInfo $testStructLogModule -Force -ErrorAction SilentlyContinue
     }
-    finally { Remove-Item -LiteralPath Function:\Sort-Object -Force }
-    $badTokens = $null
-    $badErrors = $null
-    $badAst = [System.Management.Automation.Language.Parser]::ParseInput(
-        'Invoke-Expression ''untrusted''', [ref]$badTokens, [ref]$badErrors
-    )
-    $outsideContractRejected = $false
-    try { Assert-InstallerCommandResolution -InstallerAst $badAst }
-    catch { $outsideContractRejected = $_.Exception.Message -match 'outside the exact command contract' }
-    Assert-True $outsideContractRejected `
-        'Installer command-resolution guard accepted an unreviewed command AST.'
 
     $directInfo = [System.Diagnostics.ProcessStartInfo]::new()
     $directInfo.FileName = 'C:\Program Files\PowerShell\7\pwsh.exe'
@@ -920,10 +947,15 @@ if ($BootstrapContext.Schema -cne 'blip-installer-bootstrap-context/v3' -or
     $bootstrapBytes = [System.IO.File]::ReadAllBytes($productionBootstrap)
     $bootstrapPath = Join-Path $Root 'invoke_frozen_blip_installer.ps1'
     $installerPath = Join-Path $Root 'install_blip_auto_approval.ps1'
+    $structLogPath = Join-Path $Root 'scripts\lib\StructLog.psm1'
     $freezePath = Join-Path $Root 'candidate-freeze.json'
     $reviewedManifestPath = Join-Path $Root 'reviewed-build-manifest.json'
     [System.IO.File]::WriteAllBytes($bootstrapPath, $bootstrapBytes)
     [System.IO.File]::WriteAllBytes($installerPath, $InstallerBytes)
+    [System.IO.Directory]::CreateDirectory(
+        [System.IO.Path]::GetDirectoryName($structLogPath)
+    ) | Out-Null
+    [System.IO.File]::Copy($productionStructLog, $structLogPath)
     $bootstrapHash = Get-BytesSha256 -Bytes $bootstrapBytes
     $installerHash = Get-BytesSha256 -Bytes $InstallerBytes
     $installerLauncherHash = (Get-FileHash `
@@ -933,6 +965,7 @@ if ($BootstrapContext.Schema -cne 'blip-installer-bootstrap-context/v3' -or
     $sourceKeys = @(
         'install_blip_auto_approval.ps1',
         'invoke_frozen_blip_installer.ps1',
+        'scripts/lib/StructLog.psm1',
         'bot/bots.json',
         'bot/scripts/app_auth.py',
         'bot/scripts/bind_ship_attestation.py',
@@ -979,6 +1012,9 @@ if ($BootstrapContext.Schema -cne 'blip-installer-bootstrap-context/v3' -or
     foreach ($key in $sourceKeys) { $sourceMap[$key] = 'A' * 64 }
     $sourceMap['invoke_frozen_blip_installer.ps1'] = $bootstrapHash
     $sourceMap['install_blip_auto_approval.ps1'] = $installerHash
+    $sourceMap['scripts/lib/StructLog.psm1'] = (
+        Get-FileHash -LiteralPath $structLogPath -Algorithm SHA256
+    ).Hash
     $runtimeMap = [ordered]@{}
     foreach ($key in $runtimeKeys) { $runtimeMap[$key] = 'B' * 64 }
     $signerMap = [ordered]@{}
