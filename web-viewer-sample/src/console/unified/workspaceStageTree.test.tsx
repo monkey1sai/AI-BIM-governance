@@ -222,6 +222,14 @@ describe("WorkspacePage Stage 樹與工具列整合 (Issue #609, #605)", () => {
       await flush();
     };
 
+    await renderWithTree([]);
+    expect(container.querySelector('[data-uc="ws-stage-tree"]')?.getAttribute("data-state")).toBe("waiting");
+    const initialRefresh = container.querySelector('[data-testid="ws-request-stage-tree-btn"]') as HTMLButtonElement;
+    expect(initialRefresh.disabled).toBe(false);
+    await act(async () => { initialRefresh.click(); });
+    expect(baseSlot.requestStageTree).toHaveBeenCalledTimes(1);
+    expect(baseSlot.requestStageTree).toHaveBeenCalledWith("/World");
+
     await renderWithTree(tree);
     const search = container.querySelector('[data-uc="ws-stage-search"]') as HTMLInputElement;
     const structure = container.querySelector('[data-path="/World/Structure"]') as HTMLElement;
@@ -239,6 +247,13 @@ describe("WorkspacePage Stage 樹與工具列整合 (Issue #609, #605)", () => {
     await renderWithTree([]);
     expect(container.querySelector('[data-path="/World/Structure"]')).toBeNull();
     expect(container.querySelector('[data-uc="ws-stage-search"]')).toBeNull();
+    expect(container.querySelector('[data-uc="ws-stage-tree"]')?.getAttribute("data-state")).toBe("waiting");
+    const bootstrapRefresh = container.querySelector('[data-testid="ws-request-stage-tree-btn"]') as HTMLButtonElement;
+    expect(bootstrapRefresh.disabled).toBe(false);
+    vi.mocked(baseSlot.requestStageTree).mockClear();
+    await act(async () => { bootstrapRefresh.click(); });
+    expect(baseSlot.requestStageTree).toHaveBeenCalledTimes(1);
+    expect(baseSlot.requestStageTree).toHaveBeenCalledWith("/World");
 
     await renderWithTree(tree);
     const restoredSearch = container.querySelector('[data-uc="ws-stage-search"]') as HTMLInputElement;
