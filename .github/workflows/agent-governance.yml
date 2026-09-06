@@ -24,6 +24,8 @@ jobs:
       base_sha: ${{ steps.plan.outputs.base_sha }}
       plan_result: ${{ steps.plan.outputs.plan_result }}
       plan_sha256: ${{ steps.plan.outputs.plan_sha256 }}
+      shards: ${{ steps.shards.outputs.shards }}
+      shard_policy_sha256: ${{ steps.shards.outputs.shard_policy_sha256 }}
     steps:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
@@ -77,6 +79,19 @@ jobs:
           node scripts/lib/verification-plan.mjs "${planner_args[@]}"
           printf 'base_sha=%s\n' "$base_sha" >> "$GITHUB_OUTPUT"
 
+      - name: Select Agent Governance suite shards
+        id: shards
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Selection decides WHERE steps run, never whether the repo is verified: `core` is
+          # always selected, a full dispatch selects every leg, and the required aggregator
+          # still fails closed on any selected shard that does not succeed.
+          node scripts/dev/select-agent-governance-shards.mjs \
+            --plan verification-plan.json \
+            --policy scripts/agent-governance-shards.json \
+            --github-output "$GITHUB_OUTPUT"
+
   suite:
     name: agent-governance suite
     needs: scope
@@ -88,7 +103,10 @@ jobs:
       # every red shard at once, not just the first one to fail.
       fail-fast: false
       matrix:
-        shard: [core, openspec, capability, evidence]
+        # Legs come from scripts/agent-governance-shards.json via the scope job, so an
+        # unaffected shard costs no runner at all instead of paying checkout + node + python
+        # to skip 56-80% of its steps. `core` is always selected, so this is never empty.
+        shard: ${{ fromJSON(needs.scope.outputs.shards) }}
     steps:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
@@ -181,6 +199,11 @@ jobs:
         if: matrix.shard == 'core'
         shell: pwsh
         run: pwsh -NoProfile -NonInteractive -Command "node --test scripts/tests/test-task-packet.mjs"
+
+      - name: Test Agent Governance shard selection
+        if: matrix.shard == 'core'
+        shell: pwsh
+        run: pwsh -NoProfile -NonInteractive -Command "node --test scripts/tests/test-agent-governance-shards.mjs"
 
       - name: Test verification outcomes and security exception policy
         if: matrix.shard == 'core'
