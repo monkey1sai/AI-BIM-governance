@@ -42,7 +42,8 @@ import {
 } from "./services/minioWatchSurface.js";
 import { type ObjectStorePort } from "./services/minioObjectStore.js";
 import { ConversionDispatchQueue } from "./services/conversionDispatchQueue.js";
-import { ConversionLedger } from "./services/conversionLedger.js";
+import { ConversionLedger, publicConversionRecord } from "./services/conversionLedger.js";
+import { resolveReadyRenderBundle } from "./services/readyModelResolver.js";
 import {
   IfcReadyConversionPipeline,
   type ConversionTerminalEvent,
@@ -2130,6 +2131,8 @@ export function createCoordinatorApp(
         );
         const recreated = store.create({
           session_id: deterministicSessionId,
+          ready_model_id: source.ready_model_id,
+          trace_id: source.ready_model_id ? source.trace_id : undefined,
           recreated_from_session_id: source.session_id,
           review_request_id: source.review_request_id,
           tenant_id: source.tenant_id,
@@ -3182,7 +3185,69 @@ export function createCoordinatorApp(
   app.get("/api/conversion/records", (request, response) => {
     const limit = parseListLimit(request.query.limit);
     const items = conversionLedger.list();
-    response.json({ count: items.length, items: items.slice(0, limit) });
+    response.json({ count: items.length, items: items.slice(0, limit).map(publicConversionRecord) });
+  });
+
+  // One coordinator process owns this local deployment. Per-model serialization prevents
+  // simultaneous callers from allocating duplicate sessions; persisted sessions recover
+  // the session-written/response-lost window without replaying conversion ingestion.
+  const readySessionRequests = new Map<string, Promise<{ status: number; body: unknown }>>();
+  app.post("/api/conversion/records/:readyModelId/review-session", async (request, response, next) => {
+    if (rejectIfConversionControlUnauthorized(request, response)) return;
+    try {
+      z.object({}).strict().parse(request.body ?? {});
+      const id = request.params.readyModelId;
+      if (!/^mw_[a-f0-9]{16}$/.test(id)) {
+        response.status(400).json({ error_code: "invalid_ready_model_id" }); return;
+      }
+      let pending = readySessionRequests.get(id);
+      if (!pending) {
+        pending = (async () => {
+          const record = conversionLedger.get(id);
+          if (!record) return { status: 404, body: { error_code: "ready_model_not_found" } };
+          const resolved = await resolveReadyRenderBundle({ record, configuredTenantId: config.minioWatchTenantId,
+            conversionOrigin: config.streamingConversionApiBase,
+            fetchResult: (jobId) => streamingConversionClient.fetchConversionResult(jobId) });
+          if (!resolved.ok) return { status: 409, body: { error_code: resolved.reason } };
+          const bundle = resolved.bundle;
+          const health = await probeArtifactHealth({ host_local_path: null,
+            model_artifact_url: bundle.model.url, mapping_url: bundle.mapping.url,
+            edge_runtime_data_root: config.edgeRuntimeDataRoot,
+            configured_conversion_api_origin: config.streamingConversionApiBase });
+          if (health.model_usdc_reachable !== true || health.mapping_reachable !== true) {
+            return { status: 409, body: { error_code: "ready_artifacts_unavailable" } };
+          }
+          const current = conversionLedger.get(id);
+          if (!current || current.status !== "ready" || current.conversion_job_id !== record.conversion_job_id
+            || current.correlation_id !== record.correlation_id || current.project_id !== record.project_id
+            || current.external_model_version_id !== record.external_model_version_id || current.usdc_key !== record.usdc_key) {
+            return { status: 409, body: { error_code: "ready_model_changed" } };
+          }
+          conversionLedger.rememberRenderBundle(bundle);
+          const sessions = store.list().filter(session => session.ready_model_id === id
+            && session.tenant_id === bundle.tenantId && session.project_id === bundle.projectId
+            && session.model_version_id === bundle.modelVersionId && session.trace_id === bundle.rootTraceId
+            && session.artifact_bindings.some(binding => binding.conversion_job_id === bundle.conversionJobId
+              && binding.url === bundle.model.url && binding.mapping_url === bundle.mapping.url));
+          const active = sessions.find(session => session.status === "active" || session.status === "created");
+          const result = autoCreateOrActivateSession({ traceId: bundle.rootTraceId, tenantId: bundle.tenantId,
+            projectId: bundle.projectId, modelVersionId: bundle.modelVersionId, correlationId: current.correlation_id!,
+            existingSessionId: active?.session_id, readyModelId: id,
+            recreatedFromSessionId: !active ? sessions.find(session => session.status === "closed")?.session_id : undefined },
+          { usdc_ref: bundle.model.url, element_mapping_ref: bundle.mapping.url }, bundle.conversionJobId);
+          if (!result.session) return { status: 409, body: { error_code: result.reason } };
+          return { status: 200, body: { ready_model_id: id, review_session_id: result.session.session_id,
+            session_status: result.session.status, session_replay: result.replay } };
+        })();
+        readySessionRequests.set(id, pending);
+      }
+      try {
+        const result = await pending;
+        response.status(result.status).json(result.body);
+      } finally {
+        if (readySessionRequests.get(id) === pending) readySessionRequests.delete(id);
+      }
+    } catch (error) { next(error); }
   });
 
   // MinIO folder cache dirty stream：watcher 觀察到新/變更 object 時，通知前端把對應 prefix
@@ -3794,22 +3859,23 @@ export function createCoordinatorApp(
   // streaming-owned artifact refs，構建最小 ArtifactBinding 後重用既有 Kit
   // binding 分配。
   function autoCreateOrActivateSession(
-    job: IfcReadyIntakeJob,
+    source: { traceId: string; tenantId: string; projectId: string; modelVersionId: string; correlationId: string;
+      existingSessionId?: string | null; readyModelId?: string; recreatedFromSessionId?: string },
     artifacts: { usdc_ref?: string | null; element_mapping_ref?: string | null; manifest_ref?: string | null },
     conversionJobId: string | null,
     qualitySummary: ConversionQualityMetricsSummary | null = null,
   ): { session: ReviewSession; replay: boolean } | { session: null; reason: string } {
     // D11：以 job.review_session_id 為 idempotency 主索引（job 已被 correlation_id /
     // external_model_version_id 唯一索引）。重入回既有 session。
-    if (job.review_session_id) {
-      const existing = store.get(job.review_session_id);
+    if (source.existingSessionId) {
+      const existing = store.get(source.existingSessionId);
       if (existing) {
         return { session: existing, replay: true };
       }
       // 既有 session 檔被外部移除 → 視為無 session，重建（不丟 review intent）。
     }
 
-    const modelVersionId = job.external_model_version_id;
+    const modelVersionId = source.modelVersionId;
     const usdcUrl = artifacts.usdc_ref ?? null;
     if (!usdcUrl) {
       // 沒有 usdc_ref 不建可串流 session（sustained `Non-ready conversion does
@@ -3817,7 +3883,7 @@ export function createCoordinatorApp(
       return { session: null, reason: "no_usdc_ref" };
     }
 
-    const autoArtifactId = `auto_usdc_${conversionJobId ?? job.correlation_id}`;
+    const autoArtifactId = `auto_usdc_${conversionJobId ?? source.correlationId}`;
     const artifactBindings: ArtifactBinding[] = [
       {
         binding_id: "binding_auto_usdc",
@@ -3840,7 +3906,7 @@ export function createCoordinatorApp(
       config,
       artifactBindings,
       "same_instance",
-      job.tenant_id,
+      source.tenantId,
       {},
     );
     if (kitInstanceBindings.length === 0) {
@@ -3851,10 +3917,12 @@ export function createCoordinatorApp(
     }
 
     const session = store.create({
-      trace_id: job.ifc_ready_job_id,
+      trace_id: source.traceId,
+      ready_model_id: source.readyModelId,
+      recreated_from_session_id: source.recreatedFromSessionId,
       review_request_id: undefined,
-      tenant_id: job.tenant_id,
-      project_id: job.project_id,
+      tenant_id: source.tenantId,
+      project_id: source.projectId,
       model_version_id: modelVersionId,
       source_artifact_id: undefined,
       usdc_artifact_id: autoArtifactId,
@@ -3880,7 +3948,6 @@ export function createCoordinatorApp(
         kit_instance_bindings: session.kit_instance_bindings.map((binding) => binding.kit_instance_id),
       });
     }
-    externalIfcReadyStore.recordReviewSession(job.ifc_ready_job_id, session.session_id);
     return { session, replay: false };
   }
 
@@ -3890,7 +3957,9 @@ export function createCoordinatorApp(
     let sessionCapture = emptyTerminalSessionCapture();
     if (event.status === "ready") {
       const result = autoCreateOrActivateSession(
-        event.job,
+        { traceId: event.job.ifc_ready_job_id, tenantId: event.job.tenant_id, projectId: event.job.project_id,
+          modelVersionId: event.job.external_model_version_id, correlationId: event.job.correlation_id,
+          existingSessionId: event.job.review_session_id },
         {
           usdc_ref: event.artifacts.usdc_ref ?? null,
           element_mapping_ref: event.artifacts.element_mapping_ref ?? null,
@@ -3900,6 +3969,7 @@ export function createCoordinatorApp(
         event.qualitySummary,
       );
       if (result.session) {
+        externalIfcReadyStore.recordReviewSession(event.job.ifc_ready_job_id, result.session.session_id);
         sessionCapture = {
           session: result.session,
           session_replay: result.replay,

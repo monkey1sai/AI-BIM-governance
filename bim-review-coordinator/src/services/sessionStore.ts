@@ -17,6 +17,7 @@ const safeIfcReadyTracePattern = /^ifcready_(?!ifcready_|rev_|stream_conv_|scrip
 const MAX_SESSION_TRACE_ID_LENGTH = 200;
 
 export interface CreateSessionInput {
+  ready_model_id?: string;
   /** Server-internal only; public create-session input never accepts this field. */
   trace_id?: string;
   /** Server-internal only; used by idempotent recreation to make crash recovery deterministic. */
@@ -51,6 +52,7 @@ export class SessionStore {
       throw new Error("Invalid review session trace_id.");
     }
     const session: ReviewSession = {
+      ready_model_id: input.ready_model_id,
       session_id: sessionId,
       recreated_from_session_id: input.recreated_from_session_id,
       trace_id: traceId,
@@ -121,6 +123,12 @@ export class SessionStore {
     const existing = fs.existsSync(file)
       ? (JSON.parse(fs.readFileSync(file, "utf8")) as ReviewSession)
       : null;
+    if (existing && existing.ready_model_id !== session.ready_model_id) {
+      throw new Error("Review session ready_model_id is immutable.");
+    }
+    if (session.ready_model_id !== undefined && !/^mw_[a-f0-9]{16}$/.test(session.ready_model_id)) {
+      throw new Error("Invalid review session ready_model_id.");
+    }
     if (existing?.trace_id !== undefined) {
       if (session.trace_id !== existing.trace_id) {
         throw new Error("Review session trace_id is immutable.");

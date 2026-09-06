@@ -6,12 +6,15 @@
 // `now`（ISO 字串）一律由呼叫端傳入，service 內不取時鐘（方便測試）。
 import fs from "node:fs";
 import path from "node:path";
+import type { ReadyRenderBundle } from "./readyModelResolver.js";
 
 /** 轉檔紀錄狀態（誠實鐵律：非 converter 落地不得出現 ready） */
 export type ConversionLedgerStatus = "detected" | "queued" | "converting" | "ready" | "failed";
 
 /** 持久 ledger 單筆紀錄 */
 export interface ConversionLedgerRecord {
+  /** Internal-only validated descriptor; excluded from the public ledger projection. */
+  ready_render_bundle?: ReadyRenderBundle;
   idempotency_key: string;            // mw_<hash16>（唯一鍵）
   correlation_id: string | null;      // minio-watch-<hash8>
   project_id: string;                 // safe id
@@ -43,12 +46,13 @@ export type ConversionLedgerUpsert = Pick<ConversionLedgerRecord,
   | "status"
 > & Partial<Pick<ConversionLedgerRecord, "object_key" | "bucket">>;
 
-/** JSON 持久檔 schema 版本（讀版本不符時安全降級當空 ledger） */
-const SCHEMA_VERSION = "conversion-ledger/v1";
+/** v1 可讀；未知版本或壞檔禁止寫入，保留原檔供復原。 */
+const SCHEMA_VERSION = "conversion-ledger/v2";
 
 /** 持久 ConversionLedger（coordinator-local shadow；非 metadata 權威） */
 export class ConversionLedger {
   private readonly records = new Map<string, ConversionLedgerRecord>();
+  private available = true;
 
   /**
    * @param persistencePath JSON 持久化路徑；null 表示純記憶體（測試 / 降級）
@@ -65,21 +69,26 @@ export class ConversionLedger {
     try {
       const raw = fs.readFileSync(this.persistencePath, "utf-8");
       const parsed = JSON.parse(raw) as { schema_version?: string; records?: unknown };
-      if (!Array.isArray(parsed.records)) return;
+      if (!["conversion-ledger/v1", SCHEMA_VERSION].includes(parsed.schema_version ?? "") || !Array.isArray(parsed.records)) {
+        throw new Error("Unsupported conversion ledger schema.");
+      }
       for (const item of parsed.records) {
         const r = item as ConversionLedgerRecord;
-        if (r && typeof r.idempotency_key === "string") {
-          this.records.set(r.idempotency_key, r);
-        }
+        if (!r || typeof r.idempotency_key !== "string" || this.records.has(r.idempotency_key)) throw new Error("Invalid conversion ledger record.");
+        // v1 never grants a ready-descriptor provenance field.
+        if (parsed.schema_version === "conversion-ledger/v1") delete r.ready_render_bundle;
+        this.records.set(r.idempotency_key, r);
       }
     } catch {
-      // 壞檔不 crash，當空 ledger 起手；下次 upsert 覆寫
+      // 啟動不 crash，但所有 ledger 存取消費皆 fail closed，不能覆寫原檔。
       this.records.clear();
+      this.available = false;
     }
   }
 
   /** atomic swap（寫 .tmp 再 rename，防寫到一半 crash 損毀） */
   private persist(): void {
+    this.assertAvailable();
     if (!this.persistencePath) return;
     fs.mkdirSync(path.dirname(this.persistencePath), { recursive: true });
     const tmpPath = `${this.persistencePath}.tmp`;
@@ -105,6 +114,7 @@ export class ConversionLedger {
    * @param now     ISO 時間字串（由呼叫端傳入，service 不取時鐘）
    */
   upsert(input: ConversionLedgerUpsert, now: string): ConversionLedgerRecord {
+    this.assertAvailable();
     const existing = this.records.get(input.idempotency_key);
     const record: ConversionLedgerRecord = {
       idempotency_key: input.idempotency_key,
@@ -125,6 +135,11 @@ export class ConversionLedger {
       // detected_at：首次建立時定格，後續 upsert 保留
       detected_at: existing?.detected_at ?? now,
       updated_at: now,
+      ready_render_bundle: existing?.conversion_job_id === (input.conversion_job_id ?? existing?.conversion_job_id)
+        && existing?.project_id === input.project_id
+        && existing?.external_model_version_id === input.external_model_version_id
+        && existing?.correlation_id === input.correlation_id
+        ? existing.ready_render_bundle : undefined,
     };
     this.records.set(record.idempotency_key, record);
     this.persist();
@@ -144,6 +159,7 @@ export class ConversionLedger {
     outcome: { status: ConversionLedgerStatus; usdc_key?: string | null; coverage_report?: unknown },
     now: string,
   ): ConversionLedgerRecord | null {
+    this.assertAvailable();
     const existing = this.records.get(idempotencyKey);
     if (!existing) return null;
     const next: ConversionLedgerRecord = {
@@ -162,15 +178,45 @@ export class ConversionLedger {
    * 取單筆紀錄；找不到回 null。
    */
   get(idempotencyKey: string): ConversionLedgerRecord | null {
-    return this.records.get(idempotencyKey) ?? null;
+    this.assertAvailable();
+    const record = this.records.get(idempotencyKey);
+    return record ? structuredClone(record) : null;
   }
 
   /**
    * 列出所有紀錄，依 detected_at 降冪排序（最新在前）。
    */
   list(): ConversionLedgerRecord[] {
-    return [...this.records.values()].sort(
+    this.assertAvailable();
+    return structuredClone([...this.records.values()]).sort(
       (a, b) => Date.parse(b.detected_at) - Date.parse(a.detected_at),
     );
   }
+
+  rememberRenderBundle(bundle: ReadyRenderBundle): void {
+    this.assertAvailable();
+    const existing = this.records.get(bundle.readyModelId);
+    if (!existing || existing.status !== "ready" || existing.conversion_job_id !== bundle.conversionJobId
+      || existing.correlation_id !== bundle.correlationId
+      || existing.project_id !== bundle.projectId || existing.external_model_version_id !== bundle.modelVersionId) {
+      throw new Error("Ready model identity changed.");
+    }
+    this.records.set(bundle.readyModelId, { ...existing, ready_render_bundle: structuredClone(bundle) });
+    try { this.persist(); } catch (error) { this.records.set(bundle.readyModelId, existing); throw error; }
+  }
+
+  private assertAvailable(): void {
+    if (!this.available) throw new Error("Conversion ledger unavailable; preserve the original file for recovery.");
+  }
+}
+
+export function publicConversionRecord(record: ConversionLedgerRecord): Omit<ConversionLedgerRecord, "ready_render_bundle"> {
+  return {
+    idempotency_key: record.idempotency_key, correlation_id: record.correlation_id,
+    project_id: record.project_id, project_display_name: record.project_display_name,
+    category: record.category, external_model_version_id: record.external_model_version_id,
+    object_key: record.object_key, bucket: record.bucket, conversion_job_id: record.conversion_job_id,
+    status: record.status, coverage_report: record.coverage_report, usdc_key: record.usdc_key,
+    detected_at: record.detected_at, updated_at: record.updated_at,
+  };
 }
