@@ -122,6 +122,8 @@ export interface ConversionQualityMetricsSummary {
 }
 
 export interface ReviewSession {
+  /** Server-owned durable MinIO conversion identity, never supplied through generic session creation. */
+  ready_model_id?: string;
   session_id: string;
   /** Server-owned lineage for a session recreated from a terminal closed session. */
   recreated_from_session_id?: string;
