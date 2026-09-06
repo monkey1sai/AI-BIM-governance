@@ -15,7 +15,7 @@ description: Use only when the user explicitly invokes spec-to-done (or explicit
 ## Machine contract（Claude/Codex 共用）
 
 - phases 必須逐字等於 contract 的 `P0,P1,P3,P4,P5,P6,P7`；不存在 P2。
-- durable state 唯一路徑是 contract 的 `artifacts/spec-to-done/{slug}-state.md`。
+- standalone durable state 路徑是 contract 的 `artifacts/spec-to-done/{slug}-state.md`；Fabric-managed run 必須使用 `artifacts/spec-to-done/{slug}--{binding_id}-state.md`，不可共用 slug state。
 - `reason=` 只能取 contract `durable_state.held_reasons` 的 closed enum；低階補充只能寫 `heldDetail`／`診斷=`，不得創造新 reason 或把多個 reason 串在一起。
 - `.claude/skills/spec-to-done/validate-state.mjs` 直接載入 machine contract；contract 缺失、malformed 或 state 值不在 closed enum 都 fail closed。
 
@@ -56,6 +56,11 @@ worktreeRoot worktree 的「絕對路徑」(P0 建立後填;std-*.js 都用它�
 executionMode `full`(預設)或 `evidence-closeout`;不得在 resume 時切換
 changePath   `evidence-closeout` 必填:已核准 OpenSpec change 的絕對路徑
 closeoutTaskIds `evidence-closeout` 必填:明確且不重複的 task IDs(禁 wildcard/整個 change)
+fabricBindingPath Fabric-managed 必填:canonical binding packet 絕對路徑；standalone 必須省略
+fabricPlanPath Fabric-managed 必填:目前 exact Fabric plan JSON 絕對路徑
+fabricLeasePath Fabric-managed 必填:目前 exact ACTIVE/SUSPECT lease JSON 絕對路徑
+fabricProviderSessionPath Fabric-managed 必填:目前 exact provider-session JSON 絕對路徑
+expectedStatePath Fabric-managed 必填:binding-derived durable state 絕對路徑
 ```
 
 每個新 run 固定同一組上限，跨 phase / retry / resume 累計，不得重設：
@@ -64,6 +69,14 @@ closeoutTaskIds `evidence-closeout` 必填:明確且不重複的 task IDs(禁 wi
 maxAgentCalls=40; maxP5VerifierBatches=2; maxP5Rounds=2; maxEvidenceAttempts=2
 ```
 
+### Parallel Delivery Fabric profile（outer control plane；不建立第二套引擎）
+
+- Fabric-managed run 只在 outer Fabric 已交付 `spec-to-done-fabric-binding/v1` packet 與上述四份 current evidence 時啟動。binding 固定一個 `plan_id/generation/task_id/lease_id/owner_session/provider/scope_digest/baseline_sha/branch/worktree_path_digest`，P3 仍只有一個 implementer。
+- `session_admission_limit=unbounded`：repo 可同時有任意數量 writer，只要各自使用獨立 branch、sibling worktree 且 Fabric 判定 scope 不衝突。`run_writer_cardinality=1` 只限制本 binding。不得讀 occupied writer count 作 admission blocker；`requested_capacity.writers` 只是 plan-local request，activation `writer_cap` 只屬 review／`direct_stack` authority。
+- `allowed_paths` 是該 delivery slice 的最大可寫集合，必須已由 Fabric path/glob/rename scope 證明。P1 plan、P3 edits、tests、docs 與 task ledger 都不可超出；shared contract/symbol 未解析成 path 時回 `scope_drift`，不得補猜或自動擴張。
+- binding packet 是 non-authorizing metadata：不授權 push、approve、merge、deploy、process stop、branch-protection mutation、review migration 或 `direct_stack`；P5–P7 既有 gates 完整保留。
+- managed HELD 只停止本 binding，lease 不 release/reclaim，交回 Fabric 保留並標記/維持 `SUSPECT`。v1 沒有 verified rebind receipt，所以 local `RESUMED` 固定 `fabric_resume_authority_unavailable`，local `NEW_RUN` 固定拒絕；要繼續只能由 Fabric 建立新 task/lease/binding 後啟一個新的 state identity。
+
 `resume`、retry、換 session／CLI 永遠不得重設上述 counter。唯一合法例外是前一行已是有效
 `HELD@P<n> reason=run_budget_exhausted`、至少一個固定 counter 精確到頂，且 owner 對舊 state tuple 與
 fresh descendant worktree 明確啟動**新 run**。先用唯讀命令判讀，不得靠聊天記憶猜測：
@@ -71,6 +84,10 @@ fresh descendant worktree 明確啟動**新 run**。先用唯讀命令判讀，�
 ```powershell
 node .claude/skills/spec-to-done/append-new-run.mjs status --state <absolute-state-path> --json
 ```
+
+上述 `NEW_RUN` 例外只適用 standalone state。Fabric-managed state 的 status 固定回
+`fabricManaged=true`、`canStartNewRun=false` 與 `return-control-to-parallel-delivery-fabric`；即使 owner
+另行同意，也不得用 local append 搬移既有 lease。
 
 只有 exact owner message 已存在時，才可呼叫同檔 `append`；不得手寫、copy/paste 或一般 append
 `NEW_RUN@P0`。`--git-exe` 只能選 owner 安裝的 system Git：Windows 的
@@ -85,22 +102,33 @@ atomic replace 並立即用 canonical validator readback。`ownerProvenance=sha2
 欄位清空；歷史 ledger/hash 不刪不改。`NEW_RUN@P0` 只建立 P0 rollback point，不代表任何 P0–P7
 gate 已通過。
 
+### 收斂與 anti-loop 契約
+
+- 每次 check、review、approval 或 blocker 觀察都以 `evidenceFingerprint=head/base/diffDigest/gate/blocker/authorityState` 去重。同一 fingerprint 沒有 `evidence delta` 時固定為 `NO_RETRY`／`SKIP_ALREADY_SATISFIED`：不得重跑相同 gate、重啟 reviewer、重送 approval request，或以換 session／CLI 規避；採 incremental gate evaluation，不因任一檔案變動就全套重跑。
+- 合法 `evidence delta` 只包含新 HEAD／base／diffDigest、外部 authorityState 實際改變，或 owner 對同一 blocker 提供新的明確決策；時間經過、未變的 check 狀態與重述既有訊息都不算。
+- 每個 blocker 另以 `blockerFingerprint=gate/errorCode/affectedScope/rootCause` 計數；同一 blocker 只允許一次自主修復。修後仍是同一 fingerprint 就標記 `CIRCUIT_BREAKER_OPEN`，交付可完成部分或收斂為 HELD，禁止第三次 recovery 與 trust／generator／architecture 的旁支擴張。
+- P5 採 `one_conclusive_p5_review_per_exact_head`。先累積已知 in-scope 修正為一個 bounded batch，再審 exact head；finding 必須分成 `BLOCKING / CONFIRMED_CORRECTNESS / OPTIONAL / OUT_OF_SCOPE`，只有前兩類可阻擋。若審查要求改碼，最多一個修正 batch 與一個 final exact-head review，之後仍有 blocking finding 就收斂為 HELD，不再開 review/fix 循環。
+- P7 的 exact-head authority 採 `one_approval_request_per_exact_head`。同一 exact head 僅查詢並請求一次；但 owner 已授與的 operation/repository/branch/authority scope 若未擴張則 `REUSE_AUTHORIZATION`，不得因 minor HEAD 或 metadata 改變重問。`REUSE_AUTHORIZATION` 只表示操作範圍仍獲授權，絕不重用 GitHub counted approval；HEAD 改變後仍須重新取得該 exact head 的有效 approval。只有 scope/security boundary/deployment target/destructive action 改變或 authority 失效，才可再次請求；沒有 authorityState delta 就記錄一次 blocker 並收斂為 HELD，不輪詢、不重送。
+- 既有 PASS 只要輸入與相依面未被新 diff 失效就沿用；只重跑被 evidence delta 明確失效的 gate。out-of-scope 或 non-blocking finding 放入 deferred backlog，不可擴張本 run。
+
 `remainingAgentCalls=maxAgentCalls-agentCalls.used` 必須傳入每個 `std-*` / `fu-*` workflow；回傳的
 `agentCallsUsed` 立即累加後才可決定下一步。P6 每次 `ship-item` workflow 呼叫另計 1 call。任何計數到頂、
 workflow 試圖超額、或 resume 缺少可信計數，一律 fail-closed，不可用新 session / 新 run ID 歸零。
 
 ## P0 指揮官開場(主對話親自做)
 
-1. `executionMode=full`:讀 spec 全文;自檢 placeholder / 內部矛盾 / scope 歧義 → **spec 矛盾 = HELD**(spec 是唯一忠實源,agent 不得擅自補)。
+1. 先判定 state profile：五個 Fabric args 必須全有或全無。全有時先以
+   `scripts/lib/spec-to-done-fabric-binding.mjs` 的 `validateSpecToDoneFabricBinding` 驗 exact packet/current
+   sources，並確認 `expectedStatePath`、branch、worktree、HEAD、slug/binding ID；任一漂移即 HELD，禁止
+   fallback standalone。全無才走 legacy standalone。
+2. `executionMode=full`:讀 spec 全文;自檢 placeholder / 內部矛盾 / scope 歧義 → **spec 矛盾 = HELD**(spec 是唯一忠實源,agent 不得擅自補)。
    `executionMode=evidence-closeout`:只在已核准 OpenSpec proposal/spec 明載 production / contract 已落地，且
    `closeoutTaskIds` 每一項都只需 evidence、docs 或該 change 的 task ledger 時成立。P0 逐 ID 做 scope lock；
    任一項仍需 production source、UI、public contract、dependency/config 變更，或語意不明，一律
    `HELD@P0 reason=scope_drift`，不得退回 full mode 自動擴張。`userFacing` 沿用 change 真實分類，不得為跳過 P4 改成 false。
-2. 偵測隔離:`git rev-parse --git-dir` ≠ `--git-common-dir` → 已在 linked worktree,直接用(絕不疊加)。在主 checkout 時:
-   - `.worktrees/<slug>/` 已存在(前次 held 殘留)→ **沿用**,worktreeRoot 指向它,確認 branch 正確即可。
-   - 否則:`git fetch origin +refs/heads/main:refs/remotes/origin/main` → `git worktree add .worktrees/<slug> -b <branch> origin/main`。
+3. 偵測隔離:`git rev-parse --git-dir` ≠ `--git-common-dir` → 已在 linked worktree,直接用(絕不疊加)。Fabric-managed 必須逐字使用 binding 的 branch/worktree，不得自行建立、沿用或切換；standalone 在主 checkout 時依 `docs/agents/github-workflow.md` 建立 repo-sibling worktree，禁止落在 repo 內 `.worktrees/`／`.claude/worktrees/`。
    - worktree 不帶 ignored/local artifact(storage/ 真 IFC、node_modules、.venv)— 讀主工作區絕對路徑或 worktree 內 `npm install`。
-3. TodoWrite 建 P1–P7，記錄目前 `git rev-parse HEAD` 與四個固定上限。**每次 Workflow 呼叫的工具回應都有
+4. TodoWrite 建 P1–P7，Fabric-managed 同時記錄 binding ID／allowed paths，並記錄目前 `git rev-parse HEAD` 與四個固定上限。**每次 Workflow 呼叫的工具回應都有
    實際「Run ID: wf_...」；只記真實 ID，不得以 `native-*` 描述標籤代替**。每個 phase 結束先累加計數，再寫 state(見 Resume)。
 
 ## 編排(可複製;gate 讀 StructuredOutput 布林/枚舉)
@@ -109,6 +137,10 @@ workflow 試圖超額、或 resume 缺少可信計數，一律 fail-closed，不
 > 腳本雖有 parse 防護與 `bad_args` fail-fast,仍應正確傳 object)。收到 `held='bad_args'` = args 傳壞,修 args 重呼。
 
 ```
+Fabric-managed 時，下列每個 workflow 呼叫前後都要把 planned/changed paths 與 binding `allowed_paths`
+做 exact containment；P1 產生的 plan 若要求表外 path，立即 `HELD reason=scope_drift`，不可把表外工作塞進
+後續 task。不同 Fabric binding 可在各自 branch/worktree 併行；本 run 內 P3 仍遵守單 implementer。
+
 若 executionMode==='evidence-closeout':
   P1 = {ok:true, scopeLocked:true, runId:'none'} // 指揮官只讀 change 逐 ID 鎖 scope，不啟 agent
   P3 = Workflow({name:'std-evidence-closeout', args:{worktreeRoot, changePath, closeoutTaskIds,
@@ -223,6 +255,8 @@ P5 = Workflow({name:'fu-adversarial-verify-generic', args:{
        executor 完成後 commit、確認 clean、重取新 subjectSha；只有尚有 P5 round 額度才重跑 P5，
        第 2 輪仍有 fix_now 或沒有對應 executor 額度 → HELD，不得開新 session 重設。
 P6 前置(指揮官親自做,解決 PR body 資料通道):
+     Fabric-managed 時先重驗 current binding evidence；binding 只鎖 local slice，絕不可當作 push／PR／merge
+     consent、`direct_stack` activation 或部署授權。任一 lease/branch/worktree/scope tuple 漂移即 HELD。
      a. behavior gate:PR body 填 Change lane=S、Behavior contract changed=yes、
         Requirement source=superpowers spec,並連到本次已核准 specPath。不得只因 changed path
         建立 OpenSpec；只有 repo 需求明確要求 OpenSpec artifact 時才建立。
@@ -332,7 +366,10 @@ HELD@P<n> | reason=<held 值> | spec=<specPath/changePath> | slug=<slug> | userF
 | agentCalls=<used>/40 | p5Rounds=<used>/2 | evidenceAttempts=<used>/2 | evidenceHead=<SHA 或空>
 | dateStamp=<..> | planPath=<..> | taskIndex=<..> | prNumber=<..>
 | 診斷=<specConflict/gaps/blockedDetail 摘要> | 需要使用者決定=<具體選項>
+| fabricMode=fabric-managed | fabricBindingId=<64-hex>
 ```
+
+最後兩欄只在 Fabric-managed 出現，且必須同時存在；standalone 兩欄都不得寫。
 
 ## Resume(使用者一句話重入;支援跨 session)
 
@@ -340,10 +377,16 @@ HELD@P<n> | reason=<held 值> | spec=<specPath/changePath> | slug=<slug> | userF
   `canStartNewRun=true`，目前 audit chain 仍是 terminal HELD；沒有當輪 exact owner authorization 時只回報
   所需 tuple，不得啟 agent。取得 authorization 後也只能由該 helper 的 `append` action 遷移到 freshly
   fetched main descendant worktree，再對 canonical state 跑 validator；不得修改或截斷舊 state。
-- **State 檔(durable,跨 session 唯一座標)**:`agent-contracts/spec-to-done.contract.json` 固定 canonical path
-  `artifacts/spec-to-done/{slug}-state.md`。每個 phase 完成或 HELD 時，先把 durable history 完整複製到
+- 若 status 回 `fabricManaged=true`，本 run 已 terminal：保留 exact lease/binding 並請 outer Fabric 維持
+  `SUSPECT`；不得 append `RESUMED`、`AUTHORIZATION`、`NEW_RUN`，也不得換 CLI／worktree 偷渡。只有
+  Fabric 新建 task/lease/binding 才能另開 state；舊 ledger byte-identical 保留。
+- **State 檔(durable,跨 session 唯一座標)**:`agent-contracts/spec-to-done.contract.json` 固定 standalone path
+  `artifacts/spec-to-done/{slug}-state.md`；Fabric-managed path 是
+  `artifacts/spec-to-done/{slug}--{binding_id}-state.md`。每個 phase 完成或 HELD 時，先把 durable history 完整複製到
   sibling temp，再 append 候選行（禁止只寫單一候選行），執行
   `node .claude/skills/spec-to-done/validate-state.mjs --state <temp> --platform claude --git-exe <上述 system Git 的絕對路徑> --expected-head <git SHA> --expected-worktree <worktreeRoot> --expected-agent-limit 40 --expected-p5-limit 2 --expected-evidence-limit 2 --trusted-main-ref refs/heads/main`；若 allowlist 內沒有 caller 不可寫的 system Git，回 `host_env_blocked`，不得改傳其他 binary。exit 0 才把候選 append 到 canonical durable state。`--trusted-main-ref` 只是 machine contract 所定 remote ref 的固定 marker，不接受 local tracking ref。validator 會清除 ambient `GIT_*`／config injection，載入 machine contract，檢查完整 history 的每一行、所有相鄰 transition、實際 Git executable 與 git-dir/common-dir identity、HEAD、dirty/staged/untracked、rename source，並只在 DONE@P7 獨立 live-resolve 固定 trusted remote、驗 remote main SHA、prHead ancestry 與 same tree。若既有 history 無法通過行或 transition 驗證，只能追加 counters 全到上限的 `HELD ... reason=resume_state_invalid` 作終端封存；該行不能用來繼續 progress，必須先修復或正規化歷史。
+  Fabric-managed 的同一命令必須再帶
+  `--fabric-binding <fabricBindingPath> --fabric-plan <fabricPlanPath> --fabric-lease <fabricLeasePath> --fabric-provider-session <fabricProviderSessionPath> --expected-state-path <expectedStatePath>`；五個參數缺一、傳給 standalone、binding path/state path 非 canonical、或 current tuple/branch/HEAD 漂移都 fail closed。
 - 「繼續 spec-to-done」→ 先對 durable state 跑同一 validator；通過後還原全部 args 與累計計數，只重跑該 phase：
   `Workflow({name:<phase>, args:{...還原,remainingAgentCalls:40-agentCalls.used}, resumeFromRunId:<該 phase 實際 runId>})`。
   state HEAD 與目前 worktree HEAD 不同即 `evidence_stale`；不得靠 resumeFromRunId 或新 session 跳過。
@@ -366,11 +409,15 @@ state 檔是跨 session / 跨 CLI 的唯一 resume 座標；新寫入的行一�
 - **`reason=` 的 held 值 MUST 取自 `agent-contracts/spec-to-done.contract.json` 的 closed enum**；本檔處置表不是完整名單。不得發明表外值、不得把多個值併成複合值（一行一個主因，其餘寫 `heldDetail`／診斷欄）。host/環境層阻斷一律用 `host_env_blocked`。
 - **欄位鍵固定 hold block 契約**，包含 `head/executionMode/closeoutTaskIds/runIds/agentCalls/p5Rounds/evidenceAttempts/evidenceHead` 與中文鍵
   (`診斷=`、`需要使用者決定=`)；不得混入同義欄位(`diagnosis=` / `need=` / `stateSchema=`)。
+- Fabric-managed 每行另固定 `fabricMode=fabric-managed` 與 `fabricBindingId=<64-hex>`；整條 audit chain
+  不得缺欄、切回 standalone 或更換 binding ID，validator `--platform` 必須等於 binding provider。
 - **phase 編號取自 machine contract，固定 P0/P1/P3–P7 跳號，不存在 P2**；任何 state 行不得出現 `P2`(全域或他處 skill 的「P2 Test Design」詞彙不得滲入本 repo 的 run;測項設計屬 P1 plan 範圍)。
 - **跨 CLI handoff**：先由原平台 validator 驗 durable state；新平台不得 reattach 異平台 ID，而是啟一個
   bounded 新 agent（Codex 使用 `fork_turns:"none"` 或最小必要 turns）。append `RESUMED@P<n> |
   decision=cross-cli-handoff`，`runIds` 同時保留所有舊、新實際 `wf_*`/`codex:*` ID；若新 agent call 已發生，
   `agentCalls` 必須照實遞增，其餘 counters 不得重設。
+  此 handoff 只適用 standalone；Fabric-managed 的 provider 是 immutable tuple 一部分，必須由 outer Fabric
+  另建 provider session/task/lease/binding，不可在原 state append cross-CLI `RESUMED`。
 
 **簽核委派(delegated sign-off)**:使用者可顯式委派一個獨立 read-only agent 代行本 run 後續 HIGH/CRITICAL sign-off。委派必須由使用者明說(agent 不得自行發起或暗示),記錄為一行:
 

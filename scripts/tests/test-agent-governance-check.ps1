@@ -914,14 +914,20 @@ try {
     $expectedSpecToDonePhases = @('P0', 'P1', 'P3', 'P4', 'P5', 'P6', 'P7')
     $contractPhases = @($specToDoneContract.phases)
     $contractHeldReasons = @($specToDoneContract.durable_state.held_reasons)
-    Assert-True ($specToDoneContract.schema_version -ceq 'spec-to-done-contract/v1') 'spec-to-done machine contract has the pinned schema version'
+    Assert-True ($specToDoneContract.schema_version -ceq 'spec-to-done-contract/v2') 'spec-to-done machine contract has the pinned schema version'
     Assert-True (($contractPhases -join ',') -ceq ($expectedSpecToDonePhases -join ',')) 'spec-to-done machine contract preserves the P0/P1/P3-P7 phase sequence'
     Assert-True ($specToDoneContract.durable_state.canonical_relative_path -ceq 'artifacts/spec-to-done/{slug}-state.md') 'spec-to-done machine contract owns the canonical durable state path'
+    Assert-True ($specToDoneContract.durable_state.fabric_managed_relative_path -ceq 'artifacts/spec-to-done/{slug}--{binding_id}-state.md') 'spec-to-done machine contract owns a binding-derived managed state path'
+    Assert-True ($specToDoneContract.durable_state.fabric_binding_relative_path -ceq 'artifacts/spec-to-done/bindings/{binding_id}.json') 'spec-to-done machine contract owns the canonical Fabric binding path'
     Assert-True ($contractHeldReasons.Count -gt 0 -and @($contractHeldReasons | Sort-Object -Unique).Count -eq $contractHeldReasons.Count) 'spec-to-done machine contract held reasons form a nonempty closed set'
     Assert-True (@($contractHeldReasons | Where-Object { $_ -cnotmatch '^[a-z][a-z0-9_]*$' }).Count -eq 0) 'spec-to-done machine contract held reasons use canonical tokens'
-    foreach ($requiredHeldReason in @('host_env_blocked', 'evidence_stale', 'resume_state_invalid', 'review_unverified', 'ship_blocked')) {
+    foreach ($requiredHeldReason in @('host_env_blocked', 'evidence_stale', 'fabric_resume_authority_unavailable', 'resume_state_invalid', 'review_unverified', 'ship_blocked')) {
         Assert-True ($contractHeldReasons -contains $requiredHeldReason) "spec-to-done machine contract includes durable reason $requiredHeldReason"
     }
+    Assert-True ($specToDoneContract.parallel_delivery_binding.session_admission_limit -ceq 'unbounded') 'spec-to-done Fabric binding does not impose a repo writer cap'
+    Assert-True ($specToDoneContract.parallel_delivery_binding.run_writer_cardinality -eq 1) 'spec-to-done Fabric binding keeps one writer per delivery slice'
+    Assert-True (-not $specToDoneContract.parallel_delivery_binding.local_new_run_allowed -and -not $specToDoneContract.parallel_delivery_binding.local_resume_allowed) 'spec-to-done Fabric recovery remains fail closed without outer authority'
+    Assert-True ($specToDoneContract.parallel_delivery_binding.delivery_authority -ceq 'non_authorizing') 'spec-to-done Fabric binding cannot grant delivery authority'
     Assert-True ($specToDoneContract.ship.workflow_shell_capability -ceq 'not_available_in_measured_runtime') 'spec-to-done machine contract records measured Workflow shell absence'
     Assert-True ($specToDoneContract.ship.trusted_host_executor -ceq 'implemented_external_workflow') 'spec-to-done machine contract points to the external trusted host executor'
     Assert-True ($specToDoneContract.ship.trusted_host_contract -ceq './trusted-host-merge.contract.json') 'spec-to-done machine contract links the trusted merge protocol'

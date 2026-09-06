@@ -4,7 +4,7 @@ Document version: `parallel-delivery-fabric-operator-policy/v1`
 
 Requirement map version: `parallel-delivery-fabric-acceptance-requirements/v1`
 
-Requirement map SHA-256: `e019c1112015b23f0b43ead124fe6e0fab427bafd0f872266371068f2c7d38df`
+Requirement map SHA-256: `74688a538fe0a72299e3ac3dfcc9f58a879dec65c7bcb77b14254fbafe4570bc`
 
 This is a descriptive, shadow-only operator policy. It records the approved
 acceptance obligations and their authority boundaries. The local
@@ -29,6 +29,45 @@ branch or worktree; task resources remain `RETAINED_FOR_REVIEW` until a
 separately authorized lifecycle action. Session count is not a capacity gate.
 Only a separately attested physical Kit/WebRTC resource limit may return
 `WRITER_CAPACITY`.
+
+## spec-to-done binding
+
+Parallel Delivery Fabric is the outer session control plane; `spec-to-done`
+remains the inner P0/P1/P3/P4/P5/P6/P7 workflow for one admitted delivery
+slice. This integration does not create a second scheduler, lease registry,
+resume engine, review gate, or merge authority.
+
+- Repo session admission has no writer-count cap. Any number of writers may
+  proceed when each owns an independent branch, sibling worktree, and
+  non-conflicting Fabric touch-set. `requested_capacity.writers` is a
+  plan-local request; activation `writer_cap` governs review/`direct_stack`
+  authority only. Neither is a session-admission limit.
+- One `spec-to-done-fabric-binding/v1` packet binds exactly one
+  plan/generation/task/lease/owner/provider/scope/baseline/branch/worktree
+  tuple and one writer. Other isolated bindings may execute concurrently.
+- Binding `allowed_paths` must be proven by the task's explicit path, glob, or
+  rename resources. Shared-only or unresolvable authority is `scope_drift`;
+  neither adapter may expand the touch-set.
+- Managed state is stored at
+  `artifacts/spec-to-done/{slug}--{binding_id}-state.md`, while standalone
+  state remains at `artifacts/spec-to-done/{slug}-state.md`. Every managed
+  checkpoint carries the same `fabricMode=fabric-managed` and
+  `fabricBindingId`.
+- A managed HELD checkpoint retains the lease and asks Fabric to keep or mark
+  the context `SUSPECT`. Local release, reclaim, `NEW_RUN`, provider swap, and
+  `RESUMED` are forbidden. Until Fabric defines and activates a verified
+  rebind receipt, resume remains `fabric_resume_authority_unavailable`; a new
+  outer task/lease/binding starts a new state identity.
+- The binding packet is non-authorizing. It cannot grant push, approval,
+  merge, deploy, process termination, branch-protection mutation, review
+  migration, or `direct_stack`.
+
+Machine sources are
+`agent-contracts/spec-to-done-fabric-binding.schema.json`,
+`agent-contracts/spec-to-done.contract.json`, and
+`scripts/lib/spec-to-done-fabric-binding.mjs`. Claude owns the procedural SOP;
+the Codex skill is an adapter copy and both use the single validator at
+`.claude/skills/spec-to-done/validate-state.mjs`.
 
 ## Activation record and review migration
 
