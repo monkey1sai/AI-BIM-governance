@@ -51,7 +51,12 @@ IFC intake、IFC -> USDC 轉檔、Omniverse Kit/WebRTC 串流、治理檢核操�
 指定為 `canonical-linux`；`local-windows` 是按需平台驗證點。部署主機、資料目錄與
 連線設定由 owner 預先建立的 repo 外 private inventory 提供，不以本機 checkout 或固定 IP 推測。
 
-取得部署授權並確認沒有其他 runtime writer 後，從主工作區執行：
+操作端主工作區也須先備妥 `.env.web-plane.host-kit.canonical-linux`：若檔案不存在，
+由 owner 從 `.env.web-plane.host-kit.canonical-linux.example` 複製並依目標設定；
+已有檔案時保留，不覆寫。這是 registry 指定的 base env，與 private inventory 是兩個
+必要輸入；缺少 base env 時 helper 會在 SSH dispatch 前停止。實際 env 不提交到 Git。
+
+取得部署授權、備妥上述兩個輸入並確認沒有其他 runtime writer 後，從主工作區執行：
 
 ```powershell
 .\scripts\dev\rebuild-test-deploy.ps1 -Build -InventoryPath '<repo-external target.local.json>'
