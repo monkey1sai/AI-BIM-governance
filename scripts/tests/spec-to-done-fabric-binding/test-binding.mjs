@@ -61,7 +61,7 @@ const deliveryPlan = (overrides = {}) => {
     promotion_mode: 'single_pr',
     requested_execution_level: 'implement_local',
     authority_reference: 'authority:binding-plan',
-    governance_source_refs: ['openspec:spec-to-done-parallel-delivery-binding'],
+    governance_source_refs: ['openspec:parallel-delivery-fabric'],
     ...overrides.plan,
   }
 }

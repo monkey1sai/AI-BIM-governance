@@ -54,6 +54,39 @@ def _git(repo, *args):
     ).stdout.strip()
 
 
+def _physical_path_digest(value):
+    # Mirrors normalizedPhysicalPath() in scripts/lib/spec-to-done-fabric-binding.mjs.
+    text = str(pathlib.Path(value).resolve())
+    drive = re.match(r"^([A-Za-z]):[\\/]", text)
+    unc = text.startswith("\\\\")
+    windows_path = drive is not None or unc
+    path_value = text if drive is None else text[2:]
+    normalized = []
+    for part in path_value.replace("\\", "/").split("/"):
+        if part in ("", "."):
+            continue
+        if part == "..":
+            if normalized and normalized[-1] != "..":
+                normalized.pop()
+            else:
+                normalized.append(part)
+        else:
+            normalized.append(part)
+    prefix = f"{drive.group(1).lower()}:/" if drive else ("//" if unc else ("/" if text.startswith("/") else ""))
+    physical = prefix + "/".join(normalized)
+    if windows_path:
+        physical = physical.lower()
+    return hashlib.sha256(physical.encode("utf-8")).hexdigest()
+
+
+def _repo_topology_digests(repo):
+    raw_common = _git(repo, "rev-parse", "--git-common-dir")
+    common = pathlib.Path(raw_common)
+    if not common.is_absolute():
+        common = repo / common
+    return _physical_path_digest(common), _physical_path_digest(repo)
+
+
 def _new_repo(tmp_path, name="repo"):
     repo = tmp_path / name
     repo.mkdir()
@@ -179,8 +212,9 @@ def _fabric_binding_fixture(tmp_path, repo, *, committed_changes=None):
     head = _git(repo, "rev-parse", "HEAD")
     branch = _git(repo, "branch", "--show-current")
     now = "2026-08-31T01:00:00.000Z"
-    sha256_a = "a" * 64
-    sha256_b = "b" * 64
+    # The lease binds a physical repository: common-dir and worktree digests are real, so the
+    # validator can reject a binding copied to another clone (see topology regressions below).
+    sha256_a, sha256_b = _repo_topology_digests(repo)
     scope_resources = [{"kind": "path", "path": "src"}]
     scope_digest = _canonical_digest(scope_resources)
     plan = {
@@ -219,7 +253,7 @@ def _fabric_binding_fixture(tmp_path, repo, *, committed_changes=None):
         "requested_execution_level": "implement_local",
         "authority_reference": "authority:managed-state",
         "governance_source_refs": [
-            "openspec:spec-to-done-parallel-delivery-binding"
+            "openspec:parallel-delivery-fabric"
         ],
     }
     lease = _stamp({
@@ -2159,3 +2193,85 @@ def test_terminal_p7_fails_closed_on_invalid_live_remote_resolution(
     )
 
     assert code == 2 and result["ok"] is False
+
+
+def test_fabric_managed_non_held_checkpoint_rejects_suspect_lease(tmp_path):
+    repo, _ = _new_repo(tmp_path)
+    fabric = _fabric_binding_fixture(tmp_path, repo)
+    done = _line(
+        repo,
+        fabric["head"],
+        "DONE@P3",
+        branch=fabric["branch"],
+        runIds="P3:codex:managed-state-session",
+        fabricMode="fabric-managed",
+        fabricBindingId=fabric["binding"]["binding_id"],
+    )
+
+    code, result = _run(
+        tmp_path,
+        repo,
+        done,
+        platform="codex",
+        expected_head=fabric["head"],
+        extra_args=fabric["extra_args"],
+        state_path=fabric["candidate_state_path"],
+    )
+    assert code == 0 and result["kind"] == "DONE", result
+    assert result["fabric"]["currentLeaseState"] == "ACTIVE"
+
+    # Same checkpoint, but the Fabric lease has become SUSPECT: only HELD may retain it; a run
+    # that is not held must return control to Fabric instead of validating as resumable.
+    _set_fabric_sources_suspect(fabric)
+    code, result = _run(
+        tmp_path,
+        repo,
+        done,
+        platform="codex",
+        expected_head=fabric["head"],
+        extra_args=fabric["extra_args"],
+        state_path=fabric["candidate_state_path"],
+    )
+    assert code == 2, result
+    assert result["held"] == "fabric_resume_authority_unavailable"
+    assert "not ACTIVE" in result["detail"]
+
+
+
+def test_fabric_managed_state_rejects_binding_relocated_to_another_clone(tmp_path):
+    repo, _ = _new_repo(tmp_path)
+    fabric = _fabric_binding_fixture(tmp_path, repo)
+
+    # Copy the whole repository - .git, branch, HEAD, the binding under artifacts/ - to a sibling
+    # location. Every packet still agrees with every other packet and with the binding tuple; the
+    # only thing that changed is which physical repository is being validated.
+    clone = tmp_path / "clone"
+    shutil.copytree(repo, clone)
+    relocated_args = tuple(
+        str(clone / pathlib.Path(value).relative_to(repo)) if pathlib.Path(value).is_relative_to(repo) else value
+        for value in fabric["extra_args"]
+    )
+    relocated_state_path = clone / fabric["candidate_state_path"].relative_to(repo)
+    held = _line(
+        clone,
+        fabric["head"],
+        "HELD@P3",
+        branch=fabric["branch"],
+        runIds="P3:codex:managed-state-session",
+        reason="scope_drift",
+        fabricMode="fabric-managed",
+        fabricBindingId=fabric["binding"]["binding_id"],
+    )
+
+    code, result = _run(
+        tmp_path,
+        clone,
+        held,
+        platform="codex",
+        expected_head=fabric["head"],
+        extra_args=relocated_args,
+        state_path=relocated_state_path,
+    )
+    assert code == 2, result
+    assert result["held"] == "resume_state_invalid"
+    assert "worktree_path_digest" in result["detail"]

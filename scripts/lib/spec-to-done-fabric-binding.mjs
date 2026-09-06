@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import {
   canonicalize,
   digestCanonical,
@@ -9,6 +10,35 @@ import { evaluateScopeDrift, normalizeScope } from './parallel-delivery-fabric-a
 import { parseSessionLease } from './parallel-delivery-fabric-registry.mjs'
 
 export const FABRIC_BINDING_SCHEMA_VERSION = 'spec-to-done-fabric-binding/v1'
+
+// Same physical-path dialect as the Fabric e2e binder (`normalizedPhysicalPath`): drive letter
+// lower-cased, separators folded to '/', '.'/'..' segments collapsed, Windows paths lower-cased.
+// A lease's worktree_path_digest / common_dir_digest are digests of this form, so the state
+// validator can prove the repository it is looking at is the one the lease was issued for.
+export function normalizedPhysicalPath(value) {
+  if (typeof value !== 'string' || value.trim() === '') return null
+  const drive = /^([A-Za-z]):[\\/]/u.exec(value)
+  const unc = /^\\\\/u.test(value)
+  const windowsPath = drive !== null || unc
+  const pathValue = drive === null ? value : value.slice(2)
+  const parts = pathValue.replaceAll('\\', '/').split('/')
+  const normalized = []
+  for (const part of parts) {
+    if (part === '' || part === '.') continue
+    if (part === '..') {
+      if (normalized.length > 0 && normalized.at(-1) !== '..') normalized.pop()
+      else normalized.push(part)
+    } else normalized.push(part)
+  }
+  const prefix = drive !== null ? `${drive[1].toLowerCase()}:/` : unc ? '//' : value.startsWith('/') ? '/' : ''
+  const physicalPath = `${prefix}${normalized.join('/')}`
+  return windowsPath ? physicalPath.toLowerCase() : physicalPath
+}
+
+export function physicalPathDigest(value) {
+  const normalized = normalizedPhysicalPath(value)
+  return normalized === null ? null : createHash('sha256').update(normalized, 'utf8').digest('hex')
+}
 
 const SHA1 = /^[0-9a-f]{40}$/u
 const SHA256 = /^[0-9a-f]{64}$/u

@@ -10,7 +10,7 @@ import {
   resolveTrustedGit,
   sanitizedGitEnvironment,
 } from './trusted-git.mjs'
-import { validateSpecToDoneFabricBinding } from '../../../scripts/lib/spec-to-done-fabric-binding.mjs'
+import { physicalPathDigest, validateSpecToDoneFabricBinding } from '../../../scripts/lib/spec-to-done-fabric-binding.mjs'
 
 const MACHINE_CONTRACT_URL = new URL('../../../agent-contracts/spec-to-done.contract.json', import.meta.url)
 const STATE_PREFIX = /^(HELD|DONE|RESUMED|AUTHORIZATION|NEW_RUN)@(P\d+)$/
@@ -471,6 +471,28 @@ const validateActualHead = (fields, expectedHead) => {
   const actualHead = actual.stdout.trim().toLowerCase()
   if (actualHead !== fields.head.toLowerCase() || actualHead !== expectedHead.toLowerCase()) {
     reject('evidence_stale', `actual worktree HEAD ${actualHead || '<empty>'} does not match state/expected HEAD`)
+  }
+}
+
+// A binding, lease and state can be copied wholesale to another clone or sibling worktree and
+// still agree with each other on branch and HEAD. The lease was issued for one physical
+// repository: prove the worktree being validated and its Git common directory are the ones
+// the Fabric tuple digested, not merely a repository that happens to have the same commit.
+const validateActualFabricTopology = (fields, outcome, lease) => {
+  const actualWorktreeDigest = physicalPathDigest(fs.realpathSync(fields.worktree))
+  if (actualWorktreeDigest !== outcome.worktree_path_digest) {
+    reject('resume_state_invalid', 'actual worktree does not match the Fabric-bound worktree_path_digest')
+  }
+  const commonDirectory = runGit(fields.worktree, ['rev-parse', '--git-common-dir'])
+  if (commonDirectory.error || commonDirectory.status !== 0 || !commonDirectory.stdout.trim()) {
+    reject('resume_state_invalid', 'could not resolve the Git common directory for the Fabric topology check')
+  }
+  const rawCommonDirectory = commonDirectory.stdout.trim()
+  const resolvedCommonDirectory = path.isAbsolute(rawCommonDirectory)
+    ? rawCommonDirectory
+    : path.resolve(fields.worktree, rawCommonDirectory)
+  if (physicalPathDigest(fs.realpathSync(resolvedCommonDirectory)) !== lease.common_dir_digest) {
+    reject('resume_state_invalid', 'actual Git common directory does not match the Fabric-bound common_dir_digest')
   }
 }
 
@@ -1003,7 +1025,15 @@ const validateManagedFabricBinding = ({ cli, current, statePath }) => {
   }
 
   validateActualBranch(fields)
+  validateActualFabricTopology(fields, outcome, lease)
   validateCommittedFabricScope(fields, outcome)
+  // HELD retains the lease as SUSPECT by policy (retain_as_suspect) and stays terminal until the
+  // outer Fabric re-verifies it. Any other checkpoint kind means the run would keep working on a
+  // lease it may already have lost, which the binding's recovery policy forbids
+  // (local_resume_allowed=false): fail closed instead of merely reporting the lease state.
+  if (outcome.current_lease_state !== 'ACTIVE' && current.kind !== 'HELD') {
+    reject('fabric_resume_authority_unavailable', 'Fabric lease is not ACTIVE; a Fabric-managed run may only continue after the outer Fabric re-verifies the lease')
+  }
   return {
     mode: fabric.mode,
     bindingId: fabric.bindingId,
