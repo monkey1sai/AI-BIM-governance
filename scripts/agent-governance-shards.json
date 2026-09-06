@@ -28,6 +28,9 @@
     "scripts/tests/test-task-ledger-parser-parity.mjs",
     "scripts/tests/verify-openspec-*.ps1",
     "scripts/tests/reconcile-openspec-ledger.ps1",
+    "scripts/tests/openspec-*.schema.json",
+    "scripts/tests/fixtures/task-ledger-parity.json",
+    "docs/plans/NOW.md",
         "scripts/tests/verify-openspec-*.mjs",
         "scripts/dev/verify-openspec-*.mjs"
       ]
@@ -65,6 +68,12 @@
     "scripts/tests/test-design-system-reference.ps1",
     "scripts/tests/test-design-system-change-scope.ps1",
     "scripts/tests/test-functional-runtime-result.ps1",
+    "scripts/deploy.ps1",
+    "scripts/stop-all.ps1",
+    "scripts/dev/rebuild-test-deploy.ps1",
+    "scripts/lib/rebuild-test-deploy.ps1",
+    "scripts/lib/StructLog.psm1",
+    "docs/plans/remote-linux-test-deploy-target.plan.md",
         "scripts/tests/check-pr-body-evidence.ps1",
         "scripts/lib/self-referential-bootstrap.ps1",
         "scripts/self-referential-bootstrap-ledger.json",
