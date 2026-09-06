@@ -2,7 +2,7 @@ import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useSta
 import { Btn, Field, Panel } from "./components";
 import { coordinatorClient, type RuntimeSessionSummary, type ViewerLeaseClaimResponse } from "./coordinatorClient";
 import { viewerLeaseHeartbeatDelayMs } from "../clients/viewerLeaseHeartbeat";
-import { EmbeddedViewer, type EmbeddedViewerHandle, type HighlightItem, type HighlightResultMessage } from "./EmbeddedViewer";
+import { EmbeddedViewer, type EmbeddedViewerHandle, type HighlightItem, type HighlightResultMessage, type StageTreeMessage } from "./EmbeddedViewer";
 import { t } from "./i18n";
 import { getLocalDevUserCarrier } from "./localDevPrincipal";
 import { useSharedStatus } from "./useSharedStatus";
@@ -115,11 +115,20 @@ function createReviewViewerIdentity(mode: ReviewSessionViewerPaneMode): ReviewVi
 // DataChannel / stage match）；gate 未過誠實回 { sent:false, reason }，絕不佯裝已送。
 export interface ReviewSessionViewerPaneHandle {
   sendHighlightBatch(items: HighlightItem[]): { sent: true } | { sent: false; reason: string };
+  requestStageTree(primPath?: string): void;
+  selectPrim(primPath: string, multiSelect?: boolean): void;
+  sendToolbarAction(
+    action: "reset_camera" | "camera_view" | "toggle_fullscreen" | "toggle_projection",
+    cameraView?: string,
+  ): void;
 }
 
 export interface ReviewSessionViewerPaneBatchGate {
   canSend: boolean;
   reason: string; // canSend=false 時的誠實理由（"" 代表可送）
+  /** 不依賴 IFC mapping 的 prim-path／camera 命令 readiness；舊呼叫端可省略並沿用 canSend。 */
+  canSendViewerCommand?: boolean;
+  viewerCommandReason?: string;
 }
 
 function highlightResultText(result: { ok: boolean; reason?: string }): string {
@@ -181,13 +190,16 @@ export interface ReviewSessionViewerPaneProps {
   onBatchGateChange?: (gate: ReviewSessionViewerPaneBatchGate) => void;
   // viewer highlight_result ack 透傳（含批次 ack 的 sent_count/unmapped_count 加性欄位）。
   onBatchAck?: (message: HighlightResultMessage) => void;
+  /** 可見 session input 的單一 authority 回報；workspace host 用它同步跨 dock session。 */
+  onSessionIdChange?: (sessionId: string) => void;
   // A3 currently has no element-level mapping/clash contract. It may attach the
   // real federated stage while keeping single-element highlight actions hidden.
   showHandoffActions?: boolean;
+  onStageTree?: (message: StageTreeMessage) => void;
 }
 
 export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle, ReviewSessionViewerPaneProps>(
-  function ReviewSessionViewerPane({ handoff = parseReviewRoomHandoff(), mode = "review-room", onBatchGateChange, onBatchAck, showHandoffActions = true, firstFrameTimeoutMs = 90_000, heartbeatDelayFn = viewerLeaseHeartbeatDelayMs }, ref) {
+  function ReviewSessionViewerPane({ handoff = parseReviewRoomHandoff(), mode = "review-room", onBatchGateChange, onBatchAck, onSessionIdChange, onStageTree, showHandoffActions = true, firstFrameTimeoutMs = 90_000, heartbeatDelayFn = viewerLeaseHeartbeatDelayMs }, ref) {
   const isA1Inline = mode === "a1-inline";
   const isA2Overlay = mode === "a2-overlay";
   const isA3Inline = mode === "a3-inline";
@@ -204,9 +216,16 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
   const [leaseExpired, setLeaseExpired] = useState(false);
   const [firstFrameTimedOut, setFirstFrameTimedOut] = useState(false);
   const [streamDisconnected, setStreamDisconnected] = useState(false);
+  // viewer bootstrap 需要 canonical structured-log trace carrier；真源＝coordinator
+  // stream-config（sessionTraceResolver 權威，取不到時 coordinator 自己回 409）。
+  // 取不到就不掛 viewer——舊行為是掛一個必定 white-screen 的 iframe，operator 只會看到
+  // 誤導的 first-frame 逾時。
+  const [viewerTraceId, setViewerTraceId] = useState<string | null>(null);
+  const [viewerTraceErr, setViewerTraceErr] = useState<string | null>(null);
   const [viewerMountNonce, setViewerMountNonce] = useState(0);
   const [lease, setLease] = useState<ViewerLeaseClaimResponse | null>(null);
   const [leaseBusy, setLeaseBusy] = useState(false);
+  const [leaveBusy, setLeaveBusy] = useState(false);
   const [leaseErr, setLeaseErr] = useState<ViewerLeaseError | null>(null);
   const [firstFrame, setFirstFrame] = useState(false);
   const [dataChannelReady, setDataChannelReady] = useState(false);
@@ -215,6 +234,8 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
   const [highlightResult, setHighlightResult] = useState<{ ok: boolean; reason?: string } | null>(null);
   const [commandTrace, setCommandTrace] = useState<string | null>(null);
   const identityRef = useRef<ReviewViewerIdentity | null>(null);
+  const manuallyReleasedLeaseIdRef = useRef<string | null>(null);
+  const leaseAttemptRef = useRef(0);
   const viewerRef = useRef<EmbeddedViewerHandle>(null);
   const sessionInputTestId = `${tidPrefix}-session-input`;
   const sessionCandidatesTestId = `${tidPrefix}-session-candidates`;
@@ -323,6 +344,8 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
     setStageProofStatus("not_observed");
     setHighlightResult(null);
     setCommandTrace(null);
+    setViewerTraceId(null);
+    setViewerTraceErr(null);
   }, [handoff.sessionId]);
 
   // ACK and command trace belong to the exact highlighted target, not merely
@@ -336,6 +359,10 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
   useEffect(() => {
     if (!activePrimaryLease) return;
     return () => {
+      if (manuallyReleasedLeaseIdRef.current === activePrimaryLease.lease_id) {
+        manuallyReleasedLeaseIdRef.current = null;
+        return;
+      }
       void coordinatorClient.releaseViewerLease(activePrimaryLease.session_id, activePrimaryLease.lease_id, activePrimaryLease.lease_token).catch(() => {});
     };
   }, [
@@ -373,9 +400,37 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
     heartbeatDelayFn,
   ]);
 
+  // canonical trace carrier：session 可觀測即向 coordinator 取，讓 viewer iframe 掛載前
+  // 就備妥 trace_id。coordinator 409（trace authority unavailable）與網路失敗一律誠實記錄，
+  // 不合成 `rev_<sessionId>`——ifc-ready 建立的 session 用的是 `ifcready_` 前綴。
+  useEffect(() => {
+    if (!validSession || !sessionObserved) return;
+    let alive = true;
+    coordinatorClient.streamConfig(sid)
+      .then((config) => {
+        if (!alive) return;
+        const traceId = typeof config.trace_id === "string" ? config.trace_id : "";
+        if (traceId) {
+          setViewerTraceId(traceId);
+          setViewerTraceErr(null);
+          return;
+        }
+        setViewerTraceId(null);
+        setViewerTraceErr("stream-config 未提供 trace_id");
+      })
+      .catch((e) => {
+        if (!alive) return;
+        setViewerTraceId(null);
+        setViewerTraceErr(String(e));
+      });
+    return () => { alive = false; };
+  }, [sid, validSession, sessionObserved]);
+
   // first-frame-timeout（task 5.6）：claim 成功且 viewer 已掛載，但期限內未收
   // first_frame 即轉入可見逾時態；首幀到達或 lease/session 變更時清除。
-  const activeLeaseIdForFirstFrame = activePrimaryLease ? activePrimaryLease.lease_id : null;
+  // viewer 未掛載（缺 trace carrier）時不得起這個計時器：那會把「iframe 根本沒被掛上」
+  // 誤報成「串流已建立但未收到首幀」，把 operator 導去查 Kit / GPU。
+  const activeLeaseIdForFirstFrame = activePrimaryLease && viewerTraceId ? activePrimaryLease.lease_id : null;
   useEffect(() => {
     if (!activeLeaseIdForFirstFrame || firstFrame) return;
     const timer = window.setTimeout(() => { setFirstFrameTimedOut(true); }, firstFrameTimeoutMs);
@@ -397,7 +452,6 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
     setLeaseExpired(false);
     setFirstFrameTimedOut(false);
     setStreamDisconnected(false);
-    setLease(null);
     setFirstFrame(false);
     setDataChannelReady(false);
     setLoadedStageUrl(null);
@@ -405,11 +459,21 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
     setHighlightResult(null);
     setCommandTrace(null);
     try {
+      if (activePrimaryLease) {
+        await coordinatorClient.releaseViewerLease(
+          activePrimaryLease.session_id,
+          activePrimaryLease.lease_id,
+          activePrimaryLease.lease_token,
+        );
+        manuallyReleasedLeaseIdRef.current = activePrimaryLease.lease_id;
+      }
+      setLease(null);
+      leaseAttemptRef.current += 1;
       const claimed = await coordinatorClient.claimViewerLease(sid, {
         viewer_id: identity.viewer_id,
         display_name: identity.display_name,
         requested_role: "primary",
-        client_nonce: `${identity.viewer_id}:${sid}:primary`,
+        client_nonce: `${identity.viewer_id}:${sid}:primary:${leaseAttemptRef.current}`,
       }, identity.user_token);
       setLease(claimed);
     } catch (e) {
@@ -417,7 +481,32 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
     } finally {
       setLeaseBusy(false);
     }
-  }, [sid, validSession, viewerOrigin, sessionObserved, modelArtifactStale, gpuUnavailable, leaseBusy, mode]);
+  }, [sid, validSession, viewerOrigin, sessionObserved, modelArtifactStale, gpuUnavailable, leaseBusy, mode, activePrimaryLease]);
+
+  const leave3dViewer = useCallback(async () => {
+    if (!activePrimaryLease || leaveBusy) return;
+    setLeaveBusy(true);
+    setLeaseErr(null);
+    try {
+      await coordinatorClient.releaseViewerLease(
+        activePrimaryLease.session_id,
+        activePrimaryLease.lease_id,
+        activePrimaryLease.lease_token,
+      );
+      manuallyReleasedLeaseIdRef.current = activePrimaryLease.lease_id;
+      setLease(null);
+      setFirstFrame(false);
+      setDataChannelReady(false);
+      setLoadedStageUrl(null);
+      setStageProofStatus("not_observed");
+      setFirstFrameTimedOut(false);
+      setStreamDisconnected(false);
+    } catch (error) {
+      setLeaseErr(classifyViewerLeaseError(error));
+    } finally {
+      setLeaveBusy(false);
+    }
+  }, [activePrimaryLease, leaveBusy]);
 
   const stageText = stageProofStatus === "unproven"
     ? t("unproven（coordinator authority 尚未證實；handoff 已阻擋）", "unproven (coordinator authority is not confirmed; handoff is blocked)")
@@ -480,9 +569,7 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
 
   // A2 批次疊加 gate：與單筆高亮共用同一組 viewer 證據條件，但不含 handoff 專屬欄位
   //（ifc_guid / usd_prim_path 由外部批次項目自帶；mapping 解析在送端與 viewer 端各自誠實計數）。
-  const batchGateReason = mappingArtifactStale
-    ? `mapping_reachable=false: ${artifactHealth?.stale_reason ?? "derived_artifact_unreachable"}`
-    : !validSession
+  const viewerCommandReason = !validSession
       ? t("尚未輸入有效 review session", "enter a valid review session first")
       : !sessionObserved
         ? t("runtime/status 未列出此 session（可能 stale / 已關閉）", "runtime/status does not list this session (possibly stale / closed)")
@@ -495,12 +582,20 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
               : !stageMatched
                 ? t("stage 未對齊，禁止誤標", "stage mismatch; highlight is blocked")
                 : "";
+  const batchGateReason = mappingArtifactStale
+    ? `mapping_reachable=false: ${artifactHealth?.stale_reason ?? "derived_artifact_unreachable"}`
+    : viewerCommandReason;
   // callback 經 ref 讀最新值：gate 通知只隨 gate 內容變動觸發，不因外部 callback identity 變動重跑。
   const onBatchGateChangeRef = useRef(onBatchGateChange);
   onBatchGateChangeRef.current = onBatchGateChange;
   useEffect(() => {
-    onBatchGateChangeRef.current?.({ canSend: batchGateReason === "", reason: batchGateReason });
-  }, [batchGateReason]);
+    onBatchGateChangeRef.current?.({
+      canSend: batchGateReason === "",
+      reason: batchGateReason,
+      canSendViewerCommand: viewerCommandReason === "",
+      viewerCommandReason,
+    });
+  }, [batchGateReason, viewerCommandReason]);
   const onBatchAckRef = useRef(onBatchAck);
   onBatchAckRef.current = onBatchAck;
   const batchGateReasonRef = useRef(batchGateReason);
@@ -532,6 +627,15 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
         items,
       }, null, 2));
       return { sent: true as const };
+    },
+    requestStageTree(primPath = "/World") {
+      viewerRef.current?.requestStageTree(primPath);
+    },
+    selectPrim(primPath: string, multiSelect = false) {
+      viewerRef.current?.selectPrim(primPath, multiSelect);
+    },
+    sendToolbarAction(action, cameraView) {
+      viewerRef.current?.sendToolbarAction(action, cameraView);
     },
   }), [mode]);
 
@@ -567,7 +671,9 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
             placeholder={t("review_session_xxx 或 lwv_xxx", "review_session_xxx or lwv_xxx")}
             value={sessionId}
             onChange={(e) => {
-              setSessionId(e.target.value);
+              const nextSessionId = e.target.value;
+              setSessionId(nextSessionId);
+              onSessionIdChange?.(nextSessionId);
               setLease(null);
               setLeaseErr(null);
               setFirstFrame(false);
@@ -606,6 +712,11 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
                       ? t("啟動 A4 3D Session", "Start A4 3D Session")
                   : t("手動啟動 / attach Kit session", "Start / attach Kit session")}
           </Btn>
+          {activePrimaryLease && (
+            <Btn data-testid={`${tidPrefix}-leave-3d`} disabled={leaveBusy} onClick={() => { void leave3dViewer(); }}>
+              {leaveBusy ? t("離開中…", "Leaving...") : t("離開 3D 檢視", "Leave 3D view")}
+            </Btn>
+          )}
           {!isA1Inline && (
             <a
               className={`ec-btn ${validSession ? "" : "disabled"}`}
@@ -651,7 +762,8 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
                 "Kit runtime is unavailable (the kit-manager instances query failed or no instance is available); start is honestly disabled.",
               )}
             </span>{" "}
-            <a href="#runtime">{t("檢視 Runtime", "Inspect Runtime")}</a>
+            <Btn data-testid={`${tidPrefix}-kit-refresh`} onClick={() => { void refreshRuntimeStatus(); }}>{t("重新檢查 Kit 狀態", "Recheck Kit status")}</Btn>{" "}
+            <a href="#runtime">{t("查看 Runtime 診斷", "View Runtime diagnostics")}</a>
           </div>
         )}
         {leaseExpired && (
@@ -676,9 +788,9 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
               )}
             </span>{" "}
             <Btn data-testid={`${tidPrefix}-first-frame-retry`} disabled={leaseBusy} onClick={() => { void claimPrimary(); }}>
-              {leaseBusy ? t("重試中...", "Retrying...") : t("重試", "Retry")}
+              {leaseBusy ? t("重試中...", "Retrying...") : t("重新啟動 3D Session", "Restart 3D Session")}
             </Btn>{" "}
-            <a href="#runtime">{t("檢視 Runtime", "Inspect Runtime")}</a>
+            <a href="#runtime">{t("查看 Runtime 診斷", "View Runtime diagnostics")}</a>
           </div>
         )}
         {streamDisconnected && (
@@ -765,6 +877,14 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
                     ? t("尚未啟動 A4 3D session；高亮維持封鎖。", "A4 3D session is not started; highlight remains blocked.")
                 : t("尚未啟動 3D session。這裡不做自動 claim；請按手動啟動後才會掛載 viewer。", "3D session is not started. This page does not auto-claim; the viewer mounts only after manual start.")}
           </p>
+        ) : viewerOrigin && !viewerTraceId ? (
+          <p className="ec-warn-note" data-testid={`${tidPrefix}-viewer-trace-missing`} role="alert" aria-live="assertive">
+            {t(
+              "尚未取得此 session 的 structured-log trace carrier，viewer 不會掛載（掛了也只會是白畫面）。",
+              "The structured-log trace carrier for this session is not available; the viewer is not mounted (it would only render blank).",
+            )}
+            {viewerTraceErr ? `（${viewerTraceErr}）` : null}
+          </p>
         ) : viewerOrigin ? (
           <div data-testid={viewerHostTestId} style={{ height: 480 }}>
             <EmbeddedViewer
@@ -779,6 +899,7 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
               userId={activePrimaryLease.user_id}
               displayName={activePrimaryLease.display_name}
               sourceClientId={activePrimaryLease.lease_id}
+              traceId={viewerTraceId}
               viewerLeaseToken={activePrimaryLease.lease_token}
               userToken={identityRef.current?.user_token}
               onFirstFrame={() => {
@@ -824,6 +945,7 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
                 // 批次 ack 只在本次指令與當前目標均吻合時透傳；舊指令不得污染新選取列。
                 if (pending.kind === "batch") onBatchAckRef.current?.(m);
               }}
+              onStageTree={onStageTree}
             />
           </div>
         ) : null /* origin-missing 態改由上方常駐 note（含 refresh 動作）呈現，避免 testid 重複 */}

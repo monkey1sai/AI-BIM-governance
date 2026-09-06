@@ -300,9 +300,141 @@
         }
       },
       "additionalProperties": false
+    },
+    {
+      "title": "console-to-viewer: request_stage_tree",
+      "type": "object",
+      "required": [
+        "protocol",
+        "type"
+      ],
+      "properties": {
+        "protocol": {
+          "const": "vg01"
+        },
+        "type": {
+          "const": "request_stage_tree"
+        },
+        "prim_path": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "title": "viewer-to-console: stage_tree",
+      "type": "object",
+      "required": [
+        "protocol",
+        "type",
+        "prim_path",
+        "children"
+      ],
+      "properties": {
+        "protocol": {
+          "const": "vg01"
+        },
+        "type": {
+          "const": "stage_tree"
+        },
+        "prim_path": {
+          "type": "string"
+        },
+        "children": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/usdPrimNode"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "title": "console-to-viewer: select_prim",
+      "type": "object",
+      "required": [
+        "protocol",
+        "type",
+        "prim_path"
+      ],
+      "properties": {
+        "protocol": {
+          "const": "vg01"
+        },
+        "type": {
+          "const": "select_prim"
+        },
+        "prim_path": {
+          "type": "string"
+        },
+        "multi_select": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "title": "console-to-viewer: toolbar_action",
+      "type": "object",
+      "required": [
+        "protocol",
+        "type",
+        "action"
+      ],
+      "properties": {
+        "protocol": {
+          "const": "vg01"
+        },
+        "type": {
+          "const": "toolbar_action"
+        },
+        "action": {
+          "enum": [
+            "reset_camera",
+            "camera_view",
+            "toggle_fullscreen",
+            "toggle_projection"
+          ]
+        },
+        "camera_view": {
+          "enum": [
+            "top",
+            "bottom",
+            "front",
+            "back",
+            "left",
+            "right",
+            "perspective"
+          ]
+        }
+      },
+      "additionalProperties": false
     }
   ],
   "$defs": {
+    "usdPrimNode": {
+      "type": "object",
+      "required": [
+        "path"
+      ],
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string"
+        },
+        "children": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/usdPrimNode"
+          }
+        }
+      }
+    },
     "bridgeHighlightItem": {
       "type": "object",
       "required": [
@@ -323,6 +455,14 @@
             "string",
             "null"
           ]
+        },
+        "color": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 4
         }
       },
       "additionalProperties": false

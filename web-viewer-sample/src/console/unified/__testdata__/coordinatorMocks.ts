@@ -1,4 +1,4 @@
-// 測試專用：十端點的「閒置真值」payload（形狀對齊 2026-08-25 canonical-linux 同分鐘 API：0 session／issues []／
+// 測試專用：十一端點的「閒置真值」payload（形狀對齊 2026-08-25 canonical-linux 同分鐘 API：0 session／issues []／
 // kit_local_001 idle）與 coordinatorClient 層 spy helper。production 元件不得 import 本目錄
 // （fixtureNotInProduction.test.ts 守門）。
 import { vi } from "vitest";
@@ -31,6 +31,7 @@ export const IDLE: EndpointData = {
   minioFolder: { bucket: null, prefix: "", folders: [], objects: [], count: 0 },
   kitHealth: { status: "ok" },
   kitInstance: { instance_id: "kit_local_001", status: "idle", control_status: "not_sent", selected_artifact_ids: [], opened_runtime_uris: [], last_command: null },
+  sessionIdlePolicy: { enabled: true, timeout_ms: 1_800_000, source: "environment", revision: 0, process_epoch: "11111111111111111111111111111111", countdown_seconds: 10, apply_mode: "live_process", restart_behavior: "environment_value_restored", active_session_behavior: "ready_sessions_restart_idle_clock" },
 };
 
 export const ENDPOINT_PATHS: Record<EndpointKey, string> = {
@@ -44,6 +45,7 @@ export const ENDPOINT_PATHS: Record<EndpointKey, string> = {
   minioFolder: "/api/minio/objects?delimiter=%2F",
   kitHealth: "/api/kit/health",
   kitInstance: "/api/kit/instances/current",
+  sessionIdlePolicy: "/api/runtime/session-idle-policy",
 };
 
 export function offline503(key: EndpointKey): CoordinatorHttpError {
@@ -64,6 +66,7 @@ export function idleFetchers(overrides: Partial<EndpointData> = {}): EndpointFet
     minioFolder: async () => data.minioFolder,
     kitHealth: async () => data.kitHealth,
     kitInstance: async () => data.kitInstance,
+    sessionIdlePolicy: async () => data.sessionIdlePolicy,
   };
 }
 
@@ -86,16 +89,17 @@ export function spyCoordinatorEndpoints(overrides: EndpointOverrides = {}) {
     getMinioFolder: vi.spyOn(coordinatorClient, "getMinioFolder").mockImplementation(() => pick("minioFolder")),
     kitHealth: vi.spyOn(coordinatorClient, "kitHealth").mockImplementation(() => pick("kitHealth")),
     kitInstanceCurrent: vi.spyOn(coordinatorClient, "kitInstanceCurrent").mockImplementation(() => pick("kitInstance")),
+    getSessionIdlePolicy: vi.spyOn(coordinatorClient, "getSessionIdlePolicy").mockImplementation(() => pick("sessionIdlePolicy")),
   };
 }
 
-/** 十端點全部 503（design gate 環境語意）。 */
+/** 十一端點全部 503（design gate 環境語意）。 */
 export function spyCoordinatorEndpointsOffline() {
   return spyCoordinatorEndpoints({
     runtimeStatus: offline503("runtimeStatus"), ifcReady: offline503("ifcReady"), conversionRecords: offline503("conversionRecords"),
     outboxSummary: offline503("outboxSummary"), issues: offline503("issues"), ruleRuns: offline503("ruleRuns"),
     minioWatch: offline503("minioWatch"), minioFolder: offline503("minioFolder"), kitHealth: offline503("kitHealth"),
-    kitInstance: offline503("kitInstance"),
+    kitInstance: offline503("kitInstance"), sessionIdlePolicy: offline503("sessionIdlePolicy"),
   });
 }
 

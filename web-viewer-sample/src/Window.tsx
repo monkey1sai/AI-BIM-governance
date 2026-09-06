@@ -76,6 +76,28 @@ import { governanceClient, type RuleResultRow, type RuleRunStatus } from "./cons
 import { t } from "./console/i18n";
 
 
+// live 3D 語意 dock 收合偏好（每個操作員自己的版面習慣，存本機即可）。
+// storage 被停用 / 無痕模式時一律回 null（= 交給容器寬度決定），不讓版面因此爆掉。
+const SEMANTIC_DOCK_STORAGE_KEY = "bim.viewer.semanticDockCollapsed";
+const USD_DOCK_STORAGE_KEY = "bim.viewer.usdDockCollapsed";
+
+function readDockPreference(key: string): boolean | null {
+    try {
+        const raw = window.localStorage.getItem(key);
+        return raw === "1" ? true : raw === "0" ? false : null;
+    } catch {
+        return null;
+    }
+}
+
+function writeDockPreference(key: string, collapsed: boolean): void {
+    try {
+        window.localStorage.setItem(key, collapsed ? "1" : "0");
+    } catch {
+        // 無法持久化不影響本次 session 的版面切換。
+    }
+}
+
 interface USDPrimType {
     name?: string;
     path: string;
@@ -138,6 +160,12 @@ interface AppState {
     govBindingApplyState?: BindingApplyState;
     // 完整問題分頁：viewer 分頁（模型=語意檢視 / 問題=治理操作全幅）。
     viewerTab: "model" | "issues";
+    // 左緣兩個 dock 的收合態（Omniverse USD Composer 收合軌）。null = 尚未決定，
+    // 由容器寬度決定（窄容器如 console 內嵌 iframe 預設收合，優先給 stage）。
+    semanticDockCollapsed: boolean | null;
+    usdDockCollapsed: boolean | null;
+    // 視窗寬度快照：dock 預設值依「可用舞台寬」判定，故 resize 必須觸發重算。
+    viewportWidth: number;
     showUI: boolean;
     isLoading: boolean;
     loadingText: string; 
@@ -676,6 +704,54 @@ function requestUsesNativeOpenedStageResult(requestEventType: string): boolean {
         || requestEventType === "loadArtifactGroupRequest";
 }
 
+// #783：outbound trace 只能補給「形狀正確」的 native 成功回應。欄位名對齊 SDK
+// LogFormatter.fromLoadingStateEvent / fromGetChildrenEvent 的產出；值域對齊
+// tests/contracts/kit-datachannel-v1.schema.json（loadingStateResponse.loading_state 只准
+// idle|busy；getChildrenResponse.children 每個元素都必須是物件）。任何不在契約內的值
+// 都不得被補上 trace 後放進 _handleCustomEvent——那條路會直接改 isKitReady / usdPrims。
+const NATIVE_LOADING_STATES: ReadonlySet<string> = new Set(["idle", "busy"]);
+
+function isExpectedNativeResult(
+    requestEventType: string,
+    result: Record<string, unknown>,
+    requestPayload: Record<string, unknown>,
+): boolean {
+    if (getPayloadString(result, "status") !== "success") return false;
+    if (requestEventType === "loadingStateQuery") {
+        return typeof result.loadingState === "string" && NATIVE_LOADING_STATES.has(result.loadingState);
+    }
+    if (requestEventType === "getChildrenRequest") {
+        // 回應必須答的是**這一次**請求的節點：primPath 逐字等於 outbound prim_path。
+        // 這同時擋掉切換模型後遲到的舊 stage 回應被當成新樹的 root 回應（review P2）。
+        const requestedPrimPath = getPayloadString(requestPayload, "prim_path");
+        return typeof result.primPath === "string"
+            && requestedPrimPath !== ""
+            && result.primPath === requestedPrimPath
+            && Array.isArray(result.children)
+            // 明確只傳 child：Array.every 的第二個引數是 index，直接傳函式會把
+            // 兄弟節點的序號當成遞迴深度，第 33 個兄弟就會被誤拒（gate correctness:1）。
+            && result.children.every((child) => isNativeChildPrimRecord(child));
+    }
+    return false;
+}
+
+// 契約 `children.items: object` 排除陣列；handler 之後會把元素當 USDPrimType 用、
+// _makePickable 直接取 `prim.path`、USDStage 展開節點時再遞迴讀 `children`，所以這裡要求
+// 「非陣列物件、path 為字串，且巢狀 children 若存在也必須是同樣合法的陣列」；
+// 不讓 `[[]]`、缺 path、或 `{ children: [null] }` 這類元素被補上 trace 後進 handler。
+function isNativeChildPrimRecord(value: unknown, depth = 0): boolean {
+    if (!isRecord(value) || Array.isArray(value) || typeof value.path !== "string") return false;
+    if (!Object.prototype.hasOwnProperty.call(value, "children")) return true;
+    // 深度上限只防惡意／損壞的超深巢狀把驗證拖垮；正常 lazy-load 回應只帶一層。
+    if (depth >= 32) return false;
+    return Array.isArray(value.children)
+        && value.children.every((child) => isNativeChildPrimRecord(child, depth + 1));
+}
+
+// USD 的 pseudo-root `/` 與本 viewer 的預設 root `/World` 都視為 root 請求：
+// stage_management 明確支援對 `/` 回傳頂層子節點，handler 對 root 也是整棵樹重建。
+const NATIVE_ROOT_PRIM_PATHS: ReadonlySet<string> = new Set(["/", "/World"]);
+
 function appStreamResultToAppEvent(
     requestEventType: string,
     result: unknown,
@@ -745,7 +821,27 @@ function appStreamResultToAppEvent(
         };
     }
 
-    const traceId = getPayloadString(result, "trace_id");
+    // #783：SDK 對 native 指令（loadingStateQuery / getChildrenRequest）會自己攔下 Kit 的
+    // 同名回應，並以 fromLoadingStateEvent / fromGetChildrenEvent 重組成
+    // `{ action, status, info, loadingState|primPath, url|children }` 後 resolve 這個 promise
+    // ——**trace_id 在這一步被 SDK 剝掉**（Kit 端確實有送，同 payload 換名探針逐則到達）。
+    // 之前只認 result.trace_id，等於把每一則正常回應都靜默丟掉：isKitReady 永遠 false、
+    // 永不送 openStageRequest、3D 全黑（181 與本機皆重現）。
+    // 這裡改用送出時由 _withVerifiedDataChannelTrace 寫入、且已對照 authority 驗證過的
+    // outbound trace_id；SDK 的 native callback map 保證此 result 就是該次請求的回應。
+    // 兩道守門（review P2）：
+    //   (1) result 若「帶有」trace_id 屬性但值為空／null／非字串，是明確損壞的 correlation
+    //       carrier，必須 fail closed，不得用 outbound 補位（帶錯值的 trace 本來就會被拒）。
+    //   (2) 只有 result 長得像該指令預期的 native 回應（status=success 且帶請求專屬欄位）
+    //       才允許補位；SDK 對 warning／error／generic ACK 也會 resolve 同一個 promise，
+    //       那些不得被補上 trace 後當成合法回應放進 _handleCustomEvent。
+    const hasInboundTrace = Object.prototype.hasOwnProperty.call(result, "trace_id");
+    const inboundTraceId = getPayloadString(result, "trace_id");
+    if (hasInboundTrace && !inboundTraceId) return null;
+    const traceId = inboundTraceId
+        || (isExpectedNativeResult(requestEventType, result, requestPayloadRecord)
+            ? getPayloadString(requestPayloadRecord, "trace_id")
+            : "");
     if (!traceId) return null;
 
     if (requestEventType === "loadingStateQuery") {
@@ -1009,6 +1105,9 @@ export default class App extends React.Component<AppProps, AppState> {
             isKitReady: false,
             showStream: false,
             viewerTab: "model",
+            semanticDockCollapsed: readDockPreference(SEMANTIC_DOCK_STORAGE_KEY),
+            usdDockCollapsed: readDockPreference(USD_DOCK_STORAGE_KEY),
+            viewportWidth: typeof window !== "undefined" ? window.innerWidth : 0,
             showUI: false,
             loadingText: "正在載入成果檔清單...",
             streamDiagnostic: null,
@@ -1051,7 +1150,16 @@ export default class App extends React.Component<AppProps, AppState> {
         if (window.parent !== window) this._postToParent({ type: "viewer_ready" });
     };
 
+    private _onViewportResize = (): void => {
+        if (typeof window === "undefined") return;
+        const next = window.innerWidth;
+        // 只在真的變動時 setState；dock 預設值是 <900px 的階梯函式，但寬度本身也餵給
+        // usableStageWidth，故照實記錄而非只記錄跨斷點。
+        if (next !== this.state.viewportWidth) this.setState({ viewportWidth: next });
+    };
+
     componentDidMount(): void {
+        if (typeof window !== "undefined") window.addEventListener("resize", this._onViewportResize);
         this.componentMounted = true;
         window.__structLog?.logger.setDeliveryAuthorityProvider(() => this._currentViewerLogDeliveryAuthority());
         // VG-01：嵌入 console iframe 時掛上 parent postMessage 橋（unmount 對稱移除），並通知 parent listener 已就緒。
@@ -1073,6 +1181,7 @@ export default class App extends React.Component<AppProps, AppState> {
     }
 
     componentWillUnmount(): void {
+        if (typeof window !== "undefined") window.removeEventListener("resize", this._onViewportResize);
         this.componentMounted = false;
         this.reviewSocketEpoch += 1;
         this.verifiedDataChannelAuthority = null;
@@ -1992,6 +2101,12 @@ export default class App extends React.Component<AppProps, AppState> {
             this.setState({ runtimeCommandRejection: null });
         }
         const streamGenerationAtSend = this.streamGeneration;
+        // #783（review P2）：native getChildren 回應沒有 stage 相關性。切換模型時 WebRTC
+        // stream generation 與 session trace 都不變，_openSelectedAsset 又會先清空 usdPrims，
+        // 於是舊 stage 遲到的回應會被 handler 當成新樹的 root 回應整棵換掉。送出時記下
+        // stage intent / attempt generation，回來時任一變了就丟棄。
+        const stageIntentGenerationAtSend = this.stageIntentGeneration;
+        const stageAttemptGenerationAtSend = this.activeStageAttempt?.generation ?? null;
         let nativeTransportFailed = false;
         void AppStream.sendMessage(outgoing)
             .then((result) => {
@@ -2001,9 +2116,40 @@ export default class App extends React.Component<AppProps, AppState> {
                     outgoing.payload,
                     Boolean(nativeOpenStageDispatch),
                 );
-                if (responseEvent) {
-                    this._handleCustomEvent(responseEvent, streamGenerationAtSend);
+                if (!responseEvent) return;
+                if (outgoing.event_type === "getChildrenRequest") {
+                    if (
+                        this.stageIntentGeneration !== stageIntentGenerationAtSend
+                        || (this.activeStageAttempt?.generation ?? null) !== stageAttemptGenerationAtSend
+                    ) {
+                        this._appendReviewEvent("略過遲到的 getChildrenResponse：stage 已切換");
+                        return;
+                    }
+                    const borrowedTrace = !(isRecord(result) && Object.prototype.hasOwnProperty.call(result, "trace_id"));
+                    // attempt 失敗／逾時只把 status 轉 terminal、不推進任何 generation。對借用
+                    // outbound trace 的回應：只要目前 attempt 是 terminal（不論請求是在終止前
+                    // 還是終止後發出），都不得在 viewer 已進入失敗／unproven 態時重填樹並送
+                    // makePrimsPickable（review P2 ×2）。
+                    if (borrowedTrace && this.activeStageAttempt?.status === "terminal") {
+                        this._appendReviewEvent("略過 getChildrenResponse：stage attempt 已終止");
+                        return;
+                    }
+                    // 同一 stage 內：handler 對「樹裡找不到的 prim_path」一律當 root 回應整棵換掉
+                    // （_findUSDPrimByPath === null → usdPrims = children）。這條只圍**借用 outbound
+                    // trace** 的 trace-less native 回應——那是本 PR 新開的路，不得因此讓過期節點
+                    // 的回應整棵換樹；帶真實 inbound trace 的回應維持既有行為。非 root 節點若已不在
+                    // 目前的樹上（同 stage refresh 期間消失、或 request_stage_tree 指到過期節點）就丟。
+                    const requestedPrimPath = isRecord(outgoing.payload) ? getPayloadString(outgoing.payload, "prim_path") : "";
+                    if (
+                        borrowedTrace
+                        && !NATIVE_ROOT_PRIM_PATHS.has(requestedPrimPath)
+                        && this._findUSDPrimByPath(requestedPrimPath) === null
+                    ) {
+                        this._appendReviewEvent("略過 getChildrenResponse：請求的節點已不在目前的 stage 樹上");
+                        return;
+                    }
                 }
+                this._handleCustomEvent(responseEvent, streamGenerationAtSend);
             })
             .catch(() => {
                 nativeTransportFailed = true;
@@ -2869,7 +3015,18 @@ export default class App extends React.Component<AppProps, AppState> {
             lifecycleActive,
         });
         const canOperate = canHandleHighlight(inputs.panelState.canOperate);
-        const m = e.data as { type?: string; items?: unknown; ifc_guid?: string; token?: unknown; user_token?: unknown; clientRequestId?: unknown };
+        const m = e.data as {
+            type?: string;
+            items?: unknown;
+            ifc_guid?: string;
+            token?: unknown;
+            user_token?: unknown;
+            clientRequestId?: unknown;
+            prim_path?: string;
+            action?: string;
+            camera_view?: string;
+            multi_select?: boolean;
+        };
         // 僅做 console↔iframe 的本地 ACK 關聯；Kit runtime 的 requestId 仍由
         // _overlayHighlight / _overlayHighlightMany 產生，絕不以瀏覽器輸入覆寫。
         const clientRequestId = typeof m.clientRequestId === "string"
@@ -2958,6 +3115,42 @@ export default class App extends React.Component<AppProps, AppState> {
                 if (!canOperate) return; // spectator / 未就緒靜默丟棄（不送 clearHighlightRequest）
                 this._sendStreamMessage(buildClearHighlightRequest());
                 break;
+            case "request_stage_tree": {
+                const primPath = typeof m.prim_path === "string" && m.prim_path ? m.prim_path : "/World";
+                if (this.state.usdPrims && this.state.usdPrims.length > 0) {
+                    this._postToParent({
+                        type: "stage_tree",
+                        prim_path: primPath,
+                        children: this.state.usdPrims,
+                    }, allowedOrigins);
+                }
+                if (canOperate || harnessEnabled()) {
+                    this._getChildren(primPath === "/World" ? null : { path: primPath, name: primPath });
+                }
+                break;
+            }
+            case "select_prim": {
+                if (!canOperate && !harnessEnabled()) return;
+                if (typeof m.prim_path === "string" && m.prim_path) {
+                    const prim = { path: m.prim_path, name: m.prim_path };
+                    this._onSelectUSDPrims(new Set([prim]));
+                }
+                break;
+            }
+            case "toolbar_action": {
+                if (typeof m.action === "string") {
+                    if (m.action === "reset_camera") {
+                        this._onStageReset();
+                    } else if (m.action === "toggle_fullscreen") {
+                        if (!document.fullscreenElement) {
+                            void document.documentElement.requestFullscreen?.().catch(() => {});
+                        } else {
+                            void document.exitFullscreen?.().catch(() => {});
+                        }
+                    }
+                }
+                break;
+            }
             default:
                 break; // 未知 type 忽略（協定前向相容）
         }
@@ -5678,16 +5871,25 @@ export default class App extends React.Component<AppProps, AppState> {
             const prim_path = getPayloadString(payload, "prim_path");
             const children = Array.isArray(payload.children) ? payload.children as USDPrimType[] : [];
             const usdPrim = this._findUSDPrimByPath(prim_path);
+            let nextTree = this.state.usdPrims;
             if (usdPrim === null) {
+                nextTree = children;
                 this.setState({ usdPrims: children });
             }
             else {
                 usdPrim.children = children;
+                nextTree = this.state.usdPrims;
                 this.setState({ usdPrims: this.state.usdPrims });
             }
             if (Array.isArray(children)){
                 this._makePickable(children);
             }
+            // VG-01: 下傳 USD stage 樹給 parent console
+            this._postToParent({
+                type: "stage_tree",
+                prim_path: prim_path || "/World",
+                children: nextTree,
+            });
         }
         // CH-F：Kit 確認 binding 已套用 → 更新 active + last-good revision（交易完成；誠實：只有確認才宣告 applied）。
         else if (event.event_type === "bindingApplied") {
@@ -5766,6 +5968,24 @@ export default class App extends React.Component<AppProps, AppState> {
             const streamRole = isSpectatorStreamMode() ? "spectator" : "primary";
             const renderedStreamGeneration = this.state.streamMountKey;
             const liveFrameObserved = this._hasRemoteVideoFrame();
+        // ── live 3D 版面（Omniverse USD Composer 慣例）────────────────────────────
+        // 語意 dock 一旦 live 就「佔用」左緣寬度，<video> 以同一個 --gv-stage-inset-left
+        // 內縮，兩者不可能重疊；收合時 stage 取回全寬。
+        // 預設值：未存過偏好時，窄容器（console 內嵌 iframe ~850px）預設收合先給 stage，
+        // 寬容器（獨立 viewer 視窗）預設展開。
+        const semanticDockActive = liveFrameObserved
+            && this.state.viewerTab === "model"
+            && (harnessEnabled() || Boolean(this.state.reviewSessionId));
+        // dock 預設值必須看「<video> 實際拿得到的寬」，不是整個視窗寬：?debug=1 時
+        // asset panel(300) + demo panel(360) 會先吃掉 660px，1280 視窗只剩 620px 舞台，
+        // 若仍判為寬容器就會把兩個 dock 都展開、幾乎不留 3D 視區。
+        // viewportWidth 由 componentDidMount 的 resize listener 維護，故跨 900px 拖拉會重算。
+        const usableStageWidth = Math.max(0, this.state.viewportWidth - streamReservedWidth);
+        const narrowStage = this.state.viewportWidth > 0 && usableStageWidth < 900;
+        const semanticDockCollapsed = this.state.semanticDockCollapsed ?? narrowStage;
+        const semanticDockWidth = semanticDockActive
+            ? (semanticDockCollapsed ? "var(--gv-dock-rail, 34px)" : "var(--gv-dock-w)")
+            : "0px";
         const runtimeCommandRejection = this.state.runtimeCommandRejection;
         const runtimeAuthorityUnavailable = runtimeCommandRejection?.detail_code === "authority_unavailable";
         const runtimeCommandRejectionReason = runtimeCommandRejection
@@ -5783,8 +6003,17 @@ export default class App extends React.Component<AppProps, AppState> {
         const showUsdStageDock = this.state.showUI
             && this.state.viewerTab === "model"
             && (isDebugQueryEnabled() || this.state.usdPrims.length > 0);
+        // USD Stage 樹 dock 同屬左緣面板（NVIDIA sample 的樹狀面板）。它一樣是 absolute 疊在
+        // stage 上，故必須計入 <video> 的內縮，也套同一組收合軌——否則語意 dock 收合後它會
+        // 露出來繼續蓋住模型，窄容器更會一口氣吃掉三分之一舞台。
+        const usdDockCollapsed = this.state.usdDockCollapsed ?? narrowStage;
+        const usdDockWidth = !showUsdStageDock
+            ? "0px"
+            : usdDockCollapsed ? "var(--gv-dock-rail, 34px)" : "var(--gv-usd-dock-open-w)";
         return (
             <div
+                className="gv-stage"
+                data-testid="viewer-stage-root"
                 style={{
                     position: 'absolute',
                     top: headerHeight,
@@ -5792,7 +6021,11 @@ export default class App extends React.Component<AppProps, AppState> {
                     right: 0,
                     bottom: 0,
                     width: '100%',
-                }}
+                    // 左緣所有 dock 與 <video> 內縮共用的唯一寬度來源（見 viewer.css .gv-stage）。
+                    "--gv-usd-dock-w": usdDockWidth,
+                    "--gv-semantic-dock-w": semanticDockWidth,
+                    "--gv-stage-inset-left": `calc(${usdDockWidth} + ${semanticDockWidth})`,
+                } as React.CSSProperties}
             >
                 {this.state.reviewSessionId && (
                     <SessionIdleCountdownBanner
@@ -5965,7 +6198,13 @@ export default class App extends React.Component<AppProps, AppState> {
                     onBlur={() => this._handleAppStreamBlur()}
                     style={{
                         position: 'relative',
-                        visibility: this.state.showStream? 'visible' : 'hidden'
+                        visibility: this.state.showStream? 'visible' : 'hidden',
+                        // live 3D 必須完整可見：dock 佔多寬，<video> 就內縮多寬（同一變數）。
+                        marginLeft: 'var(--gv-stage-inset-left, 0px)',
+                        width: 'calc(100% - var(--gv-stage-inset-left, 0px))',
+                        // NVIDIA sample 在 streamReady 後把 #main-div 底色設成純白；在深色治理
+                        // 視區上會出現刺眼白帶（stream 比例與視區不同時的 letterbox 區）。
+                        backgroundColor: 'var(--ab-black, #05080d)',
                     }}
                     onLoggedIn={(userId) => this._onLoggedIn(userId, renderedStreamGeneration)}
                     handleCustomEvent={(event) => this._handleCustomEvent(event, renderedStreamGeneration)}
@@ -6038,27 +6277,66 @@ export default class App extends React.Component<AppProps, AppState> {
                     {showUsdStageDock && (
                         <div
                             data-testid="usd-stage-left-dock"
+                            className={`gv-dock gv-dock--usd${usdDockCollapsed ? " gv-dock--collapsed" : ""}`}
+                            data-dock-state={usdDockCollapsed ? "collapsed" : "expanded"}
                             style={{
                                 position: "absolute",
                                 left: 0,
                                 top: headerHeight,
-                                width: sidebarWidth,
                                 // 明確高度（top..bottom）讓 dock 真正撐開；底部只保留一般工具列安全距離。
                                 bottom: 12,
-                                overflow: "hidden",
                                 // 左側語意樹須在治理 overlay（z-index 20）之上才可點選操作（spec：左側 USD 樹）。
                                 zIndex: 25,
                             }}
                         >
-                            <USDStage
-                                ref={this.usdStageRef}
-                                width={sidebarWidth}
-                                usdPrims={this.state.usdPrims}
-                                onSelectUSDPrims={(value) => this._onSelectUSDPrims(value)}
-                                selectedUSDPrims={this.state.selectedUSDPrims}
-                                fillUSDPrim={(value) => this._onFillUSDPrim(value)}
-                                onReset={() => this._onStageReset()}
-                            />
+                            {usdDockCollapsed ? (
+                                <button
+                                    type="button"
+                                    className="gv-dock__rail"
+                                    data-testid="usd-stage-dock-toggle"
+                                    aria-expanded={false}
+                                    aria-label="展開 USD Stage 樹狀結構"
+                                    title="展開 USD Stage 樹狀結構"
+                                    onClick={() => {
+                                        writeDockPreference(USD_DOCK_STORAGE_KEY, false);
+                                        this.setState({ usdDockCollapsed: false });
+                                    }}
+                                >
+                                    <span className="gv-dot" />
+                                    USD Stage
+                                </button>
+                            ) : (
+                                <div className="gv-dock__bar">
+                                    <span className="gv-dock__title">USD Stage 樹狀結構</span>
+                                    <button
+                                        type="button"
+                                        className="gv-dock__btn"
+                                        data-testid="usd-stage-dock-toggle"
+                                        aria-expanded
+                                        aria-label="收合 USD Stage 樹狀結構，讓 3D 視區取得更多寬度"
+                                        title="收合 USD Stage 樹狀結構"
+                                        onClick={() => {
+                                            writeDockPreference(USD_DOCK_STORAGE_KEY, true);
+                                            this.setState({ usdDockCollapsed: true });
+                                        }}
+                                    >
+                                        ⟨
+                                    </button>
+                                </div>
+                            )}
+                            {/* 收合時只隱藏、不卸載：USDStage 的展開節點是 component-local
+                                state，卸載會在重開時重置成初始樹。 */}
+                            <div className="gv-dock__body gv-dock__body--flush" hidden={usdDockCollapsed}>
+                                <USDStage
+                                    ref={this.usdStageRef}
+                                    width={sidebarWidth}
+                                    usdPrims={this.state.usdPrims}
+                                    onSelectUSDPrims={(value) => this._onSelectUSDPrims(value)}
+                                    selectedUSDPrims={this.state.selectedUSDPrims}
+                                    fillUSDPrim={(value) => this._onFillUSDPrim(value)}
+                                    onReset={() => this._onStageReset()}
+                                />
+                            </div>
                         </div>
                     )}
                 </>
@@ -6095,6 +6373,12 @@ export default class App extends React.Component<AppProps, AppState> {
                         onReconnect={() => this._reconnectStream()}
                         reservedRight={0}
                         reservedLeft={showUsdStageDock ? sidebarWidth : 0}
+                        dockCollapsed={semanticDockCollapsed}
+                        onToggleDock={() => {
+                            const next = !semanticDockCollapsed;
+                            writeDockPreference(SEMANTIC_DOCK_STORAGE_KEY, next);
+                            this.setState({ semanticDockCollapsed: next });
+                        }}
                         sessionId={this.state.reviewSessionId}
                         triReady={triReady}
                     />
@@ -6103,6 +6387,10 @@ export default class App extends React.Component<AppProps, AppState> {
                 {/* Task3：DataChannel 送出證據（demo-outgoing-log），供 E2E 驗證「UI-local 選取（如對構表選列）
                     不觸發 runtime mutator」。不依賴 ?debug=1 的 DemoControlPanel（該區塊預設隱藏）；本列複用同一份
                     已追蹤的 demoOutgoingMessages 真實狀態（_sendStreamMessage 每次真送出才 append），非另造假資料。 */}
+                {/* Kit 式底部狀態列：DataChannel 送出紀錄與 runtime command lifecycle 是真實佐證，
+                    但以一般流排在 stage 左上時會被 tabbar 與左緣 dock 蓋掉、只露半行。改成貼底細條，
+                    讀得到、也不搶 3D 舞台；內容與條件完全不變。 */}
+                <div className="gv-statusbar">
                 {this.state.viewerTab === "model"
                     && (harnessEnabled() || Boolean(this.state.reviewSessionId))
                     && (
@@ -6134,6 +6422,7 @@ export default class App extends React.Component<AppProps, AppState> {
                         ))}
                     </ol>
                 )}
+                </div>
 
                 {/* 統一治理控制台 MVP：A1–A10 治理面板只在「問題 · 治理」分頁渲染，
                     避免模型分頁被治理/成果檔 UI 壓住；不改 AppStream / backend / DataChannel command path。
@@ -6209,7 +6498,10 @@ export default class App extends React.Component<AppProps, AppState> {
                     conversionJobId={this.state.latestStreamConfig?.model.conversion_job_id ?? null}
                     kitInstanceId={this.state.activeStreamEndpoint.kitInstanceId || null}
                     ensureViewerLogAuthority={() => this._ensureViewerLogDeliveryAuthority()}
-                    closeReviewSession={(sessionId) => this.coordinatorClient.closeReviewSession(sessionId)}
+                    requestSessionClose={(sessionId) => {
+                        const url = `${reviewEnv.coordinatorApiBase}/ui/#sessions?source=review&session=${encodeURIComponent(sessionId)}&intent=close`;
+                        window.open(url, "_blank", "noopener,noreferrer");
+                    }}
                 />
             </div>
             );

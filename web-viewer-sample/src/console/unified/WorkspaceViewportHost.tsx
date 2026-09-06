@@ -5,10 +5,15 @@
 // /api 503 stub 下不會出現 iframe／video，manifest live_surface_policy 安全）。內容物＝重用 ReviewSessionViewerPane
 // （12 態渲染、lease/heartbeat、gate 全沿用，不新造第二套）。離開 workspace 由 UnifiedShell 的 page prop 顯式 unmount。
 // ═══════════════════════════════════════════════════════════════════════
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import { ReviewSessionViewerPane } from "../ReviewSessionViewerPane";
-import type { ReviewRoomHandoff, ReviewSessionViewerPaneBatchGate } from "../ReviewSessionViewerPane";
+import type {
+  ReviewRoomHandoff,
+  ReviewSessionViewerPaneBatchGate,
+  ReviewSessionViewerPaneHandle,
+} from "../ReviewSessionViewerPane";
+import type { StageTreeMessage } from "../EmbeddedViewer";
 import { t } from "../i18n";
 import { useConsoleData } from "./consoleData";
 import { useViewportSlot } from "./viewportSlot";
@@ -58,10 +63,10 @@ export function WorkspaceViewportHost({ firstFrameTimeoutMs }: WorkspaceViewport
 
   const publication = slot?.publication ?? null;
   const activeSessionId = slot?.activeSessionId ?? "";
-  // 共用 session 覆寫：頁面 handoff 未帶 session 時沿用跨 dock 的 activeSessionId，讓 lease 不因切 dock 重 claim。
+  // 共用 session 是單一 authority：publish 會先播種；可見 input 之後即使清空，也不回退舊 handoff。
   const handoff = useMemo<ReviewRoomHandoff | null>(() => {
     if (!publication) return null;
-    const sid = publication.handoff.sessionId.trim() || activeSessionId;
+    const sid = activeSessionId;
     return sid === publication.handoff.sessionId ? publication.handoff : { ...publication.handoff, sessionId: sid };
   }, [publication, activeSessionId]);
 
@@ -74,6 +79,49 @@ export function WorkspaceViewportHost({ firstFrameTimeoutMs }: WorkspaceViewport
     pageGateRef.current?.(gate);
   }, [setGate]);
   useEffect(() => () => { setGate?.(null); }, [setGate]);
+
+  const paneHandleRef = useRef<ReviewSessionViewerPaneHandle | null>(null);
+  const extPaneRef = publication?.paneRef;
+  const setCombinedPaneRef = useCallback((node: ReviewSessionViewerPaneHandle | null) => {
+    paneHandleRef.current = node;
+    if (typeof extPaneRef === "function") {
+      extPaneRef(node);
+    } else if (extPaneRef && typeof extPaneRef === "object") {
+      (extPaneRef as { current: ReviewSessionViewerPaneHandle | null }).current = node;
+    }
+  }, [extPaneRef]);
+
+  const registerHostActions = slot?.registerHostActions;
+  useEffect(() => {
+    registerHostActions?.({
+      requestStageTree: (primPath) => paneHandleRef.current?.requestStageTree(primPath),
+      selectPrim: (primPath, multiSelect) => paneHandleRef.current?.selectPrim(primPath, multiSelect),
+      sendToolbarAction: (action, cameraView) => paneHandleRef.current?.sendToolbarAction(action, cameraView),
+    });
+    return () => registerHostActions?.(null);
+  }, [registerHostActions]);
+
+  const setStageTree = slot?.setStageTree;
+  const pageStageTreeRef = useRef(publication?.onStageTree);
+  pageStageTreeRef.current = publication?.onStageTree;
+  const onStageTree = useCallback((msg: StageTreeMessage) => {
+    setStageTree?.(msg.children);
+    pageStageTreeRef.current?.(msg);
+  }, [setStageTree]);
+
+  useEffect(() => {
+    if (live) return;
+    setStageTree?.([]);
+    const reason = t("coordinator runtime/status 已離線", "coordinator runtime/status is offline");
+    const offlineGate: ReviewSessionViewerPaneBatchGate = {
+      canSend: false,
+      reason,
+      canSendViewerCommand: false,
+      viewerCommandReason: reason,
+    };
+    setGate?.(offlineGate);
+    pageGateRef.current?.(offlineGate);
+  }, [activeSessionId, live, setGate, setStageTree]);
 
   if (!live) return null; // 零新 DOM（離線／design gate）
 
@@ -100,12 +148,14 @@ export function WorkspaceViewportHost({ firstFrameTimeoutMs }: WorkspaceViewport
     >
       {handoff && publication ? (
         <ReviewSessionViewerPane
-          ref={publication.paneRef}
+          ref={setCombinedPaneRef}
           mode={publication.mode}
           handoff={handoff}
           showHandoffActions={publication.showHandoffActions ?? true}
           onBatchGateChange={onGate}
           onBatchAck={publication.onBatchAck}
+          onSessionIdChange={slot?.setActiveSessionId}
+          onStageTree={onStageTree}
           {...(firstFrameTimeoutMs !== undefined ? { firstFrameTimeoutMs } : {})}
         />
       ) : (

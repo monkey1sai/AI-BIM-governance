@@ -35,6 +35,8 @@ Assert-Contains $deploy 'A4InternalContextTokenFingerprint' 'governance runtime 
 Assert-Contains $deploy "[Environment]::SetEnvironmentVariable('A4_CONVERSION_ARTIFACTS_HOST_ROOT'" 'deploy.ps1 must inject an absolute host-native artifacts namespace'
 Assert-Contains $deploy "Join-Path `$RunDir 'web-plane.params.json'" 'deploy.ps1 must persist effective web-plane inputs separately'
 Assert-Contains $deploy 'function New-WebPlaneRuntimeSignature' 'deploy.ps1 must build a secret-safe effective web-plane signature'
+Assert-Contains $deploy 'ConversionTriggerIpAllowlistFingerprint' 'web-plane runtime signature must react to CONVERSION_TRIGGER_IP_ALLOWLIST rotation'
+Assert-Contains $deploy "Get-DeployEnvValue -Name 'CONVERSION_TRIGGER_IP_ALLOWLIST'" 'deploy.ps1 must read CONVERSION_TRIGGER_IP_ALLOWLIST into the web-plane signature'
 Assert-Contains $deploy 'Test-KitRuntimeSignatureMatches -Path $script:webPlaneRuntimeSignaturePath' 'deploy.ps1 must compare the effective web-plane signature before refresh'
 Assert-Contains $deploy 'Set-KitRuntimeSignature -Path $script:webPlaneRuntimeSignaturePath' 'deploy.ps1 must persist the web-plane signature after reconcile'
 Assert-Contains $deploy '-ArtifactsRoot $resolvedConversionArtifactsRoot' 'conversion runtime signature must track its effective output root'
@@ -602,8 +604,8 @@ if ($refreshFunction.Count -ne 1) {
     throw 'deploy.ps1 must define exactly one Test-WebPlaneRefreshRequired helper'
 }
 $refreshFunctionText = $refreshFunction[0].Extent.Text
-if ($refreshFunctionText -match "'A4_INTERNAL_CONTEXT_TOKEN'" -or $refreshFunctionText -match "'A4_CONVERSION_ARTIFACTS_HOST_ROOT'") {
-    throw 'script-derived A4 values must use effective signatures, not presence-only web-plane refresh triggers'
+if ($refreshFunctionText -match "'A4_INTERNAL_CONTEXT_TOKEN'" -or $refreshFunctionText -match "'A4_CONVERSION_ARTIFACTS_HOST_ROOT'" -or $refreshFunctionText -match "'CONVERSION_TRIGGER_IP_ALLOWLIST'") {
+    throw 'script-derived A4/allowlist values must use effective signatures, not presence-only web-plane refresh triggers'
 }
 
 $dockerFailureIndex = $deploy.IndexOf('if ($dockerExit -ne 0)')

@@ -55,6 +55,10 @@ Canonical package：`scripts/agent-tooling/blip-approve/`
 - Runtime manifest／completion marker 使用 duplicate-aware exact schema reader；User broker
   將新引入的 immutable packet helper納入 ACL、manifest hash、open-stream pin 與 child
   bootstrap。
+- User broker 僅從固定 `C:\Users\IOT\.grok\github-bot\.env.blip` 取得
+  `BLIP_GITHUB_TOKEN`；先要求 immutable owner SID、protected ACL、explicit sandbox deny、
+  regular non-reparse path 與 exclusive handle，再以 bounded strict UTF-8 parser 要求恰一筆
+  assignment。Agent、command line、stdin、clipboard 與一般 ambient env 都不承載 token。
 - Protected Python auth／poster source 不含 PEM、JWT、dotenv、token-printing、generic
   installation-token 或 App `APPROVE` 路徑，只接受固定 Codex identity 與
   `COMMENT`／`REQUEST_CHANGES`。

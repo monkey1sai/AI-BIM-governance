@@ -493,12 +493,14 @@ function New-WebPlaneRuntimeSignature {
     param(
         [Parameter(Mandatory = $true)][string] $A4ConversionArtifactsHostRoot,
         [Parameter(Mandatory = $true)][string] $A4InternalContextTokenFingerprint,
-        [Parameter(Mandatory = $true)][AllowEmptyString()][string] $SessionIdleTimeoutMs
+        [Parameter(Mandatory = $true)][AllowEmptyString()][string] $SessionIdleTimeoutMs,
+        [Parameter(Mandatory = $true)][string] $ConversionTriggerIpAllowlistFingerprint
     )
     return ([pscustomobject]@{
         a4ConversionArtifactsHostRoot      = $A4ConversionArtifactsHostRoot
         a4InternalContextTokenFingerprint = $A4InternalContextTokenFingerprint
         sessionIdleTimeoutMs               = $SessionIdleTimeoutMs
+        conversionTriggerIpAllowlistFingerprint = $ConversionTriggerIpAllowlistFingerprint
     } | ConvertTo-Json -Compress)
 }
 
@@ -789,6 +791,8 @@ $runtimeAuthorityTokenExplicitlyConfigured = Test-DeployValueConfigured -Name 'I
 $resolvedInternalApiAuthToken = Get-DeployEnvValue -Name 'INTERNAL_API_AUTH_TOKEN' -EnvFile $resolvedEnvFile -Default 'dev-internal-token'
 $resolvedA4InternalContextToken = (Get-DeployEnvValue -Name 'A4_INTERNAL_CONTEXT_TOKEN' -EnvFile $resolvedEnvFile -Default '').Trim()
 $resolvedSessionIdleTimeoutMs = (Get-DeployEnvValue -Name 'SESSION_IDLE_TIMEOUT_MS' -EnvFile $resolvedEnvFile -Default '').Trim()
+$resolvedConversionTriggerIpAllowlist = (Get-DeployEnvValue -Name 'CONVERSION_TRIGGER_IP_ALLOWLIST' -EnvFile $resolvedEnvFile -Default '').Trim()
+$conversionTriggerIpAllowlistFingerprint = Get-DeploySecretFingerprint -Value $resolvedConversionTriggerIpAllowlist
 if ($resolvedA4InternalContextToken.Length -gt 0 -and ($resolvedA4InternalContextToken.Length -lt 16 -or $resolvedA4InternalContextToken.Length -gt 4096)) {
     throw 'A4_INTERNAL_CONTEXT_TOKEN must be blank (A4 disabled) or between 16 and 4096 characters.'
 }
@@ -873,7 +877,8 @@ $shouldRefreshWebPlane = Test-WebPlaneRefreshRequired `
 $webPlaneRuntimeSignature = New-WebPlaneRuntimeSignature `
     -A4ConversionArtifactsHostRoot $resolvedConversionArtifactsRoot `
     -A4InternalContextTokenFingerprint $a4InternalContextTokenFingerprint `
-    -SessionIdleTimeoutMs $resolvedSessionIdleTimeoutMs
+    -SessionIdleTimeoutMs $resolvedSessionIdleTimeoutMs `
+    -ConversionTriggerIpAllowlistFingerprint $conversionTriggerIpAllowlistFingerprint
 if (-not (Test-KitRuntimeSignatureMatches -Path $script:webPlaneRuntimeSignaturePath -Expected $webPlaneRuntimeSignature)) {
     $shouldRefreshWebPlane = $true
 }
