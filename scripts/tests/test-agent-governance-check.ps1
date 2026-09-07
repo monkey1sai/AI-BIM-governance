@@ -536,6 +536,35 @@ try {
     # Any quoted relative reference counts by its trailing file name ('../lib/x.ps1', './fixtures/y.json');
     # the candidate directories below plus an existence check keep this from over-matching.
     $bareInputPattern = [regex]'[''"][^''"\s]*?(?<name>[A-Za-z0-9_.-]+\.(?:psm1|ps1|mjs|cjs|json|js|sh|py|yaml|yml|md|html))[''"]'
+    # Comments are prose, not dependencies. Block comments go first; then each line is cut at the
+    # first comment marker that starts OUTSIDE a string literal, so `$x = 1 # see other-test.ps1`
+    # and `const u = 'http://host' // note` are handled without eating quoted paths.
+    $removeShardAuditComments = {
+        param([string] $text, [string] $marker)
+        $text = [regex]::Replace($text, '(?s)<#.*?#>|/\*.*?\*/', ' ')
+        $lines = $text -split "`n"
+        for ($i = 0; $i -lt $lines.Count; $i++) {
+            $line = $lines[$i]
+            $quote = [char]0
+            for ($k = 0; $k -lt $line.Length; $k++) {
+                $ch = $line[$k]
+                if ($quote -ne [char]0) {
+                    if ($ch -eq $quote) { $quote = [char]0 }
+                    continue
+                }
+                if ($ch -eq [char]39 -or $ch -eq [char]34) { $quote = $ch; continue }
+                if ($marker -eq '#' -and $ch -eq [char]35) { $lines[$i] = $line.Substring(0, $k); break }
+                if ($marker -eq '//' -and $ch -eq [char]47 -and $k + 1 -lt $line.Length -and $line[$k + 1] -eq [char]47) { $lines[$i] = $line.Substring(0, $k); break }
+            }
+        }
+        return ($lines -join "`n")
+    }
+    # Self-test the comment stripper on the shapes the audit must get right.
+    Assert-True ((& $removeShardAuditComments '$x = 1 # see other-test.ps1' '#') -notmatch 'other-test') 'trailing PowerShell comments are stripped before dependency matching'
+    Assert-True ((& $removeShardAuditComments 'Join-Path $PSScriptRoot ''fixtures/#804-case.json''' '#') -match '#804-case') 'a # inside a quoted path is not a comment'
+    Assert-True ((& $removeShardAuditComments 'const u = ''http://host/x.json'' // see other.mjs' '//') -notmatch 'other\.mjs') 'trailing JS comments are stripped before dependency matching'
+    Assert-True ((& $removeShardAuditComments 'const u = ''http://host/x.json'' // note' '//') -match 'http://host/x\.json') 'a // inside a quoted string is not a comment'
+    Assert-True ((& $removeShardAuditComments "<# refers to other-test.ps1 #>`n. './real.ps1'" '#') -match 'real\.ps1') 'block comments are stripped and code after them survives'
     # Tests that enumerate repository paths as ledger DATA rather than reading them as inputs.
     # Their literals describe the repo; changing one of those files does not change what the
     # test exercises, so they are audited only for the script the workflow runs. The few real
@@ -575,10 +604,8 @@ try {
             if (-not $scanned.Add($scanPath)) { continue }
             # PowerShell sources often spell dependencies with backslashes; fold them before matching.
             $executedText = (Get-Content -LiteralPath (Join-Path $repoRoot $scanPath) -Raw -Encoding utf8) -replace '\\', '/'
-            # Comments are prose, not dependencies: a helper's remark that names another test must not
-            # drag that test's inputs into this leg. Drop block and line comments before matching.
-            $executedText = [regex]::Replace($executedText, '(?s)<#.*?#>|/\*.*?\*/', ' ')
-            $executedText = [regex]::Replace($executedText, '(?m)^[ \t]*(?:#|//).*$', '')
+            $commentMarker = if ($scanPath -match '\.(?:ps1|psm1)$') { '#' } else { '//' }
+            $executedText = & $removeShardAuditComments $executedText $commentMarker
             $executedDir = (Split-Path -Parent $scanPath) -replace '\\', '/'
             foreach ($inputMatch in $repoInputPattern.Matches($executedText)) {
                 $inputPath = $inputMatch.Groups['path'].Value -replace '/\./', '/'
