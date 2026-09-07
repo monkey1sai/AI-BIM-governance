@@ -38,6 +38,10 @@ services:
       # session 消失、/ifc-ready/:jobId/review-session 404。同 #531 刻意寫死容器路徑。
       EXTERNAL_IFC_READY_STORE_PATH: /workspace/storage/coordinator/external-ifc-ready.json
       SESSION_STORE_DIR: /workspace/storage/coordinator/sessions
+      # session close 的 checkpoint 與其 lifecycle events 是同一份恢復資料：event log 若仍落
+      # container-local /data/events，recreate 後 startup recovery 找不到 final events 會跳過
+      # checkpoint，session 卡在 closing。與 SESSION_STORE_DIR 一起釘到掛載卷。
+      EVENT_LOG_DIR: /workspace/storage/coordinator/events
       KIT_INSTANCE_ENDPOINTS: '[{"id":"kit_local_gpu_001","signalingServer":"127.0.0.1","signalingPort":49100,"mediaServer":"127.0.0.1","mediaPort":47998}]'
       # fast-ifc-link-demo-loop §2:同步下載 IFC 寫入 shared volume。
       # STORAGE_ROOT 必須對齊下方 volumes mount destination(/workspace/storage);

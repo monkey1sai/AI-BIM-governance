@@ -726,6 +726,34 @@ export class IfcReadyConversionPipeline<TTerminalObserverResult = void> {
     }
   }
 
+  /**
+   * #804：intake store 持久化後，coordinator recreate 會把 `dispatched` job 原樣載回，但
+   * poller 是 process-local，且 coordinator 主動輪詢的轉檔 streaming-server 不會回呼；
+   * 不補掛 poller 的話，已完成的轉檔會永遠停在 dispatched（無 outbox、無自動 session、
+   * retry 拒絕該狀態）。啟動時對每個 dispatched 且尚無 poller 的 job 以同一條
+   * schedulePollerForConversion 重掛，terminal 走同一個 ingest。回傳重掛的 conversion job id。
+   */
+  resumePersistedDispatchedPollers(): string[] {
+    if (this.disposed || !this.config.conversionPollEnabled) return [];
+    const resumed: string[] = [];
+    for (const job of this.store.list()) {
+      if (job.status !== "dispatched") continue;
+      const conversionJobId = job.conversion_job_id;
+      if (!conversionJobId || this.pollerRegistry.has(conversionJobId)) continue;
+      this.schedulePollerForConversion(conversionJobId, job.ifc_ready_job_id);
+      resumed.push(conversionJobId);
+      this.structLog
+        ?.withTraceId(job.ifc_ready_job_id)
+        .lifecycle("autoPoll", "resumed poller for persisted dispatched conversion", {
+          phase: "active",
+          subject_kind: "conversion_job",
+          subject_id: conversionJobId,
+          ifc_ready_job_id: job.ifc_ready_job_id,
+        });
+    }
+    return resumed;
+  }
+
   private schedulePollerForConversion(
     conversionJobId: string,
     rootTraceId: string,

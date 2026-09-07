@@ -176,6 +176,51 @@ async function waitFor(check: () => Promise<boolean> | boolean, timeoutMs = 2000
 }
 
 describe("coordinator auto-poll streaming conversion", () => {
+  it("#804：coordinator recreate 後對持久化的 dispatched job 重掛 poller，轉檔完成仍會 ingest", async () => {
+    const behavior: StubBehavior = { resultSequence: [queuedResultPayload("corr_ap_resume_001")] };
+    const stub = await startStreamingStub(behavior);
+    const storeRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bim-coord-auto-poll-resume-"));
+    const storePath = path.join(storeRoot, "external-ifc-ready.json");
+    const previousStorePath = process.env.EXTERNAL_IFC_READY_STORE_PATH;
+    process.env.EXTERNAL_IFC_READY_STORE_PATH = storePath;
+    try {
+      // 第一個 coordinator：派工成功、streaming 一直回 queued，job 停在 dispatched 後被 recreate。
+      const first = makeApp(stub.baseUrl);
+      const submit = await request(first.app)
+        .post("/api/external/ifc-ready")
+        .set(authHeaders("corr_ap_resume_001", "idem_ap_resume_001"))
+        .send(dispatchPayload());
+      expect(submit.status).toBe(202);
+      const jobId = submit.body.ifc_ready_job_id as string;
+      await waitFor(async () => {
+        const r = await request(first.app).get(`/api/external/ifc-ready/${jobId}`);
+        return r.body.status === "dispatched";
+      });
+      await first.dispose();
+      first.io.close();
+      await new Promise<void>((resolve) => first.server.close(() => resolve()));
+      active = null;
+      const persisted = JSON.parse(fs.readFileSync(storePath, "utf-8")) as { jobs: Array<{ status: string }> };
+      expect(persisted.jobs.find((job) => job.status === "dispatched")).toBeTruthy();
+      const pollsBeforeRecreate = stub.resultCount.value;
+
+      // 第二個 coordinator：沒有任何新的 POST，只靠啟動時重掛的 poller 把已完成的轉檔 ingest 進來。
+      behavior.resultSequence = [readyResultPayload("corr_ap_resume_001")];
+      const second = makeApp(stub.baseUrl);
+      await waitFor(async () => {
+        const r = await request(second.app).get(`/api/external/ifc-ready/${jobId}`);
+        return r.body.conversion_status === "ready";
+      });
+      expect(stub.resultCount.value).toBeGreaterThan(pollsBeforeRecreate);
+      expect(stub.dispatchCount.value).toBe(1);
+      const detail = await request(second.app).get(`/api/external/ifc-ready/${jobId}`);
+      expect(detail.body.conversion_lifecycle_status).toBe("ready");
+    } finally {
+      if (previousStorePath === undefined) delete process.env.EXTERNAL_IFC_READY_STORE_PATH;
+      else process.env.EXTERNAL_IFC_READY_STORE_PATH = previousStorePath;
+    }
+  });
+
   it("auto-poll anomaly records retain the IFC-ready root trace", async () => {
     const stub = await startStreamingStub({
       resultSequence: [{ detail: "temporarily unavailable" }],
