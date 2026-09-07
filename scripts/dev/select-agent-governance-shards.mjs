@@ -37,7 +37,10 @@ if (plan?.schema_version !== 'verification-plan/v2') {
 const policy = JSON.parse(readFileSync(resolve(options.policy), 'utf8'));
 
 const changedPaths = (plan.changed_paths ?? []).filter((path) => path !== '__full__');
-const full = plan.dispatch === 'full';
+// A plan that failed closed (unclassified changed path) marks every target required but keeps
+// dispatch=affected; narrowing the matrix there would contradict the planner's own decision
+// exactly when the affected surface is unknown, so it is a full dispatch here too.
+const full = plan.dispatch === 'full' || plan.result === 'fail_closed';
 const result = selectShards(policy, { changedPaths, full });
 
 if (options.githubOutput) {

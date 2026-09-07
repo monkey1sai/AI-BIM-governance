@@ -1,5 +1,9 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import {
   AGENT_GOVERNANCE_SHARDS_VERSION,
@@ -104,6 +108,25 @@ test('a declaration with no always-selected shard is rejected', () => {
       { id: 'b', always: false, title: 't', reason: 'r', path_globs: ['b/**'] },
     ],
   })), (error) => error.code === 'shards_invalid' && /always-selected/.test(error.message));
+});
+
+test('the CLI treats a fail-closed plan as a full dispatch, matching the workflow guard', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'agent-governance-shards-'));
+  const planPath = join(dir, 'plan.json');
+  const cli = fileURLToPath(new URL('../dev/select-agent-governance-shards.mjs', import.meta.url));
+  const policyPath = fileURLToPath(new URL('../agent-governance-shards.json', import.meta.url));
+  const run = (plan) => {
+    writeFileSync(planPath, JSON.stringify(plan));
+    const result = spawnSync(process.execPath, [cli, '--plan', planPath, '--policy', policyPath, '--json'], { encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stderr);
+    return JSON.parse(result.stdout);
+  };
+  const declared = canonical.shards.map((shard) => shard.id).sort();
+  const failClosed = run({ schema_version: 'verification-plan/v2', result: 'fail_closed', dispatch: 'affected', changed_paths: ['mystery/unclassified.bin'] });
+  assert.deepEqual([...failClosed.shards].sort(), declared);
+  assert.equal(failClosed.full, true);
+  const affected = run({ schema_version: 'verification-plan/v2', result: 'ok', dispatch: 'affected', changed_paths: ['docs/plans/NOW.md'] });
+  assert.equal(affected.full, false);
 });
 
 test('the always-selected leg must be literally named core, because every verification step is bound to it', () => {

@@ -469,7 +469,7 @@ try {
     $shardSelectorRun = [string]$shardSelectorStep[0]['run']
     Assert-True ($shardSelectorRun.Contains('index("core") != null')) 'the scope job fails closed when the candidate selection omits the required core leg'
     Assert-True ($shardSelectorRun.Contains('["core"] + (.shards - ["core"])')) 'the scope job bootstraps core into the matrix independently of the candidate policy'
-    Assert-True ($shardSelectorRun.Contains('.dispatch == "full"') -and $shardSelectorRun.Contains('[.shards[].id]')) 'the scope job independently requires every declared shard when the plan dispatched full, so a selector regression cannot drop legs'
+    Assert-True ($shardSelectorRun.Contains('.dispatch == "full" or .result == "fail_closed"') -and $shardSelectorRun.Contains('[.shards[].id]')) 'the scope job independently requires every declared shard when the plan dispatched full or failed closed, so a selector regression cannot drop legs'
 
     $shardPolicyPath = Join-Path $repoRoot 'scripts/agent-governance-shards.json'
     Assert-True (Test-Path -LiteralPath $shardPolicyPath -PathType Leaf) 'the canonical shard declaration exists'
