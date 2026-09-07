@@ -15,6 +15,7 @@
     "scripts/dev/select-agent-governance-shards.mjs",
     "scripts/tests/agent-governance-shards.schema.json",
     "scripts/tests/test-agent-governance-shards.mjs",
+    "scripts/tests/test-helpers.ps1",
     "scripts/lib/security-exceptions.mjs",
     "scripts/lib/security-exceptions-cli.mjs",
     "scripts/security-exceptions.json",

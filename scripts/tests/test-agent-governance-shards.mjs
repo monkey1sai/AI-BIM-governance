@@ -106,6 +106,11 @@ test('a declaration with no always-selected shard is rejected', () => {
   })), (error) => error.code === 'shards_invalid' && /always-selected/.test(error.message));
 });
 
+test('the always-selected leg must be literally named core, because every verification step is bound to it', () => {
+  const renamed = policy({ shards: canonical.shards.map((shard) => (shard.id === 'core' ? { ...shard, id: 'base' } : shard)) });
+  assert.throws(() => selectShards(renamed, { changedPaths: [] }), /must be named core/);
+});
+
 test('an unreachable leg is rejected: neither always-on nor matched by anything', () => {
   assert.throws(() => validateShardPolicy(policy({
     shards: [

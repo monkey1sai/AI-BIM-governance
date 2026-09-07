@@ -461,6 +461,14 @@ try {
     $shardSelectorStep = @($scopeJob['steps'] | Where-Object { ([string]$_['id']) -ceq 'shards' })
     Assert-True ($shardSelectorStep.Count -eq 1) 'the scope job runs exactly one shard selector step'
     Assert-True (([string]$shardSelectorStep[0]['run']) -match 'scripts/dev/select-agent-governance-shards\.mjs') 'the shard selector step invokes the canonical selector'
+    # The matrix is candidate-produced data, so the workflow (base-owned, CODEOWNERS-protected)
+    # must itself refuse a selection that omits `core` and must place `core` first regardless of
+    # what the policy calls its always-on leg. Otherwise a PR could rename `core`, every
+    # `matrix.shard == 'core'` step would be skipped in the renamed leg, and the aggregator
+    # would still see success. Pin both guards literally.
+    $shardSelectorRun = [string]$shardSelectorStep[0]['run']
+    Assert-True ($shardSelectorRun.Contains('index("core") != null')) 'the scope job fails closed when the candidate selection omits the required core leg'
+    Assert-True ($shardSelectorRun.Contains('["core"] + (.shards - ["core"])')) 'the scope job bootstraps core into the matrix independently of the candidate policy'
 
     $shardPolicyPath = Join-Path $repoRoot 'scripts/agent-governance-shards.json'
     Assert-True (Test-Path -LiteralPath $shardPolicyPath -PathType Leaf) 'the canonical shard declaration exists'
@@ -473,6 +481,7 @@ try {
     # Without an always-selected leg the matrix could resolve to [] and the suite would report
     # skipped, which the aggregator would then have to interpret. Keep that case impossible.
     Assert-True (@($shardPolicy.shards | Where-Object { $_.always }).Count -ge 1) 'at least one shard is always selected, so the matrix can never be empty'
+    Assert-True (@($shardPolicy.shards | Where-Object { ([string]$_.id) -ceq 'core' -and $_.always }).Count -eq 1) 'the always-selected leg is literally named core, matching every matrix.shard == ''core'' step'
 
     $shardMembershipPattern = [regex]"^matrix\.shard == '(?<shard>[a-z][a-z0-9-]*)'$"
     $suiteRunSteps = [ordered]@{}
@@ -520,9 +529,10 @@ try {
     $alwaysShards = @($shardPolicy.shards | Where-Object { $_.always } | ForEach-Object { [string]$_.id })
     $executedScriptPattern = [regex]'(?<path>(?:scripts|tests)/[^\s"'']+\.(?:ps1|mjs|py))'
     # Repository-relative literals, plus bare file names a test resolves against its own directory
-    # (Join-Path $PSScriptRoot 'x.schema.json', path.join(here, 'fixtures', 'x.json')).
-    $repoInputPattern = [regex]'(?<path>(?:scripts|tests|openspec|agent-contracts|docs/plans|\.github)/[A-Za-z0-9_./-]+\.(?:ps1|psm1|mjs|js|cjs|json|sh|py|yml|yaml|md|html))'
-    $bareInputPattern = [regex]'[''"](?<name>[A-Za-z0-9_.-]+\.(?:json|md|yml|yaml|html))[''"]'
+    # (Join-Path $PSScriptRoot 'x.schema.json', path.join(here, 'fixtures', 'x.json'), dot-sourced
+    # 'test-helpers.ps1'). Suffixes are matched completely: `.js` never claims a `.json` input.
+    $repoInputPattern = [regex]'(?<path>(?:scripts|tests|openspec|agent-contracts|docs/plans|\.github)/[A-Za-z0-9_./-]+\.(?:psm1|ps1|mjs|cjs|json|js|sh|py|yaml|yml|md|html))(?![A-Za-z0-9_.-])'
+    $bareInputPattern = [regex]'[''"](?<name>[A-Za-z0-9_.-]+\.(?:psm1|ps1|mjs|cjs|json|js|sh|py|yaml|yml|md|html))[''"]'
     # Tests that enumerate repository paths as ledger DATA rather than reading them as inputs.
     # Their literals describe the repo; changing one of those files does not change what the
     # test exercises, so they are audited only for the script the workflow runs.

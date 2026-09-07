@@ -75,6 +75,11 @@ export function validateShardPolicy(policy) {
     }
   }
   if (alwaysCount < 1) fail('shards_invalid', 'shards', 'At least one shard must be always-selected so the matrix is never empty.');
+  // The workflow's verification steps are bound to `matrix.shard == 'core'`; an always-on leg
+  // under any other name would run setup only, so the name is part of the contract.
+  if (!policy.shards.some((shard) => shard.id === 'core' && shard.always)) {
+    fail('shards_invalid', 'shards', 'The always-selected shard must be named core.');
+  }
   return policy;
 }
 

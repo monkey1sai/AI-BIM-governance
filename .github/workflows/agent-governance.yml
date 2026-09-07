@@ -90,7 +90,16 @@ jobs:
           node scripts/dev/select-agent-governance-shards.mjs \
             --plan verification-plan.json \
             --policy scripts/agent-governance-shards.json \
-            --github-output "$GITHUB_OUTPUT"
+            --json > shard-selection.json
+          # The selection is candidate data. The required `core` leg is a base-owned invariant:
+          # refuse a selection without it, and place it first so a renamed always-on shard can
+          # never turn every `matrix.shard == 'core'` step into a skipped no-op.
+          if ! jq -e '.shards | index("core") != null' shard-selection.json >/dev/null; then
+            echo "::error::shard selection omitted the required core leg" >&2
+            exit 1
+          fi
+          printf 'shards=%s\n' "$(jq -c '["core"] + (.shards - ["core"])' shard-selection.json)" >> "$GITHUB_OUTPUT"
+          printf 'shard_policy_sha256=%s\n' "$(jq -r '.policy_sha256' shard-selection.json)" >> "$GITHUB_OUTPUT"
 
   suite:
     name: agent-governance suite
