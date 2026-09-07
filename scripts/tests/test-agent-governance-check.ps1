@@ -533,7 +533,9 @@ try {
     # (Join-Path $PSScriptRoot 'x.schema.json', path.join(here, 'fixtures', 'x.json'), dot-sourced
     # 'test-helpers.ps1'). Suffixes are matched completely: `.js` never claims a `.json` input.
     $repoInputPattern = [regex]'(?<path>(?:scripts|tests|openspec|agent-contracts|docs/plans|\.github)/[A-Za-z0-9_./-]+\.(?:psm1|ps1|mjs|cjs|json|js|sh|py|yaml|yml|md|html))(?![A-Za-z0-9_.-])'
-    $bareInputPattern = [regex]'[''"](?<name>[A-Za-z0-9_.-]+\.(?:psm1|ps1|mjs|cjs|json|js|sh|py|yaml|yml|md|html))[''"]'
+    # Any quoted relative reference counts by its trailing file name ('../lib/x.ps1', './fixtures/y.json');
+    # the candidate directories below plus an existence check keep this from over-matching.
+    $bareInputPattern = [regex]'[''"][^''"\s]*?(?<name>[A-Za-z0-9_.-]+\.(?:psm1|ps1|mjs|cjs|json|js|sh|py|yaml|yml|md|html))[''"]'
     # Tests that enumerate repository paths as ledger DATA rather than reading them as inputs.
     # Their literals describe the repo; changing one of those files does not change what the
     # test exercises, so they are audited only for the script the workflow runs. The few real
@@ -541,8 +543,12 @@ try {
     # test-self-referential-bootstrap.ps1 validates) are registered explicitly in the shard surface.
     $shardAuditLedgerTests = @('scripts/tests/test-self-referential-bootstrap.ps1')
     $shardAuditPaths = [ordered]@{}
+    # Completed archives are immutable by rule and canonical specs are archive OUTPUT; tests name
+    # them as data (diff fixtures, machine-truth samples), never as inputs they exercise.
+    $shardAuditDataOnlyPattern = [regex]'^openspec/(?:changes/archive|specs)/'
     $noteShardInput = {
         param([string] $inputPath, [string] $shard, [string] $stepName)
+        if ($shardAuditDataOnlyPattern.IsMatch($inputPath)) { return }
         if (-not $shardAuditPaths.Contains($inputPath)) { $shardAuditPaths[$inputPath] = [ordered]@{} }
         if (-not $shardAuditPaths[$inputPath].Contains($shard)) { $shardAuditPaths[$inputPath][$shard] = $stepName }
     }
@@ -567,7 +573,8 @@ try {
             while ($scanQueue.Count -gt 0) {
             $scanPath = $scanQueue.Dequeue()
             if (-not $scanned.Add($scanPath)) { continue }
-            $executedText = Get-Content -LiteralPath (Join-Path $repoRoot $scanPath) -Raw -Encoding utf8
+            # PowerShell sources often spell dependencies with backslashes; fold them before matching.
+            $executedText = (Get-Content -LiteralPath (Join-Path $repoRoot $scanPath) -Raw -Encoding utf8) -replace '\\', '/'
             $executedDir = (Split-Path -Parent $scanPath) -replace '\\', '/'
             foreach ($inputMatch in $repoInputPattern.Matches($executedText)) {
                 $inputPath = $inputMatch.Groups['path'].Value -replace '/\./', '/'
@@ -594,6 +601,9 @@ try {
             }
         }
     }
+    # The audit must have seen the suite: a parser or pattern regression that finds nothing would
+    # otherwise pass vacuously.
+    Assert-True ($shardAuditPaths.Count -ge 40) "the shard coverage audit inspected the conditional legs' inputs (found $($shardAuditPaths.Count), expected at least 40)"
     if ($shardAuditPaths.Count -gt 0) {
         # One node call for the whole audit: the selector is the same module the scope job runs,
         # and a full-dispatch path is one the manifest's own glob dialect matches.
