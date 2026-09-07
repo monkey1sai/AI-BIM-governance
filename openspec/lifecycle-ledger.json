@@ -2591,7 +2591,7 @@
         "scripts/tests/spec-to-done-fabric-binding/test-binding.mjs",
         "tests/test_spec_to_done_fabric_binding_schema.py"
       ],
-      "subject_commit": "295216142c573007df44a0a30e4c4edf33cd841e",
+      "subject_commit": "b0874a599490f9cc89b5349a86512effde442ea7",
       "subject_binding": "introduction",
       "archive_debt": null
     }
