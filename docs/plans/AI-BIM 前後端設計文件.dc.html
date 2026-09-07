@@ -609,9 +609,48 @@ ACK: 201 commit | 200 exact replay | 409 digest conflict</pre>
   <div id="sec7" data-screen-label="07 實作分期" style="width:100%;max-width:1240px;background:#0e1621;border:1px solid rgba(120,160,210,.12);border-radius:14px;padding:24px;display:flex;flex-direction:column;gap:14px;scroll-margin-top:20px">
     <div style="display:flex;align-items:baseline;gap:10px">
       <span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:#41c7e8">07</span>
-      <span style="font-size:17px;font-weight:700">實作分期 — 每期一 PR,done = Playwright browser E2E 證據</span>
-      <span style="font-size:11px;color:#5a7089">對齊 docs/frontend-redesign-implementation-notes.md 的 CH 分期</span>
+      <span style="font-size:17px;font-weight:700">實作分期 — 基礎門檻 → A1 → A2 → A3 → A4 閉環</span>
+      <span style="font-size:11px;color:#5a7089">2026-09-07 使用者採納；目標需求與驗收語意，非 runtime 完成證據</span>
     </div>
+    <div id="delivery-sequence" data-canon-id="c7-application-delivery-sequence" style="display:flex;flex-direction:column;gap:12px">
+      <div style="font-size:12px;color:#b9c9da">本表定義目前產品交付順序：先凍結操作契約與 A1 必需的基礎門檻，再依 A1 → A2 → A3 → A4 逐一驗收。下方 CH 分期與 §08 Task 0–12 保留作既有工程範圍對照，不取代本表的順序與通過條件；既有出貨註記不等於應用閉環已驗收。</div>
+      <div style="overflow-x:auto">
+        <table style="width:100%;min-width:760px;border-collapse:collapse;background:#0a1220;font-size:12px;text-align:left">
+          <thead><tr style="color:#6fd6ee"><th scope="col" style="padding:12px;width:18%">階段</th><th scope="col" style="padding:12px;width:42%">交付重點</th><th scope="col" style="padding:12px">通過條件</th></tr></thead>
+          <tbody>
+            <tr style="border-top:1px solid rgba(120,160,210,.16)"><th scope="row" style="padding:12px;vertical-align:top">0. 凍結操作契約</th><td style="padding:12px;vertical-align:top">明定 base feature、模型身分、A1 主流程、錯誤與恢復方式。</td><td style="padding:12px;vertical-align:top">每一步都有輸入、操作、API、可見結果與驗收方法。</td></tr>
+            <tr style="border-top:1px solid rgba(120,160,210,.16)"><th scope="row" style="padding:12px;vertical-align:top">1. A1 所需基礎能力</th><td style="padding:12px;vertical-align:top">統一來源解析、結果身分、viewer 存取與 mapping。</td><td style="padding:12px;vertical-align:top">同一 IFC 與同源 Stage 可被驗證；失敗可定位、可重試。</td></tr>
+            <tr style="border-top:1px solid rgba(120,160,210,.16)"><th scope="row" style="padding:12px;vertical-align:top">2. A1 閉環</th><td style="padding:12px;vertical-align:top">選模型 → 選規則 → 執行 → 失敗項目 → 定位 → Issue → BCF／追蹤。</td><td style="padding:12px;vertical-align:top">從正式入口全程操作，真資料、真 API、真下載與 3D 證據成立。</td></tr>
+            <tr style="border-top:1px solid rgba(120,160,210,.16)"><th scope="row" style="padding:12px;vertical-align:top">3. A2 閉環</th><td style="padding:12px;vertical-align:top">選兩版 → 差異 → 定位／疊加 → Issue。</td><td style="padding:12px;vertical-align:top">共用能力可重用；新增／移除／修改與版本歸屬正確。</td></tr>
+            <tr style="border-top:1px solid rgba(120,160,210,.16)"><th scope="row" style="padding:12px;vertical-align:top">4. A3 閉環</th><td style="padding:12px;vertical-align:top">選成員 → 驗座標 → 整合 → Review Room。</td><td style="padding:12px;vertical-align:top">成員版本、整合 Stage、Session 一致，失敗可恢復。</td></tr>
+            <tr style="border-top:1px solid rgba(120,160,210,.16)"><th scope="row" style="padding:12px;vertical-align:top">5. A4 閉環</th><td style="padding:12px;vertical-align:top">選範圍 → 查詢 → 屬性／來源證據 → 定位。</td><td style="padding:12px;vertical-align:top">搜尋可追溯，空結果與錯誤完整，不混淆查詢與合規判定。</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div data-canon-id="c7-workflow-reference-images" style="font-size:12px;color:#b9c9da">
+        Coding agent 功能流程參考：
+        <a href="ai-bim-a1-workflow-reference.png">A1 治理檢核</a> ·
+        <a href="ai-bim-a2-workflow-reference.png">A2 版本差異</a> ·
+        <a href="ai-bim-a3-workflow-reference.png">A3 模型整合</a> ·
+        <a href="ai-bim-a4-workflow-reference.png">A4 語意查詢</a>。
+        圖片為生成的流程解說，介面、數字與狀態均為示意；不新增需求／API、不取代 Hi-Fi／CSS、不作 pixel golden 或 runtime 驗收證據。文字契約優先；完整使用限制見 docs-plans-README.md「A1–A4 流程圖讀法」。
+      </div>
+      <div data-canon-id="c7-delivery-document-responsibilities" style="background:#0a1220;border:1px solid rgba(65,199,232,.2);border-radius:10px;padding:14px;font-size:12px">
+        <strong style="color:#6fd6ee">docs/plans 承擔的工作</strong>
+        <ul style="margin:8px 0;padding-left:22px">
+          <li>本設計正本：階段 0 補齊 base feature／應用責任與依賴、模型身分、主流程與失敗恢復契約；各階段列出可驗收的輸入、操作、API、可見結果與證據。§01／§03 承載邊界與共用能力，§04／§06 承載契約與身分，§05 承載操作時序，本節承載順序與通過條件。</li>
+          <li>Hi-Fi 原型：依操作契約補齊畫面與 loading／empty／success／warning／failure／retry 狀態；示意畫面與數字不得當成真實功能完成證據。</li>
+          <li>README 只提供閱讀入口；NOW 只指定當前 outcome 與引用本表，不另複製需求正本。OpenSpec 承載各切片的變更與實作任務。</li>
+          <li>驗收矩陣須記錄正式 route、主要按鈕、真實 fixture 與版本、Backend API、observed runtime ID、可見結果、E2E command、screenshot／trace、適用 design gate 與 known gaps；3D 另需 first-frame、Stage 同源與 DataChannel ACK。</li>
+        </ul>
+      </div>
+      <div data-canon-id="c7-delivery-stage-gates" style="font-size:12px;color:#b9c9da">
+        <strong style="color:#e6b23e">階段閘門：</strong>前一階段的通過條件取得實證後，才進入下一應用的主要功能開發；下游發現的共用基礎缺口可回補，但須重驗受影響的已完成閉環。API／按鈕／測試檔存在、mock 成功或 skipped 測試皆不等於通過；缺少證據維持未驗收。
+        <br><strong style="color:#e6b23e">A1 終點：</strong>階段 0 必須明定「檢核交付閉環」（Issue、BCF 與追蹤入口）與「整改閉環」（修正版本 → 重檢 → 確認解決／關閉）的驗收邊界；只完成前者不得宣稱後者。A1 的必要基礎門檻與完整 lineage 治理須分開列管，不得以 A1 可執行替代完整 lineage 驗收。
+        <br>本次僅採納交付順序與文件責任；不代表上述待補設計、程式、部署或驗收已完成，也不自行 thaw deferred OpenSpec、重設既有 runtime ownership 或擴充 API。
+      </div>
+    </div>
+    <div style="font-size:12px;color:#5a7089">既有 CH 工程分期對照（保留歷史範圍；目前產品順序見上表）</div>
     <div data-canon-id="c7-ch-schedule-table" style="background:#0a1220;border:1px solid rgba(120,160,210,.12);border-radius:10px;overflow:hidden;font-size:11.5px">
       <div style="display:grid;grid-template-columns:64px 1.4fr 2fr 1.4fr;gap:10px;padding:8px 14px;color:#5a7089;font-family:'JetBrains Mono',monospace;font-size:9.5px;letter-spacing:.06em;text-transform:uppercase"><span>期</span><span>範圍</span><span>本設計對映</span><span>E2E 證據</span></div>
       <div style="display:grid;grid-template-columns:64px 1.4fr 2fr 1.4fr;gap:10px;padding:8px 14px;border-top:1px solid rgba(120,160,210,.08)"><span style="font-family:'JetBrains Mono',monospace;color:#6fd6ee">CH-0</span><span style="color:#b9c9da">FakeAppStreamer harness + Playwright</span><span style="color:#8aa0b8">?harness=1 回放 DataChannel 同形 payload;工作區可決定性截圖</span><span style="color:#5a7089">console smoke · viewer-harness-boot</span></div>
@@ -712,7 +751,7 @@ Never silently invent a production backend</pre>
         </div>
         <div data-canon-id="c8-r4-one-outcome-one-task" style="background:#0a1220;border:1px solid rgba(157,140,255,.25);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:6px">
           <span style="font-size:12px;font-weight:700;color:#b7a9ff">R4 · 一個 outcome 一個 task</span>
-          <span style="font-size:10.5px;color:#8aa0b8">不要一次「完成 A1–A10」。每個 task 明確給 <span style="color:#dbe6f3">outcome + constraints + definition of done</span>(route 存在 · loading/empty/error/retry · 契約測試綠 · Playwright E2E 截圖證據),依下方 Task 0–12 順序執行,project 保留共同 repo 上下文。</span>
+          <span style="font-size:10.5px;color:#8aa0b8">不要一次「完成 A1–A10」。每個 task 明確給 <span style="color:#dbe6f3">outcome + constraints + definition of done</span>(route 存在 · loading/empty/error/retry · 契約測試綠 · Playwright E2E 截圖證據)，依 <a href="#delivery-sequence">§07 階段 0–5 交付順序與閘門</a> 執行；下方 Task 0–12 僅作既有範圍對照，project 保留共同 repo 上下文。</span>
         </div>
       </div>
     </div>
@@ -734,7 +773,7 @@ Never silently invent a production backend</pre>
     <!-- Task 順序 + 模組真實程度 -->
     <div style="display:grid;grid-template-columns:1fr 1.15fr;gap:14px">
       <div style="display:flex;flex-direction:column;gap:8px">
-        <span style="font-family:'JetBrains Mono',monospace;font-size:9.5px;letter-spacing:.1em;color:#5a8db0;text-transform:uppercase">Task 0–12 建議順序(對映 §07 CH 分期)</span>
+        <span style="font-family:'JetBrains Mono',monospace;font-size:9.5px;letter-spacing:.1em;color:#5a8db0;text-transform:uppercase">Task 0–12 既有範圍對照（目前順序以 §07 階段 0–5 為準）</span>
         <div data-canon-id="c8-task-sequence-table" style="background:#0a1220;border:1px solid rgba(120,160,210,.12);border-radius:10px;overflow:hidden;font-size:11px">
           <div style="display:grid;grid-template-columns:34px 1fr;gap:8px;padding:5px 12px"><span style="font-family:'JetBrains Mono',monospace;color:#6fd6ee">0</span><span style="color:#b9c9da">Design system + shell + route + feature status</span></div>
           <div style="display:grid;grid-template-columns:34px 1fr;gap:8px;padding:5px 12px;border-top:1px solid rgba(120,160,210,.07)"><span style="font-family:'JetBrains Mono',monospace;color:#6fd6ee">1–3</span><span style="color:#b9c9da">A1 / A2 / A3 vertical slice(接真 API)</span></div>
@@ -752,7 +791,7 @@ Never silently invent a production backend</pre>
           <div style="display:grid;grid-template-columns:64px 150px 1fr;gap:8px;padding:5px 12px;border-top:1px solid rgba(120,160,210,.07)"><span style="font-family:'JetBrains Mono',monospace;color:#6fd6ee">5–10</span><span style="font-family:'JetBrains Mono',monospace;color:#e6b23e">—(無對應 CH)</span><span style="color:#8aa0b8">feature 軸,§07 未設此區間對應 CH;依 R2 三態重詮釋(見左方 R2 卡)= repo 內可建面全棧一次到位,外接引擎面才 mock</span></div>
           <div style="display:grid;grid-template-columns:64px 150px 1fr;gap:8px;padding:5px 12px;border-top:1px solid rgba(120,160,210,.07)"><span style="font-family:'JetBrains Mono',monospace;color:#6fd6ee">11–12</span><span style="font-family:'JetBrains Mono',monospace;color:#e6b23e">CH-G + 新期</span><span style="color:#8aa0b8">Task 12 跨頁/E2E 貼近 CH-G(URL 收斂,現況未做);Task 11 A10 整合儀表板未有對應 CH,擬由未來新期承接(§07 CH-H/CH-I,對應 item 18,已列入本文件)</span></div>
         </div>
-        <span style="font-size:10.5px;color:#8aa0b8;background:rgba(120,160,210,.05);border:1px solid rgba(120,160,210,.16);border-radius:6px;padding:4px 10px">CH=基礎建設軸(§07 分期;CH-0–CH-F 已出貨、CH-G 未做);Task=feature 軸(本節建議實作順序,尚未落地)。二軸非逐項嚴格對應,上表為近似區間對映;Task 5–10 無對應 CH 屬預期現象、非缺漏。</span>
+        <span style="font-size:10.5px;color:#8aa0b8;background:rgba(120,160,210,.05);border:1px solid rgba(120,160,210,.16);border-radius:6px;padding:4px 10px">CH=既有基礎建設軸；Task=既有 feature 範圍軸。二軸非逐項嚴格對應，上表保留近似區間對映；Task 5–10 無對應 CH 屬預期現象。表內出貨／未做註記屬歷史對照，不作目前完成證據；當前順序與驗收一律依 §07 階段 0–5。</span>
         <span style="font-family:'JetBrains Mono',monospace;font-size:9.5px;letter-spacing:.1em;color:#5a8db0;text-transform:uppercase;margin-top:6px">共用元件優先抽取(20 張圖重複 UI)</span>
         <span style="font-size:10px;color:#e6b23e;background:rgba(230,178,62,.08);border:1px solid rgba(230,178,62,.22);border-radius:5px;padding:3px 8px">待抽取目標;現況 1/14 以此命名存在(僅 ProvTag,見 components.tsx),其餘 13 項功能近義物異名散落(Metric/FlowBar 等)——命名收斂於抽取時裁決</span>
         <div style="display:flex;flex-wrap:wrap;gap:5px;font-family:'JetBrains Mono',monospace;font-size:10px">
