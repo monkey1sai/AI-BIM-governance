@@ -132,6 +132,11 @@ export interface MinioWatchSurfaceOptions {
     intakeTimeoutMs?: number;
   };
   webhookSecret: string;
+  /**
+   * #809 provenance：每次 self-POST 之前呼叫，讓 coordinator 內的 WatcherIntakeRegistry 先登記
+   * (idempotency_key, correlation_id)；route 消費到才把 job 標為 minio_watch。省略＝不標（測試 fake）。
+   */
+  onBeforeIntake?: (intake: { idempotencyKey: string; correlationId: string }) => void;
   /** §3.4 auto-enroll：持久 ledger 去重水印（權威去重；in-memory seen 僅單實例快取）。 */
   isLedgered: (idkey: string) => boolean;
   /** dirty signal：第一次看到 (key, etag) 時通知上層 folder cache/SSE（PR2 內化）。 */
@@ -291,6 +296,7 @@ export function createMinioWatchSurface(opts: MinioWatchSurfaceOptions): MinioWa
       requested_outputs: ["usdc", "element_mapping", "entity_index", "metadata"],
     };
     try {
+      opts.onBeforeIntake?.({ idempotencyKey: idemKey, correlationId: corrId });
       const resp = await fetch(`${r.selfBaseUrl}/api/external/ifc-ready`, {
         method: "POST",
         headers: {
@@ -714,6 +720,7 @@ export function createMinioWatchSurface(opts: MinioWatchSurfaceOptions): MinioWa
       const corrId = correlationIdFor(cfg.bucket, key, idempotencyInput);
       const selfBase = resolveManualSelfBase();
       try {
+        opts.onBeforeIntake?.({ idempotencyKey: idemKey, correlationId: corrId });
         const upstream = await fetch(`${selfBase}/api/external/ifc-ready`, {
           method: "POST",
           headers: {

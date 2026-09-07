@@ -495,3 +495,17 @@ describe("loadConfig edge artifact health", () => {
     expect(loadConfig().artifactHealthLedgerStorePath).toBe("D:\\edge\\ledgers\\custom-artifact-health.json");
   });
 });
+
+describe("loadConfig streaming conversion public artifacts URL (#809)", () => {
+  it("fails closed on a configured but unparsable value instead of falling back to the internal origin", () => {
+    expect(() => loadConfig({ streamingConversionPublicArtifactsUrl: "not a url" })).toThrow(/STREAMING_CONVERSION_PUBLIC_ARTIFACTS_URL/);
+    expect(() => loadConfig({ streamingConversionPublicArtifactsUrl: "ftp://10.0.0.5/artifacts" })).toThrow(/STREAMING_CONVERSION_PUBLIC_ARTIFACTS_URL/);
+    expect(() => loadConfig({ streamingConversionPublicArtifactsUrl: "http://10.0.0.5:49101/artifacts?x=1" })).toThrow(/query, hash, or credentials/);
+  });
+  it("normalizes a valid value and derives the default from PUBLIC_HOST when empty", () => {
+    expect(loadConfig({ streamingConversionPublicArtifactsUrl: "https://bim.example/artifacts/" }).streamingConversionPublicArtifactsUrl)
+      .toBe("https://bim.example/artifacts");
+    const defaulted = loadConfig({ streamingConversionPublicArtifactsUrl: "", publicHost: "192.168.10.105" });
+    expect(defaulted.streamingConversionPublicArtifactsUrl).toBe("http://192.168.10.105:49101/artifacts");
+  });
+});

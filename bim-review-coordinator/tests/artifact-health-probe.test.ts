@@ -80,6 +80,18 @@ describe("canonicalArtifactProbeUrl", () => {
     })).toBeNull();
   });
 
+  it("rejects non-artifact paths and query strings even on the exact configured origin (#809)", () => {
+    const options = { allowAlternateLoopback: false };
+    expect(canonicalArtifactProbeUrl("http://127.0.0.1:49101/api/conversions", "http://127.0.0.1:49101", options)).toBeNull();
+    expect(canonicalArtifactProbeUrl("http://127.0.0.1:49101/artifacts/exact/model.usdc?x=1", "http://127.0.0.1:49101", options)).toBeNull();
+    expect(canonicalArtifactProbeUrl("http://127.0.0.1:49101/artifacts/exact/model.usdc#frag", "http://127.0.0.1:49101", options)).toBeNull();
+    expect(canonicalArtifactProbeUrl("http://127.0.0.1:49101/artifacts/exact/../secret", "http://127.0.0.1:49101", options)).toBeNull();
+    // legacy direct-loopback shortcut is gated the same way
+    expect(canonicalArtifactProbeUrl("http://127.0.0.1:49101/api/health", "http://host.docker.internal:49101")).toBeNull();
+    expect(canonicalArtifactProbeUrl("http://127.0.0.1:49101/artifacts/job-1/metadata.json", "http://host.docker.internal:49101")?.href)
+      .toBe("http://127.0.0.1:49101/artifacts/job-1/metadata.json");
+  });
+
   it("remaps a DNS hostname beginning with 127 instead of treating it as loopback", () => {
     expect(canonicalArtifactProbeUrl(
       "http://127.evil.example:49101/artifacts/dns/model.usdc",

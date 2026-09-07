@@ -41,6 +41,8 @@ export type IntakeCommand = {
   tenantId: string;
   projectId: string;
   externalModelVersionId: string;
+  /** #809：由 route 以 WatcherIntakeRegistry 判定；缺省 external。 */
+  intakeSource?: "minio_watch" | "external";
 };
 
 export type ConversionResultReport = {
@@ -280,6 +282,7 @@ export class IfcReadyConversionPipeline<TTerminalObserverResult = void> {
       tenantId: command.tenantId,
       projectId: command.projectId,
       externalModelVersionId: command.externalModelVersionId,
+      intakeSource: command.intakeSource,
     });
 
     this.store.markDownloading(job.ifc_ready_job_id);

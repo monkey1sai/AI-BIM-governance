@@ -103,6 +103,7 @@ export class ExternalIfcReadyStore {
       tenantId: string;
       projectId: string;
       externalModelVersionId: string;
+      intakeSource?: "minio_watch" | "external";
     },
   ): IfcReadyIntakeJob {
     const now = new Date().toISOString();
@@ -113,6 +114,7 @@ export class ExternalIfcReadyStore {
       idempotent_replay: false,
       correlation_id: binding.correlationId,
       idempotency_key: binding.idempotencyKey,
+      intake_source: binding.intakeSource ?? "external",
       tenant_id: binding.tenantId,
       project_id: binding.projectId,
       project_display_name: event.project_display_name ?? null,

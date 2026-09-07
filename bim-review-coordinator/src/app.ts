@@ -43,6 +43,7 @@ import {
 import { type ObjectStorePort } from "./services/minioObjectStore.js";
 import { ConversionDispatchQueue } from "./services/conversionDispatchQueue.js";
 import { ConversionLedger, publicConversionRecord } from "./services/conversionLedger.js";
+import { WatcherIntakeRegistry } from "./services/watcherIntakeRegistry.js";
 import { resolveReadyRenderBundle } from "./services/readyModelResolver.js";
 import {
   IfcReadyConversionPipeline,
@@ -619,6 +620,11 @@ export interface CoordinatorApp {
   /** @internal exposed for deterministic contract tests; not a public route API. */
   externalIfcReadyStore: ExternalIfcReadyStore;
   /**
+   * @internal #809 watcher intake provenance registry；test-only accessor（測試以 expect() 模擬
+   * coordinator 內 watcher 的 self-POST 登記），**不是** production 介面。
+   */
+  watcherIntakeRegistry: WatcherIntakeRegistry;
+  /**
    * @internal rvt-ifc-usdc-lineage task 3.1 的 governed source-bundle store。
    * 與 `externalIfcReadyStore` 同性質的 test-only read accessor；**不是** production
    * 介面（production 只經 `/api/external/source-bundles/*` route）。兩個 store 的去重
@@ -1126,9 +1132,22 @@ export function createCoordinatorApp(
   // PUBLIC_HOST); trusted separately from the internal API origin the coordinator probes through.
   // #809：所有 artifact health probe 與 session binding 信任判定共用；命中此 origin 的 canonical
   // artifact URL 會改寫到 streamingConversionApiBase 探測。
-  const conversionPublicArtifactOrigin = (() => {
-    try { return new URL(config.streamingConversionPublicArtifactsUrl).origin; } catch { return undefined; }
-  })();
+  // #809 第 7 項：config.ts 已在啟動時驗證此值（無效即拒絕啟動），這裡不再靜默退回。
+  const conversionPublicArtifactOrigin = new URL(config.streamingConversionPublicArtifactsUrl).origin;
+  // #809 第 6 項：conversion-ready 事件的 artifact 必須由 authority 的發布 origin 發出，才允許
+  // 自動建 review session；internal-only URL（host.docker.internal／streaming-server）會讓 Kit／
+  // 瀏覽器解析不到。null／undefined 交給 autoCreateOrActivateSession 的 no_usdc_ref 判定。
+  const artifactPublishedByConversionAuthority = (value: string | null | undefined): boolean => {
+    if (!value) return true;
+    try {
+      const url = new URL(value);
+      return !url.username && !url.password && url.origin === conversionPublicArtifactOrigin;
+    } catch {
+      return false;
+    }
+  };
+  // #809 第 5 項：watcher self-POST 的 in-process provenance 登記（見 watcherIntakeRegistry.ts）。
+  const watcherIntakeRegistry = new WatcherIntakeRegistry();
   const artifactHealthLedger = new ArtifactHealthLedger(config.artifactHealthLedgerStorePath);
   // rvt-ifc-usdc-lineage task 3.1：governed source bundle 的 durable store ＋ 唯讀 object port。
   // 與 legacy intake 完全分離（不同 store、不同 port、不同 credentials、不同去重空間）。
@@ -1270,6 +1289,7 @@ export function createCoordinatorApp(
       tenantId: config.minioWatchTenantId,
     },
     webhookSecret: config.externalIntakeWebhookSecret,
+    onBeforeIntake: (intake) => watcherIntakeRegistry.expect(intake.idempotencyKey, intake.correlationId),
     // §3.4 全自動 auto-enroll：以持久 ledger 當去重水印。無紀錄→觸發 intake、有紀錄→skip。
     // closure 捕捉的 conversionLedger 是上方宣告即建構的 const，型別系統靜態保證已初始化。
     // watcher tick 對 ledger 唯讀（落帳由 intake route 端負責）。
@@ -3149,6 +3169,9 @@ export function createCoordinatorApp(
         tenantId: auth.tenantId,
         projectId: auth.projectId,
         externalModelVersionId: auth.externalModelVersionId,
+        // #809 第 5 項：只有 coordinator 內 watcher 事先登記的 (key, correlation) 才是 minio_watch；
+        // 一次性消費，外部 worker 送 mw_ 形狀 key 仍是 external。
+        intakeSource: watcherIntakeRegistry.consume(auth.idempotencyKey, auth.correlationId) ? "minio_watch" : "external",
       });
       if (acceptResult.kind === "replay") {
         // 誠實鐵律：source_ifc_ref 含 presigned 簽章 → sanitize 再外吐。
@@ -3995,16 +4018,29 @@ export function createCoordinatorApp(
   // failures are swallowed by pipeline and must not roll back outbox/ingest.
   onConversionTerminalImpl = (event: ConversionTerminalEvent): TerminalSessionCapture => {
     let sessionCapture = emptyTerminalSessionCapture();
-    if (event.status === "ready") {
+    if (event.status === "ready"
+      && !(artifactPublishedByConversionAuthority(event.artifacts.usdc_ref)
+        && artifactPublishedByConversionAuthority(event.artifacts.element_mapping_ref))) {
+      // #809 第 6 項：authority 誤發 internal-only URL 時不建 session（與 ready-model route 的
+      // strict publisher 判定一致）。只記 origin，不記完整 URL。
+      structLog.warn("ifcReadyIntake", "conversion-ready artifacts are not published under the trusted artifact origin; review session not created", {
+        ifc_ready_job_id: event.job.ifc_ready_job_id,
+        conversion_job_id: event.conversionJobId,
+        expected_origin: conversionPublicArtifactOrigin,
+        observed_origin: observedOrigin(event.artifacts.usdc_ref) ?? observedOrigin(event.artifacts.element_mapping_ref),
+      });
+      sessionCapture = { session: null, session_replay: false, session_reason: "artifact_origin_untrusted" };
+    } else if (event.status === "ready") {
       const result = autoCreateOrActivateSession(
         { traceId: event.job.ifc_ready_job_id, tenantId: event.job.tenant_id, projectId: event.job.project_id,
           modelVersionId: event.job.external_model_version_id, correlationId: event.job.correlation_id,
           existingSessionId: event.job.review_session_id,
           // #809：MinIO watcher job 的 idempotency_key 就是 ready model id；綁上去，之後
           // POST /api/conversion/records/:readyModelId/review-session 才能重用這顆 session，
-          // 不會對同一轉檔再配第二顆 session／Kit binding。非 mw_* 來源（devreg、外部 worker）
-          // 不是 ready model，維持不綁（store 只接受 mw_ 形狀）。
-          readyModelId: /^mw_[a-f0-9]{16}$/.test(event.job.idempotency_key) ? event.job.idempotency_key : undefined },
+          // 不會對同一轉檔再配第二顆 session／Kit binding。provenance 以 job.intake_source
+          // （WatcherIntakeRegistry 判定）為準，不再由 key 形狀推斷；外部 worker 送 mw_ 形狀也不綁。
+          readyModelId: event.job.intake_source === "minio_watch" && /^mw_[a-f0-9]{16}$/.test(event.job.idempotency_key)
+            ? event.job.idempotency_key : undefined },
         {
           usdc_ref: event.artifacts.usdc_ref ?? null,
           element_mapping_ref: event.artifacts.element_mapping_ref ?? null,
@@ -5305,6 +5341,7 @@ export function createCoordinatorApp(
     config,
     store,
     externalIfcReadyStore,
+    watcherIntakeRegistry,
     sourceBundleStore,
     pipelineJobStore,
     sourceBundleReconciler,
@@ -5336,6 +5373,11 @@ function sanitizeJobForExternal(job: IfcReadyIntakeJob): IfcReadyIntakeJob {
   delete (rest as { local_path?: string | null }).local_path;
   delete (rest as { host_local_path?: string | null }).host_local_path;
   return rest;
+}
+
+function observedOrigin(value: string | null | undefined): string | null {
+  if (!value) return null;
+  try { return new URL(value).origin; } catch { return null; }
 }
 
 function isAllowedConversionProbeUrl(

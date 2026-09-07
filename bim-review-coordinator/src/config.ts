@@ -226,6 +226,8 @@ function uniqueStrings(values: string[]): string[] {
   return Array.from(new Set(values.filter(Boolean)));
 }
 
+const ABSOLUTE_HTTP_URL_PATTERN = /^https?:\/\/[^/?#\s]+/i;
+
 function normalizeBaseUrl(value: string | undefined): string | null {
   if (!value) return null;
   const trimmed = value.trim();
@@ -615,6 +617,15 @@ export function loadConfig(overrides: Partial<CoordinatorConfig> = {}): Coordina
         `NODE_ENV=production 下偵測到預設機密（原始碼常數），拒絕啟動。請設定：${defaultedSecrets.join(", ")}`,
       );
     }
+  }
+  // #809 第 7 項：STREAMING_CONVERSION_PUBLIC_ARTIFACTS_URL 是 artifact 發布 origin 的信任錨點。
+  // 設了但無法解析時不得靜默退回 internal origin（那會讓 authority 發布 internal-only URL 被接受），
+  // 直接拒絕啟動；空字串視為未設，回落 PUBLIC_HOST 派生預設。同時正規化（去尾斜線、拒 query/hash/憑證）。
+  merged.streamingConversionPublicArtifactsUrl =
+    normalizePublicBaseUrl(merged.streamingConversionPublicArtifactsUrl, "STREAMING_CONVERSION_PUBLIC_ARTIFACTS_URL")
+    ?? `http://${merged.publicHost}:49101/artifacts`;
+  if (!ABSOLUTE_HTTP_URL_PATTERN.test(merged.streamingConversionPublicArtifactsUrl)) {
+    throw new Error("STREAMING_CONVERSION_PUBLIC_ARTIFACTS_URL must be an absolute http(s) URL.");
   }
   if (!process.env.ARTIFACT_HEALTH_LEDGER_STORE_PATH && overrides.artifactHealthLedgerStorePath === undefined) {
     const finalEdgeRoot = merged.edgeRuntimeDataRoot;
