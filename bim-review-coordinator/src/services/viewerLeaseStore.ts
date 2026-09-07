@@ -24,6 +24,10 @@ export interface ViewerLeaseRecord {
   first_frame_at: string | null;
   loaded_stage_url: string | null;
   datachannel_ready: boolean;
+  // #768: when the DataChannel was FIRST reported ready. The boolean alone has
+  // no timestamp, and the no-first-frame witness must measure from the moment
+  // Kit was proven to be messaging, not from claim time.
+  datachannel_ready_at: string | null;
   stage_match: boolean | null;
 }
 
@@ -45,6 +49,7 @@ export interface PublicViewerLease {
   first_frame_at: string | null;
   loaded_stage_url: string | null;
   datachannel_ready: boolean;
+  datachannel_ready_at: string | null;
   stage_match: boolean | null;
   lease_token?: string;
 }
@@ -150,6 +155,7 @@ export class ViewerLeaseStore {
       first_frame_at: null,
       loaded_stage_url: null,
       datachannel_ready: false,
+      datachannel_ready_at: null,
       stage_match: null,
     };
     this.leases.set(lease.lease_id, lease);
@@ -175,6 +181,9 @@ export class ViewerLeaseStore {
     }
     if (typeof input.datachannel_ready === "boolean") {
       lease.datachannel_ready = input.datachannel_ready;
+      if (input.datachannel_ready && !lease.datachannel_ready_at) {
+        lease.datachannel_ready_at = now;
+      }
     }
     if (lease.loaded_stage_url && input.expected_stage_url) {
       lease.stage_match = stageUrlsEquivalent(lease.loaded_stage_url, input.expected_stage_url);
@@ -337,6 +346,7 @@ export function publicLease(lease: ViewerLeaseRecord, options?: { includeToken?:
     first_frame_at: lease.first_frame_at,
     loaded_stage_url: lease.loaded_stage_url,
     datachannel_ready: lease.datachannel_ready,
+    datachannel_ready_at: lease.datachannel_ready_at,
     stage_match: lease.stage_match,
   };
   if (options?.includeToken) {

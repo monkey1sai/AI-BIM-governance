@@ -2,10 +2,11 @@
 import { describe, expect, it } from "vitest";
 import type { IssueRow } from "../governanceClient";
 import type { EndpointSlice } from "./coordinatorStatusStore";
+import type { RuntimeStatus } from "../coordinatorClient";
 import {
-  cell, cellSub, cellText, conversionCounts, healthOf, lastUpdatedText, openIssueCount, outboxPending,
+  cell, cellSub, cellText, conversionCounts, healthOf, kitMediaSuspect, lastUpdatedText, openIssueCount, outboxPending,
 } from "./runtimeTruth";
-import { conversionRecord, outboxEntries } from "./__testdata__/coordinatorMocks";
+import { RT_IDLE, conversionRecord, outboxEntries } from "./__testdata__/coordinatorMocks";
 
 const L = { unavailable: "未取得", offline: "未連線" };
 const live = <T,>(data: T, at = 1_000): EndpointSlice<T> => ({ data, state: "live", httpStatus: 200, message: null, lastUpdatedAt: at });
@@ -54,5 +55,18 @@ describe("pickers（截斷窗不對子集算數）", () => {
   it("lastUpdatedText：無 live → —；有 live → 取最新時間（HH:mm:ss）", () => {
     expect(lastUpdatedText([offline, error])).toBe("—");
     expect(lastUpdatedText([live(1, Date.UTC(2026, 7, 25, 1, 2, 3)), offline])).toMatch(/^\d{2}:\d{2}:\d{2}$/);
+  });
+  it("kitMediaSuspect（#768）：suspect 才回；欄位缺席／ok／unknown／非 live → null（不臆造）", () => {
+    const entry = (media_state: "ok" | "suspect" | "unknown", streak = 0) => ({
+      kit_instance_id: "kit_local_001", media_state, source: "viewer_lease_evidence" as const, detail: `d-${media_state}`,
+      no_first_frame_streak: streak, qualifying_lease_count: streak, last_first_frame_at: null, evidence_lease_ids: [],
+    });
+    expect(kitMediaSuspect(live({ ...RT_IDLE }))).toBeNull();
+    expect(kitMediaSuspect(live({ ...RT_IDLE, kit_runtime_health: [entry("ok")] }))).toBeNull();
+    expect(kitMediaSuspect(live({ ...RT_IDLE, kit_runtime_health: [entry("unknown", 1)] }))).toBeNull();
+    expect(kitMediaSuspect(live({ ...RT_IDLE, kit_runtime_health: [entry("ok"), entry("suspect", 2)] })))
+      .toEqual({ kit_instance_id: "kit_local_001", detail: "d-suspect", streak: 2 });
+    expect(kitMediaSuspect(offline as EndpointSlice<RuntimeStatus>)).toBeNull();
+    expect(kitMediaSuspect(error as EndpointSlice<RuntimeStatus>)).toBeNull();
   });
 });

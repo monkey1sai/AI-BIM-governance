@@ -54,6 +54,18 @@ export function healthOf<D>(slice: EndpointSlice<D>, degradedWhen: (data: D) => 
   return "unknown";
 }
 
+/**
+ * #768 Kit 媒體層見證：/api/runtime/status.kit_runtime_health 任一 instance media_state=suspect → 回該筆；
+ * 欄位缺席（舊 coordinator）或非 live → null（不臆造）。
+ */
+export function kitMediaSuspect(slice: EndpointSlice<RuntimeStatus>): { kit_instance_id: string; detail: string; streak: number } | null {
+  if (slice.state !== "live" || slice.data === null) return null;
+  const entries = slice.data.kit_runtime_health;
+  if (!Array.isArray(entries)) return null;
+  const hit = entries.find((entry) => entry && entry.media_state === "suspect");
+  return hit ? { kit_instance_id: hit.kit_instance_id, detail: hit.detail, streak: hit.no_first_frame_streak } : null;
+}
+
 export const HEALTH_DOT: Record<HealthState, string> = {
   ok: "var(--ab-ok)", degraded: "var(--ab-danger)", unknown: "var(--ab-text-dimmer)",
 };

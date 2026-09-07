@@ -21,7 +21,7 @@ import { ConsoleDataProvider } from "./ConsoleDataProvider";
 import { useConsoleData } from "./consoleData";
 import { coordinatorStatusStore } from "./coordinatorStatusStore";
 import type { EndpointKey } from "./coordinatorStatusStore";
-import { HEALTH_DOT, cell, cellText, conversionCounts, healthOf } from "./runtimeTruth";
+import { HEALTH_DOT, cell, cellText, conversionCounts, healthOf, kitMediaSuspect } from "./runtimeTruth";
 import type { HealthState } from "./runtimeTruth";
 import { ViewportSlotProvider } from "./ViewportSlotProvider";
 import { WorkspaceViewportHost } from "./WorkspaceViewportHost";
@@ -137,14 +137,17 @@ function ShellFrame({ page, dock, concept, children }: UnifiedShellProps) {
   // 不強改該測試（非本 task 列管的 patch 清單），改在讀取點防禦，缺欄位時誠實地不宣稱 ok（degraded）。
   const coordinatorHealth = healthOf(snap.runtimeStatus, (rt) => rt.service?.status !== "ok");
   const governanceHealth = healthOf(snap.ruleRuns);
-  const kitHealth = healthOf(snap.kitHealth);
+  // #768：/api/kit/health 只證明 kit-manager-api 活著；coordinator 由 lease 證據推導的 media_state=suspect
+  // （DataChannel 通、連續無首幀）要把 Kit chip 降為 degraded，否則假活 Kit 一整個下午都顯示「Kit Runtime OK」。
+  const kitMedia = kitMediaSuspect(snap.runtimeStatus);
+  const kitHealth: HealthState = kitMedia ? "degraded" : healthOf(snap.kitHealth);
   // 盤點（tasks 1.2）：/api/runtime/status 無 GPU 使用率欄位 → live 即「未取得」；不讀任何臆測欄位、不捏造。
   const gpu = cell(snap.runtimeStatus, () => null);
   const healthText = (h: HealthState, httpStatus: number | null) =>
     h === "ok" ? "OK" : h === "degraded" ? (httpStatus === null ? "degraded" : String(httpStatus)) : L.offline;
-  const chip = (uc: string, label: string, h: HealthState, httpStatus: number | null) => (
-    <div data-uc={uc} data-health={h} style={chipByHealth[h]}>
-      <span style={{ width: 6, height: 6, borderRadius: "50%", background: HEALTH_DOT[h] }} />{label} {healthText(h, httpStatus)}
+  const chip = (uc: string, label: string, h: HealthState, httpStatus: number | null, text?: string, title?: string) => (
+    <div data-uc={uc} data-health={h} style={chipByHealth[h]} title={title}>
+      <span style={{ width: 6, height: 6, borderRadius: "50%", background: HEALTH_DOT[h] }} />{label} {text ?? healthText(h, httpStatus)}
     </div>
   );
   const gpuText = gpu.state === "unavailable" ? `GPU ${L.unavailable}` : gpu.state === "error" ? `GPU ${gpu.httpStatus ?? "error"}` : "GPU —";
@@ -175,7 +178,9 @@ function ShellFrame({ page, dock, concept, children }: UnifiedShellProps) {
       <div data-prov="asbuilt" style={{ display: "flex", alignItems: "center", gap: 6 }}>
         {chip("chip-coordinator", "Coordinator", coordinatorHealth, snap.runtimeStatus.httpStatus)}
         {chip("chip-governance", "Governance", governanceHealth, snap.ruleRuns.httpStatus)}
-        {chip("chip-kit", "Kit Runtime", kitHealth, snap.kitHealth.httpStatus)}
+        {chip("chip-kit", "Kit Runtime", kitHealth, snap.kitHealth.httpStatus,
+          kitMedia ? (zh ? `無首幀×${kitMedia.streak}` : `no-frame×${kitMedia.streak}`) : undefined,
+          kitMedia ? `${kitMedia.kit_instance_id}: ${kitMedia.detail}` : undefined)}
         <div data-uc="chip-gpu" data-state={gpu.state} style={gpuStyle}>{gpuText}</div>
       </div>
       <div onClick={() => setLang(zh ? "en" : "zh")} style={{ display: "flex", alignItems: "center", gap: 0, border: "1px solid rgba(120,160,210,.16)", borderRadius: 8, overflow: "hidden", cursor: "pointer", fontFamily: MONO, fontSize: "10.5px" }}>

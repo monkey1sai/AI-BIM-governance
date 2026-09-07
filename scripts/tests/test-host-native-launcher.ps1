@@ -1652,6 +1652,92 @@ finally {
     Remove-TestSandbox -Path $stopSandbox
 }
 
+# Test R1 (#768): Stop-HostNativeService hands the caller the exact tree it is
+# about to kill, so the release wait has something to wait for after the pid
+# file is gone.
+$releaseSandbox = New-TestSandbox -Prefix 'hn-release'
+. $modulePath
+try {
+    $releaseRunDir = Join-Path $releaseSandbox 'scripts\.run'
+    New-Item -ItemType Directory -Path $releaseRunDir -Force | Out-Null
+    Set-Content -LiteralPath (Join-Path $releaseRunDir 'svc.pid') -Value '500'
+    $sink = [System.Collections.Generic.List[int]]::new()
+    $script:releaseStops = @()
+    $didStop = Stop-HostNativeService -Name 'svc' -RunDir $releaseRunDir -StoppedProcessIdSink $sink `
+        -ChildPidLookup { param($procId) if ($procId -eq 500) { @(501) } elseif ($procId -eq 501) { @(502) } else { @() } } `
+        -StopProcessFn { param($procId) $script:releaseStops += [int]$procId }
+    Assert-True $didStop 'stop still reports success with a sink'
+    Assert-Equal '500,501,502' (($sink | Sort-Object) -join ',') 'sink holds launcher + descendants captured before the kill'
+    Assert-Equal '502,501,500' ($script:releaseStops -join ',') 'kill order unchanged by the sink'
+    Assert-True (-not (Test-Path -LiteralPath (Join-Path $releaseRunDir 'svc.pid'))) 'pid file removed as before'
+
+    # No pid file: sink stays empty and nothing is stopped.
+    $emptySink = [System.Collections.Generic.List[int]]::new()
+    $none = Stop-HostNativeService -Name 'ghost' -RunDir $releaseRunDir -StoppedProcessIdSink $emptySink `
+        -ChildPidLookup { param($procId) @() } -StopProcessFn { param($procId) throw 'must not stop' }
+    Assert-True (-not $none) 'no pid file → nothing stopped'
+    Assert-Equal 0 $emptySink.Count 'no pid file → empty sink'
+    Write-TestPass 'Stop-HostNativeService exposes the stopped tree for the release wait (#768)'
+}
+finally {
+    Remove-TestSandbox -Path $releaseSandbox
+}
+
+# Test R2 (#768): Wait-HostNativeTreeReleased only reports Released when pids,
+# TCP signalling ports, UDP media ports and GPU context are all gone; it waits
+# for a tree that is still dying, and refuses (Released=$false, with the
+# holders named) when the budget runs out.
+. $modulePath
+$script:releasePolls = 0
+$sleepNoop = { param($ms) $script:releasePolls += 1 }
+# (a) everything already gone → released on the first observation
+$r = Wait-HostNativeTreeReleased -ProcessIds @(500, 501) -TcpPorts @(49100) -UdpPorts @(47998) -TimeoutMs 5000 `
+    -ProcessAliveFn { param($p) $false } -TcpLookupFn { param($p) $null } -UdpLookupFn { param($p) $null } `
+    -GpuProcessIdsFn { [pscustomobject]@{ Available = $true; ProcessIds = @() } } -SleepFn $sleepNoop
+Assert-True $r.Released 'nothing held → released'
+Assert-Equal 'checked' $r.GpuProbe 'GPU probe answered'
+Assert-Equal 0 $script:releasePolls 'no sleep when released immediately'
+
+# (b) the Kit child dies on the third poll → released after waiting, not before
+$script:aliveCalls = 0
+$script:releasePolls = 0
+$r = Wait-HostNativeTreeReleased -ProcessIds @(501) -TcpPorts @(49100) -UdpPorts @() -TimeoutMs 60000 -PollMs 50 `
+    -ProcessAliveFn { param($p) $script:aliveCalls += 1; ($script:aliveCalls -lt 3) } `
+    -TcpLookupFn { param($p) $null } -UdpLookupFn { param($p) $null } `
+    -GpuProcessIdsFn { [pscustomobject]@{ Available = $false; ProcessIds = @() } } -SleepFn $sleepNoop
+Assert-True $r.Released 'released once the pid is gone'
+Assert-Equal 2 $script:releasePolls 'waited two polls for the dying pid'
+Assert-Equal 'unavailable' $r.GpuProbe 'GPU probe unavailable is reported, not treated as a holder'
+
+# (c) TCP signalling port still LISTEN by anyone → not released, port named
+$r = Wait-HostNativeTreeReleased -ProcessIds @(501) -TcpPorts @(49100, 49110) -UdpPorts @(47998) -TimeoutMs 0 `
+    -ProcessAliveFn { param($p) $false } -TcpLookupFn { param($p) if ($p -eq 49110) { -1 } else { $null } } `
+    -UdpLookupFn { param($p) $null } -GpuProcessIdsFn { [pscustomobject]@{ Available = $true; ProcessIds = @() } } -SleepFn $sleepNoop
+Assert-True (-not $r.Released) 'busy signalling port blocks release'
+Assert-Equal '49110' (@($r.BusyTcpPorts) -join ',') 'busy TCP port named (owner-not-visible counts as busy)'
+
+# (d) UDP media port still bound → not released
+$r = Wait-HostNativeTreeReleased -ProcessIds @() -TcpPorts @() -UdpPorts @(47998, 48008) -TimeoutMs 0 `
+    -ProcessAliveFn { param($p) $false } -TcpLookupFn { param($p) $null } -UdpLookupFn { param($p) if ($p -eq 47998) { 501 } else { $null } } `
+    -GpuProcessIdsFn { [pscustomobject]@{ Available = $true; ProcessIds = @() } } -SleepFn $sleepNoop
+Assert-True (-not $r.Released) 'bound media port blocks release'
+Assert-Equal '47998' (@($r.BusyUdpPorts) -join ',') 'busy UDP port named'
+
+# (e) pids and ports gone but nvidia-smi still lists the old Kit pid → not released
+$r = Wait-HostNativeTreeReleased -ProcessIds @(500, 501) -TcpPorts @(49100) -UdpPorts @(47998) -TimeoutMs 0 `
+    -ProcessAliveFn { param($p) $false } -TcpLookupFn { param($p) $null } -UdpLookupFn { param($p) $null } `
+    -GpuProcessIdsFn { [pscustomobject]@{ Available = $true; ProcessIds = @(777, 501) } } -SleepFn $sleepNoop
+Assert-True (-not $r.Released) 'GPU context still owned by a stopped pid blocks release'
+Assert-Equal '501' (@($r.GpuHolderProcessIds) -join ',') 'GPU holder named'
+Assert-Equal 'checked' $r.GpuProbe 'GPU probe checked'
+
+# (f) an unrelated GPU process never blocks
+$r = Wait-HostNativeTreeReleased -ProcessIds @(501) -TcpPorts @() -UdpPorts @() -TimeoutMs 0 `
+    -ProcessAliveFn { param($p) $false } -TcpLookupFn { param($p) $null } -UdpLookupFn { param($p) $null } `
+    -GpuProcessIdsFn { [pscustomobject]@{ Available = $true; ProcessIds = @(777) } } -SleepFn $sleepNoop
+Assert-True $r.Released 'foreign GPU process is not a holder of the stopped tree'
+Write-TestPass 'Wait-HostNativeTreeReleased is fail-closed across pids, ports and GPU context (#768)'
+
 # Test: conversion service launcher honours the STORAGE_ROOT invariant (#626)
 #
 # 這一組直接跑 bim-streaming-server\scripts\start-host-native-conversion-service.ps1。
