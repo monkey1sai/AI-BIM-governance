@@ -245,9 +245,28 @@ export class IfcReadyConversionPipeline<TTerminalObserverResult = void> {
       command.correlationId,
     );
     if (existing) {
-      const replayed =
-        this.store.markIdempotentReplay(existing.ifc_ready_job_id) ?? existing;
-      return { kind: "replay", job: replayed };
+      if (existing.status === "dropped_on_restart") {
+        // #804 續：loadFromDisk() 對重啟中斷的 queued_for_conversion job 標記
+        // dropped_on_restart，dispatch_error 承諾「operator must re-POST」，但 replay
+        // 短路對任何既有 job 一律原樣回傳——上游用同一組 idempotency_key/correlation_id
+        // 自然重送（REST 慣例，也是該訊息字面上的意思）永遠只會拿回同一顆死 job，
+        // 訊息承諾的復原路徑其實不存在＝永久停滯、不可重試。此處借用唯一真實來源
+        // retryDispatch()（operator `/api/conversion/jobs/:id/retry` 走同一支）就地
+        // 恢復：下載資料還在→重新排隊派工；下載本身沒完成（context_lost）才真的救
+        // 不回，此時 fall through 視為全新 intake（repoint idempotency/correlation
+        // index 到新 job），不留一顆假的 idempotent replay 擋住後續所有重送。
+        const retried = this.retryDispatch(existing.ifc_ready_job_id);
+        if (retried.ok) {
+          const resumedJob = this.store.get(existing.ifc_ready_job_id) ?? existing;
+          const replayed =
+            this.store.markIdempotentReplay(resumedJob.ifc_ready_job_id) ?? resumedJob;
+          return { kind: "replay", job: replayed };
+        }
+      } else {
+        const replayed =
+          this.store.markIdempotentReplay(existing.ifc_ready_job_id) ?? existing;
+        return { kind: "replay", job: replayed };
+      }
     }
 
     const job = this.store.create(event, {
