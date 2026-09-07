@@ -1844,7 +1844,7 @@ if ($SkipKit) {
         # Media-aware readiness (#768): LISTEN + 'app ready' is the app plugin
         # talking; the livestream primary stream server logs its own start line
         # to the Kit file log, and only that proves the media side exists.
-        $kitRes = Wait-KitReady -LogPath $startInfo.LogPath -SignalPort $resolvedKitSignalPort -TimeoutSec $KitReadyTimeoutSec -RequireMediaServer
+        $kitRes = Wait-KitReady -LogPath $startInfo.LogPath -SignalPort $resolvedKitSignalPort -StreamPort $resolvedKitMediaPort -TimeoutSec $KitReadyTimeoutSec -RequireMediaServer
         if (-not $kitRes.ready) {
             Write-DeployTag -Tag 'fail' -Message "stage=4c Phase 4c Kit not ready in ${KitReadyTimeoutSec}s (listen=$($null -ne $kitRes.listenPort) keyword=$($kitRes.matchedKeyword) media_server=$($kitRes.mediaServerStarted) media_reason=$($kitRes.mediaServerReason) kit_log=$($kitRes.kitLogPath))" -LogPath $LogPath | Out-Null
             Print-FinalSummary -ExitCode 4 -FailedPhase 'Phase 4c (Kit)'

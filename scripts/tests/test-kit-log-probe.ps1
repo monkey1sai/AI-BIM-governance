@@ -118,6 +118,12 @@ try {
     $r2 = Test-KitMediaServerStarted -KitLogPath $kitLog -SignalPort 49200
     Assert-True (-not $r2.started) 'primary stream server on another port → not started'
     Assert-Equal 'primary_stream_server_on_other_port' $r2.reason 'other-port reason'
+    # 指定 media port：signalling 對、stream port 不對 → 媒體設定沒套上，不算 ready
+    $r2b = Test-KitMediaServerStarted -KitLogPath $kitLog -SignalPort 49100 -StreamPort 48998
+    Assert-True (-not $r2b.started) 'configured stream port mismatch → not started'
+    Assert-Equal 'primary_stream_server_on_other_stream_port' $r2b.reason 'stream-port mismatch reason'
+    Assert-Equal 47998 $r2b.streamPort 'logged stream port surfaced'
+    Assert-True (Test-KitMediaServerStarted -KitLogPath $kitLog -SignalPort 49100 -StreamPort 47998).started 'matching stream port → started'
     Set-Content -LiteralPath $kitLog -Value '[2,590ms] [Info] [omni.kit.app.plugin] [2.615s] app ready'
     $r3 = Test-KitMediaServerStarted -KitLogPath $kitLog -SignalPort 49100
     Assert-Equal 'primary_stream_server_not_logged' $r3.reason 'app ready alone is not media readiness'

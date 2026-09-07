@@ -14,9 +14,11 @@ import type { PublicViewerLease } from "./viewerLeaseStore.js";
 //
 // Rules (deliberately conservative - this is a witness, not a verdict):
 //   - Only leases that were CONNECTED long enough count: role=primary,
-//     datachannel_ready=true, and observed for >= MIN_OBSERVED_MS from
-//     claimed_at to the later of last_heartbeat_at/released_at/now(active).
-//     A viewer that left within seconds proves nothing either way.
+//     datachannel_ready=true, and observed for >= MIN_OBSERVED_MS from the
+//     moment the DataChannel was first reported ready (datachannel_ready_at;
+//     claimed_at only for records that predate that field) to the later of
+//     last_heartbeat_at/released_at/now(active). A viewer that left within
+//     seconds proves nothing either way.
 //   - `suspect` needs SUSPECT_STREAK consecutive qualifying leases (newest
 //     first) with first_frame_at === null and no newer qualifying lease that
 //     did get a frame. One failed viewer can be the browser's fault.
@@ -61,10 +63,16 @@ function qualifyingLeases(leases: PublicViewerLease[], nowMs: number): Qualifyin
     const claimedAtMs = Date.parse(lease.claimed_at);
     const untilMs = observedUntilMs(lease, nowMs);
     if (!Number.isFinite(claimedAtMs) || !Number.isFinite(untilMs)) continue;
+    // The frameless window starts when Kit was proven to be messaging, not at
+    // claim time: a viewer whose DataChannel only came up late has not yet had
+    // a fair chance at a frame. Records without the timestamp fall back to
+    // claimed_at (older coordinator builds).
+    const readyAtParsed = lease.datachannel_ready_at ? Date.parse(lease.datachannel_ready_at) : Number.NaN;
+    const windowStartMs = Number.isFinite(readyAtParsed) ? Math.max(readyAtParsed, claimedAtMs) : claimedAtMs;
     // A lease that already got a frame counts regardless of how long it lived:
     // a frame is positive proof. A frameless lease must have been observed long
     // enough that a healthy Kit would have produced one.
-    if (lease.first_frame_at === null && untilMs - claimedAtMs < KIT_MEDIA_MIN_OBSERVED_MS) continue;
+    if (lease.first_frame_at === null && untilMs - windowStartMs < KIT_MEDIA_MIN_OBSERVED_MS) continue;
     out.push({ lease, claimedAtMs });
   }
   // newest first

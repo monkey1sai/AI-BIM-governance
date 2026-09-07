@@ -375,9 +375,11 @@ function Stop-HostNativeService {
     )
     $pidFile = Join-Path $RunDir "$Name.pid"
     $jobFile = Join-Path $RunDir "$Name.job"
-    if ($null -ne $StoppedProcessIdSink) {
-        foreach ($treeId in @(Get-HostNativeRecordedProcessTree -PidFile $pidFile -ChildPidLookup $ChildPidLookup)) {
-            if (-not $StoppedProcessIdSink.Contains([int]$treeId)) { $StoppedProcessIdSink.Add([int]$treeId) }
+    $addToSink = {
+        param([int[]] $identifiers)
+        if ($null -eq $StoppedProcessIdSink) { return }
+        foreach ($identifier in @($identifiers)) {
+            if ([int]$identifier -gt 0 -and -not $StoppedProcessIdSink.Contains([int]$identifier)) { $StoppedProcessIdSink.Add([int]$identifier) }
         }
     }
     # The port record is a claim on resources, so a DELIBERATE stop is what
@@ -395,7 +397,15 @@ function Stop-HostNativeService {
     if (Test-Path -LiteralPath $jobFile) {
         $jobName = (Get-Content -LiteralPath $jobFile -ErrorAction SilentlyContinue | Select-Object -First 1)
         if ($jobName) {
+            # Job path: membership is the authority and the stop itself never
+            # walks PPIDs. Only a caller that asked for the sink pays for a
+            # best-effort walk here, plus whatever the boundary reports it
+            # terminated (#768).
+            if ($null -ne $StoppedProcessIdSink) {
+                & $addToSink @(Get-HostNativeRecordedProcessTree -PidFile $pidFile -ChildPidLookup $ChildPidLookup)
+            }
             $jobReport = & $JobStopFn ([string]$jobName.Trim())
+            if ($jobReport.PSObject.Properties.Name -contains 'MemberPids') { & $addToSink @($jobReport.MemberPids) }
             if ($jobReport.Supported) {
                 Remove-Item -LiteralPath $jobFile -Force -ErrorAction SilentlyContinue
                 Remove-Item -LiteralPath $pidFile -Force -ErrorAction SilentlyContinue
@@ -427,6 +437,10 @@ function Stop-HostNativeService {
             $stack += @(& $ChildPidLookup $current)
         }
     }
+    # Sweep path: the sink is the SAME walk the kill loop uses (#768). A separate
+    # earlier walk could miss a child spawned between the two enumerations and
+    # the release wait would then never look for it.
+    & $addToSink @($ids)
     for ($i = $ids.Count - 1; $i -ge 0; $i--) {
         & $StopProcessFn ([int]$ids[$i])
     }

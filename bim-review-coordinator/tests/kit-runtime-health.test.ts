@@ -26,9 +26,10 @@ function lease(overrides: Partial<PublicViewerLease> & { lease_id: string; claim
     first_frame_at: null,
     loaded_stage_url: null,
     datachannel_ready: true,
+    datachannel_ready_at: new Date(claimedMs + 3_000).toISOString(),
     stage_match: null,
     ...overrides,
-  };
+  } as PublicViewerLease;
 }
 
 const at = (offsetMs: number) => new Date(T0 + offsetMs).toISOString();
@@ -96,6 +97,23 @@ describe("deriveKitRuntimeHealth (#768 media witness from lease evidence)", () =
     const [entry] = deriveKitRuntimeHealth(["kit_local_001"], leases, NOW);
     expect(entry.media_state).toBe("unknown");
     expect(entry.qualifying_lease_count).toBe(0);
+  });
+
+  it("the frameless window starts at datachannel_ready_at, not claimed_at (late DataChannel is not evidence)", () => {
+    // Claimed 40s ago, but the DataChannel only came up 10s ago: the viewer has not had its 20s.
+    const late = lease({
+      lease_id: "late",
+      claimed_at: new Date(NOW - 40_000).toISOString(),
+      datachannel_ready_at: new Date(NOW - 10_000).toISOString(),
+      status: "active",
+      last_heartbeat_at: null,
+      released_at: null,
+    });
+    const older = lease({ lease_id: "older", claimed_at: at(0) });
+    expect(deriveKitRuntimeHealth(["kit_local_001"], [older, late], NOW)[0]).toMatchObject({ media_state: "unknown", qualifying_lease_count: 1 });
+    // Records without the timestamp (older coordinator builds) fall back to claimed_at.
+    const legacy = lease({ lease_id: "legacy", claimed_at: at(60_000), datachannel_ready_at: null });
+    expect(deriveKitRuntimeHealth(["kit_local_001"], [older, legacy], NOW)[0].media_state).toBe("suspect");
   });
 
   it("an active frameless lease is measured up to now", () => {

@@ -259,17 +259,42 @@ function Get-PlatformGpuComputeProcessIds {
     # process table is the only cheap observation that spans the whole
     # teardown, so the release wait consults it in addition to pids and ports.
     [CmdletBinding()]
-    param()
+    param(
+        # nvidia-smi itself can hang while the driver is wedged or still tearing
+        # down a context - the very state the release gate is waiting out. A
+        # synchronous call would then stall the gate past its own budget, so the
+        # probe is bounded and a timeout is reported as Available=$false.
+        [ValidateRange(100, 60000)][int] $TimeoutMs = 5000
+    )
 
     $unavailable = [pscustomobject]@{ Available = $false; ProcessIds = @() }
     $cmd = Get-Command nvidia-smi -ErrorAction SilentlyContinue
     if ($null -eq $cmd) { return $unavailable }
+    $process = $null
     try {
-        $out = @(& nvidia-smi --query-compute-apps=pid --format=csv,noheader,nounits 2>$null)
+        $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
+        $startInfo.FileName = $cmd.Source
+        $startInfo.Arguments = '--query-compute-apps=pid --format=csv,noheader,nounits'
+        $startInfo.UseShellExecute = $false
+        $startInfo.RedirectStandardOutput = $true
+        $startInfo.RedirectStandardError = $true
+        $startInfo.CreateNoWindow = $true
+        $process = [System.Diagnostics.Process]::Start($startInfo)
+        if ($null -eq $process) { return $unavailable }
+        $stdoutTask = $process.StandardOutput.ReadToEndAsync()
+        $null = $process.StandardError.ReadToEndAsync()
+        if (-not $process.WaitForExit($TimeoutMs)) {
+            try { $process.Kill($true) } catch { }
+            return $unavailable
+        }
+        $process.WaitForExit()
+        if ($process.ExitCode -ne 0) { return $unavailable }
+        $out = @(($stdoutTask.GetAwaiter().GetResult()) -split "`r?`n")
     } catch {
         return $unavailable
+    } finally {
+        if ($null -ne $process) { $process.Dispose() }
     }
-    if ($LASTEXITCODE -ne 0) { return $unavailable }
     $ids = [System.Collections.Generic.List[int]]::new()
     foreach ($line in $out) {
         $trimmed = ([string]$line).Trim()

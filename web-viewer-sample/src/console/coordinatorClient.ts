@@ -255,6 +255,8 @@ export interface ViewerLeaseSummary {
   first_frame_at: string | null;
   loaded_stage_url: string | null;
   datachannel_ready: boolean;
+  // #768：DataChannel 首次回報 ready 的時間；舊 coordinator 無此欄位 → optional。
+  datachannel_ready_at?: string | null;
   stage_match: boolean | null;
 }
 export interface ViewerLeaseClaimResponse extends ViewerLeaseSummary {

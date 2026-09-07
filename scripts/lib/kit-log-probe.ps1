@@ -64,7 +64,12 @@ function Test-KitMediaServerStarted {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $true)][string] $KitLogPath,
-        [int] $SignalPort = 49100
+        [int] $SignalPort = 49100,
+        # 0 = do not check the media (UDP) port. When the deploy knows the port it
+        # configured, pass it: a primary server on the right signalling port but
+        # the wrong stream port means the media setting was not applied, and the
+        # coordinator would hand viewers an endpoint that never carries video.
+        [int] $StreamPort = 0
     )
     if (-not (Test-Path -LiteralPath $KitLogPath -PathType Leaf)) {
         return [pscustomobject]@{ started = $false; signalPort = $null; streamPort = $null; reason = 'kit_log_missing' }
@@ -75,9 +80,12 @@ function Test-KitMediaServerStarted {
     }
     $found = [regex]::Matches($content, $script:KitMediaServerStartedPattern)
     foreach ($m in $found) {
-        if ([int]$m.Groups[1].Value -eq $SignalPort) {
-            return [pscustomobject]@{ started = $true; signalPort = [int]$m.Groups[1].Value; streamPort = [int]$m.Groups[2].Value; reason = $null }
+        if ([int]$m.Groups[1].Value -ne $SignalPort) { continue }
+        $loggedStreamPort = [int]$m.Groups[2].Value
+        if ($StreamPort -gt 0 -and $loggedStreamPort -ne $StreamPort) {
+            return [pscustomobject]@{ started = $false; signalPort = $SignalPort; streamPort = $loggedStreamPort; reason = 'primary_stream_server_on_other_stream_port' }
         }
+        return [pscustomobject]@{ started = $true; signalPort = $SignalPort; streamPort = $loggedStreamPort; reason = $null }
     }
     if ($found.Count -gt 0) {
         return [pscustomobject]@{ started = $false; signalPort = [int]$found[0].Groups[1].Value; streamPort = [int]$found[0].Groups[2].Value; reason = 'primary_stream_server_on_other_port' }
@@ -103,13 +111,15 @@ function Wait-KitReady {
         # server to have started on $SignalPort, read from the Kit file log that
         # the launcher log names. Without this switch behaviour is unchanged.
         [switch] $RequireMediaServer,
+        # Media (UDP) port the deploy configured; 0 = not checked.
+        [int] $StreamPort = 0,
         [scriptblock] $KitLogPathResolver = {
             param($launcherLogPath)
             Get-KitLogFilePathFromLauncherLog -LauncherLogPath $launcherLogPath
         },
         [scriptblock] $MediaServerProbe = {
-            param($kitLogPath, $port)
-            Test-KitMediaServerStarted -KitLogPath $kitLogPath -SignalPort ([int]$port)
+            param($kitLogPath, $port, $streamPort)
+            Test-KitMediaServerStarted -KitLogPath $kitLogPath -SignalPort ([int]$port) -StreamPort ([int]$streamPort)
         }
     )
 
@@ -120,7 +130,7 @@ function Wait-KitReady {
         $media = $null
         if ($RequireMediaServer) {
             $kitLogPath = & $KitLogPathResolver $LogPath
-            if ($kitLogPath) { $media = & $MediaServerProbe $kitLogPath $SignalPort }
+            if ($kitLogPath) { $media = & $MediaServerProbe $kitLogPath $SignalPort $StreamPort }
         }
         $mediaOk = (-not $RequireMediaServer) -or ($null -ne $media -and [bool]$media.started)
         [pscustomobject]@{
