@@ -98,6 +98,17 @@ jobs:
             echo "::error::shard selection omitted the required core leg" >&2
             exit 1
           fi
+          # A full dispatch (verification-mechanism self-change) must run every declared leg. Do not
+          # trust the selector for that either: require the selection to cover every shard the
+          # policy declares, so a selector regression that narrows a full dispatch fails here.
+          if jq -e '.dispatch == "full"' verification-plan.json >/dev/null; then
+            declared="$(jq -c '[.shards[].id] | sort' scripts/agent-governance-shards.json)"
+            selected="$(jq -c '.shards | sort' shard-selection.json)"
+            if [ "$declared" != "$selected" ]; then
+              echo "::error::full dispatch selected $selected but the policy declares $declared" >&2
+              exit 1
+            fi
+          fi
           printf 'shards=%s\n' "$(jq -c '["core"] + (.shards - ["core"])' shard-selection.json)" >> "$GITHUB_OUTPUT"
           printf 'shard_policy_sha256=%s\n' "$(jq -r '.policy_sha256' shard-selection.json)" >> "$GITHUB_OUTPUT"
 

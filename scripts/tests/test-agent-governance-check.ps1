@@ -469,6 +469,7 @@ try {
     $shardSelectorRun = [string]$shardSelectorStep[0]['run']
     Assert-True ($shardSelectorRun.Contains('index("core") != null')) 'the scope job fails closed when the candidate selection omits the required core leg'
     Assert-True ($shardSelectorRun.Contains('["core"] + (.shards - ["core"])')) 'the scope job bootstraps core into the matrix independently of the candidate policy'
+    Assert-True ($shardSelectorRun.Contains('.dispatch == "full"') -and $shardSelectorRun.Contains('[.shards[].id]')) 'the scope job independently requires every declared shard when the plan dispatched full, so a selector regression cannot drop legs'
 
     $shardPolicyPath = Join-Path $repoRoot 'scripts/agent-governance-shards.json'
     Assert-True (Test-Path -LiteralPath $shardPolicyPath -PathType Leaf) 'the canonical shard declaration exists'
@@ -554,17 +555,40 @@ try {
             Assert-True (Test-Path -LiteralPath (Join-Path $repoRoot $executedPath) -PathType Leaf) "suite step '$suiteStepName' runs an existing repository script '$executedPath'"
             & $noteShardInput $executedPath $suiteStepShard $suiteStepName
             if ($shardAuditLedgerTests -ccontains $executedPath) { continue }
-            $executedText = Get-Content -LiteralPath (Join-Path $repoRoot $executedPath) -Raw -Encoding utf8
-            $executedDir = (Split-Path -Parent $executedPath) -replace '\\', '/'
+            # A test often delegates to a checker beside it (test-pr-body-evidence.ps1 runs
+            # check-pr-body-evidence.ps1, which imports scripts/lib/pr-review-agent.ps1). Follow that
+            # one hop for scripts under scripts/tests only: library modules such as the policy engine
+            # name repository paths as rule data, so recursing into them would audit the whole repo.
+            $scanQueue = [System.Collections.Generic.Queue[string]]::new()
+            $scanned = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
+            $scanQueue.Enqueue($executedPath)
+            while ($scanQueue.Count -gt 0) {
+            $scanPath = $scanQueue.Dequeue()
+            if (-not $scanned.Add($scanPath)) { continue }
+            $executedText = Get-Content -LiteralPath (Join-Path $repoRoot $scanPath) -Raw -Encoding utf8
+            $executedDir = (Split-Path -Parent $scanPath) -replace '\\', '/'
             foreach ($inputMatch in $repoInputPattern.Matches($executedText)) {
                 $inputPath = $inputMatch.Groups['path'].Value -replace '/\./', '/'
-                if (Test-Path -LiteralPath (Join-Path $repoRoot $inputPath) -PathType Leaf) { & $noteShardInput $inputPath $suiteStepShard $suiteStepName }
+                if (Test-Path -LiteralPath (Join-Path $repoRoot $inputPath) -PathType Leaf) {
+                    & $noteShardInput $inputPath $suiteStepShard $suiteStepName
+                    if ($inputPath -match '^scripts/tests/[^/]+\.(?:ps1|psm1|mjs)$') { $scanQueue.Enqueue($inputPath) }
+                }
             }
             foreach ($bareMatch in $bareInputPattern.Matches($executedText)) {
                 $bareName = $bareMatch.Groups['name'].Value
-                foreach ($candidate in @("$executedDir/$bareName", "$executedDir/fixtures/$bareName")) {
-                    if (Test-Path -LiteralPath (Join-Path $repoRoot $candidate) -PathType Leaf) { & $noteShardInput $candidate $suiteStepShard $suiteStepName }
+                # Tests reach siblings, fixtures, and the libraries/scripts one level up
+                # (Join-Path $PSScriptRoot '..' 'lib' ...); resolve every form a bare name can take.
+                $bareCandidates = @("$executedDir/$bareName", "$executedDir/fixtures/$bareName")
+                # Only executable inputs are looked up one level up: a doc name such as AGENTS.md is
+                # prose the test talks about, not a file it loads.
+                if ($bareName -match '\.(?:psm1|ps1|mjs|cjs|js|sh|py|json)$') { $bareCandidates += @("scripts/lib/$bareName", "scripts/$bareName", "scripts/dev/$bareName") }
+                foreach ($candidate in $bareCandidates) {
+                    if (Test-Path -LiteralPath (Join-Path $repoRoot $candidate) -PathType Leaf) {
+                        & $noteShardInput $candidate $suiteStepShard $suiteStepName
+                        if ($candidate -match '^scripts/tests/[^/]+\.(?:ps1|psm1|mjs)$') { $scanQueue.Enqueue($candidate) }
+                    }
                 }
+            }
             }
         }
     }

@@ -75,6 +75,8 @@
     "scripts/lib/StructLog.psm1",
     "docs/plans/remote-linux-test-deploy-target.plan.md",
     "scripts/target.local.example.json",
+    "scripts/lib/pr-review-agent.ps1",
+    "scripts/pr-review-agent.ps1",
         "scripts/tests/check-pr-body-evidence.ps1",
         "scripts/lib/self-referential-bootstrap.ps1",
         "scripts/self-referential-bootstrap-ledger.json",
