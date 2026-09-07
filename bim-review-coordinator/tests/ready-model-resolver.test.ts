@@ -43,6 +43,15 @@ describe("ready render resolution without volatile intake", () => {
     expect(await resolveReadyRenderBundle(input)).toEqual(first);
     expect(input.fetchResult).not.toHaveBeenCalled();
   });
+  it("accepts artifacts published under the trusted public origin when the API base is internal", async () => {
+    const { input } = fixture();
+    const internalOnly = await resolveReadyRenderBundle({ ...input, conversionOrigin: "http://host.docker.internal:49101" });
+    expect(internalOnly).toEqual({ ok: false, reason: "artifact_invalid" });
+    const withPublicOrigin = await resolveReadyRenderBundle({ ...input, conversionOrigin: "http://host.docker.internal:49101", publicArtifactOrigin: input.conversionOrigin });
+    expect(withPublicOrigin.ok).toBe(true);
+    const wrongPublicOrigin = await resolveReadyRenderBundle({ ...input, conversionOrigin: "http://host.docker.internal:49101", publicArtifactOrigin: "http://other.invalid:49101" });
+    expect(wrongPublicOrigin).toEqual({ ok: false, reason: "artifact_invalid" });
+  });
   it.each(["tenant", "correlation", "origin", "checksum"])("rejects persisted %s drift without refreshing away the mismatch", async field => {
     const { input } = fixture();
     const first = await resolveReadyRenderBundle(input);

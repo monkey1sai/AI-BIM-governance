@@ -39,6 +39,10 @@ export interface CoordinatorConfig {
   // 公司雲端 control-plane / 落地端 IFC Worker 為外部系統；以下為落地端內網
   // machine-to-machine 設定（可替換 AuthProvider）。
   streamingConversionApiBase: string;
+  // conversion authority 對外發布 artifact URL 的 base。canonical 部署（deploy.ps1）以
+  // PUBLIC_HOST:49101/artifacts 派生，而 dockerized coordinator 的 API base 是
+  // host.docker.internal:49101：兩者 origin 不同，ready-model resolver 必須分開信任。
+  streamingConversionPublicArtifactsUrl: string;
   // host-native conversion service 啟用 internal token 時，coordinator 帶
   // X-Internal-Conversion-Token；optional（default 空＝streaming 未啟用 token），
   // 既有手動建構的 config literal 無需一律補欄位。
@@ -497,6 +501,8 @@ export function loadConfig(overrides: Partial<CoordinatorConfig> = {}): Coordina
     internalApiAuthToken: process.env.INTERNAL_API_AUTH_TOKEN || "dev-internal-token",
     streamingConversionApiBase:
       process.env.STREAMING_CONVERSION_API_BASE || DEFAULT_STREAMING_CONVERSION_API_BASE,
+    streamingConversionPublicArtifactsUrl:
+      process.env.STREAMING_CONVERSION_PUBLIC_ARTIFACTS_URL || `http://${publicHost}:49101/artifacts`,
     streamingConversionInternalToken:
       process.env.STREAMING_CONVERSION_INTERNAL_TOKEN || "",
     externalIntakeAuthProvider: process.env.EXTERNAL_INTAKE_AUTH_PROVIDER || "intranet-dev",

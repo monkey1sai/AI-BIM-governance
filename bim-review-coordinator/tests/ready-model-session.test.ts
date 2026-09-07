@@ -108,6 +108,21 @@ describe("ready model session consumption", () => {
     expect(app.store.get(first.body.review_session_id)?.status).toBe("closed");
     expect(app.store.get(next.body.review_session_id)?.recreated_from_session_id).toBe(first.body.review_session_id);
   });
+  it("replacing a closed session emits the paired recreation lineage events", async () => {
+    const { app } = await fixture();
+    const first = await request(app.app).post(route).send({});
+    expect(first.status).toBe(200);
+    app.store.setStatus(first.body.review_session_id, "closed");
+    const next = await request(app.app).post(route).send({});
+    expect(next.status).toBe(200);
+    expect(next.body.review_session_id).not.toBe(first.body.review_session_id);
+    const sourceEvents = await request(app.app).get(`/api/review-sessions/${first.body.review_session_id}/events`);
+    expect(sourceEvents.body.items.filter((event: { type: string }) => event.type === "sessionRecreated")).toHaveLength(1);
+    const targetEvents = await request(app.app).get(`/api/review-sessions/${next.body.review_session_id}/events`);
+    const created = targetEvents.body.items.filter((event: { type: string }) => event.type === "sessionCreated");
+    expect(created).toHaveLength(1);
+    expect(created[0].payload).toMatchObject({ recreated_from_session_id: first.body.review_session_id });
+  });
   it("rejects unauthorized callers before upstream I/O", async () => {
     const { app } = await fixture({ externalIntakeIpAllowlist: ["10.0.0.0/8"], devAuthToken: "dev-token" });
     expect((await request(app.app).post(route).send({})).status).toBe(403);

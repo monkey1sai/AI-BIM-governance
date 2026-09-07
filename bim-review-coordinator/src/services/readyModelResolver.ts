@@ -6,7 +6,7 @@ import { isIfcReadySessionTraceId } from "./sessionStore.js";
 /** Internal descriptor only. Never serialize this object through public ledger APIs. */
 export type { ReadyRenderBundle };
 
-export function validateCachedRenderBundle(value: unknown, record: ConversionLedgerRecord, tenantId: string, origin: string): ReadyRenderBundle | null {
+export function validateCachedRenderBundle(value: unknown, record: ConversionLedgerRecord, tenantId: string, origins: readonly string[]): ReadyRenderBundle | null {
   const bundle = object(value);
   if (!bundle || bundle.readyModelId !== record.idempotency_key || bundle.conversionJobId !== record.conversion_job_id
     || bundle.correlationId !== record.correlation_id
@@ -15,8 +15,8 @@ export function validateCachedRenderBundle(value: unknown, record: ConversionLed
     || typeof bundle.conversionJobId !== "string" || !/^[A-Za-z0-9_-]+$/.test(bundle.conversionJobId)) return null;
   const modelValue = object(bundle.model);
   const mappingValue = object(bundle.mapping);
-  const model = artifact({ url: modelValue?.url, checksum_sha256: modelValue?.sha256 }, origin, bundle.conversionJobId, "model.usdc");
-  const mapping = artifact({ url: mappingValue?.url, checksum_sha256: mappingValue?.sha256 }, origin, bundle.conversionJobId, "element_mapping.json");
+  const model = artifact({ url: modelValue?.url, checksum_sha256: modelValue?.sha256 }, origins, bundle.conversionJobId, "model.usdc");
+  const mapping = artifact({ url: mappingValue?.url, checksum_sha256: mappingValue?.sha256 }, origins, bundle.conversionJobId, "element_mapping.json");
   if (!model || !mapping || (record.usdc_key !== null && record.usdc_key !== model.url)) return null;
   return { readyModelId: record.idempotency_key, conversionJobId: bundle.conversionJobId, correlationId: bundle.correlationId as string,
     rootTraceId: bundle.rootTraceId, tenantId, projectId: record.project_id,
@@ -32,20 +32,32 @@ function object(value: unknown): Record<string, unknown> | null {
     ? value as Record<string, unknown> : null;
 }
 
-function artifact(value: unknown, origin: string, jobId: string, filename: string): ReadyRenderBundle["model"] | null {
+/** Origins allowed to publish artifact URLs: the internal conversion API origin the coordinator
+ * talks to, plus the separately configured public artifact origin the conversion authority
+ * writes into results (deploy.ps1: PUBLIC_HOST:49101). In the canonical host-Kit deployment the
+ * two differ (host.docker.internal vs. the LAN host), so requiring equality rejected every real
+ * production result. */
+export function trustedArtifactOrigins(input: { conversionOrigin: string; publicArtifactOrigin?: string }): string[] {
+  return [input.conversionOrigin, input.publicArtifactOrigin].filter((value): value is string => typeof value === "string" && value.length > 0);
+}
+
+function artifact(value: unknown, origins: readonly string[], jobId: string, filename: string): ReadyRenderBundle["model"] | null {
   const entry = object(value);
   if (!entry || typeof entry.url !== "string" || typeof entry.checksum_sha256 !== "string"
     || !/^[a-fA-F0-9]{64}$/.test(entry.checksum_sha256)) return null;
-  try {
-    const configured = new URL(origin);
-    const url = new URL(entry.url);
-    const expectedPath = `/artifacts/${jobId}/${filename}`;
-    if (!["http:", "https:"].includes(configured.protocol) || configured.username || configured.password
-      || url.origin !== configured.origin || url.username || url.password || url.search || url.hash
-      || url.pathname !== expectedPath
-      || entry.url !== `${url.origin}${expectedPath}`) return null;
-    return { url: url.href, sha256: entry.checksum_sha256.toLowerCase() };
-  } catch { return null; }
+  const expectedPath = `/artifacts/${jobId}/${filename}`;
+  let url: URL;
+  try { url = new URL(entry.url); } catch { return null; }
+  if (url.username || url.password || url.search || url.hash || url.pathname !== expectedPath
+    || entry.url !== `${url.origin}${expectedPath}`) return null;
+  const trusted = origins.some((origin) => {
+    try {
+      const configured = new URL(origin);
+      return ["http:", "https:"].includes(configured.protocol) && !configured.username && !configured.password
+        && configured.origin === url.origin;
+    } catch { return false; }
+  });
+  return trusted ? { url: url.href, sha256: entry.checksum_sha256.toLowerCase() } : null;
 }
 
 /** Read-only resolution: no intake store, conversion dispatch, callback, or session side effects.
@@ -56,6 +68,8 @@ export async function resolveReadyRenderBundle(input: {
   record: ConversionLedgerRecord;
   configuredTenantId: string;
   conversionOrigin: string;
+  /** Public origin the conversion authority publishes artifact URLs under (may differ from conversionOrigin). */
+  publicArtifactOrigin?: string;
   fetchResult: (jobId: string) => Promise<StreamingConversionResult>;
 }): Promise<ReadyRenderResolution> {
   const record = structuredClone(input.record);
@@ -65,7 +79,7 @@ export async function resolveReadyRenderBundle(input: {
     || !record.correlation_id || !record.project_id || !record.external_model_version_id
     || !input.configuredTenantId.trim()) return { ok: false, reason: "record_not_ready" };
   if (record.ready_render_bundle !== undefined) {
-    const bundle = validateCachedRenderBundle(record.ready_render_bundle, record, input.configuredTenantId, input.conversionOrigin);
+    const bundle = validateCachedRenderBundle(record.ready_render_bundle, record, input.configuredTenantId, trustedArtifactOrigins(input));
     return bundle ? { ok: true, bundle } : { ok: false, reason: "artifact_invalid" };
   }
   let result: StreamingConversionResult;
@@ -86,8 +100,9 @@ export async function resolveReadyRenderBundle(input: {
     return { ok: false, reason: "result_identity_mismatch" };
   }
   const artifacts = object(raw.artifacts);
-  const model = artifact(artifacts?.model_usdc, input.conversionOrigin, jobId, "model.usdc");
-  const mapping = artifact(artifacts?.element_mapping, input.conversionOrigin, jobId, "element_mapping.json");
+  const origins = trustedArtifactOrigins(input);
+  const model = artifact(artifacts?.model_usdc, origins, jobId, "model.usdc");
+  const mapping = artifact(artifacts?.element_mapping, origins, jobId, "element_mapping.json");
   if (!model || !mapping || raw.usdc_url !== model.url || raw.mapping_url !== mapping.url
     || result.usdc_ref !== model.url || result.element_mapping_ref !== mapping.url
     || (record.usdc_key !== null && record.usdc_key !== model.url)) {

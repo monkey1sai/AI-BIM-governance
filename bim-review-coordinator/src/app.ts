@@ -3195,6 +3195,11 @@ export function createCoordinatorApp(
   // simultaneous callers from allocating duplicate sessions; persisted sessions recover
   // the session-written/response-lost window without replaying conversion ingestion.
   const readySessionRequests = new Map<string, Promise<{ status: number; body: unknown }>>();
+  // Public artifact origin the conversion authority writes into results (deploy.ps1 derives it from
+  // PUBLIC_HOST); trusted separately from the internal API origin the coordinator probes through.
+  const readyModelPublicArtifactOrigin = (() => {
+    try { return new URL(config.streamingConversionPublicArtifactsUrl).origin; } catch { return undefined; }
+  })();
   app.post("/api/conversion/records/:readyModelId/review-session", async (request, response, next) => {
     if (rejectIfConversionControlUnauthorized(request, response)) return;
     try {
@@ -3210,6 +3215,7 @@ export function createCoordinatorApp(
           if (!record) return { status: 404, body: { error_code: "ready_model_not_found" } };
           const resolved = await resolveReadyRenderBundle({ record, configuredTenantId: config.minioWatchTenantId,
             conversionOrigin: config.streamingConversionApiBase,
+            publicArtifactOrigin: readyModelPublicArtifactOrigin,
             fetchResult: (jobId) => streamingConversionClient.fetchConversionResult(jobId) });
           if (!resolved.ok) return { status: 409, body: { error_code: resolved.reason } };
           const bundle = resolved.bundle;
@@ -3941,11 +3947,19 @@ export function createCoordinatorApp(
     });
     // lifecycle audit event parity（與 explicit /api/review-sessions caller
     // 路徑等價；Risk mitigation）。
-    eventLog.appendServerOwned(session.session_id, "sessionCreated", {
-      project_id: session.project_id,
-      model_version_id: session.model_version_id,
-      review_request_id: session.review_request_id,
-    });
+    const recreationSource = source.recreatedFromSessionId ? store.get(source.recreatedFromSessionId) : null;
+    if (recreationSource) {
+      // #800：ready-model 對已 closed session 的替換就是 recreation；沿用 explicit recreation
+      // 路徑的成對 lineage 事件（來源 sessionRecreated＋帶 recreated_from 的 sessionCreated），
+      // 不再只 append 一個沒有 lineage 的 sessionCreated。
+      ensureRecreationEvents(recreationSource, session);
+    } else {
+      eventLog.appendServerOwned(session.session_id, "sessionCreated", {
+        project_id: session.project_id,
+        model_version_id: session.model_version_id,
+        review_request_id: session.review_request_id,
+      });
+    }
     if (session.status === "active") {
       eventLog.appendServerOwned(session.session_id, "sessionActive", {
         kit_instance_bindings: session.kit_instance_bindings.map((binding) => binding.kit_instance_id),

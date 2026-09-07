@@ -47,6 +47,7 @@ const defaultConfig: CoordinatorConfig = {
   corsOrigins: ["http://127.0.0.1:5173"],
   internalApiAuthToken: "dev-internal-token",
   streamingConversionApiBase: "http://127.0.0.1:49101",
+  streamingConversionPublicArtifactsUrl: "http://127.0.0.1:49101/artifacts",
   externalIntakeAuthProvider: "intranet-dev",
   externalIntakeWebhookSecret: "dev-webhook-secret",
   externalIntakeIpAllowlist: ["127.0.0.1", "::1"],
