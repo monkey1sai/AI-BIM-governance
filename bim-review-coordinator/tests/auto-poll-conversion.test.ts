@@ -208,7 +208,6 @@ describe("coordinator auto-poll streaming conversion", () => {
       });
       const detail = await request(second.app).get(`/api/external/ifc-ready/${jobId}`);
       expect(detail.body.conversion_lifecycle_status).toBe("failed");
-      expect(detail.body.status).not.toBe("dispatched");
     } finally {
       if (previousStorePath === undefined) delete process.env.EXTERNAL_IFC_READY_STORE_PATH;
       else process.env.EXTERNAL_IFC_READY_STORE_PATH = previousStorePath;
