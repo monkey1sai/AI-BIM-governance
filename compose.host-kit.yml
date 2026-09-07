@@ -13,6 +13,7 @@ services:
       CORS_ORIGINS: "${CORS_ORIGINS:-http://127.0.0.1:5173,http://localhost:5173,http://${PUBLIC_HOST:-127.0.0.1}:${VIEWER_PORT:-5173}}"
       STREAMING_CONVERSION_API_BASE: ${HOST_CONVERSION_API_BASE:-http://host.docker.internal:49101}
       CONVERSION_API_BASE: ${HOST_CONVERSION_API_BASE:-http://host.docker.internal:49101}
+      STREAMING_CONVERSION_PUBLIC_ARTIFACTS_URL: ${STREAMING_CONVERSION_PUBLIC_ARTIFACTS_URL:-http://${PUBLIC_HOST:-127.0.0.1}:49101/artifacts}
       # governance-service 永遠 host-native（CPU ifcopenshell，:49102），不在任何 compose 內。
       # dockerized coordinator 的 governance proxy 必須走 host.docker.internal 連回；
       # 否則 governanceApiBase() fallback 到 container loopback 127.0.0.1:49102 → 502 Bad Gateway。
