@@ -2575,20 +2575,23 @@
       "id": "parallel-delivery-fabric",
       "status": "active",
       "owner": "parallel-delivery-fabric",
-      "current_slice": "phase0-governance: canonical activation boundary remains shadow-only and does not represent live delivery",
+      "current_slice": "phase0-governance: canonical activation boundary remains shadow-only; spec-to-done Fabric binding slice folded in 2026-09-07 (binding contract, validator, state integration and adapter parity implemented; final verification task open)",
       "blocked_by": [],
-      "last_verified": "2026-08-28T00:00:00Z",
+      "last_verified": "2026-09-07T00:00:00Z",
       "task_ledger": {
-        "completed": 3,
-        "total": 5
+        "completed": 16,
+        "total": 19
       },
       "evidence_refs": [
         "openspec/changes/parallel-delivery-fabric/proposal.md",
         "openspec/changes/parallel-delivery-fabric/tasks.md",
         "docs/superpowers/specs/2026-08-28-parallel-delivery-fabric-design.md",
-        "scripts/tests/test-parallel-delivery-fabric-phase0.mjs"
+        "scripts/tests/test-parallel-delivery-fabric-phase0.mjs",
+        "openspec/changes/parallel-delivery-fabric/specs/spec-to-done-parallel-delivery-binding/spec.md",
+        "scripts/tests/spec-to-done-fabric-binding/test-binding.mjs",
+        "tests/test_spec_to_done_fabric_binding_schema.py"
       ],
-      "subject_commit": "24aa54d5aedba8a5f0774a095215b9f26d21e198",
+      "subject_commit": "b0874a599490f9cc89b5349a86512effde442ea7",
       "subject_binding": "introduction",
       "archive_debt": null
     }

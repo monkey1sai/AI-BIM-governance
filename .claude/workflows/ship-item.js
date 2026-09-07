@@ -62,6 +62,7 @@ const SHIP_HELD_REASON_VALUES = [
   'evidence_stale',
   'evidence_too_large_for_arbiter',
   'external_blocked',
+  'fabric_resume_authority_unavailable',
   'final_gate_not_clean',
   'final_gate_read_failed',
   'host_env_blocked',
