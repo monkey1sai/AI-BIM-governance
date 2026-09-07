@@ -229,6 +229,12 @@ export interface IfcReadyIntakeJob {
   idempotent_replay: boolean;
   correlation_id: string;
   idempotency_key: string;
+  /**
+   * #809：intake 來源。`minio_watch` 只在 coordinator 內的 watcher 於 self-POST 前登記過
+   * (idempotency_key, correlation_id) 且 route 消費到時才標（WatcherIntakeRegistry）；外部
+   * IFC worker 即使送 `mw_` 形狀的 key 也是 `external`。缺欄位＝#809 之前的持久 job，視為 external。
+   */
+  intake_source?: "minio_watch" | "external";
   tenant_id: string;
   project_id: string;
   project_display_name?: string | null;

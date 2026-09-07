@@ -207,26 +207,29 @@ export function canonicalArtifactProbeUrl(
     return null;
   }
   if (url.username || url.password) return null;
+  // #809 第 8 項：不論 URL 落在哪個 origin，只有 canonical conversion artifact path（無 query／hash）
+  // 才可探測；exact-origin 與 legacy loopback 捷徑不再原樣放行任意 path，避免 health probe
+  // 被導向 conversion service 的無關端點。
+  const canonical = !url.search && !url.hash && isConversionArtifactPath(url.pathname);
   const configuredOrigin = normalizedOrigin(configuredConversionApiOrigin);
-  if (configuredOrigin && url.origin === configuredOrigin) return url;
+  if (configuredOrigin && url.origin === configuredOrigin) return canonical ? url : null;
   // #809：已驗證為 authority 發布 origin 的 canonical artifact URL，不論 protocol／port／loopback，
   // 都改寫到 internal API origin 探測（public origin 是給 Kit／瀏覽器用的，容器內未必可達；
   // 例如 public=127.0.0.1:49101 會讓容器 probe 到自己）。只接受 conversion artifact path。
   const publicOrigin = options.trustedPublicOrigin ? normalizedOrigin(options.trustedPublicOrigin) : null;
   if (publicOrigin && configuredOrigin && url.origin === publicOrigin) {
-    if (url.search || url.hash || !isConversionArtifactPath(url.pathname)) return null;
-    return new URL(url.pathname, configuredOrigin);
+    return canonical ? new URL(url.pathname, configuredOrigin) : null;
   }
   if (hasLoopbackHostname(url)) {
     if (options.allowAlternateLoopback === false) return null;
-    if (isLegacyDirectLoopbackHttpUrl(url)) return url;
+    if (isLegacyDirectLoopbackHttpUrl(url)) return canonical ? url : null;
   }
 
   const configuredUrl = normalizedOriginUrl(configuredConversionApiOrigin);
   if (!configuredUrl) return null;
   if (url.protocol !== configuredUrl.protocol) return null;
   if (effectivePort(url) !== effectivePort(configuredUrl)) return null;
-  if (!isConversionArtifactPath(url.pathname)) return null;
+  if (!canonical) return null;
 
   return new URL(url.pathname, configuredUrl.origin);
 }

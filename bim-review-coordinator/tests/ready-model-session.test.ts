@@ -20,6 +20,8 @@ let healthy = true;
 let wrongIdentity = false;
 // Root trace the fixture authority echoes back; the watcher-ingest test rebinds it to the real ifc-ready job id.
 let traceId = "ifcready_fixture";
+// #809 第 6 項：讓 authority 結果改發 internal-only origin 的 artifact URL。
+let foreignArtifacts = false;
 
 async function stopApp() {
   if (!active) return;
@@ -37,7 +39,7 @@ afterEach(async () => {
 
 async function fixture(overrides: Partial<CoordinatorConfig> = {}) {
   root = fs.mkdtempSync(path.join(os.tmpdir(), "ready-model-session-"));
-  reads = 0; healthy = true; wrongIdentity = false; traceId = "ifcready_fixture";
+  reads = 0; healthy = true; wrongIdentity = false; traceId = "ifcready_fixture"; foreignArtifacts = false;
   let origin = "";
   upstream = http.createServer((req, res) => {
     if (req.method === "POST" && req.url === "/api/conversions/ifc-to-usdc") {
@@ -45,8 +47,9 @@ async function fixture(overrides: Partial<CoordinatorConfig> = {}) {
       res.end(JSON.stringify({ conversion_job_id: job, status: "queued", authority: "bim-streaming-server", correlation_id: "minio-watch-test" }));
     } else if (req.url === `/api/conversions/${job}/result`) {
       reads++;
-      const model = `${origin}/artifacts/${job}/model.usdc`;
-      const mapping = `${origin}/artifacts/${job}/element_mapping.json`;
+      const publisher = foreignArtifacts ? "http://host.docker.internal:49101" : origin;
+      const model = `${publisher}/artifacts/${job}/model.usdc`;
+      const mapping = `${publisher}/artifacts/${job}/element_mapping.json`;
       res.setHeader("Content-Type", "application/json");
       res.end(JSON.stringify({
         conversion_job_id: job, authority: "bim-streaming-server", ready: true, status: "succeeded",
@@ -122,6 +125,8 @@ describe("ready model session consumption", () => {
   });
   it("reuses the session the watcher terminal-ingestion path already created for the same ready model", async () => {
     const { app } = await fixture();
+    // coordinator 內 watcher 在 self-POST 前登記 provenance（WatcherIntakeRegistry）。
+    app.watcherIntakeRegistry.expect(id, "minio-watch-test");
     const intake = await request(app.app).post("/api/external/ifc-ready")
       .set({ "X-Webhook-Secret": "dev-webhook-secret", "X-Correlation-Id": "minio-watch-test", "X-Idempotency-Key": id })
       .send({ event: "ifc_ready", event_id: "evt_809", tenant_id: "tenant-test", project_id: "project-test",
@@ -144,6 +149,8 @@ describe("ready model session consumption", () => {
   });
   it("backfills a missing quality summary when the ready-record route reuses the watcher session", async () => {
     const { app } = await fixture();
+    // coordinator 內 watcher 在 self-POST 前登記 provenance（WatcherIntakeRegistry）。
+    app.watcherIntakeRegistry.expect(id, "minio-watch-test");
     const intake = await request(app.app).post("/api/external/ifc-ready")
       .set({ "X-Webhook-Secret": "dev-webhook-secret", "X-Correlation-Id": "minio-watch-test", "X-Idempotency-Key": id })
       .send({ event: "ifc_ready", event_id: "evt_810", tenant_id: "tenant-test", project_id: "project-test",
@@ -165,10 +172,11 @@ describe("ready model session consumption", () => {
     const sc = await request(app.app).get(`/api/review-sessions/${autoSessionId}/stream-config`);
     expect(sc.body.quality_metrics_summary).toMatchObject({ coverage_status: "pass" });
   });
-  it("does not stamp a ready_model_id on non-watcher intake sessions", async () => {
+  it("does not stamp a ready_model_id on an external intake even when it supplies an mw_-shaped key", async () => {
     const { app } = await fixture();
+    // 沒有 in-process 登記：外部 worker 即使選用 mw_ 形狀的 key，也不是 watcher provenance。
     const intake = await request(app.app).post("/api/external/ifc-ready")
-      .set({ "X-Webhook-Secret": "dev-webhook-secret", "X-Correlation-Id": "minio-watch-test", "X-Idempotency-Key": "idem_external_809" })
+      .set({ "X-Webhook-Secret": "dev-webhook-secret", "X-Correlation-Id": "minio-watch-test", "X-Idempotency-Key": id })
       .send({ event: "ifc_ready", event_id: "evt_809b", tenant_id: "tenant-test", project_id: "project-test",
         external_model_version_id: "v1", project_display_name: "test", model_category: "architecture",
         external_conversion_task_id: "task_809b",
@@ -179,7 +187,32 @@ describe("ready model session consumption", () => {
     const ingest = await request(app.app).post(`/api/internal/conversions/${job}/ingest`)
       .set({ "X-Internal-Token": "dev-internal-token" }).send({});
     expect(ingest.status).toBe(202);
+    expect(app.externalIfcReadyStore.get(intake.body.ifc_ready_job_id)?.intake_source).toBe("external");
     expect(app.store.get(ingest.body.session.session_id)?.ready_model_id).toBeUndefined();
+    // ready-record route 因此看不到這顆 session，會另建一顆綁定 ready_model_id 的 session。
+    const viaRoute = await request(app.app).post(route).send({});
+    expect(viaRoute.status).toBe(200);
+    expect(viaRoute.body.review_session_id).not.toBe(ingest.body.session.session_id);
+  });
+  it("refuses to auto-create a session when the authority publishes artifacts under an internal-only origin", async () => {
+    const { app } = await fixture();
+    foreignArtifacts = true;
+    app.watcherIntakeRegistry.expect(id, "minio-watch-test");
+    const intake = await request(app.app).post("/api/external/ifc-ready")
+      .set({ "X-Webhook-Secret": "dev-webhook-secret", "X-Correlation-Id": "minio-watch-test", "X-Idempotency-Key": id })
+      .send({ event: "ifc_ready", event_id: "evt_809f", tenant_id: "tenant-test", project_id: "project-test",
+        external_model_version_id: "v1", project_display_name: "test", model_category: "architecture",
+        external_conversion_task_id: "task_809f",
+        source_ifc: { ref: "minio://bucket/tenant-test/project-test/v1/model.ifc", etag: `sha256:${"0".repeat(64)}`, filename: "model.ifc", format: "ifc" },
+        requested_outputs: ["usdc", "element_mapping"], callback_url: "https://cloud.example/callbacks" });
+    expect(intake.status).toBe(202);
+    traceId = intake.body.ifc_ready_job_id;
+    const ingest = await request(app.app).post(`/api/internal/conversions/${job}/ingest`)
+      .set({ "X-Internal-Token": "dev-internal-token" }).send({});
+    expect(ingest.status).toBe(202);
+    expect(ingest.body.session).toBeNull();
+    expect(ingest.body.session_reason).toBe("artifact_origin_untrusted");
+    expect(app.store.list()).toHaveLength(0);
   });
   it("replacing a closed session emits the paired recreation lineage events", async () => {
     const { app } = await fixture();
