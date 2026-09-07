@@ -732,7 +732,7 @@ export class IfcReadyConversionPipeline<TTerminalObserverResult = void> {
         this.config.conversionPollEnabled &&
         !this.pollerRegistry.has(dispatch.conversion_job_id)
       ) {
-        this.schedulePollerForConversion(dispatch.conversion_job_id, rootTraceId);
+        this.schedulePollerForConversion(dispatch.conversion_job_id, rootTraceId, pending.correlationId);
       }
     } catch (dispatchError) {
       // 失敗保留 pending 脈絡供 retry requeue。
@@ -757,9 +757,13 @@ export class IfcReadyConversionPipeline<TTerminalObserverResult = void> {
     const resumed: string[] = [];
     for (const job of this.store.list()) {
       if (job.status !== "dispatched") continue;
+      // recordConversionOutcome() 只改 conversion_status（ready/failed），status 仍是
+      // dispatched：這些已 ingest 過的 job 不可再輪詢，否則每次重啟都會再產一筆 outbox，
+      // 或在上游結果被清掉後以 poll_timeout 把 ready 蓋成 failed。
+      if (job.conversion_status === "ready" || job.conversion_status === "failed") continue;
       const conversionJobId = job.conversion_job_id;
       if (!conversionJobId || this.pollerRegistry.has(conversionJobId)) continue;
-      this.schedulePollerForConversion(conversionJobId, job.ifc_ready_job_id);
+      this.schedulePollerForConversion(conversionJobId, job.ifc_ready_job_id, job.correlation_id);
       resumed.push(conversionJobId);
       this.structLog
         ?.withTraceId(job.ifc_ready_job_id)
@@ -776,14 +780,19 @@ export class IfcReadyConversionPipeline<TTerminalObserverResult = void> {
   private schedulePollerForConversion(
     conversionJobId: string,
     rootTraceId: string,
+    correlationId: string,
   ): void {
     const handle = this.streamingClient.pollConversionResult(conversionJobId, {
       intervalMs: this.config.conversionPollIntervalSeconds * 1000,
       maxAttempts: this.config.conversionPollMaxAttempts,
       onTerminal: async (result) => {
         try {
+          // 合成的 poll_timeout 結果沒有 correlation_id，ingest 會以 422 拒絕而讓 job 永遠停在
+          // dispatched；poller 是為這個 job 開的，把已知的 correlation 綁回去，讓 timeout 走
+          // 同一條 failed／可重試路徑。
+          const boundResult = result.correlation_id ? result : { ...result, correlation_id: correlationId };
           await this.ingestStreamingResult(conversionJobId, {
-            result,
+            result: boundResult,
             source: "auto-poll",
           });
         } catch (err) {
