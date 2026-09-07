@@ -102,6 +102,29 @@ describe("canonicalArtifactProbeUrl", () => {
   });
 });
 
+describe("canonicalArtifactProbeUrl with a trusted public artifact origin", () => {
+  it("remaps a public loopback artifact URL onto the internal API origin instead of probing itself", () => {
+    expect(canonicalArtifactProbeUrl(
+      "http://127.0.0.1:49101/artifacts/job-1/model.usdc",
+      "http://host.docker.internal:49101",
+      { allowAlternateLoopback: false, trustedPublicOrigin: "http://127.0.0.1:49101" },
+    )?.href).toBe("http://host.docker.internal:49101/artifacts/job-1/model.usdc");
+  });
+  it("remaps an HTTPS reverse-proxy public URL whose protocol and port differ from the internal origin", () => {
+    expect(canonicalArtifactProbeUrl(
+      "https://bim.example/artifacts/job-1/element_mapping.json",
+      "http://streaming-server:49101",
+      { trustedPublicOrigin: "https://bim.example" },
+    )?.href).toBe("http://streaming-server:49101/artifacts/job-1/element_mapping.json");
+  });
+  it("still rejects non-artifact paths, query strings and other origins under the public origin", () => {
+    const options = { allowAlternateLoopback: false, trustedPublicOrigin: "https://bim.example" };
+    expect(canonicalArtifactProbeUrl("https://bim.example/api/conversions", "http://streaming-server:49101", options)).toBeNull();
+    expect(canonicalArtifactProbeUrl("https://bim.example/artifacts/job-1/model.usdc?x=1", "http://streaming-server:49101", options)).toBeNull();
+    expect(canonicalArtifactProbeUrl("https://other.example/artifacts/job-1/model.usdc", "http://streaming-server:49101", options)).toBeNull();
+  });
+});
+
 describe("probeArtifactHealth", () => {
   it("source_ifc_exists is true when host_local_path is a file", async () => {
     const { edgeRoot, storageRoot } = makeEdgeRoot();
@@ -389,6 +412,37 @@ describe("probeArtifactHealth", () => {
       "HEAD /artifacts/stream_conv_demo_001/element_mapping.json",
       "HEAD /artifacts/stream_conv_demo_001/model.usdc",
     ]);
+  });
+
+  it("public reverse-proxy artifact URLs are probed through the internal origin when the public origin is trusted", async () => {
+    const { edgeRoot } = makeEdgeRoot();
+    const seen: Array<{ host: string | undefined; url: string | undefined }> = [];
+    const server = await startArtifactServer((req, res) => {
+      seen.push({ host: req.headers.host, url: req.url });
+      res.writeHead(200);
+      res.end();
+    });
+    const address = new URL(server.origin);
+    const snapshot = await probeArtifactHealth({
+      host_local_path: null,
+      model_artifact_url: "https://bim.example/artifacts/stream_conv_demo_001/model.usdc",
+      mapping_url: "https://bim.example/artifacts/stream_conv_demo_001/element_mapping.json",
+      edge_runtime_data_root: edgeRoot,
+      configured_conversion_api_origin: server.origin,
+      trusted_public_artifact_origin: "https://bim.example",
+    });
+    expect(snapshot.model_usdc_reachable).toBe(true);
+    expect(snapshot.mapping_reachable).toBe(true);
+    expect(seen.every((hit) => hit.host === address.host)).toBe(true);
+    const untrusted = await probeArtifactHealth({
+      host_local_path: null,
+      model_artifact_url: "https://bim.example/artifacts/stream_conv_demo_001/model.usdc",
+      mapping_url: null,
+      edge_runtime_data_root: edgeRoot,
+      configured_conversion_api_origin: server.origin,
+    });
+    expect(untrusted.model_usdc_reachable).toBeNull();
+    expect(untrusted.failure_details?.model_usdc).toBe("url_not_allowed");
   });
 
   it("model_usdc_reachable follows HEAD 405 with GET range", async () => {

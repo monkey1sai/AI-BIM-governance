@@ -87,6 +87,20 @@ describe("ready render resolution without volatile intake", () => {
     const wrongPublicOrigin = await resolveReadyRenderBundle({ ...input, conversionOrigin: "http://host.docker.internal:49101", publicArtifactOrigin: "http://other.invalid:49101" });
     expect(wrongPublicOrigin).toEqual({ ok: false, reason: "artifact_invalid" });
   });
+  it("requires the public origin once it is configured, even when the result matches the internal origin", async () => {
+    const { input } = fixture();
+    // Fixture artifacts are published under input.conversionOrigin; configuring a different public
+    // origin makes that internal-origin result stale/misconfigured rather than acceptable.
+    const internalPublished = await resolveReadyRenderBundle({ ...input, publicArtifactOrigin: "http://192.168.10.105:49101" });
+    expect(internalPublished).toEqual({ ok: false, reason: "artifact_invalid" });
+    const first = await resolveReadyRenderBundle(input);
+    if (!first.ok) throw new Error("Fixture failed");
+    input.record.ready_render_bundle = first.bundle;
+    input.fetchResult.mockClear();
+    const cachedInternal = await resolveReadyRenderBundle({ ...input, publicArtifactOrigin: "http://192.168.10.105:49101" });
+    expect(cachedInternal).toEqual({ ok: false, reason: "artifact_invalid" });
+    expect(input.fetchResult).not.toHaveBeenCalled();
+  });
   it.each(["tenant", "correlation", "origin", "checksum"])("rejects persisted %s drift without refreshing away the mismatch", async field => {
     const { input } = fixture();
     const first = await resolveReadyRenderBundle(input);

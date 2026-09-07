@@ -75,7 +75,8 @@ async function fixture(overrides: Partial<CoordinatorConfig> = {}) {
     sessionStoreDir: path.join(root, "sessions"), eventLogDir: path.join(root, "events"),
     callbackOutboxStorePath: path.join(root, "outbox.json"), conversionLedgerStorePath: ledgerPath,
     minioWatchEnabled: false, minioWatchTenantId: "tenant-test", conversionPollEnabled: false,
-    streamingConversionApiBase: origin, externalIntakeIpAllowlist: ["127.0.0.1", "::1"],
+    streamingConversionApiBase: origin, streamingConversionPublicArtifactsUrl: `${origin}/artifacts`,
+    externalIntakeIpAllowlist: ["127.0.0.1", "::1"],
     kitInstanceEndpoints: [{ id: "kit_fixture", signalingServer: "127.0.0.1", signalingPort: 49100,
       mediaServer: "127.0.0.1", mediaPort: 47998 }], ...overrides,
   };

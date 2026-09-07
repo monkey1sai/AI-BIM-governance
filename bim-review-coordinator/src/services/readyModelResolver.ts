@@ -56,13 +56,17 @@ function object(value: unknown): Record<string, unknown> | null {
     ? value as Record<string, unknown> : null;
 }
 
-/** Origins allowed to publish artifact URLs: the internal conversion API origin the coordinator
- * talks to, plus the separately configured public artifact origin the conversion authority
- * writes into results (deploy.ps1: PUBLIC_HOST:49101). In the canonical host-Kit deployment the
- * two differ (host.docker.internal vs. the LAN host), so requiring equality rejected every real
- * production result. */
+/** The single origin the conversion authority is expected to publish artifact URLs under.
+ * When a public artifact origin is configured (deploy.ps1: PUBLIC_HOST:49101) it is the only
+ * acceptable publisher: results carrying the coordinator's internal API origin instead
+ * (host.docker.internal / streaming-server) are stale or misconfigured — the internal probe
+ * would pass, but host-native Kit and the browser cannot resolve those addresses, and the URL is
+ * stored verbatim in the session binding. Without a public origin the internal origin is the
+ * publisher (single-host dev). The internal origin is used only for the remapped health probe. */
 export function trustedArtifactOrigins(input: { conversionOrigin: string; publicArtifactOrigin?: string }): string[] {
-  return [input.conversionOrigin, input.publicArtifactOrigin].filter((value): value is string => typeof value === "string" && value.length > 0);
+  const publisher = typeof input.publicArtifactOrigin === "string" && input.publicArtifactOrigin.length > 0
+    ? input.publicArtifactOrigin : input.conversionOrigin;
+  return publisher.length > 0 ? [publisher] : [];
 }
 
 function artifact(value: unknown, origins: readonly string[], jobId: string, filename: string): ReadyRenderBundle["model"] | null {
