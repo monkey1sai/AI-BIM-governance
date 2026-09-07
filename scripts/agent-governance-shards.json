@@ -76,6 +76,7 @@
     "scripts/lib/StructLog.psm1",
     "docs/plans/remote-linux-test-deploy-target.plan.md",
     "scripts/target.local.example.json",
+    ".github/PULL_REQUEST_TEMPLATE.md",
     "scripts/lib/pr-review-agent.ps1",
     "scripts/pr-review-agent.ps1",
         "scripts/tests/check-pr-body-evidence.ps1",

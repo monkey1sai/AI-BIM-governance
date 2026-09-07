@@ -536,7 +536,9 @@ try {
     $bareInputPattern = [regex]'[''"](?<name>[A-Za-z0-9_.-]+\.(?:psm1|ps1|mjs|cjs|json|js|sh|py|yaml|yml|md|html))[''"]'
     # Tests that enumerate repository paths as ledger DATA rather than reading them as inputs.
     # Their literals describe the repo; changing one of those files does not change what the
-    # test exercises, so they are audited only for the script the workflow runs.
+    # test exercises, so they are audited only for the script the workflow runs. The few real
+    # inputs such a test does load (e.g. .github/PULL_REQUEST_TEMPLATE.md, whose bare yes/no rows
+    # test-self-referential-bootstrap.ps1 validates) are registered explicitly in the shard surface.
     $shardAuditLedgerTests = @('scripts/tests/test-self-referential-bootstrap.ps1')
     $shardAuditPaths = [ordered]@{}
     $noteShardInput = {
