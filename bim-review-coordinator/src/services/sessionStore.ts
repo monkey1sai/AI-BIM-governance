@@ -79,7 +79,30 @@ export class SessionStore {
     if (!isSafeSessionId(sessionId)) return null;
     const file = this.filePath(sessionId);
     if (!fs.existsSync(file)) return null;
+    // 單筆讀取維持 fail-closed（SessionTraceResolver 依賴 parse error 浮現）；
+    // 只有 list()（啟動掃描）會隔離壞檔，見 readSessionFile。
     return JSON.parse(fs.readFileSync(file, "utf8")) as ReviewSession;
+  }
+
+  /**
+   * #804：session 目錄改落掛載卷後，寫入中被 kill 的半截 JSON 會跨 recreate 存活；若
+   * 啟動時的 list() 直接 JSON.parse 會讓每次重啟都在同一個檔案上崩潰、無法自癒。壞檔在此
+   * 隔離成 `<file>.corrupt-<ts>` 並視為不存在（其餘 session 照常服務），寫入端則以 tmp+rename
+   * 原子替換，讓這種半截檔不再產生。
+   */
+  private readSessionFile(file: string): ReviewSession | null {
+    if (!fs.existsSync(file)) return null;
+    try {
+      return JSON.parse(fs.readFileSync(file, "utf8")) as ReviewSession;
+    } catch {
+      const quarantine = `${file}.corrupt-${Date.now()}`;
+      try {
+        fs.renameSync(file, quarantine);
+      } catch {
+        // 無法搬走就留在原地；下次讀取仍回 null，不讓一個壞檔拖垮整個 store。
+      }
+      return null;
+    }
   }
 
   list(): ReviewSession[] {
@@ -89,7 +112,7 @@ export class SessionStore {
       .filter((entry) => entry.endsWith(".json"))
       .map((entry) => entry.slice(0, -".json".length))
       .filter(isSafeSessionId)
-      .map((sessionId) => this.get(sessionId))
+      .map((sessionId) => this.readSessionFile(this.filePath(sessionId)))
       .filter((session): session is ReviewSession => session !== null)
       .sort((left, right) => Date.parse(right.updated_at) - Date.parse(left.updated_at));
   }
@@ -118,9 +141,7 @@ export class SessionStore {
   private persistSession(session: ReviewSession, allowLegacyTraceBackfill: boolean): void {
     assertSafeSessionId(session.session_id);
     const file = this.filePath(session.session_id);
-    const existing = fs.existsSync(file)
-      ? (JSON.parse(fs.readFileSync(file, "utf8")) as ReviewSession)
-      : null;
+    const existing = this.readSessionFile(file);
     if (existing?.trace_id !== undefined) {
       if (session.trace_id !== existing.trace_id) {
         throw new Error("Review session trace_id is immutable.");
@@ -135,7 +156,10 @@ export class SessionStore {
       throw new Error("Invalid review session trace_id.");
     }
     session.updated_at = nowIso();
-    fs.writeFileSync(file, JSON.stringify(session, null, 2), "utf8");
+    // 原子替換：先寫 tmp 再 rename，容器在寫入中被 kill 也不會留下半截目標檔。
+    const tmp = `${file}.${process.pid}.tmp`;
+    fs.writeFileSync(tmp, JSON.stringify(session, null, 2), "utf8");
+    fs.renameSync(tmp, file);
   }
 
   join(sessionId: string, participant: Pick<ReviewParticipant, "user_id" | "display_name">): ReviewSession | null {

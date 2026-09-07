@@ -364,6 +364,160 @@ describe("conversion control routes — retry", () => {
     }
   });
 
+  it("#804 續：dropped_on_restart 且已下載 IFC 時，用同一組 idempotency_key re-POST 會就地恢復（不再永久停滯）", async () => {
+    // accept() 的 replay 短路原本對任何既有 job 一律原樣回傳；上游用同一組
+    // idempotency_key/correlation_id 自然重送（dispatch_error 訊息字面上承諾的復原路徑）
+    // 因此永遠只拿回同一顆 dropped_on_restart 死 job。這裡驗證 accept() 改走 retryDispatch()
+    // 就地恢復後，re-POST 真的能讓 job 重新排隊派工，而非停在原地。
+    const storeRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bim-review-coordinator-accept-resume-"));
+    const storePath = path.join(storeRoot, "external-ifc-ready.json");
+    const previousStorePath = process.env.EXTERNAL_IFC_READY_STORE_PATH;
+    process.env.EXTERNAL_IFC_READY_STORE_PATH = storePath;
+    try {
+      const stub = await startControllableStreamingStub();
+      // 第一個 coordinator：A in-flight(hold)→ B queued_for_conversion → dispose() drain 成 dropped_on_restart。
+      const first = makeApp({ streamingConversionApiBase: stub.baseUrl });
+      await request(first.app).post("/api/external/ifc-ready").set(authHeaders("corr_resume_A", "idem_resume_A")).send(payload());
+      await waitFor(() => stub.bodies.length >= 1);
+      const bRes = await request(first.app)
+        .post("/api/external/ifc-ready")
+        .set(authHeaders("corr_resume_B", "idem_resume_B"))
+        .send(payload({ external_model_version_id: "ext_resume_B" }));
+      const jobB = bRes.body.ifc_ready_job_id as string;
+      await waitFor(async () => (await request(first.app).get(`/api/external/ifc-ready/${jobB}`)).body.status === "queued_for_conversion");
+      await first.dispose();
+      const droppedCheck = await request(first.app).get(`/api/external/ifc-ready/${jobB}`);
+      expect(droppedCheck.body.status).toBe("dropped_on_restart");
+      first.io.close();
+      await new Promise<void>((resolve) => first.server.close(() => resolve()));
+      active = null;
+
+      // 第二個 coordinator（模擬容器 recreate）：上游對同一顆 job 用同一組
+      // idempotency_key/correlation_id 自然重送——不是呼叫 operator 專用的 /retry 路由。
+      const second = makeApp({ streamingConversionApiBase: stub.baseUrl });
+      stub.releaseNext(); // 放行 first 那次仍卡住未回應的 in-flight A（否則擋住 pendingSends 佇列）
+      stub.releaseNext(); // 為重新排隊後的派工 B 預先放行
+      const retryPost = await request(second.app)
+        .post("/api/external/ifc-ready")
+        .set(authHeaders("corr_resume_B", "idem_resume_B"))
+        .send(payload({ external_model_version_id: "ext_resume_B" }));
+      expect(retryPost.status).toBe(200);
+      expect(retryPost.body.ifc_ready_job_id).toBe(jobB);
+      expect(retryPost.body.idempotent_replay).toBe(true);
+      await waitFor(async () => {
+        const r = await request(second.app).get(`/api/external/ifc-ready/${jobB}`);
+        return r.body.status === "dispatched";
+      });
+      expect(stub.bodies.length).toBe(2);
+    } finally {
+      if (previousStorePath === undefined) {
+        delete process.env.EXTERNAL_IFC_READY_STORE_PATH;
+      } else {
+        process.env.EXTERNAL_IFC_READY_STORE_PATH = previousStorePath;
+      }
+    }
+  });
+
+  it("#804 續：下載中被 recreate 的 job（download_status=failed、status=accepted）用同一組 idempotency_key re-POST 視為全新 intake", async () => {
+    const seedRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bim-review-coordinator-accept-dlinterrupt-"));
+    const persistencePath = path.join(seedRoot, "ifc-ready-store.json");
+    const seedStore = new ExternalIfcReadyStore(persistencePath);
+    const event = payload({ external_model_version_id: "ext_dlint" }) as unknown as ExternalIfcReadyEvent;
+    const seeded = seedStore.create(event, {
+      correlationId: "corr_dlint",
+      idempotencyKey: "idem_dlint",
+      tenantId: "tenant_dlint",
+      projectId: "project_dlint",
+      externalModelVersionId: "ext_dlint",
+    });
+    // 模擬 coordinator 在 await 下載時被 recreate：持久化時 download_status 仍是 downloading，
+    // loadFromDisk() 會把它調和成 failed，但 status 停在 accepted、不進 retryDispatch 的可重試集合。
+    seedStore.markDownloading(seeded.ifc_ready_job_id);
+
+    const previousStorePath = process.env.EXTERNAL_IFC_READY_STORE_PATH;
+    process.env.EXTERNAL_IFC_READY_STORE_PATH = persistencePath;
+    try {
+      const stub = await startControllableStreamingStub();
+      const app = makeApp({ streamingConversionApiBase: stub.baseUrl });
+      const before = await request(app.app).get(`/api/external/ifc-ready/${seeded.ifc_ready_job_id}`);
+      expect(before.body.status).toBe("accepted");
+      expect(before.body.download_status).toBe("failed");
+
+      stub.releaseNext();
+      const retryPost = await request(app.app)
+        .post("/api/external/ifc-ready")
+        .set(authHeaders("corr_dlint", "idem_dlint"))
+        .send(payload({ external_model_version_id: "ext_dlint" }));
+      expect(retryPost.status).toBe(202);
+      expect(retryPost.body.ifc_ready_job_id).not.toBe(seeded.ifc_ready_job_id);
+      expect(retryPost.body.idempotent_replay).toBe(false);
+
+      const staleJob = await request(app.app).get(`/api/external/ifc-ready/${seeded.ifc_ready_job_id}`);
+      expect(staleJob.body.download_status).toBe("failed");
+
+      await waitFor(async () => {
+        const r = await request(app.app).get(`/api/external/ifc-ready/${retryPost.body.ifc_ready_job_id}`);
+        return r.body.status === "dispatched";
+      });
+    } finally {
+      if (previousStorePath === undefined) {
+        delete process.env.EXTERNAL_IFC_READY_STORE_PATH;
+      } else {
+        process.env.EXTERNAL_IFC_READY_STORE_PATH = previousStorePath;
+      }
+    }
+  });
+
+  it("#804 續：dropped_on_restart 缺少已下載脈絡時，用同一組 idempotency_key re-POST 視為全新 intake（不永久卡住重送）", async () => {
+    const seedRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bim-review-coordinator-accept-contextlost-"));
+    const persistencePath = path.join(seedRoot, "ifc-ready-store.json");
+    const seedStore = new ExternalIfcReadyStore(persistencePath);
+    const event = payload({ external_model_version_id: "ext_ctxlost" }) as unknown as ExternalIfcReadyEvent;
+    const seeded = seedStore.create(event, {
+      correlationId: "corr_ctxlost",
+      idempotencyKey: "idem_ctxlost",
+      tenantId: "tenant_ctxlost",
+      projectId: "project_ctxlost",
+      externalModelVersionId: "ext_ctxlost",
+    });
+    seedStore.markQueuedForConversion(seeded.ifc_ready_job_id, 1);
+    // 未呼叫 markDownloaded：download_status 仍是 pending，模擬下載本身還沒完成就重啟
+    // ——retryDispatch() 的 context 真的救不回，accept() 必須 fall through 建全新 job。
+
+    const previousStorePath = process.env.EXTERNAL_IFC_READY_STORE_PATH;
+    process.env.EXTERNAL_IFC_READY_STORE_PATH = persistencePath;
+    try {
+      const stub = await startControllableStreamingStub();
+      const app = makeApp({ streamingConversionApiBase: stub.baseUrl });
+      const before = await request(app.app).get(`/api/external/ifc-ready/${seeded.ifc_ready_job_id}`);
+      expect(before.body.status).toBe("dropped_on_restart");
+
+      stub.releaseNext();
+      const retryPost = await request(app.app)
+        .post("/api/external/ifc-ready")
+        .set(authHeaders("corr_ctxlost", "idem_ctxlost"))
+        .send(payload({ external_model_version_id: "ext_ctxlost" }));
+      expect(retryPost.status).toBe(202);
+      expect(retryPost.body.ifc_ready_job_id).not.toBe(seeded.ifc_ready_job_id);
+      expect(retryPost.body.idempotent_replay).toBe(false);
+
+      // 舊 job 保留原樣供稽核；idempotency index 已 repoint 到新 job，不會再被找到。
+      const staleJob = await request(app.app).get(`/api/external/ifc-ready/${seeded.ifc_ready_job_id}`);
+      expect(staleJob.body.status).toBe("dropped_on_restart");
+
+      await waitFor(async () => {
+        const r = await request(app.app).get(`/api/external/ifc-ready/${retryPost.body.ifc_ready_job_id}`);
+        return r.body.status === "dispatched";
+      });
+    } finally {
+      if (previousStorePath === undefined) {
+        delete process.env.EXTERNAL_IFC_READY_STORE_PATH;
+      } else {
+        process.env.EXTERNAL_IFC_READY_STORE_PATH = previousStorePath;
+      }
+    }
+  });
+
   it("prioritize / retry 成功時 reason 寫入 audit log（模式 3 ③）", async () => {
     // §2 第 4 點 + §6.3「reason 進 audit」:操作者 confirm 對話框填入的 reason 必須出現在
     // audit trail,而非僅 HTTP response。注入 tmp-dir logger 讀回 jsonl 驗 audit record。

@@ -245,9 +245,33 @@ export class IfcReadyConversionPipeline<TTerminalObserverResult = void> {
       command.correlationId,
     );
     if (existing) {
-      const replayed =
-        this.store.markIdempotentReplay(existing.ifc_ready_job_id) ?? existing;
-      return { kind: "replay", job: replayed };
+      if (existing.status === "dropped_on_restart") {
+        // #804 續：loadFromDisk() 對重啟中斷的 queued_for_conversion job 標記
+        // dropped_on_restart，dispatch_error 承諾「operator must re-POST」，但 replay
+        // 短路對任何既有 job 一律原樣回傳——上游用同一組 idempotency_key/correlation_id
+        // 自然重送（REST 慣例，也是該訊息字面上的意思）永遠只會拿回同一顆死 job，
+        // 訊息承諾的復原路徑其實不存在＝永久停滯、不可重試。此處借用唯一真實來源
+        // retryDispatch()（operator `/api/conversion/jobs/:id/retry` 走同一支）就地
+        // 恢復：下載資料還在→重新排隊派工；下載本身沒完成（context_lost）才真的救
+        // 不回，此時 fall through 視為全新 intake（repoint idempotency/correlation
+        // index 到新 job），不留一顆假的 idempotent replay 擋住後續所有重送。
+        const retried = this.retryDispatch(existing.ifc_ready_job_id);
+        if (retried.ok) {
+          const resumedJob = this.store.get(existing.ifc_ready_job_id) ?? existing;
+          const replayed =
+            this.store.markIdempotentReplay(resumedJob.ifc_ready_job_id) ?? resumedJob;
+          return { kind: "replay", job: replayed };
+        }
+      } else if (existing.status === "accepted" && existing.download_status === "failed") {
+        // #804 續：下載進行中被 recreate 的 job，loadFromDisk() 只把 download_status 改成
+        // failed（"operator must re-POST"），status 仍是 accepted、也不在 retryDispatch 的可重試
+        // 集合裡。若在此 replay，同鍵重送永遠只拿回這顆沒下載、沒派工的死 job。這種 job 的
+        // 脈絡確定救不回，直接 fall through 視為全新 intake（index repoint 到新 job）。
+      } else {
+        const replayed =
+          this.store.markIdempotentReplay(existing.ifc_ready_job_id) ?? existing;
+        return { kind: "replay", job: replayed };
+      }
     }
 
     const job = this.store.create(event, {
@@ -713,7 +737,7 @@ export class IfcReadyConversionPipeline<TTerminalObserverResult = void> {
         this.config.conversionPollEnabled &&
         !this.pollerRegistry.has(dispatch.conversion_job_id)
       ) {
-        this.schedulePollerForConversion(dispatch.conversion_job_id, rootTraceId);
+        this.schedulePollerForConversion(dispatch.conversion_job_id, rootTraceId, pending.correlationId);
       }
     } catch (dispatchError) {
       // 失敗保留 pending 脈絡供 retry requeue。
@@ -726,17 +750,54 @@ export class IfcReadyConversionPipeline<TTerminalObserverResult = void> {
     }
   }
 
+  /**
+   * #804：intake store 持久化後，coordinator recreate 會把 `dispatched` job 原樣載回，但
+   * poller 是 process-local，且 coordinator 主動輪詢的轉檔 streaming-server 不會回呼；
+   * 不補掛 poller 的話，已完成的轉檔會永遠停在 dispatched（無 outbox、無自動 session、
+   * retry 拒絕該狀態）。啟動時對每個 dispatched 且尚無 poller 的 job 以同一條
+   * schedulePollerForConversion 重掛，terminal 走同一個 ingest。回傳重掛的 conversion job id。
+   */
+  resumePersistedDispatchedPollers(): string[] {
+    if (this.disposed || !this.config.conversionPollEnabled) return [];
+    const resumed: string[] = [];
+    for (const job of this.store.list()) {
+      if (job.status !== "dispatched") continue;
+      // recordConversionOutcome() 只改 conversion_status（ready/failed），status 仍是
+      // dispatched：這些已 ingest 過的 job 不可再輪詢，否則每次重啟都會再產一筆 outbox，
+      // 或在上游結果被清掉後以 poll_timeout 把 ready 蓋成 failed。
+      if (job.conversion_status === "ready" || job.conversion_status === "failed") continue;
+      const conversionJobId = job.conversion_job_id;
+      if (!conversionJobId || this.pollerRegistry.has(conversionJobId)) continue;
+      this.schedulePollerForConversion(conversionJobId, job.ifc_ready_job_id, job.correlation_id);
+      resumed.push(conversionJobId);
+      this.structLog
+        ?.withTraceId(job.ifc_ready_job_id)
+        .lifecycle("autoPoll", "resumed poller for persisted dispatched conversion", {
+          phase: "active",
+          subject_kind: "conversion_job",
+          subject_id: conversionJobId,
+          ifc_ready_job_id: job.ifc_ready_job_id,
+        });
+    }
+    return resumed;
+  }
+
   private schedulePollerForConversion(
     conversionJobId: string,
     rootTraceId: string,
+    correlationId: string,
   ): void {
     const handle = this.streamingClient.pollConversionResult(conversionJobId, {
       intervalMs: this.config.conversionPollIntervalSeconds * 1000,
       maxAttempts: this.config.conversionPollMaxAttempts,
       onTerminal: async (result) => {
         try {
+          // 合成的 poll_timeout 結果沒有 correlation_id，ingest 會以 422 拒絕而讓 job 永遠停在
+          // dispatched；poller 是為這個 job 開的，把已知的 correlation 綁回去，讓 timeout 走
+          // 同一條 failed／可重試路徑。
+          const boundResult = result.correlation_id ? result : { ...result, correlation_id: correlationId };
           await this.ingestStreamingResult(conversionJobId, {
-            result,
+            result: boundResult,
             source: "auto-poll",
           });
         } catch (err) {
