@@ -1,84 +1,84 @@
 ## ADDED Requirements
 
-### Requirement: Repo session admission shall not impose a writer-count limit
+### Requirement: Repo session admission 不得設定 writer 數量上限
 
-Parallel Delivery Fabric SHALL admit any number of writer sessions when each session uses an independent branch and sibling worktree and no branch/worktree/scope conflict is detected. `requested_capacity.writers` SHALL describe only a plan-local execution request, activation-record `writer_cap` SHALL describe only review／`direct_stack` authority, and neither field SHALL be used as a repo session-admission cap.
+當每個 session 使用獨立 branch 與 sibling worktree，且未偵測到 branch／worktree／scope 衝突時，Parallel Delivery Fabric SHALL 允許任意數量的 writer session 進入。`requested_capacity.writers` SHALL 只描述 plan-local 的執行請求，activation record 的 `writer_cap` SHALL 只描述 review／`direct_stack` authority，兩者皆 SHALL NOT 作為 repo session admission 的上限。
 
-#### Scenario: A third isolated writer starts
+#### Scenario: 第三個隔離 writer 啟動
 
-- **WHEN** two writer sessions are active and a third session presents an independent branch, sibling worktree, and non-conflicting scope
-- **THEN** the third session is admitted without inspecting occupied writer count as a blocker
+- **WHEN** 已有兩個 writer session 活躍，第三個 session 提出獨立 branch、sibling worktree 與不衝突的 scope
+- **THEN** 第三個 session 被 admit，不以已佔用的 writer 數量作為阻擋條件
 
-### Requirement: Each Fabric-managed spec-to-done run shall bind one delivery slice
+### Requirement: 每個 Fabric-managed spec-to-done run 必須綁定單一 delivery slice
 
-A Fabric-managed `spec-to-done` run SHALL bind exactly one `plan_id`, `generation`, `task_id`, `lease_id`, `owner_session`, provider, `scope_digest`, `baseline_sha`, branch, and worktree identity. The run SHALL have exactly one writer within that binding, while other independent bindings MAY execute concurrently.
+Fabric-managed 的 `spec-to-done` run SHALL 精確綁定一組 `plan_id`、`generation`、`task_id`、`lease_id`、`owner_session`、provider、`scope_digest`、`baseline_sha`、branch 與 worktree identity。該 run 在此 binding 內 SHALL 只有一個 writer；其他彼此獨立的 binding MAY 同時執行。
 
-#### Scenario: Two independent spec-to-done slices execute concurrently
+#### Scenario: 兩個獨立的 spec-to-done slice 同時執行
 
-- **WHEN** Fabric admits two tasks with distinct bindings and isolated branches/worktrees
-- **THEN** each task runs its own single-writer `spec-to-done` lifecycle without imposing a repo-wide writer cap
+- **WHEN** Fabric admit 兩個 task，各自持有不同的 binding 與隔離的 branch／worktree
+- **THEN** 每個 task 各跑自己的單一 writer `spec-to-done` 生命週期，不施加 repo 全域的 writer 上限
 
-#### Scenario: A binding tuple drifts
+#### Scenario: binding tuple 漂移
 
-- **WHEN** any plan, generation, task, lease, scope, baseline, branch, or worktree identity differs from the binding packet
-- **THEN** the run is rejected fail closed and SHALL NOT substitute a new tuple
+- **WHEN** plan、generation、task、lease、scope、baseline、branch 或 worktree identity 任一項與 binding packet 不同
+- **THEN** 該 run 被 fail closed 拒絕，且 SHALL NOT 以新的 tuple 替代
 
-### Requirement: Fabric-managed state shall have a unique binding-derived identity
+### Requirement: Fabric-managed state 必須有由 binding 衍生的唯一 identity
 
-The system SHALL derive a lowercase SHA-256 `binding_id` from the canonical immutable binding tuple and SHALL store the binding packet at `artifacts/spec-to-done/bindings/{binding_id}.json`. Its durable state SHALL use `artifacts/spec-to-done/{slug}--{binding_id}-state.md`, and every managed checkpoint SHALL preserve the same `fabricBindingId`.
+系統 SHALL 以 canonical 不可變 binding tuple 衍生小寫 SHA-256 的 `binding_id`，並 SHALL 將 binding packet 存於 `artifacts/spec-to-done/bindings/{binding_id}.json`。其 durable state SHALL 使用 `artifacts/spec-to-done/{slug}--{binding_id}-state.md`，且每個 managed checkpoint SHALL 保留相同的 `fabricBindingId`。
 
-Standalone runs without a Fabric binding SHALL remain valid at the legacy `artifacts/spec-to-done/{slug}-state.md` path.
+沒有 Fabric binding 的 standalone run SHALL 維持 legacy 路徑 `artifacts/spec-to-done/{slug}-state.md` 的有效性。
 
-#### Scenario: Parallel tasks reuse the same slug
+#### Scenario: 平行 task 重用同一個 slug
 
-- **WHEN** two Fabric tasks use the same spec slug but have different task or lease identities
-- **THEN** their different binding digests produce different state paths and neither state can overwrite the other
+- **WHEN** 兩個 Fabric task 使用相同的 spec slug，但 task 或 lease identity 不同
+- **THEN** 不同的 binding digest 產生不同的 state 路徑，任一 state 都無法覆寫另一個
 
-#### Scenario: A legacy standalone state is validated
+#### Scenario: 驗證 legacy standalone state
 
-- **WHEN** a pre-binding standalone state contains no Fabric binding fields and uses the legacy canonical path
-- **THEN** the validator applies the existing standalone contract without fabricating a Fabric lease
+- **WHEN** 一份 binding 之前的 standalone state 不含任何 Fabric binding 欄位，且使用 legacy canonical 路徑
+- **THEN** validator 套用既有 standalone 契約，不憑空捏造 Fabric lease
 
-### Requirement: Allowed paths shall remain inside the Fabric touch-set
+### Requirement: allowed paths 必須落在 Fabric touch-set 內
 
-Every Fabric-managed run SHALL declare canonical, unique repo-relative `allowed_paths` that preserve case-sensitive Git path identity. The binding validator SHALL prove every allowed path is covered by the selected Fabric task's path, glob, or rename resources. The state validator SHALL prove every committed path from the bound `baseline_sha` through the bound current HEAD is exactly present in `allowed_paths`, including both endpoints of a rename. Missing, ambiguous, shared-only, uncovered, or out-of-scope committed path authority SHALL return `scope_drift`; the workflow SHALL NOT expand the touch-set automatically.
+每個 Fabric-managed run SHALL 宣告 canonical、唯一、repo-relative 且保留 Git 大小寫路徑 identity 的 `allowed_paths`。binding validator SHALL 證明每個 allowed path 都被選定 Fabric task 的 path、glob 或 rename resource 涵蓋。state validator SHALL 證明自綁定的 `baseline_sha` 到綁定的目前 HEAD 之間每個已提交路徑都精確存在於 `allowed_paths`（rename 的兩端皆須包含）。缺漏、模糊、僅共享、未涵蓋或超出 scope 的已提交路徑 authority SHALL 回傳 `scope_drift`；workflow SHALL NOT 自動擴張 touch-set。
 
-#### Scenario: An implementation path is outside the task scope
+#### Scenario: 實作路徑超出 task scope
 
-- **WHEN** `allowed_paths` contains a path not covered by the bound task scope
-- **THEN** binding validation returns `scope_drift` before P3 and no file is modified
+- **WHEN** `allowed_paths` 含有未被綁定 task scope 涵蓋的路徑
+- **THEN** binding 驗證在 P3 之前回傳 `scope_drift`，且沒有任何檔案被修改
 
-#### Scenario: A committed path exceeds the binding touch-set
+#### Scenario: 已提交路徑超出 binding touch-set
 
-- **WHEN** the NUL-delimited committed diff from the bound baseline through the bound current HEAD contains a path not exactly present in `allowed_paths`
-- **THEN** state validation returns `scope_drift` and the run cannot progress
+- **WHEN** 自綁定 baseline 到綁定目前 HEAD 的 NUL 分隔已提交 diff 含有未精確存在於 `allowed_paths` 的路徑
+- **THEN** state 驗證回傳 `scope_drift`，該 run 無法前進
 
-#### Scenario: Scope authority is not path-resolvable
+#### Scenario: scope authority 無法解析為路徑
 
-- **WHEN** the task declares only a shared contract or symbol and provides no explicit path/glob/rename resource for an allowed file
-- **THEN** the path is treated as unproven and the run remains HELD
+- **WHEN** task 只宣告共享 contract 或 symbol，未對某個 allowed 檔案提供明確的 path／glob／rename resource
+- **THEN** 該路徑視為未證明，run 維持 HELD
 
-### Requirement: HELD shall retain the Fabric lease and local resume shall fail closed
+### Requirement: HELD 必須保留 Fabric lease，且 local resume 必須 fail closed
 
-When a Fabric-managed `spec-to-done` run becomes HELD, it SHALL stop only that delivery slice, retain the bound lease, and request Fabric to represent the execution context as `SUSPECT`. It SHALL NOT call release, reclaim, create a replacement lease, or use `NEW_RUN@P0` to move the run to another worktree.
+Fabric-managed 的 `spec-to-done` run 進入 HELD 時，SHALL 只停止該 delivery slice、保留綁定的 lease，並請求 Fabric 將其執行上下文標示為 `SUSPECT`。它 SHALL NOT 呼叫 release、reclaim、建立替代 lease，或以 `NEW_RUN@P0` 把 run 搬到另一個 worktree。
 
-A managed `RESUMED` checkpoint SHALL require Fabric-verified `RESUME_INTENT` and an authority-bound replacement execution context with the exact plan/task/lease/scope/branch/worktree/head tuple. Until that authority exists, validation SHALL return a durable execution-authority hold.
+managed 的 `RESUMED` checkpoint SHALL 要求 Fabric 驗證過的 `RESUME_INTENT`，以及與 plan／task／lease／scope／branch／worktree／head tuple 完全一致、由 authority 綁定的替代執行上下文。在該 authority 存在之前，驗證 SHALL 回傳 durable 的 execution-authority hold。
 
-#### Scenario: A managed run is held
+#### Scenario: managed run 被 hold
 
-- **WHEN** any P0–P6 gate returns HELD for a Fabric-managed run
-- **THEN** the run stops, its lease is retained or marked `SUSPECT`, and no local release or replacement is performed
+- **WHEN** Fabric-managed run 的任一 P0–P6 gate 回傳 HELD
+- **THEN** 該 run 停止，其 lease 被保留或標示為 `SUSPECT`，且不進行任何 local release 或替代
 
-#### Scenario: A session tries to resume locally
+#### Scenario: session 嘗試在本機 resume
 
-- **WHEN** a managed state appends `RESUMED` without Fabric-verified rebind authority
-- **THEN** validation rejects the transition with a durable execution-authority hold and does not start another implementer
+- **WHEN** managed state 在沒有 Fabric 驗證過的 rebind authority 下附加 `RESUMED`
+- **THEN** 驗證以 durable 的 execution-authority hold 拒絕該轉換，且不啟動另一個 implementer
 
-### Requirement: Binding evidence shall not grant delivery authority
+### Requirement: binding 證據不得授予 delivery authority
 
-The binding packet SHALL be non-secret control metadata and SHALL NOT authorize push, approve, merge, deploy, process termination, branch-protection mutation, review migration, or `direct_stack`. Those operations SHALL remain subject to their existing activation and external authority gates.
+binding packet SHALL 是非機密的 control metadata，且 SHALL NOT 授權 push、approve、merge、deploy、終止 process、變更 branch protection、review migration 或 `direct_stack`。這些操作 SHALL 繼續受既有的 activation 與外部 authority gate 管制。
 
-#### Scenario: A valid binding requests direct_stack
+#### Scenario: 有效的 binding 請求 direct_stack
 
-- **WHEN** a binding packet is structurally valid but no canonical Fabric activation record authorizes `direct_stack`
-- **THEN** `direct_stack` remains HELD and the binding can authorize only the bounded local delivery slice
+- **WHEN** binding packet 結構有效，但沒有 canonical Fabric activation record 授權 `direct_stack`
+- **THEN** `direct_stack` 維持 HELD，binding 只能授權有界的本機 delivery slice
