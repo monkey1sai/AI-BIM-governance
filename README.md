@@ -45,7 +45,32 @@ IFC intake、IFC -> USDC 轉檔、Omniverse Kit/WebRTC 串流、治理檢核操�
 
 ## 快速啟動
 
-### 推薦路徑：Mode C hybrid demo
+### 測試部署：canonical Linux
+
+目前測試部署目標由 [deploy-target-registry.json](scripts/deploy-target-registry.json)
+指定為 `canonical-linux`；`local-windows` 是按需平台驗證點。部署主機、資料目錄與
+連線設定由 owner 預先建立的 repo 外 private inventory 提供，不以本機 checkout 或固定 IP 推測。
+
+操作端主工作區也須先備妥 `.env.web-plane.host-kit.canonical-linux`：若檔案不存在，
+由 owner 從 `.env.web-plane.host-kit.canonical-linux.example` 複製並依目標設定；
+已有檔案時保留，不覆寫。這是 registry 指定的 base env，與 private inventory 是兩個
+必要輸入；缺少 base env 時 helper 會在 SSH dispatch 前停止。實際 env 不提交到 Git。
+
+取得部署授權、備妥上述兩個輸入並確認沒有其他 runtime writer 後，從主工作區執行：
+
+```powershell
+.\scripts\dev\rebuild-test-deploy.ps1 -Build -InventoryPath '<repo-external target.local.json>'
+```
+
+此入口預設選 canonical target，使用 freshly fetched `origin/main` 重建部署 checkout，
+再於目標執行 `scripts/deploy.ps1 -Build`。`-InventoryPath` 須替換為既有 inventory 路徑；
+也可依 helper 支援設定 `AI_BIM_DEPLOY_TARGET_INVENTORY`。不要將 private inventory 提交到 Git。
+瀏覽器入口是 inventory 所指定 public host 的 coordinator `/ui`；viewer 與串流位置依該目標設定。
+
+部署檢查通過不代表 IFC 轉檔或 3D 閉環通過；後者仍需同一份 IFC 的產物、mapping、
+正確 stage、瀏覽器首幀與 DataChannel 高亮證據。
+
+### Windows 本機 demo：Mode C hybrid
 
 Windows demo 預設走 Mode C hybrid：
 
@@ -74,15 +99,15 @@ cd C:\Repos\active\iot\AI-BIM-governance
 .\scripts\deploy.ps1 -Build
 ```
 
-預設入口：
+Windows demo 入口（以下主機佔位符須換成該環境實際設定，不是 canonical Linux 位址）：
 
 ```txt
-Coordinator UI : http://192.168.10.105:8004/ui
-Viewer base    : http://192.168.10.105:5173
-Conversion API : http://192.168.10.105:49101/health
+Coordinator UI : http://<windows-demo-host>:8004/ui
+Viewer base    : http://<windows-demo-host>:5173
+Conversion API : http://<windows-demo-host>:49101/health
 ```
 
-停止：
+停止該 Windows 本機 demo（僅在確認這些服務由本次 demo 持有時）：
 
 ```powershell
 docker compose -f compose.runtime-manager.yml -f compose.host-kit.yml --env-file .env.web-plane.host-kit down
@@ -97,7 +122,8 @@ docker compose -f compose.runtime-manager.yml -f compose.host-kit.yml --env-file
 
 ### 手動 debug 路徑
 
-手動啟動只供 local debug。demo 優先使用 `.\scripts\deploy.ps1 -Build`。
+手動啟動只供 Windows local debug；本機 demo 使用 `.\scripts\deploy.ps1 -Build`，
+canonical 測試部署使用上方 `rebuild-test-deploy.ps1` 入口。
 
 ```powershell
 # Terminal 1: coordinator
@@ -247,7 +273,7 @@ Canonical operator entrypoints：
 | `scripts/deploy.ps1` | golden deploy / demo path |
 | `scripts/verify-all.ps1` | aggregate verification |
 | `scripts/stop-all.ps1` | stop / cleanup path |
-| `scripts/dev/rebuild-test-deploy.ps1 -Build` | 重建 `D:\Users\deploy\AI-bim-geo` 測試部署區 |
+| `scripts/dev/rebuild-test-deploy.ps1 -Build` | 從 freshly fetched `origin/main` 重建 registry 選定的測試部署；預設 `canonical-linux`（需上述 private inventory），Windows 按需驗證須明確指定 `-TargetId local-windows` |
 
 Runtime / Docker / Kit / viewer / env / port / conversion-service 相關改動，至少要更新或驗證
 `scripts/deploy.ps1`。新增 root-level smoke/check/start 類 script 前，先讀
