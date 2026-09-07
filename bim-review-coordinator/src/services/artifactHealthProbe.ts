@@ -10,6 +10,12 @@ export interface ArtifactHealthProbeInput {
   edge_runtime_data_root: string;
   storage_root?: string | null;
   configured_conversion_api_origin: string;
+  /**
+   * #809：conversion authority 對外發布 artifact URL 的 origin（STREAMING_CONVERSION_PUBLIC_ARTIFACTS_URL）。
+   * coordinator 在 Docker 內時它可能是 host loopback、LAN IP 或 HTTPS reverse proxy，容器不一定打得到；
+   * 命中此 origin 的 canonical `/artifacts/...` URL 一律改寫到 configured_conversion_api_origin 再 probe。
+   */
+  trusted_public_artifact_origin?: string | null;
   checked_at?: string;
 }
 
@@ -192,7 +198,7 @@ function isConversionArtifactPath(pathname: string): boolean {
 export function canonicalArtifactProbeUrl(
   urlValue: string,
   configuredConversionApiOrigin: string,
-  options: { allowAlternateLoopback?: boolean } = {},
+  options: { allowAlternateLoopback?: boolean; trustedPublicOrigin?: string | null } = {},
 ): URL | null {
   let url: URL;
   try {
@@ -203,6 +209,14 @@ export function canonicalArtifactProbeUrl(
   if (url.username || url.password) return null;
   const configuredOrigin = normalizedOrigin(configuredConversionApiOrigin);
   if (configuredOrigin && url.origin === configuredOrigin) return url;
+  // #809：已驗證為 authority 發布 origin 的 canonical artifact URL，不論 protocol／port／loopback，
+  // 都改寫到 internal API origin 探測（public origin 是給 Kit／瀏覽器用的，容器內未必可達；
+  // 例如 public=127.0.0.1:49101 會讓容器 probe 到自己）。只接受 conversion artifact path。
+  const publicOrigin = options.trustedPublicOrigin ? normalizedOrigin(options.trustedPublicOrigin) : null;
+  if (publicOrigin && configuredOrigin && url.origin === publicOrigin) {
+    if (url.search || url.hash || !isConversionArtifactPath(url.pathname)) return null;
+    return new URL(url.pathname, configuredOrigin);
+  }
   if (hasLoopbackHostname(url)) {
     if (options.allowAlternateLoopback === false) return null;
     if (isLegacyDirectLoopbackHttpUrl(url)) return url;
@@ -234,7 +248,11 @@ async function requestStatus(url: URL, method: "HEAD" | "GET"): Promise<number> 
   return response.status;
 }
 
-async function checkArtifactUrl(urlValue: string | null, configuredConversionApiOrigin: string): Promise<ProbeResult> {
+async function checkArtifactUrl(
+  urlValue: string | null,
+  configuredConversionApiOrigin: string,
+  trustedPublicOrigin?: string | null,
+): Promise<ProbeResult> {
   if (!urlValue) {
     return { value: null, failure: null };
   }
@@ -245,7 +263,7 @@ async function checkArtifactUrl(urlValue: string | null, configuredConversionApi
     return { value: null, failure: "url_invalid" };
   }
 
-  const probeUrl = canonicalArtifactProbeUrl(urlValue, configuredConversionApiOrigin);
+  const probeUrl = canonicalArtifactProbeUrl(urlValue, configuredConversionApiOrigin, { trustedPublicOrigin });
   if (!probeUrl) {
     return { value: null, failure: "url_not_allowed" };
   }
@@ -292,8 +310,8 @@ export async function probeArtifactHealth(input: ArtifactHealthProbeInput): Prom
     input.edge_runtime_data_root,
   );
   const [model, mapping] = await Promise.all([
-    checkArtifactUrl(input.model_artifact_url, input.configured_conversion_api_origin),
-    checkArtifactUrl(input.mapping_url, input.configured_conversion_api_origin),
+    checkArtifactUrl(input.model_artifact_url, input.configured_conversion_api_origin, input.trusted_public_artifact_origin),
+    checkArtifactUrl(input.mapping_url, input.configured_conversion_api_origin, input.trusted_public_artifact_origin),
   ]);
 
   return {

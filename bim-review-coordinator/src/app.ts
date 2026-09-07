@@ -1122,6 +1122,13 @@ export function createCoordinatorApp(
   // 也不可能重新引入 TDZ。watcher 偵測即寫 queued（Task 2）、GET /api/conversion/records 讀取
   // （Task 3）；建構只讀持久 JSON 檔（無時序副作用），提早到宣告處安全。
   const conversionLedger = new ConversionLedger(config.conversionLedgerStorePath);
+  // Public artifact origin the conversion authority writes into results (deploy.ps1 derives it from
+  // PUBLIC_HOST); trusted separately from the internal API origin the coordinator probes through.
+  // #809：所有 artifact health probe 與 session binding 信任判定共用；命中此 origin 的 canonical
+  // artifact URL 會改寫到 streamingConversionApiBase 探測。
+  const conversionPublicArtifactOrigin = (() => {
+    try { return new URL(config.streamingConversionPublicArtifactsUrl).origin; } catch { return undefined; }
+  })();
   const artifactHealthLedger = new ArtifactHealthLedger(config.artifactHealthLedgerStorePath);
   // rvt-ifc-usdc-lineage task 3.1：governed source bundle 的 durable store ＋ 唯讀 object port。
   // 與 legacy intake 完全分離（不同 store、不同 port、不同 credentials、不同去重空間）。
@@ -1597,6 +1604,7 @@ export function createCoordinatorApp(
       edge_runtime_data_root: config.edgeRuntimeDataRoot,
       storage_root: sourceProbe.storageRoot,
       configured_conversion_api_origin: config.streamingConversionApiBase,
+      trusted_public_artifact_origin: conversionPublicArtifactOrigin,
       checked_at: nowIso(),
     });
     job.artifact_health = snapshot;
@@ -1724,7 +1732,7 @@ export function createCoordinatorApp(
     if (!binding?.url && !binding?.mapping_url) {
       return session.artifact_health ?? null;
     }
-    if (!isTrustedDirectSessionProbeBinding(binding, config.streamingConversionApiBase)) {
+    if (!isTrustedDirectSessionProbeBinding(binding, config.streamingConversionApiBase, conversionPublicArtifactOrigin)) {
       return session.artifact_health ?? null;
     }
     try {
@@ -1735,6 +1743,7 @@ export function createCoordinatorApp(
         edge_runtime_data_root: config.edgeRuntimeDataRoot,
         storage_root: config.storageHostRoot,
         configured_conversion_api_origin: config.streamingConversionApiBase,
+        trusted_public_artifact_origin: conversionPublicArtifactOrigin,
         checked_at: nowIso(),
       });
       session.artifact_health = snapshot;
@@ -1770,7 +1779,7 @@ export function createCoordinatorApp(
       if (!binding.mapping_url) {
         return { state: "unavailable", reason: `mapping binding is unavailable for ${binding.artifact_id}`, checked_at: checkedAt };
       }
-      if (!isTrustedDirectSessionProbeBinding(binding, config.streamingConversionApiBase)) {
+      if (!isTrustedDirectSessionProbeBinding(binding, config.streamingConversionApiBase, conversionPublicArtifactOrigin)) {
         return { state: "unavailable", reason: "artifact binding is not owned by the configured conversion authority", checked_at: checkedAt };
       }
       try {
@@ -1780,6 +1789,7 @@ export function createCoordinatorApp(
           mapping_url: binding.mapping_url,
           edge_runtime_data_root: config.edgeRuntimeDataRoot,
           configured_conversion_api_origin: config.streamingConversionApiBase,
+          trusted_public_artifact_origin: conversionPublicArtifactOrigin,
         });
         checkedAt = health.checked_at;
         if (health.model_usdc_reachable === false || health.mapping_reachable === false) {
@@ -2119,7 +2129,7 @@ export function createCoordinatorApp(
           .slice()
           .sort((left, right) => left.load_order - right.load_order);
         const sourceBinding = sourceBindings[0];
-        if (!sourceBinding || sourceBindings.some((binding) => !binding.mapping_url || !isTrustedDirectSessionProbeBinding(binding, config.streamingConversionApiBase))) {
+        if (!sourceBinding || sourceBindings.some((binding) => !binding.mapping_url || !isTrustedDirectSessionProbeBinding(binding, config.streamingConversionApiBase, conversionPublicArtifactOrigin))) {
           return { status: 409, body: { detail: "Closed review session has no ready derived artifact binding." } };
         }
         const artifactBindings: ArtifactBinding[] = sourceBindings.map((binding) => ({
@@ -3195,11 +3205,6 @@ export function createCoordinatorApp(
   // simultaneous callers from allocating duplicate sessions; persisted sessions recover
   // the session-written/response-lost window without replaying conversion ingestion.
   const readySessionRequests = new Map<string, Promise<{ status: number; body: unknown }>>();
-  // Public artifact origin the conversion authority writes into results (deploy.ps1 derives it from
-  // PUBLIC_HOST); trusted separately from the internal API origin the coordinator probes through.
-  const readyModelPublicArtifactOrigin = (() => {
-    try { return new URL(config.streamingConversionPublicArtifactsUrl).origin; } catch { return undefined; }
-  })();
   app.post("/api/conversion/records/:readyModelId/review-session", async (request, response, next) => {
     if (rejectIfConversionControlUnauthorized(request, response)) return;
     try {
@@ -3215,7 +3220,7 @@ export function createCoordinatorApp(
           if (!record) return { status: 404, body: { error_code: "ready_model_not_found" } };
           const resolved = await resolveReadyRenderBundle({ record, configuredTenantId: config.minioWatchTenantId,
             conversionOrigin: config.streamingConversionApiBase,
-            publicArtifactOrigin: readyModelPublicArtifactOrigin,
+            publicArtifactOrigin: conversionPublicArtifactOrigin,
             fetchResult: (jobId) => streamingConversionClient.fetchConversionResult(jobId) });
           if (!resolved.ok) {
             // 轉檔權威暫時不可達是可重試的上游故障，不是模型狀態衝突；比照既有 conversion-authority 路由回 502。
@@ -3225,7 +3230,8 @@ export function createCoordinatorApp(
           const health = await probeArtifactHealth({ host_local_path: null,
             model_artifact_url: bundle.model.url, mapping_url: bundle.mapping.url,
             edge_runtime_data_root: config.edgeRuntimeDataRoot,
-            configured_conversion_api_origin: config.streamingConversionApiBase });
+            configured_conversion_api_origin: config.streamingConversionApiBase,
+            trusted_public_artifact_origin: conversionPublicArtifactOrigin });
           if (health.model_usdc_reachable !== true || health.mapping_reachable !== true) {
             return { status: 409, body: { error_code: "ready_artifacts_unavailable" } };
           }
@@ -5332,17 +5338,26 @@ function sanitizeJobForExternal(job: IfcReadyIntakeJob): IfcReadyIntakeJob {
   return rest;
 }
 
-function isAllowedConversionProbeUrl(urlValue: string | null, configuredConversionApiBase: string): boolean {
+function isAllowedConversionProbeUrl(
+  urlValue: string | null,
+  configuredConversionApiBase: string,
+  trustedPublicOrigin?: string | null,
+): boolean {
   if (!urlValue) return true;
   return canonicalArtifactProbeUrl(urlValue, configuredConversionApiBase, {
     allowAlternateLoopback: false,
+    trustedPublicOrigin,
   }) !== null;
 }
 
-function isTrustedDirectSessionProbeBinding(binding: ArtifactBinding, configuredConversionApiBase: string): boolean {
+function isTrustedDirectSessionProbeBinding(
+  binding: ArtifactBinding,
+  configuredConversionApiBase: string,
+  trustedPublicOrigin?: string | null,
+): boolean {
   return binding.conversion_authority === "bim-streaming-server"
-    && isAllowedConversionProbeUrl(binding.url, configuredConversionApiBase)
-    && isAllowedConversionProbeUrl(binding.mapping_url, configuredConversionApiBase);
+    && isAllowedConversionProbeUrl(binding.url, configuredConversionApiBase, trustedPublicOrigin)
+    && isAllowedConversionProbeUrl(binding.mapping_url, configuredConversionApiBase, trustedPublicOrigin);
 }
 
 function parseListLimit(value: unknown): number {
