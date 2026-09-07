@@ -451,9 +451,38 @@ try {
     $suiteJob = $governanceWorkflowTree['jobs']['suite']
     Assert-True ($suiteJob.Contains('strategy') -and $suiteJob['strategy'].Contains('matrix') -and $suiteJob['strategy']['matrix'].Contains('shard')) 'agent-governance suite declares its shard matrix'
     Assert-True (([string]$suiteJob['strategy']['fail-fast']) -ceq 'false') 'one failing shard never cancels the others, so a single red leg cannot hide a second failure'
-    $declaredShards = @(@($suiteJob['strategy']['matrix']['shard']) | ForEach-Object { [string]$_ })
-    Assert-True ($declaredShards.Count -ge 2) 'the shard matrix declares more than one leg'
+
+    # The legs are selected per commit, so the shard names live in data rather than in the
+    # workflow. Pin the expression exactly: reverting to a hand-written literal list would
+    # silently stop honouring the declaration the rest of this block validates against.
+    Assert-True ((([string]$suiteJob['strategy']['matrix']['shard']).Trim()) -ceq '${{ fromJSON(needs.scope.outputs.shards) }}') 'the suite matrix is built from the scope job shard selection'
+    $scopeJob = $governanceWorkflowTree['jobs']['scope']
+    Assert-True (([string]$scopeJob['outputs']['shards']).Trim() -ceq '${{ steps.shards.outputs.shards }}') 'the scope job publishes the selected shards'
+    $shardSelectorStep = @($scopeJob['steps'] | Where-Object { ([string]$_['id']) -ceq 'shards' })
+    Assert-True ($shardSelectorStep.Count -eq 1) 'the scope job runs exactly one shard selector step'
+    Assert-True (([string]$shardSelectorStep[0]['run']) -match 'scripts/dev/select-agent-governance-shards\.mjs') 'the shard selector step invokes the canonical selector'
+    # The matrix is candidate-produced data, so the workflow (base-owned, CODEOWNERS-protected)
+    # must itself refuse a selection that omits `core` and must place `core` first regardless of
+    # what the policy calls its always-on leg. Otherwise a PR could rename `core`, every
+    # `matrix.shard == 'core'` step would be skipped in the renamed leg, and the aggregator
+    # would still see success. Pin both guards literally.
+    $shardSelectorRun = [string]$shardSelectorStep[0]['run']
+    Assert-True ($shardSelectorRun.Contains('index("core") != null')) 'the scope job fails closed when the candidate selection omits the required core leg'
+    Assert-True ($shardSelectorRun.Contains('["core"] + (.shards - ["core"])')) 'the scope job bootstraps core into the matrix independently of the candidate policy'
+    Assert-True ($shardSelectorRun.Contains('.dispatch == "full" or .result == "fail_closed"') -and $shardSelectorRun.Contains('[.shards[].id]')) 'the scope job independently requires every declared shard when the plan dispatched full or failed closed, so a selector regression cannot drop legs'
+
+    $shardPolicyPath = Join-Path $repoRoot 'scripts/agent-governance-shards.json'
+    Assert-True (Test-Path -LiteralPath $shardPolicyPath -PathType Leaf) 'the canonical shard declaration exists'
+    $shardPolicy = (Get-Content -LiteralPath $shardPolicyPath -Raw -Encoding utf8) | ConvertFrom-Json
+    Assert-True (([string]$shardPolicy.schema_version) -ceq 'agent-governance-shards/v1') 'shard declaration uses the pinned schema version'
+    Assert-True (([string]$shardPolicy.authority) -ceq 'shard_selection_only') 'shard declaration never claims gate authority'
+    $declaredShards = @($shardPolicy.shards | ForEach-Object { [string]$_.id })
+    Assert-True ($declaredShards.Count -ge 2) 'the shard declaration declares more than one leg'
     Assert-True (@($declaredShards | Sort-Object -Unique).Count -eq $declaredShards.Count) 'shard names are unique'
+    # Without an always-selected leg the matrix could resolve to [] and the suite would report
+    # skipped, which the aggregator would then have to interpret. Keep that case impossible.
+    Assert-True (@($shardPolicy.shards | Where-Object { $_.always }).Count -ge 1) 'at least one shard is always selected, so the matrix can never be empty'
+    Assert-True (@($shardPolicy.shards | Where-Object { ([string]$_.id) -ceq 'core' -and $_.always }).Count -eq 1) 'the always-selected leg is literally named core, matching every matrix.shard == ''core'' step'
 
     $shardMembershipPattern = [regex]"^matrix\.shard == '(?<shard>[a-z][a-z0-9-]*)'$"
     $suiteRunSteps = [ordered]@{}
@@ -489,6 +518,164 @@ try {
     )) {
         Assert-True ($suiteRunSteps.Contains($pinnedShardStep.Name)) "agent-governance suite still runs '$($pinnedShardStep.Name)'"
         Assert-True (($suiteRunSteps[$pinnedShardStep.Name]) -ceq $pinnedShardStep.Shard) "'$($pinnedShardStep.Name)' stays on the '$($pinnedShardStep.Shard)' shard the wall-clock split assumes"
+    }
+
+    # Sharding may only decide WHERE a step runs, never WHETHER the repository is verified. A
+    # conditional leg must therefore be reachable from every input it exercises: the script the
+    # workflow runs AND the repository files that script itself names (schemas, fixtures, the
+    # deploy scripts a regression reads). Otherwise a PR that edits only such an input selects
+    # `core`, the leg is never created, and the required aggregator reports success while the
+    # affected assertion never ran. The audit asks the production selector rather than
+    # re-implementing its glob dialect, so it cannot disagree with CI.
+    $alwaysShards = @($shardPolicy.shards | Where-Object { $_.always } | ForEach-Object { [string]$_.id })
+    $executedScriptPattern = [regex]'(?<path>(?:scripts|tests)/[^\s"'']+\.(?:ps1|mjs|py))'
+    # Repository-relative literals, plus bare file names a test resolves against its own directory
+    # (Join-Path $PSScriptRoot 'x.schema.json', path.join(here, 'fixtures', 'x.json'), dot-sourced
+    # 'test-helpers.ps1'). Suffixes are matched completely: `.js` never claims a `.json` input.
+    $repoInputPattern = [regex]'(?<path>(?:scripts|tests|openspec|agent-contracts|docs/plans|\.github)/[A-Za-z0-9_./-]+\.(?:psm1|ps1|mjs|cjs|json|js|sh|py|yaml|yml|md|html))(?![A-Za-z0-9_.-])'
+    # Any quoted relative reference counts by its trailing file name ('../lib/x.ps1', './fixtures/y.json');
+    # the candidate directories below plus an existence check keep this from over-matching.
+    $bareInputPattern = [regex]'[''"][^''"\s]*?(?<name>[A-Za-z0-9_.-]+\.(?:psm1|ps1|mjs|cjs|json|js|sh|py|yaml|yml|md|html))[''"]'
+    # Comments are prose, not dependencies. Block comments go first; then each line is cut at the
+    # first comment marker that starts OUTSIDE a string literal, so `$x = 1 # see other-test.ps1`
+    # and `const u = 'http://host' // note` are handled without eating quoted paths.
+    $removeShardAuditComments = {
+        param([string] $text, [string] $marker)
+        $text = [regex]::Replace($text, '(?s)<#.*?#>|/\*.*?\*/', ' ')
+        $lines = $text -split "`n"
+        for ($i = 0; $i -lt $lines.Count; $i++) {
+            $line = $lines[$i]
+            $quote = [char]0
+            for ($k = 0; $k -lt $line.Length; $k++) {
+                $ch = $line[$k]
+                if ($quote -ne [char]0) {
+                    if ($ch -eq $quote) { $quote = [char]0 }
+                    continue
+                }
+                if ($ch -eq [char]39 -or $ch -eq [char]34) { $quote = $ch; continue }
+                if ($marker -eq '#' -and $ch -eq [char]35) { $lines[$i] = $line.Substring(0, $k); break }
+                if ($marker -eq '//' -and $ch -eq [char]47 -and $k + 1 -lt $line.Length -and $line[$k + 1] -eq [char]47) { $lines[$i] = $line.Substring(0, $k); break }
+            }
+        }
+        return ($lines -join "`n")
+    }
+    # Self-test the comment stripper on the shapes the audit must get right.
+    Assert-True ((& $removeShardAuditComments '$x = 1 # see other-test.ps1' '#') -notmatch 'other-test') 'trailing PowerShell comments are stripped before dependency matching'
+    Assert-True ((& $removeShardAuditComments 'Join-Path $PSScriptRoot ''fixtures/#804-case.json''' '#') -match '#804-case') 'a # inside a quoted path is not a comment'
+    Assert-True ((& $removeShardAuditComments 'const u = ''http://host/x.json'' // see other.mjs' '//') -notmatch 'other\.mjs') 'trailing JS comments are stripped before dependency matching'
+    Assert-True ((& $removeShardAuditComments 'const u = ''http://host/x.json'' // note' '//') -match 'http://host/x\.json') 'a // inside a quoted string is not a comment'
+    Assert-True ((& $removeShardAuditComments "<# refers to other-test.ps1 #>`n. './real.ps1'" '#') -match 'real\.ps1') 'block comments are stripped and code after them survives'
+    # Tests that enumerate repository paths as ledger DATA rather than reading them as inputs.
+    # Their literals describe the repo; changing one of those files does not change what the
+    # test exercises, so they are audited only for the script the workflow runs. The few real
+    # inputs such a test does load (e.g. .github/PULL_REQUEST_TEMPLATE.md, whose bare yes/no rows
+    # test-self-referential-bootstrap.ps1 validates) are registered explicitly in the shard surface.
+    $shardAuditLedgerTests = @('scripts/tests/test-self-referential-bootstrap.ps1')
+    $shardAuditPaths = [ordered]@{}
+    # Completed archives are immutable by rule and canonical specs are archive OUTPUT; tests name
+    # them as data (diff fixtures, machine-truth samples), never as inputs they exercise.
+    $shardAuditDataOnlyPattern = [regex]'^openspec/(?:changes/archive|specs)/'
+    $noteShardInput = {
+        param([string] $inputPath, [string] $shard, [string] $stepName)
+        if ($shardAuditDataOnlyPattern.IsMatch($inputPath)) { return }
+        if (-not $shardAuditPaths.Contains($inputPath)) { $shardAuditPaths[$inputPath] = [ordered]@{} }
+        if (-not $shardAuditPaths[$inputPath].Contains($shard)) { $shardAuditPaths[$inputPath][$shard] = $stepName }
+    }
+    foreach ($suiteStep in @($suiteJob['steps'])) {
+        if (-not $suiteStep.Contains('run')) { continue }
+        $suiteStepName = [string]$suiteStep['name']
+        $suiteStepShard = [string]$suiteRunSteps[$suiteStepName]
+        # An always-selected leg is reachable from any in-scope change by construction.
+        if ($alwaysShards -ccontains $suiteStepShard) { continue }
+        foreach ($executedMatch in $executedScriptPattern.Matches([string]$suiteStep['run'])) {
+            $executedPath = $executedMatch.Groups['path'].Value
+            Assert-True (Test-Path -LiteralPath (Join-Path $repoRoot $executedPath) -PathType Leaf) "suite step '$suiteStepName' runs an existing repository script '$executedPath'"
+            & $noteShardInput $executedPath $suiteStepShard $suiteStepName
+            if ($shardAuditLedgerTests -ccontains $executedPath) { continue }
+            # A test often delegates to a checker beside it (test-pr-body-evidence.ps1 runs
+            # check-pr-body-evidence.ps1, which imports scripts/lib/pr-review-agent.ps1). Follow that
+            # one hop for scripts under scripts/tests only: library modules such as the policy engine
+            # name repository paths as rule data, so recursing into them would audit the whole repo.
+            $scanQueue = [System.Collections.Generic.Queue[string]]::new()
+            $scanned = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
+            $scanQueue.Enqueue($executedPath)
+            while ($scanQueue.Count -gt 0) {
+            $scanPath = $scanQueue.Dequeue()
+            if (-not $scanned.Add($scanPath)) { continue }
+            # PowerShell sources often spell dependencies with backslashes; fold them before matching.
+            $executedText = (Get-Content -LiteralPath (Join-Path $repoRoot $scanPath) -Raw -Encoding utf8) -replace '\\', '/'
+            $commentMarker = if ($scanPath -match '\.(?:ps1|psm1)$') { '#' } else { '//' }
+            $executedText = & $removeShardAuditComments $executedText $commentMarker
+            $executedDir = (Split-Path -Parent $scanPath) -replace '\\', '/'
+            foreach ($inputMatch in $repoInputPattern.Matches($executedText)) {
+                $inputPath = $inputMatch.Groups['path'].Value -replace '/\./', '/'
+                if (Test-Path -LiteralPath (Join-Path $repoRoot $inputPath) -PathType Leaf) {
+                    & $noteShardInput $inputPath $suiteStepShard $suiteStepName
+                    if ($inputPath -match '^scripts/tests/[^/]+\.(?:ps1|psm1|mjs)$') { $scanQueue.Enqueue($inputPath) }
+                }
+            }
+            foreach ($bareMatch in $bareInputPattern.Matches($executedText)) {
+                $bareName = $bareMatch.Groups['name'].Value
+                # Tests reach siblings, fixtures, and the libraries/scripts one level up
+                # (Join-Path $PSScriptRoot '..' 'lib' ...); resolve every form a bare name can take.
+                $bareCandidates = @("$executedDir/$bareName", "$executedDir/fixtures/$bareName")
+                # Only executable inputs are looked up one level up: a doc name such as AGENTS.md is
+                # prose the test talks about, not a file it loads.
+                if ($bareName -match '\.(?:psm1|ps1|mjs|cjs|js|sh|py|json)$') { $bareCandidates += @("scripts/lib/$bareName", "scripts/$bareName", "scripts/dev/$bareName") }
+                foreach ($candidate in $bareCandidates) {
+                    if (Test-Path -LiteralPath (Join-Path $repoRoot $candidate) -PathType Leaf) {
+                        & $noteShardInput $candidate $suiteStepShard $suiteStepName
+                        if ($candidate -match '^scripts/tests/[^/]+\.(?:ps1|psm1|mjs)$') { $scanQueue.Enqueue($candidate) }
+                    }
+                }
+            }
+            }
+        }
+    }
+    # The audit must have seen the suite: a parser or pattern regression that finds nothing would
+    # otherwise pass vacuously.
+    Assert-True ($shardAuditPaths.Count -ge 40) "the shard coverage audit inspected the conditional legs' inputs (found $($shardAuditPaths.Count), expected at least 40)"
+    if ($shardAuditPaths.Count -gt 0) {
+        # One node call for the whole audit: the selector is the same module the scope job runs,
+        # and a full-dispatch path is one the manifest's own glob dialect matches.
+        $shardAuditScript = @'
+const [policyPath, manifestPath] = process.argv.slice(2);
+const fs = require('node:fs');
+const paths = JSON.parse(fs.readFileSync(0, 'utf8'));
+const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+const escapeLiteral = (text) => text.replace(/[.+^${}()|[\]\\]/g, '\\$&');
+const globToRegExp = (glob) => new RegExp('^' + glob.split('**/').map((segment) => segment.split('**').map((piece) => piece.split('*').map(escapeLiteral).join('[^/]*')).join('.*')).join('(?:.*/)?') + '$');
+const fullDispatch = manifest.full_dispatch_globs.map(globToRegExp);
+const { pathToFileURL } = require('node:url');
+import(pathToFileURL(require('node:path').resolve(process.cwd(), 'scripts/lib/agent-governance-shards.mjs')).href).then((selector) => {
+  const policy = JSON.parse(fs.readFileSync(policyPath, 'utf8'));
+  for (const changedPath of paths) {
+    const full = fullDispatch.some((re) => re.test(changedPath));
+    const result = selector.selectShards(policy, { changedPaths: [changedPath], full });
+    process.stdout.write(`${changedPath}\t${result.shards.join(',')}\n`);
+  }
+});
+'@
+        $shardAuditFile = Join-Path ([IO.Path]::GetTempPath()) ("agent-governance-shard-audit-{0}.cjs" -f [guid]::NewGuid())
+        [IO.File]::WriteAllText($shardAuditFile, $shardAuditScript, [Text.UTF8Encoding]::new($false))
+        try {
+            $shardAuditOutput = @($shardAuditPaths.Keys) | ConvertTo-Json -Compress -AsArray |
+                & node $shardAuditFile 'scripts/agent-governance-shards.json' 'scripts/verification-manifest.json' 2>&1
+            Assert-True ($LASTEXITCODE -eq 0) "the canonical shard selector answers the coverage audit: $(($shardAuditOutput | Out-String).Trim())"
+            $selectedByPath = @{}
+            foreach ($auditLine in @($shardAuditOutput)) {
+                $auditParts = ([string]$auditLine).Split("`t")
+                if ($auditParts.Count -eq 2) { $selectedByPath[$auditParts[0]] = @($auditParts[1].Split(',')) }
+            }
+            foreach ($auditedPath in @($shardAuditPaths.Keys)) {
+                foreach ($owedShard in @($shardAuditPaths[$auditedPath].Keys)) {
+                    $owningStep = $shardAuditPaths[$auditedPath][$owedShard]
+                    Assert-True (($selectedByPath[$auditedPath]) -ccontains $owedShard) "changing '$auditedPath' selects the '$owedShard' shard whose step '$owningStep' exercises it, so the affected assertion cannot be skipped"
+                }
+            }
+        } finally {
+            Remove-Item -LiteralPath $shardAuditFile -Force -ErrorAction SilentlyContinue
+        }
     }
 
     $shipWorkflowScript = Get-Content -LiteralPath '.claude/workflows/ship-item.js' -Raw

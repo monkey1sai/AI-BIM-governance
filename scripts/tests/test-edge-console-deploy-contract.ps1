@@ -101,6 +101,12 @@ try {
     $coordinatorComposeBody = $coordinatorComposeBlock.Groups['body'].Value
     Assert-True ($coordinatorComposeBody -match '(?m)^      CALLBACK_OUTBOX_STORE_PATH:\s+/workspace/storage/coordinator/callback-outbox\.json\r?$') 'compose pins callback outbox store under the mounted runtime storage volume'
     Assert-True ($coordinatorComposeBody -match '(?m)^      CONVERSION_LEDGER_STORE_PATH:\s+/workspace/storage/coordinator/conversion-ledger\.json\r?$') 'compose pins conversion ledger store under the mounted runtime storage volume (#531)'
+    # #804：intake 佇列（ExternalIfcReadyStore）與 review session（SessionStore）同樣必須落
+    # 掛載卷；未設時前者 volatile、後者 <cwd>/data/sessions，coordinator recreate 後
+    # GET /api/external/ifc-ready 歸零、既有 session 消失。
+    Assert-True ($coordinatorComposeBody -match '(?m)^      EXTERNAL_IFC_READY_STORE_PATH:\s+/workspace/storage/coordinator/external-ifc-ready\.json\r?$') 'compose pins external ifc-ready intake store under the mounted runtime storage volume (#804)'
+    Assert-True ($coordinatorComposeBody -match '(?m)^      SESSION_STORE_DIR:\s+/workspace/storage/coordinator/sessions\r?$') 'compose pins review session store under the mounted runtime storage volume (#804)'
+    Assert-True ($coordinatorComposeBody -match '(?m)^      EVENT_LOG_DIR:\s+/workspace/storage/coordinator/events\r?$') 'compose pins the session lifecycle event log beside the session store so close recovery survives recreate (#804)'
     Assert-True ($coordinatorComposeBody -match '(?m)^      - \$\{RUNTIME_STORAGE_ROOT:-\./storage\}:/workspace/storage\r?$') 'coordinator mounts the owner-controlled runtime storage volume at /workspace/storage'
 
     $deploy = Get-Content -LiteralPath $deployPath -Raw
