@@ -6,7 +6,7 @@
 // `now`（ISO 字串）一律由呼叫端傳入，service 內不取時鐘（方便測試）。
 import fs from "node:fs";
 import path from "node:path";
-import type { ReadyRenderBundle } from "./readyModelResolver.js";
+import type { ReadyRenderBundle } from "../types.js";
 
 /** 轉檔紀錄狀態（誠實鐵律：非 converter 落地不得出現 ready） */
 export type ConversionLedgerStatus = "detected" | "queued" | "converting" | "ready" | "failed";

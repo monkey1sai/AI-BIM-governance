@@ -1,19 +1,10 @@
 import type { ConversionLedgerRecord } from "./conversionLedger.js";
+import type { ReadyRenderBundle } from "../types.js";
 import { sanitizeArtifactIdPart, type StreamingConversionResult } from "./streamingConversionClient.js";
 import { isIfcReadySessionTraceId } from "./sessionStore.js";
 
 /** Internal descriptor only. Never serialize this object through public ledger APIs. */
-export interface ReadyRenderBundle {
-  readyModelId: string;
-  conversionJobId: string;
-  correlationId: string;
-  rootTraceId: string;
-  tenantId: string;
-  projectId: string;
-  modelVersionId: string;
-  model: { url: string; sha256: string };
-  mapping: { url: string; sha256: string };
-}
+export type { ReadyRenderBundle };
 
 export function validateCachedRenderBundle(value: unknown, record: ConversionLedgerRecord, tenantId: string, origin: string): ReadyRenderBundle | null {
   const bundle = object(value);

@@ -396,3 +396,20 @@ export interface StreamConfigResponse {
     spectator_ready: boolean;
   };
 }
+
+/**
+ * Persisted ready-model render bundle (conversion ledger v2 `ready_render_bundle`). Declared here
+ * rather than in readyModelResolver.ts so conversionLedger.ts and readyModelResolver.ts depend on
+ * this module instead of on each other (ARCH-GRAPH-001: no module cycles).
+ */
+export interface ReadyRenderBundle {
+  readyModelId: string;
+  conversionJobId: string;
+  correlationId: string;
+  rootTraceId: string;
+  tenantId: string;
+  projectId: string;
+  modelVersionId: string;
+  model: { url: string; sha256: string };
+  mapping: { url: string; sha256: string };
+}
