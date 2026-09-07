@@ -262,6 +262,11 @@ export class IfcReadyConversionPipeline<TTerminalObserverResult = void> {
             this.store.markIdempotentReplay(resumedJob.ifc_ready_job_id) ?? resumedJob;
           return { kind: "replay", job: replayed };
         }
+      } else if (existing.status === "accepted" && existing.download_status === "failed") {
+        // #804 續：下載進行中被 recreate 的 job，loadFromDisk() 只把 download_status 改成
+        // failed（"operator must re-POST"），status 仍是 accepted、也不在 retryDispatch 的可重試
+        // 集合裡。若在此 replay，同鍵重送永遠只拿回這顆沒下載、沒派工的死 job。這種 job 的
+        // 脈絡確定救不回，直接 fall through 視為全新 intake（index repoint 到新 job）。
       } else {
         const replayed =
           this.store.markIdempotentReplay(existing.ifc_ready_job_id) ?? existing;

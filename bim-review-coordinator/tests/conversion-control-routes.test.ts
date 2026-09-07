@@ -418,6 +418,56 @@ describe("conversion control routes — retry", () => {
     }
   });
 
+  it("#804 續：下載中被 recreate 的 job（download_status=failed、status=accepted）用同一組 idempotency_key re-POST 視為全新 intake", async () => {
+    const seedRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bim-review-coordinator-accept-dlinterrupt-"));
+    const persistencePath = path.join(seedRoot, "ifc-ready-store.json");
+    const seedStore = new ExternalIfcReadyStore(persistencePath);
+    const event = payload({ external_model_version_id: "ext_dlint" }) as unknown as ExternalIfcReadyEvent;
+    const seeded = seedStore.create(event, {
+      correlationId: "corr_dlint",
+      idempotencyKey: "idem_dlint",
+      tenantId: "tenant_dlint",
+      projectId: "project_dlint",
+      externalModelVersionId: "ext_dlint",
+    });
+    // 模擬 coordinator 在 await 下載時被 recreate：持久化時 download_status 仍是 downloading，
+    // loadFromDisk() 會把它調和成 failed，但 status 停在 accepted、不進 retryDispatch 的可重試集合。
+    seedStore.markDownloading(seeded.ifc_ready_job_id);
+
+    const previousStorePath = process.env.EXTERNAL_IFC_READY_STORE_PATH;
+    process.env.EXTERNAL_IFC_READY_STORE_PATH = persistencePath;
+    try {
+      const stub = await startControllableStreamingStub();
+      const app = makeApp({ streamingConversionApiBase: stub.baseUrl });
+      const before = await request(app.app).get(`/api/external/ifc-ready/${seeded.ifc_ready_job_id}`);
+      expect(before.body.status).toBe("accepted");
+      expect(before.body.download_status).toBe("failed");
+
+      stub.releaseNext();
+      const retryPost = await request(app.app)
+        .post("/api/external/ifc-ready")
+        .set(authHeaders("corr_dlint", "idem_dlint"))
+        .send(payload({ external_model_version_id: "ext_dlint" }));
+      expect(retryPost.status).toBe(202);
+      expect(retryPost.body.ifc_ready_job_id).not.toBe(seeded.ifc_ready_job_id);
+      expect(retryPost.body.idempotent_replay).toBe(false);
+
+      const staleJob = await request(app.app).get(`/api/external/ifc-ready/${seeded.ifc_ready_job_id}`);
+      expect(staleJob.body.download_status).toBe("failed");
+
+      await waitFor(async () => {
+        const r = await request(app.app).get(`/api/external/ifc-ready/${retryPost.body.ifc_ready_job_id}`);
+        return r.body.status === "dispatched";
+      });
+    } finally {
+      if (previousStorePath === undefined) {
+        delete process.env.EXTERNAL_IFC_READY_STORE_PATH;
+      } else {
+        process.env.EXTERNAL_IFC_READY_STORE_PATH = previousStorePath;
+      }
+    }
+  });
+
   it("#804 續：dropped_on_restart 缺少已下載脈絡時，用同一組 idempotency_key re-POST 視為全新 intake（不永久卡住重送）", async () => {
     const seedRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bim-review-coordinator-accept-contextlost-"));
     const persistencePath = path.join(seedRoot, "ifc-ready-store.json");
