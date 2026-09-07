@@ -575,6 +575,10 @@ try {
             if (-not $scanned.Add($scanPath)) { continue }
             # PowerShell sources often spell dependencies with backslashes; fold them before matching.
             $executedText = (Get-Content -LiteralPath (Join-Path $repoRoot $scanPath) -Raw -Encoding utf8) -replace '\\', '/'
+            # Comments are prose, not dependencies: a helper's remark that names another test must not
+            # drag that test's inputs into this leg. Drop block and line comments before matching.
+            $executedText = [regex]::Replace($executedText, '(?s)<#.*?#>|/\*.*?\*/', ' ')
+            $executedText = [regex]::Replace($executedText, '(?m)^[ \t]*(?:#|//).*$', '')
             $executedDir = (Split-Path -Parent $scanPath) -replace '\\', '/'
             foreach ($inputMatch in $repoInputPattern.Matches($executedText)) {
                 $inputPath = $inputMatch.Groups['path'].Value -replace '/\./', '/'

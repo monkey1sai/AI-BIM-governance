@@ -30,13 +30,6 @@
     "scripts/tests/reconcile-openspec-ledger.ps1",
     "scripts/tests/openspec-*.schema.json",
     "scripts/tests/fixtures/task-ledger-parity.json",
-    "scripts/deploy.ps1",
-    "scripts/dev/rebuild-test-deploy.ps1",
-    "scripts/lib/rebuild-test-deploy.ps1",
-    "scripts/lib/StructLog.psm1",
-    "scripts/lib/pr-review-agent.ps1",
-    "scripts/pr-review-agent.ps1",
-    "scripts/tests/test-pr-review-agent.ps1",
     "docs/plans/NOW.md",
         "scripts/tests/verify-openspec-*.mjs",
         "scripts/dev/verify-openspec-*.mjs"
