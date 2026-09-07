@@ -40,7 +40,10 @@ describe("ready render resolution without volatile intake", () => {
     if (!first.ok) throw new Error("Fixture failed");
     input.record.ready_render_bundle = first.bundle;
     input.fetchResult.mockClear();
-    expect(await resolveReadyRenderBundle(input)).toEqual(first);
+    const second = await resolveReadyRenderBundle(input);
+    expect(second.ok && second.cached).toBe(true);
+    expect(second.ok ? second.bundle : null).toEqual(first.bundle);
+    expect(first.cached).toBe(false);
     expect(input.fetchResult).not.toHaveBeenCalled();
   });
   it("accepts artifacts published under the trusted public origin when the API base is internal", async () => {

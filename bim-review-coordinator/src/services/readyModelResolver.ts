@@ -1,6 +1,7 @@
 import type { ConversionLedgerRecord } from "./conversionLedger.js";
 import type { ReadyRenderBundle } from "../types.js";
-import { sanitizeArtifactIdPart, type StreamingConversionResult } from "./streamingConversionClient.js";
+import { buildQualityMetricsSummary, sanitizeArtifactIdPart, type StreamingConversionResult } from "./streamingConversionClient.js";
+import type { ConversionQualityMetricsSummary } from "../types.js";
 import { isIfcReadySessionTraceId } from "./sessionStore.js";
 
 /** Internal descriptor only. Never serialize this object through public ledger APIs. */
@@ -24,7 +25,9 @@ export function validateCachedRenderBundle(value: unknown, record: ConversionLed
 }
 
 export type ReadyRenderResolution =
-  | { ok: true; bundle: ReadyRenderBundle }
+  /** `cached` = descriptor came from the persisted ledger (no authority round-trip; quality metrics are
+   * only available from a fresh authority result, so they are null on the cached path). */
+  | { ok: true; bundle: ReadyRenderBundle; cached: boolean; qualitySummary: ConversionQualityMetricsSummary | null }
   | { ok: false; reason: "record_not_ready" | "result_unavailable" | "result_identity_mismatch" | "artifact_invalid" };
 
 function object(value: unknown): Record<string, unknown> | null {
@@ -80,7 +83,7 @@ export async function resolveReadyRenderBundle(input: {
     || !input.configuredTenantId.trim()) return { ok: false, reason: "record_not_ready" };
   if (record.ready_render_bundle !== undefined) {
     const bundle = validateCachedRenderBundle(record.ready_render_bundle, record, input.configuredTenantId, trustedArtifactOrigins(input));
-    return bundle ? { ok: true, bundle } : { ok: false, reason: "artifact_invalid" };
+    return bundle ? { ok: true, bundle, cached: true, qualitySummary: null } : { ok: false, reason: "artifact_invalid" };
   }
   let result: StreamingConversionResult;
   try { result = await input.fetchResult(jobId); }
@@ -108,7 +111,7 @@ export async function resolveReadyRenderBundle(input: {
     || (record.usdc_key !== null && record.usdc_key !== model.url)) {
     return { ok: false, reason: "artifact_invalid" };
   }
-  return { ok: true, bundle: {
+  return { ok: true, cached: false, qualitySummary: buildQualityMetricsSummary(result), bundle: {
     readyModelId: record.idempotency_key, conversionJobId: jobId, correlationId: record.correlation_id, rootTraceId: raw.trace_id,
     tenantId: input.configuredTenantId, projectId: record.project_id,
     modelVersionId: record.external_model_version_id, model, mapping,

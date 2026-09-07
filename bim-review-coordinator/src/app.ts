@@ -3217,7 +3217,10 @@ export function createCoordinatorApp(
             conversionOrigin: config.streamingConversionApiBase,
             publicArtifactOrigin: readyModelPublicArtifactOrigin,
             fetchResult: (jobId) => streamingConversionClient.fetchConversionResult(jobId) });
-          if (!resolved.ok) return { status: 409, body: { error_code: resolved.reason } };
+          if (!resolved.ok) {
+            // 轉檔權威暫時不可達是可重試的上游故障，不是模型狀態衝突；比照既有 conversion-authority 路由回 502。
+            return { status: resolved.reason === "result_unavailable" ? 502 : 409, body: { error_code: resolved.reason } };
+          }
           const bundle = resolved.bundle;
           const health = await probeArtifactHealth({ host_local_path: null,
             model_artifact_url: bundle.model.url, mapping_url: bundle.mapping.url,
@@ -3232,18 +3235,23 @@ export function createCoordinatorApp(
             || current.external_model_version_id !== record.external_model_version_id || current.usdc_key !== record.usdc_key) {
             return { status: 409, body: { error_code: "ready_model_changed" } };
           }
-          conversionLedger.rememberRenderBundle(bundle);
+          // 只在剛從權威取得（尚未快取）時才持久化；replay 不應每次重寫整份 ledger。
+          if (!resolved.cached) conversionLedger.rememberRenderBundle(bundle);
           const sessions = store.list().filter(session => session.ready_model_id === id
             && session.tenant_id === bundle.tenantId && session.project_id === bundle.projectId
             && session.model_version_id === bundle.modelVersionId && session.trace_id === bundle.rootTraceId
             && session.artifact_bindings.some(binding => binding.conversion_job_id === bundle.conversionJobId
               && binding.url === bundle.model.url && binding.mapping_url === bundle.mapping.url));
           const active = sessions.find(session => session.status === "active" || session.status === "created");
+          // closing 是進行中的 close-recovery 狀態：既不能重用，也不能在它還握著 Kit binding 時另配一顆新
+          // session（同一 endpoint 會被雙重配置、lineage 也會斷）。等它完成 close 後再以 recreation 接手。
+          const closing = !active ? sessions.find(session => session.status === "closing") : undefined;
+          if (closing) return { status: 409, body: { error_code: "ready_model_session_closing" } };
           const result = autoCreateOrActivateSession({ traceId: bundle.rootTraceId, tenantId: bundle.tenantId,
             projectId: bundle.projectId, modelVersionId: bundle.modelVersionId, correlationId: current.correlation_id!,
             existingSessionId: active?.session_id, readyModelId: id,
             recreatedFromSessionId: !active ? sessions.find(session => session.status === "closed")?.session_id : undefined },
-          { usdc_ref: bundle.model.url, element_mapping_ref: bundle.mapping.url }, bundle.conversionJobId);
+          { usdc_ref: bundle.model.url, element_mapping_ref: bundle.mapping.url }, bundle.conversionJobId, resolved.qualitySummary);
           if (!result.session) return { status: 409, body: { error_code: result.reason } };
           return { status: 200, body: { ready_model_id: id, review_session_id: result.session.session_id,
             session_status: result.session.status, session_replay: result.replay } };
@@ -3959,11 +3967,12 @@ export function createCoordinatorApp(
         model_version_id: session.model_version_id,
         review_request_id: session.review_request_id,
       });
-    }
-    if (session.status === "active") {
-      eventLog.appendServerOwned(session.session_id, "sessionActive", {
-        kit_instance_bindings: session.kit_instance_bindings.map((binding) => binding.kit_instance_id),
-      });
+      // recreation 分支的 sessionActive 已由 ensureRecreationEvents 以 canonical 形式 append，這裡不重複。
+      if (session.status === "active") {
+        eventLog.appendServerOwned(session.session_id, "sessionActive", {
+          kit_instance_bindings: session.kit_instance_bindings.map((binding) => binding.kit_instance_id),
+        });
+      }
     }
     return { session, replay: false };
   }

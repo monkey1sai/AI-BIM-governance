@@ -122,6 +122,18 @@ describe("ready model session consumption", () => {
     const created = targetEvents.body.items.filter((event: { type: string }) => event.type === "sessionCreated");
     expect(created).toHaveLength(1);
     expect(created[0].payload).toMatchObject({ recreated_from_session_id: first.body.review_session_id });
+    // recreation 的 sessionActive 只由 ensureRecreationEvents 發一次，不再被 auto-create 尾端重複 append。
+    expect(targetEvents.body.items.filter((event: { type: string }) => event.type === "sessionActive")).toHaveLength(1);
+  });
+  it("refuses to replace a session that is still closing", async () => {
+    const { app } = await fixture();
+    const first = await request(app.app).post(route).send({});
+    expect(first.status).toBe(200);
+    app.store.setStatus(first.body.review_session_id, "closing");
+    const next = await request(app.app).post(route).send({});
+    expect(next.status).toBe(409);
+    expect(next.body.error_code).toBe("ready_model_session_closing");
+    expect(app.store.list()).toHaveLength(1);
   });
   it("rejects unauthorized callers before upstream I/O", async () => {
     const { app } = await fixture({ externalIntakeIpAllowlist: ["10.0.0.0/8"], devAuthToken: "dev-token" });
