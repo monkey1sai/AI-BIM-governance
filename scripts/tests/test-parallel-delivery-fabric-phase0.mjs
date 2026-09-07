@@ -437,7 +437,10 @@ test('Phase 0 has one canonical, inactive-until-attested delivery authority', ()
   assert.deepEqual(Object.keys(fabricRow.task_ledger).sort(), ['completed', 'total']);
   assert.deepEqual(fabricRow.task_ledger, taskCounts(read(`${FABRIC_CHANGE}/tasks.md`)),
     'lifecycle task counts must be derived from the canonical Fabric task list');
-  assert.equal(fabricRow.subject_commit, '24aa54d5aedba8a5f0774a095215b9f26d21e198');
+  // subject_commit is the source snapshot the row was observed at; it is rebound whenever an owned
+  // OpenSpec source changes and self-heals through introduction recovery after a squash, so the
+  // gate pins its shape and binding kind, not one historical SHA.
+  assert.match(fabricRow.subject_commit, /^[0-9a-f]{40}$/u, 'Fabric row subject_commit must be a lowercase full SHA');
   assert.equal(fabricRow.subject_binding, 'introduction');
   assert.equal(fabricRow.archive_debt, null);
   for (const reference of [
