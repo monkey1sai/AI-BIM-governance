@@ -3887,6 +3887,14 @@ export function createCoordinatorApp(
     if (source.existingSessionId) {
       const existing = store.get(source.existingSessionId);
       if (existing) {
+        // #810：重用既有 session 時，若它建立當下沒有 quality summary（例如
+        // /api/internal/conversion-result 的 report 不帶 quality_metrics），而這次 caller
+        // 已從權威解析到 summary，就補上去；否則 replay 會一直回報 semantic／coverage 未就緒。
+        // 只補空值、不覆蓋既有 summary（既有值來自同一 conversion job 的權威結果）。
+        if (qualitySummary && existing.quality_metrics_summary == null) {
+          const enriched = store.update(existing.session_id, { quality_metrics_summary: qualitySummary });
+          return { session: enriched ?? existing, replay: true };
+        }
         return { session: existing, replay: true };
       }
       // 既有 session 檔被外部移除 → 視為無 session，重建（不丟 review intent）。
@@ -3985,7 +3993,12 @@ export function createCoordinatorApp(
       const result = autoCreateOrActivateSession(
         { traceId: event.job.ifc_ready_job_id, tenantId: event.job.tenant_id, projectId: event.job.project_id,
           modelVersionId: event.job.external_model_version_id, correlationId: event.job.correlation_id,
-          existingSessionId: event.job.review_session_id },
+          existingSessionId: event.job.review_session_id,
+          // #809：MinIO watcher job 的 idempotency_key 就是 ready model id；綁上去，之後
+          // POST /api/conversion/records/:readyModelId/review-session 才能重用這顆 session，
+          // 不會對同一轉檔再配第二顆 session／Kit binding。非 mw_* 來源（devreg、外部 worker）
+          // 不是 ready model，維持不綁（store 只接受 mw_ 形狀）。
+          readyModelId: /^mw_[a-f0-9]{16}$/.test(event.job.idempotency_key) ? event.job.idempotency_key : undefined },
         {
           usdc_ref: event.artifacts.usdc_ref ?? null,
           element_mapping_ref: event.artifacts.element_mapping_ref ?? null,

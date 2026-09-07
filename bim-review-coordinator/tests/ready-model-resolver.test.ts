@@ -27,6 +27,8 @@ function fixture() {
         model_usdc: { url: model, checksum_sha256: "a".repeat(64) },
         element_mapping: { url: mapping, checksum_sha256: "b".repeat(64) },
       },
+      quality_metrics: { coverage_ratio: 0.998, coverage_status: "warn", semantic_mapping_fidelity: "guid_exact",
+        mapping_has_ifc_type: true, phase_timings: { conversion_total: { duration_seconds: 12.5 } } },
     },
   };
   const fetchResult = vi.fn(async () => result);
@@ -45,6 +47,36 @@ describe("ready render resolution without volatile intake", () => {
     expect(second.ok ? second.bundle : null).toEqual(first.bundle);
     expect(first.cached).toBe(false);
     expect(input.fetchResult).not.toHaveBeenCalled();
+  });
+  it("carries the sanitized quality summary through the persisted descriptor on the cached path", async () => {
+    const { input } = fixture();
+    const first = await resolveReadyRenderBundle(input);
+    if (!first.ok) throw new Error("Fixture failed");
+    expect(first.qualitySummary).toMatchObject({ coverage_ratio: 0.998, coverage_status: "warn",
+      semantic_mapping_fidelity: "guid_exact", mapping_has_ifc_type: true, conversion_duration_seconds: 12.5 });
+    expect(first.bundle.qualitySummary).toEqual(first.qualitySummary);
+    input.record.ready_render_bundle = structuredClone(first.bundle);
+    const cached = await resolveReadyRenderBundle(input);
+    expect(cached.ok && cached.cached).toBe(true);
+    expect(cached.ok ? cached.qualitySummary : null).toEqual(first.qualitySummary);
+  });
+  it("re-sanitizes a persisted quality summary and tolerates descriptors written without one", async () => {
+    const { input } = fixture();
+    const first = await resolveReadyRenderBundle(input);
+    if (!first.ok) throw new Error("Fixture failed");
+    const tampered = structuredClone(first.bundle) as unknown as Record<string, unknown>;
+    tampered.qualitySummary = { coverage_ratio: "not-a-number", semantic_mapping_fidelity: "guid_exact", injected: true };
+    input.record.ready_render_bundle = tampered as never;
+    const sanitized = await resolveReadyRenderBundle(input);
+    if (!sanitized.ok) throw new Error("Cached resolution failed");
+    expect(sanitized.qualitySummary).toMatchObject({ coverage_ratio: null, semantic_mapping_fidelity: "guid_exact" });
+    expect(sanitized.qualitySummary).not.toHaveProperty("injected");
+    const legacy = structuredClone(first.bundle) as unknown as Record<string, unknown>;
+    delete legacy.qualitySummary;
+    input.record.ready_render_bundle = legacy as never;
+    const withoutSummary = await resolveReadyRenderBundle(input);
+    expect(withoutSummary.ok && withoutSummary.cached).toBe(true);
+    expect(withoutSummary.ok ? withoutSummary.qualitySummary : undefined).toBeNull();
   });
   it("accepts artifacts published under the trusted public origin when the API base is internal", async () => {
     const { input } = fixture();

@@ -18,6 +18,8 @@ let active: CoordinatorApp | undefined;
 let reads = 0;
 let healthy = true;
 let wrongIdentity = false;
+// Root trace the fixture authority echoes back; the watcher-ingest test rebinds it to the real ifc-ready job id.
+let traceId = "ifcready_fixture";
 
 async function stopApp() {
   if (!active) return;
@@ -35,10 +37,13 @@ afterEach(async () => {
 
 async function fixture(overrides: Partial<CoordinatorConfig> = {}) {
   root = fs.mkdtempSync(path.join(os.tmpdir(), "ready-model-session-"));
-  reads = 0; healthy = true; wrongIdentity = false;
+  reads = 0; healthy = true; wrongIdentity = false; traceId = "ifcready_fixture";
   let origin = "";
   upstream = http.createServer((req, res) => {
-    if (req.url === `/api/conversions/${job}/result`) {
+    if (req.method === "POST" && req.url === "/api/conversions/ifc-to-usdc") {
+      res.statusCode = 202; res.setHeader("Content-Type", "application/json");
+      res.end(JSON.stringify({ conversion_job_id: job, status: "queued", authority: "bim-streaming-server", correlation_id: "minio-watch-test" }));
+    } else if (req.url === `/api/conversions/${job}/result`) {
       reads++;
       const model = `${origin}/artifacts/${job}/model.usdc`;
       const mapping = `${origin}/artifacts/${job}/element_mapping.json`;
@@ -46,9 +51,11 @@ async function fixture(overrides: Partial<CoordinatorConfig> = {}) {
       res.end(JSON.stringify({
         conversion_job_id: job, authority: "bim-streaming-server", ready: true, status: "succeeded",
         tenant_id: wrongIdentity ? "other" : "tenant-test", project_id: "project-test", model_version_id: "v1",
-        correlation_id: "minio-watch-test", trace_id: "ifcready_fixture", usdc_url: model, mapping_url: mapping,
+        correlation_id: "minio-watch-test", trace_id: traceId, usdc_url: model, mapping_url: mapping,
+        model: { status: "ready", format: "usdc", url: model },
         artifacts: { model_usdc: { url: model, checksum_sha256: "a".repeat(64) },
           element_mapping: { url: mapping, checksum_sha256: "b".repeat(64) } },
+        quality_metrics: { coverage_status: "pass", semantic_mapping_fidelity: "guid_exact", mapping_has_ifc_type: true },
       }));
     } else if (req.url?.startsWith(`/artifacts/${job}/`)) {
       res.statusCode = healthy ? 200 : 404;
@@ -107,6 +114,71 @@ describe("ready model session consumption", () => {
     expect(next.body.review_session_id).not.toBe(first.body.review_session_id);
     expect(app.store.get(first.body.review_session_id)?.status).toBe("closed");
     expect(app.store.get(next.body.review_session_id)?.recreated_from_session_id).toBe(first.body.review_session_id);
+    // #809：recreation 走 cached descriptor（reads 仍為 1），quality summary 必須跟著 descriptor 回來。
+    expect(reads).toBe(1);
+    expect(app.store.get(next.body.review_session_id)?.quality_metrics_summary).toMatchObject({
+      coverage_status: "pass", semantic_mapping_fidelity: "guid_exact", mapping_has_ifc_type: true });
+  });
+  it("reuses the session the watcher terminal-ingestion path already created for the same ready model", async () => {
+    const { app } = await fixture();
+    const intake = await request(app.app).post("/api/external/ifc-ready")
+      .set({ "X-Webhook-Secret": "dev-webhook-secret", "X-Correlation-Id": "minio-watch-test", "X-Idempotency-Key": id })
+      .send({ event: "ifc_ready", event_id: "evt_809", tenant_id: "tenant-test", project_id: "project-test",
+        external_model_version_id: "v1", project_display_name: "test", model_category: "architecture",
+        external_conversion_task_id: "task_809",
+        source_ifc: { ref: "minio://bucket/tenant-test/project-test/v1/model.ifc", etag: `sha256:${"0".repeat(64)}`, filename: "model.ifc", format: "ifc" },
+        requested_outputs: ["usdc", "element_mapping"], callback_url: "https://cloud.example/callbacks" });
+    expect(intake.status).toBe(202);
+    traceId = intake.body.ifc_ready_job_id;
+    const ingest = await request(app.app).post(`/api/internal/conversions/${job}/ingest`)
+      .set({ "X-Internal-Token": "dev-internal-token" }).send({});
+    expect(ingest.status).toBe(202);
+    const autoSessionId = ingest.body.session?.session_id as string;
+    expect(autoSessionId).toMatch(/^review_session_/);
+    expect(app.store.get(autoSessionId)).toMatchObject({ ready_model_id: id, status: "active" });
+    const viaRoute = await request(app.app).post(route).send({});
+    expect(viaRoute.status).toBe(200);
+    expect(viaRoute.body).toMatchObject({ review_session_id: autoSessionId, session_replay: true });
+    expect(app.store.list()).toHaveLength(1);
+  });
+  it("backfills a missing quality summary when the ready-record route reuses the watcher session", async () => {
+    const { app } = await fixture();
+    const intake = await request(app.app).post("/api/external/ifc-ready")
+      .set({ "X-Webhook-Secret": "dev-webhook-secret", "X-Correlation-Id": "minio-watch-test", "X-Idempotency-Key": id })
+      .send({ event: "ifc_ready", event_id: "evt_810", tenant_id: "tenant-test", project_id: "project-test",
+        external_model_version_id: "v1", project_display_name: "test", model_category: "architecture",
+        external_conversion_task_id: "task_810",
+        source_ifc: { ref: "minio://bucket/tenant-test/project-test/v1/model.ifc", etag: `sha256:${"0".repeat(64)}`, filename: "model.ifc", format: "ifc" },
+        requested_outputs: ["usdc", "element_mapping"], callback_url: "https://cloud.example/callbacks" });
+    expect(intake.status).toBe(202);
+    traceId = intake.body.ifc_ready_job_id;
+    const ingest = await request(app.app).post(`/api/internal/conversions/${job}/ingest`)
+      .set({ "X-Internal-Token": "dev-internal-token" }).send({});
+    expect(ingest.status).toBe(202);
+    const autoSessionId = ingest.body.session.session_id as string;
+    // 模擬建立當下沒有 quality summary 的 terminal notification（report 不帶 quality_metrics）。
+    app.store.update(autoSessionId, { quality_metrics_summary: null });
+    const viaRoute = await request(app.app).post(route).send({});
+    expect(viaRoute.body).toMatchObject({ review_session_id: autoSessionId, session_replay: true });
+    expect(app.store.get(autoSessionId)?.quality_metrics_summary).toMatchObject({ coverage_status: "pass", semantic_mapping_fidelity: "guid_exact" });
+    const sc = await request(app.app).get(`/api/review-sessions/${autoSessionId}/stream-config`);
+    expect(sc.body.quality_metrics_summary).toMatchObject({ coverage_status: "pass" });
+  });
+  it("does not stamp a ready_model_id on non-watcher intake sessions", async () => {
+    const { app } = await fixture();
+    const intake = await request(app.app).post("/api/external/ifc-ready")
+      .set({ "X-Webhook-Secret": "dev-webhook-secret", "X-Correlation-Id": "minio-watch-test", "X-Idempotency-Key": "idem_external_809" })
+      .send({ event: "ifc_ready", event_id: "evt_809b", tenant_id: "tenant-test", project_id: "project-test",
+        external_model_version_id: "v1", project_display_name: "test", model_category: "architecture",
+        external_conversion_task_id: "task_809b",
+        source_ifc: { ref: "minio://bucket/tenant-test/project-test/v1/model.ifc", etag: `sha256:${"0".repeat(64)}`, filename: "model.ifc", format: "ifc" },
+        requested_outputs: ["usdc", "element_mapping"], callback_url: "https://cloud.example/callbacks" });
+    expect(intake.status).toBe(202);
+    traceId = intake.body.ifc_ready_job_id;
+    const ingest = await request(app.app).post(`/api/internal/conversions/${job}/ingest`)
+      .set({ "X-Internal-Token": "dev-internal-token" }).send({});
+    expect(ingest.status).toBe(202);
+    expect(app.store.get(ingest.body.session.session_id)?.ready_model_id).toBeUndefined();
   });
   it("replacing a closed session emits the paired recreation lineage events", async () => {
     const { app } = await fixture();
