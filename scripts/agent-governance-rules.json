@@ -138,7 +138,12 @@
         "docs/agents/ai-coding-metrics.md",
         "docs/PR_REVIEW_AGENT.md",
         "docs/superpowers/plans/2026-06-18-ai-coding-maturity-governance.md",
-        "openspec/AGENTS.md"
+        "openspec/AGENTS.md",
+        "scripts/agent-governance-shards.json",
+        "scripts/tests/agent-governance-shards.schema.json",
+        "scripts/lib/agent-governance-shards.mjs",
+        "scripts/dev/select-agent-governance-shards.mjs",
+        "scripts/tests/test-agent-governance-shards.mjs"
       ]
     },
     {
@@ -149,6 +154,32 @@
       "replaces": "test-agent-governance-check.ps1:321",
       "path": "scripts/verification-manifest.json",
       "schema": "scripts/tests/verification-manifest.schema.json"
+    },
+    {
+      "id": "agent-governance-shards-schema",
+      "kind": "json_schema",
+      "severity": "error",
+      "title": "agent-governance-shards.json satisfies its Draft-07 schema",
+      "path": "scripts/agent-governance-shards.json",
+      "schema": "scripts/tests/agent-governance-shards.schema.json"
+    },
+    {
+      "id": "agent-governance-shards-selection-only",
+      "kind": "json_node",
+      "severity": "error",
+      "title": "the shard declaration decides where steps run, never whether the repository is verified",
+      "path": "scripts/agent-governance-shards.json",
+      "pointer": "authority",
+      "equals": "shard_selection_only"
+    },
+    {
+      "id": "agent-governance-shards-schema-version",
+      "kind": "json_node",
+      "severity": "error",
+      "title": "the shard declaration stays on the schema the selector and the static check both read",
+      "path": "scripts/agent-governance-shards.json",
+      "pointer": "schema_version",
+      "equals": "agent-governance-shards/v1"
     },
     {
       "id": "ai-coding-metrics-policy-schema",

@@ -1,0 +1,39 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://monkey1sai.github.io/AI-BIM-governance/schemas/agent-governance-shards.schema.json",
+  "title": "Agent Governance shard declaration",
+  "description": "Canonical shard list for the Agent Governance suite matrix. Selection decides where a step runs, never whether the repository is verified.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["$schema", "schema_version", "authority", "purpose", "not_a_gate", "shards"],
+  "properties": {
+    "$schema": { "type": "string" },
+    "schema_version": { "const": "agent-governance-shards/v1" },
+    "authority": {
+      "const": "shard_selection_only",
+      "description": "Pinned: this document may never be widened into a gate."
+    },
+    "purpose": { "type": "string", "minLength": 1 },
+    "not_a_gate": { "type": "string", "minLength": 1 },
+    "shards": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 16,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "always", "title", "reason", "path_globs"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^[a-z][a-z0-9-]{0,31}$" },
+          "always": { "type": "boolean" },
+          "title": { "type": "string", "minLength": 1 },
+          "reason": { "type": "string", "minLength": 1 },
+          "path_globs": {
+            "type": "array",
+            "items": { "type": "string", "minLength": 1 }
+          }
+        }
+      }
+    }
+  }
+}
