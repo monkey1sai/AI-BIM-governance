@@ -1856,15 +1856,21 @@ if ($SkipKit) {
         # stream; nvidia-smi names the pids that hold one. Advisory only: the
         # probe is unavailable on hosts without nvidia-smi and WDDM does not
         # always expose graphics processes, so absence is a warning, not a gate.
-        $kitTreeNow = @(Get-HostNativeRecordedProcessTree -PidFile (Join-Path $RunDir 'bim-streaming-server.pid'))
-        $gpuReport = Get-PlatformGpuComputeProcessIds
-        $gpuIds = @($gpuReport.ProcessIds)
-        if (-not [bool]$gpuReport.Available) {
-            Write-DeployTag -Tag 'warn' -Message 'Phase 4c GPU context witness unavailable (nvidia-smi absent or query failed)' -LogPath $LogPath | Out-Null
-        } elseif (@($kitTreeNow | Where-Object { $gpuIds -contains $_ }).Count -eq 0) {
-            Write-DeployTag -Tag 'warn' -Message "Phase 4c no GPU context observed for the new Kit tree (pids $($kitTreeNow -join ',')); nvidia-smi lists $($gpuIds -join ',')" -LogPath $LogPath | Out-Null
-        } else {
-            Write-DeployTag -Tag 'ok' -Message "Phase 4c GPU context observed for Kit pid $(@($kitTreeNow | Where-Object { $gpuIds -contains $_ }) -join ',')" -LogPath $LogPath | Out-Null
+        try {
+            $kitTreeNow = @(Get-HostNativeRecordedProcessTree -PidFile (Join-Path $RunDir 'bim-streaming-server.pid'))
+            $gpuReport = Get-PlatformGpuComputeProcessIds
+            $gpuIds = @($gpuReport.ProcessIds)
+            if (-not [bool]$gpuReport.Available) {
+                Write-DeployTag -Tag 'warn' -Message 'Phase 4c GPU context witness unavailable (nvidia-smi absent, timed out, or query failed)' -LogPath $LogPath | Out-Null
+            } elseif (@($kitTreeNow | Where-Object { $gpuIds -contains $_ }).Count -eq 0) {
+                Write-DeployTag -Tag 'warn' -Message "Phase 4c no GPU context observed for the new Kit tree (pids $($kitTreeNow -join ',')); nvidia-smi lists $($gpuIds -join ',')" -LogPath $LogPath | Out-Null
+            } else {
+                Write-DeployTag -Tag 'ok' -Message "Phase 4c GPU context observed for Kit pid $(@($kitTreeNow | Where-Object { $gpuIds -contains $_ }) -join ',')" -LogPath $LogPath | Out-Null
+            }
+        } catch {
+            # Advisory witness only: a transient /proc or nvidia-smi failure must
+            # not turn an already-ready Kit into a failed deploy.
+            Write-DeployTag -Tag 'warn' -Message "Phase 4c GPU context witness skipped: $($_.Exception.Message)" -LogPath $LogPath | Out-Null
         }
     }
 }
