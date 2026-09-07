@@ -3887,6 +3887,14 @@ export function createCoordinatorApp(
     if (source.existingSessionId) {
       const existing = store.get(source.existingSessionId);
       if (existing) {
+        // #810：重用既有 session 時，若它建立當下沒有 quality summary（例如
+        // /api/internal/conversion-result 的 report 不帶 quality_metrics），而這次 caller
+        // 已從權威解析到 summary，就補上去；否則 replay 會一直回報 semantic／coverage 未就緒。
+        // 只補空值、不覆蓋既有 summary（既有值來自同一 conversion job 的權威結果）。
+        if (qualitySummary && existing.quality_metrics_summary == null) {
+          const enriched = store.update(existing.session_id, { quality_metrics_summary: qualitySummary });
+          return { session: enriched ?? existing, replay: true };
+        }
         return { session: existing, replay: true };
       }
       // 既有 session 檔被外部移除 → 視為無 session，重建（不丟 review intent）。

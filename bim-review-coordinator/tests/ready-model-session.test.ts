@@ -141,6 +141,29 @@ describe("ready model session consumption", () => {
     expect(viaRoute.body).toMatchObject({ review_session_id: autoSessionId, session_replay: true });
     expect(app.store.list()).toHaveLength(1);
   });
+  it("backfills a missing quality summary when the ready-record route reuses the watcher session", async () => {
+    const { app } = await fixture();
+    const intake = await request(app.app).post("/api/external/ifc-ready")
+      .set({ "X-Webhook-Secret": "dev-webhook-secret", "X-Correlation-Id": "minio-watch-test", "X-Idempotency-Key": id })
+      .send({ event: "ifc_ready", event_id: "evt_810", tenant_id: "tenant-test", project_id: "project-test",
+        external_model_version_id: "v1", project_display_name: "test", model_category: "architecture",
+        external_conversion_task_id: "task_810",
+        source_ifc: { ref: "minio://bucket/tenant-test/project-test/v1/model.ifc", etag: `sha256:${"0".repeat(64)}`, filename: "model.ifc", format: "ifc" },
+        requested_outputs: ["usdc", "element_mapping"], callback_url: "https://cloud.example/callbacks" });
+    expect(intake.status).toBe(202);
+    traceId = intake.body.ifc_ready_job_id;
+    const ingest = await request(app.app).post(`/api/internal/conversions/${job}/ingest`)
+      .set({ "X-Internal-Token": "dev-internal-token" }).send({});
+    expect(ingest.status).toBe(202);
+    const autoSessionId = ingest.body.session.session_id as string;
+    // 模擬建立當下沒有 quality summary 的 terminal notification（report 不帶 quality_metrics）。
+    app.store.update(autoSessionId, { quality_metrics_summary: null });
+    const viaRoute = await request(app.app).post(route).send({});
+    expect(viaRoute.body).toMatchObject({ review_session_id: autoSessionId, session_replay: true });
+    expect(app.store.get(autoSessionId)?.quality_metrics_summary).toMatchObject({ coverage_status: "pass", semantic_mapping_fidelity: "guid_exact" });
+    const sc = await request(app.app).get(`/api/review-sessions/${autoSessionId}/stream-config`);
+    expect(sc.body.quality_metrics_summary).toMatchObject({ coverage_status: "pass" });
+  });
   it("does not stamp a ready_model_id on non-watcher intake sessions", async () => {
     const { app } = await fixture();
     const intake = await request(app.app).post("/api/external/ifc-ready")
