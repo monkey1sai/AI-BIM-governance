@@ -1,8 +1,16 @@
-# NOW — 本週主線（2026-07-23）
+# NOW — 當前產品交付主線（2026-09-07）
 
 > 文件性質：working note；用於本週工作排序，不是 runtime/API contract 或完成證據。
 > **AI / 人：只聽這份。** 與本檔衝突時，以使用者最新口令為準，其次本檔，再才是 OpenSpec / 設計正本。  
 > 維護規則：每完成一個 outcome 就改狀態；禁止同時推進 >6 個 active OpenSpec product change。
+
+## 當前 outcome：凍結 A1 操作契約（階段 0）
+
+依使用者 2026-09-07 指示，產品交付順序改依 [設計正本 §07 階段 0–5](<AI-BIM 前後端設計文件.dc.html#delivery-sequence>)：凍結操作契約 → A1 所需基礎能力 → A1 → A2 → A3 → A4 閉環。順序、文件責任與通過條件只在正本維護，本檔不重抄。
+
+本次僅完成規劃文件更新；階段 0 仍待操作契約與驗收矩陣實際補齊、審閱，後續應用閉環皆未因此取得驗收。先完成階段 0，再以 A1 檢核交付閉環作首個應用 outcome；A1 整改閉環的終點須在階段 0 明定。
+
+下方「本週三軌」、A4 切片與建議日程保留為歷史工作紀錄，不再決定當前產品順序。此排序不改既有 OpenSpec lifecycle ledger，不自行 thaw deferred／frozen change，也不變更其他 task 的 runtime／部署 ownership。
 
 <!-- lifecycle-ledger:start -->
 ```json
