@@ -120,6 +120,7 @@ maxAgentCalls=40; maxP5VerifierBatches=2; maxP5Rounds=2; maxEvidenceAttempts=2
 ### Parallel Delivery Fabric profile（outer control plane；不建立第二套引擎）
 
 - Fabric-managed run 只在 outer Fabric 已交付 `spec-to-done-fabric-binding/v1` packet 與上述四份 current evidence 時啟動。binding 固定一個 `plan_id/generation/task_id/lease_id/owner_session/provider/scope_digest/baseline_sha/branch/worktree_path_digest`，P3 仍只有一個 implementer。
+- v1 binding 的 `delivery_authority.push=false`，且 validator 輸入與 durable state 都不含 execution envelope：**Fabric-managed run 不進入 P6**——P5 收斂後即以 `HELD@P5`／`fabric_resume_authority_unavailable`／`return-control-to-parallel-delivery-fabric` 結束本 slice；validator 拒絕任何 Fabric-managed 的 P6／P7 checkpoint。push／PR／merge 只能由 outer Fabric 以 `push_owned_branch`／`open_draft_pr` 以上等級的 execution envelope 另行授權執行。
 - `session_admission_limit=unbounded`：repo 可同時有任意數量 writer，只要各自使用獨立 branch、sibling worktree且 Fabric 判定 scope 不衝突。`run_writer_cardinality=1` 只限制本 binding。不得讀 occupied writer count 作 admission blocker；`requested_capacity.writers` 只是 plan-local request，activation `writer_cap` 只屬 review／`direct_stack` authority。
 - `allowed_paths` 是該 delivery slice 的最大可寫集合，必須已由 Fabric path/glob/rename scope 證明。P1 plan、P3 edits、tests、docs 與 task ledger 都不可超出；shared contract/symbol 未解析成 path 時回 `scope_drift`，不得補猜或自動擴張。
 - binding packet 是 non-authorizing metadata：不授權 push、approve、merge、deploy、process stop、branch-protection mutation、review migration 或 `direct_stack`；P5–P7 既有 gates 完整保留。

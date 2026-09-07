@@ -10,7 +10,7 @@ import {
   resolveTrustedGit,
   sanitizedGitEnvironment,
 } from './trusted-git.mjs'
-import { physicalPathDigest, validateSpecToDoneFabricBinding } from '../../../scripts/lib/spec-to-done-fabric-binding.mjs'
+import { matchesFabricCommonDirectoryDigest, physicalPathDigest, validateSpecToDoneFabricBinding } from '../../../scripts/lib/spec-to-done-fabric-binding.mjs'
 
 const MACHINE_CONTRACT_URL = new URL('../../../agent-contracts/spec-to-done.contract.json', import.meta.url)
 const STATE_PREFIX = /^(HELD|DONE|RESUMED|AUTHORIZATION|NEW_RUN)@(P\d+)$/
@@ -491,7 +491,11 @@ const validateActualFabricTopology = (fields, outcome, lease) => {
   const resolvedCommonDirectory = path.isAbsolute(rawCommonDirectory)
     ? rawCommonDirectory
     : path.resolve(fields.worktree, rawCommonDirectory)
-  if (physicalPathDigest(fs.realpathSync(resolvedCommonDirectory)) !== lease.common_dir_digest) {
+  // The lease's common_dir_digest is in the registry's digestCanonical({ common_dir }) format, not
+  // a bare path hash; compare against that format for the directory as resolved and as realpath.
+  const realCommonDirectory = fs.realpathSync(resolvedCommonDirectory)
+  if (!matchesFabricCommonDirectoryDigest(lease.common_dir_digest, realCommonDirectory) &&
+      !matchesFabricCommonDirectoryDigest(lease.common_dir_digest, resolvedCommonDirectory)) {
     reject('resume_state_invalid', 'actual Git common directory does not match the Fabric-bound common_dir_digest')
   }
 }
@@ -1031,6 +1035,13 @@ const validateManagedFabricBinding = ({ cli, current, statePath }) => {
   // outer Fabric re-verifies it. Any other checkpoint kind means the run would keep working on a
   // lease it may already have lost, which the binding's recovery policy forbids
   // (local_resume_allowed=false): fail closed instead of merely reporting the lease state.
+  // The v1 binding authorizes the local delivery slice only (delivery_authority.push=false). Push,
+  // PR and merge need an execution envelope the outer Fabric issues per level; nothing in the
+  // validator inputs or durable state carries one, so a Fabric-managed run terminates after P5
+  // and no P6/P7 checkpoint of any kind is a valid managed state.
+  if (['P6', 'P7'].includes(current.phase)) {
+    reject('fabric_resume_authority_unavailable', `Fabric-managed run reached ${current.phase}; the v1 binding authorizes the local slice only and push/PR/merge require a Fabric execution envelope`)
+  }
   if (outcome.current_lease_state !== 'ACTIVE' && current.kind !== 'HELD') {
     reject('fabric_resume_authority_unavailable', 'Fabric lease is not ACTIVE; a Fabric-managed run may only continue after the outer Fabric re-verifies the lease')
   }

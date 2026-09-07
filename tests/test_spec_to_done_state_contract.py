@@ -54,7 +54,7 @@ def _git(repo, *args):
     ).stdout.strip()
 
 
-def _physical_path_digest(value):
+def _normalized_physical_path(value):
     # Mirrors normalizedPhysicalPath() in scripts/lib/spec-to-done-fabric-binding.mjs.
     text = str(pathlib.Path(value).resolve())
     drive = re.match(r"^([A-Za-z]):[\\/]", text)
@@ -76,7 +76,16 @@ def _physical_path_digest(value):
     physical = prefix + "/".join(normalized)
     if windows_path:
         physical = physical.lower()
-    return hashlib.sha256(physical.encode("utf-8")).hexdigest()
+    return physical
+
+
+def _physical_path_digest(value):
+    return hashlib.sha256(_normalized_physical_path(value).encode("utf-8")).hexdigest()
+
+
+def _fabric_common_dir_digest(value):
+    # Registry format: digestCanonical({ common_dir }) (parallel-delivery-fabric-registry.mjs).
+    return _canonical_digest({"common_dir": _normalized_physical_path(value)})
 
 
 def _repo_topology_digests(repo):
@@ -84,7 +93,7 @@ def _repo_topology_digests(repo):
     common = pathlib.Path(raw_common)
     if not common.is_absolute():
         common = repo / common
-    return _physical_path_digest(common), _physical_path_digest(repo)
+    return _fabric_common_dir_digest(common), _physical_path_digest(repo)
 
 
 def _new_repo(tmp_path, name="repo"):
@@ -1009,6 +1018,7 @@ def test_claude_procedure_authority_documents_the_fabric_managed_profile():
         assert required in skill
     assert "不得讀 occupied writer count 作 admission blocker" in skill
     assert "binding packet 是 non-authorizing metadata" in skill
+    assert "Fabric-managed run 不進入 P6" in skill
 
 
 def test_codex_adapter_and_fabric_operator_doc_preserve_the_same_binding_contract():
@@ -1035,6 +1045,7 @@ def test_codex_adapter_and_fabric_operator_doc_preserve_the_same_binding_contrac
     assert "不得讀 occupied writer count 作 admission blocker" in codex_skill
     assert "binding packet 是 non-authorizing metadata" in codex_skill
     assert "不建立第二套引擎" in codex_skill
+    assert "Fabric-managed run 不進入 P6" in codex_skill
     assert "Repo session admission has no writer-count cap" in operator_doc
     assert "one writer" in operator_doc
     assert "does not create a second scheduler" in operator_doc
@@ -2275,3 +2286,33 @@ def test_fabric_managed_state_rejects_binding_relocated_to_another_clone(tmp_pat
     assert code == 2, result
     assert result["held"] == "resume_state_invalid"
     assert "worktree_path_digest" in result["detail"]
+
+
+def test_fabric_managed_run_terminates_before_p6(tmp_path):
+    repo, _ = _new_repo(tmp_path)
+    fabric = _fabric_binding_fixture(tmp_path, repo)
+    held_p6 = _line(
+        repo,
+        fabric["head"],
+        "HELD@P6",
+        branch=fabric["branch"],
+        runIds="P3:codex:managed-state-session",
+        reason="scope_drift",
+        fabricMode="fabric-managed",
+        fabricBindingId=fabric["binding"]["binding_id"],
+    )
+
+    # The v1 binding grants the local slice only: no Fabric-managed checkpoint may exist at P6/P7,
+    # because push/PR/merge authority must come from a Fabric execution envelope, not the binding.
+    code, result = _run(
+        tmp_path,
+        repo,
+        held_p6,
+        platform="codex",
+        expected_head=fabric["head"],
+        extra_args=fabric["extra_args"],
+        state_path=fabric["candidate_state_path"],
+    )
+    assert code == 2, result
+    assert result["held"] == "fabric_resume_authority_unavailable"
+    assert "P6" in result["detail"]

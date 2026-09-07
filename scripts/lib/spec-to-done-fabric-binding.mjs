@@ -35,6 +35,20 @@ export function normalizedPhysicalPath(value) {
   return windowsPath ? physicalPath.toLowerCase() : physicalPath
 }
 
+// The Fabric Git CAS registry identifies a repository as digestCanonical({ common_dir }) over the
+// common-directory string it was opened with (parallel-delivery-fabric-registry.mjs,
+// createGitCasStore). A validator that only knows the directory on disk accepts the digest of
+// either faithful spelling of that directory: the resolved path as-is, or its physical form.
+export function fabricCommonDirectoryDigests(directory) {
+  if (typeof directory !== 'string' || directory.trim() === '') return []
+  const spellings = new Set([directory, normalizedPhysicalPath(directory)].filter((value) => typeof value === 'string' && value !== ''))
+  return [...spellings].map((common_dir) => digestCanonical({ common_dir }))
+}
+
+export function matchesFabricCommonDirectoryDigest(expected, directory) {
+  return typeof expected === 'string' && fabricCommonDirectoryDigests(directory).includes(expected)
+}
+
 export function physicalPathDigest(value) {
   const normalized = normalizedPhysicalPath(value)
   return normalized === null ? null : createHash('sha256').update(normalized, 'utf8').digest('hex')
@@ -259,7 +273,9 @@ const parseFabricSources = ({ plan: rawPlan, lease: rawLease, provider_session: 
     worktree_path_digest: [lease.worktree_path_digest, providerSession.worktree_path_digest],
     provider_session_id: [lease.provider_session_id, providerSession.provider_session_id],
     execution_context_id: [lease.execution_context_id, providerSession.execution_context_id],
-    common_dir_digest: [lease.common_dir_digest, providerSession.common_dir_digest],
+    // The plan names the repository it was authored for; a lease/session pair issued for another
+    // repository must not be able to carry that plan into the wrong checkout.
+    common_dir_digest: [plan.repo_identity.common_dir_digest, lease.common_dir_digest, providerSession.common_dir_digest],
     worktree_id: [lease.worktree_id, providerSession.worktree_id],
     context_attestation_ref: [lease.context_attestation_ref, providerSession.context_attestation_ref],
     head_sha: [lease.head_sha, providerSession.evidence_head_sha],

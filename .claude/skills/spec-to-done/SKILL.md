@@ -257,6 +257,7 @@ P5 = Workflow({name:'fu-adversarial-verify-generic', args:{
 P6 前置(指揮官親自做,解決 PR body 資料通道):
      Fabric-managed 時先重驗 current binding evidence；binding 只鎖 local slice，絕不可當作 push／PR／merge
      consent、`direct_stack` activation 或部署授權。任一 lease/branch/worktree/scope tuple 漂移即 HELD。
+     v1 binding 的 `delivery_authority.push=false`，且 validator 輸入與 durable state 都不含 execution envelope：**Fabric-managed run 不進入 P6**——P5 收斂後即以 `HELD@P5`／`fabric_resume_authority_unavailable`／`return-control-to-parallel-delivery-fabric` 結束本 slice；validator 拒絕任何 Fabric-managed 的 P6／P7 checkpoint。push／PR／merge 只能由 outer Fabric 以 `push_owned_branch`／`open_draft_pr` 以上等級的 execution envelope 另行授權執行。
      a. behavior gate:PR body 填 Change lane=S、Behavior contract changed=yes、
         Requirement source=superpowers spec,並連到本次已核准 specPath。不得只因 changed path
         建立 OpenSpec；只有 repo 需求明確要求 OpenSpec artifact 時才建立。
