@@ -1,6 +1,7 @@
 import type { CoordinatorConfig } from "./config.js";
 import { deriveConversionRecoveryAction } from "./services/conversionRecoveryAction.js";
 import { deriveFailure } from "./services/failureReason.js";
+import { deriveKitRuntimeHealth } from "./services/kitRuntimeHealth.js";
 import { deriveLifecycleStatus } from "./services/lifecycleStatus.js";
 import { maskPresignedRef } from "./services/presignedRef.js";
 import type { PublicViewerLease } from "./services/viewerLeaseStore.js";
@@ -22,6 +23,16 @@ export interface RuntimeStatusInput {
 export function buildRuntimeStatus(input: RuntimeStatusInput): Record<string, unknown> {
   const activeSessions = input.sessions.filter((session) => session.status === "active");
   const participantCount = input.sessions.reduce((total, session) => total + session.participants.length, 0);
+  const leasesBySession = new Map<string, PublicViewerLease[]>(
+    input.sessions.map((session) => [session.session_id, input.viewerLeasesBySession?.(session.session_id) ?? []]),
+  );
+  // #768: Kit media witness. /api/kit/health only proves kit-manager-api is up;
+  // the lease rows carry the only coordinator-visible evidence of whether Kit
+  // actually delivers frames. Derived from the same rows exposed below.
+  const kitRuntimeHealth = deriveKitRuntimeHealth(
+    input.config.kitInstanceEndpoints.map((endpoint) => endpoint.id),
+    Array.from(leasesBySession.values()).flat(),
+  );
   return {
     service: {
       status: "ok",
@@ -59,9 +70,10 @@ export function buildRuntimeStatus(input: RuntimeStatusInput): Record<string, un
       active_count: activeSessions.length,
       participant_count: participantCount,
       items: input.sessions.map((session) =>
-        summarizeSessionForRuntime(session, input.viewerLeasesBySession?.(session.session_id) ?? []),
+        summarizeSessionForRuntime(session, leasesBySession.get(session.session_id) ?? []),
       ),
     },
+    kit_runtime_health: kitRuntimeHealth,
     kit_instance_bindings: input.sessions.flatMap((session) =>
       session.kit_instance_bindings.map((binding) => ({
         session_id: session.session_id,

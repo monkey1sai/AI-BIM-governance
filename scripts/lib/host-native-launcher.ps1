@@ -365,10 +365,21 @@ function Stop-HostNativeService {
         [scriptblock] $JobStopFn = {
             param($jobName)
             Stop-HostNativeJobBoundary -Name $jobName -TimeoutMs 5000
-        }
+        },
+        # Optional out-collector (#768): every pid this call is about to stop is
+        # appended here BEFORE any stop is issued, so the caller can afterwards
+        # prove the tree is gone with Wait-HostNativeTreeReleased. The pid list
+        # is the only handle that survives the kill; the pid file and port
+        # record are removed on the way out.
+        [System.Collections.Generic.List[int]] $StoppedProcessIdSink = $null
     )
     $pidFile = Join-Path $RunDir "$Name.pid"
     $jobFile = Join-Path $RunDir "$Name.job"
+    if ($null -ne $StoppedProcessIdSink) {
+        foreach ($treeId in @(Get-HostNativeRecordedProcessTree -PidFile $pidFile -ChildPidLookup $ChildPidLookup)) {
+            if (-not $StoppedProcessIdSink.Contains([int]$treeId)) { $StoppedProcessIdSink.Add([int]$treeId) }
+        }
+    }
     # The port record is a claim on resources, so a DELIBERATE stop is what
     # releases it (#640). Every return path below removes it: after this call the
     # service is either gone or it threw, and in neither case may a later start
@@ -422,6 +433,120 @@ function Stop-HostNativeService {
     Remove-Item -LiteralPath $pidFile -Force -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath $portFile -Force -ErrorAction SilentlyContinue
     return $true
+}
+
+function Get-HostNativeRecordedProcessTree {
+    # The recorded launcher pid plus every descendant reachable right now. Empty
+    # when there is no parseable pid file. Enumeration failure propagates: a tree
+    # we cannot enumerate must not be reported as "stopped" or "released".
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string] $PidFile,
+        [scriptblock] $ChildPidLookup = {
+            param($parentId)
+            @(Get-PlatformChildProcessIds -ParentProcessId ([int]$parentId))
+        }
+    )
+    if (-not (Test-Path -LiteralPath $PidFile -PathType Leaf)) { return @() }
+    $raw = Get-Content -LiteralPath $PidFile -ErrorAction SilentlyContinue | Select-Object -First 1
+    $rootId = 0
+    if (-not $raw -or -not [int]::TryParse(([string]$raw).Trim(), [ref]$rootId) -or $rootId -le 0) { return @() }
+    $ids = @()
+    $stack = @($rootId)
+    while ($stack.Count -gt 0) {
+        $current = [int]$stack[0]
+        $stack = @($stack | Select-Object -Skip 1)
+        if ($ids -contains $current) { continue }
+        $ids += $current
+        $stack += @(& $ChildPidLookup $current)
+    }
+    return @($ids)
+}
+
+function Wait-HostNativeTreeReleased {
+    # Proves that a force-stopped process tree has actually let go of everything
+    # the next instance needs, and refuses to guess when it cannot (#768).
+    #
+    # Stop-HostNativeService returns the instant the kill calls are issued. On
+    # canonical-linux the deploy then launched the replacement Kit 0.7s later,
+    # and seven times in one day that replacement came up "ready" by the
+    # existing gate (:49100 LISTEN + 'app ready') with a dead media layer: its
+    # own log stopped 2.7s after start, no client was ever logged, and every
+    # viewer saw DataChannel but never a frame. Both Kits that were started
+    # after scripts/stop-all.ps1 - i.e. minutes after the previous tree died -
+    # were healthy. The difference is release time, so this waits for it.
+    #
+    # Released means ALL of: no pid of the stopped tree is alive; no listener at
+    # all on the signalling TCP ports; no socket on the media UDP ports; and,
+    # when nvidia-smi can answer, none of the stopped pids still owns a GPU
+    # context. A GPU probe that cannot answer is reported as 'unavailable' and
+    # does not block - it is an extra witness, not the only one - but a probe
+    # that answers and still names a stopped pid does block.
+    [CmdletBinding()]
+    param(
+        [AllowEmptyCollection()][int[]] $ProcessIds = @(),
+        [AllowEmptyCollection()][int[]] $TcpPorts = @(),
+        [AllowEmptyCollection()][int[]] $UdpPorts = @(),
+        [ValidateRange(0, 600000)][int] $TimeoutMs = 30000,
+        [ValidateRange(50, 10000)][int] $PollMs = 500,
+        [scriptblock] $ProcessAliveFn = {
+            param($procId)
+            try { $null -ne (Get-Process -Id ([int]$procId) -ErrorAction Stop) } catch { $false }
+        },
+        [scriptblock] $TcpLookupFn = {
+            param($port)
+            Get-PlatformTcpListenerPid -Port ([int]$port)
+        },
+        [scriptblock] $UdpLookupFn = {
+            param($port)
+            Get-PlatformUdpListenerPid -Port ([int]$port)
+        },
+        [scriptblock] $GpuProcessIdsFn = {
+            Get-PlatformGpuComputeProcessIds
+        },
+        [scriptblock] $SleepFn = {
+            param($milliseconds)
+            Start-Sleep -Milliseconds ([int]$milliseconds)
+        }
+    )
+
+    $stopped = @(@($ProcessIds) | ForEach-Object { [int]$_ } | Where-Object { $_ -gt 0 } | Sort-Object -Unique)
+    $tcp = @(@($TcpPorts) | ForEach-Object { [int]$_ } | Where-Object { $_ -ge 1 -and $_ -le 65535 } | Sort-Object -Unique)
+    $udp = @(@($UdpPorts) | ForEach-Object { [int]$_ } | Where-Object { $_ -ge 1 -and $_ -le 65535 } | Sort-Object -Unique)
+    $watch = [System.Diagnostics.Stopwatch]::StartNew()
+    $gpuProbe = 'unavailable'
+    $remaining = @(); $busyTcp = @(); $busyUdp = @(); $gpuHolders = @()
+    while ($true) {
+        $remaining = @($stopped | Where-Object { [bool](& $ProcessAliveFn $_) })
+        $busyTcp = @($tcp | Where-Object { $null -ne (& $TcpLookupFn $_) })
+        $busyUdp = @($udp | Where-Object { $null -ne (& $UdpLookupFn $_) })
+        $gpuHolders = @()
+        # The probe returns { Available; ProcessIds } (see
+        # Get-PlatformGpuComputeProcessIds): a bare empty array would unroll to
+        # $null here and "no holder" would silently become "cannot tell".
+        $gpuReport = & $GpuProcessIdsFn
+        if ($null -eq $gpuReport -or -not [bool]$gpuReport.Available) {
+            $gpuProbe = 'unavailable'
+        } else {
+            $gpuProbe = 'checked'
+            $gpuSet = @(@($gpuReport.ProcessIds) | ForEach-Object { [int]$_ })
+            $gpuHolders = @($stopped | Where-Object { $gpuSet -contains $_ })
+        }
+        $released = ($remaining.Count -eq 0 -and $busyTcp.Count -eq 0 -and $busyUdp.Count -eq 0 -and $gpuHolders.Count -eq 0)
+        if ($released -or $watch.ElapsedMilliseconds -ge $TimeoutMs) {
+            return [pscustomobject]@{
+                Released            = $released
+                ElapsedMs           = [int]$watch.ElapsedMilliseconds
+                StoppedProcessIds   = @($stopped)
+                RemainingProcessIds = @($remaining)
+                BusyTcpPorts        = @($busyTcp)
+                BusyUdpPorts        = @($busyUdp)
+                GpuHolderProcessIds = @($gpuHolders)
+                GpuProbe            = $gpuProbe
+            }
+        }
+        & $SleepFn $PollMs
+    }
 }
 
 function Start-HostNativeService {

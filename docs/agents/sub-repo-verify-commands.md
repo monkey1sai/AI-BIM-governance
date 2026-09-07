@@ -98,6 +98,12 @@ Windows deployment 不是預設 canonical path，只能明確按需選擇：
 ```
 
 禁止 `-DryRun`。若 fetch `origin` explicit main refspec 失敗、approval 被拒、或清理後缺少 `scripts\deploy.ps1`，回報 blocker 並停止；不得部署 stale code。
+
+Phase 4c 重啟 Kit 的兩道閘門（#768，2026-09-07 於 181 實證：舊 Kit 被 SIGKILL 後 0.7 s 即啟新 Kit，七顆全部「LISTEN + app ready 但媒體層死」）：
+
+- **release gate**：`Stop-HostNativeService` 之後以 `Wait-HostNativeTreeReleased` 等到舊 tree 的 pid、signalling TCP、media UDP 與（nvidia-smi 可答時）GPU context 全部釋放才啟動，逾時 `-KitReleaseTimeoutSec`（預設 30）即 exit 4 並要求先跑 `scripts/stop-all.ps1`。
+- **media-aware readiness**：`Wait-KitReady -RequireMediaServer` 除 `:49100 LISTEN + 'app ready'` 外，還要求 Kit 檔案 log（路徑取自 launcher stdout 的 `Logging to file:`）出現 `Started primary stream server on signal port <port>`；之後以 nvidia-smi 記錄新 Kit 的 GPU context（advisory，缺席只 warn）。
+- coordinator `/api/runtime/status.kit_runtime_health[]`（lease 證據推導：`datachannel_ready` 但連續 ≥2 個 primary lease 觀測 ≥20 s 無 `first_frame_at` → `suspect`）；`/ui` 頂列 Kit chip 讀到 suspect 會降為 degraded 並顯示「無首幀×N」，不再被 `/api/kit/health` 的 ok 遮蓋。
 清理規則會移除所有層級的 agent instruction files、root agent tooling dirs、`.github\skills` / `.github\prompts`、root `docs` / `openspec` / `patches`，但保留 `.github\workflows` 與 tracked production dependency `docs/plans/ai-bim-governance.css`。
 明確啟動的 `spec-to-done` 在目前 spec PR 已 merge、commit 可由 freshly fetched `origin/main` 取得後，只能對明確選擇的 `local-windows` target 先用 skill helper 的 `-StopOwnedRuntime -DeploymentRoot '<resolved local-windows deploy root>'` 模式處理 blocker。只有 listener 符合 per-port service role、deployment pidfile ancestor 與精確 launcher entrypoint、creation identity 經雙快照與 stop 前重驗一致時，才可用 exact process handle 停止；pidfile 僅供 lineage 佐證，port topology 由 deployment env immutable snapshot 推導，不接受 caller parameter/process-environment override，且每次 stop 前重驗 hash。canonical Linux target 的 inventory/runtime 由 owner 控制，transport 不自動停止或改寫。MUST 記錄 port / PID / process name / ownership kind，同一 port 的全部 busy owners通過後才可進入 cleanup。既有一般 Phase 3 重試能力不變，但所有自動停止也 MUST 使用同一 hardened helper 與相同閘門，再重跑同一條 target-scoped `-Build`；helper 無法證明 ownership 時必須 HELD，只有使用者逐次確認明確 PID 與 evidence 後才可人工例外。不得驗證未 merge branch或改用 `-Force` / `-DryRun`。
 

@@ -33,6 +33,9 @@ param(
     [int]    $KitSignalPort = 49100,
     [int]    $KitMediaPort  = 47998,
     [int]    $KitReadyTimeoutSec = 480,
+    # #768: how long Phase 4c waits for a force-stopped Kit tree to release its
+    # pids, signalling/media ports and GPU context before launching the next one.
+    [int]    $KitReleaseTimeoutSec = 30,
     [int]    $SpectatorCount = 5,
     [int]    $KitSpectatorSignalPortStart = 49110,
     [int]    $KitSpectatorMediaPortStart = 48008,
@@ -1775,7 +1778,28 @@ if ($SkipKit) {
     $kitAlreadyRunning = Test-AlreadyRunning -Name 'bim-streaming-server' -RunDir $RunDir
     if ($kitAlreadyRunning -and -not (Test-KitRuntimeSignatureMatches -Path $script:kitRuntimeSignaturePath -Expected $kitRuntimeSignature)) {
         Write-DeployTag -Tag 'fix' -Message 'Phase 4c restarting host-native Kit because runtime parameters changed' -LogPath $LogPath | Out-Null
-        Stop-HostNativeService -Name 'bim-streaming-server' -RunDir $RunDir | Out-Null
+        # Release gate (#768). The stop call returns the moment the kill is
+        # issued; launching the replacement 0.7s later produced a Kit that
+        # passed the LISTEN + 'app ready' gate with a dead media layer, seven
+        # times in one day on canonical-linux. Wait until the old tree's pids,
+        # signalling TCP ports, media UDP ports and (when nvidia-smi can say)
+        # GPU context are all gone, and refuse to start otherwise - the manual
+        # recovery that always worked (stop-all, then deploy) is exactly
+        # "stop, wait, start".
+        $stoppedKitTree = [System.Collections.Generic.List[int]]::new()
+        Stop-HostNativeService -Name 'bim-streaming-server' -RunDir $RunDir -StoppedProcessIdSink $stoppedKitTree | Out-Null
+        $kitRelease = Wait-HostNativeTreeReleased `
+            -ProcessIds @($stoppedKitTree) `
+            -TcpPorts (@($resolvedKitSignalPort) + @($resolvedSpectatorSignalPorts)) `
+            -UdpPorts (@($resolvedKitMediaPort) + @($resolvedSpectatorMediaPorts)) `
+            -TimeoutMs ([int]$KitReleaseTimeoutSec * 1000)
+        if (-not $kitRelease.Released) {
+            $releaseDetail = "pids_alive=$(@($kitRelease.RemainingProcessIds) -join ',') tcp_busy=$(@($kitRelease.BusyTcpPorts) -join ',') udp_busy=$(@($kitRelease.BusyUdpPorts) -join ',') gpu_holders=$(@($kitRelease.GpuHolderProcessIds) -join ',') gpu_probe=$($kitRelease.GpuProbe)"
+            Write-DeployTag -Tag 'fail' -Message "stage=4c Phase 4c previous Kit tree (pids $(@($kitRelease.StoppedProcessIds) -join ',')) not released within ${KitReleaseTimeoutSec}s ($releaseDetail). Refusing to start a replacement into a half-torn-down Kit; run scripts/stop-all.ps1, confirm the ports and GPU are free, then re-run this deploy" -LogPath $LogPath | Out-Null
+            Print-FinalSummary -ExitCode 4 -FailedPhase 'Phase 4c (previous Kit not released)'
+            exit 4
+        }
+        Write-DeployTag -Tag 'ok' -Message "Phase 4c previous Kit tree released in $($kitRelease.ElapsedMs)ms (pids $(@($kitRelease.StoppedProcessIds) -join ','); gpu_probe=$($kitRelease.GpuProbe))" -LogPath $LogPath | Out-Null
         $kitAlreadyRunning = $false
     }
     if ($kitAlreadyRunning) {
@@ -1817,14 +1841,31 @@ if ($SkipKit) {
             -SpectatorSignalPorts $resolvedSpectatorSignalPorts `
             -SpectatorStreamPorts $resolvedSpectatorMediaPorts
         Write-DeployTag -Tag 'ok' -Message "Kit PID=$($startInfo.Pid) log=$($startInfo.LogPath)" -LogPath $LogPath | Out-Null
-        $kitRes = Wait-KitReady -LogPath $startInfo.LogPath -SignalPort $resolvedKitSignalPort -TimeoutSec $KitReadyTimeoutSec
+        # Media-aware readiness (#768): LISTEN + 'app ready' is the app plugin
+        # talking; the livestream primary stream server logs its own start line
+        # to the Kit file log, and only that proves the media side exists.
+        $kitRes = Wait-KitReady -LogPath $startInfo.LogPath -SignalPort $resolvedKitSignalPort -TimeoutSec $KitReadyTimeoutSec -RequireMediaServer
         if (-not $kitRes.ready) {
-            Write-DeployTag -Tag 'fail' -Message "stage=4c Phase 4c Kit not ready in ${KitReadyTimeoutSec}s (listen=$($null -ne $kitRes.listenPort) keyword=$($kitRes.matchedKeyword))" -LogPath $LogPath | Out-Null
+            Write-DeployTag -Tag 'fail' -Message "stage=4c Phase 4c Kit not ready in ${KitReadyTimeoutSec}s (listen=$($null -ne $kitRes.listenPort) keyword=$($kitRes.matchedKeyword) media_server=$($kitRes.mediaServerStarted) media_reason=$($kitRes.mediaServerReason) kit_log=$($kitRes.kitLogPath))" -LogPath $LogPath | Out-Null
             Print-FinalSummary -ExitCode 4 -FailedPhase 'Phase 4c (Kit)'
             exit 4
         }
         Set-KitRuntimeSignature -Path $script:kitRuntimeSignaturePath -Value $kitRuntimeSignature
-        Write-DeployTag -Tag 'ok' -Message "Phase 4c Kit ready (:$resolvedKitSignalPort LISTEN + '$($kitRes.matchedKeyword)')" -LogPath $LogPath | Out-Null
+        Write-DeployTag -Tag 'ok' -Message "Phase 4c Kit ready (:$resolvedKitSignalPort LISTEN + '$($kitRes.matchedKeyword)' + primary stream server; kit_log=$($kitRes.kitLogPath))" -LogPath $LogPath | Out-Null
+        # GPU context witness. A Kit whose render context never came up cannot
+        # stream; nvidia-smi names the pids that hold one. Advisory only: the
+        # probe is unavailable on hosts without nvidia-smi and WDDM does not
+        # always expose graphics processes, so absence is a warning, not a gate.
+        $kitTreeNow = @(Get-HostNativeRecordedProcessTree -PidFile (Join-Path $RunDir 'bim-streaming-server.pid'))
+        $gpuReport = Get-PlatformGpuComputeProcessIds
+        $gpuIds = @($gpuReport.ProcessIds)
+        if (-not [bool]$gpuReport.Available) {
+            Write-DeployTag -Tag 'warn' -Message 'Phase 4c GPU context witness unavailable (nvidia-smi absent or query failed)' -LogPath $LogPath | Out-Null
+        } elseif (@($kitTreeNow | Where-Object { $gpuIds -contains $_ }).Count -eq 0) {
+            Write-DeployTag -Tag 'warn' -Message "Phase 4c no GPU context observed for the new Kit tree (pids $($kitTreeNow -join ',')); nvidia-smi lists $($gpuIds -join ',')" -LogPath $LogPath | Out-Null
+        } else {
+            Write-DeployTag -Tag 'ok' -Message "Phase 4c GPU context observed for Kit pid $(@($kitTreeNow | Where-Object { $gpuIds -contains $_ }) -join ',')" -LogPath $LogPath | Out-Null
+        }
     }
 }
 

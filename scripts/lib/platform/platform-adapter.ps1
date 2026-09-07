@@ -244,6 +244,41 @@ function Test-PlatformTcpListening {
     return ($null -ne (Get-PlatformTcpListenerPid -Port $Port))
 }
 
+function Get-PlatformGpuComputeProcessIds {
+    # PIDs currently holding an NVIDIA GPU context, as reported by nvidia-smi
+    # (--query-compute-apps). Returns an object, never a bare array: an empty
+    # array unrolls to $null across a PowerShell call boundary, which would make
+    # "no holder" indistinguishable from "cannot tell". Available=$false means
+    # nvidia-smi is absent or the query failed - callers must treat that as
+    # unknown, never as "no holder".
+    #
+    # Why this exists (#768): after Stop-HostNativeService force-kills a Kit
+    # tree, the kernel reaps the pids and the sockets close well before the
+    # driver has torn down the render/encoder context. A new Kit launched into
+    # that window comes up listening but with a dead media layer. The GPU
+    # process table is the only cheap observation that spans the whole
+    # teardown, so the release wait consults it in addition to pids and ports.
+    [CmdletBinding()]
+    param()
+
+    $unavailable = [pscustomobject]@{ Available = $false; ProcessIds = @() }
+    $cmd = Get-Command nvidia-smi -ErrorAction SilentlyContinue
+    if ($null -eq $cmd) { return $unavailable }
+    try {
+        $out = @(& nvidia-smi --query-compute-apps=pid --format=csv,noheader,nounits 2>$null)
+    } catch {
+        return $unavailable
+    }
+    if ($LASTEXITCODE -ne 0) { return $unavailable }
+    $ids = [System.Collections.Generic.List[int]]::new()
+    foreach ($line in $out) {
+        $trimmed = ([string]$line).Trim()
+        $value = 0
+        if ($trimmed -and [int]::TryParse($trimmed, [ref]$value) -and $value -gt 0) { $ids.Add($value) }
+    }
+    return [pscustomobject]@{ Available = $true; ProcessIds = @($ids) }
+}
+
 function Get-PlatformUdpListenerPid {
     # UDP peer of Get-PlatformTcpListenerPid, same -1 convention.
     param([Parameter(Mandatory = $true)][int] $Port)

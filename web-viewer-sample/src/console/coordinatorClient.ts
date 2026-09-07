@@ -288,6 +288,17 @@ export interface RuntimeIfcReadyJob {
   artifact_health?: ArtifactHealthSnapshot | null;
   created_at: string;
 }
+export type KitMediaState = "ok" | "suspect" | "unknown";
+export interface KitRuntimeHealthEntry {
+  kit_instance_id: string;
+  media_state: KitMediaState;
+  source: "viewer_lease_evidence";
+  detail: string;
+  no_first_frame_streak: number;
+  qualifying_lease_count: number;
+  last_first_frame_at: string | null;
+  evidence_lease_ids: string[];
+}
 export interface RuntimeStatus {
   service: { status: string; name: string; uptime_seconds: number; generated_at: string };
   configured_endpoints: {
@@ -297,6 +308,9 @@ export interface RuntimeStatus {
     kit: { id: string; signalingServer: string; signalingPort: number; mediaServer: string; mediaPort: number | null }[];
   };
   sessions: { count: number; active_count: number; participant_count: number; items: RuntimeSessionSummary[] };
+  // #768：coordinator 由 viewer lease 證據推導的 Kit 媒體層見證（datachannel_ready 但長期無 first_frame → suspect）。
+  // optional：舊 coordinator 沒有此欄位時前端不得臆造，缺席＝unknown。
+  kit_runtime_health?: KitRuntimeHealthEntry[];
   kit_instance_bindings: RuntimeKitBinding[];
   ifc_ready_jobs: { count: number; recent: RuntimeIfcReadyJob[] };
   observations: {
