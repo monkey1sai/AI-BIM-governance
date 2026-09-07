@@ -21,12 +21,33 @@ export function validateCachedRenderBundle(value: unknown, record: ConversionLed
   if (!model || !mapping || (record.usdc_key !== null && record.usdc_key !== model.url)) return null;
   return { readyModelId: record.idempotency_key, conversionJobId: bundle.conversionJobId, correlationId: bundle.correlationId as string,
     rootTraceId: bundle.rootTraceId, tenantId, projectId: record.project_id,
-    modelVersionId: record.external_model_version_id, model, mapping };
+    modelVersionId: record.external_model_version_id, model, mapping,
+    qualitySummary: sanitizeCachedQualitySummary(bundle.qualitySummary, bundle.conversionJobId) };
+}
+
+/**
+ * Re-sanitizes a persisted quality summary through the same builder the fresh path uses, so a
+ * hand-edited or older ledger file can only yield the typed subset (or null) — never arbitrary
+ * keys into stream-config. The builder reads the authority's raw layout, so the summary is folded
+ * back into that shape first.
+ */
+function sanitizeCachedQualitySummary(value: unknown, conversionJobId: string): ConversionQualityMetricsSummary | null {
+  const summary = object(value);
+  if (!summary) return null;
+  const { fixture_name, artifact_group_id, conversion_duration_seconds, ...quality } = summary;
+  return buildQualityMetricsSummary({
+    conversion_job_id: conversionJobId, status: "succeeded", ready: true,
+    raw: {
+      original_filename: fixture_name, artifact_group_id,
+      quality_metrics: { ...quality, phase_timings: { conversion_total: { duration_seconds: conversion_duration_seconds } } },
+    },
+  });
 }
 
 export type ReadyRenderResolution =
-  /** `cached` = descriptor came from the persisted ledger (no authority round-trip; quality metrics are
-   * only available from a fresh authority result, so they are null on the cached path). */
+  /** `cached` = descriptor came from the persisted ledger (no authority round-trip). `qualitySummary` is
+   * the sanitized summary from the fresh result, or the one persisted with the descriptor on the cached
+   * path (null only for descriptors written before #809 or results without quality_metrics). */
   | { ok: true; bundle: ReadyRenderBundle; cached: boolean; qualitySummary: ConversionQualityMetricsSummary | null }
   | { ok: false; reason: "record_not_ready" | "result_unavailable" | "result_identity_mismatch" | "artifact_invalid" };
 
@@ -83,7 +104,7 @@ export async function resolveReadyRenderBundle(input: {
     || !input.configuredTenantId.trim()) return { ok: false, reason: "record_not_ready" };
   if (record.ready_render_bundle !== undefined) {
     const bundle = validateCachedRenderBundle(record.ready_render_bundle, record, input.configuredTenantId, trustedArtifactOrigins(input));
-    return bundle ? { ok: true, bundle, cached: true, qualitySummary: null } : { ok: false, reason: "artifact_invalid" };
+    return bundle ? { ok: true, bundle, cached: true, qualitySummary: bundle.qualitySummary ?? null } : { ok: false, reason: "artifact_invalid" };
   }
   let result: StreamingConversionResult;
   try { result = await input.fetchResult(jobId); }
@@ -111,9 +132,10 @@ export async function resolveReadyRenderBundle(input: {
     || (record.usdc_key !== null && record.usdc_key !== model.url)) {
     return { ok: false, reason: "artifact_invalid" };
   }
-  return { ok: true, cached: false, qualitySummary: buildQualityMetricsSummary(result), bundle: {
+  const qualitySummary = buildQualityMetricsSummary(result);
+  return { ok: true, cached: false, qualitySummary, bundle: {
     readyModelId: record.idempotency_key, conversionJobId: jobId, correlationId: record.correlation_id, rootTraceId: raw.trace_id,
     tenantId: input.configuredTenantId, projectId: record.project_id,
-    modelVersionId: record.external_model_version_id, model, mapping,
+    modelVersionId: record.external_model_version_id, model, mapping, qualitySummary,
   } };
 }

@@ -3985,7 +3985,12 @@ export function createCoordinatorApp(
       const result = autoCreateOrActivateSession(
         { traceId: event.job.ifc_ready_job_id, tenantId: event.job.tenant_id, projectId: event.job.project_id,
           modelVersionId: event.job.external_model_version_id, correlationId: event.job.correlation_id,
-          existingSessionId: event.job.review_session_id },
+          existingSessionId: event.job.review_session_id,
+          // #809：MinIO watcher job 的 idempotency_key 就是 ready model id；綁上去，之後
+          // POST /api/conversion/records/:readyModelId/review-session 才能重用這顆 session，
+          // 不會對同一轉檔再配第二顆 session／Kit binding。非 mw_* 來源（devreg、外部 worker）
+          // 不是 ready model，維持不綁（store 只接受 mw_ 形狀）。
+          readyModelId: /^mw_[a-f0-9]{16}$/.test(event.job.idempotency_key) ? event.job.idempotency_key : undefined },
         {
           usdc_ref: event.artifacts.usdc_ref ?? null,
           element_mapping_ref: event.artifacts.element_mapping_ref ?? null,

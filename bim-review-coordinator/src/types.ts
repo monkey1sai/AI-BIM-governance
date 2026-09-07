@@ -412,4 +412,10 @@ export interface ReadyRenderBundle {
   modelVersionId: string;
   model: { url: string; sha256: string };
   mapping: { url: string; sha256: string };
+  /**
+   * #809：與 descriptor 一併持久化的 sanitized quality summary。cached 路徑（recreation、
+   * queued_for_instance 後重試）不再回 authority，若不帶它，session 會失去 semantic readiness／
+   * coverage。optional：#801 之前寫入的 descriptor 沒有此欄位，讀回時視為 null。
+   */
+  qualitySummary?: ConversionQualityMetricsSummary | null;
 }
