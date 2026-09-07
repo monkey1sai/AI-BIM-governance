@@ -1366,6 +1366,9 @@ export function createCoordinatorApp(
     onAfterDownload: (job) => refreshArtifactHealthBestEffort(job),
     structLog,
   });
+  // #804：持久化 intake store 載回的 dispatched job 需要重掛 process-local poller，
+  // 否則 recreate 後已完成的轉檔永遠停在 dispatched。
+  ifcReadyPipeline.resumePersistedDispatchedPollers();
   // T7：使用者（local web view）auth，可替換；不做死 EZPLUS SSO（OQ5 pending）。
   const userAuthProvider = createUserAuthProvider(config);
 

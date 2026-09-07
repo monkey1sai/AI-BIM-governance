@@ -486,3 +486,33 @@ describe("SessionStore", () => {
     });
   });
 });
+
+describe("SessionStore durable-file safety (#804)", () => {
+  it("quarantines a truncated session file instead of crashing list()/get()", () => {
+    const dir = makeTmpDir();
+    const store = new SessionStore(dir);
+    const good = createBaseSession(store);
+    const victim = createBaseSession(store);
+    const truncated = path.join(dir, victim.session_id + ".json");
+    // 模擬容器在寫入中被 kill：目標檔只剩半截 JSON。
+    fs.writeFileSync(truncated, fs.readFileSync(truncated, "utf8").slice(0, 40), "utf8");
+
+    const listed = store.list();
+    expect(listed.map((session) => session.session_id)).toEqual([good.session_id]);
+    // list() 已把壞檔隔離；之後單筆 get() 視為不存在。
+    expect(store.get(victim.session_id)).toBeNull();
+    expect(fs.existsSync(truncated)).toBe(false);
+    expect(fs.readdirSync(dir).some((entry) => entry.startsWith(victim.session_id + ".json.corrupt-"))).toBe(true);
+  });
+
+  it("saves through a temporary file and leaves no tmp behind", () => {
+    const dir = makeTmpDir();
+    const store = new SessionStore(dir);
+    const session = createBaseSession(store);
+    store.save(session);
+    const entries = fs.readdirSync(dir);
+    expect(entries).toContain(session.session_id + ".json");
+    expect(entries.some((entry) => entry.endsWith(".tmp"))).toBe(false);
+    expect(store.get(session.session_id)?.session_id).toBe(session.session_id);
+  });
+});
