@@ -89,6 +89,7 @@
     "bim-review-coordinator/package-lock.json"
   ],
   "known_non_code_globs": [
+    "LICENSE",
     "README*.md",
     "docs/**",
     "patches/**",
