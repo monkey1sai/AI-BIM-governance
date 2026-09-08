@@ -11,7 +11,7 @@
 - Superpowers 是固定於官方 `obra/superpowers` v6.1.1 的 skill-only bundle；`.claude/skills/` 為 canonical，mirror 至 `.codex/skills/`。不 vendor plugin hooks / commands，且可用性不覆蓋 repo 的 explicit-only invocation policy。
 - `spec-to-done` 是刻意的 Claude / Codex platform variants，不做 byte mirror；P0–P7 shared gates 由 agent-governance tests 檢查。
 - `gitnexus/` 是 GitNexus CLI 產生、再套用 repo `--index-only` policy 的 Claude family；`ai-bim-fast-fix` / `ai-bim-bounded-change` 是 Codex-only lane helpers。
-- GitNexus 的本機 generated advisory snapshots 只可留在 ignored `.agents/skills/generated/`；它們不屬於 manifest-governed Claude / Codex provider copies，也不是 product source of truth。index refresh 必須使用 `--index-only`，不得要求 community skill generation；inventory check 會把 `.claude/skills/generated/` 或 `.codex/skills/generated/` 視為 undeclared drift。
+- GitNexus 的本機 generated advisory snapshots 不屬於任何 tracked skill root：`.agents/skills/` 自 #814 起是 tracked、manifest-governed 的目錄，`generated/` 放在那裡會讓 inventory check 以 `agents inventory undeclared: generated` fail closed，放在 `.claude/skills/generated/` 或 `.codex/skills/generated/` 同樣視為 undeclared drift。它們不是 product source of truth，可直接刪除或移到 repo 外重生。index refresh 必須使用 `--index-only`，不得要求 community skill generation。
 - Repo-local executable reference audit 確認舊 `skills-lock.json` 沒有 consumer 後已移除；`agent-skills-manifest.json` 是唯一 inventory/provenance truth。verification manifest 只保留該舊檔名作 reintroduction trigger，讓 absence gate 能阻止假鎖檔復活。
 
 ## Deterministic check and sync
