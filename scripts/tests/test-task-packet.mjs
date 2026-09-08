@@ -49,13 +49,13 @@ test('every packet carries bounded read set, agent budget, gates, evidence, and 
 test('lane contracts encode the expected worktree, agents, and evidence boundaries', () => {
   const packets = loadCorpus().tasks;
   for (const packet of packets.filter(({ lane }) => lane === 'F')) {
-    assert.equal(packet.worktree_required, false);
+    assert.equal(packet.worktree_required, true);
     assert.equal(packet.max_agents, 1);
     assert.deepEqual(packet.allowed_agents, ['coordinator']);
     assert.deepEqual(packet.required_gates, ['targeted']);
   }
   for (const packet of packets.filter(({ lane }) => lane === 'B')) {
-    assert.equal(packet.worktree_required, false);
+    assert.equal(packet.worktree_required, true);
     assert.equal(packet.max_agents, 2);
     assert(packet.required_gates.includes('affected'));
     if (packet.scope === 'single_service_internal') assert(packet.required_gates.includes('impact'));
@@ -204,6 +204,7 @@ test('CLI is an executable bounded consumer of the golden corpus', () => {
 });
 
 test('root startup context does not grow and legacy skill lock remains absent', () => {
+  assert(readFileSync(resolve(repositoryRoot, 'AGENTS.md')).length <= 16000, 'root instructions use a byte budget as well as a line budget');
   assert(lineCount(resolve(repositoryRoot, 'AGENTS.md')) <= 200);
   assert(lineCount(resolve(repositoryRoot, 'CLAUDE.md')) <= 30);
   assert.equal(existsSync(resolve(repositoryRoot, 'skills-lock.json')), false);

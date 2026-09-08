@@ -11,7 +11,7 @@
 4. **並行 Writer 隔離原則**：repo 不以 writer 數量為 blocker；多個 writer 只可在各自獨立 sibling worktree、獨立 branch 與明確無重疊 touch-set 中並行，每個 task／branch 仍限單一 writer。同一 branch、同一 worktree 或 touch-set 重疊／未知一律停工排隊；`.agents/board` 只做感知，不具 lease／approval／merge authority；`direct_stack` 與 autonomous delivery 未有 canonical activation record 前保持 HELD。
 5. **主工作區絕對乾淨與強制 Worktree 隔離（全體 Agent 永久鐵律）**：
    - **主工作區**永遠保持 `main == origin/main` 且無 dirty files；任何受版控檔案或 code 變更**一律在獨立 Worktree（`AI-BIM-governance.worktrees/<name>`）實作**。
-   - 所有 Task 必須經由真實測試與 **Chrome E2E 語意驗證（Playwright / Agent in Chrome）** 驗收；無實證數據絕不宣稱完成。全體 Agent（Codex、Claude、AGY、Grok）一體嚴格遵守。
+   - 所有 Task 必須取得與變更相符的實測證據；docs/config/Skill 治理變更跑對應驗證，user-facing route/workflow 變更另須 **browser E2E 語意驗證（Codex App in-app browser）**；Kit/WebRTC 仍須真實 first-frame、Stage、DataChannel 與 ACK 證據；無實證數據絕不宣稱完成。全體 Agent（Codex、Claude、AGY、Grok）一體嚴格遵守。
 
 ## 0.1 Agent 工作方式
 ### AI Coding Governance Lanes
@@ -20,7 +20,7 @@
 
 | Lane | 適用範圍 | 執行與驗證 |
 |---|---|---|
-| **F — Fast Fix** | 單一 service、約 1–3 檔、小 bug/docs/tests/timeout/logging/error handling；不改 contract、user workflow、security/deploy/migration/Kit/WebRTC | single coordinator；無 Superpowers/spec/plan/subagent；checkout 乾淨時不強制 worktree；targeted tests；不自動 push/PR/merge；不強制 GitNexus impact |
+| **F — Fast Fix** | 單一 service、約 1–3 檔、小 bug/docs/tests/timeout/logging/error handling；不改 contract、user workflow、security/deploy/migration/Kit/WebRTC | single coordinator；無 Superpowers/spec/plan/subagent；所有 tracked 修改使用獨立 sibling worktree；targeted tests；不自動 push/PR/merge；不強制 GitNexus impact |
 | **B — Bounded Change** | 單一 service 內清楚且有限的功能；不改 architecture/public API/schema/security/deploy | single coordinator + 3–5 項 inline checklist；最多一個 debugger 或完成後一個 read-only reviewer；禁止 parallel writers；affected tests；對 task/主要 entry symbol 跑一次 GitNexus impact |
 | **G — Governed Change** | 跨 ≥2 services、public API/event/DB schema、user-facing route/workflow、Kit/WebRTC/GPU、deploy/auth/permission/migration/destructive script、architecture boundary、GitNexus HIGH/CRITICAL | dedicated branch/worktree；簡潔 plan；GitNexus impact + detect_changes；按風險 reviewer/debugger/security_auditor；integration tests；user-facing browser E2E；PR local preflight |
 | **S — Spec-to-Done** | 使用者明確輸入 `spec-to-done`、明確要求完整 Superpowers，或指定已核准 spec 並要求自主推進至 merged PR | 保留完整 P0/P1/P3/P4/P5/P6/P7；只能明確啟動，不得由模型自行升級 |
@@ -38,20 +38,11 @@
 完整 task complexity tiers、reasoning effort routing、worker output contract、reviewer perspectives 與 evidence labels 見 `docs/agents/advanced-agent-reasoning-contract.md`。
 
 ### 產品定位與完成標準
-
-- Repo 功能需求以 `docs/plans/docs-plans-README.md` 為唯一入口：設計與規格正本＝`docs/plans/AI-BIM 前後端設計文件.dc.html`（§01 服務邊界～§08 AI Coding 交付守則）；現況（建成狀態）以 repo code＋tests 直接查證；2D design authority＝唯讀 `C:\Repos\design\desigin-system`＋`AI-BIM Console Hi-Fi.dc.html` 原型，CI/PR/merge 只讀 repo-pinned `design-system-reference.manifest.json`＋baselines；工作排序問設計文件 §07 實作分期＋§08 Task 0–12。
-- 前端相關改動動工前必讀設計文件 §04 API 契約與 §08 R1–R4（後端凍結面：前端只打 coordinator `:8004`、proxy 路徑 byte-identical、禁改 governance `app.py`、coordinator `governanceProxy.ts`、streaming `conversion_authority.py`；R2 API 三態，絕不臆造後端）。
-- 主系統架構以 `https://bim-docs.jackshappybot.com/` 分頁「01 系統架構」的「BIM 模型管理平台 — 系統架構」為準：採雲端與客戶落地端分離，外部公司雲端是 control-plane，客戶落地端是 IFC / Kit / MCP runtime data-plane。
-- `https://bim-docs.jackshappybot.com/` 分頁「05 BIM治理與模型檢核」中的 A1–A10 是本 repo 的 10 大主要開發項目；產品架構／定位仍可參考該站，但 production 2D UX、資訊架構、視覺與互動狀態以前述 pinned design reference 為準。
-- 凡是 user-facing capability，以可執行的 Functional & Semantic Playwright 驗證與真 API/runtime 為完成標準（route/button/fixture/真 API/runtime ID/loading/success/failure/retry/trace/network）。在功能迭代期，UI 與 Design Baseline 變更採單 PR 一併提交，不再強制 Demote/Reapprove 多輪 PR。
-- 最終回報 user-facing work 時列出 PR machine truth：Frontend route、Main button(s) tested、Fixture used、Backend API called、Runtime action（含 observed runtime ID）、Visible success state、E2E command、Screenshot / trace、Design gate status、Known gaps。
-- 真實 IFC semantic viewer E2E 的核心輸入為主工作區 local `storage/` 內 IFC；new worktree 不會自動帶這些 ignored/local artifact，測試應讀主工作區絕對路徑或用 gitignored junction/symlink，不得把 IFC 或大型 `model.usdc` commit 進 repo。
-- Design fidelity 與 runtime evidence 互不代替；具備 governance CPU semantic E2E、Kit WebRTC first-frame/stage/DataChannel runtime evidence，以及適用 route 的驗證結果即屬完整。live WebRTC frame 不作 design pixel golden。
-- 當使用者要求「請測試部署區重建」或同義口令時，agent MUST 執行 `.\scripts\dev\rebuild-test-deploy.ps1 -Build -InventoryPath '<repo-external target.local.json>'`（或先設定 `AI_BIM_DEPLOY_TARGET_INVENTORY`）；無 `-TargetId` 時 helper 選 canonical Linux target，用 freshly fetched `origin/main` 重建 owner-controlled deployment checkout、排除 agent/tooling 檔案與 root `docs/`、`openspec/`、`patches/`，保留必要 production asset，並在 target 內執行 `scripts/deploy.ps1 -Build`。private inventory 必須由 owner/provisioning 預先建立，transport 不得上傳或覆寫。`-TargetId local-windows` 僅供明確 on-demand Windows verification。禁止使用 `-DryRun`、stale `origin/main`、目前 worktree 或 sub-repo 啟動命令取代此流程。
-- 當使用者要求「以 origin main 為 baseline 建立隔離區執行」或同義口令時，agent MUST 先 `git fetch origin --prune`，再 `git worktree add -b <type>/<slug> <repo-sibling-path> origin/main`，並在開工前實證 `git rev-parse HEAD` 等於 `git rev-parse origin/main` 且 `git status --porcelain` 為空；不成立即停工回報。禁止以 local `main`、目前 checkout、其他 branch 或 stale `origin/main` 當 baseline；禁止落腳於 repo 內 gitignored 路徑（`.claude/worktrees/`、`.worktrees/`）。此契約對所有 Lane 生效，Lane F/B 的「乾淨時可直接切 branch」豁免在此不適用。完整位置／命名／closeout 見 `docs/agents/github-workflow.md`。
-- 已授權但限縮：(a) 明確啟動的 `spec-to-done` 可在目前 spec PR 已 merge、commit 可由 freshly fetched `origin/main` 取得後，於真實測試部署前執行 ownership-gated preflight；無參數預設只偵測。只有明確選擇 `-TargetId local-windows` 並傳入 `-StopOwnedRuntime -DeploymentRoot '<resolved local-windows deploy root>'`，且 listener 符合 per-port service role、deployment pidfile ancestor、精確 launcher entrypoint與雙快照 creation identity，才可用 exact process handle 停止。canonical Linux inventory／runtime 由 owner 控制，transport 不得自動停止或改寫。pidfile 僅供 lineage 佐證，caller 不得覆寫 topology；必須記錄 port / PID / process name / ownership kind，再執行同一條 target-scoped `-Build`。(b) 既有一般 Phase 3 重試能力保留，但所有自動停止也 MUST 走同一 helper 與相同閘門，再重跑同一條 `-Build`；helper 無法證明 ownership 時必須 HELD，只有使用者逐次確認明確 PID 與證據後才可人工例外。不得改用 `-Force` / `-DryRun`、驗證未 merge branch，或停止無關 process。
-
-完整 A1–A10 對應、frontend operability rule、真實 IFC E2E evidence contract 與 script contract 見 `docs/agents/product-operability-and-script-contract.md`。
+- Windows worktree 使用 `scripts/dev/new-governed-worktree.ps1`，不得裸 fetch/add 取代。
+- 需求入口是 `docs/plans/docs-plans-README.md`；code + tests 證明現況。前端修改先讀設計 §04、§08 R1–R4，保留 coordinator-only API 與凍結的後端邊界。
+- Frontend、runtime、部署／重建或建立 worktree 前，必讀 `docs/agents/task-acceptance-and-isolation.md` 與適用的 `docs/agents/product-operability-and-script-contract.md`。canonical Linux deployment、owner-controlled inventory、ownership-gated process stop 與 Windows governed worktree helper 的完整命令／停點都在其中，不得自行替換。
+- 真實 IFC viewer 驗收保留 fixture provenance、MinIO source identity、active session、first frame、正確 Stage、DataChannel、ACK；CPU pass、health、靜態 UI 不代表真實 3D。Frontend Functional & Semantic E2E、design fidelity 與 runtime evidence 分別取證。
+- User-facing 回報列 route / button / fixture / 真 API / observed runtime ID / visible state / E2E / screenshot/trace / design gate / known gaps；無當輪證據不宣稱完成。不得 commit IFC 或大型 USDC。
 
 ### Secrets / `.env` 存取
 - 允許：讀取 `.env`、讀寫 `.env.example`、由 `.env.example` 複製出 `.env`。
@@ -60,42 +51,15 @@
 - 此 carve-out 僅覆蓋全域「不得修改環境檔」規則中關於本 repo `.env.example` 讀寫、`.env` 讀取與複製的部分；其餘 secrets / credentials / private keys 規則不變。
 ---
 ## 1. Workspace 範圍（一句話）
-```mermaid
-flowchart LR
-EDGE["[外部] 客戶落地端 IFC Worker"] -->|POST /api/external/ifc-ready| CO[bim-review-coordinator]
-CO -->|internal conversion request| KIT[bim-streaming-server]
-CO -->|/api/governance/* proxy| GOV["governance-service (:49102 loopback)"]
-CO -->|metadata-only callback outbox| CLOUD["[外部] 公司雲端 bim-control"]
-WV[web-viewer-sample] -->|REST + Socket.IO| CO
-WV -->|WebRTC + DataChannel| KIT
-KM["kit-manager web + api (:8010)"] -->|Kit fleet ops / telemetry| KIT
-```
+| Owning service | Boundary |
+|---|---|
+| `bim-review-coordinator` (:8004) | 唯一對外 IFC-ready intake、session/control 與 governance proxy |
+| `bim-streaming-server` (49100/49101) | internal IFC→USDC authority、Kit/WebRTC runtime |
+| `governance-service` (:49102 loopback) | A1/A2/A3 rules、diff、federation、issue/BCF |
+| `web-viewer-sample` (:5173) | browser client；REST/Socket.IO 到 coordinator，WebRTC/DataChannel 到 Kit |
+| `apps/kit-manager-web` / `services/kit-manager-api` (:8010) | operator UI、Kit fleet ops/telemetry |
 
-```txt
-AI-BIM-governance/
-├── bim-review-coordinator/   # 唯一對外 IFC-ready intake + Session / Control Plane（:8004）
-├── bim-streaming-server/     # Internal IFC→USDC authority + Kit Runtime（49100/49101）
-├── governance-service/       # A1/A2/A3 governance authority（:49102 loopback）
-├── web-viewer-sample/        # Browser client（:5173）
-├── apps/kit-manager-web/     # Kit Manager operator UI
-├── services/kit-manager-api/ # Kit Manager API（:8010）
-├── scripts/                  # deploy / verify / script contract
-└── tests/{contracts,fakes}/  # 外部平台 contract + test-only fakes
-```
-
-一句話定位：
-
-```txt
-[外部] 公司雲端 bim-control = control-plane 權威（本 repo 不 mirror）
-[外部] 客戶落地端 IFC Worker = 外部 IFC 產出者（本 repo 不啟動）
-bim-review-coordinator = 唯一對外 IFC-ready intake + Session / 協作控制中心
-bim-streaming-server   = internal-only IFC→USDC conversion + Omniverse Kit / WebRTC runtime
-governance-service     = A1 rule-run / A2 diff / A3 federation / issue / BCF loopback authority
-web-viewer-sample      = Browser client / user interaction layer
-apps + services        = operator-facing Kit Manager UI / API
-tests/fakes + tests/contracts = 外部平台 test-only doubles，非 runtime profile
-_worker / _bim-control = 已自 repo 刪除（2026-05-18 B 方案落地），僅 tests/fakes 模擬
-```
+公司雲端 `bim-control` 與客戶 IFC Worker 是外部服務；本 repo 不 mirror 或啟動。`tests/fakes` / `tests/contracts` 是 test-only doubles，`_worker` / `_bim-control` 已退役。改碼前定位 owning service、entrypoint、tests 與部署邊界。
 
 完整 folder schema、§1.A 架構決策、§9–§11（Optional Mock Services / 最重要閉環 / 總結）見 `docs/agents/repo-boundary-detail.md`；per-repo 角色與禁止跨界規則（原 §3、§8）見 `docs/agents/repo-boundaries-per-service.md`；資料流 / 通訊 / source of truth（原 §4–§7）見 `docs/agents/repo-data-flow-and-ownership.md`。
 
@@ -109,6 +73,8 @@ _worker / _bim-control = 已自 repo 刪除（2026-05-18 B 方案落地），僅
 | 跨 sub-repo 決策、workspace 總覽、B 方案架構決策、最重要閉環 | `docs/agents/repo-boundary-detail.md` |
 | 查個別 repo（coordinator/streaming/viewer/governance/kit-manager）角色、負責與不負責清單、禁止跨界規則 | `docs/agents/repo-boundaries-per-service.md` |
 | 查資料類型與歸屬、核心資料流 mermaid、通訊方式邊界、Source of Truth 原則 | `docs/agents/repo-data-flow-and-ownership.md` |
+| Frontend/runtime 驗收、部署重建、process ownership、Windows worktree 入口 | `docs/agents/task-acceptance-and-isolation.md` |
+| Skill discovery 第三入口整合、main ignored 副本備份／隔離／還原 | `docs/agents/skill-discovery-migration.md` |
 | 查 A1–A10 產品定位、frontend-operable done、真實 IFC E2E、script/deploy contract | `docs/agents/product-operability-and-script-contract.md` |
 | 使用 `gh` CLI／處理 GitHub 認證、開 PR、處理 GitHub Actions、branch closeout | `docs/agents/github-workflow.md` |
 | 修改 code symbol（function/class/method）、跑 impact analysis、commit 前 detect_changes | `docs/agents/gitnexus-usage.md` |
@@ -142,57 +108,27 @@ Runtime/product 行為真相優先順序：
 5. generated wiki / generated skills / old evidence（若存在）
 ```
 
-目前 checkout **沒有** generated wiki 產物（`docs/wiki/` 不存在；graphify corpus 已於 2026-06-10 移除）。Lane F 可直接 Read/grep；Lane B/G/S 的陌生 code discovery 優先用 GitNexus **CLI** `gitnexus query` / `gitnexus context`（shell）。`codebase-memory-mcp` 只能作並列第二意見、加速定位後的交叉確認，或 GitNexus UNKNOWN/crash/unavailable 時的 advisory fallback，不得取代 GitNexus risk 判定。兩圖譜衝突時 MUST 用原始碼裁決；不得逕信單邊 exact 標籤，也不得把不存在的 wiki 寫成現有入口。
+沒有 generated wiki；Lane F 直接查 source，B/G/S 陌生 code 可用 GitNexus CLI query/context。codebase-memory 僅為已授權範圍的 advisory 第二意見；UNKNOWN、圖譜衝突或 stale 時回原始碼裁決，不能取代 required risk gate。
 ---
 ## 4. GitNexus 入口
 
 ### 政策：CLI-only（Grok / Claude / Codex 共用）
 
-本 workspace **不啟動** `gitnexus mcp`，也 **禁止** 依賴 `mcp__gitnexus__*` / MCP resources（`gitnexus://…`）。三端 agent 仍 **必須** 使用 GitNexus 圖譜能力，但一律經 **shell CLI**；全域 `gitnexus` 須先確認為 repo-reviewed `1.6.9`，安裝／一次性執行路徑也須 pin `gitnexus@1.6.9`。舊 skill / 文件寫 `impact({…})` 或 `gitnexus://…` 時改跑等價 CLI，**不得**宣稱 GitNexus 不可用，也不得為查詢而背景啟動 `gitnexus mcp` / `gitnexus setup`。完整 CLI 對照表、三端設定現況與 re-enable 條件見 `docs/agents/gitnexus-usage.md`。
+GitNexus 一律使用 reviewed 1.6.9 shell CLI；不得啟動 MCP／setup 或依賴 gitnexus resources。指令與 unavailable 契約見 `docs/agents/gitnexus-usage.md`。
 
 ### 驗證與回報
 
 先跑受影響範圍的 typecheck、lint、unit/integration checks，再依 `docs/agents/sub-repo-verify-commands.md` 擴大驗證。回報必須分開列出 verified facts、inferences、unverified risks 與 next actions；未跑的測試與原因不得省略。
 
-前端驗收紀錄至少包含 route、button、fixture、API、runtime ID、visible state、E2E command、screenshot/trace、design gate status/screen/missing scope/full claim、manifest、CI visual result/comparison/artifacts 與 known gaps；Kit/OpenUSD runtime 另列 first-frame/stage/ack。
 
 本 repo 由 GitNexus 索引。Lane F 不強制 impact；Lane B 對 task/主要 entry symbol 跑一次 batch impact，只有實際改 code symbol/flow 時才在完成前跑 detect_changes；Lane G/S 對 shared/exported symbol 改前跑 impact、commit 前跑 detect_changes。HIGH 必須明確回報補強策略；CRITICAL 必須取得 sign-off。若 stale/unavailable/linked-worktree diff 失真，依 `docs/agents/gitnexus-usage.md` 揭露，不得自行發明 pass。
-
-下方 `<!-- gitnexus:start -->` 區塊若被外部工具覆寫回 MCP 用語，**仍以本節 CLI-only 政策為準**。stale 重建、crash retry 與 unavailable gate 見 `docs/agents/gitnexus-usage.md`。
 
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence (CLI-only)
 
-This project is indexed by GitNexus as **AI-BIM-governance** (17817 symbols, 28581 relationships, 300 execution flows). **Do not use GitNexus MCP tools or `gitnexus://` resources.** Query the graph via the reviewed `gitnexus` 1.6.9 shell CLI.
+依上方 Lane 範圍使用 reviewed GitNexus 1.6.9 shell CLI；不得啟動 MCP 或依賴 gitnexus resources。不要把過時的索引統計當 current evidence。
 
-> Index stale? After current-turn re-index authorization, run `npx gitnexus@1.6.9 analyze --index-only` from the project root. On the npm 11 installer crash, use `npm i -g gitnexus@1.6.9` or `pnpm --allow-build=@ladybugdb/core --allow-build=gitnexus --allow-build=tree-sitter dlx gitnexus@1.6.9 analyze --index-only` (#1939).
-
-## Always Do
-
-- **MUST run impact analysis before editing any symbol.** Before modifying a function, class, or method, run `gitnexus impact SymbolName -d upstream -r AI-BIM-governance` and report the blast radius (direct callers, affected processes, risk level) to the user.
-- **MUST run detect-changes before committing** to verify your changes only affect expected symbols and execution flows. For regression review: `gitnexus detect-changes --scope compare --base-ref main`.
-- **MUST warn the user** if impact analysis returns HIGH or CRITICAL risk before proceeding with edits.
-- When exploring unfamiliar code, use `gitnexus query "concept" -r AI-BIM-governance` to find execution flows instead of grepping.
-- When you need full context on a specific symbol — callers, callees, which execution flows it participates in — use `gitnexus context SymbolName -r AI-BIM-governance`.
-- Prefer CLI over MCP even if an editor still has a disabled gitnexus MCP entry.
-
-## Never Do
-
-- NEVER edit a function, class, or method without first running `gitnexus impact` on it (Lane B/G/S as scoped above).
-- NEVER ignore HIGH or CRITICAL risk warnings from impact analysis.
-- NEVER rename symbols with blind find-and-replace when call-graph impact is required — use impact/context CLI first, then coordinated edits.
-- NEVER commit changes without running `gitnexus detect-changes` when Lane policy requires it.
-- NEVER start `gitnexus mcp` or re-add gitnexus MCP solely to satisfy these rules.
-
-## Skills
-
-| Task | Read this skill file |
-|------|---------------------|
-| Understand architecture / "How does X work?" | `.claude/skills/gitnexus/gitnexus-exploring/SKILL.md` |
-| Blast radius / "What breaks if I change X?" | `.claude/skills/gitnexus/gitnexus-impact-analysis/SKILL.md` |
-| Trace bugs / "Why is X failing?" | `.claude/skills/gitnexus/gitnexus-debugging/SKILL.md` |
-| Rename / extract / split / refactor | `.claude/skills/gitnexus/gitnexus-refactoring/SKILL.md` |
-| Tools / schema reference (map MCP names → CLI) | `.claude/skills/gitnexus/gitnexus-guide/SKILL.md` |
-| Index, status, clean, wiki CLI commands | `.claude/skills/gitnexus/gitnexus-cli/SKILL.md` |
-
+- 適用 code-symbol gate 時，在本 worktree 驗證 exact-path index 與 indexed commit == HEAD；impact HIGH 必須說明補強，CRITICAL 仍需 sign-off。
+- 只有已授權的 required stale/missing gate 可執行 `npx gitnexus@1.6.9 analyze --index-only`。不得自動改全域安裝、使用 embeddings 或改另一 checkout。
+- CLI 語法、Skill 路由與 unknown/fallback 契約見 `docs/agents/gitnexus-usage.md`；缺證據須揭露，不可自稱 pass。
 <!-- gitnexus:end -->

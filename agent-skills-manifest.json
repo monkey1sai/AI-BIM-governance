@@ -1,14 +1,15 @@
 {
   "schema_version": "agent-skills-manifest/v2",
   "policy": {
-    "canonical": "This file is the tracked inventory and provenance source of truth for repo-local Claude and Codex skills.",
+    "canonical": "This tracked manifest governs Claude, Codex and the Codex-discovered .agents skill root. Provider-specific adapters remain explicit independent entries.",
     "materialization": "Tracked copies only. Symlinks and junctions are forbidden.",
-    "sync": "Mirror entries copy files from their declared source platform to declared target platforms. Sync may remove stale files only inside a declared target skill directory and never deletes a whole skill tree.",
+    "sync": "Mirror entries copy files from their declared source platform to declared target platforms. Sync may remove stale files only inside a declared target skill directory and never deletes a whole skill tree. Independent provider variants may declare sync.mirrors for a derived discovery adapter; sources cannot also be targets and all existing tracking/integrity checks still apply. Thin discovery adapters may declare the closed codex-to-agents linkage in sync.adapters; Check validates the canonical entrypoint and digests, and Sync never rewrites them.",
     "integrity": "Every declared tree is pinned by agent-skill-tree/v2 SHA-256 over ordinal relative paths and per-file SHA-256 values. Git-tracked text normalizes CRLF to LF; Git-classified binary content and lone CR bytes remain raw. Sync validates every canonical source before writing and never updates these reviewed digests."
   },
   "roots": {
     "claude": ".claude/skills",
-    "codex": ".codex/skills"
+    "codex": ".codex/skills",
+    "agents": ".agents/skills"
   },
   "entry_defaults": {
     "owner": "agent-governance",
@@ -18,10 +19,15 @@
     {
       "name": "ai-bim-bounded-change",
       "locations": {
-        "codex": ".codex/skills/ai-bim-bounded-change"
+        "codex": ".codex/skills/ai-bim-bounded-change",
+        "agents": ".agents/skills/ai-bim-bounded-change"
       },
       "sync": {
-        "mode": "single"
+        "mode": "mirror",
+        "source": "codex",
+        "targets": [
+          "agents"
+        ]
       },
       "provenance": {
         "kind": "repo-authored",
@@ -32,17 +38,23 @@
         "format": "agent-skill-tree/v2",
         "algorithm": "sha256",
         "trees": {
-          "codex": "3c32b4b62051df4494b81a57e7c81995787abde9fd4b254fdd0dc98372ce1a74"
+          "codex": "3c32b4b62051df4494b81a57e7c81995787abde9fd4b254fdd0dc98372ce1a74",
+          "agents": "3c32b4b62051df4494b81a57e7c81995787abde9fd4b254fdd0dc98372ce1a74"
         }
       }
     },
     {
       "name": "ai-bim-fast-fix",
       "locations": {
-        "codex": ".codex/skills/ai-bim-fast-fix"
+        "codex": ".codex/skills/ai-bim-fast-fix",
+        "agents": ".agents/skills/ai-bim-fast-fix"
       },
       "sync": {
-        "mode": "single"
+        "mode": "mirror",
+        "source": "codex",
+        "targets": [
+          "agents"
+        ]
       },
       "provenance": {
         "kind": "repo-authored",
@@ -53,7 +65,8 @@
         "format": "agent-skill-tree/v2",
         "algorithm": "sha256",
         "trees": {
-          "codex": "a8acc7e6cfa553b2cddc4ff794378d79dadca22caf0982364043069d2aa0e985"
+          "codex": "03f3490fc0d33406da948acfa150b652a12d1e971f26aebfd8cfbc48ae485f6a",
+          "agents": "03f3490fc0d33406da948acfa150b652a12d1e971f26aebfd8cfbc48ae485f6a"
         }
       }
     },
@@ -61,13 +74,15 @@
       "name": "autonomous-pr-queue",
       "locations": {
         "claude": ".claude/skills/autonomous-pr-queue",
-        "codex": ".codex/skills/autonomous-pr-queue"
+        "codex": ".codex/skills/autonomous-pr-queue",
+        "agents": ".agents/skills/autonomous-pr-queue"
       },
       "sync": {
         "mode": "mirror",
         "source": "claude",
         "targets": [
-          "codex"
+          "codex",
+          "agents"
         ]
       },
       "provenance": {
@@ -80,7 +95,8 @@
         "algorithm": "sha256",
         "trees": {
           "claude": "1dc7daaff29611c22bc16dc3c62800a2304c417d50188d74c0b156f984e3d78c",
-          "codex": "1dc7daaff29611c22bc16dc3c62800a2304c417d50188d74c0b156f984e3d78c"
+          "codex": "1dc7daaff29611c22bc16dc3c62800a2304c417d50188d74c0b156f984e3d78c",
+          "agents": "1dc7daaff29611c22bc16dc3c62800a2304c417d50188d74c0b156f984e3d78c"
         }
       }
     },
@@ -88,13 +104,15 @@
       "name": "blip-approve",
       "locations": {
         "claude": ".claude/skills/blip-approve",
-        "codex": ".codex/skills/blip-approve"
+        "codex": ".codex/skills/blip-approve",
+        "agents": ".agents/skills/blip-approve"
       },
       "sync": {
         "mode": "mirror",
         "source": "claude",
         "targets": [
-          "codex"
+          "codex",
+          "agents"
         ]
       },
       "provenance": {
@@ -106,8 +124,9 @@
         "format": "agent-skill-tree/v2",
         "algorithm": "sha256",
         "trees": {
-          "claude": "781f425d9d1d5f88e0ca733fca20352de94e2819922cb70e185c989421ffa1a2",
-          "codex": "781f425d9d1d5f88e0ca733fca20352de94e2819922cb70e185c989421ffa1a2"
+          "claude": "58823adcd5f87fc40973680788750535a14e25f5d78bb7e25784bc416fe6e803",
+          "codex": "58823adcd5f87fc40973680788750535a14e25f5d78bb7e25784bc416fe6e803",
+          "agents": "58823adcd5f87fc40973680788750535a14e25f5d78bb7e25784bc416fe6e803"
         }
       }
     },
@@ -115,13 +134,15 @@
       "name": "brainstorming",
       "locations": {
         "claude": ".claude/skills/brainstorming",
-        "codex": ".codex/skills/brainstorming"
+        "codex": ".codex/skills/brainstorming",
+        "agents": ".agents/skills/brainstorming"
       },
       "sync": {
         "mode": "mirror",
         "source": "claude",
         "targets": [
-          "codex"
+          "codex",
+          "agents"
         ]
       },
       "provenance": {
@@ -135,7 +156,8 @@
         "algorithm": "sha256",
         "trees": {
           "claude": "d981f24448d4f1ee696cfb4e2f923c32aa800558861450b3d39898b74e981a67",
-          "codex": "d981f24448d4f1ee696cfb4e2f923c32aa800558861450b3d39898b74e981a67"
+          "codex": "d981f24448d4f1ee696cfb4e2f923c32aa800558861450b3d39898b74e981a67",
+          "agents": "d981f24448d4f1ee696cfb4e2f923c32aa800558861450b3d39898b74e981a67"
         }
       }
     },
@@ -143,13 +165,15 @@
       "name": "deploy-linux-test-environment",
       "locations": {
         "claude": ".claude/skills/deploy-linux-test-environment",
-        "codex": ".codex/skills/deploy-linux-test-environment"
+        "codex": ".codex/skills/deploy-linux-test-environment",
+        "agents": ".agents/skills/deploy-linux-test-environment"
       },
       "sync": {
         "mode": "mirror",
         "source": "claude",
         "targets": [
-          "codex"
+          "codex",
+          "agents"
         ]
       },
       "provenance": {
@@ -162,7 +186,8 @@
         "algorithm": "sha256",
         "trees": {
           "claude": "af53834988362a857a941bca5cdbd8c60deec4a0695c23e655935cb8a70a2d09",
-          "codex": "af53834988362a857a941bca5cdbd8c60deec4a0695c23e655935cb8a70a2d09"
+          "codex": "af53834988362a857a941bca5cdbd8c60deec4a0695c23e655935cb8a70a2d09",
+          "agents": "af53834988362a857a941bca5cdbd8c60deec4a0695c23e655935cb8a70a2d09"
         }
       }
     },
@@ -170,13 +195,15 @@
       "name": "deploy-main-to-linux-test",
       "locations": {
         "claude": ".claude/skills/deploy-main-to-linux-test",
-        "codex": ".codex/skills/deploy-main-to-linux-test"
+        "codex": ".codex/skills/deploy-main-to-linux-test",
+        "agents": ".agents/skills/deploy-main-to-linux-test"
       },
       "sync": {
         "mode": "mirror",
         "source": "claude",
         "targets": [
-          "codex"
+          "codex",
+          "agents"
         ]
       },
       "provenance": {
@@ -189,7 +216,8 @@
         "algorithm": "sha256",
         "trees": {
           "claude": "2941b99e341c41dfaad5371f28bb105dff47c9193103d840fca8270356625fe0",
-          "codex": "2941b99e341c41dfaad5371f28bb105dff47c9193103d840fca8270356625fe0"
+          "codex": "2941b99e341c41dfaad5371f28bb105dff47c9193103d840fca8270356625fe0",
+          "agents": "2941b99e341c41dfaad5371f28bb105dff47c9193103d840fca8270356625fe0"
         }
       }
     },
@@ -197,13 +225,15 @@
       "name": "dispatching-parallel-agents",
       "locations": {
         "claude": ".claude/skills/dispatching-parallel-agents",
-        "codex": ".codex/skills/dispatching-parallel-agents"
+        "codex": ".codex/skills/dispatching-parallel-agents",
+        "agents": ".agents/skills/dispatching-parallel-agents"
       },
       "sync": {
         "mode": "mirror",
         "source": "claude",
         "targets": [
-          "codex"
+          "codex",
+          "agents"
         ]
       },
       "provenance": {
@@ -217,7 +247,8 @@
         "algorithm": "sha256",
         "trees": {
           "claude": "82340e3f871574c3570122a9bd90cd46e10b54b22f2845c6ff9b72e10eb211df",
-          "codex": "82340e3f871574c3570122a9bd90cd46e10b54b22f2845c6ff9b72e10eb211df"
+          "codex": "82340e3f871574c3570122a9bd90cd46e10b54b22f2845c6ff9b72e10eb211df",
+          "agents": "82340e3f871574c3570122a9bd90cd46e10b54b22f2845c6ff9b72e10eb211df"
         }
       }
     },
@@ -225,13 +256,15 @@
       "name": "executing-plans",
       "locations": {
         "claude": ".claude/skills/executing-plans",
-        "codex": ".codex/skills/executing-plans"
+        "codex": ".codex/skills/executing-plans",
+        "agents": ".agents/skills/executing-plans"
       },
       "sync": {
         "mode": "mirror",
         "source": "claude",
         "targets": [
-          "codex"
+          "codex",
+          "agents"
         ]
       },
       "provenance": {
@@ -245,7 +278,8 @@
         "algorithm": "sha256",
         "trees": {
           "claude": "fc5f85e168205e81344de99a8762b0b807206679d8cb58725627d191f3523f60",
-          "codex": "fc5f85e168205e81344de99a8762b0b807206679d8cb58725627d191f3523f60"
+          "codex": "fc5f85e168205e81344de99a8762b0b807206679d8cb58725627d191f3523f60",
+          "agents": "fc5f85e168205e81344de99a8762b0b807206679d8cb58725627d191f3523f60"
         }
       }
     },
@@ -253,13 +287,15 @@
       "name": "figma",
       "locations": {
         "claude": ".claude/skills/figma",
-        "codex": ".codex/skills/figma"
+        "codex": ".codex/skills/figma",
+        "agents": ".agents/skills/figma"
       },
       "sync": {
         "mode": "mirror",
         "source": "claude",
         "targets": [
-          "codex"
+          "codex",
+          "agents"
         ]
       },
       "provenance": {
@@ -272,7 +308,8 @@
         "algorithm": "sha256",
         "trees": {
           "claude": "3860682fb99c513438e500e65c544775943268b6512c06e4ba45bd1e19bf5b97",
-          "codex": "3860682fb99c513438e500e65c544775943268b6512c06e4ba45bd1e19bf5b97"
+          "codex": "3860682fb99c513438e500e65c544775943268b6512c06e4ba45bd1e19bf5b97",
+          "agents": "3860682fb99c513438e500e65c544775943268b6512c06e4ba45bd1e19bf5b97"
         }
       }
     },
@@ -280,13 +317,15 @@
       "name": "figma-generate-design",
       "locations": {
         "claude": ".claude/skills/figma-generate-design",
-        "codex": ".codex/skills/figma-generate-design"
+        "codex": ".codex/skills/figma-generate-design",
+        "agents": ".agents/skills/figma-generate-design"
       },
       "sync": {
         "mode": "mirror",
         "source": "claude",
         "targets": [
-          "codex"
+          "codex",
+          "agents"
         ]
       },
       "provenance": {
@@ -299,7 +338,8 @@
         "algorithm": "sha256",
         "trees": {
           "claude": "3b91d5829a45eb16c7414957fa8da69bed721586f7a65d478440b50df4cd227e",
-          "codex": "3b91d5829a45eb16c7414957fa8da69bed721586f7a65d478440b50df4cd227e"
+          "codex": "3b91d5829a45eb16c7414957fa8da69bed721586f7a65d478440b50df4cd227e",
+          "agents": "3b91d5829a45eb16c7414957fa8da69bed721586f7a65d478440b50df4cd227e"
         }
       }
     },
@@ -307,13 +347,15 @@
       "name": "figma-implement-design",
       "locations": {
         "claude": ".claude/skills/figma-implement-design",
-        "codex": ".codex/skills/figma-implement-design"
+        "codex": ".codex/skills/figma-implement-design",
+        "agents": ".agents/skills/figma-implement-design"
       },
       "sync": {
         "mode": "mirror",
         "source": "claude",
         "targets": [
-          "codex"
+          "codex",
+          "agents"
         ]
       },
       "provenance": {
@@ -326,7 +368,8 @@
         "algorithm": "sha256",
         "trees": {
           "claude": "ec259bedf1c6c8bb5739e910646d52c98c66902aef2f4720bb15aaa82ce87d45",
-          "codex": "ec259bedf1c6c8bb5739e910646d52c98c66902aef2f4720bb15aaa82ce87d45"
+          "codex": "ec259bedf1c6c8bb5739e910646d52c98c66902aef2f4720bb15aaa82ce87d45",
+          "agents": "ec259bedf1c6c8bb5739e910646d52c98c66902aef2f4720bb15aaa82ce87d45"
         }
       }
     },
@@ -334,13 +377,15 @@
       "name": "figma-use",
       "locations": {
         "claude": ".claude/skills/figma-use",
-        "codex": ".codex/skills/figma-use"
+        "codex": ".codex/skills/figma-use",
+        "agents": ".agents/skills/figma-use"
       },
       "sync": {
         "mode": "mirror",
         "source": "claude",
         "targets": [
-          "codex"
+          "codex",
+          "agents"
         ]
       },
       "provenance": {
@@ -353,7 +398,8 @@
         "algorithm": "sha256",
         "trees": {
           "claude": "0171dfd5b24d68d802541a46cdd7a74dbb6b85ffc08943012e253e16d7d52a98",
-          "codex": "0171dfd5b24d68d802541a46cdd7a74dbb6b85ffc08943012e253e16d7d52a98"
+          "codex": "0171dfd5b24d68d802541a46cdd7a74dbb6b85ffc08943012e253e16d7d52a98",
+          "agents": "0171dfd5b24d68d802541a46cdd7a74dbb6b85ffc08943012e253e16d7d52a98"
         }
       }
     },
@@ -361,13 +407,15 @@
       "name": "finishing-a-development-branch",
       "locations": {
         "claude": ".claude/skills/finishing-a-development-branch",
-        "codex": ".codex/skills/finishing-a-development-branch"
+        "codex": ".codex/skills/finishing-a-development-branch",
+        "agents": ".agents/skills/finishing-a-development-branch"
       },
       "sync": {
         "mode": "mirror",
         "source": "claude",
         "targets": [
-          "codex"
+          "codex",
+          "agents"
         ]
       },
       "provenance": {
@@ -381,7 +429,8 @@
         "algorithm": "sha256",
         "trees": {
           "claude": "506c76b64b1ba5bba683528fc1e64893c8fb31957564844b3ffcab2fbd8ddcc6",
-          "codex": "506c76b64b1ba5bba683528fc1e64893c8fb31957564844b3ffcab2fbd8ddcc6"
+          "codex": "506c76b64b1ba5bba683528fc1e64893c8fb31957564844b3ffcab2fbd8ddcc6",
+          "agents": "506c76b64b1ba5bba683528fc1e64893c8fb31957564844b3ffcab2fbd8ddcc6"
         }
       }
     },
@@ -410,13 +459,15 @@
       "name": "gitnexus-blast-radius",
       "locations": {
         "claude": ".claude/skills/gitnexus-blast-radius",
-        "codex": ".codex/skills/gitnexus-blast-radius"
+        "codex": ".codex/skills/gitnexus-blast-radius",
+        "agents": ".agents/skills/gitnexus-blast-radius"
       },
       "sync": {
         "mode": "mirror",
         "source": "claude",
         "targets": [
-          "codex"
+          "codex",
+          "agents"
         ]
       },
       "provenance": {
@@ -428,8 +479,9 @@
         "format": "agent-skill-tree/v2",
         "algorithm": "sha256",
         "trees": {
-          "claude": "ee58c522dd0c53e742c3838a10cfa36c73179ac684fa4c8957f5d9cc29c98aa8",
-          "codex": "ee58c522dd0c53e742c3838a10cfa36c73179ac684fa4c8957f5d9cc29c98aa8"
+          "claude": "76b7a05edc205f74ab5da0626802ad692548edbb05718b2d627d5005de570987",
+          "codex": "76b7a05edc205f74ab5da0626802ad692548edbb05718b2d627d5005de570987",
+          "agents": "76b7a05edc205f74ab5da0626802ad692548edbb05718b2d627d5005de570987"
         }
       }
     },
@@ -437,10 +489,19 @@
       "name": "mapping-coverage-loop",
       "locations": {
         "claude": ".claude/skills/mapping-coverage-loop",
-        "codex": ".codex/skills/mapping-coverage-loop"
+        "codex": ".codex/skills/mapping-coverage-loop",
+        "agents": ".agents/skills/mapping-coverage-loop"
       },
       "sync": {
-        "mode": "independent"
+        "mode": "independent",
+        "mirrors": [
+          {
+            "source": "codex",
+            "targets": [
+              "agents"
+            ]
+          }
+        ]
       },
       "provenance": {
         "kind": "repo-authored-platform-variants",
@@ -453,7 +514,8 @@
         "algorithm": "sha256",
         "trees": {
           "claude": "86734baf4a45027fae57c2cf86f05ef34fe6542225fc5dd42fe33cd3fb3c4266",
-          "codex": "7d6d3f889404a945da6de8054f4f62476b404b47254bbcad773506954111bad3"
+          "codex": "7d6d3f889404a945da6de8054f4f62476b404b47254bbcad773506954111bad3",
+          "agents": "7d6d3f889404a945da6de8054f4f62476b404b47254bbcad773506954111bad3"
         }
       }
     },
@@ -461,13 +523,24 @@
       "name": "omniverse-cad-to-simready",
       "locations": {
         "claude": ".claude/skills/omniverse-cad-to-simready",
-        "codex": ".codex/skills/omniverse-cad-to-simready"
+        "codex": ".codex/skills/omniverse-cad-to-simready",
+        "agents": ".agents/skills/omniverse-cad-to-simready"
       },
       "sync": {
-        "mode": "mirror",
-        "source": "claude",
-        "targets": [
-          "codex"
+        "mode": "independent",
+        "mirrors": [
+          {
+            "source": "codex",
+            "targets": [
+              "claude"
+            ]
+          }
+        ],
+        "adapters": [
+          {
+            "source": "codex",
+            "target": "agents"
+          }
         ]
       },
       "provenance": {
@@ -480,7 +553,8 @@
         "algorithm": "sha256",
         "trees": {
           "claude": "7150c8ca7fefffbc7fd60ebcdc9b6b2aeaf02408d6feff46e6ce32282ba2f1e7",
-          "codex": "7150c8ca7fefffbc7fd60ebcdc9b6b2aeaf02408d6feff46e6ce32282ba2f1e7"
+          "codex": "7150c8ca7fefffbc7fd60ebcdc9b6b2aeaf02408d6feff46e6ce32282ba2f1e7",
+          "agents": "eb2af22682c4e0d8fd5bdd2ecba8ccb08ac83c39900dc8fcd193370f4f994451"
         }
       }
     },
@@ -488,13 +562,24 @@
       "name": "omniverse-realtime-viewer",
       "locations": {
         "claude": ".claude/skills/omniverse-realtime-viewer",
-        "codex": ".codex/skills/omniverse-realtime-viewer"
+        "codex": ".codex/skills/omniverse-realtime-viewer",
+        "agents": ".agents/skills/omniverse-realtime-viewer"
       },
       "sync": {
-        "mode": "mirror",
-        "source": "claude",
-        "targets": [
-          "codex"
+        "mode": "independent",
+        "mirrors": [
+          {
+            "source": "codex",
+            "targets": [
+              "claude"
+            ]
+          }
+        ],
+        "adapters": [
+          {
+            "source": "codex",
+            "target": "agents"
+          }
         ]
       },
       "provenance": {
@@ -507,7 +592,8 @@
         "algorithm": "sha256",
         "trees": {
           "claude": "d910d90693fb22cc7370c35ed43245eebe8d9975e7a37f40e58aa4da3c172bbe",
-          "codex": "d910d90693fb22cc7370c35ed43245eebe8d9975e7a37f40e58aa4da3c172bbe"
+          "codex": "d910d90693fb22cc7370c35ed43245eebe8d9975e7a37f40e58aa4da3c172bbe",
+          "agents": "4b6bf01912d12f75d7039c66789742526873f33878f6af0117d8a10ff7319d3e"
         }
       }
     },
@@ -515,13 +601,24 @@
       "name": "omniverse-usd-performance-tuning",
       "locations": {
         "claude": ".claude/skills/omniverse-usd-performance-tuning",
-        "codex": ".codex/skills/omniverse-usd-performance-tuning"
+        "codex": ".codex/skills/omniverse-usd-performance-tuning",
+        "agents": ".agents/skills/omniverse-usd-performance-tuning"
       },
       "sync": {
-        "mode": "mirror",
-        "source": "claude",
-        "targets": [
-          "codex"
+        "mode": "independent",
+        "mirrors": [
+          {
+            "source": "codex",
+            "targets": [
+              "claude"
+            ]
+          }
+        ],
+        "adapters": [
+          {
+            "source": "codex",
+            "target": "agents"
+          }
         ]
       },
       "provenance": {
@@ -534,7 +631,8 @@
         "algorithm": "sha256",
         "trees": {
           "claude": "25b7f62f2db61aebc94a10fb55bd447ea9d22eb86ab9ae165592b930a471cfcc",
-          "codex": "25b7f62f2db61aebc94a10fb55bd447ea9d22eb86ab9ae165592b930a471cfcc"
+          "codex": "25b7f62f2db61aebc94a10fb55bd447ea9d22eb86ab9ae165592b930a471cfcc",
+          "agents": "0d7ad056bbe8db96ad515ca0ed4635ecc89dc1409e37f5e563552bc0a5e6d4e5"
         }
       }
     },
@@ -542,13 +640,15 @@
       "name": "pr-queue-manager",
       "locations": {
         "claude": ".claude/skills/pr-queue-manager",
-        "codex": ".codex/skills/pr-queue-manager"
+        "codex": ".codex/skills/pr-queue-manager",
+        "agents": ".agents/skills/pr-queue-manager"
       },
       "sync": {
         "mode": "mirror",
         "source": "claude",
         "targets": [
-          "codex"
+          "codex",
+          "agents"
         ]
       },
       "provenance": {
@@ -561,7 +661,8 @@
         "algorithm": "sha256",
         "trees": {
           "claude": "bb62b44e916ff9345a7592b14ab35e421f1b4e4ac50bb58ba94e86f57b15637d",
-          "codex": "bb62b44e916ff9345a7592b14ab35e421f1b4e4ac50bb58ba94e86f57b15637d"
+          "codex": "bb62b44e916ff9345a7592b14ab35e421f1b4e4ac50bb58ba94e86f57b15637d",
+          "agents": "bb62b44e916ff9345a7592b14ab35e421f1b4e4ac50bb58ba94e86f57b15637d"
         }
       }
     },
@@ -569,13 +670,15 @@
       "name": "prompt-crafter",
       "locations": {
         "claude": ".claude/skills/prompt-crafter",
-        "codex": ".codex/skills/prompt-crafter"
+        "codex": ".codex/skills/prompt-crafter",
+        "agents": ".agents/skills/prompt-crafter"
       },
       "sync": {
         "mode": "mirror",
         "source": "claude",
         "targets": [
-          "codex"
+          "codex",
+          "agents"
         ]
       },
       "provenance": {
@@ -587,7 +690,8 @@
         "algorithm": "sha256",
         "trees": {
           "claude": "9692a379ca349d68c8070c7689a9a2f8620010a04e1e0552b207f4ff7a1d0ac9",
-          "codex": "9692a379ca349d68c8070c7689a9a2f8620010a04e1e0552b207f4ff7a1d0ac9"
+          "codex": "9692a379ca349d68c8070c7689a9a2f8620010a04e1e0552b207f4ff7a1d0ac9",
+          "agents": "9692a379ca349d68c8070c7689a9a2f8620010a04e1e0552b207f4ff7a1d0ac9"
         }
       }
     },
@@ -595,13 +699,15 @@
       "name": "receiving-code-review",
       "locations": {
         "claude": ".claude/skills/receiving-code-review",
-        "codex": ".codex/skills/receiving-code-review"
+        "codex": ".codex/skills/receiving-code-review",
+        "agents": ".agents/skills/receiving-code-review"
       },
       "sync": {
         "mode": "mirror",
         "source": "claude",
         "targets": [
-          "codex"
+          "codex",
+          "agents"
         ]
       },
       "provenance": {
@@ -615,7 +721,8 @@
         "algorithm": "sha256",
         "trees": {
           "claude": "41c5d2908ac1e66e33322cfbd75c6e8dc6ffd8cf4a39739e958db644737b5b47",
-          "codex": "41c5d2908ac1e66e33322cfbd75c6e8dc6ffd8cf4a39739e958db644737b5b47"
+          "codex": "41c5d2908ac1e66e33322cfbd75c6e8dc6ffd8cf4a39739e958db644737b5b47",
+          "agents": "41c5d2908ac1e66e33322cfbd75c6e8dc6ffd8cf4a39739e958db644737b5b47"
         }
       }
     },
@@ -623,10 +730,19 @@
       "name": "repo-health",
       "locations": {
         "claude": ".claude/skills/repo-health",
-        "codex": ".codex/skills/repo-health"
+        "codex": ".codex/skills/repo-health",
+        "agents": ".agents/skills/repo-health"
       },
       "sync": {
-        "mode": "independent"
+        "mode": "independent",
+        "mirrors": [
+          {
+            "source": "codex",
+            "targets": [
+              "agents"
+            ]
+          }
+        ]
       },
       "provenance": {
         "kind": "repo-authored-platform-variants",
@@ -639,7 +755,8 @@
         "algorithm": "sha256",
         "trees": {
           "claude": "dccdc76d9d57d9133e7453963a3120dc2b59a924e4a7cd5f39b2053a8bd209ce",
-          "codex": "0eceb7a786417521b894f3818bc73327a40c75e5d7fb81c5b87c81474d65fb24"
+          "codex": "0eceb7a786417521b894f3818bc73327a40c75e5d7fb81c5b87c81474d65fb24",
+          "agents": "0eceb7a786417521b894f3818bc73327a40c75e5d7fb81c5b87c81474d65fb24"
         }
       }
     },
@@ -647,13 +764,15 @@
       "name": "requesting-code-review",
       "locations": {
         "claude": ".claude/skills/requesting-code-review",
-        "codex": ".codex/skills/requesting-code-review"
+        "codex": ".codex/skills/requesting-code-review",
+        "agents": ".agents/skills/requesting-code-review"
       },
       "sync": {
         "mode": "mirror",
         "source": "claude",
         "targets": [
-          "codex"
+          "codex",
+          "agents"
         ]
       },
       "provenance": {
@@ -667,7 +786,8 @@
         "algorithm": "sha256",
         "trees": {
           "claude": "b216b91dedc75de9a7a4c57bfe0a51876044b325de7f0b5a165c39c65cfaac5a",
-          "codex": "b216b91dedc75de9a7a4c57bfe0a51876044b325de7f0b5a165c39c65cfaac5a"
+          "codex": "b216b91dedc75de9a7a4c57bfe0a51876044b325de7f0b5a165c39c65cfaac5a",
+          "agents": "b216b91dedc75de9a7a4c57bfe0a51876044b325de7f0b5a165c39c65cfaac5a"
         }
       }
     },
@@ -675,10 +795,19 @@
       "name": "spec-to-done",
       "locations": {
         "claude": ".claude/skills/spec-to-done",
-        "codex": ".codex/skills/spec-to-done"
+        "codex": ".codex/skills/spec-to-done",
+        "agents": ".agents/skills/spec-to-done"
       },
       "sync": {
-        "mode": "independent"
+        "mode": "independent",
+        "mirrors": [
+          {
+            "source": "codex",
+            "targets": [
+              "agents"
+            ]
+          }
+        ]
       },
       "provenance": {
         "kind": "repo-authored-platform-variants",
@@ -691,7 +820,8 @@
         "algorithm": "sha256",
         "trees": {
           "claude": "0b3c4f1662d605428c7bbfc66bf84d8b8e07d7e1e0e00a959d82b6aba6270d81",
-          "codex": "38721fe7952b6f1638571bf5d9df8fa3a0b91b2c3f4bff7d06222d59c92b6bc3"
+          "codex": "38721fe7952b6f1638571bf5d9df8fa3a0b91b2c3f4bff7d06222d59c92b6bc3",
+          "agents": "38721fe7952b6f1638571bf5d9df8fa3a0b91b2c3f4bff7d06222d59c92b6bc3"
         }
       }
     },
@@ -699,13 +829,15 @@
       "name": "subagent-driven-development",
       "locations": {
         "claude": ".claude/skills/subagent-driven-development",
-        "codex": ".codex/skills/subagent-driven-development"
+        "codex": ".codex/skills/subagent-driven-development",
+        "agents": ".agents/skills/subagent-driven-development"
       },
       "sync": {
         "mode": "mirror",
         "source": "claude",
         "targets": [
-          "codex"
+          "codex",
+          "agents"
         ]
       },
       "provenance": {
@@ -719,7 +851,8 @@
         "algorithm": "sha256",
         "trees": {
           "claude": "31608bd4d30ddfd8f1cce0f05594c5a03517d1705f629e73daba43410c96fa53",
-          "codex": "31608bd4d30ddfd8f1cce0f05594c5a03517d1705f629e73daba43410c96fa53"
+          "codex": "31608bd4d30ddfd8f1cce0f05594c5a03517d1705f629e73daba43410c96fa53",
+          "agents": "31608bd4d30ddfd8f1cce0f05594c5a03517d1705f629e73daba43410c96fa53"
         }
       }
     },
@@ -727,13 +860,15 @@
       "name": "systematic-debugging",
       "locations": {
         "claude": ".claude/skills/systematic-debugging",
-        "codex": ".codex/skills/systematic-debugging"
+        "codex": ".codex/skills/systematic-debugging",
+        "agents": ".agents/skills/systematic-debugging"
       },
       "sync": {
         "mode": "mirror",
         "source": "claude",
         "targets": [
-          "codex"
+          "codex",
+          "agents"
         ]
       },
       "provenance": {
@@ -747,7 +882,8 @@
         "algorithm": "sha256",
         "trees": {
           "claude": "9536f4003963e958ef5508f5147319e2be6e726871475dabccc2c93fd6c51ce4",
-          "codex": "9536f4003963e958ef5508f5147319e2be6e726871475dabccc2c93fd6c51ce4"
+          "codex": "9536f4003963e958ef5508f5147319e2be6e726871475dabccc2c93fd6c51ce4",
+          "agents": "9536f4003963e958ef5508f5147319e2be6e726871475dabccc2c93fd6c51ce4"
         }
       }
     },
@@ -755,13 +891,15 @@
       "name": "test-driven-development",
       "locations": {
         "claude": ".claude/skills/test-driven-development",
-        "codex": ".codex/skills/test-driven-development"
+        "codex": ".codex/skills/test-driven-development",
+        "agents": ".agents/skills/test-driven-development"
       },
       "sync": {
         "mode": "mirror",
         "source": "claude",
         "targets": [
-          "codex"
+          "codex",
+          "agents"
         ]
       },
       "provenance": {
@@ -775,7 +913,8 @@
         "algorithm": "sha256",
         "trees": {
           "claude": "87f546c0ede1770fabf14a2941b9102a78ce2e7cd370139d19fddac71fd03b55",
-          "codex": "87f546c0ede1770fabf14a2941b9102a78ce2e7cd370139d19fddac71fd03b55"
+          "codex": "87f546c0ede1770fabf14a2941b9102a78ce2e7cd370139d19fddac71fd03b55",
+          "agents": "87f546c0ede1770fabf14a2941b9102a78ce2e7cd370139d19fddac71fd03b55"
         }
       }
     },
@@ -783,10 +922,19 @@
       "name": "token-strategy-tournament",
       "locations": {
         "claude": ".claude/skills/token-strategy-tournament",
-        "codex": ".codex/skills/token-strategy-tournament"
+        "codex": ".codex/skills/token-strategy-tournament",
+        "agents": ".agents/skills/token-strategy-tournament"
       },
       "sync": {
-        "mode": "independent"
+        "mode": "independent",
+        "mirrors": [
+          {
+            "source": "codex",
+            "targets": [
+              "agents"
+            ]
+          }
+        ]
       },
       "provenance": {
         "kind": "repo-authored-platform-variants",
@@ -799,7 +947,8 @@
         "algorithm": "sha256",
         "trees": {
           "claude": "e96146dfa8425d03e68ff80a64d28174622c3ee075e4db1165888ce2314ba479",
-          "codex": "951ba37a23f996b22266329e5def36d5bed1603c7efae6030ce14c59444f4937"
+          "codex": "951ba37a23f996b22266329e5def36d5bed1603c7efae6030ce14c59444f4937",
+          "agents": "951ba37a23f996b22266329e5def36d5bed1603c7efae6030ce14c59444f4937"
         }
       }
     },
@@ -807,13 +956,15 @@
       "name": "using-git-worktrees",
       "locations": {
         "claude": ".claude/skills/using-git-worktrees",
-        "codex": ".codex/skills/using-git-worktrees"
+        "codex": ".codex/skills/using-git-worktrees",
+        "agents": ".agents/skills/using-git-worktrees"
       },
       "sync": {
         "mode": "mirror",
         "source": "claude",
         "targets": [
-          "codex"
+          "codex",
+          "agents"
         ]
       },
       "provenance": {
@@ -827,7 +978,8 @@
         "algorithm": "sha256",
         "trees": {
           "claude": "09425eedb980d8ea5297940774f7251bab4eaece1b9e1a1f06df54cd2b9a7b69",
-          "codex": "09425eedb980d8ea5297940774f7251bab4eaece1b9e1a1f06df54cd2b9a7b69"
+          "codex": "09425eedb980d8ea5297940774f7251bab4eaece1b9e1a1f06df54cd2b9a7b69",
+          "agents": "09425eedb980d8ea5297940774f7251bab4eaece1b9e1a1f06df54cd2b9a7b69"
         }
       }
     },
@@ -835,13 +987,15 @@
       "name": "using-superpowers",
       "locations": {
         "claude": ".claude/skills/using-superpowers",
-        "codex": ".codex/skills/using-superpowers"
+        "codex": ".codex/skills/using-superpowers",
+        "agents": ".agents/skills/using-superpowers"
       },
       "sync": {
         "mode": "mirror",
         "source": "claude",
         "targets": [
-          "codex"
+          "codex",
+          "agents"
         ]
       },
       "provenance": {
@@ -855,7 +1009,8 @@
         "algorithm": "sha256",
         "trees": {
           "claude": "68f87f847f1dc25ee761a29eab5624d8213c3ade3de91678ee6e1725c7a9b028",
-          "codex": "68f87f847f1dc25ee761a29eab5624d8213c3ade3de91678ee6e1725c7a9b028"
+          "codex": "68f87f847f1dc25ee761a29eab5624d8213c3ade3de91678ee6e1725c7a9b028",
+          "agents": "68f87f847f1dc25ee761a29eab5624d8213c3ade3de91678ee6e1725c7a9b028"
         }
       }
     },
@@ -863,13 +1018,15 @@
       "name": "verification-before-completion",
       "locations": {
         "claude": ".claude/skills/verification-before-completion",
-        "codex": ".codex/skills/verification-before-completion"
+        "codex": ".codex/skills/verification-before-completion",
+        "agents": ".agents/skills/verification-before-completion"
       },
       "sync": {
         "mode": "mirror",
         "source": "claude",
         "targets": [
-          "codex"
+          "codex",
+          "agents"
         ]
       },
       "provenance": {
@@ -883,7 +1040,8 @@
         "algorithm": "sha256",
         "trees": {
           "claude": "e98143913b016fca3d383992a7e38f8e7f78d54cf635bfd0a4ee110095970daf",
-          "codex": "e98143913b016fca3d383992a7e38f8e7f78d54cf635bfd0a4ee110095970daf"
+          "codex": "e98143913b016fca3d383992a7e38f8e7f78d54cf635bfd0a4ee110095970daf",
+          "agents": "e98143913b016fca3d383992a7e38f8e7f78d54cf635bfd0a4ee110095970daf"
         }
       }
     },
@@ -891,13 +1049,15 @@
       "name": "verify-minio-real-data-e2e",
       "locations": {
         "claude": ".claude/skills/verify-minio-real-data-e2e",
-        "codex": ".codex/skills/verify-minio-real-data-e2e"
+        "codex": ".codex/skills/verify-minio-real-data-e2e",
+        "agents": ".agents/skills/verify-minio-real-data-e2e"
       },
       "sync": {
         "mode": "mirror",
         "source": "claude",
         "targets": [
-          "codex"
+          "codex",
+          "agents"
         ]
       },
       "provenance": {
@@ -910,7 +1070,8 @@
         "algorithm": "sha256",
         "trees": {
           "claude": "f149ecd419a5b0228f30d8b051776c34183f78c40189ca93fd0030e608f1f83d",
-          "codex": "f149ecd419a5b0228f30d8b051776c34183f78c40189ca93fd0030e608f1f83d"
+          "codex": "f149ecd419a5b0228f30d8b051776c34183f78c40189ca93fd0030e608f1f83d",
+          "agents": "f149ecd419a5b0228f30d8b051776c34183f78c40189ca93fd0030e608f1f83d"
         }
       }
     },
@@ -918,13 +1079,15 @@
       "name": "writing-plans",
       "locations": {
         "claude": ".claude/skills/writing-plans",
-        "codex": ".codex/skills/writing-plans"
+        "codex": ".codex/skills/writing-plans",
+        "agents": ".agents/skills/writing-plans"
       },
       "sync": {
         "mode": "mirror",
         "source": "claude",
         "targets": [
-          "codex"
+          "codex",
+          "agents"
         ]
       },
       "provenance": {
@@ -938,7 +1101,8 @@
         "algorithm": "sha256",
         "trees": {
           "claude": "fdb72c7f59bcbd206f42ff035af5e4b4ce3169863cc6446aac17b82dce1f0ddd",
-          "codex": "fdb72c7f59bcbd206f42ff035af5e4b4ce3169863cc6446aac17b82dce1f0ddd"
+          "codex": "fdb72c7f59bcbd206f42ff035af5e4b4ce3169863cc6446aac17b82dce1f0ddd",
+          "agents": "fdb72c7f59bcbd206f42ff035af5e4b4ce3169863cc6446aac17b82dce1f0ddd"
         }
       }
     },
@@ -946,13 +1110,15 @@
       "name": "writing-skills",
       "locations": {
         "claude": ".claude/skills/writing-skills",
-        "codex": ".codex/skills/writing-skills"
+        "codex": ".codex/skills/writing-skills",
+        "agents": ".agents/skills/writing-skills"
       },
       "sync": {
         "mode": "mirror",
         "source": "claude",
         "targets": [
-          "codex"
+          "codex",
+          "agents"
         ]
       },
       "provenance": {
@@ -966,7 +1132,8 @@
         "algorithm": "sha256",
         "trees": {
           "claude": "dc1426b8f714181a01ada8138f2ea86323f76c6abe6f18e7ec1718ef2bb92be0",
-          "codex": "dc1426b8f714181a01ada8138f2ea86323f76c6abe6f18e7ec1718ef2bb92be0"
+          "codex": "dc1426b8f714181a01ada8138f2ea86323f76c6abe6f18e7ec1718ef2bb92be0",
+          "agents": "dc1426b8f714181a01ada8138f2ea86323f76c6abe6f18e7ec1718ef2bb92be0"
         }
       }
     }

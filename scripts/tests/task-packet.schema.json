@@ -51,7 +51,7 @@
           "then": {
             "properties": {
               "scope": {"enum": ["docs_or_text", "single_assertion", "single_service_internal"]},
-              "worktree_required": {"const": false}, "authorization_requirement": {"const": "none"},
+              "worktree_required": {"const": true}, "authorization_requirement": {"const": "none"},
               "max_agents": {"const": 1}, "read_set_max": {"const": 4}, "read_set": {"maxItems": 4},
               "required_evidence": {"contains": {"const": "test_result"}},
               "required_gates": {"minItems": 1, "maxItems": 1, "contains": {"const": "targeted"}},
@@ -65,7 +65,7 @@
           "then": {
             "properties": {
               "scope": {"enum": ["single_service_internal", "single_service_non_symbol"]},
-              "worktree_required": {"const": false}, "authorization_requirement": {"const": "none"},
+              "worktree_required": {"const": true}, "authorization_requirement": {"const": "none"},
               "max_agents": {"const": 2}, "read_set_max": {"const": 6}, "read_set": {"maxItems": 6},
               "required_evidence": {"contains": {"const": "test_result"}},
               "required_gates": {"contains": {"const": "affected"}},

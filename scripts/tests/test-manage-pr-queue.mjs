@@ -287,15 +287,17 @@ test('legacy pr-queue-manager skill delegates to the hardened named-PR skill', (
   assert.doesNotMatch(skill, /manage-pr-queue\.mjs approve --pr/);
 });
 
-test('blip approval skill is explicitly legacy guarded outside autonomous activation', () => {
+test('blip approval skill is refusal-only and preserves manual exact-head gates', () => {
   const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
   const skill = fs.readFileSync(
     path.join(repoRoot, '.claude', 'skills', 'blip-approve', 'SKILL.md'),
     'utf8',
   );
-  assert.match(skill, /LEGACY_GUARDED/);
-  assert.match(skill, /CANARY_ACTIVE.*AUTONOMOUS_ACTIVE/s);
-  assert.match(skill, /must not.*routine.*prerequisite/i);
+  assert.match(skill, /automation is retired/i);
+  assert.match(skill, /Do not execute any helper, broker/);
+  assert.match(skill, /human uses the GitHub UI.*exact current head/s);
+  assert.match(skill, /Preserve required checks, CODEOWNERS, resolved threads/);
+  assert.doesNotMatch(skill, /run_blip_live_approve_once|HumanCriticalOverride/);
 });
 
 test('skill pressure baseline preserves the observed legacy failures without rewriting passes', () => {
@@ -438,4 +440,17 @@ test('queue executor permits only exact observation tuples', () => {
     )),
     [],
   );
+});
+
+test('approval helper points to a human UI handoff without invoking the retired broker', () => {
+  let message = '';
+  const originalWrite = process.stderr.write;
+  try {
+    process.stderr.write = (chunk) => { message += chunk; return true; };
+    assert.equal(approvePr(721), false);
+  } finally { process.stderr.write = originalWrite; }
+  assert.match(message, /HELD PR #721/);
+  assert.match(message, /human in the GitHub UI on the exact current head/);
+  assert.match(message, /automated blip-approve is retired/);
+  assert.doesNotMatch(message, /use the governed blip-approve workflow/);
 });

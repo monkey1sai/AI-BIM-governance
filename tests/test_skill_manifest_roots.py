@@ -5,7 +5,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 MANIFEST = ROOT / "agent-skills-manifest.json"
-DECLARED_ROOTS = {".claude/skills", ".codex/skills"}
+DECLARED_ROOTS = {".claude/skills", ".codex/skills", ".agents/skills"}
 
 
 def _tracked_files() -> set[Path]:
@@ -22,11 +22,12 @@ def _tracked_files() -> set[Path]:
     }
 
 
-def test_manifest_declares_only_claude_and_codex_roots():
+def test_manifest_declares_exactly_the_three_agent_roots():
     manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
     assert manifest["roots"] == {
         "claude": ".claude/skills",
         "codex": ".codex/skills",
+        "agents": ".agents/skills",
     }
 
 
@@ -36,8 +37,8 @@ def test_tracked_skill_trees_are_all_declared():
         parts = path.parts
         # `.github/skills` is a separate tracked OpenSpec documentation bundle,
         # not an agent skill root.  Only the agent platform roots participate in
-        # this manifest parity assertion; this still catches a tracked `.agents`
-        # tree or any newly introduced `.claude`/`.codex` sibling root.
+        # this manifest parity assertion, including the tracked `.agents` discovery
+        # root alongside the two canonical provider roots.
         if len(parts) < 2 or parts[0] not in {".agents", ".claude", ".codex"}:
             continue
         if parts[1] != "skills":

@@ -17,7 +17,7 @@ Lane-aware 核心規則：F 不強制 impact；B 對 task/主要 entry symbol �
 | 目的 | CLI |
 |------|-----|
 | 索引狀態 / 是否 stale | `gitnexus status` |
-| 重索引（禁止注入 agent context） | `npx gitnexus@1.6.9 analyze --index-only`（須先有 current-turn 授權） |
+| 重索引（禁止注入 agent context） | `npx gitnexus@1.6.9 analyze --index-only`（須先核對適用 standing 或 current-turn explicit 授權） |
 | 已索引 repo 列表 | `gitnexus list` |
 | 概念 / 流程搜尋 | `gitnexus query "concept" -r AI-BIM-governance` |
 | 符號 360° | `gitnexus context SymbolName -r AI-BIM-governance` |
@@ -54,7 +54,7 @@ node scripts/dev/report-gitnexus-worktree-health.mjs --format json
 GitNexus 是 Lane B/G/S code-symbol impact / detect_changes 的權威 gate；不可因為工具慢或不方便就把 required 結果寫成 pass。只有以下情境可進 unavailable gate：
 
 1. GitNexus **CLI** 明確 unavailable、index stale 且重建失敗、registry 找不到 repo、或 linked worktree staged diff 已知失真。（MCP 未啟用不算 unavailable——應改跑 CLI。）
-2. 已從 repo root 跑 read-only health report；若當輪另有權限，可再跑既有 local runner 的 `status`。沒有 current-turn 明確授權時不得以 `analyze`、`npx` 安裝或 reindex 當成「最小修復」。
+2. 已從 repo root 跑 read-only health report；若當輪另有權限，可再跑既有 local runner 的 `status`。本回合須核對適用的 standing 或 explicit scope 授權；不得以健康檢查為由自行擴大安裝、索引範圍。
 3. 本輪只用 raw source、tests、`git diff --name-only --cached` / `git diff` 當 advisory evidence；不得把這些包裝成 GitNexus passed。
 
 Unavailable gate 的決策：
@@ -66,11 +66,21 @@ Unavailable gate 的決策：
 
 ## 本 repo 的 stale 處理
 
-若 GitNexus index stale，但 re-index 需要匯出或重新分析私有 repo，需遵守當前工具權限與使用者授權；不可自動 export sensitive code。下列命令屬於**另案 maintenance**，只有 current-turn 明確授權 exact target、backup/rollback 與驗證方法後才可執行：
+若 GitNexus index stale，但 re-index 需要匯出或重新分析私有 repo，需遵守當前工具權限與使用者授權；不可自動 export sensitive code。既有 standing 授權只涵蓋本任務 root／明確 sibling worktree 的 required stale/missing gate。先記 exact cwd、HEAD 與 tracked cleanliness，僅執行下列 analyze；其他安裝、embeddings、跨 repo 掃描或 cleanup 仍須另案授權：
 
 ```powershell
-npx gitnexus@1.6.9 analyze --index-only   # npm 11 crash 時改用 npm i -g gitnexus@1.6.9，或 pinned pnpm dlx
+npx gitnexus@1.6.9 analyze --index-only   # 失敗須揭露；不得自行改全域安裝或換未授權命令
 gitnexus status                            # 確認結束 + meta.json 對齊；analyze banner 不算成功
 ```
 
 已知坑：`detect_changes` 在 linked worktree 看不到 staged（fallback `git diff --name-only --cached` 並揭露）；LadybugDB crash 後的復原順序見 `~/.claude/projects/.../memory/gitnexus-ladybugdb-crash-recovery.md`（agent memory）。
+
+## Codex discovery 與來源
+
+Codex 的 repo `.agents/skills` 是 tracked discovery adapter，由 `agent-skills-manifest.json` 和 `scripts/dev/sync-agent-skills.ps1 -Mode Check` 一起檢查；Codex 的 GitNexus 預設入口只有經修正的 `gitnexus-blast-radius` CLI adapter；`.claude/skills/gitnexus` umbrella 保留為明確查閱的 provider-specific reference。不得從 global/cached 的同名 MCP 版本覆蓋。
+
+`.claude` / `.codex` 的 provider 差異以 independent entry 保留；`sync.mirrors` 明確描述由 Codex adapter 到 `.agents` 的副本，不得手改 target 後只換 hash。所有來源先驗 reviewed digest，所有 target 仍須 tracked、root-contained、非 junction，才可 Sync。
+
+舊主 checkout 的 ignored `.agents/skills` 必須在人工整合此變更前先備份與移出 discovery root，包含 manifest 未宣告的 extra；不要 checkout 覆寫使用者本機 Skill。詳見 `docs/agents/skill-discovery-migration.md`。本 worktree 不修改舊 checkout。
+
+三項大型 Omniverse Skill 使用 thin discovery adapter：`sync.adapters` 只允許 codex → agents，驗證 canonical entrypoint、frontmatter name、source/adapter digests 與 metadata；資源路徑依 canonical `.codex/skills/<name>` 解析。Sync 不重寫 thin adapter。其他 mirror 仍完整驗證；不得從薄入口推論其引用的 runtime 已驗收。

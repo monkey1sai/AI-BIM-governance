@@ -1002,7 +1002,7 @@ import(pathToFileURL(require('node:path').resolve(process.cwd(), 'scripts/lib/ag
     $agentsLineCount = @(Get-Content -LiteralPath 'AGENTS.md').Count
     $claudeLineCount = @(Get-Content -LiteralPath 'CLAUDE.md').Count
     foreach ($budget in @(
-        @{ Path = 'AGENTS.md'; Min = 150; Max = 200 },
+        @{ Path = 'AGENTS.md'; Min = 1; Max = 200 },
         @{ Path = 'CLAUDE.md'; Min = 1; Max = 30 },
         @{ Path = 'docs/agents/advanced-agent-reasoning-contract.md'; Min = 40; Max = 70 },
         @{ Path = 'docs/agents/codex-loop-workflows.md'; Min = 50; Max = 90 }
@@ -1323,7 +1323,8 @@ import(pathToFileURL(require('node:path').resolve(process.cwd(), 'scripts/lib/ag
     Assert-True ($ci -match '(?s)Run spec-to-done port helper safety tests \(PowerShell 7\).*?pwsh .*?test-spec-to-done-port-helper\.ps1') 'CI runs spec-to-done helper safety tests in PowerShell 7'
     Assert-True ($ci -match '(?s)Run spec-to-done port helper safety tests \(Windows PowerShell 5\.1\).*?powershell\.exe .*?test-spec-to-done-port-helper\.ps1') 'CI runs spec-to-done helper safety tests in Windows PowerShell 5.1'
 
-    foreach ($testDeployContractPath in @('AGENTS.md', 'docs/agents/product-operability-and-script-contract.md', 'docs/agents/sub-repo-verify-commands.md')) {
+    Assert-FileContains 'AGENTS.md' '必讀.*docs/agents/task-acceptance-and-isolation\.md' 'root routes runtime and isolation work to the preserved detailed contract'
+    foreach ($testDeployContractPath in @('docs/agents/task-acceptance-and-isolation.md', 'docs/agents/product-operability-and-script-contract.md', 'docs/agents/sub-repo-verify-commands.md')) {
         $testDeployContract = Get-Content -LiteralPath $testDeployContractPath -Raw -Encoding UTF8
         Assert-True ($testDeployContract -match [regex]::Escape('-StopOwnedRuntime')) "$testDeployContractPath documents the explicit ownership-gated stop"
         Assert-True ($testDeployContract -match 'canonical[- ]linux|canonical Linux') "$testDeployContractPath identifies the canonical Linux target"
@@ -1421,7 +1422,7 @@ import(pathToFileURL(require('node:path').resolve(process.cwd(), 'scripts/lib/ag
 
     $taskPacketSchemaMutations = @()
     $invalidFastWorktree = ($routingFixtures.tasks | Where-Object lane -eq 'F' | Select-Object -First 1) | ConvertTo-Json -Depth 20 | ConvertFrom-Json
-    $invalidFastWorktree.worktree_required = $true
+    $invalidFastWorktree.worktree_required = $false
     $taskPacketSchemaMutations += @{ Name = 'Lane F worktree'; Packet = $invalidFastWorktree }
     $invalidBoundedImpact = ($routingFixtures.tasks | Where-Object { $_.lane -eq 'B' -and $_.scope -eq 'single_service_internal' } | Select-Object -First 1) | ConvertTo-Json -Depth 20 | ConvertFrom-Json
     $invalidBoundedImpact.required_gates = @($invalidBoundedImpact.required_gates | Where-Object { $_ -ne 'impact' })
@@ -1504,15 +1505,16 @@ import(pathToFileURL(require('node:path').resolve(process.cwd(), 'scripts/lib/ag
     }
     # AGENTS.md owns the GitNexus generated block; CLAUDE.md imports it and must
     # not carry a second generated copy that can drift.
-    $gitNexusMetadata = '17817 symbols, 28581 relationships, 300 execution flows'
-    Assert-True ($agentsBody -match '<!-- gitnexus:start -->') 'AGENTS.md has GitNexus start marker'
-    Assert-True ($agentsBody -match '<!-- gitnexus:end -->') 'AGENTS.md has GitNexus end marker'
-    $agentsBlockMatch = [regex]::Match($agentsBody, '(?s)<!-- gitnexus:start -->.*?<!-- gitnexus:end -->')
-    Assert-True ($agentsBlockMatch.Value -match [regex]::Escape($gitNexusMetadata)) 'AGENTS.md has current GitNexus metadata'
-    Assert-True (-not ($claudeBody -match '<!-- gitnexus:start -->|<!-- gitnexus:end -->')) 'CLAUDE.md has no GitNexus generated markers'
+    Assert-True ([regex]::Matches($agentsBody, '(?m)^<!-- gitnexus:start -->\r?$').Count -eq 1) 'AGENTS.md has exactly one standalone GitNexus start marker'
+    Assert-True ([regex]::Matches($agentsBody, '(?m)^<!-- gitnexus:end -->\r?$').Count -eq 1) 'AGENTS.md has exactly one standalone GitNexus end marker'
     $agentsGitNexusBlock = [regex]::Match($agentsBody, '(?s)<!-- gitnexus:start -->.*?<!-- gitnexus:end -->').Value
-    $metadataPattern = '17817 symbols, 28581 relationships, 300 execution flows'
-    Assert-True ($agentsGitNexusBlock -match $metadataPattern) 'AGENTS.md GitNexus block carries current metadata'
+    Assert-True ($agentsGitNexusBlock -match [regex]::Escape('indexed commit == HEAD')) 'GitNexus instructions require fresh exact-checkout evidence instead of fixed statistics'
+    Assert-True ($agentsGitNexusBlock -match [regex]::Escape('npx gitnexus@1.6.9 analyze --index-only')) 'GitNexus refresh preserves the pinned injection-free command'
+    Assert-True ($agentsGitNexusBlock -notmatch '\d+ symbols, \d+ relationships') 'root instructions do not present stale generated counts as current evidence'
+    Assert-True (-not ($claudeBody -match '<!-- gitnexus:start -->|<!-- gitnexus:end -->')) 'CLAUDE.md has no second GitNexus block'
+    $boardContract = Get-Content -Raw -LiteralPath 'docs/agents/parallel-session-board.md'
+    Assert-True ($boardContract -match [regex]::Escape('`.claude/skills`、`.codex/skills`、`.agents/skills` 三個 roots')) 'board instructions include the tracked discovery root'
+    Assert-True ($boardContract -notmatch [regex]::Escape('`.agents/skills`、AGY 與 Grok')) 'board does not misclassify discovery as an untracked provider-local root'
 
     # No orphan sub-files: every tracked docs/agents/*.md must appear in the
     # canonical AGENTS.md index; CLAUDE.md imports that index wholesale.
