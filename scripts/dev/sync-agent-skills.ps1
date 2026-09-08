@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
     [ValidateSet('Check', 'Sync')]
     [string] $Mode = 'Check',
@@ -398,10 +398,11 @@ Assert-NoReparsePath $skillConsumerPath
 $allowedRootRelatives = [ordered]@{
     claude = '.claude/skills'
     codex = '.codex/skills'
+    agents = '.agents/skills'
 }
 $rootProperties = @($manifest.roots.PSObject.Properties)
 if ($rootProperties.Count -ne $allowedRootRelatives.Count) {
-    throw 'Skill manifest must declare exactly the claude and codex skill roots.'
+    throw 'Skill manifest must declare exactly the claude, codex and agents skill roots.'
 }
 $rootPaths = @{}
 foreach ($platform in $allowedRootRelatives.Keys) {
@@ -495,51 +496,107 @@ foreach ($skill in $manifest.skills) {
         })
     }
 
-    if ($syncMode -ne 'mirror') {
+    $adapterProperty = $skill.sync.PSObject.Properties['adapters']
+    if ($null -ne $adapterProperty) {
+        if ($syncMode -ne 'independent' -or $adapterProperty.Value -isnot [array] -or $adapterProperty.Value.Count -ne 1) {
+            throw "Reference adapters require independent mode and exactly one linkage: $skillName"
+        }
+        $adapter = $adapterProperty.Value[0]
+        $adapterKeys = @($adapter.PSObject.Properties.Name | Sort-Object)
+        if (($adapterKeys -join ',') -ne 'source,target' -or $adapter.source -cne 'codex' -or $adapter.target -cne 'agents' -or
+            -not $skillLocations.ContainsKey('codex') -or -not $skillLocations.ContainsKey('agents')) {
+            throw "Reference adapter must link declared codex source to agents target: $skillName"
+        }
+        $adapterSource = $skillLocations['codex']
+        $adapterTarget = $skillLocations['agents']
+        if ((Get-SkillTreeDigest $adapterSource) -ne [string] $skill.integrity.trees.codex) {
+            throw "Reference adapter source integrity mismatch: $skillName"
+        }
+        $sourceText = [IO.File]::ReadAllText((Join-Path $adapterSource 'SKILL.md')).Replace("`r`n", "`n")
+        $frontmatter = [regex]::Match($sourceText, '\A---\n.*?\n---\n', [Text.RegularExpressions.RegexOptions]::Singleline)
+        if (-not $frontmatter.Success -or $frontmatter.Value -notmatch "(?m)^name: $([regex]::Escape($skillName))$") {
+            throw "Reference adapter source name/frontmatter mismatch: $skillName"
+        }
+        $canonicalEntry = ([string] $skill.locations.codex).Replace('\', '/') + '/SKILL.md'
+        $expectedAdapter = $frontmatter.Value + "`n# Repo discovery adapter`n`nRead ``$canonicalEntry`` from the repository root before using this skill. That file is the canonical procedure; resolve its referenced files and scripts relative to its own directory.`n`nFollow the applicable AGENTS.md and current task authorization. This adapter adds no approval, merge, deployment, credential, or runtime evidence authority.`n"
+        $actualAdapter = [IO.File]::ReadAllText((Join-Path $adapterTarget 'SKILL.md')).Replace("`r`n", "`n")
+        if ($actualAdapter -cne $expectedAdapter) { throw "Reference adapter canonical path/name/content mismatch: $skillName" }
+        foreach ($asset in (Get-FileMap $adapterTarget).Keys) {
+            if ($asset.Replace('\', '/') -notin @('SKILL.md', 'agents/openai.yaml')) {
+                throw "Reference adapter contains an undeclared resource: $skillName"
+            }
+        }
+        $sourceMetadata = Join-Path $adapterSource 'agents/openai.yaml'
+        $targetMetadata = Join-Path $adapterTarget 'agents/openai.yaml'
+        if ((Test-Path -LiteralPath $sourceMetadata) -ne (Test-Path -LiteralPath $targetMetadata)) {
+            throw "Reference adapter metadata presence mismatch: $skillName"
+        }
+        if ((Test-Path -LiteralPath $sourceMetadata) -and
+            [Convert]::ToBase64String([IO.File]::ReadAllBytes($sourceMetadata)) -cne [Convert]::ToBase64String([IO.File]::ReadAllBytes($targetMetadata))) {
+            throw "Reference adapter metadata mismatch: $skillName"
+        }
+    }
+
+    $mirrors = @()
+    $mirrorProperty = $skill.sync.PSObject.Properties['mirrors']
+    if ($syncMode -eq 'mirror') {
+        if ($null -ne $mirrorProperty) { throw "Mirror mode cannot also declare sync.mirrors: $skillName" }
+        $mirrors = @($skill.sync)
+    } else {
         if ($null -ne $skill.sync.PSObject.Properties['source'] -or $null -ne $skill.sync.PSObject.Properties['targets']) {
             throw "Only mirror skills may declare sync source or targets: $skillName"
         }
-        continue
+        if ($null -ne $mirrorProperty) {
+            if ($syncMode -ne 'independent' -or $mirrorProperty.Value -isnot [array] -or $mirrorProperty.Value.Count -eq 0) {
+                throw "Only independent skills may declare a non-empty sync.mirrors array: $skillName"
+            }
+            $mirrors = @($mirrorProperty.Value)
+            foreach ($mirror in $mirrors) {
+                $keys = @($mirror.PSObject.Properties.Name | Sort-Object)
+                if (($keys -join ',') -ne 'source,targets') { throw "Independent mirror requires only source and targets: $skillName" }
+            }
+        }
     }
+    foreach ($mirror in $mirrors) {
+        $sourcePlatform = [string] $mirror.source
+        if (-not $rootPaths.ContainsKey($sourcePlatform) -or -not $skillLocations.ContainsKey($sourcePlatform)) {
+            throw "Mirror source location missing for $skillName`: $sourcePlatform"
+        }
+        $targetPlatforms = @($mirror.targets | ForEach-Object { [string] $_ })
+        if ($targetPlatforms.Count -eq 0 -or @($targetPlatforms | Sort-Object -Unique).Count -ne $targetPlatforms.Count) {
+            throw "Mirror targets must be a non-empty unique list for $skillName"
+        }
+        if ($targetPlatforms -contains $sourcePlatform) {
+            throw "Mirror source cannot also be a target for $skillName`: $sourcePlatform"
+        }
+        if ($syncMode -eq 'mirror' -and $skillLocations.Count -ne (1 + $targetPlatforms.Count)) {
+            throw "Mirror locations must contain only the source and declared targets for $skillName"
+        }
 
-    $sourcePlatform = [string] $skill.sync.source
-    if (-not $rootPaths.ContainsKey($sourcePlatform) -or -not $skillLocations.ContainsKey($sourcePlatform)) {
-        throw "Mirror source location missing for $skillName`: $sourcePlatform"
-    }
-    $targetPlatforms = @($skill.sync.targets | ForEach-Object { [string] $_ })
-    if ($targetPlatforms.Count -eq 0 -or @($targetPlatforms | Sort-Object -Unique).Count -ne $targetPlatforms.Count) {
-        throw "Mirror targets must be a non-empty unique list for $skillName"
-    }
-    if ($targetPlatforms -contains $sourcePlatform) {
-        throw "Mirror source cannot also be a target for $skillName`: $sourcePlatform"
-    }
-    if ($skillLocations.Count -ne (1 + $targetPlatforms.Count)) {
-        throw "Mirror locations must contain only the source and declared targets for $skillName"
-    }
-
-    $source = $skillLocations[$sourcePlatform]
-    $sourceDigest = [string] $skill.integrity.trees.PSObject.Properties[$sourcePlatform].Value
-    foreach ($targetPlatform in $targetPlatforms) {
-        if (-not $rootPaths.ContainsKey($targetPlatform) -or -not $skillLocations.ContainsKey($targetPlatform)) {
-            throw "Mirror target location missing for $skillName`: $targetPlatform"
+        $source = $skillLocations[$sourcePlatform]
+        $sourceDigest = [string] $skill.integrity.trees.PSObject.Properties[$sourcePlatform].Value
+        foreach ($targetPlatform in $targetPlatforms) {
+            if (-not $rootPaths.ContainsKey($targetPlatform) -or -not $skillLocations.ContainsKey($targetPlatform)) {
+                throw "Mirror target location missing for $skillName`: $targetPlatform"
+            }
+            $target = $skillLocations[$targetPlatform]
+            if ([string] $skill.integrity.trees.PSObject.Properties[$targetPlatform].Value -ne $sourceDigest) {
+                throw "Mirror source and target integrity digests must match for $skillName`: $sourcePlatform->$targetPlatform"
+            }
+            if (Test-OverlappingPath $source $target) {
+                throw "Mirror source and target paths overlap for $skillName`: $sourcePlatform->$targetPlatform"
+            }
+            if ((Test-OverlappingPath $target $manifestFullPath) -or (Test-OverlappingPath $target $skillConsumerPath)) {
+                throw "Mirror target overlaps protected governance files for $skillName`: $targetPlatform"
+            }
+            $syncPlans.Add([pscustomobject]@{
+                Skill = $skillName
+                SourcePlatform = $sourcePlatform
+                TargetPlatform = $targetPlatform
+                Source = $source
+                Target = $target
+            })
         }
-        $target = $skillLocations[$targetPlatform]
-        if ([string] $skill.integrity.trees.PSObject.Properties[$targetPlatform].Value -ne $sourceDigest) {
-            throw "Mirror source and target integrity digests must match for $skillName`: $sourcePlatform->$targetPlatform"
-        }
-        if (Test-OverlappingPath $source $target) {
-            throw "Mirror source and target paths overlap for $skillName`: $sourcePlatform->$targetPlatform"
-        }
-        if ((Test-OverlappingPath $target $manifestFullPath) -or (Test-OverlappingPath $target $skillConsumerPath)) {
-            throw "Mirror target overlaps protected governance files for $skillName`: $targetPlatform"
-        }
-        $syncPlans.Add([pscustomobject]@{
-            Skill = $skillName
-            SourcePlatform = $sourcePlatform
-            TargetPlatform = $targetPlatform
-            Source = $source
-            Target = $target
-        })
     }
 }
 
@@ -547,6 +604,28 @@ for ($leftIndex = 0; $leftIndex -lt $syncPlans.Count; $leftIndex++) {
     for ($rightIndex = $leftIndex + 1; $rightIndex -lt $syncPlans.Count; $rightIndex++) {
         if (Test-OverlappingPath $syncPlans[$leftIndex].Target $syncPlans[$rightIndex].Target) {
             throw "Mirror targets overlap: $($syncPlans[$leftIndex].Skill) and $($syncPlans[$rightIndex].Skill)"
+        }
+    }
+}
+
+# Every mirror source must stay independently pinned; reject chains/cycles before writes.
+foreach ($sourcePlan in $syncPlans) {
+    foreach ($targetPlan in $syncPlans) {
+        if (Test-OverlappingPath $sourcePlan.Source $targetPlan.Target) {
+            throw "Mirror source cannot be another mirror target: $($sourcePlan.Skill)"
+        }
+    }
+}
+
+foreach ($skill in $manifest.skills) {
+    if ($null -ne $skill.sync.PSObject.Properties['adapters']) {
+        $canonicalPath = Resolve-RepoPath ([string] $skill.locations.codex)
+        if (@($syncPlans | Where-Object { Test-OverlappingPath $_.Target $canonicalPath }).Count -gt 0) {
+            throw "Reference adapter source cannot also be a mirror target: $($skill.name)"
+        }
+        $adapterPath = Resolve-RepoPath ([string] $skill.locations.agents)
+        if (@($syncPlans | Where-Object { Test-OverlappingPath $_.Target $adapterPath }).Count -gt 0) {
+            throw "Reference adapter cannot also be a mirror target: $($skill.name)"
         }
     }
 }

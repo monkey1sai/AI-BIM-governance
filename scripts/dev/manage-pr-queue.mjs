@@ -284,7 +284,7 @@ export function updateBranch(prNumber, expectedHeadRef = '') {
 
 export function approvePr(prNumber) {
   process.stderr.write(
-    `[manage-pr-queue] HELD PR #${prNumber}: counted approval is an external, independent action; use the governed blip-approve workflow.\n`,
+    `[manage-pr-queue] HELD PR #${prNumber}: counted approval requires a policy-eligible human in the GitHub UI on the exact current head; automated blip-approve is retired.\n`,
   );
   return false;
 }

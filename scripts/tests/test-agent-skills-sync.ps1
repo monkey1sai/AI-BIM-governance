@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param()
 
 Set-StrictMode -Version Latest
@@ -104,6 +104,7 @@ Import-Module -Force (Join-Path $repoRoot 'scripts\lib\StructLog.psm1')
 
 $eolFixtureRoot = Join-Path ([IO.Path]::GetTempPath()) ("agent-skills-eol-" + [guid]::NewGuid().ToString('N'))
 try {
+    New-Item -ItemType Directory -Path (Join-Path $eolFixtureRoot '.agents/skills') -Force | Out-Null
     $eolSkill = Join-Path $eolFixtureRoot '.claude\skills\eol-demo'
     $eolCodexRoot = Join-Path $eolFixtureRoot '.codex\skills'
     $eolConsumer = Join-Path $eolFixtureRoot 'scripts\dev\sync-agent-skills.ps1'
@@ -136,7 +137,7 @@ try {
     $eolDigest = Get-TestV2TreeDigest -Root $eolSkill -BinaryPaths @('payload.bin')
     $eolManifest = [ordered]@{
         schema_version = 'agent-skills-manifest/v2'
-        roots = [ordered]@{ claude = '.claude/skills'; codex = '.codex/skills' }
+        roots = [ordered]@{ claude = '.claude/skills'; codex = '.codex/skills'; agents = '.agents/skills' }
         entry_defaults = [ordered]@{ owner = 'agent-governance'; executable_consumer = 'scripts/dev/sync-agent-skills.ps1' }
         skills = @([ordered]@{
             name = 'eol-demo'
@@ -168,7 +169,12 @@ try {
     $localGenerated = Join-Path $eolFixtureRoot '.agents\skills\generated\fixture'
     New-Item -ItemType Directory -Path $localGenerated -Force | Out-Null
     Set-Content -LiteralPath (Join-Path $localGenerated 'SKILL.md') -Value 'tool-generated advisory snapshot' -NoNewline
-    & $scriptUnderTest -Mode Check -RepoRoot $eolFixtureRoot -ManifestPath $eolManifestPath
+    $discoveryError = ''
+    try { & $scriptUnderTest -Mode Check -RepoRoot $eolFixtureRoot -ManifestPath $eolManifestPath } catch { $discoveryError = $_.Exception.Message }
+    Assert-True ($discoveryError -match 'agents inventory undeclared: generated') 'unreviewed discovered skills fail closed'
+    $generatedRoot = [IO.Path]::GetFullPath((Join-Path $eolFixtureRoot '.agents/skills/generated'))
+    Assert-True ($generatedRoot.StartsWith([IO.Path]::GetFullPath($eolFixtureRoot) + [IO.Path]::DirectorySeparatorChar)) 'fixture cleanup stays inside its exact root'
+    Remove-Item -LiteralPath $generatedRoot -Recurse -Force
 
     [IO.File]::WriteAllBytes((Join-Path $eolSkill 'payload.bin'), [byte[]] @(65, 10, 66))
     $binaryMutationFailed = $false
@@ -229,6 +235,7 @@ try {
 
 $missingTargetFixtureRoot = Join-Path ([IO.Path]::GetTempPath()) ("agent-skills-missing-target-" + [guid]::NewGuid().ToString('N'))
 try {
+    New-Item -ItemType Directory -Path (Join-Path $missingTargetFixtureRoot '.agents/skills') -Force | Out-Null
     $missingTargetSource = Join-Path $missingTargetFixtureRoot '.claude\skills\demo'
     $missingTargetCodexRoot = Join-Path $missingTargetFixtureRoot '.codex\skills'
     $missingTargetPath = Join-Path $missingTargetCodexRoot 'demo'
@@ -247,7 +254,7 @@ try {
     $missingTargetDigest = Get-TestV2TreeDigest -Root $missingTargetSource
     $missingTargetManifest = [ordered]@{
         schema_version = 'agent-skills-manifest/v2'
-        roots = [ordered]@{ claude = '.claude/skills'; codex = '.codex/skills' }
+        roots = [ordered]@{ claude = '.claude/skills'; codex = '.codex/skills'; agents = '.agents/skills' }
         entry_defaults = [ordered]@{ owner = 'agent-governance'; executable_consumer = 'scripts/dev/sync-agent-skills.ps1' }
         skills = @([ordered]@{
             name = 'demo'
@@ -276,6 +283,7 @@ try {
 }
 
 try {
+    New-Item -ItemType Directory -Path (Join-Path $fixtureRoot '.agents/skills') -Force | Out-Null
     $source = Join-Path $fixtureRoot '.claude\skills\demo'
     $target = Join-Path $fixtureRoot '.codex\skills\demo'
     $independent = Join-Path $fixtureRoot '.codex\skills\keep'
@@ -298,7 +306,7 @@ try {
     $keepDigest = Get-TestTreeDigest $independent
     $manifest = [ordered]@{
         schema_version = 'agent-skills-manifest/v2'
-        roots = [ordered]@{ claude = '.claude/skills'; codex = '.codex/skills' }
+        roots = [ordered]@{ claude = '.claude/skills'; codex = '.codex/skills'; agents = '.agents/skills' }
         entry_defaults = [ordered]@{ owner = 'agent-governance'; executable_consumer = 'scripts/dev/sync-agent-skills.ps1' }
         skills = @(
             [ordered]@{
@@ -346,6 +354,110 @@ try {
     & $scriptUnderTest -Mode Sync -RepoRoot $fixtureRoot -ManifestPath $manifestPath
     Assert-True ((Get-Content -Raw -LiteralPath (Join-Path $target 'SKILL.md')) -eq "source`n") 'Sync restores a deleted target whose files remain tracked in the Git index'
     & $scriptUnderTest -Mode Check -RepoRoot $fixtureRoot -ManifestPath $manifestPath
+
+    # Provider variants stay independent while the Codex discovery adapter is a real mirror.
+    $claudeVariant = Join-Path $fixtureRoot '.claude/skills/keep'
+    $discoveryTarget = Join-Path $fixtureRoot '.agents/skills/keep'
+    New-Item -ItemType Directory -Path $claudeVariant, $discoveryTarget -Force | Out-Null
+    Set-Content -LiteralPath (Join-Path $claudeVariant 'SKILL.md') -Value 'Claude-specific contract' -NoNewline
+    Set-Content -LiteralPath (Join-Path $discoveryTarget 'SKILL.md') -Value 'stale discovery contract' -NoNewline
+    & git -C $fixtureRoot add -f -- '.claude/skills/keep/SKILL.md' '.agents/skills/keep/SKILL.md'
+    Assert-True ($LASTEXITCODE -eq 0) 'provider mirror fixture stages both adapter assets'
+    $manifest.skills[1].locations.Add('claude', '.claude/skills/keep')
+    $manifest.skills[1].locations.Add('agents', '.agents/skills/keep')
+    $manifest.skills[1].integrity.trees.Add('claude', (Get-TestTreeDigest $claudeVariant))
+    $manifest.skills[1].integrity.trees.Add('agents', $keepDigest)
+    $manifest.skills[1].sync = [ordered]@{ mode = 'independent'; mirrors = @([ordered]@{ source = 'codex'; targets = @('agents') }) }
+    $manifest | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $manifestPath -Encoding UTF8
+    $variantFingerprint = Get-TreeFingerprint $claudeVariant
+    $driftError = ''
+    try { & $scriptUnderTest -Mode Check -RepoRoot $fixtureRoot -ManifestPath $manifestPath } catch { $driftError = $_.Exception.Message }
+    Assert-True ($driftError -match 'keep.*agents|agents.*keep') 'Check detects stale discovered provider adapter'
+    & $scriptUnderTest -Mode Sync -RepoRoot $fixtureRoot -ManifestPath $manifestPath
+    Assert-True ((Get-TreeFingerprint $discoveryTarget) -ceq (Get-TreeFingerprint $independent)) 'Sync updates discovery from the Codex variant'
+    Assert-True ((Get-TreeFingerprint $claudeVariant) -ceq $variantFingerprint) 'Sync preserves the distinct Claude variant'
+    & $scriptUnderTest -Mode Check -RepoRoot $fixtureRoot -ManifestPath $manifestPath
+
+    $validMirrors = $manifest.skills[1].sync.mirrors
+    foreach ($badMirrors in @(
+        @{ label = 'duplicate target'; value = @(@{ source = 'codex'; targets = @('agents') }, @{ source = 'codex'; targets = @('agents') }); pattern = 'targets overlap' },
+        @{ label = 'cycle'; value = @(@{ source = 'codex'; targets = @('agents') }, @{ source = 'agents'; targets = @('codex') }); pattern = 'source cannot be another mirror target' },
+        @{ label = 'missing source'; value = @(@{ source = 'unknown'; targets = @('agents') }); pattern = 'source location missing' },
+        @{ label = 'self target'; value = @(@{ source = 'codex'; targets = @('codex') }); pattern = 'source cannot also be a target' },
+        @{ label = 'empty mirrors'; value = @(); pattern = 'non-empty sync.mirrors' }
+    )) {
+        $manifest.skills[1].sync.mirrors = $badMirrors.value
+        $manifest | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $manifestPath -Encoding UTF8
+        $beforeRejectedMirror = Get-TreeFingerprint $fixtureRoot
+        $mirrorError = ''
+        try { & $scriptUnderTest -Mode Sync -RepoRoot $fixtureRoot -ManifestPath $manifestPath } catch { $mirrorError = $_.Exception.Message }
+        Assert-True ($mirrorError -match $badMirrors.pattern) "independent mirror rejects $($badMirrors.label)"
+        Assert-True ((Get-TreeFingerprint $fixtureRoot) -ceq $beforeRejectedMirror) 'invalid mirror graph performs zero writes'
+    }
+    $manifest.skills[1].sync.mirrors = $validMirrors
+    $manifest | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $manifestPath -Encoding UTF8
+
+    # Large skills use a pinned, exact-path thin adapter rather than a second reference tree.
+    $canonicalText = "---`nname: keep`ndescription: fixture`n---`nCanonical provider procedure`n"
+    [IO.File]::WriteAllText((Join-Path $independent 'SKILL.md'), $canonicalText)
+    $adapterText = "---`nname: keep`ndescription: fixture`n---`n`n# Repo discovery adapter`n`nRead ``.codex/skills/keep/SKILL.md`` from the repository root before using this skill. That file is the canonical procedure; resolve its referenced files and scripts relative to its own directory.`n`nFollow the applicable AGENTS.md and current task authorization. This adapter adds no approval, merge, deployment, credential, or runtime evidence authority.`n"
+    [IO.File]::WriteAllText((Join-Path $discoveryTarget 'SKILL.md'), $adapterText)
+    & git -C $fixtureRoot add -f -- '.codex/skills/keep/SKILL.md' '.agents/skills/keep/SKILL.md'
+    Assert-True ($LASTEXITCODE -eq 0) 'thin adapter fixture tracks its canonical and adapter text'
+    $manifest.skills[1].integrity.trees.codex = Get-TestTreeDigest $independent
+    $manifest.skills[1].integrity.trees.agents = Get-TestTreeDigest $discoveryTarget
+    $manifest.skills[1].sync = [ordered]@{ mode = 'independent'; adapters = @([ordered]@{ source = 'codex'; target = 'agents' }) }
+    $manifest | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $manifestPath -Encoding UTF8
+    & $scriptUnderTest -Mode Check -RepoRoot $fixtureRoot -ManifestPath $manifestPath
+    foreach ($adapterCase in @('source_digest', 'source_link', 'target_path', 'target_name', 'source_name')) {
+        $manifest.skills[1].sync.adapters[0].source = 'codex'
+        [IO.File]::WriteAllText((Join-Path $independent 'SKILL.md'), $canonicalText)
+        [IO.File]::WriteAllText((Join-Path $discoveryTarget 'SKILL.md'), $adapterText)
+        $manifest.skills[1].integrity.trees.codex = Get-TestTreeDigest $independent
+        switch ($adapterCase) {
+            'source_digest' { [IO.File]::AppendAllText((Join-Path $independent 'SKILL.md'), 'tampered source') }
+            'source_link' { $manifest.skills[1].sync.adapters[0].source = 'claude' }
+            'target_path' { [IO.File]::WriteAllText((Join-Path $discoveryTarget 'SKILL.md'), $adapterText.Replace('.codex/skills/keep/', '.codex/skills/other/')) }
+            'target_name' { [IO.File]::WriteAllText((Join-Path $discoveryTarget 'SKILL.md'), $adapterText.Replace('name: keep', 'name: other')) }
+            'source_name' {
+                [IO.File]::WriteAllText((Join-Path $independent 'SKILL.md'), $canonicalText.Replace('name: keep', 'name: other'))
+                $manifest.skills[1].integrity.trees.codex = Get-TestTreeDigest $independent
+            }
+        }
+        # Even a reviewed-looking target digest cannot authorize a different source path/name.
+        $manifest.skills[1].integrity.trees.agents = Get-TestTreeDigest $discoveryTarget
+        $manifest | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $manifestPath -Encoding UTF8
+        $adapterBefore = Get-TreeFingerprint $fixtureRoot
+        $adapterError = ''
+        try { & $scriptUnderTest -Mode Sync -RepoRoot $fixtureRoot -ManifestPath $manifestPath } catch { $adapterError = $_.Exception.Message }
+        Assert-True ($adapterError -match 'Reference adapter') "thin adapter rejects $adapterCase"
+        Assert-True ((Get-TreeFingerprint $fixtureRoot) -ceq $adapterBefore) 'rejected reference linkage performs zero writes'
+    }
+    [IO.File]::WriteAllText((Join-Path $independent 'SKILL.md'), $canonicalText)
+    [IO.File]::WriteAllText((Join-Path $discoveryTarget 'SKILL.md'), $adapterText)
+    $manifest.skills[1].sync.adapters[0].source = 'codex'
+    $manifest.skills[1].integrity.trees.codex = Get-TestTreeDigest $independent
+    $manifest.skills[1].integrity.trees.agents = Get-TestTreeDigest $discoveryTarget
+    $manifest | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $manifestPath -Encoding UTF8
+
+    # The adapter canonical source must never be a remediable mirror target.
+    $manifest.skills[1].sync.Add('mirrors', @([ordered]@{ source = 'codex'; targets = @('claude') }))
+    $manifest.skills[1].integrity.trees.claude = $manifest.skills[1].integrity.trees.codex
+    $manifest | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $manifestPath -Encoding UTF8
+    $thinBefore = Get-TreeFingerprint $discoveryTarget
+    & $scriptUnderTest -Mode Sync -RepoRoot $fixtureRoot -ManifestPath $manifestPath
+    Assert-True ((Get-TreeFingerprint $claudeVariant) -ceq (Get-TreeFingerprint $independent)) 'thin adapter canonical source repairs the full mirror target'
+    Assert-True ((Get-TreeFingerprint $discoveryTarget) -ceq $thinBefore) 'mirror repair leaves the thin discovery adapter unchanged'
+    & $scriptUnderTest -Mode Check -RepoRoot $fixtureRoot -ManifestPath $manifestPath
+    $manifest.skills[1].sync.mirrors = @([ordered]@{ source = 'claude'; targets = @('codex') })
+    $manifest | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $manifestPath -Encoding UTF8
+    $beforeBadAdapterGraph = Get-TreeFingerprint $fixtureRoot
+    $badAdapterGraphError = ''
+    try { & $scriptUnderTest -Mode Sync -RepoRoot $fixtureRoot -ManifestPath $manifestPath } catch { $badAdapterGraphError = $_.Exception.Message }
+    Assert-True ($badAdapterGraphError -match 'Reference adapter source cannot also be a mirror target') 'adapter source as mirror target is rejected'
+    Assert-True ((Get-TreeFingerprint $fixtureRoot) -ceq $beforeBadAdapterGraph) 'rejected adapter source graph performs zero writes'
+    $manifest.skills[1].sync.mirrors = @([ordered]@{ source = 'codex'; targets = @('claude') })
+    $manifest | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $manifestPath -Encoding UTF8
 
     Set-Content -LiteralPath (Join-Path $source 'SKILL.md') -Value 'tampered canonical source' -NoNewline
     $beforeRejectedSource = Get-TreeFingerprint $fixtureRoot
@@ -404,6 +516,7 @@ try {
 
     $reparseFixture = Join-Path $fixtureRoot 'reparse-fixture'
     $reparseRepo = Join-Path $reparseFixture 'repo'
+    New-Item -ItemType Directory -Path (Join-Path $reparseRepo '.agents/skills') -Force | Out-Null
     $reparseSource = Join-Path $reparseRepo '.claude\skills\demo'
     $outsideCodex = Join-Path $reparseFixture 'outside-codex'
     $reparseTarget = Join-Path $outsideCodex 'skills\demo'
@@ -417,7 +530,7 @@ try {
     $reparseDigest = Get-TestTreeDigest $reparseSource
     $reparseManifest = [ordered]@{
         schema_version = 'agent-skills-manifest/v2'
-        roots = [ordered]@{ claude = '.claude/skills'; codex = '.codex/skills' }
+        roots = [ordered]@{ claude = '.claude/skills'; codex = '.codex/skills'; agents = '.agents/skills' }
         entry_defaults = [ordered]@{ owner = 'agent-governance'; executable_consumer = 'scripts/dev/sync-agent-skills.ps1' }
         skills = @([ordered]@{
             name = 'demo'
@@ -443,7 +556,7 @@ try {
     $logRecords = @(Get-ChildItem -Recurse -File -Filter '*.jsonl' -LiteralPath (Join-Path $fixtureRoot 'logs') | ForEach-Object {
         Get-Content -LiteralPath $_.FullName | ForEach-Object { $_ | ConvertFrom-Json }
     })
-    Assert-True (@($logRecords | Where-Object { $_.msg -eq 'agent skill sync complete' }).Count -eq 2) 'each successful sync emits one structured success record'
+    Assert-True (@($logRecords | Where-Object { $_.msg -eq 'agent skill sync complete' }).Count -eq 4) 'each successful sync emits one structured success record'
     Assert-True (@($logRecords | Where-Object { $_.msg -eq 'agent skill check passed' }).Count -eq 0) 'read-only Check mode does not create a structured log file'
 } finally {
     if (Test-Path -LiteralPath $fixtureRoot) {
@@ -480,12 +593,12 @@ Assert-True ($historicalGitnexusValidation -match '(?im)^> Document nature: \*\*
 Assert-True ($historicalGitnexusValidation -notmatch '(?im)^## Re-run Commands\s*$') 'the historical GitNexus validation transcript has no prescriptive re-run section'
 $claudeBlastRadius = Get-Content -Raw -LiteralPath (Join-Path (Join-Path $repoRoot $blastRadiusEntry[0].locations.claude) 'SKILL.md')
 $codexBlastRadius = Get-Content -Raw -LiteralPath (Join-Path (Join-Path $repoRoot $blastRadiusEntry[0].locations.codex) 'SKILL.md')
-Assert-True ([regex]::Matches($claudeBlastRadius, 'gitnexus analyze --index-only --embeddings').Count -eq 3) 'every GitNexus blast-radius index refresh is injection-free'
+Assert-True ([regex]::Matches($claudeBlastRadius, 'npx gitnexus@1.6.9 analyze --index-only').Count -eq 3) 'every GitNexus blast-radius index refresh is injection-free'
 Assert-True ($codexBlastRadius -ceq $claudeBlastRadius) 'Codex mirrors the injection-free GitNexus blast-radius workflow byte-for-byte'
 Assert-True ($claudeBlastRadius -notmatch 'gitnexus impact\s+--target|--direction\b') 'GitNexus blast-radius uses the executable 1.6.9 positional impact syntax'
 Assert-True ([regex]::Matches($claudeBlastRadius, '(?m)^gitnexus --version\r?$').Count -eq 2) 'every GitNexus blast-radius phase checks the reviewed CLI version before re-indexing'
 Assert-True ([regex]::Matches($claudeBlastRadius, '(?m)^gitnexus status\r?$').Count -eq 2) 'every GitNexus blast-radius phase checks index status before re-indexing'
-Assert-True ([regex]::Matches($claudeBlastRadius, '本回合.{0,12}明確授權').Count -ge 3) 'every GitNexus blast-radius re-index path requires current-turn authorization'
+Assert-True ([regex]::Matches($claudeBlastRadius, '本回合.{0,35}(standing|明確授權)').Count -ge 3) 'every GitNexus blast-radius re-index path requires current-turn authorization'
 Assert-True ($claudeBlastRadius -notmatch 'index stale → 重跑一次') 'GitNexus blast-radius never retries re-indexing automatically'
 Assert-True ($claudeBlastRadius -notmatch '除非工具明確報 stale') 'GitNexus blast-radius has no stale-only exception to the version, status, and authorization gate'
 $activeIndexRefreshFiles = @(
@@ -558,7 +671,7 @@ foreach ($skillName in $expectedSuperpowersSkills) {
     Assert-True ($entry[0].sync.mode -eq 'mirror' -and $entry[0].sync.source -eq 'claude' -and @($entry[0].sync.targets) -contains 'codex') "$skillName mirrors Claude to Codex"
     Assert-True ($entry[0].provenance.import_commit -eq 'd884ae04edebef577e82ff7c4e143debd0bbec99') "$skillName pins the v6.1.1 release commit"
     Assert-True ($entry[0].provenance.license -eq 'MIT') "$skillName records the upstream license"
-    foreach ($platform in @('claude', 'codex')) {
+    foreach ($platform in @('claude', 'codex', 'agents')) {
         $skillPath = Join-Path $repoRoot ".$platform\skills\$skillName\SKILL.md"
         Assert-True (Test-Path -LiteralPath $skillPath) "$skillName has a $platform entrypoint"
         Assert-True ((Get-Content -Raw -LiteralPath $skillPath) -match "(?m)^name:\s*$([regex]::Escape($skillName))\s*$") "$skillName keeps the expected $platform frontmatter name"
@@ -576,7 +689,7 @@ $expectedExecutableSkillFiles = @(
     'writing-skills/render-graphs.js'
 )
 foreach ($relativePath in $expectedExecutableSkillFiles) {
-    foreach ($platform in @('claude', 'codex')) {
+    foreach ($platform in @('claude', 'codex', 'agents')) {
         $repoPath = ".$platform/skills/$relativePath"
         $indexEntry = @(& git -C $repoRoot ls-files --stage -- $repoPath)
         Assert-True ($indexEntry.Count -eq 1) "$platform executable skill file is tracked: $relativePath"
@@ -624,13 +737,13 @@ $skillPolicyChecks = @(
     }
 )
 foreach ($check in $skillPolicyChecks) {
-    foreach ($platform in @('claude', 'codex')) {
+    foreach ($platform in @('claude', 'codex', 'agents')) {
         $skillPath = Join-Path $repoRoot ".$platform\skills\$($check.Skill)\SKILL.md"
         Assert-True ((Get-Content -Raw -LiteralPath $skillPath) -match $check.Pattern) "$platform $($check.Message)"
     }
 }
 
-foreach ($platform in @('claude', 'codex')) {
+foreach ($platform in @('claude', 'codex', 'agents')) {
     $visualCompanionPath = Join-Path $repoRoot ".$platform\skills\brainstorming\visual-companion.md"
     $visualCompanion = Get-Content -Raw -LiteralPath $visualCompanionPath
     Assert-True ($visualCompanion -match 'Run every shell command in this guide from the skill directory') "$platform visual companion declares its command working directory"

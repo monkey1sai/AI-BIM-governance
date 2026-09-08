@@ -27,12 +27,12 @@ gitnexus status
 
 1. `gitnexus --version` 精確為 reviewed version `1.6.9`；
 2. `gitnexus status` 明確回報 index stale 或 missing；
-3. 使用者已在**本回合**明確授權 re-index。
+3. 本回合已核對適用的 standing 或 explicit re-index 授權（exact cwd/HEAD/cleanliness；僅 required stale/missing gate）。
 
 符合三項時只執行一次：
 
 ```
-gitnexus analyze --index-only --embeddings
+npx gitnexus@1.6.9 analyze --index-only
 ```
 
 若 index healthy/current，直接進 Step 2，不得 analyze。若版本不符、狀態不明或缺少本回合授權，不得 install、upgrade 或 analyze；回報 GitNexus unavailable/stale 並依 repo fallback 契約處理。`--index-only` 避免覆蓋 tracked AGENTS / CLAUDE 段落或在 manifest-governed skill roots 注入 generated snapshots。
@@ -109,10 +109,10 @@ gitnexus --version
 gitnexus status
 ```
 
-只有 reviewed version 為 `1.6.9`、status 明確為 stale/missing，且使用者已在**本回合**明確授權 re-index，才執行一次：
+只有 reviewed version 為 `1.6.9`、status 明確為 stale/missing，且本回合已核對適用的 standing 或 explicit re-index 授權（exact cwd/HEAD/cleanliness；僅 required stale/missing gate），才執行一次：
 
 ```
-gitnexus analyze --index-only --embeddings
+npx gitnexus@1.6.9 analyze --index-only
 gitnexus detect-changes --scope staged
 ```
 
@@ -128,7 +128,7 @@ git diff --name-only --cached
 
 | 失敗次數 | 動作 |
 |---|---|
-| 第 1 次失敗 | 只有 version=`1.6.9`、status=stale/missing 且本回合已明確授權時，跑 `gitnexus analyze --index-only --embeddings` 一次後重試；否則直接 fallback |
+| 第 1 次失敗 | 只有 version=`1.6.9`、status=stale/missing 且本回合已核對適用的 standing 或 explicit 授權時，跑 `npx gitnexus@1.6.9 analyze --index-only` 一次後重試；否則直接 fallback |
 | 第 2 次失敗 | 改用 `git diff --name-only --cached` 作 fallback，但在 PR body 標記 ⚠️ |
 | **第 3 次失敗（同一 session）** | **停止**：升為 issue（`gh issue create`），標題格式 `gitnexus: detect-changes repeatedly failing on <branch>`，body 附最近 3 次失敗指令與 stderr，並暫停該 change 的 commit / merge 流程，等修復或 reviewer 明確 sign-off「accept git-diff-only fallback for this PR」後再繼續 |
 
@@ -163,7 +163,7 @@ verdict: <pass|drift|critical>
 - 此 skill **不**修改程式碼（只診斷）
 - 不能跳過 CRITICAL 風險直接 commit
 - Fallback 用 `git diff` 時必須在 PR body 揭露
-- 不重複跑 analyze；只有 reviewed version=`1.6.9`、status=stale/missing 且使用者已在本回合明確授權時，才可執行一次
+- 不重複跑 analyze；只有 reviewed version=`1.6.9`、status=stale/missing 且本回合已核對適用的 standing 或 explicit 授權時，才可執行一次
 
 ## 參考
 

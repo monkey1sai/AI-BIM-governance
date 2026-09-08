@@ -7,7 +7,7 @@
       "lane": "F",
       "scope": "docs_or_text",
       "owner": "coordinator",
-      "worktree_required": false,
+      "worktree_required": true,
       "max_agents": 1,
       "read_set": [
         "AGENTS.md",
@@ -43,7 +43,7 @@
       "lane": "F",
       "scope": "single_service_internal",
       "owner": "coordinator",
-      "worktree_required": false,
+      "worktree_required": true,
       "max_agents": 1,
       "read_set": [
         "AGENTS.md",
@@ -79,7 +79,7 @@
       "lane": "F",
       "scope": "single_assertion",
       "owner": "coordinator",
-      "worktree_required": false,
+      "worktree_required": true,
       "max_agents": 1,
       "read_set": [
         "AGENTS.md",
@@ -115,7 +115,7 @@
       "lane": "F",
       "scope": "single_service_internal",
       "owner": "coordinator",
-      "worktree_required": false,
+      "worktree_required": true,
       "max_agents": 1,
       "read_set": [
         "AGENTS.md",
@@ -151,7 +151,7 @@
       "lane": "B",
       "scope": "single_service_internal",
       "owner": "coordinator",
-      "worktree_required": false,
+      "worktree_required": true,
       "max_agents": 2,
       "read_set": [
         "AGENTS.md",
@@ -192,7 +192,7 @@
       "lane": "B",
       "scope": "single_service_internal",
       "owner": "coordinator",
-      "worktree_required": false,
+      "worktree_required": true,
       "max_agents": 2,
       "read_set": [
         "AGENTS.md",
@@ -233,7 +233,7 @@
       "lane": "B",
       "scope": "single_service_internal",
       "owner": "coordinator",
-      "worktree_required": false,
+      "worktree_required": true,
       "max_agents": 2,
       "read_set": [
         "AGENTS.md",
@@ -274,7 +274,7 @@
       "lane": "B",
       "scope": "single_service_non_symbol",
       "owner": "coordinator",
-      "worktree_required": false,
+      "worktree_required": true,
       "max_agents": 2,
       "read_set": [
         "AGENTS.md",

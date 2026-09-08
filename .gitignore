@@ -32,7 +32,8 @@ Thumbs.db
 # target.local.example.json contains documentation-only values.
 **/target.local.json
 **/*.target.local.json
-.agents/
+/.agents/*
+!/.agents/skills/
 .claude/*
 !.claude/skills/
 .claude/skills/*

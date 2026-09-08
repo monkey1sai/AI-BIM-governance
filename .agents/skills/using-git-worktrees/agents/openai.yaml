@@ -1,0 +1,6 @@
+interface:
+  display_name: "Superpowers: Git Worktrees"
+  short_description: "Explicit-only worktree creation workflow"
+
+policy:
+  allow_implicit_invocation: false

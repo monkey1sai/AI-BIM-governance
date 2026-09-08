@@ -95,7 +95,7 @@ function validateLaneContract(packet) {
   if (packet.read_set.length > packet.read_set_max) fail(`${packet.id}.read_set exceeds read_set_max`);
   if (packet.lane === 'F') {
     if (!['docs_or_text', 'single_assertion', 'single_service_internal'].includes(packet.scope)) fail(`${packet.id}.scope is not valid for Lane F`);
-    if (packet.worktree_required || packet.max_agents !== 1 || packet.authorization_requirement !== 'none') fail(`${packet.id} violates Lane F execution limits`);
+    if (!packet.worktree_required || packet.max_agents !== 1 || packet.authorization_requirement !== 'none') fail(`${packet.id} violates Lane F execution limits`);
     if (packet.allowed_agents.length !== 1 || packet.allowed_agents[0] !== 'coordinator') fail(`${packet.id} Lane F is coordinator-only`);
     requireOnly(packet, 'required_gates', ['targeted']);
     requireEntries(packet, 'required_evidence', ['test_result']);
@@ -103,7 +103,7 @@ function validateLaneContract(packet) {
     return;
   }
   if (packet.lane === 'B') {
-    if (!['single_service_internal', 'single_service_non_symbol'].includes(packet.scope) || packet.worktree_required || packet.max_agents !== 2 || packet.authorization_requirement !== 'none') {
+    if (!['single_service_internal', 'single_service_non_symbol'].includes(packet.scope) || !packet.worktree_required || packet.max_agents !== 2 || packet.authorization_requirement !== 'none') {
       fail(`${packet.id} violates Lane B scope/execution limits`);
     }
     requireOnly(packet, 'allowed_agents', ['coordinator', 'debugger', 'reviewer']);
