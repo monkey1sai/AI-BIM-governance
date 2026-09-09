@@ -279,7 +279,8 @@ ${round ? '只核對上次 findings、修正差異與受影響相依面；若修
         new Set(axes.map((a) => a.axis)).size === axes.length &&
         axes.every((a) => pendingAxes.some((p) => p.key === a.axis) && typeof a.approved === 'boolean' &&
           Array.isArray(a.issues) && a.issues.every((i) => ['blocker', 'major', 'minor'].includes(i.severity) && typeof i.detail === 'string') &&
-          (!a.approved || a.issues.every((i) => i.severity === 'minor')))) result = candidate
+          (a.approved ? a.issues.every((i) => i.severity === 'minor') :
+            a.issues.some((i) => i.severity === 'blocker' || i.severity === 'major')))) result = candidate
     if (budgetExhausted) break
   }
   if (!result) return { ok: false, held: budgetExhausted ? 'run_budget_exhausted' : 'reviewer_agent_failed', planPath: PLAN_PATH, planReview: axisResults }

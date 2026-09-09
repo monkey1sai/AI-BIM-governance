@@ -34,7 +34,12 @@ node .claude/skills/spec-to-done/parse-plan.mjs --root <worktreeRoot> --plan <re
 Parser 驗 fence、連續 task、closed metadata、路徑與大小；拒絕 root 外 realpath。
 P1 完成與每次修 plan 後保存 parser 的 planSha256。P3 前重跑 parser 並比對該 digest；
 變更需求/計畫必須回 P1，只改 metadata 格式也需重新驗證，不接受 stale packet。
-取得當前 git HEAD 作本次 P3 的 baseSha（full 40 hex）。
+只在第一次啟動 P3、任何實作提交之前取得 HEAD 作原始 `baseSha`（full 40 hex）；
+host 在既有 phase checkpoint 保存完整 args，綁定實際 run identity、branch/worktree 與 plan digest。
+每次返回都保存完整 `resumeHint`；恢復時還原此原始 base 與完整 hint，絕不重取 checkpoint HEAD 作 base。
+host 先核對原 checkpoint 與 hint；workflow 拒絕 supplied hint 與 args 的 base／plan／worktree／branch／task 不一致。
+這仍是 host-attested metadata，不能證明任意合法 SHA 的原始性或創造授權。缺少原 args／可信 checkpoint 時
+`HELD/resume_state_invalid`，不得由 commit 標題猜測 anchor。更改計畫須回 P1 並明確更新 digest binding，保留原始 base。
 packet 只是 coordinator-attested input；不是簽章、工具/檔案授權或 runtime evidence。
 
 ## Host with Workflow runtime
@@ -45,11 +50,14 @@ P1 = Workflow({name:'std-plan', args:{specPath,slug,dateStamp,branch,worktreeRoo
 gate: P1.ok===true；HIGH 明確回報補強，CRITICAL/UNKNOWN 依 repo gate。
 
 P3 = Workflow({name:'std-implement', args:{planPath:P1.planPath,planSha256:P1.planSha256,
-  planPacket:<fresh parser JSON>,baseSha:<current HEAD>,worktreeRoot,branch,specPath,userFacing,
+  planPacket:<fresh parser JSON>,baseSha:<original pre-implementation HEAD>,worktreeRoot,branch,specPath,userFacing,
   startTaskIndex:0,maxFixRounds:2,acknowledgedCriticalSymbols:[],mode:'tasks',
   fixFindings:[],remainingAgentCalls}})
 gate: P3.held 停止；P3.ok 才進 P4；finalReview findings 仍交 P5。
 ```
+
+resume 呼叫帶 `resumeHint:<saved complete hint>`、`baseSha:resumeHint.baseSha`、
+`startTaskIndex:resumeHint.startTaskIndex`；先通過上述 host checkpoint 核對。僅重跑 final review 時也保留原始 base。
 
 P3 維持一個 writer。每個切片一次整合 review，涵蓋 spec、correctness、測試和所有 fix commit scope。
 securitySensitive 或 HIGH 另加獨立安全 review；CRITICAL sign-off 仍在改前。

@@ -1,5 +1,10 @@
 ## Resume(使用者一句話重入;支援跨 session)
 
+- `--git-exe` 僅允許 owner 安裝、caller 不可寫的 system Git：Windows 的
+  `C:\Program Files\Git\cmd\git.exe`、`C:\Program Files\Git\bin\git.exe`、
+  `C:\Program Files\Git\mingw64\bin\git.exe`；POSIX 的 `/usr/bin/git` 或 `/usr/local/bin/git`。
+  不使用 `Get-Command git`、PATH proxy、repo-local Git 或 caller-writable binary；仍須通過既有
+  executable identity、hash、owner 與 git-dir/common-dir 檢查。沒有合格 binary 即 `host_env_blocked`。
 - 任何 resume 先跑 `append-new-run.mjs status --state <absolute-state-path> --json`。若
   `canStartNewRun=true`，沒有當輪 exact owner authorization 時只能回報 tuple，不得啟 agent；有授權也只能
   用 helper 遷移到 freshly fetched main descendant worktree，舊 state 不得修改或截斷。
@@ -27,6 +32,10 @@
 - 「繼續 spec-to-done」→ 先對 durable state 跑同一 validator；通過後還原全部 args 與累計計數，只重跑該 phase：
   `Workflow({name:<phase>, args:{...還原,remainingAgentCalls:40-agentCalls.used}, resumeFromRunId:<該 phase 實際 runId>})`。
   state HEAD 與目前 worktree HEAD 不同即 `evidence_stale`；不得靠新 session / 新 agent 跳過。
+- P3 的 review anchor 是首次實作前保存的 `baseSha`，不是恢復時的 checkpoint HEAD。還原同一實際
+  phase run／plan digest 綁定的原始 args 與完整 `resumeHint`；規則見 repo-root 路徑
+  `.claude/skills/spec-to-done/references/implementation.md`。缺少可信 anchor 時 `HELD/resume_state_invalid`，
+  不以目前 HEAD 或 `task#N:` commit 標題猜測 review 起點；不得重設計數。
 - `evidenceHead` 可等於目前 HEAD 或其 ancestor；所有 committed/dirty 路徑只允許
   `docs/evidence/**`、`artifacts/e2e/**` 或精確 `openspec/changes/<change>/tasks.md`；closeout 只允許
   命名 change 的該 tasks.md，rename 來源與目的都檢查，任何產品變動皆判 `evidence_stale`。

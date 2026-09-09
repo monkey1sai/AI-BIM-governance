@@ -112,6 +112,17 @@ test('P1 will not repeat a rejected plan when fixer reports the same digest', as
   assert.equal(result.note,'no_new_plan_evidence')
   assert.equal(h.calls.filter(x=>x==='plan-review:combined').length,1)
 })
+test('P1 retries unsupported negative verdicts without dispatching an empty fix', async () => {
+  for (const issues of [[], [{severity:'minor',detail:'optional wording'}]]) {
+    const h=await harness('std-plan',label=>{
+      if(label==='plan-review:combined')return {axes:AXES.map(axis=>({axis,approved:false,issues}))}
+      if(label.startsWith('plan-fix:'))return {fixed:false,summary:'no blocking finding',plan:{}}
+    })
+    assert.equal((await h.run()).held,'reviewer_agent_failed')
+    assert.equal(h.calls.filter(x=>x==='plan-review:combined').length,2)
+    assert.ok(!h.calls.some(x=>x.startsWith('plan-fix:')))
+  }
+})
 test('P3 uses no parser agent and no duplicate final review for one completed slice', async () => {
   const h=await harness('std-implement'),result=await h.run()
   assert.equal(result.ok,true)
@@ -163,6 +174,50 @@ test('multiple slices retain one integration review',async()=>{
   const p=packet(task()+task(2)), h=await harness('std-implement')
   assert.equal((await h.run({planPacket:p,planSha256:p.planSha256})).ok,true)
   assert.equal(h.calls.filter(x=>x==='final-review').length,1)
+})
+test('P3 preserves pre-interruption commits in resumed task, fix and security reviews',async()=>{
+  const p=packet(task(1,meta({securitySensitive:true})))
+  const interrupted=await harness('std-implement',label=>label.startsWith('task-review:')?null:undefined)
+  const checkpoint=await interrupted.run({planPacket:p,planSha256:p.planSha256})
+  assert.equal(checkpoint.held,'reviewer_agent_failed')
+  assert.equal(checkpoint.resumeHint.baseSha,BASE)
+  assert.equal(checkpoint.resumeHint.planSha256,p.planSha256)
+  const fixedHead='c'.repeat(40)
+  let reviewCount=0
+  const resumed=await harness('std-implement',label=>{
+    if(label.startsWith('task-review:'))return ++reviewCount===1?{...goodReview(),importantCount:1,detail:'prior commit bug'}:goodReview()
+    if(label.startsWith('task-fix:'))return {fixed:true,commitSha:fixedHead,summary:'fixed',detectVerdict:'pass'}
+  })
+  const result=await resumed.run({planPacket:p,planSha256:p.planSha256,
+    baseSha:checkpoint.resumeHint.baseSha,startTaskIndex:checkpoint.resumeHint.startTaskIndex,resumeHint:checkpoint.resumeHint})
+  assert.equal(result.ok,true)
+  const reviews=resumed.calls.map((label,i)=>({label,prompt:resumed.prompts[i]})).filter(x=>/^(task|security)-review:/.test(x.label))
+  assert.equal(reviews.length,3)
+  assert.ok(reviews[0].prompt.includes(`git diff ${BASE} ${HEAD} --`))
+  assert.ok(reviews.slice(1).every(x=>x.prompt.includes(`git diff ${BASE} ${fixedHead} --`)))
+  assert.equal(result.resumeHint.baseSha,BASE)
+})
+test('P3 rejects contradictory resume anchors before dispatch and retains anchors at all boundaries',async()=>{
+  const first=await harness('std-implement')
+  const checkpoint=await first.run({remainingAgentCalls:0})
+  assert.equal(checkpoint.resumeHint.baseSha,BASE)
+  for(const change of [{baseSha:HEAD},{planSha256:'d'.repeat(64)},{startTaskIndex:1},{branch:'other'},{worktreeRoot:'C:/other'}]){
+    const h=await harness('std-implement')
+    const result=await h.run({resumeHint:{...checkpoint.resumeHint,...change}})
+    assert.equal(result.held,'plan_parse_failed')
+    assert.equal(h.calls.length,0)
+  }
+  const invalid=await harness('std-implement')
+  assert.equal((await invalid.run({branch:undefined})).resumeHint.baseSha,BASE)
+  const many=packet(task()+task(2)), completed=await harness('std-implement')
+  const prior=await completed.run({planPacket:many,planSha256:many.planSha256})
+  const finalOnly=await harness('std-implement')
+  const result=await finalOnly.run({planPacket:many,planSha256:many.planSha256,startTaskIndex:2,
+    baseSha:prior.resumeHint.baseSha,resumeHint:prior.resumeHint})
+  assert.equal(result.ok,true)
+  assert.ok(!finalOnly.calls.some(x=>x.startsWith('impl:')))
+  assert.ok(finalOnly.prompts.find((_,i)=>finalOnly.calls[i]==='final-review').includes(`git diff ${BASE} HEAD --`))
+  assert.equal(result.resumeHint.baseSha,BASE)
 })
 test('native review admission shares existing evidence-delta semantics and never grants authority',()=>{
   const next={head_sha:HEAD,input_sha256:'1'.repeat(64),policy_sha256:'2'.repeat(64),

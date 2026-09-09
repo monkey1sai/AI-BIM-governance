@@ -1,11 +1,11 @@
 ---
 name: spec-to-done
-description: Use when explicitly starting spec-to-done or the full Superpowers lifecycle, or resuming its existing run.
+description: Use for explicit spec-to-done/full Superpowers, an approved spec with explicit autonomous delivery through a merged PR, or an existing run resume.
 ---
 
 # spec-to-done
 
-Only explicit spec-to-done/full Superpowers invocation or an existing run resume loads this skill.
+Load for explicit spec-to-done/full Superpowers, an approved spec with explicit autonomous delivery through a merged PR, or an existing run resume.
 「實作 spec」、「完成需求」、「使用 agents」本身不啟動此流程。
 
 主代理負責完成可驗證切片，直接做已授權的規劃、實作與工具檢查。

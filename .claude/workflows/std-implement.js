@@ -294,6 +294,14 @@ ${fixList}
 phase('Parse')
 log(`std-implement:plan=${PLAN_PATH} from task#${START}(branch=${BRANCH})`)
 
+// The host restores this tuple from the original phase checkpoint. It is metadata,
+// not authorization or proof that an arbitrary supplied SHA is the original base.
+if (A.resumeHint !== undefined && (!A.resumeHint || typeof A.resumeHint !== 'object' || Array.isArray(A.resumeHint) ||
+    [['baseSha', A.baseSha], ['planPath', PLAN_PATH], ['planSha256', A.planSha256],
+      ['worktreeRoot', ROOT], ['branch', BRANCH], ['startTaskIndex', START]]
+      .some(([key, value]) => A.resumeHint[key] !== value))) {
+  return { ok: false, held: 'plan_parse_failed', note: 'resume_anchor_mismatch', resumeHint: { startTaskIndex: START } }
+}
 if (REMAINING_AGENT_CALLS === 0) return { ok: false, held: 'run_budget_exhausted', resumeHint: { startTaskIndex: START } }
 // The host runs parse-plan.mjs. This runtime has no shell/filesystem access:
 // it checks bounded shape/binding, never claims the packet is machine-authenticated.
@@ -554,4 +562,13 @@ return {
 }
 
 const workflowResult = await runWorkflow()
-return { ...workflowResult, agentCallsUsed }
+return {
+  ...workflowResult,
+  ...(MODE === 'tasks' ? { resumeHint: {
+    ...workflowResult.resumeHint,
+    startTaskIndex: workflowResult.resumeHint?.startTaskIndex ?? START,
+    baseSha: A.baseSha, planPath: PLAN_PATH, planSha256: A.planSha256,
+    worktreeRoot: ROOT, branch: BRANCH,
+  } } : {}),
+  agentCallsUsed,
+}
