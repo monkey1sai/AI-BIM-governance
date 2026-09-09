@@ -26,8 +26,8 @@ def test_codegen_no_drift():
 EXPECTED = {
     "std-plan.js": {"plan:author": "planAuthor", "plan-review:": "standard", "plan-fix:": "judge", "impact:prescan": "standard"},
     "std-implement.js": {
-        "parse:plan": "extract", "impact:${T}": "standard", "spec-review:": "standard",
-        "spec-fix:": "judge", "quality-review:": "standard", "quality-fix:": "judge",
+        "impact:${T}": "standard", "task-review:": "standard",
+        "task-fix:": "judge", "security-review:": "arbiter",
         "final-review": "arbiter", "fix:cycle": "judge", "fix:verify": "judge",
     },
     "std-evidence.js": {"probe:engine": "extract", "evidence:": "arbiter"},

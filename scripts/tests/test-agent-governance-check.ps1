@@ -1095,6 +1095,19 @@ import(pathToFileURL(require('node:path').resolve(process.cwd(), 'scripts/lib/ag
 
     $codexSpecToDone = Get-Content -LiteralPath '.codex/skills/spec-to-done/SKILL.md' -Raw -Encoding UTF8
     $claudeSpecToDone = Get-Content -LiteralPath '.claude/skills/spec-to-done/SKILL.md' -Raw -Encoding UTF8
+    # Check reachable phase documents without requiring them in session entrypoints.
+    foreach ($name in @('claudeSpecToDone', 'codexSpecToDone')) {
+        $entry = Get-Variable -Name $name -ValueOnly
+        Assert-True ($entry.Length -le 5000) 'spec-to-done entrypoint stays within its context budget'
+        $paths = @([regex]::Matches($entry, '\.claude/skills/spec-to-done/references/[a-z0-9-]+\.md') | ForEach-Object Value | Sort-Object -Unique)
+        Assert-True ($paths.Count -gt 0) 'spec-to-done routes to phase references'
+        $body = $entry
+        foreach ($path in $paths) {
+            Assert-True (Test-Path -LiteralPath $path -PathType Leaf) "phase reference exists: $path"
+            $body += [Environment]::NewLine + (Get-Content -LiteralPath $path -Raw -Encoding UTF8)
+        }
+        Set-Variable -Name $name -Value $body
+    }
     Assert-True (-not ($codexSpecToDone -match '(?i)[A-Z]:\\Users\\[^\\]+\\\.codex\\')) 'Codex spec-to-done stores no machine-specific user-home Codex path'
     $specToDoneContractPath = 'agent-contracts/spec-to-done.contract.json'
     $specToDoneContract = Get-Content -LiteralPath $specToDoneContractPath -Raw -Encoding UTF8 | ConvertFrom-Json
@@ -1239,7 +1252,7 @@ import(pathToFileURL(require('node:path').resolve(process.cwd(), 'scripts/lib/ag
     $stdEvidence = Get-Content -LiteralPath '.claude/workflows/std-evidence.js' -Raw -Encoding UTF8
     $stdCloseout = Get-Content -LiteralPath '.claude/workflows/std-evidence-closeout.js' -Raw -Encoding UTF8
     $fuAdversarial = Get-Content -LiteralPath '.claude/workflows/fu-adversarial-verify-generic.js' -Raw -Encoding UTF8
-    Assert-True ($stdPlan -match 'MAX_PARALLEL_REVIEWERS\s*=\s*2') 'P1 reviewer fan-out is capped at two'
+    Assert-True ($stdPlan -match 'PLAN_REVIEW_SCHEMA') 'P1 combines four axes into a bounded review result'
     Assert-True (-not ($stdPlan -match 'parallel\(pendingAxes\.map')) 'P1 no longer launches all pending axes in one wave'
     foreach ($budgetedWorkflow in @($stdPlan, $stdImplement, $stdEvidence, $stdCloseout, $fuAdversarial)) {
         Assert-True ($budgetedWorkflow -match 'remainingAgentCalls') 'every agent-bearing spec-to-done workflow accepts the remaining run budget'
@@ -1545,7 +1558,7 @@ import(pathToFileURL(require('node:path').resolve(process.cwd(), 'scripts/lib/ag
         Assert-True ($claudeDirs -contains $dir) "AGENTS.md in '$dir' has CLAUDE.md mirror"
     }
 
-    & node --test tests/test_governed_dispatch_runtime.mjs tests/test_ship_item_runtime.mjs
+    & node --test tests/test_governed_dispatch_runtime.mjs tests/test_ship_item_runtime.mjs tests/test_spec_workflow_lean.mjs
     Assert-True ($LASTEXITCODE -eq 0) 'governed dispatch and validation-only fail-closed ship-item runtime tests pass'
 
     & pwsh -NoProfile -NonInteractive -File (Join-Path $PSScriptRoot 'test-seed-isolated-stack-ifc-ready.ps1')
