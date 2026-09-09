@@ -16,7 +16,7 @@ def _run_harness(script, body, *args):
     return json.loads(proc.stdout)
 
 
-def test_plan_reviewers_run_in_waves_of_at_most_two():
+def test_plan_uses_one_complete_review_without_fanout():
     harness = r"""
 const fs = require('fs')
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor
@@ -34,10 +34,11 @@ const agent = async (_prompt, options) => {
   await new Promise((resolve) => setTimeout(resolve, 5))
   live -= 1
   if (options.label === 'plan:author') {
-    return { planPath: 'docs/superpowers/plans/demo.md', taskCount: 0, tasks: [], committed: true }
+    return { planPath: 'docs/superpowers/plans/2026-07-29-demo.md', planSha256: 'a'.repeat(64), taskCount: 1,
+      tasks: [{index:0,title:'demo',files:['src/demo.js'],symbols:[],mechanical:false,userFacingTouch:false}], committed: true }
   }
   if (options.label.startsWith('plan-review:')) {
-    return { axis: options.label.slice('plan-review:'.length), approved: true, issues: [] }
+    return { axes: ['completeness','spec-alignment','task-decomposition','buildability'].map(axis => ({ axis, approved:true, issues:[] })) }
   }
   throw new Error(`unexpected call: ${options.label}`)
 }
@@ -52,8 +53,8 @@ run({
 """
     result = _run_harness(".claude/workflows/std-plan.js", harness)
     assert result["out"]["ok"] is True
-    assert result["maxLive"] == 2
-    assert result["out"]["agentCallsUsed"] == 5
+    assert result["maxLive"] == 1
+    assert result["out"]["agentCallsUsed"] == 2
 
 
 def test_evidence_stops_before_second_call_when_run_budget_is_spent():

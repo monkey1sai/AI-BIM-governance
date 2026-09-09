@@ -24,6 +24,13 @@ MACHINE_CONTRACT_SCHEMA = ROOT / "agent-contracts/spec-to-done.contract.schema.j
 FABRIC_BINDING_MODULE = ROOT / "scripts/lib/spec-to-done-fabric-binding.mjs"
 FABRIC_OPERATOR_DOC = ROOT / "docs/agents/parallel-delivery-fabric.md"
 GIT = shutil.which("git")
+def _skill_text(skill_path):
+    entry = skill_path.read_text(encoding="utf-8")
+    references = re.findall(r"\.claude/skills/spec-to-done/references/[a-z0-9-]+\.md", entry)
+    assert references, "phase routing must remain discoverable"
+    return entry + "\n" + "\n".join((ROOT / p).read_text(encoding="utf-8") for p in dict.fromkeys(references))
+
+
 EXCLUSIONS = (
     "secrets,credentials,billing,production-data,destructive-delete,"
     "unproven-process-stop"
@@ -999,7 +1006,7 @@ def test_machine_contract_pins_the_owner_only_new_run_boundary():
 
 
 def test_claude_procedure_authority_documents_the_fabric_managed_profile():
-    skill = CLAUDE_SKILL.read_text(encoding="utf-8")
+    skill = _skill_text(CLAUDE_SKILL)
     for required in (
         "session_admission_limit=unbounded",
         "run_writer_cardinality=1",
@@ -1022,7 +1029,7 @@ def test_claude_procedure_authority_documents_the_fabric_managed_profile():
 
 
 def test_codex_adapter_and_fabric_operator_doc_preserve_the_same_binding_contract():
-    codex_skill = CODEX_SKILL.read_text(encoding="utf-8")
+    codex_skill = _skill_text(CODEX_SKILL)
     operator_doc = FABRIC_OPERATOR_DOC.read_text(encoding="utf-8")
 
     for required in (
@@ -1053,7 +1060,7 @@ def test_codex_adapter_and_fabric_operator_doc_preserve_the_same_binding_contrac
 
 def test_claude_and_codex_skills_define_a_bounded_anti_loop_delivery_contract():
     for skill_path in (CLAUDE_SKILL, CODEX_SKILL):
-        skill = skill_path.read_text(encoding="utf-8")
+        skill = _skill_text(skill_path)
         for required in (
             "evidenceFingerprint=head/base/diffDigest/gate/blocker/authorityState",
             "blockerFingerprint=gate/errorCode/affectedScope/rootCause",
@@ -1459,8 +1466,8 @@ def test_valid_claude_and_codex_states_and_single_canonical_validator(tmp_path):
     # .claude 側；.codex 鏡像不得放副本（SKILL.md 指向 .claude 路徑）。兩平台 state 都用同一正本驗。
     assert CLAUDE_VALIDATOR.exists()
     assert not CODEX_VALIDATOR.exists()
-    claude_skill = CLAUDE_SKILL.read_text(encoding="utf-8")
-    codex_skill = CODEX_SKILL.read_text(encoding="utf-8")
+    claude_skill = _skill_text(CLAUDE_SKILL)
+    codex_skill = _skill_text(CODEX_SKILL)
     assert "validate-state.mjs --state <temp> --platform claude" in claude_skill
     assert "validate-state.mjs --state <temp>\n  --platform codex" in codex_skill
     assert "validate-state.mjs（" not in codex_skill
@@ -1586,8 +1593,8 @@ def test_cli_rejects_a_local_tracking_ref_as_the_trust_marker(tmp_path):
 
 def test_machine_held_reasons_are_durable_and_unknown_reasons_fail_closed(tmp_path):
     repo, head = _new_repo(tmp_path)
-    claude_contract = CLAUDE_SKILL.read_text(encoding="utf-8")
-    codex_contract = CODEX_SKILL.read_text(encoding="utf-8")
+    claude_contract = _skill_text(CLAUDE_SKILL)
+    codex_contract = _skill_text(CODEX_SKILL)
 
     def section(contract, start_marker, end_marker):
         start = contract.index(start_marker)

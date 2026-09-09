@@ -1,11 +1,11 @@
 // Workflow-tool 腳本(由 Workflow({name:'std-plan', args}) 執行),非 standalone Node 程式。
-// 編排權威見 .claude/skills/spec-to-done/SKILL.md(本檔為 spec-to-done P1:plan + 四軸 review + impact 預掃)。
+// 編排權威見 .claude/skills/spec-to-done/SKILL.md(本檔為 spec-to-done P1:concise plan + consolidated review + impact 預掃)。
 export const meta = {
   name: 'std-plan',
-  description: 'spec-to-done P1:依 superpowers writing-plans 規格產 plan → 四軸 plan review(每波最多 2 個 reviewer,自動修 ≤2 輪)→ GitNexus impact 預掃(CRITICAL 早停)。',
+  description: 'spec-to-done P1:產簡潔切片 plan → 一次四軸 review(只重查修正差異,最多 2 輪)→ GitNexus impact 預掃(CRITICAL 早停)。',
   phases: [
-    { title: 'Plan', detail: 'fable(arbiter) 作者照 writing-plans 規格寫 plan 檔並 commit', model: 'fable' },
-    { title: 'PlanReview', detail: '四軸分波 review(每波最多 2 個;plan-fix 仍 opus,P3/P5 兜底):Completeness / Spec Alignment / Task Decomposition / Buildability', model: 'sonnet' },
+    { title: 'Plan', detail: 'fable(arbiter) 作者寫需求、範圍、風險與驗證命令並 commit', model: 'fable' },
+    { title: 'PlanReview', detail: '单一 reviewer 同時驗四軸:Completeness / Spec Alignment / Task Decomposition / Buildability', model: 'sonnet' },
     { title: 'Impact', detail: 'sonnet 跑 GitNexus impact 預掃全部 plan symbols', model: 'sonnet' },
   ],
 }
@@ -107,7 +107,6 @@ const ROOT = A.worktreeRoot
 const USER_FACING = A.userFacing === true
 const MAX_FIX = A.maxFixRounds ?? 2
 const ACKED_CRITICAL = A.acknowledgedCriticalSymbols || [] // reviewer sign-off 過的 symbols,gate 放行
-const MAX_PARALLEL_REVIEWERS = 2
 const MAX_AGENT_CALLS = 40
 const REMAINING_AGENT_CALLS = A.remainingAgentCalls
 let agentCallsUsed = 0
@@ -117,6 +116,16 @@ const budgetedAgent = async (prompt, options) => {
     budgetExhausted = true
     return null
   }
+  // Account for the generated routing gate too; it is a real model call.
+  if (!apexGatePromise && !isImportantApex(options)) {
+    if (REMAINING_AGENT_CALLS - agentCallsUsed < 2) {
+      budgetExhausted = true
+      return null
+    }
+    agentCallsUsed += 1
+    apexGatePromise = startSyntheticApex(prompt, options)
+  }
+  if (apexGatePromise && !(await apexGatePromise)) return null
   agentCallsUsed += 1
   return governedAgent(prompt, options)
 }
@@ -125,14 +134,15 @@ const runWorkflow = async () => {
 {
   const missing = [['specPath', SPEC_PATH], ['slug', SLUG], ['dateStamp', DATE_STAMP], ['branch', BRANCH], ['worktreeRoot', ROOT]].filter(([, v]) => !v).map(([k]) => k)
   const badBudget = !Number.isInteger(REMAINING_AGENT_CALLS) || REMAINING_AGENT_CALLS < 0 || REMAINING_AGENT_CALLS > MAX_AGENT_CALLS
-  if (missing.length || badBudget) return { ok: false, held: 'bad_args', missing }
+  if (missing.length || badBudget || !Number.isInteger(MAX_FIX) || MAX_FIX < 0 || MAX_FIX > 2) return { ok: false, held: 'bad_args', missing }
 }
 
 const PLAN_SCHEMA = {
   type: 'object', additionalProperties: false,
-  required: ['planPath', 'taskCount', 'tasks', 'committed'],
+  required: ['planPath', 'planSha256', 'taskCount', 'tasks', 'committed'],
   properties: {
     planPath: { type: 'string' },
+    planSha256: { type: 'string', pattern: '^[0-9a-f]{64}$' },
     taskCount: { type: 'integer' },
     committed: { type: 'boolean' },
     tasks: {
@@ -175,8 +185,12 @@ const AXIS_SCHEMA = {
 
 const FIX_SCHEMA = {
   type: 'object', additionalProperties: false,
-  required: ['fixed', 'summary'],
-  properties: { fixed: { type: 'boolean' }, summary: { type: 'string' } },
+  required: ['fixed', 'summary', 'plan'],
+  properties: { fixed: { type: 'boolean' }, summary: { type: 'string' }, plan: PLAN_SCHEMA },
+}
+const PLAN_REVIEW_SCHEMA = {
+  type: 'object', additionalProperties: false, required: ['axes'],
+  properties: { axes: { type: 'array', minItems: 1, maxItems: 4, items: AXIS_SCHEMA } },
 }
 
 const IMPACT_SCHEMA = {
@@ -202,22 +216,27 @@ const PLAN_PATH = `docs/superpowers/plans/${DATE_STAMP}-${SLUG}.md`
 phase('Plan')
 log(`std-plan:spec=${SPEC_PATH} → plan=${PLAN_PATH}(branch=${BRANCH})`)
 
-const plan = await budgetedAgent(`你是 AI-BIM-governance 的 plan 作者,嚴格遵循 superpowers writing-plans 規格。工作目錄(已 checkout ${BRANCH} 的 worktree):${ROOT}
+let plan = await budgetedAgent(`你是 AI-BIM-governance 的 plan 作者。產出可驗證切片的簡潔計畫。工作目錄(已 checkout ${BRANCH} 的 worktree):${ROOT}
 
 
-任務:讀 spec 全文 ${SPEC_PATH},寫出實作 plan 到 ${ROOT}/${PLAN_PATH},然後 git add + commit(繁中 message,第一行前綴「plan: 」,結尾附「Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>」)。
+任務:讀 spec 全文 ${SPEC_PATH},寫出實作 plan 到 ${ROOT}/${PLAN_PATH},然後 git add + commit(繁中 message,第一行前綴「plan: 」,attribution 只記實際參與者，不填固定模型名稱)。
 冪等:若 ${ROOT}/${PLAN_PATH} 已存在(前次 run 產物),先讀現有 plan,只做增修(保留已合理的 tasks 與 git 歷史),不要整本重寫。
 
-plan 規格(writing-plans,逐條遵守):
-1. 檔頭固定:「# <Feature> Implementation Plan」+ 引言「**For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development」+ Goal(一句話)/ Architecture(2-3 句)/ Tech Stack。
-2. 假設執行者對 codebase 零脈絡:先在 repo root 用 shell 跑「gitnexus query \"<concept>\" -r AI-BIM-governance」與「gitnexus context \"<symbol>\" -r AI-BIM-governance」導航,+ Read 確認既有模式與精確檔案路徑,不要憑空猜路徑。可並列載入 mcp__codebase-memory-mcp__search_graph 交叉確認 symbol 清單、需單一 symbol 原始碼時優先 mcp__codebase-memory-mcp__get_code_snippet(qualified_name) 取代整檔 Read(省 token);兩圖譜不一致僅供導航參考,不寫入 plan 的 symbols/taskCount。
-3. 每個 task 一節「### Task N: <元件名>」:Files 清單(Create/Modify/Test 帶精確路徑)+ checkbox 步驟(- [ ]),每步 2-5 分鐘一個動作(寫失敗測試→跑確認失敗→最小實作→跑確認通過→commit),每步附完整 code block 與精確指令+預期輸出。
-4. No Placeholders 鐵則:TBD/TODO/「加上適當錯誤處理」/「同 Task N」都算 plan failure。
+plan 規格:
+1. 檔頭寫 Goal、需求來源與 scope。只記會改變決策的 architecture/風險，不重述整份 spec。
+2. 查 affected source/tests 確認 entrypoint 與路徑。GitNexus 依 repo lane 規則使用；第二圖譜只在具體未解問題時查詢。
+3. 每個 task 是一個可獨立驗收的切片，用「### Task N: <名稱>」（N 從 1 連續）。
+   每節包含一個 spec-task fenced JSON block，鍵固定為 files（repo-relative 路徑陣列）、symbols（會修改的既有 symbol 名陣列）、userFacingTouch（boolean）、securitySensitive（boolean）。
+   securitySensitive 涵蓋 auth、permission、secrets、injection、destructive/migration 邊界；不確定為 true。
+   其餘只寫需求對應、依賴、最小修改、驗證命令與預期行為。不要預寫完整實作 code，不要求 2–5 分鐘微步驟或每步 commit。
+4. 缺少實作細節可在實作時探索；需求矛盾、未知授權或無法定義驗收必須明示，不能猜成既定契約。
 5. ${USER_FACING ? 'spec 是 user-facing:plan 必須包含 browser E2E task(Playwright spec 落該 spec 對應前端 sub-repo 的 e2e 慣例位置——web-viewer-sample/e2e/ 為預設;operator UI 類 spec 落 apps/kit-manager-web 的對應慣例——驗 vertical slice:UI route→按鈕→default fixture→真 backend API→runtime ID→loading/success/failure/retry),且 UI 無 backend 處明標 DEMO DATA / NOT BUILT。' : '此 spec 非 user-facing,不需 browser E2E task,但行為變更仍需測試。'}
 6. 不在 plan 裡加 spec 沒要求的功能(YAGNI);spec 有矛盾或重大缺口時不要擅自補——在回傳中以 blocker 描述。
 
 回傳 StructuredOutput:
+先用 host 命令 node .claude/skills/spec-to-done/parse-plan.mjs --root <worktreeRoot> --plan <PLAN_PATH> 驗證計畫；失敗時修正格式。
 - planPath:相對 repo 的 plan 路徑(${PLAN_PATH})
+- planSha256:parser 對實際 plan bytes 的 SHA-256；不得自行編造
 - taskCount、committed(是否已 commit)
 - tasks[]:每 task 的 index(從 0)、title、files(會動到的路徑)、symbols(會**修改**的既有 function/class/method 名,新建的不算;沒有就空陣列)、mechanical(1-2 檔且步驟完整可機械執行=true)、userFacingTouch(是否動到使用者可見 UI)`,
   { label: 'plan:author', phase: 'Plan', ...ROUTING.planAuthor, schema: PLAN_SCHEMA })
@@ -228,81 +247,60 @@ log(`plan 完成:${plan.taskCount} tasks,committed=${plan.committed}`)
 phase('PlanReview')
 
 const AXES = [
-  { key: 'completeness', q: 'Completeness:每個 task 是否自含(檔案路徑/完整 code/驗證指令齊全)?有無 placeholder(TBD/TODO/「適當處理」)?執行者零脈絡下能否照做?' },
-  { key: 'spec-alignment', q: 'Spec Alignment:plan 是否覆蓋 spec 全部需求?有無 scope creep(spec 沒要求的功能)?有無做錯方向(實作偏離 spec 意圖)?逐條對照列出缺漏與多做。' },
-  { key: 'task-decomposition', q: 'Task Decomposition:task 切分是否夠小(每步 2-5 分鐘)、順序可執行(依賴在前)、每 task 可獨立驗證+commit?' },
-  { key: 'buildability', q: 'Buildability:引用的檔案路徑/函式/API 是否真實存在(用 Read/Grep 抽查)?指令是否可在本 repo 跑?測試策略是否真能驗證行為?' },
+  { key: 'completeness', q: '需求、修改範圍與驗證命令是否齊全？' },
+  { key: 'spec-alignment', q: '是否覆蓋 spec 且沒有 scope creep？' },
+  { key: 'task-decomposition', q: '切片依賴順序是否可執行且可獨立驗收？不要求微步驟。' },
+  { key: 'buildability', q: '抽查路徑/API/命令與測試策略是否符合實際 source/tests？' },
 ]
-
-const axisPrompt = (a) => `你是 plan 文件 reviewer(superpowers plan-document-reviewer 的「${a.key}」軸)。
-spec:${SPEC_PATH}
-plan:${ROOT}/${PLAN_PATH}
-工作目錄:${ROOT}
-
-只審你這一軸:${a.q}
-必要時用 Read/Grep 對照真實 codebase。回傳 StructuredOutput:axis=${a.key}、approved(此軸無 blocker/major 問題才 true)、issues[](severity:blocker|major|minor + detail,引用 plan 具體段落)。minor 不影響 approved。`
+const validPlan = (value) => value && value.planPath === PLAN_PATH && value.committed === true &&
+  /^[0-9a-f]{64}$/.test(value.planSha256) && Number.isInteger(value.taskCount) &&
+  Array.isArray(value.tasks) && value.tasks.length === value.taskCount &&
+  value.taskCount > 0 && value.taskCount <= 64 && value.tasks.every((t, i) =>
+    t.index === i && Array.isArray(t.files) && t.files.length > 0 &&
+    Array.isArray(t.symbols) && typeof t.userFacingTouch === 'boolean')
+if (!validPlan(plan)) return { ok: false, held: 'plan_author_failed', note: 'invalid_plan_metadata', planPath: PLAN_PATH }
 
 let pendingAxes = AXES
 let reviewRounds = 0
 let axisResults = {}
-let axisNullStreak = 0
 for (let round = 0; round <= MAX_FIX; round++) {
-  const results = []
-  for (let start = 0; start < pendingAxes.length; start += MAX_PARALLEL_REVIEWERS) {
-    const wave = pendingAxes.slice(start, start + MAX_PARALLEL_REVIEWERS)
-    const waveResults = await parallel(wave.map((a) => () =>
-      budgetedAgent(axisPrompt(a), { label: `plan-review:${a.key}`, phase: 'PlanReview', ...ROUTING.standard, schema: AXIS_SCHEMA })
-    ))
-    results.push(...waveResults)
+  const prompt = `你是唯讀 plan reviewer。一次涵蓋下列所有軸；直接查 bounded source/tests，不委派其他 reviewer。
+spec:${SPEC_PATH}; plan:${ROOT}/${PLAN_PATH}; planSha256:${plan.planSha256}
+${pendingAxes.map((a) => `${a.key}: ${a.q}`).join('\n')}
+${round ? '只核對上次 findings、修正差異與受影響相依面；若修正引入其他軸的 regression，仍須回報。' : ''}
+回傳 axes[]，每個要求的 axis 恰好一筆。approved 只有無 blocker/major 時為 true；issues 引用具體段落。`
+  let result = null
+  // Retry only a missing/invalid result; never re-review a completed unchanged verdict.
+  for (let attempt = 0; attempt < 2 && !result; attempt++) {
+    const candidate = await budgetedAgent(prompt,
+      { label: 'plan-review:combined', phase: 'PlanReview', ...ROUTING.standard, schema: PLAN_REVIEW_SCHEMA })
+    const axes = candidate?.axes
+    if (Array.isArray(axes) && axes.length === pendingAxes.length &&
+        new Set(axes.map((a) => a.axis)).size === axes.length &&
+        axes.every((a) => pendingAxes.some((p) => p.key === a.axis) && typeof a.approved === 'boolean' &&
+          Array.isArray(a.issues) && a.issues.every((i) => ['blocker', 'major', 'minor'].includes(i.severity) && typeof i.detail === 'string') &&
+          (!a.approved || a.issues.every((i) => i.severity === 'minor')))) result = candidate
     if (budgetExhausted) break
   }
-  while (results.length < pendingAxes.length) results.push(null)
-  if (budgetExhausted) {
-    return { ok: false, held: 'run_budget_exhausted', planPath: plan.planPath, taskCount: plan.taskCount, planReview: axisResults }
-  }
-  pendingAxes.forEach((a, i) => { if (results[i]) axisResults[a.key] = results[i] })
-  // infra null(reviewer 掛掉)不可與「該軸未過」混為一談:連兩輪有 null → held reviewer_agent_failed
-  const nullAxes = pendingAxes.filter((a, i) => !results[i])
-  axisNullStreak = nullAxes.length ? axisNullStreak + 1 : 0
-  if (axisNullStreak >= 2) {
-    return { ok: false, held: 'reviewer_agent_failed', planPath: plan.planPath, taskCount: plan.taskCount, planReview: axisResults, note: `四軸 reviewer 連兩輪回 null:${nullAxes.map((a) => a.key).join(',')}` }
-  }
-  const failed = pendingAxes.filter((a, i) => !results[i] || results[i].approved !== true)
+  if (!result) return { ok: false, held: budgetExhausted ? 'run_budget_exhausted' : 'reviewer_agent_failed', planPath: PLAN_PATH, planReview: axisResults }
+  result.axes.forEach((axis) => { axisResults[axis.axis] = axis })
+  const failed = pendingAxes.filter((a) => !axisResults[a.key].approved)
   if (!failed.length) break
-  reviewRounds = round + 1
-  if (round === MAX_FIX) {
-    // 終輪首次 null 屬 infra 失效,不可誤分類為 plan 未對齊(r3 複驗 S4 反例)
-    if (nullAxes.length) {
-      return { ok: false, held: 'reviewer_agent_failed', planPath: plan.planPath, taskCount: plan.taskCount, planReview: axisResults, note: `終輪 reviewer 回 null:${nullAxes.map((a) => a.key).join(',')}` }
-    }
-    return {
-      ok: false, held: 'plan_not_aligned', planPath: plan.planPath, taskCount: plan.taskCount,
-      planReview: axisResults, reviewRounds,
-    }
-  }
-  const failIssues = failed.map((a) => `【${a.key}】\n` + ((axisResults[a.key] && axisResults[a.key].issues) || []).filter((i) => i.severity !== 'minor').map((i) => `- [${i.severity}] ${i.detail}`).join('\n')).join('\n\n')
-  log(`plan review 第 ${round + 1} 輪:${failed.length} 軸未過,派 fixer 修 plan`)
-  const fixR = await budgetedAgent(`你是 plan 修復者。plan:${ROOT}/${PLAN_PATH},spec:${SPEC_PATH},工作目錄:${ROOT}。
-
-以下 reviewer 發現(blocker/major)必須逐項修進 plan 檔(直接 Edit 該檔;修完 git add+commit,繁中 message,第一行前綴「plan: fix 」,結尾附「Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>」):
-
-${failIssues}
-
-紀律:只修 plan 文件,不動其他檔;不可為了過審而刪需求——若 reviewer 發現源自 spec 本身矛盾,回傳 fixed=false 並在 summary 寫明矛盾為何(這段會原文呈給使用者裁決)。
-回傳 StructuredOutput:fixed、summary。`,
+  if (round === MAX_FIX) return { ok: false, held: 'plan_not_aligned', planPath: PLAN_PATH, planReview: axisResults, reviewRounds }
+  const issues = failed.map((a) => ({ axis: a.key, issues: axisResults[a.key].issues.filter((i) => i.severity !== 'minor') }))
+  const fixed = await budgetedAgent(`只修 plan:${ROOT}/${PLAN_PATH} 的已確認缺口。spec:${SPEC_PATH}。
+findings=${JSON.stringify(issues)}
+保留需求與合理切片，只改 plan 並 commit。重新執行 parse-plan.mjs 取得 planSha256 與更新後 tasks。
+回傳 fixed、summary、plan（完整 PLAN_SCHEMA）。未變的 plan digest 不能重審；源自 spec 矛盾則 fixed=false。`,
     { label: `plan-fix:r${round + 1}`, phase: 'PlanReview', ...ROUTING.judge, schema: FIX_SCHEMA })
-  if (!fixR) {
-    // fixer infra 失敗不可靜默吞掉續輪(會被誤分類成 plan_not_aligned 硬停)
-    return { ok: false, held: budgetExhausted ? 'run_budget_exhausted' : 'reviewer_agent_failed', planPath: plan.planPath, taskCount: plan.taskCount, planReview: axisResults, note: 'plan-fixer 回 null' }
+  if (!fixed) return { ok: false, held: budgetExhausted ? 'run_budget_exhausted' : 'reviewer_agent_failed', planPath: PLAN_PATH }
+  if (fixed.fixed !== true || !validPlan(fixed.plan) || fixed.plan.planSha256 === plan.planSha256) {
+    return { ok: false, held: 'plan_not_aligned', planPath: PLAN_PATH, planReview: axisResults, note: 'no_new_plan_evidence', specConflict: fixed.summary }
   }
-  if (fixR.fixed === false) {
-    return {
-      ok: false, held: 'plan_not_aligned', planPath: plan.planPath, taskCount: plan.taskCount,
-      planReview: axisResults, reviewRounds, specConflict: fixR.summary,
-    }
-  }
-  // 取捨(已知):第二輪只 re-review 上輪未過的軸;fixer 改 plan 可能影響已過軸,由 P3 per-task spec review 與 P5 critic 兜底
-  pendingAxes = failed
+  plan = fixed.plan
+  reviewRounds++
+  // Any axis can regress in a fix; the one reviewer checks its affected delta.
+  pendingAxes = AXES
 }
 log(`plan review 通過(修了 ${reviewRounds} 輪)`)
 
@@ -320,9 +318,7 @@ if (allSymbols.length) {
 2. 若 index stale 且 coordinator 已提供 current-turn re-index 授權,跑「npx gitnexus@1.6.9 analyze --index-only」後再跑「gitnexus status」確認(banner 不算成功,以 status 與 .gitnexus/meta.json 為準),staleHandled=true；未獲授權或仍 stale 則 overallRisk=UNKNOWN 並寫 blocker。
 3. 對下列每個 symbol 跑 shell CLI「gitnexus impact \"<symbol>\" -d upstream -r AI-BIM-governance」:
 ${allSymbols.map((s) => `   - ${s}`).join('\n')}
-3.5 (best-effort,失敗略過,不阻擋):ToolSearch 載入 mcp__codebase-memory-mcp__trace_path,對同批 symbol 各跑 trace_path({function_name:"<symbol>", direction:"inbound", depth:3, risk_labels:true}) 取第二圖譜 callers,與 GitNexus upstream 以「symbol 名 + 檔路徑」比對(codebase-memory 回 qualified_name 非行號,勿用 file:line)。差異寫對應 perSymbol.note 前綴「[xref]」。**硬約束:overallRisk 與每個 perSymbol.risk 一律只由 GitNexus 結果決定;codebase-memory 差異即使更大,不得升降 risk、不得寫入 blockers。建模差異(節點數 / inbound≡upstream 術語 / process 概念)一律不報;兩套 caller 數結構性相等時 note 標「可能同源枚舉、非獨立佐證」。特例:GitNexus 回 0/LOW 但 codebase-memory 找到 caller(實測 deriveIntakeFromKey 即此型)→ note 醒目標「GitNexus 疑漏 caller、指揮官手動覆核」,但仍不自動翻 gate。**
 4. 風險分級(repo 基準):<5 affected symbols 且少 processes=LOW;5-15 symbols / 2-5 processes=MEDIUM;>15 symbols 或多 processes=HIGH;觸及 critical path(auth/conversion authority/session 核心)=CRITICAL。個別 symbol 在圖中找不到(可能是新名或拼錯)→ 該 symbol risk=UNKNOWN 並在 note 說明,其餘照算(overallRisk 取其餘最大,blockers 記「N symbols not in graph」)。**GitNexus 工具整體故障**(crash / 連不上 / re-analyze 後仍全失敗,LadybugDB crash 是已知坑)→ overallRisk=UNKNOWN 並在 blockers 寫明故障細節。
-4.5 fallback(僅在 GitNexus 對某 symbol 工具錯誤、或 staleness 自癒後仍取不到 upstream 時啟用;GitNexus 正常則不啟用此 fallback):改用 codebase-memory trace_path 取第二意見寫 note 標「source=codebase-memory-fallback」供指揮官 resume 判斷;**兩套皆失敗 → overallRisk 維持 UNKNOWN,gate 照常 held,不得因 fallback 結論放行。**
 回傳 StructuredOutput:overallRisk、perSymbol[](symbol/risk/note:直接 callers 數與關鍵 processes)、blockers[](CRITICAL 理由或工具故障描述)、staleHandled。`,
       { label: 'impact:prescan', phase: 'Impact', ...ROUTING.standard, schema: IMPACT_SCHEMA })
     if (r) { impact = r; break }
@@ -352,7 +348,7 @@ if (impact.overallRisk === 'UNKNOWN') {
 }
 
 return {
-  ok: true, planPath: plan.planPath, taskCount: plan.taskCount, tasks: plan.tasks,
+  ok: true, planPath: plan.planPath, planSha256: plan.planSha256, taskCount: plan.taskCount, tasks: plan.tasks,
   planReviewRounds: reviewRounds, planReview: axisResults, impact,
 }
 }

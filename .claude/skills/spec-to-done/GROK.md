@@ -29,10 +29,10 @@ Do not copy the canonical SOP into this file. Drift is a blocker.
 - Grok **cannot** execute `.claude/workflows/*.js`. Mapping `Workflow({name})` to `spawn_subagent` / Grok `workflow` is a host adapter, **not** Claude dynamic workflow, Agent Team, or `/effort ultracode` equivalence.
 - Subagent nesting depth = 1. The commander spawns workers. Workers **must not** spawn children.
 - `capability_mode`: reviewers/security use `execute` (read + shell, no writes). Implementers use `all` / `read-write`. Debugger writes need explicit authorization.
-- Parallel writers are forbidden. P3 implementer is serial. P1 axis review and P5 verifier batches: at most 2 live children.
+- Parallel writers are forbidden. P3 has one writer. P1 uses one consolidated reviewer; P5 verifier batches keep at most 2 live children.
 - P6 `ship-item` remains validation-only `host_env_blocked` / `ship_workflow_shell_unavailable` until the trusted-host executor attests. Do not hand-fill `merged=true`.
 
-If a phase cannot produce the same StructuredOutput fields as the JS workflow, **HELD** (`host_env_blocked` or the workflow's own held). Do not parent-only hand-run and call it a pass.
+The parent may perform planning, implementation and host checks directly under the canonical phase references. Independent review and all evidence gates remain required. If required evidence or output is unavailable, **HELD**; do not claim execution of an unavailable Workflow runtime.
 
 ## `Workflow({name})` → Grok spawn
 
@@ -40,8 +40,8 @@ Keep the canonical args object. Do not stringify args. Count every spawn / workf
 
 | `name` | Grok host | Output that must exist |
 |---|---|---|
-| `std-plan` | serial: plan author (`all`) → up to 2 axis reviewers (`execute`) in waves → one fixer if needed → GitNexus impact (`execute`) | `{ok, held?, planPath, taskCount, tasks[{index,title,files,symbols,mechanical,userFacingTouch}], planReview, impact{overallRisk,perSymbol,blockers,staleHandled}, agentCallsUsed}` |
-| `std-implement` | serial per task: impact → TDD implementer → spec review → quality review → `task#N:` commit. `mode:'fix'` only consumes `fixFindings` | `{ok, held?, finalReviewOk, completedThrough, perTask, highRiskNotes, minorNotes, finalReview, detectFallbackTasks, detectFailTasks, fixDetectVerdicts, agentCallsUsed}` |
+| `std-plan` | parent plan + host parser → one four-axis reviewer → affected fix/delta review → required GitNexus impact | `{ok, held?, planPath, planSha256, taskCount, tasks, planReview, impact, agentCallsUsed}` |
+| `std-implement` | fresh host parser packet → one writer → combined task review; independent security review on sensitive/HIGH/CRITICAL scope; integration review across tasks. `mode:'fix'` only consumes `fixFindings` | `{ok, held?, finalReviewOk, completedThrough, perTask, highRiskNotes, minorNotes, finalReview, detectFallbackTasks, detectFailTasks, fixDetectVerdicts, agentCallsUsed}` |
 | `std-evidence` | Playwright (default) / gstack / chrome fallback per canonical P4 | `{ok, held?, engine, evidence, evidenceAttemptsUsed}` |
 | `std-evidence-closeout` | evidence/docs/ledger only; production files non-empty → fail closed | same closeout fields as JS |
 | `fu-adversarial-verify-generic` | coordinator collects git snapshot; ≤2 verifier batches then serial critic; reviewers pinned to `git show` content | P5 fields in the canonical skill (verdicts length, SHAs, `fix_now` / `unverified` / `external_blockers`) |
