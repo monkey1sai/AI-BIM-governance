@@ -1,4 +1,5 @@
 import pathlib
+import re
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 JS = ROOT / ".claude/workflows/fu-adversarial-verify-generic.js"
@@ -6,6 +7,13 @@ SKILLS = [
     ROOT / ".claude/skills/spec-to-done/SKILL.md",
     ROOT / ".codex/skills/spec-to-done/SKILL.md",
 ]
+
+
+def _skill_text(skill_path):
+    entry = skill_path.read_text(encoding="utf-8")
+    references = re.findall(r"\.claude/skills/spec-to-done/references/[a-z0-9-]+\.md", entry)
+    assert references, "phase routing must remain discoverable"
+    return entry + "\n" + "\n".join((ROOT / p).read_text(encoding="utf-8") for p in dict.fromkeys(references))
 
 
 def test_findings_contract_landed():
@@ -29,7 +37,7 @@ def test_p5_contract_binds_immutable_identity_and_taxonomy_in_both_skills():
         "unverified", "refuted", "external_blocked", "unblock_condition",
     }
     for path in SKILLS:
-        src = path.read_text(encoding="utf-8")
+        src = _skill_text(path)
         missing = sorted(token for token in required if token not in src)
         assert not missing, f"{path} 缺 P5 contract tokens: {missing}"
         assert "P5.not_closed" not in src
