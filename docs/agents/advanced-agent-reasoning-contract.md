@@ -11,7 +11,7 @@ Use the global routing contract to select Lane F/B/G/S. Default daily work to F 
 ## Local composition
 
 - Lane F: single coordinator; no worker, plan document, spec, or mandatory GitNexus impact.
-- Lane B: single coordinator; at most one debugger when root cause is unknown and one read-only reviewer at completion.
+- Lane B: single coordinator; at most one debugger when root cause is unknown or one read-only reviewer at completion, following the root lane budget.
 - Lane G: use `explorer`, `debugger`, `reviewer`, or `security_auditor` only for the independent risk surface that triggered governance.
 - Lane S: full spec-to-done P0–P7 role composition after explicit invocation only.
 
@@ -25,9 +25,9 @@ Workers are read-only unless the coordinator grants a bounded, non-conflicting f
 
 Task packet validator **只驗結構與 routing contract，不授權執行**：結果固定為 `authorization_granted: false`。Lane S packet 不再包含可自我宣告的 `explicit_trigger`，只能宣告 `authorization_requirement: external_explicit_user_instruction`；實際授權必須來自 packet 外、目前對話中的明確 user instruction。closed routing signal evaluator 只回傳 expected minimum lane 與是否需要外部 Lane S 授權，不讀取或保存 prompt，也不能把普通的 `complete`／`do it` 字樣升格為 Lane S。下游若展開 symbolic `read_set`，仍須另行執行 repo containment、檔案數與 byte budget 檢查。
 
-## Apex slot
+## Risk-scoped review
 
-Every dispatch with at least one child must satisfy the global apex-slot invariant before work starts. The primary counts only when its actual provider model and effort meet the global apex mapping; otherwise reserve an independent apex planner, reviewer, or decision role. If that assignment is unavailable, return `HELD` without dispatching. Other workers use the minimum sufficient model, effort, bounded prompt, evidence duty, and stop condition; high-risk builder and apex reviewer remain separate assignments.
+When children exist, record one planning/adjudication assignment and follow the active global routing contract for provider-specific model and effort requirements. Use the minimum sufficient model, bounded prompt, evidence duty, and stop condition; do not add a child solely to satisfy an obsolete apex label. High-risk work retains an independent verifier/risk reviewer separate from the builder, plus every required sign-off and evidence gate. If a required capability or independent assignment is unavailable, report `HELD` for that dependent work; continue authorized independent preparation. Provider-specific requirements remain owned by the global contract and do not become another provider's dependency.
 
 ## AI-BIM evidence contract
 
