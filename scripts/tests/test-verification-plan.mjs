@@ -98,6 +98,30 @@ test('every compose input consumed by the architecture scanner triggers root con
   }
 });
 
+test('tracked discovery skills receive the same gates as provider skills without admitting local board data', () => {
+  for (const relative of ['SKILL.md', 'agents/openai.yaml', 'scripts/check.ps1', 'scripts/check.mjs']) {
+    const provider = createVerificationPlan(manifest, {
+      changedPaths: [`.codex/skills/example/${relative}`],
+    });
+    const discovery = createVerificationPlan(manifest, {
+      changedPaths: [`.agents/skills/example/${relative}`],
+    });
+    assert.equal(discovery.result, 'planned');
+    assert.deepEqual(discovery.unknown_paths, []);
+    assert.deepEqual(requiredIds(discovery), requiredIds(provider));
+    assert.ok(requiredIds(discovery).includes('agent-governance'));
+    assert.ok(requiredIds(discovery).includes('secret-pattern-scan'));
+    if (relative.endsWith('.ps1')) {
+      assert.ok(requiredIds(discovery).includes('powershell-static'));
+    }
+  }
+  for (const localPath of ['.agents/board/session.json', '.agents/cache/generated.md']) {
+    const plan = createVerificationPlan(manifest, { changedPaths: [localPath] });
+    assert.equal(plan.result, 'fail_closed');
+    assert.deepEqual(plan.unknown_paths, [localPath]);
+  }
+});
+
 test('docs-only paths produce typed skips while the security scan remains explicit', () => {
   const plan = createVerificationPlan(manifest, { changedPaths: ['docs/architecture/overview.md'] });
   assert.deepEqual(requiredIds(plan), ['secret-pattern-scan']);

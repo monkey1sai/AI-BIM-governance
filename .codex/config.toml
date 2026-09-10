@@ -6,14 +6,12 @@ default_permissions = "safe-workspace"
 description = "Allow normal autonomous development inside the active repository."
 extends = ":workspace"
 
-[permissions.safe-workspace.network.domains]
-"api.github.com" = "allow"
-"github.com" = "allow"
-
 [permissions.safe-workspace.network]
 enabled = true
 
-# 依專案實際工具鏈選擇保留
+[permissions.safe-workspace.network.domains]
+"api.github.com" = "allow"
+"github.com" = "allow"
 "registry.npmjs.org" = "allow"
 "pypi.org" = "allow"
 "files.pythonhosted.org" = "allow"

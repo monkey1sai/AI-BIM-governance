@@ -95,9 +95,7 @@
 新增 sub-file 時：先在 `docs/agents/` 建檔，再更新本表；`AGENTS.md` 是唯一 sub-file index，`CLAUDE.md` 透過 `@AGENTS.md` 匯入，不另行同步 index。本文件行數預算 ≤ 250 行（目標 ≤ 200）；CLAUDE.md ≤ 130 行（目標 ≤ 100）。預算規範見 spec `agent-doc-context-budget`。
 ---
 ## 3. 探索輔助與 Source of Truth
-本 repo 有兩條不同優先序，禁止混用：
-- **Agent instruction priority**：使用者最新明確指令 > 本文件（含已載入的 `docs/agents/*.md` lazy-load 細節）> `CLAUDE.md` > installed skills / generated artifacts。
-- **Runtime/product behavior truth**：程式碼實作與可執行測試 / contracts 描述目前行為；`docs/plans/` 描述目標需求與驗收語意；兩者不一致時不得用 docs 宣稱 runtime 已完成，必須標成 implementation gap。
+Agent instruction priority 見 §0；以下是不同用途的 runtime/product 行為真相優先序。`docs/plans/` 描述目標需求與驗收語意；與 source/tests 不一致時標成 implementation gap，不得用 docs 宣稱 runtime 已完成。
 
 Runtime/product 行為真相優先順序：
 ```txt
@@ -112,10 +110,6 @@ Runtime/product 行為真相優先順序：
 ---
 ## 4. GitNexus 入口
 
-### 政策：CLI-only（Grok / Claude / Codex 共用）
-
-GitNexus 一律使用 reviewed 1.6.9 shell CLI；不得啟動 MCP／setup 或依賴 gitnexus resources。指令與 unavailable 契約見 `docs/agents/gitnexus-usage.md`。
-
 ### 驗證與回報
 
 先跑受影響範圍的 typecheck、lint、unit/integration checks，再依 `docs/agents/sub-repo-verify-commands.md` 擴大驗證。回報必須分開列出 verified facts、inferences、unverified risks 與 next actions；未跑的測試與原因不得省略。
@@ -126,7 +120,7 @@ GitNexus 一律使用 reviewed 1.6.9 shell CLI；不得啟動 MCP／setup 或依
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence (CLI-only)
 
-依上方 Lane 範圍使用 reviewed GitNexus 1.6.9 shell CLI；不得啟動 MCP 或依賴 gitnexus resources。不要把過時的索引統計當 current evidence。
+Grok / Claude / Codex 依上方 Lane 範圍使用 reviewed GitNexus 1.6.9 shell CLI；不得啟動 MCP／setup 或依賴 gitnexus resources。不要把過時的索引統計當 current evidence。
 
 - 適用 code-symbol gate 時，在本 worktree 驗證 exact-path index 與 indexed commit == HEAD；impact HIGH 必須說明補強，CRITICAL 仍需 sign-off。
 - 只有已授權的 required stale/missing gate 可執行 `npx gitnexus@1.6.9 analyze --index-only`。不得自動改全域安裝、使用 embeddings 或改另一 checkout。
