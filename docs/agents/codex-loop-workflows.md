@@ -10,7 +10,7 @@ Default to one coordinator and Lane F/B. Use these local mappings only:
 | Lane / situation | Role composition |
 |---|---|
 | F: small bug/docs/tests/timeout/logging | single coordinator; no worker or Superpowers |
-| B: bounded single-service change | single coordinator; optional one debugger; maximum one read-only reviewer |
+| B: bounded single-service change | single coordinator; at most one debugger or one read-only reviewer |
 | G: cross-service/user-facing/runtime/security/deploy | risk-scoped `explorer`, `debugger`, `reviewer`, or `security_auditor` |
 | G-shape: huge or foggy destination that cannot fit one session | explicit work-shaping map; research/prototype/grilling tickets only; no production implementation |
 | S: explicit spec-to-done/full Superpowers | full P0–P7 composition |
@@ -24,7 +24,7 @@ contention and unknown overlap remain queued. `WRITER_CAPACITY` is reserved for
 separately attested physical Kit/WebRTC capacity, not the number of coding
 sessions. The Fabric remains shadow-only and cannot activate merge or delivery.
 
-The global apex-slot gate applies to every child dispatch in this repo. Reserve one apex planning/review/decision assignment, then route any remaining worker with the minimum sufficient model, effort, bounded prompt, and evidence responsibility; no apex means `HELD` rather than a downgraded swarm.
+For each child dispatch, follow the active global routing contract and record one planning/adjudication assignment. Use the minimum sufficient model and effort with bounded context and evidence responsibility; do not add a planning round solely for an obsolete apex label. High-risk work still requires an independent verifier/risk reviewer, provider-specific review capability, sign-off and evidence. Missing required capability holds its dependent work; authorized independent preparation continues.
 
 ## Situational work shaping
 

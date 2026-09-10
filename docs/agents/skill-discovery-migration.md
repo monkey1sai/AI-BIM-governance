@@ -16,3 +16,11 @@ Rollback：尚未整合 tracked tree 時，驗證 quarantine 未漂移後可移�
 這是後續操作者步驟，不授權自動 approve、merge、部署、ACL 修改或刪除其他任務內容。
 
 三項大型 Omniverse Skill 使用 thin discovery adapter：`sync.adapters` 只允許 codex → agents，驗證 canonical entrypoint、frontmatter name、source/adapter digests 與 metadata；資源路徑依 canonical `.codex/skills/<name>` 解析。Sync 不重寫 thin adapter。其他 mirror 仍完整驗證；不得從薄入口推論其引用的 runtime 已驗收。
+
+## Codex discovery verification
+
+同名 mirror 同時出現在可用清單時，優先使用 `.agents/skills/<name>/SKILL.md`；thin adapter 仍依上方契約讀取 canonical `.codex` 程序。不要重複讀兩份相同 mirror，也不要把有意設計的 adapter 差異當成內容漂移。這項選擇規則不代表 discovery metadata 已去重。
+
+2026-09-10 的 Codex CLI 0.154.0 實測：project `skills.config` 的相對 `skills/<name>/SKILL.md` 可由 `config/read` 解析為正確絕對路徑，但 `skills/list` 與 `debug prompt-input` 仍保留兩個 enabled 入口；單次 CLI 絕對路徑 override 才成功排除指定入口。因此目前不提交無效的 project disable 清單，不刪除既有 roots，不以全域停用改變其他 worktree 的 discovery。
+
+日後調整 discovery，必須在新的隔離 session 同時驗證 effective config、enabled skill paths、rendered catalog 與全域既有停用項目；只通過 TOML 解析不能宣稱去重成功。保持 main 與其他 active session 原狀，整合仍走上方受控流程。
