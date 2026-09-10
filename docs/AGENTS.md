@@ -35,7 +35,7 @@
 ## Before Editing
 
 - 先讀目標子目錄的 README 或既有檔案。
-- 改 `docs/agents/*.md` MUST 確認 sub-file index 已在根目錄 `AGENTS.md` §2 與 `CLAUDE.md` §2 同步（見 spec `agent-doc-context-budget` Requirement 「Root entrypoint files SHALL maintain a complete sub-file index」）。
+- 改 `docs/agents/*.md` MUST 確認需要的 sub-file routing 已在根目錄 `AGENTS.md` §2 的唯一 index 直接或經主題文件到達；`CLAUDE.md` 以單一 `@AGENTS.md` import 共用，不另建 index（見 spec `agent-doc-context-budget` Requirement 「Root entrypoint files SHALL maintain a complete sub-file index」）。
 - 改 contract 描述 MUST 同步檢查 `tests/contracts/` 與相關 sub-repo public API。
 
 ## Verify
@@ -50,6 +50,6 @@ git diff --stat origin/main..HEAD -- docs/
 ## Done Criteria
 
 - 改動沒有把 `docs/` 變成行為權威。
-- agent boundary sub-files 增刪後，根目錄兩份主檔 index 同步。
+- agent boundary sub-files 增刪後，根目錄 `AGENTS.md` 的唯一 index routing 正確，`CLAUDE.md` 保留單一 `@AGENTS.md` import。
 - contract 描述改動後，PR 描述列出對應 `tests/contracts/` 是否同步。
 - 最終回覆列出 changed files、validation、known risks。

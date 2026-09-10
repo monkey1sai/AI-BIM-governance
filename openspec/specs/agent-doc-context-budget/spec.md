@@ -128,7 +128,7 @@ Repo root `AGENTS.md` 與 `CLAUDE.md` 是 agent session 啟動時自動載入的
 - **WHEN** PR 把某段內容搬到 sub-file，但主檔的 link 指向錯誤路徑（404）
 - **THEN** review MUST 要求修正 link
 
-### Requirement: Repo-local Codex skills SHALL align with Claude skills
+### Requirement: Repo-local skills SHALL follow manifest-declared synchronization and variants
 
 `agent-skills-manifest.json` SHALL 管理受追蹤的 `.claude/skills/`、`.codex/skills/` 與 Codex discovery 入口 `.agents/skills/`。每個 entry 的 canonical source、mirrors、independent variants、thin adapters、provenance 與 tree digest SHALL 依 manifest 宣告；不得一律以 `.claude/skills/` 覆蓋其他平台。使用 tracked physical copies，不得用 symlink/junction 替代。
 
