@@ -101,7 +101,7 @@
       "id": "tracked-repository",
       "path_globs": [
         "AGENTS.md", "CLAUDE.md", "README*.md", "*.json", "*.md", "*.yml", "*.yaml",
-        ".claude/**", ".codex/**", ".github/**", "agent-contracts/**", "apps/**", "artifacts/**",
+        ".claude/**", ".codex/**", ".agents/skills/**", ".github/**", "agent-contracts/**", "apps/**", "artifacts/**",
         "bim-review-coordinator/**", "bim-streaming-server/**", "docs/**", "governance-service/**",
         "infra/**", "openspec/**", "patches/**", "rules/**", "scripts/**", "services/**", "tests/**",
         "web-viewer-sample/**",
@@ -157,7 +157,7 @@
       "id": "agent-governance",
       "path_globs": [
         "AGENTS.md", "CLAUDE.md", "CONTEXT.md", "*.json", "*.yml", "*.yaml",
-        ".claude/**", ".codex/**", ".github/**", ".gitignore", ".ignore", ".gitnexusignore", ".coderabbit.yaml",
+        ".claude/**", ".codex/**", ".agents/skills/**", ".github/**", ".gitignore", ".ignore", ".gitnexusignore", ".coderabbit.yaml",
         "agent-contracts/**", "apps/**", "artifacts/**",
         "bim-review-coordinator/**", "bim-streaming-server/**",
         "docs/PR_REVIEW_AGENT.md", "docs/agents/**", "docs/contracts/**", "docs/plans/**", "docs/superpowers/**",
@@ -171,7 +171,7 @@
     { "id": "compose-config", "path_globs": ["compose.*.yml", ".env*.example", "infra/docker/**"] },
     {
       "id": "powershell-static",
-      "path_globs": ["AGENTS.md", "docs/agents/**", ".github/workflows/**", ".claude/workflows/**", ".claude/skills/**/*.ps1", ".codex/skills/**/*.ps1", "scripts/**/*.ps1", "scripts/**/*.psm1"]
+      "path_globs": ["AGENTS.md", "docs/agents/**", ".github/workflows/**", ".claude/workflows/**", ".claude/skills/**/*.ps1", ".codex/skills/**/*.ps1", ".agents/skills/**/*.ps1", "scripts/**/*.ps1", "scripts/**/*.psm1"]
     },
     {
       "id": "rebuild-test-deploy",
@@ -402,7 +402,7 @@
       "id": "agent-governance", "display_name": "agent governance contracts",
       "path_globs": [
         "AGENTS.md", "CLAUDE.md", "CONTEXT.md", "*.json", "*.yml", "*.yaml",
-        ".claude/**", ".codex/**", ".github/**", ".gitignore", ".ignore", ".gitnexusignore", ".coderabbit.yaml",
+        ".claude/**", ".codex/**", ".agents/skills/**", ".github/**", ".gitignore", ".ignore", ".gitnexusignore", ".coderabbit.yaml",
         "agent-contracts/**", "apps/**", "artifacts/**",
         "bim-review-coordinator/**", "bim-streaming-server/**",
         "docs/PR_REVIEW_AGENT.md", "docs/agents/**", "docs/contracts/**", "docs/plans/**", "docs/superpowers/**",
@@ -423,7 +423,7 @@
       "ci_job": "docker compose config", "result_artifact": null
     },
     {
-      "id": "powershell-static", "display_name": "PowerShell static analysis", "path_globs": ["AGENTS.md", "docs/agents/**", ".github/workflows/**", ".claude/workflows/**", ".claude/skills/**/*.ps1", ".codex/skills/**/*.ps1", "scripts/**/*.ps1", "scripts/**/*.psm1"],
+      "id": "powershell-static", "display_name": "PowerShell static analysis", "path_globs": ["AGENTS.md", "docs/agents/**", ".github/workflows/**", ".claude/workflows/**", ".claude/skills/**/*.ps1", ".codex/skills/**/*.ps1", ".agents/skills/**/*.ps1", "scripts/**/*.ps1", "scripts/**/*.psm1"],
       "owner": "scripts", "fast_gates": ["powershell-static"], "contract_gates": [], "slow_evidence_gates": [],
       "required_when": { "predicate": "changed_path_class", "any_of": ["powershell-static"] }, "skip_reason": "path_not_affected",
       "default_profiles": [], "ci_output": "powershell_static",
@@ -465,7 +465,7 @@
       }
     },
     {
-      "id": "secret-pattern-scan", "display_name": "secret pattern scan", "path_globs": ["AGENTS.md", "CLAUDE.md", "README*.md", "*.json", "*.md", "*.yml", "*.yaml", ".claude/**", ".codex/**", ".github/**", "agent-contracts/**", "apps/**", "artifacts/**", "bim-review-coordinator/**", "bim-streaming-server/**", "docs/**", "governance-service/**", "infra/**", "openspec/**", "patches/**", "rules/**", "scripts/**", "services/**", "tests/**", "web-viewer-sample/**", "architecture/**"],
+      "id": "secret-pattern-scan", "display_name": "secret pattern scan", "path_globs": ["AGENTS.md", "CLAUDE.md", "README*.md", "*.json", "*.md", "*.yml", "*.yaml", ".claude/**", ".codex/**", ".agents/skills/**", ".github/**", "agent-contracts/**", "apps/**", "artifacts/**", "bim-review-coordinator/**", "bim-streaming-server/**", "docs/**", "governance-service/**", "infra/**", "openspec/**", "patches/**", "rules/**", "scripts/**", "services/**", "tests/**", "web-viewer-sample/**", "architecture/**"],
       "owner": "security", "fast_gates": ["secret-pattern-scan", "security-exception-policy", "dependency-review", "sast"], "contract_gates": [], "slow_evidence_gates": [],
       "required_when": { "predicate": "changed_path_class", "any_of": ["tracked-repository"] }, "skip_reason": "path_not_affected",
       "default_profiles": [], "ci_output": "secret_pattern_scan",
