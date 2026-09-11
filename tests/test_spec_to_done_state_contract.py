@@ -1048,6 +1048,10 @@ def test_windows_system_git_rejects_an_arbitrary_program_files_drive():
 
 def test_validator_rejects_tampered_new_run_boundary(tmp_path):
     repo, branch, _, head, source, _, expected = _new_run_fixture(tmp_path)
+    # Establish host capability before the fixture needs the trusted Git identity.
+    # The required Linux matrix still fails, rather than skips, if it is blocked.
+    code, result = _run(tmp_path, repo, _line(repo, head))
+    assert code == 0 and result["ok"] is True, result
     target = _write_historical_new_run_fixture(repo, branch, head, source)
     code, result = _validate_state_path(target, repo, head)
     assert code == 0 and result["ok"] is True, result
