@@ -202,6 +202,7 @@ export interface ArtifactHealthSnapshot {
 export interface RuntimeSessionSummary {
   session_id: string;
   status: string;
+  ready_model_id?: string | null;
   project_id: string;
   model_version_id: string;
   participant_count: number;
@@ -348,7 +349,18 @@ export interface RecreateReviewSessionResponse {
   status: string;
   recreated_from_session_id: string;
   idempotent_replay: boolean;
+  activation_state?: "configured" | "not_requested";
   kit_availability: "configured" | "unavailable";
+}
+
+export type ReadyReviewIntent =
+  | { mode: "create_new"; request_id: string }
+  | { mode: "open_existing"; session_id: string };
+export interface ReadyReviewSessionResponse {
+  ready_model_id: string;
+  review_session_id: string;
+  session_status: string;
+  session_replay: boolean;
 }
 
 // C 頁 intake 佇列列表（app.ts:712 summarizeIfcReadyJob）。
@@ -813,6 +825,8 @@ export const coordinatorClient = {
   // detected_at desc；limit 預設 50（符合 Task 3 route 行為）。
   getConversionRecords: (limit = 50) =>
     jsonGet<{ count: number; items: ConversionRecord[] }>(`/api/conversion/records?limit=${limit}`),
+  readyReviewSession: (readyModelId: string, intent: ReadyReviewIntent) =>
+    jsonPost<ReadyReviewSessionResponse>(`/api/conversion/records/${encodeURIComponent(readyModelId)}/review-session`, intent),
   // Task 5 MinIO 閉環 Phase 1：唯讀 S3 list proxy（GET /api/minio/objects）。
   // prefix 可省略（使用後端預設 config.minioWatchPrefix）；有值時 encodeURIComponent 防注入。
   getMinioObjects: (prefix?: string) =>

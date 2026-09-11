@@ -124,11 +124,12 @@ async function connectReviewSocket(url: string): Promise<SocketClient> {
   });
 }
 
-async function createClosedRebuildableSession(app: CoordinatorApp, suffix: string): Promise<string> {
+async function createClosedRebuildableSession(app: CoordinatorApp, suffix: string, reviewRequestId?: string): Promise<string> {
   const created = await request(app.app)
     .post("/api/review-sessions")
     .send({
       project_id: `project_${suffix}`,
+      review_request_id: reviewRequestId,
       model_version_id: `model_${suffix}`,
       artifact_bindings: [{
         artifact_group_id: `group_${suffix}`,
@@ -156,6 +157,32 @@ async function emitWithAck<T>(client: SocketClient, event: string, payload: unkn
 }
 
 describe("bim-review-coordinator", () => {
+  it("preserves legacy request correlation through recreation and restart, but rejects a changed receipt target", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 200 }));
+    const app = makeApp();
+    const sourceId = await createClosedRebuildableSession(app, "legacy_request", "external-review-123");
+    const recreate = (target: CoordinatorApp) => request(target.app).post(`/api/review-sessions/${sourceId}/recreate`)
+      .set("Idempotency-Key", "legacy-request-recreate").send({});
+    const first = await recreate(app);
+    expect(first.status).toBe(201);
+    expect(first.body.session.review_request_id).toBe("external-review-123");
+    expect((await recreate(app)).status).toBe(200);
+    const runtime = await request(app.app).get("/api/runtime/status");
+    expect(runtime.body.sessions.items.find((item: {session_id: string}) => item.session_id === first.body.session_id).ready_model_id).toBeNull();
+    const config = app.config;
+    await app.dispose(); app.io.close();
+    await new Promise<void>(resolve => app.server.close(() => resolve()));
+    active = createCoordinatorApp(config);
+    const replay = await recreate(active);
+    expect(replay.status).toBe(200);
+    expect(replay.body.session_id).toBe(first.body.session_id);
+    expect(replay.body.session.review_request_id).toBe("external-review-123");
+    const file = path.join(config.sessionStoreDir, `${first.body.session_id}.json`);
+    const saved = JSON.parse(fs.readFileSync(file, "utf8"));
+    saved.review_request_id = "other-external-review";
+    fs.writeFileSync(file, JSON.stringify(saved), "utf8");
+    expect((await recreate(active)).status).toBe(409);
+  });
   it("returns health", async () => {
     const app = makeApp();
     const response = await request(app.app).get("/health");
@@ -199,6 +226,18 @@ describe("bim-review-coordinator", () => {
     expect([first.status, concurrentReplay.status].sort()).toEqual([200, 201]);
     expect(first.body.session_id).toBe(concurrentReplay.body.session_id);
     expect(first.body.session_id).not.toBe(sourceSessionId);
+    expect(first.body.session).toMatchObject({status: "created", kit_instance_bindings: []});
+    expect(first.body.activation_state).toBe("not_requested");
+    expect(app.store.get(sourceSessionId)?.status).toBe("closed");
+    expect(app.eventLog.list(first.body.session_id).some(e => e.type === "sessionActive")).toBe(false);
+    const firstClaim = await request(app.app)
+      .post("/api/review-sessions/" + first.body.session_id + "/viewer-leases/claim")
+      .set("X-User-Token", "user_recreated")
+      .send({viewer_id: "viewer_recreated", requested_role: "primary",
+        client_nonce: first.body.session_id + ":primary"});
+    expect(firstClaim.status).toBe(200);
+    expect(app.store.get(first.body.session_id)?.status).toBe("active");
+    expect(app.store.get(sourceSessionId)?.status).toBe("closed");
     expect(first.body.recreated_from_session_id).toBe(sourceSessionId);
     expect(first.body.session.artifact_bindings).toHaveLength(1);
     expect(first.body.session.artifact_bindings[0].url).toContain("/artifacts/recreate_ready/model.usdc");
@@ -498,7 +537,6 @@ describe("bim-review-coordinator", () => {
     const targetEvents = await request(app.app).get(`/api/review-sessions/${replay.body.session_id}/events`);
     expect(targetEvents.body.items.map((event: { type: string }) => event.type)).toEqual([
       "sessionCreated",
-      "sessionActive",
     ]);
     const sourceEvents = await request(app.app).get(`/api/review-sessions/${sourceSessionId}/events`);
     expect(sourceEvents.body.items.filter((event: { type: string }) => event.type === "sessionRecreated"))
@@ -509,6 +547,13 @@ describe("bim-review-coordinator", () => {
       .map((name) => JSON.parse(fs.readFileSync(path.join(sessionsDir, name), "utf8")))
       .filter((session) => session.recreated_from_session_id === sourceSessionId);
     expect(targetsAfterReplay).toHaveLength(1);
+    expect(replay.body.session).toMatchObject({status: "created", kit_instance_bindings: []});
+    const claim = await request(app.app).post(`/api/review-sessions/${replay.body.session_id}/viewer-leases/claim`)
+      .set("X-User-Token", "user_receipt_recovery")
+      .send({viewer_id: "viewer_receipt_recovery", requested_role: "primary", client_nonce: "receipt-recovery-claim"});
+    expect(claim.status).toBe(200);
+    expect(app.eventLog.list(replay.body.session_id).filter(event => event.type === "sessionActive" && event.server_owned === true)).toHaveLength(1);
+    expect(app.store.get(sourceSessionId)?.status).toBe("closed");
   });
 
   it("recreates every ready trusted derived binding and ignores an older stale binding", async () => {

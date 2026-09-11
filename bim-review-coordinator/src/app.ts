@@ -46,6 +46,14 @@ import { ConversionLedger, publicConversionRecord } from "./services/conversionL
 import { WatcherIntakeRegistry } from "./services/watcherIntakeRegistry.js";
 import { resolveReadyRenderBundle } from "./services/readyModelResolver.js";
 import {
+  identifyReadyReviewRequest,
+  parseReadyReviewIntent,
+  readyReviewSourceSnapshot,
+  fingerprintReadyReviewSource,
+  type ReadyReviewIntent,
+} from "./services/readyReviewIntent.js";
+import type { KitInstanceBinding, ReadyRenderBundle } from "./types.js";
+import {
   IfcReadyConversionPipeline,
   type ConversionTerminalEvent,
 } from "./services/ifcReadyConversionPipeline.js";
@@ -138,6 +146,7 @@ import {
   type SourceBundleReconciler,
 } from "./services/lineage/sourceBundleReconciler.js";
 import { ViewerLeaseStore, publicLease } from "./services/viewerLeaseStore.js";
+import type { ViewerLeaseRecord } from "./services/viewerLeaseStore.js";
 import {
   RuntimeMutationAuthority,
   type RuntimeStageComposition,
@@ -155,6 +164,9 @@ import {
 } from "./services/kitPool.js";
 import {
   isCanonicalSessionTraceId,
+  isCanonicalReadyReviewSourceCarrier,
+  isReviewRequestDigest,
+  reviewSessionIdForRequestScope,
   isSafeSessionId,
   isSessionMutable,
   SessionStore,
@@ -1689,58 +1701,31 @@ export function createCoordinatorApp(
     return null;
   }
 
-  function activateRecreatedSessionForViewerLease(session: ReviewSession): ReviewSession {
-    const ensureActiveEvent = (activeSession: ReviewSession): void => {
-      const kitInstanceBindings = activeSession.kit_instance_bindings.map((binding) => binding.kit_instance_id);
-      const hasCanonicalEvent = eventLog.list(activeSession.session_id).some((event) => (
-        event.type === "sessionActive"
-        && event.server_owned === true
-        && isDeepStrictEqual(
-          (event.payload as { kit_instance_bindings?: unknown })?.kit_instance_bindings,
-          kitInstanceBindings,
-        )
-      ));
-      if (!hasCanonicalEvent) {
-        eventLog.appendServerOwned(activeSession.session_id, "sessionActive", {
-          kit_instance_bindings: kitInstanceBindings,
-        });
-      }
-    };
-    if (
-      session.status === "active"
-      && session.kit_instance_bindings.length > 0
-      && session.recreated_from_session_id
-    ) {
-      ensureActiveEvent(session);
-      return session;
+  function candidateViewerBindings(session: ReviewSession): KitInstanceBinding[] {
+    if (session.status !== "created" || session.kit_instance_bindings.length > 0) {
+      return runtimeKitInstanceBindings(session, config);
     }
-    if (
-      session.status !== "created"
-      || session.kit_instance_bindings.length > 0
-      || !session.recreated_from_session_id
-    ) {
-      return session;
+    const explicit = session.session_id.startsWith("review_session_request_");
+    if (!session.recreated_from_session_id && !explicit) return runtimeKitInstanceBindings(session, config);
+    const ready = session.artifact_bindings.filter(b =>
+      b.artifact_role === "derived" && b.ready_status === "ready" && Boolean(b.url)
+    ).slice().sort((a, b) => a.load_order - b.load_order);
+    const policy = ready[0]?.routing_policy;
+    return policy ? allocateKitInstanceBindings(config, ready, policy, session.tenant_id) : [];
+  }
+  function ensureAdmittedViewerEvents(session: ReviewSession, lease: ViewerLeaseRecord): void {
+    const ids = session.kit_instance_bindings.map(b => b.kit_instance_id);
+    const events = eventLog.list(session.session_id);
+    if (!events.some(e => e.type === "sessionActive" && e.server_owned === true
+      && isDeepStrictEqual((e.payload as {kit_instance_bindings?: unknown})?.kit_instance_bindings, ids))) {
+      eventLog.appendServerOwned(session.session_id, "sessionActive", {kit_instance_bindings: ids});
     }
-    const readyBindings = session.artifact_bindings
-      .filter((binding) => binding.artifact_role === "derived" && binding.ready_status === "ready" && Boolean(binding.url))
-      .slice()
-      .sort((left, right) => left.load_order - right.load_order);
-    const routingPolicy = readyBindings[0]?.routing_policy;
-    if (!routingPolicy) return session;
-    const kitInstanceBindings = allocateKitInstanceBindings(
-      config,
-      readyBindings,
-      routingPolicy,
-      session.tenant_id,
-    );
-    if (kitInstanceBindings.length === 0) return session;
-    const activated = store.update(session.session_id, {
-      status: "active",
-      kit_instance: legacyKitInstanceFromBinding(kitInstanceBindings[0], config),
-      kit_instance_bindings: kitInstanceBindings,
-    }) ?? session;
-    if (activated.status === "active") ensureActiveEvent(activated);
-    return activated;
+    const payload = {lease_id: lease.lease_id, viewer_id: lease.viewer_id,
+      user_id: lease.user_id, role: lease.role, kit_instance_id: lease.kit_instance_id};
+    if (!events.some(e => e.type === "viewerLeaseClaimed" && e.server_owned === true
+      && isDeepStrictEqual(e.payload, payload))) {
+      eventLog.appendServerOwned(session.session_id, "viewerLeaseClaimed", payload);
+    }
   }
 
   async function refreshArtifactHealthForSessionBestEffort(session: ReviewSession): Promise<ArtifactHealthSnapshot | null> {
@@ -2073,6 +2058,17 @@ export function createCoordinatorApp(
     }
   });
 
+  function recreationReadySourceMatches(source: ReviewSession, target: ReviewSession): boolean {
+    const expectedRequestId = source.session_id.startsWith("review_session_request_") ? undefined : source.review_request_id;
+    if (target.review_request_id !== expectedRequestId || target.session_id.startsWith("review_session_request_")) return false;
+    const carries = (session: ReviewSession) => session.ready_review_source !== undefined
+      || session.review_request_fingerprint !== undefined || session.session_id.startsWith("review_session_request_");
+    if (!carries(source)) return !carries(target);
+    return isCanonicalReadyReviewSourceCarrier(source) && isCanonicalReadyReviewSourceCarrier(target)
+      && source.review_request_fingerprint === target.review_request_fingerprint
+      && isDeepStrictEqual(source.ready_review_source, target.ready_review_source);
+  }
+
   app.post("/api/review-sessions/:closedSessionId/recreate", async (request, response, next) => {
     try {
       const sourceSessionId = request.params.closedSessionId;
@@ -2095,11 +2091,24 @@ export function createCoordinatorApp(
         if (source.status !== "closed") {
           return { status: 409, body: { detail: "Only a closed review session can be recreated." } };
         }
+        const sourceRequestNamespace = source.session_id.startsWith("review_session_request_");
+        if ((source.ready_review_source !== undefined || source.review_request_fingerprint !== undefined
+          || sourceRequestNamespace)
+          && (!isCanonicalReadyReviewSourceCarrier(source)
+            || (sourceRequestNamespace
+              ? !isReviewRequestDigest(source.review_request_id)
+                || source.session_id !== reviewSessionIdForRequestScope(source.review_request_id)
+              : source.review_request_id !== undefined))) {
+          return {status: 409, body: {detail: "review_request_state_corrupt"}};
+        }
         const receiptSessionId = store.getRecreationReceipt(sourceSessionId, keyDigest);
         const receiptSession = receiptSessionId ? store.get(receiptSessionId) : null;
         if (receiptSession) {
           if (receiptSession.recreated_from_session_id !== sourceSessionId) {
             throw new Error("Recreation idempotency receipt lineage mismatch.");
+          }
+          if (!recreationReadySourceMatches(source, receiptSession)) {
+            return {status: 409, body: {detail: "review_request_state_corrupt"}};
           }
           ensureRecreationEvents(source, receiptSession);
           return {
@@ -2109,6 +2118,7 @@ export function createCoordinatorApp(
               status: receiptSession.status,
               recreated_from_session_id: sourceSessionId,
               idempotent_replay: true,
+              activation_state: receiptSession.kit_instance_bindings.length > 0 ? "configured" : "not_requested",
               kit_availability: receiptSession.kit_instance_bindings.length > 0 ? "configured" : "unavailable",
               session: receiptSession,
             },
@@ -2123,6 +2133,9 @@ export function createCoordinatorApp(
           if (unreceiptedSession.recreated_from_session_id !== sourceSessionId) {
             throw new Error("Deterministic recreation session id collision.");
           }
+          if (!recreationReadySourceMatches(source, unreceiptedSession)) {
+            return {status: 409, body: {detail: "review_request_state_corrupt"}};
+          }
           ensureRecreationEvents(source, unreceiptedSession);
           store.recordRecreationReceipt(sourceSessionId, keyDigest, unreceiptedSession.session_id);
           return {
@@ -2132,6 +2145,7 @@ export function createCoordinatorApp(
               status: unreceiptedSession.status,
               recreated_from_session_id: sourceSessionId,
               idempotent_replay: true,
+              activation_state: unreceiptedSession.kit_instance_bindings.length > 0 ? "configured" : "not_requested",
               kit_availability: unreceiptedSession.kit_instance_bindings.length > 0 ? "configured" : "unavailable",
               session: unreceiptedSession,
             },
@@ -2156,18 +2170,14 @@ export function createCoordinatorApp(
           ...binding,
           binding_id: `binding_${randomBytes(6).toString("hex")}`,
         }));
-        const kitInstanceBindings = allocateKitInstanceBindings(
-          config,
-          artifactBindings,
-          sourceBinding.routing_policy,
-          source.tenant_id,
-        );
         const recreated = store.create({
           session_id: deterministicSessionId,
           ready_model_id: source.ready_model_id,
           trace_id: source.ready_model_id ? source.trace_id : undefined,
           recreated_from_session_id: source.session_id,
-          review_request_id: source.review_request_id,
+          review_request_id: sourceRequestNamespace ? undefined : source.review_request_id,
+          review_request_fingerprint: source.review_request_fingerprint,
+          ready_review_source: source.ready_review_source,
           tenant_id: source.tenant_id,
           project_id: source.project_id,
           model_version_id: source.model_version_id,
@@ -2175,9 +2185,9 @@ export function createCoordinatorApp(
           usdc_artifact_id: sourceBinding.artifact_id,
           created_by: source.created_by,
           mode: source.mode,
-          kit_instance: legacyKitInstanceFromBinding(kitInstanceBindings[0], config),
+          kit_instance: legacyKitInstanceFromBinding(undefined, config),
           artifact_bindings: artifactBindings,
-          kit_instance_bindings: kitInstanceBindings,
+          kit_instance_bindings: [],
           quality_metrics_summary: source.quality_metrics_summary ?? null,
         });
         ensureRecreationEvents(source, recreated);
@@ -2189,7 +2199,8 @@ export function createCoordinatorApp(
             status: recreated.status,
             recreated_from_session_id: source.session_id,
             idempotent_replay: false,
-            kit_availability: kitInstanceBindings.length > 0 ? "configured" : "unavailable",
+            activation_state: recreated.kit_instance_bindings.length > 0 ? "configured" : "not_requested",
+            kit_availability: recreated.kit_instance_bindings.length > 0 ? "configured" : "unavailable",
             session: recreated,
           },
         };
@@ -2670,32 +2681,58 @@ export function createCoordinatorApp(
           throw new AuthError(403, "viewer lease identity mismatch");
         }
       }
-      session = activateRecreatedSessionForViewerLease(session);
+      const requestNamespace = session.session_id.startsWith("review_session_request_");
+      if ((requestNamespace || session.ready_review_source !== undefined || session.review_request_fingerprint !== undefined)
+        && (!isCanonicalReadyReviewSourceCarrier(session)
+          || (requestNamespace && (!isReviewRequestDigest(session.review_request_id)
+            || session.session_id !== reviewSessionIdForRequestScope(session.review_request_id))))) {
+        response.status(409).json({detail: "review_request_state_corrupt"}); return;
+      }
+      const governedActivation = Boolean(session.recreated_from_session_id)
+        || session.session_id.startsWith("review_session_request_");
+      const needsActivation = governedActivation && session.status === "created"
+        && session.kit_instance_bindings.length === 0;
+      const bindings = candidateViewerBindings(session);
+      if (governedActivation && input.preferred_kit_instance_id
+        && !bindings.some(binding => binding.kit_instance_id === input.preferred_kit_instance_id)) {
+        response.status(409).json({detail: "viewer_preferred_instance_unavailable"}); return;
+      }
+      if (needsActivation && bindings.length === 0) {
+        response.status(409).json({detail: "viewer_runtime_unavailable"}); return;
+      }
       const result = viewerLeaseStore.claim({
-        session_id: session.session_id,
-        viewer_id: input.viewer_id,
-        user_id: user.userId,
-        display_name: input.display_name ?? null,
-        requested_role: input.requested_role,
-        client_nonce: input.client_nonce ?? null,
-        preferred_kit_instance_id: input.preferred_kit_instance_id ?? null,
-        bindings: runtimeKitInstanceBindings(session, config),
+        session_id: session.session_id, viewer_id: input.viewer_id, user_id: user.userId,
+        display_name: input.display_name ?? null, requested_role: input.requested_role,
+        client_nonce: input.client_nonce ?? null, preferred_kit_instance_id: input.preferred_kit_instance_id ?? null,
+        bindings,
       });
       if (!result.ok || !result.lease) {
-        if (result.detail === "primary_already_claimed") {
-          response.status(409).json({ detail: "primary_already_claimed" });
-          return;
-        }
-        response.status(409).json({ detail: result.detail ?? "viewer lease unavailable" });
-        return;
+        response.status(409).json({detail: result.detail ?? "viewer lease unavailable"}); return;
       }
-      if (!result.idempotent_replay) {
+      if (needsActivation) {
+        try {
+          const saved = store.update(session.session_id, {status: "active",
+            kit_instance: legacyKitInstanceFromBinding(bindings[0], config), kit_instance_bindings: bindings});
+          if (!saved) throw new Error("Session update failed.");
+          session = saved;
+        } catch (error) {
+          let committed = false;
+          try {
+            const saved = store.get(session.session_id);
+            committed = saved?.status === "active" && isDeepStrictEqual(saved.kit_instance_bindings, bindings);
+          } catch { /* Unknown readback: withhold success; no claim token has been returned. */ }
+          if (!committed && !result.idempotent_replay) {
+            viewerLeaseStore.release(session.session_id, result.lease.lease_id, result.lease.lease_token);
+          }
+          throw error;
+        }
+      }
+      if (governedActivation) {
+        ensureAdmittedViewerEvents(session, result.lease);
+      } else if (!result.idempotent_replay) {
         eventLog.append(session.session_id, "viewerLeaseClaimed", {
-          lease_id: result.lease.lease_id,
-          viewer_id: result.lease.viewer_id,
-          user_id: result.lease.user_id,
-          role: result.lease.role,
-          kit_instance_id: result.lease.kit_instance_id,
+          lease_id: result.lease.lease_id, viewer_id: result.lease.viewer_id,
+          user_id: result.lease.user_id, role: result.lease.role, kit_instance_id: result.lease.kit_instance_id,
         });
       }
       response.json({
@@ -3224,19 +3261,68 @@ export function createCoordinatorApp(
     response.json({ count: items.length, items: items.slice(0, limit).map(publicConversionRecord) });
   });
 
-  // One coordinator process owns this local deployment. Per-model serialization prevents
-  // simultaneous callers from allocating duplicate sessions; persisted sessions recover
-  // the session-written/response-lost window without replaying conversion ingestion.
-  const readySessionRequests = new Map<string, Promise<{ status: number; body: unknown }>>();
+  // One coordinator process owns this local deployment. Serialize each operation identity:
+  // legacy by model, explicit create by request, and open by selected session. Persisted
+  // requests recover response loss without collapsing independent reviews of one model.
+  type ReadySessionHttpResult = {status: number; body: Record<string, unknown>};
+  const readySessionRequests = new Map<string, Promise<ReadySessionHttpResult>>();
+  function readySessionBody(id: string, session: ReviewSession, replay: boolean): Record<string, unknown> {
+    return {ready_model_id: id, review_session_id: session.session_id,
+      session_status: session.status, session_replay: replay};
+  }
+  function sessionMatchesReadyBundle(s: ReviewSession, b: ReadyRenderBundle): boolean {
+    const carriesRequestSource = s.ready_review_source !== undefined
+      || s.review_request_fingerprint !== undefined
+      || s.session_id.startsWith("review_session_request_");
+    if (carriesRequestSource) {
+      return isCanonicalReadyReviewSourceCarrier(s)
+        && s.review_request_fingerprint === fingerprintReadyReviewSource(readyReviewSourceSnapshot(b));
+    }
+    // Legacy sessions have no historical checksum. Validate their existing server-owned
+    // identity and bindings against the current authority without manufacturing a snapshot.
+    return s.ready_model_id === b.readyModelId && s.tenant_id === b.tenantId
+      && s.project_id === b.projectId && s.model_version_id === b.modelVersionId
+      && s.trace_id === b.rootTraceId && s.usdc_artifact_id === `auto_usdc_${b.conversionJobId}`
+      && s.artifact_bindings.length === 1 && s.artifact_bindings.every(a =>
+        a.artifact_id === s.usdc_artifact_id && a.artifact_group_id === `ag_${b.modelVersionId}`
+        && a.model_version_id === b.modelVersionId && a.artifact_role === "derived"
+        && a.ready_status === "ready" && a.load_order === 0 && a.routing_policy === "same_instance"
+        && a.conversion_authority === "bim-streaming-server" && a.conversion_status === "ready"
+        && a.conversion_job_id === b.conversionJobId && a.url === b.model.url
+        && a.mapping_url === b.mapping.url);
+  }
+  function explicitReadyArtifactBindings(b: ReadyRenderBundle): ArtifactBinding[] {
+    return [{binding_id: "binding_auto_usdc", artifact_group_id: `ag_${b.modelVersionId}`,
+      model_version_id: b.modelVersionId, artifact_id: `auto_usdc_${b.conversionJobId}`,
+      artifact_role: "derived", url: b.model.url, mapping_url: b.mapping.url, load_order: 0,
+      routing_policy: "same_instance", ready_status: "ready", conversion_authority: "bim-streaming-server",
+      conversion_job_id: b.conversionJobId, conversion_status: "ready"}];
+  }
+  function ensureExplicitSessionCreatedEvent(s: ReviewSession): void {
+    if (!s.review_request_id || !s.review_request_fingerprint) throw new Error("Explicit review request provenance is unavailable.");
+    const found = eventLog.list(s.session_id).some(e => {
+      const payload = e.payload as {review_request_id?: unknown; review_request_fingerprint?: unknown};
+      return e.type === "sessionCreated" && e.server_owned === true
+        && payload?.review_request_id === s.review_request_id
+        && payload.review_request_fingerprint === s.review_request_fingerprint;
+    });
+    if (!found) eventLog.appendServerOwned(s.session_id, "sessionCreated", {
+      project_id: s.project_id, model_version_id: s.model_version_id,
+      review_request_id: s.review_request_id, review_request_fingerprint: s.review_request_fingerprint,
+    });
+  }
   app.post("/api/conversion/records/:readyModelId/review-session", async (request, response, next) => {
     if (rejectIfConversionControlUnauthorized(request, response)) return;
     try {
-      z.object({}).strict().parse(request.body ?? {});
+      const intent: ReadyReviewIntent = parseReadyReviewIntent(request.body ?? {});
       const id = request.params.readyModelId;
       if (!/^mw_[a-f0-9]{16}$/.test(id)) {
-        response.status(400).json({ error_code: "invalid_ready_model_id" }); return;
+        response.status(400).json({error_code: "invalid_ready_model_id"}); return;
       }
-      let pending = readySessionRequests.get(id);
+      const operationKey = intent.mode === "legacy" ? `legacy:${id}`
+        : intent.mode === "create_new" ? `create:${id}:${intent.request_id}` : `open:${id}:${intent.session_id}`;
+      const joinedPending = readySessionRequests.get(operationKey);
+      let pending = joinedPending;
       if (!pending) {
         pending = (async () => {
           const record = conversionLedger.get(id);
@@ -3266,7 +3352,41 @@ export function createCoordinatorApp(
           }
           // 只在剛從權威取得（尚未快取）時才持久化；replay 不應每次重寫整份 ledger。
           if (!resolved.cached) conversionLedger.rememberRenderBundle(bundle);
-          const sessions = store.list().filter(session => session.ready_model_id === id
+          if (intent.mode === "open_existing") {
+            const selected = store.get(intent.session_id);
+            if (!selected) return {status: 404, body: {error_code: "review_session_not_found"}};
+            const requestNamespace = selected.session_id.startsWith("review_session_request_");
+            if ((selected.ready_review_source !== undefined || selected.review_request_fingerprint !== undefined || requestNamespace)
+              && (!isCanonicalReadyReviewSourceCarrier(selected)
+                || (requestNamespace && (!isReviewRequestDigest(selected.review_request_id)
+                  || selected.session_id !== reviewSessionIdForRequestScope(selected.review_request_id))))) {
+              return {status: 409, body: {error_code: "review_request_state_corrupt"}};
+            }
+            if (!sessionMatchesReadyBundle(selected, bundle)) return {status: 409, body: {error_code: "review_session_source_mismatch"}};
+            if (!isSessionMutable(selected)) return {status: 409, body: {error_code: "review_session_not_mutable"}};
+            return {status: 200, body: readySessionBody(id, selected, true)};
+          }
+          if (intent.mode === "create_new") {
+            const identity = identifyReadyReviewRequest(bundle, intent.request_id);
+            const result = store.createOrGetReviewRequest({
+              ready_model_id: bundle.readyModelId, trace_id: bundle.rootTraceId,
+              review_request_id: identity.scopeDigest, review_request_fingerprint: identity.fingerprint,
+              ready_review_source: readyReviewSourceSnapshot(bundle),
+              tenant_id: bundle.tenantId, project_id: bundle.projectId, model_version_id: bundle.modelVersionId,
+              usdc_artifact_id: `auto_usdc_${bundle.conversionJobId}`, created_by: "coordinator-ready-review-request",
+              mode: "single_kit_shared_state", kit_instance: legacyKitInstanceFromBinding(undefined, config),
+              artifact_bindings: explicitReadyArtifactBindings(bundle), kit_instance_bindings: [],
+              quality_metrics_summary: resolved.qualitySummary,
+            });
+            if (result.kind === "conflict") return {status: 409, body: {error_code: "review_request_idempotency_conflict"}};
+            if (result.kind === "corrupt") return {status: 409, body: {error_code: "review_request_state_corrupt"}};
+            if (!sessionMatchesReadyBundle(result.session, bundle)) return {status: 409, body: {error_code: "review_request_state_corrupt"}};
+            ensureExplicitSessionCreatedEvent(result.session);
+            return {status: 200, body: readySessionBody(id, result.session, result.kind === "replay")};
+          }
+          const sessions = store.list().filter(session => !session.session_id.startsWith("review_session_request_")
+            && session.ready_review_source === undefined && session.review_request_fingerprint === undefined
+            && session.ready_model_id === id
             && session.tenant_id === bundle.tenantId && session.project_id === bundle.projectId
             && session.model_version_id === bundle.modelVersionId && session.trace_id === bundle.rootTraceId
             && session.artifact_bindings.some(binding => binding.conversion_job_id === bundle.conversionJobId
@@ -3285,13 +3405,15 @@ export function createCoordinatorApp(
           return { status: 200, body: { ready_model_id: id, review_session_id: result.session.session_id,
             session_status: result.session.status, session_replay: result.replay } };
         })();
-        readySessionRequests.set(id, pending);
+        readySessionRequests.set(operationKey, pending);
       }
       try {
         const result = await pending;
-        response.status(result.status).json(result.body);
+        const joinedExplicitCreate = intent.mode === "create_new" && joinedPending !== undefined && result.status === 200;
+        const body = joinedExplicitCreate ? {...result.body, session_replay: true} : result.body;
+        response.status(result.status).json(body);
       } finally {
-        if (readySessionRequests.get(id) === pending) readySessionRequests.delete(id);
+        if (readySessionRequests.get(operationKey) === pending) readySessionRequests.delete(operationKey);
       }
     } catch (error) { next(error); }
   });

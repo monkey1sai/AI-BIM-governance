@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { createLogger } from "../../src/lib/structLog.js";
-import { EventLog } from "../../src/services/eventLog.js";
+import { EventLog, isClientForbiddenSessionEventType } from "../../src/services/eventLog.js";
 
 /**
  * EventLog → structured log mirror contract (per docs/contracts/structured-log-schema.md §9
@@ -14,6 +14,15 @@ import { EventLog } from "../../src/services/eventLog.js";
  * every successful append emits a `lifecycle` record into the structured log.
  */
 describe("EventLog → structLog mirror", () => {
+  it("allows server-owned lease claims and forbids client claims", () => {
+    const log = new EventLog(storageRoot);
+    const event = log.appendServerOwned("review_session_lease_authority", "viewerLeaseClaimed", {lease_id: "fixture_lease"});
+    expect(event.server_owned).toBe(true);
+    expect(isClientForbiddenSessionEventType("viewerLeaseClaimed")).toBe(true);
+    expect(() => log.appendServerOwned("review_session_lease_authority", "unknownFixtureEvent", {})).toThrow();
+    expect(log.append("review_session_lease_authority", "viewerLeaseClaimed", {})).not.toHaveProperty("server_owned");
+  });
+
   let storageRoot: string;
   let logRoot: string;
 

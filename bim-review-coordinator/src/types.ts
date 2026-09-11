@@ -121,6 +121,19 @@ export interface ConversionQualityMetricsSummary {
   mapping_issues?: ConversionMappingIssueSummary[] | null;
 }
 
+export interface ReadyReviewSourceSnapshot {
+  schema_version: "ready-review-source/v1";
+  ready_model_id: string;
+  conversion_job_id: string;
+  correlation_id: string;
+  root_trace_id: string;
+  tenant_id: string;
+  project_id: string;
+  model_version_id: string;
+  model: {url: string; sha256: string};
+  mapping: {url: string; sha256: string};
+}
+
 export interface ReviewSession {
   /** Server-owned durable MinIO conversion identity, never supplied through generic session creation. */
   ready_model_id?: string;
@@ -133,6 +146,8 @@ export interface ReviewSession {
    */
   trace_id?: string;
   review_request_id?: string;
+  review_request_fingerprint?: string;
+  ready_review_source?: ReadyReviewSourceSnapshot;
   tenant_id: string;
   project_id: string;
   model_version_id: string;

@@ -20,6 +20,7 @@ describe("ClosedSessionRecovery", () => {
   let root: Root;
 
   beforeEach(() => {
+    sessionStorage.clear();
     (globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true;
     container = document.createElement("div");
     document.body.appendChild(container);
@@ -29,6 +30,7 @@ describe("ClosedSessionRecovery", () => {
   afterEach(async () => {
     await act(async () => { root.unmount(); });
     container.remove();
+    sessionStorage.clear();
     vi.restoreAllMocks();
   });
 
@@ -75,6 +77,14 @@ describe("ClosedSessionRecovery", () => {
     await flush();
     expect(container.querySelector("[data-testid='closed-session-action-error']")).not.toBeNull();
 
+    // A refresh must preserve the pending request but must not resubmit by itself.
+    await act(async () => { root.unmount(); });
+    root = createRoot(container);
+    await act(async () => { root.render(<ClosedSessionRecovery onRecreated={onRecreated} />); });
+    await flush();
+    expect(recreate).toHaveBeenCalledTimes(1);
+    expect(container.querySelector("[data-testid='closed-session-confirm']")).not.toBeNull();
+
     await act(async () => { container.querySelector<HTMLButtonElement>("[data-testid='closed-session-confirm-action']")!.click(); });
     await flush();
     expect(recreate).toHaveBeenCalledTimes(2);
@@ -82,5 +92,24 @@ describe("ClosedSessionRecovery", () => {
     expect(recreate.mock.calls[0][1]).toMatch(/^closed-recreate-/);
     expect(onRecreated).toHaveBeenCalledWith(expect.objectContaining({ session_id: "review_session_new" }), ready);
     expect(container.querySelector("[data-testid='closed-session-success']")?.textContent).toContain("review_session_new");
+  });
+  it("does not select a restored recreation whose target was closed after the response was lost", async () => {
+    sessionStorage.setItem("ai-bim.closed-review-request.v1", JSON.stringify({ source: ready, key: "closed-recreate-lost-response" }));
+    const list = vi.spyOn(coordinatorClient, "listClosedReviewSessions").mockResolvedValue({ items: [ready], next_cursor: null });
+    const recreate = vi.spyOn(coordinatorClient, "recreateReviewSession").mockResolvedValue({
+      session_id: "review_session_target_closed", status: "closed", recreated_from_session_id: ready.session_id,
+      idempotent_replay: true, kit_availability: "unavailable", activation_state: "not_requested",
+    });
+    const onRecreated = vi.fn();
+    await act(async () => { root.render(<ClosedSessionRecovery onRecreated={onRecreated} />); });
+    expect(recreate).not.toHaveBeenCalled();
+    await act(async () => { container.querySelector<HTMLButtonElement>("[data-testid='closed-session-confirm-action']")!.click(); });
+    await flush();
+    expect(recreate).toHaveBeenCalledWith(ready.session_id, "closed-recreate-lost-response");
+    expect(onRecreated).not.toHaveBeenCalled();
+    expect(list).toHaveBeenCalledTimes(2);
+    expect(container.querySelector("[data-testid='closed-session-success']")?.textContent).toContain("已結束");
+    expect(container.querySelector("[data-testid='closed-session-success']")?.textContent).not.toContain("尚未啟動 3D");
+    expect(sessionStorage.getItem("ai-bim.closed-review-request.v1")).toBeNull();
   });
 });

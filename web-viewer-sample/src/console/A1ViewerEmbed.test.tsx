@@ -252,6 +252,12 @@ describe("A1 3D review decoupling", () => {
     expect(q<HTMLButtonElement>("a1-step-run")!.disabled).toBe(true);
   });
 
+  it("does not label a selected ready review as still converting or automatically claim a lease", async () => {
+    await renderA1();
+    await selectSession();
+    expect(container.textContent).not.toContain("此 session 的模型轉檔尚未完成");
+    expect(coordinatorClient.claimViewerLease).not.toHaveBeenCalled();
+  });
   it("picked local_fs IFC enables governance run without review session and calls createRuleRunForLibrary", async () => {
     // 等價改寫（library:// 邏輯識別修復）：files/tree 的 path 被 proxy 遮蔽成 "[server-path]"，
     // 瀏覽器不可能回送真路徑當 ifc_source_path；local_fs run 改走 coordinator
