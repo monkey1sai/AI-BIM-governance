@@ -1,3 +1,4 @@
+import type { RuntimeCommandTracker } from "../viewer/core/runtimeCommandTracker";
 // VG-01：viewer 端（Window.tsx）parent postMessage 的「元件 / 整合」層測試，與純函式守衛測（windowParentMessage.test.ts）互補。
 // 這裡實際建構真 App 元件、跑真 render() / 真 _handleParentMessage，鎖三件 spec 行為（純函式測無法覆蓋的整合面）：
 //   1) S3 render：嵌入時 GovernanceOverlay 收到空 failedElements + 顯示 viewer-embedded-list-collapsed 提示（§2.3 雙清單收合）。
@@ -561,13 +562,7 @@ describe("C M4 runtime command bridge：central send path classifies UI-local/re
     const privateApp = internals(app) as unknown as {
       _beginStageAttempt: (url: string) => number;
       activeStageAttempt: { generation: number; status: string; targetUrl: string } | null;
-      runtimeCommandTerminalClaims: Map<string, { eventType: string; outcome: string }>;
-      runtimeCommandContexts: Map<string, {
-        eventType: string;
-        bindingRevisionId: string;
-        stageUrl: string;
-        stageAttemptGeneration: number;
-      }>;
+      runtimeCommandTracker: RuntimeCommandTracker;
     };
     const stageUrl = "stage://revision-guard.usdc";
     const generation = privateApp._beginStageAttempt(stageUrl);
@@ -583,7 +578,7 @@ describe("C M4 runtime command bridge：central send path classifies UI-local/re
         phases: ["pending"],
       }],
     };
-    privateApp.runtimeCommandContexts.set("req_revision_guard", {
+    privateApp.runtimeCommandTracker.register("req_revision_guard", {
       eventType: "loadArtifactGroupRequest",
       bindingRevisionId: "rev_expected",
       stageUrl,
@@ -603,8 +598,8 @@ describe("C M4 runtime command bridge：central send path classifies UI-local/re
     expect(privateApp.activeStageAttempt).toEqual(expect.objectContaining({ generation, status: "terminal" }));
     expect(internals(app).state.loadedStageUrl).toBeNull();
     expect(internals(app).state.loadingText).toBe("Stage authorization mismatch");
-    expect(privateApp.runtimeCommandContexts.has("req_revision_guard")).toBe(false);
-    expect(privateApp.runtimeCommandTerminalClaims.get("req_revision_guard")).toEqual({
+    expect(privateApp.runtimeCommandTracker.hasContext("req_revision_guard")).toBe(false);
+    expect(privateApp.runtimeCommandTracker.getTerminal("req_revision_guard")).toEqual({
       eventType: "loadArtifactGroupRequest",
       outcome: "error",
     });
@@ -624,13 +619,7 @@ describe("C M4 runtime command bridge：central send path classifies UI-local/re
     const privateApp = internals(app) as unknown as {
       _beginStageAttempt: (url: string) => number;
       activeStageAttempt: { generation: number; status: string; targetUrl: string } | null;
-      runtimeCommandTerminalClaims: Map<string, { eventType: string; outcome: string }>;
-      runtimeCommandContexts: Map<string, {
-        eventType: string;
-        bindingRevisionId: string;
-        stageUrl: string;
-        stageAttemptGeneration: number;
-      }>;
+      runtimeCommandTracker: RuntimeCommandTracker;
     };
     const stageUrl = "stage://revision-missing.usdc";
     const generation = privateApp._beginStageAttempt(stageUrl);
@@ -646,7 +635,7 @@ describe("C M4 runtime command bridge：central send path classifies UI-local/re
         phases: ["pending"],
       }],
     };
-    privateApp.runtimeCommandContexts.set("req_revision_missing", {
+    privateApp.runtimeCommandTracker.register("req_revision_missing", {
       eventType: "loadArtifactGroupRequest",
       bindingRevisionId: "rev_expected",
       stageUrl,
@@ -666,8 +655,8 @@ describe("C M4 runtime command bridge：central send path classifies UI-local/re
     expect(internals(app).state.loadedStageUrl).toBeNull();
     expect(internals(app).state.loadingText).toBe("Stage authorization mismatch");
     expect(internals(app).state.streamDiagnostic).toContain("Received revision: missing");
-    expect(privateApp.runtimeCommandContexts.has("req_revision_missing")).toBe(false);
-    expect(privateApp.runtimeCommandTerminalClaims.get("req_revision_missing")).toEqual({
+    expect(privateApp.runtimeCommandTracker.hasContext("req_revision_missing")).toBe(false);
+    expect(privateApp.runtimeCommandTracker.getTerminal("req_revision_missing")).toEqual({
       eventType: "loadArtifactGroupRequest",
       outcome: "error",
     });
@@ -1154,15 +1143,15 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
       _scheduleStageLoadTimeout: (generation: number) => void;
       _completeStageLoadFromVisibleStream: () => boolean;
       activeStageAttempt: { generation: number; status: string } | null;
-      runtimeCommandContexts: Map<string, { eventType: string; stageAttemptGeneration: number }>;
+      runtimeCommandTracker: RuntimeCommandTracker;
     };
     const generation = privateApp._beginStageAttempt("stage://timeout.usdc");
     internals(app).pendingStageUrl = "stage://timeout.usdc";
-    privateApp.runtimeCommandContexts.set("req_timeout_first", {
+    privateApp.runtimeCommandTracker.register("req_timeout_first", {
       eventType: "openStageRequest",
       stageAttemptGeneration: generation,
     });
-    privateApp.runtimeCommandContexts.set("req_timeout_second", {
+    privateApp.runtimeCommandTracker.register("req_timeout_second", {
       eventType: "openStageRequest",
       stageAttemptGeneration: generation,
     });
@@ -1204,11 +1193,7 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
       _getChildren: () => void;
       activeStageAttempt: { generation: number; status: string; targetUrl: string } | null;
       confirmedStageBindingRevision: string | null;
-      runtimeCommandContexts: Map<string, {
-        eventType: string;
-        stageAttemptGeneration: number;
-        stageUrl: string;
-      }>;
+      runtimeCommandTracker: RuntimeCommandTracker;
     };
     internals(app).state = {
       ...internals(app).state,
@@ -1227,7 +1212,7 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
     };
     const generationA = privateApp._beginStageAttempt("stage://a.usdc");
     internals(app).pendingStageUrl = "stage://a.usdc";
-    privateApp.runtimeCommandContexts.set("req_a_superseded", {
+    privateApp.runtimeCommandTracker.register("req_a_superseded", {
       eventType: "openStageRequest",
       stageAttemptGeneration: generationA,
       stageUrl: "stage://a.usdc",
@@ -1237,7 +1222,7 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
     privateApp.confirmedStageBindingRevision = "revision_b";
     vi.spyOn(privateApp, "_getChildren").mockImplementation(() => undefined);
 
-    expect(privateApp.runtimeCommandContexts.has("req_a_superseded")).toBe(false);
+    expect(privateApp.runtimeCommandTracker.hasContext("req_a_superseded")).toBe(false);
     expect(internals(app).state.runtimeCommandLifecycles).toEqual(expect.arrayContaining([
       expect.objectContaining({
         request_id: "req_a_superseded",
@@ -1298,11 +1283,7 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
       _getChildren: () => void;
       activeStageAttempt: { generation: number; status: string; targetUrl: string } | null;
       confirmedStageBindingRevision: string | null;
-      runtimeCommandContexts: Map<string, {
-        eventType: string;
-        stageAttemptGeneration: number;
-        stageUrl: string;
-      }>;
+      runtimeCommandTracker: RuntimeCommandTracker;
     };
     const sharedUrl = "stage://same-url.usdc";
     internals(app).state = {
@@ -1317,7 +1298,7 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
     const generationB = privateApp._beginStageAttempt(sharedUrl);
     internals(app).pendingStageUrl = sharedUrl;
     privateApp.confirmedStageBindingRevision = "revision_same_url_b";
-    privateApp.runtimeCommandContexts.set("req_same_url_b", {
+    privateApp.runtimeCommandTracker.register("req_same_url_b", {
       eventType: "openStageRequest",
       stageAttemptGeneration: generationB,
       stageUrl: sharedUrl,
@@ -1368,11 +1349,7 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
       _reconnectStream: () => void;
       activeStageAttempt: { generation: number; status: string; targetUrl: string } | null;
       stageAttemptGeneration: number;
-      runtimeCommandContexts: Map<string, {
-        eventType: string;
-        stageAttemptGeneration?: number;
-        stageUrl?: string;
-      }>;
+      runtimeCommandTracker: RuntimeCommandTracker;
     };
     const generation = privateApp._beginStageAttempt("stage://disconnect.usdc");
     internals(app).pendingStageUrl = "stage://disconnect.usdc";
@@ -1381,7 +1358,7 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
       expectedStageUrl: "stage://disconnect.usdc",
       selectedUSDAsset: { name: "disconnect", url: "stage://disconnect.usdc" },
     };
-    privateApp.runtimeCommandContexts.set(`req_${method}`, {
+    privateApp.runtimeCommandTracker.register(`req_${method}`, {
       eventType: "openStageRequest",
       stageAttemptGeneration: generation,
       stageUrl: "stage://disconnect.usdc",
@@ -1464,12 +1441,11 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
     const requestId = "req_focus_after_stream_stop";
     const privateApp = internals(app) as unknown as {
       _handleStreamStopped: (kind: "stopped", message: unknown) => void;
-      runtimeCommandContexts: Map<string, { eventType: string }>;
-      runtimeCommandTerminalClaims: Map<string, { eventType: string; outcome: string }>;
+      runtimeCommandTracker: RuntimeCommandTracker;
       a4HandoffPendingRequestId: string | null;
       streamGeneration: number;
     };
-    privateApp.runtimeCommandContexts.set(requestId, { eventType: "focusPrimRequest" });
+    privateApp.runtimeCommandTracker.register(requestId, { eventType: "focusPrimRequest" });
     privateApp.a4HandoffPendingRequestId = requestId;
     internals(app).state = {
       ...internals(app).state,
@@ -1489,8 +1465,8 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
     });
 
     expect(privateApp.streamGeneration).toBe(stoppedGeneration);
-    expect(privateApp.runtimeCommandContexts.has(requestId)).toBe(false);
-    expect(privateApp.runtimeCommandTerminalClaims.get(requestId)).toEqual({
+    expect(privateApp.runtimeCommandTracker.hasContext(requestId)).toBe(false);
+    expect(privateApp.runtimeCommandTracker.getTerminal(requestId)).toEqual({
       eventType: "focusPrimRequest",
       outcome: "superseded",
     });
@@ -1824,8 +1800,7 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
       _isCurrentStreamCallback: (streamGeneration: number, kind: string) => boolean;
       streamGeneration: number;
       activeStageAttempt: { generation: number; status: string; targetUrl: string } | null;
-      runtimeCommandContexts: Map<string, { eventType: string; stageAttemptGeneration: number; stageUrl: string }>;
-      runtimeCommandTerminalClaims: Map<string, { eventType: string; outcome: string }>;
+      runtimeCommandTracker: RuntimeCommandTracker;
     };
     let resolveOldLoading!: (result: unknown) => void;
     let rejectOldStage!: (reason: unknown) => void;
@@ -1849,21 +1824,21 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
       event_type: "openStageRequest",
       payload: { request_id: "req_old_generation_stage", url: "stage://old-stream.usdc" },
     })).toBe(true);
-    expect(privateApp.runtimeCommandContexts.get("req_old_generation_stage")).toEqual(expect.objectContaining({
+    expect(privateApp.runtimeCommandTracker.getContext("req_old_generation_stage")).toEqual(expect.objectContaining({
       stageAttemptGeneration: oldAttemptGeneration,
     }));
     expect(privateApp._sendStreamMessage({
       event_type: "highlightPrimsRequest",
       payload: { request_id: "req_old_generation_highlight", mode: "replace", items: [] },
     })).toBe(true);
-    expect(privateApp.runtimeCommandContexts.get("req_old_generation_highlight")).toEqual(expect.objectContaining({
+    expect(privateApp.runtimeCommandTracker.getContext("req_old_generation_highlight")).toEqual(expect.objectContaining({
       eventType: "highlightPrimsRequest",
     }));
 
     privateApp._reconnectStream();
     const newAttemptGeneration = privateApp._beginStageAttempt("stage://new-stream.usdc");
     internals(app).pendingStageUrl = "stage://new-stream.usdc";
-    privateApp.runtimeCommandContexts.set("req_new_generation_stage", {
+    privateApp.runtimeCommandTracker.register("req_new_generation_stage", {
       eventType: "openStageRequest",
       stageAttemptGeneration: newAttemptGeneration,
       stageUrl: "stage://new-stream.usdc",
@@ -1895,13 +1870,13 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
       status: "pending",
       targetUrl: "stage://new-stream.usdc",
     });
-    expect(privateApp.runtimeCommandContexts.has("req_new_generation_stage")).toBe(true);
-    expect(privateApp.runtimeCommandTerminalClaims.get("req_old_generation_stage")).toEqual({
+    expect(privateApp.runtimeCommandTracker.hasContext("req_new_generation_stage")).toBe(true);
+    expect(privateApp.runtimeCommandTracker.getTerminal("req_old_generation_stage")).toEqual({
       eventType: "openStageRequest",
       outcome: "superseded",
     });
-    expect(privateApp.runtimeCommandContexts.has("req_old_generation_highlight")).toBe(false);
-    expect(privateApp.runtimeCommandTerminalClaims.get("req_old_generation_highlight")).toEqual({
+    expect(privateApp.runtimeCommandTracker.hasContext("req_old_generation_highlight")).toBe(false);
+    expect(privateApp.runtimeCommandTracker.getTerminal("req_old_generation_highlight")).toEqual({
       eventType: "highlightPrimsRequest",
       outcome: "superseded",
     });
@@ -3458,12 +3433,7 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
       ) => void;
       activeStageAttempt: { generation: number; status: string; targetUrl: string } | null;
       stageProofBlockedRevision: string | null;
-      runtimeCommandContexts: Map<string, {
-        eventType: string;
-        bindingRevisionId?: string;
-        stageUrl?: string;
-        stageAttemptGeneration?: number;
-      }>;
+      runtimeCommandTracker: RuntimeCommandTracker;
       _getChildren: () => void;
     };
     const stageUrl = "stage://same-url-resync.usdc";
@@ -3509,7 +3479,7 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
       binding_revision_id: "rev_a",
     }));
 
-    privateApp.runtimeCommandContexts.set("req_b", {
+    privateApp.runtimeCommandTracker.register("req_b", {
       eventType: "openStageRequest",
       bindingRevisionId: "rev_b",
       stageUrl,
@@ -3559,12 +3529,7 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
       ) => void;
       activeStageAttempt: { generation: number; status: string; targetUrl: string } | null;
       stageProofBlockedRevision: string | null;
-      runtimeCommandContexts: Map<string, {
-        eventType: string;
-        bindingRevisionId?: string;
-        stageUrl?: string;
-        stageAttemptGeneration?: number;
-      }>;
+      runtimeCommandTracker: RuntimeCommandTracker;
       _getChildren: () => void;
     };
     const stageB = "stage://completed-b.usdc";
@@ -3585,7 +3550,7 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
     vi.spyOn(privateApp, "_getChildren").mockImplementation(() => undefined);
 
     const attemptB = privateApp._beginStageAttempt(stageB);
-    privateApp.runtimeCommandContexts.set("req_completed_b", {
+    privateApp.runtimeCommandTracker.register("req_completed_b", {
       eventType: "openStageRequest",
       bindingRevisionId: "rev_b",
       stageUrl: stageB,
@@ -3644,12 +3609,7 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
       _failStageLoad: (loadingText: string, diagnostic: string, attemptGeneration: number) => void;
       activeStageAttempt: { generation: number; status: string; targetUrl: string } | null;
       stageProofBlockedRevision: string | null;
-      runtimeCommandContexts: Map<string, {
-        eventType: string;
-        bindingRevisionId?: string;
-        stageUrl?: string;
-        stageAttemptGeneration?: number;
-      }>;
+      runtimeCommandTracker: RuntimeCommandTracker;
       _getChildren: () => void;
     };
     const stageUrl = "stage://timeout-resync-b.usdc";
@@ -3680,7 +3640,7 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
     await flushMicrotasks();
     parent.postMessage.mockClear();
 
-    privateApp.runtimeCommandContexts.set("req_timeout_b", {
+    privateApp.runtimeCommandTracker.register("req_timeout_b", {
       eventType: "openStageRequest",
       bindingRevisionId: "rev_b",
       stageUrl,
@@ -3732,12 +3692,7 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
       _invalidateStageAttempt: () => void;
       activeStageAttempt: { generation: number; status: string; targetUrl: string } | null;
       stageProofBlockedRevision: string | null;
-      runtimeCommandContexts: Map<string, {
-        eventType: string;
-        bindingRevisionId?: string;
-        stageUrl?: string;
-        stageAttemptGeneration?: number;
-      }>;
+      runtimeCommandTracker: RuntimeCommandTracker;
       _getChildren: () => void;
     };
     const stageUrl = "stage://invalidated-resync-b.usdc";
@@ -3768,7 +3723,7 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
     await flushMicrotasks();
     parent.postMessage.mockClear();
 
-    privateApp.runtimeCommandContexts.set("req_invalidated_b", {
+    privateApp.runtimeCommandTracker.register("req_invalidated_b", {
       eventType: "openStageRequest",
       bindingRevisionId: "rev_b",
       stageUrl,
@@ -3990,18 +3945,13 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
     const privateApp = internals(app) as unknown as {
       _beginStageAttempt: (url: string) => number;
       activeStageAttempt: { generation: number; status: string; targetUrl: string } | null;
-      runtimeCommandContexts: Map<string, {
-        eventType: string;
-        bindingRevisionId: string;
-        stageUrl: string;
-        stageAttemptGeneration: number;
-      }>;
+      runtimeCommandTracker: RuntimeCommandTracker;
       stageLoadFailureActive: boolean;
     };
     const stageA = "stage://late-changed-failed-a.usdc";
     const stageB = "stage://pending-b.usdc";
     const attemptA = privateApp._beginStageAttempt(stageA);
-    privateApp.runtimeCommandContexts.set("req_late_changed_failed_a", {
+    privateApp.runtimeCommandTracker.register("req_late_changed_failed_a", {
       eventType: "openStageRequest",
       bindingRevisionId: "rev_late_changed_failed_a",
       stageUrl: stageA,
@@ -4484,11 +4434,7 @@ describe("Standalone stage binding：頂層 viewer 無 parent token 時自動 cl
       _applyBinding: AppInternals["_applyBinding"];
       _preauthorizeStageBinding: () => Promise<Record<string, unknown>>;
       activeStageAttempt: { generation: number; status: string; targetUrl: string } | null;
-      runtimeCommandContexts: Map<string, {
-        eventType: string;
-        stageAttemptGeneration?: number;
-        stageUrl?: string;
-      }>;
+      runtimeCommandTracker: RuntimeCommandTracker;
     };
     const transaction = {
       status: "pending",
@@ -4529,7 +4475,7 @@ describe("Standalone stage binding：頂層 viewer 無 parent token 時自動 cl
     const firstStageLoadPayload = send.mock.calls
       .map(([message]) => message as { event_type?: string; payload?: unknown })
       .find((message) => message.event_type === "loadArtifactGroupRequest")?.payload as { request_id: string };
-    expect(privateApp.runtimeCommandContexts.get(firstStageLoadPayload.request_id)).toEqual(expect.objectContaining({
+    expect(privateApp.runtimeCommandTracker.getContext(firstStageLoadPayload.request_id)).toEqual(expect.objectContaining({
       eventType: "loadArtifactGroupRequest",
       stageAttemptGeneration: firstAttempt!.generation,
       stageUrl: "stage://binding-retry.usdc",
@@ -4549,13 +4495,7 @@ describe("Standalone stage binding：頂層 viewer 無 parent token 時自動 cl
       _beginStageAttempt: (url: string) => number;
       _preauthorizeStageBinding: () => Promise<Record<string, unknown>>;
       activeStageAttempt: { generation: number; status: string; targetUrl: string } | null;
-      runtimeCommandTerminalClaims: Map<string, { eventType: string; outcome: string }>;
-      runtimeCommandContexts: Map<string, {
-        eventType: string;
-        bindingRevisionId: string;
-        stageUrl: string;
-        stageAttemptGeneration: number;
-      }>;
+      runtimeCommandTracker: RuntimeCommandTracker;
     };
     const priorStageUrl = "stage://prior-before-preauth.usdc";
     const nextStageUrl = "stage://next-before-preauth.usdc";
@@ -4572,7 +4512,7 @@ describe("Standalone stage binding：頂層 viewer 無 parent token 時自動 cl
         phases: ["pending"],
       }],
     };
-    privateApp.runtimeCommandContexts.set("req_prior_before_preaut", {
+    privateApp.runtimeCommandTracker.register("req_prior_before_preaut", {
       eventType: "loadArtifactGroupRequest",
       bindingRevisionId: "rev_prior_before_preaut",
       stageUrl: priorStageUrl,
@@ -4594,8 +4534,8 @@ describe("Standalone stage binding：頂層 viewer 無 parent token 時自動 cl
 
     expect(privateApp.activeStageAttempt).toBeNull();
     expect(internals(app).pendingStageUrl).toBeNull();
-    expect(privateApp.runtimeCommandContexts.has("req_prior_before_preaut")).toBe(false);
-    expect(privateApp.runtimeCommandTerminalClaims.get("req_prior_before_preaut")).toEqual({
+    expect(privateApp.runtimeCommandTracker.hasContext("req_prior_before_preaut")).toBe(false);
+    expect(privateApp.runtimeCommandTracker.getTerminal("req_prior_before_preaut")).toEqual({
       eventType: "loadArtifactGroupRequest",
       outcome: "superseded",
     });
@@ -4675,8 +4615,7 @@ describe("Standalone stage binding：頂層 viewer 無 parent token 時自動 cl
       _applyBinding: AppInternals["_applyBinding"];
       _preauthorizeStageBinding: () => Promise<Record<string, unknown>>;
       activeStageAttempt: { generation: number; status: string; targetUrl: string } | null;
-      runtimeCommandTerminalClaims: Map<string, { eventType: string; outcome: string }>;
-      runtimeCommandContexts: Map<string, { eventType: string }>;
+      runtimeCommandTracker: RuntimeCommandTracker;
     };
     const stageUrl = "stage://binding-send-rejected.usdc";
     const transaction = {
@@ -4726,8 +4665,8 @@ describe("Standalone stage binding：頂層 viewer 無 parent token 時自動 cl
       status: "failed",
       reason: copy.title,
     });
-    expect(privateApp.runtimeCommandContexts.has(requestId)).toBe(false);
-    expect(privateApp.runtimeCommandTerminalClaims.get(requestId)).toEqual({
+    expect(privateApp.runtimeCommandTracker.hasContext(requestId)).toBe(false);
+    expect(privateApp.runtimeCommandTracker.getTerminal(requestId)).toEqual({
       eventType: "loadArtifactGroupRequest",
       outcome: "error",
     });
@@ -4976,7 +4915,7 @@ describe("Important #4（修訂）：visible-stream 完成路徑不得把 pendin
       _getChildren: () => void;
       activeStageAttempt: { generation: number; status: string; targetUrl: string } | null;
       confirmedStageBindingRevision: string | null;
-      runtimeCommandContexts: Map<string, { eventType: string; bindingRevisionId: string; stageUrl: string; stageAttemptGeneration: number }>;
+      runtimeCommandTracker: RuntimeCommandTracker;
     };
     internals(app).state = {
       ...internals(app).state,
@@ -4987,7 +4926,7 @@ describe("Important #4（修訂）：visible-stream 完成路徑不得把 pendin
     };
     const generation = privateApp._beginStageAttempt(stageUrl);
     internals(app).pendingStageUrl = stageUrl;
-    privateApp.runtimeCommandContexts.set("req_visible_provisional", {
+    privateApp.runtimeCommandTracker.register("req_visible_provisional", {
       eventType: "openStageRequest",
       bindingRevisionId: "rev_visible_provisional",
       stageUrl,
@@ -5140,7 +5079,7 @@ describe("Important #4（修訂）：visible-stream 完成路徑不得把 pendin
       _getChildren: () => void;
       activeStageAttempt: { generation: number; status: string; targetUrl: string } | null;
       confirmedStageBindingRevision: string | null;
-      runtimeCommandContexts: Map<string, { eventType: string; bindingRevisionId: string; stageUrl: string; stageAttemptGeneration: number }>;
+      runtimeCommandTracker: RuntimeCommandTracker;
     };
     internals(app).state = {
       ...internals(app).state,
@@ -5151,7 +5090,7 @@ describe("Important #4（修訂）：visible-stream 完成路徑不得把 pendin
     };
     const generation = privateApp._beginStageAttempt(stageUrl);
     internals(app).pendingStageUrl = stageUrl;
-    privateApp.runtimeCommandContexts.set("req_visible_idle", {
+    privateApp.runtimeCommandTracker.register("req_visible_idle", {
       eventType: "openStageRequest",
       bindingRevisionId: "rev_visible_idle",
       stageUrl,
@@ -5711,13 +5650,7 @@ describe("Important #2（task2 fix）：binding-apply 失敗 / 缺證據分支�
     const privateApp = internals(app) as unknown as {
       _beginStageAttempt: (url: string) => number;
       activeStageAttempt: { generation: number; status: string; targetUrl: string } | null;
-      runtimeCommandContexts: Map<string, {
-        eventType: string;
-        bindingRevisionId: string;
-        stageAttemptGeneration: number;
-        stageUrl: string;
-      }>;
-      runtimeCommandTerminalClaims: Map<string, { eventType: string; outcome: string }>;
+      runtimeCommandTracker: RuntimeCommandTracker;
     };
     internals(app).state = {
       ...internals(app).state,
@@ -5733,7 +5666,7 @@ describe("Important #2（task2 fix）：binding-apply 失敗 / 缺證據分支�
     };
     const generationA = privateApp._beginStageAttempt("stage://a.usdc");
     internals(app).pendingStageUrl = "stage://a.usdc";
-    privateApp.runtimeCommandContexts.set("req_a_artifact_error", {
+    privateApp.runtimeCommandTracker.register("req_a_artifact_error", {
       eventType: "loadArtifactGroupRequest",
       bindingRevisionId: "rev_a",
       stageAttemptGeneration: generationA,
@@ -5761,11 +5694,11 @@ describe("Important #2（task2 fix）：binding-apply 失敗 / 缺證據分支�
     internals(app)._handleCustomEvent(lateError);
     internals(app)._handleCustomEvent(lateError);
 
-    expect(privateApp.runtimeCommandTerminalClaims.get("req_a_artifact_error")).toEqual({
+    expect(privateApp.runtimeCommandTracker.getTerminal("req_a_artifact_error")).toEqual({
       eventType: "loadArtifactGroupRequest",
       outcome: "superseded",
     });
-    expect(privateApp.runtimeCommandContexts.has("req_a_artifact_error")).toBe(false);
+    expect(privateApp.runtimeCommandTracker.hasContext("req_a_artifact_error")).toBe(false);
     expect(internals(app).state.runtimeCommandLifecycles).toEqual(expect.arrayContaining([
       expect.objectContaining({
         request_id: "req_a_artifact_error",
@@ -6091,11 +6024,11 @@ describe("Important #2（task2 fix）：binding-apply 失敗 / 缺證據分支�
       _beginStageAttempt: (url: string) => number;
       activeStageAttempt: { generation: number; status: string } | null;
       pendingStageUrl: string | null;
-      runtimeCommandContexts: Map<string, Record<string, unknown>>;
+      runtimeCommandTracker: RuntimeCommandTracker;
     };
     const generation = privateApp._beginStageAttempt("stage://composition-error.usdc");
     privateApp.pendingStageUrl = "stage://composition-error.usdc";
-    privateApp.runtimeCommandContexts.set("req_composition_error", {
+    privateApp.runtimeCommandTracker.register("req_composition_error", {
       eventType: "loadArtifactGroupRequest",
       bindingRevisionId: "rev_composition_error",
       stageAttemptGeneration: generation,
@@ -6127,11 +6060,11 @@ describe("Important #2（task2 fix）：binding-apply 失敗 / 缺證據分支�
       _clearLoadingStateRetry: () => void;
       activeStageAttempt: { generation: number; status: string } | null;
       pendingStageUrl: string | null;
-      runtimeCommandContexts: Map<string, Record<string, unknown>>;
+      runtimeCommandTracker: RuntimeCommandTracker;
     };
     const generation = privateApp._beginStageAttempt("stage://missing-url.usdc");
     privateApp.pendingStageUrl = "stage://missing-url.usdc";
-    privateApp.runtimeCommandContexts.set("req_missing_url", {
+    privateApp.runtimeCommandTracker.register("req_missing_url", {
       eventType: "openStageRequest",
       bindingRevisionId: "rev_missing_url",
       stageAttemptGeneration: generation,
@@ -6246,7 +6179,7 @@ describe("P1：production stage completion correlation 與 parent proof 撤銷",
     const privateApp = internals(app) as unknown as {
       _beginStageAttempt: (url: string) => number;
       _sendStreamMessage: (message: { event_type: string; payload: Record<string, unknown> }) => boolean;
-      runtimeCommandContexts: Map<string, unknown>;
+      runtimeCommandTracker: RuntimeCommandTracker;
       activeStageAttempt: { generation: number; status: string; targetUrl: string } | null;
     };
     const stageUrl = "stage://native-partial-load.usdc";
@@ -6280,7 +6213,7 @@ describe("P1：production stage completion correlation 與 parent proof 撤銷",
 
     // The SDK wrapper has no protocol correlation/runtime_state and therefore
     // must not consume the transaction before Kit's authenticated terminal.
-    expect(privateApp.runtimeCommandContexts.has(requestId)).toBe(true);
+    expect(privateApp.runtimeCommandTracker.hasContext(requestId)).toBe(true);
     expect(internals(app).state.govBindingActiveRevision).toBe("rev_last_good");
 
     internals(app)._handleCustomEvent({
@@ -6909,7 +6842,7 @@ describe("P1：production stage completion correlation 與 parent proof 撤銷",
       _queryLoadingState: () => void;
       _pollForKitReady: () => void;
       stageProofBlockedRevision: string | null;
-      runtimeCommandTerminalClaims: Map<string, { eventType: string; outcome: string }>;
+      runtimeCommandTracker: RuntimeCommandTracker;
     };
     const stageA = "stage://timed-out-open-a.usdc";
     const stageB = "stage://after-timed-out-b.usdc";
@@ -6934,7 +6867,7 @@ describe("P1：production stage completion correlation 與 parent proof 撤銷",
       },
     }, attemptA)).toBe(true);
     await vi.advanceTimersByTimeAsync(45_000);
-    expect(privateApp.runtimeCommandTerminalClaims.get("req_timed_out_open_a")).toEqual({
+    expect(privateApp.runtimeCommandTracker.getTerminal("req_timed_out_open_a")).toEqual({
       eventType: "openStageRequest",
       outcome: "timed-out",
     });

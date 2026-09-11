@@ -587,6 +587,46 @@
           "layer": "client"
         },
         {
+          "match": "exact",
+          "value": "viewer/core/streamerLifecycle.ts",
+          "layer": "client"
+        },
+        {
+          "match": "exact",
+          "value": "viewer/core/runtimeCommandProtocol.ts",
+          "layer": "domain"
+        },
+        {
+          "match": "exact",
+          "value": "viewer/core/runtimeEventCatalog.ts",
+          "layer": "domain"
+        },
+        {
+          "match": "exact",
+          "value": "viewer/core/nativeResultAdapter.ts",
+          "layer": "domain"
+        },
+        {
+          "match": "exact",
+          "value": "viewer/core/runtimeStreamProfile.ts",
+          "layer": "domain"
+        },
+        {
+          "match": "exact",
+          "value": "viewer/core/streamConnectionProfile.ts",
+          "layer": "domain"
+        },
+        {
+          "match": "exact",
+          "value": "viewer/core/runtimeCommandTracker.ts",
+          "layer": "application"
+        },
+        {
+          "match": "exact",
+          "value": "viewer/core/nativeStageDispatchQueue.ts",
+          "layer": "application"
+        },
+        {
           "match": "prefix",
           "value": "types/",
           "layer": "domain"

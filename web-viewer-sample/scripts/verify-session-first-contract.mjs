@@ -51,6 +51,8 @@ assert.equal(routedRequest.payload.stage_composition.primary.artifact_id, bindin
 assert.deepEqual(routedRequest.payload.stage_composition.secondary_layers, []);
 
 const windowSource = readSource("src/Window.tsx");
+const nativeStageQueueSource = readSource("src/viewer/core/nativeStageDispatchQueue.ts");
+const nativeResultAdapterSource = readSource("src/viewer/core/nativeResultAdapter.ts");
 // #17 vitest 抽出:lifecycle / endpoint 純函式從 Window.tsx 搬到 utils/windowHelpers.ts,
 // 視為 Window 邏輯的一部分,正向 token 檢查兩檔聯集(否定斷言仍只看 Window.tsx)。
 const windowHelpersSource = readSource("src/utils/windowHelpers.ts");
@@ -161,14 +163,19 @@ assert.ok(
     "_sendStreamMessage must ignore Promise rejections from a superseded stream generation",
 );
 assert.match(
-    windowSource,
-    /private _settleNativeOpenStageDispatch[\s\S]*?private _dispatchNativeOpenStage[\s\S]*?private _enqueueNativeOpenStage[\s\S]*?queuedNativeOpenStage/,
+    nativeStageQueueSource,
+    /^\s+_settleNativeOpenStageDispatch\([^)]*\): void \{[\s\S]*?^\s+_dispatchNativeOpenStage\([^)]*\): boolean \{[\s\S]*?^\s+_enqueueNativeOpenStage\([\s\S]*?queuedNativeOpenStage/m,
     "production native opened-stage requests must be single-flight with a latest-wins queued successor",
 );
 assert.match(
-    windowSource,
-    /function requestUsesNativeOpenedStageResult\(requestEventType: string\)[\s\S]*?openStageRequest[\s\S]*?loadArtifactGroupRequest[\s\S]*?requestUsesNativeOpenedStageResult\(outgoing\.event_type\)/,
+    nativeResultAdapterSource,
+    /function requestUsesNativeOpenedStageResult\(requestEventType: string\)[\s\S]*?openStageRequest[\s\S]*?loadArtifactGroupRequest/,
     "all stage mutators sharing NVIDIA's openedStageResult callback must use the same native completion slot",
+);
+assert.match(
+    windowSource,
+    /private nativeStageQueue = new NativeStageDispatchQueue\([\s\S]*?requestUsesNativeOpenedStageResult\(outgoing\.event_type\)[\s\S]*?this\.nativeStageQueue\._enqueueNativeOpenStage\(outgoing, onDispatched\)/,
+    "Window must route native stage requests through its instance queue",
 );
 assert.match(
     windowSource,
@@ -181,7 +188,7 @@ assert.doesNotMatch(
     "_sendStreamMessage must not stringify DataChannel messages; Kit livestream messaging expects an event object",
 );
 assert.match(
-    windowSource,
+    nativeResultAdapterSource,
     /function appStreamResultToAppEvent[\s\S]*?requestUsesNativeOpenedStageResult\(requestEventType\)[\s\S]*?event_type: "openedStageResult"[\s\S]*?requestEventType === "loadingStateQuery"[\s\S]*?event_type: "loadingStateResponse"[\s\S]*?requestEventType === "getChildrenRequest"[\s\S]*?event_type: "getChildrenResponse"/,
     "viewer must map built-in Promise replies for every native opened-stage request back into existing DataChannel handlers",
 );
@@ -331,16 +338,27 @@ assert.ok(
 );
 
 const appStreamSource = readSource("src/AppStream.tsx");
+const streamerLifecycleSource = readSource("src/viewer/core/streamerLifecycle.ts");
+const appStreamLifecycleSource = `${appStreamSource}\n${streamerLifecycleSource}`;
+assert.match(
+    appStreamSource,
+    /import \{ terminateStreamer, waitForStreamerTeardown \} from ['"]\.\/viewer\/core\/streamerLifecycle['"]/,
+    "AppStream must use the extracted singleton lifecycle",
+);
 assert.ok(
-    appStreamSource.includes("terminate(false)"),
+    appStreamSource.includes("terminateStreamer()") && appStreamSource.includes("waitForStreamerTeardown()"),
+    "AppStream must call teardown and wait before reconnecting",
+);
+assert.ok(
+    streamerLifecycleSource.includes("getStreamer().terminate(false)"),
     "AppStream.tsx must tear down the stream via AppStreamer.terminate(false)",
 );
 assert.ok(
-    !appStreamSource.includes("._stream ="),
+    !appStreamLifecycleSource.includes("._stream ="),
     "AppStream.tsx must not assign ._stream directly after switching to AppStreamer.terminate(false)",
 );
 assert.ok(
-    !appStreamSource.includes("as any"),
+    !appStreamLifecycleSource.includes("as any"),
     "AppStream.tsx must not use `as any` after switching to AppStreamer.terminate(false)",
 );
 
