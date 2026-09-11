@@ -1,4 +1,6 @@
 import { expect, test } from "@playwright/test";
+import fs from "node:fs";
+import path from "node:path";
 import { readyModelId, startReadyReviewFixture } from "./support/ready-review-fixture";
 
 test.describe.serial("Ready review intent HTTP contract", () => {
@@ -11,6 +13,10 @@ test.describe.serial("Ready review intent HTTP contract", () => {
     let claims = 0;
     page.on("request", req => { if (req.url().includes("/viewer-leases/claim")) claims++; });
     await page.goto(`${fixture.base}/ui/#a1-workbench`);
+    await expect.poll(() => fixture.governanceRequests.length).toBeGreaterThan(0);
+    const logFile = fixture.coordinator.structLog.currentFile();
+    expect(path.relative(fixture.root, logFile)).toMatch(/^logs[\\/]/);
+    expect(fs.existsSync(logFile)).toBe(true);
     await page.getByTestId("ready-review-model").selectOption(readyModelId);
     const firstResponse = page.waitForResponse(r => r.url() === route && r.request().method() === "POST");
     await page.getByTestId("ready-review-create").click();
