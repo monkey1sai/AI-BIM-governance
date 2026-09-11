@@ -12,31 +12,18 @@ from jsonschema import Draft7Validator
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-CLAUDE_VALIDATOR = ROOT / ".claude/skills/spec-to-done/validate-state.mjs"
-NEW_RUN_APPENDER = ROOT / ".claude/skills/spec-to-done/append-new-run.mjs"
-TRUSTED_GIT_MODULE = ROOT / ".claude/skills/spec-to-done/trusted-git.mjs"
+CLAUDE_VALIDATOR = ROOT / "scripts/lib/legacy-spec-to-done/validate-state.mjs"
+TRUSTED_GIT_MODULE = ROOT / "scripts/lib/legacy-spec-to-done/trusted-git.mjs"
 CODEX_VALIDATOR = ROOT / ".codex/skills/spec-to-done/validate-state.mjs"
-CLAUDE_SKILL = ROOT / ".claude/skills/spec-to-done/SKILL.md"
-CODEX_SKILL = ROOT / ".codex/skills/spec-to-done/SKILL.md"
-GROK_SKILL = ROOT / ".claude/skills/spec-to-done/GROK.md"
 MACHINE_CONTRACT = ROOT / "agent-contracts/spec-to-done.contract.json"
 MACHINE_CONTRACT_SCHEMA = ROOT / "agent-contracts/spec-to-done.contract.schema.json"
 FABRIC_BINDING_MODULE = ROOT / "scripts/lib/spec-to-done-fabric-binding.mjs"
 FABRIC_OPERATOR_DOC = ROOT / "docs/agents/parallel-delivery-fabric.md"
 GIT = shutil.which("git")
-def _skill_text(skill_path):
-    entry = skill_path.read_text(encoding="utf-8")
-    references = re.findall(r"\.claude/skills/spec-to-done/references/[a-z0-9-]+\.md", entry)
-    assert references, "phase routing must remain discoverable"
-    return entry + "\n" + "\n".join((ROOT / p).read_text(encoding="utf-8") for p in dict.fromkeys(references))
-
-
 EXCLUSIONS = (
     "secrets,credentials,billing,production-data,destructive-delete,"
     "unproven-process-stop"
 )
-
-
 def _require_git():
     if GIT is not None:
         return
@@ -414,17 +401,6 @@ def _set_fabric_sources_suspect(fabric):
     fabric["provider_path"].write_text(json.dumps(provider), encoding="utf-8")
 
 
-def _run_new_run(*args, env_overrides=None):
-    proc = subprocess.run(
-        ["node", str(NEW_RUN_APPENDER), *map(str, args)],
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        env={**os.environ, **(env_overrides or {})},
-    )
-    return proc.returncode, json.loads(proc.stdout)
-
-
 def _validate_state_path(state, repo, expected_head, *, platform="codex"):
     _require_git()
     proc = subprocess.run(
@@ -500,51 +476,80 @@ def _new_run_fixture(tmp_path, *, held_reason="run_budget_exhausted", exhausted=
     return repo, branch, previous_head, current_head, source, source_bytes, expected
 
 
-def _append_new_run(
-    repo,
-    branch,
-    current_head,
-    source,
-    expected,
-    *,
-    expected_overrides=None,
-    owner_sha256="09" * 32,
-    owner_bytes="479",
-    date_stamp="2026-08-26",
-    env_overrides=None,
-    git_exe=None,
-    expect_host_env_blocked=False,
-):
-    expected = {**expected, **(expected_overrides or {})}
-    code, result = _run_new_run(
-        "append",
-        "--source-state",
-        source,
-        "--target-worktree",
-        repo,
-        "--git-exe",
-        git_exe or GIT,
-        "--expected-branch",
-        branch,
-        "--expected-head",
-        current_head,
-        "--expected-source-sha256",
-        expected["sha256"],
-        "--expected-source-bytes",
-        expected["bytes"],
-        "--expected-source-checkpoints",
-        expected["checkpoints"],
-        "--owner-message-sha256",
-        owner_sha256,
-        "--owner-message-bytes",
-        owner_bytes,
-        "--date-stamp",
-        date_stamp,
-        "--json",
-        env_overrides=env_overrides,
+def _write_historical_new_run_fixture(repo, branch, head, source):
+    """Build historical bytes only in pytest's disposable repository, never a live run."""
+    source_bytes = source.read_bytes()
+    terminal = source_bytes.decode("utf-8").strip()
+    old = dict(part.split("=", 1) for part in terminal.split(" | ")[1:])
+    script = (
+        f"import {{resolveTrustedGit}} from {json.dumps(TRUSTED_GIT_MODULE.as_uri())};"
+        f"process.stdout.write(JSON.stringify(resolveTrustedGit({json.dumps(GIT)},"
+        f"{json.dumps(str(repo))})));"
     )
-    _handle_host_env_blocked(result, expected=expect_host_env_blocked)
-    return code, result
+    trusted = subprocess.run(
+        ["node", "--input-type=module", "-e", script],
+        capture_output=True, text=True, check=True,
+    )
+    identity = json.loads(trusted.stdout)
+    common = pathlib.Path(_git(repo, "rev-parse", "--git-common-dir"))
+    if not common.is_absolute():
+        common = repo / common
+    fields = dict(part.split("=", 1) for part in _line(
+        repo, head, "NEW_RUN@P0", spec=(repo / "openspec/changes/demo").as_posix(),
+        branch=branch, dateStamp="2026-08-26", runIds="none", taskIndex="0",
+        agentCalls="0/40", p5Rounds="0/2", evidenceAttempts="0/2", evidenceHead="",
+        診斷="owner-authorized-new-run-boundary",
+    ).split(" | ")[1:])
+    boundary = {
+        "boundarySchema": "spec-to-done-new-run/v1", "runSequence": 2,
+        "previousStateSha256": hashlib.sha256(source_bytes).hexdigest(),
+        "previousStateBytes": len(source_bytes), "previousCheckpointCount": 1,
+        "previousTerminalSha256": hashlib.sha256(terminal.encode("utf-8")).hexdigest(),
+        **{"previous" + key[0].upper() + key[1:]: old[key]
+           for key in ("spec", "slug", "branch", "worktree", "head")},
+        "gitExecutablePath": pathlib.Path(identity["resolvedGit"]).as_posix(),
+        "gitExecutableSha256": identity["executableSha256"],
+        "gitExecutableBytes": identity["executableBytes"],
+        "gitTrustClass": identity["trustClass"],
+        "gitDirectory": pathlib.Path(_git(repo, "rev-parse", "--absolute-git-dir")).as_posix(),
+        "gitCommonDirectory": common.resolve().as_posix(),
+    }
+    seed = {
+        **boundary,
+        **{key: fields[key] for key in (
+            "spec", "slug", "userFacing", "branch", "worktree", "head",
+            "executionMode", "closeoutTaskIds", "dateStamp",
+        )},
+        "ownerMessageSha256": "09" * 32, "ownerMessageBytes": 479,
+    }
+    def digest(value):
+        return hashlib.sha256(json.dumps(
+            value, ensure_ascii=False, separators=(",", ":"),
+        ).encode("utf-8")).hexdigest()
+    run_id = "run-2-" + digest(seed)[:16]
+    provenance = "sha256-tuple-binding-not-digital-signature"
+    fields.update({
+        "boundarySchema": boundary["boundarySchema"],
+        "runSequence": boundary["runSequence"], "newRunId": run_id,
+        **{key: boundary[key] for key in (
+            "previousStateSha256", "previousStateBytes", "previousCheckpointCount",
+            "previousTerminalSha256", "previousSpec", "previousSlug", "previousBranch",
+            "previousWorktree", "previousHead",
+        )},
+        "ownerProvenance": provenance,
+        **{key: boundary[key] for key in (
+            "gitExecutablePath", "gitExecutableSha256", "gitExecutableBytes",
+            "gitTrustClass", "gitDirectory", "gitCommonDirectory",
+        )},
+        "ownerMessageSha256": seed["ownerMessageSha256"], "ownerMessageBytes": 479,
+        "ownerTupleSha256": digest({**seed, "newRunId": run_id, "ownerProvenance": provenance}),
+    })
+    target = repo / "artifacts/spec-to-done/demo-state.md"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(source_bytes + (
+        "NEW_RUN@P0 | " + " | ".join(f"{k}={v}" for k, v in fields.items()) + "\n"
+    ).encode("utf-8"))
+    return target
 
 
 def _run_trusted_git_pure(export_name, payload):
@@ -928,52 +933,6 @@ def test_fabric_managed_resumed_requires_unavailable_outer_authority(tmp_path):
     assert result["held"] == "fabric_resume_authority_unavailable"
 
 
-def test_fabric_managed_new_run_status_and_append_fail_closed(tmp_path):
-    repo, _ = _new_repo(tmp_path)
-    fabric = _fabric_binding_fixture(tmp_path, repo)
-    held = _line(
-        repo,
-        fabric["head"],
-        "HELD@P3",
-        branch=fabric["branch"],
-        runIds="P3:codex:managed-state-session",
-        reason="run_budget_exhausted",
-        agentCalls="40/40",
-        fabricMode="fabric-managed",
-        fabricBindingId=fabric["binding"]["binding_id"],
-    )
-    source = fabric["expected_state_path"]
-    source.parent.mkdir(parents=True, exist_ok=True)
-    source_bytes = (held + "\n").encode("utf-8")
-    source.write_bytes(source_bytes)
-
-    code, status = _run_new_run("status", "--state", source, "--json")
-    assert code == 0 and status["ok"] is True
-    assert status["fabricManaged"] is True
-    assert status["canStartNewRun"] is False
-    assert status["ownerAuthorizationRequired"] is False
-    assert status["nextAction"] == "return-control-to-parallel-delivery-fabric"
-    assert status["blockReason"] == "fabric-managed-local-new-run-forbidden"
-
-    code, result = _run_new_run(
-        "append",
-        "--source-state", source,
-        "--target-worktree", repo,
-        "--git-exe", GIT,
-        "--expected-branch", fabric["branch"],
-        "--expected-head", fabric["head"],
-        "--expected-source-sha256", hashlib.sha256(source_bytes).hexdigest(),
-        "--expected-source-bytes", str(len(source_bytes)),
-        "--expected-source-checkpoints", "1",
-        "--owner-message-sha256", "a" * 64,
-        "--owner-message-bytes", "1",
-        "--date-stamp", "2026-08-31",
-        "--json",
-    )
-    assert code == 2 and result["held"] == "resume_state_invalid"
-    assert "Fabric-managed" in result["detail"]
-
-
 def test_machine_contract_pins_the_owner_only_new_run_boundary():
     contract = json.loads(MACHINE_CONTRACT.read_text(encoding="utf-8"))
     boundary = contract["durable_state"]["new_run_boundary"]
@@ -1005,146 +964,11 @@ def test_machine_contract_pins_the_owner_only_new_run_boundary():
     }
 
 
-def test_claude_procedure_authority_documents_the_fabric_managed_profile():
-    skill = _skill_text(CLAUDE_SKILL)
-    for required in (
-        "session_admission_limit=unbounded",
-        "run_writer_cardinality=1",
-        "fabricBindingPath",
-        "fabricPlanPath",
-        "fabricLeasePath",
-        "fabricProviderSessionPath",
-        "expectedStatePath",
-        "--fabric-binding <fabricBindingPath>",
-        "fabricMode=fabric-managed",
-        "fabricBindingId=<64-hex>",
-        "fabric_resume_authority_unavailable",
-        "return-control-to-parallel-delivery-fabric",
-        "不同 Fabric binding 可在各自 branch/worktree 併行",
-    ):
-        assert required in skill
-    assert "不得讀 occupied writer count 作 admission blocker" in skill
-    assert "binding packet 是 non-authorizing metadata" in skill
-    assert "Fabric-managed run 不進入 P6" in skill
-
-
-def test_codex_adapter_and_fabric_operator_doc_preserve_the_same_binding_contract():
-    codex_skill = _skill_text(CODEX_SKILL)
+def test_fabric_operator_doc_preserves_binding_contract():
     operator_doc = FABRIC_OPERATOR_DOC.read_text(encoding="utf-8")
-
-    for required in (
-        "session_admission_limit=unbounded",
-        "run_writer_cardinality=1",
-        "fabricBindingPath",
-        "fabricPlanPath",
-        "fabricLeasePath",
-        "fabricProviderSessionPath",
-        "expectedStatePath",
-        "--fabric-binding <fabricBindingPath>",
-        "fabricMode=fabric-managed",
-        "fabricBindingId=<64-hex>",
-        "fabric_resume_authority_unavailable",
-        "return-control-to-parallel-delivery-fabric",
-        "不同 Fabric binding 可在各自 branch/worktree 併行",
-    ):
-        assert required in codex_skill
-
-    assert "不得讀 occupied writer count 作 admission blocker" in codex_skill
-    assert "binding packet 是 non-authorizing metadata" in codex_skill
-    assert "不建立第二套引擎" in codex_skill
-    assert "Fabric-managed run 不進入 P6" in codex_skill
     assert "Repo session admission has no writer-count cap" in operator_doc
     assert "one writer" in operator_doc
     assert "does not create a second scheduler" in operator_doc
-
-
-def test_claude_and_codex_skills_define_a_bounded_anti_loop_delivery_contract():
-    for skill_path in (CLAUDE_SKILL, CODEX_SKILL):
-        skill = _skill_text(skill_path)
-        for required in (
-            "evidenceFingerprint=head/base/diffDigest/gate/blocker/authorityState",
-            "blockerFingerprint=gate/errorCode/affectedScope/rootCause",
-            "NO_RETRY",
-            "SKIP_ALREADY_SATISFIED",
-            "CIRCUIT_BREAKER_OPEN",
-            "REUSE_AUTHORIZATION",
-            "one_conclusive_p5_review_per_exact_head",
-            "one_approval_request_per_exact_head",
-            "絕不重用 GitHub counted approval",
-            "HEAD 改變後仍須重新取得該 exact head 的有效 approval",
-            "incremental gate evaluation",
-            "BLOCKING / CONFIRMED_CORRECTNESS / OPTIONAL / OUT_OF_SCOPE",
-            "同一 fingerprint",
-            "evidence delta",
-            "既有 PASS",
-            "收斂為 HELD",
-        ):
-            assert required in skill
-
-
-def test_new_run_appender_preserves_prefix_and_emits_valid_p0(tmp_path):
-    repo, branch, old_head, new_head, source, source_bytes, expected = (
-        _new_run_fixture(tmp_path)
-    )
-    code, status = _run_new_run("status", "--state", source, "--json")
-    assert code == 0 and status["canStartNewRun"] is True
-    assert status["ownerAuthorizationRequired"] is True
-    assert status["nextAction"] == "obtain-exact-owner-authorization-then-run-append"
-    assert "owner-message-sha256" in status["appendRequiredArguments"]
-    code, result = _append_new_run(repo, branch, new_head, source, expected)
-    assert code == 0 and result["ok"] is True, result
-    target = repo / "artifacts/spec-to-done/demo-state.md"
-    target_bytes = target.read_bytes()
-    assert target_bytes.startswith(source_bytes)
-    assert result["sourceSha256"] == expected["sha256"]
-    assert result["previousHead"] == old_head
-    assert result["head"] == new_head
-    assert result["runSequence"] == 2
-    assert result["ownerProvenance"] == "sha256-tuple-binding-not-digital-signature"
-
-    code, validated = _validate_state_path(target, repo, new_head)
-    assert code == 0 and validated["ok"] is True
-    assert validated["kind"] == "NEW_RUN"
-    assert validated["phase"] == "P0"
-    assert validated["counters"]["agentCalls"]["used"] == 0
-    assert pathlib.Path(validated["fields"]["gitExecutablePath"]).is_absolute()
-    assert re.fullmatch(r"[0-9a-f]{64}", validated["fields"]["gitExecutableSha256"])
-    assert int(validated["fields"]["gitExecutableBytes"]) > 0
-    assert validated["fields"]["gitTrustClass"] == "system-owned-read-only"
-    assert pathlib.Path(validated["fields"]["gitDirectory"]).is_absolute()
-    assert pathlib.Path(validated["fields"]["gitCommonDirectory"]).is_absolute()
-    actual_git_dir = pathlib.Path(_git(repo, "rev-parse", "--absolute-git-dir")).resolve()
-    raw_common_dir = pathlib.Path(_git(repo, "rev-parse", "--git-common-dir"))
-    actual_common_dir = (
-        raw_common_dir if raw_common_dir.is_absolute() else repo / raw_common_dir
-    ).resolve()
-    assert pathlib.Path(validated["fields"]["gitDirectory"]).resolve() == actual_git_dir
-    assert (
-        pathlib.Path(validated["fields"]["gitCommonDirectory"]).resolve()
-        == actual_common_dir
-    )
-
-    code, status = _run_new_run("status", "--state", target, "--json")
-    assert code == 0 and status["ok"] is True
-    assert status["canStartNewRun"] is False
-    assert status["runSequence"] == 2
-    assert status["nextAction"] == "continue-or-hold-current-run-without-counter-reset"
-    assert status["appendRequiredArguments"] == []
-
-
-@pytest.mark.parametrize(
-    ("held_reason", "exhausted"),
-    [("external_blocked", True), ("run_budget_exhausted", False)],
-)
-def test_new_run_rejects_nonbudget_or_unexhausted_history(
-    tmp_path, held_reason, exhausted
-):
-    fixture = _new_run_fixture(
-        tmp_path, held_reason=held_reason, exhausted=exhausted
-    )
-    repo, branch, _, head, source, _, expected = fixture
-    code, result = _append_new_run(repo, branch, head, source, expected)
-    assert code == 2 and result["held"] == "resume_state_invalid"
 
 
 def test_validator_rejects_a_fabricated_new_run_line(tmp_path):
@@ -1162,53 +986,6 @@ def test_validator_rejects_a_fabricated_new_run_line(tmp_path):
     )
     code, result = _run(tmp_path, repo, fabricated, platform="codex")
     assert code == 2 and result["held"] == "resume_state_invalid"
-
-
-def test_new_run_rejects_stale_source_tuple(tmp_path):
-    repo, branch, _, head, source, _, expected = _new_run_fixture(tmp_path)
-    code, result = _append_new_run(
-        repo,
-        branch,
-        head,
-        source,
-        expected,
-        expected_overrides={"sha256": "00" * 32},
-    )
-    assert code == 2 and result["held"] == "resume_state_invalid"
-
-
-def test_new_run_rejects_dirty_target_worktree(tmp_path):
-    repo, branch, _, head, source, _, expected = _new_run_fixture(tmp_path)
-    dirty = repo / "src/dirty.txt"
-    dirty.write_text("not committed\n", encoding="utf-8")
-    code, result = _append_new_run(repo, branch, head, source, expected)
-    assert code == 2 and result["held"] == "resume_state_invalid"
-    assert "clean" in result["detail"]
-
-
-def test_new_run_rejects_reusing_the_prior_worktree(tmp_path):
-    _, branch, _, head, source, _, expected = _new_run_fixture(tmp_path)
-    prior_worktree = source.parents[2]
-
-    code, result = _append_new_run(
-        prior_worktree, branch, head, source, expected
-    )
-
-    assert code == 2 and result["held"] == "resume_state_invalid"
-    assert "fresh sibling worktree" in result["detail"]
-
-
-def test_new_run_ignores_ambient_git_directory_injection(tmp_path):
-    repo, branch, _, head, source, _, expected = _new_run_fixture(tmp_path)
-    code, result = _append_new_run(
-        repo,
-        branch,
-        head,
-        source,
-        expected,
-        env_overrides={"GIT_DIR": str(tmp_path / "attacker")},
-    )
-    assert code == 0 and result["ok"] is True, result
 
 
 def test_validator_ignores_ambient_git_repository_object_and_config_injection(tmp_path):
@@ -1269,192 +1046,15 @@ def test_windows_system_git_rejects_an_arbitrary_program_files_drive():
     assert code == 0 and result == {"ok": True, "value": True}
 
 
-def test_new_run_rejects_caller_controlled_git_even_when_named_git(tmp_path):
-    repo, branch, _, head, source, _, expected = _new_run_fixture(tmp_path)
-    suffix = ".exe" if os.name == "nt" else ""
-    fake_git = tmp_path / f"git{suffix}"
-    shutil.copyfile(GIT, fake_git)
-    fake_git.chmod(0o755)
-
-    code, result = _append_new_run(
-        repo,
-        branch,
-        head,
-        source,
-        expected,
-        git_exe=str(fake_git),
-        expect_host_env_blocked=True,
-    )
-
-    assert code == 2 and result["held"] == "host_env_blocked"
-    assert not (repo / "artifacts/spec-to-done/demo-state.md").exists()
-
-
-def test_new_run_rejects_bad_owner_tuple_or_worktree_identity(tmp_path):
-    repo, branch, _, head, source, _, expected = _new_run_fixture(tmp_path)
-    code, result = _append_new_run(
-        repo, branch, head, source, expected, owner_sha256="bad"
-    )
-    assert code == 2 and result["held"] == "bad_args"
-    code, result = _append_new_run(repo, "wrong/branch", head, source, expected)
-    assert code == 2 and result["held"] == "resume_state_invalid"
-
-
-def test_new_run_rejects_lock_and_repeat(tmp_path):
-    repo, branch, _, head, source, _, expected = _new_run_fixture(tmp_path)
-    target = repo / "artifacts/spec-to-done/demo-state.md"
-    target.parent.mkdir(parents=True)
-    lock = pathlib.Path(f"{target}.new-run.lock")
-    lock.write_text("occupied\n", encoding="utf-8")
-    code, result = _append_new_run(repo, branch, head, source, expected)
-    assert code == 2 and result["held"] == "resume_state_invalid"
-    lock.unlink()
-
-    code, result = _append_new_run(repo, branch, head, source, expected)
-    assert code == 0 and result["ok"] is True, result
-    code, result = _append_new_run(repo, branch, head, source, expected)
-    assert code == 2 and result["held"] == "resume_state_invalid"
-
-
-@pytest.mark.skipif(
-    os.name == "nt",
-    reason="trusted-Git positive atomicity coverage runs on canonical Linux",
-)
-def test_new_run_lock_snapshot_preserves_first_completed_boundary(tmp_path):
-    repo, branch, _, head, source, _, expected = _new_run_fixture(tmp_path)
-    ready = tmp_path / "before-lock.ready"
-    release = tmp_path / "before-lock.release"
-    driver = tmp_path / "append-driver.mjs"
-    driver.write_text(
-        f"""
-import fs from 'node:fs'
-import {{ appendCommand }} from {json.dumps(NEW_RUN_APPENDER.as_uri())}
-const cli = JSON.parse(process.argv[2])
-try {{
-  const result = appendCommand(cli, {{
-    beforeLock() {{
-      fs.writeFileSync(process.argv[3], 'ready')
-      const waiter = new Int32Array(new SharedArrayBuffer(4))
-      while (!fs.existsSync(process.argv[4])) Atomics.wait(waiter, 0, 0, 10)
-    }},
-  }})
-  process.stdout.write(JSON.stringify(result))
-}} catch (error) {{
-  process.stdout.write(JSON.stringify({{
-    ok: false,
-    held: error.held || 'resume_state_invalid',
-    detail: error.message,
-  }}))
-  process.exitCode = 2
-}}
-""",
-        encoding="utf-8",
-    )
-    cli = {
-        "command": "append",
-        "source-state": str(source),
-        "target-worktree": str(repo),
-        "git-exe": GIT,
-        "expected-branch": branch,
-        "expected-head": head,
-        "expected-source-sha256": expected["sha256"],
-        "expected-source-bytes": str(expected["bytes"]),
-        "expected-source-checkpoints": str(expected["checkpoints"]),
-        "owner-message-sha256": "10" * 32,
-        "owner-message-bytes": "480",
-        "date-stamp": "2026-08-27",
-        "json": True,
-    }
-    blocked = subprocess.Popen(
-        ["node", str(driver), json.dumps(cli), str(ready), str(release)],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        encoding="utf-8",
-        env=os.environ.copy(),
-    )
-    deadline = time.monotonic() + 10
-    while not ready.exists() and time.monotonic() < deadline:
-        time.sleep(0.01)
-    assert ready.exists(), "blocked appender did not reach its pre-lock barrier"
-
-    first_code, first = _append_new_run(repo, branch, head, source, expected)
-    assert first_code == 0 and first["ok"] is True, first
-    target = repo / "artifacts/spec-to-done/demo-state.md"
-    first_bytes = target.read_bytes()
-    release.write_text("release\n", encoding="utf-8")
-    stdout, stderr = blocked.communicate(timeout=10)
-    second = json.loads(stdout)
-
-    assert blocked.returncode == 2, stderr
-    assert second["held"] == "resume_state_invalid"
-    assert "overwrite refused" in second["detail"]
-    assert target.read_bytes() == first_bytes
-    assert first_bytes.count(b"NEW_RUN@P0 |") == 1
-    assert not pathlib.Path(f"{target}.new-run.lock").exists()
-
-
-@pytest.mark.skipif(
-    os.name == "nt",
-    reason="trusted-Git positive rollback coverage runs on canonical Linux",
-)
-def test_new_run_post_write_failure_restores_locked_target_bytes(tmp_path):
-    repo, branch, _, head, source, source_bytes, expected = _new_run_fixture(tmp_path)
-    target = repo / "artifacts/spec-to-done/demo-state.md"
-    target.parent.mkdir(parents=True)
-    target.write_bytes(source_bytes)
-    driver = tmp_path / "rollback-driver.mjs"
-    driver.write_text(
-        f"""
-import {{ appendCommand }} from {json.dumps(NEW_RUN_APPENDER.as_uri())}
-const cli = JSON.parse(process.argv[2])
-try {{
-  appendCommand(cli, {{ afterWrite() {{ throw new Error('forced post-write failure') }} }})
-}} catch (error) {{
-  process.stdout.write(JSON.stringify({{
-    ok: false,
-    held: error.held || 'resume_state_invalid',
-    detail: error.message,
-  }}))
-  process.exitCode = 2
-}}
-""",
-        encoding="utf-8",
-    )
-    cli = {
-        "command": "append",
-        "source-state": str(source),
-        "target-worktree": str(repo),
-        "git-exe": GIT,
-        "expected-branch": branch,
-        "expected-head": head,
-        "expected-source-sha256": expected["sha256"],
-        "expected-source-bytes": str(expected["bytes"]),
-        "expected-source-checkpoints": str(expected["checkpoints"]),
-        "owner-message-sha256": "09" * 32,
-        "owner-message-bytes": "479",
-        "date-stamp": "2026-08-26",
-        "json": True,
-    }
-    proc = subprocess.run(
-        ["node", str(driver), json.dumps(cli)],
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        env=os.environ.copy(),
-    )
-    result = json.loads(proc.stdout)
-
-    assert proc.returncode == 2 and "forced post-write failure" in result["detail"]
-    assert target.read_bytes() == source_bytes
-    assert not pathlib.Path(f"{target}.new-run.lock").exists()
-
-
 def test_validator_rejects_tampered_new_run_boundary(tmp_path):
     repo, branch, _, head, source, _, expected = _new_run_fixture(tmp_path)
-    code, result = _append_new_run(repo, branch, head, source, expected)
+    # Establish host capability before the fixture needs the trusted Git identity.
+    # The required Linux matrix still fails, rather than skips, if it is blocked.
+    code, result = _run(tmp_path, repo, _line(repo, head))
     assert code == 0 and result["ok"] is True, result
-    target = repo / "artifacts/spec-to-done/demo-state.md"
+    target = _write_historical_new_run_fixture(repo, branch, head, source)
+    code, result = _validate_state_path(target, repo, head)
+    assert code == 0 and result["ok"] is True, result
     target.write_bytes(target.read_bytes().replace(b"ownerMessageBytes=479", b"ownerMessageBytes=480"))
     code, result = _validate_state_path(target, repo, head)
     assert code == 2 and result["held"] == "resume_state_invalid"
@@ -1462,15 +1062,8 @@ def test_validator_rejects_tampered_new_run_boundary(tmp_path):
 
 def test_valid_claude_and_codex_states_and_single_canonical_validator(tmp_path):
     repo, head = _new_repo(tmp_path)
-    # 單一正本政策（pr-review-agent generated_tooling_path 規則）：validate-state.mjs 只存在
-    # .claude 側；.codex 鏡像不得放副本（SKILL.md 指向 .claude 路徑）。兩平台 state 都用同一正本驗。
     assert CLAUDE_VALIDATOR.exists()
     assert not CODEX_VALIDATOR.exists()
-    claude_skill = _skill_text(CLAUDE_SKILL)
-    codex_skill = _skill_text(CODEX_SKILL)
-    assert "validate-state.mjs --state <temp> --platform claude" in claude_skill
-    assert "validate-state.mjs --state <temp>\n  --platform codex" in codex_skill
-    assert "validate-state.mjs（" not in codex_skill
     code, result = _run(tmp_path, repo, _line(repo, head))
     assert code == 0 and result["ok"] is True
     code, result = _run(
@@ -1483,20 +1076,6 @@ def test_valid_claude_and_codex_states_and_single_canonical_validator(tmp_path):
     grok_id = "P5:grok:01a01998-c3f4-77b2-8825-0706ec8e57c6"
     code, result = _run(tmp_path, repo, _line(repo, head, runIds=grok_id), platform="grok")
     assert code == 0 and result["ok"] is True
-
-
-def test_grok_adapter_is_thin_and_points_at_canonical_gates():
-    grok_skill = GROK_SKILL.read_text(encoding="utf-8")
-    assert GROK_SKILL.is_file()
-    assert "--platform grok" in grok_skill
-    assert "grok:<actual-subagent-or-workflow-id>" in grok_skill
-    assert ".claude/skills/spec-to-done/SKILL.md" in grok_skill
-    assert "agent-contracts/spec-to-done.contract.json" in grok_skill
-    assert "validate-state.mjs" in grok_skill
-    assert "禁止" in grok_skill and "等價" in grok_skill
-    assert "P0/P1/P3/P4/P5/P6/P7" in grok_skill
-    assert "host_env_blocked" in grok_skill
-    assert "std-plan.js" in grok_skill
 
 
 def test_grok_platform_requires_grok_run_ids_except_p0_none(tmp_path):
@@ -1593,28 +1172,6 @@ def test_cli_rejects_a_local_tracking_ref_as_the_trust_marker(tmp_path):
 
 def test_machine_held_reasons_are_durable_and_unknown_reasons_fail_closed(tmp_path):
     repo, head = _new_repo(tmp_path)
-    claude_contract = _skill_text(CLAUDE_SKILL)
-    codex_contract = _skill_text(CODEX_SKILL)
-
-    def section(contract, start_marker, end_marker):
-        start = contract.index(start_marker)
-        end = contract.index(end_marker, start)
-        return contract[start:end]
-
-    p6_sections = (
-        section(claude_contract, "P6 = Workflow", "P7 ="),
-        section(codex_contract, "P6 = Workflow", "P7 ="),
-    )
-    held_tables = (
-        section(claude_contract, "## held 對照表", "## 強制停下點"),
-        section(codex_contract, "## held 對照表", "## 強制停下點"),
-    )
-    p6_scoped_reasons = {
-        "branch_requires_separate_authorization",
-        "branch_protection_changed_during_buffer",
-        "branch_protection_changed_after_verdict",
-        "human_approval_changed_after_verdict",
-    }
     machine_contract = json.loads(MACHINE_CONTRACT.read_text(encoding="utf-8"))
     documented_reasons = tuple(machine_contract["durable_state"]["held_reasons"])
     for reason in documented_reasons:
@@ -1625,9 +1182,6 @@ def test_machine_held_reasons_are_durable_and_unknown_reasons_fail_closed(tmp_pa
         )
         assert code == 0 and result["kind"] == "HELD"
         assert result["fields"]["reason"] == reason
-        if reason in p6_scoped_reasons:
-            assert all(reason in p6_section for p6_section in p6_sections)
-            assert all(reason in held_table for held_table in held_tables)
 
     code, result = _run(
         tmp_path,

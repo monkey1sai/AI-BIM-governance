@@ -10,7 +10,7 @@ import {
   resolveTrustedGit,
   sanitizedGitEnvironment,
 } from './trusted-git.mjs'
-import { matchesFabricCommonDirectoryDigest, physicalPathDigest, validateSpecToDoneFabricBinding } from '../../../scripts/lib/spec-to-done-fabric-binding.mjs'
+import { matchesFabricCommonDirectoryDigest, physicalPathDigest, validateSpecToDoneFabricBinding } from '../spec-to-done-fabric-binding.mjs'
 
 const MACHINE_CONTRACT_URL = new URL('../../../agent-contracts/spec-to-done.contract.json', import.meta.url)
 const STATE_PREFIX = /^(HELD|DONE|RESUMED|AUTHORIZATION|NEW_RUN)@(P\d+)$/

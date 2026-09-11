@@ -48,6 +48,9 @@ export function main(argv = process.argv.slice(2)) {
       packet_ids: kind === 'corpus' ? input.tasks.map((packet) => packet.id) : [input.id],
       authorization_granted: false,
       authorization_scope: 'validation_only',
+      retired_lane_validation_only: kind === 'corpus'
+        ? input.tasks.some((packet) => packet.lane === 'S')
+        : input.lane === 'S',
       external_lane_s_authorization_required: kind === 'corpus'
         ? input.tasks.some((packet) => packet.lane === 'S')
         : input.lane === 'S',

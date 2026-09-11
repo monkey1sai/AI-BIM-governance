@@ -1,4 +1,4 @@
-# spec-to-done helper — host-native port preflight for backend stack startup / rebuild
+# Host-native port preflight for backend stack startup / rebuild
 #
 # Safety contract:
 # - Default and -DetectOnly modes are read-only. They report busy ports and exit 1 without stopping anything.
@@ -41,6 +41,37 @@ $ErrorActionPreference = 'Continue'
 
 $script:CanonicalTestDeploymentRoot = 'D:\Users\deploy\AI-bim-geo'
 $script:KillableHostNativeProcessPattern = '^(kit|kitd|python|pythonw|nvstreamer|pvd_streamer)$'
+$script:HostNativePortLogger = $null
+
+function Write-HostNativePortEvent {
+    param(
+        [Parameter(Mandatory = $true)]
+        [ValidateSet('held', 'free', 'inspect', 'stopping', 'timeout')]
+        [string] $Status,
+        [Parameter(Mandatory = $true)][string] $Message
+    )
+
+    try {
+        if ($null -eq $script:HostNativePortLogger) {
+            Import-Module (Join-Path $PSScriptRoot '..\lib\StructLog.psm1') -ErrorAction Stop
+            # stdout only: detect/default modes must not create log files or capture the environment.
+            $script:HostNativePortLogger = New-StructLogger -Service scripts -Component host-native-ports `
+                -InMemoryOnly -SkipEnvSnapshot
+        }
+        $phase = if ($Status -in @('held', 'free', 'timeout')) { 'closed' } else { 'active' }
+        Write-StructLifecycle -Logger $script:HostNativePortLogger -Msg $Message -Data @{
+            phase = $phase
+            subject_kind = 'script_run'
+            subject_id = $script:HostNativePortLogger.RunId
+            status = $Status
+        } | Out-Null
+    }
+    catch {
+        # Logging cannot change port ownership decisions, stop attempts, or exit codes.
+        try { [Console]::Error.WriteLine('[ports-log] structured logging unavailable') } catch { }
+    }
+}
+
 
 function ConvertTo-ValidatedInt {
     param(
@@ -811,7 +842,7 @@ function Invoke-HostNativePortCleanup {
     )
 
     if ($ReadOnly -and $AllowOwnedStop) {
-        Write-Host '[held ] -DetectOnly and -StopOwnedRuntime cannot be combined'
+        Write-HostNativePortEvent -Status held -Message '[held ] -DetectOnly and -StopOwnedRuntime cannot be combined'
         return 2
     }
 
@@ -819,7 +850,7 @@ function Invoke-HostNativePortCleanup {
     $expectedTopology = $null
     if ($AllowOwnedStop) {
         if ([string]::IsNullOrWhiteSpace($TargetDeploymentRoot)) {
-            Write-Host '[held ] -StopOwnedRuntime requires -DeploymentRoot'
+            Write-HostNativePortEvent -Status held -Message '[held ] -StopOwnedRuntime requires -DeploymentRoot'
             return 2
         }
         try {
@@ -831,7 +862,7 @@ function Invoke-HostNativePortCleanup {
             }
         }
         catch {
-            Write-Host ("[held ] {0}" -f $_.Exception.Message)
+            Write-HostNativePortEvent -Status held -Message ("[held ] {0}" -f $_.Exception.Message)
             return 2
         }
     }
@@ -841,17 +872,17 @@ function Invoke-HostNativePortCleanup {
             $busy = @(Get-BusyPorts -TcpPorts $TcpPorts -UdpPorts $UdpPorts)
         }
         catch {
-            Write-Host ("[held ] port inspection unavailable; no process was stopped: {0}" -f $_.Exception.Message)
+            Write-HostNativePortEvent -Status held -Message ("[held ] port inspection unavailable; no process was stopped: {0}" -f $_.Exception.Message)
             return 2
         }
         if ($busy.Count -eq 0) {
-            Write-Host '[detect] all required host-native ports FREE; no process stopped'
+            Write-HostNativePortEvent -Status free -Message '[detect] all required host-native ports FREE; no process stopped'
             return 0
         }
-        Write-Host '[detect] required host-native ports occupied; default mode is read-only:'
+        Write-HostNativePortEvent -Status inspect -Message '[detect] required host-native ports occupied; default mode is read-only:'
         foreach ($item in $busy) {
             $processInfo = Get-HostNativeProcessInfo -ProcId $item.ProcId
-            Write-Host ("         {0}/{1} PID={2} ({3}) ownership=not-evaluated -> HELD" -f
+            Write-HostNativePortEvent -Status held -Message ("         {0}/{1} PID={2} ({3}) ownership=not-evaluated -> HELD" -f
                 $item.Protocol, $item.Port, $item.ProcId, $processInfo.Name)
         }
         return 1
@@ -861,70 +892,70 @@ function Invoke-HostNativePortCleanup {
         $initialSnapshot = @(Get-HostNativePortSnapshot -TcpPorts $TcpPorts -UdpPorts $UdpPorts -Root $resolvedDeploymentRoot)
     }
     catch {
-        Write-Host ("[held ] port inspection unavailable; no process was stopped: {0}" -f $_.Exception.Message)
+        Write-HostNativePortEvent -Status held -Message ("[held ] port inspection unavailable; no process was stopped: {0}" -f $_.Exception.Message)
         return 2
     }
     if ($initialSnapshot.Count -eq 0) {
-        Write-Host '[ports-free] all required host-native ports FREE'
+        Write-HostNativePortEvent -Status free -Message '[ports-free] all required host-native ports FREE'
         return 0
     }
 
     foreach ($record in $initialSnapshot) {
         $ownershipLabel = if ($record.Ownership.Count -gt 0) { $record.Ownership -join '+' } else { 'unproven' }
-        Write-Host ("[inspect] {0}/{1} PID={2} ({3}) ownership={4} allowlisted={5} creation-identity={6}" -f
+        Write-HostNativePortEvent -Status inspect -Message ("[inspect] {0}/{1} PID={2} ({3}) ownership={4} allowlisted={5} creation-identity={6}" -f
             $record.Protocol, $record.Port, $record.ProcId, $record.ProcessInfo.Name, $ownershipLabel,
             $record.NameAllowed, (-not [string]::IsNullOrWhiteSpace([string]$record.ProcessInfo.CreationKey)))
     }
     if (@($initialSnapshot | Where-Object { -not $_.SafeToStop }).Count -gt 0) {
-        Write-Host '[held ] port/process-name/pidfile evidence is insufficient; no process was stopped'
+        Write-HostNativePortEvent -Status held -Message '[held ] port/process-name/pidfile evidence is insufficient; no process was stopped'
         return 1
     }
 
     # Take a complete second snapshot before the first stop. Every protocol/port/PID and process
     # identity must remain exact, otherwise a race or PID reuse is treated as HELD.
     if (-not (Test-DeploymentTopologyUnchanged -Root $resolvedDeploymentRoot -Expected $expectedTopology)) {
-        Write-Host '[held ] deployment topology changed before cleanup; no process was stopped'
+        Write-HostNativePortEvent -Status held -Message '[held ] deployment topology changed before cleanup; no process was stopped'
         return 1
     }
     try {
         $confirmedSnapshot = @(Get-HostNativePortSnapshot -TcpPorts $TcpPorts -UdpPorts $UdpPorts -Root $resolvedDeploymentRoot)
     }
     catch {
-        Write-Host ("[held ] confirmation inspection unavailable; no process was stopped: {0}" -f $_.Exception.Message)
+        Write-HostNativePortEvent -Status held -Message ("[held ] confirmation inspection unavailable; no process was stopped: {0}" -f $_.Exception.Message)
         return 2
     }
     if ($confirmedSnapshot.Count -eq 0) {
-        Write-Host '[ports-free] required ports became FREE before cleanup; no process stopped'
+        Write-HostNativePortEvent -Status free -Message '[ports-free] required ports became FREE before cleanup; no process stopped'
         return 0
     }
     if (-not (Test-PortSnapshotsExact -Expected $initialSnapshot -Actual $confirmedSnapshot)) {
-        Write-Host '[held ] port ownership or process identity changed before cleanup; no process was stopped'
+        Write-HostNativePortEvent -Status held -Message '[held ] port ownership or process identity changed before cleanup; no process was stopped'
         return 1
     }
 
     $deadline = (Get-Date).ToUniversalTime().AddSeconds($WaitTimeoutSec)
     foreach ($processGroup in @($confirmedSnapshot | Group-Object ProcId)) {
         if (-not (Test-DeploymentTopologyUnchanged -Root $resolvedDeploymentRoot -Expected $expectedTopology)) {
-            Write-Host '[held ] deployment topology changed during cleanup; no further process was stopped'
+            Write-HostNativePortEvent -Status held -Message '[held ] deployment topology changed during cleanup; no further process was stopped'
             return 1
         }
         try {
             $currentSnapshot = @(Get-HostNativePortSnapshot -TcpPorts $TcpPorts -UdpPorts $UdpPorts -Root $resolvedDeploymentRoot)
         }
         catch {
-            Write-Host ("[held ] pre-stop inspection unavailable; no further process was stopped: {0}" -f $_.Exception.Message)
+            Write-HostNativePortEvent -Status held -Message ("[held ] pre-stop inspection unavailable; no further process was stopped: {0}" -f $_.Exception.Message)
             return 2
         }
         if ($currentSnapshot.Count -eq 0) {
-            Write-Host '[ports-free] all required host-native ports FREE'
+            Write-HostNativePortEvent -Status free -Message '[ports-free] all required host-native ports FREE'
             return 0
         }
         if (-not (Test-PortSnapshotSubset -Baseline $confirmedSnapshot -Current $currentSnapshot)) {
-            Write-Host '[held ] a port owner or process identity changed during cleanup; no further process was stopped'
+            Write-HostNativePortEvent -Status held -Message '[held ] a port owner or process identity changed during cleanup; no further process was stopped'
             return 1
         }
         if (-not (Test-DeploymentTopologyUnchanged -Root $resolvedDeploymentRoot -Expected $expectedTopology)) {
-            Write-Host '[held ] deployment topology changed after pre-stop inspection; no further process was stopped'
+            Write-HostNativePortEvent -Status held -Message '[held ] deployment topology changed after pre-stop inspection; no further process was stopped'
             return 1
         }
 
@@ -934,21 +965,21 @@ function Invoke-HostNativePortCleanup {
         $sample = $currentProcessRecords | Select-Object -First 1
         $ports = @($currentProcessRecords | ForEach-Object { "$($_.Protocol)/$($_.Port)" }) -join ','
         $ownership = @($currentProcessRecords | ForEach-Object { $_.Ownership } | Sort-Object -Unique) -join '+'
-        Write-Host ("[stop  ] ports={0} PID={1} ({2}) ownership={3} -> exact validated process handle" -f
+        Write-HostNativePortEvent -Status stopping -Message ("[stop  ] ports={0} PID={1} ({2}) ownership={3} -> exact validated process handle" -f
             $ports, $procId, $sample.ProcessInfo.Name, $ownership)
         if (-not (Invoke-ValidatedProcessStop -ExpectedProcess $sample.ProcessInfo)) {
             try {
                 $remaining = @(Get-BusyPorts -TcpPorts $TcpPorts -UdpPorts $UdpPorts)
             }
             catch {
-                Write-Host ("[held ] stop identity changed and reinspection failed: {0}" -f $_.Exception.Message)
+                Write-HostNativePortEvent -Status held -Message ("[held ] stop identity changed and reinspection failed: {0}" -f $_.Exception.Message)
                 return 2
             }
             if ($remaining.Count -eq 0) {
-                Write-Host '[ports-free] process exited before stop; all required host-native ports FREE'
+                Write-HostNativePortEvent -Status free -Message '[ports-free] process exited before stop; all required host-native ports FREE'
                 return 0
             }
-            Write-Host ("[held ] exact process identity changed or stop failed for PID={0}; no further process was stopped" -f $procId)
+            Write-HostNativePortEvent -Status held -Message ("[held ] exact process identity changed or stop failed for PID={0}; no further process was stopped" -f $procId)
             return 1
         }
     }
@@ -958,17 +989,17 @@ function Invoke-HostNativePortCleanup {
             $remaining = @(Get-BusyPorts -TcpPorts $TcpPorts -UdpPorts $UdpPorts)
         }
         catch {
-            Write-Host ("[held ] post-stop port inspection unavailable: {0}" -f $_.Exception.Message)
+            Write-HostNativePortEvent -Status held -Message ("[held ] post-stop port inspection unavailable: {0}" -f $_.Exception.Message)
             return 2
         }
         if ($remaining.Count -eq 0) {
-            Write-Host '[ports-free] all required host-native ports FREE'
+            Write-HostNativePortEvent -Status free -Message '[ports-free] all required host-native ports FREE'
             return 0
         }
         Start-Sleep -Milliseconds 250
     }
 
-    Write-Host '[fail  ] timeout: required host-native ports remain occupied after ownership-gated stop attempts'
+    Write-HostNativePortEvent -Status timeout -Message '[fail  ] timeout: required host-native ports remain occupied after ownership-gated stop attempts'
     return 1
 }
 
@@ -977,11 +1008,11 @@ if ($MyInvocation.InvocationName -ne '.') {
         $resolvedTimeoutSec = ConvertTo-ValidatedInt -Name 'TimeoutSec' -Value $TimeoutSec -Min 1 -Max 600
     }
     catch {
-        Write-Host ("[held ] {0}" -f $_.Exception.Message)
+        Write-HostNativePortEvent -Status held -Message ("[held ] {0}" -f $_.Exception.Message)
         exit 2
     }
     if ($DetectOnly -and $StopOwnedRuntime) {
-        Write-Host '[held ] -DetectOnly and -StopOwnedRuntime cannot be combined'
+        Write-HostNativePortEvent -Status held -Message '[held ] -DetectOnly and -StopOwnedRuntime cannot be combined'
         exit 2
     }
 
@@ -991,7 +1022,7 @@ if ($MyInvocation.InvocationName -ne '.') {
             'SpectatorSignalStart', 'SpectatorMediaStart', 'SpectatorStride'
         )
         if (@($topologyParameters | Where-Object { $PSBoundParameters.ContainsKey($_) }).Count -gt 0) {
-            Write-Host '[held ] explicit stop derives ports from the canonical deployment topology; caller port overrides are forbidden'
+            Write-HostNativePortEvent -Status held -Message '[held ] explicit stop derives ports from the canonical deployment topology; caller port overrides are forbidden'
             exit 2
         }
         try {
@@ -1001,7 +1032,7 @@ if ($MyInvocation.InvocationName -ne '.') {
             $udpPorts = @($topology.UdpPorts)
         }
         catch {
-            Write-Host ("[held ] {0}" -f $_.Exception.Message)
+            Write-HostNativePortEvent -Status held -Message ("[held ] {0}" -f $_.Exception.Message)
             exit 2
         }
     }
@@ -1016,7 +1047,7 @@ if ($MyInvocation.InvocationName -ne '.') {
             $resolvedSpectatorStride = ConvertTo-ValidatedInt -Name 'SpectatorStride' -Value $SpectatorStride -Min 1 -Max 1000
         }
         catch {
-            Write-Host ("[held ] {0}" -f $_.Exception.Message)
+            Write-HostNativePortEvent -Status held -Message ("[held ] {0}" -f $_.Exception.Message)
             exit 2
         }
         $tcpPorts = @($resolvedKitSignalPort, $resolvedConversionPort)
@@ -1025,7 +1056,7 @@ if ($MyInvocation.InvocationName -ne '.') {
             $derivedTcpPort = $resolvedSpectatorSignalStart + ($index * $resolvedSpectatorStride)
             $derivedUdpPort = $resolvedSpectatorMediaStart + ($index * $resolvedSpectatorStride)
             if ($derivedTcpPort -gt 65535 -or $derivedUdpPort -gt 65535) {
-                Write-Host '[held ] derived spectator port exceeds 65535'
+                Write-HostNativePortEvent -Status held -Message '[held ] derived spectator port exceeds 65535'
                 exit 2
             }
             $tcpPorts += $derivedTcpPort

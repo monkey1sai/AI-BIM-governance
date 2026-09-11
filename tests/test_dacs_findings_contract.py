@@ -1,21 +1,7 @@
 import pathlib
-import re
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 JS = ROOT / ".claude/workflows/fu-adversarial-verify-generic.js"
-SKILLS = [
-    ROOT / ".claude/skills/spec-to-done/SKILL.md",
-    ROOT / ".codex/skills/spec-to-done/SKILL.md",
-]
-
-
-def _skill_text(skill_path):
-    entry = skill_path.read_text(encoding="utf-8")
-    references = re.findall(r"\.claude/skills/spec-to-done/references/[a-z0-9-]+\.md", entry)
-    assert references, "phase routing must remain discoverable"
-    return entry + "\n" + "\n".join((ROOT / p).read_text(encoding="utf-8") for p in dict.fromkeys(references))
-
-
 def test_findings_contract_landed():
     src = JS.read_text(encoding="utf-8")
     assert "bad_findings" in src, "缺 findings 輸入契約 held"
@@ -30,15 +16,12 @@ def test_findings_contract_landed():
     assert "FINDINGS.map((f) => () =>" not in src, "不得維持一 finding 一 agent 的平行扇出"
 
 
-def test_p5_contract_binds_immutable_identity_and_taxonomy_in_both_skills():
+def test_shared_reviewer_retains_immutable_identity_and_taxonomy():
     required = {
         "targetSha", "baseSha", "subjectSha", "domainContext", "evidence_stale",
         "fix_now", "external_blockers", "known_gaps", "follow_ups",
         "unverified", "refuted", "external_blocked", "unblock_condition",
     }
-    for path in SKILLS:
-        src = _skill_text(path)
-        missing = sorted(token for token in required if token not in src)
-        assert not missing, f"{path} 缺 P5 contract tokens: {missing}"
-        assert "P5.not_closed" not in src
-        assert "P5.new_issues" not in src
+    src = JS.read_text(encoding="utf-8")
+    missing = sorted(token for token in required if token not in src)
+    assert not missing, f"shared reviewer missing contract tokens: {missing}"

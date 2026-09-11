@@ -24,28 +24,14 @@ def test_codegen_no_drift():
 
 # 每個 label 前綴 -> 期望 tier；call-site 必須 spread 對的 ROUTING.<tier>。
 EXPECTED = {
-    "std-plan.js": {"plan:author": "planAuthor", "plan-review:": "standard", "plan-fix:": "judge", "impact:prescan": "standard"},
-    "std-implement.js": {
-        "impact:${T}": "standard", "task-review:": "standard",
-        "task-fix:": "judge", "security-review:": "arbiter",
-        "final-review": "arbiter", "fix:cycle": "judge", "fix:verify": "judge",
-    },
-    "std-evidence.js": {"probe:engine": "extract", "evidence:": "arbiter"},
-    "std-evidence-closeout.js": {"closeout:execute:": "standard", "closeout:verify:": "judge"},
     "fable5-repo-advisory.js": {"scan:": "scan", "merge-dedup": "reason", "verify:": "reason", "completeness-critic": "arbiter"},
     "fu-adversarial-verify-generic.js": {"verify-batch:": "judge", "critic:": "arbiter"},
     "mapping-coverage-loop.js": {
         "plan:coverage": "arbiter", "baseline": "standard", "buckets:r": "standard",
         "measure:r": "standard", "gate:r": "extract", "confirm:": "standard", "report": "standard",
     },
-    "plan-next-spec-to-done-aware.js": {
-        "plans:phasing-rules": "scan", "plans:boundaries-contracts": "scan", "plans:ia-sequences-data": "scan",
-        "repo:frontend-routes": "scan", "repo:backend-capabilities": "scan", "repo:merged-and-inflight": "scan",
-        "synthesize:gap-analysis": "arbiter", "verify:": "reason",
-    },
     "plan-test-deploy-and-tidy.js": {"deploy-path": "arbiter", "features-enabled-gap": "reason", "param-config-inventory": "scan", "scattered-files": "extract"},
     "repo-health-scan.js": {"scan:${s.key}": "scan", "scan:progress": "arbiter"},
-    "spec-to-done-adversarial-verify.js": {"verify:compliance": "arbiter", "verify:technical": "judge", "verify:usability": "judge", "verify:resilience": "judge"},
     "token-strategy-tournament.js": {
         "plan:tournament": "arbiter", "read:": "standard", "design:": "reason",
         "judge:": "judge", "synthesize": "reason",
@@ -62,7 +48,7 @@ USER_DIRECTED_COST_VARIANTS = {"tri-adversarial-verify-haiku-sonnet.js"}
 
 
 def test_every_active_agent_workflow_is_in_routing_inventory():
-    retired = {"saas-blueprint-tournament.js"}
+    retired = {"saas-blueprint-tournament.js", "std-plan.js", "std-implement.js", "std-evidence.js", "std-evidence-closeout.js", "plan-next-spec-to-done-aware.js", "spec-to-done-adversarial-verify.js"}
     workflows = list(WF.glob("*.js"))
     assert {p.name for p in workflows if p.name in retired} == retired
     active = {
@@ -150,7 +136,7 @@ def test_prompt_contract_is_machine_readable_and_complete():
     assert data["tiers"]["arbiter"]["fallback"] == []
     assert data["tiers"]["arbiter"]["on_unavailable"] == "HELD"
     for field in contract["required_input_fields"]:
-        assert f"{field}:" in _read("std-implement.js")
+        assert f"{field}:" in _read("repo-health-scan.js")
 
 
 def test_repo_personas_route_apex_reviewers_and_secondary_test_engineer():
@@ -171,19 +157,10 @@ def test_repo_personas_route_apex_reviewers_and_secondary_test_engineer():
 
 def test_read_only_scanners_preserve_explore_capability_boundary():
     health = _read("repo-health-scan.js")
-    plan_next = _read("plan-next-spec-to-done-aware.js")
     assert re.search(r"label: `scan:\$\{s\.key\}`[^\n]*agentType: 'Explore'", health)
     assert re.search(r"label: 'scan:progress'[^\n]*agentType: 'Explore'", health)
-    assert re.search(r"label: 'repo:frontend-routes'[^\n]*agentType: 'Explore'", plan_next)
-    assert re.search(r"label: 'repo:backend-capabilities'[^\n]*agentType: 'Explore'", plan_next)
 
 
-def test_do_not_codegen_sites_unchanged():
-    impl = _read("std-implement.js")
-    assert "const implModel = 'sonnet'" in impl
-    assert "model: implModel" in impl
-    assert "label: `impl:${T}:retry`, phase: 'Implement', model: 'opus', effort: 'max'" in impl
-    assert "label: `impl:${T}:opus`, phase: 'Implement', model: 'opus', effort: 'max'" in impl
 
 
 def test_no_conflicting_routing_invariant_in_tracked_workflows():

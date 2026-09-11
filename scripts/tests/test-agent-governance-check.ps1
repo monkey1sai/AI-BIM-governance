@@ -1052,7 +1052,7 @@ import(pathToFileURL(require('node:path').resolve(process.cwd(), 'scripts/lib/ag
         'docs/agents/codex-loop-workflows.md'
         '.codex/skills/ai-bim-fast-fix/SKILL.md'
         '.codex/skills/ai-bim-bounded-change/SKILL.md'
-        '.codex/skills/spec-to-done/SKILL.md'
+        'docs/agents/spec-to-done-retirement.md'
     )
     foreach ($activePath in $activeGovernancePaths) {
         Assert-True (-not ((Get-Content -LiteralPath $activePath -Raw) -match '(?i)\bgpt-[0-9]')) "$activePath does not contain an exact GPT model slug"
@@ -1072,8 +1072,11 @@ import(pathToFileURL(require('node:path').resolve(process.cwd(), 'scripts/lib/ag
         Assert-True (-not ($codexConfig -match $forbiddenConfigKey)) ".codex/config.toml does not define forbidden selector $forbiddenConfigKey"
     }
 
-    $specMetadata = Get-Content -LiteralPath '.codex/skills/spec-to-done/agents/openai.yaml' -Raw
-    Assert-True ($specMetadata -match 'allow_implicit_invocation:\s*false') 'spec-to-done implicit invocation is mechanically disabled'
+    foreach ($root in @('.claude', '.codex', '.agents')) {
+        Assert-True (-not (Test-Path -LiteralPath "$root/skills/spec-to-done/SKILL.md")) "$root spec-to-done discovery entry is retired"
+    }
+    $skillManifest = Get-Content -LiteralPath 'agent-skills-manifest.json' -Raw | ConvertFrom-Json
+    Assert-True (@($skillManifest.skills | Where-Object name -eq 'spec-to-done').Count -eq 0) 'retired skill is absent from the active manifest'
 
     $superpowersPolicy = Get-Content -LiteralPath 'docs/agents/superpowers-invocation-policy.md' -Raw
     foreach ($policyTerm in @(
@@ -1093,22 +1096,6 @@ import(pathToFileURL(require('node:path').resolve(process.cwd(), 'scripts/lib/ag
     Assert-True ($agentsBody -match [regex]::Escape('docs/agents/superpowers-invocation-policy.md')) 'AGENTS.md indexes the Superpowers invocation policy'
     Assert-True (-not ($claudeBody -match 'docs/agents/')) 'CLAUDE.md does not duplicate the AGENTS.md sub-file index'
 
-    $codexSpecToDone = Get-Content -LiteralPath '.codex/skills/spec-to-done/SKILL.md' -Raw -Encoding UTF8
-    $claudeSpecToDone = Get-Content -LiteralPath '.claude/skills/spec-to-done/SKILL.md' -Raw -Encoding UTF8
-    # Check reachable phase documents without requiring them in session entrypoints.
-    foreach ($name in @('claudeSpecToDone', 'codexSpecToDone')) {
-        $entry = Get-Variable -Name $name -ValueOnly
-        Assert-True ($entry.Length -le 5000) 'spec-to-done entrypoint stays within its context budget'
-        $paths = @([regex]::Matches($entry, '\.claude/skills/spec-to-done/references/[a-z0-9-]+\.md') | ForEach-Object Value | Sort-Object -Unique)
-        Assert-True ($paths.Count -gt 0) 'spec-to-done routes to phase references'
-        $body = $entry
-        foreach ($path in $paths) {
-            Assert-True (Test-Path -LiteralPath $path -PathType Leaf) "phase reference exists: $path"
-            $body += [Environment]::NewLine + (Get-Content -LiteralPath $path -Raw -Encoding UTF8)
-        }
-        Set-Variable -Name $name -Value $body
-    }
-    Assert-True (-not ($codexSpecToDone -match '(?i)[A-Z]:\\Users\\[^\\]+\\\.codex\\')) 'Codex spec-to-done stores no machine-specific user-home Codex path'
     $specToDoneContractPath = 'agent-contracts/spec-to-done.contract.json'
     $specToDoneContract = Get-Content -LiteralPath $specToDoneContractPath -Raw -Encoding UTF8 | ConvertFrom-Json
     $expectedSpecToDonePhases = @('P0', 'P1', 'P3', 'P4', 'P5', 'P6', 'P7')
@@ -1180,57 +1167,8 @@ import(pathToFileURL(require('node:path').resolve(process.cwd(), 'scripts/lib/ag
     foreach ($terminalRequirement in @('live_remote_resolution', 'pr_head_ancestor_of_merge_commit', 'merge_commit_equals_remote_main', 'pr_head_and_merge_commit_same_tree')) {
         Assert-True ($specToDoneContract.terminal_evidence.$terminalRequirement -ceq 'required') "P7 machine contract requires $terminalRequirement"
     }
-    foreach ($skillBody in @($claudeSpecToDone, $codexSpecToDone)) {
-        foreach ($machineMarker in @(
-            'agent-contracts/spec-to-done.contract.json',
-            'artifacts/spec-to-done/{slug}-state.md',
-            'P0,P1,P3,P4,P5,P6,P7',
-            'closed enum',
-            '--trusted-main-ref refs/heads/main',
-            'git ls-remote',
-            'local tracking ref',
-            'ship_workflow_shell_unavailable',
-            'base-pinned trusted host executor',
-            'git merge-base --is-ancestor <prHead> <mergeCommit>',
-            'git diff --quiet <prHead> <mergeCommit> --'
-        )) {
-            Assert-True ($skillBody -match [regex]::Escape($machineMarker)) "spec-to-done skill preserves machine/runtime marker: $machineMarker"
-        }
-    }
-    $implicitTriggers = @(
-        ([string][char]0x5BE6 + [char]0x4F5C + ' spec'),
-        ([string][char]0x5B8C + [char]0x6210 + [char]0x9700 + [char]0x6C42),
-        ([string][char]0x4F7F + [char]0x7528 + ' agents')
-    )
-    foreach ($implicitTrigger in $implicitTriggers) {
-        Assert-True ($codexSpecToDone -match [regex]::Escape($implicitTrigger)) "Codex spec-to-done excludes implicit trigger: $implicitTrigger"
-    }
-    foreach ($hardGate in @('P0', 'P1', 'P3', 'P4', 'P5', 'P6', 'P7', 'HELD', 'browser evidence', 'ship-item', 'GitNexus')) {
-        Assert-True ($codexSpecToDone -match [regex]::Escape($hardGate)) "Codex spec-to-done preserves hard-gate marker: $hardGate"
-        Assert-True ($claudeSpecToDone -match [regex]::Escape($hardGate)) "Claude spec-to-done preserves hard-gate marker: $hardGate"
-    }
-    foreach ($costGuardrail in @(
-        'maxAgentCalls=40',
-        'maxP5VerifierBatches=2',
-        'maxP5Rounds=2',
-        'maxEvidenceAttempts=2',
-        'evidence-closeout',
-        'run_budget_exhausted',
-        'resume_state_invalid',
-        'scope_drift',
-        'evidence_stale'
-    )) {
-        Assert-True ($codexSpecToDone -match [regex]::Escape($costGuardrail)) "Codex spec-to-done preserves cost guardrail: $costGuardrail"
-        Assert-True ($claudeSpecToDone -match [regex]::Escape($costGuardrail)) "Claude spec-to-done preserves cost guardrail: $costGuardrail"
-    }
-    Assert-True ($codexSpecToDone -match [regex]::Escape('fork_turns:"none"')) 'Codex spec-to-done forbids full-history native subagent forks'
-    Assert-True ($codexSpecToDone -match [regex]::Escape('codex:<actual-session-or-agent-id>')) 'Codex spec-to-done records actual resumable session or agent IDs'
-
-    $claudeStateValidator = Get-Content -LiteralPath '.claude/skills/spec-to-done/validate-state.mjs' -Raw -Encoding UTF8
-    # 單一正本政策（pr-review-agent generated_tooling_path）：.codex 鏡像不得放 validate-state 副本，
-    # SKILL.md 以路徑引用 .claude 正本。
-    Assert-True (-not (Test-Path -LiteralPath '.codex/skills/spec-to-done/validate-state.mjs')) 'Codex mirror must not carry a validate-state copy (single canonical in .claude)'
-    Assert-True ($codexSpecToDone -match [regex]::Escape('.claude/skills/spec-to-done/validate-state.mjs')) 'Codex spec-to-done references the canonical .claude validate-state path'
+    $claudeStateValidator = Get-Content -LiteralPath 'scripts/lib/legacy-spec-to-done/validate-state.mjs' -Raw -Encoding UTF8
+    # Historical reader has one shared canonical implementation outside skill discovery.
     foreach ($machineValidatorMarker in @(
         '../../../agent-contracts/spec-to-done.contract.json',
         'loadMachineContract()',
@@ -1247,17 +1185,14 @@ import(pathToFileURL(require('node:path').resolve(process.cwd(), 'scripts/lib/ag
         Assert-True ($claudeStateValidator -match [regex]::Escape($stateMarker)) "spec-to-done state validator contains: $stateMarker"
     }
 
-    $stdPlan = Get-Content -LiteralPath '.claude/workflows/std-plan.js' -Raw -Encoding UTF8
-    $stdImplement = Get-Content -LiteralPath '.claude/workflows/std-implement.js' -Raw -Encoding UTF8
-    $stdEvidence = Get-Content -LiteralPath '.claude/workflows/std-evidence.js' -Raw -Encoding UTF8
-    $stdCloseout = Get-Content -LiteralPath '.claude/workflows/std-evidence-closeout.js' -Raw -Encoding UTF8
+    foreach ($workflow in @('std-plan', 'std-implement', 'std-evidence', 'std-evidence-closeout', 'plan-next-spec-to-done-aware', 'spec-to-done-adversarial-verify')) {
+        $retired = Get-Content -LiteralPath ".claude/workflows/$workflow.js" -Raw
+        Assert-True ($retired -match "held: 'retired_workflow'" -and $retired -match 'agentCallsUsed: 0') "$workflow reports retirement without calls"
+        Assert-True (-not ($retired -match '\b(?:agent|governedAgent|parallel|phase)\s*\(')) "$workflow cannot dispatch or start a phase"
+    }
     $fuAdversarial = Get-Content -LiteralPath '.claude/workflows/fu-adversarial-verify-generic.js' -Raw -Encoding UTF8
-    Assert-True ($stdPlan -match 'PLAN_REVIEW_SCHEMA') 'P1 combines four axes into a bounded review result'
-    Assert-True (-not ($stdPlan -match 'parallel\(pendingAxes\.map')) 'P1 no longer launches all pending axes in one wave'
-    foreach ($budgetedWorkflow in @($stdPlan, $stdImplement, $stdEvidence, $stdCloseout, $fuAdversarial)) {
-        Assert-True ($budgetedWorkflow -match 'remainingAgentCalls') 'every agent-bearing spec-to-done workflow accepts the remaining run budget'
-        Assert-True ($budgetedWorkflow -match 'agentCallsUsed') 'every agent-bearing spec-to-done workflow reports consumed calls'
-        Assert-True ($budgetedWorkflow -match 'run_budget_exhausted') 'every agent-bearing spec-to-done workflow fails closed at the run budget'
+    foreach ($budgetMarker in @('remainingAgentCalls', 'agentCallsUsed', 'run_budget_exhausted')) {
+        Assert-True ($fuAdversarial -match $budgetMarker) "shared reviewer preserves $budgetMarker"
     }
     Assert-True ($fuAdversarial -match 'MAX_VERIFIER_BATCHES\s*=\s*2') 'P5 verifier concurrency is capped at two batches'
     Assert-True ($fuAdversarial -match 'MAX_FINDINGS\s*=\s*32') 'P5 rejects unbounded finding registries'
@@ -1267,39 +1202,8 @@ import(pathToFileURL(require('node:path').resolve(process.cwd(), 'scripts/lib/ag
     foreach ($p5MachineMarker in @('coordinator-attested', 'acceptanceDigest', 'acceptanceSummary', 'REQUIREMENT_REF_KEYS', 'review_unverified', 'reviewer_agent_failed')) {
         Assert-True ($fuAdversarial -match [regex]::Escape($p5MachineMarker)) "P5 preserves bounded attestation/held marker: $p5MachineMarker"
     }
-    foreach ($skillBody in @($claudeSpecToDone, $codexSpecToDone)) {
-        foreach ($p5SkillMarker in @(
-            "git.attestation   = 'coordinator-attested'",
-            '{path,commitSha,blobOid,sha256}',
-            '不得宣稱 machine-bound',
-            "P5.held==='review_unverified'",
-            'null/agent infra'
-        )) {
-            Assert-True ($skillBody -match [regex]::Escape($p5SkillMarker)) "spec-to-done skill preserves P5 machine semantics: $p5SkillMarker"
-        }
-    }
-    Assert-True ($codexSpecToDone -match [regex]::Escape('targetSha')) 'Codex spec-to-done passes the immutable P5 target SHA'
-    Assert-True ($claudeSpecToDone -match [regex]::Escape('targetSha')) 'Claude spec-to-done passes the immutable P5 target SHA'
-    Assert-True ($stdCloseout -match 'MAX_EVIDENCE_ATTEMPTS.*2|MAX_EVIDENCE_ATTEMPTS\).*?>\s*2') 'evidence closeout is capped at two attempts'
-    foreach ($closeoutMarker in @('closeoutTaskIds', 'productionFilesChanged', 'scope_drift', 'evidence_stale', 'evidence_not_closing')) {
-        Assert-True ($stdCloseout -match [regex]::Escape($closeoutMarker)) "evidence closeout preserves fail-closed marker: $closeoutMarker"
-    }
-    foreach ($testDeploySafetyMarker in @(
-        'test_deploy_process_unproven',
-        '-StopOwnedRuntime',
-        "-DeploymentRoot 'D:\Users\deploy\AI-bim-geo'",
-        'freshly fetched `origin/main`',
-        '不得拿未 merge branch 宣稱已在部署區驗證'
-    )) {
-        Assert-True ($codexSpecToDone -match [regex]::Escape($testDeploySafetyMarker)) "Codex spec-to-done preserves test-deploy safety marker: $testDeploySafetyMarker"
-        Assert-True ($claudeSpecToDone -match [regex]::Escape($testDeploySafetyMarker)) "Claude spec-to-done preserves test-deploy safety marker: $testDeploySafetyMarker"
-    }
-
-    $claudePortHelperPath = '.claude/skills/spec-to-done/ensure-host-native-ports-free.ps1'
-    $codexPortHelperPath = '.codex/skills/spec-to-done/ensure-host-native-ports-free.ps1'
+    $claudePortHelperPath = 'scripts/dev/ensure-host-native-ports-free.ps1'
     $claudePortHelper = Get-Content -LiteralPath $claudePortHelperPath -Raw -Encoding UTF8
-    $codexPortHelper = Get-Content -LiteralPath $codexPortHelperPath -Raw -Encoding UTF8
-    Assert-True ($claudePortHelper -ceq $codexPortHelper) 'Claude and Codex spec-to-done port helpers remain byte-equivalent as text'
     foreach ($helperSafetyMarker in @(
         '[switch] $StopOwnedRuntime',
         '[string] $DeploymentRoot',
@@ -1345,11 +1249,6 @@ import(pathToFileURL(require('node:path').resolve(process.cwd(), 'scripts/lib/ag
         Assert-True ($testDeployContract -match [regex]::Escape('local-windows')) "$testDeployContractPath keeps Windows as an explicit on-demand target"
         Assert-True ($testDeployContract -match 'helper 無法證明 ownership 時必須 HELD') "$testDeployContractPath keeps unproven ownership non-destructive"
     }
-    foreach ($shipSafetyMarker in @('review_required', 'cyber_safeguard_payload', 'git merge-base', 'git rebase origin/main', 'published PR branch', 'git merge --no-edit origin/main', 'seg/seg/id', 'passwd')) {
-        Assert-True ($codexSpecToDone -match [regex]::Escape($shipSafetyMarker)) "Codex spec-to-done preserves ship safety marker: $shipSafetyMarker"
-        Assert-True ($claudeSpecToDone -match [regex]::Escape($shipSafetyMarker)) "Claude spec-to-done preserves ship safety marker: $shipSafetyMarker"
-    }
-
     $shipItemMarkdown = Get-Content -LiteralPath '.claude/workflows/ship-item.md' -Raw -Encoding UTF8
     $shipItemPrompt = Get-Content -LiteralPath '.claude/workflows/ship-item.js' -Raw -Encoding UTF8
     foreach ($runtimeTruthMarker in @(
@@ -1512,7 +1411,7 @@ import(pathToFileURL(require('node:path').resolve(process.cwd(), 'scripts/lib/ag
     Assert-True (-not ($invalidControlOwnerJson | Test-Json -Schema $healthObservationSchema -ErrorAction SilentlyContinue)) 'schema rejects owner control characters like the runtime validator'
 
     foreach ($stalePattern in @(('所有實作' + '走'), ('Codex CLI ' + '無 hook'), ('必須使用 ' + 'Superpowers'))) {
-        foreach ($activePath in @('AGENTS.md', 'CLAUDE.md', 'docs/agents/github-workflow.md', '.codex/skills/spec-to-done/SKILL.md')) {
+        foreach ($activePath in @('AGENTS.md', 'CLAUDE.md', 'docs/agents/github-workflow.md', 'docs/agents/spec-to-done-retirement.md')) {
             Assert-True (-not ((Get-Content -LiteralPath $activePath -Raw) -match [regex]::Escape($stalePattern))) "$activePath excludes stale rule: $stalePattern"
         }
     }

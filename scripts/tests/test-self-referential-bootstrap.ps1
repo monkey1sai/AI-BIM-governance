@@ -364,12 +364,12 @@ try {
     Assert-True $newRunJobMatch.Success 'agent-governance declares a bounded NEW_RUN platform gate'
     $newRunJob = $newRunJobMatch.Groups[1].Value
     Assert-True ($newRunJob -match '(?m)^      fail-fast: false[ \t]*\r?$') 'NEW_RUN matrix preserves both platform results'
-    Assert-True ($newRunJob -match '(?ms)^          - platform: windows-negative[ \t]*\r?$\s+runner: windows-latest[ \t]*\r?$\s+test_expression: test_new_run_rejects_caller_controlled_git_even_when_named_git[ \t]*\r?$') 'Windows leg binds the Windows runner to the fail-closed Git negative test'
+    Assert-True ($newRunJob -match '(?ms)^          - platform: windows-negative[ \t]*\r?$\s+runner: windows-latest[ \t]*\r?$\s+test_expression: test_validator_rejects_caller_controlled_git_without_escape[ \t]*\r?$') 'Windows leg binds the Windows runner to the fail-closed Git negative test'
     Assert-True ($newRunJob -match '(?ms)^          - platform: linux-positive[ \t]*\r?$\s+runner: ubuntu-latest[ \t]*\r?$\s+test_expression: >-[ \t]*\r?$') 'Linux leg binds the Ubuntu runner to required positive tests'
     foreach ($positiveNewRunTest in @(
-        'test_new_run_appender_preserves_prefix_and_emits_valid_p0'
-        'test_new_run_lock_snapshot_preserves_first_completed_boundary'
-        'test_new_run_post_write_failure_restores_locked_target_bytes'
+        'test_validator_rejects_tampered_new_run_boundary'
+        'test_validator_rejects_a_fabricated_new_run_line'
+        'test_validator_ignores_ambient_git_repository_object_and_config_injection'
     )) {
         Assert-True ($newRunJob.Contains($positiveNewRunTest)) "Linux leg includes required positive test $positiveNewRunTest"
     }

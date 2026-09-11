@@ -13,7 +13,7 @@ Default to one coordinator and Lane F/B. Use these local mappings only:
 | B: bounded single-service change | single coordinator; at most one debugger or one read-only reviewer |
 | G: cross-service/user-facing/runtime/security/deploy | risk-scoped `explorer`, `debugger`, `reviewer`, or `security_auditor` |
 | G-shape: huge or foggy destination that cannot fit one session | explicit work-shaping map; research/prototype/grilling tickets only; no production implementation |
-| S: explicit spec-to-done/full Superpowers | full P0–P7 composition |
+| Retired: spec-to-done | Use the authorized sequential PR scope under Lane F/B/G; no phase-engine dispatch |
 
 The coordinator owns scope, source-of-truth loading, write-conflict control, evidence synthesis, and final verification. Workers are read-only unless a bounded, non-conflicting scope is explicitly granted. Do not pin model names or duplicate global tiers, effort lanes, output schemas, or generic workflow modes here.
 
@@ -42,7 +42,7 @@ Out of scope:
 
 Allowed ticket types are bounded research, throwaway prototype, human decision/grilling, and a manual task that unblocks a decision. Each ticket must declare HITL or AFK, blockers, expected evidence, and its exit decision. The shaping session must not modify production code or claim delivery.
 
-Early exit: when breadth-first inspection finds no material fog, do not create a map. Route directly to the existing requirement source, a concise Lane G checklist, or explicit `spec-to-done` when the user requested it.
+Early exit: when breadth-first inspection finds no material fog, do not create a map. Route directly to the existing requirement source, a concise Lane G checklist, or the user's authorized sequential PR plan. The spec-to-done workflow is retired.
 
 Graduation requires all material decisions to have one owning source and the implementation work to be expressible as vertical tickets. Never duplicate the same decision across a map, OpenSpec, `docs/plans`, and `docs/superpowers/specs`.
 

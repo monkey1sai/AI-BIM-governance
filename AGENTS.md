@@ -16,22 +16,21 @@
 ## 0.1 Agent 工作方式
 ### AI Coding Governance Lanes
 
-日常任務預設走 Lane F 或 Lane B；Superpowers 與 `spec-to-done` 是 opt-in，不是一般實作主線。不得只因任務「非平凡」、文字含「完成」、或 changed path 位於 code/tests 就升級 Lane S。
+日常任務依風險走 Lane F、B 或 G；`spec-to-done` 已退役，不得重新啟動。Superpowers 仍是 explicit-only，任務複雜度不等於使用者授權。
 
 | Lane | 適用範圍 | 執行與驗證 |
 |---|---|---|
 | **F — Fast Fix** | 單一 service、約 1–3 檔、小 bug/docs/tests/timeout/logging/error handling；不改 contract、user workflow、security/deploy/migration/Kit/WebRTC | single coordinator；無 Superpowers/spec/plan/subagent；所有 tracked 修改使用獨立 sibling worktree；targeted tests；不自動 push/PR/merge；不強制 GitNexus impact |
 | **B — Bounded Change** | 單一 service 內清楚且有限的功能；不改 architecture/public API/schema/security/deploy | single coordinator + 3–5 項 inline checklist；最多一個 debugger 或完成後一個 read-only reviewer；禁止 parallel writers；affected tests；對 task/主要 entry symbol 跑一次 GitNexus impact |
 | **G — Governed Change** | 跨 ≥2 services、public API/event/DB schema、user-facing route/workflow、Kit/WebRTC/GPU、deploy/auth/permission/migration/destructive script、architecture boundary、GitNexus HIGH/CRITICAL | dedicated branch/worktree；簡潔 plan；GitNexus impact + detect_changes；按風險 reviewer/debugger/security_auditor；integration tests；user-facing browser E2E；PR local preflight |
-| **S — Spec-to-Done** | 使用者明確輸入 `spec-to-done`、明確要求完整 Superpowers，或指定已核准 spec 並要求自主推進至 merged PR | 保留完整 P0/P1/P3/P4/P5/P6/P7；只能明確啟動，不得由模型自行升級 |
-只有工作可安全平行、需要獨立風險檢查，或符合 Lane G/S 條件時才派 worker。coordinator 擁有所有寫入與最終決策；F 不派 subagent，B 禁止多個 writer 並行。多終端機／多 CLI（Claude Code、Codex、Grok）並行 session 以 gitignored `.agents/board/` 看板互相感知——所有 CLI 都明確執行開工 `node scripts/dev/agents-board.mjs register --agent <cli>`、動工前 `status`、收工 `done`；repo 不分發自動 command hooks。看板僅提供感知，不取代 Lane 隔離規則，契約見 `docs/agents/parallel-session-board.md`。
+只有工作可安全平行、需要獨立風險檢查，或符合 Lane G 條件時才派 worker。coordinator 擁有所有寫入與最終決策；F 不派 subagent，B 禁止多個 writer 並行。多終端機／多 CLI（Claude Code、Codex、Grok）並行 session 以 gitignored `.agents/board/` 看板互相感知——所有 CLI 都明確執行開工 `node scripts/dev/agents-board.mjs register --agent <cli>`、動工前 `status`、收工 `done`；repo 不分發自動 command hooks。看板僅提供感知，不取代 Lane 隔離規則，契約見 `docs/agents/parallel-session-board.md`。
 
 ### Superpowers invocation policy
 預設為 repo-native lean mode。Superpowers 重流程 skill 採 explicit-only；task complexity 不等於使用者授權，且單一 skill 不得自動串接下一階段。詳細 routing 見 `docs/agents/superpowers-invocation-policy.md`。
 
 ### Karpathy-style 工作守則
-- Lane B/G/S 先列出假設、成功標準、最小改動面；若需求或 repo 邊界不清楚，先查 local source of truth，仍有重大分歧才釐清。
-- 先判定 F/B/G/S；只有 G/S 或獨立風險檢查有實質價值時才 dispatch worker。最終回覆區分 verified facts / inferences / unverified risks。
+- Lane B/G 先列出假設、成功標準、最小改動面；若需求或 repo 邊界不清楚，先查 local source of truth，仍有重大分歧才釐清。
+- 先判定 F/B/G；只有 G 或獨立風險檢查有實質價值時才 dispatch worker。最終回覆區分 verified facts / inferences / unverified risks。
 - 優先採用能解決當前問題的最簡單方案；不要新增未要求的抽象、設定層、擴充點或 production dependency。
 - 只修改與任務直接相關的檔案與程式碼；不要順手重構、格式化、刪除註解或清理不理解的既有內容。
 - 每個實作切片都要能被驗證；完成時回報改動檔案、驗證指令、未跑測試原因與已知風險。
@@ -80,6 +79,7 @@
 | 修改 code symbol（function/class/method）、跑 impact analysis、commit 前 detect_changes | `docs/agents/gitnexus-usage.md` |
 | 跑 sub-repo 驗證（pytest / npm test / build / Cloud VM 啟動） | `docs/agents/sub-repo-verify-commands.md` |
 | 非平凡 / 高風險任務分級、worker dispatch、evidence labels、reviewer perspectives | `docs/agents/advanced-agent-reasoning-contract.md` |
+| spec-to-done 退役、逐刀 PR 與歷史驗證器位置 | `docs/agents/spec-to-done-retirement.md` |
 | 判定是否可啟動 Superpowers、skill explicit-only、禁止自動串接、subagent 預算 | `docs/agents/superpowers-invocation-policy.md` |
 | 看舊 PR / 退役服務 / 歷史 spec、quality/security gates，或 AI coding telemetry、privacy 與四週品質指標 | `docs/agents/history-and-archive.md`、`docs/agents/quality-security-gates.md`、`docs/agents/ai-coding-metrics.md` |
 | 查需求入口、服務邊界、route IA、API 契約、時序、資料模型、實作分期、AI Coding 交付守則 | `docs/plans/docs-plans-README.md`（入口）→ `AI-BIM 前後端設計文件.dc.html` §01–§08 |
@@ -106,7 +106,7 @@ Runtime/product 行為真相優先順序：
 5. generated wiki / generated skills / old evidence（若存在）
 ```
 
-沒有 generated wiki；Lane F 直接查 source，B/G/S 陌生 code 可用 GitNexus CLI query/context。codebase-memory 僅為已授權範圍的 advisory 第二意見；UNKNOWN、圖譜衝突或 stale 時回原始碼裁決，不能取代 required risk gate。
+沒有 generated wiki；Lane F 直接查 source，B/G 陌生 code 可用 GitNexus CLI query/context。codebase-memory 僅為已授權範圍的 advisory 第二意見；UNKNOWN、圖譜衝突或 stale 時回原始碼裁決，不能取代 required risk gate。
 ---
 ## 4. GitNexus 入口
 
@@ -115,7 +115,7 @@ Runtime/product 行為真相優先順序：
 先跑受影響範圍的 typecheck、lint、unit/integration checks，再依 `docs/agents/sub-repo-verify-commands.md` 擴大驗證。回報必須分開列出 verified facts、inferences、unverified risks 與 next actions；未跑的測試與原因不得省略。
 
 
-本 repo 由 GitNexus 索引。Lane F 不強制 impact；Lane B 對 task/主要 entry symbol 跑一次 batch impact，只有實際改 code symbol/flow 時才在完成前跑 detect_changes；Lane G/S 對 shared/exported symbol 改前跑 impact、commit 前跑 detect_changes。HIGH 必須明確回報補強策略；CRITICAL 必須取得 sign-off。若 stale/unavailable/linked-worktree diff 失真，依 `docs/agents/gitnexus-usage.md` 揭露，不得自行發明 pass。
+本 repo 由 GitNexus 索引。Lane F 不強制 impact；Lane B 對 task/主要 entry symbol 跑一次 batch impact，只有實際改 code symbol/flow 時才在完成前跑 detect_changes；Lane G 對 shared/exported symbol 改前跑 impact、commit 前跑 detect_changes。HIGH 必須明確回報補強策略；CRITICAL 必須取得 sign-off。若 stale/unavailable/linked-worktree diff 失真，依 `docs/agents/gitnexus-usage.md` 揭露，不得自行發明 pass。
 
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence (CLI-only)

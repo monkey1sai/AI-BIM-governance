@@ -2,6 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "task-packet.schema.json",
   "title": "Task packet or golden corpus v2",
+  "description": "Lane S and explicit_spec_request are historical validation only; active task routing is F/B/G. Schema validity never grants execution authority.",
   "oneOf": [
     {"$ref": "#/definitions/task_packet"},
     {"$ref": "#/definitions/corpus"}

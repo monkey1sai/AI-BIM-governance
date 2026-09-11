@@ -23,7 +23,7 @@ Workflow({ name: 'token-strategy-tournament',
 - 換題目:改 `args.subject` 與 `args.contenders`(同 schema),即可重用於 A3 clash 呈現、A9 Copilot 介面形態等抉擇。
 - run 以 apex-first 契約審核(Fable/max)開場(repo apex-first 治理慣例);否決或無回傳 → `held: apex_denied`。
 
-## Gate 與 held 語義(對齊 spec-to-done P5)
+## Gate 與 held 語義(對齊共用 fu-adversarial-verify-generic 契約)
 
 | 狀態 | 條件 | 指揮官動作 |
 |---|---|---|
@@ -34,6 +34,6 @@ Workflow({ name: 'token-strategy-tournament',
 
 ## 紀律
 
-- 裁決寫入 `artifacts/decisions/token-strategy-<runStamp>.md`;**不**自動改 docs/plans、不開 openspec change —— spec 落地仍走既有 spec-to-done 管線。
+- 裁決寫入 `artifacts/decisions/token-strategy-<runStamp>.md`;**不**自動改 docs/plans、不開 openspec change —— 需求落地依明確授權的逐刀 PR 與 Lane F/B/G。
 - claimsRegistry 每條 q ≤ 800 字(DACS 慣例);對抗段 findings 形狀 = `{id, q, suspectFile}`。
 - 誠實鐵律:引用 file:line 必親讀;查不到寫查不到;依賴未決事項掛 OQ,不假裝已解。

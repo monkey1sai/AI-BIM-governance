@@ -1,3 +1,5 @@
+// Lane S and its v2 routing signals are retained only for historical validation.
+// Active task selection uses F/B/G; this module never grants execution authority.
 const PACKET_VERSION = 'task-packet/v2';
 const CORPUS_VERSION = 'task-packet-corpus/v2';
 const PACKET_KEYS = [

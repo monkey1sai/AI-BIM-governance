@@ -43,6 +43,8 @@ $script:SelfReferentialMechanismPattern = @(
     # before the NEW_RUN implementation PR changes them. Directory-wide patterns
     # would silently widen the mechanism surface and are intentionally rejected.
     '^\.claude/skills/spec-to-done/(?:validate-state|append-new-run|trusted-git)\.mjs$'
+    '^scripts/lib/legacy-spec-to-done/(?:validate-state|trusted-git)\.mjs$'
+    '^scripts/dev/ensure-host-native-ports-free\.ps1$'
     '^\.claude/skills/spec-to-done/(?:SKILL|GROK)\.md$'
     '^\.codex/skills/spec-to-done/SKILL\.md$'
     '^tests/test_spec_to_done_(?:state_contract|budget_contract|closeout_contract)\.py$'
@@ -141,6 +143,9 @@ $script:SelfReferentialAdjudicatorPaths = @(
     # ordinary bootstrap=no mechanism lane after preregistration. Keep this
     # list exact so adjacent skill files and tests do not inherit authority.
     '.claude/skills/spec-to-done/validate-state.mjs'
+    'scripts/lib/legacy-spec-to-done/validate-state.mjs'
+    'scripts/lib/legacy-spec-to-done/trusted-git.mjs'
+    'scripts/dev/ensure-host-native-ports-free.ps1'
     '.claude/skills/spec-to-done/append-new-run.mjs'
     '.claude/skills/spec-to-done/trusted-git.mjs'
     '.claude/skills/spec-to-done/SKILL.md'

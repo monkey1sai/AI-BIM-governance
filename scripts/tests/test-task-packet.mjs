@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { dirname, resolve } from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
@@ -201,6 +202,30 @@ test('CLI is an executable bounded consumer of the golden corpus', () => {
   assert.equal(validation.authorization_granted, false);
   assert.equal(validation.authorization_scope, 'validation_only');
   assert.equal(validation.external_lane_s_authorization_required, true);
+  assert.equal(validation.retired_lane_validation_only, true);
+});
+
+test('CLI marks historical S validation without granting either S or F execution', (t) => {
+  const directory = mkdtempSync(resolve(tmpdir(), 'task-packet-retired-'));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const inputPath = resolve(directory, 'packet.json');
+  for (const lane of ['S', 'F']) {
+    writeFileSync(inputPath, JSON.stringify(loadCorpus().tasks.find((packet) => packet.lane === lane)));
+    const result = spawnSync(process.execPath, [cliPath, '--input', inputPath], {
+      cwd: repositoryRoot, encoding: 'utf8', timeout: 10_000, windowsHide: true,
+    });
+    assert.equal(result.status, 0, result.stderr);
+    const validation = JSON.parse(result.stdout);
+    assert.equal(validation.retired_lane_validation_only, lane === 'S');
+    assert.equal(validation.authorization_granted, false);
+    assert.equal(validation.authorization_scope, 'validation_only');
+  }
+  writeFileSync(inputPath, JSON.stringify({ ...loadCorpus().tasks[0], lane: 'unknown' }));
+  const invalid = spawnSync(process.execPath, [cliPath, '--input', inputPath], {
+    cwd: repositoryRoot, encoding: 'utf8', timeout: 10_000, windowsHide: true,
+  });
+  assert.equal(invalid.status, 2);
+  assert.equal(JSON.parse(invalid.stdout).error.code, 'task_packet_invalid');
 });
 
 test('root startup context does not grow and legacy skill lock remains absent', () => {

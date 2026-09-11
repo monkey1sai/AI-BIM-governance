@@ -25,7 +25,7 @@ Do **not** use this skill to add more AGENTS.md rules or open a meta-governance 
 4. Output one Markdown `text` code block the user can paste into the next session.
 5. If the request is only "make me a prompt", stop after the block. Do not start coding.
 
-Lane: F = 1–3 files, one service, no contract. B = one service, bounded feature, no public API/schema. G = ≥2 services, public API/schema, user-facing route, Kit/WebRTC, deploy/auth. Never self-upgrade to Lane S / spec-to-done. Lane G 的 `[目標服務]` 與 `[驗證指令]` 槽必須列出**每一個**受影響服務與各自的驗證指令，再加一條 integration／browser E2E。
+Lane: F = 1–3 files, one service, no contract. B = one service, bounded feature, no public API/schema. G = ≥2 services, public API/schema, user-facing route, Kit/WebRTC, deploy/auth. spec-to-done is retired; use the authorized Lane F/B/G scope. Lane G 的 `[目標服務]` 與 `[驗證指令]` 槽必須列出**每一個**受影響服務與各自的驗證指令，再加一條 integration／browser E2E。
 
 ## Service verify commands
 
@@ -51,7 +51,7 @@ Task packet: emit JSON `task-packet/v2` and require `node scripts/dev/validate-t
 Emit exactly this shape. Replace `<…>` with values from the request. Leave a slot blank only when the crafter cannot know it, and say so.
 
 ```text
-[任務分級]: Lane <F / B / G>（禁止自行升為 Lane S / spec-to-done）
+[任務分級]: Lane <F / B / G>（spec-to-done 已退役）
 [目標服務]: <service + port from the table；Lane G 列出每一個受影響服務>
 [涉及檔案/模組]: <真實路徑，或「先空著；Read 之後才能填」>
 [需求來源]: <docs/plans 段落 | contract | issue | 本訊息>
@@ -76,7 +76,7 @@ Emit exactly this shape. Replace `<…>` with values from the request. Leave a s
 4. 凍結面（前端／跨服務任務）：禁改 governance `app.py`、coordinator `governanceProxy.ts`、streaming `conversion_authority.py`；前端只打 `:8004`；後端沒有的能力標 planned/NOT BUILT。任務本身就是該服務的後端變更時，不套此禁令，但一律 Lane G＋先跑 `gitnexus impact`。
 5. 驗證指令必須用上方 [驗證指令] 槽，不准改 interpreter。
 6. 禁止完成用語：should / probably / 應該過了 / 看起來對 / 理論上。沒有本輪終端機輸出，不准說 pass/done/完成。
-7. Superpowers / spec-to-done / push / 開 PR / merge：未在使用者訊息被點名，一律不做。例外：Lane G 契約要求的 **PR local preflight**（本機 gate，不 push、不開 PR）必須做，做不到就 HELD。
+7. Superpowers / push / 開 PR / merge：未在使用者訊息被點名，一律不做。例外：Lane G 契約要求的 **PR local preflight**（本機 gate，不 push、不開 PR）必須做，做不到就 HELD。
 8. 開工：`node scripts/dev/agents-board.mjs register --agent <cli> --task "<一句話>"`，記下輸出的 session id，然後 `status`。已有 active writer 重疊檔案就停。收工必跑 `node scripts/dev/agents-board.mjs done --agent <cli> --session <id>`。
 
 ### 三、執行步驟（未勾完不得進入下一步；依 Lane 只貼一份）

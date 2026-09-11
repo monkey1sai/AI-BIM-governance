@@ -11,14 +11,14 @@ description: Codex model-adapter copy. Use when the user asks to decide the :491
 
 ## 模型映射(不自帶新表,避免雙處漂移)
 
-tier 沿用 `.codex/skills/spec-to-done/SKILL.md` 的 global task routing 原則(不固定模型表):
+tier 沿用 repo `docs/agents/advanced-agent-reasoning-contract.md` 及其指向的 global contract 的模型路由原則(不固定模型表):
 
 | tier(canonical) | 用途 | Codex 模型 |
 |---|---|---|
-| extract(←haiku) | 純抽取/格式化 | 照 spec-to-done 映射表 |
-| standard(←sonnet) | 讀檔/盤點(DeepRead 3 readers) | 照 spec-to-done 映射表 |
-| reason(←opus) | 設計/合成(Design、Synthesize) | 照 spec-to-done 映射表 |
-| judge(←opus max) | 評審(Judge 3 lenses)——**不可降** | 照 spec-to-done 映射表,judge 檔位不可降 |
+| extract(←haiku) | 純抽取/格式化 | 照 active runtime/profile 的 task routing |
+| standard(←sonnet) | 讀檔/盤點(DeepRead 3 readers) | 照 active runtime/profile 的 task routing |
+| reason(←opus) | 設計/合成(Design、Synthesize) | 照 active runtime/profile 的 task routing |
+| judge(←opus max) | 評審(Judge 3 lenses)——**不可降** | 照 active runtime/profile 的 task routing,judge 檔位不可降 |
 
 ## 執行形態差異(唯二可改之處)
 
@@ -52,4 +52,4 @@ Codex 側沒有 `fu-adversarial-verify-generic` workflow 可 compose → **手�
 ## Held 語義與紀律(與 canonical 相同)
 
 - `decided` / `held: adversarial_not_closed` / `held: apex_denied`(開跑前契約審核否決,Codex 側=指揮者 Phase 0 自審)/ infra composeError 或 fu 端 held=advisory 未驗證,處置同 `.claude` 版 SKILL.md 表格。
-- 裁決不自動改 docs/plans、不開 openspec change;spec 落地仍走 spec-to-done 管線(Codex 側走 `.codex/skills/spec-to-done`)。
+- 裁決不自動改 docs/plans、不開 openspec change;需求落地依明確授權的逐刀 PR 與 Lane F/B/G。
