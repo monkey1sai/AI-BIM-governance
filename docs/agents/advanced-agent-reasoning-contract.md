@@ -6,7 +6,7 @@ This overlay adds only local composition rules. The global task-routing contract
 
 ## When this overlay applies
 
-Use the global routing contract to select Lane F/B/G/S. Default daily work to F or B; apply the local role map below when work crosses service boundaries, touches Kit/WebRTC runtime, changes auth/deploy/permissions, or makes a user-facing done claim.
+Use the root repo policy to select Lane F/B/G and the global contract for model/effort routing. Default daily work to F or B; apply the local role map below when work crosses service boundaries, touches Kit/WebRTC runtime, changes auth/deploy/permissions, or makes a user-facing done claim.
 
 ## Local composition
 
@@ -19,11 +19,11 @@ Workers are read-only unless the coordinator grants a bounded, non-conflicting f
 
 ## Machine task packet
 
-`scripts/tests/task-packet.schema.json` 定義 closed `task-packet/v2`；`scripts/tests/fixtures/agent-governance-routing.json` 是 16-case golden corpus，涵蓋 lane、scope、owner、worktree、read-set 上限、agent budget、gates、evidence、authorization requirement 與 escalation。`max_agents` 包含 coordinator；不是額外 child-agent 數。它是對本檔／root lane 規則的 executable projection，不自行從 prompt 猜 lane，也不覆寫較高優先序指令。
+`scripts/tests/task-packet.schema.json` 定義 closed `task-packet/v2`；`scripts/tests/fixtures/agent-governance-routing.json` 是 16-case golden corpus，涵蓋 lane、scope、owner、worktree、read-set 上限、agent budget、gates、evidence、authorization requirement 與 escalation。`max_agents` 包含 coordinator；不是額外 child-agent 數。F/B/G 對應目前路由；S 僅保留為歷史資料驗證，不屬於可執行 lane。它不自行從 prompt 猜 lane，也不覆寫較高優先序指令。
 
-以 `node scripts/dev/validate-task-packet.mjs --input <json>` 驗證 packet 或 corpus。JSON Schema 的 draft-07 `if/then` 與 JS semantic validator 共同 fail closed；CI 對 F/B/G/S 的 cross-field mutations 做 parity regression。未知欄位、未知 enum、超出 read-set/agent budget、缺少 high-risk gate 或未標示「未授權」的外部動作均拒絕。Draft-07 無法表達物件陣列內的 `id` uniqueness，因此 executable consumer 必須經同一 CLI/runtime semantic gate，不能只跑 `Test-Json`。
+以 `node scripts/dev/validate-task-packet.mjs --input <json>` 驗證 packet 或 corpus。JSON Schema 的 draft-07 `if/then` 與 JS semantic validator 共同 fail closed；CI 對 F/B/G 與歷史 S 格式的 cross-field mutations 做 parity regression。未知欄位、未知 enum、超出 read-set/agent budget、缺少 high-risk gate 或未標示「未授權」的外部動作均拒絕。Draft-07 無法表達物件陣列內的 `id` uniqueness，因此 executable consumer 必須經同一 CLI/runtime semantic gate，不能只跑 `Test-Json`。
 
-Task packet validator **只驗結構與 routing contract，不授權執行**：結果固定為 `authorization_granted: false`。Lane S packet 不再包含可自我宣告的 `explicit_trigger`，只能宣告 `authorization_requirement: external_explicit_user_instruction`；實際授權必須來自 packet 外、目前對話中的明確 user instruction。closed routing signal evaluator 只回傳 expected minimum lane 與是否需要外部 Lane S 授權，不讀取或保存 prompt，也不能把普通的 `complete`／`do it` 字樣升格為 Lane S。下游若展開 symbolic `read_set`，仍須另行執行 repo containment、檔案數與 byte budget 檢查。
+Task packet validator **只驗結構，不授權執行**：結果固定為 `authorization_granted: false` 與 `authorization_scope: validation_only`。包含歷史 S packet 的結果另標 `retired_lane_validation_only: true`。v2 schema、golden corpus 與 `evaluateRoutingSignal` 保留 S／`explicit_spec_request` 的舊欄位，只供歷史相容性回歸；`external_lane_s_authorization_required` 和 `authorization_requirement: external_explicit_user_instruction` 都是歷史格式，不是目前可重啟 S 的權限。新任務一律依 root policy 選 F/B/G，明確 spec 需求也不恢復已退役 workflow。下游若展開 symbolic `read_set`，仍須另行執行 repo containment、檔案數與 byte budget 檢查。
 
 ## Risk-scoped review
 
@@ -49,4 +49,4 @@ Backend-only tests do not establish frontend completion. Full-system E2E require
 
 ## Verification and reporting
 
-Use the smallest affected-area checks first, then the repo contract commands. Report verified facts, inferences, unverified risks, and next actions separately. For runtime/deploy work, preserve ownership evidence for ports and PIDs before any stop/restart action. Lane B runs one task/entry impact and detect_changes only for code-symbol/flow changes. Lane G/S retain shared-symbol impact and pre-commit detect_changes; Lane F relies on direct source, targeted tests, and diff unless scope expands.
+Use the smallest affected-area checks first, then the repo contract commands. Report verified facts, inferences, unverified risks, and next actions separately. For runtime/deploy work, preserve ownership evidence for ports and PIDs before any stop/restart action. Lane B runs one task/entry impact and detect_changes only for code-symbol/flow changes. Lane G retains shared-symbol impact and pre-commit detect_changes; Lane F relies on direct source, targeted tests, and diff unless scope expands.

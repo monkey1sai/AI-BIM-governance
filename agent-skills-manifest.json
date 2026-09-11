@@ -514,8 +514,8 @@
         "algorithm": "sha256",
         "trees": {
           "claude": "86734baf4a45027fae57c2cf86f05ef34fe6542225fc5dd42fe33cd3fb3c4266",
-          "codex": "4c4cdbb9cc50f11125dfb39dae1a5f4c215258bd054eacd20c2ade4542df9211",
-          "agents": "4c4cdbb9cc50f11125dfb39dae1a5f4c215258bd054eacd20c2ade4542df9211"
+          "codex": "dbc239281d6b0c4a050f55abfe06f460bd6df1633bf5ed2e1940903443d06562",
+          "agents": "dbc239281d6b0c4a050f55abfe06f460bd6df1633bf5ed2e1940903443d06562"
         }
       }
     },
@@ -913,8 +913,8 @@
         "algorithm": "sha256",
         "trees": {
           "claude": "d34ecfdc47d54658c44462ef5eb595fbec7d0dc112ad55d89b9ad26cad6209ed",
-          "codex": "70094ec47bb8fad2177a6f62a720a8f550509da9c12292b898e957741b1522d0",
-          "agents": "70094ec47bb8fad2177a6f62a720a8f550509da9c12292b898e957741b1522d0"
+          "codex": "9e43596cd6e0e077f933c290038e87c44cf01a0ff6347bca3b69bd40f83e5bc9",
+          "agents": "9e43596cd6e0e077f933c290038e87c44cf01a0ff6347bca3b69bd40f83e5bc9"
         }
       }
     },

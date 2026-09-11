@@ -11,7 +11,7 @@ description: Codex model-adapter copy. Use when the user asks to decide the :491
 
 ## 模型映射(不自帶新表,避免雙處漂移)
 
-tier 沿用 global `docs/agents/task-routing.md` 的模型路由原則(不固定模型表):
+tier 沿用 repo `docs/agents/advanced-agent-reasoning-contract.md` 及其指向的 global contract 的模型路由原則(不固定模型表):
 
 | tier(canonical) | 用途 | Codex 模型 |
 |---|---|---|

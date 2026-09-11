@@ -17,7 +17,7 @@ This runbook records the only supported procedure for the post-merge corrective 
 From `C:\Repos\active\iot\AI-BIM-governance`:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .claude\skills\spec-to-done\ensure-host-native-ports-free.ps1 -DetectOnly
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\dev\ensure-host-native-ports-free.ps1 -DetectOnly
 ```
 
 If the helper reports an occupant, first establish deployment-path, command-line, or executable-path ownership. Stop for ambiguity; port or process-name evidence alone is insufficient.

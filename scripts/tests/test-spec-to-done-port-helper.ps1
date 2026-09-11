@@ -52,6 +52,11 @@ $ErrorActionPreference = 'Stop'
 
 $tempBase = [System.IO.Path]::GetFullPath([System.IO.Path]::GetTempPath()).TrimEnd('\')
 $tempRoot = Join-Path $tempBase ("spec-to-done-port-helper-{0}" -f [guid]::NewGuid().ToString('N'))
+$previousLogRoot = $env:LOG_ROOT
+$env:LOG_ROOT = Join-Path $tempRoot 'must-not-create-logs'
+$previousConsoleOut = [Console]::Out
+$eventWriter = New-Object System.IO.StringWriter
+[Console]::SetOut($eventWriter)
 try {
     $null = New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot 'scripts')
     $null = New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot '.venv\Scripts')
@@ -252,7 +257,7 @@ try {
         function Get-HostNativeProcessInfo { param([int] $ProcId); return $pidOnlyProcess }
         function Invoke-ValidatedProcessStop { param($ExpectedProcess); $script:SpecToDoneStopCalls++; return $true }
         $detectExit = Invoke-HostNativePortCleanup -TcpPorts @(49101) -UdpPorts @(47998) -WaitTimeoutSec 1
-        Assert-True ($detectExit -eq 1) 'default mode reports an occupied port as HELD'
+        Assert-True ($detectExit -is [int] -and $detectExit -eq 1) 'default mode reports a scalar HELD exit without log pipeline output'
         Assert-True ($script:SpecToDoneStopCalls -eq 0) 'default mode never stops a process'
     }
 
@@ -314,9 +319,42 @@ try {
         function Get-BusyPorts { param([int[]] $TcpPorts, [int[]] $UdpPorts); return @() }
         function Invoke-ValidatedProcessStop { param($ExpectedProcess); $script:SpecToDoneStopCalls++; return $true }
         $ownedExit = Invoke-HostNativePortCleanup -TcpPorts $topology.TcpPorts -UdpPorts $topology.UdpPorts -WaitTimeoutSec 1 -AllowOwnedStop -TargetDeploymentRoot $tempRoot
-        Assert-True ($ownedExit -eq 0) 'stable exact ownership allows cleanup and reaches FREE'
+        Assert-True ($ownedExit -is [int] -and $ownedExit -eq 0) 'stable exact ownership reaches a scalar FREE exit without log pipeline output'
         Assert-True ($script:SpecToDoneSnapshotCalls -ge 3) 'owned cleanup uses initial, confirmation, and immediate pre-stop snapshots'
         Assert-True ($script:SpecToDoneStopCalls -eq 1) 'stable owner invokes exactly one validated stop'
+    }
+
+    $events = @($eventWriter.ToString() -split '\r?\n' | Where-Object { $_ } | ForEach-Object { $_ | ConvertFrom-Json })
+    foreach ($status in @('held', 'inspect', 'stopping', 'free')) {
+        Assert-True (@($events | Where-Object { $_.data.status -eq $status }).Count -gt 0) "structured lifecycle includes $status events"
+    }
+    foreach ($event in $events) {
+        Assert-True ($event.event_type -eq 'lifecycle' -and $event.service -eq 'scripts') 'port events use the shared lifecycle schema'
+        Assert-True ($event.data.subject_kind -eq 'script_run' -and $event.data.subject_id -eq $event.run_id) 'lifecycle subject is bound to the logger run'
+        Assert-True ($event.data.phase -in @('active', 'closed')) 'lifecycle uses valid active or closed phases'
+        Assert-True ($event.run_id -match '^run_\d{8}_\d{6}_[0-9a-f]{6}$') 'port events carry a structured run identity'
+    }
+    Assert-True (-not (Test-Path -LiteralPath $env:LOG_ROOT)) 'detect and cleanup logging never create log files or directories'
+
+    foreach ($failure in @('initialize', 'emit')) {
+        & {
+            $savedLogger = $script:HostNativePortLogger
+            try {
+                if ($failure -eq 'initialize') { $script:HostNativePortLogger = $null }
+                $script:PortLogFaultCalls = 0
+                function Import-Module { $script:PortLogFaultCalls++; throw 'fixture logger initialization failed' }
+                function Write-StructLifecycle { $script:PortLogFaultCalls++; throw 'fixture logger emit failed' }
+                function Get-HostNativePortSnapshot { param([int[]] $TcpPorts, [int[]] $UdpPorts, [string] $Root); return @($ownedRecord) }
+                function Get-BusyPorts { param([int[]] $TcpPorts, [int[]] $UdpPorts); return @() }
+                $script:SpecToDoneStopCalls = 0
+                function Invoke-ValidatedProcessStop { param($ExpectedProcess); $script:SpecToDoneStopCalls++; return $true }
+                $loggingFailureExit = Invoke-HostNativePortCleanup -TcpPorts $topology.TcpPorts -UdpPorts $topology.UdpPorts -WaitTimeoutSec 1 -AllowOwnedStop -TargetDeploymentRoot $tempRoot
+                Assert-True ($loggingFailureExit -is [int] -and $loggingFailureExit -eq 0) "$failure failure preserves the scalar FREE exit"
+                Assert-True ($script:SpecToDoneStopCalls -eq 1) "$failure failure preserves the one ownership-validated stop"
+                Assert-True ($script:PortLogFaultCalls -gt 0) "$failure fault injection was exercised"
+            }
+            finally { $script:HostNativePortLogger = $savedLogger }
+        }
     }
 
     $modeConflictExit = Invoke-HostNativePortCleanup -TcpPorts @(49101) -UdpPorts @(47998) -WaitTimeoutSec 1 -ReadOnly -AllowOwnedStop -TargetDeploymentRoot $tempRoot
@@ -327,8 +365,11 @@ try {
     Assert-True $wrongRootRejected 'explicit stop rejects a non-canonical deployment root'
 
     $hostExe = (Get-Process -Id $PID).Path
-    & $hostExe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $helperPath -SpectatorCount 33 *> $null
+    $cliOutput = @(& $hostExe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $helperPath -SpectatorCount 33)
     Assert-True ($LASTEXITCODE -eq 2) 'out-of-range CLI input returns the documented exit code 2'
+    $cliEvent = ($cliOutput -join "`n") | ConvertFrom-Json
+    Assert-True ($cliEvent.data.status -eq 'held' -and $cliEvent.data.phase -eq 'closed') 'CLI validation failure emits structured HELD JSON'
+    Assert-True (-not (Test-Path -LiteralPath $env:LOG_ROOT)) 'CLI logging preserves the no-file-write boundary'
 
     $child = Start-Process -FilePath $hostExe -ArgumentList @('-NoProfile', '-NonInteractive', '-Command', 'Start-Sleep -Seconds 60') -PassThru -WindowStyle Hidden
     try {
@@ -354,6 +395,9 @@ try {
     }
 }
 finally {
+    [Console]::SetOut($previousConsoleOut)
+    $eventWriter.Dispose()
+    $env:LOG_ROOT = $previousLogRoot
     $resolvedTempRoot = [System.IO.Path]::GetFullPath($tempRoot)
     if ((Test-Path -LiteralPath $resolvedTempRoot) -and
         $resolvedTempRoot.StartsWith(($tempBase + '\'), [System.StringComparison]::OrdinalIgnoreCase) -and

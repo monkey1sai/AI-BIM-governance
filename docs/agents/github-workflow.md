@@ -6,12 +6,12 @@
 
 # GitHub Workflow（Lane-aware git 段）
 
-Lane F/B 不使用 Superpowers，也不自動 push、開 PR 或 merge。當使用者明確要求 ship，或工作進入 Lane G/S 時，git 段固定 `branch → PR → Actions → merge`；不得直接在 `main` 開發。
+Lane F/B 不使用 Superpowers，也不自動 push、開 PR 或 merge。當使用者明確要求 ship，或工作進入 Lane G 時，git 段固定 `branch → PR → Actions → merge`；不得直接在 `main` 開發。
 
 | 工具 | 正確定位 |
 |---|---|
 | **Superpowers** | explicit-only；Lane G 可按明確授權使用單一 planning/verification skill；spec-to-done 已退役 |
-| **GitNexus** | Lane B/G/S 的 code impact 與 scope intelligence；F 不強制 |
+| **GitNexus** | Lane B/G 的 code impact 與 scope intelligence；F 不強制 |
 | **Browser E2E** | user-facing 變更的可見行為證據，可用 Playwright / gstack / supported browser engine |
 | **Design fidelity** | 以 tracked design manifest/baselines 驗 screen/state；Windows runner 的 Chromium DPR1 兩 viewport pixel≤1%＋semantic 100% |
 | **PR local preflight** | PR 前 affected-only machine gate，不是每次 local edit 的循環 |
@@ -23,7 +23,7 @@ Lane F/B 不使用 Superpowers，也不自動 push、開 PR 或 merge。當使�
 - ❌ 用任何 planning/review skill 宣告 UI 完成而不跑 browser E2E。
 - ❌ 用 browser E2E 取代 design diff，或用 design screenshot pass 取代真 API/runtime E2E。
 - ❌ 用 GitNexus 當產品設計依據（2D 設計來自 approved pinned design reference，行為來自 TARGET/contracts，非 call graph）。
-- ❌ 用 browser tool 改 backend symbol 而跳過 Lane G/S 的 GitNexus gate。
+- ❌ 用 browser tool 改 backend symbol 而跳過 Lane G 的 GitNexus gate。
 
 ## `gh` CLI 認證與 sandbox 網路錯誤分流
 
@@ -66,7 +66,7 @@ gh api user --jq .login
 
 - **單一 PR 交付原則（Lean PR Delivery）**：依據 `AGENTS.md` §0.0，嚴禁將單一需求拆成「Demote Baseline ➔ 實作功能 ➔ Re-approve Baseline」的三部曲（3-PR Route）。程式碼實作、測試與 Snapshot/Baseline 更新應在**同一個 PR 內一次完成交付**，以消除不必要的分支管理與 CI 重複等待時間。
 - **凍結純治理修復 PR**：禁止開立 Fixpoint rebuild、Classifier repair、Ledger reconciliation、Watermark alignment 等純治理工具維護 PR。治理工具告警改為 Warning，不阻擋業務 PR。
-- 開 PR 前跑 affected validation 並回報結果；Lane B 只在 code symbol/flow 變更時跑 detect_changes，Lane G/S commit 前必跑。PR 由 GitHub Actions 做遠端確認，但不得把 Actions 當第一輪錯誤發現工具。
+- 開 PR 前跑 affected validation 並回報結果；Lane B 只在 code symbol/flow 變更時跑 detect_changes，Lane G commit 前必跑。PR 由 GitHub Actions 做遠端確認，但不得把 Actions 當第一輪錯誤發現工具。
 - **Local PR preflight**：凡 GitHub workflow 可在本機等效檢查，必須先本機跑過再 push / watch CI。最低要求：
 
   ```powershell
@@ -77,7 +77,7 @@ gh api user --jq .login
 - **開 PR 前的本機 preflight（2026-09-04 起）**：`pwsh -NoProfile -File scripts/verify-all.ps1 -BaseRef origin/main -Tier pr`（POSIX：`scripts/verify-all.sh --base origin/main --tier pr`）。`-BaseRef` 用 CI `changes` job **同一條** `git diff --no-renames --name-only -z base...HEAD` 推導 changed paths，餵給同一支 `scripts/lib/verification-plan.mjs`，所以本機 plan 與 CI plan 來自相同輸入；`-Tier quick|pr|full` 依 manifest 既有 `evidence_class` 篩選本機執行的 gate（sidecar `scripts/verification-tier-policy.json`，CI 不讀），動到驗證機制本身（`dispatch=full`）會強制 `full`。**tiered run 不是 evidence**：`-Tier` 與 `-OutcomeOut` 互斥；要產出 commit-bound `verification-outcome/v1` 必須跑完整 plan。CI 仍無條件重驗 base/head、scope、required checks、trust boundary、approval；本機結果只是 early failure，永不是 merge authority。
 - **PR CI local-first policy**：PR 事件不得無差別重跑本機可重現的 heavy service checks。`.github/workflows/ci.yml` 先跑 `changed path classifier`，只有受影響的 service-level jobs（coordinator / viewer / governance-service / kit-manager / root contracts / compose / static / secret scan）才跑遠端確認；未受影響的 required job 以 job-level `if` skip，保留 check 名稱且避免 workflow-level path skip pending。CI 監聽 `pull_request.edited` 只為捕捉 base retarget；body/title-only edit 會讓 classifier 的重步驟與所有 downstream jobs skip，並使用獨立 `metadata-only` concurrency group，不能取消仍在跑的 exact-head `verification`；只有 base edit 才以新的 `base.sha...head.sha` 重建 verification plan。`.github/workflows/pr-review-agent.yml` 的 `PR Metadata Contract` 是 `pull_request_target` base-owned diagnostic，不得列為 required／merge authority；它不 checkout 或執行 head code、不保留 raw body、不安裝 sub-repo deps、不重跑 local review agent，也不聚合 artifacts。base capability incomplete 時 fail closed，改由 exact-head CODEOWNER／外部 gate 裁決。本機 `check-pr-local-preflight.ps1` 仍是 push 前的 PR review agent 與 affected sub-repo verification 硬 gate。
 - **Governance base audit 與外部信任根**：`.github/workflows/governance-trust-root.yml` 使用 `pull_request_target`，workflow 定義來自 default branch，並在任何 checkout 前 fail closed 拒絕非 default-branch PR base；通過後只執行該 immutable base SHA 的 `scripts/dev/check_governance_trust_root.py`。candidate checkout 只作為 inert data 讀取，禁止載入或執行 candidate 的 script、action、hook、dependency 或 module。checker 比對 base/candidate governance policy 與 architecture baselines，並使用 GitHub server 提供的 exact head/review/permission facts，防止同一個 PR 修改 checker 或 baseline 後自行宣稱通過。[GitHub event 文件](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#pull_request_target)明定 `pull_request_target` 的 `GITHUB_SHA` 是 default-branch commit，而[required-check 文件](https://docs.github.com/en/pull-requests/how-tos/merge-and-close-pull-requests/troubleshooting-required-status-checks#required-check-needs-to-succeed-against-the-latest-commit-sha)要求 check 通過 latest PR head；因此這個 repo workflow **只能是 diagnostic，不得把 `Governance Base Audit / governance-base-audit` 設為 required 或宣稱 merge authority 已生效**。真正的 merge trust root 必須由 distinct、agent-inaccessible GitHub App（或組織層 external required workflow）在 head SHA 執行同一 base-owned checker並發布可由 branch protection 綁定 expected source 的 check；App 上線前固定 CODEOWNER exact-head approval 仍是外部信任根。
-- 每個 PR body 必填 `Change lane: F | B | G | S`、`Behavior contract changed: yes | no`、`Requirement source: issue | docs/plans | superpowers spec | existing contract | not applicable`。behavior=yes 或 Lane G/S 時不得填 not applicable；behavior=no 不得只因 changed path 缺 spec 而 blocker。新增或刪除 route/API/schema 等 contract signal，或 deploy/security/Kit runtime/cross-service 等 Governed trigger，不得自報 F/B 規避 Lane G。
+- 每個 PR body 必填 `Change lane: F | B | G`、`Behavior contract changed: yes | no`、`Requirement source: issue | docs/plans | superpowers spec | existing contract | not applicable`。behavior=yes 或 Lane G 時不得填 not applicable；behavior=no 不得只因 changed path 缺 spec 而 blocker。新增或刪除 route/API/schema 等 contract signal，或 deploy/security/Kit runtime/cross-service 等 Governed trigger，不得自報 F/B 規避 Lane G。
 - User-facing change 的 PR 描述必須包含 Frontend Verification table；machine-required labels 以 `scripts/tests/check-pr-body-evidence.ps1` 為準。除 route/button/fixture/真 backend/runtime ID/visible state/browser evidence 外，還必須填 `Design gate status`、`Design screen(s)`、`Reference-missing route(s) / surface(s)`、`Full completion claimed`、manifest 與 visual result/comparison/artifacts。scope 由 base/head manifest 聯集推導，PR 不得自選 screen；`mixed`／`partial_reference_missing` 一律 full=no。semantic/pixel只接受 CI `design-semantic-visual` output，functional/runtime 只接受 `functional-runtime-conv` output；兩者仍是完成證據，但不再由額外 artifact aggregation status 決定 merge authority。
 - Runtime / Docker / Kit / viewer / env / port 相關 PR 描述必須包含 Deploy Path Verification table；若未更新 `scripts/deploy.ps1`，必須明確說明已驗證或不適用。
 - 改動治理面檔案的 PR 描述必須包含 **AI Coding Governance** table，7 個必填 label：`Linked issue`、`Requirement source`、`CODEOWNERS / owner review`、`GitNexus evidence`、`Browser E2E evidence`、`Agent workflow changed?`、`Required checks expected`。machine labels 由 `check-pr-body-evidence.ps1` 逐字比對，值不得為占位。
@@ -154,7 +154,7 @@ git fetch origin --prune
 
 ### 何時可直接切 branch
 
-- **用 worktree**：Lane G/S、修 PR、checkout 不乾淨、並行工作、或隔離 E2E stack。
+- **用 worktree**：Lane G、修 PR、checkout 不乾淨、並行工作、或隔離 E2E stack。
 - **可直接切 branch**：Lane F/B 且工作區乾淨，或使用者明確要求在目前 checkout 操作；不得混入既有 dirty files。
 
 ### Closeout
