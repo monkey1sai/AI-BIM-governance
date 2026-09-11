@@ -74,7 +74,7 @@ describe("edge console honesty smoke", () => {
     expect(html).toContain("A1");
     expect(html).toContain("A10");
     expect(html).toContain("Governance &amp; Rule Checker");
-    expect(html).toContain("ec-prov");
+    expect(html).toContain('data-prov="asbuilt"');
   });
 
   it("[A6 消歧義] roadmap tier 不裸印 Phase 數字（與 ProvTag 願景 Phase 矛盾），改標規劃序", () => {
@@ -97,7 +97,7 @@ describe("edge console honesty smoke", () => {
     expect(html).toContain("7126"); // 真實規則評估次數
     expect(html).toContain("唯一構件");
     expect(html).toContain("6715"); // 去重後 ifc_guid 數
-    expect(html).toContain("實測 artifact");
+    expect(html).toContain('data-prov="artifact"');
     expect(html).toContain("執行規則檢核");
     expect(html).toContain("IDS-XML"); // IDS 匯入後端已實作（ifctester）
     // BCF 2.1 匯出後端已落地（純 stdlib，不依賴 GPLv3）→ 頁面誠實標「已實作」而非「待建」。
@@ -109,23 +109,23 @@ describe("edge console honesty smoke", () => {
     const html = renderToString(<IssuesRuleCenterPage />);
     // [匯出 Excel]：client exportUrl 直連 proxy，真實下載（asbuilt）。
     expect(html).toContain("匯出 Excel");
-    // [匯出 Excel] SHALL 標 asbuilt（誠實標示操作員看得到 provenance），且初始（無成功 run）SHALL disabled。
+    // 保留 machine provenance；初始無成功 run 時仍不可匯出。
     const excelBtn = html.match(/<button[^>]*disabled[^>]*>[^<]*?匯出 Excel[\s\S]*?<\/button>/);
     expect(excelBtn).not.toBeNull();
-    expect(excelBtn?.[0]).toContain("已實作"); // PROV_LABEL.asbuilt
+    expect(excelBtn?.[0]).toContain('data-prov="asbuilt"');
     // [在 3D 中標示]：console 無 viewer DataChannel → 誠實標 p1，且按鈕 disabled（非假按鈕）。
     expect(html).toContain("在 3D 中標示");
-    expect(html).toContain("後端待建 · P1"); // PROV_LABEL.p1
+    expect(html).toContain('data-prov="p1"'); // 工程分類不放主畫面。
     expect(html).toContain("DataChannel"); // 誠實說明：需 viewer DataChannel
   });
 
   it("A2 補 apply-overlay：誠實標 p15，不假裝成功", () => {
     const a2 = renderToString(<VersionDiffPage />);
-    expect(a2).toContain("ec-prov"); // provenance 標記存在
+    expect(a2).toContain('data-prov="asbuilt"'); // machine provenance 保留。
     expect(a2).not.toContain("99.1%"); // 無願景假數字
     // apply-overlay 後端誠實回 501 → UI 標 p15 + 說明走 client highlightPrimsRequest，非 server-push。
     expect(a2).toContain("套用 3D Overlay");
-    expect(a2).toContain("後端待建 · P1.5"); // PROV_LABEL.p15
+    expect(a2).toContain('data-prov="p15"');
     expect(a2).toContain("501"); // 誠實顯示後端回應碼，不偽裝成功
     // 初始（尚無成功 diff）時 [套用 3D Overlay] SHALL disabled（真實 gating，須 diff status===succeeded
     // 才 enable；失敗 / 無結果保持 disabled）——非點了無意義的假按鈕。
@@ -138,7 +138,7 @@ describe("edge console honesty smoke", () => {
     // A3 federation 後端已實作（per-member transform + review-room handoff），但仍誠實標 provenance
     // 與真實邊界（member immutable），不捏造數字。
     const a3 = renderToString(<FederationPage />);
-    expect(a3).toContain("ec-prov");
+    expect(a3).toContain('data-prov="asbuilt"');
     expect(a3).toContain("immutable"); // member usdc immutable 邊界
     expect(a3).not.toContain("99.1%");
     // visibility checkbox 存在；誠實標示「無即時切換、須重新 Build」（不捏造即時能力）。
@@ -182,7 +182,7 @@ describe("edge console honesty smoke", () => {
     expect(html).toContain("fake_for_smoke_test");
     // 點構件 highlight 需 viewer DataChannel（console 無此鏈）→ 標 p1，不做假按鈕。
     expect(html).toContain("DataChannel");
-    expect(html).toContain("後端待建 · P1"); // PROV_LABEL.p1
+    expect(html).toContain('data-prov="p1"'); // 功能限制仍保留。
     expect(html).not.toContain("99.1%");
     expect(html).not.toContain("92.4%");
   });
@@ -328,14 +328,13 @@ describe("edge console honesty smoke", () => {
     expect(html).toContain("NVIDIA");
   });
 
-  it("ProvLegend 可信度圖例顯示 4 階分類學（已實作/實測/示範/後端未建）+ 白話意思", () => {
+  it("ProvLegend 提供人類資料來源指引，不把模組標籤當成驗證證明", () => {
     const html = renderToString(<ProvLegend />);
-    expect(html).toContain("可信度圖例");
-    expect(html).toContain("已實作");
-    expect(html).toContain("實測 artifact");
+    expect(html).toContain("資料來源");
+    expect(html).toContain("審查紀錄");
     expect(html).toContain("示範資料");
-    expect(html).toContain("後端未建");
-    expect(html).toContain("真的能用");
+    expect(html).not.toContain("後端未建");
+    expect(html).not.toContain("真的能用");
   });
 
   // ── P3-1 A5–A10 vision 詳頁（A4 已 live #a4，不在 A1A10_DETAIL）──
@@ -369,24 +368,23 @@ describe("edge console honesty smoke", () => {
   });
 
   // ── P3-2 / P3-3 殼層：Agent suggested prompts（disabled 輸入）+ FlowBar + Tweaks ──
-  it("P3-2/P3-3 EdgeConsole 殼層含 Agent prompts（disabled 輸入）+ FlowBar + Tweaks", () => {
+  it("EdgeConsole 保留 FlowBar 與語言選擇，不顯示未接通 Agent 或裝飾情境控制", () => {
     // IA v2 雙殼：Agent 欄 / FlowBar / Tweaks 是 legacy 殼專屬（approved 鍵走 UnifiedShell 無此三者）；
     // 預設 #home 已讓位給 UnifiedConsole，故釘 legacy 路由（#overview）再斷言殼層契約。
     const prevHash = window.location.hash;
     try {
       window.location.hash = "#overview";
       const html = renderToString(<EdgeConsole />);
-      // P3-2：suggested prompts + 寫入限制 + disabled 輸入框（非可用的假輸入）。
-      expect(html).toContain("SUGGESTED");
-      expect(html).toContain("AI 僅能改 review / session layer");
-      expect(html).toMatch(/<input[^>]*disabled/);
+      expect(html).not.toContain("SUGGESTED");
+      expect(html).not.toContain('class="ec-agent');
+      expect(html).not.toContain('class="ec-tweaks"');
       // P3-3：FlowBar 5 步（預設語言=中 → 中文 biz 步驟標籤）+ 頂列 LangToggle（中/EN）+ Tweaks（scenario clean/warn）。
       expect(html).toContain("①"); // FlowBar step 1 標號
       expect(html).toContain("接收建模來源"); // 預設中文（biz）的步驟標籤（Intake）
       expect(html).toContain("紀錄回寫雲端"); // FlowBar 末步（Record 中文）
       expect(html).toContain("ec-langtoggle"); // 語言切換移至頂列（中/EN），取代舊「用語」操作員/技術鈕
-      expect(html).toContain("clean"); // Tweaks scenario 按鈕
-      expect(html).toContain("warn");
+      expect(html).toContain('data-prov="p15"');
+      expect(html).toContain('title="標記問題位置"');
     } finally {
       window.location.hash = prevHash;
     }
@@ -421,7 +419,7 @@ describe("edge console honesty smoke", () => {
       // 以 nav 鍵 no 精確守門（比照 CO 守門），不用裸字串。
       expect(html).toContain('class="ec-key">CV<');
       expect(html).not.toContain('class="ec-key">IN<');
-      expect(html).toContain("Chat USD Agent");
+      expect(html).not.toContain("Chat USD Agent");
     } finally {
       window.location.hash = prevHash;
     }
@@ -558,7 +556,7 @@ describe("edge console honesty smoke", () => {
     expect(html).toContain("A1 不自動啟動");
     expect(html).toContain("not_started");
     // 工具列誠實 provenance：section / snapshot 待建（p15），不假裝已實作。
-    expect(html).toContain("後端待建 · P1.5");
+    expect(html).toContain('data-prov="p15"');
     expect(html).not.toContain("99.1%");
   });
 
@@ -579,10 +577,11 @@ describe("edge console honesty smoke", () => {
   // ── PR #179 finding 2：COORD /health 探活結果（含 down）為真實觀測 → 標 asbuilt，非 demo ──
   it("P2-1 Overview COORD /health Field 標 asbuilt（真實探活），不誤標示範資料", () => {
     const html = renderToString(<OverviewPage />);
-    // COORD 健康欄位緊鄰 provenance；初始（探活中）標「已實作」(asbuilt)，不得是「示範資料」(demo)。
-    const coordField = html.match(/COORD Coordinator :8004[\s\S]*?ec-prov[^>]*>[^<]*<\/span>/);
+    // 真實探活狀態仍顯示；machine provenance 不可誤標成 demo。
+    const coordField = html.match(/COORD Coordinator :8004[\s\S]*?<span data-prov="[^"]+"[^>]*><\/span>/);
     expect(coordField).not.toBeNull();
-    expect(coordField?.[0]).toContain("已實作"); // PROV_LABEL.asbuilt（真實探活結果）
+    expect(coordField?.[0]).toContain('data-prov="asbuilt"');
+    expect(coordField?.[0]).toContain("探活中");
     expect(coordField?.[0]).not.toContain("示範資料"); // 不誤標 demo
   });
 
@@ -610,7 +609,7 @@ describe("edge console honesty smoke", () => {
     expect(html).toContain("示範資料"); // PROV_LABEL.demo
     // model.usdc 轉檔產物規約示意仍在 Demo Panel，p1 標記仍存在。
     expect(html).toContain("model.usdc");
-    expect(html).toContain("後端待建 · P1"); // PROV_LABEL.p1（待產生 pending）
+    expect(html).toContain('data-prov="p1"'); // 模型產物的 machine 分類保留。
     // 唯讀 intake 來源視圖誠實字樣。
     expect(html).toContain("唯讀 intake 來源視圖");
     // 無願景假數字。

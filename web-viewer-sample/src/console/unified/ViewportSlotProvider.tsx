@@ -4,13 +4,20 @@ import type { ReactNode } from "react";
 import type { ReviewSessionViewerPaneBatchGate } from "../ReviewSessionViewerPane";
 import type { USDPrimNode } from "../EmbeddedViewer";
 import { resolveViewerCommandGate, ViewportSlotContext } from "./viewportSlot";
-import type { ViewportHostActions, ViewportPublication, ViewportSlotApi } from "./viewportSlot";
+import type { ViewportDockSubscription, ViewportHostActions, ViewportPublication, ViewportSlotApi, WorkspaceViewerPublication } from "./viewportSlot";
 
 export function ViewportSlotProvider({ children }: { children: ReactNode }) {
   const [slotEl, setSlotEl] = useState<HTMLElement | null>(null);
-  const [publication, setPublication] = useState<ViewportPublication | null>(null);
+  const [viewerPublication, setViewerPublication] = useState<WorkspaceViewerPublication | null>(null);
+  const [dockSubscription, setDockSubscription] = useState<ViewportDockSubscription | null>(null);
+  const dockGenerationRef = useRef(0);
+  const legacyDisposeRef = useRef<(() => void) | null>(null);
+  const publication = useMemo<ViewportPublication | null>(() => viewerPublication
+    ? { ...viewerPublication, ...(dockSubscription ?? {}) }
+    : null, [viewerPublication, dockSubscription]);
   const [activeSessionId, setActiveSessionIdState] = useState("");
   const [gate, setGateState] = useState<ReviewSessionViewerPaneBatchGate | null>(null);
+  const gateRef = useRef<ReviewSessionViewerPaneBatchGate | null>(null);
   const [stageTree, setStageTreeState] = useState<USDPrimNode[]>([]);
   const hostActionsRef = useRef<ViewportHostActions | null>(null);
   const activeSessionIdRef = useRef("");
@@ -22,12 +29,14 @@ export function ViewportSlotProvider({ children }: { children: ReactNode }) {
     const nextSessionId = sessionId.trim();
     if (activeSessionIdRef.current !== nextSessionId) {
       activeSessionIdRef.current = nextSessionId;
+      gateRef.current = null;
       setGateState(null);
       setStageTreeState([]);
     }
     setActiveSessionIdState(nextSessionId);
   }, []);
   const setGate = useCallback((next: ReviewSessionViewerPaneBatchGate | null) => {
+    gateRef.current = next;
     setGateState((prev) => (
       prev && next
       && prev.canSend === next.canSend
@@ -58,21 +67,48 @@ export function ViewportSlotProvider({ children }: { children: ReactNode }) {
   ) => {
     hostActionsRef.current?.sendToolbarAction?.(action, cameraView);
   }, []);
-  const publish = useCallback((next: ViewportPublication | null) => {
-    setPublication(next);
-    // 僅首次播種共用 session；可見 input 一旦成為 authority，後續 publication 不得覆寫或復活舊 handoff。
-    if (next && next.handoff.sessionId.trim() && !sessionAuthorityInitializedRef.current) {
+  const publishViewer = useCallback((next: WorkspaceViewerPublication) => {
+    setViewerPublication({ mode: next.mode, handoff: next.handoff, showHandoffActions: next.showHandoffActions });
+    // handoff 留作資料；觀看 authority 仍為 activeSessionId，顯式清空後不重新播種。
+    if (next.handoff.sessionId.trim() && !sessionAuthorityInitializedRef.current) {
       setActiveSessionId(next.handoff.sessionId);
     }
-    if (!next) {
-      setGateState(null);
-      setStageTreeState([]);
-    }
   }, [setActiveSessionId]);
+
+  const subscribeDock = useCallback((next: ViewportDockSubscription) => {
+    const generation = ++dockGenerationRef.current;
+    setDockSubscription(next);
+    // A retained Pane emits only on gate transitions; initialize each new Dock now.
+    if (gateRef.current) next.onBatchGateChange?.(gateRef.current);
+    return () => {
+      if (dockGenerationRef.current !== generation) return;
+      ++dockGenerationRef.current;
+      setDockSubscription(null);
+    };
+  }, []);
+
+  const publish = useCallback((next: ViewportPublication | null) => {
+    if (!next) {
+      legacyDisposeRef.current?.();
+      legacyDisposeRef.current = null;
+      return;
+    }
+    publishViewer(next);
+    legacyDisposeRef.current = subscribeDock({
+      onBatchGateChange: next.onBatchGateChange,
+      onBatchAck: next.onBatchAck,
+      onStageTree: next.onStageTree,
+      paneRef: next.paneRef,
+    });
+  }, [publishViewer, subscribeDock]);
 
   const value = useMemo<ViewportSlotApi>(() => ({
     registerSlot,
     slotEl,
+    publishViewer,
+    viewerPublication,
+    subscribeDock,
+    dockSubscription,
     publish,
     publication,
     activeSessionId,
@@ -86,6 +122,7 @@ export function ViewportSlotProvider({ children }: { children: ReactNode }) {
     sendToolbarAction,
     registerHostActions,
   }), [
+    publishViewer, viewerPublication, subscribeDock, dockSubscription,
     registerSlot,
     slotEl,
     publish,

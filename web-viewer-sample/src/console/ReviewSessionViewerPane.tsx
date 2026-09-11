@@ -223,7 +223,13 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
   const [viewerTraceId, setViewerTraceId] = useState<string | null>(null);
   const [viewerTraceErr, setViewerTraceErr] = useState<string | null>(null);
   const [viewerMountNonce, setViewerMountNonce] = useState(0);
-  const [lease, setLease] = useState<ViewerLeaseClaimResponse | null>(null);
+  const [lease, setLeaseState] = useState<ViewerLeaseClaimResponse | null>(null);
+  const currentLeaseRef = useRef<ViewerLeaseClaimResponse | null>(null);
+  const setLease = useCallback((next: ViewerLeaseClaimResponse | null) => {
+    // Update the identity synchronously, before another settled Promise can run.
+    currentLeaseRef.current = next;
+    setLeaseState(next);
+  }, []);
   const [leaseBusy, setLeaseBusy] = useState(false);
   const [leaveBusy, setLeaveBusy] = useState(false);
   const [leaseErr, setLeaseErr] = useState<ViewerLeaseError | null>(null);
@@ -234,7 +240,22 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
   const [highlightResult, setHighlightResult] = useState<{ ok: boolean; reason?: string } | null>(null);
   const [commandTrace, setCommandTrace] = useState<string | null>(null);
   const identityRef = useRef<ReviewViewerIdentity | null>(null);
-  const manuallyReleasedLeaseIdRef = useRef<string | null>(null);
+  const releaseRequestsRef = useRef(new Map<string, ReturnType<typeof coordinatorClient.releaseViewerLease>>());
+  const releaseLeaseOnce = useCallback((target: ViewerLeaseClaimResponse) => {
+    const key = JSON.stringify([target.session_id, target.lease_id, target.lease_token]);
+    const existing = releaseRequestsRef.current.get(key);
+    if (existing) return existing;
+    // Register before invoking the API so manual/retry/unmount share ownership.
+    const request = Promise.resolve().then(() => coordinatorClient.releaseViewerLease(
+      target.session_id, target.lease_id, target.lease_token,
+    ));
+    releaseRequestsRef.current.set(key, request);
+    void request.catch(() => {
+      // A later cleanup may retry a failed release; failure is never cached as success.
+      if (releaseRequestsRef.current.get(key) === request) releaseRequestsRef.current.delete(key);
+    });
+    return request;
+  }, []);
   const leaseAttemptRef = useRef(0);
   const viewerRef = useRef<EmbeddedViewerHandle>(null);
   const sessionInputTestId = `${tidPrefix}-session-input`;
@@ -261,6 +282,17 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
     .filter((s) => s.status === "active" || s.status === "created")
     .map((s) => s.session_id);
   const sid = sessionId.trim();
+  // Async lease work belongs to this exact session selection, including A -> B -> A.
+  const leaseScopeKey = JSON.stringify([handoff.sessionId, sid]);
+  const leaseScopeRef = useRef({ key: leaseScopeKey, epoch: 0 });
+  if (leaseScopeRef.current.key !== leaseScopeKey) {
+    leaseScopeRef.current = { key: leaseScopeKey, epoch: leaseScopeRef.current.epoch + 1 };
+  }
+  useEffect(() => () => { leaseScopeRef.current.epoch += 1; }, []);
+  useEffect(() => {
+    setLeaseBusy(false);
+    setLeaveBusy(false);
+  }, [leaseScopeKey]);
   const highlightTargetFingerprint = `${sid}\u0000${handoff.ifcGuid ?? ""}\u0000${handoff.usdPrimPath ?? ""}`;
   const highlightTargetFingerprintRef = useRef<string | null>(null);
   const highlightTargetGenerationRef = useRef(0);
@@ -347,7 +379,7 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
     setCommandTrace(null);
     setViewerTraceId(null);
     setViewerTraceErr(null);
-  }, [handoff.sessionId]);
+  }, [handoff.sessionId, setLease]);
 
   // ACK and command trace belong to the exact highlighted target, not merely
   // to the surrounding Review Session. Preserve the active lease/runtime
@@ -360,21 +392,19 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
   useEffect(() => {
     if (!activePrimaryLease) return;
     return () => {
-      if (manuallyReleasedLeaseIdRef.current === activePrimaryLease.lease_id) {
-        manuallyReleasedLeaseIdRef.current = null;
-        return;
-      }
-      void coordinatorClient.releaseViewerLease(activePrimaryLease.session_id, activePrimaryLease.lease_id, activePrimaryLease.lease_token).catch(() => {});
+      void releaseLeaseOnce(activePrimaryLease).catch(() => {});
     };
   }, [
     activePrimaryLease?.session_id,
     activePrimaryLease?.lease_id,
     activePrimaryLease?.lease_token,
+    releaseLeaseOnce,
   ]);
 
   useEffect(() => {
     if (!activePrimaryLease) return;
     const heartbeatMs = heartbeatDelayFn(activePrimaryLease.heartbeat_after_ms);
+    const epoch = leaseScopeRef.current.epoch;
     const timer = window.setInterval(() => {
       void coordinatorClient.viewerLeaseHeartbeat(sid, activePrimaryLease.lease_id, activePrimaryLease.lease_token, {
         loaded_stage_url: loadedStageUrl,
@@ -383,6 +413,9 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
         // lease-expired（task 5.6）：coordinator 對過期/失效 lease 的 heartbeat 回
         // 404「Viewer lease not found or token invalid」。轉入可見失效態並清 lease；
         // 其他 heartbeat 失敗維持既有沉默重試語意，不誤標為過期。
+        if (leaseScopeRef.current.epoch !== epoch
+          || currentLeaseRef.current?.lease_id !== activePrimaryLease.lease_id
+          || currentLeaseRef.current?.lease_token !== activePrimaryLease.lease_token) return;
         const message = String(e);
         if (/\b404\b/.test(message) && /viewer lease/i.test(message)) {
           setLease(null);
@@ -399,6 +432,7 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
     dataChannelReady,
     loadedStageUrl,
     heartbeatDelayFn,
+    setLease,
   ]);
 
   // canonical trace carrier：session 可觀測即向 coordinator 取，讓 viewer iframe 掛載前
@@ -446,6 +480,7 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
 
   const claimPrimary = useCallback(async () => {
     if (!validSession || !viewerOrigin || !sessionObserved || modelArtifactStale || gpuUnavailable || leaseBusy) return;
+    const epoch = leaseScopeRef.current.epoch;
     const identity = identityRef.current ?? createReviewViewerIdentity(mode);
     identityRef.current = identity;
     setLeaseBusy(true);
@@ -461,12 +496,8 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
     setCommandTrace(null);
     try {
       if (activePrimaryLease) {
-        await coordinatorClient.releaseViewerLease(
-          activePrimaryLease.session_id,
-          activePrimaryLease.lease_id,
-          activePrimaryLease.lease_token,
-        );
-        manuallyReleasedLeaseIdRef.current = activePrimaryLease.lease_id;
+        await releaseLeaseOnce(activePrimaryLease);
+        if (leaseScopeRef.current.epoch !== epoch) return;
       }
       setLease(null);
       leaseAttemptRef.current += 1;
@@ -476,25 +507,32 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
         requested_role: "primary",
         client_nonce: `${identity.viewer_id}:${sid}:primary:${leaseAttemptRef.current}`,
       }, identity.user_token);
+      if (leaseScopeRef.current.epoch !== epoch) {
+        // The server may have granted the abandoned request; release that exact lease.
+        // Failure still relies on server expiry, just like unmount cleanup.
+        void releaseLeaseOnce(claimed).catch(() => {});
+        return;
+      }
+      setLeaseExpired(false);
       setLease(claimed);
     } catch (e) {
-      setLeaseErr(classifyViewerLeaseError(e));
+      if (leaseScopeRef.current.epoch === epoch) setLeaseErr(classifyViewerLeaseError(e));
     } finally {
-      setLeaseBusy(false);
+      if (leaseScopeRef.current.epoch === epoch) setLeaseBusy(false);
     }
-  }, [sid, validSession, viewerOrigin, sessionObserved, modelArtifactStale, gpuUnavailable, leaseBusy, mode, activePrimaryLease]);
+  }, [sid, validSession, viewerOrigin, sessionObserved, modelArtifactStale, gpuUnavailable, leaseBusy, mode, activePrimaryLease, releaseLeaseOnce, setLease]);
 
   const leave3dViewer = useCallback(async () => {
     if (!activePrimaryLease || leaveBusy) return;
+    const epoch = leaseScopeRef.current.epoch;
+    const stillCurrent = () => leaseScopeRef.current.epoch === epoch
+      && currentLeaseRef.current?.lease_id === activePrimaryLease.lease_id
+      && currentLeaseRef.current?.lease_token === activePrimaryLease.lease_token;
     setLeaveBusy(true);
     setLeaseErr(null);
     try {
-      await coordinatorClient.releaseViewerLease(
-        activePrimaryLease.session_id,
-        activePrimaryLease.lease_id,
-        activePrimaryLease.lease_token,
-      );
-      manuallyReleasedLeaseIdRef.current = activePrimaryLease.lease_id;
+      await releaseLeaseOnce(activePrimaryLease);
+      if (!stillCurrent()) return;
       setLease(null);
       setFirstFrame(false);
       setDataChannelReady(false);
@@ -503,11 +541,11 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
       setFirstFrameTimedOut(false);
       setStreamDisconnected(false);
     } catch (error) {
-      setLeaseErr(classifyViewerLeaseError(error));
+      if (stillCurrent()) setLeaseErr(classifyViewerLeaseError(error));
     } finally {
-      setLeaveBusy(false);
+      if (leaseScopeRef.current.epoch === epoch) setLeaveBusy(false);
     }
-  }, [activePrimaryLease, leaveBusy]);
+  }, [activePrimaryLease, leaveBusy, releaseLeaseOnce, setLease]);
 
   const stageText = stageProofStatus === "unproven"
     ? t("unproven（coordinator authority 尚未證實；handoff 已阻擋）", "unproven (coordinator authority is not confirmed; handoff is blocked)")

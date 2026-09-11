@@ -36,9 +36,10 @@ describe("GovernanceOverlay 治理 overlay（R9：條目對齊權威 A1–A10）
   it("願景/待建：碰撞歸 A3 clash（未開工·ifcclash 已選型），其餘標願景 disabled（不假裝 ready）", () => {
     const html = renderToString(<GovernanceOverlay {...baseProps} />);
     expect(html).toContain("ifcclash");
-    expect(html).toContain("後端待建 · P1"); // clash＝p1（已核可 plan 待執行）
-    // 願景 phase 標記（PROV_LABEL.p4）。
-    expect(html).toMatch(/願景 · Phase 4（後端未建）/);
+    expect(html).toContain('data-prov="p1"');
+    expect(html).toContain("尚未提供");
+    expect(html).toContain('data-prov="p4"');
+    expect(html).toContain("規劃中");
   });
 
   it("無願景假數字", () => {

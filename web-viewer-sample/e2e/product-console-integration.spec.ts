@@ -4,7 +4,7 @@ const COORDINATOR = process.env.E2E_COORDINATOR_BASE_URL || "http://127.0.0.1:80
 
 // IA v2（UnifiedConsole）：/ui 預設頁與 #a1..#a10 / #pipeline / #runtime 改掛新殼（UnifiedShell），
 // 新殼依設計稿無 ChatUSD agent 欄 / FlowBar / SharedStatusRail；legacy 鍵（#sessions / #instances /
-// #minio / #viewer …）保留舊殼，ChatUSD 欄斷言隨之移到 legacy 路由驗證。
+// #minio / #viewer …）保留舊殼；人類介面切片移除 legacy 的非功能 Agent 預覽。
 test.describe("Product AI-BIM Governance console integration", () => {
   test("operator can navigate unified + legacy product console pages", async ({ page }) => {
     const severeConsole: string[] = [];
@@ -56,7 +56,7 @@ test.describe("Product AI-BIM Governance console integration", () => {
     await expect(page.getByText("⑤ Callback Outbox")).toBeVisible();
 
     // #/sessions → legacy Session 管理（舊殼斷言維持）＋ legacy 殼專屬元素：
-    // 兩段式 nav 群組與 ChatUSD agent 欄（新殼依設計稿無 agent 欄，斷言移到 legacy 路由）。
+    // 原有 nav 群組與語言切換保留；非功能 Agent 預覽及工程進度裝飾不再顯示。
     await page.goto(`${COORDINATOR}/ui#/sessions`);
     await expect(page.getByRole("heading", { name: /Session 管理/ })).toBeVisible();
     await expect(page.locator("main").getByText(/first frame/i).first()).toBeVisible();
@@ -64,7 +64,10 @@ test.describe("Product AI-BIM Governance console integration", () => {
     await expect(page.getByText("核心治理")).toBeVisible();
     await expect(page.getByText("OMNIVERSE RUNTIME", { exact: true })).toBeVisible();
     await expect(page.getByText("落地端控制台")).toBeVisible();
-    await expect(page.getByText("Chat USD Agent")).toBeVisible();
+    await expect(page.getByText("Chat USD Agent")).toHaveCount(0);
+    await expect(page.locator(".ec-agent, .ec-tweaks, .ec-nav-badge")).toHaveCount(0);
+    await expect(page.locator(".ec-flow-step")).toHaveCount(5);
+    await expect(page.locator(".ec-langtoggle")).toBeVisible();
 
     // #/instances → legacy Kit / GPU 機隊（維持）。
     await page.goto(`${COORDINATOR}/ui#/instances`);

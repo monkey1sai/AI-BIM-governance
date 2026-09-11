@@ -26,6 +26,9 @@ export interface ViewportPublication {
   paneRef?: Ref<ReviewSessionViewerPaneHandle>;
 }
 
+export type WorkspaceViewerPublication = Pick<ViewportPublication, "mode" | "handoff" | "showHandoffActions">;
+export type ViewportDockSubscription = Omit<ViewportPublication, keyof WorkspaceViewerPublication>;
+
 export interface ViewportHostActions {
   requestStageTree?: (primPath?: string) => void;
   selectPrim?: (primPath: string, multiSelect?: boolean) => void;
@@ -39,7 +42,12 @@ export interface ViewportSlotApi {
   /** 中欄容器 ref callback；null＝解除註冊（host 轉 visibility:hidden，不 unmount）。 */
   registerSlot: (el: HTMLElement | null) => void;
   slotEl: HTMLElement | null;
-  /** 模組頁發布 handoff；null＝該頁離場。host 只掛最後一筆。 */
+  /** Workspace 保留觀看資料；Dock 的生命週期只管理訂閱。 */
+  publishViewer: (publication: WorkspaceViewerPublication) => void;
+  viewerPublication: WorkspaceViewerPublication | null;
+  subscribeDock: (subscription: ViewportDockSubscription) => () => void;
+  dockSubscription: ViewportDockSubscription | null;
+  /** 相容入口；null 僅解除最後一次此入口所建立的訂閱，不刪 viewer binding。 */
   publish: (publication: ViewportPublication | null) => void;
   publication: ViewportPublication | null;
   /** 跨 dock 共用的 review session；由 publication.handoff.sessionId 播種，也可由頁面主動設定。 */
