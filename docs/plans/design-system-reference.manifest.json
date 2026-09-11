@@ -372,16 +372,16 @@
         "authority": "canonical_product_surface",
         "canonical_route": "#a1",
         "capture_runner": "web-viewer-sample/e2e/design-system-visual.spec.ts",
-        "approval": "explicit owner rebaseline 2026-09-03 (owner approved 2026-09-03, PR #763 merged 458c0c4; sign-off recorded in this follow-up): A1 live workspace under the /api 503 stub re-laid out per design §03 IA (left stage-tree honestly disabled #609 / centre ViewportHost slot, zero DOM offline / right tool dock with flow guide) by introduce-viewer-app-integration-surface S3a+S3b; product-surface authority per PR #429 and #701 precedent; goldens captured from clean subject commit f31528e by design-system-visual.spec.ts"
+        "approval": "Owner-authorized fourth slice and same-PR baseline update, 2026-09-12: remove shared asbuilt/artifact display badges while retaining DEMO and unavailable/planned cues. Captured by the unchanged Windows Chromium DPR1 design runner from clean product commit 595f26eec97d4b962f0a892b50e13ea9ea1292e9. This records implementation scope authorization; exact-head GitHub human review remains required."
       },
       "baselines": {
         "1440x900": {
           "path": "docs/plans/design-system-baseline/workspace.a1.default/1440x900.png",
-          "sha256": "bc07ec21205c0fc1a84234836e72795ff0e4cf30006212f846216ec3bea19c6d"
+          "sha256": "d055bb321b772cd92750463b718fa0c25503e1d5940a38aef6be1cf25498fd60"
         },
         "1920x1080": {
           "path": "docs/plans/design-system-baseline/workspace.a1.default/1920x1080.png",
-          "sha256": "63fb6b602341d80721d9ef7821772c44f34692da7d946bba05b7271b8f7a5306"
+          "sha256": "6e4e2ed8318147c8e84ecd9ffdfd9c7437a770beb3538c9ba5c35aa61bfe012d"
         }
       }
     },
@@ -398,16 +398,16 @@
         "authority": "canonical_product_surface",
         "canonical_route": "#a2",
         "capture_runner": "web-viewer-sample/e2e/design-system-visual.spec.ts",
-        "approval": "explicit owner rebaseline 2026-09-03 (owner approved 2026-09-03, PR #763 merged 458c0c4; sign-off recorded in this follow-up): A2 live workspace under the /api 503 stub re-laid out per design §03 IA (left stage-tree honestly disabled #609 / centre ViewportHost slot, zero DOM offline / right tool dock with flow guide) by introduce-viewer-app-integration-surface S3a+S3b; product-surface authority per PR #429 and #701 precedent; goldens captured from clean subject commit f31528e by design-system-visual.spec.ts"
+        "approval": "Owner-authorized fourth slice and same-PR baseline update, 2026-09-12: remove shared asbuilt/artifact display badges while retaining DEMO and unavailable/planned cues. Captured by the unchanged Windows Chromium DPR1 design runner from clean product commit 595f26eec97d4b962f0a892b50e13ea9ea1292e9. This records implementation scope authorization; exact-head GitHub human review remains required."
       },
       "baselines": {
         "1440x900": {
           "path": "docs/plans/design-system-baseline/workspace.a2.default/1440x900.png",
-          "sha256": "7ec50d23b15f8710f463de6a60f959e5de610502d2e47483055858e03161458f"
+          "sha256": "3f16f5a766ab95b3468a08ef02ead0761b82588a6296659717cf07e29ec3ccde"
         },
         "1920x1080": {
           "path": "docs/plans/design-system-baseline/workspace.a2.default/1920x1080.png",
-          "sha256": "d91ab4f67859c7376271ee5986c0b2158e4c9709ed8f180a26d16dd912a089b0"
+          "sha256": "98b149877393fc3081d5db64985cb955703d583886eddbb3ac638399d6f91f51"
         }
       }
     },
@@ -424,16 +424,16 @@
         "authority": "canonical_product_surface",
         "canonical_route": "#a3",
         "capture_runner": "web-viewer-sample/e2e/design-system-visual.spec.ts",
-        "approval": "explicit owner rebaseline 2026-09-03 (owner approved 2026-09-03, PR #763 merged 458c0c4; sign-off recorded in this follow-up): A3 live workspace under the /api 503 stub re-laid out per design §03 IA (left stage-tree honestly disabled #609 / centre ViewportHost slot, zero DOM offline / right tool dock with flow guide) by introduce-viewer-app-integration-surface S3a+S3b; product-surface authority per PR #429 and #701 precedent; goldens captured from clean subject commit f31528e by design-system-visual.spec.ts"
+        "approval": "Owner-authorized fourth slice and same-PR baseline update, 2026-09-12: remove shared asbuilt/artifact display badges while retaining DEMO and unavailable/planned cues. Captured by the unchanged Windows Chromium DPR1 design runner from clean product commit 595f26eec97d4b962f0a892b50e13ea9ea1292e9. This records implementation scope authorization; exact-head GitHub human review remains required."
       },
       "baselines": {
         "1440x900": {
           "path": "docs/plans/design-system-baseline/workspace.a3.default/1440x900.png",
-          "sha256": "ec52f1b3ca441a92d146d039c8217aecc51c96c2460da2bd56f81225cf551270"
+          "sha256": "1e4fda915c8267ccd770300cfd24d109c8b84cbfec5c6378e6c1b226a541feab"
         },
         "1920x1080": {
           "path": "docs/plans/design-system-baseline/workspace.a3.default/1920x1080.png",
-          "sha256": "b54b635146dc6f02721f9223c0e72dd60279889da8cf6f66a7b0880275102aef"
+          "sha256": "2b86a4c9c9d98a431c9a6d345c8496d47210de5eea005d9999c5c721d5bace62"
         }
       }
     },
@@ -450,16 +450,16 @@
         "authority": "canonical_product_surface",
         "canonical_route": "#a4",
         "capture_runner": "web-viewer-sample/e2e/design-system-visual.spec.ts",
-        "approval": "explicit owner rebaseline 2026-09-03 (owner approved 2026-09-03, PR #763 merged 458c0c4; sign-off recorded in this follow-up): A4 live workspace under the /api 503 stub re-laid out per design §03 IA (left stage-tree honestly disabled #609 / centre ViewportHost slot, zero DOM offline / right tool dock with flow guide) by introduce-viewer-app-integration-surface S3a+S3b; product-surface authority per PR #429 and #701 precedent; goldens captured from clean subject commit f31528e by design-system-visual.spec.ts"
+        "approval": "Owner-authorized fourth slice and same-PR baseline update, 2026-09-12: remove shared asbuilt/artifact display badges while retaining DEMO and unavailable/planned cues. Captured by the unchanged Windows Chromium DPR1 design runner from clean product commit 595f26eec97d4b962f0a892b50e13ea9ea1292e9. This records implementation scope authorization; exact-head GitHub human review remains required."
       },
       "baselines": {
         "1440x900": {
           "path": "docs/plans/design-system-baseline/workspace.a4.default/1440x900.png",
-          "sha256": "33e8765a1914c3438224aadd4b5e4e277fe502be3c8c13a5b316132a85ce41cc"
+          "sha256": "c812c9f87d33405dc8b72431b0dbc79438d23da8abbd5fddc95a4cfee2b6b15e"
         },
         "1920x1080": {
           "path": "docs/plans/design-system-baseline/workspace.a4.default/1920x1080.png",
-          "sha256": "d7304fa5f043c09be5e69c95840852c7bce8ac48d3d069a27f633f4774a31695"
+          "sha256": "6137c45db43baf04da81badeed3bbd7635a4b4c8e100e0b7e1b03d172e81997a"
         }
       }
     },
@@ -766,5 +766,5 @@
     "docs/plans/ai-bim-geo-viewer-A1.png..A10.png",
     "docs/plans/ai-bim-geo-Ai-codeing-A1.png..A10.png"
   ],
-  "baseline_snapshot_sha256": "645bcf4c0c21337ec1e507fe1d4b9c1c446cd36f01c1a45b50e5d8a19438f3d1"
+  "baseline_snapshot_sha256": "99af3975e01b32531e1b39f83359167547d186814a61d7ab96bb2385171dd1f4"
 }
