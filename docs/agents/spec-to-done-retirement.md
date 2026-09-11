@@ -2,6 +2,8 @@
 
 文件性質：agent boundary。2026-09-11 使用者核准逐刀 PR 計畫後退役此技能。
 
+現行退役契約：[spec-to-done-retirement Specification](../../openspec/specs/spec-to-done-retirement/spec.md)。它明確取代 ai-coding-governance 中的舊 workflow routing Requirement；原治理規格作為 pinned review-policy source 保持原 bytes 與 SHA，其他審查及 main 保護規則繼續適用。
+
 一般任務依 F/B/G lane 執行；完整需求沿既有 source/spec 切成可獨立驗證的 PR，前一刀合入 main 後才開始下一刀。舊 P0–P7、NEW_RUN 與累計 agent 次數不是新任務的執行流程。
 
 三個技能 discovery roots 的 spec-to-done 入口已移除。舊 workflow 名稱只保留零派工的 retired 回應，不能建立新 run、執行實作或宣告完成。

@@ -51,30 +51,27 @@ Repo files SHALL prepare the checks, templates, and owner mappings. GitHub branc
 - **THEN** the repo MAY be scored at Level 5 for AI coding governance.
 - **AND** product/runtime evidence gaps SHALL still be reported separately from the AI coding governance score.
 
-### Requirement: Active workflow routing SHALL preserve deterministic drift checks after spec-to-done retirement
+### Requirement: spec-to-done agent routing SHALL have a single source of truth with a deterministic drift gate
 
-已退役的 spec-to-done 技能及 writer SHALL 不再可被 discovery 或用來派工。`std-plan.js`、`std-implement.js`、`std-evidence.js`、`std-evidence-closeout.js`、`plan-next-spec-to-done-aware.js`、`spec-to-done-adversarial-verify.js` SHALL 僅保留零派工相容入口，不再要求生成舊 ROUTING 區塊。仍啟用的 scanner workflow SHALL 繼續以 canonical `routing.json`、`scripts/gen_routing.py` 與 deterministic tests 保證路由不漂移；不得藉退役停用共用 gate。
+The spec-to-done harness SHALL define every workflow `agent()` call-site's model+effort tier in a single canonical `routing.json`, generate those tiers into each `std-*.js` via a codegen tool (`scripts/gen_routing.py`) rather than runtime import, and enforce non-divergence with a deterministic test gate. Effort downgrades SHALL be opt-in via a flag that defaults off (zero behavior change), the judgment layer (`judge` tier) SHALL remain at the highest effort and be immutable to codegen, the adjudication layer (`arbiter` tier, `fable`/`max`) SHALL likewise be immutable and only ever strengthened, and intentionally pinned call-sites SHALL be excluded from codegen and protected by literal assertions.
 
-#### Scenario: Retired workflows cannot dispatch or mutate state
+#### Scenario: Routing drift is rejected by the deterministic gate
 
-- **GIVEN** 任一已退役 workflow 與任意輸入參數
-- **WHEN** 呼叫相容入口
-- **THEN** 它 SHALL 固定回傳 `retired_workflow` 與 `agentCallsUsed=0`
-- **AND** SHALL 不呼叫 agent、不讀取執行 capability、不建立或追加 run state。
+- **GIVEN** `routing.json` and the codegen-generated `ROUTING` blocks inside `std-plan.js` / `std-implement.js` / `std-evidence.js`
+- **WHEN** any generated `ROUTING` block diverges from `routing.json`, or a wired call-site references the wrong tier
+- **THEN** `scripts/gen_routing.py --check` SHALL exit non-zero and `tests/test_routing_consistency.py` SHALL fail.
 
-#### Scenario: Active scanner routing drift remains rejected
+#### Scenario: Plan-author resolves to the arbiter tier when the effort downgrade flag is off
 
-- **GIVEN** `routing.json` 與仍啟用 scanner 的 codegen ROUTING 區塊
-- **WHEN** 區塊或 call-site tier 與 canonical routing 不一致
-- **THEN** `scripts/gen_routing.py --check` SHALL exit non-zero，`tests/test_routing_consistency.py` SHALL fail。
-- **AND** 已退役入口 SHALL 被 codegen 明確排除，退役行為由 `tests/test_spec_workflow_lean.mjs` 驗證。
+- **GIVEN** `flags.plan_author_xhigh` is `false` in `routing.json`
+- **WHEN** the spec-to-done plan-author agent call-site is resolved
+- **THEN** it SHALL resolve to the `arbiter` tier (`fable` / `max`); flipping the flag to `true` is a deliberate downgrade decision that requires updating the pinned tests in the same commit.
 
-#### Scenario: Historical readers do not restore an execution lane
+#### Scenario: Judge tier and do-not-codegen sites are protected
 
-- **GIVEN** 歷史 state、machine/Fabric contract 或 task-packet/v2 的 Lane S 資料
-- **WHEN** 保留的 reader 執行格式驗證
-- **THEN** SHALL 保留原有拒絕條件，且 SHALL NOT 授予 dispatch、resume、merge 或部署權限。
-- **AND** 新任務 SHALL 使用 F/B/G；task-packet CLI 對含 S 的成功結果 SHALL 標示 `retired_lane_validation_only: true` 並維持 `authorization_granted: false`。
+- **GIVEN** the `judge` tier is marked immutable and the std-implement primary/retry/escalation implementer call-sites are intentionally pinned
+- **WHEN** the consistency gate runs
+- **THEN** the gate SHALL assert the generated `judge` block stays `opus`/`max` and that `model: implModel` plus the two `opus`/`max` escalation literals survive verbatim rather than being codegen-replaced.
 
 #### Scenario: Invalid model/effort combination is rejected before generation
 
