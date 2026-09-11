@@ -4,7 +4,7 @@ Document version: `parallel-delivery-fabric-operator-policy/v1`
 
 Requirement map version: `parallel-delivery-fabric-acceptance-requirements/v1`
 
-Requirement map SHA-256: `74688a538fe0a72299e3ac3dfcc9f58a879dec65c7bcb77b14254fbafe4570bc`
+Requirement map SHA-256: `410a39b43e2c9b59df166073af73aefeb9f7999f879069a82d117c6c87b8346b`
 
 This is a descriptive, shadow-only operator policy. It records the approved
 acceptance obligations and their authority boundaries. The local
