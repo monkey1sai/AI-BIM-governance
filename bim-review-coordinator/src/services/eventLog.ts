@@ -38,11 +38,13 @@ const SERVER_OWNED_EVENT_TYPES = new Set([
   "sessionCreated",
   "sessionActive",
   "sessionRecreated",
+  "viewerLeaseClaimed",
 ]);
 const CLIENT_FORBIDDEN_EVENT_TYPES = new Set([
   "sessionCreated",
   "sessionActive",
   "sessionRecreated",
+  "viewerLeaseClaimed",
 ]);
 const closeCheckpointIdPattern = /^close_[A-Za-z0-9_-]+$/;
 

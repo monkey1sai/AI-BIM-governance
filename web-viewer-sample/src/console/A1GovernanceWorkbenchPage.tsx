@@ -15,6 +15,7 @@ import { buildHandoff } from "./handoff";
 import { useIncomingHandoff, IncomingHandoffBanner } from "./incomingHandoff";
 import { FailureScoreboard } from "./FailureScoreboard";
 import { ClosedSessionRecovery } from "./ClosedSessionRecovery";
+import { ReadyReviewSessions } from "./ReadyReviewSessions";
 type NativeFilePickerWindow = Window & {
   showOpenFilePicker?: (options?: {
     multiple?: boolean;
@@ -990,6 +991,10 @@ export function A1GovernanceWorkbenchPage() {
       )}
 
       <Panel title={t("A1 3D 高亮 Session", "A1 3D highlight session")} sub={t("MinIO 來源先由 coordinator 建立 / 重用 review session；A1 本頁直接 attach viewer、觀測 first frame / DataChannel / stage match，並送出 3D 高亮。", "MinIO sources create or reuse a review session through the coordinator; A1 attaches the viewer, observes first frame / DataChannel / stage match, and sends 3D highlight on this page.")} prov="asbuilt">
+        <ReadyReviewSessions sessions={sessions} onSelected={(session) => {
+          setSessions(current => [...current.filter(item => item.session_id !== session.session_id), session]);
+          setSelectedSession(session.session_id);
+        }} />
         {sessions.length === 0 ? (
           <div data-testid="a1-no-session">
             <p className="ec-note">{t("無 active session。若已有 downloaded IFC-ready job，A1 仍可先跑 CPU rule-run；3D 高亮需先讓 IFC→USD conversion ready，再在本頁建立 / 啟動 3D session。", "No active session. If a downloaded IFC-ready job exists, A1 can still run the CPU rule-run; 3D highlight requires IFC->USD conversion ready, then the 3D session is created and started on this page.")}</p>

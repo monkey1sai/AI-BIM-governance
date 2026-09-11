@@ -11,9 +11,10 @@ import path from "node:path";
 import os from "node:os";
 import fs from "node:fs";
 import { createHash } from "node:crypto";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { SessionStore, isSafeSessionId, isSessionMutable } from "../src/services/sessionStore.js";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { SessionStore, isSafeSessionId, isSessionMutable, type CreateReviewRequestSessionInput } from "../src/services/sessionStore.js";
 import type { KitInstance, KitInstanceBinding, ReviewSession } from "../src/types.js";
+import { readyReviewSourceSnapshot, fingerprintReadyReviewSource } from "../src/services/readyReviewIntent.js";
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -136,6 +137,119 @@ describe("isSessionMutable", () => {
 describe("SessionStore", () => {
   let tmpDir: string;
   let store: SessionStore;
+
+function reviewRequestInput(scope: string, modelHash: string): CreateReviewRequestSessionInput {
+  const source = readyReviewSourceSnapshot({
+    readyModelId: "mw_0123456789abcdef", conversionJobId: "stream_conv_fixture",
+    correlationId: "fixture", rootTraceId: "ifcready_request_fixture",
+    tenantId: "tenant_001", projectId: "project_001", modelVersionId: "version_001",
+    model: {url: "http://127.0.0.1/model.usdc", sha256: modelHash},
+    mapping: {url: "http://127.0.0.1/element_mapping.json", sha256: "b".repeat(64)},
+  });
+  return {
+    ready_model_id: "mw_0123456789abcdef", trace_id: "ifcready_request_fixture",
+    review_request_id: scope, review_request_fingerprint: fingerprintReadyReviewSource(source), ready_review_source: source,
+    tenant_id: "tenant_001", project_id: "project_001", model_version_id: "version_001",
+    usdc_artifact_id: "auto_usdc_stream_conv_fixture", created_by: "coordinator-ready-review-request",
+    mode: "single_kit_shared_state", kit_instance: dummyKitInstance,
+    artifact_bindings: [{binding_id: "binding_fixture", artifact_group_id: "ag_version_001",
+      model_version_id: "version_001", artifact_id: "auto_usdc_stream_conv_fixture",
+      artifact_role: "derived", url: source.model.url, mapping_url: source.mapping.url,
+      load_order: 0, routing_policy: "same_instance", ready_status: "ready",
+      conversion_authority: "bim-streaming-server", conversion_job_id: "stream_conv_fixture",
+      conversion_status: "ready"}], kit_instance_bindings: [], quality_metrics_summary: null,
+  };
+}
+describe("createOrGetReviewRequest", () => {
+  const scopeA = "1".repeat(64), scopeB = "2".repeat(64);
+  const fingerprintA = "a".repeat(64), fingerprintB = "b".repeat(64);
+  it("replays the same legal id after restart", () => {
+    const first = store.createOrGetReviewRequest(reviewRequestInput(scopeA, fingerprintA));
+    expect(first.kind).toBe("created");
+    if (first.kind !== "created") throw new Error("expected created");
+    expect(first.session.session_id).toBe(`review_session_request_${scopeA}`);
+    expect(isSafeSessionId(first.session.session_id)).toBe(true);
+    expect(first.session).toMatchObject({status: "created", kit_instance_bindings: []});
+    const replay = new SessionStore(tmpDir).createOrGetReviewRequest(reviewRequestInput(scopeA, fingerprintA));
+    expect(replay).toMatchObject({kind: "replay", session: {session_id: first.session.session_id}});
+  });
+  it("keeps different requests independent on the same model", () => {
+    const a = store.createOrGetReviewRequest(reviewRequestInput(scopeA, fingerprintA));
+    const b = store.createOrGetReviewRequest(reviewRequestInput(scopeB, fingerprintA));
+    if (a.kind !== "created" || b.kind !== "created") throw new Error("expected two sessions");
+    expect(a.session.session_id).not.toBe(b.session.session_id);
+    expect(store.list()).toHaveLength(2);
+  });
+  it("rejects same scope with different fingerprint", () => {
+    store.createOrGetReviewRequest(reviewRequestInput(scopeA, fingerprintA));
+    expect(store.createOrGetReviewRequest(reviewRequestInput(scopeA, fingerprintB))).toEqual({kind: "conflict"});
+    expect(store.list()).toHaveLength(1);
+  });
+  it("replays closed without reviving", () => {
+    const a = store.createOrGetReviewRequest(reviewRequestInput(scopeA, fingerprintA));
+    if (a.kind !== "created") throw new Error("expected created");
+    store.setStatus(a.session.session_id, "closed");
+    expect(store.createOrGetReviewRequest(reviewRequestInput(scopeA, fingerprintA)))
+      .toMatchObject({kind: "replay", session: {session_id: a.session.session_id, status: "closed"}});
+  });
+  it("keeps a corrupt request rejected after quarantine", () => {
+    const a = store.createOrGetReviewRequest(reviewRequestInput(scopeA, fingerprintA));
+    if (a.kind !== "created") throw new Error("expected created");
+    const file = path.join(tmpDir, `${a.session.session_id}.json`);
+    fs.writeFileSync(file, "{", "utf8");
+    const restarted = new SessionStore(tmpDir);
+    expect(restarted.createOrGetReviewRequest(reviewRequestInput(scopeA, fingerprintA))).toEqual({kind: "corrupt"});
+    expect(fs.existsSync(file)).toBe(false);
+    expect(fs.readdirSync(tmpDir).some(name => name.startsWith(`${a.session.session_id}.json.corrupt-`))).toBe(true);
+    expect(new SessionStore(tmpDir).createOrGetReviewRequest(reviewRequestInput(scopeA, fingerprintA))).toEqual({kind: "corrupt"});
+  });
+  it("preserves malformed JSON when quarantine rename fails", () => {
+    const a = store.createOrGetReviewRequest(reviewRequestInput(scopeA, fingerprintA));
+    if (a.kind !== "created") throw new Error("expected created");
+    const file = path.join(tmpDir, `${a.session.session_id}.json`);
+    fs.writeFileSync(file, "{", "utf8");
+    const rename = vi.spyOn(fs, "renameSync").mockImplementationOnce(() => { throw new Error("rename denied"); });
+    try {
+      expect(store.createOrGetReviewRequest(reviewRequestInput(scopeA, fingerprintA))).toEqual({kind: "corrupt"});
+      expect(fs.readFileSync(file, "utf8")).toBe("{");
+    } finally { rename.mockRestore(); }
+  });
+  it.each(["missing", "forged"])("rejects %s stored identity", variant => {
+    const a = store.createOrGetReviewRequest(reviewRequestInput(scopeA, fingerprintA));
+    if (a.kind !== "created") throw new Error("expected created");
+    const file = path.join(tmpDir, `${a.session.session_id}.json`);
+    const record = JSON.parse(fs.readFileSync(file, "utf8")) as Record<string, unknown>;
+    if (variant === "missing") delete record.review_request_fingerprint;
+    else record.review_request_id = scopeB;
+    fs.writeFileSync(file, JSON.stringify(record), "utf8");
+    expect(store.createOrGetReviewRequest(reviewRequestInput(scopeA, fingerprintA))).toEqual({kind: "corrupt"});
+  });
+  it.each([
+    [scopeA + "\n", fingerprintA], [scopeA, fingerprintA + "\n"],
+  ])("rejects noncanonical digest bytes", (scope, fingerprint) => {
+    expect(() => store.createOrGetReviewRequest(reviewRequestInput(scope, fingerprint))).toThrow();
+    expect(store.list()).toHaveLength(0);
+  });
+it("rejects an empty tenant rather than applying the generic fallback", () => {
+  const input = reviewRequestInput(scopeA, fingerprintA);
+  expect(() => store.createOrGetReviewRequest({...input, tenant_id: ""})).toThrow();
+  expect(store.list()).toHaveLength(0);
+});
+it.each(["url", "extra-binding", "hash"])("rejects stored %s tampering", (field) => {
+  const first = store.createOrGetReviewRequest(reviewRequestInput(scopeA, fingerprintA));
+  if (first.kind !== "created") throw new Error("expected created");
+  const file = path.join(tmpDir, first.session.session_id + ".json");
+  const record = JSON.parse(fs.readFileSync(file, "utf8"));
+  if (field === "url") record.artifact_bindings[0].url += "?changed";
+  if (field === "extra-binding") record.artifact_bindings.push({...record.artifact_bindings[0], binding_id: "extra"});
+  if (field === "hash") record.ready_review_source.model.sha256 = "c".repeat(64);
+  fs.writeFileSync(file, JSON.stringify(record), "utf8");
+  expect(new SessionStore(tmpDir).createOrGetReviewRequest(reviewRequestInput(scopeA, fingerprintA)))
+    .toEqual({kind: "corrupt"});
+});
+
+});
+
 
   beforeEach(() => {
     tmpDir = makeTmpDir();

@@ -20,6 +20,7 @@ describe("ClosedSessionRecovery", () => {
   let root: Root;
 
   beforeEach(() => {
+    sessionStorage.clear();
     (globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true;
     container = document.createElement("div");
     document.body.appendChild(container);
@@ -29,6 +30,7 @@ describe("ClosedSessionRecovery", () => {
   afterEach(async () => {
     await act(async () => { root.unmount(); });
     container.remove();
+    sessionStorage.clear();
     vi.restoreAllMocks();
   });
 
@@ -74,6 +76,14 @@ describe("ClosedSessionRecovery", () => {
     await act(async () => { container.querySelector<HTMLButtonElement>("[data-testid='closed-session-confirm-action']")!.click(); });
     await flush();
     expect(container.querySelector("[data-testid='closed-session-action-error']")).not.toBeNull();
+
+    // A refresh must preserve the pending request but must not resubmit by itself.
+    await act(async () => { root.unmount(); });
+    root = createRoot(container);
+    await act(async () => { root.render(<ClosedSessionRecovery onRecreated={onRecreated} />); });
+    await flush();
+    expect(recreate).toHaveBeenCalledTimes(1);
+    expect(container.querySelector("[data-testid='closed-session-confirm']")).not.toBeNull();
 
     await act(async () => { container.querySelector<HTMLButtonElement>("[data-testid='closed-session-confirm-action']")!.click(); });
     await flush();

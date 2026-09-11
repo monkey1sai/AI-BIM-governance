@@ -7,6 +7,18 @@ import {
 import { Btn } from "./components";
 import { t } from "./i18n";
 
+const PENDING_RECREATION_KEY = "ai-bim.closed-review-request.v1";
+type PendingRecreation = { source: ClosedReviewSessionItem; key: string };
+function readPendingRecreation(): PendingRecreation | null {
+  try {
+    const value = JSON.parse(sessionStorage.getItem(PENDING_RECREATION_KEY) ?? "null") as PendingRecreation | null;
+    return value && /^review_session_[A-Za-z0-9_-]+$/.test(value.source?.session_id)
+      && value.source.status === "closed" && typeof value.source.project_id === "string"
+      && typeof value.source.model_version_id === "string" && /^[A-Za-z0-9._:-]{1,128}$/.test(value.key)
+      ? value : null;
+  } catch { return null; }
+}
+
 export function ClosedSessionRecovery({
   onRecreated,
   compact = false,
@@ -18,13 +30,13 @@ export function ClosedSessionRecovery({
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadErr, setLoadErr] = useState<string | null>(null);
-  const [pending, setPending] = useState<{ source: ClosedReviewSessionItem; key: string } | null>(null);
+  const [pending, setPending] = useState<PendingRecreation | null>(readPendingRecreation);
   const [busy, setBusy] = useState(false);
   const [actionErr, setActionErr] = useState<string | null>(null);
   const [success, setSuccess] = useState<RecreateReviewSessionResponse | null>(null);
   const aliveRef = useRef(true);
 
-  useEffect(() => () => { aliveRef.current = false; }, []);
+  useEffect(() => { aliveRef.current = true; return () => { aliveRef.current = false; }; }, []);
   const load = useCallback(async (cursor?: string) => {
     setLoading(true);
     setLoadErr(null);
@@ -46,8 +58,14 @@ export function ClosedSessionRecovery({
 
   const beginRecreate = (source: ClosedReviewSessionItem) => {
     const randomPart = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`;
-    setPending({ source, key: `closed-recreate-${randomPart}` });
-    setActionErr(null);
+    try {
+      const next = { source, key: `closed-recreate-${randomPart}` };
+      sessionStorage.setItem(PENDING_RECREATION_KEY, JSON.stringify(next));
+      setPending(next);
+      setActionErr(null);
+    } catch {
+      setActionErr(t("無法保存重建請求；請允許瀏覽器儲存空間後重試。", "The recreation request could not be saved. Allow browser storage and retry."));
+    }
   };
 
   const confirmRecreate = async () => {
@@ -57,6 +75,7 @@ export function ClosedSessionRecovery({
     try {
       const result = await coordinatorClient.recreateReviewSession(pending.source.session_id, pending.key);
       if (!aliveRef.current) return;
+      sessionStorage.removeItem(PENDING_RECREATION_KEY);
       setSuccess(result);
       setPending(null);
       onRecreated?.(result, pending.source);
@@ -107,9 +126,12 @@ export function ClosedSessionRecovery({
       {success && (
         <p className="ec-note" data-testid="closed-session-success">
           {t("已建立新 Session：", "New Session created: ")}<strong>{success.session_id}</strong>
-          {success.kit_availability === "unavailable" && ` · ${t("Kit 尚不可用，Session 已保留", "Kit is unavailable; the Session is preserved")}`}
+          {success.activation_state === "not_requested"
+            ? ` · ${t("尚未啟動 3D，審查已保留", "3D has not been started; the review is preserved")}`
+            : success.kit_availability === "unavailable" && ` · ${t("Kit 尚不可用，Session 已保留", "Kit is unavailable; the Session is preserved")}`}
         </p>
       )}
+      {!pending && actionErr && <p role="alert">{actionErr}</p>}
       {pending && (
         <div className="ec-modal-backdrop" data-testid="closed-session-confirm">
           <div className="ec-modal" role="dialog" aria-modal="true" aria-labelledby="closed-session-confirm-title">
@@ -117,7 +139,7 @@ export function ClosedSessionRecovery({
             <p>{t("原 Session 保持 closed 且不可逆；系統會從已驗證的既有成果建立不同的新 Session ID。", "The original Session remains irreversibly closed; a different new Session ID is created from verified artifacts.")}</p>
             <p className="ec-note">{pending.source.session_id}</p>
             <div className="ec-modal-actions">
-              <Btn data-testid="closed-session-cancel" disabled={busy} onClick={() => { setPending(null); setActionErr(null); }}>{t("取消", "Cancel")}</Btn>
+              <Btn data-testid="closed-session-cancel" disabled={busy} onClick={() => { sessionStorage.removeItem(PENDING_RECREATION_KEY); setPending(null); setActionErr(null); }}>{t("取消", "Cancel")}</Btn>
               <Btn data-testid="closed-session-confirm-action" disabled={busy} onClick={() => { void confirmRecreate(); }}>{busy ? t("建立中…", "Creating...") : t("確認建立新 Session", "Create new Session")}</Btn>
             </div>
             {actionErr && <p className="ec-warn-note" data-testid="closed-session-action-error">{actionErr}</p>}

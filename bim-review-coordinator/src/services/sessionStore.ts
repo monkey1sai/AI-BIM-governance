@@ -1,6 +1,8 @@
 import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
+import { isReadyReviewSourceSnapshot, fingerprintReadyReviewSource } from "./readyReviewIntent.js";
 import type {
   ArtifactBinding,
   ConversionQualityMetricsSummary,
@@ -8,6 +10,7 @@ import type {
   KitInstanceBinding,
   ReviewParticipant,
   ReviewSession,
+  ReadyReviewSourceSnapshot,
   SessionStatus,
 } from "../types.js";
 import { nowIso } from "../utils/time.js";
@@ -24,6 +27,8 @@ export interface CreateSessionInput {
   session_id?: string;
   recreated_from_session_id?: string;
   review_request_id?: string;
+  review_request_fingerprint?: string;
+  ready_review_source?: ReadyReviewSourceSnapshot;
   tenant_id?: string;
   project_id: string;
   model_version_id: string;
@@ -35,6 +40,69 @@ export interface CreateSessionInput {
   artifact_bindings?: ArtifactBinding[];
   kit_instance_bindings?: KitInstanceBinding[];
   quality_metrics_summary?: ConversionQualityMetricsSummary | null;
+}
+
+function sourceProjectsExactly(
+  s: Pick<CreateSessionInput, "ready_model_id" | "trace_id" | "tenant_id" | "project_id"
+    | "model_version_id" | "usdc_artifact_id" | "artifact_bindings">,
+  source: ReadyReviewSourceSnapshot,
+): boolean {
+  if (!Array.isArray(s.artifact_bindings) || s.artifact_bindings.length !== 1) return false;
+  const a = s.artifact_bindings[0];
+  return !!a && s.ready_model_id === source.ready_model_id && s.trace_id === source.root_trace_id
+    && s.tenant_id === source.tenant_id && s.project_id === source.project_id
+    && s.model_version_id === source.model_version_id
+    && s.usdc_artifact_id === "auto_usdc_" + source.conversion_job_id
+    && a.artifact_id === s.usdc_artifact_id && a.artifact_group_id === "ag_" + source.model_version_id
+    && a.model_version_id === source.model_version_id && a.artifact_role === "derived"
+    && a.ready_status === "ready" && a.load_order === 0 && a.routing_policy === "same_instance"
+    && a.conversion_authority === "bim-streaming-server" && a.conversion_status === "ready"
+    && a.conversion_job_id === source.conversion_job_id
+    && a.url === source.model.url && a.mapping_url === source.mapping.url;
+}
+export function isCanonicalReadyReviewSourceCarrier(value: unknown): value is ReviewSession & {
+  ready_review_source: ReadyReviewSourceSnapshot; review_request_fingerprint: string;
+} {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const s = value as ReviewSession;
+  return isReadyReviewSourceSnapshot(s.ready_review_source)
+    && s.review_request_fingerprint === fingerprintReadyReviewSource(s.ready_review_source)
+    && sourceProjectsExactly(s, s.ready_review_source);
+}
+
+export function isReviewRequestDigest(value: unknown): value is string {
+  return typeof value === "string" && value.length === 64 && /^[a-f0-9]+$/.test(value);
+}
+export type CreateReviewRequestSessionInput = Omit<CreateSessionInput,
+  "session_id" | "tenant_id" | "review_request_id" | "review_request_fingerprint" | "ready_review_source"> & {
+  tenant_id: string;
+  ready_review_source: ReadyReviewSourceSnapshot;
+  review_request_id: string;
+  review_request_fingerprint: string;
+};
+export type CreateReviewRequestSessionResult =
+  | {kind: "created"; session: ReviewSession}
+  | {kind: "replay"; session: ReviewSession}
+  | {kind: "conflict"} | {kind: "corrupt"};
+export function reviewSessionIdForRequestScope(scopeDigest: string): string {
+  if (!isReviewRequestDigest(scopeDigest)) throw new Error("Invalid review request scope digest.");
+  return `review_session_request_${scopeDigest}`;
+}
+function isCanonicalStoredReviewRequestSession(
+  value: unknown, expectedSessionId: string, expectedScopeDigest: string,
+): value is ReviewSession {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const r = value as Partial<ReviewSession>;
+  return isCanonicalReadyReviewSourceCarrier(r)
+    && r.session_id === expectedSessionId && r.review_request_id === expectedScopeDigest
+    && isReviewRequestDigest(r.review_request_fingerprint)
+    && typeof r.tenant_id === "string" && r.tenant_id.length > 0
+    && typeof r.project_id === "string" && r.project_id.length > 0
+    && typeof r.model_version_id === "string" && r.model_version_id.length > 0
+    && typeof r.trace_id === "string"
+    && ["created", "active", "closing", "closed", "failed"].includes(String(r.status))
+    && Array.isArray(r.artifact_bindings) && Array.isArray(r.kit_instance_bindings)
+    && Array.isArray(r.participants);
 }
 
 export class SessionStore {
@@ -57,6 +125,8 @@ export class SessionStore {
       recreated_from_session_id: input.recreated_from_session_id,
       trace_id: traceId,
       review_request_id: input.review_request_id,
+      review_request_fingerprint: input.review_request_fingerprint,
+      ready_review_source: input.ready_review_source,
       tenant_id: input.tenant_id || "tenant_demo_001",
       project_id: input.project_id,
       model_version_id: input.model_version_id,
@@ -75,6 +145,30 @@ export class SessionStore {
     };
     this.save(session);
     return session;
+  }
+
+  createOrGetReviewRequest(input: CreateReviewRequestSessionInput): CreateReviewRequestSessionResult {
+    if (!input.tenant_id || !isReviewRequestDigest(input.review_request_id)
+      || !isReadyReviewSourceSnapshot(input.ready_review_source)
+      || input.review_request_fingerprint !== fingerprintReadyReviewSource(input.ready_review_source)
+      || !sourceProjectsExactly(input, input.ready_review_source)) {
+      throw new Error("Invalid review request identity.");
+    }
+    const sessionId = reviewSessionIdForRequestScope(input.review_request_id);
+    const file = this.filePath(sessionId);
+    const existedBeforeRead = fs.existsSync(file);
+    const parsed = this.readSessionFile(file) as unknown;
+    if (parsed !== null) {
+      if (!isCanonicalStoredReviewRequestSession(parsed, sessionId, input.review_request_id)) return {kind: "corrupt"};
+      if (parsed.review_request_fingerprint !== input.review_request_fingerprint) return {kind: "conflict"};
+      return {kind: "replay", session: parsed};
+    }
+    if (existedBeforeRead || this.hasQuarantinedSession(sessionId)) return {kind: "corrupt"};
+    return {kind: "created", session: this.create({...input, session_id: sessionId})};
+  }
+  private hasQuarantinedSession(sessionId: string): boolean {
+    const prefix = `${sessionId}.json.corrupt-`;
+    return fs.readdirSync(this.rootDir).some(entry => entry.startsWith(prefix));
   }
 
   get(sessionId: string): ReviewSession | null {
@@ -162,6 +256,25 @@ export class SessionStore {
       }
     } else if (!existing) {
       throw new Error("Invalid review session trace_id.");
+    }
+    if (session.ready_review_source !== undefined || session.review_request_fingerprint !== undefined) {
+      if (!isCanonicalReadyReviewSourceCarrier(session)) throw new Error("Invalid ready review source projection.");
+    }
+    if (existing?.ready_review_source !== undefined || existing?.review_request_fingerprint !== undefined) {
+      if (!isCanonicalReadyReviewSourceCarrier(existing) || !isCanonicalReadyReviewSourceCarrier(session)
+        || existing.review_request_fingerprint !== session.review_request_fingerprint
+        || !isDeepStrictEqual(existing.ready_review_source, session.ready_review_source)) {
+        throw new Error("Ready review source identity is immutable.");
+      }
+    }
+    if (session.review_request_fingerprint !== undefined && !isReviewRequestDigest(session.review_request_fingerprint)) {
+      throw new Error("Invalid review request fingerprint.");
+    }
+    if (existing?.review_request_id !== undefined && session.review_request_id !== existing.review_request_id) {
+      throw new Error("Review session review_request_id is immutable.");
+    }
+    if (existing?.review_request_fingerprint !== undefined && session.review_request_fingerprint !== existing.review_request_fingerprint) {
+      throw new Error("Review session review_request_fingerprint is immutable.");
     }
     session.updated_at = nowIso();
     // 原子替換：先寫 tmp 再 rename，容器在寫入中被 kill 也不會留下半截目標檔。

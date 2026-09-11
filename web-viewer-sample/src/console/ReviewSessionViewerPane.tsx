@@ -286,7 +286,8 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
   const sessionObserved = Boolean(runtimeSession);
   const artifactHealth = runtimeSession?.artifact_health ?? null;
   // session-preparing（task 5.6）：session 已列於 runtime/status 但 conversion 未達終態。
-  const conversionPreparing = Boolean(sessionObserved && runtimeSession && runtimeSession.conversion_status && runtimeSession.conversion_status !== 'succeeded');
+  const conversionPreparing = Boolean(sessionObserved && runtimeSession?.conversion_status
+    && !['ready', 'succeeded'].includes(runtimeSession.conversion_status));
   const modelArtifactStale = artifactHealth?.model_usdc_reachable === false;
   const mappingArtifactStale = artifactHealth?.mapping_reachable === false;
   const artifactHealthSummary = artifactHealth
