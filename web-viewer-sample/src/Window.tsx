@@ -10,6 +10,16 @@
  * its affiliates is strictly prohibited.
  */
 import React from 'react';
+import { RuntimeCommandTracker, type RuntimeCommandOutcome, type RuntimeCommandContext } from "./viewer/core/runtimeCommandTracker";
+import { NativeStageDispatchQueue, type NativeOpenStageDispatch } from "./viewer/core/nativeStageDispatchQueue";
+import { isSpectatorStreamMode as profileIsSpectatorStreamMode, hasDirectStreamEndpointOverride as profileHasDirectStreamEndpointOverride, resolveInitialStreamEndpoint as profileResolveInitialStreamEndpoint, streamEndpointLabel as profileStreamEndpointLabel } from "./viewer/core/runtimeStreamProfile";
+import { isKitToViewerEventType, isRuntimeResponseForRequest, isSimpleRuntimeTerminalEvent, isViewerToKitEventType } from "./viewer/core/runtimeEventCatalog";
+import {
+    appStreamResultToAppEvent,
+    requestUsesNativeOpenedStageResult,
+    type AppStreamEventType,
+} from "./viewer/core/nativeResultAdapter";
+import { getPayloadString, isRuntimeMutator, parseRuntimeCommandRejection, type RuntimeCommandRejection, type RuntimeRejectionReason } from "./viewer/core/runtimeCommandProtocol";
 import './App.css';
 import AppStream from './AppStream'; // Ensure .tsx extension if needed
 import StreamConfig from '../stream.config.json';
@@ -196,75 +206,8 @@ interface AppStreamMessageType {
     payload: unknown;
 }
 
-const runtimeMutatingEvents = new Set([
-    "openStageRequest",
-    "loadArtifactGroupRequest",
-    "composeStageRequest",
-    "highlightPrimsRequest",
-    "focusPrimRequest",
-    "clearHighlightRequest",
-    "selectPrimsRequest",
-    "makePrimsPickable",
-    "resetStage",
-]);
 
-const viewerToKitEventTypes = new Set([
-    "openStageRequest",
-    "loadArtifactGroupRequest",
-    "composeStageRequest",
-    "highlightPrimsRequest",
-    "focusPrimRequest",
-    "clearHighlightRequest",
-    "selectPrimsRequest",
-    "makePrimsPickable",
-    "resetStage",
-    "loadingStateQuery",
-    "getChildrenRequest",
-]);
 
-const kitToViewerEventTypes = new Set([
-    "openedStageResult",
-    "loadArtifactGroupResult",
-    "highlightPrimsResult",
-    "focusPrimResult",
-    "selectPrimsResult",
-    "makePrimsPickableResponse",
-    "resetStageResponse",
-    "clearHighlightResult",
-    "loadingStateResponse",
-    "getChildrenResponse",
-    "stageSelectionChanged",
-    "updateProgressAmount",
-    "updateProgressActivity",
-    "bindingApplied",
-    "commandRejected",
-]);
-
-const runtimeResponseRequestTypes = new Map<string, ReadonlySet<string>>([
-    ["openedStageResult", new Set(["openStageRequest", "loadArtifactGroupRequest"])],
-    ["loadArtifactGroupResult", new Set(["loadArtifactGroupRequest", "composeStageRequest"])],
-    ["bindingApplied", new Set(["loadArtifactGroupRequest", "composeStageRequest"])],
-    ["highlightPrimsResult", new Set(["highlightPrimsRequest"])],
-    ["focusPrimResult", new Set(["focusPrimRequest"])],
-    ["clearHighlightResult", new Set(["clearHighlightRequest"])],
-    ["selectPrimsResult", new Set(["selectPrimsRequest"])],
-    ["makePrimsPickableResponse", new Set(["makePrimsPickable"])],
-    ["resetStageResponse", new Set(["resetStage"])],
-]);
-
-const simpleRuntimeTerminalEvents = new Set([
-    "clearHighlightResult",
-    "selectPrimsResult",
-    "makePrimsPickableResponse",
-    "resetStageResponse",
-]);
-
-interface AppStreamEventType {
-    event_type?: string;
-    messageRecipient?: string;
-    data?: string;
-    payload?: unknown;
-}
 
 interface VerifiedDataChannelAuthority {
     sessionId: string;
@@ -272,22 +215,7 @@ interface VerifiedDataChannelAuthority {
     connectionGeneration: number;
 }
 
-const runtimeRejectionReasons = new Set([
-    "spectator_readonly",
-    "lease_invalid",
-    "session_lifecycle_blocked",
-    "unauthorized_source_client",
-    "unsupported_command",
-    "invalid_payload",
-] as const);
 
-type RuntimeRejectionReason =
-    | "spectator_readonly"
-    | "lease_invalid"
-    | "session_lifecycle_blocked"
-    | "unauthorized_source_client"
-    | "unsupported_command"
-    | "invalid_payload";
 
 type LocalizedCopy = Readonly<{ zh: string; en: string }>;
 
@@ -439,32 +367,14 @@ function runtimeRejectionReviewEvent(rejectedEventType: string, reason: string):
     )}${t("：", ": ")}${reason}`;
 }
 
-interface RuntimeCommandRejection {
-    rejected_event_type: string;
-    reason: RuntimeRejectionReason;
-    request_id?: string;
-    rejection_id?: string;
-    retryable: boolean;
-    runtime_state: "unchanged" | "changed_unconfirmed";
-    detail_code?: string;
-    binding_revision_id?: string;
-}
 
 type RuntimeCommandPhase = "pending" | "executing" | "terminal";
-type RuntimeCommandOutcome = "success" | "rejected" | "error" | "timed-out" | "superseded";
 
 interface RuntimeCommandLifecycle {
     request_id: string;
     event_type: string;
     phases: RuntimeCommandPhase[];
     outcome?: RuntimeCommandOutcome;
-}
-
-interface RuntimeCommandContext {
-    eventType: string;
-    bindingRevisionId?: string;
-    stageUrl?: string;
-    stageAttemptGeneration?: number;
 }
 
 type StageAttemptStatus = "pending" | "provisional" | "terminal" | "completed";
@@ -487,29 +397,6 @@ const IDLE_ACTIVITY_TRANSPORT_TIMEOUT_MS = 1_000;
 // Let the user-facing proof deadline claim the terminal result first. The
 // SDK slot watchdog runs immediately after it and only fences lifecycle reuse.
 const NATIVE_OPEN_STAGE_SLOT_TIMEOUT_MS = STAGE_LOAD_TIMEOUT_MS + 1;
-
-interface NativeOpenStageDispatch {
-    token: number;
-    outgoing: AppStreamMessageType | StreamMessage;
-    streamGeneration: number;
-    stageAttemptGeneration?: number;
-    targetUrl: string;
-    requestId: string;
-    bindingRevisionId: string;
-    // openStageRequest resolves through the SDK Promise callback. The SDK
-    // treats loadArtifactGroupRequest as an unknown command and acknowledges
-    // its send immediately, so that slot is released only by its correlated
-    // DataChannel terminal (openedStageResult / commandRejected).
-    settlesFromDataChannel: boolean;
-    onDispatched?: () => void;
-}
-
-interface RuntimeCommandCorrelation {
-    requestId: string;
-    context?: RuntimeCommandContext;
-    disposition: "matched" | "untracked" | "uncorrelated" | "duplicate" | "mismatch";
-    mismatchReason?: "event_type" | "binding_revision";
-}
 
 type A4HandoffStatus = "idle" | "pending" | "succeeded" | "rejected" | "timed-out";
 type A4HandoffPhase = "idle" | "waiting-session" | "consuming" | "waiting-readiness" | "revalidating" | "command-pending" | "terminal";
@@ -561,9 +448,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === "object" && value !== null;
 }
 
-function isRuntimeMutator(eventType: string): boolean {
-    return runtimeMutatingEvents.has(eventType);
-}
 
 function isSensitiveDiagnosticKey(key: string): boolean {
     const normalized = key.toLowerCase().replace(/[^a-z0-9]/g, "");
@@ -609,11 +493,6 @@ function redactStreamPayload(payload: unknown): unknown {
     return redactDiagnosticValue(payload);
 }
 
-function isSafeMachineField(value: string, maxLength = 128): boolean {
-    return value.length > 0
-        && value.length <= maxLength
-        && /^[A-Za-z0-9_.:-]+$/.test(value);
-}
 
 // VG-01（Important #2）：parent postMessage 的 highlight item 執行期形狀守衛。
 // 跨 origin 反序列化的 payload 不可信，最低要求是物件且帶字串 ifc_guid，才當作合法 FailedElement。
@@ -621,10 +500,6 @@ function isHighlightItem(value: unknown): value is FailedElement {
     return isRecord(value) && typeof value.ifc_guid === "string";
 }
 
-function getPayloadString(payload: Record<string, unknown>, key: string): string {
-    const value = payload[key];
-    return typeof value === "string" ? value : "";
-}
 
 function getPayloadStringArray(payload: Record<string, unknown>, key: string): string[] {
     const value = payload[key];
@@ -653,245 +528,17 @@ function createStageBindingPreauthorizationRequestId(): string {
     return `stage_preauth_${Date.now().toString(36)}_${stageBindingPreauthorizationSequence.toString(36)}`;
 }
 
-function parseRuntimeCommandRejection(payload: Record<string, unknown>): RuntimeCommandRejection | null {
-    const reason = getPayloadString(payload, "reason");
-    const runtimeState = getPayloadString(payload, "runtime_state");
-    const rejectedEventType = getPayloadString(payload, "rejected_event_type");
-    const requestId = getPayloadString(payload, "request_id");
-    const rejectionId = getPayloadString(payload, "rejection_id");
-    if (
-        !runtimeRejectionReasons.has(reason as RuntimeRejectionReason)
-        || (runtimeState !== "unchanged" && runtimeState !== "changed_unconfirmed")
-        || !isRuntimeMutator(rejectedEventType)
-        || typeof payload.retryable !== "boolean"
-        || (Boolean(requestId) === Boolean(rejectionId))
-        || (requestId ? !isSafeMachineField(requestId) : false)
-        || (rejectionId ? !isSafeMachineField(rejectionId) : false)
-    ) {
-        return null;
-    }
-    const detailCode = getPayloadString(payload, "detail_code");
-    if (detailCode && !isSafeMachineField(detailCode, 64)) return null;
-    return {
-        rejected_event_type: rejectedEventType,
-        reason: reason as RuntimeRejectionReason,
-        ...(requestId ? { request_id: requestId } : {}),
-        ...(rejectionId ? { rejection_id: rejectionId } : {}),
-        retryable: payload.retryable,
-        runtime_state: runtimeState,
-        ...(detailCode ? { detail_code: detailCode } : {}),
-    };
-}
 
-function isNvidiaOpenStageEvent(result: Record<string, unknown>): boolean {
-    // SDK 5.18.2 fromStageOpenedEvent() maps Kit's StageOpenedEvent to this
-    // concrete wrapper shape. Requiring every stable field keeps arbitrary
-    // trace-less AppStream results fail-closed. Only success is promoted to
-    // success below; every other concrete status is a terminal failure.
-    return result.action === "message"
-        && typeof result.url === "string"
-        && result.url.length > 0
-        && typeof result.info === "string"
-        && typeof result.status === "string";
-}
-
-function requestUsesNativeOpenedStageResult(requestEventType: string): boolean {
-    // Both stage commands can produce Kit's openedStageResult. NVIDIA SDK
-    // resolves openStageRequest from its callback map, while its unknown
-    // loadArtifactGroupRequest gets only an immediate generic ACK; they still
-    // share one per-lifecycle slot so neither result can be misattributed.
-    return requestEventType === "openStageRequest"
-        || requestEventType === "loadArtifactGroupRequest";
-}
-
-// #783：outbound trace 只能補給「形狀正確」的 native 成功回應。欄位名對齊 SDK
-// LogFormatter.fromLoadingStateEvent / fromGetChildrenEvent 的產出；值域對齊
-// tests/contracts/kit-datachannel-v1.schema.json（loadingStateResponse.loading_state 只准
-// idle|busy；getChildrenResponse.children 每個元素都必須是物件）。任何不在契約內的值
-// 都不得被補上 trace 後放進 _handleCustomEvent——那條路會直接改 isKitReady / usdPrims。
-const NATIVE_LOADING_STATES: ReadonlySet<string> = new Set(["idle", "busy"]);
-
-function isExpectedNativeResult(
-    requestEventType: string,
-    result: Record<string, unknown>,
-    requestPayload: Record<string, unknown>,
-): boolean {
-    if (getPayloadString(result, "status") !== "success") return false;
-    if (requestEventType === "loadingStateQuery") {
-        return typeof result.loadingState === "string" && NATIVE_LOADING_STATES.has(result.loadingState);
-    }
-    if (requestEventType === "getChildrenRequest") {
-        // 回應必須答的是**這一次**請求的節點：primPath 逐字等於 outbound prim_path。
-        // 這同時擋掉切換模型後遲到的舊 stage 回應被當成新樹的 root 回應（review P2）。
-        const requestedPrimPath = getPayloadString(requestPayload, "prim_path");
-        return typeof result.primPath === "string"
-            && requestedPrimPath !== ""
-            && result.primPath === requestedPrimPath
-            && Array.isArray(result.children)
-            // 明確只傳 child：Array.every 的第二個引數是 index，直接傳函式會把
-            // 兄弟節點的序號當成遞迴深度，第 33 個兄弟就會被誤拒（gate correctness:1）。
-            && result.children.every((child) => isNativeChildPrimRecord(child));
-    }
-    return false;
-}
-
-// 契約 `children.items: object` 排除陣列；handler 之後會把元素當 USDPrimType 用、
-// _makePickable 直接取 `prim.path`、USDStage 展開節點時再遞迴讀 `children`，所以這裡要求
-// 「非陣列物件、path 為字串，且巢狀 children 若存在也必須是同樣合法的陣列」；
-// 不讓 `[[]]`、缺 path、或 `{ children: [null] }` 這類元素被補上 trace 後進 handler。
-function isNativeChildPrimRecord(value: unknown, depth = 0): boolean {
-    if (!isRecord(value) || Array.isArray(value) || typeof value.path !== "string") return false;
-    if (!Object.prototype.hasOwnProperty.call(value, "children")) return true;
-    // 深度上限只防惡意／損壞的超深巢狀把驗證拖垮；正常 lazy-load 回應只帶一層。
-    if (depth >= 32) return false;
-    return Array.isArray(value.children)
-        && value.children.every((child) => isNativeChildPrimRecord(child, depth + 1));
-}
-
-// USD 的 pseudo-root `/` 與本 viewer 的預設 root `/World` 都視為 root 請求：
-// stage_management 明確支援對 `/` 回傳頂層子節點，handler 對 root 也是整棵樹重建。
 const NATIVE_ROOT_PRIM_PATHS: ReadonlySet<string> = new Set(["/", "/World"]);
-
-function appStreamResultToAppEvent(
-    requestEventType: string,
-    result: unknown,
-    requestPayload?: unknown,
-    allowNativeOpenStageFallback = false,
-): AppStreamEventType | null {
-    if (!isRecord(result)) return null;
-    const requestPayloadRecord: Record<string, unknown> = isRecord(requestPayload) ? requestPayload : {};
-
-    if (requestUsesNativeOpenedStageResult(requestEventType)) {
-        // A production AppStreamer OpenStageEvent has no data-channel
-        // correlation at all. Any partial native correlation is ambiguous and
-        // must not be completed by mixing in outbound fields. A trace-less
-        // fallback is only safe while the per-lifecycle single-flight slot is
-        // current, and only when the complete native wrapper matches the
-        // exact outbound target and authority tuple.
-        const outboundTraceId = getPayloadString(requestPayloadRecord, "trace_id");
-        const outboundRequestId = getPayloadString(requestPayloadRecord, "request_id");
-        const outboundBindingRevisionId = getPayloadString(requestPayloadRecord, "binding_revision_id");
-        const hasInboundCorrelation = ["trace_id", "request_id", "binding_revision_id"]
-            .some((key) => Object.prototype.hasOwnProperty.call(result, key));
-        const nativeOpenStageResponse = !hasInboundCorrelation
-            && allowNativeOpenStageFallback
-            && isNvidiaOpenStageEvent(result);
-
-        if (hasInboundCorrelation) {
-            if (
-                !outboundTraceId
-                || !outboundRequestId
-                || getPayloadString(result, "trace_id") !== outboundTraceId
-                || getPayloadString(result, "request_id") !== outboundRequestId
-                || (
-                    outboundBindingRevisionId
-                        ? getPayloadString(result, "binding_revision_id") !== outboundBindingRevisionId
-                        : Object.prototype.hasOwnProperty.call(result, "binding_revision_id")
-                )
-            ) return null;
-        } else if (
-            !nativeOpenStageResponse
-            || !outboundTraceId
-            || !outboundRequestId
-            || !outboundBindingRevisionId
-            || getPayloadString(result, "url") !== getPayloadString(requestPayloadRecord, "url")
-        ) {
-            return null;
-        }
-
-        const status = getPayloadString(result, "status");
-        const info = getPayloadString(result, "info");
-        // The SDK treats loadArtifactGroupRequest as an unknown custom
-        // command. Its returned wrapper is only an immediate transport ACK;
-        // the authenticated DataChannel terminal carries changed_failed and
-        // must remain the sole completion authority for this transaction.
-        if (nativeOpenStageResponse && requestEventType === "loadArtifactGroupRequest") return null;
-
-        const responseResult = status === "success" ? "success" : "error";
-        return {
-            event_type: "openedStageResult",
-            payload: {
-                trace_id: outboundTraceId,
-                result: responseResult,
-                url: getPayloadString(result, "url"),
-                error: responseResult === "error" ? info || [requestEventType, status || "failed"].join(" ") : "",
-                request_id: outboundRequestId,
-                ...(outboundBindingRevisionId ? { binding_revision_id: outboundBindingRevisionId } : {}),
-            },
-        };
-    }
-
-    // #783：SDK 對 native 指令（loadingStateQuery / getChildrenRequest）會自己攔下 Kit 的
-    // 同名回應，並以 fromLoadingStateEvent / fromGetChildrenEvent 重組成
-    // `{ action, status, info, loadingState|primPath, url|children }` 後 resolve 這個 promise
-    // ——**trace_id 在這一步被 SDK 剝掉**（Kit 端確實有送，同 payload 換名探針逐則到達）。
-    // 之前只認 result.trace_id，等於把每一則正常回應都靜默丟掉：isKitReady 永遠 false、
-    // 永不送 openStageRequest、3D 全黑（181 與本機皆重現）。
-    // 這裡改用送出時由 _withVerifiedDataChannelTrace 寫入、且已對照 authority 驗證過的
-    // outbound trace_id；SDK 的 native callback map 保證此 result 就是該次請求的回應。
-    // 兩道守門（review P2）：
-    //   (1) result 若「帶有」trace_id 屬性但值為空／null／非字串，是明確損壞的 correlation
-    //       carrier，必須 fail closed，不得用 outbound 補位（帶錯值的 trace 本來就會被拒）。
-    //   (2) 只有 result 長得像該指令預期的 native 回應（status=success 且帶請求專屬欄位）
-    //       才允許補位；SDK 對 warning／error／generic ACK 也會 resolve 同一個 promise，
-    //       那些不得被補上 trace 後當成合法回應放進 _handleCustomEvent。
-    const hasInboundTrace = Object.prototype.hasOwnProperty.call(result, "trace_id");
-    const inboundTraceId = getPayloadString(result, "trace_id");
-    if (hasInboundTrace && !inboundTraceId) return null;
-    const traceId = inboundTraceId
-        || (isExpectedNativeResult(requestEventType, result, requestPayloadRecord)
-            ? getPayloadString(requestPayloadRecord, "trace_id")
-            : "");
-    if (!traceId) return null;
-
-    if (requestEventType === "loadingStateQuery") {
-        return {
-            event_type: "loadingStateResponse",
-            payload: {
-                trace_id: traceId,
-                loading_state: getPayloadString(result, "loadingState"),
-                url: getPayloadString(result, "url"),
-            },
-        };
-    }
-
-    if (requestEventType === "getChildrenRequest") {
-        return {
-            event_type: "getChildrenResponse",
-            payload: {
-                trace_id: traceId,
-                prim_path: getPayloadString(result, "primPath"),
-                children: Array.isArray(result.children) ? result.children : [],
-            },
-        };
-    }
-
-    return null;
-}
 
 function isElementMappingDocument(value: unknown): value is ElementMappingDocument {
     return isRecord(value) && (Array.isArray(value.items) || isRecord(value.summary));
 }
 
-function getQueryParam(...names: string[]): string | null {
-    const params = new URLSearchParams(window.location.search);
-    for (const name of names) {
-        const value = params.get(name);
-        if (value && value.trim().length > 0) return value.trim();
-    }
-    return null;
-}
 
-function getQueryPort(...names: string[]): number | null {
-    const value = getQueryParam(...names);
-    if (!value) return null;
-    const parsed = Number.parseInt(value, 10);
-    return Number.isFinite(parsed) ? parsed : null;
-}
 
 function isSpectatorStreamMode(): boolean {
-    const mode = getQueryParam("streamRole", "stream_role", "viewerMode", "viewer_mode");
-    return mode?.toLowerCase() === "spectator" || mode?.toLowerCase() === "view_only";
+    return profileIsSpectatorStreamMode(window.location.search);
 }
 
 // viewer-edge-bim-server-console:`?debug=1` 控制 legacy USDAsset 下拉、
@@ -904,24 +551,15 @@ function isDebugQueryEnabled(): boolean {
 }
 
 function hasDirectStreamEndpointOverride(): boolean {
-    const params = new URLSearchParams(window.location.search);
-    return params.has("signalingPort") || params.has("signalingport") || params.has("mediaPort") || params.has("mediaport");
+    return profileHasDirectStreamEndpointOverride(window.location.search);
 }
 
 function resolveInitialStreamEndpoint(props: AppProps): StreamEndpoint {
-    return {
-        kitInstanceId: getQueryParam("kitInstanceId", "kit_instance_id"),
-        signalingserver: getQueryParam("signalingServer", "signalingserver") || props.signalingserver || StreamConfig.local.server,
-        signalingport: getQueryPort("signalingPort", "signalingport") || props.signalingport || StreamConfig.local.signalingPort,
-        mediaserver: getQueryParam("mediaServer", "mediaserver") || props.mediaserver || StreamConfig.local.server,
-        mediaport: getQueryPort("mediaPort", "mediaport") ?? props.mediaport ?? StreamConfig.local.mediaPort ?? undefined,
-    };
+    return profileResolveInitialStreamEndpoint(window.location.search, props, StreamConfig.local);
 }
 
 function streamEndpointLabel(endpoint: StreamEndpoint): string {
-    const kit = endpoint.kitInstanceId ? `${endpoint.kitInstanceId} ` : "";
-    const media = endpoint.mediaport !== undefined ? `/${endpoint.mediaport}` : "";
-    return `${kit}${endpoint.signalingserver}:${endpoint.signalingport}${media}`;
+    return profileStreamEndpointLabel(endpoint);
 }
 
 function makeRequestId(prefix: string): string {
@@ -1004,19 +642,14 @@ export default class App extends React.Component<AppProps, AppState> {
     // React state remounts <AppStream>, but callbacks can run before React commits that state.
     // Keep the lifetime authority outside React so a retired stream is fenced synchronously.
     private streamGeneration = 0;
-    // NVIDIA SDK 5.18.2 registers openStageRequest callbacks by response event
-    // type rather than request id, while loadArtifactGroupRequest's immediate
-    // generic ACK must wait for its DataChannel terminal. Never issue either
-    // native stage command on the same AppStreamer lifecycle until the prior
-    // opened-stage slot settles.
-    private nativeOpenStageSlot: NativeOpenStageDispatch | null = null;
-    private queuedNativeOpenStage: NativeOpenStageDispatch | null = null;
-    private nativeOpenStageSlotTimeoutId: number | null = null;
-    private nativeOpenStageSlotSequence = 0;
-    private nativeOpenStagePoisonedGeneration: number | null = null;
-    // Only a fresh React-keyed AppStream lifecycle may clear a poison fence.
-    // AppStream waits for the prior physical teardown before it reports started.
-    private nativeOpenStageReplacementStartGeneration: number | null = null;
+    private nativeStageQueue = new NativeStageDispatchQueue({
+        getStreamGeneration: () => this.streamGeneration,
+        getActiveStageAttempt: () => this.activeStageAttempt,
+        isCurrentStageAttemptAwaitingProof: (generation) => this._isCurrentStageAttemptAwaitingProof(generation),
+        failNativeOpenStageDispatch: (dispatch, diagnostic) => this._failNativeOpenStageDispatch(dispatch, diagnostic),
+        appendReviewEvent: (event) => this._appendReviewEvent(event),
+        sendStreamMessage: (outgoing, dispatch) => this._sendStreamMessage(outgoing, dispatch),
+    }, NATIVE_OPEN_STAGE_SLOT_TIMEOUT_MS);
     private stageDispatchCallbacks = new WeakMap<AppStreamMessageType | StreamMessage, () => void>();
     private bindingApplyGeneration = 0;
     private pendingBindingApplyGeneration: number | null = null;
@@ -1037,12 +670,10 @@ export default class App extends React.Component<AppProps, AppState> {
     private pendingMappingHighlightRequestId: string | null = null;
     private pendingMappingFocusRequestId: string | null = null;
     private pendingMappingPrimPath: string | null = null;
-    private runtimeCommandContexts = new Map<string, RuntimeCommandContext>();
-    private runtimeCommandTerminalClaims = new Map<string, { eventType: string; outcome: RuntimeCommandOutcome }>();
-    // Terminal claims deliberately retain their minimal established shape.
-    // Keep only the safety metadata needed to process a later authenticated
-    // physical-change terminal after an intent was superseded or timed out.
-    private runtimeCommandTerminalSafetyContexts = new Map<string, RuntimeCommandContext>();
+    private runtimeCommandTracker = new RuntimeCommandTracker({
+        appendReviewEvent: event => this._appendReviewEvent(event),
+        recordTerminal: (requestId, eventType, outcome) => this._recordRuntimeCommandPhase(requestId, eventType, "terminal", outcome),
+    });
     private a4HandoffIntent: A4HandoffIntent | null = null;
     private a4HandoffStarted = false;
     private a4HandoffAttemptInFlight = false;
@@ -1196,7 +827,7 @@ export default class App extends React.Component<AppProps, AppState> {
         this._clearLoadingStateRetry();
         this._clearStageLoadTimeout();
         this._clearDeferredOpenStage();
-        this._retireNativeOpenStageDispatches();
+        this.nativeStageQueue._retireNativeOpenStageDispatches();
         this._clearPollForKitReady();
         this._clearA4HandoffReadinessTimer();
         this._clearA4HandoffCommandTimeout();
@@ -1599,7 +1230,7 @@ export default class App extends React.Component<AppProps, AppState> {
             this.a4HandoffCommandTimeoutId = window.setTimeout(() => {
                 this.a4HandoffCommandTimeoutId = null;
                 if (this.a4HandoffPendingRequestId !== requestId) return;
-                if (!this._claimRuntimeCommandTerminal(requestId, message.event_type, "timed-out")) return;
+                if (!this.runtimeCommandTracker._claimRuntimeCommandTerminal(requestId, message.event_type, "timed-out")) return;
                 this._finishA4HandoffCommand(requestId, "timed-out", "runtime_result_timeout", true);
             }, A4_HANDOFF_COMMAND_TIMEOUT_MS);
         } catch (error) {
@@ -1708,67 +1339,6 @@ export default class App extends React.Component<AppProps, AppState> {
         });
     }
 
-    private _correlateRuntimeCommandEvent(
-        responseEventType: string,
-        payload: Record<string, unknown>,
-    ): RuntimeCommandCorrelation {
-        const requestId = getPayloadString(payload, "request_id");
-        if (!requestId) return { requestId, disposition: "uncorrelated" };
-        if (this.runtimeCommandTerminalClaims.has(requestId)) {
-            return { requestId, disposition: "duplicate" };
-        }
-        const context = requestId ? this.runtimeCommandContexts.get(requestId) : undefined;
-        if (!context) return { requestId, disposition: "untracked" };
-
-        const allowedRequests = runtimeResponseRequestTypes.get(responseEventType);
-        if (!allowedRequests?.has(context.eventType)) {
-            this._appendReviewEvent(`忽略 ${responseEventType}：terminal 與 ${context.eventType} 不相符`);
-            return { requestId, context, disposition: "mismatch", mismatchReason: "event_type" };
-        }
-        const expectedRevision = context.bindingRevisionId;
-        const receivedRevision = getPayloadString(payload, "binding_revision_id");
-        if (expectedRevision && receivedRevision !== expectedRevision) {
-            this._appendReviewEvent(`忽略 ${responseEventType}：binding revision 與 request context 不相符`);
-            return { requestId, context, disposition: "mismatch", mismatchReason: "binding_revision" };
-        }
-        return { requestId, context, disposition: "matched" };
-    }
-
-    private _claimRuntimeCommandTerminal(
-        requestId: string,
-        eventType: string,
-        outcome: RuntimeCommandOutcome,
-    ): boolean {
-        if (!requestId || this.runtimeCommandTerminalClaims.has(requestId)) return false;
-        const context = this.runtimeCommandContexts.get(requestId);
-        this.runtimeCommandTerminalClaims.set(requestId, { eventType, outcome });
-        if (context) this.runtimeCommandTerminalSafetyContexts.set(requestId, context);
-        while (this.runtimeCommandTerminalClaims.size > 128) {
-            const oldest = this.runtimeCommandTerminalClaims.keys().next().value as string | undefined;
-            if (!oldest) break;
-            this.runtimeCommandTerminalClaims.delete(oldest);
-            this.runtimeCommandTerminalSafetyContexts.delete(oldest);
-        }
-        this._recordRuntimeCommandPhase(requestId, eventType, "terminal", outcome);
-        this.runtimeCommandContexts.delete(requestId);
-        return true;
-    }
-
-    private _completeRuntimeCommandEvent(
-        responseEventType: string,
-        payload: Record<string, unknown>,
-        outcome: RuntimeCommandOutcome,
-    ): RuntimeCommandCorrelation {
-        const correlation = this._correlateRuntimeCommandEvent(responseEventType, payload);
-        if (correlation.disposition === "matched" && correlation.requestId && correlation.context) {
-            const eventType = correlation.context.eventType;
-            if (!this._claimRuntimeCommandTerminal(correlation.requestId, eventType, outcome)) {
-                return { ...correlation, disposition: "duplicate" };
-            }
-        }
-        return correlation;
-    }
-
     private _runtimeMutatorBlockReason(eventType: string): string | null {
         if (!isRuntimeMutator(eventType)) return null;
         if (
@@ -1850,7 +1420,7 @@ export default class App extends React.Component<AppProps, AppState> {
     private _withVerifiedDataChannelTrace(
         message: AppStreamMessageType | StreamMessage,
     ): AppStreamMessageType | StreamMessage | null {
-        if (!viewerToKitEventTypes.has(message.event_type) || !isRecord(message.payload)) return null;
+        if (!isViewerToKitEventType(message.event_type) || !isRecord(message.payload)) return null;
         const authority = this._currentVerifiedDataChannelAuthority();
         if (!authority) return null;
         const hasSessionId = Object.prototype.hasOwnProperty.call(message.payload, "session_id");
@@ -1875,24 +1445,6 @@ export default class App extends React.Component<AppProps, AppState> {
         };
     }
 
-    private _isCurrentNativeOpenStageDispatch(dispatch: NativeOpenStageDispatch): boolean {
-        return this.nativeOpenStageSlot?.token === dispatch.token
-            && dispatch.streamGeneration === this.streamGeneration;
-    }
-
-    private _canDispatchNativeOpenStage(dispatch: NativeOpenStageDispatch): boolean {
-        if (dispatch.streamGeneration !== this.streamGeneration) return false;
-        if (!dispatch.stageAttemptGeneration) return true;
-        return this._isCurrentStageAttemptAwaitingProof(dispatch.stageAttemptGeneration)
-            && this.activeStageAttempt?.targetUrl === dispatch.targetUrl;
-    }
-
-    private _clearNativeOpenStageSlotTimeout(): void {
-        if (this.nativeOpenStageSlotTimeoutId === null) return;
-        window.clearTimeout(this.nativeOpenStageSlotTimeoutId);
-        this.nativeOpenStageSlotTimeoutId = null;
-    }
-
     private _failNativeOpenStageDispatch(
         dispatch: NativeOpenStageDispatch,
         diagnostic: string,
@@ -1907,140 +1459,6 @@ export default class App extends React.Component<AppProps, AppState> {
                 dispatch.stageAttemptGeneration,
             );
         }
-    }
-
-    private _scheduleNativeOpenStageSlotTimeout(dispatch: NativeOpenStageDispatch): void {
-        this._clearNativeOpenStageSlotTimeout();
-        this.nativeOpenStageSlotTimeoutId = window.setTimeout(() => {
-            if (!this._isCurrentNativeOpenStageDispatch(dispatch)) return;
-            const queued = this.queuedNativeOpenStage;
-            this.nativeOpenStageSlot = null;
-            this.queuedNativeOpenStage = null;
-            this.nativeOpenStageSlotTimeoutId = null;
-            // The SDK callback map may still retain this response type. Do not
-            // reuse this AppStreamer lifecycle until it is remounted.
-            this.nativeOpenStagePoisonedGeneration = this.streamGeneration;
-            this.nativeOpenStageReplacementStartGeneration = null;
-            this._appendReviewEvent("openedStageResult SDK callback timed out; reconnect AppStreamer before retry");
-            const latest = queued && this._canDispatchNativeOpenStage(queued) ? queued : dispatch;
-            this._failNativeOpenStageDispatch(latest, "sdk_open_stage_slot_stuck; reconnect stream before retry");
-        }, NATIVE_OPEN_STAGE_SLOT_TIMEOUT_MS);
-    }
-
-    private _retireNativeOpenStageDispatches(): void {
-        this._clearNativeOpenStageSlotTimeout();
-        this.nativeOpenStageSlot = null;
-        this.queuedNativeOpenStage = null;
-    }
-
-    private _settleNativeOpenStageDispatch(dispatch: NativeOpenStageDispatch): void {
-        if (!this._isCurrentNativeOpenStageDispatch(dispatch)) return;
-        this._clearNativeOpenStageSlotTimeout();
-        this.nativeOpenStageSlot = null;
-        const queued = this.queuedNativeOpenStage;
-        this.queuedNativeOpenStage = null;
-        if (!queued || !this._canDispatchNativeOpenStage(queued)) return;
-        if (!this._dispatchNativeOpenStage(queued)) {
-            this._failNativeOpenStageDispatch(queued, "runtime_command_blocked");
-        }
-    }
-
-    private _matchingNativeOpenStageDataChannelTerminal(
-        responseEventType: string,
-        payload: Record<string, unknown>,
-    ): NativeOpenStageDispatch | null {
-        const dispatch = this.nativeOpenStageSlot;
-        if (
-            !dispatch
-            || !dispatch.settlesFromDataChannel
-            || dispatch.outgoing.event_type !== "loadArtifactGroupRequest"
-            || getPayloadString(payload, "request_id") !== dispatch.requestId
-        ) return null;
-        if (responseEventType === "commandRejected") {
-            // commandRejected is a validated protocol terminal but intentionally
-            // does not carry binding_revision_id. The current DataChannel trace,
-            // exact request_id, and rejected event type are its correlation tuple.
-            return getPayloadString(payload, "rejected_event_type") === dispatch.outgoing.event_type
-                ? dispatch
-                : null;
-        }
-        if (
-            !dispatch.bindingRevisionId
-            || getPayloadString(payload, "binding_revision_id") !== dispatch.bindingRevisionId
-        ) return null;
-        if (responseEventType === "openedStageResult") {
-            const result = getPayloadString(payload, "result");
-            return result === "success" || result === "error" ? dispatch : null;
-        } else if (
-            responseEventType !== "loadArtifactGroupResult"
-            || getPayloadString(payload, "result") !== "error"
-        ) {
-            return null;
-        }
-        return dispatch;
-    }
-
-    private _settleNativeOpenStageDispatchFromDataChannel(
-        responseEventType: string,
-        payload: Record<string, unknown>,
-    ): NativeOpenStageDispatch | null {
-        const dispatch = this._matchingNativeOpenStageDataChannelTerminal(responseEventType, payload);
-        if (!dispatch) return null;
-        this._settleNativeOpenStageDispatch(dispatch);
-        return dispatch;
-    }
-
-    private _dispatchNativeOpenStage(dispatch: NativeOpenStageDispatch): boolean {
-        if (
-            this.nativeOpenStageSlot
-            || this.nativeOpenStagePoisonedGeneration === this.streamGeneration
-            || !this._canDispatchNativeOpenStage(dispatch)
-        ) return false;
-        this.nativeOpenStageSlot = dispatch;
-        this._scheduleNativeOpenStageSlotTimeout(dispatch);
-        const dispatched = this._sendStreamMessage(
-            dispatch.outgoing,
-            dispatch,
-        );
-        if (!dispatched && this._isCurrentNativeOpenStageDispatch(dispatch)) {
-            this._clearNativeOpenStageSlotTimeout();
-            this.nativeOpenStageSlot = null;
-        }
-        return dispatched;
-    }
-
-    private _enqueueNativeOpenStage(
-        outgoing: AppStreamMessageType | StreamMessage,
-        onDispatched?: () => void,
-    ): boolean {
-        const payload = isRecord(outgoing.payload) ? outgoing.payload : {};
-        const requestId = getPayloadString(payload, "request_id");
-        if (!requestId) return false;
-        const bindingRevisionId = getPayloadString(payload, "binding_revision_id");
-        if (outgoing.event_type === "loadArtifactGroupRequest" && !bindingRevisionId) return false;
-        const dispatch: NativeOpenStageDispatch = {
-            token: ++this.nativeOpenStageSlotSequence,
-            outgoing,
-            streamGeneration: this.streamGeneration,
-            stageAttemptGeneration: this.activeStageAttempt?.generation,
-            targetUrl: getPayloadString(payload, "url"),
-            requestId,
-            bindingRevisionId,
-            settlesFromDataChannel: outgoing.event_type === "loadArtifactGroupRequest",
-            onDispatched,
-        };
-        if (this.nativeOpenStagePoisonedGeneration === this.streamGeneration) {
-            this._appendReviewEvent("略過 stage request：AppStreamer callback lifecycle requires reconnect");
-            return false;
-        }
-        if (this.nativeOpenStageSlot) {
-            // Latest intent wins while retaining the in-flight SDK callback as
-            // the sole completion authority for this lifecycle.
-            this.queuedNativeOpenStage = dispatch;
-            this._appendReviewEvent(`${outgoing.event_type} queued behind native openedStageResult SDK callback`);
-            return true;
-        }
-        return this._dispatchNativeOpenStage(dispatch);
     }
 
     private _sendStreamMessage(
@@ -2064,7 +1482,7 @@ export default class App extends React.Component<AppProps, AppState> {
             && !nativeOpenStageDispatch
             && this.activeStageAttempt
         ) {
-            return this._enqueueNativeOpenStage(outgoing, onDispatched);
+            return this.nativeStageQueue._enqueueNativeOpenStage(outgoing, onDispatched);
         }
         let runtimeRequestId = "";
         let runtimeStageAttemptGeneration: number | undefined;
@@ -2073,14 +1491,14 @@ export default class App extends React.Component<AppProps, AppState> {
         if (isRuntimeMutator(outgoing.event_type) && isRecord(outgoing.payload)) {
             const requestId = getPayloadString(outgoing.payload, "request_id");
             if (requestId) {
-                if (this.runtimeCommandTerminalClaims.has(requestId) || this.runtimeCommandContexts.has(requestId)) {
+                if (this.runtimeCommandTracker.hasRequest(requestId)) {
                     this._appendReviewEvent(`略過 ${outgoing.event_type}：request_id 已使用`);
                     return false;
                 }
                 runtimeRequestId = requestId;
                 const bindingRevisionId = getPayloadString(outgoing.payload, "binding_revision_id");
                 const stageUrl = getPayloadString(outgoing.payload, "url");
-                this.runtimeCommandContexts.set(requestId, {
+                this.runtimeCommandTracker.register(requestId, {
                     eventType: outgoing.event_type,
                     ...(bindingRevisionId ? { bindingRevisionId } : {}),
                     ...(stageUrl ? { stageUrl } : {}),
@@ -2091,11 +1509,6 @@ export default class App extends React.Component<AppProps, AppState> {
                 runtimeStageAttemptGeneration = isStageLoadRequest
                     ? this.activeStageAttempt?.generation
                     : undefined;
-                while (this.runtimeCommandContexts.size > 128) {
-                    const oldest = this.runtimeCommandContexts.keys().next().value as string | undefined;
-                    if (!oldest) break;
-                    this.runtimeCommandContexts.delete(oldest);
-                }
                 this._recordRuntimeCommandPhase(requestId, outgoing.event_type, "pending");
             }
             this.setState({ runtimeCommandRejection: null });
@@ -2156,7 +1569,7 @@ export default class App extends React.Component<AppProps, AppState> {
                 if (!this._isCurrentStreamCallback(streamGenerationAtSend, `${outgoing.event_type}-error`)) return;
                 const diagnostic = "stream_transport_error";
                 if (runtimeRequestId) {
-                    if (!this._claimRuntimeCommandTerminal(runtimeRequestId, outgoing.event_type, "error")) return;
+                    if (!this.runtimeCommandTracker._claimRuntimeCommandTerminal(runtimeRequestId, outgoing.event_type, "error")) return;
                     this._finishA4HandoffCommand(runtimeRequestId, "rejected", diagnostic, true);
                 }
                 this._appendReviewEvent(`${outgoing.event_type} failed: ${diagnostic}`);
@@ -2176,7 +1589,7 @@ export default class App extends React.Component<AppProps, AppState> {
                     nativeOpenStageDispatch
                     && (!nativeOpenStageDispatch.settlesFromDataChannel || nativeTransportFailed)
                 ) {
-                    this._settleNativeOpenStageDispatch(nativeOpenStageDispatch);
+                    this.nativeStageQueue._settleNativeOpenStageDispatch(nativeOpenStageDispatch);
                 }
             });
         onDispatched?.();
@@ -2344,13 +1757,7 @@ export default class App extends React.Component<AppProps, AppState> {
     }
 
     private _scheduleStageLoadTimeout(attemptGeneration: number): void {
-        for (const context of this.runtimeCommandContexts.values()) {
-            if (
-                (context.eventType === "openStageRequest" || context.eventType === "loadArtifactGroupRequest")
-                && !context.stageAttemptGeneration
-                && context.stageUrl === this.pendingStageUrl
-            ) context.stageAttemptGeneration = attemptGeneration;
-        }
+        this.runtimeCommandTracker.attachStageAttempt(this.pendingStageUrl, attemptGeneration);
         this._clearStageLoadTimeout();
         this.stageLoadTimeoutId = window.setTimeout(() => {
             this.stageLoadTimeoutId = null;
@@ -2406,17 +1813,13 @@ export default class App extends React.Component<AppProps, AppState> {
         this.streamGeneration += 1;
         // The adapter serializes connect behind physical teardown. Keep native
         // stage dispatch fenced until the replacement lifecycle reports started.
-        this.nativeOpenStagePoisonedGeneration = this.streamGeneration;
-        this.nativeOpenStageReplacementStartGeneration = this.streamGeneration;
-        this._retireNativeOpenStageDispatches();
+        this.nativeStageQueue.fenceReplacement();
         this._invalidateStageAttempt();
         const pendingA4HandoffRequestId = this.a4HandoffPendingRequestId;
         // Every outstanding command belongs to the retired stream. Its later
         // callback is generation-fenced, so terminalize it now instead of
         // leaving a visible pending lifecycle entry until map eviction.
-        for (const [requestId, context] of this.runtimeCommandContexts.entries()) {
-            this._claimRuntimeCommandTerminal(requestId, context.eventType, "superseded");
-        }
+        this.runtimeCommandTracker.claimAll("superseded");
         // The A4 command timeout only completes a request it can terminal-claim.
         // A stream replacement claims the runtime command first, so retire its
         // visible handoff explicitly and expose the existing retry path.
@@ -2444,15 +1847,9 @@ export default class App extends React.Component<AppProps, AppState> {
         if (supersededAttempt && this._isCurrentStageAttemptAwaitingProof(supersededAttempt.generation)) {
             supersededAttempt.status = "terminal";
             this._finishStageLoad(supersededAttempt.generation);
-            for (const [requestId, context] of this.runtimeCommandContexts.entries()) {
-                if (context.stageAttemptGeneration === supersededAttempt.generation) {
-                    this._claimRuntimeCommandTerminal(requestId, context.eventType, "superseded");
-                }
-            }
+            this.runtimeCommandTracker.claimAttempt(supersededAttempt.generation, "superseded");
         }
-        if (this.queuedNativeOpenStage?.stageAttemptGeneration === supersededAttempt.generation) {
-            this.queuedNativeOpenStage = null;
-        }
+        this.nativeStageQueue.dropQueuedAttempt(supersededAttempt.generation);
         this._revokeStageProof();
         this.activeStageAttempt = null;
     }
@@ -2641,12 +2038,7 @@ export default class App extends React.Component<AppProps, AppState> {
         this.pendingStagePreauthorizationIntent = null;
         this.stageIntentGeneration += 1;
         const attemptGeneration = this.activeStageAttempt?.generation;
-        if (
-            !attemptGeneration
-            || this.queuedNativeOpenStage?.stageAttemptGeneration === attemptGeneration
-        ) {
-            this.queuedNativeOpenStage = null;
-        }
+        this.nativeStageQueue.invalidateQueuedAttempt(attemptGeneration);
         this._revokeStageProof();
         if (!attemptGeneration) {
             this.stageLoadFailureActive = false;
@@ -2658,11 +2050,7 @@ export default class App extends React.Component<AppProps, AppState> {
             this.activeStageAttempt.status = "terminal";
         }
         this._finishStageLoad(attemptGeneration);
-        for (const [requestId, context] of this.runtimeCommandContexts.entries()) {
-            if (context.stageAttemptGeneration === attemptGeneration) {
-                this._claimRuntimeCommandTerminal(requestId, context.eventType, "superseded");
-            }
-        }
+        this.runtimeCommandTracker.claimAttempt(attemptGeneration, "superseded");
         // A reconnect must accept its new no-URL readiness probe. Keeping a
         // terminal attempt here would reject that probe, while clearing it
         // still rejects any old correlated result by generation mismatch.
@@ -2719,11 +2107,7 @@ export default class App extends React.Component<AppProps, AppState> {
         if (this._isCurrentStageAttemptAwaitingProof(attemptGeneration) && this.activeStageAttempt) {
             this.activeStageAttempt.terminalReason = "stage-load-timeout";
         }
-        for (const [requestId, context] of this.runtimeCommandContexts.entries()) {
-            if (context.stageAttemptGeneration === attemptGeneration) {
-                this._claimRuntimeCommandTerminal(requestId, context.eventType, "timed-out");
-            }
-        }
+        this.runtimeCommandTracker.claimAttempt(attemptGeneration, "timed-out");
     }
 
     private _expectedStageAsset(): USDAssetType | null {
@@ -4471,14 +3855,7 @@ export default class App extends React.Component<AppProps, AppState> {
 
         private _onStreamStarted(streamGeneration = this.streamGeneration): void {
             if (!this._isCurrentStreamCallback(streamGeneration, "started")) return;
-        if (this.nativeOpenStagePoisonedGeneration === streamGeneration) {
-            if (this.nativeOpenStageReplacementStartGeneration !== streamGeneration) {
-                this._appendReviewEvent("ignored same-lifecycle AppStreamer start; reconnect is required before native stage retry");
-                return;
-            }
-            this.nativeOpenStagePoisonedGeneration = null;
-            this.nativeOpenStageReplacementStartGeneration = null;
-        }
+        if (!this.nativeStageQueue.acceptStarted(streamGeneration)) return;
         this.setState(
             { streamDiagnostic: null, webrtcLifecycleStatus: "started" },
             () => this._reportStreamReadinessIfFrame(streamGeneration),
@@ -4593,13 +3970,9 @@ export default class App extends React.Component<AppProps, AppState> {
         const pendingA4HandoffRequestId = this.a4HandoffPendingRequestId;
         // AppStreamer keeps response callbacks in the old lifecycle. A later
         // stage request must remount before it can safely reuse this slot.
-        this.nativeOpenStagePoisonedGeneration = this.streamGeneration;
-        this.nativeOpenStageReplacementStartGeneration = null;
-        this._retireNativeOpenStageDispatches();
+        this.nativeStageQueue.fenceStopped();
         this._invalidateStageAttempt();
-        for (const [requestId, context] of this.runtimeCommandContexts.entries()) {
-            this._claimRuntimeCommandTerminal(requestId, context.eventType, "superseded");
-        }
+        this.runtimeCommandTracker.claimAll("superseded");
         if (pendingA4HandoffRequestId) {
             this._finishA4HandoffCommand(
                 pendingA4HandoffRequestId,
@@ -5223,7 +4596,7 @@ export default class App extends React.Component<AppProps, AppState> {
                 // Keep the original event shape so the fallback logger below can surface it.
             }
         }
-        if (!event.event_type || !kitToViewerEventTypes.has(event.event_type) || !isRecord(event.payload)) {
+        if (!event.event_type || !isKitToViewerEventType(event.event_type) || !isRecord(event.payload)) {
             return;
         }
         const authority = this._currentVerifiedDataChannelAuthority();
@@ -5240,12 +4613,12 @@ export default class App extends React.Component<AppProps, AppState> {
                 return;
             }
             const terminalClaim = parsed.request_id
-                ? this.runtimeCommandTerminalClaims.get(parsed.request_id)
+                ? this.runtimeCommandTracker.getTerminal(parsed.request_id)
                 : undefined;
             const terminalSafetyContext = parsed.request_id
-                ? this.runtimeCommandTerminalSafetyContexts.get(parsed.request_id)
+                ? this.runtimeCommandTracker.getSafetyContext(parsed.request_id)
                 : undefined;
-            const nativeDataChannelDispatch = this._matchingNativeOpenStageDataChannelTerminal(
+            const nativeDataChannelDispatch = this.nativeStageQueue._matchingNativeOpenStageDataChannelTerminal(
                 "commandRejected",
                 payload,
             );
@@ -5267,7 +4640,7 @@ export default class App extends React.Component<AppProps, AppState> {
             // This must precede duplicate/current-attempt guards: a manual
             // loadArtifactGroupRequest receives only an immediate SDK ACK, and
             // its later DataChannel terminal owns physical slot release.
-            this._settleNativeOpenStageDispatchFromDataChannel("commandRejected", payload);
+            this.nativeStageQueue._settleNativeOpenStageDispatchFromDataChannel("commandRejected", payload);
             if (terminalClaim) {
                 if (
                     !nativeChangedUnconfirmed
@@ -5293,7 +4666,7 @@ export default class App extends React.Component<AppProps, AppState> {
                 return;
             }
             const context = parsed.request_id
-                ? this.runtimeCommandContexts.get(parsed.request_id)
+                ? this.runtimeCommandTracker.getContext(parsed.request_id)
                 : undefined;
             if (context && context.eventType !== parsed.rejected_event_type) {
                 this._appendReviewEvent(t(
@@ -5303,7 +4676,7 @@ export default class App extends React.Component<AppProps, AppState> {
                 return;
             }
             if (parsed.request_id) {
-                if (!this._claimRuntimeCommandTerminal(
+                if (!this.runtimeCommandTracker._claimRuntimeCommandTerminal(
                     parsed.request_id,
                     context?.eventType || parsed.rejected_event_type,
                     "rejected",
@@ -5386,19 +4759,19 @@ export default class App extends React.Component<AppProps, AppState> {
 
         // response received once a USD asset is fully loaded
         if (event.event_type === "openedStageResult") {
-            this._settleNativeOpenStageDispatchFromDataChannel("openedStageResult", payload);
-            let correlation = this._correlateRuntimeCommandEvent("openedStageResult", payload);
+            this.nativeStageQueue._settleNativeOpenStageDispatchFromDataChannel("openedStageResult", payload);
+            let correlation = this.runtimeCommandTracker._correlateRuntimeCommandEvent("openedStageResult", payload);
             if (correlation.disposition !== "matched") {
                 if (correlation.disposition === "duplicate") {
                     const requestId = getPayloadString(payload, "request_id");
-                    const terminalClaim = this.runtimeCommandTerminalClaims.get(requestId);
-                    const terminalSafetyContext = this.runtimeCommandTerminalSafetyContexts.get(requestId);
+                    const terminalClaim = this.runtimeCommandTracker.getTerminal(requestId);
+                    const terminalSafetyContext = this.runtimeCommandTracker.getSafetyContext(requestId);
                     const bindingRevisionId = getPayloadString(payload, "binding_revision_id");
                     if (
                         terminalClaim
                         && terminalSafetyContext
                         && (terminalClaim.outcome === "superseded" || terminalClaim.outcome === "timed-out")
-                        && runtimeResponseRequestTypes.get("openedStageResult")?.has(terminalClaim.eventType)
+                        && isRuntimeResponseForRequest("openedStageResult", terminalClaim.eventType)
                         && getPayloadString(payload, "result") !== "success"
                         && getPayloadString(payload, "runtime_state") === "changed_failed"
                         && (
@@ -5415,7 +4788,7 @@ export default class App extends React.Component<AppProps, AppState> {
                     }
                 }
                 if (correlation.mismatchReason === "binding_revision" && correlation.context) {
-                    this._claimRuntimeCommandTerminal(correlation.requestId, correlation.context.eventType, "error");
+                    this.runtimeCommandTracker._claimRuntimeCommandTerminal(correlation.requestId, correlation.context.eventType, "error");
                     if (correlation.context.stageAttemptGeneration) {
                         this._failStageLoad(
                             t(stageLoadFailurePresentation.revisionMismatch.zh, stageLoadFailurePresentation.revisionMismatch.en),
@@ -5433,7 +4806,7 @@ export default class App extends React.Component<AppProps, AppState> {
                 correlation.context?.stageAttemptGeneration
                 && !this._isCurrentStageAttemptAwaitingProof(correlation.context.stageAttemptGeneration)
             ) return;
-            correlation = this._completeRuntimeCommandEvent(
+            correlation = this.runtimeCommandTracker._completeRuntimeCommandEvent(
                 "openedStageResult",
                 payload,
                 payload.result === "success" ? "success" : "error",
@@ -5535,7 +4908,7 @@ export default class App extends React.Component<AppProps, AppState> {
                 const runtimeState = getPayloadString(payload, "runtime_state");
                 const bindingRevisionId = getPayloadString(payload, "binding_revision_id");
                 const requestId = getPayloadString(payload, "request_id");
-                if (requestId) this.runtimeCommandContexts.delete(requestId);
+                if (requestId) this.runtimeCommandTracker.deleteContext(requestId);
                 console.error(`Kit App communicates there was an error loading: ${redactStageUrlForDiagnostic(url)} (${error})`);
                 if (runtimeState === "changed_failed") {
                     this._applyChangedFailedStageSafety(
@@ -5558,12 +4931,12 @@ export default class App extends React.Component<AppProps, AppState> {
         }
 
         else if (event.event_type === "loadArtifactGroupResult") {
-            this._settleNativeOpenStageDispatchFromDataChannel("loadArtifactGroupResult", payload);
+            this.nativeStageQueue._settleNativeOpenStageDispatchFromDataChannel("loadArtifactGroupResult", payload);
             const result = getPayloadString(payload, "result") || "unknown";
             const requestId = getPayloadString(payload, "request_id");
             const correlation = result === "error"
-                ? this._completeRuntimeCommandEvent("loadArtifactGroupResult", payload, "error")
-                : this._correlateRuntimeCommandEvent("loadArtifactGroupResult", payload);
+                ? this.runtimeCommandTracker._completeRuntimeCommandEvent("loadArtifactGroupResult", payload, "error")
+                : this.runtimeCommandTracker._correlateRuntimeCommandEvent("loadArtifactGroupResult", payload);
             if (correlation.disposition !== "matched") return;
             const context = correlation.context;
             if (requestId && context) {
@@ -5738,7 +5111,7 @@ export default class App extends React.Component<AppProps, AppState> {
             const fallbackPaths = getPayloadObjectArray(payload, "fallback_paths");
             const requestId = getPayloadString(payload, "request_id");
             const a4Succeeded = this._a4RuntimeResultSucceeded("highlightPrimsResult", payload);
-            const correlation = this._completeRuntimeCommandEvent(
+            const correlation = this.runtimeCommandTracker._completeRuntimeCommandEvent(
                 "highlightPrimsResult",
                 payload,
                 result === "success" && a4Succeeded !== false ? "success" : "error",
@@ -5793,7 +5166,7 @@ export default class App extends React.Component<AppProps, AppState> {
             const result = getPayloadString(payload, "result") || "unknown";
             const requestId = getPayloadString(payload, "request_id");
             const a4Succeeded = this._a4RuntimeResultSucceeded("focusPrimResult", payload);
-            const correlation = this._completeRuntimeCommandEvent(
+            const correlation = this.runtimeCommandTracker._completeRuntimeCommandEvent(
                 "focusPrimResult",
                 payload,
                 result === "success" && a4Succeeded !== false ? "success" : "error",
@@ -5828,9 +5201,9 @@ export default class App extends React.Component<AppProps, AppState> {
             this.setState(nextState as Pick<AppState, keyof AppState>);
         }
 
-        else if (event.event_type && simpleRuntimeTerminalEvents.has(event.event_type)) {
+        else if (event.event_type && isSimpleRuntimeTerminalEvent(event.event_type)) {
             const result = getPayloadString(payload, "result") || "unknown";
-            const correlation = this._completeRuntimeCommandEvent(
+            const correlation = this.runtimeCommandTracker._completeRuntimeCommandEvent(
                 event.event_type,
                 payload,
                 result === "success" ? "success" : "error",
@@ -5894,7 +5267,7 @@ export default class App extends React.Component<AppProps, AppState> {
         // CH-F：Kit 確認 binding 已套用 → 更新 active + last-good revision（交易完成；誠實：只有確認才宣告 applied）。
         else if (event.event_type === "bindingApplied") {
             const revision = getPayloadString(payload, "binding_revision_id");
-            const correlation = this._completeRuntimeCommandEvent("bindingApplied", payload, "success");
+            const correlation = this.runtimeCommandTracker._completeRuntimeCommandEvent("bindingApplied", payload, "success");
             if (correlation.disposition !== "matched") return;
             if (revision) {
                 if (this.stageProofBlockedRevision) {

@@ -1,0 +1,27 @@
+{
+  "$schema": "../architecture-delta.schema.json",
+  "schema_version": "ai-bim-architecture-delta/v1",
+  "change_id": "extract-viewer-runtime-core",
+  "lane": "G",
+  "summary": "Extract existing Viewer protocol, connection profiles, command correlation, native stage dispatch and streamer teardown into eight internal modules. Preserve wire events, authority ownership, state transitions and the single AppStreamer transport.",
+  "created_on": "2026-09-12",
+  "affected_services": ["web-viewer-sample"],
+  "affected_surfaces": [
+    "web-viewer-sample/src/AppStream.tsx",
+    "web-viewer-sample/src/Window.tsx",
+    "web-viewer-sample/src/viewer/core",
+    "architecture/layer-contract.json"
+  ],
+  "added_dependency_edges": [],
+  "removed_dependency_edges": [],
+  "public_contract_changes": [],
+  "data_ownership_changes": [],
+  "state_machine_changes": [],
+  "exceptions": [],
+  "approval": {
+    "required": false,
+    "status": "not-required",
+    "approved_by": null,
+    "approved_at": null
+  }
+}

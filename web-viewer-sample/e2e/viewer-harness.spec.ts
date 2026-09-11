@@ -39,6 +39,22 @@ test.describe("viewer harness 開機（deterministic，無真實 Kit）", () => 
     }));
     await page.goto(`${harnessRoute()}&debug=1`);
     await expect(page.getByTestId("harness-viewport-label")).toContainText("stage:", { timeout: 25_000 });
+    // FakeAppStreamer has no media track. Provide a synthetic frame through the
+    // production loadeddata callback so the fake socket can acknowledge activity.
+    // This fixture is not evidence of a real Kit/WebRTC frame.
+    await page.locator("#remote-video").evaluate((element) => {
+      const video = element as HTMLVideoElement;
+      Object.defineProperties(video, {
+        readyState: { configurable: true, get: () => HTMLMediaElement.HAVE_CURRENT_DATA },
+        videoWidth: { configurable: true, get: () => 1280 },
+        videoHeight: { configurable: true, get: () => 720 },
+      });
+      video.dispatchEvent(new Event("loadeddata"));
+    });
+    // Startup loads are automatic activity. Exercise an explicit user command
+    // before requiring an activity ACK, then verify another dispatch after debounce.
+    const command = page.locator("button").filter({ hasText: "載入可審查 3D 模型" }).first();
+    await command.evaluate((element) => (element as HTMLButtonElement).click());
     await expect(page.locator("body")).toContainText("Socket.IO userActivity 已確認", { timeout: 10_000 });
     const acknowledgedCount = async () => (
       (await page.locator("body").textContent())?.match(/Socket\.IO userActivity 已確認/g) ?? []
@@ -46,7 +62,6 @@ test.describe("viewer harness 開機（deterministic，無真實 Kit）", () => 
     const acknowledgedBefore = await acknowledgedCount();
     await page.waitForTimeout(5_100);
 
-    const command = page.locator("button").filter({ hasText: "載入可審查 3D 模型" }).first();
     await command.evaluate((element) => (element as HTMLButtonElement).click());
 
     await expect(page.getByTestId("demo-outgoing-log")).toContainText("loadingStateQuery");

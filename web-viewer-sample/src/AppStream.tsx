@@ -11,165 +11,19 @@
  */
 import React, { Component } from 'react';
 import PropTypes from 'prop-types';
-import { StreamEvent, StreamProps, DirectConfig, GFNConfig, StreamStats, StreamStatus, StreamType } from '@nvidia/omniverse-webrtc-streaming-library';
+import { StreamEvent, StreamProps, DirectConfig, GFNConfig, StreamStats, StreamType } from '@nvidia/omniverse-webrtc-streaming-library';
 import StreamConfig from '../stream.config.json';
+import { buildGfnStreamConfig, buildLocalStreamConfig, buildRemoteStreamConfig } from './viewer/core/streamConnectionProfile';
 // 串流引擎一律經 getStreamer()：harness 關閉時 === 真實 AppStreamer（prod 行為零變更），
 // harness 開啟時為可決定性 FakeAppStreamer（只換 transport + 假 Kit 大腦，不碰前端狀態機）。
 import { getStreamer } from './harness/streamer';
 import { harnessEnabled } from './harness/harnessConfig';
+import { terminateStreamer, waitForStreamerTeardown } from "./viewer/core/streamerLifecycle";
 // #624 exactly-once 緩解：帶 request_id 的 Kit runtime 回應在此咽喉點做短時窗 LRU 去重。
 import {
     KitRuntimeResponseDeduper,
     readKitRuntimeResponseIdentity,
 } from './clients/kitRuntimeResponseDedup';
-
-// NVIDIA's singleton streamer clears its callback map only after a successful
-// terminate result. A fulfilled inProgress/error result can retain _stream,
-// so serialize the next connect behind proven physical teardown rather than
-// treating every fulfilled Promise as a completed lifecycle.
-let pendingStreamerTeardown: Promise<boolean> | null = null;
-const STREAMER_TEARDOWN_POLL_MS = 25;
-const STREAMER_TEARDOWN_TIMEOUT_MS = 5_000;
-const GFN_STREAMER_IDLE_STATES = new Set([0, 7]); // Unknown / Finished in GFN client SDK 1.x.
-
-interface GfnStreamerLifecycle {
-    state?: number;
-    stop?: () => unknown;
-}
-
-function usesGfnManagedLifecycle(): boolean {
-    // NVIDIA AppStreamer 5.18.2 does not implement its GFN adapter's
-    // terminate(), so GFN must be stopped through the client SDK global.
-    return StreamConfig.source === "gfn";
-}
-
-function getGfnStreamerLifecycle(): GfnStreamerLifecycle | null {
-    const gfn = (globalThis as typeof globalThis & {
-        GFN?: { streamer?: GfnStreamerLifecycle };
-    }).GFN;
-    return gfn?.streamer || null;
-}
-
-function isGfnStreamerPhysicallyTerminated(): boolean {
-    const state = getGfnStreamerLifecycle()?.state;
-    return typeof state === "number" && GFN_STREAMER_IDLE_STATES.has(state);
-}
-
-function waitForPhysicalGfnTeardown(): Promise<boolean> {
-    if (isGfnStreamerPhysicallyTerminated()) return Promise.resolve(true);
-    const deadline = Date.now() + STREAMER_TEARDOWN_TIMEOUT_MS;
-    return new Promise((resolve) => {
-        const poll = () => {
-            if (isGfnStreamerPhysicallyTerminated()) {
-                resolve(true);
-                return;
-            }
-            if (Date.now() >= deadline) {
-                resolve(false);
-                return;
-            }
-            setTimeout(poll, STREAMER_TEARDOWN_POLL_MS);
-        };
-        poll();
-    });
-}
-
-async function terminateGfnStreamer(): Promise<boolean> {
-    const streamer = getGfnStreamerLifecycle();
-    if (!streamer) return false;
-    if (isGfnStreamerPhysicallyTerminated()) return true;
-    if (typeof streamer.stop !== "function") return false;
-    try {
-        await Promise.resolve(streamer.stop());
-        return waitForPhysicalGfnTeardown();
-    } catch (error) {
-        console.error(error);
-        return false;
-    }
-}
-
-function hasCompletedStreamerTeardown(result: unknown): boolean {
-    // The deterministic harness terminates synchronously and deliberately
-    // returns void after it clears its own callback/timer state. Production
-    // AppStreamer must return the documented terminate/success event.
-    if (harnessEnabled() && result === undefined) return true;
-    if (!result || typeof result !== "object") return false;
-    const event = result as { action?: unknown; status?: unknown };
-    return event.action === "terminate" && event.status === "success";
-}
-
-function isStreamerPhysicallyTerminated(): boolean {
-    if (harnessEnabled()) return true;
-    return (getStreamer() as { streamStatus?: unknown }).streamStatus === StreamStatus.none;
-}
-
-function waitsForStreamerTeardown(result: unknown): boolean {
-    if (!result || typeof result !== "object") return false;
-    const event = result as { action?: unknown; status?: unknown };
-    return event.action === "terminate" && event.status === "inProgress";
-}
-
-function waitForPhysicalStreamerTeardown(): Promise<boolean> {
-    if (isStreamerPhysicallyTerminated()) return Promise.resolve(true);
-    const deadline = Date.now() + STREAMER_TEARDOWN_TIMEOUT_MS;
-    return new Promise((resolve) => {
-        const poll = () => {
-            if (isStreamerPhysicallyTerminated()) {
-                resolve(true);
-                return;
-            }
-            if (Date.now() >= deadline) {
-                resolve(false);
-                return;
-            }
-            setTimeout(poll, STREAMER_TEARDOWN_POLL_MS);
-        };
-        poll();
-    });
-}
-
-function trackStreamerTeardown(teardown: Promise<boolean>): Promise<boolean> {
-    pendingStreamerTeardown = teardown;
-    void teardown.finally(() => {
-        if (pendingStreamerTeardown === teardown) pendingStreamerTeardown = null;
-    });
-    return teardown;
-}
-
-function terminateStreamer(): Promise<boolean> {
-    if (pendingStreamerTeardown) return pendingStreamerTeardown;
-    if (usesGfnManagedLifecycle()) return trackStreamerTeardown(terminateGfnStreamer());
-    if (isStreamerPhysicallyTerminated()) return Promise.resolve(true);
-    try {
-        const teardown = Promise.resolve(getStreamer().terminate(false))
-            .then(
-                (result) => {
-                    if (hasCompletedStreamerTeardown(result)) return true;
-                    if (waitsForStreamerTeardown(result)) return waitForPhysicalStreamerTeardown();
-                    // A fulfilled error/warning is not a terminal cleanup
-                    // acknowledgement. It must fail this lifecycle even when
-                    // a snapshot happens to report none; a later fresh mount
-                    // may independently observe none and reconnect safely.
-                    console.error("AppStream streamer teardown did not complete");
-                    return false;
-                },
-                (error) => {
-                    console.error(error);
-                    return false;
-                },
-            );
-        return trackStreamerTeardown(teardown);
-    } catch (error) {
-        console.error(error);
-        return Promise.resolve(false);
-    }
-}
-
-function waitForStreamerTeardown(): Promise<boolean> {
-    if (pendingStreamerTeardown) return pendingStreamerTeardown;
-    if (usesGfnManagedLifecycle()) return Promise.resolve(isGfnStreamerPhysicallyTerminated());
-    return Promise.resolve(isStreamerPhysicallyTerminated());
-}
 
 type StreamPayload = StreamEvent & {
     action?: string;
@@ -298,84 +152,34 @@ export default class AppStream extends Component<AppStreamProps, AppStreamState>
                 return;
             }
             streamSource = StreamType.GFN;
-            streamConfig = {
-                GFN             : gfnGlobal,
-                catalogClientId : StreamConfig.gfn.catalogClientId,
-                clientId        : StreamConfig.gfn.clientId,
-                cmsId           : StreamConfig.gfn.cmsId,
+            streamConfig = buildGfnStreamConfig(gfnGlobal, StreamConfig.gfn, {
                 onUpdate        : (message: StreamEvent) => this._onUpdate(message),
                 onStart         : (message: StreamEvent) => this._onStart(message),
                 onCustomEvent   : (message) => this._onCustomEvent(message as AppStreamCustomEvent)
-            }
+            });
         }
 
         else if (StreamConfig.source === 'local') {
             streamSource = StreamType.DIRECT;
-            streamConfig = {
-                videoElementId: 'remote-video',
-                audioElementId: 'remote-audio',
-                server: this.props.signalingserver || StreamConfig.local.server,
-                authenticate: Boolean(this.props.accessToken),
-                ...(this.props.accessToken ? { accessToken: this.props.accessToken } : {}),
-                maxReconnects: 20,
-                signalingServer: this.props.signalingserver || StreamConfig.local.server,
-                signalingPort: this.props.signalingport || StreamConfig.local.signalingPort,
-                mediaServer: this.props.mediaserver || StreamConfig.local.server,
-                // mediaport 的「未指定」哨兵有兩種：undefined（Window 路徑 StreamEndpoint
-                // 缺值時）與 0（App.tsx state 初始 / _resetState 的 mediaport: number=0）。
-                // 兩者都代表沒有有效 port，必須略過 mediaPort 欄交給 library 套預設；
-                // 僅當 props.mediaport 為真正設定的非零 number 時才帶入（還原 EC-02 前
-                // `(this.props.mediaport || StreamConfig.local.mediaPort) != null` 的 falsy-0
-                // 語意，同時保留 number|undefined 型別不傳 null / undefined）。
-                ...(this.props.mediaport != null && this.props.mediaport !== 0 && {
-                    mediaPort: this.props.mediaport,
-                }),
-                nativeTouchEvents: true,
-                // No hardcoded width/height/fps — library defaults (1920x1080/60) match the
-                // server's renderer.resolution in the .kit file. The server's actual encoded
-                // size may differ (e.g. 1920x1008 in headless mode) due to streaming-layer
-                // internals; onStreamStats below detects that and calls AppStreamer.resize()
-                // so client and server converge on whatever size the encoder actually delivers.
+            streamConfig = buildLocalStreamConfig(this.props, StreamConfig.local, {
                 onUpdate: (message: StreamEvent) => this._onUpdate(message),
                 onStart: (message: StreamEvent) => this._onStart(message),
                 onStreamStats: (message: StreamEvent) => this._onStreamStats(message),
                 onCustomEvent: (message) => this._onCustomEvent(message as AppStreamCustomEvent),
                 onStop: (message: StreamEvent) => this._onStop(message),
                 onTerminate: (message: StreamEvent) => this._onTerminate(message)
-            };
+            });
         }
 
         else if (StreamConfig.source === 'stream') {
             streamSource =  StreamType.DIRECT;
-            streamConfig = {
-                signalingServer: this.props.signalingserver,
-                signalingPort: this.props.signalingport,
-                mediaServer: this.props.mediaserver,
-                // 與 local 分支一致處理 mediaport 的未指定哨兵（undefined / App.tsx
-                // state 初始的 0）：缺值時略過 mediaPort 欄交給 library 套預設，
-                // 不把 0 / undefined 當有效 port 傳入 DirectConfig.mediaPort。
-                ...(this.props.mediaport != null && this.props.mediaport !== 0 && {
-                    mediaPort: this.props.mediaport,
-                }),
-                backendUrl: this.props.backendUrl,
-                sessionId: this.props.sessionId,
-                autoLaunch: true,
-                cursor: 'free',
-                mic: false,
-                videoElementId: 'remote-video',
-                audioElementId: 'remote-audio',
-                authenticate: false,
-                maxReconnects: 20,
-                nativeTouchEvents: true,
-                width: 1920,
-                height: 1080,
-                fps: 60,
+            streamConfig = buildRemoteStreamConfig(this.props, {
                 onUpdate: (message: StreamEvent) => this._onUpdate(message),
                 onStart: (message: StreamEvent) => this._onStart(message),
                 onCustomEvent: (message) => this._onCustomEvent(message as AppStreamCustomEvent),
                 onStop: (message: StreamEvent) => this._onStop(message),
                 onTerminate: (message: StreamEvent) => this._onTerminate(message),
-            };
+            });
         }
 
         else {

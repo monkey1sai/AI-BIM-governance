@@ -1,3 +1,4 @@
+import type { RuntimeCommandTracker } from "../viewer/core/runtimeCommandTracker";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { connectReviewSocketMock } = vi.hoisted(() => ({
@@ -74,8 +75,7 @@ type AppInternals = {
         connectionGeneration: number;
     } | null;
     reviewSocketEpoch: number;
-    runtimeCommandContexts: Map<string, unknown>;
-    runtimeCommandTerminalClaims: Map<string, unknown>;
+    runtimeCommandTracker: RuntimeCommandTracker;
     stageIntentGeneration: number;
     activeStageAttempt: { generation: number; status?: string } | null;
     _connectReviewSocket: (sessionId: string, traceId: string) => void;
@@ -776,7 +776,7 @@ describe("Window Socket canonical trace authority", () => {
         expect(sendSpy).not.toHaveBeenCalled();
         expect(outgoingSpy).not.toHaveBeenCalled();
         expect(app.setState).not.toHaveBeenCalled();
-        expect(target.runtimeCommandContexts.size).toBe(0);
+        expect(target.runtimeCommandTracker.pendingCount).toBe(0);
     });
 
     it.each([
@@ -799,8 +799,8 @@ describe("Window Socket canonical trace authority", () => {
         expect(outgoingSpy).not.toHaveBeenCalled();
         expect(reviewSpy).not.toHaveBeenCalled();
         expect(app.setState).not.toHaveBeenCalled();
-        expect(target.runtimeCommandContexts.size).toBe(0);
-        expect(target.runtimeCommandTerminalClaims.size).toBe(0);
+        expect(target.runtimeCommandTracker.pendingCount).toBe(0);
+        expect(target.runtimeCommandTracker.terminalCount).toBe(0);
     });
 
     it("rejects a non-object outbound payload before all side effects", () => {
@@ -832,8 +832,8 @@ describe("Window Socket canonical trace authority", () => {
                 expect(incomingSpy, eventType).not.toHaveBeenCalled();
                 expect(reviewSpy, eventType).not.toHaveBeenCalled();
                 expect(app.setState, eventType).not.toHaveBeenCalled();
-                expect(target.runtimeCommandContexts.size, eventType).toBe(0);
-                expect(target.runtimeCommandTerminalClaims.size, eventType).toBe(0);
+                expect(target.runtimeCommandTracker.pendingCount, eventType).toBe(0);
+                expect(target.runtimeCommandTracker.terminalCount, eventType).toBe(0);
             }
         },
     );
@@ -1071,13 +1071,13 @@ describe("Window Socket canonical trace authority", () => {
         });
 
         expect(target._sendStreamMessage({ event_type: "openStageRequest", payload: {} })).toBe(true);
-        const contextSizeAfterSend = target.runtimeCommandContexts.size;
+        const contextSizeAfterSend = target.runtimeCommandTracker.pendingCount;
         vi.mocked(app.setState).mockClear();
         await Promise.resolve();
 
         expect(incomingSpy).not.toHaveBeenCalled();
         expect(app.setState).not.toHaveBeenCalled();
-        expect(target.runtimeCommandContexts.size).toBe(contextSizeAfterSend);
+        expect(target.runtimeCommandTracker.pendingCount).toBe(contextSizeAfterSend);
     });
 
     it("does not synthesize responses for request types without an explicit adapter mapping", async () => {
