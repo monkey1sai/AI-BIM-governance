@@ -124,11 +124,12 @@ async function connectReviewSocket(url: string): Promise<SocketClient> {
   });
 }
 
-async function createClosedRebuildableSession(app: CoordinatorApp, suffix: string): Promise<string> {
+async function createClosedRebuildableSession(app: CoordinatorApp, suffix: string, reviewRequestId?: string): Promise<string> {
   const created = await request(app.app)
     .post("/api/review-sessions")
     .send({
       project_id: `project_${suffix}`,
+      review_request_id: reviewRequestId,
       model_version_id: `model_${suffix}`,
       artifact_bindings: [{
         artifact_group_id: `group_${suffix}`,
@@ -156,6 +157,32 @@ async function emitWithAck<T>(client: SocketClient, event: string, payload: unkn
 }
 
 describe("bim-review-coordinator", () => {
+  it("preserves legacy request correlation through recreation and restart, but rejects a changed receipt target", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 200 }));
+    const app = makeApp();
+    const sourceId = await createClosedRebuildableSession(app, "legacy_request", "external-review-123");
+    const recreate = (target: CoordinatorApp) => request(target.app).post(`/api/review-sessions/${sourceId}/recreate`)
+      .set("Idempotency-Key", "legacy-request-recreate").send({});
+    const first = await recreate(app);
+    expect(first.status).toBe(201);
+    expect(first.body.session.review_request_id).toBe("external-review-123");
+    expect((await recreate(app)).status).toBe(200);
+    const runtime = await request(app.app).get("/api/runtime/status");
+    expect(runtime.body.sessions.items.find((item: {session_id: string}) => item.session_id === first.body.session_id).ready_model_id).toBeNull();
+    const config = app.config;
+    await app.dispose(); app.io.close();
+    await new Promise<void>(resolve => app.server.close(() => resolve()));
+    active = createCoordinatorApp(config);
+    const replay = await recreate(active);
+    expect(replay.status).toBe(200);
+    expect(replay.body.session_id).toBe(first.body.session_id);
+    expect(replay.body.session.review_request_id).toBe("external-review-123");
+    const file = path.join(config.sessionStoreDir, `${first.body.session_id}.json`);
+    const saved = JSON.parse(fs.readFileSync(file, "utf8"));
+    saved.review_request_id = "other-external-review";
+    fs.writeFileSync(file, JSON.stringify(saved), "utf8");
+    expect((await recreate(active)).status).toBe(409);
+  });
   it("returns health", async () => {
     const app = makeApp();
     const response = await request(app.app).get("/health");

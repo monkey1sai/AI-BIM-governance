@@ -2059,7 +2059,8 @@ export function createCoordinatorApp(
   });
 
   function recreationReadySourceMatches(source: ReviewSession, target: ReviewSession): boolean {
-    if (target.review_request_id !== undefined || target.session_id.startsWith("review_session_request_")) return false;
+    const expectedRequestId = source.session_id.startsWith("review_session_request_") ? undefined : source.review_request_id;
+    if (target.review_request_id !== expectedRequestId || target.session_id.startsWith("review_session_request_")) return false;
     const carries = (session: ReviewSession) => session.ready_review_source !== undefined
       || session.review_request_fingerprint !== undefined || session.session_id.startsWith("review_session_request_");
     if (!carries(source)) return !carries(target);
@@ -2174,7 +2175,7 @@ export function createCoordinatorApp(
           ready_model_id: source.ready_model_id,
           trace_id: source.ready_model_id ? source.trace_id : undefined,
           recreated_from_session_id: source.session_id,
-          review_request_id: undefined,
+          review_request_id: sourceRequestNamespace ? undefined : source.review_request_id,
           review_request_fingerprint: source.review_request_fingerprint,
           ready_review_source: source.ready_review_source,
           tenant_id: source.tenant_id,
@@ -3354,8 +3355,13 @@ export function createCoordinatorApp(
           if (intent.mode === "open_existing") {
             const selected = store.get(intent.session_id);
             if (!selected) return {status: 404, body: {error_code: "review_session_not_found"}};
-            if ((selected.ready_review_source !== undefined || selected.session_id.startsWith("review_session_request_"))
-              && !isCanonicalReadyReviewSourceCarrier(selected)) return {status: 409, body: {error_code: "review_request_state_corrupt"}};
+            const requestNamespace = selected.session_id.startsWith("review_session_request_");
+            if ((selected.ready_review_source !== undefined || selected.review_request_fingerprint !== undefined || requestNamespace)
+              && (!isCanonicalReadyReviewSourceCarrier(selected)
+                || (requestNamespace && (!isReviewRequestDigest(selected.review_request_id)
+                  || selected.session_id !== reviewSessionIdForRequestScope(selected.review_request_id))))) {
+              return {status: 409, body: {error_code: "review_request_state_corrupt"}};
+            }
             if (!sessionMatchesReadyBundle(selected, bundle)) return {status: 409, body: {error_code: "review_session_source_mismatch"}};
             if (!isSessionMutable(selected)) return {status: 409, body: {error_code: "review_session_not_mutable"}};
             return {status: 200, body: readySessionBody(id, selected, true)};

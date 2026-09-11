@@ -9,6 +9,8 @@ test.describe.serial("Ready review intent HTTP contract", () => {
   test.afterAll(async () => { await fixture?.stop(); });
 
   test("explicit create, lost response retry after reload, named open and closed lineage", async ({ page, request }, testInfo) => {
+    // HTTP LAN browsers may lack randomUUID; preserve the same request/retry behavior.
+    await page.addInitScript(() => { Object.defineProperty(globalThis.crypto, "randomUUID", { value: undefined }); });
     const route = `${fixture.base}/api/conversion/records/${readyModelId}/review-session`;
     let claims = 0;
     page.on("request", req => { if (req.url().includes("/viewer-leases/claim")) claims++; });
@@ -24,6 +26,12 @@ test.describe.serial("Ready review intent HTTP contract", () => {
     await expect(page.getByTestId("a1-session-select")).toHaveValue(first.review_session_id);
     expect(first.session_status).toBe("created");
     await expect(page.getByTestId("a1-inline-session-preparing")).toHaveCount(0);
+
+    const elsewhere = await (await request.post(route, { data: { mode: "create_new", request_id: "created-in-another-tab" } })).json();
+    await page.getByTestId("ready-review-refresh").click();
+    await expect(page.getByTestId("ready-review-existing").locator(`option[value="${elsewhere.review_session_id}"]`)).toHaveCount(1);
+    await expect(page.getByTestId("a1-session-select")).toHaveValue(first.review_session_id);
+    expect((await request.post(`${fixture.base}/api/review-sessions/${elsewhere.review_session_id}/close`, { data: {} })).ok()).toBeTruthy();
 
     let lostId = "";
     await page.route(route, async intercepted => {
@@ -72,5 +80,28 @@ test.describe.serial("Ready review intent HTTP contract", () => {
     expect(events.some(event => event.type === "viewerLeaseClaimed")).toBe(false);
     await page.screenshot({ path: testInfo.outputPath("ready-review-recreated.png"), fullPage: true });
     await testInfo.attach("session-identities", { body: JSON.stringify({ first, replay, recreated, claims }), contentType: "application/json" });
+
+    expect((await request.post(`${fixture.base}/api/review-sessions/${recreated.session_id}/close`, { data: {} })).ok()).toBeTruthy();
+    await page.reload();
+    await page.getByTestId(`closed-session-recreate-${first.review_session_id}`).click();
+    const recreateRoute = `${fixture.base}/api/review-sessions/${first.review_session_id}/recreate`;
+    let closedTarget = "";
+    await page.route(recreateRoute, async intercepted => {
+      const committed = await intercepted.fetch();
+      closedTarget = (await committed.json()).session_id;
+      expect((await request.post(`${fixture.base}/api/review-sessions/${closedTarget}/close`, { data: {} })).ok()).toBeTruthy();
+      await intercepted.abort("failed");
+    }, { times: 1 });
+    await page.getByTestId("closed-session-confirm-action").click();
+    await expect(page.getByTestId("closed-session-action-error")).toBeVisible();
+    await page.reload();
+    await expect(page.getByTestId("closed-session-confirm")).toBeVisible();
+    await page.getByTestId("closed-session-confirm-action").click();
+    await expect(page.getByTestId("closed-session-success")).toContainText("已結束");
+    await expect(page.getByTestId("closed-session-success")).toContainText(closedTarget);
+    await expect(page.getByTestId("a1-no-session")).toBeVisible();
+    await expect(page.getByTestId(`closed-session-recreate-${closedTarget}`)).toBeVisible();
+    expect(claims).toBe(0);
+    await page.screenshot({ path: testInfo.outputPath("ready-review-closed-replay.png"), fullPage: true });
   });
 });

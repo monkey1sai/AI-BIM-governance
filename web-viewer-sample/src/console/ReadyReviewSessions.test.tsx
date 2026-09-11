@@ -1,4 +1,4 @@
-import { act } from "react";
+import { act, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ReadyReviewSessions } from "./ReadyReviewSessions";
@@ -12,11 +12,16 @@ const record: ConversionRecord = {
   detected_at: "", updated_at: "",
 };
 const session: RuntimeSessionSummary = {
+  ready_model_id: modelId,
   session_id: "review_session_existing", status: "created", project_id: "project-a",
   model_version_id: "v1", participant_count: 0, expected_stage_url: null,
   conversion_status: "ready", kit_instance_ids: [], created_at: "", updated_at: "",
 };
 const response = { ready_model_id: modelId, review_session_id: session.session_id, session_status: "created", session_replay: false };
+function Harness({ onSelected }: { onSelected: (session: RuntimeSessionSummary) => void }) {
+  const [sessions, setSessions] = useState([session]);
+  return <ReadyReviewSessions sessions={sessions} onSessionsRefreshed={setSessions} onSelected={onSelected} />;
+}
 
 describe("ReadyReviewSessions", () => {
   let container: HTMLDivElement;
@@ -37,8 +42,9 @@ describe("ReadyReviewSessions", () => {
     container.remove();
     sessionStorage.clear();
     vi.restoreAllMocks();
+    vi.unstubAllGlobals();
   });
-  const render = async () => { await act(async () => { root.render(<ReadyReviewSessions sessions={[session]} onSelected={selected} />); }); };
+  const render = async () => { await act(async () => { root.render(<Harness onSelected={selected} />); }); };
   const click = async (id: string) => { await act(async () => { container.querySelector<HTMLButtonElement>(`[data-testid="${id}"]`)!.click(); }); };
   const choose = async (id: string, value: string) => { await act(async () => {
     const element = container.querySelector<HTMLSelectElement>(`[data-testid="${id}"]`)!;
@@ -59,6 +65,44 @@ describe("ReadyReviewSessions", () => {
     expect(selected).toHaveBeenCalledWith(session);
     expect(claim).not.toHaveBeenCalled();
     expect(sessionStorage.getItem("ai-bim.ready-review-request.v1")).toBeNull();
+  });
+  it("creates distinct retryable requests when randomUUID is unavailable on an HTTP LAN origin", async () => {
+    vi.stubGlobal("crypto", { randomUUID: undefined });
+    const submit = vi.spyOn(coordinatorClient, "readyReviewSession")
+      .mockRejectedValueOnce(new Error("response lost")).mockResolvedValue(response);
+    await render();
+    await choose("ready-review-model", modelId);
+    await click("ready-review-create");
+    const first = submit.mock.calls[0];
+    expect(first[1]).toMatchObject({ mode: "create_new", request_id: expect.stringMatching(/^review-[A-Za-z0-9._:-]+$/) });
+    await click("ready-review-retry");
+    expect(submit.mock.calls[1]).toEqual(first);
+    await click("ready-review-create");
+    expect(submit.mock.calls[2][1]).not.toEqual(first[1]);
+  });
+  it("offers only sessions with the exact selected ready-model identity", async () => {
+    const otherId = "mw_fedcba9876543210";
+    vi.mocked(coordinatorClient.getConversionRecords).mockResolvedValue({ count: 2, items: [record, { ...record, idempotency_key: otherId }] });
+    const other = { ...session, session_id: "review_session_other", ready_model_id: otherId };
+    const unknown = { ...session, session_id: "review_session_legacy", ready_model_id: null };
+    vi.mocked(coordinatorClient.runtimeStatus).mockResolvedValue({ sessions: { items: [session, other, unknown] } } as RuntimeStatus);
+    await render();
+    await choose("ready-review-model", modelId);
+    const options = () => Array.from(container.querySelector<HTMLSelectElement>('[data-testid="ready-review-existing"]')!.options).map(option => option.value);
+    expect(options()).toEqual(["", session.session_id]);
+    await choose("ready-review-model", otherId);
+    expect(options()).toEqual(["", other.session_id]);
+  });
+  it("refreshes sessions created elsewhere without selecting or creating one", async () => {
+    const submit = vi.spyOn(coordinatorClient, "readyReviewSession");
+    await render();
+    await choose("ready-review-model", modelId);
+    const another = { ...session, session_id: "review_session_another_tab" };
+    vi.mocked(coordinatorClient.runtimeStatus).mockResolvedValue({ sessions: { items: [session, another] } } as RuntimeStatus);
+    await click("ready-review-refresh");
+    expect(container.querySelector('[data-testid="ready-review-existing"]')?.textContent).toContain(another.session_id);
+    expect(submit).not.toHaveBeenCalled();
+    expect(selected).not.toHaveBeenCalled();
   });
   it("keeps the same request after a lost response and remount without automatically resending", async () => {
     const submit = vi.spyOn(coordinatorClient, "readyReviewSession")

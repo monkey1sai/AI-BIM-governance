@@ -991,7 +991,7 @@ export function A1GovernanceWorkbenchPage() {
       )}
 
       <Panel title={t("A1 3D 高亮 Session", "A1 3D highlight session")} sub={t("MinIO 來源先由 coordinator 建立 / 重用 review session；A1 本頁直接 attach viewer、觀測 first frame / DataChannel / stage match，並送出 3D 高亮。", "MinIO sources create or reuse a review session through the coordinator; A1 attaches the viewer, observes first frame / DataChannel / stage match, and sends 3D highlight on this page.")} prov="asbuilt">
-        <ReadyReviewSessions sessions={sessions} onSelected={(session) => {
+        <ReadyReviewSessions sessions={sessions} onSessionsRefreshed={setSessions} onSelected={(session) => {
           setSessions(current => [...current.filter(item => item.session_id !== session.session_id), session]);
           setSelectedSession(session.session_id);
         }} />

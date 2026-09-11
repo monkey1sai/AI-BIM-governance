@@ -202,6 +202,7 @@ export interface ArtifactHealthSnapshot {
 export interface RuntimeSessionSummary {
   session_id: string;
   status: string;
+  ready_model_id?: string | null;
   project_id: string;
   model_version_id: string;
   participant_count: number;

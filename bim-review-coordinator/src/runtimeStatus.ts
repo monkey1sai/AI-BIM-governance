@@ -120,6 +120,7 @@ function summarizeSessionForRuntime(session: ReviewSession, viewerLeases: Public
   return {
     session_id: session.session_id,
     status: session.status,
+    ready_model_id: session.ready_model_id ?? null,
     project_id: session.project_id,
     model_version_id: session.model_version_id,
     participant_count: session.participants.length,

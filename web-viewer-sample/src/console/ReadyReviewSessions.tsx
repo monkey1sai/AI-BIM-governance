@@ -13,9 +13,10 @@ function readPending(): PendingCreate | null {
   } catch { return null; }
 }
 
-export function ReadyReviewSessions({ sessions, onSelected }: {
+export function ReadyReviewSessions({ sessions, onSelected, onSessionsRefreshed }: {
   sessions: RuntimeSessionSummary[];
   onSelected: (session: RuntimeSessionSummary) => void;
+  onSessionsRefreshed: (sessions: RuntimeSessionSummary[]) => void;
 }) {
   const [records, setRecords] = useState<ConversionRecord[]>([]);
   const [modelId, setModelId] = useState("");
@@ -36,19 +37,25 @@ export function ReadyReviewSessions({ sessions, onSelected }: {
     setLoading(true);
     setLoadError(null);
     try {
-      const response = await coordinatorClient.getConversionRecords(200);
-      if (alive.current) setRecords(response.items.filter(record => record.status === "ready"));
+      const [response, runtime] = await Promise.all([
+        coordinatorClient.getConversionRecords(200), coordinatorClient.runtimeStatus(),
+      ]);
+      if (alive.current) {
+        setRecords(response.items.filter(record => record.status === "ready"));
+        onSessionsRefreshed(runtime.sessions.items.filter(session => session.status === "created" || session.status === "active"));
+      }
     } catch (failure) {
       if (alive.current) setLoadError(String(failure));
     } finally {
       if (alive.current) setLoading(false);
     }
-  }, []);
+  }, [onSessionsRefreshed]);
   useEffect(() => { void load(); }, [load]);
 
   const model = records.find(record => record.idempotency_key === modelId);
   const available = model ? sessions.filter(session =>
     (session.status === "created" || session.status === "active")
+    && session.ready_model_id === model.idempotency_key
     && session.project_id === model.project_id
     && session.model_version_id === model.external_model_version_id) : [];
 
@@ -89,7 +96,8 @@ export function ReadyReviewSessions({ sessions, onSelected }: {
   const create = () => {
     if (!model || pending || inFlight.current) return;
     try {
-      const next = { readyModelId: modelId, requestId: "review-" + crypto.randomUUID() };
+      const randomPart = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+      const next = { readyModelId: modelId, requestId: "review-" + randomPart };
       // Persist before sending: after a lost response or page reload, retry this request.
       sessionStorage.setItem(PENDING_KEY, JSON.stringify(next));
       setPending(next);
@@ -118,7 +126,7 @@ export function ReadyReviewSessions({ sessions, onSelected }: {
       <Btn data-testid="ready-review-create" disabled={!model || busy || loading || Boolean(pending) || Boolean(loadError)} onClick={create}>
         {t("建立新的審查", "Create a new review")}
       </Btn>
-      <Btn disabled={busy || loading} onClick={() => { void load(); }}>{t("重新整理模型", "Refresh models")}</Btn>
+      <Btn data-testid="ready-review-refresh" disabled={busy || loading} onClick={() => { void load(); }}>{t("重新整理模型", "Refresh models")}</Btn>
     </div>
     {model && <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 8 }}>
       <label htmlFor="ready-review-existing">{t("既有審查", "Existing review")}</label>

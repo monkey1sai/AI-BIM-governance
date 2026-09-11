@@ -78,7 +78,11 @@ export function ClosedSessionRecovery({
       sessionStorage.removeItem(PENDING_RECREATION_KEY);
       setSuccess(result);
       setPending(null);
-      onRecreated?.(result, pending.source);
+      if (result.status === "created" || result.status === "active") {
+        onRecreated?.(result, pending.source);
+      } else {
+        void load();
+      }
     } catch (error) {
       if (aliveRef.current) setActionErr(String(error));
     } finally {
@@ -125,10 +129,12 @@ export function ClosedSessionRecovery({
       {nextCursor && <Btn data-testid="closed-session-load-more" disabled={loading} onClick={() => { void load(nextCursor); }}>{loading ? t("讀取中…", "Loading...") : t("載入更多", "Load more")}</Btn>}
       {success && (
         <p className="ec-note" data-testid="closed-session-success">
-          {t("已建立新 Session：", "New Session created: ")}<strong>{success.session_id}</strong>
-          {success.activation_state === "not_requested"
+          {success.status === "created" || success.status === "active"
+            ? t("已建立新 Session：", "New Session created: ")
+            : t("此請求對應的 Session 已結束，請從封存清單重建：", "This request belongs to a closed Session. Recreate it from the archive: ")}<strong>{success.session_id}</strong>
+          {(success.status === "created" || success.status === "active") && (success.activation_state === "not_requested"
             ? ` · ${t("尚未啟動 3D，審查已保留", "3D has not been started; the review is preserved")}`
-            : success.kit_availability === "unavailable" && ` · ${t("Kit 尚不可用，Session 已保留", "Kit is unavailable; the Session is preserved")}`}
+            : success.kit_availability === "unavailable" && ` · ${t("Kit 尚不可用，Session 已保留", "Kit is unavailable; the Session is preserved")}`)}
         </p>
       )}
       {!pending && actionErr && <p role="alert">{actionErr}</p>}

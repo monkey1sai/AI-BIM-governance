@@ -18,6 +18,8 @@ request scope 綁 server-resolved tenant/project/request_id，source fingerprint
 
 session 新增 optional `review_request_fingerprint`、`ready_review_source`；舊記錄不需 migration。legacy open 嚴格比對既有 server identity/binding，不能捏造歷史 checksum；帶有部分新 provenance 的記錄不可退回 legacy 路徑。未新增 TTL、清除排程或資料刪除；key 的保存期間等同 session/receipt 保存期間。
 
+`review_session_request_` 記錄在 open 與 viewer claim 都必須具備合法 digest，且 digest 對應該 session ID。`GET /api/runtime/status` 的 session summary 新增 nullable `ready_model_id`，只投影 server-owned identity；前端舊 server 相容型別為 optional nullable，缺值不猜測可開啟的 ready 模型。
+
 目前為單一 coordinator process 管理一個 session store；記憶體 in-flight 合併搭配既有 atomic file persistence，不宣稱多程序共享 store 的分散式 CAS。
 
 ## Closed 與 GPU
@@ -25,6 +27,8 @@ session 新增 optional `review_request_fingerprint`、`ready_review_source`；�
 closed 保持 terminal。同建立 request 的 replay 可回傳原 closed ID，不建立替代 session；open_existing 不得重新啟用 closed。
 
 既有 `POST /api/review-sessions/:sessionId/recreate` 沿用 `Idempotency-Key`，從已驗證來源建立不同 ID，保存 lineage 與獨立 receipt。相同重建 key 在 lost response/restart 後取得相同重建結果，不能與 create request 合併。回應新增 `activation_state: "not_requested" | "configured"`。
+
+重建僅清除新 ready-review request namespace 的內部 digest；既有 create API 的外部 `review_request_id` 保留，receipt replay 同時核對該 correlation ID。若重建目標已 closed，重播仍回該 terminal 結果，UI 不選取或啟用它，並更新封存清單。
 
 explicit create/recreate 初始為 created、無 Kit bindings，不 claim GPU。使用者另外按下啟動 3D，才由既有 viewer-lease claim 路徑配置 binding、取得 lease、持久化 active 狀態並記錄 server-owned `viewerLeaseClaimed`。失敗不得留下錯誤綁定或釋放既有其他 lease。
 
@@ -37,6 +41,8 @@ explicit create/recreate 初始為 created、無 Kit bindings，不 claim GPU。
 3. 建立或重建的回應遺失後重新整理；UI 保留 sessionStorage 中的原請求，明確重試才送出，不自動 POST。
    若永久失敗，可明確確認停止追蹤；畫面保留原請求識別並提醒可能已建立，不自動另建。
 4. 封存後從既有封存清單重建；原 session 保持 closed，新 ID 保存來源關係。儲存空間不可用時在送出前拒絕並顯示錯誤。
+5. HTTP LAN 缺少 `crypto.randomUUID` 時，使用相容的 request ID fallback；仍先保存再送出，重試沿用原 key。
+6. 既有審查選項精確比對 `ready_model_id`；「重新整理模型」同步更新 runtime sessions，讓其他分頁建立的審查可見，不自動選取或建立。
 
 驗證：coordinator `npm run verify`；viewer `npm run verify`；先 `npm run build:ui` 再 `E2E_DISABLE_WEBSERVER=1 npm run test:e2e -- e2e/ready-review-session-intent.spec.ts e2e/closed-session-recreate.spec.ts`（PowerShell 以 `$env:E2E_DISABLE_WEBSERVER='1'` 設定）。
 

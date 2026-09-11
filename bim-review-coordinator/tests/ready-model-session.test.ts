@@ -92,6 +92,33 @@ async function fixture(overrides: Partial<CoordinatorConfig> = {}) {
 }
 
 describe("ready model session consumption", () => {
+  it.each([undefined, "not-a-digest", "f".repeat(64)])("rejects opening a request with corrupt namespace identity %s", async scope => {
+    const { app } = await fixture();
+    const sessionId = await createdReview(app, "open-corrupt-namespace");
+    const file = path.join(root, "sessions", `${sessionId}.json`);
+    const saved = JSON.parse(fs.readFileSync(file, "utf8"));
+    saved.review_request_id = scope;
+    fs.writeFileSync(file, JSON.stringify(saved), "utf8");
+    const opened = await request(app.app).post(route).send({ mode: "open_existing", session_id: sessionId });
+    expect(opened.status).toBe(409);
+    expect(opened.body.error_code).toBe("review_request_state_corrupt");
+  });
+  it("projects ready-model identity and opens a valid recreated source without a request digest", async () => {
+    const { app } = await fixture();
+    const sourceId = await createdReview(app, "runtime-ready-identity");
+    const originalScope = app.store.get(sourceId)?.review_request_id;
+    app.store.setStatus(sourceId, "closed");
+    const recreated = await request(app.app).post(`/api/review-sessions/${sourceId}/recreate`)
+      .set("Idempotency-Key", "runtime-identity-recreate").send({});
+    expect(recreated.status).toBe(201);
+    expect(app.store.get(recreated.body.session_id)?.review_request_id).toBeUndefined();
+    expect(app.store.get(sourceId)?.review_request_id).toBe(originalScope);
+    const opened = await request(app.app).post(route).send({ mode: "open_existing", session_id: recreated.body.session_id });
+    expect(opened.status).toBe(200);
+    const runtime = await request(app.app).get("/api/runtime/status");
+    expect(runtime.body.sessions.items.find((item: {session_id: string}) => item.session_id === recreated.body.session_id))
+      .toMatchObject({ ready_model_id: id, project_id: "project-test", model_version_id: "v1" });
+  });
   it("rejects injected scope on a recreated source", async () => {
     const {app} = await fixture();
     const sourceId = await createdReview(app, "recreated-source-scope");
