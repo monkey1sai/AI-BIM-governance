@@ -1,8 +1,11 @@
 import { expect, test } from "@playwright/test";
-import { requireIsolatedStackConfig, watchForbiddenRequests } from "./support/isolated-stack";
+import { loadIsolatedStackConfig, watchForbiddenRequests } from "./support/isolated-stack";
 
-const isolated = requireIsolatedStackConfig();
+const isolated = loadIsolatedStackConfig();
 
+test.describe("Ready review isolated stack", () => {
+test.skip(!isolated, "Requires E2E_REQUIRE_REAL=1 and an owned stack manifest");
+if (!isolated) return;
 test("isolated A1 exposes an honest empty model state without creating a session", async ({page, request}, testInfo) => {
   const forbidden = watchForbiddenRequests(page, isolated.coordinatorBaseUrl);
   const before = await (await request.get(isolated.coordinatorBaseUrl + "/api/runtime/status")).json();
@@ -18,4 +21,5 @@ test("isolated A1 exposes an honest empty model state without creating a session
   expect(posts).toEqual([]);
   await page.screenshot({path: testInfo.outputPath("ready-review-isolated-empty.png"), fullPage: true});
   forbidden.assertClean();
+});
 });
