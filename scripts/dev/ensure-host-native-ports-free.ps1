@@ -1,4 +1,4 @@
-# spec-to-done helper — host-native port preflight for backend stack startup / rebuild
+# Host-native port preflight for backend stack startup / rebuild
 #
 # Safety contract:
 # - Default and -DetectOnly modes are read-only. They report busy ports and exit 1 without stopping anything.

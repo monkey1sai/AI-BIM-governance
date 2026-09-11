@@ -514,8 +514,8 @@
         "algorithm": "sha256",
         "trees": {
           "claude": "86734baf4a45027fae57c2cf86f05ef34fe6542225fc5dd42fe33cd3fb3c4266",
-          "codex": "7d6d3f889404a945da6de8054f4f62476b404b47254bbcad773506954111bad3",
-          "agents": "7d6d3f889404a945da6de8054f4f62476b404b47254bbcad773506954111bad3"
+          "codex": "4c4cdbb9cc50f11125dfb39dae1a5f4c215258bd054eacd20c2ade4542df9211",
+          "agents": "4c4cdbb9cc50f11125dfb39dae1a5f4c215258bd054eacd20c2ade4542df9211"
         }
       }
     },
@@ -689,9 +689,9 @@
         "format": "agent-skill-tree/v2",
         "algorithm": "sha256",
         "trees": {
-          "claude": "9692a379ca349d68c8070c7689a9a2f8620010a04e1e0552b207f4ff7a1d0ac9",
-          "codex": "9692a379ca349d68c8070c7689a9a2f8620010a04e1e0552b207f4ff7a1d0ac9",
-          "agents": "9692a379ca349d68c8070c7689a9a2f8620010a04e1e0552b207f4ff7a1d0ac9"
+          "claude": "053a4ddbe1f42eec48867e40b582ed633ecb3f7ca0dbe4aadb5f2f70fc2f5ffc",
+          "codex": "053a4ddbe1f42eec48867e40b582ed633ecb3f7ca0dbe4aadb5f2f70fc2f5ffc",
+          "agents": "053a4ddbe1f42eec48867e40b582ed633ecb3f7ca0dbe4aadb5f2f70fc2f5ffc"
         }
       }
     },
@@ -788,40 +788,6 @@
           "claude": "b216b91dedc75de9a7a4c57bfe0a51876044b325de7f0b5a165c39c65cfaac5a",
           "codex": "b216b91dedc75de9a7a4c57bfe0a51876044b325de7f0b5a165c39c65cfaac5a",
           "agents": "b216b91dedc75de9a7a4c57bfe0a51876044b325de7f0b5a165c39c65cfaac5a"
-        }
-      }
-    },
-    {
-      "name": "spec-to-done",
-      "locations": {
-        "claude": ".claude/skills/spec-to-done",
-        "codex": ".codex/skills/spec-to-done",
-        "agents": ".agents/skills/spec-to-done"
-      },
-      "sync": {
-        "mode": "independent",
-        "mirrors": [
-          {
-            "source": "codex",
-            "targets": [
-              "agents"
-            ]
-          }
-        ]
-      },
-      "provenance": {
-        "kind": "repo-authored-platform-variants",
-        "source": "AI-BIM-governance",
-        "import_commit": "c414e1cd4ca46ae3443db76a1a43a5334695db01",
-        "notes": "Claude and Codex adapter prose intentionally differs; agent-contracts/spec-to-done.contract.json owns the shared phases, canonical state path, durable HELD reasons, and terminal evidence constraints, with agent-governance tests enforcing adapter parity. Grok host adapter is tracked as .claude/skills/spec-to-done/GROK.md."
-      },
-      "integrity": {
-        "format": "agent-skill-tree/v2",
-        "algorithm": "sha256",
-        "trees": {
-          "claude": "03de893f46216e4d7874ddf984c70320af27d21e0e3665b846d82d68dc84e623",
-          "codex": "aa2538f5198a81182c40cee4defb3e424bba31330b60585b5c5650057fe45652",
-          "agents": "aa2538f5198a81182c40cee4defb3e424bba31330b60585b5c5650057fe45652"
         }
       }
     },
@@ -946,9 +912,9 @@
         "format": "agent-skill-tree/v2",
         "algorithm": "sha256",
         "trees": {
-          "claude": "e96146dfa8425d03e68ff80a64d28174622c3ee075e4db1165888ce2314ba479",
-          "codex": "951ba37a23f996b22266329e5def36d5bed1603c7efae6030ce14c59444f4937",
-          "agents": "951ba37a23f996b22266329e5def36d5bed1603c7efae6030ce14c59444f4937"
+          "claude": "d34ecfdc47d54658c44462ef5eb595fbec7d0dc112ad55d89b9ad26cad6209ed",
+          "codex": "70094ec47bb8fad2177a6f62a720a8f550509da9c12292b898e957741b1522d0",
+          "agents": "70094ec47bb8fad2177a6f62a720a8f550509da9c12292b898e957741b1522d0"
         }
       }
     },

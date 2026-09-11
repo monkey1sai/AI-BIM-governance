@@ -1,11 +1,10 @@
-# Behavioral safety tests for the mirrored spec-to-done host-native port helper.
+# Behavioral safety tests for the shared host-native port helper.
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 $repoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..')).Path
-$claudeHelperPath = Join-Path $repoRoot '.claude\skills\spec-to-done\ensure-host-native-ports-free.ps1'
-$codexHelperPath = Join-Path $repoRoot '.codex\skills\spec-to-done\ensure-host-native-ports-free.ps1'
+$helperPath = Join-Path $repoRoot 'scripts\dev\ensure-host-native-ports-free.ps1'
 
 function Assert-True {
     param([bool] $Condition, [string] $Message)
@@ -43,14 +42,12 @@ function New-TestPortRecord {
     }
 }
 
-$claudeBody = Get-Content -LiteralPath $claudeHelperPath -Raw -Encoding UTF8
-$codexBody = Get-Content -LiteralPath $codexHelperPath -Raw -Encoding UTF8
-Assert-True ($claudeBody -ceq $codexBody) 'Claude and Codex helpers are byte-equivalent as text'
-Assert-True (-not ($claudeBody -match 'command-line-path|Test-TextContainsPathBoundary')) 'arbitrary command-line substrings cannot authorize a stop'
-Assert-True ($claudeBody -match '\$process\.Handle' -and $claudeBody -match '\$process\.Kill\(\)') 'stop uses an exact acquired process handle'
-Assert-True (-not ($claudeBody -match 'GetEnvironmentVariable\(\$Name')) 'explicit stop topology never falls back to caller process environment'
+$helperBody = Get-Content -LiteralPath $helperPath -Raw -Encoding UTF8
+Assert-True (-not ($helperBody -match 'command-line-path|Test-TextContainsPathBoundary')) 'arbitrary command-line substrings cannot authorize a stop'
+Assert-True ($helperBody -match '\$process\.Handle' -and $helperBody -match '\$process\.Kill\(\)') 'stop uses an exact acquired process handle'
+Assert-True (-not ($helperBody -match 'GetEnvironmentVariable\(\$Name')) 'explicit stop topology never falls back to caller process environment'
 
-. $claudeHelperPath
+. $helperPath
 $ErrorActionPreference = 'Stop'
 
 $tempBase = [System.IO.Path]::GetFullPath([System.IO.Path]::GetTempPath()).TrimEnd('\')
@@ -330,7 +327,7 @@ try {
     Assert-True $wrongRootRejected 'explicit stop rejects a non-canonical deployment root'
 
     $hostExe = (Get-Process -Id $PID).Path
-    & $hostExe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $claudeHelperPath -SpectatorCount 33 *> $null
+    & $hostExe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $helperPath -SpectatorCount 33 *> $null
     Assert-True ($LASTEXITCODE -eq 2) 'out-of-range CLI input returns the documented exit code 2'
 
     $child = Start-Process -FilePath $hostExe -ArgumentList @('-NoProfile', '-NonInteractive', '-Command', 'Start-Sleep -Seconds 60') -PassThru -WindowStyle Hidden

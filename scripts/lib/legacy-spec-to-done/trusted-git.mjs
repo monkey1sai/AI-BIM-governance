@@ -1,4 +1,5 @@
 import crypto from 'node:crypto'
+// Retained for read-only validation of historical evidence, not workflow execution.
 import fs from 'node:fs'
 import path from 'node:path'
 

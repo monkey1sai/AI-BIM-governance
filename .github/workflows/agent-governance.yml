@@ -353,13 +353,13 @@ jobs:
         include:
           - platform: windows-negative
             runner: windows-latest
-            test_expression: test_new_run_rejects_caller_controlled_git_even_when_named_git
+            test_expression: test_validator_rejects_caller_controlled_git_without_escape
           - platform: linux-positive
             runner: ubuntu-latest
             test_expression: >-
-              test_new_run_appender_preserves_prefix_and_emits_valid_p0 or
-              test_new_run_lock_snapshot_preserves_first_completed_boundary or
-              test_new_run_post_write_failure_restores_locked_target_bytes
+              test_validator_rejects_tampered_new_run_boundary or
+              test_validator_rejects_a_fabricated_new_run_line or
+              test_validator_ignores_ambient_git_repository_object_and_config_injection
     steps:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5

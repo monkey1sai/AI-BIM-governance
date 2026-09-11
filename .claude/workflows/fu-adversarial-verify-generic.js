@@ -4,7 +4,7 @@
 // 且 agentCallsUsed=0——形同從未複驗過；單元測試把 `$` 當參數注入才會綠。
 // 因此所有 git/requirement 事實改由 coordinator 收集後傳入；本檔只驗證「被傳入的資料」，
 // 證據信任等級固定是 coordinator-attested，並非 workflow 自己 machine-bound 的證明。
-// 收集契約見 `.claude/skills/spec-to-done/SKILL.md` P5，以及本檔 GIT_FACTS 驗證段。
+// 收集契約見本檔 GIT_FACTS、REQUIREMENT_REF_KEYS 與 supplied-content 驗證段。
 export const meta = {
   name: 'fu-adversarial-verify-generic',
   description: 'immutable target/base/subject SHA 對抗複驗：coordinator-attested git/requirement 事實（不宣稱 machine-bound），最多兩個 finding batches + sequential holistic critic；只把 supplied-content-bound、in-scope 的 fix_now 送回修復',

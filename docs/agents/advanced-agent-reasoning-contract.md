@@ -13,7 +13,7 @@ Use the global routing contract to select Lane F/B/G/S. Default daily work to F 
 - Lane F: single coordinator; no worker, plan document, spec, or mandatory GitNexus impact.
 - Lane B: single coordinator; at most one debugger when root cause is unknown or one read-only reviewer at completion, following the root lane budget.
 - Lane G: use `explorer`, `debugger`, `reviewer`, or `security_auditor` only for the independent risk surface that triggered governance.
-- Lane S: full spec-to-done P0–P7 role composition after explicit invocation only.
+- Lane S is retired with spec-to-done. Use Lane F/B/G for each explicitly authorized PR slice; keep review and merge gates.
 
 Workers are read-only unless the coordinator grants a bounded, non-conflicting file scope. The coordinator owns source-of-truth loading, scope, writes, evidence synthesis, and final verification.
 

@@ -8,7 +8,7 @@ description: Codex model-adapter copy. Use when the user asks to push element_ma
 > **本檔性質**:`.claude/skills/mapping-coverage-loop/SKILL.md` + `.claude/workflows/mapping-coverage-loop.js` 的 **model-adapter copy**。
 > 只映射模型與執行形態;**過關條件 / 圈數上限 / held 語義 / 防竄改規則一字不改**;canonical 檔更新時本檔 MUST 同步。
 
-## 模型映射(tier 沿用 `.codex/skills/spec-to-done/SKILL.md` 的 global task routing 原則,不固定模型表)
+## 模型映射(tier 沿用 global `docs/agents/task-routing.md` 的模型路由原則,不固定模型表)
 
 | tier(canonical) | 本流程角色 | Codex 模型 |
 |---|---|---|

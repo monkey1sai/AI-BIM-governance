@@ -10,7 +10,7 @@ Lane F/B 不使用 Superpowers，也不自動 push、開 PR 或 merge。當使�
 
 | 工具 | 正確定位 |
 |---|---|
-| **Superpowers** | Lane S 的完整 spec-to-done；Lane G 可按需使用單一 planning/verification skill，但不是預設 |
+| **Superpowers** | explicit-only；Lane G 可按明確授權使用單一 planning/verification skill；spec-to-done 已退役 |
 | **GitNexus** | Lane B/G/S 的 code impact 與 scope intelligence；F 不強制 |
 | **Browser E2E** | user-facing 變更的可見行為證據，可用 Playwright / gstack / supported browser engine |
 | **Design fidelity** | 以 tracked design manifest/baselines 驗 screen/state；Windows runner 的 Chromium DPR1 兩 viewport pixel≤1%＋semantic 100% |
@@ -60,7 +60,7 @@ gh api user --jq .login
 - 從 freshly fetched `origin/main` 建立獨立 sibling worktree 與功能 branch（例：`feat/<slug>`、`fix/<slug>`、`chore/<slug>`）；所有 Lane 的 tracked 修改一體適用。
 - Lane F：無 plan/spec/subagent，targeted test；tracked 修改仍使用 sibling worktree。
 - Lane B：只列 3–5 項 inline checklist，不建立 detailed plan；對 task/主要 entry symbol 跑一次 GitNexus impact。
-- Lane G：簡潔 implementation plan + risk-scoped reviewer；Lane S 才使用完整 `writing-plans` / `subagent-driven-development` / spec-to-done。
+- Lane G：簡潔 implementation plan + risk-scoped reviewer；`writing-plans` / `subagent-driven-development` 仍須明確授權，spec-to-done 已退役。
 
 ## PR 與 merge
 

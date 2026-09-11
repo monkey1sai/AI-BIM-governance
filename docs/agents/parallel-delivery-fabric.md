@@ -30,7 +30,9 @@ separately authorized lifecycle action. Session count is not a capacity gate.
 Only a separately attested physical Kit/WebRTC resource limit may return
 `WRITER_CAPACITY`.
 
-## spec-to-done binding
+## Historical spec-to-done binding
+
+The spec-to-done skill and workflow are retired. This section preserves the historical binding validation contract only; it does not activate a run or grant local resume, dispatch, delivery or merge authority.
 
 Parallel Delivery Fabric is the outer session control plane; `spec-to-done`
 remains the inner P0/P1/P3/P4/P5/P6/P7 workflow for one admitted delivery
@@ -65,9 +67,8 @@ resume engine, review gate, or merge authority.
 Machine sources are
 `agent-contracts/spec-to-done-fabric-binding.schema.json`,
 `agent-contracts/spec-to-done.contract.json`, and
-`scripts/lib/spec-to-done-fabric-binding.mjs`. Claude owns the procedural SOP;
-the Codex skill is an adapter copy and both use the single validator at
-`.claude/skills/spec-to-done/validate-state.mjs`.
+`scripts/lib/spec-to-done-fabric-binding.mjs`. Historical state uses the read-only validator at
+`scripts/lib/legacy-spec-to-done/validate-state.mjs`; no procedural skill remains.
 
 ## Activation record and review migration
 
