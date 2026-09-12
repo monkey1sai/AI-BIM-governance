@@ -17,7 +17,7 @@ beforeEach(() => {
   issueId = "form-" + (++serial); (globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true;
   container = document.createElement("div"); document.body.appendChild(container); root = createRoot(container);
   vi.spyOn(remediationCandidatesClient, "loadOriginal").mockImplementation(async id => ({ issue: {
-    id, status: "in_progress", revision: 3, model_version_id: "v1", ifc_guid: "g1", source_ref: "a1" }, projectId: "p1", original }));
+    id, status: "in_progress", revision: 3, model_version_id: "v1", ifc_guid: "g1", source_ref: "a1" }, projectId: "p1", tenantId: "t1", consumedRunIds: [], original }));
   vi.spyOn(remediationCandidatesClient, "list").mockResolvedValue({ items: [{ id: "r2", version: "v2", finishedAt: null }], offset: 0, nextOffset: null });
   vi.spyOn(remediationCandidatesClient, "select").mockResolvedValue(revised);
   vi.spyOn(remediationClient, "confirm").mockResolvedValue(receipt());
@@ -95,7 +95,7 @@ it("does not let a late original read populate another Issue", async () => {
   vi.mocked(remediationCandidatesClient.loadOriginal).mockReturnValueOnce(new Promise(r => { resolve = r; }) as ReturnType<typeof remediationCandidatesClient.loadOriginal>);
   await render(); await render("next-" + issueId);
   await act(async () => resolve({ issue: { id: issueId, status: "in_progress", revision: 3,
-    model_version_id: "v1", ifc_guid: "g1", source_ref: "a1" }, projectId: "wrong", original: { ...original, rule_code: "WRONG" } }));
+    model_version_id: "v1", ifc_guid: "g1", source_ref: "a1" }, projectId: "wrong", tenantId: "t1", consumedRunIds: [], original: { ...original, rule_code: "WRONG" } }));
   expect(container.textContent).not.toContain("WRONG");
 });
 it("shows loading and empty-page pagination honestly", async () => {

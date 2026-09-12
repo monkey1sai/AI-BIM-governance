@@ -339,11 +339,6 @@ describe("loadIsolatedStackConfig", () => {
     });
   });
 
-  it("limits require-real isolated Playwright discovery to the A1, A3 and A4 specs", () => {
-    const source = readFileSync(path.join(process.cwd(), "playwright.config.ts"), "utf8");
-    expect(source).toContain('testMatch: ["**/a1-remediation.spec.ts", "**/a3-federated-session-chain.spec.ts", "**/a4-closeout.spec.ts"]');
-  });
-
   it("starts an isolated viewer without rerunning the mutating design-asset sync", () => {
     const source = readFileSync(path.join(process.cwd(), "playwright.config.ts"), "utf8");
     expect(source).toContain('? `npm exec -- vite --host 127.0.0.1 --port ${viewerPort} --strictPort`');

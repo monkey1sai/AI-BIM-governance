@@ -3,7 +3,7 @@ import hashlib
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from .engine import open_model
+import ifcopenshell
 
 
 def load_source_snapshot(ifc_path):
@@ -16,5 +16,7 @@ def load_source_snapshot(ifc_path):
             for chunk in iter(lambda: source.read(1024 * 1024), b""):
                 digest.update(chunk)
                 target.write(chunk)
-        model = open_model(str(snapshot))
+        # This unique path is deleted below and cannot produce a cache hit.
+        # Keep private snapshots out of the shared stable-source model cache.
+        model = ifcopenshell.open(str(snapshot))
         return model, digest.hexdigest()

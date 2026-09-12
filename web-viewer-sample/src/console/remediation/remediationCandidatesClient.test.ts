@@ -6,15 +6,15 @@ const digest = "dsl-json-v1:sha256:" + "a".repeat(64);
 const issue = { id: "i1", status: "in_progress", revision: 3, model_version_id: "v1", ifc_guid: "g1", source_ref: "a1" };
 function run(id = "r1", version = "v1", passed = false) {
   return { rule_run_id: id, status: "succeeded", model_version_id: version, rule_set: "rules",
-    source_metadata: { project_id: "p1", model_version_id: version },
-    summary: { rule_content_digest: digest, total: 1, passed: passed ? 1 : 0, failed: passed ? 0 : 1, errored: 0 } };
+    source_metadata: { tenant_id: "t1", project_id: "p1", model_version_id: version },
+    summary: { source_sha256: "b".repeat(64), rule_content_digest: digest, total: 1, passed: passed ? 1 : 0, failed: passed ? 0 : 1, errored: 0 } };
 }
 function rows(id = "r1", anchor = "a1", status = "fail") {
   return { rule_run_id: id, status_filter: null,
     results: [{ id: anchor, rule_run_id: id, ifc_guid: "g1", rule_code: "NAME", status, evidence_json: "private" }] };
 }
 let fetcher: ReturnType<typeof vi.fn>;
-beforeEach(() => { read.mockReset().mockResolvedValue({ issue }); fetcher = vi.fn(); vi.stubGlobal("fetch", fetcher); });
+beforeEach(() => { read.mockReset().mockResolvedValue({ issue, items: [], total: 0, offset: 0, next_offset: null }); fetcher = vi.fn(); vi.stubGlobal("fetch", fetcher); });
 afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers(); });
 function response(value: unknown) { return new Response(JSON.stringify(value), { status: 200 }); }
 async function client() {
@@ -84,6 +84,34 @@ it.each(["project", "version", "digest", "guid", "rule", "fail", "count", "resul
 it("does not expose backend error body", async () => {
   const api = await client(); fetcher.mockResolvedValue(response("sensitive"));
   await expect(api.loadOriginal("i1", "r1")).rejects.toMatchObject({ message: "evidence_unavailable" });
+});
+it.each(["tenant-missing", "tenant-mismatch", "sha-missing", "sha-invalid"])("excludes invalid source-bound candidates: %s", async kind => {
+  const { api, context } = await original(), candidate = run("r2", "v2", true);
+  if (kind === "tenant-missing") candidate.source_metadata.tenant_id = "";
+  if (kind === "tenant-mismatch") candidate.source_metadata.tenant_id = "t2";
+  if (kind === "sha-missing") candidate.summary.source_sha256 = "";
+  if (kind === "sha-invalid") candidate.summary.source_sha256 = "not-sha256";
+  fetcher.mockResolvedValueOnce(response({ filters: { project_id: "p1" }, limit: 20, offset: 0, total: 1, items: [candidate] }));
+  expect((await api.list(context)).items).toEqual([]);
+  fetcher.mockResolvedValueOnce(response(candidate));
+  await expect(api.select(context, "r2")).rejects.toMatchObject({ code: "evidence_unavailable" });
+});
+it("excludes consumed runs across every history page from listing and direct selection", async () => {
+  const items = Array.from({ length: 20 }, (_, n) => ({ revised: { run_id: "used" + n } }));
+  read.mockResolvedValueOnce({ issue, items, total: 21, offset: 0, next_offset: 20 })
+    .mockResolvedValueOnce({ issue, items: [{ revised: { run_id: "r2" } }], total: 21, offset: 20, next_offset: null });
+  const { api, context } = await original();
+  expect(read).toHaveBeenCalledTimes(2);
+  fetcher.mockResolvedValueOnce(response({ filters: { project_id: "p1" }, limit: 20, offset: 0, total: 2,
+    items: [run("r2", "v2", true), run("r3", "v3", true)] }));
+  expect((await api.list(context)).items.map(item => item.id)).toEqual(["r3"]);
+  fetcher.mockResolvedValueOnce(response(run("r2", "v2", true))).mockResolvedValueOnce(response(rows("r2", "a2", "pass")));
+  await expect(api.select(context, "r2")).rejects.toMatchObject({ code: "evidence_unavailable" });
+});
+it("rejects a history revision change between pages", async () => {
+  read.mockResolvedValueOnce({ issue, items: [], total: 21, offset: 0, next_offset: 20 })
+    .mockResolvedValueOnce({ issue: { ...issue, revision: 4 }, items: [], total: 21, offset: 20, next_offset: null });
+  await expect(original()).rejects.toMatchObject({ code: "evidence_unavailable" });
 });
 it("honors an already aborted read without fetching", async () => {
   const api = await client(), controller = new AbortController(); controller.abort();

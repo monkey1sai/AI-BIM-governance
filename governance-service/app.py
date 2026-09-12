@@ -17,6 +17,7 @@ import importlib.util
 import json
 import os
 import re
+from contextlib import asynccontextmanager
 from typing import Any, Optional
 
 import ifcopenshell.util.element as ifc_el
@@ -25,6 +26,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from db import Store
+from issues.store import IssueStore
 from rule_engine import (
     is_fake_mapping,
     join_usd_prim_paths,
@@ -41,7 +43,14 @@ SERVICE_ROOT = os.path.dirname(__file__)
 RULES_DIR = os.path.join(SERVICE_ROOT, "rules")
 DB_PATH = os.environ.get("GOV_DB_PATH", os.path.join(SERVICE_ROOT, "storage", "governance.db"))
 
-app = FastAPI(title="governance-service", version="0.1.0")
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    # Apply additive issue migrations before any read-only history request.
+    IssueStore(DB_PATH)
+    yield
+
+
+app = FastAPI(title="governance-service", version="0.1.0", lifespan=lifespan)
 store = Store(DB_PATH)
 
 # 保留舊測試相容入口；執行與匯出不再寫入或讀取此非權威快取。

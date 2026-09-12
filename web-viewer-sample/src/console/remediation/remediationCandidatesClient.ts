@@ -1,7 +1,10 @@
 import { coordinatorUrl } from "../coordinatorClient";
 import { remediationHistoryClient, type HistoryGroup, type HistoryPage, type HistoryMember } from "./remediationHistoryClient";
 
-export interface OriginalContext { issue: HistoryPage["issue"]; original: HistoryGroup; projectId: string; access?: HistoryPage["access"] }
+export interface OriginalContext {
+  issue: HistoryPage["issue"]; original: HistoryGroup; projectId: string; tenantId: string;
+  consumedRunIds: readonly string[]; access?: HistoryPage["access"];
+}
 export interface CandidateRun { id: string; version: string; finishedAt: string | null }
 export interface CandidatePage { items: CandidateRun[]; offset: number; nextOffset: number | null }
 export class CandidatesError extends Error {
@@ -41,12 +44,13 @@ function verifiedRun(value: unknown, runId: string) {
   if (!object(value) || value.rule_run_id !== runId || value.status !== "succeeded"
     || !id(value.model_version_id) || !object(value.source_metadata) || !object(value.summary)) return invalid();
   const meta = value.source_metadata, summary = value.summary;
-  if (!id(meta.project_id) || meta.model_version_id !== value.model_version_id
+  if (!id(meta.tenant_id) || !id(meta.project_id) || meta.model_version_id !== value.model_version_id
+    || typeof summary.source_sha256 !== "string" || !/^[0-9a-f]{64}$/.test(summary.source_sha256)
     || typeof summary.rule_content_digest !== "string"
     || !/^(dsl-json-v1|ids-xml-v1):sha256:[0-9a-f]{64}$/.test(summary.rule_content_digest)
     || !integer(summary.total) || !integer(summary.passed) || !integer(summary.failed) || !integer(summary.errored)
     || summary.total !== summary.passed + summary.failed + summary.errored) return invalid();
-  return { id: runId, version: value.model_version_id, projectId: meta.project_id,
+  return { id: runId, version: value.model_version_id, projectId: meta.project_id, tenantId: meta.tenant_id,
     digest: summary.rule_content_digest, total: summary.total, passed: summary.passed, failed: summary.failed, errored: summary.errored };
 }
 type Run = ReturnType<typeof verifiedRun>;
@@ -77,16 +81,28 @@ async function loadOriginal(issueId: string, originalRunId?: string, signal?: Ab
   if (!id(issueId) || (originalRunId !== undefined && !id(originalRunId))) return invalid();
   check(signal);
   const history = await remediationHistoryClient.read(issueId, 0, signal); check(signal);
+  const consumedRunIds = new Set(history.items.map(item => item.revised.run_id));
+  let page = history;
+  while (page.next_offset !== null) {
+    const next = await remediationHistoryClient.read(issueId, page.next_offset, signal); check(signal);
+    if (next.issue.revision !== history.issue.revision || next.total !== history.total
+      || next.issue.id !== history.issue.id || next.issue.source_ref !== history.issue.source_ref
+      || next.offset <= page.offset) return invalid();
+    for (const item of next.items) consumedRunIds.add(item.revised.run_id);
+    page = next;
+  }
   originalRunId = originalRunId ?? history.original_run_id;
   if (!id(originalRunId)) return invalid();
   const run = verifiedRun(await get("rule-runs/" + encodeURIComponent(originalRunId), signal), originalRunId);
   if (run.version !== history.issue.model_version_id) return invalid();
   const original = resultGroup(await get("rule-runs/" + encodeURIComponent(originalRunId) + "/results", signal),
     run, history.issue.ifc_guid, undefined, history.issue.source_ref);
-  return { issue: history.issue, projectId: run.projectId, original, access: history.access };
+  return { issue: history.issue, projectId: run.projectId, tenantId: run.tenantId,
+    consumedRunIds: [...consumedRunIds], original, access: history.access };
 }
 function compatible(run: Run, context: OriginalContext) {
-  return run.projectId === context.projectId && run.id !== context.original.run_id
+  return run.projectId === context.projectId && run.tenantId === context.tenantId
+    && !context.consumedRunIds.includes(run.id) && run.id !== context.original.run_id
     && run.version !== context.issue.model_version_id && run.digest === context.original.rule_content_digest;
 }
 async function list(context: OriginalContext, offset = 0, signal?: AbortSignal): Promise<CandidatePage> {

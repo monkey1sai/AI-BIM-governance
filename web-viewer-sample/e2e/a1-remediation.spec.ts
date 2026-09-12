@@ -51,6 +51,10 @@ test("A1 library remediation confirmation, durable history and authorized reopen
     const after = await request.get(`${isolated.coordinatorBaseUrl}/api/governance/issues/${issueId}/remediation-history`);
     const reopened = await after.json(); expect(reopened.items).toEqual(snapshot.items);
     expect(reopened.issue.revision).toBe(snapshot.issue.revision + 1);
+    await row.getByRole("button", { name: "核對整改", exact: true }).click();
+    await expect(form.getByRole("combobox", { name: "修正版檢核", exact: true })).toBeVisible();
+    await expect(form.getByRole("combobox", { name: "修正版檢核", exact: true }).locator(`option[value="${fixture.revised_run_id}"]`)).toHaveCount(0);
+    await expect(form.getByRole("button", { name: "確認整改", exact: true })).toBeDisabled();
     await page.screenshot({ path: testInfo.outputPath("reopened.png"), fullPage: true });
     const denied = await request.post(`${isolated.coordinatorBaseUrl}/api/governance/issues/${issueId}/confirm-remediation`, {
       headers: { Origin: "http://attacker.invalid", "X-A1-Intent": "confirm" },
