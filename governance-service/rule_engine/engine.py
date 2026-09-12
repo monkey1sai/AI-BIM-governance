@@ -16,6 +16,7 @@ import ifcopenshell
 import yaml
 
 from .models import RuleResult, RuleRunResult
+from .rule_identity import dsl_snapshot
 from .predicates import PREDICATES
 
 # 跨 schema 型別別名：IFC4X3 把 IfcBuildingElement 改名為 IfcBuiltElement。
@@ -85,6 +86,7 @@ open_model.cache_info = _open_model_cached.cache_info  # type: ignore[attr-defin
 
 def run_rules(model: Any, rule_set: dict) -> RuleRunResult:
     """對已開啟的 model 套用規則集，回傳彙總結果。"""
+    rule_set, rule_content_digest = dsl_snapshot(rule_set)
     results: list[RuleResult] = []
     warnings: list[str] = []
     target_summary: dict[str, int] = {}
@@ -143,6 +145,7 @@ def run_rules(model: Any, rule_set: dict) -> RuleRunResult:
         unique_elements=unique_elements,
         results=results,
         warnings=warnings,
+        rule_content_digest=rule_content_digest,
     )
 
 

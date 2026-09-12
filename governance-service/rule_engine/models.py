@@ -46,6 +46,7 @@ class RuleRunResult:
     unique_elements: int = 0  # distinct ifc_guid count across all rule results
     results: list[RuleResult] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
+    rule_content_digest: Optional[str] = None
 
     def failed_results(self) -> list[RuleResult]:
         return [r for r in self.results if r.status == "fail"]
@@ -62,4 +63,5 @@ class RuleRunResult:
             "unique_elements": self.unique_elements,
             "target_summary": self.target_summary,
             "warnings": self.warnings,
+            "rule_content_digest": self.rule_content_digest,
         }

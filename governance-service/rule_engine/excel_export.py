@@ -50,6 +50,13 @@ def build_workbook(run: RuleRunResult) -> Workbook:
     summary.append(["passed", run.passed])
     summary.append(["failed", run.failed])
     summary.append(["errored", run.errored])
+    # IFC / rule text is data even when it starts with "=". Preserve its literal
+    # value rather than allowing openpyxl to emit executable spreadsheet formulas.
+    for sheet in (ws, summary):
+        for row in sheet:
+            for cell in row:
+                if isinstance(cell.value, str):
+                    cell.data_type = "s"
     return wb
 
 
