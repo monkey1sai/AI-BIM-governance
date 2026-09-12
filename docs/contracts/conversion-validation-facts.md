@@ -22,7 +22,11 @@
 - distance_measurement：另須單位及已核准參考距離／容差。
 - ifc_rules：使用 source inventory 與 IFC rule authority 結果，不以 USD/mapping 失敗全域阻擋；必要構件依來源 GUID 存在判定。
 
-本版會實測單位、mesh 與 correspondence；source/output 座標對齊尚未具備核准參考與容差，標 unknown；量測 reference與IFC rule authority在本producer未執行，標 not_run。因此目前 production 預設只產生已執行事實及誠實拒絕／未知結論，不宣稱正式模型完整、量測適用或IFC合規。測試提供的 synthetic scope不構成領域核准。
+validator v2 另執行獨立 IFC world-coordinate tessellation，逐 mapped GUID 比對實際 USD points 經 world transform 與 metersPerUnit 換算後的 AABB；方法為 ifc-usd-world-aabb/v1，固定絕對容差 0.001 m。成功僅為 coordinates=pass_with_limits：包圍盒一致不能證明曲面、地理參考、Viewer 操作或工程量測精度。任何已比對 GUID 超限為 fail；缺參考為 unknown，例外為 execution_failed；未知單位、非 Z-up frame 不推定成功。未轉出的 GUID 仍留在來源分母與用途必要構件 gate。
+
+optional coordinateEvidence 保存方法、容差、mapped/checked 數、最大偏差、mismatch/unavailable GUID；Coordinator 交叉核對 correspondence 與 check 狀態。舊 v1 facts 可讀，v2 的座標成功必須附證據。identity profile 保留 mesh-local Float32 points，新增 double placement transform；root-frame bbox 用轉換後完整頂點計算，不重複套 IFC 單位。
+
+量測 reference 與 IFC rule authority 在本 producer 未執行，標 not_run。production 預設不配置用途 scope；本次使用者指定許良宇圖書館 IFC 並委託撰寫用途，範圍與實測見 [圖書館用途驗證](../evidence/conversion-purpose-validation/library-validation.md)。驗證 tenant/project 是隔離 context，不構成正式環境授權或 MinIO enrollment。
 
 ## 持久化與相容性
 
@@ -34,5 +38,5 @@ terminal status與artifact一起原子保存；persist失敗回復記憶體狀�
 
 - 既有host-native轉換、fallback、identity、containment測試；新增fingerprint與真CPU IfcOpenShell/OpenUSD分析幾何fixture。
 - 檢查獨立分母、缺漏、mapping偽造、source drift、單位未知、可開啟但壞mesh、scope租戶／版本漂移、record竄改、持久化失敗與restart/replay。
-- 解析幾何fixture是可重現測試資料，並非業主核准的代表模型。測試不包含Kit/WebRTC/GPU或正式前端驗收。
-- Python adapter在GitNexus1.6.9的exact worktree index仍TargetNotFound/UNKNOWN；依限定reviewer sign-off以source/full host-native/真CPU轉換補強，不標為GitNexus pass。
+- 解析幾何 fixture 驗證非零位移、巢狀旋轉、公分單位、mesh-local extent/root-frame bbox，另有故意移位、錯誤尺度、來源 geometry 失敗與不支援 frame 負向案例。真圖書館 IFC 執行全量轉換、座標 bounds、HTTP metadata 與持久化驗證；均不包含 Kit/WebRTC/GPU 或前端驗收。
+- GitNexus 1.6.9 exact worktree stale 重建遇 Invalid UTF-8，維持 UNKNOWN；依新增 flow 的限定 reviewer sign-off，以 source/regression/真模型驗證補強，不標為 GitNexus pass。

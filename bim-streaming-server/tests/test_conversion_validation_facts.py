@@ -6,7 +6,7 @@ import sys
 import pytest
 ifcopenshell = pytest.importorskip("ifcopenshell")
 pytest.importorskip("pxr")
-from pxr import Usd, UsdGeom
+from pxr import Gf, Usd, UsdGeom
 
 MODULE_DIR = Path(__file__).resolve().parents[1] / "source/extensions/ezplus.bim_review_stream.messaging/ezplus/bim_review_stream/messaging"
 sys.path.insert(0, str(MODULE_DIR))
@@ -17,14 +17,14 @@ from ifc2usdc_powershell_adapter import Ifc2UsdcPowershellConverterAdapter
 GUIDS = ["0000000000000000000001", "0000000000000000000002"]
 
 
-def write_real_ifc(path):
+def write_real_ifc(path, *, centimetres=False, nested_rotation=False):
     """Analytic two-wall IFC fixture; not a domain acceptance model."""
     model = ifcopenshell.file(schema="IFC4")
     point = model.create_entity("IfcCartesianPoint", Coordinates=(0.0, 0.0, 0.0))
     axis = model.create_entity("IfcAxis2Placement3D", Location=point)
     context = model.create_entity("IfcGeometricRepresentationContext", ContextType="Model",
                                   CoordinateSpaceDimension=3, Precision=0.00001, WorldCoordinateSystem=axis)
-    unit = model.create_entity("IfcSIUnit", UnitType="LENGTHUNIT", Name="METRE")
+    unit = model.create_entity("IfcSIUnit", UnitType="LENGTHUNIT", Name="METRE", Prefix="CENTI" if centimetres else None)
     assignment = model.create_entity("IfcUnitAssignment", Units=[unit])
     model.create_entity("IfcProject", GlobalId="0000000000000000000003", Name="Analytic fixture",
                         RepresentationContexts=[context], UnitsInContext=assignment)
@@ -39,16 +39,22 @@ def write_real_ifc(path):
         shape = model.create_entity("IfcShapeRepresentation", ContextOfItems=context,
                                    RepresentationIdentifier="Body", RepresentationType="SweptSolid", Items=[solid])
         representation = model.create_entity("IfcProductDefinitionShape", Representations=[shape])
+        parent = None
+        if nested_rotation:
+            parent_axis = model.create_entity("IfcAxis2Placement3D",
+                Location=model.create_entity("IfcCartesianPoint", Coordinates=(1000., 2000., 3000.)),
+                RefDirection=model.create_entity("IfcDirection", DirectionRatios=(0., 1., 0.)))
+            parent = model.create_entity("IfcLocalPlacement", RelativePlacement=parent_axis)
         model.create_entity("IfcWall", GlobalId=guid, Name=f"Wall {index + 1}",
-                            ObjectPlacement=model.create_entity("IfcLocalPlacement", RelativePlacement=placement),
+                            ObjectPlacement=model.create_entity("IfcLocalPlacement", RelativePlacement=placement, PlacementRelTo=parent),
                             Representation=representation)
     model.write(str(path))
 
 
-def convert_fixture(root):
+def convert_fixture(root, **fixture_options):
     root.mkdir(parents=True, exist_ok=True)
     source = root / "analytic.ifc"
-    write_real_ifc(source)
+    write_real_ifc(source, **fixture_options)
     adapter = Ifc2UsdcPowershellConverterAdapter(repo_root=root, work_dir=root, storage_root=root)
     result = adapter.convert(job={"conversion_job_id": "facts_job", "model_version_id": "facts_v1",
                                    "conversion_profile": "ifcopenshell_openusd_identity"},
@@ -77,6 +83,17 @@ def check(facts, name):
     return next(item for item in facts["checks"] if item["id"] == name)
 
 
+def test_identity_author_preserves_source_placement(converted):
+    _, result = converted
+    stage = Usd.Stage.Open(str(result["model_path"]))
+    bounds = []
+    for mesh in (UsdGeom.Mesh(p) for p in stage.Traverse() if p.IsA(UsdGeom.Mesh)):
+        matrix = UsdGeom.Xformable(mesh).ComputeLocalToWorldTransform(Usd.TimeCode.Default())
+        xs = [matrix.Transform(Gf.Vec3d(p))[0] for p in mesh.GetPointsAttr().Get()]
+        bounds.append((min(xs), max(xs)))
+    assert sorted(bounds) == [(-1.0, 1.0), (4.0, 6.0)]
+
+
 def test_real_cpu_conversion_has_independent_inventory_and_bound_bytes(converted):
     source, result = converted
     facts = read_facts(result)
@@ -89,7 +106,9 @@ def test_real_cpu_conversion_has_independent_inventory_and_bound_bytes(converted
     assert facts["artifacts"]["mappingSha256"] == hashlib.sha256(Path(result["mapping_path"]).read_bytes()).hexdigest()
     for name in ("source_inventory", "usd_artifact", "mesh_geometry", "mapping", "units"):
         assert check(facts, name)["state"] == "pass", (name, facts)
-    assert check(facts, "coordinates")["state"] == "unknown"
+    assert check(facts, "coordinates")["state"] == "pass_with_limits"
+    assert facts["coordinateEvidence"]["checkedCount"] == 2
+    assert facts["coordinateEvidence"]["maxDeltaM"] <= 0.001
     assert check(facts, "reference_measurement")["state"] == "not_run"
 
 
@@ -169,3 +188,57 @@ def test_corrupt_mesh_is_failed_even_when_stage_opens(converted):
     facts = recollect(source, result)
     assert check(facts, "usd_artifact")["state"] == "pass"
     assert check(facts, "mesh_geometry")["state"] == "fail"
+
+
+def test_centimetre_nested_rotation_and_root_bbox(tmp_path):
+    _, result = convert_fixture(tmp_path, centimetres=True, nested_rotation=True)
+    facts = read_facts(result)
+    assert facts["units"]["ifcLengthScaleM"] == 0.01
+    assert check(facts, "coordinates")["state"] == "pass_with_limits"
+    stage = Usd.Stage.Open(str(result["model_path"]))
+    boxes = json.loads((Path(result["model_path"]).parent / "bbox_index.json").read_text())
+    for item in boxes["items"]:
+        prim = stage.GetPrimAtPath(item["usd_prim_path"])
+        mesh = UsdGeom.Mesh(next(p for p in Usd.PrimRange(prim) if p.IsA(UsdGeom.Mesh)))
+        matrix = UsdGeom.Xformable(mesh).ComputeLocalToWorldTransform(Usd.TimeCode.Default())
+        vertices = [matrix.Transform(Gf.Vec3d(p)) for p in mesh.GetPointsAttr().Get()]
+        bounds = [min(p[i] for p in vertices) for i in range(3)] + [max(p[i] for p in vertices) for i in range(3)]
+        assert item["bbox_local"] == pytest.approx(bounds, abs=1e-8)
+        offset = 0.05 if item["ifc_guid"] == GUIDS[1] else 0.
+        assert bounds == pytest.approx([9.995, 19.99 + offset, 30., 10.005, 20.01 + offset, 30.03], abs=1e-7)
+        # Mesh extent stays in mesh-local coordinates; root bbox includes placement.
+        assert list(mesh.GetExtentAttr().Get()[0]) == pytest.approx([-0.01, -0.005, 0.], abs=1e-8)
+
+
+@pytest.mark.parametrize("mutation", ["translation", "scale"])
+def test_world_bounds_reject_wrong_placement_and_scale(converted, mutation):
+    source, result = converted
+    stage = Usd.Stage.Open(str(result["model_path"]))
+    if mutation == "translation":
+        UsdGeom.Xformable(stage.GetDefaultPrim()).AddTranslateOp().Set(Gf.Vec3d(0.01, 0., 0.))
+    else:
+        UsdGeom.SetStageMetersPerUnit(stage, 0.01)
+    stage.GetRootLayer().Save()
+    facts = recollect(source, result)
+    assert check(facts, "coordinates")["state"] == "fail"
+    assert facts["coordinateEvidence"]["mismatchedGuids"]
+    assert facts["coordinateEvidence"]["maxDeltaM"] > 0.001
+
+
+def test_reference_failure_is_not_coordinate_success(converted, monkeypatch):
+    source, result = converted
+    import ifcopenshell.geom
+    def fail(*args, **kwargs):
+        raise RuntimeError("reference parser failed")
+    monkeypatch.setattr(ifcopenshell.geom, "iterator", fail)
+    facts = recollect(source, result)
+    assert check(facts, "coordinates")["state"] == "execution_failed"
+    assert facts["coordinateEvidence"] is None
+
+
+def test_unsupported_coordinate_frame_is_unknown(converted):
+    source, result = converted
+    stage = Usd.Stage.Open(str(result["model_path"]))
+    UsdGeom.SetStageUpAxis(stage, "Y")
+    stage.GetRootLayer().Save()
+    assert check(recollect(source, result), "coordinates")["state"] == "unknown"

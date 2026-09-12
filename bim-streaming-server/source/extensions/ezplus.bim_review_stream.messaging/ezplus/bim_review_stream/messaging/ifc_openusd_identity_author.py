@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping
 import json
+import math
 
 from conversion_authority import (
     ConversionAuthorityError,
@@ -193,6 +194,19 @@ class IfcOpenUsdIdentityAuthor:
                     child_name = f"Body_{int(record['mesh_count']):03d}"
                     record["mesh_count"] = int(record["mesh_count"]) + 1
                     mesh = UsdGeom.Mesh.Define(stage, f"{record['usd_prim_path']}/{child_name}")
+                    # IfcOpenShell stores this column-major; Gf takes row vectors.
+                    # Reading the flat values as Gf rows performs the transpose.
+                    # Vertices and placement translations are already in metres.
+                    try:
+                        values = tuple(float(v) for v in shape.transformation.matrix)
+                        if len(values) != 16 or not all(math.isfinite(v) for v in values):
+                            raise ValueError("invalid placement")
+                        transform = Gf.Matrix4d(*values)
+                        mesh.AddTransformOp(UsdGeom.XformOp.PrecisionDouble).Set(transform)
+                    except Exception as exc:
+                        raise ConversionAuthorityError(
+                            "identity_placement_invalid", "IFC shape placement could not be authored."
+                        ) from exc
                     mesh.CreatePointsAttr(points)
                     mesh.CreateFaceVertexCountsAttr(face_counts)
                     mesh.CreateFaceVertexIndicesAttr(face_indices)
@@ -200,7 +214,10 @@ class IfcOpenUsdIdentityAuthor:
                     mesh.CreateExtentAttr(extent)
                     record["bbox_local"] = self._merge_bbox(
                         record.get("bbox_local"),
-                        self._extent_to_bbox(extent),
+                        self._extent_to_bbox(self._mesh_extent(
+                            [transform.Transform(Gf.Vec3d(point)) for point in points],
+                            vec3_type=Gf.Vec3d,
+                        )),
                     )
 
             try:

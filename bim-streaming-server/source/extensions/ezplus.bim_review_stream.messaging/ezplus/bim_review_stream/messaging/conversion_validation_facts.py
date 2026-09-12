@@ -12,8 +12,8 @@ from conversion_source_fingerprint import (
     attach_source_fingerprint, capture_source, verify_source,
 )
 
-VERSION = "conversion-facts-validator/v1"
-CONVERTER_VERSION = "host-native-ifc-adapter/v1"
+VERSION = "conversion-facts-validator/v2"
+CONVERTER_VERSION = "host-native-ifc-adapter/v2"
 _GUID = re.compile(r"^[A-Za-z0-9_$-]{1,128}$")
 
 
@@ -124,12 +124,87 @@ def _mapping_observation(mapping_path, expected, stage, mesh_paths):
         return None, _check("mapping", "fail", "mapping_correspondence_invalid")
 
 
+def _coordinate_observation(ifc_path, stage, usd, correspondence):
+    """Compare mapped world AABBs in metres, not surface fidelity or survey accuracy.
+
+    The reference is a separate IFC world-coordinate tessellation, never the
+    converter's placement matrix or its bbox sidecar. Unmapped source identities
+    remain in the independent inventory and required-component purpose gate.
+    """
+    if stage is None or correspondence is None or not correspondence or usd.get("metersPerUnit") is None:
+        return None, _check("coordinates", "unknown", "coordinate_prerequisites_unavailable")
+    if usd.get("upAxis") != "Z":
+        return None, _check("coordinates", "unknown", "coordinate_frame_not_supported")
+    try:
+        import ifcopenshell
+        import ifcopenshell.geom
+        import numpy as np
+        from pxr import Gf, Usd, UsdGeom
+        settings = ifcopenshell.geom.settings()
+        settings.set(settings.USE_WORLD_COORDS, True)
+        model = ifcopenshell.open(str(ifc_path))
+        iterator = ifcopenshell.geom.iterator(settings, model, min(os.cpu_count() or 1, 4))
+        if not iterator.initialize():
+            return None, _check("coordinates", "unknown", "source_geometry_unavailable")
+        source_bounds, invalid_source = {}, set()
+        wanted = {item["guid"] for item in correspondence}
+        while True:
+            shape = iterator.get()
+            guid = str(shape.guid)
+            if guid in wanted:
+                points = np.asarray(shape.geometry.verts, dtype=float).reshape((-1, 3))
+                if len(points) and np.isfinite(points).all():
+                    lo, hi = points.min(axis=0), points.max(axis=0)
+                    if guid in source_bounds:
+                        lo = np.minimum(lo, source_bounds[guid][0])
+                        hi = np.maximum(hi, source_bounds[guid][1])
+                    source_bounds[guid] = (lo, hi)
+                else:
+                    invalid_source.add(guid)
+            if not iterator.next():
+                break
+        mismatched, unavailable, checked, maximum = [], [], 0, 0.0
+        for item in correspondence:
+            guid = item["guid"]
+            reference = source_bounds.get(guid)
+            vertices = []
+            for path in item["primPaths"]:
+                for prim in Usd.PrimRange(stage.GetPrimAtPath(path)):
+                    if prim.IsA(UsdGeom.Mesh):
+                        matrix = UsdGeom.Xformable(prim).ComputeLocalToWorldTransform(Usd.TimeCode.Default())
+                        vertices.extend(tuple(matrix.Transform(Gf.Vec3d(p))) for p in UsdGeom.Mesh(prim).GetPointsAttr().Get())
+            points = np.asarray(vertices, dtype=float) * usd["metersPerUnit"]
+            if guid in invalid_source or reference is None or not len(points) or not np.isfinite(points).all():
+                unavailable.append(guid)
+                continue
+            delta = float(np.max(np.abs(np.asarray([points.min(axis=0), points.max(axis=0)]) - reference)))
+            checked += 1
+            maximum = max(maximum, delta)
+            if delta > 0.001:
+                mismatched.append(guid)
+        evidence = {"method": "ifc-usd-world-aabb/v1", "toleranceM": 0.001,
+                    "mappedCount": len(correspondence), "checkedCount": checked,
+                    "maxDeltaM": maximum if checked else None,
+                    "mismatchedGuids": sorted(mismatched), "unavailableGuids": sorted(unavailable)}
+        if mismatched:
+            check = _check("coordinates", "fail", "world_bounds_mismatch")
+        elif unavailable or not checked:
+            check = _check("coordinates", "unknown", "source_output_bounds_unavailable")
+        else:
+            check = {**_check("coordinates", "pass_with_limits", "world_bounds_only"),
+                     "limitations": ["Mapped world bounds agree within 1 mm; unmapped components, surface fidelity, georeferencing, viewer interaction and measurement accuracy are not validated."]}
+        return evidence, check
+    except Exception:
+        return None, _check("coordinates", "execution_failed", "coordinate_validation_failed")
+
+
 def collect_conversion_facts(ifc_path, model_path, mapping_path, source, model_version_id):
     verify_source(ifc_path, source)
     expected, excluded, scale, source_check = _source_inventory(ifc_path)
     model_before, mapping_before = capture_source(model_path), capture_source(mapping_path)
     stage, usd, artifact_check, geometry_check = _usd_observation(model_path)
     correspondence, mapping_check = _mapping_observation(mapping_path, expected, stage, usd.get("meshPaths", set()))
+    coordinate_evidence, coordinate_check = _coordinate_observation(ifc_path, stage, usd, correspondence)
     converted = {item["guid"] for item in correspondence} if correspondence is not None else None
     missing = [{"guid": guid, "reasonCodes": ["renderable_not_corresponded"]}
                for guid in sorted(set(expected) - converted)] if expected is not None and converted is not None else []
@@ -155,7 +230,7 @@ def collect_conversion_facts(ifc_path, model_path, mapping_path, source, model_v
     units_known = scale is not None and usd.get("metersPerUnit") is not None and usd.get("upAxis") in ("Y", "Z")
     checks = [source_check, artifact_check, geometry_check, mapping_check, completeness,
               _check("units", "pass" if units_known else "unknown", *([] if units_known else ["units_unavailable"])),
-              _check("coordinates", "unknown", "source_output_alignment_not_validated"),
+              coordinate_check,
               _check("reference_measurement", "not_run", "reference_and_tolerance_unavailable"),
               _check("ifc_rules", "not_run", "ifc_rule_authority_not_run")]
     verify_source(ifc_path, source)
@@ -170,6 +245,7 @@ def collect_conversion_facts(ifc_path, model_path, mapping_path, source, model_v
         "inventory": inventory, "byClass": by_class,
         "expectedElements": [{"guid": guid, "ifcType": kind} for guid, kind in sorted(expected.items())] if expected is not None else None,
         "correspondence": correspondence,
+        "coordinateEvidence": coordinate_evidence,
         "units": {"ifcLengthScaleM": scale, "usdMetersPerUnit": usd.get("metersPerUnit"), "upAxis": usd.get("upAxis")},
         "checks": checks,
     }

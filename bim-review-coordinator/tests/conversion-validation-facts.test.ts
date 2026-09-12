@@ -40,6 +40,31 @@ function input(value: ConversionValidationFacts, scopes: ApprovedPurposeScope[] 
     evidence: value, approvedScopes: scopes, purposes: purposeFacts(value, scopes, context) };
 }
 describe("streaming conversion facts and trusted purpose scope", () => {
+  function boundedFacts(): ConversionValidationFacts {
+    const value = facts();
+    value.validatorVersion = "conversion-facts-validator/v2";
+    value.coordinateEvidence = { method: "ifc-usd-world-aabb/v1", toleranceM: 0.001,
+      mappedCount: 1, checkedCount: 1, maxDeltaM: 0.000001, mismatchedGuids: [], unavailableGuids: [] };
+    value.checks = value.checks.filter(x => x.id !== "coordinates");
+    value.checks.push({ id: "coordinates", state: "pass_with_limits", reasonCodes: ["world_bounds_only"], limitations: ["Bounds only; no measurement claim."] });
+    return value;
+  }
+  it("retains bounded coordinate evidence and limitations in a durable record", () => {
+    const value = conversionFactsSchema.parse(boundedFacts());
+    const record = createConversionValidationRecord(input(value, [scope()]));
+    expect(record.evaluations[0].outcome).toBe("usable_with_limits");
+    expect(parseConversionValidationRecord(JSON.parse(JSON.stringify(record)))).toEqual(record);
+  });
+  it.each(["missing", "denominator", "foreign", "delta", "state", "duplicate"])("rejects inconsistent bounds %s", change => {
+    const value = boundedFacts();
+    if (change === "missing") value.coordinateEvidence = null;
+    if (change === "denominator") value.coordinateEvidence!.checkedCount = 0;
+    if (change === "foreign") value.coordinateEvidence!.mismatchedGuids = ["foreign"];
+    if (change === "delta") value.coordinateEvidence!.maxDeltaM = 5;
+    if (change === "state") value.checks.find(x => x.id === "coordinates")!.state = "pass";
+    if (change === "duplicate") value.coordinateEvidence!.unavailableGuids = ["g1", "g1"];
+    expect(conversionFactsSchema.safeParse(value).success).toBe(false);
+  });
   it("keeps actual evidence and unknown outcomes through historical parsing", () => {
     const value = conversionFactsSchema.parse(facts());
     const record = createConversionValidationRecord(input(value));

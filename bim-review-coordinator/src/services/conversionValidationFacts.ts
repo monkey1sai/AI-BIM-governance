@@ -22,12 +22,31 @@ export const conversionFactsSchema = z.object({
   expectedElements: z.array(z.object({ guid: id, ifcType: id }).strict()).max(100000).nullable(),
   correspondence: z.array(z.object({ guid: id, primPaths: z.array(z.string().startsWith("/").min(2).max(2048)).min(1).max(1000) }).strict()).max(100000).nullable(),
   units: z.object({ ifcLengthScaleM: z.number().finite().positive().nullable(), usdMetersPerUnit: z.number().finite().positive().nullable(), upAxis: z.enum(["Y", "Z"]).nullable() }).strict(),
+  coordinateEvidence: z.object({
+    method: z.literal("ifc-usd-world-aabb/v1"), toleranceM: z.literal(0.001),
+    mappedCount: count, checkedCount: count, maxDeltaM: z.number().finite().nonnegative().nullable(),
+    mismatchedGuids: z.array(id).max(100000), unavailableGuids: z.array(id).max(100000),
+  }).strict().nullable().optional(),
   checks: z.array(check).max(100),
 }).strict().superRefine((facts, context) => {
   const bad = (message: string) => context.addIssue({ code: z.ZodIssueCode.custom, message });
   const unique = (values: string[]) => new Set(values).size === values.length;
   const { inventory: i, correspondence: c, byClass } = facts;
   const expected = facts.expectedElements;
+  const bounds = facts.coordinateEvidence;
+  if (facts.validatorVersion === "conversion-facts-validator/v2" && !bounds &&
+      facts.checks.some(x => x.id === "coordinates" && ["pass", "pass_with_limits"].includes(x.state))) bad("Coordinate success requires evidence.");
+  if (bounds) {
+    const mapped = new Set(c?.map(x => x.guid));
+    const ids = [...bounds.mismatchedGuids, ...bounds.unavailableGuids];
+    const coordinate = facts.checks.find(x => x.id === "coordinates");
+    const state = bounds.mismatchedGuids.length ? "fail" : bounds.unavailableGuids.length || !bounds.checkedCount ? "unknown" : "pass_with_limits";
+    if (bounds.mappedCount !== c?.length || bounds.checkedCount + bounds.unavailableGuids.length !== bounds.mappedCount ||
+        bounds.mismatchedGuids.length > bounds.checkedCount || !unique(ids) || ids.some(g => !mapped.has(g)) ||
+        (bounds.checkedCount === 0) !== (bounds.maxDeltaM === null) ||
+        (bounds.maxDeltaM !== null && (bounds.maxDeltaM > bounds.toleranceM) !== (bounds.mismatchedGuids.length > 0)) ||
+        coordinate?.state !== state) bad("World bounds evidence mismatch.");
+  }
   if (i.observation === "observed") {
     if (expected === null || expected.length !== i.expectedRenderable || !unique(expected.map(x => x.guid))) bad("Expected source identities mismatch.");
     else {

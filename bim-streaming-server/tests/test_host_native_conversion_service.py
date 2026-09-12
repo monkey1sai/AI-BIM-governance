@@ -1812,6 +1812,9 @@ def _install_fake_identity_ifcopenshell(
             self.name = spec.get("name") or ""
             self.type = spec["ifc_type"]
             self.geometry = FakeGeometry(skipped=bool(spec.get("skipped_shape")))
+            from types import SimpleNamespace
+            self.transformation = SimpleNamespace(matrix=(
+                1., 0., 0., 0., 0., 1., 0., 0., 0., 0., 1., 0., 0., 0., 0., 1.))
 
     class FakeIterator:
         def __init__(self):
