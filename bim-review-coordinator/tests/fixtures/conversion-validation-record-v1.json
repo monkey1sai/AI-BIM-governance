@@ -1,0 +1,29 @@
+{
+  "schemaVersion": "conversion-validation-record/v1",
+  "recordId": "validation_v1_fixture", "readyModelId": "worker:project::version::task", "conversionJobId": "job_1",
+  "tenantId": "tenant_1", "projectId": "project_1", "modelVersionId": "version_1",
+  "source": { "name": "fixture.ifc", "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" },
+  "artifacts": { "usdcSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "mappingSha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc" },
+  "correspondence": [], "converterVersion": null, "validatorVersion": "conversion-facts-validator/v1", "validatedAt": "2026-09-12T00:00:00Z",
+  "evidence": {
+    "schemaVersion": "conversion-validation-facts/v1", "validatorVersion": "conversion-facts-validator/v1", "validatedAt": "2026-09-12T00:00:00Z",
+    "sourceSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "modelVersionId": "version_1", "sourceName": "fixture.ifc",
+    "artifacts": { "usdcSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "mappingSha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc" },
+    "inventory": { "observation": "observed", "expectedRenderable": 0, "convertedRenderable": 0, "missing": [], "excluded": [] },
+    "byClass": [], "expectedElements": [], "correspondence": [], "units": { "ifcLengthScaleM": null, "usdMetersPerUnit": null, "upAxis": null }, "checks": []
+  },
+  "approvedScopes": [],
+  "inventory": { "observation": "observed", "expectedRenderable": 0, "convertedRenderable": 0, "missing": [], "excluded": [] },
+  "purposes": [
+    { "purpose": "view_3d", "policy": { "id": "conversion-technical-baseline", "version": "1", "purpose": "view_3d", "requiredCheckIds": ["source_inventory", "usd_artifact", "mesh_geometry", "coordinates", "inventory_completeness", "required_components"] }, "checks": [{ "id": "required_components", "state": "not_run", "reasonCodes": ["approved_scope_unavailable"] }] },
+    { "purpose": "locate_highlight", "policy": { "id": "conversion-technical-baseline", "version": "1", "purpose": "locate_highlight", "requiredCheckIds": ["source_inventory", "usd_artifact", "mesh_geometry", "coordinates", "mapping", "required_components"] }, "checks": [{ "id": "required_components", "state": "not_run", "reasonCodes": ["approved_scope_unavailable"] }] },
+    { "purpose": "distance_measurement", "policy": { "id": "conversion-technical-baseline", "version": "1", "purpose": "distance_measurement", "requiredCheckIds": ["source_inventory", "usd_artifact", "mesh_geometry", "coordinates", "units", "reference_measurement", "required_components"] }, "checks": [{ "id": "required_components", "state": "not_run", "reasonCodes": ["approved_scope_unavailable"] }] },
+    { "purpose": "ifc_rules", "policy": { "id": "conversion-technical-baseline", "version": "1", "purpose": "ifc_rules", "requiredCheckIds": ["source_inventory", "ifc_rules", "required_components"] }, "checks": [{ "id": "required_components", "state": "not_run", "reasonCodes": ["approved_scope_unavailable"] }] }
+  ],
+  "evaluations": [
+    { "purpose": "view_3d", "outcome": "not_validated", "policyId": "conversion-technical-baseline", "policyVersion": "1", "reasonCodes": ["approved_scope_unavailable", "coordinates:missing", "inventory_completeness:missing", "mesh_geometry:missing", "required_components:not_run", "source_inventory:missing", "usd_artifact:missing"], "limitations": [] },
+    { "purpose": "locate_highlight", "outcome": "not_validated", "policyId": "conversion-technical-baseline", "policyVersion": "1", "reasonCodes": ["approved_scope_unavailable", "coordinates:missing", "mapping:missing", "mesh_geometry:missing", "required_components:not_run", "source_inventory:missing", "usd_artifact:missing"], "limitations": [] },
+    { "purpose": "distance_measurement", "outcome": "not_validated", "policyId": "conversion-technical-baseline", "policyVersion": "1", "reasonCodes": ["approved_scope_unavailable", "coordinates:missing", "mesh_geometry:missing", "reference_measurement:missing", "required_components:not_run", "source_inventory:missing", "units:missing", "usd_artifact:missing"], "limitations": [] },
+    { "purpose": "ifc_rules", "outcome": "not_validated", "policyId": "conversion-technical-baseline", "policyVersion": "1", "reasonCodes": ["approved_scope_unavailable", "ifc_rules:missing", "required_components:not_run", "source_inventory:missing"], "limitations": [] }
+  ]
+}

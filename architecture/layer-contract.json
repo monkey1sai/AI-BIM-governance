@@ -243,6 +243,16 @@
         },
         {
           "match": "exact",
+          "value": "ezplus.bim_review_stream.messaging.conversion_source_fingerprint",
+          "layer": "infrastructure"
+        },
+        {
+          "match": "exact",
+          "value": "ezplus.bim_review_stream.messaging.conversion_validation_facts",
+          "layer": "infrastructure"
+        },
+        {
+          "match": "exact",
           "value": "ezplus.bim_review_stream.messaging.kit_struct_log",
           "layer": "infrastructure"
         },

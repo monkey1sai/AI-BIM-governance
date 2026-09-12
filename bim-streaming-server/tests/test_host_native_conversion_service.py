@@ -380,7 +380,8 @@ def test_adapter_builds_powershell_command_and_confirms_usdc(tmp_path: Path, mon
     assert captured["kwargs"]["shell"] is False
     assert captured["kwargs"]["cwd"] == str(repo_root)
     assert Path(result["model_path"]).name == "model.usdc"
-    assert result["quality_metrics"]["coverage_status"] == "pass"
+    # The IFC fixture has no parseable independent denominator.
+    assert result["quality_metrics"]["coverage_status"] == "not_evaluable"
 
 
 def test_adapter_from_env_keeps_unset_paths_none(tmp_path: Path):
@@ -1811,6 +1812,9 @@ def _install_fake_identity_ifcopenshell(
             self.name = spec.get("name") or ""
             self.type = spec["ifc_type"]
             self.geometry = FakeGeometry(skipped=bool(spec.get("skipped_shape")))
+            from types import SimpleNamespace
+            self.transformation = SimpleNamespace(matrix=(
+                1., 0., 0., 0., 0., 1., 0., 0., 0., 0., 1., 0., 0., 0., 0., 1.))
 
     class FakeIterator:
         def __init__(self):
@@ -5365,3 +5369,85 @@ def test_real_failed_run_still_reports_converter_failed_not_containment_failed(
     assert raised is not None
     assert raised.code == "converter_failed", raised.message
     assert "exited 7" in raised.message
+
+
+@pytest.mark.parametrize("eligible,ratio,status,unmapped", [
+    (None, None, "not_evaluable", None),
+    (0, None, "not_evaluable", 0),
+    (3, 2 / 3, "warn", 1),
+])
+def test_overlay_independent_coverage_replaces_converter_claim(
+    tmp_path: Path, monkeypatch, eligible, ratio, status, unmapped
+):
+    import ifc2usdc_powershell_adapter as adapter_module
+
+    monkeypatch.setattr(adapter_module, "try_count_eligible_ifc_products", lambda _path: eligible)
+    quality = {
+        "mapped_count": 2, "eligible_ifc_product_count": 2, "source_ifc_entity_count": 2,
+        "unmapped_count": 0, "coverage_ratio": 1.0, "coverage_status": "pass",
+        "minimum_coverage_baseline_locked": True, "custom": "preserved",
+    }
+    observed = Ifc2UsdcPowershellConverterAdapter._overlay_independent_coverage(
+        quality, ifc_path=tmp_path / "source.ifc"
+    )
+    assert observed["eligible_ifc_product_count"] == eligible
+    assert observed["source_ifc_entity_count"] == eligible
+    assert observed["coverage_ratio"] == ratio
+    assert observed["coverage_status"] == status
+    assert observed["unmapped_count"] == unmapped
+    assert observed["mapped_count"] == 2
+    assert observed["custom"] == "preserved"
+    if status == "not_evaluable":
+        assert observed["minimum_coverage_baseline_locked"] is False
+    assert quality["coverage_ratio"] == 1.0
+    assert quality["minimum_coverage_baseline_locked"] is True
+
+@pytest.mark.parametrize("profile", ["", "ifcopenshell_openusd_identity"])
+@pytest.mark.parametrize("drift", [False, True])
+def test_convert_fingerprint_both_profiles(tmp_path, monkeypatch, profile, drift):
+    import hashlib
+    source = tmp_path / "source.ifc"
+    source.write_bytes(b"ISO-10303-21;fixture")
+    original = source.read_bytes()
+    output = tmp_path / "out"
+    adapter = Ifc2UsdcPowershellConverterAdapter(
+        repo_root=tmp_path, storage_root=tmp_path / "storage")
+    monkeypatch.setattr(adapter, "_resolve_local_ifc", lambda event: source)
+    monkeypatch.setattr(adapter, "_preflight_with_hoops_validation",
+                        lambda: (tmp_path / "hoops.py", (1, 2, 3, 4, "hash")))
+    def produce():
+        output.mkdir(exist_ok=True)
+        for name, body in [("model.usdc", b"PXR-USDC-fixture"), ("element_mapping.json", b"{}"),
+                           ("entity_index.json", b"{}"), ("metadata.json", b'{"original":true}')]:
+            (output / name).write_bytes(body)
+        if drift:
+            source.write_bytes(original + b"changed")
+    monkeypatch.setattr(adapter, "_run_powershell_conversion", lambda **kwargs: produce())
+    monkeypatch.setattr(adapter, "_materialize_sidecars", lambda **kwargs: {})
+    class Author:
+        def __init__(self, **kwargs):
+            pass
+        def author(self):
+            produce()
+            names = ["model", "mapping", "entity_index", "metadata", "pset_index",
+                     "spatial_index", "bbox_index", "quality_metrics", "geo_reference"]
+            paths = {name + "_path": output / (name + ".json") for name in names}
+            paths["model_path"] = output / "model.usdc"
+            paths["mapping_path"] = output / "element_mapping.json"
+            return {"paths": paths, "quality_metrics": {}}
+    monkeypatch.setattr("ifc2usdc_powershell_adapter.IfcOpenUsdIdentityAuthor", Author)
+    kwargs = dict(job={"conversion_job_id": "job1", "model_version_id": "v1",
+                       "conversion_profile": profile},
+                  ifc_ready_event=ifc_ready_payload(), output_dir=output)
+    if drift:
+        with pytest.raises(ConversionAuthorityError) as caught:
+            adapter.convert(**kwargs)
+        assert caught.value.code == "source_fingerprint_unavailable"
+        assert str(tmp_path) not in caught.value.message
+        assert json.loads((output / "metadata.json").read_text()) == {"original": True}
+    else:
+        result = adapter.convert(**kwargs)
+        metadata = json.loads(Path(result["metadata_path"]).read_text())
+        assert metadata["original"] is True
+        assert metadata["source_fingerprint"]["sha256"] == hashlib.sha256(original).hexdigest()
+        assert metadata["source_fingerprint"]["model_version_id"] == "v1"

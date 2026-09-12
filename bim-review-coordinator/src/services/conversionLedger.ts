@@ -6,6 +6,8 @@
 // `now`（ISO 字串）一律由呼叫端傳入，service 內不取時鐘（方便測試）。
 import fs from "node:fs";
 import path from "node:path";
+import { isDeepStrictEqual } from "node:util";
+import { createConversionValidationRecord, parseConversionValidationRecord, type ConversionValidationRecord } from "./conversionValidationRecord.js";
 import type { ReadyRenderBundle } from "../types.js";
 
 /** 轉檔紀錄狀態（誠實鐵律：非 converter 落地不得出現 ready） */
@@ -15,6 +17,8 @@ export type ConversionLedgerStatus = "detected" | "queued" | "converting" | "rea
 export interface ConversionLedgerRecord {
   /** Internal-only validated descriptor; excluded from the public ledger projection. */
   ready_render_bundle?: ReadyRenderBundle;
+  /** Internal immutable history; never part of the public ledger projection. */
+  validation_records?: ConversionValidationRecord[];
   idempotency_key: string;            // mw_<hash16>（唯一鍵）
   correlation_id: string | null;      // minio-watch-<hash8>
   project_id: string;                 // safe id
@@ -76,7 +80,20 @@ export class ConversionLedger {
         const r = item as ConversionLedgerRecord;
         if (!r || typeof r.idempotency_key !== "string" || this.records.has(r.idempotency_key)) throw new Error("Invalid conversion ledger record.");
         // v1 never grants a ready-descriptor provenance field.
-        if (parsed.schema_version === "conversion-ledger/v1") delete r.ready_render_bundle;
+        if (parsed.schema_version === "conversion-ledger/v1") {
+          delete r.ready_render_bundle;
+          delete r.validation_records;
+        } else if (r.validation_records !== undefined) {
+          if (!Array.isArray(r.validation_records)) throw new Error("Invalid validation history.");
+          r.validation_records = r.validation_records.map(parseConversionValidationRecord);
+          const ids = new Set<string>();
+          for (const record of r.validation_records) {
+            if (record.readyModelId !== r.idempotency_key || ids.has(record.recordId)) {
+              throw new Error("Invalid validation history identity.");
+            }
+            ids.add(record.recordId);
+          }
+        }
         this.records.set(r.idempotency_key, r);
       }
     } catch {
@@ -106,14 +123,19 @@ export class ConversionLedger {
    * 新增或更新 ledger 紀錄。
    * - 首次：建立完整紀錄，detected_at = now。
    * - 已存在（同 idempotency_key）：只更新 status / conversion_job_id / updated_at，
-   *   保留 detected_at、coverage_report、usdc_key。
+   *   保留 detected_at；未提供 artifacts 時保留 coverage_report、usdc_key。
+   * - artifacts 與狀態同次保存；undefined 保留既有欄位，null 明確清除。
    *   conversion_job_id 採 ?? 語意：input 為 null 時保留既有（null 不清除），
    *   僅 undefined（未傳）時回落 existing，兩者皆無時才落 null。
    *
    * @param input   upsert 輸入（識別欄位 + 可選物件欄位）
    * @param now     ISO 時間字串（由呼叫端傳入，service 不取時鐘）
    */
-  upsert(input: ConversionLedgerUpsert, now: string): ConversionLedgerRecord {
+  upsert(
+    input: ConversionLedgerUpsert,
+    now: string,
+    artifacts?: Partial<Pick<ConversionLedgerRecord, "usdc_key" | "coverage_report">>,
+  ): ConversionLedgerRecord {
     this.assertAvailable();
     const existing = this.records.get(input.idempotency_key);
     const record: ConversionLedgerRecord = {
@@ -129,21 +151,20 @@ export class ConversionLedger {
       // conversion_job_id：?? 語意 — input 為 null 時保留既有（null 不清除）
       conversion_job_id: input.conversion_job_id ?? existing?.conversion_job_id ?? null,
       status: input.status,
-      // Phase 2 回填欄位：保留既有，不覆蓋
-      coverage_report: existing?.coverage_report ?? null,
-      usdc_key: existing?.usdc_key ?? null,
+      // Terminal artifacts 與 status 一起發布；一般 upsert 不覆蓋既有資料。
+      coverage_report: artifacts?.coverage_report !== undefined ? artifacts.coverage_report : existing?.coverage_report ?? null,
+      usdc_key: artifacts?.usdc_key !== undefined ? artifacts.usdc_key : existing?.usdc_key ?? null,
       // detected_at：首次建立時定格，後續 upsert 保留
       detected_at: existing?.detected_at ?? now,
       updated_at: now,
+      validation_records: existing?.validation_records,
       ready_render_bundle: existing?.conversion_job_id === (input.conversion_job_id ?? existing?.conversion_job_id)
         && existing?.project_id === input.project_id
         && existing?.external_model_version_id === input.external_model_version_id
         && existing?.correlation_id === input.correlation_id
         ? existing.ready_render_bundle : undefined,
     };
-    this.records.set(record.idempotency_key, record);
-    this.persist();
-    return record;
+    return this.commitRecord(record);
   }
 
   /**
@@ -169,9 +190,7 @@ export class ConversionLedger {
       coverage_report: outcome.coverage_report !== undefined ? outcome.coverage_report : existing.coverage_report,
       updated_at: now,
     };
-    this.records.set(idempotencyKey, next);
-    this.persist();
-    return next;
+    return this.commitRecord(next);
   }
 
   /**
@@ -201,8 +220,44 @@ export class ConversionLedger {
       || existing.project_id !== bundle.projectId || existing.external_model_version_id !== bundle.modelVersionId) {
       throw new Error("Ready model identity changed.");
     }
-    this.records.set(bundle.readyModelId, { ...existing, ready_render_bundle: structuredClone(bundle) });
-    try { this.persist(); } catch (error) { this.records.set(bundle.readyModelId, existing); throw error; }
+    this.commitRecord({ ...existing, ready_render_bundle: bundle });
+  }
+
+  appendValidationRecord(idempotencyKey: string, value: unknown): ConversionValidationRecord {
+    this.assertAvailable();
+    const existing = this.records.get(idempotencyKey);
+    if (!existing) throw new Error("Conversion record not found.");
+    const record = createConversionValidationRecord(value);
+    const history = existing.validation_records ?? [];
+    const previous = history.find((entry) => entry.recordId === record.recordId);
+    if (previous) {
+      if (!isDeepStrictEqual(previous, record)) throw new Error("Validation record identity conflict.");
+      return structuredClone(previous);
+    }
+    if (record.readyModelId !== idempotencyKey || record.projectId !== existing.project_id ||
+        record.modelVersionId !== existing.external_model_version_id ||
+        record.conversionJobId !== existing.conversion_job_id) throw new Error("Validation source identity changed.");
+    this.commitRecord({ ...existing, validation_records: [...history, record] });
+    return structuredClone(record);
+  }
+
+  listValidationRecords(idempotencyKey: string): ConversionValidationRecord[] {
+    this.assertAvailable();
+    return structuredClone(this.records.get(idempotencyKey)?.validation_records ?? []);
+  }
+
+  private commitRecord(record: ConversionLedgerRecord): ConversionLedgerRecord {
+    const next = structuredClone(record);
+    const previous = this.records.get(next.idempotency_key);
+    this.records.set(next.idempotency_key, next);
+    try {
+      this.persist();
+    } catch (error) {
+      if (previous) this.records.set(next.idempotency_key, previous);
+      else this.records.delete(next.idempotency_key);
+      throw error;
+    }
+    return structuredClone(next);
   }
 
   private assertAvailable(): void {
@@ -210,7 +265,7 @@ export class ConversionLedger {
   }
 }
 
-export function publicConversionRecord(record: ConversionLedgerRecord): Omit<ConversionLedgerRecord, "ready_render_bundle"> {
+export function publicConversionRecord(record: ConversionLedgerRecord): Omit<ConversionLedgerRecord, "ready_render_bundle" | "validation_records"> {
   return {
     idempotency_key: record.idempotency_key, correlation_id: record.correlation_id,
     project_id: record.project_id, project_display_name: record.project_display_name,
