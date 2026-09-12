@@ -49,6 +49,12 @@ SQLite、ifcopenshell 與 openpyxl 均為實際實作。未提供 mapping，usd_
 - revision 競爭、audit 故障 rollback、strict API 值與省略 revision 舊 caller。
 - 實际 XLSX 重新解析，`=` 開頭來源文字保持 string、沒有 formula cell。
 
+PR review 後同步 `web-viewer-sample/src/generated/governance-api.ts` 的
+`TransitionBody.expected_revision?: number | null`。使用既有
+`generate-api-types.mjs` 對 base 與本刀來源各自生成；相同 openapi-typescript 7.13.0
+的唯一 base-to-head 差異就是這兩行，因此只選取該生成差異，未納入既有 A4／Kit
+型別漂移。`npm run verify` 通過 typecheck、build、1636 tests 與 23 structured-log tests。
+
 ## 風險與限制
 
 GitNexus 1.6.9 已在本 worktree/base `5439f728f29bf72736e41ea56c5b98afa7d881d8`
