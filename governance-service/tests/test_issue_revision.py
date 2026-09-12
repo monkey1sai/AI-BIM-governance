@@ -114,6 +114,11 @@ def test_api_exposes_revision_and_rejects_stale_or_malformed_values(tmp_path, mo
 @pytest.mark.parametrize("source_type", ["manual", "rule_result", "diff_item"])
 def test_existing_resolution_and_reopen_flow_keeps_source_and_tracks_revision(store, source_type):
     issue = create(store, source_type=source_type, source_ref="source1")
+    if source_type == "rule_result":
+        with pytest.raises(TransitionError, match="remediation evidence"):
+            store.transition(issue["id"], "resolved")
+        assert store.get_issue(issue["id"]) == issue
+        return
     resolved = store.transition(issue["id"], "resolved")
     assert resolved["revision"] == 1
     reopened = store.transition(issue["id"], "reopened", expected_revision=1)

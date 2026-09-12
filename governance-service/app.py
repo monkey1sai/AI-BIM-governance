@@ -35,6 +35,7 @@ from rule_engine import (
     workbook_bytes,
 )
 from rule_engine.models import RuleResult, RuleRunResult
+from rule_engine.source_snapshot import load_source_snapshot
 
 SERVICE_ROOT = os.path.dirname(__file__)
 RULES_DIR = os.path.join(SERVICE_ROOT, "rules")
@@ -102,6 +103,7 @@ class RuleRunRequest(BaseModel):
 
 
 _SOURCE_METADATA_KEYS = frozenset({
+    "tenant_id",
     "source_kind",
     "ifc_ready_job_id",
     "idempotency_key",
@@ -351,7 +353,7 @@ def list_rule_runs(
 def _execute(run_id: str, ifc_path: str, rule_set_path: Optional[str], mapping_path: Optional[str], ids_path: Optional[str] = None) -> None:
     try:
         store.mark_running(run_id)
-        model = open_model(ifc_path)
+        model, source_sha256 = load_source_snapshot(ifc_path)
         if ids_path:
             from rule_engine.ids_runner import run_ids_file
 
@@ -365,6 +367,7 @@ def _execute(run_id: str, ifc_path: str, rule_set_path: Optional[str], mapping_p
                 run.warnings.append("element_mapping 為 fake/smoke：usd_prim_path 不視為真實覆蓋率")
             else:
                 join_usd_prim_paths(run.results, mapping)
+        run.source_sha256 = source_sha256
         store.complete_run(run_id, run)
     except Exception as exc:  # noqa: BLE001 - 失敗誠實標記，不假裝 pass
         store.fail_run(run_id, str(exc))

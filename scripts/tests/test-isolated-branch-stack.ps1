@@ -98,6 +98,32 @@ try {
 finally {
     [Environment]::SetEnvironmentVariable('SESSION_IDLE_TIMEOUT_MS', $idleTimeoutBackup, 'Process')
 }
+$remediationEnvNames = @('A1_REMEDIATION_INTERNAL_KEY', 'A1_REMEDIATION_LOCAL_VALIDATION', 'A1_REMEDIATION_LOCAL_POLICY_PATH')
+$remediationEnvBackup = @{}
+try {
+    foreach ($name in $remediationEnvNames) {
+        $remediationEnvBackup[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
+        [Environment]::SetEnvironmentVariable($name, $null, 'Process')
+    }
+    $layout = [pscustomobject]@{ coordinator_root='C:\isolated\coordinator'; fixture_root='C:\isolated\fixtures';
+        governance_root='C:\isolated\governance'; governance_db='C:\isolated\governance\test.db'; governance_federation_out='C:\isolated\governance\federated' }
+    foreach ($role in @('coordinator', 'governance')) {
+        $values = New-IsolatedBackendEnvironment -Role $role -StateLayout $layout -Ports $p4
+        Assert-True (-not $values.ContainsKey('A1_REMEDIATION_INTERNAL_KEY')) 'A1 mutation authority defaults absent'
+        Assert-True (-not $values.ContainsKey('A1_REMEDIATION_LOCAL_VALIDATION')) 'A1 local validation defaults absent'
+    }
+    [Environment]::SetEnvironmentVariable('A1_REMEDIATION_INTERNAL_KEY', 'synthetic-test-sentinel', 'Process')
+    [Environment]::SetEnvironmentVariable('A1_REMEDIATION_LOCAL_VALIDATION', 'true', 'Process')
+    [Environment]::SetEnvironmentVariable('A1_REMEDIATION_LOCAL_POLICY_PATH', 'C:\isolated\owner-policy.json', 'Process')
+    foreach ($role in @('coordinator', 'governance')) {
+        $values = New-IsolatedBackendEnvironment -Role $role -StateLayout $layout -Ports $p4
+        Assert-Equal 'synthetic-test-sentinel' $values.A1_REMEDIATION_INTERNAL_KEY 'explicit A1 test key reaches both internal services'
+        Assert-Equal 'true' $values.A1_REMEDIATION_LOCAL_VALIDATION 'explicit local validation reaches both internal services'
+        Assert-Equal ($role -eq 'coordinator') $values.ContainsKey('A1_REMEDIATION_LOCAL_POLICY_PATH') 'only Coordinator reads the owner registry'
+    }
+} finally {
+    foreach ($name in $remediationEnvNames) { [Environment]::SetEnvironmentVariable($name, $remediationEnvBackup[$name], 'Process') }
+}
 $spacedWorktreeArgumentLine = ConvertTo-IsolatedWindowsArgumentLine -Arguments @(
     'C:\Repos\isolated branch stack\bim-review-coordinator\src\index.ts',
     '--port',

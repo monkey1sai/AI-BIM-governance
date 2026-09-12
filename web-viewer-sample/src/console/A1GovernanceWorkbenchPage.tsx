@@ -16,6 +16,9 @@ import { useIncomingHandoff, IncomingHandoffBanner } from "./incomingHandoff";
 import { FailureScoreboard } from "./FailureScoreboard";
 import { ClosedSessionRecovery } from "./ClosedSessionRecovery";
 import { ReadyReviewSessions } from "./ReadyReviewSessions";
+import { RemediationHistoryPanel } from "./remediation/RemediationHistoryPanel";
+import { RemediationConfirmationPanel } from "./remediation/RemediationConfirmationPanel";
+import type { HistoryPage } from "./remediation/remediationHistoryClient";
 type NativeFilePickerWindow = Window & {
   showOpenFilePicker?: (options?: {
     multiple?: boolean;
@@ -137,6 +140,30 @@ export function A1GovernanceWorkbenchPage() {
   const [actionErr, setActionErr] = useState<string | null>(null);
   const [a1Issues, setA1Issues] = useState<IssueRow[]>([]);
   const bcfIssues = useMemo(() => a1Issues.filter((issue) => issue.kind === "issue" && Boolean(issue.ifc_guid)), [a1Issues]);
+  const [remediationSelection, setRemediationSelection] = useState<{
+    id: string; runId: string | null; version: string; mode: "history" | "confirm";
+  } | null>(null);
+  const remediation = remediationSelection?.runId === runId && remediationSelection.version === state.modelVersionId
+    ? remediationSelection : null;
+  useEffect(() => { setRemediationSelection(null); }, [runId, state.modelVersionId]);
+  const updateRemediationIssue = useCallback((issue: HistoryPage["issue"]) => {
+    setA1Issues(items => items.map(item => item.id === issue.id ? { ...item, status: issue.status } : item));
+  }, []);
+  const [existingIssuesBusy, setExistingIssuesBusy] = useState(false);
+  const existingIssuesGeneration = useRef(0);
+  useEffect(() => {
+    setExistingIssuesBusy(false);
+    return () => { existingIssuesGeneration.current += 1; };
+  }, [runId, state.modelVersionId]);
+  async function loadExistingRemediationIssues() {
+    const generation = ++existingIssuesGeneration.current;
+    setExistingIssuesBusy(true); setActionErr(null); setRemediationSelection(null);
+    try {
+      const items = await governanceClient.listIssues(undefined, { kind: "issue" });
+      if (generation === existingIssuesGeneration.current) setA1Issues(items.filter(item => item.source_type === "rule_result"));
+    } catch { if (generation === existingIssuesGeneration.current) setActionErr("既有整改問題載入失敗，請重試。"); }
+    finally { if (generation === existingIssuesGeneration.current) setExistingIssuesBusy(false); }
+  }
   // F4：fetch 期間 disable 兩鈕（Excel 與 BCF 同等 loading 保護，防重送）。
   const [excelBusy, setExcelBusy] = useState(false);
   const [bcfBusy, setBcfBusy] = useState(false);
@@ -472,7 +499,7 @@ export function A1GovernanceWorkbenchPage() {
   }, [runId, dispatch]);
 
   const transitionA1Issue = useCallback(async (issue: IssueRow) => {
-    const next = issue.status === "open" ? "in_progress" : issue.status === "in_progress" ? "resolved" : null;
+    const next = issue.status === "open" ? "in_progress" : issue.status === "in_progress" && issue.source_type !== "rule_result" ? "resolved" : null;
     if (!next) return;
     setActionErr(null);
     try {
@@ -1075,6 +1102,9 @@ export function A1GovernanceWorkbenchPage() {
 
       <Panel title={t("交付", "Deliverables")} sub={t("開 Issue / 匯出 Excel / 匯出 BCF 2.1 走真實後端；BCF 需先建 Issue（step=issued/delivered）才 enable；3D 高亮在 A1 本頁 session 面板執行", "Open Issue / Export Excel / Export BCF 2.1 go through the real backend; BCF is enabled only after Issues are created (step=issued/delivered); 3D highlight runs in the A1 session panel above")} prov="asbuilt">
         <div data-testid="a1-bcf-review-panel" style={{ marginBottom: 10 }}>
+          <button type="button" disabled={existingIssuesBusy} onClick={() => { void loadExistingRemediationIssues(); }}>
+            {existingIssuesBusy ? "載入既有問題…" : "載入既有規則問題"}
+          </button>
           <div className="ec-grid" style={{ marginBottom: 8 }}>
             <Field k="BCF topics" v={bcfIssues.length > 0 ? String(bcfIssues.length) : t("尚未建立可匯出的正式 Issue", "no exportable formal issues created yet")} prov={bcfIssues.length > 0 ? "asbuilt" : "p1"} />
             <Field k="scope" v={t("只列 kind=issue 且含 ifc_guid 的 BCF topics；annotation 不計入", "only kind=issue rows with ifc_guid are listed as BCF topics; annotations are excluded")} prov="asbuilt" />
@@ -1086,7 +1116,7 @@ export function A1GovernanceWorkbenchPage() {
               <thead><tr><th>topic</th><th>rule_code</th><th>severity</th><th>status</th><th>assignee</th><th>ifc_guid</th><th>action</th></tr></thead>
               <tbody>
                 {bcfIssues.map((issue) => {
-                  const next = issue.status === "open" ? "in_progress" : issue.status === "in_progress" ? "resolved" : null;
+                  const next = issue.status === "open" ? "in_progress" : issue.status === "in_progress" && issue.source_type !== "rule_result" ? "resolved" : null;
                   return (
                     <tr key={issue.id}>
                       <td>{issue.title}</td>
@@ -1101,6 +1131,10 @@ export function A1GovernanceWorkbenchPage() {
                           onClick={() => { void transitionA1Issue(issue); }}>
                           {next ?? t("無下一步", "No next step")}
                         </Btn>
+                        {issue.source_type === "rule_result" && <>
+                          <button type="button" onClick={() => setRemediationSelection({ id: issue.id, runId, version: state.modelVersionId, mode: "history" })}>查看整改紀錄</button>
+                          <button type="button" onClick={() => setRemediationSelection({ id: issue.id, runId, version: state.modelVersionId, mode: "confirm" })}>核對整改</button>
+                        </>}
                       </td>
                     </tr>
                   );
@@ -1109,6 +1143,8 @@ export function A1GovernanceWorkbenchPage() {
             </table>
           )}
         </div>
+        {remediation?.mode === "history" && <RemediationHistoryPanel key={remediation.id} issueId={remediation.id} onIssueChanged={updateRemediationIssue}/>}
+        {remediation?.mode === "confirm" && <RemediationConfirmationPanel key={remediation.id} issueId={remediation.id} onIssueChanged={updateRemediationIssue}/>}
         <Btn data-testid="a1-step-issues" disabled={state.step === "idle" || state.step === "picked" || state.step === "running"}
           caption="POST /api/governance/issues/from-rule-run/:id" onClick={makeIssues}>{t("失敗構件建 Issue", "Create Issues for Failed Elements")}</Btn>{" "}
         {/* export 與 a1-step-issues 共用 state-machine gating（step ∈ {scored,issued,delivered} 才 enable），

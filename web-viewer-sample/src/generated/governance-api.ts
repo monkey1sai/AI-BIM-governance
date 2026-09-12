@@ -207,6 +207,57 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/issues/{issue_id}/confirm-remediation": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Confirm Issue Remediation */
+        post: operations["confirm_issue_remediation_api_issues__issue_id__confirm_remediation_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/issues/{issue_id}/remediation-history": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Remediation History */
+        get: operations["remediation_history_api_issues__issue_id__remediation_history_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/issues/{issue_id}/reopen-remediation": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Reopen Issue Remediation */
+        post: operations["reopen_issue_remediation_api_issues__issue_id__reopen_remediation_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/issues": {
         parameters: {
             query?: never;
@@ -599,6 +650,34 @@ export interface components {
              */
             interpret_mode: "deterministic" | "semantic" | "auto";
         };
+        /** RemediationBody */
+        RemediationBody: {
+            /** Expected Revision */
+            expected_revision: number;
+            /** Revised Model Version Id */
+            revised_model_version_id: string;
+            /** Revised Run Id */
+            revised_run_id: string;
+            /** Revised Result Id */
+            revised_result_id: string;
+            /** Idempotency Key */
+            idempotency_key: string;
+            /**
+             * Note
+             * @default
+             */
+            note: string;
+        };
+        /** ReopenBody */
+        ReopenBody: {
+            /** Expected Revision */
+            expected_revision: number;
+            /**
+             * Note
+             * @default
+             */
+            note: string;
+        };
         /** RuleRunRequest */
         RuleRunRequest: {
             /** Ifc Source Path */
@@ -980,6 +1059,110 @@ export interface operations {
             cookie?: never;
         };
         requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    confirm_issue_remediation_api_issues__issue_id__confirm_remediation_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                issue_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RemediationBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    remediation_history_api_issues__issue_id__remediation_history_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path: {
+                issue_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    reopen_issue_remediation_api_issues__issue_id__reopen_remediation_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                issue_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReopenBody"];
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {

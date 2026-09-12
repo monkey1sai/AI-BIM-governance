@@ -35,6 +35,7 @@ export interface RuleRunSourceContext {
 }
 
 export interface RuleRunSourceMetadata {
+  tenant_id?: string;
   source_kind: "minio_ifc_ready";
   ifc_ready_job_id: string;
   idempotency_key: string;

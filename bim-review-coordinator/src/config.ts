@@ -22,6 +22,10 @@ export interface CoordinatorConfig {
   host: string;
   /** Explicit, non-production, loopback-only report preview; not user authentication. */
   validationReportSupervisorPreview?: boolean;
+  /** Independent default-off local mutation validation, never report-preview authority. */
+  remediationLocalValidation?: boolean;
+  remediationLocalPolicyPath?: string;
+  remediationInternalKey?: string;
   port: number;
   coordinatorPublicBaseUrl: string;
   conversionApiBase: string;
@@ -483,6 +487,14 @@ export function loadConfig(overrides: Partial<CoordinatorConfig> = {}): Coordina
       if (value === "true") return true;
       throw new Error("VALIDATION_REPORT_SUPERVISOR_PREVIEW must be true or false.");
     })(),
+    remediationLocalValidation: (() => {
+      const value = process.env.A1_REMEDIATION_LOCAL_VALIDATION;
+      if (value === undefined || value === "false") return false;
+      if (value === "true") return true;
+      throw new Error("A1_REMEDIATION_LOCAL_VALIDATION must be true or false.");
+    })(),
+    remediationLocalPolicyPath: process.env.A1_REMEDIATION_LOCAL_POLICY_PATH,
+    remediationInternalKey: process.env.A1_REMEDIATION_INTERNAL_KEY,
     coordinatorPublicBaseUrl,
     conversionApiBase: conversionApiBaseFromEnv(),
     // CH-D：kit-manager-api base（forward-only proxy 用）。docker compose 顯式設 host.docker.internal:8010；
@@ -590,6 +602,14 @@ export function loadConfig(overrides: Partial<CoordinatorConfig> = {}): Coordina
       (merged.validationReportSupervisorPreview &&
        (process.env.NODE_ENV === "production" || !["127.0.0.1", "::1"].includes(merged.host)))) {
     throw new Error("Supervisor report preview requires non-production and an explicit loopback HOST.");
+  }
+  if (typeof merged.remediationLocalValidation !== "boolean" || (merged.remediationLocalValidation &&
+      (process.env.NODE_ENV === "production" || !["127.0.0.1", "::1"].includes(merged.host) ||
+       !merged.remediationLocalPolicyPath || !path.isAbsolute(merged.remediationLocalPolicyPath) ||
+       Buffer.byteLength(merged.remediationInternalKey ?? "") < 32 ||
+       !["127.0.0.1", "localhost", "[::1]"].includes(new URL(merged.viewerPublicBaseUrl).hostname) ||
+       new URL(merged.viewerPublicBaseUrl).protocol !== "http:"))) {
+    throw new Error("Local remediation validation requires non-production loopback, an absolute policy path and internal key.");
   }
   // 下限是安全保護（防忙迴圈連打 MinIO），必須在 overrides 合併後夾值，
   // 否則 loadConfig({minioWatchIntervalSeconds: 3}) 會繞過 env 路徑的 Math.max。
