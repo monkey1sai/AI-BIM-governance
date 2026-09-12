@@ -47,6 +47,7 @@ import { publishConversionValidation } from "./services/conversionValidationPubl
 import type { ApprovedPurposeScope } from "./services/conversionValidationFacts.js";
 import { registerConversionValidationReports } from "./routes/conversionValidationReports.js";
 import type { ValidationReportAccess } from "./services/validationReportAccess.js";
+import { createLocalSupervisorReportAccess } from "./services/localSupervisorReportAccess.js";
 import { WatcherIntakeRegistry } from "./services/watcherIntakeRegistry.js";
 import { resolveReadyRenderBundle } from "./services/readyModelResolver.js";
 import {
@@ -776,6 +777,9 @@ export function createCoordinatorApp(
   options: CreateCoordinatorAppOptions = {},
 ): CoordinatorApp {
   const config = loadConfig(overrides);
+  if (config.validationReportSupervisorPreview && options.validationReportAccess) {
+    throw new Error("Supervisor report preview cannot be combined with a report authority adapter.");
+  }
   const app = express();
   const governanceLibraryWorkflow = new GovernanceLibraryWorkflow(
     new GovernanceLibraryHttpAdapter(),
@@ -784,6 +788,8 @@ export function createCoordinatorApp(
     new Set([...config.corsOrigins, new URL(config.viewerPublicBaseUrl).origin]),
   );
   const server = http.createServer(app);
+  const validationReportAccess = config.validationReportSupervisorPreview
+    ? createLocalSupervisorReportAccess(() => server.address()) : options.validationReportAccess;
   const io = new Server(server, {
     cors: {
       origin: corsOrigins,
@@ -3267,7 +3273,8 @@ export function createCoordinatorApp(
     });
   });
 
-  registerConversionValidationReports(app, { ledger: conversionLedger, access: options.validationReportAccess });
+  registerConversionValidationReports(app, { ledger: conversionLedger, access: validationReportAccess,
+    localSupervisorPreview: config.validationReportSupervisorPreview });
 
   // minio-closed-loop-phase1 Task 3：讀持久 ConversionLedger；唯讀 GET，無 auth（照既有
   // /api/external/ifc-ready 模式）。插在 /api/external/ifc-ready 之後、/:jobId 之前（避免 param 吃掉）。

@@ -19,7 +19,7 @@ export interface ValidationReport {
 export interface HistoryItem {recordId:string;readyModelId:string;modelVersionId:string;sourceName:string;validatedAt:string}
 export interface ValidationHistory {items:HistoryItem[];total:number;nextOffset:number|null}
 export interface ReportModel {readyModelId:string;sourceName:string;modelVersionId:string}
-export interface ReportModels {items:ReportModel[];total:number;nextOffset:number|null}
+export interface ReportModels {items:ReportModel[];total:number;nextOffset:number|null;accessMode?:"local-supervisor-preview"}
 export class ReportHttpError extends Error { constructor(readonly status:number) { super("Report request failed"); } }
 async function read<T>(path: string, signal: AbortSignal | undefined, consume: (response: Response) => Promise<T>, accept: string): Promise<T> {
   const controller = new AbortController();

@@ -24,6 +24,7 @@ function stillAuthorized(access: ValidationReportDecision) {
 export function registerConversionValidationReports(app: Express, dependencies: {
   ledger: Pick<ConversionLedger, "listValidationRecords">;
   access?: ValidationReportAccess;
+  localSupervisorPreview?: boolean;
 }): void {
   const get = (path: string, handler: (request: Request, response: Response) => Promise<void>) => {
     app.get(path, (request, response) => {
@@ -40,7 +41,7 @@ export function registerConversionValidationReports(app: Express, dependencies: 
   get("/api/conversion/validation-models", async (request, response) => {
     const query = pagination(request);
     if (!query) { response.status(400).json({ detail: "Invalid report request." }); return; }
-    const access = await resolveValidationReportAccess(dependencies.access, request, { format: "models" });
+    const access = await resolveValidationReportAccess(dependencies.access, request, { format: "models" }, dependencies.localSupervisorPreview);
     const items = [...new Set(access.sources.map(source => source.readyModelId))].flatMap(readyModelId => {
       const records = dependencies.ledger.listValidationRecords(readyModelId)
         .filter(record => reportSourceAllowed(access, record))
@@ -50,14 +51,15 @@ export function registerConversionValidationReports(app: Express, dependencies: 
       return [{ readyModelId, sourceName: dto.source.name, modelVersionId: dto.modelVersionId }];
     }).sort((a, b) => a.readyModelId.localeCompare(b.readyModelId));
     stillAuthorized(access);
-    response.json(page(items, query));
+    response.json({ ...page(items, query), ...(access.actorKind === "local_supervisor_preview"
+      ? { accessMode: "local-supervisor-preview" } : {}) });
   });
   get("/api/conversion/records/:readyModelId/validations", async (request, response) => {
     const query = pagination(request), readyModelId = request.params.readyModelId;
     if (!query || typeof readyModelId !== "string" || !readyModelId || readyModelId.length > 2048) {
       response.status(400).json({ detail: "Invalid report request." }); return;
     }
-    const access = await resolveValidationReportAccess(dependencies.access, request, { readyModelId, format: "history" });
+    const access = await resolveValidationReportAccess(dependencies.access, request, { readyModelId, format: "history" }, dependencies.localSupervisorPreview);
     // Authenticate first; avoid consulting any record outside the allowed ready identities.
     const records = access.sources.some(source => source.readyModelId === readyModelId)
       ? dependencies.ledger.listValidationRecords(readyModelId).filter(record => reportSourceAllowed(access, record)) : [];
@@ -80,7 +82,7 @@ export function registerConversionValidationReports(app: Express, dependencies: 
       response.status(400).json({ detail: "Invalid report request." }); return;
     }
     const access = await resolveValidationReportAccess(dependencies.access, request,
-      { readyModelId, recordId, format: format as "json" | "csv" | "pdf" });
+      { readyModelId, recordId, format: format as "json" | "csv" | "pdf" }, dependencies.localSupervisorPreview);
     const record = access.sources.some(source => source.readyModelId === readyModelId)
       ? dependencies.ledger.listValidationRecords(readyModelId).find(item => item.recordId === recordId && reportSourceAllowed(access, item))
       : undefined;

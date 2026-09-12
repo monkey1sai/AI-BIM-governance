@@ -11,6 +11,7 @@ const failure = (error: unknown) => error instanceof ReportHttpError && error.st
 
 export function PurposeReportPage() {
   const [models, setModels] = useState<ReportModel[]>([]);
+  const [localPreview, setLocalPreview] = useState(false);
   const [modelsOffset, setModelsOffset] = useState(0);
   const [modelsNextOffset, setModelsNextOffset] = useState<number|null>(null);
   const [modelsBusy, setModelsBusy] = useState(true);
@@ -39,10 +40,12 @@ export function PurposeReportPage() {
   useEffect(() => {
     const controller = new AbortController();
     setModelsBusy(true); setModelsError("");
+    setLocalPreview(false);
     validationReportClient.getModels(modelsOffset, controller.signal).then(result => {
       if (!controller.signal.aborted) {
         setModels(previous => modelsOffset === 0 ? result.items : [...previous, ...result.items.filter(item => !previous.some(old => old.readyModelId === item.readyModelId))]);
         setModelsNextOffset(result.nextOffset);
+        setLocalPreview(result.accessMode === "local-supervisor-preview");
       }
     }).catch(error => { if (!controller.signal.aborted) setModelsError(failure(error)); })
       .finally(() => { if (!controller.signal.aborted) setModelsBusy(false); });
@@ -140,6 +143,11 @@ export function PurposeReportPage() {
   return <main className="purpose-report" data-prov="asbuilt">
     <header><div><p className="purpose-report-kicker">模型品質與可追溯性</p><h1>用途驗證報表</h1>
       <p>依驗證紀錄確認模型適用範圍；閱讀報表不會改變 3D 模型。</p></div><a href="#pipeline">返回模型資料</a></header>
+    {localPreview && <aside className="purpose-report-access" aria-label="主管暫行驗證權限">
+      <strong>主管預設驗證權限 · 僅本機</strong>
+      <p>僅可閱讀及下載許良宇圖書館指定版本的驗證報表。這是暫行本機預覽，未驗證公司登入身份。</p>
+      <p>版本 24e598ab-be3d-4dbb-a1aa-60b0ba610618 · 不含模型變更或 3D 操作權限。</p>
+    </aside>}
     <section className="purpose-report-picker" aria-label="選擇驗證紀錄">
       {modelsBusy && <p role="status">正在載入模型清單…</p>}
       {modelsError && <p role="alert">{modelsError} <button onClick={() => setModelRetry(n=>n+1)}>重試模型清單</button></p>}

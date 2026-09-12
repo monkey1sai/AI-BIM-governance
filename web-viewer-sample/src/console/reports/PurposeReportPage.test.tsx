@@ -39,6 +39,19 @@ function transport(override?:(url:string)=>Promise<Response>|undefined){
 }
 async function selected(){await mount();await select("模型與版本","mw_1");await select("驗證紀錄","report_1");}
 describe("human purpose report",()=>{
+ it("labels local supervisor preview from the authorized catalog and clears it on failure",async()=>{
+ let fail=false;
+ transport(u=>u.includes("validation-models?")?Promise.resolve(fail?json({},503):json({...models,accessMode:"local-supervisor-preview"})):undefined);
+ await mount();
+ expect(host.querySelector('aside[aria-label="主管暫行驗證權限"]')?.textContent).toContain("未驗證公司登入身份");
+ expect(host.textContent).toContain("24e598ab-be3d-4dbb-a1aa-60b0ba610618");
+ fail=true;await click("載入更多模型紀錄");
+ expect(host.querySelector('aside[aria-label="主管暫行驗證權限"]')).toBeNull();
+ expect(host.textContent).toContain("報表服務或來源授權目前無法使用");
+ });
+ it("does not label an ordinary authority response as local preview",async()=>{
+ transport();await mount();expect(host.querySelector('aside[aria-label="主管暫行驗證權限"]')).toBeNull();
+ });
  it("cancels an in-progress PDF and discards its late bytes",async()=>{
  let resolve!:(r:Response)=>void;
  transport(u=>u.endsWith("?format=pdf")?new Promise(r=>{resolve=r;}):undefined);

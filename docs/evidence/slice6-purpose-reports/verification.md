@@ -1,7 +1,8 @@
 # 第六刀用途報表驗證紀錄
 
 日期：2026-09-12。Baseline：`e423eee7f6d096f3c00aedddee31506ffcaa0dad`（第五刀 PR #824 已合併）。
-本紀錄是功能與拒絕邊界的實測，**不是正式操作者授權或全刀完成證明**。
+本紀錄保留初次 synthetic contract 驗證，末段補記 owner 後續授權的主管本機預覽。
+兩者均不代表正式 SSO／來源 ACL、Kit 或完整設計基準驗收。
 
 ## 來源與驗證用途
 
@@ -61,3 +62,35 @@ fixture kind=`report_contract_fixture`，`productionAuthorizationVerified=false`
 - 沒有部署、正式 isolated branch stack、Kit first frame／Stage／DataChannel／ACK 證據；本刀不宣稱真 3D 驗收。
 
 PR preflight／遠端 CI／exact-head review 以後續 PR 的當輪結果為準，不由此文件推論通過。
+
+## Owner 授權後：主管預設權限驗證
+
+2026-09-12 12:45–12:51 UTC，owner 接受暫行主管權限，正式身份／來源 ACL 介接延期。
+本輪使用新 `localSupervisorReportAccess` 實作及 app 啟動接線，沒有注入 synthetic grant。
+權限固定許良宇來源五元組、唯讀、預設關閉、僅 non-production loopback；詳 API 契約。
+
+- 啟用程序 `run_20260912_124553_2b45d6`，loopback `64953`，fixture kind 仍為
+  `report_contract_fixture`，`accessMode=local-supervisor-preview`，正式身份驗證 false。
+- 由真 HTTP 重新下載上述同一 record：PDF 328 頁／677143 bytes／19.89 秒；
+  全部 6770／46／1181 GUID、CSV 解碼及 PDF JSON 附件相等。輸出與 ledger SHA256 均與上表相同。
+  證據在本機 root 的 `slice6-supervisor-exports-01/evidence.json`。
+- Codex App in-app browser 選模型／歷史，觀察「主管預設驗證權限 · 僅本機」、
+  固定版本與「未驗證公司登入身份」，CSV／PDF 均顯示已交給瀏覽器下載。
+  1440×900、1920×1080 main scrollWidth 沒有超過 clientWidth。
+- `report-supervisor-1440.png`、`report-supervisor-1920.png` 是本輪新畫面；
+  語意快照在本機 `slice6-supervisor-preview-01/browser-dom.txt`。
+- 停止預覽程序後，確認原 port 無 listener，再於同一網址以 false 重啟：
+  `run_20260912_125013_120abd`。原頁 reload 與「重試模型清單」都顯示授權服務無法使用，
+  無模型清單與主管提示，見 `report-supervisor-disabled.png`。驗證後程序已停止、viewport 已 reset。
+- 新權限測試 30 項通過，包含真 HTTP listener、production／wildcard／remote socket、
+  DNS rebinding Host、跨站／重複 Origin、proxy headers、fetch metadata、HEAD、
+  default-off、formal adapter 混用拒絕與 formal port 拒絕 preview actor。
+  合併原報表／PDF／config tests 共 105 項；Viewer 報表 31 項，build／typecheck／affected lint 通過。
+- GitNexus 1.6.9 本 worktree reindex 失敗 `Failed calling LOWER: Invalid UTF-8`；
+  index 仍 stale，保持 UNKNOWN。獨立安全 reviewer 先授予限定 unavailable-gate sign-off，
+  再審具體 source/diff/tests，未發現未解 P1/P2，接受此 HIGH 本機權限邊界交付人類審查。
+  此 review 不代替 counted human approval。
+
+本次驗證用途是證明暫行讀取權限、固定來源隔離、停用拒絕與保存報表一致性。
+本機程序／同源 XSS 可讀此固定來源的限制已揭露；正式 SSO、LAN、正式租戶及新頁 approved
+reference 仍為後续範圍，設計 `full=no`。合併以新 HEAD required checks 與合格人類審核為準。

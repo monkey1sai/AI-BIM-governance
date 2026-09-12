@@ -10,6 +10,8 @@
 .purpose-report .purpose-report-kicker { color:var(--ab-accent-text); letter-spacing:.15em; font-size:11px; }
 .purpose-report a { color:var(--ab-accent-text); white-space:nowrap; }
 .purpose-report .purpose-report-picker,.purpose-report article { margin-top:24px; padding:22px; background:var(--ab-surface); border:1px solid var(--ab-border); border-radius:12px; }
+.purpose-report .purpose-report-access { margin-top:20px; padding:16px 20px; border:1px solid var(--ab-warn); border-radius:8px; }
+.purpose-report .purpose-report-access strong { color:var(--ab-warn); font-size:14px; }
 .purpose-report label { display:block; margin:12px 0; font-size:13px; }
 .purpose-report select { display:block; width:100%; min-width:0; max-width:100%; margin-top:8px; padding:10px; color:var(--ab-text); background:var(--ab-inset); border:1px solid var(--ab-border-strong); border-radius:6px; }
 .purpose-report button { color:var(--ab-accent-text); background:var(--ab-inset); padding:9px 14px; border:1px solid var(--ab-border-accent); border-radius:6px; cursor:pointer; }

@@ -7,7 +7,7 @@ const source = z.object({
   readyModelId: opaque, sourceSha256: z.string().regex(/^[a-f0-9]{64}$/),
 }).strict();
 const decision = z.object({
-  subject: opaque, actorKind: z.literal("operator"),
+  subject: opaque, actorKind: z.enum(["operator", "local_supervisor_preview"]),
   expiresAt: z.string().datetime({ offset: true }),
   sources: z.array(source).max(1000),
 }).strict();
@@ -24,6 +24,7 @@ export interface ValidationReportTarget {
  * obtain current source-read grants from the external authority for this exact request.
  * This is an internal port, not a proposed SSO wire protocol. No local-dev, viewer lease,
  * internal service token, request roles or client-supplied source tuples imply a grant.
+ * The explicitly enabled local preview is a separate actor kind, never an SSO identity.
  */
 export type ValidationReportAccess = (
   request: Request, target: ValidationReportTarget, signal: AbortSignal,
@@ -37,6 +38,7 @@ export class ReportAccessError extends Error {
 
 export async function resolveValidationReportAccess(
   access: ValidationReportAccess | undefined, request: Request, target: ValidationReportTarget,
+  allowLocalSupervisorPreview = false,
 ): Promise<ValidationReportDecision> {
   if (!access) throw new ReportAccessError(503);
   const controller = new AbortController();
@@ -49,6 +51,7 @@ export async function resolveValidationReportAccess(
     if (value === null) throw new ReportAccessError(403);
     const parsed = decision.safeParse(value);
     if (!parsed.success || Date.parse(parsed.data.expiresAt) <= Date.now()) throw new ReportAccessError(403);
+    if (parsed.data.actorKind === "local_supervisor_preview" && !allowLocalSupervisorPreview) throw new ReportAccessError(403);
     return parsed.data;
   } catch (error) {
     if (error instanceof ReportAccessError) throw error;
