@@ -152,6 +152,7 @@ export function PipelinePage() {
         <span style={{ marginLeft: "auto", display: "flex", gap: 14 }}>
           {link("to-issues", "#issues", "Issues →")}
           {link("to-reports", "#reports", zh ? "報表 →" : "Reports →")}
+          {link("to-purpose-reports", "#purpose-reports", zh ? "用途驗證報表 →" : "Purpose validation reports →")}
         </span>
       </div>
     </div>

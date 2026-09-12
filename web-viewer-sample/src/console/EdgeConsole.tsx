@@ -32,6 +32,7 @@ import {
   VersionDiffPage,
 } from "./pages";
 import { ConversionPage } from "./ConversionPage";
+import { PurposeReportPage } from "./reports/PurposeReportPage";
 // MD 三頁合一（Task 6/7/9）：#minio 改由單一 ModelDataPage 承接（原 ConversionSchedulingPage / IntakePage /
 // MinioDataPage 三頁合併）。舊三頁本體已於 Task 9 自 pages.tsx 移除。
 import { ModelDataPage } from "./modelData/ModelDataPage";
@@ -216,6 +217,7 @@ function renderUnified(page: string): ReactElement | null {
   switch (page) {
     case "home": return <UnifiedShell page="home"><UnifiedHomePage /></UnifiedShell>;
     case "pipeline": return <UnifiedShell page="pipe"><PipelinePage /></UnifiedShell>;
+    case "purpose-reports": return <UnifiedShell page="pipe"><PurposeReportPage /></UnifiedShell>;
     case "runtime": return <UnifiedShell page="ops"><OpsPage /></UnifiedShell>;
     default: return null;
   }

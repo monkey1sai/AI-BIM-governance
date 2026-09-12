@@ -20,6 +20,8 @@ export interface KitInstanceEndpointConfig {
 
 export interface CoordinatorConfig {
   host: string;
+  /** Explicit, non-production, loopback-only report preview; not user authentication. */
+  validationReportSupervisorPreview?: boolean;
   port: number;
   coordinatorPublicBaseUrl: string;
   conversionApiBase: string;
@@ -475,6 +477,12 @@ export function loadConfig(overrides: Partial<CoordinatorConfig> = {}): Coordina
   const merged = {
     host,
     port,
+    validationReportSupervisorPreview: (() => {
+      const value = process.env.VALIDATION_REPORT_SUPERVISOR_PREVIEW;
+      if (value === undefined || value === "false") return false;
+      if (value === "true") return true;
+      throw new Error("VALIDATION_REPORT_SUPERVISOR_PREVIEW must be true or false.");
+    })(),
     coordinatorPublicBaseUrl,
     conversionApiBase: conversionApiBaseFromEnv(),
     // CH-D：kit-manager-api base（forward-only proxy 用）。docker compose 顯式設 host.docker.internal:8010；
@@ -578,6 +586,11 @@ export function loadConfig(overrides: Partial<CoordinatorConfig> = {}): Coordina
     sourceBundleReconcileIntervalMs: numberFromEnv("SOURCE_BUNDLE_RECONCILE_INTERVAL_MS", 300_000),
     ...overrides,
   };
+  if (typeof merged.validationReportSupervisorPreview !== "boolean" ||
+      (merged.validationReportSupervisorPreview &&
+       (process.env.NODE_ENV === "production" || !["127.0.0.1", "::1"].includes(merged.host)))) {
+    throw new Error("Supervisor report preview requires non-production and an explicit loopback HOST.");
+  }
   // 下限是安全保護（防忙迴圈連打 MinIO），必須在 overrides 合併後夾值，
   // 否則 loadConfig({minioWatchIntervalSeconds: 3}) 會繞過 env 路徑的 Math.max。
   // 預設 floor=10；唯一降檔入口為 MINIO_WATCH_INTERVAL_FLOOR_SECONDS（見上方註解）。
