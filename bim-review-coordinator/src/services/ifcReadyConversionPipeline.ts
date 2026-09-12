@@ -20,6 +20,7 @@ import type { CallbackOutbox, CallbackOutboxEntry } from "./callbackOutbox.js";
 import type { ConversionDispatchQueue } from "./conversionDispatchQueue.js";
 import type { ConversionLedger } from "./conversionLedger.js";
 import type { ExternalIfcReadyStore } from "./externalIfcReadyStore.js";
+import type { ValidationPublication } from "./conversionValidationPublication.js";
 import {
   downloadIfcToSharedVolume,
   type IfcDownloadResult,
@@ -100,6 +101,7 @@ export type StreamingIngestResult<TTerminalObserverResult = void> =
       outcome: Extract<IngestResult<TTerminalObserverResult>, { ok: true }>;
       conversion_status: "ready" | "failed";
       failed: boolean;
+      validation_record: ValidationPublication;
     }
   | {
       ok: false;
@@ -160,6 +162,7 @@ export type IfcReadyConversionPipelineDeps<TTerminalObserverResult = void> = {
   queue: ConversionDispatchQueue;
   outbox: CallbackOutbox;
   ledger: ConversionLedger;
+  publishValidation?: (job: IfcReadyIntakeJob, result: StreamingConversionResult) => Promise<ValidationPublication>;
   download?: (
     sourceRef: string,
     jobId: string,
@@ -200,6 +203,7 @@ export class IfcReadyConversionPipeline<TTerminalObserverResult = void> {
   private readonly queue: ConversionDispatchQueue;
   private readonly outbox: CallbackOutbox;
   private readonly ledger: ConversionLedger;
+  private readonly publishValidation: IfcReadyConversionPipelineDeps<TTerminalObserverResult>["publishValidation"];
   private readonly download: NonNullable<
     IfcReadyConversionPipelineDeps<TTerminalObserverResult>["download"]
   >;
@@ -221,6 +225,7 @@ export class IfcReadyConversionPipeline<TTerminalObserverResult = void> {
     this.queue = deps.queue;
     this.outbox = deps.outbox;
     this.ledger = deps.ledger;
+    this.publishValidation = deps.publishValidation;
     this.download = deps.download ?? downloadIfcToSharedVolume;
     this.config = deps.config;
     this.onConversionTerminal = deps.onConversionTerminal;
@@ -454,17 +459,12 @@ export class IfcReadyConversionPipeline<TTerminalObserverResult = void> {
           status: ledgerStatus,
         },
         ledgerNow,
-      );
-      this.ledger.recordCallbackOutcome(
-        job.idempotency_key,
         {
-          status: ledgerStatus,
           ...(normalizedStatus === "ready"
             ? { usdc_key: report.artifacts?.usdc_ref ?? null }
             : {}),
           coverage_report: qualitySummary ?? report.artifact_summary ?? null,
         },
-        ledgerNow,
       );
     } catch {
       /* ledger 回填失敗不卡 conversion result ingest / callback outbox */
@@ -565,11 +565,23 @@ export class IfcReadyConversionPipeline<TTerminalObserverResult = void> {
     if (!outcome.ok) {
       return { ok: false, status: outcome.status, detail: outcome.detail };
     }
+    let validationRecord: ValidationPublication = { status: "not_recorded", reason: "source_not_ready" };
+    if (!failed && outcome.ifc_ready_job) {
+      validationRecord = { status: "not_recorded", reason: "publisher_unavailable" };
+      try {
+        if (this.publishValidation) {
+          validationRecord = await this.publishValidation(structuredClone(outcome.ifc_ready_job), structuredClone(result));
+        }
+      } catch {
+        // Report publication never invalidates the already completed conversion/outbox.
+      }
+    }
     return {
       ok: true,
       outcome,
       conversion_status: failed ? "failed" : "ready",
       failed,
+      validation_record: validationRecord,
     };
   }
 

@@ -43,6 +43,8 @@ import {
 import { type ObjectStorePort } from "./services/minioObjectStore.js";
 import { ConversionDispatchQueue } from "./services/conversionDispatchQueue.js";
 import { ConversionLedger, publicConversionRecord } from "./services/conversionLedger.js";
+import { publishConversionValidation } from "./services/conversionValidationPublication.js";
+import type { ApprovedPurposeScope } from "./services/conversionValidationFacts.js";
 import { WatcherIntakeRegistry } from "./services/watcherIntakeRegistry.js";
 import { resolveReadyRenderBundle } from "./services/readyModelResolver.js";
 import {
@@ -725,6 +727,8 @@ export interface CoordinatorApp {
 }
 
 export interface CreateCoordinatorAppOptions {
+  /** Trusted owner-approved configuration; never populated from HTTP or converter metadata. */
+  conversionValidationScopes?: readonly ApprovedPurposeScope[];
   /**
    * Pre-built structured logger. Tests use this to write into a tmp dir and
    * assert on records. Omit to let the app build one against $LOG_ROOT or the
@@ -1391,6 +1395,11 @@ export function createCoordinatorApp(
     queue: conversionDispatchQueue,
     outbox: callbackOutbox,
     ledger: conversionLedger,
+    publishValidation: (job, result) => publishConversionValidation({
+      store: externalIfcReadyStore, ledger: conversionLedger, jobId: job.ifc_ready_job_id, result,
+      conversionOrigin: config.streamingConversionApiBase, publicArtifactOrigin: conversionPublicArtifactOrigin,
+      approvedScopes: options.conversionValidationScopes,
+    }),
     config: {
       storageRoot: config.storageRoot,
       storageHostRoot: config.storageHostRoot,

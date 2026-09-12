@@ -48,6 +48,8 @@ from conversion_authority import (
     try_count_eligible_ifc_products,
 )
 from ifc_openusd_identity_author import IDENTITY_PROFILE, IfcOpenUsdIdentityAuthor
+from conversion_source_fingerprint import capture_source
+from conversion_validation_facts import attach_conversion_validation
 
 
 # --- #489 SEC-001 / L1-COR-004:converter process-tree containment ------------
@@ -2261,6 +2263,14 @@ class Ifc2UsdcPowershellConverterAdapter:
             validated_hoops_main, validated_hoops_identity = self._preflight_with_hoops_validation()
 
         ifc_path = self._resolve_local_ifc(ifc_ready_event)
+        try:
+            source_fingerprint = capture_source(ifc_path)
+        except (OSError, ValueError) as exc:
+            raise ConversionAuthorityError(
+                "source_fingerprint_unavailable",
+                "Conversion source provenance could not be verified.",
+            ) from exc
+        source_version = job.get("model_version_id") or ifc_ready_event.get("model_version_id")
         output_dir = Path(output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
         model_path = output_dir / "model.usdc"
@@ -2276,6 +2286,14 @@ class Ifc2UsdcPowershellConverterAdapter:
                 or None,
             ).author()
             paths = authored["paths"]
+            try:
+                attach_conversion_validation(paths["metadata_path"], ifc_path, paths["model_path"],
+                                             paths["mapping_path"], source_fingerprint, source_version)
+            except (OSError, ValueError) as exc:
+                raise ConversionAuthorityError(
+                    "source_fingerprint_unavailable",
+                    "Conversion source provenance could not be verified.",
+                ) from exc
             return {
                 "model_path": paths["model_path"],
                 "mapping_path": paths["mapping_path"],
@@ -2337,6 +2355,14 @@ class Ifc2UsdcPowershellConverterAdapter:
             metadata_path=metadata_path,
         )
 
+        try:
+            attach_conversion_validation(metadata_path, ifc_path, model_path, mapping_path,
+                                         source_fingerprint, source_version)
+        except (OSError, ValueError) as exc:
+            raise ConversionAuthorityError(
+                "source_fingerprint_unavailable",
+                "Conversion source provenance could not be verified.",
+            ) from exc
         return {
             "model_path": model_path,
             "mapping_path": mapping_path,
@@ -3108,13 +3134,11 @@ class Ifc2UsdcPowershellConverterAdapter:
     ) -> dict[str, Any]:
         """Replace self-referential coverage with an independent IfcProduct denominator.
 
-        If the IFC source cannot be counted, keep converter-emitted numbers rather
-        than inventing 0.0 / 1.0.
+        If the IFC source cannot be counted, clear converter-emitted denominators
+        and ratios and mark coverage as not_evaluable rather than claiming a pass.
         """
         updated = dict(quality)
         eligible = try_count_eligible_ifc_products(ifc_path)
-        if eligible is None:
-            return updated
         mapped_count = _int_metric(updated.get("mapped_count"))
         coverage = compute_coverage_quality(
             mapped_count=mapped_count,
