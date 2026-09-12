@@ -43,7 +43,7 @@ DB_PATH = os.environ.get("GOV_DB_PATH", os.path.join(SERVICE_ROOT, "storage", "g
 app = FastAPI(title="governance-service", version="0.1.0")
 store = Store(DB_PATH)
 
-# 已完成 run 的記憶體快取（供 Excel 匯出；亦可由 DB 重建）。
+# 保留舊測試相容入口；執行與匯出不再寫入或讀取此非權威快取。
 _RUN_CACHE: dict[str, RuleRunResult] = {}
 
 # A2 model-version diff（獨立 router 模組，掛入同一 governance-service app）。
@@ -365,7 +365,6 @@ def _execute(run_id: str, ifc_path: str, rule_set_path: Optional[str], mapping_p
                 run.warnings.append("element_mapping 為 fake/smoke：usd_prim_path 不視為真實覆蓋率")
             else:
                 join_usd_prim_paths(run.results, mapping)
-        _RUN_CACHE[run_id] = run
         store.complete_run(run_id, run)
     except Exception as exc:  # noqa: BLE001 - 失敗誠實標記，不假裝 pass
         store.fail_run(run_id, str(exc))
@@ -396,10 +395,10 @@ def get_rule_run_results(run_id: str, status: Optional[str] = Query(None)):
 
 
 def _rebuild_run_from_store(run_id: str) -> RuleRunResult | None:
-    """F3（2026-07-10，凍結例外已登記手冊 §1.1）：_RUN_CACHE miss 時由 DB 重建匯出用 RuleRunResult。
+    """從持久化成功結果重建匯出，記憶體快取不具權威。
 
-    僅重建 succeeded run（未完成/失敗不匯出半成品）。rule_results 表未持久化
-    ifc_type/ifc_name → 該兩欄以空值重建（誠實，不捏造；Excel 對應欄留白）。
+    僅重建 succeeded run（未完成/失敗不匯出半成品）。
+    舊資料缺少 ifc_type/ifc_name 時留白，不捏造；新資料保留原始顯示欄位。
     """
     row = store.get_run(run_id)
     if not row or row.get("status") != "succeeded":
@@ -419,8 +418,8 @@ def _rebuild_run_from_store(run_id: str) -> RuleRunResult | None:
     results = [
         RuleResult(
             ifc_guid=r.get("ifc_guid"),
-            ifc_type="",
-            ifc_name=None,
+            ifc_type=r.get("ifc_type") or "",
+            ifc_name=r.get("ifc_name"),
             rule_code=r.get("rule_code") or "",
             severity=r.get("severity") or "",
             status=r.get("status") or "",
@@ -442,6 +441,7 @@ def _rebuild_run_from_store(run_id: str) -> RuleRunResult | None:
         unique_elements=int(summary.get("unique_elements") or 0),
         results=results,
         warnings=list(summary.get("warnings") or []),
+        rule_content_digest=summary.get("rule_content_digest"),
     )
 
 
@@ -451,7 +451,7 @@ def export_rule_run(run_id: str, fmt: str = Query("excel")):
         raise HTTPException(status_code=400, detail="rule-run 匯出僅 Excel；BCF 匯出請先 from-rule-run 建 issue，再 GET /api/bcf/export")
     if fmt != "excel":
         raise HTTPException(status_code=400, detail="only fmt=excel is supported")
-    run = _RUN_CACHE.get(run_id) or _rebuild_run_from_store(run_id)  # F3：重啟/多 worker 後由 DB 重建
+    run = _rebuild_run_from_store(run_id)
     if run is None:
         row = store.get_run(run_id)
         if not row:

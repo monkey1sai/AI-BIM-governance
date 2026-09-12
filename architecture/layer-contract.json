@@ -431,6 +431,11 @@
         },
         {
           "match": "exact",
+          "value": "rule_engine.rule_identity",
+          "layer": "domain"
+        },
+        {
+          "match": "exact",
           "value": "search.proofs",
           "layer": "domain"
         },

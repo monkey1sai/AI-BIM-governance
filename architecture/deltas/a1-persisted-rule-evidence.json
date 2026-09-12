@@ -1,0 +1,46 @@
+{
+  "$schema": "../architecture-delta.schema.json",
+  "schema_version": "ai-bim-architecture-delta/v1",
+  "change_id": "a1-persisted-rule-evidence",
+  "lane": "G",
+  "summary": "Persist the first committed terminal rule-run, definition identity and display fields; export only saved evidence and add optional Issue revision checks.",
+  "created_on": "2026-09-12",
+  "affected_services": ["governance-service"],
+  "affected_surfaces": [
+    "governance-service/app.py",
+    "governance-service/db.py",
+    "governance-service/rule_engine",
+    "governance-service/issues/api.py",
+    "governance-service/issues/store.py",
+    "architecture/layer-contract.json"
+  ],
+  "added_dependency_edges": [],
+  "removed_dependency_edges": [],
+  "public_contract_changes": [
+    {
+      "contract": "governance rule-run summary/results and Issue transition",
+      "change_type": "additive",
+      "description": "Add optional rule_content_digest, persisted ifc_type/ifc_name, Issue revision and optional strict expected_revision. Preserve routes and callers that omit revision."
+    }
+  ],
+  "data_ownership_changes": [],
+  "state_machine_changes": [
+    {
+      "machine": "governance-rule-run",
+      "change_type": "behavioral",
+      "description": "Only queued/running may commit a terminal state. First committed terminal state and result batch win atomically; stale writes cannot replace saved evidence."
+    },
+    {
+      "machine": "governance-issue",
+      "change_type": "additive",
+      "description": "Increment revision atomically with successful status transition and audit; optional expected_revision rejects stale writes without changing the allowed transitions."
+    }
+  ],
+  "exceptions": [],
+  "approval": {
+    "required": false,
+    "status": "not-required",
+    "approved_by": null,
+    "approved_at": null
+  }
+}

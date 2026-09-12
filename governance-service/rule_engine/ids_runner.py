@@ -10,6 +10,7 @@ import os
 from typing import Any
 
 from .models import RuleResult, RuleRunResult
+from .rule_identity import ids_snapshot
 
 
 def open_ids(ids_path: str):
@@ -54,6 +55,7 @@ def _reset_ids_residual_state(specs: Any) -> None:
 
 def run_ids(model: Any, specs: Any, label: str = "ids") -> RuleRunResult:
     """對已開啟的 model 跑已載入的 IDS specs，回傳 RuleRunResult。"""
+    specs, rule_content_digest = ids_snapshot(specs)
     # A1-IDS-REUSE-FALSEPASS：先清殘留再 validate，杜絕重用 specs 物件跨 model 的假通過。
     _reset_ids_residual_state(specs)
     specs.validate(model)
@@ -166,6 +168,7 @@ def run_ids(model: Any, specs: Any, label: str = "ids") -> RuleRunResult:
         unique_elements=unique_elements,
         results=results,
         warnings=["規則來源：buildingSMART IDS（ifctester）"],
+        rule_content_digest=rule_content_digest,
     )
 
 

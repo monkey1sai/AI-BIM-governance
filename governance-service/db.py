@@ -30,6 +30,8 @@ CREATE TABLE IF NOT EXISTS rule_results(
   id TEXT PRIMARY KEY,
   rule_run_id TEXT,
   ifc_guid TEXT,
+  ifc_type TEXT,
+  ifc_name TEXT,
   usd_prim_path TEXT,
   rule_code TEXT,
   severity TEXT,
@@ -55,6 +57,14 @@ def _ensure_rule_run_columns(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE rule_runs ADD COLUMN source_metadata_json TEXT")
 
 
+def _ensure_rule_result_columns(conn: sqlite3.Connection) -> None:
+    columns = {row["name"] for row in conn.execute("PRAGMA table_info(rule_results)").fetchall()}
+    if "ifc_type" not in columns:
+        conn.execute("ALTER TABLE rule_results ADD COLUMN ifc_type TEXT")
+    if "ifc_name" not in columns:
+        conn.execute("ALTER TABLE rule_results ADD COLUMN ifc_name TEXT")
+
+
 class Store:
     def __init__(self, db_path: str):
         self.db_path = db_path
@@ -63,7 +73,9 @@ class Store:
             os.makedirs(parent, exist_ok=True)
         with self._conn() as conn:
             conn.executescript(_SCHEMA)
+            conn.execute("BEGIN IMMEDIATE")
             _ensure_rule_run_columns(conn)
+            _ensure_rule_result_columns(conn)
 
     def _conn(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.db_path)
@@ -87,22 +99,31 @@ class Store:
 
     def mark_running(self, run_id: str) -> None:
         with self._conn() as conn:
-            conn.execute("UPDATE rule_runs SET status='running' WHERE id=?", (run_id,))
+            conn.execute(
+                "UPDATE rule_runs SET status='running' WHERE id=? AND status='queued'",
+                (run_id,),
+            )
 
     def complete_run(self, run_id: str, run: RuleRunResult) -> None:
         with self._conn() as conn:
-            conn.execute(
-                "UPDATE rule_runs SET status='succeeded', finished_at=?, score=?, summary_json=? WHERE id=?",
+            cur = conn.execute(
+                "UPDATE rule_runs SET status='succeeded', finished_at=?, score=?, summary_json=?"
+                " WHERE id=? AND status IN ('queued', 'running')",
                 (_now(), run.score, json.dumps(run.summary_dict(), ensure_ascii=False), run_id),
             )
+            # First terminal write wins; stale completion must not append results.
+            if cur.rowcount == 0:
+                return
             conn.executemany(
-                "INSERT INTO rule_results(id, rule_run_id, ifc_guid, usd_prim_path, rule_code, severity, status, message, evidence_json)"
-                " VALUES(?,?,?,?,?,?,?,?,?)",
+                "INSERT INTO rule_results(id, rule_run_id, ifc_guid, ifc_type, ifc_name, usd_prim_path, rule_code, severity, status, message, evidence_json)"
+                " VALUES(?,?,?,?,?,?,?,?,?,?,?)",
                 [
                     (
                         _new_id("res"),
                         run_id,
                         r.ifc_guid,
+                        r.ifc_type,
+                        r.ifc_name,
                         r.usd_prim_path,
                         r.rule_code,
                         r.severity,
@@ -117,7 +138,8 @@ class Store:
     def fail_run(self, run_id: str, error: str) -> None:
         with self._conn() as conn:
             conn.execute(
-                "UPDATE rule_runs SET status='failed', finished_at=?, summary_json=? WHERE id=?",
+                "UPDATE rule_runs SET status='failed', finished_at=?, summary_json=?"
+                " WHERE id=? AND status IN ('queued', 'running')",
                 (_now(), json.dumps({"error": error}, ensure_ascii=False), run_id),
             )
 

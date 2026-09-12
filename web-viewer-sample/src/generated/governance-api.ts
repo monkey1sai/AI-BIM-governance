@@ -629,6 +629,8 @@ export interface components {
             to_status: string;
             /** Note */
             note?: string | null;
+            /** Expected Revision */
+            expected_revision?: number | null;
         };
         /** ValidationError */
         ValidationError: {

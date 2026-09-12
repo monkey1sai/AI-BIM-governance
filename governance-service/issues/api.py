@@ -8,7 +8,7 @@ import os
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from .store import ISSUE_STATUSES, IssueBindingError, IssueStore, TransitionError
 
@@ -46,6 +46,7 @@ class IssueCreate(BaseModel):
 class TransitionBody(BaseModel):
     to_status: str
     note: Optional[str] = None
+    expected_revision: Optional[int] = Field(default=None, strict=True, ge=0)
 
 
 @router.post("/api/issues", status_code=201)
@@ -82,7 +83,9 @@ def transition_issue(issue_id: str, body: TransitionBody):
         # non-session-authorized route.
         raise HTTPException(status_code=404, detail="issue not found")
     try:
-        return store.transition(issue_id, body.to_status, body.note)
+        return store.transition(
+            issue_id, body.to_status, body.note, expected_revision=body.expected_revision,
+        )
     except KeyError:
         raise HTTPException(status_code=404, detail="issue not found")
     except TransitionError as exc:

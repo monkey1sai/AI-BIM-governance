@@ -41,7 +41,8 @@ CREATE TABLE IF NOT EXISTS issues(
   source_type TEXT,          -- 'manual' | 'rule_result' | 'diff_item' | 'a4_search'
   source_ref TEXT,
   created_at TEXT,
-  updated_at TEXT
+  updated_at TEXT,
+  revision INTEGER NOT NULL DEFAULT 0 CHECK(revision >= 0)
 );
 CREATE TABLE IF NOT EXISTS issue_events(
   id TEXT PRIMARY KEY,
@@ -142,6 +143,16 @@ def _migrate_legacy_unbound_formal_issues(conn: sqlite3.Connection) -> None:
         raise
 
 
+def _ensure_issue_revision(conn: sqlite3.Connection) -> None:
+    with conn:
+        conn.execute("BEGIN IMMEDIATE")
+        columns = {row["name"] for row in conn.execute("PRAGMA table_info(issues)")}
+        if "revision" not in columns:
+            conn.execute(
+                "ALTER TABLE issues ADD COLUMN revision INTEGER NOT NULL DEFAULT 0 CHECK(revision >= 0)"
+            )
+
+
 class TransitionError(ValueError):
     pass
 
@@ -173,6 +184,7 @@ class IssueStore:
                 if str(journal_mode).lower() != "wal":
                     raise RuntimeError(f"IssueStore requires WAL mode, got {journal_mode!r}")
                 conn.executescript(_SCHEMA)
+                _ensure_issue_revision(conn)
                 _migrate_legacy_unbound_formal_issues(conn)
                 conn.executescript(_BINDING_TRIGGERS)
 
@@ -526,25 +538,35 @@ class IssueStore:
         with self._conn() as conn:
             return [dict(r) for r in conn.execute(query, args).fetchall()]
 
-    def transition(self, issue_id: str, to_status: str, note: str | None = None) -> dict:
+    def transition(
+        self, issue_id: str, to_status: str, note: str | None = None,
+        *, expected_revision: int | None = None,
+    ) -> dict:
         if to_status not in ISSUE_STATUSES:
             raise TransitionError(f"unknown status: {to_status}")
+        if expected_revision is not None and (
+            type(expected_revision) is not int or expected_revision < 0
+        ):
+            raise TransitionError("expected_revision must be a nonnegative integer")
         conn = self._conn()
         conn.isolation_level = None  # 自行控制交易；BEGIN IMMEDIATE 序列化並發 transition
         try:
             conn.execute("PRAGMA busy_timeout=5000")
             conn.execute("BEGIN IMMEDIATE")
-            row = conn.execute("SELECT status FROM issues WHERE id=?", (issue_id,)).fetchone()
+            row = conn.execute("SELECT status, revision FROM issues WHERE id=?", (issue_id,)).fetchone()
             if row is None:
                 conn.execute("ROLLBACK")
                 raise KeyError(issue_id)
             frm = row["status"]
+            if expected_revision is not None and row["revision"] != expected_revision:
+                conn.execute("ROLLBACK")
+                raise TransitionError("stale issue revision; reload before retry")
             if to_status not in _ALLOWED.get(frm, set()):
                 conn.execute("ROLLBACK")
                 raise TransitionError(f"illegal transition {frm} -> {to_status}")
             now = _now()
             cur = conn.execute(
-                "UPDATE issues SET status=?, updated_at=? WHERE id=? AND status=?",
+                "UPDATE issues SET status=?, updated_at=?, revision=revision+1 WHERE id=? AND status=?",
                 (to_status, now, issue_id, frm),
             )
             if cur.rowcount == 0:
