@@ -1,12 +1,15 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { createHash } from "node:crypto";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ExternalIfcReadyStore } from "../src/services/externalIfcReadyStore.js";
 import { ConversionLedger } from "../src/services/conversionLedger.js";
 import type { ConversionSourceReadResult } from "../src/services/conversionSourceMetadata.js";
 import type { StreamingConversionResult } from "../src/services/streamingConversionClient.js";
 import { publishConversionValidation } from "../src/services/conversionValidationPublication.js";
+import { readConversionSourceMetadata } from "../src/services/conversionSourceMetadata.js";
+import { sanitizeArtifactIdPart } from "../src/services/streamingConversionClient.js";
 
 const roots: string[] = [];
 afterEach(() => {
@@ -38,11 +41,48 @@ function setup() {
   return { input, job, file, ledger, metadata };
 }
 describe("conversion validation publication", () => {
+  it("reads normalized Streaming evidence but durably preserves opaque worker and Unicode scope identities", async () => {
+    const f = setup();
+    Object.assign(f.job, { idempotency_key: "worker:圖書館/A::版次:一::task#1",
+      tenant_id: "租戶:甲", project_id: "圖書館/A", external_model_version_id: "版次:一" });
+    f.ledger.upsert({ ...f.ledger.get(key)!, idempotency_key: f.job.idempotency_key,
+      project_id: f.job.project_id, external_model_version_id: f.job.external_model_version_id }, time);
+    f.ledger.recordCallbackOutcome(f.job.idempotency_key, { status: "ready", usdc_key: f.input.result.usdc_ref }, time);
+    const modelVersionId = sanitizeArtifactIdPart(f.job.external_model_version_id);
+    const validation = { schemaVersion: "conversion-validation-facts/v1", validatorVersion: "conversion-facts-validator/v1",
+      validatedAt: time, sourceName: "library.ifc", sourceSha256: "a".repeat(64), modelVersionId,
+      artifacts: { usdcSha256: "b".repeat(64), mappingSha256: "c".repeat(64) },
+      inventory: { observation: "observed", expectedRenderable: 0, convertedRenderable: 0, missing: [], excluded: [] },
+      expectedElements: [], byClass: [], correspondence: [],
+      units: { ifcLengthScaleM: null, usdMetersPerUnit: null, upAxis: null }, checks: [] };
+    const bytes = Buffer.from(JSON.stringify({ source_fingerprint: { schema_version: "ifc-source-fingerprint/v1",
+      sha256: "a".repeat(64), size_bytes: 13, model_version_id: modelVersionId, observation: "before_after_match" },
+      conversion_validation: validation }));
+    const artifacts = {
+      metadata: { url: "https://publisher.test/artifacts/job_1/metadata.json", checksum_sha256: createHash("sha256").update(bytes).digest("hex") },
+      model_usdc: { url: f.input.result.usdc_ref!, checksum_sha256: "b".repeat(64) },
+      element_mapping: { url: "https://publisher.test/artifacts/job_1/element_mapping.json", checksum_sha256: "c".repeat(64) },
+    };
+    Object.assign(f.input.result, { manifest_ref: artifacts.metadata.url, element_mapping_ref: artifacts.element_mapping.url,
+      raw: { conversion_job_id: "job_1", correlation_id: "trace_1", tenant_id: sanitizeArtifactIdPart(f.job.tenant_id),
+        project_id: sanitizeArtifactIdPart(f.job.project_id), model_version_id: modelVersionId,
+        authority: "bim-streaming-server", ready: true, status: "succeeded", artifacts } });
+    const approvedScopes = [{ id: "library-scope", version: "1", purpose: "view_3d" as const,
+      sourceSha256: "a".repeat(64), modelVersionId: f.job.external_model_version_id,
+      tenantId: f.job.tenant_id, projectId: f.job.project_id, requiredGuids: ["required"] }];
+    const published = await publishConversionValidation({ ...f.input, approvedScopes, publicArtifactOrigin: "https://publisher.test",
+      readMetadata: input => readConversionSourceMetadata({ ...input, fetchImpl: async () => new Response(bytes) }) });
+    expect(published.status).toBe("stored");
+    const saved = new ConversionLedger(f.file).listValidationRecords(f.job.idempotency_key)[0];
+    expect(saved).toMatchObject({ readyModelId: f.job.idempotency_key, tenantId: "租戶:甲", projectId: "圖書館/A", modelVersionId: "版次:一" });
+    expect(saved.evidence).toEqual(validation);
+    expect(saved.purposes[0].checks).toContainEqual({ id: "required_components", state: "fail", reasonCodes: ["required_components_missing"] });
+  });
   it("persists producer observations and scope versions without replacing historical evidence", async () => {
     const f = setup(); if (!f.metadata.ok) throw new Error("fixture");
     const observedAt = "2026-09-11T23:00:00Z";
     f.metadata.facts.validation = {
-      schemaVersion: "conversion-validation-facts/v1", validatorVersion: "fixture-validator/v1",
+      schemaVersion: "conversion-validation-facts/v1", validatorVersion: "conversion-facts-validator/v1",
       validatedAt: observedAt, sourceName: "fixture.ifc", sourceSha256: "a".repeat(64), modelVersionId: "version_1",
       artifacts: { usdcSha256: "b".repeat(64), mappingSha256: "c".repeat(64) },
       inventory: { observation: "observed", expectedRenderable: 0, convertedRenderable: 0, missing: [], excluded: [] },
@@ -136,7 +176,7 @@ describe("conversion validation publication", () => {
     const f = setup(); if (!f.metadata.ok) throw new Error("fixture");
     f.metadata.facts.converterVersion = "Bearer private-sentinel";
     expect(await publishConversionValidation(f.input)).toEqual({ status: "not_recorded", reason: "record_invalid" });
-    f.metadata.facts.converterVersion = null; f.job.tenant_id = "invalid/tenant";
+    f.metadata.facts.converterVersion = null; f.job.tenant_id = "";
     expect(await publishConversionValidation(f.input)).toEqual({ status: "not_recorded", reason: "record_invalid" });
     expect(f.ledger.listValidationRecords(key)).toEqual([]);
   });

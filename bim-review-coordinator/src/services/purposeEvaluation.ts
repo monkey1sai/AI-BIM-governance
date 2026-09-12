@@ -26,7 +26,9 @@ const ordered = (values: readonly string[]): string[] => [...new Set(values)].so
 
 // Internal typed evaluator only. External schema, provenance, policy authority,
 // and access checks belong to the producer before calling this function.
-export function evaluatePurpose(
+// Frozen conversion-validation-record/v1 outcome semantics. Introduce a new
+// versioned evaluator for policy changes; retained records must keep using V1.
+export function evaluatePurposeV1(
   purpose: Purpose,
   policy: PurposePolicy | null,
   checks: readonly PurposeCheck[],
@@ -88,3 +90,5 @@ export function evaluatePurpose(
     reasonCodes: ordered(reasons), limitations: ordered(limitations),
   };
 }
+
+export const evaluatePurpose = evaluatePurposeV1;

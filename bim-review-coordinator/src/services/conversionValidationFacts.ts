@@ -1,6 +1,9 @@
 import { z } from "zod";
 import type { Purpose, PurposeCheck } from "./purposeEvaluation.js";
+import { sanitizeArtifactIdPart } from "./streamingConversionClient.js";
 const id = z.string().regex(/^[A-Za-z0-9_$.-]{1,128}$/);
+// External intake identifiers are opaque; preserve Unicode, punctuation and bytes.
+const externalId = z.string().min(1);
 const sha = z.string().regex(/^[a-f0-9]{64}$/);
 const count = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
 const text = z.string().trim().min(1).max(256);
@@ -10,7 +13,7 @@ const check = z.union([
 ]);
 export const conversionFactsSchema = z.object({
   schemaVersion: z.literal("conversion-validation-facts/v1"),
-  validatorVersion: text, validatedAt: z.string().datetime({ offset: true }),
+  validatorVersion: z.enum(["conversion-facts-validator/v1", "conversion-facts-validator/v2"]), validatedAt: z.string().datetime({ offset: true }),
   sourceSha256: sha, modelVersionId: id, sourceName: text,
   artifacts: z.object({ usdcSha256: sha, mappingSha256: sha }).strict(),
   inventory: z.object({
@@ -34,7 +37,7 @@ export const conversionFactsSchema = z.object({
   const { inventory: i, correspondence: c, byClass } = facts;
   const expected = facts.expectedElements;
   const bounds = facts.coordinateEvidence;
-  if (facts.validatorVersion === "conversion-facts-validator/v2" && !bounds &&
+  if (!bounds &&
       facts.checks.some(x => x.id === "coordinates" && ["pass", "pass_with_limits"].includes(x.state))) bad("Coordinate success requires evidence.");
   if (bounds) {
     const mapped = new Set(c?.map(x => x.guid));
@@ -68,28 +71,34 @@ export const conversionFactsSchema = z.object({
 });
 export type ConversionValidationFacts = z.infer<typeof conversionFactsSchema>;
 const purposeNames = ["view_3d", "locate_highlight", "distance_measurement", "ifc_rules"] as const;
-const requirements: Record<Purpose, readonly string[]> = {
+// Frozen semantics for conversion-validation-record/v1. New technical policy
+// semantics require a new record schema/implementation; owner scope versions are
+// independent and must never select the technical evaluator.
+const recordV1Requirements: Readonly<Record<Purpose, readonly string[]>> = Object.freeze({
   view_3d: ["source_inventory", "usd_artifact", "mesh_geometry", "coordinates", "inventory_completeness", "required_components"],
   locate_highlight: ["source_inventory", "usd_artifact", "mesh_geometry", "coordinates", "mapping", "required_components"],
   distance_measurement: ["source_inventory", "usd_artifact", "mesh_geometry", "coordinates", "units", "reference_measurement", "required_components"],
   ifc_rules: ["source_inventory", "ifc_rules", "required_components"],
-};
+});
+for (const required of Object.values(recordV1Requirements)) Object.freeze(required);
 /** Trusted server configuration only, never conversion metadata or HTTP input. */
 export const approvedScopeSchema = z.object({
-  id, version: text, purpose: z.enum(purposeNames), sourceSha256: sha, modelVersionId: id,
-  tenantId: id, projectId: id,
+  id, version: text, purpose: z.enum(purposeNames), sourceSha256: sha, modelVersionId: externalId,
+  tenantId: externalId, projectId: externalId,
   requiredGuids: z.array(id).min(1).max(100000),
 }).strict().refine(scope => new Set(scope.requiredGuids).size === scope.requiredGuids.length, "Duplicate required GUID.");
 export type ApprovedPurposeScope = z.infer<typeof approvedScopeSchema>;
-export function purposeFacts(facts: ConversionValidationFacts, approvedScopes: readonly ApprovedPurposeScope[] = [],
-  context?: { tenantId: string; projectId: string }) {
+export function purposeFactsV1(facts: ConversionValidationFacts, approvedScopes: readonly ApprovedPurposeScope[] = [],
+  context?: { tenantId: string; projectId: string; modelVersionId?: string }) {
   const scopes = approvedScopes.map(scope => approvedScopeSchema.parse(scope));
   if (new Set(scopes.map(scope => scope.purpose)).size !== scopes.length) throw new Error("Duplicate purpose scope.");
   return purposeNames.map(purpose => {
     const scope = scopes.find(item => item.purpose === purpose);
     let required: PurposeCheck = { id: "required_components", state: "not_run", reasonCodes: ["approved_scope_unavailable"] };
     if (scope) {
-      if (scope.sourceSha256 !== facts.sourceSha256 || scope.modelVersionId !== facts.modelVersionId ||
+      const externalModel = context?.modelVersionId ?? facts.modelVersionId;
+      if (scope.sourceSha256 !== facts.sourceSha256 || scope.modelVersionId !== externalModel ||
+          facts.modelVersionId !== sanitizeArtifactIdPart(externalModel) ||
           scope.tenantId !== context?.tenantId || scope.projectId !== context?.projectId) {
         required = { id: "required_components", state: "unknown", reasonCodes: ["approved_scope_binding_mismatch"] };
       } else if (facts.inventory.observation !== "observed" ||
@@ -104,7 +113,10 @@ export function purposeFacts(facts: ConversionValidationFacts, approvedScopes: r
       }
     }
     return { purpose, policy: { id: scope?.id ?? "conversion-technical-baseline", version: scope?.version ?? "1",
-      purpose, requiredCheckIds: [...requirements[purpose]] },
-    checks: [...facts.checks.filter(check => requirements[purpose].includes(check.id)), required] };
+      purpose, requiredCheckIds: [...recordV1Requirements[purpose]] },
+    checks: [...facts.checks.filter(check => recordV1Requirements[purpose].includes(check.id)), required] };
   });
 }
+
+/** Current publication entrypoint. Historical record parsing imports V1 explicitly. */
+export const purposeFacts = purposeFactsV1;

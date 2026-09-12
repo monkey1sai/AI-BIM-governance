@@ -6,7 +6,7 @@ import { evaluatePurpose } from "../src/services/purposeEvaluation.js";
 const context = { tenantId: "tenant_1", projectId: "project_1" };
 function facts(): ConversionValidationFacts {
   return {
-    schemaVersion: "conversion-validation-facts/v1", validatorVersion: "fixture-validator/v1",
+    schemaVersion: "conversion-validation-facts/v1", validatorVersion: "conversion-facts-validator/v1",
     validatedAt: "2026-09-12T00:00:00Z", sourceSha256: "a".repeat(64), sourceName: "fixture.ifc",
     modelVersionId: "version_1", artifacts: { usdcSha256: "b".repeat(64), mappingSha256: "c".repeat(64) },
     inventory: { observation: "observed", expectedRenderable: 2, convertedRenderable: 1,
@@ -40,6 +40,11 @@ function input(value: ConversionValidationFacts, scopes: ApprovedPurposeScope[] 
     evidence: value, approvedScopes: scopes, purposes: purposeFacts(value, scopes, context) };
 }
 describe("streaming conversion facts and trusted purpose scope", () => {
+  it.each(["conversion-facts-validator/v3", "conversion-facts-validatr/v2"])("rejects unsupported validator %s", validatorVersion => {
+    const value = { ...facts(), validatorVersion };
+    value.checks.find(x => x.id === "coordinates")!.state = "pass";
+    expect(conversionFactsSchema.safeParse(value).success).toBe(false);
+  });
   function boundedFacts(): ConversionValidationFacts {
     const value = facts();
     value.validatorVersion = "conversion-facts-validator/v2";
@@ -75,9 +80,8 @@ describe("streaming conversion facts and trusted purpose scope", () => {
   it("does not allow partial viewing until coordinate and required scope checks pass", () => {
     const value = facts();
     expect(outcome(value, [scope()]).outcome).toBe("not_validated");
-    value.checks.find(x => x.id === "coordinates")!.state = "pass"; // Explicit synthetic validator fact.
-    expect(outcome(value, []).outcome).toBe("not_validated");
-    expect(outcome(value, [scope()]).outcome).toBe("usable_with_limits");
+    expect(outcome(boundedFacts(), []).outcome).toBe("not_validated");
+    expect(outcome(boundedFacts(), [scope()]).outcome).toBe("usable_with_limits");
   });
   it("required missing component blocks despite unknown coordinates and high aggregate success", () => {
     const result = outcome(facts(), [scope(["g2"])]);
@@ -87,7 +91,7 @@ describe("streaming conversion facts and trusted purpose scope", () => {
   it.each(["sourceSha256", "modelVersionId", "tenantId", "projectId"] as const)(
     "does not reuse scope across a changed %s", field => {
       const approval = scope(); approval[field] = field === "sourceSha256" ? "e".repeat(64) : "other";
-      const value = facts(); value.checks.find(x => x.id === "coordinates")!.state = "pass";
+      const value = boundedFacts();
       expect(outcome(value, [approval]).outcome).toBe("not_validated");
     });
   it("IFC rule purpose uses source membership and is independent of USD failure", () => {

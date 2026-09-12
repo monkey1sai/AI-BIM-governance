@@ -1,7 +1,8 @@
 import { z } from "zod";
 import { isDeepStrictEqual } from "node:util";
-import { evaluatePurpose } from "./purposeEvaluation.js";
-import { conversionFactsSchema, approvedScopeSchema, purposeFacts } from "./conversionValidationFacts.js";
+import { evaluatePurposeV1 } from "./purposeEvaluation.js";
+import { conversionFactsSchema, approvedScopeSchema, purposeFactsV1 } from "./conversionValidationFacts.js";
+import { sanitizeArtifactIdPart } from "./streamingConversionClient.js";
 
 // Bound disclosure at persistence, independently of the later report renderer.
 const text = z.string().trim().min(1).max(256).refine(
@@ -9,6 +10,7 @@ const text = z.string().trim().min(1).max(256).refine(
   "Internal locations or credentials are not validation text.",
 );
 const identity = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/);
+const externalIdentity = z.string().min(1);
 const guid = z.string().regex(/^[A-Za-z0-9_$-]{1,128}$/);
 const sha256 = z.string().regex(/^[a-f0-9]{64}$/);
 const count = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
@@ -22,8 +24,8 @@ const check = z.union([
 const policy = z.object({ id: identity, version: text, purpose,
   requiredCheckIds: z.array(identity).min(1).max(100) }).strict();
 const inputSchema = z.object({
-  recordId: identity, readyModelId: identity, conversionJobId: identity,
-  tenantId: identity, projectId: identity, modelVersionId: identity,
+  recordId: identity, readyModelId: externalIdentity, conversionJobId: identity,
+  tenantId: externalIdentity, projectId: externalIdentity, modelVersionId: externalIdentity,
   source: z.object({ name: text, sha256 }).strict(),
   artifacts: z.object({ usdcSha256: sha256.nullable(), mappingSha256: sha256.nullable() }).strict(),
   correspondence: z.array(z.object({ guid,
@@ -45,7 +47,7 @@ const inputSchema = z.object({
 export type ConversionValidationInput = z.infer<typeof inputSchema>;
 export interface ConversionValidationRecord extends ConversionValidationInput {
   schemaVersion: "conversion-validation-record/v1";
-  evaluations: ReturnType<typeof evaluatePurpose>[];
+  evaluations: ReturnType<typeof evaluatePurposeV1>[];
 }
 
 const unique = (values: readonly string[]): boolean => new Set(values).size === values.length;
@@ -59,14 +61,14 @@ export function createConversionValidationRecord(value: unknown): ConversionVali
   }
   const inventory = input.inventory;
   if (input.evidence && (input.evidence.sourceSha256 !== input.source.sha256 ||
-      input.evidence.modelVersionId !== input.modelVersionId ||
+      input.evidence.modelVersionId !== sanitizeArtifactIdPart(input.modelVersionId) ||
       input.evidence.sourceName !== input.source.name ||
       input.evidence.validatorVersion !== input.validatorVersion ||
       input.evidence.validatedAt !== input.validatedAt ||
       !isDeepStrictEqual(input.evidence.artifacts, input.artifacts) ||
       !isDeepStrictEqual(input.evidence.inventory, inventory) ||
       !isDeepStrictEqual(input.evidence.correspondence, input.correspondence) ||
-      !isDeepStrictEqual(purposeFacts(input.evidence, input.approvedScopes, input), input.purposes))) {
+      !isDeepStrictEqual(purposeFactsV1(input.evidence, input.approvedScopes, input), input.purposes))) {
     throw new Error("Validation evidence binding changed.");
   }
   if (inventory.observation === "not_run" &&
@@ -92,7 +94,7 @@ export function createConversionValidationRecord(value: unknown): ConversionVali
   }
   const evaluations = purpose.options.map((name) => {
     const item = input.purposes.find((entry) => entry.purpose === name);
-    return evaluatePurpose(name, item?.policy ?? null, item?.checks ?? []);
+    return evaluatePurposeV1(name, item?.policy ?? null, item?.checks ?? []);
   });
   return { schemaVersion: "conversion-validation-record/v1", ...input, evaluations };
 }

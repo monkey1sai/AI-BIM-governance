@@ -18,6 +18,12 @@ export const validationInput = () => ({
 });
 
 describe("conversion validation records", () => {
+  it("preserves opaque worker and Unicode external identities without normalization", () => {
+    const identifiers = { readyModelId: "worker:圖書館/A::版次:一::task#1", tenantId: "租戶:甲",
+      projectId: "圖書館/A", modelVersionId: "版次:一" };
+    const record = createConversionValidationRecord({ ...validationInput(), ...identifiers });
+    expect(parseConversionValidationRecord(JSON.parse(JSON.stringify(record)))).toMatchObject(identifiers);
+  });
   it("roundtrips unknown converter and unobserved inventory without inventing facts", () => {
     const record = createConversionValidationRecord({ ...validationInput(), converterVersion: null,
       correspondence: null, purposes: [], inventory: { observation: "not_run",

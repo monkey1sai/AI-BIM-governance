@@ -72,7 +72,7 @@ export async function publishConversionValidation(input: {
     inventory: observed?.inventory ?? { observation: "not_run", expectedRenderable: null, convertedRenderable: null, missing: [], excluded: [] },
     correspondence: observed?.correspondence ?? null,
     ...(observed ? { evidence: observed, approvedScopes } : {}),
-    purposes: observed ? purposeFacts(observed, approvedScopes, { tenantId: job.tenant_id, projectId: job.project_id })
+    purposes: observed ? purposeFacts(observed, approvedScopes, { tenantId: job.tenant_id, projectId: job.project_id, modelVersionId: job.external_model_version_id })
       : ["view_3d", "locate_highlight", "distance_measurement", "ifc_rules"].map(purpose => ({
       purpose, policy: null, checks: [{ id: "purpose_checks", state: "not_run", reasonCodes: ["checks_not_executed"] }],
     })),

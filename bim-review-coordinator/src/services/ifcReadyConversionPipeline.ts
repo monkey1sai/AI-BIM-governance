@@ -29,6 +29,7 @@ import { maskPresignedRef } from "./presignedRef.js";
 import {
   buildQualityMetricsSummary,
   isTerminalConversionResult,
+  sanitizeArtifactIdPart,
   type PollerHandle,
   type StreamingConversionClient,
   type StreamingConversionResult,
@@ -190,6 +191,8 @@ export type IfcReadyConversionPipelineDeps<TTerminalObserverResult = void> = {
 };
 
 const DEFAULT_CONVERSION_PROFILE = "ifcopenshell_openusd_identity";
+const VALIDATION_RETRY_DELAYS_MS = [5_000, 10_000, 20_000] as const;
+type ValidationRetry = { binding: string; conversionJobId: string; attempts: number; due: number };
 
 function normalizeConversionReportStatus(
   status: "ready" | "succeeded" | "failed",
@@ -217,6 +220,11 @@ export class IfcReadyConversionPipeline<TTerminalObserverResult = void> {
 
   private readonly pendingDispatchEvents = new Map<string, PendingDispatchEvent>();
   private readonly pollerRegistry = new Map<string, PollerHandle>();
+  private readonly validationInFlight = new Map<string, Promise<ValidationPublication>>();
+  private readonly validationRetries = new Map<string, ValidationRetry>();
+  private readonly validationScheduled = new Set<string>();
+  private validationTimer: ReturnType<typeof setTimeout> | undefined;
+  private validationRecoveryRunning = false;
   private disposed = false;
 
   constructor(deps: IfcReadyConversionPipelineDeps<TTerminalObserverResult>) {
@@ -567,13 +575,10 @@ export class IfcReadyConversionPipeline<TTerminalObserverResult = void> {
     }
     let validationRecord: ValidationPublication = { status: "not_recorded", reason: "source_not_ready" };
     if (!failed && outcome.ifc_ready_job) {
-      validationRecord = { status: "not_recorded", reason: "publisher_unavailable" };
-      try {
-        if (this.publishValidation) {
-          validationRecord = await this.publishValidation(structuredClone(outcome.ifc_ready_job), structuredClone(result));
-        }
-      } catch {
-        // Report publication never invalidates the already completed conversion/outbox.
+      validationRecord = await this.publishValidationOnce(outcome.ifc_ready_job, result);
+      if (validationRecord.status === "not_recorded") {
+        this.logValidation(outcome.ifc_ready_job.ifc_ready_job_id, validationRecord.reason, 0);
+        if (this.validationRetryable(validationRecord)) this.queueValidationRecovery(outcome.ifc_ready_job);
       }
     }
     return {
@@ -590,6 +595,116 @@ export class IfcReadyConversionPipeline<TTerminalObserverResult = void> {
     if (existing) {
       existing.cancel();
       this.pollerRegistry.delete(conversionJobId);
+    }
+  }
+
+  private publishValidationOnce(job: IfcReadyIntakeJob, result: StreamingConversionResult): Promise<ValidationPublication> {
+    const jobId = job.ifc_ready_job_id;
+    const existing = this.validationInFlight.get(jobId);
+    if (existing) return existing;
+    const pending = Promise.resolve().then(async (): Promise<ValidationPublication> => {
+      if (this.disposed || !this.publishValidation) return { status: "not_recorded", reason: "publisher_unavailable" };
+      try { return await this.publishValidation(structuredClone(job), structuredClone(result)); }
+      catch { return { status: "not_recorded", reason: "publisher_unavailable" }; }
+    }).finally(() => {
+      if (this.validationInFlight.get(jobId) === pending) this.validationInFlight.delete(jobId);
+    });
+    this.validationInFlight.set(jobId, pending);
+    return pending;
+  }
+
+  /** Ready intake + missing current-conversion history is the persisted pending set.
+   * Retry budgets are per process, not persisted across restarts. No ingest or outbox. */
+  resumeValidationPublications(): string[] {
+    if (this.disposed || !this.publishValidation) return [];
+    return this.store.list().filter(job => this.queueValidationRecovery(job)).map(job => job.ifc_ready_job_id);
+  }
+
+  private validationBinding(job: IfcReadyIntakeJob | undefined): string | null {
+    if (!job || job.conversion_authority !== "bim-streaming-server" || job.conversion_status !== "ready" ||
+        !job.conversion_job_id) return null;
+    const row = this.ledger.get(job.idempotency_key);
+    if (!row || row.status !== "ready" || !row.usdc_key || row.conversion_job_id !== job.conversion_job_id ||
+        row.correlation_id !== job.correlation_id || row.project_id !== job.project_id ||
+        row.external_model_version_id !== job.external_model_version_id) return null;
+    const recorded = this.ledger.listValidationRecords(job.idempotency_key).some(record =>
+      record.readyModelId === job.idempotency_key && record.conversionJobId === job.conversion_job_id &&
+      record.tenantId === job.tenant_id && record.projectId === job.project_id &&
+      record.modelVersionId === job.external_model_version_id);
+    if (recorded) return null;
+    return JSON.stringify([job.ifc_ready_job_id, job.idempotency_key, job.conversion_job_id,
+      job.correlation_id, job.tenant_id, job.project_id, job.external_model_version_id,
+      job.source_ifc_ref, job.source_ifc_etag, row.usdc_key]);
+  }
+
+  private queueValidationRecovery(job: IfcReadyIntakeJob): boolean {
+    const jobId = job.ifc_ready_job_id;
+    if (this.disposed || !this.publishValidation || this.validationScheduled.has(jobId)) return false;
+    try {
+      const binding = this.validationBinding(job);
+      if (!binding) return false;
+      this.validationScheduled.add(jobId);
+      this.validationRetries.set(jobId, { binding, conversionJobId: job.conversion_job_id!, attempts: 0,
+        due: Date.now() + VALIDATION_RETRY_DELAYS_MS[0] });
+      this.logValidation(jobId, "validation_retry_scheduled", 0);
+      this.armValidationRecovery();
+      return true;
+    } catch { this.logValidation(jobId, "validation_state_unavailable", 0); return false; }
+  }
+
+  private validationRetryable(result: ValidationPublication): boolean {
+    return result.status === "not_recorded" &&
+      ["metadata_unavailable", "persistence_failed", "publisher_unavailable"].includes(result.reason);
+  }
+
+  private logValidation(jobId: string, reason: string, attempt: number): void {
+    // Do not include external identifiers, artifact URLs or exception messages.
+    this.structLog?.withTraceId(jobId).anomaly("conversionValidation", "validation publication state", {
+      anomaly_kind: "retry", reason, attempt,
+    });
+  }
+
+  private armValidationRecovery(): void {
+    if (this.disposed || this.validationRecoveryRunning || this.validationTimer || !this.validationRetries.size) return;
+    let due = Infinity;
+    for (const retry of this.validationRetries.values()) due = Math.min(due, retry.due);
+    this.validationTimer = setTimeout(() => {
+      this.validationTimer = undefined;
+      void this.runValidationRecovery();
+    }, Math.max(0, due - Date.now()));
+    this.validationTimer.unref();
+  }
+
+  private async runValidationRecovery(): Promise<void> {
+    if (this.disposed || this.validationRecoveryRunning) return;
+    const entry = [...this.validationRetries].find(([, retry]) => retry.due <= Date.now());
+    if (!entry) { this.armValidationRecovery(); return; }
+    const [jobId, retry] = entry;
+    this.validationRecoveryRunning = true;
+    retry.attempts++;
+    let publication: ValidationPublication = { status: "not_recorded", reason: "source_changed" };
+    try {
+      if (this.validationBinding(this.store.get(jobId)) !== retry.binding) return;
+      const result = await this.streamingClient.fetchConversionResult(retry.conversionJobId);
+      if (this.disposed || this.validationBinding(this.store.get(jobId)) !== retry.binding) return;
+      const job = this.store.get(jobId)!;
+      const terminal = isTerminalConversionResult(result);
+      if (!terminal.terminal || terminal.failed || result.conversion_job_id !== retry.conversionJobId ||
+          result.correlation_id !== sanitizeArtifactIdPart(job.correlation_id)) return;
+      publication = await this.publishValidationOnce(job, result);
+    } catch { publication = { status: "not_recorded", reason: "metadata_unavailable" }; }
+    finally {
+      const canRetry = this.validationRetryable(publication) && retry.attempts < VALIDATION_RETRY_DELAYS_MS.length;
+      if (!this.disposed) {
+        this.logValidation(jobId, publication.status === "not_recorded" ? publication.reason : publication.status, retry.attempts);
+        if (canRetry) retry.due = Date.now() + VALIDATION_RETRY_DELAYS_MS[retry.attempts];
+        else {
+          this.validationRetries.delete(jobId);
+          if (this.validationRetryable(publication)) this.logValidation(jobId, "validation_retry_exhausted", retry.attempts);
+        }
+      }
+      this.validationRecoveryRunning = false;
+      this.armValidationRecovery();
     }
   }
 
@@ -687,6 +802,10 @@ export class IfcReadyConversionPipeline<TTerminalObserverResult = void> {
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
+    if (this.validationTimer) clearTimeout(this.validationTimer);
+    this.validationTimer = undefined;
+    this.validationRetries.clear();
+    this.validationScheduled.clear();
     for (const handle of this.pollerRegistry.values()) {
       handle.cancel();
     }

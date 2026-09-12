@@ -34,7 +34,7 @@ describe("conversion source metadata reader", () => {
     "binds actual streaming checks to exact artifact and source identities: %s", async change => {
       const f = fixture();
       const validation = {
-        schemaVersion: "conversion-validation-facts/v1", validatorVersion: "facts/v1",
+        schemaVersion: "conversion-validation-facts/v1", validatorVersion: "conversion-facts-validator/v1",
         validatedAt: "2026-09-12T00:00:00Z", sourceSha256: "a".repeat(64),
         sourceName: "fixture.ifc", modelVersionId: "version_1",
         artifacts: { usdcSha256: "b".repeat(64), mappingSha256: "c".repeat(64) },
