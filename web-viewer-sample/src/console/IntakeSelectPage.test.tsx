@@ -18,7 +18,7 @@ describe("IntakeSelectPage A1 進件（選現成模型，不手填路徑）", ()
 
   it("標 provenance 且只打 coordinator :8004（不直連內部埠）", () => {
     const html = renderToString(<IntakeSelectPage />);
-    expect(html).toContain("ec-prov");
+    expect(html).toContain('data-prov="asbuilt"');
     expect(html).not.toContain(":49102");
     expect(html).not.toContain(":49101");
     expect(html).not.toContain(":49100");

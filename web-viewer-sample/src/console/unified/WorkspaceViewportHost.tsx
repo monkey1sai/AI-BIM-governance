@@ -61,7 +61,8 @@ export function WorkspaceViewportHost({ firstFrameTimeoutMs }: WorkspaceViewport
     };
   }, [live, slotEl]);
 
-  const publication = slot?.publication ?? null;
+  const publication = slot?.viewerPublication ?? null;
+  const dockSubscription = slot?.dockSubscription ?? null;
   const activeSessionId = slot?.activeSessionId ?? "";
   // 共用 session 是單一 authority：publish 會先播種；可見 input 之後即使清空，也不回退舊 handoff。
   const handoff = useMemo<ReviewRoomHandoff | null>(() => {
@@ -72,8 +73,8 @@ export function WorkspaceViewportHost({ firstFrameTimeoutMs }: WorkspaceViewport
 
   // gate 單一來源：pane 回報 → context（FlowGuide 讀）→ 再透傳給發布頁（A2 批次 apply 鈕）。
   const setGate = slot?.setGate;
-  const pageGateRef = useRef(publication?.onBatchGateChange);
-  pageGateRef.current = publication?.onBatchGateChange;
+  const pageGateRef = useRef(dockSubscription?.onBatchGateChange);
+  pageGateRef.current = dockSubscription?.onBatchGateChange;
   const onGate = useMemo(() => (gate: ReviewSessionViewerPaneBatchGate) => {
     setGate?.(gate);
     pageGateRef.current?.(gate);
@@ -81,7 +82,7 @@ export function WorkspaceViewportHost({ firstFrameTimeoutMs }: WorkspaceViewport
   useEffect(() => () => { setGate?.(null); }, [setGate]);
 
   const paneHandleRef = useRef<ReviewSessionViewerPaneHandle | null>(null);
-  const extPaneRef = publication?.paneRef;
+  const extPaneRef = dockSubscription?.paneRef;
   const setCombinedPaneRef = useCallback((node: ReviewSessionViewerPaneHandle | null) => {
     paneHandleRef.current = node;
     if (typeof extPaneRef === "function") {
@@ -102,8 +103,8 @@ export function WorkspaceViewportHost({ firstFrameTimeoutMs }: WorkspaceViewport
   }, [registerHostActions]);
 
   const setStageTree = slot?.setStageTree;
-  const pageStageTreeRef = useRef(publication?.onStageTree);
-  pageStageTreeRef.current = publication?.onStageTree;
+  const pageStageTreeRef = useRef(dockSubscription?.onStageTree);
+  pageStageTreeRef.current = dockSubscription?.onStageTree;
   const onStageTree = useCallback((msg: StageTreeMessage) => {
     setStageTree?.(msg.children);
     pageStageTreeRef.current?.(msg);
@@ -151,9 +152,9 @@ export function WorkspaceViewportHost({ firstFrameTimeoutMs }: WorkspaceViewport
           ref={setCombinedPaneRef}
           mode={publication.mode}
           handoff={handoff}
-          showHandoffActions={publication.showHandoffActions ?? true}
+          showHandoffActions={Boolean(dockSubscription) && (publication.showHandoffActions ?? true)}
           onBatchGateChange={onGate}
-          onBatchAck={publication.onBatchAck}
+          onBatchAck={dockSubscription?.onBatchAck}
           onSessionIdChange={slot?.setActiveSessionId}
           onStageTree={onStageTree}
           {...(firstFrameTimeoutMs !== undefined ? { firstFrameTimeoutMs } : {})}

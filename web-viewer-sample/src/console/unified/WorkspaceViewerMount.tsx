@@ -38,20 +38,18 @@ export function WorkspaceViewerMount({ mode, handoff, showHandoffActions = true,
   const handoffFingerprint = JSON.stringify(handoff);
   const handoffRef = useRef(handoff);
   handoffRef.current = handoff;
-  const publish = slot?.publish;
+  const publishViewer = slot?.publishViewer;
+  const subscribeDock = slot?.subscribeDock;
 
   useEffect(() => {
-    if (!publish) return;
-    publish({
-      mode,
-      handoff: handoffRef.current,
-      showHandoffActions,
+    if (!publishViewer || !subscribeDock) return;
+    publishViewer({ mode, handoff: handoffRef.current, showHandoffActions });
+    return subscribeDock({
       onBatchGateChange: (gate) => gateRef.current?.(gate),
       onBatchAck: (message) => ackRef.current?.(message),
       paneRef,
     });
-    return () => { publish(null); };
-  }, [publish, mode, handoffFingerprint, showHandoffActions, paneRef]);
+  }, [publishViewer, subscribeDock, mode, handoffFingerprint, showHandoffActions, paneRef]);
 
   if (slot) return null;
   return (
