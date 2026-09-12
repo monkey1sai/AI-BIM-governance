@@ -7,7 +7,7 @@
     "node": ">=20.0.0"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && node -e \"require('node:fs').cpSync('assets', 'dist/assets', { recursive: true })\"",
     "dev": "tsx src/index.ts",
     "test": "vitest run",
     "verify": "npm run build && npm test"
@@ -18,15 +18,20 @@
     "cors": "^2.8.5",
     "dotenv": "^16.4.7",
     "express": "^4.21.2",
+    "fontkit": "2.0.4",
+    "pdfkit": "0.20.2",
     "socket.io": "^4.8.1",
     "zod": "^3.24.1"
   },
   "devDependencies": {
     "@types/cors": "^2.8.17",
     "@types/express": "^5.0.0",
+    "@types/fontkit": "2.0.9",
     "@types/node": "^22.10.2",
+    "@types/pdfkit": "0.17.6",
     "@types/supertest": "^6.0.2",
     "ajv": "^8.20.0",
+    "pdfjs-dist": "5.4.624",
     "socket.io-client": "^4.8.3",
     "supertest": "^7.0.0",
     "tsx": "^4.19.2",

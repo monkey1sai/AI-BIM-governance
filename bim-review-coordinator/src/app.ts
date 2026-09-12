@@ -45,6 +45,8 @@ import { ConversionDispatchQueue } from "./services/conversionDispatchQueue.js";
 import { ConversionLedger, publicConversionRecord } from "./services/conversionLedger.js";
 import { publishConversionValidation } from "./services/conversionValidationPublication.js";
 import type { ApprovedPurposeScope } from "./services/conversionValidationFacts.js";
+import { registerConversionValidationReports } from "./routes/conversionValidationReports.js";
+import type { ValidationReportAccess } from "./services/validationReportAccess.js";
 import { WatcherIntakeRegistry } from "./services/watcherIntakeRegistry.js";
 import { resolveReadyRenderBundle } from "./services/readyModelResolver.js";
 import {
@@ -729,6 +731,8 @@ export interface CoordinatorApp {
 export interface CreateCoordinatorAppOptions {
   /** Trusted owner-approved configuration; never populated from HTTP or converter metadata. */
   conversionValidationScopes?: readonly ApprovedPurposeScope[];
+  /** External operator/source authority; absent deployment adapter remains fail closed. */
+  validationReportAccess?: ValidationReportAccess;
   /**
    * Pre-built structured logger. Tests use this to write into a tmp dir and
    * assert on records. Omit to let the app build one against $LOG_ROOT or the
@@ -3262,6 +3266,8 @@ export function createCoordinatorApp(
       }),
     });
   });
+
+  registerConversionValidationReports(app, { ledger: conversionLedger, access: options.validationReportAccess });
 
   // minio-closed-loop-phase1 Task 3：讀持久 ConversionLedger；唯讀 GET，無 auth（照既有
   // /api/external/ifc-ready 模式）。插在 /api/external/ifc-ready 之後、/:jobId 之前（避免 param 吃掉）。
