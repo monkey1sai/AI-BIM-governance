@@ -13,6 +13,7 @@ import React from 'react';
 import { decodeHighlightResult } from "./viewer/core/highlightResult";
 import { IssueViewExchange } from "./viewer/core/issueViewExchange";
 import { SectionPlaneExchange } from "./console/sectionPlaneBridge";
+import { MeasurementExchange, measurementUv, type MeasurementState } from "./console/measurementBridge";
 import { buildClipPlaneRequest } from "./clients/streamMessages";
 import { RuntimeCommandTracker, type RuntimeCommandOutcome, type RuntimeCommandContext } from "./viewer/core/runtimeCommandTracker";
 import { NativeStageDispatchQueue, type NativeOpenStageDispatch } from "./viewer/core/nativeStageDispatchQueue";
@@ -130,6 +131,7 @@ export interface AppProps {
 }
 
 interface AppState {
+    measurement: MeasurementState;
     usdAssets: USDAssetType[];
     selectedUSDAsset: USDAssetType | null;
     reviewSessionId: string | null;
@@ -723,6 +725,7 @@ export default class App extends React.Component<AppProps, AppState> {
         const activeStreamEndpoint = resolveInitialStreamEndpoint(props);
 
         this.state = {
+            measurement: { status: "idle" },
             usdAssets: [],
             selectedUSDAsset: null,
             reviewSessionId: null,
@@ -823,6 +826,26 @@ export default class App extends React.Component<AppProps, AppState> {
         void this._bootstrapReview();
     }
 
+    private measurementPointer: { x: number; y: number } | null = null;
+    private measurementExchange = new MeasurementExchange({
+        snapshot: () => this._sectionSnapshot(),
+        requestId: () => createRuntimeRequestId(),
+        send: payload => this._sendStreamMessage({ event_type: "measurementRequest", payload }),
+        complete: (id, outcome) => {
+            if (this.runtimeCommandTracker.hasContext(id)) this.runtimeCommandTracker._claimRuntimeCommandTerminal(id, "measurementRequest", outcome);
+        },
+        notify: measurement => {
+            if (this.componentMounted) this.setState({ measurement });
+            this._postToParent({ type: "measurement_state", ...measurement });
+        },
+    });
+    private _cancelMeasurementKey = (event: KeyboardEvent): void => {
+        if (this.measurementExchange.capturesInput) {
+            event.preventDefault(); event.stopImmediatePropagation();
+            if (event.key === "Escape" && event.type === "keydown") this.measurementExchange.control("cancel");
+        }
+    };
+
     private sectionExchange = new SectionPlaneExchange({
         snapshot: () => this._sectionSnapshot(),
         requestId: () => createRuntimeRequestId(),
@@ -839,20 +862,33 @@ export default class App extends React.Component<AppProps, AppState> {
         notify: (reply) => this._postToParent({ type: "section_result", ...reply }),
     });
 
+    private measurementAuthorityEpoch = 0;
     private _sectionSnapshot(): string | null {
         const authority = this._currentVerifiedDataChannelAuthority();
-        if (!this.componentMounted || !authority || this._runtimeMutatorBlockReason("clipPlaneRequest")
+        if (!this.componentMounted || !authority || this._runtimeMutatorBlockReason("measurementRequest")
             || this.state.stageLoadStatus !== "matched" || !this._hasRemoteVideoFrame()
             || this.state.webrtcLifecycleStatus === "stopped" || this.state.webrtcLifecycleStatus === "terminated") return null;
         return JSON.stringify([authority.sessionId, authority.traceId, authority.connectionGeneration,
-            this.streamGeneration, this.stageIntentGeneration, this.activeStageAttempt?.generation ?? null]);
+            this.streamGeneration, this.stageIntentGeneration, this.activeStageAttempt?.generation ?? null,
+            this.measurementAuthorityEpoch, reviewEnv.sourceClientId]);
     }
 
     componentDidUpdate(): void {
         this.sectionExchange.sync();
+        this.measurementExchange.sync();
+        window.removeEventListener("keydown", this._cancelMeasurementKey, true);
+        window.removeEventListener("keyup", this._cancelMeasurementKey, true);
+        if (this.measurementExchange.capturesInput) {
+            window.addEventListener("keydown", this._cancelMeasurementKey, true);
+            window.addEventListener("keyup", this._cancelMeasurementKey, true);
+            document.querySelector<HTMLElement>('[data-testid="measurement-pick-surface"]')?.focus();
+        }
     }
 
     componentWillUnmount(): void {
+        this.measurementExchange.dispose();
+        window.removeEventListener("keydown", this._cancelMeasurementKey, true);
+        window.removeEventListener("keyup", this._cancelMeasurementKey, true);
         this.sectionExchange.dispose();
         this.issueViewExchange.dispose();
         if (typeof window !== "undefined") window.removeEventListener("resize", this._onViewportResize);
@@ -1384,6 +1420,8 @@ export default class App extends React.Component<AppProps, AppState> {
     }
 
     private _runtimeMutatorBlockReason(eventType: string): string | null {
+        if (eventType !== "measurementRequest" && this.measurementExchange.capturesInput
+            && ["selectPrimsRequest", "focusPrimRequest", "resetStage", "clipPlaneRequest", "highlightPrimsRequest", "clearHighlightRequest"].includes(eventType)) return "measurement picking active";
         if (!isRuntimeMutator(eventType)) return null;
         if (
             requestUsesNativeOpenedStageResult(eventType)
@@ -1615,6 +1653,7 @@ export default class App extends React.Component<AppProps, AppState> {
                 if (runtimeRequestId) {
                     if (!this.runtimeCommandTracker._claimRuntimeCommandTerminal(runtimeRequestId, outgoing.event_type, "error")) return;
                     if (outgoing.event_type === "clipPlaneRequest") this.sectionExchange.fail(runtimeRequestId, "transport");
+                    if (outgoing.event_type === "measurementRequest") this.measurementExchange.fail(runtimeRequestId, "transport");
                     this._finishA4HandoffCommand(runtimeRequestId, "rejected", diagnostic, true);
                 }
                 this._appendReviewEvent(`${outgoing.event_type} failed: ${diagnostic}`);
@@ -2474,6 +2513,11 @@ export default class App extends React.Component<AppProps, AppState> {
             reviewEnv.userToken = nextUserToken;
             const completeAuthorityAvailable = Boolean(nextToken && nextUserToken);
             const authorityChanged = nextToken !== previousToken || nextUserToken !== previousUserToken;
+            if (authorityChanged) {
+                ++this.measurementAuthorityEpoch;
+                this.measurementExchange.sync();
+                this.sectionExchange.sync();
+            }
             if (
                 completeAuthorityAvailable
                 && authorityChanged
@@ -2488,6 +2532,12 @@ export default class App extends React.Component<AppProps, AppState> {
             return;
         }
         switch (m.type) {
+            case "measurement_control": {
+                if (e.source !== window.parent || !["start", "cancel", "clear"].includes(m.action as string)) return;
+                if (m.action === "start" && !canOperate) return;
+                this.measurementExchange.control(m.action as "start" | "cancel" | "clear");
+                break;
+            }
             case "section_plane": {
                 if (e.source !== window.parent || !canOperate || !clientRequestId) return;
                 this.sectionExchange.start(m.section, clientRequestId);
@@ -2746,6 +2796,8 @@ export default class App extends React.Component<AppProps, AppState> {
                     this.standaloneViewerLease = lease;
                     reviewEnv.viewerLeaseToken = lease.lease_token;
                     reviewEnv.sourceClientId = lease.lease_id;
+                    ++this.measurementAuthorityEpoch;
+                    this.measurementExchange.sync();
                     this._scheduleStandaloneViewerLeaseHeartbeat(sessionId, lease);
                     this._appendReviewEvent(`已取得 primary viewer lease：${lease.lease_id}`);
                     return lease;
@@ -2813,6 +2865,10 @@ export default class App extends React.Component<AppProps, AppState> {
         }
         if (lease && reviewEnv.sourceClientId === lease.lease_id) {
             reviewEnv.sourceClientId = this.standaloneViewerId;
+        }
+        if (lease) {
+            ++this.measurementAuthorityEpoch;
+            this.measurementExchange.sync();
         }
         if (reason) this._appendReviewEvent(reason);
     }
@@ -4747,6 +4803,9 @@ export default class App extends React.Component<AppProps, AppState> {
             if (parsed.request_id && parsed.rejected_event_type === "clipPlaneRequest") {
                 this.sectionExchange.fail(parsed.request_id, "rejected");
             }
+            if (parsed.request_id && parsed.rejected_event_type === "measurementRequest") {
+                this.measurementExchange.fail(parsed.request_id, "rejected");
+            }
             if (parsed.request_id) {
                 this._finishA4HandoffCommand(
                     parsed.request_id,
@@ -4804,6 +4863,10 @@ export default class App extends React.Component<AppProps, AppState> {
         }
 
         this._appendDemoIncoming(event.event_type || event.messageRecipient || "streamEvent", event);
+
+        if (event.event_type === "measurementResult"
+            && this.runtimeCommandTracker._correlateRuntimeCommandEvent(event.event_type, payload).disposition === "matched"
+            && this.measurementExchange.receive(payload)) return;
 
         if (event.event_type === "clipPlaneResult"
             && this.runtimeCommandTracker._correlateRuntimeCommandEvent(event.event_type, payload).disposition === "matched"
@@ -5653,6 +5716,26 @@ export default class App extends React.Component<AppProps, AppState> {
                     onStopped={(message) => this._handleStreamStopped("stopped", message, renderedStreamGeneration)}
                     onTerminated={(message) => this._handleStreamStopped("terminated", message, renderedStreamGeneration)}
                     />}
+                {this.measurementExchange.capturesInput && <div data-testid="measurement-pick-surface"
+                    aria-label="量測取點區" role="application" tabIndex={0}
+                    style={{ position: "absolute", inset: 0, left: "var(--gv-stage-inset-left, 0px)", zIndex: 25, cursor: "crosshair", touchAction: "none" }}
+                    onContextMenu={event => event.preventDefault()}
+                    onWheel={event => { event.preventDefault(); event.stopPropagation(); }}
+                    onKeyDown={event => { event.preventDefault(); event.stopPropagation(); }}
+                    onPointerDown={event => {
+                        event.preventDefault(); event.stopPropagation(); event.currentTarget.focus();
+                        this.measurementPointer = event.button === 0 ? { x: event.clientX, y: event.clientY } : null;
+                    }}
+                    onPointerUp={event => {
+                        event.preventDefault(); event.stopPropagation();
+                        const down = this.measurementPointer; this.measurementPointer = null;
+                        if (!down || Math.hypot(event.clientX - down.x, event.clientY - down.y) > 3) return;
+                        const video = (document.getElementById("remote-video") ?? document.getElementById("gfn-stream-player-video")) as HTMLVideoElement | null;
+                        if (!video) return;
+                        const uv = measurementUv(event.clientX, event.clientY, video.getBoundingClientRect(), video.videoWidth, video.videoHeight);
+                        if (uv) this.measurementExchange.pick(uv);
+                    }}
+                    onPointerCancel={() => { this.measurementPointer = null; }} />}
                 </div>
 
                 {showDemoPanel &&

@@ -8,6 +8,7 @@
     "focusPrimRequest",
     "clearHighlightRequest",
     "clipPlaneRequest",
+    "measurementRequest",
     "selectPrimsRequest",
     "makePrimsPickable",
     "resetStage"

@@ -9,6 +9,7 @@ import { ACCENT, MONO } from "./fixtures";
 import type { DockKey } from "./fixtures";
 import { WorkspaceFlowGuide } from "./WorkspaceFlowGuide";
 import { SectionPlaneControls } from "./SectionPlaneControls";
+import { MeasurementControls } from "./MeasurementControls";
 import { resolveViewerCommandGate, useViewportSlot } from "./viewportSlot";
 import { useUsdStageTree, type USDPrimNode } from "../../hooks/useUsdStageTree";
 
@@ -343,6 +344,7 @@ export function WorkspacePage({ initialDock = "a1" }: WorkspacePageProps) {
             </span>
           )}
           <SectionPlaneControls ready={!toolbarDisabled} state={slot?.sectionState ?? { status: "idle" }} onSend={input => slot?.sendSectionPlane?.(input)} />
+          <MeasurementControls ready={!toolbarDisabled} state={slot?.measurementState ?? { status: "idle" }} onSend={action => slot?.sendMeasurement?.(action)} />
         </aside>
 
         {/* 中：viewport slot（live 時 host 覆蓋於容器；離線只剩下方誠實說明） */}

@@ -99,6 +99,7 @@ export function WorkspaceViewportHost({ firstFrameTimeoutMs }: WorkspaceViewport
       selectPrim: (primPath, multiSelect) => paneHandleRef.current?.selectPrim(primPath, multiSelect),
       sendToolbarAction: (action, cameraView) => paneHandleRef.current?.sendToolbarAction(action, cameraView),
       sendSectionPlane: (input) => paneHandleRef.current?.sendSectionPlane?.(input) ?? Promise.resolve({ status: "error", reason: "unavailable" }),
+      sendMeasurement: (action) => paneHandleRef.current?.sendMeasurement?.(action) ?? false,
     });
     return () => registerHostActions?.(null);
   }, [registerHostActions]);
@@ -161,6 +162,7 @@ export function WorkspaceViewportHost({ firstFrameTimeoutMs }: WorkspaceViewport
           onSessionIdChange={slot?.setActiveSessionId}
           onStageTree={onStageTree}
           onSectionInvalidated={slot?.invalidateSection}
+          onMeasurementState={slot?.setMeasurementState}
           {...(firstFrameTimeoutMs !== undefined ? { firstFrameTimeoutMs } : {})}
         />
       ) : (

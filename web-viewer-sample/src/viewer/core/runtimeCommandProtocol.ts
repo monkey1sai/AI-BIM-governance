@@ -17,6 +17,7 @@ const runtimeMutatingEvents = new Set([
     "focusPrimRequest",
     "clearHighlightRequest",
     "clipPlaneRequest",
+    "measurementRequest",
     "selectPrimsRequest",
     "makePrimsPickable",
     "resetStage",

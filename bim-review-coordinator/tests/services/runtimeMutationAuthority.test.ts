@@ -28,7 +28,7 @@ function testAuthority(
   stateOptions: Record<string, unknown> = {},
   portOverrides: Partial<Pick<
     RuntimeMutationAuthorityPorts,
-    "generateId" | "inspectRuntimeLease"
+    "generateId" | "inspectRuntimeLease" | "inspectPrimaryLease" | "getSessionContext"
   >> = {},
 ) {
   let now = 1_000;
@@ -73,6 +73,8 @@ function testAuthority(
       appendedEvents.push(event);
     },
   };
+  if (portOverrides.inspectPrimaryLease) ports.inspectPrimaryLease = portOverrides.inspectPrimaryLease;
+  if (portOverrides.getSessionContext) ports.getSessionContext = portOverrides.getSessionContext;
   const authority = new RuntimeMutationAuthority(ports, {
     pendingTtlMs: 100,
     executingTtlMs: 1_000,
@@ -110,6 +112,51 @@ function mustPreauthorize(
 }
 
 describe("RuntimeMutationAuthority", () => {
+  it("grants measurement only for the current primary's confirmed ready artifact binding", () => {
+    const { authority, setSessionStatus } = testAuthority();
+    const measurement = { sessionId: "review_session_a", sourceClientId: "viewer_lease_a", credential: "test-only",
+      requestId: "measure-1", requestedEventType: "measurementRequest", commandContext: { action: "start", measurement_id: "m1" } };
+    expect(authority.authorizeRuntimeCommand(measurement)).toMatchObject({ authorized: false, detailCode: "measurement_active_binding_required" });
+    const binding = mustPreauthorize(authority);
+    const load = { ...measurement, requestId: "load-1", requestedEventType: "openStageRequest", commandContext: {},
+      stageBindingAuthorizationId: binding.stageBindingAuthorizationId, bindingRevisionId: binding.bindingRevisionId, stageComposition: binding.composition };
+    expect(authority.authorizeRuntimeCommand(load)).toMatchObject({ authorized: true });
+    expect(authority.authorizeRuntimeCommand(measurement)).toMatchObject({ authorized: false });
+    expect(authority.confirmStageBinding({ ...load, outcome: "success" })).toMatchObject({ confirmed: true });
+    const result = authority.authorizeRuntimeCommand(measurement);
+    expect(result).toMatchObject({ authorized: true, measurementContext: { session_id: "review_session_a", client_id: "viewer_lease_a",
+      lease_id: "viewer_lease_a", binding_id: binding.bindingRevisionId, artifact_ids: ["artifact_primary"], policy_id: "primary-lease-distance-v1" } });
+    for (const commandContext of [{ action: "pick", measurement_id: "m1" }, { action: "start", measurement_id: "m1", uv: [0, 0] },
+      { action: "pick", measurement_id: "m1", uv: [-1, 0] }, { action: "start", measurement_id: "m1", approved: true },
+      { action: "start", measurement_id: "m1", policy_id: "primary-lease-distance-v1" }]) {
+      expect(authority.authorizeRuntimeCommand({ ...measurement, commandContext })).toMatchObject({ authorized: false, reason: "invalid_payload" });
+    }
+    expect(authority.authorizeRuntimeCommand({ ...measurement, sourceClientId: "viewer_lease_b" })).toMatchObject({ authorized: false });
+    setSessionStatus("review_session_a", "closing");
+    expect(authority.authorizeRuntimeCommand(measurement)).toMatchObject({ authorized: false, reason: "session_lifecycle_blocked" });
+  });
+
+  it.each(["primary", "runtime", "artifact", "url"])("revokes measurement when %s context changes", drift => {
+    let changed = false;
+    const lease = { leaseId: "viewer_lease_a", principal: "lab_principal_a" };
+    const { authority } = testAuthority({}, {
+      inspectPrimaryLease: () => changed && drift === "primary" ? { authorized: false } : { authorized: true, lease },
+      inspectRuntimeLease: () => changed && drift === "runtime" ? { authorized: false, reason: "lease_invalid", detailCode: "revoked" } : { authorized: true, lease },
+      getSessionContext: sessionId => ({ sessionId, status: "active", artifacts: [{ artifactId: "artifact_primary",
+        readyStatus: changed && drift === "artifact" ? "failed" : "ready",
+        usdcUrl: changed && drift === "url" ? "http://127.0.0.1:49101/changed.usdc" : "http://127.0.0.1:49101/artifacts/artifact_primary/model.usdc" }] }),
+    });
+    const binding = mustPreauthorize(authority);
+    const load = { sessionId: "review_session_a", sourceClientId: "viewer_lease_a", credential: "test-only", requestId: "load-1",
+      requestedEventType: "openStageRequest", commandContext: {}, stageBindingAuthorizationId: binding.stageBindingAuthorizationId,
+      bindingRevisionId: binding.bindingRevisionId, stageComposition: binding.composition };
+    expect(authority.authorizeRuntimeCommand(load)).toMatchObject({ authorized: true });
+    expect(authority.confirmStageBinding({ ...load, outcome: "success" })).toMatchObject({ confirmed: true });
+    changed = true;
+    expect(authority.authorizeRuntimeCommand({ sessionId: load.sessionId, sourceClientId: load.sourceClientId, credential: load.credential,
+      requestId: "measure-1", requestedEventType: "measurementRequest", commandContext: { action: "start", measurement_id: "m1" } })).toMatchObject({ authorized: false });
+  });
+
   it("authorizes bounded clip planes and denies malformed or unauthorized commands", () => {
     const command = {
       sessionId: "review_session_a", sourceClientId: "viewer_lease_a", credential: "test-lease",
@@ -979,6 +1026,7 @@ describe("RuntimeMutationAuthority", () => {
       focusPrimRequest: { primPath: "/World/Wall_001" },
       clearHighlightRequest: {},
       clipPlaneRequest: { enabled: true, axis: "z", position: 0, normal: [0, 0, 1] },
+      measurementRequest: { action: "start", measurement_id: "measurement-1" },
       selectPrimsRequest: { paths: ["/World/Wall_001"] },
       makePrimsPickable: { paths: ["/World/Wall_001"] },
       resetStage: {},
@@ -998,6 +1046,8 @@ describe("RuntimeMutationAuthority", () => {
         expect(result).toMatchObject({ authorized: false, detailCode: "harness_only_command" });
       } else if (fixture.stageLoadEventTypes.includes(eventType)) {
         expect(result).toMatchObject({ authorized: false, detailCode: "stage_transaction_required" });
+      } else if (eventType === "measurementRequest") {
+        expect(result).toMatchObject({ authorized: false, detailCode: "measurement_active_binding_required" });
       } else {
         expect(result).toMatchObject({ authorized: true });
       }

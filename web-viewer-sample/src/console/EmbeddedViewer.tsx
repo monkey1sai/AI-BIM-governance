@@ -1,4 +1,5 @@
 import { useEffect, useImperativeHandle, useRef, forwardRef } from "react";
+import { parseMeasurementState, type MeasurementAction, type MeasurementState } from "./measurementBridge";
 import { parseSectionInput, parseSectionReply, type SectionInput, type SectionReply } from "./sectionPlaneBridge";
 
 // viewerOrigin 可能被設定成帶尾斜線或路徑前綴的「viewer 入口 base URL」（如 https://host/bim-viewer/），
@@ -71,6 +72,7 @@ export interface HighlightItem {
 }
 
 export interface EmbeddedViewerHandle {
+  sendMeasurement?(action: MeasurementAction): boolean;
   sendSectionPlane?(input: SectionInput): Promise<SectionReply>;
   sendHighlight(items: HighlightItem[], clientRequestId: string): void;
   // 批次疊加（A2 diff overlay）：viewer 端把全部 items 裝進「一個」highlightPrimsRequest（聯集選取）
@@ -119,6 +121,7 @@ export interface EmbeddedViewerProps {
   viewerLeaseToken?: string | null;
   userToken?: string | null;
   onViewerReady?: () => void;
+  onMeasurementState?: (state: MeasurementState) => void;
   onFirstFrame?: (m: FirstFrameMessage) => void;
   onStreamState?: (m: StreamStateMessage) => void;
   onStageLoaded?: (message: StageLoadedMessage) => void;
@@ -167,6 +170,11 @@ export const EmbeddedViewer = forwardRef<EmbeddedViewerHandle, EmbeddedViewerPro
       const m = e.data as { protocol?: string; type?: string } | null;
       if (!m || m.protocol !== "vg01") return;                     // 協定版本 / 前向相容（未知忽略）
       switch (m.type) {
+        case "measurement_state": {
+          const state = parseMeasurementState(m);
+          if (state) p.onMeasurementState?.(state);
+          break;
+        }
         case "section_result": {
           const reply = parseSectionReply(m);
           if (!reply) break;
@@ -225,6 +233,11 @@ export const EmbeddedViewer = forwardRef<EmbeddedViewerHandle, EmbeddedViewerPro
   // 送出側比照接收側：經 propsRef.current 讀最新 viewerOrigin，與 listener 同模式（避免兩側不對稱）。
   // handle 內 closure 不直接 close over render-scope props → useImperativeHandle dep 可為 []（zero re-create）。
   useImperativeHandle(ref, () => ({
+    sendMeasurement: (action) => {
+      if (!["start", "cancel", "clear"].includes(action) || !viewerReadyRef.current || !iframeRef.current?.contentWindow) return false;
+      post({ type: "measurement_control", action });
+      return true;
+    },
     sendSectionPlane: (input) => {
       if (!parseSectionInput(input)) return Promise.resolve({ status: "error", reason: "invalid" });
       if (!viewerReadyRef.current || !iframeRef.current?.contentWindow) return Promise.resolve({ status: "error", reason: "unavailable" });
@@ -274,7 +287,7 @@ export const EmbeddedViewer = forwardRef<EmbeddedViewerHandle, EmbeddedViewerPro
   //     （跨 origin <video> 自動播放，否則白頁）。viewer receive-only（AppStream mic:false）→ 不需 camera/microphone。
   return (
     <iframe ref={iframeRef} src={src} title="live-3d-viewer"
-      onLoad={() => { viewerReadyRef.current = false; cancelSection(); propsRef.current.onSectionInvalidated?.(); }}
+      onLoad={() => { viewerReadyRef.current = false; cancelSection(); propsRef.current.onSectionInvalidated?.(); propsRef.current.onMeasurementState?.({ status: "unconfirmed" }); }}
       sandbox="allow-scripts allow-same-origin" allow="autoplay"
       style={{ width: "100%", height: "100%", minHeight: 480, border: "1px solid var(--ab-border)", background: "var(--ab-black)" }} />
   );

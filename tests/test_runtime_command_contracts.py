@@ -140,6 +140,8 @@ def datachannel_message_samples() -> dict[str, dict]:
         },
         "focusPrimRequest": {**authority, "prim_path": "/World"},
         "clearHighlightRequest": authority,
+        "measurementRequest": {**authority, "action": "start", "measurement_id": "measure-1"},
+        "measurementResult": {"trace_id": TRACE_ID, "request_id": "request_001", "measurement_id": "measure-1", "status": "started", "meters_per_unit": 1},
         "clipPlaneRequest": {**authority, "enabled": True, "axis": "x", "position": 3, "normal": [1, 0, 0]},
         "clipPlaneResult": {"trace_id": TRACE_ID, "request_id": "request_001", "result": "success", "enabled": True, "planes": [[1, 0, 0, -3]]},
         "selectPrimsRequest": {**authority, "paths": ["/World"]},
@@ -218,12 +220,12 @@ def effective_payload_contract(schema: dict, event_type: str) -> tuple[set[str],
     return collect(payload)
 
 
-def test_all_28_datachannel_payload_contracts_require_and_validate_trace_id() -> None:
+def test_all_30_datachannel_payload_contracts_require_and_validate_trace_id() -> None:
     schema = json.loads((CONTRACTS / "kit-datachannel-v1.schema.json").read_text(encoding="utf-8"))
     validator = load_validator("kit-datachannel-v1.schema.json")
     samples = datachannel_message_samples()
     assert kit_event_catalog() == set(samples)
-    assert len(samples) == 28
+    assert len(samples) == 30
 
     for event_type, payload in samples.items():
         required, properties = effective_payload_contract(schema, event_type)
