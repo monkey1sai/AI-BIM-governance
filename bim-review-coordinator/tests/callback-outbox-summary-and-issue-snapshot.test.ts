@@ -149,12 +149,12 @@ async function seedConversionOutboxEntry(app: CoordinatorApp): Promise<string> {
 }
 
 /** 顯式建一個 review session（不走 IFC intake），回 session_id。 */
-async function seedSession(app: CoordinatorApp): Promise<string> {
+async function seedSession(app: CoordinatorApp, modelVersionId = "version_demo_001"): Promise<string> {
   const created = await request(app.app)
     .post("/api/review-sessions")
     .send({
       project_id: "project_demo_001",
-      model_version_id: "version_demo_001",
+      model_version_id: modelVersionId,
       artifact_bindings: [
         {
           artifact_group_id: "ag_demo",
@@ -327,6 +327,33 @@ describe("POST /api/review-sessions/:sessionId/issue-snapshot", () => {
     expect(JSON.stringify(summary.body)).not.toMatch(/"payload"|"target_url"/);
   });
 
+  it.each([true, false])("原樣保留 opaque 版本的前後空白（caller version=%s）", async withVersion => {
+    const version = " 圖書館/原版 A.ifc ";
+    const gov = await startGovernanceStub({ model_version_id: version });
+    process.env.GOVERNANCE_API_BASE = gov.baseUrl;
+    const app = makeApp();
+    const sessionId = await seedSession(app, version);
+    const response = await request(app.app).post(`/api/review-sessions/${sessionId}/issue-snapshot`)
+      .send({ rule_run_id: "rr_raw", ...(withVersion ? { model_version_id: version } : {}) });
+    expect(response.status).toBe(202);
+    expect(gov.urls[1]).toBe(`GET /api/issues?model_version_id=${encodeURIComponent(version)}&kind=issue`);
+    const entry = await request(app.app).get(`/api/internal/callback-outbox/${response.body.outbox_id}`)
+      .set({ "X-Internal-Token": INTERNAL_TOKEN });
+    expect(entry.body.payload.model_version_id).toBe(version);
+  });
+
+  it.each(["caller", "run"])("不將不同空白的 %s 版本合併為同一身分", async mismatch => {
+    const version = " version_demo_001 ";
+    const gov = await startGovernanceStub({ model_version_id: mismatch === "run" ? version.trim() : version });
+    process.env.GOVERNANCE_API_BASE = gov.baseUrl;
+    const app = makeApp();
+    const sessionId = await seedSession(app, version);
+    await request(app.app).post(`/api/review-sessions/${sessionId}/issue-snapshot`)
+      .send({ rule_run_id: "rr_raw", model_version_id: mismatch === "caller" ? version.trim() : version }).expect(409);
+    expect(gov.urls).toHaveLength(mismatch === "caller" ? 0 : 1);
+    expect((await request(app.app).get("/api/callback-outbox/summary")).body.total).toBe(0);
+  });
+
   it("未給 model_version_id → 仍以 session canonical version 查正式問題統計", async () => {
     const gov = await startGovernanceStub();
     process.env.GOVERNANCE_API_BASE = gov.baseUrl;
@@ -367,16 +394,18 @@ describe("POST /api/review-sessions/:sessionId/issue-snapshot", () => {
     expect((await request(app.app).get("/api/callback-outbox/summary")).body.total).toBe(0);
   });
 
-  it.each(["caller_mismatch", "missing_session_version"])("%s 在讀取上游前拒絕且不入列", async scenario => {
+  it.each(["caller_mismatch", "missing_session_version", "blank_session_version", "blank_caller_version"])("%s 在讀取上游前拒絕且不入列", async scenario => {
     const gov = await startGovernanceStub();
     process.env.GOVERNANCE_API_BASE = gov.baseUrl;
     const app = makeApp();
     const sessionId = await seedSession(app);
     if (scenario === "missing_session_version") app.store.update(sessionId, { model_version_id: "" });
+    if (scenario === "blank_session_version") app.store.update(sessionId, { model_version_id: "  " });
     const response = await request(app.app).post(`/api/review-sessions/${sessionId}/issue-snapshot`).send({
       rule_run_id: "rr_guard", ...(scenario === "caller_mismatch" ? { model_version_id: "caller_version" } : {}),
+      ...(scenario === "blank_caller_version" ? { model_version_id: "  " } : {}),
     });
-    expect(response.status).toBe(409);
+    expect(response.status).toBe(scenario === "blank_caller_version" ? 400 : 409);
     expect(gov.urls).toEqual([]);
     expect((await request(app.app).get("/api/callback-outbox/summary")).body.total).toBe(0);
   });

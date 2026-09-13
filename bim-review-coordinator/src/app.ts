@@ -478,7 +478,7 @@ const appendEventSchema = z
 // model_version_id 等識別碼，統計由 coordinator server-side 向 governance 查詢。
 const issueSnapshotSchema = z.object({
   rule_run_id: z.string().trim().min(1).max(200),
-  model_version_id: z.string().trim().min(1).max(200).optional(),
+  model_version_id: z.string().min(1).max(200).refine(value => value.trim().length > 0).optional(),
 });
 
 // A1/A2 governance file-library 邏輯識別（unified-console local_fs 修復）：
@@ -4383,8 +4383,9 @@ export function createCoordinatorApp(
         return;
       }
       const input = issueSnapshotSchema.parse(request.body);
-      const modelVersionId = session.model_version_id?.trim();
-      if (!modelVersionId || (input.model_version_id !== undefined && input.model_version_id !== modelVersionId)) {
+      // Version IDs are opaque: reject blank values without changing identity.
+      const modelVersionId = session.model_version_id;
+      if (!modelVersionId?.trim() || (input.model_version_id !== undefined && input.model_version_id !== modelVersionId)) {
         response.status(409).json({ error: "issue_snapshot_source_mismatch" });
         return;
       }

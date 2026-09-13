@@ -174,10 +174,10 @@ describe("A1 issue snapshot（F2⑩ 回拋摘要至雲端）", () => {
     await act(async () => { root!.render(<A1GovernanceWorkbenchPage />); });
     await flush();
   };
-  const runLocalFsToScored = async () => {
+  const runLocalFsToScored = async (modelVersionId = "v1") => {
     // local_fs run 走 library:// 邏輯識別 → createRuleRunForLibrary（path 被遮蔽不可回送）。
     vi.spyOn(governanceClient, "createRuleRunForLibrary").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
-    vi.spyOn(governanceClient, "getRuleRun").mockResolvedValue(fakeRunStatus("succeeded"));
+    vi.spyOn(governanceClient, "getRuleRun").mockResolvedValue(fakeRunStatus("succeeded", { model_version_id: modelVersionId }));
     vi.spyOn(governanceClient, "getResults").mockResolvedValue([]);
     await renderA1();
     const model = q<HTMLSelectElement>("a1-localfs-select")!;
@@ -244,14 +244,15 @@ describe("A1 issue snapshot（F2⑩ 回拋摘要至雲端）", () => {
     expect(q("a1-issue-snapshot-error")).toBeNull();
   });
 
-  it("檔案庫檢核需明確選擇同版本 session 才能回拋", async () => {
+  it.each(["v1", " v1 "])("檔案庫檢核需明確選擇原樣相同版本 %s 的 session 才能回拋", async version => {
+    vi.mocked(coordinatorClient.runtimeStatus).mockResolvedValue(fakeRuntimeStatus([{ ...fakeSession(REVIEW_SESSION_ID), model_version_id: version }]) as never);
     const post = vi.spyOn(coordinatorClient, "postIssueSnapshot").mockResolvedValue({ outbox_id: "local_library_snapshot" });
-    await runLocalFsToScored();
+    await runLocalFsToScored(version);
     expect(q<HTMLButtonElement>("a1-issue-snapshot")!.disabled).toBe(true);
     const session = q<HTMLSelectElement>("a1-session-select")!;
     await act(async () => { session.value = REVIEW_SESSION_ID; session.dispatchEvent(new Event("change", { bubbles: true })); });
     await act(async () => { q<HTMLButtonElement>("a1-issue-snapshot")!.click(); });
-    expect(post).toHaveBeenCalledWith(REVIEW_SESSION_ID, { rule_run_id: "rr_a1", model_version_id: "v1" });
+    expect(post).toHaveBeenCalledWith(REVIEW_SESSION_ID, { rule_run_id: "rr_a1", model_version_id: version });
   });
 
   it("不同版本 session 不可回拋，也不把本機選項鍵當成 run 的版本", async () => {

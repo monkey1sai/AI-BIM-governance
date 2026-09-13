@@ -50,6 +50,17 @@ npm exec playwright test -- --config=playwright.a1-delivery.config.ts
 
 持久測試入口與 fixture preparer 隨本 PR 保存。當輪大檔證據在 ignored `artifacts/e2e/a1-delivery/r2/`：`library-fixture.json`、`stack-manifest.json`、`iab-complete.json`，及 `playwright-output/884ba9d7-261b-4a9c-b62d-b768e7ce25c7/` 內的 `library.xlsx`、`library.bcfzip`、兩段 `trace.zip` 與四張操作截圖。Codex IAB 的 `slice12-iab-{outbox,confirmed,reopened,revised}.txt`、截圖與 `slice12-real-evidence.json` 保存於本次外部視覺化目錄；不將自動 IAB holder 的獨立頁面 screenshot 當成人工操作證據。
 
+## PR #831 第三輪 review 修補
+
+- 保留 opaque `model_version_id` 的原值，只以 `trim()` 拒絕全空白；不再單方面改寫 Session、run、BCF 或 snapshot 的版本身分。含前後空白的同版本成功；空白不同的版本、全空白與缺版本均拒絕交付。新增案例先重現 coordinator 4 個、UI 2 個失敗，再驗證修補。
+- fixture preparer 的 GUID、原檔 digest、run succeeded、run source digest、tenant、68→0 FAIL、68 個 Issue 與發布 policy 前 digest 檢查，全部使用不受 `python -O` 影響的 `require`。`python web-viewer-sample/e2e/support/test_prepare_a1_delivery.py` 在正常與 `-O` interpreter 分別測 6 種 invalid evidence，12 組均拒絕且 fixture/policy bytes 不變；修補前 `-O` 可錯誤發布。
+- Coordinator 完整 `npm run verify`：122 files / 2,149 tests；Viewer：135 files / 1,896 tests、typecheck/build、23 structured-log checks 通過。
+- 新 receipt 設計由 Console Hi-Fi 的 `a1-delivery-state-reference` 定義，涵蓋 loading、pending、delivered、dead_letter、查詢失敗、查無與送達證據不完整。補充 manifest 為 [receipt-state-reference.json](receipt-state-reference.json)，含 source hashes、瀏覽器版本、DPR 1、兩 viewport 的 reference/current PNG 與 GET-only retry 紀錄。來源 hash 識別當次 worktree 內容，`subject_head` 是其 parent，不能誤稱乾淨 HEAD capture。
+- `npx playwright test --config=playwright.a1-outbox-design.config.ts`：2 passed；14 個 state/viewport 配對的文字完全一致、按鈕狀態正確；每個 viewport 僅 36 pixels 差異，低於原主 manifest 的 1% 容差。重試只新增一個 `GET /api/callback-outbox/summary?limit=200`，沒有 POST。四張圖可直接比較：[1440 reference](receipt-states/1440x900-reference.png)、[1440 current](receipt-states/1440x900-current.png)、[1920 reference](receipt-states/1920x1080-reference.png)、[1920 current](receipt-states/1920x1080-current.png)。
+- Codex in-app browser 另操作相同 production component 的 test-only loopback fixture，確認查詢失敗→重試→pending，並取得七狀態 DOM。外部證據 `slice12-r3-iab-retry.{txt,png}`、`slice12-r3-iab-states-dom.txt`、`slice12-r3-iab-states.png`。這是設計狀態證據；不是公司 receiver 或真 Kit evidence。
+- 保留原 13-screen idle golden、主 design manifest、generic runner 與 threshold。本補充 state manifest 不擴充原 required pixel runner 的 coverage。原 runner 的 default/offline 綠燈與新增 receipt 狀態驗證分開計。
+- GitNexus stale 重建失敗：`Failed calling LOWER: Invalid UTF-8`；health report 為 UNKNOWN。scoped detect 雖輸出 low，但索引未對齊 HEAD，不能當 pass，也不降低先前 HIGH。同第三輪 reviewer 已接受以 source/tests/exact diff 取代 unavailable gate 的限定風險程序；不是 GitHub human approval。
+
 ## V1–V8 證據對照與保留缺口
 
 對照原需求 §6；本刀可送審，不宣稱 full-system E2E complete。前刀合併只證明 code 已落地，不能取代當輪 runtime。

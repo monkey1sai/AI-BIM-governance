@@ -57,17 +57,19 @@ beforeEach(() => {
 });
 afterEach(async () => { await act(async () => root.unmount()); host.remove(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
-it("BCF 僅送成功 run 的編碼版本；其他版本只供整改檢視", async () => {
+it.each([versionA, ` ${versionA} `])("BCF 原樣傳送成功 run 的 opaque 版本 %s", async version => {
+  selectState(version);
+  vi.mocked(governanceClient.issuesFromRuleRun).mockResolvedValue({ created: 2, issue_ids: [version, "other_version"] });
   await render(); await click("a1-step-issues");
   expect(button("a1-step-bcf").disabled).toBe(false);
   await click("a1-step-bcf");
-  expect(fetch).toHaveBeenCalledWith(governanceClient.bcfExportUrl({ model_version_id: versionA }));
-  expect(new URL(String(vi.mocked(fetch).mock.calls[0][0])).searchParams.get("model_version_id")).toBe(versionA);
+  expect(fetch).toHaveBeenCalledWith(governanceClient.bcfExportUrl({ model_version_id: version }));
+  expect(new URL(String(vi.mocked(fetch).mock.calls[0][0])).searchParams.get("model_version_id")).toBe(version);
   expect(dispatch).toHaveBeenCalledWith({ type: "BCF_EXPORT_OK" });
   expect(host.textContent).toContain("other_version");
 });
 
-it.each([null, "version_without_issues"])("BCF 缺可信版本或同版本問題 %s 時拒絕匯出", async version => {
+it.each([null, "  ", "version_without_issues"])("BCF 缺可信版本或同版本問題 %s 時拒絕匯出", async version => {
   state.run = { ...state.run!, model_version_id: version };
   await render(); await click("a1-step-issues");
   expect(button("a1-step-bcf").disabled).toBe(true);

@@ -6,6 +6,18 @@
 <script src="./support.js"></script>
 </head>
 <body>
+<!-- A1 receipt state reference: design-only fixture, rendered by e2e/support/a1-outbox-preview.html.
+     Uses the existing Console tokens/ec-note surface. Retry only refreshes GET summary.
+     These supplemental states do not replace the 13-screen idle baseline contract. -->
+<template id="a1-delivery-state-reference">
+  <section data-receipt-state="loading"><h2>查詢中</h2><div class="ec-note"><p>查詢遞送狀態中…</p><button type="button" disabled>重新查詢遞送狀態</button></div></section>
+  <section data-receipt-state="pending"><h2>等待投遞</h2><div class="ec-note"><p>已入列，等待投遞或重試；尚未確認送達。</p><p>投遞次數: 0/5</p><button type="button">重新查詢遞送狀態</button></div></section>
+  <section data-receipt-state="delivered"><h2>接收端 HTTP 成功</h2><div class="ec-note"><p>接收端已回應成功（HTTP 2xx）；尚不代表雲端業務處理完成。</p><p>投遞次數: 2/5 · 送達時間: <time datetime="2026-09-13T01:00:00Z">2026-09-13T01:00:00Z</time></p><button type="button">重新查詢遞送狀態</button></div></section>
+  <section data-receipt-state="dead_letter"><h2>投遞耗盡</h2><div class="ec-note"><p>投遞次數已耗盡，請由管理者處理；查詢不會重新投遞。</p><p>投遞次數: 5/5</p><button type="button">重新查詢遞送狀態</button></div></section>
+  <section data-receipt-state="error"><h2>查詢失敗，可重試</h2><div class="ec-note"><p>無法取得遞送狀態，請重試查詢。</p><button type="button">重新查詢遞送狀態</button></div></section>
+  <section data-receipt-state="missing"><h2>摘要中無紀錄</h2><div class="ec-note"><p>最近 200 筆摘要中未確認此回拋紀錄，遞送結果未知。</p><button type="button">重新查詢遞送狀態</button></div></section>
+  <section data-receipt-state="incomplete"><h2>送達證據不完整</h2><div class="ec-note"><p>遞送紀錄不完整，結果未知。</p><p>投遞次數: 2/5</p><button type="button">重新查詢遞送狀態</button></div></section>
+</template>
 <x-dc>
 <helmet>
 <link rel="preconnect" href="https://fonts.googleapis.com">

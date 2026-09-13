@@ -147,7 +147,8 @@ export function A1GovernanceWorkbenchPage({ active = true }: { active?: boolean 
   const [a1Issues, setA1Issues] = useState<IssueRow[]>([]);
   const bcfIssues = useMemo(() => a1Issues.filter((issue) => issue.kind === "issue" && Boolean(issue.ifc_guid)), [a1Issues]);
   // 匯出範圍只信任成功 run 的 server-side version；跨版問題仍保留供整改檢視。
-  const deliveryVersionId = state.run?.model_version_id?.trim() || "";
+  const rawDeliveryVersionId = state.run?.model_version_id ?? "";
+  const deliveryVersionId = rawDeliveryVersionId.trim() ? rawDeliveryVersionId : "";
   const exportableBcfIssues = bcfIssues.filter(issue => deliveryVersionId && issue.model_version_id === deliveryVersionId);
   const [remediationSelection, setRemediationSelection] = useState<{
     id: string; runId: string | null; version: string; mode: "history" | "confirm";

@@ -42,8 +42,8 @@ if a.phase == 'prepare':
         ifcopenshell.api.pset.edit_pset(model, pset=pset, properties={'FireRating': 'VALIDATION_ONLY_NOT_CERTIFIED'})
     model.write(str(revised))
     shutil.copyfile(revised, library / 'revised-validation-only.ifc')
-    assert sorted(e.GlobalId for e in model.by_type('IfcElement')) == original_guids
-    assert sha(ORIGINAL) == SHA and sha(original) == SHA
+    require(sorted(e.GlobalId for e in model.by_type('IfcElement')) == original_guids, 'derived IFC element GUIDs changed')
+    require(sha(ORIGINAL) == SHA and sha(original) == SHA, 'original IFC digest changed during preparation')
     revised_sha = sha(revised); now = datetime.now(timezone.utc).isoformat()
     jobs = []
     for label, path, version, digest in [('original', original, VERSION, SHA), ('revised', revised, 'slice12-library-revised-v1', revised_sha)]:
@@ -56,7 +56,7 @@ if a.phase == 'prepare':
             'conversion_authority': None, 'download_status': 'downloaded', 'host_local_path': str(path),
             'local_path': str(path), 'created_at': now, 'updated_at': now})
     state = run / 'state/coordinator'; state.mkdir(parents=True, exist_ok=True)
-    assert not (state / 'external-ifc-ready.json').exists()
+    require(not (state / 'external-ifc-ready.json').exists(), 'refusing existing IFC-ready state')
     write(state / 'external-ifc-ready.json', {'jobs': jobs})
     write(fixture_file, {'fixture_kind': 'owner-seeded-local-derived-ifc', 'original_sha256': SHA,
         'revised_sha256': revised_sha, 'original_model_version_id': VERSION, 'revised_model_version_id': 'slice12-library-revised-v1',
@@ -82,13 +82,13 @@ else:
             record = api('rule-runs/' + run_id)
             if record['status'] not in ['queued', 'running']: break
             time.sleep(0.4)
-        assert record['status'] == 'succeeded', record
-        assert record['summary']['source_sha256'] == fixture[label + '_sha256']
-        assert record['source_metadata']['tenant_id'] == 'tenant_library_validation'
+        require(record['status'] == 'succeeded', 'rule run did not succeed')
+        require(record['summary']['source_sha256'] == fixture[label + '_sha256'], 'rule run source digest mismatch')
+        require(record['source_metadata']['tenant_id'] == 'tenant_library_validation', 'rule run tenant mismatch')
         fixture[label + '_run_id'] = run_id; summaries[label] = record['summary']
-    assert summaries['original']['failed'] == 68 and summaries['revised']['failed'] == 0
+    require(summaries['original']['failed'] == 68 and summaries['revised']['failed'] == 0, 'expected original 68 FAIL and revised 0 FAIL')
     created = api('issues/from-rule-run/' + fixture['original_run_id'], {})
-    assert created['created'] == 68
+    require(created['created'] == 68, 'expected 68 created issues')
     cases = []
     for index, issue_id in enumerate(created['issue_ids']):
         issue = api('issues/' + issue_id)['issue']
@@ -100,7 +100,7 @@ else:
             'original': {'model_version_id': VERSION, 'run_id': fixture['original_run_id'], 'source_sha256': SHA},
             'revised': {'model_version_id': fixture['revised_model_version_id'], 'run_id': fixture['revised_run_id'], 'source_sha256': fixture['revised_sha256']},
             'operations': ['history','confirm','reopen']})
-    assert sha(ORIGINAL) == SHA and sha(Path(fixture['original_file'])) == SHA and sha(Path(fixture['revised_file'])) == fixture['revised_sha256']
+    require(sha(ORIGINAL) == SHA and sha(Path(fixture['original_file'])) == SHA and sha(Path(fixture['revised_file'])) == fixture['revised_sha256'], 'IFC digest changed before policy publication')
     write(run / 'owner-remediation-policy.json', {'version': 1, 'expires_at_ms': int(time.time()*1000) + 8*3600*1000, 'cases': cases})
     fixture['summaries'] = summaries; fixture['head_sha'] = manifest['head_sha']; write(fixture_file, fixture)
     print(json.dumps(fixture, ensure_ascii=True))
