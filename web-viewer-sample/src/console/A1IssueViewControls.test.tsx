@@ -83,4 +83,22 @@ describe("A1 explicit model issue controls", () => {
     expect(f.container.textContent).toContain("尚未確認模型效果");
     expect(f.button("關閉問題高亮").disabled).toBe(false);
   });
+  it("reports partially mapped issues and never clears the model for all-unmapped results", async () => {
+    const f = await mount();
+    await f.click("在模型中顯示問題");
+    expect(f.container.textContent).toContain("另有 1 個構件無法定位");
+    await f.render("unmapped-run", [rows[3]]);
+    f.runIssueView.mockClear();
+    await f.click("在模型中顯示問題");
+    expect(f.runIssueView).not.toHaveBeenCalled();
+    expect(f.container.textContent).toContain("都無法在模型中定位；既有模型外觀保持不變");
+    expect(f.container.textContent).not.toContain("問題高亮已套用");
+    await f.render("mixed-run", [rows[0], { ...rows[3], rule_code: "UNMAPPED" }]);
+    await f.click("在模型中顯示問題");
+    f.runIssueView.mockClear();
+    await f.filter("UNMAPPED");
+    expect(f.runIssueView).not.toHaveBeenCalled();
+    expect(f.container.textContent).toContain("都無法在模型中定位；既有模型外觀保持不變");
+    expect(f.button("關閉問題高亮").disabled).toBe(false);
+  });
 });

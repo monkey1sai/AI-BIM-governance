@@ -44,6 +44,11 @@ export function A1IssueViewControls({ rows, runId, sessionId, paneRef, gate }: {
     const pane = paneRef.current;
     if (!pane || pending) return;
     const input = issueHighlightItems(nextRows);
+    const unmappedCount = new Set(nextRows.filter(row => !row.usd_prim_path || !row.ifc_guid).map(row => row.ifc_guid)).size;
+    if (action === "highlight" && nextRows.length > 0 && input.length === 0) {
+      setStatus("目前篩選的問題都無法在模型中定位；既有模型外觀保持不變。請查看問題明細。");
+      return;
+    }
     if (action === "highlight" && input.length > 4096) { setStatus("目前篩選超過 4096 個構件，請縮小篩選範圍。"); return; }
     const expectedScope = scope;
     setPending(true); setStatus("等待模型確認…");
@@ -62,7 +67,7 @@ export function A1IssueViewControls({ rows, runId, sessionId, paneRef, gate }: {
     if (action === "highlight") {
       setEnabled(true);
       setRenderer(result.renderer_mode || "unknown");
-      setStatus(`問題高亮已套用：${result.applied_count ?? 0} 個模型構件。`);
+      setStatus(`問題高亮已套用：${result.applied_count ?? 0} 個模型構件。${unmappedCount > 0 ? `另有 ${unmappedCount} 個構件無法定位，請查看問題明細。` : ""}`);
     } else if (action === "clear") {
       setEnabled(false); setMayHaveOverlay(false); setStatus("問題高亮已關閉，原始外觀已恢復。");
     } else if (action === "focus") setStatus("已定位構件並加入選取框；問題顏色保持不變。");
