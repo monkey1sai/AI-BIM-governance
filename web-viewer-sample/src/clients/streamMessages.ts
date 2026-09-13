@@ -141,14 +141,17 @@ export interface ClipPlanePayload {
 }
 
 export function buildClipPlaneRequest(params: ClipPlanePayload): StreamMessage {
+    const axis = params.axis ?? "z";
+    const normal: [number, number, number] = [0, 0, 0];
+    normal[{ x: 0, y: 1, z: 2 }[axis]] = 1;
     return {
         event_type: "clipPlaneRequest",
         payload: {
             ...(params.requestId ? { request_id: params.requestId } : {}),
             enabled: params.enabled,
-            axis: params.axis ?? "z",
+            axis,
             position: params.position ?? 0,
-            normal: params.normal ?? [0, 0, 1],
+            normal: params.normal ?? normal,
         },
     };
 }

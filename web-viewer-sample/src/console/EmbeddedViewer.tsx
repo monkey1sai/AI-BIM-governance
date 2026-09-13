@@ -1,4 +1,5 @@
 import { useEffect, useImperativeHandle, useRef, forwardRef } from "react";
+import { parseSectionInput, parseSectionReply, type SectionInput, type SectionReply } from "./sectionPlaneBridge";
 
 // viewerOrigin 可能被設定成帶尾斜線或路徑前綴的「viewer 入口 base URL」（如 https://host/bim-viewer/），
 // 但 MessageEvent.origin 永遠是純 origin（https://host，無路徑/尾斜線）。origin 比對與 postMessage targetOrigin
@@ -70,6 +71,7 @@ export interface HighlightItem {
 }
 
 export interface EmbeddedViewerHandle {
+  sendSectionPlane?(input: SectionInput): Promise<SectionReply>;
   sendHighlight(items: HighlightItem[], clientRequestId: string): void;
   // 批次疊加（A2 diff overlay）：viewer 端把全部 items 裝進「一個」highlightPrimsRequest（聯集選取）
   // 並回「一個」帶 sent_count/unmapped_count 的 highlight_result。sendHighlight 維持逐筆語意
@@ -87,6 +89,7 @@ export interface EmbeddedViewerHandle {
 }
 
 export interface EmbeddedViewerProps {
+  onSectionInvalidated?: () => void;
   sessionId: string;
   viewerOrigin: string; // 必須是「viewer 入口 origin」（:5173 baked viewer），非 coordinator :8004。
                         // 真源 = coordinatorClient.runtimeStatus().configured_endpoints.viewer.browser_url_base（Task 3 提供）。
@@ -128,6 +131,12 @@ export interface EmbeddedViewerProps {
 export const EmbeddedViewer = forwardRef<EmbeddedViewerHandle, EmbeddedViewerProps>(function EmbeddedViewer(props, ref) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const viewerReadyRef = useRef(false);
+  const sectionPending = useRef<{ id: string; resolve: (reply: SectionReply) => void; timer: ReturnType<typeof setTimeout> } | null>(null);
+  const cancelSection = () => {
+    const pending = sectionPending.current;
+    sectionPending.current = null;
+    if (pending) { clearTimeout(pending.timer); pending.resolve({ status: "unconfirmed" }); }
+  };
 
   // stable ref：每 render 同步最新 props，listener 才不必每 render 重掛。
   // 原 dep=[props]（每 render 新 object reference）會在每個 render cycle removeEventListener + addEventListener，
@@ -158,6 +167,18 @@ export const EmbeddedViewer = forwardRef<EmbeddedViewerHandle, EmbeddedViewerPro
       const m = e.data as { protocol?: string; type?: string } | null;
       if (!m || m.protocol !== "vg01") return;                     // 協定版本 / 前向相容（未知忽略）
       switch (m.type) {
+        case "section_result": {
+          const reply = parseSectionReply(m);
+          if (!reply) break;
+          if (reply.status === "unconfirmed" && !reply.clientRequestId) {
+            cancelSection(); p.onSectionInvalidated?.(); break;
+          }
+          const pending = sectionPending.current;
+          if (!pending || reply.clientRequestId !== pending.id) break;
+          sectionPending.current = null;
+          clearTimeout(pending.timer); pending.resolve(reply);
+          break;
+        }
         case "viewer_ready":
           if (!viewerReadyRef.current) {
             viewerReadyRef.current = true;
@@ -194,7 +215,7 @@ export const EmbeddedViewer = forwardRef<EmbeddedViewerHandle, EmbeddedViewerPro
       }
     };
     window.addEventListener("message", onMsg);
-    return () => window.removeEventListener("message", onMsg);
+    return () => { window.removeEventListener("message", onMsg); cancelSection(); };
   }, []); // listener 只掛一次；最新 callback / origin 經 propsRef 讀取
 
   useEffect(() => {
@@ -204,6 +225,24 @@ export const EmbeddedViewer = forwardRef<EmbeddedViewerHandle, EmbeddedViewerPro
   // 送出側比照接收側：經 propsRef.current 讀最新 viewerOrigin，與 listener 同模式（避免兩側不對稱）。
   // handle 內 closure 不直接 close over render-scope props → useImperativeHandle dep 可為 []（zero re-create）。
   useImperativeHandle(ref, () => ({
+    sendSectionPlane: (input) => {
+      if (!parseSectionInput(input)) return Promise.resolve({ status: "error", reason: "invalid" });
+      if (!viewerReadyRef.current || !iframeRef.current?.contentWindow) return Promise.resolve({ status: "error", reason: "unavailable" });
+      if (sectionPending.current) return Promise.resolve({ status: "error", reason: "busy" });
+      const id = crypto.randomUUID();
+      return new Promise<SectionReply>(resolve => {
+        const timer = setTimeout(() => {
+          if (sectionPending.current?.id !== id) return;
+          sectionPending.current = null; resolve({ status: "error", reason: "timeout" });
+        }, 11000);
+        sectionPending.current = { id, resolve, timer };
+        try { post({ type: "section_plane", section: input, clientRequestId: id }); }
+        catch {
+          clearTimeout(timer); sectionPending.current = null;
+          resolve({ status: "error", reason: "transport" });
+        }
+      });
+    },
     sendHighlight: (items, clientRequestId) => post({ type: "highlight", items, clientRequestId }),
     sendHighlightBatch: (items, clientRequestId) => post({ type: "highlight_batch", items, clientRequestId }),
     sendFocus: (ifcGuid, clientRequestId) => post({ type: "focus", ifc_guid: ifcGuid, clientRequestId }),
@@ -235,7 +274,7 @@ export const EmbeddedViewer = forwardRef<EmbeddedViewerHandle, EmbeddedViewerPro
   //     （跨 origin <video> 自動播放，否則白頁）。viewer receive-only（AppStream mic:false）→ 不需 camera/microphone。
   return (
     <iframe ref={iframeRef} src={src} title="live-3d-viewer"
-      onLoad={() => { viewerReadyRef.current = false; }}
+      onLoad={() => { viewerReadyRef.current = false; cancelSection(); propsRef.current.onSectionInvalidated?.(); }}
       sandbox="allow-scripts allow-same-origin" allow="autoplay"
       style={{ width: "100%", height: "100%", minHeight: 480, border: "1px solid var(--ab-border)", background: "var(--ab-black)" }} />
   );

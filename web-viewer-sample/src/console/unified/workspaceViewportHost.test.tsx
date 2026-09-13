@@ -359,6 +359,29 @@ describe("ViewportSlotProvider", () => {
     await act(async () => { root.unmount(); });
   });
 
+
+  it("section commands reuse host, prevent duplicates and discard replies after a session change", async () => {
+    let api: ReturnType<typeof useViewportSlot> = null;
+    function GrabSection() { api = useViewportSlot(); return null; }
+    const container = document.createElement("div"); const root = createRoot(container);
+    await act(async () => root.render(<ViewportSlotProvider><GrabSection /></ViewportSlotProvider>));
+    let finish: (reply: { status: "applied"; requestId: string; clientRequestId: string }) => void = () => {};
+    const send = vi.fn(() => new Promise<{ status: "applied"; requestId: string; clientRequestId: string }>(resolve => { finish = resolve; }));
+    await act(async () => {
+      api!.setActiveSessionId("review_session_one");
+      api!.setGate({ canSend: false, reason: "mapping unavailable", canSendViewerCommand: true, viewerCommandReason: "" });
+      api!.registerHostActions?.({ sendSectionPlane: send });
+    });
+    const input = { enabled: true, axis: "z" as const, direction: 1 as const, position: 2 };
+    await act(async () => { api!.sendSectionPlane?.(input); api!.sendSectionPlane?.(input); });
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(api!.sectionState?.status).toBe("pending");
+    await act(async () => api!.setActiveSessionId("review_session_two"));
+    await act(async () => finish({ status: "applied", requestId: "runtime_old", clientRequestId: "local_old" }));
+    expect(api!.sectionState?.status).toBe("unconfirmed");
+    await act(async () => root.unmount());
+  });
+
   it("支援 stageTree 與 host actions 轉發（requestStageTree / selectPrim / sendToolbarAction）", async () => {
     let api: ReturnType<typeof useViewportSlot> = null;
     function Grab() { api = useViewportSlot(); return null; }

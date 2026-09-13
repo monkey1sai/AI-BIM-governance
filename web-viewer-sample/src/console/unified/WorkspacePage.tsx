@@ -8,6 +8,7 @@ import { t, useLang } from "../i18n";
 import { ACCENT, MONO } from "./fixtures";
 import type { DockKey } from "./fixtures";
 import { WorkspaceFlowGuide } from "./WorkspaceFlowGuide";
+import { SectionPlaneControls } from "./SectionPlaneControls";
 import { resolveViewerCommandGate, useViewportSlot } from "./viewportSlot";
 import { useUsdStageTree, type USDPrimNode } from "../../hooks/useUsdStageTree";
 
@@ -341,6 +342,7 @@ export function WorkspacePage({ initialDock = "a1" }: WorkspacePageProps) {
               {t("viewer 協定（vg01）尚未下傳 USD stage 樹；此欄依規格誠實停用，不顯示假結構。", "The viewer protocol (vg01) does not stream the USD stage tree yet; this column stays honestly disabled instead of showing a fake tree.")}
             </span>
           )}
+          <SectionPlaneControls ready={!toolbarDisabled} state={slot?.sectionState ?? { status: "idle" }} onSend={input => slot?.sendSectionPlane?.(input)} />
         </aside>
 
         {/* 中：viewport slot（live 時 host 覆蓋於容器；離線只剩下方誠實說明） */}

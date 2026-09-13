@@ -165,6 +165,7 @@ export const RUNTIME_MUTATION_AUTHORITY_VOCABULARY = {
     "highlightPrimsRequest",
     "focusPrimRequest",
     "clearHighlightRequest",
+    "clipPlaneRequest",
     "selectPrimsRequest",
     "makePrimsPickable",
     "resetStage",
@@ -277,6 +278,14 @@ const runtimeCommandContextSchemas: Record<string, z.ZodTypeAny> = {
   }).strict(),
   focusPrimRequest: z.object({ primPath: runtimePrimPathSchema }).strict(),
   clearHighlightRequest: z.object({}).strict(),
+  clipPlaneRequest: z.object({
+    enabled: z.boolean(), axis: z.enum(["x", "y", "z"]),
+    position: z.number().finite().min(-3.4028234663852886e38).max(3.4028234663852886e38),
+    normal: z.tuple([z.number().finite(), z.number().finite(), z.number().finite()]),
+  }).strict().refine(({ axis, normal }) => {
+    const index = { x: 0, y: 1, z: 2 }[axis];
+    return Math.abs(normal[index]) === 1 && normal.every((value, i) => i === index || value === 0);
+  }),
   selectPrimsRequest: z.object({ paths: z.array(runtimePrimPathSchema).max(4096) }).strict(),
   makePrimsPickable: z.object({ paths: z.array(runtimePrimPathSchema).min(1).max(4096) }).strict(),
   resetStage: z.object({}).strict(),

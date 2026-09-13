@@ -57,6 +57,7 @@ class StageManager:
         self._highlight_overlay = HighlightOverlay()
         self._highlight_stage = None
         self._camera_stage = None
+        self._section_plane = None
         self._subscriptions = []
         self._runtime_authority = runtime_authority or RuntimeAuthorityClient()
         self._trace_context = trace_context or DataChannelTraceContext()
@@ -76,6 +77,7 @@ class StageManager:
             "highlightPrimsResult",
             "clearHighlightResult",
             "focusPrimResult",
+            "clipPlaneResult",
         ]
 
         for o in outgoing:
@@ -101,6 +103,7 @@ class StageManager:
             'clearHighlightRequest': self._on_clear_highlight,
             # request to focus/select one prim
             'focusPrimRequest': self._on_focus_prim,
+            'clipPlaneRequest': self._on_clip_plane,
             # harness-only in browsers; production Kit rejects explicitly.
             'composeStageRequest': self._on_unsupported_mutator,
         }
@@ -121,6 +124,11 @@ class StageManager:
 
         # -- subscribe to stage events
         usd_context = omni.usd.get_context()
+        self._subscriptions.append(ed.observe_event(
+            observer_name="StageManager:StageClosing",
+            event_name=usd_context.stage_event_name(omni.usd.StageEventType.CLOSING),
+            on_event=self._restore_section_plane,
+        ))
         self._subscriptions.append(ed.observe_event(
             observer_name="StageManager:StageClosed",
             event_name=usd_context.stage_event_name(omni.usd.StageEventType.CLOSED),
@@ -251,6 +259,11 @@ class StageManager:
 
     def _on_stage_event_opened(self, event):
         stage = omni.usd.get_context().get_stage()
+        if self._section_plane is not None:
+            try:
+                self._section_plane.sync_stage(stage)
+            except Exception:
+                carb.log_warn("Section settings could not be restored for the new stage.")
         self._sync_highlight_stage(stage)
         if stage == self._camera_stage:
             return
@@ -408,6 +421,37 @@ class StageManager:
         )
         return False
 
+    def _restore_section_plane(self, event=None):
+        if self._section_plane is not None:
+            try:
+                self._section_plane.restore()
+            except Exception:
+                carb.log_warn("Section settings could not be restored.")
+
+    def _on_clip_plane(self, event):
+        request_payload = self._payload_dict(event.payload)
+        if not self._authorize_mutator("clipPlaneRequest", request_payload):
+            return
+        payload = {"result": "error", "error": "Section plane could not be applied."}
+        try:
+            if isinstance(request_payload.get("normal"), carb.dictionary.Item):
+                request_payload = {**request_payload, "normal": list(request_payload["normal"].get_dict())}
+            stage = omni.usd.get_context().get_stage()
+            if not stage:
+                raise ValueError("No stage.")
+            if self._section_plane is None:
+                from carb import settings
+                try:
+                    from .section_plane import SectionPlaneController
+                except ImportError:
+                    from section_plane import SectionPlaneController
+                self._section_plane = SectionPlaneController(settings.get_settings())
+            payload = {"result": "success", **self._section_plane.apply(stage, request_payload)}
+        except Exception:
+            pass
+        get_eventdispatcher().dispatch_event(
+            "clipPlaneResult", payload=correlated_result(request_payload, payload))
+
     def _on_unsupported_mutator(self, event: carb.events.IEvent):
         request_payload = self._payload_dict(event.payload)
         self._authorize_mutator("composeStageRequest", request_payload)
@@ -452,6 +496,7 @@ class StageManager:
             self._highlight_stage = stage
 
     def _on_stage_event_closed(self, event):
+        self._restore_section_plane()
         self._sync_highlight_stage(None)
         self._camera_stage = None
         self._camera_attrs.clear()
@@ -529,7 +574,10 @@ class StageManager:
         """This is called every time the extension is deactivated. It is used
         to clean up the extension state."""
         # Reseting the state.
-        self._sync_highlight_stage(None)
-        self._subscriptions.clear()
-        self._is_external_update: bool = False
-        self._camera_attrs.clear()
+        self._restore_section_plane()
+        try:
+            self._sync_highlight_stage(None)
+        finally:
+            self._subscriptions.clear()
+            self._is_external_update: bool = False
+            self._camera_attrs.clear()

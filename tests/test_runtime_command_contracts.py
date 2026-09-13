@@ -57,6 +57,37 @@ def authority_envelope() -> dict:
     }
 
 
+@pytest.mark.parametrize("enabled,planes", [(True, [[1,0,0,-3]]), (False, []), (False, [[1,0,0,0],[0,1,0,0]])])
+def test_clip_result_validates_enabled_and_disabled_readback_shapes(enabled, planes):
+    validator = load_validator("kit-datachannel-v1.schema.json")
+    payload = {"trace_id": TRACE_ID, "request_id": "clip-1", "result": "success", "enabled": enabled, "planes": planes}
+    validator.validate({"event_type": "clipPlaneResult", "payload": payload})
+    for invalid in ([[1,0,0]], [[1,0,0,0,0]], [[1,0,0,0]] * 257):
+        assert list(validator.iter_errors({"event_type": "clipPlaneResult", "payload": {**payload, "planes": invalid}}))
+    for invalid in ([], [[1,0,0,0],[0,1,0,0]]):
+        assert list(validator.iter_errors({"event_type": "clipPlaneResult", "payload": {**payload, "enabled": True, "planes": invalid}}))
+
+
+def test_clip_request_requires_authority_and_axis_aligned_normal():
+    validator = load_validator("kit-datachannel-v1.schema.json")
+    payload = {**authority_envelope(), "enabled": True, "axis": "x", "position": 3, "normal": [-1,0,0]}
+    validator.validate({"event_type": "clipPlaneRequest", "payload": payload})
+    for key in ("request_id", "trace_id", "viewer_lease_token"):
+        bad = dict(payload)
+        del bad[key]
+        assert list(validator.iter_errors({"event_type": "clipPlaneRequest", "payload": bad}))
+    for delta in ({"axis": "bad"}, {"normal": [0,1,0]}, {"position": True}, {"position": 1e39}):
+        assert list(validator.iter_errors({"event_type": "clipPlaneRequest", "payload": {**payload, **delta}}))
+
+
+def test_clip_error_cannot_claim_observed_state_or_include_credentials():
+    validator = load_validator("kit-datachannel-v1.schema.json")
+    payload = {"trace_id": TRACE_ID, "request_id": "clip-1", "result": "error", "error": "Section unavailable."}
+    validator.validate({"event_type": "clipPlaneResult", "payload": payload})
+    for delta in ({"enabled": False}, {"planes": []}, {"viewer_lease_token": "test-only"}):
+        assert list(validator.iter_errors({"event_type": "clipPlaneResult", "payload": {**payload, **delta}}))
+
+
 def stage_composition() -> dict:
     return {
         "primary": {
@@ -109,6 +140,8 @@ def datachannel_message_samples() -> dict[str, dict]:
         },
         "focusPrimRequest": {**authority, "prim_path": "/World"},
         "clearHighlightRequest": authority,
+        "clipPlaneRequest": {**authority, "enabled": True, "axis": "x", "position": 3, "normal": [1, 0, 0]},
+        "clipPlaneResult": {"trace_id": TRACE_ID, "request_id": "request_001", "result": "success", "enabled": True, "planes": [[1, 0, 0, -3]]},
         "selectPrimsRequest": {**authority, "paths": ["/World"]},
         "makePrimsPickable": {**authority, "paths": ["/World"]},
         "resetStage": authority,
@@ -185,12 +218,12 @@ def effective_payload_contract(schema: dict, event_type: str) -> tuple[set[str],
     return collect(payload)
 
 
-def test_all_26_datachannel_payload_contracts_require_and_validate_trace_id() -> None:
+def test_all_28_datachannel_payload_contracts_require_and_validate_trace_id() -> None:
     schema = json.loads((CONTRACTS / "kit-datachannel-v1.schema.json").read_text(encoding="utf-8"))
     validator = load_validator("kit-datachannel-v1.schema.json")
     samples = datachannel_message_samples()
     assert kit_event_catalog() == set(samples)
-    assert len(samples) == 26
+    assert len(samples) == 28
 
     for event_type, payload in samples.items():
         required, properties = effective_payload_contract(schema, event_type)

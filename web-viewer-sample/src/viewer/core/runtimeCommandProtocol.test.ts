@@ -6,10 +6,10 @@ const reasons: readonly RuntimeRejectionReason[] = ["spectator_readonly", "lease
 const valid = { rejected_event_type: "focusPrimRequest", reason: "lease_invalid", request_id: "req_runtime_001", retryable: true, runtime_state: "unchanged", detail_code: "authority_unavailable" };
 
 describe("runtime command protocol", () => {
-    it("does not enable deferred clip-plane mutation or rejection", () => {
-        expect(isRuntimeMutator("clipPlaneRequest")).toBe(false);
+    it("requires authority and supports correlated clip-plane rejection", () => {
+        expect(isRuntimeMutator("clipPlaneRequest")).toBe(true);
         expect(parseRuntimeCommandRejection({ ...valid, rejected_event_type: "clipPlaneRequest" }))
-            .toBeNull();
+            .toMatchObject({ rejected_event_type: "clipPlaneRequest", reason: "lease_invalid" });
     });
     it.each(events)("preserves mutating wire event %s", event => expect(isRuntimeMutator(event)).toBe(true));
     it.each(["", "loadingStateQuery", "commandRejected", "focusPrimRequest<script>"])("rejects non-mutator %s", event => expect(isRuntimeMutator(event)).toBe(false));

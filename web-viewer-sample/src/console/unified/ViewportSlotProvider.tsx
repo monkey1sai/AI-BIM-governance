@@ -1,5 +1,6 @@
 // UnifiedConsole — ViewportSlotProvider：viewportSlot.ts 契約的 state 持有者（純 context state，不碰 DOM、不發請求）。
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { parseSectionInput, type SectionInput, type SectionState } from "../sectionPlaneBridge";
 import type { ReactNode } from "react";
 import type { ReviewSessionViewerPaneBatchGate } from "../ReviewSessionViewerPane";
 import type { USDPrimNode } from "../EmbeddedViewer";
@@ -23,6 +24,34 @@ export function ViewportSlotProvider({ children }: { children: ReactNode }) {
   const hostActionsRef = useRef<ViewportHostActions | null>(null);
   const activeSessionIdRef = useRef("");
   const sessionAuthorityInitializedRef = useRef(false);
+  const [sectionState, setSectionState] = useState<SectionState>({ status: "idle" });
+  const sectionBusy = useRef(false);
+  const sectionGeneration = useRef(0);
+  const invalidateSection = useCallback(() => {
+    ++sectionGeneration.current; sectionBusy.current = false;
+    setSectionState(previous => previous.status === "idle" || previous.status === "unconfirmed" ? previous : { status: "unconfirmed" });
+  }, []);
+  useEffect(() => () => { ++sectionGeneration.current; }, []);
+  const sendSectionPlane = useCallback((input: SectionInput) => {
+    if (sectionBusy.current) return;
+    if (!parseSectionInput(input)) { setSectionState({ status: "error", reason: "invalid" }); return; }
+    const send = hostActionsRef.current?.sendSectionPlane;
+    if (!resolveViewerCommandGate(gateRef.current).canSend || !send) {
+      setSectionState({ status: "error", reason: "unavailable" }); return;
+    }
+    const generation = ++sectionGeneration.current;
+    sectionBusy.current = true; setSectionState({ status: "pending" });
+    void Promise.resolve().then(() => {
+      if (generation !== sectionGeneration.current || !resolveViewerCommandGate(gateRef.current).canSend) return null;
+      return send(input);
+    }).then(reply => {
+      if (generation !== sectionGeneration.current || !reply) return;
+      sectionBusy.current = false; setSectionState(reply);
+    }).catch(() => {
+      if (generation !== sectionGeneration.current) return;
+      sectionBusy.current = false; setSectionState({ status: "error", reason: "transport" });
+    });
+  }, []);
 
   const registerSlot = useCallback((el: HTMLElement | null) => { setSlotEl(el); }, []);
   const setActiveSessionId = useCallback((sessionId: string) => {
@@ -30,14 +59,16 @@ export function ViewportSlotProvider({ children }: { children: ReactNode }) {
     const nextSessionId = sessionId.trim();
     if (activeSessionIdRef.current !== nextSessionId) {
       activeSessionIdRef.current = nextSessionId;
+      invalidateSection();
       gateRef.current = null;
       setGateState(null);
       setStageTreeState([]);
       setSelectedStagePaths([]);
     }
     setActiveSessionIdState(nextSessionId);
-  }, []);
+  }, [invalidateSection]);
   const setGate = useCallback((next: ReviewSessionViewerPaneBatchGate | null) => {
+    if (!resolveViewerCommandGate(next).canSend) invalidateSection();
     gateRef.current = next;
     setGateState((prev) => (
       prev && next
@@ -52,14 +83,15 @@ export function ViewportSlotProvider({ children }: { children: ReactNode }) {
       setStageTreeState([]);
       setSelectedStagePaths([]);
     }
-  }, []);
+  }, [invalidateSection]);
   const setStageTree = useCallback((nodes: USDPrimNode[]) => {
     // Window.tsx 已把 nested getChildrenResponse 合併進完整 root tree，再以 stage_tree 下傳。
     setStageTreeState(nodes);
   }, []);
   const registerHostActions = useCallback((actions: ViewportHostActions | null) => {
     hostActionsRef.current = actions;
-  }, []);
+    if (!actions) invalidateSection();
+  }, [invalidateSection]);
   const requestStageTree = useCallback((primPath?: string) => {
     hostActionsRef.current?.requestStageTree?.(primPath);
   }, []);
@@ -108,6 +140,7 @@ export function ViewportSlotProvider({ children }: { children: ReactNode }) {
   }, [publishViewer, subscribeDock]);
 
   const value = useMemo<ViewportSlotApi>(() => ({
+    sectionState, sendSectionPlane, invalidateSection,
     selectedStagePaths, setSelectedStagePaths,
     registerSlot,
     slotEl,
@@ -128,6 +161,7 @@ export function ViewportSlotProvider({ children }: { children: ReactNode }) {
     sendToolbarAction,
     registerHostActions,
   }), [
+    sectionState, sendSectionPlane, invalidateSection,
     selectedStagePaths,
     publishViewer, viewerPublication, subscribeDock, dockSubscription,
     registerSlot,

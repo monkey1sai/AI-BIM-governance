@@ -12,6 +12,8 @@
 import React from 'react';
 import { decodeHighlightResult } from "./viewer/core/highlightResult";
 import { IssueViewExchange } from "./viewer/core/issueViewExchange";
+import { SectionPlaneExchange } from "./console/sectionPlaneBridge";
+import { buildClipPlaneRequest } from "./clients/streamMessages";
 import { RuntimeCommandTracker, type RuntimeCommandOutcome, type RuntimeCommandContext } from "./viewer/core/runtimeCommandTracker";
 import { NativeStageDispatchQueue, type NativeOpenStageDispatch } from "./viewer/core/nativeStageDispatchQueue";
 import { isSpectatorStreamMode as profileIsSpectatorStreamMode, hasDirectStreamEndpointOverride as profileHasDirectStreamEndpointOverride, resolveInitialStreamEndpoint as profileResolveInitialStreamEndpoint, streamEndpointLabel as profileStreamEndpointLabel } from "./viewer/core/runtimeStreamProfile";
@@ -821,7 +823,37 @@ export default class App extends React.Component<AppProps, AppState> {
         void this._bootstrapReview();
     }
 
+    private sectionExchange = new SectionPlaneExchange({
+        snapshot: () => this._sectionSnapshot(),
+        requestId: () => createRuntimeRequestId(),
+        send: (input, requestId) => {
+            const normal: [number, number, number] = [0, 0, 0];
+            normal[{ x: 0, y: 1, z: 2 }[input.axis]] = input.direction;
+            return this._sendStreamMessage(buildClipPlaneRequest({ ...input, normal, requestId }));
+        },
+        complete: (requestId, outcome) => {
+            if (this.runtimeCommandTracker.hasContext(requestId)) {
+                this.runtimeCommandTracker._claimRuntimeCommandTerminal(requestId, "clipPlaneRequest", outcome);
+            }
+        },
+        notify: (reply) => this._postToParent({ type: "section_result", ...reply }),
+    });
+
+    private _sectionSnapshot(): string | null {
+        const authority = this._currentVerifiedDataChannelAuthority();
+        if (!this.componentMounted || !authority || this._runtimeMutatorBlockReason("clipPlaneRequest")
+            || this.state.stageLoadStatus !== "matched" || !this._hasRemoteVideoFrame()
+            || this.state.webrtcLifecycleStatus === "stopped" || this.state.webrtcLifecycleStatus === "terminated") return null;
+        return JSON.stringify([authority.sessionId, authority.traceId, authority.connectionGeneration,
+            this.streamGeneration, this.stageIntentGeneration, this.activeStageAttempt?.generation ?? null]);
+    }
+
+    componentDidUpdate(): void {
+        this.sectionExchange.sync();
+    }
+
     componentWillUnmount(): void {
+        this.sectionExchange.dispose();
         this.issueViewExchange.dispose();
         if (typeof window !== "undefined") window.removeEventListener("resize", this._onViewportResize);
         this.componentMounted = false;
@@ -1582,6 +1614,7 @@ export default class App extends React.Component<AppProps, AppState> {
                 const diagnostic = "stream_transport_error";
                 if (runtimeRequestId) {
                     if (!this.runtimeCommandTracker._claimRuntimeCommandTerminal(runtimeRequestId, outgoing.event_type, "error")) return;
+                    if (outgoing.event_type === "clipPlaneRequest") this.sectionExchange.fail(runtimeRequestId, "transport");
                     this._finishA4HandoffCommand(runtimeRequestId, "rejected", diagnostic, true);
                 }
                 this._appendReviewEvent(`${outgoing.event_type} failed: ${diagnostic}`);
@@ -2418,6 +2451,7 @@ export default class App extends React.Component<AppProps, AppState> {
             token?: unknown;
             user_token?: unknown;
             clientRequestId?: unknown;
+            section?: unknown;
             prim_path?: string;
             action?: string;
             camera_view?: string;
@@ -2454,6 +2488,11 @@ export default class App extends React.Component<AppProps, AppState> {
             return;
         }
         switch (m.type) {
+            case "section_plane": {
+                if (e.source !== window.parent || !canOperate || !clientRequestId) return;
+                this.sectionExchange.start(m.section, clientRequestId);
+                break;
+            }
             case "highlight": {
                 if (!canOperate || !Array.isArray(m.items)) return;
                 for (const item of m.items.filter(isHighlightItem)) {
@@ -4705,6 +4744,9 @@ export default class App extends React.Component<AppProps, AppState> {
                     ? { binding_revision_id: context.bindingRevisionId }
                     : {}),
             };
+            if (parsed.request_id && parsed.rejected_event_type === "clipPlaneRequest") {
+                this.sectionExchange.fail(parsed.request_id, "rejected");
+            }
             if (parsed.request_id) {
                 this._finishA4HandoffCommand(
                     parsed.request_id,
@@ -4762,6 +4804,10 @@ export default class App extends React.Component<AppProps, AppState> {
         }
 
         this._appendDemoIncoming(event.event_type || event.messageRecipient || "streamEvent", event);
+
+        if (event.event_type === "clipPlaneResult"
+            && this.runtimeCommandTracker._correlateRuntimeCommandEvent(event.event_type, payload).disposition === "matched"
+            && this.sectionExchange.receive(payload)) return;
 
         // response received once a USD asset is fully loaded
         if (event.event_type === "openedStageResult") {

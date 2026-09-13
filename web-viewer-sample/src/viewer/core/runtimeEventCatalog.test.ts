@@ -14,12 +14,12 @@ const pairs: Array<[string, string]> = [
 const simple = ["clearHighlightResult", "selectPrimsResult", "makePrimsPickableResponse", "resetStageResponse"];
 const unknown = ["", "__proto__", "constructor", "openStageRequest ", "OpenedStageResult", "futureEvent"];
 describe("runtime event catalog", () => {
-    it("does not enable deferred clip-plane commands", () => {
-        expect(isViewerToKitEventType("clipPlaneRequest")).toBe(false);
-        expect(isKitToViewerEventType("clipPlaneResult")).toBe(false);
-        expect(isRuntimeResponseForRequest("clipPlaneResult", "clipPlaneRequest")).toBe(false);
+    it("supports only the matching clip-plane response", () => {
+        expect(isViewerToKitEventType("clipPlaneRequest")).toBe(true);
+        expect(isKitToViewerEventType("clipPlaneResult")).toBe(true);
+        expect(isRuntimeResponseForRequest("clipPlaneResult", "clipPlaneRequest")).toBe(true);
         expect(isRuntimeResponseForRequest("clipPlaneResult", "clearHighlightRequest")).toBe(false);
-        expect(isSimpleRuntimeTerminalEvent("clipPlaneResult")).toBe(false);
+        expect(isSimpleRuntimeTerminalEvent("clipPlaneResult")).toBe(true);
     });
     it.each(outbound)("preserves outbound event %s", event => expect(isViewerToKitEventType(event)).toBe(true));
     it.each(inbound)("preserves inbound event %s", event => expect(isKitToViewerEventType(event)).toBe(true));
