@@ -3,10 +3,10 @@ import { describe, expect, it, vi } from "vitest";
 import { HighlightBridge, normalizeSeverity } from "./highlightBridge";
 import { MappingCache } from "./mappingCache";
 import type { ElementMappingDocument } from "../../types/mapping";
-import type { StreamMessage } from "../../types/streamMessages";
+import type { HighlightItem, StreamMessage } from "../../types/streamMessages";
 
 type HighlightPrimsPayload = {
-  items: Array<{ prim_path: string; ifc_guid?: string; color?: number[] }>;
+  items: HighlightItem[];
 };
 
 type HighlightPrimsMessage = StreamMessage & {
