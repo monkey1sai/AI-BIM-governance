@@ -2380,13 +2380,14 @@ describe("A1GovernanceWorkbenchPage client-render（doRun 輪詢守門 + 動作�
   // Fix-F4：BCF click 成功路徑 dispatch BCF_EXPORT_OK → 顯示 a1-bcf-exported-artifact。
   it("[F4] BCF click 成功 → dispatch BCF_EXPORT_OK → 顯示 a1-bcf-exported-artifact", async () => {
     vi.spyOn(governanceClient, "createRuleRunForLibrary").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
-    vi.spyOn(governanceClient, "getRuleRun").mockResolvedValue(fakeRunStatus("succeeded"));
+    vi.spyOn(governanceClient, "getRuleRun").mockResolvedValue({ ...fakeRunStatus("succeeded"), model_version_id: A1_LOCAL_IFC_KEY });
     vi.spyOn(governanceClient, "getResults").mockResolvedValue([]);
     vi.spyOn(governanceClient, "issuesFromRuleRun").mockResolvedValue({ created: 2, issue_ids: ["i1", "i2"] });
     vi.spyOn(governanceClient, "getIssue").mockImplementation(async (id: string): Promise<IssueRow> => ({
       id,
       kind: "issue",
       title: `issue ${id}`,
+      model_version_id: A1_LOCAL_IFC_KEY,
       status: "open",
       severity: "medium",
       ifc_guid: `guid-${id}`,

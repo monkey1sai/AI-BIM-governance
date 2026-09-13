@@ -31,7 +31,7 @@ function fakeSession(sessionId: string) {
     session_id: sessionId,
     status: "active",
     project_id: "p1",
-    model_version_id: "m1",
+    model_version_id: "v1",
     participant_count: 0,
     expected_stage_url: "stage://x",
     expected_mapping_url: "http://127.0.0.1:49101/artifacts/demo/element_mapping.json",
@@ -70,7 +70,7 @@ function fakeRunStatus(status: RuleRunStatus["status"], overrides: Partial<RuleR
     status,
     score: 99,
     rule_set: "default",
-    model_version_id: null,
+    model_version_id: "v1",
     summary: { total: 10, passed: 9, failed: 1, errored: 0, target_summary: {}, warnings: [] },
     ...overrides,
   };
@@ -147,6 +147,7 @@ describe("A1 issue snapshot（F2⑩ 回拋摘要至雲端）", () => {
       objects: [{ key: MINIO_KEY, etag: "e", role: "source_ifc", idempotency_key: MINIO_IDEMPOTENCY_KEY, project_id: "p1", project_display_name: "松風庵", category: "建築", version: "v1" }],
     });
     vi.spyOn(coordinatorClient, "listIfcReady").mockResolvedValue({ count: 0, items: [] });
+    vi.spyOn(coordinatorClient, "getCallbackOutboxSummary").mockResolvedValue({ total: 0, limit: 200, entries: [] });
     vi.spyOn(governanceClient, "listRuleRuns").mockResolvedValue({ filters: {}, limit: 5, offset: 0, total: 0, items: [] });
     // A1 不得自動 claim / heartbeat / release viewer lease（沿用 3D decoupling 回歸鎖的防呆 stub）。
     vi.spyOn(coordinatorClient, "claimViewerLease").mockRejectedValue(new Error("A1 must not claim viewer lease"));
@@ -243,6 +244,27 @@ describe("A1 issue snapshot（F2⑩ 回拋摘要至雲端）", () => {
     expect(q("a1-issue-snapshot-error")).toBeNull();
   });
 
+  it("檔案庫檢核需明確選擇同版本 session 才能回拋", async () => {
+    const post = vi.spyOn(coordinatorClient, "postIssueSnapshot").mockResolvedValue({ outbox_id: "local_library_snapshot" });
+    await runLocalFsToScored();
+    expect(q<HTMLButtonElement>("a1-issue-snapshot")!.disabled).toBe(true);
+    const session = q<HTMLSelectElement>("a1-session-select")!;
+    await act(async () => { session.value = REVIEW_SESSION_ID; session.dispatchEvent(new Event("change", { bubbles: true })); });
+    await act(async () => { q<HTMLButtonElement>("a1-issue-snapshot")!.click(); });
+    expect(post).toHaveBeenCalledWith(REVIEW_SESSION_ID, { rule_run_id: "rr_a1", model_version_id: "v1" });
+  });
+
+  it("不同版本 session 不可回拋，也不把本機選項鍵當成 run 的版本", async () => {
+    vi.mocked(coordinatorClient.runtimeStatus).mockResolvedValue(fakeRuntimeStatus([{ ...fakeSession(REVIEW_SESSION_ID), model_version_id: "wrong_version" }]) as never);
+    const post = vi.spyOn(coordinatorClient, "postIssueSnapshot");
+    await runLocalFsToScored();
+    const session = q<HTMLSelectElement>("a1-session-select")!;
+    await act(async () => { session.value = REVIEW_SESSION_ID; session.dispatchEvent(new Event("change", { bubbles: true })); });
+    expect(q<HTMLButtonElement>("a1-issue-snapshot")!.disabled).toBe(true);
+    expect(q<HTMLButtonElement>("a1-issue-snapshot")!.title).toContain("模型版本必須相同");
+    expect(post).not.toHaveBeenCalled();
+  });
+
   it("502 governance_unreachable：誠實錯誤顯示（governance 不可達、未入列），不顯示假 outbox_id", async () => {
     vi.spyOn(coordinatorClient, "postIssueSnapshot").mockRejectedValue(
       new Error('coordinator /api/review-sessions/review_session_x/issue-snapshot -> 502 {"error":"governance_unreachable"}'),
@@ -259,5 +281,31 @@ describe("A1 issue snapshot（F2⑩ 回拋摘要至雲端）", () => {
     expect(error.textContent).toContain("governance 不可達，摘要未入列");
     expect(error.textContent).toContain("governance_unreachable");
     expect(q("a1-issue-snapshot-result")).toBeNull();
+  });
+
+  it.each(["success", "failure"])("舊 snapshot %s 在切換來源並開始新請求後不可回填或解除 busy", async outcome => {
+    let finishOld!: (value: { outbox_id: string }) => void, failOld!: (error: Error) => void;
+    let finishNew!: (value: { outbox_id: string }) => void;
+    const old = new Promise<{ outbox_id: string }>((resolve, reject) => { finishOld = resolve; failOld = reject; });
+    const next = new Promise<{ outbox_id: string }>(resolve => { finishNew = resolve; });
+    const post = vi.spyOn(coordinatorClient, "postIssueSnapshot").mockReturnValueOnce(old).mockReturnValueOnce(next);
+    await runMinioForSessionToScored();
+    await act(async () => { q<HTMLButtonElement>("a1-issue-snapshot")!.click(); });
+    await act(async () => { q<HTMLButtonElement>("a1-source-local")!.click(); });
+    await act(async () => { q<HTMLButtonElement>("a1-source-minio")!.click(); });
+    const model = q<HTMLSelectElement>("a1-minio-select")!;
+    await act(async () => { model.value = MINIO_KEY; model.dispatchEvent(new Event("change", { bubbles: true })); });
+    await act(async () => { q<HTMLButtonElement>("a1-step-pick")!.click(); });
+    await act(async () => { q<HTMLButtonElement>("a1-step-run")!.click(); });
+    await flush();
+    await act(async () => { q<HTMLButtonElement>("a1-issue-snapshot")!.click(); q<HTMLButtonElement>("a1-issue-snapshot")!.click(); });
+    expect(post).toHaveBeenCalledTimes(2);
+    await act(async () => { if (outcome === "success") finishOld({ outbox_id: "stale_id" }); else failOld(new Error("old_snapshot_failure")); });
+    expect(q("a1-issue-snapshot-result")).toBeNull();
+    expect(q("a1-issue-snapshot-error")).toBeNull();
+    expect(q<HTMLButtonElement>("a1-issue-snapshot")!.disabled).toBe(true);
+    await act(async () => finishNew({ outbox_id: "current_id" }));
+    expect(q("a1-issue-snapshot-result")!.textContent).toContain("current_id");
+    expect(q<HTMLButtonElement>("a1-issue-snapshot")!.disabled).toBe(false);
   });
 });

@@ -87,7 +87,7 @@ function makeApp(overrides: Partial<CoordinatorConfig> = {}): CoordinatorApp {
  * governance-service stub：GET /api/rule-runs/{id}（status + summary.failed）與
  * GET /api/issues?model_version_id=...（issues[].status）。記錄 URL 供 assert。
  */
-async function startGovernanceStub(): Promise<{ baseUrl: string; urls: string[] }> {
+async function startGovernanceStub(runOverrides: Record<string, unknown> = {}, onIssues?: () => void): Promise<{ baseUrl: string; urls: string[] }> {
   const urls: string[] = [];
   governanceStub = http.createServer((req, res) => {
     const url = req.url ?? "/";
@@ -99,10 +99,12 @@ async function startGovernanceStub(): Promise<{ baseUrl: string; urls: string[] 
         status: "succeeded",
         summary: { total: 10, passed: 7, failed: 3, errored: 0 },
         model_version_id: "version_demo_001",
+        ...runOverrides,
       }));
       return;
     }
     if (req.method === "GET" && url.startsWith("/api/issues")) {
+      onIssues?.();
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify({
         issues: [
@@ -293,7 +295,7 @@ describe("POST /api/review-sessions/:sessionId/issue-snapshot", () => {
     // coordinator server-side 查了 rule-run + issues 兩條 governance API。
     expect(gov.urls).toEqual([
       "GET /api/rule-runs/rr_snap_001",
-      "GET /api/issues?model_version_id=version_demo_001",
+      "GET /api/issues?model_version_id=version_demo_001&kind=issue",
     ]);
 
     const entry = (
@@ -325,7 +327,7 @@ describe("POST /api/review-sessions/:sessionId/issue-snapshot", () => {
     expect(JSON.stringify(summary.body)).not.toMatch(/"payload"|"target_url"/);
   });
 
-  it("未給 model_version_id → 只查 rule-run；issue_total/issue_open 誠實回 null", async () => {
+  it("未給 model_version_id → 仍以 session canonical version 查正式問題統計", async () => {
     const gov = await startGovernanceStub();
     process.env.GOVERNANCE_API_BASE = gov.baseUrl;
     const app = makeApp();
@@ -336,18 +338,101 @@ describe("POST /api/review-sessions/:sessionId/issue-snapshot", () => {
       .send({ rule_run_id: "rr_snap_002" });
 
     expect(res.status).toBe(202);
-    expect(gov.urls).toEqual(["GET /api/rule-runs/rr_snap_002"]);
+    expect(gov.urls).toEqual(["GET /api/rule-runs/rr_snap_002", "GET /api/issues?model_version_id=version_demo_001&kind=issue"]);
     const entry = (
       await request(app.app)
         .get(`/api/internal/callback-outbox/${res.body.outbox_id}`)
         .set({ "X-Internal-Token": INTERNAL_TOKEN })
     ).body;
-    expect(entry.payload.issue_total).toBeNull();
-    expect(entry.payload.issue_open).toBeNull();
+    expect(entry.payload.issue_total).toBe(3);
+    expect(entry.payload.issue_open).toBe(2);
     expect(entry.payload.rule_run_status).toBe("succeeded");
     expect(entry.payload.failed_count).toBe(3);
     // model_version_id fallback 到 session 的 metadata 值。
     expect(entry.payload.model_version_id).toBe("version_demo_001");
+  });
+
+  it.each([
+    { model_version_id: "another_version" }, { model_version_id: null },
+    { rule_run_id: "another_run" }, { status: "queued" }, { status: "running" }, { status: "failed" },
+  ])("拒絕不屬於 session 的成功檢核 %j；不查問題、不入列", async overrides => {
+    const gov = await startGovernanceStub(overrides);
+    process.env.GOVERNANCE_API_BASE = gov.baseUrl;
+    const app = makeApp();
+    const sessionId = await seedSession(app);
+    const response = await request(app.app).post(`/api/review-sessions/${sessionId}/issue-snapshot`).send({ rule_run_id: "rr_guard" });
+    expect(response.status).toBe(409);
+    expect(response.body.error).toBe("status" in overrides ? "issue_snapshot_run_not_succeeded" : "issue_snapshot_source_mismatch");
+    expect(gov.urls).toEqual(["GET /api/rule-runs/rr_guard"]);
+    expect((await request(app.app).get("/api/callback-outbox/summary")).body.total).toBe(0);
+  });
+
+  it.each(["caller_mismatch", "missing_session_version"])("%s 在讀取上游前拒絕且不入列", async scenario => {
+    const gov = await startGovernanceStub();
+    process.env.GOVERNANCE_API_BASE = gov.baseUrl;
+    const app = makeApp();
+    const sessionId = await seedSession(app);
+    if (scenario === "missing_session_version") app.store.update(sessionId, { model_version_id: "" });
+    const response = await request(app.app).post(`/api/review-sessions/${sessionId}/issue-snapshot`).send({
+      rule_run_id: "rr_guard", ...(scenario === "caller_mismatch" ? { model_version_id: "caller_version" } : {}),
+    });
+    expect(response.status).toBe(409);
+    expect(gov.urls).toEqual([]);
+    expect((await request(app.app).get("/api/callback-outbox/summary")).body.total).toBe(0);
+  });
+
+  it("統計查詢期間 session 版本改變，enqueue 前再次拒絕", async () => {
+    const app = makeApp();
+    const sessionId = await seedSession(app);
+    const gov = await startGovernanceStub({}, () => { app.store.update(sessionId, { model_version_id: "changed_while_fetching" }); });
+    process.env.GOVERNANCE_API_BASE = gov.baseUrl;
+    const response = await request(app.app).post(`/api/review-sessions/${sessionId}/issue-snapshot`).send({ rule_run_id: "rr_guard" });
+    expect(response.status).toBe(409);
+    expect((await request(app.app).get("/api/callback-outbox/summary")).body.total).toBe(0);
+  });
+
+  it("真實 loopback 測試接收端 503→重試→204 才標 delivered，且 payload 身分一致", async () => {
+    const received: unknown[] = [];
+    const receiver = http.createServer(async (req, res) => {
+      const chunks: Buffer[] = [];
+      for await (const chunk of req) chunks.push(Buffer.from(chunk));
+      received.push(JSON.parse(Buffer.concat(chunks).toString("utf8")));
+      res.writeHead(received.length === 1 ? 503 : 204); res.end();
+    });
+    await new Promise<void>(resolve => receiver.listen(0, "127.0.0.1", resolve));
+    try {
+      const gov = await startGovernanceStub();
+      process.env.GOVERNANCE_API_BASE = gov.baseUrl;
+      const app = makeApp({ cloudCallbackBaseUrl: `http://127.0.0.1:${(receiver.address() as AddressInfo).port}/test-only` });
+      const sessionId = await seedSession(app);
+      const queued = await request(app.app).post(`/api/review-sessions/${sessionId}/issue-snapshot`).send({ rule_run_id: "rr_transport" });
+      expect(queued.status).toBe(202);
+      const summaryEntry = async () => (await request(app.app).get("/api/callback-outbox/summary")).body.entries.find((entry: { outbox_id: string }) => entry.outbox_id === queued.body.outbox_id);
+      expect(await summaryEntry()).toMatchObject({ status: "pending", attempts: 0, delivered_at: null });
+      await request(app.app).post("/api/internal/callback-outbox/deliver").set({ "X-Internal-Token": INTERNAL_TOKEN }).send({}).expect(200);
+      expect(await summaryEntry()).toMatchObject({ status: "pending", attempts: 1, delivered_at: null, last_error: "callback_delivery_failed" });
+      await request(app.app).post("/api/internal/callback-outbox/deliver").set({ "X-Internal-Token": INTERNAL_TOKEN }).send({}).expect(200);
+      expect(await summaryEntry()).toMatchObject({ status: "delivered", attempts: 2, delivered_at: expect.any(String), last_error: null });
+      expect(received).toHaveLength(2);
+      expect(received[0]).toEqual(received[1]);
+      expect(received[1]).toMatchObject({ session_id: sessionId, model_version_id: "version_demo_001", rule_run_id: "rr_transport", issue_total: 3 });
+      expect(JSON.stringify(received)).not.toMatch(/https?:\/\/|content_base64|X-Amz|PXR-USDC/);
+    } finally { await new Promise<void>(resolve => receiver.close(() => resolve())); }
+  });
+
+  it("持久化的任意 last_error 只投影固定分類，內部 evidence 保留原文", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "outbox-redaction-"));
+    const storePath = path.join(root, "outbox.json");
+    const rawError = "test-only https://receiver.invalid/?token=synthetic-secret";
+    const outbox = new CallbackOutbox(2, async () => { throw new Error(rawError); }, storePath);
+    const entry = outbox.enqueue({ event: "issue_snapshot", targetUrl: "http://test.invalid", correlationId: "review_session_redaction", externalModelVersionId: "v1", conversionJobId: null, payload: { event: "issue_snapshot" } });
+    await outbox.attemptDelivery(entry.outbox_id);
+    const app = makeApp({ callbackOutboxStorePath: storePath });
+    const summary = await request(app.app).get("/api/callback-outbox/summary");
+    expect(summary.body.entries[0].last_error).toBe("callback_delivery_failed");
+    expect(JSON.stringify(summary.body)).not.toMatch(/synthetic-secret|receiver.invalid/);
+    const internal = await request(app.app).get(`/api/internal/callback-outbox/${entry.outbox_id}`).set({ "X-Internal-Token": INTERNAL_TOKEN });
+    expect(internal.body.last_error).toBe(rawError);
   });
 });
 

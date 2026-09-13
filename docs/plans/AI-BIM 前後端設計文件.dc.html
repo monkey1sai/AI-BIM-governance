@@ -497,6 +497,7 @@ ACK: 201 commit | 200 exact replay | 409 digest conflict</pre>
         </div>
       </div>
       <span style="font-size:10.5px;color:#5a7089;margin-top:8px">A2 diff 同構:POST /api/diffs → items → apply-overlay(⑥ 改為差異三色疊加)→ /api/issues/from-diff/:diffId。A3:POST /api/federated-sets → validate-coords → build → review-room → F1 ⑧ 起接手。</span>
+      <span style="font-size:10.5px;color:#8aa0b8;margin-top:8px">A1 交付範圍：BCF 依成功檢核的 model_version_id 匯出正式 Issue；缺少版本時停用。檔案庫／IFC-ready 檢核都須明確選擇同版本 Session 才可回拋，coordinator 在入列前核對成功 run、Session 與 caller 版本，不符回 409。Excel、BCF、摘要回拋切換來源後不得回填舊結果。202 只代表已入列；A1 依 outbox_id、issue_snapshot 事件與 Session 查詢遞送狀態，pending、dead_letter、查詢失敗或最近 200 筆中缺席均不得標成功。delivered 表示接收端 HTTP 2xx，尚不證明雲端業務處理完成。整改確認與歷史仍走獨立授權／持久化流程；CPU、瀏覽器、GPU 與正式接收端分別驗證。</span>
     </div>
   </div>
 
