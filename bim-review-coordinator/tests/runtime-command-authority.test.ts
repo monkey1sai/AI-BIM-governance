@@ -828,6 +828,24 @@ describe("coordinator runtime command authority", () => {
     });
     expect(app.eventLog.list(sessionId).filter((event) => event.type === "stageBindingApplied")).toHaveLength(1);
 
+    // The Kit adapter consumes this internal response, never browser policy fields.
+    const measurement = await request(app.app)
+      .post(`/api/internal/review-sessions/${sessionId}/runtime-command-authorizations`)
+      .set(internalHeaders(sessionId))
+      .set("X-Viewer-Lease-Token", lease.lease_token)
+      .send(runtimeBody(lease, {
+        requested_event_type: "measurementRequest", request_id: "measure_start_001",
+        command_context: { action: "start", measurement_id: "measurement_001" },
+      }));
+    expect(measurement.body).toEqual({
+      authorized: true, request_id: "measure_start_001", retryable: false, trace_id: sessionTrace(sessionId),
+      measurement_context: {
+        session_id: sessionId, client_id: lease.lease_id, lease_id: lease.lease_id,
+        binding_id: pending.body.binding_revision_id,
+        artifact_ids: ["artifact_primary_a", "artifact_secondary_a"], policy_id: "primary-lease-distance-v1",
+      },
+    });
+
     const duplicate = await request(app.app)
       .post(`/api/internal/review-sessions/${sessionId}/stage-binding-confirmations`)
       .set(internalHeaders(sessionId))

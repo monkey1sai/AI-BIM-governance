@@ -3924,6 +3924,7 @@ export function createCoordinatorApp(
         request_id: input.request_id,
         retryable: false,
         trace_id: canonicalTraceId,
+        ...(decision.measurementContext ? { measurement_context: decision.measurementContext } : {}),
       });
     },
   );

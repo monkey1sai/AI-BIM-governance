@@ -19,6 +19,7 @@ MUTATING_EVENTS = {
     "highlightPrimsRequest",
     "clearHighlightRequest",
     "clipPlaneRequest",
+    "measurementRequest",
     "focusPrimRequest",
 }
 
@@ -72,8 +73,9 @@ class AuthorityDecision:
 class DataChannelTraceContext:
     _session_id: Optional[str] = field(default=None, init=False, repr=False)
     _trace_id: Optional[str] = field(default=None, init=False, repr=False)
+    _binding_id: Optional[str] = field(default=None, init=False, repr=False)
 
-    def bind_active_stage(self, session_id: str, trace_id: str) -> bool:
+    def bind_active_stage(self, session_id: str, trace_id: str, binding_id=None) -> bool:
         if (
             not _SAFE_SESSION_ID.fullmatch(session_id)
             or len(trace_id) > 200
@@ -82,7 +84,11 @@ class DataChannelTraceContext:
             return False
         self._session_id = session_id
         self._trace_id = trace_id
+        self._binding_id = binding_id if isinstance(binding_id, str) and _SAFE_COMMAND_ID.fullmatch(binding_id) else None
         return True
+
+    def active_binding(self):
+        return self._binding_id
 
     def active_stage(self) -> Optional[tuple[str, str]]:
         if self._session_id is None or self._trace_id is None:
@@ -92,6 +98,7 @@ class DataChannelTraceContext:
     def clear(self) -> None:
         self._session_id = None
         self._trace_id = None
+        self._binding_id = None
 
 
 class _NoRedirectHandler(HTTPRedirectHandler):
@@ -453,6 +460,7 @@ def _command_context(event_type: str, payload: Mapping[str, object]) -> dict:
         "focusPrimRequest": ("prim_path",),
         "clearHighlightRequest": (),
         "clipPlaneRequest": ("enabled", "axis", "position", "normal"),
+        "measurementRequest": ("action", "measurement_id", "uv"),
         "selectPrimsRequest": ("paths",),
         "makePrimsPickable": ("paths",),
         "resetStage": (),

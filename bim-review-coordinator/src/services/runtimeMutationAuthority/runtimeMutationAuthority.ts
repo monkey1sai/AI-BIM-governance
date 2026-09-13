@@ -166,6 +166,7 @@ export const RUNTIME_MUTATION_AUTHORITY_VOCABULARY = {
     "focusPrimRequest",
     "clearHighlightRequest",
     "clipPlaneRequest",
+    "measurementRequest",
     "selectPrimsRequest",
     "makePrimsPickable",
     "resetStage",
@@ -186,8 +187,17 @@ export const RUNTIME_MUTATION_AUTHORITY_VOCABULARY = {
 export type RuntimeCommandRejectionReason =
   (typeof RUNTIME_MUTATION_AUTHORITY_VOCABULARY.rejectionReasons)[number];
 
+export interface RuntimeMeasurementContext {
+  session_id: string;
+  client_id: string;
+  lease_id: string;
+  binding_id: string;
+  artifact_ids: string[];
+  policy_id: "primary-lease-distance-v1";
+}
+
 export type AuthorizeRuntimeCommandResult =
-  | { authorized: true; requestId: string; retryable: false }
+  | { authorized: true; requestId: string; retryable: false; measurementContext?: RuntimeMeasurementContext }
   | {
       authorized: false;
       reason: RuntimeCommandRejectionReason;
@@ -278,6 +288,11 @@ const runtimeCommandContextSchemas: Record<string, z.ZodTypeAny> = {
   }).strict(),
   focusPrimRequest: z.object({ primPath: runtimePrimPathSchema }).strict(),
   clearHighlightRequest: z.object({}).strict(),
+  measurementRequest: z.object({
+    action: z.enum(["start", "pick", "cancel", "clear"]),
+    measurement_id: z.string().regex(/^[A-Za-z0-9_-]{1,100}$/),
+    uv: z.tuple([z.number().finite().min(0).max(1), z.number().finite().min(0).max(1)]).optional(),
+  }).strict().refine(value => (value.action === "pick") === (value.uv !== undefined)),
   clipPlaneRequest: z.object({
     enabled: z.boolean(), axis: z.enum(["x", "y", "z"]),
     position: z.number().finite().min(-3.4028234663852886e38).max(3.4028234663852886e38),
@@ -425,6 +440,29 @@ export class RuntimeMutationAuthority {
     );
     if (!isStageLoad && hasAnyStageAuthority) {
       return deny("invalid_payload", "unexpected_stage_transaction");
+    }
+    if (input.requestedEventType === "measurementRequest") {
+      // Temporary viewport readings require the current primary and an actual
+      // confirmed binding. This is a policy predicate, never a caller grant.
+      const primary = this.ports.inspectPrimaryLease({
+        sessionId: session.sessionId, sourceClientId: input.sourceClientId, credential: input.credential,
+      });
+      const active = this.state.activeBinding(session.sessionId, leaseDecision.lease.principal);
+      if (!primary.authorized || primary.lease.leaseId !== leaseDecision.lease.leaseId
+          || primary.lease.principal !== leaseDecision.lease.principal || !active
+          || active.leaseId !== primary.lease.leaseId || active.sourceClientId !== input.sourceClientId) {
+        return deny("lease_invalid", "measurement_active_binding_required");
+      }
+      const artifacts = [active.composition.primary, ...active.composition.secondaryLayers];
+      if (artifacts.some(item => !session.artifacts.some(current => current.artifactId === item.artifactId
+          && current.readyStatus === "ready" && current.usdcUrl === item.usdcUrl))) {
+        return deny("lease_invalid", "measurement_artifact_unavailable");
+      }
+      return { authorized: true, requestId: input.requestId, retryable: false, measurementContext: {
+        session_id: session.sessionId, client_id: input.sourceClientId, lease_id: primary.lease.leaseId,
+        binding_id: active.bindingRevisionId, artifact_ids: artifacts.map(item => item.artifactId),
+        policy_id: "primary-lease-distance-v1",
+      } };
     }
     if (isStageLoad) {
       if (!input.stageBindingAuthorizationId || !input.bindingRevisionId || !input.stageComposition) {

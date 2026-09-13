@@ -1020,7 +1020,7 @@ class LoadingManager:
             return
         decision = self._runtime_authority.confirm_stage(attempt.authority_payload(), "success")
         if decision.authorized:
-            if not self._trace_context.bind_active_stage(attempt.session_id, attempt.trace_id):
+            if not self._trace_context.bind_active_stage(attempt.session_id, attempt.trace_id, attempt.binding_revision_id):
                 self._reset_state(attempt)
                 return
             self._public_opened_stage_url = public_url

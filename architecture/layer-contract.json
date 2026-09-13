@@ -233,6 +233,16 @@
         },
         {
           "match": "exact",
+          "value": "ezplus.bim_review_stream.messaging.distance_measurement",
+          "layer": "infrastructure"
+        },
+        {
+          "match": "exact",
+          "value": "ezplus.bim_review_stream.messaging.measurement_runtime",
+          "layer": "application"
+        },
+        {
+          "match": "exact",
           "value": "ezplus.bim_review_stream.messaging.stage_loading",
           "layer": "application"
         },

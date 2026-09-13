@@ -1,6 +1,7 @@
 // UnifiedConsole — ViewportSlotProvider：viewportSlot.ts 契約的 state 持有者（純 context state，不碰 DOM、不發請求）。
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { parseSectionInput, type SectionInput, type SectionState } from "../sectionPlaneBridge";
+import type { MeasurementAction, MeasurementState } from "../measurementBridge";
 import type { ReactNode } from "react";
 import type { ReviewSessionViewerPaneBatchGate } from "../ReviewSessionViewerPane";
 import type { USDPrimNode } from "../EmbeddedViewer";
@@ -27,7 +28,15 @@ export function ViewportSlotProvider({ children }: { children: ReactNode }) {
   const [sectionState, setSectionState] = useState<SectionState>({ status: "idle" });
   const sectionBusy = useRef(false);
   const sectionGeneration = useRef(0);
+  const [measurementState, setMeasurementState] = useState<MeasurementState>({ status: "idle" });
+  const sendMeasurement = useCallback((action: MeasurementAction) => {
+    if (action === "start" && !resolveViewerCommandGate(gateRef.current).canSend) return;
+    if (!hostActionsRef.current?.sendMeasurement?.(action)) {
+      setMeasurementState({ status: "error", reason: "unavailable" });
+    }
+  }, []);
   const invalidateSection = useCallback(() => {
+    setMeasurementState(previous => previous.status === "idle" || previous.status === "unconfirmed" ? previous : { status: "unconfirmed" });
     ++sectionGeneration.current; sectionBusy.current = false;
     setSectionState(previous => previous.status === "idle" || previous.status === "unconfirmed" ? previous : { status: "unconfirmed" });
   }, []);
@@ -140,6 +149,7 @@ export function ViewportSlotProvider({ children }: { children: ReactNode }) {
   }, [publishViewer, subscribeDock]);
 
   const value = useMemo<ViewportSlotApi>(() => ({
+    measurementState, setMeasurementState, sendMeasurement,
     sectionState, sendSectionPlane, invalidateSection,
     selectedStagePaths, setSelectedStagePaths,
     registerSlot,
@@ -161,6 +171,7 @@ export function ViewportSlotProvider({ children }: { children: ReactNode }) {
     sendToolbarAction,
     registerHostActions,
   }), [
+    measurementState, sendMeasurement,
     sectionState, sendSectionPlane, invalidateSection,
     selectedStagePaths,
     publishViewer, viewerPublication, subscribeDock, dockSubscription,

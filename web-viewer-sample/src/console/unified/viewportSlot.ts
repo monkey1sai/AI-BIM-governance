@@ -7,6 +7,7 @@
 // ═══════════════════════════════════════════════════════════════════════
 import { createContext, useContext } from "react";
 import type { SectionInput, SectionReply, SectionState } from "../sectionPlaneBridge";
+import type { MeasurementAction, MeasurementState } from "../measurementBridge";
 import type { Ref } from "react";
 import type {
   ReviewRoomHandoff,
@@ -31,6 +32,7 @@ export type WorkspaceViewerPublication = Pick<ViewportPublication, "mode" | "han
 export type ViewportDockSubscription = Omit<ViewportPublication, keyof WorkspaceViewerPublication>;
 
 export interface ViewportHostActions {
+  sendMeasurement?: (action: MeasurementAction) => boolean;
   sendSectionPlane?: (input: SectionInput) => Promise<SectionReply>;
   requestStageTree?: (primPath?: string) => void;
   selectPrim?: (primPath: string, multiSelect?: boolean) => void;
@@ -41,6 +43,9 @@ export interface ViewportHostActions {
 }
 
 export interface ViewportSlotApi {
+  measurementState?: MeasurementState;
+  setMeasurementState?: (state: MeasurementState) => void;
+  sendMeasurement?: (action: MeasurementAction) => void;
   sectionState?: SectionState;
   sendSectionPlane?: (input: SectionInput) => void;
   invalidateSection?: () => void;

@@ -9,6 +9,8 @@
 # its affiliates is strictly prohibited.
 
 from pxr import UsdGeom, Usd
+import asyncio
+import threading
 
 import carb
 import carb.dictionary
@@ -58,6 +60,14 @@ class StageManager:
         self._highlight_stage = None
         self._camera_stage = None
         self._section_plane = None
+        self._measurement_runtime = None
+        self._measurement_tasks = set()
+        self._measurement_notice = None
+        self._measurement_stage = None
+        self._measurement_revision = 0
+        self._measurement_epoch_lock = threading.Lock()
+        self._measurement_loop = None
+        self._measurement_closed = False
         self._subscriptions = []
         self._runtime_authority = runtime_authority or RuntimeAuthorityClient()
         self._trace_context = trace_context or DataChannelTraceContext()
@@ -78,6 +88,7 @@ class StageManager:
             "clearHighlightResult",
             "focusPrimResult",
             "clipPlaneResult",
+            "measurementResult",
         ]
 
         for o in outgoing:
@@ -104,6 +115,7 @@ class StageManager:
             # request to focus/select one prim
             'focusPrimRequest': self._on_focus_prim,
             'clipPlaneRequest': self._on_clip_plane,
+            'measurementRequest': self._on_measurement,
             # harness-only in browsers; production Kit rejects explicitly.
             'composeStageRequest': self._on_unsupported_mutator,
         }
@@ -127,7 +139,7 @@ class StageManager:
         self._subscriptions.append(ed.observe_event(
             observer_name="StageManager:StageClosing",
             event_name=usd_context.stage_event_name(omni.usd.StageEventType.CLOSING),
-            on_event=self._restore_section_plane,
+            on_event=self._on_stage_closing,
         ))
         self._subscriptions.append(ed.observe_event(
             observer_name="StageManager:StageClosed",
@@ -428,6 +440,87 @@ class StageManager:
             except Exception:
                 carb.log_warn("Section settings could not be restored.")
 
+    def _invalidate_measurement(self, *args):
+        # USD notices execute on the editing thread. Publish the epoch before
+        # scheduling cancellation so a final authority read cannot miss an edit.
+        with self._measurement_epoch_lock:
+            self._measurement_revision += 1
+        runtime, loop = self._measurement_runtime, self._measurement_loop
+        if runtime is None or loop is None:
+            return
+        try:
+            current = asyncio.get_running_loop()
+        except RuntimeError:
+            current = None
+        if current is loop:
+            runtime.invalidate()
+        elif not loop.is_closed():
+            try:
+                loop.call_soon_threadsafe(runtime.invalidate)
+            except RuntimeError:  # loop may close concurrently with notice delivery
+                pass
+
+    def _measurement_scene_revision(self):
+        with self._measurement_epoch_lock:
+            return self._measurement_revision
+
+    def _on_stage_closing(self, event=None):
+        self._restore_section_plane()
+        self._invalidate_measurement()
+        self._trace_context.clear()
+        if self._measurement_notice is not None:
+            self._measurement_notice.Revoke()
+            self._measurement_notice = None
+        self._measurement_stage = None
+
+    def _on_measurement(self, event):
+        if self._measurement_closed:
+            return
+        request = self._payload_dict(event.payload)
+        if "uv" in request:
+            request = {**request, "uv": self._payload_list(request["uv"])}
+        if len(self._measurement_tasks) >= 2:
+            if self._measurement_runtime is not None:
+                self._measurement_runtime.cancel_local(request)
+            get_eventdispatcher().dispatch_event("measurementResult", payload=correlated_result(request, {
+                "measurement_id": request.get("measurement_id"), "status": "rejected", "error": "busy"}))
+            return
+        async def execute():
+            self._measurement_loop = asyncio.get_running_loop()
+            try:
+                from omni.kit.viewport.utility import get_active_viewport
+                from pxr import Tf
+                try:
+                    from .measurement_runtime import MeasurementRuntime
+                except ImportError:
+                    from measurement_runtime import MeasurementRuntime
+                viewport = get_active_viewport()
+                stage = omni.usd.get_context().get_stage()
+                if viewport is None or stage is None or viewport.stage != stage:
+                    raise ValueError("No viewport.")
+                if stage != self._measurement_stage:
+                    self._invalidate_measurement()
+                    if self._measurement_notice is not None:
+                        self._measurement_notice.Revoke()
+                    self._measurement_notice = Tf.Notice.Register(Usd.Notice.ObjectsChanged, self._invalidate_measurement, stage)
+                    self._measurement_stage = stage
+                if self._measurement_runtime is None:
+                    self._measurement_runtime = MeasurementRuntime(viewport, self._runtime_authority,
+                        self._trace_context, self._measurement_scene_revision)
+                if self._measurement_runtime.viewport != viewport:
+                    raise ValueError("Viewport replaced.")
+                revision = self._measurement_scene_revision()
+                result = await self._measurement_runtime.execute(request)
+                if self._measurement_scene_revision() != revision and result.get("status") in ("started", "point", "result"):
+                    result = {"measurement_id": request.get("measurement_id"), "status": "rejected", "error": "context_changed"}
+            except Exception:
+                result = {"measurement_id": request.get("measurement_id"), "status": "rejected", "error": "measurement_unavailable"}
+            if not self._measurement_closed:
+                get_eventdispatcher().dispatch_event("measurementResult", payload=correlated_result(request, result))
+        task = asyncio.ensure_future(execute())
+        self._measurement_tasks.add(task)
+        task.add_done_callback(self._measurement_tasks.discard)
+
     def _on_clip_plane(self, event):
         request_payload = self._payload_dict(event.payload)
         if not self._authorize_mutator("clipPlaneRequest", request_payload):
@@ -496,7 +589,7 @@ class StageManager:
             self._highlight_stage = stage
 
     def _on_stage_event_closed(self, event):
-        self._restore_section_plane()
+        self._on_stage_closing()
         self._sync_highlight_stage(None)
         self._camera_stage = None
         self._camera_attrs.clear()
@@ -574,7 +667,12 @@ class StageManager:
         """This is called every time the extension is deactivated. It is used
         to clean up the extension state."""
         # Reseting the state.
-        self._restore_section_plane()
+        self._measurement_closed = True
+        self._on_stage_closing()
+        if self._measurement_runtime is not None:
+            self._measurement_runtime.close()
+        for task in tuple(self._measurement_tasks):
+            task.cancel()
         try:
             self._sync_highlight_stage(None)
         finally:

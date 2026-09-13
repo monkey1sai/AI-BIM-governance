@@ -18,6 +18,8 @@
     { "$ref": "#/$defs/clearHighlightRequest" },
     { "$ref": "#/$defs/clipPlaneRequest" },
     { "$ref": "#/$defs/clipPlaneResult" },
+    { "$ref": "#/$defs/measurementRequest" },
+    { "$ref": "#/$defs/measurementResult" },
     { "$ref": "#/$defs/selectPrimsRequest" },
     { "$ref": "#/$defs/makePrimsPickable" },
     { "$ref": "#/$defs/resetStage" },
@@ -40,6 +42,58 @@
     { "$ref": "#/$defs/commandRejected" }
   ],
   "$defs": {
+    "measurementId": { "type": "string", "pattern": "^[A-Za-z0-9_-]{1,100}$" },
+    "worldPoint": { "type": "array", "minItems": 3, "maxItems": 3, "items": { "type": "number" } },
+    "measurementRequest": {
+      "type": "object", "required": ["event_type", "payload"],
+      "properties": {
+        "event_type": { "const": "measurementRequest" },
+        "payload": {
+          "allOf": [{ "$ref": "#/$defs/runtimeAuthorityEnvelope" }],
+          "type": "object", "required": ["action", "measurement_id"],
+          "properties": {
+            "action": { "enum": ["start", "pick", "cancel", "clear"] },
+            "measurement_id": { "$ref": "#/$defs/measurementId" },
+            "uv": { "type": "array", "minItems": 2, "maxItems": 2, "items": { "type": "number", "minimum": 0, "maximum": 1 } }
+          },
+          "if": { "properties": { "action": { "const": "pick" } } },
+          "then": { "required": ["uv"] },
+          "else": { "not": { "required": ["uv"] } },
+          "unevaluatedProperties": false
+        }
+      }
+    },
+    "measurementResult": {
+      "type": "object", "required": ["event_type", "payload"],
+      "properties": {
+        "event_type": { "const": "measurementResult" },
+        "payload": {
+          "type": "object", "required": ["trace_id", "request_id", "measurement_id", "status"],
+          "properties": {
+            "trace_id": { "$ref": "#/$defs/dataChannelTraceId" },
+            "request_id": { "$ref": "#/$defs/requestId" },
+            "measurement_id": { "$ref": "#/$defs/measurementId" },
+            "status": { "enum": ["started", "point", "result", "cancelled", "cleared", "rejected"] },
+            "generation": { "type": "integer", "minimum": 0 },
+            "error": { "type": "string", "maxLength": 100 },
+            "point_index": { "const": 1 },
+            "point": { "$ref": "#/$defs/worldPoint" },
+            "points": { "type": "array", "minItems": 2, "maxItems": 2, "items": { "$ref": "#/$defs/worldPoint" } },
+            "meters_per_unit": { "type": "number", "exclusiveMinimum": 0 },
+            "distance_model_units": { "type": "number", "minimum": 0 },
+            "distance_metres": { "type": "number", "minimum": 0 }
+          },
+          "allOf": [
+            { "if": { "properties": { "status": { "const": "started" } } }, "then": { "required": ["meters_per_unit"] } },
+            { "if": { "properties": { "status": { "const": "point" } } }, "then": { "required": ["point", "point_index"] } },
+            { "if": { "properties": { "status": { "const": "result" } } }, "then": { "required": ["points", "meters_per_unit", "distance_model_units", "distance_metres"] } },
+            { "if": { "properties": { "status": { "const": "rejected" } } }, "then": { "required": ["error"] } },
+            { "if": { "properties": { "status": { "enum": ["rejected", "cancelled", "cleared"] } } }, "then": { "not": { "anyOf": [{ "required": ["points"] }, { "required": ["point"] }, { "required": ["distance_metres"] }] } } }
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
     "clipPlaneRequest": {
       "type": "object", "required": ["event_type", "payload"],
       "properties": {

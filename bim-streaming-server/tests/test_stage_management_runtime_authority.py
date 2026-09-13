@@ -285,6 +285,14 @@ def make_manager(authority):
     manager._highlight_stage = None
     manager._camera_stage = None
     manager._section_plane = None
+    manager._measurement_runtime = None
+    manager._measurement_tasks = set()
+    manager._measurement_notice = None
+    manager._measurement_stage = None
+    manager._measurement_revision = 0
+    manager._measurement_epoch_lock = stage_management.threading.Lock()
+    manager._measurement_loop = None
+    manager._measurement_closed = False
     manager._highlight_overlay = types.SimpleNamespace(
         clear=lambda: None,
         replace=lambda _stage, items: {"applied_paths": [item["prim_path"] for item in items],
@@ -348,7 +356,81 @@ def test_constructor_registers_clip_request_result_and_stage_closing(monkeypatch
     assert "clipPlaneResult" in outgoing
     by_name = {row["event_name"]: row["on_event"] for row in subscriptions}
     assert by_name["clipPlaneRequest"] == manager._on_clip_plane
-    assert by_name["stage-3"] == manager._restore_section_plane
+    assert by_name["stage-3"] == manager._on_stage_closing
+    assert by_name["measurementRequest"] == manager._on_measurement
+    assert "measurementResult" in outgoing
+
+
+def test_measurement_task_cap_still_cancels_matching_owner(monkeypatch):
+    import asyncio
+    from test_measurement_runtime import setup, request
+    async def run():
+        runtime, _, authority, _, _ = setup()
+        await runtime.execute(request("start"))
+        manager = make_manager(authority)
+        manager._measurement_runtime = runtime
+        manager._measurement_tasks = {object(), object()}
+        emitted = []
+        monkeypatch.setattr(stage_management, "get_eventdispatcher", lambda: types.SimpleNamespace(
+            dispatch_event=lambda *args, **kwargs: emitted.append((args, kwargs))))
+        before = runtime.epoch
+        manager._on_measurement(event(request("cancel", "foreign", source_client_id="other")))
+        assert runtime.epoch == before
+        manager._on_measurement(event(request("cancel", "cancel")))
+        assert runtime.epoch > before
+        assert len(manager._measurement_tasks) == 2
+        assert len(emitted) == 2
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("worker_thread", [False, True])
+def test_measurement_handler_uses_native_query_notice_and_no_shutdown_publish(monkeypatch, worker_thread):
+    import asyncio
+    from test_measurement_runtime import setup, request, until
+    async def run():
+        asyncio.get_running_loop().set_debug(True)
+        runtime, viewport, authority, trace, _ = setup()
+        manager = make_manager(authority)
+        manager._trace_context = trace
+        notice = types.SimpleNamespace(Revoke=lambda: None)
+        callbacks, emitted = [], []
+        monkeypatch.setattr(sys.modules["pxr"], "Tf", types.SimpleNamespace(Notice=types.SimpleNamespace(
+            Register=lambda kind, callback, stage: (callbacks.append(callback), notice)[1])), raising=False)
+        monkeypatch.setattr(stage_management.Usd, "Notice", types.SimpleNamespace(ObjectsChanged=object()), raising=False)
+        monkeypatch.setattr(sys.modules["omni.kit.viewport.utility"], "get_active_viewport", lambda: viewport, raising=False)
+        monkeypatch.setattr(stage_management.omni.usd, "get_context", lambda: types.SimpleNamespace(get_stage=lambda: viewport.stage))
+        monkeypatch.setattr(stage_management, "get_eventdispatcher", lambda: types.SimpleNamespace(
+            dispatch_event=lambda name, payload: emitted.append((name, payload))))
+        manager._on_measurement(event(request("start")))
+        await until(lambda: len(emitted) == 1)
+        assert emitted[-1][1]["status"] == "started" and len(callbacks) == 1
+        manager._on_measurement(event(request("pick", "p1", uv=[0.5, 0.5])))
+        await until(lambda: len(viewport.callbacks) == 1)
+        before = manager._measurement_scene_revision()
+        if worker_thread:
+            errors = []
+            def notify():
+                try:
+                    callbacks[0](None, None)
+                except Exception as exc:
+                    errors.append(exc)
+            thread = stage_management.threading.Thread(target=notify)
+            thread.start()
+            thread.join(timeout=1)
+            assert not thread.is_alive() and errors == []
+            # Notice epoch is visible even before this loop can drain cancellation.
+            assert manager._measurement_scene_revision() > before
+        else:
+            callbacks[0](None, None)
+        viewport.callbacks[0]("/Wall", (1, 2, 3))
+        await until(lambda: len(emitted) == 2)
+        assert emitted[-1][1]["status"] in ("rejected", "cancelled")
+        manager._on_measurement(event(request("start", "start2")))
+        manager.on_shutdown()
+        await asyncio.sleep(0.02)
+        assert len(emitted) == 2
+        assert trace.active_binding() is None
+    asyncio.run(run())
 
 
 def test_section_lifecycle_preserves_same_stage_and_retries_failed_cleanup(monkeypatch):
