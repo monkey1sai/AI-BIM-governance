@@ -372,16 +372,16 @@
         "authority": "canonical_product_surface",
         "canonical_route": "#a1",
         "capture_runner": "web-viewer-sample/e2e/design-system-visual.spec.ts",
-        "approval": "Owner-authorized fourth slice and same-PR baseline update, 2026-09-12: remove shared asbuilt/artifact display badges while retaining DEMO and unavailable/planned cues. Captured by the unchanged Windows Chromium DPR1 design runner from clean product commit 595f26eec97d4b962f0a892b50e13ea9ea1292e9. This records implementation scope authorization; exact-head GitHub human review remains required."
+        "approval": "Owner-authorized eleventh slice and same-PR UI/baseline delivery, 2026-09-13: add two-point measurement controls below the previously merged section tool, retaining unavailable states and empty viewport. Captured by the unchanged Windows Chromium DPR1 runner from clean product commit 30e817d0d169189cf8b69ae72c8d66dd3f2bd0af. This records implementation scope authorization; exact-head GitHub human review and real GPU acceptance remain separate."
       },
       "baselines": {
         "1440x900": {
           "path": "docs/plans/design-system-baseline/workspace.a1.default/1440x900.png",
-          "sha256": "d055bb321b772cd92750463b718fa0c25503e1d5940a38aef6be1cf25498fd60"
+          "sha256": "6577384b7d14ed628d99c294f147998dd0aa6e7cb95073f7172e9bf1b4e10419"
         },
         "1920x1080": {
           "path": "docs/plans/design-system-baseline/workspace.a1.default/1920x1080.png",
-          "sha256": "6e4e2ed8318147c8e84ecd9ffdfd9c7437a770beb3538c9ba5c35aa61bfe012d"
+          "sha256": "d53f1736d3b88cd7101e9449ee0f1200381ec275366fa7fe5d446c4e386c4cca"
         }
       }
     },
@@ -398,16 +398,16 @@
         "authority": "canonical_product_surface",
         "canonical_route": "#a2",
         "capture_runner": "web-viewer-sample/e2e/design-system-visual.spec.ts",
-        "approval": "Owner-authorized fourth slice and same-PR baseline update, 2026-09-12: remove shared asbuilt/artifact display badges while retaining DEMO and unavailable/planned cues. Captured by the unchanged Windows Chromium DPR1 design runner from clean product commit 595f26eec97d4b962f0a892b50e13ea9ea1292e9. This records implementation scope authorization; exact-head GitHub human review remains required."
+        "approval": "Owner-authorized eleventh slice and same-PR UI/baseline delivery, 2026-09-13: add two-point measurement controls below the previously merged section tool, retaining unavailable states and empty viewport. Captured by the unchanged Windows Chromium DPR1 runner from clean product commit 30e817d0d169189cf8b69ae72c8d66dd3f2bd0af. This records implementation scope authorization; exact-head GitHub human review and real GPU acceptance remain separate."
       },
       "baselines": {
         "1440x900": {
           "path": "docs/plans/design-system-baseline/workspace.a2.default/1440x900.png",
-          "sha256": "3f16f5a766ab95b3468a08ef02ead0761b82588a6296659717cf07e29ec3ccde"
+          "sha256": "50a3238561f323140c2ea5f548d204789affb8bd4b108308f33f577ce4b37939"
         },
         "1920x1080": {
           "path": "docs/plans/design-system-baseline/workspace.a2.default/1920x1080.png",
-          "sha256": "98b149877393fc3081d5db64985cb955703d583886eddbb3ac638399d6f91f51"
+          "sha256": "0e257eff9eda6b055a1df7363560a51668e8ba8589e5527d2769d662673ff633"
         }
       }
     },
@@ -424,16 +424,16 @@
         "authority": "canonical_product_surface",
         "canonical_route": "#a3",
         "capture_runner": "web-viewer-sample/e2e/design-system-visual.spec.ts",
-        "approval": "Owner-authorized fourth slice and same-PR baseline update, 2026-09-12: remove shared asbuilt/artifact display badges while retaining DEMO and unavailable/planned cues. Captured by the unchanged Windows Chromium DPR1 design runner from clean product commit 595f26eec97d4b962f0a892b50e13ea9ea1292e9. This records implementation scope authorization; exact-head GitHub human review remains required."
+        "approval": "Owner-authorized eleventh slice and same-PR UI/baseline delivery, 2026-09-13: add two-point measurement controls below the previously merged section tool, retaining unavailable states and empty viewport. Captured by the unchanged Windows Chromium DPR1 runner from clean product commit 30e817d0d169189cf8b69ae72c8d66dd3f2bd0af. This records implementation scope authorization; exact-head GitHub human review and real GPU acceptance remain separate."
       },
       "baselines": {
         "1440x900": {
           "path": "docs/plans/design-system-baseline/workspace.a3.default/1440x900.png",
-          "sha256": "1e4fda915c8267ccd770300cfd24d109c8b84cbfec5c6378e6c1b226a541feab"
+          "sha256": "6d8718c75be5561d9adc04aa60657e18f554821cb267bc3c2e92ced0bf4b61b6"
         },
         "1920x1080": {
           "path": "docs/plans/design-system-baseline/workspace.a3.default/1920x1080.png",
-          "sha256": "2b86a4c9c9d98a431c9a6d345c8496d47210de5eea005d9999c5c721d5bace62"
+          "sha256": "64157fed62649781ea3e511234ee27add994c7cfe4d3a29ec67062e501bb105d"
         }
       }
     },
@@ -450,16 +450,16 @@
         "authority": "canonical_product_surface",
         "canonical_route": "#a4",
         "capture_runner": "web-viewer-sample/e2e/design-system-visual.spec.ts",
-        "approval": "Owner-authorized fourth slice and same-PR baseline update, 2026-09-12: remove shared asbuilt/artifact display badges while retaining DEMO and unavailable/planned cues. Captured by the unchanged Windows Chromium DPR1 design runner from clean product commit 595f26eec97d4b962f0a892b50e13ea9ea1292e9. This records implementation scope authorization; exact-head GitHub human review remains required."
+        "approval": "Owner-authorized eleventh slice and same-PR UI/baseline delivery, 2026-09-13: add two-point measurement controls below the previously merged section tool, retaining unavailable states and empty viewport. Captured by the unchanged Windows Chromium DPR1 runner from clean product commit 30e817d0d169189cf8b69ae72c8d66dd3f2bd0af. This records implementation scope authorization; exact-head GitHub human review and real GPU acceptance remain separate."
       },
       "baselines": {
         "1440x900": {
           "path": "docs/plans/design-system-baseline/workspace.a4.default/1440x900.png",
-          "sha256": "c812c9f87d33405dc8b72431b0dbc79438d23da8abbd5fddc95a4cfee2b6b15e"
+          "sha256": "89febcd8e6ed1a6f2becd1230a086f3783900c3eb85a4345dadd95e38507d879"
         },
         "1920x1080": {
           "path": "docs/plans/design-system-baseline/workspace.a4.default/1920x1080.png",
-          "sha256": "6137c45db43baf04da81badeed3bbd7635a4b4c8e100e0b7e1b03d172e81997a"
+          "sha256": "d3d8d083c71087628991e0976545728b37909cb0e5e069e0c2f84dd3b054dfa2"
         }
       }
     },
@@ -766,5 +766,5 @@
     "docs/plans/ai-bim-geo-viewer-A1.png..A10.png",
     "docs/plans/ai-bim-geo-Ai-codeing-A1.png..A10.png"
   ],
-  "baseline_snapshot_sha256": "99af3975e01b32531e1b39f83359167547d186814a61d7ab96bb2385171dd1f4"
+  "baseline_snapshot_sha256": "3e3465825221b8eda5eb6ef7750d50a8ff49f0f31f7b83ed6b21fed069a7c06e"
 }
