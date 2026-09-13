@@ -111,7 +111,7 @@ def install_stage_management_stubs() -> None:
 
     omni = types.ModuleType("omni")
     omni_usd = types.ModuleType("omni.usd")
-    omni_usd.StageEventType = types.SimpleNamespace(ASSETS_LOADED=1, SELECTION_CHANGED=2, CLOSED=3)
+    omni_usd.StageEventType = types.SimpleNamespace(ASSETS_LOADED=1, SELECTION_CHANGED=2, CLOSED=3, CLOSING=4)
     omni_usd.get_context = lambda: None
     omni.usd = omni_usd
     omni_kit = types.ModuleType("omni.kit")
@@ -284,6 +284,7 @@ def make_manager(authority):
     manager._camera_attrs = {}
     manager._highlight_stage = None
     manager._camera_stage = None
+    manager._section_plane = None
     manager._highlight_overlay = types.SimpleNamespace(
         clear=lambda: None,
         replace=lambda _stage, items: {"applied_paths": [item["prim_path"] for item in items],
@@ -305,6 +306,112 @@ def base_payload(request_id="req-1"):
         "source_client_id": "viewer_lease_x",
         "viewer_lease_token": "viewer-secret-sentinel",
     }
+
+
+@pytest.mark.parametrize("fail", [False, True])
+def test_clip_handler_correlates_single_result_and_restores_on_close(monkeypatch, fail):
+    manager = make_manager(FakeAuthority(True))
+    effects, results = [], []
+    def apply(stage, payload):
+        effects.append("apply")
+        if fail:
+            raise RuntimeError("private renderer exception")
+        return {"enabled": True, "planes": [[1, 0, 0, -3]]}
+    manager._section_plane = types.SimpleNamespace(apply=apply, restore=lambda: effects.append("restore"))
+    context = DummyUsdContext()
+    monkeypatch.setattr(stage_management.omni.usd, "get_context", lambda: context)
+    monkeypatch.setattr(stage_management, "get_eventdispatcher", lambda: types.SimpleNamespace(
+        dispatch_event=lambda name, payload: results.append((name, payload))))
+    manager._on_clip_plane(event({**base_payload(), "enabled": True, "axis": "x", "position": 3, "normal": [1, 0, 0]}))
+    assert len(results) == 1 and results[0][0] == "clipPlaneResult"
+    result = results[0][1]
+    assert result["result"] == ("error" if fail else "success")
+    assert result["request_id"] == "req-1" and result["trace_id"] == "rev_review_session_x"
+    assert "private" not in str(result) and "viewer-secret" not in str(result)
+    assert context.selection.set_calls == [] and context.selection.clear_count == 0
+    manager._restore_section_plane(event({}))
+    manager.on_shutdown()
+    assert effects == ["apply", "restore", "restore"]
+
+
+def test_constructor_registers_clip_request_result_and_stage_closing(monkeypatch):
+    subscriptions, outgoing = [], []
+    monkeypatch.setattr(stage_management, "register_client_send", lambda name: outgoing.append(name))
+    monkeypatch.setattr(stage_management, "get_eventdispatcher", lambda: types.SimpleNamespace(
+        observe_event=lambda **kwargs: subscriptions.append(kwargs)))
+    monkeypatch.setattr(stage_management.omni.usd, "StageEventType",
+                        types.SimpleNamespace(ASSETS_LOADED=1, SELECTION_CHANGED=2, CLOSING=3, CLOSED=4))
+    monkeypatch.setattr(stage_management.omni.usd, "get_context", lambda: types.SimpleNamespace(
+        stage_event_name=lambda value: "stage-" + str(value)))
+    manager = StageManager(runtime_authority=FakeAuthority(False))
+    assert manager._section_plane is None
+    assert "clipPlaneResult" in outgoing
+    by_name = {row["event_name"]: row["on_event"] for row in subscriptions}
+    assert by_name["clipPlaneRequest"] == manager._on_clip_plane
+    assert by_name["stage-3"] == manager._restore_section_plane
+
+
+def test_section_lifecycle_preserves_same_stage_and_retries_failed_cleanup(monkeypatch):
+    from section_plane import SectionPlaneController, ENABLED, PLANE
+    from test_section_plane import FakeSettings, payload
+    settings, context = FakeSettings(), DummyUsdContext()
+    manager = make_manager(FakeAuthority(True))
+    manager._section_plane = SectionPlaneController(settings)
+    monkeypatch.setattr(stage_management.omni.usd, "get_context", lambda: context)
+    manager._camera_stage = context.stage
+    manager._highlight_stage = context.stage
+    manager._section_plane.apply(context.stage, payload())
+    manager._on_stage_event_opened(None)
+    assert settings.values[ENABLED] is True
+    settings.fail_once = PLANE
+    warnings = []
+    monkeypatch.setattr(stage_management.carb, "log_warn", warnings.append)
+    manager._restore_section_plane()
+    assert warnings == ["Section settings could not be restored."]
+    assert settings.values[ENABLED] is True
+    manager._on_stage_event_closed(None)
+    assert settings.values == {ENABLED: False, PLANE: [0, 0, 0, 0]}
+    manager._section_plane.apply(context.stage, payload())
+    context.stage = object()
+    manager._camera_stage = context.stage
+    manager._on_stage_event_opened(None)
+    assert settings.values == {ENABLED: False, PLANE: [0, 0, 0, 0]}
+
+
+def test_shutdown_restores_section_and_cleans_up_if_highlight_clear_throws():
+    manager = make_manager(FakeAuthority(True))
+    effects = []
+    def fail_clear():
+        raise RuntimeError("clear failed")
+    manager._highlight_overlay = types.SimpleNamespace(clear=fail_clear)
+    manager._highlight_stage = object()
+    manager._section_plane = types.SimpleNamespace(restore=lambda: effects.append("restore"))
+    manager._subscriptions = [object()]
+    manager._camera_attrs = {"camera": object()}
+    manager._is_external_update = True
+    with pytest.raises(RuntimeError, match="clear failed"):
+        manager.on_shutdown()
+    assert effects == ["restore"]
+    assert manager._subscriptions == [] and manager._camera_attrs == {}
+    assert manager._is_external_update is False
+
+
+def test_clip_handler_normalizes_nested_carb_normal_after_authorization(monkeypatch):
+    class NormalItem(stage_management.carb.dictionary.Item):
+        def get_dict(self):
+            return [1, 0, 0]
+    manager = make_manager(FakeAuthority(True))
+    results = []
+    def apply(stage, payload):
+        assert payload["normal"] == [1, 0, 0]
+        return {"enabled": True, "planes": [[1, 0, 0, -3]]}
+    manager._section_plane = types.SimpleNamespace(apply=apply)
+    monkeypatch.setattr(stage_management.omni.usd, "get_context", lambda: DummyUsdContext())
+    monkeypatch.setattr(stage_management, "get_eventdispatcher", lambda: types.SimpleNamespace(
+        dispatch_event=lambda name, payload: results.append(payload)))
+    manager._on_clip_plane(event({**base_payload(), "enabled": True, "axis": "x",
+                                  "position": 3, "normal": NormalItem()}))
+    assert len(results) == 1 and results[0]["result"] == "success"
 
 
 def test_every_stage_mutator_denial_emits_only_command_rejected_before_mutation(monkeypatch):
@@ -333,6 +440,7 @@ def test_every_stage_mutator_denial_emits_only_command_rejected_before_mutation(
             "focus_first": True,
         }),
         (manager._on_clear_highlight, "clearHighlightRequest", {}),
+        (manager._on_clip_plane, "clipPlaneRequest", {"enabled": True, "axis": "x", "position": 3, "normal": [1, 0, 0]}),
         (manager._on_focus_prim, "focusPrimRequest", {"prim_path": "/World/Wall_001"}),
     ]
 

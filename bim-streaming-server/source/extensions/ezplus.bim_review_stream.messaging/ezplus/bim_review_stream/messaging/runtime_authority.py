@@ -18,6 +18,7 @@ MUTATING_EVENTS = {
     "resetStage",
     "highlightPrimsRequest",
     "clearHighlightRequest",
+    "clipPlaneRequest",
     "focusPrimRequest",
 }
 
@@ -451,6 +452,7 @@ def _command_context(event_type: str, payload: Mapping[str, object]) -> dict:
         "highlightPrimsRequest": ("mode", "items", "focus_first"),
         "focusPrimRequest": ("prim_path",),
         "clearHighlightRequest": (),
+        "clipPlaneRequest": ("enabled", "axis", "position", "normal"),
         "selectPrimsRequest": ("paths",),
         "makePrimsPickable": ("paths",),
         "resetStage": (),

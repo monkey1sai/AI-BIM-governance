@@ -16,6 +16,7 @@ const viewerToKitEventTypes = new Set([
     "highlightPrimsRequest",
     "focusPrimRequest",
     "clearHighlightRequest",
+    "clipPlaneRequest",
     "selectPrimsRequest",
     "makePrimsPickable",
     "resetStage",
@@ -32,6 +33,7 @@ const kitToViewerEventTypes = new Set([
     "makePrimsPickableResponse",
     "resetStageResponse",
     "clearHighlightResult",
+    "clipPlaneResult",
     "loadingStateResponse",
     "getChildrenResponse",
     "stageSelectionChanged",
@@ -48,12 +50,14 @@ const runtimeResponseRequestTypes = new Map<string, ReadonlySet<string>>([
     ["highlightPrimsResult", new Set(["highlightPrimsRequest"])],
     ["focusPrimResult", new Set(["focusPrimRequest"])],
     ["clearHighlightResult", new Set(["clearHighlightRequest"])],
+    ["clipPlaneResult", new Set(["clipPlaneRequest"])],
     ["selectPrimsResult", new Set(["selectPrimsRequest"])],
     ["makePrimsPickableResponse", new Set(["makePrimsPickable"])],
     ["resetStageResponse", new Set(["resetStage"])],
 ]);
 
 const simpleRuntimeTerminalEvents = new Set([
+    "clipPlaneResult",
     "clearHighlightResult",
     "selectPrimsResult",
     "makePrimsPickableResponse",

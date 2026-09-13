@@ -64,6 +64,36 @@ async function installControlledApis(page: Page) {
 }
 
 test.describe("Unified A1-A4 browser semantics (controlled APIs, not live runtime)", () => {
+  test("section controls stay outside the viewport and fail closed across Dock switches", async ({ page }, testInfo) => {
+    await installControlledApis(page);
+    const mutations: string[] = [];
+    page.on("request", request => { if (request.method() === "POST") mutations.push(new URL(request.url()).pathname); });
+    await page.goto("/#a1");
+    const controls = page.getByTestId("section-controls");
+    const viewport = page.locator("[data-uc='viewport'][data-prov='asbuilt']");
+    await expect(controls).toBeVisible();
+    await expect(controls.getByRole("combobox", { name: "剖切軸", exact: true })).toBeDisabled();
+    await expect(controls.getByRole("combobox", { name: "方向", exact: true })).toBeDisabled();
+    await expect(controls.getByRole("spinbutton", { name: "位置", exact: true })).toBeDisabled();
+    await expect(controls.getByTestId("section-apply")).toBeDisabled();
+    await expect(controls.getByTestId("section-off")).toBeDisabled();
+    await expect(controls).toContainText("尚未設定");
+    await expect(controls).toContainText("模型尚未就緒或目前沒有操作權限");
+    await expect(controls.locator("iframe,video,canvas")).toHaveCount(0);
+    const controlBox = await controls.boundingBox(), viewportBox = await viewport.boundingBox();
+    expect(controlBox).not.toBeNull(); expect(viewportBox).not.toBeNull();
+    expect(controlBox!.x + controlBox!.width).toBeLessThanOrEqual(viewportBox!.x);
+    const token = await viewport.getAttribute("data-mount-token");
+    for (const dock of ["a2", "a3", "a4", "a1"]) {
+      await page.locator(`[data-uc='dock-tab-${dock}']`).click();
+      await expect(controls).toBeVisible();
+      await expect(controls.getByTestId("section-apply")).toBeDisabled();
+      await expect(viewport).toHaveAttribute("data-mount-token", token!);
+    }
+    expect(mutations).not.toContainEqual(expect.stringMatching(/viewer-lease|runtime-command|stage-binding/));
+    await page.screenshot({ path: testInfo.outputPath("section-controls-disabled.png"), fullPage: true });
+  });
+
   test("all four canonical hashes mount live modules and contain no prototype viewport", async ({ page }) => {
     await installControlledApis(page);
     const expectations = [

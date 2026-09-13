@@ -6,6 +6,7 @@
 // context 缺席（legacy 深連結）時模組頁維持原本 inline 行為。
 // ═══════════════════════════════════════════════════════════════════════
 import { createContext, useContext } from "react";
+import type { SectionInput, SectionReply, SectionState } from "../sectionPlaneBridge";
 import type { Ref } from "react";
 import type {
   ReviewRoomHandoff,
@@ -30,6 +31,7 @@ export type WorkspaceViewerPublication = Pick<ViewportPublication, "mode" | "han
 export type ViewportDockSubscription = Omit<ViewportPublication, keyof WorkspaceViewerPublication>;
 
 export interface ViewportHostActions {
+  sendSectionPlane?: (input: SectionInput) => Promise<SectionReply>;
   requestStageTree?: (primPath?: string) => void;
   selectPrim?: (primPath: string, multiSelect?: boolean) => void;
   sendToolbarAction?: (
@@ -39,6 +41,9 @@ export interface ViewportHostActions {
 }
 
 export interface ViewportSlotApi {
+  sectionState?: SectionState;
+  sendSectionPlane?: (input: SectionInput) => void;
+  invalidateSection?: () => void;
   selectedStagePaths?: string[];
   setSelectedStagePaths?: (paths: string[]) => void;
   /** 中欄容器 ref callback；null＝解除註冊（host 轉 visibility:hidden，不 unmount）。 */

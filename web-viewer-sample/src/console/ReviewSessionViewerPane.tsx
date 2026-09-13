@@ -6,6 +6,7 @@ import { EmbeddedViewer, type EmbeddedViewerHandle, type HighlightItem, type Hig
 import { t } from "./i18n";
 import type { IssueViewResultMessage } from "./EmbeddedViewer";
 import type { IssueViewAction } from "../viewer/core/issueViewExchange";
+import type { SectionInput, SectionReply } from "./sectionPlaneBridge";
 import { getLocalDevUserCarrier } from "./localDevPrincipal";
 import { useSharedStatus } from "./useSharedStatus";
 
@@ -116,6 +117,7 @@ function createReviewViewerIdentity(mode: ReviewSessionViewerPaneMode): ReviewVi
 // 送出前先過與單筆高亮相同的 viewer 證據 gate（session observed / lease / first frame /
 // DataChannel / stage match）；gate 未過誠實回 { sent:false, reason }，絕不佯裝已送。
 export interface ReviewSessionViewerPaneHandle {
+  sendSectionPlane?(input: SectionInput): Promise<SectionReply>;
   runIssueView(action: IssueViewAction, items?: HighlightItem[], ifcGuid?: string): Promise<HighlightResultMessage | IssueViewResultMessage>;
   sendHighlightBatch(items: HighlightItem[]): { sent: true } | { sent: false; reason: string };
   requestStageTree(primPath?: string): void;
@@ -180,6 +182,7 @@ function classifyViewerLeaseError(error: unknown): ViewerLeaseError {
 }
 
 export interface ReviewSessionViewerPaneProps {
+  onSectionInvalidated?: () => void;
   handoff?: ReviewRoomHandoff;
   mode?: ReviewSessionViewerPaneMode;
   // 失敗態矩陣 first-frame-timeout（task 5.6）：claim 後未收首幀的可見逾時。90s 與
@@ -202,7 +205,7 @@ export interface ReviewSessionViewerPaneProps {
 }
 
 export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle, ReviewSessionViewerPaneProps>(
-  function ReviewSessionViewerPane({ handoff = parseReviewRoomHandoff(), mode = "review-room", onBatchGateChange, onBatchAck, onSessionIdChange, onStageTree, showHandoffActions = true, firstFrameTimeoutMs = 90_000, heartbeatDelayFn = viewerLeaseHeartbeatDelayMs }, ref) {
+  function ReviewSessionViewerPane({ handoff = parseReviewRoomHandoff(), mode = "review-room", onBatchGateChange, onBatchAck, onSessionIdChange, onStageTree, onSectionInvalidated, showHandoffActions = true, firstFrameTimeoutMs = 90_000, heartbeatDelayFn = viewerLeaseHeartbeatDelayMs }, ref) {
   const isA1Inline = mode === "a1-inline";
   const isA2Overlay = mode === "a2-overlay";
   const isA3Inline = mode === "a3-inline";
@@ -674,6 +677,10 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
   }, [sid]);
 
   useImperativeHandle(ref, () => ({
+    sendSectionPlane(input) {
+      if (commandGateRef.current) return Promise.resolve({ status: "error", reason: "unavailable" });
+      return viewerRef.current?.sendSectionPlane?.(input) ?? Promise.resolve({ status: "error", reason: "unavailable" });
+    },
     runIssueView(action, items = [], ifcGuid) {
       const reason = action === "highlight" || action === "focus"
         ? batchGateReasonRef.current : commandGateRef.current;
@@ -1038,6 +1045,7 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
               }}
               onStageTree={onStageTree}
               onIssueViewResult={receiveIssueResult}
+              onSectionInvalidated={onSectionInvalidated}
             />
           </div>
         ) : null /* origin-missing 態改由上方常駐 note（含 refresh 動作）呈現，避免 testid 重複 */}

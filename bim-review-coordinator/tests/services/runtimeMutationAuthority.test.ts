@@ -110,6 +110,26 @@ function mustPreauthorize(
 }
 
 describe("RuntimeMutationAuthority", () => {
+  it("authorizes bounded clip planes and denies malformed or unauthorized commands", () => {
+    const command = {
+      sessionId: "review_session_a", sourceClientId: "viewer_lease_a", credential: "test-lease",
+      requestId: "clip-1", requestedEventType: "clipPlaneRequest",
+      commandContext: { enabled: true, axis: "y", position: 3, normal: [0, -1, 0] },
+    };
+    const { authority, setSessionStatus } = testAuthority();
+    expect(authority.authorizeRuntimeCommand(command)).toMatchObject({ authorized: true });
+    for (const delta of [{ axis: "bad" }, { normal: [1, 0, 0] }, { normal: [0, 2, 0] },
+      { position: Infinity }, { position: 1e39 }, { position: true }, { enabled: 1 }, { extra: true }]) {
+      expect(authority.authorizeRuntimeCommand({ ...command, commandContext: { ...command.commandContext, ...delta } }))
+        .toMatchObject({ authorized: false, reason: "invalid_payload" });
+    }
+    setSessionStatus(command.sessionId, "closed");
+    expect(authority.authorizeRuntimeCommand(command)).toMatchObject({ authorized: false, reason: "session_lifecycle_blocked" });
+    for (const reason of ["spectator_readonly", "lease_invalid", "unauthorized_source_client"] as const) {
+      const denied = testAuthority({}, { inspectRuntimeLease: () => ({ authorized: false, reason, detailCode: "test_denial" }) });
+      expect(denied.authority.authorizeRuntimeCommand(command)).toMatchObject({ authorized: false, reason });
+    }
+  });
   it("preauthorizes a server-resolved pending stage binding", () => {
     const { authority } = testAuthority();
 
@@ -958,6 +978,7 @@ describe("RuntimeMutationAuthority", () => {
       },
       focusPrimRequest: { primPath: "/World/Wall_001" },
       clearHighlightRequest: {},
+      clipPlaneRequest: { enabled: true, axis: "z", position: 0, normal: [0, 0, 1] },
       selectPrimsRequest: { paths: ["/World/Wall_001"] },
       makePrimsPickable: { paths: ["/World/Wall_001"] },
       resetStage: {},

@@ -16,6 +16,8 @@
     { "$ref": "#/$defs/highlightPrimsRequest" },
     { "$ref": "#/$defs/focusPrimRequest" },
     { "$ref": "#/$defs/clearHighlightRequest" },
+    { "$ref": "#/$defs/clipPlaneRequest" },
+    { "$ref": "#/$defs/clipPlaneResult" },
     { "$ref": "#/$defs/selectPrimsRequest" },
     { "$ref": "#/$defs/makePrimsPickable" },
     { "$ref": "#/$defs/resetStage" },
@@ -38,6 +40,64 @@
     { "$ref": "#/$defs/commandRejected" }
   ],
   "$defs": {
+    "clipPlaneRequest": {
+      "type": "object", "required": ["event_type", "payload"],
+      "properties": {
+        "event_type": { "const": "clipPlaneRequest" },
+        "payload": {
+          "allOf": [{ "$ref": "#/$defs/runtimeAuthorityEnvelope" }],
+          "type": "object", "required": ["enabled", "axis", "position", "normal"],
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "axis": { "enum": ["x", "y", "z"] },
+            "position": { "type": "number", "minimum": -3.4028234663852886e38, "maximum": 3.4028234663852886e38 },
+            "normal": { "type": "array", "minItems": 3, "maxItems": 3, "items": { "type": "number" } },
+            "retry_of_request_id": { "$ref": "#/$defs/requestId" }
+          },
+          "oneOf": [
+            { "properties": { "axis": { "const": "x" }, "normal": { "enum": [[1,0,0],[-1,0,0]] } } },
+            { "properties": { "axis": { "const": "y" }, "normal": { "enum": [[0,1,0],[0,-1,0]] } } },
+            { "properties": { "axis": { "const": "z" }, "normal": { "enum": [[0,0,1],[0,0,-1]] } } }
+          ],
+          "unevaluatedProperties": false
+        }
+      }
+    },
+    "clipPlaneResult": {
+      "type": "object", "required": ["event_type", "payload"],
+      "properties": {
+        "event_type": { "const": "clipPlaneResult" },
+        "payload": {
+          "type": "object", "required": ["trace_id", "request_id", "result"],
+          "properties": {
+            "trace_id": { "$ref": "#/$defs/dataChannelTraceId" },
+            "request_id": { "$ref": "#/$defs/requestId" },
+            "session_id": { "type": "string" },
+            "result": { "enum": ["success", "error"] },
+            "error": { "type": "string" },
+            "enabled": { "type": "boolean" },
+            "planes": { "type": "array", "maxItems": 256, "items": {
+              "type": "array", "minItems": 4, "maxItems": 4, "items": { "type": "number" }
+            } }
+          },
+          "oneOf": [
+            {
+              "properties": { "result": { "const": "success" } },
+              "required": ["enabled", "planes"],
+              "allOf": [{
+                "if": { "properties": { "enabled": { "const": true } } },
+                "then": { "properties": { "planes": { "minItems": 1, "maxItems": 1 } } }
+              }]
+            },
+            {
+              "properties": { "result": { "const": "error" } }, "required": ["error"],
+              "not": { "anyOf": [{ "required": ["enabled"] }, { "required": ["planes"] }] }
+            }
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
     "requestId": {
       "type": "string",
       "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"

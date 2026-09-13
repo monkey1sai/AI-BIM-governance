@@ -8,6 +8,38 @@ import { EmbeddedViewer, type EmbeddedViewerHandle } from "./EmbeddedViewer";
 const VIEWER_ORIGIN = "http://127.0.0.1:5173";
 const actEnvKey = "IS_REACT_ACT_ENVIRONMENT" as const;
 
+it("section download-style bridge only resolves correlated replies from the actual frame", async () => {
+  const container = document.createElement("div"); document.body.append(container);
+  const root = createRoot(container); const ref = { current: null as EmbeddedViewerHandle | null };
+  await act(async () => root.render(<EmbeddedViewer ref={ref} sessionId="review_session_section" viewerOrigin={VIEWER_ORIGIN} />));
+  const frame = container.querySelector("iframe")!, source = frame.contentWindow!;
+  const post = vi.spyOn(source, "postMessage");
+  fireMessage({ protocol: "vg01", type: "viewer_ready" }, VIEWER_ORIGIN, source);
+  let settled = false;
+  const reply = ref.current!.sendSectionPlane!({ enabled: true, axis: "z", direction: 1, position: 2 }).then(value => { settled = true; return value; });
+  const id = (post.mock.calls[post.mock.calls.length - 1][0] as { clientRequestId: string }).clientRequestId;
+  const ack = { protocol: "vg01", type: "section_result", status: "applied", requestId: "runtime_1", clientRequestId: id };
+  fireMessage(ack, "https://evil.test", source); fireMessage(ack, VIEWER_ORIGIN, window);
+  fireMessage({ ...ack, clientRequestId: "old" }, VIEWER_ORIGIN, source);
+  await Promise.resolve(); expect(settled).toBe(false);
+  fireMessage(ack, VIEWER_ORIGIN, source); expect((await reply).status).toBe("applied");
+  post.mockRestore(); await act(async () => root.unmount()); container.remove();
+});
+it("section pending is cancelled on iframe reload and unmount", async () => {
+  const container = document.createElement("div"); document.body.append(container);
+  const root = createRoot(container); const ref = { current: null as EmbeddedViewerHandle | null };
+  await act(async () => root.render(<EmbeddedViewer ref={ref} sessionId="review_session_section" viewerOrigin={VIEWER_ORIGIN} />));
+  const frame = container.querySelector("iframe")!, source = frame.contentWindow!;
+  fireMessage({ protocol: "vg01", type: "viewer_ready" }, VIEWER_ORIGIN, source);
+  const pending = ref.current!.sendSectionPlane!({ enabled: true, axis: "z", direction: 1, position: 2 });
+  await act(async () => frame.dispatchEvent(new Event("load")));
+  expect((await pending).status).toBe("unconfirmed");
+  fireMessage({ protocol: "vg01", type: "viewer_ready" }, VIEWER_ORIGIN, source);
+  const again = ref.current!.sendSectionPlane!({ enabled: false, axis: "z", direction: 1, position: 2 });
+  await act(async () => root.unmount()); expect((await again).status).toBe("unconfirmed"); container.remove();
+});
+
+
 function fireMessage(data: unknown, origin: string, source: Window | null) {
   const ev = new MessageEvent("message", { data, origin, source: source as Window });
   window.dispatchEvent(ev);

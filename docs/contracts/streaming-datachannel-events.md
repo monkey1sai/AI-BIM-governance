@@ -4,11 +4,23 @@ These events are exchanged between `web-viewer-sample` and `bim-streaming-server
 
 ## Verified trace carrier
 
-The supported vendor `ApplicationMessage` ABI is exactly `{event_type,payload}`; it does not expose a separately supported root envelope field. Every one of the 26 event types enumerated by `tests/contracts/kit-datachannel-v1.schema.json` therefore carries the case-exact verified review root in `payload.trace_id`. A top-level `trace_id` is not a valid substitute.
+The supported vendor `ApplicationMessage` ABI is exactly `{event_type,payload}`; it does not expose a separately supported root envelope field. Every one of the 28 event types enumerated by `tests/contracts/kit-datachannel-v1.schema.json` therefore carries the case-exact verified review root in `payload.trace_id`. A top-level `trace_id` is not a valid substitute.
 
 Viewer sends no DataChannel message before the coordinator Socket.IO acknowledgement verifies the session root. Kit rejects every viewer→Kit message with a missing or mismatched payload trace before any stage read or mutation, and propagates the verified trace on every response/result/rejection/progress/unsolicited event. Viewer rejects every Kit→viewer message with a missing or mismatched trace before correlation bookkeeping, pending-request completion, accepted logging, or UI/state mutation. Mutators still require coordinator runtime authority; trace matching never replaces lease authorization.
 
 Every viewer→Kit catalog payload also carries the Socket-verified `session_id` beside `trace_id`. Both values are untrusted resolver candidates at the Kit boundary: Kit must verify their case-exact pair through the coordinator internal API before any read or mutation. `session_id` is correlation context, not an independent authority and never replaces the runtime mutator lease check.
+
+## 單平面剖切
+
+`clipPlaneRequest` 使用相同的 runtime authority envelope（trace、request、session、primary role、source client 與 ephemeral lease）；coordinator 每次重新檢查 lease。剖切欄位為 `enabled: boolean`、`axis: x|y|z`、有限且可表示為 float32 的 `position`、該軸單位法向量 `normal`（允許反向）。例如 X=3：`{"enabled":true,"axis":"x","position":3,"normal":[1,0,0]}`。
+
+Kit 只寫 `/rtx/sectionPlane/enabled` 與 `/rtx/sectionPlane/plane`，平面係數為 `[normal.x, normal.y, normal.z, -position * direction]`。位置使用模型座標單位。依據 [NVIDIA RTX Section Plane 設定](https://docs.omniverse.nvidia.com/materials-and-rendering/latest/rtx-renderer_common.html)，係數描述 `Ax + By + Cz + D = 0`。
+
+`clipPlaneResult` 保留原 `trace_id`、`request_id` 與 `session_id`。成功回 `result:"success"`、實際讀回的 `enabled` 及 `planes`（啟用時恰一個四係數平面，關閉時保留原零個或多個 inactive plane）；失敗回 `result:"error"` 與泛化 `error`，不能宣稱 observed state 或攜帶 lease。權限拒絕仍使用 `commandRejected`。
+
+控制器僅取得原本 disabled 的設定；若已存在外部 active plane，apply/off 均拒絕。每次 apply/off/cleanup 比對最後一次实际 readback；外部 writer 改值時不覆蓋。off 還原原設定並釋放 ownership；Stage CLOSING/CLOSED、新 Stage 及 shutdown 執行同樣清理。來源 USD／USDC 與材質不寫入。
+
+Workspace 同一 context 跨 Dock 保留狀態；session、Stage intent、trace/connection generation 或權限失效後顯示未確認，忽略舊 ACK。設定讀回、CPU 測試與 browser 語意測試不代表 GPU 幾何剖切已驗收。
 
 ## Open Stage
 

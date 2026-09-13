@@ -228,6 +228,11 @@
         },
         {
           "match": "exact",
+          "value": "ezplus.bim_review_stream.messaging.section_plane",
+          "layer": "infrastructure"
+        },
+        {
+          "match": "exact",
           "value": "ezplus.bim_review_stream.messaging.stage_loading",
           "layer": "application"
         },
