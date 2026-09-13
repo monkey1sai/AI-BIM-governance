@@ -35,7 +35,37 @@ npm exec playwright test -- --config=playwright.a1-delivery.config.ts
 
 `a1-remediation.spec.ts` 另以同一 IFC 的 for-ifc-ready 問題，操作 local-validation policy 約束的確認、持久歷史、重載、重開及禁止重用舊修正版。兩段 run 身分各自保留，不冒充同一筆。
 
-當輪測試／Codex IAB 結果、IDs、截圖／trace、V1–V8 對照另寫驗證紀錄；執行前為尚未驗證。正式公司接收端、MinIO intake/conversion、真 GPU first-frame／Stage／DataChannel／ACK 不由這組 CPU/交付測試替代。
+## 2026-09-13 當輪驗證
+
+產品及測試 subject 為 `ad0199ab1b5d638bb643685612926079924af8bc`，base 為已合併第十一刀 `da775739f5f9760b66a64f85e691939a2df3dc60`。本節後續文件提交不改產品 bytes。官方隔離 stack 使用 `a1-delivery/r2`、offset 1（Viewer 5181、coordinator 8006、governance 49104），harness 關閉。
+
+- Coordinator `npm run verify`：122 files / 2,143 tests，build 通過；Viewer `npm run verify`：135 files / 1,893 tests、typecheck、build 與 structured-log checks 通過；既有 BCF backend tests 12 passed。
+- 真 IFC Playwright 2 passed：原版 7,059 次評估、6,991 PASS / 68 FAIL；同 run 建 Issue 68→0。下載的 Excel 含 `xl/workbook.xml`；BCF 2.1 的 68 個 topic 全部比對實際 Issue 標題、GUID、版本及 viewpoint identity，資料庫另有其他版本的 68 個 Issue。
+- 修正版 SHA256 `a28d1e465da4311607fb153e6d590fb0eee023b7a358e20a8cc700b527bb85c2`，7,059 PASS / 0 FAIL。測試等待 succeeded 的匯出按鈕後才讀 summary，避免將 running 暫時顯示的 0 誤認通過。
+- Playwright outbox `cbk_1789307470931_ce67b800`；Codex IAB 另操作原版 run `rr_6f9174ce33f6`、修正版 run `rr_8f65cd045dc7`、metadata Session `review_session_c30931f51c55`、outbox `cbk_1789307913837_425a7e38`。摘要入列與重新查詢顯示 pending、0/5；A2→A1 保留 run/receipt。IAB 點擊 Excel/BCF 後顯示 artifact；IAB download event 等待逾時，因此下載 bytes 的通過依據是上述 Playwright 實際檔案，不能由畫面標籤推論。
+- 整改使用原 run `rr_acae7662e358`、修正版 `rr_898e989461ff`。Playwright Issue `iss_02fed1b96f65` 與 IAB Issue `iss_ca8e42dd0e7b` 分別驗證 resolved、重新載入的持久歷史、reopened、禁止重用已消耗的修正版。actor 明示 `local-library-validation`；測試另驗跨 origin POST 403。
+- 真 loopback HTTP receiver 測試先回 503，再回 204，核對兩次相同 payload 與 pending→delivered；不是公司正式 receiver。錯版本／非 succeeded／upstream 延遲期間 Session 換版皆 409 且零 enqueue。UI 測試涵蓋切來源、ABA、舊 success/error/finally、雙擊與 outbox 查詢失败／查無／dead-letter／無效 delivered 時間。
+- fixture prepare 在一般 Python 與 `python -O` 各驗 wrong root、`../escape`、既有修正版，6 次均在寫入前拒絕。原檔與主工作區模型未修改，IFC/USDC 不提交。
+- 原始失敗紀錄保留：r1 的兩個 E2E assertion 分別未等 run 終態、以及以 GUID 匹配多版本 Issue，已修正後 r2 通過。首次 aggregate 缺少 kit-manager-web dependencies，補齊本 worktree 後該 build 通過。官方 stack 首次因 process PATH 有兩個 Node executable 而 rollback；限定本次 process PATH 後啟動成功，未改全域配置。r2 驗證完成後用相同 helper ownership-gated stop，exit 0。
+
+持久測試入口與 fixture preparer 隨本 PR 保存。當輪大檔證據在 ignored `artifacts/e2e/a1-delivery/r2/`：`library-fixture.json`、`stack-manifest.json`、`iab-complete.json`，及 `playwright-output/884ba9d7-261b-4a9c-b62d-b768e7ce25c7/` 內的 `library.xlsx`、`library.bcfzip`、兩段 `trace.zip` 與四張操作截圖。Codex IAB 的 `slice12-iab-{outbox,confirmed,reopened,revised}.txt`、截圖與 `slice12-real-evidence.json` 保存於本次外部視覺化目錄；不將自動 IAB holder 的獨立頁面 screenshot 當成人工操作證據。
+
+## V1–V8 證據對照與保留缺口
+
+對照原需求 §6；本刀可送審，不宣稱 full-system E2E complete。前刀合併只證明 code 已落地，不能取代當輪 runtime。
+
+| 驗收 | 當輪證據 | 結論與保留項 |
+|---|---|---|
+| V1 來源／版本 | 正式 library selector、原版與修正版 SHA、run version、BCF scope、snapshot server 重驗 | library 路徑已驗；MinIO ETag、cache drift、用途報表 PDF/CSV 本刀未重跑 |
+| V2 轉換／retry | 本刀不觸發 conversion；aggregate 的 conversion functional 測試另明示 external stub | 真 MinIO→USDC、retry／重啟與用途判定尚未做本刀 exact-head 全程驗收 |
+| V3 Session／lease | 明確選取同版本 metadata Session，不分配 Kit、不 claim lease；錯版拒絕 snapshot | 真 Kit 建立／occupied／refresh／release 本刀未驗，不能由 metadata Session 代替 |
+| V4 Dock／來源切換 | 真 A1→A2→A3→A4→A1 保留 CPU 結果／receipt；改選修正版清除；DOM ABA／晚到回覆負向 | CPU 與交付狀態通過；active Viewer、lease 與 Stage 跨 Dock 保留未驗 |
+| V5 觀看工具 | 無 Kit 時高亮／剖切／量測停用、沒有假距離；本刀無 runtime command | 真 first frame、正確 Stage、DataChannel、ACK、多色／剖切／量測及 SDK input 隔離仍缺；第十一刀 2.300m ±0.020m 仍是待核准提案 |
+| V6 規則檢核 | 真原版 68 FAIL、修正版 0 FAIL、rule/source digest／GUID；成功終態後交付；切版本負向 tests | 本刀 CPU 規則及交付接線通過 |
+| V7 Issue／BCF／outbox | 真同 run 去重、Excel/BCF bytes 與 68 topic/GUID/version；精確 outbox pending；loopback 503→204 | 本刀交付及本機 HTTP transport 通過；正式公司 receiver 收件／持久化／業務 ACK 尚未驗 |
+| V8 整改／歷史 | 真 IFC 保留 GUID，兩筆獨立 UI 確認、重載、重開、舊修正版拒絕、跨 origin 拒絕 | 授權的本地主管驗證通過；正式公司 SSO／來源 ACL 依既有決議延期 |
+
+本刀合併後，才可在 freshly fetched `origin/main` 與既有 owner 授權範圍內執行 canonical 測試部署及整合回歸。CPU、歷史證據、model approval 與 merge 皆不補足上表未驗項。
 
 ## 回滾
 
