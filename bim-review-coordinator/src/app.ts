@@ -478,7 +478,7 @@ const appendEventSchema = z
 // model_version_id 等識別碼，統計由 coordinator server-side 向 governance 查詢。
 const issueSnapshotSchema = z.object({
   rule_run_id: z.string().trim().min(1).max(200),
-  model_version_id: z.string().trim().min(1).max(200).optional(),
+  model_version_id: z.string().min(1).max(200).refine(value => value.trim().length > 0).optional(),
 });
 
 // A1/A2 governance file-library 邏輯識別（unified-console local_fs 修復）：
@@ -4349,7 +4349,8 @@ export function createCoordinatorApp(
         status: entry.status,
         attempts: entry.attempts,
         max_attempts: entry.max_attempts,
-        last_error: entry.last_error,
+        // 無 token 的投影不能外洩 deliverer / 既有持久化 entry 的任意錯誤文字。
+        last_error: entry.last_error ? "callback_delivery_failed" : null,
         created_at: entry.created_at,
         delivered_at: entry.delivered_at,
         correlation_id: entry.correlation_id,
@@ -4382,6 +4383,12 @@ export function createCoordinatorApp(
         return;
       }
       const input = issueSnapshotSchema.parse(request.body);
+      // Version IDs are opaque: reject blank values without changing identity.
+      const modelVersionId = session.model_version_id;
+      if (!modelVersionId?.trim() || (input.model_version_id !== undefined && input.model_version_id !== modelVersionId)) {
+        response.status(409).json({ error: "issue_snapshot_source_mismatch" });
+        return;
+      }
       const govBase = governanceApiBaseForSnapshot();
       let ruleRunStatus: string | null = null;
       let failedCount: number | null = null;
@@ -4394,6 +4401,14 @@ export function createCoordinatorApp(
         );
         if (!runRes.ok) throw new Error(`governance rule-run HTTP ${runRes.status}`);
         const run = (await runRes.json()) as Record<string, unknown>;
+        if (run.rule_run_id !== input.rule_run_id || run.model_version_id !== modelVersionId) {
+          response.status(409).json({ error: "issue_snapshot_source_mismatch" });
+          return;
+        }
+        if (run.status !== "succeeded") {
+          response.status(409).json({ error: "issue_snapshot_run_not_succeeded" });
+          return;
+        }
         ruleRunStatus = typeof run.status === "string" ? run.status : null;
         const summary = run.summary && typeof run.summary === "object" && !Array.isArray(run.summary)
           ? (run.summary as Record<string, unknown>)
@@ -4401,9 +4416,9 @@ export function createCoordinatorApp(
         failedCount = typeof summary?.failed === "number" && Number.isFinite(summary.failed)
           ? summary.failed
           : null;
-        if (input.model_version_id) {
+        if (modelVersionId) {
           const issuesRes = await fetch(
-            `${govBase}/api/issues?model_version_id=${encodeURIComponent(input.model_version_id)}`,
+            `${govBase}/api/issues?model_version_id=${encodeURIComponent(modelVersionId)}&kind=issue`,
             { headers: { Accept: "application/json" }, signal: AbortSignal.timeout(3000) },
           );
           if (!issuesRes.ok) throw new Error(`governance issues HTTP ${issuesRes.status}`);
@@ -4424,6 +4439,10 @@ export function createCoordinatorApp(
         response.status(502).json({ error: "governance_unreachable" });
         return;
       }
+      if (store.get(session.session_id)?.model_version_id !== modelVersionId) {
+        response.status(409).json({ error: "issue_snapshot_source_mismatch" });
+        return;
+      }
       const entry = callbackOutbox.enqueue({
         event: "issue_snapshot",
         // 與 conversion callback 同源（app.ts ingest 路徑）：issue snapshot 無
@@ -4431,13 +4450,13 @@ export function createCoordinatorApp(
         // 不可達，保留重試至 dead-letter，不靜默丟棄（OQ1 pending 行為一致）。
         targetUrl: config.cloudCallbackBaseUrl || null,
         correlationId: session.session_id,
-        externalModelVersionId: session.model_version_id,
+        externalModelVersionId: modelVersionId,
         conversionJobId: null,
         payload: {
           event: "issue_snapshot",
           session_id: session.session_id,
           rule_run_id: input.rule_run_id,
-          model_version_id: input.model_version_id ?? session.model_version_id ?? null,
+          model_version_id: modelVersionId,
           rule_run_status: ruleRunStatus,
           failed_count: failedCount,
           issue_total: issueTotal,

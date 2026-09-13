@@ -1,5 +1,5 @@
 // A1 governance workbench and its private helpers.
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { t } from "./i18n";
 import { Btn, Field, Metric, Panel } from "./components";
 import { uiSteps } from "./a1Machine";
@@ -15,6 +15,7 @@ import { ElementMappingDocument, isFakeMappingDocument, isFakeMappingItem } from
 import { buildHandoff } from "./handoff";
 import { useIncomingHandoff, IncomingHandoffBanner } from "./incomingHandoff";
 import { A1IssueViewControls } from "./A1IssueViewControls";
+import { A1OutboxStatus } from "./A1OutboxStatus";
 import type { ReviewSessionViewerPaneHandle, ReviewSessionViewerPaneBatchGate } from "./ReviewSessionViewerPane";
 import { ClosedSessionRecovery } from "./ClosedSessionRecovery";
 import { ReadyReviewSessions } from "./ReadyReviewSessions";
@@ -145,6 +146,10 @@ export function A1GovernanceWorkbenchPage({ active = true }: { active?: boolean 
   const [actionErr, setActionErr] = useState<string | null>(null);
   const [a1Issues, setA1Issues] = useState<IssueRow[]>([]);
   const bcfIssues = useMemo(() => a1Issues.filter((issue) => issue.kind === "issue" && Boolean(issue.ifc_guid)), [a1Issues]);
+  // 匯出範圍只信任成功 run 的 server-side version；跨版問題仍保留供整改檢視。
+  const rawDeliveryVersionId = state.run?.model_version_id ?? "";
+  const deliveryVersionId = rawDeliveryVersionId.trim() ? rawDeliveryVersionId : "";
+  const exportableBcfIssues = bcfIssues.filter(issue => deliveryVersionId && issue.model_version_id === deliveryVersionId);
   const [remediationSelection, setRemediationSelection] = useState<{
     id: string; runId: string | null; version: string; mode: "history" | "confirm";
   } | null>(null);
@@ -183,6 +188,7 @@ export function A1GovernanceWorkbenchPage({ active = true }: { active?: boolean 
   // A1 v2 的治理 rule-run 直接對已選 IFC 檔案執行；A1 mount 不得自動選第一個 session 或 claim viewer lease。
   const [sessions, setSessions] = useState<RuntimeStatus["sessions"]["items"]>([]);
   const [selectedSession, setSelectedSession] = useState<string>("");
+  const selectedSessionVersionId = sessions.find(session => session.session_id === selectedSession)?.model_version_id;
   const [runHistory, setRunHistory] = useState<RuleRunHistoryItem[] | null>(null);
   const [runHistoryTotal, setRunHistoryTotal] = useState<number | null>(null);
   const [runHistoryErr, setRunHistoryErr] = useState<string | null>(null);
@@ -216,16 +222,22 @@ export function A1GovernanceWorkbenchPage({ active = true }: { active?: boolean 
   const ui = uiSteps(state);
   const issueGenRef = useRef(0);
   const issueGuardRef = useRef({ runId: null as string | null, modelVersionId: "" });
-  useEffect(() => {
+  useLayoutEffect(() => {
     issueGuardRef.current = { runId, modelVersionId: state.modelVersionId };
     issueGenRef.current += 1;
-  }, [runId, state.modelVersionId, state.ifcPath]);
-  // F2⑩：run 或 session 變更即清掉上次回拋結果/錯誤——舊 run 的 outbox_id 對新 run 無意義，
-  // 殘留會誤導操作員以為新 run 已回拋（RESET 走 runId→null 同樣命中此 effect）。
-  useEffect(() => {
+    return () => { issueGenRef.current += 1; };
+  }, [runId, state.modelVersionId, state.ifcPath, selectedSession]);
+  const deliveryGeneration = useRef(0);
+  const deliveryBusy = useRef({ excel: false, bcf: false, snapshot: false });
+  // 來源 A→B→A 也必須使 A 的舊請求失效；layout cleanup 在新畫面可操作前執行。
+  useLayoutEffect(() => {
+    deliveryBusy.current = { excel: false, bcf: false, snapshot: false };
+    setExcelBusy(false); setBcfBusy(false); setIssueSnapshotBusy(false);
+    setActionErr(null);
     setIssueSnapshotOutboxId(null);
     setIssueSnapshotErr(null);
-  }, [runId, selectedSession]);
+    return () => { deliveryGeneration.current += 1; };
+  }, [runId, state.modelVersionId, deliveryVersionId, state.ifcPath, selectedSession, selectedSessionVersionId]);
 
   const clearReviewOpenState = useCallback(() => {
     setReviewOpen(null);
@@ -476,18 +488,23 @@ export function A1GovernanceWorkbenchPage({ active = true }: { active?: boolean 
       dispatch({ type: "CREATE_ISSUES_OK", issueCount: created });
     } catch (e) {
       // 後端離線：誠實不前進（不偽造 issued），但顯示失敗讓操作員知道（誠實鐵律）。
+      if (!isCurrentIssueRequest()) return;
       setActionErr(`${t("建 Issue 失敗：", "Failed to create Issue: ")}${String(e)}`);
     }
   }, [runId, state.modelVersionId, dispatch]);
 
   const doExport = useCallback(async () => {
-    if (!runId) return;
+    if (!runId || deliveryBusy.current.excel) return;
+    const generation = deliveryGeneration.current;
+    deliveryBusy.current.excel = true;
     setActionErr(null); // 重試前清掉上次錯誤
     setExcelBusy(true);
     try {
       const res = await fetch(governanceClient.exportUrl(runId));
+      if (generation !== deliveryGeneration.current) return;
       if (!res.ok) { setActionErr(`${t("匯出失敗：HTTP ", "Export failed: HTTP ")}${res.status}`); return; }
       const blob = await res.blob();
+      if (generation !== deliveryGeneration.current) return;
       const url = URL.createObjectURL(blob);
       // 錨點須掛載於 document 才觸發 .click()：Firefox（Gecko）與部分 Edge 對 detached <a> 下載不可靠，
       // 會靜默失敗（EXPORT_OK 永不 dispatch、UI 卡 scored 無回饋，違誠實鐵律）。appendChild→click→removeChild
@@ -497,55 +514,63 @@ export function A1GovernanceWorkbenchPage({ active = true }: { active?: boolean 
       setTimeout(() => URL.revokeObjectURL(url), 0);
       dispatch({ type: "EXPORT_OK" });
     } catch (e) {
+      if (generation !== deliveryGeneration.current) return;
       setActionErr(`${t("匯出失敗：", "Export failed: ")}${String(e)}`); // 誠實顯示失敗，不靜默
     } finally {
-      setExcelBusy(false);
+      if (generation === deliveryGeneration.current) { deliveryBusy.current.excel = false; setExcelBusy(false); }
     }
   }, [runId, dispatch]);
 
   const transitionA1Issue = useCallback(async (issue: IssueRow) => {
     const next = issue.status === "open" ? "in_progress" : issue.status === "in_progress" && issue.source_type !== "rule_result" ? "resolved" : null;
     if (!next) return;
+    const generation = deliveryGeneration.current;
     setActionErr(null);
     try {
       const updated = await governanceClient.transitionIssue(issue.id, next, "A1 BCF review panel transition");
+      if (generation !== deliveryGeneration.current) return;
       setA1Issues((items) => items.map((item) => item.id === updated.id ? updated : item));
     } catch (e) {
+      if (generation !== deliveryGeneration.current) return;
       setActionErr(`${t("Issue 狀態更新失敗：", "Issue transition failed: ")}${String(e)}`);
     }
   }, []);
 
-  // F2⑩ gating：rule-run 成功（step 進 scored/issued/delivered）且來源含 session 脈絡
-  //（for-session 模式 ifcPath=session://… 且已選 session）才可回拋。local_fs / for-ifc-ready
-  // 無 session → 誠實 disabled：coordinator route 以 review session 為錨（correlation_id=session_id），
-  // 無 session 無從綁定，不做假成功。
-  const issueSnapshotSessionId = state.ifcPath.startsWith("session://") ? selectedSession : "";
+  // 來源可為檔案庫或 IFC-ready；回拋前必須明確選擇同版本 session。
+  // UI 的核對不授予權限，coordinator 仍在 enqueue 前重驗 canonical version。
+  const issueSnapshotSessionId = deliveryVersionId && selectedSessionVersionId === deliveryVersionId ? selectedSession : "";
   const issueSnapshotRunSucceeded = Boolean(runId) && ["scored", "issued", "delivered"].includes(state.step);
   const canIssueSnapshot = issueSnapshotRunSucceeded && Boolean(issueSnapshotSessionId);
   const issueSnapshotReason = !issueSnapshotRunSucceeded
     ? t("需先成功完成 rule-run 檢核", "Run a successful rule-run first")
-    : t("需 review session 脈絡（F2⑩ 綁 session）", "Requires review session context (F2⑩ binds the session)");
+    : selectedSession
+      ? t("檢核與所選 Session 的模型版本必須相同", "The run and selected session must share a model version")
+      : t("需 review session 脈絡（F2⑩ 綁 session）", "Requires review session context (F2⑩ binds the session)");
   const doIssueSnapshot = useCallback(async () => {
-    if (!runId || !issueSnapshotSessionId) return;
+    if (!canIssueSnapshot || !runId || !issueSnapshotSessionId || deliveryBusy.current.snapshot) return;
+    const generation = deliveryGeneration.current;
+    deliveryBusy.current.snapshot = true;
     setIssueSnapshotBusy(true);
     setIssueSnapshotErr(null);
     setIssueSnapshotOutboxId(null);
     try {
       const res = await coordinatorClient.postIssueSnapshot(issueSnapshotSessionId, {
         rule_run_id: runId,
-        ...(state.modelVersionId ? { model_version_id: state.modelVersionId } : {}),
+        ...(deliveryVersionId ? { model_version_id: deliveryVersionId } : {}),
       });
+      if (generation !== deliveryGeneration.current) return;
       setIssueSnapshotOutboxId(res.outbox_id);
     } catch (e) {
+      if (generation !== deliveryGeneration.current) return;
       // 502＝coordinator 查 governance 統計失敗、未入列（後端誠實不偽造統計）；其餘照實顯示。
       const message = String(e);
       setIssueSnapshotErr(message.includes("governance_unreachable")
         ? `${t("governance 不可達，摘要未入列：", "governance unreachable; the snapshot was not enqueued: ")}${message}`
         : `${t("回拋失敗：", "Snapshot failed: ")}${message}`);
     } finally {
-      setIssueSnapshotBusy(false);
+      if (generation === deliveryGeneration.current) { deliveryBusy.current.snapshot = false; setIssueSnapshotBusy(false); }
     }
-  }, [runId, issueSnapshotSessionId, state.modelVersionId]);
+  }, [runId, issueSnapshotSessionId, deliveryVersionId, canIssueSnapshot]);
 
   // A1（B2）下拉項 label：專案·種類·版本·檔名（缺值以「?」誠實標示，不臆造）。
   const minioLabel = (o: import("./coordinatorClient").MinioObject) =>
@@ -1115,20 +1140,22 @@ export function A1GovernanceWorkbenchPage({ active = true }: { active?: boolean 
             {existingIssuesBusy ? "載入既有問題…" : "載入既有規則問題"}
           </button>
           <div className="ec-grid" style={{ marginBottom: 8 }}>
-            <Field k="BCF topics" v={bcfIssues.length > 0 ? String(bcfIssues.length) : t("尚未建立可匯出的正式 Issue", "no exportable formal issues created yet")} prov={bcfIssues.length > 0 ? "asbuilt" : "p1"} />
-            <Field k="scope" v={t("只列 kind=issue 且含 ifc_guid 的 BCF topics；annotation 不計入", "only kind=issue rows with ifc_guid are listed as BCF topics; annotations are excluded")} prov="asbuilt" />
+            <Field k="BCF topics" v={exportableBcfIssues.length ? String(exportableBcfIssues.length) : t("尚未建立可匯出的正式 Issue", "no exportable formal issues created yet")} prov="asbuilt" />
+            <Field k={t("匯出版本", "Export version")} v={deliveryVersionId || t("需先完成含模型版本的檢核", "Complete a run bound to a model version first")} prov={deliveryVersionId ? "asbuilt" : "p1"} />
+            <Field k="scope" v={t("BCF 只匯出本次檢核版本的正式問題；下方可跨版本查看整改紀錄。", "BCF exports formal issues for this run's version; remediation history below may span versions.")} prov="asbuilt" />
           </div>
           {bcfIssues.length === 0 ? (
             <p className="ec-note">{t("先按「失敗構件建 Issue」後，這裡才會列出可追蹤的 BCF topics；未建 Issue 前 BCF 匯出保持 disabled。", "Create Issues for Failed Elements first; this panel then lists trackable BCF topics. BCF export stays disabled before issues exist.")}</p>
           ) : (
             <table className="ec-table">
-              <thead><tr><th>topic</th><th>rule_code</th><th>severity</th><th>status</th><th>assignee</th><th>ifc_guid</th><th>action</th></tr></thead>
+              <thead><tr><th>topic</th><th>model_version_id</th><th>rule_code</th><th>severity</th><th>status</th><th>assignee</th><th>ifc_guid</th><th>action</th></tr></thead>
               <tbody>
                 {bcfIssues.map((issue) => {
                   const next = issue.status === "open" ? "in_progress" : issue.status === "in_progress" && issue.source_type !== "rule_result" ? "resolved" : null;
                   return (
                     <tr key={issue.id}>
                       <td>{issue.title}</td>
+                      <td>{issue.model_version_id || "—"}</td>
                       <td>{issue.rule_code ?? "—"}</td>
                       <td>{issue.severity}</td>
                       <td>{issue.status}</td>
@@ -1168,22 +1195,26 @@ export function A1GovernanceWorkbenchPage({ active = true }: { active?: boolean 
         {(() => {
           // F1：bcfEnabled 同時檢查 issuesCreated（獨立追蹤「曾真正建過 Issue」）與 step。
           // scored→EXPORT_OK→delivered 不經 CREATE_ISSUES_OK，issuesCreated 仍 false → BCF disabled。
-          const bcfEnabled = state.issuesCreated && bcfIssues.length > 0 && (state.step === "issued" || state.step === "delivered");
+          const bcfEnabled = state.issuesCreated && exportableBcfIssues.length > 0 && (state.step === "issued" || state.step === "delivered");
           return (
             <>
               <Btn
                 data-testid="a1-step-bcf"
                 prov="asbuilt"
                 disabled={!bcfEnabled || bcfBusy}
-                caption={bcfEnabled ? t("GET /api/governance/bcf/export（只含正式 issue）", "GET /api/governance/bcf/export (formal issues only)") : t("需先建 Issue（step=issued/delivered）", "Create Issues first (step=issued/delivered)")}
+                caption={bcfEnabled ? t("匯出本次檢核版本的正式問題", "Export formal issues for this run's version") : t("需先建 Issue，且檢核與問題須含相同模型版本", "Create Issues first with the same model version as the run")}
                 onClick={async () => {
-                  if (!bcfEnabled) return;
+                  if (!bcfEnabled || deliveryBusy.current.bcf) return;
+                  const generation = deliveryGeneration.current;
+                  deliveryBusy.current.bcf = true;
                   setActionErr(null);
                   setBcfBusy(true);
                   try {
-                    const res = await fetch(governanceClient.bcfExportUrl());
+                    const res = await fetch(governanceClient.bcfExportUrl({ model_version_id: deliveryVersionId }));
+                    if (generation !== deliveryGeneration.current) return;
                     if (!res.ok) { setActionErr(`${t("BCF 匯出 ", "BCF export ")}${res.status}${t("：需至少一個正式 issue（kind=issue 且有 ifc_guid）", ": at least one formal issue is required (kind=issue with ifc_guid)")}`); return; }
                     const blob = await res.blob();
+                    if (generation !== deliveryGeneration.current) return;
                     const a = document.createElement("a");
                     a.href = URL.createObjectURL(blob);
                     a.download = "governance-issues.bcfzip";
@@ -1194,8 +1225,11 @@ export function A1GovernanceWorkbenchPage({ active = true }: { active?: boolean 
                     // 延後釋放 object URL：同步 revoke 會在瀏覽器開始讀取 blob 前就釋放（對齊 doExport 延後模式）。
                     setTimeout(() => URL.revokeObjectURL(a.href), 0);
                     dispatch({ type: "BCF_EXPORT_OK" });
-                  } catch (e) { setActionErr(`${t("BCF 匯出失敗：", "BCF export failed: ")}${String(e)}`); }
-                  finally { setBcfBusy(false); }
+                  } catch (e) {
+                    if (generation === deliveryGeneration.current) setActionErr(`${t("BCF 匯出失敗：", "BCF export failed: ")}${String(e)}`);
+                  } finally {
+                    if (generation === deliveryGeneration.current) { deliveryBusy.current.bcf = false; setBcfBusy(false); }
+                  }
                 }}
               >
                 {t("匯出 BCF 2.1", "Export BCF 2.1")}
@@ -1219,10 +1253,11 @@ export function A1GovernanceWorkbenchPage({ active = true }: { active?: boolean 
           {issueSnapshotBusy ? t("回拋中…", "Sending snapshot…") : t("回拋摘要至雲端", "Send Summary Snapshot to Cloud")}
         </Btn>{" "}
         {issueSnapshotOutboxId && (
-          <span className="ec-note" data-testid="a1-issue-snapshot-result">
+          <div className="ec-note" data-testid="a1-issue-snapshot-result">
             {t("已入列 outbox：", "Enqueued to outbox: ")}<code>{issueSnapshotOutboxId}</code>{" "}
             <a href="#conv">{t("→ 到 IFC→USD 轉檔歷史頁看 outbox 遞送狀態", "→ see outbox delivery status on the IFC→USD conversion history page")}</a>
-          </span>
+            <A1OutboxStatus key={`${issueSnapshotSessionId}:${issueSnapshotOutboxId}`} outboxId={issueSnapshotOutboxId} sessionId={issueSnapshotSessionId} />
+          </div>
         )}
         {issueSnapshotErr && <span className="ec-warn-note" data-testid="a1-issue-snapshot-error">{issueSnapshotErr}</span>}{" "}
         {/* 七軸 cross-link chips（§4.3）：回看 MinIO 來源物件、跳 Session 管理檢視此 session。

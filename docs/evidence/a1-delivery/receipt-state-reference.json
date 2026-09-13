@@ -1,0 +1,167 @@
+{
+  "schema_version": 1,
+  "kind": "supplemental-a1-receipt-design-evidence",
+  "reference_anchor": "a1-delivery-state-reference",
+  "scope": "7 authored state references vs production A1OutboxStatus; design-only loopback coordinator fixture",
+  "limitations": "Does not extend the existing 13-screen required pixel runner or prove real cloud/Kit delivery.",
+  "subject_head": "913d4a4876f75ed8118210c6039891cbce571cff",
+  "subject_note": "Source hashes identify the rendered working-tree files; subject_head is their parent until committed.",
+  "source_sha256": [
+    {
+      "path": "web-viewer-sample/src/console/A1OutboxStatus.tsx",
+      "sha256": "7a54e228c30d51e59728e691838c44a4ab4f99856d081327187d5859ee579d0f"
+    },
+    {
+      "path": "web-viewer-sample/src/console/coordinatorClient.ts",
+      "sha256": "3a751e1847093155263ab72cdff70eab3203f15418f7802cc99799e8056a6d65"
+    },
+    {
+      "path": "docs/plans/AI-BIM Console Hi-Fi.dc.html",
+      "sha256": "17c3995b167cfd82599c49f55907f37e7f708fea64b0d85a680ce960757a9064"
+    },
+    {
+      "path": "web-viewer-sample/e2e/support/a1-outbox-preview.tsx",
+      "sha256": "dc13d37375630e4c98cfa03eefa52f7c978cd5c145ae527d994ce487179cc4cb"
+    },
+    {
+      "path": "web-viewer-sample/e2e/support/a1-outbox-preview.config.ts",
+      "sha256": "5fb8443b2801e49d11f282e8db7109ab4e905bf985b62e055cbd9cd144d9bb4a"
+    },
+    {
+      "path": "web-viewer-sample/e2e/a1-outbox-design.spec.ts",
+      "sha256": "5efc5440ac999529d6e72176f6b201db467c952b0fa1997841dd65cfec21e9bb"
+    }
+  ],
+  "observations": [
+    {
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "browser": "149.0.7827.55",
+      "dpr": 1,
+      "captures": {
+        "reference": {
+          "path": "docs/evidence/a1-delivery/receipt-states/1440x900-reference.png",
+          "sha256": "453f432de0c6c92a78e2206d4970e2a3de8f05883bd7bae6e0a2f94d41d9b17e"
+        },
+        "current": {
+          "path": "docs/evidence/a1-delivery/receipt-states/1440x900-current.png",
+          "sha256": "4870818f33f8ddb6a8a2af27cda3c60f54eba2433e018d56151fa49c72397ecb"
+        }
+      },
+      "changed_pixels": 36,
+      "changed_pixel_ratio": 0.000026511134676564155,
+      "max_diff_pixel_ratio": 0.01,
+      "states": [
+        "loading",
+        "pending",
+        "delivered",
+        "dead_letter",
+        "error",
+        "missing",
+        "incomplete"
+      ],
+      "retry": "one GET summary; no POST",
+      "requests": [
+        {
+          "method": "GET",
+          "path": "/api/callback-outbox/summary?limit=200"
+        },
+        {
+          "method": "GET",
+          "path": "/api/callback-outbox/summary?limit=200"
+        },
+        {
+          "method": "GET",
+          "path": "/api/callback-outbox/summary?limit=200"
+        },
+        {
+          "method": "GET",
+          "path": "/api/callback-outbox/summary?limit=200"
+        },
+        {
+          "method": "GET",
+          "path": "/api/callback-outbox/summary?limit=200"
+        },
+        {
+          "method": "GET",
+          "path": "/api/callback-outbox/summary?limit=200"
+        },
+        {
+          "method": "GET",
+          "path": "/api/callback-outbox/summary?limit=200"
+        },
+        {
+          "method": "GET",
+          "path": "/api/callback-outbox/summary?limit=200"
+        }
+      ]
+    },
+    {
+      "viewport": {
+        "width": 1920,
+        "height": 1080
+      },
+      "browser": "149.0.7827.55",
+      "dpr": 1,
+      "captures": {
+        "reference": {
+          "path": "docs/evidence/a1-delivery/receipt-states/1920x1080-reference.png",
+          "sha256": "09ecd4db1d3ab2908716ddec13084b4bc000455fd5361f6fe136404930a46100"
+        },
+        "current": {
+          "path": "docs/evidence/a1-delivery/receipt-states/1920x1080-current.png",
+          "sha256": "d3627e4f0484652d53e493b7c87bd71aba85ae043a6b775ad462c76b65c5bd02"
+        }
+      },
+      "changed_pixels": 36,
+      "changed_pixel_ratio": 0.00001736111111111111,
+      "max_diff_pixel_ratio": 0.01,
+      "states": [
+        "loading",
+        "pending",
+        "delivered",
+        "dead_letter",
+        "error",
+        "missing",
+        "incomplete"
+      ],
+      "retry": "one GET summary; no POST",
+      "requests": [
+        {
+          "method": "GET",
+          "path": "/api/callback-outbox/summary?limit=200"
+        },
+        {
+          "method": "GET",
+          "path": "/api/callback-outbox/summary?limit=200"
+        },
+        {
+          "method": "GET",
+          "path": "/api/callback-outbox/summary?limit=200"
+        },
+        {
+          "method": "GET",
+          "path": "/api/callback-outbox/summary?limit=200"
+        },
+        {
+          "method": "GET",
+          "path": "/api/callback-outbox/summary?limit=200"
+        },
+        {
+          "method": "GET",
+          "path": "/api/callback-outbox/summary?limit=200"
+        },
+        {
+          "method": "GET",
+          "path": "/api/callback-outbox/summary?limit=200"
+        },
+        {
+          "method": "GET",
+          "path": "/api/callback-outbox/summary?limit=200"
+        }
+      ]
+    }
+  ]
+}

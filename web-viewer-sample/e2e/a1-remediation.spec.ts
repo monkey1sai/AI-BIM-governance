@@ -18,7 +18,8 @@ test("A1 library remediation confirmation, durable history and authorized reopen
   try {
     await page.goto("/#a1");
     await page.getByRole("button", { name: "載入既有規則問題", exact: true }).click();
-    const row = page.getByTestId("a1-bcf-review-panel").getByRole("row").filter({ hasText: guid });
+    const row = page.getByTestId("a1-bcf-review-panel").getByRole("row")
+      .filter({ has: page.getByTestId(`a1-issue-transition-${issueId}`), hasText: guid });
     await expect(row).toHaveCount(1);
     await row.getByRole("button", { name: "核對整改", exact: true }).click();
     const form = page.getByRole("region", { name: "整改確認", exact: true });
