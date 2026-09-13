@@ -36,6 +36,29 @@ async function mount() {
 }
 
 describe("A1 explicit model issue controls", () => {
+  it("keeps failed IDS required rows in the error filter and above warnings without changing their severity", async () => {
+    const required = { ...rows[0], rule_code: "IDS", severity: "required" };
+    for (const input of [[rows[0], required], [required, rows[0]]]) {
+      expect(issueHighlightItems(input)).toEqual([
+        expect.objectContaining({ ifc_guid: "A", severity: "required", rule_code: "IDS" }),
+      ]);
+    }
+    const f = await mount();
+    await f.render("ids-run", [rows[0], required]);
+    await act(async () => {
+      const select = f.container.querySelector<HTMLSelectElement>('[aria-label="問題嚴重度"]')!;
+      select.value = "error"; select.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    expect(f.container.textContent).toContain("1 筆問題・1 個構件・0 個無法定位");
+    expect(f.container.textContent).toContain("IDS · required");
+    expect(f.runIssueView).not.toHaveBeenCalled();
+    await f.click("在模型中顯示問題");
+    expect(f.runIssueView).toHaveBeenLastCalledWith("highlight", [
+      expect.objectContaining({ ifc_guid: "A", severity: "required" }),
+    ], undefined);
+    expect(required.severity).toBe("required");
+    expect(required.status).toBe("fail");
+  });
   it("deduplicates components by highest severity without losing issue rows", () => {
     expect(issueHighlightItems(rows)).toEqual(expect.arrayContaining([
       expect.objectContaining({ ifc_guid: "A", severity: "critical" }),

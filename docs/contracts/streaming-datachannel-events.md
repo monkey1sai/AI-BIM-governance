@@ -131,7 +131,8 @@ GPU / Kit manual validation when hardware is available:
 `highlightPrimsRequest`；檢核完成與閱讀明細都不發 3D mutator。
 請求繼續使用既有 authority envelope、request_id 與 mode=replace；items 最多4096個，
 每個 prim_path 為確切 mapped USD prim path。color 為3/4個0..1有限數字，預設alpha=1。
-新增可省略的 severity 字串：critical > high > error > medium=warning > low > info/unknown。
+新增可省略的 severity 字串：critical > high > error=required > medium=warning > low > info/unknown。
+IDS 失敗結果的 required 在問題篩選與著色時歸入 error 紅色；原始 severity 與 pass/fail 狀態保持不變。
 同 prim／重疊 render target 依最高嚴重度仲裁；同順位按 path、RGBA 排序以確保順序無關。
 A1 的問題列不去重，送出構件與模型 applied_paths 分別計數。
 

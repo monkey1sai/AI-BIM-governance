@@ -1,7 +1,7 @@
 import type { RuleResultRow } from "../governanceClient";
 import type { HighlightItem } from "../EmbeddedViewer";
 
-const severityRank: Record<string, number> = { critical: 5, high: 4, error: 3, medium: 2, warning: 2, low: 1, info: 0 };
+const severityRank: Record<string, number> = { critical: 5, high: 4, error: 3, required: 3, medium: 2, warning: 2, low: 1, info: 0 };
 export function issueHighlightItems(rows: RuleResultRow[]): HighlightItem[] {
   const byGuid = new Map<string, RuleResultRow>();
   for (const row of [...rows].sort((a, b) => a.rule_code.localeCompare(b.rule_code))) {

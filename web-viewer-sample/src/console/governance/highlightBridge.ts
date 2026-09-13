@@ -25,12 +25,12 @@ export type HighlightManyResult =
   | { ok: true; requestId: string; sent: { ifc_guid: string; primPath: string }[]; unmapped: string[] }
   | { ok: false; reason: "unmapped" | "datachannel_not_ready" };
 
-// severityToColor 只特判 "error"/"warning"，其餘一律藍。治理 rule engine 可能吐 critical/high/medium/low
+// severityToColor 只特判 "error"/"warning"，其餘一律藍。治理 rule engine 可能吐 critical/high/required/medium/low
 // 等其他標籤，先正規化成 severityToColor 認得的 error/warning（大小寫不敏感），其餘原樣透傳（→ 預設藍）。
 // 不改 severityToColor 本身（共用於 mapping-verify 等既有路徑）。
 export function normalizeSeverity(sev: string): string {
   const s = sev.toLowerCase();
-  if (s === "critical" || s === "high" || s === "error") return "error";
+  if (s === "critical" || s === "high" || s === "error" || s === "required") return "error";
   if (s === "medium" || s === "warning") return "warning";
   return s;
 }

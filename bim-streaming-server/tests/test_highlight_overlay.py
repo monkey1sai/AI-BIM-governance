@@ -288,6 +288,32 @@ o.clear()
 ''')
 
 
+def test_ids_required_beats_overlapping_warning_and_filter_restores_warning():
+    run_usd(r'''
+from pxr import Usd, UsdGeom, UsdShade, Gf
+from highlight_overlay import HighlightOverlay
+s = Usd.Stage.CreateInMemory()
+UsdGeom.Cube.Define(s, "/World/Door")
+required = {"prim_path":"/World", "color":[1,0,0,1], "severity":"required"}
+warning = {"prim_path":"/World/Door", "color":[1,1,0,1], "severity":"warning"}
+before = s.GetRootLayer().ExportToString()
+o = HighlightOverlay()
+def color():
+    material = UsdShade.MaterialBindingAPI(s.GetPrimAtPath("/World/Door")).ComputeBoundMaterial()[0]
+    return UsdShade.Shader(s.GetPrimAtPath(material.GetPath().AppendChild("Shader"))).GetInput("diffuseColor").Get()
+for rows in ([required, warning], [warning, required]):
+    result = o.replace(s, rows)
+    assert set(result["applied_paths"]) == {"/World", "/World/Door"}, result
+    assert not result["unsupported_paths"], result
+    assert color() == Gf.Vec3f(1,0,0)
+o.replace(s, [warning])
+assert color() == Gf.Vec3f(1,1,0)
+o.clear()
+assert s.GetRootLayer().ExportToString() == before
+assert not UsdShade.MaterialBindingAPI(s.GetPrimAtPath("/World/Door")).ComputeBoundMaterial()[0]
+''')
+
+
 def test_unique_render_target_boundary_preserves_previous_overlay():
     run_usd(r'''
 from pxr import Usd, UsdGeom, Sdf

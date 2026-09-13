@@ -41,7 +41,7 @@ class HighlightOverlay:
             severity = item.get("severity", "info")
             if not isinstance(severity, str):
                 raise ValueError("Invalid highlight severity.")
-            rank = {"critical": 5, "high": 4, "error": 3, "medium": 2,
+            rank = {"critical": 5, "high": 4, "error": 3, "required": 3, "medium": 2,
                     "warning": 2, "low": 1, "info": 0}.get(severity.lower(), 0)
             # Stable ties and descending severity make both duplicate paths and
             # overlapping geometry independent of request/authoring order.
