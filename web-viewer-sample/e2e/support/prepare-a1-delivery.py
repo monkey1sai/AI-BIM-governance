@@ -1,5 +1,5 @@
 """Owner-authorized isolated fixtures; no MinIO, deployment or original IFC writes."""
-import argparse, hashlib, json, shutil, time, urllib.request
+import argparse, hashlib, json, re, shutil, time, urllib.request
 from pathlib import Path
 from datetime import datetime, timezone
 
@@ -7,24 +7,32 @@ SHA = '8fe7efdbbf56d42b8a6b73c4a580e1f3d6a364afec7aa903a852a7ef2759ddce'
 VERSION = '24e598ab-be3d-4dbb-a1aa-60b0ba610618'
 p = argparse.ArgumentParser(); p.add_argument('phase', choices=['prepare', 'run']); p.add_argument('root'); p.add_argument('run_id'); p.add_argument('--original', required=True)
 a = p.parse_args(); ORIGINAL = Path(a.original).resolve(); root = Path(a.root).resolve(); run = root / 'artifacts/e2e/a1-delivery' / a.run_id
-assert root.name == 'codex-a1-delivery-regression' and a.run_id.replace('-', '').isalnum()
-run.mkdir(parents=True, exist_ok=True)
+def require(condition, message):
+    if not condition:
+        raise ValueError(message)
+
+require(root == Path(__file__).resolve().parents[3] and (root / '.git').is_file(), 'root must be this linked worktree')
+require(re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9-]{0,63}', a.run_id), 'invalid run id')
+library = root / 'storage/library-validation/architecture'
+sources = run / 'state/coordinator/storage'
+for destination in (run, sources, library):
+    require(destination.resolve().is_relative_to(root), 'destination escapes this worktree')
 fixture_file = run / 'library-fixture.json'
 def sha(path): return hashlib.file_digest(path.open('rb'), 'sha256').hexdigest()
 def write(path, value): path.write_text(json.dumps(value, ensure_ascii=False, indent=2), encoding='utf-8')
 if a.phase == 'prepare':
+    # 全部寫入前檢查；包括 -O 模式，亦不得覆寫任何已存在的 fixture/policy。
+    for destination in (library / 'revised-validation-only.ifc', library / 'original.ifc',
+                        fixture_file, run / 'stack-manifest.json', run / 'owner-remediation-policy.json', sources):
+        require(not destination.exists(), f'refusing existing destination: {destination.name}')
+    require(sha(ORIGINAL) == SHA, 'original IFC digest mismatch')
     import ifcopenshell
     import ifcopenshell.api.pset.add_pset
     import ifcopenshell.api.pset.edit_pset
-    assert not fixture_file.exists() and not (run / 'stack-manifest.json').exists()
-    assert sha(ORIGINAL) == SHA
-    sources = run / 'state/coordinator/storage'
     sources.mkdir(parents=True, exist_ok=False)
     original, revised = sources / 'original.ifc', sources / 'revised-validation-only.ifc'
     shutil.copyfile(ORIGINAL, original)
-    library = root / 'storage/library-validation/architecture'
     library.mkdir(parents=True, exist_ok=True)
-    assert not (library / 'original.ifc').exists()
     shutil.copyfile(ORIGINAL, library / 'original.ifc')
     model = ifcopenshell.open(str(original))
     original_guids = sorted(e.GlobalId for e in model.by_type('IfcElement'))
@@ -59,9 +67,9 @@ if a.phase == 'prepare':
     print(json.dumps({'phase': 'prepared', 'original_sha256': SHA, 'revised_sha256': revised_sha, 'doors_updated': len(doors), 'element_guids_preserved': len(original_guids)}))
 else:
     manifest = json.loads((run / 'stack-manifest.json').read_text(encoding='utf-8-sig'))
-    assert manifest['worktree_root'].lower() == str(root).lower() and manifest['stack_kind'] == 'isolated_branch_stack'
-    base = manifest['base_urls']['coordinator']; assert base in [f'http://127.0.0.1:{n}' for n in range(8005, 8010)]
-    fixture = json.loads(fixture_file.read_text(encoding='utf-8')); assert 'original_run_id' not in fixture
+    require(Path(manifest['worktree_root']).resolve() == root and manifest['stack_kind'] == 'isolated_branch_stack', 'wrong stack manifest')
+    base = manifest['base_urls']['coordinator']; require(base in [f'http://127.0.0.1:{n}' for n in range(8005, 8010)], 'wrong coordinator endpoint')
+    fixture = json.loads(fixture_file.read_text(encoding='utf-8')); require('original_run_id' not in fixture, 'fixture already executed')
     def api(path, payload=None):
         data = None if payload is None else json.dumps(payload).encode()
         req = urllib.request.Request(base + '/api/governance/' + path, data=data, headers={'Content-Type':'application/json'})
