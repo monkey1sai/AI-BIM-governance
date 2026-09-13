@@ -667,6 +667,11 @@ function New-IsolatedBackendEnvironment {
         if (-not [string]::IsNullOrWhiteSpace($env:A4_INTERNAL_CONTEXT_TOKEN)) {
             $governanceEnvironment.A4_INTERNAL_CONTEXT_TOKEN = $env:A4_INTERNAL_CONTEXT_TOKEN
         }
+        # A1 validation is independently provisioned by the owner; no key values in evidence.
+        foreach ($name in @('A1_REMEDIATION_INTERNAL_KEY', 'A1_REMEDIATION_LOCAL_VALIDATION')) {
+            $value = [Environment]::GetEnvironmentVariable($name, 'Process')
+            if (-not [string]::IsNullOrWhiteSpace($value)) { $governanceEnvironment[$name] = $value }
+        }
         return $governanceEnvironment
     }
 
@@ -710,6 +715,10 @@ function New-IsolatedBackendEnvironment {
     }
     if (-not [string]::IsNullOrWhiteSpace($env:SESSION_IDLE_TIMEOUT_MS)) {
         $coordinatorEnvironment.SESSION_IDLE_TIMEOUT_MS = $env:SESSION_IDLE_TIMEOUT_MS
+    }
+    foreach ($name in @('A1_REMEDIATION_INTERNAL_KEY', 'A1_REMEDIATION_LOCAL_VALIDATION', 'A1_REMEDIATION_LOCAL_POLICY_PATH')) {
+        $value = [Environment]::GetEnvironmentVariable($name, 'Process')
+        if (-not [string]::IsNullOrWhiteSpace($value)) { $coordinatorEnvironment[$name] = $value }
     }
     $coordinatorEnvironment
 }

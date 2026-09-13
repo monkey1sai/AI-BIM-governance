@@ -71,6 +71,20 @@ CREATE TABLE IF NOT EXISTS a4_issue_evidence(
   FOREIGN KEY(issue_id) REFERENCES issues(id)
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_a4_issue_evidence_proof ON a4_issue_evidence(proof_id);
+CREATE TABLE IF NOT EXISTS issue_remediation_confirmations(
+  id TEXT PRIMARY KEY,
+  issue_id TEXT NOT NULL REFERENCES issues(id),
+  idempotency_key TEXT NOT NULL,
+  request_hash TEXT NOT NULL,
+  principal_ref TEXT NOT NULL,
+  correspondence_ref TEXT NOT NULL,
+  revised_run_id TEXT NOT NULL,
+  snapshot_json TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  UNIQUE(issue_id, idempotency_key),
+  UNIQUE(issue_id, correspondence_ref),
+  UNIQUE(issue_id, revised_run_id)
+);
 """
 
 _BINDING_TRIGGERS = """
@@ -553,7 +567,7 @@ class IssueStore:
         try:
             conn.execute("PRAGMA busy_timeout=5000")
             conn.execute("BEGIN IMMEDIATE")
-            row = conn.execute("SELECT status, revision FROM issues WHERE id=?", (issue_id,)).fetchone()
+            row = conn.execute("SELECT status, source_type, revision FROM issues WHERE id=?", (issue_id,)).fetchone()
             if row is None:
                 conn.execute("ROLLBACK")
                 raise KeyError(issue_id)
@@ -564,6 +578,9 @@ class IssueStore:
             if to_status not in _ALLOWED.get(frm, set()):
                 conn.execute("ROLLBACK")
                 raise TransitionError(f"illegal transition {frm} -> {to_status}")
+            if row["source_type"] == "rule_result" and to_status in ("resolved", "reopened"):
+                conn.execute("ROLLBACK")
+                raise TransitionError("rule-result resolution and reopen require remediation evidence and authority")
             now = _now()
             cur = conn.execute(
                 "UPDATE issues SET status=?, updated_at=?, revision=revision+1 WHERE id=? AND status=?",

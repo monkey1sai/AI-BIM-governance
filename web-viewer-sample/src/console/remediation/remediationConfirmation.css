@@ -1,0 +1,16 @@
+.a1-remediation-confirmation { margin-top: 20px; padding: 20px; background: var(--ab-surface); color: var(--ab-text); border: 1px solid var(--ab-border-strong); border-radius: 12px; }
+.a1-remediation-confirmation header, .a1-remediation-confirmation nav { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 16px; }
+.a1-remediation-confirmation h3 { margin: 0; color: var(--ab-accent-text); }
+.a1-remediation-confirmation__comparison { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.a1-remediation-confirmation__comparison > section { background: var(--ab-inset); padding: 16px; border: 1px solid var(--ab-border); border-radius: 8px; overflow-wrap: anywhere; }
+.a1-remediation-confirmation fieldset { margin: 16px 0; padding: 16px; border: 1px solid var(--ab-border); border-radius: 8px; min-width: 0; }
+.a1-remediation-confirmation label { display: grid; gap: 8px; margin: 12px 0; }
+.a1-remediation-confirmation select, .a1-remediation-confirmation textarea { width: 100%; box-sizing: border-box; color: var(--ab-text); background: var(--ab-inset); border: 1px solid var(--ab-border-strong); border-radius: 6px; padding: 10px; font: inherit; }
+.a1-remediation-confirmation textarea { resize: vertical; }
+.a1-remediation-confirmation .a1-remediation-confirmation__check { display: flex; align-items: flex-start; gap: 10px; }
+.a1-remediation-confirmation button { color: var(--ab-accent-text); background: var(--ab-inset); border: 1px solid var(--ab-border-accent); border-radius: 6px; padding: 8px 12px; cursor: pointer; }
+.a1-remediation-confirmation button:disabled, .a1-remediation-confirmation fieldset:disabled { opacity: .55; cursor: default; }
+.a1-remediation-confirmation :is(button, select, textarea, input, summary):focus-visible { outline: 2px solid var(--ab-accent); outline-offset: 3px; }
+.a1-remediation-confirmation [role="alert"] { color: var(--ab-warn); }
+.a1-remediation-confirmation details { color: var(--ab-text-muted); font-size: .9em; }
+@media (max-width: 760px) { .a1-remediation-confirmation__comparison { grid-template-columns: 1fr; } }

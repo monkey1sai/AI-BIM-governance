@@ -1,0 +1,18 @@
+{
+  "$schema": "../architecture-delta.schema.json",
+  "schema_version": "ai-bim-architecture-delta/v1",
+  "change_id": "a1-remediation-history",
+  "lane": "G",
+  "summary": "Bind authorized A1 confirmation and reopen to persisted source and PASS evidence; expose durable history in A1.",
+  "created_on": "2026-09-12",
+  "affected_services": ["governance-service", "bim-review-coordinator", "web-viewer-sample"],
+  "affected_surfaces": ["governance-service/issues", "governance-service/app.py", "governance-service/rule_engine", "bim-review-coordinator/src", "web-viewer-sample/src/console", "scripts/dev/start-isolated-branch-stack.ps1"],
+  "added_dependency_edges": [],
+  "removed_dependency_edges": [],
+  "public_contract_changes": [{ "contract": "A1 remediation confirmation/history/reopen", "change_type": "additive", "description": "Add Coordinator-only operation-scoped APIs, trusted authority port and default-off local validation. Preserve browser to Coordinator boundary." },
+    { "contract": "rule-run source evidence", "change_type": "additive", "description": "Persist SHA of the private copy actually parsed, and server-owned intake tenant metadata. Legacy runs without bindings cannot confirm remediation." }],
+  "data_ownership_changes": [],
+  "state_machine_changes": [{ "machine": "governance-issue", "change_type": "behavioral", "description": "Rule-result resolve/reopen require separate authority and atomic revision/audit; consumed revised run cannot resolve again. Manual and diff transitions remain compatible." }],
+  "exceptions": [],
+  "approval": { "required": false, "status": "not-required", "approved_by": null, "approved_at": null }
+}

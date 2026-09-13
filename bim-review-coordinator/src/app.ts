@@ -47,6 +47,8 @@ import { publishConversionValidation } from "./services/conversionValidationPubl
 import type { ApprovedPurposeScope } from "./services/conversionValidationFacts.js";
 import { registerConversionValidationReports } from "./routes/conversionValidationReports.js";
 import type { ValidationReportAccess } from "./services/validationReportAccess.js";
+import { createLocalRemediationAccess, type RemediationAccess } from "./services/remediationAccess.js";
+import { registerRemediationRoutes } from "./routes/remediationRoutes.js";
 import { createLocalSupervisorReportAccess } from "./services/localSupervisorReportAccess.js";
 import { WatcherIntakeRegistry } from "./services/watcherIntakeRegistry.js";
 import { resolveReadyRenderBundle } from "./services/readyModelResolver.js";
@@ -734,6 +736,7 @@ export interface CreateCoordinatorAppOptions {
   conversionValidationScopes?: readonly ApprovedPurposeScope[];
   /** External operator/source authority; absent deployment adapter remains fail closed. */
   validationReportAccess?: ValidationReportAccess;
+  remediationAccess?: RemediationAccess;
   /**
    * Pre-built structured logger. Tests use this to write into a tmp dir and
    * assert on records. Omit to let the app build one against $LOG_ROOT or the
@@ -780,6 +783,9 @@ export function createCoordinatorApp(
   if (config.validationReportSupervisorPreview && options.validationReportAccess) {
     throw new Error("Supervisor report preview cannot be combined with a report authority adapter.");
   }
+  if (config.remediationLocalValidation && options.remediationAccess) {
+    throw new Error("Local remediation validation cannot be combined with an authority adapter.");
+  }
   const app = express();
   const governanceLibraryWorkflow = new GovernanceLibraryWorkflow(
     new GovernanceLibraryHttpAdapter(),
@@ -790,6 +796,9 @@ export function createCoordinatorApp(
   const server = http.createServer(app);
   const validationReportAccess = config.validationReportSupervisorPreview
     ? createLocalSupervisorReportAccess(() => server.address()) : options.validationReportAccess;
+  const remediationAccess = config.remediationLocalValidation
+    ? createLocalRemediationAccess(() => server.address(), config.remediationLocalPolicyPath!, new URL(config.viewerPublicBaseUrl).origin)
+    : options.remediationAccess;
   const io = new Server(server, {
     cors: {
       origin: corsOrigins,
@@ -4984,6 +4993,7 @@ export function createCoordinatorApp(
       source_kind: "minio_ifc_ready",
       ifc_ready_job_id: job.ifc_ready_job_id,
       idempotency_key: job.idempotency_key,
+      tenant_id: job.tenant_id,
       project_id: job.project_id,
       project_display_name: job.project_display_name ?? null,
       model_category: job.category ?? null,
@@ -5329,6 +5339,8 @@ export function createCoordinatorApp(
     resolveSessionContext: resolveA4SearchSessionContext,
   });
 
+  registerRemediationRoutes(app, { access: remediationAccess,
+    localValidation: config.remediationLocalValidation, internalKey: config.remediationInternalKey });
   registerGovernanceProxy(app, {
     isSafeSessionId,
     isSafeIfcReadyJobId,

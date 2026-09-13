@@ -459,6 +459,10 @@
           "value": "issues.store",
           "layer": "infrastructure"
         },
+        { "match": "exact", "value": "issues.remediation", "layer": "infrastructure" },
+        { "match": "exact", "value": "issues.remediation_history", "layer": "infrastructure" },
+        { "match": "exact", "value": "issues.remediation_authority", "layer": "infrastructure" },
+        { "match": "exact", "value": "rule_engine.source_snapshot", "layer": "application" },
         {
           "match": "exact",
           "value": "rule_engine.excel_export",

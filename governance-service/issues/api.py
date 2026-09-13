@@ -5,10 +5,18 @@ issue 可手動建立，或由 A1 rule-run 失敗構件 / A2 diff 變更構件�
 from __future__ import annotations
 
 import os
+import sqlite3
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Query
-from pydantic import BaseModel, Field
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
+from pydantic import BaseModel, ConfigDict, Field
+
+from .remediation import (
+    ConfirmationCommand, ConfirmationConflict, ConfirmationError, ConfirmationUnauthorized,
+    confirm_remediation, reopen_remediation,
+)
+from .remediation_authority import request_authority
+from .remediation_history import HistoryDenied, HistoryNotFound, HistoryUnavailable, read_remediation_history
 
 from .store import ISSUE_STATUSES, IssueBindingError, IssueStore, TransitionError
 
@@ -47,6 +55,89 @@ class TransitionBody(BaseModel):
     to_status: str
     note: Optional[str] = None
     expected_revision: Optional[int] = Field(default=None, strict=True, ge=0)
+
+
+class RemediationBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    expected_revision: int = Field(strict=True, ge=0)
+    revised_model_version_id: str = Field(strict=True, min_length=1, max_length=512)
+    revised_run_id: str = Field(strict=True, min_length=1, max_length=512)
+    revised_result_id: str = Field(strict=True, min_length=1, max_length=512)
+    idempotency_key: str = Field(strict=True, min_length=1, max_length=512)
+    note: str = Field(default="", strict=True, max_length=4000)
+
+
+class ReopenBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    expected_revision: int = Field(strict=True, ge=0)
+    note: str = Field(default="", strict=True, max_length=4000)
+
+
+async def get_remediation_authorizer(request: Request):
+    return await request_authority(request, "confirm")
+
+
+async def get_remediation_history_authorizer(request: Request):
+    authority = await request_authority(request, "history")
+    return authority.history if authority else None
+
+
+async def get_remediation_reopen_authorizer(request: Request):
+    return await request_authority(request, "reopen")
+
+
+@router.post("/api/issues/{issue_id}/confirm-remediation")
+def confirm_issue_remediation(issue_id: str, body: RemediationBody, response: Response,
+                             authorize=Depends(get_remediation_authorizer)):
+    response.headers["Cache-Control"] = "no-store"
+    if authorize is None:
+        raise HTTPException(503, detail={"code": "remediation_authorization_unavailable"})
+    try:
+        return confirm_remediation(_get_store(),
+            ConfirmationCommand(issue_id=issue_id, **body.model_dump()), authorize=authorize)
+    except ConfirmationUnauthorized:
+        raise HTTPException(403, detail={"code": "remediation_authorization_denied"}) from None
+    except ConfirmationConflict:
+        raise HTTPException(409, detail={"code": "remediation_conflict"}) from None
+    except ConfirmationError:
+        raise HTTPException(422, detail={"code": "remediation_evidence_invalid"}) from None
+    except sqlite3.Error:
+        raise HTTPException(503, detail={"code": "remediation_persistence_unavailable"}) from None
+
+
+@router.get("/api/issues/{issue_id}/remediation-history")
+def remediation_history(issue_id: str, response: Response, limit: int = Query(50, ge=1, le=100),
+                        offset: int = Query(0, ge=0, le=9223372036854775807),
+                        authorize=Depends(get_remediation_history_authorizer)):
+    response.headers["Cache-Control"] = "no-store"
+    if authorize is None:
+        raise HTTPException(503, detail={"code": "remediation_history_authorization_unavailable"})
+    try:
+        return read_remediation_history(_db_path(), issue_id, authorize, limit, offset)
+    except HistoryDenied:
+        raise HTTPException(403, detail={"code": "remediation_history_denied"}) from None
+    except HistoryNotFound:
+        raise HTTPException(404, detail={"code": "remediation_history_not_found"}) from None
+    except HistoryUnavailable:
+        raise HTTPException(503, detail={"code": "remediation_history_unavailable"}) from None
+
+
+@router.post("/api/issues/{issue_id}/reopen-remediation")
+def reopen_issue_remediation(issue_id: str, body: ReopenBody, response: Response,
+                            authorize=Depends(get_remediation_reopen_authorizer)):
+    response.headers["Cache-Control"] = "no-store"
+    if authorize is None:
+        raise HTTPException(503, detail={"code": "remediation_authorization_unavailable"})
+    try:
+        return reopen_remediation(_get_store(), issue_id, body.expected_revision, body.note, authorize)
+    except ConfirmationUnauthorized:
+        raise HTTPException(403, detail={"code": "remediation_authorization_denied"}) from None
+    except ConfirmationConflict:
+        raise HTTPException(409, detail={"code": "remediation_conflict"}) from None
+    except ConfirmationError:
+        raise HTTPException(422, detail={"code": "remediation_evidence_invalid"}) from None
+    except sqlite3.Error:
+        raise HTTPException(503, detail={"code": "remediation_persistence_unavailable"}) from None
 
 
 @router.post("/api/issues", status_code=201)

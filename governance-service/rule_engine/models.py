@@ -47,6 +47,7 @@ class RuleRunResult:
     results: list[RuleResult] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     rule_content_digest: Optional[str] = None
+    source_sha256: Optional[str] = None
 
     def failed_results(self) -> list[RuleResult]:
         return [r for r in self.results if r.status == "fail"]
@@ -64,4 +65,5 @@ class RuleRunResult:
             "target_summary": self.target_summary,
             "warnings": self.warnings,
             "rule_content_digest": self.rule_content_digest,
+            **({"source_sha256": self.source_sha256} if self.source_sha256 is not None else {}),
         }
