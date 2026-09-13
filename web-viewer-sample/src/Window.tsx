@@ -10,6 +10,8 @@
  * its affiliates is strictly prohibited.
  */
 import React from 'react';
+import { decodeHighlightResult } from "./viewer/core/highlightResult";
+import { IssueViewExchange } from "./viewer/core/issueViewExchange";
 import { RuntimeCommandTracker, type RuntimeCommandOutcome, type RuntimeCommandContext } from "./viewer/core/runtimeCommandTracker";
 import { NativeStageDispatchQueue, type NativeOpenStageDispatch } from "./viewer/core/nativeStageDispatchQueue";
 import { isSpectatorStreamMode as profileIsSpectatorStreamMode, hasDirectStreamEndpointOverride as profileHasDirectStreamEndpointOverride, resolveInitialStreamEndpoint as profileResolveInitialStreamEndpoint, streamEndpointLabel as profileStreamEndpointLabel } from "./viewer/core/runtimeStreamProfile";
@@ -695,6 +697,14 @@ export default class App extends React.Component<AppProps, AppState> {
     // pendingMappingHighlightRequestId 分開，互不干擾）。
     // F1：一併記 rowKey（rule_code::ifc_guid），確認回來時以 rowKey 寫 govHighlightConfirm，
     // 避免同一 ifc_guid 多筆不同 rule_code 的列共用 / 互相覆蓋確認狀態。
+    private issueViewExchange = new IssueViewExchange({
+        snapshot: () => `${this.streamGeneration}:${this.stageIntentGeneration}:${this.confirmedStageBindingRevision}:${this.state.stageLoadStatus}`,
+        reply: message => this._postToParent(message),
+        expired: (requestId, outcome) => {
+            const context = this.runtimeCommandTracker.getContext(requestId);
+            if (context) this.runtimeCommandTracker._claimRuntimeCommandTerminal(requestId, context.eventType, outcome);
+        },
+    });
     private _pendingGovHighlights: Record<string, { ifc_guid: string; rowKey: string; primPath: string }> = {};
     private standaloneViewerLease: StandaloneViewerLease | null = null;
     private standaloneViewerLeaseClaim: Promise<StandaloneViewerLease | null> | null = null;
@@ -812,6 +822,7 @@ export default class App extends React.Component<AppProps, AppState> {
     }
 
     componentWillUnmount(): void {
+        this.issueViewExchange.dispose();
         if (typeof window !== "undefined") window.removeEventListener("resize", this._onViewportResize);
         this.componentMounted = false;
         this.reviewSocketEpoch += 1;
@@ -1301,7 +1312,7 @@ export default class App extends React.Component<AppProps, AppState> {
                 && !getPayloadString(payload, "fallback_path");
         }
         if (eventType !== "highlightPrimsResult") return false;
-        const selectedPaths = getPayloadStringArray(payload, "selected_paths");
+        const selectedPaths = decodeHighlightResult(payload).paths;
         const missingPaths = getPayloadStringArray(payload, "missing_paths");
         const fallbackPaths = getPayloadObjectArray(payload, "fallback_paths");
         return selectedPaths.length === intent.prim_paths.length
@@ -1317,6 +1328,7 @@ export default class App extends React.Component<AppProps, AppState> {
         outcome?: RuntimeCommandOutcome,
     ): void {
         if (!requestId || !eventType) return;
+        if (phase === "terminal" && outcome !== "success") this.issueViewExchange.fail(requestId, outcome || "error");
         this.setState((state) => {
             const current = state.runtimeCommandLifecycles.find((entry) => entry.request_id === requestId);
             // A request has one terminal outcome. Late or duplicate protocol
@@ -2443,62 +2455,50 @@ export default class App extends React.Component<AppProps, AppState> {
         }
         switch (m.type) {
             case "highlight": {
-                if (!canOperate) return; // spectator / 未就緒靜默丟棄
-                // Important #2：postMessage 跨 origin 反序列化，TS cast 不做執行期檢查。origin 已驗白名單，
-                // payload 也須驗：items 非陣列直接丟棄；每筆須是帶字串 ifc_guid 的物件，否則跳過該筆
-                // （不把非法 FailedElement 餵進 _overlayHighlight / HighlightBridge）。
-                if (!Array.isArray(m.items)) return;
-                for (const raw of m.items) {
-                    if (!isHighlightItem(raw)) continue; // 非法 item（null / 數字 / 缺 ifc_guid）跳過
-                    const res = this._overlayHighlight(raw);
-                    this._postToParent({
-                        type: "highlight_result",
-                        requestId: res.ok ? res.requestId : "",
-                        ...(clientRequestId ? { clientRequestId } : {}),
-                        ok: res.ok,
-                        ...(res.ok ? {} : { reason: res.reason }),
-                    }, allowedOrigins); // Important #3：複用本 call stack 已建白名單，免迴圈內重 parse
+                if (!canOperate || !Array.isArray(m.items)) return;
+                for (const item of m.items.filter(isHighlightItem)) {
+                    const result = this._overlayHighlight(item);
+                    if (result.ok) this.issueViewExchange.begin({ requestId: result.requestId,
+                        clientRequestId: clientRequestId ?? undefined, action: "highlight", paths: [result.primPath] });
+                    else this._postToParent({ type: "highlight_result", requestId: "", clientRequestId,
+                        ok: false, reason: result.reason }, allowedOrigins);
                 }
                 break;
             }
             case "highlight_batch": {
-                if (!canOperate) return; // spectator / 未就緒靜默丟棄（與 highlight 同一守衛）
-                // 與 highlight 同一 payload 執行期守衛：items 非陣列丟棄；非法 item（缺字串 ifc_guid）跳過。
-                if (!Array.isArray(m.items)) return;
+                if (!canOperate || !Array.isArray(m.items)) return;
                 const validItems = m.items.filter(isHighlightItem);
                 if (validItems.length === 0) return;
-                // 批次 = 單一 highlightPrimsRequest（Kit 聯集選取）；回「一個」批次層級 highlight_result，
-                // 帶 sent_count / unmapped_count / unmapped_guids 誠實計數（console 端據以顯示，不虛報）。
-                const batchRes = this._overlayHighlightMany(validItems);
-                this._postToParent({
-                    type: "highlight_result",
-                    requestId: batchRes.ok ? batchRes.requestId : "",
-                    ...(clientRequestId ? { clientRequestId } : {}),
-                    ok: batchRes.ok,
-                    ...(batchRes.ok
-                        ? {
-                            sent_count: batchRes.sent.length,
-                            unmapped_count: batchRes.unmapped.length,
-                            unmapped_guids: batchRes.unmapped,
-                        }
-                        : { reason: batchRes.reason }),
-                }, allowedOrigins);
+                const res = this._overlayHighlightMany(validItems);
+                if (res.ok) {
+                    this.issueViewExchange.begin({ requestId: res.requestId, clientRequestId: clientRequestId ?? undefined,
+                        action: "highlight", paths: res.sent.map(item => item.primPath), unmapped: res.unmapped });
+                } else {
+                    this._postToParent({ type: "highlight_result", requestId: "", clientRequestId,
+                        ok: false, reason: res.reason }, allowedOrigins);
+                }
                 break;
             }
             case "focus":
-                if (!canOperate) return; // spectator / 未就緒靜默丟棄（不送 focusPrimRequest）
-                // 對齊 highlight 的 isHighlightItem 嚴格守衛：postMessage 跨 origin 反序列化，TS cast 不做執行期
-                // 檢查；非字串 ifc_guid（如 {toString} 物件）須擋在 primPathForGuid 之前，避免與 highlight 守衛不對稱。
-                if (typeof m.ifc_guid === "string" && m.ifc_guid) {
-                    // 既有反查 / focus 路徑：ifc_guid → primPath 後送 focusPrim（沿用 _overlayHighlight 內的 cache 解析慣例）。
-                    const primPath = this._mappingCache?.primPathForGuid(m.ifc_guid) ?? null;
-                    if (primPath) this._sendStreamMessage(buildFocusPrimRequest(primPath));
-                }
-                break;
             case "clear":
-                if (!canOperate) return; // spectator / 未就緒靜默丟棄（不送 clearHighlightRequest）
-                this._sendStreamMessage(buildClearHighlightRequest());
+            case "clear_selection": {
+                if (!canOperate) return;
+                const path = typeof m.ifc_guid === "string"
+                    ? this._mappingCache?.primPathForGuid(m.ifc_guid) : null;
+                if (m.type === "focus" && !path) {
+                    this._postToParent({ type: "issue_view_result", action: m.type,
+                        clientRequestId, requestId: "", ok: false, reason: "unmapped" }, allowedOrigins);
+                    return;
+                }
+                const requestId = createRuntimeRequestId();
+                const message = m.type === "focus" ? buildFocusPrimRequest(path!, requestId)
+                    : m.type === "clear" ? buildClearHighlightRequest()
+                    : { event_type: "selectPrimsRequest", payload: { paths: [] } };
+                message.payload = { ...(isRecord(message.payload) ? message.payload : {}), request_id: requestId };
+                this.issueViewExchange.begin({ requestId, clientRequestId: clientRequestId ?? undefined, action: m.type, paths: path ? [path] : [] });
+                if (!this._sendStreamMessage(message)) this.issueViewExchange.fail(requestId, "datachannel_not_ready");
                 break;
+            }
             case "request_stage_tree": {
                 const primPath = typeof m.prim_path === "string" && m.prim_path ? m.prim_path : "/World";
                 if (this.state.usdPrims && this.state.usdPrims.length > 0) {
@@ -4603,6 +4603,12 @@ export default class App extends React.Component<AppProps, AppState> {
         if (!authority || event.payload.trace_id !== authority.traceId) return;
         const payload = event.payload;
 
+        // The current trace, request type and binding must all match before a
+        // console receives material/focus evidence. Existing handlers own terminal claims.
+        if (this.runtimeCommandTracker._correlateRuntimeCommandEvent(event.event_type, payload).disposition === "matched") {
+            this.issueViewExchange.result(getPayloadString(payload, "request_id"), event.event_type, payload);
+        }
+
         if (event.event_type === "commandRejected") {
             const parsed = parseRuntimeCommandRejection(payload);
             if (!parsed) {
@@ -5106,7 +5112,8 @@ export default class App extends React.Component<AppProps, AppState> {
 
         else if (event.event_type === "highlightPrimsResult") {
             const result = getPayloadString(payload, "result") || "unknown";
-            const selectedPaths = getPayloadStringArray(payload, "selected_paths");
+            const decoded = decodeHighlightResult(payload);
+            const selectedPaths = decoded.paths;
             const missingPaths = getPayloadStringArray(payload, "missing_paths");
             const fallbackPaths = getPayloadObjectArray(payload, "fallback_paths");
             const requestId = getPayloadString(payload, "request_id");
@@ -5131,7 +5138,7 @@ export default class App extends React.Component<AppProps, AppState> {
 
             if (requestId && requestId === this.pendingMappingHighlightRequestId) {
                 const expectedPath = this.pendingMappingPrimPath;
-                const passed = result === "success"
+                const passed = decoded.complete
                     && !!expectedPath
                     && selectedPaths.includes(expectedPath)
                     && missingPaths.length === 0
@@ -5147,14 +5154,16 @@ export default class App extends React.Component<AppProps, AppState> {
             const govPending = requestId ? this._pendingGovHighlights[requestId] : undefined;
             if (govPending) {
                 // R6 誠實：Kit 用 fallback path 不算真正確認（鏡像上方 mapping-verify predicate 的 fallback 檢查）。
-                const confirmed = result === "success"
+                const confirmed = decoded.complete
                     && selectedPaths.includes(govPending.primPath)
                     && missingPaths.length === 0
                     && fallbackPaths.length === 0;
                 nextState.govHighlightConfirm = {
                     ...this.state.govHighlightConfirm,
                     // F1：以 rowKey 為 key（與 overlay 讀取一致），同一 ifc_guid 多筆不同 rule_code 各自獨立確認。
-                    [govPending.rowKey]: confirmed ? "已在 3D 標示（Kit 已選取）" : "Kit 未選到該構件（missing/fallback）",
+                    [govPending.rowKey]: confirmed
+                        ? decoded.mode === "material_overlay" ? "問題高亮已套用" : "已選取構件（尚未確認多色高亮）"
+                        : "此構件目前無法在模型中標示",
                 };
                 delete this._pendingGovHighlights[requestId];
             }
@@ -5172,6 +5181,12 @@ export default class App extends React.Component<AppProps, AppState> {
                 result === "success" && a4Succeeded !== false ? "success" : "error",
             );
             if (correlation.disposition !== "matched") return;
+            if (result === "success" && payload.framed === true && !payload.fallback_path) {
+                const path = getPayloadString(payload, "prim_path");
+                const node = this._findUSDPrimByPath(path);
+                this.setState({ selectedUSDPrims: new Set(node ? [node] : []) });
+                this._postToParent({ type: "stage_tree", prim_path: "/World", children: this.state.usdPrims, selected_paths: [path] });
+            }
             if (a4Succeeded !== null && requestId) {
                 this._finishA4HandoffCommand(
                     requestId,
@@ -5210,6 +5225,10 @@ export default class App extends React.Component<AppProps, AppState> {
             );
             if (correlation.disposition !== "matched") return;
             this._appendReviewEvent(`${event.event_type}：${result}`);
+            if (event.event_type === "selectPrimsResult" && result === "success") {
+                this._postToParent({ type: "stage_tree", prim_path: "/World", children: this.state.usdPrims,
+                    selected_paths: getPayloadStringArray(payload, "selected_paths") });
+            }
         }
             
         // Notification from Kit about user changing the selection via the viewport.
@@ -5218,7 +5237,7 @@ export default class App extends React.Component<AppProps, AppState> {
                 ? payload.prims.filter((prim): prim is string => typeof prim === "string")
                 : [];
 
-            console.log(prims.constructor.name);
+            this._postToParent({ type: "stage_tree", prim_path: "/World", children: this.state.usdPrims, selected_paths: prims });
             // W4：live viewport 點選 → 反查 ifc_guid 帶進治理（與 USDStage 清單點選共用 helper，DRY）。
             if (prims[0]) this._reverseLookupGuid(prims[0]);
             if (prims.length === 0) {

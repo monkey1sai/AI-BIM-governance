@@ -29,7 +29,9 @@ function CopyGuidBtn({ guid }: { guid: string }) {
 }
 // export 供單元測試直接掛載驗收「同 tick 雙擊載入更多不得並行 fetch」（去重/鎖 spec §5）；
 // 非頁面公開 API，僅 FailureScoreboard 內部使用。
-export function FailureRuleRow({ runId, ruleCode, count }: { runId: string; ruleCode: string; count: number }) {
+export function FailureRuleRow({ runId, ruleCode, count, visibleFailures }: {
+  runId: string; ruleCode: string; count: number; visibleFailures?: RuleResultRow[];
+}) {
   const [open, setOpen] = useState(false);
   const [rows, setRows] = useState<FailureRow[]>([]);
   const [total, setTotal] = useState<number | null>(null);
@@ -87,7 +89,9 @@ export function FailureRuleRow({ runId, ruleCode, count }: { runId: string; rule
             <table className="ec-table">
               <thead><tr><th>ifc_guid</th><th>ifc_name</th><th>ifc_type</th><th>storey</th><th></th></tr></thead>
               <tbody>
-                {rows.map((r, i) => (
+                {rows.filter(row => !visibleFailures || visibleFailures.some(visible =>
+                  visible.ifc_guid === row.ifc_guid && visible.severity.toLowerCase() === (row.severity || "").toLowerCase()
+                )).map((r, i) => (
                   <tr key={`${r.ifc_guid ?? "null"}-${i}`}>
                     <td><code>{r.ifc_guid ?? <span className="ec-warn-note">null</span>}</code></td>
                     <td>{r.ifc_name ?? "—"}</td>
@@ -125,7 +129,8 @@ export function FailureScoreboard({ runId, failed }: { runId: string; failed: Ru
       {rules.map(([code, count]) => (
         // key 含 runId:重跑同一規則 code 但換 runId 時,React 須建新 instance,
         // 否則沿用舊 instance 的 local state(已載入的 rows/total)會殘留上一輪的 GUID/storey。
-        <FailureRuleRow key={`${runId}:${code}`} runId={runId} ruleCode={code} count={count} />
+        <FailureRuleRow key={`${runId}:${code}`} runId={runId} ruleCode={code} count={count}
+          visibleFailures={failed.filter(row => row.rule_code === code)} />
       ))}
     </div>
   );

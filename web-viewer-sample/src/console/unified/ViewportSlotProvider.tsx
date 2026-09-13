@@ -19,6 +19,7 @@ export function ViewportSlotProvider({ children }: { children: ReactNode }) {
   const [gate, setGateState] = useState<ReviewSessionViewerPaneBatchGate | null>(null);
   const gateRef = useRef<ReviewSessionViewerPaneBatchGate | null>(null);
   const [stageTree, setStageTreeState] = useState<USDPrimNode[]>([]);
+  const [selectedStagePaths, setSelectedStagePaths] = useState<string[]>([]);
   const hostActionsRef = useRef<ViewportHostActions | null>(null);
   const activeSessionIdRef = useRef("");
   const sessionAuthorityInitializedRef = useRef(false);
@@ -32,6 +33,7 @@ export function ViewportSlotProvider({ children }: { children: ReactNode }) {
       gateRef.current = null;
       setGateState(null);
       setStageTreeState([]);
+      setSelectedStagePaths([]);
     }
     setActiveSessionIdState(nextSessionId);
   }, []);
@@ -46,7 +48,10 @@ export function ViewportSlotProvider({ children }: { children: ReactNode }) {
         ? prev
         : next
     ));
-    if (!resolveViewerCommandGate(next).canSend) setStageTreeState([]);
+    if (!resolveViewerCommandGate(next).canSend) {
+      setStageTreeState([]);
+      setSelectedStagePaths([]);
+    }
   }, []);
   const setStageTree = useCallback((nodes: USDPrimNode[]) => {
     // Window.tsx 已把 nested getChildrenResponse 合併進完整 root tree，再以 stage_tree 下傳。
@@ -103,6 +108,7 @@ export function ViewportSlotProvider({ children }: { children: ReactNode }) {
   }, [publishViewer, subscribeDock]);
 
   const value = useMemo<ViewportSlotApi>(() => ({
+    selectedStagePaths, setSelectedStagePaths,
     registerSlot,
     slotEl,
     publishViewer,
@@ -122,6 +128,7 @@ export function ViewportSlotProvider({ children }: { children: ReactNode }) {
     sendToolbarAction,
     registerHostActions,
   }), [
+    selectedStagePaths,
     publishViewer, viewerPublication, subscribeDock, dockSubscription,
     registerSlot,
     slotEl,

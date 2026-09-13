@@ -4,6 +4,8 @@ import { coordinatorClient, type RuntimeSessionSummary, type ViewerLeaseClaimRes
 import { viewerLeaseHeartbeatDelayMs } from "../clients/viewerLeaseHeartbeat";
 import { EmbeddedViewer, type EmbeddedViewerHandle, type HighlightItem, type HighlightResultMessage, type StageTreeMessage } from "./EmbeddedViewer";
 import { t } from "./i18n";
+import type { IssueViewResultMessage } from "./EmbeddedViewer";
+import type { IssueViewAction } from "../viewer/core/issueViewExchange";
 import { getLocalDevUserCarrier } from "./localDevPrincipal";
 import { useSharedStatus } from "./useSharedStatus";
 
@@ -114,6 +116,7 @@ function createReviewViewerIdentity(mode: ReviewSessionViewerPaneMode): ReviewVi
 // 送出前先過與單筆高亮相同的 viewer 證據 gate（session observed / lease / first frame /
 // DataChannel / stage match）；gate 未過誠實回 { sent:false, reason }，絕不佯裝已送。
 export interface ReviewSessionViewerPaneHandle {
+  runIssueView(action: IssueViewAction, items?: HighlightItem[], ifcGuid?: string): Promise<HighlightResultMessage | IssueViewResultMessage>;
   sendHighlightBatch(items: HighlightItem[]): { sent: true } | { sent: false; reason: string };
   requestStageTree(primPath?: string): void;
   selectPrim(primPath: string, multiSelect?: boolean): void;
@@ -641,8 +644,56 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
   batchGateReasonRef.current = batchGateReason;
   const sidRef = useRef(sid);
   sidRef.current = sid;
+  const commandGateRef = useRef(viewerCommandReason);
+  commandGateRef.current = viewerCommandReason;
+  const issueRequestsRef = useRef(new Map<string, {
+    sessionId: string; action: IssueViewAction;
+    resolve: (message: HighlightResultMessage | IssueViewResultMessage) => void;
+    timer: ReturnType<typeof setTimeout>;
+  }>());
+  const receiveIssueResult = (message: HighlightResultMessage | IssueViewResultMessage) => {
+    const id = message.clientRequestId;
+    const pending = id ? issueRequestsRef.current.get(id) : null;
+    if (!id || !pending || pending.sessionId !== sidRef.current) return;
+    const action = message.type === "highlight_result" ? "highlight" : message.action;
+    if (action !== pending.action) return;
+    clearTimeout(pending.timer);
+    issueRequestsRef.current.delete(id);
+    pending.resolve(message);
+  };
+  useEffect(() => {
+    const requests = issueRequestsRef.current;
+    return () => {
+      for (const [id, pending] of requests) {
+        clearTimeout(pending.timer);
+        pending.resolve({ protocol: "vg01", type: "highlight_result", requestId: "",
+          clientRequestId: id, ok: false, reason: "superseded" });
+      }
+      requests.clear();
+    };
+  }, [sid]);
 
   useImperativeHandle(ref, () => ({
+    runIssueView(action, items = [], ifcGuid) {
+      const reason = action === "highlight" || action === "focus"
+        ? batchGateReasonRef.current : commandGateRef.current;
+      const clientRequestId = createHighlightCorrelationId();
+      const fail = (why: string): HighlightResultMessage => ({ protocol: "vg01", type: "highlight_result",
+        requestId: "", clientRequestId, ok: false, reason: why });
+      if (reason || !viewerRef.current) return Promise.resolve(fail(reason || "viewer_unavailable"));
+      if (issueRequestsRef.current.size) return Promise.resolve(fail("command_pending"));
+      return new Promise(resolve => {
+        const timer = setTimeout(() => {
+          issueRequestsRef.current.delete(clientRequestId);
+          resolve(fail("timed_out"));
+        }, 16_000);
+        issueRequestsRef.current.set(clientRequestId, { sessionId: sidRef.current, action, resolve, timer });
+        if (action === "highlight") viewerRef.current!.sendHighlightBatch(items, clientRequestId);
+        else if (action === "focus") viewerRef.current!.sendFocus(ifcGuid || "", clientRequestId);
+        else if (action === "clear") viewerRef.current!.sendClear(clientRequestId);
+        else viewerRef.current!.clearSelection(clientRequestId);
+      });
+    },
     sendHighlightBatch(items: HighlightItem[]) {
       const reason = batchGateReasonRef.current;
       if (reason !== "") return { sent: false as const, reason };
@@ -973,6 +1024,7 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
                 setHighlightResult(null);
               }}
               onHighlightResult={(m) => {
+                receiveIssueResult(m);
                 const pending = pendingHighlightRef.current;
                 if (
                   !pending
@@ -985,6 +1037,7 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
                 if (pending.kind === "batch") onBatchAckRef.current?.(m);
               }}
               onStageTree={onStageTree}
+              onIssueViewResult={receiveIssueResult}
             />
           </div>
         ) : null /* origin-missing 態改由上方常駐 note（含 refresh 動作）呈現，避免 testid 重複 */}

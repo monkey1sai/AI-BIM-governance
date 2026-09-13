@@ -1,4 +1,5 @@
 export interface HighlightItem {
+    severity?: string;
     prim_path: string;
     ifc_guid?: string | null;
     color?: number[];

@@ -19,6 +19,11 @@ import omni.kit.app
 from carb.eventdispatcher import get_eventdispatcher
 from omni.kit.viewport.utility import get_active_viewport_camera_string
 
+try:
+    from .highlight_overlay import HighlightOverlay
+except ImportError:  # pragma: no cover - direct CPU test import.
+    from highlight_overlay import HighlightOverlay
+
 # Import the submodule directly, not `from . import client_send_bridge`: the package
 # form adds an edge to `messaging` itself, which pulled this module into the existing
 # package-level import cycle and tripped ARCH-GRAPH-001.
@@ -49,6 +54,9 @@ class StageManager:
         # Internal messaging state
         self._is_external_update: bool = False
         self._camera_attrs = {}
+        self._highlight_overlay = HighlightOverlay()
+        self._highlight_stage = None
+        self._camera_stage = None
         self._subscriptions = []
         self._runtime_authority = runtime_authority or RuntimeAuthorityClient()
         self._trace_context = trace_context or DataChannelTraceContext()
@@ -87,9 +95,9 @@ class StageManager:
             'makePrimsPickable': self._on_make_pickable,
             # request to make primitives pickable
             'resetStage': self._on_reset_camera,
-            # request to highlight BIM issue prims; first implementation uses selection fallback
+            # Reversible materials; selection and camera are separate commands.
             'highlightPrimsRequest': self._on_highlight_prims,
-            # request to clear highlight selection
+            # Restore original materials, preserving selection and camera.
             'clearHighlightRequest': self._on_clear_highlight,
             # request to focus/select one prim
             'focusPrimRequest': self._on_focus_prim,
@@ -113,6 +121,11 @@ class StageManager:
 
         # -- subscribe to stage events
         usd_context = omni.usd.get_context()
+        self._subscriptions.append(ed.observe_event(
+            observer_name="StageManager:StageClosed",
+            event_name=usd_context.stage_event_name(omni.usd.StageEventType.CLOSED),
+            on_event=self._on_stage_event_closed,
+        ))
         self._subscriptions.append(
             ed.observe_event(
                 observer_name="StageManager:StageOpened",
@@ -238,6 +251,10 @@ class StageManager:
 
     def _on_stage_event_opened(self, event):
         stage = omni.usd.get_context().get_stage()
+        self._sync_highlight_stage(stage)
+        if stage == self._camera_stage:
+            return
+        self._camera_stage = stage
         stage_url = stage.GetRootLayer().identifier if stage else ''
 
         if stage_url:
@@ -419,86 +436,64 @@ class StageManager:
 
         return None
 
-    def _on_highlight_prims(self, event: carb.events.IEvent):
-        """
-        Handler for `highlightPrimsRequest`.
+    @staticmethod
+    def _renderer_mode():
+        # Observation only: do not change renderer settings to manufacture proof.
+        try:
+            import carb.settings
+            mode = carb.settings.get_settings().get("/rtx/rendermode")
+            return mode if mode in ("RaytracedLighting", "PathTracing", "RealTimePathTracing") else "unknown"
+        except Exception:
+            return "unknown"
 
-        First MVP uses USD selection as the visual fallback. It still returns
-        explicit missing paths so client/coordinator state remains honest.
-        """
+    def _sync_highlight_stage(self, stage):
+        if stage != self._highlight_stage:
+            self._highlight_overlay.clear()
+            self._highlight_stage = stage
+
+    def _on_stage_event_closed(self, event):
+        self._sync_highlight_stage(None)
+        self._camera_stage = None
+        self._camera_attrs.clear()
+
+    def _on_highlight_prims(self, event: carb.events.IEvent):
         request_payload = self._payload_dict(event.payload)
         if not self._authorize_mutator("highlightPrimsRequest", request_payload):
             return
-        stage = omni.usd.get_context().get_stage()
-        if stage is None:
-            payload = {
-                "result": "error",
-                "applied_mode": "selection",
-                "selected_paths": [],
-                "missing_paths": [],
-                "fallback_paths": [],
-                "error": "No stage is open.",
-            }
-            get_eventdispatcher().dispatch_event(
-                "highlightPrimsResult",
-                payload=correlated_result(request_payload, payload),
-            )
-            return
-
-        items = self._payload_list(request_payload.get("items"))
-        selected_paths = []
-        missing_paths = []
-        fallback_paths = []
-        for raw_item in items:
-            item = self._payload_dict(raw_item)
-            prim_path = item.get("prim_path") or item.get("usd_prim_path")
-            if not prim_path:
-                continue
-            selected_path = self._resolve_selectable_prim_path(stage, prim_path)
-            if selected_path:
-                if selected_path not in selected_paths:
-                    selected_paths.append(selected_path)
-                if selected_path != prim_path:
-                    fallback_paths.append({
-                        "requested_path": prim_path,
-                        "selected_path": selected_path,
-                        "reason": "stage_root_fallback",
-                    })
-            else:
-                missing_paths.append(prim_path)
-
-        sel = omni.usd.get_context().get_selection()
-        mode = request_payload.get("mode", "replace")
-        if mode == "replace":
-            sel.clear_selected_prim_paths()
-        if selected_paths:
-            self._is_external_update = True
-            sel.set_selected_prim_paths(selected_paths, True)
-
-        payload = {
-            "result": "success",
-            "applied_mode": "selection",
-            "selected_paths": selected_paths,
-            "missing_paths": missing_paths,
-            "fallback_paths": fallback_paths,
-        }
+        payload = {"result": "error", "applied_mode": "material_overlay",
+                   "applied_paths": [], "missing_paths": [], "unsupported_paths": []}
+        try:
+            stage = omni.usd.get_context().get_stage()
+            self._sync_highlight_stage(stage)
+            if request_payload.get("mode", "replace") != "replace":
+                raise ValueError("Only replace highlight mode is supported.")
+            raw_items = request_payload.get("items")
+            if isinstance(raw_items, carb.dictionary.Item):
+                raw_items = raw_items.get_dict()
+                if isinstance(raw_items, dict):
+                    raw_items = list(raw_items.values())
+            if not isinstance(raw_items, (list, tuple)):
+                raise ValueError("Invalid highlight items.")
+            items = [self._payload_dict(item) for item in raw_items]
+            payload.update(self._highlight_overlay.replace(stage, items))
+            payload["result"] = "success"
+            payload["renderer_mode"] = self._renderer_mode()
+        except Exception as error:
+            payload["error"] = str(error)
         get_eventdispatcher().dispatch_event(
-            "highlightPrimsResult",
-            payload=correlated_result(request_payload, payload),
-        )
+            "highlightPrimsResult", payload=correlated_result(request_payload, payload))
 
     def _on_clear_highlight(self, event: carb.events.IEvent):
         request_payload = self._payload_dict(event.payload)
         if not self._authorize_mutator("clearHighlightRequest", request_payload):
             return
-        sel = omni.usd.get_context().get_selection()
-        self._is_external_update = True
-        sel.clear_selected_prim_paths()
-        payload = correlated_result(
-            request_payload,
-            {"result": "success", "applied_mode": "selection"},
-        )
-        get_eventdispatcher().dispatch_event("clearHighlightResult", payload=payload)
+        payload = {"result": "success", "applied_mode": "material_overlay"}
+        try:
+            self._highlight_overlay.clear()
+        except Exception as error:
+            payload.update(result="error", error=str(error))
+        get_eventdispatcher().dispatch_event(
+            "clearHighlightResult", payload=correlated_result(request_payload, payload))
 
     def _on_focus_prim(self, event: carb.events.IEvent):
         request_payload = self._payload_dict(event.payload)
@@ -506,20 +501,25 @@ class StageManager:
             return
         stage = omni.usd.get_context().get_stage()
         prim_path = request_payload.get("prim_path") or request_payload.get("usd_prim_path")
-        selected_path = self._resolve_selectable_prim_path(stage, prim_path)
-        if stage is None or not prim_path or not selected_path:
-            payload = {"result": "error", "prim_path": prim_path, "error": "Prim not found."}
-        else:
+        try:
+            from pxr import Sdf
+            if not isinstance(prim_path, str) or len(prim_path) > 4096:
+                raise ValueError("Invalid focus path.")
+            path = Sdf.Path(prim_path)
+            if not path.IsAbsolutePath() or not path.IsPrimPath() or prim_path == "/":
+                raise ValueError("Invalid focus path.")
+            if stage is None or not stage.GetPrimAtPath(prim_path):
+                raise ValueError("Prim not found.")
+            from omni.kit.viewport.utility import frame_viewport_prims
+            with Usd.EditContext(stage, Usd.EditTarget(stage.GetSessionLayer())):
+                if not frame_viewport_prims(prims=[prim_path]):
+                    raise ValueError("Viewport framing unavailable.")
             self._is_external_update = True
-            omni.usd.get_context().get_selection().set_selected_prim_paths([selected_path], True)
-            payload = {
-                "result": "success",
-                "prim_path": selected_path,
-                "requested_prim_path": prim_path,
-                "applied_mode": "selection",
-            }
-            if selected_path != prim_path:
-                payload["fallback_path"] = selected_path
+            omni.usd.get_context().get_selection().set_selected_prim_paths([prim_path], True)
+            payload = {"result": "success", "prim_path": prim_path,
+                       "requested_prim_path": prim_path, "applied_mode": "selection", "framed": True}
+        except Exception as error:
+            payload = {"result": "error", "prim_path": prim_path if isinstance(prim_path, str) else None, "error": str(error)}
         get_eventdispatcher().dispatch_event(
             "focusPrimResult",
             payload=correlated_result(request_payload, payload),
@@ -529,6 +529,7 @@ class StageManager:
         """This is called every time the extension is deactivated. It is used
         to clean up the extension state."""
         # Reseting the state.
+        self._sync_highlight_stage(None)
         self._subscriptions.clear()
         self._is_external_update: bool = False
         self._camera_attrs.clear()

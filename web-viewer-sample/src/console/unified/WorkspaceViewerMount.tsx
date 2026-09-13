@@ -18,6 +18,7 @@ import { useViewportSlot } from "./viewportSlot";
 import type { WorkspaceViewerMode } from "./viewportSlot";
 
 export interface WorkspaceViewerMountProps {
+  active?: boolean;
   mode: WorkspaceViewerMode;
   handoff: ReviewRoomHandoff;
   showHandoffActions?: boolean;
@@ -27,7 +28,7 @@ export interface WorkspaceViewerMountProps {
   paneRef?: Ref<ReviewSessionViewerPaneHandle>;
 }
 
-export function WorkspaceViewerMount({ mode, handoff, showHandoffActions = true, onBatchGateChange, onBatchAck, paneRef }: WorkspaceViewerMountProps) {
+export function WorkspaceViewerMount({ mode, handoff, active = true, showHandoffActions = true, onBatchGateChange, onBatchAck, paneRef }: WorkspaceViewerMountProps) {
   const slot = useViewportSlot();
   // callback 走 ref：identity 變動不重新 publish（避免 publish→provider setState→頁面 re-render→再 publish 的迴圈）。
   const gateRef = useRef(onBatchGateChange);
@@ -42,14 +43,14 @@ export function WorkspaceViewerMount({ mode, handoff, showHandoffActions = true,
   const subscribeDock = slot?.subscribeDock;
 
   useEffect(() => {
-    if (!publishViewer || !subscribeDock) return;
+    if (!active || !publishViewer || !subscribeDock) return;
     publishViewer({ mode, handoff: handoffRef.current, showHandoffActions });
     return subscribeDock({
       onBatchGateChange: (gate) => gateRef.current?.(gate),
       onBatchAck: (message) => ackRef.current?.(message),
       paneRef,
     });
-  }, [publishViewer, subscribeDock, mode, handoffFingerprint, showHandoffActions, paneRef]);
+  }, [publishViewer, subscribeDock, mode, handoffFingerprint, showHandoffActions, paneRef, active]);
 
   if (slot) return null;
   return (

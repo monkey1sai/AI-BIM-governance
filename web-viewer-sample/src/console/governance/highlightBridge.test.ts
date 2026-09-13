@@ -3,10 +3,10 @@ import { describe, expect, it, vi } from "vitest";
 import { HighlightBridge, normalizeSeverity } from "./highlightBridge";
 import { MappingCache } from "./mappingCache";
 import type { ElementMappingDocument } from "../../types/mapping";
-import type { StreamMessage } from "../../types/streamMessages";
+import type { HighlightItem, StreamMessage } from "../../types/streamMessages";
 
 type HighlightPrimsPayload = {
-  items: Array<{ prim_path: string; ifc_guid?: string; color?: number[] }>;
+  items: HighlightItem[];
 };
 
 type HighlightPrimsMessage = StreamMessage & {
@@ -67,13 +67,14 @@ describe("HighlightBridge（client 主動拉 → DataChannel，不 server-push�
 
   // F4：治理 rule engine 可能吐 critical/high/medium/low 等 severityToColor 不特判的標籤；
   // 經 normalizeSeverity 正規化後，"high" 應映到 error 紅 [1,0,0,1]（否則落到預設藍，視覺上誤導）。
-  it("severity=high（rule engine 標籤）→ normalizeSeverity → error 紅 [1,0,0,1]", () => {
+  it.each(["high", "required"])("severity=%s → error 紅 [1,0,0,1]，保留原始 severity", (severity) => {
     const cache = MappingCache.fromDocument(DOC, "mv_1");
     const sent: HighlightPrimsMessage[] = [];
     const bridge = new HighlightBridge({ cache, sendMessage: (m) => sent.push(m as HighlightPrimsMessage), dataChannelReady: () => true });
-    const res = bridge.highlightFailed({ ifc_guid: "GUID_A", severity: "high" });
+    const res = bridge.highlightFailed({ ifc_guid: "GUID_A", severity });
     expect(res.ok).toBe(true);
-    expect(sent[0].payload.items[0].color).toEqual([1, 0, 0, 1]); // critical/high/error → 紅
+    expect(sent[0].payload.items[0].color).toEqual([1, 0, 0, 1]);
+    expect(sent[0].payload.items[0].severity).toBe(severity);
   });
 });
 
@@ -133,10 +134,11 @@ describe("HighlightBridge.highlightMany（單一批次 request＝聯集選取）
 });
 
 describe("normalizeSeverity（治理 severity 正規化，大小寫不敏感）", () => {
-  it("critical / high / error → error", () => {
+  it("critical / high / error / IDS required → error", () => {
     expect(normalizeSeverity("critical")).toBe("error");
     expect(normalizeSeverity("HIGH")).toBe("error");
     expect(normalizeSeverity("Error")).toBe("error");
+    expect(normalizeSeverity("Required")).toBe("error");
   });
   it("medium / warning → warning", () => {
     expect(normalizeSeverity("medium")).toBe("warning");

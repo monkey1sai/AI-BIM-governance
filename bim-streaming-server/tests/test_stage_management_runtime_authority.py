@@ -4,6 +4,82 @@ from pathlib import Path
 
 import pytest
 
+def test_material_commands_preserve_selection_and_stage_lifecycle(monkeypatch):
+    context = DummyUsdContext()
+    monkeypatch.setattr(stage_management.omni.usd, "get_context", lambda: context)
+    dispatched = []
+    monkeypatch.setattr(stage_management, "get_eventdispatcher", lambda: types.SimpleNamespace(
+        dispatch_event=lambda name, payload: dispatched.append((name, payload))))
+    manager = make_manager(FakeAuthority(True))
+    changes = []
+    manager._highlight_stage = context.stage
+    manager._camera_stage = context.stage
+    manager._highlight_overlay.clear = lambda: changes.append("clear")
+    manager._highlight_overlay.replace = lambda stage, items: changes.append(("replace", stage)) or {
+        "applied_paths": ["/B", "/C"], "missing_paths": [], "unsupported_paths": []}
+    manager._on_highlight_prims(event({**base_payload(), "items": [{"prim_path": "/B"}, {"prim_path": "/C"}]}))
+    manager._on_stage_event_opened(None)
+    assert changes == [("replace", context.stage)]
+    manager._on_clear_highlight(event(base_payload()))
+    assert context.selection.set_calls == [] and context.selection.clear_count == 0
+    manager._on_focus_prim(event({**base_payload(), "prim_path": "/B"}))
+    assert context.selection.set_calls == [(["/B"], True)]
+    assert dispatched[-1][1]["framed"] is True
+    assert changes == [("replace", context.stage), "clear"]
+    manager._on_stage_event_closed(None)
+    assert changes[-1] == "clear" and manager._highlight_stage is None
+    manager.on_shutdown()
+
+
+@pytest.mark.parametrize("bad", ["bad", False, 123, {}, None])
+def test_invalid_highlight_container_preserves_previous_effect_and_reports_error(monkeypatch, bad):
+    context = DummyUsdContext()
+    monkeypatch.setattr(stage_management.omni.usd, "get_context", lambda: context)
+    dispatched = []
+    monkeypatch.setattr(stage_management, "get_eventdispatcher", lambda: types.SimpleNamespace(
+        dispatch_event=lambda name, payload: dispatched.append((name, payload))))
+    manager = make_manager(FakeAuthority(True))
+    manager._highlight_stage = context.stage
+    manager._highlight_overlay.clear = lambda: pytest.fail("invalid payload cleared existing overlay")
+    manager._highlight_overlay.replace = lambda *_args: pytest.fail("invalid payload reached replace")
+    manager._on_highlight_prims(event({**base_payload("bad-batch"), "items": bad}))
+    assert dispatched[-1][1]["result"] == "error"
+    assert dispatched[-1][1]["request_id"] == "bad-batch"
+    assert context.selection.set_calls == []
+
+
+@pytest.mark.parametrize("bad", [[], {}, False, "relative", "/World.attr", "/bad path", "/"])
+def test_invalid_focus_path_emits_correlated_error_without_selection(monkeypatch, bad):
+    context = DummyUsdContext()
+    monkeypatch.setattr(stage_management.omni.usd, "get_context", lambda: context)
+    dispatched = []
+    monkeypatch.setattr(stage_management, "get_eventdispatcher", lambda: types.SimpleNamespace(
+        dispatch_event=lambda name, payload: dispatched.append((name, payload))))
+    manager = make_manager(FakeAuthority(True))
+    manager._on_focus_prim(event({**base_payload("bad-focus"), "prim_path": bad}))
+    assert dispatched[-1][1]["result"] == "error"
+    assert dispatched[-1][1]["request_id"] == "bad-focus"
+    assert context.selection.set_calls == []
+
+
+def test_highlight_clear_errors_and_denials_do_not_report_success(monkeypatch):
+    context = DummyUsdContext()
+    monkeypatch.setattr(stage_management.omni.usd, "get_context", lambda: context)
+    dispatched = []
+    monkeypatch.setattr(stage_management, "get_eventdispatcher", lambda: types.SimpleNamespace(
+        dispatch_event=lambda name, payload: dispatched.append((name, payload))))
+    manager = make_manager(FakeAuthority(True))
+    def failed_clear():
+        raise RuntimeError("injected layer removal error")
+    manager._highlight_overlay.clear = failed_clear
+    manager._on_clear_highlight(event(base_payload()))
+    assert dispatched[-1][1]["result"] == "error"
+    manager._runtime_authority.authorized = False
+    manager._on_clear_highlight(event(base_payload()))
+    assert dispatched[-1][0] == "commandRejected"
+    assert context.selection.clear_count == 0
+
+
 
 def install_stage_management_stubs() -> None:
     class DummyItem:
@@ -35,7 +111,7 @@ def install_stage_management_stubs() -> None:
 
     omni = types.ModuleType("omni")
     omni_usd = types.ModuleType("omni.usd")
-    omni_usd.StageEventType = types.SimpleNamespace(ASSETS_LOADED=1, SELECTION_CHANGED=2)
+    omni_usd.StageEventType = types.SimpleNamespace(ASSETS_LOADED=1, SELECTION_CHANGED=2, CLOSED=3)
     omni_usd.get_context = lambda: None
     omni.usd = omni_usd
     omni_kit = types.ModuleType("omni.kit")
@@ -50,11 +126,16 @@ def install_stage_management_stubs() -> None:
     omni_kit_viewport = types.ModuleType("omni.kit.viewport")
     omni_kit_viewport_utility = types.ModuleType("omni.kit.viewport.utility")
     omni_kit_viewport_utility.get_active_viewport_camera_string = lambda: "/OmniverseKit_Persp"
+    omni_kit_viewport_utility.frame_viewport_prims = lambda **_kwargs: True
     omni_kit_viewport.utility = omni_kit_viewport_utility
     omni.kit = omni_kit
 
     pxr = types.ModuleType("pxr")
     pxr.UsdGeom = types.ModuleType("pxr.UsdGeom")
+    pxr.Sdf = types.SimpleNamespace(Path=lambda value: types.SimpleNamespace(
+        IsAbsolutePath=lambda: value.startswith("/"),
+        IsPrimPath=lambda: "." not in value and " " not in value,
+    ))
     pxr.Usd = types.SimpleNamespace(
         EditContext=lambda *_args: DummyEditContext(),
         EditTarget=lambda value: value,
@@ -201,6 +282,13 @@ def make_manager(authority):
     )
     manager._is_external_update = False
     manager._camera_attrs = {}
+    manager._highlight_stage = None
+    manager._camera_stage = None
+    manager._highlight_overlay = types.SimpleNamespace(
+        clear=lambda: None,
+        replace=lambda _stage, items: {"applied_paths": [item["prim_path"] for item in items],
+                                      "missing_paths": [], "unsupported_paths": []},
+    )
     manager._subscriptions = []
     return manager
 

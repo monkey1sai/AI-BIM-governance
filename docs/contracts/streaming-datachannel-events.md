@@ -127,78 +127,54 @@ GPU / Kit manual validation when hardware is available:
 
 ## Highlight Prims
 
-Request:
+目前 Kit 使用 `applied_mode: material_overlay`。只有明確「在模型中顯示問題」才送出
+`highlightPrimsRequest`；檢核完成與閱讀明細都不發 3D mutator。
+請求繼續使用既有 authority envelope、request_id 與 mode=replace；items 最多4096個，
+每個 prim_path 為確切 mapped USD prim path。color 為3/4個0..1有限數字，預設alpha=1。
+新增可省略的 severity 字串：critical > high > error=required > medium=warning > low > info/unknown。
+IDS 失敗結果的 required 在問題篩選與著色時歸入 error 紅色；原始 severity 與 pass/fail 狀態保持不變。
+同 prim／重疊 render target 依最高嚴重度仲裁；同順位按 path、RGBA 排序以確保順序無關。
+A1 的問題列不去重，送出構件與模型 applied_paths 分別計數。
 
-```json
-{
-  "event_type": "highlightPrimsRequest",
-  "payload": {
-    "trace_id": "ifcready_1779687625000_064c6813",
-    "request_id": "mapping-highlight-001",
-    "mode": "replace",
-    "items": [
-      {
-        "prim_path": "/World",
-        "ifc_guid": "2VJ3sK9L000fake001",
-        "color": [1, 0, 0, 1],
-        "label": "Smoke Test",
-        "source": "mock_compliance",
-        "issue_id": "ISSUE-DEMO-001"
-      }
-    ],
-    "focus_first": true
-  }
-}
-```
+成功回覆範例（每個請求仍須先通過 coordinator 的逐次授權）：
 
-Response:
-
-```json
+~~~json
 {
   "event_type": "highlightPrimsResult",
   "payload": {
-    "trace_id": "ifcready_1779687625000_064c6813",
+    "trace_id": "ifcready_material_example",
+    "request_id": "material-example-001",
     "result": "success",
-    "request_id": "mapping-highlight-001",
-    "applied_mode": "selection",
-    "selected_paths": ["/World"],
+    "applied_mode": "material_overlay",
+    "applied_paths": ["/World/WallA", "/World/DoorB"],
     "missing_paths": [],
-    "fallback_paths": []
+    "unsupported_paths": [],
+    "renderer_mode": "RaytracedLighting"
   }
 }
-```
+~~~
 
-The first implementation may use selection as the visual fallback. It must return missing prims instead of crashing.
-
-Stage-root fallback rules:
-
-- Fallback is triggered only when the requested `prim_path` equals `/World`. Any other unresolved path (for example `/World/Floor1/Wall_1`) is returned as-is in `missing_paths`, never silently rewritten to a different prim.
-- When `/World` is missing, Kit resolves to the stage `defaultPrim` (or the first non-Render, non-`OmniverseKit_*` child of the pseudo-root) and reports the substitution under `fallback_paths`.
-
-If a converted BIM stage uses another root prim such as `/model`, a `/World` request may resolve to the stage default prim and return:
-
-```json
-{
-  "event_type": "highlightPrimsResult",
-  "payload": {
-    "trace_id": "ifcready_1779687625000_064c6813",
-    "result": "success",
-    "request_id": "mapping-highlight-001",
-    "applied_mode": "selection",
-    "selected_paths": ["/model"],
-    "missing_paths": [],
-    "fallback_paths": [
-      {
-        "requested_path": "/World",
-        "selected_path": "/model",
-        "reason": "stage_root_fallback"
-      }
-    ]
-  }
-}
-```
+- applied_paths 是已驗證 composed material 勝出的 requested paths；missing_paths、unsupported_paths
+  必須保留。較低嚴重度的重疊路徑仍列 applied，但共享 render target 使用最高嚴重度顏色。
+- Instance root 可使用唯一 instance opinion；不改 shared prototype，不支援直接 instance proxy、
+  prototype、PointInstancer 或無可繪製幾何。外部更強 material opinion 無法克服時回 unsupported。
+- Overlay 僅寫入自己持有的匿名 session sublayer；不保存 root/source USDC、不更換 edit target 的永久狀態。
+  替換驗證失敗會回 error 並恢復舊圖層。關閉只移除自己的 layer，保留相機、選取與其他 layers。
+- 同 Stage ASSETS_LOADED 保留效果；新 Stage、CLOSED、shutdown 清除舊效果。
+- focus_first 保留協定相容，但材質高亮不聚焦、不選取；定位必須另送 focusPrimRequest。
+  高亮／定位不再以 /World fallback 冒充 mapped component。
+- Viewer 僅在 trace、request、binding 與觀看 context 相符時處理 ACK；父介面的 highlight_result
+  等待真正 Kit 回覆。缺路徑、unsupported、unmapped、舊 selection ACK、拒絕／逾時均不聲稱多色完成。
+- renderer_mode 只讀 /rtx/rendermode，unknown 保持未知，不切換 renderer。
+  它不能單獨證明可見 RTX 效果；必須另外保留實際 first frame、Stage、DataChannel、ACK及畫面。
+  舊 applied_mode=selection 仍可解析為選取資訊，但不能作為多色高亮驗收。
 
 ## Focus Prim
+
+定位只接受存在的 absolute prim path。成功時在 session edit context 執行 viewport framing，
+加入 selection outline，回覆 framed=true；不改 severity materials。clear selection 使用
+selectPrimsRequest(paths=[])，不重置相機；clearHighlightRequest 只恢復材質。
+官方 framing API：https://docs.omniverse.nvidia.com/kit/docs/omni.kit.viewport.utility/1.0.17/omni.kit.viewport.utility/omni.kit.viewport.utility.frame_viewport_prims.html
 
 Request:
 
@@ -241,7 +217,7 @@ catalog and retain the same request correlation:
 | `selectPrimsResult` | `result`, `error`, `selected_paths[]`, `request_id` |
 | `makePrimsPickableResponse` | `result`, `error`, `request_id` |
 | `resetStageResponse` | `result`, `error`, `request_id` |
-| `clearHighlightResult` | `result`, `applied_mode:"selection"`, `request_id` |
+| `clearHighlightResult` | `result`, `applied_mode:"material_overlay"`, `request_id`；error 時含 `error` |
 
 The root contract test extracts every literal production Kit
 `dispatch_event(...)` and requires it to appear in

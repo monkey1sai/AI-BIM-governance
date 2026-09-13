@@ -103,12 +103,14 @@ export function WorkspaceViewportHost({ firstFrameTimeoutMs }: WorkspaceViewport
   }, [registerHostActions]);
 
   const setStageTree = slot?.setStageTree;
+  const setSelectedStagePaths = slot?.setSelectedStagePaths;
   const pageStageTreeRef = useRef(dockSubscription?.onStageTree);
   pageStageTreeRef.current = dockSubscription?.onStageTree;
   const onStageTree = useCallback((msg: StageTreeMessage) => {
     setStageTree?.(msg.children);
+    if (Array.isArray(msg.selected_paths)) setSelectedStagePaths?.(msg.selected_paths.filter(path => typeof path === "string" && path.startsWith("/")));
     pageStageTreeRef.current?.(msg);
-  }, [setStageTree]);
+  }, [setStageTree, setSelectedStagePaths]);
 
   useEffect(() => {
     if (live) return;

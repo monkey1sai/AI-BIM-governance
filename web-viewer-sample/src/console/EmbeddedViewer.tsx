@@ -27,12 +27,22 @@ export interface HighlightResultMessage {
   // Console 發送端為每個 postMessage 指令建立的本地關聯 ID。Kit requestId 仍保留為
   // runtime 實際請求 ID；兩者不可互換，前者只用於避免選取切換後接收舊 ACK。
   clientRequestId?: string;
-  ok: boolean; reason?: "unmapped" | "datachannel_not_ready";
+  ok: boolean; reason?: string;
+  applied_mode?: string;
+  applied_count?: number;
+  applied_paths?: string[];
+  unsupported_paths?: string[];
+  missing_paths?: string[];
+  renderer_mode?: string;
   // 批次（highlight_batch）ack 專屬（加性欄位；單筆 highlight ack 不帶）：viewer 端誠實計數——
   // 實際裝進單一 highlightPrimsRequest 的筆數與 viewer mapping 解不出 prim 的 GUID 清單。
   sent_count?: number;
   unmapped_count?: number;
   unmapped_guids?: string[];
+}
+export interface IssueViewResultMessage extends Omit<HighlightResultMessage, "type"> {
+  type: "issue_view_result";
+  action: "clear" | "focus" | "clear_selection";
 }
 export interface SelectedGuidMessage { protocol: "vg01"; type: "selected_guid"; ifcGuid: string | null }
 
@@ -44,6 +54,7 @@ export interface USDPrimNode {
 }
 
 export interface StageTreeMessage {
+  selected_paths?: string[];
   protocol: "vg01";
   type: "stage_tree";
   prim_path: string;
@@ -64,8 +75,9 @@ export interface EmbeddedViewerHandle {
   // 並回「一個」帶 sent_count/unmapped_count 的 highlight_result。sendHighlight 維持逐筆語意
   //（每 item 一個 replace request + 一個 ack），兩者不可混用。
   sendHighlightBatch(items: HighlightItem[], clientRequestId: string): void;
-  sendFocus(ifcGuid: string): void;
-  sendClear(): void;
+  sendFocus(ifcGuid: string, clientRequestId?: string): void;
+  sendClear(clientRequestId?: string): void;
+  clearSelection(clientRequestId: string): void;
   requestStageTree(primPath?: string): void;
   selectPrim(primPath: string, multiSelect?: boolean): void;
   sendToolbarAction(
@@ -108,6 +120,7 @@ export interface EmbeddedViewerProps {
   onStreamState?: (m: StreamStateMessage) => void;
   onStageLoaded?: (message: StageLoadedMessage) => void;
   onHighlightResult?: (m: HighlightResultMessage) => void;
+  onIssueViewResult?: (m: IssueViewResultMessage) => void;
   onSelectedGuid?: (ifcGuid: string | null) => void;
   onStageTree?: (message: StageTreeMessage) => void;
 }
@@ -174,6 +187,7 @@ export const EmbeddedViewer = forwardRef<EmbeddedViewerHandle, EmbeddedViewerPro
           break;
         }
         case "highlight_result": p.onHighlightResult?.(m as unknown as HighlightResultMessage); break;
+        case "issue_view_result": p.onIssueViewResult?.(m as unknown as IssueViewResultMessage); break;
         case "selected_guid":    p.onSelectedGuid?.((m as unknown as SelectedGuidMessage).ifcGuid ?? null); break;
         case "stage_tree":       p.onStageTree?.(m as unknown as StageTreeMessage); break;
         default: break; // 未知 type 忽略
@@ -192,8 +206,9 @@ export const EmbeddedViewer = forwardRef<EmbeddedViewerHandle, EmbeddedViewerPro
   useImperativeHandle(ref, () => ({
     sendHighlight: (items, clientRequestId) => post({ type: "highlight", items, clientRequestId }),
     sendHighlightBatch: (items, clientRequestId) => post({ type: "highlight_batch", items, clientRequestId }),
-    sendFocus: (ifcGuid) => post({ type: "focus", ifc_guid: ifcGuid }),
-    sendClear: () => post({ type: "clear" }),
+    sendFocus: (ifcGuid, clientRequestId) => post({ type: "focus", ifc_guid: ifcGuid, clientRequestId }),
+    sendClear: (clientRequestId) => post({ type: "clear", clientRequestId }),
+    clearSelection: (clientRequestId) => post({ type: "clear_selection", clientRequestId }),
     requestStageTree: (primPath = "/World") => post({ type: "request_stage_tree", prim_path: primPath }),
     selectPrim: (primPath: string, multiSelect = false) =>
       post({ type: "select_prim", prim_path: primPath, multi_select: multiSelect }),

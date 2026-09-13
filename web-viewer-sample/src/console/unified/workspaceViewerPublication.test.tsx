@@ -39,6 +39,24 @@ describe("workspace publication ownership", () => {
   async function mountProvider() {
     await act(async () => root.render(<ViewportSlotProvider><Probe /></ViewportSlotProvider>));
   }
+  it("retained inactive A1 releases only its subscription and restores it without changing session evidence", async () => {
+    function Harness({ active }: { active: boolean }) {
+      return <ViewportSlotProvider><Probe /><WorkspaceViewerMount active={active} mode="a1-inline" handoff={binding.handoff} /></ViewportSlotProvider>;
+    }
+    await act(async () => root.render(<Harness active />));
+    await act(async () => {
+      api!.setGate({ canSend: true, reason: "" });
+      api!.setSelectedStagePaths?.(["/World/A"]);
+    });
+    await act(async () => root.render(<Harness active={false} />));
+    expect(api!.dockSubscription).toBeNull();
+    expect(api!.viewerPublication).toEqual(binding);
+    expect(api!.selectedStagePaths).toEqual(["/World/A"]);
+    await act(async () => root.render(<Harness active />));
+    expect(api!.dockSubscription).not.toBeNull();
+    expect(api!.activeSessionId).toBe(binding.handoff.sessionId);
+    expect(api!.gate?.canSend).toBe(true);
+  });
   it("Dock unmount drops callbacks/ref without dropping binding, gate or tree", async () => {
     const gate = vi.fn();
     const paneRef = createRef<ReviewSessionViewerPaneHandle>();

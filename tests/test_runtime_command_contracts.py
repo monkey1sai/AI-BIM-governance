@@ -20,6 +20,23 @@ MESSAGING_SOURCE = (
     / "messaging"
 )
 TRACE_ID = "ifcready_runtime_command_contract"
+
+
+def test_material_highlight_and_focus_observation_contract():
+    validator = load_validator("kit-datachannel-v1.schema.json")
+    payload = {"trace_id": TRACE_ID, "request_id": "material-test", "result": "success",
+               "applied_mode": "material_overlay", "applied_paths": ["/A", "/B"],
+               "missing_paths": [], "unsupported_paths": [], "renderer_mode": "RaytracedLighting"}
+    validator.validate({"event_type": "highlightPrimsResult", "payload": payload})
+    for field in ("applied_paths", "missing_paths", "unsupported_paths"):
+        bad = {key: value for key, value in payload.items() if key != field}
+        assert list(validator.iter_errors({"event_type": "highlightPrimsResult", "payload": bad}))
+    validator.validate({"event_type": "clearHighlightResult", "payload": {
+        "trace_id": TRACE_ID, "request_id": "clear-test", "result": "error",
+        "applied_mode": "material_overlay", "error": "layer removal failed"}})
+    validator.validate({"event_type": "focusPrimResult", "payload": {
+        "trace_id": TRACE_ID, "request_id": "focus-test", "result": "success",
+        "prim_path": "/A", "applied_mode": "selection", "framed": True}})
 SESSION_ID = "review_session_001"
 
 
