@@ -223,6 +223,11 @@
         },
         {
           "match": "exact",
+          "value": "ezplus.bim_review_stream.messaging.highlight_overlay",
+          "layer": "infrastructure"
+        },
+        {
+          "match": "exact",
           "value": "ezplus.bim_review_stream.messaging.stage_loading",
           "layer": "application"
         },
@@ -638,6 +643,16 @@
         {
           "match": "exact",
           "value": "viewer/core/runtimeCommandTracker.ts",
+          "layer": "application"
+        },
+        {
+          "match": "exact",
+          "value": "viewer/core/highlightResult.ts",
+          "layer": "domain"
+        },
+        {
+          "match": "exact",
+          "value": "viewer/core/issueViewExchange.ts",
           "layer": "application"
         },
         {
