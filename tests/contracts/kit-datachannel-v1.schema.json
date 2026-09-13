@@ -123,6 +123,7 @@
       "required": ["prim_path"],
       "properties": {
         "prim_path": { "type": "string", "minLength": 1 },
+        "severity": { "type": "string" },
         "ifc_guid": { "type": ["string", "null"] },
         "color": { "type": "array", "items": { "type": "number" }, "minItems": 3, "maxItems": 4 },
         "label": { "type": "string" },
@@ -210,7 +211,7 @@
               "required": ["mode", "items", "focus_first"],
               "properties": {
                 "mode": { "const": "replace" },
-                "items": { "type": "array", "items": { "$ref": "#/$defs/highlightItem" } },
+                "items": { "type": "array", "maxItems": 4096, "items": { "$ref": "#/$defs/highlightItem" } },
                 "focus_first": { "type": "boolean" }
               }
             }
@@ -476,7 +477,10 @@
             "trace_id": { "$ref": "#/$defs/dataChannelTraceId" },
             "result": { "enum": ["success", "error"] },
             "request_id": { "$ref": "#/$defs/requestId" },
-            "applied_mode": { "const": "selection" },
+            "applied_mode": { "enum": ["selection", "material_overlay"] },
+            "applied_paths": { "type": "array", "items": { "type": "string" } },
+            "unsupported_paths": { "type": "array", "items": { "type": "string" } },
+            "renderer_mode": { "enum": ["unknown", "RaytracedLighting", "PathTracing", "RealTimePathTracing"] },
             "selected_paths": { "type": "array", "items": { "type": "string" } },
             "missing_paths": { "type": "array", "items": { "type": "string" } },
             "fallback_paths": {
@@ -485,7 +489,11 @@
             },
             "error": { "type": "string" }
           },
-          "additionalProperties": false
+          "additionalProperties": false,
+          "allOf": [{
+            "if": { "required": ["applied_mode"], "properties": { "applied_mode": { "const": "material_overlay" } } },
+            "then": { "required": ["applied_paths", "missing_paths", "unsupported_paths"] }
+          }]
         }
       }
     },
@@ -504,6 +512,7 @@
             "prim_path": { "type": ["string", "null"] },
             "requested_prim_path": { "type": "string" },
             "applied_mode": { "const": "selection" },
+            "framed": { "type": "boolean" },
             "fallback_path": { "type": "string" },
             "error": { "type": "string" }
           },
@@ -577,7 +586,8 @@
           "properties": {
             "trace_id": { "$ref": "#/$defs/dataChannelTraceId" },
             "result": { "enum": ["success", "error"] },
-            "applied_mode": { "const": "selection" },
+            "applied_mode": { "enum": ["selection", "material_overlay"] },
+            "error": { "type": "string" },
             "request_id": { "$ref": "#/$defs/requestId" }
           },
           "additionalProperties": false

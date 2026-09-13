@@ -151,6 +151,8 @@ export function WorkspacePage({ initialDock = "a1" }: WorkspacePageProps) {
   const zh = useLang() === "zh";
   const slot = useViewportSlot();
   const [dock, setDock] = useState<DockKey>(() => dockFromHashQuery() ?? initialDock);
+  const [a1Visited, setA1Visited] = useState(dock === "a1");
+  useEffect(() => { if (dock === "a1") setA1Visited(true); }, [dock]);
 
   const stageTreeApi = useUsdStageTree();
   const rawTree = slot?.stageTree;
@@ -295,6 +297,7 @@ export function WorkspacePage({ initialDock = "a1" }: WorkspacePageProps) {
           </div>
           {hasStageTree ? (
             <>
+              {slot?.selectedStagePaths?.map(path => <p key={path} data-testid="stage-selected-path" style={{ overflowWrap: "anywhere" }}>已選取：{path}</p>)}
               <input
                 data-uc="ws-stage-search"
                 type="text"
@@ -317,7 +320,7 @@ export function WorkspacePage({ initialDock = "a1" }: WorkspacePageProps) {
                     key={rootNode.path}
                     node={rootNode}
                     expandedPaths={stageTreeApi.expandedPaths}
-                    selectedPrims={stageTreeApi.selectedPrims}
+                    selectedPrims={slot?.selectedStagePaths ? new Set(slot.selectedStagePaths) : stageTreeApi.selectedPrims}
                     disabled={toolbarDisabled}
                     onToggle={(path) => {
                       const expanding = !stageTreeApi.expandedPaths.has(path);
@@ -426,7 +429,9 @@ export function WorkspacePage({ initialDock = "a1" }: WorkspacePageProps) {
         <aside data-uc="ws-dock" style={{ borderLeft: "1px solid rgba(120,160,210,.10)", minHeight: 0, minWidth: 0, display: "flex", flexDirection: "column" }}>
           <WorkspaceFlowGuide dock={dock} />
           <main data-uc={`live-module-${dock}`} style={{ flex: 1, minHeight: 0, minWidth: 0, overflow: "auto", padding: 12 }}>
-            {dock === "a1" ? <A1GovernanceWorkbenchPage /> : null}
+            {a1Visited || dock === "a1" ? <div hidden={dock !== "a1"}>
+              <A1GovernanceWorkbenchPage active={dock === "a1"} />
+            </div> : null}
             {dock === "a2" ? <VersionDiffPage /> : null}
             {dock === "a3" ? <FederationPage /> : null}
             {dock === "a4" ? <A4SemanticSearchPage /> : null}

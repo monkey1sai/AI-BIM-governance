@@ -19,10 +19,8 @@ export type HighlightResult =
   | { ok: true; primPath: string; requestId: string }
   | { ok: false; reason: "unmapped" | "datachannel_not_ready" };
 
-// A2 F2⑥ 批次疊加：單一 highlightPrimsRequest 可帶多 items，Kit 端 _on_highlight_prims 會把全部
-// prim 收進同一次 set_selected_prim_paths（聯集選取）。反之「逐筆各發一個 mode:"replace" request」
-// 會每筆先 clear 前一筆（stage_management.py:406-411），多構件最終只剩最後一筆——批次疊加必須走
-// 這個單一 request 入口。unmapped 誠實逐 GUID 回列（不捏造 prim、不虛報成功筆數）。
+// 批次疊加使用一個 replace request 原子替換 Kit 材質層，保留每個構件的嚴重度與顏色。
+// 逐筆 replace 只會留下最後一筆；unmapped 逐 GUID 回列，實際套用仍須等待 Kit ACK。
 export type HighlightManyResult =
   | { ok: true; requestId: string; sent: { ifc_guid: string; primPath: string }[]; unmapped: string[] }
   | { ok: false; reason: "unmapped" | "datachannel_not_ready" };
@@ -34,12 +32,12 @@ export function normalizeSeverity(sev: string): string {
   const s = sev.toLowerCase();
   if (s === "critical" || s === "high" || s === "error") return "error";
   if (s === "medium" || s === "warning") return "warning";
-  return sev;
+  return s;
 }
 
 export interface HighlightBridgeDeps {
   cache: MappingCache;
-  sendMessage: (message: StreamMessage) => void;
+  sendMessage: (message: StreamMessage) => unknown;
   dataChannelReady: () => boolean;
 }
 
@@ -59,6 +57,7 @@ export class HighlightBridge {
       : severityToColor(normalizeSeverity(failed.severity));
     const item: HighlightItem = {
       prim_path: primPath,
+      severity: failed.severity,
       ifc_guid: failed.ifc_guid,
       color: resolvedColor,
       label: failed.label || failed.rule_code || failed.ifc_guid,
@@ -66,13 +65,15 @@ export class HighlightBridge {
       issue_id: failed.rule_code ? `gov:${failed.rule_code}:${failed.ifc_guid}` : `gov:${failed.ifc_guid}`,
     };
     const requestId = `gov-highlight-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    this.deps.sendMessage(buildHighlightPrimsRequest([item], true, requestId));
+    if (this.deps.sendMessage(buildHighlightPrimsRequest([item], false, requestId)) === false) {
+      return { ok: false, reason: "datachannel_not_ready" };
+    }
     return { ok: true, primPath, requestId };
   }
 
   // 批次疊加（A2 diff overlay）：全部可對映構件裝進「一個」highlightPrimsRequest（mode:"replace"）
-  // → Kit 端一次 set_selected_prim_paths 聯集選取。per-item color 仍照 severity 對映寫入協定 payload
-  //（error=紅 / warning=橘 / 其他=藍；或若提供自訂 RGBA color 則優先透傳）。focusFirst=false：批次疊加不搶相機焦點。
+  // → Kit 一次替換材質層。per-item color 依 severity 對映（紅／黃／藍），或使用自訂 RGBA。
+  // focusFirst=false：批次疊加不改相機或選取；定位與清除選取由各自的命令處理。
   highlightMany(failedList: FailedElement[]): HighlightManyResult {
     if (!this.deps.dataChannelReady()) {
       return { ok: false, reason: "datachannel_not_ready" };
@@ -91,6 +92,7 @@ export class HighlightBridge {
         : severityToColor(normalizeSeverity(failed.severity));
       items.push({
         prim_path: primPath,
+        severity: failed.severity,
         ifc_guid: failed.ifc_guid,
         color: resolvedColor,
         label: failed.label || failed.rule_code || failed.ifc_guid,
@@ -104,7 +106,9 @@ export class HighlightBridge {
       return { ok: false, reason: "unmapped" };
     }
     const requestId = `gov-highlight-batch-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    this.deps.sendMessage(buildHighlightPrimsRequest(items, false, requestId));
+    if (this.deps.sendMessage(buildHighlightPrimsRequest(items, false, requestId)) === false) {
+      return { ok: false, reason: "datachannel_not_ready" };
+    }
     return { ok: true, requestId, sent, unmapped };
   }
 }

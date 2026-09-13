@@ -5240,7 +5240,7 @@ describe("Q-Important #2：highlight 分支須驗 payload 形狀（items 非陣�
     vi.stubEnv("VITE_ALLOWED_COORDINATOR_ORIGINS", PARENT_ORIGIN);
     const parent = setEmbedded(`${PARENT_ORIGIN}/ui`);
     const app = operableApp();
-    vi.spyOn(internals(app), "_overlayHighlight").mockReturnValue({ ok: true, requestId: "kit_request_001" });
+    vi.spyOn(internals(app), "_overlayHighlight").mockReturnValue({ ok: true, requestId: "kit_request_001", primPath: "/World/A" });
     const message = new MessageEvent("message", {
       data: {
         protocol: "vg01",
@@ -5253,6 +5253,13 @@ describe("Q-Important #2：highlight 分支須驗 payload 形狀（items 非陣�
 
     internals(app)._handleParentMessage(message);
 
+    expect(postedTypes(parent)).not.toContain("highlight_result");
+    (app as unknown as { runtimeCommandTracker: import("../viewer/core/runtimeCommandTracker").RuntimeCommandTracker })
+      .runtimeCommandTracker.register("kit_request_001", { eventType: "highlightPrimsRequest" });
+    internals(app)._handleCustomEvent({ event_type: "highlightPrimsResult", payload: {
+      request_id: "kit_request_001", result: "success", applied_mode: "material_overlay",
+      applied_paths: ["/World/A"], missing_paths: [], unsupported_paths: [],
+    } });
     expect(parent.postMessage).toHaveBeenCalledWith(expect.objectContaining({
       type: "highlight_result",
       requestId: "kit_request_001",
@@ -5314,11 +5321,18 @@ describe("A2 highlight_batch：單一批次 request + 單一 ack（誠實計數�
     internals(app)._handleParentMessage(batchMessage(items));
     expect(manySpy).toHaveBeenCalledTimes(1); // 整批一次，非逐筆三次
     expect(manySpy.mock.calls[0][0]).toEqual(items);
+    expect(postedTypes(parent)).not.toContain("highlight_result");
+    (app as unknown as { runtimeCommandTracker: import("../viewer/core/runtimeCommandTracker").RuntimeCommandTracker })
+      .runtimeCommandTracker.register("req_batch_1", { eventType: "highlightPrimsRequest" });
+    internals(app)._handleCustomEvent({ event_type: "highlightPrimsResult", payload: {
+      request_id: "req_batch_1", result: "success", applied_mode: "material_overlay",
+      applied_paths: ["/World/A", "/World/B"], missing_paths: [], unsupported_paths: [],
+    } });
     const results = parent.postMessage.mock.calls
       .map((c) => c[0] as Record<string, unknown>)
       .filter((p) => p.type === "highlight_result");
     expect(results).toHaveLength(1); // 單一批次 ack
-    expect(results[0]).toMatchObject({ ok: true, requestId: "req_batch_1", sent_count: 2, unmapped_count: 1, unmapped_guids: ["GUID-C"] });
+    expect(results[0]).toMatchObject({ ok: false, requestId: "req_batch_1", applied_count: 2, sent_count: 2, unmapped_count: 1, unmapped_guids: ["GUID-C"] });
   });
 
   it("bridge 回拒（datachannel_not_ready）→ 單一 ok:false ack 帶 reason（誠實，不假裝已送）", () => {

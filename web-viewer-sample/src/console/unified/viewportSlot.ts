@@ -39,6 +39,8 @@ export interface ViewportHostActions {
 }
 
 export interface ViewportSlotApi {
+  selectedStagePaths?: string[];
+  setSelectedStagePaths?: (paths: string[]) => void;
   /** 中欄容器 ref callback；null＝解除註冊（host 轉 visibility:hidden，不 unmount）。 */
   registerSlot: (el: HTMLElement | null) => void;
   slotEl: HTMLElement | null;

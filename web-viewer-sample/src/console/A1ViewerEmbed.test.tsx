@@ -18,6 +18,13 @@ vi.mock("./EmbeddedViewer", async () => {
         const onHighlightResult = props.onHighlightResult as undefined | ((message: unknown) => void);
         onHighlightResult?.({ protocol: "vg01", type: "highlight_result", requestId: "test", clientRequestId, ok: true });
       },
+      sendHighlightBatch(items: unknown[], clientRequestId: string) {
+        viewerBox.highlightBatches.push(items);
+        const onHighlightResult = props.onHighlightResult as undefined | ((message: unknown) => void);
+        onHighlightResult?.({ protocol: "vg01", type: "highlight_result", requestId: "test", clientRequestId,
+          ok: true, applied_mode: "material_overlay", applied_count: items.length });
+      },
+      clearSelection() {},
       sendFocus() {},
       sendClear() {},
     }));
@@ -955,8 +962,8 @@ describe("A1 3D review decoupling", () => {
     expect(forSessionSpy).not.toHaveBeenCalled();
     expect(directRunSpy).not.toHaveBeenCalled();
     expect(q("a1-open-review-room")).toBeNull();
-    expect(q("a1-inline-handoff-summary")?.textContent).toContain("2O2Fr$t4X7Zf8NOew3FLOH");
-    expect(q("a1-inline-handoff-summary")?.textContent).toContain("/World/Door_001");
+    expect(q("a1-issue-view-controls")?.textContent).toContain("2O2Fr$t4X7Zf8NOew3FLOH");
+    expect(q("a1-issue-view-controls")?.textContent).toContain("/World/Door_001");
     expect(q<HTMLInputElement>("a1-inline-session-input")?.value).toBe("review_session_x");
     expect(window.location.hash).toBe("#a1");
     expect(container.textContent).not.toContain("lease_token");
@@ -976,7 +983,7 @@ describe("A1 3D review decoupling", () => {
     await flush();
 
     expect(q("a1-open-review-room")).toBeNull();
-    expect(q("a1-inline-handoff-summary")).toBeNull();
+    expect(q<HTMLButtonElement>("a1-show-issues")?.disabled).toBe(true);
     expect(window.location.hash).toBe("#a1");
     expect(container.textContent).not.toContain("lease_token");
     expect(viewerBox.renderCount).toBe(0);
@@ -1021,8 +1028,8 @@ describe("A1 3D review decoupling", () => {
     expect(createReviewSessionSpy).toHaveBeenCalledWith("ifcready_1");
     expect(window.location.hash).toBe("#a1");
     expect(q<HTMLInputElement>("a1-inline-session-input")?.value).toBe("review_session_new");
-    expect(q("a1-inline-handoff-summary")?.textContent).toContain("guid_minio_new_session");
-    expect(q("a1-inline-handoff-summary")?.textContent).toContain("/World/Door_003");
+    expect(q("a1-issue-view-controls")?.textContent).toContain("guid_minio_new_session");
+    expect(q("a1-issue-view-controls")?.textContent).toContain("/World/Door_003");
     expect(q("a1-review-open-url")?.textContent).toContain("review_session_new");
     expect(q("a1-open-viewer")).toBeNull();
     expect(openSpy).not.toHaveBeenCalled();
@@ -1109,7 +1116,7 @@ describe("A1 3D review decoupling", () => {
     const inlineClaim = vi.mocked(coordinatorClient.claimViewerLease).mock.calls[0];
     expect(inlineClaim[1]).not.toHaveProperty("user_id");
     expect(q("a1-inline-viewer-host")).not.toBeNull();
-    const highlight = q<HTMLButtonElement>("a1-inline-highlight")!;
+    const highlight = q<HTMLButtonElement>("a1-show-issues")!;
     expect(highlight.disabled).toBe(false);
     await act(async () => { highlight.click(); });
     await flush();
@@ -1158,9 +1165,9 @@ describe("A1 3D review decoupling", () => {
     expect(forSessionSpy).not.toHaveBeenCalled();
     expect(directRunSpy).not.toHaveBeenCalled();
     expect(q("a1-open-review-room")).toBeNull();
-    expect(q("a1-inline-handoff-summary")?.textContent).toContain("guid_without_mapping");
-    expect(q("a1-inline-handoff-summary")?.textContent).toContain("ifc_usdc_mapping_information_incomplete");
-    expect(q("a1-inline-highlight-reason")?.textContent).toContain("usd_prim_path");
+    expect(q("a1-issue-view-controls")?.textContent).toContain("guid_without_mapping");
+    expect(q("a1-issue-view-controls")?.textContent).toContain("ifc_usdc_mapping_information_incomplete");
+    expect(q("a1-issue-view-controls")?.textContent).toContain("此構件目前無法在模型中定位");
     expect(window.location.hash).toBe("#a1");
     expect(container.textContent).not.toContain("lease_token");
   });

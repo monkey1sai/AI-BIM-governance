@@ -10,10 +10,12 @@ import { coordinatorClient, CoordinatorHttpError, IfcReadyListItem, IfcReadyRevi
 import { LifecycleStrip } from "./modelData/conversionShared";
 import type { ReviewRoomHandoff } from "./ReviewSessionViewerPane";
 import { WorkspaceViewerMount } from "./unified/WorkspaceViewerMount";
+import { useViewportSlot } from "./unified/viewportSlot";
 import { ElementMappingDocument, isFakeMappingDocument, isFakeMappingItem } from "../types/mapping";
 import { buildHandoff } from "./handoff";
 import { useIncomingHandoff, IncomingHandoffBanner } from "./incomingHandoff";
-import { FailureScoreboard } from "./FailureScoreboard";
+import { A1IssueViewControls } from "./A1IssueViewControls";
+import type { ReviewSessionViewerPaneHandle, ReviewSessionViewerPaneBatchGate } from "./ReviewSessionViewerPane";
 import { ClosedSessionRecovery } from "./ClosedSessionRecovery";
 import { ReadyReviewSessions } from "./ReadyReviewSessions";
 import { RemediationHistoryPanel } from "./remediation/RemediationHistoryPanel";
@@ -117,7 +119,10 @@ function enrichRuleResultsWithMapping(rows: RuleResultRow[], value: unknown): Ru
     return { ...row, ...diagnostic };
   });
 }
-export function A1GovernanceWorkbenchPage() {
+export function A1GovernanceWorkbenchPage({ active = true }: { active?: boolean } = {}) {
+  const workspaceSlot = useViewportSlot();
+  const issueViewerRef = useRef<ReviewSessionViewerPaneHandle>(null);
+  const [issueViewerGate, setIssueViewerGate] = useState<ReviewSessionViewerPaneBatchGate | null>(null);
   // C3 slice 1：rule-run 狀態機 + pollGen 輪詢抽至共用 hook useRuleRun（seam 的第二個 adapter
   // 是 UnifiedConsole A1Dock）；本頁行為與 DOM 不變。
   const { state, dispatch, runId, run: runRuleRun } = useRuleRun();
@@ -1013,7 +1018,6 @@ export function A1GovernanceWorkbenchPage() {
               />
             </div>
           )}
-          {runId && state.failed.length > 0 && <FailureScoreboard runId={runId} failed={state.failed} />}
         </Panel>
       )}
 
@@ -1097,7 +1101,12 @@ export function A1GovernanceWorkbenchPage() {
           {reviewOpenErr && <span className="ec-warn-note" data-testid="a1-review-open-error">{reviewOpenErr}</span>}
           {conversionRetryErr && <span className="ec-warn-note" data-testid="a1-conversion-retry-error">{conversionRetryErr}</span>}
         </div>
-        {a1InlineHandoff && <WorkspaceViewerMount mode="a1-inline" handoff={a1InlineHandoff} />}
+        <A1IssueViewControls rows={state.failed} runId={runId} sessionId={selectedSession}
+          paneRef={issueViewerRef} gate={workspaceSlot && workspaceSlot.activeSessionId !== selectedSession
+            ? { canSend: false, canSendViewerCommand: false, reason: "目前 3D Session 與這份檢核結果不同，請先選擇一致的 Session。" }
+            : issueViewerGate} />
+        {a1InlineHandoff && <WorkspaceViewerMount active={active} mode="a1-inline" handoff={a1InlineHandoff}
+          paneRef={issueViewerRef} onBatchGateChange={setIssueViewerGate} showHandoffActions={false} />}
       </Panel>
 
       <Panel title={t("交付", "Deliverables")} sub={t("開 Issue / 匯出 Excel / 匯出 BCF 2.1 走真實後端；BCF 需先建 Issue（step=issued/delivered）才 enable；3D 高亮在 A1 本頁 session 面板執行", "Open Issue / Export Excel / Export BCF 2.1 go through the real backend; BCF is enabled only after Issues are created (step=issued/delivered); 3D highlight runs in the A1 session panel above")} prov="asbuilt">
