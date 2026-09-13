@@ -60,6 +60,9 @@ npm exec playwright test -- --config=playwright.a1-delivery.config.ts
 - Codex in-app browser 另操作相同 production component 的 test-only loopback fixture，確認查詢失敗→重試→pending，並取得七狀態 DOM。外部證據 `slice12-r3-iab-retry.{txt,png}`、`slice12-r3-iab-states-dom.txt`、`slice12-r3-iab-states.png`。這是設計狀態證據；不是公司 receiver 或真 Kit evidence。
 - 保留原 13-screen idle golden、主 design manifest、generic runner 與 threshold。本補充 state manifest 不擴充原 required pixel runner 的 coverage。原 runner 的 default/offline 綠燈與新增 receipt 狀態驗證分開計。
 - GitNexus stale 重建失敗：`Failed calling LOWER: Invalid UTF-8`；health report 為 UNKNOWN。scoped detect 雖輸出 low，但索引未對齊 HEAD，不能當 pass，也不降低先前 HIGH。同第三輪 reviewer 已接受以 source/tests/exact diff 取代 unavailable gate 的限定風險程序；不是 GitHub human approval。
+- 修補 subject `4a9172e04b06d4be2b013070b55947505456dcf8` 在乾淨 worktree 重跑官方 `a1-delivery/r3`。prepare 與 run 均用 `python -O`：原版 run `rr_15a9dcebac39` 為 6,991 PASS / 68 FAIL，修正版 `rr_4473344b0f5d` 為 7,059 PASS / 0 FAIL；修正版 SHA256 `049c263974b074b09cc60ac7a2a3243b9a1d85a39d74bb382504d6d1d67f182c`，原檔 SHA 與 6,845 個 GUID 保持不變。有效資料可正常發布限定 policy。
+- 修補後真 IFC Playwright **2 passed**：Excel/BCF、68 topics 的逐項身分、版本隔離、snapshot、整改確認／reload 歷史／reopen 通過。下載與兩段 trace 位於 `artifacts/e2e/a1-delivery/r3/playwright-output/05c2cc8f-361d-4ad7-8ece-8c189e94f974/`；outbox=`cbk_1789312518457_d4c78a6f`。
+- 修補後 Codex IAB 真 A1 另跑 `rr_4d85bd41584e`，選 Session `review_session_f0211a3e7626`，建立 Issue 並回拋 `cbk_1789312677506_0c70948d`；重新查詢仍為 pending 0/5，A2→A1 保留相同 receipt。實際 IAB DOM／畫面存於外部 `slice12-r3-iab-real-{dom.txt,outbox.txt,outbox.png}`；官方 holder 1 passed 只證明生命週期／guard，holder 的獨立頁面不是 IAB 操作截圖。r3 已由同一官方 helper ownership-gated stop，exit 0。
 
 ## V1–V8 證據對照與保留缺口
 
