@@ -111,6 +111,8 @@ with zipfile.ZipFile(sys.argv[1]) as z:
     const revisedResponse = page.waitForResponse(r => r.request().method() === "POST" && r.url().endsWith("/api/governance-library/rule-runs"));
     await page.getByTestId("a1-step-run").click();
     const revisedRunId = (await (await revisedResponse).json()).rule_run_id;
+    // running 的空結果也顯示 0，必須先等待檢核終態的交付按鈕才讀 summary。
+    await expect(page.getByTestId("a1-step-export")).toBeEnabled({ timeout: 120_000 });
     await expect(page.getByTestId("a1-issue-counts")).toHaveText("0 筆問題・0 個構件・0 個無法定位", { timeout: 120_000 });
     await expect(page.getByTestId("a1-step-bcf")).toBeDisabled();
     await expect(page.getByTestId("a1-issue-snapshot")).toBeDisabled();
