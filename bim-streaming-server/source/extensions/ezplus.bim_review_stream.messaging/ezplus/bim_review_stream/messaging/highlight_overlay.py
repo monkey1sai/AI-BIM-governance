@@ -120,6 +120,9 @@ class HighlightOverlay:
             shader = UsdShade.Shader.Define(scratch, path + "/Shader")
             shader.CreateIdAttr("UsdPreviewSurface")
             shader.CreateInput("diffuseColor", Sdf.ValueTypeNames.Color3f).Set(Gf.Vec3f(*rgba[:3]))
+            # 問題色是檢核標記，不能在未照明的室內退化成黑色；只作用於可回復 overlay。
+            # 不改原始建材、場景燈光或遮擋關係，也不宣稱可穿透牆體。
+            shader.CreateInput("emissiveColor", Sdf.ValueTypeNames.Color3f).Set(Gf.Vec3f(*rgba[:3]))
             shader.CreateInput("opacity", Sdf.ValueTypeNames.Float).Set(rgba[3])
             shader.CreateInput("roughness", Sdf.ValueTypeNames.Float).Set(0.5)
             material.CreateSurfaceOutput().ConnectToSource(shader.ConnectableAPI(), "surface")

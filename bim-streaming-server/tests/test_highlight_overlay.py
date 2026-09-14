@@ -159,6 +159,8 @@ b = bound("/World/B")
 assert a and b and a.GetPath() != b.GetPath()
 assert UsdShade.Shader(s.GetPrimAtPath(a.GetPath().AppendChild("Shader"))).GetInput("diffuseColor").Get() == Gf.Vec3f(1,0,0)
 assert UsdShade.Shader(s.GetPrimAtPath(b.GetPath().AppendChild("Shader"))).GetInput("diffuseColor").Get() == Gf.Vec3f(0,0.75,1)
+assert UsdShade.Shader(s.GetPrimAtPath(a.GetPath().AppendChild("Shader"))).GetInput("emissiveColor").Get() == Gf.Vec3f(1,0,0)
+assert UsdShade.Shader(s.GetPrimAtPath(b.GetPath().AppendChild("Shader"))).GetInput("emissiveColor").Get() == Gf.Vec3f(0,0.75,1)
 for bad in [
     [{"prim_path":"/World/A","color":[float("nan"),0,0,1]}],
     [{"prim_path":"/World/A","color":[2,0,0,1]}],
